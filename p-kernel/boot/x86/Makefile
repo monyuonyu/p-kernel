@@ -1,14 +1,14 @@
 # QEMU x64ブートローダー Makefile
 
-# ツールチェイン設定
-CC = x86_64-elf-gcc
-AS = x86_64-elf-as
-LD = x86_64-elf-ld
+# ツールチェイン設定 (標準gccを使用)
+CC = gcc
+AS = as
+LD = ld
 
 # コンパイルフラグ
-CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone
-ASFLAGS = 
-LDFLAGS = -nostdlib -static -T linker.ld
+CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -m64 -fno-builtin
+ASFLAGS = -m64
+LDFLAGS = -nostdlib -static -T linker.ld -m elf_x86_64
 
 # ソースファイル
 SRCS = start.S main.c
