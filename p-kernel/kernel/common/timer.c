@@ -11,9 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	timer.c
- *	Timer Control
+/**
+ * @file timer.c
+ * @brief タイマー制御機能の実装
+ * 
+ * T-Kernelのタイマー制御機能を実装する。
+ * システムタイマーの管理、タイマーイベントのスケジューリング、
+ * ハードウェアタイマーとのインターフェースを提供する。
+ * 
+ * 主な機能：
+ * - システムタイマーの初期化・終了処理
+ * - タイマーイベントキューの管理
+ * - タイマー割込みハンドラの実行
+ * - システム時刻の管理と更新
  */
 
 #include "kernel.h"
@@ -40,8 +50,15 @@ Noinit(EXPORT LSYSTIM	knl_real_time_ofs);	/* Actual time - System operation time
  */
 Noinit(EXPORT QUEUE	knl_timer_queue);
 
-/*
- * Initialization of timer module
+/**
+ * @brief タイマーモジュールの初期化
+ * 
+ * システム起動時にタイマーモジュールを初期化する。
+ * タイマー周期のチェック、タイマーキューの初期化、
+ * ハードウェアタイマーの開始を行う。
+ * 
+ * @return E_OK: 正常終了
+ * @return E_SYS: システム設定エラー（タイマー周期が範囲外）
  */
 EXPORT ER knl_timer_initialize( void )
 {
@@ -143,13 +160,15 @@ EXPORT void knl_timer_insert_abs( TMEB *evt, LSYSTIM time, CBACK cback, void *ar
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Timer interrupt handler
- *	Timer interrupt handler starts every TIMER_PERIOD millisecond 
- *	interval by hardware timer. Update the software clock and start the 
- *	timer event upon arriving at start time.
+/**
+ * @brief タイマー割込みハンドラ
+ * 
+ * ハードウェアタイマーからの割込みを処理する。
+ * システム時刻の更新、タイマーイベントの実行、
+ * タスクの実行時間統計の更新を行う。
+ * 
+ * @note この関数はTIMER_PERIODミリ秒間隔で呼び出される
  */
-
 EXPORT void knl_timer_handler( void )
 {
 	TMEB	*event;

@@ -11,9 +11,21 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	device.c
- *	Device Management Function
+/**
+ * @file device.c
+ * @brief デバイス管理機能
+ * 
+ * このファイルは、T-Kernelのデバイス管理サブシステムの中核を実装します。
+ * 
+ * 主な機能：
+ * - デバイスドライバの登録・削除
+ * - デバイス情報の管理（デバイス名、属性、サブユニット数など）
+ * - デバイスイベントの処理
+ * - デバイス一覧の取得
+ * 
+ * デバイス管理では、物理デバイスと論理デバイスの概念を使用し、
+ * 一つの物理デバイスに対して複数のサブユニット（論理デバイス）を
+ * 管理することができます。
  */
 
 /** [BEGIN Common Definitions] */
@@ -47,8 +59,13 @@ Noinit(EXPORT	QUEUE		knl_FreeDevCB);	/* Unused queue */
 
 
 #ifdef USE_FUNC_SEARCHDEVCB
-/*
- * Search registration device
+/**
+ * @brief 登録済みデバイスの検索
+ * @param devnm 検索するデバイス名
+ * @return 見つかったデバイス制御ブロックのポインタ、見つからない場合はNULL
+ * 
+ * 指定されたデバイス名に一致する登録済みデバイスを検索します。
+ * デバイス名の比較は文字列比較で行われます。
  */
 EXPORT DevCB* knl_searchDevCB( CONST UB *devnm )
 {

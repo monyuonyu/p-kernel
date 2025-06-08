@@ -11,8 +11,19 @@
  *----------------------------------------------------------------------
  */
 
+/**
+ * @file tm_exit.c
+ * @brief T-Monitor 終了処理
+ * 
+ * T-Monitorの終了処理機能を実装する。
+ * 現在はスタブ実装で、無限ループする。
+ */
 #include <typedef.h>
 
+/**
+ * @brief T-Monitor終了処理
+ * @param mode 終了モード
+ */
 void tm_exit( INT mode )
 {
 	for(;;) {

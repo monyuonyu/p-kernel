@@ -17,8 +17,18 @@
 
 IMPORT void sio_recv_frame( UB* buf, INT size );
 
-/*
- * supported only on wait != 0 (polling not supported)
+/**
+ * @file tm_getchar.c
+ * @brief T-Monitor 文字入力機能
+ * 
+ * T-Monitorの文字入力機能を実装する。
+ * シリアルポートから一文字を受信する。
+ */
+
+/**
+ * @brief 一文字入力
+ * @param wait 待機フラグ（ポーリングは未サポート）
+ * @return 入力された文字コード
  */
 EXPORT INT tm_getchar( INT wait )
 {

@@ -11,9 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	time_calls.c
- *	Time Management Function
+/**
+ * @file time_calls.c
+ * @brief 時刻管理機能の実装
+ * 
+ * T-Kernelの時刻管理機能を実装する。
+ * システム時刻の設定・参照、タスクの遅延実行、
+ * 周期ハンドラ・アラームハンドラの管理機能を提供する。
+ * 
+ * 主な機能：
+ * - システム時刻管理（tk_set_tim, tk_get_tim, tk_get_otm）
+ * - タスク遅延実行（tk_dly_tsk）
+ * - 周期ハンドラ管理（tk_cre_cyc, tk_del_cyc, tk_sta_cyc, tk_stp_cyc）
+ * - アラームハンドラ管理（tk_cre_alm, tk_del_alm, tk_sta_alm, tk_stp_alm）
  */
 
 /** [BEGIN Common Definitions] */
@@ -27,8 +37,15 @@
 /** [END Common Definitions] */
 
 #ifdef USE_FUNC_TK_SET_TIM
-/*
- * Set system clock
+/**
+ * @brief システム時刻の設定
+ * 
+ * システムの現在時刻を設定する。
+ * 実際にはリアルタイムオフセットを調整することで時刻設定を実現する。
+ * 
+ * @param pk_tim 設定する時刻
+ * @return E_OK: 正常終了
+ * @return E_PAR: パラメータエラー
  */
 SYSCALL ER tk_set_tim_impl( CONST SYSTIM *pk_tim )
 {
@@ -105,14 +122,17 @@ SYSCALL ER td_get_otm_impl( SYSTIM *tim, UW *ofs )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_TK_DLY_TSK
-/*
- * Definition of task delay wait specification
+/**
+ * @brief タスクの遅延実行
+ * 
+ * 現在実行中のタスクを指定時間だけ遅延実行する。
+ * 指定時間経過後にタスクの実行を再開する。
+ * 
+ * @param dlytim 遅延時間（ミリ秒）
+ * @return E_OK: 正常終了
  */
 LOCAL CONST WSPEC knl_wspec_dly = { TTW_DLY, NULL, NULL };
 
-/*
- * Task delay
- */
 SYSCALL ER tk_dly_tsk_impl( RELTIM dlytim )
 {
 	ER	ercd = E_OK;

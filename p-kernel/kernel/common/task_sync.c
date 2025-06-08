@@ -11,9 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	task_sync.c
- *	Task with Synchronize Function
+/**
+ * @file task_sync.c
+ * @brief タスク同期機能の実装
+ * 
+ * T-Kernelのタスク同期に関する機能を実装する。
+ * タスクの実行制御（サスペンド・レジューム）、
+ * タスクの起床待ち・起床要求機能を提供する。
+ * 
+ * 主な機能：
+ * - タスクの強制待ち（tk_sus_tsk）
+ * - タスクの強制待ち解除（tk_rsm_tsk, tk_frsm_tsk）
+ * - タスクの起床待ち（tk_slp_tsk）
+ * - タスクの起床要求（tk_wup_tsk, tk_can_wup）
  */
 
 /** [BEGIN Common Definitions] */
@@ -26,8 +36,18 @@
 /** [END Common Definitions] */
 
 #ifdef USE_FUNC_TK_SUS_TSK
-/*
- * Suspend task
+/**
+ * @brief タスクの強制待ち
+ * 
+ * 指定されたタスクを強制的に待ち状態にする。
+ * 既に待ち状態のタスクでも、更に強制待ち状態を重ねることができる。
+ * 
+ * @param tskid タスクID
+ * @return E_OK: 正常終了
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_OBJ: オブジェクト状態エラー
+ * @return E_CTX: コンテキストエラー
+ * @return E_QOVR: キューイングオーバーフロー
  */
 SYSCALL ER tk_sus_tsk_impl( ID tskid )
 {
@@ -176,8 +196,15 @@ EXPORT CONST WSPEC knl_wspec_slp = { TTW_SLP, NULL, NULL };
 #endif /* USE_FUNC_WSPEC_SLP */
 
 #ifdef USE_FUNC_TK_SLP_TSK
-/*
- * Move its own task state to wait state
+/**
+ * @brief 自タスクの起床待ち
+ * 
+ * 自分自身のタスクを起床待ち状態にする。
+ * 起床要求があれば即座に実行を継続し、なければ指定時間待機する。
+ * 
+ * @param tmout タイムアウト時間（ミリ秒）
+ * @return E_OK: 正常終了（起床要求により復帰）
+ * @return E_TMOUT: タイムアウト
  */
 SYSCALL ER tk_slp_tsk_impl( TMO tmout )
 {

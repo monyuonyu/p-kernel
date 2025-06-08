@@ -11,9 +11,26 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	objname.c
- *	Object name support
+/**
+ * @file objname.c
+ * @brief オブジェクト名管理機能
+ * 
+ * T-Kernelのデバッガサポート機能として、各種カーネルオブジェクトの
+ * 名前（DS名）を管理する機能を提供する。オブジェクト名はデバッグや
+ * システム監視において、オブジェクトの識別を容易にするために使用される。
+ * 
+ * 主な機能：
+ * - オブジェクト名の取得（knl_object_getname）
+ * - オブジェクト名の参照（td_ref_dsname）
+ * - オブジェクト名の設定（td_set_dsname）
+ * - 各種オブジェクトタイプのサポート（タスク、セマフォ、イベントフラグ等）
+ * 
+ * サポートされるオブジェクトタイプ：
+ * TN_TSK, TN_SEM, TN_FLG, TN_MBX, TN_MBF, TN_POR, TN_MTX,
+ * TN_MPL, TN_MPF, TN_CYC, TN_ALM
+ * 
+ * @note USE_OBJECT_NAMEが有効な場合のみ機能する
+ * @note USE_DBGSPTが有効な場合のみコンパイルされる
  */
 
 /** [BEGIN Common Definitions] */
@@ -25,6 +42,26 @@
 
 #if USE_OBJECT_NAME
 #ifdef USE_FUNC_OBJECT_GETNAME
+/**
+ * @brief オブジェクト名取得
+ * 
+ * 指定されたオブジェクトタイプとIDに基づいて、オブジェクトの名前を取得する。
+ * 各オブジェクトタイプに応じて適切な取得関数を呼び出す。
+ * 
+ * @param objtype オブジェクトタイプ（TN_TSK, TN_SEM, TN_FLG等）
+ * @param objid オブジェクトID
+ * @param name 取得した名前へのポインタを格納する変数のアドレス
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_PAR パラメータエラー（未サポートのオブジェクトタイプ）
+ * @retval E_ID 不正ID
+ * @retval E_NOEXS オブジェクト未生成
+ * @retval E_OBJ オブジェクトに名前が設定されていない
+ * 
+ * @note 対応するオブジェクトタイプのCFN_MAX_xxxIDが0より大きい場合のみ処理される
+ * @note 取得された名前ポインタはオブジェクトの制御ブロック内を指す
+ */
 EXPORT ER knl_object_getname( UINT objtype, ID objid, UB **name)
 {
 	ER	ercd;
@@ -144,6 +181,27 @@ EXPORT ER knl_object_getname( UINT objtype, ID objid, UB **name)
 IMPORT ER knl_object_getname( UINT objtype, ID objid, UB **name);
 #endif /* USE_OBJECT_NAME */
 
+/**
+ * @brief オブジェクト名参照
+ * 
+ * 指定されたオブジェクトのDS名（デバッガサポート名）を参照し、
+ * 指定されたバッファにコピーする。デバッガやシステム監視ツールで使用される。
+ * 
+ * @param type オブジェクトタイプ（TN_TSK, TN_SEM, TN_FLG等）
+ * @param id オブジェクトID
+ * @param dsname DS名を格納するバッファ（OBJECT_NAME_LENGTH分の領域が必要）
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_NOSPT サポートしていない（USE_OBJECT_NAMEが無効）
+ * @retval E_PAR パラメータエラー（未サポートのオブジェクトタイプ）
+ * @retval E_ID 不正ID
+ * @retval E_NOEXS オブジェクト未生成
+ * @retval E_OBJ オブジェクトに名前が設定されていない
+ * 
+ * @note USE_OBJECT_NAMEが無効な場合はE_NOSPTを返す
+ * @note 取得した名前はdsnameバッファにコピーされる
+ */
 SYSCALL ER td_ref_dsname_impl( UINT type, ID id, UB *dsname )
 {
 #if USE_OBJECT_NAME
@@ -167,6 +225,28 @@ SYSCALL ER td_ref_dsname_impl( UINT type, ID id, UB *dsname )
 IMPORT ER knl_object_getname( UINT objtype, ID objid, UB **name);
 #endif /* USE_OBJECT_NAME */
 
+/**
+ * @brief オブジェクト名設定
+ * 
+ * 指定されたオブジェクトにDS名（デバッガサポート名）を設定する。
+ * デバッグやシステム監視において、オブジェクトの識別を容易にするために使用される。
+ * 
+ * @param type オブジェクトタイプ（TN_TSK, TN_SEM, TN_FLG等）
+ * @param id オブジェクトID
+ * @param dsname 設定するDS名（最大OBJECT_NAME_LENGTH-1文字）
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_NOSPT サポートしていない（USE_OBJECT_NAMEが無効）
+ * @retval E_PAR パラメータエラー（未サポートのオブジェクトタイプ）
+ * @retval E_ID 不正ID
+ * @retval E_NOEXS オブジェクト未生成
+ * @retval E_OBJ オブジェクトに名前設定領域がない
+ * 
+ * @note USE_OBJECT_NAMEが無効な場合はE_NOSPTを返す
+ * @note オブジェクト生成時にTA_DSNAME属性が指定されている必要がある
+ * @note 名前はOBJECT_NAME_LENGTH分の領域にコピーされる
+ */
 SYSCALL ER td_set_dsname_impl( UINT type, ID id, CONST UB *dsname )
 {
 #if USE_OBJECT_NAME

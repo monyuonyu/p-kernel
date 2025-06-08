@@ -11,9 +11,22 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	eventflag.c
- *	Event Flag
+/**
+ * @file eventflag.c
+ * @brief イベントフラグ管理機能
+ *
+ * このファイルは、T-Kernelのイベントフラグ同期オブジェクトの
+ * 実装を提供します。イベントフラグは、複数のタスク間でビット
+ * パターンによる同期を取るためのオブジェクトです。
+ *
+ * 主な機能：
+ * - イベントフラグの生成・削除
+ * - イベントフラグパターンの設定・クリア
+ * - イベントフラグ待ち（AND/OR条件）
+ * - イベントフラグ状態参照
+ * - 複数タスク待ちサポート（TA_WMUL属性）
+ * - 優先度別待ちキューサポート（TA_TPRI属性）
+ * - ビット自動クリア機能（TWF_BITCLR, TWF_CLR）
  */
 
 /** [BEGIN Common Definitions] */
@@ -33,8 +46,17 @@ Noinit(EXPORT QUEUE	knl_free_flgcb);	/* FreeQue */
 
 
 #ifdef USE_FUNC_EVENTFLAG_INITIALIZE
-/*
- * Initialization of event flag control block 
+/**
+ * @brief イベントフラグ管理ブロックの初期化
+ *
+ * イベントフラグ管理ブロックの初期化を行います。
+ * 全ての管理ブロックをフリーキューに登録します。
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_SYS システムエラー（使用可能なイベントフラグ数が0）
+ *
+ * @note この関数はカーネル初期化時に呼び出されます。
  */
 EXPORT ER knl_eventflag_initialize( void )
 {
@@ -58,8 +80,23 @@ EXPORT ER knl_eventflag_initialize( void )
 #endif /* USE_FUNC_EVENTFLAG_INITIALIZE */
 
 #ifdef USE_FUNC_TK_CRE_FLG
-/*
- * Create event flag
+/**
+ * @brief イベントフラグ生成システムコール
+ *
+ * イベントフラグを生成し、イベントフラグIDを返します。
+ * 初期パターンや属性を設定できます。
+ *
+ * @param pk_cflg イベントフラグ生成情報パケットへのポインタ
+ *   - exinf: 拡張情報
+ *   - flgatr: イベントフラグ属性（TA_TPRI, TA_WMUL, TA_DSNAME）
+ *   - iflgptn: 初期パターン
+ *   - dsname: オブジェクト名（TA_DSNAME指定時）
+ *
+ * @return イベントフラグID（正の値）またはエラーコード（負の値）
+ *   @retval E_LIMIT イベントフラグ数が上限に達した
+ *   @retval E_RSATR 不正な属性
+ *
+ * @note TA_TPRI: 優先度順待ちキュー, TA_WMUL: 複数タスク待ち許可
  */
 SYSCALL ID tk_cre_flg_impl( CONST T_CFLG *pk_cflg )
 {
@@ -107,8 +144,20 @@ SYSCALL ID tk_cre_flg_impl( CONST T_CFLG *pk_cflg )
 #endif /* USE_FUNC_TK_CRE_FLG */
 
 #ifdef USE_FUNC_TK_DEL_FLG
-/*
- * Delete event flag
+/**
+ * @brief イベントフラグ削除システムコール
+ *
+ * 指定されたイベントフラグを削除します。
+ * 待ち状態のタスクがある場合は、E_DLTエラーで待ち解除します。
+ *
+ * @param flgid イベントフラグID
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note 削除されたイベントフラグの管理ブロックはフリーキューに返却されます。
  */
 SYSCALL ER tk_del_flg_impl( ID flgid )
 {
@@ -137,8 +186,22 @@ SYSCALL ER tk_del_flg_impl( ID flgid )
 #endif /* USE_FUNC_TK_DEL_FLG */
 
 #ifdef USE_FUNC_TK_SET_FLG
-/*
- * Event flag set
+/**
+ * @brief イベントフラグ設定システムコール
+ *
+ * 指定されたイベントフラグにビットパターンを設定（OR演算）します。
+ * 待ち条件が満たされたタスクがある場合、待ち解除します。
+ *
+ * @param flgid イベントフラグID
+ * @param setptn 設定するビットパターン
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note フラグ設定後、待ちタスクの条件をチェックし、
+ *       条件満足時はTWF_BITCLR/TWF_CLRに従ってフラグをクリアします。
  */
 SYSCALL ER tk_set_flg_impl( ID flgid, UINT setptn )
 {
@@ -197,8 +260,21 @@ SYSCALL ER tk_set_flg_impl( ID flgid, UINT setptn )
 #endif /* USE_FUNC_TK_SET_FLG */
 
 #ifdef USE_FUNC_TK_CLR_FLG
-/*
- * Clear event flag 
+/**
+ * @brief イベントフラグクリアシステムコール
+ *
+ * 指定されたイベントフラグのビットパターンをクリア（AND演算）します。
+ *
+ * @param flgid イベントフラグID
+ * @param clrptn クリアパターン（ビット、1:保持, 0:クリア）
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note フラグパターン &= clrptn の演算でクリアします。
+ *       0を指定すると全ビットがクリアされます。
  */
 SYSCALL ER tk_clr_flg_impl( ID flgid, UINT clrptn )
 {
@@ -222,8 +298,16 @@ SYSCALL ER tk_clr_flg_impl( ID flgid, UINT clrptn )
 #endif /* USE_FUNC_TK_CLR_FLG */
 
 #ifdef USE_FUNC_TK_WAI_FLG
-/*
- * Processing if the priority of wait task changes
+/**
+ * @brief 待ちタスクの優先度変更時の処理
+ *
+ * イベントフラグ待ち中のタスクの優先度が変更された場合の
+ * 待ちキューの再編成処理を行います。
+ *
+ * @param tcb 優先度が変更されたタスクのタスク管理ブロック
+ * @param oldpri 変更前の優先度
+ *
+ * @note この関数はTA_TPRI属性のイベントフラグで使用されます。
  */
 LOCAL void flg_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -239,8 +323,32 @@ LOCAL void flg_chg_pri( TCB *tcb, INT oldpri )
 LOCAL CONST WSPEC knl_wspec_flg_tfifo = { TTW_FLG, NULL, NULL };
 LOCAL CONST WSPEC knl_wspec_flg_tpri  = { TTW_FLG, flg_chg_pri, NULL };
 
-/*
- * Event flag wait
+/**
+ * @brief イベントフラグ待ちシステムコール
+ *
+ * 指定されたイベントフラグのパターンが条件を満たすまで待ちます。
+ * AND条件やOR条件、および待ち後のフラグクリア指定が可能です。
+ *
+ * @param flgid イベントフラグID
+ * @param waiptn 待ちパターン（0以外）
+ * @param wfmode 待ちモード（TWF_ORW|TWF_CLR|TWF_BITCLR）
+ *   - TWF_ORW: OR待ち（デフォルトはAND待ち）
+ *   - TWF_CLR: 待ち解除時に全ビットクリア
+ *   - TWF_BITCLR: 待ち解除時に条件ビットのみクリア
+ * @param p_flgptn 現在のフラグパターンの格納先
+ * @param tmout タイムアウト時間
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *   @retval E_OBJ 複数タスク待ち禁止イベントフラグに既に待ちタスクあり
+ *   @retval E_PAR パラメータエラー
+ *   @retval E_TMOUT タイムアウト
+ *   @retval E_CTX コンテキストエラー
+ *
+ * @note AND条件: (flgptn & waiptn) == waiptn
+ *       OR条件: (flgptn & waiptn) != 0
  */
 SYSCALL ER tk_wai_flg_impl( ID flgid, UINT waiptn, UINT wfmode, UINT *p_flgptn, TMO tmout )
 {
@@ -296,8 +404,23 @@ SYSCALL ER tk_wai_flg_impl( ID flgid, UINT waiptn, UINT wfmode, UINT *p_flgptn, 
 #endif /* USE_FUNC_TK_WAI_FLG */
 
 #ifdef USE_FUNC_TK_REF_FLG
-/*
- * Check event flag state
+/**
+ * @brief イベントフラグ状態参照システムコール
+ *
+ * 指定されたイベントフラグの現在状態を参照します。
+ *
+ * @param flgid イベントフラグID
+ * @param pk_rflg イベントフラグ状態パケットの格納先
+ *   - exinf: 拡張情報
+ *   - wtsk: 待ちタスクID（待ちタスクがない場合は0）
+ *   - flgptn: 現在のフラグパターン
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note 複数タスク待ちの場合、wtskは最初の待ちタスクIDを返します。
  */
 SYSCALL ER tk_ref_flg_impl( ID flgid, T_RFLG *pk_rflg )
 {
@@ -330,8 +453,21 @@ SYSCALL ER tk_ref_flg_impl( ID flgid, T_RFLG *pk_rflg )
 
 #ifdef USE_FUNC_EVENTFLAG_GETNAME
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief イベントフラグのオブジェクト名取得
+ *
+ * 指定されたイベントフラグのオブジェクト名を取得します。
+ *
+ * @param id イベントフラグID
+ * @param name オブジェクト名のポインタの格納先
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *   @retval E_OBJ オブジェクト名が設定されていない
+ *
+ * @note この関数はデバッグサポート用です。
  */
 EXPORT ER knl_eventflag_getname(ID id, UB **name)
 {
@@ -361,8 +497,18 @@ EXPORT ER knl_eventflag_getname(ID id, UB **name)
 #endif /* USE_FUNC_EVENTFLAG_GETNAME */
 
 #ifdef USE_FUNC_TD_LST_FLG
-/*
- * Refer event flag usage state
+/**
+ * @brief イベントフラグ使用状態参照（デバッグ機能）
+ *
+ * 現在使用中のイベントフラグのID一覧を取得します。
+ *
+ * @param list イベントフラグID格納配列
+ * @param nent 配列のエントリ数
+ *
+ * @return 使用中のイベントフラグ数
+ *
+ * @note この関数はデバッグサポート用です。
+ *       戻り値がnentより大きい場合、全てのIDが格納されていないことを示します。
  */
 SYSCALL INT td_lst_flg_impl( ID list[], INT nent )
 {
@@ -387,8 +533,20 @@ SYSCALL INT td_lst_flg_impl( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_FLG */
 
 #ifdef USE_FUNC_TD_REF_FLG
-/*
- * Refer event flag state
+/**
+ * @brief イベントフラグ状態参照（デバッグ機能）
+ *
+ * 指定されたイベントフラグの現在状態をデバッグ用に参照します。
+ *
+ * @param flgid イベントフラグID
+ * @param pk_rflg イベントフラグ状態パケットの格納先
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note この関数はデバッグサポート用です。
  */
 SYSCALL ER td_ref_flg_impl( ID flgid, TD_RFLG *pk_rflg )
 {
@@ -414,8 +572,21 @@ SYSCALL ER td_ref_flg_impl( ID flgid, TD_RFLG *pk_rflg )
 #endif /* USE_FUNC_TD_REF_FLG */
 
 #ifdef USE_FUNC_TD_FLG_QUE
-/*
- * Refer event flag wait queue
+/**
+ * @brief イベントフラグ待ちキュー参照（デバッグ機能）
+ *
+ * 指定されたイベントフラグの待ちキューにあるタスクIDの一覧を取得します。
+ *
+ * @param flgid イベントフラグID
+ * @param list タスクID格納配列
+ * @param nent 配列のエントリ数
+ *
+ * @return 待ちキューにあるタスク数（正の値）またはエラーコード（負の値）
+ *   @retval E_ID 無効なイベントフラグID
+ *   @retval E_NOEXS イベントフラグが存在しない
+ *
+ * @note この関数はデバッグサポート用です。
+ *       戻り値がnentより大きい場合、全てのタスクIDが格納されていないことを示します。
  */
 SYSCALL INT td_flg_que_impl( ID flgid, ID list[], INT nent )
 {

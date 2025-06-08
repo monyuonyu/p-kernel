@@ -11,18 +11,18 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	@(#)tm_printf.c (libtm)
- *
- *	printf() / sprintf() routine using t-monitor function.
- *
- *	- Unsupported specifiers: floating point, long long and others.
- *		Coversion:	 a, A, e, E, f, F, g, G, n
- *		Size qualifier:  hh, ll, j, z, t, L
- *	- No limitation of output string length.
- *	- Minimize stack usage.
- *		Depending on available stack size, define OUTBUF_SZ by
- *		appropriate value.
+/**
+ * @file tm_printf.c
+ * @brief T-Monitor printf/sprintf実装
+ * 
+ * T-Monitorのprintf()/sprintf()ルーチンを実装する。
+ * 標準Cライブラリのprintf相当機能を提供するが、
+ * 一部機能はサポートしていない。
+ * 
+ * サポート状況：
+ * - 未サポート: 浮動小数点、long long、その他
+ * - 出力文字列長に制限なし
+ * - スタック使用量を最小化
  */
 #include <stdarg.h>
 #include <basic.h>
@@ -297,6 +297,12 @@ static	void	out_cons( UB *str, int len,  OutPar *par )
 #endif
 }
 
+/**
+ * @brief 書式付き文字列出力
+ * @param format 書式文字列
+ * @param ... 可変引数
+ * @return 出力文字数
+ */
 INT	tm_printf( const UB *format, ... )
 {
 	va_list	ap;
@@ -330,6 +336,13 @@ static	void	out_buf( UB *str, int len, OutPar *par )
 	while (--len >= 0) *(par->bufp)++ = *str++;
 }
 
+/**
+ * @brief 書式付き文字列生成
+ * @param str 出力バッファ
+ * @param format 書式文字列
+ * @param ... 可変引数
+ * @return 生成文字数
+ */
 int	tm_sprintf( UB *str, const UB *format, ... )
 {
 	OutPar	par;

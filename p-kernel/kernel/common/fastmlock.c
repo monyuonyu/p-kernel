@@ -11,10 +11,25 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	@(#)fastmlock.c (libtk)
- *
- *	High-speed exclusive control multi-lock 
+/**
+ * @file fastmlock.c
+ * @brief 高速排他制御マルチロック機能
+ * 
+ * このファイルは、T-Kernelライブラリの高速排他制御マルチロック機能を
+ * 実装します。FastMLockは、一つのロックオブジェクトで最大32個の
+ * 独立したロックを管理できる効率的な排他制御メカニズムです。
+ * 
+ * 主な特徴：
+ * - 単一オブジェクトで最大32個のロック管理
+ * - イベントフラグベースの実装
+ * - ビット操作による高速なロック制御
+ * - 優先度順待ちキューサポート（TA_TPRI）
+ * - 複数タスク待ちサポート（TA_WMUL）
+ * 
+ * アーキテクチャ：
+ * - lock->flg: 各ビットがロック状態を表現（32個のロック）
+ * - lock->wai: 待機中タスク数のカウンタ
+ * - lock->id: 内部で使用するイベントフラグID
  */
 
 /** [BEGIN Common Definitions] */
@@ -25,15 +40,24 @@
 #include "libtk_config.h"
 
 /* ------------------------------------------------------------------------ */
-/*
- *	void INC( INT *val )		increment 
- *	void DEC( INT *val )		decrement 
- *	BOOL BTS( UINT *val, INT no )	bit test and set 
- *	void BR( UINT *val, INT no )	bit reset 
- *
- *	The above must be operated exclusively.
+/**
+ * @brief アトミックな演算操作関数群
+ * 
+ * 以下の関数は排他制御が必要なアトミック操作を提供します：
+ * - INC: インクリメント操作
+ * - DEC: デクリメント操作  
+ * - BTS: ビットテストアンドセット操作
+ * - BR: ビットリセット操作
+ * 
+ * これらの操作は割り込み禁止により排他制御を実現しています。
  */
 
+/**
+ * @brief 値をアトミックにインクリメントする
+ * @param val インクリメントする値へのポインタ
+ * 
+ * 割り込みを禁止して値を1増加させます。
+ */
 void INC( INT *val )
 {
 	UINT	imask;
@@ -43,6 +67,12 @@ void INC( INT *val )
 	EI(imask);
 }
 
+/**
+ * @brief 値をアトミックにデクリメントする
+ * @param val デクリメントする値へのポインタ
+ * 
+ * 割り込みを禁止して値を1減少させます。
+ */
 void DEC( INT *val )
 {
 	UINT	imask;
@@ -52,6 +82,15 @@ void DEC( INT *val )
 	EI(imask);
 }
 
+/**
+ * @brief ビットテストアンドセット操作
+ * @param val 操作対象の値へのポインタ
+ * @param no 操作するビット番号（0-31）
+ * @return セット前のビット状態（TRUE: 既にセット済み、FALSE: 未セット）
+ * 
+ * 指定されたビットをテストし、その後1にセットします。
+ * この操作はアトミックに実行されます。
+ */
 BOOL BTS( UINT *val, INT no )
 {
 	UINT	imask;
@@ -65,6 +104,14 @@ BOOL BTS( UINT *val, INT no )
 	return (BOOL)b;
 }
 
+/**
+ * @brief ビットリセット操作
+ * @param val 操作対象の値へのポインタ
+ * @param no リセットするビット番号（0-31）
+ * 
+ * 指定されたビットを0にリセットします。
+ * この操作はアトミックに実行されます。
+ */
 void BR( UINT *val, INT no )
 {
 	UINT	imask;
@@ -78,9 +125,15 @@ void BR( UINT *val, INT no )
 /** [END Common Definitions] */
 
 #ifdef USE_FUNC_MLOCKTMO
-/*
- * Lock with wait time designation 
- *	no	lock number 0 - 31 
+/**
+ * @brief タイムアウト指定付きロック取得
+ * @param lock マルチロックオブジェクトへのポインタ
+ * @param no ロック番号（0-31）
+ * @param tmo タイムアウト時間（TMO_FEVRで無限待ち）
+ * @return エラーコード（E_OK: 成功、E_TMOUT: タイムアウト）
+ * 
+ * 指定されたロック番号のロックを取得します。
+ * ロックが取得できない場合は、指定された時間まで待機します。
  */
 EXPORT ER MLockTmo( FastMLock *lock, INT no, TMO tmo )
 {
@@ -107,9 +160,14 @@ EXPORT ER MLockTmo( FastMLock *lock, INT no, TMO tmo )
 #endif /* USE_FUNC_MLOCKTMO */
 
 #ifdef USE_FUNC_MLOCK
-/*
- * Lock 
- *	no	Lock number 0 - 31 
+/**
+ * @brief ロック取得（無限待ち）
+ * @param lock マルチロックオブジェクトへのポインタ
+ * @param no ロック番号（0-31）
+ * @return エラーコード（E_OK: 成功）
+ * 
+ * 指定されたロック番号のロックを取得します。
+ * ロックが取得できない場合は無限に待機します。
  */
 EXPORT ER MLock( FastMLock *lock, INT no )
 {
@@ -118,9 +176,14 @@ EXPORT ER MLock( FastMLock *lock, INT no )
 #endif /* USE_FUNC_MLOCK */
 
 #ifdef USE_FUNC_MUNLOCK
-/*
- * Lock release 
- *	no	Lock number 0 - 31 
+/**
+ * @brief ロック解放
+ * @param lock マルチロックオブジェクトへのポインタ
+ * @param no ロック番号（0-31）
+ * @return エラーコード（E_OK: 成功）
+ * 
+ * 指定されたロック番号のロックを解放します。
+ * 待機中のタスクがある場合は、イベントフラグをセットして通知します。
  */
 EXPORT ER MUnlock( FastMLock *lock, INT no )
 {
@@ -135,8 +198,14 @@ EXPORT ER MUnlock( FastMLock *lock, INT no )
 #endif /* USE_FUNC_MUNLOCK */
 
 #ifdef USE_FUNC_CREATEMLOCK
-/*
- * Create multi-lock 
+/**
+ * @brief マルチロックオブジェクトの生成
+ * @param lock 初期化するマルチロックオブジェクトへのポインタ
+ * @param name オブジェクト名（NULL可）
+ * @return エラーコード（E_OK: 成功）
+ * 
+ * マルチロックオブジェクトを生成し、初期化します。
+ * 内部でイベントフラグを生成し、マルチロック機能を提供します。
  */
 EXPORT ER CreateMLock( FastMLock *lock, CONST UB *name )
 {
@@ -164,8 +233,13 @@ EXPORT ER CreateMLock( FastMLock *lock, CONST UB *name )
 #endif /* USE_FUNC_CREATEMLOCK */
 
 #ifdef USE_FUNC_DELETEMLOCK
-/*
- * Delete multi-lock 
+/**
+ * @brief マルチロックオブジェクトの削除
+ * @param lock 削除するマルチロックオブジェクトへのポインタ
+ * @return エラーコード（E_OK: 成功、E_PAR: パラメータエラー）
+ * 
+ * マルチロックオブジェクトを削除し、関連する
+ * イベントフラグも削除します。
  */
 EXPORT ER DeleteMLock( FastMLock *lock )
 {

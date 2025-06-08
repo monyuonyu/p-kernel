@@ -11,9 +11,21 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	rendezvous.c
- *	Rendezvous
+/**
+ * @file rendezvous.c
+ * @brief ランデブー機能の実装
+ * 
+ * T-Kernelのランデブーポート（rendezvous port）による同期通信機能を実装する。
+ * ランデブーは、タスク間でメッセージを同期的に送受信するための機能で、
+ * コール側とアクセプト側の両方が準備完了状態になったときに通信が成立する。
+ * 
+ * 主な機能：
+ * - ランデブーポートの作成・削除
+ * - ランデブーコール（tk_cal_por）
+ * - ランデズーアクセプト（tk_acp_por）
+ * - ランデブー転送（tk_fwd_por）
+ * - ランデブー応答（tk_rpl_rdv）
+ * - ランデブーポート状態参照
  */
 
 
@@ -35,8 +47,14 @@ Noinit(EXPORT QUEUE knl_free_porcb);	/* FreeQue */
 
 
 #ifdef USE_FUNC_RENDEZVOUS_INITIALIZE
-/* 
- * Initialization of port control block 
+/**
+ * @brief ランデブーポート制御ブロックの初期化
+ * 
+ * システム起動時にランデブーポート制御ブロック（PORCB）を初期化し、
+ * すべての制御ブロックを空きキューに登録する。
+ * 
+ * @return E_OK: 正常終了
+ * @return E_SYS: システム設定エラー（ポート数が不正）
  */
 EXPORT ER knl_rendezvous_initialize( void )
 {
@@ -85,8 +103,18 @@ EXPORT CONST WSPEC knl_wspec_rdv       = { TTW_RDV, NULL, NULL };
 
 
 #ifdef USE_FUNC_TK_CRE_POR
-/*
- * Create rendezvous port
+/**
+ * @brief ランデブーポートの作成
+ * 
+ * 指定されたパラメータでランデブーポートを作成する。
+ * ランデブーポートは、タスク間でメッセージを同期的に送受信するために使用される。
+ * 
+ * @param pk_cpor ランデブーポート作成パラメータ
+ * @return ポートID: 正常終了時
+ * @return E_NOMEM: メモリ不足
+ * @return E_LIMIT: 作成可能数の上限超過
+ * @return E_RSATR: 予約属性またはサポートしていない属性の指定
+ * @return E_PAR: パラメータエラー
  */
 SYSCALL ID tk_cre_por_impl( CONST T_CPOR *pk_cpor )
 {
@@ -170,8 +198,21 @@ SYSCALL ER tk_del_por_impl( ID porid )
 #endif /* USE_FUNC_TK_DEL_POR */
 
 #ifdef USE_FUNC_TK_CAL_POR
-/*
- * Call rendezvous
+/**
+ * @brief ランデブーコール
+ * 
+ * 指定されたランデブーポートに対してメッセージ送信要求を行う。
+ * アクセプト待ちタスクがあれば即座に通信が成立し、なければコール待ち状態になる。
+ * 
+ * @param porid ランデブーポートID
+ * @param calptn コールパターン（ビットパターン）
+ * @param msg 送信メッセージ
+ * @param cmsgsz 送信メッセージサイズ
+ * @param tmout タイムアウト時間（ミリ秒）
+ * @return 受信メッセージサイズ: 正常終了時
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_PAR: パラメータエラー
+ * @return E_TMOUT: タイムアウト
  */
 SYSCALL INT tk_cal_por_impl( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout )
 {
@@ -256,8 +297,21 @@ SYSCALL INT tk_cal_por_impl( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO t
 
 LOCAL CONST WSPEC knl_wspec_acp = { TTW_ACP, NULL, NULL };
 
-/*
- * Accept rendezvous
+/**
+ * @brief ランデブーアクセプト
+ * 
+ * 指定されたランデブーポートからメッセージ受信要求を行う。
+ * コール待ちタスクがあれば即座に通信が成立し、なければアクセプト待ち状態になる。
+ * 
+ * @param porid ランデブーポートID
+ * @param acpptn アクセプトパターン（ビットパターン）
+ * @param p_rdvno ランデブー番号格納領域
+ * @param msg 受信メッセージ格納領域
+ * @param tmout タイムアウト時間（ミリ秒）
+ * @return 受信メッセージサイズ: 正常終了時
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_PAR: パラメータエラー
+ * @return E_TMOUT: タイムアウト
  */
 SYSCALL INT tk_acp_por_impl( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmout )
 {
@@ -438,8 +492,18 @@ SYSCALL ER tk_fwd_por_impl( ID porid, UINT calptn, RNO rdvno, CONST void *msg, I
 #endif /* USE_FUNC_TK_FWD_POR */
 
 #ifdef USE_FUNC_TK_RPL_RDV
-/*
- * Reply rendezvous
+/**
+ * @brief ランデブー応答
+ * 
+ * ランデブー通信に対する応答メッセージを送信する。
+ * アクセプト側からコール側に対して応答を返し、ランデブー通信を完了させる。
+ * 
+ * @param rdvno ランデブー番号
+ * @param msg 応答メッセージ
+ * @param rmsgsz 応答メッセージサイズ
+ * @return E_OK: 正常終了
+ * @return E_OBJ: オブジェクト状態エラー
+ * @return E_PAR: パラメータエラー
  */
 SYSCALL ER tk_rpl_rdv_impl( RNO rdvno, CONST void *msg, INT rmsgsz )
 {

@@ -11,9 +11,21 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	task_manage.c
- *	Task Management Function
+/**
+ * @file task_manage.c
+ * @brief タスク管理機能の実装
+ * 
+ * T-Kernelのタスク管理機能を実装する。
+ * タスクの生成・削除・起動・終了、優先度変更、実行中タスク情報の取得など、
+ * タスクのライフサイクル管理に関する機能を提供する。
+ * 
+ * 主な機能：
+ * - タスクの作成・削除（tk_cre_tsk, tk_del_tsk）
+ * - タスクの起動・終了（tk_sta_tsk, tk_ext_tsk, tk_exd_tsk, tk_ter_tsk）
+ * - タスク優先度変更（tk_chg_pri）
+ * - レディキューローテーション（tk_rot_rdq）
+ * - タスク状態参照（tk_ref_tsk, tk_get_tid）
+ * - 強制待ち解除（tk_rel_wai）
  */
 
 /** [BEGIN Common Definitions] */
@@ -27,8 +39,18 @@
 
 
 #ifdef USE_FUNC_TK_CRE_TSK
-/*
- * Create task
+/**
+ * @brief タスクの作成
+ * 
+ * 指定されたパラメータで新しいタスクを作成する。
+ * 作成されたタスクは休止状態（DORMANT）で、tk_sta_tsk()で起動する。
+ * 
+ * @param pk_ctsk タスク作成パラメータ
+ * @return タスクID: 正常終了時
+ * @return E_NOMEM: メモリ不足
+ * @return E_LIMIT: 作成可能数の上限超過
+ * @return E_RSATR: 予約属性またはサポートしていない属性の指定
+ * @return E_PAR: パラメータエラー
  */
 SYSCALL ID tk_cre_tsk_impl P1( CONST T_CTSK *pk_ctsk )
 {
@@ -188,8 +210,17 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_TK_STA_TSK
-/*
- * Start task
+/**
+ * @brief タスクの起動
+ * 
+ * 休止状態のタスクを起動し、実行可能状態（READY）にする。
+ * タスクの起動時にはスタートアップコードが渡される。
+ * 
+ * @param tskid タスクID
+ * @param stacd スタートアップコード
+ * @return E_OK: 正常終了
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_OBJ: オブジェクト状態エラー（休止状態でない）
  */
 SYSCALL ER tk_sta_tsk_impl( ID tskid, INT stacd )
 {
@@ -246,8 +277,15 @@ EXPORT void knl_ter_tsk( TCB *tcb )
 #endif /* USE_FUNC_TER_TSK */
 
 #ifdef USE_FUNC_TK_EXT_TSK
-/*
- * End its own task
+/**
+ * @brief 自タスクの終了
+ * 
+ * 自分自身のタスクを終了し、休止状態（DORMANT）に遷移する。
+ * このシステムコールは実行中のタスクからのみ呼び出し可能で、
+ * 呼び出し後は制御が戻らない。
+ * 
+ * @note 割込み禁止状態やディスパッチ禁止状態からの呼び出しは
+ *       コンテキストエラーとなる
  */
 SYSCALL void tk_ext_tsk_impl( void )
 {

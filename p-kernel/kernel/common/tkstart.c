@@ -11,9 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	tkstart.c
- *	micro T-Kernel Startup / Finalization
+/**
+ * @file tkstart.c
+ * @brief micro T-Kernelの起動・終了処理
+ * 
+ * micro T-Kernelのシステム起動と終了処理を実装する。
+ * カーネルの各モジュールの初期化、初期タスクの作成・起動、
+ * システムの終了処理を順次実行する。
+ * 
+ * 主な機能：
+ * - カーネルモジュールの初期化
+ * - 初期タスクの作成・起動
+ * - システム終了処理
+ * - モジュール初期化エラーのハンドリング
  */
 
 #include "kernel.h"
@@ -70,8 +80,15 @@ LOCAL void knl_init_module( ER (*initfunc)( void ), UB *name )
 }
 #define InitModule(name)	knl_init_module( knl_##name##_initialize, (UB*)#name )
 
-/*
- * Initialize kernel and create/start initial task
+/**
+ * @brief カーネルの初期化と初期タスクの作成・起動
+ * 
+ * micro T-Kernelのメイン初期化関数。
+ * ターゲット依存部の初期化、各モジュールの初期化、
+ * 初期タスクの作成・起動を順次実行する。
+ * 
+ * @param inittask 初期タスクの作成パラメータ
+ * @note この関数は制御を返さない
  */
 EXPORT void knl_t_kernel_main( T_CTSK *inittask )
 {

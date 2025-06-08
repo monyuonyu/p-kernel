@@ -11,9 +11,23 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	deviceio.c
- *	Device Management Function: Input/Output
+/**
+ * @file deviceio.c
+ * @brief デバイス管理機能：入出力制御
+ *
+ * このファイルは、T-Kernelのデバイス管理サブシステムにおける
+ * 入出力制御機能を実装します。デバイスのオープン・クローズ、
+ * 読み書き要求、要求完了待ち、およびサスペンド処理などの
+ * 主要な入出力操作を提供します。
+ *
+ * 主な機能：
+ * - デバイスのオープン・クローズ管理
+ * - 非同期・同期I/O要求処理
+ * - I/O要求完了待ち機能
+ * - デバイスサスペンド・リジューム機能
+ * - オープン管理ブロック(OpnCB)の管理
+ * - 要求管理ブロック(ReqCB)の管理
+ * - リソース管理ブロック(ResCB)の管理
  */
 
 /** [BEGIN Common Definitions] */
@@ -40,8 +54,16 @@ Noinit(EXPORT ResCB knl_resource_control_block);
 
 
 #ifdef USE_FUNC_GETRESCB
-/*
- * Get resource management information
+/**
+ * @brief リソース管理情報の取得
+ *
+ * システムのリソース管理ブロック(ResCB)を取得します。
+ * 初回呼び出し時にはオープンデバイス管理キューの初期化も行います。
+ *
+ * @return リソース管理ブロックへのポインタ
+ *
+ * @note この関数はデバイス管理機能の初期化時に呼び出されます。
+ *       スレッドセーフな実装となっています。
  */
 EXPORT ResCB* knl_GetResCB( void )
 {
@@ -60,8 +82,22 @@ EXPORT ResCB* knl_GetResCB( void )
 #endif /* USE_FUNC_GETRESCB */
 
 #ifdef USE_FUNC_CHECK_DEVDESC
-/*
- * Verify validity of device descriptor
+/**
+ * @brief デバイスディスクリプタの妥当性確認
+ *
+ * 指定されたデバイスディスクリプタが有効で、指定されたアクセスモードで
+ * 利用可能かどうかを確認します。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param mode アクセスモード（TD_READ, TD_WRITE等）
+ * @param p_opncb オープン管理ブロックポインタの格納先
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なデバイスディスクリプタ
+ *   @retval E_OACV アクセス権限なし
+ *
+ * @note mode=0の場合はアクセスモードの確認を行いません。
  */
 EXPORT ER knl_check_devdesc( ID dd, UINT mode, OpnCB **p_opncb )
 {
@@ -87,8 +123,17 @@ EXPORT ER knl_check_devdesc( ID dd, UINT mode, OpnCB **p_opncb )
 #endif /* USE_FUNC_CHECK_DEVDESC */
 
 #ifdef USE_FUNC_DELOPNCB
-/*
- * Free open management block
+/**
+ * @brief オープン管理ブロックの解放
+ *
+ * 指定されたオープン管理ブロックをキューから削除し、
+ * オプションでフリープールに返却します。
+ *
+ * @param opncb 解放するオープン管理ブロック
+ * @param free TRUE:フリープールに返却する, FALSE:返却しない
+ *
+ * @note この関数はデバイスクローズ時に呼び出されます。
+ *       free=FALSEの場合、呼び出し元が後でフリープールに返却する責任があります。
  */
 EXPORT void knl_delOpnCB( OpnCB *opncb, BOOL free )
 {
@@ -103,8 +148,15 @@ EXPORT void knl_delOpnCB( OpnCB *opncb, BOOL free )
 #endif /* USE_FUNC_DELOPNCB */
 
 #ifdef USE_FUNC_DELREQCB
-/*
- * Free request management block
+/**
+ * @brief 要求管理ブロックの解放
+ *
+ * 指定された要求管理ブロックをキューから削除し、
+ * フリープールに返却します。
+ *
+ * @param reqcb 解放する要求管理ブロック
+ *
+ * @note この関数はI/O要求完了時に呼び出されます。
  */
 EXPORT void knl_delReqCB( ReqCB *reqcb )
 {
@@ -118,8 +170,19 @@ EXPORT void knl_delReqCB( ReqCB *reqcb )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_CHKOPEN
-/*
- * TRUE if specified device is open.
+/**
+ * @brief デバイスのオープン状態確認
+ *
+ * 指定されたデバイス・ユニットがオープンされているかどうかを確認します。
+ *
+ * @param devcb デバイス管理ブロック
+ * @param unitno ユニット番号
+ *
+ * @return オープン状態
+ *   @retval TRUE オープンされている
+ *   @retval FALSE オープンされていない
+ *
+ * @note ユニット番号が0の場合は全てのユニットを対象とします。
  */
 EXPORT BOOL knl_chkopen( DevCB *devcb, INT unitno )
 {
@@ -143,8 +206,20 @@ LOCAL CONST T_CSEM knl_pk_csem_DM = {
 	1,
 };
 
-/*
- * Get open management block
+/**
+ * @brief オープン管理ブロックの取得
+ *
+ * 新しいオープン管理ブロックをフリープールから取得し、
+ * 初期化してデバイスのオープンキューに登録します。
+ *
+ * @param devcb デバイス管理ブロック
+ * @param unitno ユニット番号
+ * @param omode オープンモード
+ * @param rescb リソース管理ブロック
+ *
+ * @return オープン管理ブロックポインタ（失敗時はNULL）
+ *
+ * @note この関数ではオープン処理未完成状態でresid=0とします。
  */
 LOCAL OpnCB* newOpnCB( DevCB *devcb, INT unitno, UINT omode, ResCB *rescb )
 {
@@ -173,8 +248,22 @@ LOCAL OpnCB* newOpnCB( DevCB *devcb, INT unitno, UINT omode, ResCB *rescb )
 	return opncb;
 }
 
-/*
- * Check open mode
+/**
+ * @brief オープンモードの確認
+ *
+ * 新しいオープン要求のモードが、現在のオープン状態と
+ * 互換性があるかどうかを確認します。
+ *
+ * @param devcb デバイス管理ブロック
+ * @param unitno ユニット番号
+ * @param omode 要求するオープンモード
+ *
+ * @return エラーコード
+ *   @retval E_OK オープン可能
+ *   @retval E_PAR パラメータエラー
+ *   @retval E_BUSY 排他制御によりオープン不可
+ *
+ * @note 排他モード(TD_EXCL, TD_REXCL, TD_WEXCL)の確認を行います。
  */
 LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 {
@@ -224,8 +313,22 @@ LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 	return E_OK;
 }
 
-/*
- * Device open
+/**
+ * @brief デバイスオープンシステムコール
+ *
+ * 指定されたデバイスを指定されたモードでオープンし、
+ * デバイスディスクリプタを返します。
+ *
+ * @param devnm デバイス名（物理デバイス名を含む）
+ * @param omode オープンモード（TD_READ|TD_WRITE|TD_EXCL等）
+ *
+ * @return デバイスディスクリプタ（正の値）またはエラーコード（負の値）
+ *   @retval E_NOEXS デバイスが存在しない
+ *   @retval E_BUSY 排他制御によりオープン不可
+ *   @retval E_LIMIT オープン数が上限に達した
+ *   @retval E_CTX コンテキストエラー
+ *
+ * @note デバイスドライバのopen関数が呼び出されます。
  */
 SYSCALL ID tk_opn_dev_impl( CONST UB *devnm, UINT omode )
 {
@@ -333,8 +436,17 @@ err_ret1:
 #endif /* USE_FUNC_TK_OPN_DEV */
 
 #ifdef USE_FUNC_CLOSE_DEVICE
-/*
- * Abort all requests
+/**
+ * @brief 全要求の中止
+ *
+ * 指定されたオープンデバイスに対する全てのI/O要求を中止します。
+ * デバイスドライバのabort関数とwait関数を呼び出して
+ * 全ての要求の完了を待ちます。
+ *
+ * @param opncb オープン管理ブロック
+ *
+ * @note この関数はデバイスクローズ時に呼び出されます。
+ *       中止処理の完了をセマフォで待ちます。
  */
 LOCAL void abort_allrequest( OpnCB *opncb )
 {
@@ -447,8 +559,20 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 	UnlockDM();
 }
 
-/*
- * Device close processing
+/**
+ * @brief デバイスクローズ処理
+ *
+ * 指定されたオープンデバイスをクローズします。
+ * 全ての未完了要求を中止し、デバイスドライバのclose関数を呼び出します。
+ *
+ * @param opncb オープン管理ブロック
+ * @param option クローズオプション（TD_EJECT等）
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note この関数はtk_cls_devから呼び出されます。
+ *       オープン管理ブロックは最終的にフリープールに返却されます。
  */
 EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 {
@@ -522,8 +646,19 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 #endif /* USE_FUNC_CLOSE_DEVICE */
 
 #ifdef USE_FUNC_TK_CLS_DEV
-/*
- * Device close
+/**
+ * @brief デバイスクローズシステムコール
+ *
+ * 指定されたデバイスディスクリプタに対応するデバイスをクローズします。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param option クローズオプション
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *   @retval E_ID 無効なデバイスディスクリプタ
+ *
+ * @note この関数はユーザタスクから呼び出されるシステムコールです。
  */
 SYSCALL ER tk_cls_dev_impl( ID dd, UINT option )
 {
@@ -558,8 +693,17 @@ err_ret:
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_REQUEST
-/*
- * Get request management block
+/**
+ * @brief 要求管理ブロックの取得
+ *
+ * 新しい要求管理ブロックをフリープールから取得し、
+ * 指定されたオープンデバイスの要求キューに登録します。
+ *
+ * @param opncb オープン管理ブロック
+ *
+ * @return 要求管理ブロックポインタ（失敗時はNULL）
+ *
+ * @note この関数はI/O要求開始時に呼び出されます。
  */
 LOCAL ReqCB* newReqCB( OpnCB *opncb )
 {
@@ -579,8 +723,25 @@ LOCAL ReqCB* newReqCB( OpnCB *opncb )
 	return reqcb;
 }
 
-/*
- * Request for starting input/output to device
+/**
+ * @brief デバイス入出力要求の開始
+ *
+ * 指定されたデバイスに対して入出力要求を発行します。
+ * デバイスドライバのexec関数を呼び出して非同期I/Oを実行します。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param start 開始アドレスまたは特殊コマンド
+ * @param buf データバッファ
+ * @param size データサイズ
+ * @param tmout タイムアウト時間
+ * @param cmd コマンド（TDC_READまたはTDC_WRITE）
+ *
+ * @return 要求ID（正の値）またはエラーコード（負の値）
+ *   @retval E_ID 無効なデバイスディスクリプタ
+ *   @retval E_OACV アクセス権限なし
+ *   @retval E_LIMIT 要求数が上限に達した
+ *
+ * @note 返された要求IDを使ってtk_wai_devで完了を待ちます。
  */
 EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 {
@@ -680,8 +841,21 @@ err_ret1:
 #endif /* USE_FUNC_REQUEST */
 
 #ifdef USE_FUNC_TK_REA_DEV
-/*
- * Start reading from device
+/**
+ * @brief デバイス読み込み開始システムコール
+ *
+ * 指定されたデバイスからのデータ読み込みを開始します。
+ * 非同期I/Oであり、完了を待つにはtk_wai_devを使用します。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param start 読み込み開始アドレス
+ * @param buf データ格納バッファ
+ * @param size 読み込みサイズ
+ * @param tmout タイムアウト時間
+ *
+ * @return 要求ID（正の値）またはエラーコード（負の値）
+ *
+ * @note この関数はユーザタスクから呼び出されるシステムコールです。
  */
 SYSCALL ID tk_rea_dev_impl( ID dd, W start, void *buf, SZ size, TMO tmout )
 {
@@ -699,8 +873,22 @@ SYSCALL ID tk_rea_dev_impl( ID dd, W start, void *buf, SZ size, TMO tmout )
 #endif /* USE_FUNC_TK_REA_DEV */
 
 #ifdef USE_FUNC_TK_SREA_DEV
-/*
- * Synchronous reading from device
+/**
+ * @brief デバイス同期読み込みシステムコール
+ *
+ * 指定されたデバイスからのデータ読み込みを同期的に実行します。
+ * 内部でtk_rea_devとtk_wai_devを呼び出して完了を待ちます。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param start 読み込み開始アドレス
+ * @param buf データ格納バッファ
+ * @param size 読み込みサイズ
+ * @param asize 実際の読み込みサイズの格納先
+ *
+ * @return I/Oエラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note この関数はブロッキング関数です。
  */
 SYSCALL ER tk_srea_dev_impl( ID dd, W start, void *buf, SZ size, SZ *asize )
 {
@@ -725,8 +913,21 @@ err_ret:
 #endif /* USE_FUNC_TK_SREA_DEV */
 
 #ifdef USE_FUNC_TK_WRI_DEV
-/*
- * Start writing to device
+/**
+ * @brief デバイス書き込み開始システムコール
+ *
+ * 指定されたデバイスへのデータ書き込みを開始します。
+ * 非同期I/Oであり、完了を待つにはtk_wai_devを使用します。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param start 書き込み開始アドレス
+ * @param buf 書き込みデータバッファ
+ * @param size 書き込みサイズ
+ * @param tmout タイムアウト時間
+ *
+ * @return 要求ID（正の値）またはエラーコード（負の値）
+ *
+ * @note この関数はユーザタスクから呼び出されるシステムコールです。
  */
 SYSCALL ID tk_wri_dev_impl( ID dd, W start, CONST void *buf, SZ size, TMO tmout )
 {
@@ -744,8 +945,22 @@ SYSCALL ID tk_wri_dev_impl( ID dd, W start, CONST void *buf, SZ size, TMO tmout 
 #endif /* USE_FUNC_TK_WRI_DEV */
 
 #ifdef USE_FUNC_TK_SWRI_DEV
-/*
- * Synchronous writing to device
+/**
+ * @brief デバイス同期書き込みシステムコール
+ *
+ * 指定されたデバイスへのデータ書き込みを同期的に実行します。
+ * 内部でtk_wri_devとtk_wai_devを呼び出して完了を待ちます。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param start 書き込み開始アドレス
+ * @param buf 書き込みデータバッファ
+ * @param size 書き込みサイズ
+ * @param asize 実際の書き込みサイズの格納先
+ *
+ * @return I/Oエラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note この関数はブロッキング関数です。
  */
 SYSCALL ER tk_swri_dev_impl( ID dd, W start, CONST void *buf, SZ size, SZ *asize )
 {
@@ -770,8 +985,18 @@ err_ret:
 #endif /* USE_FUNC_TK_SWRI_DEV */
 
 #ifdef USE_FUNC_TK_WAI_DEV
-/*
- * Verify validity of request ID
+/**
+ * @brief 要求IDの妥当性確認
+ *
+ * 指定された要求IDが有効で、指定されたオープンデバイスに
+ * 属しているかどうかを確認します。
+ *
+ * @param reqid 要求ID
+ * @param opncb オープン管理ブロック
+ *
+ * @return 要求管理ブロックポインタ（無効な場合はNULL）
+ *
+ * @note この関数はtk_wai_dev内で使用されます。
  */
 LOCAL ReqCB* knl_check_reqid( ID reqid, OpnCB *opncb )
 {
@@ -788,8 +1013,25 @@ LOCAL ReqCB* knl_check_reqid( ID reqid, OpnCB *opncb )
 	return reqcb;
 }
 
-/*
- * Request completion wait
+/**
+ * @brief 要求完了待ちシステムコール
+ *
+ * 指定されたデバイスのI/O要求の完了を待ち、結果を取得します。
+ * 特定の要求または任意の要求の完了を待つことができます。
+ *
+ * @param dd デバイスディスクリプタ
+ * @param reqid 要求ID（0:任意の要求を待つ）
+ * @param asize 実際の処理サイズの格納先
+ * @param ioer I/Oエラーコードの格納先
+ * @param tmout タイムアウト時間
+ *
+ * @return 完了した要求ID（正の値）またはエラーコード（負の値）
+ *   @retval E_ID 無効なデバイスディスクリプタまたは要求ID
+ *   @retval E_OBJ 既に待ち中のタスクがある
+ *   @retval E_NOEXS 待ち対象の要求がない
+ *
+ * @note この関数はブロッキング関数です。
+ *       reqid=0の場合、任意の要求の完了を待ちます。
  */
 SYSCALL ID tk_wai_dev_impl( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 {
@@ -945,8 +1187,20 @@ EXPORT INT	knl_DisSusCnt = 0;
 #endif /* USE_FUNC_DISSUSCNT */
 
 #ifdef USE_FUNC_TK_SUS_DEV
-/*
- * Send driver request event to each device
+/**
+ * @brief 全デバイスへのイベント送信
+ *
+ * 登録されている全てのデバイスまたは指定されたタイプのデバイスに
+ * ドライバイベントを送信します。
+ *
+ * @param evttyp イベントタイプ（TDV_SUSPEND, TDV_RESUME等）
+ * @param disk TRUE:ディスクデバイスのみ, FALSE:ディスク以外
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note サスペンド・リジューム処理で使用されます。
+ *       ディスクデバイスとその他のデバイスを別々に処理します。
  */
 LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 {
@@ -989,8 +1243,17 @@ LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 	return ercd;
 }
 
-/*
- * Suspend
+/**
+ * @brief サスペンド処理の実行
+ *
+ * システム全体のサスペンド処理を実行します。
+ * 全デバイスにサスペンドイベントを送信し、システムを低電力モードに移行します。
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note ディスクデバイスとその他のデバイスを順番にサスペンドし、
+ *       リジューム時は逆順で処理します。
  */
 LOCAL ER do_suspend( void )
 {
@@ -1052,8 +1315,26 @@ LOCAL ER do_suspend( void )
 	return ercd;
 }
 
-/*
- * Suspend processing
+/**
+ * @brief サスペンド制御システムコール
+ *
+ * システムのサスペンド・リジュームを制御します。
+ * サスペンドの禁止・許可、およびサスペンドの実行を行います。
+ *
+ * @param mode 動作モード
+ *   - TD_SUSPEND: サスペンド実行
+ *   - TD_DISSUS: サスペンド禁止
+ *   - TD_ENASUS: サスペンド許可
+ *   - TD_CHECK: サスペンド禁止カウンタ取得
+ *   - TD_FORCE: 強制サスペンド
+ *
+ * @return サスペンド禁止カウンタ値またはエラーコード
+ *   @retval E_PAR パラメータエラー
+ *   @retval E_BUSY サスペンド禁止中
+ *   @retval E_QOVR カウンタオーバーフロー
+ *   @retval E_CTX コンテキストエラー
+ *
+ * @note サスペンド禁止カウンタが0の場合のみサスペンド可能です。
  */
 SYSCALL INT tk_sus_dev_impl( UINT mode )
 {
@@ -1125,8 +1406,13 @@ err_ret1:
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_DEVMGR_STARTUP
-/*
- * Device management startup function
+/**
+ * @brief デバイス管理機能の起動
+ *
+ * デバイス管理サブシステムの初期化を行います。
+ * オープンデバイス管理キューとサスペンド禁止カウンタを初期化します。
+ *
+ * @note この関数はシステム起動時に呼び出されます。
  */
 EXPORT void knl_devmgr_startup( void )
 {
@@ -1143,8 +1429,13 @@ EXPORT void knl_devmgr_startup( void )
 #endif /* USE_FUNC_DEVMGR_STARTUP */
 
 #ifdef USE_FUNC_DEVMGR_CLEANUP
-/*
- * Device management cleanup function
+/**
+ * @brief デバイス管理機能のクリーンアップ
+ *
+ * デバイス管理サブシステムの終了処理を行います。
+ * 全てのオープンデバイスをクローズし、サスペンド禁止要求を解放します。
+ *
+ * @note この関数はシステム終了時またはタスク終了時に呼び出されます。
  */
 EXPORT void knl_devmgr_cleanup( void )
 {
@@ -1182,8 +1473,16 @@ EXPORT void knl_devmgr_cleanup( void )
 #endif /* USE_FUNC_DEVMGR_CLEANUP */
 
 #ifdef USE_FUNC_INITDEVIO
-/*
- * Initialization sequence of device input/output-related
+/**
+ * @brief デバイス入出力関連の初期化
+ *
+ * デバイス入出力管理に関連するデータ構造を初期化します。
+ * オープン管理ブロックと要求管理ブロックのフリープールを作成します。
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note この関数はカーネル初期化時に呼び出されます。
  */
 EXPORT ER knl_initDevIO( void )
 {
@@ -1206,8 +1505,16 @@ EXPORT ER knl_initDevIO( void )
 #endif /* USE_FUNC_INITDEVIO */
 
 #ifdef USE_FUNC_FINISHDEVIO
-/*
- * Finalization sequence of device input/output-related
+/**
+ * @brief デバイス入出力関連の終了処理
+ *
+ * デバイス入出力管理の終了処理を行います。
+ * 現在の実装では特に処理を行いません。
+ *
+ * @return エラーコード
+ *   @retval E_OK 正常終了
+ *
+ * @note この関数はカーネル終了時に呼び出されます。
  */
 EXPORT ER knl_finishDevIO( void )
 {

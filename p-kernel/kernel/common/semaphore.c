@@ -11,9 +11,20 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	semaphore.c
- *	Semaphore
+/**
+ * @file semaphore.c
+ * @brief セマフォ機能の実装
+ * 
+ * T-Kernelのセマフォ（semaphore）による排他制御と同期機能を実装する。
+ * セマフォは、共有リソースへのアクセス制御やタスク間の同期に使用される
+ * 基本的な同期プリミティブである。
+ * 
+ * 主な機能：
+ * - セマフォの作成・削除（tk_cre_sem, tk_del_sem）
+ * - セマフォ獲得（tk_wai_sem）
+ * - セマフォ返却（tk_sig_sem）
+ * - セマフォ状態参照（tk_ref_sem）
+ * - 優先度順待ちキューとFIFO待ちキューのサポート
  */
 
 /** [BEGIN Common Definitions] */
@@ -33,8 +44,14 @@ Noinit(EXPORT QUEUE knl_free_semcb);	/* FreeQue */
 
 
 #ifdef USE_FUNC_SEMAPHORE_INITIALIZE
-/* 
- * Initialization of semaphore control block 
+/**
+ * @brief セマフォ制御ブロックの初期化
+ * 
+ * システム起動時にセマフォ制御ブロック（SEMCB）を初期化し、
+ * すべての制御ブロックを空きキューに登録する。
+ * 
+ * @return E_OK: 正常終了
+ * @return E_SYS: システム設定エラー（セマフォ数が不正）
  */
 EXPORT ER knl_semaphore_initialize( void )
 {
@@ -59,8 +76,18 @@ EXPORT ER knl_semaphore_initialize( void )
 
 
 #ifdef USE_FUNC_TK_CRE_SEM
-/*
- * Create semaphore
+/**
+ * @brief セマフォの作成
+ * 
+ * 指定されたパラメータでセマフォを作成する。
+ * セマフォはカウンタベースの同期オブジェクトで、複数のタスクが
+ * 共有リソースへの同時アクセス数を制御するために使用される。
+ * 
+ * @param pk_csem セマフォ作成パラメータ
+ * @return セマフォID: 正常終了時
+ * @return E_LIMIT: 作成可能数の上限超過
+ * @return E_RSATR: 予約属性またはサポートしていない属性の指定
+ * @return E_PAR: パラメータエラー
  */
 SYSCALL ID tk_cre_sem_impl( CONST T_CSEM *pk_csem )
 {
@@ -142,8 +169,18 @@ SYSCALL ER tk_del_sem_impl( ID semid )
 #endif /* USE_FUNC_TK_DEL_SEM */
 
 #ifdef USE_FUNC_TK_SIG_SEM
-/*
- * Signal semaphore
+/**
+ * @brief セマフォの返却（カウンタ増加）
+ * 
+ * セマフォのカウンタを指定された値だけ増加させる。
+ * 待ちタスクがある場合は、条件を満たすタスクの待ち状態を解除する。
+ * 
+ * @param semid セマフォID
+ * @param cnt 返却するセマフォ資源数
+ * @return E_OK: 正常終了
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_PAR: パラメータエラー
+ * @return E_QOVR: キューイングオーバーフロー
  */
 SYSCALL ER tk_sig_sem_impl( ID semid, INT cnt )
 {
@@ -253,8 +290,19 @@ LOCAL void sem_rel_wai( TCB *tcb )
 LOCAL CONST WSPEC knl_wspec_sem_tfifo = { TTW_SEM, NULL,        sem_rel_wai };
 LOCAL CONST WSPEC knl_wspec_sem_tpri  = { TTW_SEM, sem_chg_pri, sem_rel_wai };
 
-/*
- * Wait on semaphore
+/**
+ * @brief セマフォの獲得（カウンタ減少）
+ * 
+ * セマフォのカウンタから指定された値を減算する。
+ * 減算結果が負になる場合は、セマフォ獲得待ち状態になる。
+ * 
+ * @param semid セマフォID
+ * @param cnt 獲得するセマフォ資源数
+ * @param tmout タイムアウト時間（ミリ秒）
+ * @return E_OK: 正常終了
+ * @return E_NOEXS: オブジェクトが存在しない
+ * @return E_PAR: パラメータエラー
+ * @return E_TMOUT: タイムアウト
  */
 SYSCALL ER tk_wai_sem_impl( ID semid, INT cnt, TMO tmout )
 {

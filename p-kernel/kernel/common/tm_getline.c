@@ -18,8 +18,18 @@
 IMPORT void sio_send_frame( const UB* buf, INT size );
 IMPORT void sio_recv_frame( UB* buf, INT size );
 
-/*
- * special key is not supported
+/**
+ * @file tm_getline.c
+ * @brief T-Monitor 行入力機能
+ * 
+ * T-Monitorの行入力機能を実装する。
+ * シリアルポートから一行を入力し、エコーバックを行う。
+ */
+
+/**
+ * @brief 一行入力（特殊キーは未サポート）
+ * @param buff 入力バッファ
+ * @return 入力文字数（Ctrl-Cの場合は-1）
  */
 EXPORT INT tm_getline( UB *buff )
 {

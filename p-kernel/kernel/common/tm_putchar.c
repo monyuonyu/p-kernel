@@ -16,8 +16,18 @@
 
 IMPORT void sio_send_frame( const UB* buf, INT size );
 
-/*
- * Ctrl-C is not supported
+/**
+ * @file tm_putchar.c
+ * @brief T-Monitor 文字出力機能
+ * 
+ * T-Monitorの文字出力機能を実装する。
+ * シリアルポートへ一文字を出力する。
+ */
+
+/**
+ * @brief 一文字出力（Ctrl-Cは未サポート）
+ * @param c 出力する文字コード
+ * @return 0（固定値）
  */
 EXPORT INT tm_putchar( INT c )
 {

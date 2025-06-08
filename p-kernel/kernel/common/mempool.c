@@ -11,9 +11,23 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	mempool.c
- *	Variable Size Memory Pool
+/**
+ * @file mempool.c
+ * @brief 可変長メモリプール管理機能
+ * 
+ * T-Kernelの可変長メモリプール（Variable Size Memory Pool）の実装を提供する。
+ * 可変長メモリプールは、異なるサイズのメモリブロックを動的に割り当て・解放する
+ * ためのメモリ管理機構である。
+ * 
+ * 主な機能：
+ * - メモリプールの作成・削除（tk_cre_mpl, tk_del_mpl）
+ * - メモリブロックの取得・返却（tk_get_mpl, tk_rel_mpl）
+ * - メモリプールの状態参照（tk_ref_mpl）
+ * - 効率的なメモリ断片化の管理
+ * - タスクの待ち状態管理（FIFO/優先度順）
+ * 
+ * メモリプールは内部的にフリーエリアキューとエリアキューを使用して
+ * メモリブロックの効率的な管理を実現している。
  */
 
 /** [BEGIN Common Definitions] */
@@ -35,8 +49,18 @@ Noinit(EXPORT QUEUE knl_free_mplcb);	/* FreeQue */
 
 
 #ifdef USE_FUNC_MEMORYPOOL_INITIALIZE
-/*
- * Initialization of variable size memory pool control block
+/**
+ * @brief 可変長メモリプール制御ブロック初期化
+ * 
+ * システム起動時に可変長メモリプール制御ブロックテーブルを初期化する。
+ * 全ての制御ブロックをフリーキューに登録し、使用可能な状態にする。
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_SYS システムエラー（メモリプールID数が無効）
+ * 
+ * @note システム初期化時に一度だけ呼び出される
+ * @note 割り込み禁止状態で呼び出される
  */
 EXPORT ER knl_memorypool_initialize( void )
 {
@@ -61,9 +85,17 @@ EXPORT ER knl_memorypool_initialize( void )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_APPENDFREEAREABOUND
-/*
- * Registration of free area on FreeQue
- *   Specialized version for merging with top/end area
+/**
+ * @brief フリーエリアをフリーキューに登録（境界専用版）
+ * 
+ * メモリプールの境界（先頭・末尾）エリアとのマージを考慮した
+ * 特殊なフリーエリア登録処理を行う。
+ * 
+ * @param mplcb メモリプール制御ブロックへのポインタ
+ * @param aq エリアキューエントリへのポインタ
+ * 
+ * @note この関数は境界エリアでの断片化を効率的に管理するために使用される
+ * @note フリーエリアのサイズ順でキューに挿入される
  */
 EXPORT void knl_appendFreeAreaBound( MPLCB *mplcb, QUEUE *aq )
 {
@@ -113,10 +145,21 @@ EXPORT void knl_appendFreeAreaBound( MPLCB *mplcb, QUEUE *aq )
 #endif /* USE_FUNC_APPENDFREEAREABOUND */
 
 #ifdef USE_FUNC_GET_BLK
-/*
- * Get memory block 
- *	'blksz' must be larger than minimum fragment size
- *	and adjusted by ROUNDSZ unit.
+/**
+ * @brief メモリブロック取得
+ * 
+ * 指定されたサイズのメモリブロックをメモリプールから取得する。
+ * フリーキューから適切なサイズのエリアを検索し、必要に応じて分割する。
+ * 
+ * @param mplcb メモリプール制御ブロックへのポインタ
+ * @param blksz 取得するブロックサイズ（ROUNDSZ単位で調整済み）
+ * 
+ * @return void* 取得したメモリブロックへのポインタ
+ * @retval NULL 適切なサイズのメモリブロックが見つからない
+ * @retval その他 取得したメモリブロックのアドレス
+ * 
+ * @note blkszは最小断片サイズより大きく、ROUNDSZ単位で調整されている必要がある
+ * @note 残りサイズが最小断片サイズ未満の場合は分割せずに全体を割り当てる
  */
 EXPORT void *knl_get_blk( MPLCB *mplcb, W blksz )
 {
@@ -155,8 +198,21 @@ EXPORT void *knl_get_blk( MPLCB *mplcb, W blksz )
 #endif /* USE_FUNC_GET_BLK */
 
 #ifdef USE_FUNC_REL_BLK
-/*
- * Free memory block 
+/**
+ * @brief メモリブロック解放
+ * 
+ * メモリプールに対してメモリブロックを解放し、隣接する
+ * フリーエリアがあれば自動的にマージする。
+ * 
+ * @param mplcb メモリプール制御ブロックへのポインタ
+ * @param blk 解放するメモリブロックへのポインタ
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_PAR パラメータエラー（既に解放済みのブロック等）
+ * 
+ * @note 解放されたエリアは前後の空きエリアと自動的にマージされる
+ * @note マージによりメモリの断片化を防ぐ
  */
 EXPORT ER knl_rel_blk( MPLCB *mplcb, void *blk )
 {
@@ -201,9 +257,17 @@ EXPORT ER knl_rel_blk( MPLCB *mplcb, void *blk )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_MPL_WAKEUP
-/*
- * Allocate memory and release wait task,
- * as long as there are enough free memory.
+/**
+ * @brief メモリプール待ちタスクの起床処理
+ * 
+ * メモリプールで待機中のタスクに対して、十分な空きメモリがある限り
+ * メモリを割り当てて待ち状態を解除する。
+ * 
+ * @param mplcb メモリプール制御ブロックへのポインタ
+ * 
+ * @note 待ちキューの先頭から順番に処理される
+ * @note 各タスクが要求するサイズのメモリが確保できる場合のみ起床させる
+ * @note メモリブロック解放時やメモリプール操作後に呼び出される
  */
 EXPORT void knl_mpl_wakeup( MPLCB *mplcb )
 {
@@ -232,8 +296,15 @@ EXPORT void knl_mpl_wakeup( MPLCB *mplcb )
 
 
 #ifdef USE_FUNC_TK_CRE_MPL
-/*
- * Memory pool initial setting
+/**
+ * @brief メモリプール初期設定
+ * 
+ * 新規作成されたメモリプールの内部構造を初期化する。
+ * エリアキューとフリーキューを設定し、全領域を1つのフリーエリアとして登録する。
+ * 
+ * @param mplcb 初期化するメモリプール制御ブロックへのポインタ
+ * 
+ * @note この関数はメモリプール作成時に内部的に呼び出される
  */
 LOCAL void init_mempool( MPLCB *mplcb )
 {
@@ -250,8 +321,23 @@ LOCAL void init_mempool( MPLCB *mplcb )
 	knl_appendFreeAreaBound(mplcb, &mplcb->areaque);
 }
 
-/*
- * Create variable size memory pool 
+/**
+ * @brief 可変長メモリプール生成
+ * 
+ * 指定されたパラメータに基づいて可変長メモリプールを生成する。
+ * ユーザーバッファまたはシステムが確保したメモリを使用してメモリプールを構築する。
+ * 
+ * @param pk_cmpl メモリプール生成情報パケットへのポインタ
+ * 
+ * @return ID 生成されたメモリプールID
+ * @retval 正の値 生成されたメモリプールのID
+ * @retval E_RSATR 予約属性エラー
+ * @retval E_PAR パラメータエラー（サイズが0以下等）
+ * @retval E_NOMEM メモリ不足
+ * @retval E_LIMIT メモリプール数の上限超過
+ * 
+ * @note TA_USERBUFが指定された場合はユーザー提供のバッファを使用
+ * @note TA_TPRIが指定された場合は優先度順で待ちキューを管理
  */
 SYSCALL ID tk_cre_mpl_impl( CONST T_CMPL *pk_cmpl )
 {
@@ -347,8 +433,21 @@ SYSCALL ID tk_cre_mpl_impl( CONST T_CMPL *pk_cmpl )
 #endif /* USE_FUNC_TK_CRE_MPL */
 
 #ifdef USE_FUNC_TK_DEL_MPL
-/*
- * Delete variable size memory pool 
+/**
+ * @brief 可変長メモリプール削除
+ * 
+ * 指定されたメモリプールを削除し、関連リソースを解放する。
+ * 待機中のタスクがある場合は全て起床させる（E_DLTエラーで）。
+ * 
+ * @param mplid 削除するメモリプールのID
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正ID
+ * @retval E_NOEXS オブジェクト未生成
+ * 
+ * @note TA_USERBUFでない場合はシステムが確保したメモリも解放される
+ * @note 削除後、該当IDのメモリプールは使用できなくなる
  */
 SYSCALL ER tk_del_mpl_impl( ID mplid )
 {
@@ -389,9 +488,17 @@ SYSCALL ER tk_del_mpl_impl( ID mplid )
 #endif /* USE_FUNC_TK_DEL_MPL */
 
 #ifdef USE_FUNC_TK_GET_MPL
-/*
- * Processing if the priority of wait task changes.
- *	You need to execute with interrupt disable.
+/**
+ * @brief 待ちタスクの優先度変更時処理
+ * 
+ * メモリプールで待機中のタスクの優先度が変更された場合の処理を行う。
+ * 優先度順の待ちキューを再構築し、新しい優先度に基づいてメモリ割り当てを試行する。
+ * 
+ * @param tcb 優先度が変更されたタスクの制御ブロック
+ * @param oldpri 変更前の優先度（負の値の場合は新規待ち）
+ * 
+ * @note 割り込み禁止状態で実行する必要がある
+ * @note 優先度変更により新たにメモリ割り当て可能なタスクが生じる可能性がある
  */
 LOCAL void mpl_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -408,8 +515,14 @@ LOCAL void mpl_chg_pri( TCB *tcb, INT oldpri )
 	knl_mpl_wakeup(mplcb);
 }
 
-/*
- * Processing if the wait task is freed
+/**
+ * @brief 待ちタスク解放時処理
+ * 
+ * メモリプールで待機中のタスクが解放される際の処理を行う。
+ * 
+ * @param tcb 解放されるタスクの制御ブロック
+ * 
+ * @note 内部的にmpl_chg_pri()を呼び出して処理を委譲する
  */
 LOCAL void mpl_rel_wai( TCB *tcb )
 {
@@ -422,8 +535,27 @@ LOCAL void mpl_rel_wai( TCB *tcb )
 LOCAL CONST WSPEC knl_wspec_mpl_tfifo = { TTW_MPL, NULL,        mpl_rel_wai };
 LOCAL CONST WSPEC knl_wspec_mpl_tpri  = { TTW_MPL, mpl_chg_pri, mpl_rel_wai };
 
-/*
- * Get variable size memory block 
+/**
+ * @brief 可変長メモリブロック取得
+ * 
+ * 指定されたメモリプールから指定サイズのメモリブロックを取得する。
+ * 適切なサイズのブロックがない場合は指定されたタイムアウト時間まで待機する。
+ * 
+ * @param mplid メモリプールID
+ * @param blksz 取得するメモリブロックサイズ
+ * @param p_blk 取得したメモリブロックのアドレスを格納する変数へのポインタ
+ * @param tmout タイムアウト時間（TMO_POL:ポーリング、TMO_FEVR:永久待ち）
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正ID
+ * @retval E_PAR パラメータエラー（サイズが0以下またはプールサイズ超過等）
+ * @retval E_NOEXS オブジェクト未生成
+ * @retval E_TMOUT タイムアウト発生
+ * @retval E_RLWAI 待ち状態の強制解除
+ * 
+ * @note 取得されるメモリブロックのアドレスは*p_blkに格納される
+ * @note メモリプールの属性によりFIFO順または優先度順で待機する
  */
 SYSCALL ER tk_get_mpl_impl( ID mplid, SZ blksz, void **p_blk, TMO tmout )
 {
@@ -474,8 +606,23 @@ SYSCALL ER tk_get_mpl_impl( ID mplid, SZ blksz, void **p_blk, TMO tmout )
 #endif /* USE_FUNC_TK_GET_MPL */
 
 #ifdef USE_FUNC_TK_REL_MPL
-/*
- * Return variable size memory block 
+/**
+ * @brief 可変長メモリブロック返却
+ * 
+ * 指定されたメモリプールに対してメモリブロックを返却する。
+ * 返却されたメモリは他のタスクから再利用可能になる。
+ * 
+ * @param mplid メモリプールID
+ * @param blk 返却するメモリブロックへのポインタ
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正ID
+ * @retval E_PAR パラメータエラー（不正なメモリアドレス等）
+ * @retval E_NOEXS オブジェクト未生成
+ * 
+ * @note 返却されたメモリは隣接する空き領域と自動的にマージされる
+ * @note 返却により待機中のタスクが起床する可能性がある
  */
 SYSCALL ER tk_rel_mpl_impl( ID mplid, void *blk )
 {
@@ -516,8 +663,22 @@ SYSCALL ER tk_rel_mpl_impl( ID mplid, void *blk )
 #endif /* USE_FUNC_TK_REL_MPL */
 
 #ifdef USE_FUNC_TK_REF_MPL
-/*
- * Refer variable size memory pool state
+/**
+ * @brief 可変長メモリプール状態参照
+ * 
+ * 指定されたメモリプールの現在の状態情報を取得する。
+ * 空きメモリサイズ、最大連続空きサイズ、待機タスク数等の情報を提供する。
+ * 
+ * @param mplid メモリプールID
+ * @param pk_rmpl メモリプール状態情報を格納するパケットへのポインタ
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正ID
+ * @retval E_NOEXS オブジェクト未生成
+ * 
+ * @note 返される情報には待機タスクID、総空きサイズ、最大連続空きサイズが含まれる
+ * @note 状態参照時点でのスナップショット情報である
  */
 SYSCALL ER tk_ref_mpl_impl( ID mplid, T_RMPL *pk_rmpl )
 {

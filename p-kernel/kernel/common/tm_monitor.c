@@ -11,9 +11,19 @@
  *----------------------------------------------------------------------
  */
 
+/**
+ * @file tm_monitor.c
+ * @brief T-Monitor メイン処理
+ * 
+ * T-Monitorのメイン処理を実装する。
+ * 現在はスタブ実装で、無限ループする。
+ */
 #include <typedef.h>
 #include <stddef.h>
 
+/**
+ * @brief T-Monitorメイン処理
+ */
 EXPORT void tm_monitor( void )
 {
 	for(;;) {

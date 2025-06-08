@@ -18,8 +18,18 @@
 IMPORT void sio_send_frame( const UB* buf, INT size );
 IMPORT void sio_recv_frame( UB* buf, INT size );
 
-/*
- * Ctrl-C is not supported
+/**
+ * @file tm_putstring.c
+ * @brief T-Monitor 文字列出力機能
+ * 
+ * T-Monitorの文字列出力機能を実装する。
+ * シリアルポートへ文字列を出力する。
+ */
+
+/**
+ * @brief 文字列出力（Ctrl-Cは未サポート）
+ * @param buff 出力する文字列
+ * @return 0（固定値）
  */
 EXPORT INT tm_putstring( UB *buff )
 {

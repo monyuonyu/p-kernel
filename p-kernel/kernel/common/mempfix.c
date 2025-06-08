@@ -11,9 +11,29 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	mempfix.c
- *	Fixed Size Memory Pool
+/**
+ * @file mempfix.c
+ * @brief 固定長メモリプール管理機能
+ * 
+ * T-Kernelの固定長メモリプール機能を実装します。
+ * 固定長メモリプールは、同一サイズのメモリブロックを効率的に管理し、
+ * 高速な確保・解放を実現する仕組みです。
+ * 
+ * 主な機能：
+ * - 固定長メモリプールの作成・削除
+ * - メモリブロックの取得・返却
+ * - タスク待ちキューの管理（FIFO/優先度順）
+ * - メモリプール状態の参照
+ * - デバッグサポート機能
+ * 
+ * 固定長メモリプールの特徴：
+ * - 同一サイズのブロックによる高速なメモリ管理
+ * - フラグメンテーションが発生しない
+ * - O(1)の高速な確保・解放処理
+ * - ユーザ指定メモリ領域またはシステム自動確保領域を選択可能
+ * - フリーリストによる効率的な空きブロック管理
+ * 
+ * @note リアルタイム性を要求するシステムに最適なメモリ管理機構です
  */
 
 /** [BEGIN Common Definitions] */
@@ -33,8 +53,18 @@ Noinit(EXPORT QUEUE	knl_free_mpfcb);	/* FreeQue */
 
 
 #ifdef USE_FUNC_FIX_MEMORYPOOL_INITIALIZE
-/*
- * Initialization of fixed size memory pool control block
+/**
+ * @brief 固定長メモリプール制御ブロックの初期化
+ * 
+ * システム起動時に固定長メモリプール管理機構を初期化します。
+ * 全ての制御ブロックを空きキューに登録し、使用可能な状態にします。
+ * 
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_SYS システムエラー（メモリプール数が不正）
+ * 
+ * @note この関数はシステム初期化時に一度だけ呼び出されます
+ * @note NUM_MPFID が1未満の場合はエラーとなります
  */
 EXPORT ER knl_fix_memorypool_initialize( void )
 {
@@ -60,8 +90,27 @@ EXPORT ER knl_fix_memorypool_initialize( void )
 
 
 #ifdef USE_FUNC_TK_CRE_MPF
-/*
- * Create fixed size memory pool
+/**
+ * @brief 固定長メモリプールの作成
+ * 
+ * 指定された属性で固定長メモリプールを作成します。
+ * 作成されたメモリプールには一意のIDが割り当てられます。
+ * 
+ * @param pk_cmpf メモリプール作成情報パケットへのポインタ
+ * @return ID 作成されたメモリプールID（正の値）、またはエラーコード（負の値）
+ * @retval E_LIMIT 利用可能なメモリプールがない
+ * @retval E_NOMEM メモリ不足
+ * @retval E_RSATR 予約属性が指定された
+ * @retval E_PAR パラメータエラー
+ * 
+ * 対応する属性：
+ * - TA_TPRI: タスク優先度順待ち
+ * - TA_RNG3: ユーザモードでのアクセス許可
+ * - TA_USERBUF: ユーザ指定バッファ使用
+ * - TA_DSNAME: オブジェクト名の指定
+ * 
+ * @note メモリプールIDは1以上の値が割り当てられます
+ * @note TA_USERBUF未指定時はImallocでメモリを自動確保します
  */
 SYSCALL ID tk_cre_mpf_impl( CONST T_CMPF *pk_cmpf )
 {
@@ -156,8 +205,21 @@ SYSCALL ID tk_cre_mpf_impl( CONST T_CMPF *pk_cmpf )
 #endif /* USE_FUNC_TK_CRE_MPF */
 
 #ifdef USE_FUNC_TK_DEL_MPF
-/*
- * Delete fixed size memory pool 
+/**
+ * @brief 固定長メモリプールの削除
+ * 
+ * 指定された固定長メモリプールを削除し、リソースを解放します。
+ * 削除時に待ちタスクがある場合は、E_DLTエラーで待ち解除されます。
+ * 
+ * @param mpfid 削除対象のメモリプールID
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * 
+ * @note 削除されたメモリプールIDは再利用される可能性があります
+ * @note TA_USERBUF未指定の場合、メモリ領域はImallocで解放されます
+ * @note 待ちタスクは全てE_DLTエラーで待ち解除されます
  */
 SYSCALL ER tk_del_mpf_impl( ID mpfid )
 {
@@ -200,8 +262,16 @@ SYSCALL ER tk_del_mpf_impl( ID mpfid )
 #endif /* USE_FUNC_TK_DEL_MPF */
 
 #ifdef USE_FUNC_TK_GET_MPF
-/*
- * Processing if the priority of wait task changes
+/**
+ * @brief 待ちタスクの優先度変更時の処理
+ * 
+ * メモリプール取得待ち中のタスクの優先度が変更された場合に
+ * 呼び出される内部関数です。待ちキューの順序を再調整します。
+ * 
+ * @param tcb 優先度が変更されたタスクの制御ブロック
+ * @param oldpri 変更前の優先度（未使用）
+ * 
+ * @note この関数はTA_TPRI属性のメモリプールでのみ使用されます
  */
 LOCAL void knl_mpf_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -211,14 +281,35 @@ LOCAL void knl_mpf_chg_pri( TCB *tcb, INT oldpri )
 	knl_gcb_change_priority((GCB*)mpfcb, tcb);
 }
 
-/*
- * Definition of fixed size memory pool wait specification
+/**
+ * @brief 固定長メモリプール待ち仕様の定義
+ * 
+ * FIFO順待ち（TA_TPRI未指定）と優先度順待ち（TA_TPRI指定）の
+ * 待ち仕様を定義します。
  */
 LOCAL CONST WSPEC knl_wspec_mpf_tfifo = { TTW_MPF, NULL, NULL };
 LOCAL CONST WSPEC knl_wspec_mpf_tpri  = { TTW_MPF, knl_mpf_chg_pri, NULL };
 
-/*
- * Get fixed size memory block 
+/**
+ * @brief 固定長メモリブロックの取得
+ * 
+ * 指定された固定長メモリプールからメモリブロックを取得します。
+ * 空きブロックがある場合は即座に取得し、ない場合は指定時間まで待機します。
+ * 
+ * @param mpfid メモリプールID
+ * @param p_blf 取得したメモリブロックポインタを格納する領域
+ * @param tmout タイムアウト時間（TMO_FEVR=無限待ち、TMO_POL=ポーリング）
+ * @return ER エラーコード
+ * @retval E_OK 正常終了（メモリブロック取得成功）
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * @retval E_TMOUT タイムアウト
+ * @retval E_RLWAI 待ち状態の強制解除
+ * @retval E_DLT 待ち対象の削除
+ * @retval E_CTX コンテキストエラー
+ * 
+ * @note 取得したメモリブロックは呼び出し側が管理し、使用後はtk_rel_mpfで返却する必要があります
+ * @note TA_TPRI指定時は優先度順、未指定時はFIFO順で待ちキューが管理されます
  */
 SYSCALL ER tk_get_mpf_impl( ID mpfid, void **p_blf, TMO tmout )
 {
@@ -276,8 +367,22 @@ wait_mpf:
 #endif /* USE_FUNC_TK_GET_MPF */
 
 #ifdef USE_FUNC_TK_REL_MPF
-/*
- * Return fixed size memory block 
+/**
+ * @brief 固定長メモリブロックの返却
+ * 
+ * 以前にtk_get_mpfで取得した固定長メモリブロックをメモリプールに返却します。
+ * 待ちタスクがある場合は直接渡し、ない場合はフリーリストに追加します。
+ * 
+ * @param mpfid メモリプールID
+ * @param blf 返却するメモリブロックのポインタ
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * @retval E_PAR 不正なメモリブロックポインタ
+ * 
+ * @note 返却するブロックは指定されたメモリプールから取得したものである必要があります
+ * @note 無効なポインタや他のメモリプールのブロックを指定した場合はE_PARエラーとなります
  */
 SYSCALL ER tk_rel_mpf_impl( ID mpfid, void *blf )
 {
@@ -328,8 +433,25 @@ error_exit:
 #endif /* USE_FUNC_TK_REL_MPF */
 
 #ifdef USE_FUNC_TK_REF_MPF
-/*
- * Check fixed size pool state
+/**
+ * @brief 固定長メモリプール状態の参照
+ * 
+ * 指定された固定長メモリプールの現在の状態を取得します。
+ * 拡張情報、待ちタスクID、空きブロック数を返します。
+ * 
+ * @param mpfid 参照対象のメモリプールID
+ * @param pk_rmpf メモリプール状態を格納する領域
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * 
+ * 取得される情報：
+ * - exinf: 拡張情報
+ * - wtsk: メモリブロック取得待ちタスクのID（待ちタスクがない場合は0）
+ * - frbcnt: 空きブロック数
+ * 
+ * @note この関数は状態参照のみで、メモリプールの動作には影響しません
  */
 SYSCALL ER tk_ref_mpf_impl( ID mpfid, T_RMPF *pk_rmpf )
 {
@@ -358,15 +480,30 @@ SYSCALL ER tk_ref_mpf_impl( ID mpfid, T_RMPF *pk_rmpf )
 #endif /* USE_FUNC_TK_REF_MPF */
 
 /* ------------------------------------------------------------------------ */
-/*
- *	Debugger support function
+/**
+ * @brief デバッガサポート機能
+ * 
+ * デバッグ時の固定長メモリプール情報取得機能を提供します。
  */
 #if USE_DBGSPT
 
 #ifdef USE_FUNC_FIX_MEMORYPOOL_GETNAME
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief メモリプールオブジェクト名の取得
+ * 
+ * デバッガ用：指定されたメモリプールIDからオブジェクト名を取得します。
+ * 
+ * @param id メモリプールID
+ * @param name オブジェクト名を格納するポインタ変数
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * @retval E_OBJ オブジェクト名が設定されていない
+ * 
+ * @note この関数はデバッグサポート機能が有効な場合のみ利用可能です
+ * @note TA_DSNAMEが指定されていないメモリプールではE_OBJエラーとなります
  */
 EXPORT ER knl_fix_memorypool_getname(ID id, UB **name)
 {
@@ -396,8 +533,18 @@ EXPORT ER knl_fix_memorypool_getname(ID id, UB **name)
 #endif /* USE_FUNC_FIX_MEMORYPOOL_GETNAME */
 
 #ifdef USE_FUNC_TD_LST_MPF
-/*
- * Refer fixed size memory pool usage state
+/**
+ * @brief 固定長メモリプール使用状況の参照
+ * 
+ * デバッガ用：現在作成されている固定長メモリプールのIDリストを取得します。
+ * 
+ * @param list メモリプールIDを格納する配列
+ * @param nent 配列の要素数
+ * @return INT 実際のメモリプール数
+ * 
+ * @note 戻り値が nent より大きい場合、全てのIDを取得するには
+ *       より大きな配列が必要です
+ * @note この関数はデバッグサポート機能が有効な場合のみ利用可能です
  */
 SYSCALL INT td_lst_mpf_impl( ID list[], INT nent )
 {
@@ -422,8 +569,21 @@ SYSCALL INT td_lst_mpf_impl( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_MPF */
 
 #ifdef USE_FUNC_TD_REF_MPF
-/*
- * Refer fixed size memory pool state 
+/**
+ * @brief 固定長メモリプール状態の参照（デバッガ用）
+ * 
+ * デバッガ用：指定された固定長メモリプールの詳細な状態を取得します。
+ * tk_ref_mpf と同様の情報を取得しますが、デバッガ用の追加情報も含みます。
+ * 
+ * @param mpfid 参照対象のメモリプールID
+ * @param pk_rmpf メモリプール状態を格納する領域
+ * @return ER エラーコード
+ * @retval E_OK 正常終了
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * @retval E_CTX コンテキストエラー
+ * 
+ * @note この関数はデバッグサポート機能が有効な場合のみ利用可能です
  */
 SYSCALL ER td_ref_mpf_impl( ID mpfid, TD_RMPF *pk_rmpf )
 {
@@ -451,8 +611,21 @@ SYSCALL ER td_ref_mpf_impl( ID mpfid, TD_RMPF *pk_rmpf )
 #endif /* USE_FUNC_TD_REF_MPF */
 
 #ifdef USE_FUNC_TD_MPF_QUE
-/*
- * Refer fixed size memory wait queue 
+/**
+ * @brief 固定長メモリプール待ちキューの参照
+ * 
+ * デバッガ用：指定された固定長メモリプールでメモリブロック取得待ちしているタスクのIDリストを取得します。
+ * 
+ * @param mpfid 対象のメモリプールID
+ * @param list 待ちタスクIDを格納する配列
+ * @param nent 配列の要素数
+ * @return INT 実際の待ちタスク数（正の値）、またはエラーコード（負の値）
+ * @retval E_ID 不正なメモリプールID
+ * @retval E_NOEXS 指定のメモリプールが存在しない
+ * 
+ * @note 戻り値が nent より大きい場合、全てのタスクIDを取得するには
+ *       より大きな配列が必要です
+ * @note この関数はデバッグサポート機能が有効な場合のみ利用可能です
  */
 SYSCALL INT td_mpf_que_impl( ID mpfid, ID list[], INT nent )
 {

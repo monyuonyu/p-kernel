@@ -11,9 +11,20 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	subsystem.c
- *	Subsystem Manager
+/**
+ * @file subsystem.c
+ * @brief サブシステム管理機能の実装
+ * 
+ * T-Kernelのサブシステム管理機能を実装する。
+ * サブシステムは、カーネルの機能を拡張するためのモジュールで、
+ * 拡張SVC（System Call）ハンドラを登録することで、
+ * アプリケーションから独自の機能を呼び出すことができる。
+ * 
+ * 主な機能：
+ * - サブシステムの定義・削除（tk_def_ssy）
+ * - サブシステム情報の参照（tk_ref_ssy）
+ * - 拡張SVCハンドラの呼び出し制御
+ * - タスク独立部・タスク部での実行制御
  */
 
 /** [BEGIN Common Definitions] */
@@ -33,8 +44,14 @@ Noinit(EXPORT SSYCB knl_ssycb_table[NUM_SSYID]);	/* Subsystem control block */
 
 
 #ifdef USE_FUNC_SUBSYSTEM_INITIALIZE
-/*
- * Initialization of subsystem control block
+/**
+ * @brief サブシステム制御ブロックの初期化
+ * 
+ * システム起動時にサブシステム制御ブロック（SSYCB）を初期化する。
+ * 全てのサブシステムIDを未登録状態（knl_no_support）に設定する。
+ * 
+ * @return E_OK: 正常終了
+ * @return E_SYS: システム設定エラー
  */
 EXPORT ER knl_subsystem_initialize( void )
 {
@@ -58,8 +75,17 @@ EXPORT ER knl_subsystem_initialize( void )
 
 
 #ifdef USE_FUNC_TK_DEF_SSY
-/*
- * Definition of subsystem
+/**
+ * @brief サブシステムの定義
+ * 
+ * サブシステムを定義または削除する。
+ * pk_dssy が NULL 以外の場合は新規登録、NULL の場合は削除を行う。
+ * 
+ * @param ssid サブシステムID
+ * @param pk_dssy サブシステム定義パケット（NULLの場合は削除）
+ * @return E_OK: 正常終了
+ * @return E_OBJ: オブジェクト状態エラー（既に登録済み、または未登録）
+ * @return E_RSATR: 予約属性またはサポートしていない属性の指定
  */
 SYSCALL ER tk_def_ssy_impl P2( ID ssid, CONST T_DSSY *pk_dssy )
 {
@@ -184,8 +210,17 @@ SYSCALL ER td_ref_ssy_impl( ID ssid, TD_RSSY *pk_rssy )
 #endif /* USE_DBGSPT */
 
 #ifdef USE_FUNC_SVC_IENTRY
-/*
- * Branch routine to extended SVC handler
+/**
+ * @brief 拡張SVCハンドラへの分岐ルーチン
+ * 
+ * 拡張SVCが呼び出された際に、適切なサブシステムのハンドラを呼び出す。
+ * 機能コードの下位8ビットからサブシステムIDを取得し、
+ * タスク独立部かタスク部かに応じて適切に実行する。
+ * 
+ * @param pk_para パラメータパケット
+ * @param fncd 機能コード
+ * @return サブシステムハンドラの戻り値
+ * @return E_RSFN: 未サポート機能
  */
 EXPORT ER knl_svc_ientry P2GP( void *pk_para, FN fncd )
 {
