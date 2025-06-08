@@ -1,49 +1,65 @@
+/*
+ * p-kernel libc implementation
+ * エラーメッセージ実装 (strerror.c)
+ *
+ * このファイルはstrerror関数を実装します。
+ * エラー番号に対応するエラーメッセージを返します。
+ */
+
 #include "string.h"
 
+/* エラーメッセージテーブル */
 static char* error_messages[] = {
-	"Success",
-	"Operation not permitted",
-	"No such file or directory",
-	"No such process",
-	"Interrupted system call",
-	"I/O error",
-	"No such device or address",
-	"Argument list too long",
-	"Exec format error",
-	"Bad file number",
-	"No child processes",
-	"Try again",
-	"Out of memory",
-	"Permission denied",
-	"Bad address",
-	"Block device required",
-	"Device or resource busy",
-	"File exists",
-	"Cross-device link",
-	"No such device",
-	"Not a directory",
-	"Is a directory",
-	"Invalid argument",
-	"File table overflow",
-	"Too many open files",
-	"Not a typewriter",
-	"Text file busy",
-	"File too large",
-	"No space left on device",
-	"Illegal seek",
-	"Read-only file system",
-	"Too many links",
-	"Broken pipe",
-	"Math argument out of domain of func",
-	"Math result not representable"
+	"Success",                          /* 0 */
+	"Operation not permitted",          /* 1 */
+	"No such file or directory",        /* 2 */
+	"No such process",                  /* 3 */
+	"Interrupted system call",          /* 4 */
+	"I/O error",                        /* 5 */
+	"No such device or address",        /* 6 */
+	"Argument list too long",           /* 7 */
+	"Exec format error",                /* 8 */
+	"Bad file number",                  /* 9 */
+	"No child processes",               /* 10 */
+	"Try again",                        /* 11 */
+	"Out of memory",                    /* 12 */
+	"Permission denied",                /* 13 */
+	"Bad address",                      /* 14 */
+	"Block device required",            /* 15 */
+	"Device or resource busy",          /* 16 */
+	"File exists",                      /* 17 */
+	"Cross-device link",                /* 18 */
+	"No such device",                   /* 19 */
+	"Not a directory",                  /* 20 */
+	"Is a directory",                   /* 21 */
+	"Invalid argument",                 /* 22 */
+	"File table overflow",              /* 23 */
+	"Too many open files",              /* 24 */
+	"Not a typewriter",                 /* 25 */
+	"Text file busy",                   /* 26 */
+	"File too large",                   /* 27 */
+	"No space left on device",          /* 28 */
+	"Illegal seek",                     /* 29 */
+	"Read-only file system",            /* 30 */
+	"Too many links",                   /* 31 */
+	"Broken pipe",                      /* 32 */
+	"Math argument out of domain of func", /* 33 */
+	"Math result not representable"     /* 34 */
 };
 
-#define MAX_ERRNO 34
+#define MAX_ERRNO 34  /* 最大エラー番号 */
 
+/**
+ * @brief エラー番号に対応するエラーメッセージを取得
+ * @param errnum エラー番号
+ * @return エラーメッセージ文字列
+ * @note 未知のエラー番号の場合は"Unknown error"を返す
+ */
 char* strerror(int errnum)
 {
+	/* 有効なエラー番号の範囲チェック */
 	if (errnum >= 0 && errnum <= MAX_ERRNO)
 		return error_messages[errnum];
 	
-	return "Unknown error";
+	return "Unknown error";  /* 未知のエラー番号 */
 }

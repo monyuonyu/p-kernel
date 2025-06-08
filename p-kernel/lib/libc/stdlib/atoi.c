@@ -1,5 +1,20 @@
+/*
+ * p-kernel libc implementation
+ * 文字列から整数変換実装 (atoi.c)
+ *
+ * このファイルはatoi関数を実装します。
+ * 文字列を整数(int)に変換します。
+ */
+
 #include "stdlib.h"
 
+/**
+ * @brief 文字列を整数に変換
+ * @param _str 変換する文字列 (数字のみ)
+ * @return 変換された整数値
+ * @note 数字以外の文字が含まれる場合は0を返す
+ * @warning オーバーフローや負の値には対応していない
+ */
 int atoi(const char* _str)
 {
 	int cnt = 0;

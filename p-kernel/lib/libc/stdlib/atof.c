@@ -1,6 +1,20 @@
+/*
+ * p-kernel libc implementation
+ * 浮動小数点数変換実装 (atof.c)
+ * 
+ * このファイルはatof関数を実装します。
+ * 文字列をdouble型の浮動小数点数に変換します。
+ */
+
 #include "stdlib.h"
 #include "ctype.h"
 
+/**
+ * @brief 文字列をdouble型浮動小数点数に変換
+ * @param str 変換する文字列
+ * @return 変換されたdouble型浮動小数点数
+ * @note 空白、符号、整数部、小数部、指数部を処理
+ */
 double atof(const char* str)
 {
 	double result = 0.0;
