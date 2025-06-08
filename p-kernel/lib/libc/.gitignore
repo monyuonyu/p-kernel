@@ -1,0 +1,128 @@
+# p-kernel libc .gitignore
+# コンパイル生成物とビルドアーティファクトを無視
+
+# オブジェクトファイル
+*.o
+
+# スタティックライブラリ
+*.a
+
+# 動的ライブラリ
+*.so
+*.so.*
+*.dylib
+
+# 実行可能ファイル
+*.exe
+*.out
+a.out
+
+# デバッグ情報
+*.dSYM/
+*.gdb_history
+
+# プリコンパイル済みヘッダー
+*.gch
+*.pch
+
+# コンパイラが生成する一時ファイル
+*.tmp
+*.temp
+*~
+.*.swp
+.*.swo
+
+# IDEファイル
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# エディタ一時ファイル
+*~
+.#*
+#*#
+*.bak
+*.orig
+
+# OS生成ファイル
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ログファイル
+*.log
+*.out
+
+# テスト実行ファイル
+test_*
+*_test
+
+# カバレッジレポート
+*.gcov
+*.gcno
+*.gcda
+coverage/
+
+# プロファイリングデータ
+gmon.out
+
+# ctags/etags
+tags
+TAGS
+
+# cscope
+cscope.*
+
+# GNU Global
+GPATH
+GRTAGS
+GSYMS
+GTAGS
+
+# ビルドディレクトリ
+build/
+Build/
+BUILD/
+debug/
+Debug/
+DEBUG/
+release/
+Release/
+RELEASE/
+
+# Makefileが生成するファイル
+.depend
+.deps/
+.libs/
+
+# autotools
+autom4te.cache/
+config.log
+config.status
+configure
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+
+# アーカイブファイル
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# ドキュメント生成ファイル
+html/
+latex/
+man/
+rtf/
