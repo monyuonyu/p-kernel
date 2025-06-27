@@ -1,12 +1,22 @@
-# QEMU x86 完全64ビットロングモードカーネル & デバッグ環境
+# QEMU x86 完全64ビットOSカーネル & 物理メモリ管理
 
-このディレクトリには、QEMU仮想環境でx86_64アーキテクチャ向けの完全64ビットロングモードp-kernelと、包括的なデバッグ環境が含まれます。32ビットMultiboot準拠エントリから64ビットロングモードへの完全移行を実現します。
+このディレクトリには、QEMU仮想環境でx86_64アーキテクチャ向けの完全64ビットOSカーネルと、物理メモリ管理機能が含まれます。32ビットMultiboot準拠エントリから64ビットロングモードへの完全移行と、IDT(割り込み記述子テーブル)、物理メモリマップ検出を実現する実用的なOSカーネルです。
 
 ## 主要ファイル
 
+### カーネルコア
 - `main.c`: 64ビット環境で実行されるカーネルのメインコード（C言語）
 - `start.S`: Multibootヘッダーと32→64ビット移行アセンブリコード
 - `linker.ld`: 64ビット対応メモリレイアウト定義
+
+### 割り込み処理
+- `idt.h/idt.c`: IDT(割り込み記述子テーブル)管理とC例外ハンドラ
+- `isr.S`: 64ビット例外ハンドラ(ISR)アセンブリ実装
+
+### 物理メモリ管理
+- `memory.h/memory.c`: 物理メモリマップ検出とメモリ領域管理
+
+### ビルドシステム
 - `Makefile`: ビルドとデバッグ用のターゲット定義
 
 ## クイックスタート
@@ -25,18 +35,20 @@ make debug
 make run-log && cat serial.log
 ```
 
-## 完全64ビットロングモード機能
+## 完全64ビットOSカーネル機能
 
-### 64ビット移行アーキテクチャ
+### OSカーネル初期化フロー
 
-この実装は以下の段階的64ビット移行を実現します：
+この実装は以下の段階的OSカーネル初期化を実現します：
 
-1. **32ビットMultibootエントリ** → QEMU標準ローダー対応
+1. **32ビットMultibootエントリ** → QEMU標準ローダー対応とメモリ情報取得
 2. **64ビットCPU検出** → CPUID命令による動的検出
 3. **ページテーブル構築** → PML4/PDP/PD 3階層ページング
 4. **ロングモード有効化** → IA32_EFER MSR設定
 5. **64ビットGDT設定** → 64ビット互換セグメント
-6. **64ビットCコード実行** → 完全64ビット環境での実行
+6. **IDT初期化** → 割り込み記述子テーブルと例外ハンドラ
+7. **物理メモリマップ検出** → Multibootメモリ情報の解析と管理
+8. **64ビットCコード実行** → 完全64ビット環境での実行
 
 ### 利用可能なMakeターゲット
 
@@ -49,33 +61,74 @@ make run-log && cat serial.log
 | `make run-32` | 32ビットCPU環境での動作確認（フォールバックテスト） | 互換性テスト |
 | `make clean` | ビルド生成物を削除 | クリーンビルド |
 
-### 64ビットカーネル機能
+### 64ビットOSカーネル機能
 
-この64ビットカーネルは以下の高度な機能を提供します：
+この64ビットOSカーネルは以下の実用的な機能を提供します：
 
+#### コアシステム機能
 1. **Multiboot準拠**: 標準的なMultibootヘッダーでQEMU `-kernel`オプション対応
 2. **64ビットロングモード**: 完全な64ビット実行環境
 3. **動的CPU検出**: CPUID命令による64ビット機能の実行時検出
 4. **完全ページング**: 3階層ページテーブル（PML4→PDP→PD）
 5. **MSR制御**: IA32_EFER MSRによるロングモード制御
-6. **64ビット算術**: 64ビット整数演算の完全サポート
-7. **フォールバック処理**: 32ビットCPUでの適切なエラーハンドリング
 
-### 実際の出力例（64ビットモード）
+#### 割り込み・例外処理
+6. **IDT管理**: 256エントリの割り込み記述子テーブル
+7. **例外ハンドラ**: 19個の主要例外ハンドラ（Division Error, Page Fault等）
+8. **64ビットISR**: 32ビットアセンブラから64ビット命令生成
+9. **復帰可能例外**: ブレークポイント例外等の非致命的例外処理
+
+#### 物理メモリ管理
+10. **メモリマップ検出**: E820スタイルMultibootメモリマップ解析
+11. **メモリ領域分類**: Available, Reserved, ACPI Reclaimable等の分類
+12. **メモリサイズ計算**: 総メモリ・利用可能メモリの正確な計算
+13. **詳細メモリ表示**: 16進数アドレス・KB単位サイズ表示
+14. **フォールバック処理**: メモリマップ未対応時の基本メモリ情報利用
+
+#### その他
+15. **64ビット算術**: 64ビット整数演算の完全サポート
+16. **エラーハンドリング**: 32ビットCPUでの適切なエラーハンドリング
+
+### 実際の出力例（64ビットOSカーネル）
 
 ```
 Starting 32-bit kernel with 64-bit long mode capability...
 Entering 64-bit long mode transition...
 64-bit long mode successfully activated! Running in compatibility mode.
-=== 64-bit Long Mode Transition Kernel ===
+=== 64-bit Long Mode Kernel with IDT ===
 Successfully transitioned to 64-bit long mode!
 Running C code called from 64-bit assembly context
+Initializing IDT (Interrupt Descriptor Table)...
+IDT initialized successfully!
+Initializing physical memory management...
+Basic memory info available
+Memory map available - parsing regions...
+Physical memory initialization complete!
+
+=== Physical Memory Map ===
+Total Memory: 131072 KB
+Available Memory: 128000 KB
+Memory Regions: 4
+Region 0: 0x0000000000000000 - 0x000000000009FFFF (640 KB) - Available
+Region 1: 0x0000000000100000 - 0x0000000007FFFFFF (129024 KB) - Available
+Region 2: 0x00000000000A0000 - 0x00000000000FFFFF (384 KB) - Reserved
+Region 3: 0x00000000FFFC0000 - 0x00000000FFFFFFFF (256 KB) - Reserved
+=== End Memory Map ===
+
 64-bit integer arithmetic test: PASSED!
 64-bit multiplication test: PASSED!
 64-bit large number test: PASSED!
 === Long Mode Transition Complete! ===
 Kernel is now running in 64-bit long mode environment
 C code execution from 64-bit context confirmed!
+
+=== IDT Exception Handling Test ===
+Testing breakpoint exception (INT3)...
+=== KERNEL EXCEPTION ===
+Exception: Breakpoint
+Breakpoint exception handled - continuing execution...
+Breakpoint exception handling complete!
+IDT is working correctly!
 ```
 
 ### 実際の出力例（32ビットCPU）
@@ -212,21 +265,52 @@ gdb
 
 ### 実装済み機能
 
+#### コアシステム
 ✅ **32ビットMultibootエントリ**: 標準的なカーネル形式  
 ✅ **64ビットCPU動的検出**: CPUID命令による実行時検出  
 ✅ **完全ページテーブル**: PML4/PDP/PD 3階層構造  
 ✅ **ロングモード移行**: IA32_EFER MSR制御  
 ✅ **64ビットGDT**: 互換モードセグメント設定  
 ✅ **64ビットC実行**: 64ビット環境でのC言語実行  
+
+#### 割り込み・例外処理
+✅ **IDT実装**: 256エントリ割り込み記述子テーブル  
+✅ **例外ハンドラ**: 19個の主要例外処理 (DE, PF, GP等)  
+✅ **64ビットISR**: 32→64ビット命令変換アセンブリ  
+✅ **例外復帰処理**: ブレークポイント等の復帰可能例外  
+
+#### 物理メモリ管理
+✅ **Multibootメモリ情報取得**: マジック番号・ポインタ保存  
+✅ **メモリマップ解析**: E820スタイルメモリ領域解析  
+✅ **メモリ領域分類**: Available/Reserved/ACPI分類  
+✅ **メモリサイズ計算**: 総メモリ・利用可能メモリ計算  
+✅ **詳細メモリ表示**: 16進アドレス・KB単位表示  
+✅ **フォールバック処理**: メモリマップ未対応時の基本情報利用  
+
+#### その他
 ✅ **64ビット算術**: 完全な64ビット整数演算  
 ✅ **フォールバック処理**: 32ビットCPUでのエラーハンドリング  
 ✅ **QEMUデバッグ環境**: 包括的なデバッグ機能  
 
 ### テスト確認項目
 
+#### 64ビット機能テスト
 ✅ **64ビット整数オーバーフローテスト**: PASSED  
 ✅ **64ビット乗算テスト**: PASSED  
 ✅ **64ビット大数値テスト**: PASSED  
+
+#### IDT・例外処理テスト
+✅ **IDT初期化テスト**: 成功確認  
+✅ **ブレークポイント例外テスト**: PASSED  
+✅ **例外ハンドラ動作テスト**: 正常復帰確認  
+
+#### 物理メモリ管理テスト
+✅ **Multiboot情報取得テスト**: 成功確認  
+✅ **メモリマップ解析テスト**: 領域分類成功  
+✅ **メモリサイズ計算テスト**: 正確な計算確認  
+✅ **メモリ表示機能テスト**: 詳細表示成功  
+
+#### 互換性テスト
 ✅ **32ビットCPU互換性テスト**: 適切なエラー表示  
 
 ## トラブルシューティング

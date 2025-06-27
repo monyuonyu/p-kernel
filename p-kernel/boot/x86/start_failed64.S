@@ -1,9 +1,9 @@
-# 完全64ビット移行カーネル（段階的アーキテクチャ）
+# 64ビット移行可能カーネル（Multiboot互換）
 .code32
 
 # Multiboot ヘッダー
 .set MULTIBOOT_MAGIC, 0x1BADB002
-.set MULTIBOOT_FLAGS, 0x00000006    # メモリマップ情報を要求
+.set MULTIBOOT_FLAGS, 0x00000000
 .set MULTIBOOT_CHECKSUM, -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 .section .multiboot
@@ -18,11 +18,6 @@
 # 32ビットエントリポイント（Multibootから呼び出される）
 _start:
     cli                 # 割り込み無効化
-    
-    # Multiboot情報を保存（64ビット移行前）
-    # EAX = マジック番号, EBX = Multiboot情報構造体のアドレス
-    mov %eax, multiboot_magic
-    mov %ebx, multiboot_info_ptr
     
     # スタック設定（32ビット）
     mov $0x200000, %esp
@@ -116,28 +111,8 @@ enter_long_mode:
     # 64ビットGDTをロード
     lgdt gdt64_descriptor
     
-    # 64ビットモードへ移行（32ビット互換モードで継続）
-    ljmp $0x08, $compat_mode_64
-
-# 64ビット互換モードでの実行（32ビットコードとして実行）
-compat_mode_64:
-    # セグメントレジスタ設定
-    mov $0x10, %ax
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
-    mov %ax, %ss
-    
-    # 成功メッセージ
-    pushl $success_64_msg
-    call print_string_32
-    addl $4, %esp
-    
-    # 32ビットCコードを呼び出し（64ビット環境で実行）
-    call main
-    
-    jmp hang_32
+    # 64ビットモードへジャンプ
+    ljmp $0x08, $start_64bit
 
 # ページテーブル設定（アイデンティティマッピング）
 setup_page_tables:
@@ -252,27 +227,90 @@ wait_tx_32:
 hang_32:
     jmp hang_32
 
+# 64ビットコードセクション開始
+.code64
+start_64bit:
+    # セグメントレジスタ設定
+    mov $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %fs
+    mov %ax, %gs
+    mov %ax, %ss
+    
+    # 64ビットスタック設定
+    mov $0x300000, %rsp
+    
+    # 64ビット開始メッセージ
+    mov $success_64_msg, %rdi
+    call print_string_64
+    
+    # 64ビットCコードを呼び出し
+    call main
+    
+hang_64:
+    jmp hang_64
+
+# 64ビット文字列出力
+print_string_64:
+    push %rax
+    push %rdx
+    push %rsi
+    
+    mov %rdi, %rsi
+print_loop_64:
+    lodsb
+    test %al, %al
+    jz print_done_64
+    call serial_putc_64
+    jmp print_loop_64
+print_done_64:
+    pop %rsi
+    pop %rdx
+    pop %rax
+    ret
+
+# 64ビットシリアル出力
+serial_putc_64:
+    push %rax
+    push %rdx
+    
+    mov %al, %ah      # 文字をAHに保存
+    mov $0x3f8, %dx
+    add $5, %dx
+wait_tx_64:
+    in %dx, %al
+    test $0x20, %al
+    jz wait_tx_64
+    mov $0x3f8, %dx
+    mov %ah, %al      # 保存した文字をALに復帰
+    out %al, %dx
+    
+    pop %rdx
+    pop %rax
+    ret
+
 # メッセージ定義
 .section .rodata
 starting_msg:
-    .asciz "Starting 32-bit kernel with 64-bit long mode capability...\r\n"
+    .asciz "Starting 32-bit kernel with 64-bit transition...\r\n"
 
 entering_64_msg:
-    .asciz "Entering 64-bit long mode transition...\r\n"
+    .asciz "Entering 64-bit long mode...\r\n"
 
 success_64_msg:
-    .asciz "64-bit long mode successfully activated! Running in compatibility mode.\r\n"
+    .asciz "64-bit long mode activated successfully!\r\n"
 
 no_64bit_error_msg:
-    .asciz "ERROR: 64-bit long mode not supported on this CPU!\r\n"
+    .asciz "ERROR: 64-bit long mode not supported!\r\n"
 
 # 64ビット用GDT
 .section .data
 .align 8
 gdt64_start:
     .quad 0                         # NULL セグメント
-    .quad 0x00cf9a000000ffff        # 32ビット互換コードセグメント
-    .quad 0x00cf92000000ffff        # 32ビット互換データセグメント
+    .quad 0x00af9a000000ffff        # 64ビットコードセグメント
+    .quad 0x00af92000000ffff        # 64ビットデータセグメント
 gdt64_end:
 
 gdt64_descriptor:
@@ -292,13 +330,3 @@ pdp_table:
 .align 4096
 pd_table:
     .space 4096
-
-# Multiboot情報保存用変数
-.section .data
-.global multiboot_magic
-.global multiboot_info_ptr
-multiboot_magic:
-    .long 0
-
-multiboot_info_ptr:
-    .long 0

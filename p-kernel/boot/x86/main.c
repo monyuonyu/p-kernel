@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "idt.h"
+#include "memory.h"
 
 /* I/Oポートアクセス (64ビットロングモード対応) */
 static inline void outb(uint16_t port, uint8_t val) {
@@ -49,6 +50,11 @@ void main() {
     idt_init();
     idt_install();
     print("IDT initialized successfully!\r\n");
+    
+    /* 物理メモリマップ初期化 */
+    print("Initializing physical memory management...\r\n");
+    memory_init();
+    memory_dump_regions();
     
     // 64ビット整数演算テスト
     uint64_t test64_a = 0xFFFFFFFFFFFFFFFFULL;
