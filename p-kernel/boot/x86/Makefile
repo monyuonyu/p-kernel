@@ -5,7 +5,7 @@ CC = gcc
 AS = as
 LD = ld
 
-# コンパイルフラグ
+# コンパイルフラグ（32ビットベースで64ビット移行）
 CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -m32 -fno-pic
 ASFLAGS = -32
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
@@ -29,20 +29,24 @@ $(TARGET): $(OBJS)
 %.o: %.S
 	$(AS) $(ASFLAGS) $< -o $@
 
-# QEMUでの実行とデバッグ
+# QEMUでの実行とデバッグ（64ビット対応CPUで32ビットベース実行）
 run: $(TARGET)
-	qemu-system-i386 -kernel $(TARGET) -serial stdio
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64
 
 debug: $(TARGET)
-	qemu-system-i386 -kernel $(TARGET) -serial stdio -s -S
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64
 
 # シリアル出力をファイルに保存
 run-log: $(TARGET)
-	qemu-system-i386 -kernel $(TARGET) -serial file:serial.log
+	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64
+
+# 32ビットモードでの実行
+run-32: $(TARGET)
+	qemu-system-i386 -kernel $(TARGET) -serial stdio
 
 # ブートディスクとしての実行
 run-boot: $(TARGET)
-	qemu-system-i386 -drive format=raw,file=$(TARGET) -serial stdio
+	qemu-system-x86_64 -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64
 
 clean:
 	rm -f $(OBJS) $(TARGET) serial.log

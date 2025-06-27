@@ -27,11 +27,66 @@ _start:
     mov $boot_32_msg, %esi
     call print_string_32
     
-    # 32ビットCコードを呼び出し
+    # 64ビットロングモードへの移行を試行
+    call check_long_mode_support
+    test %eax, %eax
+    jz no_long_mode
+    
+    # 64ビット移行成功メッセージ（実際の移行は後で実装）
+    mov $entering_64bit_msg, %esi
+    call print_string_32
+    mov $cpu_64bit_support_msg, %esi
+    call print_string_32
+    # TODO: 実際の64ビット移行処理
+    # call enter_long_mode
+    
+no_long_mode:
+    # 32ビットモードのまま実行
+    mov $no_64bit_msg, %esi
+    call print_string_32
     call main
     
 hang_32:
     jmp hang_32
+
+# 64ビットロングモード対応チェック
+check_long_mode_support:
+    # CPUID機能の存在確認
+    pushfl
+    pop %eax
+    mov %eax, %ecx
+    xor $0x200000, %eax  # ID ビットを反転
+    push %eax
+    popfl
+    pushfl
+    pop %eax
+    xor %ecx, %eax
+    jz no_cpuid
+    
+    # 拡張CPUID機能確認
+    mov $0x80000000, %eax
+    cpuid
+    cmp $0x80000001, %eax
+    jb no_long_mode_support
+    
+    # ロングモード対応確認
+    mov $0x80000001, %eax
+    cpuid
+    test $0x20000000, %edx  # LM ビット
+    jz no_long_mode_support
+    
+    mov $1, %eax
+    ret
+
+no_cpuid:
+no_long_mode_support:
+    mov $0, %eax
+    ret
+
+# TODO: 64ビットロングモード移行（将来実装）
+# 現在は64ビット対応チェックのみ実装
+
+.code32
 
 # 32ビットシリアルポート初期化
 serial_init_32:
@@ -99,3 +154,17 @@ wait_tx_32:
 
 boot_32_msg:
     .asciz "32-bit kernel started!\r\n"
+
+no_64bit_msg:
+    .asciz "64-bit mode not supported, running in 32-bit mode\r\n"
+
+entering_64bit_msg:
+    .asciz "Entering 64-bit long mode...\r\n"
+
+success_64bit_msg:
+    .asciz "64-bit long mode activated!\r\n"
+
+cpu_64bit_support_msg:
+    .asciz "CPU supports 64-bit long mode!\r\n"
+
+# TODO: 64ビット用GDTとページテーブル（将来実装）

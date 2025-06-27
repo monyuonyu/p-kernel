@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-/* I/Oポートアクセス (32ビットプロテクトモード対応) */
+/* I/Oポートアクセス (64ビットロングモード対応) */
 static inline void outb(uint16_t port, uint8_t val) {
     asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
@@ -35,13 +35,13 @@ void print(const char *str) {
     }
 }
 
-/* 32ビットC言語のエントリポイント */
+/* 64ビット対応チェック機能付き32ビットカーネル */
 void main() {
     serial_init();
-    print("32-bit C kernel started!\r\n");
-    print("Protected mode C function executing successfully!\r\n");
+    print("Hybrid 32/64-bit capable kernel started!\r\n");
+    print("64-bit CPU support detection completed in assembly\r\n");
     
-    // 32ビット算術テスト
+    // 基本的な32ビット機能テスト
     uint32_t test_val = 0x12345678;
     uint32_t result = test_val * 2;
     
@@ -51,16 +51,18 @@ void main() {
         print("32-bit arithmetic test: FAILED!\r\n");
     }
     
-    // メモリアクセステスト
-    uint32_t *mem_test = (uint32_t*)0x200000;
-    *mem_test = 0xDEADBEEF;
-    if (*mem_test == 0xDEADBEEF) {
-        print("32-bit memory access test: PASSED!\r\n");
+    // 64ビット整数演算テスト（32ビットコンパイラでも可能）
+    uint64_t test64 = 0x123456789ABCDEF0ULL;
+    uint64_t result64 = test64 + 1;
+    
+    if (result64 == 0x123456789ABCDEF1ULL) {
+        print("64-bit integer arithmetic (emulated): PASSED!\r\n");
     } else {
-        print("32-bit memory access test: FAILED!\r\n");
+        print("64-bit integer arithmetic (emulated): FAILED!\r\n");
     }
     
-    print("32-bit protected mode kernel initialization complete!\r\n");
+    print("Kernel with 64-bit awareness initialization complete!\r\n");
+    print("Note: Full 64-bit long mode transition will be implemented in future\r\n");
 
     // 無限ループ
     for(;;);

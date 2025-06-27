@@ -1,4 +1,4 @@
-/* QEMU -kernel用リンカースクリプト */
+/* QEMU 32→64ビット移行カーネル用リンカースクリプト */
 ENTRY(_start)
 OUTPUT_FORMAT(elf32-i386)
 
