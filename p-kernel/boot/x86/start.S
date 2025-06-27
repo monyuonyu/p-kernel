@@ -1,3 +1,4 @@
+# 完全64ビット移行カーネル（段階的アーキテクチャ）
 .code32
 
 # Multiboot ヘッダー
@@ -14,39 +15,38 @@
 .section .text
 .global _start
 
+# 32ビットエントリポイント（Multibootから呼び出される）
 _start:
     cli                 # 割り込み無効化
     
-    # スタック設定
+    # スタック設定（32ビット）
     mov $0x200000, %esp
     
-    # 32ビットでシリアルポート初期化
+    # 32ビットシリアルポート初期化
     call serial_init_32
     
-    # 32ビット開始メッセージ出力
-    mov $boot_32_msg, %esi
+    # 32ビット開始メッセージ
+    pushl $starting_msg
     call print_string_32
+    addl $4, %esp
     
-    # 64ビットロングモードへの移行を試行
+    # 64ビットロングモード対応チェック
     call check_long_mode_support
     test %eax, %eax
-    jz no_long_mode
+    jz no_long_mode_error
     
-    # 64ビット移行成功メッセージ（実際の移行は後で実装）
-    mov $entering_64bit_msg, %esi
+    # 64ビット移行開始メッセージ
+    pushl $entering_64_msg
     call print_string_32
-    mov $cpu_64bit_support_msg, %esi
-    call print_string_32
-    # TODO: 実際の64ビット移行処理
-    # call enter_long_mode
+    addl $4, %esp
     
-no_long_mode:
-    # 32ビットモードのまま実行
-    mov $no_64bit_msg, %esi
-    call print_string_32
-    call main
+    # 64ビットロングモードに移行
+    call enter_long_mode
     
-hang_32:
+no_long_mode_error:
+    pushl $no_64bit_error_msg
+    call print_string_32
+    addl $4, %esp
     jmp hang_32
 
 # 64ビットロングモード対応チェック
@@ -61,7 +61,7 @@ check_long_mode_support:
     pushfl
     pop %eax
     xor %ecx, %eax
-    jz no_cpuid
+    jz no_cpuid_support
     
     # 拡張CPUID機能確認
     mov $0x80000000, %eax
@@ -78,15 +78,96 @@ check_long_mode_support:
     mov $1, %eax
     ret
 
-no_cpuid:
+no_cpuid_support:
 no_long_mode_support:
     mov $0, %eax
     ret
 
-# TODO: 64ビットロングモード移行（将来実装）
-# 現在は64ビット対応チェックのみ実装
+# 64ビットロングモードに移行
+enter_long_mode:
+    # PAE有効化
+    mov %cr4, %eax
+    or $0x20, %eax      # PAE ビット
+    mov %eax, %cr4
+    
+    # ページテーブル設定
+    call setup_page_tables
+    
+    # ページテーブルをCR3に設定
+    mov $pml4_table, %eax
+    mov %eax, %cr3
+    
+    # IA32_EFER MSRでロングモード有効化
+    mov $0xC0000080, %ecx  # IA32_EFER MSR
+    rdmsr
+    or $0x100, %eax        # LME ビット
+    wrmsr
+    
+    # ページング有効化（ロングモード移行）
+    mov %cr0, %eax
+    or $0x80000000, %eax   # PG ビット
+    mov %eax, %cr0
+    
+    # 64ビットGDTをロード
+    lgdt gdt64_descriptor
+    
+    # 64ビットモードへ移行（32ビット互換モードで継続）
+    ljmp $0x08, $compat_mode_64
 
-.code32
+# 64ビット互換モードでの実行（32ビットコードとして実行）
+compat_mode_64:
+    # セグメントレジスタ設定
+    mov $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %fs
+    mov %ax, %gs
+    mov %ax, %ss
+    
+    # 成功メッセージ
+    pushl $success_64_msg
+    call print_string_32
+    addl $4, %esp
+    
+    # 32ビットCコードを呼び出し（64ビット環境で実行）
+    call main
+    
+    jmp hang_32
+
+# ページテーブル設定（アイデンティティマッピング）
+setup_page_tables:
+    # すべてのページテーブルをクリア
+    mov $pml4_table, %edi
+    mov $0, %eax
+    mov $3072, %ecx  # 3 * 4096 / 4
+    rep stosl
+    
+    # PML4テーブル（最上位）
+    mov $pml4_table, %edi
+    mov $pdp_table, %eax
+    or $0x03, %eax      # Present + Writable
+    mov %eax, (%edi)
+    
+    # PDPテーブル
+    mov $pdp_table, %edi
+    mov $pd_table, %eax
+    or $0x03, %eax
+    mov %eax, (%edi)
+    
+    # PDテーブル（2MBページ使用）
+    mov $pd_table, %edi
+    mov $0, %eax
+pd_loop:
+    mov %eax, %ebx
+    shl $21, %ebx       # 2MBページ
+    or $0x83, %ebx      # Present + Writable + Page Size
+    mov %ebx, (%edi)
+    add $8, %edi
+    inc %eax
+    cmp $512, %eax
+    jl pd_loop
+    
+    ret
 
 # 32ビットシリアルポート初期化
 serial_init_32:
@@ -123,10 +204,14 @@ serial_init_32:
     pop %eax
     ret
 
-# 32ビットモードでの文字列出力関数
+# 32ビット文字列出力
 print_string_32:
+    push %ebp
+    mov %esp, %ebp
+    push %esi
     push %eax
-    push %edx
+    
+    mov 8(%ebp), %esi
 print_loop_32:
     lodsb
     test %al, %al
@@ -134,13 +219,17 @@ print_loop_32:
     call serial_putc_32
     jmp print_loop_32
 print_done_32:
-    pop %edx
     pop %eax
+    pop %esi
+    pop %ebp
     ret
 
-# 32ビットモードでのシリアル出力
+# 32ビットシリアル出力
 serial_putc_32:
+    push %eax
     push %edx
+    
+    mov %al, %ah      # 文字をAHに保存
     mov $0x3f8, %dx
     add $5, %dx
 wait_tx_32:
@@ -148,23 +237,53 @@ wait_tx_32:
     test $0x20, %al
     jz wait_tx_32
     mov $0x3f8, %dx
+    mov %ah, %al      # 保存した文字をALに復帰
     out %al, %dx
+    
     pop %edx
+    pop %eax
     ret
 
-boot_32_msg:
-    .asciz "32-bit kernel started!\r\n"
+hang_32:
+    jmp hang_32
 
-no_64bit_msg:
-    .asciz "64-bit mode not supported, running in 32-bit mode\r\n"
+# メッセージ定義
+.section .rodata
+starting_msg:
+    .asciz "Starting 32-bit kernel with 64-bit long mode capability...\r\n"
 
-entering_64bit_msg:
-    .asciz "Entering 64-bit long mode...\r\n"
+entering_64_msg:
+    .asciz "Entering 64-bit long mode transition...\r\n"
 
-success_64bit_msg:
-    .asciz "64-bit long mode activated!\r\n"
+success_64_msg:
+    .asciz "64-bit long mode successfully activated! Running in compatibility mode.\r\n"
 
-cpu_64bit_support_msg:
-    .asciz "CPU supports 64-bit long mode!\r\n"
+no_64bit_error_msg:
+    .asciz "ERROR: 64-bit long mode not supported on this CPU!\r\n"
 
-# TODO: 64ビット用GDTとページテーブル（将来実装）
+# 64ビット用GDT
+.section .data
+.align 8
+gdt64_start:
+    .quad 0                         # NULL セグメント
+    .quad 0x00cf9a000000ffff        # 32ビット互換コードセグメント
+    .quad 0x00cf92000000ffff        # 32ビット互換データセグメント
+gdt64_end:
+
+gdt64_descriptor:
+    .word gdt64_end - gdt64_start - 1
+    .long gdt64_start
+
+# ページテーブル（4KB境界でアライン）
+.section .bss
+.align 4096
+pml4_table:
+    .space 4096
+
+.align 4096
+pdp_table:
+    .space 4096
+
+.align 4096
+pd_table:
+    .space 4096

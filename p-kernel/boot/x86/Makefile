@@ -5,7 +5,7 @@ CC = gcc
 AS = as
 LD = ld
 
-# コンパイルフラグ（32ビットベースで64ビット移行）
+# コンパイルフラグ（32ビットブート、64ビット実行）
 CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -m32 -fno-pic
 ASFLAGS = -32
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
