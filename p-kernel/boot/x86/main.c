@@ -1,13 +1,13 @@
 #include <stdint.h>
 
-/* I/Oポートアクセス (16ビットモード対応) */
+/* I/Oポートアクセス (32ビットプロテクトモード対応) */
 static inline void outb(uint16_t port, uint8_t val) {
-    asm volatile ("outb %%al, %%dx" : : "a"(val), "d"(port));
+    asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
-    asm volatile ("inb %%dx, %%al" : "=a"(ret) : "d"(port));
+    asm volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
 
@@ -35,12 +35,32 @@ void print(const char *str) {
     }
 }
 
-/* C言語のエントリポイント */
+/* 32ビットC言語のエントリポイント */
 void main() {
     serial_init();
-    print("Hello from C!\r\n");
-    print("C main function executing...\r\n");
-    print("Serial port initialized successfully!\r\n");
+    print("32-bit C kernel started!\r\n");
+    print("Protected mode C function executing successfully!\r\n");
+    
+    // 32ビット算術テスト
+    uint32_t test_val = 0x12345678;
+    uint32_t result = test_val * 2;
+    
+    if (result == 0x2468ACF0) {
+        print("32-bit arithmetic test: PASSED!\r\n");
+    } else {
+        print("32-bit arithmetic test: FAILED!\r\n");
+    }
+    
+    // メモリアクセステスト
+    uint32_t *mem_test = (uint32_t*)0x200000;
+    *mem_test = 0xDEADBEEF;
+    if (*mem_test == 0xDEADBEEF) {
+        print("32-bit memory access test: PASSED!\r\n");
+    } else {
+        print("32-bit memory access test: FAILED!\r\n");
+    }
+    
+    print("32-bit protected mode kernel initialization complete!\r\n");
 
     // 無限ループ
     for(;;);

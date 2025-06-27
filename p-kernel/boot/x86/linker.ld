@@ -1,13 +1,16 @@
-/* QEMU x86ブートローダー用リンカースクリプト */
+/* QEMU -kernel用リンカースクリプト */
 ENTRY(_start)
-OUTPUT_FORMAT(binary)
+OUTPUT_FORMAT(elf32-i386)
 
 SECTIONS {
-    . = 0x7c00;
+    . = 0x100000;
+
+    .multiboot : {
+        *(.multiboot)
+    }
 
     .text : {
         *(.text)
-        *(.bootsect)
     }
 
     .rodata : {

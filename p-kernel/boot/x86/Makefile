@@ -6,7 +6,7 @@ AS = as
 LD = ld
 
 # コンパイルフラグ
-CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -m16 -fno-pic
+CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -m32 -fno-pic
 ASFLAGS = -32
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
 
@@ -31,14 +31,18 @@ $(TARGET): $(OBJS)
 
 # QEMUでの実行とデバッグ
 run: $(TARGET)
-	qemu-system-i386 -drive format=raw,file=$(TARGET) -serial stdio
+	qemu-system-i386 -kernel $(TARGET) -serial stdio
 
 debug: $(TARGET)
-	qemu-system-i386 -drive format=raw,file=$(TARGET) -serial stdio -s -S
+	qemu-system-i386 -kernel $(TARGET) -serial stdio -s -S
 
 # シリアル出力をファイルに保存
 run-log: $(TARGET)
-	qemu-system-i386 -drive format=raw,file=$(TARGET) -serial file:serial.log
+	qemu-system-i386 -kernel $(TARGET) -serial file:serial.log
+
+# ブートディスクとしての実行
+run-boot: $(TARGET)
+	qemu-system-i386 -drive format=raw,file=$(TARGET) -serial stdio
 
 clean:
 	rm -f $(OBJS) $(TARGET) serial.log

@@ -1,16 +1,46 @@
-.code16
+.code32
+
+# Multiboot ヘッダー
+.set MULTIBOOT_MAGIC, 0x1BADB002
+.set MULTIBOOT_FLAGS, 0x00000000
+.set MULTIBOOT_CHECKSUM, -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
+
+.section .multiboot
+.align 4
+.long MULTIBOOT_MAGIC
+.long MULTIBOOT_FLAGS
+.long MULTIBOOT_CHECKSUM
+
+.section .text
 .global _start
 
 _start:
     cli                 # 割り込み無効化
     
     # スタック設定
-    mov $0x7c00, %sp
+    mov $0x200000, %esp
     
-    # シリアルポート初期化（直接アセンブリで）
+    # 32ビットでシリアルポート初期化
+    call serial_init_32
+    
+    # 32ビット開始メッセージ出力
+    mov $boot_32_msg, %esi
+    call print_string_32
+    
+    # 32ビットCコードを呼び出し
+    call main
+    
+hang_32:
+    jmp hang_32
+
+# 32ビットシリアルポート初期化
+serial_init_32:
+    push %eax
+    push %edx
+    
     mov $0x3f8, %dx     # COM1ポート
-    mov $0x00, %al
     inc %dx
+    mov $0x00, %al
     out %al, %dx        # 割り込み無効
     
     mov $0x3f8, %dx
@@ -34,51 +64,38 @@ _start:
     mov $0xc7, %al
     out %al, %dx        # FIFO有効
     
-    # "Hello from Boot!\r\n" を出力
-    mov $hello_msg, %si
-print_loop:
-    lodsb
-    test %al, %al
-    jz done_print
-    mov %al, %bl        # 文字をblに保存
-    call serial_putc
-    jmp print_loop
-    
-done_print:
-    # Cコードを呼び出し前にもう一度メッセージ
-    mov $calling_c_msg, %si
-calling_c_loop:
-    lodsb
-    test %al, %al
-    jz call_c_now
-    mov %al, %bl
-    call serial_putc
-    jmp calling_c_loop
-    
-call_c_now:
-    # 16ビットCコードを呼び出し
-    call main
-    
-hang:
-    jmp hang
-
-serial_putc:
-    mov $0x3f8, %dx
-    add $5, %dx
-wait_tx:
-    in %dx, %al
-    test $0x20, %al
-    jz wait_tx
-    mov $0x3f8, %dx
-    mov %bl, %al        # 文字をalに
-    out %al, %dx
+    pop %edx
+    pop %eax
     ret
 
-hello_msg:
-    .asciz "Hello from Boot!\r\n"
+# 32ビットモードでの文字列出力関数
+print_string_32:
+    push %eax
+    push %edx
+print_loop_32:
+    lodsb
+    test %al, %al
+    jz print_done_32
+    call serial_putc_32
+    jmp print_loop_32
+print_done_32:
+    pop %edx
+    pop %eax
+    ret
 
-calling_c_msg:
-    .asciz "Calling C main...\r\n"
+# 32ビットモードでのシリアル出力
+serial_putc_32:
+    push %edx
+    mov $0x3f8, %dx
+    add $5, %dx
+wait_tx_32:
+    in %dx, %al
+    test $0x20, %al
+    jz wait_tx_32
+    mov $0x3f8, %dx
+    out %al, %dx
+    pop %edx
+    ret
 
-.org 510
-.word 0xaa55
+boot_32_msg:
+    .asciz "32-bit kernel started!\r\n"
