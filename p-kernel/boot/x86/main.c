@@ -1,17 +1,17 @@
 #include <stdint.h>
 
-/* I/Oポートアクセス */
+/* I/Oポートアクセス (16ビットモード対応) */
+static inline void outb(uint16_t port, uint8_t val) {
+    asm volatile ("outb %%al, %%dx" : : "a"(val), "d"(port));
+}
+
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
-    asm volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    asm volatile ("inb %%dx, %%al" : "=a"(ret) : "d"(port));
     return ret;
 }
 
-static inline void outb(uint16_t port, uint8_t val) {
-    asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
-}
-
-/* QEMUシリアルポート (COM1) */
+/* シリアルポート (COM1) */
 #define COM1 0x3F8
 
 /* シリアルポート初期化 */
@@ -24,29 +24,24 @@ void serial_init() {
     outb(COM1 + 2, 0xC7);    // Enable FIFO
 }
 
-/* シリアルポートに1文字出力 */
 void serial_putc(char c) {
-    while ((inb(COM1 + 5) & 0x20) == 0);
+    while ((inb(COM1 + 5) & 0x20) == 0); // 送信バッファが空になるまで待つ
     outb(COM1, c);
 }
 
-/* 文字列出力 */
 void print(const char *str) {
-    while (*str) {
-        serial_putc(*str++);
+    for (int i = 0; str[i] != '\0'; i++) {
+        serial_putc(str[i]);
     }
 }
 
-/* メイン関数 */
+/* C言語のエントリポイント */
 void main() {
     serial_init();
-    print("p-kernel x64 bootloader started\r\n");
+    print("Hello from C!\r\n");
+    print("C main function executing...\r\n");
+    print("Serial port initialized successfully!\r\n");
 
-    // TODO: カーネルロード処理を実装
-
-    print("Booting kernel...\r\n");
-    
-    // カーネルエントリポイントへジャンプ
-    // void (*kernel_entry)() = (void (*)())0x100000;
-    // kernel_entry();
+    // 無限ループ
+    for(;;);
 }

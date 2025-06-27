@@ -1,12 +1,13 @@
-/* QEMU x64用リンカースクリプト */
+/* QEMU x86ブートローダー用リンカースクリプト */
 ENTRY(_start)
+OUTPUT_FORMAT(binary)
 
 SECTIONS {
-    /* カーネルは1MB以上のアドレスにロードされる */
-    . = 0x100000;
+    . = 0x7c00;
 
     .text : {
         *(.text)
+        *(.bootsect)
     }
 
     .rodata : {
