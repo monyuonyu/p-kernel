@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "idt.h"
 
 /* I/Oポートアクセス (64ビットロングモード対応) */
 static inline void outb(uint16_t port, uint8_t val) {
@@ -39,9 +40,15 @@ void print(const char *str) {
 /* 完全64ビットロングモード移行カーネル */
 void main() {
     serial_init();
-    print("=== 64-bit Long Mode Transition Kernel ===\r\n");
+    print("=== 64-bit Long Mode Kernel with IDT ===\r\n");
     print("Successfully transitioned to 64-bit long mode!\r\n");
     print("Running C code called from 64-bit assembly context\r\n");
+    
+    /* IDT（割り込み記述子テーブル）初期化 */
+    print("Initializing IDT (Interrupt Descriptor Table)...\r\n");
+    idt_init();
+    idt_install();
+    print("IDT initialized successfully!\r\n");
     
     // 64ビット整数演算テスト
     uint64_t test64_a = 0xFFFFFFFFFFFFFFFFULL;
@@ -79,6 +86,16 @@ void main() {
     print("=== Long Mode Transition Complete! ===\r\n");
     print("Kernel is now running in 64-bit long mode environment\r\n");
     print("C code execution from 64-bit context confirmed!\r\n");
+    
+    /* IDT機能テスト */
+    print("\r\n=== IDT Exception Handling Test ===\r\n");
+    print("Testing breakpoint exception (INT3)...\r\n");
+    
+    // ブレークポイント例外をテスト（非致命的）
+    asm volatile ("int3");  // Breakpoint例外を発生
+    
+    print("Breakpoint exception handling complete!\r\n");
+    print("IDT is working correctly!\r\n");
 
     // 無限ループ
     for(;;);

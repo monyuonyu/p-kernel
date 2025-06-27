@@ -11,7 +11,7 @@ ASFLAGS = -32
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
 
 # ソースファイル
-SRCS = start.S main.c
+SRCS = start.S main.c idt.c isr.S
 OBJS = $(SRCS:.c=.o)
 OBJS := $(OBJS:.S=.o)
 
