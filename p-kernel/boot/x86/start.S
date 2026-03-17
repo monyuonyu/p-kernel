@@ -270,9 +270,10 @@ no_64bit_error_msg:
 .section .data
 .align 8
 gdt64_start:
-    .quad 0                         # NULL セグメント
-    .quad 0x00cf9a000000ffff        # 32ビット互換コードセグメント
-    .quad 0x00cf92000000ffff        # 32ビット互換データセグメント
+    .quad 0                         # NULL セグメント         (selector 0x00)
+    .quad 0x00cf9a000000ffff        # 32ビット互換コードセグメント (selector 0x08)
+    .quad 0x00cf92000000ffff        # 32ビット互換データセグメント (selector 0x10)
+    .quad 0x00af9a000000ffff        # 64ビットコードセグメント    (selector 0x18, L=1,D=0)
 gdt64_end:
 
 gdt64_descriptor:

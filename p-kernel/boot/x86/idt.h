@@ -24,7 +24,8 @@ struct idt_ptr {
 #define IDT_ENTRIES         256
 #define IDT_INTERRUPT_GATE  0x8E  // 64ビット割り込みゲート
 #define IDT_TRAP_GATE       0x8F  // 64ビットトラップゲート
-#define KERNEL_CS           0x08  // カーネルコードセグメント
+#define KERNEL_CS           0x08  // 32ビット互換コードセグメント
+#define KERNEL64_CS         0x18  // 64ビットコードセグメント (割り込みゲート用)
 
 /* 例外番号定義 */
 #define EXCEPTION_DE        0   // Division Error
@@ -70,5 +71,29 @@ extern void isr16(void);  // FPU Error
 extern void isr17(void);  // Alignment Check
 extern void isr18(void);  // Machine Check
 extern void isr19(void);  // SIMD Exception
+
+/* IRQベクタ番号 (PICリマップ後) */
+#define IRQ_VECTOR_BASE 32
+
+/* IRQハンドラ宣言 */
+extern void irq0(void);
+extern void irq1(void);
+extern void irq2(void);
+extern void irq3(void);
+extern void irq4(void);
+extern void irq5(void);
+extern void irq6(void);
+extern void irq7(void);
+extern void irq8(void);
+extern void irq9(void);
+extern void irq10(void);
+extern void irq11(void);
+extern void irq12(void);
+extern void irq13(void);
+extern void irq14(void);
+extern void irq15(void);
+
+/* IRQハンドラ登録関数 */
+void irq_register_handler(uint8_t irq, void (*handler)(void));
 
 #endif /* IDT_H */

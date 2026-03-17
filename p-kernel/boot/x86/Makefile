@@ -7,12 +7,12 @@ AS = $(CROSS)as
 LD = $(CROSS)ld
 
 # コンパイルフラグ（32ビットブート、64ビット実行）
-CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic
+CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic -fcf-protection=none -O2
 ASFLAGS =
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
 
 # ソースファイル
-SRCS = start.S main.c idt.c isr.S memory.c
+SRCS = start.S main.c idt.c isr.S memory.c pic.c timer.c
 OBJS = $(SRCS:.c=.o)
 OBJS := $(OBJS:.S=.o)
 

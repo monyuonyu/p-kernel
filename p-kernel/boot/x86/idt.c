@@ -1,4 +1,6 @@
 #include "idt.h"
+#include "pic.h"
+#include "timer.h"
 
 /* IDTテーブル（256エントリ） */
 static struct idt_entry idt_table[IDT_ENTRIES];
@@ -32,25 +34,43 @@ void idt_init(void) {
         idt_table[i].zero        = 0;
     }
 
-    /* 例外ハンドラを設定 */
-    idt_set_gate(EXCEPTION_DE, (uint64_t)isr0,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_DB, (uint64_t)isr1,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_NMI,(uint64_t)isr2,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_BP, (uint64_t)isr3,  KERNEL_CS, IDT_TRAP_GATE);
-    idt_set_gate(EXCEPTION_OF, (uint64_t)isr4,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_BR, (uint64_t)isr5,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_UD, (uint64_t)isr6,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_NM, (uint64_t)isr7,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_DF, (uint64_t)isr8,  KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_TS, (uint64_t)isr10, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_NP, (uint64_t)isr11, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_SS, (uint64_t)isr12, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_GP, (uint64_t)isr13, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_PF, (uint64_t)isr14, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_MF, (uint64_t)isr16, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_AC, (uint64_t)isr17, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_MC, (uint64_t)isr18, KERNEL_CS, IDT_INTERRUPT_GATE);
-    idt_set_gate(EXCEPTION_XM, (uint64_t)isr19, KERNEL_CS, IDT_INTERRUPT_GATE);
+    /* 例外ハンドラを設定 (CS=0x18: IA-32eモードでは64ビットCSが必須) */
+    idt_set_gate(EXCEPTION_DE, (uint64_t)isr0,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_DB, (uint64_t)isr1,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_NMI,(uint64_t)isr2,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_BP, (uint64_t)isr3,  KERNEL64_CS, IDT_TRAP_GATE);
+    idt_set_gate(EXCEPTION_OF, (uint64_t)isr4,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_BR, (uint64_t)isr5,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_UD, (uint64_t)isr6,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_NM, (uint64_t)isr7,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_DF, (uint64_t)isr8,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_TS, (uint64_t)isr10, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_NP, (uint64_t)isr11, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_SS, (uint64_t)isr12, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_GP, (uint64_t)isr13, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_PF, (uint64_t)isr14, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_MF, (uint64_t)isr16, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_AC, (uint64_t)isr17, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_MC, (uint64_t)isr18, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(EXCEPTION_XM, (uint64_t)isr19, KERNEL64_CS, IDT_INTERRUPT_GATE);
+
+    /* IRQハンドラ登録 (INT 32-47, CS=0x18: 64ビットゲート必須) */
+    idt_set_gate(IRQ_VECTOR_BASE +  0, (uint64_t)irq0,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  1, (uint64_t)irq1,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  2, (uint64_t)irq2,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  3, (uint64_t)irq3,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  4, (uint64_t)irq4,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  5, (uint64_t)irq5,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  6, (uint64_t)irq6,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  7, (uint64_t)irq7,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  8, (uint64_t)irq8,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE +  9, (uint64_t)irq9,  KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 10, (uint64_t)irq10, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 11, (uint64_t)irq11, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 12, (uint64_t)irq12, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 13, (uint64_t)irq13, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 14, (uint64_t)irq14, KERNEL64_CS, IDT_INTERRUPT_GATE);
+    idt_set_gate(IRQ_VECTOR_BASE + 15, (uint64_t)irq15, KERNEL64_CS, IDT_INTERRUPT_GATE);
 }
 
 /* IDTをCPUに登録 */
@@ -116,9 +136,27 @@ void exception_handler(uint64_t exception_num, uint64_t error_code) {
     }
     
     print("System halted.\r\n");
-    
+
     /* 致命的例外の場合はシステム停止 */
     while (1) {
         asm volatile ("hlt");
     }
+}
+
+/* 共通IRQディスパッチャ (isr.S の irq_common_stub から呼ばれる) */
+/* regparm(1): 第1引数を %eax/rax レジスタで渡す (i686でもレジスタ渡し) */
+void __attribute__((regparm(1))) irq_handler(uint32_t irq_num) {
+    /* IRQに対応するハンドラを呼び出す */
+    if (irq_num == IRQ_TIMER) {
+        timer_irq_handler();
+    }
+
+    /* PICにEnd of Interruptを送信 */
+    pic_send_eoi((uint8_t)irq_num);
+}
+
+/* IRQハンドラ登録関数 (将来の拡張用スタブ) */
+void irq_register_handler(uint8_t irq, void (*handler)(void)) {
+    (void)irq;
+    (void)handler;
 }

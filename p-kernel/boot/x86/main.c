@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include "idt.h"
 #include "memory.h"
+#include "pic.h"
+#include "timer.h"
 
 /* I/Oポートアクセス (64ビットロングモード対応) */
 static inline void outb(uint16_t port, uint8_t val) {
@@ -41,68 +43,87 @@ void print(const char *str) {
 /* 完全64ビットロングモード移行カーネル */
 void main() {
     serial_init();
-    print("=== 64-bit Long Mode Kernel with IDT ===\r\n");
-    print("Successfully transitioned to 64-bit long mode!\r\n");
-    print("Running C code called from 64-bit assembly context\r\n");
-    
-    /* IDT（割り込み記述子テーブル）初期化 */
-    print("Initializing IDT (Interrupt Descriptor Table)...\r\n");
+    print("=== p-kernel x86 boot ===\r\n");
+
+    /* IDT初期化 */
+    print("[INIT] IDT...\r\n");
     idt_init();
     idt_install();
-    print("IDT initialized successfully!\r\n");
-    
-    /* 物理メモリマップ初期化 */
-    print("Initializing physical memory management...\r\n");
+    print("[OK]   IDT\r\n");
+
+    /* 物理メモリ初期化 */
+    print("[INIT] Memory...\r\n");
     memory_init();
     memory_dump_regions();
-    
-    // 64ビット整数演算テスト
-    uint64_t test64_a = 0xFFFFFFFFFFFFFFFFULL;
-    uint64_t test64_b = 1;
-    uint64_t result64 = test64_a + test64_b;
-    
-    print("64-bit integer arithmetic test: ");
-    if (result64 == 0) {
-        print("PASSED!\r\n");
-    } else {
-        print("FAILED!\r\n");
-    }
-    
-    // 64ビット乗算テスト
-    uint64_t mult_a = 0x100000000ULL;
-    uint64_t mult_b = 0x100000000ULL;
-    uint64_t mult_result = mult_a * mult_b;
-    
-    print("64-bit multiplication test: ");
-    if (mult_result == 0) { // 64-bit overflow to 0
-        print("PASSED!\r\n");
-    } else {
-        print("FAILED!\r\n");
-    }
-    
-    // 大きな数値テスト
-    uint64_t large_num = 0x123456789ABCDEF0ULL;
-    print("64-bit large number test: ");
-    if (large_num > 0xFFFFFFFFULL) {
-        print("PASSED!\r\n");
-    } else {
-        print("FAILED!\r\n");
-    }
-    
-    print("=== Long Mode Transition Complete! ===\r\n");
-    print("Kernel is now running in 64-bit long mode environment\r\n");
-    print("C code execution from 64-bit context confirmed!\r\n");
-    
-    /* IDT機能テスト */
-    print("\r\n=== IDT Exception Handling Test ===\r\n");
-    print("Testing breakpoint exception (INT3)...\r\n");
-    
-    // ブレークポイント例外をテスト（非致命的）
-    asm volatile ("int3");  // Breakpoint例外を発生
-    
-    print("Breakpoint exception handling complete!\r\n");
-    print("IDT is working correctly!\r\n");
+    print("[OK]   Memory\r\n");
 
-    // 無限ループ
-    for(;;);
+    /* PIC初期化 (IRQ0-7: INT32-39, IRQ8-15: INT40-47) */
+    print("[INIT] PIC (8259A)...\r\n");
+    pic_init();
+    print("[OK]   PIC\r\n");
+
+    /* PIT初期化 (100Hz) */
+    print("[INIT] PIT timer (100Hz)...\r\n");
+    timer_init(TIMER_HZ);
+    pic_unmask_irq(IRQ_TIMER);   /* IRQ0 (タイマー) のみ有効化 */
+    print("[OK]   PIT\r\n");
+
+    /* 割り込み有効化 */
+    print("[INIT] Enabling interrupts...\r\n");
+    asm volatile ("sti");
+    print("[OK]   Interrupts enabled\r\n");
+
+    /* タイマー動作確認 (5秒間、1秒ごとに報告) */
+    print("\r\n=== Timer test (5 seconds) ===\r\n");
+
+    uint64_t last_report = 0;
+    uint32_t seconds = 0;
+
+    while (seconds < 5) {
+        uint64_t ticks = timer_get_ticks();
+
+        if (ticks - last_report >= (uint64_t)TIMER_HZ) {
+            seconds++;
+            last_report = ticks;
+
+            /* 秒数を表示 */
+            char buf[4];
+            buf[0] = '0' + seconds;
+            buf[1] = 's';
+            buf[2] = ' ';
+            buf[3] = '\0';
+            print("[TICK] ");
+            print(buf);
+
+            /* tick数を16進で表示 */
+            char hex[19];
+            hex[0] = '(';
+            hex[1] = 't';
+            hex[2] = 'i';
+            hex[3] = 'c';
+            hex[4] = 'k';
+            hex[5] = 's';
+            hex[6] = '=';
+            for (int i = 7; i < 15; i++) {
+                int nibble = (ticks >> ((14 - i) * 4)) & 0xF;
+                hex[i] = nibble < 10 ? '0' + nibble : 'A' + nibble - 10;
+            }
+            hex[15] = ')';
+            hex[16] = '\r';
+            hex[17] = '\n';
+            hex[18] = '\0';
+            print(hex);
+        }
+
+        asm volatile ("hlt");  /* 次の割り込みまで待機 */
+    }
+
+    print("\r\n=== Timer test PASSED! ===\r\n");
+    print("PIC + PIT working correctly.\r\n");
+    print("\r\nKernel idle loop.\r\n");
+
+    /* アイドルループ */
+    for (;;) {
+        asm volatile ("hlt");
+    }
 }
