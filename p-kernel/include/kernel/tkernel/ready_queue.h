@@ -54,7 +54,7 @@ IMPORT RDYQUE	knl_ready_queue;
 /*
  * Ready queue initialization
  */
-void knl_ready_queue_initialize( RDYQUE *rq )
+static inline void knl_ready_queue_initialize( RDYQUE *rq )
 {
 	INT	i;
 
@@ -70,7 +70,7 @@ void knl_ready_queue_initialize( RDYQUE *rq )
 /*
  * Return the highest priority task in ready queue
  */
-TCB* knl_ready_queue_top( RDYQUE *rq )
+static inline TCB* knl_ready_queue_top( RDYQUE *rq )
 {
 	/* If there is a task at kernel lock, that is the highest priority task */
 	if ( rq->klocktsk != NULL ) {
@@ -83,7 +83,7 @@ TCB* knl_ready_queue_top( RDYQUE *rq )
 /*
  * Return the priority of the highest priority task in the ready queue
  */
-INT knl_ready_queue_top_priority( const RDYQUE *rq )
+static inline INT knl_ready_queue_top_priority( const RDYQUE *rq )
 {
 	return rq->top_priority;
 }
@@ -95,7 +95,7 @@ INT knl_ready_queue_top_priority( const RDYQUE *rq )
  *	update 'top_priority' if necessary. When updating 'top_priority,' 
  *	return TRUE, otherwise FALSE.
  */
-BOOL knl_ready_queue_insert( RDYQUE *rq, TCB *tcb )
+static inline BOOL knl_ready_queue_insert( RDYQUE *rq, TCB *tcb )
 {
 	INT	priority = tcb->priority;
 
@@ -116,7 +116,7 @@ BOOL knl_ready_queue_insert( RDYQUE *rq, TCB *tcb )
 /*
  * Insert task at head in ready queue 
  */
-void knl_ready_queue_insert_top( RDYQUE *rq, TCB *tcb )
+static inline void knl_ready_queue_insert_top( RDYQUE *rq, TCB *tcb )
 {
 	INT	priority = tcb->priority;
 
@@ -140,7 +140,7 @@ void knl_ready_queue_insert_top( RDYQUE *rq, TCB *tcb )
  *	priority. In such case, use the bitmap area to search the second
  *	highest priority task.
  */
-void knl_ready_queue_delete( RDYQUE *rq, TCB *tcb )
+static inline void knl_ready_queue_delete( RDYQUE *rq, TCB *tcb )
 {
 	INT	priority = tcb->priority;
 	INT	i;
@@ -176,7 +176,7 @@ void knl_ready_queue_delete( RDYQUE *rq, TCB *tcb )
  * Move the task, whose ready queue priority is 'priority', at head of
  * queue to the end of queue. Do nothing, if the queue is empty.
  */
-void knl_ready_queue_rotate( RDYQUE *rq, INT priority )
+static inline void knl_ready_queue_rotate( RDYQUE *rq, INT priority )
 {
 	QUEUE	*tskque = &rq->tskque[priority];
 	TCB	*tcb;
@@ -190,7 +190,7 @@ void knl_ready_queue_rotate( RDYQUE *rq, INT priority )
 /*
  * Put 'tcb' to the end of ready queue. 
  */
-TCB* knl_ready_queue_move_last( RDYQUE *rq, TCB *tcb )
+static inline TCB* knl_ready_queue_move_last( RDYQUE *rq, TCB *tcb )
 {
 	QUEUE	*tskque = &rq->tskque[tcb->priority];
 

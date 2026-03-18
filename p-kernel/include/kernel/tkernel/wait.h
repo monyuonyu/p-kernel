@@ -19,6 +19,7 @@
 #ifndef _WAIT_
 #define _WAIT_
 
+#include <stddef.h>
 #include <queue.h>
 #include "timer.h"
 #include "task.h"
@@ -46,7 +47,7 @@ IMPORT void knl_wait_release_tmout( TCB *tcb );
  *	Remove the task from the timer queue and the wait queue.
  *	Do not update the task state.
  */
-void knl_wait_cancel( TCB *tcb )
+static inline void knl_wait_cancel( TCB *tcb )
 {
 	knl_timer_delete(&tcb->wtmeb);
 	QueRemove(&tcb->tskque);
@@ -75,7 +76,7 @@ IMPORT ID knl_wait_tskid( QUEUE *wait_queue );
 /*
  * Connect the task to the prioritized wait queue.
  */
-void knl_queue_insert_tpri( TCB *tcb, QUEUE *queue )
+static inline void knl_queue_insert_tpri( TCB *tcb, QUEUE *queue )
 {
 	QUEUE *q;
 	QUEUE *start, *end;
@@ -140,7 +141,7 @@ IMPORT TCB* knl_gcb_top_of_wait_queue( GCB *gcb, TCB *tcb );
  * connect to the ready queue.
  * Call when the task is in the wait state (including double wait).
  */
-void knl_make_non_wait( TCB *tcb )
+static inline void knl_make_non_wait( TCB *tcb )
 {
 	if ( tcb->state == TS_WAIT ) {
 		knl_make_ready(tcb);
@@ -152,7 +153,7 @@ void knl_make_non_wait( TCB *tcb )
 /*
  * Release wait state of the task.
  */
-void knl_wait_release( TCB *tcb )
+static inline void knl_wait_release( TCB *tcb )
 {
 	knl_timer_delete(&tcb->wtmeb);
 	QueRemove(&tcb->tskque);

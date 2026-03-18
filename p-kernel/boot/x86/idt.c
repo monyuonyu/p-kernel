@@ -143,12 +143,18 @@ void exception_handler(uint64_t exception_num, uint64_t error_code) {
     }
 }
 
+/*
+ * x86_irq_handlers[] - T-Kernel IRQディスパッチテーブル
+ *   tkdev_init.c で設定される。NULLの場合は既定動作にフォールバック。
+ */
+void (*x86_irq_handlers[16])(void);
+
 /* 共通IRQディスパッチャ (isr.S の irq_common_stub から呼ばれる) */
 /* regparm(1): 第1引数を %eax/rax レジスタで渡す (i686でもレジスタ渡し) */
 void __attribute__((regparm(1))) irq_handler(uint32_t irq_num) {
-    /* IRQに対応するハンドラを呼び出す */
-    if (irq_num == IRQ_TIMER) {
-        timer_irq_handler();
+    /* T-Kernelハンドラが登録済みならそちらに委譲 */
+    if (irq_num < 16 && x86_irq_handlers[irq_num] != 0) {
+        x86_irq_handlers[irq_num]();
     }
 
     /* PICにEnd of Interruptを送信 */

@@ -40,4 +40,9 @@
 #include <cpudef.h>
 #endif
 
+#ifdef _APP_X86_
+#include <cpuattr.h>
+#include <cpudef.h>
+#endif
+
 #endif /* __TK_SYSCALL_COMMON_H__ */

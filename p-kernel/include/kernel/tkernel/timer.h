@@ -26,7 +26,7 @@
  */
 typedef	longlong	LSYSTIM;	/* SYSTIM int. expression */
 
-LSYSTIM knl_toLSYSTIM( CONST SYSTIM *time )
+static inline LSYSTIM knl_toLSYSTIM( CONST SYSTIM *time )
 {
 	LSYSTIM		ltime;
 
@@ -35,7 +35,7 @@ LSYSTIM knl_toLSYSTIM( CONST SYSTIM *time )
 	return ltime;
 }
 
-SYSTIM knl_toSYSTIM( LSYSTIM ltime )
+static inline SYSTIM knl_toSYSTIM( LSYSTIM ltime )
 {
 	SYSTIM		time;
 
@@ -86,7 +86,7 @@ IMPORT void knl_timer_insert_abs( TMEB *evt, LSYSTIM time, CBACK cback, void *ar
 /*
  * Delete from timer queue
  */
-void knl_timer_delete( TMEB *event )
+static inline void knl_timer_delete( TMEB *event )
 {
 	QueRemove(&event->queue);
 }

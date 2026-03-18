@@ -99,24 +99,23 @@ EXPORT ER knl_task_initialize( void )
 	}
 
 	/* タスク実行制御情報の初期化 */
-	knl_ctxtsk = knl_schedtsk = NULL;  /* 実行中/次実行タスクをNULLに */
-	knl_ready_queue_initialize(&knl_ready_queue);  /* 実行可能キュー初期化 */
-	knl_dispatch_disabled = DDS_ENABLE;  /* ディスパッチ許可状態に設定 */
+	knl_ctxtsk = knl_schedtsk = NULL;
+	knl_ready_queue_initialize(&knl_ready_queue);
+	knl_dispatch_disabled = DDS_ENABLE;
 
 	/* 全TCBを未使用キューに登録 */
-	QueInit(&knl_free_tcb);  /* 未使用キュー初期化 */
+	QueInit(&knl_free_tcb);
 	for ( tcb = knl_tcb_table, i = 0; i < NUM_TSKID; tcb++, i++ ) {
-		tskid = ID_TSK(i);  /* タスクID生成 */
-		tcb->tskid = tskid;  /* TCBにID設定 */
-		tcb->state = TS_NONEXIST;  /* 状態を未存在に設定 */
+		tskid = ID_TSK(i);
+		tcb->tskid = tskid;
+		tcb->state = TS_NONEXIST;
 #if CFN_MAX_PORID > 0
-		tcb->wrdvno = tskid;  /* 待ち合わせ番号設定 */
+		tcb->wrdvno = tskid;
 #endif
-
-		QueInsert(&tcb->tskque, &knl_free_tcb);  /* 未使用キューに追加 */
+		QueInsert(&tcb->tskque, &knl_free_tcb);
 	}
 
-	return E_OK;  /* 正常終了 */
+	return E_OK;
 }
 #endif /* USE_FUNC_TASK_INITIALIZE */
 

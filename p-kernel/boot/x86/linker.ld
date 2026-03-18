@@ -23,6 +23,12 @@ SECTIONS {
         *(.bss)
     }
 
+    .noinit (NOLOAD) : {
+        *(.noinit)
+    }
+
+    _kernel_end = ALIGN(4096);  /* ページ境界に丸めたカーネル終端アドレス */
+
     /DISCARD/ : {
         *(.comment)
     }

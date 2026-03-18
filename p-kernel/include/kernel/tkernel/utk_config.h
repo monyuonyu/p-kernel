@@ -19,7 +19,7 @@
 #ifndef _UTK_CONFIG_H_
 #define _UTK_CONFIG_H_
 
-#include "config.h"
+#include <config.h>
 
 // #ifdef _APP_H8S2212_
 // #include "utk_config_depend.h"
@@ -35,6 +35,10 @@
 
 #ifdef _APP_RL78G13_R5F100ADASP_
 #include "utk_config_depend.h"
+#endif
+
+#ifdef _APP_X86_
+#include <utk_config_depend.h>
 #endif
 
 #include "utk_config_func.h"

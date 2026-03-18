@@ -36,4 +36,8 @@
 #include <sysinfo_depend.h>
 #endif
 
+#ifdef _APP_X86_
+#include <sysinfo_depend.h>
+#endif
+
 #endif /* __SYS_SYSINFO_COMMON_H__ */

@@ -36,4 +36,8 @@
 #include <profile_depend.h>
 #endif
 
+#ifdef _APP_X86_
+#include <profile_depend.h>
+#endif
+
 #endif /* __SYS_PROFILE_COMMON_H__ */

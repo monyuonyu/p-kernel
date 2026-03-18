@@ -52,7 +52,7 @@ typedef enum {
 /*
  * If the task is alive ( except NON-EXISTENT,DORMANT ), return TRUE.
  */
-BOOL knl_task_alive( TSTAT state )
+static inline BOOL knl_task_alive( TSTAT state )
 {
 	return ( (state & (TS_READY|TS_WAIT|TS_SUSPEND)) != 0 );
 }
@@ -225,7 +225,7 @@ IMPORT void knl_rotate_ready_queue_run( void );
  * Reselect task to execute
  *	Set 'schedtsk' to the head task at the ready queue.
  */
-void knl_reschedule( void )
+static inline void knl_reschedule( void )
 {
 	TCB	*toptsk;
 

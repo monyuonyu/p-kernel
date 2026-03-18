@@ -37,9 +37,9 @@
 /*
  * Kernel configuration file
  */
-#include "config.h"
-#include "cpu_conf.h"
-#include "tkdev_conf.h"
+#include <config.h>
+#include <cpu_conf.h>
+#include <tkdev_conf.h>
 
 #ifndef __tcb__
 #define __tcb__
@@ -55,14 +55,14 @@ typedef struct objlock {
 	QUEUE		wtskq;		/* Wait task queue */
 } OBJLOCK;
 
-void knl_InitOBJLOCK( OBJLOCK *loc )
+static inline void knl_InitOBJLOCK( OBJLOCK *loc )
 {
 	loc->wtskq.next = NULL;
 }
 IMPORT void knl_LockOBJ( OBJLOCK* );
 IMPORT void knl_UnlockOBJ( OBJLOCK* );
 
-BOOL knl_isLockedOBJ( OBJLOCK *loc )
+static inline BOOL knl_isLockedOBJ( OBJLOCK *loc )
 {
 	return ( loc->wtskq.next != NULL )? TRUE: FALSE;
 }
@@ -70,8 +70,9 @@ BOOL knl_isLockedOBJ( OBJLOCK *loc )
 
 /*
  * CPU-dependent include file
+ * Use <> to allow arch-specific override via -I search path
  */
-#include "cpu_status.h"
+#include <cpu_status.h>
 
 /*
  * System initialization (each module)

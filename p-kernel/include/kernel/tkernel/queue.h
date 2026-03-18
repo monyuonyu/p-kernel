@@ -37,7 +37,7 @@ typedef struct queue {
 /*
  * Queue initialization 
  */
-void QueInit( QUEUE *que )
+static inline void QueInit( QUEUE *que )
 {
 	que->next = (struct queue *)que;
 	que->prev = (struct queue *)que;
@@ -46,7 +46,7 @@ void QueInit( QUEUE *que )
 /*
  * TRUE if the queue is empty 
  */
-BOOL isQueEmpty( QUEUE *que )
+static inline BOOL isQueEmpty( QUEUE *que )
 {
 	return ( que->next == que )? TRUE: FALSE;
 }
@@ -55,7 +55,7 @@ BOOL isQueEmpty( QUEUE *que )
  * Insert in queue 
  *	Inserts entry directly prior to que 
  */
-void QueInsert( QUEUE *entry, QUEUE *que )
+static inline void QueInsert( QUEUE *entry, QUEUE *que )
 {
 	entry->prev = (struct queue*) que->prev;
 	entry->next = que;
@@ -68,7 +68,7 @@ void QueInsert( QUEUE *entry, QUEUE *que )
  *	Deletes entry from queue 
  *	No action is performed if entry is empty. 
  */
-void QueRemove( QUEUE *entry )
+static inline void QueRemove( QUEUE *entry )
 {
 	if ( entry->next != entry ) {
 		entry->prev->next = (struct queue*) entry->next;
@@ -82,7 +82,7 @@ void QueRemove( QUEUE *entry )
  *	and returns the deleted entry.
  *	Returns NULL if que is empty.
  */
-QUEUE* QueRemoveNext( QUEUE *que )
+static inline QUEUE* QueRemoveNext( QUEUE *que )
 {
 	QUEUE	*entry;
 

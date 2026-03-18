@@ -21,7 +21,7 @@
 
 #include <syslib.h>
 #include <sysdef.h>
-#include "cpu_insn.h"
+#include <cpu_insn.h>
 
 /*
  * Start/End critical section

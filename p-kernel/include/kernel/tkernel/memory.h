@@ -53,7 +53,7 @@ typedef struct {
 /*
  * Adjusting the size which can be allocated 
  */
-W roundSize( W sz )
+static inline W roundSize( W sz )
 {
 	if ( sz < (W)MIN_FRAGMENT ) {
 		sz = (W)MIN_FRAGMENT;

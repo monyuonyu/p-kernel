@@ -5,7 +5,13 @@
 #include "pic.h"
 #include "timer.h"
 
-/* I/Oポートアクセス (64ビットロングモード対応) */
+/* T-Kernel kernel main (kernel/common/tkstart.c) */
+extern void knl_t_kernel_main(void *inittask);
+
+/* Initial task parameters (arch/x86/inittask_def.c) */
+extern const void *knl_c_init_task;
+
+/* I/Oポートアクセス */
 static inline void outb(uint16_t port, uint8_t val) {
     asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
@@ -19,18 +25,17 @@ static inline uint8_t inb(uint16_t port) {
 /* シリアルポート (COM1) */
 #define COM1 0x3F8
 
-/* シリアルポート初期化 */
 void serial_init() {
-    outb(COM1 + 1, 0x00);    // Disable interrupts
-    outb(COM1 + 3, 0x80);    // Enable DLAB
-    outb(COM1 + 0, 0x03);    // Divisor = 3 (lo byte)
-    outb(COM1 + 1, 0x00);    //           (hi byte)
-    outb(COM1 + 3, 0x03);    // 8 bits, no parity, one stop bit
-    outb(COM1 + 2, 0xC7);    // Enable FIFO
+    outb(COM1 + 1, 0x00);
+    outb(COM1 + 3, 0x80);
+    outb(COM1 + 0, 0x03);
+    outb(COM1 + 1, 0x00);
+    outb(COM1 + 3, 0x03);
+    outb(COM1 + 2, 0xC7);
 }
 
 void serial_putc(char c) {
-    while ((inb(COM1 + 5) & 0x20) == 0); // 送信バッファが空になるまで待つ
+    while ((inb(COM1 + 5) & 0x20) == 0);
     outb(COM1, c);
 }
 
@@ -40,7 +45,7 @@ void print(const char *str) {
     }
 }
 
-/* 完全64ビットロングモード移行カーネル */
+/* p-kernel x86 メインエントリ */
 void main() {
     serial_init();
     print("=== p-kernel x86 boot ===\r\n");
@@ -54,75 +59,22 @@ void main() {
     /* 物理メモリ初期化 */
     print("[INIT] Memory...\r\n");
     memory_init();
-    memory_dump_regions();
     print("[OK]   Memory\r\n");
 
-    /* PIC初期化 (IRQ0-7: INT32-39, IRQ8-15: INT40-47) */
+    /* PIC初期化 (全IRQマスク - T-Kernelが必要なものを開ける) */
     print("[INIT] PIC (8259A)...\r\n");
     pic_init();
+    /* 全IRQをマスク: T-Kernel の tkdev_initialize() がアンマスクする */
+    outb(0x21, 0xFF);
+    outb(0xA1, 0xFF);
     print("[OK]   PIC\r\n");
 
-    /* PIT初期化 (100Hz) */
-    print("[INIT] PIT timer (100Hz)...\r\n");
-    timer_init(TIMER_HZ);
-    pic_unmask_irq(IRQ_TIMER);   /* IRQ0 (タイマー) のみ有効化 */
-    print("[OK]   PIT\r\n");
+    /* T-Kernel 起動 */
+    print("[BOOT] Starting T-Kernel...\r\n");
+    knl_t_kernel_main((void *)&knl_c_init_task);
 
-    /* 割り込み有効化 */
-    print("[INIT] Enabling interrupts...\r\n");
-    asm volatile ("sti");
-    print("[OK]   Interrupts enabled\r\n");
-
-    /* タイマー動作確認 (5秒間、1秒ごとに報告) */
-    print("\r\n=== Timer test (5 seconds) ===\r\n");
-
-    uint64_t last_report = 0;
-    uint32_t seconds = 0;
-
-    while (seconds < 5) {
-        uint64_t ticks = timer_get_ticks();
-
-        if (ticks - last_report >= (uint64_t)TIMER_HZ) {
-            seconds++;
-            last_report = ticks;
-
-            /* 秒数を表示 */
-            char buf[4];
-            buf[0] = '0' + seconds;
-            buf[1] = 's';
-            buf[2] = ' ';
-            buf[3] = '\0';
-            print("[TICK] ");
-            print(buf);
-
-            /* tick数を16進で表示 */
-            char hex[19];
-            hex[0] = '(';
-            hex[1] = 't';
-            hex[2] = 'i';
-            hex[3] = 'c';
-            hex[4] = 'k';
-            hex[5] = 's';
-            hex[6] = '=';
-            for (int i = 7; i < 15; i++) {
-                int nibble = (ticks >> ((14 - i) * 4)) & 0xF;
-                hex[i] = nibble < 10 ? '0' + nibble : 'A' + nibble - 10;
-            }
-            hex[15] = ')';
-            hex[16] = '\r';
-            hex[17] = '\n';
-            hex[18] = '\0';
-            print(hex);
-        }
-
-        asm volatile ("hlt");  /* 次の割り込みまで待機 */
-    }
-
-    print("\r\n=== Timer test PASSED! ===\r\n");
-    print("PIC + PIT working correctly.\r\n");
-    print("\r\nKernel idle loop.\r\n");
-
-    /* アイドルループ */
+    /* ここには到達しない */
+    print("[ERROR] T-Kernel returned!\r\n");
     for (;;) {
         asm volatile ("hlt");
     }

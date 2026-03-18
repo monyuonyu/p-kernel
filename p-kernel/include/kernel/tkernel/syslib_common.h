@@ -39,4 +39,8 @@
 #include <syslib_depend.h>
 #endif
 
+#ifdef _APP_X86_
+#include <syslib_depend.h>
+#endif
+
 #endif /* __TK_SYSLIB_COMMON_H__ */
