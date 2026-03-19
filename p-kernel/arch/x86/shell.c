@@ -82,8 +82,10 @@ static void cmd_help(void)
     sout("  ps     - list tasks\r\n");
     sout("  net    - NIC status (RTL8139 + stats)\r\n");
     sout("  arp    - ARP cache + send request for gateway\r\n");
-    sout("  ping <IP> - send ICMP echo request\r\n");
-    sout("  clear  - clear screen\r\n");
+    sout("  ping <IP>        - send ICMP echo request\r\n");
+    sout("  dns <host>       - DNS A-record lookup\r\n");
+    sout("  udp <IP> <p> <m> - send UDP datagram\r\n");
+    sout("  clear            - clear screen\r\n");
 }
 
 static void cmd_ver(void)
@@ -188,8 +190,11 @@ static void cmd_net(void)
     sout("  ICMP : "); sout_dec(net_rx_icmp_req);  sout(" req rx / ");
                        sout_dec(net_rx_icmp_rep);  sout(" rep rx / ");
                        sout_dec(net_tx_icmp);      sout(" tx\r\n");
+    sout("  UDP  : "); sout_dec(net_rx_udp);       sout(" rx / ");
+                       sout_dec(net_tx_udp);       sout(" tx\r\n");
     sout("  My IP: "); sout(ip_str(NET_MY_IP));    sout("\r\n");
     sout("  GW   : "); sout(ip_str(NET_GW_IP));    sout("\r\n");
+    sout("  DNS  : "); sout(ip_str(NET_DNS_IP));   sout("\r\n");
 }
 
 /* Parse "A.B.C.D" → IP4 value.  Returns 1 on success. */
@@ -268,14 +273,89 @@ static void cmd_arp(void)
     }
 }
 
+IMPORT INT dns_query(const char *hostname, UW *out_ip);
+IMPORT INT udp_send(UW dst_ip, UH src_port, UH dst_port,
+                    const UB *data, UH data_len);
+
+static void cmd_dns(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: dns <hostname>\r\n");
+        return;
+    }
+
+    if (!rtl_initialized) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("NIC not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    sout("Resolving '"); sout(arg); sout("' ...\r\n");
+
+    UW ip;
+    INT r = dns_query(arg, &ip);
+    if (r == 0) {
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        sout(arg); sout(" -> "); sout(ip_str(ip)); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("DNS failed (timeout or NXDOMAIN)\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_udp(const char *arg)
+{
+    /* udp <ip> <port> <message> */
+    while (*arg == ' ') arg++;
+
+    UW dst;
+    if (!parse_ip(arg, &dst)) {
+        sout("Usage: udp <ip> <port> <message>\r\n");
+        return;
+    }
+    while (*arg && *arg != ' ') arg++;
+    while (*arg == ' ') arg++;
+
+    UW port = 0;
+    while (*arg >= '0' && *arg <= '9') { port = port * 10 + (UW)(*arg++ - '0'); }
+    while (*arg == ' ') arg++;
+
+    if (!*arg || port == 0 || port > 65535) {
+        sout("Usage: udp <ip> <port> <message>\r\n");
+        return;
+    }
+
+    INT mlen = 0;
+    while (arg[mlen]) mlen++;
+
+    sout("UDP -> "); sout(ip_str(dst)); sout(":"); sout_dec(port); sout("\r\n");
+
+    INT r = udp_send(dst, 5301, (UH)port, (const UB *)arg, (UH)mlen);
+    if (r < 0) {
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        sout("ARP not resolved — retry after ARP completes\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        sout("Sent "); sout_dec((UW)mlen); sout(" bytes\r\n");
+    }
+}
+
 static void execute(const char *cmd)
 {
     while (*cmd == ' ') cmd++;      /* strip leading spaces */
     if (*cmd == '\0') return;
 
-    /* Commands that take arguments */
+    /* Commands that take arguments (prefix match) */
     if (cmd[0]=='p' && cmd[1]=='i' && cmd[2]=='n' && cmd[3]=='g')
         { cmd_ping(cmd + 4); return; }
+    if (cmd[0]=='d' && cmd[1]=='n' && cmd[2]=='s')
+        { cmd_dns(cmd + 3); return; }
+    if (cmd[0]=='u' && cmd[1]=='d' && cmd[2]=='p')
+        { cmd_udp(cmd + 3); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "ver"))    cmd_ver();

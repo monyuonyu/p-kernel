@@ -24,6 +24,8 @@ volatile UW net_rx_icmp_req = 0;
 volatile UW net_rx_icmp_rep = 0;
 volatile UW net_tx_arp      = 0;
 volatile UW net_tx_icmp     = 0;
+volatile UW net_rx_udp      = 0;
+volatile UW net_tx_udp      = 0;
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -292,6 +294,198 @@ static INT ip_send(UW dst_ip, UB proto, const UB *payload, UH plen)
 }
 
 /* ------------------------------------------------------------------ */
+/* UDP                                                                 */
+/* ------------------------------------------------------------------ */
+
+#define UDP_MAX_SOCKS  8
+
+static struct {
+    UH          port;
+    udp_recv_fn fn;
+    UB          active;
+} udp_socks[UDP_MAX_SOCKS];
+
+INT udp_bind(UH port, udp_recv_fn fn)
+{
+    for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
+        if (!udp_socks[i].active) {
+            udp_socks[i].port   = port;
+            udp_socks[i].fn     = fn;
+            udp_socks[i].active = 1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void udp_input(const IP_HDR *ip, const UB *seg, INT seg_len)
+{
+    if (seg_len < (INT)sizeof(UDP_HDR)) return;
+
+    const UDP_HDR *udp   = (const UDP_HDR *)seg;
+    UH udp_len  = ntohs(udp->length);
+    if (udp_len < 8 || (INT)udp_len > seg_len) return;
+
+    UH dst_port = ntohs(udp->dst_port);
+    UH src_port = ntohs(udp->src_port);
+    const UB *data   = seg + sizeof(UDP_HDR);
+    UH data_len      = (UH)(udp_len - 8);
+
+    net_rx_udp++;
+
+    for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
+        if (udp_socks[i].active && udp_socks[i].port == dst_port) {
+            udp_socks[i].fn(ip->src, src_port, data, data_len);
+            return;
+        }
+    }
+}
+
+INT udp_send(UW dst_ip, UH src_port, UH dst_port,
+             const UB *data, UH data_len)
+{
+    if (data_len > 508) return -1;
+
+    static UB udp_buf[516];
+    UDP_HDR *udp = (UDP_HDR *)udp_buf;
+    UH udp_len   = (UH)(8 + data_len);
+
+    udp->src_port = htons(src_port);
+    udp->dst_port = htons(dst_port);
+    udp->length   = htons(udp_len);
+    udp->checksum = 0;              /* optional for IPv4 — 0 = disabled */
+
+    for (UH i = 0; i < data_len; i++) udp_buf[8 + i] = data[i];
+
+    INT r = ip_send(dst_ip, IP_PROTO_UDP, udp_buf, udp_len);
+    if (r == 0) net_tx_udp++;
+    return r;
+}
+
+/* ------------------------------------------------------------------ */
+/* DNS client (A-record lookup via NET_DNS_IP:53)                     */
+/* ------------------------------------------------------------------ */
+
+#define DNS_PORT     53
+#define DNS_SRC_PORT 5300
+
+static ID  dns_sem    = 0;
+static UW  dns_result = 0;
+static UB  dns_ok     = 0;
+
+/*
+ * Encode "google.com" → \x06google\x03com\x00
+ * Returns bytes written, or -1 on error.
+ */
+static INT dns_encode_name(const char *name, UB *out, INT maxlen)
+{
+    INT pos = 0;
+    while (*name) {
+        const char *dot = name;
+        while (*dot && *dot != '.') dot++;
+        INT n = (INT)(dot - name);
+        if (n == 0 || n > 63 || pos + 1 + n + 1 >= maxlen) return -1;
+        out[pos++] = (UB)n;
+        for (INT i = 0; i < n; i++) out[pos++] = (UB)name[i];
+        name = dot;
+        if (*name == '.') name++;
+    }
+    out[pos++] = 0;     /* root label */
+    return pos;
+}
+
+/*
+ * Skip a DNS name field (labels or compressed pointer).
+ * Returns new position, or -1 on error.
+ */
+static INT dns_skip_name(const UB *d, INT pos, INT len)
+{
+    while (pos < len) {
+        UB b = d[pos];
+        if (b == 0)              return pos + 1;
+        if ((b & 0xC0) == 0xC0) return pos + 2;   /* compressed pointer */
+        pos += 1 + b;
+    }
+    return -1;
+}
+
+/* UDP callback: receives DNS response on port DNS_SRC_PORT */
+static void dns_recv_cb(UW src_ip, UH src_port,
+                        const UB *data, UH dlen)
+{
+    (void)src_ip; (void)src_port;
+
+    if (dlen >= 12) {
+        UH flags   = (UH)((data[2] << 8) | data[3]);
+        UH ancount = (UH)((data[6] << 8) | data[7]);
+
+        /* QR=1 (response) and RCODE=0 (no error) */
+        if ((flags & 0x8000) && !(flags & 0x000F) && ancount > 0) {
+            INT pos = dns_skip_name(data, 12, dlen); /* skip QNAME */
+            if (pos >= 0 && pos + 4 <= dlen) {
+                pos += 4;   /* skip QTYPE + QCLASS */
+
+                for (UH i = 0; i < ancount && pos < dlen; i++) {
+                    pos = dns_skip_name(data, pos, dlen);
+                    if (pos < 0 || pos + 10 > dlen) break;
+                    UH rtype = (UH)((data[pos]  << 8) | data[pos+1]);
+                    UH rdlen = (UH)((data[pos+8] << 8) | data[pos+9]);
+                    pos += 10;
+                    if (rtype == 1 && rdlen == 4 && pos + 4 <= dlen) {
+                        /* A record: wire bytes [a][b][c][d] */
+                        dns_result = IP4(data[pos], data[pos+1],
+                                         data[pos+2], data[pos+3]);
+                        dns_ok = 1;
+                        break;
+                    }
+                    pos += rdlen;
+                }
+            }
+        }
+    }
+    tk_sig_sem(dns_sem, 1);
+}
+
+INT dns_query(const char *hostname, UW *out_ip)
+{
+    if (!dns_sem) return -1;
+
+    static UB qbuf[256];
+    /* DNS header */
+    qbuf[0]=0x12; qbuf[1]=0x34;    /* ID */
+    qbuf[2]=0x01; qbuf[3]=0x00;    /* Flags: QR=0, RD=1 */
+    qbuf[4]=0x00; qbuf[5]=0x01;    /* QDCOUNT=1 */
+    qbuf[6]=0x00; qbuf[7]=0x00;    /* ANCOUNT=0 */
+    qbuf[8]=0x00; qbuf[9]=0x00;    /* NSCOUNT=0 */
+    qbuf[10]=0x00; qbuf[11]=0x00;  /* ARCOUNT=0 */
+
+    INT name_len = dns_encode_name(hostname, qbuf + 12, (INT)sizeof(qbuf) - 16);
+    if (name_len < 0) return -1;
+    INT pos = 12 + name_len;
+    qbuf[pos++] = 0x00; qbuf[pos++] = 0x01;  /* QTYPE  = A  */
+    qbuf[pos++] = 0x00; qbuf[pos++] = 0x01;  /* QCLASS = IN */
+
+    dns_ok     = 0;
+    dns_result = 0;
+
+    /* Retry up to 5× if ARP for DNS server not yet resolved */
+    INT r = -1;
+    for (INT retry = 0; retry < 5; retry++) {
+        r = udp_send(NET_DNS_IP, DNS_SRC_PORT, DNS_PORT, qbuf, (UH)pos);
+        if (r == 0) break;
+        tk_dly_tsk(200);    /* yield so net_task can process ARP reply */
+    }
+    if (r < 0) return r;
+
+    /* Block up to 3 s for response */
+    ER er = tk_wai_sem(dns_sem, 1, 3000);
+    if (er != E_OK) return -1;
+
+    if (dns_ok) { *out_ip = dns_result; return 0; }
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
 /* ICMP                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -430,8 +624,10 @@ static void ip_input(const UB *frame, INT len)
     INT payload_len = (INT)ip_total - 20;
     if (payload_len <= 0 || payload_off + payload_len > len) return;
 
-    if (ip->proto == IP_PROTO_ICMP) {
+    if      (ip->proto == IP_PROTO_ICMP) {
         icmp_input(frame, ip, frame + payload_off, payload_len);
+    } else if (ip->proto == IP_PROTO_UDP) {
+        udp_input(ip, frame + payload_off, payload_len);
     }
 }
 
@@ -459,13 +655,24 @@ void netstack_start(void)
     /* Get our MAC from the NIC */
     rtl8139_get_mac(my_mac);
 
+    /* Create DNS semaphore and register receive port */
+    {
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                      .isemcnt = 0, .maxsem = 1 };
+        dns_sem = tk_cre_sem(&cs);
+    }
+    udp_bind(DNS_SRC_PORT, dns_recv_cb);
+
     /* Send ARP request to discover gateway (10.0.2.2).
      * QEMU's virtual switch will respond with the gateway's MAC,
      * populating the ARP table before the user sends any pings. */
     ns_puts("[net] Sending ARP request for gateway ");
     ns_puts(ip_str(NET_GW_IP));
+    ns_puts(" and DNS ");
+    ns_puts(ip_str(NET_DNS_IP));
     ns_puts("\r\n");
     arp_request(NET_GW_IP);
+    arp_request(NET_DNS_IP);
 }
 
 /* ------------------------------------------------------------------ */

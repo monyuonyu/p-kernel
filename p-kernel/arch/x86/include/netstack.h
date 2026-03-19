@@ -1,10 +1,11 @@
 /*
  *  netstack.h (x86)
- *  Ethernet + ARP + IP + ICMP network stack for p-kernel
+ *  Ethernet + ARP + IP + ICMP + UDP + DNS stack for p-kernel
  *
  *  Network configuration (QEMU user networking):
  *    My IP  : 10.0.2.15
  *    Gateway: 10.0.2.2
+ *    DNS    : 10.0.2.3
  *    Netmask: 255.255.255.0
  */
 
@@ -25,6 +26,7 @@
 /* QEMU user-mode network defaults */
 #define NET_MY_IP    IP4(10,  0, 2, 15)
 #define NET_GW_IP    IP4(10,  0, 2,  2)
+#define NET_DNS_IP   IP4(10,  0, 2,  3)
 #define NET_NETMASK  IP4(255,255,255, 0)
 #define NET_BCAST    IP4(10,  0, 2,255)
 
@@ -92,6 +94,14 @@ typedef struct {
 #define ICMP_ECHO_REQ  8
 #define ICMP_ECHO_REP  0
 
+typedef struct {
+    UH  src_port;       /* htons */
+    UH  dst_port;       /* htons */
+    UH  length;         /* header + data, htons */
+    UH  checksum;       /* 0 = disabled (optional for IPv4) */
+    /* followed by data */
+} __attribute__((packed)) UDP_HDR;
+
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
@@ -114,9 +124,30 @@ INT arp_lookup(UW ip, UB mac_out[6]);
 /* Send ARP request for given IP */
 void arp_request(UW target_ip);
 
+/* UDP receive callback: called from net_task when a datagram arrives */
+typedef void (*udp_recv_fn)(UW src_ip, UH src_port, const UB *data, UH len);
+
+/* Bind a local UDP port to a callback. Returns 0 on success. */
+INT udp_bind(UH port, udp_recv_fn fn);
+
+/*
+ * Send a UDP datagram.
+ * Returns 0 on success, -1 if ARP not resolved (ARP request sent, retry).
+ */
+INT udp_send(UW dst_ip, UH src_port, UH dst_port, const UB *data, UH data_len);
+
+/*
+ * DNS A-record lookup.
+ * Sends a query to NET_DNS_IP:53 and blocks up to 3 s.
+ * Returns 0 and fills *out_ip on success, -1 on timeout/NXDOMAIN.
+ */
+INT dns_query(const char *hostname, UW *out_ip);
+
 /* Stats */
 extern volatile UW net_rx_arp;
 extern volatile UW net_rx_icmp_req;
 extern volatile UW net_rx_icmp_rep;
 extern volatile UW net_tx_arp;
 extern volatile UW net_tx_icmp;
+extern volatile UW net_rx_udp;
+extern volatile UW net_tx_udp;
