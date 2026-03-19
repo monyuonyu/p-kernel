@@ -53,7 +53,9 @@ ARCH_C_SRCS = \
     sio.c \
     vga.c \
     keyboard.c \
-    shell.c
+    shell.c \
+    pci.c \
+    rtl8139.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -146,17 +148,22 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 # -------------------------------------------------------------------
 # 実行ターゲット
 # -------------------------------------------------------------------
+NETDEV = -netdev user,id=n0 -device rtl8139,netdev=n0
+
 run: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
 
 run-headless: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(NETDEV)
+
+run-nonet: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
 
 run-log: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64
+	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64 $(NETDEV)
 
 debug: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
 
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
 run-32: $(TARGET)

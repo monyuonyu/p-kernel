@@ -12,6 +12,7 @@
 
 #include "vga.h"
 #include "keyboard.h"
+#include "rtl8139.h"
 #include "kernel.h"
 
 #define SHELL_LINE_MAX  128
@@ -78,6 +79,7 @@ static void cmd_help(void)
     sout("  ver    - kernel version info\r\n");
     sout("  mem    - memory layout\r\n");
     sout("  ps     - list tasks\r\n");
+    sout("  net    - NIC status (RTL8139)\r\n");
     sout("  clear  - clear screen\r\n");
 }
 
@@ -149,6 +151,37 @@ static INT str_eq(const char *a, const char *b)
     return *a == *b;
 }
 
+static void cmd_net(void)
+{
+    if (!rtl_initialized) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("RTL8139 not found. Launch QEMU with:\r\n");
+        sout("  -netdev user,id=n0 -device rtl8139,netdev=n0\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    UB mac[6];
+    rtl8139_get_mac(mac);
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("RTL8139 NIC status:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    sout("  MAC  : ");
+    for (INT i = 0; i < 6; i++) {
+        if (i) sout(":");
+        /* print hex byte */
+        const char *h = "0123456789ABCDEF";
+        char buf[3] = { h[mac[i] >> 4], h[mac[i] & 0xF], '\0' };
+        sout(buf);
+    }
+    sout("\r\n");
+
+    sout("  RX   : "); sout_dec(rtl_rx_count); sout(" packets\r\n");
+    sout("  TX   : "); sout_dec(rtl_tx_count); sout(" packets\r\n");
+}
+
 static void execute(const char *cmd)
 {
     while (*cmd == ' ') cmd++;      /* strip leading spaces */
@@ -158,6 +191,7 @@ static void execute(const char *cmd)
     else if (str_eq(cmd, "ver"))    cmd_ver();
     else if (str_eq(cmd, "mem"))    cmd_mem();
     else if (str_eq(cmd, "ps"))     cmd_ps();
+    else if (str_eq(cmd, "net"))    cmd_net();
     else if (str_eq(cmd, "clear"))  vga_clear();
     else {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);

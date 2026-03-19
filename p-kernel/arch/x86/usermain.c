@@ -1,56 +1,71 @@
 /*
  *  usermain.c (x86)
- *  p-kernel initial task: starts keyboard driver and interactive shell
+ *  p-kernel initial task
+ *  Starts: keyboard driver, shell task, RTL8139 NIC, net RX task
  */
 
 #include "kernel.h"
 #include "keyboard.h"
+#include "rtl8139.h"
 #include <tmonitor.h>
 
-/* Shell task entry point (defined in shell.c) */
 IMPORT void shell_task(INT stacd, void *exinf);
 
-#define SHELL_STACK_SIZE  8192  /* 8KB stack for shell */
-#define SHELL_PRIORITY    2     /* lower than initial task (1) */
+#define SHELL_PRIORITY   2
+#define SHELL_STACK      8192
+#define NET_PRIORITY     3
+#define NET_STACK        4096
+
+static ID create_sem(INT isemcnt, INT maxsem)
+{
+    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                  .isemcnt = isemcnt, .maxsem = maxsem };
+    return tk_cre_sem(&cs);
+}
+
+static ID create_task(FP fn, INT pri, INT stksz)
+{
+    T_CTSK ct = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                  .task = fn, .itskpri = pri, .stksz = stksz };
+    ID id = tk_cre_tsk(&ct);
+    if (id >= E_OK) tk_sta_tsk(id, 0);
+    return id;
+}
 
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
 
-    /* --- Semaphore for keyboard driver -------------------------------- */
-    T_CSEM csem = {
-        .exinf   = NULL,
-        .sematr  = TA_TFIFO,
-        .isemcnt = 0,
-        .maxsem  = 64,
-    };
-    ID kbd_sem = tk_cre_sem(&csem);
+    /* ---- Keyboard ------------------------------------------------- */
+    ID kbd_sem = create_sem(0, 64);
     if (kbd_sem < E_OK) {
-        tm_putstring((UB *)"[ERR] kbd semaphore create failed\r\n");
-        return 0;
+        tm_putstring((UB *)"[ERR] kbd sem\r\n"); return 0;
     }
-
-    /* --- Initialize keyboard driver ----------------------------------- */
     kbd_init(kbd_sem);
-    tm_putstring((UB *)"[OK]  Keyboard driver initialized (IRQ1)\r\n");
+    tm_putstring((UB *)"[OK]  Keyboard (IRQ1)\r\n");
 
-    /* --- Create and start shell task ---------------------------------- */
-    T_CTSK ctsk = {
-        .exinf   = NULL,
-        .tskatr  = TA_HLNG | TA_RNG0,
-        .task    = shell_task,
-        .itskpri = SHELL_PRIORITY,
-        .stksz   = SHELL_STACK_SIZE,
-    };
-    ID shell_id = tk_cre_tsk(&ctsk);
-    if (shell_id < E_OK) {
-        tm_putstring((UB *)"[ERR] shell task create failed\r\n");
-        return 0;
+    /* ---- Shell task ----------------------------------------------- */
+    if (create_task(shell_task, SHELL_PRIORITY, SHELL_STACK) < E_OK) {
+        tm_putstring((UB *)"[ERR] shell task\r\n"); return 0;
     }
-    tk_sta_tsk(shell_id, 0);
+    tm_putstring((UB *)"[OK]  Shell task\r\n");
 
-    tm_putstring((UB *)"[OK]  Shell task started\r\n");
+    /* ---- RTL8139 NIC ---------------------------------------------- */
+    ID net_sem = create_sem(0, 64);
+    if (net_sem < E_OK) {
+        tm_putstring((UB *)"[ERR] net sem\r\n"); return 0;
+    }
+    ER er = rtl8139_init(net_sem);
+    if (er != E_OK) {
+        tm_putstring((UB *)"[WARN] RTL8139 not found (add -device rtl8139)\r\n");
+    } else {
+        /* ---- Net RX task ------------------------------------------ */
+        if (create_task(net_task, NET_PRIORITY, NET_STACK) < E_OK) {
+            tm_putstring((UB *)"[ERR] net task\r\n");
+        } else {
+            tm_putstring((UB *)"[OK]  Net RX task\r\n");
+        }
+    }
 
-    /* Initial task can exit — shell task keeps running */
     return 0;
 }
