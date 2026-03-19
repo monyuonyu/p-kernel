@@ -50,7 +50,10 @@ ARCH_C_SRCS = \
     inittask_def.c \
     inittask_main.c \
     usermain.c \
-    sio.c
+    sio.c \
+    vga.c \
+    keyboard.c \
+    shell.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -144,13 +147,16 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 # 実行ターゲット
 # -------------------------------------------------------------------
 run: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64
+
+run-headless: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
 
 run-log: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64 -display none
+	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64
 
 debug: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 -display none
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64
 
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
 run-32: $(TARGET)
