@@ -152,12 +152,14 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 # -------------------------------------------------------------------
 NETDEV  = -netdev user,id=n0 -device rtl8139,netdev=n0
 
-# Distributed two-node setup (QEMU socket networking = virtual Ethernet cable)
+# Distributed two-node setup (QEMU UDP multicast = virtual Ethernet hub)
 # Run in two separate terminals: make run-node0, then make run-node1
-NODEDEV0 = -netdev socket,id=n0,listen=:1234 \
-           -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
-NODEDEV1 = -netdev socket,id=n0,connect=localhost:1234 \
-           -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
+# Both use the same multicast group — no listen/connect asymmetry needed.
+MCAST     = 230.0.0.1:1234
+NODEDEV0  = -netdev socket,id=n0,mcast=$(MCAST) \
+            -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
+NODEDEV1  = -netdev socket,id=n0,mcast=$(MCAST) \
+            -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
 
 run: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
