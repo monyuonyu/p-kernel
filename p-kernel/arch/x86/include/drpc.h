@@ -74,14 +74,23 @@ typedef struct {
 #define GOBJ_LOCAL(g)   ((UW)(g) & 0x00FFFFFFUL)
 
 /* ------------------------------------------------------------------ */
+/* Node state machine                                                  */
+/* ------------------------------------------------------------------ */
+
+#define DNODE_UNKNOWN   0   /* never heard from                          */
+#define DNODE_ALIVE     1   /* heartbeat received recently               */
+#define DNODE_SUSPECT   2   /* missed SUSPECT_THRESH heartbeats          */
+#define DNODE_DEAD      3   /* missed DEAD_THRESH more; pending cancelled */
+
+/* ------------------------------------------------------------------ */
 /* Node table                                                          */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
     UB  node_id;
     UW  ip;
-    UB  alive;
-    UB  age;    /* incremented every 500 ms period; reset on heartbeat RX */
+    UB  state;  /* DNODE_UNKNOWN / ALIVE / SUSPECT / DEAD               */
+    UB  missed; /* consecutive missed heartbeat periods                  */
 } DNODE;
 
 extern DNODE dnode_table[DNODE_MAX];
