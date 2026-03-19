@@ -82,10 +82,11 @@ static void cmd_help(void)
     sout("  ps     - list tasks\r\n");
     sout("  net    - NIC status (RTL8139 + stats)\r\n");
     sout("  arp    - ARP cache + send request for gateway\r\n");
-    sout("  ping <IP>        - send ICMP echo request\r\n");
-    sout("  dns <host>       - DNS A-record lookup\r\n");
-    sout("  udp <IP> <p> <m> - send UDP datagram\r\n");
-    sout("  clear            - clear screen\r\n");
+    sout("  ping <IP>           - send ICMP echo request\r\n");
+    sout("  dns <host>          - DNS A-record lookup\r\n");
+    sout("  udp <IP> <p> <msg>  - send UDP datagram\r\n");
+    sout("  http <host>[/path]  - HTTP GET (port 80)\r\n");
+    sout("  clear               - clear screen\r\n");
 }
 
 static void cmd_ver(void)
@@ -192,6 +193,8 @@ static void cmd_net(void)
                        sout_dec(net_tx_icmp);      sout(" tx\r\n");
     sout("  UDP  : "); sout_dec(net_rx_udp);       sout(" rx / ");
                        sout_dec(net_tx_udp);       sout(" tx\r\n");
+    sout("  TCP  : "); sout_dec(net_rx_tcp);       sout(" rx / ");
+                       sout_dec(net_tx_tcp);       sout(" tx\r\n");
     sout("  My IP: "); sout(ip_str(NET_MY_IP));    sout("\r\n");
     sout("  GW   : "); sout(ip_str(NET_GW_IP));    sout("\r\n");
     sout("  DNS  : "); sout(ip_str(NET_DNS_IP));   sout("\r\n");
@@ -276,6 +279,11 @@ static void cmd_arp(void)
 IMPORT INT dns_query(const char *hostname, UW *out_ip);
 IMPORT INT udp_send(UW dst_ip, UH src_port, UH dst_port,
                     const UB *data, UH data_len);
+IMPORT INT  tcp_connect(UW ip, UH port, TCP_CONN **out);
+IMPORT INT  tcp_write(TCP_CONN *c, const UB *data, UH len);
+IMPORT INT  tcp_read(TCP_CONN *c, UB *buf, INT maxlen, INT timeout_ms);
+IMPORT void tcp_close(TCP_CONN *c);
+IMPORT void tcp_free(TCP_CONN *c);
 
 static void cmd_dns(const char *arg)
 {
@@ -344,6 +352,93 @@ static void cmd_udp(const char *arg)
     }
 }
 
+static void cmd_http(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (!*arg) {
+        sout("Usage: http <host>[/path]\r\n");
+        sout("  e.g.  http example.com/\r\n");
+        return;
+    }
+
+    if (!rtl_initialized) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("NIC not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* Split "host/path" → host and path */
+    char host[64];
+    INT  hi = 0;
+    while (*arg && *arg != '/' && hi < 63) host[hi++] = *arg++;
+    host[hi] = '\0';
+    const char *path = *arg ? arg : "/";
+
+    /* Resolve hostname (skip DNS if already an IP) */
+    UW ip;
+    if (!parse_ip(host, &ip)) {
+        sout("DNS: "); sout(host); sout(" ...\r\n");
+        if (dns_query(host, &ip) != 0) {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("DNS failed\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+            return;
+        }
+        sout(host); sout(" -> "); sout(ip_str(ip)); sout("\r\n");
+    }
+
+    /* TCP connect to port 80 */
+    sout("TCP -> "); sout(ip_str(ip)); sout(":80 ...\r\n");
+    TCP_CONN *conn;
+    if (tcp_connect(ip, 80, &conn) != 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("TCP connect failed\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* Build HTTP/1.0 GET request */
+    static char req[256];
+    INT rlen = 0;
+    const char *s;
+    s = "GET ";           for (; *s; ) req[rlen++] = *s++;
+    s = path;             for (; *s; ) req[rlen++] = *s++;
+    s = " HTTP/1.0\r\nHost: ";  for (; *s; ) req[rlen++] = *s++;
+    s = host;             for (; *s; ) req[rlen++] = *s++;
+    s = "\r\nConnection: close\r\n\r\n"; for (; *s; ) req[rlen++] = *s++;
+
+    tcp_write(conn, (const UB *)req, (UH)rlen);
+
+    /* Read and display response */
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    sout("--- HTTP Response ---\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    static UB rbuf[512];
+    INT total = 0;
+    for (;;) {
+        INT n = tcp_read(conn, rbuf, (INT)sizeof(rbuf), 4000);
+        if (n <= 0) break;
+        for (INT i = 0; i < n; i++) {
+            char c = (char)rbuf[i];
+            if (c == '\r') continue;
+            if (c == '\n') soutc('\r');
+            if ((unsigned char)c >= 0x20 || c == '\n' || c == '\t') soutc(c);
+        }
+        total += n;
+        if (total > 8192) { sout("\r\n[... truncated]\r\n"); break; }
+    }
+
+    sout("\r\n");
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    sout("--- "); sout_dec((UW)total); sout(" bytes ---\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    tcp_close(conn);
+    tcp_free(conn);
+}
+
 static void execute(const char *cmd)
 {
     while (*cmd == ' ') cmd++;      /* strip leading spaces */
@@ -356,6 +451,8 @@ static void execute(const char *cmd)
         { cmd_dns(cmd + 3); return; }
     if (cmd[0]=='u' && cmd[1]=='d' && cmd[2]=='p')
         { cmd_udp(cmd + 3); return; }
+    if (cmd[0]=='h' && cmd[1]=='t' && cmd[2]=='t' && cmd[3]=='p')
+        { cmd_http(cmd + 4); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "ver"))    cmd_ver();

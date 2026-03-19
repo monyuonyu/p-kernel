@@ -26,6 +26,8 @@ volatile UW net_tx_arp      = 0;
 volatile UW net_tx_icmp     = 0;
 volatile UW net_rx_udp      = 0;
 volatile UW net_tx_udp      = 0;
+volatile UW net_rx_tcp      = 0;
+volatile UW net_tx_tcp      = 0;
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -291,6 +293,289 @@ static INT ip_send(UW dst_ip, UB proto, const UB *payload, UH plen)
 
     rtl8139_send(tx_buf, (UH)(sizeof(ETH_HDR) + 20 + plen));
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* TCP                                                                 */
+/* ------------------------------------------------------------------ */
+
+#define TCP_MAX_CONN  2
+#define TCP_RX_BUF    4096
+#define TCP_DATA_MAX  1460   /* max payload per segment (Ethernet MTU) */
+
+struct tcp_conn {
+    UB   active;
+    UB   state;
+    UW   remote_ip;
+    UH   local_port;
+    UH   remote_port;
+    UW   snd_nxt;           /* next sequence number to send         */
+    UW   rcv_nxt;           /* next expected sequence from remote   */
+    UB   rx_buf[TCP_RX_BUF];
+    UW   rx_len;            /* bytes buffered in rx_buf             */
+    ID   sem;               /* signaled on state change or new data */
+};
+
+static struct tcp_conn tcp_pool[TCP_MAX_CONN];
+static UH tcp_port_ctr = 49200;     /* ephemeral port counter        */
+
+/*
+ * tcp_cksum — one's complement checksum over pseudo-header + TCP segment.
+ * On x86 (little-endian) this produces a value that big-endian receivers
+ * correctly verify because the internet checksum is byte-order transparent.
+ */
+static UH tcp_cksum(UW src_ip, UW dst_ip, const UB *seg, INT tcp_len)
+{
+    UW sum = 0;
+    /* Pseudo-header: src_ip, dst_ip, zero+proto, tcp_len */
+    sum += (UH)(src_ip & 0xFFFF);
+    sum += (UH)(src_ip >> 16);
+    sum += (UH)(dst_ip & 0xFFFF);
+    sum += (UH)(dst_ip >> 16);
+    sum += htons(IP_PROTO_TCP);
+    sum += htons((UH)tcp_len);
+    /* TCP segment */
+    const UH *p = (const UH *)seg;
+    INT n = tcp_len;
+    while (n > 1) { sum += *p++; n -= 2; }
+    if (n)         { sum += (UH)(*(const UB *)p); }
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    return (UH)(~sum);
+}
+
+/* Build and send a TCP segment; update snd_nxt for SYN/FIN/data */
+static void tcp_send_raw(struct tcp_conn *c, UB flags,
+                         const UB *data, UH data_len)
+{
+    static UB tcpbuf[20 + TCP_DATA_MAX];
+    TCP_HDR *tcp = (TCP_HDR *)tcpbuf;
+
+    tcp->src_port = htons(c->local_port);
+    tcp->dst_port = htons(c->remote_port);
+    tcp->seq      = htonl(c->snd_nxt);
+    tcp->ack_seq  = (flags & TCP_ACK) ? htonl(c->rcv_nxt) : 0;
+    tcp->data_off = 0x50;               /* 5 × 4 = 20-byte header  */
+    tcp->flags    = flags;
+    tcp->window   = htons((UH)(TCP_RX_BUF - c->rx_len));
+    tcp->checksum = 0;
+    tcp->urgent   = 0;
+
+    for (UH i = 0; i < data_len; i++) tcpbuf[20 + i] = data[i];
+    UH tcp_len = (UH)(20 + data_len);
+    tcp->checksum = tcp_cksum(NET_MY_IP, c->remote_ip, tcpbuf, tcp_len);
+
+    ip_send(c->remote_ip, IP_PROTO_TCP, tcpbuf, tcp_len);
+    net_tx_tcp++;
+
+    if (flags & TCP_SYN) c->snd_nxt++;  /* SYN occupies one seq num */
+    if (flags & TCP_FIN) c->snd_nxt++;  /* FIN occupies one seq num */
+    c->snd_nxt += data_len;
+}
+
+/* Called from ip_input when IP proto == TCP */
+static void tcp_input(const IP_HDR *iph, const UB *seg, INT seg_len)
+{
+    if (seg_len < 20) return;
+
+    const TCP_HDR *tcp = (const TCP_HDR *)seg;
+    INT hdr_len = (tcp->data_off >> 4) * 4;
+    if (hdr_len < 20 || hdr_len > seg_len) return;
+
+    /* Verify checksum */
+    if (tcp_cksum(iph->src, iph->dst, seg, seg_len) != 0) return;
+
+    UH  dst_port = ntohs(tcp->dst_port);
+    UH  src_port = ntohs(tcp->src_port);
+    UW  seq      = ntohl(tcp->seq);
+    UW  ack_val  = ntohl(tcp->ack_seq);
+    UB  flags    = tcp->flags;
+    const UB *data = seg + hdr_len;
+    INT data_len   = seg_len - hdr_len;
+
+    /* Find matching connection */
+    struct tcp_conn *c = NULL;
+    for (INT i = 0; i < TCP_MAX_CONN; i++) {
+        struct tcp_conn *t = &tcp_pool[i];
+        if (t->active          &&
+            t->remote_ip   == iph->src  &&
+            t->remote_port == src_port  &&
+            t->local_port  == dst_port) {
+            c = t; break;
+        }
+    }
+    if (!c) return;
+
+    net_rx_tcp++;
+
+    if (flags & TCP_RST) {
+        c->state = TCP_CLOSED_RST;
+        tk_sig_sem(c->sem, 1);
+        return;
+    }
+
+    switch (c->state) {
+
+    case TCP_SYN_SENT:
+        if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
+            c->rcv_nxt = seq + 1;   /* SYN occupies one seq num     */
+            c->snd_nxt = ack_val;   /* server confirmed our SYN     */
+            c->state   = TCP_ESTABLISHED;
+            tcp_send_raw(c, TCP_ACK, NULL, 0);
+            ns_puts("[tcp] ESTABLISHED\r\n");
+            tk_sig_sem(c->sem, 1);
+        }
+        break;
+
+    case TCP_ESTABLISHED:
+        if (seq == c->rcv_nxt) {
+            if (data_len > 0) {
+                INT space = TCP_RX_BUF - (INT)c->rx_len;
+                INT n = data_len < space ? data_len : space;
+                for (INT i = 0; i < n; i++)
+                    c->rx_buf[c->rx_len + i] = data[i];
+                c->rx_len  += (UW)n;
+                c->rcv_nxt += (UW)n;
+                tcp_send_raw(c, TCP_ACK, NULL, 0);
+                tk_sig_sem(c->sem, 1);
+            }
+            if (flags & TCP_FIN) {
+                c->rcv_nxt++;
+                c->state = TCP_CLOSE_WAIT;
+                tcp_send_raw(c, TCP_ACK, NULL, 0);
+                ns_puts("[tcp] CLOSE_WAIT\r\n");
+                tk_sig_sem(c->sem, 1);
+            }
+        } else if (data_len > 0 || (flags & TCP_FIN)) {
+            tcp_send_raw(c, TCP_ACK, NULL, 0);  /* re-ACK duplicate */
+        }
+        (void)ack_val;
+        break;
+
+    case TCP_FIN_WAIT_1:
+        if (flags & TCP_FIN) {
+            c->rcv_nxt++;
+            tcp_send_raw(c, TCP_ACK, NULL, 0);
+        }
+        if (flags & TCP_ACK) {
+            c->state = (flags & TCP_FIN) ? TCP_CLOSED : TCP_FIN_WAIT_2;
+            tk_sig_sem(c->sem, 1);
+        }
+        break;
+
+    case TCP_FIN_WAIT_2:
+        if (flags & TCP_FIN) {
+            c->rcv_nxt++;
+            tcp_send_raw(c, TCP_ACK, NULL, 0);
+            c->state = TCP_CLOSED;
+            tk_sig_sem(c->sem, 1);
+        }
+        break;
+
+    case TCP_LAST_ACK:
+        if (flags & TCP_ACK) {
+            c->state = TCP_CLOSED;
+            tk_sig_sem(c->sem, 1);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* TCP public API                                                      */
+/* ------------------------------------------------------------------ */
+
+INT tcp_connect(UW ip, UH port, TCP_CONN **out)
+{
+    /* Find free slot */
+    struct tcp_conn *c = NULL;
+    for (INT i = 0; i < TCP_MAX_CONN; i++) {
+        if (!tcp_pool[i].active) { c = &tcp_pool[i]; break; }
+    }
+    if (!c) return -1;
+
+    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                  .isemcnt = 0, .maxsem = 16 };
+    c->sem = tk_cre_sem(&cs);
+    if (c->sem < E_OK) return -1;
+
+    c->remote_ip   = ip;
+    c->remote_port = port;
+    c->local_port  = tcp_port_ctr++;
+    c->snd_nxt     = 0x19700101;    /* arbitrary ISN */
+    c->rcv_nxt     = 0;
+    c->rx_len      = 0;
+    c->state       = TCP_SYN_SENT;
+    c->active      = 1;
+
+    tcp_send_raw(c, TCP_SYN, NULL, 0);
+
+    /* Wait up to 10 s for ESTABLISHED */
+    for (INT i = 0; i < 100; i++) {
+        tk_wai_sem(c->sem, 1, 100);
+        if (c->state == TCP_ESTABLISHED) { *out = c; return 0; }
+        if (c->state == TCP_CLOSED || c->state == TCP_CLOSED_RST) break;
+    }
+    tcp_free(c);
+    return -1;
+}
+
+INT tcp_write(TCP_CONN *c, const UB *data, UH len)
+{
+    if (c->state != TCP_ESTABLISHED) return -1;
+    if (len == 0) return 0;
+    if (len > TCP_DATA_MAX) len = TCP_DATA_MAX;
+    tcp_send_raw(c, TCP_PSH | TCP_ACK, data, len);
+    return 0;
+}
+
+INT tcp_read(TCP_CONN *c, UB *buf, INT maxlen, INT timeout_ms)
+{
+    INT elapsed = 0;
+    while (c->rx_len == 0) {
+        if (c->state == TCP_CLOSE_WAIT ||
+            c->state == TCP_CLOSED     ||
+            c->state == TCP_CLOSED_RST) return 0;
+        if (elapsed >= timeout_ms) return 0;
+        INT wait = 200;
+        if (wait > timeout_ms - elapsed) wait = timeout_ms - elapsed;
+        tk_wai_sem(c->sem, 1, (TMO)wait);
+        elapsed += wait;
+    }
+    INT n = (INT)c->rx_len;
+    if (n > maxlen) n = maxlen;
+    for (INT i = 0; i < n; i++) buf[i] = c->rx_buf[i];
+    for (INT i = n; i < (INT)c->rx_len; i++) c->rx_buf[i - n] = c->rx_buf[i];
+    c->rx_len -= (UW)n;
+    return n;
+}
+
+void tcp_close(TCP_CONN *c)
+{
+    if (c->state == TCP_ESTABLISHED) {
+        tcp_send_raw(c, TCP_FIN | TCP_ACK, NULL, 0);
+        c->state = TCP_FIN_WAIT_1;
+        for (INT i = 0; i < 50; i++) {
+            tk_wai_sem(c->sem, 1, 100);
+            if (c->state == TCP_CLOSED || c->state == TCP_CLOSED_RST) break;
+        }
+    } else if (c->state == TCP_CLOSE_WAIT) {
+        tcp_send_raw(c, TCP_FIN | TCP_ACK, NULL, 0);
+        c->state = TCP_LAST_ACK;
+        for (INT i = 0; i < 50; i++) {
+            tk_wai_sem(c->sem, 1, 100);
+            if (c->state == TCP_CLOSED || c->state == TCP_CLOSED_RST) break;
+        }
+    }
+}
+
+void tcp_free(TCP_CONN *c)
+{
+    if (c->sem > 0) { tk_del_sem(c->sem); c->sem = 0; }
+    c->active = 0;
+    c->state  = TCP_CLOSED;
 }
 
 /* ------------------------------------------------------------------ */
@@ -628,6 +913,8 @@ static void ip_input(const UB *frame, INT len)
         icmp_input(frame, ip, frame + payload_off, payload_len);
     } else if (ip->proto == IP_PROTO_UDP) {
         udp_input(ip, frame + payload_off, payload_len);
+    } else if (ip->proto == IP_PROTO_TCP) {
+        tcp_input(ip, frame + payload_off, payload_len);
     }
 }
 

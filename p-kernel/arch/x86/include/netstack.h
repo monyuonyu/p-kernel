@@ -95,6 +95,37 @@ typedef struct {
 #define ICMP_ECHO_REP  0
 
 typedef struct {
+    UH  src_port;   /* htons */
+    UH  dst_port;   /* htons */
+    UW  seq;        /* htonl: sequence number          */
+    UW  ack_seq;    /* htonl: acknowledgment number    */
+    UB  data_off;   /* high nibble = header len /4     */
+    UB  flags;      /* TCP_FIN|SYN|RST|PSH|ACK         */
+    UH  window;     /* htons: receive window           */
+    UH  checksum;
+    UH  urgent;
+} __attribute__((packed)) TCP_HDR;
+
+#define TCP_FIN  0x01
+#define TCP_SYN  0x02
+#define TCP_RST  0x04
+#define TCP_PSH  0x08
+#define TCP_ACK  0x10
+
+/* TCP connection states */
+#define TCP_CLOSED       0
+#define TCP_SYN_SENT     1
+#define TCP_ESTABLISHED  2
+#define TCP_CLOSE_WAIT   3   /* received FIN, need to send ours */
+#define TCP_FIN_WAIT_1   4   /* sent FIN, waiting for ACK       */
+#define TCP_FIN_WAIT_2   5   /* ACK received, waiting for FIN   */
+#define TCP_LAST_ACK     6   /* sent FIN in CLOSE_WAIT, wait ACK*/
+#define TCP_CLOSED_RST   7   /* aborted by RST                  */
+
+/* Opaque connection handle */
+typedef struct tcp_conn TCP_CONN;
+
+typedef struct {
     UH  src_port;       /* htons */
     UH  dst_port;       /* htons */
     UH  length;         /* header + data, htons */
@@ -124,6 +155,21 @@ INT arp_lookup(UW ip, UB mac_out[6]);
 /* Send ARP request for given IP */
 void arp_request(UW target_ip);
 
+/*
+ * TCP client API
+ *
+ * tcp_connect  – SYN handshake; blocks up to 10 s; fills *out on success
+ * tcp_write    – send data (call only when ESTABLISHED)
+ * tcp_read     – receive data; blocks up to timeout_ms; 0 = connection closed
+ * tcp_close    – send FIN and wait for the peer's FIN
+ * tcp_free     – release the connection slot (call after tcp_close)
+ */
+INT  tcp_connect(UW ip, UH port, TCP_CONN **out);
+INT  tcp_write(TCP_CONN *c, const UB *data, UH len);
+INT  tcp_read(TCP_CONN *c, UB *buf, INT maxlen, INT timeout_ms);
+void tcp_close(TCP_CONN *c);
+void tcp_free(TCP_CONN *c);
+
 /* UDP receive callback: called from net_task when a datagram arrives */
 typedef void (*udp_recv_fn)(UW src_ip, UH src_port, const UB *data, UH len);
 
@@ -151,3 +197,5 @@ extern volatile UW net_tx_arp;
 extern volatile UW net_tx_icmp;
 extern volatile UW net_rx_udp;
 extern volatile UW net_tx_udp;
+extern volatile UW net_rx_tcp;
+extern volatile UW net_tx_tcp;
