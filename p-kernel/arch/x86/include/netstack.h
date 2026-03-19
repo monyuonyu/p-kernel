@@ -23,8 +23,12 @@
  */
 #define IP4(a,b,c,d)  ((UW)(((UB)(d)<<24)|((UB)(c)<<16)|((UB)(b)<<8)|(UB)(a)))
 
+/* My IP — set at init time by drpc_init(); default = QEMU user-mode IP.
+ * All code can use NET_MY_IP as before; it now resolves to the variable. */
+extern UW net_my_ip;
+#define NET_MY_IP    net_my_ip
+
 /* QEMU user-mode network defaults */
-#define NET_MY_IP    IP4(10,  0, 2, 15)
 #define NET_GW_IP    IP4(10,  0, 2,  2)
 #define NET_DNS_IP   IP4(10,  0, 2,  3)
 #define NET_NETMASK  IP4(255,255,255, 0)

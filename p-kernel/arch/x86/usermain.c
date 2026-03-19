@@ -1,13 +1,15 @@
 /*
  *  usermain.c (x86)
  *  p-kernel initial task
- *  Starts: keyboard driver, shell task, RTL8139 NIC, net RX task
+ *  Starts: keyboard driver, shell task, RTL8139 NIC, net RX task,
+ *          and (if distributed MAC detected) DRPC heartbeat task
  */
 
 #include "kernel.h"
 #include "keyboard.h"
 #include "rtl8139.h"
 #include "netstack.h"
+#include "drpc.h"
 #include <tmonitor.h>
 
 IMPORT void shell_task(INT stacd, void *exinf);
@@ -16,6 +18,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define SHELL_STACK      8192
 #define NET_PRIORITY     3
 #define NET_STACK        4096
+#define DRPC_PRIORITY    5
+#define DRPC_STACK       4096
 
 static ID create_sem(INT isemcnt, INT maxsem)
 {
@@ -60,6 +64,23 @@ EXPORT INT usermain(void)
     if (er != E_OK) {
         tm_putstring((UB *)"[WARN] RTL8139 not found (add -device rtl8139)\r\n");
     } else {
+        /* ---- Detect distributed mode from MAC --------------------- *
+         * Node MACs:  52:54:00:00:00:01 → node 0  IP=10.1.0.1         *
+         *             52:54:00:00:00:02 → node 1  IP=10.1.0.2         *
+         * Default user-mode MAC: 52:54:00:12:34:56 → single-node mode */
+        UB mac[6];
+        rtl8139_get_mac(mac);
+        if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= 8) {
+            UB nid = (UB)(mac[5] - 1);
+            /* IP4(10,1,0,mac[5]) = mac[5]<<24 | 0x0000010A */
+            UW nip = ((UW)mac[5] << 24) | 0x0000010AUL;
+            drpc_init(nid, nip);
+            if (create_task(drpc_task, DRPC_PRIORITY, DRPC_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] drpc task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  DRPC task\r\n");
+        }
+
         /* Send initial ARP from here (priority 1) so the reply arrives
          * before the shell task has a chance to run. */
         netstack_start();

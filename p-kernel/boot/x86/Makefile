@@ -56,7 +56,8 @@ ARCH_C_SRCS = \
     shell.c \
     pci.c \
     rtl8139.c \
-    netstack.c
+    netstack.c \
+    drpc.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -149,7 +150,14 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 # -------------------------------------------------------------------
 # 実行ターゲット
 # -------------------------------------------------------------------
-NETDEV = -netdev user,id=n0 -device rtl8139,netdev=n0
+NETDEV  = -netdev user,id=n0 -device rtl8139,netdev=n0
+
+# Distributed two-node setup (QEMU socket networking = virtual Ethernet cable)
+# Run in two separate terminals: make run-node0, then make run-node1
+NODEDEV0 = -netdev socket,id=n0,listen=:1234 \
+           -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
+NODEDEV1 = -netdev socket,id=n0,connect=localhost:1234 \
+           -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
 
 run: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
@@ -166,6 +174,12 @@ run-log: $(TARGET)
 debug: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
 
+run-node0: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
+
+run-node1: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV1)
+
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
 run-32: $(TARGET)
 	qemu-system-i386 -kernel $(TARGET) -serial stdio -display none
@@ -176,4 +190,4 @@ run-boot: $(TARGET)
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) serial.log
 
-.PHONY: all clean run run-log debug run-32 run-boot
+.PHONY: all clean run run-log debug run-32 run-boot run-node0 run-node1

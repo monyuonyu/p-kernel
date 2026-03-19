@@ -14,6 +14,7 @@
 #include "keyboard.h"
 #include "rtl8139.h"
 #include "netstack.h"
+#include "drpc.h"
 #include "kernel.h"
 
 #define SHELL_LINE_MAX  128
@@ -87,6 +88,16 @@ static void cmd_help(void)
     sout("  udp <IP> <p> <msg>  - send UDP datagram\r\n");
     sout("  http <host>[/path]  - HTTP GET (port 80)\r\n");
     sout("  clear               - clear screen\r\n");
+    if (drpc_my_node != 0xFF) {
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        sout("Distributed (node "); sout_dec(drpc_my_node); sout("):\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        sout("  nodes                 - list cluster nodes\r\n");
+        sout("  dtask <n> <fn>        - create task on node n (fn: hello, counter)\r\n");
+        sout("  dsem new              - create distributed semaphore\r\n");
+        sout("  dsem wai <0xID>       - wait on distributed semaphore\r\n");
+        sout("  dsem sig <0xID>       - signal distributed semaphore\r\n");
+    }
 }
 
 static void cmd_ver(void)
@@ -198,6 +209,122 @@ static void cmd_net(void)
     sout("  My IP: "); sout(ip_str(NET_MY_IP));    sout("\r\n");
     sout("  GW   : "); sout(ip_str(NET_GW_IP));    sout("\r\n");
     sout("  DNS  : "); sout(ip_str(NET_DNS_IP));   sout("\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* Distributed commands                                                */
+/* ------------------------------------------------------------------ */
+
+static INT str_starts(const char *s, const char *pfx)
+{
+    while (*pfx && *s == *pfx) { s++; pfx++; }
+    return *pfx == '\0';
+}
+
+static UW parse_hex_arg(const char *s)
+{
+    while (*s == ' ') s++;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+    UW v = 0;
+    while (*s) {
+        char c = *s++;
+        INT d;
+        if      (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else break;
+        v = (v << 4) | (UW)d;
+    }
+    return v;
+}
+
+static void cmd_nodes(void)
+{
+    if (drpc_my_node == 0xFF) {
+        sout("Not in distributed mode (use make run-node0 / run-node1)\r\n");
+        return;
+    }
+    drpc_nodes_list();
+}
+
+static void cmd_dtask(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (drpc_my_node == 0xFF) {
+        sout("Not in distributed mode\r\n"); return;
+    }
+    if (!*arg) {
+        sout("Usage: dtask <node_id> <func>  (func: hello, counter)\r\n"); return;
+    }
+
+    UB node_id = 0;
+    while (*arg >= '0' && *arg <= '9') node_id = (UB)(node_id * 10 + (*arg++ - '0'));
+    while (*arg == ' ') arg++;
+
+    UH func_id = 0;
+    if      (str_starts(arg, "hello"))   func_id = 0x0001;
+    else if (str_starts(arg, "counter")) func_id = 0x0002;
+    else { sout("Unknown func (hello, counter)\r\n"); return; }
+
+    sout("[dtask] -> node "); sout_dec(node_id);
+    sout("  func="); sout(arg); sout("\r\n");
+
+    W r = dtk_cre_tsk(node_id, func_id, 4);
+    if (r >= 0) {
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        sout("[dtask] OK  tskid="); sout_dec((UW)r); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[dtask] failed\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_dsem(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (drpc_my_node == 0xFF) {
+        sout("Not in distributed mode\r\n"); return;
+    }
+
+    if (str_starts(arg, "new")) {
+        UW gsemid = dtk_cre_sem(0);
+        if (gsemid == (UW)-1) {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("[dsem] failed\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[dsem] global semaphore: 0x"); sout_hex(gsemid); sout("\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+    } else if (str_starts(arg, "wai")) {
+        arg += 3;
+        UW gsemid = parse_hex_arg(arg);
+        sout("[dsem] waiting on 0x"); sout_hex(gsemid); sout("...\r\n");
+        ER er = dtk_wai_sem(gsemid, 1, TMO_FEVR);
+        if (er == E_OK) {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[dsem] woke!\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            sout("[dsem] error\r\n");
+        }
+    } else if (str_starts(arg, "sig")) {
+        arg += 3;
+        UW gsemid = parse_hex_arg(arg);
+        ER er = dtk_sig_sem(gsemid, 1);
+        if (er == E_OK) {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[dsem] signal OK\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            sout("[dsem] signal failed\r\n");
+        }
+    } else {
+        sout("Usage: dsem new | dsem wai <0xID> | dsem sig <0xID>\r\n");
+    }
 }
 
 /* Parse "A.B.C.D" → IP4 value.  Returns 1 on success. */
@@ -453,8 +580,13 @@ static void execute(const char *cmd)
         { cmd_udp(cmd + 3); return; }
     if (cmd[0]=='h' && cmd[1]=='t' && cmd[2]=='t' && cmd[3]=='p')
         { cmd_http(cmd + 4); return; }
+    if (cmd[0]=='d' && cmd[1]=='t' && cmd[2]=='a' && cmd[3]=='s' && cmd[4]=='k')
+        { cmd_dtask(cmd + 5); return; }
+    if (cmd[0]=='d' && cmd[1]=='s' && cmd[2]=='e' && cmd[3]=='m')
+        { cmd_dsem(cmd + 4); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
+    else if (str_eq(cmd, "nodes"))  cmd_nodes();
     else if (str_eq(cmd, "ver"))    cmd_ver();
     else if (str_eq(cmd, "mem"))    cmd_mem();
     else if (str_eq(cmd, "ps"))     cmd_ps();
