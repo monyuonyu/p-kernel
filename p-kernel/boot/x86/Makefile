@@ -55,7 +55,8 @@ ARCH_C_SRCS = \
     keyboard.c \
     shell.c \
     pci.c \
-    rtl8139.c
+    rtl8139.c \
+    netstack.c
 
 ARCH_S_SRCS = cpu_support.S
 

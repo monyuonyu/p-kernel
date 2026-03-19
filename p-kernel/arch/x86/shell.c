@@ -13,6 +13,7 @@
 #include "vga.h"
 #include "keyboard.h"
 #include "rtl8139.h"
+#include "netstack.h"
 #include "kernel.h"
 
 #define SHELL_LINE_MAX  128
@@ -79,7 +80,9 @@ static void cmd_help(void)
     sout("  ver    - kernel version info\r\n");
     sout("  mem    - memory layout\r\n");
     sout("  ps     - list tasks\r\n");
-    sout("  net    - NIC status (RTL8139)\r\n");
+    sout("  net    - NIC status (RTL8139 + stats)\r\n");
+    sout("  arp    - ARP cache + send request for gateway\r\n");
+    sout("  ping <IP> - send ICMP echo request\r\n");
     sout("  clear  - clear screen\r\n");
 }
 
@@ -178,8 +181,91 @@ static void cmd_net(void)
     }
     sout("\r\n");
 
-    sout("  RX   : "); sout_dec(rtl_rx_count); sout(" packets\r\n");
-    sout("  TX   : "); sout_dec(rtl_tx_count); sout(" packets\r\n");
+    sout("  RX   : "); sout_dec(rtl_rx_count);    sout(" frames\r\n");
+    sout("  TX   : "); sout_dec(rtl_tx_count);    sout(" frames\r\n");
+    sout("  ARP  : "); sout_dec(net_rx_arp);       sout(" rx / ");
+                       sout_dec(net_tx_arp);       sout(" tx\r\n");
+    sout("  ICMP : "); sout_dec(net_rx_icmp_req);  sout(" req rx / ");
+                       sout_dec(net_rx_icmp_rep);  sout(" rep rx / ");
+                       sout_dec(net_tx_icmp);      sout(" tx\r\n");
+    sout("  My IP: "); sout(ip_str(NET_MY_IP));    sout("\r\n");
+    sout("  GW   : "); sout(ip_str(NET_GW_IP));    sout("\r\n");
+}
+
+/* Parse "A.B.C.D" → IP4 value.  Returns 1 on success. */
+static INT parse_ip(const char *s, UW *out)
+{
+    UW ip = 0;
+    for (INT oct = 0; oct < 4; oct++) {
+        UW v = 0;
+        if (*s < '0' || *s > '9') return 0;
+        while (*s >= '0' && *s <= '9') { v = v * 10 + (UW)(*s++ - '0'); }
+        if (v > 255) return 0;
+        ip |= (v << (oct * 8));         /* IP4 format: byte 0 = octet A */
+        if (oct < 3) { if (*s != '.') return 0; s++; }
+    }
+    *out = ip;
+    return 1;
+}
+
+IMPORT INT icmp_ping_shell(UW dst_ip);
+
+static void cmd_ping(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: ping <A.B.C.D>\r\n");
+        return;
+    }
+
+    UW dst;
+    if (!parse_ip(arg, &dst)) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("Invalid IP address\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    sout("PING "); sout(ip_str(dst)); sout(" ...\r\n");
+
+    /* Retry up to 10×100ms waiting for ARP to resolve */
+    INT r = -1;
+    for (INT retry = 0; retry < 10; retry++) {
+        r = icmp_ping_shell(dst);
+        if (r == 0) break;
+        tk_dly_tsk(100);    /* sleep → net_task gets to process ARP reply */
+    }
+    if (r < 0) {
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        sout("ARP timed out — no reply from gateway\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        sout("(watch for [icmp] echo REPLY in the log)\r\n");
+    }
+}
+
+static void cmd_arp(void)
+{
+    UB mac[6];
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("Sending ARP request for gateway ");
+    sout(ip_str(NET_GW_IP)); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    arp_request(NET_GW_IP);
+
+    /* Show what's already cached */
+    if (arp_lookup(NET_GW_IP, mac)) {
+        sout("Gateway MAC (cached): ");
+        for (INT i = 0; i < 6; i++) {
+            if (i) sout(":");
+            const char *h = "0123456789ABCDEF";
+            char buf[3] = { h[mac[i]>>4], h[mac[i]&0xF], '\0' };
+            sout(buf);
+        }
+        sout("\r\n");
+    } else {
+        sout("(ARP reply pending — watch for [arp] log)\r\n");
+    }
 }
 
 static void execute(const char *cmd)
@@ -187,11 +273,16 @@ static void execute(const char *cmd)
     while (*cmd == ' ') cmd++;      /* strip leading spaces */
     if (*cmd == '\0') return;
 
+    /* Commands that take arguments */
+    if (cmd[0]=='p' && cmd[1]=='i' && cmd[2]=='n' && cmd[3]=='g')
+        { cmd_ping(cmd + 4); return; }
+
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "ver"))    cmd_ver();
     else if (str_eq(cmd, "mem"))    cmd_mem();
     else if (str_eq(cmd, "ps"))     cmd_ps();
     else if (str_eq(cmd, "net"))    cmd_net();
+    else if (str_eq(cmd, "arp"))    cmd_arp();
     else if (str_eq(cmd, "clear"))  vga_clear();
     else {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);

@@ -273,18 +273,10 @@ INT rtl8139_recv(UB *buf, INT maxlen)
 /* Net RX task                                                         */
 /* ------------------------------------------------------------------ */
 
-static UB pkt_buf[1514];
+IMPORT void eth_input(const UB *frame, INT len);
+IMPORT void netstack_start(void);
 
-/* Ethertype names */
-static const char *ether_type_name(UH t)
-{
-    switch (t) {
-    case 0x0800: return "IPv4";
-    case 0x0806: return "ARP ";
-    case 0x86DD: return "IPv6";
-    default:     return "????";
-    }
-}
+static UB pkt_buf[1514];
 
 void net_task(INT stacd, void *exinf)
 {
@@ -299,34 +291,7 @@ void net_task(INT stacd, void *exinf)
         INT len;
         while ((len = rtl8139_recv(pkt_buf, (INT)sizeof(pkt_buf))) > 0) {
             if (len < 14) continue;
-
-            UH etype = (UH)((UH)pkt_buf[12] << 8 | pkt_buf[13]);
-
-            net_puts("[net] RX ");
-            net_puts(ether_type_name(etype));
-            net_puts(" len=");
-            net_putdec((UW)len);
-            net_puts(" dst=");
-            for (INT i = 0; i < 6; i++) {
-                if (i) net_puts(":");
-                net_puthex8(pkt_buf[i]);
-            }
-            net_puts(" src=");
-            for (INT i = 6; i < 12; i++) {
-                if (i > 6) net_puts(":");
-                net_puthex8(pkt_buf[i]);
-            }
-            if (etype == 0x0806 && len >= 28) {
-                /* ARP: show target IP */
-                net_puts(" target=");
-                net_puts((char[]){
-                    '0' + pkt_buf[24]/100, '0' + (pkt_buf[24]/10)%10, '0' + pkt_buf[24]%10, '.',
-                    '0' + pkt_buf[25]/100, '0' + (pkt_buf[25]/10)%10, '0' + pkt_buf[25]%10, '.',
-                    '0' + pkt_buf[26]/100, '0' + (pkt_buf[26]/10)%10, '0' + pkt_buf[26]%10, '.',
-                    '0' + pkt_buf[27]/100, '0' + (pkt_buf[27]/10)%10, '0' + pkt_buf[27]%10, '\0'
-                });
-            }
-            net_puts("\r\n");
+            eth_input(pkt_buf, len);
         }
     }
 }
@@ -397,15 +362,33 @@ ER rtl8139_init(ID sem)
     /* Enable RX + TX */
     wrb(R_CMD, (UB)(CMD_RE | CMD_TE));
 
-    /* Register IRQ handler and unmask PIC */
+    /* Register IRQ handler */
     if (rtl_irq < 16) {
         x86_irq_handlers[rtl_irq] = rtl_irq_handler;
+
+        /* PCI uses level-triggered interrupts.
+         * Configure ELCR (Edge/Level Control Register) for this IRQ.
+         *   0x4D0 = master PIC ELCR (IRQ 0-7)
+         *   0x4D1 = slave  PIC ELCR (IRQ 8-15)
+         * Bit N set = level triggered.  IRQs 0,1,2,8,13 must stay edge. */
+        if (rtl_irq >= 3) {
+            UH elcr_port = (rtl_irq < 8) ? 0x4D0 : 0x4D1;
+            UB bit       = (UB)(1 << (rtl_irq & 7));
+            UB elcr      = pic_inb(elcr_port);
+            pic_outb(elcr_port, (UB)(elcr | bit));
+        }
+
+        /* Unmask IRQ on PIC (and IRQ2 cascade line for slave IRQs) */
         if (rtl_irq < 8) {
             UB mask = pic_inb(0x21);
             pic_outb(0x21, (UB)(mask & ~(1 << rtl_irq)));
         } else {
-            UB mask = pic_inb(0xA1);
-            pic_outb(0xA1, (UB)(mask & ~(1 << (rtl_irq - 8))));
+            /* Slave IRQ: unmask target IRQ on slave PIC */
+            UB smask = pic_inb(0xA1);
+            pic_outb(0xA1, (UB)(smask & ~(1 << (rtl_irq - 8))));
+            /* Also unmask IRQ2 (cascade) on master PIC */
+            UB mmask = pic_inb(0x21);
+            pic_outb(0x21, (UB)(mmask & ~0x04));
         }
     }
 

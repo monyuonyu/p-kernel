@@ -7,6 +7,7 @@
 #include "kernel.h"
 #include "keyboard.h"
 #include "rtl8139.h"
+#include "netstack.h"
 #include <tmonitor.h>
 
 IMPORT void shell_task(INT stacd, void *exinf);
@@ -59,6 +60,10 @@ EXPORT INT usermain(void)
     if (er != E_OK) {
         tm_putstring((UB *)"[WARN] RTL8139 not found (add -device rtl8139)\r\n");
     } else {
+        /* Send initial ARP from here (priority 1) so the reply arrives
+         * before the shell task has a chance to run. */
+        netstack_start();
+
         /* ---- Net RX task ------------------------------------------ */
         if (create_task(net_task, NET_PRIORITY, NET_STACK) < E_OK) {
             tm_putstring((UB *)"[ERR] net task\r\n");
