@@ -281,3 +281,88 @@ irq_back64_stub:
 
     # 64ビット割り込みから復帰
     .byte 0x48, 0xcf            # iretq
+
+# ============================================================
+# INT 0x80 システムコールハンドラ
+#
+# IDTゲート: CS=0x18 (64ビット), DPL=3 (ring3から呼び出し可能)
+#
+# 動作概要:
+#   1. 64ビットモードでエントリ (CS=0x18)
+#      ring3→ring0 特権切り替え時にCPUが64ビット割り込みフレームを積む:
+#        [rsp+32] SS   (ring3)
+#        [rsp+24] RSP  (ring3)
+#        [rsp+16] RFLAGS
+#        [rsp+ 8] CS   (ring3 = 0x23)
+#        [rsp+ 0] RIP  (ring3 EIP)
+#   2. EAX=nr, EBX=arg0, ECX=arg1, EDX=arg2 をpushq保存
+#   3. 32ビット互換モードへ far jump → syscall_dispatch() 呼び出し
+#   4. 64ビットモードへ far jump → iretq でring3へ復帰
+#
+# スタックレイアウト (pushq保存後, 64ビットモード):
+#   [rsp+ 0] rax (syscall nr / return value slot)
+#   [rsp+ 8] rcx (arg1)
+#   [rsp+16] rdx (arg2)
+#   [rsp+24] rbx (arg0)
+#   [rsp+32] 64ビット割り込みフレーム (RIP,CS,RFLAGS,RSP,SS)
+# ============================================================
+
+.extern syscall_dispatch
+
+.global syscall_isr
+syscall_isr:
+    # 64ビットモード: システムコール引数レジスタを pushq で保存
+    # 保存順: rax(nr), rcx(arg1), rdx(arg2), rbx(arg0)
+    .byte 0x48, 0x50            # pushq %rax   (syscall番号 / 戻り値スロット)
+    .byte 0x48, 0x51            # pushq %rcx   (arg1)
+    .byte 0x48, 0x52            # pushq %rdx   (arg2)
+    .byte 0x48, 0x53            # pushq %rbx   (arg0)
+
+    # 32ビット互換モードへ far jump: pushq CS; pushq offset; rex.W retf
+    .byte 0x48, 0x6a, 0x08      # pushq $0x08  (32ビット互換 CS)
+    .byte 0x68                  # push imm32
+    .long syscall_call32_stub
+    .byte 0x48, 0xcb            # rex.W retf   (64→32ビット far jump)
+
+# ---- 32ビット互換モードで実行される部分 (CS=0x08) ----
+syscall_call32_stub:
+    # スタックレイアウト (64ビットpushq = 8バイト/要素):
+    #   [esp+ 0] rbx low32 (arg0)
+    #   [esp+ 8] rdx low32 (arg2)
+    #   [esp+16] rcx low32 (arg1)
+    #   [esp+24] rax low32 (syscall番号)
+    #
+    # syscall_dispatch(nr, arg0, arg1, arg2) を cdecl で呼び出す
+
+    mov  0(%esp), %ebx          # arg0
+    mov  8(%esp), %edx          # arg2
+    mov 16(%esp), %ecx          # arg1
+    mov 24(%esp), %eax          # nr
+
+    push %edx                   # push arg2
+    push %ecx                   # push arg1
+    push %ebx                   # push arg0
+    push %eax                   # push nr
+    call syscall_dispatch
+    add  $16, %esp
+
+    # 戻り値 (EAX) を保存済み rax スロットに書き戻す
+    # → 64ビットモードで popq %rax するとring3の EAX に戻る
+    mov  %eax, 24(%esp)
+
+    # 64ビットモードへ戻る: push CS; push offset; retf
+    .byte 0x6a, 0x18            # push $0x18   (64ビット CS)
+    .byte 0x68                  # push imm32
+    .long syscall_back64_stub
+    .byte 0xcb                  # retf          (32→64ビット far jump)
+
+# ---- 64ビットモードで実行される部分 (CS=0x18) ----
+syscall_back64_stub:
+    # pushq の逆順で popq (LIFO)
+    .byte 0x48, 0x5b            # popq %rbx   (arg0, 破棄)
+    .byte 0x48, 0x5a            # popq %rdx   (arg2, 破棄)
+    .byte 0x48, 0x59            # popq %rcx   (arg1, 破棄)
+    .byte 0x48, 0x58            # popq %rax   (戻り値 → ring3 EAX)
+
+    # ring3 へ iretq 復帰
+    .byte 0x48, 0xcf            # iretq

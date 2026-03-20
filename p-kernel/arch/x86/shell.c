@@ -16,6 +16,8 @@
 #include "netstack.h"
 #include "drpc.h"
 #include "ai_kernel.h"
+#include "vfs.h"
+#include "elf_loader.h"
 #include "kernel.h"
 
 #define SHELL_LINE_MAX  128
@@ -97,6 +99,12 @@ static void cmd_help(void)
     sout("  aistat                      - AI statistics\r\n");
     sout("  fl train                    - federated learning local train step\r\n");
     sout("  fl status                   - FL round count + last loss\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Filesystem commands:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  ls [path]    - list directory (default: /)\r\n");
+    sout("  cat <file>   - print file contents\r\n");
+    sout("  exec <file>  - load and run ELF32 binary\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -523,6 +531,117 @@ static void cmd_fl(const char *arg)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Filesystem commands (ls / cat / exec)                               */
+/* ------------------------------------------------------------------ */
+
+IMPORT BOOL vfs_ready;
+
+static void cmd_ls(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    const char *path = (*arg == '\0') ? "/" : arg;
+
+    if (!vfs_ready) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[fs] VFS not ready (no disk?)\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    VFS_DIRENT entries[32];
+    INT n = vfs_readdir(path, entries, 32);
+    if (n < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[ls] directory not found: "); sout(path); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    sout(path); sout(":\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    for (INT i = 0; i < n; i++) {
+        if (entries[i].is_dir) {
+            vga_set_color(VGA_LIGHT_BLUE, VGA_BLACK);
+            sout("  ["); sout(entries[i].name); sout("]/\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            sout("  "); sout(entries[i].name);
+            sout("  ("); sout_dec(entries[i].size); sout(" B)\r\n");
+        }
+    }
+    if (n == 0) sout("  (empty)\r\n");
+}
+
+static void cmd_cat(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: cat <file>\r\n");
+        return;
+    }
+
+    if (!vfs_ready) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[fs] VFS not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    INT fd = vfs_open(arg);
+    if (fd < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[cat] not found: "); sout(arg); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    static UB catbuf[512];
+    INT total = 0;
+    for (;;) {
+        INT n = vfs_read(fd, catbuf, sizeof(catbuf));
+        if (n <= 0) break;
+        for (INT i = 0; i < n; i++) {
+            char c = (char)catbuf[i];
+            if (c == '\n') soutc('\r');
+            if ((unsigned char)c >= 0x20 || c == '\n' || c == '\t') soutc(c);
+        }
+        total += n;
+        if (total > 65536) { sout("\r\n[... truncated]\r\n"); break; }
+    }
+    sout("\r\n");
+    vfs_close(fd);
+}
+
+static void cmd_exec(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: exec <file.elf>\r\n");
+        return;
+    }
+
+    if (!vfs_ready) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[fs] VFS not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[exec] loading: "); sout(arg); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    ID tid = elf_exec(arg);
+    if (tid < E_OK) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[exec] failed\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
 /* Parse "A.B.C.D" → IP4 value.  Returns 1 on success. */
 static INT parse_ip(const char *s, UW *out)
 {
@@ -787,6 +906,12 @@ static void execute(const char *cmd)
         { cmd_infer(cmd + 5); return; }
     if (cmd[0]=='f' && cmd[1]=='l')
         { cmd_fl(cmd + 2); return; }
+    if (cmd[0]=='l' && cmd[1]=='s')
+        { cmd_ls(cmd + 2); return; }
+    if (cmd[0]=='c' && cmd[1]=='a' && cmd[2]=='t')
+        { cmd_cat(cmd + 3); return; }
+    if (cmd[0]=='e' && cmd[1]=='x' && cmd[2]=='e' && cmd[3]=='c')
+        { cmd_exec(cmd + 4); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();

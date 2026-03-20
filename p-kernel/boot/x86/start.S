@@ -148,24 +148,26 @@ setup_page_tables:
     rep stosl
     
     # PML4テーブル（最上位）
+    # US=1 (0x04) を設定: ring3がすべてのページにアクセス可能にする
     mov $pml4_table, %edi
     mov $pdp_table, %eax
-    or $0x03, %eax      # Present + Writable
+    or $0x07, %eax      # Present + Writable + User/Supervisor
     mov %eax, (%edi)
-    
+
     # PDPテーブル
     mov $pdp_table, %edi
     mov $pd_table, %eax
-    or $0x03, %eax
+    or $0x07, %eax      # Present + Writable + User/Supervisor
     mov %eax, (%edi)
-    
+
     # PDテーブル（2MBページ使用）
+    # US=1 を設定: ring3ユーザーコードがすべての2MBページにアクセス可能
     mov $pd_table, %edi
     mov $0, %eax
 pd_loop:
     mov %eax, %ebx
     shl $21, %ebx       # 2MBページ
-    or $0x83, %ebx      # Present + Writable + Page Size
+    or $0x87, %ebx      # Present + Writable + Page Size + User/Supervisor
     mov %ebx, (%edi)
     add $8, %edi
     inc %eax
@@ -270,10 +272,14 @@ no_64bit_error_msg:
 .section .data
 .align 8
 gdt64_start:
-    .quad 0                         # NULL セグメント         (selector 0x00)
-    .quad 0x00cf9a000000ffff        # 32ビット互換コードセグメント (selector 0x08)
-    .quad 0x00cf92000000ffff        # 32ビット互換データセグメント (selector 0x10)
-    .quad 0x00af9a000000ffff        # 64ビットコードセグメント    (selector 0x18, L=1,D=0)
+    .quad 0                         # [0] NULL                        (selector 0x00)
+    .quad 0x00cf9a000000ffff        # [1] 32ビット互換コード (ring0)   (selector 0x08)
+    .quad 0x00cf92000000ffff        # [2] 32ビット互換データ (ring0)   (selector 0x10)
+    .quad 0x00af9a000000ffff        # [3] 64ビットコード    (ring0)   (selector 0x18, L=1,D=0)
+    .quad 0                         # [4] ring3コード  — gdt_user.c で設定 (selector 0x20)
+    .quad 0                         # [5] ring3データ  — gdt_user.c で設定 (selector 0x28)
+    .quad 0                         # [6] 64-bit TSS lo — gdt_user.c で設定 (selector 0x30)
+    .quad 0                         # [7] 64-bit TSS hi — gdt_user.c で設定
 gdt64_end:
 
 gdt64_descriptor:

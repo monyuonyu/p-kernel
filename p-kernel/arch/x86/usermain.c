@@ -11,6 +11,9 @@
 #include "netstack.h"
 #include "drpc.h"
 #include "ai_kernel.h"
+#include "vfs.h"
+#include "gdt_user.h"
+#include "p_syscall.h"
 #include <tmonitor.h>
 
 IMPORT void shell_task(INT stacd, void *exinf);
@@ -45,6 +48,11 @@ static ID create_task(FP fn, INT pri, INT stksz)
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
+
+    /* ---- Ring-3 userspace infrastructure -------------------------- */
+    gdt_init_userspace();   /* ring3 GDT entries + 64-bit TSS         */
+    syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
+    vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();

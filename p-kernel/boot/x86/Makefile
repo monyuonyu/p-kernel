@@ -62,7 +62,14 @@ ARCH_C_SRCS = \
     ai_job.c \
     pipeline.c \
     fedlearn.c \
-    ai_stats.c
+    ai_stats.c \
+    ide.c \
+    fat32.c \
+    vfs.c \
+    gdt_user.c \
+    syscall.c \
+    userspace.c \
+    elf_loader.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -166,11 +173,32 @@ NODEDEV0  = -netdev socket,id=n0,mcast=$(MCAST) \
 NODEDEV1  = -netdev socket,id=n0,mcast=$(MCAST) \
             -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
 
+# -------------------------------------------------------------------
+# ディスクイメージ (FAT32, ATA PIO経由でVFSからマウント)
+# -------------------------------------------------------------------
+DISK_IMG = disk.img
+DISK_SIZE_MB = 32
+USER_HELLO_DIR = user_hello
+
+# FAT32ディスクイメージ作成
+# mkdosfs / mformat が必要 (dosfstools パッケージ)
+$(DISK_IMG):
+	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
+	mkdosfs -F 32 -n "PKERNEL" $@
+	$(MAKE) -C $(USER_HELLO_DIR) CROSS=$(CROSS)
+	mcopy -i $@ $(USER_HELLO_DIR)/hello.elf ::hello.elf
+
+disk: $(DISK_IMG)
+
 run: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
 
 run-headless: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(NETDEV)
+
+run-disk: $(TARGET) $(DISK_IMG)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
 
 run-nonet: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
@@ -196,5 +224,9 @@ run-boot: $(TARGET)
 
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) serial.log
+	$(MAKE) -C $(USER_HELLO_DIR) clean 2>/dev/null || true
 
-.PHONY: all clean run run-log debug run-32 run-boot run-node0 run-node1
+clean-disk:
+	rm -f $(DISK_IMG)
+
+.PHONY: all clean clean-disk disk run run-disk run-log debug run-32 run-boot run-node0 run-node1
