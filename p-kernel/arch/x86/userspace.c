@@ -19,6 +19,7 @@
 #include "kernel.h"
 #include "userspace.h"
 #include "gdt_user.h"
+#include <tmonitor.h>
 
 void user_exec(UW entry, UW ustack_top)
 {
@@ -59,7 +60,7 @@ void user_exec(UW entry, UW ustack_top)
         "pushl %0               \n"   /* SS      = USER_DS */
         "pushl %1               \n"   /* ESP     = ustack_top */
         "pushf                  \n"   /* EFLAGS */
-        "orl  $0x200, (%%esp)   \n"   /* set IF (enable interrupts in ring3) */
+        "orl  $0x200, (%%esp)   \n"   /* IF=1: ring-3でも割り込みを有効化 */
         "pushl %2               \n"   /* CS      = USER_CS */
         "pushl %3               \n"   /* EIP     = entry */
         "iret                   \n"   /* switch to ring-3 */

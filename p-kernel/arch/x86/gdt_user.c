@@ -81,11 +81,19 @@ static UW desc_lo(UW base, UW limit)
  */
 static UW desc_hi(UW base, UW limit, UB access, UB flags)
 {
-    return ((base >> 24) & 0xFF)
-         | ((UW)access << 8)
-         | (((limit >> 16) & 0x0F) << 16)
-         | ((UW)(flags & 0x0F) << 20)
-         | (((base >> 16) & 0xFF) << 24);
+    /*
+     * High dword of an 8-byte GDT segment descriptor (bytes 4..7):
+     *   byte 4  = base[23:16]   → bits  7: 0
+     *   byte 5  = access byte   → bits 15: 8
+     *   byte 6  = limit[19:16]  → bits 19:16
+     *             flags (G/DB/L/AVL) → bits 23:20
+     *   byte 7  = base[31:24]   → bits 31:24
+     */
+    return ((base >> 16) & 0xFF)              /* bits  7: 0 = base[23:16] */
+         | ((UW)access << 8)                  /* bits 15: 8 = access byte */
+         | (((limit >> 16) & 0x0F) << 16)     /* bits 19:16 = limit[19:16] */
+         | ((UW)(flags & 0x0F) << 20)         /* bits 23:20 = G/DB/L/AVL  */
+         | (((base >> 24) & 0xFF) << 24);     /* bits 31:24 = base[31:24] */
 }
 
 /* Write a 64-bit descriptor at GDT slot `index` (0-based). */

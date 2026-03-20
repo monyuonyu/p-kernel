@@ -312,11 +312,12 @@ irq_back64_stub:
 .global syscall_isr
 syscall_isr:
     # 64ビットモード: システムコール引数レジスタを pushq で保存
-    # 保存順: rax(nr), rcx(arg1), rdx(arg2), rbx(arg0)
+    # 保存順: rax(nr), rcx(arg1), rdx(arg2), rbx(arg0), rsi(ring3 ESI)
     .byte 0x48, 0x50            # pushq %rax   (syscall番号 / 戻り値スロット)
     .byte 0x48, 0x51            # pushq %rcx   (arg1)
     .byte 0x48, 0x52            # pushq %rdx   (arg2)
     .byte 0x48, 0x53            # pushq %rbx   (arg0)
+    .byte 0x48, 0x56            # pushq %rsi   (ring3 ESI保存: isr.Sは保存しないのでここで保存)
 
     # 32ビット互換モードへ far jump: pushq CS; pushq offset; rex.W retf
     .byte 0x48, 0x6a, 0x08      # pushq $0x08  (32ビット互換 CS)
@@ -326,18 +327,28 @@ syscall_isr:
 
 # ---- 32ビット互換モードで実行される部分 (CS=0x08) ----
 syscall_call32_stub:
+    # DS/SS/ESをカーネルデータセレクタ(0x10)に再ロード
+    # ring3→ring0割り込み時: CPUがSSをnull(0x0000)にセット(IA-32eモード)
+    # DSはring3のUSER_DS(0x2B)が残る可能性がある
+    # カーネルのC関数が正しくカーネルスタック/データにアクセスできるよう修正
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %ss
+
     # スタックレイアウト (64ビットpushq = 8バイト/要素):
-    #   [esp+ 0] rbx low32 (arg0)
-    #   [esp+ 8] rdx low32 (arg2)
-    #   [esp+16] rcx low32 (arg1)
-    #   [esp+24] rax low32 (syscall番号)
+    #   [esp+ 0] rsi low32 (ring3 ESI)
+    #   [esp+ 8] rbx low32 (arg0)
+    #   [esp+16] rdx low32 (arg2)
+    #   [esp+24] rcx low32 (arg1)
+    #   [esp+32] rax low32 (syscall番号)
     #
     # syscall_dispatch(nr, arg0, arg1, arg2) を cdecl で呼び出す
 
-    mov  0(%esp), %ebx          # arg0
-    mov  8(%esp), %edx          # arg2
-    mov 16(%esp), %ecx          # arg1
-    mov 24(%esp), %eax          # nr
+    mov  8(%esp), %ebx          # arg0
+    mov 16(%esp), %edx          # arg2
+    mov 24(%esp), %ecx          # arg1
+    mov 32(%esp), %eax          # nr
 
     push %edx                   # push arg2
     push %ecx                   # push arg1
@@ -348,7 +359,7 @@ syscall_call32_stub:
 
     # 戻り値 (EAX) を保存済み rax スロットに書き戻す
     # → 64ビットモードで popq %rax するとring3の EAX に戻る
-    mov  %eax, 24(%esp)
+    mov  %eax, 32(%esp)
 
     # 64ビットモードへ戻る: push CS; push offset; retf
     .byte 0x6a, 0x18            # push $0x18   (64ビット CS)
@@ -359,6 +370,7 @@ syscall_call32_stub:
 # ---- 64ビットモードで実行される部分 (CS=0x18) ----
 syscall_back64_stub:
     # pushq の逆順で popq (LIFO)
+    .byte 0x48, 0x5e            # popq %rsi   (ring3 ESI復元)
     .byte 0x48, 0x5b            # popq %rbx   (arg0, 破棄)
     .byte 0x48, 0x5a            # popq %rdx   (arg2, 破棄)
     .byte 0x48, 0x59            # popq %rcx   (arg1, 破棄)

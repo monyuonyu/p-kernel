@@ -58,22 +58,36 @@ static INT ide_wait_drq(void)
 
 INT ide_init(void)
 {
+    /* Select master drive (0xA0) before touching the bus */
+    outb(IDE_PRIMARY_BASE + IDE_REG_DRIVE, 0xA0);
+    io_wait(); io_wait(); io_wait(); io_wait();
+
+    /* Check for floating bus: STATUS = 0xFF → no controller / no drive */
+    UB st0 = inb(IDE_PRIMARY_BASE + IDE_REG_STATUS);
+    if (st0 == 0xFF) {
+        tm_putstring((UB *)"[ide]  no drive (floating bus)\r\n");
+        return -1;
+    }
+
     /* Software reset via control register */
     outb(IDE_PRIMARY_CTRL, 0x04);   /* SRST bit */
     io_wait(); io_wait();
     outb(IDE_PRIMARY_CTRL, 0x00);   /* clear reset */
-    io_wait(); io_wait(); io_wait(); io_wait();
 
+    /* Wait up to ~500 ms for BSY to clear after reset */
     if (ide_wait_not_busy() < 0) {
         tm_putstring((UB *)"[ide]  no drive (BSY timeout)\r\n");
         return -1;
     }
 
-    /* Check if drive exists: after reset LBA1/LBA2 = 0 for ATA drive */
-    UB lba1 = inb(IDE_PRIMARY_BASE + IDE_REG_LBA1);
-    UB lba2 = inb(IDE_PRIMARY_BASE + IDE_REG_LBA2);
-    if (lba1 == 0xFF && lba2 == 0xFF) {
-        tm_putstring((UB *)"[ide]  no drive (floating bus)\r\n");
+    /* Re-select master after reset */
+    outb(IDE_PRIMARY_BASE + IDE_REG_DRIVE, 0xA0);
+    io_wait(); io_wait();
+
+    /* Confirm STATUS is non-zero and non-FF (drive present) */
+    UB st1 = inb(IDE_PRIMARY_BASE + IDE_REG_STATUS);
+    if (st1 == 0x00 || st1 == 0xFF) {
+        tm_putstring((UB *)"[ide]  no drive (status=0)\r\n");
         return -1;
     }
 
