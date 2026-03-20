@@ -1,0 +1,55 @@
+qemu-system-x86_64: multiboot knows VBE. we don't
+Starting 32-bit kernel with 64-bit long mode capability...
+Entering 64-bit long mode transition...
+64-bit long mode successfully activated! Running in compatibility mode.
+=== p-kernel x86 boot ===
+[INIT] IDT...
+[OK]   IDT
+[INIT] Memory...
+Initializing physical memory management...
+Basic memory info available
+Memory map available - parsing regions...
+Physical memory initialization complete!
+[OK]   Memory
+[INIT] PIC (8259A)...
+[OK]   PIC
+[BOOT] Starting T-Kernel...
+[T-Kernel] Initial task started
+[T-Kernel] Initial task started
+[OK]  Keyboard (IRQ1)
+[OK]  Shell task
+[net] Scanning PCI bus for RTL8139...
+[net] RTL8139 ready  I/O=0xC000  IRQ=11  MAC=52:54:00:00:00:01
+[drpc] node 0  IP=10.1.0.1  port=7374
+[OK]  DRPC task
+[net] Sending ARP request for gateway 10.0.2.2 and DNS 10.0.2.3
+[OK]  Net RX task
+[T-Kernel] usermain() returned
+
+  +-----------------------------------------+
+  |  p-kernel  /  micro T-Kernel 2.0 x86   |
+  |  Interactive Shell                      |
+  +-----------------------------------------+
+  Type 'help' for available commands.
+
+p-kernel> [net] RX task running
+[drpc] node 1 discovered  IP=10.1.0.2
+net
+RTL8139 NIC status:
+  MAC  : 52:54:00:00:00:01
+  RX   : 68 frames
+  TX   : 86 frames
+  ARP  : 0 rx / 75 tx
+  ICMP : 0 req rx / 0 rep rx / 0 tx
+  UDP  : 11 rx / 11 tx
+  TCP  : 0 rx / 0 tx
+  My IP: 10.1.0.1
+  GW   : 10.0.2.2
+  DNS  : 10.0.2.3
+p-kernel> 
+p-kernel> nodes
+[nodes]  ID  State    IP
+          0  (self)  10.1.0.1
+          1  alive    10.1.0.2  (missed=0)
+p-kernel> 
+p-kernel> qemu-system-x86_64: terminating on signal 15 from pid 14859 (timeout)

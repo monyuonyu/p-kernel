@@ -50,6 +50,8 @@
 #define DRPC_CALL_PING      0x0001
 #define DRPC_CALL_CRE_TSK   0x0101    /* create task on remote node      */
 #define DRPC_CALL_SIG_SEM   0x0201    /* signal remote semaphore         */
+#define DRPC_CALL_INFER     0x0301    /* MLP inference on remote node    */
+#define DRPC_CALL_FL_AGG    0x0401    /* FedAvg weight aggregation       */
 
 typedef struct {
     UW  magic;          /* DRPC_MAGIC                        */
@@ -130,3 +132,8 @@ ER dtk_wai_sem(UW gsemid, INT cnt, TMO tmout);
 
 /* Signal semaphore — routes over the network if on remote node. */
 ER dtk_sig_sem(UW gsemid, INT cnt);
+
+/* Run MLP inference on a remote node (or local if node_id==drpc_my_node).
+ * sensor_packed = SENSOR_PACK(temp_q8, hum_q8, press_q8, light_q8)
+ * Returns E_OK and sets *class_out to 0/1/2. */
+ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);

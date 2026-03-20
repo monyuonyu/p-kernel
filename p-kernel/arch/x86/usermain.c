@@ -10,16 +10,21 @@
 #include "rtl8139.h"
 #include "netstack.h"
 #include "drpc.h"
+#include "ai_kernel.h"
 #include <tmonitor.h>
 
 IMPORT void shell_task(INT stacd, void *exinf);
 
-#define SHELL_PRIORITY   2
-#define SHELL_STACK      8192
-#define NET_PRIORITY     3
-#define NET_STACK        4096
-#define DRPC_PRIORITY    5
-#define DRPC_STACK       4096
+#define SHELL_PRIORITY      2
+#define SHELL_STACK         8192
+#define NET_PRIORITY        3
+#define NET_STACK           4096
+#define DRPC_PRIORITY       5
+#define DRPC_STACK          4096
+#define AI_WORKER_PRIORITY  6
+#define AI_WORKER_STACK     4096
+#define AI_INFER_PRIORITY   7
+#define AI_INFER_STACK      4096
 
 static ID create_sem(INT isemcnt, INT maxsem)
 {
@@ -40,6 +45,21 @@ static ID create_task(FP fn, INT pri, INT stksz)
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
+
+    /* ---- AI kernel primitives ------------------------------------- */
+    ai_kernel_init();
+
+    /* ---- AI worker task (software NPU) ---------------------------- */
+    if (create_task(ai_worker_task, AI_WORKER_PRIORITY, AI_WORKER_STACK) < E_OK)
+        tm_putstring((UB *)"[ERR] AI worker task\r\n");
+    else
+        tm_putstring((UB *)"[OK]  AI worker task\r\n");
+
+    /* ---- AI inference pipeline consumer --------------------------- */
+    if (create_task(ai_infer_task, AI_INFER_PRIORITY, AI_INFER_STACK) < E_OK)
+        tm_putstring((UB *)"[ERR] AI infer task\r\n");
+    else
+        tm_putstring((UB *)"[OK]  AI infer task\r\n");
 
     /* ---- Keyboard ------------------------------------------------- */
     ID kbd_sem = create_sem(0, 64);

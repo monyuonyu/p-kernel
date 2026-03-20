@@ -15,6 +15,7 @@
 #include "rtl8139.h"
 #include "netstack.h"
 #include "drpc.h"
+#include "ai_kernel.h"
 #include "kernel.h"
 
 #define SHELL_LINE_MAX  128
@@ -88,6 +89,17 @@ static void cmd_help(void)
     sout("  udp <IP> <p> <msg>  - send UDP datagram\r\n");
     sout("  http <host>[/path]  - HTTP GET (port 80)\r\n");
     sout("  clear               - clear screen\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("AI commands:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  sensor <t> <h> <p> <l>      - push sensor frame (°C, %, hPa, lux)\r\n");
+    sout("  infer <t> <h> <p> <l>       - local MLP inference (no pipeline)\r\n");
+    sout("  aistat                      - AI statistics\r\n");
+    sout("  fl train                    - federated learning local train step\r\n");
+    sout("  fl status                   - FL round count + last loss\r\n");
+    if (drpc_my_node != 0xFF) {
+        sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
+    }
     if (drpc_my_node != 0xFF) {
         vga_set_color(VGA_YELLOW, VGA_BLACK);
         sout("Distributed (node "); sout_dec(drpc_my_node); sout("):\r\n");
@@ -324,6 +336,190 @@ static void cmd_dsem(const char *arg)
         }
     } else {
         sout("Usage: dsem new | dsem wai <0xID> | dsem sig <0xID>\r\n");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* AI commands                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Parse a signed integer from string; advances *pp past digits */
+static W parse_sint(const char **pp)
+{
+    while (**pp == ' ') (*pp)++;
+    W sign = 1;
+    if (**pp == '-') { sign = -1; (*pp)++; }
+    W v = 0;
+    while (**pp >= '0' && **pp <= '9') { v = v * 10 + (**pp - '0'); (*pp)++; }
+    return sign * v;
+}
+
+static void cmd_sensor(const char *arg)
+{
+    /* sensor <temp_C> <hum_%> <press_hPa> <light_lux> */
+    const char *p = arg;
+    W t = parse_sint(&p);
+    W h = parse_sint(&p);
+    W pr = parse_sint(&p);
+    W l  = parse_sint(&p);
+
+    SENSOR_FRAME f;
+    f.temp     = sensor_norm_temp(t);
+    f.humidity = sensor_norm_hum(h);
+    f.pressure = sensor_norm_press(pr);
+    f.light    = sensor_norm_light(l);
+    SYSTIM st; tk_get_tim(&st);
+    f.tick     = (UW)st.lo;
+
+    ER er = pipeline_push(&f);
+    if (er == E_OK) {
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        sout("[sensor] pushed (t="); sout_dec((UW)(t < 0 ? (UW)(-t) : (UW)t));
+        sout("C h="); sout_dec((UW)h);
+        sout("% p="); sout_dec((UW)pr);
+        sout("hPa l="); sout_dec((UW)l); sout("lux)\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[sensor] pipeline full — frame dropped\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static const char *cls_name(UB c)
+{
+    if (c == 0) return "normal  ";
+    if (c == 1) return "ALERT   ";
+    return "CRITICAL";
+}
+
+static void cmd_infer(const char *arg)
+{
+    /* infer [node] <temp_C> <hum_%> <press_hPa> <light_lux>
+     * If first token is 0-7 and NIC is distributed, treat as node_id.
+     * Otherwise run local inference. */
+    const char *p = arg;
+    while (*p == ' ') p++;
+
+    UB node_id = drpc_my_node;
+    BOOL remote = FALSE;
+
+    /* Peek: if first token is a single digit 0-7 and next char is space/end */
+    if (drpc_my_node != 0xFF && *p >= '0' && *p <= '7') {
+        const char *q = p + 1;
+        while (*q >= '0' && *q <= '9') q++;
+        if (*q == ' ' || *q == '\0') {
+            node_id = (UB)(*p - '0');
+            p = q;
+            remote = (node_id != drpc_my_node);
+        }
+    }
+
+    W t  = parse_sint(&p);
+    W h  = parse_sint(&p);
+    W pr = parse_sint(&p);
+    W l  = parse_sint(&p);
+
+    if (remote) {
+        W packed = SENSOR_PACK(sensor_norm_temp(t),
+                               sensor_norm_hum(h),
+                               sensor_norm_press(pr),
+                               sensor_norm_light(l));
+        UB cls = 0;
+        ER er = dtk_infer(node_id, packed, &cls, 3000);
+        if (er == E_OK) {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[infer] node "); sout_dec(node_id);
+            sout(" -> "); sout(cls_name(cls)); sout("\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("[infer] remote error\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+    } else {
+        B input[MLP_IN];
+        input[0] = sensor_norm_temp(t);
+        input[1] = sensor_norm_hum(h);
+        input[2] = sensor_norm_press(pr);
+        input[3] = sensor_norm_light(l);
+        UB cls = mlp_forward(input);
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        sout("[infer] local -> "); sout(cls_name(cls)); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_aistat(void)
+{
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    ai_stats_print();
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+/* Tiny labelled training dataset — covers all three classes */
+static const B fl_samples[6][MLP_IN] = {
+    /* normal: t=22C h=50% p=1013hPa l=500lux */
+    {  4, 0, 0, 0 },
+    {  0, 0, 0, 0 },
+    /* alert: t=38C h=80% p=950hPa l=2000lux */
+    { 36, 60, -31, 62 },
+    { 30, 50, -20, 50 },
+    /* critical: t=50C h=95% p=900hPa l=5000lux */
+    { 60, 90, -56, 112 },
+    { 55, 85, -50, 100 },
+};
+static const UB fl_labels[6] = { 0, 0, 1, 1, 2, 2 };
+
+static void cmd_fl(const char *arg)
+{
+    while (*arg == ' ') arg++;
+
+    if (str_starts(arg, "train")) {
+        sout("[FL] local train step...\r\n");
+
+        float delta_w1[MLP_IN*MLP_H1], delta_b1[MLP_H1];
+        float delta_w2[MLP_H1*MLP_H2], delta_b2[MLP_H2];
+        float delta_w3[MLP_H2*MLP_OUT], delta_b3[MLP_OUT];
+
+        ER er = fl_local_train(fl_samples, fl_labels, 6,
+                               delta_w1, delta_b1,
+                               delta_w2, delta_b2,
+                               delta_w3, delta_b3);
+        if (er != E_OK) {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("[FL] train failed\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+            return;
+        }
+
+        /* Pack all deltas into one flat array for dtk_fl_aggregate */
+        static float flat_delta[MLP_IN*MLP_H1 + MLP_H1 +
+                                 MLP_H1*MLP_H2 + MLP_H2 +
+                                 MLP_H2*MLP_OUT + MLP_OUT];
+        UW i = 0, j;
+        for (j = 0; j < MLP_IN*MLP_H1;  j++) flat_delta[i++] = delta_w1[j];
+        for (j = 0; j < MLP_H1;         j++) flat_delta[i++] = delta_b1[j];
+        for (j = 0; j < MLP_H1*MLP_H2;  j++) flat_delta[i++] = delta_w2[j];
+        for (j = 0; j < MLP_H2;         j++) flat_delta[i++] = delta_b2[j];
+        for (j = 0; j < MLP_H2*MLP_OUT; j++) flat_delta[i++] = delta_w3[j];
+        for (j = 0; j < MLP_OUT;        j++) flat_delta[i++] = delta_b3[j];
+
+        ER er2 = dtk_fl_aggregate(0, flat_delta, 6, 3000);
+        if (er2 == E_OK) {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[FL] aggregate OK\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("[FL] aggregate failed\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+
+    } else if (str_starts(arg, "status")) {
+        fl_status();
+    } else {
+        sout("Usage: fl train | fl status\r\n");
     }
 }
 
@@ -584,6 +780,13 @@ static void execute(const char *cmd)
         { cmd_dtask(cmd + 5); return; }
     if (cmd[0]=='d' && cmd[1]=='s' && cmd[2]=='e' && cmd[3]=='m')
         { cmd_dsem(cmd + 4); return; }
+    if (cmd[0]=='s' && cmd[1]=='e' && cmd[2]=='n' && cmd[3]=='s' &&
+        cmd[4]=='o' && cmd[5]=='r')
+        { cmd_sensor(cmd + 6); return; }
+    if (cmd[0]=='i' && cmd[1]=='n' && cmd[2]=='f' && cmd[3]=='e' && cmd[4]=='r')
+        { cmd_infer(cmd + 5); return; }
+    if (cmd[0]=='f' && cmd[1]=='l')
+        { cmd_fl(cmd + 2); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();
@@ -592,6 +795,7 @@ static void execute(const char *cmd)
     else if (str_eq(cmd, "ps"))     cmd_ps();
     else if (str_eq(cmd, "net"))    cmd_net();
     else if (str_eq(cmd, "arp"))    cmd_arp();
+    else if (str_eq(cmd, "aistat")) cmd_aistat();
     else if (str_eq(cmd, "clear"))  vga_clear();
     else {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);

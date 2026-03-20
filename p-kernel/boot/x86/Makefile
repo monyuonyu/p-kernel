@@ -57,7 +57,12 @@ ARCH_C_SRCS = \
     pci.c \
     rtl8139.c \
     netstack.c \
-    drpc.c
+    drpc.c \
+    tensor.c \
+    ai_job.c \
+    pipeline.c \
+    fedlearn.c \
+    ai_stats.c
 
 ARCH_S_SRCS = cpu_support.S
 

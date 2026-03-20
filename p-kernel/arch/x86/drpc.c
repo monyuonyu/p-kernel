@@ -35,6 +35,7 @@
 #include "drpc.h"
 #include "netstack.h"
 #include "kernel.h"
+#include "ai_kernel.h"
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -241,6 +242,19 @@ static W drpc_dispatch(UB src, UH call_id, UW obj_id, W a0, W a1, W a2)
         return drpc_local_cre_tsk((UH)obj_id, (INT)a0, src);
     case DRPC_CALL_SIG_SEM:
         return (W)tk_sig_sem((ID)GOBJ_LOCAL(obj_id), (INT)a0);
+    case DRPC_CALL_INFER: {
+        /* a0 = SENSOR_PACK(temp,hum,press,light) */
+        B input[4] = {
+            SENSOR_UNPACK_T(a0),
+            SENSOR_UNPACK_H(a0),
+            SENSOR_UNPACK_P(a0),
+            SENSOR_UNPACK_L(a0),
+        };
+        UB cls = mlp_forward(input);
+        dp_puts("[drpc/infer] from node "); dp_putdec((UW)src);
+        dp_puts("  class="); dp_putdec((UW)cls); dp_puts("\r\n");
+        return (W)cls;
+    }
     default:
         return E_NOSPT;
     }
@@ -581,4 +595,43 @@ ER dtk_sig_sem(UW gsemid, INT cnt)
     dp_puts("[dsem] sig -> node "); dp_putdec(GOBJ_NODE(gsemid)); dp_puts("\r\n");
     W r = drpc_call(GOBJ_NODE(gsemid), DRPC_CALL_SIG_SEM, gsemid, (W)cnt, 0, 0);
     return (r >= 0) ? E_OK : (ER)r;
+}
+
+/* ------------------------------------------------------------------ */
+/* Distributed Inference                                               */
+/* ------------------------------------------------------------------ */
+
+ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout)
+{
+    (void)tmout;
+
+    /* Local shortcut: if target is self or not in distributed mode */
+    if (node_id == drpc_my_node || drpc_my_node == 0xFF) {
+        B input[MLP_IN] = {
+            SENSOR_UNPACK_T(sensor_packed),
+            SENSOR_UNPACK_H(sensor_packed),
+            SENSOR_UNPACK_P(sensor_packed),
+            SENSOR_UNPACK_L(sensor_packed),
+        };
+        UB cls = mlp_forward(input);
+        ai_stats.inferences_local++;
+        ai_stats.inferences_total++;
+        ai_stats.class_count[cls < 3 ? cls : 0]++;
+        if (class_out) *class_out = cls;
+        return E_OK;
+    }
+
+    if (node_id >= DNODE_MAX) return E_PAR;
+    if (dnode_table[node_id].state == DNODE_DEAD) return E_NOEXS;
+
+    dp_puts("[dtk_infer] -> node "); dp_putdec(node_id); dp_puts("\r\n");
+    W r = drpc_call(node_id, DRPC_CALL_INFER, 0, sensor_packed, 0, 0);
+    if (r < 0) return (ER)r;
+
+    ai_stats.inferences_remote++;
+    ai_stats.inferences_total++;
+    UB cls = (UB)(r & 0xFF);
+    ai_stats.class_count[cls < 3 ? cls : 0]++;
+    if (class_out) *class_out = cls;
+    return E_OK;
 }
