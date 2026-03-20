@@ -26,14 +26,18 @@ INT vfs_init(void)
     return 0;
 }
 
-INT  vfs_open(const char *path)        { return fat32_open(path); }
-INT  vfs_read(INT fd, void *b, UW l)   { return fat32_read(fd, b, l); }
-INT  vfs_seek(INT fd, UW off)          { return fat32_seek(fd, off); }
-UW   vfs_fsize(INT fd)                 { return fat32_fsize(fd); }
-void vfs_close(INT fd)                 { fat32_close(fd); }
+INT  vfs_open(const char *path)            { return fat32_open(path); }
+INT  vfs_read(INT fd, void *b, UW l)       { return fat32_read(fd, b, l); }
+INT  vfs_seek(INT fd, UW off)              { return fat32_seek(fd, off); }
+UW   vfs_fsize(INT fd)                     { return fat32_fsize(fd); }
+void vfs_close(INT fd)                     { fat32_close(fd); }
+INT  vfs_create(const char *path)          { return fat32_create_fd(path); }
+INT  vfs_write(INT fd, const void *b, UW l){ return fat32_write(fd, b, l); }
+INT  vfs_unlink(const char *path)          { return fat32_unlink(path); }
+INT  vfs_mkdir(const char *path)           { return fat32_mkdir(path); }
+INT  vfs_rename(const char *o, const char *n){ return fat32_rename(o, n); }
 
 INT  vfs_readdir(const char *path, VFS_DIRENT *out, INT max)
 {
-    /* Reuse FAT32_DIRENT which has identical layout */
     return fat32_readdir(path, (FAT32_DIRENT *)out, max);
 }

@@ -1,6 +1,6 @@
 /*
  *  fat32.h (x86)
- *  FAT32 read-only filesystem
+ *  FAT32 filesystem (read + write)
  */
 #pragma once
 #include "kernel.h"
@@ -41,5 +41,22 @@ void fat32_close(INT fd);
  * Stores up to `max` entries in `out[]`.
  * Returns entry count, negative on error. */
 INT fat32_readdir(const char *path, FAT32_DIRENT *out, INT max);
+
+/* Create or truncate a file; return a writable fd >= 0, or -1 on error.
+ * On close the file size is written back to the directory entry. */
+INT fat32_create_fd(const char *path);
+
+/* Write `len` bytes at the current position of a writable fd.
+ * Returns bytes written, or -1 on error. */
+INT fat32_write(INT fd, const void *buf, UW len);
+
+/* Delete a file (not a directory). */
+INT fat32_unlink(const char *path);
+
+/* Create an empty directory. */
+INT fat32_mkdir(const char *path);
+
+/* Rename / move a file or directory. */
+INT fat32_rename(const char *oldpath, const char *newpath);
 
 extern BOOL fat32_mounted;

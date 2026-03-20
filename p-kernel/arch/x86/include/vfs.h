@@ -35,6 +35,21 @@ UW   vfs_fsize(INT fd);
 /* Close fd. */
 void vfs_close(INT fd);
 
+/* Create or truncate a file; returns writable fd or -1. */
+INT  vfs_create(const char *path);
+
+/* Write len bytes at current position of writable fd. */
+INT  vfs_write(INT fd, const void *buf, UW len);
+
+/* Delete a file. */
+INT  vfs_unlink(const char *path);
+
+/* Create a directory. */
+INT  vfs_mkdir(const char *path);
+
+/* Rename / move. */
+INT  vfs_rename(const char *oldpath, const char *newpath);
+
 /* List directory.  Returns entry count, negative on error. */
 INT  vfs_readdir(const char *path, VFS_DIRENT *out, INT max);
 

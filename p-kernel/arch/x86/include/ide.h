@@ -30,7 +30,9 @@
 #define IDE_STATUS_BSY      0x80
 
 /* Commands */
-#define IDE_CMD_READ_PIO    0x20    /* Read sectors with retry */
+#define IDE_CMD_READ_PIO    0x20    /* Read sectors with retry  */
+#define IDE_CMD_WRITE_PIO   0x30    /* Write sectors with retry */
+#define IDE_CMD_FLUSH_CACHE 0xE7    /* Flush write cache        */
 #define IDE_CMD_IDENTIFY    0xEC
 
 /* Sector size */
@@ -44,6 +46,10 @@ INT  ide_init(void);
  * buf must be at least count * 512 bytes.
  * Returns 0 on success, -1 on error. */
 INT  ide_read(UW lba, UW count, void *buf);
+
+/* Write `count` sectors from `buf` to LBA `lba`.
+ * Returns 0 on success, -1 on error. */
+INT  ide_write(UW lba, UW count, const void *buf);
 
 /* Number of sectors on the drive (from IDENTIFY). */
 UW   ide_sector_count(void);

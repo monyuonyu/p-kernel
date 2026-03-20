@@ -22,6 +22,9 @@ static UW  ide_nsectors = 0;
 static inline UH inw(UH port)
     { UH v; asm volatile("inw %1,%0":"=a"(v):"Nd"(port)); return v; }
 
+static inline void outw(UH port, UH val)
+    { asm volatile("outw %0,%1"::"a"(val),"Nd"(port)); }
+
 static inline void io_wait(void)
     { inb(0x80); }   /* dummy write to port 80 ≈ ~1 µs delay */
 
@@ -171,3 +174,44 @@ INT ide_read(UW lba, UW count, void *buf)
 }
 
 UW ide_sector_count(void) { return ide_nsectors; }
+
+/* --------------------------------------------------------------- */
+/* Write sectors                                                    */
+/* --------------------------------------------------------------- */
+
+INT ide_write(UW lba, UW count, const void *buf)
+{
+    if (!ide_present) return -1;
+    if (count == 0)   return 0;
+
+    const UH *p = (const UH *)buf;
+
+    while (count > 0) {
+        UW batch = (count > 255) ? 255 : count;
+
+        if (ide_wait_not_busy() < 0) return -1;
+
+        outb(IDE_PRIMARY_BASE + IDE_REG_DRIVE,
+             (UB)(0xE0 | ((lba >> 24) & 0x0F)));
+        outb(IDE_PRIMARY_BASE + IDE_REG_SECCOUNT, (UB)batch);
+        outb(IDE_PRIMARY_BASE + IDE_REG_LBA0, (UB)(lba));
+        outb(IDE_PRIMARY_BASE + IDE_REG_LBA1, (UB)(lba >> 8));
+        outb(IDE_PRIMARY_BASE + IDE_REG_LBA2, (UB)(lba >> 16));
+        outb(IDE_PRIMARY_BASE + IDE_REG_COMMAND, IDE_CMD_WRITE_PIO);
+
+        for (UW s = 0; s < batch; s++) {
+            if (ide_wait_drq() < 0) return -1;
+            for (INT w = 0; w < 256; w++)
+                outw(IDE_PRIMARY_BASE + IDE_REG_DATA, *p++);
+        }
+
+        lba   += batch;
+        count -= batch;
+    }
+
+    /* Flush write cache to persistent storage */
+    if (ide_wait_not_busy() < 0) return 0;
+    outb(IDE_PRIMARY_BASE + IDE_REG_COMMAND, IDE_CMD_FLUSH_CACHE);
+    ide_wait_not_busy();
+    return 0;
+}

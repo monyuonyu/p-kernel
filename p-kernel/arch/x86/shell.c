@@ -102,9 +102,14 @@ static void cmd_help(void)
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("Filesystem commands:\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-    sout("  ls [path]    - list directory (default: /)\r\n");
-    sout("  cat <file>   - print file contents\r\n");
-    sout("  exec <file>  - load and run ELF32 binary\r\n");
+    sout("  ls [path]          - list directory (default: /)\r\n");
+    sout("  cat <file>         - print file contents\r\n");
+    sout("  write <file> <txt> - create/overwrite file with text\r\n");
+    sout("  rm <file>          - delete file\r\n");
+    sout("  mkdir <dir>        - create directory\r\n");
+    sout("  cp <src> <dst>     - copy file\r\n");
+    sout("  mv <src> <dst>     - rename/move file\r\n");
+    sout("  exec <file>        - load and run ELF32 binary\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -642,6 +647,145 @@ static void cmd_exec(const char *arg)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* New filesystem write commands                                       */
+/* ------------------------------------------------------------------ */
+
+IMPORT INT  vfs_create(const char *path);
+IMPORT INT  vfs_write(INT fd, const void *buf, UW len);
+IMPORT INT  vfs_unlink(const char *path);
+IMPORT INT  vfs_mkdir(const char *path);
+IMPORT INT  vfs_rename(const char *oldpath, const char *newpath);
+
+static void fs_err(const char *cmd, const char *detail)
+{
+    vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+    sout("["); sout(cmd); sout("] "); sout(detail); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_write(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: write <file> <text>\r\n"); return; }
+    if (!vfs_ready) { fs_err("write", "VFS not ready"); return; }
+
+    /* Split into path and content */
+    const char *path = arg;
+    while (*arg && *arg != ' ') arg++;
+    if (*arg == '\0') { fs_err("write", "missing text argument"); return; }
+    /* NUL-terminate path in a local buffer */
+    char path_buf[128];
+    INT plen = (INT)(arg - path);
+    if (plen >= 128) plen = 127;
+    for (INT i = 0; i < plen; i++) path_buf[i] = path[i];
+    path_buf[plen] = '\0';
+    while (*arg == ' ') arg++;  /* skip spaces before content */
+
+    INT fd = vfs_create(path_buf);
+    if (fd < 0) { fs_err("write", "cannot create file"); return; }
+
+    /* Write text + newline */
+    UW len = 0;
+    while (arg[len]) len++;
+    vfs_write(fd, arg, len);
+    vfs_write(fd, "\r\n", 2);
+    vfs_close(fd);
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[write] ok: "); sout(path_buf); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_rm(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: rm <file>\r\n"); return; }
+    if (!vfs_ready) { fs_err("rm", "VFS not ready"); return; }
+
+    if (vfs_unlink(arg) < 0) { fs_err("rm", "failed (not found or is a dir?)"); return; }
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[rm] deleted: "); sout(arg); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_mkdir(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: mkdir <dir>\r\n"); return; }
+    if (!vfs_ready) { fs_err("mkdir", "VFS not ready"); return; }
+
+    if (vfs_mkdir(arg) < 0) { fs_err("mkdir", "failed (exists or no space?)"); return; }
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[mkdir] created: "); sout(arg); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_cp(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: cp <src> <dst>\r\n"); return; }
+    if (!vfs_ready) { fs_err("cp", "VFS not ready"); return; }
+
+    /* Parse src and dst */
+    const char *src = arg;
+    while (*arg && *arg != ' ') arg++;
+    if (*arg == '\0') { fs_err("cp", "missing dst"); return; }
+    char src_buf[128];
+    INT slen = (INT)(arg - src);
+    if (slen >= 128) slen = 127;
+    for (INT i = 0; i < slen; i++) src_buf[i] = src[i];
+    src_buf[slen] = '\0';
+    while (*arg == ' ') arg++;
+    const char *dst = arg;
+
+    INT sfd = vfs_open(src_buf);
+    if (sfd < 0) { fs_err("cp", "src not found"); return; }
+    INT dfd = vfs_create(dst);
+    if (dfd < 0) { vfs_close(sfd); fs_err("cp", "cannot create dst"); return; }
+
+    static UB cp_buf[512];
+    INT total = 0;
+    for (;;) {
+        INT n = vfs_read(sfd, cp_buf, sizeof(cp_buf));
+        if (n <= 0) break;
+        vfs_write(dfd, cp_buf, (UW)n);
+        total += n;
+    }
+    vfs_close(sfd);
+    vfs_close(dfd);
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[cp] "); sout(src_buf); sout(" -> "); sout(dst);
+    sout("  ("); sout_dec((UW)total); sout(" B)\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_mv(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: mv <src> <dst>\r\n"); return; }
+    if (!vfs_ready) { fs_err("mv", "VFS not ready"); return; }
+
+    const char *src = arg;
+    while (*arg && *arg != ' ') arg++;
+    if (*arg == '\0') { fs_err("mv", "missing dst"); return; }
+    char src_buf[128];
+    INT slen = (INT)(arg - src);
+    if (slen >= 128) slen = 127;
+    for (INT i = 0; i < slen; i++) src_buf[i] = src[i];
+    src_buf[slen] = '\0';
+    while (*arg == ' ') arg++;
+    const char *dst = arg;
+
+    if (vfs_rename(src_buf, dst) < 0) {
+        fs_err("mv", "failed"); return;
+    }
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[mv] "); sout(src_buf); sout(" -> "); sout(dst); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
 /* Parse "A.B.C.D" → IP4 value.  Returns 1 on success. */
 static INT parse_ip(const char *s, UW *out)
 {
@@ -912,6 +1056,16 @@ static void execute(const char *cmd)
         { cmd_cat(cmd + 3); return; }
     if (cmd[0]=='e' && cmd[1]=='x' && cmd[2]=='e' && cmd[3]=='c')
         { cmd_exec(cmd + 4); return; }
+    if (cmd[0]=='w' && cmd[1]=='r' && cmd[2]=='i' && cmd[3]=='t' && cmd[4]=='e')
+        { cmd_write(cmd + 5); return; }
+    if (cmd[0]=='r' && cmd[1]=='m')
+        { cmd_rm(cmd + 2); return; }
+    if (cmd[0]=='m' && cmd[1]=='k' && cmd[2]=='d' && cmd[3]=='i' && cmd[4]=='r')
+        { cmd_mkdir(cmd + 5); return; }
+    if (cmd[0]=='c' && cmd[1]=='p')
+        { cmd_cp(cmd + 2); return; }
+    if (cmd[0]=='m' && cmd[1]=='v')
+        { cmd_mv(cmd + 2); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();
