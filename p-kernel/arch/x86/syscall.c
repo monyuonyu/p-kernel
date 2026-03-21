@@ -17,6 +17,7 @@
 #include "ai_kernel.h"
 #include "paging.h"
 #include "kdds.h"
+#include "edf.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -838,6 +839,11 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0 = handle */
         kdds_close(arg0);
         return 0;
+    }
+
+    case SYS_INFER_SLA: {
+        /* arg0 = sensor_packed, arg1 = deadline_ms */
+        return edf_infer(arg0, arg1);
     }
 
     /* ------------------------------------------------------------- */

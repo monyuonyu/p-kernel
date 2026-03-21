@@ -13,6 +13,7 @@
 #include "swim.h"
 #include "kdds.h"
 #include "heal.h"
+#include "edf.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -33,6 +34,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define DRPC_STACK          4096
 #define SWIM_PRIORITY       6
 #define SWIM_STACK          4096
+#define EDF_LOAD_PRIORITY   7
+#define EDF_LOAD_STACK      2048
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -124,8 +127,8 @@ EXPORT INT usermain(void)
             drpc_init(nid, nip);
             swim_init();
             heal_init();
-            /* sensor_pub タスクをガード登録: 通常はノード 0 で動作 */
             heal_register("sensor_pub", 0x0003, 0, 5);
+            edf_init();
             if (create_task(drpc_task, DRPC_PRIORITY, DRPC_STACK) < E_OK)
                 tm_putstring((UB *)"[ERR] drpc task\r\n");
             else
@@ -134,6 +137,10 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] SWIM task\r\n");
             else
                 tm_putstring((UB *)"[OK]  SWIM task\r\n");
+            if (create_task(edf_load_task, EDF_LOAD_PRIORITY, EDF_LOAD_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] EDF load task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  EDF load task\r\n");
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

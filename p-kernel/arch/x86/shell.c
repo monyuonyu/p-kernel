@@ -18,6 +18,7 @@
 #include "swim.h"
 #include "kdds.h"
 #include "heal.h"
+#include "edf.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -129,6 +130,10 @@ static void cmd_help(void)
     sout("Self-Healing commands:\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  heal list                - ガードタスク一覧表示\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("EDF スケジューリング:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  edf stat                 - SLA 統計 + ノード負荷表示\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -329,6 +334,18 @@ static void cmd_topic(const char *arg)
     }
 
     sout("Usage: topic list | topic pub <name> <data>\r\n");
+}
+
+static void cmd_edf(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (str_starts(arg, "stat") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        edf_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    sout("Usage: edf stat\r\n");
 }
 
 static void cmd_heal(const char *arg)
@@ -1241,6 +1258,8 @@ static void execute(const char *cmd)
         { cmd_topic(cmd + 5); return; }
     if (cmd[0]=='h' && cmd[1]=='e' && cmd[2]=='a' && cmd[3]=='l')
         { cmd_heal(cmd + 4); return; }
+    if (cmd[0]=='e' && cmd[1]=='d' && cmd[2]=='f')
+        { cmd_edf(cmd + 3); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

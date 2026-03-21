@@ -61,6 +61,7 @@ ARCH_C_SRCS = \
     swim.c \
     kdds.c \
     heal.c \
+    edf.c \
     tensor.c \
     ai_job.c \
     pipeline.c \
@@ -214,6 +215,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/07_network/01_net_infer/net_infer.elf      ::net_infer.elf
 	mcopy -i $@ $(USERLAND_X86)/07_network/02_http_get/http_get.elf       ::http_get.elf
 	mcopy -i $@ $(USERLAND_X86)/07_network/03_multicast/multicast.elf     ::multicast.elf
+	mcopy -i $@ $(USERLAND_X86)/07_network/04_edf_infer/edf_infer.elf     ::edf_infer.elf
 
 disk: $(DISK_IMG)
 

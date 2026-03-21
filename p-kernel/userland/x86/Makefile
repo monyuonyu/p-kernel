@@ -54,7 +54,8 @@ SAMPLES = \
     06_system/02_misc/misc.elf \
     07_network/01_net_infer/net_infer.elf \
     07_network/02_http_get/http_get.elf \
-    07_network/03_multicast/multicast.elf
+    07_network/03_multicast/multicast.elf \
+    07_network/04_edf_infer/edf_infer.elf
 
 all: $(SAMPLES)
 
@@ -228,6 +229,14 @@ all: $(SAMPLES)
 	mkdir -p 01_posix/06_kdds
 	$(CC) $(CFLAGS) -c $< -o 01_posix/06_kdds/kdds_demo.o
 	$(LD) $(LDFLAGS) -o $@ 01_posix/06_kdds/kdds_demo.o
+
+# -------------------------------------------------------------------
+# 07_network/04_edf_infer — SLA 付き推論デモ (Phase 4)
+# -------------------------------------------------------------------
+07_network/04_edf_infer/edf_infer.elf: $(S)/07_network/04_edf_infer/edf_infer.c plibc.h user.ld
+	mkdir -p 07_network/04_edf_infer
+	$(CC) $(CFLAGS) -c $< -o 07_network/04_edf_infer/edf_infer.o
+	$(LD) $(LDFLAGS) -o $@ 07_network/04_edf_infer/edf_infer.o
 
 clean:
 	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network

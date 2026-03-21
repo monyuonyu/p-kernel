@@ -999,3 +999,13 @@ static inline int sys_ai_submit(int packed)
  * Returns class (0/1/2) on success, or -50 (E_TMOUT) on timeout.   */
 static inline int sys_ai_wait(int handle, int timeout_ms)
     { return __sc(0x212, handle, timeout_ms, 0); }
+
+/*
+ * SLA 付き推論 (Phase 4 EDF スケジューリング)
+ * カーネルが deadline_ms を見て最適ノードへ自動ルーティングする。
+ *   packed       : SYS_SENSOR_PACK(norm_temp, norm_hum, norm_press, norm_light)
+ *   deadline_ms  : 許容最大レイテンシ (ms)。< 5 で積極的オフロード。
+ *   Returns      : クラス (0=normal, 1=alert, 2=critical) または負のエラー
+ */
+static inline int sys_infer_sla(int packed, int deadline_ms)
+    { return __sc(0x230, packed, deadline_ms, 0); }
