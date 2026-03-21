@@ -95,6 +95,24 @@ typedef struct {
     int           tmout;
 } PK_WAI_FLG;
 
+/* TCP connect args (SYS_TCP_CONNECT)
+ * Layout must match PK_TCP_CONNECT in p_syscall.h (32-bit flat) */
+typedef struct {
+    unsigned int   dst_ip;     /* destination IP (SYS_IP4 format)        */
+    unsigned short dst_port;   /* destination port (host byte order)     */
+    unsigned short _pad;
+    int            timeout_ms; /* connect timeout (-1 = default 10 s)    */
+} PK_SYS_TCP_CONNECT;
+
+/* TCP read args (SYS_TCP_READ)
+ * Layout must match PK_TCP_READ in p_syscall.h (32-bit flat) */
+typedef struct {
+    int          handle;     /* connection handle from sys_tcp_connect   */
+    unsigned int buf_ptr;    /* receive buffer pointer (uint32)          */
+    int          buflen;     /* buffer capacity                          */
+    int          timeout_ms; /* receive timeout in ms                    */
+} PK_SYS_TCP_READ;
+
 /* UDP send args (SYS_UDP_SEND)
  * Layout must match PK_UDP_SEND in p_syscall.h (32-bit flat) */
 typedef struct {
@@ -308,6 +326,41 @@ static inline int sys_udp_send(PK_SYS_UDP_SEND *pk)
  * Returns received byte count, or negative error (-50 = timeout).  */
 static inline int sys_udp_recv(PK_SYS_UDP_RECV *pk)
     { return __sc(0x202, (int)(long)pk, 0, 0); }
+
+/* ================================================================= */
+/* Network API (TCP)                                                  */
+/* ================================================================= */
+
+/* Open a TCP connection to dst_ip:dst_port.
+ * timeout_ms: -1 = use kernel default (10 s).
+ * Returns connection handle (0-3) on success, or -1 on error.      */
+static inline int sys_tcp_connect(unsigned int dst_ip,
+                                   unsigned short dst_port,
+                                   int timeout_ms)
+{
+    PK_SYS_TCP_CONNECT pk = { dst_ip, dst_port, 0, timeout_ms };
+    return __sc(0x203, (int)(long)&pk, 0, 0);
+}
+
+/* Send data over an established TCP connection.
+ * Returns number of bytes sent, or -1 on error.                     */
+static inline int sys_tcp_write(int handle, const void *buf, int len)
+    { return __sc(0x204, handle, (int)(long)buf, len); }
+
+/* Receive data from a TCP connection.
+ * Returns bytes received (>0), 0 on connection close, <0 on error. */
+static inline int sys_tcp_read(int handle, void *buf,
+                                int buflen, int timeout_ms)
+{
+    PK_SYS_TCP_READ pk = { handle, (unsigned int)(long)buf,
+                            buflen, timeout_ms };
+    return __sc(0x205, (int)(long)&pk, 0, 0);
+}
+
+/* Close and release a TCP connection.
+ * Returns 0 on success, -1 on invalid handle.                      */
+static inline int sys_tcp_close(int handle)
+    { return __sc(0x206, handle, 0, 0); }
 
 /* ================================================================= */
 /* AI inference API                                                   */

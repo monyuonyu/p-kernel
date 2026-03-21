@@ -28,6 +28,12 @@
 /* ------------------------------------------------------------------ */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+
+/* stdin relay API (syscall.c) — forwards serial chars to user ELF stdin */
+IMPORT void stdin_activate(void);
+IMPORT void stdin_deactivate(void);
+IMPORT void stdin_feed(UB c);
+IMPORT ID   stdin_get_exit_sem(void);
 IMPORT void sio_recv_frame(UB *buf, INT size);
 
 static void sout(const char *s)
@@ -639,11 +645,38 @@ static void cmd_exec(const char *arg)
     sout("[exec] loading: "); sout(arg); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 
+    stdin_activate();
+
     ID tid = elf_exec(arg);
     if (tid < E_OK) {
+        stdin_deactivate();
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
         sout("[exec] failed\r\n");
         vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* stdin relay loop: forward serial chars to user ELF stdin.
+     * Exits when the ELF calls SYS_EXIT (which signals stdin_exit_sem).
+     *
+     * The command line ends with '\r'; the terminal typically sends "\r\n".
+     * The '\n' that immediately follows '\r' stays in the serial buffer and
+     * arrives as the very first character in the relay loop.  We discard it
+     * so that the ELF's first readline() call is not terminated by a stray
+     * newline before the user has typed anything. */
+    ID exit_sem = stdin_get_exit_sem();
+    BOOL skip_lf = TRUE;   /* discard the first '\n' only */
+    for (;;) {
+        UB raw;
+        sio_recv_frame(&raw, 1);          /* block until a char arrives     */
+        /* Check (non-blocking) if the ELF has exited */
+        if (tk_wai_sem(exit_sem, 1, TMO_POL) == E_OK) break;
+        /* Skip the one '\n' left over from the "\r\n" command terminator */
+        if (skip_lf) {
+            skip_lf = FALSE;
+            if (raw == (UB)'\n') continue;
+        }
+        stdin_feed(raw);
     }
 }
 

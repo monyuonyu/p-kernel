@@ -41,6 +41,10 @@
  *    0x200  SYS_UDP_BIND    — bind local UDP port (arg0=port)
  *    0x201  SYS_UDP_SEND    — send UDP datagram (arg0=PK_UDP_SEND*)
  *    0x202  SYS_UDP_RECV    — receive UDP datagram (arg0=PK_UDP_RECV*)
+ *    0x203  SYS_TCP_CONNECT — TCP connect (arg0=PK_TCP_CONNECT*)
+ *    0x204  SYS_TCP_WRITE   — TCP send (arg0=handle, arg1=buf, arg2=len)
+ *    0x205  SYS_TCP_READ    — TCP receive (arg0=PK_TCP_READ*)
+ *    0x206  SYS_TCP_CLOSE   — TCP close+free (arg0=handle)
  *
  *  AI syscalls (0x210+):
  *    0x210  SYS_INFER       — local MLP inference (arg0=packed sensor)
@@ -93,6 +97,10 @@
 #define SYS_UDP_BIND    0x200
 #define SYS_UDP_SEND    0x201
 #define SYS_UDP_RECV    0x202
+#define SYS_TCP_CONNECT 0x203
+#define SYS_TCP_WRITE   0x204
+#define SYS_TCP_READ    0x205
+#define SYS_TCP_CLOSE   0x206
 
 /* ----------------------------------------------------------------- */
 /* AI syscall numbers (p-kernel extension)                           */
@@ -163,6 +171,28 @@ typedef struct {
     UINT *p_flgptn;   /* out: satisfied pattern                   */
     TMO   tmout;
 } PK_WAI_FLG;
+
+/* ----------------------------------------------------------------- */
+/* PK_TCP_CONNECT — args for SYS_TCP_CONNECT                        */
+/* Layout must match PK_SYS_TCP_CONNECT in plibc.h (32-bit flat)   */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  dst_ip;       /* destination IP (IP4 format)                 */
+    UH  dst_port;     /* destination port (host byte order)          */
+    UH  _pad;
+    W   timeout_ms;   /* connect timeout (-1 = use default 10 s)     */
+} PK_TCP_CONNECT;
+
+/* ----------------------------------------------------------------- */
+/* PK_TCP_READ — args for SYS_TCP_READ                              */
+/* Layout must match PK_SYS_TCP_READ in plibc.h (32-bit flat)      */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    W   handle;       /* connection handle from SYS_TCP_CONNECT      */
+    UW  buf_ptr;      /* user buffer pointer                         */
+    W   buflen;       /* buffer capacity                             */
+    W   timeout_ms;   /* receive timeout in ms                       */
+} PK_TCP_READ;
 
 /* ----------------------------------------------------------------- */
 /* Register IDT gate 0x80 (DPL=3, callable from ring3).             */

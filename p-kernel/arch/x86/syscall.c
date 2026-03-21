@@ -88,6 +88,55 @@ typedef struct {
 static USR_AI_JOB usr_ai[USR_AI_MAX];
 
 /* ----------------------------------------------------------------- */
+/* stdin relay buffer (SYS_READ fd=0)                               */
+/*                                                                   */
+/* When a user ELF is executing, shell_task forwards each serial     */
+/* character to stdin_feed().  SYS_READ(fd=0) waits on stdin_sem    */
+/* and copies bytes out of the ring buffer.                          */
+/* SYS_EXIT signals stdin_exit_sem to unblock the relay loop.       */
+/* ----------------------------------------------------------------- */
+#define STDIN_BUFSZ  256
+
+static ID   stdin_sem;         /* count = bytes available in ring buffer */
+static ID   stdin_exit_sem;    /* signalled once when user ELF calls SYS_EXIT */
+static BOOL stdin_active;      /* TRUE while a user ELF is running         */
+static UB   stdin_rbuf[STDIN_BUFSZ];
+static volatile UB stdin_wptr; /* next write index (wraps at 256)          */
+static volatile UB stdin_rptr; /* next read  index (wraps at 256)          */
+
+/* Called from shell.c before elf_exec() */
+void stdin_activate(void)
+{
+    /* Drain any stale semaphore tokens */
+    while (tk_wai_sem(stdin_sem,      1, TMO_POL) == E_OK) {}
+    while (tk_wai_sem(stdin_exit_sem, 1, TMO_POL) == E_OK) {}
+    stdin_wptr = 0;
+    stdin_rptr = 0;
+    stdin_active = TRUE;
+}
+
+/* Called from shell.c on elf_exec() failure */
+void stdin_deactivate(void) { stdin_active = FALSE; }
+
+/* Called from shell.c relay loop to push one serial char into stdin */
+void stdin_feed(UB c)
+{
+    if (!stdin_active) return;
+    stdin_rbuf[stdin_wptr++] = c;   /* wptr wraps naturally (UB, 256) */
+    tk_sig_sem(stdin_sem, 1);
+}
+
+/* Returns the exit semaphore ID so shell.c can poll it */
+ID stdin_get_exit_sem(void) { return stdin_exit_sem; }
+
+/* ----------------------------------------------------------------- */
+/* TCP connection handle table (SYS_TCP_CONNECT / WRITE / READ / CLOSE) */
+/* ----------------------------------------------------------------- */
+#define USR_TCP_MAX  4
+
+static TCP_CONN *usr_tcp[USR_TCP_MAX];
+
+/* ----------------------------------------------------------------- */
 /* Stack pool for user-created tasks (8 slots × 4 KiB)              */
 /* ----------------------------------------------------------------- */
 #define USR_TASK_MAX   8
@@ -149,6 +198,18 @@ void syscall_init(void)
     for (INT i = 0; i < USR_TASK_MAX; i++) usr_stack_inuse[i] = FALSE;
     for (INT i = 0; i < UDP_BIND_MAX;  i++) usr_udp[i].in_use = 0;
     for (INT i = 0; i < USR_AI_MAX;    i++) usr_ai[i].in_use  = 0;
+    for (INT i = 0; i < USR_TCP_MAX;   i++) usr_tcp[i]        = NULL;
+
+    /* stdin semaphores */
+    {
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                      .isemcnt = 0, .maxsem = STDIN_BUFSZ };
+        stdin_sem = tk_cre_sem(&cs);
+        T_CSEM cs2 = { .exinf = NULL, .sematr = TA_TFIFO,
+                       .isemcnt = 0, .maxsem = 1 };
+        stdin_exit_sem = tk_cre_sem(&cs2);
+    }
+    stdin_active = FALSE;
 
     idt_set_gate(0x80,
                  (unsigned long long)(UW)syscall_isr,
@@ -215,7 +276,18 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         void *buf = (void *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
-        if (arg0 == 0) return -1;  /* stdin not implemented */
+        if (arg0 == 0) {
+            /* stdin: block until at least one byte is available */
+            if (!stdin_active || len == 0) return -1;
+            if (tk_wai_sem(stdin_sem, 1, TMO_FEVR) != E_OK) return -1;
+            UB *dst = (UB *)buf;
+            INT n = 0;
+            dst[n++] = stdin_rbuf[stdin_rptr++];  /* first byte */
+            /* Greedily read additional bytes that are already available */
+            while (n < len && tk_wai_sem(stdin_sem, 1, TMO_POL) == E_OK)
+                dst[n++] = stdin_rbuf[stdin_rptr++];
+            return (W)n;
+        }
         if (IS_STD_FD(arg0)) return -1;
         if (!vfs_ready) return -1;
         return vfs_read(TO_VFS_FD(arg0), buf, (UW)len);
@@ -281,6 +353,11 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         tm_putstring((UB *)"\r\n[proc] exited (code=");
         sout_num(arg0);
         tm_putstring((UB *)")\r\np-kernel> ");
+        /* Unblock shell relay loop */
+        if (stdin_active) {
+            stdin_active = FALSE;
+            tk_sig_sem(stdin_exit_sem, 1);
+        }
         tk_ext_tsk();
         return 0;
     }
@@ -655,6 +732,57 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         usr_ai[slot].in_use = 0;
 
         return (er == E_OK) ? result : (W)er;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* TCP network syscalls                                          */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TCP_CONNECT: {
+        /* arg0 = PK_TCP_CONNECT* */
+        PK_TCP_CONNECT *pk = (PK_TCP_CONNECT *)(UW)arg0;
+        if (!pk) return -1;
+
+        /* Find a free TCP handle slot */
+        INT slot = -1;
+        for (INT i = 0; i < USR_TCP_MAX; i++) {
+            if (!usr_tcp[i]) { slot = i; break; }
+        }
+        if (slot < 0) return -1;
+
+        TCP_CONN *conn = NULL;
+        if (tcp_connect(pk->dst_ip, pk->dst_port, &conn) < 0 || !conn)
+            return -1;
+
+        usr_tcp[slot] = conn;
+        return slot;
+    }
+
+    case SYS_TCP_WRITE: {
+        /* arg0=handle, arg1=buf_ptr, arg2=len */
+        INT h = (INT)arg0;
+        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
+        return tcp_write(usr_tcp[h], (const UB *)(UW)arg1, (UH)arg2);
+    }
+
+    case SYS_TCP_READ: {
+        /* arg0 = PK_TCP_READ* */
+        PK_TCP_READ *pk = (PK_TCP_READ *)(UW)arg0;
+        if (!pk) return -1;
+        INT h = pk->handle;
+        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
+        return tcp_read(usr_tcp[h], (UB *)(UW)pk->buf_ptr,
+                        pk->buflen, pk->timeout_ms);
+    }
+
+    case SYS_TCP_CLOSE: {
+        /* arg0 = handle */
+        INT h = (INT)arg0;
+        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
+        tcp_close(usr_tcp[h]);
+        tcp_free(usr_tcp[h]);
+        usr_tcp[h] = NULL;
+        return 0;
     }
 
     default:

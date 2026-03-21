@@ -43,7 +43,9 @@ SAMPLES = \
     03_rtos_task/rtos_task.elf \
     04_rtos_sync/rtos_sync.elf \
     05_all_demo/all_demo.elf \
-    06_net_infer/net_infer.elf
+    06_net_infer/net_infer.elf \
+    07_stdin_echo/stdin_echo.elf \
+    08_http_get/http_get.elf
 
 all: $(SAMPLES)
 
@@ -109,10 +111,26 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ 06_net_infer/net_infer.o
 
 # -------------------------------------------------------------------
+# 07_stdin_echo — 標準入力エコーデモ
+# -------------------------------------------------------------------
+07_stdin_echo/stdin_echo.elf: $(S)/07_stdin_echo/stdin_echo.c plibc.h user.ld
+	mkdir -p 07_stdin_echo
+	$(CC) $(CFLAGS) -c $< -o 07_stdin_echo/stdin_echo.o
+	$(LD) $(LDFLAGS) -o $@ 07_stdin_echo/stdin_echo.o
+
+# -------------------------------------------------------------------
+# 08_http_get — TCP 接続 + HTTP GET デモ
+# -------------------------------------------------------------------
+08_http_get/http_get.elf: $(S)/08_http_get/http_get.c plibc.h user.ld
+	mkdir -p 08_http_get
+	$(CC) $(CFLAGS) -c $< -o 08_http_get/http_get.o
+	$(LD) $(LDFLAGS) -o $@ 08_http_get/http_get.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
 	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
-	       06_net_infer
+	       06_net_infer 07_stdin_echo 08_http_get
 
 .PHONY: all clean

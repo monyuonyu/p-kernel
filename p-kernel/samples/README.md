@@ -15,7 +15,9 @@ p-kernel/
 │   ├── 03_rtos_task/
 │   ├── 04_rtos_sync/
 │   ├── 05_all_demo/
-│   └── 06_net_infer/
+│   ├── 06_net_infer/
+│   ├── 07_stdin_echo/
+│   └── 08_http_get/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -55,7 +57,16 @@ OK=59 NG=0 を確認済み（QEMU x86_64）。
 カーネル内蔵の MLP ニューラルネットワーク (`SYS_INFER`) と
 非同期 AI ジョブ (`SYS_AI_SUBMIT` / `SYS_AI_WAIT`)、
 UDP 送受信 (`SYS_UDP_BIND` / `SYS_UDP_SEND` / `SYS_UDP_RECV`) を使います。
-→ 全サンプルを学んだあと、最後に試してください。
+
+### 07_stdin_echo — 標準入力エコー
+`sys_read(fd=0)` で標準入力から 1 行読み込み、そのままエコーするサンプルです。
+空行を入力すると終了します。
+→ stdin syscall の動作を最もシンプルに確認できます。
+
+### 08_http_get — HTTP GET (TCP クライアント)
+`sys_tcp_connect` / `sys_tcp_write` / `sys_tcp_read` / `sys_tcp_close` を使って
+HTTP/1.0 GET リクエストを 10.0.2.2:80 に送るサンプルです。
+→ TCP syscall の一連の流れを学べます。`make run-disk-net` でネットワーク付き起動が必要です。
 
 ---
 
@@ -70,6 +81,8 @@ make
 make 01_hello/hello.elf
 make 05_all_demo/all_demo.elf
 make 06_net_infer/net_infer.elf
+make 07_stdin_echo/stdin_echo.elf
+make 08_http_get/http_get.elf
 ```
 
 **必要なツール:**
@@ -91,6 +104,8 @@ p-kernel> exec rtos_task.elf
 p-kernel> exec rtos_sync.elf
 p-kernel> exec all_demo.elf
 p-kernel> exec net_infer.elf
+p-kernel> exec stdin_echo.elf
+p-kernel> exec http_get.elf
 ```
 
 ---
@@ -116,6 +131,7 @@ T-Kernel ネイティブ API (0x100+):
 
 ネットワーク API (0x200+):
   sys_udp_bind, sys_udp_send, sys_udp_recv
+  sys_tcp_connect, sys_tcp_write, sys_tcp_read, sys_tcp_close
 
 AI 推論 API (0x210+):
   sys_infer, sys_ai_submit, sys_ai_wait
@@ -160,6 +176,10 @@ AI 推論 API (0x210+):
 | 0x200  | SYS_UDP_BIND     | UDP ポートバインド          |
 | 0x201  | SYS_UDP_SEND     | UDP 送信                    |
 | 0x202  | SYS_UDP_RECV     | UDP 受信（タイムアウト付き）|
+| 0x203  | SYS_TCP_CONNECT  | TCP 接続確立                |
+| 0x204  | SYS_TCP_WRITE    | TCP 送信                    |
+| 0x205  | SYS_TCP_READ     | TCP 受信（タイムアウト付き）|
+| 0x206  | SYS_TCP_CLOSE    | TCP クローズ＋解放          |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

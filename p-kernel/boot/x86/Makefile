@@ -191,7 +191,9 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/03_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USERLAND_X86)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
 	mcopy -i $@ $(USERLAND_X86)/05_all_demo/all_demo.elf     ::all_demo.elf
-	mcopy -i $@ $(USERLAND_X86)/06_net_infer/net_infer.elf  ::net_infer.elf
+	mcopy -i $@ $(USERLAND_X86)/06_net_infer/net_infer.elf      ::net_infer.elf
+	mcopy -i $@ $(USERLAND_X86)/07_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
+	mcopy -i $@ $(USERLAND_X86)/08_http_get/http_get.elf       ::http_get.elf
 
 disk: $(DISK_IMG)
 
@@ -204,6 +206,12 @@ run-headless: $(TARGET)
 run-disk: $(TARGET) $(DISK_IMG)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
+
+# ディスク + ネットワーク (RTL8139 QEMU user-net 10.0.2.0/24)
+# TCP/UDP サンプル (08_http_get, 06_net_infer) を動かす場合に使用
+run-disk-net: $(TARGET) $(DISK_IMG)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NETDEV)
 
 run-nonet: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
@@ -234,4 +242,4 @@ clean:
 clean-disk:
 	rm -f $(DISK_IMG)
 
-.PHONY: all clean clean-disk disk run run-disk run-log debug run-32 run-boot run-node0 run-node1
+.PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot run-node0 run-node1
