@@ -13,6 +13,7 @@
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
+#include "paging.h"
 #include "p_syscall.h"
 #include "blk_ssy.h"
 #include "fs_ssy.h"
@@ -53,6 +54,7 @@ EXPORT INT usermain(void)
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
 
     /* ---- Ring-3 userspace infrastructure -------------------------- */
+    paging_init();          /* kernel CR3: strip U/S from all PD entries */
     gdt_init_userspace();   /* ring3 GDT entries + 64-bit TSS         */
     syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
     vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */

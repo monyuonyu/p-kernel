@@ -15,6 +15,7 @@
 #include "fs_ssy.h"
 #include "vfs.h"
 #include "ai_kernel.h"
+#include "paging.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -293,6 +294,14 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         if (stdin_active) {
             stdin_active = FALSE;
             tk_sig_sem(stdin_exit_sem, 1);
+        }
+        /* Free process page tables and restore kernel address space */
+        {
+            ID  tid      = knl_ctxtsk->tskid;
+            UW  proc_cr3 = paging_get_task_cr3(tid);
+            paging_switch(paging_get_kernel_cr3());
+            paging_proc_destroy(proc_cr3);
+            paging_set_task_cr3(tid, 0);
         }
         tk_ext_tsk();
         return 0;

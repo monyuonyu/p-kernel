@@ -15,6 +15,7 @@
 #include "vfs.h"
 #include "gdt_user.h"
 #include "userspace.h"
+#include "paging.h"
 #include <tmonitor.h>
 
 /* ----------------------------------------------------------------- */
@@ -65,17 +66,6 @@ typedef struct __attribute__((packed)) {
 #define ET_EXEC     2
 #define EM_386      3
 #define PT_LOAD     1
-
-/* ----------------------------------------------------------------- */
-/* User stack                                                        */
-/* ----------------------------------------------------------------- */
-
-/*
- * Physical user stack: a statically allocated kernel-side buffer.
- * With flat identity mapping (US bit set in PDEs) ring-3 can access
- * this by the same linear address as the kernel.
- */
-static UB user_stack_buf[USER_STACK_SIZE] __attribute__((aligned(16)));
 
 /* ----------------------------------------------------------------- */
 /* Task launcher                                                     */
@@ -206,9 +196,20 @@ ID elf_exec(const char *path)
     print_hex(ehdr.e_entry);
     tm_putstring((UB *)"\r\n");
 
+    /* ---- Allocate per-process page tables ------------------------- */
+    UW proc_cr3 = paging_proc_create();
+    if (!proc_cr3) {
+        tm_putstring((UB *)"[elf] paging_proc_create failed\r\n");
+        return (ID)-1;
+    }
+
     /* ---- Prepare user stack --------------------------------------- */
-    UW stack_top = (UW)user_stack_buf + USER_STACK_SIZE;
-    stack_top &= ~0xFUL;   /* 16-byte align */
+    /*
+     * USER_STACK_TOP (0x600000) is the initial ESP (stack grows down).
+     * The stack occupies the top of PD[2] (0x400000–0x5FFFFF) which
+     * is mapped U/S=1 by paging_proc_create().
+     */
+    UW stack_top = USER_STACK_TOP;   /* already 16-byte aligned */
 
     /* ---- Create ring-0 launcher task ------------------------------ */
     _uarg.entry     = ehdr.e_entry;
@@ -223,12 +224,18 @@ ID elf_exec(const char *path)
 
     ID tid = tk_cre_tsk(&ct);
     if (tid < E_OK) {
+        paging_proc_destroy(proc_cr3);
         tm_putstring((UB *)"[elf] tk_cre_tsk failed\r\n");
         return tid;
     }
 
+    /* Register process CR3 before starting the task */
+    paging_set_task_cr3(tid, proc_cr3);
+
     ER er = tk_sta_tsk(tid, 0);
     if (er < E_OK) {
+        paging_set_task_cr3(tid, 0);
+        paging_proc_destroy(proc_cr3);
         tm_putstring((UB *)"[elf] tk_sta_tsk failed\r\n");
         tk_del_tsk(tid);
         return (ID)er;

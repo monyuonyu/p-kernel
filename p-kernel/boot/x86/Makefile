@@ -72,7 +72,8 @@ ARCH_C_SRCS = \
     gdt_user.c \
     syscall.c \
     userspace.c \
-    elf_loader.c
+    elf_loader.c \
+    paging.c
 
 ARCH_S_SRCS = cpu_support.S
 

@@ -20,6 +20,7 @@
 #include "task.h"
 #include "userspace.h"
 #include "gdt_user.h"
+#include "paging.h"
 #include <tmonitor.h>
 
 void user_exec(UW entry, UW ustack_top)
@@ -32,6 +33,9 @@ void user_exec(UW entry, UW ustack_top)
      * gives the full 8 KB to ring-0 handlers and avoids any overflow.
      */
     gdt_set_kernel_stack((UW)knl_ctxtsk->isstack);
+
+    /* Switch to the process page tables before entering ring-3 */
+    paging_switch(paging_get_task_cr3(knl_ctxtsk->tskid));
 
     /*
      * Transition to ring-3:
