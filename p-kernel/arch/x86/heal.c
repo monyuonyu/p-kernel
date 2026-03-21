@@ -71,10 +71,11 @@ void heal_register(const char *name, UH func_id, UB home_node, W priority)
         INT j = 0;
         while (name[j] && j < 31) { guards[i].name[j] = name[j]; j++; }
         guards[i].name[j]   = '\0';
-        guards[i].func_id   = func_id;
-        guards[i].home_node = home_node;
-        guards[i].priority  = priority;
-        guards[i].active    = 1;
+        guards[i].func_id      = func_id;
+        guards[i].home_node    = home_node;
+        guards[i].current_node = home_node;
+        guards[i].priority     = priority;
+        guards[i].active       = 1;
         hl_puts("[heal] guard \""); hl_puts(guards[i].name);
         hl_puts("\" func=0x"); hl_puthex4(func_id);
         hl_puts(" home="); hl_putdec(home_node);
@@ -120,13 +121,19 @@ void heal_on_node_dead(UB dead_node)
     /* 自分が後継でなければ何もしない */
     if (heir != drpc_my_node) return;
 
-    /* ガードを走査して dead_node をホームとするタスクを引き継ぐ */
+    /* ガードを走査: current_node == dead_node のタスクを引き継ぐ
+     * (home_node ではなく current_node を使うことで連鎖継承を実現) */
     for (INT i = 0; i < HEAL_GUARD_MAX; i++) {
         if (!guards[i].active) continue;
-        if (guards[i].home_node != dead_node) continue;
+        if (guards[i].current_node != dead_node) continue;
 
         hl_puts("[heal] taking over \""); hl_puts(guards[i].name);
-        hl_puts("\" from node "); hl_putdec(dead_node); hl_puts("\r\n");
+        hl_puts("\" from node "); hl_putdec(dead_node);
+        if (guards[i].home_node != dead_node) {
+            hl_puts(" (cascade: original home=");
+            hl_putdec(guards[i].home_node); hl_puts(")");
+        }
+        hl_puts("\r\n");
 
         W r = drpc_local_restart(guards[i].func_id,
                                  (INT)guards[i].priority,
@@ -136,6 +143,8 @@ void heal_on_node_dead(UB dead_node)
             hl_putdec((UW)(-r)); hl_puts("\r\n");
         } else {
             hl_puts("[heal] restarted tid="); hl_putdec((UW)r); hl_puts("\r\n");
+            /* 連鎖継承: current_node を自分に更新 */
+            guards[i].current_node = drpc_my_node;
         }
     }
 }
@@ -147,7 +156,7 @@ void heal_on_node_dead(UB dead_node)
 void heal_list(void)
 {
     hl_puts("[heal] guard table:\r\n");
-    hl_puts("  #  name             func   home  pri  triggered\r\n");
+    hl_puts("  #  name             func   home  current  pri\r\n");
     INT found = 0;
     for (INT i = 0; i < HEAL_GUARD_MAX; i++) {
         if (!guards[i].active) continue;
@@ -156,9 +165,13 @@ void heal_list(void)
         hl_puts("  "); hl_puts(guards[i].name);
         hl_puts("  0x"); hl_puthex4(guards[i].func_id);
         hl_puts("  "); hl_putdec(guards[i].home_node);
-        hl_puts("     "); hl_putdec((UW)guards[i].priority);
-        hl_puts("   ");
-        hl_puts(heal_triggered[guards[i].home_node] ? "yes" : "no");
+        hl_puts("     ");
+        hl_putdec(guards[i].current_node);
+        if (guards[i].current_node != guards[i].home_node)
+            hl_puts("(!)");   /* 連鎖継承中 */
+        else
+            hl_puts("   ");
+        hl_puts("  "); hl_putdec((UW)guards[i].priority);
         hl_puts("\r\n");
     }
     if (!found) hl_puts("  (no guards registered)\r\n");

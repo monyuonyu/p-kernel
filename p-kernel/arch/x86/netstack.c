@@ -683,9 +683,9 @@ static void udp_input(const IP_HDR *ip, const UB *seg, INT seg_len)
 INT udp_send(UW dst_ip, UH src_port, UH dst_port,
              const UB *data, UH data_len)
 {
-    if (data_len > 508) return -1;
+    if (data_len > 1400) return -1;
 
-    static UB udp_buf[516];
+    static UB udp_buf[1408];
     UDP_HDR *udp = (UDP_HDR *)udp_buf;
     UH udp_len   = (UH)(8 + data_len);
 

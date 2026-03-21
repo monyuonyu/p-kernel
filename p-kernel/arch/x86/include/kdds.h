@@ -53,6 +53,7 @@ typedef struct {
     char  name[KDDS_NAME_MAX];  /* トピック名 (例: "sensor/temperature") */
     UB    data[KDDS_DATA_MAX];  /* 最新の発行データ                       */
     UH    data_len;             /* データバイト数 (0 = 未発行)            */
+    UH    data_seq;             /* 複製判定用: publish ごとにインクリメント */
     UB    qos;                  /* KDDS_QOS_*                             */
     UB    open;                 /* 1 = 使用中                             */
 } KDDS_TOPIC;

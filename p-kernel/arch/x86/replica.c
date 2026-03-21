@@ -1,0 +1,294 @@
+/*
+ *  replica.c (x86)
+ *  分散状態複製 — フェーズ 5
+ *
+ *  gossip ベースのトピックテーブル全複製。
+ *  3 秒ごとに全 ALIVE ノードへスナップショットをブロードキャストし、
+ *  新規参加/復帰ノードへは即座にプッシュする。
+ *
+ *  マージ戦略: data_seq を符号なし半開空間で比較し、
+ *  リモートが新しい場合のみ kdds_topics[] を直接更新する
+ *  (kdds_pub() は呼ばず、再ブロードキャストループを防ぐ)。
+ */
+
+#include "replica.h"
+#include "netstack.h"
+#include "kernel.h"
+
+IMPORT void sio_send_frame(const UB *buf, INT size);
+
+/* ------------------------------------------------------------------ */
+/* シリアル出力ヘルパ                                                 */
+/* ------------------------------------------------------------------ */
+
+static void rp_puts(const char *s)
+{
+    INT n = 0; while (s[n]) n++;
+    sio_send_frame((const UB *)s, n);
+}
+
+static void rp_putdec(UW v)
+{
+    char buf[12]; INT i = 11; buf[i] = '\0';
+    if (v == 0) { rp_puts("0"); return; }
+    while (v > 0 && i > 0) { buf[--i] = (char)('0' + v % 10); v /= 10; }
+    rp_puts(&buf[i]);
+}
+
+/* ------------------------------------------------------------------ */
+/* 統計                                                                */
+/* ------------------------------------------------------------------ */
+
+REPLICA_STATS replica_stats;
+
+/* ------------------------------------------------------------------ */
+/* 文字列 / メモリユーティリティ                                      */
+/* ------------------------------------------------------------------ */
+
+static INT rp_streq(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a == '\0' && *b == '\0';
+}
+
+static void rp_strcpy(char *dst, const char *src, INT max)
+{
+    INT i;
+    for (i = 0; i < max - 1 && src[i]; i++) dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+static void rp_memcpy(void *dst, const void *src, INT n)
+{
+    const UB *s = (const UB *)src;
+    UB       *d = (UB *)dst;
+    for (INT i = 0; i < n; i++) d[i] = s[i];
+}
+
+/* ------------------------------------------------------------------ */
+/* パケット構築                                                        */
+/* ------------------------------------------------------------------ */
+
+static void build_pkt(REPLICA_PKT *pkt, UB type)
+{
+    pkt->magic     = REPLICA_MAGIC;
+    pkt->version   = REPLICA_VERSION;
+    pkt->type      = type;
+    pkt->src_node  = drpc_my_node;
+    pkt->entry_cnt = 0;
+
+    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+        if (!kdds_topics[i].open) continue;
+        REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
+        rp_strcpy(e->name, kdds_topics[i].name, KDDS_NAME_MAX);
+        e->data_len  = kdds_topics[i].data_len;
+        e->data_seq  = kdds_topics[i].data_seq;
+        e->qos       = kdds_topics[i].qos;
+        e->_pad[0]   = 0; e->_pad[1] = 0; e->_pad[2] = 0;
+        if (e->data_len > 0)
+            rp_memcpy(e->data, kdds_topics[i].data, e->data_len);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* ノードへ送信                                                        */
+/* ------------------------------------------------------------------ */
+
+static void send_to_node(UB node_id, UB type)
+{
+    if (node_id >= DNODE_MAX) return;
+    UW dst_ip = dnode_table[node_id].ip;
+    if (!dst_ip) return;
+
+    REPLICA_PKT pkt = { 0 };
+    build_pkt(&pkt, type);
+    udp_send(dst_ip, REPLICA_PORT, REPLICA_PORT,
+             (const UB *)&pkt, (UH)sizeof(pkt));
+    replica_stats.sent_pkts++;
+}
+
+/* ------------------------------------------------------------------ */
+/* マージ                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 符号なし半開空間比較:
+ *   diff = (UH)(remote_seq - local_seq)
+ *   diff == 0            → 等しい (スキップ)
+ *   diff >= 0x8000       → local が新しい (スキップ)
+ *   0 < diff < 0x8000    → remote が新しい (マージ)
+ */
+static void merge_entry(const REPLICA_ENTRY *e)
+{
+    if (e->data_len == 0 || e->data_len > KDDS_DATA_MAX) return;
+
+    /* 既存トピック検索 */
+    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+        if (!kdds_topics[i].open) continue;
+        if (!rp_streq(kdds_topics[i].name, e->name)) continue;
+
+        UH diff = (UH)(e->data_seq - kdds_topics[i].data_seq);
+        if (diff == 0 || diff >= 0x8000U) {
+            /* ローカルが最新 */
+            replica_stats.skipped++;
+            return;
+        }
+        /* リモートが新しい */
+        rp_memcpy(kdds_topics[i].data, e->data, e->data_len);
+        kdds_topics[i].data_len = e->data_len;
+        kdds_topics[i].data_seq = e->data_seq;
+        replica_stats.merged++;
+        return;
+    }
+
+    /* 未知トピック: 新規スロット確保 */
+    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+        if (kdds_topics[i].open) continue;
+        rp_strcpy(kdds_topics[i].name, e->name, KDDS_NAME_MAX);
+        rp_memcpy(kdds_topics[i].data, e->data, e->data_len);
+        kdds_topics[i].data_len = e->data_len;
+        kdds_topics[i].data_seq = e->data_seq;
+        kdds_topics[i].qos      = e->qos;
+        kdds_topics[i].open     = 1;
+        replica_stats.recovered++;
+        rp_puts("[replica] recovered topic \"");
+        rp_puts(kdds_topics[i].name);
+        rp_puts("\"\r\n");
+        return;
+    }
+    /* トピックテーブル満杯: 廃棄 */
+}
+
+/* ------------------------------------------------------------------ */
+/* UDP 受信コールバック                                                */
+/* ------------------------------------------------------------------ */
+
+void replica_rx(UW src_ip, UH src_port, const UB *data, UH len)
+{
+    (void)src_port; (void)src_ip;
+    if (len < (UH)sizeof(REPLICA_PKT)) return;
+
+    const REPLICA_PKT *pkt = (const REPLICA_PKT *)data;
+    if (pkt->magic   != REPLICA_MAGIC)   return;
+    if (pkt->version != REPLICA_VERSION) return;
+
+    replica_stats.recv_pkts++;
+
+    if (pkt->type == REPLICA_ANNOUNCE) {
+        /* 復帰ノードからの状態要求 — 全トピックをプッシュ */
+        if (pkt->src_node < DNODE_MAX)
+            replica_push_to(pkt->src_node);
+        return;
+    }
+
+    if (pkt->type != REPLICA_DATA) return;
+
+    /* エントリをマージ */
+    UB cnt = pkt->entry_cnt;
+    if (cnt > KDDS_TOPIC_MAX) cnt = KDDS_TOPIC_MAX;
+    for (UB i = 0; i < cnt; i++)
+        merge_entry(&pkt->entries[i]);
+}
+
+/* ------------------------------------------------------------------ */
+/* 定期複製タスク                                                      */
+/* ------------------------------------------------------------------ */
+
+void replica_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+
+    tk_dly_tsk(2000);   /* ネットワーク・ARP 完了を待つ */
+    replica_boot_cry(); /* 起動の叫び: 全ピアへ記憶要求 */
+    tk_dly_tsk(1000);   /* 応答を受け取る猶予 */
+
+    for (;;) {
+        tk_dly_tsk(3000);
+        if (drpc_my_node == 0xFF) continue;
+
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (n == drpc_my_node) continue;
+            if (dnode_table[n].state != DNODE_ALIVE) continue;
+            send_to_node(n, REPLICA_DATA);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 即時プッシュ (swim.c から ALIVE 遷移時に呼ぶ)                      */
+/* ------------------------------------------------------------------ */
+
+void replica_push_to(UB node_id)
+{
+    if (node_id >= DNODE_MAX) return;
+    if (dnode_table[node_id].state != DNODE_ALIVE) return;
+    send_to_node(node_id, REPLICA_DATA);
+}
+
+/* ------------------------------------------------------------------ */
+/* 起動の叫び — 全ノード IP へ ANNOUNCE を送り記憶プッシュを要求       */
+/* ------------------------------------------------------------------ */
+
+void replica_boot_cry(void)
+{
+    if (drpc_my_node == 0xFF) return;
+    rp_puts("[replica] *** BOOT CRY *** requesting memories from all peers\r\n");
+
+    /* IP スキーム: 10.1.0.(n+1) — 全可能ピアへ直接送る */
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == drpc_my_node) continue;
+        UW peer_ip = ((UW)(n + 1) << 24) | 0x0000010AUL;
+        REPLICA_PKT pkt = { 0 };
+        pkt.magic     = REPLICA_MAGIC;
+        pkt.version   = REPLICA_VERSION;
+        pkt.type      = REPLICA_ANNOUNCE;
+        pkt.src_node  = drpc_my_node;
+        pkt.entry_cnt = 0;
+        udp_send(peer_ip, REPLICA_PORT, REPLICA_PORT,
+                 (const UB *)&pkt, (UH)sizeof(pkt));
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 断末魔 — SUSPECT 噂を検知したら全 ALIVE ノードへ即座に散布          */
+/* ------------------------------------------------------------------ */
+
+void replica_scatter_all(void)
+{
+    if (drpc_my_node == 0xFF) return;
+    rp_puts("[replica] *** DEATH THROES *** scattering all memories NOW\r\n");
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == drpc_my_node) continue;
+        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        send_to_node(n, REPLICA_DATA);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 統計表示                                                            */
+/* ------------------------------------------------------------------ */
+
+void replica_stat(void)
+{
+    rp_puts("[replica] sent=");      rp_putdec(replica_stats.sent_pkts);
+    rp_puts("  recv=");              rp_putdec(replica_stats.recv_pkts);
+    rp_puts("  merged=");            rp_putdec(replica_stats.merged);
+    rp_puts("  skipped=");           rp_putdec(replica_stats.skipped);
+    rp_puts("  recovered=");         rp_putdec(replica_stats.recovered);
+    rp_puts("\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* 初期化                                                              */
+/* ------------------------------------------------------------------ */
+
+void replica_init(void)
+{
+    replica_stats.sent_pkts = 0;
+    replica_stats.recv_pkts = 0;
+    replica_stats.merged    = 0;
+    replica_stats.skipped   = 0;
+    replica_stats.recovered = 0;
+    udp_bind(REPLICA_PORT, replica_rx);
+    rp_puts("[replica] state replication ready  port=7379\r\n");
+}

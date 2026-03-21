@@ -150,9 +150,10 @@ W kdds_pub(W handle, const void *data, W len)
     W tidx = kdds_handles[handle].topic_idx;
     KDDS_TOPIC *t = &kdds_topics[tidx];
 
-    /* トピックデータを更新 */
+    /* トピックデータを更新 (seq をインクリメントして複製判定に使う) */
     kd_memcpy(t->data, data, len);
     t->data_len = (UH)len;
+    t->data_seq++;
 
     /* 同一トピックの全 subscriber セマフォを signal */
     for (W h = 0; h < KDDS_HANDLE_MAX; h++) {

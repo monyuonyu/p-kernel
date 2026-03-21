@@ -29,7 +29,8 @@
 
 typedef struct {
     char  name[32];      /* 人間可読な識別名 (例: "sensor_pub")      */
-    UB    home_node;     /* 通常動作するノード ID                    */
+    UB    home_node;     /* 元のホームノード ID                      */
+    UB    current_node;  /* 現在の実行ノード (引き継ぎ後に更新)      */
     UH    func_id;       /* drpc rfunc ID (0x0001 〜)                */
     W     priority;      /* 再起動タスクの優先度                     */
     UB    active;        /* 1 = 登録済み                             */

@@ -19,6 +19,9 @@
 #include "kdds.h"
 #include "heal.h"
 #include "edf.h"
+#include "replica.h"
+#include "vital.h"
+#include "persist.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -134,6 +137,17 @@ static void cmd_help(void)
     sout("EDF スケジューリング:\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  edf stat                 - SLA 統計 + ノード負荷表示\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("生存本能 (Phase 6):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  replica stat             - 複製統計表示\r\n");
+    sout("  vital stat               - クラスタ生命兆候一覧\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("永続化 (Phase 7):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  persist list             - ディスク上の保存トピック一覧\r\n");
+    sout("  persist save             - 全トピックを今すぐ保存\r\n");
+    sout("  persist clear            - 保存済みトピックを全削除\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -358,6 +372,54 @@ static void cmd_heal(const char *arg)
         return;
     }
     sout("Usage: heal list\r\n");
+}
+
+static void cmd_replica(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (str_starts(arg, "stat") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        replica_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    sout("Usage: replica stat\r\n");
+}
+
+static void cmd_vital(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (str_starts(arg, "stat") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        vital_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    sout("Usage: vital stat\r\n");
+}
+
+static void cmd_persist(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (str_starts(arg, "list") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        persist_list();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    if (str_starts(arg, "save")) {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        persist_checkpoint();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    if (str_starts(arg, "clear")) {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        persist_clear();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    sout("Usage: persist list | save | clear\r\n");
 }
 
 static void cmd_dtask(const char *arg)
@@ -1260,6 +1322,14 @@ static void execute(const char *cmd)
         { cmd_heal(cmd + 4); return; }
     if (cmd[0]=='e' && cmd[1]=='d' && cmd[2]=='f')
         { cmd_edf(cmd + 3); return; }
+    if (cmd[0]=='r' && cmd[1]=='e' && cmd[2]=='p' && cmd[3]=='l' &&
+        cmd[4]=='i' && cmd[5]=='c' && cmd[6]=='a')
+        { cmd_replica(cmd + 7); return; }
+    if (cmd[0]=='v' && cmd[1]=='i' && cmd[2]=='t' && cmd[3]=='a' && cmd[4]=='l')
+        { cmd_vital(cmd + 5); return; }
+    if (cmd[0]=='p' && cmd[1]=='e' && cmd[2]=='r' && cmd[3]=='s' &&
+        cmd[4]=='i' && cmd[5]=='s' && cmd[6]=='t')
+        { cmd_persist(cmd + 7); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

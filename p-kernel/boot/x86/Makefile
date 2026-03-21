@@ -62,11 +62,14 @@ ARCH_C_SRCS = \
     kdds.c \
     heal.c \
     edf.c \
+    replica.c \
+    vital.c \
     tensor.c \
     ai_job.c \
     pipeline.c \
     fedlearn.c \
     ai_stats.c \
+    persist.c \
     blk_ssy.c \
     fs_ssy.c \
     ide.c \

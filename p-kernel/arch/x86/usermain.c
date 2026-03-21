@@ -14,6 +14,9 @@
 #include "kdds.h"
 #include "heal.h"
 #include "edf.h"
+#include "replica.h"
+#include "vital.h"
+#include "persist.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -36,6 +39,12 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define SWIM_STACK          4096
 #define EDF_LOAD_PRIORITY   7
 #define EDF_LOAD_STACK      2048
+#define REPLICA_PRIORITY    8
+#define REPLICA_STACK       2048
+#define VITAL_PRIORITY      9
+#define VITAL_STACK         2048
+#define PERSIST_PRIORITY    10
+#define PERSIST_STACK       2048
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -66,6 +75,7 @@ EXPORT INT usermain(void)
     gdt_init_userspace();   /* ring3 GDT entries + 64-bit TSS         */
     syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
     vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */
+    persist_restore_all();  /* Phase 7: ネットワーク前にディスクからトピックを復元 */
     /* NOTE: run_initrc() called after all tasks start (below) */
 
     /* ---- Subsystems ----------------------------------------------- */
@@ -75,6 +85,14 @@ EXPORT INT usermain(void)
 
     /* ---- K-DDS — カーネルネイティブ pub/sub ----------------------- */
     kdds_init();
+
+    /* ---- Phase 7: 永続化タスク (ディスクがある場合のみ有効) ------- */
+    if (vfs_ready) {
+        if (create_task(persist_task, PERSIST_PRIORITY, PERSIST_STACK) < E_OK)
+            tm_putstring((UB *)"[ERR] persist task\r\n");
+        else
+            tm_putstring((UB *)"[OK]  persist task\r\n");
+    }
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();
@@ -129,6 +147,7 @@ EXPORT INT usermain(void)
             heal_init();
             heal_register("sensor_pub", 0x0003, 0, 5);
             edf_init();
+            replica_init();
             if (create_task(drpc_task, DRPC_PRIORITY, DRPC_STACK) < E_OK)
                 tm_putstring((UB *)"[ERR] drpc task\r\n");
             else
@@ -141,6 +160,14 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] EDF load task\r\n");
             else
                 tm_putstring((UB *)"[OK]  EDF load task\r\n");
+            if (create_task(replica_task, REPLICA_PRIORITY, REPLICA_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] replica task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  replica task\r\n");
+            if (create_task(vital_task, VITAL_PRIORITY, VITAL_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] vital task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  vital task\r\n");
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

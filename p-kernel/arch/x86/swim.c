@@ -13,6 +13,7 @@
 
 #include "swim.h"
 #include "heal.h"
+#include "replica.h"
 #include "netstack.h"
 #include "kernel.h"
 
@@ -97,7 +98,21 @@ static void gossip_apply(const SWIM_PKT *pkt)
     for (UB i = 0; i < pkt->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
         UB nid = pkt->gossip[i].node_id;
         UB st  = pkt->gossip[i].state;
-        if (nid >= DNODE_MAX || nid == drpc_my_node) continue;
+
+        /* 自分自身が SUSPECT/DEAD と噂されていたら断末魔散布 */
+        if (nid == drpc_my_node) {
+            if (st == DNODE_SUSPECT || st == DNODE_DEAD) {
+                sw_puts("[swim] *** SELF-SUSPICION *** I'm rumored ");
+                sw_puts(st == DNODE_SUSPECT ? "SUSPECT" : "DEAD");
+                sw_puts(" — triggering death throes\r\n");
+                replica_scatter_all();
+                /* 自分が生きていることを再アナウンス */
+                gossip_add(drpc_my_node, DNODE_ALIVE);
+            }
+            continue;
+        }
+
+        if (nid >= DNODE_MAX) continue;
         if (dnode_table[nid].state == st) continue;
         dnode_table[nid].state = st;
         sw_puts("[swim] gossip: node "); sw_putdec(nid);
@@ -161,6 +176,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
             sw_puts(old == DNODE_UNKNOWN ? " discovered" : " recovered");
             sw_puts("  (via rx)\r\n");
             gossip_add(snid, DNODE_ALIVE);
+            replica_push_to(snid);
         }
     }
 
@@ -292,6 +308,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
                 gossip_add(target, DNODE_ALIVE);
+                replica_push_to(target);
             }
             suspect_count[target] = 0;
             continue;
@@ -320,6 +337,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
                 gossip_add(target, DNODE_ALIVE);
+                replica_push_to(target);
             }
             suspect_count[target] = 0;
             continue;
