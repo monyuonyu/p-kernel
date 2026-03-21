@@ -189,25 +189,25 @@ $(DISK_IMG):
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
 	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
-	mcopy -i $@ $(USERLAND_X86)/01_hello/hello.elf         ::hello.elf
-	mcopy -i $@ $(USERLAND_X86)/02_posix_io/posix_io.elf   ::posix_io.elf
-	mcopy -i $@ $(USERLAND_X86)/03_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
-	mcopy -i $@ $(USERLAND_X86)/04_readdir/readdir.elf         ::readdir.elf
-	mcopy -i $@ $(USERLAND_X86)/05_rtos_task/rtos_task.elf ::rtos_task.elf
-	mcopy -i $@ $(USERLAND_X86)/06_rtos_sync/rtos_sync.elf ::rtos_sync.elf
-	mcopy -i $@ $(USERLAND_X86)/07_mutex/mutex.elf             ::mutex.elf
-	mcopy -i $@ $(USERLAND_X86)/08_task_ext/task_ext.elf      ::task_ext.elf
-	mcopy -i $@ $(USERLAND_X86)/09_mailbox/mailbox.elf         ::mailbox.elf
-	mcopy -i $@ $(USERLAND_X86)/10_msgbuf/msgbuf.elf           ::msgbuf.elf
-	mcopy -i $@ $(USERLAND_X86)/11_rendezvous/rendezvous.elf  ::rendezvous.elf
-	mcopy -i $@ $(USERLAND_X86)/12_mempool/mempool.elf         ::mempool.elf
-	mcopy -i $@ $(USERLAND_X86)/13_time/time.elf               ::time.elf
-	mcopy -i $@ $(USERLAND_X86)/14_cyc_alm/cyc_alm.elf        ::cyc_alm.elf
-	mcopy -i $@ $(USERLAND_X86)/15_ref/ref.elf                 ::ref.elf
-	mcopy -i $@ $(USERLAND_X86)/16_misc/misc.elf               ::misc.elf
-	mcopy -i $@ $(USERLAND_X86)/17_net_infer/net_infer.elf      ::net_infer.elf
-	mcopy -i $@ $(USERLAND_X86)/18_http_get/http_get.elf       ::http_get.elf
-	mcopy -i $@ $(USERLAND_X86)/19_multicast/multicast.elf     ::multicast.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/01_hello/hello.elf         ::hello.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/02_posix_io/posix_io.elf   ::posix_io.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/03_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/04_readdir/readdir.elf         ::readdir.elf
+	mcopy -i $@ $(USERLAND_X86)/02_rtos/01_rtos_task/rtos_task.elf ::rtos_task.elf
+	mcopy -i $@ $(USERLAND_X86)/02_rtos/02_rtos_sync/rtos_sync.elf ::rtos_sync.elf
+	mcopy -i $@ $(USERLAND_X86)/02_rtos/03_mutex/mutex.elf             ::mutex.elf
+	mcopy -i $@ $(USERLAND_X86)/02_rtos/04_task_ext/task_ext.elf      ::task_ext.elf
+	mcopy -i $@ $(USERLAND_X86)/03_ipc/01_mailbox/mailbox.elf         ::mailbox.elf
+	mcopy -i $@ $(USERLAND_X86)/03_ipc/02_msgbuf/msgbuf.elf           ::msgbuf.elf
+	mcopy -i $@ $(USERLAND_X86)/03_ipc/03_rendezvous/rendezvous.elf  ::rendezvous.elf
+	mcopy -i $@ $(USERLAND_X86)/04_memory/01_mempool/mempool.elf         ::mempool.elf
+	mcopy -i $@ $(USERLAND_X86)/05_time/01_time/time.elf               ::time.elf
+	mcopy -i $@ $(USERLAND_X86)/05_time/02_cyc_alm/cyc_alm.elf        ::cyc_alm.elf
+	mcopy -i $@ $(USERLAND_X86)/06_system/01_ref/ref.elf                 ::ref.elf
+	mcopy -i $@ $(USERLAND_X86)/06_system/02_misc/misc.elf               ::misc.elf
+	mcopy -i $@ $(USERLAND_X86)/07_network/01_net_infer/net_infer.elf      ::net_infer.elf
+	mcopy -i $@ $(USERLAND_X86)/07_network/02_http_get/http_get.elf       ::http_get.elf
+	mcopy -i $@ $(USERLAND_X86)/07_network/03_multicast/multicast.elf     ::multicast.elf
 
 disk: $(DISK_IMG)
 
