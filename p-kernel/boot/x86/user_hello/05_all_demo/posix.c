@@ -1,16 +1,16 @@
 /*
- *  test_all/test_posix.c — POSIX ファイル I/O テスト
+ *  05_all_demo/posix.c — POSIX ファイル I/O デモ
  *
- *  テスト一覧:
- *    T1  — 基本ファイルI/O (open / write / read / close)
- *    T2  — lseek (SEEK_SET / SEEK_END)
- *    T3  — ディレクトリ・ファイル操作 (mkdir / rename / unlink)
- *    T20 — 部分読み (lseek 後に指定バイト数だけ読む)
+ *  デモ一覧:
+ *    D1  — 基本ファイルI/O (open / write / read / close)
+ *    D2  — lseek (SEEK_SET / SEEK_END)
+ *    D3  — ディレクトリ・ファイル操作 (mkdir / rename / unlink)
+ *    D20 — 部分読み (lseek 後に指定バイト数だけ読む)
  */
 
-#include "test_common.h"
+#include "common.h"
 
-void test_posix(void)
+void demo_posix(void)
 {
     /* ----------------------------------------------------------------
      *  T1: POSIX open / write / read / close

@@ -1,52 +1,52 @@
 /*
- *  test_all/test_main.c — テストスイート エントリーポイント
+ *  05_all_demo/main.c — デモスイート エントリーポイント
  *
  *  このファイルの役割:
  *    - グローバル変数の実体を定義する
- *    - pass() / fail() / start_task() などのヘルパー関数を定義する
+ *    - ok() / ng() / start_task() などのヘルパー関数を定義する
  *    - 共有タスク関数 task_sem_signal / task_flg_set を定義する
- *    - _start() から各テストモジュールを順番に呼び出す
+ *    - _start() から各デモモジュールを順番に呼び出す
  *
  *  ビルド方法:
- *    make test_all/test_all.elf
+ *    make 05_all_demo/all_demo.elf
  *
  *  QEMU 実行方法:
- *    p-kernel> exec test_all.elf
+ *    p-kernel> exec all_demo.elf
  */
 
-#include "test_common.h"
+#include "common.h"
 
 /* ================================================================= */
 /* グローバル変数の実体                                               */
 /* ================================================================= */
 
-int          g_pass = 0;
-int          g_fail = 0;
-int          g_sem  = -1;
-int          g_flg  = -1;
+int          g_ok  = 0;
+int          g_ng  = 0;
+int          g_sem = -1;
+int          g_flg = -1;
 volatile int g_order[16];
 volatile int g_order_cnt = 0;
 
 /* ================================================================= */
-/* テスト結果出力ヘルパー                                             */
+/* 動作確認出力ヘルパー                                              */
 /* ================================================================= */
 
-void pass(const char *name)
+void ok(const char *name)
 {
-    plib_puts("[PASS] ");
+    plib_puts("[ OK] ");
     plib_puts(name);
     plib_puts("\r\n");
-    g_pass++;
+    g_ok++;
 }
 
-void fail(const char *name, const char *reason)
+void ng(const char *name, const char *reason)
 {
-    plib_puts("[FAIL] ");
+    plib_puts("[ NG] ");
     plib_puts(name);
     plib_puts(" : ");
     plib_puts(reason);
     plib_puts("\r\n");
-    g_fail++;
+    g_ng++;
 }
 
 /* ================================================================= */
@@ -132,38 +132,38 @@ void _start(void)
 {
     plib_puts("\r\n");
     plib_puts("============================================\r\n");
-    plib_puts("  p-kernel テストスイート (test_all.elf)\r\n");
+    plib_puts("  p-kernel 総合デモ (all_demo.elf)\r\n");
     plib_puts("============================================\r\n\r\n");
 
-    /* ---- 各テストモジュールを順番に呼び出す ---- */
+    /* ---- 各デモモジュールを順番に呼び出す ---- */
 
-    plib_puts(">>> POSIX ファイル I/O テスト\r\n");
-    test_posix();
+    plib_puts(">>> POSIX ファイル I/O\r\n");
+    demo_posix();
 
-    plib_puts(">>> セマフォ テスト\r\n");
-    test_sem();
+    plib_puts(">>> セマフォ\r\n");
+    demo_sem();
 
-    plib_puts(">>> イベントフラグ テスト\r\n");
-    test_flg();
+    plib_puts(">>> イベントフラグ\r\n");
+    demo_flg();
 
-    plib_puts(">>> タスク管理 テスト\r\n");
-    test_task();
+    plib_puts(">>> タスク管理\r\n");
+    demo_task();
 
-    plib_puts(">>> スケジューリング テスト\r\n");
-    test_sched();
+    plib_puts(">>> スケジューリング\r\n");
+    demo_sched();
 
     /* ---- 最終結果を表示 ---- */
     plib_puts("\r\n============================================\r\n");
-    plib_puts("  結果: PASS=");
-    plib_puti(g_pass);
-    plib_puts("  FAIL=");
-    plib_puti(g_fail);
+    plib_puts("  結果: OK=");
+    plib_puti(g_ok);
+    plib_puts("  NG=");
+    plib_puti(g_ng);
     plib_puts("\r\n");
-    if (g_fail == 0)
-        plib_puts("  全テスト合格!\r\n");
+    if (g_ng == 0)
+        plib_puts("  全項目 OK!\r\n");
     else
-        plib_puts("  失敗あり — 上記 [FAIL] を確認してください\r\n");
+        plib_puts("  NG あり — 上記 [ NG] を確認してください\r\n");
     plib_puts("============================================\r\n");
 
-    sys_exit(g_fail == 0 ? 0 : 1);
+    sys_exit(g_ng == 0 ? 0 : 1);
 }

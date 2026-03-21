@@ -1,15 +1,15 @@
 /*
- *  test_all/test_sem.c — セマフォ テスト
+ *  05_all_demo/sem.c — セマフォ デモ
  *
- *  テスト一覧:
- *    T4 — 基本 signal / wait (1 タスクが +1、メインが待つ)
- *    T5 — バルク signal / wait (3 タスクが各 +1、メインが cnt=3 を一気に消費)
- *    T6 — TMO_POL (即時ポーリング: カウント 0 では失敗、+1 後は成功)
+ *  デモ一覧:
+ *    D4 — 基本 signal / wait (1 タスクが +1、メインが待つ)
+ *    D5 — バルク signal / wait (3 タスクが各 +1、メインが cnt=3 を一気に消費)
+ *    D6 — TMO_POL (即時ポーリング: カウント 0 では失敗、+1 後は成功)
  */
 
-#include "test_common.h"
+#include "common.h"
 
-void test_sem(void)
+void demo_sem(void)
 {
     /* ----------------------------------------------------------------
      *  T4: セマフォ 基本 signal / wait

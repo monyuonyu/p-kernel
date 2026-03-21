@@ -267,6 +267,6 @@ void _start(void)
     demo_eventflag_orw();
 
     plib_puts("=== 完了 ===\r\n");
-    plib_puts("全機能テスト: exec test_all.elf\r\n");
+    plib_puts("全機能テスト: exec all_demo.elf\r\n");
     sys_exit(0);
 }

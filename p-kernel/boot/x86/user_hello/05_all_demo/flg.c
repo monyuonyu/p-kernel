@@ -1,15 +1,15 @@
 /*
- *  test_all/test_flg.c — イベントフラグ テスト
+ *  05_all_demo/flg.c — イベントフラグ デモ
  *
- *  テスト一覧:
- *    T7 — TWF_ANDW: 指定した全ビットがセットされるまで待つ
- *    T8 — TWF_ORW:  指定したいずれかのビットがセットされるまで待つ
- *    T9 — TMO_POL + tk_clr_flg: ポーリングとクリア操作
+ *  デモ一覧:
+ *    D7 — TWF_ANDW: 指定した全ビットがセットされるまで待つ
+ *    D8 — TWF_ORW:  指定したいずれかのビットがセットされるまで待つ
+ *    D9 — TMO_POL + tk_clr_flg: ポーリングとクリア操作
  */
 
-#include "test_common.h"
+#include "common.h"
 
-void test_flg(void)
+void demo_flg(void)
 {
     /* ----------------------------------------------------------------
      *  T7: イベントフラグ TWF_ANDW (AND 待ち)

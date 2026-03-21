@@ -16,7 +16,7 @@ user_hello/
 ├── 02_posix_io/      ステップ2: POSIX ファイル I/O
 ├── 03_rtos_task/     ステップ3: RTOS タスク管理
 ├── 04_rtos_sync/     ステップ4: 同期プリミティブ（セマフォ・イベントフラグ）
-└── test_all/         テストスイート（全機能の動作検証）
+└── 05_all_demo/         総合デモ（全機能の動作確認）
 ```
 
 ---
@@ -33,7 +33,7 @@ make 01_hello/hello.elf
 make 02_posix_io/posix_io.elf
 make 03_rtos_task/rtos_task.elf
 make 04_rtos_sync/rtos_sync.elf
-make test_all/test_all.elf
+make 05_all_demo/all_demo.elf
 ```
 
 **必要なツール:**
@@ -55,7 +55,7 @@ p-kernel> exec hello.elf
 p-kernel> exec posix_io.elf
 p-kernel> exec rtos_task.elf
 p-kernel> exec rtos_sync.elf
-p-kernel> exec test_all.elf
+p-kernel> exec all_demo.elf
 ```
 
 ---
@@ -79,9 +79,9 @@ T-Kernel ネイティブ API でタスクを作成・起動します。
 セマフォとイベントフラグを使ったタスク間同期を実演します。
 複数タスクが協調して動作するパターンを学べます。
 
-### test_all — テストスイート
+### 05_all_demo   総合デモ
 上記サンプルの全機能を網羅した自動テストです。
-PASS=59 FAIL=0 を確認済み（QEMU x86_64）。
+OK=59 NG=0 を確認済み（QEMU x86_64）。
 
 ---
 

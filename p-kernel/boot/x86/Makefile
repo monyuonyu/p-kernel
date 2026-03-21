@@ -190,7 +190,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USER_HELLO_DIR)/02_posix_io/posix_io.elf ::posix_io.elf
 	mcopy -i $@ $(USER_HELLO_DIR)/03_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USER_HELLO_DIR)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
-	mcopy -i $@ $(USER_HELLO_DIR)/test_all/test_all.elf    ::test_all.elf
+	mcopy -i $@ $(USER_HELLO_DIR)/05_all_demo/all_demo.elf    ::all_demo.elf
 
 disk: $(DISK_IMG)
 

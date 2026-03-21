@@ -103,5 +103,5 @@ p-kernel> exec rtos_sync.elf
 ## 次のステップ
 
 ```
-p-kernel> exec test_all.elf   ← 全機能テストスイート（PASS=59 FAIL=0）
+p-kernel> exec all_demo.elf   ← 全機能テストスイート（OK=59 NG=0）
 ```

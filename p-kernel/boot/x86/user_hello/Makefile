@@ -6,12 +6,12 @@
 #   02_posix_io/posix_io.elf   POSIX ファイル I/O
 #   03_rtos_task/rtos_task.elf RTOS タスク管理
 #   04_rtos_sync/rtos_sync.elf 同期プリミティブ
-#   test_all/test_all.elf      包括的テストスイート
+#   05_all_demo/all_demo.elf      総合デモ
 #
 # 使い方:
 #   make                              — 全 ELF をビルド
 #   make 01_hello/hello.elf           — 個別ビルド
-#   make test_all/test_all.elf        — テストスイートのみ
+#   make 05_all_demo/all_demo.elf        — 総合デモのみ
 #   make clean                        — オブジェクトと ELF を削除
 
 CROSS   ?= i686-linux-gnu-
@@ -32,7 +32,7 @@ SAMPLES = \
     02_posix_io/posix_io.elf \
     03_rtos_task/rtos_task.elf \
     04_rtos_sync/rtos_sync.elf \
-    test_all/test_all.elf
+    05_all_demo/all_demo.elf
 
 all: $(SAMPLES)
 
@@ -65,24 +65,24 @@ all: $(SAMPLES)
 	$(LD) $(LDFLAGS) -o $@ 04_rtos_sync/rtos_sync.o
 
 # -------------------------------------------------------------------
-# test_all (複数ソースファイルをリンク)
+# 05_all_demo (複数ソースファイルをリンク)
 # -------------------------------------------------------------------
 TEST_SRCS = \
-    test_all/test_main.c \
-    test_all/test_posix.c \
-    test_all/test_sem.c \
-    test_all/test_flg.c \
-    test_all/test_task.c \
-    test_all/test_sched.c
+    05_all_demo/main.c \
+    05_all_demo/posix.c \
+    05_all_demo/sem.c \
+    05_all_demo/flg.c \
+    05_all_demo/task.c \
+    05_all_demo/sched.c
 
 TEST_OBJS = $(TEST_SRCS:.c=.o)
 
-# test_all/ 配下の .c を .o にコンパイル
-# -I. で user_hello/plibc.h を、-Itest_all で test_common.h を参照
-test_all/%.o: test_all/%.c plibc.h test_all/test_common.h
-	$(CC) $(CFLAGS) -Itest_all -c $< -o $@
+# 05_all_demo/ 配下の .c を .o にコンパイル
+# -I. で user_hello/plibc.h を、-I05_all_demo で common.h を参照
+05_all_demo/%.o: 05_all_demo/%.c plibc.h 05_all_demo/common.h
+	$(CC) $(CFLAGS) -I05_all_demo -c $< -o $@
 
-test_all/test_all.elf: $(TEST_OBJS) user.ld
+05_all_demo/all_demo.elf: $(TEST_OBJS) user.ld
 	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS)
 
 # -------------------------------------------------------------------
@@ -93,7 +93,7 @@ clean:
 	rm -f 02_posix_io/*.o 02_posix_io/*.elf
 	rm -f 03_rtos_task/*.o 03_rtos_task/*.elf
 	rm -f 04_rtos_sync/*.o 04_rtos_sync/*.elf
-	rm -f test_all/*.o    test_all/*.elf
+	rm -f 05_all_demo/*.o    05_all_demo/*.elf
 	rm -f *.o *.elf
 
 .PHONY: all clean
