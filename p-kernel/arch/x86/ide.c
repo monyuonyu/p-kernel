@@ -8,10 +8,14 @@
 
 #include "kernel.h"
 #include "ide.h"
+#include "blk_ssy.h"
 #include <tmonitor.h>
 
 BOOL ide_present = FALSE;
 static UW  ide_nsectors = 0;
+
+/* Forward declaration — definition is at end of file */
+static const BLK_OPS ide_ops;
 
 /* --------------------------------------------------------------- */
 /* Port helpers                                                     */
@@ -123,6 +127,9 @@ INT ide_init(void)
 
     ide_present = TRUE;
 
+    /* Self-register with the block device subsystem */
+    blk_ssy_register(&ide_ops);
+
     tm_putstring((UB *)"[ide]  ATA drive ready  sectors=");
     /* print sector count */
     char buf[12]; INT bi = 11; buf[bi] = '\0';
@@ -174,6 +181,21 @@ INT ide_read(UW lba, UW count, void *buf)
 }
 
 UW ide_sector_count(void) { return ide_nsectors; }
+
+/* ---------------------------------------------------------------- */
+/* BLK_OPS — registered with blk_ssy on successful ide_init()      */
+/* ---------------------------------------------------------------- */
+
+static BOOL ide_blk_present(void) { return ide_present; }
+
+static const BLK_OPS ide_ops = {
+    .name         = "ide0",
+    .sector_size  = IDE_SECTOR_SIZE,
+    .read         = ide_read,
+    .write        = ide_write,
+    .sector_count = ide_sector_count,
+    .present      = ide_blk_present,
+};
 
 /* --------------------------------------------------------------- */
 /* Write sectors                                                    */

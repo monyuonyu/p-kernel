@@ -63,6 +63,8 @@ ARCH_C_SRCS = \
     pipeline.c \
     fedlearn.c \
     ai_stats.c \
+    blk_ssy.c \
+    fs_ssy.c \
     ide.c \
     fat32.c \
     vfs.c \
@@ -191,7 +193,6 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/02_posix_io/posix_io.elf   ::posix_io.elf
 	mcopy -i $@ $(USERLAND_X86)/03_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USERLAND_X86)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
-	mcopy -i $@ $(USERLAND_X86)/05_all_demo/all_demo.elf     ::all_demo.elf
 	mcopy -i $@ $(USERLAND_X86)/06_net_infer/net_infer.elf      ::net_infer.elf
 	mcopy -i $@ $(USERLAND_X86)/07_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
 	mcopy -i $@ $(USERLAND_X86)/08_http_get/http_get.elf       ::http_get.elf

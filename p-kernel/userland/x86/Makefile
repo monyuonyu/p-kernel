@@ -42,7 +42,6 @@ SAMPLES = \
     02_posix_io/posix_io.elf \
     03_rtos_task/rtos_task.elf \
     04_rtos_sync/rtos_sync.elf \
-    05_all_demo/all_demo.elf \
     06_net_infer/net_infer.elf \
     07_stdin_echo/stdin_echo.elf \
     08_http_get/http_get.elf \
@@ -92,27 +91,6 @@ all: $(SAMPLES)
 	mkdir -p 04_rtos_sync
 	$(CC) $(CFLAGS) -c $< -o 04_rtos_sync/rtos_sync.o
 	$(LD) $(LDFLAGS) -o $@ 04_rtos_sync/rtos_sync.o
-
-# -------------------------------------------------------------------
-# 05_all_demo (複数ソースファイルをリンク)
-#   -I$(S)/05_all_demo で common.h (samples/05_all_demo/) を参照
-# -------------------------------------------------------------------
-DEMO_SRCS = \
-    $(S)/05_all_demo/main.c \
-    $(S)/05_all_demo/posix.c \
-    $(S)/05_all_demo/sem.c \
-    $(S)/05_all_demo/flg.c \
-    $(S)/05_all_demo/task.c \
-    $(S)/05_all_demo/sched.c
-
-DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
-
-05_all_demo/%.o: $(S)/05_all_demo/%.c plibc.h $(S)/05_all_demo/common.h
-	mkdir -p 05_all_demo
-	$(CC) $(CFLAGS) -I$(S)/05_all_demo -c $< -o $@
-
-05_all_demo/all_demo.elf: $(DEMO_OBJS) user.ld
-	$(LD) $(LDFLAGS) -o $@ $(DEMO_OBJS)
 
 # -------------------------------------------------------------------
 # 06_net_infer — センサーデータ分類 + UDP 配信デモ
@@ -238,7 +216,7 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 # クリーン
 # -------------------------------------------------------------------
 clean:
-	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
+	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync \
 	       06_net_infer 07_stdin_echo 08_http_get 09_readdir \
 	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm \
 	       15_task_ext 16_time 17_rendezvous 18_ref 19_misc 20_multicast

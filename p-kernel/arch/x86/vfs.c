@@ -5,6 +5,7 @@
 
 #include "kernel.h"
 #include "ide.h"
+#include "blk_ssy.h"
 #include "fat32.h"
 #include "vfs.h"
 #include <tmonitor.h>
@@ -13,10 +14,20 @@ BOOL vfs_ready = FALSE;
 
 INT vfs_init(void)
 {
+    /* Probe IDE; on success it self-registers as "ide0" in blk_ssy */
     if (ide_init() < 0) {
         tm_putstring((UB *)"[vfs]  IDE not found — filesystem unavailable\r\n");
         return -1;
     }
+
+    /* Hand the "ide0" ops to FAT32 */
+    const BLK_OPS *blk = blk_ssy_lookup("ide0");
+    if (!blk) {
+        tm_putstring((UB *)"[vfs]  blk_ssy: ide0 not registered\r\n");
+        return -1;
+    }
+    fat32_set_blkdev(blk);
+
     if (fat32_mount() < 0) {
         tm_putstring((UB *)"[vfs]  FAT32 mount failed\r\n");
         return -1;

@@ -17,6 +17,7 @@
  */
 
 #include "kernel.h"
+#include "task.h"
 #include "userspace.h"
 #include "gdt_user.h"
 #include <tmonitor.h>
@@ -24,16 +25,13 @@
 void user_exec(UW entry, UW ustack_top)
 {
     /*
-     * Capture the current kernel ESP so we can tell the TSS where the
-     * ring-0 stack is.  We add a generous margin because the inline asm
-     * below will use a few more bytes before the IRET discards the frame.
-     *
-     * TSS.RSP0 must point ABOVE the area we are about to clobber so that
-     * when the user calls INT 0x80 the CPU does not overwrite live data.
+     * Set TSS.RSP0 to the TOP of this task's kernel stack.
+     * On INT 0x80 or IRQ from ring-3, the CPU loads RSP0 and pushes the
+     * user context (SS, ESP, EFLAGS, CS, EIP) there.  Using isstack
+     * (the task's initial stack pointer = top of the 8 KB kernel stack)
+     * gives the full 8 KB to ring-0 handlers and avoids any overflow.
      */
-    UW esp0;
-    asm volatile("mov %%esp, %0" : "=r"(esp0));
-    gdt_set_kernel_stack(esp0 + 512);
+    gdt_set_kernel_stack((UW)knl_ctxtsk->isstack);
 
     /*
      * Transition to ring-3:

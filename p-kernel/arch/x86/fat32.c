@@ -13,9 +13,20 @@
  */
 
 #include "kernel.h"
-#include "ide.h"
+#include "blk_ssy.h"
 #include "fat32.h"
 #include <tmonitor.h>
+
+/* Block device used by this filesystem instance */
+static const BLK_OPS *g_blk = NULL;
+
+/* Called from vfs.c before fat32_mount() */
+void fat32_set_blkdev(const BLK_OPS *ops) { g_blk = ops; }
+
+/* Convenience macros so the rest of the code stays readable */
+#define blk_read(lba, n, buf)   (g_blk->read((lba), (n), (buf)))
+#define blk_write(lba, n, buf)  (g_blk->write((lba), (n), (buf)))
+#define blk_present()           (g_blk != NULL && g_blk->present())
 
 /* ----------------------------------------------------------------- */
 /* On-disk structures (little-endian)                                */
@@ -105,9 +116,9 @@ static UW  root_cluster;
 static UW  bytes_per_sector; /* always 512 for QEMU               */
 
 /* I/O buffers (not re-entrant — single-threaded use only) */
-static UB  sec_buf[IDE_SECTOR_SIZE * 8];    /* FAT / scratch         */
-static UB  dir_sec_buf[IDE_SECTOR_SIZE];    /* dir entry read/write  */
-static UB  clus_rw_buf[IDE_SECTOR_SIZE * 8];/* data cluster R-M-W    */
+static UB  sec_buf[512 * 8];    /* FAT / scratch         */
+static UB  dir_sec_buf[512];    /* dir entry read/write  */
+static UB  clus_rw_buf[512 * 8];/* data cluster R-M-W    */
 
 /* ----------------------------------------------------------------- */
 /* File descriptor table                                              */
@@ -144,7 +155,7 @@ static UW fat_read(UW cluster)
 {
     UW fat_sector = fat_lba + (cluster * 4) / bytes_per_sector;
     UW fat_offset = (cluster * 4) % bytes_per_sector;
-    ide_read(fat_sector, 1, sec_buf);
+    blk_read(fat_sector, 1, sec_buf);
     UW val = *(UW *)(sec_buf + fat_offset);
     return val & 0x0FFFFFFF;
 }
@@ -157,7 +168,7 @@ static BOOL fat_end(UW cluster)
 /* Read one full cluster into buf. */
 static void read_cluster(UW cluster, UB *buf)
 {
-    ide_read(cluster_to_lba(cluster), sectors_per_cluster, buf);
+    blk_read(cluster_to_lba(cluster), sectors_per_cluster, buf);
 }
 
 /* ----------------------------------------------------------------- */
@@ -203,9 +214,9 @@ static void parse_83(const UB name[8], const UB ext[3], char *out)
 
 INT fat32_mount(void)
 {
-    if (!ide_present) return -1;
+    if (!blk_present()) return -1;
 
-    ide_read(0, 1, sec_buf);
+    blk_read(0, 1, sec_buf);
     BPB *bpb = (BPB *)sec_buf;
 
     /* Validate FAT32 signature */
@@ -450,12 +461,12 @@ void fat32_close(INT fd)
 
     if (f->writable) {
         /* Flush file size and first cluster back to directory entry */
-        ide_read(f->dir_lba, 1, dir_sec_buf);
+        blk_read(f->dir_lba, 1, dir_sec_buf);
         DIRENTRY *de = (DIRENTRY *)(dir_sec_buf + f->dir_off);
         de->file_size   = f->file_size;
         de->fst_clus_lo = (UH)(f->first_cluster & 0xFFFF);
         de->fst_clus_hi = (UH)((f->first_cluster >> 16) & 0xFFFF);
-        ide_write(f->dir_lba, 1, dir_sec_buf);
+        blk_write(f->dir_lba, 1, dir_sec_buf);
     }
     f->in_use = FALSE;
 }
@@ -501,12 +512,12 @@ static void fat_set(UW cluster, UW value)
 {
     UW fat_sector = fat_lba + (cluster * 4) / bytes_per_sector;
     UW fat_offset = (cluster * 4) % bytes_per_sector;
-    ide_read(fat_sector, 1, sec_buf);
+    blk_read(fat_sector, 1, sec_buf);
     UW *entry = (UW *)(sec_buf + fat_offset);
     *entry = (*entry & 0xF0000000) | (value & 0x0FFFFFFF);
-    ide_write(fat_sector, 1, sec_buf);
+    blk_write(fat_sector, 1, sec_buf);
     if (num_fats > 1)
-        ide_write(fat_sector + fat_size32, 1, sec_buf);
+        blk_write(fat_sector + fat_size32, 1, sec_buf);
 }
 
 /* Scan FAT for a free cluster, mark EOC, return cluster number.
@@ -515,16 +526,16 @@ static UW fat_alloc(void)
 {
     UW entries_per_sector = bytes_per_sector / 4;
     for (UW sect = 0; sect < fat_size32; sect++) {
-        ide_read(fat_lba + sect, 1, sec_buf);
+        blk_read(fat_lba + sect, 1, sec_buf);
         UW *entries = (UW *)sec_buf;
         for (UW i = 0; i < entries_per_sector; i++) {
             UW cluster = sect * entries_per_sector + i;
             if (cluster < 2) continue;
             if ((entries[i] & 0x0FFFFFFF) == 0) {
                 entries[i] = (entries[i] & 0xF0000000) | 0x0FFFFFFF;
-                ide_write(fat_lba + sect, 1, sec_buf);
+                blk_write(fat_lba + sect, 1, sec_buf);
                 if (num_fats > 1)
-                    ide_write(fat_lba + fat_size32 + sect, 1, sec_buf);
+                    blk_write(fat_lba + fat_size32 + sect, 1, sec_buf);
                 return cluster;
             }
         }
@@ -545,7 +556,7 @@ static void fat_free_chain(UW cluster)
 /* Write one full cluster to disk. */
 static void write_cluster(UW cluster, const UB *buf)
 {
-    ide_write(cluster_to_lba(cluster), sectors_per_cluster, buf);
+    blk_write(cluster_to_lba(cluster), sectors_per_cluster, buf);
 }
 
 /* ----------------------------------------------------------------- */
@@ -624,7 +635,7 @@ static INT dir_scan(UW dir_cluster, const char *name,
 
         for (UW sect = 0; sect < sectors_per_cluster; sect++) {
             UW lba = base_lba + sect;
-            ide_read(lba, 1, dir_sec_buf);
+            blk_read(lba, 1, dir_sec_buf);
             DIRENTRY *de = (DIRENTRY *)dir_sec_buf;
 
             for (UW i = 0; i < entries_per_sector; i++, de++) {
@@ -695,9 +706,9 @@ static INT dir_scan(UW dir_cluster, const char *name,
         if (new_clus == 0) return -1;
         fat_set(last_cluster, new_clus);
         fat_set(new_clus, 0x0FFFFFFF);
-        for (INT k = 0; k < IDE_SECTOR_SIZE; k++) dir_sec_buf[k] = 0;
+        for (INT k = 0; k < 512; k++) dir_sec_buf[k] = 0;
         for (UW s = 0; s < sectors_per_cluster; s++)
-            ide_write(cluster_to_lba(new_clus) + s, 1, dir_sec_buf);
+            blk_write(cluster_to_lba(new_clus) + s, 1, dir_sec_buf);
         *out_lba = cluster_to_lba(new_clus);
         *out_off = 0;
         if (out_de) {
@@ -735,24 +746,24 @@ INT fat32_create_fd(const char *path)
         UW old_clus = ((UW)existing_de.fst_clus_hi << 16) |
                        existing_de.fst_clus_lo;
         if (old_clus >= 2) fat_free_chain(old_clus);
-        ide_read(entry_lba, 1, dir_sec_buf);
+        blk_read(entry_lba, 1, dir_sec_buf);
         DIRENTRY *de = (DIRENTRY *)(dir_sec_buf + entry_off);
         de->file_size   = 0;
         de->fst_clus_lo = 0;
         de->fst_clus_hi = 0;
-        ide_write(entry_lba, 1, dir_sec_buf);
+        blk_write(entry_lba, 1, dir_sec_buf);
     } else {
         /* New file: find free dir slot */
         if (dir_scan(dir_cluster, NULL, &entry_lba, &entry_off, NULL) < 0)
             return -1;
-        ide_read(entry_lba, 1, dir_sec_buf);
+        blk_read(entry_lba, 1, dir_sec_buf);
         DIRENTRY *de = (DIRENTRY *)(dir_sec_buf + entry_off);
         for (INT k = 0; k < (INT)sizeof(DIRENTRY); k++) ((UB *)de)[k] = 0;
         make_83(fname, de->name, de->ext);
         de->attr     = ATTR_ARCHIVE;
         de->wrt_date = 0x4A21;
         de->crt_date = 0x4A21;
-        ide_write(entry_lba, 1, dir_sec_buf);
+        blk_write(entry_lba, 1, dir_sec_buf);
     }
 
     /* Allocate first cluster */
@@ -762,11 +773,11 @@ INT fat32_create_fd(const char *path)
     write_cluster(first_clus, clus_rw_buf);
 
     /* Update dir entry with first cluster */
-    ide_read(entry_lba, 1, dir_sec_buf);
+    blk_read(entry_lba, 1, dir_sec_buf);
     DIRENTRY *de = (DIRENTRY *)(dir_sec_buf + entry_off);
     de->fst_clus_lo = (UH)(first_clus & 0xFFFF);
     de->fst_clus_hi = (UH)((first_clus >> 16) & 0xFFFF);
-    ide_write(entry_lba, 1, dir_sec_buf);
+    blk_write(entry_lba, 1, dir_sec_buf);
 
     /* Open writable fd */
     for (INT i = 0; i < FAT32_MAX_FD; i++) {
@@ -864,9 +875,9 @@ INT fat32_unlink(const char *path)
     UW first_clus = ((UW)de.fst_clus_hi << 16) | de.fst_clus_lo;
     if (first_clus >= 2) fat_free_chain(first_clus);
 
-    ide_read(entry_lba, 1, dir_sec_buf);
+    blk_read(entry_lba, 1, dir_sec_buf);
     dir_sec_buf[entry_off] = 0xE5;
-    ide_write(entry_lba, 1, dir_sec_buf);
+    blk_write(entry_lba, 1, dir_sec_buf);
     return 0;
 }
 
@@ -921,7 +932,7 @@ INT fat32_mkdir(const char *path)
         fat_set(new_clus, 0);
         return -1;
     }
-    ide_read(entry_lba, 1, dir_sec_buf);
+    blk_read(entry_lba, 1, dir_sec_buf);
     DIRENTRY *de = (DIRENTRY *)(dir_sec_buf + entry_off);
     for (INT k = 0; k < (INT)sizeof(DIRENTRY); k++) ((UB *)de)[k] = 0;
     make_83(dname, de->name, de->ext);
@@ -930,7 +941,7 @@ INT fat32_mkdir(const char *path)
     de->crt_date    = 0x4A21;
     de->fst_clus_lo = (UH)(new_clus & 0xFFFF);
     de->fst_clus_hi = (UH)((new_clus >> 16) & 0xFFFF);
-    ide_write(entry_lba, 1, dir_sec_buf);
+    blk_write(entry_lba, 1, dir_sec_buf);
     return 0;
 }
 
@@ -964,22 +975,22 @@ INT fat32_rename(const char *oldpath, const char *newpath)
     if (dir_scan(new_dir, new_name, &dst_lba, &dst_off, &dst_de) == 0) {
         UW dst_clus = ((UW)dst_de.fst_clus_hi << 16) | dst_de.fst_clus_lo;
         if (dst_clus >= 2) fat_free_chain(dst_clus);
-        ide_read(dst_lba, 1, dir_sec_buf);
+        blk_read(dst_lba, 1, dir_sec_buf);
         dir_sec_buf[dst_off] = 0xE5;
-        ide_write(dst_lba, 1, dir_sec_buf);
+        blk_write(dst_lba, 1, dir_sec_buf);
     }
 
     UW new_entry_lba, new_entry_off;
     if (dir_scan(new_dir, NULL, &new_entry_lba, &new_entry_off, NULL) < 0)
         return -1;
-    ide_read(new_entry_lba, 1, dir_sec_buf);
+    blk_read(new_entry_lba, 1, dir_sec_buf);
     DIRENTRY *nde = (DIRENTRY *)(dir_sec_buf + new_entry_off);
     *nde = src_de;
     make_83(new_name, nde->name, nde->ext);
-    ide_write(new_entry_lba, 1, dir_sec_buf);
+    blk_write(new_entry_lba, 1, dir_sec_buf);
 
-    ide_read(src_lba, 1, dir_sec_buf);
+    blk_read(src_lba, 1, dir_sec_buf);
     dir_sec_buf[src_off] = 0xE5;
-    ide_write(src_lba, 1, dir_sec_buf);
+    blk_write(src_lba, 1, dir_sec_buf);
     return 0;
 }

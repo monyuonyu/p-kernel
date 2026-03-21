@@ -10,9 +10,10 @@
 #include "kernel.h"
 #include "task.h"
 #include "p_syscall.h"
-#include "vfs.h"
 #include "netstack.h"
 #include "net_ssy.h"
+#include "fs_ssy.h"
+#include "vfs.h"
 #include "ai_kernel.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
@@ -30,18 +31,10 @@ extern void syscall_isr(void);
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
-/* ----------------------------------------------------------------- */
-/* readdir kernel-side scratch buffer (SYS_READDIR)                 */
-/*                                                                   */
-/* vfs_readdir() fills VFS_DIRENT entries (256-byte name fields).   */
-/* We copy them into the smaller user-side PK_DIRENT structs (64 B).*/
-/* Using a static buffer avoids large stack allocation.             */
-/* ----------------------------------------------------------------- */
-#define READDIR_BUF_MAX  32
-static VFS_DIRENT readdir_kbuf[READDIR_BUF_MAX];
-
-/* UDP/TCP socket state has moved to net_ssy.c (network subsystem, ssid=1).
- * syscall_dispatch() routes 0x200-0x2FF to knl_svc_ientry() below. */
+/* File I/O: SYS_OPEN and SYS_CLOSE route through fs_ssy_call() so that
+ * fs_ssy.c can track per-task FD ownership (cleanupfn closes leaked fds).
+ * SYS_READ/WRITE/LSEEK/MKDIR/UNLINK/RENAME/READDIR go direct to VFS.
+ * UDP/TCP state lives in net_ssy.c (ssid=1). */
 
 /* ----------------------------------------------------------------- */
 /* Async AI job pool (SYS_AI_SUBMIT / SYS_AI_WAIT)                  */
@@ -202,14 +195,9 @@ static void sout_num(W n)
     tm_putstring((UB *)(buf+i));
 }
 
-/* ----------------------------------------------------------------- */
-/* FD translation: POSIX fd 3..10 → VFS fd 0..7                     */
-/* fd 0 = stdin (not impl), fd 1/2 = serial stdout/stderr           */
-/* ----------------------------------------------------------------- */
-#define POSIX_FD_OFFSET   3
-#define IS_STD_FD(fd)     ((fd) == 0 || (fd) == 1 || (fd) == 2)
-#define TO_VFS_FD(fd)     ((fd) - POSIX_FD_OFFSET)
-#define TO_POSIX_FD(vfd)  ((vfd) + POSIX_FD_OFFSET)
+#define IS_STD_FD(fd)    ((fd) == 0 || (fd) == 1 || (fd) == 2)
+#define TO_VFS_FD(fd)    ((fd) - 3)
+#define TO_POSIX_FD(vfd) ((vfd) + 3)
 
 /* ----------------------------------------------------------------- */
 /* syscall_dispatch                                                   */
@@ -223,31 +211,25 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     /* ------------------------------------------------------------- */
 
     case SYS_WRITE: {
-        /* arg0=fd, arg1=buf_ptr, arg2=len */
+        /* fd=1/2 → serial stdout; fd≥3 → fs_ssy via direct call */
         const char *buf = (const char *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
-        if (IS_STD_FD(arg0)) {
-            serial_write(buf, len);
-            return len;
-        }
+        if (IS_STD_FD(arg0)) { serial_write(buf, len); return len; }
         if (!vfs_ready) return -1;
         return vfs_write(TO_VFS_FD(arg0), buf, (UW)len);
     }
 
     case SYS_READ: {
-        /* arg0=fd, arg1=buf_ptr, arg2=len */
         void *buf = (void *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
         if (arg0 == 0) {
-            /* stdin: block until at least one byte is available */
             if (!stdin_active || len == 0) return -1;
             if (tk_wai_sem(stdin_sem, 1, TMO_FEVR) != E_OK) return -1;
             UB *dst = (UB *)buf;
             INT n = 0;
-            dst[n++] = stdin_rbuf[stdin_rptr++];  /* first byte */
-            /* Greedily read additional bytes that are already available */
+            dst[n++] = stdin_rbuf[stdin_rptr++];
             while (n < len && tk_wai_sem(stdin_sem, 1, TMO_POL) == E_OK)
                 dst[n++] = stdin_rbuf[stdin_rptr++];
             return (W)n;
@@ -258,54 +240,37 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_OPEN: {
-        /* arg0=path_ptr, arg1=flags */
-        const char *path = (const char *)(UW)arg0;
-        W flags = arg1;
-        if (!vfs_ready) return -1;
-        INT vfd;
-        if (flags & 0x0041) {  /* O_WRONLY | O_CREAT */
-            vfd = vfs_create(path);
-        } else {
-            vfd = vfs_open(path);
-        }
-        if (vfd < 0) return -1;
-        return TO_POSIX_FD(vfd);
+        /* fd tracking via fs_ssy_call (records ownership for cleanupfn) */
+        return fs_ssy_call(SYS_OPEN, arg0, arg1, 0);
     }
 
     case SYS_CLOSE: {
-        /* arg0=fd */
         if (IS_STD_FD(arg0)) return 0;
-        if (!vfs_ready) return -1;
-        vfs_close(TO_VFS_FD(arg0));
-        return 0;
+        /* fd release via fs_ssy_call */
+        return fs_ssy_call(SYS_CLOSE, arg0, 0, 0);
     }
 
     case SYS_LSEEK: {
-        /* arg0=fd, arg1=offset, arg2=whence (0=SET,1=CUR,2=END) */
         if (IS_STD_FD(arg0)) return -1;
         if (!vfs_ready) return -1;
-        /* Only SEEK_SET (0) and SEEK_END (2) supported via vfs_seek */
         UW off = (UW)arg1;
-        if (arg2 == 2) off = vfs_fsize(TO_VFS_FD(arg0));  /* SEEK_END */
+        if (arg2 == 2) off = vfs_fsize(TO_VFS_FD(arg0));
         return vfs_seek(TO_VFS_FD(arg0), off);
     }
 
     case SYS_MKDIR: {
-        /* arg0=path_ptr */
         const char *path = (const char *)(UW)arg0;
         if (!vfs_ready) return -1;
         return vfs_mkdir(path);
     }
 
     case SYS_UNLINK: {
-        /* arg0=path_ptr */
         const char *path = (const char *)(UW)arg0;
         if (!vfs_ready) return -1;
         return vfs_unlink(path);
     }
 
     case SYS_RENAME: {
-        /* arg0=old_ptr, arg1=new_ptr */
         const char *old = (const char *)(UW)arg0;
         const char *nw  = (const char *)(UW)arg1;
         if (!vfs_ready) return -1;
@@ -313,27 +278,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_READDIR: {
-        /* arg0=path_ptr, arg1=PK_DIRENT*, arg2=max_entries */
-        const char *path = (const char *)(UW)arg0;
-        PK_DIRENT  *out  = (PK_DIRENT  *)(UW)arg1;
-        INT max = (INT)arg2;
-        if (!path || !out || max <= 0) return -1;
         if (!vfs_ready) return -1;
-        if (max > READDIR_BUF_MAX) max = READDIR_BUF_MAX;
-
-        INT n = vfs_readdir(path, readdir_kbuf, max);
-        if (n < 0) return n;
-
-        /* Copy VFS_DIRENT → PK_DIRENT (truncate name to 63 chars) */
-        for (INT i = 0; i < n; i++) {
-            INT j;
-            for (j = 0; j < PK_DIRENT_NAMELEN - 1 && readdir_kbuf[i].name[j]; j++)
-                out[i].name[j] = readdir_kbuf[i].name[j];
-            out[i].name[j] = '\0';
-            out[i].size   = readdir_kbuf[i].size;
-            out[i].is_dir = readdir_kbuf[i].is_dir ? 1 : 0;
-        }
-        return n;
+        return fs_ssy_call(SYS_READDIR, arg0, arg1, arg2);
     }
 
     case SYS_EXIT: {

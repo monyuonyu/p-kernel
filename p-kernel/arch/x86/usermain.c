@@ -14,6 +14,8 @@
 #include "vfs.h"
 #include "gdt_user.h"
 #include "p_syscall.h"
+#include "blk_ssy.h"
+#include "fs_ssy.h"
 #include "net_ssy.h"
 #include <tmonitor.h>
 
@@ -57,6 +59,8 @@ EXPORT INT usermain(void)
     /* NOTE: run_initrc() called after all tasks start (below) */
 
     /* ---- Subsystems ----------------------------------------------- */
+    blk_ssy_init();         /* block device subsystem (ssid=2)         */
+    fs_ssy_init();          /* filesystem subsystem  (ssid=3)          */
     net_ssy_init();         /* network subsystem (ssid=1)              */
 
     /* ---- AI kernel primitives ------------------------------------- */

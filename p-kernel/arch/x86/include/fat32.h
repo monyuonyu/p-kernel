@@ -4,6 +4,10 @@
  */
 #pragma once
 #include "kernel.h"
+#include "blk_ssy.h"
+
+/* Set the block device before calling fat32_mount(). */
+void fat32_set_blkdev(const BLK_OPS *ops);
 
 #define FAT32_MAX_FD        8       /* max open file descriptors   */
 #define FAT32_MAX_PATH      128
