@@ -249,6 +249,19 @@
 #define SYS_TK_REF_VER   0x1A0
 #define SYS_TK_REF_SYS   0x1A1
 
+/* Rendezvous port ref (supplement) */
+#define SYS_TK_REF_POR   0x196
+
+/* Time (supplement) */
+#define SYS_TK_GET_OTM   0x182
+#define SYS_TK_SET_TIM   0x183
+
+/* Task dispatch control */
+#define SYS_TK_EXD_TSK   0x1C0
+#define SYS_TK_DIS_DSP   0x1C1
+#define SYS_TK_ENA_DSP   0x1C2
+#define SYS_TK_ROT_RDQ   0x1C3
+
 /* ----------------------------------------------------------------- */
 /* Network syscall numbers (p-kernel extension)                      */
 /* ----------------------------------------------------------------- */

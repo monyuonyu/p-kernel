@@ -1256,6 +1256,78 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         return 0;
     }
 
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: rendezvous port ref                          */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_REF_POR: {
+        /* arg0=porid, arg1=PK_RPOR* */
+        PK_RPOR *out = (PK_RPOR *)(UW)arg1;
+        if (!out) return -1;
+        T_RPOR rpor;
+        ER er = tk_ref_por((ID)arg0, &rpor);
+        if (er < E_OK) return (W)er;
+        out->wtsk    = (W)rpor.wtsk;
+        out->atsk    = (W)rpor.atsk;
+        out->maxcmsz = (W)rpor.maxcmsz;
+        out->maxrmsz = (W)rpor.maxrmsz;
+        return 0;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: time supplement                              */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_GET_OTM: {
+        /* arg0 = PK_SYSTIM* — operational time (monotonic uptime) */
+        PK_SYSTIM *out = (PK_SYSTIM *)(UW)arg0;
+        if (!out) return -1;
+        SYSTIM tim;
+        ER er = tk_get_otm(&tim);
+        if (er < E_OK) return (W)er;
+        out->hi = (W)tim.hi;
+        out->lo = (UW)tim.lo;
+        return 0;
+    }
+
+    case SYS_TK_SET_TIM: {
+        /* arg0 = PK_SYSTIM* */
+        PK_SYSTIM *in = (PK_SYSTIM *)(UW)arg0;
+        if (!in) return -1;
+        SYSTIM tim;
+        tim.hi = (W)in->hi;
+        tim.lo = (UW)in->lo;
+        return (W)tk_set_tim(&tim);
+    }
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: task dispatch control                        */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_EXD_TSK: {
+        /* Exit and delete self (free stack like EXT_TSK) */
+        ID cur = knl_ctxtsk->tskid;
+        for (INT i = 0; i < USR_TASK_MAX; i++) {
+            if (usr_ctx[i].real_task != NULL && usr_ctx[i].tskid == cur) {
+                free_user_stack(usr_ctx[i].stack_base);
+                usr_ctx[i].real_task = NULL;
+                break;
+            }
+        }
+        tk_exd_tsk();
+        return 0;
+    }
+
+    case SYS_TK_DIS_DSP:
+        return (W)tk_dis_dsp();
+
+    case SYS_TK_ENA_DSP:
+        return (W)tk_ena_dsp();
+
+    case SYS_TK_ROT_RDQ:
+        /* arg0 = priority (0 = current task priority) */
+        return (W)tk_rot_rdq((PRI)arg0);
+
     default:
         return -1;  /* ENOSYS */
     }

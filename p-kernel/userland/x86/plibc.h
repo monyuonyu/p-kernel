@@ -830,6 +830,50 @@ static inline int tk_ref_sys(PK_RSYS *out)
     { return __sc(0x1A1, (int)(long)out, 0, 0); }
 
 /* ================================================================= */
+/* T-Kernel native: rendezvous port ref (supplement)                  */
+/* ================================================================= */
+
+static inline int tk_ref_por(int porid, PK_RPOR *out)
+    { return __sc(0x196, porid, (int)(long)out, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: time supplement                                   */
+/* ================================================================= */
+
+/* Get operational (monotonic) time — unaffected by tk_set_tim. */
+static inline int tk_get_otm(PK_SYSTIM *out)
+    { return __sc(0x182, (int)(long)out, 0, 0); }
+
+/* Set system time. */
+static inline int tk_set_tim(PK_SYSTIM *in)
+    { return __sc(0x183, (int)(long)in, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: task dispatch control                             */
+/* ================================================================= */
+
+/* Exit current task AND delete its TCB (combined ext+del). */
+static inline void tk_exd_tsk(void)
+{
+    __sc(0x1C0, 0, 0, 0);
+    for (;;) asm volatile("hlt");
+}
+
+/* Disable task dispatch (non-preemptive section begin). */
+static inline int tk_dis_dsp(void)
+    { return __sc(0x1C1, 0, 0, 0); }
+
+/* Enable task dispatch (non-preemptive section end). */
+static inline int tk_ena_dsp(void)
+    { return __sc(0x1C2, 0, 0, 0); }
+
+/* Rotate ready queue at priority tskpri (0 = own priority).
+ * Moves the running task to the tail — cooperative yield within
+ * same-priority group. */
+static inline int tk_rot_rdq(int tskpri)
+    { return __sc(0x1C3, tskpri, 0, 0); }
+
+/* ================================================================= */
 /* AI inference API                                                   */
 /* ================================================================= */
 

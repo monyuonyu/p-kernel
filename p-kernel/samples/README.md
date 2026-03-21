@@ -27,7 +27,8 @@ p-kernel/
 │   ├── 15_task_ext/
 │   ├── 16_time/
 │   ├── 17_rendezvous/
-│   └── 18_ref/
+│   ├── 18_ref/
+│   └── 19_misc/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -125,6 +126,12 @@ mailbox とは異なりメッセージの「中身」がコピーされます。
 sem / flg / mtx / mbx / mbf / mpl / mpf / cyc / alm の全 ref 関数と
 `tk_ref_ver`（バージョン情報）・`tk_ref_sys`（システム状態）を実演します。
 
+### 19_misc — 残余 API
+`tk_ref_por`（ポート状態参照）・`tk_get_otm`（単調増加稼働時間）・`tk_set_tim`（時刻設定）・
+`tk_dis_dsp` / `tk_ena_dsp`（ディスパッチ禁止/許可）・`tk_rot_rdq`（レディキュー回転）・
+`tk_exd_tsk`（タスク終了+削除）を実演します。
+T-Kernel 2.0 ユーザー空間 API のほぼ全てがこのサンプルで網羅されます。
+
 ---
 
 ## ビルド方法 (x86)
@@ -150,6 +157,7 @@ make 15_task_ext/task_ext.elf
 make 16_time/time.elf
 make 17_rendezvous/rendezvous.elf
 make 18_ref/ref.elf
+make 19_misc/misc.elf
 ```
 
 **必要なツール:**
@@ -183,6 +191,7 @@ p-kernel> exec task_ext.elf
 p-kernel> exec time.elf
 p-kernel> exec rendezvous.elf
 p-kernel> exec ref.elf
+p-kernel> exec misc.elf
 ```
 
 ---
@@ -218,6 +227,8 @@ T-Kernel ネイティブ API (0x100+):
   ランデブー:   tk_cre_por, tk_del_por, tk_cal_por, tk_acp_por,
                 tk_fwd_por, tk_rpl_rdv
   システム情報: tk_ref_ver, tk_ref_sys
+  残余/制御:    tk_ref_por, tk_get_otm, tk_set_tim,
+                tk_dis_dsp, tk_ena_dsp, tk_rot_rdq, tk_exd_tsk
 
 ネットワーク API (0x200+):
   sys_udp_bind, sys_udp_send, sys_udp_recv
@@ -325,6 +336,13 @@ AI 推論 API (0x210+):
 | 0x195  | SYS_TK_RPL_RDV   | ランデブー返答              |
 | 0x1A0  | SYS_TK_REF_VER   | T-Kernel バージョン参照     |
 | 0x1A1  | SYS_TK_REF_SYS   | システム状態参照            |
+| 0x196  | SYS_TK_REF_POR   | ランデブーポート状態参照    |
+| 0x182  | SYS_TK_GET_OTM   | 単調増加稼働時間取得        |
+| 0x183  | SYS_TK_SET_TIM   | システム時刻設定            |
+| 0x1C0  | SYS_TK_EXD_TSK   | タスク終了+削除             |
+| 0x1C1  | SYS_TK_DIS_DSP   | ディスパッチ禁止            |
+| 0x1C2  | SYS_TK_ENA_DSP   | ディスパッチ許可            |
+| 0x1C3  | SYS_TK_ROT_RDQ   | レディキュー回転            |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

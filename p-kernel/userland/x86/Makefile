@@ -55,7 +55,8 @@ SAMPLES = \
     15_task_ext/task_ext.elf \
     16_time/time.elf \
     17_rendezvous/rendezvous.elf \
-    18_ref/ref.elf
+    18_ref/ref.elf \
+    19_misc/misc.elf
 
 all: $(SAMPLES)
 
@@ -217,12 +218,20 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ 18_ref/ref.o
 
 # -------------------------------------------------------------------
+# 19_misc
+# -------------------------------------------------------------------
+19_misc/misc.elf: $(S)/19_misc/misc.c plibc.h user.ld
+	mkdir -p 19_misc
+	$(CC) $(CFLAGS) -c $< -o 19_misc/misc.o
+	$(LD) $(LDFLAGS) -o $@ 19_misc/misc.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
 	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
 	       06_net_infer 07_stdin_echo 08_http_get 09_readdir \
 	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm \
-	       15_task_ext 16_time 17_rendezvous 18_ref
+	       15_task_ext 16_time 17_rendezvous 18_ref 19_misc
 
 .PHONY: all clean

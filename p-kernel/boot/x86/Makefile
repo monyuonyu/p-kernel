@@ -204,6 +204,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/16_time/time.elf               ::time.elf
 	mcopy -i $@ $(USERLAND_X86)/17_rendezvous/rendezvous.elf  ::rendezvous.elf
 	mcopy -i $@ $(USERLAND_X86)/18_ref/ref.elf                 ::ref.elf
+	mcopy -i $@ $(USERLAND_X86)/19_misc/misc.elf               ::misc.elf
 
 disk: $(DISK_IMG)
 

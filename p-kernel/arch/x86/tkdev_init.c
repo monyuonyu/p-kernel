@@ -11,6 +11,7 @@
 #include "cpu_insn.h"
 #include "sysdef_depend.h"
 #include "tkdev_conf.h"
+#include "task.h"
 
 IMPORT void knl_timer_handler_startup(void);
 
@@ -52,3 +53,26 @@ EXPORT void knl_tkdev_exit(void)
     for (;;) {}
 }
 #endif /* USE_CLEANUP */
+
+/* ------------------------------------------------------------------ */
+/* Dispatch enable/disable (cpu_calls equivalent for x86)             */
+/* ------------------------------------------------------------------ */
+
+#ifdef USE_FUNC_TK_DIS_DSP
+SYSCALL ER tk_dis_dsp( void )
+{
+    knl_dispatch_disabled = DDS_DISABLE;
+    return E_OK;
+}
+#endif
+
+#ifdef USE_FUNC_TK_ENA_DSP
+SYSCALL ER tk_ena_dsp( void )
+{
+    knl_dispatch_disabled = DDS_ENABLE;
+    if ( knl_ctxtsk != knl_schedtsk ) {
+        knl_dispatch();
+    }
+    return E_OK;
+}
+#endif
