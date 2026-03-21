@@ -14,7 +14,6 @@ p-kernel/
 │   ├── 02_posix_io/
 │   ├── 03_rtos_task/
 │   ├── 04_rtos_sync/
-│   ├── 05_all_demo/
 │   ├── 06_net_infer/
 │   ├── 07_stdin_echo/
 │   ├── 08_http_get/
@@ -59,10 +58,6 @@ T-Kernel ネイティブ API でタスクを作成・起動します。
 ### 04_rtos_sync — 同期プリミティブ
 セマフォとイベントフラグを使ったタスク間同期を実演します。
 複数タスクが協調して動作するパターンを学べます。
-
-### 05_all_demo — 総合デモ
-上記サンプルの全機能を網羅した自動確認プログラムです。
-OK=59 NG=0 を確認済み（QEMU x86_64）。
 
 ### 06_net_infer — AI 推論 + UDP ネットワーク配信
 センサーデータを AI で分類し、結果を UDP で配信するサンプルです。
@@ -149,7 +144,6 @@ make
 
 # 個別ビルド
 make 01_hello/hello.elf
-make 05_all_demo/all_demo.elf
 make 06_net_infer/net_infer.elf
 make 07_stdin_echo/stdin_echo.elf
 make 08_http_get/http_get.elf
@@ -184,7 +178,6 @@ p-kernel> exec hello.elf
 p-kernel> exec posix_io.elf
 p-kernel> exec rtos_task.elf
 p-kernel> exec rtos_sync.elf
-p-kernel> exec all_demo.elf
 p-kernel> exec net_infer.elf
 p-kernel> exec stdin_echo.elf
 p-kernel> exec http_get.elf
