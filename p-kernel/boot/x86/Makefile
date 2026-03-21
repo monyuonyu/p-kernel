@@ -178,19 +178,19 @@ NODEDEV1  = -netdev socket,id=n0,mcast=$(MCAST) \
 # -------------------------------------------------------------------
 DISK_IMG = disk.img
 DISK_SIZE_MB = 32
-USER_HELLO_DIR = user_hello
+USERLAND_X86 = ../../userland/x86
 
 # FAT32ディスクイメージ作成
 # mkdosfs / mformat が必要 (dosfstools パッケージ)
 $(DISK_IMG):
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
-	$(MAKE) -C $(USER_HELLO_DIR) CROSS=$(CROSS)
-	mcopy -i $@ $(USER_HELLO_DIR)/01_hello/hello.elf      ::hello.elf
-	mcopy -i $@ $(USER_HELLO_DIR)/02_posix_io/posix_io.elf ::posix_io.elf
-	mcopy -i $@ $(USER_HELLO_DIR)/03_rtos_task/rtos_task.elf ::rtos_task.elf
-	mcopy -i $@ $(USER_HELLO_DIR)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
-	mcopy -i $@ $(USER_HELLO_DIR)/05_all_demo/all_demo.elf    ::all_demo.elf
+	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
+	mcopy -i $@ $(USERLAND_X86)/01_hello/hello.elf         ::hello.elf
+	mcopy -i $@ $(USERLAND_X86)/02_posix_io/posix_io.elf   ::posix_io.elf
+	mcopy -i $@ $(USERLAND_X86)/03_rtos_task/rtos_task.elf ::rtos_task.elf
+	mcopy -i $@ $(USERLAND_X86)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
+	mcopy -i $@ $(USERLAND_X86)/05_all_demo/all_demo.elf   ::all_demo.elf
 
 disk: $(DISK_IMG)
 
@@ -228,7 +228,7 @@ run-boot: $(TARGET)
 
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) serial.log
-	$(MAKE) -C $(USER_HELLO_DIR) clean 2>/dev/null || true
+	$(MAKE) -C $(USERLAND_X86) clean 2>/dev/null || true
 
 clean-disk:
 	rm -f $(DISK_IMG)

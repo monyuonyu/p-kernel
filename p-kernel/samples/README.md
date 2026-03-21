@@ -1,61 +1,27 @@
-# p-kernel ユーザースペース サンプル集
+# p-kernel サンプル集
 
-p-kernel の **ring-3 ユーザー空間プログラム**の開発ガイドです。
+p-kernel の **ring-3 ユーザー空間プログラム**のサンプルコード集です。
 `INT 0x80` システムコールを使って、カーネルの機能を実際に動かしながら学べます。
 
----
-
-## フォルダ構成
+このディレクトリのソースコードは**アーキテクチャ非依存**です。
+アーキテクチャ固有のビルドインフラ（`plibc.h`、リンカスクリプト）は
+`userland/<arch>/` に分離されています。
 
 ```
-user_hello/
-├── plibc.h           ユーザー空間ライブラリ（システムコールラッパー）
-├── user.ld           リンカスクリプト（ELF ロードアドレス定義）
+p-kernel/
+├── samples/              ← このディレクトリ（アーキ非依存ソース）
+│   ├── 01_hello/
+│   ├── 02_posix_io/
+│   ├── 03_rtos_task/
+│   ├── 04_rtos_sync/
+│   └── 05_all_demo/
 │
-├── 01_hello/         ステップ1: Hello World — 最初の一歩
-├── 02_posix_io/      ステップ2: POSIX ファイル I/O
-├── 03_rtos_task/     ステップ3: RTOS タスク管理
-├── 04_rtos_sync/     ステップ4: 同期プリミティブ（セマフォ・イベントフラグ）
-└── 05_all_demo/         総合デモ（全機能の動作確認）
-```
-
----
-
-## ビルド方法
-
-```bash
-# サンプル全体をビルド
-cd boot/x86/user_hello
-make
-
-# 個別にビルド
-make 01_hello/hello.elf
-make 02_posix_io/posix_io.elf
-make 03_rtos_task/rtos_task.elf
-make 04_rtos_sync/rtos_sync.elf
-make 05_all_demo/all_demo.elf
-```
-
-**必要なツール:**
-- `i686-linux-gnu-gcc` (32ビットクロスコンパイラ)
-- `i686-linux-gnu-ld`
-
----
-
-## QEMU での実行方法
-
-```bash
-# カーネルイメージとディスクイメージのビルド
-cd boot/x86
-make disk          # disk.img を作成（全 ELF を FAT32 ディスクに格納）
-make run-disk      # QEMU 起動
-
-# シェルコマンドで実行
-p-kernel> exec hello.elf
-p-kernel> exec posix_io.elf
-p-kernel> exec rtos_task.elf
-p-kernel> exec rtos_sync.elf
-p-kernel> exec all_demo.elf
+└── userland/
+    ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
+    │   ├── plibc.h
+    │   ├── user.ld
+    │   └── Makefile
+    └── arm/              ← (将来) ARM 用ビルドインフラ (SVC / ELF32)
 ```
 
 ---
@@ -79,16 +45,51 @@ T-Kernel ネイティブ API でタスクを作成・起動します。
 セマフォとイベントフラグを使ったタスク間同期を実演します。
 複数タスクが協調して動作するパターンを学べます。
 
-### 05_all_demo   総合デモ
-上記サンプルの全機能を網羅した自動テストです。
+### 05_all_demo — 総合デモ
+上記サンプルの全機能を網羅した自動確認プログラムです。
 OK=59 NG=0 を確認済み（QEMU x86_64）。
+
+---
+
+## ビルド方法 (x86)
+
+```bash
+# x86 向けに全 ELF をビルド
+cd userland/x86
+make
+
+# 個別ビルド
+make 01_hello/hello.elf
+make 05_all_demo/all_demo.elf
+```
+
+**必要なツール:**
+- `i686-linux-gnu-gcc` (32 ビットクロスコンパイラ)
+- `i686-linux-gnu-ld`
+
+## QEMU での実行方法 (x86)
+
+```bash
+# カーネルイメージとディスクイメージのビルド
+cd boot/x86
+make disk          # disk.img を作成（全 ELF を FAT32 ディスクに格納）
+make run-disk      # QEMU 起動
+
+# シェルコマンドで実行
+p-kernel> exec hello.elf
+p-kernel> exec posix_io.elf
+p-kernel> exec rtos_task.elf
+p-kernel> exec rtos_sync.elf
+p-kernel> exec all_demo.elf
+```
 
 ---
 
 ## plibc.h について
 
 `plibc.h` は p-kernel 専用のユーザー空間ライブラリです。
-libc を一切使わずに `INT 0x80` シスコールを呼び出します。
+libc を一切使わずにシステムコールを呼び出します。
+x86 版は `userland/x86/plibc.h` にあり、`INT 0x80` を使います。
 
 ```
 POSIX 互換 API:
