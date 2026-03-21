@@ -24,6 +24,7 @@
 #include "persist.h"
 #include "dtr.h"
 #include "dproc.h"
+#include "sfs.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -162,6 +163,16 @@ static void cmd_help(void)
     sout("  dproc                  - クラスタ全体のプロセス一覧\r\n");
     sout("  kill <name|path>       - プロセスを停止 (全クラスタへ伝播)\r\n");
     sout("  topic del <name>       - K-DDS トピックを全クラスタから削除\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("共有フォルダ同期 (Phase 9.5 SFS):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  sfs list               - /shared/ ファイル一覧\r\n");
+    sout("  sfs stat               - 同期統計 + tombstone\r\n");
+    sout("  sfs push <path>        - /shared/ ファイルを手動でプッシュ\r\n");
+    sout("  sfs sync               - 全ノードへ SYNC_REQ (起動時同期)\r\n");
+    sout("  write /shared/F text   - 書き込み→自動同期\r\n");
+    sout("  rm    /shared/F        - 削除→自動tombstone伝播\r\n");
+    sout("  cp src /shared/F       - コピー→自動同期\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -985,6 +996,9 @@ static void cmd_write(const char *arg)
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
     sout("[write] ok: "); sout(path_buf); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    /* Phase 9.5 (SFS): /shared/ 以下なら全ノードへ同期 */
+    if (sfs_is_shared(path_buf)) sfs_push(path_buf);
 }
 
 static void cmd_rm(const char *arg)
@@ -997,6 +1011,9 @@ static void cmd_rm(const char *arg)
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
     sout("[rm] deleted: "); sout(arg); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    /* Phase 9.5 (SFS): /shared/ 以下なら削除を全ノードへ伝播 */
+    if (sfs_is_shared(arg)) sfs_delete(arg);
 }
 
 static void cmd_mkdir(const char *arg)
@@ -1049,6 +1066,9 @@ static void cmd_cp(const char *arg)
     sout("[cp] "); sout(src_buf); sout(" -> "); sout(dst);
     sout("  ("); sout_dec((UW)total); sout(" B)\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    /* Phase 9.5 (SFS): コピー先が /shared/ 以下なら全ノードへ同期 */
+    if (sfs_is_shared(dst)) sfs_push(dst);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1122,6 +1142,50 @@ static void cmd_mount(void)
     if (vfs_ready) {
         sout("  init.rc: /etc/init.rc  (exec at boot)\r\n");
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* SFS — Shared Folder Sync                                           */
+/* ------------------------------------------------------------------ */
+
+static void cmd_sfs(const char *arg)
+{
+    while (*arg == ' ') arg++;
+
+    if (str_starts(arg, "list") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        sfs_list();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    if (str_starts(arg, "stat")) {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        sfs_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* sfs push <path> */
+    if (str_starts(arg, "push ")) {
+        arg += 5;
+        while (*arg == ' ') arg++;
+        if (!*arg) { sout("Usage: sfs push <path>\r\n"); return; }
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        sfs_push(arg);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* sfs sync */
+    if (str_starts(arg, "sync")) {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        sfs_boot_sync();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    sout("Usage: sfs list | sfs stat | sfs push <path> | sfs sync\r\n");
 }
 
 static void cmd_mv(const char *arg)
@@ -1449,6 +1513,8 @@ static void execute(const char *cmd)
         { cmd_kill(cmd + 4); return; }
     if (cmd[0]=='d' && cmd[1]=='p' && cmd[2]=='r' && cmd[3]=='o' && cmd[4]=='c')
         { cmd_dproc(cmd + 5); return; }
+    if (cmd[0]=='s' && cmd[1]=='f' && cmd[2]=='s')
+        { cmd_sfs(cmd + 3); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

@@ -19,6 +19,7 @@
 #include "persist.h"
 #include "dtr.h"
 #include "dproc.h"
+#include "sfs.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -184,6 +185,10 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] dtr task\r\n");
             else
                 tm_putstring((UB *)"[OK]  dtr task\r\n");
+
+            /* Phase 9.5: 共有フォルダ同期 (SFS) */
+            sfs_init();
+            sfs_boot_sync();   /* 全ノードへ /shared/ の内容を要求 */
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

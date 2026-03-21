@@ -71,6 +71,7 @@ ARCH_C_SRCS = \
     ai_stats.c \
     dtr.c \
     dproc.c \
+    sfs.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \
