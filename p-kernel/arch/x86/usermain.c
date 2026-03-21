@@ -18,6 +18,7 @@
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
+#include "dproc.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -102,6 +103,9 @@ EXPORT INT usermain(void)
 
     /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
     dtr_init();
+
+    /* ---- Phase 9: 分散プロセスレジストリ ----------------------- */
+    dproc_init();
 
     /* ---- AI worker task (software NPU) ---------------------------- */
     if (create_task(ai_worker_task, AI_WORKER_PRIORITY, AI_WORKER_STACK) < E_OK)

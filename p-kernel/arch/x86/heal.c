@@ -10,6 +10,7 @@
  */
 
 #include "heal.h"
+#include "dproc.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -120,6 +121,10 @@ void heal_on_node_dead(UB dead_node)
 
     /* 自分が後継でなければ何もしない */
     if (heir != drpc_my_node) return;
+
+    /* Phase 9: ユーザープロセスのフェイルオーバー
+     * RUNNING だったプロセスのみ再起動。KILLED/EXITED は再起動しない。 */
+    dproc_on_node_dead(dead_node);
 
     /* ガードを走査: current_node == dead_node のタスクを引き継ぐ
      * (home_node ではなく current_node を使うことで連鎖継承を実現) */

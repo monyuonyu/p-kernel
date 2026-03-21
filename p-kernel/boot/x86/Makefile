@@ -70,6 +70,7 @@ ARCH_C_SRCS = \
     fedlearn.c \
     ai_stats.c \
     dtr.c \
+    dproc.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \

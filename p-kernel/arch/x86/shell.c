@@ -23,6 +23,7 @@
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
+#include "dproc.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -155,6 +156,12 @@ static void cmd_help(void)
     sout("  dtr stat                         - パイプライン統計\r\n");
     sout("  dtr infer <t> <h> <p> <l>        - 分散推論実行\r\n");
     sout("    Node 0: Embed+Layer0 -> dtr/l0 -> Node 1: FFN+Output\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("プロセス管理 (Phase 9):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  dproc                  - クラスタ全体のプロセス一覧\r\n");
+    sout("  kill <name|path>       - プロセスを停止 (全クラスタへ伝播)\r\n");
+    sout("  topic del <name>       - K-DDS トピックを全クラスタから削除\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -354,7 +361,22 @@ static void cmd_topic(const char *arg)
         return;
     }
 
-    sout("Usage: topic list | topic pub <name> <data>\r\n");
+    /* topic del <name> — クラスタ全体から削除 (tombstone gossip) */
+    if (str_starts(arg, "del ")) {
+        arg += 4;
+        while (*arg == ' ') arg++;
+        char name[32];
+        INT ni = 0;
+        while (*arg && *arg != ' ' && ni < 31) name[ni++] = *arg++;
+        name[ni] = '\0';
+        if (!name[0]) { sout("Usage: topic del <name>\r\n"); return; }
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        kdds_delete_cluster(name);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    sout("Usage: topic list | topic pub <name> <data> | topic del <name>\r\n");
 }
 
 static void cmd_edf(const char *arg)
@@ -478,6 +500,32 @@ static void cmd_dtr(const char *arg)
     }
 
     sout("Usage: dtr stat | dtr infer <temp> <hum> <press> <light>\r\n");
+}
+
+static void cmd_kill(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: kill <name|path>  (例: kill hello.elf)\r\n");
+        return;
+    }
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    W r = dproc_kill_by_name(arg);
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    if (r < 0) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[kill] not found: "); sout(arg); sout("\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
+}
+
+static void cmd_dproc(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    dproc_list();
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    (void)arg;
 }
 
 static void cmd_dtask(const char *arg)
@@ -858,6 +906,9 @@ static void cmd_exec(const char *arg)
         return;
     }
 
+    /* Phase 9 (dproc): RUNNING として全クラスタに通知 */
+    dproc_register(arg, tid);
+
     /* stdin relay loop: forward serial chars to user ELF stdin.
      * Exits when the ELF calls SYS_EXIT (which signals stdin_exit_sem).
      *
@@ -880,6 +931,10 @@ static void cmd_exec(const char *arg)
         }
         stdin_feed(raw);
     }
+
+    /* ELF 終了 — EXITED として全クラスタへ通知 (フェイルオーバーしない) */
+    stdin_deactivate();
+    dproc_exit_by_tid(tid);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1390,6 +1445,10 @@ static void execute(const char *cmd)
         { cmd_persist(cmd + 7); return; }
     if (cmd[0]=='d' && cmd[1]=='t' && cmd[2]=='r')
         { cmd_dtr(cmd + 3); return; }
+    if (cmd[0]=='k' && cmd[1]=='i' && cmd[2]=='l' && cmd[3]=='l')
+        { cmd_kill(cmd + 4); return; }
+    if (cmd[0]=='d' && cmd[1]=='p' && cmd[2]=='r' && cmd[3]=='o' && cmd[4]=='c')
+        { cmd_dproc(cmd + 5); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

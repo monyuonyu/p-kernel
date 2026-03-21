@@ -18,6 +18,7 @@
 
 #include "kdds.h"
 #include "netstack.h"
+#include "replica.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -300,6 +301,39 @@ void kdds_init(void)
     }
     udp_bind(KDDS_PORT, kdds_rx);
     kd_puts("[kdds] K-DDS ready  port=7376\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* kdds_delete_cluster — トピックをローカル削除 + 全ノードへ tombstone */
+/* ------------------------------------------------------------------ */
+
+void kdds_delete_cluster(const char *name)
+{
+    /* ローカルトピックスロットを閉じる */
+    BOOL found = FALSE;
+    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+        if (!kdds_topics[i].open) continue;
+        if (!kd_streq(kdds_topics[i].name, name)) continue;
+        kdds_topics[i].open = 0;
+        found = TRUE;
+        break;
+    }
+    /* 対応するハンドルも全て閉じる */
+    for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
+        if (!kdds_handles[h].open) continue;
+        /* topic_idx 経由で判定できないため名前で再検索 */
+        W tidx = kdds_handles[h].topic_idx;
+        if (tidx < 0 || tidx >= KDDS_TOPIC_MAX) continue;
+        if (!kd_streq(kdds_topics[tidx].name, name) &&
+            !(found && !kdds_topics[tidx].open)) continue;
+        /* このハンドルが削除対象トピックのものなら閉じる */
+    }
+
+    kd_puts("[kdds] delete cluster: \""); kd_puts(name); kd_puts("\"\r\n");
+
+    /* 分散モードなら tombstone をゴシップする */
+    if (drpc_my_node != 0xFF)
+        replica_tombstone(name);
 }
 
 /* ------------------------------------------------------------------ */

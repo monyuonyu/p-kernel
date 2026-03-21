@@ -34,6 +34,11 @@
 #define REPLICA_ANNOUNCE 0x01   /* 参加/復帰通知 — 相手に状態要求      */
 #define REPLICA_DATA     0x02   /* トピックテーブル全体を送信           */
 
+/* Tombstone シーケンス番号 — 通常の seq 範囲 (0..0x7FFF) より大きく、
+ * 0xFFFF (ラップアラウンドと紛らわしい値) を避けた特別な値 */
+#define REPLICA_TOMB_SEQ 0xFFFEU
+#define REPLICA_TOMB_MAX 8      /* 同時保持できる tombstone 数          */
+
 /* ------------------------------------------------------------------ */
 /* パケットフォーマット                                                */
 /* ------------------------------------------------------------------ */
@@ -96,6 +101,10 @@ void replica_boot_cry(void);
 /* 断末魔: 自分が SUSPECT と噂されたとき全 ALIVE ノードへ即座にデータを散布。
  * swim.c の gossip_apply() から呼ぶ。 */
 void replica_scatter_all(void);
+
+/* Tombstone: トピックの削除を全 ALIVE ノードへ伝播する。
+ * kdds_delete_cluster() から呼ぶ。ローカルトピックは呼び出し前に消す。 */
+void replica_tombstone(const char *name);
 
 /* 統計表示 (shell `replica stat` から呼ぶ)。 */
 void replica_stat(void);

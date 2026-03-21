@@ -42,6 +42,17 @@ static void rp_putdec(UW v)
 REPLICA_STATS replica_stats;
 
 /* ------------------------------------------------------------------ */
+/* Tombstone テーブル — 削除したトピック名を一定期間保持して伝播する  */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    char name[KDDS_NAME_MAX];
+    UB   active;
+} TOMB_SLOT;
+
+static TOMB_SLOT tomb[REPLICA_TOMB_MAX];
+
+/* ------------------------------------------------------------------ */
 /* 文字列 / メモリユーティリティ                                      */
 /* ------------------------------------------------------------------ */
 
@@ -77,6 +88,7 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
     pkt->src_node  = drpc_my_node;
     pkt->entry_cnt = 0;
 
+    /* 通常トピック */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
         if (!kdds_topics[i].open) continue;
         REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
@@ -87,6 +99,17 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
         e->_pad[0]   = 0; e->_pad[1] = 0; e->_pad[2] = 0;
         if (e->data_len > 0)
             rp_memcpy(e->data, kdds_topics[i].data, e->data_len);
+    }
+
+    /* Tombstone エントリを末尾に追加 (削除の伝播) */
+    for (INT ti = 0; ti < REPLICA_TOMB_MAX && pkt->entry_cnt < KDDS_TOPIC_MAX; ti++) {
+        if (!tomb[ti].active) continue;
+        REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
+        rp_strcpy(e->name, tomb[ti].name, KDDS_NAME_MAX);
+        e->data_len = 0;
+        e->data_seq = (UH)REPLICA_TOMB_SEQ;
+        e->qos      = 0;
+        e->_pad[0]  = 0; e->_pad[1] = 0; e->_pad[2] = 0;
     }
 }
 
@@ -120,7 +143,23 @@ static void send_to_node(UB node_id, UB type)
  */
 static void merge_entry(const REPLICA_ENTRY *e)
 {
-    if (e->data_len == 0 || e->data_len > KDDS_DATA_MAX) return;
+    /* Tombstone: data_len==0 かつ TOMB_SEQ → ローカルトピックを削除する */
+    if (e->data_len == 0) {
+        if (e->data_seq != (UH)REPLICA_TOMB_SEQ) return;  /* 空エントリ: 無視 */
+        for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+            if (!kdds_topics[i].open) continue;
+            if (!rp_streq(kdds_topics[i].name, e->name)) continue;
+            kdds_topics[i].open = 0;   /* トピックスロット解放 */
+            replica_stats.merged++;
+            rp_puts("[replica] tombstone applied: \"");
+            rp_puts(e->name);
+            rp_puts("\"\r\n");
+            return;
+        }
+        return;  /* ローカルに存在しない場合は何もしない (既に削除済み) */
+    }
+
+    if (e->data_len > KDDS_DATA_MAX) return;
 
     /* 既存トピック検索 */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
@@ -279,6 +318,50 @@ void replica_stat(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Tombstone 伝播                                                      */
+/* ------------------------------------------------------------------ */
+
+void replica_tombstone(const char *name)
+{
+    /* tombstone テーブルに追加 (gossip パケットに乗せて継続伝播) */
+    for (INT i = 0; i < REPLICA_TOMB_MAX; i++) {
+        if (tomb[i].active) continue;
+        rp_strcpy(tomb[i].name, name, KDDS_NAME_MAX);
+        tomb[i].active = 1;
+        break;
+    }
+
+    /* 今すぐ全 ALIVE ノードへ tombstone を送信 */
+    if (drpc_my_node == 0xFF) return;
+
+    REPLICA_PKT pkt = { 0 };
+    pkt.magic     = REPLICA_MAGIC;
+    pkt.version   = REPLICA_VERSION;
+    pkt.type      = REPLICA_DATA;
+    pkt.src_node  = drpc_my_node;
+    pkt.entry_cnt = 1;
+
+    REPLICA_ENTRY *e = &pkt.entries[0];
+    rp_strcpy(e->name, name, KDDS_NAME_MAX);
+    e->data_len = 0;
+    e->data_seq = (UH)REPLICA_TOMB_SEQ;
+    e->qos      = 0;
+
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == drpc_my_node) continue;
+        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        UW dst_ip = dnode_table[n].ip;
+        udp_send(dst_ip, REPLICA_PORT, REPLICA_PORT,
+                 (const UB *)&pkt, (UH)sizeof(pkt));
+    }
+
+    rp_puts("[replica] tombstone sent: \"");
+    rp_puts(name);
+    rp_puts("\"\r\n");
+    replica_stats.sent_pkts++;
+}
+
+/* ------------------------------------------------------------------ */
 /* 初期化                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -289,6 +372,7 @@ void replica_init(void)
     replica_stats.merged    = 0;
     replica_stats.skipped   = 0;
     replica_stats.recovered = 0;
+    for (INT i = 0; i < REPLICA_TOMB_MAX; i++) tomb[i].active = 0;
     udp_bind(REPLICA_PORT, replica_rx);
     rp_puts("[replica] state replication ready  port=7379\r\n");
 }

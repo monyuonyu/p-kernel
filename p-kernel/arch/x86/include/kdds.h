@@ -122,3 +122,7 @@ void kdds_rx(UW src_ip, UH src_port, const UB *data, UH len);
 
 /* トピックテーブルを表示 (shell `topic list`) */
 void kdds_list(void);
+
+/* トピックをクラスタ全体から削除する (tombstone gossip で全ノードへ伝播)。
+ * ローカルスロットを解放し、分散モードでは replica_tombstone() を呼ぶ。 */
+void kdds_delete_cluster(const char *name);

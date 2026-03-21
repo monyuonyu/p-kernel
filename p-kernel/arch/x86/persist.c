@@ -138,8 +138,11 @@ void persist_checkpoint(void)
 
     INT count = 0;
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
-        if (!kdds_topics[i].open)     continue;
+        if (!kdds_topics[i].open)         continue;
         if (kdds_topics[i].data_len == 0) continue;   /* 未発行トピックはスキップ */
+        /* プロセスレジストリは起動毎にリセット — 永続化しない */
+        const char *n = kdds_topics[i].name;
+        if (n[0]=='p' && n[1]=='r' && n[2]=='o' && n[3]=='c' && n[4]=='/') continue;
         persist_save_one(&kdds_topics[i]);
         count++;
     }
