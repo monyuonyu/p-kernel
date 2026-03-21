@@ -37,6 +37,20 @@
 #define TMO_FEVR     (-1)   /* wait forever              */
 #define TMO_POL      (0)    /* poll (no wait)            */
 
+/* AI inference classes (SYS_INFER return value) */
+#define AI_CLASS_NORMAL    0   /* all sensor values within range   */
+#define AI_CLASS_ALERT     1   /* one value moderately out of range */
+#define AI_CLASS_CRITICAL  2   /* multiple values severely out     */
+
+/* AI job operation codes (SYS_AI_SUBMIT) */
+#define SYS_AI_OP_MLP_FWD  0x10   /* full 4→8→8→3 MLP forward pass  */
+#define SYS_AI_MODEL_SENSOR 0x0001 /* sensor classifier model ID     */
+
+/* IP address construction helper (same byte layout as kernel IP4()) */
+#define SYS_IP4(a,b,c,d) \
+    ((unsigned int)(((unsigned char)(d)<<24) | ((unsigned char)(c)<<16) | \
+                    ((unsigned char)(b)<<8)  |  (unsigned char)(a)))
+
 /* ================================================================= */
 /* Structures                                                         */
 /* ================================================================= */
@@ -80,6 +94,32 @@ typedef struct {
     unsigned int *p_flgptn;  /* out: satisfied pattern      */
     int           tmout;
 } PK_WAI_FLG;
+
+/* UDP send args (SYS_UDP_SEND)
+ * Layout must match PK_UDP_SEND in p_syscall.h (32-bit flat) */
+typedef struct {
+    unsigned int   dst_ip;    /* destination IP (SYS_IP4 format)    */
+    unsigned short src_port;  /* source port (host byte order)      */
+    unsigned short dst_port;  /* destination port (host byte order) */
+    const void    *buf;       /* payload buffer                     */
+    unsigned short len;       /* payload length in bytes            */
+    unsigned short _pad;
+} PK_SYS_UDP_SEND;
+
+/* UDP receive args (SYS_UDP_RECV, IN/OUT)
+ * Layout must match PK_UDP_RECV in p_syscall.h (32-bit flat) */
+typedef struct {
+    unsigned short port;       /* IN:  local port to receive on     */
+    unsigned short _pad;
+    void          *buf;        /* IN:  receive buffer               */
+    unsigned short buflen;     /* IN:  buffer capacity              */
+    unsigned short _pad2;
+    int            timeout_ms; /* IN:  ms; -1=forever, 0=poll       */
+    /* Filled by kernel on successful return: */
+    unsigned int   src_ip;     /* OUT: sender IP                    */
+    unsigned short src_port;   /* OUT: sender port                  */
+    unsigned short data_len;   /* OUT: received byte count          */
+} PK_SYS_UDP_RECV;
 
 /* ================================================================= */
 /* Syscall helper                                                     */
@@ -236,3 +276,64 @@ static inline void plib_puti(int v)
     if (v < 0) { sys_write(1, "-", 1); plib_putu((unsigned int)(-v)); }
     else        { plib_putu((unsigned int)v); }
 }
+
+/* Print IP address as "A.B.C.D" */
+static inline void plib_put_ip(unsigned int ip)
+{
+    unsigned char a = (unsigned char)(ip & 0xFF);
+    unsigned char b = (unsigned char)((ip >> 8) & 0xFF);
+    unsigned char c = (unsigned char)((ip >> 16) & 0xFF);
+    unsigned char d = (unsigned char)((ip >> 24) & 0xFF);
+    plib_putu(a); sys_write(1, ".", 1);
+    plib_putu(b); sys_write(1, ".", 1);
+    plib_putu(c); sys_write(1, ".", 1);
+    plib_putu(d);
+}
+
+/* ================================================================= */
+/* Network API (UDP)                                                  */
+/* ================================================================= */
+
+/* Bind a local UDP port to receive packets.
+ * Returns 0 on success, -1 if no free slot or port already bound.  */
+static inline int sys_udp_bind(unsigned short port)
+    { return __sc(0x200, (int)port, 0, 0); }
+
+/* Send a UDP datagram.
+ * Returns 0 on success, -1 if ARP not yet resolved (will retry).   */
+static inline int sys_udp_send(PK_SYS_UDP_SEND *pk)
+    { return __sc(0x201, (int)(long)pk, 0, 0); }
+
+/* Receive a UDP datagram (fills pk->src_ip, src_port, data_len).
+ * Returns received byte count, or negative error (-50 = timeout).  */
+static inline int sys_udp_recv(PK_SYS_UDP_RECV *pk)
+    { return __sc(0x202, (int)(long)pk, 0, 0); }
+
+/* ================================================================= */
+/* AI inference API                                                   */
+/* ================================================================= */
+
+/* Sensor value packing: 4 int8 values → one int32.
+ * Each value should already be normalised to [-127, 127].          */
+#define SYS_SENSOR_PACK(t,h,p,l) \
+    ( (int)(((signed char)(t)<<24) | (((unsigned char)(h))<<16) | \
+            (((unsigned char)(p))<<8) | ((unsigned char)(l))) )
+
+/* Synchronous local MLP inference.
+ * packed = SYS_SENSOR_PACK(norm_temp, norm_hum, norm_press, norm_light)
+ * Returns class: 0=normal, 1=alert, 2=critical, or -1 on error.    */
+static inline int sys_infer(int packed)
+    { return __sc(0x210, packed, 0, 0); }
+
+/* Submit an async AI inference job.
+ * packed = same format as sys_infer().
+ * Returns job handle (0-3) on success, or -1 if queue is full.     */
+static inline int sys_ai_submit(int packed)
+    { return __sc(0x211, packed, 0, 0); }
+
+/* Wait for a previously submitted AI job to complete.
+ * handle = value returned by sys_ai_submit().
+ * timeout_ms: -1 = forever, 0 = poll.
+ * Returns class (0/1/2) on success, or -50 (E_TMOUT) on timeout.   */
+static inline int sys_ai_wait(int handle, int timeout_ms)
+    { return __sc(0x212, handle, timeout_ms, 0); }

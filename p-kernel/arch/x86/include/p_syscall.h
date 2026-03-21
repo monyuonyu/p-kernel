@@ -36,6 +36,16 @@
  *    0x122  SYS_TK_SET_FLG  — set event flag bits
  *    0x123  SYS_TK_CLR_FLG  — clear event flag bits
  *    0x124  SYS_TK_WAI_FLG  — wait event flag (args via struct*)
+ *
+ *  Network syscalls (0x200+):
+ *    0x200  SYS_UDP_BIND    — bind local UDP port (arg0=port)
+ *    0x201  SYS_UDP_SEND    — send UDP datagram (arg0=PK_UDP_SEND*)
+ *    0x202  SYS_UDP_RECV    — receive UDP datagram (arg0=PK_UDP_RECV*)
+ *
+ *  AI syscalls (0x210+):
+ *    0x210  SYS_INFER       — local MLP inference (arg0=packed sensor)
+ *    0x211  SYS_AI_SUBMIT   — submit async AI job (arg0=packed sensor)
+ *    0x212  SYS_AI_WAIT     — wait AI job completion (arg0=handle, arg1=tmout_ms)
  */
 #pragma once
 #include "kernel.h"
@@ -76,6 +86,50 @@
 #define SYS_TK_SET_FLG  0x122
 #define SYS_TK_CLR_FLG  0x123
 #define SYS_TK_WAI_FLG  0x124  /* arg2 = (W*)pk_waiflg struct */
+
+/* ----------------------------------------------------------------- */
+/* Network syscall numbers (p-kernel extension)                      */
+/* ----------------------------------------------------------------- */
+#define SYS_UDP_BIND    0x200
+#define SYS_UDP_SEND    0x201
+#define SYS_UDP_RECV    0x202
+
+/* ----------------------------------------------------------------- */
+/* AI syscall numbers (p-kernel extension)                           */
+/* ----------------------------------------------------------------- */
+#define SYS_INFER       0x210
+#define SYS_AI_SUBMIT   0x211
+#define SYS_AI_WAIT     0x212
+
+/* ----------------------------------------------------------------- */
+/* PK_UDP_SEND — args for SYS_UDP_SEND                              */
+/* Layout must match PK_SYS_UDP_SEND in plibc.h (both 32-bit)      */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  dst_ip;       /* destination IP (host byte order, IP4 format) */
+    UH  src_port;     /* source port (host byte order)                */
+    UH  dst_port;     /* destination port (host byte order)           */
+    UW  buf_ptr;      /* pointer to payload (const UB*)               */
+    UH  len;          /* payload length in bytes                      */
+    UH  _pad;
+} PK_UDP_SEND;
+
+/* ----------------------------------------------------------------- */
+/* PK_UDP_RECV — args for SYS_UDP_RECV (IN/OUT struct)              */
+/* Layout must match PK_SYS_UDP_RECV in plibc.h (both 32-bit)      */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UH  port;         /* IN:  local port to receive on               */
+    UH  _pad;
+    UW  buf_ptr;      /* IN:  user receive buffer pointer            */
+    UH  buflen;       /* IN:  buffer capacity                        */
+    UH  _pad2;
+    W   timeout_ms;   /* IN:  timeout in ms; -1=forever, 0=poll      */
+    /* Filled by kernel on return: */
+    UW  src_ip;       /* OUT: sender IP                              */
+    UH  src_port;     /* OUT: sender port                            */
+    UH  data_len;     /* OUT: received byte count                    */
+} PK_UDP_RECV;
 
 /* ----------------------------------------------------------------- */
 /* PK_CRE_TSK — extended task creation (used by SYS_TK_CRE_TSK)    */

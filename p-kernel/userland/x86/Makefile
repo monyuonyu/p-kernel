@@ -42,7 +42,8 @@ SAMPLES = \
     02_posix_io/posix_io.elf \
     03_rtos_task/rtos_task.elf \
     04_rtos_sync/rtos_sync.elf \
-    05_all_demo/all_demo.elf
+    05_all_demo/all_demo.elf \
+    06_net_infer/net_infer.elf
 
 all: $(SAMPLES)
 
@@ -100,9 +101,18 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ $(DEMO_OBJS)
 
 # -------------------------------------------------------------------
+# 06_net_infer — センサーデータ分類 + UDP 配信デモ
+# -------------------------------------------------------------------
+06_net_infer/net_infer.elf: $(S)/06_net_infer/net_infer.c plibc.h user.ld
+	mkdir -p 06_net_infer
+	$(CC) $(CFLAGS) -c $< -o 06_net_infer/net_infer.o
+	$(LD) $(LDFLAGS) -o $@ 06_net_infer/net_infer.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
-	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo
+	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
+	       06_net_infer
 
 .PHONY: all clean

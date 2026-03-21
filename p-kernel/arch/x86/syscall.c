@@ -11,6 +11,8 @@
 #include "task.h"
 #include "p_syscall.h"
 #include "vfs.h"
+#include "netstack.h"
+#include "ai_kernel.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <tmonitor.h>
 
@@ -22,6 +24,68 @@ IMPORT void idt_set_gate(UB num, unsigned long long handler,
 extern void syscall_isr(void);
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+
+/* ----------------------------------------------------------------- */
+/* UDP receive buffer pool (SYS_UDP_BIND / SYS_UDP_RECV)            */
+/*                                                                   */
+/* When user-space calls SYS_UDP_BIND, a kernel-side slot is        */
+/* allocated. Arriving packets are copied into the slot buffer and  */
+/* the rx_sem is signalled. SYS_UDP_RECV waits on rx_sem and then  */
+/* copies to user-space.                                             */
+/* ----------------------------------------------------------------- */
+#define UDP_BIND_MAX    4
+#define UDP_RECV_BUFSZ  512
+
+typedef struct {
+    UH   port;
+    UB   in_use;
+    ID   rx_sem;
+    UW   src_ip;
+    UH   src_port;
+    UH   data_len;
+    UB   data[UDP_RECV_BUFSZ];
+} USR_UDP_SLOT;
+
+static USR_UDP_SLOT usr_udp[UDP_BIND_MAX];
+
+/* Forward declarations for the per-slot UDP callbacks */
+static void usr_udp_rx(INT slot, UW src_ip, UH src_port,
+                        const UB *data, UH len);
+static void usr_udp_rx0(UW i, UH p, const UB *d, UH l) { usr_udp_rx(0,i,p,d,l); }
+static void usr_udp_rx1(UW i, UH p, const UB *d, UH l) { usr_udp_rx(1,i,p,d,l); }
+static void usr_udp_rx2(UW i, UH p, const UB *d, UH l) { usr_udp_rx(2,i,p,d,l); }
+static void usr_udp_rx3(UW i, UH p, const UB *d, UH l) { usr_udp_rx(3,i,p,d,l); }
+
+static const udp_recv_fn usr_udp_cbs[UDP_BIND_MAX] = {
+    usr_udp_rx0, usr_udp_rx1, usr_udp_rx2, usr_udp_rx3
+};
+
+static void usr_udp_rx(INT slot, UW src_ip, UH src_port,
+                        const UB *data, UH len)
+{
+    USR_UDP_SLOT *s = &usr_udp[slot];
+    if (!s->in_use) return;
+    if (len > UDP_RECV_BUFSZ) len = (UH)UDP_RECV_BUFSZ;
+    s->src_ip   = src_ip;
+    s->src_port = src_port;
+    s->data_len = len;
+    for (UH i = 0; i < len; i++) s->data[i] = data[i];
+    tk_sig_sem(s->rx_sem, 1);
+}
+
+/* ----------------------------------------------------------------- */
+/* Async AI job pool (SYS_AI_SUBMIT / SYS_AI_WAIT)                  */
+/* ----------------------------------------------------------------- */
+#define USR_AI_MAX  4
+
+typedef struct {
+    UB   in_use;
+    ID   jid;       /* kernel AI job ID                              */
+    ID   in_tid;    /* input  tensor (4-byte int8 FLAT)             */
+    ID   out_tid;   /* output tensor (1-byte int8 = class)          */
+} USR_AI_JOB;
+
+static USR_AI_JOB usr_ai[USR_AI_MAX];
 
 /* ----------------------------------------------------------------- */
 /* Stack pool for user-created tasks (8 slots × 4 KiB)              */
@@ -83,6 +147,8 @@ static void user_task_wrapper(INT stacd, void *exinf)
 void syscall_init(void)
 {
     for (INT i = 0; i < USR_TASK_MAX; i++) usr_stack_inuse[i] = FALSE;
+    for (INT i = 0; i < UDP_BIND_MAX;  i++) usr_udp[i].in_use = 0;
+    for (INT i = 0; i < USR_AI_MAX;    i++) usr_ai[i].in_use  = 0;
 
     idt_set_gate(0x80,
                  (unsigned long long)(UW)syscall_isr,
@@ -421,6 +487,174 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
                              &flgptn, pk->tmout);
         if (pk->p_flgptn) *pk->p_flgptn = flgptn;
         return r;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* UDP network syscalls                                          */
+    /* ------------------------------------------------------------- */
+
+    case SYS_UDP_BIND: {
+        /* arg0 = port number */
+        UH port = (UH)arg0;
+
+        /* Find a free slot */
+        INT slot = -1;
+        for (INT i = 0; i < UDP_BIND_MAX; i++) {
+            if (!usr_udp[i].in_use) { slot = i; break; }
+        }
+        if (slot < 0) return -1;
+
+        /* Create receive semaphore */
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                      .isemcnt = 0, .maxsem = 16 };
+        ID sem = tk_cre_sem(&cs);
+        if (sem < E_OK) return -1;
+
+        /* Register with netstack */
+        if (udp_bind(port, usr_udp_cbs[slot]) != 0) {
+            tk_del_sem(sem);
+            return -1;
+        }
+
+        usr_udp[slot].port     = port;
+        usr_udp[slot].rx_sem   = sem;
+        usr_udp[slot].data_len = 0;
+        usr_udp[slot].in_use   = 1;
+        return 0;
+    }
+
+    case SYS_UDP_SEND: {
+        /* arg0 = PK_UDP_SEND* */
+        PK_UDP_SEND *pk = (PK_UDP_SEND *)(UW)arg0;
+        if (!pk) return -1;
+        return udp_send(pk->dst_ip, pk->src_port, pk->dst_port,
+                        (const UB *)pk->buf_ptr, pk->len);
+    }
+
+    case SYS_UDP_RECV: {
+        /* arg0 = PK_UDP_RECV* (IN/OUT) */
+        PK_UDP_RECV *pk = (PK_UDP_RECV *)(UW)arg0;
+        if (!pk) return -1;
+
+        /* Find bound slot for this port */
+        INT slot = -1;
+        for (INT i = 0; i < UDP_BIND_MAX; i++) {
+            if (usr_udp[i].in_use && usr_udp[i].port == pk->port) {
+                slot = i; break;
+            }
+        }
+        if (slot < 0) return -1;
+
+        /* Wait for a packet */
+        ER er = tk_wai_sem(usr_udp[slot].rx_sem, 1, (TMO)pk->timeout_ms);
+        if (er != E_OK) return (W)er;   /* E_TMOUT = -50 */
+
+        /* Copy to user buffer */
+        UH dlen = usr_udp[slot].data_len;
+        if (dlen > pk->buflen) dlen = pk->buflen;
+        UB *dst = (UB *)(UW)pk->buf_ptr;
+        for (UH i = 0; i < dlen; i++) dst[i] = usr_udp[slot].data[i];
+
+        pk->src_ip   = usr_udp[slot].src_ip;
+        pk->src_port = usr_udp[slot].src_port;
+        pk->data_len = dlen;
+        return (W)dlen;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* AI inference syscalls                                         */
+    /* ------------------------------------------------------------- */
+
+    case SYS_INFER: {
+        /* arg0 = sensor_packed (SENSOR_PACK(t,h,p,l)) */
+        B input[MLP_IN] = {
+            SENSOR_UNPACK_T(arg0),
+            SENSOR_UNPACK_H(arg0),
+            SENSOR_UNPACK_P(arg0),
+            SENSOR_UNPACK_L(arg0),
+        };
+        return (W)mlp_forward(input);
+    }
+
+    case SYS_AI_SUBMIT: {
+        /* arg0 = sensor_packed — submits a job to the AI worker task */
+        /* Find a free user AI slot */
+        INT slot = -1;
+        for (INT i = 0; i < USR_AI_MAX; i++) {
+            if (!usr_ai[i].in_use) { slot = i; break; }
+        }
+        if (slot < 0) return -1;
+
+        /* Create input tensor: shape [4], dtype int8 */
+        UW shape_in[1] = { (UW)MLP_IN };
+        ID in_tid = tk_cre_tensor(1, shape_in, TENSOR_DTYPE_I8,
+                                  TENSOR_LAYOUT_FLAT);
+        if (in_tid < E_OK) return -1;
+
+        /* Write sensor data */
+        B input[MLP_IN] = {
+            SENSOR_UNPACK_T(arg0),
+            SENSOR_UNPACK_H(arg0),
+            SENSOR_UNPACK_P(arg0),
+            SENSOR_UNPACK_L(arg0),
+        };
+        tk_tensor_write(in_tid, 0, input, MLP_IN);
+
+        /* Create output tensor: shape [1], dtype int8 */
+        UW shape_out[1] = { 1 };
+        ID out_tid = tk_cre_tensor(1, shape_out, TENSOR_DTYPE_I8,
+                                   TENSOR_LAYOUT_FLAT);
+        if (out_tid < E_OK) {
+            tk_del_tensor(in_tid);
+            return -1;
+        }
+
+        /* Submit AI job */
+        AI_JOB_SPEC spec;
+        spec.op         = AI_OP_MLP_FWD;
+        spec.model_id   = MODEL_SENSOR_CLS;
+        spec.input_tid  = in_tid;
+        spec.output_tid = out_tid;
+        spec.param[0]   = 0;
+        spec.param[1]   = 0;
+
+        ID jid = tk_cre_ai_job(&spec);
+        if (jid < E_OK) {
+            tk_del_tensor(in_tid);
+            tk_del_tensor(out_tid);
+            return -1;
+        }
+
+        usr_ai[slot].jid     = jid;
+        usr_ai[slot].in_tid  = in_tid;
+        usr_ai[slot].out_tid = out_tid;
+        usr_ai[slot].in_use  = 1;
+        return slot;
+    }
+
+    case SYS_AI_WAIT: {
+        /* arg0 = slot (returned by SYS_AI_SUBMIT), arg1 = timeout_ms */
+        INT slot = (INT)arg0;
+        if (slot < 0 || slot >= USR_AI_MAX) return -1;
+        if (!usr_ai[slot].in_use) return -1;
+
+        ER er = tk_wai_ai_job(usr_ai[slot].jid, (TMO)arg1);
+
+        W result = -1;
+        if (er == E_OK) {
+            /* Read class from output tensor */
+            B cls = 0;
+            tk_tensor_read(usr_ai[slot].out_tid, 0, &cls, 1);
+            result = (W)(UB)cls;
+        }
+
+        /* Cleanup */
+        tk_del_ai_job(usr_ai[slot].jid);
+        tk_del_tensor(usr_ai[slot].in_tid);
+        tk_del_tensor(usr_ai[slot].out_tid);
+        usr_ai[slot].in_use = 0;
+
+        return (er == E_OK) ? result : (W)er;
     }
 
     default:

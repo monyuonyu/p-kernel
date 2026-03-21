@@ -190,7 +190,8 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/02_posix_io/posix_io.elf   ::posix_io.elf
 	mcopy -i $@ $(USERLAND_X86)/03_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USERLAND_X86)/04_rtos_sync/rtos_sync.elf ::rtos_sync.elf
-	mcopy -i $@ $(USERLAND_X86)/05_all_demo/all_demo.elf   ::all_demo.elf
+	mcopy -i $@ $(USERLAND_X86)/05_all_demo/all_demo.elf     ::all_demo.elf
+	mcopy -i $@ $(USERLAND_X86)/06_net_infer/net_infer.elf  ::net_infer.elf
 
 disk: $(DISK_IMG)
 

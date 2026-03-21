@@ -14,7 +14,8 @@ p-kernel/
 │   ├── 02_posix_io/
 │   ├── 03_rtos_task/
 │   ├── 04_rtos_sync/
-│   └── 05_all_demo/
+│   ├── 05_all_demo/
+│   └── 06_net_infer/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -49,6 +50,13 @@ T-Kernel ネイティブ API でタスクを作成・起動します。
 上記サンプルの全機能を網羅した自動確認プログラムです。
 OK=59 NG=0 を確認済み（QEMU x86_64）。
 
+### 06_net_infer — AI 推論 + UDP ネットワーク配信
+センサーデータを AI で分類し、結果を UDP で配信するサンプルです。
+カーネル内蔵の MLP ニューラルネットワーク (`SYS_INFER`) と
+非同期 AI ジョブ (`SYS_AI_SUBMIT` / `SYS_AI_WAIT`)、
+UDP 送受信 (`SYS_UDP_BIND` / `SYS_UDP_SEND` / `SYS_UDP_RECV`) を使います。
+→ 全サンプルを学んだあと、最後に試してください。
+
 ---
 
 ## ビルド方法 (x86)
@@ -61,6 +69,7 @@ make
 # 個別ビルド
 make 01_hello/hello.elf
 make 05_all_demo/all_demo.elf
+make 06_net_infer/net_infer.elf
 ```
 
 **必要なツール:**
@@ -81,6 +90,7 @@ p-kernel> exec posix_io.elf
 p-kernel> exec rtos_task.elf
 p-kernel> exec rtos_sync.elf
 p-kernel> exec all_demo.elf
+p-kernel> exec net_infer.elf
 ```
 
 ---
@@ -104,8 +114,14 @@ T-Kernel ネイティブ API (0x100+):
   イベントフラグ: tk_cre_flg, tk_del_flg, tk_set_flg,
                   tk_clr_flg, tk_wai_flg
 
+ネットワーク API (0x200+):
+  sys_udp_bind, sys_udp_send, sys_udp_recv
+
+AI 推論 API (0x210+):
+  sys_infer, sys_ai_submit, sys_ai_wait
+
 文字列ユーティリティ:
-  plib_strlen, plib_puts, plib_puti, plib_putu
+  plib_strlen, plib_puts, plib_puti, plib_putu, plib_put_ip
 ```
 
 ---
@@ -141,3 +157,9 @@ T-Kernel ネイティブ API (0x100+):
 | 0x122  | SYS_TK_SET_FLG   | フラグビット セット          |
 | 0x123  | SYS_TK_CLR_FLG   | フラグビット クリア          |
 | 0x124  | SYS_TK_WAI_FLG   | フラグ待ち                  |
+| 0x200  | SYS_UDP_BIND     | UDP ポートバインド          |
+| 0x201  | SYS_UDP_SEND     | UDP 送信                    |
+| 0x202  | SYS_UDP_RECV     | UDP 受信（タイムアウト付き）|
+| 0x210  | SYS_INFER        | MLP 推論（同期）            |
+| 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
+| 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |
