@@ -109,6 +109,7 @@ SYSCALL ER tk_def_ssy_impl P2( ID ssid, CONST T_DSSY *pk_dssy )
 			goto error_exit;
 		}
 		ssycb->svchdr    = (SVC)pk_dssy->svchdr;
+		ssycb->cleanupfn = (SSYCLEANUP)pk_dssy->cleanupfn;
 #if TA_GP
 		if ( (pk_dssy->ssyatr & TA_GP) != 0 ) {
 			gp = pk_dssy->gp;
@@ -124,6 +125,7 @@ SYSCALL ER tk_def_ssy_impl P2( ID ssid, CONST T_DSSY *pk_dssy )
 		}
 
 		ssycb->svchdr    = knl_no_support;
+		ssycb->cleanupfn = NULL;
 	}
 
     error_exit:
@@ -208,6 +210,24 @@ SYSCALL ER td_ref_ssy_impl( ID ssid, TD_RSSY *pk_rssy )
 #endif /* USE_FUNC_TD_REF_SSY */
 
 #endif /* USE_DBGSPT */
+
+/**
+ * @brief サブシステムのクリーンアップ関数を全て呼び出す
+ *
+ * タスク終了時に呼び出し、各サブシステムが保持するリソース
+ * （ソケット、ファイルディスクリプタなど）を解放させる。
+ * タスクレベル（割り込みコンテキスト外）で呼ぶこと。
+ */
+EXPORT void knl_ssy_cleanup( ID tskid )
+{
+	SSYCB *ssycb, *end;
+	end = knl_ssycb_table + NUM_SSYID;
+	for ( ssycb = knl_ssycb_table; ssycb < end; ssycb++ ) {
+		if ( ssycb->svchdr != knl_no_support && ssycb->cleanupfn != NULL ) {
+			ssycb->cleanupfn(tskid);
+		}
+	}
+}
 
 #ifdef USE_FUNC_SVC_IENTRY
 /**

@@ -14,6 +14,7 @@
 #include "vfs.h"
 #include "gdt_user.h"
 #include "p_syscall.h"
+#include "net_ssy.h"
 #include <tmonitor.h>
 
 IMPORT void shell_task(INT stacd, void *exinf);
@@ -54,6 +55,9 @@ EXPORT INT usermain(void)
     syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
     vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */
     /* NOTE: run_initrc() called after all tasks start (below) */
+
+    /* ---- Subsystems ----------------------------------------------- */
+    net_ssy_init();         /* network subsystem (ssid=1)              */
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();

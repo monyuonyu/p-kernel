@@ -12,8 +12,13 @@
 #include "p_syscall.h"
 #include "vfs.h"
 #include "netstack.h"
+#include "net_ssy.h"
 #include "ai_kernel.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
+#include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
+
+/* knl_svc_ientry: routes pk_para to the subsystem whose ID = fncd & 0xFF */
+IMPORT ER knl_svc_ientry(void *pk_para, FN fncd);
 #include <tmonitor.h>
 
 /* idt_set_gate() lives in boot/x86/idt.c */
@@ -35,53 +40,8 @@ IMPORT void sio_send_frame(const UB *buf, INT size);
 #define READDIR_BUF_MAX  32
 static VFS_DIRENT readdir_kbuf[READDIR_BUF_MAX];
 
-/* ----------------------------------------------------------------- */
-/* UDP receive buffer pool (SYS_UDP_BIND / SYS_UDP_RECV)            */
-/*                                                                   */
-/* When user-space calls SYS_UDP_BIND, a kernel-side slot is        */
-/* allocated. Arriving packets are copied into the slot buffer and  */
-/* the rx_sem is signalled. SYS_UDP_RECV waits on rx_sem and then  */
-/* copies to user-space.                                             */
-/* ----------------------------------------------------------------- */
-#define UDP_BIND_MAX    4
-#define UDP_RECV_BUFSZ  512
-
-typedef struct {
-    UH   port;
-    UB   in_use;
-    ID   rx_sem;
-    UW   src_ip;
-    UH   src_port;
-    UH   data_len;
-    UB   data[UDP_RECV_BUFSZ];
-} USR_UDP_SLOT;
-
-static USR_UDP_SLOT usr_udp[UDP_BIND_MAX];
-
-/* Forward declarations for the per-slot UDP callbacks */
-static void usr_udp_rx(INT slot, UW src_ip, UH src_port,
-                        const UB *data, UH len);
-static void usr_udp_rx0(UW i, UH p, const UB *d, UH l) { usr_udp_rx(0,i,p,d,l); }
-static void usr_udp_rx1(UW i, UH p, const UB *d, UH l) { usr_udp_rx(1,i,p,d,l); }
-static void usr_udp_rx2(UW i, UH p, const UB *d, UH l) { usr_udp_rx(2,i,p,d,l); }
-static void usr_udp_rx3(UW i, UH p, const UB *d, UH l) { usr_udp_rx(3,i,p,d,l); }
-
-static const udp_recv_fn usr_udp_cbs[UDP_BIND_MAX] = {
-    usr_udp_rx0, usr_udp_rx1, usr_udp_rx2, usr_udp_rx3
-};
-
-static void usr_udp_rx(INT slot, UW src_ip, UH src_port,
-                        const UB *data, UH len)
-{
-    USR_UDP_SLOT *s = &usr_udp[slot];
-    if (!s->in_use) return;
-    if (len > UDP_RECV_BUFSZ) len = (UH)UDP_RECV_BUFSZ;
-    s->src_ip   = src_ip;
-    s->src_port = src_port;
-    s->data_len = len;
-    for (UH i = 0; i < len; i++) s->data[i] = data[i];
-    tk_sig_sem(s->rx_sem, 1);
-}
+/* UDP/TCP socket state has moved to net_ssy.c (network subsystem, ssid=1).
+ * syscall_dispatch() routes 0x200-0x2FF to knl_svc_ientry() below. */
 
 /* ----------------------------------------------------------------- */
 /* Async AI job pool (SYS_AI_SUBMIT / SYS_AI_WAIT)                  */
@@ -139,12 +99,7 @@ void stdin_feed(UB c)
 /* Returns the exit semaphore ID so shell.c can poll it */
 ID stdin_get_exit_sem(void) { return stdin_exit_sem; }
 
-/* ----------------------------------------------------------------- */
-/* TCP connection handle table (SYS_TCP_CONNECT / WRITE / READ / CLOSE) */
-/* ----------------------------------------------------------------- */
-#define USR_TCP_MAX  4
-
-static TCP_CONN *usr_tcp[USR_TCP_MAX];
+/* TCP handle table has moved to net_ssy.c */
 
 /* ----------------------------------------------------------------- */
 /* Stack pool for user-created tasks (8 slots × 4 KiB)              */
@@ -206,9 +161,8 @@ static void user_task_wrapper(INT stacd, void *exinf)
 void syscall_init(void)
 {
     for (INT i = 0; i < USR_TASK_MAX; i++) usr_stack_inuse[i] = FALSE;
-    for (INT i = 0; i < UDP_BIND_MAX;  i++) usr_udp[i].in_use = 0;
-    for (INT i = 0; i < USR_AI_MAX;    i++) usr_ai[i].in_use  = 0;
-    for (INT i = 0; i < USR_TCP_MAX;   i++) usr_tcp[i]        = NULL;
+    for (INT i = 0; i < USR_AI_MAX;   i++) usr_ai[i].in_use   = 0;
+    /* UDP/TCP state initialised by net_ssy_init() in usermain */
 
     /* stdin semaphores */
     {
@@ -387,6 +341,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         tm_putstring((UB *)"\r\n[proc] exited (code=");
         sout_num(arg0);
         tm_putstring((UB *)")\r\np-kernel> ");
+        /* Release subsystem resources (sockets, etc.) */
+        knl_ssy_cleanup(knl_ctxtsk->tskid);
         /* Unblock shell relay loop */
         if (stdin_active) {
             stdin_active = FALSE;
@@ -466,8 +422,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_TK_EXT_TSK: {
-        /* Free stack/ctx for user-created tasks before exiting */
         ID cur = knl_ctxtsk->tskid;
+        knl_ssy_cleanup(cur);   /* release sockets etc. */
         for (INT i = 0; i < USR_TASK_MAX; i++) {
             if (usr_ctx[i].real_task != NULL && usr_ctx[i].tskid == cur) {
                 free_user_stack(usr_ctx[i].stack_base);
@@ -601,75 +557,22 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     /* ------------------------------------------------------------- */
-    /* UDP network syscalls                                          */
+    /* Network syscalls (0x200-0x2FF) — delegated to net_ssy (ssid=1) */
     /* ------------------------------------------------------------- */
 
-    case SYS_UDP_BIND: {
-        /* arg0 = port number */
-        UH port = (UH)arg0;
-
-        /* Find a free slot */
-        INT slot = -1;
-        for (INT i = 0; i < UDP_BIND_MAX; i++) {
-            if (!usr_udp[i].in_use) { slot = i; break; }
-        }
-        if (slot < 0) return -1;
-
-        /* Create receive semaphore */
-        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
-                      .isemcnt = 0, .maxsem = 16 };
-        ID sem = tk_cre_sem(&cs);
-        if (sem < E_OK) return -1;
-
-        /* Register with netstack */
-        if (udp_bind(port, usr_udp_cbs[slot]) != 0) {
-            tk_del_sem(sem);
-            return -1;
-        }
-
-        usr_udp[slot].port     = port;
-        usr_udp[slot].rx_sem   = sem;
-        usr_udp[slot].data_len = 0;
-        usr_udp[slot].in_use   = 1;
-        return 0;
-    }
-
-    case SYS_UDP_SEND: {
-        /* arg0 = PK_UDP_SEND* */
-        PK_UDP_SEND *pk = (PK_UDP_SEND *)(UW)arg0;
-        if (!pk) return -1;
-        return udp_send(pk->dst_ip, pk->src_port, pk->dst_port,
-                        (const UB *)pk->buf_ptr, pk->len);
-    }
-
-    case SYS_UDP_RECV: {
-        /* arg0 = PK_UDP_RECV* (IN/OUT) */
-        PK_UDP_RECV *pk = (PK_UDP_RECV *)(UW)arg0;
-        if (!pk) return -1;
-
-        /* Find bound slot for this port */
-        INT slot = -1;
-        for (INT i = 0; i < UDP_BIND_MAX; i++) {
-            if (usr_udp[i].in_use && usr_udp[i].port == pk->port) {
-                slot = i; break;
-            }
-        }
-        if (slot < 0) return -1;
-
-        /* Wait for a packet */
-        ER er = tk_wai_sem(usr_udp[slot].rx_sem, 1, (TMO)pk->timeout_ms);
-        if (er != E_OK) return (W)er;   /* E_TMOUT = -50 */
-
-        /* Copy to user buffer */
-        UH dlen = usr_udp[slot].data_len;
-        if (dlen > pk->buflen) dlen = pk->buflen;
-        UB *dst = (UB *)(UW)pk->buf_ptr;
-        for (UH i = 0; i < dlen; i++) dst[i] = usr_udp[slot].data[i];
-
-        pk->src_ip   = usr_udp[slot].src_ip;
-        pk->src_port = usr_udp[slot].src_port;
-        pk->data_len = dlen;
-        return (W)dlen;
+    case SYS_UDP_BIND:
+    case SYS_UDP_SEND:
+    case SYS_UDP_RECV:
+    case SYS_UDP_JOIN_GROUP:
+    case SYS_UDP_LEAVE_GROUP:
+    case SYS_TCP_CONNECT:
+    case SYS_TCP_WRITE:
+    case SYS_TCP_READ:
+    case SYS_TCP_CLOSE:
+    case SYS_MOUNT:
+    case SYS_UMOUNT: {
+        NET_SVC_PKT pk = { nr, arg0, arg1, arg2 };
+        return (W)knl_svc_ientry(&pk, (FN)(((UW)nr << 8) | NET_SSID));
     }
 
     /* ------------------------------------------------------------- */
@@ -766,93 +669,6 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         usr_ai[slot].in_use = 0;
 
         return (er == E_OK) ? result : (W)er;
-    }
-
-    /* ------------------------------------------------------------- */
-    /* TCP network syscalls                                          */
-    /* ------------------------------------------------------------- */
-
-    case SYS_TCP_CONNECT: {
-        /* arg0 = PK_TCP_CONNECT* */
-        PK_TCP_CONNECT *pk = (PK_TCP_CONNECT *)(UW)arg0;
-        if (!pk) return -1;
-
-        /* Find a free TCP handle slot */
-        INT slot = -1;
-        for (INT i = 0; i < USR_TCP_MAX; i++) {
-            if (!usr_tcp[i]) { slot = i; break; }
-        }
-        if (slot < 0) return -1;
-
-        TCP_CONN *conn = NULL;
-        if (tcp_connect(pk->dst_ip, pk->dst_port, &conn) < 0 || !conn)
-            return -1;
-
-        usr_tcp[slot] = conn;
-        return slot;
-    }
-
-    case SYS_TCP_WRITE: {
-        /* arg0=handle, arg1=buf_ptr, arg2=len */
-        INT h = (INT)arg0;
-        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
-        return tcp_write(usr_tcp[h], (const UB *)(UW)arg1, (UH)arg2);
-    }
-
-    case SYS_TCP_READ: {
-        /* arg0 = PK_TCP_READ* */
-        PK_TCP_READ *pk = (PK_TCP_READ *)(UW)arg0;
-        if (!pk) return -1;
-        INT h = pk->handle;
-        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
-        return tcp_read(usr_tcp[h], (UB *)(UW)pk->buf_ptr,
-                        pk->buflen, pk->timeout_ms);
-    }
-
-    case SYS_TCP_CLOSE: {
-        /* arg0 = handle */
-        INT h = (INT)arg0;
-        if (h < 0 || h >= USR_TCP_MAX || !usr_tcp[h]) return -1;
-        tcp_close(usr_tcp[h]);
-        tcp_free(usr_tcp[h]);
-        usr_tcp[h] = NULL;
-        return 0;
-    }
-
-    case SYS_UDP_JOIN_GROUP: {
-        /* arg0 = port, arg1 = mcast_ip */
-        UH port     = (UH)(UW)arg0;
-        UW mcast_ip = (UW)arg1;
-        /* Find the bound slot and record mcast membership */
-        INT slot = -1;
-        for (INT i = 0; i < UDP_BIND_MAX; i++) {
-            if (usr_udp[i].in_use && usr_udp[i].port == port) { slot = i; break; }
-        }
-        if (slot < 0) return -1;
-        return (W)udp_join_group(port, mcast_ip);
-    }
-
-    case SYS_UDP_LEAVE_GROUP: {
-        /* arg0 = port, arg1 = mcast_ip */
-        UH port     = (UH)(UW)arg0;
-        UW mcast_ip = (UW)arg1;
-        return (W)udp_leave_group(port, mcast_ip);
-    }
-
-    /* ------------------------------------------------------------- */
-    /* Filesystem extended                                           */
-    /* ------------------------------------------------------------- */
-
-    case SYS_MOUNT: {
-        /* arg0 = device path (NULL = show mount table), arg1 = mount path */
-        /* Currently only "/" on FAT32/IDE is supported.
-         * Returns 0 if VFS is ready, -1 if not. */
-        return vfs_ready ? 0 : -1;
-    }
-
-    case SYS_UMOUNT: {
-        /* arg0 = path — no-op for now (single root mount) */
-        return 0;
     }
 
     /* ------------------------------------------------------------- */
@@ -1341,8 +1157,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     /* ------------------------------------------------------------- */
 
     case SYS_TK_EXD_TSK: {
-        /* Exit and delete self (free stack like EXT_TSK) */
         ID cur = knl_ctxtsk->tskid;
+        knl_ssy_cleanup(cur);   /* release sockets etc. */
         for (INT i = 0; i < USR_TASK_MAX; i++) {
             if (usr_ctx[i].real_task != NULL && usr_ctx[i].tskid == cur) {
                 free_user_stack(usr_ctx[i].stack_base);

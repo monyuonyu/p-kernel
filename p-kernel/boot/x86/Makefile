@@ -66,6 +66,7 @@ ARCH_C_SRCS = \
     ide.c \
     fat32.c \
     vfs.c \
+    net_ssy.c \
     gdt_user.c \
     syscall.c \
     userspace.c \
