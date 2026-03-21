@@ -26,6 +26,16 @@ extern void syscall_isr(void);
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
 /* ----------------------------------------------------------------- */
+/* readdir kernel-side scratch buffer (SYS_READDIR)                 */
+/*                                                                   */
+/* vfs_readdir() fills VFS_DIRENT entries (256-byte name fields).   */
+/* We copy them into the smaller user-side PK_DIRENT structs (64 B).*/
+/* Using a static buffer avoids large stack allocation.             */
+/* ----------------------------------------------------------------- */
+#define READDIR_BUF_MAX  32
+static VFS_DIRENT readdir_kbuf[READDIR_BUF_MAX];
+
+/* ----------------------------------------------------------------- */
 /* UDP receive buffer pool (SYS_UDP_BIND / SYS_UDP_RECV)            */
 /*                                                                   */
 /* When user-space calls SYS_UDP_BIND, a kernel-side slot is        */
@@ -346,6 +356,30 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         const char *nw  = (const char *)(UW)arg1;
         if (!vfs_ready) return -1;
         return vfs_rename(old, nw);
+    }
+
+    case SYS_READDIR: {
+        /* arg0=path_ptr, arg1=PK_DIRENT*, arg2=max_entries */
+        const char *path = (const char *)(UW)arg0;
+        PK_DIRENT  *out  = (PK_DIRENT  *)(UW)arg1;
+        INT max = (INT)arg2;
+        if (!path || !out || max <= 0) return -1;
+        if (!vfs_ready) return -1;
+        if (max > READDIR_BUF_MAX) max = READDIR_BUF_MAX;
+
+        INT n = vfs_readdir(path, readdir_kbuf, max);
+        if (n < 0) return n;
+
+        /* Copy VFS_DIRENT → PK_DIRENT (truncate name to 63 chars) */
+        for (INT i = 0; i < n; i++) {
+            INT j;
+            for (j = 0; j < PK_DIRENT_NAMELEN - 1 && readdir_kbuf[i].name[j]; j++)
+                out[i].name[j] = readdir_kbuf[i].name[j];
+            out[i].name[j] = '\0';
+            out[i].size   = readdir_kbuf[i].size;
+            out[i].is_dir = readdir_kbuf[i].is_dir ? 1 : 0;
+        }
+        return n;
     }
 
     case SYS_EXIT: {

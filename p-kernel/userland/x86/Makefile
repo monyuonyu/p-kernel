@@ -45,7 +45,8 @@ SAMPLES = \
     05_all_demo/all_demo.elf \
     06_net_infer/net_infer.elf \
     07_stdin_echo/stdin_echo.elf \
-    08_http_get/http_get.elf
+    08_http_get/http_get.elf \
+    09_readdir/readdir.elf
 
 all: $(SAMPLES)
 
@@ -127,10 +128,18 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ 08_http_get/http_get.o
 
 # -------------------------------------------------------------------
+# 09_readdir — ディレクトリ一覧デモ
+# -------------------------------------------------------------------
+09_readdir/readdir.elf: $(S)/09_readdir/readdir.c plibc.h user.ld
+	mkdir -p 09_readdir
+	$(CC) $(CFLAGS) -c $< -o 09_readdir/readdir.o
+	$(LD) $(LDFLAGS) -o $@ 09_readdir/readdir.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
 	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
-	       06_net_infer 07_stdin_echo 08_http_get
+	       06_net_infer 07_stdin_echo 08_http_get 09_readdir
 
 .PHONY: all clean

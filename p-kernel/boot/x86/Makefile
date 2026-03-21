@@ -194,6 +194,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/06_net_infer/net_infer.elf      ::net_infer.elf
 	mcopy -i $@ $(USERLAND_X86)/07_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
 	mcopy -i $@ $(USERLAND_X86)/08_http_get/http_get.elf       ::http_get.elf
+	mcopy -i $@ $(USERLAND_X86)/09_readdir/readdir.elf         ::readdir.elf
 
 disk: $(DISK_IMG)
 

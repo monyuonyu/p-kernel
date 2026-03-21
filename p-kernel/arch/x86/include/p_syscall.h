@@ -17,6 +17,7 @@
  *    8      SYS_MKDIR     — create directory
  *    9      SYS_UNLINK    — delete file
  *    10     SYS_RENAME    — rename/move file
+ *    11     SYS_READDIR   — list directory entries (arg0=path, arg1=PK_DIRENT*, arg2=max)
  *
  *  T-Kernel native (p-kernel extension, 0x100+):
  *    0x100  SYS_TK_CRE_TSK  — create task (PK_CRE_TSK*)
@@ -66,6 +67,7 @@
 #define SYS_MKDIR       8
 #define SYS_UNLINK      9
 #define SYS_RENAME      10
+#define SYS_READDIR     11
 
 /* ----------------------------------------------------------------- */
 /* T-Kernel native syscall numbers (p-kernel extension)              */
@@ -108,6 +110,18 @@
 #define SYS_INFER       0x210
 #define SYS_AI_SUBMIT   0x211
 #define SYS_AI_WAIT     0x212
+
+/* ----------------------------------------------------------------- */
+/* PK_DIRENT — one directory entry returned by SYS_READDIR          */
+/* Layout must match PK_SYS_DIRENT in plibc.h (32-bit flat)        */
+/* ----------------------------------------------------------------- */
+#define PK_DIRENT_NAMELEN  64
+
+typedef struct {
+    char name[PK_DIRENT_NAMELEN]; /* null-terminated filename          */
+    UW   size;                    /* file size in bytes (0 for dirs)   */
+    W    is_dir;                  /* 1 = directory, 0 = file           */
+} PK_DIRENT;
 
 /* ----------------------------------------------------------------- */
 /* PK_UDP_SEND — args for SYS_UDP_SEND                              */

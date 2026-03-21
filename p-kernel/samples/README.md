@@ -17,7 +17,8 @@ p-kernel/
 │   ├── 05_all_demo/
 │   ├── 06_net_infer/
 │   ├── 07_stdin_echo/
-│   └── 08_http_get/
+│   ├── 08_http_get/
+│   └── 09_readdir/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -68,6 +69,11 @@ UDP 送受信 (`SYS_UDP_BIND` / `SYS_UDP_SEND` / `SYS_UDP_RECV`) を使います
 HTTP/1.0 GET リクエストを 10.0.2.2:80 に送るサンプルです。
 → TCP syscall の一連の流れを学べます。`make run-disk-net` でネットワーク付き起動が必要です。
 
+### 09_readdir — ディレクトリ一覧
+`sys_readdir(path, buf, max)` でディレクトリのエントリ一覧を取得するサンプルです。
+ファイル名・サイズ・種別（ファイル/ディレクトリ）を表示します。
+→ ファイルシステム操作の仕上げとして試してください。
+
 ---
 
 ## ビルド方法 (x86)
@@ -83,6 +89,7 @@ make 05_all_demo/all_demo.elf
 make 06_net_infer/net_infer.elf
 make 07_stdin_echo/stdin_echo.elf
 make 08_http_get/http_get.elf
+make 09_readdir/readdir.elf
 ```
 
 **必要なツール:**
@@ -106,6 +113,7 @@ p-kernel> exec all_demo.elf
 p-kernel> exec net_infer.elf
 p-kernel> exec stdin_echo.elf
 p-kernel> exec http_get.elf
+p-kernel> exec readdir.elf
 ```
 
 ---
@@ -180,6 +188,7 @@ AI 推論 API (0x210+):
 | 0x204  | SYS_TCP_WRITE    | TCP 送信                    |
 | 0x205  | SYS_TCP_READ     | TCP 受信（タイムアウト付き）|
 | 0x206  | SYS_TCP_CLOSE    | TCP クローズ＋解放          |
+| 11     | SYS_READDIR      | ディレクトリ一覧取得        |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

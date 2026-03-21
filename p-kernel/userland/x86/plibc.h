@@ -95,6 +95,16 @@ typedef struct {
     int           tmout;
 } PK_WAI_FLG;
 
+/* Directory entry returned by sys_readdir() (SYS_READDIR)
+ * Layout must match PK_DIRENT in p_syscall.h (32-bit flat) */
+#define PLIB_DIRENT_NAMELEN  64
+
+typedef struct {
+    char         name[PLIB_DIRENT_NAMELEN]; /* null-terminated filename */
+    unsigned int size;                       /* file size in bytes       */
+    int          is_dir;                     /* 1 = directory, 0 = file  */
+} PK_SYS_DIRENT;
+
 /* TCP connect args (SYS_TCP_CONNECT)
  * Layout must match PK_TCP_CONNECT in p_syscall.h (32-bit flat) */
 typedef struct {
@@ -326,6 +336,17 @@ static inline int sys_udp_send(PK_SYS_UDP_SEND *pk)
  * Returns received byte count, or negative error (-50 = timeout).  */
 static inline int sys_udp_recv(PK_SYS_UDP_RECV *pk)
     { return __sc(0x202, (int)(long)pk, 0, 0); }
+
+/* ================================================================= */
+/* Filesystem API (readdir)                                           */
+/* ================================================================= */
+
+/* List directory entries at `path`.
+ * Fills `out[0..max-1]` with up to `max` entries (max ≤ 32).
+ * Returns the number of entries found, or -1 on error.
+ * The entries are NOT sorted; order depends on the FAT32 directory.  */
+static inline int sys_readdir(const char *path, PK_SYS_DIRENT *out, int max)
+    { return __sc(11, (int)(long)path, (int)(long)out, max); }
 
 /* ================================================================= */
 /* Network API (TCP)                                                  */
