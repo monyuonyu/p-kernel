@@ -64,6 +64,7 @@
 #define SYS_TK_CHG_PRI  0x105
 #define SYS_TK_CHG_SLT  0x106
 #define SYS_TK_REF_TSK  0x107
+#define SYS_TK_DEL_TSK  0x108
 
 #define SYS_TK_CRE_SEM  0x110
 #define SYS_TK_DEL_SEM  0x111

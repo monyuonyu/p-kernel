@@ -61,6 +61,7 @@ typedef struct {
     FP    real_task;
     void *real_exinf;
     void *stack_base;
+    ID    tskid;        /* kernel task ID — used for cleanup on ext_tsk */
 } USR_TASK_CTX;
 
 static USR_TASK_CTX usr_ctx[USR_TASK_MAX];
@@ -69,7 +70,9 @@ static void user_task_wrapper(INT stacd, void *exinf)
 {
     USR_TASK_CTX *ctx = (USR_TASK_CTX *)exinf;
     ctx->real_task(stacd, ctx->real_exinf);
+    /* real_task returned normally (did NOT call tk_ext_tsk via syscall) */
     void *stk = ctx->stack_base;
+    ctx->real_task = NULL;   /* free ctx slot */
     free_user_stack(stk);
     tk_ext_tsk();
 }
@@ -261,6 +264,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
             free_user_stack(stk);
             return -1;
         }
+        usr_ctx[ci].tskid = tid;
 
         /* Apply scheduling policy */
         TCB *tcb = get_tcb(tid);
@@ -285,6 +289,15 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_TK_EXT_TSK: {
+        /* Free stack/ctx for user-created tasks before exiting */
+        ID cur = knl_ctxtsk->tskid;
+        for (INT i = 0; i < USR_TASK_MAX; i++) {
+            if (usr_ctx[i].real_task != NULL && usr_ctx[i].tskid == cur) {
+                free_user_stack(usr_ctx[i].stack_base);
+                usr_ctx[i].real_task = NULL;
+                break;
+            }
+        }
         tk_ext_tsk();
         return 0;
     }
@@ -314,6 +327,11 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         tcb->time_slice      = (UH)ticks;
         tcb->remaining_slice = (UH)ticks;
         return 0;
+    }
+
+    case SYS_TK_DEL_TSK: {
+        /* arg0=tid — delete a DORMANT task and free its TCB slot */
+        return (W)tk_del_tsk((ID)arg0);
     }
 
     case SYS_TK_REF_TSK: {

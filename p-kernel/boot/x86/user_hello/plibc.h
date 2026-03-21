@@ -160,6 +160,9 @@ static inline int tk_chg_slt(int tid, int slice_ms)
 static inline int tk_ref_tsk(int tid, PK_REF_TSK *out)
     { return __sc(0x107, tid, (int)(long)out, 0); }
 
+static inline int tk_del_tsk(int tid)
+    { return __sc(0x108, tid, 0, 0); }
+
 /* ================================================================= */
 /* T-Kernel native: semaphore                                         */
 /* ================================================================= */
