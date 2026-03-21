@@ -10,6 +10,8 @@
 #include "rtl8139.h"
 #include "netstack.h"
 #include "drpc.h"
+#include "swim.h"
+#include "kdds.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -28,6 +30,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define NET_STACK           4096
 #define DRPC_PRIORITY       5
 #define DRPC_STACK          4096
+#define SWIM_PRIORITY       6
+#define SWIM_STACK          4096
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -64,6 +68,9 @@ EXPORT INT usermain(void)
     blk_ssy_init();         /* block device subsystem (ssid=2)         */
     fs_ssy_init();          /* filesystem subsystem  (ssid=3)          */
     net_ssy_init();         /* network subsystem (ssid=1)              */
+
+    /* ---- K-DDS — カーネルネイティブ pub/sub ----------------------- */
+    kdds_init();
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();
@@ -114,10 +121,15 @@ EXPORT INT usermain(void)
             /* IP4(10,1,0,mac[5]) = mac[5]<<24 | 0x0000010A */
             UW nip = ((UW)mac[5] << 24) | 0x0000010AUL;
             drpc_init(nid, nip);
+            swim_init();
             if (create_task(drpc_task, DRPC_PRIORITY, DRPC_STACK) < E_OK)
                 tm_putstring((UB *)"[ERR] drpc task\r\n");
             else
                 tm_putstring((UB *)"[OK]  DRPC task\r\n");
+            if (create_task(swim_task, SWIM_PRIORITY, SWIM_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] SWIM task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  SWIM task\r\n");
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

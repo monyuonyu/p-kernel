@@ -16,6 +16,7 @@
 #include "vfs.h"
 #include "ai_kernel.h"
 #include "paging.h"
+#include "kdds.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -804,6 +805,39 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         usr_ai[slot].in_use = 0;
 
         return (er == E_OK) ? result : (W)er;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* K-DDS トピック syscall                                        */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TOPIC_OPEN: {
+        /* arg0 = name (const char*), arg1 = qos */
+        const char *name = (const char *)(UW)arg0;
+        if (!name) return -1;
+        return kdds_open(name, arg1);
+    }
+
+    case SYS_TOPIC_PUB: {
+        /* arg0 = handle, arg1 = data ptr, arg2 = len */
+        const void *data = (const void *)(UW)arg1;
+        if (!data) return -1;
+        return kdds_pub(arg0, data, arg2);
+    }
+
+    case SYS_TOPIC_SUB: {
+        /* arg0 = PK_TOPIC_SUB* */
+        PK_TOPIC_SUB *pk = (PK_TOPIC_SUB *)(UW)arg0;
+        if (!pk) return -1;
+        void *buf = (void *)(UW)pk->buf_ptr;
+        if (!buf) return -1;
+        return kdds_sub(pk->handle, buf, pk->buflen, pk->timeout_ms);
+    }
+
+    case SYS_TOPIC_CLOSE: {
+        /* arg0 = handle */
+        kdds_close(arg0);
+        return 0;
     }
 
     /* ------------------------------------------------------------- */

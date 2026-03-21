@@ -304,6 +304,22 @@
 #define SYS_AI_WAIT     0x212
 
 /* ----------------------------------------------------------------- */
+/* K-DDS トピック syscall (p-kernel Phase 2)                         */
+/* ----------------------------------------------------------------- */
+#define SYS_TOPIC_OPEN   0x220  /* トピックを開く (arg0=name, arg1=qos)   */
+#define SYS_TOPIC_PUB    0x221  /* データ発行 (arg0=handle, arg1=ptr, arg2=len) */
+#define SYS_TOPIC_SUB    0x222  /* データ受信 (arg0=PK_TOPIC_SUB*)        */
+#define SYS_TOPIC_CLOSE  0x223  /* ハンドルを閉じる (arg0=handle)         */
+
+/* SYS_TOPIC_SUB に渡す引数構造体 (4 パラメータ → 1 ポインタ) */
+typedef struct {
+    W   handle;       /* kdds_open() で取得したハンドル              */
+    W   buflen;       /* 受信バッファの最大バイト数                  */
+    UW  buf_ptr;      /* 受信バッファへのポインタ (ユーザー空間)     */
+    W   timeout_ms;   /* -1=無限待ち, 0=ポーリング                  */
+} PK_TOPIC_SUB;
+
+/* ----------------------------------------------------------------- */
 /* PK_DIRENT — one directory entry returned by SYS_READDIR          */
 /* Layout must match PK_SYS_DIRENT in plibc.h (32-bit flat)        */
 /* ----------------------------------------------------------------- */

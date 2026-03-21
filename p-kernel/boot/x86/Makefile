@@ -58,6 +58,8 @@ ARCH_C_SRCS = \
     rtl8139.c \
     netstack.c \
     drpc.c \
+    swim.c \
+    kdds.c \
     tensor.c \
     ai_job.c \
     pipeline.c \
@@ -195,6 +197,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/01_posix/03_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/04_readdir/readdir.elf         ::readdir.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/05_posix2/posix2.elf           ::posix2.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/06_kdds/kdds_demo.elf          ::kdds_demo.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/01_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/02_rtos_sync/rtos_sync.elf ::rtos_sync.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/03_mutex/mutex.elf             ::mutex.elf

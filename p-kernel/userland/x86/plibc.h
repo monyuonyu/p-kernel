@@ -244,6 +244,37 @@ static inline int sys_pipe(int fds[2])
     { return __sc(42, (int)(long)fds, 0, 0); }
 
 /* ================================================================= */
+/* K-DDS — カーネルネイティブ pub/sub                                 */
+/* ================================================================= */
+
+/* SYS_TOPIC_SUB に渡す構造体 (カーネル側の PK_TOPIC_SUB と同レイアウト) */
+typedef struct {
+    int  handle;
+    int  buflen;
+    const void *buf_ptr;
+    int  timeout_ms;
+} pk_topic_sub_t;
+
+/* トピックを開く / 作成する。QoS: 0=BEST_EFFORT, 1=RELIABLE, 2=LATEST_ONLY */
+static inline int sys_topic_open(const char *name, int qos)
+    { return __sc(0x220, (int)(long)name, qos, 0); }
+
+/* トピックへデータを発行する */
+static inline int sys_topic_pub(int handle, const void *data, int len)
+    { return __sc(0x221, handle, (int)(long)data, len); }
+
+/* トピックからデータを受信する (ブロッキング) */
+static inline int sys_topic_sub(int handle, void *buf, int buflen, int tmo_ms)
+{
+    pk_topic_sub_t pk = { handle, buflen, buf, tmo_ms };
+    return __sc(0x222, (int)(long)&pk, 0, 0);
+}
+
+/* ハンドルを閉じる */
+static inline void sys_topic_close(int handle)
+    { __sc(0x223, handle, 0, 0); }
+
+/* ================================================================= */
 /* T-Kernel native: task management                                   */
 /* ================================================================= */
 

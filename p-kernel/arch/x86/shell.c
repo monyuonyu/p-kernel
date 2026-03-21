@@ -15,6 +15,8 @@
 #include "rtl8139.h"
 #include "netstack.h"
 #include "drpc.h"
+#include "swim.h"
+#include "kdds.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -117,6 +119,11 @@ static void cmd_help(void)
     sout("  mv <src> <dst>     - rename/move file\r\n");
     sout("  exec <file>        - load and run ELF32 binary\r\n");
     sout("  mount              - show mount table\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("K-DDS commands:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  topic list               - トピック一覧表示\r\n");
+    sout("  topic pub <name> <data>  - トピックへ発行\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -276,7 +283,47 @@ static void cmd_nodes(void)
         sout("Not in distributed mode (use make run-node0 / run-node1)\r\n");
         return;
     }
-    drpc_nodes_list();
+    swim_nodes_print();
+}
+
+static void cmd_topic(const char *arg)
+{
+    while (*arg == ' ') arg++;
+
+    if (str_starts(arg, "list") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        kdds_list();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    /* topic pub <name> <data> */
+    if (str_starts(arg, "pub ")) {
+        arg += 4;
+        while (*arg == ' ') arg++;
+        /* トピック名を切り出す */
+        char name[32];
+        INT ni = 0;
+        while (*arg && *arg != ' ' && ni < 31) name[ni++] = *arg++;
+        name[ni] = '\0';
+        while (*arg == ' ') arg++;
+        if (!*arg) { sout("Usage: topic pub <name> <data>\r\n"); return; }
+
+        W h = kdds_open(name, KDDS_QOS_LATEST_ONLY);
+        if (h < 0) { sout("[topic] open failed\r\n"); return; }
+        INT len = 0; while (arg[len]) len++;
+        W r = kdds_pub(h, arg, len + 1);   /* null 含む */
+        if (r < 0) sout("[topic] pub failed\r\n");
+        else {
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            sout("[topic] published to \""); sout(name); sout("\"\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+        kdds_close(h);
+        return;
+    }
+
+    sout("Usage: topic list | topic pub <name> <data>\r\n");
 }
 
 static void cmd_dtask(const char *arg)
@@ -1173,6 +1220,8 @@ static void execute(const char *cmd)
         { cmd_cp(cmd + 2); return; }
     if (cmd[0]=='m' && cmd[1]=='v')
         { cmd_mv(cmd + 2); return; }
+    if (cmd[0]=='t' && cmd[1]=='o' && cmd[2]=='p' && cmd[3]=='i' && cmd[4]=='c')
+        { cmd_topic(cmd + 5); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();
