@@ -51,7 +51,11 @@ SAMPLES = \
     11_mailbox/mailbox.elf \
     12_msgbuf/msgbuf.elf \
     13_mempool/mempool.elf \
-    14_cyc_alm/cyc_alm.elf
+    14_cyc_alm/cyc_alm.elf \
+    15_task_ext/task_ext.elf \
+    16_time/time.elf \
+    17_rendezvous/rendezvous.elf \
+    18_ref/ref.elf
 
 all: $(SAMPLES)
 
@@ -181,11 +185,44 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ 14_cyc_alm/cyc_alm.o
 
 # -------------------------------------------------------------------
+# 15_task_ext
+# -------------------------------------------------------------------
+15_task_ext/task_ext.elf: $(S)/15_task_ext/task_ext.c plibc.h user.ld
+	mkdir -p 15_task_ext
+	$(CC) $(CFLAGS) -c $< -o 15_task_ext/task_ext.o
+	$(LD) $(LDFLAGS) -o $@ 15_task_ext/task_ext.o
+
+# -------------------------------------------------------------------
+# 16_time
+# -------------------------------------------------------------------
+16_time/time.elf: $(S)/16_time/time.c plibc.h user.ld
+	mkdir -p 16_time
+	$(CC) $(CFLAGS) -c $< -o 16_time/time.o
+	$(LD) $(LDFLAGS) -o $@ 16_time/time.o
+
+# -------------------------------------------------------------------
+# 17_rendezvous
+# -------------------------------------------------------------------
+17_rendezvous/rendezvous.elf: $(S)/17_rendezvous/rendezvous.c plibc.h user.ld
+	mkdir -p 17_rendezvous
+	$(CC) $(CFLAGS) -c $< -o 17_rendezvous/rendezvous.o
+	$(LD) $(LDFLAGS) -o $@ 17_rendezvous/rendezvous.o
+
+# -------------------------------------------------------------------
+# 18_ref
+# -------------------------------------------------------------------
+18_ref/ref.elf: $(S)/18_ref/ref.c plibc.h user.ld
+	mkdir -p 18_ref
+	$(CC) $(CFLAGS) -c $< -o 18_ref/ref.o
+	$(LD) $(LDFLAGS) -o $@ 18_ref/ref.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
 	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
 	       06_net_infer 07_stdin_echo 08_http_get 09_readdir \
-	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm
+	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm \
+	       15_task_ext 16_time 17_rendezvous 18_ref
 
 .PHONY: all clean

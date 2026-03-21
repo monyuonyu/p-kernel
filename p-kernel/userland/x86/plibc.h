@@ -631,6 +631,205 @@ static inline int tk_stp_alm(int almid)
     { return __sc(0x17B, almid, 0, 0); }
 
 /* ================================================================= */
+/* T-Kernel native: task supplement                                   */
+/* ================================================================= */
+
+/* Force-terminate another task (must be in non-DORMANT state). */
+static inline int tk_ter_tsk(int tid)
+    { return __sc(0x109, tid, 0, 0); }
+
+/* Suspend task (task remains suspended until tk_rsm_tsk/tk_frsm_tsk). */
+static inline int tk_sus_tsk(int tid)
+    { return __sc(0x10A, tid, 0, 0); }
+
+/* Resume a suspended task (clears one suspend level). */
+static inline int tk_rsm_tsk(int tid)
+    { return __sc(0x10B, tid, 0, 0); }
+
+/* Force-resume: clears all suspend levels. */
+static inline int tk_frsm_tsk(int tid)
+    { return __sc(0x10C, tid, 0, 0); }
+
+/* Release task from wait state (task transitions to READY). */
+static inline int tk_rel_wai(int tid)
+    { return __sc(0x10D, tid, 0, 0); }
+
+/* Get current running task ID. */
+static inline int tk_get_tid(void)
+    { return __sc(0x10E, 0, 0, 0); }
+
+/* Cancel pending wakeup requests. Returns cancelled count or error. */
+static inline int tk_can_wup(int tid)
+    { return __sc(0x10F, tid, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: ref (reference state) APIs                        */
+/* ================================================================= */
+
+/* Semaphore state */
+typedef struct { int wtsk; int semcnt; } PK_REF_SEM;
+
+/* Event flag state */
+typedef struct { int wtsk; unsigned int flgptn; } PK_REF_FLG;
+
+/* Mutex state */
+typedef struct { int htsk; int wtsk; } PK_REF_MTX;
+
+/* Mailbox state */
+typedef struct { int wtsk; } PK_REF_MBX;
+
+/* Message buffer state */
+typedef struct { int wtsk; int stsk; int msgsz; int frbufsz; int maxmsz; } PK_REF_MBF;
+
+/* Variable pool state */
+typedef struct { int wtsk; int frsz; int maxsz; } PK_REF_MPL;
+
+/* Fixed pool state */
+typedef struct { int wtsk; int frbcnt; } PK_REF_MPF;
+
+/* Cyclic handler state (cycstat: 1=running, 0=stopped) */
+typedef struct { int lfttim_ms; unsigned int cycstat; } PK_REF_CYC;
+
+/* Alarm handler state (almstat: 1=pending, 0=idle) */
+typedef struct { int lfttim_ms; unsigned int almstat; } PK_REF_ALM;
+
+static inline int tk_ref_sem(int semid, PK_REF_SEM *out)
+    { return __sc(0x114, semid, (int)(long)out, 0); }
+
+static inline int tk_ref_flg(int flgid, PK_REF_FLG *out)
+    { return __sc(0x125, flgid, (int)(long)out, 0); }
+
+static inline int tk_ref_mtx(int mtxid, PK_REF_MTX *out)
+    { return __sc(0x134, mtxid, (int)(long)out, 0); }
+
+static inline int tk_ref_mbx(int mbxid, PK_REF_MBX *out)
+    { return __sc(0x144, mbxid, (int)(long)out, 0); }
+
+static inline int tk_ref_mbf(int mbfid, PK_REF_MBF *out)
+    { return __sc(0x154, mbfid, (int)(long)out, 0); }
+
+static inline int tk_ref_mpl(int mplid, PK_REF_MPL *out)
+    { return __sc(0x164, mplid, (int)(long)out, 0); }
+
+static inline int tk_ref_mpf(int mpfid, PK_REF_MPF *out)
+    { return __sc(0x16C, mpfid, (int)(long)out, 0); }
+
+static inline int tk_ref_cyc(int cycid, PK_REF_CYC *out)
+    { return __sc(0x174, cycid, (int)(long)out, 0); }
+
+static inline int tk_ref_alm(int almid, PK_REF_ALM *out)
+    { return __sc(0x17C, almid, (int)(long)out, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: time                                              */
+/* ================================================================= */
+
+/* System time: hi = upper 32 bits, lo = lower 32 bits (ms since boot) */
+typedef struct { int hi; unsigned int lo; } PK_SYSTIM;
+
+/* Get system time. */
+static inline int tk_get_tim(PK_SYSTIM *out)
+    { return __sc(0x180, (int)(long)out, 0, 0); }
+
+/* Delay current task by delay_ms milliseconds. */
+static inline int tk_dly_tsk(int delay_ms)
+    { return __sc(0x181, delay_ms, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: rendezvous port                                   */
+/* ================================================================= */
+
+/* Rendezvous port attribute */
+#define TA_RDV_TFIFO  0x00  /* wait queue: FIFO            */
+#define TA_RDV_TPRI   0x01  /* wait queue: priority order  */
+
+/* Port creation */
+typedef struct {
+    unsigned int poratr;  /* TA_RDV_TFIFO or TA_RDV_TPRI */
+    int          maxcmsz; /* max call message size (bytes) */
+    int          maxrmsz; /* max reply message size (bytes)*/
+} PK_CPOR;
+
+/* Port reference result */
+typedef struct { int wtsk; int atsk; int maxcmsz; int maxrmsz; } PK_RPOR;
+
+/* Create rendezvous port. Returns porid (>0) or error. */
+static inline int tk_cre_por(PK_CPOR *pk)
+    { return __sc(0x190, (int)(long)pk, 0, 0); }
+
+/* Delete rendezvous port. */
+static inline int tk_del_por(int porid)
+    { return __sc(0x191, porid, 0, 0); }
+
+/* Call rendezvous: send msg (cmsgsz bytes), receive reply into same msg buf.
+ * calptn selects the call pattern; tmout_ms: -1=forever.
+ * Returns reply message size (>=0) or error. */
+static inline int tk_cal_por(int porid, unsigned int calptn,
+                               void *msg, int cmsgsz, int tmout_ms)
+{
+    struct { int porid; unsigned int calptn; unsigned int msg_ptr;
+             int cmsgsz; int tmout; } args = {
+        porid, calptn, (unsigned int)(long)msg, cmsgsz, tmout_ms };
+    return __sc(0x192, (int)(long)&args, 0, 0);
+}
+
+/* Accept rendezvous: receive call message, fill *p_rdvno with rendezvous ID.
+ * acpptn: accepted call patterns (bitfield).
+ * msg: buffer to receive call message (maxcmsz bytes).
+ * Returns received message size (>=0) or error. */
+static inline int tk_acp_por(int porid, unsigned int acpptn,
+                               unsigned int *p_rdvno, void *msg, int tmout_ms)
+{
+    struct { int porid; unsigned int acpptn; unsigned int p_rdvno;
+             unsigned int msg_ptr; int tmout; } args = {
+        porid, acpptn, (unsigned int)(long)p_rdvno,
+        (unsigned int)(long)msg, tmout_ms };
+    return __sc(0x193, (int)(long)&args, 0, 0);
+}
+
+/* Forward rendezvous to another port. */
+static inline int tk_fwd_por(int porid, unsigned int calptn,
+                               unsigned int rdvno, void *msg, int cmsgsz)
+{
+    struct { int porid; unsigned int calptn; unsigned int rdvno;
+             unsigned int msg_ptr; int cmsgsz; } args = {
+        porid, calptn, rdvno, (unsigned int)(long)msg, cmsgsz };
+    return __sc(0x194, (int)(long)&args, 0, 0);
+}
+
+/* Reply to rendezvous: send reply message of rmsgsz bytes. */
+static inline int tk_rpl_rdv(unsigned int rdvno, void *msg, int rmsgsz)
+    { return __sc(0x195, (int)rdvno, (int)(long)msg, rmsgsz); }
+
+/* ================================================================= */
+/* T-Kernel native: system info                                       */
+/* ================================================================= */
+
+/* Version info */
+typedef struct {
+    unsigned short maker;   /* OS manufacturer code */
+    unsigned short prid;    /* OS ID                */
+    unsigned short spver;   /* spec version         */
+    unsigned short prver;   /* product version      */
+    unsigned short prno[4]; /* product number       */
+} PK_RVER;
+
+/* System state */
+typedef struct {
+    unsigned int sysstat;    /* system state flags        */
+    int          runtskid;   /* running task ID           */
+    int          schedtskid; /* scheduled task ID         */
+} PK_RSYS;
+
+/* Get T-Kernel version info. */
+static inline int tk_ref_ver(PK_RVER *out)
+    { return __sc(0x1A0, (int)(long)out, 0, 0); }
+
+/* Get system state. */
+static inline int tk_ref_sys(PK_RSYS *out)
+    { return __sc(0x1A1, (int)(long)out, 0, 0); }
+
+/* ================================================================= */
 /* AI inference API                                                   */
 /* ================================================================= */
 

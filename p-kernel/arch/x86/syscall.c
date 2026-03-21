@@ -1019,6 +1019,243 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_STP_ALM:
         return (W)tk_stp_alm((ID)arg0);
 
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: task supplement                              */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_TER_TSK:
+        return (W)tk_ter_tsk((ID)arg0);
+
+    case SYS_TK_SUS_TSK:
+        return (W)tk_sus_tsk((ID)arg0);
+
+    case SYS_TK_RSM_TSK:
+        return (W)tk_rsm_tsk((ID)arg0);
+
+    case SYS_TK_FRSM_TSK:
+        return (W)tk_frsm_tsk((ID)arg0);
+
+    case SYS_TK_REL_WAI:
+        return (W)tk_rel_wai((ID)arg0);
+
+    case SYS_TK_GET_TID:
+        return (W)tk_get_tid();
+
+    case SYS_TK_CAN_WUP:
+        return (W)tk_can_wup((ID)arg0);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: ref APIs                                     */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_REF_SEM: {
+        PK_REF_SEM *out = (PK_REF_SEM *)(UW)arg1;
+        if (!out) return -1;
+        T_RSEM rsem;
+        ER er = tk_ref_sem((ID)arg0, &rsem);
+        if (er < E_OK) return (W)er;
+        out->wtsk   = (W)rsem.wtsk;
+        out->semcnt = (W)rsem.semcnt;
+        return 0;
+    }
+
+    case SYS_TK_REF_FLG: {
+        PK_REF_FLG *out = (PK_REF_FLG *)(UW)arg1;
+        if (!out) return -1;
+        T_RFLG rflg;
+        ER er = tk_ref_flg((ID)arg0, &rflg);
+        if (er < E_OK) return (W)er;
+        out->wtsk   = (W)rflg.wtsk;
+        out->flgptn = (UW)rflg.flgptn;
+        return 0;
+    }
+
+    case SYS_TK_REF_MTX: {
+        PK_REF_MTX *out = (PK_REF_MTX *)(UW)arg1;
+        if (!out) return -1;
+        T_RMTX rmtx;
+        ER er = tk_ref_mtx((ID)arg0, &rmtx);
+        if (er < E_OK) return (W)er;
+        out->htsk = (W)rmtx.htsk;
+        out->wtsk = (W)rmtx.wtsk;
+        return 0;
+    }
+
+    case SYS_TK_REF_MBX: {
+        PK_REF_MBX *out = (PK_REF_MBX *)(UW)arg1;
+        if (!out) return -1;
+        T_RMBX rmbx;
+        ER er = tk_ref_mbx((ID)arg0, &rmbx);
+        if (er < E_OK) return (W)er;
+        out->wtsk = (W)rmbx.wtsk;
+        return 0;
+    }
+
+    case SYS_TK_REF_MBF: {
+        PK_REF_MBF *out = (PK_REF_MBF *)(UW)arg1;
+        if (!out) return -1;
+        T_RMBF rmbf;
+        ER er = tk_ref_mbf((ID)arg0, &rmbf);
+        if (er < E_OK) return (W)er;
+        out->wtsk    = (W)rmbf.wtsk;
+        out->stsk    = (W)rmbf.stsk;
+        out->msgsz   = (W)rmbf.msgsz;
+        out->frbufsz = (W)rmbf.frbufsz;
+        out->maxmsz  = (W)rmbf.maxmsz;
+        return 0;
+    }
+
+    case SYS_TK_REF_MPL: {
+        PK_REF_MPL *out = (PK_REF_MPL *)(UW)arg1;
+        if (!out) return -1;
+        T_RMPL rmpl;
+        ER er = tk_ref_mpl((ID)arg0, &rmpl);
+        if (er < E_OK) return (W)er;
+        out->wtsk  = (W)rmpl.wtsk;
+        out->frsz  = (W)rmpl.frsz;
+        out->maxsz = (W)rmpl.maxsz;
+        return 0;
+    }
+
+    case SYS_TK_REF_MPF: {
+        PK_REF_MPF *out = (PK_REF_MPF *)(UW)arg1;
+        if (!out) return -1;
+        T_RMPF rmpf;
+        ER er = tk_ref_mpf((ID)arg0, &rmpf);
+        if (er < E_OK) return (W)er;
+        out->wtsk   = (W)rmpf.wtsk;
+        out->frbcnt = (W)rmpf.frbcnt;
+        return 0;
+    }
+
+    case SYS_TK_REF_CYC: {
+        PK_REF_CYC *out = (PK_REF_CYC *)(UW)arg1;
+        if (!out) return -1;
+        T_RCYC rcyc;
+        ER er = tk_ref_cyc((ID)arg0, &rcyc);
+        if (er < E_OK) return (W)er;
+        out->lfttim_ms = (W)rcyc.lfttim;
+        out->cycstat   = (UW)rcyc.cycstat;
+        return 0;
+    }
+
+    case SYS_TK_REF_ALM: {
+        PK_REF_ALM *out = (PK_REF_ALM *)(UW)arg1;
+        if (!out) return -1;
+        T_RALM ralm;
+        ER er = tk_ref_alm((ID)arg0, &ralm);
+        if (er < E_OK) return (W)er;
+        out->lfttim_ms = (W)ralm.lfttim;
+        out->almstat   = (UW)ralm.almstat;
+        return 0;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: time                                         */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_GET_TIM: {
+        /* arg0 = PK_SYSTIM* */
+        PK_SYSTIM *out = (PK_SYSTIM *)(UW)arg0;
+        if (!out) return -1;
+        SYSTIM tim;
+        ER er = tk_get_tim(&tim);
+        if (er < E_OK) return (W)er;
+        out->hi = (W)tim.hi;
+        out->lo = (UW)tim.lo;
+        return 0;
+    }
+
+    case SYS_TK_DLY_TSK:
+        /* arg0 = delay_ms */
+        return (W)tk_dly_tsk((RELTIM)arg0);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: rendezvous port                              */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_POR: {
+        /* arg0 = PK_CPOR* */
+        PK_CPOR *upk = (PK_CPOR *)(UW)arg0;
+        if (!upk) return -1;
+        T_CPOR pk;
+        pk.exinf   = NULL;
+        pk.poratr  = (ATR)upk->poratr;
+        pk.maxcmsz = (INT)upk->maxcmsz;
+        pk.maxrmsz = (INT)upk->maxrmsz;
+        return (W)tk_cre_por(&pk);
+    }
+
+    case SYS_TK_DEL_POR:
+        return (W)tk_del_por((ID)arg0);
+
+    case SYS_TK_CAL_POR: {
+        /* arg0 = PK_CAL_POR* */
+        PK_CAL_POR *upk = (PK_CAL_POR *)(UW)arg0;
+        if (!upk) return -1;
+        return (W)tk_cal_por((ID)upk->porid, (UINT)upk->calptn,
+                              (void *)(UW)upk->msg_ptr,
+                              (INT)upk->cmsgsz, (TMO)upk->tmout);
+    }
+
+    case SYS_TK_ACP_POR: {
+        /* arg0 = PK_ACP_POR* */
+        PK_ACP_POR *upk = (PK_ACP_POR *)(UW)arg0;
+        if (!upk) return -1;
+        RNO rdvno = 0;
+        W r = (W)tk_acp_por((ID)upk->porid, (UINT)upk->acpptn,
+                              &rdvno, (void *)(UW)upk->msg_ptr,
+                              (TMO)upk->tmout);
+        if (upk->p_rdvno) *(RNO *)(UW)upk->p_rdvno = rdvno;
+        return r;
+    }
+
+    case SYS_TK_FWD_POR: {
+        /* arg0 = PK_FWD_POR* */
+        PK_FWD_POR *upk = (PK_FWD_POR *)(UW)arg0;
+        if (!upk) return -1;
+        return (W)tk_fwd_por((ID)upk->porid, (UINT)upk->calptn,
+                               (RNO)upk->rdvno,
+                               (void *)(UW)upk->msg_ptr,
+                               (INT)upk->cmsgsz);
+    }
+
+    case SYS_TK_RPL_RDV:
+        /* arg0=rdvno, arg1=msg_ptr, arg2=rmsgsz */
+        return (W)tk_rpl_rdv((RNO)arg0, (void *)(UW)arg1, (INT)arg2);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: system info                                  */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_REF_VER: {
+        /* arg0 = PK_RVER* */
+        PK_RVER *out = (PK_RVER *)(UW)arg0;
+        if (!out) return -1;
+        T_RVER rver;
+        ER er = tk_ref_ver(&rver);
+        if (er < E_OK) return (W)er;
+        out->maker = rver.maker;
+        out->prid  = rver.prid;
+        out->spver = rver.spver;
+        out->prver = rver.prver;
+        for (INT i = 0; i < 4; i++) out->prno[i] = rver.prno[i];
+        return 0;
+    }
+
+    case SYS_TK_REF_SYS: {
+        /* arg0 = PK_RSYS* */
+        PK_RSYS *out = (PK_RSYS *)(UW)arg0;
+        if (!out) return -1;
+        T_RSYS rsys;
+        ER er = tk_ref_sys(&rsys);
+        if (er < E_OK) return (W)er;
+        out->sysstat    = (UW)rsys.sysstat;
+        out->runtskid   = (W)rsys.runtskid;
+        out->schedtskid = (W)rsys.schedtskid;
+        return 0;
+    }
+
     default:
         return -1;  /* ENOSYS */
     }

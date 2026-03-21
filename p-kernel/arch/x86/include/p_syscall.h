@@ -80,6 +80,42 @@
  *    0x17A  SYS_TK_STA_ALM  — start alarm handler (arg0=almid, arg1=almtim_ms)
  *    0x17B  SYS_TK_STP_ALM  — stop alarm handler
  *
+ *  T-Kernel task supplement (0x109+):
+ *    0x109  SYS_TK_TER_TSK  — force-terminate task
+ *    0x10A  SYS_TK_SUS_TSK  — suspend task
+ *    0x10B  SYS_TK_RSM_TSK  — resume task
+ *    0x10C  SYS_TK_FRSM_TSK — force-resume suspended task
+ *    0x10D  SYS_TK_REL_WAI  — release task from wait state
+ *    0x10E  SYS_TK_GET_TID  — get current task ID
+ *    0x10F  SYS_TK_CAN_WUP  — cancel pending wakeup requests
+ *
+ *  T-Kernel ref APIs:
+ *    0x114  SYS_TK_REF_SEM  — reference semaphore (arg0=semid, arg1=PK_REF_SEM*)
+ *    0x125  SYS_TK_REF_FLG  — reference event flag (arg0=flgid, arg1=PK_REF_FLG*)
+ *    0x134  SYS_TK_REF_MTX  — reference mutex (arg0=mtxid, arg1=PK_REF_MTX*)
+ *    0x144  SYS_TK_REF_MBX  — reference mailbox (arg0=mbxid, arg1=PK_REF_MBX*)
+ *    0x154  SYS_TK_REF_MBF  — reference message buffer (arg0=mbfid, arg1=PK_REF_MBF*)
+ *    0x164  SYS_TK_REF_MPL  — reference variable pool (arg0=mplid, arg1=PK_REF_MPL*)
+ *    0x16C  SYS_TK_REF_MPF  — reference fixed pool (arg0=mpfid, arg1=PK_REF_MPF*)
+ *    0x174  SYS_TK_REF_CYC  — reference cyclic handler (arg0=cycid, arg1=PK_REF_CYC*)
+ *    0x17C  SYS_TK_REF_ALM  — reference alarm handler (arg0=almid, arg1=PK_REF_ALM*)
+ *
+ *  T-Kernel time (0x180+):
+ *    0x180  SYS_TK_GET_TIM  — get system time (arg0=PK_SYSTIM*)
+ *    0x181  SYS_TK_DLY_TSK  — task delay (arg0=delay_ms)
+ *
+ *  T-Kernel rendezvous port (0x190+):
+ *    0x190  SYS_TK_CRE_POR  — create rendezvous port (arg0=PK_CPOR*)
+ *    0x191  SYS_TK_DEL_POR  — delete rendezvous port
+ *    0x192  SYS_TK_CAL_POR  — call rendezvous (arg0=PK_CAL_POR*)
+ *    0x193  SYS_TK_ACP_POR  — accept rendezvous (arg0=PK_ACP_POR*)
+ *    0x194  SYS_TK_FWD_POR  — forward rendezvous (arg0=PK_FWD_POR*)
+ *    0x195  SYS_TK_RPL_RDV  — reply to rendezvous (arg0=rdvno,arg1=msg,arg2=sz)
+ *
+ *  T-Kernel system info (0x1A0+):
+ *    0x1A0  SYS_TK_REF_VER  — reference T-Kernel version (arg0=PK_RVER*)
+ *    0x1A1  SYS_TK_REF_SYS  — reference system state (arg0=PK_RSYS*)
+ *
  *  Network syscalls (0x200+):
  *    0x200  SYS_UDP_BIND    — bind local UDP port (arg0=port)
  *    0x201  SYS_UDP_SEND    — send UDP datagram (arg0=PK_UDP_SEND*)
@@ -176,6 +212,42 @@
 #define SYS_TK_DEL_ALM  0x179
 #define SYS_TK_STA_ALM  0x17A
 #define SYS_TK_STP_ALM  0x17B
+
+/* Task supplement */
+#define SYS_TK_TER_TSK   0x109
+#define SYS_TK_SUS_TSK   0x10A
+#define SYS_TK_RSM_TSK   0x10B
+#define SYS_TK_FRSM_TSK  0x10C
+#define SYS_TK_REL_WAI   0x10D
+#define SYS_TK_GET_TID   0x10E
+#define SYS_TK_CAN_WUP   0x10F
+
+/* Ref APIs */
+#define SYS_TK_REF_SEM   0x114
+#define SYS_TK_REF_FLG   0x125
+#define SYS_TK_REF_MTX   0x134
+#define SYS_TK_REF_MBX   0x144
+#define SYS_TK_REF_MBF   0x154
+#define SYS_TK_REF_MPL   0x164
+#define SYS_TK_REF_MPF   0x16C
+#define SYS_TK_REF_CYC   0x174
+#define SYS_TK_REF_ALM   0x17C
+
+/* Time */
+#define SYS_TK_GET_TIM   0x180
+#define SYS_TK_DLY_TSK   0x181
+
+/* Rendezvous port */
+#define SYS_TK_CRE_POR   0x190
+#define SYS_TK_DEL_POR   0x191
+#define SYS_TK_CAL_POR   0x192
+#define SYS_TK_ACP_POR   0x193
+#define SYS_TK_FWD_POR   0x194
+#define SYS_TK_RPL_RDV   0x195
+
+/* System info */
+#define SYS_TK_REF_VER   0x1A0
+#define SYS_TK_REF_SYS   0x1A1
 
 /* ----------------------------------------------------------------- */
 /* Network syscall numbers (p-kernel extension)                      */
@@ -356,6 +428,55 @@ typedef struct {
     UW  almatr;      /* TA_HLNG(1)                                       */
     UW  almhdr;      /* handler function pointer (FP)                    */
 } PK_CRE_ALM;
+
+/* ----------------------------------------------------------------- */
+/* PK_REF_* — ref result structs (filled by kernel, read by user)   */
+/* ----------------------------------------------------------------- */
+typedef struct { W wtsk; W semcnt; }                        PK_REF_SEM;
+typedef struct { W wtsk; UW flgptn; }                       PK_REF_FLG;
+typedef struct { W htsk; W wtsk; }                          PK_REF_MTX;
+typedef struct { W wtsk; }                                  PK_REF_MBX;
+typedef struct { W wtsk; W stsk; W msgsz; W frbufsz; W maxmsz; } PK_REF_MBF;
+typedef struct { W wtsk; W frsz; W maxsz; }                 PK_REF_MPL;
+typedef struct { W wtsk; W frbcnt; }                        PK_REF_MPF;
+typedef struct { W lfttim_ms; UW cycstat; }                 PK_REF_CYC;
+typedef struct { W lfttim_ms; UW almstat; }                 PK_REF_ALM;
+
+/* ----------------------------------------------------------------- */
+/* PK_SYSTIM — system time returned by SYS_TK_GET_TIM               */
+/* ----------------------------------------------------------------- */
+typedef struct { W hi; UW lo; } PK_SYSTIM;
+
+/* ----------------------------------------------------------------- */
+/* PK_RVER / PK_RSYS — version/system info                          */
+/* ----------------------------------------------------------------- */
+typedef struct { UH maker; UH prid; UH spver; UH prver; UH prno[4]; } PK_RVER;
+typedef struct { UW sysstat; W runtskid; W schedtskid; }    PK_RSYS;
+
+/* ----------------------------------------------------------------- */
+/* PK_CPOR — rendezvous port creation                               */
+/* ----------------------------------------------------------------- */
+typedef struct { UW poratr; W maxcmsz; W maxrmsz; } PK_CPOR;
+
+/* ----------------------------------------------------------------- */
+/* PK_RPOR — rendezvous port reference result                       */
+/* ----------------------------------------------------------------- */
+typedef struct { W wtsk; W atsk; W maxcmsz; W maxrmsz; } PK_RPOR;
+
+/* ----------------------------------------------------------------- */
+/* PK_CAL_POR — args for SYS_TK_CAL_POR (5 params → 1 ptr)        */
+/* ----------------------------------------------------------------- */
+typedef struct { W porid; UW calptn; UW msg_ptr; W cmsgsz; W tmout; } PK_CAL_POR;
+
+/* ----------------------------------------------------------------- */
+/* PK_ACP_POR — args for SYS_TK_ACP_POR (5 params → 1 ptr)        */
+/* ----------------------------------------------------------------- */
+typedef struct { W porid; UW acpptn; UW p_rdvno; UW msg_ptr; W tmout; } PK_ACP_POR;
+
+/* ----------------------------------------------------------------- */
+/* PK_FWD_POR — args for SYS_TK_FWD_POR (5 params → 1 ptr)        */
+/* ----------------------------------------------------------------- */
+typedef struct { W porid; UW calptn; UW rdvno; UW msg_ptr; W cmsgsz; } PK_FWD_POR;
 
 /* ----------------------------------------------------------------- */
 /* Register IDT gate 0x80 (DPL=3, callable from ring3).             */

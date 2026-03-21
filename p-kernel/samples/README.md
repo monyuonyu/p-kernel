@@ -23,7 +23,11 @@ p-kernel/
 │   ├── 11_mailbox/
 │   ├── 12_msgbuf/
 │   ├── 13_mempool/
-│   └── 14_cyc_alm/
+│   ├── 14_cyc_alm/
+│   ├── 15_task_ext/
+│   ├── 16_time/
+│   ├── 17_rendezvous/
+│   └── 18_ref/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -104,6 +108,23 @@ mailbox とは異なりメッセージの「中身」がコピーされます。
 アラームハンドラ (`tk_cre_alm` / `tk_sta_alm` / `tk_del_alm`) の両方を実演します。
 ハンドラはタスク独立文脈で実行されるため、ブロッキング呼び出しは禁止されています。
 
+### 15_task_ext — タスク補助 API
+`tk_get_tid` / `tk_sus_tsk` / `tk_rsm_tsk` / `tk_rel_wai` /
+`tk_can_wup` / `tk_ter_tsk` を実演します。
+タスクの強制サスペンド・レジューム・終了と待ち解除を確認します。
+
+### 16_time — 時刻 API
+`tk_get_tim`（システム時刻取得）と `tk_dly_tsk`（タスク遅延）を実演します。
+`dly_tsk(200)` の前後で経過時間を計測して精度を確認します。
+
+### 17_rendezvous — ランデブーポート
+`tk_cre_por` / `tk_cal_por` / `tk_acp_por` / `tk_rpl_rdv` / `tk_del_por` を実演します。
+カーラータスクがメッセージを送り、アクセプタタスクが受け取って返答するシナリオです。
+
+### 18_ref — Ref API + システム情報
+sem / flg / mtx / mbx / mbf / mpl / mpf / cyc / alm の全 ref 関数と
+`tk_ref_ver`（バージョン情報）・`tk_ref_sys`（システム状態）を実演します。
+
 ---
 
 ## ビルド方法 (x86)
@@ -125,6 +146,10 @@ make 11_mailbox/mailbox.elf
 make 12_msgbuf/msgbuf.elf
 make 13_mempool/mempool.elf
 make 14_cyc_alm/cyc_alm.elf
+make 15_task_ext/task_ext.elf
+make 16_time/time.elf
+make 17_rendezvous/rendezvous.elf
+make 18_ref/ref.elf
 ```
 
 **必要なツール:**
@@ -154,6 +179,10 @@ p-kernel> exec mailbox.elf
 p-kernel> exec msgbuf.elf
 p-kernel> exec mempool.elf
 p-kernel> exec cyc_alm.elf
+p-kernel> exec task_ext.elf
+p-kernel> exec time.elf
+p-kernel> exec rendezvous.elf
+p-kernel> exec ref.elf
 ```
 
 ---
@@ -173,9 +202,22 @@ T-Kernel ネイティブ API (0x100+):
   タスク管理:   tk_cre_tsk, tk_sta_tsk, tk_ext_tsk,
                 tk_slp_tsk, tk_wup_tsk, tk_chg_pri,
                 tk_chg_slt, tk_ref_tsk, tk_del_tsk
-  セマフォ:     tk_cre_sem, tk_del_sem, tk_sig_sem, tk_wai_sem
+  タスク補助:   tk_ter_tsk, tk_sus_tsk, tk_rsm_tsk,
+                tk_frsm_tsk, tk_rel_wai, tk_get_tid, tk_can_wup
+  セマフォ:     tk_cre_sem, tk_del_sem, tk_sig_sem, tk_wai_sem, tk_ref_sem
   イベントフラグ: tk_cre_flg, tk_del_flg, tk_set_flg,
-                  tk_clr_flg, tk_wai_flg
+                  tk_clr_flg, tk_wai_flg, tk_ref_flg
+  Mutex:        tk_cre_mtx, tk_del_mtx, tk_loc_mtx, tk_unl_mtx, tk_ref_mtx
+  Mailbox:      tk_cre_mbx, tk_del_mbx, tk_snd_mbx, tk_rcv_mbx, tk_ref_mbx
+  MsgBuffer:    tk_cre_mbf, tk_del_mbf, tk_snd_mbf, tk_rcv_mbf, tk_ref_mbf
+  MemPool(変):  tk_cre_mpl, tk_del_mpl, tk_get_mpl, tk_rel_mpl, tk_ref_mpl
+  MemPool(固):  tk_cre_mpf, tk_del_mpf, tk_get_mpf, tk_rel_mpf, tk_ref_mpf
+  周期ハンドラ: tk_cre_cyc, tk_del_cyc, tk_sta_cyc, tk_stp_cyc, tk_ref_cyc
+  アラーム:     tk_cre_alm, tk_del_alm, tk_sta_alm, tk_stp_alm, tk_ref_alm
+  時刻:         tk_get_tim, tk_dly_tsk
+  ランデブー:   tk_cre_por, tk_del_por, tk_cal_por, tk_acp_por,
+                tk_fwd_por, tk_rpl_rdv
+  システム情報: tk_ref_ver, tk_ref_sys
 
 ネットワーク API (0x200+):
   sys_udp_bind, sys_udp_send, sys_udp_recv
@@ -257,6 +299,32 @@ AI 推論 API (0x210+):
 | 0x179  | SYS_TK_DEL_ALM   | アラームハンドラ削除        |
 | 0x17A  | SYS_TK_STA_ALM   | アラームハンドラ開始        |
 | 0x17B  | SYS_TK_STP_ALM   | アラームハンドラ停止        |
+| 0x109  | SYS_TK_TER_TSK   | タスク強制終了              |
+| 0x10A  | SYS_TK_SUS_TSK   | タスク強制待ち              |
+| 0x10B  | SYS_TK_RSM_TSK   | タスク強制待ち解除          |
+| 0x10C  | SYS_TK_FRSM_TSK  | タスク強制待ち解除（強制）  |
+| 0x10D  | SYS_TK_REL_WAI   | 待ち状態解除                |
+| 0x10E  | SYS_TK_GET_TID   | 自タスク ID 取得            |
+| 0x10F  | SYS_TK_CAN_WUP   | 起床要求キャンセル          |
+| 0x114  | SYS_TK_REF_SEM   | セマフォ状態参照            |
+| 0x125  | SYS_TK_REF_FLG   | イベントフラグ状態参照      |
+| 0x134  | SYS_TK_REF_MTX   | Mutex 状態参照              |
+| 0x144  | SYS_TK_REF_MBX   | Mailbox 状態参照            |
+| 0x154  | SYS_TK_REF_MBF   | Message Buffer 状態参照     |
+| 0x164  | SYS_TK_REF_MPL   | 可変長プール状態参照        |
+| 0x16C  | SYS_TK_REF_MPF   | 固定長プール状態参照        |
+| 0x174  | SYS_TK_REF_CYC   | 周期ハンドラ状態参照        |
+| 0x17C  | SYS_TK_REF_ALM   | アラームハンドラ状態参照    |
+| 0x180  | SYS_TK_GET_TIM   | システム時刻取得            |
+| 0x181  | SYS_TK_DLY_TSK   | タスク遅延                  |
+| 0x190  | SYS_TK_CRE_POR   | ランデブーポート作成        |
+| 0x191  | SYS_TK_DEL_POR   | ランデブーポート削除        |
+| 0x192  | SYS_TK_CAL_POR   | ランデブー呼び出し          |
+| 0x193  | SYS_TK_ACP_POR   | ランデブー受け付け          |
+| 0x194  | SYS_TK_FWD_POR   | ランデブー転送              |
+| 0x195  | SYS_TK_RPL_RDV   | ランデブー返答              |
+| 0x1A0  | SYS_TK_REF_VER   | T-Kernel バージョン参照     |
+| 0x1A1  | SYS_TK_REF_SYS   | システム状態参照            |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

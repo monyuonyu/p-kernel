@@ -200,6 +200,10 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/12_msgbuf/msgbuf.elf           ::msgbuf.elf
 	mcopy -i $@ $(USERLAND_X86)/13_mempool/mempool.elf         ::mempool.elf
 	mcopy -i $@ $(USERLAND_X86)/14_cyc_alm/cyc_alm.elf        ::cyc_alm.elf
+	mcopy -i $@ $(USERLAND_X86)/15_task_ext/task_ext.elf      ::task_ext.elf
+	mcopy -i $@ $(USERLAND_X86)/16_time/time.elf               ::time.elf
+	mcopy -i $@ $(USERLAND_X86)/17_rendezvous/rendezvous.elf  ::rendezvous.elf
+	mcopy -i $@ $(USERLAND_X86)/18_ref/ref.elf                 ::ref.elf
 
 disk: $(DISK_IMG)
 
