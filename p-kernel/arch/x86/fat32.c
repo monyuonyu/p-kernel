@@ -454,6 +454,27 @@ UW fat32_fsize(INT fd)
     return fds[fd].file_size;
 }
 
+/* Duplicate fd: copy FD state to a new slot (independent seek position). */
+INT fat32_dup(INT fd)
+{
+    if (fd < 0 || fd >= FAT32_MAX_FD || !fds[fd].in_use) return -1;
+    for (INT i = 0; i < FAT32_MAX_FD; i++) {
+        if (!fds[i].in_use) {
+            fds[i] = fds[fd];   /* shallow copy — independent seek state */
+            fds[i].writable = FALSE;  /* dup'd fd is read-only */
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Stat by path: fills *size and *is_dir.  Returns 0 on success, -1 on error. */
+INT fat32_stat_path(const char *path, UW *size, BOOL *is_dir)
+{
+    UW cluster;
+    return resolve_path(path, &cluster, size, is_dir);
+}
+
 void fat32_close(INT fd)
 {
     if (fd < 0 || fd >= FAT32_MAX_FD || !fds[fd].in_use) return;

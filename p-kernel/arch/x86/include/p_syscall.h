@@ -143,6 +143,7 @@
 /* POSIX-compatible syscall numbers                                   */
 /* ----------------------------------------------------------------- */
 #define SYS_EXIT        1
+#define SYS_FORK        2   /* not yet implemented */
 #define SYS_READ        3
 #define SYS_WRITE       4
 #define SYS_OPEN        5
@@ -152,6 +153,14 @@
 #define SYS_UNLINK      9
 #define SYS_RENAME      10
 #define SYS_READDIR     11
+#define SYS_CHDIR       12
+#define SYS_GETPID      20
+#define SYS_FSTAT       28
+#define SYS_DUP         41
+#define SYS_PIPE        42
+#define SYS_DUP2        63
+#define SYS_STAT        106
+#define SYS_GETCWD      183
 
 /* ----------------------------------------------------------------- */
 /* T-Kernel native syscall numbers (p-kernel extension)              */
@@ -504,6 +513,21 @@ typedef struct { W porid; UW acpptn; UW p_rdvno; UW msg_ptr; W tmout; } PK_ACP_P
 /* PK_FWD_POR — args for SYS_TK_FWD_POR (5 params → 1 ptr)        */
 /* ----------------------------------------------------------------- */
 typedef struct { W porid; UW calptn; UW rdvno; UW msg_ptr; W cmsgsz; } PK_FWD_POR;
+
+/* ----------------------------------------------------------------- */
+/* struct p_stat — result of SYS_STAT / SYS_FSTAT                   */
+/* Layout must match struct p_stat in plibc.h (32-bit flat)         */
+/* ----------------------------------------------------------------- */
+#define S_IFREG   0x8000u   /* regular file     */
+#define S_IFDIR   0x4000u   /* directory        */
+#define S_IFMT    0xF000u   /* file type mask   */
+
+typedef struct {
+    UW  st_mode;    /* S_IFREG or S_IFDIR */
+    UW  st_size;    /* file size in bytes  */
+    UW  st_ino;     /* inode (0 for FAT32) */
+    UW  st_mtime;   /* modification time   (0 for now) */
+} PK_STAT;
 
 /* ----------------------------------------------------------------- */
 /* Register IDT gate 0x80 (DPL=3, callable from ring3).             */

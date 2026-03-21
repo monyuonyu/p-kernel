@@ -194,6 +194,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/01_posix/02_posix_io/posix_io.elf   ::posix_io.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/03_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/04_readdir/readdir.elf         ::readdir.elf
+	mcopy -i $@ $(USERLAND_X86)/01_posix/05_posix2/posix2.elf           ::posix2.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/01_rtos_task/rtos_task.elf ::rtos_task.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/02_rtos_sync/rtos_sync.elf ::rtos_sync.elf
 	mcopy -i $@ $(USERLAND_X86)/02_rtos/03_mutex/mutex.elf             ::mutex.elf

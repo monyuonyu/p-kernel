@@ -38,6 +38,7 @@ SAMPLES = \
     01_posix/02_posix_io/posix_io.elf \
     01_posix/03_stdin_echo/stdin_echo.elf \
     01_posix/04_readdir/readdir.elf \
+    01_posix/05_posix2/posix2.elf \
     02_rtos/01_rtos_task/rtos_task.elf \
     02_rtos/02_rtos_sync/rtos_sync.elf \
     02_rtos/03_mutex/mutex.elf \
@@ -211,5 +212,13 @@ all: $(SAMPLES)
 # -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
+# -------------------------------------------------------------------
+# 01_posix/05_posix2
+# -------------------------------------------------------------------
+01_posix/05_posix2/posix2.elf: $(S)/01_posix/05_posix2/posix2.c plibc.h user.ld
+	mkdir -p 01_posix/05_posix2
+	$(CC) $(CFLAGS) -c $< -o 01_posix/05_posix2/posix2.o
+	$(LD) $(LDFLAGS) -o $@ 01_posix/05_posix2/posix2.o
+
 clean:
 	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network

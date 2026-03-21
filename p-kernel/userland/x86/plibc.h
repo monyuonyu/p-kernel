@@ -203,6 +203,47 @@ static inline int sys_rename(const char *old, const char *nw)
     { return __sc(10, (int)(long)old, (int)(long)nw, 0); }
 
 /* ================================================================= */
+/* New POSIX interfaces                                               */
+/* ================================================================= */
+
+/* File type bits (st_mode) */
+#define S_IFREG   0x8000u
+#define S_IFDIR   0x4000u
+#define S_ISREG(m) (((m) & S_IFREG) != 0)
+#define S_ISDIR(m) (((m) & S_IFDIR) != 0)
+
+typedef struct {
+    unsigned int st_mode;
+    unsigned int st_size;
+    unsigned int st_ino;
+    unsigned int st_mtime;
+} struct_stat;
+
+static inline int sys_getpid(void)
+    { return __sc(20, 0, 0, 0); }
+
+static inline int sys_chdir(const char *path)
+    { return __sc(12, (int)(long)path, 0, 0); }
+
+static inline int sys_getcwd(char *buf, int len)
+    { return __sc(183, (int)(long)buf, len, 0); }
+
+static inline int sys_stat(const char *path, struct_stat *st)
+    { return __sc(106, (int)(long)path, (int)(long)st, 0); }
+
+static inline int sys_fstat(int fd, struct_stat *st)
+    { return __sc(28, fd, (int)(long)st, 0); }
+
+static inline int sys_dup(int fd)
+    { return __sc(41, fd, 0, 0); }
+
+static inline int sys_dup2(int old_fd, int new_fd)
+    { return __sc(63, old_fd, new_fd, 0); }
+
+static inline int sys_pipe(int fds[2])
+    { return __sc(42, (int)(long)fds, 0, 0); }
+
+/* ================================================================= */
 /* T-Kernel native: task management                                   */
 /* ================================================================= */
 

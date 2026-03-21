@@ -96,6 +96,35 @@ ID stdin_get_exit_sem(void) { return stdin_exit_sem; }
 /* TCP handle table has moved to net_ssy.c */
 
 /* ----------------------------------------------------------------- */
+/* Pipe table (SYS_PIPE)                                             */
+/*                                                                   */
+/* POSIX pipe fd numbering:                                          */
+/*   read  end = PIPE_FD_BASE + 2*i                                  */
+/*   write end = PIPE_FD_BASE + 2*i + 1                              */
+/*                                                                   */
+/* SYS_READ / SYS_WRITE check IS_PIPE_FD before routing to VFS.     */
+/* ----------------------------------------------------------------- */
+#define PIPE_MAX      4
+#define PIPE_BUFSZ    256
+#define PIPE_FD_BASE  32   /* fd 32..39: pipe fds */
+
+typedef struct {
+    BOOL in_use;
+    ID   sem_data;          /* count = bytes available to read */
+    ID   sem_space;         /* count = free bytes in buffer    */
+    UB   buf[PIPE_BUFSZ];
+    volatile UB wptr;       /* next write index (wraps at 256) */
+    volatile UB rptr;       /* next read  index (wraps at 256) */
+    BOOL write_end_open;    /* FALSE after write end closed (= EOF) */
+} PIPE_SLOT;
+
+static PIPE_SLOT pipes[PIPE_MAX];
+
+#define IS_PIPE_FD(fd)     ((fd) >= PIPE_FD_BASE && (fd) < PIPE_FD_BASE + PIPE_MAX*2)
+#define PIPE_IDX(fd)       (((fd) - PIPE_FD_BASE) / 2)
+#define IS_PIPE_WRITE(fd)  (((fd) - PIPE_FD_BASE) % 2 == 1)
+
+/* ----------------------------------------------------------------- */
 /* Stack pool for user-created tasks (8 slots × 4 KiB)              */
 /* ----------------------------------------------------------------- */
 #define USR_TASK_MAX   8
@@ -169,6 +198,9 @@ void syscall_init(void)
     }
     stdin_active = FALSE;
 
+    /* Pipe slots */
+    for (INT i = 0; i < PIPE_MAX; i++) pipes[i].in_use = FALSE;
+
     idt_set_gate(0x80,
                  (unsigned long long)(UW)syscall_isr,
                  (UH)KERNEL64_CS,
@@ -212,11 +244,22 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     /* ------------------------------------------------------------- */
 
     case SYS_WRITE: {
-        /* fd=1/2 → serial stdout; fd≥3 → fs_ssy via direct call */
+        /* fd=1/2 → serial stdout; pipe fd → pipe buf; fd≥3 → VFS */
         const char *buf = (const char *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
         if (IS_STD_FD(arg0)) { serial_write(buf, len); return len; }
+        if (IS_PIPE_FD(arg0) && IS_PIPE_WRITE(arg0)) {
+            INT pi = PIPE_IDX(arg0);
+            if (!pipes[pi].in_use) return -1;
+            W written = 0;
+            while (written < len) {
+                if (tk_wai_sem(pipes[pi].sem_space, 1, TMO_FEVR) != E_OK) break;
+                pipes[pi].buf[pipes[pi].wptr++] = (UB)buf[written++];
+                tk_sig_sem(pipes[pi].sem_data, 1);
+            }
+            return written;
+        }
         if (!vfs_ready) return -1;
         return vfs_write(TO_VFS_FD(arg0), buf, (UW)len);
     }
@@ -235,6 +278,26 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
                 dst[n++] = stdin_rbuf[stdin_rptr++];
             return (W)n;
         }
+        if (IS_PIPE_FD(arg0) && !IS_PIPE_WRITE(arg0)) {
+            INT pi = PIPE_IDX(arg0);
+            if (!pipes[pi].in_use) return -1;
+            UB *dst = (UB *)buf;
+            INT n = 0;
+            while (n < len) {
+                ER er = tk_wai_sem(pipes[pi].sem_data, 1, TMO_POL);
+                if (er != E_OK) {
+                    /* no data — if write end is closed, return EOF */
+                    if (!pipes[pi].write_end_open) break;
+                    if (n > 0) break;  /* return what we have */
+                    /* block waiting for data or EOF */
+                    er = tk_wai_sem(pipes[pi].sem_data, 1, TMO_FEVR);
+                    if (er != E_OK) break;
+                }
+                dst[n++] = pipes[pi].buf[pipes[pi].rptr++];
+                tk_sig_sem(pipes[pi].sem_space, 1);
+            }
+            return (W)n;
+        }
         if (IS_STD_FD(arg0)) return -1;
         if (!vfs_ready) return -1;
         return vfs_read(TO_VFS_FD(arg0), buf, (UW)len);
@@ -247,6 +310,18 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_CLOSE: {
         if (IS_STD_FD(arg0)) return 0;
+        if (IS_PIPE_FD(arg0)) {
+            INT pi = PIPE_IDX(arg0);
+            if (!pipes[pi].in_use) return -1;
+            if (IS_PIPE_WRITE(arg0)) {
+                /* closing write end — signal EOF to readers */
+                pipes[pi].write_end_open = FALSE;
+                tk_sig_sem(pipes[pi].sem_data, 1); /* unblock any waiting reader */
+            } else {
+                pipes[pi].in_use = FALSE;  /* read end closed — free slot */
+            }
+            return 0;
+        }
         /* fd release via fs_ssy_call */
         return fs_ssy_call(SYS_CLOSE, arg0, 0, 0);
     }
@@ -281,6 +356,111 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_READDIR: {
         if (!vfs_ready) return -1;
         return fs_ssy_call(SYS_READDIR, arg0, arg1, arg2);
+    }
+
+    /* ------------------------------------------------------------- */
+    /* New POSIX interfaces                                           */
+    /* ------------------------------------------------------------- */
+
+    case SYS_GETPID: {
+        /* Returns the current task ID as the process ID */
+        return (W)knl_ctxtsk->tskid;
+    }
+
+    case SYS_CHDIR: {
+        const char *path = (const char *)(UW)arg0;
+        if (!vfs_ready) return -1;
+        return (W)vfs_chdir(path);
+    }
+
+    case SYS_GETCWD: {
+        /* arg0=buf, arg1=len */
+        char *buf = (char *)(UW)arg0;
+        INT   len = (INT)arg1;
+        if (!buf || len <= 0) return -1;
+        vfs_getcwd(buf, len);
+        return 0;
+    }
+
+    case SYS_STAT: {
+        /* arg0=path, arg1=struct p_stat* */
+        const char *path = (const char *)(UW)arg0;
+        PK_STAT    *st   = (PK_STAT *)(UW)arg1;
+        if (!st || !vfs_ready) return -1;
+        UW size; BOOL is_dir;
+        if (vfs_stat_path(path, &size, &is_dir) < 0) return -1;
+        st->st_mode  = is_dir ? S_IFDIR : S_IFREG;
+        st->st_size  = is_dir ? 0       : size;
+        st->st_ino   = 0;
+        st->st_mtime = 0;
+        return 0;
+    }
+
+    case SYS_FSTAT: {
+        /* arg0=posix_fd, arg1=struct p_stat* */
+        PK_STAT *st = (PK_STAT *)(UW)arg1;
+        if (!st || IS_STD_FD(arg0)) return -1;
+        if (IS_PIPE_FD(arg0)) {
+            /* pipes are always regular files for stat purposes */
+            st->st_mode = S_IFREG; st->st_size = 0;
+            st->st_ino = 0; st->st_mtime = 0;
+            return 0;
+        }
+        if (!vfs_ready) return -1;
+        st->st_mode  = S_IFREG;
+        st->st_size  = vfs_fsize(TO_VFS_FD(arg0));
+        st->st_ino   = 0;
+        st->st_mtime = 0;
+        return 0;
+    }
+
+    case SYS_DUP: {
+        /* arg0 = old posix fd  → returns new posix fd */
+        if (IS_STD_FD(arg0)) return arg0;   /* dup(0/1/2) = itself */
+        if (IS_PIPE_FD(arg0)) return -1;    /* pipe dup not supported */
+        if (!vfs_ready) return -1;
+        INT vfd = vfs_dup(TO_VFS_FD(arg0));
+        if (vfd < 0) return -1;
+        return TO_POSIX_FD(vfd);
+    }
+
+    case SYS_DUP2: {
+        /* arg0=old fd, arg1=new fd  (only newfd≥3 supported) */
+        if (arg1 < 3 || IS_PIPE_FD(arg1)) return -1;
+        if (arg0 == arg1) return arg1;
+        /* close newfd if open */
+        if (!IS_STD_FD(arg1)) fs_ssy_call(SYS_CLOSE, arg1, 0, 0);
+        INT vfd = vfs_dup(TO_VFS_FD(arg0));
+        if (vfd < 0) return -1;
+        /* We got a new vfd; we need it to be arg1-3 exactly — not trivial.
+         * Simple approach: close the new vfd we got, open src again.
+         * For now just return the new fd (ignoring requested number). */
+        return TO_POSIX_FD(vfd);
+    }
+
+    case SYS_PIPE: {
+        /* arg0 = int[2]* — filled with [read_fd, write_fd] */
+        W *fds = (W *)(UW)arg0;
+        if (!fds) return -1;
+        /* Find a free pipe slot */
+        for (INT i = 0; i < PIPE_MAX; i++) {
+            if (!pipes[i].in_use) {
+                T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                              .isemcnt = 0, .maxsem = PIPE_BUFSZ };
+                pipes[i].sem_data  = tk_cre_sem(&cs);
+                T_CSEM cs2 = { .exinf = NULL, .sematr = TA_TFIFO,
+                               .isemcnt = PIPE_BUFSZ, .maxsem = PIPE_BUFSZ };
+                pipes[i].sem_space = tk_cre_sem(&cs2);
+                pipes[i].wptr      = 0;
+                pipes[i].rptr      = 0;
+                pipes[i].write_end_open = TRUE;
+                pipes[i].in_use    = TRUE;
+                fds[0] = PIPE_FD_BASE + 2 * i;       /* read end  */
+                fds[1] = PIPE_FD_BASE + 2 * i + 1;   /* write end */
+                return 0;
+            }
+        }
+        return -1;   /* no free pipe slot */
     }
 
     case SYS_EXIT: {

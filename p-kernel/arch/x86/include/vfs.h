@@ -53,4 +53,14 @@ INT  vfs_rename(const char *oldpath, const char *newpath);
 /* List directory.  Returns entry count, negative on error. */
 INT  vfs_readdir(const char *path, VFS_DIRENT *out, INT max);
 
+/* Stat by path.  Returns 0 on success, -1 on error. */
+INT  vfs_stat_path(const char *path, UW *size, BOOL *is_dir);
+
+/* Duplicate an open fd (independent seek, read-only). */
+INT  vfs_dup(INT fd);
+
+/* Get/set current working directory. */
+void vfs_getcwd(char *buf, INT len);
+INT  vfs_chdir(const char *path);
+
 extern BOOL vfs_ready;
