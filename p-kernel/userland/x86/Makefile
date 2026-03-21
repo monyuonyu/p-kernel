@@ -11,9 +11,8 @@
 # 生成物 (このディレクトリ以下に出力):
 #   01_hello/hello.elf
 #   02_posix_io/posix_io.elf
-#   03_rtos_task/rtos_task.elf
-#   04_rtos_sync/rtos_sync.elf
-#   05_all_demo/all_demo.elf
+#   05_rtos_task/rtos_task.elf
+#   06_rtos_sync/rtos_sync.elf
 #
 # 使い方:
 #   make                              — 全 ELF をビルド
@@ -40,23 +39,23 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 SAMPLES = \
     01_hello/hello.elf \
     02_posix_io/posix_io.elf \
-    03_rtos_task/rtos_task.elf \
-    04_rtos_sync/rtos_sync.elf \
-    06_net_infer/net_infer.elf \
-    07_stdin_echo/stdin_echo.elf \
-    08_http_get/http_get.elf \
-    09_readdir/readdir.elf \
-    10_mutex/mutex.elf \
-    11_mailbox/mailbox.elf \
-    12_msgbuf/msgbuf.elf \
-    13_mempool/mempool.elf \
+    03_stdin_echo/stdin_echo.elf \
+    04_readdir/readdir.elf \
+    05_rtos_task/rtos_task.elf \
+    06_rtos_sync/rtos_sync.elf \
+    07_mutex/mutex.elf \
+    08_task_ext/task_ext.elf \
+    09_mailbox/mailbox.elf \
+    10_msgbuf/msgbuf.elf \
+    11_rendezvous/rendezvous.elf \
+    12_mempool/mempool.elf \
+    13_time/time.elf \
     14_cyc_alm/cyc_alm.elf \
-    15_task_ext/task_ext.elf \
-    16_time/time.elf \
-    17_rendezvous/rendezvous.elf \
-    18_ref/ref.elf \
-    19_misc/misc.elf \
-    20_multicast/multicast.elf
+    15_ref/ref.elf \
+    16_misc/misc.elf \
+    17_net_infer/net_infer.elf \
+    18_http_get/http_get.elf \
+    19_multicast/multicast.elf
 
 all: $(SAMPLES)
 
@@ -77,84 +76,84 @@ all: $(SAMPLES)
 	$(LD) $(LDFLAGS) -o $@ 02_posix_io/posix_io.o
 
 # -------------------------------------------------------------------
-# 03_rtos_task
+# 05_rtos_task
 # -------------------------------------------------------------------
-03_rtos_task/rtos_task.elf: $(S)/03_rtos_task/rtos_task.c plibc.h user.ld
-	mkdir -p 03_rtos_task
-	$(CC) $(CFLAGS) -c $< -o 03_rtos_task/rtos_task.o
-	$(LD) $(LDFLAGS) -o $@ 03_rtos_task/rtos_task.o
+05_rtos_task/rtos_task.elf: $(S)/05_rtos_task/rtos_task.c plibc.h user.ld
+	mkdir -p 05_rtos_task
+	$(CC) $(CFLAGS) -c $< -o 05_rtos_task/rtos_task.o
+	$(LD) $(LDFLAGS) -o $@ 05_rtos_task/rtos_task.o
 
 # -------------------------------------------------------------------
-# 04_rtos_sync
+# 06_rtos_sync
 # -------------------------------------------------------------------
-04_rtos_sync/rtos_sync.elf: $(S)/04_rtos_sync/rtos_sync.c plibc.h user.ld
-	mkdir -p 04_rtos_sync
-	$(CC) $(CFLAGS) -c $< -o 04_rtos_sync/rtos_sync.o
-	$(LD) $(LDFLAGS) -o $@ 04_rtos_sync/rtos_sync.o
+06_rtos_sync/rtos_sync.elf: $(S)/06_rtos_sync/rtos_sync.c plibc.h user.ld
+	mkdir -p 06_rtos_sync
+	$(CC) $(CFLAGS) -c $< -o 06_rtos_sync/rtos_sync.o
+	$(LD) $(LDFLAGS) -o $@ 06_rtos_sync/rtos_sync.o
 
 # -------------------------------------------------------------------
-# 06_net_infer — センサーデータ分類 + UDP 配信デモ
+# 17_net_infer — センサーデータ分類 + UDP 配信デモ
 # -------------------------------------------------------------------
-06_net_infer/net_infer.elf: $(S)/06_net_infer/net_infer.c plibc.h user.ld
-	mkdir -p 06_net_infer
-	$(CC) $(CFLAGS) -c $< -o 06_net_infer/net_infer.o
-	$(LD) $(LDFLAGS) -o $@ 06_net_infer/net_infer.o
+17_net_infer/net_infer.elf: $(S)/17_net_infer/net_infer.c plibc.h user.ld
+	mkdir -p 17_net_infer
+	$(CC) $(CFLAGS) -c $< -o 17_net_infer/net_infer.o
+	$(LD) $(LDFLAGS) -o $@ 17_net_infer/net_infer.o
 
 # -------------------------------------------------------------------
-# 07_stdin_echo — 標準入力エコーデモ
+# 03_stdin_echo — 標準入力エコーデモ
 # -------------------------------------------------------------------
-07_stdin_echo/stdin_echo.elf: $(S)/07_stdin_echo/stdin_echo.c plibc.h user.ld
-	mkdir -p 07_stdin_echo
-	$(CC) $(CFLAGS) -c $< -o 07_stdin_echo/stdin_echo.o
-	$(LD) $(LDFLAGS) -o $@ 07_stdin_echo/stdin_echo.o
+03_stdin_echo/stdin_echo.elf: $(S)/03_stdin_echo/stdin_echo.c plibc.h user.ld
+	mkdir -p 03_stdin_echo
+	$(CC) $(CFLAGS) -c $< -o 03_stdin_echo/stdin_echo.o
+	$(LD) $(LDFLAGS) -o $@ 03_stdin_echo/stdin_echo.o
 
 # -------------------------------------------------------------------
-# 08_http_get — TCP 接続 + HTTP GET デモ
+# 18_http_get — TCP 接続 + HTTP GET デモ
 # -------------------------------------------------------------------
-08_http_get/http_get.elf: $(S)/08_http_get/http_get.c plibc.h user.ld
-	mkdir -p 08_http_get
-	$(CC) $(CFLAGS) -c $< -o 08_http_get/http_get.o
-	$(LD) $(LDFLAGS) -o $@ 08_http_get/http_get.o
+18_http_get/http_get.elf: $(S)/18_http_get/http_get.c plibc.h user.ld
+	mkdir -p 18_http_get
+	$(CC) $(CFLAGS) -c $< -o 18_http_get/http_get.o
+	$(LD) $(LDFLAGS) -o $@ 18_http_get/http_get.o
 
 # -------------------------------------------------------------------
-# 09_readdir — ディレクトリ一覧デモ
+# 04_readdir — ディレクトリ一覧デモ
 # -------------------------------------------------------------------
-09_readdir/readdir.elf: $(S)/09_readdir/readdir.c plibc.h user.ld
-	mkdir -p 09_readdir
-	$(CC) $(CFLAGS) -c $< -o 09_readdir/readdir.o
-	$(LD) $(LDFLAGS) -o $@ 09_readdir/readdir.o
+04_readdir/readdir.elf: $(S)/04_readdir/readdir.c plibc.h user.ld
+	mkdir -p 04_readdir
+	$(CC) $(CFLAGS) -c $< -o 04_readdir/readdir.o
+	$(LD) $(LDFLAGS) -o $@ 04_readdir/readdir.o
 
 # -------------------------------------------------------------------
-# 10_mutex
+# 07_mutex
 # -------------------------------------------------------------------
-10_mutex/mutex.elf: $(S)/10_mutex/mutex.c plibc.h user.ld
-	mkdir -p 10_mutex
-	$(CC) $(CFLAGS) -c $< -o 10_mutex/mutex.o
-	$(LD) $(LDFLAGS) -o $@ 10_mutex/mutex.o
+07_mutex/mutex.elf: $(S)/07_mutex/mutex.c plibc.h user.ld
+	mkdir -p 07_mutex
+	$(CC) $(CFLAGS) -c $< -o 07_mutex/mutex.o
+	$(LD) $(LDFLAGS) -o $@ 07_mutex/mutex.o
 
 # -------------------------------------------------------------------
-# 11_mailbox
+# 09_mailbox
 # -------------------------------------------------------------------
-11_mailbox/mailbox.elf: $(S)/11_mailbox/mailbox.c plibc.h user.ld
-	mkdir -p 11_mailbox
-	$(CC) $(CFLAGS) -c $< -o 11_mailbox/mailbox.o
-	$(LD) $(LDFLAGS) -o $@ 11_mailbox/mailbox.o
+09_mailbox/mailbox.elf: $(S)/09_mailbox/mailbox.c plibc.h user.ld
+	mkdir -p 09_mailbox
+	$(CC) $(CFLAGS) -c $< -o 09_mailbox/mailbox.o
+	$(LD) $(LDFLAGS) -o $@ 09_mailbox/mailbox.o
 
 # -------------------------------------------------------------------
-# 12_msgbuf
+# 10_msgbuf
 # -------------------------------------------------------------------
-12_msgbuf/msgbuf.elf: $(S)/12_msgbuf/msgbuf.c plibc.h user.ld
-	mkdir -p 12_msgbuf
-	$(CC) $(CFLAGS) -c $< -o 12_msgbuf/msgbuf.o
-	$(LD) $(LDFLAGS) -o $@ 12_msgbuf/msgbuf.o
+10_msgbuf/msgbuf.elf: $(S)/10_msgbuf/msgbuf.c plibc.h user.ld
+	mkdir -p 10_msgbuf
+	$(CC) $(CFLAGS) -c $< -o 10_msgbuf/msgbuf.o
+	$(LD) $(LDFLAGS) -o $@ 10_msgbuf/msgbuf.o
 
 # -------------------------------------------------------------------
-# 13_mempool
+# 12_mempool
 # -------------------------------------------------------------------
-13_mempool/mempool.elf: $(S)/13_mempool/mempool.c plibc.h user.ld
-	mkdir -p 13_mempool
-	$(CC) $(CFLAGS) -c $< -o 13_mempool/mempool.o
-	$(LD) $(LDFLAGS) -o $@ 13_mempool/mempool.o
+12_mempool/mempool.elf: $(S)/12_mempool/mempool.c plibc.h user.ld
+	mkdir -p 12_mempool
+	$(CC) $(CFLAGS) -c $< -o 12_mempool/mempool.o
+	$(LD) $(LDFLAGS) -o $@ 12_mempool/mempool.o
 
 # -------------------------------------------------------------------
 # 14_cyc_alm
@@ -165,60 +164,60 @@ all: $(SAMPLES)
 	$(LD) $(LDFLAGS) -o $@ 14_cyc_alm/cyc_alm.o
 
 # -------------------------------------------------------------------
-# 15_task_ext
+# 08_task_ext
 # -------------------------------------------------------------------
-15_task_ext/task_ext.elf: $(S)/15_task_ext/task_ext.c plibc.h user.ld
-	mkdir -p 15_task_ext
-	$(CC) $(CFLAGS) -c $< -o 15_task_ext/task_ext.o
-	$(LD) $(LDFLAGS) -o $@ 15_task_ext/task_ext.o
+08_task_ext/task_ext.elf: $(S)/08_task_ext/task_ext.c plibc.h user.ld
+	mkdir -p 08_task_ext
+	$(CC) $(CFLAGS) -c $< -o 08_task_ext/task_ext.o
+	$(LD) $(LDFLAGS) -o $@ 08_task_ext/task_ext.o
 
 # -------------------------------------------------------------------
-# 16_time
+# 13_time
 # -------------------------------------------------------------------
-16_time/time.elf: $(S)/16_time/time.c plibc.h user.ld
-	mkdir -p 16_time
-	$(CC) $(CFLAGS) -c $< -o 16_time/time.o
-	$(LD) $(LDFLAGS) -o $@ 16_time/time.o
+13_time/time.elf: $(S)/13_time/time.c plibc.h user.ld
+	mkdir -p 13_time
+	$(CC) $(CFLAGS) -c $< -o 13_time/time.o
+	$(LD) $(LDFLAGS) -o $@ 13_time/time.o
 
 # -------------------------------------------------------------------
-# 17_rendezvous
+# 11_rendezvous
 # -------------------------------------------------------------------
-17_rendezvous/rendezvous.elf: $(S)/17_rendezvous/rendezvous.c plibc.h user.ld
-	mkdir -p 17_rendezvous
-	$(CC) $(CFLAGS) -c $< -o 17_rendezvous/rendezvous.o
-	$(LD) $(LDFLAGS) -o $@ 17_rendezvous/rendezvous.o
+11_rendezvous/rendezvous.elf: $(S)/11_rendezvous/rendezvous.c plibc.h user.ld
+	mkdir -p 11_rendezvous
+	$(CC) $(CFLAGS) -c $< -o 11_rendezvous/rendezvous.o
+	$(LD) $(LDFLAGS) -o $@ 11_rendezvous/rendezvous.o
 
 # -------------------------------------------------------------------
-# 18_ref
+# 15_ref
 # -------------------------------------------------------------------
-18_ref/ref.elf: $(S)/18_ref/ref.c plibc.h user.ld
-	mkdir -p 18_ref
-	$(CC) $(CFLAGS) -c $< -o 18_ref/ref.o
-	$(LD) $(LDFLAGS) -o $@ 18_ref/ref.o
+15_ref/ref.elf: $(S)/15_ref/ref.c plibc.h user.ld
+	mkdir -p 15_ref
+	$(CC) $(CFLAGS) -c $< -o 15_ref/ref.o
+	$(LD) $(LDFLAGS) -o $@ 15_ref/ref.o
 
 # -------------------------------------------------------------------
-# 20_multicast
+# 19_multicast
 # -------------------------------------------------------------------
-20_multicast/multicast.elf: $(S)/20_multicast/multicast.c plibc.h user.ld
-	mkdir -p 20_multicast
-	$(CC) $(CFLAGS) -c $< -o 20_multicast/multicast.o
-	$(LD) $(LDFLAGS) -o $@ 20_multicast/multicast.o
+19_multicast/multicast.elf: $(S)/19_multicast/multicast.c plibc.h user.ld
+	mkdir -p 19_multicast
+	$(CC) $(CFLAGS) -c $< -o 19_multicast/multicast.o
+	$(LD) $(LDFLAGS) -o $@ 19_multicast/multicast.o
 
 # -------------------------------------------------------------------
-# 19_misc
+# 16_misc
 # -------------------------------------------------------------------
-19_misc/misc.elf: $(S)/19_misc/misc.c plibc.h user.ld
-	mkdir -p 19_misc
-	$(CC) $(CFLAGS) -c $< -o 19_misc/misc.o
-	$(LD) $(LDFLAGS) -o $@ 19_misc/misc.o
+16_misc/misc.elf: $(S)/16_misc/misc.c plibc.h user.ld
+	mkdir -p 16_misc
+	$(CC) $(CFLAGS) -c $< -o 16_misc/misc.o
+	$(LD) $(LDFLAGS) -o $@ 16_misc/misc.o
 
 # -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
-	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync \
-	       06_net_infer 07_stdin_echo 08_http_get 09_readdir \
-	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm \
-	       15_task_ext 16_time 17_rendezvous 18_ref 19_misc 20_multicast
+	rm -rf 01_hello 02_posix_io 03_stdin_echo 04_readdir 05_rtos_task \
+	       06_rtos_sync 07_mutex 08_task_ext 09_mailbox 10_msgbuf \
+	       11_rendezvous 12_mempool 13_time 14_cyc_alm 15_ref \
+	       16_misc 17_net_infer 18_http_get 19_multicast
 
 .PHONY: all clean

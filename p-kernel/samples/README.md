@@ -12,23 +12,23 @@ p-kernel/
 ├── samples/              ← このディレクトリ（アーキ非依存ソース）
 │   ├── 01_hello/
 │   ├── 02_posix_io/
-│   ├── 03_rtos_task/
-│   ├── 04_rtos_sync/
-│   ├── 06_net_infer/
-│   ├── 07_stdin_echo/
-│   ├── 08_http_get/
-│   ├── 09_readdir/
-│   ├── 10_mutex/
-│   ├── 11_mailbox/
-│   ├── 12_msgbuf/
-│   ├── 13_mempool/
+│   ├── 03_stdin_echo/
+│   ├── 04_readdir/
+│   ├── 05_rtos_task/
+│   ├── 06_rtos_sync/
+│   ├── 07_mutex/
+│   ├── 08_task_ext/
+│   ├── 09_mailbox/
+│   ├── 10_msgbuf/
+│   ├── 11_rendezvous/
+│   ├── 12_mempool/
+│   ├── 13_time/
 │   ├── 14_cyc_alm/
-│   ├── 15_task_ext/
-│   ├── 16_time/
-│   ├── 17_rendezvous/
-│   ├── 18_ref/
-│   ├── 19_misc/
-│   └── 20_multicast/
+│   ├── 15_ref/
+│   ├── 16_misc/
+│   ├── 17_net_infer/
+│   ├── 18_http_get/
+│   └── 19_multicast/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -51,84 +51,84 @@ p-kernel/
 POSIX 互換の `open` / `write` / `read` / `lseek` / `close` を使い、
 FAT32 ファイルシステムへのファイル読み書きを行います。
 
-### 03_rtos_task — RTOS タスク管理
-T-Kernel ネイティブ API でタスクを作成・起動します。
-優先度スケジューリング（FIFO）とタイムスライス（RR）の両方を実演します。
-
-### 04_rtos_sync — 同期プリミティブ
-セマフォとイベントフラグを使ったタスク間同期を実演します。
-複数タスクが協調して動作するパターンを学べます。
-
-### 06_net_infer — AI 推論 + UDP ネットワーク配信
-センサーデータを AI で分類し、結果を UDP で配信するサンプルです。
-カーネル内蔵の MLP ニューラルネットワーク (`SYS_INFER`) と
-非同期 AI ジョブ (`SYS_AI_SUBMIT` / `SYS_AI_WAIT`)、
-UDP 送受信 (`SYS_UDP_BIND` / `SYS_UDP_SEND` / `SYS_UDP_RECV`) を使います。
-
-### 07_stdin_echo — 標準入力エコー
+### 03_stdin_echo — 標準入力エコー
 `sys_read(fd=0)` で標準入力から 1 行読み込み、そのままエコーするサンプルです。
 空行を入力すると終了します。
 → stdin syscall の動作を最もシンプルに確認できます。
 
-### 08_http_get — HTTP GET (TCP クライアント)
-`sys_tcp_connect` / `sys_tcp_write` / `sys_tcp_read` / `sys_tcp_close` を使って
-HTTP/1.0 GET リクエストを 10.0.2.2:80 に送るサンプルです。
-→ TCP syscall の一連の流れを学べます。`make run-disk-net` でネットワーク付き起動が必要です。
-
-### 09_readdir — ディレクトリ一覧
+### 04_readdir — ディレクトリ一覧
 `sys_readdir(path, buf, max)` でディレクトリのエントリ一覧を取得するサンプルです。
 ファイル名・サイズ・種別（ファイル/ディレクトリ）を表示します。
 → ファイルシステム操作の仕上げとして試してください。
 
-### 10_mutex — Mutex (相互排他)
+### 05_rtos_task — RTOS タスク管理
+T-Kernel ネイティブ API でタスクを作成・起動します。
+優先度スケジューリング（FIFO）とタイムスライス（RR）の両方を実演します。
+
+### 06_rtos_sync — 同期プリミティブ
+セマフォとイベントフラグを使ったタスク間同期を実演します。
+複数タスクが協調して動作するパターンを学べます。
+
+### 07_mutex — Mutex (相互排他)
 `tk_cre_mtx` / `tk_loc_mtx` / `tk_unl_mtx` / `tk_del_mtx` を使って
 2つのタスクが共有カウンタを mutex で保護するサンプルです。
 優先度継承 (TA_INHERIT) や上限プロトコル (TA_CEILING) にも対応しています。
 
-### 11_mailbox — Mailbox (メッセージパッシング)
+### 08_task_ext — タスク補助 API
+`tk_get_tid` / `tk_sus_tsk` / `tk_rsm_tsk` / `tk_rel_wai` /
+`tk_can_wup` / `tk_ter_tsk` を実演します。
+タスクの強制サスペンド・レジューム・終了と待ち解除を確認します。
+
+### 09_mailbox — Mailbox (メッセージパッシング)
 `tk_cre_mbx` / `tk_snd_mbx` / `tk_rcv_mbx` / `tk_del_mbx` を使い、
 タスク間でポインタベースのメッセージを受け渡しするサンプルです。
 ユーザー定義メッセージ構造体の先頭に `PK_MSG` を埋め込む方法を示します。
 
-### 12_msgbuf — Message Buffer (可変長メッセージ)
+### 10_msgbuf — Message Buffer (可変長メッセージ)
 `tk_cre_mbf` / `tk_snd_mbf` / `tk_rcv_mbf` / `tk_del_mbf` を使い、
 バイト列メッセージをバッファ経由でコピー転送するサンプルです。
 mailbox とは異なりメッセージの「中身」がコピーされます。
 
-### 13_mempool — Memory Pool (メモリ管理)
+### 11_rendezvous — ランデブーポート
+`tk_cre_por` / `tk_cal_por` / `tk_acp_por` / `tk_rpl_rdv` / `tk_del_por` を実演します。
+カーラータスクがメッセージを送り、アクセプタタスクが受け取って返答するシナリオです。
+
+### 12_mempool — Memory Pool (メモリ管理)
 可変長プール (`tk_cre_mpl` / `tk_get_mpl` / `tk_rel_mpl` / `tk_del_mpl`) と
 固定長プール (`tk_cre_mpf` / `tk_get_mpf` / `tk_rel_mpf` / `tk_del_mpf`) の
 両方をユーザーバッファで使うサンプルです。
+
+### 13_time — 時刻 API
+`tk_get_tim`（システム時刻取得）と `tk_dly_tsk`（タスク遅延）を実演します。
+`dly_tsk(200)` の前後で経過時間を計測して精度を確認します。
 
 ### 14_cyc_alm — Cyclic/Alarm Handler (時間駆動)
 周期ハンドラ (`tk_cre_cyc` / `tk_sta_cyc` / `tk_stp_cyc` / `tk_del_cyc`) と
 アラームハンドラ (`tk_cre_alm` / `tk_sta_alm` / `tk_del_alm`) の両方を実演します。
 ハンドラはタスク独立文脈で実行されるため、ブロッキング呼び出しは禁止されています。
 
-### 15_task_ext — タスク補助 API
-`tk_get_tid` / `tk_sus_tsk` / `tk_rsm_tsk` / `tk_rel_wai` /
-`tk_can_wup` / `tk_ter_tsk` を実演します。
-タスクの強制サスペンド・レジューム・終了と待ち解除を確認します。
-
-### 16_time — 時刻 API
-`tk_get_tim`（システム時刻取得）と `tk_dly_tsk`（タスク遅延）を実演します。
-`dly_tsk(200)` の前後で経過時間を計測して精度を確認します。
-
-### 17_rendezvous — ランデブーポート
-`tk_cre_por` / `tk_cal_por` / `tk_acp_por` / `tk_rpl_rdv` / `tk_del_por` を実演します。
-カーラータスクがメッセージを送り、アクセプタタスクが受け取って返答するシナリオです。
-
-### 18_ref — Ref API + システム情報
+### 15_ref — Ref API + システム情報
 sem / flg / mtx / mbx / mbf / mpl / mpf / cyc / alm の全 ref 関数と
 `tk_ref_ver`（バージョン情報）・`tk_ref_sys`（システム状態）を実演します。
 
-### 19_misc — 残余 API
+### 16_misc — 残余 API
 `tk_ref_por`（ポート状態参照）・`tk_get_otm`（単調増加稼働時間）・`tk_set_tim`（時刻設定）・
 `tk_dis_dsp` / `tk_ena_dsp`（ディスパッチ禁止/許可）・`tk_rot_rdq`（レディキュー回転）・
 `tk_exd_tsk`（タスク終了+削除）を実演します。
 T-Kernel 2.0 ユーザー空間 API のほぼ全てがこのサンプルで網羅されます。
 
-### 20_multicast — UDP マルチキャスト
+### 17_net_infer — AI 推論 + UDP ネットワーク配信
+センサーデータを AI で分類し、結果を UDP で配信するサンプルです。
+カーネル内蔵の MLP ニューラルネットワーク (`SYS_INFER`) と
+非同期 AI ジョブ (`SYS_AI_SUBMIT` / `SYS_AI_WAIT`)、
+UDP 送受信 (`SYS_UDP_BIND` / `SYS_UDP_SEND` / `SYS_UDP_RECV`) を使います。
+
+### 18_http_get — HTTP GET (TCP クライアント)
+`sys_tcp_connect` / `sys_tcp_write` / `sys_tcp_read` / `sys_tcp_close` を使って
+HTTP/1.0 GET リクエストを 10.0.2.2:80 に送るサンプルです。
+→ TCP syscall の一連の流れを学べます。`make run-disk-net` でネットワーク付き起動が必要です。
+
+### 19_multicast — UDP マルチキャスト
 `sys_udp_join_group` / `sys_udp_leave_group` でマルチキャストグループ (239.1.1.1:4000) に
 参加・脱退するサンプルです。送信タスクが 3 回マルチキャスト送信し、
 ソフトウェアループバックで同一ノード内でも受信できることを確認します。
@@ -144,21 +144,24 @@ make
 
 # 個別ビルド
 make 01_hello/hello.elf
-make 06_net_infer/net_infer.elf
-make 07_stdin_echo/stdin_echo.elf
-make 08_http_get/http_get.elf
-make 09_readdir/readdir.elf
-make 10_mutex/mutex.elf
-make 11_mailbox/mailbox.elf
-make 12_msgbuf/msgbuf.elf
-make 13_mempool/mempool.elf
+make 02_posix_io/posix_io.elf
+make 03_stdin_echo/stdin_echo.elf
+make 04_readdir/readdir.elf
+make 05_rtos_task/rtos_task.elf
+make 06_rtos_sync/rtos_sync.elf
+make 07_mutex/mutex.elf
+make 08_task_ext/task_ext.elf
+make 09_mailbox/mailbox.elf
+make 10_msgbuf/msgbuf.elf
+make 11_rendezvous/rendezvous.elf
+make 12_mempool/mempool.elf
+make 13_time/time.elf
 make 14_cyc_alm/cyc_alm.elf
-make 15_task_ext/task_ext.elf
-make 16_time/time.elf
-make 17_rendezvous/rendezvous.elf
-make 18_ref/ref.elf
-make 19_misc/misc.elf
-make 20_multicast/multicast.elf
+make 15_ref/ref.elf
+make 16_misc/misc.elf
+make 17_net_infer/net_infer.elf
+make 18_http_get/http_get.elf
+make 19_multicast/multicast.elf
 ```
 
 **必要なツール:**
