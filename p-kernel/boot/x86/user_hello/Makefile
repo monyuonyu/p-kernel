@@ -9,17 +9,23 @@ CFLAGS  = -m32 -ffreestanding -fno-stack-protector -fno-pic \
           -fcf-protection=none -nostdlib -O1 -std=gnu11 \
           -Wall -Wextra
 
-TARGET  = hello.elf
+TARGETS = hello.elf demo.elf
 
-all: $(TARGET)
+all: $(TARGETS)
 
 hello.o: hello.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TARGET): hello.o user.ld
+hello.elf: hello.o user.ld
+	$(LD) -m elf_i386 -static -nostdlib -T user.ld -o $@ $<
+
+demo.o: demo.c plibc.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+demo.elf: demo.o user.ld
 	$(LD) -m elf_i386 -static -nostdlib -T user.ld -o $@ $<
 
 clean:
-	rm -f hello.o $(TARGET)
+	rm -f hello.o hello.elf demo.o demo.elf
 
 .PHONY: all clean

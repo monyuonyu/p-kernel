@@ -203,6 +203,16 @@ EXPORT void knl_timer_handler( void )
 		}
 	}
 
+	/* Round-robin time-slice management */
+	if ( knl_ctxtsk != NULL && knl_ctxtsk->sched_policy == SCHED_RR ) {
+		if ( knl_ctxtsk->remaining_slice > 0 )
+			knl_ctxtsk->remaining_slice--;
+		if ( knl_ctxtsk->remaining_slice == 0 ) {
+			knl_ctxtsk->remaining_slice = knl_ctxtsk->time_slice;
+			knl_rotate_ready_queue_run();
+		}
+	}
+
 	END_CRITICAL_SECTION;
 
 	knl_end_of_hw_timer_interrupt();		/* Clear timer interrupt */

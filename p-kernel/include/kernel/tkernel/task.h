@@ -127,7 +127,19 @@ struct task_control_block {
 #if USE_OBJECT_NAME
 	UB	name[OBJECT_NAME_LENGTH];	/* name */
 #endif
+
+	/* --- p-kernel scheduler extension --- */
+	UB	sched_policy;		/* SCHED_FIFO or SCHED_RR         */
+	UH	time_slice;		/* time slice in ticks            */
+	UH	remaining_slice;	/* ticks remaining in this slice  */
 };
+
+/*
+ * Scheduling policy (p-kernel extension)
+ */
+#define SCHED_FIFO          0   /* priority preemptive only (default) */
+#define SCHED_RR            1   /* round-robin within same priority   */
+#define DEFAULT_TIME_SLICE  10  /* 10 ticks × 10ms = 100ms per slice  */
 
 /*
  * Task dispatch disable state

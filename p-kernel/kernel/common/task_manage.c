@@ -119,6 +119,11 @@ SYSCALL ID tk_cre_tsk_impl P1( CONST T_CTSK *pk_ctsk )
 	tcb->task      = pk_ctsk->task;
 	tcb->ipriority = (UB)int_priority(pk_ctsk->itskpri);
 	tcb->sstksz    = sstksz;
+
+	/* p-kernel scheduler extension: default FIFO, 10-tick slice */
+	tcb->sched_policy    = SCHED_FIFO;
+	tcb->time_slice      = DEFAULT_TIME_SLICE;
+	tcb->remaining_slice = DEFAULT_TIME_SLICE;
 #if USE_OBJECT_NAME
 	if ( (pk_ctsk->tskatr & TA_DSNAME) != 0 ) {
 		strncpy((char*)tcb->name, (char*)pk_ctsk->dsname, OBJECT_NAME_LENGTH);
