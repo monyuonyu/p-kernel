@@ -17,6 +17,7 @@
 #include "drpc.h"
 #include "swim.h"
 #include "kdds.h"
+#include "heal.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -124,6 +125,10 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  topic list               - トピック一覧表示\r\n");
     sout("  topic pub <name> <data>  - トピックへ発行\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Self-Healing commands:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  heal list                - ガードタスク一覧表示\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -324,6 +329,18 @@ static void cmd_topic(const char *arg)
     }
 
     sout("Usage: topic list | topic pub <name> <data>\r\n");
+}
+
+static void cmd_heal(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (str_starts(arg, "list") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        heal_list();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    sout("Usage: heal list\r\n");
 }
 
 static void cmd_dtask(const char *arg)
@@ -1222,6 +1239,8 @@ static void execute(const char *cmd)
         { cmd_mv(cmd + 2); return; }
     if (cmd[0]=='t' && cmd[1]=='o' && cmd[2]=='p' && cmd[3]=='i' && cmd[4]=='c')
         { cmd_topic(cmd + 5); return; }
+    if (cmd[0]=='h' && cmd[1]=='e' && cmd[2]=='a' && cmd[3]=='l')
+        { cmd_heal(cmd + 4); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

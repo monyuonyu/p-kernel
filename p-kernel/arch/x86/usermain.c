@@ -12,6 +12,7 @@
 #include "drpc.h"
 #include "swim.h"
 #include "kdds.h"
+#include "heal.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -122,6 +123,9 @@ EXPORT INT usermain(void)
             UW nip = ((UW)mac[5] << 24) | 0x0000010AUL;
             drpc_init(nid, nip);
             swim_init();
+            heal_init();
+            /* sensor_pub タスクをガード登録: 通常はノード 0 で動作 */
+            heal_register("sensor_pub", 0x0003, 0, 5);
             if (create_task(drpc_task, DRPC_PRIORITY, DRPC_STACK) < E_OK)
                 tm_putstring((UB *)"[ERR] drpc task\r\n");
             else

@@ -60,6 +60,7 @@ ARCH_C_SRCS = \
     drpc.c \
     swim.c \
     kdds.c \
+    heal.c \
     tensor.c \
     ai_job.c \
     pipeline.c \

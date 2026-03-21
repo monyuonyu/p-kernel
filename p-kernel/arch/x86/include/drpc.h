@@ -137,3 +137,9 @@ ER dtk_sig_sem(UW gsemid, INT cnt);
  * sensor_packed = SENSOR_PACK(temp_q8, hum_q8, press_q8, light_q8)
  * Returns E_OK and sets *class_out to 0/1/2. */
 ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);
+
+/*
+ * heal.c から呼ぶ公開ラッパー。
+ * DEAD ノードの代わりにローカルで rfunc タスクを起動する。
+ */
+W drpc_local_restart(UH func_id, INT pri, UB caller_node);

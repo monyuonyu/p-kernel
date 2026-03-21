@@ -12,6 +12,7 @@
  */
 
 #include "swim.h"
+#include "heal.h"
 #include "netstack.h"
 #include "kernel.h"
 
@@ -341,6 +342,7 @@ void swim_task(INT stacd, void *exinf)
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> DEAD\r\n");
             gossip_add(target, DNODE_DEAD);
+            heal_on_node_dead(target);
         }
     }
 }

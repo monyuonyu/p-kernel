@@ -36,6 +36,8 @@
 #include "netstack.h"
 #include "kernel.h"
 #include "ai_kernel.h"
+#include "kdds.h"
+#include "heal.h"
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -185,13 +187,56 @@ static void remote_counter(INT stacd, void *exinf)
     tk_exd_tsk();
 }
 
+/*
+ * sensor_pub タスク (rfunc 0x0003)
+ * K-DDS トピック "sensor/watchdog" へ 1 秒ごとに alive メッセージを発行する。
+ * heal.c が DEAD ノードの代わりに起動する長期常駐タスク。
+ */
+static void remote_sensor_pub(INT stacd, void *exinf)
+{
+    (void)exinf;
+    dp_puts("\r\n[sensor_pub] started on node ");
+    dp_putdec((UW)drpc_my_node);
+    dp_puts(" (took over from node ");
+    dp_putdec((UW)stacd); dp_puts(")\r\n");
+
+    W h = kdds_open("sensor/watchdog", KDDS_QOS_LATEST_ONLY);
+    if (h < 0) {
+        dp_puts("[sensor_pub] kdds_open failed\r\n");
+        tk_exd_tsk();
+    }
+
+    UW seq = 0;
+    for (;;) {
+        seq++;
+        /* "alive:NNNN" メッセージを発行 */
+        char msg[24];
+        const char *pfx = "alive:";
+        INT mi = 0;
+        for (; pfx[mi - (mi > 5 ? 6 : 0)] && mi < 6; mi++) msg[mi] = pfx[mi];
+        /* seq を 10 進で追記 */
+        char nbuf[12]; INT ni = 11; nbuf[ni] = '\0';
+        UW sv = seq;
+        if (sv == 0) { nbuf[--ni] = '0'; } else {
+            while (sv > 0 && ni > 0) { nbuf[--ni] = (char)('0' + sv % 10); sv /= 10; }
+        }
+        for (; nbuf[ni]; ni++) msg[mi++] = nbuf[ni];
+        msg[mi] = '\0';
+
+        kdds_pub(h, msg, mi + 1);
+        dp_puts("[sensor_pub] pub \""); dp_puts(msg); dp_puts("\"\r\n");
+        tk_dly_tsk(1000);
+    }
+}
+
 typedef void (*RTASK_FN)(INT, void *);
 typedef struct { UH id; RTASK_FN fn; } RFUNC_ENTRY;
 
 static const RFUNC_ENTRY rfunc_table[] = {
-    { 0x0001, remote_hello   },
-    { 0x0002, remote_counter },
-    { 0,      NULL           }
+    { 0x0001, remote_hello      },
+    { 0x0002, remote_counter    },
+    { 0x0003, remote_sensor_pub },
+    { 0,      NULL              }
 };
 
 /* ------------------------------------------------------------------ */
@@ -226,6 +271,15 @@ static W drpc_local_cre_tsk(UH func_id, INT pri, UB caller_node)
     if (tid < E_OK) return (W)tid;
     tk_sta_tsk(tid, (INT)caller_node);
     return (W)tid;
+}
+
+/*
+ * drpc_local_restart — heal.c から呼ぶ公開ラッパー
+ * DEAD ノードの代わりにローカルでタスクを再起動する。
+ */
+W drpc_local_restart(UH func_id, INT pri, UB caller_node)
+{
+    return drpc_local_cre_tsk(func_id, pri, caller_node);
 }
 
 /* ------------------------------------------------------------------ */
@@ -524,6 +578,7 @@ void drpc_task(INT stacd, void *exinf)
                 dp_puts("[drpc] node "); dp_putdec(n);
                 dp_puts(" DEAD — cancelling pending calls\r\n");
                 pending_cancel_node(n);
+                heal_on_node_dead(n);
             }
         }
     }
