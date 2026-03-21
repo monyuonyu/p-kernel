@@ -28,7 +28,8 @@ p-kernel/
 │   ├── 16_time/
 │   ├── 17_rendezvous/
 │   ├── 18_ref/
-│   └── 19_misc/
+│   ├── 19_misc/
+│   └── 20_multicast/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -132,6 +133,11 @@ sem / flg / mtx / mbx / mbf / mpl / mpf / cyc / alm の全 ref 関数と
 `tk_exd_tsk`（タスク終了+削除）を実演します。
 T-Kernel 2.0 ユーザー空間 API のほぼ全てがこのサンプルで網羅されます。
 
+### 20_multicast — UDP マルチキャスト
+`sys_udp_join_group` / `sys_udp_leave_group` でマルチキャストグループ (239.1.1.1:4000) に
+参加・脱退するサンプルです。送信タスクが 3 回マルチキャスト送信し、
+ソフトウェアループバックで同一ノード内でも受信できることを確認します。
+
 ---
 
 ## ビルド方法 (x86)
@@ -158,6 +164,7 @@ make 16_time/time.elf
 make 17_rendezvous/rendezvous.elf
 make 18_ref/ref.elf
 make 19_misc/misc.elf
+make 20_multicast/multicast.elf
 ```
 
 **必要なツール:**
@@ -192,6 +199,14 @@ p-kernel> exec time.elf
 p-kernel> exec rendezvous.elf
 p-kernel> exec ref.elf
 p-kernel> exec misc.elf
+p-kernel> exec multicast.elf
+```
+
+`/etc/init.rc` を disk.img に置くと、シェル起動時に自動実行されます:
+
+```
+# /etc/init.rc
+exec multicast.elf
 ```
 
 ---
@@ -232,7 +247,9 @@ T-Kernel ネイティブ API (0x100+):
 
 ネットワーク API (0x200+):
   sys_udp_bind, sys_udp_send, sys_udp_recv
+  sys_udp_join_group, sys_udp_leave_group
   sys_tcp_connect, sys_tcp_write, sys_tcp_read, sys_tcp_close
+  sys_mount, sys_umount
 
 AI 推論 API (0x210+):
   sys_infer, sys_ai_submit, sys_ai_wait
@@ -343,6 +360,10 @@ AI 推論 API (0x210+):
 | 0x1C1  | SYS_TK_DIS_DSP   | ディスパッチ禁止            |
 | 0x1C2  | SYS_TK_ENA_DSP   | ディスパッチ許可            |
 | 0x1C3  | SYS_TK_ROT_RDQ   | レディキュー回転            |
+| 0x207  | SYS_UDP_JOIN_GROUP | マルチキャストグループ参加  |
+| 0x208  | SYS_UDP_LEAVE_GROUP| マルチキャストグループ脱退  |
+| 0x300  | SYS_MOUNT        | マウント状態確認            |
+| 0x301  | SYS_UMOUNT       | アンマウント（ダミー）      |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

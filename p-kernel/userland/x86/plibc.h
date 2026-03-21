@@ -342,6 +342,32 @@ static inline int sys_udp_send(PK_SYS_UDP_SEND *pk)
 static inline int sys_udp_recv(PK_SYS_UDP_RECV *pk)
     { return __sc(0x202, (int)(long)pk, 0, 0); }
 
+/* Join a UDP multicast group on a previously bound port.
+ * Packets sent to mcast_ip:port will be delivered to this socket.
+ * Software loopback: packets sent locally to the group arrive too.
+ * Returns 0 on success, -1 if port not bound.                       */
+static inline int sys_udp_join_group(unsigned short port,
+                                      unsigned int   mcast_ip)
+    { return __sc(0x207, (int)port, (int)mcast_ip, 0); }
+
+/* Leave a UDP multicast group. Returns 0 on success.               */
+static inline int sys_udp_leave_group(unsigned short port,
+                                       unsigned int   mcast_ip)
+    { return __sc(0x208, (int)port, (int)mcast_ip, 0); }
+
+/* ================================================================= */
+/* Filesystem extended API (mount)                                    */
+/* ================================================================= */
+
+/* Check if VFS (FAT32/IDE) is mounted and ready.
+ * Returns 0 if ready, -1 if not.                                    */
+static inline int sys_mount(void)
+    { return __sc(0x300, 0, 0, 0); }
+
+/* Unmount (no-op for single root mount — future use).              */
+static inline int sys_umount(const char *path)
+    { return __sc(0x301, (int)(long)path, 0, 0); }
+
 /* ================================================================= */
 /* Filesystem API (readdir)                                           */
 /* ================================================================= */

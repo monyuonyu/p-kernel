@@ -53,6 +53,7 @@ EXPORT INT usermain(void)
     gdt_init_userspace();   /* ring3 GDT entries + 64-bit TSS         */
     syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
     vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */
+    /* NOTE: run_initrc() called after all tasks start (below) */
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();

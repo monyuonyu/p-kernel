@@ -180,9 +180,17 @@ typedef void (*udp_recv_fn)(UW src_ip, UH src_port, const UB *data, UH len);
 /* Bind a local UDP port to a callback. Returns 0 on success. */
 INT udp_bind(UH port, udp_recv_fn fn);
 
+/* Join / leave a UDP multicast group on a previously bound port.
+ * join_group: marks socket so it receives packets to mcast_ip:port.
+ * leave_group: reverts to unicast-only. Returns 0 on success, -1 if not bound. */
+INT udp_join_group(UH port, UW mcast_ip);
+INT udp_leave_group(UH port, UW mcast_ip);
+
 /*
  * Send a UDP datagram.
- * Returns 0 on success, -1 if ARP not resolved (ARP request sent, retry).
+ * For unicast: returns 0 on success, -1 if ARP not resolved.
+ * For multicast (224-239.x.x.x): always succeeds; also does software loopback
+ * to any local socket that joined the same group.
  */
 INT udp_send(UW dst_ip, UH src_port, UH dst_port, const UB *data, UH data_len);
 

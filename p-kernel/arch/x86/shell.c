@@ -116,6 +116,7 @@ static void cmd_help(void)
     sout("  cp <src> <dst>     - copy file\r\n");
     sout("  mv <src> <dst>     - rename/move file\r\n");
     sout("  exec <file>        - load and run ELF32 binary\r\n");
+    sout("  mount              - show mount table\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -794,6 +795,79 @@ static void cmd_cp(const char *arg)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
+/* ------------------------------------------------------------------ */
+/* /etc/init.rc — boot-time script (called from shell_task at startup) */
+/* ------------------------------------------------------------------ */
+static void run_initrc(void)
+{
+    INT fd = vfs_open("/etc/init.rc");
+    if (fd < 0) return;
+
+    sout("[init.rc] /etc/init.rc found\r\n");
+
+    static UB rc_buf[2048];
+    INT n = vfs_read(fd, rc_buf, sizeof(rc_buf) - 1);
+    vfs_close(fd);
+    if (n <= 0) return;
+    rc_buf[n] = '\0';
+
+    INT pos = 0;
+    while (pos < n) {
+        INT start = pos;
+        while (pos < n && rc_buf[pos] != '\n' && rc_buf[pos] != '\r') pos++;
+        INT end = pos;
+        while (pos < n && (rc_buf[pos] == '\n' || rc_buf[pos] == '\r')) pos++;
+        rc_buf[end] = '\0';
+
+        const UB *line = &rc_buf[start];
+        while (*line == ' ' || *line == '\t') line++;
+        if (*line == '\0' || *line == '#') continue;
+
+        /* exec <file.elf> */
+        if (line[0]=='e' && line[1]=='x' && line[2]=='e' &&
+            line[3]=='c' && line[4]==' ') {
+            const UB *path = line + 5;
+            while (*path == ' ') path++;
+            sout("[init.rc] exec: ");
+            sout((const char *)path);
+            sout("\r\n");
+
+            stdin_activate();
+            ID tid = elf_exec((const char *)path);
+            if (tid < E_OK) {
+                stdin_deactivate();
+                sout("[init.rc] exec failed\r\n");
+                continue;
+            }
+            ID esem = stdin_get_exit_sem();
+            tk_wai_sem(esem, 1, 30000);
+            stdin_deactivate();
+
+        /* mkdir <path> */
+        } else if (line[0]=='m' && line[1]=='k' && line[2]=='d' &&
+                   line[3]=='i' && line[4]=='r' && line[5]==' ') {
+            const UB *path = line + 6;
+            while (*path == ' ') path++;
+            vfs_mkdir((const char *)path);
+        }
+    }
+
+    sout("[init.rc] done\r\n");
+}
+
+static void cmd_mount(void)
+{
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("Mount table:\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  /  ->  FAT32 / IDE  [");
+    sout(vfs_ready ? "ready" : "not ready");
+    sout("]\r\n");
+    if (vfs_ready) {
+        sout("  init.rc: /etc/init.rc  (exec at boot)\r\n");
+    }
+}
+
 static void cmd_mv(const char *arg)
 {
     while (*arg == ' ') arg++;
@@ -1101,7 +1175,9 @@ static void execute(const char *cmd)
         { cmd_mv(cmd + 2); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
+    else if (str_eq(cmd, "mount"))  cmd_mount();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();
+    else if (str_eq(cmd, "umount")) sout("umount: single root mount — nothing to unmount\r\n");
     else if (str_eq(cmd, "ver"))    cmd_ver();
     else if (str_eq(cmd, "mem"))    cmd_mem();
     else if (str_eq(cmd, "ps"))     cmd_ps();
@@ -1135,6 +1211,9 @@ void shell_task(INT stacd, void *exinf)
     sout("  +-----------------------------------------+\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  Type 'help' for available commands.\r\n\r\n");
+
+    /* Run /etc/init.rc now that all tasks and VFS are ready */
+    run_initrc();
 
     char line[SHELL_LINE_MAX];
 

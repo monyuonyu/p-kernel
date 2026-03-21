@@ -159,6 +159,20 @@ static UB tx_buf[1514];
 static const UB BCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const UB ZERO_MAC[6]  = {0,0,0,0,0,0};
 
+/* Multicast helper: is the IP in 224.0.0.0/4 range?
+ * IP4(a,b,c,d) stores 'a' in the lowest byte, so check (ip & 0xFF). */
+#define is_mcast(ip)  (((ip) & 0xFFu) >= 224u && ((ip) & 0xFFu) <= 239u)
+
+/* Build Ethernet multicast MAC from IP4 multicast address.
+ * RFC 1112: 01:00:5e + low 23 bits of IP (in network byte order b.c.d). */
+static void make_mcast_mac(UW mcast_ip, UB mac[6])
+{
+    mac[0] = 0x01; mac[1] = 0x00; mac[2] = 0x5E;
+    mac[3] = (UB)((mcast_ip >>  8) & 0x7Fu);   /* 2nd octet, bit23 cleared */
+    mac[4] = (UB)((mcast_ip >> 16) & 0xFFu);   /* 3rd octet */
+    mac[5] = (UB)((mcast_ip >> 24) & 0xFFu);   /* 4th octet */
+}
+
 /* ------------------------------------------------------------------ */
 /* ARP                                                                 */
 /* ------------------------------------------------------------------ */
@@ -268,12 +282,17 @@ static UW next_hop(UW dst_ip)
  */
 static INT ip_send(UW dst_ip, UB proto, const UB *payload, UH plen)
 {
-    UW  hop = next_hop(dst_ip);
     UB  dst_mac[6];
 
-    if (!arp_lookup(hop, dst_mac)) {
-        arp_request(hop);
-        return -1;              /* ARP pending — caller should retry */
+    if (is_mcast(dst_ip)) {
+        /* Multicast: derive Ethernet MAC directly — no ARP needed */
+        make_mcast_mac(dst_ip, dst_mac);
+    } else {
+        UW  hop = next_hop(dst_ip);
+        if (!arp_lookup(hop, dst_mac)) {
+            arp_request(hop);
+            return -1;          /* ARP pending — caller should retry */
+        }
     }
 
     ETH_HDR *eth = (ETH_HDR *)tx_buf;
@@ -287,7 +306,7 @@ static INT ip_send(UW dst_ip, UB proto, const UB *payload, UH plen)
     ip->len   = htons((UH)(20 + plen));
     ip->id    = htons(ip_id_ctr++);
     ip->frag  = 0;
-    ip->ttl   = 64;
+    ip->ttl   = is_mcast(dst_ip) ? 1 : 64;   /* TTL=1 for link-local mcast */
     ip->proto = proto;
     ip->csum  = 0;
     ip->src   = NET_MY_IP;
@@ -592,6 +611,7 @@ void tcp_free(TCP_CONN *c)
 
 static struct {
     UH          port;
+    UW          mcast_ip;   /* 0 = unicast-only; != 0 = multicast group joined */
     udp_recv_fn fn;
     UB          active;
 } udp_socks[UDP_MAX_SOCKS];
@@ -600,9 +620,36 @@ INT udp_bind(UH port, udp_recv_fn fn)
 {
     for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
         if (!udp_socks[i].active) {
-            udp_socks[i].port   = port;
-            udp_socks[i].fn     = fn;
-            udp_socks[i].active = 1;
+            udp_socks[i].port     = port;
+            udp_socks[i].mcast_ip = 0;
+            udp_socks[i].fn       = fn;
+            udp_socks[i].active   = 1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Join a multicast group on a previously bound port.
+ * Sets mcast_ip so udp_input only dispatches matching multicast packets. */
+INT udp_join_group(UH port, UW mcast_ip)
+{
+    for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
+        if (udp_socks[i].active && udp_socks[i].port == port) {
+            udp_socks[i].mcast_ip = mcast_ip;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Leave multicast group (revert to unicast-only for this socket). */
+INT udp_leave_group(UH port, UW mcast_ip)
+{
+    (void)mcast_ip;
+    for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
+        if (udp_socks[i].active && udp_socks[i].port == port) {
+            udp_socks[i].mcast_ip = 0;
             return 0;
         }
     }
@@ -625,10 +672,11 @@ static void udp_input(const IP_HDR *ip, const UB *seg, INT seg_len)
     net_rx_udp++;
 
     for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
-        if (udp_socks[i].active && udp_socks[i].port == dst_port) {
-            udp_socks[i].fn(ip->src, src_port, data, data_len);
-            return;
-        }
+        if (!udp_socks[i].active || udp_socks[i].port != dst_port) continue;
+        /* If socket joined a multicast group, only accept packets to that group */
+        if (udp_socks[i].mcast_ip != 0 && udp_socks[i].mcast_ip != ip->dst) continue;
+        udp_socks[i].fn(ip->src, src_port, data, data_len);
+        return;
     }
 }
 
@@ -650,6 +698,18 @@ INT udp_send(UW dst_ip, UH src_port, UH dst_port,
 
     INT r = ip_send(dst_ip, IP_PROTO_UDP, udp_buf, udp_len);
     if (r == 0) net_tx_udp++;
+
+    /* Multicast software loopback: deliver locally to any joined socket */
+    if (is_mcast(dst_ip)) {
+        for (INT i = 0; i < UDP_MAX_SOCKS; i++) {
+            if (udp_socks[i].active       &&
+                udp_socks[i].port     == dst_port &&
+                udp_socks[i].mcast_ip == dst_ip) {
+                udp_socks[i].fn(NET_MY_IP, src_port, data, data_len);
+            }
+        }
+        return 0;   /* multicast always succeeds locally */
+    }
     return r;
 }
 
@@ -907,8 +967,8 @@ static void ip_input(const UB *frame, INT len)
         return;
     }
 
-    /* Only accept packets addressed to us or broadcast */
-    if (ip->dst != NET_MY_IP && ip->dst != NET_BCAST) return;
+    /* Only accept packets addressed to us, broadcast, or joined multicast */
+    if (ip->dst != NET_MY_IP && ip->dst != NET_BCAST && !is_mcast(ip->dst)) return;
 
     UH  ip_total = ntohs(ip->len);
     INT payload_off = (INT)(sizeof(ETH_HDR) + 20);

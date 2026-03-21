@@ -117,13 +117,19 @@
  *    0x1A1  SYS_TK_REF_SYS  — reference system state (arg0=PK_RSYS*)
  *
  *  Network syscalls (0x200+):
- *    0x200  SYS_UDP_BIND    — bind local UDP port (arg0=port)
- *    0x201  SYS_UDP_SEND    — send UDP datagram (arg0=PK_UDP_SEND*)
- *    0x202  SYS_UDP_RECV    — receive UDP datagram (arg0=PK_UDP_RECV*)
- *    0x203  SYS_TCP_CONNECT — TCP connect (arg0=PK_TCP_CONNECT*)
- *    0x204  SYS_TCP_WRITE   — TCP send (arg0=handle, arg1=buf, arg2=len)
- *    0x205  SYS_TCP_READ    — TCP receive (arg0=PK_TCP_READ*)
- *    0x206  SYS_TCP_CLOSE   — TCP close+free (arg0=handle)
+ *    0x200  SYS_UDP_BIND       — bind local UDP port (arg0=port)
+ *    0x201  SYS_UDP_SEND       — send UDP datagram (arg0=PK_UDP_SEND*)
+ *    0x202  SYS_UDP_RECV       — receive UDP datagram (arg0=PK_UDP_RECV*)
+ *    0x203  SYS_TCP_CONNECT    — TCP connect (arg0=PK_TCP_CONNECT*)
+ *    0x204  SYS_TCP_WRITE      — TCP send (arg0=handle, arg1=buf, arg2=len)
+ *    0x205  SYS_TCP_READ       — TCP receive (arg0=PK_TCP_READ*)
+ *    0x206  SYS_TCP_CLOSE      — TCP close+free (arg0=handle)
+ *    0x207  SYS_UDP_JOIN_GROUP — join multicast group (arg0=port, arg1=mcast_ip)
+ *    0x208  SYS_UDP_LEAVE_GROUP— leave multicast group (arg0=port, arg1=mcast_ip)
+ *
+ *  Filesystem extended (0x300+):
+ *    0x300  SYS_MOUNT          — mount filesystem (arg0="dev", arg1="path"; 0=show table)
+ *    0x301  SYS_UMOUNT         — unmount path (arg0="path")
  *
  *  AI syscalls (0x210+):
  *    0x210  SYS_INFER       — local MLP inference (arg0=packed sensor)
@@ -265,13 +271,21 @@
 /* ----------------------------------------------------------------- */
 /* Network syscall numbers (p-kernel extension)                      */
 /* ----------------------------------------------------------------- */
-#define SYS_UDP_BIND    0x200
-#define SYS_UDP_SEND    0x201
-#define SYS_UDP_RECV    0x202
-#define SYS_TCP_CONNECT 0x203
-#define SYS_TCP_WRITE   0x204
-#define SYS_TCP_READ    0x205
-#define SYS_TCP_CLOSE   0x206
+#define SYS_UDP_BIND        0x200
+#define SYS_UDP_SEND        0x201
+#define SYS_UDP_RECV        0x202
+#define SYS_TCP_CONNECT     0x203
+#define SYS_TCP_WRITE       0x204
+#define SYS_TCP_READ        0x205
+#define SYS_TCP_CLOSE       0x206
+#define SYS_UDP_JOIN_GROUP  0x207
+#define SYS_UDP_LEAVE_GROUP 0x208
+
+/* ----------------------------------------------------------------- */
+/* Filesystem extended syscall numbers                               */
+/* ----------------------------------------------------------------- */
+#define SYS_MOUNT       0x300
+#define SYS_UMOUNT      0x301
 
 /* ----------------------------------------------------------------- */
 /* AI syscall numbers (p-kernel extension)                           */

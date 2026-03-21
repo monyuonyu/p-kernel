@@ -205,6 +205,7 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/17_rendezvous/rendezvous.elf  ::rendezvous.elf
 	mcopy -i $@ $(USERLAND_X86)/18_ref/ref.elf                 ::ref.elf
 	mcopy -i $@ $(USERLAND_X86)/19_misc/misc.elf               ::misc.elf
+	mcopy -i $@ $(USERLAND_X86)/20_multicast/multicast.elf     ::multicast.elf
 
 disk: $(DISK_IMG)
 

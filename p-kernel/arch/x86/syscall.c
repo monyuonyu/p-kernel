@@ -819,6 +819,42 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         return 0;
     }
 
+    case SYS_UDP_JOIN_GROUP: {
+        /* arg0 = port, arg1 = mcast_ip */
+        UH port     = (UH)(UW)arg0;
+        UW mcast_ip = (UW)arg1;
+        /* Find the bound slot and record mcast membership */
+        INT slot = -1;
+        for (INT i = 0; i < UDP_BIND_MAX; i++) {
+            if (usr_udp[i].in_use && usr_udp[i].port == port) { slot = i; break; }
+        }
+        if (slot < 0) return -1;
+        return (W)udp_join_group(port, mcast_ip);
+    }
+
+    case SYS_UDP_LEAVE_GROUP: {
+        /* arg0 = port, arg1 = mcast_ip */
+        UH port     = (UH)(UW)arg0;
+        UW mcast_ip = (UW)arg1;
+        return (W)udp_leave_group(port, mcast_ip);
+    }
+
+    /* ------------------------------------------------------------- */
+    /* Filesystem extended                                           */
+    /* ------------------------------------------------------------- */
+
+    case SYS_MOUNT: {
+        /* arg0 = device path (NULL = show mount table), arg1 = mount path */
+        /* Currently only "/" on FAT32/IDE is supported.
+         * Returns 0 if VFS is ready, -1 if not. */
+        return vfs_ready ? 0 : -1;
+    }
+
+    case SYS_UMOUNT: {
+        /* arg0 = path — no-op for now (single root mount) */
+        return 0;
+    }
+
     /* ------------------------------------------------------------- */
     /* T-Kernel native: mutex                                       */
     /* ------------------------------------------------------------- */
