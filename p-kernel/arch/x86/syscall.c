@@ -819,6 +819,206 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         return 0;
     }
 
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: mutex                                       */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_MTX: {
+        /* arg0 = PK_CRE_MTX* */
+        PK_CRE_MTX *upk = (PK_CRE_MTX *)(UW)arg0;
+        if (!upk) return -1;
+        T_CMTX pk;
+        pk.exinf   = NULL;
+        pk.mtxatr  = (ATR)upk->mtxatr;
+        pk.ceilpri = (PRI)upk->ceilpri;
+        return (W)tk_cre_mtx(&pk);
+    }
+
+    case SYS_TK_DEL_MTX:
+        return (W)tk_del_mtx((ID)arg0);
+
+    case SYS_TK_LOC_MTX:
+        /* arg0=mtxid, arg1=tmout_ms */
+        return (W)tk_loc_mtx((ID)arg0, (TMO)arg1);
+
+    case SYS_TK_UNL_MTX:
+        return (W)tk_unl_mtx((ID)arg0);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: mailbox                                      */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_MBX: {
+        /* arg0 = mbxatr (TA_TFIFO=0, TA_TPRI=1, TA_MPRI=2) */
+        T_CMBX pk;
+        pk.exinf  = NULL;
+        pk.mbxatr = (ATR)arg0;
+        return (W)tk_cre_mbx(&pk);
+    }
+
+    case SYS_TK_DEL_MBX:
+        return (W)tk_del_mbx((ID)arg0);
+
+    case SYS_TK_SND_MBX:
+        /* arg0=mbxid, arg1=T_MSG* */
+        return (W)tk_snd_mbx((ID)arg0, (T_MSG *)(UW)arg1);
+
+    case SYS_TK_RCV_MBX: {
+        /* arg0=mbxid, arg1=T_MSG** (out), arg2=tmout_ms */
+        T_MSG *msg = NULL;
+        ER er = tk_rcv_mbx((ID)arg0, &msg, (TMO)arg2);
+        if (er < E_OK) return (W)er;
+        *(T_MSG **)(UW)arg1 = msg;
+        return 0;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: message buffer                               */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_MBF: {
+        /* arg0 = PK_CRE_MBF* */
+        PK_CRE_MBF *upk = (PK_CRE_MBF *)(UW)arg0;
+        if (!upk) return -1;
+        T_CMBF pk;
+        pk.exinf  = NULL;
+        pk.mbfatr = (ATR)upk->mbfatr | TA_USERBUF;
+        pk.bufsz  = (SZ)upk->bufsz;
+        pk.maxmsz = (INT)upk->maxmsz;
+        pk.bufptr = (void *)(UW)upk->buf_ptr;
+        return (W)tk_cre_mbf(&pk);
+    }
+
+    case SYS_TK_DEL_MBF:
+        return (W)tk_del_mbf((ID)arg0);
+
+    case SYS_TK_SND_MBF: {
+        /* arg0 = PK_SND_MBF* (mbfid, msg_ptr, msgsz, tmout) */
+        PK_SND_MBF *upk = (PK_SND_MBF *)(UW)arg0;
+        if (!upk) return -1;
+        return (W)tk_snd_mbf((ID)upk->mbfid,
+                               (void *)(UW)upk->msg_ptr,
+                               (INT)upk->msgsz, (TMO)upk->tmout);
+    }
+
+    case SYS_TK_RCV_MBF:
+        /* arg0=mbfid, arg1=buf_ptr, arg2=tmout_ms — returns received size */
+        return (W)tk_rcv_mbf((ID)arg0, (void *)(UW)arg1, (TMO)arg2);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: variable memory pool                         */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_MPL: {
+        /* arg0 = PK_CRE_MPL* */
+        PK_CRE_MPL *upk = (PK_CRE_MPL *)(UW)arg0;
+        if (!upk) return -1;
+        T_CMPL pk;
+        pk.exinf  = NULL;
+        pk.mplatr = (ATR)upk->mplatr | TA_USERBUF;
+        pk.mplsz  = (SZ)upk->mplsz;
+        pk.bufptr = (void *)(UW)upk->buf_ptr;
+        return (W)tk_cre_mpl(&pk);
+    }
+
+    case SYS_TK_DEL_MPL:
+        return (W)tk_del_mpl((ID)arg0);
+
+    case SYS_TK_GET_MPL: {
+        /* arg0=mplid, arg1=blksz, arg2=tmout_ms — returns block ptr or err */
+        void *blk = NULL;
+        ER er = tk_get_mpl((ID)arg0, (SZ)arg1, &blk, (TMO)arg2);
+        if (er < E_OK) return (W)er;
+        return (W)(UW)blk;
+    }
+
+    case SYS_TK_REL_MPL:
+        /* arg0=mplid, arg1=blk_ptr */
+        return (W)tk_rel_mpl((ID)arg0, (void *)(UW)arg1);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: fixed memory pool                            */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_MPF: {
+        /* arg0 = PK_CRE_MPF* */
+        PK_CRE_MPF *upk = (PK_CRE_MPF *)(UW)arg0;
+        if (!upk) return -1;
+        T_CMPF pk;
+        pk.exinf  = NULL;
+        pk.mpfatr = (ATR)upk->mpfatr | TA_USERBUF;
+        pk.mpfcnt = (SZ)upk->mpfcnt;
+        pk.blfsz  = (SZ)upk->blfsz;
+        pk.bufptr = (void *)(UW)upk->buf_ptr;
+        return (W)tk_cre_mpf(&pk);
+    }
+
+    case SYS_TK_DEL_MPF:
+        return (W)tk_del_mpf((ID)arg0);
+
+    case SYS_TK_GET_MPF: {
+        /* arg0=mpfid, arg1=tmout_ms — returns block ptr or err */
+        void *blf = NULL;
+        ER er = tk_get_mpf((ID)arg0, &blf, (TMO)arg1);
+        if (er < E_OK) return (W)er;
+        return (W)(UW)blf;
+    }
+
+    case SYS_TK_REL_MPF:
+        /* arg0=mpfid, arg1=blf_ptr */
+        return (W)tk_rel_mpf((ID)arg0, (void *)(UW)arg1);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: cyclic handler                               */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_CYC: {
+        /* arg0 = PK_CRE_CYC* */
+        PK_CRE_CYC *upk = (PK_CRE_CYC *)(UW)arg0;
+        if (!upk || !upk->cychdr) return -1;
+        T_CCYC pk;
+        pk.exinf   = NULL;
+        pk.cycatr  = (ATR)upk->cycatr | TA_HLNG;
+        pk.cychdr  = (FP)(UW)upk->cychdr;
+        pk.cyctim  = (RELTIM)upk->cyctim_ms;
+        pk.cycphs  = (RELTIM)upk->cycphs_ms;
+        return (W)tk_cre_cyc(&pk);
+    }
+
+    case SYS_TK_DEL_CYC:
+        return (W)tk_del_cyc((ID)arg0);
+
+    case SYS_TK_STA_CYC:
+        return (W)tk_sta_cyc((ID)arg0);
+
+    case SYS_TK_STP_CYC:
+        return (W)tk_stp_cyc((ID)arg0);
+
+    /* ------------------------------------------------------------- */
+    /* T-Kernel native: alarm handler                                */
+    /* ------------------------------------------------------------- */
+
+    case SYS_TK_CRE_ALM: {
+        /* arg0 = PK_CRE_ALM* */
+        PK_CRE_ALM *upk = (PK_CRE_ALM *)(UW)arg0;
+        if (!upk || !upk->almhdr) return -1;
+        T_CALM pk;
+        pk.exinf  = NULL;
+        pk.almatr = (ATR)upk->almatr | TA_HLNG;
+        pk.almhdr = (FP)(UW)upk->almhdr;
+        return (W)tk_cre_alm(&pk);
+    }
+
+    case SYS_TK_DEL_ALM:
+        return (W)tk_del_alm((ID)arg0);
+
+    case SYS_TK_STA_ALM:
+        /* arg0=almid, arg1=almtim_ms */
+        return (W)tk_sta_alm((ID)arg0, (RELTIM)arg1);
+
+    case SYS_TK_STP_ALM:
+        return (W)tk_stp_alm((ID)arg0);
+
     default:
         return -1;  /* ENOSYS */
     }

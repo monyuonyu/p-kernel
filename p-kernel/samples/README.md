@@ -18,7 +18,12 @@ p-kernel/
 │   ├── 06_net_infer/
 │   ├── 07_stdin_echo/
 │   ├── 08_http_get/
-│   └── 09_readdir/
+│   ├── 09_readdir/
+│   ├── 10_mutex/
+│   ├── 11_mailbox/
+│   ├── 12_msgbuf/
+│   ├── 13_mempool/
+│   └── 14_cyc_alm/
 │
 └── userland/
     ├── x86/              ← x86 用ビルドインフラ (INT 0x80 / ELF32)
@@ -74,6 +79,31 @@ HTTP/1.0 GET リクエストを 10.0.2.2:80 に送るサンプルです。
 ファイル名・サイズ・種別（ファイル/ディレクトリ）を表示します。
 → ファイルシステム操作の仕上げとして試してください。
 
+### 10_mutex — Mutex (相互排他)
+`tk_cre_mtx` / `tk_loc_mtx` / `tk_unl_mtx` / `tk_del_mtx` を使って
+2つのタスクが共有カウンタを mutex で保護するサンプルです。
+優先度継承 (TA_INHERIT) や上限プロトコル (TA_CEILING) にも対応しています。
+
+### 11_mailbox — Mailbox (メッセージパッシング)
+`tk_cre_mbx` / `tk_snd_mbx` / `tk_rcv_mbx` / `tk_del_mbx` を使い、
+タスク間でポインタベースのメッセージを受け渡しするサンプルです。
+ユーザー定義メッセージ構造体の先頭に `PK_MSG` を埋め込む方法を示します。
+
+### 12_msgbuf — Message Buffer (可変長メッセージ)
+`tk_cre_mbf` / `tk_snd_mbf` / `tk_rcv_mbf` / `tk_del_mbf` を使い、
+バイト列メッセージをバッファ経由でコピー転送するサンプルです。
+mailbox とは異なりメッセージの「中身」がコピーされます。
+
+### 13_mempool — Memory Pool (メモリ管理)
+可変長プール (`tk_cre_mpl` / `tk_get_mpl` / `tk_rel_mpl` / `tk_del_mpl`) と
+固定長プール (`tk_cre_mpf` / `tk_get_mpf` / `tk_rel_mpf` / `tk_del_mpf`) の
+両方をユーザーバッファで使うサンプルです。
+
+### 14_cyc_alm — Cyclic/Alarm Handler (時間駆動)
+周期ハンドラ (`tk_cre_cyc` / `tk_sta_cyc` / `tk_stp_cyc` / `tk_del_cyc`) と
+アラームハンドラ (`tk_cre_alm` / `tk_sta_alm` / `tk_del_alm`) の両方を実演します。
+ハンドラはタスク独立文脈で実行されるため、ブロッキング呼び出しは禁止されています。
+
 ---
 
 ## ビルド方法 (x86)
@@ -90,6 +120,11 @@ make 06_net_infer/net_infer.elf
 make 07_stdin_echo/stdin_echo.elf
 make 08_http_get/http_get.elf
 make 09_readdir/readdir.elf
+make 10_mutex/mutex.elf
+make 11_mailbox/mailbox.elf
+make 12_msgbuf/msgbuf.elf
+make 13_mempool/mempool.elf
+make 14_cyc_alm/cyc_alm.elf
 ```
 
 **必要なツール:**
@@ -114,6 +149,11 @@ p-kernel> exec net_infer.elf
 p-kernel> exec stdin_echo.elf
 p-kernel> exec http_get.elf
 p-kernel> exec readdir.elf
+p-kernel> exec mutex.elf
+p-kernel> exec mailbox.elf
+p-kernel> exec msgbuf.elf
+p-kernel> exec mempool.elf
+p-kernel> exec cyc_alm.elf
 ```
 
 ---
@@ -189,6 +229,34 @@ AI 推論 API (0x210+):
 | 0x205  | SYS_TCP_READ     | TCP 受信（タイムアウト付き）|
 | 0x206  | SYS_TCP_CLOSE    | TCP クローズ＋解放          |
 | 11     | SYS_READDIR      | ディレクトリ一覧取得        |
+| 0x130  | SYS_TK_CRE_MTX   | Mutex 作成                  |
+| 0x131  | SYS_TK_DEL_MTX   | Mutex 削除                  |
+| 0x132  | SYS_TK_LOC_MTX   | Mutex ロック                |
+| 0x133  | SYS_TK_UNL_MTX   | Mutex アンロック            |
+| 0x140  | SYS_TK_CRE_MBX   | Mailbox 作成                |
+| 0x141  | SYS_TK_DEL_MBX   | Mailbox 削除                |
+| 0x142  | SYS_TK_SND_MBX   | メッセージ送信              |
+| 0x143  | SYS_TK_RCV_MBX   | メッセージ受信              |
+| 0x150  | SYS_TK_CRE_MBF   | Message Buffer 作成         |
+| 0x151  | SYS_TK_DEL_MBF   | Message Buffer 削除         |
+| 0x152  | SYS_TK_SND_MBF   | メッセージ送信（コピー）    |
+| 0x153  | SYS_TK_RCV_MBF   | メッセージ受信（コピー）    |
+| 0x160  | SYS_TK_CRE_MPL   | 可変長メモリプール作成      |
+| 0x161  | SYS_TK_DEL_MPL   | 可変長メモリプール削除      |
+| 0x162  | SYS_TK_GET_MPL   | ブロック取得                |
+| 0x163  | SYS_TK_REL_MPL   | ブロック返却                |
+| 0x168  | SYS_TK_CRE_MPF   | 固定長メモリプール作成      |
+| 0x169  | SYS_TK_DEL_MPF   | 固定長メモリプール削除      |
+| 0x16A  | SYS_TK_GET_MPF   | ブロック取得                |
+| 0x16B  | SYS_TK_REL_MPF   | ブロック返却                |
+| 0x170  | SYS_TK_CRE_CYC   | 周期ハンドラ作成            |
+| 0x171  | SYS_TK_DEL_CYC   | 周期ハンドラ削除            |
+| 0x172  | SYS_TK_STA_CYC   | 周期ハンドラ開始            |
+| 0x173  | SYS_TK_STP_CYC   | 周期ハンドラ停止            |
+| 0x178  | SYS_TK_CRE_ALM   | アラームハンドラ作成        |
+| 0x179  | SYS_TK_DEL_ALM   | アラームハンドラ削除        |
+| 0x17A  | SYS_TK_STA_ALM   | アラームハンドラ開始        |
+| 0x17B  | SYS_TK_STP_ALM   | アラームハンドラ停止        |
 | 0x210  | SYS_INFER        | MLP 推論（同期）            |
 | 0x211  | SYS_AI_SUBMIT    | AI ジョブ投入（非同期）     |
 | 0x212  | SYS_AI_WAIT      | AI ジョブ完了待ち           |

@@ -17,6 +17,11 @@
 #define SCHED_FIFO   0   /* priority preemptive only (RTOS default) */
 #define SCHED_RR     1   /* round-robin within same priority        */
 
+/* NULL pointer */
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 /* open() flags */
 #define O_RDONLY     0x0000
 #define O_WRONLY     0x0001
@@ -382,6 +387,248 @@ static inline int sys_tcp_read(int handle, void *buf,
  * Returns 0 on success, -1 on invalid handle.                      */
 static inline int sys_tcp_close(int handle)
     { return __sc(0x206, handle, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: mutex                                             */
+/* ================================================================= */
+
+/* Mutex attributes */
+#define TA_MTX_TFIFO    0x00  /* wait queue: FIFO                    */
+#define TA_MTX_TPRI     0x01  /* wait queue: priority order          */
+#define TA_INHERIT      0x02  /* priority inheritance protocol       */
+#define TA_CEILING      0x03  /* priority ceiling protocol           */
+
+typedef struct {
+    unsigned int mtxatr;   /* TA_MTX_TFIFO/TA_MTX_TPRI/TA_INHERIT/TA_CEILING */
+    int          ceilpri;  /* ceiling priority (only for TA_CEILING)           */
+} PK_CMTX;
+
+/* Create mutex. Returns mtxid (>0) or -1 on error. */
+static inline int tk_cre_mtx(PK_CMTX *pk)
+    { return __sc(0x130, (int)(long)pk, 0, 0); }
+
+/* Delete mutex. */
+static inline int tk_del_mtx(int mtxid)
+    { return __sc(0x131, mtxid, 0, 0); }
+
+/* Lock mutex. tmout_ms: -1=forever, 0=poll. */
+static inline int tk_loc_mtx(int mtxid, int tmout_ms)
+    { return __sc(0x132, mtxid, tmout_ms, 0); }
+
+/* Unlock mutex. */
+static inline int tk_unl_mtx(int mtxid)
+    { return __sc(0x133, mtxid, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: mailbox                                           */
+/* ================================================================= */
+
+/* Mailbox message header — MUST be the first field in every message struct. */
+typedef struct {
+    void *msgque[1];  /* kernel linkage — do not use directly */
+} PK_MSG;
+
+/* Mailbox attributes */
+#define TA_MBX_TFIFO  0x00  /* wait queue: FIFO           */
+#define TA_MBX_TPRI   0x01  /* wait queue: priority order */
+#define TA_MFIFO      0x00  /* message queue: FIFO        */
+#define TA_MPRI       0x02  /* message queue: priority    */
+
+/* Create mailbox. mbxatr = TA_MBX_TFIFO | TA_MFIFO etc.
+ * Returns mbxid (>0) or -1 on error. */
+static inline int tk_cre_mbx(unsigned int mbxatr)
+    { return __sc(0x140, (int)mbxatr, 0, 0); }
+
+/* Delete mailbox. */
+static inline int tk_del_mbx(int mbxid)
+    { return __sc(0x141, mbxid, 0, 0); }
+
+/* Send message. pk_msg must point to a struct with PK_MSG as first field. */
+static inline int tk_snd_mbx(int mbxid, PK_MSG *pk_msg)
+    { return __sc(0x142, mbxid, (int)(long)pk_msg, 0); }
+
+/* Receive message. On success, *ppk_msg points to the received message.
+ * tmout_ms: -1=forever, 0=poll. Returns 0 or negative error. */
+static inline int tk_rcv_mbx(int mbxid, PK_MSG **ppk_msg, int tmout_ms)
+    { return __sc(0x143, mbxid, (int)(long)ppk_msg, tmout_ms); }
+
+/* ================================================================= */
+/* T-Kernel native: message buffer                                    */
+/* ================================================================= */
+
+typedef struct {
+    unsigned int  mbfatr;  /* TA_MBX_TFIFO=0 or TA_MBX_TPRI=1 */
+    int           bufsz;   /* buffer size in bytes              */
+    int           maxmsz;  /* max message size in bytes         */
+    void         *bufptr;  /* user-allocated backing buffer     */
+} PK_CMBF;
+
+/* Internal: packed args for sys_snd_mbf (4 params) */
+typedef struct {
+    int         mbfid;
+    const void *msg;
+    int         msgsz;
+    int         tmout;
+} PK_SND_MBF_ARGS;
+
+/* Create message buffer with user-provided backing buffer. Returns mbfid or -1. */
+static inline int tk_cre_mbf(PK_CMBF *pk)
+{
+    struct { unsigned int mbfatr; int bufsz; int maxmsz; unsigned int buf_ptr; } args = {
+        pk->mbfatr, pk->bufsz, pk->maxmsz, (unsigned int)(long)pk->bufptr
+    };
+    return __sc(0x150, (int)(long)&args, 0, 0);
+}
+
+/* Delete message buffer. */
+static inline int tk_del_mbf(int mbfid)
+    { return __sc(0x151, mbfid, 0, 0); }
+
+/* Send message. msgsz must be <= maxmsz specified at creation.
+ * tmout_ms: -1=forever, 0=poll. */
+static inline int tk_snd_mbf(int mbfid, const void *msg, int msgsz, int tmout_ms)
+{
+    PK_SND_MBF_ARGS args = { mbfid, msg, msgsz, tmout_ms };
+    return __sc(0x152, (int)(long)&args, 0, 0);
+}
+
+/* Receive message into buf. Returns received size (>0) or negative error. */
+static inline int tk_rcv_mbf(int mbfid, void *buf, int tmout_ms)
+    { return __sc(0x153, mbfid, (int)(long)buf, tmout_ms); }
+
+/* ================================================================= */
+/* T-Kernel native: variable memory pool                              */
+/* ================================================================= */
+
+typedef struct {
+    unsigned int  mplatr;  /* TA_MBX_TFIFO=0 or TA_MBX_TPRI=1 */
+    int           mplsz;   /* total pool size in bytes          */
+    void         *bufptr;  /* user-allocated backing buffer     */
+} PK_CMPL;
+
+/* Create variable memory pool. Returns mplid or -1. */
+static inline int tk_cre_mpl(PK_CMPL *pk)
+{
+    struct { unsigned int mplatr; int mplsz; unsigned int buf_ptr; } args = {
+        pk->mplatr, pk->mplsz, (unsigned int)(long)pk->bufptr
+    };
+    return __sc(0x160, (int)(long)&args, 0, 0);
+}
+
+/* Delete variable memory pool. */
+static inline int tk_del_mpl(int mplid)
+    { return __sc(0x161, mplid, 0, 0); }
+
+/* Allocate a block of blksz bytes.
+ * Returns block pointer (non-NULL) or NULL/negative on error or timeout. */
+static inline void *tk_get_mpl(int mplid, int blksz, int tmout_ms)
+    { return (void *)(long)__sc(0x162, mplid, blksz, tmout_ms); }
+
+/* Release an allocated block back to the pool. */
+static inline int tk_rel_mpl(int mplid, void *blk)
+    { return __sc(0x163, mplid, (int)(long)blk, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: fixed memory pool                                 */
+/* ================================================================= */
+
+typedef struct {
+    unsigned int  mpfatr;  /* TA_MBX_TFIFO=0 or TA_MBX_TPRI=1 */
+    int           mpfcnt;  /* number of blocks in pool          */
+    int           blfsz;   /* block size in bytes               */
+    void         *bufptr;  /* user-allocated backing buffer     */
+} PK_CMPF;
+
+/* Create fixed memory pool. Returns mpfid or -1. */
+static inline int tk_cre_mpf(PK_CMPF *pk)
+{
+    struct { unsigned int mpfatr; int mpfcnt; int blfsz; unsigned int buf_ptr; } args = {
+        pk->mpfatr, pk->mpfcnt, pk->blfsz, (unsigned int)(long)pk->bufptr
+    };
+    return __sc(0x168, (int)(long)&args, 0, 0);
+}
+
+/* Delete fixed memory pool. */
+static inline int tk_del_mpf(int mpfid)
+    { return __sc(0x169, mpfid, 0, 0); }
+
+/* Allocate one fixed-size block. tmout_ms: -1=forever, 0=poll.
+ * Returns block pointer or NULL on error/timeout. */
+static inline void *tk_get_mpf(int mpfid, int tmout_ms)
+    { return (void *)(long)__sc(0x16A, mpfid, tmout_ms, 0); }
+
+/* Release a fixed block back to the pool. */
+static inline int tk_rel_mpf(int mpfid, void *blf)
+    { return __sc(0x16B, mpfid, (int)(long)blf, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: cyclic handler                                    */
+/* ================================================================= */
+
+/* Cyclic handler attribute flags */
+#define TA_CYC_HLNG  0x01  /* high-level language handler (always required) */
+#define TA_CYC_STA   0x02  /* start handler immediately after creation      */
+#define TA_CYC_PHS   0x04  /* preserve phase on restart                     */
+
+typedef struct {
+    unsigned int  cycatr;     /* TA_CYC_STA and/or TA_CYC_PHS            */
+    void        (*cychdr)(void); /* handler function (must not block)     */
+    int           cyctim_ms;  /* cycle interval in ms (must be > 0)      */
+    int           cycphs_ms;  /* initial phase offset in ms              */
+} PK_CCYC;
+
+/* Create cyclic handler. Returns cycid or -1. */
+static inline int tk_cre_cyc(PK_CCYC *pk)
+{
+    struct { unsigned int cycatr; unsigned int cychdr;
+             int cyctim_ms; int cycphs_ms; } args = {
+        pk->cycatr, (unsigned int)(long)pk->cychdr,
+        pk->cyctim_ms, pk->cycphs_ms
+    };
+    return __sc(0x170, (int)(long)&args, 0, 0);
+}
+
+/* Delete cyclic handler. */
+static inline int tk_del_cyc(int cycid)
+    { return __sc(0x171, cycid, 0, 0); }
+
+/* Start (or restart) cyclic handler. */
+static inline int tk_sta_cyc(int cycid)
+    { return __sc(0x172, cycid, 0, 0); }
+
+/* Stop cyclic handler (can be restarted with tk_sta_cyc). */
+static inline int tk_stp_cyc(int cycid)
+    { return __sc(0x173, cycid, 0, 0); }
+
+/* ================================================================= */
+/* T-Kernel native: alarm handler                                     */
+/* ================================================================= */
+
+typedef struct {
+    unsigned int  almatr;     /* 0 (no special attributes)               */
+    void        (*almhdr)(void); /* handler function (must not block)    */
+} PK_CALM;
+
+/* Create alarm handler. Returns almid or -1. */
+static inline int tk_cre_alm(PK_CALM *pk)
+{
+    struct { unsigned int almatr; unsigned int almhdr; } args = {
+        pk->almatr, (unsigned int)(long)pk->almhdr
+    };
+    return __sc(0x178, (int)(long)&args, 0, 0);
+}
+
+/* Delete alarm handler. */
+static inline int tk_del_alm(int almid)
+    { return __sc(0x179, almid, 0, 0); }
+
+/* Start alarm: fires once after almtim_ms milliseconds. */
+static inline int tk_sta_alm(int almid, int almtim_ms)
+    { return __sc(0x17A, almid, almtim_ms, 0); }
+
+/* Cancel a pending alarm. */
+static inline int tk_stp_alm(int almid)
+    { return __sc(0x17B, almid, 0, 0); }
 
 /* ================================================================= */
 /* AI inference API                                                   */

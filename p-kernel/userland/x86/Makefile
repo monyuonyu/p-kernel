@@ -46,7 +46,12 @@ SAMPLES = \
     06_net_infer/net_infer.elf \
     07_stdin_echo/stdin_echo.elf \
     08_http_get/http_get.elf \
-    09_readdir/readdir.elf
+    09_readdir/readdir.elf \
+    10_mutex/mutex.elf \
+    11_mailbox/mailbox.elf \
+    12_msgbuf/msgbuf.elf \
+    13_mempool/mempool.elf \
+    14_cyc_alm/cyc_alm.elf
 
 all: $(SAMPLES)
 
@@ -136,10 +141,51 @@ DEMO_OBJS = $(patsubst $(S)/05_all_demo/%.c, 05_all_demo/%.o, $(DEMO_SRCS))
 	$(LD) $(LDFLAGS) -o $@ 09_readdir/readdir.o
 
 # -------------------------------------------------------------------
+# 10_mutex
+# -------------------------------------------------------------------
+10_mutex/mutex.elf: $(S)/10_mutex/mutex.c plibc.h user.ld
+	mkdir -p 10_mutex
+	$(CC) $(CFLAGS) -c $< -o 10_mutex/mutex.o
+	$(LD) $(LDFLAGS) -o $@ 10_mutex/mutex.o
+
+# -------------------------------------------------------------------
+# 11_mailbox
+# -------------------------------------------------------------------
+11_mailbox/mailbox.elf: $(S)/11_mailbox/mailbox.c plibc.h user.ld
+	mkdir -p 11_mailbox
+	$(CC) $(CFLAGS) -c $< -o 11_mailbox/mailbox.o
+	$(LD) $(LDFLAGS) -o $@ 11_mailbox/mailbox.o
+
+# -------------------------------------------------------------------
+# 12_msgbuf
+# -------------------------------------------------------------------
+12_msgbuf/msgbuf.elf: $(S)/12_msgbuf/msgbuf.c plibc.h user.ld
+	mkdir -p 12_msgbuf
+	$(CC) $(CFLAGS) -c $< -o 12_msgbuf/msgbuf.o
+	$(LD) $(LDFLAGS) -o $@ 12_msgbuf/msgbuf.o
+
+# -------------------------------------------------------------------
+# 13_mempool
+# -------------------------------------------------------------------
+13_mempool/mempool.elf: $(S)/13_mempool/mempool.c plibc.h user.ld
+	mkdir -p 13_mempool
+	$(CC) $(CFLAGS) -c $< -o 13_mempool/mempool.o
+	$(LD) $(LDFLAGS) -o $@ 13_mempool/mempool.o
+
+# -------------------------------------------------------------------
+# 14_cyc_alm
+# -------------------------------------------------------------------
+14_cyc_alm/cyc_alm.elf: $(S)/14_cyc_alm/cyc_alm.c plibc.h user.ld
+	mkdir -p 14_cyc_alm
+	$(CC) $(CFLAGS) -c $< -o 14_cyc_alm/cyc_alm.o
+	$(LD) $(LDFLAGS) -o $@ 14_cyc_alm/cyc_alm.o
+
+# -------------------------------------------------------------------
 # クリーン
 # -------------------------------------------------------------------
 clean:
 	rm -rf 01_hello 02_posix_io 03_rtos_task 04_rtos_sync 05_all_demo \
-	       06_net_infer 07_stdin_echo 08_http_get 09_readdir
+	       06_net_infer 07_stdin_echo 08_http_get 09_readdir \
+	       10_mutex 11_mailbox 12_msgbuf 13_mempool 14_cyc_alm
 
 .PHONY: all clean

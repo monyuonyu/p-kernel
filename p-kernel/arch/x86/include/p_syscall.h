@@ -38,6 +38,48 @@
  *    0x123  SYS_TK_CLR_FLG  — clear event flag bits
  *    0x124  SYS_TK_WAI_FLG  — wait event flag (args via struct*)
  *
+ *  T-Kernel mutex (0x130+):
+ *    0x130  SYS_TK_CRE_MTX  — create mutex (arg0=PK_CRE_MTX*)
+ *    0x131  SYS_TK_DEL_MTX  — delete mutex
+ *    0x132  SYS_TK_LOC_MTX  — lock mutex (arg0=mtxid, arg1=tmout_ms)
+ *    0x133  SYS_TK_UNL_MTX  — unlock mutex
+ *
+ *  T-Kernel mailbox (0x140+):
+ *    0x140  SYS_TK_CRE_MBX  — create mailbox (arg0=mbxatr)
+ *    0x141  SYS_TK_DEL_MBX  — delete mailbox
+ *    0x142  SYS_TK_SND_MBX  — send message (arg0=mbxid, arg1=T_MSG*)
+ *    0x143  SYS_TK_RCV_MBX  — receive message (arg0=mbxid, arg1=T_MSG**, arg2=tmout_ms)
+ *
+ *  T-Kernel message buffer (0x150+):
+ *    0x150  SYS_TK_CRE_MBF  — create message buffer (arg0=PK_CRE_MBF*)
+ *    0x151  SYS_TK_DEL_MBF  — delete message buffer
+ *    0x152  SYS_TK_SND_MBF  — send message (arg0=PK_SND_MBF*)
+ *    0x153  SYS_TK_RCV_MBF  — receive message (arg0=mbfid, arg1=buf, arg2=tmout_ms)
+ *
+ *  T-Kernel variable memory pool (0x160+):
+ *    0x160  SYS_TK_CRE_MPL  — create variable pool (arg0=PK_CRE_MPL*)
+ *    0x161  SYS_TK_DEL_MPL  — delete variable pool
+ *    0x162  SYS_TK_GET_MPL  — get block (arg0=mplid, arg1=blksz, arg2=tmout_ms; ret=ptr)
+ *    0x163  SYS_TK_REL_MPL  — release block (arg0=mplid, arg1=blk_ptr)
+ *
+ *  T-Kernel fixed memory pool (0x168+):
+ *    0x168  SYS_TK_CRE_MPF  — create fixed pool (arg0=PK_CRE_MPF*)
+ *    0x169  SYS_TK_DEL_MPF  — delete fixed pool
+ *    0x16A  SYS_TK_GET_MPF  — get block (arg0=mpfid, arg1=tmout_ms; ret=ptr)
+ *    0x16B  SYS_TK_REL_MPF  — release block (arg0=mpfid, arg1=blf_ptr)
+ *
+ *  T-Kernel cyclic handler (0x170+):
+ *    0x170  SYS_TK_CRE_CYC  — create cyclic handler (arg0=PK_CRE_CYC*)
+ *    0x171  SYS_TK_DEL_CYC  — delete cyclic handler
+ *    0x172  SYS_TK_STA_CYC  — start cyclic handler
+ *    0x173  SYS_TK_STP_CYC  — stop cyclic handler
+ *
+ *  T-Kernel alarm handler (0x178+):
+ *    0x178  SYS_TK_CRE_ALM  — create alarm handler (arg0=PK_CRE_ALM*)
+ *    0x179  SYS_TK_DEL_ALM  — delete alarm handler
+ *    0x17A  SYS_TK_STA_ALM  — start alarm handler (arg0=almid, arg1=almtim_ms)
+ *    0x17B  SYS_TK_STP_ALM  — stop alarm handler
+ *
  *  Network syscalls (0x200+):
  *    0x200  SYS_UDP_BIND    — bind local UDP port (arg0=port)
  *    0x201  SYS_UDP_SEND    — send UDP datagram (arg0=PK_UDP_SEND*)
@@ -92,6 +134,48 @@
 #define SYS_TK_SET_FLG  0x122
 #define SYS_TK_CLR_FLG  0x123
 #define SYS_TK_WAI_FLG  0x124  /* arg2 = (W*)pk_waiflg struct */
+
+/* Mutex */
+#define SYS_TK_CRE_MTX  0x130
+#define SYS_TK_DEL_MTX  0x131
+#define SYS_TK_LOC_MTX  0x132
+#define SYS_TK_UNL_MTX  0x133
+
+/* Mailbox */
+#define SYS_TK_CRE_MBX  0x140
+#define SYS_TK_DEL_MBX  0x141
+#define SYS_TK_SND_MBX  0x142
+#define SYS_TK_RCV_MBX  0x143
+
+/* Message buffer */
+#define SYS_TK_CRE_MBF  0x150
+#define SYS_TK_DEL_MBF  0x151
+#define SYS_TK_SND_MBF  0x152
+#define SYS_TK_RCV_MBF  0x153
+
+/* Variable memory pool */
+#define SYS_TK_CRE_MPL  0x160
+#define SYS_TK_DEL_MPL  0x161
+#define SYS_TK_GET_MPL  0x162
+#define SYS_TK_REL_MPL  0x163
+
+/* Fixed memory pool */
+#define SYS_TK_CRE_MPF  0x168
+#define SYS_TK_DEL_MPF  0x169
+#define SYS_TK_GET_MPF  0x16A
+#define SYS_TK_REL_MPF  0x16B
+
+/* Cyclic handler */
+#define SYS_TK_CRE_CYC  0x170
+#define SYS_TK_DEL_CYC  0x171
+#define SYS_TK_STA_CYC  0x172
+#define SYS_TK_STP_CYC  0x173
+
+/* Alarm handler */
+#define SYS_TK_CRE_ALM  0x178
+#define SYS_TK_DEL_ALM  0x179
+#define SYS_TK_STA_ALM  0x17A
+#define SYS_TK_STP_ALM  0x17B
 
 /* ----------------------------------------------------------------- */
 /* Network syscall numbers (p-kernel extension)                      */
@@ -207,6 +291,71 @@ typedef struct {
     W   buflen;       /* buffer capacity                             */
     W   timeout_ms;   /* receive timeout in ms                       */
 } PK_TCP_READ;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_MTX — args for SYS_TK_CRE_MTX                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  mtxatr;    /* TA_TFIFO(0)/TA_TPRI(1)/TA_INHERIT(2)/TA_CEILING(3) */
+    W   ceilpri;   /* ceiling priority (only when TA_CEILING)             */
+} PK_CRE_MTX;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_MBF — args for SYS_TK_CRE_MBF                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  mbfatr;    /* TA_TFIFO(0) or TA_TPRI(1)                          */
+    W   bufsz;     /* message buffer size in bytes                        */
+    W   maxmsz;    /* maximum message size in bytes                       */
+    UW  buf_ptr;   /* user-provided backing buffer pointer                */
+} PK_CRE_MBF;
+
+/* ----------------------------------------------------------------- */
+/* PK_SND_MBF — args for SYS_TK_SND_MBF (4 params → 1 ptr)        */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    W   mbfid;
+    UW  msg_ptr;   /* pointer to message data                             */
+    W   msgsz;     /* message size in bytes                               */
+    W   tmout;     /* timeout in ms                                       */
+} PK_SND_MBF;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_MPL — args for SYS_TK_CRE_MPL                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  mplatr;    /* TA_TFIFO(0) or TA_TPRI(1)                          */
+    W   mplsz;     /* total pool size in bytes                            */
+    UW  buf_ptr;   /* user-provided backing buffer pointer                */
+} PK_CRE_MPL;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_MPF — args for SYS_TK_CRE_MPF                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  mpfatr;    /* TA_TFIFO(0) or TA_TPRI(1)                          */
+    W   mpfcnt;    /* number of fixed-size blocks in pool                 */
+    W   blfsz;     /* block size in bytes                                 */
+    UW  buf_ptr;   /* user-provided backing buffer pointer                */
+} PK_CRE_MPF;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_CYC — args for SYS_TK_CRE_CYC                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  cycatr;      /* TA_HLNG(1) | TA_STA(2) | TA_PHS(4)              */
+    UW  cychdr;      /* handler function pointer (FP)                    */
+    W   cyctim_ms;   /* cycle interval in ms                             */
+    W   cycphs_ms;   /* cycle phase offset in ms (0 = none)              */
+} PK_CRE_CYC;
+
+/* ----------------------------------------------------------------- */
+/* PK_CRE_ALM — args for SYS_TK_CRE_ALM                           */
+/* ----------------------------------------------------------------- */
+typedef struct {
+    UW  almatr;      /* TA_HLNG(1)                                       */
+    UW  almhdr;      /* handler function pointer (FP)                    */
+} PK_CRE_ALM;
 
 /* ----------------------------------------------------------------- */
 /* Register IDT gate 0x80 (DPL=3, callable from ring3).             */

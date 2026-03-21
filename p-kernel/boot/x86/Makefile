@@ -195,6 +195,11 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/07_stdin_echo/stdin_echo.elf   ::stdin_echo.elf
 	mcopy -i $@ $(USERLAND_X86)/08_http_get/http_get.elf       ::http_get.elf
 	mcopy -i $@ $(USERLAND_X86)/09_readdir/readdir.elf         ::readdir.elf
+	mcopy -i $@ $(USERLAND_X86)/10_mutex/mutex.elf             ::mutex.elf
+	mcopy -i $@ $(USERLAND_X86)/11_mailbox/mailbox.elf         ::mailbox.elf
+	mcopy -i $@ $(USERLAND_X86)/12_msgbuf/msgbuf.elf           ::msgbuf.elf
+	mcopy -i $@ $(USERLAND_X86)/13_mempool/mempool.elf         ::mempool.elf
+	mcopy -i $@ $(USERLAND_X86)/14_cyc_alm/cyc_alm.elf        ::cyc_alm.elf
 
 disk: $(DISK_IMG)
 
