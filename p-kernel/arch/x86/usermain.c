@@ -17,6 +17,7 @@
 #include "replica.h"
 #include "vital.h"
 #include "persist.h"
+#include "dtr.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -45,6 +46,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define VITAL_STACK         2048
 #define PERSIST_PRIORITY    10
 #define PERSIST_STACK       2048
+#define DTR_PRIORITY        6
+#define DTR_STACK           4096
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -96,6 +99,9 @@ EXPORT INT usermain(void)
 
     /* ---- AI kernel primitives ------------------------------------- */
     ai_kernel_init();
+
+    /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
+    dtr_init();
 
     /* ---- AI worker task (software NPU) ---------------------------- */
     if (create_task(ai_worker_task, AI_WORKER_PRIORITY, AI_WORKER_STACK) < E_OK)
@@ -168,6 +174,12 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] vital task\r\n");
             else
                 tm_putstring((UB *)"[OK]  vital task\r\n");
+
+            /* Phase 8: 分散推論パイプラインタスク */
+            if (create_task(dtr_task, DTR_PRIORITY, DTR_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] dtr task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  dtr task\r\n");
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

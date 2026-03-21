@@ -22,6 +22,7 @@
 #include "replica.h"
 #include "vital.h"
 #include "persist.h"
+#include "dtr.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -148,6 +149,12 @@ static void cmd_help(void)
     sout("  persist list             - ディスク上の保存トピック一覧\r\n");
     sout("  persist save             - 全トピックを今すぐ保存\r\n");
     sout("  persist clear            - 保存済みトピックを全削除\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("分散 AI 推論 (Phase 8):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  dtr stat                         - パイプライン統計\r\n");
+    sout("  dtr infer <t> <h> <p> <l>        - 分散推論実行\r\n");
+    sout("    Node 0: Embed+Layer0 -> dtr/l0 -> Node 1: FFN+Output\r\n");
     if (drpc_my_node != 0xFF) {
         sout("  infer <n> <t> <h> <p> <l>   - remote inference on node n\r\n");
     }
@@ -420,6 +427,57 @@ static void cmd_persist(const char *arg)
         return;
     }
     sout("Usage: persist list | save | clear\r\n");
+}
+
+static void cmd_dtr(const char *arg)
+{
+    while (*arg == ' ') arg++;
+
+    if (str_starts(arg, "stat") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        dtr_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    if (str_starts(arg, "infer")) {
+        arg += 5;
+        while (*arg == ' ') arg++;
+
+        /* <t> <h> <p> <l> を読む */
+        W vals[4] = {25, 50, 1013, 500};   /* デフォルト値 */
+        for (INT vi = 0; vi < 4 && *arg; vi++) {
+            while (*arg == ' ') arg++;
+            W neg = 0, v = 0;
+            if (*arg == '-') { neg = 1; arg++; }
+            while (*arg >= '0' && *arg <= '9') v = v * 10 + (*arg++ - '0');
+            vals[vi] = neg ? -v : v;
+        }
+
+        B inp[4];
+        inp[0] = sensor_norm_temp  ((W)vals[0]);
+        inp[1] = sensor_norm_hum   ((W)vals[1]);
+        inp[2] = sensor_norm_press ((W)vals[2]);
+        inp[3] = sensor_norm_light ((W)vals[3]);
+
+        sout("DTR infer: temp="); sout_dec((UW)vals[0]);
+        sout(" hum=");  sout_dec((UW)vals[1]);
+        sout(" press="); sout_dec((UW)vals[2]);
+        sout(" light="); sout_dec((UW)vals[3]); sout("\r\n");
+
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        W cls = dtr_infer(inp);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+        if (cls < 0) {
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            sout("[dtr] inference failed\r\n");
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+        return;
+    }
+
+    sout("Usage: dtr stat | dtr infer <temp> <hum> <press> <light>\r\n");
 }
 
 static void cmd_dtask(const char *arg)
@@ -1330,6 +1388,8 @@ static void execute(const char *cmd)
     if (cmd[0]=='p' && cmd[1]=='e' && cmd[2]=='r' && cmd[3]=='s' &&
         cmd[4]=='i' && cmd[5]=='s' && cmd[6]=='t')
         { cmd_persist(cmd + 7); return; }
+    if (cmd[0]=='d' && cmd[1]=='t' && cmd[2]=='r')
+        { cmd_dtr(cmd + 3); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

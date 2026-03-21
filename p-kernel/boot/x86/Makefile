@@ -69,6 +69,7 @@ ARCH_C_SRCS = \
     pipeline.c \
     fedlearn.c \
     ai_stats.c \
+    dtr.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \
