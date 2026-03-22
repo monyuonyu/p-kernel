@@ -25,6 +25,7 @@
 #include "dtr.h"
 #include "dproc.h"
 #include "sfs.h"
+#include "pmesh.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -170,6 +171,11 @@ static void cmd_help(void)
     sout("  sfs stat               - 同期統計 + tombstone\r\n");
     sout("  sfs push <path>        - /shared/ ファイルを手動でプッシュ\r\n");
     sout("  sfs sync               - 全ノードへ SYNC_REQ (起動時同期)\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("メッシュルーティング (Phase 10 prep):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  mesh route             - ルーティングテーブル表示\r\n");
+    sout("  mesh stat              - メッシュ統計表示\r\n");
     sout("  write /shared/F text   - 書き込み→自動同期\r\n");
     sout("  rm    /shared/F        - 削除→自動tombstone伝播\r\n");
     sout("  cp src /shared/F       - コピー→自動同期\r\n");
@@ -1188,6 +1194,31 @@ static void cmd_sfs(const char *arg)
     sout("Usage: sfs list | sfs stat | sfs push <path> | sfs sync\r\n");
 }
 
+/* ------------------------------------------------------------------ */
+/* mesh — メッシュルーティング                                        */
+/* ------------------------------------------------------------------ */
+
+static void cmd_mesh(const char *arg)
+{
+    while (*arg == ' ') arg++;
+
+    if (str_starts(arg, "route") || *arg == '\0') {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        pmesh_route_list();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    if (str_starts(arg, "stat")) {
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        pmesh_stat();
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    sout("Usage: mesh route | mesh stat\r\n");
+}
+
 static void cmd_mv(const char *arg)
 {
     while (*arg == ' ') arg++;
@@ -1515,6 +1546,8 @@ static void execute(const char *cmd)
         { cmd_dproc(cmd + 5); return; }
     if (cmd[0]=='s' && cmd[1]=='f' && cmd[2]=='s')
         { cmd_sfs(cmd + 3); return; }
+    if (cmd[0]=='m' && cmd[1]=='e' && cmd[2]=='s' && cmd[3]=='h')
+        { cmd_mesh(cmd + 4); return; }
 
     if      (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();

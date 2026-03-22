@@ -20,6 +20,7 @@
 #include "dtr.h"
 #include "dproc.h"
 #include "sfs.h"
+#include "pmesh.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -50,6 +51,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define PERSIST_STACK       2048
 #define DTR_PRIORITY        6
 #define DTR_STACK           4096
+#define PMESH_PRIORITY      7
+#define PMESH_STACK         2048
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -189,6 +192,13 @@ EXPORT INT usermain(void)
             /* Phase 9.5: 共有フォルダ同期 (SFS) */
             sfs_init();
             sfs_boot_sync();   /* 全ノードへ /shared/ の内容を要求 */
+
+            /* Phase 10 前準備: メッシュルーティング */
+            pmesh_init();
+            if (create_task(pmesh_task, PMESH_PRIORITY, PMESH_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] pmesh task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  pmesh task\r\n");
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

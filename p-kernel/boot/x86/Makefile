@@ -72,6 +72,7 @@ ARCH_C_SRCS = \
     dtr.c \
     dproc.c \
     sfs.c \
+    pmesh.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \
