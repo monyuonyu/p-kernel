@@ -3,7 +3,8 @@
 micro T-Kernel 2.0 の x86/QEMU ポートです。
 OS コア・デバイスドライバ・完全 TCP/IP ネットワークスタック・
 **AI 時代のカーネルプリミティブ（Tensor / AI Job / ゼロコピーパイプライン / 連合学習）**・
-**分散 RPC（DRPC）** が動作します。
+**分散 RPC（DRPC）**・**K-DDS（カーネルネイティブ Data Distribution Service）**・
+**SFS（Shared Folder Sync / 共有フォルダ同期）** が動作します。
 
 ## 動作確認済み機能
 
@@ -33,6 +34,21 @@ p-kernel> fl train
 node0> infer 1 45 85 950 2000
 [dtk_infer] -> node 1
 [infer] node 1 -> CRITICAL
+
+# 共有フォルダ同期（3 ノード）— Phase 9.5
+node0> mkdir /shared
+[mkdir] created: /shared
+node0> write /shared/hello.txt hello world
+[write] ok: /shared/hello.txt
+[sfs] pushed "/shared/hello.txt"  chunks=1
+# node1/node2 では自動受信
+[sfs] received "/shared/hello.txt"  13 bytes
+
+node1> rm /shared/hello.txt
+[rm] deleted: /shared/hello.txt
+[sfs] delete broadcast: "/shared/hello.txt"
+# node0/node2 に伝播
+[sfs] deleted (remote): "/shared/hello.txt"
 ```
 
 ## ファイル構成
@@ -49,11 +65,26 @@ node0> infer 1 45 85 950 2000
 | `sio.c` | COM1 シリアル I/O（送受信） |
 | `vga.c` | VGA テキストモードドライバ（80×25、スクロール対応） |
 | `keyboard.c` | PS/2 キーボードドライバ（IRQ1、US スキャンコード→ASCII） |
-| `shell.c` | インタラクティブシェル（AI コマンド含む） |
+| `shell.c` | インタラクティブシェル（AI・SFS コマンド含む） |
 | `pci.c` | PCI コンフィグ空間列挙（0xCF8/0xCFC） |
 | `rtl8139.c` | RTL8139 NIC ドライバ |
 | `netstack.c` | 完全 TCP/IP スタック |
 | `drpc.c` | 分散 T-Kernel RPC over UDP（ハートビート・タスク生成・セマフォ・推論） |
+| `persist.c` | FAT32 永続化（定期チェックポイント・ブート時リストア） |
+
+### 分散システム層（Phase 5〜9.5）
+
+| ファイル | 機能 |
+|---------|------|
+| `swim.c` | SWIM gossip 生存監視プロトコル（UDP port 7375） |
+| `kdds.c` | K-DDS — カーネルネイティブ Data Distribution Service（port 7376、32 トピック） |
+| `replica.c` | gossip ベーストピックテーブル全複製（port 7379、3 秒周期） |
+| `heal.c` | 自己修復タスク（ノード障害検出・自動再起動） |
+| `edf.c` | EDF リアルタイムスケジューラ（負荷分散） |
+| `vital.c` | バイタルサイン発行（各ノードの生存トピック） |
+| `dtr.c` | 分散 Transformer 推論（Pipeline Parallelism、3 ステージ） |
+| `dproc.c` | 分散プロセスレジストリ（K-DDS topic "proc/N"） |
+| `sfs.c` | **Shared Folder Sync** — `/shared/` をノード間で UDP 同期（port 7381） |
 
 ### AI カーネルプリミティブ
 
@@ -71,11 +102,15 @@ node0> infer 1 45 85 950 2000
 |---------|------|
 | `ai_kernel.h` | Tensor / AI Job / Pipeline / FL / 統計の全 API 宣言 |
 | `drpc.h` | 分散 RPC プロトコル定義、ノードテーブル、分散 API |
+| `kdds.h` | K-DDS API（32 トピック、64 ハンドル、QoS ポリシー） |
+| `replica.h` | gossip 複製プロトコル定義、REPLICA_PKT 構造体 |
+| `sfs.h` | SFS API（`sfs_push` / `sfs_delete` / `sfs_boot_sync` 等） |
 | `vga.h` | VGA API・カラー定数 |
 | `keyboard.h` | キーボード API |
 | `pci.h` | PCI API・ベンダー ID 定数 |
 | `rtl8139.h` | NIC API・統計変数 |
 | `netstack.h` | TCP/IP 全構造体・API |
+| `utk_config_depend.h` | カーネル定数（`CFN_MAX_SEMID=48` 等） |
 
 ---
 
@@ -128,6 +163,51 @@ DRPC_PKT の arg[0] に 4 つの int8 をパック（32 ビット）:
 
 ---
 
+## SFS（Shared Folder Sync）詳細 — Phase 9.5
+
+`/shared/` パス以下のファイルをクラスタ全ノードへリアルタイム同期します。
+
+### プロトコル仕様
+
+| 項目 | 値 |
+|-----|---|
+| トランスポート | Raw UDP、port **7381** |
+| チャンクサイズ | 512 bytes |
+| 最大ファイルサイズ | 32 KB |
+| 対象パス | `/shared/` のみ |
+| 削除伝播 | Tombstone テーブル（最大 16 エントリ） |
+
+### パケット構造 (`SFS_PKT`, 596 bytes)
+
+```
+magic(4) + version(1) + type(1) + src_node(1) + _pad(1) +
+path[64] + total_size(4) + chunk_idx(4) + chunk_len(4) + _pad2(4) +
+data[512]
+```
+
+### パケットタイプ
+
+| タイプ | 説明 |
+|-------|------|
+| `SFS_START` | ファイル転送開始（total_size 通知） |
+| `SFS_CHUNK` | チャンクデータ送信 |
+| `SFS_DELETE` | ファイル削除（tombstone 伝播） |
+| `SFS_SYNC_REQ` | ブート時同期要求（全ファイルを push してもらう） |
+
+### シェルコマンド
+
+```
+sfs list              — /shared/ の一覧表示
+sfs stat <path>       — ファイルのステータス確認
+sfs push <path>       — 手動でファイルを全ノードへ送信
+sfs sync              — SYNC_REQ ブロードキャスト（ブート時と同じ）
+```
+
+`write`・`cp` コマンドは `/shared/` パスを自動検出して `sfs_push()` を呼び出します。
+`rm` コマンドは `sfs_delete()` を呼び出してリモートの tombstone を伝播します。
+
+---
+
 ## 分散 RPC (DRPC) 詳細
 
 ### プロトコル
@@ -154,14 +234,18 @@ UNKNOWN → ALIVE → SUSPECT → DEAD
 | `dtk_wai_sem(gsemid, cnt, t)` | セマフォ wait |
 | `dtk_infer(node, packed, &cls, tmout)` | 任意ノードで MLP 推論（透過ルーティング） |
 
-### QEMU 2 ノード構成
+### QEMU 3 ノード構成
 
 ```
 端末 0:  make run-node0  →  Node 0  IP=10.1.0.1  MAC=52:54:00:00:00:01
 端末 1:  make run-node1  →  Node 1  IP=10.1.0.2  MAC=52:54:00:00:00:02
+端末 2:  make run-node2  →  Node 2  IP=10.1.0.3  MAC=52:54:00:00:00:03
 
 ネットワーク: UDP マルチキャスト 230.0.0.1:1234（仮想 Ethernet ハブ）
+ディスクイメージ: ノードごとに独立（node0.img / node1.img / node2.img）
 ```
+
+ノード ID は MAC アドレスの最終オクテットから自動決定 — 再コンパイル不要。
 
 ---
 
@@ -191,6 +275,7 @@ make run              # シングルノード（VGA + シリアル + RTL8139 NIC
 make run-headless     # ヘッドレス
 make run-node0        # 分散モード node 0
 make run-node1        # 分散モード node 1（別ターミナル）
+make run-node2        # 分散モード node 2（別ターミナル）
 make debug            # GDB リモートデバッグ（:1234）
 ```
 
