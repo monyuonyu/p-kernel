@@ -22,6 +22,7 @@
 #include "replica.h"
 #include "degrade.h"
 #include "dmn.h"
+#include "ga.h"
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
@@ -463,6 +464,14 @@ static void cmd_dmn(const char *arg)
     (void)arg;
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     dmn_stat();
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+static void cmd_ga(const char *arg)
+{
+    (void)arg;
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    ga_stat();
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
@@ -1884,6 +1893,8 @@ static void execute(const char *cmd)
         { cmd_dtr(cmd + 3); return; }
     if (cmd[0]=='d' && cmd[1]=='m' && cmd[2]=='n')
         { cmd_dmn(cmd + 3); return; }
+    if (cmd[0]=='g' && cmd[1]=='a')
+        { cmd_ga(cmd + 2); return; }
     if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&
         cmd[4]=='a' && cmd[5]=='d' && cmd[6]=='e')
         { cmd_degrade(cmd + 7); return; }

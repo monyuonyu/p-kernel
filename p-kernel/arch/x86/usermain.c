@@ -20,6 +20,7 @@
 #include "persist.h"
 #include "dtr.h"
 #include "dmn.h"
+#include "ga.h"
 #include "dproc.h"
 #include "sfs.h"
 #include "pmesh.h"
@@ -62,7 +63,7 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define AI_INFER_PRIORITY   7
 #define AI_INFER_STACK      4096
 #define DMN_PRIORITY        13   /* 最低優先度 — アイドル時のみ動作 */
-#define DMN_STACK           2048
+#define DMN_STACK           8192 /* GA/推論スタック深度に対応 */
 
 static ID create_sem(INT isemcnt, INT maxsem)
 {
@@ -122,6 +123,9 @@ EXPORT INT usermain(void)
 
     /* ---- Phase 13: DMN (Default Mode Network) ------------------- */
     dmn_init();
+
+    /* ---- Phase 14: GA (遺伝的アルゴリズム 重み自己改善) --------- */
+    ga_init();
 
     /* ---- Phase 9: 分散プロセスレジストリ ----------------------- */
     dproc_init();

@@ -65,6 +65,7 @@ ARCH_C_SRCS = \
     replica.c \
     degrade.c \
     dmn.c \
+    ga.c \
     vital.c \
     tensor.c \
     ai_job.c \

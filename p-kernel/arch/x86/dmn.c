@@ -21,6 +21,7 @@
 #include "dmn.h"
 #include "dtr.h"
 #include "degrade.h"
+#include "ga.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -107,6 +108,10 @@ static void dmn_idle_work(void)
 
     /* 推論統計を出力 */
     dtr_stat();
+
+    /* Phase 14: GA による重み自己改善 (GA_INTERVAL アイドルに 1 回) */
+    if (dmn_stats.idle_runs % GA_INTERVAL == 1)
+        ga_step();
 }
 
 /* ------------------------------------------------------------------ */

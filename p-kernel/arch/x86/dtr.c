@@ -203,6 +203,116 @@ static ID  dtr_result_sem  = -1;
 static DTR_RESULT dtr_last_result;
 static UW  dtr_req_counter = 0;
 
+/* ------------------------------------------------------------------ */
+/* Phase 14 — 推論ログ + GA サポート                                  */
+/* ------------------------------------------------------------------ */
+
+/* 推論ログ リングバッファ */
+static DTR_LOG_ENTRY dtr_log[DTR_LOG_SIZE];
+static UW dtr_log_head  = 0;   /* 次回書き込み位置 (mod DTR_LOG_SIZE) */
+static UW dtr_log_count = 0;   /* 有効エントリ数 (0〜DTR_LOG_SIZE)    */
+
+/* GA 実行中フラグ */
+volatile UB dtr_ga_busy = 0;
+
+/* ログに推論結果を追記 (内部用) */
+static void dtr_log_push(const B input[SEQ], UB class_id, UB conf_pct)
+{
+    UW idx = dtr_log_head;
+    for (INT i = 0; i < SEQ; i++) dtr_log[idx].input[i] = input[i];
+    dtr_log[idx].class_id       = class_id;
+    dtr_log[idx].confidence_pct = conf_pct;
+    dtr_log[idx]._pad           = 0;
+    dtr_log_head = (dtr_log_head + 1) % DTR_LOG_SIZE;
+    if (dtr_log_count < DTR_LOG_SIZE) dtr_log_count++;
+}
+
+/* ---- 公開 API ---- */
+
+UW dtr_log_avail(void) { return dtr_log_count; }
+
+void dtr_log_get_entry(UW idx, DTR_LOG_ENTRY *out)
+{
+    if (idx >= dtr_log_count) { out->class_id = 0xFF; return; }
+    /* idx=0 が最新エントリ (head-1), idx=1 がその前, … */
+    UW slot = (dtr_log_head + DTR_LOG_SIZE - 1 - idx) % DTR_LOG_SIZE;
+    *out = dtr_log[slot];
+}
+
+/* 重みコピーユーティリティ */
+static void dtr_cpy(float *dst, const float *src, INT n)
+{
+    for (INT i = 0; i < n; i++) dst[i] = src[i];
+}
+
+void dtr_weights_get(float *buf)
+{
+    INT off = 0;
+#define WG(arr, n)  dtr_cpy(buf + off, (const float *)(arr), (n)); off += (n)
+    WG(W_emb,  EMB_OUT * EMB_IN);   /*  32 */
+    WG(b_emb,  EMB_OUT);            /*   8 */
+    WG(W_q,    NH * DM * DH);       /*  64 */
+    WG(W_k,    NH * DM * DH);       /*  64 */
+    WG(W_v,    NH * DM * DH);       /*  64 */
+    WG(W_o,    DM * DM);            /*  64 */
+    WG(ln1_g,  DM);                 /*   8 */
+    WG(ln1_b,  DM);                 /*   8 */
+    WG(ln2_g,  DM);                 /*   8 */
+    WG(ln2_b,  DM);                 /*   8 */
+    WG(W_ffn1, DFFN * DM);          /* 128 */
+    WG(b_ffn1, DFFN);               /*  16 */
+    WG(W_ffn2, DM * DFFN);          /* 128 */
+    WG(b_ffn2, DM);                 /*   8 */
+    WG(W_cls,  DOUT * DM);          /*  24 */
+    WG(b_cls,  DOUT);               /*   3 */
+#undef WG
+    /* off == DTR_WEIGHT_FLOATS (635) */
+}
+
+void dtr_weights_set(const float *buf)
+{
+    INT off = 0;
+#define WS(arr, n)  dtr_cpy((float *)(arr), buf + off, (n)); off += (n)
+    WS(W_emb,  EMB_OUT * EMB_IN);
+    WS(b_emb,  EMB_OUT);
+    WS(W_q,    NH * DM * DH);
+    WS(W_k,    NH * DM * DH);
+    WS(W_v,    NH * DM * DH);
+    WS(W_o,    DM * DM);
+    WS(ln1_g,  DM);
+    WS(ln1_b,  DM);
+    WS(ln2_g,  DM);
+    WS(ln2_b,  DM);
+    WS(W_ffn1, DFFN * DM);
+    WS(b_ffn1, DFFN);
+    WS(W_ffn2, DM * DFFN);
+    WS(b_ffn2, DM);
+    WS(W_cls,  DOUT * DM);
+    WS(b_cls,  DOUT);
+#undef WS
+}
+
+/* 前方宣言 (run_transformer_local は後方で定義) */
+static UB run_transformer_local(const B input[SEQ], float scores_out[DOUT]);
+
+float dtr_eval_confidence(void)
+{
+    UW n = dtr_log_count;
+    if (n == 0) return 0.0f;
+    float total = 0.0f;
+    for (UW i = 0; i < n; i++) {
+        DTR_LOG_ENTRY e;
+        dtr_log_get_entry(i, &e);
+        float scores[DOUT];
+        run_transformer_local(e.input, scores);
+        /* max softmax score */
+        float mx = scores[0];
+        for (INT c = 1; c < DOUT; c++) if (scores[c] > mx) mx = scores[c];
+        total += mx;
+    }
+    return total / (float)n;
+}
+
 /* K-DDS ハンドル */
 /* Pipeline Parallel 用 (FULL mode) */
 static W h_l0_pub  = -1;
@@ -577,6 +687,9 @@ void dtr_task(INT stacd, void *exinf)
 
 W dtr_infer(const B input[4])
 {
+    /* GA 評価中は推論をスキップ */
+    if (dtr_ga_busy) return -1;
+
     dtr_stats.inferences++;
     dmn_trigger();   /* 推論リクエスト = 外部刺激 → DMN を ACTIVE に */
     UB lvl = degrade_level();
@@ -586,6 +699,11 @@ W dtr_infer(const B input[4])
         float scores[DOUT];
         UB cls = run_transformer_local(input, scores);
         dtr_stats.local++;
+
+        /* max softmax → confidence_pct */
+        float mx = scores[0];
+        for (INT c = 1; c < DOUT; c++) if (scores[c] > mx) mx = scores[c];
+        dtr_log_push(input, cls, (UB)(mx * 100.0f));
 
         static const char *cn[] = {"normal", "alert", "critical"};
         dt_puts("[dtr] local(SOLO): class="); dt_putdec((UW)cls);

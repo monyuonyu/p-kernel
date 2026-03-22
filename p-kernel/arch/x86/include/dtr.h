@@ -138,3 +138,44 @@ W    dtr_infer(const B input[4]);
 
 /* 統計表示 */
 void dtr_stat(void);
+
+/* ------------------------------------------------------------------ */
+/* Phase 14 — GA サポート API                                         */
+/* ------------------------------------------------------------------ */
+
+/* 全重みパラメータ数 (bias・LN 含む)
+ *   W_emb(32)+b_emb(8)+W_q(64)+W_k(64)+W_v(64)+W_o(64)
+ *   +ln1_g(8)+ln1_b(8)+ln2_g(8)+ln2_b(8)
+ *   +W_ffn1(128)+b_ffn1(16)+W_ffn2(128)+b_ffn2(8)
+ *   +W_cls(24)+b_cls(3) = 635                                        */
+#define DTR_WEIGHT_FLOATS  635
+
+/* 推論ログのリングバッファサイズ */
+#define DTR_LOG_SIZE  16
+
+/* 推論ログエントリ (8 bytes) */
+typedef struct {
+    B   input[DTR_SEQ_LEN];   /* センサー入力 int8[4]               */
+    UB  class_id;             /* 推論結果クラス (0=normal/1=alert/2=critical) */
+    UB  confidence_pct;       /* max softmax × 100 (0〜100)         */
+    UH  _pad;
+} DTR_LOG_ENTRY;
+
+/* GA 実行中フラグ — セットされている間 dtr_infer() は -1 を返す */
+extern volatile UB dtr_ga_busy;
+
+/* 全重みを flat バッファにコピー (buf は DTR_WEIGHT_FLOATS 要素以上) */
+void  dtr_weights_get(float *buf);
+
+/* flat バッファから全重みをロード */
+void  dtr_weights_set(const float *buf);
+
+/* 推論ログの有効エントリ数を返す (0〜DTR_LOG_SIZE) */
+UW    dtr_log_avail(void);
+
+/* 推論ログエントリを取得 (idx=0 が最新) */
+void  dtr_log_get_entry(UW idx, DTR_LOG_ENTRY *out);
+
+/* GA 評価専用: 現在ロードされている重みで log エントリを再推論し
+ * 平均 max-softmax (0.0〜1.0) を返す。dtr_ga_busy セット中に呼ぶこと */
+float dtr_eval_confidence(void);
