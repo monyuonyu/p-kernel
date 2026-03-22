@@ -97,7 +97,7 @@ void sfs_delete(const char *path);
 void sfs_boot_sync(void);
 
 /* UDP 受信コールバック (SFS_PORT に登録) */
-void sfs_rx(UW src_ip, UH src_port, const UB *data, UH len);
+void sfs_rx(UB src_node, UH dst_port, const UB *data, UH len);
 
 /* パスが SFS_ROOT 以下かどうかを確認する */
 BOOL sfs_is_shared(const char *path);

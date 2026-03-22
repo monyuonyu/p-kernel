@@ -118,7 +118,7 @@ W kdds_sub(W handle, void *buf, W buflen, W timeout_ms);
 void kdds_close(W handle);
 
 /* UDP 受信コールバック (KDDS_PORT に登録) */
-void kdds_rx(UW src_ip, UH src_port, const UB *data, UH len);
+void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len);
 
 /* トピックテーブルを表示 (shell `topic list`) */
 void kdds_list(void);

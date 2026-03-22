@@ -89,7 +89,7 @@ void replica_init(void);
 void replica_task(INT stacd, void *exinf);
 
 /* UDP 受信コールバック (REPLICA_PORT に登録)。 */
-void replica_rx(UW src_ip, UH src_port, const UB *data, UH len);
+void replica_rx(UB src_node, UH dst_port, const UB *data, UH len);
 
 /* 新規/復帰ノードへ即座に全トピックをプッシュする (swim.c から呼ぶ)。 */
 void replica_push_to(UB node_id);

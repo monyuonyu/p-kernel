@@ -19,6 +19,7 @@
 #include "kdds.h"
 #include "netstack.h"
 #include "replica.h"
+#include "pmesh.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -182,10 +183,7 @@ W kdds_pub(W handle, const void *data, W len)
 
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
-            if (dnode_table[n].state != DNODE_ALIVE) continue;
-            UW dst_ip = dnode_table[n].ip;
-            udp_send(dst_ip, KDDS_PORT, KDDS_PORT,
-                     (const UB *)&pkt, (UH)sizeof(pkt));
+            pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
         }
     }
 
@@ -260,9 +258,9 @@ void kdds_close(W handle)
 /* kdds_rx — リモートノードからのデータ受信                           */
 /* ------------------------------------------------------------------ */
 
-void kdds_rx(UW src_ip, UH src_port, const UB *data, UH len)
+void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len)
 {
-    (void)src_port; (void)src_ip;
+    (void)src_node; (void)dst_port;
     if (len < (UH)sizeof(KDDS_PKT)) return;
 
     const KDDS_PKT *pkt = (const KDDS_PKT *)data;
@@ -299,7 +297,7 @@ void kdds_init(void)
         kdds_handles[h].sub_sem   = -1;
         kdds_handles[h].topic_idx = -1;
     }
-    udp_bind(KDDS_PORT, kdds_rx);
+    pmesh_bind(KDDS_PORT, kdds_rx);
     kd_puts("[kdds] K-DDS ready  port=7376\r\n");
 }
 

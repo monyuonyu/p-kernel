@@ -13,6 +13,7 @@
 
 #include "replica.h"
 #include "netstack.h"
+#include "pmesh.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -120,15 +121,12 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
 static void send_to_node(UB node_id, UB type)
 {
     if (node_id >= DNODE_MAX) return;
-    UW dst_ip = dnode_table[node_id].ip;
-    if (!dst_ip) return;
 
     /* static: REPLICA_PKT は KDDS_TOPIC_MAX×168+8 バイト。スタック節約のため static */
     static REPLICA_PKT pkt;
     for (INT _i = 0; _i < (INT)sizeof(pkt); _i++) ((UB *)&pkt)[_i] = 0;
     build_pkt(&pkt, type);
-    udp_send(dst_ip, REPLICA_PORT, REPLICA_PORT,
-             (const UB *)&pkt, (UH)sizeof(pkt));
+    pmesh_send(node_id, REPLICA_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
     replica_stats.sent_pkts++;
 }
 
@@ -204,9 +202,9 @@ static void merge_entry(const REPLICA_ENTRY *e)
 /* UDP 受信コールバック                                                */
 /* ------------------------------------------------------------------ */
 
-void replica_rx(UW src_ip, UH src_port, const UB *data, UH len)
+void replica_rx(UB src_node, UH dst_port, const UB *data, UH len)
 {
-    (void)src_port; (void)src_ip;
+    (void)src_node; (void)dst_port;
     /* ヘッダ 8 バイト以上あれば受け付ける (ANNOUNCE はヘッダのみ送信) */
     if (len < 8) return;
 
@@ -290,12 +288,9 @@ void replica_boot_cry(void)
     ann.src_node  = drpc_my_node;
     ann.entry_cnt = 0;
 
-    /* IP スキーム: 10.1.0.(n+1) — 全可能ピアへ直接送る */
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        UW peer_ip = ((UW)(n + 1) << 24) | 0x0000010AUL;
-        udp_send(peer_ip, REPLICA_PORT, REPLICA_PORT,
-                 (const UB *)&ann, (UH)sizeof(ann));
+        pmesh_send(n, REPLICA_PORT, (const UB *)&ann, (UH)sizeof(ann));
     }
 }
 
@@ -309,7 +304,6 @@ void replica_scatter_all(void)
     rp_puts("[replica] *** DEATH THROES *** scattering all memories NOW\r\n");
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
         send_to_node(n, REPLICA_DATA);
     }
 }
@@ -362,10 +356,7 @@ void replica_tombstone(const char *name)
 
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
-        UW dst_ip = dnode_table[n].ip;
-        udp_send(dst_ip, REPLICA_PORT, REPLICA_PORT,
-                 (const UB *)&pkt, (UH)sizeof(pkt));
+        pmesh_send(n, REPLICA_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
     }
 
     rp_puts("[replica] tombstone sent: \"");
@@ -386,6 +377,6 @@ void replica_init(void)
     replica_stats.skipped   = 0;
     replica_stats.recovered = 0;
     for (INT i = 0; i < REPLICA_TOMB_MAX; i++) tomb[i].active = 0;
-    udp_bind(REPLICA_PORT, replica_rx);
+    pmesh_bind(REPLICA_PORT, replica_rx);
     rp_puts("[replica] state replication ready  port=7379\r\n");
 }

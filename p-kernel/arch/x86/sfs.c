@@ -9,6 +9,7 @@
 #include "sfs.h"
 #include "drpc.h"
 #include "netstack.h"
+#include "pmesh.h"
 #include "vfs.h"
 #include "kernel.h"
 #include <tmonitor.h>
@@ -95,7 +96,7 @@ void sfs_init(void)
     sf_memset(sfs_tomb,        0, (INT)sizeof(sfs_tomb));
     sf_memset(sfs_tomb_active, 0, (INT)sizeof(sfs_tomb_active));
 
-    udp_bind(SFS_PORT, sfs_rx);
+    pmesh_bind(SFS_PORT, sfs_rx);
 
     sf_puts("[sfs] shared folder sync ready  root=");
     sf_puts(SFS_ROOT);
@@ -153,13 +154,13 @@ static INT tomb_contains(const char *path)
 /* 単一ノードへパケット送信                                            */
 /* ------------------------------------------------------------------ */
 
-static void send_pkt_to(UW dst_ip, const SFS_PKT *pkt, UH len)
+static void send_pkt_to(UB node_id, const SFS_PKT *pkt, UH len)
 {
-    udp_send(dst_ip, SFS_PORT, SFS_PORT, (const UB *)pkt, len);
+    pmesh_send(node_id, SFS_PORT, (const UB *)pkt, len);
 }
 
 /* ------------------------------------------------------------------ */
-/* 全 ALIVE ノードへパケット送信 (自ノードを除く)                     */
+/* 全ノードへパケット送信 (自ノードを除く、pmesh で中継)              */
 /* ------------------------------------------------------------------ */
 
 static void broadcast_pkt(const SFS_PKT *pkt, UH len)
@@ -167,9 +168,7 @@ static void broadcast_pkt(const SFS_PKT *pkt, UH len)
     if (drpc_my_node == 0xFF) return;   /* 非分散モード */
     for (INT n = 0; n < DNODE_MAX; n++) {
         if ((UB)n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
-        if (!dnode_table[n].ip) continue;
-        send_pkt_to(dnode_table[n].ip, pkt, len);
+        pmesh_send((UB)n, SFS_PORT, (const UB *)pkt, len);
     }
 }
 
@@ -283,9 +282,9 @@ void sfs_boot_sync(void)
 /* sfs_rx — UDP 受信コールバック                                       */
 /* ------------------------------------------------------------------ */
 
-void sfs_rx(UW src_ip, UH src_port, const UB *data, UH len)
+void sfs_rx(UB src_node, UH dst_port, const UB *data, UH len)
 {
-    (void)src_port;
+    (void)dst_port;
 
     if (len < (UH)(sizeof(SFS_PKT) - SFS_CHUNK_SIZE)) return;  /* ヘッダ最小長 */
     const SFS_PKT *pkt = (const SFS_PKT *)data;
@@ -418,7 +417,7 @@ void sfs_rx(UW src_ip, UH src_port, const UB *data, UH len)
                 sf_strncpy(spkt.path, fpath, SFS_PATH_MAX);
                 spkt.total_size = fsize;
 
-                send_pkt_to(src_ip, &spkt, (UH)sizeof(spkt));
+                send_pkt_to(src_node, &spkt, (UH)sizeof(spkt));
 
                 UW cidx = 0;
                 for (;;) {
@@ -427,15 +426,15 @@ void sfs_rx(UW src_ip, UH src_port, const UB *data, UH len)
                     spkt.type      = SFS_FILE_CHUNK;
                     spkt.chunk_idx = cidx;
                     spkt.chunk_len = (UH)nr;
-                    send_pkt_to(src_ip, &spkt, (UH)sizeof(spkt));
+                    send_pkt_to(src_node, &spkt, (UH)sizeof(spkt));
                     sfs_stats.chunks_sent++;
                     cidx++;
                 }
                 vfs_close(fd);
                 sfs_stats.files_sent++;
             }
-            sf_puts("[sfs] sync response sent to ");
-            sf_puts(ip_str(src_ip));
+            sf_puts("[sfs] sync response sent to node ");
+            sf_putdec(src_node);
             sf_puts("\r\n");
         }
         break;
