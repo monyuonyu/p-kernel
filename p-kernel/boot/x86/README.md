@@ -232,6 +232,41 @@ p-kernel> rm /shared/hello.txt
 | Phase 10 | pmesh + kloader | ✅ 完成 | メッシュルーティング + ring-3 カーネルローダーデーモン (kloader_d.elf) |
 | Phase 11 | 縮退モード | ✅ 完成 | ノード数に応じて自動縮退。SOLO=ローカル / REDUCED=TensorPar / FULL=Pipeline |
 | **Phase 12** | **大規模 LLM 推論** | 🔲 設計済み | ring-3 推論デーモン群 + ring-0 制御。200B 級モデルへの道筋 |
+| **Phase 13** | **DMN** | 🔲 設計中 | Default Mode Network。外部刺激で発火、アイドル時に記憶整理 |
+
+---
+
+## Phase 13 — DMN (Default Mode Network)
+
+人間の脳はつねに動いている。外的な刺激があれば反応し、何もない時は内側で情報を整理する。
+このフェーズではその仕組みをカーネルに組み込む。
+
+### 設計
+
+```
+外部刺激 (センサー / ネットワーク / K-DDS トピック)
+  → dmn_trigger() で発火
+  → dtr_infer() を優先実行
+
+アイドル状態 (一定時間リクエストなし)
+  → dmn_idle_task() が起動
+  → replica の整理 / KV キャッシュの LRU 再構築 / K-DDS 統計集計
+  → fedlearn の勾配集約 (学習の定着)
+```
+
+### 主なコンポーネント
+
+| モジュール | 役割 |
+|---|---|
+| `dmn.c` | cyclic handler でハートビートを刻み、アイドル検知と整理タスクを管理 |
+| `dmn_trigger()` | 外部刺激を受け取り推論を優先起動。swim / drpc / kdds から呼ばれる |
+| `dmn_idle()` | アイドル時の整理処理。記憶の定着・不要エントリの削除・索引再構築 |
+
+### カーネルへの組み込み
+
+- `tk_cre_cyc` (T-Kernel cyclic handler) でハートビート周期を設定
+- 外部刺激到着時は event flag でアイドルを中断し推論を優先
+- 整理処理は最低優先度タスクとして動作し、推論の邪魔をしない
 
 ---
 
