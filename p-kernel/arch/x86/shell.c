@@ -97,6 +97,7 @@ static void cmd_help(void)
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("Available commands:\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  status - クラスタ全体のヘルスダッシュボード\r\n");
     sout("  help   - show this message\r\n");
     sout("  ver    - kernel version info\r\n");
     sout("  mem    - memory layout\r\n");
@@ -1219,6 +1220,126 @@ static void cmd_mesh(const char *arg)
     sout("Usage: mesh route | mesh stat\r\n");
 }
 
+/* ------------------------------------------------------------------ */
+/* status — クラスタ全体のヘルスダッシュボード                        */
+/* ------------------------------------------------------------------ */
+
+static void cmd_status(void)
+{
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    sout("=== p-kernel cluster status ===\r\n");
+
+    /* ---- [Nodes] ---- */
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("\r\n[Nodes]\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    if (drpc_my_node == 0xFF) {
+        sout("  (single-node mode)\r\n");
+    } else {
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            UB st = dnode_table[n].state;
+            if (st == DNODE_UNKNOWN && n != drpc_my_node) continue;
+
+            if (n == drpc_my_node) {
+                vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+                sout("  * node ");
+            } else {
+                vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+                sout("    node ");
+            }
+            sout_dec(n);
+            sout("  ");
+            /* IP */
+            if (n == drpc_my_node) {
+                /* own IP from drpc */
+                UW ip = dnode_table[n].ip;
+                for (INT b = 0; b < 4; b++) {
+                    if (b) sout(".");
+                    sout_dec((ip >> (b * 8)) & 0xFF);
+                }
+            } else {
+                UW ip = dnode_table[n].ip;
+                for (INT b = 0; b < 4; b++) {
+                    if (b) sout(".");
+                    sout_dec((ip >> (b * 8)) & 0xFF);
+                }
+            }
+            sout("  ");
+            if (n == drpc_my_node) {
+                vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+                sout("ALIVE (me)");
+            } else if (st == DNODE_ALIVE) {
+                vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+                sout("ALIVE");
+            } else if (st == DNODE_SUSPECT) {
+                vga_set_color(VGA_YELLOW, VGA_BLACK);
+                sout("SUSPECT");
+            } else {
+                vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+                sout("DEAD");
+            }
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+            sout("\r\n");
+        }
+    }
+
+    /* ---- [Mesh] ---- */
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("\r\n[Mesh]\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    if (drpc_my_node == 0xFF) {
+        sout("  (not in distributed mode)\r\n");
+    } else {
+        sout("  beacon tx="); sout_dec(pmesh_stats.beacon_tx);
+        sout("  rx=");        sout_dec(pmesh_stats.beacon_rx);
+        sout("  data tx=");   sout_dec(pmesh_stats.data_tx);
+        sout("  rx=");        sout_dec(pmesh_stats.data_rx);
+        sout("  relay=");     sout_dec(pmesh_stats.data_relay);
+        sout("\r\n");
+        /* relay routes (non-direct) */
+        INT nroutes = 0;
+        for (INT i = 0; i < DNODE_MAX; i++)
+            if (pmesh_routes[i].active) nroutes++;
+        sout("  relay routes="); sout_dec(nroutes); sout("\r\n");
+    }
+
+    /* ---- [Topics] ---- */
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("\r\n[Topics]\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    INT ntopic = 0;
+    for (INT i = 0; i < KDDS_TOPIC_MAX; i++)
+        if (kdds_topics[i].open) ntopic++;
+    sout("  active="); sout_dec(ntopic); sout("\r\n");
+
+    /* ---- [Tasks] ---- */
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("\r\n[Tasks]\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    INT nrun = 0, nwait = 0;
+    for (INT id = 1; id <= PS_MAX_TSKID; id++) {
+        T_RTSK rtsk;
+        if (tk_ref_tsk((ID)id, &rtsk) != E_OK) continue;
+        UINT s = rtsk.tskstat & 0xFF;
+        if (s == 0 || s == TTS_DMT) continue;
+        if (s == TTS_RUN || s == TTS_RDY) nrun++;
+        else nwait++;
+    }
+    sout("  running/ready="); sout_dec(nrun);
+    sout("  waiting=");       sout_dec(nwait);
+    sout("\r\n");
+
+    /* ---- [Memory] ---- */
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("\r\n[Memory]\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    UW avail = (UW)knl_lowmem_limit - (UW)knl_lowmem_top;
+    sout("  heap free: "); sout_dec(avail / 1024); sout(" KB\r\n");
+
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
 static void cmd_mv(const char *arg)
 {
     while (*arg == ' ') arg++;
@@ -1549,7 +1670,8 @@ static void execute(const char *cmd)
     if (cmd[0]=='m' && cmd[1]=='e' && cmd[2]=='s' && cmd[3]=='h')
         { cmd_mesh(cmd + 4); return; }
 
-    if      (str_eq(cmd, "help"))   cmd_help();
+    if      (str_eq(cmd, "status")) cmd_status();
+    else if (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();
     else if (str_eq(cmd, "umount")) sout("umount: single root mount — nothing to unmount\r\n");
