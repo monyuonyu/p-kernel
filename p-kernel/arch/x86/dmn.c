@@ -91,6 +91,10 @@ static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
 
+    /* Phase 14: GA による重み自己改善 (GA_INTERVAL アイドルに 1 回) */
+    if (dmn_stats.idle_runs % GA_INTERVAL == 1)
+        ga_step();
+
     /* DMN_LOG_INTERVAL パルスに 1 回だけ詳細ログを出す */
     if (dmn_stats.idle_runs % DMN_LOG_INTERVAL != 1) return;
 
@@ -108,10 +112,6 @@ static void dmn_idle_work(void)
 
     /* 推論統計を出力 */
     dtr_stat();
-
-    /* Phase 14: GA による重み自己改善 (GA_INTERVAL アイドルに 1 回) */
-    if (dmn_stats.idle_runs % GA_INTERVAL == 1)
-        ga_step();
 }
 
 /* ------------------------------------------------------------------ */
