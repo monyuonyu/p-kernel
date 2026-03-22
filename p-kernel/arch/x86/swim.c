@@ -14,6 +14,7 @@
 #include "swim.h"
 #include "heal.h"
 #include "replica.h"
+#include "degrade.h"
 #include "netstack.h"
 #include "kernel.h"
 
@@ -120,6 +121,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
         else if (st == DNODE_DEAD)    sw_puts(" -> DEAD\r\n");
         gossip_add(nid, st);   /* re-propagate */
+        degrade_update();
     }
 }
 
@@ -177,6 +179,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
             sw_puts("  (via rx)\r\n");
             gossip_add(snid, DNODE_ALIVE);
             replica_push_to(snid);
+            degrade_update();
         }
     }
 
@@ -361,6 +364,7 @@ void swim_task(INT stacd, void *exinf)
             sw_puts(" -> DEAD\r\n");
             gossip_add(target, DNODE_DEAD);
             heal_on_node_dead(target);
+            degrade_update();
         }
     }
 }

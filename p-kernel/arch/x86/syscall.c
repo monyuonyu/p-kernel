@@ -18,6 +18,7 @@
 #include "paging.h"
 #include "kdds.h"
 #include "edf.h"
+#include "dtr.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -847,6 +848,30 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     /* ------------------------------------------------------------- */
+    /* 分散 Transformer 推論 syscall (Phase 12)                      */
+    /* ------------------------------------------------------------- */
+
+    case SYS_DTR_SUBMIT: {
+        /* arg0 = sensor_packed (SENSOR_PACK(t,h,p,l))
+         * dtr_infer() を呼んで Transformer 推論を実行する。
+         * 単一ノード(0xFF)は全ステージをローカル実行。
+         * 分散ノード (0/1) は縮退レベルに応じて Pipeline/Tensor Parallel。
+         * 最大 DTR_INFER_TMO ms ブロックして class [0,1,2] または -1 を返す。 */
+        B input[4] = {
+            SENSOR_UNPACK_T(arg0),
+            SENSOR_UNPACK_H(arg0),
+            SENSOR_UNPACK_P(arg0),
+            SENSOR_UNPACK_L(arg0),
+        };
+        return (W)dtr_infer(input);
+    }
+
+    case SYS_DTR_WAIT: {
+        /* 将来の非同期実装用 — 現バージョンでは SYS_DTR_SUBMIT が同期のため不要 */
+        return -1;
+    }
+
+    /* ------------------------------------------------------------- */
     /* T-Kernel native: mutex                                       */
     /* ------------------------------------------------------------- */
 
@@ -1354,6 +1379,18 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_ROT_RDQ:
         /* arg0 = priority (0 = current task priority) */
         return (W)tk_rot_rdq((PRI)arg0);
+
+    /* System control (0x400+) */
+    case SYS_REBOOT:
+        /* ACPI フルリセット — 呼び出し元には返らない */
+        __asm__ volatile(
+            "movw $0xCF9, %%dx\n\t"
+            "movb $0x06, %%al\n\t"
+            "outb %%al, %%dx\n\t"
+            :: : "eax", "edx"
+        );
+        for (;;) __asm__("hlt");
+        return 0;   /* 到達しない */
 
     default:
         return -1;  /* ENOSYS */

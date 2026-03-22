@@ -13,6 +13,7 @@
 #include "swim.h"
 #include "kdds.h"
 #include "heal.h"
+#include "degrade.h"
 #include "edf.h"
 #include "replica.h"
 #include "vital.h"
@@ -49,6 +50,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define VITAL_STACK         2048
 #define PERSIST_PRIORITY    10
 #define PERSIST_STACK       2048
+#define HEAL_ELF_PRIORITY   4
+#define HEAL_ELF_STACK      2048
 #define DTR_PRIORITY        6
 #define DTR_STACK           4096
 #define PMESH_PRIORITY      7
@@ -94,12 +97,18 @@ EXPORT INT usermain(void)
     /* ---- K-DDS — カーネルネイティブ pub/sub ----------------------- */
     kdds_init();
 
-    /* ---- Phase 7: 永続化タスク (ディスクがある場合のみ有効) ------- */
+    /* ---- Phase 7: 永続化タスク + ELF watchdog (ディスクがある場合のみ) */
     if (vfs_ready) {
         if (create_task(persist_task, PERSIST_PRIORITY, PERSIST_STACK) < E_OK)
             tm_putstring((UB *)"[ERR] persist task\r\n");
         else
             tm_putstring((UB *)"[OK]  persist task\r\n");
+
+        heal_elf_init();
+        if (create_task(heal_elf_task, HEAL_ELF_PRIORITY, HEAL_ELF_STACK) < E_OK)
+            tm_putstring((UB *)"[ERR] heal ELF task\r\n");
+        else
+            tm_putstring((UB *)"[OK]  heal ELF task\r\n");
     }
 
     /* ---- AI kernel primitives ------------------------------------- */
@@ -159,6 +168,7 @@ EXPORT INT usermain(void)
             drpc_init(nid, nip);
             swim_init();
             heal_init();
+            degrade_init();
             heal_register("sensor_pub", 0x0003, 0, 5);
             edf_init();
             replica_init();
@@ -199,6 +209,7 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] pmesh task\r\n");
             else
                 tm_putstring((UB *)"[OK]  pmesh task\r\n");
+
         }
 
         /* Send initial ARP from here (priority 1) so the reply arrives

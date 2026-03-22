@@ -1,28 +1,38 @@
 /*
  *  dtr.c (x86)
- *  Phase 8 — Distributed Transformer Inference (Pipeline Parallelism)
+ *  Phase 8/11 — Distributed Transformer Inference
  *
- *  LLM・大規模モデルをノード間で分割して動かすための実装。
- *  K-DDS トピックが中間活性化テンソルの転送バスとして機能する。
+ *  本物の Transformer Block (MHSA + LayerNorm + FFN + LayerNorm) を
+ *  クラスタ規模に応じた分散戦略で実行する。
  *
- *  同じコードを全ノードで動かす。drpc_my_node の偶奇で役割が決まる。
+ *  モデル構造:
+ *    Input int8[4]
+ *    → Embed  : 各センサー値を 1 トークンとして float[4][8] に変換
+ *    → MHSA   : Multi-Head Self-Attention (h=2, d_k=d_v=4)
+ *               + 残差接続 + LayerNorm (LN1)
+ *    → FFN    : Linear(8→16) + ReLU + Linear(16→8)
+ *               + 残差接続 + LayerNorm (LN2)
+ *    → Pool   : Mean Pooling float[4][8] → float[8]
+ *    → Cls    : Linear(8→3) + Softmax → class [0,1,2]
  *
- *     ┌─────────────────┐  dtr/l0  ┌──────────────────────┐
- *     │ Node 0 (even)   │ ───────► │ Node 1 (odd)         │
- *     │  dtr_infer()    │          │                      │
- *     │  Stage 0:       │          │  Stage 1: FFN        │
- *     │  Embed(4→8)     │          │  8→16→8              │
- *     │  Layer0(8→8)    │ ◄─────── │  Stage 2: OutputHead │
- *     │  [wait result]  │ dtr/result│  8→3 + Softmax      │
- *     └─────────────────┘          └──────────────────────┘
+ *  分散戦略 (縮退モードと連携):
  *
- *  モデルの重みは全ノードで同じ LCG シードから初期化するため同一。
- *  学習 (Phase 8 以降) で重みを更新した場合は fedlearn で同期する。
+ *    SOLO    (1 node):  全ステージをローカルで実行
+ *
+ *    REDUCED (2 nodes): Tensor Parallel — Attention ヘッドを分割
+ *      Node 0 (even): head0 計算 → "dtr/input" pub, "dtr/head1" 待機
+ *                     → gather → W_o → LN1 → FFN → LN2 → Pool → Cls
+ *      Node 1 (odd) : "dtr/input" sub → head1 計算 → "dtr/head1" pub
+ *
+ *    FULL    (3+ nodes): Pipeline Parallel — ステージをノード間で分割
+ *      Node 0 (even): Embed + MHSA(local) + mean-pool → "dtr/l0" pub
+ *      Node 1 (odd) : "dtr/l0" sub → LN1 → FFN → LN2 → Cls → "dtr/result" pub
  */
 
 #include "dtr.h"
 #include "kdds.h"
 #include "drpc.h"
+#include "degrade.h"
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -56,20 +66,31 @@ static void dt_putf2(float f)
 
 static float dt_relu(float x) { return x > 0.0f ? x : 0.0f; }
 
-/* exp(x): Taylor 展開, |x| <= 5 で十分な精度 */
+/* exp(x): Horner 法 Taylor 展開 */
 static float dt_exp(float x)
 {
     if (x >  10.0f) return 22026.0f;
     if (x < -10.0f) return 0.0f;
-    /* Horner 法: 1 + x + x²/2! + x³/3! + x⁴/4! + x⁵/5! + x⁶/6! */
     float r = 1.0f + x * (1.0f + x * (0.5f + x * (0.16667f +
               x * (0.04167f + x * (0.00833f + x * 0.00139f)))));
     return r < 1e-10f ? 1e-10f : r;
 }
 
-/* y[M] = W[M×N] · x[N] + b[M]  (row-major) */
-static void dt_linear(const float *W, const float *b, const float *x,
-                      float *y, INT M, INT N)
+/* sqrt(x): Newton-Raphson 法 */
+static float dt_sqrt(float x)
+{
+    if (x <= 0.0f) return 0.0f;
+    float r = x > 1.0f ? x * 0.5f : 1.0f;
+    r = (r + x / r) * 0.5f;
+    r = (r + x / r) * 0.5f;
+    r = (r + x / r) * 0.5f;
+    r = (r + x / r) * 0.5f;
+    return r;
+}
+
+/* y[M] = W[M×N] · x[N] + b[M] */
+static void dt_linear(const float *W, const float *b,
+                      const float *x, float *y, INT M, INT N)
 {
     for (INT m = 0; m < M; m++) {
         float s = b ? b[m] : 0.0f;
@@ -89,46 +110,86 @@ static void dt_softmax(float *x, INT n)
     for (INT i = 0; i < n; i++) x[i] /= sum;
 }
 
+/* Layer Normalization: (x - mean) / sqrt(var + eps) * gamma + beta */
+static void dt_layernorm(float *x, const float *gamma, const float *beta, INT n)
+{
+    float mean = 0.0f, var = 0.0f;
+    for (INT i = 0; i < n; i++) mean += x[i];
+    mean /= (float)n;
+    for (INT i = 0; i < n; i++) { float d = x[i] - mean; var += d * d; }
+    var /= (float)n;
+    float inv_std = 1.0f / dt_sqrt(var + 1e-5f);
+    for (INT i = 0; i < n; i++)
+        x[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i];
+}
+
 /* ------------------------------------------------------------------ */
-/* モデル重み (全ノードで同一の LCG シードから初期化)                 */
+/* 次元定義 (旧モデルとの互換用エイリアスを残す)                     */
 /* ------------------------------------------------------------------ */
 
-/* 次元定義 */
-#define EMB_IN    4   /* センサ入力次元 */
-#define EMB_OUT   8   /* 埋め込み次元   */
-#define L0_IN     8
-#define L0_OUT    8
-#define L1A_OUT  16   /* FFN 展開       */
-#define L1B_OUT   8   /* FFN 収縮       */
-#define OUT_IN    8
-#define OUT_OUT   3
+#define SEQ  DTR_SEQ_LEN    /* 4  */
+#define DM   DTR_EMBED_DIM  /* 8  */
+#define DH   DTR_D_HEAD     /* 4  */
+#define NH   DTR_NUM_HEADS  /* 2  */
+#define DFFN DTR_FFN_DIM    /* 16 */
+#define DOUT DTR_OUT_DIM    /* 3  */
 
-/* 重みテーブル */
-static float W_emb [EMB_OUT][EMB_IN ];   /* 32 floats   */
-static float b_emb [EMB_OUT          ];  /*  8 floats   */
-static float W_l0  [L0_OUT ][L0_IN  ];  /* 64 floats   */
-static float b_l0  [L0_OUT           ];  /*  8 floats   */
-static float W_l1a [L1A_OUT][L1B_OUT];   /* 128 floats  */
-static float b_l1a [L1A_OUT          ];  /* 16 floats   */
-static float W_l1b [L1B_OUT][L1A_OUT];   /* 128 floats  */
-static float b_l1b [L1B_OUT          ];  /*  8 floats   */
-static float W_out [OUT_OUT][OUT_IN  ];  /* 24 floats   */
-static float b_out [OUT_OUT          ];  /*  3 floats   */
+/* 旧 Stage 定義 (Pipeline Parallel の dtr/l0 互換) */
+#define EMB_IN   4
+#define EMB_OUT  DM
+#define L0_IN    DM
+#define L0_OUT   DM
+#define L1A_OUT  DFFN
+#define L1B_OUT  DM
+#define OUT_IN   DM
+#define OUT_OUT  DOUT
 
-/* LCG 疑似乱数による重み初期化 (He 初期化 スケール) */
+/* ------------------------------------------------------------------ */
+/* モデル重み                                                          */
+/* ------------------------------------------------------------------ */
+
+/* --- Embed (旧実装と同じ: 各センサー値をDMに投影) --- */
+static float W_emb[EMB_OUT][EMB_IN];
+static float b_emb[EMB_OUT];
+
+/* --- Multi-Head Self-Attention 重み --- */
+/* W_q/k/v[head][d_model → d_head]: 投影行列 */
+static float W_q[NH][DM][DH];   /* 2×8×4 = 64 floats */
+static float W_k[NH][DM][DH];   /* 2×8×4 = 64 floats */
+static float W_v[NH][DM][DH];   /* 2×8×4 = 64 floats */
+/* W_o: concat(heads) → d_model (DM×DM = 8×8 = 64 floats) */
+static float W_o[DM][DM];
+
+/* --- LayerNorm パラメータ (gamma=1, beta=0 で初期化) --- */
+static float ln1_g[DM], ln1_b[DM];   /* MHSA 後 */
+static float ln2_g[DM], ln2_b[DM];   /* FFN  後 */
+
+/* --- FFN 重み --- */
+static float W_ffn1[DFFN][DM];   /* 16×8 = 128 floats */
+static float b_ffn1[DFFN];
+static float W_ffn2[DM][DFFN];   /* 8×16 = 128 floats */
+static float b_ffn2[DM];
+
+/* --- 分類ヘッド --- */
+static float W_cls[DOUT][DM];    /* 3×8 = 24 floats */
+static float b_cls[DOUT];
+
+/* ------------------------------------------------------------------ */
+/* 重み初期化ヘルパー (LCG 疑似乱数 He 初期化)                       */
+/* ------------------------------------------------------------------ */
+
 static void init_weights(float *w, INT n, float scale, UW *seed)
 {
     for (INT i = 0; i < n; i++) {
         *seed = *seed * 1664525UL + 1013904223UL;
-        /* [0, 2^23) → [0,1) → [-1, 1) */
         float v = (float)((*seed >> 9) & 0x7FFFFFU) / (float)(1 << 23) * 2.0f - 1.0f;
         w[i] = v * scale;
     }
 }
 
-static void init_zeros(float *w, INT n)
+static void init_const(float *w, INT n, float val)
 {
-    for (INT i = 0; i < n; i++) w[i] = 0.0f;
+    for (INT i = 0; i < n; i++) w[i] = val;
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,75 +198,219 @@ static void init_zeros(float *w, INT n)
 
 DTR_STATS dtr_stats;
 
-static ID  dtr_result_sem  = -1;   /* dtr_infer() が結果待ちに使う  */
-static DTR_RESULT dtr_last_result; /* dtr_task が書き込む最終結果   */
-static UW  dtr_req_counter = 0;    /* リクエスト ID カウンタ        */
+static ID  dtr_result_sem  = -1;
+static DTR_RESULT dtr_last_result;
+static UW  dtr_req_counter = 0;
 
-/* K-DDS ハンドル (dtr_task で設定) */
-static W h_l0_pub  = -1;   /* node 0: "dtr/l0" へ pub     */
-static W h_l0_sub  = -1;   /* node 1: "dtr/l0" を sub     */
-static W h_res_pub = -1;   /* node 1: "dtr/result" へ pub */
-static W h_res_sub = -1;   /* node 0: "dtr/result" を sub */
+/* K-DDS ハンドル */
+/* Pipeline Parallel 用 (FULL mode) */
+static W h_l0_pub  = -1;
+static W h_l0_sub  = -1;
+static W h_res_pub = -1;
+static W h_res_sub = -1;
+
+/* Tensor Parallel 用 (REDUCED mode) */
+static W h_input_pub  = -1;   /* Node0: "dtr/input" pub  */
+static W h_input_sub  = -1;   /* Node1: "dtr/input" sub  */
+static W h_head1_pub  = -1;   /* Node1: "dtr/head1" pub  */
+static W h_head1_sub  = -1;   /* Node0: "dtr/head1" sub  */
 
 /* ------------------------------------------------------------------ */
-/* ステージ計算関数                                                    */
+/* Transformer 計算関数                                               */
 /* ------------------------------------------------------------------ */
 
 /*
- *  Stage 0: Embed(int8[4]→float[8]) + Layer0(8→8, Linear+ReLU)
- *  Node 0 が担当。結果を "dtr/l0" へ pub する。
+ *  Embed: int8[SEQ] → float[SEQ][DM]
+ *  各トークンを W_emb で d_model 次元に投影し ReLU
  */
-static void run_stage0(const B input[4], float out[L0_OUT])
+static void run_embed_seq(const B input[SEQ], float tok[SEQ][DM])
 {
-    /* Embed: int8 → [-1, 1] に正規化してから線形変換 */
-    float in_f[EMB_IN];
-    for (INT i = 0; i < EMB_IN; i++) in_f[i] = (float)input[i] / 127.0f;
-
-    float emb[EMB_OUT];
-    dt_linear((float *)W_emb, b_emb, in_f, emb, EMB_OUT, EMB_IN);
-    for (INT i = 0; i < EMB_OUT; i++) emb[i] = dt_relu(emb[i]);
-
-    /* Layer 0: Linear(8→8) + ReLU */
-    dt_linear((float *)W_l0, b_l0, emb, out, L0_OUT, L0_IN);
-    for (INT i = 0; i < L0_OUT; i++) out[i] = dt_relu(out[i]);
-
-    dtr_stats.layer0_runs++;
+    for (INT t = 0; t < SEQ; t++) {
+        float in_f = (float)input[t] / 127.0f;
+        for (INT d = 0; d < DM; d++) {
+            float s = b_emb[d];
+            s += W_emb[d][0] * in_f;   /* 各センサー値は独立したトークン */
+            /* 残り3入力は0 (パディング) */
+            for (INT k = 1; k < EMB_IN; k++) s += W_emb[d][k] * 0.0f;
+            tok[t][d] = dt_relu(s);
+        }
+    }
 }
 
 /*
- *  Stage 1: FFN(8→16→8, Linear+ReLU×2)
- *  Node 1 が担当。Stage 0 の出力を受け取り FFN を計算。
+ *  Scaled Dot-Product Attention (1 head):
+ *    Q[SEQ][DH] = tok[SEQ][DM] · W_q[h]^T
+ *    K[SEQ][DH] = tok[SEQ][DM] · W_k[h]^T
+ *    V[SEQ][DH] = tok[SEQ][DM] · W_v[h]^T
+ *    Attn = softmax(Q·K^T / sqrt(DH)) · V → out[SEQ][DH]
  */
-static void run_stage1(const float in[L0_OUT], float out[L1B_OUT])
+static void run_attn_head(const float tok[SEQ][DM], INT h,
+                          float out[SEQ][DH])
 {
-    float mid[L1A_OUT];
+    float Q[SEQ][DH], K[SEQ][DH], V[SEQ][DH];
+    float scale = 1.0f / dt_sqrt((float)DH);
 
-    /* FFN expand: 8→16 */
-    dt_linear((float *)W_l1a, b_l1a, in, mid, L1A_OUT, L0_OUT);
-    for (INT i = 0; i < L1A_OUT; i++) mid[i] = dt_relu(mid[i]);
+    /* Q, K, V 投影 */
+    for (INT t = 0; t < SEQ; t++) {
+        dt_linear((float *)W_q[h], NULL, tok[t], Q[t], DH, DM);
+        dt_linear((float *)W_k[h], NULL, tok[t], K[t], DH, DM);
+        dt_linear((float *)W_v[h], NULL, tok[t], V[t], DH, DM);
+    }
 
-    /* FFN contract: 16→8 */
-    dt_linear((float *)W_l1b, b_l1b, mid, out, L1B_OUT, L1A_OUT);
-    for (INT i = 0; i < L1B_OUT; i++) out[i] = dt_relu(out[i]);
+    /* Attention スコア: attn_w[SEQ][SEQ] */
+    float attn_w[SEQ][SEQ];
+    for (INT i = 0; i < SEQ; i++) {
+        for (INT j = 0; j < SEQ; j++) {
+            float s = 0.0f;
+            for (INT d = 0; d < DH; d++) s += Q[i][d] * K[j][d];
+            attn_w[i][j] = s * scale;
+        }
+        dt_softmax(attn_w[i], SEQ);
+    }
 
+    /* Attention 出力: out[SEQ][DH] = attn_w · V */
+    for (INT i = 0; i < SEQ; i++) {
+        for (INT d = 0; d < DH; d++) {
+            float s = 0.0f;
+            for (INT j = 0; j < SEQ; j++) s += attn_w[i][j] * V[j][d];
+            out[i][d] = s;
+        }
+    }
+}
+
+/*
+ *  Multi-Head Self-Attention (全ヘッドをローカルで計算):
+ *    各ヘッドの出力 [SEQ][DH] を concat → [SEQ][DM]
+ *    → W_o で投影 → mhsa_out[SEQ][DM]
+ */
+static void run_mhsa_local(const float tok[SEQ][DM],
+                           float mhsa_out[SEQ][DM])
+{
+    float head_out[NH][SEQ][DH];
+
+    for (INT h = 0; h < NH; h++)
+        run_attn_head(tok, h, head_out[h]);
+
+    /* concat(heads) = [SEQ][DM], W_o 投影 */
+    for (INT t = 0; t < SEQ; t++) {
+        float concat[DM];
+        for (INT h = 0; h < NH; h++)
+            for (INT d = 0; d < DH; d++)
+                concat[h * DH + d] = head_out[h][t][d];
+        dt_linear((float *)W_o, NULL, concat, mhsa_out[t], DM, DM);
+    }
+
+    dtr_stats.attn_runs++;
+}
+
+/*
+ *  FFN on sequence: [SEQ][DM] → [SEQ][DM]
+ *  各トークンに独立して適用
+ */
+static void run_ffn_seq(const float in[SEQ][DM], float out[SEQ][DM])
+{
+    for (INT t = 0; t < SEQ; t++) {
+        float mid[DFFN];
+        dt_linear((float *)W_ffn1, b_ffn1, in[t], mid, DFFN, DM);
+        for (INT d = 0; d < DFFN; d++) mid[d] = dt_relu(mid[d]);
+        dt_linear((float *)W_ffn2, b_ffn2, mid, out[t], DM, DFFN);
+    }
     dtr_stats.layer1_runs++;
 }
 
 /*
- *  Stage 2: OutputHead(8→3) + Softmax → class [0,1,2]
- *  Node 1 が担当 (2ノード構成)。結果を "dtr/result" へ pub。
+ *  Mean Pooling: float[SEQ][DM] → float[DM]
  */
-static UB run_stage2(const float in[OUT_IN], float scores[OUT_OUT])
+static void run_mean_pool(const float seq[SEQ][DM], float out[DM])
 {
-    dt_linear((float *)W_out, b_out, in, scores, OUT_OUT, OUT_IN);
-    dt_softmax(scores, OUT_OUT);
+    for (INT d = 0; d < DM; d++) {
+        float s = 0.0f;
+        for (INT t = 0; t < SEQ; t++) s += seq[t][d];
+        out[d] = s / (float)SEQ;
+    }
+}
 
+/*
+ *  分類ヘッド: float[DM] → class [0,1,2]
+ */
+static UB run_cls_head(const float vec[DM], float scores[DOUT])
+{
+    dt_linear((float *)W_cls, b_cls, vec, scores, DOUT, DM);
+    dt_softmax(scores, DOUT);
     UB cls = 0;
-    for (INT i = 1; i < OUT_OUT; i++)
+    for (INT i = 1; i < DOUT; i++)
         if (scores[i] > scores[cls]) cls = (UB)i;
-
     dtr_stats.output_runs++;
     return cls;
+}
+
+/*
+ *  Transformer Block をローカルで全実行 (SOLO モード)
+ *    input[4] → class [0,1,2]
+ */
+static UB run_transformer_local(const B input[SEQ],
+                                float scores_out[DOUT])
+{
+    /* 1. Embed */
+    float tok[SEQ][DM];
+    run_embed_seq(input, tok);
+    dtr_stats.layer0_runs++;
+
+    /* 2. MHSA + 残差 + LN1 */
+    float mhsa[SEQ][DM];
+    run_mhsa_local(tok, mhsa);
+    for (INT t = 0; t < SEQ; t++) {
+        for (INT d = 0; d < DM; d++) mhsa[t][d] += tok[t][d]; /* 残差 */
+        dt_layernorm(mhsa[t], ln1_g, ln1_b, DM);
+    }
+
+    /* 3. FFN + 残差 + LN2 */
+    float ffn[SEQ][DM];
+    run_ffn_seq(mhsa, ffn);
+    for (INT t = 0; t < SEQ; t++) {
+        for (INT d = 0; d < DM; d++) ffn[t][d] += mhsa[t][d]; /* 残差 */
+        dt_layernorm(ffn[t], ln2_g, ln2_b, DM);
+    }
+
+    /* 4. Mean Pool + Cls */
+    float pool[DM];
+    run_mean_pool(ffn, pool);
+    return run_cls_head(pool, scores_out);
+}
+
+/* ------------------------------------------------------------------ */
+/* 旧 Stage 互換関数 (Pipeline Parallel / dtr_stat 用)               */
+/* ------------------------------------------------------------------ */
+
+static void run_stage0(const B input[4], float out[L0_OUT])
+{
+    float tok[SEQ][DM];
+    run_embed_seq(input, tok);
+    dtr_stats.layer0_runs++;
+
+    float mhsa[SEQ][DM];
+    run_mhsa_local(tok, mhsa);
+    for (INT t = 0; t < SEQ; t++) {
+        for (INT d = 0; d < DM; d++) mhsa[t][d] += tok[t][d];
+        dt_layernorm(mhsa[t], ln1_g, ln1_b, DM);
+    }
+    /* mean pool → [DM] として出力 */
+    run_mean_pool(mhsa, out);
+}
+
+static UB run_stage12(const float in[DM], float scores[DOUT])
+{
+    /* in = mean-pooled MHSA 出力 → FFN (簡易: per-vector) + Cls */
+    float mid[DFFN];
+    dt_linear((float *)W_ffn1, b_ffn1, in, mid, DFFN, DM);
+    for (INT d = 0; d < DFFN; d++) mid[d] = dt_relu(mid[d]);
+    float ffn[DM];
+    dt_linear((float *)W_ffn2, b_ffn2, mid, ffn, DM, DFFN);
+    float ln[DM];
+    for (INT d = 0; d < DM; d++) ln[d] = ffn[d] + in[d];
+    dt_layernorm(ln, ln2_g, ln2_b, DM);
+    dtr_stats.layer1_runs++;
+    return run_cls_head(ln, scores);
 }
 
 /* ------------------------------------------------------------------ */
@@ -214,200 +419,314 @@ static UB run_stage2(const float in[OUT_IN], float scores[OUT_OUT])
 
 void dtr_init(void)
 {
-    /* 全ノードで同一の固定シードを使い、同じ重みを生成する */
     UW seed = 0xDEAD8888UL;
-    init_weights((float *)W_emb,  EMB_OUT * EMB_IN,  0.707f, &seed);
-    init_zeros  (b_emb,  EMB_OUT);
-    init_weights((float *)W_l0,   L0_OUT  * L0_IN,   0.500f, &seed);
-    init_zeros  (b_l0,   L0_OUT);
-    init_weights((float *)W_l1a,  L1A_OUT * L1B_OUT, 0.500f, &seed);
-    init_zeros  (b_l1a,  L1A_OUT);
-    init_weights((float *)W_l1b,  L1B_OUT * L1A_OUT, 0.354f, &seed);
-    init_zeros  (b_l1b,  L1B_OUT);
-    init_weights((float *)W_out,  OUT_OUT * OUT_IN,   0.500f, &seed);
-    init_zeros  (b_out,  OUT_OUT);
 
-    /* 分散モードで dtr_infer() がブロックするセマフォ */
+    /* Embed */
+    init_weights((float *)W_emb, EMB_OUT * EMB_IN, 0.707f, &seed);
+    init_const  (b_emb, EMB_OUT, 0.0f);
+
+    /* MHSA 重み (He 初期化, scale=1/sqrt(DM)) */
+    float attn_scale = 0.354f;  /* 1/sqrt(8) ≈ 0.354 */
+    for (INT h = 0; h < NH; h++) {
+        init_weights((float *)W_q[h], DM * DH, attn_scale, &seed);
+        init_weights((float *)W_k[h], DM * DH, attn_scale, &seed);
+        init_weights((float *)W_v[h], DM * DH, attn_scale, &seed);
+    }
+    init_weights((float *)W_o, DM * DM, attn_scale, &seed);
+
+    /* LayerNorm: gamma=1, beta=0 */
+    init_const(ln1_g, DM, 1.0f); init_const(ln1_b, DM, 0.0f);
+    init_const(ln2_g, DM, 1.0f); init_const(ln2_b, DM, 0.0f);
+
+    /* FFN */
+    init_weights((float *)W_ffn1, DFFN * DM,  0.500f, &seed);
+    init_const  (b_ffn1, DFFN, 0.0f);
+    init_weights((float *)W_ffn2, DM * DFFN,  0.354f, &seed);
+    init_const  (b_ffn2, DM, 0.0f);
+
+    /* 分類ヘッド */
+    init_weights((float *)W_cls, DOUT * DM,   0.500f, &seed);
+    init_const  (b_cls, DOUT, 0.0f);
+
+    /* 分散推論セマフォ */
     T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
     dtr_result_sem = tk_cre_sem(&cs);
 
-    dt_puts("[dtr] initialized  "
-            "embed=4->8  l0=8->8  ffn=8->16->8  out=8->3\r\n");
-    dt_puts("[dtr] params=");
-    dt_putdec((UW)(EMB_OUT*EMB_IN + L0_OUT*L0_IN +
-                   L1A_OUT*L1B_OUT + L1B_OUT*L1A_OUT +
-                   OUT_OUT*OUT_IN));
-    dt_puts(" floats\r\n");
+    INT total_params = EMB_OUT*EMB_IN + NH*(DM*DH*3) + DM*DM +
+                       DFFN*DM + DM*DFFN + DOUT*DM;
+
+    dt_puts("[dtr] Transformer initialized\r\n");
+    dt_puts("[dtr]   arch  : Embed(4tok×8) + MHSA(h=2,dk=4) + FFN(16) + Cls(3)\r\n");
+    dt_puts("[dtr]   params: "); dt_putdec((UW)total_params); dt_puts(" floats\r\n");
+    dt_puts("[dtr]   dist  : SOLO=local / REDUCED=TensorPar / FULL=Pipeline\r\n");
 }
 
 /* ------------------------------------------------------------------ */
-/* dtr_task — パイプラインタスク (全ノードで同じ関数を起動)           */
+/* dtr_task — パイプライン & テンソル並列ワーカー                    */
 /* ------------------------------------------------------------------ */
 
 void dtr_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
 
-    /* 単一ノードモード: K-DDS 不要、dtr_infer() がローカル実行 */
     if (drpc_my_node == 0xFF) {
-        dt_puts("[dtr] task: single-node mode, all stages local\r\n");
+        dt_puts("[dtr] task: single-node mode (SOLO)\r\n");
         return;
     }
 
-    UB my_node = drpc_my_node;
-    /* 偶数ノード = Stage 0 担当 (Embed + Layer0, 結果収集)   */
-    /* 奇数ノード = Stage 1+2 担当 (FFN + OutputHead, 結果送信) */
-    BOOL is_stage0 = (my_node % 2 == 0);
+    UB my_node  = drpc_my_node;
+    BOOL is_n0  = (my_node % 2 == 0);
 
-    if (is_stage0) {
-        /* ---- Node 0 (even): Stage 0 + 結果収集 ------------------- */
+    if (is_n0) {
+        /* ---- Node 0 (even) ---- */
+        /* Pipeline Parallel 用ハンドル (FULL mode) */
         h_l0_pub  = kdds_open(DTR_TOPIC_L0,     KDDS_QOS_LATEST_ONLY);
         h_res_sub = kdds_open(DTR_TOPIC_RESULT,  KDDS_QOS_LATEST_ONLY);
+        /* Tensor Parallel 用ハンドル (REDUCED mode) */
+        h_input_pub  = kdds_open(DTR_TOPIC_INPUT,  KDDS_QOS_LATEST_ONLY);
+        h_head1_sub  = kdds_open(DTR_TOPIC_HEAD1,  KDDS_QOS_LATEST_ONLY);
 
-        dt_puts("[dtr] node ");
-        dt_putdec((UW)my_node);
-        dt_puts(": stage0 (embed+l0+output-collect)\r\n");
+        dt_puts("[dtr] node "); dt_putdec((UW)my_node);
+        dt_puts(": stage0/TP-requester ready\r\n");
 
+        /* Node0 は dtr_infer() が呼ばれたときだけ動く。
+         * ここでは FULL mode の result 受信ループのみ常駐。 */
         for (;;) {
             DTR_RESULT res;
             W r = kdds_sub(h_res_sub, &res, (W)sizeof(res), -1);
             if (r < (W)sizeof(DTR_RESULT)) continue;
             if (res.magic != DTR_RESULT_MAGIC) continue;
-
-            /* 結果を保存して dtr_infer() のブロックを解除 */
             dtr_last_result = res;
             tk_sig_sem(dtr_result_sem, 1);
             dtr_stats.distributed++;
         }
+
     } else {
-        /* ---- Node 1 (odd): Stage 1+2 (FFN + OutputHead) ---------- */
+        /* ---- Node 1 (odd) — 両モードに対応するワーカー ---- */
         h_l0_sub  = kdds_open(DTR_TOPIC_L0,     KDDS_QOS_LATEST_ONLY);
         h_res_pub = kdds_open(DTR_TOPIC_RESULT,  KDDS_QOS_LATEST_ONLY);
+        h_input_sub  = kdds_open(DTR_TOPIC_INPUT,  KDDS_QOS_LATEST_ONLY);
+        h_head1_pub  = kdds_open(DTR_TOPIC_HEAD1,  KDDS_QOS_LATEST_ONLY);
 
-        dt_puts("[dtr] node ");
-        dt_putdec((UW)my_node);
-        dt_puts(": stage1+2 (ffn+output-head), listening dtr/l0\r\n");
+        dt_puts("[dtr] node "); dt_putdec((UW)my_node);
+        dt_puts(": stage1+2/TP-worker ready\r\n");
 
         for (;;) {
-            DTR_ACT act;
-            W r = kdds_sub(h_l0_sub, &act, (W)sizeof(act), -1);
-            if (r < (W)sizeof(DTR_ACT)) continue;
-            if (act.magic != DTR_ACT_MAGIC) continue;
+            /* dtr/l0 と dtr/input を交互にポーリング */
 
-            /* Stage 1: FFN 8→16→8 (packed member → ローカルコピーに展開) */
-            float act_copy[DTR_EMBED_DIM];
-            for (INT ai = 0; ai < DTR_EMBED_DIM; ai++) act_copy[ai] = act.act[ai];
-            float ffn_out[L1B_OUT];
-            run_stage1(act_copy, ffn_out);
+            /* --- Pipeline Parallel: dtr/l0 受信 (FULL mode) --- */
+            {
+                DTR_ACT act;
+                W r = kdds_sub(h_l0_sub, &act, (W)sizeof(act), 0);
+                if (r >= (W)sizeof(DTR_ACT) && act.magic == DTR_ACT_MAGIC) {
+                    /* LN1 → FFN → LN2 → Cls */
+                    float scores[DOUT];
+                    DTR_RESULT res;
+                    res.magic    = DTR_RESULT_MAGIC;
+                    res.req_id   = act.req_id;
+                    res.src_node = my_node;
+                    res._pad     = 0;
+                    res.class_id = run_stage12(act.act, scores);
+                    for (INT si = 0; si < DOUT; si++) res.scores[si] = scores[si];
+                    kdds_pub(h_res_pub, &res, (W)sizeof(res));
 
-            /* Stage 2: OutputHead 8→3 + Softmax */
-            float scores_copy[OUT_OUT];
-            DTR_RESULT res;
-            res.magic    = DTR_RESULT_MAGIC;
-            res.req_id   = act.req_id;
-            res.src_node = my_node;
-            res._pad     = 0;
-            res.class_id = run_stage2(ffn_out, scores_copy);
-            for (INT si = 0; si < OUT_OUT; si++) res.scores[si] = scores_copy[si];
+                    static const char *cn[] = {"normal", "alert", "critical"};
+                    dt_puts("[dtr] pipeline: req="); dt_putdec(res.req_id);
+                    dt_puts(" -> "); dt_puts(cn[res.class_id < 3 ? res.class_id : 0]);
+                    dt_puts("\r\n");
+                }
+            }
 
-            kdds_pub(h_res_pub, &res, (W)sizeof(res));
+            /* --- Tensor Parallel: dtr/input 受信 (REDUCED mode) --- */
+            {
+                DTR_INPUT inp;
+                W r = kdds_sub(h_input_sub, &inp, (W)sizeof(inp), 0);
+                if (r >= (W)sizeof(DTR_INPUT) && inp.magic == DTR_INPUT_MAGIC) {
+                    /* Embed → head1 計算 */
+                    float tok[SEQ][DM];
+                    run_embed_seq(inp.input, tok);
 
-            static const char *cls_name[] = {"normal", "alert", "critical"};
-            dt_puts("[dtr] stage1+2: req=");
-            dt_putdec(res.req_id);
-            dt_puts(" -> class=");
-            dt_putdec(res.class_id);
-            dt_puts(" (");
-            dt_puts(cls_name[res.class_id < 3 ? res.class_id : 0]);
-            dt_puts(") scores=[");
-            dt_putf2(res.scores[0]); dt_puts(" ");
-            dt_putf2(res.scores[1]); dt_puts(" ");
-            dt_putf2(res.scores[2]);
-            dt_puts("]\r\n");
+                    float head1_out[SEQ][DH];
+                    run_attn_head(tok, 1, head1_out);
+
+                    DTR_HEAD_ACT pkt;
+                    pkt.magic    = DTR_HEAD_MAGIC;
+                    pkt.req_id   = inp.req_id;
+                    pkt.src_node = my_node;
+                    pkt.head_id  = 1;
+                    pkt._pad     = 0;
+                    for (INT t = 0; t < SEQ; t++)
+                        for (INT d = 0; d < DH; d++)
+                            pkt.out[t * DH + d] = head1_out[t][d];
+                    kdds_pub(h_head1_pub, &pkt, (W)sizeof(pkt));
+
+                    dt_puts("[dtr] TP: head1 req="); dt_putdec(inp.req_id);
+                    dt_puts(" done → head1 pub\r\n");
+                }
+            }
+
+            tk_dly_tsk(5);   /* 過負荷防止 */
         }
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* dtr_infer — シェルタスクから呼び出す推論 API                       */
+/* dtr_infer — 縮退モード対応分散推論 API                            */
 /* ------------------------------------------------------------------ */
 
 W dtr_infer(const B input[4])
 {
     dtr_stats.inferences++;
+    UB lvl = degrade_level();
 
-    /* 分散モードかつ Stage 0 ハンドルが開いているか確認 */
-    BOOL has_peers = FALSE;
-    if (drpc_my_node != 0xFF && h_l0_pub >= 0) {
+    /* ========================== SOLO ========================== */
+    if (drpc_my_node == 0xFF || lvl == DEGRADE_SOLO) {
+        float scores[DOUT];
+        UB cls = run_transformer_local(input, scores);
+        dtr_stats.local++;
+
+        static const char *cn[] = {"normal", "alert", "critical"};
+        dt_puts("[dtr] local(SOLO): class="); dt_putdec((UW)cls);
+        dt_puts(" ("); dt_puts(cn[cls < 3 ? cls : 0]);
+        dt_puts(") scores=[");
+        dt_putf2(scores[0]); dt_puts(" ");
+        dt_putf2(scores[1]); dt_puts(" ");
+        dt_putf2(scores[2]); dt_puts("]\r\n");
+        return (W)cls;
+    }
+
+    /* ======================= REDUCED: Tensor Parallel ===================== */
+    if (lvl == DEGRADE_REDUCED && (drpc_my_node % 2 == 0) && h_input_pub >= 0) {
+        /* Step 1: Node0 が head0 を計算 */
+        float tok[SEQ][DM];
+        run_embed_seq(input, tok);
+        dtr_stats.layer0_runs++;
+
+        float head0_out[SEQ][DH];
+        run_attn_head(tok, 0, head0_out);
+
+        /* Step 2: raw input を Node1 へ送信 */
+        DTR_INPUT inp_pkt;
+        inp_pkt.magic    = DTR_INPUT_MAGIC;
+        inp_pkt.req_id   = ++dtr_req_counter;
+        inp_pkt.src_node = drpc_my_node;
+        inp_pkt._pad[0]  = inp_pkt._pad[1] = inp_pkt._pad[2] = 0;
+        for (INT i = 0; i < SEQ; i++) inp_pkt.input[i] = input[i];
+        kdds_pub(h_input_pub, &inp_pkt, (W)sizeof(inp_pkt));
+
+        dt_puts("[dtr] TP: req="); dt_putdec(dtr_req_counter);
+        dt_puts(" head0 done, waiting head1...\r\n");
+
+        /* Step 3: head1 を待つ (50ms × 16 = 800ms) */
+        DTR_HEAD_ACT head1_pkt;
+        ER er = E_TMOUT;
+        INT retry = (INT)(DTR_INFER_TMO / 50);
+        while (retry-- > 0) {
+            W r = kdds_sub(h_head1_sub, &head1_pkt, (W)sizeof(head1_pkt), 0);
+            if (r >= (W)sizeof(DTR_HEAD_ACT) &&
+                head1_pkt.magic == DTR_HEAD_MAGIC &&
+                head1_pkt.req_id == dtr_req_counter) {
+                er = E_OK; break;
+            }
+            tk_dly_tsk(50);
+        }
+        if (er != E_OK) {
+            dt_puts("[dtr] TP: timeout waiting head1\r\n");
+            dtr_stats.timeouts++;
+            /* fallback: head1 を自分で計算 */
+            float h1_fb[SEQ][DH];
+            run_attn_head(tok, 1, h1_fb);
+            for (INT t = 0; t < SEQ; t++)
+                for (INT d = 0; d < DH; d++)
+                    head1_pkt.out[t * DH + d] = h1_fb[t][d];
+        }
+
+        /* Step 4: head0 + head1 を concat → W_o → [SEQ][DM] */
+        float mhsa[SEQ][DM];
+        for (INT t = 0; t < SEQ; t++) {
+            float concat[DM];
+            for (INT d = 0; d < DH; d++) concat[d]      = head0_out[t][d];
+            for (INT d = 0; d < DH; d++) concat[DH + d]  = head1_pkt.out[t * DH + d];
+            dt_linear((float *)W_o, NULL, concat, mhsa[t], DM, DM);
+        }
+
+        /* Step 5: 残差 + LN1 + FFN + 残差 + LN2 + Pool + Cls */
+        for (INT t = 0; t < SEQ; t++) {
+            for (INT d = 0; d < DM; d++) mhsa[t][d] += tok[t][d];
+            dt_layernorm(mhsa[t], ln1_g, ln1_b, DM);
+        }
+        float ffn[SEQ][DM];
+        run_ffn_seq(mhsa, ffn);
+        for (INT t = 0; t < SEQ; t++) {
+            for (INT d = 0; d < DM; d++) ffn[t][d] += mhsa[t][d];
+            dt_layernorm(ffn[t], ln2_g, ln2_b, DM);
+        }
+        float pool[DM];
+        run_mean_pool(ffn, pool);
+        float scores[DOUT];
+        UB cls = run_cls_head(pool, scores);
+
+        if (er == E_OK) dtr_stats.tp_distributed++;
+
+        static const char *cn[] = {"normal", "alert", "critical"};
+        dt_puts("[dtr] TP(REDUCED): class="); dt_putdec((UW)cls);
+        dt_puts(" ("); dt_puts(cn[cls < 3 ? cls : 0]);
+        dt_puts(") scores=[");
+        dt_putf2(scores[0]); dt_puts(" ");
+        dt_putf2(scores[1]); dt_puts(" ");
+        dt_putf2(scores[2]); dt_puts("]\r\n");
+        return (W)cls;
+    }
+
+    /* ======================= FULL: Pipeline Parallel ====================== */
+    if (h_l0_pub >= 0) {
+        /* Node0 のみ dtr_infer() を呼ぶ想定 */
+        BOOL has_peers = FALSE;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE) {
                 has_peers = TRUE; break;
             }
         }
+        if (has_peers) {
+            float l0_out[DM];
+            run_stage0(input, l0_out);   /* Embed + MHSA + mean-pool */
+
+            DTR_ACT act;
+            act.magic    = DTR_ACT_MAGIC;
+            act.req_id   = ++dtr_req_counter;
+            act.src_node = drpc_my_node;
+            act.layer    = 1;
+            act._pad     = 0;
+            for (INT i = 0; i < DM; i++) act.act[i] = l0_out[i];
+            kdds_pub(h_l0_pub, &act, (W)sizeof(act));
+
+            dt_puts("[dtr] Pipeline: req="); dt_putdec(dtr_req_counter);
+            dt_puts(" Attn done, waiting LN+FFN+Cls...\r\n");
+
+            ER er = tk_wai_sem(dtr_result_sem, 1, (TMO)DTR_INFER_TMO);
+            if (er != E_OK) {
+                dt_puts("[dtr] Pipeline: timeout\r\n");
+                dtr_stats.timeouts++;
+                return -1;
+            }
+
+            static const char *cn[] = {"normal", "alert", "critical"};
+            UB cls = dtr_last_result.class_id;
+            dt_puts("[dtr] Pipeline(FULL): class="); dt_putdec((UW)cls);
+            dt_puts(" ("); dt_puts(cn[cls < 3 ? cls : 0]);
+            dt_puts(") scores=[");
+            dt_putf2(dtr_last_result.scores[0]); dt_puts(" ");
+            dt_putf2(dtr_last_result.scores[1]); dt_puts(" ");
+            dt_putf2(dtr_last_result.scores[2]); dt_puts("]\r\n");
+            return (W)cls;
+        }
     }
 
-    if (!has_peers) {
-        /* ---- ローカル実行: 全ステージをこのノードで処理 ---------- */
-        float l0_out[L0_OUT], l1_out[L1B_OUT], scores[OUT_OUT];
-        run_stage0(input, l0_out);
-        run_stage1(l0_out, l1_out);
-        UB cls = run_stage2(l1_out, scores);
-        dtr_stats.local++;
-
-        static const char *cname[] = {"normal", "alert", "critical"};
-        dt_puts("[dtr] local: class=");
-        dt_putdec((UW)cls);
-        dt_puts(" (");
-        dt_puts(cname[cls < 3 ? cls : 0]);
-        dt_puts(") scores=[");
-        dt_putf2(scores[0]); dt_puts(" ");
-        dt_putf2(scores[1]); dt_puts(" ");
-        dt_putf2(scores[2]);
-        dt_puts("]\r\n");
-        return (W)cls;
-    }
-
-    /* ---- 分散実行: Stage 0 → K-DDS → Stage 1+2 → 結果待ち ------ */
-    float l0_out[L0_OUT];
-    run_stage0(input, l0_out);
-
-    /* DTR_ACT を組み立てて "dtr/l0" へ pub */
-    DTR_ACT act;
-    act.magic    = DTR_ACT_MAGIC;
-    act.req_id   = ++dtr_req_counter;
-    act.src_node = drpc_my_node;
-    act.layer    = 1;
-    act._pad     = 0;
-    for (INT i = 0; i < L0_OUT; i++) act.act[i] = l0_out[i];
-
-    dt_puts("[dtr] -> node1: req=");
-    dt_putdec(act.req_id);
-    dt_puts(" stage0 done, waiting result...\r\n");
-
-    kdds_pub(h_l0_pub, &act, (W)sizeof(act));
-
-    /* 結果待ち (DTR_INFER_TMO ms) */
-    ER er = tk_wai_sem(dtr_result_sem, 1, (TMO)DTR_INFER_TMO);
-    if (er != E_OK) {
-        dt_puts("[dtr] timeout: node1 did not respond\r\n");
-        dtr_stats.timeouts++;
-        return -1;
-    }
-
-    static const char *cname[] = {"normal", "alert", "critical"};
-    UB cls = dtr_last_result.class_id;
-    dt_puts("[dtr] result from node");
-    dt_putdec((UW)dtr_last_result.src_node);
-    dt_puts(": class=");
-    dt_putdec((UW)cls);
-    dt_puts(" (");
-    dt_puts(cname[cls < 3 ? cls : 0]);
-    dt_puts(") scores=[");
-    dt_putf2(dtr_last_result.scores[0]); dt_puts(" ");
-    dt_putf2(dtr_last_result.scores[1]); dt_puts(" ");
-    dt_putf2(dtr_last_result.scores[2]);
-    dt_puts("]\r\n");
-
+    /* フォールバック: ローカル実行 */
+    float scores[DOUT];
+    UB cls = run_transformer_local(input, scores);
+    dtr_stats.local++;
+    dt_puts("[dtr] fallback(local): class="); dt_putdec((UW)cls); dt_puts("\r\n");
     return (W)cls;
 }
 
@@ -417,39 +736,35 @@ W dtr_infer(const B input[4])
 
 void dtr_stat(void)
 {
-    dt_puts("[dtr] Pipeline Parallelism Stats:\r\n");
+    static const char *mode_str[] = { "FULL/Pipeline", "REDUCED/TensorPar", "SOLO/Local" };
+    UB lvl = degrade_level();
 
+    dt_puts("[dtr] Distributed Transformer Stats:\r\n");
+    dt_puts("  arch        : Transformer (MHSA h=2 + FFN + Cls)\r\n");
     dt_puts("  node        : ");
     if (drpc_my_node == 0xFF) dt_puts("single");
     else dt_putdec((UW)drpc_my_node);
-    dt_puts("  role: ");
-    if (drpc_my_node == 0xFF)
-        dt_puts("local-only");
-    else if (drpc_my_node % 2 == 0)
-        dt_puts("stage0 (embed+l0)");
-    else
-        dt_puts("stage1+2 (ffn+output)");
+    dt_puts("  mode: ");
+    dt_puts(drpc_my_node == 0xFF ? "SOLO" : mode_str[lvl < 3 ? lvl : 0]);
     dt_puts("\r\n");
 
-    dt_puts("  inferences  : "); dt_putdec(dtr_stats.inferences);  dt_puts("\r\n");
-    dt_puts("    local     : "); dt_putdec(dtr_stats.local);        dt_puts("\r\n");
-    dt_puts("    distributed:"); dt_putdec(dtr_stats.distributed);  dt_puts("\r\n");
-    dt_puts("    timeouts  : "); dt_putdec(dtr_stats.timeouts);     dt_puts("\r\n");
-    dt_puts("  layer0 runs : "); dt_putdec(dtr_stats.layer0_runs);  dt_puts("\r\n");
-    dt_puts("  layer1 runs : "); dt_putdec(dtr_stats.layer1_runs);  dt_puts("\r\n");
-    dt_puts("  output runs : "); dt_putdec(dtr_stats.output_runs);  dt_puts("\r\n");
+    dt_puts("  inferences  : "); dt_putdec(dtr_stats.inferences);   dt_puts("\r\n");
+    dt_puts("    local     : "); dt_putdec(dtr_stats.local);         dt_puts("\r\n");
+    dt_puts("    pipeline  : "); dt_putdec(dtr_stats.distributed);   dt_puts("\r\n");
+    dt_puts("    tensor_par: "); dt_putdec(dtr_stats.tp_distributed); dt_puts("\r\n");
+    dt_puts("    timeouts  : "); dt_putdec(dtr_stats.timeouts);      dt_puts("\r\n");
+    dt_puts("  attn runs   : "); dt_putdec(dtr_stats.attn_runs);     dt_puts("\r\n");
+    dt_puts("  ffn  runs   : "); dt_putdec(dtr_stats.layer1_runs);   dt_puts("\r\n");
+    dt_puts("  cls  runs   : "); dt_putdec(dtr_stats.output_runs);   dt_puts("\r\n");
 
     if (dtr_last_result.magic == DTR_RESULT_MAGIC) {
-        static const char *cname[] = {"normal", "alert", "critical"};
+        static const char *cn[] = {"normal", "alert", "critical"};
         UB cls = dtr_last_result.class_id;
-        dt_puts("  last result : class=");
-        dt_putdec((UW)cls);
-        dt_puts(" (");
-        dt_puts(cname[cls < 3 ? cls : 0]);
+        dt_puts("  last result : class="); dt_putdec((UW)cls);
+        dt_puts(" ("); dt_puts(cn[cls < 3 ? cls : 0]);
         dt_puts(")  scores=[");
         dt_putf2(dtr_last_result.scores[0]); dt_puts("  ");
         dt_putf2(dtr_last_result.scores[1]); dt_puts("  ");
-        dt_putf2(dtr_last_result.scores[2]);
-        dt_puts("]\r\n");
+        dt_putf2(dtr_last_result.scores[2]); dt_puts("]\r\n");
     }
 }

@@ -11,9 +11,11 @@
 
 #include "heal.h"
 #include "dproc.h"
+#include "elf_loader.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+IMPORT BOOL vfs_ready;
 
 /* drpc.c で定義された公開ラッパー (heal.c から呼ぶ用) */
 IMPORT W drpc_local_restart(UH func_id, INT pri, UB caller_node);
@@ -47,8 +49,9 @@ static void hl_puthex4(UH v)
 /* モジュール状態                                                      */
 /* ------------------------------------------------------------------ */
 
-static HEAL_GUARD guards[HEAL_GUARD_MAX];
-static BOOL       heal_triggered[DNODE_MAX];   /* 二重発火防止フラグ */
+static HEAL_GUARD     guards[HEAL_GUARD_MAX];
+static BOOL           heal_triggered[DNODE_MAX];
+static HEAL_ELF_GUARD elf_guards[HEAL_ELF_GUARD_MAX];
 
 /* ------------------------------------------------------------------ */
 /* 初期化                                                              */
@@ -59,6 +62,15 @@ void heal_init(void)
     for (INT i = 0; i < HEAL_GUARD_MAX; i++) guards[i].active = 0;
     for (INT i = 0; i < DNODE_MAX;      i++) heal_triggered[i] = FALSE;
     hl_puts("[heal] initialized\r\n");
+}
+
+void heal_elf_init(void)
+{
+    for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
+        elf_guards[i].active = 0;
+        elf_guards[i].tid    = -1;
+    }
+    hl_puts("[heal] ELF watchdog ready\r\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,7 +172,7 @@ void heal_on_node_dead(UB dead_node)
 
 void heal_list(void)
 {
-    hl_puts("[heal] guard table:\r\n");
+    hl_puts("[heal] kernel task guards:\r\n");
     hl_puts("  #  name             func   home  current  pri\r\n");
     INT found = 0;
     for (INT i = 0; i < HEAL_GUARD_MAX; i++) {
@@ -173,11 +185,109 @@ void heal_list(void)
         hl_puts("     ");
         hl_putdec(guards[i].current_node);
         if (guards[i].current_node != guards[i].home_node)
-            hl_puts("(!)");   /* 連鎖継承中 */
+            hl_puts("(!)");
         else
             hl_puts("   ");
         hl_puts("  "); hl_putdec((UW)guards[i].priority);
         hl_puts("\r\n");
     }
-    if (!found) hl_puts("  (no guards registered)\r\n");
+    if (!found) hl_puts("  (none)\r\n");
+
+    hl_puts("[heal] ELF daemon guards:\r\n");
+    hl_puts("  #  path                              tid   pri\r\n");
+    found = 0;
+    for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
+        if (!elf_guards[i].active) continue;
+        found++;
+        hl_puts("  "); hl_putdec((UW)i);
+        hl_puts("  "); hl_puts(elf_guards[i].path);
+        hl_puts("  "); hl_putdec((UW)elf_guards[i].tid);
+        hl_puts("  "); hl_putdec((UW)elf_guards[i].priority);
+        hl_puts("\r\n");
+    }
+    if (!found) hl_puts("  (none)\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* ring-3 ELF デーモン watchdog                                       */
+/* ------------------------------------------------------------------ */
+
+static BOOL hl_streq(const char *a, const char *b)
+{
+    INT i = 0;
+    while (a[i] && b[i]) { if (a[i] != b[i]) return FALSE; i++; }
+    return a[i] == '\0' && b[i] == '\0';
+}
+
+static void hl_strcpy(char *dst, const char *src, INT max)
+{
+    INT i = 0;
+    while (src[i] && i < max - 1) { dst[i] = src[i]; i++; }
+    dst[i] = '\0';
+}
+
+void heal_elf_register(const char *path, W priority)
+{
+    for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
+        if (elf_guards[i].active) continue;
+        hl_strcpy(elf_guards[i].path, path, 64);
+        elf_guards[i].tid      = -1;
+        elf_guards[i].priority = priority;
+        elf_guards[i].active   = 1;
+        hl_puts("[heal] ELF guard \""); hl_puts(path);
+        hl_puts("\" pri="); hl_putdec((UW)priority);
+        hl_puts("\r\n");
+        return;
+    }
+    hl_puts("[heal] ELF guard table full\r\n");
+}
+
+void heal_elf_update_tid(const char *path, ID tid)
+{
+    for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
+        if (!elf_guards[i].active) continue;
+        if (!hl_streq(elf_guards[i].path, path)) continue;
+        elf_guards[i].tid = tid;
+        return;
+    }
+}
+
+void heal_elf_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+
+    /* 起動直後は他タスクの初期化を待つ */
+    tk_dly_tsk(5000);
+
+    for (;;) {
+        if (vfs_ready) {
+            for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
+                if (!elf_guards[i].active) continue;
+                if (elf_guards[i].tid < 0)  continue;
+
+                /* TID が DORMANT または存在しなければ死亡とみなす */
+                T_RTSK rtsk;
+                ER er = tk_ref_tsk((ID)elf_guards[i].tid, &rtsk);
+                BOOL dead = (er == E_NOEXS) ||
+                            (er == E_OK && (rtsk.tskstat & TTS_DMT));
+                if (!dead) continue;
+
+                hl_puts("[heal] ELF dead: "); hl_puts(elf_guards[i].path);
+                hl_puts("  restarting...\r\n");
+
+                tk_dly_tsk(500);   /* 短い冷却時間 */
+
+                ID new_tid = elf_exec(elf_guards[i].path);
+                if (new_tid >= E_OK) {
+                    elf_guards[i].tid = new_tid;
+                    dproc_register(elf_guards[i].path, new_tid);
+                    hl_puts("[heal] ELF restarted  tid=");
+                    hl_putdec((UW)new_tid); hl_puts("\r\n");
+                } else {
+                    hl_puts("[heal] ELF restart failed\r\n");
+                }
+            }
+        }
+        tk_dly_tsk(HEAL_WATCH_INTERVAL);
+    }
 }

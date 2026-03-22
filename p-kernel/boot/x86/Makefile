@@ -63,6 +63,7 @@ ARCH_C_SRCS = \
     heal.c \
     edf.c \
     replica.c \
+    degrade.c \
     vital.c \
     tensor.c \
     ai_job.c \
@@ -140,9 +141,30 @@ ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 TARGET = bootloader.bin
 
 # -------------------------------------------------------------------
+# kloader.bin — Stage-1 Kernel Loader (OS 依存なし, 0x50000 にロード)
+# -------------------------------------------------------------------
+KLOADER_SRCS_C = kl_main.c kl_fat32.c kl_net.c
+KLOADER_SRCS_S = kloader_start.S
+KLOADER_OBJS   = kl_main.o kl_fat32.o kl_net.o kloader_start.o
+
+# kloader は OS ヘッダ不要 — インクルードパスなし
+KLOADER_CFLAGS = -Wall -ffreestanding -fno-stack-protector -fno-pic \
+                 -fcf-protection=none -O1 -m32 -std=gnu11 -I.
+
+KLOADER_LDFLAGS = -nostdlib -static -T kloader.ld -m elf_i386
+
+kloader.bin: $(KLOADER_OBJS)
+	$(LD) $(KLOADER_LDFLAGS) -o $@ $^ $(LIBGCC)
+
+kl_main.o:       kl_main.c;       $(CC) $(KLOADER_CFLAGS) -c $< -o $@
+kl_fat32.o:      kl_fat32.c;      $(CC) $(KLOADER_CFLAGS) -c $< -o $@
+kl_net.o:        kl_net.c;        $(CC) $(KLOADER_CFLAGS) -c $< -o $@
+kloader_start.o: kloader_start.S; $(CC) $(KLOADER_CFLAGS) -c $< -o $@
+
+# -------------------------------------------------------------------
 # ビルドルール
 # -------------------------------------------------------------------
-all: $(TARGET)
+all: $(TARGET) kloader.bin
 
 $(TARGET): $(ALL_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
@@ -199,9 +221,10 @@ USERLAND_X86 = ../../userland/x86
 
 # FAT32ディスクイメージ作成
 # mkdosfs / mformat が必要 (dosfstools パッケージ)
-$(DISK_IMG):
+$(DISK_IMG): $(TARGET)
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
+	mcopy -i $@ $(TARGET) ::PKNL.BIN
 	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
 	mcopy -i $@ $(USERLAND_X86)/01_posix/01_hello/hello.elf         ::hello.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/02_posix_io/posix_io.elf   ::posix_io.elf
@@ -225,6 +248,10 @@ $(DISK_IMG):
 	mcopy -i $@ $(USERLAND_X86)/07_network/02_http_get/http_get.elf       ::http_get.elf
 	mcopy -i $@ $(USERLAND_X86)/07_network/03_multicast/multicast.elf     ::multicast.elf
 	mcopy -i $@ $(USERLAND_X86)/07_network/04_edf_infer/edf_infer.elf     ::edf_infer.elf
+	mcopy -i $@ $(USERLAND_X86)/08_system/01_kloader_d/kloader_d.elf      ::kloader_d.elf
+	mcopy -i $@ $(USERLAND_X86)/09_ai/01_infer_d/infer_d.elf             ::infer_d.elf
+	mmd   -i $@ ::etc 2>/dev/null || true
+	mcopy -i $@ ../../samples/08_system/init.rc                            ::etc/init.rc
 
 disk: $(DISK_IMG)
 
@@ -262,6 +289,28 @@ run-node1: $(TARGET)
 run-node2: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV2)
 
+# -------------------------------------------------------------------
+# kloader ベースの実行ターゲット
+# kloader.bin (0x50000) → FAT32ディスク上の PKNL.BIN (0x100000) を起動
+# -------------------------------------------------------------------
+run-kloader: kloader.bin $(DISK_IMG)
+	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 -display none \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
+
+# 3ノードクラスタ kloader 版
+# 事前に: cp disk.img node0.img && cp disk.img node1.img && cp disk.img node2.img
+run-kloader-node0: kloader.bin node0.img
+	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	    -drive file=node0.img,format=raw,if=ide,index=0 $(NODEDEV0)
+
+run-kloader-node1: kloader.bin node1.img
+	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	    -drive file=node1.img,format=raw,if=ide,index=0 $(NODEDEV1)
+
+run-kloader-node2: kloader.bin node2.img
+	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	    -drive file=node2.img,format=raw,if=ide,index=0 $(NODEDEV2)
+
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
 run-32: $(TARGET)
 	qemu-system-i386 -kernel $(TARGET) -serial stdio -display none
@@ -270,10 +319,12 @@ run-boot: $(TARGET)
 	qemu-system-x86_64 -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64 -display none
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) serial.log
+	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin serial.log
 	$(MAKE) -C $(USERLAND_X86) clean 2>/dev/null || true
 
 clean-disk:
 	rm -f $(DISK_IMG)
 
-.PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot run-node0 run-node1 run-node2
+.PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
+        run-node0 run-node1 run-node2 \
+        run-kloader run-kloader-node0 run-kloader-node1 run-kloader-node2

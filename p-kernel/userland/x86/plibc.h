@@ -396,6 +396,26 @@ static inline void plib_put_ip(unsigned int ip)
 }
 
 /* ================================================================= */
+/* 分散 Transformer 推論 API (Phase 12, 0x240+)                      */
+/* ================================================================= */
+
+/* Transformer 推論を実行する。
+ * sensor_packed = (t<<24)|(h<<16)|(p<<8)|l の 4 センサー値 int8 詰め。
+ * 戻り値: class 0=normal, 1=alert, 2=critical, または -1 (エラー/タイムアウト)。
+ * 分散ノードの場合は最大 800ms ブロックする。 */
+static inline int sys_dtr_submit(int sensor_packed)
+    { return __sc(0x240, sensor_packed, 0, 0); }
+
+/* 将来の非同期バージョン用 (現在は -1 を返す) */
+static inline int sys_dtr_wait(int slot, int timeout_ms)
+    { return __sc(0x241, slot, timeout_ms, 0); }
+
+/* センサー値を packed int に変換するヘルパー */
+#define DTR_SENSOR_PACK(t,h,p,l) \
+    (((int)(signed char)(t)<<24) | ((int)(signed char)(h)<<16) | \
+     ((int)(signed char)(p)<<8)  |  (int)(signed char)(l))
+
+/* ================================================================= */
 /* Network API (UDP)                                                  */
 /* ================================================================= */
 
@@ -439,6 +459,14 @@ static inline int sys_mount(void)
 /* Unmount (no-op for single root mount — future use).              */
 static inline int sys_umount(const char *path)
     { return __sc(0x301, (int)(long)path, 0, 0); }
+
+/* ================================================================= */
+/* System control API (0x400+)                                        */
+/* ================================================================= */
+
+/* Trigger ACPI full reset. Does not return.                         */
+static inline void sys_reboot(void)
+    { __sc(0x400, 0, 0, 0); }
 
 /* ================================================================= */
 /* Filesystem API (readdir)                                           */

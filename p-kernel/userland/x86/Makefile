@@ -34,6 +34,7 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 
 # ビルド対象の ELF ファイル一覧
 SAMPLES = \
+    09_ai/01_infer_d/infer_d.elf \
     01_posix/01_hello/hello.elf \
     01_posix/02_posix_io/posix_io.elf \
     01_posix/03_stdin_echo/stdin_echo.elf \
@@ -55,7 +56,8 @@ SAMPLES = \
     07_network/01_net_infer/net_infer.elf \
     07_network/02_http_get/http_get.elf \
     07_network/03_multicast/multicast.elf \
-    07_network/04_edf_infer/edf_infer.elf
+    07_network/04_edf_infer/edf_infer.elf \
+    08_system/01_kloader_d/kloader_d.elf
 
 all: $(SAMPLES)
 
@@ -238,5 +240,21 @@ all: $(SAMPLES)
 	$(CC) $(CFLAGS) -c $< -o 07_network/04_edf_infer/edf_infer.o
 	$(LD) $(LDFLAGS) -o $@ 07_network/04_edf_infer/edf_infer.o
 
+# -------------------------------------------------------------------
+# 08_system/01_kloader_d — カーネルローダーデーモン
+# -------------------------------------------------------------------
+08_system/01_kloader_d/kloader_d.elf: $(S)/08_system/01_kloader_d/kloader_d.c plibc.h user.ld
+	mkdir -p 08_system/01_kloader_d
+	$(CC) $(CFLAGS) -c $< -o 08_system/01_kloader_d/kloader_d.o
+	$(LD) $(LDFLAGS) -o $@ 08_system/01_kloader_d/kloader_d.o
+
+# -------------------------------------------------------------------
+# 09_ai/01_infer_d — 分散 Transformer 推論デーモン (Phase 12)
+# -------------------------------------------------------------------
+09_ai/01_infer_d/infer_d.elf: $(S)/09_ai/01_infer_d/infer_d.c plibc.h user.ld
+	mkdir -p 09_ai/01_infer_d
+	$(CC) $(CFLAGS) -c $< -o 09_ai/01_infer_d/infer_d.o
+	$(LD) $(LDFLAGS) -o $@ 09_ai/01_infer_d/infer_d.o
+
 clean:
-	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network
+	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai

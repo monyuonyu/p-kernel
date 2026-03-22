@@ -200,6 +200,115 @@ p-kernel> rm /shared/hello.txt
 [sfs] deleted (remote): "/shared/hello.txt"
 ```
 
+## 実装フェーズ一覧
+
+| フェーズ | 名称 | 状態 | 概要 |
+|---------|------|------|------|
+| Phase 1  | x86 ポート | ✅ 完成 | micro T-Kernel 2.0 を x86/QEMU へ移植。Multiboot、IDT、PIC、PIT、シリアル、VGA |
+| Phase 2  | K-DDS | ✅ 完成 | カーネルネイティブ pub/sub。「すべてはトピック」。ローカル＆分散透過 API |
+| Phase 3  | Self-Healing | ✅ 完成 | ノード DEAD 検出 → 後継ノードがカーネルタスクを自動引き継ぎ (heal.c) |
+| Phase 4  | DRPC | ✅ 完成 | 分散 RPC。dtk_cre_tsk / dtk_infer / dtk_fl_aggregate |
+| Phase 5  | SWIM + Replica | ✅ 完成 | gossip 生存監視 + 全トピックスナップショット複製。脱中央集権型HA |
+| Phase 6  | EDF + Vital | ✅ 完成 | Earliest Deadline First スケジューラ + クラスタ生命兆候モニタ |
+| Phase 7  | 永続化 + ELF Watchdog | ✅ 完成 | FAT32 チェックポイント + heal による ring-3 デーモン自動再起動 |
+| Phase 8  | 分散 Transformer | ✅ 完成 | MHSA(h=2,dk=4)+FFN+Cls。縮退モード連携分散推論 (→ Phase 11 で拡張) |
+| Phase 9  | dproc | ✅ 完成 | 分散プロセスレジストリ。kill / failover がクラスタ全体に伝播 |
+| Phase 9.5 | SFS | ✅ 完成 | /shared/ フォルダをゴシップで全ノード同期。tombstone 削除伝播 |
+| Phase 10 | pmesh + kloader | ✅ 完成 | メッシュルーティング + ring-3 カーネルローダーデーモン (kloader_d.elf) |
+| Phase 11 | 縮退モード | ✅ 完成 | ノード数に応じて自動縮退。SOLO=ローカル / REDUCED=TensorPar / FULL=Pipeline |
+| **Phase 12** | **大規模 LLM 推論** | 🔲 設計済み | ring-3 推論デーモン群 + ring-0 制御。200B 級モデルへの道筋 |
+
+---
+
+## Phase 12 — 大規模 LLM 推論デーモン設計
+
+### コンセプト: 「AIの魂は ring-0、AIの体は ring-3」
+
+現在の dtr.c (ring-0) は d_model=8 の Transformer を動かせるが、
+200B パラメータ (fp16 で 400 GB) はカーネルの静的領域には絶対に入らない。
+
+**解決策: kloader_d と同じ発想を AI 推論に適用する。**
+
+```
+ring-0 (カーネル) — "AIの魂"           ring-3 (ユーザー空間) — "AIの体"
+─────────────────────────────────       ────────────────────────────────────
+dtr.c : 推論スケジューラ・制御          infer_d.elf   : 実際の行列演算
+K-DDS : ノード間テンソル転送バス        weights_d.elf : 重みの mmap 管理
+DRPC  : 分散パイプライン調整            kvcache_d.elf : KV キャッシュ管理
+heal  : デーモン全体の watchdog         ← heal が死んでも即再起動
+tensor.c : 低レイヤ演算プリミティブ     ← p_syscall 経由でカーネルを呼ぶ
+↑ 絶対に死なせない                      ↑ 死んでも heal が復活させる
+```
+
+### 新しいデーモン構成 (ring-3)
+
+| デーモン | 役割 |
+|---------|------|
+| `infer_d.elf` | 実際の大行列演算。大きなスタック (数 MB) を動的確保。p_syscall でカーネル tensor プリミティブを呼ぶ |
+| `weights_d.elf` | 重みファイルを VFS 経由でページ単位に読み込み。LRU キャッシュで VRAM 相当を管理 |
+| `kvcache_d.elf` | Transformer の KV キャッシュを管理。マルチリクエスト並列処理 |
+
+init.rc での登録:
+```sh
+guard /weights_d.elf    # heal watchdog: 重みローダー
+guard /infer_d.elf      # heal watchdog: 推論エンジン
+guard /kvcache_d.elf    # heal watchdog: KV キャッシュ
+```
+
+### 分散推論アーキテクチャ (200B 級)
+
+```
+Tensor Parallel × Pipeline Parallel のハイブリッド:
+
+  ┌─────────────────────────────────────────────────────────┐
+  │  p-kernel クラスタ (8 ノード例)                          │
+  │                                                         │
+  │  [Node 0,1] Stage 0: Embed + Layers 0-11  (PP Stage 0) │
+  │    └─ Node 0: head 0,1,2  (TP shard 0)                 │
+  │    └─ Node 1: head 3,4,5  (TP shard 1)                 │
+  │                    ↓ K-DDS "dtr/pp0"                   │
+  │  [Node 2,3] Stage 1: Layers 12-23         (PP Stage 1) │
+  │    └─ Node 2: head 0,1,2  (TP shard 0)                 │
+  │    └─ Node 3: head 3,4,5  (TP shard 1)                 │
+  │                    ↓ K-DDS "dtr/pp1"                   │
+  │  [Node 4,5] Stage 2: Layers 24-35         (PP Stage 2) │
+  │  [Node 6,7] Stage 3: Layers 36-47 + Cls  (PP Stage 3)  │
+  └─────────────────────────────────────────────────────────┘
+
+  各ノードの infer_d.elf が実際の行列演算を担当。
+  dtr.c (ring-0) がパイプライン制御・障害検出・再ルーティングを担当。
+```
+
+### スケール別の対応モデル規模
+
+| ノード数 | 縮退レベル | 対応モデル規模 | 分散方式 |
+|---------|----------|-------------|---------|
+| 1 | SOLO | < 1B params (RAM に収まる分) | ローカル infer_d |
+| 2 | REDUCED | < 4B params | Tensor Parallel (head 分割) |
+| 4 | FULL | < 16B params | TP × PP ハイブリッド |
+| 8+ | FULL | 70B〜200B params | TP × PP 多段 + 量子化 |
+
+### Phase 12 実装タスク
+
+```
+[ ] p_syscall 拡張 (0x230 SYS_INFER_SUBMIT, 0x231 SYS_INFER_WAIT)
+    → ring-3 から dtr.c のパイプラインを呼ぶ
+[ ] infer_d.elf の実装
+    → 大スタック (malloc 相当) + tensor 演算 + VFS 重みロード
+[ ] weights_d.elf の実装
+    → mmap 的ページング、LRU キャッシュ、VFS ストリーミング読み込み
+[ ] kvcache_d.elf の実装
+    → KV キャッシュ + ページング + マルチリクエスト管理
+[ ] dtr.c 拡張
+    → PP Stage 数を動的設定、infer_d への計算委託インターフェース
+[ ] int8/fp16 量子化サポート
+    → tensor.c に quantize/dequantize プリミティブ追加
+[ ] ベンチマーク
+    → tokens/sec の計測、3ノードで 7B モデルを動かす実証
+```
+
+---
+
 ## 必要な環境
 
 ```sh

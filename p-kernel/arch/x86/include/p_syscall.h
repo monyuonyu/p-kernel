@@ -131,10 +131,19 @@
  *    0x300  SYS_MOUNT          — mount filesystem (arg0="dev", arg1="path"; 0=show table)
  *    0x301  SYS_UMOUNT         — unmount path (arg0="path")
  *
+ *  System control (0x400+):
+ *    0x400  SYS_REBOOT         — ACPI フルリセット (引数なし)
+ *
  *  AI syscalls (0x210+):
  *    0x210  SYS_INFER       — local MLP inference (arg0=packed sensor)
  *    0x211  SYS_AI_SUBMIT   — submit async AI job (arg0=packed sensor)
  *    0x212  SYS_AI_WAIT     — wait AI job completion (arg0=handle, arg1=tmout_ms)
+ *
+ *  Distributed Transformer (Phase 12, 0x240+):
+ *    0x240  SYS_DTR_SUBMIT  — Transformer推論 submit (arg0=packed sensor)
+ *                             戻り値: class [0,1,2] または -1 (エラー/タイムアウト)
+ *                             dtr_infer() 経由で分散推論を実行 (最大800ms)
+ *    0x241  SYS_DTR_WAIT    — 将来の非同期用 (現在は -1 を返す)
  */
 #pragma once
 #include "kernel.h"
@@ -297,6 +306,11 @@
 #define SYS_UMOUNT      0x301
 
 /* ----------------------------------------------------------------- */
+/* System control syscall numbers                                    */
+/* ----------------------------------------------------------------- */
+#define SYS_REBOOT      0x400
+
+/* ----------------------------------------------------------------- */
 /* AI syscall numbers (p-kernel extension)                           */
 /* ----------------------------------------------------------------- */
 #define SYS_INFER       0x210
@@ -307,6 +321,12 @@
 /* EDF リアルタイム AI スケジューリング (p-kernel Phase 4)           */
 /* ----------------------------------------------------------------- */
 #define SYS_INFER_SLA   0x230  /* SLA 付き推論 (arg0=packed, arg1=deadline_ms) */
+
+/* ----------------------------------------------------------------- */
+/* 分散 Transformer 推論 syscall (p-kernel Phase 12)                 */
+/* ----------------------------------------------------------------- */
+#define SYS_DTR_SUBMIT  0x240  /* Transformer 推論実行 (arg0=sensor_packed)    */
+#define SYS_DTR_WAIT    0x241  /* 将来の非同期用 (現在未実装)                  */
 
 /* ----------------------------------------------------------------- */
 /* K-DDS トピック syscall (p-kernel Phase 2)                         */

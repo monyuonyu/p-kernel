@@ -29,30 +29,43 @@
 /* 定数                                                                */
 /* ------------------------------------------------------------------ */
 
-#define DTR_EMBED_DIM   8    /* 埋め込みベクトル次元数                */
+#define DTR_EMBED_DIM   8    /* 埋め込みベクトル次元数 (d_model)      */
 #define DTR_FFN_DIM    16    /* FFN 中間次元数                        */
 #define DTR_OUT_DIM     3    /* 出力クラス数 (normal/alert/critical)  */
 
-#define DTR_ACT_MAGIC    0x52545444UL   /* "DTTR" LE */
-#define DTR_RESULT_MAGIC 0x53455244UL   /* "DRES" LE */
+/* Transformer ハイパーパラメータ */
+#define DTR_SEQ_LEN     4    /* トークン数 (センサー4ch = 4 tokens)   */
+#define DTR_NUM_HEADS   2    /* Multi-Head Attention ヘッド数         */
+#define DTR_D_HEAD      4    /* ヘッド次元 (DTR_EMBED_DIM/NUM_HEADS)  */
 
-#define DTR_TOPIC_L0      "dtr/l0"      /* Stage 0 出力: node 0→1 */
-#define DTR_TOPIC_RESULT  "dtr/result"  /* 最終結果:   node 1→0 */
+#define DTR_ACT_MAGIC    0x52545444UL   /* "DTTR" LE — Pipeline Parallel  */
+#define DTR_RESULT_MAGIC 0x53455244UL   /* "DRES" LE — 推論結果           */
+#define DTR_INPUT_MAGIC  0x4E495444UL   /* "DTIN" LE — raw input 共有     */
+#define DTR_HEAD_MAGIC   0x44485444UL   /* "DTHD" LE — head 出力          */
 
-#define DTR_INFER_TMO   500  /* 分散推論タイムアウト (ms) */
+#define DTR_TOPIC_L0      "dtr/l0"      /* Pipeline: Attn出力(node0→1)    */
+#define DTR_TOPIC_RESULT  "dtr/result"  /* Pipeline: 最終結果(node1→0)    */
+#define DTR_TOPIC_INPUT   "dtr/input"   /* TensorPar: raw input(node0→1)  */
+#define DTR_TOPIC_HEAD1   "dtr/head1"   /* TensorPar: head1出力(node1→0)  */
+
+#define DTR_INFER_TMO   800  /* 分散推論タイムアウト (ms) */
 
 /* ------------------------------------------------------------------ */
 /* パケット構造 (K-DDS topic data として転送)                         */
 /* ------------------------------------------------------------------ */
 
-/* Stage 0 出力 — Layer0 後の活性化テンソル (44 bytes) */
+/* ------------------------------------------------------------------ */
+/* Pipeline Parallel パケット (FULL mode / 後方互換)                 */
+/* ------------------------------------------------------------------ */
+
+/* Stage 0 出力 — MHSA 後の mean-pool ベクトル (44 bytes) */
 typedef struct {
     UW    magic;                       /* DTR_ACT_MAGIC               */
     UW    req_id;                      /* 推論リクエスト ID           */
     UB    src_node;                    /* 送信ノード ID               */
-    UB    layer;                       /* ステージ番号 (0=l0out)      */
+    UB    layer;                       /* ステージ番号                */
     UH    _pad;
-    float act[DTR_EMBED_DIM];          /* 活性化ベクトル float[8]=32B */
+    float act[DTR_EMBED_DIM];          /* float[8] = 32B              */
 } __attribute__((packed)) DTR_ACT;    /* 4+4+1+1+2+32 = 44 bytes     */
 
 /* 最終結果 (24 bytes) */
@@ -66,17 +79,42 @@ typedef struct {
 } __attribute__((packed)) DTR_RESULT; /* 4+4+1+1+2+12 = 24 bytes     */
 
 /* ------------------------------------------------------------------ */
+/* Tensor Parallel パケット (REDUCED mode)                           */
+/* ------------------------------------------------------------------ */
+
+/* raw input 共有パケット (16 bytes) — Node0 → Node1 */
+typedef struct {
+    UW  magic;                         /* DTR_INPUT_MAGIC             */
+    UW  req_id;
+    UB  src_node;
+    UB  _pad[3];
+    B   input[DTR_SEQ_LEN];            /* センサー入力 int8[4]        */
+} __attribute__((packed)) DTR_INPUT;  /* 4+4+1+3+4 = 16 bytes        */
+
+/* head 出力パケット (76 bytes) — Node1 → Node0 */
+typedef struct {
+    UW    magic;                       /* DTR_HEAD_MAGIC              */
+    UW    req_id;
+    UB    src_node;
+    UB    head_id;
+    UH    _pad;
+    float out[DTR_SEQ_LEN * DTR_D_HEAD]; /* [4][4] float = 64 bytes  */
+} __attribute__((packed)) DTR_HEAD_ACT; /* 4+4+1+1+2+64 = 76 bytes   */
+
+/* ------------------------------------------------------------------ */
 /* 統計                                                                */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    UW  inferences;    /* 推論実行回数 (合計)           */
-    UW  local;         /* ローカル実行回数              */
-    UW  distributed;   /* 分散実行完了回数              */
-    UW  timeouts;      /* タイムアウト回数              */
-    UW  layer0_runs;   /* Stage 0 実行回数              */
-    UW  layer1_runs;   /* Stage 1 (FFN) 実行回数        */
-    UW  output_runs;   /* Stage 2 (OutputHead) 実行回数 */
+    UW  inferences;    /* 推論実行回数 (合計)              */
+    UW  local;         /* ローカル実行回数                 */
+    UW  distributed;   /* 分散実行完了回数                 */
+    UW  timeouts;      /* タイムアウト回数                 */
+    UW  layer0_runs;   /* Stage 0 実行回数                 */
+    UW  layer1_runs;   /* Stage 1 (FFN) 実行回数           */
+    UW  output_runs;   /* Stage 2 (OutputHead) 実行回数    */
+    UW  attn_runs;     /* MHSA 実行回数                    */
+    UW  tp_distributed;/* Tensor Parallel 分散完了回数     */
 } DTR_STATS;
 
 extern DTR_STATS dtr_stats;

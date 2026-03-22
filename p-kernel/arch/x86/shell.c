@@ -20,6 +20,7 @@
 #include "heal.h"
 #include "edf.h"
 #include "replica.h"
+#include "degrade.h"
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
@@ -127,7 +128,9 @@ static void cmd_help(void)
     sout("  mkdir <dir>        - create directory\r\n");
     sout("  cp <src> <dst>     - copy file\r\n");
     sout("  mv <src> <dst>     - rename/move file\r\n");
-    sout("  exec <file>        - load and run ELF32 binary\r\n");
+    sout("  exec <file>        - load and run ELF32 binary (blocking)\r\n");
+    sout("  spawn <file>       - load and run ELF32 binary (background)\r\n");
+    sout("  guard <file>       - spawn + heal watchdog (auto-restart on crash)\r\n");
     sout("  mount              - show mount table\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("K-DDS commands:\r\n");
@@ -173,10 +176,19 @@ static void cmd_help(void)
     sout("  sfs push <path>        - /shared/ ファイルを手動でプッシュ\r\n");
     sout("  sfs sync               - 全ノードへ SYNC_REQ (起動時同期)\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
-    sout("メッシュルーティング (Phase 10 prep):\r\n");
+    sout("メッシュルーティング (Phase 10):\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  mesh route             - ルーティングテーブル表示\r\n");
     sout("  mesh stat              - メッシュ統計表示\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("縮退モード (Phase 11):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  degrade                - 縮退レベル + 統計表示\r\n");
+    sout("    FULL(3+)→REDUCED(2)→SOLO(1) ノード数で自動遷移\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("カーネルローダー (Phase 10 kloader):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  kpush <node_id>        - カーネルバイナリをノードへ送信→自動再起動\r\n");
     sout("  write /shared/F text   - 書き込み→自動同期\r\n");
     sout("  rm    /shared/F        - 削除→自動tombstone伝播\r\n");
     sout("  cp src /shared/F       - コピー→自動同期\r\n");
@@ -443,6 +455,14 @@ static void cmd_vital(const char *arg)
         return;
     }
     sout("Usage: vital stat\r\n");
+}
+
+static void cmd_degrade(const char *arg)
+{
+    (void)arg;
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    degrade_stat();
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
 static void cmd_persist(const char *arg)
@@ -956,6 +976,74 @@ static void cmd_exec(const char *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/* spawn — 非ブロッキング ELF 起動 (デーモン用)                      */
+/* ------------------------------------------------------------------ */
+
+static void cmd_spawn(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: spawn <file.elf>\r\n");
+        return;
+    }
+    if (!vfs_ready) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[fs] VFS not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[spawn] loading: "); sout(arg); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    ID tid = elf_exec(arg);
+    if (tid < E_OK) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[spawn] failed\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    dproc_register(arg, tid);
+    sout("[spawn] OK (background)\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* guard — spawn + heal ELF watchdog 登録                            */
+/* ------------------------------------------------------------------ */
+
+static void cmd_guard(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') {
+        sout("Usage: guard <file.elf>\r\n");
+        return;
+    }
+    if (!vfs_ready) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[fs] VFS not ready\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[guard] loading: "); sout(arg); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    ID tid = elf_exec(arg);
+    if (tid < E_OK) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[guard] exec failed\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    dproc_register(arg, tid);
+    heal_elf_register(arg, 5);
+    heal_elf_update_tid(arg, tid);
+    sout("[guard] OK (watchdog active)\r\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* New filesystem write commands                                       */
 /* ------------------------------------------------------------------ */
 
@@ -1106,8 +1194,42 @@ static void run_initrc(void)
         while (*line == ' ' || *line == '\t') line++;
         if (*line == '\0' || *line == '#') continue;
 
-        /* exec <file.elf> */
-        if (line[0]=='e' && line[1]=='x' && line[2]=='e' &&
+        /* guard <file.elf> — spawn + heal watchdog */
+        if (line[0]=='g' && line[1]=='u' && line[2]=='a' &&
+            line[3]=='r' && line[4]=='d' && line[5]==' ') {
+            const UB *path = line + 6;
+            while (*path == ' ') path++;
+            sout("[init.rc] guard: ");
+            sout((const char *)path);
+            sout("\r\n");
+            ID tid = elf_exec((const char *)path);
+            if (tid < E_OK) {
+                sout("[init.rc] guard: exec failed\r\n");
+            } else {
+                dproc_register((const char *)path, tid);
+                heal_elf_register((const char *)path, 5);
+                heal_elf_update_tid((const char *)path, tid);
+                sout("[init.rc] guard OK (watchdog active)\r\n");
+            }
+
+        /* spawn <file.elf> — non-blocking (daemon) */
+        } else if (line[0]=='s' && line[1]=='p' && line[2]=='a' &&
+            line[3]=='w' && line[4]=='n' && line[5]==' ') {
+            const UB *path = line + 6;
+            while (*path == ' ') path++;
+            sout("[init.rc] spawn: ");
+            sout((const char *)path);
+            sout("\r\n");
+            ID tid = elf_exec((const char *)path);
+            if (tid < E_OK) {
+                sout("[init.rc] spawn failed\r\n");
+            } else {
+                dproc_register((const char *)path, tid);
+                sout("[init.rc] spawn OK\r\n");
+            }
+
+        /* exec <file.elf> — blocking (foreground) */
+        } else if (line[0]=='e' && line[1]=='x' && line[2]=='e' &&
             line[3]=='c' && line[4]==' ') {
             const UB *path = line + 5;
             while (*path == ' ') path++;
@@ -1193,6 +1315,92 @@ static void cmd_sfs(const char *arg)
     }
 
     sout("Usage: sfs list | sfs stat | sfs push <path> | sfs sync\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* kpush — /PKNL.BIN を読んでターゲットノードへ UDP 直接送信          */
+/* ------------------------------------------------------------------ */
+
+#define KLOAD_MAGIC_SH   0x44414F4CUL
+#define KLOAD_PORT_SH    7382
+#define KLOAD_CHUNK_SH   1024
+
+typedef struct __attribute__((packed)) {
+    UW magic; UB version; UB type; UB src_node; UB _pad;
+    UW total_size; UW chunk_idx; UH chunk_len;
+    UB data[KLOAD_CHUNK_SH];
+} KLOAD_PKT_SH;
+
+IMPORT INT vfs_open(const char *path);
+IMPORT INT vfs_read(INT fd, void *buf, UW len);
+IMPORT UW  vfs_fsize(INT fd);
+IMPORT void vfs_close(INT fd);
+IMPORT INT udp_send(UW dst_ip, UH src_port, UH dst_port,
+                    const UB *data, UH data_len);
+
+static void cmd_kpush(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (*arg == '\0') { sout("Usage: kpush <node_id>\r\n"); return; }
+    if (drpc_my_node == 0xFF) {
+        sout("[kpush] not in distributed mode\r\n"); return;
+    }
+
+    UW nid = 0;
+    while (*arg >= '0' && *arg <= '9') nid = nid * 10 + (UW)(*arg++ - '0');
+
+    if (nid >= DNODE_MAX || dnode_table[nid].state != DNODE_ALIVE) {
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        sout("[kpush] node "); sout_dec(nid); sout(" not alive\r\n");
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+
+    UW target_ip = dnode_table[nid].ip;
+
+    if (!vfs_ready) { sout("[kpush] VFS not ready\r\n"); return; }
+
+    INT fd = vfs_open("/PKNL.BIN");
+    if (fd < 0) { sout("[kpush] /PKNL.BIN not found\r\n"); return; }
+
+    UW fsize = vfs_fsize(fd);
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    sout("[kpush] node="); sout_dec(nid);
+    sout("  size="); sout_dec(fsize); sout(" bytes\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+
+    static KLOAD_PKT_SH pkt;
+    /* START */
+    for (UW i = 0; i < sizeof(pkt); i++) ((UB*)&pkt)[i] = 0;
+    pkt.magic      = KLOAD_MAGIC_SH; pkt.version = 1;
+    pkt.type       = 0x01;           pkt.src_node = (UB)drpc_my_node;
+    pkt.total_size = fsize;
+    udp_send(target_ip, KLOAD_PORT_SH, KLOAD_PORT_SH,
+             (const UB *)&pkt, 12);
+    tk_dly_tsk(200);
+
+    static UB fbuf[KLOAD_CHUNK_SH];
+    UW chunk_idx = 0;
+    for (;;) {
+        INT n = vfs_read(fd, fbuf, KLOAD_CHUNK_SH);
+        if (n <= 0) break;
+        for (UW i = 0; i < sizeof(pkt); i++) ((UB*)&pkt)[i] = 0;
+        pkt.magic      = KLOAD_MAGIC_SH; pkt.version = 1;
+        pkt.type       = 0x02;           pkt.src_node = (UB)drpc_my_node;
+        pkt.total_size = fsize;
+        pkt.chunk_idx  = chunk_idx;
+        pkt.chunk_len  = (UH)n;
+        for (INT i = 0; i < n; i++) pkt.data[i] = fbuf[i];
+        udp_send(target_ip, KLOAD_PORT_SH, KLOAD_PORT_SH,
+                 (const UB *)&pkt, (UH)(12 + n));
+        chunk_idx++;
+        if (chunk_idx % 32 == 0) tk_dly_tsk(50);
+    }
+    vfs_close(fd);
+
+    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    sout("[kpush] done  chunks="); sout_dec(chunk_idx); sout("\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1635,6 +1843,10 @@ static void execute(const char *cmd)
         { cmd_cat(cmd + 3); return; }
     if (cmd[0]=='e' && cmd[1]=='x' && cmd[2]=='e' && cmd[3]=='c')
         { cmd_exec(cmd + 4); return; }
+    if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n')
+        { cmd_spawn(cmd + 5); return; }
+    if (cmd[0]=='g' && cmd[1]=='u' && cmd[2]=='a' && cmd[3]=='r' && cmd[4]=='d')
+        { cmd_guard(cmd + 5); return; }
     if (cmd[0]=='w' && cmd[1]=='r' && cmd[2]=='i' && cmd[3]=='t' && cmd[4]=='e')
         { cmd_write(cmd + 5); return; }
     if (cmd[0]=='r' && cmd[1]=='m')
@@ -1661,6 +1873,9 @@ static void execute(const char *cmd)
         { cmd_persist(cmd + 7); return; }
     if (cmd[0]=='d' && cmd[1]=='t' && cmd[2]=='r')
         { cmd_dtr(cmd + 3); return; }
+    if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&
+        cmd[4]=='a' && cmd[5]=='d' && cmd[6]=='e')
+        { cmd_degrade(cmd + 7); return; }
     if (cmd[0]=='k' && cmd[1]=='i' && cmd[2]=='l' && cmd[3]=='l')
         { cmd_kill(cmd + 4); return; }
     if (cmd[0]=='d' && cmd[1]=='p' && cmd[2]=='r' && cmd[3]=='o' && cmd[4]=='c')
@@ -1669,6 +1884,8 @@ static void execute(const char *cmd)
         { cmd_sfs(cmd + 3); return; }
     if (cmd[0]=='m' && cmd[1]=='e' && cmd[2]=='s' && cmd[3]=='h')
         { cmd_mesh(cmd + 4); return; }
+    if (cmd[0]=='k' && cmd[1]=='p' && cmd[2]=='u' && cmd[3]=='s' && cmd[4]=='h')
+        { cmd_kpush(cmd + 5); return; }
 
     if      (str_eq(cmd, "status")) cmd_status();
     else if (str_eq(cmd, "help"))   cmd_help();

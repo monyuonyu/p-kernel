@@ -12,6 +12,7 @@
  */
 
 #include "replica.h"
+#include "degrade.h"
 #include "netstack.h"
 #include "pmesh.h"
 #include "kernel.h"
@@ -243,7 +244,7 @@ void replica_task(INT stacd, void *exinf)
     tk_dly_tsk(1000);   /* 応答を受け取る猶予 */
 
     for (;;) {
-        tk_dly_tsk(3000);
+        tk_dly_tsk(degrade_replica_interval());
         if (drpc_my_node == 0xFF) continue;
 
         for (UB n = 0; n < DNODE_MAX; n++) {

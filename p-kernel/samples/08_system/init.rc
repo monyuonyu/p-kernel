@@ -1,0 +1,12 @@
+# p-kernel /etc/init.rc
+# 起動時に自動実行されるスクリプト
+# shell_task の run_initrc() から読み込まれる
+
+mkdir /etc
+mkdir /shared
+
+# カーネルローダーデーモン (自動起動)
+guard /kloader_d.elf
+
+# Phase 12: 分散 Transformer 推論デーモン
+guard /infer_d.elf

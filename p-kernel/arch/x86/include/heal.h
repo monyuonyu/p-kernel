@@ -21,10 +21,12 @@
 /* 定数                                                                */
 /* ------------------------------------------------------------------ */
 
-#define HEAL_GUARD_MAX  8    /* 同時登録できるガード数                */
+#define HEAL_GUARD_MAX      8    /* 分散カーネルタスク watchdog 最大数 */
+#define HEAL_ELF_GUARD_MAX  4    /* ring-3 ELF デーモン watchdog 最大数 */
+#define HEAL_WATCH_INTERVAL 3000 /* ELF 死活チェック間隔 (ms)          */
 
 /* ------------------------------------------------------------------ */
-/* ガードテーブルエントリ                                             */
+/* カーネルタスク用ガードテーブルエントリ                             */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
@@ -35,6 +37,18 @@ typedef struct {
     W     priority;      /* 再起動タスクの優先度                     */
     UB    active;        /* 1 = 登録済み                             */
 } HEAL_GUARD;
+
+/* ------------------------------------------------------------------ */
+/* ring-3 ELF デーモン用ガードテーブルエントリ                       */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    char  path[64];      /* ELF パス (例: "/kloader_d.elf")          */
+    ID    tid;           /* 現在の task ID (-1 = 未起動)             */
+    W     priority;      /* 再起動時のタスク優先度                   */
+    UB    active;        /* 1 = 登録済み                             */
+    UB    _pad[3];
+} HEAL_ELF_GUARD;
 
 /* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
@@ -55,3 +69,19 @@ void heal_on_node_dead(UB dead_node);
 
 /* shell `heal list` から呼ぶ。ガード一覧を表示。 */
 void heal_list(void);
+
+/* ------------------------------------------------------------------ */
+/* ring-3 ELF デーモン watchdog API                                  */
+/* ------------------------------------------------------------------ */
+
+/* vfs_ready 後に一度だけ呼ぶ。ELF ガードテーブルを初期化する。 */
+void heal_elf_init(void);
+
+/* ELF デーモンを watchdog に登録する。heal_elf_init() の後に呼ぶ。 */
+void heal_elf_register(const char *path, W priority);
+
+/* spawn / re-exec 後に TID を更新する。 */
+void heal_elf_update_tid(const char *path, ID tid);
+
+/* watchdog タスク本体。usermain() から create_task() で起動する。 */
+void heal_elf_task(INT stacd, void *exinf);
