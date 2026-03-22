@@ -163,8 +163,9 @@ void persist_restore_all(void)
 {
     if (!vfs_ready) return;
 
-    /* ルートディレクトリを列挙し "kd_*.dat" を探す */
-    VFS_DIRENT entries[32];
+    /* ルートディレクトリを列挙し "kd_*.dat" を探す
+     * static: 初期タスクのスタックが 1KB しかないためスタックオーバーフロー防止 */
+    static VFS_DIRENT entries[32];
     INT n = vfs_readdir("/", entries, 32);
     if (n < 0) return;
 
@@ -190,7 +191,8 @@ void persist_restore_all(void)
         INT fd = vfs_open(fpath);
         if (fd < 0) continue;
 
-        PERSIST_RECORD rec;
+        /* static: ループ内でも 168B をスタックに積まないよう static 化 */
+        static PERSIST_RECORD rec;
         INT r = vfs_read(fd, &rec, (UW)sizeof(rec));
         vfs_close(fd);
 
@@ -276,7 +278,7 @@ void persist_list(void)
         return;
     }
 
-    VFS_DIRENT entries[32];
+    static VFS_DIRENT entries[32];
     INT n = vfs_readdir("/", entries, 32);
     if (n < 0) {
         ps_puts("[persist] readdir failed\r\n");
@@ -305,7 +307,7 @@ void persist_list(void)
         INT fd = vfs_open(fpath);
         if (fd < 0) continue;
 
-        PERSIST_RECORD rec;
+        static PERSIST_RECORD rec;
         INT r = vfs_read(fd, &rec, (UW)sizeof(rec));
         vfs_close(fd);
 
@@ -347,7 +349,7 @@ void persist_clear(void)
         return;
     }
 
-    VFS_DIRENT entries[32];
+    static VFS_DIRENT entries[32];
     INT n = vfs_readdir("/", entries, 32);
     if (n < 0) return;
 

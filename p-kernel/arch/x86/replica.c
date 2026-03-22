@@ -102,7 +102,7 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
     }
 
     /* Tombstone エントリを末尾に追加 (削除の伝播) */
-    for (INT ti = 0; ti < REPLICA_TOMB_MAX && pkt->entry_cnt < KDDS_TOPIC_MAX; ti++) {
+    for (INT ti = 0; ti < REPLICA_TOMB_MAX && (INT)pkt->entry_cnt < KDDS_TOPIC_MAX; ti++) {
         if (!tomb[ti].active) continue;
         REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
         rp_strcpy(e->name, tomb[ti].name, KDDS_NAME_MAX);
@@ -123,7 +123,9 @@ static void send_to_node(UB node_id, UB type)
     UW dst_ip = dnode_table[node_id].ip;
     if (!dst_ip) return;
 
-    REPLICA_PKT pkt = { 0 };
+    /* static: REPLICA_PKT は KDDS_TOPIC_MAX×168+8 バイト。スタック節約のため static */
+    static REPLICA_PKT pkt;
+    for (INT _i = 0; _i < (INT)sizeof(pkt); _i++) ((UB *)&pkt)[_i] = 0;
     build_pkt(&pkt, type);
     udp_send(dst_ip, REPLICA_PORT, REPLICA_PORT,
              (const UB *)&pkt, (UH)sizeof(pkt));
@@ -205,7 +207,8 @@ static void merge_entry(const REPLICA_ENTRY *e)
 void replica_rx(UW src_ip, UH src_port, const UB *data, UH len)
 {
     (void)src_port; (void)src_ip;
-    if (len < (UH)sizeof(REPLICA_PKT)) return;
+    /* ヘッダ 8 バイト以上あれば受け付ける (ANNOUNCE はヘッダのみ送信) */
+    if (len < 8) return;
 
     const REPLICA_PKT *pkt = (const REPLICA_PKT *)data;
     if (pkt->magic   != REPLICA_MAGIC)   return;
@@ -273,18 +276,26 @@ void replica_boot_cry(void)
     if (drpc_my_node == 0xFF) return;
     rp_puts("[replica] *** BOOT CRY *** requesting memories from all peers\r\n");
 
+    /* ANNOUNCE ヘッダのみ送る (entries[] は不要) */
+    static struct {
+        UW magic;
+        UB version;
+        UB type;
+        UB src_node;
+        UB entry_cnt;
+    } ann;
+    ann.magic     = REPLICA_MAGIC;
+    ann.version   = REPLICA_VERSION;
+    ann.type      = REPLICA_ANNOUNCE;
+    ann.src_node  = drpc_my_node;
+    ann.entry_cnt = 0;
+
     /* IP スキーム: 10.1.0.(n+1) — 全可能ピアへ直接送る */
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
         UW peer_ip = ((UW)(n + 1) << 24) | 0x0000010AUL;
-        REPLICA_PKT pkt = { 0 };
-        pkt.magic     = REPLICA_MAGIC;
-        pkt.version   = REPLICA_VERSION;
-        pkt.type      = REPLICA_ANNOUNCE;
-        pkt.src_node  = drpc_my_node;
-        pkt.entry_cnt = 0;
         udp_send(peer_ip, REPLICA_PORT, REPLICA_PORT,
-                 (const UB *)&pkt, (UH)sizeof(pkt));
+                 (const UB *)&ann, (UH)sizeof(ann));
     }
 }
 
@@ -334,7 +345,9 @@ void replica_tombstone(const char *name)
     /* 今すぐ全 ALIVE ノードへ tombstone を送信 */
     if (drpc_my_node == 0xFF) return;
 
-    REPLICA_PKT pkt = { 0 };
+    /* static: REPLICA_PKT はスタックには大きすぎる */
+    static REPLICA_PKT pkt;
+    for (INT _i = 0; _i < (INT)sizeof(pkt); _i++) ((UB *)&pkt)[_i] = 0;
     pkt.magic     = REPLICA_MAGIC;
     pkt.version   = REPLICA_VERSION;
     pkt.type      = REPLICA_DATA;

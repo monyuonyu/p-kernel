@@ -186,6 +186,8 @@ NODEDEV0  = -netdev socket,id=n0,mcast=$(MCAST) \
             -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
 NODEDEV1  = -netdev socket,id=n0,mcast=$(MCAST) \
             -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
+NODEDEV2  = -netdev socket,id=n0,mcast=$(MCAST) \
+            -device rtl8139,netdev=n0,mac=52:54:00:00:00:03
 
 # -------------------------------------------------------------------
 # ディスクイメージ (FAT32, ATA PIO経由でVFSからマウント)
@@ -256,6 +258,9 @@ run-node0: $(TARGET)
 run-node1: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV1)
 
+run-node2: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV2)
+
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
 run-32: $(TARGET)
 	qemu-system-i386 -kernel $(TARGET) -serial stdio -display none
@@ -270,4 +275,4 @@ clean:
 clean-disk:
 	rm -f $(DISK_IMG)
 
-.PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot run-node0 run-node1
+.PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot run-node0 run-node1 run-node2

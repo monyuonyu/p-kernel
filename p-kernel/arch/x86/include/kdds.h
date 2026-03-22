@@ -34,8 +34,8 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_TOPIC_MAX   8      /* カーネルが同時に管理できるトピック数    */
-#define KDDS_HANDLE_MAX  16     /* 同時オープンハンドル数 (2 per topic)   */
+#define KDDS_TOPIC_MAX   32     /* カーネルが同時に管理できるトピック数 (Phase 9+: 3ノード×多数トピック対応) */
+#define KDDS_HANDLE_MAX  64     /* 同時オープンハンドル数                 */
 #define KDDS_NAME_MAX    32     /* トピック名の最大長 (null 含む)          */
 #define KDDS_DATA_MAX    128    /* トピックデータの最大バイト数            */
 #define KDDS_SUB_MAX     4      /* トピックあたりの最大サブスクライバ数    */
