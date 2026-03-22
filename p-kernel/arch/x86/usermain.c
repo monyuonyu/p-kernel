@@ -19,6 +19,7 @@
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
+#include "dmn.h"
 #include "dproc.h"
 #include "sfs.h"
 #include "pmesh.h"
@@ -60,6 +61,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
 #define AI_INFER_STACK      4096
+#define DMN_PRIORITY        13   /* 最低優先度 — アイドル時のみ動作 */
+#define DMN_STACK           2048
 
 static ID create_sem(INT isemcnt, INT maxsem)
 {
@@ -117,8 +120,17 @@ EXPORT INT usermain(void)
     /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
     dtr_init();
 
+    /* ---- Phase 13: DMN (Default Mode Network) ------------------- */
+    dmn_init();
+
     /* ---- Phase 9: 分散プロセスレジストリ ----------------------- */
     dproc_init();
+
+    /* ---- Phase 13: DMN タスク (最低優先度 — アイドル時のみ動作) -- */
+    if (create_task(dmn_task, DMN_PRIORITY, DMN_STACK) < E_OK)
+        tm_putstring((UB *)"[ERR] DMN task\r\n");
+    else
+        tm_putstring((UB *)"[OK]  DMN task\r\n");
 
     /* ---- AI worker task (software NPU) ---------------------------- */
     if (create_task(ai_worker_task, AI_WORKER_PRIORITY, AI_WORKER_STACK) < E_OK)

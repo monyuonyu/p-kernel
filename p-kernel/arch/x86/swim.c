@@ -15,6 +15,7 @@
 #include "heal.h"
 #include "replica.h"
 #include "degrade.h"
+#include "dmn.h"
 #include "netstack.h"
 #include "kernel.h"
 
@@ -122,6 +123,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         else if (st == DNODE_DEAD)    sw_puts(" -> DEAD\r\n");
         gossip_add(nid, st);   /* re-propagate */
         degrade_update();
+        dmn_trigger();   /* ノード状態変化 = 外部刺激 */
     }
 }
 

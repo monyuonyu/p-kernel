@@ -33,6 +33,7 @@
 #include "kdds.h"
 #include "drpc.h"
 #include "degrade.h"
+#include "dmn.h"
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -577,6 +578,7 @@ void dtr_task(INT stacd, void *exinf)
 W dtr_infer(const B input[4])
 {
     dtr_stats.inferences++;
+    dmn_trigger();   /* 推論リクエスト = 外部刺激 → DMN を ACTIVE に */
     UB lvl = degrade_level();
 
     /* ========================== SOLO ========================== */

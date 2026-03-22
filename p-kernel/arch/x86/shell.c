@@ -21,6 +21,7 @@
 #include "edf.h"
 #include "replica.h"
 #include "degrade.h"
+#include "dmn.h"
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
@@ -455,6 +456,14 @@ static void cmd_vital(const char *arg)
         return;
     }
     sout("Usage: vital stat\r\n");
+}
+
+static void cmd_dmn(const char *arg)
+{
+    (void)arg;
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    dmn_stat();
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
 static void cmd_degrade(const char *arg)
@@ -1873,6 +1882,8 @@ static void execute(const char *cmd)
         { cmd_persist(cmd + 7); return; }
     if (cmd[0]=='d' && cmd[1]=='t' && cmd[2]=='r')
         { cmd_dtr(cmd + 3); return; }
+    if (cmd[0]=='d' && cmd[1]=='m' && cmd[2]=='n')
+        { cmd_dmn(cmd + 3); return; }
     if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&
         cmd[4]=='a' && cmd[5]=='d' && cmd[6]=='e')
         { cmd_degrade(cmd + 7); return; }
