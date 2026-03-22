@@ -34,9 +34,18 @@
 #define DMN_ACTIVE          0   /* 外部刺激に反応中                   */
 #define DMN_IDLE            1   /* アイドル — 記憶整理中              */
 
-#define DMN_PULSE_MS        1000   /* ハートビート周期 (ms)           */
-#define DMN_IDLE_THRESHOLD  5      /* N パルス刺激なし → IDLE 遷移    */
-#define DMN_LOG_INTERVAL    30     /* アイドルログ出力間隔 (パルス数)  */
+#define DMN_PULSE_MS                1000   /* ハートビート周期 (ms)              */
+#define DMN_IDLE_THRESHOLD_DEFAULT  5      /* デフォルト: N パルス刺激なし → IDLE */
+#define DMN_LOG_INTERVAL_DEFAULT    30     /* デフォルト: ログ出力間隔 (パルス数) */
+
+/* ------------------------------------------------------------------ */
+/* 実行時可変パラメータ (GA/RL から動的調整可能)                      */
+/* ------------------------------------------------------------------ */
+
+/* IDLE 遷移閾値 — dmn_trigger() のないパルス数でアイドルへ           */
+extern volatile UW  dmn_idle_threshold;
+/* アイドルログ出力間隔 (idle_runs の周期)                            */
+extern volatile UW  dmn_log_interval;
 
 /* ------------------------------------------------------------------ */
 /* 統計                                                                */
@@ -70,3 +79,7 @@ UB   dmn_state_get(void);
 
 /* 統計表示 (shell `dmn` コマンド用) */
 void dmn_stat(void);
+
+/* 実行時パラメータ変更 (GA/RL / shell から呼ぶ) */
+void dmn_set_idle_threshold(UW v);
+void dmn_set_log_interval(UW v);

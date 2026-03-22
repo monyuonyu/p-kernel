@@ -46,7 +46,11 @@ Inline void knl_start_hw_timer(void)
 /* Called at the start of the timer interrupt handler */
 Inline void knl_clear_hw_timer_interrupt(void)
 {
-    /* Send EOI to master PIC - done in irq_handler (boot/x86/pic.c) */
+    /* Send specific EOI for IRQ0 to master PIC.
+     * Must be done HERE (before knl_timer_handler may cause a context switch),
+     * not in irq_handler — if knl_dispatch() switches tasks mid-handler,
+     * irq_handler never returns and never sends EOI, freezing the timer. */
+    outb(0x20, 0x60);  /* Specific EOI for IRQ0 (command 0x60 = EOI for level 0) */
 }
 
 /* Called at the end of the timer interrupt handler */

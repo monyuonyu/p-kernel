@@ -461,7 +461,26 @@ static void cmd_vital(const char *arg)
 
 static void cmd_dmn(const char *arg)
 {
-    (void)arg;
+    /* "dmn set idle <n>" or "dmn set log <n>" */
+    while (*arg == ' ') arg++;
+    if (arg[0]=='s' && arg[1]=='e' && arg[2]=='t' && arg[3]==' ') {
+        const char *p = arg + 4;
+        while (*p == ' ') p++;
+        if (p[0]=='i' && p[1]=='d' && p[2]=='l' && p[3]=='e') {
+            p += 4; while (*p == ' ') p++;
+            UW v = 0; while (*p >= '0' && *p <= '9') v = v*10 + (*p++ - '0');
+            if (v) dmn_set_idle_threshold(v);
+            else   sout("Usage: dmn set idle <n>\r\n");
+        } else if (p[0]=='l' && p[1]=='o' && p[2]=='g') {
+            p += 3; while (*p == ' ') p++;
+            UW v = 0; while (*p >= '0' && *p <= '9') v = v*10 + (*p++ - '0');
+            if (v) dmn_set_log_interval(v);
+            else   sout("Usage: dmn set log <n>\r\n");
+        } else {
+            sout("Usage: dmn set idle <n> | dmn set log <n>\r\n");
+        }
+        return;
+    }
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     dmn_stat();
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);

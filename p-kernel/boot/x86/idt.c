@@ -157,8 +157,12 @@ void __attribute__((regparm(1))) irq_handler(uint32_t irq_num) {
         x86_irq_handlers[irq_num]();
     }
 
-    /* PICにEnd of Interruptを送信 */
-    pic_send_eoi((uint8_t)irq_num);
+    /* PICにEnd of Interruptを送信
+     * IRQ0(タイマー)でT-Kernelハンドラが登録済みの場合は
+     * knl_clear_hw_timer_interrupt() が既にEOIを送信済みなのでスキップ */
+    if (irq_num != 0 || x86_irq_handlers[0] == 0) {
+        pic_send_eoi((uint8_t)irq_num);
+    }
 }
 
 /* IRQハンドラ登録関数 (将来の拡張用スタブ) */

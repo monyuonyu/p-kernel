@@ -53,8 +53,11 @@ DMN_STATS dmn_stats;
 static volatile UB  dmn_state        = DMN_ACTIVE;
 static volatile UW  dmn_pulse_count  = 0;   /* ハートビート総数        */
 static volatile UW  dmn_last_trigger = 0;   /* 最後に刺激を受けたパルス */
-static ID           dmn_sem;               /* cyclic handler → task   */
-static ID           dmn_cyc;               /* cyclic handler ID        */
+static ID           dmn_cyc;               /* cyclic handler ID (将来拡張用) */
+
+/* 実行時可変パラメータ (GA/RL から動的調整可能) */
+volatile UW  dmn_idle_threshold = DMN_IDLE_THRESHOLD_DEFAULT;
+volatile UW  dmn_log_interval   = DMN_LOG_INTERVAL_DEFAULT;
 
 /* ------------------------------------------------------------------ */
 /* Cyclic handler — タスク独立コンテキスト (割り込みレベル)           */
@@ -63,9 +66,8 @@ static ID           dmn_cyc;               /* cyclic handler ID        */
 static void dmn_pulse_handler(VP exinf)
 {
     (void)exinf;
-    dmn_pulse_count++;
-    dmn_stats.pulses++;
-    tk_sig_sem(dmn_sem, 1);
+    /* dmn_task が tk_dly_tsk で自律的にパルスをカウントするため、
+     * ここでは何もしない (cyclic handler は将来の拡張用に残す) */
 }
 
 /* ------------------------------------------------------------------ */
@@ -95,8 +97,8 @@ static void dmn_idle_work(void)
     if (dmn_stats.idle_runs % GA_INTERVAL == 1)
         ga_step();
 
-    /* DMN_LOG_INTERVAL パルスに 1 回だけ詳細ログを出す */
-    if (dmn_stats.idle_runs % DMN_LOG_INTERVAL != 1) return;
+    /* dmn_log_interval パルスに 1 回だけ詳細ログを出す */
+    if (dmn_stats.idle_runs % dmn_log_interval != 1) return;
 
     static const char *lname[] = { "FULL", "REDUCED", "SOLO" };
     UB lv = degrade_level();
@@ -125,16 +127,18 @@ void dmn_task(INT stacd, void *exinf)
     dmn_puts("[dmn] task started  pulse=");
     dmn_putdec(DMN_PULSE_MS);
     dmn_puts("ms  idle_threshold=");
-    dmn_putdec(DMN_IDLE_THRESHOLD);
+    dmn_putdec(DMN_IDLE_THRESHOLD_DEFAULT);
     dmn_puts("s\r\n");
 
     for (;;) {
-        /* ハートビートを待つ */
-        tk_wai_sem(dmn_sem, 1, TMO_FEVR);
+        /* ハートビート: task context で待機してパルスをカウント */
+        tk_dly_tsk(DMN_PULSE_MS);
+        dmn_pulse_count++;
+        dmn_stats.pulses++;
 
         UW idle_for = dmn_pulse_count - dmn_last_trigger;
 
-        if (idle_for >= DMN_IDLE_THRESHOLD) {
+        if (idle_for >= dmn_idle_threshold) {
             /* ACTIVE → IDLE 遷移 */
             if (dmn_state == DMN_ACTIVE) {
                 dmn_state = DMN_IDLE;
@@ -163,15 +167,13 @@ void dmn_init(void)
     dmn_stats.active_to_idle = 0;
     dmn_stats.idle_to_active = 0;
 
-    dmn_state        = DMN_ACTIVE;
-    dmn_pulse_count  = 0;
-    dmn_last_trigger = 0;
+    dmn_state           = DMN_ACTIVE;
+    dmn_pulse_count     = 0;
+    dmn_last_trigger    = 0;
+    dmn_idle_threshold  = DMN_IDLE_THRESHOLD_DEFAULT;
+    dmn_log_interval    = DMN_LOG_INTERVAL_DEFAULT;
 
-    /* セマフォ生成 */
-    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 64 };
-    dmn_sem = tk_cre_sem(&cs);
-
-    /* Cyclic handler 生成 */
+    /* Cyclic handler 生成 (将来の拡張用; 現在はパルスカウントは dmn_task 側で実施) */
     T_CCYC cc;
     cc.exinf   = NULL;
     cc.cycatr  = TA_HLNG | TA_STA;           /* 即時開始               */
@@ -183,7 +185,7 @@ void dmn_init(void)
     dmn_puts("[dmn] initialized  heartbeat=");
     dmn_putdec(DMN_PULSE_MS);
     dmn_puts("ms  idle_threshold=");
-    dmn_putdec(DMN_IDLE_THRESHOLD);
+    dmn_putdec(DMN_IDLE_THRESHOLD_DEFAULT);
     dmn_puts("s\r\n");
 }
 
@@ -204,6 +206,23 @@ void dmn_stat(void)
     dmn_puts("[dmn] idle runs     : "); dmn_putdec(dmn_stats.idle_runs);      dmn_puts("\r\n");
     dmn_puts("[dmn] active->idle  : "); dmn_putdec(dmn_stats.active_to_idle); dmn_puts("\r\n");
     dmn_puts("[dmn] idle->active  : "); dmn_putdec(dmn_stats.idle_to_active); dmn_puts("\r\n");
-    dmn_puts("[dmn] idle threshold: "); dmn_putdec(DMN_IDLE_THRESHOLD);       dmn_puts("s\r\n");
+    dmn_puts("[dmn] idle threshold: "); dmn_putdec(dmn_idle_threshold);
+    dmn_puts("s (def="); dmn_putdec(DMN_IDLE_THRESHOLD_DEFAULT); dmn_puts(")\r\n");
+    dmn_puts("[dmn] log interval  : "); dmn_putdec(dmn_log_interval);
+    dmn_puts(" (def="); dmn_putdec(DMN_LOG_INTERVAL_DEFAULT); dmn_puts(")\r\n");
     dmn_puts("[dmn] heartbeat     : "); dmn_putdec(DMN_PULSE_MS);             dmn_puts("ms\r\n");
+}
+
+void dmn_set_idle_threshold(UW v)
+{
+    if (v < 1) v = 1;
+    dmn_idle_threshold = v;
+    dmn_puts("[dmn] idle_threshold <- "); dmn_putdec(v); dmn_puts("s\r\n");
+}
+
+void dmn_set_log_interval(UW v)
+{
+    if (v < 1) v = 1;
+    dmn_log_interval = v;
+    dmn_puts("[dmn] log_interval <- "); dmn_putdec(v); dmn_puts(" idle_runs\r\n");
 }
