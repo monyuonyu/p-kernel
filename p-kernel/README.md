@@ -1,344 +1,179 @@
 # p-kernel
 
-p-kernel は、RL78・H8300・x86 など複数ハードウェアアーキテクチャをサポートする
-リアルタイムカーネル実装です。micro T-Kernel 2.0 互換の OS コアに加え、
-**x86/QEMU 環境では完全な TCP/IP ネットワークスタックと HTTP クライアントが動作します。**
+micro T-Kernel 2.0 ベースのリアルタイム OS。x86/QEMU で動作確認済み。
 
-## 達成状況（x86/QEMU）
+## 対応アーキテクチャ
 
-| フェーズ | 内容 | 状態 |
+- x86 (QEMU) — メイン開発環境
+- H8300
+- RL78
+
+## 実装済み機能（x86）
+
+| カテゴリ | 機能 | 備考 |
 |---------|------|------|
-| ベース   | x86 ベアメタル起動・GDT/IDT・8259A PIC・タイマー | ✅ 完了 |
-| T-Kernel | micro T-Kernel 2.0 移植（タスク・セマフォ・メモリ等 全API） | ✅ 完了 |
-| Phase 1  | PCI 列挙 + RTL8139 NIC ドライバ | ✅ 完了 |
-| Phase 2/3 | Ethernet + ARP + IP + ICMP (ping) | ✅ 完了 |
-| Phase 4  | UDP + DNS クライアント | ✅ 完了 |
-| Phase 5  | TCP 状態機械 + HTTP GET | ✅ 完了 |
-
-```
-p-kernel> http example.com/
-DNS: example.com -> 104.18.26.120
-TCP -> 104.18.26.120:80 ...
-[tcp] ESTABLISHED
---- HTTP Response ---
-HTTP/1.1 200 OK
-<!doctype html>...<h1>Example Domain</h1>...
---- 1571 bytes ---
-```
-
-## ディレクトリ構造
-
-| ディレクトリ | 内容 |
-|------------|------|
-| `arch/`    | アーキテクチャ固有コード（x86・H8300・RL78） |
-| `boot/`    | ブートローダーと初期化コード |
-| `docs/`    | ドキュメントとマニュアル |
-| `drivers/` | デバイスドライバ |
-| `include/` | ヘッダーファイルと API 定義 |
-| `kernel/`  | T-Kernel コアカーネル実装 |
-| `lib/`     | サポートライブラリ（libc 等） |
-
-## クイックスタート（x86/QEMU）
-
-```sh
-cd p-kernel/boot/x86
-
-# ビルド
-make
-
-# 実行（シリアルを stdio に接続、RTL8139 NIC 付き）
-make run
-
-# ヘッドレス実行
-make run-headless
-
-# GDB デバッグ
-make debug
-```
-
-### シェルコマンド一覧
-
-| コマンド | 機能 |
-|---------|------|
-| `help`  | コマンド一覧 |
-| `ver`   | カーネルバージョン |
-| `mem`   | メモリレイアウト |
-| `ps`    | タスク一覧 |
-| `net`   | NIC 統計（RX/TX/ARP/ICMP/UDP/TCP） |
-| `ping <IP>` | ICMP echo 送信 |
-| `arp`   | ARP キャッシュ表示・ゲートウェイ問合せ |
-| `dns <host>` | DNS A レコード解決 |
-| `udp <IP> <port> <msg>` | UDP データグラム送信 |
-| `http <host>[/path]` | HTTP GET リクエスト |
-| `clear` | 画面クリア |
-
-## ネットワーク構成（QEMU user networking）
-
-```
-ゲスト IP : 10.0.2.15
-ゲートウェイ: 10.0.2.2
-DNS サーバー: 10.0.2.3
-```
+| OS コア | micro T-Kernel 2.0（タスク・セマフォ・IPC・メモリ・タイマー） | 全 API 実装済み |
+| ユーザー空間 | ring-3 プロセス・ELF ローダー・INT 0x80 syscall・ページング | |
+| ファイルシステム | VFS / FAT32 / IDE ATA PIO | |
+| POSIX | ファイル I/O（open/read/write/stat/dup/pipe 等） | |
+| ネットワーク | RTL8139 ドライバ・ARP / IP / ICMP / UDP / DNS / TCP / HTTP | |
+| 分散基盤 | SWIM gossip 生存監視 | port 7375 |
+| 分散基盤 | DRPC 分散 RPC over UDP | port 7374 |
+| 分散基盤 | K-DDS カーネルネイティブ pub/sub（32 トピック） | port 7376 |
+| 分散基盤 | gossip レプリカ（3 秒周期でトピックテーブルを全ノード複製） | port 7379 |
+| 分散基盤 | Vital Signs・自己修復（heal） | |
+| 分散基盤 | 分散プロセスレジストリ（K-DDS topic "proc/N"） | |
+| 永続化 | FAT32 定期チェックポイント・ブート時リストア | |
+| AI | MLP 推論・EDF スケジューリング・連合学習（FedAvg） | |
+| AI | 分散 Transformer 推論 Pipeline Parallelism（3 ステージ） | |
+| ファイル同期 | SFS 共有フォルダ同期（`/shared/` を全ノードへ UDP 複製） | port 7381 |
 
 ## 必要環境
 
-- `qemu-system-x86_64`
-- `i686-linux-gnu-gcc`（クロスコンパイラ）
-- GNU Binutils（i686-linux-gnu-ld）
-
----
-
-## p-kernel ロードマップ — 生命体アーキテクチャへ
-
-### 設計思想
-
-p-kernel は「Unix の改良版」を目指すものではない。
-Unix は 1970 年代の「1台のコンピュータを複数人で使う」という前提で設計された。
-p-kernel が目指すのは、**極限環境（宇宙・深海）で自律的に生存するシステム**である。
-
-宇宙船の外装を構成する 1 万枚のパネル。
-それぞれに p-kernel が載り、中央管理者なしに互いを認識し、助け合い、生き続ける。
-設計の根底にあるのは **生命体の設計原理** だ。
-
-```
-生命体の原理                  p-kernel での実現
-────────────────────────      ────────────────────────────────────
-細胞それぞれが自律する        各ノードが完結した判断能力を持つ
-局所ルールが全体を作る        中央制御なしに創発的な動作が生まれる
-障害を自己修復する            カーネルがノード死亡を検知・タスクを移住
-神経系が即時反応する          T-Kernel RTOS がリアルタイムを保証
-免疫系が脅威を識別する        AI 推論がカーネルネイティブに動作する
+```sh
+sudo apt install -y qemu-system-x86_64 gcc-i686-linux-gnu binutils-i686-linux-gnu
 ```
 
----
+## クイックスタート
 
-### 現在の実装状況
-
-| カテゴリ | 機能 | 状態 |
-|---------|------|------|
-| **OS コア** | micro T-Kernel 2.0 全 API（タスク・セマフォ・IPC 等） | ✅ 完了 |
-| **ユーザー空間** | ring-3 プロセス・ELF ローダー・INT 0x80 syscall | ✅ 完了 |
-| **メモリ保護** | IA-32e ページング・プロセスアドレス空間分離 | ✅ 完了 |
-| **ファイルシステム** | VFS / FAT32 / IDE ATA PIO | ✅ 完了 |
-| **POSIX** | ファイル I/O・stat・dup・pipe・getpid・chdir 等 | ✅ 完了 |
-| **ネットワーク** | RTL8139 / Ethernet / ARP / IP / ICMP / UDP / TCP / HTTP | ✅ 完了 |
-| **分散基盤** | SWIM gossip・DRPC・K-DDS pub/sub・2ノード動作確認 | ✅ 完了 |
-| **AI 推論** | MLP 推論・EDF スケジューリング・AI ジョブ・連合学習 | ✅ 完了 |
-| **自己修復** | heal / 後継選出 / 連鎖継承 (Phase 3) | ✅ 完了 |
-| **状態複製** | gossip replica・Boot Cry・断末魔散布 (Phase 5/6) | ✅ 完了 |
-| **生存本能** | Vital Signs・自己 SUSPECT 検知・連鎖継承 (Phase 6) | ✅ 完了 |
-
----
-
-### フェーズ 1 ― 生体通信層（Biotic Mesh Network）
-
-> **目標**: ノード群が中央サーバーなしに互いを発見し、生死を知り合う
-
-現在の `drpc.c` と `multicast` を基盤に、カーネルネイティブの **SWIM プロトコル** を実装する。
-SWIM (Scalable Weakly-consistent Infection-style Membership) は、
-生物の感染モデルを模した分散メンバーシップ管理プロトコルである。
-
-```
-実装項目:
-  - SWIM ハートビート (カーネル定期タスク)
-  - ノード参加・離脱・障害の伝播 (gossip)
-  - クラスタメンバーテーブル (kernel-side, syscall で参照可能)
-  - ノード状態: ALIVE / SUSPECT / DEAD / LEFT
+```sh
+cd boot/x86
+make
 ```
 
-**完了条件**: `ps -cluster` でネットワーク上の全 p-kernel ノードが表示される
+### シングルノード
 
----
-
-### フェーズ 2 ― カーネルネイティブ pub/sub（K-DDS）
-
-> **目標**: DDS をミドルウェアではなくシステムコールにする
-
-Unix の「すべてはファイル」に対して、p-kernel は「**すべてはトピック**」を提案する。
-アプリケーションは `sys_topic_pub()` / `sys_topic_sub()` を呼ぶだけで、
-同一ノード内・複数ノード間を問わず同じ API でデータを共有できる。
-
-```c
-/* カーネルネイティブ pub/sub (設計中) */
-int topic = sys_topic_open("sensor/temperature", QOS_RELIABLE);
-sys_topic_pub(topic, &data, sizeof(data));   /* 送信 */
-sys_topic_sub(topic, &data, TMO_FEVR);       /* 受信 (ブロック) */
+```sh
+make run          # VGA + シリアル stdio + NIC
+make run-headless # ヘッドレス
+make debug        # GDB リモートデバッグ（:1234）
 ```
 
-```
-実装項目:
-  - トピック名前空間 (カーネル管理)
-  - QoS ポリシー: RELIABLE / BEST_EFFORT / LATEST_ONLY
-  - ローカル配送 (同一ノード内ゼロコピー)
-  - リモート配送 (SWIM クラスタ上にブロードキャスト)
-  - テンソル型トピック (AI データの効率転送)
-```
+### 3 ノードクラスタ
 
-**完了条件**: ノード A で `sys_topic_pub` → ノード B で `sys_topic_sub` が受信できる
+```sh
+# 初回のみ: ノード別ディスクイメージを準備
+cp disk.img node0.img && cp disk.img node1.img && cp disk.img node2.img
 
----
-
-### フェーズ 3 ― 自律修復（Self-Healing Kernel）
-
-> **目標**: ノードが死んでも、残りが自動的に引き継ぐ
-
-```
-障害シナリオ:
-  1. ノード X が DEAD 判定される (SWIM)
-  2. ノード X が担当していたトピックを検出
-  3. 生存ノード群がコンセンサスで後継ノードを選出
-  4. タスク・トピック・AI モデルが後継ノードへ移住
-  5. クラスタ全体に新トポロジが伝播 (gossip)
+# 別ターミナルで各ノードを起動
+make run-node0   # Node 0  IP=10.1.0.1
+make run-node1   # Node 1  IP=10.1.0.2
+make run-node2   # Node 2  IP=10.1.0.3
 ```
 
-```
-実装項目:
-  - タスクスナップショット (T-Kernel タスク状態の直列化)
-  - ノード間タスク移住プロトコル
-  - 簡易 Raft コンセンサス (リーダー選出)
-  - AI モデルのノード間転送 (fedlearn 基盤を拡張)
-```
+ノード ID は MAC アドレスの末尾オクテットから自動決定。
 
-**完了条件**: QEMU 2ノード構成でノード 0 を強制終了 → ノード 1 が自動で引き継ぐ
+## 分散推論（DTR）
 
----
+3 ノードで Transformer の推論をパイプライン分割して実行する。
 
-### フェーズ 4 ― リアルタイム AI スケジューリング
+| ステージ | 担当ノード | 処理内容 |
+|---------|-----------|---------|
+| Stage 0 | node 0 | 入力埋め込み + L0（Attention）→ 中間活性化を K-DDS で転送 |
+| Stage 1 | node 1 | FFN + output head → 結果を node 0 へ返送 |
+| Stage 2 | node 2 | バックアップ / EDF 負荷分散によるオフロード先 |
 
-> **目標**: 推論の締め切りをカーネルスケジューラが知っている
+| 項目 | 内容 |
+|-----|------|
+| トランスポート | K-DDS topic `dtr/l0`・`dtr/result` |
+| ロール決定 | 起動時に node_id で自動割り当て（再コンパイル不要） |
+| タイムアウト | 3 秒（応答なしでローカルフォールバック） |
+| シェルコマンド | `infer <node> <temp> <hum> <press> <light>` |
 
-T-Kernel の RTOS 特性 (優先度・タイムスライス) と AI 推論を統合する。
-「10ms 以内に推論しないと廃棄」という SLA をカーネルが保証する。
+## 動作確認済み出力
 
-```
-実装項目:
-  - AI タスクへの EDF (Earliest Deadline First) スケジューリング
-  - 推論 SLA 宣言: sys_infer_sla(model, deadline_us)
-  - SLA 違反時のフォールバック (キャッシュ結果 / 近傍ノードへオフロード)
-  - NPU/GPU 抽象化レイヤー (将来のハードウェア対応)
-  - ワークロード分散: 重い推論を自動的に余裕ノードへ転送
-```
-
-**完了条件**: 2ノード構成で CPU 負荷が偏ると、推論ジョブが自動的に移動する
-
----
-
-### フェーズ 5 ― マルチアーキテクチャ展開
-
-> **目標**: 宇宙・深海の実ハードウェアで動く
+### ネットワーク
 
 ```
-ターゲット:
-  ARM Cortex-M  ← 組み込みセンサーノード (既存 H8/RL78 経験を活かす)
-  RISC-V        ← オープンソースハードウェアとの親和性
-  ARM64         ← Raspberry Pi / 単ボードコンピュータ
+p-kernel> ping 10.0.2.2
+[icmp] echo REPLY from 10.0.2.2  id=20480  seq=1
+
+p-kernel> http example.com/
+DNS: example.com -> 104.18.26.120
+[tcp] ESTABLISHED
+HTTP/1.1 200 OK ... --- 1571 bytes ---
 ```
 
+### SFS 共有フォルダ同期（3 ノード）
+
 ```
-実装項目:
-  - arch/arm/ ポーティング (T-Kernel ARM 対応)
-  - ベアメタル UART ブートローダー
-  - 物理ネットワーク対応 (有線 / LoRa / 衛星通信)
-  - 超低消費電力モード (深宇宙・深海での長期動作)
+# node 0
+p-kernel> mkdir /shared
+p-kernel> write /shared/hello.txt hello world
+[write] ok: /shared/hello.txt
+[sfs] pushed "/shared/hello.txt"  chunks=1
+
+# node 1 / node 2（自動受信）
+[sfs] received "/shared/hello.txt"  13 bytes
+
+# node 1
+p-kernel> rm /shared/hello.txt
+[sfs] delete broadcast: "/shared/hello.txt"
+
+# node 0 / node 2（削除伝播）
+[sfs] deleted (remote): "/shared/hello.txt"
+```
+
+## シェルコマンド
+
+```
+help / ver / mem / ps / clear
+ls / cat / write / rm / mkdir / cp
+ping / arp / dns / udp / http / net
+sensor / infer / fl train
+topic list / drpc stat / replica stat
+sfs list / sfs stat <path> / sfs push <path> / sfs sync
+persist list / persist clear
+```
+
+## ネットワークポート
+
+| ポート | 用途 |
+|-------|------|
+| 7374 | DRPC 分散 RPC |
+| 7375 | SWIM gossip |
+| 7376 | K-DDS pub/sub |
+| 7379 | replica 状態複製 |
+| 7381 | SFS 共有フォルダ同期 |
+
+## ディレクトリ構造
+
+```
+arch/x86/       x86 アーキテクチャ実装
+boot/x86/       ビルド・QEMU 実行環境
+kernel/common/  T-Kernel コア
+include/        共通ヘッダー
+lib/libc/       文字列ライブラリ
+userland/x86/   ring-3 サンプル（ELF）
+docs/           設計ドキュメント
 ```
 
 ---
 
-### 長期ビジョン
+## 目標とする最終形態
 
-```
-2030年代以降に想定される世界:
+中央サーバーや管理者なしに、複数ノードが協調して動き続けるクラスタ OS。
 
-  宇宙構造物    ← 外装パネル×10,000 それぞれに p-kernel
-  深海探査機    ← 通信遅延数秒でも自律して動き続ける
-  惑星探査群    ← 惑星表面を覆う自己修復センサーネット
-  軌道上工場    ← 中央管理なしに協調して製造を続ける
+**核心となる性質:**
 
-  共通原則:
-    - 中央サーバーが不在でも動く
-    - 部分故障が全体に影響しない
-    - AI がリアルタイムに状況判断する
-    - 全体は設計されず、局所ルールから創発する
-```
+| 性質 | 説明 |
+|-----|------|
+| ノード数が多いほど賢くなる | 分散 Attention で全ノードの知識を統合し、推論精度が上がる |
+| ノード数が少ないほど生き残る | 縮退モードで推論精度より生存を優先し、最後の 1 ノードでも動き続ける |
+| 管理者が不要 | 各ノードが局所的な情報だけで判断し、クラスタ全体の動作が創発する |
 
-p-kernel はそのための、最初の一歩である。
+**現時点で実現済みのもの:**
 
----
+- ノード死亡検知と自己修復（SWIM + heal）
+- 全ノードへのトピック状態複製（gossip replica、3 秒周期）
+- 電源断後のデータ復元（FAT32 永続化）
+- 新規ノード参加時の即時状態同期（Boot Cry + SFS boot sync）
+- ファイルの全ノード自動複製（SFS）
 
-### フェーズ 7 ― フラッシュ永続化（Persistent Memory）
+**未実装（Phase 10）:**
 
-> **目標**: 全ノードが同時に電源を失っても、データが消えない
-
-```
-実装項目:
-  - 重要トピックを FAT32/VFS へ自動書き込み (kdds_pub 時)
-  - 起動直後にディスクからトピックを復元 (ネットワーク replica より先)
-  - "永続フラグ" を QoS に追加: QOS_PERSISTENT
-  - 書き込みレート制限 (Flash 書き換え寿命保護)
-```
-
-**完了条件**: 全ノード電源断 → 再起動 → ネットワーク疎通前にトピックが復元される
-
----
-
-### フェーズ 8 ― 分散 AI 推論（Distributed Transformer Inference）
-
-> **目標**: 1 ノードに載らない大規模モデルを、クラスタ全体で動かす
-
-```
-実装項目:
-  - トランスフォーマー層をノード間で分割 (Pipeline Parallelism)
-  - 中間活性化テンソルを K-DDS テンソル型トピックで転送
-  - EDF スケジューラが推論 SLA をクラスタ単位で保証
-  - モデル断片のノード間移住 (heal フレームワークを拡張)
-```
-
-**完了条件**: 3 ノード構成で 1 ノード 1 層ずつ担当し、入力→出力が通り抜ける
-
----
-
-### フェーズ 9 ― ノード認証（Biometric Node Identity）
-
-> **目標**: 不正ノードがクラスタに混入できない
-
-```
-実装項目:
-  - 起動時に共有シークレットから HMAC-SHA256 ノード証明書を生成
-  - SWIM gossip パケットに署名フィールドを追加
-  - 未認証ノードは SUSPECT 扱いで自動隔離
-  - 鍵ローテーション: gossip 経由でクラスタ全体に伝播
-```
-
-**完了条件**: 不正 MAC のノードが参加しようとすると DEAD 判定される
-
----
-
-### フェーズ 10 ― 集合意識（Collective Consciousness）
-
-> **目標**: クラスタ全体がひとつの知性として振る舞う
-
-```
-実装項目:
-  - Raft コンセンサス: クラスタ全体で合意したひとつの「意思決定」
-  - Mixture of Experts ルーティング: 推論タスクを得意ノードへ自動転送
-  - 分散 Attention: 各ノードが Key/Value を持ち、他ノードの Query に応答
-  - 自己増殖: 新ノードが接続された瞬間に OS カーネルをプッシュ転送
-  - 緊急時縮退: ノード数が減るほど推論精度より生存優先度が上がる
-```
-
-**完了条件**: 1 ノードが生き残った状態でも、クラスタ全体の「記憶」と「判断能力」が維持される
-
----
-
-### 最終形態
-
-```
-フェーズ 10 が完成したとき:
-
-  ノード数が多いほど賢くなる    ← 分散 Attention が全ノードの知識を統合
-  ノード数が少ないほど生き残る  ← 縮退モードで生存本能を最優先
-  電源断・通信断・物理破壊      ← どの単一障害点も全体を止められない
-
-  スケールアウトするほど賢く、縮退するほど頑健に。
-  これが p-kernel の設計目標である。
-```
+- Raft コンセンサスによるリーダー選出と分散合意
+- 分散 Attention — 各ノードが Key/Value を保持し、他ノードの Query に応答
+- Mixture of Experts ルーティング — 得意なノードへ推論タスクを自動転送
+- 自己増殖 — 新ノードが接続された瞬間に OS カーネルを自動プッシュ転送
+- 縮退モード — ノード数減少に応じて推論精度より生存優先度を動的に引き上げ
