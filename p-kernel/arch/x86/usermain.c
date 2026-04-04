@@ -24,6 +24,9 @@
 #include "dproc.h"
 #include "sfs.h"
 #include "pmesh.h"
+#include "raft.h"
+#include "spawn.h"
+#include "moe.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "gdt_user.h"
@@ -58,6 +61,10 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define DTR_STACK           4096
 #define PMESH_PRIORITY      7
 #define PMESH_STACK         2048
+#define RAFT_PRIORITY       5
+#define RAFT_STACK          2048
+#define MOE_PRIORITY        8
+#define MOE_STACK           2048
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -225,6 +232,23 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] pmesh task\r\n");
             else
                 tm_putstring((UB *)"[OK]  pmesh task\r\n");
+
+            /* Phase 10: Raft コンセンサス */
+            raft_init();
+            if (create_task(raft_task, RAFT_PRIORITY, RAFT_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] raft task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  raft task\r\n");
+
+            /* Phase 10: 自己増殖 */
+            spawn_init();
+
+            /* Phase 10: MoE 推論ルーティング */
+            moe_init();
+            if (create_task(moe_task, MOE_PRIORITY, MOE_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] moe task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  moe task\r\n");
 
         }
 

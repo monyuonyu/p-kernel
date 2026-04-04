@@ -75,6 +75,9 @@ ARCH_C_SRCS = \
     dtr.c \
     dproc.c \
     sfs.c \
+    raft.c \
+    spawn.c \
+    moe.c \
     pmesh.c \
     persist.c \
     blk_ssy.c \
@@ -282,6 +285,24 @@ run-log: $(TARGET)
 debug: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
 
+# デバッグシンボル付きビルド (gdb用)
+TARGET_ELF = bootloader.elf
+debug-build: CFLAGS += -g3 -O0
+debug-build: LDFLAGS_ELF = -nostdlib -static -T linker.ld -m elf_i386
+debug-build: $(ALL_OBJS)
+	$(LD) $(LDFLAGS_ELF) -o $(TARGET_ELF) $^ $(LIBGCC)
+	$(LD) $(LDFLAGS) -o $(TARGET) $^ $(LIBGCC)
+	@echo "[OK] debug build: $(TARGET_ELF) + $(TARGET)"
+
+# GDBアタッチ (別ターミナルで make debug 後に実行)
+gdb: $(TARGET_ELF)
+	gdb-multiarch -x .gdbinit $(TARGET_ELF)
+
+# シンボルなしでも接続だけする場合
+gdb-bare:
+	gdb-multiarch -ex "set architecture i386:x86-64" \
+	              -ex "target remote localhost:1234"
+
 run-node0: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
 
@@ -329,4 +350,5 @@ clean-disk:
 
 .PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
         run-node0 run-node1 run-node2 \
-        run-kloader run-kloader-node0 run-kloader-node1 run-kloader-node2
+        run-kloader run-kloader-node0 run-kloader-node1 run-kloader-node2 \
+        debug-build gdb gdb-bare

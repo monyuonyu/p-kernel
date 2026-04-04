@@ -29,6 +29,9 @@
 #include "dproc.h"
 #include "sfs.h"
 #include "pmesh.h"
+#include "raft.h"
+#include "spawn.h"
+#include "moe.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -187,6 +190,12 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  degrade                - 縮退レベル + 統計表示\r\n");
     sout("    FULL(3+)→REDUCED(2)→SOLO(1) ノード数で自動遷移\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Phase 10 (Raft / MoE / 自己増殖):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  raft                   - Raftコンセンサス状態表示\r\n");
+    sout("  moe                    - MoE推論ルーター統計表示\r\n");
+    sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("カーネルローダー (Phase 10 kloader):\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -1908,8 +1917,16 @@ static void execute(const char *cmd)
         { cmd_mesh(cmd + 4); return; }
     if (cmd[0]=='k' && cmd[1]=='p' && cmd[2]=='u' && cmd[3]=='s' && cmd[4]=='h')
         { cmd_kpush(cmd + 5); return; }
+    if (cmd[0]=='r' && cmd[1]=='a' && cmd[2]=='f' && cmd[3]=='t')
+        { raft_stat(); return; }
+    if (cmd[0]=='m' && cmd[1]=='o' && cmd[2]=='e')
+        { moe_stat(); return; }
+    if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n'
+        && cmd[5]==' ')
+        { /* spawn <file> handled below */ }
 
     if      (str_eq(cmd, "status")) cmd_status();
+    else if (str_eq(cmd, "spawn-stat")) { spawn_stat(); return; }
     else if (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();
