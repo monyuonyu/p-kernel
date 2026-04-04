@@ -29,7 +29,7 @@
 #define INITTASK_EXINF		(0x0)
 #define INITTASK_TSKATR		(TA_HLNG | TA_RNG0)
 #define INITTASK_ITSKPRI	(1)
-#define INITTASK_STKSZ		(1*1024)
+#define INITTASK_STKSZ		(8*1024)	/* p-kernel: VFS/FAT32/AI init requires deep stack */
 #define INITTASK_DSNAME		"inittsk"
 #define INITTASK_STACK		(NULL)
 

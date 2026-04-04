@@ -55,6 +55,7 @@ IMPORT void stdin_deactivate(void);
 IMPORT void stdin_feed(UB c);
 IMPORT ID   stdin_get_exit_sem(void);
 IMPORT void sio_recv_frame(UB *buf, INT size);
+IMPORT BOOL sio_data_ready(void);
 
 static void sout(const char *s)
 {
@@ -995,16 +996,17 @@ static void cmd_exec(const char *arg)
     ID exit_sem = stdin_get_exit_sem();
     BOOL skip_lf = TRUE;   /* discard the first '\n' only */
     for (;;) {
-        UB raw;
-        sio_recv_frame(&raw, 1);          /* block until a char arrives     */
-        /* Check (non-blocking) if the ELF has exited */
-        if (tk_wai_sem(exit_sem, 1, TMO_POL) == E_OK) break;
-        /* Skip the one '\n' left over from the "\r\n" command terminator */
-        if (skip_lf) {
-            skip_lf = FALSE;
-            if (raw == (UB)'\n') continue;
+        /* Poll exit status every 50ms — allows ELF to exit without serial input */
+        if (tk_wai_sem(exit_sem, 1, 50) == E_OK) break;
+        /* Forward any pending serial chars to ELF stdin (non-blocking) */
+        if (sio_data_ready()) {
+            UB raw; sio_recv_frame(&raw, 1);
+            if (skip_lf) {
+                skip_lf = FALSE;
+                if (raw == (UB)'\n') continue;
+            }
+            stdin_feed(raw);
         }
-        stdin_feed(raw);
     }
 
     /* ELF 終了 — EXITED として全クラスタへ通知 (フェイルオーバーしない) */

@@ -16,7 +16,7 @@
 #include "kernel.h"
 
 /* Maximum number of task IDs tracked */
-#define PAGING_MAX_TASKS  32
+#define PAGING_MAX_TASKS  129
 
 /*
  * paging_init()

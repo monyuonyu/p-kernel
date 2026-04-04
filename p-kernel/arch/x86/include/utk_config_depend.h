@@ -13,7 +13,7 @@
 
 /* SYSCONF */
 #define CFN_TIMER_PERIOD    10          /* 10ms timer period */
-#define CFN_MAX_TSKID       32
+#define CFN_MAX_TSKID       128
 #define CFN_MAX_SEMID       48   /* Phase 9+: dproc/kdds/dtr/swim 等で大量消費するため拡張 */
 #define CFN_MAX_FLGID       16
 #define CFN_MAX_MBXID       8

@@ -17,7 +17,8 @@
 #define BEGIN_CRITICAL_SECTION  { UINT _imask_ = disint();
 #define END_CRITICAL_SECTION    if (!isDI(_imask_)                      \
                                   && knl_ctxtsk != knl_schedtsk         \
-                                  && !knl_dispatch_disabled) {          \
+                                  && !knl_dispatch_disabled             \
+                                  && !knl_isTaskIndependent()) {        \
                                     knl_dispatch();                     \
                                 }                                       \
                                 enaint(_imask_); }

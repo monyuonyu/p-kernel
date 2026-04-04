@@ -34,7 +34,7 @@ typedef unsigned long long PTE;
 /* Page-table pool (3 tables per process × 4 processes = 12 slots)  */
 /* ----------------------------------------------------------------- */
 
-#define POOL_SIZE  12
+#define POOL_SIZE  24
 
 static PTE  pt_pool[POOL_SIZE][PT_ENTRIES] __attribute__((aligned(4096)));
 static BOOL pt_used[POOL_SIZE];

@@ -36,6 +36,14 @@ EXPORT void sio_send_frame(const UB *buf, INT size)
 }
 
 /*
+ * sio_data_ready - non-blocking check: returns TRUE if a byte is waiting
+ */
+EXPORT BOOL sio_data_ready(void)
+{
+    return (_inb(COM1_LSR) & LSR_DR) != 0;
+}
+
+/*
  * sio_recv_frame - receive bytes from COM1 (blocking, yields to other tasks)
  */
 EXPORT void sio_recv_frame(UB *buf, INT size)
