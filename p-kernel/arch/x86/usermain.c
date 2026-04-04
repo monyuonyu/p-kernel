@@ -93,9 +93,13 @@ static ID create_task(FP fn, INT pri, INT stksz)
     return id;
 }
 
+IMPORT void kernel_selftest(void);
+
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
+
+    kernel_selftest();
 
     /* ---- Ring-3 userspace infrastructure -------------------------- */
     paging_init();          /* kernel CR3: strip U/S from all PD entries */

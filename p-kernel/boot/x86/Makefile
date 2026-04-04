@@ -50,6 +50,7 @@ ARCH_C_SRCS = \
     inittask_def.c \
     inittask_main.c \
     usermain.c \
+    selftest.c \
     sio.c \
     vga.c \
     keyboard.c \
