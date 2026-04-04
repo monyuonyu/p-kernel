@@ -91,7 +91,9 @@ ARCH_C_SRCS = \
     syscall.c \
     userspace.c \
     elf_loader.c \
-    paging.c
+    paging.c \
+    mem_store.c \
+    chat.c
 
 ARCH_S_SRCS = cpu_support.S
 

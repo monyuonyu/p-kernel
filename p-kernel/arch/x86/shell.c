@@ -35,6 +35,8 @@
 #include "dkva.h"
 #include "ai_kernel.h"
 #include "vfs.h"
+#include "mem_store.h"
+#include "chat.h"
 #include "elf_loader.h"
 #include "kernel.h"
 
@@ -191,6 +193,13 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  degrade                - 縮退レベル + 統計表示\r\n");
     sout("    FULL(3+)→REDUCED(2)→SOLO(1) ノード数で自動遷移\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Phase 11 (記憶 / AI会話):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  chat                   - AI会話モード (記憶付き)\r\n");
+    sout("  memstat                - 記憶ストア統計表示\r\n");
+    sout("  chatstat               - チャット統計表示\r\n");
+    sout("  spawn claude_bridge.elf - Claude API ブリッジ起動\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("Phase 10 (Raft / MoE / 自己増殖):\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -1918,6 +1927,12 @@ static void execute(const char *cmd)
         { cmd_mesh(cmd + 4); return; }
     if (cmd[0]=='k' && cmd[1]=='p' && cmd[2]=='u' && cmd[3]=='s' && cmd[4]=='h')
         { cmd_kpush(cmd + 5); return; }
+    /* Phase 11: 記憶 / AI会話 */
+    if (cmd[0]=='c' && cmd[1]=='h' && cmd[2]=='a' && cmd[3]=='t' && cmd[4]=='\0')
+        { chat_run(0); return; }
+    if (str_eq(cmd, "memstat"))    { mem_stat();  return; }
+    if (str_eq(cmd, "chatstat"))   { chat_stat(); return; }
+
     if (cmd[0]=='r' && cmd[1]=='a' && cmd[2]=='f' && cmd[3]=='t')
         { raft_stat(); return; }
     if (cmd[0]=='m' && cmd[1]=='o' && cmd[2]=='e')

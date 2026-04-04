@@ -34,6 +34,7 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 
 # ビルド対象の ELF ファイル一覧
 SAMPLES = \
+    10_ai/01_claude_bridge/claude_bridge.elf \
     09_ai/01_infer_d/infer_d.elf \
     01_posix/01_hello/hello.elf \
     01_posix/02_posix_io/posix_io.elf \
@@ -256,5 +257,13 @@ all: $(SAMPLES)
 	$(CC) $(CFLAGS) -c $< -o 09_ai/01_infer_d/infer_d.o
 	$(LD) $(LDFLAGS) -o $@ 09_ai/01_infer_d/infer_d.o
 
+# -------------------------------------------------------------------
+# 10_ai/01_claude_bridge — Claude API ブリッジ (ring-3 デーモン)
+# -------------------------------------------------------------------
+10_ai/01_claude_bridge/claude_bridge.elf: $(S)/10_ai/01_claude_bridge/claude_bridge.c plibc.h user.ld
+	mkdir -p 10_ai/01_claude_bridge
+	$(CC) $(CFLAGS) -c $< -o 10_ai/01_claude_bridge/claude_bridge.o
+	$(LD) $(LDFLAGS) -o $@ 10_ai/01_claude_bridge/claude_bridge.o
+
 clean:
-	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai
+	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai

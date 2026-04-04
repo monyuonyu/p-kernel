@@ -47,3 +47,34 @@ EXPORT void sio_recv_frame(UB *buf, INT size)
         buf[i] = _inb(COM1_DATA);
     }
 }
+
+/*
+ * sio_read_line - read one line (until \r or \n) from COM1
+ *   Returns the number of characters in buf (not counting NUL).
+ *   Echoes typed characters; handles backspace.
+ */
+EXPORT INT sio_read_line(UB *buf, INT max)
+{
+    INT pos = 0;
+    for (;;) {
+        UB c;
+        sio_recv_frame(&c, 1);
+        if (c == '\r' || c == '\n') {
+            /* echo CR+LF */
+            UB crlf[2] = { '\r', '\n' };
+            sio_send_frame(crlf, 2);
+            break;
+        } else if (c == '\b' || c == 0x7F) {   /* backspace / DEL */
+            if (pos > 0) {
+                pos--;
+                UB bs[3] = { '\b', ' ', '\b' };
+                sio_send_frame(bs, 3);
+            }
+        } else if (pos < max - 1) {
+            buf[pos++] = c;
+            sio_send_frame(&c, 1);   /* echo */
+        }
+    }
+    buf[pos] = '\0';
+    return pos;
+}

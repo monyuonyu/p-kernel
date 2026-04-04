@@ -23,6 +23,8 @@
 #include "dmn.h"
 #include "ga.h"
 #include "dproc.h"
+#include "mem_store.h"
+#include "chat.h"
 #include "sfs.h"
 #include "pmesh.h"
 #include "raft.h"
@@ -130,6 +132,10 @@ EXPORT INT usermain(void)
 
     /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
     dtr_init();
+
+    /* ---- Phase 11: 記憶永続化 + AI会話インターフェース ---------- */
+    mem_store_init();          /* FAT32 からリングバッファを復元      */
+    chat_init();               /* chat コマンド待受け初期化           */
 
     /* ---- Phase 13: DMN (Default Mode Network) ------------------- */
     dmn_init();
