@@ -171,9 +171,18 @@ kl_net.o:        kl_net.c;        $(CC) $(KLOADER_CFLAGS) -c $< -o $@
 kloader_start.o: kloader_start.S; $(CC) $(KLOADER_CFLAGS) -c $< -o $@
 
 # -------------------------------------------------------------------
+# kernel.elf — カーネル本体 ELF (kloader がロードする)
+# kernel.ld を使用: .multiboot を除去し _start を 0x100000 に配置
+# -------------------------------------------------------------------
+KERNEL_LDFLAGS = -nostdlib -static -T kernel.ld -m elf_i386
+
+kernel.elf: $(ALL_OBJS)
+	$(LD) $(KERNEL_LDFLAGS) -o $@ $^ $(LIBGCC)
+
+# -------------------------------------------------------------------
 # ビルドルール
 # -------------------------------------------------------------------
-all: $(TARGET) kloader.bin
+all: $(TARGET) kloader.bin kernel.elf
 
 $(TARGET): $(ALL_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
@@ -230,10 +239,11 @@ USERLAND_X86 = ../../userland/x86
 
 # FAT32ディスクイメージ作成
 # mkdosfs / mformat が必要 (dosfstools パッケージ)
-$(DISK_IMG): $(TARGET)
+$(DISK_IMG): $(TARGET) kernel.elf
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
 	mcopy -i $@ $(TARGET) ::PKNL.BIN
+	mcopy -i $@ kernel.elf ::KERNEL.ELF
 	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
 	mcopy -i $@ $(USERLAND_X86)/01_posix/01_hello/hello.elf         ::hello.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/02_posix_io/posix_io.elf   ::posix_io.elf
@@ -346,7 +356,7 @@ run-boot: $(TARGET)
 	qemu-system-x86_64 -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64 -display none
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin serial.log
+	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin kernel.elf serial.log
 	$(MAKE) -C $(USERLAND_X86) clean 2>/dev/null || true
 
 clean-disk:

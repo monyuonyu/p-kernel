@@ -235,6 +235,7 @@ p-kernel> rm /shared/hello.txt
 | **Phase 13** | **DMN** | ✅ 完成 | Default Mode Network。外部刺激で発火、アイドル時に記憶整理 |
 | **Phase 14** | **無意識学習 (GA)** | 🔲 設計中 | DMN アイドル中に遺伝的アルゴリズムで Transformer 重みを自己改善 |
 | **Phase 15** | **無意識学習 (RL)** | 🔲 設計中 | DMN 自身の行動方針を強化学習で更新。カーネルが自分の動き方を学ぶ |
+| **Phase 16** | **kloader — ブート分離** | ✅ 完成 | カーネルとローダーを分離。kloader.bin が FAT32/ネットから kernel.elf を取得・ELF展開して起動 |
 
 ---
 
@@ -422,6 +423,74 @@ Tensor Parallel × Pipeline Parallel のハイブリッド:
 [ ] ベンチマーク
     → tokens/sec の計測、3ノードで 7B モデルを動かす実証
 ```
+
+---
+
+## Phase 16 — kloader: カーネル/ローダー分離
+
+### コンセプト
+
+通常の OS では「GRUB がカーネルをロードする」が当たり前だが、p-kernel には
+より強い動機がある。**ローダーが生きていれば、カーネルを外から受け取って再起動できる。**
+
+```
+従来:  QEMU -kernel bootloader.bin  ← カーネル自身が Multiboot を持つ
+Phase 16:
+  QEMU -kernel kloader.bin          ← 小さなローダー (8 KB, 0x50000)
+    ├─ FAT32 disk → KERNEL.ELF を読み込む
+    ├─ (Phase 16b) ネット受信 → 別ノードから kernel ELF を取得して起動
+    └─ ELF展開 → e_entry にジャンプ → p-kernel が通常起動
+```
+
+### ファイル構成
+
+| ファイル | 役割 |
+|---------|------|
+| `kloader_start.S` | Multiboot ヘッダー + エントリ。EAX/EBX (MB magic/info) を保存して kl_main へ |
+| `kl_main.c` | FAT32 試行 → ネット試行 → 失敗時 halt。カーネル起動時に EAX/EBX を復元 |
+| `kl_fat32.c` | IDE PIO + FAT32 BPB 解析 + ファイル読み込み + ELF32 ロード |
+| `kl_net.c` | ネットワーク受信 (Phase 16b: RTL8139 minimal + UDP) |
+| `kloader.ld` | kloader を 0x50000 に配置 |
+| `kernel.ld` | kernel.elf: `.multiboot` を除去し `_start` を 0x100000 の先頭に配置 |
+
+### ビルドと実行
+
+```sh
+# ビルド (kloader.bin + kernel.elf + disk.img)
+make all
+
+# kloader 経由で起動 (推奨: 本番に近い構成)
+make run-kloader
+
+# 従来の直接起動 (後方互換: 開発・デバッグ用)
+make run
+```
+
+### 起動シーケンス (Phase 16)
+
+```
+QEMU -kernel kloader.bin
+  │
+  ├─ [kloader_start.S]  Multiboot エントリ (0x50000)
+  │                     EAX=0x2BADB002, EBX=MB info → kl_main へ渡す
+  │
+  ├─ [kl_main.c]        シリアル初期化
+  │                     FAT32 → KERNEL.ELF 発見
+  │
+  ├─ [kl_fat32.c]       IDE PIO → FAT32 解析 → ファイル読み込み (staging: 0x300000)
+  │                     ELF32 ヘッダ解析 → PT_LOAD セグメントを vaddr へ展開
+  │                     e_entry を返す
+  │
+  └─ [kl_main.c]        EAX/EBX を復元して e_entry へジャンプ
+       │
+       └─ [start.S]     通常の p-kernel 起動シーケンスへ (長モード移行等)
+```
+
+### なぜこれが「方舟」に重要か
+
+- カーネルが壊れても kloader (8 KB) が生きていれば再起動できる
+- Phase 16b 完成後: 別ノードからカーネルを UDP 受信して即時ブート
+  → ディスク障害 + カーネル破損でも、ネットワーク上の仲間がいれば復活する
 
 ---
 
