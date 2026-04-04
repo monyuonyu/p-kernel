@@ -19,6 +19,7 @@
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
+#include "dkva.h"
 #include "dmn.h"
 #include "ga.h"
 #include "dproc.h"
@@ -65,6 +66,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define RAFT_STACK          2048
 #define MOE_PRIORITY        8
 #define MOE_STACK           2048
+#define DKVA_PRIORITY       7
+#define DKVA_STACK          4096
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -232,6 +235,13 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] pmesh task\r\n");
             else
                 tm_putstring((UB *)"[OK]  pmesh task\r\n");
+
+            /* Phase 10: 分散 KV Attention */
+            dkva_init();
+            if (create_task(dkva_task, DKVA_PRIORITY, DKVA_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] dkva task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  dkva task\r\n");
 
             /* Phase 10: Raft コンセンサス */
             raft_init();

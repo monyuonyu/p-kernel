@@ -32,6 +32,7 @@
 #include "raft.h"
 #include "spawn.h"
 #include "moe.h"
+#include "dkva.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "elf_loader.h"
@@ -1921,6 +1922,8 @@ static void execute(const char *cmd)
         { raft_stat(); return; }
     if (cmd[0]=='m' && cmd[1]=='o' && cmd[2]=='e')
         { moe_stat(); return; }
+    if (cmd[0]=='d' && cmd[1]=='k' && cmd[2]=='v' && cmd[3]=='a')
+        { dkva_stat(); return; }
     if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n'
         && cmd[5]==' ')
         { /* spawn <file> handled below */ }

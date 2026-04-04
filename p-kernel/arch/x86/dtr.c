@@ -1,6 +1,6 @@
 /*
  *  dtr.c (x86)
- *  Phase 8/11 — Distributed Transformer Inference
+ *  Phase 8/10/11 — Distributed Transformer Inference
  *
  *  本物の Transformer Block (MHSA + LayerNorm + FFN + LayerNorm) を
  *  クラスタ規模に応じた分散戦略で実行する。
@@ -24,12 +24,17 @@
  *                     → gather → W_o → LN1 → FFN → LN2 → Pool → Cls
  *      Node 1 (odd) : "dtr/input" sub → head1 計算 → "dtr/head1" pub
  *
- *    FULL    (3+ nodes): Pipeline Parallel — ステージをノード間で分割
- *      Node 0 (even): Embed + MHSA(local) + mean-pool → "dtr/l0" pub
- *      Node 1 (odd) : "dtr/l0" sub → LN1 → FFN → LN2 → Cls → "dtr/result" pub
+ *    FULL    (3+ nodes): Distributed KV Attention (Phase 10) + Pipeline
+ *      Phase 10 DKVA:
+ *        各ノードが KV キャッシュを保持し、Q をブロードキャストして
+ *        全ノードの KV を Attention に組み込む (集合記憶 Attention)。
+ *      従来 Pipeline Parallel (フォールバック):
+ *        Node 0 (even): Embed + MHSA(local) + mean-pool → "dtr/l0" pub
+ *        Node 1 (odd) : "dtr/l0" sub → LN1 → FFN → LN2 → Cls → "dtr/result" pub
  */
 
 #include "dtr.h"
+#include "dkva.h"
 #include "kdds.h"
 #include "drpc.h"
 #include "degrade.h"
@@ -399,8 +404,22 @@ static void run_mhsa_local(const float tok[SEQ][DM],
 {
     float head_out[NH][SEQ][DH];
 
-    for (INT h = 0; h < NH; h++)
+    float K_all[NH][SEQ][DH], V_all[NH][SEQ][DH];
+    float scale = 1.0f / dt_sqrt((float)DH);
+
+    for (INT h = 0; h < NH; h++) {
         run_attn_head(tok, h, head_out[h]);
+
+        /* KV キャッシュ用に K/V を保存 (DKVA 用) */
+        for (INT t = 0; t < SEQ; t++) {
+            dt_linear((float *)W_k[h], NULL, tok[t], K_all[h][t], DH, DM);
+            dt_linear((float *)W_v[h], NULL, tok[t], V_all[h][t], DH, DM);
+            (void)scale;
+        }
+    }
+
+    /* KV キャッシュを更新 (分散 Attention 用) */
+    dkva_cache_update(K_all, V_all);
 
     /* concat(heads) = [SEQ][DM], W_o 投影 */
     for (INT t = 0; t < SEQ; t++) {
@@ -798,9 +817,77 @@ W dtr_infer(const B input[4])
         return (W)cls;
     }
 
-    /* ======================= FULL: Pipeline Parallel ====================== */
+    /* ======================= FULL: Distributed KV Attention (Phase 10) === */
+    if (lvl == DEGRADE_FULL && h_l0_pub >= 0) {
+        BOOL has_peers = FALSE;
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE) {
+                has_peers = TRUE; break;
+            }
+        }
+        if (has_peers && drpc_my_node % 2 == 0) {
+            /* --- Phase 10: DKVA で Attention を計算 --- */
+            float tok[SEQ][DM];
+            run_embed_seq(input, tok);
+            dtr_stats.layer0_runs++;
+
+            /* Q を計算 */
+            float Q[SEQ][NH][DH];
+            for (INT h = 0; h < NH; h++)
+                for (INT t = 0; t < SEQ; t++)
+                    dt_linear((float *)W_q[h], NULL, tok[t], Q[t][h], DH, DM);
+
+            /* 分散 KV Attention 試行 */
+            float mhsa_dkva[SEQ][DM];
+            ER dkva_er = dkva_infer(Q, W_o, mhsa_dkva, ++dtr_req_counter);
+
+            float mhsa[SEQ][DM];
+            if (dkva_er == E_OK) {
+                /* DKVA 成功: 結果を使用 */
+                for (INT t = 0; t < SEQ; t++)
+                    for (INT d = 0; d < DM; d++)
+                        mhsa[t][d] = mhsa_dkva[t][d];
+                dtr_stats.distributed++;
+                dt_puts("[dtr] DKVA(FULL): Attention from cluster\r\n");
+            } else {
+                /* フォールバック: ローカル MHSA */
+                run_mhsa_local(tok, mhsa);
+                dt_puts("[dtr] DKVA fallback to local MHSA\r\n");
+            }
+
+            /* 残差 + LN1 + FFN + 残差 + LN2 + Pool + Cls */
+            for (INT t = 0; t < SEQ; t++) {
+                for (INT d = 0; d < DM; d++) mhsa[t][d] += tok[t][d];
+                dt_layernorm(mhsa[t], ln1_g, ln1_b, DM);
+            }
+            float ffn[SEQ][DM];
+            run_ffn_seq(mhsa, ffn);
+            for (INT t = 0; t < SEQ; t++) {
+                for (INT d = 0; d < DM; d++) ffn[t][d] += mhsa[t][d];
+                dt_layernorm(ffn[t], ln2_g, ln2_b, DM);
+            }
+            float pool[DM];
+            run_mean_pool(ffn, pool);
+            float scores_dkva[DOUT];
+            UB cls_dkva = run_cls_head(pool, scores_dkva);
+
+            float mx = scores_dkva[0];
+            for (INT c = 1; c < DOUT; c++) if (scores_dkva[c] > mx) mx = scores_dkva[c];
+            dtr_log_push(input, cls_dkva, (UB)(mx * 100.0f));
+
+            static const char *cn_dkva[] = {"normal", "alert", "critical"};
+            dt_puts("[dtr] DKVA class="); dt_putdec((UW)cls_dkva);
+            dt_puts(" ("); dt_puts(cn_dkva[cls_dkva < 3 ? cls_dkva : 0]);
+            dt_puts(") scores=[");
+            dt_putf2(scores_dkva[0]); dt_puts(" ");
+            dt_putf2(scores_dkva[1]); dt_puts(" ");
+            dt_putf2(scores_dkva[2]); dt_puts("]\r\n");
+            return (W)cls_dkva;
+        }
+    }
+
+    /* ======================= FULL: Pipeline Parallel (フォールバック) == */
     if (h_l0_pub >= 0) {
-        /* Node0 のみ dtr_infer() を呼ぶ想定 */
         BOOL has_peers = FALSE;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE) {
