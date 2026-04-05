@@ -6,17 +6,21 @@
 .set MULTIBOOT_FLAGS, 0x00000006    # メモリマップ情報を要求
 .set MULTIBOOT_CHECKSUM, -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
-.section .multiboot
-.align 4
-.long MULTIBOOT_MAGIC
-.long MULTIBOOT_FLAGS
-.long MULTIBOOT_CHECKSUM
-
-.section .text
+.section .text.start,"ax"
 .global _start
 
-# 32ビットエントリポイント（Multibootから呼び出される）
+# エントリポイント — kloader は 0x100000 へジャンプ、QEMU は ELF エントリポイントを使用
+# どちらも最終的に _start_real へ到達する
 _start:
+    jmp _start_real         # kloader 対応: マルチブートヘッダーをスキップ
+
+.align 4
+multiboot_header:           # QEMU Multiboot スキャン用 (8KB 以内に配置)
+    .long MULTIBOOT_MAGIC
+    .long MULTIBOOT_FLAGS
+    .long MULTIBOOT_CHECKSUM
+
+_start_real:
     cli                 # 割り込み無効化
     
     # Multiboot情報を保存（64ビット移行前）

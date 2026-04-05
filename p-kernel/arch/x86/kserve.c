@@ -22,6 +22,7 @@
  */
 
 #include "kernel.h"
+#include <tmonitor.h>
 #include "netstack.h"
 #include "vfs.h"
 

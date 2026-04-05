@@ -243,7 +243,8 @@ USERLAND_X86 = ../../userland/x86
 $(DISK_IMG): $(TARGET) kernel.elf
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
-	mcopy -i $@ $(TARGET) ::PKNL.BIN
+	$(CROSS)objcopy -O binary $(TARGET) pknl.raw
+	mcopy -i $@ pknl.raw ::PKNL.BIN
 	mcopy -i $@ kernel.elf ::KERNEL.ELF
 	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
 	mcopy -i $@ $(USERLAND_X86)/01_posix/01_hello/hello.elf         ::hello.elf

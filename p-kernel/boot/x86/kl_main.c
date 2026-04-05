@@ -1,132 +1,139 @@
 /*
- * kl_main.c — p-kernel Stage-1 Loader main
+ * kl_main.c — Stage-1 Kernel Loader メインロジック
  *
- * Boot sequence:
- *   1. Try FAT32 disk  → kl_fat32_load_elf()
- *   2. Try network     → kl_net_receive_elf()     (Phase 16b)
- *   3. Halt on failure
+ * 起動シーケンス:
+ *   1. FAT32 初期化
+ *   2. "KL.BIN"  (ネットワーク経由で書き込まれた更新版) を探す
+ *      → 見つかれば 0x100000 へロード
+ *   3. 見つからなければ "PKNL.BIN" (工場出荷版) を探す
+ *      → 見つかれば 0x100000 へロード
+ *   4. どちらも見つからなければ停止 (halt)
+ *   5. 0x100000 の Multiboot エントリへジャンプ
  *
- * On success, jumps to the kernel ELF entry with the original
- * Multiboot magic in EAX and Multiboot info ptr in EBX so that
- * the kernel's start.S proceeds normally.
- *
- * This file is OS-independent: no kernel headers, plain C99.
+ * kloader は OS を起動しない — 32 ビット保護モードのまま動作。
  */
 
-#include <stdint.h>
+#include "kl_fat32.h"
+#include "kl_net.h"
 
 /* ------------------------------------------------------------------ */
-/* COM1 serial (115200 8N1)                                           */
+/* シリアルポート出力 (デバッグ用)                                    */
 /* ------------------------------------------------------------------ */
+#define SERIAL_PORT 0x3F8
 
-#define COM1 0x3F8
-
-static inline uint8_t _inb(uint16_t p)
+static inline void outb_kl(unsigned short port, unsigned char val)
 {
-    uint8_t v;
-    __asm__ volatile("inb %1,%0" : "=a"(v) : "dN"(p));
-    return v;
-}
-static inline void _outb(uint16_t p, uint8_t v)
-{
-    __asm__ volatile("outb %0,%1" :: "a"(v), "dN"(p));
+    __asm__ volatile("outb %0, %1" :: "a"(val), "dN"(port));
 }
 
-static void kl_serial_init(void)
+static inline unsigned char inb_kl(unsigned short port)
 {
-    _outb(COM1+1, 0x00);  /* disable interrupts */
-    _outb(COM1+3, 0x80);  /* DLAB on */
-    _outb(COM1+0, 0x01);  /* divisor lo: 115200 baud */
-    _outb(COM1+1, 0x00);  /* divisor hi */
-    _outb(COM1+3, 0x03);  /* 8N1, DLAB off */
-    _outb(COM1+2, 0xC7);  /* FIFO on */
-    _outb(COM1+4, 0x0B);  /* RTS+DTR */
+    unsigned char val;
+    __asm__ volatile("inb %1, %0" : "=a"(val) : "dN"(port));
+    return val;
 }
 
-static void kl_putc(char c)
+static void serial_init(void)
 {
-    if (c == '\n') {
-        while (!(_inb(COM1+5) & 0x20));
-        _outb(COM1, '\r');
+    outb_kl(SERIAL_PORT + 1, 0x00); /* 割り込み無効 */
+    outb_kl(SERIAL_PORT + 3, 0x80); /* DLAB セット */
+    outb_kl(SERIAL_PORT + 0, 0x01); /* 115200 baud (divisor lo) */
+    outb_kl(SERIAL_PORT + 1, 0x00); /* divisor hi */
+    outb_kl(SERIAL_PORT + 3, 0x03); /* 8N1 */
+    outb_kl(SERIAL_PORT + 2, 0xC7); /* FIFO クリア */
+    outb_kl(SERIAL_PORT + 4, 0x0B); /* RTS/DTR */
+}
+
+static void serial_putc(char c)
+{
+    int t = 10000;
+    while (!(inb_kl(SERIAL_PORT + 5) & 0x20) && t--);
+    outb_kl(SERIAL_PORT, (unsigned char)c);
+}
+
+static void serial_puts(const char *s)
+{
+    while (*s) {
+        if (*s == '\n') serial_putc('\r');
+        serial_putc(*s++);
     }
-    while (!(_inb(COM1+5) & 0x20));
-    _outb(COM1, (uint8_t)c);
-}
-
-static void kl_puts(const char *s)
-{
-    while (*s) kl_putc(*s++);
-}
-
-static void kl_puthex(uint32_t v)
-{
-    const char *hex = "0123456789ABCDEF";
-    kl_puts("0x");
-    for (int i = 28; i >= 0; i -= 4)
-        kl_putc(hex[(v >> i) & 0xF]);
 }
 
 /* ------------------------------------------------------------------ */
-/* Forward declarations (implemented in kl_fat32.c / kl_net.c)       */
+/* p-kernel エントリへジャンプ (32 ビット保護モード)                  */
 /* ------------------------------------------------------------------ */
+#define PKERNEL_LOAD_ADDR  0x100000UL
+#define PKERNEL_MAX_SIZE   (8 * 1024 * 1024)   /* 最大 8 MB */
 
-uint32_t kl_fat32_load_elf(void);
-uint32_t kl_net_receive_elf(void);
-
-/* ------------------------------------------------------------------ */
-/* Entry                                                               */
-/* ------------------------------------------------------------------ */
-
-void kl_main(uint32_t mb_magic, uint32_t mb_info)
+/*
+ * p-kernel の _start は Multiboot ヘッダを持つ。
+ * kloader は 32 ビット保護モードのまま 0x100000 へ制御を渡す。
+ * p-kernel 側は自分で long mode へ移行する。
+ *
+ * EAX = 0x2BADB002 (Multiboot ブートローダー魔法数)
+ * EBX = 0 (Multiboot 情報構造体なし)
+ */
+static void jump_to_kernel(void)
 {
-    kl_serial_init();
-
-    kl_puts("\n");
-    kl_puts("[kloader] p-kernel Stage-1 Loader\n");
-    kl_puts("[kloader] MB magic=");
-    kl_puthex(mb_magic);
-    kl_puts("  info=");
-    kl_puthex(mb_info);
-    kl_puts("\n");
-
-    uint32_t entry = 0;
-
-    /* --- Try FAT32 disk ------------------------------------------- */
-    kl_puts("[kloader] trying FAT32 disk...\n");
-    entry = kl_fat32_load_elf();
-
-    /* --- Try network (Phase 16b) ----------------------------------- */
-    if (!entry) {
-        kl_puts("[kloader] trying network...\n");
-        entry = kl_net_receive_elf();
-    }
-
-    /* --- Give up --------------------------------------------------- */
-    if (!entry) {
-        kl_puts("[kloader] FATAL: no kernel found — system halted\n");
-        for (;;) __asm__ volatile("hlt");
-    }
-
-    /* --- Jump to kernel ------------------------------------------- */
-    kl_puts("[kloader] kernel entry=");
-    kl_puthex(entry);
-    kl_puts("  jumping...\n");
-
-    /* Small delay so serial output flushes before we hand off. */
-    for (volatile int i = 0; i < 2000000; i++);
-
-    /*
-     * Restore EAX = Multiboot magic, EBX = Multiboot info ptr.
-     * The kernel's start.S saves them immediately on entry.
-     */
+    unsigned int entry = PKERNEL_LOAD_ADDR;
     __asm__ volatile(
-        "mov %0, %%eax\n"
-        "mov %1, %%ebx\n"
-        "jmp *%2\n"
-        :: "r"(mb_magic), "r"(mb_info), "r"(entry)
+        "movl $0x2BADB002, %%eax\n\t"
+        "xorl %%ebx, %%ebx\n\t"
+        "jmp *%0\n\t"
+        :: "r"(entry)
         : "eax", "ebx"
     );
+    /* 返らない */
+    for (;;) __asm__("hlt");
+}
 
-    /* unreachable */
-    for (;;) __asm__ volatile("hlt");
+/* ------------------------------------------------------------------ */
+/* エントリポイント                                                    */
+/* ------------------------------------------------------------------ */
+void kl_main(void)
+{
+    serial_init();
+    serial_puts("[kloader] Stage-1 Kernel Loader\n");
+
+    /* FAT32 初期化 */
+    if (kl_fat32_init() < 0) {
+        serial_puts("[kloader] FAT32 init FAILED — halting\n");
+        for (;;) __asm__("hlt");
+    }
+    serial_puts("[kloader] FAT32 OK\n");
+
+    int size;
+
+    /* 優先: KL.BIN (ネットワーク更新版) */
+    serial_puts("[kloader] Trying KL.BIN ...\n");
+    size = kl_fat32_load("KL      ", "BIN",
+                         (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
+    if (size > 0) {
+        serial_puts("[kloader] KL.BIN loaded\n");
+        jump_to_kernel();
+    }
+
+    /* フォールバック: PKNL.BIN (デフォルト版) */
+    serial_puts("[kloader] Trying PKNL.BIN ...\n");
+    size = kl_fat32_load("PKNL    ", "BIN",
+                         (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
+    if (size > 0) {
+        serial_puts("[kloader] PKNL.BIN loaded\n");
+        jump_to_kernel();
+    }
+
+    /* ディスクにカーネルなし → ネットワーク経由で受信を試みる */
+    serial_puts("[kloader] No kernel on disk — trying network auto-receive\n");
+    if (kl_net_init() == 0) {
+        int net_size = kl_net_receive_kernel((void *)PKERNEL_LOAD_ADDR,
+                                              PKERNEL_MAX_SIZE);
+        if (net_size > 0) {
+            serial_puts("[kloader] kernel received from network — booting\n");
+            jump_to_kernel();
+        }
+    }
+
+    /* 両方なし */
+    serial_puts("[kloader] No kernel — halting\n");
+    for (;;) __asm__("hlt");
 }
