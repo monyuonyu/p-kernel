@@ -27,6 +27,7 @@
 #include "chat.h"
 #include "sfs.h"
 #include "pmesh.h"
+#include "kloader_task.h"
 #include "raft.h"
 #include "spawn.h"
 #include "moe.h"
@@ -69,6 +70,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define RAFT_STACK          2048
 #define MOE_PRIORITY        8
 #define MOE_STACK           2048
+#define KLOADER_PRIORITY    9
+#define KLOADER_STACK       4096
 #define DKVA_PRIORITY       7
 #define DKVA_STACK          4096
 #define AI_WORKER_PRIORITY  6
@@ -273,6 +276,13 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] moe task\r\n");
             else
                 tm_putstring((UB *)"[OK]  moe task\r\n");
+
+            /* OTA: kloader_task — KLOAD 受信 + bare ノードへ自動プッシュ */
+            kloader_task_init();
+            if (create_task(kloader_task, KLOADER_PRIORITY, KLOADER_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] kloader task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  kloader task\r\n");
 
         }
 

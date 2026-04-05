@@ -13,6 +13,7 @@
 #include "drpc.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+IMPORT UB _kernel_end[];   /* linker.ld で定義 */
 
 /* ------------------------------------------------------------------ */
 /* シリアル出力ヘルパ                                                 */
@@ -333,9 +334,6 @@ void kloader_task_init(void)
 /* ------------------------------------------------------------------ */
 /* kpush — シェルから呼ぶ: 自分自身のカーネルをターゲットノードへ送信 */
 /* ------------------------------------------------------------------ */
-
-/* p-kernel バイナリは 0x100000 にある。サイズは _kernel_end から算出 */
-IMPORT UB _kernel_end[];   /* linker.ld で定義 */
 
 void kloader_push(UB target_node)
 {

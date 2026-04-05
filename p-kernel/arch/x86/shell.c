@@ -31,6 +31,7 @@
 #include "pmesh.h"
 #include "raft.h"
 #include "spawn.h"
+#include "kloader_task.h"
 #include "moe.h"
 #include "dkva.h"
 #include "ai_kernel.h"
@@ -1376,25 +1377,9 @@ static void cmd_sfs(const char *arg)
 }
 
 /* ------------------------------------------------------------------ */
-/* kpush — /PKNL.BIN を読んでターゲットノードへ UDP 直接送信          */
+/* kpush — 実行中カーネルをターゲットノードへ pmesh 経由で送信        */
+/* (kloader_task.c の kloader_push() に委譲)                          */
 /* ------------------------------------------------------------------ */
-
-#define KLOAD_MAGIC_SH   0x44414F4CUL
-#define KLOAD_PORT_SH    7382
-#define KLOAD_CHUNK_SH   1024
-
-typedef struct __attribute__((packed)) {
-    UW magic; UB version; UB type; UB src_node; UB _pad;
-    UW total_size; UW chunk_idx; UH chunk_len;
-    UB data[KLOAD_CHUNK_SH];
-} KLOAD_PKT_SH;
-
-IMPORT INT vfs_open(const char *path);
-IMPORT INT vfs_read(INT fd, void *buf, UW len);
-IMPORT UW  vfs_fsize(INT fd);
-IMPORT void vfs_close(INT fd);
-IMPORT INT udp_send(UW dst_ip, UH src_port, UH dst_port,
-                    const UB *data, UH data_len);
 
 static void cmd_kpush(const char *arg)
 {
@@ -1414,50 +1399,14 @@ static void cmd_kpush(const char *arg)
         return;
     }
 
-    UW target_ip = dnode_table[nid].ip;
-
-    if (!vfs_ready) { sout("[kpush] VFS not ready\r\n"); return; }
-
-    INT fd = vfs_open("/PKNL.BIN");
-    if (fd < 0) { sout("[kpush] /PKNL.BIN not found\r\n"); return; }
-
-    UW fsize = vfs_fsize(fd);
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    sout("[kpush] node="); sout_dec(nid);
-    sout("  size="); sout_dec(fsize); sout(" bytes\r\n");
+    sout("[kpush] pushing to node "); sout_dec(nid); sout(" ...\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 
-    static KLOAD_PKT_SH pkt;
-    /* START */
-    for (UW i = 0; i < sizeof(pkt); i++) ((UB*)&pkt)[i] = 0;
-    pkt.magic      = KLOAD_MAGIC_SH; pkt.version = 1;
-    pkt.type       = 0x01;           pkt.src_node = (UB)drpc_my_node;
-    pkt.total_size = fsize;
-    udp_send(target_ip, KLOAD_PORT_SH, KLOAD_PORT_SH,
-             (const UB *)&pkt, 12);
-    tk_dly_tsk(200);
-
-    static UB fbuf[KLOAD_CHUNK_SH];
-    UW chunk_idx = 0;
-    for (;;) {
-        INT n = vfs_read(fd, fbuf, KLOAD_CHUNK_SH);
-        if (n <= 0) break;
-        for (UW i = 0; i < sizeof(pkt); i++) ((UB*)&pkt)[i] = 0;
-        pkt.magic      = KLOAD_MAGIC_SH; pkt.version = 1;
-        pkt.type       = 0x02;           pkt.src_node = (UB)drpc_my_node;
-        pkt.total_size = fsize;
-        pkt.chunk_idx  = chunk_idx;
-        pkt.chunk_len  = (UH)n;
-        for (INT i = 0; i < n; i++) pkt.data[i] = fbuf[i];
-        udp_send(target_ip, KLOAD_PORT_SH, KLOAD_PORT_SH,
-                 (const UB *)&pkt, (UH)(12 + n));
-        chunk_idx++;
-        if (chunk_idx % 32 == 0) tk_dly_tsk(50);
-    }
-    vfs_close(fd);
+    kloader_push((UB)nid);
 
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    sout("[kpush] done  chunks="); sout_dec(chunk_idx); sout("\r\n");
+    sout("[kpush] done\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 

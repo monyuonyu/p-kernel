@@ -82,6 +82,7 @@ ARCH_C_SRCS = \
     spawn.c \
     moe.c \
     pmesh.c \
+    kloader_task.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \
