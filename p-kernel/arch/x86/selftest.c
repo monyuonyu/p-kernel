@@ -17,6 +17,9 @@
  *   T10: Raft initial state (FOLLOWER, term=0, leader=0xFF)
  *   T11: Raft write guard (non-leader → E_RSFN)
  *   T12: Degrade initial level (FULL before first degrade_update)
+ *   T13: Tensor alloc/write/read/free
+ *   T14: Tensor zero (all bytes = 0 after tk_tensor_zero)
+ *   T15: MemStore add/recent retrieval
  */
 
 #include "kernel.h"
@@ -24,6 +27,7 @@
 #include "ai_kernel.h"
 #include "raft.h"
 #include "degrade.h"
+#include "mem_store.h"
 
 IMPORT void tm_putstring(UB *str);
 
@@ -401,6 +405,120 @@ static int run_t12_degrade_init_level(void)
 }
 
 /* ================================================================== */
+/* T13: Tensor alloc / write / read / free                             */
+/* ================================================================== */
+
+static int run_t13_tensor_rw(void)
+{
+    /* tensor_init() は ai_kernel_init() より前に呼ばれるため、ここで初期化。
+     * usermain が後で ai_kernel_init() を呼ぶと pool_sem が再生成されるが
+     * 旧 sem (1個) はリークする — 許容範囲。 */
+    tensor_init();
+
+    UW shape[1] = { 8 };
+    ID tid = tk_cre_tensor(1, shape, TENSOR_DTYPE_I8, TENSOR_LAYOUT_FLAT);
+    if (tid < 0) {
+        st_puts("[FAIL] T13: cre_tensor er="); st_puti((W)tid); st_puts("\r\n");
+        return 0;
+    }
+
+    static const UB wdata[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    UB rdata[8] = { 0 };
+
+    ER r = tk_tensor_write(tid, 0, wdata, 8);
+    if (r != E_OK) {
+        st_puts("[FAIL] T13: write er="); st_puti((W)r); st_puts("\r\n");
+        tk_del_tensor(tid); return 0;
+    }
+    r = tk_tensor_read(tid, 0, rdata, 8);
+    if (r != E_OK) {
+        st_puts("[FAIL] T13: read er="); st_puti((W)r); st_puts("\r\n");
+        tk_del_tensor(tid); return 0;
+    }
+    for (INT i = 0; i < 8; i++) {
+        if (rdata[i] != wdata[i]) {
+            st_puts("[FAIL] T13: data mismatch idx="); st_puti(i);
+            st_puts(" got="); st_puti((W)rdata[i]);
+            st_puts(" exp="); st_puti((W)wdata[i]); st_puts("\r\n");
+            tk_del_tensor(tid); return 0;
+        }
+    }
+    tk_del_tensor(tid);
+    st_puts("[PASS] T13: tensor write/read\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T14: Tensor zero                                                    */
+/* ================================================================== */
+
+static int run_t14_tensor_zero(void)
+{
+    UW shape[1] = { 8 };
+    ID tid = tk_cre_tensor(1, shape, TENSOR_DTYPE_I8, TENSOR_LAYOUT_FLAT);
+    if (tid < 0) {
+        st_puts("[FAIL] T14: cre_tensor er="); st_puti((W)tid); st_puts("\r\n");
+        return 0;
+    }
+
+    static const UB wdata[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    tk_tensor_write(tid, 0, wdata, 8);
+    ER r = tk_tensor_zero(tid);
+    if (r != E_OK) {
+        st_puts("[FAIL] T14: zero er="); st_puti((W)r); st_puts("\r\n");
+        tk_del_tensor(tid); return 0;
+    }
+
+    UB rdata[8];
+    tk_tensor_read(tid, 0, rdata, 8);
+    for (INT i = 0; i < 8; i++) {
+        if (rdata[i] != 0) {
+            st_puts("[FAIL] T14: not zero idx="); st_puti(i);
+            st_puts(" val="); st_puti((W)rdata[i]); st_puts("\r\n");
+            tk_del_tensor(tid); return 0;
+        }
+    }
+    tk_del_tensor(tid);
+    st_puts("[PASS] T14: tensor zero\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T15: MemStore add / recent retrieval                                */
+/* ================================================================== */
+
+static int run_t15_mem_store(void)
+{
+    /* mem_store_init() は selftest の後に呼ばれる。
+     * ring バッファは静的ゼロ初期化済みなので init なしで add/recent が動く。 */
+    ER r;
+    r = mem_store_add(0, MEM_TYPE_EVENT, "selftest-event-A");
+    if (r != E_OK) {
+        st_puts("[FAIL] T15: add A er="); st_puti((W)r); st_puts("\r\n");
+        return 0;
+    }
+    r = mem_store_add(0, MEM_TYPE_EVENT, "selftest-event-B");
+    if (r != E_OK) {
+        st_puts("[FAIL] T15: add B er="); st_puti((W)r); st_puts("\r\n");
+        return 0;
+    }
+
+    MEM_ENTRY entries[2];
+    INT n = mem_recent(0, 2, entries);
+    if (n != 2) {
+        st_puts("[FAIL] T15: mem_recent n="); st_puti(n); st_puts(" (expect 2)\r\n");
+        return 0;
+    }
+    /* 最新が entries[0] = "selftest-event-B" */
+    if (entries[0].text[0] == '\0') {
+        st_puts("[FAIL] T15: entries[0] empty\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T15: mem_store add/recent\r\n");
+    return 1;
+}
+
+/* ================================================================== */
 /* Entry point                                                         */
 /* ================================================================== */
 
@@ -421,11 +539,14 @@ EXPORT void kernel_selftest(void)
     pass += run_t10_raft_init_state();
     pass += run_t11_raft_write_guard();
     pass += run_t12_degrade_init_level();
+    pass += run_t13_tensor_rw();
+    pass += run_t14_tensor_zero();
+    pass += run_t15_mem_store();
 
     st_puts("[SELFTEST] ");
     st_puti(pass);
-    st_puts("/12 passed");
-    if (pass == 12) {
+    st_puts("/15 passed");
+    if (pass == 15) {
         st_puts(" -- OK\r\n\r\n");
     } else {
         st_puts(" -- KERNEL UNHEALTHY\r\n\r\n");

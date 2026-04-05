@@ -270,6 +270,8 @@ $(DISK_IMG): $(TARGET) kernel.elf
 	mcopy -i $@ $(USERLAND_X86)/07_network/04_edf_infer/edf_infer.elf     ::edf_infer.elf
 	mcopy -i $@ $(USERLAND_X86)/08_system/01_kloader_d/kloader_d.elf      ::kloader_d.elf
 	mcopy -i $@ $(USERLAND_X86)/09_ai/01_infer_d/infer_d.elf             ::infer_d.elf
+	mcopy -i $@ $(USERLAND_X86)/11_ai/01_persist_demo/persist_demo.elf   ::persist_demo.elf
+	mcopy -i $@ $(USERLAND_X86)/11_ai/02_cluster_stat/cluster_stat.elf   ::cluster_stat.elf
 	mmd   -i $@ ::etc 2>/dev/null || true
 	mcopy -i $@ ../../samples/08_system/init.rc                            ::etc/init.rc
 

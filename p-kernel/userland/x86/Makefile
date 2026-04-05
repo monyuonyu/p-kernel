@@ -34,6 +34,8 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 
 # ビルド対象の ELF ファイル一覧
 SAMPLES = \
+    11_ai/01_persist_demo/persist_demo.elf \
+    11_ai/02_cluster_stat/cluster_stat.elf \
     10_ai/01_claude_bridge/claude_bridge.elf \
     09_ai/01_infer_d/infer_d.elf \
     01_posix/01_hello/hello.elf \
@@ -265,5 +267,21 @@ all: $(SAMPLES)
 	$(CC) $(CFLAGS) -c $< -o 10_ai/01_claude_bridge/claude_bridge.o
 	$(LD) $(LDFLAGS) -o $@ 10_ai/01_claude_bridge/claude_bridge.o
 
+# -------------------------------------------------------------------
+# 11_ai/01_persist_demo — K-DDS 永続化デモ
+# -------------------------------------------------------------------
+11_ai/01_persist_demo/persist_demo.elf: $(S)/11_ai/01_persist_demo/persist_demo.c plibc.h user.ld
+	mkdir -p 11_ai/01_persist_demo
+	$(CC) $(CFLAGS) -c $< -o 11_ai/01_persist_demo/persist_demo.o
+	$(LD) $(LDFLAGS) -o $@ 11_ai/01_persist_demo/persist_demo.o
+
+# -------------------------------------------------------------------
+# 11_ai/02_cluster_stat — クラスタ状態モニタ
+# -------------------------------------------------------------------
+11_ai/02_cluster_stat/cluster_stat.elf: $(S)/11_ai/02_cluster_stat/cluster_stat.c plibc.h user.ld
+	mkdir -p 11_ai/02_cluster_stat
+	$(CC) $(CFLAGS) -c $< -o 11_ai/02_cluster_stat/cluster_stat.o
+	$(LD) $(LDFLAGS) -o $@ 11_ai/02_cluster_stat/cluster_stat.o
+
 clean:
-	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai
+	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai 11_ai
