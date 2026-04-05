@@ -468,6 +468,19 @@ INT fat32_dup(INT fd)
     return -1;
 }
 
+/* Duplicate fd to a specific slot (dup2 semantics).
+ * Closes new_fd first if already open. Returns new_fd on success, -1 on error. */
+INT fat32_dup2(INT old_fd, INT new_fd)
+{
+    if (old_fd < 0 || old_fd >= FAT32_MAX_FD || !fds[old_fd].in_use) return -1;
+    if (new_fd < 0 || new_fd >= FAT32_MAX_FD) return -1;
+    if (old_fd == new_fd) return new_fd;
+    if (fds[new_fd].in_use) fat32_close(new_fd);
+    fds[new_fd] = fds[old_fd];   /* shallow copy — independent seek state */
+    fds[new_fd].writable = FALSE;
+    return new_fd;
+}
+
 /* Stat by path: fills *size and *is_dir.  Returns 0 on success, -1 on error. */
 INT fat32_stat_path(const char *path, UW *size, BOOL *is_dir)
 {

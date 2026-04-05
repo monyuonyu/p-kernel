@@ -19,12 +19,19 @@
 #include "vital.h"
 #include "persist.h"
 #include "dtr.h"
+#include "dkva.h"
 #include "dmn.h"
 #include "ga.h"
 #include "dproc.h"
+#include "mem_store.h"
+#include "chat.h"
 #include "sfs.h"
 #include "pmesh.h"
+#include "raft.h"
+#include "spawn.h"
+#include "moe.h"
 #include "ai_kernel.h"
+IMPORT void kserve_init(void);
 #include "vfs.h"
 #include "gdt_user.h"
 #include "paging.h"
@@ -58,6 +65,12 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define DTR_STACK           4096
 #define PMESH_PRIORITY      7
 #define PMESH_STACK         2048
+#define RAFT_PRIORITY       5
+#define RAFT_STACK          2048
+#define MOE_PRIORITY        8
+#define MOE_STACK           2048
+#define DKVA_PRIORITY       7
+#define DKVA_STACK          4096
 #define AI_WORKER_PRIORITY  6
 #define AI_WORKER_STACK     4096
 #define AI_INFER_PRIORITY   7
@@ -81,9 +94,13 @@ static ID create_task(FP fn, INT pri, INT stksz)
     return id;
 }
 
+IMPORT void kernel_selftest(void);
+
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
+
+    kernel_selftest();
 
     /* ---- Ring-3 userspace infrastructure -------------------------- */
     paging_init();          /* kernel CR3: strip U/S from all PD entries */
@@ -121,11 +138,18 @@ EXPORT INT usermain(void)
     /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
     dtr_init();
 
+    /* ---- Phase 11: 記憶永続化 + AI会話インターフェース ---------- */
+    mem_store_init();          /* FAT32 からリングバッファを復元      */
+    chat_init();               /* chat コマンド待受け初期化           */
+
     /* ---- Phase 13: DMN (Default Mode Network) ------------------- */
     dmn_init();
 
     /* ---- Phase 14: GA (遺伝的アルゴリズム 重み自己改善) --------- */
     ga_init();
+
+    /* ---- Phase 16b: kserve — ネットブート用カーネル配信 ---------- */
+    if (vfs_ready) kserve_init();
 
     /* ---- Phase 9: 分散プロセスレジストリ ----------------------- */
     dproc_init();
@@ -225,6 +249,30 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] pmesh task\r\n");
             else
                 tm_putstring((UB *)"[OK]  pmesh task\r\n");
+
+            /* Phase 10: 分散 KV Attention */
+            dkva_init();
+            if (create_task(dkva_task, DKVA_PRIORITY, DKVA_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] dkva task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  dkva task\r\n");
+
+            /* Phase 10: Raft コンセンサス */
+            raft_init();
+            if (create_task(raft_task, RAFT_PRIORITY, RAFT_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] raft task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  raft task\r\n");
+
+            /* Phase 10: 自己増殖 */
+            spawn_init();
+
+            /* Phase 10: MoE 推論ルーティング */
+            moe_init();
+            if (create_task(moe_task, MOE_PRIORITY, MOE_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] moe task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  moe task\r\n");
 
         }
 

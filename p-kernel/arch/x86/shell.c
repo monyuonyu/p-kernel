@@ -29,8 +29,14 @@
 #include "dproc.h"
 #include "sfs.h"
 #include "pmesh.h"
+#include "raft.h"
+#include "spawn.h"
+#include "moe.h"
+#include "dkva.h"
 #include "ai_kernel.h"
 #include "vfs.h"
+#include "mem_store.h"
+#include "chat.h"
 #include "elf_loader.h"
 #include "kernel.h"
 
@@ -49,6 +55,7 @@ IMPORT void stdin_deactivate(void);
 IMPORT void stdin_feed(UB c);
 IMPORT ID   stdin_get_exit_sem(void);
 IMPORT void sio_recv_frame(UB *buf, INT size);
+IMPORT BOOL sio_data_ready(void);
 
 static void sout(const char *s)
 {
@@ -187,6 +194,19 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  degrade                - 縮退レベル + 統計表示\r\n");
     sout("    FULL(3+)→REDUCED(2)→SOLO(1) ノード数で自動遷移\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Phase 11 (記憶 / AI会話):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  chat                   - AI会話モード (記憶付き)\r\n");
+    sout("  memstat                - 記憶ストア統計表示\r\n");
+    sout("  chatstat               - チャット統計表示\r\n");
+    sout("  spawn claude_bridge.elf - Claude API ブリッジ起動\r\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    sout("Phase 10 (Raft / MoE / 自己増殖):\r\n");
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    sout("  raft                   - Raftコンセンサス状態表示\r\n");
+    sout("  moe                    - MoE推論ルーター統計表示\r\n");
+    sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("カーネルローダー (Phase 10 kloader):\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -995,16 +1015,17 @@ static void cmd_exec(const char *arg)
     ID exit_sem = stdin_get_exit_sem();
     BOOL skip_lf = TRUE;   /* discard the first '\n' only */
     for (;;) {
-        UB raw;
-        sio_recv_frame(&raw, 1);          /* block until a char arrives     */
-        /* Check (non-blocking) if the ELF has exited */
-        if (tk_wai_sem(exit_sem, 1, TMO_POL) == E_OK) break;
-        /* Skip the one '\n' left over from the "\r\n" command terminator */
-        if (skip_lf) {
-            skip_lf = FALSE;
-            if (raw == (UB)'\n') continue;
+        /* Poll exit status every 50ms — allows ELF to exit without serial input */
+        if (tk_wai_sem(exit_sem, 1, 50) == E_OK) break;
+        /* Forward any pending serial chars to ELF stdin (non-blocking) */
+        if (sio_data_ready()) {
+            UB raw; sio_recv_frame(&raw, 1);
+            if (skip_lf) {
+                skip_lf = FALSE;
+                if (raw == (UB)'\n') continue;
+            }
+            stdin_feed(raw);
         }
-        stdin_feed(raw);
     }
 
     /* ELF 終了 — EXITED として全クラスタへ通知 (フェイルオーバーしない) */
@@ -1927,8 +1948,24 @@ static void execute(const char *cmd)
         { cmd_mesh(cmd + 4); return; }
     if (cmd[0]=='k' && cmd[1]=='p' && cmd[2]=='u' && cmd[3]=='s' && cmd[4]=='h')
         { cmd_kpush(cmd + 5); return; }
+    /* Phase 11: 記憶 / AI会話 */
+    if (cmd[0]=='c' && cmd[1]=='h' && cmd[2]=='a' && cmd[3]=='t' && cmd[4]=='\0')
+        { chat_run(0); return; }
+    if (str_eq(cmd, "memstat"))    { mem_stat();  return; }
+    if (str_eq(cmd, "chatstat"))   { chat_stat(); return; }
+
+    if (cmd[0]=='r' && cmd[1]=='a' && cmd[2]=='f' && cmd[3]=='t')
+        { raft_stat(); return; }
+    if (cmd[0]=='m' && cmd[1]=='o' && cmd[2]=='e')
+        { moe_stat(); return; }
+    if (cmd[0]=='d' && cmd[1]=='k' && cmd[2]=='v' && cmd[3]=='a')
+        { dkva_stat(); return; }
+    if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n'
+        && cmd[5]==' ')
+        { /* spawn <file> handled below */ }
 
     if      (str_eq(cmd, "status")) cmd_status();
+    else if (str_eq(cmd, "spawn-stat")) { spawn_stat(); return; }
     else if (str_eq(cmd, "help"))   cmd_help();
     else if (str_eq(cmd, "mount"))  cmd_mount();
     else if (str_eq(cmd, "nodes"))  cmd_nodes();

@@ -156,6 +156,9 @@ INT icmp_ping(UW dst_ip, UH id, UH seq);
 /* Look up ARP table. Returns 1 if found and mac_out filled. */
 INT arp_lookup(UW ip, UB mac_out[6]);
 
+/* Manually add an IP→MAC mapping (e.g. for kloader which has no ARP responder) */
+void arp_seed(UW ip, const UB mac[6]);
+
 /* Send ARP request for given IP */
 void arp_request(UW target_ip);
 

@@ -125,6 +125,9 @@ static void arp_add(UW ip, const UB mac[6])
     for (INT j = 0; j < 6; j++) arp_table[0].mac[j] = mac[j];
 }
 
+/* Manually seed the ARP table (used by kserve to register kloader's MAC) */
+void arp_seed(UW ip, const UB mac[6]) { arp_add(ip, mac); }
+
 INT arp_lookup(UW ip, UB mac_out[6])
 {
     for (INT i = 0; i < ARP_TABLE_SIZE; i++) {
@@ -967,8 +970,13 @@ static void ip_input(const UB *frame, INT len)
         return;
     }
 
-    /* Only accept packets addressed to us, broadcast, or joined multicast */
-    if (ip->dst != NET_MY_IP && ip->dst != NET_BCAST && !is_mcast(ip->dst)) return;
+    /* Only accept packets addressed to us, broadcast, or joined multicast.
+     * Accept both subnet broadcast (NET_BCAST) and limited broadcast (255.255.255.255)
+     * so kloader's KLRQ packets reach kserve in all network configurations. */
+    if (ip->dst != NET_MY_IP
+     && ip->dst != NET_BCAST
+     && ip->dst != IP4(255,255,255,255)
+     && !is_mcast(ip->dst)) return;
 
     UH  ip_total = ntohs(ip->len);
     INT payload_off = (INT)(sizeof(ETH_HDR) + 20);

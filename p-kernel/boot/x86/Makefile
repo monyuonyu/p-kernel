@@ -50,6 +50,8 @@ ARCH_C_SRCS = \
     inittask_def.c \
     inittask_main.c \
     usermain.c \
+    selftest.c \
+    kserve.c \
     sio.c \
     vga.c \
     keyboard.c \
@@ -73,8 +75,12 @@ ARCH_C_SRCS = \
     fedlearn.c \
     ai_stats.c \
     dtr.c \
+    dkva.c \
     dproc.c \
     sfs.c \
+    raft.c \
+    spawn.c \
+    moe.c \
     pmesh.c \
     persist.c \
     blk_ssy.c \
@@ -87,7 +93,9 @@ ARCH_C_SRCS = \
     syscall.c \
     userspace.c \
     elf_loader.c \
-    paging.c
+    paging.c \
+    mem_store.c \
+    chat.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -164,9 +172,18 @@ kl_net.o:        kl_net.c;        $(CC) $(KLOADER_CFLAGS) -c $< -o $@
 kloader_start.o: kloader_start.S; $(CC) $(KLOADER_CFLAGS) -c $< -o $@
 
 # -------------------------------------------------------------------
+# kernel.elf — カーネル本体 ELF (kloader がロードする)
+# kernel.ld を使用: .multiboot を除去し _start を 0x100000 に配置
+# -------------------------------------------------------------------
+KERNEL_LDFLAGS = -nostdlib -static -T kernel.ld -m elf_i386
+
+kernel.elf: $(ALL_OBJS)
+	$(LD) $(KERNEL_LDFLAGS) -o $@ $^ $(LIBGCC)
+
+# -------------------------------------------------------------------
 # ビルドルール
 # -------------------------------------------------------------------
-all: $(TARGET) kloader.bin
+all: $(TARGET) kloader.bin kernel.elf
 
 $(TARGET): $(ALL_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
@@ -223,10 +240,11 @@ USERLAND_X86 = ../../userland/x86
 
 # FAT32ディスクイメージ作成
 # mkdosfs / mformat が必要 (dosfstools パッケージ)
-$(DISK_IMG): $(TARGET)
+$(DISK_IMG): $(TARGET) kernel.elf
 	dd if=/dev/zero of=$@ bs=1M count=$(DISK_SIZE_MB)
 	mkdosfs -F 32 -n "PKERNEL" $@
 	mcopy -i $@ $(TARGET) ::PKNL.BIN
+	mcopy -i $@ kernel.elf ::KERNEL.ELF
 	$(MAKE) -C $(USERLAND_X86) CROSS=$(CROSS)
 	mcopy -i $@ $(USERLAND_X86)/01_posix/01_hello/hello.elf         ::hello.elf
 	mcopy -i $@ $(USERLAND_X86)/01_posix/02_posix_io/posix_io.elf   ::posix_io.elf
@@ -252,6 +270,8 @@ $(DISK_IMG): $(TARGET)
 	mcopy -i $@ $(USERLAND_X86)/07_network/04_edf_infer/edf_infer.elf     ::edf_infer.elf
 	mcopy -i $@ $(USERLAND_X86)/08_system/01_kloader_d/kloader_d.elf      ::kloader_d.elf
 	mcopy -i $@ $(USERLAND_X86)/09_ai/01_infer_d/infer_d.elf             ::infer_d.elf
+	mcopy -i $@ $(USERLAND_X86)/11_ai/01_persist_demo/persist_demo.elf   ::persist_demo.elf
+	mcopy -i $@ $(USERLAND_X86)/11_ai/02_cluster_stat/cluster_stat.elf   ::cluster_stat.elf
 	mmd   -i $@ ::etc 2>/dev/null || true
 	mcopy -i $@ ../../samples/08_system/init.rc                            ::etc/init.rc
 
@@ -282,6 +302,24 @@ run-log: $(TARGET)
 debug: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
 
+# デバッグシンボル付きビルド (gdb用)
+TARGET_ELF = bootloader.elf
+debug-build: CFLAGS += -g3 -O0
+debug-build: LDFLAGS_ELF = -nostdlib -static -T linker.ld -m elf_i386
+debug-build: $(ALL_OBJS)
+	$(LD) $(LDFLAGS_ELF) -o $(TARGET_ELF) $^ $(LIBGCC)
+	$(LD) $(LDFLAGS) -o $(TARGET) $^ $(LIBGCC)
+	@echo "[OK] debug build: $(TARGET_ELF) + $(TARGET)"
+
+# GDBアタッチ (別ターミナルで make debug 後に実行)
+gdb: $(TARGET_ELF)
+	gdb-multiarch -x .gdbinit $(TARGET_ELF)
+
+# シンボルなしでも接続だけする場合
+gdb-bare:
+	gdb-multiarch -ex "set architecture i386:x86-64" \
+	              -ex "target remote localhost:1234"
+
 run-node0: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
 
@@ -295,6 +333,15 @@ run-node2: $(TARGET)
 # kloader ベースの実行ターゲット
 # kloader.bin (0x50000) → FAT32ディスク上の PKNL.BIN (0x100000) を起動
 # -------------------------------------------------------------------
+# ネットブート: kloader.bin だけ持つ新規ノード（ディスクなし）
+# 別ターミナルで run-kloader-node0 を起動しておくとカーネルを受け取れる
+KLOADER_BOOT_MAC = 52:54:00:00:00:10
+run-kloader-boot: kloader.bin
+	qemu-system-x86_64 -kernel kloader.bin \
+	    -serial stdio -cpu qemu64 \
+	    -netdev socket,id=n0,mcast=$(MCAST) \
+	    -device rtl8139,netdev=n0,mac=$(KLOADER_BOOT_MAC)
+
 run-kloader: kloader.bin $(DISK_IMG)
 	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
@@ -321,7 +368,7 @@ run-boot: $(TARGET)
 	qemu-system-x86_64 -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64 -display none
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin serial.log
+	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin kernel.elf serial.log
 	$(MAKE) -C $(USERLAND_X86) clean 2>/dev/null || true
 
 clean-disk:
@@ -329,4 +376,6 @@ clean-disk:
 
 .PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
         run-node0 run-node1 run-node2 \
-        run-kloader run-kloader-node0 run-kloader-node1 run-kloader-node2
+        run-kloader run-kloader-boot \
+        run-kloader-node0 run-kloader-node1 run-kloader-node2 \
+        debug-build gdb gdb-bare

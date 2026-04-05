@@ -78,6 +78,7 @@ INT  vfs_seek(INT fd, UW off)              { return fat32_seek(fd, off); }
 UW   vfs_fsize(INT fd)                     { return fat32_fsize(fd); }
 void vfs_close(INT fd)                     { fat32_close(fd); }
 INT  vfs_dup(INT fd)                       { return fat32_dup(fd); }
+INT  vfs_dup2(INT old_fd, INT new_fd)      { return fat32_dup2(old_fd, new_fd); }
 INT  vfs_create(const char *path)
 {
     char buf[FAT32_MAX_PATH]; vfs_resolve(path, buf);

@@ -431,13 +431,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0=old fd, arg1=new fd  (only newfd≥3 supported) */
         if (arg1 < 3 || IS_PIPE_FD(arg1)) return -1;
         if (arg0 == arg1) return arg1;
-        /* close newfd if open */
-        if (!IS_STD_FD(arg1)) fs_ssy_call(SYS_CLOSE, arg1, 0, 0);
-        INT vfd = vfs_dup(TO_VFS_FD(arg0));
+        INT vfd = vfs_dup2(TO_VFS_FD(arg0), TO_VFS_FD(arg1));
         if (vfd < 0) return -1;
-        /* We got a new vfd; we need it to be arg1-3 exactly — not trivial.
-         * Simple approach: close the new vfd we got, open src again.
-         * For now just return the new fd (ignoring requested number). */
         return TO_POSIX_FD(vfd);
     }
 

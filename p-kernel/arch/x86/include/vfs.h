@@ -58,6 +58,8 @@ INT  vfs_stat_path(const char *path, UW *size, BOOL *is_dir);
 
 /* Duplicate an open fd (independent seek, read-only). */
 INT  vfs_dup(INT fd);
+/* Duplicate old_fd to new_fd (dup2 semantics). Closes new_fd first if open. */
+INT  vfs_dup2(INT old_fd, INT new_fd);
 
 /* Get/set current working directory. */
 void vfs_getcwd(char *buf, INT len);
