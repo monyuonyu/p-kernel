@@ -3,17 +3,27 @@
  *  Kernel built-in self-test — runs at boot from the initial task,
  *  before any background tasks are started.
  *
- *  Five tests, ~100ms total:
- *   T1: Semaphore signal/wait (no context switch)
- *   T2: Timer fire via tk_dly_tsk (20ms sleep)
- *   T3: Cyclic handler → tk_sig_sem  (Bug-1 regression: END_CRITICAL_SECTION
- *       must not dispatch from IRQ/task-independent context)
- *   T4: Mutex lock/unlock across two tasks
- *   T5: Config sanity (PAGING_MAX_TASKS vs CFN_MAX_TSKID)
+ *  Twelve tests, ~100ms total:
+ *   T1:  Semaphore signal/wait (no context switch)
+ *   T2:  Timer fire via tk_dly_tsk (20ms sleep)
+ *   T3:  Cyclic handler → tk_sig_sem  (Bug-1 regression: END_CRITICAL_SECTION
+ *        must not dispatch from IRQ/task-independent context)
+ *   T4:  Mutex lock/unlock across two tasks
+ *   T5:  Config sanity (PAGING_MAX_TASKS vs CFN_MAX_TSKID)
+ *   T6:  MLP forward determinism (same input → same class)
+ *   T7:  MLP output bounds (class ∈ {0,1,2})
+ *   T8:  FedLearn local_train returns E_OK
+ *   T9:  FedLearn gradient — delta_b3 nonzero after finite-diff
+ *   T10: Raft initial state (FOLLOWER, term=0, leader=0xFF)
+ *   T11: Raft write guard (non-leader → E_RSFN)
+ *   T12: Degrade initial level (FULL before first degrade_update)
  */
 
 #include "kernel.h"
 #include "paging.h"
+#include "ai_kernel.h"
+#include "raft.h"
+#include "degrade.h"
 
 IMPORT void tm_putstring(UB *str);
 
@@ -224,6 +234,173 @@ static int run_t5_config(void)
 }
 
 /* ================================================================== */
+/* T6: MLP forward determinism                                         */
+/* ================================================================== */
+
+static int run_t6_mlp_determinism(void)
+{
+    B input[MLP_IN] = { 25, 50, 100, 127 };
+    UB c1 = mlp_forward(input);
+    UB c2 = mlp_forward(input);
+    if (c1 != c2) {
+        st_puts("[FAIL] T6: mlp non-deterministic c1="); st_puti((W)c1);
+        st_puts(" c2="); st_puti((W)c2); st_puts("\r\n");
+        return 0;
+    }
+    if (c1 > 2) {
+        st_puts("[FAIL] T6: mlp class out of range c="); st_puti((W)c1); st_puts("\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T6: mlp forward determinism\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T7: MLP output bounds for multiple inputs                           */
+/* ================================================================== */
+
+static int run_t7_mlp_bounds(void)
+{
+    static const B inputs[4][MLP_IN] = {
+        {  10, 30,  90, 100 },   /* cold   */
+        {  28, 60, 100, 120 },   /* warm   */
+        {  40, 80, 110, 127 },   /* hot    */
+        { -10, 10,  70,  50 },   /* edge: negative temp */
+    };
+    for (INT i = 0; i < 4; i++) {
+        UB c = mlp_forward(inputs[i]);
+        if (c > 2) {
+            st_puts("[FAIL] T7: mlp bounds input="); st_puti(i);
+            st_puts(" class="); st_puti((W)c); st_puts("\r\n");
+            return 0;
+        }
+    }
+    st_puts("[PASS] T7: mlp output bounds\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T8: FedLearn local_train returns E_OK                               */
+/* ================================================================== */
+
+static int run_t8_fedlearn_train(void)
+{
+    static const B samples[2][MLP_IN] = {
+        { 10, 30,  90, 100 },
+        { 40, 70, 110, 127 },
+    };
+    static const UB labels[2] = { 0, 2 };
+
+    float dw1[MLP_IN*MLP_H1], db1[MLP_H1];
+    float dw2[MLP_H1*MLP_H2], db2[MLP_H2];
+    float dw3[MLP_H2*MLP_OUT], db3[MLP_OUT];
+
+    ER r = fl_local_train(samples, labels, 2,
+                          dw1, db1, dw2, db2, dw3, db3);
+    if (r != E_OK) {
+        st_puts("[FAIL] T8: fl_local_train er="); st_puti((W)r); st_puts("\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T8: fedlearn local train\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T9: FedLearn gradient — delta_b3 nonzero after finite-diff          */
+/* ================================================================== */
+
+static int run_t9_fedlearn_gradient(void)
+{
+    static const B samples[3][MLP_IN] = {
+        { 10, 30,  90, 100 },
+        { 28, 55, 100, 110 },
+        { 40, 70, 110, 127 },
+    };
+    static const UB labels[3] = { 0, 1, 2 };
+
+    float dw1[MLP_IN*MLP_H1], db1[MLP_H1];
+    float dw2[MLP_H1*MLP_H2], db2[MLP_H2];
+    float dw3[MLP_H2*MLP_OUT], db3[MLP_OUT];
+
+    ER r = fl_local_train(samples, labels, 3,
+                          dw1, db1, dw2, db2, dw3, db3);
+    if (r != E_OK) {
+        st_puts("[FAIL] T9: fl_local_train er="); st_puti((W)r); st_puts("\r\n");
+        return 0;
+    }
+    /* delta_b3 が全ゼロでないことを確認 (finite-diff が実際に動いた証拠) */
+    float sum = 0.0f;
+    for (INT j = 0; j < MLP_OUT; j++) {
+        float v = db3[j];
+        sum += (v < 0.0f ? -v : v);
+    }
+    if (sum == 0.0f) {
+        st_puts("[FAIL] T9: fedlearn gradient all-zero\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T9: fedlearn gradient nonzero\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T10: Raft initial state                                             */
+/* ================================================================== */
+
+static int run_t10_raft_init_state(void)
+{
+    /* raft_init() はまだ呼ばれていない — static 初期値を確認 */
+    if (raft_role() != RAFT_FOLLOWER) {
+        st_puts("[FAIL] T10: raft role not FOLLOWER got=");
+        st_puti((W)raft_role()); st_puts("\r\n");
+        return 0;
+    }
+    if (raft_term() != 0) {
+        st_puts("[FAIL] T10: raft term not 0 got=");
+        st_puti((W)raft_term()); st_puts("\r\n");
+        return 0;
+    }
+    if (raft_leader() != 0xFF) {
+        st_puts("[FAIL] T10: raft leader not 0xFF got=");
+        st_puti((W)raft_leader()); st_puts("\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T10: raft initial state\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T11: Raft write guard — non-leader must be rejected                 */
+/* ================================================================== */
+
+static int run_t11_raft_write_guard(void)
+{
+    ER r = raft_write(1, 1);
+    if (r != E_RSFN) {
+        st_puts("[FAIL] T11: raft_write expected E_RSFN got=");
+        st_puti((W)r); st_puts("\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T11: raft write guard (non-leader)\r\n");
+    return 1;
+}
+
+/* ================================================================== */
+/* T12: Degrade initial level                                          */
+/* ================================================================== */
+
+static int run_t12_degrade_init_level(void)
+{
+    UB lv = degrade_level();
+    if (lv != DEGRADE_FULL) {
+        st_puts("[FAIL] T12: degrade level not FULL got=");
+        st_puti((W)lv); st_puts("\r\n");
+        return 0;
+    }
+    st_puts("[PASS] T12: degrade initial level FULL\r\n");
+    return 1;
+}
+
+/* ================================================================== */
 /* Entry point                                                         */
 /* ================================================================== */
 
@@ -237,11 +414,18 @@ EXPORT void kernel_selftest(void)
     pass += run_t3_cyclic_bug1();
     pass += run_t4_mutex();
     pass += run_t5_config();
+    pass += run_t6_mlp_determinism();
+    pass += run_t7_mlp_bounds();
+    pass += run_t8_fedlearn_train();
+    pass += run_t9_fedlearn_gradient();
+    pass += run_t10_raft_init_state();
+    pass += run_t11_raft_write_guard();
+    pass += run_t12_degrade_init_level();
 
     st_puts("[SELFTEST] ");
     st_puti(pass);
-    st_puts("/5 passed");
-    if (pass == 5) {
+    st_puts("/12 passed");
+    if (pass == 12) {
         st_puts(" -- OK\r\n\r\n");
     } else {
         st_puts(" -- KERNEL UNHEALTHY\r\n\r\n");
