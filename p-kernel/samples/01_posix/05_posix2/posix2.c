@@ -4,9 +4,11 @@
  *  テスト内容:
  *    getpid()   — タスク ID をプロセス ID として返す
  *    getcwd()   — カレントディレクトリ取得 (初期値 "/")
+ *    chdir()    — カレントディレクトリ変更
  *    stat()     — パス指定でファイル情報取得
  *    fstat()    — fd 指定でファイル情報取得
  *    dup()      — ファイルディスクリプタの複製
+ *    dup2()     — 指定番号へのファイルディスクリプタ複製
  *    pipe()     — プロセス内パイプ通信
  *
  *  実行方法:
@@ -27,6 +29,19 @@ void _start(void)
     plib_puts("[posix2] getcwd = ");
     plib_puts(cwd);
     plib_puts("\r\n");
+
+    /* ---- chdir ---------------------------------------------------- */
+    sys_mkdir("/tmp");   /* なければ作成 */
+    if (sys_chdir("/tmp") == 0) {
+        char cwd2[128];
+        sys_getcwd(cwd2, sizeof(cwd2));
+        plib_puts("[posix2] chdir(/tmp) -> getcwd = ");
+        plib_puts(cwd2);
+        plib_puts("\r\n");
+        sys_chdir("/");  /* ルートへ戻す */
+    } else {
+        plib_puts("[posix2] chdir(/tmp) failed\r\n");
+    }
 
     /* ---- stat ----------------------------------------------------- */
     struct_stat st;
@@ -60,6 +75,22 @@ void _start(void)
             plib_puts("\r\n");
             sys_close(fd2);
         }
+
+        /* ---- dup2 ------------------------------------------------- */
+        /* fd を固定番号 9 に複製する (9 が空いていることを前提) */
+        int target_fd = 9;
+        int fd3 = sys_dup2(fd, target_fd);
+        if (fd3 == target_fd) {
+            plib_puts("[posix2] dup2 original_fd=");
+            plib_puti(fd);
+            plib_puts(" -> fixed_fd=");
+            plib_puti(fd3);
+            plib_puts("\r\n");
+            sys_close(fd3);
+        } else {
+            plib_puts("[posix2] dup2 failed\r\n");
+        }
+
         sys_close(fd);
     }
 
