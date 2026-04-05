@@ -352,7 +352,11 @@ ER rtl8139_init(ID sem)
     /* Interrupt mask: RX OK + TX OK */
     wrw(R_IMR, (UH)(ISR_ROK | ISR_TOK));
 
-    /* RX config: broadcast + physical match, 8 KB, no FIFO threshold, WRAP */
+    /* Multicast address filter: accept all multicast groups (MAR0-7 = 0xFF) */
+    wrl(R_MAR,   0xFFFFFFFFu);
+    wrl(R_MAR+4, 0xFFFFFFFFu);
+
+    /* RX config: broadcast + physical match + multicast, 8 KB, no FIFO threshold, WRAP */
     wrl(R_RCR, RCR_AB | RCR_APM | RCR_AM |
                RCR_MXDMA_UNL | RCR_RBLEN_8K | RCR_RXFTH_NONE | RCR_WRAP);
 

@@ -358,7 +358,8 @@ static uint32_t fat32_find_file(const char *name83, uint32_t *size_out)
  * Copies each PT_LOAD segment to its p_vaddr.
  * Returns the ELF entry point, or 0 on error.
  */
-static uint32_t elf_load_from_staging(uint32_t staging)
+/* Public: also called by kl_net.c after network receive */
+uint32_t kl_elf_load(uint32_t staging)
 {
     Elf32_Ehdr *eh = (Elf32_Ehdr *)staging;
 
@@ -466,5 +467,5 @@ uint32_t kl_fat32_load_elf(void)
     fat_puts("[kl_fat32] load OK, parsing ELF...\n");
 
     /* --- Parse ELF and copy segments --------------------------- */
-    return elf_load_from_staging(STAGING_ADDR);
+    return kl_elf_load(STAGING_ADDR);
 }

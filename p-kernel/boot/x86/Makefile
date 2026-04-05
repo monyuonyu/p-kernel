@@ -51,6 +51,7 @@ ARCH_C_SRCS = \
     inittask_main.c \
     usermain.c \
     selftest.c \
+    kserve.c \
     sio.c \
     vga.c \
     keyboard.c \
@@ -330,6 +331,15 @@ run-node2: $(TARGET)
 # kloader ベースの実行ターゲット
 # kloader.bin (0x50000) → FAT32ディスク上の PKNL.BIN (0x100000) を起動
 # -------------------------------------------------------------------
+# ネットブート: kloader.bin だけ持つ新規ノード（ディスクなし）
+# 別ターミナルで run-kloader-node0 を起動しておくとカーネルを受け取れる
+KLOADER_BOOT_MAC = 52:54:00:00:00:10
+run-kloader-boot: kloader.bin
+	qemu-system-x86_64 -kernel kloader.bin \
+	    -serial stdio -cpu qemu64 \
+	    -netdev socket,id=n0,mcast=$(MCAST) \
+	    -device rtl8139,netdev=n0,mac=$(KLOADER_BOOT_MAC)
+
 run-kloader: kloader.bin $(DISK_IMG)
 	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
@@ -364,5 +374,6 @@ clean-disk:
 
 .PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
         run-node0 run-node1 run-node2 \
-        run-kloader run-kloader-node0 run-kloader-node1 run-kloader-node2 \
+        run-kloader run-kloader-boot \
+        run-kloader-node0 run-kloader-node1 run-kloader-node2 \
         debug-build gdb gdb-bare

@@ -31,6 +31,7 @@
 #include "spawn.h"
 #include "moe.h"
 #include "ai_kernel.h"
+IMPORT void kserve_init(void);
 #include "vfs.h"
 #include "gdt_user.h"
 #include "paging.h"
@@ -146,6 +147,9 @@ EXPORT INT usermain(void)
 
     /* ---- Phase 14: GA (遺伝的アルゴリズム 重み自己改善) --------- */
     ga_init();
+
+    /* ---- Phase 16b: kserve — ネットブート用カーネル配信 ---------- */
+    if (vfs_ready) kserve_init();
 
     /* ---- Phase 9: 分散プロセスレジストリ ----------------------- */
     dproc_init();
