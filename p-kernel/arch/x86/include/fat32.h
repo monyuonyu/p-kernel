@@ -66,6 +66,8 @@ INT fat32_rename(const char *oldpath, const char *newpath);
 /* Duplicate an open fd (independent seek position, read-only copy).
  * Returns new fd >= 0 on success, -1 on error. */
 INT fat32_dup(INT fd);
+/* Duplicate old_fd to new_fd (dup2 semantics). Returns new_fd or -1. */
+INT fat32_dup2(INT old_fd, INT new_fd);
 
 /* Stat by path: fills *size and *is_dir.  Returns 0 on success, -1. */
 INT fat32_stat_path(const char *path, UW *size, BOOL *is_dir);
