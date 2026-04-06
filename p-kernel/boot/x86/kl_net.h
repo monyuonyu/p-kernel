@@ -15,8 +15,8 @@ typedef unsigned int   u32;
 /* ------------------------------------------------------------------ */
 /* KLOAD プロトコル定数 (kloader_task.h と共通)                       */
 /* ------------------------------------------------------------------ */
-#define KLOAD_PORT_RX   7382    /* kloader が受信するポート */
-#define KLOAD_PORT_BCN  7383    /* KLOAD_BEACON 送信先ポート */
+#define KLOAD_PORT_RX   7386    /* kloader が受信するポート */
+#define KLOAD_PORT_BCN  7387    /* KLOAD_BEACON 送信先ポート */
 #define KLOAD_MAGIC     0x44414F4CUL  /* "LOAD" LE */
 #define KLOAD_VERSION   1
 #define KLOAD_START     0x01

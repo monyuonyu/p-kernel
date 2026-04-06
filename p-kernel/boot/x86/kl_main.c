@@ -63,7 +63,7 @@ static void serial_puts(const char *s)
 /* p-kernel エントリへジャンプ (32 ビット保護モード)                  */
 /* ------------------------------------------------------------------ */
 #define PKERNEL_LOAD_ADDR  0x100000UL
-#define PKERNEL_MAX_SIZE   (8 * 1024 * 1024)   /* 最大 8 MB */
+#define PKERNEL_MAX_SIZE   (12 * 1024 * 1024)  /* 最大 12 MB (カーネル ~9MB対応) */
 
 /*
  * p-kernel の _start は Multiboot ヘッダを持つ。
@@ -95,31 +95,31 @@ void kl_main(void)
     serial_init();
     serial_puts("[kloader] Stage-1 Kernel Loader\n");
 
-    /* FAT32 初期化 */
+    /* FAT32 初期化 (失敗してもネットワーク受信にフォールスルー) */
     if (kl_fat32_init() < 0) {
-        serial_puts("[kloader] FAT32 init FAILED — halting\n");
-        for (;;) __asm__("hlt");
-    }
-    serial_puts("[kloader] FAT32 OK\n");
+        serial_puts("[kloader] FAT32 not found — trying network\n");
+    } else {
+        serial_puts("[kloader] FAT32 OK\n");
 
-    int size;
+        int size;
 
-    /* 優先: KL.BIN (ネットワーク更新版) */
-    serial_puts("[kloader] Trying KL.BIN ...\n");
-    size = kl_fat32_load("KL      ", "BIN",
-                         (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
-    if (size > 0) {
-        serial_puts("[kloader] KL.BIN loaded\n");
-        jump_to_kernel();
-    }
+        /* 優先: KL.BIN (ネットワーク更新版) */
+        serial_puts("[kloader] Trying KL.BIN ...\n");
+        size = kl_fat32_load("KL      ", "BIN",
+                             (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
+        if (size > 0) {
+            serial_puts("[kloader] KL.BIN loaded\n");
+            jump_to_kernel();
+        }
 
-    /* フォールバック: PKNL.BIN (デフォルト版) */
-    serial_puts("[kloader] Trying PKNL.BIN ...\n");
-    size = kl_fat32_load("PKNL    ", "BIN",
-                         (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
-    if (size > 0) {
-        serial_puts("[kloader] PKNL.BIN loaded\n");
-        jump_to_kernel();
+        /* フォールバック: PKNL.BIN (デフォルト版) */
+        serial_puts("[kloader] Trying PKNL.BIN ...\n");
+        size = kl_fat32_load("PKNL    ", "BIN",
+                             (void *)PKERNEL_LOAD_ADDR, PKERNEL_MAX_SIZE);
+        if (size > 0) {
+            serial_puts("[kloader] PKNL.BIN loaded\n");
+            jump_to_kernel();
+        }
     }
 
     /* ディスクにカーネルなし → ネットワーク経由で受信を試みる */

@@ -13,8 +13,8 @@
 /* ------------------------------------------------------------------ */
 /* KLOAD プロトコル定数                                                */
 /* ------------------------------------------------------------------ */
-#define KLOAD_PORT      7382    /* KLOAD_CHUNK/START 受信ポート */
-#define KLOAD_PORT_BCN  7383    /* KLOAD_BEACON 受信ポート */
+#define KLOAD_PORT      7386    /* KLOAD_CHUNK/START 受信ポート */
+#define KLOAD_PORT_BCN  7387    /* KLOAD_BEACON 受信ポート */
 #define KLOAD_MAGIC     0x44414F4CUL    /* "LOAD" LE */
 #define KLOAD_VERSION   1
 

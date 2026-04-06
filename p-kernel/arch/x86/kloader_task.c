@@ -228,7 +228,9 @@ static void kloader_push_ip(UW target_ip)
 
         offset += clen;
         chunk_idx++;
-        if (chunk_idx % 32 == 0) tk_dly_tsk(50);
+        /* RTL8139 RX リング (8KB ≈ 7 パケット) 溢れ防止:
+         * 4 チャンク送信ごとに 1 tick 待機して受信側に消化させる */
+        if (chunk_idx % 4 == 0) tk_dly_tsk(1);
     }
 
     kl_puts("[kloader_task] auto-push done  chunks=");
@@ -296,7 +298,7 @@ void kloader_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
 
-    tk_dly_tsk(3000);   /* NIC/ARP 安定待ち */
+    tk_dly_tsk(100);    /* NIC/ARP 安定待ち (1 秒) */
 
     for (;;) {
         tk_dly_tsk(500);
@@ -327,8 +329,8 @@ void kloader_task_init(void)
     /* KLOAD_BEACON 受信 (direct UDP — bare kloader ノードから) */
     udp_bind(KLOAD_PORT_BCN, kloader_beacon_rx);
 
-    kl_puts("[kloader_task] KLOAD receiver ready  port=7382\r\n");
-    kl_puts("[kloader_task] BEACON listener ready  port=7383\r\n");
+    kl_puts("[kloader_task] KLOAD receiver ready  port=7386\r\n");
+    kl_puts("[kloader_task] BEACON listener ready  port=7387\r\n");
 }
 
 /* ------------------------------------------------------------------ */

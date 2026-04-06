@@ -139,7 +139,7 @@ static u16 pci_find_rtl8139(void)
 static u8  rtl_tx_buf[4][1536];
 static int rtl_tx_slot = 0;
 static u16 rtl_iobase  = 0;
-static u16 rtl_rx_off  = 0;   /* RX リング読み出しオフセット */
+static u32 rtl_rx_pos  = 0;   /* RX リング読み出しオフセット (ランニングカウンタ) */
 
 /* ------------------------------------------------------------------ */
 /* ネットワーク状態                                                   */
@@ -184,6 +184,41 @@ static int kn_memcmp(const void *a, const void *b, u32 n)
     for (u32 i = 0; i < n; i++)
         if (aa[i] != bb[i]) return (int)aa[i] - (int)bb[i];
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* ARP キャッシュ (kn_memcpy の後に配置)                             */
+/* ------------------------------------------------------------------ */
+
+#define ARP_CACHE_MAX 8
+typedef struct { u32 ip; u8 mac[6]; } ARP_ENTRY;
+static ARP_ENTRY arp_cache[ARP_CACHE_MAX];
+static u8        arp_cache_cnt = 0;
+
+static void arp_store(u32 ip, const u8 *mac)
+{
+    for (u8 i = 0; i < arp_cache_cnt; i++) {
+        if (arp_cache[i].ip == ip) {
+            kn_memcpy(arp_cache[i].mac, mac, 6);
+            return;
+        }
+    }
+    if (arp_cache_cnt < ARP_CACHE_MAX) {
+        arp_cache[arp_cache_cnt].ip = ip;
+        kn_memcpy(arp_cache[arp_cache_cnt].mac, mac, 6);
+        arp_cache_cnt++;
+    }
+}
+
+static int arp_lookup(u32 ip, u8 *mac_out)
+{
+    for (u8 i = 0; i < arp_cache_cnt; i++) {
+        if (arp_cache[i].ip == ip) {
+            kn_memcpy(mac_out, arp_cache[i].mac, 6);
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -245,7 +280,7 @@ static int rtl_init(u16 iobase)
     /* TX/RX 有効化 */
     outb((u16)(iobase + RTL_CMD), RTL_CMD_TEN | RTL_CMD_REN);
 
-    rtl_rx_off = 0;
+    rtl_rx_pos = 0;
 
     kn_puts("[kl_net] RTL8139  MAC=");
     const char *h = "0123456789ABCDEF";
@@ -272,11 +307,11 @@ static void rtl_send(const u8 *frame, u16 len)
     /* TX ステータスレジスタへサイズ書き込みで送信開始 */
     outl((u16)(rtl_iobase + 0x10 + slot * 4), (u32)len);
 
-    /* 送信完了待ち */
+    /* 送信完了待ち (TOK = bit15) */
     int t = 100000;
     while (t--) {
         u32 st = inl((u16)(rtl_iobase + 0x10 + slot * 4));
-        if (st & 0x00000100) break;  /* TOK: TX OK */
+        if (st & 0x00008000) break;  /* TOK: TX OK (bit 15) */
     }
     rtl_tx_slot++;
 }
@@ -293,27 +328,32 @@ static u16 rtl_recv(u8 *buf, u16 max_len)
 
     u8 *rx = (u8 *)RTL_RX_BUF_ADDR;
 
+    /* ランニングカウンタから物理リングオフセットを計算
+     * RTL8139 の CBR は 8192 でラップするため % 8192 を使用 */
+    u32 ring_off = rtl_rx_pos % 8192;
+
     /* RTL8139 RX パケットヘッダ: status(2) + len(2) */
-    u16 pkt_status = (u16)(rx[rtl_rx_off] | (rx[rtl_rx_off + 1] << 8));
-    u16 pkt_len    = (u16)(rx[rtl_rx_off + 2] | (rx[rtl_rx_off + 3] << 8));
+    u16 pkt_status = (u16)(rx[ring_off] | (rx[ring_off + 1] << 8));
+    u16 pkt_len    = (u16)(rx[ring_off + 2] | (rx[ring_off + 3] << 8));
 
     if (!(pkt_status & 0x0001)) return 0;  /* ROK ビット未セット */
     if (pkt_len < 14 || pkt_len > 1514) {
         /* 壊れたパケット — スキップ */
-        rtl_rx_off = (u16)((rtl_rx_off + 4 + ((pkt_len + 3) & ~3)) % (8192 + 16));
-        outw((u16)(rtl_iobase + RTL_CAPR), (u16)(rtl_rx_off - 16));
+        rtl_rx_pos += (u32)((4 + pkt_len + 3) & ~3u);
+        outw((u16)(rtl_iobase + RTL_CAPR), (u16)(rtl_rx_pos - 16));
         return 0;
     }
 
     u16 copy = (pkt_len < max_len) ? pkt_len : max_len;
-    u32 data_off = rtl_rx_off + 4;
-    /* リングバッファ折り返し考慮コピー */
+    /* データはオーバーフロー領域に物理的に連続して書かれているため
+     * モジュロ不要 (RTL_RX_BUF_SIZE = 8192+16+1500 で保護) */
+    u8 *data = rx + ring_off + 4;
     for (u16 i = 0; i < copy; i++)
-        buf[i] = rx[(data_off + i) % (8192 + 16)];
+        buf[i] = data[i];
 
-    /* 次パケット位置 (4 バイトアラインメント) */
-    rtl_rx_off = (u16)((rtl_rx_off + 4 + pkt_len + 3) & ~3) % (8192 + 16);
-    outw((u16)(rtl_iobase + RTL_CAPR), (u16)(rtl_rx_off - 16));
+    /* ランニングカウンタを次パケット先頭まで進める */
+    rtl_rx_pos += (u32)((4 + pkt_len + 3) & ~3u);
+    outw((u16)(rtl_iobase + RTL_CAPR), (u16)(rtl_rx_pos - 16));
 
     return copy;
 }
@@ -346,11 +386,9 @@ static void send_arp_request(u32 target_ip)
     /* HTYPE=1 PTYPE=0x0800 HLEN=6 PLEN=4 OP=1 */
     a[0]=0; a[1]=1; a[2]=8; a[3]=0; a[4]=6; a[5]=4; a[6]=0; a[7]=1;
     kn_memcpy(a + 8,  my_mac, 6);
-    u32 my_ip_n = htonl(my_ip);
-    kn_memcpy(a + 14, &my_ip_n, 4);
+    kn_memcpy(a + 14, &my_ip, 4);     /* IP4 形式のまま (htonl 不要) */
     kn_memset(a + 18, 0, 6);
-    u32 tip_n = htonl(target_ip);
-    kn_memcpy(a + 24, &tip_n, 4);
+    kn_memcpy(a + 24, &target_ip, 4); /* IP4 形式のまま (htonl 不要) */
     rtl_send(tx_frame, 60);
 }
 
@@ -375,12 +413,11 @@ static void send_udp(const u8 *dst_mac, u32 dst_ip,
     ip[6] = 0; ip[7] = 0;   /* flags / frag */
     ip[8] = 64;              /* TTL */
     ip[9] = 17;              /* UDP */
-    u32 src_n = htonl(my_ip);
-    u32 dst_n = htonl(dst_ip);
-    kn_memcpy(ip + 12, &src_n, 4);
-    kn_memcpy(ip + 16, &dst_n, 4);
+    kn_memcpy(ip + 12, &my_ip,  4);   /* IP4 形式のまま (htonl 不要) */
+    kn_memcpy(ip + 16, &dst_ip, 4);  /* IP4 形式のまま (htonl 不要) */
     u16 cksum = ip_checksum(ip, 20);
-    ip[10] = (u8)(cksum >> 8); ip[11] = (u8)cksum;
+    /* p-kernel の ip_cksum は LE 16-bit 読みで検証するため LE で格納 */
+    ip[10] = (u8)cksum; ip[11] = (u8)(cksum >> 8);
 
     /* UDP ヘッダ */
     u8 *udp = ip + 20;
@@ -391,6 +428,18 @@ static void send_udp(const u8 *dst_mac, u32 dst_ip,
 
     kn_memcpy(udp + 8, data, data_len);
     rtl_send(tx_frame, frame_len);
+}
+
+/* ------------------------------------------------------------------ */
+/* ARP 解決済みの宛先へ UDP 送信 (未解決はサイレントスキップ)         */
+/* ------------------------------------------------------------------ */
+
+static void send_udp_to(u32 dst_ip, u16 src_port, u16 dst_port,
+                         const u8 *data, u16 data_len)
+{
+    u8 dst_mac[6];
+    if (arp_lookup(dst_ip, dst_mac) < 0) return;
+    send_udp(dst_mac, dst_ip, src_port, dst_port, data, data_len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -407,9 +456,18 @@ static void send_beacon(void)
     pkt.node_id = node_id;
     pkt.src_ip  = my_ip;   /* ホストバイトオーダー */
 
+    /* ① ブロードキャスト (255.255.255.255) */
     send_udp(bcast_mac, 0xFFFFFFFFUL,
              KLOAD_PORT_RX, KLOAD_PORT_BCN,
              (const u8 *)&pkt, (u16)sizeof(pkt));
+
+    /* ② 10.1.0.x サブネット unicast (ARP 解決して確実に届ける) */
+    for (u8 n = 1; n <= 8; n++) {
+        if (n == node_id + 1) continue;   /* 自分自身はスキップ */
+        u32 target = (10UL) | (1UL << 8) | (0UL << 16) | ((u32)n << 24);
+        send_udp_to(target, KLOAD_PORT_RX, KLOAD_PORT_BCN,
+                    (const u8 *)&pkt, (u16)sizeof(pkt));
+    }
 
     kn_puts("[kl_net] KLOAD_BEACON sent (node ");
     kn_putdec(node_id);
@@ -470,24 +528,31 @@ static u32 process_frame(u8 *dst, u32 max_size)
         u8 *a = rx_frame + 14;
         u16 op = (u16)((a[6] << 8) | a[7]);
         if (op == 1) {
-            /* ARP request */
+            /* ARP request: who-has us? → reply */
             u32 tip; kn_memcpy(&tip, a + 24, 4);
-            if (ntohl(tip) == my_ip) {
-                /* reply */
+            if (tip == my_ip) {   /* IP4 形式で直接比較 (ntohl 不要) */
                 u8 r[60]; kn_memset(r, 0, 60);
-                kn_memcpy(r,     a + 8, 6);   /* dst = requester MAC */
+                kn_memcpy(r,     a + 8, 6);
                 kn_memcpy(r + 6, my_mac, 6);
-                r[12]=8; r[13]=6;    /* ARP */
+                r[12]=8; r[13]=6;
                 u8 *ra = r + 14;
                 ra[0]=0; ra[1]=1; ra[2]=8; ra[3]=0;
                 ra[4]=6; ra[5]=4; ra[6]=0; ra[7]=2;
                 kn_memcpy(ra + 8,  my_mac, 6);
-                u32 my_n = htonl(my_ip);
-                kn_memcpy(ra + 14, &my_n, 4);
+                kn_memcpy(ra + 14, &my_ip, 4);  /* IP4 形式のまま (htonl 不要) */
                 kn_memcpy(ra + 18, a + 8, 6);
                 kn_memcpy(ra + 24, a + 14, 4);
                 rtl_send(r, 60);
             }
+            /* ARP request 送信元の MAC もキャッシュしておく */
+            {
+                u32 sip; kn_memcpy(&sip, a + 14, 4); /* すでに IP4 形式 */
+                arp_store(sip, a + 8);
+            }
+        } else if (op == 2) {
+            /* ARP reply: キャッシュに登録 */
+            u32 sip; kn_memcpy(&sip, a + 14, 4); /* すでに IP4 形式 */
+            arp_store(sip, a + 8);
         }
         return 0;
     }
@@ -514,11 +579,8 @@ static u32 process_frame(u8 *dst, u32 max_size)
         kload_total   = pkt->total_size;
         kload_written = 0;
         kload_active  = 1;
-        /* 受信バッファをゼロクリア */
-        kn_memset(dst, 0, (kload_total < max_size) ? kload_total : max_size);
-        kn_puts("[kl_net] KLOAD_START  total=");
-        kn_putdec(kload_total);
-        kn_puts(" bytes\n");
+        /* kn_memset は呼ばない: 8MB クリアでリングバッファが溢れるため
+           チャンクが順次上書きするので事前クリア不要 */
         return 0;
     }
 
@@ -531,14 +593,6 @@ static u32 process_frame(u8 *dst, u32 max_size)
 
         if (offset + clen > kload_written)
             kload_written = offset + clen;
-
-        if (pkt->chunk_idx % 64 == 0) {
-            kn_puts("[kl_net] chunk ");
-            kn_putdec(pkt->chunk_idx);
-            kn_puts("  written=");
-            kn_putdec(kload_written);
-            kn_puts("\n");
-        }
 
         if (kload_written >= kload_total) {
             kn_puts("[kl_net] kernel received!  size=");
@@ -579,26 +633,56 @@ int kl_net_receive_kernel(void *dst, u32 max_size)
 {
     kn_puts("[kl_net] entering kernel receive loop...\n");
 
-    /* 最初に ARP 自己紹介 (ゲートウェイへ) */
-    send_arp_request(my_ip);    /* gratuitous ARP もどき */
+    /* 10.1.0.1-8 へ ARP request を送り MAC を収集 (p-kernel ノード検出) */
+    for (u8 n = 1; n <= 8; n++) {
+        if (n == node_id + 1) continue;
+        u32 target = (10UL) | (1UL << 8) | (0UL << 16) | ((u32)n << 24);
+        send_arp_request(target);
+    }
+    /* ~100ms ARP reply 待ち (受信してキャッシュに蓄積) */
+    for (u32 w = 0; w < 500000U; w++)
+        process_frame((u8 *)dst, max_size);
 
     u32 beacon_count   = 0;
-    u32 poll_count     = 0;
-    /* ビーコンは ~2 秒ごと、タイムアウトは ~60 秒 (ループ数は環境依存) */
+    u32 idle_count     = 0;
+    u32 last_written   = 0;
+    /* ビーコンは ~2 秒ごと
+     * タイムアウト: 最後にチャンクを受信してから IDLE_LIMIT イテレーション無応答で打ち切り
+     * (転送中にリセットされるため転送時間に上限なし) */
     const u32 BEACON_INTERVAL = 2000000U;
-    const u32 TIMEOUT_LIMIT   = 60000000U;
+    const u32 IDLE_LIMIT      = 400000000U; /* ~40-200 秒 (CPU 速度依存, p-kernel 起動待ち) */
 
-    send_beacon();  /* 最初のビーコン */
+    /* 最初の BEACON + ARP リクエスト送信 */
+    send_beacon();
+    for (u8 n = 1; n <= 8; n++) {
+        if (n == node_id + 1) continue;
+        u32 t = (10UL) | (1UL << 8) | (0UL << 16) | ((u32)n << 24);
+        send_arp_request(t);
+    }
     beacon_count = BEACON_INTERVAL;
 
-    while (poll_count < TIMEOUT_LIMIT) {
+    for (;;) {
         u32 result = process_frame((u8 *)dst, max_size);
         if (result > 0) return (int)result;
 
-        poll_count++;
+        if (kload_written != last_written) {
+            idle_count   = 0;
+            last_written = kload_written;
+        } else {
+            idle_count++;
+            if (idle_count >= IDLE_LIMIT) break;
+        }
+
         beacon_count--;
         if (beacon_count == 0) {
             send_beacon();
+            /* p-kernel の ARP キャッシュに自ノード MAC を登録させるため
+               ARP リクエストを定期的に再送 */
+            for (u8 n = 1; n <= 8; n++) {
+                if (n == node_id + 1) continue;
+                u32 t = (10UL) | (1UL << 8) | (0UL << 16) | ((u32)n << 24);
+                send_arp_request(t);
+            }
             beacon_count = BEACON_INTERVAL;
         }
     }
