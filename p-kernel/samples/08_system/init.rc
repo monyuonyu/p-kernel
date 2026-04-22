@@ -5,8 +5,8 @@
 mkdir /etc
 mkdir /shared
 
-# カーネルローダーデーモン (自動起動)
-guard /kloader_d.elf
+# kloader_task.c (カーネル空間) が OTA を担当するため kloader_d.elf は不要
+# guard /kloader_d.elf
 
 # Phase 12: 分散 Transformer 推論デーモン
 guard /infer_d.elf

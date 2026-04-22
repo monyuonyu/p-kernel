@@ -93,8 +93,13 @@ EXPORT void knl_timer_shutdown( void )
 LOCAL void knl_enqueue_tmeb( TMEB *event )
 {
 	QUEUE	*q;
+	int cnt = 0;
 
 	for ( q = knl_timer_queue.next; q != &knl_timer_queue; q = q->next ) {
+		if ( ++cnt > 10000 ) {
+			/* timer queue corrupted - break to avoid infinite loop */
+			break;
+		}
 		if ( ll_cmp(event->time, ((TMEB*)q)->time) < 0) {
 			break;
 		}
@@ -190,6 +195,7 @@ EXPORT void knl_timer_handler( void )
 #endif
 
 	/* Execute event that passed occurring time. */
+	int timer_loop_cnt = 0;
 	while ( !isQueEmpty(&knl_timer_queue) ) {
 		event = (TMEB*)knl_timer_queue.next;
 
@@ -197,7 +203,13 @@ EXPORT void knl_timer_handler( void )
 			break;
 		}
 
+		if ( ++timer_loop_cnt > 1000 ) {
+			/* timer queue corrupted - break to avoid infinite loop */
+			break;
+		}
+
 		QueRemove(&event->queue);
+		QueInit(&event->queue);
 		if ( event->callback != NULL ) {
 			(*event->callback)(event->arg);
 		}

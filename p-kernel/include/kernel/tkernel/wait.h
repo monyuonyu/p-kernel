@@ -157,6 +157,7 @@ static inline void knl_wait_release( TCB *tcb )
 {
 	knl_timer_delete(&tcb->wtmeb);
 	QueRemove(&tcb->tskque);
+	QueInit(&tcb->tskque);
 	knl_make_non_wait(tcb);
 }
 

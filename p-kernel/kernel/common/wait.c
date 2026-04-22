@@ -109,6 +109,7 @@ EXPORT void knl_wait_release_ng( TCB *tcb, ER ercd )
 EXPORT void knl_wait_release_tmout( TCB *tcb )
 {
 	QueRemove(&tcb->tskque);
+	QueInit(&tcb->tskque);
 	knl_make_non_wait(tcb);
 	if ( tcb->wspec->rel_wai_hook != NULL ) {
 		(*tcb->wspec->rel_wai_hook)(tcb);

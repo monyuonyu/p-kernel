@@ -89,6 +89,7 @@ IMPORT void knl_timer_insert_abs( TMEB *evt, LSYSTIM time, CBACK cback, void *ar
 static inline void knl_timer_delete( TMEB *event )
 {
 	QueRemove(&event->queue);
+	QueInit(&event->queue);
 }
 
 #endif /* _TIMER_ */
