@@ -13,8 +13,12 @@
  *
  *  User-space memory map (fits inside QEMU default 128 MB):
  *    USER_CODE_BASE  0x00400000  ELF segments loaded here  (4 MB)
- *    USER_STACK_TOP  0x00600000  user stack top            (6 MB)
- *    USER_STACK_SIZE 0x00010000  64 KB stack
+ *    [heap]          0x00500000+ brk grows upward from end of BSS
+ *    USER_STACK_TOP  0x01000000  user stack top           (16 MB)
+ *    USER_STACK_SIZE 0x00020000  128 KB stack
+ *
+ *  PD[2..7] (0x400000–0xFFFFFF, 12 MB) are all U/S=1 for ring-3,
+ *  giving ~10 MB of heap space between BSS end and stack.
  */
 #pragma once
 #include "kernel.h"
@@ -27,8 +31,8 @@
 
 /* User-space process memory map */
 #define USER_CODE_BASE  0x00400000UL    /* ELF loads here  (4 MB)  */
-#define USER_STACK_TOP  0x00600000UL    /* stack top       (6 MB)  */
-#define USER_STACK_SIZE 0x00010000UL    /* 64 KB user stack        */
+#define USER_STACK_TOP  0x01000000UL    /* stack top      (16 MB)  */
+#define USER_STACK_SIZE 0x00020000UL    /* 128 KB user stack       */
 
 /*
  * Set up ring-3 GDT entries and 64-bit TSS.

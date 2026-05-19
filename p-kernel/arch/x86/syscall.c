@@ -16,6 +16,7 @@
 #include "vfs.h"
 #include "ai_kernel.h"
 #include "paging.h"
+#include "gdt_user.h"
 #include "kdds.h"
 #include "edf.h"
 #include "dtr.h"
@@ -459,6 +460,30 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
             }
         }
         return -1;   /* no free pipe slot */
+    }
+
+    /* ------------------------------------------------------------- */
+    /* Linux-compatible brk (heap extension) — syscall #45          */
+    /* Used by musl/libc malloc to grow the heap.                   */
+    /* arg0 = requested new brk; 0 = query current brk.             */
+    /* Returns new brk on success, current brk on failure.          */
+    /* ------------------------------------------------------------- */
+    case 45: {
+        ID tid      = knl_ctxtsk->tskid;
+        UW cur_brk  = paging_get_task_brk(tid);
+        UW new_brk  = (UW)arg0;
+
+        if (new_brk == 0) {
+            /* Query */
+            return (W)cur_brk;
+        }
+        /* Clamp to safe range: must be above USER_CODE_BASE and
+         * below USER_STACK_TOP minus a 64 KB guard */
+        if (new_brk < 0x500000UL || new_brk > (USER_STACK_TOP - 0x10000UL)) {
+            return (W)cur_brk;   /* refuse — return current brk */
+        }
+        paging_set_task_brk(tid, new_brk);
+        return (W)new_brk;
     }
 
     case SYS_EXIT: {

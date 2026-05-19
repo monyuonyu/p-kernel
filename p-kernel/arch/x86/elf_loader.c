@@ -152,6 +152,7 @@ ID elf_exec(const char *path)
     }
 
     /* ---- Load PT_LOAD segments ------------------------------------ */
+    UW brk_start = 0;   /* track highest loaded address for brk init */
     for (Elf32_Half i = 0; i < ehdr.e_phnum; i++) {
         Elf32_Off phoff = ehdr.e_phoff + (Elf32_Off)(i * sizeof(Elf32_Phdr));
         Elf32_Phdr phdr;
@@ -186,6 +187,10 @@ ID elf_exec(const char *path)
             UW   blen = phdr.p_memsz - phdr.p_filesz;
             for (UW j = 0; j < blen; j++) bss[j] = 0;
         }
+
+        /* Track highest address for initial brk */
+        UW seg_end = phdr.p_vaddr + phdr.p_memsz;
+        if (seg_end > brk_start) brk_start = seg_end;
     }
 
     vfs_close(fd);
@@ -229,8 +234,10 @@ ID elf_exec(const char *path)
         return tid;
     }
 
-    /* Register process CR3 before starting the task */
+    /* Register process CR3 and initial brk before starting the task */
     paging_set_task_cr3(tid, proc_cr3);
+    /* Align brk to 4KB boundary */
+    paging_set_task_brk(tid, (brk_start + 0xFFFUL) & ~0xFFFUL);
 
     ER er = tk_sta_tsk(tid, 0);
     if (er < E_OK) {

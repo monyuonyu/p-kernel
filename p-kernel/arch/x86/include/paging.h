@@ -52,6 +52,10 @@ UW   paging_get_task_cr3(ID tid);   /* returns kernel_cr3 if tid unknown */
 /* Returns the kernel CR3 established by paging_init() */
 UW paging_get_kernel_cr3(void);
 
+/* Per-task brk (heap end) — used by SYS_BRK (Linux syscall #45) */
+void paging_set_task_brk(ID tid, UW brk);
+UW   paging_get_task_brk(ID tid);
+
 /* Reload CR3 — flushes the entire TLB */
 static inline void paging_switch(UW cr3)
 {

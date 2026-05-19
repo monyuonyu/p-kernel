@@ -68,6 +68,7 @@ static void pool_free(PTE *pt)
 
 static UW kernel_cr3;
 static UW task_cr3_table[PAGING_MAX_TASKS];
+static UW task_brk_table[PAGING_MAX_TASKS];   /* per-task heap end (brk) */
 
 /* ----------------------------------------------------------------- */
 /* paging_init                                                       */
@@ -80,6 +81,7 @@ void paging_init(void)
     /* Initialise pool and per-task table */
     for (i = 0; i < POOL_SIZE;         i++) pt_used[i]          = FALSE;
     for (i = 0; i < PAGING_MAX_TASKS;  i++) task_cr3_table[i]   = 0;
+    for (i = 0; i < PAGING_MAX_TASKS;  i++) task_brk_table[i]   = 0;
 
     /* Read current CR3 (= &pml4_table, set by start.S) */
     UW cr3;
@@ -134,11 +136,17 @@ UW paging_proc_create(void)
     }
 
     /*
-     * Grant ring-3 access to PD[2] (0x400000–0x5FFFFF):
-     *   - ELF text/data/bss loaded at 0x400000 (user.ld)
-     *   - User stack grows down from 0x600000 into 0x5F0000–0x5FFFFF
+     * Grant ring-3 access to PD[2..7] (0x400000–0xFFFFFF, 12 MB):
+     *   PD[2] 0x400000–0x5FFFFF  ELF code / data / BSS
+     *   PD[3] 0x600000–0x7FFFFF  heap
+     *   PD[4] 0x800000–0x9FFFFF  heap
+     *   PD[5] 0xA00000–0xBFFFFF  heap
+     *   PD[6] 0xC00000–0xDFFFFF  heap
+     *   PD[7] 0xE00000–0xFFFFFF  heap + user stack (top=0x1000000)
      */
-    proc_pd[2] = (PTE)(0x400000UL) | PTE_P | PTE_RW | PTE_US | PTE_PS;
+    for (INT pd_i = 2; pd_i <= 7; pd_i++)
+        proc_pd[pd_i] = (PTE)((UW)pd_i * 0x200000UL)
+                        | PTE_P | PTE_RW | PTE_US | PTE_PS;
 
     /* Wire up PDPT and PML4 with U/S=1 so the MMU can walk them */
     proc_pdpt[0] = (PTE)(UW)proc_pd   | PTE_P | PTE_RW | PTE_US;
@@ -182,3 +190,20 @@ UW paging_get_task_cr3(ID tid)
 }
 
 UW paging_get_kernel_cr3(void) { return kernel_cr3; }
+
+/* ----------------------------------------------------------------- */
+/* Per-task brk (heap end) registry — used by SYS_BRK (Linux #45)  */
+/* ----------------------------------------------------------------- */
+
+void paging_set_task_brk(ID tid, UW brk)
+{
+    if (tid >= 1 && tid < PAGING_MAX_TASKS)
+        task_brk_table[tid] = brk;
+}
+
+UW paging_get_task_brk(ID tid)
+{
+    if (tid >= 1 && tid < PAGING_MAX_TASKS)
+        return task_brk_table[tid];
+    return 0;
+}
