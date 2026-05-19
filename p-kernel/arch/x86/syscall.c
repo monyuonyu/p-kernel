@@ -605,18 +605,30 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     /* writev: Linux=#146 — scatter write over iovec array */
     case 146: {
         typedef struct { void *base; unsigned int len; } iovec_t;
-        INT      fd     = (INT)arg0;
-        iovec_t *iov    = (iovec_t *)(UW)arg1;
-        INT      iovcnt = (INT)arg2;
+        INT      posix_fd = (INT)arg0;
+        iovec_t *iov      = (iovec_t *)(UW)arg1;
+        INT      iovcnt   = (INT)arg2;
         W total = 0;
         for (INT i = 0; i < iovcnt; i++) {
             if (!iov[i].base || iov[i].len == 0) continue;
             W r;
-            if (fd == 1 || fd == 2) {
+            if (IS_STD_FD(posix_fd)) {
                 sio_send_frame((const UB *)iov[i].base, (INT)iov[i].len);
                 r = (W)iov[i].len;
+            } else if (IS_PIPE_FD(posix_fd) && IS_PIPE_WRITE(posix_fd)) {
+                INT pi = PIPE_IDX(posix_fd);
+                if (!pipes[pi].in_use) return total > 0 ? total : -1;
+                r = 0;
+                const UB *b = (const UB *)iov[i].base;
+                for (UW k = 0; k < iov[i].len; k++) {
+                    if (tk_wai_sem(pipes[pi].sem_space, 1, TMO_FEVR) != E_OK) break;
+                    pipes[pi].buf[pipes[pi].wptr++] = b[k];
+                    tk_sig_sem(pipes[pi].sem_data, 1);
+                    r++;
+                }
             } else {
-                r = (W)vfs_write(fd, iov[i].base, (UW)iov[i].len);
+                if (!vfs_ready) return total > 0 ? total : -1;
+                r = (W)vfs_write(TO_VFS_FD(posix_fd), iov[i].base, (UW)iov[i].len);
             }
             if (r < 0) return total > 0 ? total : r;
             total += r;
@@ -632,14 +644,17 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case 240:
         return 0;
 
-    /* set_thread_area: Linux=#243 — minimal TLS stub */
+    /* set_thread_area: Linux=#243 — wire musl TLS into GDT[8] */
     case 243:
-        /* musl uses this to set GS-based TLS.
-         * For single-threaded programs, return 0 (success).
-         * The struct user_desc entry_number field must be set. */
+        /* user_desc layout: [0]=entry_number [1]=base_addr [2]=limit [3]=flags
+         * musl passes the TLS block address in base_addr, then loads GS with
+         * (entry_number*8)|3.  We use GDT slot 8 (selector 0x43) which is
+         * already set up; just update the base to musl's TLS block address. */
         if (arg0) {
             unsigned int *ud = (unsigned int *)(UW)arg0;
-            ud[0] = 6;   /* entry_number = GDT index 6 */
+            UW base = (UW)ud[1];
+            if (base) gdt_set_user_tls(base);   /* update GDT[8] base */
+            ud[0] = 8;   /* entry_number = 8 → GS = (8*8)|3 = 0x43 */
         }
         return 0;
 

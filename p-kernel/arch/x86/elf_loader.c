@@ -113,7 +113,92 @@ static void print_hex(UW v)
 /* Public API                                                        */
 /* ----------------------------------------------------------------- */
 
-ID elf_exec(const char *path)
+/* ----------------------------------------------------------------- */
+/* argv builder — writes argc/argv/envp/auxv onto the user stack     */
+/* ----------------------------------------------------------------- */
+
+#define ARGV_MAX     32
+#define ARGV_STRBUF  512   /* total string storage on stack */
+
+/*
+ * Parse cmdline into tokens and lay out a Linux-style initial stack
+ * frame.  Returns the new ESP (pointing to argc).
+ *
+ * Stack layout built here (grows downward, ESP = lowest address):
+ *   [esp+0]            argc
+ *   [esp+4..4*argc+4]  argv[0..argc-1] pointers
+ *   [esp+4*(argc+1)]   NULL  (end of argv)
+ *   [esp+4*(argc+2)]   NULL  (end of envp)
+ *   [esp+4*(argc+3)]   0     (AT_NULL type)
+ *   [esp+4*(argc+4)]   0     (AT_NULL value)
+ *   ... (strings stored above, high addresses)
+ */
+static UW build_argv_stack(const char *cmdline, UW stack_top)
+{
+    /* ---- tokenise cmdline ---- */
+    static char strbuf[ARGV_STRBUF];
+    const char *toks[ARGV_MAX];
+    UB  tlen[ARGV_MAX];
+    INT argc = 0;
+
+    INT spos = 0;
+    const char *p = cmdline ? cmdline : "";
+    while (*p && argc < ARGV_MAX) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *start = p;
+        while (*p && *p != ' ') p++;
+        INT l = (INT)(p - start);
+        if (l > 127) l = 127;
+        if (spos + l + 1 > ARGV_STRBUF) break;
+        for (INT k = 0; k < l; k++) strbuf[spos + k] = start[k];
+        strbuf[spos + l] = '\0';
+        toks[argc] = strbuf + spos;
+        tlen[argc] = (UB)l;
+        argc++;
+        spos += l + 1;
+    }
+
+    /* ---- lay out strings starting just below stack_top ---- */
+    UW sp = stack_top;
+
+    /* Copy strings from high to low address */
+    UW str_addrs[ARGV_MAX];
+    for (INT i = argc - 1; i >= 0; i--) {
+        INT l = tlen[i] + 1;           /* include NUL */
+        sp -= (UW)l;
+        sp &= ~3UL;                     /* 4-byte align */
+        UB *dst = (UB *)sp;
+        for (INT k = 0; k <= tlen[i]; k++) dst[k] = (UB)toks[i][k];
+        str_addrs[i] = sp;
+    }
+    sp &= ~15UL;    /* 16-byte align before pointer array */
+
+    /* ---- auxv AT_NULL (2 × UW = 8 bytes) ---- */
+    sp -= 4; *(UW *)sp = 0;  /* AT_NULL value */
+    sp -= 4; *(UW *)sp = 0;  /* AT_NULL type  */
+
+    /* ---- envp NULL terminator ---- */
+    sp -= 4; *(UW *)sp = 0;
+
+    /* ---- argv pointers (NULL terminator then pointers, reversed) ---- */
+    sp -= 4; *(UW *)sp = 0;             /* argv[argc] = NULL */
+    for (INT i = argc - 1; i >= 0; i--) {
+        sp -= 4;
+        *(UW *)sp = str_addrs[i];
+    }
+
+    /* ---- argc ---- */
+    sp -= 4; *(UW *)sp = (UW)argc;
+
+    return sp;  /* new ESP */
+}
+
+/* ----------------------------------------------------------------- */
+/* elf_exec                                                          */
+/* ----------------------------------------------------------------- */
+
+ID elf_exec(const char *path, const char *cmdline)
 {
     /* ---- Open file ------------------------------------------------ */
     INT fd = vfs_open(path);
@@ -216,28 +301,18 @@ ID elf_exec(const char *path)
     UW stack_top;
     if (ehdr.e_entry >= 0x08000000UL) {
         /* Linux-compatible binary (musl/glibc).
-         * Set up the initial stack that Linux puts in place before
-         * calling _start:  argc, argv[], NULL, envp[], NULL, auxv, AT_NULL.
-         * musl's _start reads these directly from ESP.
-         * We use argc=0 (no arguments) and empty envp/auxv. */
-        UW base = 0x0FFF000UL;    /* top of PD[7], within QEMU 128MB RAM */
-        /* Write initial stack frame (grows down) */
-        UW *sp = (UW *)(base - 32UL);
-        sp[0] = 0;   /* argc = 0          */
-        sp[1] = 0;   /* argv[0] = NULL    */
-        sp[2] = 0;   /* envp[0] = NULL    */
-        sp[3] = 0;   /* AT_NULL type = 0  */
-        sp[4] = 0;   /* AT_NULL value = 0 */
-        sp[5] = 0;   /* extra null        */
-        stack_top = (UW)sp;  /* ESP → argc */
+         * Build a proper Linux initial stack: argc, argv[], envp[], auxv.
+         * Strings and pointers are stored just below stack top (0x0FFF000).
+         * build_argv_stack() returns the new ESP (= address of argc). */
+        stack_top = build_argv_stack(cmdline, 0x0FFF000UL);
 
         /* Set up minimal TLS block for musl (gs:0 = self-pointer).
-         * Place it at 0x08060000 which is in PD[64] (mapped for ring-3).
-         * musl reads gs:0 to get pthread_self(); it must be a self-pointer. */
+         * Placed at 0x08060000 (PD[64], mapped for ring-3).
+         * musl overwrites this via set_thread_area once it allocates TLS. */
         UW tls_addr = 0x08060000UL;
         UW *tls = (UW *)tls_addr;
         tls[0] = tls_addr;   /* gs:0 = self-pointer (pthread_self) */
-        tls[1] = 0;          /* errno_val = 0 */
+        tls[1] = 0;
         tls[2] = 0;
         tls[3] = 0;
         gdt_set_user_tls(tls_addr);

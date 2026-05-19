@@ -1199,7 +1199,7 @@ static void cmd_exec(const char *arg)
 {
     while (*arg == ' ') arg++;
     if (*arg == '\0') {
-        sout("Usage: exec <file.elf>\r\n");
+        sout("Usage: exec <file.elf> [args...]\r\n");
         return;
     }
 
@@ -1210,13 +1210,23 @@ static void cmd_exec(const char *arg)
         return;
     }
 
+    /* Split first token (path) from the rest (args) */
+    char pathbuf[128];
+    const char *p = arg;
+    while (*p && *p != ' ') p++;
+    INT plen = (INT)(p - arg);
+    if (plen >= (INT)sizeof(pathbuf)) plen = (INT)sizeof(pathbuf) - 1;
+    for (INT i = 0; i < plen; i++) pathbuf[i] = arg[i];
+    pathbuf[plen] = '\0';
+
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
     sout("[exec] loading: "); sout(arg); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 
     stdin_activate();
 
-    ID tid = elf_exec(arg);
+    /* Pass full command line as cmdline (elf_loader builds argc/argv) */
+    ID tid = elf_exec(pathbuf, arg);
     if (tid < E_OK) {
         stdin_deactivate();
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
@@ -1279,7 +1289,7 @@ static void cmd_spawn(const char *arg)
     sout("[spawn] loading: "); sout(arg); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 
-    ID tid = elf_exec(arg);
+    ID tid = elf_exec(arg, arg);
     if (tid < E_OK) {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
         sout("[spawn] failed\r\n");
@@ -1312,7 +1322,7 @@ static void cmd_guard(const char *arg)
     sout("[guard] loading: "); sout(arg); sout("\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 
-    ID tid = elf_exec(arg);
+    ID tid = elf_exec(arg, arg);
     if (tid < E_OK) {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
         sout("[guard] exec failed\r\n");
@@ -1484,7 +1494,7 @@ static void run_initrc(void)
             sout("[init.rc] guard: ");
             sout((const char *)path);
             sout("\r\n");
-            ID tid = elf_exec((const char *)path);
+            ID tid = elf_exec((const char *)path, (const char *)path);
             if (tid < E_OK) {
                 sout("[init.rc] guard: exec failed\r\n");
             } else {
@@ -1502,7 +1512,7 @@ static void run_initrc(void)
             sout("[init.rc] spawn: ");
             sout((const char *)path);
             sout("\r\n");
-            ID tid = elf_exec((const char *)path);
+            ID tid = elf_exec((const char *)path, (const char *)path);
             if (tid < E_OK) {
                 sout("[init.rc] spawn failed\r\n");
             } else {
@@ -1520,7 +1530,7 @@ static void run_initrc(void)
             sout("\r\n");
 
             stdin_activate();
-            ID tid = elf_exec((const char *)path);
+            ID tid = elf_exec((const char *)path, (const char *)path);
             if (tid < E_OK) {
                 stdin_deactivate();
                 sout("[init.rc] exec failed\r\n");

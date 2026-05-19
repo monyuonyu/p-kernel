@@ -291,7 +291,7 @@ void dproc_on_node_dead(UB dead_node)
             dp_puts("\r\n");
 
             /* ELF を自ノードで再起動 (daemon mode: stdin 不接続) */
-            ID new_tid = elf_exec(e.path);
+            ID new_tid = elf_exec(e.path, e.path);
             if (new_tid < E_OK) {
                 dp_puts("[dproc] re-exec failed: ");
                 dp_puts(e.path);

@@ -277,7 +277,7 @@ void heal_elf_task(INT stacd, void *exinf)
 
                 tk_dly_tsk(500);   /* 短い冷却時間 */
 
-                ID new_tid = elf_exec(elf_guards[i].path);
+                ID new_tid = elf_exec(elf_guards[i].path, elf_guards[i].path);
                 if (new_tid >= E_OK) {
                     elf_guards[i].tid = new_tid;
                     dproc_register(elf_guards[i].path, new_tid);
