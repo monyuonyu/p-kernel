@@ -23,7 +23,7 @@
 #include "paging.h"
 #include <tmonitor.h>
 
-void user_exec(UW entry, UW ustack_top)
+void user_exec(UW entry, UW ustack_top, UW gs_sel)
 {
     /*
      * Set TSS.RSP0 to the TOP of this task's kernel stack.
@@ -57,6 +57,7 @@ void user_exec(UW entry, UW ustack_top)
         "movw %%ax, %%ds        \n"
         "movw %%ax, %%es        \n"
         "movw %%ax, %%fs        \n"
+        "movl %4, %%eax         \n"   /* GS = gs_sel (USER_DS or TLS) */
         "movw %%ax, %%gs        \n"
         /* Build IRET frame (grows toward lower addresses) */
         "pushl %0               \n"   /* SS      = USER_DS */
@@ -68,7 +69,8 @@ void user_exec(UW entry, UW ustack_top)
         "iret                   \n"   /* switch to ring-3 */
         :
         : "r"((UW)USER_DS), "r"(ustack_top),
-          "r"((UW)USER_CS), "r"(entry)
+          "r"((UW)USER_CS), "r"(entry),
+          "r"(gs_sel)        /* %4 */
         : "memory", "eax"
     );
 

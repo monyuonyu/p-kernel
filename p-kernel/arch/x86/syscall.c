@@ -241,6 +241,11 @@ static void sout_num(W n)
 /* ----------------------------------------------------------------- */
 W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 {
+    /* Linux set_robust_list (#258 = 0x102) conflicts with p-kernel
+     * SYS_TK_EXT_TSK (0x102).  Stub here to prevent musl's libc init
+     * from accidentally triggering tk_ext_tsk() and killing the task. */
+    if (nr == 258) return 0;
+
     switch (nr) {
 
     /* ------------------------------------------------------------- */
@@ -463,6 +468,203 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     /* ------------------------------------------------------------- */
+    /* Linux i386 syscall number aliases                             */
+    /* These allow musl-compiled static binaries to run on p-kernel */
+    /* ------------------------------------------------------------- */
+
+    /* lseek: Linux=#19, p-kernel=7 */
+    case 19: {
+        INT fd = (INT)arg0;
+        W   off = arg1;
+        INT r = vfs_seek(fd, (INT)off);
+        return (r < 0) ? -1 : off;
+    }
+
+    /* access: Linux=#33 — check if file is accessible */
+    case 33: {
+        INT fd = vfs_open((const char *)(UW)arg0);
+        if (fd < 0) return -2;   /* ENOENT */
+        vfs_close(fd);
+        return 0;
+    }
+
+    /* rename: Linux=#38, p-kernel=10 */
+    case 38:
+        return (W)vfs_rename((const char *)(UW)arg0,
+                             (const char *)(UW)arg1);
+
+    /* mkdir: Linux=#39, p-kernel=8 */
+    case 39:
+        return (W)vfs_mkdir((const char *)(UW)arg0);
+
+    /* rmdir: Linux=#40 — stub (not implemented) */
+    case 40:
+        return -1;
+
+    /* munmap: Linux=#91 — ignore (we never unmap) */
+    case 91:
+        return 0;
+
+    /* readlink: Linux=#85 — no symlinks */
+    case 85:
+        return -22;   /* EINVAL */
+
+    /* ioctl: Linux=#54 — stub for terminal detection */
+    case 54:
+        return -25;   /* ENOTTY — not a terminal */
+
+    /* mmap: Linux=#90 — return ENOMEM (force brk-only malloc) */
+    case 90:
+        return -12;   /* ENOMEM */
+
+    /* mmap2: Linux=#192 — anonymous-only via brk extension */
+    case 192: {
+        /* We ignore flags and treat all mmap2 as anonymous MAP_PRIVATE */
+        UW size  = ((UW)arg1 + 0xFFFUL) & ~0xFFFUL;   /* page-align */
+        ID tid   = knl_ctxtsk->tskid;
+        UW cur   = paging_get_task_brk(tid);
+        UW next  = cur + size;
+        /* Upper limit: end of PD[71] (0x09000000) which is the top of the
+         * Linux-ELF mapped region; native ELF heap is well below this. */
+        if (size == 0 || next > 0x09000000UL)
+            return -12;   /* ENOMEM */
+        paging_set_task_brk(tid, next);
+        return (W)cur;   /* pointer to new mapping */
+    }
+
+    /* kstat64 helper macro — fill Linux stat64 struct from path or fd */
+    /* fstat: Linux=#108 */
+    case 108:
+    /* fstat64: Linux=#197 */
+    case 197: {
+        typedef struct {
+            unsigned long long st_dev; unsigned char _p0[4];
+            unsigned long __ino; unsigned int st_mode; unsigned int st_nlink;
+            unsigned int st_uid; unsigned int st_gid;
+            unsigned long long st_rdev; unsigned char _p3[4];
+            long long st_size; unsigned long st_blksize;
+            unsigned long long st_blocks;
+            unsigned long st_atime; unsigned long _an;
+            unsigned long st_mtime; unsigned long _mn;
+            unsigned long st_ctime; unsigned long _cn;
+            unsigned long long st_ino;
+        } kstat64;
+        kstat64 *ks = (kstat64 *)(UW)arg1;
+        if (!ks) return -14;
+        INT posix_fd = (INT)arg0;
+        UW sz = 0;
+        unsigned int mode = 0100644; /* S_IFREG | 0644 */
+        if (IS_STD_FD(posix_fd)) {
+            mode = 020000 | 0666; /* S_IFCHR */
+        } else if (!IS_PIPE_FD(posix_fd) && vfs_ready) {
+            sz = (UW)vfs_fsize(TO_VFS_FD(posix_fd));
+        }
+        ks->st_dev = 1; ks->__ino = 1; ks->st_ino = 1;
+        ks->st_mode = mode; ks->st_nlink = 1;
+        ks->st_uid = 0; ks->st_gid = 0; ks->st_rdev = 0;
+        ks->st_size = (long long)sz; ks->st_blksize = 512;
+        ks->st_blocks = (unsigned long long)((sz + 511) / 512);
+        ks->st_atime = ks->_an = ks->st_mtime = ks->_mn =
+        ks->st_ctime = ks->_cn = 0;
+        return 0;
+    }
+
+    /* lstat: Linux=#107 — same as stat (no symlinks) */
+    case 107:
+    /* stat64: Linux=#195, lstat64=#196 */
+    case 195:
+    case 196: {
+        typedef struct {
+            unsigned long long st_dev; unsigned char _p0[4];
+            unsigned long __ino; unsigned int st_mode; unsigned int st_nlink;
+            unsigned int st_uid; unsigned int st_gid;
+            unsigned long long st_rdev; unsigned char _p3[4];
+            long long st_size; unsigned long st_blksize;
+            unsigned long long st_blocks;
+            unsigned long st_atime; unsigned long _an;
+            unsigned long st_mtime; unsigned long _mn;
+            unsigned long st_ctime; unsigned long _cn;
+            unsigned long long st_ino;
+        } kstat64;
+        kstat64 *ks = (kstat64 *)(UW)arg1;
+        const char *path = (const char *)(UW)arg0;
+        if (!ks || !path || !vfs_ready) return -2;
+        UW sz; BOOL is_dir;
+        if (vfs_stat_path(path, &sz, &is_dir) < 0) return -2;
+        ks->st_dev = 1; ks->__ino = 1; ks->st_ino = 1;
+        ks->st_mode = is_dir ? (040000|0755) : (0100644);
+        ks->st_nlink = 1; ks->st_uid = 0; ks->st_gid = 0; ks->st_rdev = 0;
+        ks->st_size = is_dir ? 0 : (long long)sz;
+        ks->st_blksize = 512;
+        ks->st_blocks = is_dir ? 0 : (unsigned long long)((sz+511)/512);
+        ks->st_atime = ks->_an = ks->st_mtime = ks->_mn =
+        ks->st_ctime = ks->_cn = 0;
+        return 0;
+    }
+
+    /* writev: Linux=#146 — scatter write over iovec array */
+    case 146: {
+        typedef struct { void *base; unsigned int len; } iovec_t;
+        INT      fd     = (INT)arg0;
+        iovec_t *iov    = (iovec_t *)(UW)arg1;
+        INT      iovcnt = (INT)arg2;
+        W total = 0;
+        for (INT i = 0; i < iovcnt; i++) {
+            if (!iov[i].base || iov[i].len == 0) continue;
+            W r;
+            if (fd == 1 || fd == 2) {
+                sio_send_frame((const UB *)iov[i].base, (INT)iov[i].len);
+                r = (W)iov[i].len;
+            } else {
+                r = (W)vfs_write(fd, iov[i].base, (UW)iov[i].len);
+            }
+            if (r < 0) return total > 0 ? total : r;
+            total += r;
+        }
+        return total;
+    }
+
+    /* poll: Linux=#168 — stub (no events, immediate timeout) */
+    case 168:
+        return 0;
+
+    /* futex: Linux=#240 — stub for single-threaded programs */
+    case 240:
+        return 0;
+
+    /* set_thread_area: Linux=#243 — minimal TLS stub */
+    case 243:
+        /* musl uses this to set GS-based TLS.
+         * For single-threaded programs, return 0 (success).
+         * The struct user_desc entry_number field must be set. */
+        if (arg0) {
+            unsigned int *ud = (unsigned int *)(UW)arg0;
+            ud[0] = 6;   /* entry_number = GDT index 6 */
+        }
+        return 0;
+
+    /* exit_group: Linux=#252 — same as SYS_EXIT */
+    case 252:
+        goto do_exit;
+
+    /* set_robust_list: Linux=#258 handled before switch() above */
+
+    /* getdents64: Linux=#220 — stub (return 0 = no entries) */
+    case 220:
+        return 0;
+
+    /* fcntl64: Linux=#221 — stub basic operations */
+    case 221:
+        /* F_GETFL=3: return O_RDWR */
+        if (arg1 == 3) return 2;
+        /* F_SETFL=4: ignore */
+        if (arg1 == 4) return 0;
+        return -22;   /* EINVAL */
+
+    /* NOTE: Linux unlink=#10 conflicts with p-kernel SYS_RENAME=#10.
+     * musl's hello world doesn't call unlink, so this is acceptable. */
+
+    /* ------------------------------------------------------------- */
     /* Linux-compatible brk (heap extension) — syscall #45          */
     /* Used by musl/libc malloc to grow the heap.                   */
     /* arg0 = requested new brk; 0 = query current brk.             */
@@ -477,15 +679,18 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
             /* Query */
             return (W)cur_brk;
         }
-        /* Clamp to safe range: must be above USER_CODE_BASE and
-         * below USER_STACK_TOP minus a 64 KB guard */
-        if (new_brk < 0x500000UL || new_brk > (USER_STACK_TOP - 0x10000UL)) {
+        /* Clamp to safe range.
+         * Native ELFs: heap in 0x500000–0xFFFFFF (PD[2..7]).
+         * Linux ELFs:  heap in 0x08050000–0x08FFFFFF (PD[64..71]).
+         * Upper bound = end of PD[71] = 0x09000000. */
+        if (new_brk < 0x400000UL || new_brk > 0x09000000UL) {
             return (W)cur_brk;   /* refuse — return current brk */
         }
         paging_set_task_brk(tid, new_brk);
         return (W)new_brk;
     }
 
+    do_exit:
     case SYS_EXIT: {
         /* arg0 = exit code */
         tm_putstring((UB *)"\r\n[proc] exited (code=");

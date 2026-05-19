@@ -220,6 +220,8 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 # 実行ターゲット
 # -------------------------------------------------------------------
 NETDEV  = -netdev user,id=n0 -device rtl8139,netdev=n0
+# 256 MB: Linux ELFs load at 0x08048000 which is above the 128 MB default
+QEMU_MEM = -m 256
 
 # Distributed two-node setup (QEMU UDP multicast = virtual Ethernet hub)
 # Run in two separate terminals: make run-node0, then make run-node1
@@ -280,29 +282,29 @@ $(DISK_IMG): $(TARGET) kernel.elf
 disk: $(DISK_IMG)
 
 run: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 $(NETDEV)
 
 run-headless: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(NETDEV)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(NETDEV)
 
 run-disk: $(TARGET) $(DISK_IMG)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
 
 # ディスク + ネットワーク (RTL8139 QEMU user-net 10.0.2.0/24)
 # TCP/UDP サンプル (18_http_get, 17_net_infer) を動かす場合に使用
 run-disk-net: $(TARGET) $(DISK_IMG)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NETDEV)
 
 run-nonet: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
 
 run-log: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial file:serial.log -cpu qemu64 $(NETDEV)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial file:serial.log -cpu qemu64 $(NETDEV)
 
 debug: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -s -S -cpu qemu64 $(NETDEV)
 
 # デバッグシンボル付きビルド (gdb用)
 TARGET_ELF = bootloader.elf
@@ -327,28 +329,28 @@ gdb-bare:
 SOLODEV = -netdev user,id=n0 -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
 
 run-solo: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(SOLODEV)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(SOLODEV)
 
 run-solo-disk: $(TARGET) $(DISK_IMG)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(SOLODEV)
 
 run-node0: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
 
 run-node1: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV1)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV1)
 
 run-node2: $(TARGET)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV2)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV2)
 
 # ディスク付き2ノードクラスタ (disk.img を事前にビルドしておくこと)
 run-node0-disk: $(TARGET) $(DISK_IMG)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NODEDEV0)
 
 run-node1-disk: $(TARGET) $(DISK_IMG)
-	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NODEDEV1)
 
 # -------------------------------------------------------------------
@@ -359,27 +361,27 @@ run-node1-disk: $(TARGET) $(DISK_IMG)
 # 別ターミナルで run-kloader-node0 を起動しておくとカーネルを受け取れる
 KLOADER_BOOT_MAC = 52:54:00:00:00:10
 run-kloader-boot: kloader.bin
-	qemu-system-x86_64 -kernel kloader.bin \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel kloader.bin \
 	    -serial stdio -cpu qemu64 \
 	    -netdev socket,id=n0,mcast=$(MCAST) \
 	    -device rtl8139,netdev=n0,mac=$(KLOADER_BOOT_MAC)
 
 run-kloader: kloader.bin $(DISK_IMG)
-	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 -display none \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel kloader.bin -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0
 
 # 3ノードクラスタ kloader 版
 # 事前に: cp disk.img node0.img && cp disk.img node1.img && cp disk.img node2.img
 run-kloader-node0: kloader.bin node0.img
-	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel kloader.bin -serial stdio -cpu qemu64 \
 	    -drive file=node0.img,format=raw,if=ide,index=0 $(NODEDEV0)
 
 run-kloader-node1: kloader.bin node1.img
-	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel kloader.bin -serial stdio -cpu qemu64 \
 	    -drive file=node1.img,format=raw,if=ide,index=0 $(NODEDEV1)
 
 run-kloader-node2: kloader.bin node2.img
-	qemu-system-x86_64 -kernel kloader.bin -serial stdio -cpu qemu64 \
+	qemu-system-x86_64 $(QEMU_MEM) -kernel kloader.bin -serial stdio -cpu qemu64 \
 	    -drive file=node2.img,format=raw,if=ide,index=0 $(NODEDEV2)
 
 # 旧来の単体テスト用ターゲット (boot/x86のみ)
@@ -387,7 +389,7 @@ run-32: $(TARGET)
 	qemu-system-i386 -kernel $(TARGET) -serial stdio -display none
 
 run-boot: $(TARGET)
-	qemu-system-x86_64 -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64 -display none
+	qemu-system-x86_64 $(QEMU_MEM) -drive format=raw,file=$(TARGET) -serial stdio -cpu qemu64 -display none
 
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) $(KLOADER_OBJS) kloader.bin kernel.elf serial.log

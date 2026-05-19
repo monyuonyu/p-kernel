@@ -24,4 +24,6 @@
  *
  * Does NOT return.
  */
-void user_exec(UW entry, UW ustack_top);
+/*   gs_sel — GS segment selector: USER_DS (0x2B) for p-kernel native,
+ *             USER_TLS_SEL (0x43) for Linux/musl programs. */
+void user_exec(UW entry, UW ustack_top, UW gs_sel);

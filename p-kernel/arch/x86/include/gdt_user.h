@@ -46,3 +46,8 @@ void gdt_init_userspace(void);
  * from user code finds a valid kernel stack.
  */
 void gdt_set_kernel_stack(UW esp0);
+
+/* Set GDT[8] base for user TLS (Linux musl programs).
+ * After this, GS=0x43 makes gs:0 read from base. */
+void gdt_set_user_tls(UW base);
+#define USER_TLS_SEL  0x43u   /* GDT[8] | RPL3 */

@@ -136,17 +136,31 @@ UW paging_proc_create(void)
     }
 
     /*
-     * Grant ring-3 access to PD[2..7] (0x400000–0xFFFFFF, 12 MB):
-     *   PD[2] 0x400000–0x5FFFFF  ELF code / data / BSS
-     *   PD[3] 0x600000–0x7FFFFF  heap
-     *   PD[4] 0x800000–0x9FFFFF  heap
-     *   PD[5] 0xA00000–0xBFFFFF  heap
-     *   PD[6] 0xC00000–0xDFFFFF  heap
-     *   PD[7] 0xE00000–0xFFFFFF  heap + user stack (top=0x1000000)
+     * Grant ring-3 access to two regions:
+     *
+     * Region A — p-kernel native ELFs (user.ld at 0x400000):
+     *   PD[2..7]  0x400000–0xFFFFFF   12 MB  code/BSS/heap/stack
+     *
+     * Region B — Linux-standard ELFs (musl/glibc load at 0x08048000):
+     *   PD[64..71] 0x08000000–0x08FFFFFF  16 MB  text/data/heap
+     *   PD[319]    0x27E00000–0x27FFFFFF  2 MB   Linux stack area
+     *
+     * With identity mapping (VA=PA), we just enable the huge-page
+     * entries in the process PD for both regions.
      */
+
+    /* Region A: p-kernel native (0x400000–0xFFFFFF) */
     for (INT pd_i = 2; pd_i <= 7; pd_i++)
         proc_pd[pd_i] = (PTE)((UW)pd_i * 0x200000UL)
                         | PTE_P | PTE_RW | PTE_US | PTE_PS;
+
+    /* Region B: Linux standard load address (0x08000000–0x08FFFFFF) */
+    for (INT pd_i = 64; pd_i <= 71; pd_i++)
+        proc_pd[pd_i] = (PTE)((UW)pd_i * 0x200000UL)
+                        | PTE_P | PTE_RW | PTE_US | PTE_PS;
+
+    /* Note: Linux stack uses PD[7] (0xE00000-0xFFFFFF) which is already
+     * mapped in Region A above.  No separate stack mapping needed. */
 
     /* Wire up PDPT and PML4 with U/S=1 so the MMU can walk them */
     proc_pdpt[0] = (PTE)(UW)proc_pd   | PTE_P | PTE_RW | PTE_US;

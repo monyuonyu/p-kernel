@@ -14,6 +14,7 @@
 #include "elf_loader.h"
 #include "vfs.h"
 #include "gdt_user.h"
+#include "paging.h"
 #include "userspace.h"
 #include "paging.h"
 #include <tmonitor.h>
@@ -75,6 +76,7 @@ typedef struct __attribute__((packed)) {
 typedef struct {
     UW entry;
     UW stack_top;
+    UW gs_sel;    /* GS selector: USER_DS or USER_TLS_SEL */
 } UserStartArg;
 
 static UserStartArg _uarg;   /* single user task (no re-entrancy) */
@@ -87,7 +89,7 @@ static void user_launcher(INT stacd, void *exinf)
 {
     (void)stacd;
     const UserStartArg *a = (const UserStartArg *)exinf;
-    user_exec(a->entry, a->stack_top);  /* does not return */
+    user_exec(a->entry, a->stack_top, a->gs_sel);  /* does not return */
     tk_ext_tsk();
 }
 
@@ -209,16 +211,45 @@ ID elf_exec(const char *path)
     }
 
     /* ---- Prepare user stack --------------------------------------- */
-    /*
-     * USER_STACK_TOP (0x600000) is the initial ESP (stack grows down).
-     * The stack occupies the top of PD[2] (0x400000–0x5FFFFF) which
-     * is mapped U/S=1 by paging_proc_create().
-     */
-    UW stack_top = USER_STACK_TOP;   /* already 16-byte aligned */
+    /* Linux-standard ELFs load at 0x08048000; use a high stack area.
+     * p-kernel native ELFs load at 0x400000; use USER_STACK_TOP.    */
+    UW stack_top;
+    if (ehdr.e_entry >= 0x08000000UL) {
+        /* Linux-compatible binary (musl/glibc).
+         * Set up the initial stack that Linux puts in place before
+         * calling _start:  argc, argv[], NULL, envp[], NULL, auxv, AT_NULL.
+         * musl's _start reads these directly from ESP.
+         * We use argc=0 (no arguments) and empty envp/auxv. */
+        UW base = 0x0FFF000UL;    /* top of PD[7], within QEMU 128MB RAM */
+        /* Write initial stack frame (grows down) */
+        UW *sp = (UW *)(base - 32UL);
+        sp[0] = 0;   /* argc = 0          */
+        sp[1] = 0;   /* argv[0] = NULL    */
+        sp[2] = 0;   /* envp[0] = NULL    */
+        sp[3] = 0;   /* AT_NULL type = 0  */
+        sp[4] = 0;   /* AT_NULL value = 0 */
+        sp[5] = 0;   /* extra null        */
+        stack_top = (UW)sp;  /* ESP → argc */
+
+        /* Set up minimal TLS block for musl (gs:0 = self-pointer).
+         * Place it at 0x08060000 which is in PD[64] (mapped for ring-3).
+         * musl reads gs:0 to get pthread_self(); it must be a self-pointer. */
+        UW tls_addr = 0x08060000UL;
+        UW *tls = (UW *)tls_addr;
+        tls[0] = tls_addr;   /* gs:0 = self-pointer (pthread_self) */
+        tls[1] = 0;          /* errno_val = 0 */
+        tls[2] = 0;
+        tls[3] = 0;
+        gdt_set_user_tls(tls_addr);
+    } else {
+        stack_top = USER_STACK_TOP;
+    }
 
     /* ---- Create ring-0 launcher task ------------------------------ */
     _uarg.entry     = ehdr.e_entry;
     _uarg.stack_top = stack_top;
+    _uarg.gs_sel    = (ehdr.e_entry >= 0x08000000UL)
+                      ? USER_TLS_SEL : (UW)USER_DS;
 
     T_CTSK ct;
     ct.exinf   = (void *)&_uarg;

@@ -151,9 +151,13 @@ void gdt_init_userspace(void)
     /* Upper half of 16-byte TSS descriptor: base[63:32] = 0 */
     write_desc(7, 0, 0);
 
-    /* 5. Reload GDT covering 8 descriptors (slots 0..7), limit = 63 */
+    /* 5. Reload GDT covering 9 descriptors (slots 0..8), limit = 71
+     *    Slot 8 (0x40 | RPL3 = 0x43) is reserved for user TLS.
+     *    gdt_set_user_tls() fills it at process-load time. */
+    write_desc(8, 0, 0);   /* placeholder — filled by gdt_set_user_tls() */
+
     struct __attribute__((packed)) { UH limit; UW base; } new_gdtr;
-    new_gdtr.limit = 8 * 8 - 1;  /* 63 */
+    new_gdtr.limit = 9 * 8 - 1;  /* 71 */
     new_gdtr.base  = gdt_base;
     asm volatile("lgdt %0" : : "m"(new_gdtr));
 
@@ -167,6 +171,23 @@ void gdt_init_userspace(void)
 
     tm_putstring((UB *)"[gdt]  ring3 segments + 64-bit TSS loaded\r\n");
 }
+
+/* ----------------------------------------------------------------- */
+/* User TLS segment (GDT slot 8, selector 0x40, RPL3 = 0x43)        */
+/* Called from elf_loader.c when loading a Linux-ABI ELF.            */
+/* Sets the segment base so that gs:0 returns the TLS block address. */
+/* ----------------------------------------------------------------- */
+
+void gdt_set_user_tls(UW base)
+{
+    /* 32-bit data segment, DPL=3, base=base, limit=4GB (G=1) */
+    write_desc(8,
+        desc_lo(base, 0xFFFFF),
+        desc_hi(base, 0xFFFFF, 0xF2, 0xC));
+    /* No lgdt needed — we only changed content, not the limit */
+}
+
+#define USER_TLS_SEL  0x43u   /* GDT[8] | RPL3 */
 
 void gdt_set_kernel_stack(UW esp0)
 {
