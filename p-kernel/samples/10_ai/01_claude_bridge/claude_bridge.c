@@ -47,6 +47,8 @@
 #define READY_PATH    "/user/ready"
 #define POLL_MS       500    /* prompt.txt のポーリング間隔 */
 
+static void handle_code_block(const char *resp, int rlen);
+
 /* ------------------------------------------------------------------ */
 /* 文字列ヘルパー                                                      */
 /* ------------------------------------------------------------------ */
@@ -123,8 +125,17 @@ static int call_claude(const char *prompt, char *resp_out, int resp_max)
     char clen_str[12];
     cb_itoa(plen, clen_str, (int)sizeof(clen_str));
 
+    /* evolve リクエストか chat リクエストかでエンドポイントを切り替え */
+    int is_evolve = (cb_strlen(prompt) > 15 &&
+                     prompt[0]=='E' && prompt[1]=='V' && prompt[2]=='O' &&
+                     prompt[3]=='L' && prompt[4]=='V' && prompt[5]=='E');
+    const char *endpoint = is_evolve ? "/v1/evolve" : "/v1/chat";
+
     /* ヘッダ送信 */
-    const char *hdr1 = "POST /v1/chat HTTP/1.0\r\nHost: 10.0.2.2\r\nContent-Type: text/plain\r\nContent-Length: ";
+    const char *method = "POST ";
+    sys_tcp_write(h, method, cb_strlen(method));
+    sys_tcp_write(h, endpoint, cb_strlen(endpoint));
+    const char *hdr1 = " HTTP/1.0\r\nHost: 10.0.2.2\r\nContent-Type: text/plain\r\nContent-Length: ";
     sys_tcp_write(h, hdr1, cb_strlen(hdr1));
     sys_tcp_write(h, clen_str, cb_strlen(clen_str));
     const char *hdr2 = "\r\n\r\n";
@@ -207,6 +218,9 @@ void _start(void)
                 (int)sizeof(response));
         }
 
+        /* [CODE] ブロックを検出してコンパイル依頼を送る */
+        handle_code_block(response, cb_strlen(response));
+
         /* response.txt に書き込む */
         write_file(RESPONSE_PATH, response, cb_strlen(response));
         plib_puts("[bridge] response written\r\n");
@@ -214,4 +228,88 @@ void _start(void)
 
     /* ここには到達しない */
     sys_exit(0);
+}
+
+/* ------------------------------------------------------------------ */
+/* [CODE] ブロック検出 → /v1/compile → /tmp/gen.elf に保存           */
+/* ------------------------------------------------------------------ */
+
+static void handle_code_block(const char *resp, int rlen)
+{
+    /* [CODE で始まるブロックを探す */
+    const char *ctag  = "[CODE";
+    const char *etag  = "[/CODE]";
+    int ctlen = 5, etlen = 7;
+
+    for (int i = 0; i < rlen - ctlen; i++) {
+        int m = 1;
+        for (int j = 0; j < ctlen; j++) if (resp[i+j] != ctag[j]) { m = 0; break; }
+        if (!m) continue;
+
+        /* ] を探してコード開始位置へ */
+        int start = i + ctlen;
+        while (start < rlen && resp[start] != ']') start++;
+        if (start >= rlen) continue;
+        start++;
+        if (start < rlen && resp[start] == '\n') start++;
+
+        /* [/CODE] を探す */
+        int end = start;
+        while (end < rlen - etlen) {
+            int em = 1;
+            for (int j = 0; j < etlen; j++) if (resp[end+j] != etag[j]) { em = 0; break; }
+            if (em) break;
+            end++;
+        }
+        if (end >= rlen - etlen) continue;
+
+        int codelen = end - start;
+        if (codelen <= 0 || codelen > 4096) continue;
+
+        plib_puts("[bridge] [CODE] block found, sending to /v1/compile...\r\n");
+
+        /* /v1/compile に POST */
+        int h = sys_tcp_connect(PROXY_IP, PROXY_PORT, CONN_TMO);
+        if (h < 0) { plib_puts("[bridge] compile connect failed\r\n"); return; }
+
+        char clen_str[12];
+        cb_itoa(codelen, clen_str, (int)sizeof(clen_str));
+
+        const char *ch1 = "POST /v1/compile HTTP/1.0\r\nHost: 10.0.2.2\r\nContent-Type: text/plain\r\nContent-Length: ";
+        sys_tcp_write(h, ch1, cb_strlen(ch1));
+        sys_tcp_write(h, clen_str, cb_strlen(clen_str));
+        sys_tcp_write(h, "\r\n\r\n", 4);
+        sys_tcp_write(h, resp + start, (unsigned int)codelen);
+
+        /* ELF レスポンスを受け取る */
+        static char elf_buf[65536];
+        int total = 0, n;
+        while (total < (int)sizeof(elf_buf) - 1 &&
+               (n = sys_tcp_read(h, elf_buf + total,
+                                 (int)sizeof(elf_buf) - 1 - total, 30000)) > 0)
+            total += n;
+        sys_tcp_close(h);
+
+        if (total < 10) { plib_puts("[bridge] compile: empty or error response\r\n"); return; }
+
+        /* HTTP ヘッダをスキップ */
+        int body_off = skip_headers(elf_buf, total);
+        if (body_off < 0) body_off = 0;
+        int elflen = total - body_off;
+
+        /* ELFマジック確認 (0x7f 'E' 'L' 'F') */
+        const char *elfdata = elf_buf + body_off;
+        if (elflen < 4 || elfdata[0] != 0x7f || elfdata[1] != 'E' ||
+            elfdata[2] != 'L' || elfdata[3] != 'F') {
+            plib_puts("[bridge] compile: not a valid ELF\r\n");
+            return;
+        }
+
+        /* /tmp/gen.elf に保存 */
+        sys_mkdir("/tmp");
+        write_file("/tmp/gen.elf", elfdata, elflen);
+        plib_puts("[bridge] compiled ELF saved to /tmp/gen.elf\r\n");
+        plib_puts("[bridge] -> exec /tmp/gen.elf で実行できます\r\n");
+        return;
+    }
 }

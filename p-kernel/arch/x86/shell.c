@@ -202,6 +202,7 @@ static void cmd_help(void)
     sout("  memstat                - 記憶ストア統計表示\r\n");
     sout("  chatstat               - チャット統計表示\r\n");
     sout("  spawn claude_bridge.elf - Claude API ブリッジ起動\r\n");
+    sout("  evolve                 - AI自律進化: 状態収集→Claude分析→改善実行\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("Phase 10 (Raft / MoE / 自己増殖):\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -820,6 +821,228 @@ static void cmd_aistat(void)
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     ai_stats_print();
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+}
+
+/* ------------------------------------------------------------------ */
+/* Self-Evolution Loop (Phase 12)                                      */
+/* Claude API を通じてカーネル自身が状態を分析・改善コマンドを実行   */
+/* ------------------------------------------------------------------ */
+
+static void execute(const char *cmd);  /* forward decl for evolve */
+
+static void ev_app(char *buf, INT *pos, INT max, const char *s)
+{
+    while (*s && *pos < max - 1) buf[(*pos)++] = *s++;
+    buf[*pos] = '\0';
+}
+
+static void ev_app_dec(char *buf, INT *pos, INT max, UW v)
+{
+    char tmp[12]; INT i = 11; tmp[i] = '\0';
+    if (v == 0) { tmp[--i] = '0'; }
+    else { while (v > 0 && i > 0) { tmp[--i] = (char)('0' + v % 10); v /= 10; } }
+    ev_app(buf, pos, max, &tmp[i]);
+}
+
+/* [ANALYSIS] セクションを表示 */
+static void ev_print_analysis(const char *resp, INT rlen)
+{
+    const char *tag = "[ANALYSIS]";
+    INT tlen = 10;
+    for (INT i = 0; i < rlen - tlen; i++) {
+        INT match = 1;
+        for (INT j = 0; j < tlen; j++) if (resp[i+j] != tag[j]) { match = 0; break; }
+        if (!match) continue;
+        /* found — print until next [ or end */
+        vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+        sout("\r\n[Claude]\r\n");
+        i += tlen;
+        while (i < rlen && resp[i] != '[') {
+            if (resp[i] == '\n') sout("\r\n");
+            else { char sc[2] = {resp[i], 0}; sout(sc); }
+            i++;
+        }
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        sout("\r\n");
+        return;
+    }
+}
+
+/* [CMD] 行を解析して execute() に渡す */
+static void ev_exec_cmds(const char *resp, INT rlen)
+{
+    const char *ctag = "[CMD] ";
+    INT ctlen = 6;
+    static char cmdline[128];
+
+    /* 許可コマンドプレフィックス (危険操作を弾く) */
+    static const char *allowed[] = {
+        "exec ", "spawn ", "write ", "mkdir ", "persist", "raft", "ls", "ps", NULL
+    };
+
+    for (INT i = 0; i < rlen - ctlen; i++) {
+        INT match = 1;
+        for (INT j = 0; j < ctlen; j++) if (resp[i+j] != ctag[j]) { match = 0; break; }
+        if (!match) continue;
+        i += ctlen;
+
+        /* コマンド行を取り出す */
+        INT cpos = 0;
+        while (i < rlen && resp[i] != '\n' && resp[i] != '\r' && cpos < 127)
+            cmdline[cpos++] = resp[i++];
+        cmdline[cpos] = '\0';
+        if (cpos == 0) continue;
+
+        /* 許可チェック */
+        INT ok = 0;
+        for (INT k = 0; allowed[k]; k++) {
+            INT al = 0; while (allowed[k][al]) al++;
+            if (cpos >= al) {
+                INT m = 1;
+                for (INT x = 0; x < al; x++) if (cmdline[x] != allowed[k][x]) { m = 0; break; }
+                if (m) { ok = 1; break; }
+            }
+        }
+        if (!ok) {
+            sout("[evolve] blocked cmd: "); sout(cmdline); sout("\r\n");
+            continue;
+        }
+
+        sout("[evolve] exec cmd: "); sout(cmdline); sout("\r\n");
+        execute(cmdline);
+    }
+}
+
+/* [CODE filename.c]...[/CODE] を /user/code_gen.c に保存 */
+static void ev_save_code(const char *resp, INT rlen)
+{
+    if (!vfs_ready) return;
+    const char *otag = "[/CODE]";
+    INT otlen = 7;
+
+    /* [CODE で始まるブロックを探す */
+    for (INT i = 0; i < rlen - 6; i++) {
+        if (resp[i]!='[' || resp[i+1]!='C' || resp[i+2]!='O' ||
+            resp[i+3]!='D' || resp[i+4]!='E') continue;
+        /* ] まで読み飛ばしてコード開始位置を求める */
+        INT start = i + 5;
+        while (start < rlen && resp[start] != ']') start++;
+        if (start >= rlen) continue;
+        start++;  /* ] の次 */
+        if (start < rlen && resp[start] == '\n') start++;
+
+        /* [/CODE] を探す */
+        INT end = start;
+        while (end < rlen - otlen) {
+            INT m = 1;
+            for (INT j = 0; j < otlen; j++) if (resp[end+j] != otag[j]) { m = 0; break; }
+            if (m) break;
+            end++;
+        }
+        if (end >= rlen - otlen) continue;
+
+        /* コードを /user/code_gen.c に保存 */
+        vfs_mkdir("/user");
+        INT fd = vfs_create("/user/code_gen.c");
+        if (fd < 0) { sout("[evolve] failed to save code\r\n"); return; }
+        vfs_write(fd, resp + start, (UW)(end - start));
+        vfs_close(fd);
+        sout("[evolve] [CODE] saved to /user/code_gen.c\r\n");
+        sout("[evolve] cat /user/code_gen.c で確認 / claude_proxy.py --compile で自動コンパイル\r\n");
+        return;
+    }
+}
+
+static void cmd_evolve(void)
+{
+    if (!vfs_ready) { sout("[evolve] VFS not ready\r\n"); return; }
+    if (!chat_api_check()) {
+        sout("[evolve] Claude bridge が起動していません。\r\n");
+        sout("[evolve]   -> spawn claude_bridge.elf\r\n");
+        return;
+    }
+
+    sout("[evolve] カーネル状態を収集中...\r\n");
+
+    static char ep[1024];
+    INT pos = 0, max = (INT)sizeof(ep);
+
+    ev_app(ep, &pos, max,
+        "EVOLVE_REQUEST:\n"
+        "あなたは p-kernel の自律進化AIです。"
+        "以下のカーネル現在状態を分析し、改善提案を行ってください。\n\n");
+
+    /* Raft 状態 */
+    ev_app(ep, &pos, max, "RAFT:\n  ");
+    if (drpc_my_node != 0xFF) {
+        static const char *rnames[] = {"FOLLOWER","CANDIDATE","LEADER"};
+        UB r = raft_role();
+        ev_app(ep, &pos, max, "node="); ev_app_dec(ep, &pos, max, drpc_my_node);
+        ev_app(ep, &pos, max, " role="); ev_app(ep, &pos, max, r < 3 ? rnames[r] : "?");
+        ev_app(ep, &pos, max, " term="); ev_app_dec(ep, &pos, max, raft_term());
+    } else {
+        ev_app(ep, &pos, max, "single-node (distributed mode off)");
+    }
+    ev_app(ep, &pos, max, "\n");
+
+    /* メモリ */
+    IMPORT void *knl_lowmem_top; IMPORT void *knl_lowmem_limit;
+    UW avail = (UW)knl_lowmem_limit - (UW)knl_lowmem_top;
+    ev_app(ep, &pos, max, "MEMORY:\n  heap_avail=");
+    ev_app_dec(ep, &pos, max, avail / 1024); ev_app(ep, &pos, max, "KB\n");
+
+    /* タスク数 */
+    ev_app(ep, &pos, max, "TASKS:\n  count=");
+    UW tcnt = 0;
+    for (ID id = 1; id <= 32; id++) {
+        T_RTSK rtsk; if (tk_ref_tsk(id, &rtsk) == E_OK) tcnt++;
+    }
+    ev_app_dec(ep, &pos, max, tcnt); ev_app(ep, &pos, max, "\n");
+
+    /* AI 推論統計 */
+    ev_app(ep, &pos, max, "AI:\n  ");
+    ev_app(ep, &pos, max, "mlp+transformer ready\n");
+
+    ev_app(ep, &pos, max,
+        "\nINSTRUCTIONS:\n"
+        "返答フォーマット (必ずこの形式で):\n"
+        "[ANALYSIS]\n(分析 3行以内)\n\n"
+        "[CMD] exec /filename.elf    (←実行したいコマンド、省略可)\n"
+        "[CMD] write /path content\n\n"
+        "[CODE gen.c]\n"
+        "#include \"plibc.h\"\nvoid _start(void){...sys_exit(0);}\n"
+        "[/CODE]\n\n"
+        "許可: exec/spawn/write/mkdir/persist/raft/ls/ps のみ\n"
+        "保守的に。今回1つだけ提案してください。\n");
+
+    /* prompt.txt に書き込む */
+    vfs_mkdir("/user");
+    INT fd = vfs_create("/user/prompt.txt");
+    if (fd < 0) { sout("[evolve] prompt write failed\r\n"); return; }
+    vfs_write(fd, ep, (UW)pos);
+    vfs_close(fd);
+
+    sout("[evolve] Claude に送信中... (最大60秒)\r\n");
+
+    /* response.txt を待つ */
+    static char resp[2048];
+    INT waited = 0, rlen = 0;
+    while (waited < 60000) {
+        tk_dly_tsk(500);
+        waited += 500;
+        fd = vfs_open("/user/response.txt");
+        if (fd >= 0) {
+            rlen = vfs_read(fd, resp, (INT)sizeof(resp) - 1);
+            vfs_close(fd);
+            if (rlen > 0) { resp[rlen] = '\0'; vfs_unlink("/user/response.txt"); break; }
+        }
+    }
+
+    if (rlen <= 0) { sout("[evolve] タイムアウト\r\n"); return; }
+
+    ev_print_analysis(resp, rlen);
+    ev_exec_cmds(resp, rlen);
+    ev_save_code(resp, rlen);
 }
 
 /* Tiny labelled training dataset — covers all three classes */
@@ -1902,6 +2125,7 @@ static void execute(const char *cmd)
         { chat_run(0); return; }
     if (str_eq(cmd, "memstat"))    { mem_stat();  return; }
     if (str_eq(cmd, "chatstat"))   { chat_stat(); return; }
+    if (str_eq(cmd, "evolve"))     { cmd_evolve(); return; }
 
     if (cmd[0]=='r' && cmd[1]=='a' && cmd[2]=='f' && cmd[3]=='t')
         { raft_stat(); return; }
