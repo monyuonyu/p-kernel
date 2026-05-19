@@ -2,3 +2,10 @@ pinokernel/DefaultBuild/through_build.ccl
 pinokernel/DefaultBuild/through_build.lbk
 *.o
 *.bin
+
+# ビルド成果物
+p-kernel/boot/x86/kernel.elf
+p-kernel/boot/x86/pknl.raw
+p-kernel/boot/x86/disk.img
+p-kernel/boot/x86/serial.log
+test_results.log

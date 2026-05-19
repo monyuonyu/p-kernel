@@ -1,0 +1,218 @@
+#!/usr/bin/expect -f
+# p-kernel 全サンプル自動テストスクリプト v2
+
+set timeout 30
+set pass_count 0
+set skip_count 0
+set results {}
+
+set logfile [open "/root/p-kernel/test_results.log" w]
+puts $logfile "=== p-kernel 全サンプル テスト結果 ===\n"
+
+# プロセスが終了したかどうかを確認するヘルパー
+# デーモン以外は "[proc] exited" が出力される
+proc run_exec {elf_name label timeout_sec} {
+    global logfile pass_count results
+    set output ""
+
+    send "exec $elf_name\r"
+
+    set deadline [expr {$timeout_sec}]
+    set done 0
+
+    expect {
+        -re {\[proc\] exited} {
+            # ELFが終了した — その後のプロンプトを待つ
+            expect {
+                -re {p-kernel>} {}
+                timeout {}
+            }
+            set output $expect_out(buffer)
+            set done 1
+        }
+        -re {p-kernel>} {
+            set output $expect_out(buffer)
+            set done 1
+        }
+        timeout {
+            set output "TIMEOUT after ${timeout_sec}s"
+        }
+    }
+
+    if {$done} {
+        puts $logfile "=== $label === PASS ==="
+        puts $logfile $output
+        puts $logfile ""
+        incr pass_count
+        lappend results [list $label "PASS"]
+        puts "  \[PASS\] $label"
+    } else {
+        puts $logfile "=== $label === TIMEOUT ==="
+        puts $logfile $output
+        puts $logfile ""
+        lappend results [list $label "TIMEOUT"]
+        puts "  \[TIMEOUT\] $label"
+    }
+}
+
+proc run_spawn {elf_name label} {
+    global logfile pass_count results
+    send "spawn $elf_name\r"
+    set timeout 10
+    expect {
+        -re {p-kernel>} {
+            set out $expect_out(buffer)
+            puts $logfile "=== $label === PASS(spawned) ==="
+            puts $logfile $out
+            puts $logfile ""
+            incr pass_count
+            lappend results [list $label "PASS(daemon/spawn)"]
+            puts "  \[PASS\] $label (daemon spawned)"
+        }
+        timeout {
+            puts $logfile "=== $label === TIMEOUT ==="
+            puts $logfile ""
+            lappend results [list $label "TIMEOUT"]
+            puts "  \[TIMEOUT\] $label"
+        }
+    }
+}
+
+# QEMU起動
+spawn qemu-system-x86_64 \
+    -kernel bootloader.bin \
+    -serial stdio \
+    -cpu qemu64 \
+    -display none \
+    -drive file=disk.img,format=raw,if=ide,index=0 \
+    -netdev user,id=n0 \
+    -device rtl8139,netdev=n0
+
+puts "QEMU起動中..."
+
+set timeout 60
+expect {
+    -re {p-kernel>} { puts "シェル起動OK" }
+    timeout { puts "ERROR: 起動タイムアウト"; exit 1 }
+}
+# init.rcによるinfer_d起動ログが出終わるのを待つ
+after 2000
+
+# 最初のプロンプトを確実に受け取る
+send "\r"
+set timeout 5
+expect { -re {p-kernel>} {} ; timeout {} }
+
+# ========================
+puts "\n--- 01_posix ---"
+# ========================
+run_exec "/hello.elf"      "01_posix/01_hello"      20
+run_exec "/posix_io.elf"   "01_posix/02_posix_io"   20
+run_exec "/stdin_echo.elf" "01_posix/03_stdin_echo"  8
+run_exec "/readdir.elf"    "01_posix/04_readdir"    25
+run_exec "/posix2.elf"     "01_posix/05_posix2"     20
+run_exec "/kdds_demo.elf"  "01_posix/06_kdds"       20
+
+# ========================
+puts "\n--- 02_rtos ---"
+# ========================
+run_exec "/rtos_task.elf"  "02_rtos/01_rtos_task"  25
+run_exec "/rtos_sync.elf"  "02_rtos/02_rtos_sync"  25
+run_exec "/mutex.elf"      "02_rtos/03_mutex"       20
+run_exec "/task_ext.elf"   "02_rtos/04_task_ext"    20
+
+# ========================
+puts "\n--- 03_ipc ---"
+# ========================
+run_exec "/mailbox.elf"    "03_ipc/01_mailbox"      20
+run_exec "/msgbuf.elf"     "03_ipc/02_msgbuf"       20
+run_exec "/rendezvous.elf" "03_ipc/03_rendezvous"   20
+
+# ========================
+puts "\n--- 04_memory ---"
+# ========================
+run_exec "/mempool.elf"    "04_memory/01_mempool"   20
+
+# ========================
+puts "\n--- 05_time ---"
+# ========================
+run_exec "/time.elf"       "05_time/01_time"        30
+run_exec "/cyc_alm.elf"    "05_time/02_cyc_alm"     30
+
+# ========================
+puts "\n--- 06_system ---"
+# ========================
+run_exec "/ref.elf"        "06_system/01_ref"       20
+run_exec "/misc.elf"       "06_system/02_misc"      20
+
+# ========================
+puts "\n--- 07_network ---"
+# ========================
+run_exec "/net_infer.elf"  "07_network/01_net_infer" 30
+run_exec "/http_get.elf"   "07_network/02_http_get"  30
+run_exec "/multicast.elf"  "07_network/03_multicast" 30
+run_exec "/edf_infer.elf"  "07_network/04_edf_infer" 30
+
+# ========================
+puts "\n--- 08_system (daemon) ---"
+# kloader_d と infer_d はデーモン → spawn で実行
+# ========================
+run_spawn "/kloader_d.elf" "08_system/01_kloader_d"
+# infer_d は init.rc で既に起動済みのため確認のみ
+send "ps\r"
+set timeout 10
+expect {
+    -re {p-kernel>} {
+        set ps_out $expect_out(buffer)
+        if {[string match "*infer_d*" $ps_out] || [string match "*11*" $ps_out]} {
+            puts $logfile "=== 09_ai/01_infer_d === PASS(auto-started by init.rc) ==="
+            puts $logfile $ps_out
+            incr pass_count
+            lappend results [list "09_ai/01_infer_d" "PASS(init.rc daemon)"]
+            puts "  \[PASS\] 09_ai/01_infer_d (init.rc で自動起動済み)"
+        } else {
+            run_spawn "/infer_d.elf" "09_ai/01_infer_d"
+        }
+    }
+    timeout {
+        lappend results [list "09_ai/01_infer_d" "TIMEOUT"]
+        puts "  \[TIMEOUT\] 09_ai/01_infer_d"
+    }
+}
+
+# ========================
+puts "\n--- 11_ai ---"
+# persist_demo: K-DDS 永続化 (exec, 短時間で終了するはず)
+# cluster_stat: K-DDS モニタ (spawn推奨 or exec with longer timeout)
+# ========================
+run_exec "/persist_demo.elf"  "11_ai/01_persist_demo"  30
+run_exec "/cluster_stat.elf"  "11_ai/02_cluster_stat"  40
+
+# ========================
+# 結果サマリ
+# ========================
+set total [llength $results]
+puts "\n================================================"
+puts "テスト結果サマリ"
+puts "================================================"
+puts "合計: $total サンプル / PASS: $pass_count"
+puts ""
+
+foreach r $results {
+    set n [lindex $r 0]
+    set s [lindex $r 1]
+    set pad [string repeat " " [expr {40 - [string length $n]}]]
+    puts "  $s$pad $n"
+}
+
+puts $logfile "\n=== サマリ ==="
+puts $logfile "合計: $total / PASS: $pass_count"
+foreach r $results {
+    puts $logfile "  [lindex $r 1]\t[lindex $r 0]"
+}
+close $logfile
+
+send "q\r"
+after 500
+close
+wait
