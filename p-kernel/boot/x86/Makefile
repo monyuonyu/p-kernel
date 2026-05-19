@@ -322,6 +322,17 @@ gdb-bare:
 	gdb-multiarch -ex "set architecture i386:x86-64" \
 	              -ex "target remote localhost:1234"
 
+# ソロ Raft モード: user-net (インターネット到達可) + node 0 MAC
+# → drpc/raft が初期化され、単体でもリーダー選出が動作する
+SOLODEV = -netdev user,id=n0 -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
+
+run-solo: $(TARGET)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none $(SOLODEV)
+
+run-solo-disk: $(TARGET) $(DISK_IMG)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(SOLODEV)
+
 run-node0: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV0)
 
@@ -330,6 +341,15 @@ run-node1: $(TARGET)
 
 run-node2: $(TARGET)
 	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 $(NODEDEV2)
+
+# ディスク付き2ノードクラスタ (disk.img を事前にビルドしておくこと)
+run-node0-disk: $(TARGET) $(DISK_IMG)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NODEDEV0)
+
+run-node1-disk: $(TARGET) $(DISK_IMG)
+	qemu-system-x86_64 -kernel $(TARGET) -serial stdio -cpu qemu64 \
+	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NODEDEV1)
 
 # -------------------------------------------------------------------
 # kloader ベースの実行ターゲット
@@ -377,7 +397,8 @@ clean-disk:
 	rm -f $(DISK_IMG)
 
 .PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
-        run-node0 run-node1 run-node2 \
+        run-solo run-solo-disk \
+        run-node0 run-node1 run-node2 run-node0-disk run-node1-disk \
         run-kloader run-kloader-boot \
         run-kloader-node0 run-kloader-node1 run-kloader-node2 \
         debug-build gdb gdb-bare

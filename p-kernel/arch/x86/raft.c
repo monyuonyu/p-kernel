@@ -55,6 +55,17 @@ static UW   votes_got  = 0;      /* 現任期で得た票数        */
 static INT  elect_tmo  = 0;
 static INT  elect_tmo_max = RAFT_ELECT_TMO_MIN;  /* 初期化時に設定 */
 
+/* スプリットボート回避用: term・nodeIDから決定論的にジッターを生成 */
+static INT next_elect_tmo(void)
+{
+    /* LCG: seed = cur_term*31 + node_id*17 */
+    UW seed = cur_term * 31u + (UW)drpc_my_node * 17u;
+    seed = seed * 1664525u + 1013904223u;
+    return RAFT_ELECT_TMO_MIN
+           + (INT)((UW)drpc_my_node * 2)   /* ノード間の基本オフセット */
+           + (INT)(seed % (UW)RAFT_ELECT_TMO_RANGE);
+}
+
 /* ログ */
 static RAFT_LOG_ENTRY log_buf[RAFT_LOG_MAX];
 static UW             log_size    = 0;
@@ -319,14 +330,18 @@ void raft_task(INT stacd, void *exinf)
         voted_for = drpc_my_node;   /* 自分に投票 */
         votes_got = 1;              /* 自票 */
 
+        /* 次の選挙タイムアウトを再ランダム化 (スプリットボート対策) */
+        elect_tmo_max = next_elect_tmo();
+
         rf_puts("[raft] ** election  term="); rf_putdec(cur_term);
-        rf_puts("  node="); rf_putdec(drpc_my_node); rf_puts("\r\n");
+        rf_puts("  node="); rf_putdec(drpc_my_node);
+        rf_puts("  tmo="); rf_putdec((UW)elect_tmo_max * RAFT_TICK_MS); rf_puts("ms\r\n");
 
         /* 過半数チェック (自分だけなら即リーダー) */
         if (votes_got >= quorum()) {
             role       = RAFT_LEADER;
             cur_leader = drpc_my_node;
-            rf_puts("[raft] LEADER (solo)  term="); rf_putdec(cur_term); rf_puts("\r\n");
+            rf_puts("[raft] *** LEADER (solo)  term="); rf_putdec(cur_term); rf_puts("\r\n");
             spawn_on_leader();
             continue;
         }
@@ -353,7 +368,7 @@ void raft_init(void)
 
     /* ノードIDでタイムアウトをずらす (選挙の衝突を防ぐ) */
     /* node 0: 300ms, node 1: 350ms, ... */
-    elect_tmo_max = RAFT_ELECT_TMO_MIN + (INT)drpc_my_node;
+    elect_tmo_max = next_elect_tmo();
 
     udp_bind(RAFT_PORT, raft_rx);
     rf_puts("[raft] initialized  port="); rf_putdec(RAFT_PORT);

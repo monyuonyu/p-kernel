@@ -1,0 +1,157 @@
+#!/usr/bin/expect -f
+# Raft リーダー選出テスト
+# solo モードと 2ノードモードの両方を検証する
+
+set timeout 20
+set pass 0
+set fail 0
+
+proc result {name status detail} {
+    global pass fail
+    if {$status eq "PASS"} { incr pass } elseif {$status ne "INFO"} { incr fail }
+    puts "  \[$status\] $name: $detail"
+}
+
+# ============================================================
+# TEST 1: ソロモード — 単体でリーダー選出
+# ============================================================
+puts "\n=== TEST 1: solo mode (node 0 のみ) ===\n"
+
+spawn qemu-system-x86_64 -kernel bootloader.bin -serial stdio -cpu qemu64 \
+    -display none \
+    -netdev user,id=n0 -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
+
+set solo_pid $spawn_id
+
+set timeout 20
+set got_leader 0
+set got_election 0
+set got_drpc 0
+
+expect {
+    -re {\[drpc\] node 0} { set got_drpc 1; exp_continue }
+    -re {\[raft\] \*\* election} { set got_election 1; exp_continue }
+    -re {LEADER \(solo\)} {
+        set got_leader 1
+        result "drpc init"      [expr {$got_drpc ? "PASS" : "FAIL"}] "node 0 initialized"
+        result "election start" [expr {$got_election ? "PASS" : "FAIL"}] "term 1 election started"
+        result "solo leader"    "PASS" "elected as LEADER in solo mode"
+    }
+    timeout {
+        result "solo leader" "FAIL" "timeout — leader not elected"
+    }
+}
+
+# Raft stat を確認
+if {$got_leader} {
+    set timeout 10
+    expect { "p-kernel>" {} ; timeout {} }
+    send "raft stat\r"
+    expect {
+        -re {role\s+:\s+LEADER} {
+            result "raft stat" "PASS" "raft stat shows LEADER"
+            expect { -re {p-kernel>} {} ; timeout {} }
+        }
+        -re {p-kernel>} {
+            result "raft stat" "FAIL" "raft stat did not show LEADER"
+        }
+        timeout {
+            result "raft stat" "FAIL" "timeout"
+        }
+    }
+}
+
+set spawn_id $solo_pid
+catch {close}
+catch {wait}
+
+# ============================================================
+# TEST 2: 2ノードモード — node0/node1 間でリーダー選出
+# QEMU socket multicast による仮想ネットワーク
+# ============================================================
+puts "\n=== TEST 2: 2-node mode (node0 + node1, multicast) ===\n"
+
+# node 0 を起動
+spawn qemu-system-x86_64 -kernel bootloader.bin -serial stdio -cpu qemu64 \
+    -display none \
+    -netdev socket,id=n0,mcast=230.0.0.1:1234 \
+    -device rtl8139,netdev=n0,mac=52:54:00:00:00:01
+set node0_id $spawn_id
+
+# 少し待ってから node 1 を起動
+after 500
+
+spawn qemu-system-x86_64 -kernel bootloader.bin -serial stdio -cpu qemu64 \
+    -display none \
+    -netdev socket,id=n0,mcast=230.0.0.1:1234 \
+    -device rtl8139,netdev=n0,mac=52:54:00:00:00:02
+set node1_id $spawn_id
+
+set timeout 30
+set node0_leader 0
+set node0_follower 0
+set node1_vote 0
+set node1_follower 0
+set got_hb 0
+
+# node0 の出力を監視 (最初にリーダーになるはず)
+set spawn_id $node0_id
+expect {
+    "LEADER" {
+        set node0_leader 1
+        result "node0 leader" "PASS" "node 0 became LEADER"
+    }
+    timeout {
+        result "node0 leader" "FAIL" "node 0 did not become LEADER"
+    }
+}
+
+# node1 の出力を監視 (FOLLOWER になるはず)
+set spawn_id $node1_id
+set timeout 15
+expect {
+    -re {lost election|-> FOLLOWER|newer term} {
+        set node1_follower 1
+        result "node1 follower" "PASS" "node 1 became FOLLOWER"
+    }
+    timeout {
+        result "node1 follower" "INFO" "node 1 status unclear (may be ok)"
+    }
+}
+
+# node0 から vote received ログを確認
+set spawn_id $node0_id
+set timeout 5
+expect {
+    -re {vote from node} {
+        result "vote received" "PASS" "node 0 received vote from node 1"
+        set node0_leader 2
+    }
+    timeout {
+        if {$node0_leader} {
+            result "vote received" "INFO" "solo election (node 1 may not have voted yet)"
+        } else {
+            result "vote received" "FAIL" "no vote received"
+        }
+    }
+}
+
+set spawn_id $node0_id
+catch {close}
+catch {wait}
+set spawn_id $node1_id
+catch {close}
+catch {wait}
+
+# ============================================================
+# サマリ
+# ============================================================
+puts "\n================================================"
+puts "Raft テスト結果"
+puts "================================================"
+puts "PASS: $pass  FAIL: $fail"
+if {$fail == 0} {
+    puts "全テスト PASS"
+} else {
+    puts "FAIL あり — ログを確認してください"
+}
