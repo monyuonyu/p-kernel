@@ -29,6 +29,54 @@ static int strneq(const UB *a, const char *b, INT n)
     return 1;
 }
 
+#define NET_PRIORITY    9
+#define NET_STACK       4096
+
+static ID create_sem(INT isemcnt, INT maxsem)
+{
+    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                  .isemcnt = isemcnt, .maxsem = maxsem };
+    return tk_cre_sem(&cs);
+}
+
+static ID create_task(FP fn, INT pri, INT stksz)
+{
+    T_CTSK ct = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                  .task = fn, .itskpri = pri, .stksz = stksz };
+    ID id = tk_cre_tsk(&ct);
+    if (id >= E_OK) tk_sta_tsk(id, 0);
+    return id;
+}
+
+static void net_bringup(void)
+{
+    static INT net_up = 0;
+    if (net_up) {
+        print("[net] already up\r\n");
+        return;
+    }
+
+    ID net_sem = create_sem(0, 64);
+    if (net_sem < E_OK) {
+        print("[net] sem create failed\r\n");
+        return;
+    }
+
+    ER er = rtl8139_init(net_sem);
+    if (er != E_OK) {
+        print("[net] init failed (add -device rtl8139?)\r\n");
+        return;
+    }
+
+    if (create_task((FP)net_task, NET_PRIORITY, NET_STACK) < E_OK) {
+        print("[net] task create failed\r\n");
+        return;
+    }
+
+    net_up = 1;
+    print("[net] RX task started\r\n");
+}
+
 EXPORT INT usermain(void)
 {
     print("\r\n");
@@ -54,10 +102,7 @@ EXPORT INT usermain(void)
         if (n >= 2 && strneq(line, "ai", 2)) {
             ai_stats_print();
         } else if (n >= 3 && strneq(line, "net", 3)) {
-            ER er = rtl8139_init(0);
-            if (er != E_OK) {
-                print("[net] init failed\r\n");
-            }
+            net_bringup();
         } else {
             print("[echo] ");
             sio_send_frame(line, n);
