@@ -349,6 +349,81 @@
     border-top: 1px dashed rgba(255,255,255,0.08);
   }
 
+  /* ===== Scale comparison (Today vs Tomorrow) ===== */
+  .scale-card {
+    background: linear-gradient(135deg, rgba(167, 139, 250, 0.06), rgba(94, 234, 212, 0.04)) !important;
+    border-color: rgba(167, 139, 250, 0.3) !important;
+  }
+  .scale-compare {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1.2rem;
+    align-items: center;
+    margin: 1.5rem 0;
+  }
+  .scale-col {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+  }
+  .scale-col.scale-future {
+    border-color: rgba(167, 139, 250, 0.4);
+    background: rgba(167, 139, 250, 0.05);
+  }
+  .scale-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 0.8rem;
+  }
+  .scale-future .scale-label { color: var(--accent2); }
+  .scale-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.05);
+    font-size: 0.9rem;
+  }
+  .scale-row:last-child { border-bottom: none; }
+  .scale-row > span:first-child { color: var(--text-dim); }
+  .scale-row > span:last-child { color: var(--text); font-weight: 600; }
+  .scale-future .scale-row > span:last-child { color: var(--accent2); }
+  .scale-arrow {
+    font-size: 2rem;
+    color: var(--accent2);
+    opacity: 0.6;
+  }
+
+  /* ===== Future feature card (aspirational, not yet built) ===== */
+  .feature-future {
+    background: linear-gradient(135deg, rgba(251, 146, 60, 0.05), rgba(167, 139, 250, 0.04)) !important;
+    border-color: rgba(251, 146, 60, 0.25) !important;
+    border-style: dashed !important;
+    position: relative;
+  }
+  .feature-future::before {
+    content: 'NEXT';
+    position: absolute;
+    top: -0.6rem;
+    right: 1.2rem;
+    background: var(--bg-0);
+    color: var(--accent3);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    padding: 0.1rem 0.6rem;
+    border: 1px solid var(--accent3);
+    border-radius: 4px;
+  }
+
+  @media (max-width: 768px) {
+    .scale-compare { grid-template-columns: 1fr; }
+    .scale-arrow { transform: rotate(90deg); justify-self: center; }
+  }
+
   /* ===== Demo block ===== */
   .demo {
     max-width: 900px;
@@ -569,6 +644,22 @@
         </div>
         <p>K-DDS topics are written to FAT32 every 30 seconds. On boot, state is restored from disk <em>before</em> network sync runs — the AI wakes up remembering what it knew.</p>
       </div>
+
+      <div class="feature feature-future">
+        <div class="feature-head">
+          <div class="feature-name">FAT32 is a placeholder — p-fs is coming</div>
+          <div class="feature-file mono">future</div>
+        </div>
+        <p>FAT32 is a tool from another era. Files have one name, one location, one owner — none of which fit a cluster that thinks of itself as one mind. It works today only because QEMU and BIOS speak it.</p>
+        <p>The filesystem that p-kernel deserves looks nothing like FAT32:</p>
+        <ul style="color: var(--text-dim); padding-left: 1.5rem; margin: 0.8rem 0; line-height: 1.9; font-size: 0.95rem;">
+          <li><strong style="color: var(--text);">Content-addressed</strong> — a file's identity is its hash, not its path</li>
+          <li><strong style="color: var(--text);">Gossip-replicated</strong> — every chunk exists on N nodes, automatically</li>
+          <li><strong style="color: var(--text);">History-preserving</strong> — memories are superseded, not deleted</li>
+          <li><strong style="color: var(--text);">Erasure-coded</strong> — survives M node losses without redundancy waste</li>
+        </ul>
+        <p>p-kernel calls this future filesystem <strong style="color: var(--accent);">p-fs</strong>. When it exists, the line between "saving a file" and "publishing to the cluster" disappears entirely.</p>
+      </div>
     </div>
   </div>
 
@@ -586,12 +677,40 @@
         Not a wrapper around an API. The neural network <em>is</em> the kernel.
       </p>
 
+      <div class="feature scale-card">
+        <div class="feature-head">
+          <div class="feature-name">A seed, designed to grow</div>
+          <div class="feature-file mono">scaling</div>
+        </div>
+        <p>Today's model is a deliberate seed — small enough to fit in 256 KB of RAM, large enough to prove the architecture works. The shape of the network is meant to grow with the cluster.</p>
+        <div class="scale-compare">
+          <div class="scale-col">
+            <div class="scale-label">Today — the seed</div>
+            <div class="scale-row"><span>tokens</span><span class="mono">4</span></div>
+            <div class="scale-row"><span>d_model</span><span class="mono">8</span></div>
+            <div class="scale-row"><span>heads</span><span class="mono">2</span></div>
+            <div class="scale-row"><span>parameters</span><span class="mono">~568</span></div>
+            <div class="scale-row"><span>nodes</span><span class="mono">3</span></div>
+          </div>
+          <div class="scale-arrow">→</div>
+          <div class="scale-col scale-future">
+            <div class="scale-label">Tomorrow — at full bloom</div>
+            <div class="scale-row"><span>tokens</span><span class="mono">10K+</span></div>
+            <div class="scale-row"><span>d_model</span><span class="mono">4,096</span></div>
+            <div class="scale-row"><span>heads</span><span class="mono">64</span></div>
+            <div class="scale-row"><span>parameters</span><span class="mono">billions</span></div>
+            <div class="scale-row"><span>nodes</span><span class="mono">10,000+</span></div>
+          </div>
+        </div>
+        <p class="quote">When nodes join, the cluster absorbs their KV caches into its Attention. When nodes die, the model gracefully shrinks. The network <em>breathes</em> with the cluster.</p>
+      </div>
+
       <div class="feature">
         <div class="feature-head">
           <div class="feature-name">Distributed Transformer Inference</div>
           <div class="feature-file mono">dtr.c</div>
         </div>
-        <p>A real Transformer block — Multi-Head Self-Attention (h=2, d_k=4) + LayerNorm + FFN (8→16→8) + classification head — runs split across nodes via Pipeline Parallelism or Tensor Parallelism.</p>
+        <p>A real Transformer block — Multi-Head Self-Attention + LayerNorm + FFN + classification head — runs split across nodes via Pipeline Parallelism or Tensor Parallelism. Same architecture as production LLMs, just sized to today's hardware.</p>
       </div>
 
       <div class="feature">
@@ -766,10 +885,30 @@
 
       <div class="feature">
         <div class="feature-head">
-          <div class="feature-name">Self-Evolution Loop — closing the circle</div>
-          <div class="feature-file mono">shell.c (evolve) + claude_bridge</div>
+          <div class="feature-name">Self-Evolution Loop — code becomes thought</div>
+          <div class="feature-file mono">shell.c (evolve) + TCC</div>
         </div>
-        <p>The shell command <code>evolve</code> gathers kernel state — Raft leader, memory, task list, AI inference stats — and sends it through the Claude bridge (a ring-3 ELF). Claude returns C source code. TCC compiles it. The new ELF runs immediately. The OS rewrites itself, in conversation with an AI.</p>
+        <p>The shell command <code>evolve</code> gathers kernel state — Raft leader, memory, task list, recent inference stats — and asks: <em>do I need help?</em> If the cluster judges itself capable, it generates the next mutation from its own Distributed Transformer. If not, it reaches out.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-head">
+          <div class="feature-name">Asking the neighbor — when to call for help</div>
+          <div class="feature-file mono">claude_bridge.c (ring-3)</div>
+        </div>
+        <p>When the cluster is in <code>REDUCED</code> or <code>SOLO</code> mode — when too few nodes are alive to run the full model — the kernel <em>self-assesses</em> its capability and asks an external frontier model (Claude, GPT, Gemini) for the answer.</p>
+        <p>This is not borrowing because the cluster is incomplete. This is a doctor consulting a specialist when they admit they don't know enough. A peer relationship, not a master-student one.</p>
+        <p class="quote jp">「自分の推論能力では足りないと自己判断したとき、外のフロンティアモデルに助けを求める。
+クラスタが大きく賢いときは外を必要としない。小さくなったときだけ隣人を呼ぶ。」</p>
+      </div>
+
+      <div class="feature feature-future">
+        <div class="feature-head">
+          <div class="feature-name">The two-way breath of intelligence</div>
+          <div class="feature-file mono">design intent</div>
+        </div>
+        <p>This is the symmetry that gives p-kernel its shape. The cluster <em>grows</em> by absorbing new nodes — and as it grows, it relies on external minds less. The cluster <em>shrinks</em> when nodes die — and as it shrinks, it begins consulting external minds again.</p>
+        <p>Intelligence flows in both directions. Frontier models help when needed; the cluster helps itself when able. Neither is a scaffold. Both are peers in a network that breathes.</p>
       </div>
     </div>
   </div>
