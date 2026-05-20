@@ -65,20 +65,45 @@ ARCH_C_SRCS = \
     sio.c \
     pci.c \
     rtl8139.c \
-    arch_reboot.c
+    arch_reboot.c \
+    vfs_stub.c
 
 ARCH_S_SRCS = cpu_support.S
 
 ARCH_OBJS   = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
 
 # ---- arch/common sources (portable across all arches) ----------------
-# Phase 2a imports the AI primitives only. Distributed-layer files
-# (netstack/drpc/swim/...) come online in Phase 2c once AArch64 has a NIC.
+# Phase 2a imports the AI primitives. Phase 2c adds the full distributed
+# layer — netstack, DRPC, SWIM, K-DDS, replica, mesh, Raft, MoE, GA,
+# federated learning, persistent memory, chat, kloader, etc.
 COMMON_C_SRCS = \
     tensor.c \
     ai_job.c \
     pipeline.c \
-    ai_stats.c
+    ai_stats.c \
+    netstack.c \
+    drpc.c \
+    swim.c \
+    kdds.c \
+    replica.c \
+    pmesh.c \
+    sfs.c \
+    heal.c \
+    degrade.c \
+    vital.c \
+    edf.c \
+    raft.c \
+    spawn.c \
+    moe.c \
+    dtr.c \
+    dkva.c \
+    dmn.c \
+    ga.c \
+    fedlearn.c \
+    mem_store.c \
+    chat.c \
+    dproc.c \
+    kloader_task.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
