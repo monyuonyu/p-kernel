@@ -7,14 +7,18 @@
  *    - DMA buffer addresses are 32-bit truncations of 64-bit kernel
  *      pointers; QEMU virt places RAM at 0x40000000 and we use < 256 MB,
  *      so all buffers fit in the 32-bit window the chip can address.
- *    - First-cut: polling net_task instead of GIC SPI IRQ. The IRQ wire-
- *      up (PCI INTx -> SPI 3..6 on QEMU virt) is a follow-on patch.
+ *    - GIC SPI IRQ via INTNO_RTL8139_GIC (QEMU virt slot-0 INTA = INTID 35).
+ *      gic_enable_irq() unmasks; knl_define_inthdr() installs the handler;
+ *      _vec_el1_irq dispatches into rtl_irq_handler() on every ROK/TOK.
  */
 
 #include "rtl8139.h"
 #include "pci.h"
 #include "kernel.h"
 #include "mmio.h"
+#include "tkdev_conf.h"
+
+IMPORT void gic_enable_irq(UINT intid);
 
 /* ------------------------------------------------------------------ */
 /* RTL8139 register offsets (chip register map is arch-independent)    */
@@ -129,6 +133,27 @@ static void net_puthex16(UH v)
 }
 
 /* ------------------------------------------------------------------ */
+/* IRQ handler — runs in interrupt context, dispatched from            */
+/* _vec_el1_irq via knl_intvec[INTNO_RTL8139_GIC].                     */
+/* ------------------------------------------------------------------ */
+
+static void rtl_irq_handler(void)
+{
+    UH isr = rdw(R_ISR);
+    wrw(R_ISR, isr);            /* ACK all bits (write-1-to-clear) */
+
+    if (isr & ISR_ROK) {
+        rtl_rx_count++;
+        if (rx_sem > 0) {
+            tk_sig_sem(rx_sem, 1);
+        }
+    }
+    if (isr & ISR_TOK) {
+        rtl_tx_count++;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -187,9 +212,9 @@ INT rtl8139_recv(UB *buf, INT maxlen)
 }
 
 /* ------------------------------------------------------------------ */
-/* Net RX task — polling variant.                                     */
-/* GIC SPI IRQ wiring is a follow-up; for now we poll the CBR every   */
-/* 10 ms. T-Kernel tk_dly_tsk() yields the CPU, so this is cheap.      */
+/* Net RX task — IRQ-driven.                                          */
+/* The GIC SPI handler (rtl_irq_handler) signals rx_sem on each ROK;  */
+/* the task wakes, drains every queued frame, then sleeps again.      */
 /* ------------------------------------------------------------------ */
 
 /* Weak stub: when arch/common/netstack.c is linked in (Phase 2c) its
@@ -204,16 +229,16 @@ static UB pkt_buf[1514];
 void net_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
-    net_puts("[net] RX task running (poll mode)\r\n");
+    net_puts("[net] RX task running (IRQ mode)\r\n");
 
     for (;;) {
+        tk_wai_sem(rx_sem, 1, TMO_FEVR);
+
         INT len;
         while ((len = rtl8139_recv(pkt_buf, (INT)sizeof(pkt_buf))) > 0) {
             if (len < 14) continue;
-            rtl_rx_count++;
             eth_input(pkt_buf, len);
         }
-        tk_dly_tsk(10);   /* 10 ms */
     }
 }
 
@@ -238,7 +263,7 @@ ER rtl8139_init(ID sem)
         return E_NOEXS;
     }
 
-    rx_sem = sem;   /* Recorded for compatibility; poll mode ignores it. */
+    rx_sem = sem;
 
     /* BAR1 = memory-mapped registers. Lower 4 bits are flags.
      * On QEMU virt with no UEFI firmware, BARs are unassigned (read 0).
@@ -281,9 +306,12 @@ ER rtl8139_init(ID sem)
     rx_pos = 0;
     wrl(R_RBSTART, (UW)(unsigned long)rx_buf);
 
-    /* Interrupt mask — we still set this so the chip writes ISR; we
-     * just don't deliver via GIC yet. */
+    /* Interrupt mask — chip will assert INTA when ROK or TOK fires. */
     wrw(R_IMR, (UH)(ISR_ROK | ISR_TOK));
+
+    /* Hook into _vec_el1_irq via knl_intvec[], then unmask in GICD. */
+    knl_define_inthdr(INTNO_RTL8139_GIC, (FP)rtl_irq_handler);
+    gic_enable_irq(INTNO_RTL8139_GIC);
 
     /* Multicast: accept all */
     wrl(R_MAR,   0xFFFFFFFFu);
