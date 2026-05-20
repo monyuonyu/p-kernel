@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="p-kernel: AI-first microkernel OS with on-device TCC compilation, Linux ABI ring-3, Raft consensus, distributed AI inference, and self-evolving loop. Built on T-Kernel 2.0 for bare-metal x86.">
+<meta name="keywords" content="p-kernel, AI OS, microkernel, T-Kernel, x86, distributed OS, Raft consensus, TCC compiler, musl, ring-3, embedded AI, self-evolving OS, RTOS, autonomous systems, distributed AI inference">
+<meta property="og:title" content="p-kernel — AI-First Microkernel OS">
+<meta property="og:description" content="The OS that never dies. AI inference embedded in the kernel, on-device C compilation, Raft consensus, self-evolving loop.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://monyuonyu.github.io/p-kernel">
+<title>p-kernel — AI-First Microkernel OS for Distributed Embedded Systems</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #f78166;
+    --accent4: #d2a8ff;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 1.4rem; color: var(--accent); }
+  header a { color: var(--text-dim); text-decoration: none; font-size: 0.9rem; border: 1px solid var(--border); padding: 0.4rem 1rem; border-radius: 6px; transition: border-color 0.2s; }
+  header a:hover { border-color: var(--accent); color: var(--accent); }
+  .hero { text-align: center; padding: 5rem 2rem 4rem; max-width: 900px; margin: 0 auto; }
+  .hero h2 { font-size: 3rem; font-weight: 700; margin-bottom: 1rem; background: linear-gradient(135deg, var(--accent), var(--accent4)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .hero p { font-size: 1.2rem; color: var(--text-dim); max-width: 600px; margin: 0 auto 2rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-bottom: 2rem; }
+  .badge { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 0.3rem 0.8rem; font-size: 0.8rem; color: var(--text-dim); }
+  .cta-group { display: flex; gap: 1rem; justify-content: center; }
+  .btn { padding: 0.7rem 1.8rem; border-radius: 6px; text-decoration: none; font-weight: 600; transition: opacity 0.2s; }
+  .btn-primary { background: var(--accent); color: #0d1117; }
+  .btn-secondary { border: 1px solid var(--border); color: var(--text); }
+  .btn:hover { opacity: 0.85; }
+
+  .section { max-width: 1000px; margin: 0 auto; padding: 4rem 2rem; }
+  .section h3 { font-size: 1.8rem; color: var(--accent); margin-bottom: 0.5rem; }
+  .section .sub { color: var(--text-dim); margin-bottom: 2rem; }
+
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+  .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; }
+  .feature-card .icon { font-size: 2rem; margin-bottom: 0.8rem; }
+  .feature-card h4 { color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem; }
+  .feature-card p { color: var(--text-dim); font-size: 0.9rem; }
+
+  pre { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+  code { color: var(--accent2); }
+  .prompt { color: var(--accent4); }
+  .comment { color: var(--text-dim); }
+
+  .arch-diagram { background: #010409; border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.8rem; overflow-x: auto; }
+  .arch-line { line-height: 1.4; white-space: pre; color: var(--text); }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 2rem; }
+  .stat { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; }
+  .stat .number { font-size: 2.5rem; font-weight: 700; color: var(--accent); }
+  .stat .label { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.3rem; }
+
+  .tag-cloud { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .tag { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.6rem; font-size: 0.8rem; color: var(--text-dim); font-family: monospace; }
+
+  footer { text-align: center; padding: 3rem; color: var(--text-dim); border-top: 1px solid var(--border); font-size: 0.9rem; }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ p-kernel</h1>
+  <a href="https://github.com/monyuonyu/p-kernel">View on GitHub →</a>
+</header>
+
+<section class="hero">
+  <h2>AI-First Microkernel OS</h2>
+  <p>The operating system that never dies. AI inference embedded in the kernel, distributed across unlimited nodes, self-evolving at runtime.</p>
+  <div class="badges">
+    <span class="badge">T-Kernel 2.0</span>
+    <span class="badge">x86 / IA-32e</span>
+    <span class="badge">Linux ABI ring-3</span>
+    <span class="badge">TCC on-device</span>
+    <span class="badge">Raft consensus</span>
+    <span class="badge">musl static ELF</span>
+    <span class="badge">SWIM gossip</span>
+    <span class="badge">Distributed Transformer</span>
+  </div>
+  <div class="cta-group">
+    <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-primary">Get Started</a>
+    <a href="https://github.com/monyuonyu/p-kernel#quick-start" class="btn btn-secondary">Quick Start</a>
+  </div>
+</section>
+
+<section class="section">
+  <h3>Why p-kernel?</h3>
+  <p class="sub">Current AI runs on data-center servers — when the server dies, the AI dies. p-kernel changes that.</p>
+  <div class="features">
+    <div class="feature-card">
+      <div class="icon">🧠</div>
+      <h4>AI Lives in the Kernel</h4>
+      <p>MLP and Transformer inference run inside T-Kernel, not above it. Ring-3 crashes can't kill the AI.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🔄</div>
+      <h4>Self-Evolving at Runtime</h4>
+      <p>TCC compiler runs in ring-3. Claude API generates new code. The OS compiles and deploys it — no reboot.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📡</div>
+      <h4>Distributed by Design</h4>
+      <p>Raft consensus, SWIM gossip, K-DDS pub/sub, and SFS file sync across unlimited nodes.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🐧</div>
+      <h4>Linux ABI Compatible</h4>
+      <p>Run unmodified musl-compiled Linux i386 static ELFs. write, brk, mmap2, set_thread_area — all supported.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">⚡</div>
+      <h4>On-Device Compilation</h4>
+      <p>TCC (Tiny C Compiler) runs on p-kernel ring-3. Compile C source files to i386 ELF without any external tools.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🛡️</div>
+      <h4>Survives Until Last Node</h4>
+      <p>Degraded mode gracefully trades accuracy for survival. The last alive node continues all functions.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h3>Architecture</h3>
+  <p class="sub">Bare-metal x86 from bootloader to distributed AI cluster.</p>
+  <div class="arch-diagram">
+<div class="arch-line">┌─────────────────────────────────────────────────────────┐</div>
+<div class="arch-line">│                    ring-3 User Space                     │</div>
+<div class="arch-line">│   musl ELF  │  TCC compiler  │  AI bridge  │  Shell ELF  │</div>
+<div class="arch-line">├─────────────────────────────────────────────────────────┤</div>
+<div class="arch-line">│               INT 0x80 Syscall Layer                     │</div>
+<div class="arch-line">│       POSIX (Linux ABI) + T-Kernel native (0x100+)      │</div>
+<div class="arch-line">├───────────────┬─────────────────┬───────────────────────┤</div>
+<div class="arch-line">│  AI Subsystem │  Net Subsystem  │   FS Subsystem        │</div>
+<div class="arch-line">│  MLP / DTR    │  RTL8139+TCP/IP │   FAT32 / VFS         │</div>
+<div class="arch-line">│  FedLearn     │  Raft / SWIM    │   SFS sync            │</div>
+<div class="arch-line">│  K-DDS / DRPC │  K-DDS topics  │   ATA PIO             │</div>
+<div class="arch-line">├───────────────┴─────────────────┴───────────────────────┤</div>
+<div class="arch-line">│                micro T-Kernel 2.0 Core                   │</div>
+<div class="arch-line">│   task / semaphore / mutex / mpool / timer / subsystem   │</div>
+<div class="arch-line">├─────────────────────────────────────────────────────────┤</div>
+<div class="arch-line">│              x86 HAL  (IA-32e long mode)                 │</div>
+<div class="arch-line">│   IDT / GDT / TSS / PIC / PIT / ATA / PCI / VGA        │</div>
+<div class="arch-line">└─────────────────────────────────────────────────────────┘</div>
+<div class="arch-line">                   QEMU  (qemu-system-x86_64)              </div>
+  </div>
+</section>
+
+<section class="section">
+  <h3>On-Device Compilation Demo</h3>
+  <p class="sub">TCC compiles C to i386 ELF at runtime — entirely on bare-metal.</p>
+<pre><code><span class="comment"># Write a C program to the FAT32 disk</span>
+<span class="prompt">p-kernel&gt;</span> cat /ondevice.c
+
+<span class="comment"># Compile with TCC running in ring-3</span>
+<span class="prompt">p-kernel&gt;</span> exec /tcc -nostdlib -nostdinc -static -B / /ondevice.c -o /compiled.elf
+[elf] loaded '/tcc' entry=0x0804906E
+[elf] task started (tid=11)
+[proc] exited (code=0)          <span class="comment">← TCC compiled successfully</span>
+
+<span class="prompt">p-kernel&gt;</span> exec /compiled.elf
+On-device compiled and running! <span class="comment">← Compiled ELF executed in ring-3</span>
+[proc] exited (code=0)</code></pre>
+</section>
+
+<section class="section">
+  <h3>Self-Evolution Loop</h3>
+  <p class="sub">The kernel sends its own state to Claude AI, which generates new code that TCC compiles on-device.</p>
+<pre><code><span class="prompt">p-kernel&gt;</span> evolve
+
+[evolve] gathering kernel state...
+  raft: LEADER  term=3
+  memory: 12MB used / 128MB
+  tasks: 6 running
+  ai_inferences: 142
+
+[evolve] sending to Claude API...
+[evolve] response received
+
+[ANALYSIS]
+Cluster is healthy. Recommend optimizing inference batch size.
+
+[CODE]
+void optimized_batch(void) { ... }
+
+[CMD]
+exec /tcc -nostdlib -static -B / /user/code_gen.c -o /user/gen.elf
+exec /user/gen.elf</code></pre>
+</section>
+
+<section class="section">
+  <h3>By the Numbers</h3>
+  <div class="stat-grid">
+    <div class="stat"><div class="number">26</div><div class="label">sample programs passing</div></div>
+    <div class="stat"><div class="number">512</div><div class="label">KB kernel binary size</div></div>
+    <div class="stat"><div class="number">3</div><div class="label">node distributed cluster</div></div>
+    <div class="stat"><div class="number">8</div><div class="label">network ports</div></div>
+    <div class="stat"><div class="number">∞</div><div class="label">nodes supported</div></div>
+    <div class="stat"><div class="number">0</div><div class="label">reboots for code deploy</div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h3>Quick Start</h3>
+  <p class="sub">Boot a bare-metal AI OS in 3 commands.</p>
+<pre><code><span class="comment"># Install dependencies</span>
+sudo apt install qemu-system-x86_64 gcc-i686-linux-gnu binutils-i686-linux-gnu
+
+<span class="comment"># Clone and build</span>
+git clone https://github.com/monyuonyu/p-kernel.git
+cd p-kernel/p-kernel/boot/x86
+make && make run-disk</code></pre>
+</section>
+
+<section class="section">
+  <h3>Technologies</h3>
+  <div class="tag-cloud">
+    <span class="tag">T-Kernel 2.0</span>
+    <span class="tag">x86 / IA-32e</span>
+    <span class="tag">32-bit compat mode</span>
+    <span class="tag">ELF32 loader</span>
+    <span class="tag">Linux i386 ABI</span>
+    <span class="tag">musl libc</span>
+    <span class="tag">TCC 0.9.27</span>
+    <span class="tag">ring-3 isolation</span>
+    <span class="tag">2MB huge pages</span>
+    <span class="tag">per-process page tables</span>
+    <span class="tag">INT 0x80 syscalls</span>
+    <span class="tag">GDT / IDT / TSS</span>
+    <span class="tag">Raft consensus</span>
+    <span class="tag">SWIM gossip</span>
+    <span class="tag">K-DDS pub/sub</span>
+    <span class="tag">DRPC over UDP</span>
+    <span class="tag">SFS file sync</span>
+    <span class="tag">RTL8139 driver</span>
+    <span class="tag">TCP/IP stack</span>
+    <span class="tag">FAT32 / VFS</span>
+    <span class="tag">ATA PIO</span>
+    <span class="tag">MLP inference</span>
+    <span class="tag">Distributed Transformer</span>
+    <span class="tag">FedAvg</span>
+    <span class="tag">Pipeline parallelism</span>
+    <span class="tag">Self-evolution loop</span>
+    <span class="tag">Claude API</span>
+    <span class="tag">QEMU</span>
+    <span class="tag">bare-metal</span>
+    <span class="tag">autonomous systems</span>
+    <span class="tag">spacecraft</span>
+  </div>
+</section>
+
+<footer>
+  <p><a href="https://github.com/monyuonyu/p-kernel">github.com/monyuonyu/p-kernel</a> &mdash; Built for a future where AI belongs to everyone.</p>
+</footer>
+
+</body>
+</html>
