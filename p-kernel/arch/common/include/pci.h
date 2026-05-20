@@ -1,13 +1,12 @@
 /*
- *  pci.h (x86)
- *  PCI configuration space access
+ *  pci.h (common)
+ *  Public PCI configuration-space API. Each architecture supplies its
+ *  own implementation: x86 uses I/O ports 0xCF8/0xCFC, AArch64 uses the
+ *  PCIe ECAM memory window.
  */
 
 #pragma once
 #include "kernel.h"
-
-#define PCI_CONFIG_ADDR  0x0CF8
-#define PCI_CONFIG_DATA  0x0CFC
 
 /* Well-known vendor/device IDs */
 #define PCI_VENDOR_REALTEK  0x10EC

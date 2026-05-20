@@ -62,7 +62,10 @@ ARCH_C_SRCS = \
     inittask_def.c \
     inittask_main.c \
     usermain.c \
-    sio.c
+    sio.c \
+    pci.c \
+    rtl8139.c \
+    arch_reboot.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -146,23 +149,8 @@ start.o: $(ARCH)/start.S
 cpu_support.o: $(ARCH)/cpu_support.S
 	$(CC) $(CFLAGS) $(ASFLAGS) -c -o $@ $<
 
-# arch/aarch64 C sources
-cpu_init.o: $(ARCH)/cpu_init.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-tkdev_init.o: $(ARCH)/tkdev_init.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-inittask_def.o: $(ARCH)/inittask_def.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-inittask_main.o: $(ARCH)/inittask_main.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-usermain.o: $(ARCH)/usermain.c
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-sio.o: $(ARCH)/sio.c
+# arch/aarch64 C sources (pattern rule)
+$(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # arch/common C sources (portable distributed/AI layer)

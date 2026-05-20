@@ -6,6 +6,10 @@
 #include "pci.h"
 #include "kernel.h"
 
+/* x86-specific PIO addresses for the legacy PCI config mechanism #1 */
+#define PCI_CONFIG_ADDR  0x0CF8
+#define PCI_CONFIG_DATA  0x0CFC
+
 /* ------------------------------------------------------------------ */
 /* Raw 32-bit I/O (not in cpu_insn.h)                                  */
 /* ------------------------------------------------------------------ */

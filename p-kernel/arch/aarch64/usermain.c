@@ -9,6 +9,7 @@
 #include "kernel.h"
 #include <tmonitor.h>
 #include "ai_kernel.h"
+#include "rtl8139.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -39,7 +40,7 @@ EXPORT INT usermain(void)
     /* AI kernel primitives — tensor / ai_job / pipeline */
     ai_kernel_init();
 
-    print("\r\nCommands: ai (show stats)  echo: any text\r\n");
+    print("\r\nCommands: ai (show stats) | net (init RTL8139) | echo: any text\r\n");
     print("p-kernel> ");
 
     for (;;) {
@@ -52,6 +53,11 @@ EXPORT INT usermain(void)
         print("\r\n");
         if (n >= 2 && strneq(line, "ai", 2)) {
             ai_stats_print();
+        } else if (n >= 3 && strneq(line, "net", 3)) {
+            ER er = rtl8139_init(0);
+            if (er != E_OK) {
+                print("[net] init failed\r\n");
+            }
         } else {
             print("[echo] ");
             sio_send_frame(line, n);
