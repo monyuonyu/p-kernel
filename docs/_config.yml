@@ -1,0 +1,5 @@
+title: p-kernel
+description: AI-first microkernel OS with on-device TCC compilation, Linux ABI ring-3, Raft consensus, and self-evolving AI loop.
+url: "https://monyuonyu.github.io"
+baseurl: "/p-kernel"
+theme: null
