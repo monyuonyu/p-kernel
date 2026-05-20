@@ -27,6 +27,20 @@ static inline unsigned int mmio_read32(unsigned long addr)
 }
 
 /* -----------------------------------------------------------------------
+ *  Enable a single GIC interrupt by INTID.
+ *  Works for PPIs (id 16..31) and SPIs (id 32..N). Used by drivers
+ *  (e.g. RTL8139 wiring its PCIe legacy IRQ to a GIC SPI) without
+ *  exposing GICD register layout to every caller.
+ * --------------------------------------------------------------------- */
+EXPORT void gic_enable_irq(UINT intid)
+{
+    UINT word = intid >> 5;          /* /32 */
+    UINT bit  = intid & 31;          /* %32 */
+    mmio_write32(GICD_BASE + GICD_ISENABLER + word * 4, 1U << bit);
+    DSB();
+}
+
+/* -----------------------------------------------------------------------
  *  GICv2 initialisation
  *  Distributor: enable group 0; unmask timer PPI (id=30).
  *  CPU interface: enable; set priority mask to 0xFF (all pass).
@@ -39,8 +53,8 @@ static void gic_init(void)
     /* Distributor enable */
     mmio_write32(GICD_BASE + GICD_CTLR, 1);
 
-    /* Enable PPI 30 (timer) in GICD_ISENABLER[0] — PPIs are in word 0 */
-    mmio_write32(GICD_BASE + GICD_ISENABLER, 1U << 30);
+    /* Enable timer PPI (id=30) */
+    gic_enable_irq(INTNO_TIMER_GIC);
 
     /* CPU interface: priority mask 0xFF = allow all, then enable */
     mmio_write32(GICC_BASE + GICC_PMR,  0xFF);
