@@ -40,4 +40,8 @@
 #include <str_align_depend.h>
 #endif
 
+#ifdef _APP_AARCH64_
+#include <str_align_depend.h>
+#endif
+
 #endif /* __SYS_STR_ALIGN_COMMON_H__ */

@@ -41,6 +41,10 @@
 #include <utk_config_depend.h>
 #endif
 
+#ifdef _APP_AARCH64_
+#include <utk_config_depend.h>
+#endif
+
 #include "utk_config_func.h"
 
 #if !USE_TRAP && !(USE_DBGSPT && USE_HOOK_TRACE)

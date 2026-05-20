@@ -40,4 +40,8 @@
 #include <profile_depend.h>
 #endif
 
+#ifdef _APP_AARCH64_
+#include <profile_depend.h>
+#endif
+
 #endif /* __SYS_PROFILE_COMMON_H__ */
