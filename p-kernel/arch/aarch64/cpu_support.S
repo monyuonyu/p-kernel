@@ -149,6 +149,11 @@ knl_task_entry_trampoline:
  * --------------------------------------------------------------------- */
     .global knl_timer_handler_startup
 knl_timer_handler_startup:
+    /* Save lr — we make a BL below which would otherwise overwrite x30,
+     * leaving us no way to return to the IRQ vector. */
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+
     ldr x0, =knl_taskindp
     ldr w1, [x0]
     add w1, w1, #1
@@ -161,6 +166,7 @@ knl_timer_handler_startup:
     sub w1, w1, #1
     str w1, [x0]
 
+    ldp x29, x30, [sp], #16
     ret
 
 /* -----------------------------------------------------------------------
@@ -227,10 +233,16 @@ el1_vectors:
 
 _vec_el1_irq:
     save_caller_regs
+    /* Reserve a 16-byte stack slot to preserve the IAR value across the
+     * BLR — w1-w18 are call-clobbered per the AArch64 ABI, and writing
+     * a garbage value to EOIR would leave the IRQ active in the GIC and
+     * stop subsequent interrupts of equal/lower priority from firing. */
+    sub sp, sp, #16
 
     ldr x0, =gicc_base_ptr
     ldr x0, [x0]
     ldr w1, [x0, #0x0C]         /* GICC_IAR */
+    str w1, [sp]                /* save IAR for the EOIR write below */
     and w2, w1, #0x3FF
 
     mov w3, #512
@@ -245,6 +257,8 @@ _vec_el1_irq:
     blr x3
 
 .Lirq_eoi:
+    ldr w1, [sp]                /* restore IAR — handler may have clobbered w1 */
+    add sp, sp, #16
     ldr x0, =gicc_base_ptr
     ldr x0, [x0]
     str w1, [x0, #0x10]         /* GICC_EOIR */

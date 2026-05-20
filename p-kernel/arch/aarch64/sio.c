@@ -23,8 +23,6 @@
 #define FR_RXFE     (1 << 4)    /* RX FIFO empty */
 #define FR_BUSY     (1 << 3)
 
-static volatile unsigned int *pl011 = (volatile unsigned int *)PL011_BASE;
-
 static inline unsigned int pl011_read(unsigned int reg)
 {
     return *((volatile unsigned int *)((unsigned long)PL011_BASE + reg));
