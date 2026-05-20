@@ -10,6 +10,7 @@ LD      = $(CROSS)ld
 # ルートディレクトリ (このMakefileからの相対パス)
 ROOT    = ../..
 ARCH    = $(ROOT)/arch/x86
+COMMON  = $(ROOT)/arch/common
 KERNEL  = $(ROOT)/kernel/common
 INC_TK  = $(ROOT)/include/kernel/tkernel
 INC_LIB = $(ROOT)/include/lib
@@ -17,8 +18,10 @@ INC_TOP = $(ROOT)/include
 
 # インクルードパス
 # arch/x86/include を先に置いてFM3依存ヘッダを上書き
+# arch/common/include は分散層・AI層・kloader の共有ヘッダ
 INCDIRS = \
     -I$(ARCH)/include \
+    -I$(COMMON)/include \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
@@ -42,7 +45,7 @@ BOOT_SRCS_S = start.S isr.S
 BOOT_OBJS   = main.o idt.o boot_memory.o pic.o boot_timer.o start.o isr.o
 
 # -------------------------------------------------------------------
-# arch/x86 ソース
+# arch/x86 ソース (x86 固有: CPU/PIC/PIT/MMU/PIO/ドライバ実装)
 # -------------------------------------------------------------------
 ARCH_C_SRCS = \
     cpu_init.c \
@@ -58,31 +61,7 @@ ARCH_C_SRCS = \
     shell.c \
     pci.c \
     rtl8139.c \
-    netstack.c \
-    drpc.c \
-    swim.c \
-    kdds.c \
-    heal.c \
-    edf.c \
-    replica.c \
-    degrade.c \
-    dmn.c \
-    ga.c \
-    vital.c \
-    tensor.c \
-    ai_job.c \
-    pipeline.c \
-    fedlearn.c \
-    ai_stats.c \
-    dtr.c \
-    dkva.c \
-    dproc.c \
-    sfs.c \
-    raft.c \
-    spawn.c \
-    moe.c \
-    pmesh.c \
-    kloader_task.c \
+    arch_reboot.c \
     persist.c \
     blk_ssy.c \
     fs_ssy.c \
@@ -94,13 +73,45 @@ ARCH_C_SRCS = \
     syscall.c \
     userspace.c \
     elf_loader.c \
-    paging.c \
-    mem_store.c \
-    chat.c
+    paging.c
 
 ARCH_S_SRCS = cpu_support.S
 
 ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+
+# -------------------------------------------------------------------
+# arch/common ソース (分散層・kloader: 全 arch 共通)
+# -------------------------------------------------------------------
+COMMON_C_SRCS = \
+    tensor.c \
+    ai_job.c \
+    pipeline.c \
+    ai_stats.c \
+    netstack.c \
+    drpc.c \
+    swim.c \
+    kdds.c \
+    heal.c \
+    edf.c \
+    replica.c \
+    degrade.c \
+    dmn.c \
+    ga.c \
+    vital.c \
+    fedlearn.c \
+    dtr.c \
+    dkva.c \
+    dproc.c \
+    sfs.c \
+    raft.c \
+    spawn.c \
+    moe.c \
+    pmesh.c \
+    kloader_task.c \
+    mem_store.c \
+    chat.c
+
+COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
 # -------------------------------------------------------------------
 # kernel/common ソース (T-Kernel コア)
@@ -147,7 +158,7 @@ LIBSTR_DIR  = $(ROOT)/lib/libc/string
 LIBSTR_SRCS = memset.c strncpy.c memcpy.c memmove.c memcmp.c strlen.c strcmp.c strncmp.c strcpy.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 
 TARGET = bootloader.bin
 
@@ -206,6 +217,10 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 
 # arch/x86 アセンブリ
 $(ARCH_S_SRCS:.S=.o): %.o: $(ARCH)/%.S
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# arch/common C ソース (分散層・kloader)
+$(COMMON_OBJS): %.o: $(COMMON)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # kernel/common C ソース

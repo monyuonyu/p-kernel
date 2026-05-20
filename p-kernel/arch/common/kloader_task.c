@@ -11,6 +11,7 @@
 #include "kernel.h"
 #include "netstack.h"
 #include "drpc.h"
+#include "arch_reboot.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT UB _kernel_end[];   /* linker.ld で定義 */
@@ -43,23 +44,6 @@ static UB  kload_buf[KLOAD_BUF_MAX];
 static UW  kload_total   = 0;
 static UW  kload_written = 0;
 static UB  kload_active  = 0;   /* 受信中フラグ */
-
-/* ------------------------------------------------------------------ */
-/* ACPI リセット                                                       */
-/* ------------------------------------------------------------------ */
-
-static void acpi_reset(void)
-{
-    /* QEMU ACPI リセットレジスタ経由でフルリセット */
-    __asm__ volatile(
-        "movw $0xCF9, %%dx\n\t"
-        "movb $0x06, %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        :: : "eax", "edx"
-    );
-    /* 返らない */
-    for (;;);
-}
 
 /* ------------------------------------------------------------------ */
 /* VFS 書き込みユーティリティ                                         */
@@ -165,7 +149,7 @@ void kloader_rx(UB src_node, UH dst_port, const UB *data, UH len)
 
             /* 少し待ってからリセット (シリアル出力が流れる時間) */
             tk_dly_tsk(500);
-            acpi_reset();
+            arch_reboot();
         }
     }
 }

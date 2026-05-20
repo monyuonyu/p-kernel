@@ -18,21 +18,22 @@ OBJCOPY = $(CROSS)objcopy
 # ---- Paths ------------------------------------------------------------
 ROOT    = ../..
 ARCH    = $(ROOT)/arch/aarch64
+COMMON  = $(ROOT)/arch/common
 KERNEL  = $(ROOT)/kernel/common
 INC_TK  = $(ROOT)/include/kernel/tkernel
 INC_LIB = $(ROOT)/include/lib
 INC_TOP = $(ROOT)/include
 
 # ---- Include directories ----------------------------------------------
-# arch/aarch64 FIRST so its cpu_insn.h, sysdef_depend.h, etc. shadow x86's;
-# arch/x86 included for AI/distributed headers that are arch-independent
-# (ai_kernel.h, dtr.h, dkva.h, drpc.h, kdds.h, etc.).
+# arch/aarch64 FIRST so its cpu_insn.h / sysdef_depend.h shadow generic ones;
+# arch/common holds AI primitives, distributed layer headers (drpc/swim/...),
+# kloader, and the public driver APIs (pci.h, rtl8139.h, arch_reboot.h).
 INCDIRS = \
     -I$(ARCH)/include \
+    -I$(COMMON)/include \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
-    -I$(ROOT)/arch/x86/include \
     -I.
 
 # ---- Compiler flags ---------------------------------------------------
@@ -67,18 +68,16 @@ ARCH_S_SRCS = cpu_support.S
 
 ARCH_OBJS   = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
 
-# ---- Portable AI / distributed sources (built from arch/x86 location)
-# These files have no x86-specific assembly or I/O — they're the "brain"
-# layer of p-kernel. Phase 2 imports the AI primitives only; distributed
-# features come after we add a PCI/NIC driver for AArch64.
-X86_PORTABLE_AI = \
+# ---- arch/common sources (portable across all arches) ----------------
+# Phase 2a imports the AI primitives only. Distributed-layer files
+# (netstack/drpc/swim/...) come online in Phase 2c once AArch64 has a NIC.
+COMMON_C_SRCS = \
     tensor.c \
     ai_job.c \
     pipeline.c \
     ai_stats.c
-# fedlearn.c needs drpc — add it back once networking is up
 
-AI_OBJS = $(X86_PORTABLE_AI:.c=.o)
+COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
 # ---- kernel/common sources -------------------------------------------
 KERNEL_SRCS = \
@@ -123,7 +122,7 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
 # ---- All objects -------------------------------------------------------
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(AI_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 
 TARGET = kernel.elf
 
@@ -166,8 +165,8 @@ usermain.o: $(ARCH)/usermain.c
 sio.o: $(ARCH)/sio.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Portable AI sources (built from arch/x86 location)
-$(AI_OBJS): %.o: $(ROOT)/arch/x86/%.c
+# arch/common C sources (portable distributed/AI layer)
+$(COMMON_OBJS): %.o: $(COMMON)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kernel/common C sources
