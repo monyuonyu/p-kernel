@@ -199,7 +199,11 @@ EXPORT INT usermain(void)
 {
     print("\r\n");
     print("====================================\r\n");
+#ifdef BOARD_RPI3
+    print(" p-kernel  [aarch64 / RPi 3 BCM2837]\r\n");
+#else
     print(" p-kernel  [aarch64 / QEMU virt]\r\n");
+#endif
     print(" Phase 2c: AI + distributed kernel\r\n");
     print("====================================\r\n");
 

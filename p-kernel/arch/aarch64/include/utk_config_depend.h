@@ -1,14 +1,24 @@
 /*
- *  utk_config_depend.h (aarch64 / QEMU virt)
- *  System configuration for AArch64 QEMU virt environment
+ *  utk_config_depend.h (aarch64)
+ *  System configuration — board-dependent RAM layout selected by
+ *  BOARD_RPI3, defaults to QEMU virt.
  */
 
 #ifndef _UTK_CONFIG_DEPEND_
 #define _UTK_CONFIG_DEPEND_
 
-/* System RAM area (QEMU virt: loads at 0x40000000, 256MB available) */
-#define SYSTEMAREA_TOP      0x40200000UL    /* 2MB above kernel load */
-#define SYSTEMAREA_END      0x50000000UL    /* 256MB ceiling */
+#if defined(BOARD_RPI3)
+/* BCM2837: ARM cores see RAM from 0x00000000 to 0x3F000000 (1 GB minus
+ * the peripheral aperture). Firmware drops the AArch64 kernel at
+ * 0x80000, so the kernel + stack live below ~0x100000 and the rest is
+ * free for I-malloc and task stacks. */
+#  define SYSTEMAREA_TOP    0x00200000UL    /* 2MB: above kernel + stack */
+#  define SYSTEMAREA_END    0x3F000000UL    /* ceiling — peripheral base */
+#else
+/* QEMU virt: loads at 0x40000000, 256 MB visible RAM (-m 256M). */
+#  define SYSTEMAREA_TOP    0x40200000UL    /* 2MB above kernel load */
+#  define SYSTEMAREA_END    0x50000000UL    /* 256MB ceiling */
+#endif
 
 #define RI_USERAREA_TOP     SYSTEMAREA_TOP
 #define RI_USERINIT         NULL

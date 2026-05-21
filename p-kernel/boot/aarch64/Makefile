@@ -160,6 +160,20 @@ ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS
 
 TARGET = kernel.elf
 
+# ---- BOARD selection --------------------------------------------------
+# Default target: QEMU virt (cortex-a53 + GICv2 + PL011 at 0x09000000).
+# Override on the make command line for other boards:
+#     make rpi3          → kernel8.img for Raspberry Pi 3 Model B
+#
+# RPi 3 differs from QEMU virt in three ways the build chain needs to
+# know about:
+#   1. Load address is 0x80000 (set by the BCM2837 firmware) — needs a
+#      separate linker script.
+#   2. Boot image is a raw binary called kernel8.img, not an ELF.
+#   3. PL011 base, BCM2837 ARM-local interrupt controller, watchdog
+#      reset — handled by source-level #ifdef BOARD_RPI3 in arch code.
+BOARD_CFLAGS_RPI3 = -DBOARD_RPI3
+
 # ---- Build rules -------------------------------------------------------
 all: $(TARGET)
 
@@ -167,6 +181,33 @@ $(TARGET): $(ALL_OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(ALL_OBJS) $(LIBGCC)
 	@echo "[OK] $(TARGET) built"
 	@$(CROSS)size $@
+
+# ---- Raspberry Pi 3 build ---------------------------------------------
+.PHONY: rpi3 rpi3-clean run-rpi3
+rpi3:
+	@echo "[BOARD] building for Raspberry Pi 3 Model B (BCM2837)"
+	$(MAKE) clean
+	$(MAKE) _rpi3_image BOARD=RPI3
+
+# Internal target: invoked by `rpi3` with BOARD=RPI3 propagated so the
+# CFLAGS/linker pick up the RPi 3 settings.
+_rpi3_image: CFLAGS += $(BOARD_CFLAGS_RPI3)
+_rpi3_image: ASFLAGS += $(BOARD_CFLAGS_RPI3)
+_rpi3_image: LDFLAGS := -nostdlib -static -T linker.rpi3.ld
+_rpi3_image: TARGET := kernel.rpi3.elf
+_rpi3_image: kernel8.img
+
+kernel.rpi3.elf: $(ALL_OBJS) linker.rpi3.ld
+	$(LD) -nostdlib -static -T linker.rpi3.ld -o $@ $(ALL_OBJS) $(LIBGCC)
+	@echo "[OK] $@ built"
+	@$(CROSS)size $@
+
+# Raw binary the BCM2837 firmware actually consumes. objcopy strips the
+# ELF metadata; the result has section contents at their linker-assigned
+# offsets, with 0x80000 itself at the head of the file.
+kernel8.img: kernel.rpi3.elf
+	$(OBJCOPY) -O binary $< $@
+	@echo "[OK] $@ — $(shell stat -c %s $@) bytes ready for SD card"
 
 # boot/aarch64 C sources
 main.o: main.c
@@ -210,7 +251,14 @@ run-debug: $(TARGET)
 	qemu-system-aarch64 $(QEMU_FLAGS) -S -gdb tcp::1234 &
 	@echo "GDB: aarch64-linux-gnu-gdb -ex 'target remote :1234' kernel.elf"
 
+# Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
+# firmware contract: load kernel8.img at 0x80000, run at EL2.
+QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
+                  -display none -no-reboot
+run-rpi3: kernel8.img
+	qemu-system-aarch64 $(QEMU_RPI3_FLAGS)
+
 clean:
-	rm -f $(ALL_OBJS) $(TARGET)
+	rm -f $(ALL_OBJS) $(TARGET) kernel.rpi3.elf kernel8.img
 
 .PHONY: all run run-debug clean

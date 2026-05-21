@@ -106,9 +106,17 @@ static void timer_irq_handler(void)
  * --------------------------------------------------------------------- */
 EXPORT ER knl_tkdev_initialize(void)
 {
+#ifndef BOARD_RPI3
+    /* GICv2 init — only on QEMU virt. RPi 3 / BCM2837 uses a
+     * non-GIC ARM-local interrupt controller; that path lands in a
+     * future Phase 3 step. For now boot proceeds without timer IRQs;
+     * tk_dly_tsk-blocked tasks will hang, but the boot banner and
+     * usermain init can come up so we can verify the rest of the
+     * port works. */
     gic_init();
     knl_define_inthdr(INTNO_TIMER_GIC, (FP)timer_irq_handler);
     timer_init();
+#endif
     return E_OK;
 }
 

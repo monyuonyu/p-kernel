@@ -1,0 +1,42 @@
+# config.txt — drop on the FAT32 boot partition of an SD card to make
+# the BCM2837 firmware load p-kernel as a bare-metal AArch64 image.
+#
+# Pair with:
+#   bootcode.bin
+#   start.elf
+#   fixup.dat
+#   kernel8.img        <- built by `make rpi3`
+#
+# bootcode.bin / start.elf / fixup.dat come from the official Raspberry
+# Pi firmware repository:
+#     https://github.com/raspberrypi/firmware/tree/master/boot
+#
+# Reset behaviour:
+#   - The VideoCore GPU runs bootcode.bin first, then start.elf.
+#   - start.elf reads this file, sees arm_64bit=1, and jumps the ARM
+#     core(s) into AArch64 EL2 with PC = 0x80000.
+#   - p-kernel takes over from there (arch/aarch64/start.S).
+
+# Boot the ARM core(s) in AArch64 mode.
+arm_64bit=1
+
+# Image filename (default kernel8.img for AArch64; we keep the default).
+kernel=kernel8.img
+
+# Disable USB controllers we don't drive yet — saves a couple seconds
+# of firmware probe latency on boot. Re-enable when adding the SMSC9514
+# USB-Ethernet driver.
+dtoverlay=disable-bt
+
+# Don't put the GPU at the bottom of memory; leave the first 64 MB
+# untouched so the kernel can rely on 0x80000+ being free.
+gpu_mem=16
+
+# Keep the system console on the PL011 (mini-UART would shift its baud
+# with the CPU clock and confuse p-kernel's hard-coded 115200 init).
+enable_uart=1
+
+# Lock the VPU (and the PL011 base clock) to 250 MHz — otherwise the
+# firmware may scale it down under thermal/power events, breaking the
+# IBRD/FBRD divisor in sio_init.
+core_freq=250

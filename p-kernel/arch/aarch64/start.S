@@ -14,6 +14,29 @@
     .global _start
 
 _start:
+#ifdef BOARD_RPI3
+    /* Linux AArch64 image header — QEMU raspi3b checks the magic at
+     * offset 56 to decide between AArch32 and AArch64 boot.  We keep
+     * the structure exactly, with code0 doing a forward branch to the
+     * real entry below so the first executed instruction is sensible
+     * regardless of whether the firmware boots us via the header path
+     * or by jumping straight to 0x80000.  Docs: kernel.org
+     *   Documentation/arm64/booting.rst (Image header layout). */
+    b   _rpi3_start                 /* code0  */
+    .long 0                          /* code1 (PE COFF stub offset)   */
+    .quad 0x00080000                 /* text_offset  (image load off) */
+    .quad _kernel_end - _start       /* image_size                    */
+    .quad 0                          /* flags (page-size etc — 4K LE) */
+    .quad 0                          /* res2                          */
+    .quad 0                          /* res3                          */
+    .quad 0                          /* res4                          */
+    .ascii "ARM\x64"                 /* magic at offset 56            */
+    .long 0                          /* res5 (PE-COFF header offset)  */
+
+_rpi3_start:
+    /* Fall through into the common path below — header done, real boot
+     * starts here. */
+#endif
     /* Silence all secondary cores immediately */
     mrs x0, mpidr_el1
     and x0, x0, #0xFF           /* extract CPU ID (Aff0) */

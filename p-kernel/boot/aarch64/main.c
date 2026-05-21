@@ -17,10 +17,17 @@ extern const void *knl_c_init_task;
 /* PL011 UART init (arch/aarch64/sio.c) */
 extern void sio_init(void);
 
+/* PL011 base differs between QEMU virt and BCM2837 — keep this print
+ * helper minimal so it works before sio_init() runs. */
+#ifdef BOARD_RPI3
+#  define PRINT_UART_BASE   0x3F201000UL    /* BCM2837 PL011 (UART0) */
+#else
+#  define PRINT_UART_BASE   0x09000000UL    /* QEMU virt PL011       */
+#endif
 static void print(const char *s)
 {
-    volatile unsigned int *uart = (volatile unsigned int *)0x09000000; /* UARTDR */
-    volatile unsigned int *fr   = (volatile unsigned int *)0x09000018; /* UARTFR */
+    volatile unsigned int *uart = (volatile unsigned int *)(PRINT_UART_BASE + 0x00); /* UARTDR */
+    volatile unsigned int *fr   = (volatile unsigned int *)(PRINT_UART_BASE + 0x18); /* UARTFR */
     for (; *s; s++) {
         while (*fr & (1 << 5)) {}   /* wait TX FIFO not full */
         *uart = (unsigned int)(unsigned char)*s;
