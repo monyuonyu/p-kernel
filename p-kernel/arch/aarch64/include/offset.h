@@ -64,12 +64,15 @@
  *  (we found this the hard way — initial guess of 168 → dispatcher loaded
  *  SSP=0 → ret to garbage → fault at PC=0x3000000).
  *
- *  Verification: see arch/aarch64/include/offset_check.c (build-time check)
- *  Result on AArch64 with CFN_MAX_PORID > 0 and CFN_MAX_MTXID > 0:
+ *  Re-derive these whenever a TCB-field type changes width by adding a
+ *  temporary `offsetof` dump in boot/aarch64/main.c — the W/UW typedef
+ *  fix (long→int on LP64) shifted the layout once already.
+ *
+ *  Current values (W/UW = 32-bit int, CFN_MAX_PORID>0, CFN_MAX_MTXID>0):
  *      TCB_task    = 40
- *      TCB_isstack = 192
- *      TCB_tskctxb = 200      ← key one for the dispatcher
- *      sizeof(TCB) = 216
+ *      TCB_isstack = 184
+ *      TCB_tskctxb = 192      ← key one for the dispatcher
+ *      sizeof(TCB) = 208
  */
 #define TCB_tskid       16
 #define TCB_exinf       24
@@ -79,10 +82,10 @@
 #define TCB_state       59
 #define TCB_winfo       104
 #define TCB_wtmeb       136
-#define TCB_isstack     192
-#define TCB_tskctxb     200
+#define TCB_isstack     184
+#define TCB_tskctxb     192
 #define CTXB_ssp        0
-#define TCB_SSP         200     /* TCB_tskctxb + CTXB_ssp             */
+#define TCB_SSP         192     /* TCB_tskctxb + CTXB_ssp             */
 
 /* winfo/wtmeb offsets — not needed in assembler, computed by C compiler */
 
