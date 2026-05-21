@@ -31,34 +31,41 @@ extern "C" {
 #endif
 
 /*
- * General-purpose data type  
+ * General-purpose data type
+ *
+ * The "32-bit integer" types are spelled `int` rather than the
+ * historical `long`, because on LP64 targets (AArch64 Linux, x86-64
+ * Linux) `long` is 64 bits and silently breaks every network struct,
+ * task counter, and global that was sized assuming W/UW = 32 bits.
+ * `int` is 32 bits on every ABI we currently target (i386 ILP32,
+ * AArch64 LP64), so the spelling is portable without #ifdefs.
  */
 typedef signed char	    S1; /* Signed 8 bit integer    */
 typedef signed short    S2; /* Signed 16 bit integer   */
-typedef signed long	    S4; /* Signed 32 bit integer   */
+typedef signed int	    S4; /* Signed 32 bit integer   */
 typedef unsigned char   U1; /* Unsigned 8 bit integer  */
 typedef unsigned short  U2; /* Unsigned 16 bit integer */
-typedef unsigned long   U4; /* Unsigned 32 bit integer */
+typedef unsigned int    U4; /* Unsigned 32 bit integer */
 
 typedef signed char        int8_t;   /* Signed 8 bit integer    */
 typedef signed short        int16_t;  /* Signed 16 bit integer   */
-typedef signed long        int32_t;  /* Signed 32 bit integer   */
+typedef signed int         int32_t;  /* Signed 32 bit integer   */
 typedef signed long long   int64_t;  /* Signed 64 bit integer   */
 typedef unsigned char      uint8_t;  /* Unsigned 8 bit integer  */
 typedef unsigned short     uint16_t; /* Unsigned 16 bit integer */
-typedef unsigned long      uint32_t; /* Unsigned 32 bit integer */
+typedef unsigned int       uint32_t; /* Unsigned 32 bit integer */
 typedef unsigned long long uint64_t; /* Unsigned 64 bit integer */
 
 typedef signed char	B;	/* Signed 8 bit integer */
 typedef signed short	H;	/* Signed 16 bit integer */
-typedef signed long	W;	/* Signed 32 bit integer */
+typedef signed int	W;	/* Signed 32 bit integer */
 typedef unsigned char	UB;	/* Unsigned 8 bit integer */
 typedef unsigned short  UH;	/* Unsigned 16 bit integer */
-typedef unsigned long	UW;	/* Unsigned 32 bit integer */
+typedef unsigned int	UW;	/* Unsigned 32 bit integer */
 
 typedef signed char	VB;	/* Nonuniform type 8 bit data */
 typedef signed short	VH;	/* Nonuniform type 16 bit data */
-typedef signed long	VW;	/* Nonuniform type 32 bit data */
+typedef signed int	VW;	/* Nonuniform type 32 bit data */
 typedef void		*VP;	/* Nonuniform type data pointer */
 
 typedef volatile B	_B;	/* Volatile statement attached */
