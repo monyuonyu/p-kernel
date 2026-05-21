@@ -38,9 +38,15 @@ INCDIRS = \
 
 # ---- Compiler flags ---------------------------------------------------
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
-          -fno-common -O1 -std=gnu11 \
+          -fno-common -O1 -std=gnu11 -mstrict-align \
           -D_APP_AARCH64_ \
           $(INCDIRS)
+# -mstrict-align: with MMU disabled at EL1, Cortex-A53 treats RAM as
+# Device-nGnRnE, which disallows unaligned data accesses. Without this
+# flag GCC merges packed-struct field writes (e.g. arp->spa, arp->tpa)
+# into single STUR x{n}, [base, #42] instructions and the kernel takes
+# an alignment fault on the first ARP send. Switch to a proper MMU
+# identity map (RAM as Normal cacheable) when we need the performance.
 
 ASFLAGS = -D_in_asm_source_ \
           -I$(ARCH)/include \

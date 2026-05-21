@@ -266,11 +266,54 @@ _vec_el1_irq:
     restore_caller_regs
     eret
 
+_vec_el1_sync:
+    /* Dump ESR_EL1 + ELR_EL1 + FAR_EL1 to PL011 for diagnosis */
+    movz x0, #0x0000
+    movk x0, #0x0900, lsl #16    /* PL011 DR = 0x09000000 */
+    mov w1, #'S'; str w1, [x0]
+    mov w1, #'Y'; str w1, [x0]
+    mov w1, #'N'; str w1, [x0]
+    mov w1, #'C'; str w1, [x0]
+    mov w1, #' '; str w1, [x0]
+    mrs x2, esr_el1
+    mov w1, #'E'; str w1, [x0]
+    mov w1, #'='; str w1, [x0]
+    bl .Lhex64
+    mov w1, #' '; str w1, [x0]
+    mrs x2, elr_el1
+    mov w1, #'P'; str w1, [x0]
+    mov w1, #'='; str w1, [x0]
+    bl .Lhex64
+    mov w1, #' '; str w1, [x0]
+    mrs x2, far_el1
+    mov w1, #'A'; str w1, [x0]
+    mov w1, #'='; str w1, [x0]
+    bl .Lhex64
+    mov w1, #'\r'; str w1, [x0]
+    mov w1, #'\n'; str w1, [x0]
+    b .
+
+/* Hex64 helper: prints x2 as 16 hex digits, clobbers x3,x4. */
+.Lhex64:
+    mov x4, #16
+.Lhex_loop:
+    sub x4, x4, #1
+    lsl x3, x4, #2
+    lsr x3, x2, x3
+    and x3, x3, #0xF
+    cmp x3, #9
+    b.le 1f
+    add x3, x3, #('A' - '0' - 10)
+1:  add x3, x3, #'0'
+    mov w1, w3
+    str w1, [x0]
+    cbnz x4, .Lhex_loop
+    ret
+
 _vec_sp0_sync:
 _vec_sp0_irq:
 _vec_sp0_fiq:
 _vec_sp0_serr:
-_vec_el1_sync:
 _vec_el1_fiq:
 _vec_el1_serr:
 _vec_el0_sync:

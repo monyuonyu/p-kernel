@@ -98,6 +98,15 @@ _el1_entry:
     msr sctlr_el1, x0
     isb
 
+    /* Enable FP/SIMD access at EL1 — without this, the first FP op
+     * (e.g. dtr_init weight initialisation) traps to _vec_el1_sync
+     * and the kernel hangs silently. CPACR_EL1.FPEN[21:20] = 0b11
+     * disables trapping at both EL0 and EL1. */
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
     /* Jump to C main */
     bl  main
 
