@@ -1,0 +1,132 @@
+# Building UMP as an Android app — Phase A
+
+This is the on-ramp for distributing p-kernel via Google Play. The kernel
+itself already runs end-to-end as a Linux process on aarch64; this
+document covers the wrapping that turns `./p-kernel` into `libpkernel.so`
+inside an APK.
+
+Status as of 2026-05-21: this guide describes the path; the actual
+Android Studio project files (`build.gradle`, `AndroidManifest.xml`,
+the Kotlin Activity) live outside this repo and are built where the
+NDK is available. The native side (`android/app/src/main/cpp/` and
+`android/app/src/main/java/io/pkernel/PKernel.java`) **is** in this
+repo and contains the JNI bridge + CMakeLists.txt the project uses.
+
+## Prerequisites
+
+- A Linux machine (or macOS) with **Android Studio** + **NDK r25c** or
+  newer. The home Ubuntu server in [[project-ump-android-node]] is the
+  intended build environment.
+- This repository cloned somewhere accessible to the Studio project.
+
+## Project skeleton
+
+Create a new Android Studio project (Empty Activity, Kotlin, minimum
+API 26 / Android 8.0). After the wizard finishes, replace the generated
+`app/src/main/cpp/` with the contents of `android/app/src/main/cpp/`
+from this repo, and drop `android/app/src/main/java/io/pkernel/PKernel.java`
+into the appropriate Java sources directory.
+
+`app/build.gradle.kts` needs:
+
+```kotlin
+android {
+    namespace = "io.pkernel"
+    ndkVersion = "25.2.9519653"     // or whatever you have
+    defaultConfig {
+        externalNativeBuild {
+            cmake { arguments += listOf("-DANDROID_ABI=arm64-v8a") }
+        }
+        ndk { abiFilters += "arm64-v8a" }    // 32-bit ABIs not supported yet
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+}
+```
+
+`AndroidManifest.xml` needs INTERNET permission (for the relay /
+loopback network) and a foreground service declaration (so the kernel
+keeps running while the screen is off):
+
+```xml
+<uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+<service
+    android:name=".KernelService"
+    android:foregroundServiceType="dataSync"
+    android:exported="false"/>
+```
+
+## What the JNI bridge does
+
+`pkernel_jni.c` exposes three native methods:
+
+- `nativeBoot(nodeId)` — Sets `PKERNEL_NODE_ID` + `PKERNEL_AUTONET=1`
+  in the process environment, opens two pipes (stdin / stdout), spawns
+  a pthread, and inside that thread `dup2`s the pipe ends to FD 0/1/2
+  before calling `pkernel_main()` (which is just our existing `main()`
+  renamed via `-Dmain=pkernel_main` to avoid colliding with JNI's
+  own entry-point conventions).
+- `nativeReadStdout(buf, maxlen)` — Pulls captured stdout bytes for the
+  UI's TerminalView.
+- `nativeWriteStdin(buf, len)` — Feeds keystrokes from the UI's input
+  field into the kernel's `sio_read_line`.
+
+The kernel has no awareness of being inside an app; from its point of
+view it's just running on aarch64 Linux with stdin/stdout being a pipe.
+
+## Build steps
+
+1. Open the Studio project, sync gradle.
+2. `Build → Make Project`. Errors here are usually missing headers —
+   confirm `PK_ROOT` in `CMakeLists.txt` resolves to the repo root
+   (the `../../../../../..` chain is correct when the CMakeLists is at
+   `android/app/src/main/cpp/`).
+3. `Run → Run 'app'` on a connected aarch64 device or emulator.
+4. First boot: you should see the same banner as `./p-kernel` on Linux,
+   inside the TerminalView.
+
+## Known issues (Phase A → Phase B)
+
+- **PIE/PIC**: the current Linux build sets `-no-pie`. The Android build
+  uses `-fPIC` (required for `.so`) and the same code does pass through
+  cc successfully, but a runtime test on Termux Ubuntu hung after
+  `[BOOT] Starting T-Kernel...`. The `adrp + add` patterns in
+  `cpu_support.S` are PIC-safe in principle (same-DSO PC-relative);
+  the hang is most likely a separate initialization-order issue that
+  emerges under PIE's address-randomization. Track as Session 3f.
+- **Background lifecycle**: The Activity launches `nativeBoot` but
+  Android will kill the process within minutes of the user leaving the
+  app. The Foreground Service stub above is the workaround; the kernel
+  thread should be created from `Service.onStartCommand`, not the
+  Activity.
+- **Battery**: the SIGALRM at 10 ms cadence is fine for active use,
+  but for "passive node" mode the user should default to `Allow only
+  while charging`. See [[project-linux-userspace-time-domain]] for
+  NO_HZ-style tickless idle to address this.
+- **NAT traversal**: two phones on cellular won't reach each other via
+  127.0.0.1. Phase B replaces `net_unix.c`'s UDP loopback with a relay
+  server (one tiny public IP). Until then the demo is "two emulators
+  on one host" or "two devices on the same Wi-Fi LAN with a tiny
+  STUN/relay component."
+
+## Play Store path
+
+This is a hosted-RTOS distribution. Google's review process should
+treat the APK as an ordinary NDK app (no code executed from `/data`,
+no ARM64 jit, no APIs they restrict). The honest user-facing
+description is essential:
+
+> p-kernel is research / hobby OS that uses a small slice of your
+> phone's CPU and network to participate in a distributed AI fabric.
+> It runs only while your phone is charging by default. You can
+> disable participation at any time.
+
+F-Droid (direct APK install) is the long-term distribution backup so
+the project doesn't depend on a single store.
