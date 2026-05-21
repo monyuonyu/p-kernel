@@ -29,6 +29,13 @@ EXPORT void *knl_lowmem_limit;
  * boot banner + a handful of tasks. */
 static unsigned char linux_heap[16 * 1024 * 1024] __attribute__((aligned(16)));
 
+/* _kernel_end is normally a linker-defined symbol marking the top of
+ * the loaded kernel image (used by kloader_task as a "do not overwrite
+ * below here" sentinel). Linux processes have no equivalent. Expose a
+ * zero-size symbol that resolves to the bottom of our heap so the
+ * kloader bounds check is a stable address. */
+__asm__ (".global _kernel_end\n_kernel_end:\n");
+
 EXPORT ER knl_cpu_initialize(void)
 {
     for (INT i = 0; i < N_INTVEC; i++) {

@@ -77,6 +77,43 @@ ARCH_S_SRCS = cpu_support.S
 
 ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
 
+# ---- arch/common sources (portable AI + distributed layer) -----------
+# Same list as boot/aarch64. These files are arch-independent C and
+# expect only the T-Kernel public API + a handful of arch hooks
+# (rtl8139_*, pci_*, sio_*, arch_reboot, vfs_*) that arch/linux already
+# provides as either real implementations (sio) or stubs (NIC, VFS).
+ARCH_COMMON = $(ROOT)/arch/common
+COMMON_C_SRCS = \
+    tensor.c \
+    ai_job.c \
+    pipeline.c \
+    ai_stats.c \
+    netstack.c \
+    drpc.c \
+    swim.c \
+    kdds.c \
+    replica.c \
+    pmesh.c \
+    sfs.c \
+    heal.c \
+    degrade.c \
+    vital.c \
+    edf.c \
+    raft.c \
+    spawn.c \
+    moe.c \
+    dtr.c \
+    dkva.c \
+    dmn.c \
+    ga.c \
+    fedlearn.c \
+    mem_store.c \
+    chat.c \
+    dproc.c \
+    kloader_task.c
+
+COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
+
 # ---- kernel/common sources -------------------------------------------
 KERNEL_SRCS = \
     task.c \
@@ -119,7 +156,7 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
               strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 
 TARGET = p-kernel
 
@@ -149,6 +186,10 @@ cpu_support.o: $(ARCH_LINUX)/aarch64/cpu_support.S
 
 # kernel/common — uses T-Kernel placeholder libc
 $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+# arch/common — portable AI + distributed layer; same libc as kernel/common
+$(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 # libc string sources
