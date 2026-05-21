@@ -26,7 +26,7 @@ CC      = $(CROSS)gcc
 CFLAGS  = -O2 -Wall -Wextra -g -fno-omit-frame-pointer
 LDFLAGS = -static
 
-POCS = poc_ctx_switch poc_preempt
+POCS = poc_ctx_switch poc_preempt poc_dispatch
 
 CTX_OBJS  = poc_ctx_switch.o ctx_switch.o
 CTX_HDR   = ../include/arch_ctx.h
@@ -36,6 +36,16 @@ PRMP_HDR  = ../include/arch_preempt.h
 # poc_preempt needs librt for timer_create/timer_settime (only matters
 # on glibc < 2.34; harmless on newer toolchains).
 PRMP_LDFLAGS = $(LDFLAGS) -lrt
+
+# Session 3a needs T-Kernel headers (offset.h, utk_config_depend.h,
+# config.h) so cpu_support.S can resolve TCB_SSP. The Linux x86_64
+# offset.h shadow lives in include/.
+DISPATCH_CFLAGS = -I$(CURDIR)/include \
+                  -I$(CURDIR)/../include \
+                  -I$(CURDIR)/../../../include/kernel/tkernel \
+                  -I$(CURDIR)/../../../include \
+                  -D_APP_X86_64_ -D_APP_LINUX_
+DISPATCH_OBJS = poc_dispatch.o cpu_support.o
 
 all: $(POCS)
 
@@ -57,16 +67,29 @@ poc_preempt.o: poc_preempt.c $(PRMP_HDR)
 trampoline.o: trampoline.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Session 3a — T-Kernel dispatcher unit test
+poc_dispatch: $(DISPATCH_OBJS)
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+poc_dispatch.o: poc_dispatch.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+cpu_support.o: cpu_support.S
+	$(CC) $(CFLAGS) $(DISPATCH_CFLAGS) -c -o $@ $<
+
 run-ctx: poc_ctx_switch
 	$(RUN) ./poc_ctx_switch
 
 run-preempt: poc_preempt
 	$(RUN) ./poc_preempt
 
+run-dispatch: poc_dispatch
+	$(RUN) ./poc_dispatch
+
 # Legacy alias
 run: run-ctx
 
 clean:
-	rm -f $(CTX_OBJS) $(PRMP_OBJS) $(POCS)
+	rm -f $(CTX_OBJS) $(PRMP_OBJS) $(DISPATCH_OBJS) $(POCS)
 
-.PHONY: all run run-ctx run-preempt clean
+.PHONY: all run run-ctx run-preempt run-dispatch clean
