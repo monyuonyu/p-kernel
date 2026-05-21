@@ -1,0 +1,6 @@
+arch/linux/x86_64/poc_ctx_switch
+arch/linux/x86_64/*.o
+arch/linux/aarch64/poc_dispatch
+arch/linux/aarch64/poc_ctx_switch
+arch/linux/aarch64/poc_preempt
+arch/linux/aarch64/*.o
