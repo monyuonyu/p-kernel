@@ -228,7 +228,12 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
     (void)src_ip; (void)src_port;
     if (len < 8) return;
 
-    const UW magic = *(const UW *)data;
+    /* UDP payload sits at frame offset 42 (eth14 + ip20 + udp8), which is
+     * not 4-byte aligned. With MMU off Cortex-A53 treats RAM as
+     * Device-nGnRnE and traps unaligned wide reads, so load magic
+     * byte-by-byte. */
+    UW magic;
+    __builtin_memcpy(&magic, data, sizeof magic);
     if (magic != PMESH_MAGIC)        return;
     if (data[4] != PMESH_VERSION)    return;
 
