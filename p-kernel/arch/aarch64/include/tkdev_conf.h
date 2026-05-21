@@ -40,11 +40,10 @@
 /* ARM Generic Timer: EL1 physical timer PPI 30 */
 #define INTNO_TIMER_GIC     30
 
-/* RTL8139 over QEMU virt PCIe legacy IRQ.
- * QEMU virt routes PCIe slots 0..3 INTA pin to GIC SPIs 3..6
- * (= INTIDs 35..38). Slot 0 INTA → INTID 35. Other boards (e.g. real
- * hardware with UEFI) must re-derive this from PCI_INT_PIN/PCI_INT_LINE. */
-#define INTNO_RTL8139_GIC   35
+/* RTL8139's IRQ is no longer a build-time constant — rtl8139_init()
+ * computes it dynamically from PCI dev + INT_PIN, since QEMU virt may
+ * place the chip at different slots and the legacy PCI INTx swizzle
+ * rotates the SPI assignment per device. */
 
 /* Max interrupt vector slots */
 #define N_INTVEC        512

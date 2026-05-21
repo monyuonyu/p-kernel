@@ -78,6 +78,7 @@ static UB tx_buf[TX_NUM][TX_BUF_LEN]     __attribute__((aligned(4)));
 /* ------------------------------------------------------------------ */
 
 static unsigned long rtl_mmio = 0;     /* BAR1 base, MMIO       */
+unsigned long rtl_mmio_for_diag = 0;   /* exposed for shell `rx` cmd */
 static UB  rtl_irq  = 0;               /* PCI INT_LINE (legacy) */
 static UB  rtl_mac[6];
 static INT tx_cur   = 0;
@@ -263,6 +264,18 @@ ER rtl8139_init(ID sem)
         return E_NOEXS;
     }
 
+    /* QEMU virt PCIe routes legacy INTx pins to SPIs 3..6 using the
+     * standard PCI swizzle. INT_PIN is 1..4 for INTA..INTD; without
+     * UEFI/ACPI we just assume INTA (1) — the chip never wires anything
+     * else. The hard-coded INTNO_RTL8139_GIC=35 only worked for dev=0;
+     * QEMU virt actually lands the RTL8139 at dev=1, which rotates to
+     * INTID 36. Compute it from (dev,int_pin) so this also stays right
+     * if QEMU shuffles slots in a future release. */
+    UB int_pin = pci_read8(bus, dev, func, 0x3D);
+    if (int_pin == 0) int_pin = 1;
+    UINT spi = 3 + ((UINT)(dev + int_pin - 1) % 4);
+    UINT rtl_intid = 32 + spi;
+
     rx_sem = sem;
 
     /* BAR1 = memory-mapped registers. Lower 4 bits are flags.
@@ -275,6 +288,7 @@ ER rtl8139_init(ID sem)
         net_puts("[net] assigned BAR1 manually\r\n");
     }
     rtl_mmio = (unsigned long)(bar1 & 0xFFFFFFF0u);
+    rtl_mmio_for_diag = rtl_mmio;
 
     /* INT_LINE is firmware-routed; on QEMU virt without UEFI this is
      * undefined. We don't use it (poll mode). Record for diagnostics. */
@@ -310,8 +324,8 @@ ER rtl8139_init(ID sem)
     wrw(R_IMR, (UH)(ISR_ROK | ISR_TOK));
 
     /* Hook into _vec_el1_irq via knl_intvec[], then unmask in GICD. */
-    knl_define_inthdr(INTNO_RTL8139_GIC, (FP)rtl_irq_handler);
-    gic_enable_irq(INTNO_RTL8139_GIC);
+    knl_define_inthdr((INT)rtl_intid, (FP)rtl_irq_handler);
+    gic_enable_irq(rtl_intid);
 
     /* Multicast: accept all */
     wrl(R_MAR,   0xFFFFFFFFu);

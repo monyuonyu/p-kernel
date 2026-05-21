@@ -226,6 +226,38 @@ EXPORT INT usermain(void)
             ai_stats_print();
         } else if (n >= 3 && strneq(line, "net", 3)) {
             net_bringup();
+        } else if (n >= 2 && strneq(line, "rx", 2)) {
+            extern unsigned long rtl_mmio_for_diag;
+            char buf2[64];
+            UH isr = 0;
+            if (rtl_initialized) {
+                isr = *(volatile UH *)(rtl_mmio_for_diag + 0x3E);
+            }
+            INT i = 0;
+            const char *p = "[rx] count="; while (*p) buf2[i++] = *p++;
+            UW v = rtl_rx_count;
+            if (v == 0) buf2[i++] = '0';
+            else {
+                char tmp[12]; INT t = 0;
+                while (v > 0) { tmp[t++] = '0' + (v % 10); v /= 10; }
+                while (t > 0) buf2[i++] = tmp[--t];
+            }
+            const char *p2 = "  tx="; while (*p2) buf2[i++] = *p2++;
+            v = rtl_tx_count;
+            if (v == 0) buf2[i++] = '0';
+            else {
+                char tmp[12]; INT t = 0;
+                while (v > 0) { tmp[t++] = '0' + (v % 10); v /= 10; }
+                while (t > 0) buf2[i++] = tmp[--t];
+            }
+            const char *p3 = "  ISR=0x"; while (*p3) buf2[i++] = *p3++;
+            static const char hex[] = "0123456789ABCDEF";
+            buf2[i++] = hex[(isr >> 12) & 0xF];
+            buf2[i++] = hex[(isr >>  8) & 0xF];
+            buf2[i++] = hex[(isr >>  4) & 0xF];
+            buf2[i++] = hex[isr & 0xF];
+            buf2[i++] = '\r'; buf2[i++] = '\n';
+            sio_send_frame((const UB *)buf2, i);
         } else {
             print("[echo] ");
             sio_send_frame(line, n);
