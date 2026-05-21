@@ -500,6 +500,18 @@ void drpc_init(UB my_node_id, UW my_ip)
     drpc_my_node = my_node_id;
     net_my_ip    = my_ip;
 
+    /* Make the "not yet heard from" state explicit for every other
+     * slot. BSS zero-init gives this for free (DNODE_UNKNOWN == 0),
+     * but writing it out documents the dependency and keeps the
+     * table correct under future allocation strategies that don't
+     * use BSS (e.g. a dynamically allocated table). */
+    for (UB i = 0; i < DNODE_MAX; i++) {
+        dnode_table[i].state   = DNODE_UNKNOWN;
+        dnode_table[i].ip      = 0;
+        dnode_table[i].missed  = 0;
+        dnode_table[i].node_id = i;
+    }
+
     /* Register self in the table */
     dnode_table[my_node_id].node_id = my_node_id;
     dnode_table[my_node_id].ip      = my_ip;
