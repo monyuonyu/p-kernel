@@ -37,7 +37,14 @@ IMPORT void knl_task_entry_trampoline(void);
 
 Inline void knl_setup_context(TCB *tcb)
 {
-    UW *ssp = (UW *)((UB *)tcb->isstack - DORMANT_STACK_SIZE);
+    /* AArch64 requires sp to be 16-byte aligned for every load/store
+     * that uses sp as the base register. knl_Imalloc only guarantees
+     * 8-byte alignment for the task stack, so the naïve
+     * (isstack - 112) can land 8-aligned but not 16-aligned. Round
+     * the top of stack down to 16 here. Bare-metal builds get the
+     * same guarantee for free; AArch64-Linux ones rely on it. */
+    unsigned long base = ((unsigned long)tcb->isstack) & ~0xFUL;
+    UW *ssp = (UW *)(base - DORMANT_STACK_SIZE);
 
     /* Zero the entire frame */
     for (INT i = 0; i < DORMANT_STACK_SIZE / (INT)sizeof(UW); i++) {

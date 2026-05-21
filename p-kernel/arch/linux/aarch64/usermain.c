@@ -15,11 +15,11 @@ IMPORT void sio_init(void);
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)" p-kernel  [linux / aarch64 userspace]\r\n");
-    tm_putstring((UB *)"  (Session 3b — boot reached usermain. Hi from the great goal.)\r\n");
+    tm_putstring((UB *)"  T-Kernel is alive inside a Linux process.\r\n");
     tm_putstring((UB *)"  Press Ctrl-C in the host terminal to exit.\r\n");
 
     for (;;) {
-        tk_dly_tsk(1000);   /* 1 second; the timer IRQ keeps this alive */
+        tk_dly_tsk(1000);   /* 1 second; SIGALRM keeps this alive */
     }
 
     return 0;

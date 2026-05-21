@@ -42,6 +42,45 @@ static volatile sig_atomic_t pending_timer_ticks = 0;
  * knl_taskindp around the call to knl_timer_handler. */
 extern void knl_timer_handler_startup(void);
 
+extern void sio_send_frame(const unsigned char *buf, int size);
+
+void arch_linux_trampoline_marker(void)
+{
+    sio_send_frame((const unsigned char *)"[asm] trampoline reached\r\n", 26);
+}
+
+void arch_linux_dispatch_loop_marker(void)
+{
+    sio_send_frame((const unsigned char *)"[asm] dispatch loop entered\r\n", 29);
+}
+
+static void hexdump(const char *lbl, int lbl_len, unsigned long v) {
+    unsigned char buf[24];
+    sio_send_frame((const unsigned char *)lbl, lbl_len);
+    for (int i = 0; i < 16; i++) {
+        int n = (v >> ((15 - i) * 4)) & 0xF;
+        buf[i] = (n < 10) ? ('0' + n) : ('a' + n - 10);
+    }
+    buf[16] = '\r'; buf[17] = '\n';
+    sio_send_frame(buf, 18);
+}
+
+void arch_linux_dispatch_after_cbz(unsigned long sched) { hexdump("[asm] after cbz, sched=", 23, sched); }
+void arch_linux_dispatch_after_sp_switch(unsigned long sp_v) { hexdump("[asm] after mov sp, sp=", 23, sp_v); }
+void arch_linux_dispatch_after_restore(unsigned long x30_v) { hexdump("[asm] after restore, x30=", 25, x30_v); }
+
+void arch_linux_trampoline_about_to_br(unsigned long x17)
+{
+    unsigned char buf[24];
+    sio_send_frame((const unsigned char *)"[asm] br x17 target=", 20);
+    for (int i = 0; i < 16; i++) {
+        int n = (x17 >> ((15 - i) * 4)) & 0xF;
+        buf[i] = (n < 10) ? ('0' + n) : ('a' + n - 10);
+    }
+    buf[16] = '\r'; buf[17] = '\n';
+    sio_send_frame(buf, 18);
+}
+
 void arch_irq_enable_with_drain(void)
 {
     arch_irq_disabled_flag = 0;
