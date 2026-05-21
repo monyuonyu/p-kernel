@@ -33,18 +33,75 @@ static inline void pl011_write(unsigned int reg, unsigned int val)
     *((volatile unsigned int *)((unsigned long)PL011_BASE + reg)) = val;
 }
 
+#ifdef BOARD_RPI3
+/* BCM2837 GPIO controller — needed to mux GPIO 14/15 onto PL011.
+ *   GPFSEL1   @ 0x3F200004  bits[14:12]=GPIO14, bits[17:15]=GPIO15
+ *                            ALT0 = 0b100 (PL011 TX / RX)
+ *   GPPUD     @ 0x3F200094  pull-up/down control (0=disabled)
+ *   GPPUDCLK0 @ 0x3F200098  apply control to selected pins
+ *
+ * QEMU raspi3b emulates the PL011 as always-on regardless of GPIO
+ * mux, so the boot output already worked without this. On real
+ * silicon the chip's TX line goes nowhere until the pins are switched
+ * to ALT0, which is why this whole block exists.
+ */
+#define BCM_GPIO_BASE   0x3F200000UL
+#define GPFSEL1         (BCM_GPIO_BASE + 0x04)
+#define GPPUD           (BCM_GPIO_BASE + 0x94)
+#define GPPUDCLK0       (BCM_GPIO_BASE + 0x98)
+
+static inline void mmio_w32(unsigned long addr, unsigned int v)
+{
+    *((volatile unsigned int *)addr) = v;
+}
+static inline unsigned int mmio_r32(unsigned long addr)
+{
+    return *((volatile unsigned int *)addr);
+}
+
+static void bcm2837_gpio_pl011_setup(void)
+{
+    /* GPIO 14 + 15 → ALT0 (PL011 TXD/RXD). Mask out the 3-bit
+     * function fields then OR in 0b100 for both pins. */
+    unsigned int s = mmio_r32(GPFSEL1);
+    s &= ~((7u << 12) | (7u << 15));            /* clear FSEL14, FSEL15 */
+    s |=  ((4u << 12) | (4u << 15));            /* ALT0 = 0b100         */
+    mmio_w32(GPFSEL1, s);
+
+    /* Disable pull-up/down on GPIO 14/15. The BCM2835/6/7 sequence:
+     *   GPPUD = 0; wait; GPPUDCLK0 = mask; wait; GPPUDCLK0 = 0.
+     * 150 cycles of delay is recommended; a small busy loop is plenty. */
+    mmio_w32(GPPUD, 0);
+    for (volatile int i = 0; i < 150; i++) { }
+    mmio_w32(GPPUDCLK0, (1u << 14) | (1u << 15));
+    for (volatile int i = 0; i < 150; i++) { }
+    mmio_w32(GPPUDCLK0, 0);
+}
+#endif /* BOARD_RPI3 */
+
 /*
  * sio_init — initialise PL011 at 115200 8N1
- *   QEMU virt's PL011 works without explicit init (clocked at 24MHz).
- *   RPi3 needs BCM2837 clock setup first; we do minimal init here.
+ *   QEMU virt: PL011 base clock is 24 MHz; nothing else to set up.
+ *   RPi 3:     same 24 MHz UART clock under config.txt core_freq=250,
+ *              plus the GPIO 14/15 ALT0 mux above. config.txt also
+ *              sets enable_uart=1 so the firmware doesn't shut PL011
+ *              down at boot.
  */
 EXPORT void sio_init(void)
 {
-    /* Disable UART */
+#ifdef BOARD_RPI3
+    bcm2837_gpio_pl011_setup();
+#endif
+
+    /* Disable UART so register writes below take effect. */
     pl011_write(UARTCR, 0);
 
-    /* Wait for any in-progress transmission */
-    while (pl011_read(UARTFR) & FR_BUSY) {}
+    /* Wait for any in-progress transmission. Bounded — on a fault path
+     * the chip may have left FR.BUSY stuck, and we'd rather drop a
+     * char than hang the kernel before it even prints. */
+    for (volatile int i = 0; i < 100000; i++) {
+        if (!(pl011_read(UARTFR) & FR_BUSY)) break;
+    }
 
     /* 115200 baud @ 24 MHz: IBRD=13, FBRD=1 */
     pl011_write(UARTIBRD, 13);
