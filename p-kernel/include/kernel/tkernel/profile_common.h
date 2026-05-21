@@ -44,4 +44,8 @@
 #include <profile_depend.h>
 #endif
 
+#ifdef _APP_X86_64_
+#include <profile_depend.h>
+#endif
+
 #endif /* __SYS_PROFILE_COMMON_H__ */

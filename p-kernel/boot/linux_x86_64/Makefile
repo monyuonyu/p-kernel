@@ -1,0 +1,200 @@
+# p-kernel Linux userspace Makefile — x86_64 sibling.
+# Mirrors boot/linux/ but builds the arch/linux/x86_64 backend.
+# Cross-compiles when the build host isn't already x86_64.
+#
+# Usage:
+#   make            — build ./p-kernel
+#   make run        — build and run (qemu-x86_64 if not native)
+#   make clean
+
+# ---- Toolchain --------------------------------------------------------
+# Auto-detect host arch; cross-build via x86_64-linux-gnu-gcc when not
+# already on x86_64, and run via qemu-x86_64.
+ifeq ($(shell uname -m),x86_64)
+CROSS ?=
+RUN   ?=
+else
+CROSS ?= x86_64-linux-gnu-
+RUN   ?= qemu-x86_64
+endif
+
+CC = $(CROSS)gcc
+
+# ---- Paths ------------------------------------------------------------
+ROOT       = ../..
+ARCH_LINUX  = $(ROOT)/arch/linux
+ARCH_X86_64 = $(ROOT)/arch/linux/x86_64
+ARCH_AA64   = $(ROOT)/arch/aarch64
+KERNEL      = $(ROOT)/kernel/common
+ARCH_COMMON = $(ROOT)/arch/common
+INC_TK      = $(ROOT)/include/kernel/tkernel
+INC_TOP     = $(ROOT)/include
+INC_LIB     = $(ROOT)/include/lib
+
+# ---- Include directories ----------------------------------------------
+# arch/linux/x86_64/include comes FIRST so its shadows (cpu_status.h,
+# cpu_insn.h, syslib_depend.h, tkdev_timer.h, cpu_task.h, offset.h)
+# take precedence. arch/linux/include holds the Linux-port APIs
+# (arch_ctx.h, arch_preempt.h, arch_time.h). arch/aarch64/include is
+# brought in for the LP64-uniform type defs (sysdef_depend, sysinfo_
+# depend, etc.) — both LP64 ABIs share those.
+#
+# include/lib/libc deliberately stays OUT so Linux POSIX headers
+# resolve to system libc.
+INCDIRS = \
+    -I$(ARCH_X86_64)/include \
+    -I$(ARCH_LINUX)/include \
+    -I$(ARCH_AA64)/include \
+    -I$(ROOT)/arch/common/include \
+    -I$(INC_TK) \
+    -I$(INC_TOP)
+
+# ---- Compiler flags ---------------------------------------------------
+CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
+          -fno-stack-protector -fno-common -std=gnu11 \
+          -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+          $(INCDIRS)
+
+ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
+          -I$(ARCH_X86_64)/include \
+          -I$(ARCH_AA64)/include \
+          -I$(INC_TK) -I$(INC_TOP)
+
+LDFLAGS = -no-pie -static -lrt
+
+# ---- boot/linux_x86_64 sources ---------------------------------------
+BOOT_C_SRCS = main.c
+BOOT_OBJS   = main.o
+
+# ---- arch/linux/x86_64 sources ---------------------------------------
+ARCH_C_SRCS = \
+    cpu_init.c \
+    tkdev_init.c \
+    inittask_def.c \
+    inittask_main.c \
+    usermain.c \
+    sio.c \
+    pci.c \
+    rtl8139.c \
+    net_unix.c \
+    arch_reboot.c \
+    vfs_stub.c \
+    preempt.c \
+    time.c
+
+ARCH_S_SRCS = cpu_support.S
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+
+# ---- arch/common sources (portable AI + distributed layer) -----------
+COMMON_C_SRCS = \
+    tensor.c \
+    ai_job.c \
+    pipeline.c \
+    ai_stats.c \
+    netstack.c \
+    drpc.c \
+    swim.c \
+    kdds.c \
+    replica.c \
+    pmesh.c \
+    sfs.c \
+    heal.c \
+    degrade.c \
+    vital.c \
+    edf.c \
+    raft.c \
+    spawn.c \
+    moe.c \
+    dtr.c \
+    dkva.c \
+    dmn.c \
+    ga.c \
+    fedlearn.c \
+    mem_store.c \
+    chat.c \
+    dproc.c \
+    kloader_task.c
+
+COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
+
+# ---- kernel/common sources -------------------------------------------
+KERNEL_SRCS = \
+    task.c \
+    task_manage.c \
+    task_sync.c \
+    timer.c \
+    time_calls.c \
+    wait.c \
+    semaphore.c \
+    eventflag.c \
+    mailbox.c \
+    messagebuf.c \
+    mutex.c \
+    mempfix.c \
+    mempool.c \
+    memory.c \
+    misc_calls.c \
+    tkstart.c \
+    bitop.c \
+    fastlock.c \
+    fastmlock.c \
+    klock.c \
+    objname.c \
+    rendezvous.c \
+    subsystem.c \
+    tm_putchar.c \
+    tm_putstring.c \
+    tm_printf.c \
+    tm_monitor.c \
+    tm_exit.c \
+    tm_getchar.c \
+    tm_getline.c \
+    tm_command.c
+
+KERNEL_OBJS = $(KERNEL_SRCS:.c=.o)
+
+# ---- libc string sources ---------------------------------------------
+LIBSTR_DIR  = $(ROOT)/lib/libc/string
+LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
+              strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
+LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
+
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+
+TARGET = p-kernel
+
+KERNEL_CFLAGS = $(CFLAGS) -I$(INC_LIB)/libc
+
+# ---- Build rules -----------------------------------------------------
+all: $(TARGET)
+
+$(TARGET): $(ALL_OBJS)
+	$(CC) -o $@ $(ALL_OBJS) $(LDFLAGS)
+	@echo "[OK] $(TARGET) built ($$(stat -c %s $(TARGET)) bytes)"
+
+main.o: main.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_X86_64)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+cpu_support.o: $(ARCH_X86_64)/cpu_support.S
+	$(CC) $(ASFLAGS) -c -o $@ $<
+
+$(KERNEL_OBJS): %.o: $(KERNEL)/%.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+$(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+$(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+run: $(TARGET)
+	$(RUN) ./$(TARGET)
+
+clean:
+	rm -f $(ALL_OBJS) $(TARGET)
+
+.PHONY: all run clean

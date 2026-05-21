@@ -1,0 +1,3 @@
+boot/linux/p-kernel
+boot/linux_x86_64/p-kernel
+boot/linux*/*.o
