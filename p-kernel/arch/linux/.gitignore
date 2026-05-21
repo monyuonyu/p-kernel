@@ -1,6 +1,6 @@
-arch/linux/x86_64/poc_ctx_switch
-arch/linux/x86_64/*.o
-arch/linux/aarch64/poc_dispatch
-arch/linux/aarch64/poc_ctx_switch
-arch/linux/aarch64/poc_preempt
-arch/linux/aarch64/*.o
+# Paths in this file are relative to arch/linux/ (where .gitignore lives).
+# PoC binaries and build objects, both per-host-arch directory.
+*/poc_ctx_switch
+*/poc_preempt
+*/poc_dispatch
+*/*.o
