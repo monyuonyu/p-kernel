@@ -38,6 +38,12 @@ volatile int arch_irq_disabled_flag = 0;
 
 static volatile sig_atomic_t pending_timer_ticks = 0;
 
+/* The POSIX timer that delivers SIGALRM. File-scope so the signal
+ * handler can call timer_getoverrun() to recover ticks Linux collapsed
+ * while we were not running. */
+static timer_t arch_alarm_tid;
+static int     arch_alarm_tid_created = 0;
+
 /* T-Kernel timer bridge — defined in cpu_support.S. Increments
  * knl_taskindp around the call to knl_timer_handler. */
 extern void knl_timer_handler_startup(void);
@@ -84,13 +90,15 @@ void arch_linux_trampoline_about_to_br(unsigned long x17)
 void arch_irq_enable_with_drain(void)
 {
     arch_irq_disabled_flag = 0;
-    /* Drain any deferred ticks. We do NOT attempt to swallow them all
-     * at once — calling the timer handler multiple times in a row
-     * could starve the very task that just re-enabled IRQs. One tick
-     * per re-enable is plenty; the next SIGALRM will deliver the
-     * rest at its natural cadence. */
-    if (pending_timer_ticks > 0) {
-        pending_timer_ticks = 0;
+    /* Drain every deferred tick. Bursts at re-enable time are
+     * acceptable; dropping ticks is not, because tk_dly_tsk and other
+     * timeout-bearing waits drift behind wall-clock by the amount we
+     * drop. The handler call is short (queue walk + a few comparisons)
+     * so even a 100-tick catch-up after a 1 s IRQ-disabled window
+     * costs well under a millisecond. */
+    sig_atomic_t to_replay = pending_timer_ticks;
+    pending_timer_ticks = 0;
+    while (to_replay-- > 0) {
         knl_timer_handler_startup();
     }
 }
@@ -98,11 +106,21 @@ void arch_irq_enable_with_drain(void)
 static void sigalrm_handler(int sig)
 {
     (void)sig;
+    /* Linux collapses missed expirations of a periodic POSIX timer
+     * into a single signal delivery and exposes the count via
+     * timer_getoverrun(). Replay all of them so tick count tracks
+     * wall-clock even after the process was descheduled. */
+    int overrun = arch_alarm_tid_created ? timer_getoverrun(arch_alarm_tid) : 0;
+    if (overrun < 0) overrun = 0;
+    int to_run = 1 + overrun;
+
     if (arch_irq_disabled_flag) {
-        pending_timer_ticks++;
+        pending_timer_ticks += to_run;
         return;
     }
-    knl_timer_handler_startup();
+    while (to_run-- > 0) {
+        knl_timer_handler_startup();
+    }
 }
 
 #define SIGSTACK_SZ (64 * 1024)
@@ -124,16 +142,14 @@ void arch_signals_init(void)
 
 void arch_timer_start(unsigned long period_us)
 {
-    static timer_t tid;
-    static int created = 0;
-    if (!created) {
+    if (!arch_alarm_tid_created) {
         struct sigevent sev = { 0 };
         sev.sigev_notify = SIGEV_SIGNAL;
         sev.sigev_signo  = SIGALRM;
-        if (timer_create(CLOCK_MONOTONIC, &sev, &tid) < 0) {
+        if (timer_create(CLOCK_MONOTONIC, &sev, &arch_alarm_tid) < 0) {
             perror("timer_create"); exit(1);
         }
-        created = 1;
+        arch_alarm_tid_created = 1;
     }
     struct itimerspec its = {
         .it_interval = { .tv_sec = period_us / 1000000,
@@ -141,7 +157,7 @@ void arch_timer_start(unsigned long period_us)
         .it_value    = { .tv_sec = period_us / 1000000,
                          .tv_nsec = (long)(period_us % 1000000) * 1000 },
     };
-    if (timer_settime(tid, 0, &its, NULL) < 0) {
+    if (timer_settime(arch_alarm_tid, 0, &its, NULL) < 0) {
         perror("timer_settime"); exit(1);
     }
 }

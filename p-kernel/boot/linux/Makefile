@@ -72,7 +72,8 @@ ARCH_C_SRCS = \
     net_unix.c \
     arch_reboot.c \
     vfs_stub.c \
-    preempt.c
+    preempt.c \
+    time.c
 
 ARCH_S_SRCS = cpu_support.S
 
