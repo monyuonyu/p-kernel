@@ -233,35 +233,52 @@ el1_vectors:
 
 _vec_el1_irq:
     save_caller_regs
-    /* Reserve a 16-byte stack slot to preserve the IAR value across the
-     * BLR — w1-w18 are call-clobbered per the AArch64 ABI, and writing
-     * a garbage value to EOIR would leave the IRQ active in the GIC and
-     * stop subsequent interrupts of equal/lower priority from firing. */
+    /* Reserve a 16-byte stack slot for the ack-time value we need to
+     * remember across the handler call (the GIC IAR on virt, a placeholder
+     * 0 on RPi 3). w1-w18 are call-clobbered per the AArch64 ABI, so
+     * stashing it in a register would lose it across the BLR. */
     sub sp, sp, #16
 
+#ifdef BOARD_RPI3
+    /* BCM2837 ARM Local Interrupt Controller: read CORE0_IRQ_SOURCE
+     * (0x40000060). Bit 1 = nCNTPNSIRQ. For now the EL1 phys timer
+     * is the only enabled source, so any IRQ here is INTID 30. */
+    movz x0, #0x0060
+    movk x0, #0x4000, lsl #16
+    ldr w1, [x0]
+    str w1, [sp]
+    tbz w1, #1, .Lirq_no_dispatch    /* timer bit clear → spurious */
+    mov w2, #30                       /* INTNO_TIMER_GIC */
+#else
+    /* GICv2: read IAR, mask off the CPU-ID, drop spurious 1023. */
     ldr x0, =gicc_base_ptr
     ldr x0, [x0]
     ldr w1, [x0, #0x0C]         /* GICC_IAR */
-    str w1, [sp]                /* save IAR for the EOIR write below */
+    str w1, [sp]
     and w2, w1, #0x3FF
-
     mov w3, #512
     cmp w2, w3
     b.ge .Lirq_eoi
+#endif
 
     ldr x3, =knl_intvec
     lsl x4, x2, #3
     add x3, x3, x4
     ldr x3, [x3]
-    cbz x3, .Lirq_eoi
+    cbz x3, .Lirq_no_dispatch
     blr x3
 
+.Lirq_no_dispatch:
 .Lirq_eoi:
-    ldr w1, [sp]                /* restore IAR — handler may have clobbered w1 */
+    ldr w1, [sp]                /* restore ack-time value */
     add sp, sp, #16
+#ifndef BOARD_RPI3
+    /* GICv2 needs EOIR to deactivate. On BCM2837 the timer ack is
+     * done by writing CNTP_TVAL_EL0 in timer_irq_handler — no EOI. */
     ldr x0, =gicc_base_ptr
     ldr x0, [x0]
     str w1, [x0, #0x10]         /* GICC_EOIR */
+#endif
 
     restore_caller_regs
     eret

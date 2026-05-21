@@ -26,8 +26,53 @@ static inline unsigned int mmio_read32(unsigned long addr)
     return *((volatile unsigned int *)addr);
 }
 
+#ifdef BOARD_RPI3
+
 /* -----------------------------------------------------------------------
- *  Enable a single GIC interrupt by INTID.
+ *  BCM2837 ARM Local Interrupt Controller — base 0x40000000.
+ *
+ *  It is NOT a GIC. There is no distributor or CPU interface and no
+ *  EOI register; this block is a per-core routing matrix that decides
+ *  whether each per-core source (generic timer, mailbox, local PMU)
+ *  goes to IRQ or FIQ. The timer condition itself is cleared by
+ *  writing CNTP_TVAL_EL0, so the IRQ vector has nothing to ack.
+ *
+ *  Register map (offsets from 0x40000000):
+ *    0x40 + 4*n   CORE_n_TIMER_INTCTL — bit 1 = nCNTPNSIRQ → IRQ
+ *    0x60 + 4*n   CORE_n_IRQ_SOURCE   — read-only, bit 1 set when
+ *                                       the EL1 phys timer has fired
+ * --------------------------------------------------------------------- */
+#  define BCM2837_LOCAL_BASE        0x40000000UL
+#  define LOCAL_CORE0_TIMER_INTCTL  (BCM2837_LOCAL_BASE + 0x40)
+#  define LOCAL_CORE0_IRQ_SOURCE    (BCM2837_LOCAL_BASE + 0x60)
+#  define LOCAL_TIMER_NCNTPNSIRQ    (1U << 1)
+
+EXPORT void gic_enable_irq(UINT intid)
+{
+    /* Only the EL1 generic timer (PPI 30) is wired through the ARM
+     * local controller in our build. Anything else is silently a
+     * no-op until the matching Phase-3 driver lands. */
+    if (intid == INTNO_TIMER_GIC) {
+        mmio_write32(LOCAL_CORE0_TIMER_INTCTL, LOCAL_TIMER_NCNTPNSIRQ);
+        DSB();
+    }
+}
+
+static void gic_init(void)
+{
+    /* Make sure no stale routing is in effect before we enable our
+     * one interrupt. CORE0_TIMER_INTCTL = 0 → all timer sources
+     * disabled. The CPU interface in cpu_support.S takes the IRQ
+     * source register address through a fixed-MMIO read (no base
+     * pointer needed). */
+    mmio_write32(LOCAL_CORE0_TIMER_INTCTL, 0);
+    DSB();
+}
+
+#else
+
+/* -----------------------------------------------------------------------
+ *  Enable a single GIC interrupt by INTID. (QEMU virt / GICv2.)
  *  Works for PPIs (id 16..31) and SPIs (id 32..N). Used by drivers
  *  (e.g. RTL8139 wiring its PCIe legacy IRQ to a GIC SPI) without
  *  exposing GICD register layout to every caller.
@@ -62,6 +107,8 @@ static void gic_init(void)
 
     DSB();
 }
+
+#endif /* BOARD_RPI3 */
 
 /* -----------------------------------------------------------------------
  *  ARM Generic Timer: program interval and start counting
@@ -106,17 +153,13 @@ static void timer_irq_handler(void)
  * --------------------------------------------------------------------- */
 EXPORT ER knl_tkdev_initialize(void)
 {
-#ifndef BOARD_RPI3
-    /* GICv2 init — only on QEMU virt. RPi 3 / BCM2837 uses a
-     * non-GIC ARM-local interrupt controller; that path lands in a
-     * future Phase 3 step. For now boot proceeds without timer IRQs;
-     * tk_dly_tsk-blocked tasks will hang, but the boot banner and
-     * usermain init can come up so we can verify the rest of the
-     * port works. */
+    /* On QEMU virt: GICv2 distributor + CPU interface.
+     * On RPi 3:     BCM2837 ARM Local Interrupt Controller.
+     * Both reach the same handler at INTID 30 (EL1 phys timer PPI). */
     gic_init();
     knl_define_inthdr(INTNO_TIMER_GIC, (FP)timer_irq_handler);
+    gic_enable_irq(INTNO_TIMER_GIC);
     timer_init();
-#endif
     return E_OK;
 }
 
