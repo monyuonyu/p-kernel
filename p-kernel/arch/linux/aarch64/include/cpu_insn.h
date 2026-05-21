@@ -34,7 +34,15 @@ static inline void enaint(UINT prev)
     }
 }
 
+/* T-Kernel's syslib_depend.h supplies a DAIF-based isDI macro; we
+ * undefine and re-supply so the flag-based version wins. */
+#undef  isDI
 #define isDI(saved)  ((saved) != 0)
+
+/* Memory barriers — identical to the bare-metal AArch64 port. These
+ * are unprivileged AArch64 instructions, safe to emit from EL0. */
+#define DSB()   __asm__ volatile ("dsb sy" ::: "memory")
+#define ISB()   __asm__ volatile ("isb"    ::: "memory")
 
 static inline UINT knl_getBASEPRI(void)
 {

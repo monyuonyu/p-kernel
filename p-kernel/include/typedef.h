@@ -47,6 +47,13 @@ typedef unsigned char   U1; /* Unsigned 8 bit integer  */
 typedef unsigned short  U2; /* Unsigned 16 bit integer */
 typedef unsigned int    U4; /* Unsigned 32 bit integer */
 
+/* Bare-metal builds (no system libc) must typedef int{8,16,32,64}_t
+ * themselves. Hosted builds (arch/linux) get them from <stdint.h>
+ * with potentially different underlying types (e.g. glibc spells
+ * int64_t as `long` rather than `long long`). Guard against the
+ * conflict so both build paths can share this header. _STDINT_H is
+ * set by glibc and musl; __CLANG_STDINT_H by clang's builtin. */
+#if !defined(_TK_HOSTED_LIBC_) && !defined(_STDINT_H) && !defined(__CLANG_STDINT_H) && !defined(_GCC_STDINT_H) && !defined(__int64_t_defined)
 typedef signed char        int8_t;   /* Signed 8 bit integer    */
 typedef signed short        int16_t;  /* Signed 16 bit integer   */
 typedef signed int         int32_t;  /* Signed 32 bit integer   */
@@ -55,6 +62,7 @@ typedef unsigned char      uint8_t;  /* Unsigned 8 bit integer  */
 typedef unsigned short     uint16_t; /* Unsigned 16 bit integer */
 typedef unsigned int       uint32_t; /* Unsigned 32 bit integer */
 typedef unsigned long long uint64_t; /* Unsigned 64 bit integer */
+#endif
 
 typedef signed char	B;	/* Signed 8 bit integer */
 typedef signed short	H;	/* Signed 16 bit integer */
