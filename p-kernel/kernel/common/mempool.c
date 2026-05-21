@@ -139,7 +139,7 @@ EXPORT void knl_appendFreeAreaBound( MPLCB *mplcb, QUEUE *aq )
 		/* FreeQue Size order */
 		QueInsert(top, fq);
 		(top + 1)->next = NULL;
-		(top + 1)->prev = (QUEUE*)size;
+		(top + 1)->prev = (QUEUE*)(PTR_UINT)size;
 	}
 }
 #endif /* USE_FUNC_APPENDFREEAREABOUND */

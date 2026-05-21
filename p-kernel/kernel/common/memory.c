@@ -150,7 +150,7 @@ EXPORT void knl_appendFreeArea( IMACB *imacb, QUEUE *aq )
 		/* FreeQue Size order */
 		QueInsert(aq + 1, fq);
 		(aq + 2)->next = NULL;
-		(aq + 2)->prev = (QUEUE*)size;
+		(aq + 2)->prev = (QUEUE*)(PTR_UINT)size;
 	}
 }
 #endif /* USE_FUNC_APPENDFREEAREA */
@@ -431,19 +431,19 @@ IMPORT	void	*knl_lowmem_top, *knl_lowmem_limit;
 
 	/* Acquire system configuration definition information */
 	memend = CFN_REALMEMEND;
-	if ( (UW)memend > (UW)knl_lowmem_limit ) {
+	if ( (PTR_UINT)memend > (PTR_UINT)knl_lowmem_limit ) {
 		memend = knl_lowmem_limit;
 	}
 
 	/* Align top with 4 byte unit alignment for IMACB */
-	knl_lowmem_top = (void *)(((UW)knl_lowmem_top + 3) & ~0x00000003UL);
+	knl_lowmem_top = (void *)(((PTR_UINT)knl_lowmem_top + 3) & ~(PTR_UINT)0x3);
 	knl_imacb = (IMACB*)knl_lowmem_top;
-	knl_lowmem_top = (void *)((UW)knl_lowmem_top + sizeof(IMACB));
+	knl_lowmem_top = (void *)((PTR_UINT)knl_lowmem_top + sizeof(IMACB));
 
 	/* Align top with 8 byte unit alignment */
-	knl_lowmem_top = (void *)(((UW)knl_lowmem_top + 7) & ~0x00000007UL);
+	knl_lowmem_top = (void *)(((PTR_UINT)knl_lowmem_top + 7) & ~(PTR_UINT)0x7);
 	top = (QUEUE*)knl_lowmem_top;
-	knl_imacb->memsz = (W)((UW)memend - (UW)knl_lowmem_top - sizeof(QUEUE)*2);
+	knl_imacb->memsz = (W)((PTR_UINT)memend - (PTR_UINT)knl_lowmem_top - sizeof(QUEUE)*2);
 
 	knl_lowmem_top = memend;  /* Update memory free space */
 
