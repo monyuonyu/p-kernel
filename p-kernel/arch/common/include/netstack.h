@@ -162,6 +162,9 @@ void arp_seed(UW ip, const UB mac[6]);
 /* Send ARP request for given IP */
 void arp_request(UW target_ip);
 
+/* Dump the ARP table to the kernel console (for `arp` shell command) */
+void arp_dump(void);
+
 /*
  * TCP client API
  *

@@ -128,6 +128,31 @@ static void arp_add(UW ip, const UB mac[6])
 /* Manually seed the ARP table (used by kserve to register kloader's MAC) */
 void arp_seed(UW ip, const UB mac[6]) { arp_add(ip, mac); }
 
+/* Dump the ARP table to the kernel console — for shell diagnostics. */
+void arp_dump(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    ns_puts("[arp] table:\r\n");
+    INT n = 0;
+    for (INT i = 0; i < ARP_TABLE_SIZE; i++) {
+        if (!arp_table[i].valid) continue;
+        n++;
+        ns_puts("  ");
+        ns_puts(ip_str(arp_table[i].ip));
+        ns_puts(" -> ");
+        for (INT j = 0; j < 6; j++) {
+            char buf[3];
+            buf[0] = hex[(arp_table[i].mac[j] >> 4) & 0xF];
+            buf[1] = hex[arp_table[i].mac[j] & 0xF];
+            buf[2] = '\0';
+            if (j) ns_puts(":");
+            ns_puts(buf);
+        }
+        ns_puts("\r\n");
+    }
+    if (n == 0) ns_puts("  (empty)\r\n");
+}
+
 INT arp_lookup(UW ip, UB mac_out[6])
 {
     for (INT i = 0; i < ARP_TABLE_SIZE; i++) {
@@ -954,18 +979,26 @@ static void icmp_input(const UB *frame, const IP_HDR *ip,
 /* IP input                                                            */
 /* ------------------------------------------------------------------ */
 
+volatile UW net_ip_in        = 0;
+volatile UW net_ip_drop_size  = 0;
+volatile UW net_ip_drop_vhl   = 0;
+volatile UW net_ip_drop_csum  = 0;
+volatile UW net_ip_drop_dst   = 0;
+
 static void ip_input(const UB *frame, INT len)
 {
-    if (len < (INT)(sizeof(ETH_HDR) + sizeof(IP_HDR))) return;
+    net_ip_in++;
+    if (len < (INT)(sizeof(ETH_HDR) + sizeof(IP_HDR))) { net_ip_drop_size++; return; }
 
     const IP_HDR *ip = (const IP_HDR *)(frame + sizeof(ETH_HDR));
 
     /* Only handle IPv4, 20-byte header */
-    if ((ip->vhl >> 4) != 4)  return;
-    if ((ip->vhl & 0xF) != 5) return;  /* no options */
+    if ((ip->vhl >> 4) != 4)  { net_ip_drop_vhl++; return; }
+    if ((ip->vhl & 0xF) != 5) { net_ip_drop_vhl++; return; }  /* no options */
 
     /* Verify header checksum */
     if (ip_cksum(ip, 20) != 0) {
+        net_ip_drop_csum++;
         ns_puts("[ip] bad checksum\r\n");
         return;
     }
@@ -976,7 +1009,7 @@ static void ip_input(const UB *frame, INT len)
     if (ip->dst != NET_MY_IP
      && ip->dst != NET_BCAST
      && ip->dst != IP4(255,255,255,255)
-     && !is_mcast(ip->dst)) return;
+     && !is_mcast(ip->dst)) { net_ip_drop_dst++; return; }
 
     UH  ip_total = ntohs(ip->len);
     INT payload_off = (INT)(sizeof(ETH_HDR) + 20);
@@ -996,15 +1029,21 @@ static void ip_input(const UB *frame, INT len)
 /* Ethernet input dispatcher                                           */
 /* ------------------------------------------------------------------ */
 
+volatile UW net_eth_in        = 0;
+volatile UW net_eth_drop_short = 0;
+volatile UW net_eth_unknown   = 0;
+
 void eth_input(const UB *frame, INT len)
 {
-    if (len < (INT)sizeof(ETH_HDR)) return;
+    net_eth_in++;
+    if (len < (INT)sizeof(ETH_HDR)) { net_eth_drop_short++; return; }
 
     const ETH_HDR *eth = (const ETH_HDR *)frame;
     UH type = eth->type;
 
     if      (type == ETH_TYPE_ARP) arp_input(frame, len);
     else if (type == ETH_TYPE_IP)  ip_input(frame, len);
+    else net_eth_unknown++;
 }
 
 /* ------------------------------------------------------------------ */

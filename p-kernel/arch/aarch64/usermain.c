@@ -226,38 +226,46 @@ EXPORT INT usermain(void)
             ai_stats_print();
         } else if (n >= 3 && strneq(line, "net", 3)) {
             net_bringup();
+        } else if (n >= 3 && strneq(line, "arp", 3)) {
+            arp_dump();
         } else if (n >= 2 && strneq(line, "rx", 2)) {
             extern unsigned long rtl_mmio_for_diag;
-            char buf2[64];
+            extern volatile UW net_rx_arp, net_rx_udp, net_rx_icmp_req, net_rx_tcp;
+            char buf2[160];
             UH isr = 0;
             if (rtl_initialized) {
                 isr = *(volatile UH *)(rtl_mmio_for_diag + 0x3E);
             }
             INT i = 0;
-            const char *p = "[rx] count="; while (*p) buf2[i++] = *p++;
-            UW v = rtl_rx_count;
-            if (v == 0) buf2[i++] = '0';
-            else {
-                char tmp[12]; INT t = 0;
-                while (v > 0) { tmp[t++] = '0' + (v % 10); v /= 10; }
-                while (t > 0) buf2[i++] = tmp[--t];
-            }
-            const char *p2 = "  tx="; while (*p2) buf2[i++] = *p2++;
-            v = rtl_tx_count;
-            if (v == 0) buf2[i++] = '0';
-            else {
-                char tmp[12]; INT t = 0;
-                while (v > 0) { tmp[t++] = '0' + (v % 10); v /= 10; }
-                while (t > 0) buf2[i++] = tmp[--t];
-            }
-            const char *p3 = "  ISR=0x"; while (*p3) buf2[i++] = *p3++;
             static const char hex[] = "0123456789ABCDEF";
+            #define APPEND_STR(s) do { const char *p = s; while (*p) buf2[i++] = *p++; } while (0)
+            #define APPEND_DEC(v) do { UW vv = (v); if (vv == 0) buf2[i++] = '0'; \
+                else { char tmp[12]; INT t = 0; while (vv > 0) { tmp[t++] = '0' + (vv % 10); vv /= 10; } \
+                while (t > 0) buf2[i++] = tmp[--t]; } } while (0)
+            APPEND_STR("[rx] frame="); APPEND_DEC(rtl_rx_count);
+            APPEND_STR("  tx="); APPEND_DEC(rtl_tx_count);
+            APPEND_STR("  ISR=0x");
             buf2[i++] = hex[(isr >> 12) & 0xF];
             buf2[i++] = hex[(isr >>  8) & 0xF];
             buf2[i++] = hex[(isr >>  4) & 0xF];
             buf2[i++] = hex[isr & 0xF];
+            APPEND_STR("\r\n[rx] arp="); APPEND_DEC(net_rx_arp);
+            APPEND_STR("  icmp_req="); APPEND_DEC(net_rx_icmp_req);
+            APPEND_STR("  udp="); APPEND_DEC(net_rx_udp);
+            APPEND_STR("  tcp="); APPEND_DEC(net_rx_tcp);
+            extern volatile UW net_eth_in, net_eth_unknown, net_ip_in;
+            extern volatile UW net_ip_drop_size, net_ip_drop_vhl, net_ip_drop_csum, net_ip_drop_dst;
+            APPEND_STR("\r\n[rx] eth_in="); APPEND_DEC(net_eth_in);
+            APPEND_STR("  eth_unk="); APPEND_DEC(net_eth_unknown);
+            APPEND_STR("  ip_in="); APPEND_DEC(net_ip_in);
+            APPEND_STR("\r\n[rx] ip drops: size="); APPEND_DEC(net_ip_drop_size);
+            APPEND_STR(" vhl="); APPEND_DEC(net_ip_drop_vhl);
+            APPEND_STR(" csum="); APPEND_DEC(net_ip_drop_csum);
+            APPEND_STR(" dst="); APPEND_DEC(net_ip_drop_dst);
             buf2[i++] = '\r'; buf2[i++] = '\n';
             sio_send_frame((const UB *)buf2, i);
+            #undef APPEND_STR
+            #undef APPEND_DEC
         } else {
             print("[echo] ");
             sio_send_frame(line, n);
