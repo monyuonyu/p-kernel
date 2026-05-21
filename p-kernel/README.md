@@ -1,12 +1,23 @@
 # p-kernel — AI-First Microkernel OS for Distributed Embedded Systems
 
 <p align="center">
-  <img src="https://img.shields.io/badge/arch-x86__64%20%7C%20IA--32e-blue" alt="arch">
+  <img src="https://img.shields.io/badge/arch-x86__64%20%7C%20AArch64-blue" alt="arch">
+  <img src="https://img.shields.io/badge/targets-bare__metal%20%7C%20UMP%20%7C%20Android-teal" alt="targets">
   <img src="https://img.shields.io/badge/kernel-micro%20T--Kernel%202.0-green" alt="kernel">
   <img src="https://img.shields.io/badge/userspace-Linux%20ABI%20ring--3-orange" alt="userspace">
   <img src="https://img.shields.io/badge/compiler-TCC%20on--device-red" alt="tcc">
   <img src="https://img.shields.io/badge/consensus-Raft-purple" alt="raft">
   <img src="https://img.shields.io/badge/license-BSD-lightgrey" alt="license">
+</p>
+
+<p align="center">
+  <b>UMP — User-Mode p-kernel — is here.</b><br>
+  Run the entire p-kernel + T-Kernel stack inside an ordinary Linux
+  process. Same kernel, same distributed fabric, no QEMU, no hardware.
+  <br><br>
+  <b>→ <a href="docs/quickstart.md">docs/quickstart.md</a></b> &nbsp;|&nbsp;
+  <a href="docs/android.md">Android app build (Phase A)</a> &nbsp;|&nbsp;
+  <a href="docs/netboot.md">Raspberry Pi 3B+ netboot</a>
 </p>
 
 > **The OS that never dies.** p-kernel embeds AI inference directly in the kernel, replicates state across unlimited nodes, and can recompile itself — all on bare-metal x86 hardware running in QEMU.
@@ -144,7 +155,28 @@ Supported Linux syscalls (i386 ABI):
 
 ## Quick Start
 
-### Requirements
+### Option 1 — UMP (recommended for first-time tryers)
+
+The fastest way to see p-kernel run is to build it as a Linux
+userspace process. No QEMU, no hardware:
+
+```sh
+sudo apt install -y build-essential
+git clone https://github.com/monyuonyu/p-kernel.git
+cd p-kernel/p-kernel/boot/linux
+make && ./p-kernel
+```
+
+Full walkthrough including the built-in shell, 2-node mesh on one
+machine, and a tour of the implementation: see
+[**docs/quickstart.md**](docs/quickstart.md).
+
+Currently aarch64-linux hosts only; x86_64-linux sibling is in
+progress.
+
+### Option 2 — bare-metal x86 (the original target)
+
+#### Requirements
 
 ```sh
 sudo apt install -y \
@@ -154,7 +186,7 @@ sudo apt install -y \
     nasm
 ```
 
-### Build and Run
+#### Build and Run
 
 ```sh
 git clone https://github.com/monyuonyu/p-kernel.git
