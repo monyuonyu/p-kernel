@@ -69,6 +69,7 @@ ARCH_C_SRCS = \
     sio.c \
     pci.c \
     rtl8139.c \
+    net_unix.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c
