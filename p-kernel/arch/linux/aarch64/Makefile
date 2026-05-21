@@ -15,7 +15,24 @@ CC      = cc
 CFLAGS  = -O2 -Wall -Wextra -g -fno-omit-frame-pointer
 LDFLAGS = -lrt
 
-POCS = poc_ctx_switch poc_preempt
+# Session 3a's dispatcher PoC needs adrp/add against globals defined
+# in the same final executable. PIE adds a layer of indirection (GOT
+# / PLT) that the dispatcher's inline asm does not perform. Disable
+# PIE for now; full T-Kernel integration in Session 3b will revisit.
+DISPATCH_LDFLAGS = -no-pie
+
+# Build path so cpu_support.S finds offset.h from the aarch64 tree:
+DISPATCH_CFLAGS = -no-pie \
+                  -I$(CURDIR)/include \
+                  -I$(CURDIR)/../include \
+                  -I$(CURDIR)/../../aarch64/include \
+                  -I$(CURDIR)/../../common/include \
+                  -I$(CURDIR)/../../../include/kernel/tkernel \
+                  -I$(CURDIR)/../../../include \
+                  -I$(CURDIR)/../../../include/lib/libc \
+                  -D_APP_AARCH64_ -D_APP_LINUX_
+
+POCS = poc_ctx_switch poc_preempt poc_dispatch
 
 # Session 1 — cooperative arch_ctx_switch
 CTX_OBJS  = poc_ctx_switch.o ctx_switch.o
@@ -32,6 +49,19 @@ poc_ctx_switch: $(CTX_OBJS)
 
 poc_preempt: $(PRMP_OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS)
+
+# Session 3a — T-Kernel dispatcher unit test
+DISPATCH_OBJS = poc_dispatch.o cpu_support.o
+poc_dispatch: $(DISPATCH_OBJS)
+	$(CC) $(DISPATCH_LDFLAGS) -o $@ $^
+
+# poc_dispatch.c uses system libc; cpu_support.S needs T-Kernel headers
+# (offset.h). Different include paths.
+poc_dispatch.o: poc_dispatch.c
+	$(CC) $(CFLAGS) -no-pie -c -o $@ $<
+
+cpu_support.o: cpu_support.S
+	$(CC) $(CFLAGS) $(DISPATCH_CFLAGS) -c -o $@ $<
 
 poc_ctx_switch.o: poc_ctx_switch.c $(CTX_HDR)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -51,10 +81,13 @@ run-ctx: poc_ctx_switch
 run-preempt: poc_preempt
 	./poc_preempt
 
+run-dispatch: poc_dispatch
+	./poc_dispatch
+
 # Legacy alias for Session 1
 run: run-ctx
 
 clean:
-	rm -f $(CTX_OBJS) $(PRMP_OBJS) $(POCS)
+	rm -f $(CTX_OBJS) $(PRMP_OBJS) $(DISPATCH_OBJS) $(POCS)
 
-.PHONY: all run run-ctx run-preempt clean
+.PHONY: all run run-ctx run-preempt run-dispatch clean
