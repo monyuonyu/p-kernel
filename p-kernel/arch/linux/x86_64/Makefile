@@ -26,15 +26,24 @@ CC      = $(CROSS)gcc
 CFLAGS  = -O2 -Wall -Wextra -g -fno-omit-frame-pointer
 LDFLAGS = -static
 
-POCS = poc_ctx_switch
+POCS = poc_ctx_switch poc_preempt
 
-CTX_OBJS = poc_ctx_switch.o ctx_switch.o
-CTX_HDR  = ../include/arch_ctx.h
+CTX_OBJS  = poc_ctx_switch.o ctx_switch.o
+CTX_HDR   = ../include/arch_ctx.h
+PRMP_OBJS = poc_preempt.o trampoline.o
+PRMP_HDR  = ../include/arch_preempt.h
+
+# poc_preempt needs librt for timer_create/timer_settime (only matters
+# on glibc < 2.34; harmless on newer toolchains).
+PRMP_LDFLAGS = $(LDFLAGS) -lrt
 
 all: $(POCS)
 
 poc_ctx_switch: $(CTX_OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS)
+
+poc_preempt: $(PRMP_OBJS)
+	$(CC) -o $@ $^ $(PRMP_LDFLAGS)
 
 poc_ctx_switch.o: poc_ctx_switch.c $(CTX_HDR)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -42,13 +51,22 @@ poc_ctx_switch.o: poc_ctx_switch.c $(CTX_HDR)
 ctx_switch.o: ctx_switch.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+poc_preempt.o: poc_preempt.c $(PRMP_HDR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+trampoline.o: trampoline.S
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 run-ctx: poc_ctx_switch
 	$(RUN) ./poc_ctx_switch
+
+run-preempt: poc_preempt
+	$(RUN) ./poc_preempt
 
 # Legacy alias
 run: run-ctx
 
 clean:
-	rm -f $(CTX_OBJS) $(POCS)
+	rm -f $(CTX_OBJS) $(PRMP_OBJS) $(POCS)
 
-.PHONY: all run run-ctx clean
+.PHONY: all run run-ctx run-preempt clean
