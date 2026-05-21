@@ -258,6 +258,33 @@ QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
 run-rpi3: kernel8.img
 	qemu-system-aarch64 $(QEMU_RPI3_FLAGS)
 
+# ---- TFTP deployment for real-hardware netboot iteration --------------
+# Drops the freshly built kernel8.img into a TFTP root so U-Boot on the
+# RPi can pull it over the wire (no SD-card flashing required).
+#
+# Usage:
+#   make tftp                          → copy to $(TFTPROOT) (default /srv/tftp)
+#   make tftp TFTPROOT=/var/lib/tftp   → override the target directory
+#
+# Prerequisites on the dev host:
+#   sudo apt install tftpd-hpa
+#   sudo mkdir -p /srv/tftp && sudo chown $$USER /srv/tftp
+#
+# See docs/netboot.md for the SD card layout, U-Boot bootcmd, and the
+# physical wiring of the USB-UART console.
+TFTPROOT ?= /srv/tftp
+
+.PHONY: tftp
+tftp: rpi3
+	@if [ ! -d "$(TFTPROOT)" ]; then \
+	    echo "[tftp] ERROR: TFTPROOT '$(TFTPROOT)' does not exist."; \
+	    echo "[tftp]        sudo mkdir -p $(TFTPROOT) && sudo chown \$$USER $(TFTPROOT)"; \
+	    exit 1; \
+	fi
+	cp kernel8.img $(TFTPROOT)/kernel8.img
+	@echo "[tftp] kernel8.img -> $(TFTPROOT)/kernel8.img ($$(stat -c %s kernel8.img) bytes)"
+	@echo "[tftp] Power-cycle the Pi (or type 'reset' at the U-Boot prompt) to load."
+
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) kernel.rpi3.elf kernel8.img
 
