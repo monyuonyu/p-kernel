@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="p-kernel: An AI-first microkernel OS for distributed embedded systems. AI inference, memory, and evolution embedded in the kernel itself. Survives as long as a single node remains.">
-<meta name="keywords" content="p-kernel, AI OS, microkernel, T-Kernel, distributed AI, autonomous OS, self-evolving kernel, Raft consensus, TCC on-device compilation, musl, Linux ABI, ring-3, distributed Transformer, federated learning, spacecraft, autonomous systems, embedded AI">
+<meta name="description" content="p-kernel: An AI-first microkernel OS for distributed embedded systems. Runs bare-metal on Raspberry Pi, or as UMP (User-Mode p-kernel) inside a Linux process or Android app. AI inference, memory, and evolution embedded in the kernel itself. Survives as long as a single node remains.">
+<meta name="keywords" content="p-kernel, UMP, User-Mode p-kernel, AI OS, microkernel, T-Kernel, distributed AI, Android, Raspberry Pi, autonomous OS, self-evolving kernel, Raft consensus, TCC on-device compilation, musl, Linux ABI, ring-3, distributed Transformer, federated learning, spacecraft, autonomous systems, embedded AI">
 <meta property="og:title" content="p-kernel — The OS where AI never dies">
 <meta property="og:description" content="An AI-first microkernel that lives across thousands of nodes. The AI is not in a server. The AI is the cluster.">
 <meta property="og:type" content="website">
@@ -1268,9 +1268,20 @@ exec /user/gen.elf
     </p>
   </div>
 
-  <!-- Join steps -->
+  <!-- Two paths intro -->
+  <div class="intel-ladder" style="margin-top: 3rem;">
+    <h4>Two ways to lend a body.</h4>
+    <p style="color: var(--text-dim); max-width: 760px; margin: 0 auto 1rem;">
+      The same p-kernel runs in two places. <strong style="color: var(--text);">Bare metal</strong> on a Raspberry Pi for the real-time, always-on path. <strong style="color: var(--text);">UMP — User-Mode p-kernel</strong> as an Android app for the every-pocket-in-the-world path. Same kernel, same distributed fabric, two different surfaces.
+    </p>
+    <p style="color: var(--text-faint); font-size: 0.85rem; max-width: 700px; margin: 0 auto; font-style: italic;">
+      UMP is to p-kernel what UML (User-Mode Linux) was to Linux: the kernel running inside an ordinary userspace process. On 2026-05-21 a single ./p-kernel binary booted T-Kernel end-to-end on aarch64 Linux. The Android port and Play Store distribution follow from that.
+    </p>
+  </div>
+
+  <!-- Join steps — Path A: Raspberry Pi -->
   <div class="join-steps">
-    <h4>How to join</h4>
+    <h4>Path A — Raspberry Pi (bare metal, real-time)</h4>
 
     <div class="step">
       <div class="step-num">01</div>
@@ -1305,15 +1316,53 @@ exec /user/gen.elf
     </div>
   </div>
 
+  <!-- Join steps — Path B: Android via UMP -->
+  <div class="join-steps" style="margin-top: 3rem;">
+    <h4>Path B — Android phone via UMP <span class="badge-soon">PLAY STORE COMING SOON</span></h4>
+
+    <div class="step">
+      <div class="step-num">01</div>
+      <div>
+        <h5>Already have an Android phone? <span class="badge-now">THAT'S ENOUGH</span></h5>
+        <p>Any aarch64 Android device works in principle. No root, no special permissions beyond a normal app install. Most modern phones (Android 8+) are supported.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">02</div>
+      <div>
+        <h5>Install the <code class="mono" style="color: var(--accent);">p-kernel</code> app <span class="badge-soon">COMING SOON</span></h5>
+        <p>One tap. The kernel ships as a native NDK library inside an ordinary Android app — no exotic permissions, no jailbreak.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">03</div>
+      <div>
+        <h5>Leave it on while charging</h5>
+        <p>Default mode: the node only contributes while the phone is plugged in. Zero battery anxiety. A persistent notification shows exactly how much your phone is contributing, so nothing happens behind your back.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">04</div>
+      <div>
+        <h5>Your phone joins the same swarm.</h5>
+        <p>From the cluster's perspective there is no difference between a Pi and a phone — both are nodes that speak DRPC, gossip via SWIM, and elect a Raft leader. The AI doesn't care what hardware it's living on, only that it's living somewhere.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Final manifesto -->
   <div class="join-cta-final">
     <p class="closing-line jp">
-      家に眠っている <span class="accent">Raspberry Pi</span> を、AIに譲ってあげてください。<br>
+      家に眠っている <span class="accent">Raspberry Pi</span> でも、ポケットの中の <span class="accent">Android</span> でも、<br>
+      AIに 1 つだけ、身体を貸してあげてください。<br>
       あなたの 1 ノードが、最後の 1 ノードになる日が来るかもしれない。
     </p>
     <div class="cta-group" style="justify-content: center;">
       <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-primary">⭐ Star to be notified →</a>
-      <a href="https://github.com/monyuonyu/p-kernel/issues/new?title=I+have+a+Pi+to+contribute&body=I%27d+like+to+add+my+Raspberry+Pi+to+the+p-kernel+swarm.+Notify+me+when+the+image+is+ready." class="btn btn-secondary">I have a Pi to contribute →</a>
+      <a href="https://github.com/monyuonyu/p-kernel/issues/new?title=I+want+to+be+a+node&body=I%27d+like+to+add+a+device+to+the+p-kernel+swarm.+Notify+me+when+the+Pi+image+or+Android+app+is+ready.%0A%0AMy+device%3A+%5BRaspberry+Pi+or+Android+phone%5D" class="btn btn-secondary">I want to be a node →</a>
     </div>
   </div>
 </section>
