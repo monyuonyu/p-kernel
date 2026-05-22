@@ -180,6 +180,66 @@ $(TARGET): $(ALL_OBJS)
 	$(CC) -o $@ $(ALL_OBJS) $(LDFLAGS)
 	@echo "[OK] $(TARGET) built ($$(stat -c %s $(TARGET)) bytes)"
 
+# ---- libpkernel.so (Android UMP Phase A host-side smoke test) --------
+#
+# Builds the same kernel sources as a shared library. The Android
+# CMakeLists.txt does the equivalent via NDK clang; this target lets
+# you reproduce the .so build (and the test_so_load.c dlopen check)
+# on any aarch64-linux host without Android Studio.
+#
+# Key flags vs. the regular build:
+#   -fPIC                       — required for shared library
+#   -fvisibility=hidden         — every symbol hidden by default;
+#                                 main.c marks pkernel_main explicitly
+#                                 visible; pkernel_jni.c uses JNIEXPORT
+#   -Dmain=pkernel_main         — rename main so the JNI bridge can call
+#                                 it without colliding with the loader's
+#                                 own start symbol
+#
+# Use: make libpkernel.so && ./test_so_load
+SO_TARGET = libpkernel.so
+SO_CFLAGS = -Wall -Wextra -g -O1 -fPIC -fvisibility=hidden \
+            -fno-stack-protector -fno-common -std=gnu11 \
+            -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+            -Dmain=pkernel_main $(INCDIRS)
+SO_KCFLAGS = $(SO_CFLAGS) -I$(INC_LIB)/libc
+
+SO_OBJS = $(ALL_OBJS:.o=.lo)
+
+$(SO_TARGET): $(SO_OBJS)
+	$(CC) -shared -fPIC -fvisibility=hidden -o $@ $(SO_OBJS) -lrt -lpthread
+	@echo "[OK] $(SO_TARGET) built ($$(stat -c %s $(SO_TARGET)) bytes)"
+
+# .lo objects are the PIC siblings of .o. Sharing source trees but
+# different flags so a single `make` doesn't have to rebuild from scratch
+# when switching between executable and shared-library outputs.
+main.lo: main.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
+$(ARCH_C_SRCS:.c=.lo): %.lo: $(ARCH_LINUX)/aarch64/%.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
+cpu_support.lo: $(ARCH_LINUX)/aarch64/cpu_support.S
+	$(CC) $(ASFLAGS) -fPIC -c -o $@ $<
+
+$(KERNEL_SRCS:.c=.lo): %.lo: $(KERNEL)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+$(COMMON_C_SRCS:.c=.lo): %.lo: $(ARCH_COMMON)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+$(LIBSTR_SRCS:.c=.lo): %.lo: $(LIBSTR_DIR)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+test_so_load: test_so_load.c $(SO_TARGET)
+	$(CC) -o $@ $< -ldl -lpthread
+
+# Run the host-side dlopen smoke test: confirms libpkernel.so loads and
+# pkernel_main runs to the T-Kernel boot banner.
+run-so-test: test_so_load
+	LD_LIBRARY_PATH=. ./test_so_load
+
+
 # boot/linux/main.c — uses system libc directly
 main.o: main.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -208,6 +268,6 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET)
+	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) test_so_load
 
-.PHONY: all run clean
+.PHONY: all run run-so-test clean

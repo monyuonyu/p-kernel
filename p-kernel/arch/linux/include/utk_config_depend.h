@@ -1,25 +1,35 @@
 /*
- *  arch/linux/x86_64/include/utk_config_depend.h
+ *  arch/linux/include/utk_config_depend.h
  *
- *  System configuration for hosted x86_64-linux.
+ *  System configuration shared by every hosted Linux port (aarch64-linux,
+ *  x86_64-linux, future LP64 hosts).
  *
  *  The kernel's real backing memory is the 16 MB BSS array in cpu_init.c
- *  (knl_lowmem_top/knl_lowmem_limit). SYSTEMAREA_TOP/END below are only
- *  consulted by T-Kernel internals for sanity checks; knl_init_Imalloc
- *  clamps the upper bound to knl_lowmem_limit, so the values just have
- *  to be safe (non-NULL and at least page-sized).
+ *  (knl_lowmem_top/knl_lowmem_limit). CFN_REALMEMEND below is the
+ *  fallback "system area upper bound" T-Kernel internals use; the
+ *  clamp in knl_init_Imalloc is `if (CFN_REALMEMEND > knl_lowmem_limit)
+ *  memend = knl_lowmem_limit`, so CFN_REALMEMEND must be set HIGHER
+ *  than any possible BSS address — otherwise PIE/ASLR placement of
+ *  linux_heap[] at, say, 0x7f8000000000 leaves CFN_REALMEMEND lower
+ *  than knl_lowmem_top, the clamp never fires, memsz wraps to garbage
+ *  and the allocator faults on first use.
  *
- *  The object-count limits (CFN_MAX_*) must match the aarch64 sibling
- *  byte-for-byte because the TCB struct layout — and therefore the
- *  offsets in arch/common/include/lp64/offset.h — depends on them.
+ *  This file shadows the per-arch bare-metal utk_config_depend.h on
+ *  every hosted build via the include-path order in boot/linux/Makefile
+ *  and boot/linux_x86_64/Makefile.
+ *
+ *  The object-count limits (CFN_MAX_*) must match the bare-metal aarch64
+ *  sibling byte-for-byte because the TCB struct layout — and therefore
+ *  the offsets in arch/common/include/lp64/offset.h — depends on them.
  */
 
 #ifndef _UTK_CONFIG_DEPEND_
 #define _UTK_CONFIG_DEPEND_
 
-/* Placeholder system area — unused on hosted (clamped to knl_lowmem_limit). */
+/* SYSTEMAREA_END must be HIGHER than any heap address so the clamp in
+ * knl_init_Imalloc always fires under PIE/ASLR. */
 #define SYSTEMAREA_TOP      0x40200000UL
-#define SYSTEMAREA_END      0x50000000UL
+#define SYSTEMAREA_END      (~(unsigned long)0)
 
 #define RI_USERAREA_TOP     SYSTEMAREA_TOP
 #define RI_USERINIT         NULL

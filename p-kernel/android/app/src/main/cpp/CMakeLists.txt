@@ -22,10 +22,14 @@ set(INC_LIB  ${PK_ROOT}/include/lib)
 set(LIBSTR   ${PK_ROOT}/lib/libc/string)
 
 # Headers — same path order as boot/linux/Makefile.
+# arch/linux/include sits BEFORE arch/aarch64/include so the hosted
+# utk_config_depend.h (CFN_REALMEMEND = ~0UL, required for PIE/ASLR-safe
+# Imalloc init) wins over the bare-metal one (0x50000000UL).
 include_directories(
     ${ARCH_LX}/aarch64/include
     ${ARCH_LX}/include
     ${ARCH_AA}/include
+    ${ARCH_CO}/include/lp64
     ${ARCH_CO}/include
     ${INC_TK}
     ${INC_TOP}
@@ -37,8 +41,12 @@ include_directories(
 set(KCOMMON_EXTRA_INC ${INC_LIB}/libc)
 
 add_compile_definitions(_APP_AARCH64_ _APP_LINUX_ _TK_HOSTED_LIBC_)
-add_compile_options(-Wall -Wextra -O2 -fPIC -fno-stack-protector
-                    -fno-common -std=gnu11)
+add_compile_options(-Wall -Wextra -O2 -fPIC -fvisibility=hidden
+                    -fno-stack-protector -fno-common -std=gnu11)
+# -fvisibility=hidden: only the JNI bridge's JNIEXPORT'd symbols and the
+# pkernel_main entry (visibility("default") in main.c) are externally
+# visible. Cuts ld errors about "may bind externally" on cpu_support.S's
+# adrp + add :lo12: against arch_irq_disabled_flag / knl_ctxtsk / etc.
 
 # boot/linux/main.c is renamed via -Dmain=pkernel_main below so the
 # JNI's own main symbol is unaffected.

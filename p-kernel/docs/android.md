@@ -92,15 +92,39 @@ view it's just running on aarch64 Linux with stdin/stdout being a pipe.
 4. First boot: you should see the same banner as `./p-kernel` on Linux,
    inside the TerminalView.
 
+## Host-side smoke test (`make libpkernel.so`)
+
+`boot/linux/Makefile` now has a `libpkernel.so` target that builds the
+same kernel sources as a `.so` using exactly the same flag set the
+Android CMakeLists.txt uses (`-fPIC -fvisibility=hidden`, with
+`-Dmain=pkernel_main` so the JNI bridge can call it). Plus a
+`test_so_load.c` that `dlopen`s the .so and runs `pkernel_main` in a
+thread — the host-side equivalent of `System.loadLibrary("pkernel")`
+followed by `nativeBoot(1)`.
+
+```sh
+$ make libpkernel.so
+$ make run-so-test     # dlopens, runs to the [autonet]/banner
+```
+
+Use this before pushing changes that touch the kernel — it catches
+PIC-incompatibility issues without needing an Android device or NDK.
+
 ## Known issues (Phase A → Phase B)
 
-- **PIE/PIC**: the current Linux build sets `-no-pie`. The Android build
-  uses `-fPIC` (required for `.so`) and the same code does pass through
-  cc successfully, but a runtime test on Termux Ubuntu hung after
-  `[BOOT] Starting T-Kernel...`. The `adrp + add` patterns in
-  `cpu_support.S` are PIC-safe in principle (same-DSO PC-relative);
-  the hang is most likely a separate initialization-order issue that
-  emerges under PIE's address-randomization. Track as Session 3f.
+- ~~**PIE/PIC**: hang after `[BOOT] Starting T-Kernel...`~~ **RESOLVED 2026-05-22.**
+  Root cause was not the dispatcher (`adrp + add :lo12:` is in fact
+  PIC-safe for same-DSO symbols) but `CFN_REALMEMEND = 0x50000000UL`
+  in `utk_config_depend.h`. Under PIE/ASLR the BSS `linux_heap[]` lands
+  at a much higher virtual address (e.g. `0x7f8000000000`), so the
+  `if (CFN_REALMEMEND > knl_lowmem_limit) memend = knl_lowmem_limit`
+  clamp in `knl_init_Imalloc` never fires, `memsz` wraps to garbage,
+  and the allocator faults on first use. Fix: `arch/linux/include/
+  utk_config_depend.h` shadows the bare-metal version and sets
+  `SYSTEMAREA_END = ~0UL`, guaranteeing the clamp always fires on hosted.
+  Also `arch/linux/aarch64/cpu_support.S` adds `.hidden knl_taskmode`
+  so the linker accepts its `adrp + add` access pattern when the TU
+  is included in a shared library.
 - **Background lifecycle**: The Activity launches `nativeBoot` but
   Android will kill the process within minutes of the user leaving the
   app. The Foreground Service stub above is the workaround; the kernel
