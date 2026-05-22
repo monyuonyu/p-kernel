@@ -21,10 +21,14 @@ INC_LIB    = $(ROOT)/include/lib
 
 # ---- Include directories ----------------------------------------------
 # arch/linux/aarch64/include comes FIRST so its shadows (cpu_status.h,
-# cpu_insn.h) take precedence over arch/aarch64/include's privileged-
-# instruction versions. arch/linux/include holds the new APIs
-# (arch_ctx.h, arch_preempt.h). The aarch64 tree provides everything
-# else (cpu_task.h, offset.h, type defs, sysdef/syslib).
+# cpu_insn.h, syslib_depend.h, tkdev_timer.h) take precedence over
+# arch/aarch64/include's privileged-instruction versions. arch/linux/include
+# holds the cross-arch hosted-port APIs (arch_ctx.h, arch_preempt.h).
+# arch/common/include/lp64 holds LP64-uniform headers shared with the
+# x86_64 sibling (offset.h, sysinfo_depend.h, profile_depend.h, etc.).
+# arch/aarch64/include still provides the aarch64-specific headers that
+# the linux/aarch64 port reuses verbatim (cpu_task.h, machine_depend.h,
+# mmio.h, sysdef_depend.h, tkdev_conf.h, utk_config_depend.h, cpudef.h).
 #
 # Note: include/lib/libc deliberately stays OUT of the include path so
 # Linux POSIX headers (signal.h, termios.h, etc.) resolve to the real
@@ -33,6 +37,7 @@ INCDIRS = \
     -I$(ARCH_LINUX)/aarch64/include \
     -I$(ARCH_LINUX)/include \
     -I$(ARCH_AA64)/include \
+    -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
     -I$(INC_TK) \
     -I$(INC_TOP)
@@ -51,6 +56,7 @@ CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
 ASFLAGS = -D_in_asm_source_ -D_APP_AARCH64_ -D_APP_LINUX_ \
           -I$(ARCH_LINUX)/aarch64/include \
           -I$(ARCH_AA64)/include \
+          -I$(ROOT)/arch/common/include/lp64 \
           -I$(INC_TK) -I$(INC_TOP)
 
 LDFLAGS = -no-pie -lrt

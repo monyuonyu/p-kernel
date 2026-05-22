@@ -25,11 +25,14 @@ INC_LIB = $(ROOT)/include/lib
 INC_TOP = $(ROOT)/include
 
 # ---- Include directories ----------------------------------------------
-# arch/aarch64 FIRST so its cpu_insn.h / sysdef_depend.h shadow generic ones;
-# arch/common holds AI primitives, distributed layer headers (drpc/swim/...),
-# kloader, and the public driver APIs (pci.h, rtl8139.h, arch_reboot.h).
+# arch/aarch64/include FIRST so its arch-specific shadows (cpu_insn.h,
+# sysdef_depend.h, etc.) win over generic ones; arch/common/include/lp64
+# holds LP64-uniform headers (offset.h, sysinfo_depend.h, profile_depend.h,
+# str_align_depend.h, cpu_conf.h, stdarg.h) shared with the x86_64 sibling;
+# arch/common/include holds the cross-arch driver / distributed-layer API.
 INCDIRS = \
     -I$(ARCH)/include \
+    -I$(COMMON)/include/lp64 \
     -I$(COMMON)/include \
     -I$(INC_TK) \
     -I$(INC_TOP) \
@@ -50,6 +53,7 @@ CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
 
 ASFLAGS = -D_in_asm_source_ \
           -I$(ARCH)/include \
+          -I$(COMMON)/include/lp64 \
           -I$(INC_TK) \
           -I$(INC_TOP)
 

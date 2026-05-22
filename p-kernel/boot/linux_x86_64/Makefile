@@ -24,7 +24,6 @@ CC = $(CROSS)gcc
 ROOT       = ../..
 ARCH_LINUX  = $(ROOT)/arch/linux
 ARCH_X86_64 = $(ROOT)/arch/linux/x86_64
-ARCH_AA64   = $(ROOT)/arch/aarch64
 KERNEL      = $(ROOT)/kernel/common
 ARCH_COMMON = $(ROOT)/arch/common
 INC_TK      = $(ROOT)/include/kernel/tkernel
@@ -33,18 +32,23 @@ INC_LIB     = $(ROOT)/include/lib
 
 # ---- Include directories ----------------------------------------------
 # arch/linux/x86_64/include comes FIRST so its shadows (cpu_status.h,
-# cpu_insn.h, syslib_depend.h, tkdev_timer.h, cpu_task.h, offset.h)
-# take precedence. arch/linux/include holds the Linux-port APIs
-# (arch_ctx.h, arch_preempt.h, arch_time.h). arch/aarch64/include is
-# brought in for the LP64-uniform type defs (sysdef_depend, sysinfo_
-# depend, etc.) — both LP64 ABIs share those.
+# cpu_insn.h, syslib_depend.h, tkdev_timer.h, cpu_task.h, machine_depend.h,
+# sysdef_depend.h, utk_config_depend.h) take precedence. arch/linux/include
+# holds the cross-arch hosted-port APIs (arch_ctx.h, arch_preempt.h,
+# arch_time.h). arch/common/include/lp64 holds LP64-uniform headers
+# shared with the aarch64 sibling (offset.h, sysinfo_depend.h,
+# profile_depend.h, str_align_depend.h, cpu_conf.h, stdarg.h).
+#
+# This Makefile no longer borrows -I arch/aarch64/include; everything the
+# x86_64-linux build needs is either x86_64-specific (in arch/linux/x86_64/
+# include) or LP64-shared (in arch/common/include/lp64).
 #
 # include/lib/libc deliberately stays OUT so Linux POSIX headers
 # resolve to system libc.
 INCDIRS = \
     -I$(ARCH_X86_64)/include \
     -I$(ARCH_LINUX)/include \
-    -I$(ARCH_AA64)/include \
+    -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
     -I$(INC_TK) \
     -I$(INC_TOP)
@@ -57,7 +61,7 @@ CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
 
 ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
           -I$(ARCH_X86_64)/include \
-          -I$(ARCH_AA64)/include \
+          -I$(ROOT)/arch/common/include/lp64 \
           -I$(INC_TK) -I$(INC_TOP)
 
 LDFLAGS = -no-pie -static -lrt
