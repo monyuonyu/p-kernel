@@ -109,7 +109,8 @@ COMMON_C_SRCS = \
     pmesh.c \
     kloader_task.c \
     mem_store.c \
-    chat.c
+    chat.c \
+    demo_kdds.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

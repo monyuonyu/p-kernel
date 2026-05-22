@@ -19,6 +19,8 @@
 #include "netstack.h"
 #include "drpc.h"
 #include "swim.h"
+#include "pmesh.h"
+#include "demo_kdds.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -54,6 +56,7 @@ static void cmd_help(void)
     print("  ai     - AI primitive statistics (inferences, jobs, FL rounds)\r\n");
     print("  dtr    - Distributed Transformer status\r\n");
     print("  kdds   - K-DDS topic table\r\n");
+    print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
@@ -156,6 +159,13 @@ static void cmd_net(void)
     create_task((FP)swim_task, 6, 4096);
     print("[net] SWIM gossip task started\r\n");
 
+    /* pmesh_init() already ran at boot (before kdds_init() so its
+     * pmesh_socks[] zero-clear didn't wipe K-DDS's bind). Here we just
+     * spawn the housekeeping task that periodically beacons routes
+     * across the mesh — needs drpc_my_node to be set first. */
+    create_task((FP)pmesh_task, 7, 2048);
+    print("[net] pmesh routing task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -168,6 +178,10 @@ EXPORT INT usermain(void)
 
     /* AI Body layer — tensor pool, ai_job queue, pipeline, MLP. */
     ai_kernel_init();
+    /* pmesh routing MUST come before kdds_init(): pmesh_init() zeros
+     * pmesh_socks[], which would otherwise wipe out the kdds_rx
+     * binding kdds_init() installs via pmesh_bind(). */
+    pmesh_init();
     /* K-DDS — pub/sub. Single-node mode without a NIC. */
     kdds_init();
     /* DTR — distributed Transformer (the AI brain layer). */
@@ -201,6 +215,8 @@ EXPORT INT usermain(void)
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
             kdds_list();
+        } else if (starts_with(line, n, "kdemo")) {
+            cmd_kdemo("x86_64");
         } else if (starts_with(line, n, "net")) {
             cmd_net();
         } else if (starts_with(line, n, "rx")) {
