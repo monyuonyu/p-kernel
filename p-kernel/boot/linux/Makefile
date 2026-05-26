@@ -39,6 +39,7 @@ INCDIRS = \
     -I$(ARCH_AA64)/include \
     -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP)
 
@@ -76,6 +77,8 @@ ARCH_C_SRCS = \
     pci.c \
     rtl8139.c \
     net_unix.c \
+    net_relay.c \
+    net_dispatch.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
@@ -83,7 +86,14 @@ ARCH_C_SRCS = \
 
 ARCH_S_SRCS = cpu_support.S
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+# Relay-side sha256 implementation, pulled into the kernel build so
+# net_relay.c can compute HMAC-SHA256 for v2 wire. Single canonical
+# source — kept in relay/ where it was first written.
+RELAY_DIR    = $(ROOT)/relay
+RELAY_C_SRCS = sha256.c
+RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 # Same list as boot/aarch64. These files are arch-independent C and
@@ -232,6 +242,9 @@ $(COMMON_C_SRCS:.c=.lo): %.lo: $(ARCH_COMMON)/%.c
 $(LIBSTR_SRCS:.c=.lo): %.lo: $(LIBSTR_DIR)/%.c
 	$(CC) $(SO_KCFLAGS) -c -o $@ $<
 
+$(RELAY_OBJS:.o=.lo): %.lo: $(RELAY_DIR)/%.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
 test_so_load: test_so_load.c $(SO_TARGET)
 	$(CC) -o $@ $< -ldl -lpthread
 
@@ -252,6 +265,10 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_LINUX)/aarch64/%.c
 # arch/linux/aarch64 ASM
 cpu_support.o: $(ARCH_LINUX)/aarch64/cpu_support.S
 	$(CC) $(ASFLAGS) -c -o $@ $<
+
+# relay/sha256.c — built with the same CFLAGS as arch/linux C sources
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kernel/common — uses T-Kernel placeholder libc
 $(KERNEL_OBJS): %.o: $(KERNEL)/%.c

@@ -50,6 +50,7 @@ INCDIRS = \
     -I$(ARCH_LINUX)/include \
     -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP)
 
@@ -81,6 +82,8 @@ ARCH_C_SRCS = \
     pci.c \
     rtl8139.c \
     net_unix.c \
+    net_relay.c \
+    net_dispatch.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
@@ -88,7 +91,13 @@ ARCH_C_SRCS = \
 
 ARCH_S_SRCS = cpu_support.S
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+# Relay-side sha256 implementation, pulled in so net_relay.c can compute
+# HMAC-SHA256 for Phase B v2. Single canonical source in relay/.
+RELAY_DIR    = $(ROOT)/relay
+RELAY_C_SRCS = sha256.c
+RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 COMMON_C_SRCS = \
@@ -186,6 +195,10 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_X86_64)/%.c
 
 cpu_support.o: $(ARCH_X86_64)/cpu_support.S
 	$(CC) $(ASFLAGS) -c -o $@ $<
+
+# relay/sha256.c — same CFLAGS as arch/linux C sources
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
