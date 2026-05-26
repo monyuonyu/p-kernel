@@ -64,6 +64,90 @@ The 12-byte header is the only thing the relay parses. Whatever's in
 the payload is opaque — for Phase B it's a pmesh DATA packet, but it
 could be anything.
 
+## Wire format v2 (auth + replay protection)
+
+v1 above is what the prototype actually shipped. v2 keeps the 12-byte
+header layout but bumps `ver` to 2, and inserts a 24-byte AUTH block
+between the header and the payload:
+
+```
+v2 packet:
+  [ HEAD 12 ][ AUTH 24 ][ payload <=1380 ]
+
+AUTH block (24 bytes):
+   0     1     2     3     4     5     6     7
++-----+-----+-----+-----+-----+-----+-----+-----+
+|              nonce (u64 LE, per-src monotonic)        |
++-----+-----+-----+-----+-----+-----+-----+-----+
+|                hmac16 (HMAC-SHA256 truncated to 16 B) |
+|                          (16 bytes total)             |
++-----+-----+-----+-----+-----+-----+-----+-----+
+```
+
+The MAC is computed as:
+
+```
+hmac16 = HMAC-SHA256(K, ver || type || src || dst ||
+                        nonce(8 LE) || payload)[:16]
+```
+
+`magic` is intentionally NOT covered by the MAC: it's a self-describing
+sync word, not a security-relevant field. Including it would just bloat
+every MAC input by 4 bytes for zero benefit.
+
+`payload` may be zero-length (REGISTER / KEEPALIVE), in which case the
+MAC covers only the 12-byte preamble (ver..nonce).
+
+### Replay protection
+
+Per src node_id the relay keeps:
+
+```
+struct {
+    uint64_t max_nonce;     // highest nonce ever accepted
+    uint64_t window_bits;   // 64-bit bitmap; bit i = "nonce (max - i) seen"
+} replay[NODE_MAX];
+```
+
+Rule:
+
+- `nonce > max_nonce`:        accept, shift bitmap left by (nonce - max),
+                              set bit 0, update max.
+- `nonce == max_nonce`:       drop (already seen).
+- `max - 64 < nonce < max`:   look at bit; drop if set, else set + accept.
+- `nonce <= max - 64`:        drop (outside window; can't tell if replay).
+
+Window size 64 is chosen so the replay state per node is one word, and
+the window comfortably exceeds the realistic out-of-order budget over a
+single UDP path (a few packets, never tens).
+
+Replay state survives idle eviction from the routing table: only a
+relay-process restart clears it. Clients therefore MUST keep nonces
+monotonic across their own restarts — the recommended construction is
+`nonce = (wall_clock_seconds << 24) | counter` so a freshly-started
+client always exceeds the relay's stored `max_nonce`.
+
+### Key distribution
+
+The relay reads `PKERNEL_RELAY_KEY` from the environment — 64 hex chars
+(= 32 bytes raw). Without it, the relay refuses to start:
+
+```sh
+$ ./relay
+[relay] PKERNEL_RELAY_KEY not set — refusing to start (use --insecure
+        for v1-compatible no-auth mode)
+```
+
+Pass `--insecure` to fall back to v1 behaviour (no MAC checked, no
+replay state, ver=1 packets accepted). This is intended for local
+loopback testing and the existing single-host pmesh demos. Production
+deployments and any phone fleet MUST run with a key.
+
+Key distribution to clients is out of band for v2 — QR code, manual
+paste, F-Droid metadata pin, take your pick. v3 may add an in-band
+"trust ratchet" but for now the threat model is "the user holds the
+key for their own mesh."
+
 ## State
 
 Server-side, two maps:
@@ -95,23 +179,24 @@ phone-B recv  → strips 12-byte header, hands payload to existing
 
 ## What the relay does NOT do (yet)
 
-- **Authentication.** Any sender can claim any `src` node_id. Phase B
-  Threat model is "two phones I own, on my own relay" — the user's
-  trust boundary is the relay binary itself. v2 adds an HMAC of
-  `(src, dst, payload)` keyed by a per-network secret distributed via
-  out-of-band channel (QR code, etc.).
-- **Encryption.** Same reason. v2 layers TLS-like AEAD on top.
-- **Replay protection.** Packets are stateless; an attacker on the
-  wire can replay them. Fine for heartbeat traffic.
+- **Authentication.** ~~v1 has none.~~ v2 adds HMAC-SHA256 keyed by a
+  per-network secret in `PKERNEL_RELAY_KEY`. Distribution channel is
+  still out of band (QR / paste / pin).
+- **Replay protection.** ~~v1 packets can be replayed.~~ v2 enforces a
+  64-packet sliding nonce window per src.
+- **Encryption.** v2 still has none. The payload is integrity-protected
+  but visible to anyone on the wire (and to the relay operator). v3
+  layers AEAD on top — pmesh payloads then become opaque even to the
+  relay.
 - **DDoS protection.** Rate-limit per src IP, or per claimed node_id.
-  v2.
-- **Multi-relay.** If the single relay dies, the mesh dies. v2 adds
+  v3.
+- **Multi-relay.** If the single relay dies, the mesh dies. v3 adds
   a discovery protocol so phones learn alternate relays.
 - **NAT hole-punching.** A proper STUN-style attempt would let two
   cooperating phones eventually talk directly, with the relay only
   needed for the introduction. The current design just forwards every
   packet forever; works, but uses the relay's bandwidth proportional
-  to mesh traffic. v3.
+  to mesh traffic. v3+.
 
 The non-features above are not security theater — they're the right
 sequence to ship a v1 the user can hold and trust before adding
@@ -223,15 +308,18 @@ library); we'd ship that too if someone prefers. The wire protocol is
 the load-bearing piece, and that's plain bytes — any implementation
 that gets the 12-byte header right interops.
 
-## Open questions for v2
+## Open questions for v3
 
 - IPv6 only? Dual-stack? (Lean: dual-stack, no opinion yet.)
 - Multicast group support — could simulate K-DDS multicast across the
-  relay so we don't have to broadcast to every node. (Defer to v2.)
+  relay so we don't have to broadcast to every node.
 - Heartbeat → presence: the relay already knows last-seen-time, so we
-  could expose a `who's online` query (encrypted) without the K-DDS
-  layer needing to know. Probably useful for UI ("3 other phones
-  reachable"). (v2.)
+  could expose a `who's online` query (now MAC-verified for free since
+  v2's key already gates trust). Probably useful for UI ("3 other
+  phones reachable").
+- Payload encryption (AEAD) on top of v2's integrity — relay operator
+  stops being inside the trust boundary.
+- Per-src-IP rate limit for DDoS resistance.
 
 ---
 
