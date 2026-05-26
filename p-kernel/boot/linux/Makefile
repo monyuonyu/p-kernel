@@ -253,6 +253,21 @@ test_so_load: test_so_load.c $(SO_TARGET)
 run-so-test: test_so_load
 	LD_LIBRARY_PATH=. ./test_so_load
 
+# Variant: dlopen libpkernel.so AND join a Phase B v2 relay mesh.
+# Spawns ../../relay/relay on port 27460 with a fixed key, then sets
+# PKERNEL_RELAY_{HOST,PORT,KEY}+AUTONET before dlopen so the kernel's
+# net_dispatch.c picks the relay transport. Confirms end-to-end that
+# the .so artifact (= what the Android NDK build ships) can drive the
+# v2 wire successfully.
+test_so_load_relay: test_so_load_relay.c $(SO_TARGET) $(ROOT)/relay/relay
+	$(CC) -o $@ $< -ldl -lpthread
+
+$(ROOT)/relay/relay:
+	$(MAKE) -C $(ROOT)/relay relay
+
+run-so-relay-test: test_so_load_relay
+	LD_LIBRARY_PATH=. ./test_so_load_relay
+
 
 # boot/linux/main.c — uses system libc directly
 main.o: main.c
@@ -286,6 +301,7 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) test_so_load
+	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \
+	      test_so_load test_so_load_relay
 
-.PHONY: all run run-so-test clean
+.PHONY: all run run-so-test run-so-relay-test clean

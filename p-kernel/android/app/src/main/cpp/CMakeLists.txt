@@ -20,6 +20,7 @@ set(INC_TK   ${PK_ROOT}/include/kernel/tkernel)
 set(INC_TOP  ${PK_ROOT}/include)
 set(INC_LIB  ${PK_ROOT}/include/lib)
 set(LIBSTR   ${PK_ROOT}/lib/libc/string)
+set(RELAY    ${PK_ROOT}/relay)
 
 # Headers — same path order as boot/linux/Makefile.
 # arch/linux/include sits BEFORE arch/aarch64/include so the hosted
@@ -31,6 +32,7 @@ include_directories(
     ${ARCH_AA}/include
     ${ARCH_CO}/include/lp64
     ${ARCH_CO}/include
+    ${RELAY}
     ${INC_TK}
     ${INC_TOP}
 )
@@ -65,10 +67,18 @@ set(ARCH_SRC
     ${ARCH_LX}/aarch64/pci.c
     ${ARCH_LX}/aarch64/rtl8139.c
     ${ARCH_LX}/aarch64/net_unix.c
+    ${ARCH_LX}/aarch64/net_relay.c
+    ${ARCH_LX}/aarch64/net_dispatch.c
     ${ARCH_LX}/aarch64/arch_reboot.c
     ${ARCH_LX}/aarch64/vfs_stub.c
     ${ARCH_LX}/aarch64/preempt.c
     ${ARCH_LX}/aarch64/cpu_support.S
+)
+
+# relay-side sha256 — same canonical source as boot/linux/Makefile.
+# net_relay.c calls into hmac_sha256 to authenticate v2 wire packets.
+set(RELAY_SRC
+    ${RELAY}/sha256.c
 )
 
 # arch/common (AI + distributed; same list as boot/linux/Makefile)
@@ -88,7 +98,8 @@ set_source_files_properties(${LIBSTR_SRC} PROPERTIES
 set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c)
 
 add_library(pkernel SHARED
-    ${BOOT} ${ARCH_SRC} ${COMMON_SRC} ${KCOMMON_SRC} ${LIBSTR_SRC} ${JNI_SRC})
+    ${BOOT} ${ARCH_SRC} ${RELAY_SRC} ${COMMON_SRC} ${KCOMMON_SRC}
+    ${LIBSTR_SRC} ${JNI_SRC})
 
 # Bionic's libc + posix timers (timer_create lives there); no -lrt.
 target_link_libraries(pkernel log android)

@@ -69,6 +69,51 @@ Java_io_pkernel_PKernel_nativeBoot(JNIEnv *env, jobject self, jint node_id)
     pthread_create(&kernel_thread, NULL, kernel_thread_main, NULL);
 }
 
+/*
+ *  nativeConfigureRelay — wire the Phase B v2 relay transport into the
+ *  upcoming nativeBoot() call by setting PKERNEL_RELAY_{HOST,PORT,KEY}
+ *  before the kernel thread starts. Must be invoked BEFORE nativeBoot();
+ *  net_dispatch.c reads these env vars at arch_linux_net_init() time
+ *  (which happens in the kernel's usermain after the boot banner).
+ *
+ *  Args:
+ *    host    — relay hostname or dotted-quad IPv4. Pass null/empty to
+ *              clear, which leaves the dispatcher on loopback (net_unix).
+ *    port    — relay UDP port (typical: 7400). Ignored if <= 0.
+ *    keyHex  — 64-char hex (32-byte key). Pass null/empty to fall back
+ *              to v1 wire (relay must be running with --insecure).
+ */
+JNIEXPORT void JNICALL
+Java_io_pkernel_PKernel_nativeConfigureRelay(JNIEnv *env, jobject self,
+                                              jstring jhost, jint jport,
+                                              jstring jkey)
+{
+    (void)self;
+
+    if (jhost) {
+        const char *host = (*env)->GetStringUTFChars(env, jhost, NULL);
+        if (host && *host) setenv("PKERNEL_RELAY_HOST", host, 1);
+        else               unsetenv("PKERNEL_RELAY_HOST");
+        (*env)->ReleaseStringUTFChars(env, jhost, host);
+    } else {
+        unsetenv("PKERNEL_RELAY_HOST");
+    }
+
+    if (jport > 0) {
+        char val[16]; snprintf(val, sizeof(val), "%d", (int)jport);
+        setenv("PKERNEL_RELAY_PORT", val, 1);
+    }
+
+    if (jkey) {
+        const char *key = (*env)->GetStringUTFChars(env, jkey, NULL);
+        if (key && *key) setenv("PKERNEL_RELAY_KEY", key, 1);
+        else             unsetenv("PKERNEL_RELAY_KEY");
+        (*env)->ReleaseStringUTFChars(env, jkey, key);
+    } else {
+        unsetenv("PKERNEL_RELAY_KEY");
+    }
+}
+
 JNIEXPORT jint JNICALL
 Java_io_pkernel_PKernel_nativeReadStdout(JNIEnv *env, jobject self,
                                           jbyteArray dst, jint maxlen)
