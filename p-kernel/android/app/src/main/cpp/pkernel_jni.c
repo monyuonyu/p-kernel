@@ -23,6 +23,16 @@
 #include <string.h>
 #include <pthread.h>
 
+/* Bionic ↔ glibc errno shim.
+ * arch/linux/aarch64/{net_unix,net_relay,vfs_stub,…}.c declare an
+ * extern `__errno_location()` (the glibc accessor) so they can read
+ * errno without including <errno.h> — that header is shadowed by the
+ * T-Kernel placeholder on our include path. Bionic exposes the same
+ * thing as `__errno()`. Provide a one-line forwarder so the link
+ * succeeds on Android without touching the kernel-side sources. */
+extern volatile int *__errno(void);
+int *__errno_location(void) { return (int *)__errno(); }
+
 /* From boot/linux/main.c (renamed via -Dmain=pkernel_main for the
  * Android build so JNI's _start isn't shadowed). */
 extern int pkernel_main(int argc, char **argv);
