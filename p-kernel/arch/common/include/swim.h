@@ -33,6 +33,7 @@
 #define SWIM_PROBE_INTERVAL_MS 1000     /* プローブラウンド間隔 (ms)         */
 #define SWIM_PROBE_TMO_MS      400      /* 直接プローブタイムアウト          */
 #define SWIM_IND_TMO_MS        500      /* 間接プローブタイムアウト          */
+#define SWIM_SUSPECT_ROUNDS    2        /* ALIVE 連続無応答 → SUSPECT       */
 #define SWIM_DEAD_ROUNDS       3        /* SUSPECT ラウンド数 → DEAD        */
 
 /* ------------------------------------------------------------------ */
