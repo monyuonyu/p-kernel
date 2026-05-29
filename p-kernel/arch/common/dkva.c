@@ -212,14 +212,21 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
             }
     }
 
-    /* 他ノードからのレスポンスを受信 (タイムアウトまで収集) */
-    INT   tmo_left = DKVA_INFER_TMO;
-    INT   resp_cnt = 0;
+    /* 他ノードからのレスポンスを受信 (タイムアウトまで収集)。
+     * K-DDS LATEST_ONLY はラッチした最新値を毎ポール再配信するので、
+     * ノードごとに 1 回だけ集約する (重複加算で peer 数と attention 和が
+     * 水増しされるのを防ぐ)。 */
+    INT  tmo_left = DKVA_INFER_TMO;
+    INT  resp_cnt = 0;
+    UB   seen[DNODE_MAX];
+    for (UB i = 0; i < DNODE_MAX; i++) seen[i] = 0;
     while (tmo_left > 0) {
         DKVA_RESP_PKT rp = { 0 };
         W r = kdds_sub(h_resp_sub, &rp, (W)sizeof(rp), 0);
         if (r >= (W)sizeof(DKVA_RESP_PKT) &&
-            rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id) {
+            rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id &&
+            rp.src_node < DNODE_MAX && !seen[rp.src_node]) {
+            seen[rp.src_node] = 1;
             resp_cnt++;
             stat_resp_got++;
             for (INT t = 0; t < DKVA_SEQ; t++)
@@ -278,16 +285,29 @@ void dkva_task(INT stacd, void *exinf)
     dk_puts("[dkva] responder task started  node=");
     dk_putdec(drpc_my_node); dk_puts("\r\n");
 
+    /* Last req_id answered per requesting node. K-DDS LATEST_ONLY QoS
+     * re-delivers the latched Q on every poll; respond only to a new
+     * req_id, else dkva_infer (which SUMS responses) would double-count. */
+    static UW last_resp_req[DNODE_MAX];
+    for (UB i = 0; i < DNODE_MAX; i++) last_resp_req[i] = 0;
+
     for (;;) {
         DKVA_Q_PKT qpkt = { 0 };
         W r = kdds_sub(h_q_sub, &qpkt, (W)sizeof(qpkt), 0);
 
         if (r >= (W)sizeof(DKVA_Q_PKT) && qpkt.magic == DKVA_Q_MAGIC) {
-            /* 自分宛ではない (自分が送ったもの) はスキップ */
-            if (qpkt.src_node == drpc_my_node) {
+            /* 自分宛ではない (自分が送ったもの) / 範囲外はスキップ */
+            if (qpkt.src_node == drpc_my_node ||
+                qpkt.src_node >= DNODE_MAX) {
                 tk_dly_tsk(10);
                 continue;
             }
+            /* 同じ要求への重複応答を抑止 (集約の多重カウント防止) */
+            if (qpkt.req_id == last_resp_req[qpkt.src_node]) {
+                tk_dly_tsk(10);
+                continue;
+            }
+            last_resp_req[qpkt.src_node] = qpkt.req_id;
 
             DKVA_RESP_PKT resp = { 0 };
             resp.magic    = DKVA_RESP_MAGIC;

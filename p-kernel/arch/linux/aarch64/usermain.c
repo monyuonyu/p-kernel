@@ -35,6 +35,8 @@ IMPORT void dtr_task(INT stacd, void *exinf);
 IMPORT W    dtr_infer(const B input[4]);
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
+IMPORT void dkva_init(void);
+IMPORT void dkva_task(INT stacd, void *exinf);
 
 extern char *getenv(const char *);
 
@@ -182,6 +184,12 @@ static void cmd_net(void)
     create_task((FP)dtr_task, 6, 4096);
     print("[net] dtr distributed-inference worker started\r\n");
 
+    /* DKVA responder — every node answers distributed-KV-attention queries
+     * over its local cache. With 3+ nodes degrade goes FULL and dtr_infer's
+     * DKVA path broadcasts Q, aggregating partial attention from the mesh. */
+    create_task((FP)dkva_task, 7, 4096);
+    print("[net] dkva attention responder started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -264,6 +272,8 @@ EXPORT INT usermain(void)
     kdds_init();
     /* DTR — distributed Transformer (the AI brain layer). */
     dtr_init();
+    /* DKVA — distributed KV attention topics (FULL-mode responder). */
+    dkva_init();
     /* Degrade controller — derives SOLO/REDUCED/FULL from the live node
      * count SWIM observes. Starts at SOLO until a peer appears. */
     degrade_init();
