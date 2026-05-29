@@ -193,14 +193,14 @@ static void udp_send(const unsigned char *buf, int len)
 
 static void send_register(void)
 {
-    unsigned char buf[MAX_PKT];
+    static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_REGISTER, (unsigned)my_node_id, 0, NULL, 0);
     udp_send(buf, n);
 }
 
 static void send_keepalive(void)
 {
-    unsigned char buf[MAX_PKT];
+    static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_KEEPALIVE, (unsigned)my_node_id, 0, NULL, 0);
     udp_send(buf, n);
 }
@@ -302,7 +302,7 @@ int net_relay_send(const void *frame, int len)
 {
     if (sock_fd < 0 || len <= 0 || len > MAX_PAYLOAD) return -1;
     maybe_keepalive();
-    unsigned char buf[MAX_PKT];
+    static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_BROADCAST,
                          (unsigned)my_node_id, 0, frame, len);
     udp_send(buf, n);
@@ -313,7 +313,7 @@ int net_relay_recv(void *out, int maxlen)
 {
     if (sock_fd < 0) return 0;
     maybe_keepalive();
-    unsigned char buf[MAX_PKT];
+    static unsigned char buf[MAX_PKT];
     ssize_t n = recv(sock_fd, buf, sizeof(buf), MSG_DONTWAIT);
     if (n <= 0) return 0;
 

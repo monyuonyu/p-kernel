@@ -31,6 +31,12 @@ IMPORT void kdds_init(void);
 IMPORT void kdds_list(void);
 IMPORT void dtr_init(void);
 IMPORT void dtr_stat(void);
+IMPORT void dtr_task(INT stacd, void *exinf);
+IMPORT W    dtr_infer(const B input[4]);
+IMPORT void degrade_init(void);
+IMPORT void degrade_stat(void);
+
+extern char *getenv(const char *);
 
 static void print(const char *s)
 {
@@ -55,6 +61,8 @@ static void cmd_help(void)
     print("  help   - this list\r\n");
     print("  ai     - AI primitive statistics (inferences, jobs, FL rounds)\r\n");
     print("  dtr    - Distributed Transformer status\r\n");
+    print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
+    print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
@@ -166,11 +174,81 @@ static void cmd_net(void)
     create_task((FP)pmesh_task, 7, 2048);
     print("[net] pmesh routing task started\r\n");
 
+    /* Distributed Transformer worker. Needs drpc_my_node set (done by
+     * drpc_init above) so it can pick its role: node 0 (even id) drives
+     * inference from the shell, node 1 (odd id) answers as the K-DDS
+     * worker. Once SWIM sees a peer, degrade flips SOLO -> REDUCED and
+     * `infer` runs tensor-parallel across the mesh. */
+    create_task((FP)dtr_task, 6, 4096);
+    print("[net] dtr distributed-inference worker started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
 
-extern char *getenv(const char *);
+/* Print a signed decimal over the sio frame channel. */
+static void print_dec_s(W v)
+{
+    UW uv;
+    if (v < 0) { print("-"); uv = (UW)(-v); } else uv = (UW)v;
+    if (uv == 0) { print("0"); return; }
+    char tmp[12]; INT t = 0;
+    while (uv > 0) { tmp[t++] = (char)('0' + (uv % 10)); uv /= 10; }
+    char out[13]; INT i = 0;
+    while (t > 0) out[i++] = tmp[--t];
+    out[i] = '\0';
+    print(out);
+}
+
+/* Parse one signed decimal from [*pp, end); advance *pp past it.
+ * Returns 1 if a number was consumed, 0 otherwise. */
+static int parse_int(const UB **pp, const UB *end, INT *out)
+{
+    const UB *p = *pp;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (p >= end) return 0;
+    int neg = 0;
+    if (*p == '-') { neg = 1; p++; }
+    if (p >= end || *p < '0' || *p > '9') return 0;
+    INT v = 0;
+    while (p < end && *p >= '0' && *p <= '9') { v = v * 10 + (INT)(*p - '0'); p++; }
+    *out = neg ? -v : v;
+    *pp  = p;
+    return 1;
+}
+
+/* `infer [a b c d]` — run a Transformer inference on 4 int8 sensor
+ * values. With no peers this is local (SOLO); once a second node has
+ * meshed in, dtr_infer transparently distributes it (REDUCED/FULL).
+ * The detailed scores are printed by dtr_infer itself. */
+static void cmd_infer(const UB *line, INT n)
+{
+    const UB *p   = line;
+    const UB *end = line + n;
+    while (p < end && *p != ' ' && *p != '\t') p++;   /* skip the verb */
+
+    B input[4] = { 40, 80, 30, 10 };   /* default demo sensor vector */
+    for (INT i = 0; i < 4; i++) {
+        INT v;
+        if (!parse_int(&p, end, &v)) break;
+        if (v >  127) v =  127;
+        if (v < -128) v = -128;
+        input[i] = (B)v;
+    }
+
+    print("[infer] sensors = [");
+    for (INT i = 0; i < 4; i++) { if (i) print(" "); print_dec_s(input[i]); }
+    print("]\r\n");
+
+    W cls = dtr_infer(input);
+    if (cls < 0) {
+        print("[infer] no result (timeout or busy)\r\n");
+    } else {
+        static const char *cn[] = { "normal", "alert", "critical" };
+        print("[infer] => class "); print_dec_s(cls);
+        print(" ("); print(cn[cls < 3 ? cls : 0]); print(")\r\n");
+    }
+}
 
 EXPORT INT usermain(void)
 {
@@ -186,6 +264,9 @@ EXPORT INT usermain(void)
     kdds_init();
     /* DTR — distributed Transformer (the AI brain layer). */
     dtr_init();
+    /* Degrade controller — derives SOLO/REDUCED/FULL from the live node
+     * count SWIM observes. Starts at SOLO until a peer appears. */
+    degrade_init();
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
@@ -211,6 +292,10 @@ EXPORT INT usermain(void)
             cmd_help();
         } else if (starts_with(line, n, "ai")) {
             ai_stats_print();
+        } else if (starts_with(line, n, "infer")) {
+            cmd_infer(line, n);
+        } else if (starts_with(line, n, "dist")) {
+            degrade_stat();
         } else if (starts_with(line, n, "dtr")) {
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
