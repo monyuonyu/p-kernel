@@ -434,6 +434,32 @@ static void run_mhsa_local(const float tok[SEQ][DM],
 }
 
 /*
+ *  DKVA 用 KV キャッシュ warmup (Phase 10, follow-up #2)。
+ *
+ *  新規 FULL クラスタではどのノードも一度もローカル推論をしていないため
+ *  各ノードの kv_cache が空 → compute_partial が全ゼロを返し、集約された
+ *  Attention が自明 (entries=0) になってしまう。
+ *
+ *  そこで各ノードが自分のノード ID から導いた「ノード固有の」合成入力で
+ *  ローカル MHSA を数回回し、kv_cache を seed する (run_mhsa_local が
+ *  dkva_cache_update を呼ぶ)。ノードごとに異なる入力 → 異なる K/V を持つので、
+ *  requester が複数 peer の partial を集約したときに初めて「クラスタの集合
+ *  記憶」を Attention に取り込んだ非自明な結果になる。
+ */
+void dtr_seed_kv_cache(UB node)
+{
+    for (INT s = 0; s < DTR_KV_SEED_N; s++) {
+        B input[SEQ];
+        for (INT t = 0; t < SEQ; t++)
+            input[t] = (B)(17 * (node + 1) + 31 * s + 13 * t);
+        float tok[SEQ][DM];
+        run_embed_seq(input, tok);
+        float mhsa[SEQ][DM];
+        run_mhsa_local(tok, mhsa);   /* dkva_cache_update を内部で呼ぶ */
+    }
+}
+
+/*
  *  FFN on sequence: [SEQ][DM] → [SEQ][DM]
  *  各トークンに独立して適用
  */

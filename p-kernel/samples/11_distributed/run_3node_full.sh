@@ -10,14 +10,16 @@
 # Usage:   ./run_3node_full.sh
 # Watch:   /tmp/pk3_node{1,2,3}.log  /tmp/pk3_relay.log
 #
-# NOTE (known limitations, see ../../arch/common/dkva.c):
-#   * The single LATEST_ONLY response slot is shared by all responders, so
-#     the requester currently aggregates one peer per round; robust N-way
-#     fan-in needs a per-source response topic / queue QoS.
-#   * KV caches are empty in a fresh cluster (no prior local inferences), so
-#     the partials — and hence the aggregated attention — are trivial here.
-#   This script demonstrates the FULL/DKVA *mechanism* (Q broadcast + partial
-#   replies + aggregation) running across three kernels over the relay.
+# Two earlier limitations are now fixed (see ../../arch/common/dkva.c):
+#   * Per-source response topics ("dtr/dkva/resp/<node>") give each responder
+#     its own LATEST_ONLY slot, so the requester now aggregates ALL peers per
+#     round ("aggregated 2 peers") instead of just one.
+#   * Each node seeds its KV cache with node-specific synthetic inputs at
+#     startup (dtr_seed_kv_cache), so partials are non-trivial (entries=3) and
+#     the aggregated attention genuinely combines the cluster's collective
+#     memory rather than reducing to all-zeros.
+#   This script runs full FULL/DKVA distributed attention across three kernels
+#   over the relay: Q broadcast + per-source partial replies + aggregation.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

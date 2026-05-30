@@ -6,12 +6,13 @@
  *
  *  Requester (node0, FULL mode, dkva_infer から):
  *    1. DKVA_Q_PKT を "dtr/dkva/q" へ pub
- *    2. 各ノードからの DKVA_RESP_PKT を "dtr/dkva/resp" でポーリング
+ *    2. 各ノードの "dtr/dkva/resp/<node>" を順にポーリングして
+ *       DKVA_RESP_PKT を収集 (per-source topic なので peer ごとに独立)
  *    3. partial_out を集約して mhsa_out を計算
  *
  *  Responder (node1,2,..., dkva_task から):
  *    1. "dtr/dkva/q" を sub してキャッシュに対して Attention 計算
- *    2. partial_out + attn_sum を "dtr/dkva/resp" へ pub
+ *    2. partial_out + attn_sum を自ノード "dtr/dkva/resp/<my_node>" へ pub
  *
  *  集約 (Attention 合成):
  *    partial_out_total[t][h][d] = Σ_nodes partial_out[t][h][d]
@@ -25,6 +26,7 @@
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+IMPORT void dtr_seed_kv_cache(UB node);   /* dtr.c: KV キャッシュ warmup */
 
 /* ------------------------------------------------------------------ */
 /* 出力ヘルパー                                                        */
@@ -96,8 +98,23 @@ static UW stat_resp_sent = 0;
 
 static W h_q_pub    = -1;
 static W h_q_sub    = -1;
-static W h_resp_pub = -1;
-static W h_resp_sub = -1;
+/* per-source response topics: h_resp_pub[n] / h_resp_sub[n] は
+ * "dtr/dkva/resp/<n>" を指す。responder は自ノード (drpc_my_node) の
+ * pub ハンドルへ発行し、requester は自分以外の全 sub ハンドルから収集する。
+ * dkva_init は drpc_my_node が確定する前 (boot 時) に走るので、全 DNODE_MAX
+ * 分のトピックを開いておき、実行時にノード ID で選ぶ。 */
+static W h_resp_pub[DNODE_MAX];
+static W h_resp_sub[DNODE_MAX];
+
+/* "dtr/dkva/resp/<node>" を out に組み立てる (node は 0..DNODE_MAX-1, 1 桁) */
+static void resp_topic_name(char *out, UB node)
+{
+    const char *p = DKVA_TOPIC_RESP_PFX;
+    INT i = 0;
+    while (p[i]) { out[i] = p[i]; i++; }
+    out[i++] = (char)('0' + node);
+    out[i]   = '\0';
+}
 
 /* ------------------------------------------------------------------ */
 /* KV キャッシュ更新 (dtr.c から呼ぶ)                                */
@@ -172,7 +189,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               float mhsa_out[DKVA_SEQ][DKVA_DM],
               UW req_id)
 {
-    if (h_q_pub < 0 || h_resp_sub < 0) return E_NOEXS;
+    if (h_q_pub < 0) return E_NOEXS;
 
     /* Query パケット送信 */
     DKVA_Q_PKT qpkt = { 0 };
@@ -212,31 +229,36 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
             }
     }
 
-    /* 他ノードからのレスポンスを受信 (タイムアウトまで収集)。
-     * K-DDS LATEST_ONLY はラッチした最新値を毎ポール再配信するので、
-     * ノードごとに 1 回だけ集約する (重複加算で peer 数と attention 和が
-     * 水増しされるのを防ぐ)。 */
+    /* 他ノードからのレスポンスを per-source トピックから収集。
+     * 各ノードは "dtr/dkva/resp/<node>" という専用トピックへ pub するので、
+     * requester はノードごとの sub ハンドルを順に poll するだけでよい。
+     * K-DDS LATEST_ONLY はラッチした最新値を毎ポール再配信するため、
+     * 一度集約したノードは got[] でスキップして重複加算を防ぐ。 */
     INT  tmo_left = DKVA_INFER_TMO;
     INT  resp_cnt = 0;
-    UB   seen[DNODE_MAX];
-    for (UB i = 0; i < DNODE_MAX; i++) seen[i] = 0;
+    UB   got[DNODE_MAX];
+    for (UB i = 0; i < DNODE_MAX; i++) got[i] = 0;
     while (tmo_left > 0) {
-        DKVA_RESP_PKT rp = { 0 };
-        W r = kdds_sub(h_resp_sub, &rp, (W)sizeof(rp), 0);
-        if (r >= (W)sizeof(DKVA_RESP_PKT) &&
-            rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id &&
-            rp.src_node < DNODE_MAX && !seen[rp.src_node]) {
-            seen[rp.src_node] = 1;
-            resp_cnt++;
-            stat_resp_got++;
-            for (INT t = 0; t < DKVA_SEQ; t++)
-                for (INT h = 0; h < DKVA_NH; h++) {
-                    total_sum[t][h] += rp.attn_sum[t][h];
-                    for (INT d = 0; d < DKVA_DH; d++)
-                        total_out[t][h][d] += rp.partial_out[t][h][d];
-                }
-            dk_puts("[dkva] resp from node "); dk_putdec(rp.src_node);
-            dk_puts("  entries="); dk_putdec(rp.n_entries); dk_puts("\r\n");
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (n == drpc_my_node || got[n] || h_resp_sub[n] < 0) continue;
+
+            DKVA_RESP_PKT rp = { 0 };
+            W r = kdds_sub(h_resp_sub[n], &rp, (W)sizeof(rp), 0);
+            if (r >= (W)sizeof(DKVA_RESP_PKT) &&
+                rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id &&
+                rp.src_node == n) {
+                got[n] = 1;
+                resp_cnt++;
+                stat_resp_got++;
+                for (INT t = 0; t < DKVA_SEQ; t++)
+                    for (INT h = 0; h < DKVA_NH; h++) {
+                        total_sum[t][h] += rp.attn_sum[t][h];
+                        for (INT d = 0; d < DKVA_DH; d++)
+                            total_out[t][h][d] += rp.partial_out[t][h][d];
+                    }
+                dk_puts("[dkva] resp from node "); dk_putdec(rp.src_node);
+                dk_puts("  entries="); dk_putdec(rp.n_entries); dk_puts("\r\n");
+            }
         }
         tk_dly_tsk(20);
         tmo_left -= 20;
@@ -285,6 +307,13 @@ void dkva_task(INT stacd, void *exinf)
     dk_puts("[dkva] responder task started  node=");
     dk_putdec(drpc_my_node); dk_puts("\r\n");
 
+    /* KV キャッシュ warmup: 新規 FULL クラスタでは全ノードのキャッシュが空で
+     * partial Attention が自明 (entries=0) になるため、自ノード固有の合成入力で
+     * seed しておく。dkva_task は drpc_my_node 確定後に走るので node 固有値が使える。 */
+    dtr_seed_kv_cache(drpc_my_node);
+    dk_puts("[dkva] kv-cache seeded for node="); dk_putdec(drpc_my_node);
+    dk_puts("\r\n");
+
     /* Last req_id answered per requesting node. K-DDS LATEST_ONLY QoS
      * re-delivers the latched Q on every poll; respond only to a new
      * req_id, else dkva_infer (which SUMS responses) would double-count. */
@@ -315,8 +344,10 @@ void dkva_task(INT stacd, void *exinf)
             resp.src_node = drpc_my_node;
 
             compute_partial(&qpkt, &resp);
-            kdds_pub(h_resp_pub, &resp, (W)sizeof(resp));
-            stat_resp_sent++;
+            if (drpc_my_node < DNODE_MAX && h_resp_pub[drpc_my_node] >= 0) {
+                kdds_pub(h_resp_pub[drpc_my_node], &resp, (W)sizeof(resp));
+                stat_resp_sent++;
+            }
 
             dk_puts("[dkva] responded to node "); dk_putdec(qpkt.src_node);
             dk_puts("  req="); dk_putdec(qpkt.req_id);
@@ -337,15 +368,25 @@ void dkva_init(void)
     kv_count = 0;
     stat_req_sent = stat_resp_got = stat_timeout = stat_resp_sent = 0;
     for (INT i = 0; i < DKVA_CACHE_SIZE; i++) kv_cache[i].valid = 0;
+    for (UB n = 0; n < DNODE_MAX; n++) { h_resp_pub[n] = -1; h_resp_sub[n] = -1; }
 
     h_q_pub    = kdds_open(DKVA_TOPIC_Q,    KDDS_QOS_LATEST_ONLY);
     h_q_sub    = kdds_open(DKVA_TOPIC_Q,    KDDS_QOS_LATEST_ONLY);
-    h_resp_pub = kdds_open(DKVA_TOPIC_RESP,  KDDS_QOS_LATEST_ONLY);
-    h_resp_sub = kdds_open(DKVA_TOPIC_RESP,  KDDS_QOS_LATEST_ONLY);
+
+    /* per-source レスポンストピックを全ノード分開く (drpc_my_node が未確定の
+     * 段階なのでどれが自分のものか決め打ちできない)。responder/requester は
+     * 実行時にノード ID で pub/sub ハンドルを選ぶ。 */
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        char tn[KDDS_NAME_MAX];
+        resp_topic_name(tn, n);
+        h_resp_pub[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+        h_resp_sub[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+    }
 
     dk_puts("[dkva] initialized  cache="); dk_putdec(DKVA_CACHE_SIZE);
     dk_puts("  topics: "); dk_puts(DKVA_TOPIC_Q);
-    dk_puts(" / "); dk_puts(DKVA_TOPIC_RESP); dk_puts("\r\n");
+    dk_puts(" / "); dk_puts(DKVA_TOPIC_RESP_PFX); dk_puts("<node> x");
+    dk_putdec((UW)DNODE_MAX); dk_puts("\r\n");
 }
 
 /* ------------------------------------------------------------------ */

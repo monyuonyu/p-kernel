@@ -12,8 +12,8 @@
  *    ノードが増えるほど KV コンテキストが広がり、推論精度が向上する。
  *
  *  プロトコル (K-DDS):
- *    "dtr/dkva/q"    : Query ブロードキャスト (node0 → 全ノード)
- *    "dtr/dkva/resp" : 部分 Attention レスポンス (各ノード → node0)
+ *    "dtr/dkva/q"          : Query ブロードキャスト (node0 → 全ノード)
+ *    "dtr/dkva/resp/<node>": 部分 Attention レスポンス (ノードごとに別トピック)
  *
  *  KV キャッシュ:
  *    各ノードが DKVA_CACHE_SIZE エントリを保持。
@@ -29,7 +29,13 @@
 
 #define DKVA_CACHE_SIZE   8     /* ノードあたりの KV キャッシュエントリ数 */
 #define DKVA_TOPIC_Q      "dtr/dkva/q"
-#define DKVA_TOPIC_RESP   "dtr/dkva/resp"
+/* レスポンスは「送信元ノードごと」に別トピックへ pub する。
+ * 単一トピック ("dtr/dkva/resp") を LATEST_ONLY で共有すると、複数の
+ * responder が同じ 1 スロットを上書きし合い、requester が 1 ラウンドで
+ * 1 peer 分しか集約できなかった。per-source topic
+ * "dtr/dkva/resp/<node>" にすることで responder ごとに独立した
+ * ラッチスロットを持たせ、全 peer の partial が確実に届くようにする。 */
+#define DKVA_TOPIC_RESP_PFX "dtr/dkva/resp/"   /* + 1 桁ノード ID         */
 #define DKVA_INFER_TMO    600   /* 分散 Attention タイムアウト (ms) */
 
 /* モデル次元 (dtr.h と合わせる) */

@@ -139,6 +139,13 @@ W    dtr_infer(const B input[4]);
 /* 統計表示 */
 void dtr_stat(void);
 
+/* DKVA 用 KV キャッシュ warmup (Phase 10, follow-up #2)。
+ * node 固有の合成入力でローカル MHSA を DTR_KV_SEED_N 回回し、kv_cache を
+ * seed する。FULL クラスタで分散 Attention が非自明になるよう dkva_task の
+ * 起動時に一度だけ呼ぶ。 */
+#define DTR_KV_SEED_N  3
+void dtr_seed_kv_cache(UB node);
+
 /* ------------------------------------------------------------------ */
 /* Phase 14 — GA サポート API                                         */
 /* ------------------------------------------------------------------ */
