@@ -90,3 +90,9 @@ void swim_nodes_print(void);
  * (R0, regions design — docs/architecture/regions.md。region 形成と
  *  locality-aware MoE ゲーティングが消費する。) */
 UW swim_rtt_ms(UB node);
+
+/* RTT シミュレーション注入 (テスト専用)。zone = node_id / zone_size とし、
+ * 異 zone のピアへの観測 RTT に penalty_ms を上乗せする。zone_size==0 で
+ * 無効。localhost で人工的に複数 region を作って region 形成を検証するため。
+ * arch 非依存を保つため env は読まず、linux usermain が呼ぶ。 */
+void swim_set_sim_zone(UB zone_size, UW penalty_ms);

@@ -118,6 +118,17 @@ static ID create_task(FP fn, INT pri, INT stksz)
 
 static INT net_up = 0;
 
+/* env を符号なし10進としてパース。未設定/空なら dflt。 */
+static UW env_uint(const char *name, UW dflt)
+{
+    const char *v = getenv(name);
+    if (!v || !*v) return dflt;
+    UW r = 0;
+    for (const char *p = v; *p >= '0' && *p <= '9'; p++)
+        r = r * 10 + (UW)(*p - '0');
+    return r;
+}
+
 static void cmd_net(void)
 {
     if (net_up) {
@@ -169,6 +180,17 @@ static void cmd_net(void)
     swim_init();
     create_task((FP)swim_task, 6, 4096);
     print("[net] SWIM gossip task started\r\n");
+
+    /* RTT シミュレーション (テスト用): PKERNEL_RTT_ZONE_SIZE>0 で
+     * ノードを zone = id/size に分割し、異 zone へ合成 RTT を上乗せして
+     * localhost でも複数 region が形成されるようにする (region 検証用)。 */
+    {
+        UW zs = env_uint("PKERNEL_RTT_ZONE_SIZE", 0);
+        if (zs > 0) {
+            swim_set_sim_zone((UB)zs, env_uint("PKERNEL_RTT_ZONE_PENALTY", 200));
+            print("[net] RTT sim zones enabled (region partitioning test)\r\n");
+        }
+    }
 
     /* pmesh_init() already ran at boot (before kdds_init() so its
      * pmesh_socks[] zero-clear didn't wipe K-DDS's bind). Here we just

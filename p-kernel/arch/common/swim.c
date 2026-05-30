@@ -147,6 +147,22 @@ static UB suspect_count[DNODE_MAX];    /* consecutive no-response rounds */
 static UW rtt_ewma_ms[DNODE_MAX];      /* 平滑化済み RTT (ms)            */
 static UB rtt_valid  [DNODE_MAX];      /* 1 = 一度でも実測した           */
 
+/* --- RTT シミュレーション (テスト専用; 本番では無効) ---------------- *
+ * localhost では全ノードの実測 RTT がほぼ同じ (~数 ms) になり region が
+ * 分割されない。region 形成ロジックを degenerate でなく検証するため、
+ * ノード ID を zone_size でグループ化し (zone = id / zone_size)、異なる
+ * zone のピアへ合成ペナルティを上乗せして観測 RTT を水増しする。
+ * arch 非依存に保つため env は読まない: linux usermain が
+ * swim_set_sim_zone() で注入する。zone_size==0 で無効。 */
+static UB sim_zone_size    = 0;
+static UW sim_zone_penalty = 0;
+
+void swim_set_sim_zone(UB zone_size, UW penalty_ms)
+{
+    sim_zone_size    = zone_size;
+    sim_zone_penalty = penalty_ms;
+}
+
 static void rtt_observe(UB node, UW sample_ms)
 {
     if (node >= DNODE_MAX) return;
@@ -159,11 +175,17 @@ static void rtt_observe(UB node, UW sample_ms)
     }
 }
 
-/* 公開: ノードへの平滑化 RTT(ms)。未実測は 0xFFFFFFFF を返す。 */
+/* 公開: ノードへの平滑化 RTT(ms)。未実測は 0xFFFFFFFF を返す。
+ * sim_zone が有効なら異 zone のピアへ合成ペナルティを上乗せする。 */
 UW swim_rtt_ms(UB node)
 {
     if (node >= DNODE_MAX || !rtt_valid[node]) return 0xFFFFFFFFUL;
-    return rtt_ewma_ms[node];
+    UW r = rtt_ewma_ms[node];
+    if (sim_zone_size > 0 && drpc_my_node != 0xFF &&
+        node / sim_zone_size != drpc_my_node / sim_zone_size) {
+        r += sim_zone_penalty;
+    }
+    return r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,10 +472,13 @@ void swim_nodes_print(void)
             sw_puts("            "); sw_putdec(n);
             sw_puts("  "); sw_puts(state_str(dnode_table[n].state));
             sw_puts("  "); sw_puts(ip_str(dnode_table[n].ip));
-            if (rtt_valid[n]) {
-                sw_puts("  rtt="); sw_putdec(rtt_ewma_ms[n]); sw_puts("ms");
-            } else {
-                sw_puts("  rtt=?");
+            {
+                UW rtt = swim_rtt_ms(n);   /* sim_zone ペナルティ込み */
+                if (rtt != 0xFFFFFFFFUL) {
+                    sw_puts("  rtt="); sw_putdec(rtt); sw_puts("ms");
+                } else {
+                    sw_puts("  rtt=?");
+                }
             }
             if (dnode_table[n].state == DNODE_SUSPECT) {
                 sw_puts("  (suspect_cnt="); sw_putdec(suspect_count[n]); sw_puts(")");
