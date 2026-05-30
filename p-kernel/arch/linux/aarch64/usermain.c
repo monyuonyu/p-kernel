@@ -306,6 +306,8 @@ EXPORT INT usermain(void)
             cmd_infer(line, n);
         } else if (starts_with(line, n, "dist")) {
             degrade_stat();
+        } else if (starts_with(line, n, "nodes")) {
+            swim_nodes_print();
         } else if (starts_with(line, n, "dtr")) {
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
