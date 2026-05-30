@@ -30,15 +30,19 @@ Three nodes. With 3 live members degrade selects `FULL`, and `dtr_infer`
 broadcasts its query `Q` across the mesh; every node computes partial
 attention over its local KV cache and replies, and the requester aggregates.
 
-This demonstrates the FULL/DKVA **mechanism** end-to-end over the relay
-(Q broadcast → partial replies → aggregation → "Attention from cluster").
-Two honest limitations remain (tracked in `arch/common/dkva.c`):
+This runs full FULL/DKVA distributed attention end-to-end over the relay
+(Q broadcast → per-source partial replies → aggregation → "Attention from
+cluster"). The requester aggregates **all** peers per round (per-source
+response topics) and each node seeds its KV cache at startup, so the
+partials are non-trivial — see `arch/common/dkva.c`.
 
-1. **Fan-in.** All responders share a single `LATEST_ONLY` response slot and
-   overwrite each other, so the requester aggregates one peer per round.
-   Robust N-way fan-in needs a per-source response topic or a queue QoS.
-2. **Empty caches.** A fresh cluster has no prior local inferences, so the
-   KV caches — and therefore the partials — are trivial.
+## `run_4node_regions.sh` — region-confined attention (regions)
+
+Four nodes split into two latency clusters via a simulated cross-zone RTT
+penalty (`PKERNEL_RTT_ZONE_SIZE`). DKVA's topics are region-scoped, so the
+region-A requester's query reaches only its same-region peer and the
+region-B nodes never participate — distributed attention stays inside the
+latency cluster. See `docs/architecture/regions.md`.
 
 ## Relay key
 
