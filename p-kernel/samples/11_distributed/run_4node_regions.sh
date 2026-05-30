@@ -1,18 +1,24 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# 4-node, 2-region distributed KV attention over the public ./relay.
+# 4-node, 2-region hierarchical distributed KV attention over the ./relay.
 #
 # Demonstrates the regions architecture (docs/architecture/regions.md): nodes
-# are split into two latency clusters by a simulated RTT penalty, and DKVA's
-# region-scoped topics confine each requester's distributed attention to its
-# own region.
+# are split into two latency clusters by a simulated RTT penalty, and DKVA
+# aggregates attention hierarchically — dense inside each region, sparse
+# across regions — to reconstruct the exact global attention at O(region^2)
+# + O(#regions) traffic instead of O(N^2).
 #
-#   zone 0 (region A): node0 (id1), node1 (id2)
-#   zone 1 (region B): node2 (id3), node3 (id4)
+#   zone 0 (region A): node0 (id1, requester+coord), node1 (id2)
+#   zone 1 (region B): node2 (id3, coordinator),     node3 (id4)
 #
-# With PKERNEL_RTT_ZONE_SIZE=2 the cross-zone RTT is inflated past tau=50ms,
-# so node0's region is {0,1}. Its DKVA query reaches only node1; the region-B
-# nodes never see it. node0 aggregates exactly its one same-region peer.
+# Topic scopes: Q=global (every node computes a partial), resp/<n>=region
+# (per-node partials stay in-region), rsum/<rid>=global (only each region's
+# coordinator summary crosses region boundaries).
+#
+# So node0's query reaches all four nodes; node3's partial stays inside
+# region B and is folded by node2's coordinator into one region summary,
+# which is the only region-B traffic node0 sees. node0 aggregates its own
+# region directly (node1) plus region B's summary = all four nodes' KV.
 #
 # Usage:   ./run_4node_regions.sh
 # Watch:   /tmp/pk4_node{1..4}.log  /tmp/pk4_relay.log
@@ -65,12 +71,11 @@ echo
 echo "===== node 1 (region A) — region view ====="
 grep -E "\[region\]" /tmp/pk4_node1.log
 echo
-echo "===== node 1 — DKVA (region-confined) ====="
-grep -E "Q broadcast|resp from node|aggregated|=> class" /tmp/pk4_node1.log
+echo "===== node 1 — DKVA (hierarchical: own region + remote summary) ====="
+grep -E "Q broadcast|resp from node|region summary rid|aggregated|=> class" /tmp/pk4_node1.log
 echo
-echo "===== region B saw node 1's query? (expect 0 each) ====="
-echo "node 3 (id3) responded to node 0: $(grep -c 'responded to node 0' /tmp/pk4_node3.log)"
-echo "node 4 (id4) responded to node 0: $(grep -c 'responded to node 0' /tmp/pk4_node4.log)"
-echo "node 2 (id2, region A) responded to node 0: $(grep -c 'responded to node 0' /tmp/pk4_node2.log)"
+echo "===== region B — internal partials folded into one cross-region summary ====="
+echo "node 3 (id3, coordinator) published region summary: $(grep -c 'region summary published' /tmp/pk4_node3.log)"
+echo "node 4 (id4) computed its partial (stays in region B): $(grep -c 'responded to node 0' /tmp/pk4_node4.log)"
 echo
 echo "[demo] done. full logs in /tmp/pk4_node{1..4}.log /tmp/pk4_relay.log"
