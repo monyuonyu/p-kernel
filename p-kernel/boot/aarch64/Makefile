@@ -94,6 +94,7 @@ COMMON_C_SRCS = \
     netstack.c \
     drpc.c \
     swim.c \
+    region.c \
     kdds.c \
     replica.c \
     pmesh.c \

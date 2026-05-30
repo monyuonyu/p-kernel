@@ -19,6 +19,7 @@
 #include "netstack.h"
 #include "drpc.h"
 #include "swim.h"
+#include "region.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
 
@@ -308,6 +309,8 @@ EXPORT INT usermain(void)
             degrade_stat();
         } else if (starts_with(line, n, "nodes")) {
             swim_nodes_print();
+        } else if (starts_with(line, n, "region")) {
+            region_print();
         } else if (starts_with(line, n, "dtr")) {
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
