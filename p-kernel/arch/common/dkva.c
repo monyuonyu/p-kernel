@@ -370,8 +370,14 @@ void dkva_init(void)
     for (INT i = 0; i < DKVA_CACHE_SIZE; i++) kv_cache[i].valid = 0;
     for (UB n = 0; n < DNODE_MAX; n++) { h_resp_pub[n] = -1; h_resp_sub[n] = -1; }
 
-    h_q_pub    = kdds_open(DKVA_TOPIC_Q,    KDDS_QOS_LATEST_ONLY);
-    h_q_sub    = kdds_open(DKVA_TOPIC_Q,    KDDS_QOS_LATEST_ONLY);
+    /* DKVA トピックは REGION スコープ (regions R2 入口)。Q ブロードキャストも
+     * per-source レスポンスも自 region 内に閉じるので、分散 Attention は
+     * 「近いノード群 = 1つの脳半球」の集合記憶で計算され、遠い region の
+     * partial を待たずに済む (region 間は将来 coordinator が疎に再集約)。 */
+    h_q_pub    = kdds_open_scoped(DKVA_TOPIC_Q, KDDS_QOS_LATEST_ONLY,
+                                  KDDS_SCOPE_REGION);
+    h_q_sub    = kdds_open_scoped(DKVA_TOPIC_Q, KDDS_QOS_LATEST_ONLY,
+                                  KDDS_SCOPE_REGION);
 
     /* per-source レスポンストピックを全ノード分開く (drpc_my_node が未確定の
      * 段階なのでどれが自分のものか決め打ちできない)。responder/requester は
@@ -379,11 +385,13 @@ void dkva_init(void)
     for (UB n = 0; n < DNODE_MAX; n++) {
         char tn[KDDS_NAME_MAX];
         resp_topic_name(tn, n);
-        h_resp_pub[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
-        h_resp_sub[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+        h_resp_pub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                         KDDS_SCOPE_REGION);
+        h_resp_sub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                         KDDS_SCOPE_REGION);
     }
 
-    dk_puts("[dkva] initialized  cache="); dk_putdec(DKVA_CACHE_SIZE);
+    dk_puts("[dkva] initialized (region-scoped)  cache="); dk_putdec(DKVA_CACHE_SIZE);
     dk_puts("  topics: "); dk_puts(DKVA_TOPIC_Q);
     dk_puts(" / "); dk_puts(DKVA_TOPIC_RESP_PFX); dk_puts("<node> x");
     dk_putdec((UW)DNODE_MAX); dk_puts("\r\n");
