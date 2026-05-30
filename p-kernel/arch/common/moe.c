@@ -20,6 +20,7 @@
 #include "moe.h"
 #include "drpc.h"
 #include "kdds.h"
+#include "swim.h"
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -55,8 +56,21 @@ static UW  my_total       = 0;
 static UW  my_correct[MOE_NUM_CLASSES];
 static UB  my_accuracy[MOE_NUM_CLASSES];
 
-/* K-DDS ハンドル */
-static W   score_handle = -1;
+/* K-DDS ハンドル (per-source score topics)
+ *   h_score_pub     : 自ノード "moe/score/<my>" へ発行
+ *   h_score_sub[n]  : ピア "moe/score/<n>" を購読 (n != my) */
+static W   h_score_pub = -1;
+static W   h_score_sub[DNODE_MAX];
+
+/* "moe/score/<node>" を out に組み立てる (node は 0..DNODE_MAX-1, 1 桁) */
+static void score_topic_name(char *out, UB node)
+{
+    const char *p = MOE_SCORE_TOPIC_PFX;
+    INT i = 0;
+    while (p[i]) { out[i] = p[i]; i++; }
+    out[i++] = (char)('0' + node);
+    out[i]   = '\0';
+}
 
 /* ------------------------------------------------------------------ */
 /* Gate: 入力からクラス予測                                           */
@@ -75,20 +89,41 @@ static UB gate_predict(B temp, B hum, B press, B light)
 /* 最適ノード選択                                                     */
 /* ------------------------------------------------------------------ */
 
+/* locality-aware 効用: 賢さ(accuracy) から近さ(RTT) のペナルティを引く。
+ * (regions R1 — docs/architecture/regions.md の gating cost を簡略化:
+ *  帯域項 γ·(1/bw) はまだ測れないので省略。) */
+static W expert_utility(UB accuracy, UW rtt_ms)
+{
+    if (rtt_ms == 0xFFFFFFFFUL) rtt_ms = MOE_RTT_UNKNOWN_MS;  /* 未実測 */
+    return (W)accuracy - (W)(rtt_ms / MOE_RTT_MS_PER_POINT);
+}
+
 static UB select_expert(UB gate_class)
 {
-    UB  best_node  = drpc_my_node;
-    UB  best_score = my_accuracy[gate_class];
+    /* 自分: RTT=0 なのでペナルティ無し */
+    UB best_node = drpc_my_node;
+    W  best_util = (W)my_accuracy[gate_class];
+
+    mo_puts("[moe] cand self  acc="); mo_putdec(my_accuracy[gate_class]);
+    mo_puts(" rtt=0ms util="); mo_putdec((UW)best_util); mo_puts("\r\n");
 
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
         if (!score_valid[n]) continue;
         if (dnode_table[n].state != DNODE_ALIVE) continue;
 
-        UB sc = peer_scores[n].accuracy[gate_class];
-        if (sc > best_score) {
-            best_score = sc;
-            best_node  = n;
+        UB acc = peer_scores[n].accuracy[gate_class];
+        UW rtt = swim_rtt_ms(n);
+        W  u   = expert_utility(acc, rtt);
+
+        mo_puts("[moe] cand node"); mo_putdec(n);
+        mo_puts(" acc="); mo_putdec(acc);
+        mo_puts(" rtt="); mo_putdec(rtt == 0xFFFFFFFFUL ? MOE_RTT_UNKNOWN_MS : rtt);
+        mo_puts("ms util="); mo_putdec((UW)u); mo_puts("\r\n");
+
+        if (u > best_util) {
+            best_util = u;
+            best_node = n;
         }
     }
     return best_node;
@@ -115,7 +150,7 @@ static void update_my_accuracy(void)
 
 static void broadcast_score(void)
 {
-    if (score_handle < 0) return;
+    if (h_score_pub < 0) return;
 
     MOE_SCORE s;
     s.node_id     = drpc_my_node;
@@ -124,7 +159,7 @@ static void broadcast_score(void)
         s.accuracy[c] = my_accuracy[c];
         s.correct[c]  = my_correct[c];
     }
-    kdds_pub(score_handle, &s, sizeof(s));
+    kdds_pub(h_score_pub, &s, sizeof(s));
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,15 +242,40 @@ void moe_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
 
-    /* K-DDS ハンドルを取得 */
-    score_handle = kdds_open(MOE_SCORE_TOPIC, KDDS_QOS_LATEST_ONLY);
+    /* moe_task は drpc_init の後 (cmd_net) に起動されるので drpc_my_node は確定。
+     * 自ノードの per-source スコアトピックへ pub、ピアのトピックを sub する。 */
+    if (drpc_my_node != 0xFF) {
+        char tn[KDDS_NAME_MAX];
+        score_topic_name(tn, drpc_my_node);
+        h_score_pub = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (n == drpc_my_node) { h_score_sub[n] = -1; continue; }
+            score_topic_name(tn, n);
+            h_score_sub[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+        }
+    }
 
+    UW since_bcast = MOE_BROADCAST_MS;   /* 起動直後に1回 broadcast */
     for (;;) {
-        tk_dly_tsk(MOE_BROADCAST_MS);
+        tk_dly_tsk(MOE_POLL_MS);
         if (drpc_my_node == 0xFF) continue;
 
-        update_my_accuracy();
-        broadcast_score();
+        /* ピアのスコアを取り込む (per-source なので衝突せず全ノード蓄積) */
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (h_score_sub[n] < 0) continue;
+            MOE_SCORE s;
+            W r = kdds_sub(h_score_sub[n], &s, (W)sizeof(s), 0);
+            if (r >= (W)sizeof(MOE_SCORE) && s.node_id == n)
+                moe_update_peer(&s);
+        }
+
+        /* 自分のスコアを定期 broadcast */
+        since_bcast += MOE_POLL_MS;
+        if (since_bcast >= MOE_BROADCAST_MS) {
+            since_bcast = 0;
+            update_my_accuracy();
+            broadcast_score();
+        }
     }
 }
 
@@ -231,9 +291,10 @@ void moe_init(void)
         my_accuracy[c] = 50;   /* 初期値 50% */
     }
     for (INT n = 0; n < DNODE_MAX; n++) {
-        score_valid[n] = 0;
+        score_valid[n]  = 0;
+        h_score_sub[n]  = -1;
     }
-    score_handle = -1;
+    h_score_pub = -1;
     mo_puts("[moe] initialized  classes="); mo_putdec(MOE_NUM_CLASSES); mo_puts("\r\n");
 }
 

@@ -28,8 +28,19 @@
 /* ------------------------------------------------------------------ */
 
 #define MOE_NUM_CLASSES    3    /* クラス数 */
-#define MOE_SCORE_TOPIC    "moe/score"
+/* スコアはノードごとに別トピック "moe/score/<node>" へ pub する。単一
+ * "moe/score" を LATEST_ONLY で共有すると複数ノードの broadcast が1スロットを
+ * 上書きし合い、gating 時に全 peer のスコアが揃わない (DKVA と同じ単一スロット
+ * fan-in 問題)。per-source topic で各ノードが独立スロットを持つ。 */
+#define MOE_SCORE_TOPIC_PFX "moe/score/"   /* + 1 桁ノード ID            */
 #define MOE_BROADCAST_MS   5000 /* スコアブロードキャスト間隔 (ms) */
+#define MOE_POLL_MS        200  /* peer スコア取り込みのポーリング間隔 */
+
+/* locality-aware ゲーティング (regions R1 — docs/architecture/regions.md)
+ *   utility(node) = accuracy[class] - rtt_ms / MOE_RTT_MS_PER_POINT
+ * 賢いが遠いノードより、そこそこ賢く近いノードを選ぶ。RTT は swim_rtt_ms()。 */
+#define MOE_RTT_MS_PER_POINT  20   /* RTT 20ms ごとに effort 1 点減点      */
+#define MOE_RTT_UNKNOWN_MS    100  /* RTT 未実測ノードの想定距離 (ms)      */
 
 /* ------------------------------------------------------------------ */
 /* スコアパケット (K-DDS 経由でブロードキャスト)                     */

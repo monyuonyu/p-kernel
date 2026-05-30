@@ -21,6 +21,7 @@
 #include "swim.h"
 #include "region.h"
 #include "kdds.h"
+#include "moe.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
 
@@ -214,6 +215,12 @@ static void cmd_net(void)
     create_task((FP)dkva_task, 7, 4096);
     print("[net] dkva attention responder started\r\n");
 
+    /* MoE score gossip — broadcasts this node's per-class accuracy and
+     * collects peers'. `moe` then routes a query to the best expert by
+     * locality-aware utility (accuracy minus RTT penalty, regions R1). */
+    create_task((FP)moe_task, 7, 4096);
+    print("[net] moe score-gossip task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -282,6 +289,27 @@ static void cmd_infer(const UB *line, INT n)
     }
 }
 
+/* `moe [a b c d]` — route a query to the best expert node via locality-aware
+ * MoE gating (accuracy minus RTT penalty, regions R1). moe_infer logs each
+ * candidate's utility and the chosen expert. */
+static void cmd_moe(const UB *line, INT n)
+{
+    const UB *p   = line;
+    const UB *end = line + n;
+    while (p < end && *p != ' ' && *p != '\t') p++;   /* skip the verb */
+
+    B in[4] = { 40, 80, 30, 10 };
+    for (INT i = 0; i < 4; i++) {
+        INT v;
+        if (!parse_int(&p, end, &v)) break;
+        if (v >  127) v =  127;
+        if (v < -128) v = -128;
+        in[i] = (B)v;
+    }
+    UB cls = moe_infer(in[0], in[1], in[2], in[3]);
+    print("[moe] => class "); print_dec_s((W)cls); print("\r\n");
+}
+
 /* `rgnpub` — regions R0 demo: publish to a GLOBAL topic and a REGION-scoped
  * topic and report each pub's fanout (peers actually sent to). In a
  * partitioned cluster the region pub reaches only same-region peers. */
@@ -319,6 +347,9 @@ EXPORT INT usermain(void)
     /* Degrade controller — derives SOLO/REDUCED/FULL from the live node
      * count SWIM observes. Starts at SOLO until a peer appears. */
     degrade_init();
+    /* MoE router — per-class accuracy scoreboard + locality-aware expert
+     * selection (regions R1). The score-gossip task starts in cmd_net. */
+    moe_init();
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
@@ -354,6 +385,8 @@ EXPORT INT usermain(void)
             region_print();
         } else if (starts_with(line, n, "rgnpub")) {
             cmd_rgnpub();
+        } else if (starts_with(line, n, "moe")) {
+            cmd_moe(line, n);
         } else if (starts_with(line, n, "dtr")) {
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
