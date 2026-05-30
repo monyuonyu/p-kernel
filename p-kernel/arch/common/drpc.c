@@ -518,6 +518,19 @@ void drpc_init(UB my_node_id, UW my_ip)
     dnode_table[my_node_id].state   = DNODE_ALIVE;
     dnode_table[my_node_id].missed  = 0;
 
+    /* Pre-seed ARP for the whole cluster. The virtual-cluster addressing
+     * is fully deterministic — node d has IP 10.1.0.(d+1) and MAC
+     * 52:54:00:00:00:0(d+1) — so we never need a runtime ARP round-trip to
+     * reach a peer. Without this, a node learned only via SWIM gossip (not
+     * a direct packet) has no ARP entry, so ip_send() drops the first
+     * datagram to it and returns -1; one-shot senders like kdds_pub never
+     * retry, silently losing e.g. DKVA partials back to the requester. */
+    for (UB d = 0; d < DNODE_MAX; d++) {
+        UW  ip      = ((UW)(d + 1) << 24) | (my_ip & 0x00FFFFFFUL);
+        UB  mac[6]  = { 0x52, 0x54, 0x00, 0x00, 0x00, (UB)(d + 1) };
+        arp_seed(ip, mac);
+    }
+
     /* Bind UDP port for incoming packets */
     udp_bind(DRPC_PORT, drpc_rx);
 

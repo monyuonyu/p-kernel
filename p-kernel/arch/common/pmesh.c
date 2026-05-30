@@ -355,9 +355,12 @@ void pmesh_init(void)
         pmesh_routes[i].age      = 0;
         pmesh_routes[i].active   = 0;
     }
-    for (INT i = 0; i < PMESH_BIND_MAX; i++) {
-        pmesh_socks[i].active = 0;
-    }
+    /* Do NOT zero pmesh_socks[] here. Callers may have registered
+     * inner-port handlers (kdds_rx, dkva, ...) via pmesh_bind() before
+     * this init runs, and BSS zero already gave us a clean initial
+     * state. Wiping here silently unbound K-DDS on the hosted port
+     * because cmd_net()'s pmesh_init() landed after usermain()'s
+     * kdds_init() — see moment_2026_05_22_cross_arch_kdds. */
     pm_memzero(&pmesh_stats, sizeof(pmesh_stats));
     udp_bind(PMESH_PORT, pmesh_rx);
     pm_puts("[pmesh] mesh routing ready  port=7380\r\n");

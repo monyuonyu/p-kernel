@@ -14,6 +14,7 @@
 extern const void *knl_c_init_task;
 extern void sio_init(void);
 
+__attribute__((visibility("default")))
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;

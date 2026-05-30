@@ -1,0 +1,12 @@
+# Local Android Studio / gradle artefacts
+local.properties
+.gradle/
+build/
+**/build/
+*.apk
+*.aab
+*.idea
+*.iml
+
+# Native build intermediates
+**/.cxx/

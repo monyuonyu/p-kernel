@@ -352,9 +352,19 @@ void swim_task(INT stacd, void *exinf)
         suspect_count[target]++;
         UB st = dnode_table[target].state;
 
-        if (st == DNODE_ALIVE || st == DNODE_UNKNOWN) {
+        /* UNKNOWN nodes are not "suspected dead" — we've simply never
+         * confirmed them alive yet. Gossiping a never-seen node as SUSPECT
+         * makes the peer self-suspect and trigger death throes during the
+         * normal discovery race (esp. before ARP/relay routes warm up), so
+         * leave UNKNOWN nodes untouched and let an actual rx mark them ALIVE.
+         *
+         * For ALIVE nodes, require SWIM_SUSPECT_ROUNDS consecutive misses
+         * before SUSPECT: with only 2 nodes there are no indirect helpers,
+         * so a single dropped UDP datagram must not be a death sentence. */
+        if (st == DNODE_ALIVE && suspect_count[target] >= SWIM_SUSPECT_ROUNDS) {
             dnode_table[target].state  = DNODE_SUSPECT;
             dnode_table[target].missed = 0;
+            suspect_count[target]      = 0;   /* count fresh toward DEAD */
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> SUSPECT (no response)\r\n");
             gossip_add(target, DNODE_SUSPECT);

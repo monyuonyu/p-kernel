@@ -21,10 +21,14 @@ INC_LIB    = $(ROOT)/include/lib
 
 # ---- Include directories ----------------------------------------------
 # arch/linux/aarch64/include comes FIRST so its shadows (cpu_status.h,
-# cpu_insn.h) take precedence over arch/aarch64/include's privileged-
-# instruction versions. arch/linux/include holds the new APIs
-# (arch_ctx.h, arch_preempt.h). The aarch64 tree provides everything
-# else (cpu_task.h, offset.h, type defs, sysdef/syslib).
+# cpu_insn.h, syslib_depend.h, tkdev_timer.h) take precedence over
+# arch/aarch64/include's privileged-instruction versions. arch/linux/include
+# holds the cross-arch hosted-port APIs (arch_ctx.h, arch_preempt.h).
+# arch/common/include/lp64 holds LP64-uniform headers shared with the
+# x86_64 sibling (offset.h, sysinfo_depend.h, profile_depend.h, etc.).
+# arch/aarch64/include still provides the aarch64-specific headers that
+# the linux/aarch64 port reuses verbatim (cpu_task.h, machine_depend.h,
+# mmio.h, sysdef_depend.h, tkdev_conf.h, utk_config_depend.h, cpudef.h).
 #
 # Note: include/lib/libc deliberately stays OUT of the include path so
 # Linux POSIX headers (signal.h, termios.h, etc.) resolve to the real
@@ -33,7 +37,9 @@ INCDIRS = \
     -I$(ARCH_LINUX)/aarch64/include \
     -I$(ARCH_LINUX)/include \
     -I$(ARCH_AA64)/include \
+    -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP)
 
@@ -51,6 +57,7 @@ CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
 ASFLAGS = -D_in_asm_source_ -D_APP_AARCH64_ -D_APP_LINUX_ \
           -I$(ARCH_LINUX)/aarch64/include \
           -I$(ARCH_AA64)/include \
+          -I$(ROOT)/arch/common/include/lp64 \
           -I$(INC_TK) -I$(INC_TOP)
 
 LDFLAGS = -no-pie -lrt
@@ -70,6 +77,8 @@ ARCH_C_SRCS = \
     pci.c \
     rtl8139.c \
     net_unix.c \
+    net_relay.c \
+    net_dispatch.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
@@ -77,7 +86,14 @@ ARCH_C_SRCS = \
 
 ARCH_S_SRCS = cpu_support.S
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+# Relay-side sha256 implementation, pulled into the kernel build so
+# net_relay.c can compute HMAC-SHA256 for v2 wire. Single canonical
+# source — kept in relay/ where it was first written.
+RELAY_DIR    = $(ROOT)/relay
+RELAY_C_SRCS = sha256.c
+RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 # Same list as boot/aarch64. These files are arch-independent C and
@@ -112,7 +128,8 @@ COMMON_C_SRCS = \
     mem_store.c \
     chat.c \
     dproc.c \
-    kloader_task.c
+    kloader_task.c \
+    demo_kdds.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
@@ -174,6 +191,84 @@ $(TARGET): $(ALL_OBJS)
 	$(CC) -o $@ $(ALL_OBJS) $(LDFLAGS)
 	@echo "[OK] $(TARGET) built ($$(stat -c %s $(TARGET)) bytes)"
 
+# ---- libpkernel.so (Android UMP Phase A host-side smoke test) --------
+#
+# Builds the same kernel sources as a shared library. The Android
+# CMakeLists.txt does the equivalent via NDK clang; this target lets
+# you reproduce the .so build (and the test_so_load.c dlopen check)
+# on any aarch64-linux host without Android Studio.
+#
+# Key flags vs. the regular build:
+#   -fPIC                       — required for shared library
+#   -fvisibility=hidden         — every symbol hidden by default;
+#                                 main.c marks pkernel_main explicitly
+#                                 visible; pkernel_jni.c uses JNIEXPORT
+#   -Dmain=pkernel_main         — rename main so the JNI bridge can call
+#                                 it without colliding with the loader's
+#                                 own start symbol
+#
+# Use: make libpkernel.so && ./test_so_load
+SO_TARGET = libpkernel.so
+SO_CFLAGS = -Wall -Wextra -g -O1 -fPIC -fvisibility=hidden \
+            -fno-stack-protector -fno-common -std=gnu11 \
+            -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+            -Dmain=pkernel_main $(INCDIRS)
+SO_KCFLAGS = $(SO_CFLAGS) -I$(INC_LIB)/libc
+
+SO_OBJS = $(ALL_OBJS:.o=.lo)
+
+$(SO_TARGET): $(SO_OBJS)
+	$(CC) -shared -fPIC -fvisibility=hidden -o $@ $(SO_OBJS) -lrt -lpthread
+	@echo "[OK] $(SO_TARGET) built ($$(stat -c %s $(SO_TARGET)) bytes)"
+
+# .lo objects are the PIC siblings of .o. Sharing source trees but
+# different flags so a single `make` doesn't have to rebuild from scratch
+# when switching between executable and shared-library outputs.
+main.lo: main.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
+$(ARCH_C_SRCS:.c=.lo): %.lo: $(ARCH_LINUX)/aarch64/%.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
+cpu_support.lo: $(ARCH_LINUX)/aarch64/cpu_support.S
+	$(CC) $(ASFLAGS) -fPIC -c -o $@ $<
+
+$(KERNEL_SRCS:.c=.lo): %.lo: $(KERNEL)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+$(COMMON_C_SRCS:.c=.lo): %.lo: $(ARCH_COMMON)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+$(LIBSTR_SRCS:.c=.lo): %.lo: $(LIBSTR_DIR)/%.c
+	$(CC) $(SO_KCFLAGS) -c -o $@ $<
+
+$(RELAY_OBJS:.o=.lo): %.lo: $(RELAY_DIR)/%.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
+test_so_load: test_so_load.c $(SO_TARGET)
+	$(CC) -o $@ $< -ldl -lpthread
+
+# Run the host-side dlopen smoke test: confirms libpkernel.so loads and
+# pkernel_main runs to the T-Kernel boot banner.
+run-so-test: test_so_load
+	LD_LIBRARY_PATH=. ./test_so_load
+
+# Variant: dlopen libpkernel.so AND join a Phase B v2 relay mesh.
+# Spawns ../../relay/relay on port 27460 with a fixed key, then sets
+# PKERNEL_RELAY_{HOST,PORT,KEY}+AUTONET before dlopen so the kernel's
+# net_dispatch.c picks the relay transport. Confirms end-to-end that
+# the .so artifact (= what the Android NDK build ships) can drive the
+# v2 wire successfully.
+test_so_load_relay: test_so_load_relay.c $(SO_TARGET) $(ROOT)/relay/relay
+	$(CC) -o $@ $< -ldl -lpthread
+
+$(ROOT)/relay/relay:
+	$(MAKE) -C $(ROOT)/relay relay
+
+run-so-relay-test: test_so_load_relay
+	LD_LIBRARY_PATH=. ./test_so_load_relay
+
+
 # boot/linux/main.c — uses system libc directly
 main.o: main.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -185,6 +280,10 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_LINUX)/aarch64/%.c
 # arch/linux/aarch64 ASM
 cpu_support.o: $(ARCH_LINUX)/aarch64/cpu_support.S
 	$(CC) $(ASFLAGS) -c -o $@ $<
+
+# relay/sha256.c — built with the same CFLAGS as arch/linux C sources
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kernel/common — uses T-Kernel placeholder libc
 $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
@@ -202,6 +301,7 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET)
+	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \
+	      test_so_load test_so_load_relay
 
-.PHONY: all run clean
+.PHONY: all run run-so-test run-so-relay-test clean

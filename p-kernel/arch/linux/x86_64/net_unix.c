@@ -44,7 +44,7 @@ static int sock_fd = -1;
 static int my_node_id = 1;
 static struct sockaddr_in peer_addrs[MAX_NODES + 1];
 
-int arch_linux_net_init(void)
+int net_unix_init(void)
 {
     const char *env = getenv("PKERNEL_NODE_ID");
     my_node_id = env ? atoi(env) : 1;
@@ -77,7 +77,7 @@ int arch_linux_net_init(void)
     return my_node_id;
 }
 
-int arch_linux_net_send(const void *frame, int len)
+int net_unix_send(const void *frame, int len)
 {
     if (sock_fd < 0 || len <= 0 || len > FRAME_MAX) return -1;
     for (int i = 1; i <= MAX_NODES; i++) {
@@ -92,7 +92,7 @@ int arch_linux_net_send(const void *frame, int len)
     return len;
 }
 
-int arch_linux_net_recv(void *buf, int maxlen)
+int net_unix_recv(void *buf, int maxlen)
 {
     if (sock_fd < 0) return 0;
     ssize_t n = recv(sock_fd, buf, (size_t)maxlen, MSG_DONTWAIT);
@@ -100,4 +100,4 @@ int arch_linux_net_recv(void *buf, int maxlen)
     return (int)n;
 }
 
-int arch_linux_net_node_id(void) { return my_node_id; }
+int net_unix_node_id(void) { return my_node_id; }

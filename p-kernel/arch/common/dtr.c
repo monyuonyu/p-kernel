@@ -434,6 +434,32 @@ static void run_mhsa_local(const float tok[SEQ][DM],
 }
 
 /*
+ *  DKVA 用 KV キャッシュ warmup (Phase 10, follow-up #2)。
+ *
+ *  新規 FULL クラスタではどのノードも一度もローカル推論をしていないため
+ *  各ノードの kv_cache が空 → compute_partial が全ゼロを返し、集約された
+ *  Attention が自明 (entries=0) になってしまう。
+ *
+ *  そこで各ノードが自分のノード ID から導いた「ノード固有の」合成入力で
+ *  ローカル MHSA を数回回し、kv_cache を seed する (run_mhsa_local が
+ *  dkva_cache_update を呼ぶ)。ノードごとに異なる入力 → 異なる K/V を持つので、
+ *  requester が複数 peer の partial を集約したときに初めて「クラスタの集合
+ *  記憶」を Attention に取り込んだ非自明な結果になる。
+ */
+void dtr_seed_kv_cache(UB node)
+{
+    for (INT s = 0; s < DTR_KV_SEED_N; s++) {
+        B input[SEQ];
+        for (INT t = 0; t < SEQ; t++)
+            input[t] = (B)(17 * (node + 1) + 31 * s + 13 * t);
+        float tok[SEQ][DM];
+        run_embed_seq(input, tok);
+        float mhsa[SEQ][DM];
+        run_mhsa_local(tok, mhsa);   /* dkva_cache_update を内部で呼ぶ */
+    }
+}
+
+/*
  *  FFN on sequence: [SEQ][DM] → [SEQ][DM]
  *  各トークンに独立して適用
  */
@@ -641,6 +667,13 @@ void dtr_task(INT stacd, void *exinf)
         dt_puts("[dtr] node "); dt_putdec((UW)my_node);
         dt_puts(": stage1+2/TP-worker ready\r\n");
 
+        /* K-DDS LATEST_ONLY QoS re-delivers the latched value on every
+         * poll, so remember the last req_id we served per topic and skip
+         * duplicates — otherwise the worker re-publishes the same answer
+         * dozens of times per request and floods the relay. */
+        UW last_l0_req    = 0;
+        UW last_input_req = 0;
+
         for (;;) {
             /* dtr/l0 と dtr/input を交互にポーリング */
 
@@ -648,7 +681,9 @@ void dtr_task(INT stacd, void *exinf)
             {
                 DTR_ACT act;
                 W r = kdds_sub(h_l0_sub, &act, (W)sizeof(act), 0);
-                if (r >= (W)sizeof(DTR_ACT) && act.magic == DTR_ACT_MAGIC) {
+                if (r >= (W)sizeof(DTR_ACT) && act.magic == DTR_ACT_MAGIC &&
+                    act.req_id != last_l0_req) {
+                    last_l0_req = act.req_id;
                     /* LN1 → FFN → LN2 → Cls */
                     float scores[DOUT];
                     DTR_RESULT res;
@@ -671,7 +706,9 @@ void dtr_task(INT stacd, void *exinf)
             {
                 DTR_INPUT inp;
                 W r = kdds_sub(h_input_sub, &inp, (W)sizeof(inp), 0);
-                if (r >= (W)sizeof(DTR_INPUT) && inp.magic == DTR_INPUT_MAGIC) {
+                if (r >= (W)sizeof(DTR_INPUT) && inp.magic == DTR_INPUT_MAGIC &&
+                    inp.req_id != last_input_req) {
+                    last_input_req = inp.req_id;
                     /* Embed → head1 計算 */
                     float tok[SEQ][DM];
                     run_embed_seq(inp.input, tok);

@@ -23,6 +23,16 @@
 #include <string.h>
 #include <pthread.h>
 
+/* Bionic ↔ glibc errno shim.
+ * arch/linux/aarch64/{net_unix,net_relay,vfs_stub,…}.c declare an
+ * extern `__errno_location()` (the glibc accessor) so they can read
+ * errno without including <errno.h> — that header is shadowed by the
+ * T-Kernel placeholder on our include path. Bionic exposes the same
+ * thing as `__errno()`. Provide a one-line forwarder so the link
+ * succeeds on Android without touching the kernel-side sources. */
+extern volatile int *__errno(void);
+int *__errno_location(void) { return (int *)__errno(); }
+
 /* From boot/linux/main.c (renamed via -Dmain=pkernel_main for the
  * Android build so JNI's _start isn't shadowed). */
 extern int pkernel_main(int argc, char **argv);
@@ -67,6 +77,51 @@ Java_io_pkernel_PKernel_nativeBoot(JNIEnv *env, jobject self, jint node_id)
     if (stdin_pipe[0]  < 0) pipe(stdin_pipe);
 
     pthread_create(&kernel_thread, NULL, kernel_thread_main, NULL);
+}
+
+/*
+ *  nativeConfigureRelay — wire the Phase B v2 relay transport into the
+ *  upcoming nativeBoot() call by setting PKERNEL_RELAY_{HOST,PORT,KEY}
+ *  before the kernel thread starts. Must be invoked BEFORE nativeBoot();
+ *  net_dispatch.c reads these env vars at arch_linux_net_init() time
+ *  (which happens in the kernel's usermain after the boot banner).
+ *
+ *  Args:
+ *    host    — relay hostname or dotted-quad IPv4. Pass null/empty to
+ *              clear, which leaves the dispatcher on loopback (net_unix).
+ *    port    — relay UDP port (typical: 7400). Ignored if <= 0.
+ *    keyHex  — 64-char hex (32-byte key). Pass null/empty to fall back
+ *              to v1 wire (relay must be running with --insecure).
+ */
+JNIEXPORT void JNICALL
+Java_io_pkernel_PKernel_nativeConfigureRelay(JNIEnv *env, jobject self,
+                                              jstring jhost, jint jport,
+                                              jstring jkey)
+{
+    (void)self;
+
+    if (jhost) {
+        const char *host = (*env)->GetStringUTFChars(env, jhost, NULL);
+        if (host && *host) setenv("PKERNEL_RELAY_HOST", host, 1);
+        else               unsetenv("PKERNEL_RELAY_HOST");
+        (*env)->ReleaseStringUTFChars(env, jhost, host);
+    } else {
+        unsetenv("PKERNEL_RELAY_HOST");
+    }
+
+    if (jport > 0) {
+        char val[16]; snprintf(val, sizeof(val), "%d", (int)jport);
+        setenv("PKERNEL_RELAY_PORT", val, 1);
+    }
+
+    if (jkey) {
+        const char *key = (*env)->GetStringUTFChars(env, jkey, NULL);
+        if (key && *key) setenv("PKERNEL_RELAY_KEY", key, 1);
+        else             unsetenv("PKERNEL_RELAY_KEY");
+        (*env)->ReleaseStringUTFChars(env, jkey, key);
+    } else {
+        unsetenv("PKERNEL_RELAY_KEY");
+    }
 }
 
 JNIEXPORT jint JNICALL

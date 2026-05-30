@@ -1,13 +1,11 @@
 /*
- *  arch/linux/aarch64/include/syslib_depend.h
+ *  arch/linux/x86_64/include/syslib_depend.h
  *
  *  Linux userspace flavour: DI / EI / isDI route to the flag-based
- *  disint / enaint defined in our cpu_insn.h. The bare-metal sibling
- *  inlines `msr daifset/clr` (EL1 privileged) — those instructions
- *  raise SIGILL when executed from EL0 in a Linux process.
- *
- *  Shadows arch/aarch64/include/syslib_depend.h via the Linux build's
- *  include path ordering (arch/linux/aarch64/include first).
+ *  disint / enaint defined in our cpu_insn.h. The bare-metal aarch64
+ *  sibling inlines `msr daifset/clr` (EL1 privileged); x86_64 hosted
+ *  has no privileged-instruction analogue to worry about, but the
+ *  same flag-based model keeps the two ports behaviourally aligned.
  */
 
 #ifndef __TK_SYSLIB_DEPEND_H__

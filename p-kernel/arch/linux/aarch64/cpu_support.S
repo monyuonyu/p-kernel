@@ -32,9 +32,16 @@
     .align 4
 
 /* knl_taskmode is shared global — defined here (BSS via .data 0) so
- * that the linker resolves it without an arch-specific C file. */
+ * that the linker resolves it without an arch-specific C file.
+ *
+ * Marked .hidden so the dispatcher's `adrp + add :lo12:` against it is
+ * not flagged as "may bind externally" when this TU is linked into a
+ * shared library (libpkernel.so for the Android port). C-defined
+ * globals get hidden via -fvisibility=hidden; the asm-defined symbol
+ * has to opt in explicitly. */
     .data
     .global knl_taskmode
+    .hidden knl_taskmode
 knl_taskmode:
     .quad   0
     .text

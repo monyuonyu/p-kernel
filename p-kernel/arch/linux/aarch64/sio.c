@@ -20,6 +20,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#if defined(__ANDROID__)
+/* Bionic's <termios.h> inlines bits/termios_inlines.h whose helpers do
+ * `errno = EINVAL` textually — they need both names visible at parse
+ * time. We can't just `#include <errno.h>` because the T-Kernel errno.h
+ * shadow (used by the kernel-side sources) sits earlier on the include
+ * path and provides neither symbol. Declare the Bionic accessor and the
+ * one POSIX errno constant the inlines reference. */
+extern volatile int *__errno(void);
+#define errno  (*__errno())
+#define EINVAL 22
+#endif
 #include <termios.h>
 #include <fcntl.h>
 

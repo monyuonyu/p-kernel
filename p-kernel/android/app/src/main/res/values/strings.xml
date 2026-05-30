@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UMP</string>
+
+    <string name="label_node_id">Node ID (1..255)</string>
+    <string name="label_relay_host">Relay host (leave blank for loopback)</string>
+    <string name="label_relay_port">Relay port</string>
+    <string name="label_relay_key">Relay key (64 hex; blank = v1 insecure)</string>
+    <string name="label_log">Kernel log</string>
+
+    <string name="hint_relay_host">e.g. relay.example.com</string>
+    <string name="hint_relay_key">aabbcc… (64 chars)</string>
+
+    <string name="btn_start">Start</string>
+    <string name="btn_stop">Stop</string>
+
+    <string name="notif_channel_name">p-kernel node</string>
+    <string name="notif_channel_desc">Persistent notification while the kernel is running.</string>
+</resources>

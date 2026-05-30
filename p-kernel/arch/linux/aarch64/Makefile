@@ -21,11 +21,13 @@ LDFLAGS = -lrt
 # PIE for now; full T-Kernel integration in Session 3b will revisit.
 DISPATCH_LDFLAGS = -no-pie
 
-# Build path so cpu_support.S finds offset.h from the aarch64 tree:
+# Build path so cpu_support.S finds offset.h (now in arch/common/include/lp64/)
+# and the aarch64-specific TCB headers (cpu_task.h, utk_config_depend.h):
 DISPATCH_CFLAGS = -no-pie \
                   -I$(CURDIR)/include \
                   -I$(CURDIR)/../include \
                   -I$(CURDIR)/../../aarch64/include \
+                  -I$(CURDIR)/../../common/include/lp64 \
                   -I$(CURDIR)/../../common/include \
                   -I$(CURDIR)/../../../include/kernel/tkernel \
                   -I$(CURDIR)/../../../include \
