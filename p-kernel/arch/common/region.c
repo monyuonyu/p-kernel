@@ -86,10 +86,18 @@ UB region_coordinator(void)
     return coord;
 }
 
+/* 最後の region_recompute() の結果を読む (再計算しない; ホットパス用)。
+ * kdds_pub のような per-packet ループは region_recompute() を一度呼んでから
+ * これでメンバ判定すると O(N²) を避けられる。 */
+BOOL region_is_member(UB node)
+{
+    return (node < DNODE_MAX && member[node]) ? TRUE : FALSE;
+}
+
 BOOL region_contains(UB node)
 {
     region_recompute();
-    return (node < DNODE_MAX && member[node]) ? TRUE : FALSE;
+    return region_is_member(node);
 }
 
 UB region_size(void)

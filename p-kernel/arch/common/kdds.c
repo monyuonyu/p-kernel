@@ -20,7 +20,12 @@
 #include "netstack.h"
 #include "replica.h"
 #include "pmesh.h"
+#include "region.h"
 #include "kernel.h"
+
+/* 直近の kdds_pub() の fanout (UDP 送信したピア数) — スコープ効果の観測用 */
+static UW kdds_last_fanout = 0;
+UW kdds_pub_fanout(void) { return kdds_last_fanout; }
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -80,12 +85,14 @@ static void kd_memcpy(void *dst, const void *src, INT n)
 
 /* 名前でトピックを検索する。見つからなければ新規スロットを確保する。
  * 返り値: インデックス (0..KDDS_TOPIC_MAX-1) または -1 (失敗) */
-static W topic_find_or_create(const char *name, W qos)
+static W topic_find_or_create(const char *name, W qos, W scope)
 {
-    /* 既存検索 */
+    /* 既存検索 — 見つかればスコープを更新 (REGION への昇格を許す) */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
-        if (kdds_topics[i].open && kd_streq(kdds_topics[i].name, name))
+        if (kdds_topics[i].open && kd_streq(kdds_topics[i].name, name)) {
+            kdds_topics[i].scope = (UB)scope;
             return i;
+        }
     }
     /* 空きスロット確保 */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
@@ -93,6 +100,7 @@ static W topic_find_or_create(const char *name, W qos)
             kd_strcpy(kdds_topics[i].name, name, KDDS_NAME_MAX);
             kdds_topics[i].data_len = 0;
             kdds_topics[i].qos      = (UB)qos;
+            kdds_topics[i].scope    = (UB)scope;
             kdds_topics[i].open     = 1;
             return i;
         }
@@ -106,7 +114,12 @@ static W topic_find_or_create(const char *name, W qos)
 
 W kdds_open(const char *name, W qos)
 {
-    W tidx = topic_find_or_create(name, qos);
+    return kdds_open_scoped(name, qos, KDDS_SCOPE_GLOBAL);
+}
+
+W kdds_open_scoped(const char *name, W qos, W scope)
+{
+    W tidx = topic_find_or_create(name, qos, scope);
     if (tidx < 0) {
         kd_puts("[kdds] topic table full\r\n");
         return -1;
@@ -181,10 +194,21 @@ W kdds_pub(W handle, const void *data, W len)
         kd_memcpy(pkt.name, t->name, nlen);
         kd_memcpy(pkt.data, data, len);
 
+        /* REGION スコープなら自 region メンバにだけ送る。region_recompute()
+         * を一度回し、ループ内は region_is_member() で安く判定する。 */
+        BOOL region_scoped = (t->scope == KDDS_SCOPE_REGION);
+        if (region_scoped) region_recompute();
+
+        UW fanout = 0;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
+            if (region_scoped && !region_is_member(n)) continue;
             pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
+            fanout++;
         }
+        kdds_last_fanout = fanout;
+    } else {
+        kdds_last_fanout = 0;
     }
 
     return 0;
@@ -268,8 +292,10 @@ void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len)
     if (pkt->type  != KDDS_DATA_PKT) return;
     if (pkt->data_len == 0 || pkt->data_len > KDDS_DATA_MAX) return;
 
-    /* トピックを検索 (なければ作成) */
-    W tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY);
+    /* トピックを検索 (なければ作成)。スコープは送信側でのみ強制されるので
+     * 受信側は GLOBAL で作る (ローカル subscriber への配信には影響しない)。 */
+    W tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY,
+                                  KDDS_SCOPE_GLOBAL);
     if (tidx < 0) return;
 
     KDDS_TOPIC *t = &kdds_topics[tidx];

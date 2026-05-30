@@ -20,6 +20,7 @@
 #include "drpc.h"
 #include "swim.h"
 #include "region.h"
+#include "kdds.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
 
@@ -281,6 +282,24 @@ static void cmd_infer(const UB *line, INT n)
     }
 }
 
+/* `rgnpub` — regions R0 demo: publish to a GLOBAL topic and a REGION-scoped
+ * topic and report each pub's fanout (peers actually sent to). In a
+ * partitioned cluster the region pub reaches only same-region peers. */
+static void cmd_rgnpub(void)
+{
+    static W hg = -1, hr = -1;
+    if (hg < 0) hg = kdds_open("demo/global", KDDS_QOS_BEST_EFFORT);
+    if (hr < 0) hr = kdds_open_scoped("demo/region", KDDS_QOS_BEST_EFFORT,
+                                      KDDS_SCOPE_REGION);
+    UB payload = 0x42;
+    kdds_pub(hg, &payload, 1);
+    print("[rgnpub] global fanout = "); print_dec_s((W)kdds_pub_fanout());
+    print(" peers\r\n");
+    kdds_pub(hr, &payload, 1);
+    print("[rgnpub] region fanout = "); print_dec_s((W)kdds_pub_fanout());
+    print(" peers (same-region only)\r\n");
+}
+
 EXPORT INT usermain(void)
 {
     print("\r\n p-kernel  [linux / aarch64 userspace]\r\n\r\n");
@@ -333,6 +352,8 @@ EXPORT INT usermain(void)
             swim_nodes_print();
         } else if (starts_with(line, n, "region")) {
             region_print();
+        } else if (starts_with(line, n, "rgnpub")) {
+            cmd_rgnpub();
         } else if (starts_with(line, n, "dtr")) {
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {

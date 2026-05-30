@@ -34,8 +34,12 @@ UB   region_id(void);
 /* 自 region の coordinator ノード ID (region 内の最小 ID)。 */
 UB   region_coordinator(void);
 
-/* node が自分と同じ region に属するか。 */
+/* node が自分と同じ region に属するか (内部で region_recompute する)。 */
 BOOL region_contains(UB node);
+
+/* 最後の region_recompute() 結果を再計算せずに読む (ホットパス用)。
+ * 呼ぶ前に region_recompute() を一度実行しておくこと。 */
+BOOL region_is_member(UB node);
 
 /* 自 region のメンバ数 (自分を含む)。 */
 UB   region_size(void);

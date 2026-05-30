@@ -45,6 +45,13 @@
 #define KDDS_QOS_RELIABLE     1
 #define KDDS_QOS_LATEST_ONLY  2
 
+/* 配信スコープ (regions, R0 — docs/architecture/regions.md)
+ *   GLOBAL: 従来どおり全ノードへ送る (フラット broadcast)
+ *   REGION: 自 region のメンバ (RTT≤τ) にだけ送る — region 内に閉じた密通信。
+ * スコープは送信時にローカルで強制され、ワイヤ (KDDS_PKT) には載らない。 */
+#define KDDS_SCOPE_GLOBAL     0
+#define KDDS_SCOPE_REGION     1
+
 /* ------------------------------------------------------------------ */
 /* 内部トピックスロット (カーネル側)                                   */
 /* ------------------------------------------------------------------ */
@@ -55,6 +62,7 @@ typedef struct {
     UH    data_len;             /* データバイト数 (0 = 未発行)            */
     UH    data_seq;             /* 複製判定用: publish ごとにインクリメント */
     UB    qos;                  /* KDDS_QOS_*                             */
+    UB    scope;                /* KDDS_SCOPE_* (配信範囲)                */
     UB    open;                 /* 1 = 使用中                             */
 } KDDS_TOPIC;
 
@@ -100,8 +108,16 @@ typedef struct {
 void kdds_init(void);
 
 /* トピックを開く / 作成する。ハンドル (0..KDDS_HANDLE_MAX-1) を返す。
- * 失敗時は負のエラーコード。 */
+ * 失敗時は負のエラーコード。スコープは KDDS_SCOPE_GLOBAL。 */
 W kdds_open(const char *name, W qos);
+
+/* スコープ指定版。新規トピックなら scope で作成、既存なら scope を更新する。
+ * (regions R0 — region-scoped topic は自 region メンバにだけ配信される) */
+W kdds_open_scoped(const char *name, W qos, W scope);
+
+/* 直近の kdds_pub() が UDP 送信したピア数 (fanout)。スコープの効果を観測する
+ * デモ/検証用。GLOBAL なら全 peer 数、REGION なら region メンバ数になる。 */
+UW kdds_pub_fanout(void);
 
 /* データをトピックへ発行する。
  * ローカルの subscriber を起こし、分散モードなら全 ALIVE ノードへ送信。
