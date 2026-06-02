@@ -110,6 +110,7 @@ set(COMMON_SRC
     ${ARCH_CO}/netstack.c
     ${ARCH_CO}/drpc.c
     ${ARCH_CO}/swim.c
+    ${ARCH_CO}/region.c
     ${ARCH_CO}/kdds.c
     ${ARCH_CO}/replica.c
     ${ARCH_CO}/pmesh.c
