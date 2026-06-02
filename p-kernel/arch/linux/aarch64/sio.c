@@ -95,6 +95,21 @@ EXPORT void sio_send_frame(const UB *buf, INT size)
 EXPORT void sio_recv_frame(UB *buf, INT size)
 {
     INT off = 0;
+    /* Drain a byte stashed by sio_data_ready()'s non-destructive peek
+     * FIRST. On a pipe (unlike a UART status bit) a peek is destructive,
+     * so sio_data_ready() reads the byte and parks it in the single-slot
+     * ungetch buffer. If sio_recv_frame ignored that slot it would read()
+     * the byte AFTER the peeked one — silently dropping/reordering input
+     * for any caller that pairs `if (sio_data_ready()) sio_recv_frame()`.
+     * (Dormant in the current build — the Linux shell uses sio_read_line,
+     * which already honours the slot, and never calls sio_data_ready —
+     * but this keeps the two read paths consistent.) */
+    extern UB  sio_ungetch_byte;
+    extern int sio_ungetch_full;
+    if (off < size && sio_ungetch_full) {
+        buf[off++] = sio_ungetch_byte;
+        sio_ungetch_full = 0;
+    }
     while (off < size) {
         ssize_t n = read(STDIN_FILENO, buf + off, (size_t)(size - off));
         if (n <= 0) return;
