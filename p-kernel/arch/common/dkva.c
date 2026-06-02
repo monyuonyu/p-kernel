@@ -24,6 +24,7 @@
 #include "drpc.h"
 #include "kdds.h"
 #include "region.h"
+#include "degrade.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -300,12 +301,16 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
             for (INT d = 0; d < DKVA_DH; d++) total_out[t][h][d] = 0.0f;
         }
 
+    /* capacity(N) の KV-context 軸: 実際に畳み込んだ KV エントリ総数を測る。 */
+    UW total_entries = 0;
+
     /* 自分のキャッシュも含める */
     {
         DKVA_RESP_PKT self_resp = { 0 };
         self_resp.req_id = req_id;
         compute_partial(&qpkt, &self_resp);
         accumulate(total_out, total_sum, &self_resp);
+        total_entries += self_resp.n_entries;
     }
 
     /* 階層集約 (regions R2, Y):
@@ -336,6 +341,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     got[n] = 1;
                     resp_cnt++;
                     stat_resp_got++;
+                    total_entries += rp.n_entries;
                     accumulate(total_out, total_sum, &rp);
                     dk_puts("[dkva] resp from node "); dk_putdec(rp.src_node);
                     dk_puts("  entries="); dk_putdec(rp.n_entries); dk_puts("\r\n");
@@ -350,6 +356,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     rs.src_node == n) {
                     rgot[n] = 1;
                     rsum_cnt++;
+                    total_entries += rs.n_entries;
                     accumulate(total_out, total_sum, &rs);
                     dk_puts("[dkva] region summary rid="); dk_putdec(n);
                     dk_puts("  entries="); dk_putdec(rs.n_entries); dk_puts("\r\n");
@@ -383,9 +390,13 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         }
     }
 
+    /* capacity(N) の KV-context 軸へ実測値を供給 (regions.md §3.2)。 */
+    capacity_note_kv(total_entries);
+
     dk_puts("[dkva] aggregated "); dk_putdec((UW)resp_cnt);
     dk_puts(" region peers + "); dk_putdec((UW)rsum_cnt);
-    dk_puts(" remote regions  req="); dk_putdec(req_id); dk_puts("\r\n");
+    dk_puts(" remote regions  ("); dk_putdec(total_entries);
+    dk_puts(" KV entries)  req="); dk_putdec(req_id); dk_puts("\r\n");
     return E_OK;
 }
 

@@ -6,7 +6,7 @@
 > **遅延でクラスタ化された region**・**ローカリティを見る疎な MoE**・
 > **台数とともに増える容量**へと再設計するための一枚の絵である。
 
-Status: **DESIGN（未実装）** / 最終更新: 2026-05-30
+Status: **R0✅ R1✅ R2✅（配管完了）/ R3 未着手** / 最終更新: 2026-06-02
 
 関連: [[project_pkernel_philosophy]]（5レイヤー世界観の Collective 層）、
 `phase_b_relay.md`（relay 基盤）、`android.md`（UMP フリート = この設計の強制力）。
@@ -115,6 +115,15 @@ kv_context(N)       = Σ_{n∈region} kv_count[n]    # region 内の KV を合�
 degrade の3段は**この連続関数の粗いバンド**として残す（SOLO/REDUCED/FULL は
 人間が読むラベル）。内部判断は `capacity(N)` の数値で行う。
 
+> **実装済み (R2)**: `degrade.c` / `degrade.h` に `capacity_experts()` /
+> `capacity_depth()` / `capacity_kv()` / `capacity_score()` を追加。
+> breadth は ALIVE 全ノード (global MoE) を `clamp(N,1,CAP_E_MAX)`、depth は
+> region 内 (密) の `1+floor(log2(region_size))`、KV-context は dkva.c の階層
+> 集約が実際に畳んだ KV エントリ総数 (`capacity_note_kv()` で供給。推論前は
+> `region_size × DKVA_CACHE_SIZE` の見積り)。`dist` シェルコマンドで読める。
+> 例: 4 ノード / 2 region の素のメッシュで experts=4・depth=2・kv=16(estimate)、
+> 1 回推論すると kv=12 (= 全 4 ノードの KV を厳密復元、measured) に切り替わる。
+
 ### 3.3 Locality-aware ゲーティング
 
 `select_expert()` を **accuracy だけ**から **効用（utility）最大化**へ。
@@ -176,7 +185,7 @@ utility(node, class) =  α · accuracy[node][class]      # 賢さ
 |---|---|---|
 | **R0**（土台） | SWIM に RTT、`DNODE_MAX` 引き上げ、`region.c` 骨格、K-DDS スコープ topic。 | 非依存 |
 | **R1**（locality-MoE） | `select_expert()` に RTT/帯域。expert を region 単位に。 | 非依存 |
-| **R2**（容量スケール） | `capacity(N)` が expert/層/KV-context を駆動。DKVA 2段集約。 | 弱依存 |
+| **R2**（容量スケール） | ~~DKVA 2段集約~~ ✅ / ~~`capacity(N)` 連続関数~~ ✅ → expert/層を駆動するのは R3 で網が太ってから。 | 弱依存 |
 | **R3**（網を太らせる） | d_model/層/expert 重みを実用サイズへ。重み供給・学習。 | **本丸・別レイヤー** |
 
 **Phase D（Android）は R0–R1 の強制力**。実機スマホ群は台数可変・到達範囲
