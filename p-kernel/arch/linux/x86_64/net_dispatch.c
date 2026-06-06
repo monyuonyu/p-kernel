@@ -5,7 +5,8 @@
  *  rtl8139 driver shim calls into, and delegates to either:
  *    - net_unix_*  (loopback UDP transport, default)
  *    - net_relay_* (Phase B v1/v2 wire over public relay, selected
- *                    when PKERNEL_RELAY_HOST is set in the environment)
+ *                    when PKERNEL_RELAY (multi-relay HA list) or the
+ *                    legacy PKERNEL_RELAY_HOST is set in the environment)
  *
  *  Decided at arch_linux_net_init() time and stable for the process
  *  lifetime. Same source compiled identically for x86_64; promote to
@@ -36,8 +37,9 @@ static int  g_node = 1;
 
 int arch_linux_net_init(void)
 {
+    const char *list = getenv("PKERNEL_RELAY");
     const char *host = getenv("PKERNEL_RELAY_HOST");
-    if (host && *host) {
+    if ((list && *list) || (host && *host)) {
         int n = net_relay_init();
         if (n > 0) {
             g_send    = net_relay_send;

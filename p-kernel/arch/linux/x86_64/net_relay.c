@@ -9,15 +9,29 @@
  *  packets have their 12+24 byte header stripped before the payload
  *  is returned to the rtl8139 shim.
  *
- *  Selected at runtime by net_dispatch.c when PKERNEL_RELAY_HOST is
- *  set. Wire version (v2 with HMAC, or v1 plaintext) is chosen by
- *  whether PKERNEL_RELAY_KEY is set — useful for both production
- *  (key required) and bring-up against an --insecure relay.
+ *  Selected at runtime by net_dispatch.c when PKERNEL_RELAY (or the
+ *  legacy PKERNEL_RELAY_HOST) is set. Wire version (v2 with HMAC, or
+ *  v1 plaintext) is chosen by whether PKERNEL_RELAY_KEY is set —
+ *  useful for both production (key required) and bring-up against an
+ *  --insecure relay.
+ *
+ *  Relay HA (multi-relay failover, see docs/architecture/relay-ha.md):
+ *  PKERNEL_RELAY takes an ordered, comma-separated list of up to 4
+ *  relay endpoints sharing one PSK. Every node holds the SAME list in
+ *  the SAME order and follows one deterministic rule: "use the first
+ *  relay on the list that is alive". Liveness is probed with the
+ *  existing REL_KEEPALIVE packet, which the relay echoes back (pong).
+ *  No coordinator is needed — because the rule is a pure function of
+ *  (shared list, per-relay liveness), all nodes converge on the same
+ *  relay; periodic probing of higher-priority relays pulls everyone
+ *  back to the list head when it recovers.
  *
  *  Env vars:
  *    PKERNEL_NODE_ID      our node_id (1..255), default 1
- *    PKERNEL_RELAY_HOST   relay hostname or IPv4 dotted-quad (required)
- *    PKERNEL_RELAY_PORT   relay port, default 7400
+ *    PKERNEL_RELAY        "host[:port],host[:port][,...]" (max 4)
+ *    PKERNEL_RELAY_HOST   legacy single relay host (used when
+ *                         PKERNEL_RELAY is not set)
+ *    PKERNEL_RELAY_PORT   legacy single relay port, default 7400
  *    PKERNEL_RELAY_KEY    32 bytes as 64 hex chars; if absent, v1 wire
  *
  *  T-Kernel headers are NOT included here (same rule as net_unix.c).
@@ -62,6 +76,14 @@ extern char *strerror(int);
 #define DEFAULT_PORT       7400
 #define KEEPALIVE_SEC      25            /* < IDLE_TIMEOUT/2 in relay */
 
+/* Relay-HA failover/failback time constants (ms). All nodes share these,
+ * so the "first live relay on the list" rule resolves identically
+ * everywhere. See docs/architecture/relay-ha.md. */
+#define MAX_RELAYS         4
+#define HA_RX_IDLE_MS      5000   /* no rx for this long -> probe current */
+#define HA_PROBE_TMO_MS    3000   /* probe unanswered -> advance to next  */
+#define HA_FAILBACK_MS    10000   /* period for probing higher-prio relays */
+
 #define REL_REGISTER       1
 #define REL_DATA           2
 #define REL_KEEPALIVE      3
@@ -71,9 +93,23 @@ static int sock_fd        = -1;
 static int my_node_id     = 1;
 static int wire_version   = RELAY_VER_V1;   /* upgraded to V2 if key loaded */
 static u8 key[KEY_LEN];
-static struct sockaddr_in relay_addr;
+static struct sockaddr_in relay_list[MAX_RELAYS];
+static int      relay_count = 0;
+static int      cur_relay   = 0;            /* index into relay_list */
 static u64 next_nonce = 0;
 static time_t   last_send_ts = 0;
+
+/* HA liveness state (CLOCK_MONOTONIC milliseconds). */
+static u64 ha_last_rx_ms       = 0;  /* last packet from any relay        */
+static u64 ha_probe_sent_ms    = 0;  /* 0 = no liveness probe outstanding */
+static u64 ha_last_failback_ms = 0;  /* last higher-priority probe sweep  */
+
+static u64 now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000ULL + (u64)(ts.tv_nsec / 1000000L);
+}
 
 /* --- helpers ------------------------------------------------------------ */
 
@@ -177,40 +213,172 @@ static int build_packet(unsigned char *buf,
     return HEAD_LEN + AUTH_LEN + plen;
 }
 
-/* Fire-and-forget. Logs errors but never blocks the caller. */
-static void udp_send(const unsigned char *buf, int len)
+/* Fire-and-forget to relay_list[idx]. Never blocks the caller. */
+static void udp_send_to(int idx, const unsigned char *buf, int len)
 {
-    if (sock_fd < 0) return;
+    if (sock_fd < 0 || idx < 0 || idx >= relay_count) return;
     ssize_t r = sendto(sock_fd, buf, (size_t)len,
                        MSG_DONTWAIT | MSG_NOSIGNAL,
-                       (struct sockaddr *)&relay_addr, sizeof(relay_addr));
+                       (struct sockaddr *)&relay_list[idx],
+                       sizeof(relay_list[idx]));
     if (r < 0) {
         /* EAGAIN etc. silently ignored — next packet will retry. */
         return;
     }
-    last_send_ts = time(NULL);
+    if (idx == cur_relay) last_send_ts = time(NULL);
 }
 
-static void send_register(void)
+static void send_register_to(int idx)
 {
     static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_REGISTER, (unsigned)my_node_id, 0, NULL, 0);
-    udp_send(buf, n);
+    udp_send_to(idx, buf, n);
 }
 
-static void send_keepalive(void)
+static void send_keepalive_to(int idx)
 {
     static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_KEEPALIVE, (unsigned)my_node_id, 0, NULL, 0);
-    udp_send(buf, n);
+    udp_send_to(idx, buf, n);
 }
 
-static void maybe_keepalive(void)
+static void log_relay(const char *what, int idx)
 {
-    time_t now = time(NULL);
-    if (now - last_send_ts >= KEEPALIVE_SEC) {
-        send_keepalive();
+    char ipbuf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &relay_list[idx].sin_addr, ipbuf, sizeof(ipbuf));
+    dprintf(2, "[net_relay] %s relay#%d %s:%d\n",
+            what, idx, ipbuf, (int)ntohs(relay_list[idx].sin_port));
+}
+
+/* HA driver — called from every send/recv. Three duties:
+ *  1. legacy 25 s keepalive so the current relay doesn't evict us;
+ *  2. every HA_FAILBACK_MS, probe all higher-priority relays so the
+ *     whole fleet drifts back to the list head once it recovers;
+ *  3. if nothing has been received for HA_RX_IDLE_MS, probe the
+ *     current relay; if the probe goes unanswered for HA_PROBE_TMO_MS,
+ *     advance (mod relay_count) and re-REGISTER there. */
+static void ha_tick(void)
+{
+    u64 now = now_ms();
+
+    if (time(NULL) - last_send_ts >= KEEPALIVE_SEC) {
+        send_keepalive_to(cur_relay);
     }
+
+    if (cur_relay > 0 && now - ha_last_failback_ms >= HA_FAILBACK_MS) {
+        ha_last_failback_ms = now;
+        for (int i = 0; i < cur_relay; i++) send_keepalive_to(i);
+    }
+
+    if (now - ha_last_rx_ms >= HA_RX_IDLE_MS) {
+        if (ha_probe_sent_ms == 0) {
+            send_keepalive_to(cur_relay);
+            ha_probe_sent_ms = now;
+        } else if (now - ha_probe_sent_ms >= HA_PROBE_TMO_MS) {
+            int next = (cur_relay + 1) % relay_count;
+            if (next != cur_relay) {
+                dprintf(2, "[net_relay] relay#%d unresponsive\n", cur_relay);
+                cur_relay = next;
+                log_relay("failover ->", cur_relay);
+            }
+            ha_probe_sent_ms = 0;
+            ha_last_rx_ms    = now;   /* grace period for the new relay */
+            send_register_to(cur_relay);
+        }
+    }
+}
+
+/* Called whenever a packet arrives from relay_list[idx]. Refreshes
+ * liveness; if a higher-priority relay answered (idx < cur_relay),
+ * switch back to it — deterministic failback. */
+static void ha_mark_rx(int idx)
+{
+    if (idx == cur_relay) {
+        ha_last_rx_ms    = now_ms();
+        ha_probe_sent_ms = 0;
+    } else if (idx >= 0 && idx < cur_relay) {
+        cur_relay = idx;
+        log_relay("failback ->", cur_relay);
+        ha_last_rx_ms    = now_ms();
+        ha_probe_sent_ms = 0;
+        send_register_to(cur_relay);
+    }
+    /* idx > cur_relay: a lower-priority relay is alive — irrelevant
+     * while a higher-priority one serves us; ignore for liveness. */
+}
+
+/* Match a UDP source address against the configured relay list.
+ * Returns the index, or -1 if the sender is not a known relay. */
+static int relay_index_of(const struct sockaddr_in *from)
+{
+    for (int i = 0; i < relay_count; i++) {
+        if (relay_list[i].sin_addr.s_addr == from->sin_addr.s_addr &&
+            relay_list[i].sin_port        == from->sin_port) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Resolve host (DNS name or dotted-quad) + port into *out. 0 on success. */
+static int resolve_relay(const char *host, int port, struct sockaddr_in *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->sin_family = AF_INET;
+    out->sin_port   = htons((unsigned short)port);
+
+    if (inet_pton(AF_INET, host, &out->sin_addr) == 1) return 0;
+
+    struct addrinfo hints = {0};
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    struct addrinfo *res = NULL;
+    int gai = getaddrinfo(host, NULL, &hints, &res);
+    if (gai != 0 || !res) {
+        dprintf(2, "[net_relay] resolve '%s' failed: %s\n",
+                host, gai_strerror(gai));
+        return -1;
+    }
+    struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+    out->sin_addr = sin->sin_addr;
+    freeaddrinfo(res);
+    return 0;
+}
+
+/* Parse PKERNEL_RELAY="host[:port],host[:port][,...]" (max MAX_RELAYS)
+ * into relay_list[]. Returns the number of relays, or -1 on error. */
+static int parse_relay_list(const char *spec)
+{
+    char work[256];
+    size_t sl = strlen(spec);
+    if (sl == 0 || sl >= sizeof(work)) {
+        dprintf(2, "[net_relay] PKERNEL_RELAY empty or too long\n");
+        return -1;
+    }
+    memcpy(work, spec, sl + 1);
+
+    int count = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(work, ",", &save); tok;
+         tok = strtok_r(NULL, ",", &save)) {
+        if (count >= MAX_RELAYS) {
+            dprintf(2, "[net_relay] PKERNEL_RELAY: more than %d entries, "
+                       "ignoring the rest\n", MAX_RELAYS);
+            break;
+        }
+        while (*tok == ' ') tok++;
+        int port = DEFAULT_PORT;
+        char *colon = strrchr(tok, ':');
+        if (colon) {
+            *colon = '\0';
+            port = atoi(colon + 1);
+            if (port <= 0 || port > 65535) port = DEFAULT_PORT;
+        }
+        if (!*tok) continue;
+        if (resolve_relay(tok, port, &relay_list[count]) < 0) return -1;
+        count++;
+    }
+    return count;
 }
 
 /* --- public API --------------------------------------------------------- */
@@ -218,19 +386,13 @@ static void maybe_keepalive(void)
 int net_relay_init(void)
 {
     const char *env_id   = getenv("PKERNEL_NODE_ID");
+    const char *env_list = getenv("PKERNEL_RELAY");
     const char *env_host = getenv("PKERNEL_RELAY_HOST");
     const char *env_port = getenv("PKERNEL_RELAY_PORT");
     const char *env_key  = getenv("PKERNEL_RELAY_KEY");
 
     my_node_id = env_id ? atoi(env_id) : 1;
     if (my_node_id < 1 || my_node_id > 255) my_node_id = 1;
-    int port = env_port ? atoi(env_port) : DEFAULT_PORT;
-    if (port <= 0 || port > 65535) port = DEFAULT_PORT;
-
-    if (!env_host || !*env_host) {
-        dprintf(2, "[net_relay] PKERNEL_RELAY_HOST not set\n");
-        return -1;
-    }
 
     if (env_key && *env_key) {
         if (hex_decode(env_key, key, KEY_LEN) < 0) {
@@ -245,26 +407,23 @@ int net_relay_init(void)
                    "(relay must run with --insecure)\n");
     }
 
-    /* Resolve host. Accept both DNS names and dotted-quad. */
-    memset(&relay_addr, 0, sizeof(relay_addr));
-    relay_addr.sin_family = AF_INET;
-    relay_addr.sin_port   = htons((unsigned short)port);
-
-    if (inet_pton(AF_INET, env_host, &relay_addr.sin_addr) != 1) {
-        struct addrinfo hints = {0};
-        hints.ai_family   = AF_INET;
-        hints.ai_socktype = SOCK_DGRAM;
-        struct addrinfo *res = NULL;
-        int gai = getaddrinfo(env_host, NULL, &hints, &res);
-        if (gai != 0 || !res) {
-            dprintf(2, "[net_relay] resolve '%s' failed: %s\n",
-                    env_host, gai_strerror(gai));
+    if (env_list && *env_list) {
+        relay_count = parse_relay_list(env_list);
+        if (relay_count <= 0) {
+            dprintf(2, "[net_relay] PKERNEL_RELAY has no usable entries\n");
             return -1;
         }
-        struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
-        relay_addr.sin_addr = sin->sin_addr;
-        freeaddrinfo(res);
+    } else if (env_host && *env_host) {
+        /* Legacy single-relay configuration. */
+        int port = env_port ? atoi(env_port) : DEFAULT_PORT;
+        if (port <= 0 || port > 65535) port = DEFAULT_PORT;
+        if (resolve_relay(env_host, port, &relay_list[0]) < 0) return -1;
+        relay_count = 1;
+    } else {
+        dprintf(2, "[net_relay] neither PKERNEL_RELAY nor PKERNEL_RELAY_HOST set\n");
+        return -1;
     }
+    cur_relay = 0;
 
     sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
@@ -289,48 +448,73 @@ int net_relay_init(void)
      * docs/phase_b_relay.md, replay protection section). */
     next_nonce = ((u64)time(NULL) << 24) | 1;
 
-    char ipbuf[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &relay_addr.sin_addr, ipbuf, sizeof(ipbuf));
-    dprintf(2, "[net_relay] node %d → %s:%d (wire v%d)\n",
-            my_node_id, ipbuf, port, wire_version);
+    ha_last_rx_ms = now_ms();   /* grace period before the first probe */
 
-    send_register();
+    {
+        char ipbuf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &relay_list[0].sin_addr, ipbuf, sizeof(ipbuf));
+        dprintf(2, "[net_relay] node %d → %s:%d (wire v%d, %d relay%s)\n",
+                my_node_id, ipbuf, (int)ntohs(relay_list[0].sin_port),
+                wire_version, relay_count, relay_count == 1 ? "" : "s");
+    }
+
+    send_register_to(cur_relay);
     return my_node_id;
 }
 
 int net_relay_send(const void *frame, int len)
 {
     if (sock_fd < 0 || len <= 0 || len > MAX_PAYLOAD) return -1;
-    maybe_keepalive();
+    ha_tick();
     static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_BROADCAST,
                          (unsigned)my_node_id, 0, frame, len);
-    udp_send(buf, n);
+    udp_send_to(cur_relay, buf, n);
     return len;
 }
 
 int net_relay_recv(void *out, int maxlen)
 {
     if (sock_fd < 0) return 0;
-    maybe_keepalive();
+    ha_tick();
     static unsigned char buf[MAX_PKT];
-    ssize_t n = recv(sock_fd, buf, sizeof(buf), MSG_DONTWAIT);
-    if (n <= 0) return 0;
 
-    /* Strip the relay header. We trust the relay to MAC-verify before
-     * forwarding; the client side only checks structure. */
-    if (n < HEAD_LEN) return 0;
-    if (buf[0] != (u8)(RELAY_MAGIC      & 0xff) ||
-        buf[1] != (u8)((RELAY_MAGIC>>8) & 0xff) ||
-        buf[2] != (u8)((RELAY_MAGIC>>16)& 0xff) ||
-        buf[3] != (u8)((RELAY_MAGIC>>24)& 0xff)) return 0;
-    unsigned ver = buf[4];
-    int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
-    if (n < hdr) return 0;
-    int payload_len = (int)n - hdr;
-    if (payload_len > maxlen) payload_len = maxlen;
-    if (payload_len > 0) memcpy(out, buf + hdr, (size_t)payload_len);
-    return payload_len;
+    /* Drain control packets (keepalive echoes) so a data frame is never
+     * starved behind them; return on the first data payload. */
+    for (;;) {
+        struct sockaddr_in from;
+        socklen_t flen = sizeof(from);
+        ssize_t n = recvfrom(sock_fd, buf, sizeof(buf), MSG_DONTWAIT,
+                             (struct sockaddr *)&from, &flen);
+        if (n <= 0) return 0;
+
+        /* Only accept packets from a configured relay. */
+        int ridx = relay_index_of(&from);
+        if (ridx < 0) continue;
+
+        /* Strip the relay header. We trust the relay to MAC-verify before
+         * forwarding; the client side only checks structure. */
+        if (n < HEAD_LEN) continue;
+        if (buf[0] != (u8)(RELAY_MAGIC      & 0xff) ||
+            buf[1] != (u8)((RELAY_MAGIC>>8) & 0xff) ||
+            buf[2] != (u8)((RELAY_MAGIC>>16)& 0xff) ||
+            buf[3] != (u8)((RELAY_MAGIC>>24)& 0xff)) continue;
+
+        ha_mark_rx(ridx);   /* liveness + deterministic failback */
+
+        unsigned ver  = buf[4];
+        unsigned type = buf[5];
+        int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
+        if (n < hdr) continue;
+
+        /* KEEPALIVE echoes (and stray REGISTERs) are control-plane only. */
+        if (type != REL_DATA && type != REL_BROADCAST) continue;
+
+        int payload_len = (int)n - hdr;
+        if (payload_len > maxlen) payload_len = maxlen;
+        if (payload_len > 0) memcpy(out, buf + hdr, (size_t)payload_len);
+        return payload_len;
+    }
 }
 
 int net_relay_node_id(void) { return my_node_id; }

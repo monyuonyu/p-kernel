@@ -418,8 +418,21 @@ int main(int argc, char **argv)
 
         switch (pkt.type) {
         case REL_REGISTER:
+            update((int)pkt.src, &from);
+            break;
+
         case REL_KEEPALIVE:
             update((int)pkt.src, &from);
+            /* Relay-HA liveness pong: reflect the (already verified)
+             * keepalive back to its sender so clients can distinguish
+             * "relay alive" from "relay dead" and run deterministic
+             * failover/failback (docs/architecture/relay-ha.md). The
+             * wire format is untouched — this echoes the same packet. */
+            if (sendto(sock, buf, (size_t)n, 0,
+                       (struct sockaddr *)&from, flen) < 0 && verbose) {
+                fprintf(stderr, "[relay] keepalive echo to src=%u: %s\n",
+                        pkt.src, strerror(errno));
+            }
             break;
 
         case REL_DATA:
