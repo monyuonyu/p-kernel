@@ -1,8 +1,8 @@
 # p-kernel x86 Makefile
 # boot/x86 + kernel/common + arch/x86 を統合してQEMU起動イメージを生成
 
-# ツールチェイン
-CROSS   = i686-linux-gnu-
+# ツールチェイン (上書き可: make CROSS=<prefix>-)
+CROSS  ?= i686-linux-gnu-
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
 LD      = $(CROSS)ld

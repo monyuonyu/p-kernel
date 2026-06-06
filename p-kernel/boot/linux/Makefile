@@ -8,7 +8,20 @@
 #   make clean
 
 # ---- Toolchain --------------------------------------------------------
-CC      = cc
+# Auto-detect host arch (mirror of boot/linux_x86_64): native build on an
+# aarch64 host, cross-build via aarch64-linux-gnu-gcc elsewhere (e.g. an
+# x86_64 CI runner), run via qemu-aarch64 when not native.
+# Override on the command line: make CROSS=<prefix>-  or  make CC=<cc>
+ifeq ($(shell uname -m),aarch64)
+CROSS ?=
+RUN   ?=
+else
+CROSS ?= aarch64-linux-gnu-
+RUN   ?= qemu-aarch64
+endif
+
+# Keep the native default EXACTLY `cc`; any CROSS prefix switches to gcc.
+CC      = $(if $(CROSS),$(CROSS)gcc,cc)
 
 # ---- Paths ------------------------------------------------------------
 ROOT       = ../..
@@ -311,7 +324,7 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 run: $(TARGET)
-	./$(TARGET)
+	$(RUN) ./$(TARGET)
 
 clean:
 	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \

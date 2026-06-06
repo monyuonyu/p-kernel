@@ -9,7 +9,8 @@
 #   make clean
 
 # ---- Toolchain --------------------------------------------------------
-CROSS   = aarch64-linux-gnu-
+# Override on the command line: make CROSS=<prefix>-
+CROSS  ?= aarch64-linux-gnu-
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
 LD      = $(CROSS)ld
