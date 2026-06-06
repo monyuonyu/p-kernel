@@ -137,6 +137,10 @@ void moe_task(INT stacd, void *exinf);
 /* 推論実行: 最適ノードを選んで推論し、クラスを返す */
 UB   moe_infer(B temp, B hum, B press, B light);
 
+/* §7 ゲートの公開ラッパー: 入力のクラス帯を返す (0..MOE_NUM_CLASSES-1)。
+ * R3b spec.c が専門分化した専門家を疎に発火させるルーティングに使う。 */
+UB   moe_gate_predict(B temp, B hum, B press, B light);
+
 /* 推論結果をフィードバック (正解ラベルを学習) */
 void moe_feedback(UB pred_class, UB true_class);
 
