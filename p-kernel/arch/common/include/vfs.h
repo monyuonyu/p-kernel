@@ -66,3 +66,23 @@ void vfs_getcwd(char *buf, INT len);
 INT  vfs_chdir(const char *path);
 
 extern BOOL vfs_ready;
+
+/* ------------------------------------------------------------------ */
+/* Second backend slot — p-fs content-addressed store (p-fs.md §3.1)   */
+/* ------------------------------------------------------------------ */
+/* The VFS today fronts a single FAT32 mount ("Currently: one mount
+ * point" above). p-fs is the planned second backend that sits beside
+ * FAT32: content-addressed, immutable blocks (block-id = sha256(bytes)).
+ *
+ * P0 (delivered): the block layer itself — see pfs_block.h
+ * (pfs_put / pfs_get / pfs_has). It is reachable directly today; the
+ * VFS_BACKEND enum below reserves the slot so a future increment can
+ * route vfs_open/read/write to either backend by mount point without an
+ * API change (p-fs.md §3.1 "vfs.h コメントの Future: multiple backends").
+ *
+ * TODO(P1+): dispatch table {fat32, pfs} selected per mount; for now the
+ * two coexist as separate entry points (vfs_* vs pfs_*). */
+typedef enum {
+    VFS_BACKEND_FAT32 = 0,   /* current durable backend (arch/x86/fat32.c) */
+    VFS_BACKEND_PFS   = 1,   /* p-fs content-addressed store (pfs_block.c) */
+} VFS_BACKEND;

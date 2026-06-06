@@ -25,6 +25,7 @@
 #include "world.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
+#include "pfs_block.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -72,6 +73,7 @@ static void cmd_help(void)
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
+    print("  pfs    - p-fs P0 content-addressed block store self-test (dedup)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  rx     - RX/TX frame counters\r\n");
@@ -409,6 +411,8 @@ EXPORT INT usermain(void)
             dtr_stat();
         } else if (starts_with(line, n, "kdds")) {
             kdds_list();
+        } else if (starts_with(line, n, "pfs")) {
+            pfs_self_test(print);
         } else if (starts_with(line, n, "kdemo")) {
             cmd_kdemo("aarch64");
         } else if (starts_with(line, n, "net")) {
