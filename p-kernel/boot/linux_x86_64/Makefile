@@ -67,6 +67,23 @@ ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
 
 LDFLAGS = -no-pie -static -lrt
 
+# ---- libtcc self-compile support (hosted-only, auto-detected) --------
+# Same probe as boot/linux. On an aarch64 host the only libtcc.a is the
+# aarch64 one, so this -static x86_64 link probe fails and selfc stays
+# a stub here — that is the detection working as intended, not a bug.
+# Force-disable with `make NO_LIBTCC=1`.
+# (-include libtcc.h instead of a "#include" line: '#' inside $(shell)
+#  is a make-comment minefield. This still proves both the header and
+#  the library exist and link for the target ABI.)
+ifeq ($(NO_LIBTCC),)
+HAVE_LIBTCC := $(shell echo 'int main(void){tcc_new();return 0;}' | \
+                 $(CC) $(LDFLAGS) -include libtcc.h -x c - -ltcc -o /dev/null 2>/dev/null && echo yes)
+endif
+ifeq ($(HAVE_LIBTCC),yes)
+CFLAGS  += -DHAVE_LIBTCC
+LDFLAGS += -ltcc
+endif
+
 # ---- boot/linux_x86_64 sources ---------------------------------------
 BOOT_C_SRCS = main.c
 BOOT_OBJS   = main.o
@@ -98,7 +115,12 @@ RELAY_DIR    = $(ROOT)/relay
 RELAY_C_SRCS = sha256.c
 RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS)
+# arch/linux/ (cross-arch hosted) sources — shared with boot/linux
+ARCH_SHARED_C_SRCS = selfc.c
+ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \
+            $(ARCH_SHARED_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 COMMON_C_SRCS = \
@@ -200,6 +222,10 @@ main.o: main.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_X86_64)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# arch/linux/ cross-arch hosted C sources (selfc)
+$(ARCH_SHARED_OBJS): %.o: $(ARCH_LINUX)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 cpu_support.o: $(ARCH_X86_64)/cpu_support.S

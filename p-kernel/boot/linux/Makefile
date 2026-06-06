@@ -75,6 +75,24 @@ ASFLAGS = -D_in_asm_source_ -D_APP_AARCH64_ -D_APP_LINUX_ \
 
 LDFLAGS = -no-pie -lrt
 
+# ---- libtcc self-compile support (hosted-only, auto-detected) --------
+# selfc lets the RUNNING kernel compile C source in-memory (libtcc,
+# TCC_OUTPUT_MEMORY) and start it as a T-Kernel task. Enabled only when
+# the toolchain can actually link -ltcc for THIS target ABI, so builds
+# without libtcc-dev (CI, cross) still succeed — selfc.c then compiles
+# as a stub. Force-disable with `make NO_LIBTCC=1`.
+# (-include libtcc.h instead of a "#include" line: '#' inside $(shell)
+#  is a make-comment minefield. This still proves both the header and
+#  the library exist and link for the target ABI.)
+ifeq ($(NO_LIBTCC),)
+HAVE_LIBTCC := $(shell echo 'int main(void){tcc_new();return 0;}' | \
+                 $(CC) $(LDFLAGS) -include libtcc.h -x c - -ltcc -o /dev/null 2>/dev/null && echo yes)
+endif
+ifeq ($(HAVE_LIBTCC),yes)
+CFLAGS  += -DHAVE_LIBTCC
+LDFLAGS += -ltcc
+endif
+
 # ---- boot/linux sources ----------------------------------------------
 BOOT_C_SRCS = main.c
 BOOT_OBJS   = main.o
@@ -107,7 +125,12 @@ RELAY_DIR    = $(ROOT)/relay
 RELAY_C_SRCS = sha256.c
 RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS)
+# arch/linux/ (cross-arch hosted) sources — shared with linux_x86_64
+ARCH_SHARED_C_SRCS = selfc.c
+ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
+
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \
+            $(ARCH_SHARED_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 # Same list as boot/aarch64. These files are arch-independent C and
@@ -252,6 +275,12 @@ main.lo: main.c
 $(ARCH_C_SRCS:.c=.lo): %.lo: $(ARCH_LINUX)/aarch64/%.c
 	$(CC) $(SO_CFLAGS) -c -o $@ $<
 
+# selfc stays a stub in the .so build (SO_CFLAGS never gets
+# -DHAVE_LIBTCC): the Android/.so pipeline has no libtcc yet, and
+# linking a non-PIC libtcc.a into a shared object wouldn't fly anyway.
+$(ARCH_SHARED_OBJS:.o=.lo): %.lo: $(ARCH_LINUX)/%.c
+	$(CC) $(SO_CFLAGS) -c -o $@ $<
+
 cpu_support.lo: $(ARCH_LINUX)/aarch64/cpu_support.S
 	$(CC) $(ASFLAGS) -fPIC -c -o $@ $<
 
@@ -304,6 +333,10 @@ main.o: main.c
 
 # arch/linux/aarch64 C sources
 $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_LINUX)/aarch64/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# arch/linux/ cross-arch hosted C sources (selfc)
+$(ARCH_SHARED_OBJS): %.o: $(ARCH_LINUX)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # arch/linux/aarch64 ASM
