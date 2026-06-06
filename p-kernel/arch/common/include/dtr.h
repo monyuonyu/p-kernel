@@ -126,6 +126,16 @@ extern DTR_STATS dtr_stats;
 /* 初期化 (重みを LCG で生成, セマフォ作成) */
 void dtr_init(void);
 
+/* 全重みを与えた seed から再ロール (He 初期化)。dtr_init が使う固定 seed
+ * とは別 seed で呼べる — R3b の specialization (spec.c) が各エキスパートを
+ * 別 seed で初期化して自然に分化させるために使う (survival-network.md 道B)。
+ * セマフォ等の副作用は無く、純粋に重みだけを書き換える。 */
+void dtr_reinit_weights(UW seed);
+
+/* 現在ロードされている重みでの 1 入力のクラス確率 (retrieval OFF、副作用
+ * なし)。R3b spec.c が専門家の生出力をルーティング/集約するために使う。 */
+void dtr_forward_probs(const B input[DTR_SEQ_LEN], float out[DTR_OUT_DIM]);
+
 /* パイプラインタスク
  *   Node 0: "dtr/result" を subscribe し、dtr_infer() のセマフォを signal
  *   Node 1: "dtr/l0" を subscribe し、Stage1+2 を計算して "dtr/result" を pub */

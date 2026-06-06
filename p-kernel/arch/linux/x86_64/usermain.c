@@ -23,6 +23,7 @@
 #include "lookup.h"
 #include "kdds.h"
 #include "moe.h"
+#include "spec.h"   /* R3b breathing params */
 #include "world.h"
 #include "reflex.h"
 #include "pmesh.h"
@@ -98,6 +99,7 @@ static void cmd_help(void)
     print("  guard  - guarded-task table (fault isolation + auto-respawn)\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
     print("  moe [a b c d] - route to best expert (locality MoE); `moe test` = §7/§8 property tests\r\n");
+    print("  breathe - R3b: expert specialization; join smarter / leave graceful (numbers)\r\n");
     print("  dkva [infer [a b c d]] - distributed KV attention from THIS node\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
@@ -567,6 +569,9 @@ EXPORT INT usermain(void)
             world_print();
         } else if (starts_with(line, n, "moe")) {
             cmd_moe(line, n);
+        } else if (starts_with(line, n, "breathe")) {
+            /* R3b: expert specialization — join smarter / leave graceful */
+            breathe_cmd(line + 7, (UW)(n - 7));
         } else if (starts_with(line, n, "dtr")) {
             /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad/
              * remember/ret -> R3a + wave-8 verbs (dtr_train.c) */

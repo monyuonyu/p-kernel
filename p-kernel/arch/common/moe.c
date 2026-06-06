@@ -112,6 +112,14 @@ static UB gate_predict(B temp, B hum, B press, B light)
     return 2;                  /* critical */
 }
 
+/* 公開ラッパー (R3b spec.c のルーティングが §7 ゲートをそのまま使うため)。
+ * 専門分化した専門家のうち「この入力のクラス帯に効く」one を疎に発火させる
+ * のに使う — moe_infer の expert 選択と同じゲートで、重複定義を作らない。 */
+UB moe_gate_predict(B temp, B hum, B press, B light)
+{
+    return gate_predict(temp, hum, press, light);
+}
+
 /* ------------------------------------------------------------------ */
 /* 最適ノード選択                                                     */
 /* ------------------------------------------------------------------ */

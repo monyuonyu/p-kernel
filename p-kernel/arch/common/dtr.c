@@ -994,6 +994,18 @@ float dtr_eval_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n,
     return loss / (float)n;
 }
 
+/* Side-effect-free class probabilities for one input under the CURRENTLY
+ * loaded weights (retrieval forced OFF so the result reflects only the
+ * weights — R3b spec.c routes/ensembles raw specialist outputs). No
+ * stats, no DKVA cache, no log, no reflex. */
+void dtr_forward_probs(const B input[DTR_SEQ_LEN], float out[DTR_OUT_DIM])
+{
+    UB rprev = ret_set(0);
+    (void)train_forward(input, 0);   /* label irrelevant; fills tc.probs */
+    ret_set(rprev);
+    for (INT c = 0; c < DOUT; c++) out[c] = tc.probs[c];
+}
+
 /* Gradient check: compares the analytic gradient against central
  * finite differences on a spread of parameter indices for one sample.
  * Returns the max relative error — the proof that train_backward is
@@ -1032,10 +1044,16 @@ float dtr_grad_check(const B input[DTR_SEQ_LEN], UB label)
 /* dtr_init                                                            */
 /* ------------------------------------------------------------------ */
 
-void dtr_init(void)
+/*
+ *  Roll all weights from a given LCG seed (He-style init), gamma=1/beta=0
+ *  LayerNorm. Extracted from dtr_init so R3b's specialization harness
+ *  (spec.c) can reinitialize a fresh expert with a per-expert seed —
+ *  "異なる初期化＋ローカル学習" (survival-network.md 道B). dtr_init()
+ *  keeps using the original 0xDEAD8888 seed so the existing single-node
+ *  train/eval demo numbers are byte-for-byte unchanged.
+ */
+void dtr_reinit_weights(UW seed)
 {
-    UW seed = 0xDEAD8888UL;
-
     /* Embed */
     init_weights((float *)W_emb, EMB_OUT * EMB_IN, 0.707f, &seed);
     init_const  (b_emb, EMB_OUT, 0.0f);
@@ -1062,6 +1080,11 @@ void dtr_init(void)
     /* 分類ヘッド */
     init_weights((float *)W_cls, DOUT * DM,   0.500f, &seed);
     init_const  (b_cls, DOUT, 0.0f);
+}
+
+void dtr_init(void)
+{
+    dtr_reinit_weights(0xDEAD8888UL);
 
     /* 分散推論セマフォ */
     T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
