@@ -59,6 +59,7 @@ Evolution 層への入口）に集中している。
 | `world.c` の世界図（[[survival-network.md]] §II 参照） | **観測**。中央なしで全網の状況図を各ノードが eventual に獲得する situational-awareness map。 | 観測 |
 | [[decentralized-lookup.md]] | **探索**。中央索引なしで「誰が何を持つか」を全員が同じ計算で引く共有基盤（rendezvous/HRW＋gossip WANT fallback＋world-table キャッシュ）。p-fs §3.3 と survival §7 の共通の壁を一枚に括る。 | 探索 |
 | [[r3-model-widening.md]] | **成長**。玩具 635 param を実用サイズへ広げ、初めて「1台に収まらない＝分散が必然」になる。regions R3 / Evolution 層。 | 成長 |
+| [[genome.md]] | **再生**（survival §3）。生存細胞が genome（重み＋コード＋役割）のマニフェストを p-fs に蒔き、空の装甲板が gossip だけから一個のフル細胞に発芽する。新しい臓器はなく、発芽のオーケストレーションだけ。 | 再生 |
 
 ### 関係（一文ずつ）
 

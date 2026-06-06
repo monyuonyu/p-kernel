@@ -120,7 +120,8 @@ COMMON_C_SRCS = \
     pfs_block.c \
     lookup.c \
     pfs_repl.c \
-    pfs_dag.c
+    pfs_dag.c \
+    genome.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

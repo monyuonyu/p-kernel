@@ -17,6 +17,7 @@
 #include "drpc.h"
 #include "netstack.h"
 #include "sfs.h"
+#include "genome.h"
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -147,6 +148,19 @@ void spawn_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
         /* SFS boot sync もトリガー (ファイル状態を同期) */
         sfs_boot_sync();
+
+        /* §3 自己再生: この細胞が genome を publish 済みなら、新しい
+         * 装甲板は発芽できる。マニフェスト自体は p-fs P1/P2 が region へ
+         * 勝手に複製する — spawn は指し示すだけで、raft メタ配布は
+         * 一切変えない。(p-fs 走査ではなくローカルフラグ参照:
+         * pfs_dag_read の scratch はシェルタスク専用で、ここは
+         * ネットタスク文脈のため。) */
+        if (genome_published_here()) {
+            sp_puts("[spawn] genome published here — node ");
+            sp_putdec(pkt->src_node);
+            sp_puts(" can `genome sprout` (or boot with "
+                    "PKERNEL_SPROUT=1)\r\n");
+        }
         break;
     }
 
