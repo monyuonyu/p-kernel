@@ -24,6 +24,7 @@
 #include "drpc.h"
 #include "kdds.h"
 #include "region.h"
+#include "world.h"
 #include "degrade.h"
 #include "kernel.h"
 
@@ -97,8 +98,13 @@ static UW stat_degraded  = 0;   /* 部分集約で完遂した回数 (survival, 
 /* K-DDS ハンドル                                                     */
 /* ------------------------------------------------------------------ */
 
-static W h_q_pub    = -1;
-static W h_q_sub    = -1;
+/* per-origin Query topics (G1, wave 10): h_q_pub[o] / h_q_sub[o] は
+ * "dtr/dkva/q/<o>" を指す。requester は自ノードの h_q_pub[drpc_my_node] へ
+ * 問いを発行し、responder は全 origin の h_q_sub[o] を購読する。dkva_init は
+ * drpc_my_node 確定前 (boot 時) に走るので全 DNODE_MAX 分を pre-open しておき、
+ * 実行時にノード ID で選ぶ (resp/rsum と同じ方式)。 */
+static W h_q_pub[DNODE_MAX];
+static W h_q_sub[DNODE_MAX];
 /* per-source response topics: h_resp_pub[n] / h_resp_sub[n] は
  * "dtr/dkva/resp/<n>" を指す。responder は自ノード (drpc_my_node) の
  * pub ハンドルへ発行し、requester は自分以外の全 sub ハンドルから収集する。
@@ -201,6 +207,20 @@ static void accumulate(float total_out[DKVA_SEQ][DKVA_NH][DKVA_DH],
         }
 }
 
+/* 自分以外に「自 region 外の生存ノード」が居るか (= rsum を読む他 region が
+ * 存在するか)。region_is_member() を使うので呼ぶ前に region_recompute() 済みの
+ * こと (region_coordinator() が直前に再計算する)。単一 region では coordinator が
+ * rsum 集約 (200ms 窓) を丸ごと省けるので、同時多発の時間多重をブロックしない。 */
+static BOOL have_remote_region(void)
+{
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == drpc_my_node) continue;
+        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        if (!region_is_member(n)) return TRUE;
+    }
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ */
 /* Coordinator: 自 region の partial を集約して region 要約を発行       */
 /*                                                                     */
@@ -238,7 +258,7 @@ static void coordinator_aggregate(const DKVA_Q_PKT *qpkt,
             W r = kdds_sub(h_resp_sub[n], &rp, (W)sizeof(rp), 0);
             if (r >= (W)sizeof(DKVA_RESP_PKT) &&
                 rp.magic == DKVA_RESP_MAGIC && rp.req_id == qpkt->req_id &&
-                rp.src_node == n) {
+                rp.src_node == n && rp.origin == qpkt->src_node) {
                 got[n] = 1;
                 entries += rp.n_entries;
                 accumulate(total_out, total_sum, &rp);
@@ -254,6 +274,7 @@ static void coordinator_aggregate(const DKVA_Q_PKT *qpkt,
     sum.magic    = DKVA_RESP_MAGIC;
     sum.req_id   = qpkt->req_id;
     sum.src_node = drpc_my_node;          /* = region id (coordinator) */
+    sum.origin   = qpkt->src_node;        /* この要約の宛先 = 問いの起点 (G1) */
     sum.n_entries = (UB)(entries > 255 ? 255 : entries);
     for (INT t = 0; t < DKVA_SEQ; t++)
         for (INT h = 0; h < DKVA_NH; h++) {
@@ -275,20 +296,21 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               float mhsa_out[DKVA_SEQ][DKVA_DM],
               UW req_id)
 {
-    if (h_q_pub < 0) return E_NOEXS;
+    UB me = drpc_my_node;
+    if (me == 0xFF || me >= DNODE_MAX || h_q_pub[me] < 0) return E_NOEXS;
 
-    /* Query パケット送信 */
+    /* Query パケット送信 (起点ごとの per-origin トピックへ — G1) */
     DKVA_Q_PKT qpkt = { 0 };
     qpkt.magic    = DKVA_Q_MAGIC;
     qpkt.req_id   = req_id;
-    qpkt.src_node = drpc_my_node;
+    qpkt.src_node = me;
     qpkt.n_cached = DKVA_CACHE_SIZE;
     for (INT t = 0; t < DKVA_SEQ; t++)
         for (INT h = 0; h < DKVA_NH; h++)
             for (INT d = 0; d < DKVA_DH; d++)
                 qpkt.Q[t][h][d] = Q[t][h][d];
 
-    kdds_pub(h_q_pub, &qpkt, (W)sizeof(qpkt));
+    kdds_pub(h_q_pub[me], &qpkt, (W)sizeof(qpkt));
     stat_req_sent++;
 
     dk_puts("[dkva] Q broadcast req="); dk_putdec(req_id); dk_puts("\r\n");
@@ -309,6 +331,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
     {
         DKVA_RESP_PKT self_resp = { 0 };
         self_resp.req_id = req_id;
+        self_resp.origin = me;
         compute_partial(&qpkt, &self_resp);
         accumulate(total_out, total_sum, &self_resp);
         total_entries += self_resp.n_entries;
@@ -323,46 +346,59 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
      *     なるのでスキップする。
      * softmax の分子Σa·V と分母Σa は単純和なので、これで単一ノード全体 attention
      * と厳密に同じ結果になる。 */
-    UB my_coord = region_coordinator();
+    UB my_coord = region_coordinator();   /* region_recompute() 込み */
     INT  tmo_left  = DKVA_INFER_TMO;
     INT  resp_cnt  = 0;       /* 自 region の直接 partial 数         */
     INT  rsum_cnt  = 0;       /* 畳んだ他 region 要約数              */
     UB   got [DNODE_MAX];     /* 自 region partial の重複防止        */
     UB   rgot[DNODE_MAX];     /* 他 region 要約の重複防止 (rid 単位)  */
 
-    /* --- 死を待たない (survival, wave 8) -----------------------------
-     * expect[n]=1 は「fan-out 時点で SWIM が生存中 (ALIVE/SUSPECT) と
-     * 見ている自 region のピア」。待ち合わせの対象はこの集合だけ:
-     *   ・SWIM が DEAD と判定済みのノードは最初から待たない。
-     *   ・待っている間に DEAD へ遷移したノードは期待集合から外す。
-     *   ・自 region 外に生存ノードが居なければ (rsum はそこからしか
-     *     来ない)、期待集合が満たされ次第タイムアウトを待たず確定する。
-     * exp_cnt0 は fan-out 時の期待 peer 数 — degraded (k/n) の分母。
-     * exp_cnt0==0 のときは早期確定しない: SWIM がまだ peer を発見して
-     * いないだけかもしれないので、従来どおり全窓ポーリングする。 */
+    /* --- 死を待たない / region 横断の正直な degraded -----------------
+     * (wave 8 + G2/G8, wave 10)
+     *  期待集合は 2 種類:
+     *    expect[n]   : fan-out 時に SWIM 生存 (ALIVE/SUSPECT) と見ている
+     *                  自 region のピア (直接 partial を待つ)。
+     *    rc_expect[c]: 応答すべき他 region の coordinator c (rsum を待つ)。
+     *                  world gossip の region_id で remote ノードを region 単位に
+     *                  まとめ coordinator を特定する。gossip 未着なら各 remote
+     *                  ノードを自前 region とみなし保守的に数える (黙って
+     *                  成功にしないため)。
+     *  SWIM が DEAD と判定したノード/region は待たない (ハングしない) が、
+     *  欠損として degraded (k/n) に正直計上する (黙って成功にしない)。
+     *  exp_cnt0 / rc_cnt0 は fan-out 時の期待数 — degraded の分母を成す。 */
     UB   expect[DNODE_MAX];
-    INT  exp_cnt0     = 0;    /* fan-out 時に期待した peer 数        */
+    UB   rc_expect[DNODE_MAX];
+    INT  exp_cnt0     = 0;    /* 期待した自 region ピア数            */
     INT  exp_got      = 0;    /* うち実際に応答した数                */
-    INT  remote_alive = 0;    /* 自 region 外の生存ノード数 (rsum 源) */
+    INT  rc_cnt0      = 0;    /* 期待した他 region 数 (coordinator)  */
+    INT  rc_got       = 0;    /* うち rsum が届いた数                */
     region_recompute();
     for (UB i = 0; i < DNODE_MAX; i++) {
-        got[i] = 0; rgot[i] = 0; expect[i] = 0;
-        if (i == drpc_my_node) continue;
-        UB st = dnode_table[i].state;
+        got[i] = 0; rgot[i] = 0; expect[i] = 0; rc_expect[i] = 0;
+    }
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == me) continue;
+        UB st = dnode_table[n].state;
         if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
-        if (region_is_member(i)) { expect[i] = 1; exp_cnt0++; }
-        else                       remote_alive++;
+        if (region_is_member(n)) { expect[n] = 1; exp_cnt0++; }
+        else {
+            /* 他 region のノード: その coordinator (= 応答すべき rsum の発行者) を
+             * world gossip から引く。未知なら n 自身を 1 region とみなす。 */
+            INT cid = world_peer_region(n);
+            if (cid < 0 || cid >= DNODE_MAX || (UB)cid == me) cid = (INT)n;
+            if (!rc_expect[cid]) { rc_expect[cid] = 1; rc_cnt0++; }
+        }
     }
 
     while (tmo_left > 0) {
         for (UB n = 0; n < DNODE_MAX; n++) {
-            /* --- 自 region の per-source partial --- */
-            if (n != drpc_my_node && !got[n] && h_resp_sub[n] >= 0) {
+            /* --- 自 region の per-source partial (自分宛 origin==me のみ) --- */
+            if (n != me && !got[n] && h_resp_sub[n] >= 0) {
                 DKVA_RESP_PKT rp = { 0 };
                 W r = kdds_sub(h_resp_sub[n], &rp, (W)sizeof(rp), 0);
                 if (r >= (W)sizeof(DKVA_RESP_PKT) &&
                     rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id &&
-                    rp.src_node == n) {
+                    rp.src_node == n && rp.origin == me) {
                     got[n] = 1;
                     if (expect[n]) exp_got++;
                     resp_cnt++;
@@ -373,15 +409,16 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     dk_puts("  entries="); dk_putdec(rp.n_entries); dk_puts("\r\n");
                 }
             }
-            /* --- 他 region の要約 (自 region coordinator はスキップ) --- */
+            /* --- 他 region の要約 (自 region coordinator はスキップ; origin==me) --- */
             if (n != my_coord && !rgot[n] && h_rsum_sub[n] >= 0) {
                 DKVA_RESP_PKT rs = { 0 };
                 W r = kdds_sub(h_rsum_sub[n], &rs, (W)sizeof(rs), 0);
                 if (r >= (W)sizeof(DKVA_RESP_PKT) &&
                     rs.magic == DKVA_RESP_MAGIC && rs.req_id == req_id &&
-                    rs.src_node == n) {
+                    rs.src_node == n && rs.origin == me) {
                     rgot[n] = 1;
                     rsum_cnt++;
+                    if (rc_expect[n]) rc_got++;
                     total_entries += rs.n_entries;
                     accumulate(total_out, total_sum, &rs);
                     dk_puts("[dkva] region summary rid="); dk_putdec(n);
@@ -390,7 +427,8 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
             }
         }
 
-        /* SWIM が待っている間に DEAD と判定したノードはもう待たない */
+        /* SWIM が待っている間に DEAD と判定したノードはもう待たない
+         * (が degraded の分子には数えないので欠損として正直に残る)。 */
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (expect[n] && !got[n] && dnode_table[n].state == DNODE_DEAD) {
                 expect[n] = 0;
@@ -398,12 +436,16 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                 dk_puts(" (SWIM: DEAD)\r\n");
             }
         }
-        /* 期待集合が満たされ、rsum を出し得る他 region の生存ノードも
-         * 居なければ、タイムアウトを待たずに確定する。 */
-        if (exp_cnt0 > 0 && remote_alive == 0) {
+        /* 期待した全寄与 (自 region ピア + 他 region coordinator) が
+         * got もしくは DEAD で解決したら、窓を待たず確定する。
+         * 期待が 0 のときは早期確定しない (SWIM が peer 未発見なだけかも)。 */
+        if ((exp_cnt0 + rc_cnt0) > 0) {
             INT pending = 0;
-            for (UB n = 0; n < DNODE_MAX; n++)
+            for (UB n = 0; n < DNODE_MAX; n++) {
                 if (expect[n] && !got[n]) pending++;
+                if (rc_expect[n] && !rgot[n] &&
+                    dnode_table[n].state != DNODE_DEAD) pending++;
+            }
             if (pending == 0) break;
         }
 
@@ -411,19 +453,24 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         tmo_left -= 20;
     }
 
-    if (resp_cnt == 0 && rsum_cnt == 0) {
+    /* 期待も寄与も無い = 真の単独ノード → ローカル MHSA へフォールバック。 */
+    if (resp_cnt == 0 && rsum_cnt == 0 && (exp_cnt0 + rc_cnt0) == 0) {
         stat_timeout++;
-        dk_puts("[dkva] timeout: no remote contribution\r\n");
+        dk_puts("[dkva] timeout: no cluster peers\r\n");
         return E_TMOUT;
     }
 
-    /* 部分集約の正直さ規約 (survival, wave 8): fan-out 時に期待した peer が
-     * 欠けたまま完遂するときは、黙って成功にせず必ず明示する。
-     * k/n = 自分を含む寄与ノード数 / fan-out 時に期待したノード数。 */
-    if (exp_got < exp_cnt0) {
+    /* 正直さ規約 (wave 8 + G2/G8): fan-out 時に期待した寄与 (自 region ピア +
+     * 他 region) が欠けたまま完遂するときは、黙って成功にせず必ず明示する。
+     *   k = 自分 + 応答した region ピア + 畳んだ他 region
+     *   n = 自分 + 期待した region ピア + 期待した他 region
+     * 他 region の coordinator 消失 (G8) もこの分母に乗るので無音消失しない。 */
+    INT got_total = 1 + exp_got + rc_got;
+    INT exp_total = 1 + exp_cnt0 + rc_cnt0;
+    if (got_total < exp_total) {
         stat_degraded++;
-        dk_puts("[dkva] degraded ("); dk_putdec((UW)(exp_got + 1));
-        dk_puts("/"); dk_putdec((UW)(exp_cnt0 + 1));
+        dk_puts("[dkva] degraded ("); dk_putdec((UW)got_total);
+        dk_puts("/"); dk_putdec((UW)exp_total);
         dk_puts("): completed with partial aggregation  req=");
         dk_putdec(req_id); dk_puts("\r\n");
     }
@@ -463,63 +510,85 @@ void dkva_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
     if (drpc_my_node == 0xFF) return;
+    UB me = drpc_my_node;
 
     /* 全ノードが Responder として動作する。Requester も特定ノードでは
      * なく「いま問いを発行したノード」でしかない (起点に特権はない)。 */
 
     dk_puts("[dkva] responder task started  node=");
-    dk_putdec(drpc_my_node); dk_puts("\r\n");
+    dk_putdec(me); dk_puts("\r\n");
 
     /* KV キャッシュ warmup: 新規 FULL クラスタでは全ノードのキャッシュが空で
      * partial Attention が自明 (entries=0) になるため、自ノード固有の合成入力で
      * seed しておく。dkva_task は drpc_my_node 確定後に走るので node 固有値が使える。 */
-    dtr_seed_kv_cache(drpc_my_node);
-    dk_puts("[dkva] kv-cache seeded for node="); dk_putdec(drpc_my_node);
+    dtr_seed_kv_cache(me);
+    dk_puts("[dkva] kv-cache seeded for node="); dk_putdec(me);
     dk_puts("\r\n");
 
-    /* Last req_id answered per requesting node. K-DDS LATEST_ONLY QoS
-     * re-delivers the latched Q on every poll; respond only to a new
-     * req_id, else dkva_infer (which SUMS responses) would double-count. */
-    static UW last_resp_req[DNODE_MAX];
-    for (UB i = 0; i < DNODE_MAX; i++) last_resp_req[i] = 0;
+    /* per-origin の応答キャッシュ (G1 時間多重). すべて static — 小タスクスタック
+     * (4KB) に大物 (resp_cache ≈ 5.5KB) を置かない。
+     *   pend_req[o] : いま応答中の req_id (0=なし)。q/<o> は LATEST_ONLY で
+     *                 同じ Q を再配信するので、req_id 変化時だけ再計算する
+     *                 (dkva_infer は応答を SUM するので二重計上防止に必須)。
+     *   pend_ttl[o] : 残り再発行回数。新規問いが来たらリセットする。
+     * 同時に複数 origin が問うても、各 origin の応答を resp/<me> の単一スロットへ
+     * ラウンドロビンで再発行することで、どの起点も自分のポーリング窓内で
+     * 自分宛 (origin==自ノード) の応答を取り出せる。 */
+    static DKVA_RESP_PKT resp_cache[DNODE_MAX];
+    static UW  pend_req[DNODE_MAX];
+    static INT pend_ttl[DNODE_MAX];
+    for (UB i = 0; i < DNODE_MAX; i++) { pend_req[i] = 0; pend_ttl[i] = 0; }
+    UB rr = 0;
 
     for (;;) {
-        DKVA_Q_PKT qpkt = { 0 };
-        W r = kdds_sub(h_q_sub, &qpkt, (W)sizeof(qpkt), 0);
+        /* 1) 全 origin の q/<o> を走査。新しい req_id には partial を計算して
+         *    resp_cache[o] に積む (再発行用に保持)。 */
+        for (UB o = 0; o < DNODE_MAX; o++) {
+            if (o == me || h_q_sub[o] < 0) continue;
+            DKVA_Q_PKT qpkt = { 0 };
+            W r = kdds_sub(h_q_sub[o], &qpkt, (W)sizeof(qpkt), 0);
+            if (r < (W)sizeof(DKVA_Q_PKT) || qpkt.magic != DKVA_Q_MAGIC) continue;
+            if (qpkt.src_node != o || qpkt.src_node >= DNODE_MAX) continue;
+            if (qpkt.req_id == pend_req[o]) continue;   /* 既に応答中 */
 
-        if (r >= (W)sizeof(DKVA_Q_PKT) && qpkt.magic == DKVA_Q_MAGIC) {
-            /* 自分宛ではない (自分が送ったもの) / 範囲外はスキップ */
-            if (qpkt.src_node == drpc_my_node ||
-                qpkt.src_node >= DNODE_MAX) {
-                tk_dly_tsk(10);
-                continue;
-            }
-            /* 同じ要求への重複応答を抑止 (集約の多重カウント防止) */
-            if (qpkt.req_id == last_resp_req[qpkt.src_node]) {
-                tk_dly_tsk(10);
-                continue;
-            }
-            last_resp_req[qpkt.src_node] = qpkt.req_id;
+            DKVA_RESP_PKT *rc = &resp_cache[o];
+            UB *rb = (UB *)rc;
+            for (INT z = 0; z < (INT)sizeof(*rc); z++) rb[z] = 0;
+            rc->magic    = DKVA_RESP_MAGIC;
+            rc->req_id   = qpkt.req_id;
+            rc->src_node = me;
+            rc->origin   = o;
+            compute_partial(&qpkt, rc);
+            pend_req[o] = qpkt.req_id;
+            pend_ttl[o] = DKVA_ANSWER_ITERS;
+            stat_resp_sent++;
 
-            DKVA_RESP_PKT resp = { 0 };
-            resp.magic    = DKVA_RESP_MAGIC;
-            resp.req_id   = qpkt.req_id;
-            resp.src_node = drpc_my_node;
-
-            compute_partial(&qpkt, &resp);
-            if (drpc_my_node < DNODE_MAX && h_resp_pub[drpc_my_node] >= 0) {
-                kdds_pub(h_resp_pub[drpc_my_node], &resp, (W)sizeof(resp));
-                stat_resp_sent++;
-            }
-
-            dk_puts("[dkva] responded to node "); dk_putdec(qpkt.src_node);
+            dk_puts("[dkva] responded to node "); dk_putdec(o);
             dk_puts("  req="); dk_putdec(qpkt.req_id);
-            dk_puts("  entries="); dk_putdec(resp.n_entries); dk_puts("\r\n");
+            dk_puts("  entries="); dk_putdec(rc->n_entries); dk_puts("\r\n");
 
-            /* 自 region の coordinator なら、partial を集約して region 要約を
-             * rsum/<my_node> (GLOBAL) へ発行する (regions R2, Y の階層集約)。 */
-            if (region_coordinator() == drpc_my_node)
-                coordinator_aggregate(&qpkt, &resp);
+            /* 自 region の coordinator かつ他 region が存在するときだけ、region
+             * partial を畳んで rsum/<me> を発行する (regions R2, Y)。単一 region
+             * では rsum は誰も読まないので集約 (200ms 窓) を省き、同時多発の
+             * 時間多重をブロックしない (G1)。region_coordinator() が
+             * region_recompute() するので have_remote_region() は最新を見る。 */
+            if (region_coordinator() == me && have_remote_region())
+                coordinator_aggregate(&qpkt, rc);
+        }
+
+        /* 2) pending な応答を 1 つラウンドロビンで resp/<me> へ再発行 (時間多重)。
+         *    1 反復に 1 件だけ発行することで、各 origin の応答が単一スロットに
+         *    一定時間ずつ滞在し、全起点が自分宛を取りこぼさない。 */
+        if (me < DNODE_MAX && h_resp_pub[me] >= 0) {
+            for (INT scan = 0; scan < DNODE_MAX; scan++) {
+                rr = (UB)((rr + 1) % DNODE_MAX);
+                if (pend_ttl[rr] > 0) {
+                    kdds_pub(h_resp_pub[me], &resp_cache[rr],
+                             (W)sizeof(DKVA_RESP_PKT));
+                    pend_ttl[rr]--;
+                    break;
+                }
+            }
         }
 
         tk_dly_tsk(10);
@@ -537,39 +606,57 @@ void dkva_init(void)
     stat_req_sent = stat_resp_got = stat_timeout = stat_resp_sent = 0;
     for (INT i = 0; i < DKVA_CACHE_SIZE; i++) kv_cache[i].valid = 0;
     for (UB n = 0; n < DNODE_MAX; n++) {
+        h_q_pub[n]    = -1; h_q_sub[n]    = -1;
         h_resp_pub[n] = -1; h_resp_sub[n] = -1;
         h_rsum_pub[n] = -1; h_rsum_sub[n] = -1;
     }
 
     /* 階層集約 (regions R2, Y — docs/architecture/regions.md):
-     *   Q     : GLOBAL  — 全 region のノードが partial を計算する
+     *   Q     : GLOBAL  — 全 region のノードが partial を計算する (per-origin, G1)
      *   resp  : REGION  — per-node partial は自 region 内に留まる (密)
      *   rsum  : GLOBAL  — coordinator の region 要約だけ region 間を渡る (疎)
      * これで通信は region 内 O(region²) + region 間 O(#region) に収まりつつ、
-     * 結果は単一ノード全体 attention と厳密に一致する。 */
-    h_q_pub    = kdds_open_scoped(DKVA_TOPIC_Q, KDDS_QOS_LATEST_ONLY,
-                                  KDDS_SCOPE_GLOBAL);
-    h_q_sub    = kdds_open_scoped(DKVA_TOPIC_Q, KDDS_QOS_LATEST_ONLY,
-                                  KDDS_SCOPE_GLOBAL);
-
-    /* per-source トピックを全ノード分開く (drpc_my_node が未確定の段階なので
-     * どれが自分のものか決め打ちできない)。実行時にノード ID で選ぶ。 */
+     * 結果は単一ノード全体 attention と厳密に一致する。
+     *
+     * トピック名は drpc_my_node に依存しない (q/<o>, resp/<n>, rsum/<rid>) ので、
+     * my_node 未確定の boot 段階で全 DNODE_MAX 分を pre-open でき、実行時に
+     * ノード ID で選べる。全ハンドルは timeout=0 ポーリングで読むため
+     * kdds_open_poll_scoped (zero-sem) で開く。 */
     for (UB n = 0; n < DNODE_MAX; n++) {
         char tn[KDDS_NAME_MAX];
+        node_topic_name(tn, DKVA_TOPIC_Q_PFX, n);      /* q は GLOBAL (per-origin) */
+        h_q_pub[n]    = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_GLOBAL);
+        h_q_sub[n]    = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_GLOBAL);
         node_topic_name(tn, DKVA_TOPIC_RESP_PFX, n);   /* resp は REGION */
-        h_resp_pub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                         KDDS_SCOPE_REGION);
-        h_resp_sub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                         KDDS_SCOPE_REGION);
+        h_resp_pub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_REGION);
+        h_resp_sub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_REGION);
         node_topic_name(tn, DKVA_TOPIC_RSUM_PFX, n);   /* rsum は GLOBAL */
-        h_rsum_pub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                         KDDS_SCOPE_GLOBAL);
-        h_rsum_sub[n] = kdds_open_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                         KDDS_SCOPE_GLOBAL);
+        h_rsum_pub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_GLOBAL);
+        h_rsum_sub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
+                                              KDDS_SCOPE_GLOBAL);
     }
 
-    dk_puts("[dkva] initialized (hierarchical)  cache="); dk_putdec(DKVA_CACHE_SIZE);
-    dk_puts("  Q=global resp=region rsum=global\r\n");
+    /* ── 容量検算 (DNODE_MAX=32, wave 10 G1) ───────────────────────────
+     *  dkva が pre-open する数 (1 ノードあたり):
+     *    トピック : q 32 + resp 32 + rsum 32              = 96   (< KDDS_TOPIC_MAX  160)
+     *    ハンドル : (pub+sub) × 3 × 32                    = 192  (< KDDS_HANDLE_MAX 320)
+     *    セマフォ : 0  ← 全て kdds_open_poll_scoped(zero-sem)(< CFN_MAX_SEMID   256)
+     *  per-origin Q (G1) は単一トピック (+1) を 32 トピック (+31) に増やすが、
+     *  旧実装は q/resp/rsum を blocking open して 130 個のセマフォを浪費していた。
+     *  これらは全て timeout=0 ポーリングで読むので poll-open に切替え、dkva の
+     *  セマフォ消費を 0 にした → CFN_MAX_SEMID を上げる必要なし。
+     *  注: 実クラスタは regions が近接ノードを小さく束ねるため、moe/world 等の
+     *  per-source トピックと合算しても 1 ホストで 32 ノード全部を同時開放する
+     *  構成は元々取らない (テストは ≤4 ノード, 実測トピック数 << 160)。 */
+
+    dk_puts("[dkva] initialized (hierarchical, per-origin Q)  cache=");
+    dk_putdec(DKVA_CACHE_SIZE);
+    dk_puts("  Q=global resp=region rsum=global (poll, zero-sem)\r\n");
 }
 
 /* ------------------------------------------------------------------ */

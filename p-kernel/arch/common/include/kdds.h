@@ -127,6 +127,13 @@ W kdds_open_scoped(const char *name, W qos, W scope);
  * 軽量オープン。スコープは GLOBAL。 */
 W kdds_open_poll(const char *name, W qos);
 
+/* poll-only オープンの scope 指定版 (wave 10, G1)。kdds_open_poll と同じく
+ * セマフォを 1 つも消費しないが、REGION スコープ等を指定できる。dkva の
+ * per-origin/per-source トピック (q=GLOBAL, resp=REGION, rsum=GLOBAL) は
+ * すべて timeout=0 ポーリングで読むのでブロッキング sem が要らない →
+ * これで開けば dkva は CFN_MAX_SEMID を 1 つも使わない。 */
+W kdds_open_poll_scoped(const char *name, W qos, W scope);
+
 /* 直近の kdds_pub() が UDP 送信したピア数 (fanout)。スコープの効果を観測する
  * デモ/検証用。GLOBAL なら全 peer 数、REGION なら region メンバ数になる。 */
 UW kdds_pub_fanout(void);

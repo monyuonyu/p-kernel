@@ -37,6 +37,62 @@ SWIM が SUSPECT を広告した後は region_recompute がそのノードを re
 degraded は付かない。degraded が出るのは「群れの自己認識がまだ死に
 追いついていない窓」だけ — それがこの規約の正直さの定義である。
 
+## 同時多発 — 網全体で多数の問いを並行して立てる (wave 10, G1)
+
+§5 の「同時に数百件…並行して立ち上がる」を本物にするには、推論の起点が
+互いを潰さないことが要る。以前は Query が単一の共有ラッチトピック
+(`dtr/dkva/q`) を使っており、異なる起点が同時に問うと後の Q が前の Q を
+**上書き**して、上書きされた側は誰も応答しなかった — 網全体で in-flight な
+問いは実質 **1 つだけ**という隠れた直列化点 (= 隠れた中央) だった。
+
+修正は三段:
+
+1. **per-origin Query** — Q を起点ごとの `dtr/dkva/q/<origin>` へ発行する
+   (resp/rsum と同じ per-source 方式)。各起点が独立ラッチを持つので、
+   同時に問うても互いを潰さない。responder は全 origin の `q/<o>` を購読する。
+2. **origin で取り違えを消す** — `DKVA_RESP_PKT` に `origin` フィールドを
+   足し、requester は自分宛 (`origin == 自ノード`) の応答だけ受理する。
+   req_id が起点間で衝突しても origin で曖昧さが消える。
+3. **応答スロットの時間多重** — 1 つの responder の `resp/<n>` スロットも、
+   複数起点が同時に問えば起点間で上書きし合う。responder は pending な
+   各 origin の応答を **ラウンドロビンで再発行** (1 反復 1 件) するので、
+   どの起点も自分のポーリング窓内で自分宛の応答を取りこぼさない。
+
+これで `samples/13_survival_loop/concurrent_infer.sh` シナリオ A の通り、
+node1 と node2 (さらに node3) が**同フレームで**推論を発行しても両方が完遂し、
+各起点の出力指紋 (fp) は単独実行のベースラインと一致する (混線しない)。
+
+容量は据え置きで足りる (`dkva_init` のコメント参照): dkva の pre-open は
+1 ノードあたり トピック 96 / ハンドル 192 / **セマフォ 0** (全て
+`kdds_open_poll_scoped` の zero-sem)。per-origin Q を足してもセマフォ枠は
+増えない — 旧実装が blocking open で浪費していた 130 個を poll 化で 0 にした。
+
+## region 横断の正直さ — 他 region が欠けても黙って成功にしない (wave 10, G2/G8)
+
+degraded(k/n) は当初**自 region の期待集合しか数えていなかった**。他 region の
+寄与は coordinator が `rsum/<rid>` で運ぶが、その rsum が (coordinator 死亡 ＝
+G8、パケット欠損で) 届かなくても degraded が付かず、縮んだ群れを黙って成功
+扱いにしていた — death-piercing の正直さ規約の region 横断の穴。
+
+修正は期待集合を二層にした:
+
+- **expect[n]** : fan-out 時に生存と見ている自 region の peer (直接 partial を待つ)。
+- **rc_expect[c]** : 応答すべき他 region の coordinator `c` (rsum を待つ)。
+  どの remote ノードがどの region に属すかは、各ノードが self-beacon で広告する
+  `region_id` を world マップ (`world_peer_region()`) から引いて束ねる。中央の
+  真実ではなく**受信したゴシップだけ**から組む (NO-CENTRAL)。gossip 未着なら
+  各 remote ノードを 1 region とみなし保守的に数える (黙って成功にしないため)。
+
+degraded の分母は `1 (自分) + 期待した region peer + 期待した他 region` となり、
+**coordinator の消失 (G8) もこの分母に乗る**ので、その region の寄与が無音で
+消えることはなくなった。SWIM が DEAD と判定した region は待たない (ハングしない)
+が、欠損として degraded に正直計上する。`concurrent_infer.sh` シナリオ B で、
+2 region 構成の他 region をまるごと kill すると `degraded (2/3)` が必ず出て完遂する。
+
+G8 のストレッチ (coordinator 死亡時に region 内の次点が in-flight rsum を
+肩代わりする) は未実装。今は「失われた」と正直に言うところまでで、これは
+下記「残課題 — 自動引き継ぎ」と同じ系譜の次の波。
+
 ## 起点の特権を消す
 
 - `dkva_infer` 自体にノード ID 前提はもともと無い (src_node は
@@ -64,5 +120,9 @@ degraded は付かない。degraded が出るのは「群れの自己認識が�
 
 - `samples/13_survival_loop/kill_one.sh` — シナリオ A/B/C、失敗時
   exit 非0、タイムスタンプ付きログ。詳細は同ディレクトリの README。
+- `samples/13_survival_loop/concurrent_infer.sh` — 同時多発 (G1) と
+  region 横断の正直な degraded (G2/G8) を実証。シナリオ A: 複数起点の
+  同フレーム推論が両方完遂・fp 一致。シナリオ B: 他 region 全滅で
+  `degraded (k/n)` を必ず出力して完遂。
 - `.github/workflows/ci.yml` の `survival-loop` job — ubuntu 上で
   boot/linux_x86_64 + relay をビルドし kill_one.sh を回す (15 分制限)。

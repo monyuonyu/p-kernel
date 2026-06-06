@@ -185,6 +185,11 @@ W kdds_open_poll(const char *name, W qos)
     return kdds_open_core(name, qos, KDDS_SCOPE_GLOBAL, 0);
 }
 
+W kdds_open_poll_scoped(const char *name, W qos, W scope)
+{
+    return kdds_open_core(name, qos, scope, 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* kdds_pub                                                            */
 /* ------------------------------------------------------------------ */
