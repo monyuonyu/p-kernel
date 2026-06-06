@@ -51,6 +51,7 @@ IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
 IMPORT void dkva_init(void);
 IMPORT void dkva_task(INT stacd, void *exinf);
+IMPORT void dkva_cmd(const UB *args, UW len);
 
 extern char *getenv(const char *);
 
@@ -85,6 +86,7 @@ static void cmd_help(void)
     print("  dtr crash - fault-inject the guarded worker (NULL write); guard recovers\r\n");
     print("  guard  - guarded-task table (fault isolation + auto-respawn)\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
+    print("  dkva [infer [a b c d]] - distributed KV attention from THIS node\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
@@ -477,6 +479,11 @@ EXPORT INT usermain(void)
             ai_stats_print();
         } else if (starts_with(line, n, "infer")) {
             cmd_infer(line, n);
+        } else if (starts_with(line, n, "dkva")) {
+            /* "dkva" -> stats; "dkva infer [a b c d]" -> distributed
+             * attention with THIS node as the requester (any node may
+             * be the origin — survival, wave 8) */
+            dkva_cmd(line + 4, (UW)(n - 4));
         } else if (starts_with(line, n, "dist")) {
             degrade_stat();
         } else if (starts_with(line, n, "nodes")) {

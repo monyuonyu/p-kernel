@@ -4,13 +4,13 @@
  *
  *  【動作フロー】
  *
- *  Requester (node0, FULL mode, dkva_infer から):
+ *  Requester (どのノードでもよい — dkva_infer / dkva_cmd から):
  *    1. DKVA_Q_PKT を "dtr/dkva/q" へ pub
  *    2. 各ノードの "dtr/dkva/resp/<node>" を順にポーリングして
  *       DKVA_RESP_PKT を収集 (per-source topic なので peer ごとに独立)
  *    3. partial_out を集約して mhsa_out を計算
  *
- *  Responder (node1,2,..., dkva_task から):
+ *  Responder (requester 以外の全ノード, dkva_task から):
  *    1. "dtr/dkva/q" を sub してキャッシュに対して Attention 計算
  *    2. partial_out + attn_sum を自ノード "dtr/dkva/resp/<my_node>" へ pub
  *
@@ -91,6 +91,7 @@ static UW stat_req_sent  = 0;
 static UW stat_resp_got  = 0;
 static UW stat_timeout   = 0;
 static UW stat_resp_sent = 0;
+static UW stat_degraded  = 0;   /* 部分集約で完遂した回数 (survival, wave 8) */
 
 /* ------------------------------------------------------------------ */
 /* K-DDS ハンドル                                                     */
@@ -328,7 +329,31 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
     INT  rsum_cnt  = 0;       /* 畳んだ他 region 要約数              */
     UB   got [DNODE_MAX];     /* 自 region partial の重複防止        */
     UB   rgot[DNODE_MAX];     /* 他 region 要約の重複防止 (rid 単位)  */
-    for (UB i = 0; i < DNODE_MAX; i++) { got[i] = 0; rgot[i] = 0; }
+
+    /* --- 死を待たない (survival, wave 8) -----------------------------
+     * expect[n]=1 は「fan-out 時点で SWIM が生存中 (ALIVE/SUSPECT) と
+     * 見ている自 region のピア」。待ち合わせの対象はこの集合だけ:
+     *   ・SWIM が DEAD と判定済みのノードは最初から待たない。
+     *   ・待っている間に DEAD へ遷移したノードは期待集合から外す。
+     *   ・自 region 外に生存ノードが居なければ (rsum はそこからしか
+     *     来ない)、期待集合が満たされ次第タイムアウトを待たず確定する。
+     * exp_cnt0 は fan-out 時の期待 peer 数 — degraded (k/n) の分母。
+     * exp_cnt0==0 のときは早期確定しない: SWIM がまだ peer を発見して
+     * いないだけかもしれないので、従来どおり全窓ポーリングする。 */
+    UB   expect[DNODE_MAX];
+    INT  exp_cnt0     = 0;    /* fan-out 時に期待した peer 数        */
+    INT  exp_got      = 0;    /* うち実際に応答した数                */
+    INT  remote_alive = 0;    /* 自 region 外の生存ノード数 (rsum 源) */
+    region_recompute();
+    for (UB i = 0; i < DNODE_MAX; i++) {
+        got[i] = 0; rgot[i] = 0; expect[i] = 0;
+        if (i == drpc_my_node) continue;
+        UB st = dnode_table[i].state;
+        if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
+        if (region_is_member(i)) { expect[i] = 1; exp_cnt0++; }
+        else                       remote_alive++;
+    }
+
     while (tmo_left > 0) {
         for (UB n = 0; n < DNODE_MAX; n++) {
             /* --- 自 region の per-source partial --- */
@@ -339,6 +364,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     rp.magic == DKVA_RESP_MAGIC && rp.req_id == req_id &&
                     rp.src_node == n) {
                     got[n] = 1;
+                    if (expect[n]) exp_got++;
                     resp_cnt++;
                     stat_resp_got++;
                     total_entries += rp.n_entries;
@@ -363,6 +389,24 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                 }
             }
         }
+
+        /* SWIM が待っている間に DEAD と判定したノードはもう待たない */
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (expect[n] && !got[n] && dnode_table[n].state == DNODE_DEAD) {
+                expect[n] = 0;
+                dk_puts("[dkva] not waiting for node "); dk_putdec(n);
+                dk_puts(" (SWIM: DEAD)\r\n");
+            }
+        }
+        /* 期待集合が満たされ、rsum を出し得る他 region の生存ノードも
+         * 居なければ、タイムアウトを待たずに確定する。 */
+        if (exp_cnt0 > 0 && remote_alive == 0) {
+            INT pending = 0;
+            for (UB n = 0; n < DNODE_MAX; n++)
+                if (expect[n] && !got[n]) pending++;
+            if (pending == 0) break;
+        }
+
         tk_dly_tsk(20);
         tmo_left -= 20;
     }
@@ -371,6 +415,17 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         stat_timeout++;
         dk_puts("[dkva] timeout: no remote contribution\r\n");
         return E_TMOUT;
+    }
+
+    /* 部分集約の正直さ規約 (survival, wave 8): fan-out 時に期待した peer が
+     * 欠けたまま完遂するときは、黙って成功にせず必ず明示する。
+     * k/n = 自分を含む寄与ノード数 / fan-out 時に期待したノード数。 */
+    if (exp_got < exp_cnt0) {
+        stat_degraded++;
+        dk_puts("[dkva] degraded ("); dk_putdec((UW)(exp_got + 1));
+        dk_puts("/"); dk_putdec((UW)(exp_cnt0 + 1));
+        dk_puts("): completed with partial aggregation  req=");
+        dk_putdec(req_id); dk_puts("\r\n");
     }
 
     /* 正規化: attn_out[t][h] = total_out[t][h] / total_sum[t][h] */
@@ -409,8 +464,8 @@ void dkva_task(INT stacd, void *exinf)
     (void)stacd; (void)exinf;
     if (drpc_my_node == 0xFF) return;
 
-    /* node0 は Requester なので Responder は不要 (兼任も可) */
-    /* 全ノードが Responder として動作する */
+    /* 全ノードが Responder として動作する。Requester も特定ノードでは
+     * なく「いま問いを発行したノード」でしかない (起点に特権はない)。 */
 
     dk_puts("[dkva] responder task started  node=");
     dk_putdec(drpc_my_node); dk_puts("\r\n");
@@ -529,4 +584,103 @@ void dkva_stat(void)
     dk_puts("[dkva] resp_got  : "); dk_putdec(stat_resp_got);  dk_puts("\r\n");
     dk_puts("[dkva] resp_sent : "); dk_putdec(stat_resp_sent); dk_puts("\r\n");
     dk_puts("[dkva] timeout   : "); dk_putdec(stat_timeout);   dk_puts("\r\n");
+    dk_puts("[dkva] degraded  : "); dk_putdec(stat_degraded);  dk_puts("\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* シェルコマンド: どのノードからでも分散 attention を発行できる        */
+/*                                                                     */
+/*   dkva                  → 統計表示 (dkva_stat)                       */
+/*   dkva infer [a b c d]  → 4 つの int8 値から決定論的に Q を合成し    */
+/*                           dkva_infer を「このノードを起点に」実行    */
+/*                                                                     */
+/* dtr.c の FULL 経路は偶数 node id だけを requester にする heuristic   */
+/* を持つが、このコマンドはノード ID に一切依存しない。同じ引数なら     */
+/* どのノードから発行しても同じ問い (同じ Q) になるので、「起点が死ん   */
+/* でも生き残りが同じ問いを発行して完遂できる」ことをそのまま示せる     */
+/* (survival, wave 8 — 起点はただの呼び出し元であり特権ではない)。      */
+/* ------------------------------------------------------------------ */
+
+static UW dkva_cmd_seq = 0;   /* dtr_req_counter (小さい整数) と衝突しない
+                               * よう 9,000,000 番台を使う           */
+
+/* [*pp, end) から 10 進整数を 1 つ読む。読めたら 1。 */
+static INT dk_parse_int(const UB **pp, const UB *end, INT *out)
+{
+    const UB *p = *pp;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    INT neg = 0;
+    if (p < end && *p == '-') { neg = 1; p++; }
+    if (p >= end || *p < '0' || *p > '9') return 0;
+    INT v = 0;
+    while (p < end && *p >= '0' && *p <= '9') { v = v * 10 + (INT)(*p - '0'); p++; }
+    *out = neg ? -v : v;
+    *pp  = p;
+    return 1;
+}
+
+void dkva_cmd(const UB *args, UW len)
+{
+    const UB *p   = args;
+    const UB *end = args + len;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+
+    /* verb "infer" 以外は統計表示 */
+    static const char verb[] = "infer";
+    INT vi = 0;
+    while (verb[vi] && p + vi < end && (char)p[vi] == verb[vi]) vi++;
+    if (verb[vi] != '\0') { dkva_stat(); return; }
+    p += 5;
+
+    if (drpc_my_node == 0xFF) {
+        dk_puts("[dkva-cmd] mesh not up (run 'net' first)\r\n");
+        return;
+    }
+
+    INT v[4] = { 40, 80, 30, 10 };        /* default demo sensor vector */
+    for (INT i = 0; i < 4; i++) {
+        INT x;
+        if (!dk_parse_int(&p, end, &x)) break;
+        if (x >  127) x =  127;
+        if (x < -128) x = -128;
+        v[i] = x;
+    }
+
+    /* Q を引数から決定論的に合成: 同じ引数 → 同じ問い。どのノードが
+     * 発行しても同一になるよう、ノード ID は混ぜない。 */
+    static float Q[DKVA_SEQ][DKVA_NH][DKVA_DH];
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++)
+            for (INT d = 0; d < DKVA_DH; d++) {
+                INT m = v[(t + h + d) & 3];
+                Q[t][h][d] =
+                    (float)((m * (t + 1) + 7 * h + 3 * d) % 23 - 11) / 11.0f;
+            }
+
+    /* W_o = 単位行列: attention 出力をそのまま観測する */
+    static float W_o[DKVA_DM][DKVA_DM];
+    for (INT i = 0; i < DKVA_DM; i++)
+        for (INT j = 0; j < DKVA_DM; j++)
+            W_o[i][j] = (i == j) ? 1.0f : 0.0f;
+
+    UW req = 9000000UL + (UW)drpc_my_node * 10000UL + (++dkva_cmd_seq);
+
+    dk_puts("[dkva-cmd] infer from node "); dk_putdec(drpc_my_node);
+    dk_puts("  req="); dk_putdec(req); dk_puts("\r\n");
+
+    static float out[DKVA_SEQ][DKVA_DM];
+    ER er = dkva_infer(Q, W_o, out, req);
+    if (er != E_OK) {
+        dk_puts("[dkva-cmd] => FAILED (E_TMOUT: no remote contribution)  req=");
+        dk_putdec(req); dk_puts("\r\n");
+        return;
+    }
+
+    /* 出力指紋: Σ|out| を 100 倍した整数。完遂の機械検証用。 */
+    float acc = 0.0f;
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT m = 0; m < DKVA_DM; m++)
+            acc += out[t][m] >= 0.0f ? out[t][m] : -out[t][m];
+    dk_puts("[dkva-cmd] => OK  req="); dk_putdec(req);
+    dk_puts("  fp="); dk_putdec((UW)(acc * 100.0f)); dk_puts("\r\n");
 }

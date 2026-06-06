@@ -12,7 +12,7 @@
  *    ノードが増えるほど KV コンテキストが広がり、推論精度が向上する。
  *
  *  プロトコル (K-DDS):
- *    "dtr/dkva/q"          : Query ブロードキャスト (node0 → 全ノード)
+ *    "dtr/dkva/q"          : Query ブロードキャスト (任意の起点 → 全ノード)
  *    "dtr/dkva/resp/<node>": 部分 Attention レスポンス (ノードごとに別トピック)
  *
  *  KV キャッシュ:
@@ -57,7 +57,7 @@
 #define DKVA_Q_MAGIC     0x51564B44UL   /* "DKVQ" LE */
 #define DKVA_RESP_MAGIC  0x52564B44UL   /* "DKVR" LE */
 
-/* Query パケット: node0 が全ノードにブロードキャスト */
+/* Query パケット: 起点ノード (どれでもよい) が全ノードにブロードキャスト */
 typedef struct {
     UW    magic;          /* DKVA_Q_MAGIC                         */
     UW    req_id;         /* リクエスト ID                        */
@@ -96,9 +96,14 @@ void dkva_cache_update(const float K[DKVA_NH][DKVA_SEQ][DKVA_DH],
 
 /*
  * 分散 KV Attention を実行し、mhsa_out[SEQ][DM] を返す。
- * dtr.c の FULL モードから呼ぶ。
- * 失敗 (タイムアウト等) の場合は E_TMOUT を返し、
- * ローカル MHSA にフォールバックする。
+ * dtr.c の FULL モードおよび dkva_cmd から、どのノードでも呼べる。
+ *
+ * 部分集約 (survival, wave 8):
+ *   fan-out 時に SWIM が生存と見ていた peer が欠けても、resp_cnt >= 1
+ *   なら部分結果で完遂し "degraded (k/n)" を明示出力する (黙って成功に
+ *   しない)。SWIM が DEAD と判定済みのノードは最初から待たない。
+ *   リモート寄与がゼロのときだけ E_TMOUT を返し、呼び出し側は
+ *   ローカル MHSA にフォールバックする。
  */
 ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               const float W_o[DKVA_DM][DKVA_DM],
@@ -106,3 +111,11 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               UW req_id);
 
 void dkva_stat(void);
+
+/*
+ * シェルコマンド "dkva [infer [a b c d]]"。
+ * 引数から決定論的に Q を合成し、このノードを起点に dkva_infer を回す。
+ * ノード ID に依存しない: 起点が死んでも、生き残りのどのノードからでも
+ * 同じ問いを発行して完遂できる (survival, wave 8)。
+ */
+void dkva_cmd(const UB *args, UW len);
