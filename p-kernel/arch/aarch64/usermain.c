@@ -31,6 +31,7 @@
 #include "raft.h"
 #include "spawn.h"
 #include "moe.h"
+#include "world.h"
 #include "kloader_task.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -75,6 +76,8 @@ static int strneq(const UB *a, const char *b, INT n)
 #define RAFT_STACK          2048
 #define MOE_PRIORITY        8
 #define MOE_STACK           2048
+#define WORLD_PRIORITY      7
+#define WORLD_STACK         4096
 #define KLOADER_PRIORITY    9
 #define KLOADER_STACK       4096
 
@@ -151,6 +154,10 @@ static void distributed_init(UB nid, UW nip)
     moe_init();
     try_task((FP)moe_task, MOE_PRIORITY, MOE_STACK, "moe task");
 
+    /* World map — self-beacon + gossip 取り込み常駐タスク。
+     * 全ノードで同一に走る (中央なし — world.h NO-CENTRAL 不変条件) */
+    try_task((FP)world_task, WORLD_PRIORITY, WORLD_STACK, "world task");
+
     /* OTA: kloader receives KLOAD frames + auto-pushes to bare nodes. */
     kloader_task_init();
     try_task((FP)kloader_task, KLOADER_PRIORITY, KLOADER_STACK, "kloader task");
@@ -215,7 +222,12 @@ EXPORT INT usermain(void)
     kdds_init();
     dtr_init();
 
-    print("\r\nCommands: ai (show stats) | net (init RTL8139) | echo: any text\r\n");
+    /* World map — decentralized situational awareness. Init here so the
+     * `world` command works even single-node; the beacon task starts in
+     * distributed_init() once the node ID is known. */
+    world_init();
+
+    print("\r\nCommands: ai (show stats) | net (init RTL8139) | world/map (network map) | echo: any text\r\n");
     print("p-kernel> ");
 
     for (;;) {
@@ -232,6 +244,9 @@ EXPORT INT usermain(void)
             net_bringup();
         } else if (n >= 3 && strneq(line, "arp", 3)) {
             arp_dump();
+        } else if ((n >= 5 && strneq(line, "world", 5)) ||
+                   (n >= 3 && strneq(line, "map", 3))) {
+            world_print();
         } else if (n >= 2 && strneq(line, "rx", 2)) {
             extern unsigned long rtl_mmio_for_diag;
             extern volatile UW net_rx_arp, net_rx_udp, net_rx_icmp_req, net_rx_tcp;

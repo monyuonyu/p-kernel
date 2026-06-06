@@ -36,7 +36,13 @@
  * "dtr/dkva/resp/<node>" にすることで responder ごとに独立した
  * ラッチスロットを持たせ、全 peer の partial が確実に届くようにする。 */
 #define DKVA_TOPIC_RESP_PFX "dtr/dkva/resp/"   /* + 1 桁ノード ID         */
+/* region 要約トピック (GLOBAL スコープ)。coordinator が自 region の partial を
+ * 集約した {分子 partial_out, 分母 attn_sum} を "dtr/dkva/rsum/<rid>" へ発行し、
+ * requester が region 間で疎に畳む。階層集約で全体 attention を厳密復元する
+ * (regions R2, Y — docs/architecture/regions.md)。rid = coordinator のノード ID。*/
+#define DKVA_TOPIC_RSUM_PFX "dtr/dkva/rsum/"   /* + 1 桁 coordinator ID    */
 #define DKVA_INFER_TMO    600   /* 分散 Attention タイムアウト (ms) */
+#define DKVA_RSUM_WIN_MS  200   /* coordinator が region partial を集める窓 */
 
 /* モデル次元 (dtr.h と合わせる) */
 #define DKVA_SEQ   4   /* トークン数    */

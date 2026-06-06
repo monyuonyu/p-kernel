@@ -20,7 +20,12 @@
 #include "netstack.h"
 #include "replica.h"
 #include "pmesh.h"
+#include "region.h"
 #include "kernel.h"
+
+/* 直近の kdds_pub() の fanout (UDP 送信したピア数) — スコープ効果の観測用 */
+static UW kdds_last_fanout = 0;
+UW kdds_pub_fanout(void) { return kdds_last_fanout; }
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -78,14 +83,27 @@ static void kd_memcpy(void *dst, const void *src, INT n)
 /* トピック検索 / 作成                                                 */
 /* ------------------------------------------------------------------ */
 
-/* 名前でトピックを検索する。見つからなければ新規スロットを確保する。
- * 返り値: インデックス (0..KDDS_TOPIC_MAX-1) または -1 (失敗) */
-static W topic_find_or_create(const char *name, W qos)
+/* 名前でトピックを検索する (既存のみ)。見つからなければ -1。 */
+static W topic_find(const char *name)
 {
-    /* 既存検索 */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
         if (kdds_topics[i].open && kd_streq(kdds_topics[i].name, name))
             return i;
+    }
+    return -1;
+}
+
+/* 名前でトピックを検索する。見つからなければ新規スロットを確保する。
+ * 返り値: インデックス (0..KDDS_TOPIC_MAX-1) または -1 (失敗) */
+static W topic_find_or_create(const char *name, W qos, W scope)
+{
+    /* 既存検索 — 見つかればスコープを更新 (REGION への昇格を許す) */
+    {
+        W i = topic_find(name);
+        if (i >= 0) {
+            kdds_topics[i].scope = (UB)scope;
+            return i;
+        }
     }
     /* 空きスロット確保 */
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
@@ -93,6 +111,7 @@ static W topic_find_or_create(const char *name, W qos)
             kd_strcpy(kdds_topics[i].name, name, KDDS_NAME_MAX);
             kdds_topics[i].data_len = 0;
             kdds_topics[i].qos      = (UB)qos;
+            kdds_topics[i].scope    = (UB)scope;
             kdds_topics[i].open     = 1;
             return i;
         }
@@ -106,7 +125,19 @@ static W topic_find_or_create(const char *name, W qos)
 
 W kdds_open(const char *name, W qos)
 {
-    W tidx = topic_find_or_create(name, qos);
+    return kdds_open_scoped(name, qos, KDDS_SCOPE_GLOBAL);
+}
+
+/* 共通実装。blocking != 0 なら subscriber 用セマフォを作る。
+ * blocking == 0 (poll-only) なら sem を作らずハンドルだけ確保する。
+ * poll-only は LATEST_ONLY + timeout=0 ポーリング購読で使う: kdds_sub は
+ * データがあればセマフォに触れず即時返却し、kdds_rx も sub_sem<0 を skip する
+ * ので、ブロックしない購読者はセマフォを1個も消費しない。
+ * (CFN_MAX_SEMID は TCB ABI に縛られて増やせないため、per-source topic を
+ *  大量に開く world/moe のような購読者がセマフォを枯渇させない逃げ道。) */
+static W kdds_open_core(const char *name, W qos, W scope, int blocking)
+{
+    W tidx = topic_find_or_create(name, qos, scope);
     if (tidx < 0) {
         kd_puts("[kdds] topic table full\r\n");
         return -1;
@@ -115,28 +146,43 @@ W kdds_open(const char *name, W qos)
     /* ハンドルスロット確保 */
     for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
         if (!kdds_handles[h].open) {
-            /* subscriber 用セマフォを作成する */
-            T_CSEM cs = {
-                .exinf   = NULL,
-                .sematr  = TA_TFIFO,
-                .isemcnt = 0,
-                .maxsem  = 64
-            };
-            ID sem = tk_cre_sem(&cs);
-            if (sem < E_OK) return (W)sem;
+            ID sem = -1;
+            if (blocking) {
+                /* subscriber 用セマフォを作成する */
+                T_CSEM cs = {
+                    .exinf   = NULL,
+                    .sematr  = TA_TFIFO,
+                    .isemcnt = 0,
+                    .maxsem  = 64
+                };
+                sem = tk_cre_sem(&cs);
+                if (sem < E_OK) return (W)sem;
+            }
 
             kdds_handles[h].topic_idx = tidx;
             kdds_handles[h].sub_sem   = sem;
             kdds_handles[h].open      = 1;
 
             kd_puts("[kdds] open  topic=\""); kd_puts(name);
-            kd_puts("\"  handle="); kd_putdec((UW)h); kd_puts("\r\n");
+            kd_puts("\"  handle="); kd_putdec((UW)h);
+            if (!blocking) kd_puts(" (poll)");
+            kd_puts("\r\n");
             return h;
         }
     }
 
     kd_puts("[kdds] handle table full\r\n");
     return -1;
+}
+
+W kdds_open_scoped(const char *name, W qos, W scope)
+{
+    return kdds_open_core(name, qos, scope, 1);
+}
+
+W kdds_open_poll(const char *name, W qos)
+{
+    return kdds_open_core(name, qos, KDDS_SCOPE_GLOBAL, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -181,10 +227,21 @@ W kdds_pub(W handle, const void *data, W len)
         kd_memcpy(pkt.name, t->name, nlen);
         kd_memcpy(pkt.data, data, len);
 
+        /* REGION スコープなら自 region メンバにだけ送る。region_recompute()
+         * を一度回し、ループ内は region_is_member() で安く判定する。 */
+        BOOL region_scoped = (t->scope == KDDS_SCOPE_REGION);
+        if (region_scoped) region_recompute();
+
+        UW fanout = 0;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
+            if (region_scoped && !region_is_member(n)) continue;
             pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
+            fanout++;
         }
+        kdds_last_fanout = fanout;
+    } else {
+        kdds_last_fanout = 0;
     }
 
     return 0;
@@ -268,8 +325,15 @@ void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len)
     if (pkt->type  != KDDS_DATA_PKT) return;
     if (pkt->data_len == 0 || pkt->data_len > KDDS_DATA_MAX) return;
 
-    /* トピックを検索 (なければ作成) */
-    W tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY);
+    /* トピックを検索 (なければ作成)。スコープは送信側でのみ強制されるので
+     * 受信側は GLOBAL で「作る」— だが既存トピックのスコープは触らない。
+     * (以前は find_or_create が既存スロットのスコープも GLOBAL に上書きして
+     *  いた: REGION スコープで開いた pfs/ann 等が、最初の受信パケットで
+     *  こっそり GLOBAL 配送へ昇格してしまい、region 局所性が壊れていた。) */
+    W tidx = topic_find(pkt->name);
+    if (tidx < 0)
+        tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY,
+                                    KDDS_SCOPE_GLOBAL);
     if (tidx < 0) return;
 
     KDDS_TOPIC *t = &kdds_topics[tidx];

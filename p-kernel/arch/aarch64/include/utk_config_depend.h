@@ -28,7 +28,9 @@
 
 /* Object limits — keep same as x86 for compatibility */
 #define CFN_MAX_TSKID       128
-#define CFN_MAX_SEMID       48
+#define CFN_MAX_SEMID       256  /* DNODE_MAX=32: kdds_open は handle ごとに
+                                  * sem を作る。dkva だけで 2×DNODE_MAX+2≈66 必要。
+                                  * linux config と一致させること (TCB layout)。 */
 #define CFN_MAX_FLGID       16
 #define CFN_MAX_MBXID       8
 #define CFN_MAX_MTXID       4

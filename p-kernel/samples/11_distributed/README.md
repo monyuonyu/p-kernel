@@ -30,15 +30,31 @@ Three nodes. With 3 live members degrade selects `FULL`, and `dtr_infer`
 broadcasts its query `Q` across the mesh; every node computes partial
 attention over its local KV cache and replies, and the requester aggregates.
 
-This demonstrates the FULL/DKVA **mechanism** end-to-end over the relay
-(Q broadcast → partial replies → aggregation → "Attention from cluster").
-Two honest limitations remain (tracked in `arch/common/dkva.c`):
+This runs full FULL/DKVA distributed attention end-to-end over the relay
+(Q broadcast → per-source partial replies → aggregation → "Attention from
+cluster"). The requester aggregates **all** peers per round (per-source
+response topics) and each node seeds its KV cache at startup, so the
+partials are non-trivial — see `arch/common/dkva.c`.
 
-1. **Fan-in.** All responders share a single `LATEST_ONLY` response slot and
-   overwrite each other, so the requester aggregates one peer per round.
-   Robust N-way fan-in needs a per-source response topic or a queue QoS.
-2. **Empty caches.** A fresh cluster has no prior local inferences, so the
-   KV caches — and therefore the partials — are trivial.
+## `run_4node_regions.sh` — region-confined attention (regions)
+
+Four nodes split into two latency clusters via a simulated cross-zone RTT
+penalty (`PKERNEL_RTT_ZONE_SIZE`). DKVA's topics are region-scoped, so the
+region-A requester's query reaches only its same-region peer and the
+region-B nodes never participate — distributed attention stays inside the
+latency cluster. See `docs/architecture/regions.md`.
+
+## `run_2node_train_propagate.sh` — R3a: trained weights propagate as memory
+
+Two nodes. Node 1 shows the honest before/after (`dtr eval` at random init
+≈ 26.7% held-out, then `dtr train` — 300 epochs of full-batch SGD with
+analytic backprop and a real cross-entropy loss, ~0.2 s — then `dtr eval`
+again at ~95% train / ~100% held-out) and `dtr save`s the weights as the
+versioned p-fs object `dtr/weights`. Node 2 **never trains**: the 2560-byte
+weight blob reaches it through P1 chunk replication + P2 ref gossip,
+`dtr load` restores it, and `dtr eval` prints the SAME trained accuracy.
+When `qemu-x86_64` is available node 2 runs the sibling ABI, proving the
+float32 blob is bit-portable across architectures.
 
 ## Relay key
 

@@ -8,7 +8,20 @@
 #   make clean
 
 # ---- Toolchain --------------------------------------------------------
-CC      = cc
+# Auto-detect host arch (mirror of boot/linux_x86_64): native build on an
+# aarch64 host, cross-build via aarch64-linux-gnu-gcc elsewhere (e.g. an
+# x86_64 CI runner), run via qemu-aarch64 when not native.
+# Override on the command line: make CROSS=<prefix>-  or  make CC=<cc>
+ifeq ($(shell uname -m),aarch64)
+CROSS ?=
+RUN   ?=
+else
+CROSS ?= aarch64-linux-gnu-
+RUN   ?= qemu-aarch64
+endif
+
+# Keep the native default EXACTLY `cc`; any CROSS prefix switches to gcc.
+CC      = $(if $(CROSS),$(CROSS)gcc,cc)
 
 # ---- Paths ------------------------------------------------------------
 ROOT       = ../..
@@ -109,6 +122,8 @@ COMMON_C_SRCS = \
     netstack.c \
     drpc.c \
     swim.c \
+    region.c \
+    world.c \
     kdds.c \
     replica.c \
     pmesh.c \
@@ -121,6 +136,7 @@ COMMON_C_SRCS = \
     spawn.c \
     moe.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dmn.c \
     ga.c \
@@ -129,7 +145,11 @@ COMMON_C_SRCS = \
     chat.c \
     dproc.c \
     kloader_task.c \
-    demo_kdds.c
+    demo_kdds.c \
+    pfs_block.c \
+    lookup.c \
+    pfs_repl.c \
+    pfs_dag.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
@@ -268,6 +288,13 @@ $(ROOT)/relay/relay:
 run-so-relay-test: test_so_load_relay
 	LD_LIBRARY_PATH=. ./test_so_load_relay
 
+# so_node — a pure single-node launcher (no relay fork). Run N copies as
+# separate processes to build a real multi-node mesh from the SAME .so the
+# APK ships. Used by samples/11_distributed/run_region_relay_so.sh to prove
+# region formation over the relay from *measured* RTT (no sim zone).
+so_node: so_node.c $(SO_TARGET)
+	$(CC) -o $@ $< -ldl -lpthread
+
 
 # boot/linux/main.c — uses system libc directly
 main.o: main.c
@@ -298,10 +325,10 @@ $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 run: $(TARGET)
-	./$(TARGET)
+	$(RUN) ./$(TARGET)
 
 clean:
 	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \
-	      test_so_load test_so_load_relay
+	      test_so_load test_so_load_relay so_node
 
 .PHONY: all run run-so-test run-so-relay-test clean

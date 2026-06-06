@@ -108,6 +108,8 @@ COMMON_C_SRCS = \
     netstack.c \
     drpc.c \
     swim.c \
+    region.c \
+    world.c \
     kdds.c \
     replica.c \
     pmesh.c \
@@ -120,6 +122,7 @@ COMMON_C_SRCS = \
     spawn.c \
     moe.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dmn.c \
     ga.c \
@@ -128,7 +131,11 @@ COMMON_C_SRCS = \
     chat.c \
     dproc.c \
     kloader_task.c \
-    demo_kdds.c
+    demo_kdds.c \
+    pfs_block.c \
+    lookup.c \
+    pfs_repl.c \
+    pfs_dag.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

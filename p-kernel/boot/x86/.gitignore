@@ -1,0 +1,6 @@
+# QEMU 実行時に生成されるパケットキャプチャ / テストログ(実行成果物)
+*.pcap
+test_output.log
+
+# user_hello デモのビルド成果物
+user_hello/*.elf

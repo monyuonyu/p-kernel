@@ -4,7 +4,8 @@
  *
  *  Handles:
  *    Ethernet  — frame dispatch
- *    ARP       — request/reply, 16-entry table
+ *    ARP       — request/reply, table sized for the whole cluster
+ *                (DNODE_MAX+8 entries; see comment at ARP_TABLE_SIZE)
  *    IP        — header checksum, input routing, output build
  *    ICMP      — echo request → reply, echo reply logging
  *
@@ -13,6 +14,7 @@
 
 #include "netstack.h"
 #include "rtl8139.h"
+#include "drpc.h"      /* DNODE_MAX — ARP table must cover the whole cluster */
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -91,7 +93,23 @@ static UB my_mac[6];
 /* ARP table                                                           */
 /* ------------------------------------------------------------------ */
 
-#define ARP_TABLE_SIZE  16
+/*
+ * The table must hold MACs for every cluster peer (DNODE_MAX-1) plus the
+ * gateway and DNS, or beacon/heartbeat delivery silently starves at scale.
+ *
+ * Post-mortem (N=32 world-map 23/32): with 16 slots and 31 peers, passive
+ * learning from everyone's broadcast ARP requests filled the table in the
+ * first heartbeat round; every later peer then fought over ONE victim slot
+ * (the old "overwrite entry 0" policy), being evicted within milliseconds.
+ * udp_send() drops on ARP miss (best-effort), so heartbeats AND world
+ * beacons toward the thrashing peers — node 1, launched last, was almost
+ * always one of them — were silently dropped for the whole run. N=16
+ * passed only because 15 peers happened to fit. Two fixes:
+ *   1. size the table for the cluster: DNODE_MAX + 8 (gw, DNS, slack);
+ *   2. if it ever fills anyway, evict round-robin, not always slot 0,
+ *      so no fixed subset of peers is permanently starved.
+ */
+#define ARP_TABLE_SIZE  (DNODE_MAX + 8)
 
 typedef struct {
     UW  ip;
@@ -100,6 +118,7 @@ typedef struct {
 } ARP_ENTRY;
 
 static ARP_ENTRY arp_table[ARP_TABLE_SIZE];
+static INT       arp_evict_cursor = 0;   /* round-robin victim when full */
 
 static void arp_add(UW ip, const UB mac[6])
 {
@@ -119,10 +138,13 @@ static void arp_add(UW ip, const UB mac[6])
             return;
         }
     }
-    /* Table full: overwrite first entry */
-    arp_table[0].ip    = ip;
-    arp_table[0].valid = 1;
-    for (INT j = 0; j < 6; j++) arp_table[0].mac[j] = mac[j];
+    /* Table full: evict round-robin so no fixed entry is always the victim
+     * (always clobbering slot 0 starved the same set of peers forever). */
+    INT v = arp_evict_cursor;
+    arp_evict_cursor = (arp_evict_cursor + 1) % ARP_TABLE_SIZE;
+    arp_table[v].ip    = ip;
+    arp_table[v].valid = 1;
+    for (INT j = 0; j < 6; j++) arp_table[v].mac[j] = mac[j];
 }
 
 /* Manually seed the ARP table (used by kserve to register kloader's MAC) */

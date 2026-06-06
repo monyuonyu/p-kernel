@@ -26,6 +26,20 @@
 #define DEGRADE_SOLO     2   /* 1 ノード    : 単独 (孤立)        */
 
 /* ------------------------------------------------------------------ */
+/* capacity(N) — 連続容量 (regions.md §3.2)                            */
+/*                                                                     */
+/* 3 段の degrade レベルは「人間が読む粗いバンド」に降格し、分散戦略の   */
+/* 内部判断は以下の連続関数の数値で行う。容量は3軸の積で表現する:        */
+/*   breadth (expert 数) × depth (層数) × KV-context (文脈の広さ)        */
+/* width (d_model) は重みの再形成=学習を要するので capacity(N) には含め  */
+/* ない (R3 の課題)。                                                   */
+/* ------------------------------------------------------------------ */
+
+/* breadth の上限。expert ≒ ノードだが、現ノード数を超える expert を     */
+/* 抱える余地 (provisioning headroom) を表すため DNODE_MAX とは独立。     */
+#define CAP_E_MAX        16
+
+/* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -47,3 +61,27 @@ TMO  degrade_replica_interval(void);
 
 /* shell `degrade` コマンド用: 現在のレベルと統計を表示。 */
 void degrade_stat(void);
+
+/* ------------------------------------------------------------------ */
+/* capacity(N) 公開 API                                                */
+/* ------------------------------------------------------------------ */
+
+/* breadth: experts_active(N) = clamp(生存ノード数, 1, CAP_E_MAX)。
+ * ノード ≒ エキスパート。join で MoE の expert が増える。 */
+UW capacity_experts(void);
+
+/* depth: pipeline_depth(N) = 1 + floor(log2(region_size))。
+ * 台数の対数で pipeline 並列の段数を深くする。region 内 (密) で測る。 */
+UW capacity_depth(void);
+
+/* KV-context: 直近の DKVA 集約で実際に畳み込んだ KV エントリ総数。
+ * region 内 → region 間の階層集約で見た「集合記憶」の広さ。
+ * 推論前は region_size × DKVA_CACHE_SIZE の見積りを返す。 */
+UW capacity_kv(void);
+
+/* 容量の粗い 1 数値 = experts × depth × kv。台数 N とともに増える。 */
+UW capacity_score(void);
+
+/* dkva.c が階層集約のたびに、実測した KV エントリ総数を通知する。
+ * capacity_kv() がこの実測値を返すようになる。 */
+void capacity_note_kv(UW entries);

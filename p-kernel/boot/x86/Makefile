@@ -1,8 +1,8 @@
 # p-kernel x86 Makefile
 # boot/x86 + kernel/common + arch/x86 を統合してQEMU起動イメージを生成
 
-# ツールチェイン
-CROSS   = i686-linux-gnu-
+# ツールチェイン (上書き可: make CROSS=<prefix>-)
+CROSS  ?= i686-linux-gnu-
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
 LD      = $(CROSS)ld
@@ -22,6 +22,7 @@ INC_TOP = $(ROOT)/include
 INCDIRS = \
     -I$(ARCH)/include \
     -I$(COMMON)/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
@@ -90,6 +91,8 @@ COMMON_C_SRCS = \
     netstack.c \
     drpc.c \
     swim.c \
+    region.c \
+    world.c \
     kdds.c \
     heal.c \
     edf.c \
@@ -100,6 +103,7 @@ COMMON_C_SRCS = \
     vital.c \
     fedlearn.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dproc.c \
     sfs.c \
@@ -110,7 +114,11 @@ COMMON_C_SRCS = \
     kloader_task.c \
     mem_store.c \
     chat.c \
-    demo_kdds.c
+    demo_kdds.c \
+    pfs_block.c \
+    lookup.c \
+    pfs_repl.c \
+    pfs_dag.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
@@ -159,7 +167,19 @@ LIBSTR_DIR  = $(ROOT)/lib/libc/string
 LIBSTR_SRCS = memset.c strncpy.c memcpy.c memmove.c memcmp.c strlen.c strcmp.c strncmp.c strcpy.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+# -------------------------------------------------------------------
+# relay/sha256.c — zero-dep SHA-256, needed by arch/common/pfs_block.c.
+# Compiled with a libc-consistent include order (lib/libc stddef.h only;
+# NOT include/stddef.h) so its <string.h>/<stddef.h> pair never mixes the
+# two ptrdiff_t definitions. memcpy/memset/memcmp link from LIBSTR_OBJS.
+# -------------------------------------------------------------------
+RELAY_DIR    = $(ROOT)/relay
+RELAY_OBJS   = sha256.o
+RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
+               -fcf-protection=none -O1 -m32 -std=gnu11 \
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
 
 TARGET = bootloader.bin
 
@@ -231,6 +251,10 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 # lib/libc/string C ソース
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# relay/sha256.c — 専用 CFLAGS (上の RELAY_CFLAGS コメント参照)
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(RELAY_CFLAGS) -c $< -o $@
 
 # -------------------------------------------------------------------
 # 実行ターゲット

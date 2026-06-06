@@ -137,6 +137,58 @@ static UB probe_waiting_node = 0xFF;   /* node currently being probed    */
 static UB suspect_count[DNODE_MAX];    /* consecutive no-response rounds */
 
 /* ------------------------------------------------------------------ */
+/* RTT estimation (R0, regions design — docs/architecture/regions.md)  */
+/*                                                                     */
+/* 直接プローブ (SWIM_PING→SWIM_ACK) の往復時間を測り、ノードごとに      */
+/* EWMA (alpha=1/4) で平滑化する。間接プローブはヘルパー経由で対象との    */
+/* 直接 RTT にならないので測定対象外。region 形成と locality-aware MoE の  */
+/* ゲーティングがこの値を消費する。                                      */
+/* ------------------------------------------------------------------ */
+static UW rtt_ewma_ms[DNODE_MAX];      /* 平滑化済み RTT (ms)            */
+static UB rtt_valid  [DNODE_MAX];      /* 1 = 一度でも実測した           */
+
+/* --- RTT シミュレーション (テスト専用; 本番では無効) ---------------- *
+ * localhost では全ノードの実測 RTT がほぼ同じ (~数 ms) になり region が
+ * 分割されない。region 形成ロジックを degenerate でなく検証するため、
+ * ノード ID を zone_size でグループ化し (zone = id / zone_size)、異なる
+ * zone のピアへ合成ペナルティを上乗せして観測 RTT を水増しする。
+ * arch 非依存に保つため env は読まない: linux usermain が
+ * swim_set_sim_zone() で注入する。zone_size==0 で無効。 */
+static UB sim_zone_size    = 0;
+static UW sim_zone_penalty = 0;
+
+void swim_set_sim_zone(UB zone_size, UW penalty_ms)
+{
+    sim_zone_size    = zone_size;
+    sim_zone_penalty = penalty_ms;
+}
+
+static void rtt_observe(UB node, UW sample_ms)
+{
+    if (node >= DNODE_MAX) return;
+    if (!rtt_valid[node]) {
+        rtt_ewma_ms[node] = sample_ms;
+        rtt_valid[node]   = 1;
+    } else {
+        /* ewma = 3/4 old + 1/4 sample (+2 は四捨五入) */
+        rtt_ewma_ms[node] = (rtt_ewma_ms[node] * 3 + sample_ms + 2) / 4;
+    }
+}
+
+/* 公開: ノードへの平滑化 RTT(ms)。未実測は 0xFFFFFFFF を返す。
+ * sim_zone が有効なら異 zone のピアへ合成ペナルティを上乗せする。 */
+UW swim_rtt_ms(UB node)
+{
+    if (node >= DNODE_MAX || !rtt_valid[node]) return 0xFFFFFFFFUL;
+    UW r = rtt_ewma_ms[node];
+    if (sim_zone_size > 0 && drpc_my_node != 0xFF &&
+        node / sim_zone_size != drpc_my_node / sim_zone_size) {
+        r += sim_zone_penalty;
+    }
+    return r;
+}
+
+/* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -304,10 +356,13 @@ void swim_task(INT stacd, void *exinf)
         ping.src_node     = drpc_my_node;
         ping.probe_target = target;
         swim_send(swim_node_ip(target), &ping);
+        SYSTIM t_ping; tk_get_otm(&t_ping);   /* RTT 計測開始 */
 
         ER er = tk_wai_sem(probe_sem, 1, SWIM_PROBE_TMO_MS);
         if (er == E_OK) {
-            /* Direct probe succeeded */
+            /* Direct probe succeeded — clean round-trip, record RTT. */
+            SYSTIM t_ack; tk_get_otm(&t_ack);
+            rtt_observe(target, (UW)(t_ack.lo - t_ping.lo));
             if (dnode_table[target].state != DNODE_ALIVE) {
                 dnode_table[target].state = DNODE_ALIVE;
                 sw_puts("[swim] node "); sw_putdec(target);
@@ -417,6 +472,14 @@ void swim_nodes_print(void)
             sw_puts("            "); sw_putdec(n);
             sw_puts("  "); sw_puts(state_str(dnode_table[n].state));
             sw_puts("  "); sw_puts(ip_str(dnode_table[n].ip));
+            {
+                UW rtt = swim_rtt_ms(n);   /* sim_zone ペナルティ込み */
+                if (rtt != 0xFFFFFFFFUL) {
+                    sw_puts("  rtt="); sw_putdec(rtt); sw_puts("ms");
+                } else {
+                    sw_puts("  rtt=?");
+                }
+            }
             if (dnode_table[n].state == DNODE_SUSPECT) {
                 sw_puts("  (suspect_cnt="); sw_putdec(suspect_count[n]); sw_puts(")");
             }

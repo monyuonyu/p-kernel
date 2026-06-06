@@ -3,6 +3,10 @@ pinokernel/DefaultBuild/through_build.lbk
 *.o
 *.bin
 
+# エディタのバックアップ/一時ファイル
+\#*\#
+*~
+
 # ビルド成果物
 p-kernel/boot/x86/kernel.elf
 p-kernel/boot/x86/pknl.raw
@@ -10,3 +14,6 @@ p-kernel/boot/x86/disk.img
 p-kernel/boot/x86/serial.log
 p-kernel/boot/aarch64/kernel.elf
 test_results.log
+
+# Claude Code tool state (subagent worktrees etc.) — never commit
+.claude/

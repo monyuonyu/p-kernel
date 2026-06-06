@@ -55,7 +55,9 @@ typedef struct {
     UB _pad[2];
 } __attribute__((packed)) PMESH_ROUTE_ENTRY;
 
-/* BEACON パケット: 8 + DNODE_MAX×4 = 40 bytes */
+/* BEACON パケット: 8 + DNODE_MAX×4 bytes (DNODE_MAX=32 -> 136 bytes, UDP 上限内)
+ * entries[] サイズは DNODE_MAX に追従する。全ノードが同じ DNODE_MAX を共有する
+ * 限り wire 互換 (entry_cnt で有効数を持つため過大読みは起きない)。 */
 typedef struct {
     UW magic;                              /* PMESH_MAGIC             */
     UB version;                            /* PMESH_VERSION           */

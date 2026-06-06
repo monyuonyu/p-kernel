@@ -1,0 +1,102 @@
+# p-kernel minimal CI
+#
+# Answers the PR #3 critique: "84k lines, the only real automated test is
+# the relay, no GitHub Actions, and the aarch64 UMP build breaks on x86_64
+# hosts with nothing to detect it."
+#
+# Four lean jobs, no matrix:
+#   ump-x86_64        — native build of boot/linux_x86_64 + the kernel's own
+#                       pfs/hrw self-tests driven through the shell via stdin.
+#   ump-aarch64-cross — cross-build of boot/linux on an x86_64 host. THE
+#                       previously-missing check. Bonus: self-tests under
+#                       qemu-user (non-blocking).
+#   bare-metal        — build-only: boot/x86 (i686) and boot/aarch64 ELFs.
+#   relay-tests       — the existing 6-scenario relay round-trip suite.
+
+name: CI
+
+on:
+  push:
+    branches: [master, 'feat/**']
+  pull_request:
+    branches: [master, 'feat/**']
+
+jobs:
+  ump-x86_64:
+    name: UMP x86_64 (build + self-tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build (native x86_64 — Makefile auto-detects host arch)
+        run: make -C p-kernel/boot/linux_x86_64
+      - name: Kernel self-tests (pfs + hrw via shell stdin)
+        run: |
+          cd p-kernel/boot/linux_x86_64
+          timeout 120 sh -c "printf 'pfs\nhrw\nexit\n' | ./p-kernel" | tee selftest.log
+          grep -aF '[pfs] PASS' selftest.log
+          grep -aF '[hrw] PASS' selftest.log
+          grep -aF '[hrw-l1] PASS' selftest.log
+
+  ump-aarch64-cross:
+    name: UMP aarch64 (cross-build on x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain + qemu-user
+        run: |
+          sudo apt-get update
+          # libc6-dev-arm64-cross: the hosted UMP build (_TK_HOSTED_LIBC_) needs
+          # real aarch64 glibc headers; --no-install-recommends skips them and
+          # the cross gcc falls back to the host's /usr/include and dies on
+          # bits/libc-header-start.h. (Also pulls libc6-arm64-cross, which
+          # provides /usr/aarch64-linux-gnu for the qemu-user -L below.)
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross make qemu-user-static
+      - name: Cross-build (Makefile auto-selects aarch64-linux-gnu- off-host)
+        run: make -C p-kernel/boot/linux
+      - name: Verify artifact is aarch64
+        run: file p-kernel/boot/linux/p-kernel | grep -F 'ARM aarch64'
+      - name: Kernel self-tests under qemu-aarch64 (bonus, non-blocking)
+        continue-on-error: true
+        run: |
+          cd p-kernel/boot/linux
+          timeout 120 sh -c "printf 'pfs\nhrw\nexit\n' | \
+            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
+          grep -aF '[pfs] PASS' selftest.log
+          grep -aF '[hrw] PASS' selftest.log
+          grep -aF '[hrw-l1] PASS' selftest.log
+
+  bare-metal:
+    name: Bare-metal (i686 + aarch64, build-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-i686-linux-gnu gcc-aarch64-linux-gnu make
+      - name: Build boot/x86 (bootloader.bin + kloader.bin + kernel.elf)
+        run: make -C p-kernel/boot/x86 all
+      - name: Build boot/aarch64 (QEMU virt kernel.elf)
+        run: make -C p-kernel/boot/aarch64
+
+  relay-tests:
+    name: Relay round-trip suite (6 scenarios)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build + run test_relay
+        run: make -C p-kernel/relay test

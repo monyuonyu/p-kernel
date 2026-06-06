@@ -84,3 +84,15 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len);
 
 /* SWIM 強化版クラスタ表示 (shell `nodes` から呼ぶ)。 */
 void swim_nodes_print(void);
+
+/* ノードへの平滑化 RTT (ms)。直接プローブの往復から EWMA で推定。
+ * 未実測のノードは 0xFFFFFFFF を返す。
+ * (R0, regions design — docs/architecture/regions.md。region 形成と
+ *  locality-aware MoE ゲーティングが消費する。) */
+UW swim_rtt_ms(UB node);
+
+/* RTT シミュレーション注入 (テスト専用)。zone = node_id / zone_size とし、
+ * 異 zone のピアへの観測 RTT に penalty_ms を上乗せする。zone_size==0 で
+ * 無効。localhost で人工的に複数 region を作って region 形成を検証するため。
+ * arch 非依存を保つため env は読まず、linux usermain が呼ぶ。 */
+void swim_set_sim_zone(UB zone_size, UW penalty_ms);

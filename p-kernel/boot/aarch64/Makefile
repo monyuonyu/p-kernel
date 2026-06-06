@@ -9,7 +9,8 @@
 #   make clean
 
 # ---- Toolchain --------------------------------------------------------
-CROSS   = aarch64-linux-gnu-
+# Override on the command line: make CROSS=<prefix>-
+CROSS  ?= aarch64-linux-gnu-
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
 LD      = $(CROSS)ld
@@ -34,6 +35,7 @@ INCDIRS = \
     -I$(ARCH)/include \
     -I$(COMMON)/include/lp64 \
     -I$(COMMON)/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
@@ -94,6 +96,8 @@ COMMON_C_SRCS = \
     netstack.c \
     drpc.c \
     swim.c \
+    region.c \
+    world.c \
     kdds.c \
     replica.c \
     pmesh.c \
@@ -106,6 +110,7 @@ COMMON_C_SRCS = \
     spawn.c \
     moe.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dmn.c \
     ga.c \
@@ -114,7 +119,11 @@ COMMON_C_SRCS = \
     chat.c \
     dproc.c \
     kloader_task.c \
-    demo_kdds.c
+    demo_kdds.c \
+    pfs_block.c \
+    lookup.c \
+    pfs_repl.c \
+    pfs_dag.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
@@ -160,8 +169,18 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
               strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
+# ---- relay/sha256.c — zero-dep SHA-256 for arch/common/pfs_block.c ----
+# Compiled with a libc-consistent include order (lib/libc stddef.h only;
+# NOT include/stddef.h) so its <string.h>/<stddef.h> pair never mixes the
+# two ptrdiff_t definitions. memcpy/memset/memcmp link from LIBSTR_OBJS.
+RELAY_DIR    = $(ROOT)/relay
+RELAY_OBJS   = sha256.o
+RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
+               -fno-common -O1 -std=gnu11 -mstrict-align \
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+
 # ---- All objects -------------------------------------------------------
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
 
 TARGET = kernel.elf
 
@@ -241,6 +260,10 @@ $(COMMON_OBJS): %.o: $(COMMON)/%.c
 # libc string sources
 $(LIBSTR_SRCS:.c=.o): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# relay/sha256.c — dedicated CFLAGS (see RELAY_CFLAGS comment above)
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(RELAY_CFLAGS) -c -o $@ $<
 
 # ---- Run targets -------------------------------------------------------
 QEMU_FLAGS = -M virt -cpu cortex-a53 -m 256M \

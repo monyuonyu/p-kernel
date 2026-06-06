@@ -154,3 +154,35 @@ description is essential:
 
 F-Droid (direct APK install) is the long-term distribution backup so
 the project doesn't depend on a single store.
+
+## Phase D entry — the APK becomes region-aware (2026-06-02)
+
+The first installable APK (Phase C) predated the regions work, so it was
+region-blind: `android/app/src/main/cpp/CMakeLists.txt` keeps its own
+explicit source list (separate from the four `boot/*/Makefile`s) and
+`region.c` had never been added to it. Once `capacity(N)` wired
+`degrade.c` to `region_size()` / `region_id()` / `region_coordinator()`,
+that omission would have failed the link with undefined `region_*`.
+
+Fixed by adding `${ARCH_CO}/region.c` to `COMMON_SRC`. Verified end to end:
+
+- `region.c`, `degrade.c`, `dkva.c` compile cleanly with NDK r26d's
+  `aarch64-linux-android26-clang` (Bionic).
+- `./gradlew :app:assembleDebug` → `app-debug.apk` (BUILD SUCCESSFUL).
+- The packaged `lib/arm64-v8a/libpkernel.so` contains the `[region]` and
+  `[capacity]` log strings — i.e. the regional fabric is really in the APK.
+
+A phone running this APK is now a first-class regional node. Because the
+RTT-zone simulator (`PKERNEL_RTT_ZONE_*`) is opt-in via env vars that the
+app never sets, a phone forms regions from **measured** SWIM RTT — the
+real-world latency that, by design, only a physical fleet can provide.
+The in-app TerminalView can already drive `region` and `dist` (capacity)
+since the JNI bridge is just stdin/stdout; surfacing region/capacity in
+the Foreground Service notification (the "contributing X" dashboard) is
+the next UX step.
+
+### What Phase D still needs (operational, not code)
+
+- A public relay reachable by phones behind NAT (Phase B relay, hosted).
+- Real devices installing the APK + joining that relay.
+- τ tuned from the fleet's measured cross-device RTT distribution.

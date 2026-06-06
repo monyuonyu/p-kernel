@@ -257,8 +257,11 @@ static W drpc_local_cre_tsk(UH func_id, INT pri, UB caller_node)
         return E_PAR;
     }
     if (caller_node < DNODE_MAX) {
-        caller_strs[caller_node][0] = (char)('0' + caller_node);
-        caller_strs[caller_node][1] = '\0';
+        INT ci = 0;
+        if (caller_node >= 10)
+            caller_strs[caller_node][ci++] = (char)('0' + caller_node / 10);
+        caller_strs[caller_node][ci++] = (char)('0' + caller_node % 10);
+        caller_strs[caller_node][ci]   = '\0';
     }
     T_CTSK ct = {
         .exinf   = (VP)(caller_node < DNODE_MAX ? caller_strs[caller_node] : "?"),

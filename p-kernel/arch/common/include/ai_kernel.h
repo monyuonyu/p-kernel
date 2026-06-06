@@ -123,6 +123,12 @@ ER   ai_run_sync(const AI_JOB_SPEC *spec, TMO tmout);
 /*   class 0 = normal, 1 = alert, 2 = critical                       */
 UB   mlp_forward(const B input[MLP_IN]);
 
+/* Forward pass to softmax class probabilities (stable softmax with
+ * the accurate range-reduced exp from dtr.c). This is what makes the
+ * federated-learning cross-entropy a REAL loss: it varies smoothly
+ * with the weights, so finite-difference gradients point downhill. */
+void mlp_forward_probs(const B input[MLP_IN], float probs[MLP_OUT]);
+
 /* Get current model weights (for FL export)                          */
 void mlp_get_weights(float *w1, float *b1, float *w2, float *b2,
                      float *w3, float *b3);

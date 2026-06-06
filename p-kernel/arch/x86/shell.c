@@ -34,6 +34,7 @@
 #include "kloader_task.h"
 #include "moe.h"
 #include "dkva.h"
+#include "world.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "mem_store.h"
@@ -208,6 +209,7 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  raft                   - Raftコンセンサス状態表示\r\n");
     sout("  moe                    - MoE推論ルーター統計表示\r\n");
+    sout("  world                  - 全網状況マップ表示 (alias: map) — ゴシップ由来、中央なし\r\n");
     sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("カーネルローダー (Phase 10 kloader):\r\n");
@@ -762,20 +764,22 @@ static const char *cls_name(UB c)
 static void cmd_infer(const char *arg)
 {
     /* infer [node] <temp_C> <hum_%> <press_hPa> <light_lux>
-     * If first token is 0-7 and NIC is distributed, treat as node_id.
-     * Otherwise run local inference. */
+     * If first token is a node id 0..DNODE_MAX-1 and NIC is distributed,
+     * treat as node_id. Otherwise run local inference. */
     const char *p = arg;
     while (*p == ' ') p++;
 
     UB node_id = drpc_my_node;
     BOOL remote = FALSE;
 
-    /* Peek: if first token is a single digit 0-7 and next char is space/end */
-    if (drpc_my_node != 0xFF && *p >= '0' && *p <= '7') {
-        const char *q = p + 1;
-        while (*q >= '0' && *q <= '9') q++;
-        if (*q == ' ' || *q == '\0') {
-            node_id = (UB)(*p - '0');
+    /* Peek: if first token is a decimal node id (0..DNODE_MAX-1) followed by
+     * a space/end, treat it as a target node. */
+    if (drpc_my_node != 0xFF && *p >= '0' && *p <= '9') {
+        const char *q = p;
+        UW v = 0;
+        while (*q >= '0' && *q <= '9') { v = v * 10 + (UW)(*q - '0'); q++; }
+        if ((*q == ' ' || *q == '\0') && v < DNODE_MAX) {
+            node_id = (UB)v;
             p = q;
             remote = (node_id != drpc_my_node);
         }
@@ -2143,6 +2147,8 @@ static void execute(const char *cmd)
         { moe_stat(); return; }
     if (cmd[0]=='d' && cmd[1]=='k' && cmd[2]=='v' && cmd[3]=='a')
         { dkva_stat(); return; }
+    if (str_eq(cmd, "world") || str_eq(cmd, "map"))
+        { world_print(); return; }
     if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n'
         && cmd[5]==' ')
         { /* spawn <file> handled below */ }

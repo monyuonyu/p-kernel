@@ -34,8 +34,13 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_TOPIC_MAX   32     /* カーネルが同時に管理できるトピック数 (Phase 9+: 3ノード×多数トピック対応) */
-#define KDDS_HANDLE_MAX  64     /* 同時オープンハンドル数                 */
+#define KDDS_TOPIC_MAX   160    /* カーネルが同時に管理できるトピック数。
+                                 * DNODE_MAX=32 で dkva が q(1)+resp(32)+rsum(32)=65、
+                                 * moe が score per-source(32)、world が beacon(32) を
+                                 * init で全枠 pre-open するため大幅拡張。 */
+#define KDDS_HANDLE_MAX  320    /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
+                                 * dkva は per-node に resp/rsum の pub+sub=4 ハンドル
+                                 * (=4×DNODE_MAX=128)、moe/world も per-node に開く。 */
 #define KDDS_NAME_MAX    32     /* トピック名の最大長 (null 含む)          */
 #define KDDS_DATA_MAX    192    /* トピックデータの最大バイト数 (DKVA_RESP_PKT=172B が必要) */
 #define KDDS_SUB_MAX     4      /* トピックあたりの最大サブスクライバ数    */
@@ -44,6 +49,13 @@
 #define KDDS_QOS_BEST_EFFORT  0
 #define KDDS_QOS_RELIABLE     1
 #define KDDS_QOS_LATEST_ONLY  2
+
+/* 配信スコープ (regions, R0 — docs/architecture/regions.md)
+ *   GLOBAL: 従来どおり全ノードへ送る (フラット broadcast)
+ *   REGION: 自 region のメンバ (RTT≤τ) にだけ送る — region 内に閉じた密通信。
+ * スコープは送信時にローカルで強制され、ワイヤ (KDDS_PKT) には載らない。 */
+#define KDDS_SCOPE_GLOBAL     0
+#define KDDS_SCOPE_REGION     1
 
 /* ------------------------------------------------------------------ */
 /* 内部トピックスロット (カーネル側)                                   */
@@ -55,6 +67,7 @@ typedef struct {
     UH    data_len;             /* データバイト数 (0 = 未発行)            */
     UH    data_seq;             /* 複製判定用: publish ごとにインクリメント */
     UB    qos;                  /* KDDS_QOS_*                             */
+    UB    scope;                /* KDDS_SCOPE_* (配信範囲)                */
     UB    open;                 /* 1 = 使用中                             */
 } KDDS_TOPIC;
 
@@ -100,8 +113,23 @@ typedef struct {
 void kdds_init(void);
 
 /* トピックを開く / 作成する。ハンドル (0..KDDS_HANDLE_MAX-1) を返す。
- * 失敗時は負のエラーコード。 */
+ * 失敗時は負のエラーコード。スコープは KDDS_SCOPE_GLOBAL。 */
 W kdds_open(const char *name, W qos);
+
+/* スコープ指定版。新規トピックなら scope で作成、既存なら scope を更新する。
+ * (regions R0 — region-scoped topic は自 region メンバにだけ配信される) */
+W kdds_open_scoped(const char *name, W qos, W scope);
+
+/* poll-only オープン: subscriber 用セマフォを作らずハンドルだけ確保する。
+ * LATEST_ONLY + kdds_sub(timeout=0) のポーリング購読/発行専用。ブロッキング
+ * 待ちは不可 (timeout<0/>0 は即エラーを返す)。per-source topic を大量に開く
+ * 購読者 (world/moe の世界マップ等) が CFN_MAX_SEMID を枯渇させないための
+ * 軽量オープン。スコープは GLOBAL。 */
+W kdds_open_poll(const char *name, W qos);
+
+/* 直近の kdds_pub() が UDP 送信したピア数 (fanout)。スコープの効果を観測する
+ * デモ/検証用。GLOBAL なら全 peer 数、REGION なら region メンバ数になる。 */
+UW kdds_pub_fanout(void);
 
 /* データをトピックへ発行する。
  * ローカルの subscriber を起こし、分散モードなら全 ALIVE ノードへ送信。

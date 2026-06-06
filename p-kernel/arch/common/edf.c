@@ -42,6 +42,18 @@ UB        peer_load[DNODE_MAX];
 /* 負荷タスクが動的に開くサブスクライバハンドル (ノードごと) */
 static W sub_h[DNODE_MAX];
 
+/* "L/<node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁)。
+ * out は最低 5 バイト ("L/NN\0") 必要。 */
+static void load_topic_name(char *out, UB node)
+{
+    INT i = 0;
+    out[i++] = 'L';
+    out[i++] = '/';
+    if (node >= 10) out[i++] = (char)('0' + node / 10);
+    out[i++] = (char)('0' + node % 10);
+    out[i]   = '\0';
+}
+
 /* ------------------------------------------------------------------ */
 /* 初期化                                                              */
 /* ------------------------------------------------------------------ */
@@ -175,11 +187,8 @@ void edf_load_task(INT stacd, void *exinf)
     (void)stacd; (void)exinf;
 
     /* 自分の負荷を発行するパブリッシャを開く */
-    char my_topic[4] = {
-        'L', '/',
-        (char)('0' + drpc_my_node),
-        '\0'
-    };
+    char my_topic[5];
+    load_topic_name(my_topic, drpc_my_node);
     W pub_h = kdds_open(my_topic, KDDS_QOS_LATEST_ONLY);
 
     for (;;) {
@@ -190,7 +199,8 @@ void edf_load_task(INT stacd, void *exinf)
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node || sub_h[n] >= 0) continue;
             if (dnode_table[n].state == DNODE_ALIVE) {
-                char tn[4] = { 'L', '/', (char)('0' + n), '\0' };
+                char tn[5];
+                load_topic_name(tn, n);
                 sub_h[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
                 if (sub_h[n] >= 0) {
                     ed_puts("[edf] subscribed to load/"); ed_putdec(n); ed_puts("\r\n");
