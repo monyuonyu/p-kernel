@@ -21,6 +21,7 @@
 #pragma once
 #include "kdds.h"
 #include "drpc.h"
+#include "pmesh.h"   /* PMESH_DATA_MAX — wire パケット上限の根拠 */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -28,11 +29,22 @@
 
 #define REPLICA_PORT     7379
 #define REPLICA_MAGIC    0x4C504552UL   /* "REPL" little-endian         */
-#define REPLICA_VERSION  1
+
+/* v2: マルチパケット・スナップショット (wire chunking)。
+ * v1 は 1 announce = 1 パケット固定で、KDDS_DATA_MAX が 128→192 に
+ * 肥大した時点で REPLICA_PKT が 1864B となり pmesh_send (>1380B 拒否)
+ * に黙って弾かれていた — つまり v1 の複製はこのブランチでは実質
+ * 死んでいた。v2 はスナップショットを {round_seq, part_idx, part_cnt}
+ * 付きのパケット列に分割する。レイアウト変更のため version を上げる。
+ *
+ * 互換性の決定: 本リポジトリの fleet は単一系統でロールアウト中の
+ * 新旧混在は発生しないため、v1↔v2 共存は意図的にサポートしない。
+ * (受信側は version 不一致を黙って捨てるので誤マージは起きない) */
+#define REPLICA_VERSION  2
 
 /* パケットタイプ */
 #define REPLICA_ANNOUNCE 0x01   /* 参加/復帰通知 — 相手に状態要求      */
-#define REPLICA_DATA     0x02   /* トピックテーブル全体を送信           */
+#define REPLICA_DATA     0x02   /* トピックスナップショット (1 part)   */
 
 /* Tombstone シーケンス番号 — 通常の seq 範囲 (0..0x7FFF) より大きく、
  * 0xFFFF (ラップアラウンドと紛らわしい値) を避けた特別な値 */
@@ -40,39 +52,66 @@
 #define REPLICA_TOMB_MAX 8      /* 同時保持できる tombstone 数          */
 
 /* ------------------------------------------------------------------ */
-/* パケットフォーマット                                                */
+/* パケットフォーマット (v2)                                           */
 /* ------------------------------------------------------------------ */
 
-/* 1 トピックのスナップショット (可変長パケットの要素) */
+/* 1 トピックのスナップショット (可変長パケットの要素)。
+ * v2 で _pad の 1 バイトを scope に転用: regions R0 の REGION スコープ
+ * を複製でも運び、復元トピックが GLOBAL に格下げされるのを防ぐ。 */
 typedef struct {
     char name[KDDS_NAME_MAX];  /* トピック名                           */
     UH   data_len;             /* データバイト数 (0 = なし)            */
     UH   data_seq;             /* 複製判定用シーケンス番号             */
     UB   qos;                  /* KDDS_QOS_*                           */
-    UB   _pad[3];
+    UB   scope;                /* KDDS_SCOPE_* (新規復元時のみ適用)    */
+    UB   _pad[2];
     UB   data[KDDS_DATA_MAX];  /* 最新データ                           */
 } __attribute__((packed)) REPLICA_ENTRY;
-/* = 32 + 2 + 2 + 1 + 3 + 128 = 168 bytes */
+
+#define REPLICA_HDR_LEN    12                                  /* v2 ヘッダ */
+#define REPLICA_ENTRY_LEN  (KDDS_NAME_MAX + 8 + KDDS_DATA_MAX) /* = 232    */
 
 /* 1 パケットに収められるスナップショット数。
- * REPLICA_PKT は pmesh_send 経由で 1 UDP パケットとして送るため
- * PMESH_DATA_MAX(1380) を超えてはならない: 8 + 168×N <= 1380 → N <= 8。
- * KDDS_TOPIC_MAX とは独立 (KDDS_TOPIC_MAX を 32→48 に増やしても
- * この wire パケットは肥大させない)。
- * NOTE: 全トピック数 > REPLICA_ENTRY_MAX のクラスタでは 1 announce で
- *       全トピックを伝播しきれない。チャンク分割は wire 変更を伴うため
- *       後続フォローアップ (regions) に委ねる。 */
-#define REPLICA_ENTRY_MAX  8
+ * 各 part は pmesh_send 経由の 1 UDP パケットなので
+ * PMESH_DATA_MAX(1380) を超えてはならない:
+ *   12 + 232×N <= 1380 → N <= 5 (現行値)。
+ * KDDS_DATA_MAX を動かすとここも自動で再計算される。
+ * 全トピック数が REPLICA_ENTRY_MAX を超える分は複数 part に分割される
+ * (v1 の「先頭 8 件しか乗らない」負債は v2 で解消)。 */
+#define REPLICA_ENTRY_MAX  ((PMESH_DATA_MAX - REPLICA_HDR_LEN) / REPLICA_ENTRY_LEN)
+
+/* part 間に挟む送信間隔 (ms)。タスクコンテキスト (replica_task の定期
+ * ラウンド) でのみ適用し、バーストを抑える。コールバックコンテキスト
+ * (boot cry 応答 / swim ALIVE 遷移 / 断末魔) では眠れないので連続送信。 */
+#define REPLICA_PART_GAP_MS  2
 
 typedef struct {
     UW   magic;                                /* REPLICA_MAGIC            */
     UB   version;                              /* REPLICA_VERSION          */
     UB   type;                                 /* REPLICA_ANNOUNCE / DATA  */
     UB   src_node;
-    UB   entry_cnt;                            /* entries[] 有効数         */
+    UB   entry_cnt;                            /* この part の entries 数  */
+    UH   round_seq;                            /* スナップショット世代番号 */
+    UB   part_idx;                             /* 0 .. part_cnt-1          */
+    UB   part_cnt;                             /* このラウンドの総 part 数 */
     REPLICA_ENTRY entries[REPLICA_ENTRY_MAX];  /* トピックスナップショット */
 } __attribute__((packed)) REPLICA_PKT;
-/* header=8 + 8×168=1344 = 1352 bytes (UDP MTU 内) */
+/* header=12 + 5×232=1160 = 1172 bytes (PMESH_DATA_MAX 内) */
+
+_Static_assert(sizeof(REPLICA_ENTRY) == REPLICA_ENTRY_LEN,
+               "REPLICA_ENTRY wire size drifted");
+_Static_assert(sizeof(REPLICA_PKT) ==
+               REPLICA_HDR_LEN + REPLICA_ENTRY_MAX * REPLICA_ENTRY_LEN,
+               "REPLICA_PKT header size drifted");
+_Static_assert(sizeof(REPLICA_PKT) <= PMESH_DATA_MAX,
+               "REPLICA_PKT must fit one pmesh UDP packet");
+_Static_assert(REPLICA_ENTRY_MAX >= 1,
+               "KDDS_DATA_MAX too large for a single replica entry");
+/* part_idx/part_cnt は UB: 全アイテム (トピック+tombstone) が 255 part
+ * に収まることを保証する */
+_Static_assert((KDDS_TOPIC_MAX + REPLICA_TOMB_MAX + REPLICA_ENTRY_MAX - 1)
+                   / REPLICA_ENTRY_MAX <= 255,
+               "part_cnt (UB) would overflow");
 
 /* ------------------------------------------------------------------ */
 /* 統計情報                                                            */
@@ -84,6 +123,12 @@ typedef struct {
     UW  merged;      /* リモートデータで上書きしたトピック更新数       */
     UW  skipped;     /* ローカルが最新だったため無視した数             */
     UW  recovered;   /* 復元した新規トピック数                         */
+    /* v2 観測用: 最後に受信したラウンドの part/entry 集計 */
+    UW  rnd_entries; /* 当該ラウンドで受信した entry 総数              */
+    UB  rnd_parts;   /* 当該ラウンドで受信した part 数                 */
+    UB  rnd_total;   /* 送信側が宣言した part_cnt                      */
+    UB  rnd_src;     /* 当該ラウンドの送信元ノード                     */
+    UH  rnd_seq;     /* 当該ラウンドの round_seq                       */
 } REPLICA_STATS;
 
 extern REPLICA_STATS replica_stats;
