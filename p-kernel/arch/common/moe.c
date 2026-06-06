@@ -54,6 +54,14 @@ static void mo_putdec(UW v)
     mo_puts(&buf[i]);
 }
 
+/* 符号付き10進。utility は負になり得る (acc=0 + pressure/rtt ペナルティ) ので
+ * (UW) キャストで 4294967286 のような化け方をしないように。 */
+static void mo_putsdec(W v)
+{
+    if (v < 0) { mo_puts("-"); mo_putdec((UW)(-v)); return; }
+    mo_putdec((UW)v);
+}
+
 /* ------------------------------------------------------------------ */
 /* スコアテーブル                                                      */
 /* ------------------------------------------------------------------ */
@@ -144,7 +152,7 @@ static UB select_expert(UB gate_class)
     mo_puts("[moe] cand self  acc="); mo_putdec(my_accuracy[gate_class]);
     mo_puts(" rtt=0ms press=");
     mo_putdec(self_press < 0 ? MOE_PRESS_UNKNOWN : (UW)self_press);
-    mo_puts(" util="); mo_putdec((UW)best_util); mo_puts(" [self]\r\n");
+    mo_puts(" util="); mo_putsdec(best_util); mo_puts(" [self]\r\n");
 
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
@@ -166,7 +174,7 @@ static UB select_expert(UB gate_class)
         mo_puts("ms press=");
         mo_putdec(eff < 0 ? MOE_PRESS_UNKNOWN : (UW)eff);
         mo_puts(same ? " rgn" : "    ");
-        mo_puts(" util="); mo_putdec((UW)u); mo_puts("\r\n");
+        mo_puts(" util="); mo_putsdec(u); mo_puts("\r\n");
 
         if (u > best_util) {
             best_util = u;
