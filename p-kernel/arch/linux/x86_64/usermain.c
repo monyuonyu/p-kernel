@@ -31,6 +31,7 @@
 #include "pfs_dag.h"
 #include "guard.h"
 #include "selfc.h"
+#include "genome.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -98,6 +99,9 @@ static void cmd_help(void)
     print("  selfc save <name> - save the demo C source as p-fs object <name>\r\n");
     print("  selfc run <name> - compile+run C source from p-fs object <name>\r\n");
     print("  selfc ls - list units compiled this boot\r\n");
+    print("  genome - cell DNA status (role / manifest)\r\n");
+    print("  genome publish <role> - this cell's DNA (weights+code) -> p-fs manifest\r\n");
+    print("  genome sprout - empty plate germinates from the swarm's manifest\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
@@ -459,6 +463,12 @@ EXPORT INT usermain(void)
         cmd_net();
     }
 
+    /* §3 self-regeneration: PKERNEL_SPROUT=1 makes an empty plate wait
+     * for the swarm's genome manifest and germinate from it. Runs here
+     * (shell task, before the shell loop) so the pfs_dag scratch rule
+     * holds; default OFF, so every existing demo is untouched. */
+    genome_autosprout();
+
     print("\r\n  T-Kernel is alive inside a Linux process.\r\n");
     print("  Type 'help' for commands.\r\n\r\n");
 
@@ -504,6 +514,8 @@ EXPORT INT usermain(void)
             cmd_pfs(line, n);
         } else if (starts_with(line, n, "selfc")) {
             selfc_cmd(line, n);
+        } else if (starts_with(line, n, "genome")) {
+            genome_cmd(line, n);
         } else if (starts_with(line, n, "kdemo")) {
             cmd_kdemo("x86_64");
         } else if (starts_with(line, n, "net")) {
