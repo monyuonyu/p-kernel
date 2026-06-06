@@ -30,7 +30,35 @@
 
 #include "pfs_block.h"
 #include "sha256.h"          /* relay/sha256.c — zero-dep, reused kernel-side */
-#include <string.h>
+
+/* NO <string.h> here. arch/common files never include libc headers
+ * directly (repo rule — see kdds.c's kd_memcpy): on hosted-LP64 builds
+ * include/lib/libc/stddef.h (ptrdiff_t = int) clashes with the kernel
+ * include chain's include/stddef.h (ptrdiff_t = long). Tiny local
+ * loops below; sha256.h is fine — its <stddef.h> resolves to the same
+ * kernel-chain include/stddef.h. */
+
+static void pfs_memcpy(void *dst, const void *src, UW n)
+{
+    U1 *d = (U1 *)dst;
+    const U1 *s = (const U1 *)src;
+    while (n--) *d++ = *s++;
+}
+
+static INT pfs_memcmp(const void *a, const void *b, UW n)
+{
+    const U1 *p = (const U1 *)a, *q = (const U1 *)b;
+    for (UW i = 0; i < n; i++) {
+        if (p[i] != q[i]) return (INT)p[i] - (INT)q[i];
+    }
+    return 0;
+}
+
+static void pfs_memset(void *dst, U1 v, UW n)
+{
+    U1 *d = (U1 *)dst;
+    while (n--) *d++ = v;
+}
 
 /* ABI-stability guard: the block-id MUST be exactly the sha256 digest
  * width, as a byte array — not a UW/W-derived type that would bloat on
@@ -61,7 +89,7 @@ static UW       pfs_n;             /* number of distinct blocks stored */
 
 static INT id_eq(const U1 a[PFS_ID_LEN], const U1 b[PFS_ID_LEN])
 {
-    return memcmp(a, b, PFS_ID_LEN) == 0;
+    return pfs_memcmp(a, b, PFS_ID_LEN) == 0;
 }
 
 /* Linear scan for a slot holding `id`. Returns index or -1. P0 keeps the
@@ -91,7 +119,7 @@ INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
 
     U1 id[PFS_ID_LEN];
     pfs_id_compute(buf, len, id);
-    if (id_out) memcpy(id_out, id, PFS_ID_LEN);
+    if (id_out) pfs_memcpy(id_out, id, PFS_ID_LEN);
 
     /* Dedup: same content -> same id -> do not re-store. */
     if (find_slot(id) >= 0) return PFS_OK;
@@ -99,9 +127,9 @@ INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
     /* Find a free slot. */
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
         if (!pfs_table[i].used) {
-            memcpy(pfs_table[i].id, id, PFS_ID_LEN);
+            pfs_memcpy(pfs_table[i].id, id, PFS_ID_LEN);
             pfs_table[i].len = len;
-            if (len) memcpy(pfs_table[i].data, buf, (size_t)len);
+            if (len) pfs_memcpy(pfs_table[i].data, buf, (size_t)len);
             pfs_table[i].used = 1;
             pfs_n++;
             /* TODO(P0->durable): also append (id,len,bytes) to a
@@ -119,7 +147,7 @@ INT pfs_get(const U1 id[PFS_ID_LEN], void *buf, UW maxlen)
 
     UW len = pfs_table[s].len;
     UW cpy = (len < maxlen) ? len : maxlen;
-    if (buf && cpy) memcpy(buf, pfs_table[s].data, (size_t)cpy);
+    if (buf && cpy) pfs_memcpy(buf, pfs_table[s].data, (size_t)cpy);
     return (INT)len;
 }
 
@@ -175,7 +203,7 @@ INT pfs_self_test(void (*emit)(const char *))
     if (r1 != PFS_OK || r2 != PFS_OK) {
         emit("[pfs] FAIL put returned error\r\n"); fails++;
     }
-    if (memcmp(id1, id2, PFS_ID_LEN) != 0) {
+    if (pfs_memcmp(id1, id2, PFS_ID_LEN) != 0) {
         emit("[pfs] FAIL same content gave different id\r\n"); fails++;
     } else {
         emit("[pfs] ok  same content -> same id ("); emit_hex_id(emit, id1);
@@ -194,7 +222,7 @@ INT pfs_self_test(void (*emit)(const char *))
     U1 rd[64];
     INT glen = pfs_get(id1, rd, sizeof(rd));
     if (glen != (INT)(sizeof(msgA) - 1) ||
-        memcmp(rd, msgA, sizeof(msgA) - 1) != 0) {
+        pfs_memcmp(rd, msgA, sizeof(msgA) - 1) != 0) {
         emit("[pfs] FAIL get returned wrong bytes\r\n"); fails++;
     } else {
         emit("[pfs] ok  get by id round-trips identical bytes\r\n");
@@ -203,13 +231,13 @@ INT pfs_self_test(void (*emit)(const char *))
     /* a distinct block gets a distinct id and bumps the count. */
     U1 idB[PFS_ID_LEN];
     pfs_put(msgB, (UW)(sizeof(msgB) - 1), idB);
-    if (memcmp(id1, idB, PFS_ID_LEN) == 0) {
+    if (pfs_memcmp(id1, idB, PFS_ID_LEN) == 0) {
         emit("[pfs] FAIL distinct content shares an id\r\n"); fails++;
     }
 
     /* get on an unknown id must miss. */
     U1 bogus[PFS_ID_LEN];
-    memset(bogus, 0xAB, PFS_ID_LEN);
+    pfs_memset(bogus, 0xAB, PFS_ID_LEN);
     if (pfs_get(bogus, rd, sizeof(rd)) != PFS_E_NOTFOUND ||
         pfs_has(bogus) != 0) {
         emit("[pfs] FAIL unknown id was found\r\n"); fails++;
