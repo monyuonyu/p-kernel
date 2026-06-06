@@ -140,3 +140,8 @@
 | **G8** | 🟡 | in progress | coordinator 死の貫通 — 第10波 A隊（G2 と一体）。 |
 | **G6** | 🟡 | 据え置き | 動的 ID 割当・自己編成トポロジは R3/Phase D の本丸として明示。 |
 | **G10/G11** | 🟢 | 据え置き | heal の後継選出 drift / 時定数の理論接続。後続。 |
+
+### follow-up（第10波で表面化、未統合）
+
+- **G4+ 受信側リプレイ窓**: honesty は受信 HMAC を検証するが、**正規フレームの再送（replay）** は素通る（MAC は再送でも有効）。並列で走った重複隊 `w10-honest-defense` (branch 温存) が per-source 64-packet スライディング nonce 窓を受信側に実装済み（`rx_nonce_max/win/armed[256]`、relay.c の `replay_check_and_update` と同一ロジック）。honesty の上に小さく移植して取り込む価値あり。監査 G リスト外のボーナス発見。
+- **G7 残**: カーネル側 `usermain.c` の `mac[5] <= DNODE_MAX` 無音 skip（net_relay_init では可視化済みだが usermain は別経路）。
