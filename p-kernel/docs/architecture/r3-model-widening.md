@@ -7,6 +7,14 @@
 
 Status: **R3 未着手（設計のみ）** / 最終更新: 2026-06-06
 
+> **前提課題 DONE (2026-06-06, branch r3a-train)**: 太らせる前に、L0 (635
+> param) が**本物に学習している**こと。PR #3 の批判（LCG 乱数のまま・偽の
+> 損失関数）への回答として、cross-entropy + 解析的逆伝播の in-kernel 学習
+> （`dtr train`）、held-out 評価（学習前 26.7% → 学習後 ~95/100%）、学習済み
+> 重みの p-fs 版管理オブジェクト化（`dtr save/load`, "dtr/weights"）が入った。
+> 重みが p-fs で配れるようになったことは §2.1 の reprovision（width 段の
+> 再配布）の配管でもある。width 拡張 (L1+) は本ドキュメントの通り未着手。
+
 関連: [[regions.md]]（R0–R2 の配管・§1.1 玩具モデルの正確な数字・§5 鶏と卵）、
 [[survival-network.md]]（§3 装甲板＝細胞・§4 MoE・§8 二層構造 ＝ この設計の「なぜ」）、
 [[reflex-deliberation.md]]（反射層／熟慮層の時定数分離 ＝ 推論ルーティングの安定化）。

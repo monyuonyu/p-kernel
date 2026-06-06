@@ -44,6 +44,18 @@ region-A requester's query reaches only its same-region peer and the
 region-B nodes never participate — distributed attention stays inside the
 latency cluster. See `docs/architecture/regions.md`.
 
+## `run_2node_train_propagate.sh` — R3a: trained weights propagate as memory
+
+Two nodes. Node 1 shows the honest before/after (`dtr eval` at random init
+≈ 26.7% held-out, then `dtr train` — 300 epochs of full-batch SGD with
+analytic backprop and a real cross-entropy loss, ~0.2 s — then `dtr eval`
+again at ~95% train / ~100% held-out) and `dtr save`s the weights as the
+versioned p-fs object `dtr/weights`. Node 2 **never trains**: the 2560-byte
+weight blob reaches it through P1 chunk replication + P2 ref gossip,
+`dtr load` restores it, and `dtr eval` prints the SAME trained accuracy.
+When `qemu-x86_64` is available node 2 runs the sibling ABI, proving the
+float32 blob is bit-portable across architectures.
+
 ## Relay key
 
 The scripts use a fixed 64-hex demo key via `PKERNEL_RELAY_KEY`. For anything
