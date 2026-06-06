@@ -87,6 +87,7 @@ ARCH_C_SRCS = \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
+    fault.c \
     time.c
 
 ARCH_S_SRCS = cpu_support.S
@@ -115,6 +116,7 @@ COMMON_C_SRCS = \
     pmesh.c \
     sfs.c \
     heal.c \
+    guard.c \
     degrade.c \
     vital.c \
     edf.c \

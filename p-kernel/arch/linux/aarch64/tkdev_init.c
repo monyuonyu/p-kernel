@@ -12,6 +12,7 @@
 #include "tkdev_conf.h"
 
 IMPORT void arch_signals_init(void);
+IMPORT void arch_fault_init(void);
 IMPORT void arch_timer_start(unsigned long period_us);
 IMPORT void knl_timer_handler_startup(void);
 
@@ -20,6 +21,10 @@ IMPORT void knl_timer_handler_startup(void);
 EXPORT ER knl_tkdev_initialize(void)
 {
     arch_signals_init();
+
+    /* SIGSEGV/SIGBUS/SIGFPE capture for task fault isolation (fault.c).
+     * Must follow arch_signals_init: it relies on that sigaltstack. */
+    arch_fault_init();
 
     /* Hook the timer-tick vector so knl_define_inthdr-style callers
      * see something registered. Real preemption goes through the

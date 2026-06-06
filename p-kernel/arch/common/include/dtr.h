@@ -237,5 +237,23 @@ typedef struct {
 
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
- *   eval | train [epochs] | save | load | grad | stat        */
+ *   eval | train [epochs] | save | load | grad | crash | stat */
 void dtr_train_cmd(const UB *args, UW len);
+
+/* ------------------------------------------------------------------ */
+/* Wave 7 — task fault isolation (guard.c) integration                 */
+/* ------------------------------------------------------------------ */
+
+/* The guarded ring-0 inference worker (register via guard_register).
+ * Idles polling the crash-injection flag; `dtr crash` makes it
+ * corrupt the in-memory weights and write to NULL — the demo fault
+ * that guard isolates and recovers from. */
+void dtr_worker_task(INT stacd, void *exinf);
+
+/* guard recover_fn: reload trained weights from the p-fs versioned
+ * object "dtr/weights" (what `dtr save` wrote). Safe to call even if
+ * the object does not exist (prints a warning, weights unchanged). */
+void dtr_recover_weights(void);
+
+/* `dtr crash` arms this; dtr_worker_task trips on it. */
+extern volatile UB dtr_crash_req;

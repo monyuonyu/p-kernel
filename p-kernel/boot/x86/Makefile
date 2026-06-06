@@ -95,6 +95,7 @@ COMMON_C_SRCS = \
     world.c \
     kdds.c \
     heal.c \
+    guard.c \
     edf.c \
     replica.c \
     degrade.c \
