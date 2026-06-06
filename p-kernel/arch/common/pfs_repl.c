@@ -468,6 +468,16 @@ INT pfs_repl_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
     return pfs_put_origin(buf, len, id_out, origin);
 }
 
+/* P2 hook: chase a block we heard about via a ref beacon but never got
+ * an ANNOUNCE for (e.g. joined after the save). Rides the existing
+ * pending-WANT retry machinery; no-op if we already hold it. */
+void pfs_repl_want(const U1 id[PFS_ID_LEN])
+{
+    if (drpc_my_node == 0xFF) return;
+    if (pfs_has(id)) return;
+    pending_add(id);
+}
+
 void pfs_repl_put_cmd(const UB *text, UW len)
 {
     U1 id[PFS_ID_LEN];

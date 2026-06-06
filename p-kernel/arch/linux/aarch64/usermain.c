@@ -28,6 +28,7 @@
 #include "demo_kdds.h"
 #include "pfs_block.h"
 #include "pfs_repl.h"
+#include "pfs_dag.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -78,6 +79,9 @@ static void cmd_help(void)
     print("  pfs    - p-fs block store self-test (dedup)\r\n");
     print("  pfs put <text> - store <text> as a block; replicates to region peers\r\n");
     print("  pfs ls - list stored blocks (id prefix / len / origin)\r\n");
+    print("  pfs save <name> <text> - new VERSION of <name> (old ones survive)\r\n");
+    print("  pfs log <name> - version history (walk the prev chain)\r\n");
+    print("  pfs cat <name> [@<seq>] - head (or version <seq>) content\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
@@ -247,6 +251,12 @@ static void cmd_net(void)
     create_task((FP)pfs_repl_task, 7, 4096);
     print("[net] pfs block replication task started\r\n");
 
+    /* p-fs P2 ref gossip — beacons this node's name->head-manifest refs
+     * on the region topic and merges peers' (LWW by version seq). Same
+     * symmetric task everywhere: refs are gossip, not a registry. */
+    create_task((FP)pfs_dag_task, 7, 4096);
+    print("[net] pfs ref (version DAG) gossip task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -339,14 +349,20 @@ static void cmd_moe(const UB *line, INT n)
 /* `pfs` family — p-fs block store + P1 replication:
  *   pfs            -> P0 self-test (dedup / round-trip / miss)
  *   pfs put <text> -> store <text>; new blocks announce to region peers
- *   pfs ls         -> list blocks (id prefix / len / origin) */
+ *   pfs ls         -> list blocks (id prefix / len / origin)
+ *   pfs save/log/cat -> P2 version DAG (pfs_dag_cmd) */
 static void cmd_pfs(const UB *line, INT n)
 {
     const UB *p   = line + 3;          /* skip "pfs" */
     const UB *end = line + n;
     while (p < end && (*p == ' ' || *p == '\t')) p++;
 
-    if (p < end && starts_with(p, (INT)(end - p), "put")) {
+    if (p < end && (starts_with(p, (INT)(end - p), "save") ||
+                    starts_with(p, (INT)(end - p), "log")  ||
+                    starts_with(p, (INT)(end - p), "cat"))) {
+        /* P2 version-DAG verbs — parsed + printed by pfs_dag.c */
+        pfs_dag_cmd(p, (UW)(end - p));
+    } else if (p < end && starts_with(p, (INT)(end - p), "put")) {
         p += 3;
         while (p < end && (*p == ' ' || *p == '\t')) p++;
         if (p >= end) {
@@ -408,6 +424,9 @@ EXPORT INT usermain(void)
      * topics + chunk port and hooks pfs_put; must follow pmesh_init()
      * and kdds_init(). The poll task starts in cmd_net. */
     pfs_repl_init();
+    /* p-fs P2 — version DAG + ref gossip on "pfs/ref". Manifests ride
+     * the P1 block replication; only refs are mutable. */
+    pfs_dag_init();
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via

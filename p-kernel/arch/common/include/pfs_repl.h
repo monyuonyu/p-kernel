@@ -143,6 +143,11 @@ void pfs_repl_task(INT stacd, void *exinf);
  * announces it to the region. */
 INT  pfs_repl_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
 
+/* Ask the region for a block by id (rides the pending-WANT retry
+ * table; no-op if already held or not distributed). Used by the P2
+ * DAG layer to fetch a manifest learned from a ref beacon. */
+void pfs_repl_want(const U1 id[PFS_ID_LEN]);
+
 /* Shell helpers (`pfs put <text>` / `pfs ls`) — print via tmonitor. */
 void pfs_repl_put_cmd(const UB *text, UW len);
 void pfs_repl_ls(void);

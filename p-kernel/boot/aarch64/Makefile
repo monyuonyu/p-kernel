@@ -120,7 +120,8 @@ COMMON_C_SRCS = \
     demo_kdds.c \
     pfs_block.c \
     lookup.c \
-    pfs_repl.c
+    pfs_repl.c \
+    pfs_dag.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
