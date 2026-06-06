@@ -82,6 +82,8 @@ static void cmd_help(void)
     print("  dtr save  - trained weights -> versioned p-fs object dtr/weights\r\n");
     print("  dtr load  - load weights from p-fs (works on replicas too)\r\n");
     print("  dtr grad  - verify analytic gradient vs finite differences\r\n");
+    print("  dtr remember - store engrams (memory the forward pass reads) in p-fs\r\n");
+    print("  dtr ret [on|off|reload] - retrieval blend: forward votes with p-fs engrams\r\n");
     print("  dtr crash - fault-inject the guarded worker (NULL write); guard recovers\r\n");
     print("  guard  - guarded-task table (fault isolation + auto-respawn)\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
@@ -493,8 +495,8 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "moe")) {
             cmd_moe(line, n);
         } else if (starts_with(line, n, "dtr")) {
-            /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad
-             * -> R3a training verbs (dtr_train.c) */
+            /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad/
+             * remember/ret -> R3a + wave-8 verbs (dtr_train.c) */
             dtr_train_cmd(line + 3, (UW)(n - 3));
         } else if (starts_with(line, n, "guard")) {
             guard_print();

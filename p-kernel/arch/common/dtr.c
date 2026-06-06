@@ -34,6 +34,7 @@
  */
 
 #include "dtr.h"
+#include "retrieval.h"
 #include "dkva.h"
 #include "kdds.h"
 #include "drpc.h"
@@ -539,10 +540,16 @@ static void run_mean_pool(const float seq[SEQ][DM], float out[DM])
 
 /*
  *  分類ヘッド: float[DM] → class [0,1,2]
+ *
+ *  Wave 8 ①: softmax の直前に retrieval の票を logits に加算する。
+ *  input が NULL のパス (pipeline stage12 — 生入力が手元に無い) では
+ *  retrieval は掛からない。ret_blend は OFF / engram 未取得なら no-op。
  */
-static UB run_cls_head(const float vec[DM], float scores[DOUT])
+static UB run_cls_head(const float vec[DM], const B *input,
+                       float scores[DOUT])
 {
     dt_linear((float *)W_cls, b_cls, vec, scores, DOUT, DM);
+    if (input) ret_blend(input, scores);   /* 記憶→思考 (p-fs engram) */
     dt_softmax(scores, DOUT);
     UB cls = 0;
     for (INT i = 1; i < DOUT; i++)
@@ -579,10 +586,10 @@ static UB run_transformer_local(const B input[SEQ],
         dt_layernorm(ffn[t], ln2_g, ln2_b, DM);
     }
 
-    /* 4. Mean Pool + Cls */
+    /* 4. Mean Pool + Cls (+ retrieval blend, ON のとき) */
     float pool[DM];
     run_mean_pool(ffn, pool);
-    return run_cls_head(pool, scores_out);
+    return run_cls_head(pool, input, scores_out);
 }
 
 /* ------------------------------------------------------------------ */
@@ -617,7 +624,8 @@ static UB run_stage12(const float in[DM], float scores[DOUT])
     for (INT d = 0; d < DM; d++) ln[d] = ffn[d] + in[d];
     dt_layernorm(ln, ln2_g, ln2_b, DM);
     dtr_stats.layer1_runs++;
-    return run_cls_head(ln, scores);
+    /* pipeline worker は生入力を持たない → retrieval なし (NULL) */
+    return run_cls_head(ln, NULL, scores);
 }
 
 /* ------------------------------------------------------------------ */
@@ -787,6 +795,12 @@ static float train_forward(const B input[SEQ], UB label)
         tc.pool[d] = s / (float)SEQ;
     }
     dt_linear((float *)W_cls, b_cls, tc.pool, tc.probs, DOUT, DM);
+    /* Wave 8 ①: eval 経路でも softmax 前に記憶の票を加算する。訓練と
+     * 勾配検証は dtr_train_batch / dtr_grad_check が retrieval を一時
+     * OFF にするので、学習は素の重みのまま (記憶は松葉杖にしない)。
+     * 数学的注意: 票は重みに対して定数なので、仮に ON のままでも
+     * dlogits = p - onehot の解析勾配は正確なまま。 */
+    ret_blend(input, tc.probs);
     dt_softmax(tc.probs, DOUT);
 
     float pl = tc.probs[label];
@@ -939,11 +953,16 @@ float dtr_train_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n, float lr)
     if (n == 0) return 0.0f;
     for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) g_grad[i] = 0.0f;
 
+    /* 学習中は retrieval を切る — 重みは自力で学ぶ (記憶ブレンドの
+     * 上に重みを最適化すると、記憶なしでは立てない重みになる) */
+    UB rprev = ret_set(0);
+
     float loss = 0.0f;
     for (UW s = 0; s < n; s++) {
         loss += train_forward(X[s], y[s]);
         train_backward(y[s]);
     }
+    ret_set(rprev);
 
     dtr_weights_get(g_flatw);
     float step = lr / (float)n;
@@ -977,6 +996,7 @@ float dtr_eval_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n,
  * the real derivative of train_forward, not a plausible-looking one. */
 float dtr_grad_check(const B input[DTR_SEQ_LEN], UB label)
 {
+    UB rprev = ret_set(0);     /* 素の重みの勾配を検証する */
     for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) g_grad[i] = 0.0f;
     (void)train_forward(input, label);
     train_backward(label);
@@ -1000,6 +1020,7 @@ float dtr_grad_check(const B input[DTR_SEQ_LEN], UB label)
         float rel = diff / ref;
         if (rel > worst) worst = rel;
     }
+    ret_set(rprev);
     return worst;
 }
 
@@ -1276,7 +1297,7 @@ W dtr_infer(const B input[4])
         float pool[DM];
         run_mean_pool(ffn, pool);
         float scores[DOUT];
-        UB cls = run_cls_head(pool, scores);
+        UB cls = run_cls_head(pool, input, scores);
 
         if (er == E_OK) dtr_stats.tp_distributed++;
 
@@ -1342,7 +1363,7 @@ W dtr_infer(const B input[4])
             float pool[DM];
             run_mean_pool(ffn, pool);
             float scores_dkva[DOUT];
-            UB cls_dkva = run_cls_head(pool, scores_dkva);
+            UB cls_dkva = run_cls_head(pool, input, scores_dkva);
 
             float mx = scores_dkva[0];
             for (INT c = 1; c < DOUT; c++) if (scores_dkva[c] > mx) mx = scores_dkva[c];

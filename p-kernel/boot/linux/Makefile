@@ -162,6 +162,7 @@ COMMON_C_SRCS = \
     moe.c \
     dtr.c \
     dtr_train.c \
+    retrieval.c \
     dkva.c \
     dmn.c \
     ga.c \
