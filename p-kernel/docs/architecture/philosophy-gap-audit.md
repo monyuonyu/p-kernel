@@ -121,3 +121,22 @@
 > 骨格は思想に忠実である。残る乖離の多くは「配管は通ったが、正直さ（I4）と同時多発（I6）と
 > 検証（性質テスト）が水量（R3）を待たずに先回りで破れている」一点に収斂する。
 > —— 迷ったら `survival-network.md` へ戻る。
+
+---
+
+## 修正ステータス（2026-06-07 第10波）
+
+監査の置き土産を並列ワークフローで一掃。各 G の現在地（master 反映済み分）:
+
+| # | 重さ | 状態 | 修正 |
+|---|---|---|---|
+| **G3** | 🔴 | **FIXED** | §7/§8 の核に4本の性質テスト（`moe test`）+ CI grep。NO-CENTRAL（各ノードが局所勾配で別 expert を選ぶ）/ 二層時定数のローパス性 / **発振=単一時定数28〜39切替 vs ヒステリシス4〜5切替**を数で実証。reflex-deliberation.md D0 を DESIGNED→DONE。 |
+| **G4** | 🟡 | **FIXED** | `net_relay_recv` が受信フレームの v2 HMAC を定数時間比較で検証→不正は破棄（`mac drop` カウンタ）。正規トラフィックは無損失。`run_relay_forgery.sh` で偽造注入→破棄を実証。 |
+| **G5** | 🟡 | **FIXED** | fedlearn の distributed 集約が偽 `E_OK` をやめ `E_NOSPT` を返す（嘘の成功を消す）。 |
+| **G7** | 🟡 | **FIXED** | ID 範囲外・`>DNODE_MAX` の無音脱落を診断ログで可視化（relay 側 + `net_relay_init`）。※カーネル側 usermain の skip は follow-up。 |
+| **G9** | 🟢 | **FIXED** | `kdds_pub` の fanout は `pmesh_send`==0 のときだけ加算。no_route は別カウンタへ。観測指標が配送数を過大報告しない。 |
+| **G1** | 🔴 | in progress | 真の同時多発（per-source Query）— 第10波 A隊。 |
+| **G2** | 🔴 | in progress | 全 region を数える正直な degraded — 第10波 A隊。 |
+| **G8** | 🟡 | in progress | coordinator 死の貫通 — 第10波 A隊（G2 と一体）。 |
+| **G6** | 🟡 | 据え置き | 動的 ID 割当・自己編成トポロジは R3/Phase D の本丸として明示。 |
+| **G10/G11** | 🟢 | 据え置き | heal の後継選出 drift / 時定数の理論接続。後続。 |
