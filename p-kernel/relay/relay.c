@@ -51,6 +51,7 @@ typedef struct {
     struct sockaddr_in addr;
     time_t  last_seen;
     int     active;
+    int     leased;    /* 1 if this id was handed out via auto-lease (src=0) */
 } NodeEntry;
 
 typedef struct {
@@ -65,6 +66,8 @@ static int         verbose  = 0;
 static int         insecure = 0;
 static uint8_t     key[KEY_LEN];
 static int         have_key = 0;
+static int         idle_timeout = IDLE_TIMEOUT;  /* overridable via PKERNEL_RELAY_IDLE (testing) */
+static uint64_t    grant_nonce  = 1;             /* nonce for relay-originated v2 lease grants */
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -107,6 +110,11 @@ static uint64_t load_u64_le(const uint8_t *p)
          | ((uint64_t)p[5] << 40)
          | ((uint64_t)p[6] << 48)
          | ((uint64_t)p[7] << 56);
+}
+
+static void store_u64_le(uint8_t *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++) p[i] = (uint8_t)((v >> (i * 8)) & 0xff);
 }
 
 /* --- v2 packet parsing + auth ------------------------------------------- */
@@ -260,13 +268,111 @@ static void update(int src, const struct sockaddr_in *from)
 static void evict_stale(time_t now)
 {
     for (int n = 1; n < NODE_MAX; n++) {
-        if (table[n].active && now - table[n].last_seen > IDLE_TIMEOUT) {
+        if (table[n].active && now - table[n].last_seen > idle_timeout) {
             table[n].active = 0;
             fprintf(stderr, "[relay] node %d evicted (idle)\n", n);
             /* NOTE: replay[n] is intentionally preserved across eviction
              *       so an attacker can't clear the window by waiting. */
         }
     }
+}
+
+/* --- dynamic node-id lease (src=0 auto-REGISTER) ------------------------ */
+/*
+ *  A client that does not have a human-assigned PKERNEL_NODE_ID sends a
+ *  REGISTER with src=0 — a value that was always invalid (and silently
+ *  dropped) in v1/v2, so no existing client uses it. The relay picks the
+ *  smallest free node id, claims that table slot for the requester, and
+ *  replies with a REGISTER grant carrying the leased id in the dst field
+ *  (src=0 marks the packet as "this is a grant, not a peer's REGISTER").
+ *  For v2 the grant is HMAC-signed so the client can trust the id.
+ *
+ *  Scope (this wave): single relay. Lease release is by the same idle
+ *  eviction as static nodes — when a leased slot goes idle it is freed
+ *  and its id becomes reusable. Multi-relay lease arbitration is design
+ *  only; see docs/architecture/dynamic-id.md.
+ */
+
+static int addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
+{
+    return a->sin_addr.s_addr == b->sin_addr.s_addr
+        && a->sin_port        == b->sin_port;
+}
+
+/* Pick an id for an auto-REGISTER from `from`. Idempotent: if this exact
+ * address already holds a lease, return the same id (so a retransmitted
+ * or replayed auto-REGISTER never consumes a second id). Otherwise the
+ * smallest free slot. Returns 0 if the pool (1..NODE_MAX-1) is full. */
+static int lease_pick(const struct sockaddr_in *from)
+{
+    for (int n = 1; n < NODE_MAX; n++) {
+        if (table[n].active && table[n].leased && addr_eq(&table[n].addr, from))
+            return n;
+    }
+    for (int n = 1; n < NODE_MAX; n++) {
+        if (!table[n].active) return n;
+    }
+    return 0;
+}
+
+/* Build + send a REGISTER grant (src=0, dst=leased_id) back to `to`.
+ * leased_id==0 signals lease denied (pool exhausted). Matches request
+ * version so v1 (--insecure) clients get a v1 grant and v2 clients a
+ * signed v2 grant. */
+static void send_lease_grant(int sock, const struct sockaddr_in *to,
+                             unsigned version, int leased_id)
+{
+    unsigned char out[RELAY_HEADER_LEN + RELAY_AUTH_LEN];
+    out[0] = (uint8_t)(RELAY_MAGIC        & 0xff);
+    out[1] = (uint8_t)((RELAY_MAGIC >> 8) & 0xff);
+    out[2] = (uint8_t)((RELAY_MAGIC >> 16)& 0xff);
+    out[3] = (uint8_t)((RELAY_MAGIC >> 24)& 0xff);
+    out[4] = (uint8_t)version;
+    out[5] = REL_REGISTER;
+    out[6] = 0;                       /* src=0 → lease grant */
+    out[7] = (uint8_t)leased_id;      /* dst = the id we are granting */
+    out[8] = out[9] = out[10] = out[11] = 0;
+
+    int len = RELAY_HEADER_LEN;
+    if (version == RELAY_VERSION_V2) {
+        uint64_t nonce = grant_nonce++;
+        store_u64_le(out + RELAY_HEADER_LEN, nonce);
+        ParsedPkt gp = {
+            .version = version, .type = REL_REGISTER,
+            .src = 0, .dst = (unsigned)leased_id, .nonce = nonce,
+            .hmac = NULL, .payload = NULL, .payload_len = 0,
+        };
+        compute_mac(&gp, out + RELAY_HEADER_LEN + 8);
+        len = RELAY_HEADER_LEN + RELAY_AUTH_LEN;
+    }
+    if (sendto(sock, out, (size_t)len, 0,
+               (struct sockaddr *)to, sizeof(*to)) < 0 && verbose) {
+        fprintf(stderr, "[relay] lease grant to %u: %s\n",
+                (unsigned)leased_id, strerror(errno));
+    }
+}
+
+static void handle_lease(int sock, const struct sockaddr_in *from,
+                         unsigned version)
+{
+    int id = lease_pick(from);
+    char ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &from->sin_addr, ip, sizeof(ip));
+    if (id == 0) {
+        fprintf(stderr, "[relay] lease denied: id pool 1..%d exhausted (req %s:%u)\n",
+                NODE_MAX - 1, ip, ntohs(from->sin_port));
+        send_lease_grant(sock, from, version, 0);
+        return;
+    }
+    int reissue = table[id].active && table[id].leased && addr_eq(&table[id].addr, from);
+    table[id].addr      = *from;
+    table[id].last_seen = time(NULL);
+    table[id].active    = 1;
+    table[id].leased    = 1;
+    fprintf(stderr, "[relay] node %d %s to %s:%u\n",
+            id, reissue ? "lease re-issued" : "leased (auto)",
+            ip, ntohs(from->sin_port));
+    send_lease_grant(sock, from, version, id);
 }
 
 /* --- forwarding --------------------------------------------------------- */
@@ -285,7 +391,7 @@ static void forward(int sock, int dst_node,
         if (verbose) fprintf(stderr, "[relay] no route to dst=%d\n", dst_node);
         return;
     }
-    if (now - table[dst_node].last_seen > IDLE_TIMEOUT) {
+    if (now - table[dst_node].last_seen > idle_timeout) {
         table[dst_node].active = 0;
         return;
     }
@@ -357,6 +463,18 @@ int main(int argc, char **argv)
 
     load_key_or_die();
 
+    /* Optional override of the idle-eviction window (seconds). Keeps the
+     * 300 s default for production; the dynamic-id test sets it low so it
+     * can observe a leased id being reclaimed and reused without waiting. */
+    {
+        const char *idle_env = getenv("PKERNEL_RELAY_IDLE");
+        int v = idle_env ? atoi(idle_env) : 0;
+        if (v > 0) {
+            idle_timeout = v;
+            fprintf(stderr, "[relay] idle timeout overridden: %d s\n", idle_timeout);
+        }
+    }
+
     /* sigaction without SA_RESTART so recvfrom() returns EINTR on
      * SIGTERM/SIGINT — signal() defaults to SA_RESTART on glibc. */
     struct sigaction sa = {0};
@@ -416,10 +534,16 @@ int main(int argc, char **argv)
                                      pkt.src, pkt.type);
                 continue;
             }
-            if (!replay_check_and_update(pkt.src, pkt.nonce)) {
-                if (verbose) fprintf(stderr, "[relay] drop: replay src=%u nonce=%llu\n",
-                                     pkt.src, (unsigned long long)pkt.nonce);
-                continue;
+            /* An auto-REGISTER (src=0) has no per-node replay state yet —
+             * it's authenticated by HMAC above and deduped by source
+             * address in handle_lease(), so it bypasses the src-keyed
+             * replay window (which would otherwise drop src=0 outright). */
+            if (!(pkt.type == REL_REGISTER && pkt.src == 0)) {
+                if (!replay_check_and_update(pkt.src, pkt.nonce)) {
+                    if (verbose) fprintf(stderr, "[relay] drop: replay src=%u nonce=%llu\n",
+                                         pkt.src, (unsigned long long)pkt.nonce);
+                    continue;
+                }
             }
         }
 
@@ -436,7 +560,12 @@ int main(int argc, char **argv)
 
         switch (pkt.type) {
         case REL_REGISTER:
-            update((int)pkt.src, &from);
+            if (pkt.src == 0) {
+                /* Auto-lease request: hand out a dynamic node id. */
+                handle_lease(sock, &from, pkt.version);
+            } else {
+                update((int)pkt.src, &from);
+            }
             break;
 
         case REL_KEEPALIVE:
