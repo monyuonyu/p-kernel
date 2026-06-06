@@ -18,11 +18,12 @@
 #   Phase 2 (massacre + survival)
 #     SIGKILL K nodes (N=4 -> K=1, 6..7 -> K=2, >=8 -> K=3; override with
 #     K=...). Wait for SWIM to converge, then on the survivors:
+#     ASSERT: every survivor PROCESS is still running (collateral-crash check)
 #     ASSERT: `nodes`/`world` show exactly N-K live + K DEAD
 #     ASSERT: every survivor still evals at trained accuracy
 #     ASSERT: `pfs ls` still lists the 2560 B weight blob (data survival)
-#     ASSERT: kdds pub/sub still works (rgnpub fanout >= 1, and a full
-#             distributed `infer` round-trip returns a class)
+#     ASSERT: kdds pub/sub still works (region pub fanout == survivors-1,
+#             and a full distributed `infer` round-trip returns a class)
 #
 #   Phase 3 (return)
 #     Restart ONE killed node (same node id, fresh process = a new
@@ -120,7 +121,10 @@ start_node() {                  # start_node <id>
       PKERNEL_NODE_ID=$id PKERNEL_AUTONET=1 LD_LIBRARY_PATH=. \
       exec ./so_node ) <"$fifo" >>"$(nodelog "$id")" 2>&1 &
     NODE_PID[$id]=$!
+    disown    # silence job-control noise; liveness is asserted explicitly
 }
+
+node_running() { [ -n "${NODE_PID[$1]:-}" ] && kill -0 "${NODE_PID[$1]}" 2>/dev/null; }
 
 send() {                        # send <id> <command...>
     local id="$1"; shift
@@ -147,6 +151,21 @@ held_out_acc() {                # held_out_acc <id> <from_mark> -> "97.3" or ""
         | grep -oE 'acc [0-9.]+' | awk '{print $2}'
 }
 
+get_acc() {                     # get_acc <id> [tries] -> held-out acc or ""
+    # send `dtr eval` and parse the held-out accuracy; retry a couple of
+    # times because a single stdin line has been observed (rarely) to get
+    # lost on a freshly rebooted node.
+    local id="$1" tries="${2:-3}" t M acc
+    for t in $(seq 1 "$tries"); do
+        M=$(mark "$id"); send "$id" "dtr eval"
+        if wait_log "$id" "$M" '\[dtr\] eval held-out' 15; then
+            acc=$(held_out_acc "$id" "$M")
+            [ -n "$acc" ] && { echo "$acc"; return 0; }
+        fi
+    done
+    echo ""
+}
+
 acc_ge()  { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a+0 >= b+0) }'; }
 acc_lt()  { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a+0 <  b+0) }'; }
 
@@ -168,6 +187,7 @@ echo "[bench] survival benchmark  N=$N  K=$K  victims={$(echo $VICTIMS | tr ' ' 
 # ===========================================================================
 echo "[bench] starting relay on :$PORT"
 "$ROOT/relay/relay" -p "$PORT" -v >"${LOGPFX}_relay.log" 2>&1 & RELAY_PID=$!
+disown
 sleep 1
 
 echo "[bench] launching nodes 1..$N (FIFO-driven shells)"
@@ -187,9 +207,7 @@ echo "================ PHASE 1: learn + propagate (N=$N) ================"
 P1_T0=$(now_s)
 
 # honest baseline: untrained accuracy on node 1 (recorded, not asserted)
-M=$(mark 1); send 1 "dtr eval"
-wait_log 1 "$M" '\[dtr\] eval held-out' 15
-BASE_ACC=$(held_out_acc 1 "$M")
+BASE_ACC=$(get_acc 1)
 echo "[bench] node1 untrained baseline: held-out acc ${BASE_ACC:-?}%"
 
 M=$(mark 1); send 1 "dtr train"
@@ -231,9 +249,7 @@ for id in $(seq 2 "$N"); do
         PROP_FAILED=1; ACC1[$id]=""
         continue
     fi
-    M=$(mark "$id"); send "$id" "dtr eval"
-    wait_log "$id" "$M" '\[dtr\] eval held-out' 15
-    ACC1[$id]=$(held_out_acc "$id" "$M")
+    ACC1[$id]=$(get_acc "$id")
     if acc_ge "${ACC1[$id]}" "$ACC_MIN"; then
         ok "node$id loaded + trained: held-out acc ${ACC1[$id]}%"
     else
@@ -242,6 +258,15 @@ for id in $(seq 2 "$N"); do
     fi
 done
 [ "$PROP_FAILED" -eq 0 ] && ok "weights propagated to all $N nodes (every node evals trained)"
+
+# every node process must still be running at the end of Phase 1
+P1_LIVE=0
+for id in $(seq 1 "$N"); do node_running "$id" && P1_LIVE=$((P1_LIVE + 1)); done
+if [ "$P1_LIVE" -eq "$N" ]; then
+    ok "all $N node processes alive at end of Phase 1"
+else
+    bad "only $P1_LIVE/$N node processes alive at end of Phase 1"
+fi
 
 P1_SECS=$(( $(now_s) - P1_T0 ))
 P1_ACCS=$(for id in $(seq 1 "$N"); do printf '%s' "n$id=${ACC1[$id]:-?}% "; done)
@@ -282,6 +307,20 @@ else
     bad "SWIM never converged: last view $N_ALIVE ALIVE / $N_DEAD DEAD (want $WANT_ALIVE/$K)"
 fi
 
+# --- every survivor PROCESS is still alive ----------------------------------
+# (catches collateral crashes: a survivor segfaulting as a side effect of a
+#  peer's death is a survival failure even if SWIM arithmetic still adds up)
+P2_LIVE=0
+for id in $SURVIVORS; do
+    if node_running "$id"; then P2_LIVE=$((P2_LIVE + 1));
+    else echo "        node$id process died (collateral crash?)"; fi
+done
+if [ "$P2_LIVE" -eq $(( N - K )) ]; then
+    ok "all $((N - K)) survivor processes alive after the kill"
+else
+    bad "only $P2_LIVE/$((N - K)) survivor processes alive (collateral crash)"
+fi
+
 # --- world map agrees -------------------------------------------------------
 M=$(mark 1); send 1 "world"
 wait_log 1 "$M" '\[world\] known nodes:' 10
@@ -298,9 +337,7 @@ fi
 declare -A ACC2
 P2_DATA_OK=0; P2_DATA_TOTAL=0
 for id in $SURVIVORS; do
-    M=$(mark "$id"); send "$id" "dtr eval"
-    wait_log "$id" "$M" '\[dtr\] eval held-out' 15
-    ACC2[$id]=$(held_out_acc "$id" "$M")
+    ACC2[$id]=$(get_acc "$id")
     if acc_ge "${ACC2[$id]}" "$ACC_MIN"; then
         ok "survivor node$id still trained: held-out acc ${ACC2[$id]}%"
     else
@@ -330,14 +367,19 @@ else
 fi
 
 # --- kdds pub/sub still flows ------------------------------------------------
+# NOTE: the GLOBAL-scope pub sends blindly to all DNODE_MAX-1 slots, so its
+# fanout is always 31 and proves nothing. The REGION-scope fanout counts
+# actual region members (recomputed from live SWIM state) — that is the
+# meaningful "how many peers can I still reach" number.
 M=$(mark 1); send 1 "rgnpub"
-wait_log 1 "$M" 'global fanout' 10
-FANOUT=$(slice 1 "$M" | grep -oE 'global fanout = [0-9]+' | grep -oE '[0-9]+$' | head -1)
+wait_log 1 "$M" 'region fanout' 10
+FANOUT=$(slice 1 "$M" | grep -oE 'region fanout = [0-9]+' | grep -oE '[0-9]+$' | head -1)
 FANOUT="${FANOUT:-0}"
-if [ "$FANOUT" -ge 1 ]; then
-    ok "kdds pub fanout = $FANOUT peers (>=1; survivors still reachable)"
+WANT_FANOUT=$(( N - K - 1 ))    # survivors minus self
+if [ "$FANOUT" -eq "$WANT_FANOUT" ]; then
+    ok "kdds region pub fanout = $FANOUT peers (== survivors-1 = $WANT_FANOUT)"
 else
-    bad "kdds pub fanout = $FANOUT (no peers reachable)"
+    bad "kdds region pub fanout = $FANOUT (want $WANT_FANOUT = survivors-1)"
 fi
 
 M=$(mark 1); send 1 "infer 50 20 90 5"
@@ -361,13 +403,16 @@ P3_T0=$(now_s)
 echo "[bench] restarting node$REVIVE (fresh process, untrained weights)"
 start_node "$REVIVE"
 
-# rejoin: a survivor must see node$REVIVE ALIVE again
+# rejoin: a survivor must see node$REVIVE ALIVE again.
+# NOTE: the `nodes` table prints INTERNAL node ids, which are 0-based
+# (PKERNEL_NODE_ID=4 -> internal node 3).
+REVIVE_IID=$(( REVIVE - 1 ))
 REJOINED=0
 REJOIN_DEADLINE=$(( $(now_s) + 120 ))
 while [ "$(now_s)" -lt "$REJOIN_DEADLINE" ]; do
     M=$(mark 1); send 1 "nodes"
     sleep 2
-    if slice 1 "$M" | grep -qE "^ +$REVIVE +ALIVE"; then
+    if slice 1 "$M" | grep -qE "^ +$REVIVE_IID +ALIVE"; then
         REJOINED=1; break
     fi
     sleep 2
@@ -380,13 +425,13 @@ else
 fi
 
 # honest before-number: the fresh individual is untrained
-M=$(mark "$REVIVE"); send "$REVIVE" "dtr eval"
-wait_log "$REVIVE" "$M" '\[dtr\] eval held-out' 20
-ACC3_BEFORE=$(held_out_acc "$REVIVE" "$M")
-if acc_lt "${ACC3_BEFORE:-0}" "$ACC_MIN"; then
-    ok "revived node$REVIVE starts untrained: held-out acc ${ACC3_BEFORE:-?}%"
+ACC3_BEFORE=$(get_acc "$REVIVE")
+if [ -z "$ACC3_BEFORE" ]; then
+    bad "revived node$REVIVE never answered 'dtr eval' (shell unresponsive)"
+elif acc_lt "$ACC3_BEFORE" "$ACC_MIN"; then
+    ok "revived node$REVIVE starts untrained: held-out acc ${ACC3_BEFORE}%"
 else
-    bad "revived node$REVIVE already at ${ACC3_BEFORE:-?}% before load (?)"
+    bad "revived node$REVIVE already at ${ACC3_BEFORE}% before load (?)"
 fi
 
 # inherit: re-fetch the weights through p-fs gossip
@@ -404,9 +449,7 @@ else
     bad "node$REVIVE never received 'dtr/weights' after rejoin"
 fi
 
-M=$(mark "$REVIVE"); send "$REVIVE" "dtr eval"
-wait_log "$REVIVE" "$M" '\[dtr\] eval held-out' 15
-ACC3=$(held_out_acc "$REVIVE" "$M")
+ACC3=$(get_acc "$REVIVE")
 if acc_ge "${ACC3:-0}" "$ACC_MIN"; then
     ok "node$REVIVE inherits the flock's memory: held-out acc ${ACC3}%"
 else
@@ -442,7 +485,7 @@ echo "| 2 kill $K (SIGKILL) | $((N - K))/$N | ${P2_MIN}% (all survivors) | blob 
 echo "| 3 node$REVIVE returns | $((N - K + 1))/$N | ${ACC3_BEFORE:-?}% -> ${ACC3:-?}% (revived) | re-fetched via p-fs gossip | $P3_SECS (rejoin $REJOIN_SECS) |"
 echo
 echo "  untrained baseline: ${BASE_ACC:-?}% held-out  |  trained threshold: >=${ACC_MIN}%"
-echo "  kdds pub fanout after kill: $FANOUT peers"
+echo "  kdds region pub fanout after kill: $FANOUT peers (expected $WANT_FANOUT)"
 echo "  logs: ${LOGPFX}_node{1..$N}.log  ${LOGPFX}_relay.log"
 echo
 echo "================ SUMMARY ================"
