@@ -52,14 +52,12 @@ static void dk_putdec(UW v)
 /* 数学ヘルパー                                                        */
 /* ------------------------------------------------------------------ */
 
-static float dk_exp(float x)
-{
-    if (x >  10.0f) return 22026.0f;
-    if (x < -10.0f) return 0.0f;
-    float r = 1.0f + x * (1.0f + x * (0.5f + x * (0.16667f +
-              x * (0.04167f + x * (0.00833f + x * 0.00139f)))));
-    return r < 1e-10f ? 1e-10f : r;
-}
+/* accurate range-reduced exp from dtr.c (R3a). The raw 7-term Taylor
+ * that used to live here was wrong past |x|~3, which would make the
+ * DISTRIBUTED attention softmax disagree with the local one now that
+ * trained weights produce real logit gaps. */
+IMPORT float dtr_expf(float x);
+static float dk_exp(float x) { return dtr_expf(x); }
 
 static float dk_sqrt(float x)
 {
