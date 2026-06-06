@@ -242,12 +242,69 @@ static void send_keepalive_to(int idx)
     udp_send_to(idx, buf, n);
 }
 
+/* Low-stack loggers for the failover hot path.
+ *
+ * glibc dprintf() funnels through vfprintf(), which burns ~4 KB of
+ * stack. ha_tick()/ha_mark_rx() run on the netstack worker tasks
+ * (net_task, the kdds publishers, ...), all of which have only ~4 KB
+ * T-Kernel stacks. Calling dprintf() from these paths at the failover
+ * instant overflows the task stack and silently corrupts a neighboring
+ * task's saved context — producing the deterministic garbage-PC
+ * SIGSEGV (pc=0x2000000024, addr=0) that only appeared once relay-HA's
+ * failover prints met wave-7's guarded tasks. So we format by hand into
+ * a static buffer and write(2) it. See docs note
+ * feedback_hosted_relay_stack_overflow: net_relay scratch must never
+ * live on the task stack. */
+static void rl_append(char *dst, int cap, int *pos, const char *s)
+{
+    while (*s && *pos < cap - 1) dst[(*pos)++] = *s++;
+    dst[*pos] = '\0';
+}
+
+static void rl_append_dec(char *dst, int cap, int *pos, unsigned v)
+{
+    char t[12]; int n = 0;
+    if (v == 0) t[n++] = '0';
+    while (v) { t[n++] = (char)('0' + v % 10); v /= 10; }
+    while (n > 0 && *pos < cap - 1) dst[(*pos)++] = t[--n];
+    dst[*pos] = '\0';
+}
+
+/* "[net_relay] <what> relay#<idx> <a.b.c.d>:<port>\n" — byte-identical
+ * to the previous dprintf format the failover test greps for. */
 static void log_relay(const char *what, int idx)
 {
-    char ipbuf[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &relay_list[idx].sin_addr, ipbuf, sizeof(ipbuf));
-    dprintf(2, "[net_relay] %s relay#%d %s:%d\n",
-            what, idx, ipbuf, (int)ntohs(relay_list[idx].sin_port));
+    static char line[96];
+    int pos = 0;
+    unsigned ip = (unsigned)ntohl(relay_list[idx].sin_addr.s_addr);
+    rl_append(line, (int)sizeof(line), &pos, "[net_relay] ");
+    rl_append(line, (int)sizeof(line), &pos, what);
+    rl_append(line, (int)sizeof(line), &pos, " relay#");
+    rl_append_dec(line, (int)sizeof(line), &pos, (unsigned)idx);
+    rl_append(line, (int)sizeof(line), &pos, " ");
+    rl_append_dec(line, (int)sizeof(line), &pos, (ip >> 24) & 0xff);
+    rl_append(line, (int)sizeof(line), &pos, ".");
+    rl_append_dec(line, (int)sizeof(line), &pos, (ip >> 16) & 0xff);
+    rl_append(line, (int)sizeof(line), &pos, ".");
+    rl_append_dec(line, (int)sizeof(line), &pos, (ip >> 8) & 0xff);
+    rl_append(line, (int)sizeof(line), &pos, ".");
+    rl_append_dec(line, (int)sizeof(line), &pos, ip & 0xff);
+    rl_append(line, (int)sizeof(line), &pos, ":");
+    rl_append_dec(line, (int)sizeof(line), &pos,
+                  (unsigned)ntohs(relay_list[idx].sin_port));
+    rl_append(line, (int)sizeof(line), &pos, "\n");
+    (void)write(2, line, (size_t)pos);
+}
+
+/* "[net_relay] relay#<idx> unresponsive\n" — same low-stack discipline. */
+static void log_unresponsive(int idx)
+{
+    static char line[48];
+    int pos = 0;
+    rl_append(line, (int)sizeof(line), &pos, "[net_relay] relay#");
+    rl_append_dec(line, (int)sizeof(line), &pos, (unsigned)idx);
+    rl_append(line, (int)sizeof(line), &pos, " unresponsive\n");
+    (void)write(2, line, (size_t)pos);
 }
 
 /* HA driver — called from every send/recv. Three duties:
@@ -277,7 +334,7 @@ static void ha_tick(void)
         } else if (now - ha_probe_sent_ms >= HA_PROBE_TMO_MS) {
             int next = (cur_relay + 1) % relay_count;
             if (next != cur_relay) {
-                dprintf(2, "[net_relay] relay#%d unresponsive\n", cur_relay);
+                log_unresponsive(cur_relay);
                 cur_relay = next;
                 log_relay("failover ->", cur_relay);
             }
