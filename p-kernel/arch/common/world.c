@@ -205,6 +205,28 @@ void world_observe(const WORLD_BEACON *b)
 }
 
 /* ------------------------------------------------------------------ */
+/* gating アクセサ — select_expert (§7) が局所勾配を読む窓口            */
+/*                                                                     */
+/* 重要 (NO-CENTRAL 不変条件): これらは中央集約器ではなく、このノードの */
+/* ローカル world-table (受信したゴシップビーコンだけ) を読む。逼迫度は */
+/* 各ノードが compute_pressure() で *自分の* 局所状態から算出し self-   */
+/* beacon で配ったもの。読む側は近隣の勾配を見るだけで、全網の真実を    */
+/* 集約する場所はどこにも無い。                                         */
+/* ------------------------------------------------------------------ */
+
+BOOL world_peer_known(UB node)
+{
+    if (node >= DNODE_MAX) return FALSE;
+    return table[node].valid ? TRUE : FALSE;
+}
+
+INT world_peer_pressure(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    return (INT)table[node].beacon.pressure;   /* 0..100 (-1 = 未知) */
+}
+
+/* ------------------------------------------------------------------ */
 /* world-task: 発信 + 取り込み (全ノードで対称に走る)                  */
 /* ------------------------------------------------------------------ */
 
