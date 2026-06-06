@@ -93,6 +93,7 @@ COMMON_C_SRCS = \
     swim.c \
     region.c \
     world.c \
+    reflex.c \
     kdds.c \
     heal.c \
     guard.c \
