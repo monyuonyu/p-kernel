@@ -56,6 +56,31 @@ weight blob reaches it through P1 chunk replication + P2 ref gossip,
 When `qemu-x86_64` is available node 2 runs the sibling ABI, proving the
 float32 blob is bit-portable across architectures.
 
+## `run_survival_bench.sh` — survival benchmark (kill K, stay smart)
+
+N `so_node` processes (the same `libpkernel.so` the APK ships) on one v2
+relay, measured through three phases: node 1 trains and `dtr save`s the
+weights, every node receives them via p-fs gossip and must eval at trained
+accuracy (Phase 1); K nodes get SIGKILLed and the survivors must stay
+running, converge in SWIM/world, still eval trained, still hold the weight
+blob, and still pub/sub (Phase 2); one victim restarts as a fresh untrained
+process and must rejoin and re-fetch the weights from the flock (Phase 3).
+Prints a markdown result table; exits nonzero if any assertion fails.
+
+```sh
+./run_survival_bench.sh        # N=4, K=1
+N=8 ./run_survival_bench.sh    # N=8, K=3
+```
+
+Measured results: `docs/benchmarks/survival.md`.
+
+## `run_Nnode_scale.sh` — N-node runtime scale test
+
+Parametrized N-node harness (default 16, up to the DNODE_MAX=32 cap) that
+asserts full relay registration, membership/world convergence, region
+formation, DKVA aggregation, zero resource-exhaustion errors and no crash
+signatures. See the header comment for tunables (`ZONE_SIZE`, `SETTLE`).
+
 ## Relay key
 
 The scripts use a fixed 64-hex demo key via `PKERNEL_RELAY_KEY`. For anything
