@@ -30,7 +30,11 @@ def hmac16(key, ver, typ, src, dst, nonce, payload):
     return hashlib.sha256(opad + inner).digest()[:16]
 
 def frame(key, ver, typ, src, dst, nonce, payload, mac=None):
-    h = struct.pack("<IBBBB", MAGIC, ver, typ, src, dst)
+    # Wire head is 12 bytes: magic(4) ver type src dst (4) + 4 zero pad bytes
+    # (HEAD_LEN=12 in net_relay.c — buf[8..11] are zeroed). Omitting the pad
+    # shifts the nonce/mac/payload by 4 bytes so EVERY frame fails MAC
+    # verification — which silently made the "valid" frame below fail too.
+    h = struct.pack("<IBBBB", MAGIC, ver, typ, src, dst) + b"\x00\x00\x00\x00"
     if ver == 2:
         if mac is None:
             mac = hmac16(key, ver, typ, src, dst, nonce, payload)
