@@ -40,6 +40,7 @@
 #include "drpc.h"
 #include "degrade.h"
 #include "dmn.h"
+#include "reflex.h"   /* §8 反射層: 推論完了 → 局所即時防御アクション (配線②) */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -275,6 +276,9 @@ static void dtr_log_push(const B input[SEQ], UB class_id, UB conf_pct)
     dtr_log[idx]._pad           = 0;
     dtr_log_head = (dtr_log_head + 1) % DTR_LOG_SIZE;
     if (dtr_log_count < DTR_LOG_SIZE) dtr_log_count++;
+    /* 配線②: 推論結果を虚空に消さず、§8 反射層へ繋ぐ (推論完了点フック)。
+     * class を脅威レベルと解釈し、reflex がアクション表で局所防御に変換する。 */
+    reflex_on_inference(class_id, conf_pct, drpc_my_node);
 }
 
 /* ---- 公開 API ---- */
@@ -1308,6 +1312,11 @@ W dtr_infer(const B input[4])
         dt_putf2(scores[0]); dt_puts(" ");
         dt_putf2(scores[1]); dt_puts(" ");
         dt_putf2(scores[2]); dt_puts("]\r\n");
+        /* 配線②: REDUCED/TP 完了点も §8 反射層へ繋ぐ (この経路は dtr_log_push
+         * を通らないので、推論完了点で明示フックする)。 */
+        { float mx = scores[0];
+          for (INT c = 1; c < DOUT; c++) if (scores[c] > mx) mx = scores[c];
+          reflex_on_inference(cls, (UB)(mx * 100.0f), drpc_my_node); }
         return (W)cls;
     }
 

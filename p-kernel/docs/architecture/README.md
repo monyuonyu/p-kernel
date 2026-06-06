@@ -55,6 +55,7 @@ Evolution 層への入口）に集中している。
 | [[survival-network.md]] | **なぜこう作るか**。宇宙生存ネットワーク構想＝MoE を生存器官に。思想の核（逐語保存）。 | なぜ |
 | [[regions.md]] | **空間**。遅延でクラスタ化した region・locality-aware MoE・台数で増える容量 `capacity(N)`。 | 空間 |
 | [[reflex-deliberation.md]] | **時間**。反射層（近く・速い）／熟慮層（遠く・遅い）の二層と時定数分離＝発振しない脳。 | 時間 |
+| [[reflex-action.md]] | **行動**。推論結果（class）を §8 反射層の実在する局所防御（SHIELD/CONSERVE/BEACON）へ繋ぐ＝思考に手足を付ける。 | 行動 |
 | [[p-fs.md]] | **記憶**。内容アドレス・gossip 複製・履歴 DAG・消失訂正符号で、死なないファイルシステム。 | 記憶 |
 | `world.c` の世界図（[[survival-network.md]] §II 参照） | **観測**。中央なしで全網の状況図を各ノードが eventual に獲得する situational-awareness map。 | 観測 |
 | [[decentralized-lookup.md]] | **探索**。中央索引なしで「誰が何を持つか」を全員が同じ計算で引く共有基盤（rendezvous/HRW＋gossip WANT fallback＋world-table キャッシュ）。p-fs §3.3 と survival §7 の共通の壁を一枚に括る。 | 探索 |

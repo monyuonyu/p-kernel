@@ -24,6 +24,7 @@
 #include "kdds.h"
 #include "moe.h"
 #include "world.h"
+#include "reflex.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
 #include "pfs_block.h"
@@ -104,6 +105,7 @@ static void cmd_help(void)
     print("  selfc ls - list units compiled this boot\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
+    print("  reflex [on|off|table|stat] - §8 reflex layer: inference -> local defence\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
@@ -264,6 +266,14 @@ static void cmd_net(void)
      * destroys the map (see world.h NO-CENTRAL invariant). */
     create_task((FP)world_task, 7, 4096);
     print("[net] world situational-awareness beacon task started\r\n");
+
+    /* Reflex layer (wave 9 配線②) — wires inference completion to local
+     * immediate-defence actions (§8). Same symmetric task on every node:
+     * it polls peers' "reflex/alarm/<id>" topics and reacts with an
+     * attenuated reflex of its own. No central commander (alarms are
+     * information, not orders). */
+    create_task((FP)reflex_task, 7, 4096);
+    print("[net] reflex (thought->action) task started\r\n");
 
     /* p-fs P1 replication — polls the region-scoped announce/want/sync
      * topics so a block put on any region peer is pulled in here too.
@@ -440,6 +450,10 @@ EXPORT INT usermain(void)
     /* World map — decentralized whole-network situational awareness. The
      * beacon task starts in cmd_net once the node ID is known. */
     world_init();
+    /* Reflex layer (§8) — thought->action wiring. The reflex_task itself
+     * starts in cmd_net once the node ID is known; here we just clear state
+     * so reflex_is_shielded()/reflex_pressure_bias() are safe pre-mesh. */
+    reflex_init();
     /* p-fs P1 — region-scoped block replication. Opens its control
      * topics + chunk port and hooks pfs_put; must follow pmesh_init()
      * and kdds_init(). The poll task starts in cmd_net. */
@@ -511,8 +525,19 @@ EXPORT INT usermain(void)
             kdds_list();
         } else if (starts_with(line, n, "pfs")) {
             cmd_pfs(line, n);
+        } else if (starts_with(line, n, "reflex")) {
+            /* `reflex [on|off|table|stat]` — §8 reflex layer status/control */
+            reflex_cmd(line + 6, (UW)(n - 6));
         } else if (starts_with(line, n, "selfc")) {
-            selfc_cmd(line, n);
+            /* SHIELD (§8): under sustained threat the reflex layer refuses to
+             * take in unknown code — don't germinate new self-compiled units
+             * while shielded (real defensive action, not a print). */
+            if (reflex_is_shielded()) {
+                print("[reflex] SHIELD active — refusing new selfc germination "
+                      "(no unknown code under attack)\r\n");
+            } else {
+                selfc_cmd(line, n);
+            }
         } else if (starts_with(line, n, "kdemo")) {
             cmd_kdemo("x86_64");
         } else if (starts_with(line, n, "net")) {

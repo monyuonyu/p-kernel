@@ -148,6 +148,7 @@ COMMON_C_SRCS = \
     swim.c \
     region.c \
     world.c \
+    reflex.c \
     kdds.c \
     replica.c \
     pmesh.c \

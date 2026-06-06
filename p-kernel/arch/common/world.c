@@ -20,6 +20,7 @@
 #include "region.h"
 #include "degrade.h"
 #include "moe.h"      /* MOE_NUM_CLASSES */
+#include "reflex.h"   /* CONSERVE: reflex_pressure_bias() を局所勾配へ上乗せ */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -140,6 +141,11 @@ static UB compute_pressure(void)
     for (INT c = 0; c < MOE_NUM_CLASSES; c++)
         if (my_firing & WORLD_FIRE_BIT(c)) fires++;
     UW p = (UW)base + (UW)fires * 12u;
+    /* §8 反射層 CONSERVE (収縮): reflex が危険を観測している間だけ、自ノードの
+     * 逼迫度を底上げする。これがビーコンで配られ moe ゲートの局所勾配に乗り、
+     * 近傍は当ノードへの委譲を避ける = 「受援不要・応援に出ない」(§6 応援・受援)。
+     * 反射が解除されればバイアスは 0 に戻る (ヒステリシスは reflex 側)。 */
+    p += (UW)reflex_pressure_bias();
     if (p > 100) p = 100;
     return (UB)p;
 }
