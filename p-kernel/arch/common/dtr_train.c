@@ -41,6 +41,7 @@
  */
 
 #include "dtr.h"
+#include "retrieval.h"
 #include "pfs_block.h"
 #include "pfs_dag.h"
 #include "kernel.h"
@@ -172,7 +173,7 @@ static void ds_init(void)
 /* ------------------------------------------------------------------ */
 
 static void print_split(const char *tag, const B (*X)[DTR_SEQ_LEN],
-                        const UB *y, UW n)
+                        const UB *y, UW n, const char *suffix)
 {
     UW correct = 0;
     float ce = dtr_eval_batch(X, y, n, &correct);
@@ -182,14 +183,34 @@ static void print_split(const char *tag, const B (*X)[DTR_SEQ_LEN],
     tr_puts(": acc "); tr_putf1(pct);
     tr_puts("% ("); tr_putdec(correct); tr_puts("/"); tr_putdec(n);
     tr_puts(")  mean CE "); tr_putf3(ce);
+    tr_puts(suffix);
     tr_puts("\r\n");
 }
 
+/* Wave 8 ①: 同じ重みで retrieval OFF / ON の両方を並記する — どちらの
+ * 数字も同じ dtr_eval_batch から出る、cherry-pick なしの直接比較。
+ * ON 側は p-fs に "dtr/engrams" が無ければ測れない (記憶が源)。 */
 static void cmd_eval(void)
 {
     ds_init();
-    print_split("train   ", ds_x,            ds_y,            DS_TRAIN);
-    print_split("held-out", ds_x + DS_TRAIN, ds_y + DS_TRAIN, DS_TEST);
+
+    UB rprev = ret_set(0);
+    print_split("train   ", ds_x,            ds_y,            DS_TRAIN,
+                "  [ret off]");
+    print_split("held-out", ds_x + DS_TRAIN, ds_y + DS_TRAIN, DS_TEST,
+                "  [ret off]");
+
+    ret_set(1);
+    if (ret_avail() > 0) {
+        print_split("train   ", ds_x,            ds_y,            DS_TRAIN,
+                    "  [ret ON]");
+        print_split("held-out", ds_x + DS_TRAIN, ds_y + DS_TRAIN, DS_TEST,
+                    "  [ret ON]");
+    } else {
+        tr_puts("[dtr] eval [ret ON] skipped: no '" RET_REF "' in p-fs"
+                " — without memory, retrieval cannot think\r\n");
+    }
+    ret_set(rprev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -330,8 +351,19 @@ static void cmd_load(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* grad — analytic-vs-finite-difference gradient check                 */
+/* Wave 8 ① — remember / ret: 記憶→思考の配線の操作面                  */
 /* ------------------------------------------------------------------ */
+
+/* `dtr remember`: 訓練セットから代表 engram を p-fs に保存する。
+ * 重みは一切保存しない — これは dtr save とは別物 (あちらはライフ
+ * サイクル、こちらは思考中に参照される記憶)。 */
+static void cmd_remember(void)
+{
+    ds_init();
+    ret_remember(ds_x, ds_y, DS_TRAIN);
+}
+
+/* (`dtr ret …` の本体 cmd_ret はディスパッチャ節 — tr_tok の後 — にある) */
 
 static void cmd_grad(void)
 {
@@ -433,6 +465,33 @@ static INT tr_tok(const UB *p, const UB *end, const char *kw)
 
 IMPORT void dtr_stat(void);
 
+/* `dtr ret` / `dtr ret on|off|reload` — retrieval ブレンドの操作 */
+static void cmd_ret(const UB *p, const UB *end)
+{
+    p = tr_skip_ws(p, end);
+    if (p >= end) { ret_stat(); return; }
+
+    if (tr_tok(p, end, "on")) {
+        ret_set(1);
+        tr_puts("[ret] blend ON — forward now votes with p-fs engrams\r\n");
+        ret_stat();
+        return;
+    }
+    if (tr_tok(p, end, "off")) {
+        ret_set(0);
+        tr_puts("[ret] blend OFF — weights only\r\n");
+        return;
+    }
+    if (tr_tok(p, end, "reload")) {
+        ret_drop();
+        if (ret_avail() > 0) ret_stat();
+        else tr_puts("[ret] reload: no '" RET_REF "' in p-fs yet"
+                     " (want sent — retry)\r\n");
+        return;
+    }
+    tr_puts("usage: dtr ret [on|off|reload]\r\n");
+}
+
 void dtr_train_cmd(const UB *args, UW len)
 {
     const UB *end = args + len;
@@ -445,6 +504,8 @@ void dtr_train_cmd(const UB *args, UW len)
     if (tr_tok(p, end, "load")) { cmd_load(); return; }
     if (tr_tok(p, end, "grad")) { cmd_grad(); return; }
     if (tr_tok(p, end, "crash")) { cmd_crash(); return; }
+    if (tr_tok(p, end, "remember")) { cmd_remember(); return; }
+    if (tr_tok(p, end, "ret")) { cmd_ret(p + 3, end); return; }
     if (tr_tok(p, end, "train")) {
         p += 5;
         p = tr_skip_ws(p, end);
@@ -457,5 +518,6 @@ void dtr_train_cmd(const UB *args, UW len)
     }
 
     tr_puts("usage: dtr [stat] | dtr eval | dtr train [epochs]"
-            " | dtr save | dtr load | dtr grad | dtr crash\r\n");
+            " | dtr save | dtr load | dtr grad | dtr crash"
+            " | dtr remember | dtr ret [on|off|reload]\r\n");
 }

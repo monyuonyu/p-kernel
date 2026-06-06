@@ -105,6 +105,7 @@ COMMON_C_SRCS = \
     fedlearn.c \
     dtr.c \
     dtr_train.c \
+    retrieval.c \
     dkva.c \
     dproc.c \
     sfs.c \
