@@ -113,12 +113,14 @@ static W h_resp_sub[DNODE_MAX];
 static W h_rsum_pub[DNODE_MAX];
 static W h_rsum_sub[DNODE_MAX];
 
-/* "<pfx><node>" を out に組み立てる (node は 0..DNODE_MAX-1, 1 桁) */
+/* "<pfx><node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁。
+ * resp/rsum が共用するので DNODE_MAX=32 対応で 2 桁化) */
 static void node_topic_name(char *out, const char *pfx, UB node)
 {
     INT i = 0;
     while (pfx[i]) { out[i] = pfx[i]; i++; }
-    out[i++] = (char)('0' + node);
+    if (node >= 10) out[i++] = (char)('0' + node / 10);
+    out[i++] = (char)('0' + node % 10);
     out[i]   = '\0';
 }
 

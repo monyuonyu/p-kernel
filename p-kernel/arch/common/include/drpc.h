@@ -20,7 +20,7 @@
  *    dtk_wai_sem(global_semid, cnt, t) wait  (semaphore must live on local node)
  *
  *  Global Object ID encoding:
- *    bits 31..24 = node_id (0-7)
+ *    bits 31..24 = node_id (0-255; cluster currently capped at DNODE_MAX)
  *    bits 23.. 0 = local T-Kernel object ID
  */
 
@@ -32,7 +32,12 @@
 /* ------------------------------------------------------------------ */
 
 #define DRPC_PORT       7374        /* UDP port for all DRPC traffic     */
-#define DNODE_MAX       8           /* max nodes in cluster (node 0-7)   */
+#define DNODE_MAX       32          /* max nodes in cluster (node 0-31)
+                                     * Bounded by the 8-bit node_id field
+                                     * (UB src_node/dst_node on the wire and
+                                     * obj_id bits 31..24) -> hard ceiling 256.
+                                     * Raised 8 -> 32 for regions scalability
+                                     * (docs/architecture/regions.md §1.2).   */
 
 /* ------------------------------------------------------------------ */
 /* Packet header                                                        */

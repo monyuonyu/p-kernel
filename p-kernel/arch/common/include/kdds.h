@@ -34,10 +34,13 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_TOPIC_MAX   64     /* カーネルが同時に管理できるトピック数。
-                                 * regions R2 で dkva が q(1)+resp(8)+rsum(8)、
-                                 * moe が score per-source(8) を開くため拡張。 */
-#define KDDS_HANDLE_MAX  96     /* 同時オープンハンドル数 (pub/sub 各ハンドル) */
+#define KDDS_TOPIC_MAX   160    /* カーネルが同時に管理できるトピック数。
+                                 * DNODE_MAX=32 で dkva が q(1)+resp(32)+rsum(32)=65、
+                                 * moe が score per-source(32)、world が beacon(32) を
+                                 * init で全枠 pre-open するため大幅拡張。 */
+#define KDDS_HANDLE_MAX  320    /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
+                                 * dkva は per-node に resp/rsum の pub+sub=4 ハンドル
+                                 * (=4×DNODE_MAX=128)、moe/world も per-node に開く。 */
 #define KDDS_NAME_MAX    32     /* トピック名の最大長 (null 含む)          */
 #define KDDS_DATA_MAX    192    /* トピックデータの最大バイト数 (DKVA_RESP_PKT=172B が必要) */
 #define KDDS_SUB_MAX     4      /* トピックあたりの最大サブスクライバ数    */

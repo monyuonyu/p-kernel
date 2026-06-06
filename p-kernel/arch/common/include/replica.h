@@ -54,13 +54,23 @@ typedef struct {
 } __attribute__((packed)) REPLICA_ENTRY;
 /* = 32 + 2 + 2 + 1 + 3 + 128 = 168 bytes */
 
+/* 1 パケットに収められるスナップショット数。
+ * REPLICA_PKT は pmesh_send 経由で 1 UDP パケットとして送るため
+ * PMESH_DATA_MAX(1380) を超えてはならない: 8 + 168×N <= 1380 → N <= 8。
+ * KDDS_TOPIC_MAX とは独立 (KDDS_TOPIC_MAX を 32→48 に増やしても
+ * この wire パケットは肥大させない)。
+ * NOTE: 全トピック数 > REPLICA_ENTRY_MAX のクラスタでは 1 announce で
+ *       全トピックを伝播しきれない。チャンク分割は wire 変更を伴うため
+ *       後続フォローアップ (regions) に委ねる。 */
+#define REPLICA_ENTRY_MAX  8
+
 typedef struct {
-    UW   magic;                             /* REPLICA_MAGIC            */
-    UB   version;                           /* REPLICA_VERSION          */
-    UB   type;                              /* REPLICA_ANNOUNCE / DATA  */
+    UW   magic;                                /* REPLICA_MAGIC            */
+    UB   version;                              /* REPLICA_VERSION          */
+    UB   type;                                 /* REPLICA_ANNOUNCE / DATA  */
     UB   src_node;
-    UB   entry_cnt;                         /* entries[] 有効数         */
-    REPLICA_ENTRY entries[KDDS_TOPIC_MAX];  /* トピックスナップショット */
+    UB   entry_cnt;                            /* entries[] 有効数         */
+    REPLICA_ENTRY entries[REPLICA_ENTRY_MAX];  /* トピックスナップショット */
 } __attribute__((packed)) REPLICA_PKT;
 /* header=8 + 8×168=1344 = 1352 bytes (UDP MTU 内) */
 

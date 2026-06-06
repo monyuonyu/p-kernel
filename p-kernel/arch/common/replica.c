@@ -90,8 +90,8 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
     pkt->src_node  = drpc_my_node;
     pkt->entry_cnt = 0;
 
-    /* 通常トピック */
-    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+    /* 通常トピック (1 パケットに収まる REPLICA_ENTRY_MAX 件まで) */
+    for (W i = 0; i < KDDS_TOPIC_MAX && pkt->entry_cnt < REPLICA_ENTRY_MAX; i++) {
         if (!kdds_topics[i].open) continue;
         REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
         rp_strcpy(e->name, kdds_topics[i].name, KDDS_NAME_MAX);
@@ -104,7 +104,7 @@ static void build_pkt(REPLICA_PKT *pkt, UB type)
     }
 
     /* Tombstone エントリを末尾に追加 (削除の伝播) */
-    for (INT ti = 0; ti < REPLICA_TOMB_MAX && (INT)pkt->entry_cnt < KDDS_TOPIC_MAX; ti++) {
+    for (INT ti = 0; ti < REPLICA_TOMB_MAX && pkt->entry_cnt < REPLICA_ENTRY_MAX; ti++) {
         if (!tomb[ti].active) continue;
         REPLICA_ENTRY *e = &pkt->entries[pkt->entry_cnt++];
         rp_strcpy(e->name, tomb[ti].name, KDDS_NAME_MAX);
@@ -226,7 +226,7 @@ void replica_rx(UB src_node, UH dst_port, const UB *data, UH len)
 
     /* エントリをマージ */
     UB cnt = pkt->entry_cnt;
-    if (cnt > KDDS_TOPIC_MAX) cnt = KDDS_TOPIC_MAX;
+    if (cnt > REPLICA_ENTRY_MAX) cnt = REPLICA_ENTRY_MAX;
     for (UB i = 0; i < cnt; i++)
         merge_entry(&pkt->entries[i]);
 }
