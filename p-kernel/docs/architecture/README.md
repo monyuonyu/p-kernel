@@ -56,7 +56,7 @@ Evolution 層への入口）に集中している。
 | [[reflex-deliberation.md]] | **時間**。反射層（近く・速い）／熟慮層（遠く・遅い）の二層と時定数分離＝発振しない脳。 | 時間 |
 | [[p-fs.md]] | **記憶**。内容アドレス・gossip 複製・履歴 DAG・消失訂正符号で、死なないファイルシステム。 | 記憶 |
 | `world.c` の世界図（[[survival-network.md]] §II 参照） | **観測**。中央なしで全網の状況図を各ノードが eventual に獲得する situational-awareness map。 | 観測 |
-| `decentralized-lookup.md`（並行執筆中・本ディレクトリに着地予定） | **探索**。中央索引なしで「誰が何を持つか」を全員が同じ計算で引く共有基盤（一貫性ハッシュ＋gossip fallback）。p-fs §3.3 と survival §7 の共通の壁を一枚に括る。 | 探索 |
+| [[decentralized-lookup.md]] | **探索**。中央索引なしで「誰が何を持つか」を全員が同じ計算で引く共有基盤（rendezvous/HRW＋gossip WANT fallback＋world-table キャッシュ）。p-fs §3.3 と survival §7 の共通の壁を一枚に括る。 | 探索 |
 | `r3-model-widening.md`（並行執筆中・本ディレクトリに着地予定） | **成長**。玩具 635 param を実用サイズへ広げ、初めて「1台に収まらない＝分散が必然」になる。regions R3 / Evolution 層。 | 成長 |
 
 ### 関係（一文ずつ）
@@ -65,7 +65,7 @@ Evolution 層への入口）に集中している。
 - [[regions.md]]（空間）と [[reflex-deliberation.md]]（時間）は**同じアーキテクチャの直交2軸**。
   region が「どこまでが近傍か」を決め、時定数が「近傍は速く・全体は遅く」を決める。τ で1点に繋がる。
 - [[p-fs.md]] は regions の局所性原則（密な region 内／疎な region 間）を**記憶に反復**する。
-- `decentralized-lookup.md` は p-fs の所在引きと survival §7 の分散ゲーティングが
+- [[decentralized-lookup.md]] は p-fs の所在引きと survival §7 の分散ゲーティングが
   **同じ「中央なしで探す」問題**であることを括り出す共有基盤。
 - `r3-model-widening.md` は他の全部が「配管」だとすれば**水量**。網を太らせて分散を必然にする。
 
