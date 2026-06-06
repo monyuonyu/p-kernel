@@ -443,6 +443,7 @@ EXPORT INT usermain(void)
             region_print();
         } else if (starts_with(line, n, "hrw")) {
             lookup_self_test(print);
+            lookup_l1_self_test(print);
         } else if (starts_with(line, n, "rgnpub")) {
             cmd_rgnpub();
         } else if (starts_with(line, n, "world") || starts_with(line, n, "map")) {

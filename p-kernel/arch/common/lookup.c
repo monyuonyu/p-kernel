@@ -265,3 +265,259 @@ INT lookup_self_test(void (*emit)(const char *))
     else            emit("[hrw] FAIL\r\n");
     return fails;
 }
+
+/* ================================================================== */
+/* L1 — resolution cache + read-k candidates                          */
+/* (doc §2.3 "成功を覚える", §3.2 read-k, §6 L1 row)                  */
+/* ================================================================== */
+
+/*
+ *  The cache is a LOCAL OBSERVATION table in the world-table style
+ *  (world.c): each entry remembers "key k was actually FOUND on node n
+ *  at local time t". It is never gossiped, never synced, never treated
+ *  as truth — staleness (LOOKUP_CACHE_TTL_MS, same value as
+ *  WORLD_STALE_MS) makes old observations decay back to the stateless
+ *  HRW guess. A wrong entry costs one extra hop at L2; it can never
+ *  make a key unfindable, because lookup_candidates_in() always appends
+ *  the full HRW order after the (at most one) cached candidate.
+ *
+ *  LP64 note: seen_ms is U4 on purpose (feedback_lp64_typedef_trap) —
+ *  freshness math is done in 32-bit unsigned wraparound arithmetic,
+ *  identical on every ABI.
+ */
+
+typedef struct {
+    U1 key[LOOKUP_KEY_LEN];  /* the resolved key                        */
+    U4 seen_ms;              /* local tk_get_otm().lo at observation    */
+    UB node;                 /* where the key was actually found        */
+    UB valid;                /* 1 = slot in use                         */
+} LOOKUP_CACHE_ENT;
+
+_Static_assert(sizeof(U4) == 4, "U4 must be 32 bits (LP64 trap)");
+_Static_assert(sizeof(LOOKUP_CACHE_ENT) == 40,
+               "cache entry layout must be LP64-stable (32+4+1+1+2pad)");
+_Static_assert(LOOKUP_CACHE_SIZE > 0 && LOOKUP_CACHE_SIZE <= 256,
+               "cache must stay small and index-able by INT");
+
+static LOOKUP_CACHE_ENT lk_cache[LOOKUP_CACHE_SIZE];
+
+/* Local clock in ms (32-bit lo is plenty for age math; wraparound-safe
+ * because freshness uses unsigned (now - seen) like world.c). */
+static U4 lk_now_ms(void)
+{
+    SYSTIM t; tk_get_otm(&t);
+    return (U4)t.lo;
+}
+
+static INT lk_key_eq(const U1 *a, const U1 *b)
+{
+    for (INT i = 0; i < LOOKUP_KEY_LEN; i++)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+/* entry age in ms (unsigned wraparound math, ABI-uniform) */
+static U4 lk_age(const LOOKUP_CACHE_ENT *e, U4 now)
+{
+    return (U4)(now - e->seen_ms);
+}
+
+static INT lk_fresh(const LOOKUP_CACHE_ENT *e, U4 now)
+{
+    return e->valid && lk_age(e, now) <= (U4)LOOKUP_CACHE_TTL_MS;
+}
+
+void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], UB node)
+{
+    if (key == NULL) return;
+
+    U4 now = lk_now_ms();
+
+    /* 1) same key already cached -> refresh in place */
+    for (INT i = 0; i < LOOKUP_CACHE_SIZE; i++) {
+        if (lk_cache[i].valid && lk_key_eq(lk_cache[i].key, key)) {
+            lk_cache[i].node    = node;
+            lk_cache[i].seen_ms = now;
+            return;
+        }
+    }
+
+    /* 2) eviction: free slot > oldest expired slot > oldest live slot.
+     * Deterministic: scan order breaks age ties to the lowest index. */
+    INT victim = -1;
+    U4  victim_age = 0;
+    for (INT i = 0; i < LOOKUP_CACHE_SIZE; i++) {
+        if (!lk_cache[i].valid) { victim = i; break; }   /* free wins  */
+        U4 age = lk_age(&lk_cache[i], now);
+        if (victim < 0 || age > victim_age) {
+            victim = i; victim_age = age;                /* oldest     */
+        }
+    }
+
+    for (INT i = 0; i < LOOKUP_KEY_LEN; i++) lk_cache[victim].key[i] = key[i];
+    lk_cache[victim].node    = node;
+    lk_cache[victim].seen_ms = now;
+    lk_cache[victim].valid   = 1;
+}
+
+INT lookup_cache_get(const U1 key[LOOKUP_KEY_LEN], UB *node)
+{
+    if (key == NULL || node == NULL) return 0;
+
+    U4 now = lk_now_ms();
+    for (INT i = 0; i < LOOKUP_CACHE_SIZE; i++) {
+        if (lk_cache[i].valid && lk_key_eq(lk_cache[i].key, key)) {
+            if (!lk_fresh(&lk_cache[i], now)) {
+                lk_cache[i].valid = 0;   /* expired: drop on touch */
+                return 0;
+            }
+            *node = lk_cache[i].node;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void lookup_cache_clear(void)
+{
+    for (INT i = 0; i < LOOKUP_CACHE_SIZE; i++) lk_cache[i].valid = 0;
+}
+
+void lookup_cache_age_for_test(U4 ms)
+{
+    /* Pretend `ms` of wall time passed: push every observation that far
+     * into the past. Unsigned wraparound keeps (now - seen) exact. */
+    for (INT i = 0; i < LOOKUP_CACHE_SIZE; i++)
+        if (lk_cache[i].valid) lk_cache[i].seen_ms -= ms;
+}
+
+/* ------------------------------------------------------------------ */
+/* read-k candidates: cache hit first, then HRW order, deduped         */
+/* ------------------------------------------------------------------ */
+
+INT lookup_candidates_in(const U1 key[LOOKUP_KEY_LEN],
+                         const UB *members, INT n_members,
+                         UB out[], INT k)
+{
+    if (key == NULL || members == NULL || out == NULL) return -1;
+    if (n_members <= 0 || k <= 0)                      return -1;
+    if (n_members > LOOKUP_MAX_MEMBERS)                return -1;
+
+    /* Full HRW ranking once; the cache only REORDERS within it. */
+    UB rank[LOOKUP_MAX_MEMBERS];
+    INT nr = lookup_responsible(key, members, n_members, rank, n_members);
+    if (nr < 0) return nr;
+
+    INT cnt = 0;
+
+    /* Fresh local observation goes first — but only if the node is in
+     * the supplied member view (a dead/foreign node must not shadow a
+     * live HRW candidate). */
+    UB hit;
+    INT have_hit = 0;
+    if (lookup_cache_get(key, &hit)) {
+        for (INT i = 0; i < n_members; i++) {
+            if (members[i] == hit) { have_hit = 1; break; }
+        }
+        if (have_hit && cnt < k) out[cnt++] = hit;
+    }
+
+    /* Then the HRW order, skipping the already-emitted cache hit. */
+    for (INT i = 0; i < nr && cnt < k; i++) {
+        if (have_hit && rank[i] == hit) continue;
+        out[cnt++] = rank[i];
+    }
+    return cnt;
+}
+
+INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], UB out[], INT k)
+{
+    UB members[DNODE_MAX];
+    INT n = 0;
+
+    for (UB i = 0; i < DNODE_MAX; i++) {
+        if (dnode_table[i].state == DNODE_ALIVE) members[n++] = i;
+    }
+    if (n == 0) return 0;   /* no cluster yet */
+    return lookup_candidates_in(key, members, n, out, k);
+}
+
+/* ------------------------------------------------------------------ */
+/* L1 self-test — cache semantics on top of the unchanged L0 ranking   */
+/* ------------------------------------------------------------------ */
+
+static INT ids_equal(const UB *a, const UB *b, INT n)
+{
+    for (INT i = 0; i < n; i++)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+INT lookup_l1_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+
+    UB members8[8];
+    for (UB i = 0; i < 8; i++) members8[i] = i;
+
+    /* Same fixed key as the L0 vector (bytes 0x00..0x1f) so the HRW
+     * baseline is the known cross-ABI ranking. */
+    U1 key[LOOKUP_KEY_LEN];
+    for (INT i = 0; i < LOOKUP_KEY_LEN; i++) key[i] = (U1)i;
+
+    lookup_cache_clear();   /* re-runnable: start from a cold cache */
+
+    UB hrw[8], cand[8], cand2[8];
+    INT nh = lookup_responsible(key, members8, 8, hrw, 8);
+
+    /* (1) cold cache: candidates must equal the pure HRW order. */
+    INT nc = lookup_candidates_in(key, members8, 8, cand, 8);
+    if (nh == 8 && nc == 8 && ids_equal(cand, hrw, 8)) {
+        emit("[hrw-l1] ok  cold cache: candidates == HRW order\r\n");
+    } else {
+        emit("[hrw-l1] FAIL cold cache must fall through to HRW\r\n"); fails++;
+    }
+
+    /* (2) note a local observation on the HRW LAST-ranked node; a fresh
+     * hit must short-circuit to candidates[0], rest stays HRW-ordered. */
+    UB found_on = hrw[7];               /* worst HRW guess: node 5 */
+    lookup_note_found(key, found_on);
+    nc = lookup_candidates_in(key, members8, 8, cand, 8);
+    {
+        INT ok = (nc == 8 && cand[0] == found_on);
+        /* remainder must be the HRW order with found_on removed */
+        for (INT i = 0; ok && i < 7; i++) ok = (cand[i + 1] == hrw[i]);
+        if (ok) {
+            emit("[hrw-l1] ok  fresh hit: noted node short-circuits to candidates[0]\r\n");
+        } else {
+            emit("[hrw-l1] FAIL fresh-hit ordering\r\n"); fails++;
+        }
+    }
+
+    /* (3) simulated aging past the TTL: the observation expires and
+     * candidates fall back to the pure HRW order. */
+    lookup_cache_age_for_test((U4)LOOKUP_CACHE_TTL_MS + 1u);
+    nc = lookup_candidates_in(key, members8, 8, cand, 8);
+    if (nc == 8 && ids_equal(cand, hrw, 8)) {
+        emit("[hrw-l1] ok  aged out: stale observation decays back to HRW\r\n");
+    } else {
+        emit("[hrw-l1] FAIL stale entry must not steer candidates\r\n"); fails++;
+    }
+
+    /* (4) determinism: same cache state + members twice -> identical
+     * lists, both with and without a fresh hit present. */
+    lookup_note_found(key, found_on);
+    nc      = lookup_candidates_in(key, members8, 8, cand,  8);
+    INT nc2 = lookup_candidates_in(key, members8, 8, cand2, 8);
+    if (nc == 8 && nc2 == 8 && ids_equal(cand, cand2, 8)) {
+        emit("[hrw-l1] ok  determinism: identical candidate lists on repeat\r\n");
+    } else {
+        emit("[hrw-l1] FAIL determinism\r\n"); fails++;
+    }
+
+    lookup_cache_clear();   /* leave no test residue for real callers */
+
+    if (fails == 0) emit("[hrw-l1] PASS (read-k candidates + resolution cache)\r\n");
+    else            emit("[hrw-l1] FAIL\r\n");
+    return fails;
+}
