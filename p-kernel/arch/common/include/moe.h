@@ -145,3 +145,8 @@ void moe_update_peer(const MOE_SCORE *score);
 
 /* 統計表示 */
 void moe_stat(void);
+
+/* §7/§8 性質テスト (philosophy-gap-audit G3 / I7 I8 D0 §5)。
+ * shell `moe test` から呼ぶカーネル内 self-test。0=全 PASS。
+ * 純ローカル計算なので net/kdds 不要・ベアメタルでも走る。 */
+INT  moe_self_test(void);

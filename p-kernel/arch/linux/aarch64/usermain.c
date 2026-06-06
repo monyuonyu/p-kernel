@@ -90,6 +90,7 @@ static void cmd_help(void)
     print("  dtr crash - fault-inject the guarded worker (NULL write); guard recovers\r\n");
     print("  guard  - guarded-task table (fault isolation + auto-respawn)\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
+    print("  moe [a b c d] - route to best expert (locality MoE); `moe test` = §7/§8 property tests\r\n");
     print("  dkva [infer [a b c d]] - distributed KV attention from THIS node\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
@@ -361,12 +362,21 @@ static void cmd_infer(const UB *line, INT n)
 
 /* `moe [a b c d]` — route a query to the best expert node via locality-aware
  * MoE gating (accuracy minus RTT penalty, regions R1). moe_infer logs each
- * candidate's utility and the chosen expert. */
+ * candidate's utility and the chosen expert.
+ * `moe test` — run the §7/§8 property self-tests (I7/I8/D0/§5). */
 static void cmd_moe(const UB *line, INT n)
 {
     const UB *p   = line;
     const UB *end = line + n;
     while (p < end && *p != ' ' && *p != '\t') p++;   /* skip the verb */
+    while (p < end && (*p == ' ' || *p == '\t')) p++; /* skip spaces      */
+
+    /* `moe test` — NO-CENTRAL gating / two-layer low-pass / oscillation /
+     * simultaneous-event property tests. CI greps the [moe-*] PASS lines. */
+    if (p < end && starts_with(p, (INT)(end - p), "test")) {
+        moe_self_test();
+        return;
+    }
 
     B in[4] = { 40, 80, 30, 10 };
     for (INT i = 0; i < 4; i++) {

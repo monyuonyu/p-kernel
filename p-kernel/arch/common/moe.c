@@ -175,6 +175,24 @@ static W ewma_step(W prev, W sample)
     return prev + d;
 }
 
+/* デッドバンド (§4.2 ヒステリシス) の *唯一の* 定義。現職 inc (inc_ok=健在,
+ * inc_e=その EWMA utility) に対し、挑戦者 chal (chal_e=その EWMA) が乗り換える
+ * には MOE_SWITCH_MARGIN を超えて勝らねばならない。select_expert と
+ * moe_self_test の両方がこの 1 関数を呼ぶので、ヒステリシス規則の重複定義が
+ * 生まれない = 性質テスト (D0) が本番の切替ロジックそのものを守る。 */
+static UB deadband_pick(UB inc, int inc_ok, W inc_e, UB chal, W chal_e,
+                        const char **verdict)
+{
+    if (!inc_ok) {                       /* 現職不在/死亡: 即引き継ぎ */
+        *verdict = "seed";  return chal;
+    }
+    if (chal != inc && chal_e > inc_e + MOE_SWITCH_MARGIN) {
+        *verdict = "SWITCH"; return chal;            /* margin 超過: 乗り換え */
+    }
+    *verdict = (chal == inc) ? "hold" : "hold(deadband)";
+    return inc;
+}
+
 /* 反射層の決定 (reflex-deliberation.md §4.3 / D1):
  *   1. 候補ごとに瞬間 utility を計り、EWMA に畳む (単発ノイズ除去)。
  *   2. EWMA の最大を「挑戦者」とする。
@@ -244,16 +262,9 @@ static UB select_expert(UB gate_class)
     int inc_ok = (inc < DNODE_MAX) && ewma_valid[inc][gate_class] &&
                  (inc == me || (score_valid[inc] &&
                                 dnode_table[inc].state == DNODE_ALIVE));
-    UB pick;
     const char *verdict;
-    if (!inc_ok) {
-        pick = chal;  verdict = "seed";          /* 現職不在/死亡: 即引き継ぎ */
-    } else if (chal != inc &&
-               chal_e > util_ewma[inc][gate_class] + MOE_SWITCH_MARGIN) {
-        pick = chal;  verdict = "SWITCH";        /* margin を超えた: 乗り換え */
-    } else {
-        pick = inc;   verdict = (chal == inc) ? "hold" : "hold(deadband)";
-    }
+    W inc_e = inc_ok ? util_ewma[inc][gate_class] : 0;
+    UB pick = deadband_pick(inc, inc_ok, inc_e, chal, chal_e, &verdict);
     incumbent[gate_class] = pick;
 
     /* 反射 vs 熟慮の可観測行 (D2): 現職/挑戦者の EWMA、margin、判定、
@@ -484,6 +495,332 @@ void moe_init(void)
     delib_count   = 0;
     h_score_pub = -1;
     mo_puts("[moe] initialized  classes="); mo_putdec(MOE_NUM_CLASSES); mo_puts("\r\n");
+}
+
+/* ================================================================== */
+/* 性質テスト (philosophy-gap-audit G3 / I7 I8 D0 §5 の自動検証)        */
+/*                                                                     */
+/* §7/§8 の思想の核を「数で」守るカーネル内 self-test。shell の         */
+/* `moe test` から呼び、CI が stdin 経由で叩いて PASS 行を grep する     */
+/* (pfs/hrw と同じ方式)。本番の expert_utility / ewma_step /            */
+/* deadband_pick をそのまま使うので、これらのロジックが思想から逸脱     */
+/* (例: ヒステリシス削除、中央 argmax への退行) すると即座に落ちる。     */
+/*                                                                     */
+/* すべて純ローカル計算 (network/kdds に触れない) でベアメタルでも走る。 */
+/* タスクスタックを汚さないよう大きなローカルは置かない (ncand<=3)。    */
+/* ================================================================== */
+
+/* テスト用: 既知の瞬間 utility 配列に対し反射層の 1 決定を回す。本番
+ * select_expert と *同じ* ewma_step + deadband_pick を呼ぶ (重複定義なし)。
+ * ewma[]/ewma_valid[]/incumbent_slot は呼び出し側が保持する反射状態。 */
+static UB st_reflex_step(const W *inst_util, INT ncand,
+                         W *ewma, UB *ewma_valid, UB *incumbent_slot)
+{
+    UB chal = 0xFF; W chal_e = 0;
+    for (INT n = 0; n < ncand; n++) {
+        ewma[n] = ewma_valid[n] ? ewma_step(ewma[n], inst_util[n]) : inst_util[n];
+        ewma_valid[n] = 1;
+        if (chal == 0xFF || ewma[n] > chal_e) { chal = (UB)n; chal_e = ewma[n]; }
+    }
+    UB  inc    = *incumbent_slot;
+    INT inc_ok = (inc < (UB)ncand) && ewma_valid[inc];
+    W   inc_e  = inc_ok ? ewma[inc] : 0;
+    const char *v;
+    UB pick = deadband_pick(inc, inc_ok, inc_e, chal, chal_e, &v);
+    *incumbent_slot = pick;
+    return pick;
+}
+
+/* argmax の純ヘルパー (中央 argmax の退行検知に使う)。 */
+static INT st_argmax(const W *a, INT n)
+{
+    INT best = 0;
+    for (INT i = 1; i < n; i++) if (a[i] > a[best]) best = i;
+    return best;
+}
+
+/* ── I7: NO-CENTRAL ゲーティング ──────────────────────────────────────
+ * expert 選択が「各ノードの *局所* 勾配 (自分が観測した近傍の pressure/RTT)」
+ * で決まり、全体を集約する単一点 (= 全員が同じ accuracy テーブルの
+ * グローバル argmax を取る準・中央集権) へ退行していないことを数で示す。
+ *
+ * 仕掛け: 3 つの観測ノード A/B/C が同一 accuracy の 3 expert を見るが、
+ * 各々が *別々の局所 pressure ビュー* を持つ。各ノードは本番 expert_utility
+ * で自分の勾配を下る → 別々の expert を選ぶ。もし中央 argmax(accuracy) へ
+ * 退行していれば accuracy 同点で全員が同一 expert を選ぶはず。 */
+static INT st_test_nocentral(void)
+{
+    INT fails = 0;
+    const UB acc = 70;                         /* 3 expert すべて同一の賢さ */
+    /* 各観測ノードの局所 pressure ビュー (近傍勾配; 自分だけが知る)。 */
+    INT press[3][3] = {
+        { 80, 10, 50 },   /* node A: expert1 が一番空いて見える          */
+        { 10, 80, 50 },   /* node B: expert0 が一番空いて見える          */
+        { 50, 50, 10 },   /* node C: expert2 が一番空いて見える          */
+    };
+    UB pick[3];
+    for (INT obs = 0; obs < 3; obs++) {
+        W u[3];
+        for (INT e = 0; e < 3; e++)
+            u[e] = expert_utility(acc, 0, press[obs][e], 0);
+        pick[obs] = (UB)st_argmax(u, 3);
+        mo_puts("[moe-nocentral] obs"); mo_putdec((UW)obs);
+        mo_puts(" local-press=["); mo_putdec((UW)press[obs][0]);
+        mo_puts(","); mo_putdec((UW)press[obs][1]);
+        mo_puts(","); mo_putdec((UW)press[obs][2]);
+        mo_puts("] -> expert"); mo_putdec(pick[obs]); mo_puts("\r\n");
+    }
+    /* (1) 各ノードは自分の局所勾配の最小 pressure へ下る (= 中央でなく局所)。 */
+    for (INT obs = 0; obs < 3; obs++) {
+        INT cheapest = 0;
+        for (INT e = 1; e < 3; e++)
+            if (press[obs][e] < press[obs][cheapest]) cheapest = e;
+        if (pick[obs] != (UB)cheapest) {
+            mo_puts("[moe-nocentral] FAIL obs follows non-local choice\r\n");
+            fails++;
+        }
+    }
+    /* (2) 退行検知: accuracy だけのグローバル argmax なら全員同一になる。
+     * 実際の選択がすべて同一なら中央集権へ退行している。 */
+    INT all_same = (pick[0] == pick[1]) && (pick[1] == pick[2]);
+    if (all_same) {
+        mo_puts("[moe-nocentral] FAIL all nodes converged to one expert"
+                " (regressed to central argmax)\r\n");
+        fails++;
+    } else {
+        mo_puts("[moe-nocentral] ok  divergent local choices: no single"
+                " aggregation point\r\n");
+    }
+    if (fails == 0)
+        mo_puts("[moe-nocentral] PASS (expert chosen by per-node local"
+                " gradient; no central argmax)\r\n");
+    else
+        mo_puts("[moe-nocentral] FAIL\r\n");
+    return fails;
+}
+
+/* ── I8: 二層時定数のローパス性 ───────────────────────────────────────
+ * 反射層 (速い tick) と熟慮層 (遅い tick = decimation 比 R) が分離している
+ * = 高周波の入力変動は熟慮層では減衰する、を数で示す。
+ *   (a) ステップ応答: 速い層と遅い層の 63% 到達 tick 比 ≒ 時定数比 R。
+ *   (b) 振動応答: 反射層の最速周期 (2 tick) の振動は、熟慮層 (R 間引き) では
+ *       peak-to-peak が縮む (ローパス)。
+ * 反射層 EWMA は本番 ewma_step を使用。 */
+static INT st_test_twolayer(void)
+{
+    INT fails = 0;
+    const INT R = MOE_DELIB_TICK_MS / MOE_REFLEX_TICK_MS;   /* 時定数比 (=10) */
+
+    /* (a) ステップ 0->100。反射=毎 tick、熟慮=R tick ごとに ewma_step。 */
+    W fast = 0, slow = 0;                       /* 両層とも baseline 0 で安定 */
+    INT fast_t63 = -1, slow_t63 = -1;
+    for (INT t = 1; t <= R * 12; t++) {
+        fast = ewma_step(fast, 100);            /* 反射: 毎 tick 実 EWMA      */
+        if (fast_t63 < 0 && fast >= 63) fast_t63 = t;
+        if (t % R == 0) {                       /* 熟慮: R tick ごと          */
+            slow = ewma_step(slow, 100);
+            if (slow_t63 < 0 && slow >= 63) slow_t63 = t;
+        }
+    }
+    mo_puts("[moe-twolayer] step63  fast="); mo_putdec((UW)fast_t63);
+    mo_puts("tick slow="); mo_putdec((UW)slow_t63);
+    mo_puts("tick ratio="); 
+    if (fast_t63 > 0) mo_putdec((UW)(slow_t63 / fast_t63)); else mo_puts("-");
+    mo_puts(" (tau-ratio="); mo_putdec((UW)R); mo_puts(")\r\n");
+    /* 遅い層は速い層の (R を超える) 時定数で応答する = ローパス。 */
+    if (fast_t63 <= 0 || slow_t63 < fast_t63 * (R - 2)) {
+        mo_puts("[moe-twolayer] FAIL step time-constant not separated\r\n");
+        fails++;
+    }
+
+    /* (b) 反射層の最速振動 (毎 tick 100/0)。熟慮層は R 間引きで観測。
+     * 各層の定常 peak-to-peak を測る (位相非依存・バイアス不変の指標)。 */
+    W f = 0, sl = 0;                            /* 両層とも baseline 0 で安定 */
+    W fmin = 1000, fmax = -1000, smin = 1000, smax = -1000;
+    for (INT t = 1; t <= R * 20; t++) {
+        W x = (t & 1) ? 100 : 0;
+        f = ewma_step(f, x);
+        if (t % R == 0) sl = ewma_step(sl, x);
+        if (t > R * 10) {                         /* 定常のみ集計 */
+            if (f  < fmin) fmin = f;
+            if (f  > fmax) fmax = f;
+            if (sl < smin) smin = sl;
+            if (sl > smax) smax = sl;
+        }
+    }
+    W fpp = fmax - fmin, spp = smax - smin;
+    mo_puts("[moe-twolayer] osc-pp fast="); mo_putsdec(fpp);
+    mo_puts(" slow="); mo_putsdec(spp); mo_puts("\r\n");
+    /* 反射層は実際に振動し (sanity)、熟慮層では強く減衰している。 */
+    if (fpp < 8) {
+        mo_puts("[moe-twolayer] FAIL fast layer did not oscillate\r\n"); fails++;
+    }
+    if (spp * 3 >= fpp) {
+        mo_puts("[moe-twolayer] FAIL slow layer did not attenuate hi-freq\r\n");
+        fails++;
+    }
+    if (fails == 0)
+        mo_puts("[moe-twolayer] PASS (reflex fast / deliberation slow:"
+                " hi-freq low-passed)\r\n");
+    else
+        mo_puts("[moe-twolayer] FAIL\r\n");
+    return fails;
+}
+
+/* ── D0: 発振の再現 + ヒステリシスによる収束 ──────────────────────────
+ * 「いま一番空いてるノードへ全員が殺到 → そこが逼迫 → 全員逃げる」の速い
+ * 振動 (発振) を、単一時定数 (ヒステリシス/デッドバンド/EWMA 無しの素朴な
+ * 瞬間 argmax) で再現し、現行の処方 (util EWMA + MOE_SWITCH_MARGIN
+ * デッドバンド + recent_pick 減衰) を入れると切替回数が激減することを示す。
+ *
+ * 共通の負荷モデル (本番 recent_pick と同形):
+ *   毎決定の冒頭で全 load を MOE_PICK_DECAY_NUM/DEN 減衰、
+ *   選んだノードへ MOE_PICK_LOAD を上乗せ。utility は本番 expert_utility。 */
+static INT st_herd(INT stabilized, UW *switches_out)
+{
+    const INT M = 3;            /* 候補ノード数 */
+    const UB  acc = 70;         /* 全候補同一の賢さ (純粋に負荷勾配で競う) */
+    const INT T = 30;           /* 決定回数 */
+    UW load[3] = { 0, 0, 0 };
+    W  ewma[3] = { 0, 0, 0 }; UB ev[3] = { 0, 0, 0 };
+    UB inc = 0xFF;
+    UB prev = 0xFF; UW switches = 0;
+    for (INT t = 0; t < T; t++) {
+        /* 冒頭で負荷減衰 (本番 select_expert と同じ作法)。 */
+        for (INT n = 0; n < M; n++)
+            load[n] = load[n] * MOE_PICK_DECAY_NUM / MOE_PICK_DECAY_DEN;
+        /* 瞬間 utility = 本番 expert_utility (賢さ - 負荷勾配)。 */
+        W u[3];
+        for (INT n = 0; n < M; n++)
+            u[n] = expert_utility(acc, 0, (INT)load[n], 0);
+        UB pick;
+        if (stabilized) {
+            pick = st_reflex_step(u, M, ewma, ev, &inc);   /* EWMA+デッドバンド */
+        } else {
+            pick = (UB)st_argmax(u, M);                    /* 素朴な瞬間 argmax */
+        }
+        if (t > 1 && pick != prev) switches++;             /* 2 回は warmup */
+        prev = pick;
+        load[pick] += MOE_PICK_LOAD;
+    }
+    *switches_out = switches;
+    return 0;
+}
+
+static INT st_test_oscillation(void)
+{
+    INT fails = 0;
+    UW naive = 0, stable = 0;
+    st_herd(0, &naive);
+    st_herd(1, &stable);
+    mo_puts("[moe-osc] herd 3-node, 30 decisions: naive switches=");
+    mo_putdec(naive); mo_puts(" stabilized switches="); mo_putdec(stable);
+    mo_puts("\r\n");
+    /* 発振が再現していること (素朴版は頻繁に切り替わる)。 */
+    if (naive < 18) {
+        mo_puts("[moe-osc] FAIL naive case did not oscillate\r\n"); fails++;
+    }
+    /* 処方が効いていること (切替が半分以下かつ閾値以下)。 */
+    const UW K = 12;
+    if (!(stable <= K && stable * 2 <= naive)) {
+        mo_puts("[moe-osc] FAIL hysteresis did not damp oscillation\r\n");
+        fails++;
+    }
+    if (fails == 0) {
+        mo_puts("[moe-osc] PASS (switches: "); mo_putdec(stable);
+        mo_puts("<="); mo_putdec(K); mo_puts(", naive="); mo_putdec(naive);
+        mo_puts(")\r\n");
+    } else {
+        mo_puts("[moe-osc] FAIL\r\n");
+    }
+    return fails;
+}
+
+/* ── §5: 同時多発の劣化なし (moe 範囲) ────────────────────────────────
+ * ゲーティングはクラスごとに独立した局所状態 (incumbent[c], util_ewma[][c])
+ * を持つ = 複数の独立イベント (別クラス) が同時に来ても互いを直列化しない。
+ * 検証: 同じイベント列を 2 通りの順序 (ラウンドロビン / クラス毎ブロック) で
+ * 処理し、各クラスの k 番目の決定結果が順序に依存しないことを示す
+ * (= イベント間に共有直列化点がない = 各々ローカルに捌ける)。
+ * さらに 3 クラスが別々の expert へ落ち着くことで「単一窓口への funnel」で
+ * ないことも確認する。 */
+static void st_class_util(INT cls, W out[3])
+{
+    /* クラス c では候補 c が最良 (賢さ高)。クラスごとに勝者が違う。 */
+    for (INT n = 0; n < 3; n++)
+        out[n] = expert_utility((UB)(n == cls ? 90 : 50), 0, 0, 0);
+}
+
+static INT st_test_concurrent(void)
+{
+    INT fails = 0;
+    const INT C = 3, E = 6;       /* 3 クラス x 6 イベント */
+    UB res1[3][6], res2[3][6];
+    /* run1: ラウンドロビン (0,1,2,0,1,2,...) — イベントが交互に殺到 */
+    {
+        W ew[3][3]; UB ev[3][3], inc[3];
+        for (INT c = 0; c < C; c++) { inc[c] = 0xFF;
+            for (INT n = 0; n < 3; n++) { ew[c][n] = 0; ev[c][n] = 0; } }
+        for (INT k = 0; k < E; k++)
+            for (INT c = 0; c < C; c++) {
+                W u[3]; st_class_util(c, u);
+                res1[c][k] = st_reflex_step(u, 3, ew[c], ev[c], &inc[c]);
+            }
+    }
+    /* run2: クラス毎ブロック (0x6, 1x6, 2x6) — 同じイベント集合・別順序 */
+    {
+        W ew[3][3]; UB ev[3][3], inc[3];
+        for (INT c = 0; c < C; c++) { inc[c] = 0xFF;
+            for (INT n = 0; n < 3; n++) { ew[c][n] = 0; ev[c][n] = 0; } }
+        for (INT c = 0; c < C; c++)
+            for (INT k = 0; k < E; k++) {
+                W u[3]; st_class_util(c, u);
+                res2[c][k] = st_reflex_step(u, 3, ew[c], ev[c], &inc[c]);
+            }
+    }
+    /* (1) 順序非依存: 各クラスの各イベント結果が両順序で一致。 */
+    INT order_indep = 1;
+    for (INT c = 0; c < C; c++)
+        for (INT k = 0; k < E; k++)
+            if (res1[c][k] != res2[c][k]) order_indep = 0;
+    if (order_indep)
+        mo_puts("[moe-concurrent] ok  per-class results order-independent"
+                " (no serialization point)\r\n");
+    else {
+        mo_puts("[moe-concurrent] FAIL interleaving changed results"
+                " (events serialized)\r\n"); fails++;
+    }
+    /* (2) クラスごとに別 expert へ落ち着く (単一窓口へ funnel していない)。 */
+    UB f0 = res1[0][E-1], f1 = res1[1][E-1], f2 = res1[2][E-1];
+    mo_puts("[moe-concurrent] settled experts: cls0=node"); mo_putdec(f0);
+    mo_puts(" cls1=node"); mo_putdec(f1);
+    mo_puts(" cls2=node"); mo_putdec(f2); mo_puts("\r\n");
+    if (f0 == f1 || f1 == f2 || f0 == f2) {
+        mo_puts("[moe-concurrent] FAIL classes funneled to one expert\r\n");
+        fails++;
+    }
+    if (fails == 0)
+        mo_puts("[moe-concurrent] PASS (independent local handling of"
+                " simultaneous events)\r\n");
+    else
+        mo_puts("[moe-concurrent] FAIL\r\n");
+    return fails;
+}
+
+/* 公開エントリ: 4 本の性質テストを順に走らせ、合計 fail 数を返す。
+ * shell `moe test` から呼ばれ、CI は各 PASS 行を grep する。 */
+INT moe_self_test(void)
+{
+    INT fails = 0;
+    mo_puts("[moe-test] ==== §7/§8 property tests (I7/I8/D0/§5) ====\r\n");
+    fails += st_test_nocentral();
+    fails += st_test_twolayer();
+    fails += st_test_oscillation();
+    fails += st_test_concurrent();
+    if (fails == 0) mo_puts("[moe-test] ALL PASS\r\n");
+    else { mo_puts("[moe-test] FAILURES="); mo_putdec((UW)fails);
+           mo_puts("\r\n"); }
+    return fails;
 }
 
 /* ------------------------------------------------------------------ */
