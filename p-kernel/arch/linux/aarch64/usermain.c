@@ -20,6 +20,7 @@
 #include "drpc.h"
 #include "swim.h"
 #include "region.h"
+#include "lookup.h"
 #include "kdds.h"
 #include "moe.h"
 #include "world.h"
@@ -76,6 +77,7 @@ static void cmd_help(void)
     print("  pfs    - p-fs P0 content-addressed block store self-test (dedup)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
+    print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
     print("  exit   - terminate the UMP process\r\n");
@@ -401,6 +403,8 @@ EXPORT INT usermain(void)
             swim_nodes_print();
         } else if (starts_with(line, n, "region")) {
             region_print();
+        } else if (starts_with(line, n, "hrw")) {
+            lookup_self_test(print);
         } else if (starts_with(line, n, "rgnpub")) {
             cmd_rgnpub();
         } else if (starts_with(line, n, "world") || starts_with(line, n, "map")) {
