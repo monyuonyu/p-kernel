@@ -124,4 +124,24 @@ README: *"thousands of nodes" / "unlimited nodes" / "10,000 spacecraft plates" /
 
 ---
 
+## 追記：現状ステータス（2026-06-06、PR #2 マージ後）
+
+本書のレビュー対象は PR #2（feat/regions-r0、49 コミット）マージ**前**の master。
+同日マージされた regions ブランチで状況が動いているため、穴ごとの現在地を記録する。
+
+| 穴 | 判定 | 現在地 |
+|---|---|---|
+| ⑤ モデルのライフサイクル | ✅ 閉 | 実 CE loss＋解析的 backprop（有限差分検証済み、26.7%→95%/100% held-out）。重みは p-fs DAG に永続（`dtr/weights`、content-addressed 2560B blob）、`dtr load` で復元、クロス ABI（aarch64→x86_64）伝播デモ済み。偽 loss `0.1f:1.0f` は撤去（fedlearn.c のコメントに過去形で記録） |
+| ⑥ 測定機構 | 🟡 7割閉 | `dtr eval`（held-out 付き精度）、N ノードハーネス 6 アサーション、GitHub Actions 4 ジョブ（self-test grep 込み）。**生存ベンチ（K 台殺して精度劣化を測る）は未着手** |
+| ② 上限 8 ノード | 🟡 半分閉 | `DNODE_MAX 32`、N=32 実測 6/6 PASS。replica v2 パケット分割、region スコープで fanout 削減。**「数千」には差分 gossip・動的 ID 割当が未着手** — 指摘の本丸は生きている |
+| ③ relay SPOF | 🔴 開 | LAN 直結 mesh は relay 不要で動くが、relay 経由トポロジは依然一点。冗長化・フェイルオーバ未実装 |
+| ④ ring-0 AI 即死 | 🔴 開 | 未着手。なお重みが p-fs 永続化された今、「推論タスク死亡→ p-fs の重みから再スポーン」という heal.c 延長の復旧パスが初めて設計可能になった |
+| ① TCC 不在 | 🔴 開 | 未着手。最重量。survival-network.md §9（自己進化）の心臓部であり、いずれ避けて通れない |
+
+ロードマップとの対応: 推奨 1（README）と 2・3（測定・モデル）は本書の執筆と同日に
+feat/regions-r0 側で先行着手済みだった。残るは 4（ring-0 復旧）、5（relay 冗長化）、
+6（TCC＋スケール再設計）。
+
+---
+
 *このドキュメントはリポジトリ評価のための所見であり、コード変更の提案ではありません。*
