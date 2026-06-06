@@ -9,6 +9,7 @@
 Status: **R0✅ R1✅ R2✅（配管完了）/ R3 未着手** / 最終更新: 2026-06-02
 
 関連: [[project_pkernel_philosophy]]（5レイヤー世界観の Collective 層）、
+[survival-network.md](survival-network.md)（**この設計の「なぜ」= 宇宙生存ネットワーク構想。R3 = §7 分散ゲーティング**）、
 `phase_b_relay.md`（relay 基盤）、`android.md`（UMP フリート = この設計の強制力）。
 
 ---
