@@ -110,6 +110,61 @@ static u32 mac_drop_count      = 0;   /* total inbound frames failing auth */
 static u64 mac_drop_last_log_ms = 0;  /* rate-limit for the drop log       */
 static int v1_permit_warned    = 0;   /* one-shot permissive-mode warning  */
 
+/* Receive-side replay window (the bonus hole surfaced in wave 10).
+ *
+ * G4 verifies the HMAC of every inbound v2 frame, but a captured-and-resent
+ * frame carries a *valid* MAC, so HMAC verification alone re-admits replays.
+ * The relay has its own per-source nonce window, but it lives in another
+ * process and protects a different hop — an injector that can reach our UDP
+ * tuple from the relay's address (or a buggy/compromised relay) bypasses it
+ * entirely. So the client keeps its OWN per-source 64-packet sliding nonce
+ * window here, keyed by src node id, with the same logic as relay.c's
+ * replay_check_and_update. A fresh nonce is NEVER dropped, so legitimate
+ * traffic always passes; a repeated or too-old nonce is dropped and counted.
+ * All state is static — never on a task stack (see
+ * feedback_hosted_relay_stack_overflow). */
+#define RX_NODE_MAX 256
+static u64 rx_nonce_max[RX_NODE_MAX];
+static u64 rx_nonce_win[RX_NODE_MAX];
+static u8  rx_nonce_armed[RX_NODE_MAX];
+static u32 rx_ok_count          = 0;  /* authenticated, fresh frames passed */
+static u32 replay_drop_count    = 0;  /* inbound frames dropped as replays  */
+static u64 replay_drop_last_log_ms = 0; /* rate-limit for the replay log    */
+
+/* Returns 1 if (src,nonce) is fresh (accept), 0 if replay/out-of-window. */
+static int rx_replay_ok(unsigned src, u64 nonce)
+{
+    if (src >= RX_NODE_MAX) return 0;
+    if (!rx_nonce_armed[src]) {
+        rx_nonce_max[src]   = nonce;
+        rx_nonce_win[src]   = 1;
+        rx_nonce_armed[src] = 1;
+        return 1;
+    }
+    if (nonce > rx_nonce_max[src]) {
+        u64 shift = nonce - rx_nonce_max[src];
+        rx_nonce_win[src] = (shift >= 64) ? 0 : (rx_nonce_win[src] << shift);
+        rx_nonce_win[src] |= 1;
+        rx_nonce_max[src]  = nonce;
+        return 1;
+    }
+    u64 diff = rx_nonce_max[src] - nonce;
+    if (diff >= 64) return 0;                /* too old — outside the window  */
+    u64 bit = 1ULL << diff;
+    if (rx_nonce_win[src] & bit) return 0;   /* already seen — replay         */
+    rx_nonce_win[src] |= bit;
+    return 1;
+}
+
+/* Read-only counters for the shell (`rx` -> [rx-relay]). */
+void net_relay_stats(unsigned long *ok, unsigned long *badmac,
+                     unsigned long *replay)
+{
+    if (ok)     *ok     = (unsigned long)rx_ok_count;
+    if (badmac) *badmac = (unsigned long)mac_drop_count;
+    if (replay) *replay = (unsigned long)replay_drop_count;
+}
+
 /* HA liveness state (CLOCK_MONOTONIC milliseconds). */
 static u64 ha_last_rx_ms       = 0;  /* last packet from any relay        */
 static u64 ha_probe_sent_ms    = 0;  /* 0 = no liveness probe outstanding */
@@ -347,6 +402,23 @@ static void note_mac_drop(void)
     int pos = 0;
     rl_append(line, (int)sizeof(line), &pos, "[net_relay] mac drop n=");
     rl_append_dec(line, (int)sizeof(line), &pos, mac_drop_count);
+    rl_append(line, (int)sizeof(line), &pos, "\n");
+    (void)write(2, line, (size_t)pos);
+}
+
+/* Rate-limited (<=1/sec) replay-drop counter/log. Same low-stack discipline
+ * as note_mac_drop (static buffer + write(2), never glibc stdio on a task
+ * stack). Format is "[net_relay] replay drop n=<count>\n". */
+static void note_replay_drop(void)
+{
+    replay_drop_count++;
+    u64 now = now_ms();
+    if (replay_drop_last_log_ms != 0 && now - replay_drop_last_log_ms < 1000) return;
+    replay_drop_last_log_ms = now;
+    static char line[48];
+    int pos = 0;
+    rl_append(line, (int)sizeof(line), &pos, "[net_relay] replay drop n=");
+    rl_append_dec(line, (int)sizeof(line), &pos, replay_drop_count);
     rl_append(line, (int)sizeof(line), &pos, "\n");
     (void)write(2, line, (size_t)pos);
 }
@@ -639,6 +711,12 @@ int net_relay_recv(void *out, int maxlen)
         int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
         if (n < hdr) continue;
 
+        /* For v2 frames the nonce is carried right after the head; remember
+         * it so the replay window can be consulted once the MAC is verified
+         * and control packets are filtered out. v1 frames carry no nonce. */
+        u64 rx_nonce     = 0;
+        int rx_have_nonce = 0;
+
         /* G4: authenticate the frame BEFORE trusting it for liveness OR data.
          * The relay forwards frames verbatim, so a v2 frame still carries the
          * originator's HMAC-SHA256 over the shared PSK — we recompute it over
@@ -658,6 +736,8 @@ int net_relay_recv(void *out, int maxlen)
                     note_mac_drop();
                     continue;
                 }
+                rx_nonce      = nonce;
+                rx_have_nonce = 1;
             } else {
                 /* v1 frame while we hold a key: unauthenticated. */
                 if (relay_strict) { note_mac_drop(); continue; }
@@ -667,12 +747,25 @@ int net_relay_recv(void *out, int maxlen)
 
         ha_mark_rx(ridx);   /* liveness + deterministic failback */
 
-        /* KEEPALIVE echoes (and stray REGISTERs) are control-plane only. */
+        /* KEEPALIVE echoes (and stray REGISTERs) are control-plane only.
+         * They are filtered out BEFORE the replay window so control traffic
+         * never consumes a data nonce slot. */
         if (type != REL_DATA && type != REL_BROADCAST) continue;
+
+        /* Replay window: a captured v2 data frame carries a valid HMAC, so
+         * the MAC check above re-admits replays. Drop any nonce already seen
+         * from this src (per-source 64-packet window). Fresh nonces are never
+         * dropped, so legitimate traffic always passes. v1 frames carry no
+         * nonce and so are not replay-protected (that is what v2 is for). */
+        if (rx_have_nonce && !rx_replay_ok(buf[6], rx_nonce)) {
+            note_replay_drop();
+            continue;
+        }
 
         int payload_len = (int)n - hdr;
         if (payload_len > maxlen) payload_len = maxlen;
         if (payload_len > 0) memcpy(out, buf + hdr, (size_t)payload_len);
+        rx_ok_count++;
         return payload_len;
     }
 }
