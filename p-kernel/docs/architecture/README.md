@@ -5,7 +5,8 @@
 > 本ファイルはそれら全部を一望し、**どう噛み合うか・何が出来ていて何がまだか**を
 > 示す索引である。未来の Claude セッションも、人間も、まずここから入る。
 
-最終更新: 2026-06-06 ／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
+最終更新: 2026-06-06（同日第2波後 — §7 ゲーティング・p-fs P0+P1・lookup L0・N=32 検証が着地）
+／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
 
 ---
 
@@ -57,7 +58,7 @@ Evolution 層への入口）に集中している。
 | [[p-fs.md]] | **記憶**。内容アドレス・gossip 複製・履歴 DAG・消失訂正符号で、死なないファイルシステム。 | 記憶 |
 | `world.c` の世界図（[[survival-network.md]] §II 参照） | **観測**。中央なしで全網の状況図を各ノードが eventual に獲得する situational-awareness map。 | 観測 |
 | [[decentralized-lookup.md]] | **探索**。中央索引なしで「誰が何を持つか」を全員が同じ計算で引く共有基盤（rendezvous/HRW＋gossip WANT fallback＋world-table キャッシュ）。p-fs §3.3 と survival §7 の共通の壁を一枚に括る。 | 探索 |
-| `r3-model-widening.md`（並行執筆中・本ディレクトリに着地予定） | **成長**。玩具 635 param を実用サイズへ広げ、初めて「1台に収まらない＝分散が必然」になる。regions R3 / Evolution 層。 | 成長 |
+| [[r3-model-widening.md]] | **成長**。玩具 635 param を実用サイズへ広げ、初めて「1台に収まらない＝分散が必然」になる。regions R3 / Evolution 層。 | 成長 |
 
 ### 関係（一文ずつ）
 
@@ -67,7 +68,7 @@ Evolution 層への入口）に集中している。
 - [[p-fs.md]] は regions の局所性原則（密な region 内／疎な region 間）を**記憶に反復**する。
 - [[decentralized-lookup.md]] は p-fs の所在引きと survival §7 の分散ゲーティングが
   **同じ「中央なしで探す」問題**であることを括り出す共有基盤。
-- `r3-model-widening.md` は他の全部が「配管」だとすれば**水量**。網を太らせて分散を必然にする。
+- [[r3-model-widening.md]] は他の全部が「配管」だとすれば**水量**。網を太らせて分散を必然にする。
 
 ---
 
@@ -105,7 +106,7 @@ Evolution 層への入口）に集中している。
 
 読み筋:
 - **swim(RTT) → region → {locality-MoE, KDDS scope, DKVA region-scope, capacity(N)}**。region が空間の土台。
-- **survival §7 ゲーティング → R3 で moe の select_expert を局所勾配へ置換 → §8 二層で damping**。
+- **survival §7 ゲーティング → moe の select_expert を局所勾配へ置換（済 `30f6343`）→ §8 二層で damping**。
 - **survival §8 → reflex-deliberation（時間軸）。region が反射層の空間、time-constant が分離の速度**。
 - **p-fs → decentralized-lookup**（所在引き）と survival §7（ゲーティング）は同じ「中央なしで探す」問題。
 - **world.c**（観測）は熟慮層が全体像を遅れて得る器官。moe の発火記録を吸う。
@@ -114,71 +115,73 @@ Evolution 層への入口）に集中している。
 
 ## 4. 状態表（正直に）
 
-`git log` で接地した SHIPPED 列。DESIGNED = 設計済み未実装、OPEN = 設計上の未解決問題。
+`git log` で接地した SHIPPED 列。**進行中** = いま別ワークツリーで実装中（着地前・shipped とは
+書かない）、DESIGNED = 設計済み未着手、OPEN = 設計上の未解決問題。
 
 | 能力 | 状態 | 根拠（commit / doc） |
 |---|---|---|
 | relay 経由 分散推論（テンソル並列 / DKVA FULL） | **SHIPPED** | PR #1（`6240252` 他）、master |
 | SWIM per-node RTT EWMA | **SHIPPED** | `abdb881`（regions R0） |
 | region 形成（遅延クラスタ・決定的 coordinator） | **SHIPPED** | `1ac8388`（R0）, `f204939` test |
-| K-DDS scoped topics（REGION / GLOBAL、O(N²) 殺し） | **SHIPPED** | `bf1fb64`（R0） |
-| locality-aware MoE ゲーティング（utility = acc − RTT） | **SHIPPED（部分）** | `102478b`（R1）。局所勾配化は R3 で未 |
+| K-DDS scoped topics（REGION / GLOBAL、O(N²) 殺し） | **SHIPPED** | `bf1fb64`（R0）。rx が REGION topic を GLOBAL に降格させる穴は `50808a7` で修正 |
+| locality-aware MoE ゲーティング（utility = acc − RTT） | **SHIPPED** | `102478b`（R1）→ R3 で局所勾配へ置換済（次行） |
+| §7 分散ゲーティング（局所勾配の相互扶助ルーティング） | **SHIPPED** | `30f6343`。utility = acc − rtt − pressure ＋ 同 region ボーナス。§8 由来の `recent_pick[]` ヒステリシス（殺到→発振の抑制）も同コミット。負 utility の表示修正は `5041ac1` |
 | DKVA region-scope + rsum 2段集約 | **SHIPPED** | `7ca1f17`, `c1b8ede`（R2） |
 | `capacity(N)` 連続容量関数（breadth×depth×KV） | **SHIPPED** | `11cc2c2`（R2） |
-| DNODE_MAX 8 → 32（台数の天井上げ） | **SHIPPED** | `473387f` |
-| 全網 situational-awareness map（world.c） | **SHIPPED** | `95ac916`（`arch/common/world.c`） |
+| DNODE_MAX 8 → 32（台数の天井上げ） | **SHIPPED ＋ 実走検証済** | `473387f`。リテラル 8 でノード 9+ が迷子になる罠は `4df9e07`（N-node ハーネス同梱）、ARP テーブル枯渇は `cad09db` で修正。**実走 N=32 で 6/6 PASS（world map 32/32 到達含む）** |
+| 全網 situational-awareness map（world.c） | **SHIPPED** | `95ac916`（`arch/common/world.c`）。ベアメタル x86 + aarch64 にも `world`/`map` コマンドを公開 `fccf30b` |
+| p-fs P0（sha256・content-addressed store・重複排除） | **SHIPPED** | `7e8c98c` `2459005` `5b8a6a8` `b2e63fb`。cross-ABI で block-id が一致、self-test PASS。stddef/ptrdiff_t 衝突は lib/libc 一貫の include 順で解決 |
+| p-fs P1（region-scoped 複製、ANNOUNCE/WANT＋チャンク転送） | **SHIPPED** | `0abc9c3`。save==publish の第一歩。3ノードデモは `50808a7` |
+| decentralized-lookup L0（stateless HRW `responsible(k,r)`） | **SHIPPED** | `cbb5a5a`。cross-ABI で順位が一致、メンバービュー drift 耐性も確認。doc は `63d8a8f` |
 | Android UMP フリート（各インストール＝1ノード、region-aware） | **SHIPPED（進行中）** | `f2d7dc1`, `de09eef`（Phase D） |
-| regions 設計（空間） | **DESIGNED** | [[regions.md]] |
-| survival-network 構想（why / 思想の核） | **DESIGNED**（思想は確定） | [[survival-network.md]] |
-| reflex-deliberation 二層・時定数分離（時間） | **DESIGNED** | [[reflex-deliberation.md]]（DESIGN ONLY） |
-| p-fs P0（sha256 移植・content-addressed store・重複排除） | **DESIGNED（進行中）** | [[p-fs.md]] §5 P0 |
-| p-fs P1–P4（region-scoped 複製・履歴 DAG・分散ルックアップ・符号化） | **DESIGNED** | [[p-fs.md]] §5 |
-| §7 分散ゲーティング（局所勾配でルーティング） | **DESIGNED（着手前）** | survival §7 / §II-2、reflex §4.3 |
-| §8 二層 damping（ヒステリシス・別 tick・EWMA 平滑） | **DESIGNED** | reflex §4 / §6 D1–D2 |
-| 同時多発・並行分散（§5）のシミュレーション（中央なし検証） | **DESIGNED（着手前）** | survival §10 ステップA / reflex D0 |
-| decentralized-lookup（探索の共有基盤） | **DESIGNED**（並行執筆中） | `decentralized-lookup.md`（着地予定） |
-| R3 model widening（網を太らせる） | **OPEN / DESIGNED**（並行執筆中） | `r3-model-widening.md`（着地予定）、regions R3 |
+| §8 二層の明示分離（反射 tick／熟慮 tick を別周期で） | **進行中** | reflex §4 D2。ヒステリシス（D1 相当）は `30f6343` で先行着地、二層本体は実装中 |
+| p-fs P2（履歴 DAG） | **進行中** | [[p-fs.md]] §5 P2 |
+| p-fs 複製の wire chunking 改善 | **進行中** | P1（`0abc9c3`）の後続 |
+| decentralized-lookup L1（WANT gossip fallback） | **進行中** | [[decentralized-lookup.md]] §6 L1 |
+| p-fs P3–P4（分散ルックアップ統合・消失訂正符号） | **DESIGNED** | [[p-fs.md]] §5 |
+| 同時多発・並行分散（§5）のホスト純シミュレーション | **DESIGNED** | survival §10 ステップA / reflex D0（ヒステリシスは実装側で先行したが、発振の定量観測はまだ） |
+| R3 model widening（網を太らせる） | **OPEN / DESIGNED** | [[r3-model-widening.md]]（doc 着地 `55b6e7d`）、regions R3。実装は未着手 |
 | 重みの provisioning（join 時にどこから重みを取るか） | **OPEN** | regions §6-1 |
 | 反射と熟慮の和解（上書き・抑制の権限を分散したまま） | **OPEN** | reflex §7-1, §7-2 |
 | 分散 GC（履歴の安全な破棄） | **OPEN** | p-fs §6.3 |
 | region 間の信頼（HMAC はリンク単位／ref 署名） | **OPEN** | regions §6-4, p-fs §6.4 |
 | 消失訂正符号 churn 下のシャード再配置 | **OPEN** | p-fs §6.2 |
 
-> 一言で: **空間の配管（region / RTT / scope / capacity / world map / DNODE 32）はほぼ通った。**
-> 欠けているのは **時間軸（二層の時定数分離・ゲートの damping）**、**探索の中央なし化**（decentralized-lookup）、
+> 一言で: **空間の配管（region / RTT / scope / capacity / world map / N=32 実走）は通り、
+> ゲーティング（§7 局所勾配＋ヒステリシス）・記憶の入口（p-fs P0+P1）・探索の入口（lookup L0）まで実物になった。**
+> 欠けているのは **時間軸の本体（§8 二層の別 tick）**、**記憶の歴史（P2 DAG → P3）**、
 > そして **水量（R3 で網を太らせ、分散を必然にする）**。
 
 ---
 
 ## 5. 次の一手（クリティカルパス）
 
-何が最も多くを解錠するか。3本が絡み合うが、順序がある。
+第1波（§7＋P0＋P1＋L0）が着地したので、解錠点が動いた。順序はこう。
 
-1. **§7 ゲーティング damping（reflex D0 → D1）— 安定性の前提条件。最優先。**
-   現状の `select_expert()` は瞬間 utility の最大を取るだけで、§7 を素朴に局所勾配化すると
-   **必ず発振する**（reflex §4.1: 殺到→スパイク→一斉退避→再殺到の ringing）。まず
-   ホスト純シミュレーション（survival §10 ステップA = reflex D0）で**発振を目で見る**、
-   次に反射ゲートにヒステリシス／デッドバンド／EWMA 平滑（reflex §4.3, D1）を入れて消す。
-   これは最適化ではなく**制御安定性**で、ゲーティング作業すべての前提。カーネル本体に触る前に
-   シミュレーションで原理を確認する（survival §10 優先度所見）。
+1. **§8 二層の明示分離（reflex D2）— いま進行中。最優先で完遂する。**
+   `recent_pick[]` ヒステリシス（D1 相当）は `30f6343` で先行着地したが、これは
+   反射ループ内の応急 damping にすぎない。反射ループ（REGION・速い tick）と
+   熟慮ループ（GLOBAL・遅い tick）を**別周期**で回し、熟慮が反射のスパイクを
+   観測しない（ローパス）ことを確認して初めて、§7 ゲーティングは構造的に安定する。
+   併せて reflex D0（ホスト純シミュレーションで発振を**定量で**見る）も塞いでおきたい —
+   ヒステリシスが効いていることを目視でなく数で言えるようにする。
 
-2. **§8 二層の明示分離（reflex D2）— 1 の構造的な裏付け。**
-   反射ループ（REGION・速い tick）と熟慮ループ（GLOBAL・遅い tick）を**別周期**で回し、
-   熟慮が反射のスパイクを観測しない（ローパス）ことを確認する。配管（REGION/GLOBAL/rsum/world/
-   capacity）は既に SHIPPED なので、**時定数を別々に与えるだけ**が残作業。
+2. **p-fs P2（履歴 DAG）→ P3（lookup と合流）— 記憶に歴史を与える。**
+   P0（内容アドレス・cross-ABI 同一 block-id）と P1（region-scoped 複製）が実物に
+   なったので、次は commit/ref の DAG（P2、進行中）。P3 の所在引きは
+   [[decentralized-lookup.md]] L0（HRW、SHIPPED）の上に乗る — L1（WANT gossip
+   fallback、進行中）が繋ぎ目。複製の wire chunking 改善も同じ波で進行中。
 
-3. **R3 model widening（`r3-model-widening.md`）— 分散を「必然」にする水量。**
-   R0–R2 と p-fs P0–P2 は玩具モデルでも正しく作れるが、635 param の今は **1台に収まり**、
-   区切る意味が出ない（regions §5 の鶏卵問題）。網を太らせて初めて region 分割・容量スケール・
-   §7 ゲーティングが**机上でなく現実の制約**になる。Phase D（Android フリート）が現実の churn を供給する。
+3. **R3 model widening（[[r3-model-widening.md]]）— 分散を「必然」にする水量。**
+   R0–R2・§7・p-fs P0–P1 は玩具モデルでも正しく作れたが、635 param の今は
+   **1台に収まり**、区切る意味が出ない（regions §5 の鶏卵問題）。doc は着地済
+   （`55b6e7d`）、実装は未着手。網を太らせて初めて region 分割・容量スケール・
+   §7 ゲーティングが**机上でなく現実の制約**になる。N=32 実走検証が済んだ今、
+   台数側の受け皿は既にある。Phase D（Android フリート）が現実の churn を供給する。
 
-4. **p-fs P1（region-scoped 複製）— 記憶を Collective 層へ橋渡し。**
-   「最後の1ノードで記憶が残る」をファイルにも効かせる save==publish の第一歩。
-   swim/region/kdds が SHIPPED なので依存は満たされている。P0 進行中の次の自然な一段。
-
-> 推奨する波: **(1)+(2) を一緒に**（時間軸を入れる）→ **(4)**（記憶を分散へ）→ **(3)**（水量を上げて
-> すべてに意味を与える）。1+2 は配管が揃っており実装コストが小さく、それ無しでは §7 のどんな実装も
-> 壊れるため、ここが最大の解錠点。
+> 推奨する波: **(1) を完遂**（時間軸の本体。進行中のものを着地させる）→ **(2)**（記憶に
+> 歴史と探索を）→ **(3)**（水量を上げてすべてに意味を与える）。第1波で「配管が無い」は
+> もう言い訳にならない — 残るのは時定数と水量である。
 
 ---
 
