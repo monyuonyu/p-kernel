@@ -117,7 +117,14 @@ W kdds_open(const char *name, W qos)
     return kdds_open_scoped(name, qos, KDDS_SCOPE_GLOBAL);
 }
 
-W kdds_open_scoped(const char *name, W qos, W scope)
+/* 共通実装。blocking != 0 なら subscriber 用セマフォを作る。
+ * blocking == 0 (poll-only) なら sem を作らずハンドルだけ確保する。
+ * poll-only は LATEST_ONLY + timeout=0 ポーリング購読で使う: kdds_sub は
+ * データがあればセマフォに触れず即時返却し、kdds_rx も sub_sem<0 を skip する
+ * ので、ブロックしない購読者はセマフォを1個も消費しない。
+ * (CFN_MAX_SEMID は TCB ABI に縛られて増やせないため、per-source topic を
+ *  大量に開く world/moe のような購読者がセマフォを枯渇させない逃げ道。) */
+static W kdds_open_core(const char *name, W qos, W scope, int blocking)
 {
     W tidx = topic_find_or_create(name, qos, scope);
     if (tidx < 0) {
@@ -128,28 +135,43 @@ W kdds_open_scoped(const char *name, W qos, W scope)
     /* ハンドルスロット確保 */
     for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
         if (!kdds_handles[h].open) {
-            /* subscriber 用セマフォを作成する */
-            T_CSEM cs = {
-                .exinf   = NULL,
-                .sematr  = TA_TFIFO,
-                .isemcnt = 0,
-                .maxsem  = 64
-            };
-            ID sem = tk_cre_sem(&cs);
-            if (sem < E_OK) return (W)sem;
+            ID sem = -1;
+            if (blocking) {
+                /* subscriber 用セマフォを作成する */
+                T_CSEM cs = {
+                    .exinf   = NULL,
+                    .sematr  = TA_TFIFO,
+                    .isemcnt = 0,
+                    .maxsem  = 64
+                };
+                sem = tk_cre_sem(&cs);
+                if (sem < E_OK) return (W)sem;
+            }
 
             kdds_handles[h].topic_idx = tidx;
             kdds_handles[h].sub_sem   = sem;
             kdds_handles[h].open      = 1;
 
             kd_puts("[kdds] open  topic=\""); kd_puts(name);
-            kd_puts("\"  handle="); kd_putdec((UW)h); kd_puts("\r\n");
+            kd_puts("\"  handle="); kd_putdec((UW)h);
+            if (!blocking) kd_puts(" (poll)");
+            kd_puts("\r\n");
             return h;
         }
     }
 
     kd_puts("[kdds] handle table full\r\n");
     return -1;
+}
+
+W kdds_open_scoped(const char *name, W qos, W scope)
+{
+    return kdds_open_core(name, qos, scope, 1);
+}
+
+W kdds_open_poll(const char *name, W qos)
+{
+    return kdds_open_core(name, qos, KDDS_SCOPE_GLOBAL, 0);
 }
 
 /* ------------------------------------------------------------------ */

@@ -22,6 +22,7 @@
 #include "region.h"
 #include "kdds.h"
 #include "moe.h"
+#include "world.h"
 #include "pmesh.h"
 #include "demo_kdds.h"
 
@@ -71,6 +72,7 @@ static void cmd_help(void)
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
+    print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
     print("  exit   - terminate the UMP process\r\n");
@@ -221,6 +223,14 @@ static void cmd_net(void)
     create_task((FP)moe_task, 7, 4096);
     print("[net] moe score-gossip task started\r\n");
 
+    /* World map — each node beacons a compact self-descriptor on its own
+     * per-source topic "world/beacon/<id>" and assembles its own whole-
+     * network view from received beacons. No central collector: the same
+     * symmetric task runs on every node, so killing any node never
+     * destroys the map (see world.h NO-CENTRAL invariant). */
+    create_task((FP)world_task, 7, 4096);
+    print("[net] world situational-awareness beacon task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -350,6 +360,9 @@ EXPORT INT usermain(void)
     /* MoE router — per-class accuracy scoreboard + locality-aware expert
      * selection (regions R1). The score-gossip task starts in cmd_net. */
     moe_init();
+    /* World map — decentralized whole-network situational awareness. The
+     * beacon task starts in cmd_net once the node ID is known. */
+    world_init();
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
@@ -385,6 +398,8 @@ EXPORT INT usermain(void)
             region_print();
         } else if (starts_with(line, n, "rgnpub")) {
             cmd_rgnpub();
+        } else if (starts_with(line, n, "world") || starts_with(line, n, "map")) {
+            world_print();
         } else if (starts_with(line, n, "moe")) {
             cmd_moe(line, n);
         } else if (starts_with(line, n, "dtr")) {

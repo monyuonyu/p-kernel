@@ -21,6 +21,7 @@
 #include "drpc.h"
 #include "kdds.h"
 #include "swim.h"
+#include "world.h"      /* world_note_firing — situational-awareness map */
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -170,6 +171,10 @@ UB moe_infer(B temp, B hum, B press, B light)
 {
     UB gate_class = gate_predict(temp, hum, press, light);
     UB expert     = select_expert(gate_class);
+
+    /* このノードがこの推論で発火したことを world-table へ通知する。
+     * 全網マップ (world.c) の firing インジケータが点灯する。 */
+    world_note_firing(gate_class);
 
     mo_puts("[moe] gate="); mo_putdec(gate_class);
     mo_puts("  expert=node"); mo_putdec(expert);

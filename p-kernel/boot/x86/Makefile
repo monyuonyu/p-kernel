@@ -91,6 +91,7 @@ COMMON_C_SRCS = \
     drpc.c \
     swim.c \
     region.c \
+    world.c \
     kdds.c \
     heal.c \
     edf.c \

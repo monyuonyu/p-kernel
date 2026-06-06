@@ -117,6 +117,13 @@ W kdds_open(const char *name, W qos);
  * (regions R0 — region-scoped topic は自 region メンバにだけ配信される) */
 W kdds_open_scoped(const char *name, W qos, W scope);
 
+/* poll-only オープン: subscriber 用セマフォを作らずハンドルだけ確保する。
+ * LATEST_ONLY + kdds_sub(timeout=0) のポーリング購読/発行専用。ブロッキング
+ * 待ちは不可 (timeout<0/>0 は即エラーを返す)。per-source topic を大量に開く
+ * 購読者 (world/moe の世界マップ等) が CFN_MAX_SEMID を枯渇させないための
+ * 軽量オープン。スコープは GLOBAL。 */
+W kdds_open_poll(const char *name, W qos);
+
 /* 直近の kdds_pub() が UDP 送信したピア数 (fanout)。スコープの効果を観測する
  * デモ/検証用。GLOBAL なら全 peer 数、REGION なら region メンバ数になる。 */
 UW kdds_pub_fanout(void);
