@@ -1,4 +1,5 @@
 p-kernel
 libpkernel.so
 test_so_load
+so_node
 *.lo

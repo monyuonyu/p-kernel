@@ -269,6 +269,13 @@ $(ROOT)/relay/relay:
 run-so-relay-test: test_so_load_relay
 	LD_LIBRARY_PATH=. ./test_so_load_relay
 
+# so_node — a pure single-node launcher (no relay fork). Run N copies as
+# separate processes to build a real multi-node mesh from the SAME .so the
+# APK ships. Used by samples/11_distributed/run_region_relay_so.sh to prove
+# region formation over the relay from *measured* RTT (no sim zone).
+so_node: so_node.c $(SO_TARGET)
+	$(CC) -o $@ $< -ldl -lpthread
+
 
 # boot/linux/main.c — uses system libc directly
 main.o: main.c
@@ -303,6 +310,6 @@ run: $(TARGET)
 
 clean:
 	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \
-	      test_so_load test_so_load_relay
+	      test_so_load test_so_load_relay so_node
 
 .PHONY: all run run-so-test run-so-relay-test clean
