@@ -41,6 +41,7 @@ IMPORT void dtr_init(void);
 IMPORT void dtr_stat(void);
 IMPORT void dtr_task(INT stacd, void *exinf);
 IMPORT W    dtr_infer(const B input[4]);
+IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -72,6 +73,11 @@ static void cmd_help(void)
     print("  help   - this list\r\n");
     print("  ai     - AI primitive statistics (inferences, jobs, FL rounds)\r\n");
     print("  dtr    - Distributed Transformer status\r\n");
+    print("  dtr eval  - accuracy + cross-entropy on the labelled dataset\r\n");
+    print("  dtr train [epochs] - REAL training: SGD + analytic backprop\r\n");
+    print("  dtr save  - trained weights -> versioned p-fs object dtr/weights\r\n");
+    print("  dtr load  - load weights from p-fs (works on replicas too)\r\n");
+    print("  dtr grad  - verify analytic gradient vs finite differences\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
@@ -470,7 +476,9 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "moe")) {
             cmd_moe(line, n);
         } else if (starts_with(line, n, "dtr")) {
-            dtr_stat();
+            /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad
+             * -> R3a training verbs (dtr_train.c) */
+            dtr_train_cmd(line + 3, (UW)(n - 3));
         } else if (starts_with(line, n, "kdds")) {
             kdds_list();
         } else if (starts_with(line, n, "pfs")) {

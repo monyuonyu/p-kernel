@@ -72,15 +72,59 @@ static void dt_putf2(float f)
 
 static float dt_relu(float x) { return x > 0.0f ? x : 0.0f; }
 
-/* exp(x): Horner 法 Taylor 展開 */
-static float dt_exp(float x)
+/* IEEE754 binary32 bit-punning (2^k construction / mantissa split).
+ * Every supported target (i686 bare, aarch64 bare, aarch64-linux,
+ * x86_64-linux) is little-endian IEEE754; pinned here so a port to
+ * anything exotic fails loudly instead of mis-training. */
+_Static_assert(sizeof(float) == 4, "float must be IEEE754 binary32");
+typedef union { float f; UW u; } DT_F32;
+
+/*
+ *  exp(x), libc-free — exported as dtr_expf for fedlearn/ai_job.
+ *
+ *  HONESTY NOTE (R3a): the previous implementation was a raw 7-term
+ *  Taylor series clamped at |x|=10. That is fine near 0 but garbage
+ *  past |x|~3 (it returned 848.0 for exp(-10) instead of 4.5e-5), so
+ *  every softmax with a logit gap over a few units produced silently
+ *  wrong probabilities. Cross-entropy training needs real
+ *  probabilities, hence: range reduction e^x = 2^k * e^r with
+ *  k = round(x/ln2), r in [-ln2/2, +ln2/2], 7-term Taylor on r
+ *  (rel. err ~1e-7), then scale by 2^k built from exponent bits.
+ */
+float dtr_expf(float x)
 {
-    if (x >  10.0f) return 22026.0f;
-    if (x < -10.0f) return 0.0f;
-    float r = 1.0f + x * (1.0f + x * (0.5f + x * (0.16667f +
-              x * (0.04167f + x * (0.00833f + x * 0.00139f)))));
-    return r < 1e-10f ? 1e-10f : r;
+    if (x >  88.0f) return 3.0e38f;
+    if (x < -87.0f) return 0.0f;
+    float t = x * 1.4426950f;                       /* x / ln2        */
+    INT  k = (INT)(t + (t >= 0.0f ? 0.5f : -0.5f)); /* round          */
+    float r = x - (float)k * 0.69314718f;
+    float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f +
+              r * (0.041666667f + r * (0.0083333333f +
+              r * 0.0013888889f)))));
+    DT_F32 s; s.u = (UW)(k + 127) << 23;            /* 2^k            */
+    return p * s.f;
 }
+
+/*
+ *  ln(x), libc-free — needed for the cross-entropy loss (R3a).
+ *  x = m * 2^e with m in [1,2); ln(m) = 2*atanh((m-1)/(m+1)) via 5 odd
+ *  terms (rel. err < 1e-7 on [1,2)).
+ */
+float dtr_logf(float x)
+{
+    if (x < 1e-30f) return -69.0f;                  /* ln(1e-30) floor */
+    DT_F32 v; v.f = x;
+    INT e = (INT)((v.u >> 23) & 0xFF) - 127;
+    v.u = (v.u & 0x007FFFFFU) | 0x3F800000U;        /* m in [1,2)      */
+    float m  = v.f;
+    float z  = (m - 1.0f) / (m + 1.0f);
+    float z2 = z * z;
+    float l  = 2.0f * z * (1.0f + z2 * (0.33333333f + z2 * (0.2f +
+               z2 * (0.14285714f + z2 * 0.11111111f))));
+    return l + (float)e * 0.69314718f;
+}
+
+static float dt_exp(float x) { return dtr_expf(x); }
 
 /* sqrt(x): Newton-Raphson 法 */
 static float dt_sqrt(float x)
@@ -346,8 +390,15 @@ static void run_embed_seq(const B input[SEQ], float tok[SEQ][DM])
         for (INT d = 0; d < DM; d++) {
             float s = b_emb[d];
             s += W_emb[d][0] * in_f;   /* 各センサー値は独立したトークン */
-            /* 残り3入力は0 (パディング) */
-            for (INT k = 1; k < EMB_IN; k++) s += W_emb[d][k] * 0.0f;
+            /* R3a: W_emb columns 1..3 used to be multiplied by a
+             * literal 0.0f — 24 dead parameters. They are repurposed
+             * as learned POSITIONAL embeddings (one per token slot
+             * t=1..3; t=0 is covered by b_emb). Without them the
+             * pipeline (shared embed -> permutation-equivariant
+             * attention -> mean pool) cannot tell WHICH sensor channel
+             * a value came from, and a supervised task whose label is
+             * driven by channel 0 (temperature) would be ill-posed. */
+            if (t > 0) s += W_emb[d][t];
             tok[t][d] = dt_relu(s);
         }
     }
@@ -570,6 +621,389 @@ static UB run_stage12(const float in[DM], float scores[DOUT])
 }
 
 /* ------------------------------------------------------------------ */
+/* R3a — 本物の学習 (supervised training, analytic backprop)          */
+/*                                                                     */
+/* PR #3 の批判への直接の答え:「LCG乱数で初期化されたまま一度も学習   */
+/* されていません … 乱数のままなら『AI』と呼ぶのをやめる」。          */
+/* ここは本物である: cross-entropy 損失 + この 635 パラメータグラフ   */
+/* 全体 (embed/pos, W_q/k/v/o, LN1/2 γβ, FFN, cls) を解析的に逆伝播   */
+/* する full-batch SGD。有限差分ではない (勾配検証用の dtr_grad_check */
+/* だけが有限差分を使い、解析勾配と突き合わせる)。                    */
+/*                                                                     */
+/* 勾配バッファ g_grad は dtr_weights_get/set と同じ flat 並びを使う:  */
+/*   W_emb(32) b_emb(8) W_q(64) W_k(64) W_v(64) W_o(64)                */
+/*   ln1_g(8) ln1_b(8) ln2_g(8) ln2_b(8)                               */
+/*   W_ffn1(128) b_ffn1(16) W_ffn2(128) b_ffn2(8) W_cls(24) b_cls(3)   */
+/* ------------------------------------------------------------------ */
+
+/* flat-buffer offsets (must mirror dtr_weights_get order) */
+#define G_W_EMB    0
+#define G_B_EMB   32
+#define G_W_Q     40
+#define G_W_K    104
+#define G_W_V    168
+#define G_W_O    232
+#define G_LN1_G  296
+#define G_LN1_B  304
+#define G_LN2_G  312
+#define G_LN2_B  320
+#define G_W_FFN1 328
+#define G_B_FFN1 456
+#define G_W_FFN2 472
+#define G_B_FFN2 600
+#define G_W_CLS  608
+#define G_B_CLS  632
+_Static_assert(G_B_CLS + DOUT == DTR_WEIGHT_FLOATS,
+               "flat gradient layout must cover exactly 635 params");
+
+/* forward activations cached for backprop. Static, never task-stack
+ * locals (feedback_hosted_relay_stack_overflow). Training is driven
+ * from the shell task only; no concurrent use. */
+typedef struct {
+    float in_f[SEQ];                 /* input[t]/127                  */
+    float tok[SEQ][DM];              /* post-ReLU embed               */
+    float Q[NH][SEQ][DH];
+    float K[NH][SEQ][DH];
+    float V[NH][SEQ][DH];
+    float attn[NH][SEQ][SEQ];        /* softmax(QK^T/sqrt(DH))        */
+    float concat[SEQ][DM];           /* concat(heads)                 */
+    float r1[SEQ][DM];               /* mhsa + tok   (pre-LN1)        */
+    float xh1[SEQ][DM];              /* LN1 normalized x-hat          */
+    float istd1[SEQ];                /* LN1 1/sqrt(var+eps)           */
+    float y1[SEQ][DM];               /* post-LN1                      */
+    float mid[SEQ][DFFN];            /* post-ReLU FFN hidden          */
+    float r2[SEQ][DM];               /* ffn + y1     (pre-LN2)        */
+    float xh2[SEQ][DM];
+    float istd2[SEQ];
+    float y2[SEQ][DM];               /* post-LN2                      */
+    float pool[DM];
+    float probs[DOUT];               /* softmax output                */
+} DT_TCACHE;
+
+static DT_TCACHE tc;
+static float g_grad[DTR_WEIGHT_FLOATS];
+static float g_flatw[DTR_WEIGHT_FLOATS];
+
+/* LayerNorm forward that caches x-hat and 1/std for the backward */
+static void ln_fwd_cache(const float *x, const float *g, const float *b,
+                         float *xh, float *istd_out, float *y)
+{
+    float mean = 0.0f, var = 0.0f;
+    for (INT i = 0; i < DM; i++) mean += x[i];
+    mean /= (float)DM;
+    for (INT i = 0; i < DM; i++) { float d = x[i] - mean; var += d * d; }
+    var /= (float)DM;
+    float istd = 1.0f / dt_sqrt(var + 1e-5f);
+    *istd_out = istd;
+    for (INT i = 0; i < DM; i++) {
+        xh[i] = (x[i] - mean) * istd;
+        y[i]  = xh[i] * g[i] + b[i];
+    }
+}
+
+/* LayerNorm backward: y = xh*g + b, xh = (x-mean)*istd.
+ *   dg += dy*xh ; db += dy ; dxh = dy*g
+ *   dx = istd * (dxh - mean(dxh) - xh * mean(dxh*xh))                 */
+static void ln_bwd(const float *dy, const float *xh, float istd,
+                   const float *g, float *dgam, float *dbet, float *dx)
+{
+    float dxh[DM], m1 = 0.0f, m2 = 0.0f;
+    for (INT i = 0; i < DM; i++) {
+        dgam[i] += dy[i] * xh[i];
+        dbet[i] += dy[i];
+        dxh[i]   = dy[i] * g[i];
+        m1 += dxh[i];
+        m2 += dxh[i] * xh[i];
+    }
+    m1 /= (float)DM; m2 /= (float)DM;
+    for (INT i = 0; i < DM; i++)
+        dx[i] = (dxh[i] - m1 - xh[i] * m2) * istd;
+}
+
+/* Side-effect-free forward (no stats, no DKVA cache update, no log),
+ * caching every activation backprop needs. Returns the cross-entropy
+ * loss -ln p[label]; fills tc. */
+static float train_forward(const B input[SEQ], UB label)
+{
+    float scale = 1.0f / dt_sqrt((float)DH);
+
+    /* embed (+ positional cols, mirrors run_embed_seq) */
+    for (INT t = 0; t < SEQ; t++) {
+        tc.in_f[t] = (float)input[t] / 127.0f;
+        for (INT d = 0; d < DM; d++) {
+            float s = b_emb[d] + W_emb[d][0] * tc.in_f[t];
+            if (t > 0) s += W_emb[d][t];
+            tc.tok[t][d] = dt_relu(s);
+        }
+    }
+
+    /* MHSA */
+    for (INT h = 0; h < NH; h++) {
+        for (INT t = 0; t < SEQ; t++) {
+            dt_linear((float *)W_q[h], NULL, tc.tok[t], tc.Q[h][t], DH, DM);
+            dt_linear((float *)W_k[h], NULL, tc.tok[t], tc.K[h][t], DH, DM);
+            dt_linear((float *)W_v[h], NULL, tc.tok[t], tc.V[h][t], DH, DM);
+        }
+        for (INT i = 0; i < SEQ; i++) {
+            for (INT j = 0; j < SEQ; j++) {
+                float s = 0.0f;
+                for (INT d = 0; d < DH; d++) s += tc.Q[h][i][d] * tc.K[h][j][d];
+                tc.attn[h][i][j] = s * scale;
+            }
+            dt_softmax(tc.attn[h][i], SEQ);
+        }
+        for (INT i = 0; i < SEQ; i++) {
+            for (INT d = 0; d < DH; d++) {
+                float s = 0.0f;
+                for (INT j = 0; j < SEQ; j++)
+                    s += tc.attn[h][i][j] * tc.V[h][j][d];
+                tc.concat[i][h * DH + d] = s;
+            }
+        }
+    }
+
+    /* W_o + residual + LN1 */
+    for (INT t = 0; t < SEQ; t++) {
+        float m[DM];
+        dt_linear((float *)W_o, NULL, tc.concat[t], m, DM, DM);
+        for (INT d = 0; d < DM; d++) tc.r1[t][d] = m[d] + tc.tok[t][d];
+        ln_fwd_cache(tc.r1[t], ln1_g, ln1_b, tc.xh1[t], &tc.istd1[t], tc.y1[t]);
+    }
+
+    /* FFN + residual + LN2 */
+    for (INT t = 0; t < SEQ; t++) {
+        dt_linear((float *)W_ffn1, b_ffn1, tc.y1[t], tc.mid[t], DFFN, DM);
+        for (INT k = 0; k < DFFN; k++) tc.mid[t][k] = dt_relu(tc.mid[t][k]);
+        float f[DM];
+        dt_linear((float *)W_ffn2, b_ffn2, tc.mid[t], f, DM, DFFN);
+        for (INT d = 0; d < DM; d++) tc.r2[t][d] = f[d] + tc.y1[t][d];
+        ln_fwd_cache(tc.r2[t], ln2_g, ln2_b, tc.xh2[t], &tc.istd2[t], tc.y2[t]);
+    }
+
+    /* mean pool + cls softmax */
+    for (INT d = 0; d < DM; d++) {
+        float s = 0.0f;
+        for (INT t = 0; t < SEQ; t++) s += tc.y2[t][d];
+        tc.pool[d] = s / (float)SEQ;
+    }
+    dt_linear((float *)W_cls, b_cls, tc.pool, tc.probs, DOUT, DM);
+    dt_softmax(tc.probs, DOUT);
+
+    float pl = tc.probs[label];
+    if (pl < 1e-7f) pl = 1e-7f;
+    return -dtr_logf(pl);
+}
+
+/* Analytic backprop through the whole graph; accumulates into g_grad.
+ * Must run immediately after train_forward on the same sample. */
+static void train_backward(UB label)
+{
+    float scale = 1.0f / dt_sqrt((float)DH);
+
+    /* static backward scratch (stack discipline) */
+    static float dy2[SEQ][DM], dr2[SEQ][DM], dy1[SEQ][DM];
+    static float dr1[SEQ][DM], dtok[SEQ][DM], dconcat[SEQ][DM];
+    static float dQ[SEQ][DH], dK[SEQ][DH], dV[SEQ][DH];
+
+    /* cls: dlogits = p - onehot */
+    float dlog[DOUT], dpool[DM];
+    for (INT c = 0; c < DOUT; c++)
+        dlog[c] = tc.probs[c] - (c == (INT)label ? 1.0f : 0.0f);
+    for (INT c = 0; c < DOUT; c++) {
+        g_grad[G_B_CLS + c] += dlog[c];
+        for (INT d = 0; d < DM; d++)
+            g_grad[G_W_CLS + c * DM + d] += dlog[c] * tc.pool[d];
+    }
+    for (INT d = 0; d < DM; d++) {
+        float s = 0.0f;
+        for (INT c = 0; c < DOUT; c++) s += W_cls[c][d] * dlog[c];
+        dpool[d] = s;
+    }
+
+    /* mean pool */
+    for (INT t = 0; t < SEQ; t++)
+        for (INT d = 0; d < DM; d++)
+            dy2[t][d] = dpool[d] / (float)SEQ;
+
+    /* LN2 -> residual -> FFN -> (residual into dy1) */
+    for (INT t = 0; t < SEQ; t++) {
+        ln_bwd(dy2[t], tc.xh2[t], tc.istd2[t], ln2_g,
+               &g_grad[G_LN2_G], &g_grad[G_LN2_B], dr2[t]);
+        for (INT d = 0; d < DM; d++) dy1[t][d] = dr2[t][d];  /* residual */
+
+        /* f = W_ffn2 * mid + b_ffn2  (df = dr2) */
+        float dmid[DFFN];
+        for (INT k = 0; k < DFFN; k++) dmid[k] = 0.0f;
+        for (INT d = 0; d < DM; d++) {
+            g_grad[G_B_FFN2 + d] += dr2[t][d];
+            for (INT k = 0; k < DFFN; k++) {
+                g_grad[G_W_FFN2 + d * DFFN + k] += dr2[t][d] * tc.mid[t][k];
+                dmid[k] += W_ffn2[d][k] * dr2[t][d];
+            }
+        }
+        /* mid = relu(W_ffn1 * y1 + b_ffn1) */
+        for (INT k = 0; k < DFFN; k++) {
+            if (tc.mid[t][k] <= 0.0f) { dmid[k] = 0.0f; continue; }
+            g_grad[G_B_FFN1 + k] += dmid[k];
+            for (INT d = 0; d < DM; d++) {
+                g_grad[G_W_FFN1 + k * DM + d] += dmid[k] * tc.y1[t][d];
+                dy1[t][d] += W_ffn1[k][d] * dmid[k];
+            }
+        }
+    }
+
+    /* LN1 -> residual -> W_o */
+    for (INT t = 0; t < SEQ; t++) {
+        ln_bwd(dy1[t], tc.xh1[t], tc.istd1[t], ln1_g,
+               &g_grad[G_LN1_G], &g_grad[G_LN1_B], dr1[t]);
+        for (INT d = 0; d < DM; d++) dtok[t][d] = dr1[t][d];  /* residual */
+
+        /* m = W_o * concat  (dm = dr1) */
+        for (INT n = 0; n < DM; n++) dconcat[t][n] = 0.0f;
+        for (INT d = 0; d < DM; d++) {
+            for (INT n = 0; n < DM; n++) {
+                g_grad[G_W_O + d * DM + n] += dr1[t][d] * tc.concat[t][n];
+                dconcat[t][n] += W_o[d][n] * dr1[t][d];
+            }
+        }
+    }
+
+    /* attention backward, per head */
+    for (INT h = 0; h < NH; h++) {
+        for (INT t = 0; t < SEQ; t++)
+            for (INT d = 0; d < DH; d++)
+                dQ[t][d] = dK[t][d] = dV[t][d] = 0.0f;
+
+        for (INT i = 0; i < SEQ; i++) {
+            /* dout for this head = slice of dconcat */
+            const float *dout = &dconcat[i][h * DH];
+            float da[SEQ], dots = 0.0f;
+            for (INT j = 0; j < SEQ; j++) {
+                float s = 0.0f;
+                for (INT d = 0; d < DH; d++) {
+                    dV[j][d] += tc.attn[h][i][j] * dout[d];
+                    s += dout[d] * tc.V[h][j][d];
+                }
+                da[j] = s;
+                dots += da[j] * tc.attn[h][i][j];
+            }
+            /* softmax backward + scaled dot-product backward */
+            for (INT j = 0; j < SEQ; j++) {
+                float ds = tc.attn[h][i][j] * (da[j] - dots) * scale;
+                for (INT d = 0; d < DH; d++) {
+                    dQ[i][d] += ds * tc.K[h][j][d];
+                    dK[j][d] += ds * tc.Q[h][i][d];
+                }
+            }
+        }
+
+        /* Q/K/V projections: P[d] = sum_n Wp[d*DM+n] * tok[n] */
+        const float *wq = (const float *)W_q[h];
+        const float *wk = (const float *)W_k[h];
+        const float *wv = (const float *)W_v[h];
+        UW oq = (UW)(G_W_Q + h * DM * DH);
+        UW ok = (UW)(G_W_K + h * DM * DH);
+        UW ov = (UW)(G_W_V + h * DM * DH);
+        for (INT t = 0; t < SEQ; t++) {
+            for (INT d = 0; d < DH; d++) {
+                for (INT n = 0; n < DM; n++) {
+                    g_grad[oq + (UW)(d * DM + n)] += dQ[t][d] * tc.tok[t][n];
+                    g_grad[ok + (UW)(d * DM + n)] += dK[t][d] * tc.tok[t][n];
+                    g_grad[ov + (UW)(d * DM + n)] += dV[t][d] * tc.tok[t][n];
+                    dtok[t][n] += wq[d * DM + n] * dQ[t][d]
+                                + wk[d * DM + n] * dK[t][d]
+                                + wv[d * DM + n] * dV[t][d];
+                }
+            }
+        }
+    }
+
+    /* embed backward (ReLU mask: tok>0 <=> pre-activation>0) */
+    for (INT t = 0; t < SEQ; t++) {
+        for (INT d = 0; d < DM; d++) {
+            if (tc.tok[t][d] <= 0.0f) continue;
+            float dz = dtok[t][d];
+            g_grad[G_B_EMB + d] += dz;
+            g_grad[G_W_EMB + d * EMB_IN + 0] += dz * tc.in_f[t];
+            if (t > 0) g_grad[G_W_EMB + d * EMB_IN + t] += dz;
+        }
+    }
+}
+
+/* ---- exported training API (used by dtr_train.c) ------------------ */
+
+/* One full-batch SGD step over (X[i], y[i]), i < n.
+ * Returns the mean cross-entropy loss at the CURRENT weights. */
+float dtr_train_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n, float lr)
+{
+    if (n == 0) return 0.0f;
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) g_grad[i] = 0.0f;
+
+    float loss = 0.0f;
+    for (UW s = 0; s < n; s++) {
+        loss += train_forward(X[s], y[s]);
+        train_backward(y[s]);
+    }
+
+    dtr_weights_get(g_flatw);
+    float step = lr / (float)n;
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++)
+        g_flatw[i] -= step * g_grad[i];
+    dtr_weights_set(g_flatw);
+
+    return loss / (float)n;
+}
+
+/* Mean CE loss + accuracy on (X, y) without touching the weights. */
+float dtr_eval_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n,
+                     UW *correct_out)
+{
+    if (n == 0) { if (correct_out) *correct_out = 0; return 0.0f; }
+    float loss = 0.0f; UW correct = 0;
+    for (UW s = 0; s < n; s++) {
+        loss += train_forward(X[s], y[s]);
+        UB cls = 0;
+        for (INT c = 1; c < DOUT; c++)
+            if (tc.probs[c] > tc.probs[cls]) cls = (UB)c;
+        if (cls == y[s]) correct++;
+    }
+    if (correct_out) *correct_out = correct;
+    return loss / (float)n;
+}
+
+/* Gradient check: compares the analytic gradient against central
+ * finite differences on a spread of parameter indices for one sample.
+ * Returns the max relative error — the proof that train_backward is
+ * the real derivative of train_forward, not a plausible-looking one. */
+float dtr_grad_check(const B input[DTR_SEQ_LEN], UB label)
+{
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) g_grad[i] = 0.0f;
+    (void)train_forward(input, label);
+    train_backward(label);
+
+    dtr_weights_get(g_flatw);
+    const float eps = 2e-3f;
+    float worst = 0.0f;
+    /* stride 13 covers every weight family incl. LN params */
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i += 13) {
+        float orig = g_flatw[i];
+        g_flatw[i] = orig + eps; dtr_weights_set(g_flatw);
+        float lp = train_forward(input, label);
+        g_flatw[i] = orig - eps; dtr_weights_set(g_flatw);
+        float lm = train_forward(input, label);
+        g_flatw[i] = orig;       dtr_weights_set(g_flatw);
+        float fd  = (lp - lm) / (2.0f * eps);
+        float ref = fd < 0.0f ? -fd : fd;
+        if (ref < 0.05f) ref = 0.05f;        /* absolute floor for tiny grads */
+        float diff = g_grad[i] - fd;
+        if (diff < 0.0f) diff = -diff;
+        float rel = diff / ref;
+        if (rel > worst) worst = rel;
+    }
+    return worst;
+}
+
+/* ------------------------------------------------------------------ */
 /* dtr_init                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -608,8 +1042,10 @@ void dtr_init(void)
     T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
     dtr_result_sem = tk_cre_sem(&cs);
 
-    INT total_params = EMB_OUT*EMB_IN + NH*(DM*DH*3) + DM*DM +
-                       DFFN*DM + DM*DFFN + DOUT*DM;
+    /* count EVERYTHING (weights + biases + LN gamma/beta) so the
+     * banner matches DTR_WEIGHT_FLOATS — the old count said 568 and
+     * silently dropped the 67 bias/LN params */
+    INT total_params = DTR_WEIGHT_FLOATS;
 
     dt_puts("[dtr] Transformer initialized\r\n");
     dt_puts("[dtr]   arch  : Embed(4tok×8) + MHSA(h=2,dk=4) + FFN(16) + Cls(3)\r\n");

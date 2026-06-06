@@ -44,16 +44,26 @@
 static UW  fl_rounds = 0;
 static float fl_last_loss = 0.0f;
 
-/* Cross-entropy loss on one sample (true label = label) */
+/* accurate libc-free ln from dtr.c (R3a) */
+IMPORT float dtr_logf(float x);
+
+/* Cross-entropy loss on one sample (true label = label).
+ *
+ * R3a HONESTY NOTE: this used to be
+ *     return (pred == label) ? 0.1f : 1.0f;
+ * — a step function of the argmax dressed up as a loss (PR #3 called
+ * it out, correctly: "何も学習していません"). A step function has zero
+ * gradient almost everywhere, so the finite-difference loop below was
+ * measuring noise. Now it is the real thing: -ln softmax_label(MLP),
+ * smooth in the weights, so the finite differences are actual
+ * gradients. */
 static float cross_entropy_loss(const B input[MLP_IN], UB label)
 {
-    /* Run forward pass to get raw outputs */
-    float x[MLP_IN];
-    for (INT i = 0; i < MLP_IN; i++) x[i] = (float)input[i] / 127.0f;
-
-    /* We approximate: loss ≈ 1 - out[label] (hinge-like, simpler) */
-    UB pred = mlp_forward(input);
-    return (pred == label) ? 0.1f : 1.0f;
+    float p[MLP_OUT];
+    mlp_forward_probs(input, p);
+    float pl = p[label];
+    if (pl < 1e-7f) pl = 1e-7f;
+    return -dtr_logf(pl);
 }
 
 ER fl_local_train(const B samples[][MLP_IN], const UB labels[],

@@ -110,6 +110,7 @@ COMMON_C_SRCS = \
     spawn.c \
     moe.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dmn.c \
     ga.c \

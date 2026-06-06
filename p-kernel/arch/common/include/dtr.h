@@ -186,3 +186,56 @@ void  dtr_log_get_entry(UW idx, DTR_LOG_ENTRY *out);
 /* GA 評価専用: 現在ロードされている重みで log エントリを再推論し
  * 平均 max-softmax (0.0〜1.0) を返す。dtr_ga_busy セット中に呼ぶこと */
 float dtr_eval_confidence(void);
+
+/* ------------------------------------------------------------------ */
+/* R3a — supervised training (real loss, real gradients)               */
+/* ------------------------------------------------------------------ */
+
+/* accurate libc-free exp/ln (range-reduced; see dtr.c HONESTY NOTE).
+ * Shared with fedlearn.c / ai_job.c so the cross-entropy there is the
+ * same real math, not a Taylor approximation gone feral. */
+float dtr_expf(float x);
+float dtr_logf(float x);
+
+/* One full-batch SGD step (analytic backprop, cross-entropy).
+ * Returns mean CE loss at the current weights. Call from the shell
+ * task only; set dtr_ga_busy around training to block dtr_infer. */
+float dtr_train_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n,
+                      float lr);
+
+/* Mean CE loss + accuracy (correct_out) without weight updates. */
+float dtr_eval_batch(const B (*X)[DTR_SEQ_LEN], const UB *y, UW n,
+                     UW *correct_out);
+
+/* Analytic-vs-finite-difference gradient check on one sample.
+ * Returns the max relative error (should be < ~0.05 in float32). */
+float dtr_grad_check(const B input[DTR_SEQ_LEN], UB label);
+
+/* ---- trained-weight persistence blob (p-fs object "dtr/weights") -- */
+/* Fixed-width header + DTR_WEIGHT_FLOATS little-endian IEEE754
+ * float32 params. PORTABILITY (honest statement): all 4 supported
+ * targets (i686 / aarch64 / aarch64-linux / x86_64-linux) are
+ * little-endian IEEE754 binary32, the same assumption every p-fs /
+ * K-DDS wire struct already makes; sizeof(float)==4 is _Static_assert
+ * pinned in dtr.c and dtr_train.c. A big-endian port would need a
+ * byte-swapping loader. */
+
+#define DTR_WBLOB_MAGIC  0x57525444UL   /* "DTRW" LE */
+#define DTR_WBLOB_VER    1
+
+typedef struct {
+    UW magic;                       /* DTR_WBLOB_MAGIC                 */
+    UW version;                     /* DTR_WBLOB_VER                   */
+    UW n_params;                    /* DTR_WEIGHT_FLOATS               */
+    UB d_model;                     /* DTR_EMBED_DIM                   */
+    UB n_heads;                     /* DTR_NUM_HEADS                   */
+    UB seq_len;                     /* DTR_SEQ_LEN                     */
+    UB ffn_dim;                     /* DTR_FFN_DIM                     */
+    UB out_dim;                     /* DTR_OUT_DIM                     */
+    UB _pad[3];
+} __attribute__((packed)) DTR_WBLOB_HDR;   /* 20 bytes */
+
+/* dtr_train.c — dataset + train/eval/save/load shell verbs.
+ * args points just past "dtr"; handles
+ *   eval | train [epochs] | save | load | grad | stat        */
+void dtr_train_cmd(const UB *args, UW len);

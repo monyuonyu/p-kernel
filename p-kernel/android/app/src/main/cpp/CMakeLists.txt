@@ -123,6 +123,7 @@ set(COMMON_SRC
     ${ARCH_CO}/spawn.c
     ${ARCH_CO}/moe.c
     ${ARCH_CO}/dtr.c
+    ${ARCH_CO}/dtr_train.c
     ${ARCH_CO}/dkva.c
     ${ARCH_CO}/dmn.c
     ${ARCH_CO}/ga.c

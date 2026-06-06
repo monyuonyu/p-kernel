@@ -406,6 +406,39 @@ static void dag_cat(const char *name, UW nlen, W at_seq)
 }
 
 /* ------------------------------------------------------------------ */
+/* read — programmatic head-content fetch (R3a: `dtr load` pulls the   */
+/* trained-weights blob through the same ref -> manifest -> content    */
+/* walk dag_cat uses, silently). Shell-task context only (shares       */
+/* man_scratch with save/log/cat).                                     */
+/* ------------------------------------------------------------------ */
+
+INT pfs_dag_read(const UB *name, UW nlen, void *buf, UW maxlen)
+{
+    if (!name || nlen == 0 || nlen > PFS_NAME_MAX || !buf)
+        return PFS_E_INVAL;
+
+    PFSD_REF *r = ref_find((const char *)name, nlen);
+    if (!r) return PFS_E_NOTFOUND;
+
+    if (!pfs_has(r->e.head)) {           /* head manifest not local yet */
+        pfs_repl_want(r->e.head);
+        return PFS_E_NOTFOUND;
+    }
+    INT glen = pfs_get(r->e.head, &man_scratch, (UW)sizeof(man_scratch));
+    if (glen != (INT)sizeof(man_scratch) ||
+        man_scratch.magic   != PFSD_MAN_MAGIC ||
+        man_scratch.version != PFSD_VERSION)
+        return PFS_E_INVAL;
+
+    INT clen = pfs_get(man_scratch.content, buf, maxlen);
+    if (clen < 0) {                      /* content not local yet */
+        pfs_repl_want(man_scratch.content);
+        return PFS_E_NOTFOUND;
+    }
+    return clen;
+}
+
+/* ------------------------------------------------------------------ */
 /* shell dispatcher — "save <name> <text>" / "log <name>" /            */
 /* "cat <name> [@<seq>]" (args points at the verb)                     */
 /* ------------------------------------------------------------------ */

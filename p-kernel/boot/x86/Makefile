@@ -103,6 +103,7 @@ COMMON_C_SRCS = \
     vital.c \
     fedlearn.c \
     dtr.c \
+    dtr_train.c \
     dkva.c \
     dproc.c \
     sfs.c \

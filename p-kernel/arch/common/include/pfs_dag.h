@@ -135,6 +135,14 @@ void pfs_dag_task(INT stacd, void *exinf);
  * negative PFS_E_* code. Works in SOLO mode too (purely local). */
 INT  pfs_dag_save(const UB *name, UW nlen, const void *buf, UW len);
 
+/* Programmatic read of <name>'s HEAD version content into buf (up to
+ * maxlen bytes). Returns the content length, or PFS_E_NOTFOUND if the
+ * ref is unknown / the manifest or content block is not local yet (a
+ * P1 WANT is issued so a retry usually succeeds), or PFS_E_INVAL.
+ * Shell-task context only (shares scratch with save/log/cat).
+ * R3a uses this to load the trained dtr weight blob ("dtr/weights"). */
+INT  pfs_dag_read(const UB *name, UW nlen, void *buf, UW maxlen);
+
 /* Shell dispatcher for the verbs after "pfs ":
  *   save <name> <text> / log <name> / cat <name> [@<seq>]
  * args points at the verb. Prints results/usage via tmonitor. */

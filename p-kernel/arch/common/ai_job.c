@@ -88,27 +88,16 @@ static float B3[MLP_OUT] = { 1.2f, -0.8f, -2.5f };
 
 static float relu(float x) { return x > 0.0f ? x : 0.0f; }
 
-static float softmax_denom(const float v[], UW n)
-{
-    /* stable softmax: subtract max first */
-    float mx = v[0];
-    for (UW i = 1; i < n; i++) if (v[i] > mx) mx = v[i];
-    float s = 0.0f;
-    for (UW i = 0; i < n; i++) {
-        /* Approximate e^x via Taylor: e^x ≈ 1 + x + x²/2 + x³/6 */
-        float t = v[i] - mx;
-        float ex = 1.0f + t + (t*t)*0.5f + (t*t*t)*(1.0f/6.0f);
-        if (ex < 0.0001f) ex = 0.0001f;
-        s += ex;
-    }
-    return s;
-}
+/* accurate range-reduced exp shared with the Transformer (dtr.c) —
+ * the old 3-term Taylor here was unusable past |x|~1 */
+IMPORT float dtr_expf(float x);
 
 /* ================================================================== */
 /* MLP forward pass                                                   */
 /* ================================================================== */
 
-UB mlp_forward(const B input[MLP_IN])
+/* raw logits (shared by mlp_forward / mlp_forward_probs) */
+static void mlp_logits(const B input[MLP_IN], float out[MLP_OUT])
 {
     float x[MLP_IN];
 
@@ -132,21 +121,43 @@ UB mlp_forward(const B input[MLP_IN])
         h2[j] = relu(acc);
     }
 
-    /* Layer 3: linear → argmax (no softmax needed for classification) */
-    float out[MLP_OUT];
+    /* Layer 3: linear */
     for (INT j = 0; j < MLP_OUT; j++) {
         float acc = B3[j];
         for (INT i = 0; i < MLP_H2; i++) acc += W3[j][i] * h2[i];
         out[j] = acc;
     }
+}
 
-    /* Argmax */
+UB mlp_forward(const B input[MLP_IN])
+{
+    float out[MLP_OUT];
+    mlp_logits(input, out);
+
+    /* Argmax (no softmax needed for plain classification) */
     UB cls = 0;
     for (UB j = 1; j < MLP_OUT; j++)
         if (out[j] > out[cls]) cls = j;
-
-    (void)softmax_denom;   /* suppress unused warning */
     return cls;
+}
+
+/* Softmax class probabilities — the real, differentiable output that
+ * fedlearn.c's cross-entropy loss needs (R3a: the previous FL "loss"
+ * was a step function of the argmax). Stable softmax, accurate exp. */
+void mlp_forward_probs(const B input[MLP_IN], float probs[MLP_OUT])
+{
+    float out[MLP_OUT];
+    mlp_logits(input, out);
+
+    float mx = out[0];
+    for (INT j = 1; j < MLP_OUT; j++) if (out[j] > mx) mx = out[j];
+    float s = 0.0f;
+    for (INT j = 0; j < MLP_OUT; j++) {
+        probs[j] = dtr_expf(out[j] - mx);
+        s += probs[j];
+    }
+    if (s < 1e-10f) s = 1e-10f;
+    for (INT j = 0; j < MLP_OUT; j++) probs[j] /= s;
 }
 
 /* Weight accessors for FL */
