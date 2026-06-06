@@ -83,13 +83,24 @@ static void kd_memcpy(void *dst, const void *src, INT n)
 /* トピック検索 / 作成                                                 */
 /* ------------------------------------------------------------------ */
 
+/* 名前でトピックを検索する (既存のみ)。見つからなければ -1。 */
+static W topic_find(const char *name)
+{
+    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+        if (kdds_topics[i].open && kd_streq(kdds_topics[i].name, name))
+            return i;
+    }
+    return -1;
+}
+
 /* 名前でトピックを検索する。見つからなければ新規スロットを確保する。
  * 返り値: インデックス (0..KDDS_TOPIC_MAX-1) または -1 (失敗) */
 static W topic_find_or_create(const char *name, W qos, W scope)
 {
     /* 既存検索 — 見つかればスコープを更新 (REGION への昇格を許す) */
-    for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
-        if (kdds_topics[i].open && kd_streq(kdds_topics[i].name, name)) {
+    {
+        W i = topic_find(name);
+        if (i >= 0) {
             kdds_topics[i].scope = (UB)scope;
             return i;
         }
@@ -315,9 +326,14 @@ void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len)
     if (pkt->data_len == 0 || pkt->data_len > KDDS_DATA_MAX) return;
 
     /* トピックを検索 (なければ作成)。スコープは送信側でのみ強制されるので
-     * 受信側は GLOBAL で作る (ローカル subscriber への配信には影響しない)。 */
-    W tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY,
-                                  KDDS_SCOPE_GLOBAL);
+     * 受信側は GLOBAL で「作る」— だが既存トピックのスコープは触らない。
+     * (以前は find_or_create が既存スロットのスコープも GLOBAL に上書きして
+     *  いた: REGION スコープで開いた pfs/ann 等が、最初の受信パケットで
+     *  こっそり GLOBAL 配送へ昇格してしまい、region 局所性が壊れていた。) */
+    W tidx = topic_find(pkt->name);
+    if (tidx < 0)
+        tidx = topic_find_or_create(pkt->name, KDDS_QOS_LATEST_ONLY,
+                                    KDDS_SCOPE_GLOBAL);
     if (tidx < 0) return;
 
     KDDS_TOPIC *t = &kdds_topics[tidx];
