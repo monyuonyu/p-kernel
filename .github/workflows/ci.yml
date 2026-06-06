@@ -51,8 +51,13 @@ jobs:
       - name: Install cross toolchain + qemu-user
         run: |
           sudo apt-get update
+          # libc6-dev-arm64-cross: the hosted UMP build (_TK_HOSTED_LIBC_) needs
+          # real aarch64 glibc headers; --no-install-recommends skips them and
+          # the cross gcc falls back to the host's /usr/include and dies on
+          # bits/libc-header-start.h. (Also pulls libc6-arm64-cross, which
+          # provides /usr/aarch64-linux-gnu for the qemu-user -L below.)
           sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu make qemu-user-static
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross make qemu-user-static
       - name: Cross-build (Makefile auto-selects aarch64-linux-gnu- off-host)
         run: make -C p-kernel/boot/linux
       - name: Verify artifact is aarch64
