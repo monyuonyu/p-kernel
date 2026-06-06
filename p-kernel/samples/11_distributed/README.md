@@ -56,6 +56,18 @@ weight blob reaches it through P1 chunk replication + P2 ref gossip,
 When `qemu-x86_64` is available node 2 runs the sibling ABI, proving the
 float32 blob is bit-portable across architectures.
 
+## `run_selfc_propagate.sh` — code written on one node runs inside another
+
+Two nodes plus the relay. Node 1 authors C source (`selfc save genome.c`):
+the source becomes a content-addressed p-fs object and replicates over the
+region like any block. Node 2 runs `selfc run genome.c`: it reads the
+source from its own p-fs replica and compiles it **inside its own kernel
+process** with the embedded libtcc (`TCC_OUTPUT_MEMORY`), then starts the
+result as a new T-Kernel task. No file exchanged, no compiler forked —
+see `docs/architecture/self-compile.md` (and its honest list of what is
+NOT verified/sandboxed yet). Needs `libtcc-dev` at build time on node 2's
+binary; without it the demo still replicates but prints the stub message.
+
 ## Relay key
 
 The scripts use a fixed 64-hex demo key via `PKERNEL_RELAY_KEY`. For anything
