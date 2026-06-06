@@ -135,9 +135,9 @@
 | **G5** | 🟡 | **FIXED** | fedlearn の distributed 集約が偽 `E_OK` をやめ `E_NOSPT` を返す（嘘の成功を消す）。 |
 | **G7** | 🟡 | **FIXED** | ID 範囲外・`>DNODE_MAX` の無音脱落を診断ログで可視化（relay 側 + `net_relay_init`）。※カーネル側 usermain の skip は follow-up。 |
 | **G9** | 🟢 | **FIXED** | `kdds_pub` の fanout は `pmesh_send`==0 のときだけ加算。no_route は別カウンタへ。観測指標が配送数を過大報告しない。 |
-| **G1** | 🔴 | in progress | 真の同時多発（per-source Query）— 第10波 A隊。 |
-| **G2** | 🔴 | in progress | 全 region を数える正直な degraded — 第10波 A隊。 |
-| **G8** | 🟡 | in progress | coordinator 死の貫通 — 第10波 A隊（G2 と一体）。 |
+| **G1** | 🔴 | **FIXED** | 真の同時多発: Q を per-origin `dtr/dkva/q/<origin>` 化、RESP_PKT に origin、responder が時間多重で再発行 → 2〜3起点が同時完遂（`concurrent_infer.sh` A）。 |
+| **G2** | 🔴 | **FIXED** | 全 region を数える正直な degraded: 期待集合に他 region coordinator を追加（`world_peer_region()`）、欠損は `degraded (k/n)` に計上（同 B: 他 region 全滅で `degraded (2/3)`）。 |
+| **G8** | 🟡 | **FIXED**(最小) | coordinator 死＝その region 欠損として G2 の degraded 分母へ正直計上。次点の rsum 肩代わりはストレッチで残置。 |
 | **G6** | 🟡 | 据え置き | 動的 ID 割当・自己編成トポロジは R3/Phase D の本丸として明示。 |
 | **G10/G11** | 🟢 | 据え置き | heal の後継選出 drift / 時定数の理論接続。後続。 |
 
