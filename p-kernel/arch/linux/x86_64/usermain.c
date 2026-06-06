@@ -27,6 +27,7 @@
 #include "pmesh.h"
 #include "demo_kdds.h"
 #include "pfs_block.h"
+#include "pfs_repl.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -74,7 +75,9 @@ static void cmd_help(void)
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
-    print("  pfs    - p-fs P0 content-addressed block store self-test (dedup)\r\n");
+    print("  pfs    - p-fs block store self-test (dedup)\r\n");
+    print("  pfs put <text> - store <text> as a block; replicates to region peers\r\n");
+    print("  pfs ls - list stored blocks (id prefix / len / origin)\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
@@ -238,6 +241,12 @@ static void cmd_net(void)
     create_task((FP)world_task, 7, 4096);
     print("[net] world situational-awareness beacon task started\r\n");
 
+    /* p-fs P1 replication — polls the region-scoped announce/want/sync
+     * topics so a block put on any region peer is pulled in here too.
+     * Same symmetric task on every node: no master copy. */
+    create_task((FP)pfs_repl_task, 7, 4096);
+    print("[net] pfs block replication task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -327,6 +336,31 @@ static void cmd_moe(const UB *line, INT n)
     print("[moe] => class "); print_dec_s((W)cls); print("\r\n");
 }
 
+/* `pfs` family — p-fs block store + P1 replication:
+ *   pfs            -> P0 self-test (dedup / round-trip / miss)
+ *   pfs put <text> -> store <text>; new blocks announce to region peers
+ *   pfs ls         -> list blocks (id prefix / len / origin) */
+static void cmd_pfs(const UB *line, INT n)
+{
+    const UB *p   = line + 3;          /* skip "pfs" */
+    const UB *end = line + n;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+
+    if (p < end && starts_with(p, (INT)(end - p), "put")) {
+        p += 3;
+        while (p < end && (*p == ' ' || *p == '\t')) p++;
+        if (p >= end) {
+            print("usage: pfs put <text>\r\n");
+            return;
+        }
+        pfs_repl_put_cmd(p, (UW)(end - p));
+    } else if (p < end && starts_with(p, (INT)(end - p), "ls")) {
+        pfs_repl_ls();
+    } else {
+        pfs_self_test(print);
+    }
+}
+
 /* `rgnpub` — regions R0 demo: publish to a GLOBAL topic and a REGION-scoped
  * topic and report each pub's fanout (peers actually sent to). In a
  * partitioned cluster the region pub reaches only same-region peers. */
@@ -370,6 +404,10 @@ EXPORT INT usermain(void)
     /* World map — decentralized whole-network situational awareness. The
      * beacon task starts in cmd_net once the node ID is known. */
     world_init();
+    /* p-fs P1 — region-scoped block replication. Opens its control
+     * topics + chunk port and hooks pfs_put; must follow pmesh_init()
+     * and kdds_init(). The poll task starts in cmd_net. */
+    pfs_repl_init();
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
@@ -416,7 +454,7 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "kdds")) {
             kdds_list();
         } else if (starts_with(line, n, "pfs")) {
-            pfs_self_test(print);
+            cmd_pfs(line, n);
         } else if (starts_with(line, n, "kdemo")) {
             cmd_kdemo("x86_64");
         } else if (starts_with(line, n, "net")) {

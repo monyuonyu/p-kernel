@@ -77,11 +77,21 @@ typedef struct {
     U1   id[PFS_ID_LEN];           /* sha256(data[0..len)) */
     UW   len;                      /* block length in bytes */
     U1   used;                     /* slot occupied? */
+    U1   origin;                   /* creator node id / PFS_ORIGIN_SELF */
     U1   data[PFS_BLOCK_MAX];      /* block bytes */
 } PFS_SLOT;
 
 static PFS_SLOT pfs_table[PFS_MAX_BLOCKS];
 static UW       pfs_n;             /* number of distinct blocks stored */
+
+/* P1 hook: fired once per NEW block (never on a dedup hit). Registered
+ * by pfs_repl.c so a local store becomes a region announce. */
+static PFS_PUT_HOOK pfs_put_hook = 0;
+
+void pfs_set_put_hook(PFS_PUT_HOOK fn)
+{
+    pfs_put_hook = fn;
+}
 
 /* ------------------------------------------------------------------ */
 /* internal helpers                                                    */
@@ -112,7 +122,8 @@ void pfs_id_compute(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
     sha256(buf, (size_t)len, id_out);
 }
 
-INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
+INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
+                   U1 origin)
 {
     if (buf == 0 && len != 0) return PFS_E_INVAL;
     if (len > PFS_BLOCK_MAX)   return PFS_E_TOOBIG;
@@ -121,23 +132,32 @@ INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
     pfs_id_compute(buf, len, id);
     if (id_out) pfs_memcpy(id_out, id, PFS_ID_LEN);
 
-    /* Dedup: same content -> same id -> do not re-store. */
+    /* Dedup: same content -> same id -> do not re-store (and do NOT
+     * fire the hook — that is what stops announce loops in P1: a
+     * replica that already holds the block stays silent). */
     if (find_slot(id) >= 0) return PFS_OK;
 
     /* Find a free slot. */
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
         if (!pfs_table[i].used) {
             pfs_memcpy(pfs_table[i].id, id, PFS_ID_LEN);
-            pfs_table[i].len = len;
+            pfs_table[i].len    = len;
+            pfs_table[i].origin = origin;
             if (len) pfs_memcpy(pfs_table[i].data, buf, (size_t)len);
             pfs_table[i].used = 1;
             pfs_n++;
             /* TODO(P0->durable): also append (id,len,bytes) to a
              * content-addressed file on FAT32 here; see header note. */
+            if (pfs_put_hook) pfs_put_hook(pfs_table[i].id, len, origin);
             return PFS_OK;
         }
     }
     return PFS_E_FULL;
+}
+
+INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
+{
+    return pfs_put_origin(buf, len, id_out, PFS_ORIGIN_SELF);
 }
 
 INT pfs_get(const U1 id[PFS_ID_LEN], void *buf, UW maxlen)
@@ -159,6 +179,16 @@ INT pfs_has(const U1 id[PFS_ID_LEN])
 UW pfs_count(void)
 {
     return pfs_n;
+}
+
+INT pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
+                  U1 *origin_out)
+{
+    if (idx >= PFS_MAX_BLOCKS || !pfs_table[idx].used) return 0;
+    if (id_out)     pfs_memcpy(id_out, pfs_table[idx].id, PFS_ID_LEN);
+    if (len_out)    *len_out    = pfs_table[idx].len;
+    if (origin_out) *origin_out = pfs_table[idx].origin;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */

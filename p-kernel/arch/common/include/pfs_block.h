@@ -28,6 +28,11 @@
 #define PFS_BLOCK_MAX  4096        /* max bytes per block (P0) */
 #define PFS_MAX_BLOCKS 64          /* in-memory block table capacity (P0) */
 
+/* origin tag for blocks created locally outside distributed mode (also
+ * the value pfs_put() uses). A real node id (0..DNODE_MAX-1) marks the
+ * node that first created the block (p-fs P1 replication metadata). */
+#define PFS_ORIGIN_SELF 0xFF
+
 /* Result codes (0 = success, negative = error). */
 #define PFS_OK          0
 #define PFS_E_NOTFOUND (-1)        /* no block with that id */
@@ -40,8 +45,29 @@ void pfs_id_compute(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
 
 /* Store a block. block-id = H(buf) is written to id_out. If a block with
  * that id is already present the bytes are NOT re-stored (dedup); id_out is
- * still filled. Returns PFS_OK, or a negative PFS_E_* code. */
+ * still filled. Returns PFS_OK, or a negative PFS_E_* code.
+ * Equivalent to pfs_put_origin(buf, len, id_out, PFS_ORIGIN_SELF). */
 INT  pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
+
+/* As pfs_put, but tags the block with the node that first created it
+ * (p-fs P1: replicated blocks keep their creator's id so `pfs ls` shows
+ * the same origin on every replica). On a NEW store (not a dedup hit)
+ * the registered put-hook fires — pfs_repl.c uses this to announce the
+ * block to the region (save == publish, p-fs.md §3.2). */
+INT  pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
+                    U1 origin);
+
+/* Hook called on every NEW block store (never on a dedup hit). Keeps
+ * pfs_block.c network-free: the P1 replication layer registers here.
+ * The hook runs in the storing task's context — keep it light. */
+typedef void (*PFS_PUT_HOOK)(const U1 id[PFS_ID_LEN], UW len, U1 origin);
+void pfs_set_put_hook(PFS_PUT_HOOK fn);
+
+/* Enumerate the block table for `pfs ls` / replication sync: fills the
+ * out params for slot idx (0..PFS_MAX_BLOCKS-1). Returns 1 if the slot
+ * holds a block, 0 if empty / out of range. Any out param may be NULL. */
+INT  pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
+                   U1 *origin_out);
 
 /* Retrieve the block named by id into buf (up to maxlen bytes). Returns the
  * block's full length on success (may exceed maxlen if the caller's buffer

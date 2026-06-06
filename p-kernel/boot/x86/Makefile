@@ -115,7 +115,8 @@ COMMON_C_SRCS = \
     chat.c \
     demo_kdds.c \
     pfs_block.c \
-    lookup.c
+    lookup.c \
+    pfs_repl.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
