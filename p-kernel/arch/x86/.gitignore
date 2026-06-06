@@ -1,0 +1,3 @@
+# 参照資料 (Intel IA-32 マニュアル等) はリポジトリに入れない
+# → docs/repo-hygiene.md 参照。入手先 URL はそちらに記載。
+*.pdf
