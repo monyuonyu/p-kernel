@@ -147,8 +147,11 @@ static UW ref_seq;                          /* own beacon counter      */
 static UW last_ref_seq[DNODE_MAX];          /* rx dedup, per source    */
 static UW beacon_rr;                        /* round-robin window base */
 
-/* static scratch — never task-stack locals (net/4KB discipline) */
+/* static scratch — never task-stack locals (net/4KB discipline).
+ * man_scratch belongs to the SHELL task (save/log/cat); sweep_man
+ * belongs to the gossip task — they must not share a buffer. */
 static PFSD_MANIFEST man_scratch;           /* save / log / cat walk   */
+static PFSD_MANIFEST sweep_man;             /* gossip-task chain sweep */
 static PFSD_REF_PKT  tx_beacon;
 static PFSD_REF_PKT  rx_beacon;
 static U1            cat_buf[PFS_BLOCK_MAX];
@@ -480,6 +483,41 @@ usage:
 }
 
 /* ------------------------------------------------------------------ */
+/* chain sweep — chase blocks the announce plane lost                  */
+/*                                                                     */
+/* One save makes TWO back-to-back puts (content, then manifest), and  */
+/* P1's "pfs/ann" topic is a single LATEST_ONLY slot — the manifest    */
+/* announce can overwrite the content announce before a peer's poll,   */
+/* so the content is never WANTed. State-based repair: every beacon    */
+/* tick, walk each ref's prev chain and WANT whatever block is missing */
+/* (manifest or content). Re-issued each tick until it lands, so even  */
+/* the pending-table give-up self-heals. No center: each node chases   */
+/* only what its own refs say it should hold.                          */
+/* ------------------------------------------------------------------ */
+
+static void sweep_missing(void)
+{
+    for (INT i = 0; i < PFS_REF_MAX; i++) {
+        if (!refs[i].used) continue;
+        U1 id[PFS_ID_LEN];
+        pd_memcpy(id, refs[i].e.head, PFS_ID_LEN);
+        for (INT depth = 0; depth < PFSD_LOG_MAX; depth++) {
+            if (!pfs_has(id)) {                /* missing manifest */
+                pfs_repl_want(id);
+                break;                         /* can't see past it yet */
+            }
+            INT glen = pfs_get(id, &sweep_man, (UW)sizeof(sweep_man));
+            if (glen != (INT)sizeof(sweep_man) ||
+                sweep_man.magic != PFSD_MAN_MAGIC) break;
+            if (!pfs_has(sweep_man.content))   /* missing content */
+                pfs_repl_want(sweep_man.content);
+            if (pd_id_zero(sweep_man.prev)) break;
+            pd_memcpy(id, sweep_man.prev, PFS_ID_LEN);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* gossip task — beacon own refs, merge peers' (symmetric, no center)  */
 /* ------------------------------------------------------------------ */
 
@@ -509,6 +547,7 @@ void pfs_dag_task(INT stacd, void *exinf)
         if (since_beacon >= PFSD_BEACON_MS) {
             since_beacon = 0;
             beacon_publish();
+            sweep_missing();
         }
         tk_dly_tsk(PFSD_POLL_MS);
     }
