@@ -75,6 +75,11 @@ extern char *strerror(int);
 #define MAX_PKT            (HEAD_LEN + AUTH_LEN + MAX_PAYLOAD)
 #define DEFAULT_PORT       7400
 #define KEEPALIVE_SEC      25            /* < IDLE_TIMEOUT/2 in relay */
+/* G7: the relay wire allows node ids 1..255, but the kernel cluster (drpc)
+ * only tracks 1..DNODE_MAX. Mirror DNODE_MAX here (T-Kernel headers are not
+ * included in this TU); a node id above this registers with the relay but
+ * never joins drpc/pmesh/kdds, so we warn at init instead of vanishing. */
+#define NET_CLUSTER_NODE_MAX 32
 
 /* Relay-HA failover/failback time constants (ms). All nodes share these,
  * so the "first live relay on the list" rule resolves identically
@@ -98,6 +103,12 @@ static int      relay_count = 0;
 static int      cur_relay   = 0;            /* index into relay_list */
 static u64 next_nonce = 0;
 static time_t   last_send_ts = 0;
+
+/* G4 inbound-auth state. */
+static int relay_strict        = 0;   /* PKERNEL_RELAY_STRICT: drop v1 in */
+static u32 mac_drop_count      = 0;   /* total inbound frames failing auth */
+static u64 mac_drop_last_log_ms = 0;  /* rate-limit for the drop log       */
+static int v1_permit_warned    = 0;   /* one-shot permissive-mode warning  */
 
 /* HA liveness state (CLOCK_MONOTONIC milliseconds). */
 static u64 ha_last_rx_ms       = 0;  /* last packet from any relay        */
@@ -137,6 +148,21 @@ static int hex_decode(const char *hex, u8 *out, size_t out_len)
 static void store_u64_le(u8 *p, u64 v)
 {
     for (int i = 0; i < 8; i++) p[i] = (u8)((v >> (i * 8)) & 0xff);
+}
+
+static u64 load_u64_le(const u8 *p)
+{
+    u64 v = 0;
+    for (int i = 0; i < 8; i++) v |= (u64)p[i] << (i * 8);
+    return v;
+}
+
+/* Constant-time compare of n bytes. Returns 1 if equal. */
+static int ct_eq(const u8 *a, const u8 *b, int n)
+{
+    u8 d = 0;
+    for (int i = 0; i < n; i++) d |= (u8)(a[i] ^ b[i]);
+    return d == 0;
 }
 
 static u64 mint_nonce(void)
@@ -307,6 +333,36 @@ static void log_unresponsive(int idx)
     (void)write(2, line, (size_t)pos);
 }
 
+/* G4: rate-limited (<=1/sec) authentication-failure counter. Same low-stack
+ * discipline as log_relay (static buffer + write(2), never glibc stdio on a
+ * task stack — see the rl_append comment block above). Format is
+ * "[net_relay] mac drop n=<count>\n". */
+static void note_mac_drop(void)
+{
+    mac_drop_count++;
+    u64 now = now_ms();
+    if (mac_drop_last_log_ms != 0 && now - mac_drop_last_log_ms < 1000) return;
+    mac_drop_last_log_ms = now;
+    static char line[48];
+    int pos = 0;
+    rl_append(line, (int)sizeof(line), &pos, "[net_relay] mac drop n=");
+    rl_append_dec(line, (int)sizeof(line), &pos, mac_drop_count);
+    rl_append(line, (int)sizeof(line), &pos, "\n");
+    (void)write(2, line, (size_t)pos);
+}
+
+/* G4: one-shot warning when permissive mode accepts an unauthenticated v1
+ * frame while we hold a key (new/old migration aid). */
+static void note_v1_permit(void)
+{
+    if (v1_permit_warned) return;
+    v1_permit_warned = 1;
+    static const char m[] =
+        "[net_relay] WARNING: permissive mode accepted an unauthenticated "
+        "v1 frame (set PKERNEL_RELAY_STRICT=1 to drop)\n";
+    (void)write(2, m, sizeof(m) - 1);
+}
+
 /* HA driver — called from every send/recv. Three duties:
  *  1. legacy 25 s keepalive so the current relay doesn't evict us;
  *  2. every HA_FAILBACK_MS, probe all higher-priority relays so the
@@ -449,7 +505,20 @@ int net_relay_init(void)
     const char *env_key  = getenv("PKERNEL_RELAY_KEY");
 
     my_node_id = env_id ? atoi(env_id) : 1;
-    if (my_node_id < 1 || my_node_id > 255) my_node_id = 1;
+    if (my_node_id < 1 || my_node_id > 255) {
+        /* G7: don't silently rewrite a bad id to 1 (which would collide with
+         * node 1) — say what happened. */
+        dprintf(2, "[net_relay] PKERNEL_NODE_ID=%d out of range (1..255) — "
+                   "defaulting to 1\n", my_node_id);
+        my_node_id = 1;
+    } else if (my_node_id > NET_CLUSTER_NODE_MAX) {
+        /* G7: valid on the relay wire, but the kernel cluster can't see it.
+         * This is the silent-dropout case the audit flagged — make it loud. */
+        dprintf(2, "[net_relay] WARNING: PKERNEL_NODE_ID=%d exceeds cluster "
+                   "DNODE_MAX=%d — this node will register with the relay but "
+                   "NOT join the drpc/pmesh/kdds cluster\n",
+                   my_node_id, NET_CLUSTER_NODE_MAX);
+    }
 
     if (env_key && *env_key) {
         if (hex_decode(env_key, key, KEY_LEN) < 0) {
@@ -462,6 +531,15 @@ int net_relay_init(void)
         wire_version = RELAY_VER_V1;
         dprintf(2, "[net_relay] WARNING: no PKERNEL_RELAY_KEY — using v1 wire "
                    "(relay must run with --insecure)\n");
+    }
+
+    /* G4: inbound-auth policy. Default permissive — with a key we always
+     * verify v2 MACs and drop mismatches, but an unauthenticated v1 frame is
+     * accepted (once-warned) to ease new/old migration. PKERNEL_RELAY_STRICT
+     * makes v1 inbound a hard drop too. See docs/phase_b_relay.md. */
+    {
+        const char *env_strict = getenv("PKERNEL_RELAY_STRICT");
+        relay_strict = (env_strict && *env_strict && env_strict[0] != '0');
     }
 
     if (env_list && *env_list) {
@@ -549,20 +627,45 @@ int net_relay_recv(void *out, int maxlen)
         int ridx = relay_index_of(&from);
         if (ridx < 0) continue;
 
-        /* Strip the relay header. We trust the relay to MAC-verify before
-         * forwarding; the client side only checks structure. */
+        /* Strip the relay header. */
         if (n < HEAD_LEN) continue;
         if (buf[0] != (u8)(RELAY_MAGIC      & 0xff) ||
             buf[1] != (u8)((RELAY_MAGIC>>8) & 0xff) ||
             buf[2] != (u8)((RELAY_MAGIC>>16)& 0xff) ||
             buf[3] != (u8)((RELAY_MAGIC>>24)& 0xff)) continue;
 
-        ha_mark_rx(ridx);   /* liveness + deterministic failback */
-
         unsigned ver  = buf[4];
         unsigned type = buf[5];
         int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
         if (n < hdr) continue;
+
+        /* G4: authenticate the frame BEFORE trusting it for liveness OR data.
+         * The relay forwards frames verbatim, so a v2 frame still carries the
+         * originator's HMAC-SHA256 over the shared PSK — we recompute it over
+         * (ver,type,src,dst,nonce,payload) and constant-time compare. A
+         * spoofed relay source, a tampered frame, or an injected one all fail
+         * this and are dropped (rate-limited counter). Without this the client
+         * was wide open: anyone who could send to our UDP tuple from the
+         * relay's address could inject arbitrary frames into the stack. */
+        if (wire_version == RELAY_VER_V2) {
+            if (ver == RELAY_VER_V2) {
+                u64 nonce = load_u64_le(buf + HEAD_LEN);
+                int plen  = (int)n - hdr;
+                u8 want[HMAC_TRUNC_LEN];
+                compute_mac(RELAY_VER_V2, buf[5], buf[6], buf[7], nonce,
+                            buf + hdr, plen, want);
+                if (!ct_eq(want, buf + HEAD_LEN + 8, HMAC_TRUNC_LEN)) {
+                    note_mac_drop();
+                    continue;
+                }
+            } else {
+                /* v1 frame while we hold a key: unauthenticated. */
+                if (relay_strict) { note_mac_drop(); continue; }
+                note_v1_permit();
+            }
+        }
+
+        ha_mark_rx(ridx);   /* liveness + deterministic failback */
 
         /* KEEPALIVE echoes (and stray REGISTERs) are control-plane only. */
         if (type != REL_DATA && type != REL_BROADCAST) continue;

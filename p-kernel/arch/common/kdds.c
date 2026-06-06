@@ -232,12 +232,17 @@ W kdds_pub(W handle, const void *data, W len)
         BOOL region_scoped = (t->scope == KDDS_SCOPE_REGION);
         if (region_scoped) region_recompute();
 
+        /* G9 (honesty): count DELIVERIES, not attempts. pmesh_send() returns
+         * 0 only when the frame was actually handed to the link layer; on a
+         * missing route it bumps pmesh_stats.no_route and returns -1. Counting
+         * the attempt made fanout report packets that fell into a no_route
+         * hole as if they had been sent — a quiet lie about scope reach. */
         UW fanout = 0;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
             if (region_scoped && !region_is_member(n)) continue;
-            pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
-            fanout++;
+            if (pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0)
+                fanout++;
         }
         kdds_last_fanout = fanout;
     } else {

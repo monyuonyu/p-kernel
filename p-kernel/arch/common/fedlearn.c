@@ -162,25 +162,24 @@ ER dtk_fl_aggregate(UB aggregator_node,
         return E_OK;
     }
 
-    /* Distributed: use DRPC CALL_FL_AGG */
-    /* Pack delta_b3 (3 floats) into arg[0..2] via DRPC */
-    UW skip = MLP_IN*MLP_H1 + MLP_H1 + MLP_H1*MLP_H2 + MLP_H2 + MLP_H2*MLP_OUT;
-    const float *db3 = my_delta + skip;
-
-    W arg0, arg1, arg2;
-    /* Transmit float as raw W bits */
-    float f0 = db3[0], f1 = db3[1], f2 = db3[2];
-    W *p0 = (W *)&f0, *p1 = (W *)&f1, *p2 = (W *)&f2;
-    arg0 = *p0; arg1 = *p1; arg2 = *p2;
-
-    /* Send via existing dtk_cre_tsk call path (repurposed for FL) */
-    /* For demo, call remote fl_apply which is registered as func 0x0003 */
-    W r = dtk_cre_tsk(aggregator_node, 0x0003, 0);
-    (void)r; (void)arg0; (void)arg1; (void)arg2;
-
-    fl_rounds++;
-    ai_stats.fl_rounds++;
-    return E_OK;
+    /* Distributed FedAvg aggregation is NOT implemented.
+     *
+     * HONESTY (G5, wave 10): the previous code here packed delta_b3 into
+     * arg0..2 and fired a remote dtk_cre_tsk(), but the packed args were
+     * immediately discarded ((void)arg0...) and the call's result ignored
+     * ((void)r) — and crucially NO averaged weights ever return. So across
+     * real multi-node runs nothing was aggregated, yet this returned E_OK
+     * and bumped fl_rounds / ai_stats.fl_rounds. The caller (arch/x86/
+     * shell.c `fl train`) then printed "[FL] aggregate OK" for a federated
+     * round that never left this node — a false success.
+     *
+     * Until the real path exists — FL_UDP_PORT bulk delta transfer to the
+     * aggregator, an aggregator-side collection + FedAvg loop, and a
+     * broadcast of the averaged weights back (see the protocol sketch in
+     * the file header) — report the truth (E_NOSPT) and do NOT advance the
+     * round counters. */
+    (void)aggregator_node;
+    return E_NOSPT;
 }
 
 ER fl_apply_update(const float *new_weights)

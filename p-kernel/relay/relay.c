@@ -205,7 +205,13 @@ static int verify_mac(const ParsedPkt *p)
 /* Returns 1 if nonce is fresh (accept), 0 if replay (drop). */
 static int replay_check_and_update(unsigned src, uint64_t nonce)
 {
-    if (src < 1 || src >= NODE_MAX) return 0;
+    if (src < 1 || src >= NODE_MAX) {
+        /* G7: surface the reason instead of a silent drop. */
+        if (verbose) fprintf(stderr,
+            "[relay] drop: replay-check src node id %u out of range "
+            "(valid 1..%d)\n", src, NODE_MAX - 1);
+        return 0;
+    }
     ReplayEntry *r = &replay[src];
     if (!r->armed) {
         r->max_nonce   = nonce;
@@ -232,7 +238,13 @@ static int replay_check_and_update(unsigned src, uint64_t nonce)
 
 static void update(int src, const struct sockaddr_in *from)
 {
-    if (src < 1 || src >= NODE_MAX) return;
+    if (src < 1 || src >= NODE_MAX) {
+        /* G7: don't drop an out-of-range src silently — say why. */
+        if (verbose) fprintf(stderr,
+            "[relay] drop: REGISTER/DATA src node id %d out of range "
+            "(valid 1..%d)\n", src, NODE_MAX - 1);
+        return;
+    }
     int was_active = table[src].active;
     table[src].addr      = *from;
     table[src].last_seen = time(NULL);
@@ -262,7 +274,13 @@ static void evict_stale(time_t now)
 static void forward(int sock, int dst_node,
                     const unsigned char *buf, int len, time_t now)
 {
-    if (dst_node < 1 || dst_node >= NODE_MAX) return;
+    if (dst_node < 1 || dst_node >= NODE_MAX) {
+        /* G7: an out-of-range dst is a routing dead-end — say why. */
+        if (verbose) fprintf(stderr,
+            "[relay] drop: dst node id %d out of range (valid 1..%d)\n",
+            dst_node, NODE_MAX - 1);
+        return;
+    }
     if (!table[dst_node].active) {
         if (verbose) fprintf(stderr, "[relay] no route to dst=%d\n", dst_node);
         return;

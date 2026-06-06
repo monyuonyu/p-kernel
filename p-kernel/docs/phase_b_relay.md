@@ -148,6 +148,34 @@ paste, F-Droid metadata pin, take your pick. v3 may add an in-band
 "trust ratchet" but for now the threat model is "the user holds the
 key for their own mesh."
 
+### Client-side inbound verification (wave 10, gap G4)
+
+The relay forwards DATA / BROADCAST frames **verbatim** — it does not
+re-MAC them. That means an inbound frame at a client still carries the
+*originator's* HMAC over the shared PSK, so the client can (and now does)
+verify it. Previously `net_relay.c` trusted the relay blindly and only
+checked the 12-byte structure; anyone able to send to a client's UDP
+tuple from the relay's address could inject arbitrary frames straight
+into the netstack. The client now recomputes the HMAC over
+`(ver,type,src,dst,nonce,payload)` and drops mismatches *before* the
+frame is used for either liveness (relay-HA failback) or data, logging a
+rate-limited `[net_relay] mac drop n=<count>`.
+
+Policy (client side), keyed off whether `PKERNEL_RELAY_KEY` is set:
+
+- **No key (v1 wire):** nothing to verify; frames pass as before.
+- **Key set (v2 wire), default permissive:** v2 frames are always
+  verified and mismatches dropped; an unauthenticated *v1* frame is
+  accepted once with a one-shot warning, easing a mixed new/old fleet
+  during migration.
+- **Key set + `PKERNEL_RELAY_STRICT=1`:** a v1 inbound frame is a hard
+  drop too — no unauthenticated traffic enters the stack.
+
+Replay is still handled relay-side (the 64-packet nonce window above);
+the client check is integrity/authenticity only. Regression test:
+`samples/11_distributed/run_relay_forgery.sh` stands up a malicious relay
+that injects bad-MAC frames and asserts the node drops them.
+
 ## State
 
 Server-side, two maps:
