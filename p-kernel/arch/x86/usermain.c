@@ -31,6 +31,7 @@
 #include "raft.h"
 #include "spawn.h"
 #include "moe.h"
+#include "world.h"
 #include "ai_kernel.h"
 IMPORT void kserve_init(void);
 #include "vfs.h"
@@ -70,6 +71,8 @@ IMPORT void shell_task(INT stacd, void *exinf);
 #define RAFT_STACK          2048
 #define MOE_PRIORITY        8
 #define MOE_STACK           2048
+#define WORLD_PRIORITY      7
+#define WORLD_STACK         4096
 #define KLOADER_PRIORITY    9
 #define KLOADER_STACK       4096
 #define DKVA_PRIORITY       7
@@ -140,6 +143,9 @@ EXPORT INT usermain(void)
 
     /* ---- Phase 8: 分散 Transformer 推論 初期化 ------------------- */
     dtr_init();
+
+    /* ---- World map — 分散全網状況認識 (ビーコンタスクは分散検出後) -- */
+    world_init();
 
     /* ---- Phase 11: 記憶永続化 + AI会話インターフェース ---------- */
     mem_store_init();          /* FAT32 からリングバッファを復元      */
@@ -276,6 +282,13 @@ EXPORT INT usermain(void)
                 tm_putstring((UB *)"[ERR] moe task\r\n");
             else
                 tm_putstring((UB *)"[OK]  moe task\r\n");
+
+            /* World map — self-beacon + gossip 取り込み常駐タスク。
+             * 全ノードで同一に走る (中央なし — world.h NO-CENTRAL 不変条件) */
+            if (create_task(world_task, WORLD_PRIORITY, WORLD_STACK) < E_OK)
+                tm_putstring((UB *)"[ERR] world task\r\n");
+            else
+                tm_putstring((UB *)"[OK]  world task\r\n");
 
             /* OTA: kloader_task — KLOAD 受信 + bare ノードへ自動プッシュ */
             kloader_task_init();

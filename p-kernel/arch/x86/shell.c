@@ -34,6 +34,7 @@
 #include "kloader_task.h"
 #include "moe.h"
 #include "dkva.h"
+#include "world.h"
 #include "ai_kernel.h"
 #include "vfs.h"
 #include "mem_store.h"
@@ -208,6 +209,7 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  raft                   - Raftコンセンサス状態表示\r\n");
     sout("  moe                    - MoE推論ルーター統計表示\r\n");
+    sout("  world                  - 全網状況マップ表示 (alias: map) — ゴシップ由来、中央なし\r\n");
     sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("カーネルローダー (Phase 10 kloader):\r\n");
@@ -2145,6 +2147,8 @@ static void execute(const char *cmd)
         { moe_stat(); return; }
     if (cmd[0]=='d' && cmd[1]=='k' && cmd[2]=='v' && cmd[3]=='a')
         { dkva_stat(); return; }
+    if (str_eq(cmd, "world") || str_eq(cmd, "map"))
+        { world_print(); return; }
     if (cmd[0]=='s' && cmd[1]=='p' && cmd[2]=='a' && cmd[3]=='w' && cmd[4]=='n'
         && cmd[5]==' ')
         { /* spawn <file> handled below */ }
