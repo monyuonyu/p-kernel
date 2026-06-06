@@ -28,14 +28,35 @@
 /* ------------------------------------------------------------------ */
 
 #define DKVA_CACHE_SIZE   8     /* ノードあたりの KV キャッシュエントリ数 */
-#define DKVA_TOPIC_Q      "dtr/dkva/q"
-/* レスポンスは「送信元ノードごと」に別トピックへ pub する。
+/* Query は「起点ノードごと」に別トピックへ pub する (G1, wave 10)。
+ * 旧実装は単一共有トピック "dtr/dkva/q" を LATEST_ONLY で全網が上書きし
+ * 合っていた → 網全体で in-flight な問いが常に 1 つだけという隠れた直列化点
+ * (§5「同時多発」の真逆)。per-origin topic "dtr/dkva/q/<origin>" にすると
+ * 起点ごとに独立したラッチスロットを持ち、複数ノードが同時に問いを発行しても
+ * 互いを潰さない。responder は全 origin の q/<o> を購読する。 */
+#define DKVA_TOPIC_Q_PFX  "dtr/dkva/q/"        /* + 1〜2 桁の起点ノード ID  */
+/* レスポンスは「送信元(=応答した)ノードごと」に別トピックへ pub する。
  * 単一トピック ("dtr/dkva/resp") を LATEST_ONLY で共有すると、複数の
  * responder が同じ 1 スロットを上書きし合い、requester が 1 ラウンドで
  * 1 peer 分しか集約できなかった。per-source topic
  * "dtr/dkva/resp/<node>" にすることで responder ごとに独立した
- * ラッチスロットを持たせ、全 peer の partial が確実に届くようにする。 */
-#define DKVA_TOPIC_RESP_PFX "dtr/dkva/resp/"   /* + 1 桁ノード ID         */
+ * ラッチスロットを持たせ、全 peer の partial が確実に届くようにする。
+ *
+ * 同時多発 (G1, wave 10): 1 つの responder の resp/<node> スロットも、
+ * 複数の起点が同時に問うと起点間で上書きし合う。これを解くため
+ *   (1) RESP_PKT に origin フィールドを持たせ、requester は自分宛
+ *       (origin==自ノード) の応答だけ受理する → 取り違えゼロ。
+ *       req_id が起点間で衝突しても origin で曖昧さが消える。
+ *   (2) responder は pending な各 origin の応答をラウンドロビンで
+ *       resp/<node> へ再発行する (時間多重) → どの起点の応答も
+ *       自分のポーリング窓内で必ずスロットに現れる。
+ * これで「網全体で同時に多数の問い」が本当に成立する。 */
+#define DKVA_TOPIC_RESP_PFX "dtr/dkva/resp/"   /* + 1〜2 桁ノード ID       */
+/* responder が pending な応答をラウンドロビン再発行し続ける反復回数
+ * (1 反復 ≒ 10ms)。requester の窓 (DKVA_INFER_TMO) より十分長くして、
+ * 同時起点が ≤ 数個でも全起点の応答がそれぞれの窓内でスロットに現れる
+ * ことを保証する。 */
+#define DKVA_ANSWER_ITERS 100
 /* region 要約トピック (GLOBAL スコープ)。coordinator が自 region の partial を
  * 集約した {分子 partial_out, 分母 attn_sum} を "dtr/dkva/rsum/<rid>" へ発行し、
  * requester が region 間で疎に畳む。階層集約で全体 attention を厳密復元する
@@ -71,9 +92,10 @@ typedef struct {
 typedef struct {
     UW    magic;          /* DKVA_RESP_MAGIC                      */
     UW    req_id;
-    UB    src_node;
+    UB    src_node;       /* 応答した(=この partial を計算した)ノード */
     UB    n_entries;      /* 応答に含まれる KV エントリ数         */
-    UH    _pad;
+    UB    origin;         /* この応答の宛先 = 問いの起点ノード (G1) */
+    UB    _pad;
     /* 部分 Attention 出力: Σ(softmax(Q·K_i^T) * V_i) の分子と分母 */
     float partial_out[DKVA_SEQ][DKVA_NH][DKVA_DH];  /* 加重和   */
     float attn_sum   [DKVA_SEQ][DKVA_NH];            /* 正規化用 */

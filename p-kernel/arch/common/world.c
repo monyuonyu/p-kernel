@@ -232,6 +232,13 @@ INT world_peer_pressure(UB node)
     return (INT)table[node].beacon.pressure;   /* 0..100 (-1 = 未知) */
 }
 
+INT world_peer_region(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    UB rid = table[node].beacon.region_id;
+    return (rid == 0xFF) ? -1 : (INT)rid;       /* coordinator ID (-1=未知) */
+}
+
 /* ------------------------------------------------------------------ */
 /* world-task: 発信 + 取り込み (全ノードで対称に走る)                  */
 /* ------------------------------------------------------------------ */

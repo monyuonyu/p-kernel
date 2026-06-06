@@ -118,3 +118,9 @@ BOOL world_peer_known(UB node);
  * これが §6 の応援・受援の勾配信号: 高いほど逼迫 (避ける)、
  * 低いほど余力あり (応援を引き受けられる)。 */
 INT  world_peer_pressure(UB node);
+
+/* node が gossip で広告した「自 region の coordinator ID (region_id)」を
+ * 局所 world-table から読む。未知 / 未広告 (0xFF) なら -1 (wave 10, G2)。
+ * dkva の requester はこれで他 region をまとめ、欠けた region を degraded に
+ * 正直計上する (中央の真実ではなく、受信したビーコンだけから組む)。 */
+INT  world_peer_region(UB node);
