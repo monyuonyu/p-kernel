@@ -6,7 +6,8 @@
 #
 # Five lean jobs, no matrix:
 #   ump-x86_64        — native build of boot/linux_x86_64 + the kernel's own
-#                       pfs/hrw self-tests driven through the shell via stdin.
+#                       pfs/hrw + §7/§8 moe property self-tests (I7/I8/D0/§5)
+#                       driven through the shell via stdin.
 #   ump-aarch64-cross — cross-build of boot/linux on an x86_64 host. THE
 #                       previously-missing check. Bonus: self-tests under
 #                       qemu-user (non-blocking).
@@ -40,10 +41,15 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd p-kernel/boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
+          # §7/§8 thought-core property tests (philosophy-gap-audit G3)
+          grep -aF '[moe-nocentral] PASS' selftest.log
+          grep -aF '[moe-twolayer] PASS' selftest.log
+          grep -aF '[moe-osc] PASS' selftest.log
+          grep -aF '[moe-concurrent] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -69,11 +75,15 @@ jobs:
         continue-on-error: true
         run: |
           cd p-kernel/boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nexit\n' | \
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
+          grep -aF '[moe-nocentral] PASS' selftest.log
+          grep -aF '[moe-twolayer] PASS' selftest.log
+          grep -aF '[moe-osc] PASS' selftest.log
+          grep -aF '[moe-concurrent] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
