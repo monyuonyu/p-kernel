@@ -22,6 +22,7 @@ INC_TOP = $(ROOT)/include
 INCDIRS = \
     -I$(ARCH)/include \
     -I$(COMMON)/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
@@ -162,7 +163,19 @@ LIBSTR_DIR  = $(ROOT)/lib/libc/string
 LIBSTR_SRCS = memset.c strncpy.c memcpy.c memmove.c memcmp.c strlen.c strcmp.c strncmp.c strcpy.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+# -------------------------------------------------------------------
+# relay/sha256.c — zero-dep SHA-256, needed by arch/common/pfs_block.c.
+# Compiled with a libc-consistent include order (lib/libc stddef.h only;
+# NOT include/stddef.h) so its <string.h>/<stddef.h> pair never mixes the
+# two ptrdiff_t definitions. memcpy/memset/memcmp link from LIBSTR_OBJS.
+# -------------------------------------------------------------------
+RELAY_DIR    = $(ROOT)/relay
+RELAY_OBJS   = sha256.o
+RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
+               -fcf-protection=none -O1 -m32 -std=gnu11 \
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
 
 TARGET = bootloader.bin
 
@@ -234,6 +247,10 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 # lib/libc/string C ソース
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# relay/sha256.c — 専用 CFLAGS (上の RELAY_CFLAGS コメント参照)
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(RELAY_CFLAGS) -c $< -o $@
 
 # -------------------------------------------------------------------
 # 実行ターゲット

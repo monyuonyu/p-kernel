@@ -34,6 +34,7 @@ INCDIRS = \
     -I$(ARCH)/include \
     -I$(COMMON)/include/lp64 \
     -I$(COMMON)/include \
+    -I$(ROOT)/relay \
     -I$(INC_TK) \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
@@ -163,8 +164,18 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
               strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
+# ---- relay/sha256.c — zero-dep SHA-256 for arch/common/pfs_block.c ----
+# Compiled with a libc-consistent include order (lib/libc stddef.h only;
+# NOT include/stddef.h) so its <string.h>/<stddef.h> pair never mixes the
+# two ptrdiff_t definitions. memcpy/memset/memcmp link from LIBSTR_OBJS.
+RELAY_DIR    = $(ROOT)/relay
+RELAY_OBJS   = sha256.o
+RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
+               -fno-common -O1 -std=gnu11 -mstrict-align \
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+
 # ---- All objects -------------------------------------------------------
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
 
 TARGET = kernel.elf
 
@@ -244,6 +255,10 @@ $(COMMON_OBJS): %.o: $(COMMON)/%.c
 # libc string sources
 $(LIBSTR_SRCS:.c=.o): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# relay/sha256.c — dedicated CFLAGS (see RELAY_CFLAGS comment above)
+$(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
+	$(CC) $(RELAY_CFLAGS) -c -o $@ $<
 
 # ---- Run targets -------------------------------------------------------
 QEMU_FLAGS = -M virt -cpu cortex-a53 -m 256M \
