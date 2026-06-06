@@ -57,6 +57,13 @@ IMPORT void dkva_cmd(const UB *args, UW len);
 
 extern char *getenv(const char *);
 
+/* Receive-side relay authenticity counters (defined in net_relay.c):
+ *   ok     = authenticated + fresh frames delivered to the stack
+ *   badmac = inbound frames dropped for failing HMAC verification (G4)
+ *   replay = inbound frames dropped as nonce replays (wave-11 window) */
+IMPORT void net_relay_stats(unsigned long *ok, unsigned long *badmac,
+                            unsigned long *replay);
+
 static void print(const char *s)
 {
     sio_send_frame((const UB *)s, (INT)__builtin_strlen(s));
@@ -130,6 +137,19 @@ static void cmd_rx(void)
     APPEND("  initialized="); APPEND_DEC((UW)rtl_initialized);
     buf[i++] = '\r'; buf[i++] = '\n';
     sio_send_frame((const UB *)buf, i);
+
+    /* Relay-transport authenticity counters (only meaningful when running
+     * over the relay backend; all zero otherwise). */
+    {
+        unsigned long ok = 0, badmac = 0, replay = 0;
+        net_relay_stats(&ok, &badmac, &replay);
+        i = 0;
+        APPEND("[rx-relay] ok="); APPEND_DEC((UW)ok);
+        APPEND("  badmac="); APPEND_DEC((UW)badmac);
+        APPEND("  replay="); APPEND_DEC((UW)replay);
+        buf[i++] = '\r'; buf[i++] = '\n';
+        sio_send_frame((const UB *)buf, i);
+    }
     #undef APPEND
     #undef APPEND_DEC
 }
@@ -211,6 +231,18 @@ static void cmd_net(void)
         print("[net] DRPC initialised (10.1.0.");
         print_dec_s((W)mac[5]);
         print(")\r\n");
+    } else if (mac[3] == 0 && mac[4] == 0 && mac[5] > DNODE_MAX) {
+        /* G7: a valid relay-wire node id (1..255) that exceeds the cluster
+         * cap. This node joins the relay transport but its index nid=mac[5]-1
+         * would overflow dnode_table[DNODE_MAX], so drpc/pmesh/kdds can't see
+         * it. Say so loudly — this is the silent single-node dropout the audit
+         * flagged (net_relay_init already warns on the transport side). */
+        print("[net] node id ");
+        print_dec_s((W)mac[5]);
+        print(" > DNODE_MAX(");
+        print_dec_s((W)DNODE_MAX);
+        print("): joins relay transport but NOT the cluster logic; "
+              "single-node mode only\r\n");
     } else {
         print("[net] no cluster MAC; single-node mode only\r\n");
     }

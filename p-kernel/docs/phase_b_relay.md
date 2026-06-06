@@ -171,10 +171,35 @@ Policy (client side), keyed off whether `PKERNEL_RELAY_KEY` is set:
 - **Key set + `PKERNEL_RELAY_STRICT=1`:** a v1 inbound frame is a hard
   drop too — no unauthenticated traffic enters the stack.
 
-Replay is still handled relay-side (the 64-packet nonce window above);
-the client check is integrity/authenticity only. Regression test:
-`samples/11_distributed/run_relay_forgery.sh` stands up a malicious relay
-that injects bad-MAC frames and asserts the node drops them.
+Regression test: `samples/11_distributed/run_relay_forgery.sh` stands up a
+malicious relay that injects bad-MAC frames and asserts the node drops them.
+
+### Client-side replay window (wave 11)
+
+Wave 10's HMAC check closes forgery, but a *replay* — a legitimately
+captured v2 frame resent verbatim — still carries a **valid** HMAC, so
+authenticity verification alone re-admits it. The relay has its own
+64-packet nonce window, but it lives in another process and protects a
+different hop: an injector that reaches the client's UDP tuple from the
+relay's address (or a buggy/compromised relay) bypasses it entirely.
+
+So the client now keeps its **own** per-source 64-packet sliding nonce
+window (`rx_nonce_max/win/armed[256]`, keyed by src node id, same logic as
+the relay's `replay_check_and_update`). It is consulted *after* the HMAC is
+verified and *after* control packets (keepalive echoes) are filtered out, so
+control traffic never consumes a data nonce slot. A fresh nonce is **never**
+dropped — legitimate traffic always passes — while a repeated or too-old
+nonce is dropped and counted in a rate-limited `[net_relay] replay drop
+n=<count>`. Counters are exposed via `net_relay_stats(ok,badmac,replay)` and
+surfaced by the shell `rx` command's `[rx-relay] ok=.. badmac=.. replay=..`
+line.
+
+End to end the client now defends against **both** threats: forgery (bad
+MAC → `mac drop`) *and* replay (valid MAC, repeated nonce → `replay drop`).
+Regression test: `samples/11_distributed/run_replay_reject.sh` injects three
+distinct valid frames (asserts all accepted, zero replay drops) then resends
+two of them verbatim (asserts each dropped as a replay), so a false drop of
+fresh traffic fails the test as loudly as a missed replay.
 
 ## State
 
@@ -211,7 +236,9 @@ phone-B recv  → strips 12-byte header, hands payload to existing
   per-network secret in `PKERNEL_RELAY_KEY`. Distribution channel is
   still out of band (QR / paste / pin).
 - **Replay protection.** ~~v1 packets can be replayed.~~ v2 enforces a
-  64-packet sliding nonce window per src.
+  64-packet sliding nonce window per src — **on both hops**: the relay on
+  ingress, and (wave 11) the client on inbound, so a frame replayed straight
+  at a client's UDP tuple is dropped even when the relay never saw it.
 - **Encryption.** v2 still has none. The payload is integrity-protected
   but visible to anyone on the wire (and to the relay operator). v3
   layers AEAD on top — pmesh payloads then become opaque even to the
