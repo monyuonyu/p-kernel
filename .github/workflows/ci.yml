@@ -4,7 +4,7 @@
 # the relay, no GitHub Actions, and the aarch64 UMP build breaks on x86_64
 # hosts with nothing to detect it."
 #
-# Four lean jobs, no matrix:
+# Five lean jobs, no matrix:
 #   ump-x86_64        — native build of boot/linux_x86_64 + the kernel's own
 #                       pfs/hrw self-tests driven through the shell via stdin.
 #   ump-aarch64-cross — cross-build of boot/linux on an x86_64 host. THE
@@ -12,6 +12,9 @@
 #                       qemu-user (non-blocking).
 #   bare-metal        — build-only: boot/x86 (i686) and boot/aarch64 ELFs.
 #   relay-tests       — the existing 6-scenario relay round-trip suite.
+#   survival-loop     — death-piercing: 3-node DKVA inference over the relay
+#                       with SIGKILLs mid-inference (wave 8); asserts the
+#                       swarm completes every inference, marked degraded(k/n).
 
 name: CI
 
@@ -100,3 +103,26 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build + run test_relay
         run: make -C p-kernel/relay test
+
+  survival-loop:
+    name: Survival loop (kill nodes mid-inference)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C p-kernel/boot/linux_x86_64
+          make -C p-kernel/relay
+      - name: Run kill_one.sh (scenarios A/B/C)
+        run: timeout 600 p-kernel/samples/13_survival_loop/kill_one.sh
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: survival-loop-logs
+          path: /tmp/sl13_*.log
