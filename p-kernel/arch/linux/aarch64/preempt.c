@@ -30,6 +30,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/syscall.h>
 
 /* The flag itself — read and written by cpu_support.S via adrp/add.
  * Volatile sig_atomic_t so concurrent updates from signal handler and
@@ -144,7 +146,33 @@ void arch_timer_start(unsigned long period_us)
 {
     if (!arch_alarm_tid_created) {
         struct sigevent sev = { 0 };
-        sev.sigev_notify = SIGEV_SIGNAL;
+        /* Pin SIGALRM delivery to THIS thread (the T-Kernel thread).
+         *
+         * SIGEV_SIGNAL is process-directed: when the kernel runs on a
+         * pthread inside a launcher (so_node, the Android JNI bridge),
+         * Linux may deliver the tick to the launcher's main thread
+         * instead. knl_timer_handler_startup then runs CONCURRENTLY
+         * with task code on the kernel thread — arch_irq_disabled_flag
+         * cannot protect across threads — and corrupts the ready/timer
+         * queues. Observed in multi-node so_node runs as (a) a survivor
+         * segfault and (b) a livelock: two nodes spinning forever at
+         * the same PC in knl_tstdlib_bitsearch1 under
+         * knl_ready_queue_delete, whose inner loop never terminates
+         * once the bitmap/top_priority invariant is broken.
+         *
+         * arch_timer_start() is called during boot on the kernel
+         * thread, so gettid() here is exactly the thread the signal-
+         * as-IRQ emulation expects. */
+#if defined(SIGEV_THREAD_ID)
+        sev.sigev_notify = SIGEV_THREAD_ID;
+# if defined(sigev_notify_thread_id)
+        sev.sigev_notify_thread_id = (pid_t)syscall(SYS_gettid);
+# else
+        sev._sigev_un._tid         = (pid_t)syscall(SYS_gettid);
+# endif
+#else
+        sev.sigev_notify = SIGEV_SIGNAL;   /* single-threaded fallback */
+#endif
         sev.sigev_signo  = SIGALRM;
         if (timer_create(CLOCK_MONOTONIC, &sev, &arch_alarm_tid) < 0) {
             perror("timer_create"); exit(1);
