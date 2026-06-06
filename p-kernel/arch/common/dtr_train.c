@@ -289,15 +289,14 @@ static void cmd_save(void)
             "' — replicates to region peers\r\n");
 }
 
-static void cmd_load(void)
+/* shared load core: read + validate + install. Returns E_OK style:
+ * 0 on success, -1 not found, -2 rejected. Used by `dtr load` and by
+ * the guard recover_fn after a worker-task fault. */
+static INT load_weights_from_pfs(void)
 {
     INT r = pfs_dag_read((const UB *)DTR_WEIGHTS_REF, DTR_WEIGHTS_REF_LEN,
                          &wblob, (UW)sizeof(wblob));
-    if (r == PFS_E_NOTFOUND) {
-        tr_puts("[dtr] no '" DTR_WEIGHTS_REF "' object here yet"
-                " (want sent if a ref is known — retry)\r\n");
-        return;
-    }
+    if (r == PFS_E_NOTFOUND) return -1;
     if (r != (INT)sizeof(wblob) ||
         wblob.h.magic    != DTR_WBLOB_MAGIC ||
         wblob.h.version  != DTR_WBLOB_VER   ||
@@ -306,14 +305,27 @@ static void cmd_load(void)
         wblob.h.n_heads  != DTR_NUM_HEADS ||
         wblob.h.seq_len  != DTR_SEQ_LEN ||
         wblob.h.ffn_dim  != DTR_FFN_DIM ||
-        wblob.h.out_dim  != DTR_OUT_DIM) {
+        wblob.h.out_dim  != DTR_OUT_DIM)
+        return -2;
+    dtr_weights_set(wblob.w);
+    return 0;
+}
+
+static void cmd_load(void)
+{
+    INT r = load_weights_from_pfs();
+    if (r == -1) {
+        tr_puts("[dtr] no '" DTR_WEIGHTS_REF "' object here yet"
+                " (want sent if a ref is known — retry)\r\n");
+        return;
+    }
+    if (r == -2) {
         tr_puts("[dtr] '" DTR_WEIGHTS_REF "' blob rejected"
                 " (bad size/magic/dims)\r\n");
         return;
     }
-    dtr_weights_set(wblob.w);
     tr_puts("[dtr] weights loaded from p-fs object '" DTR_WEIGHTS_REF
-            "' ("); tr_putdec((UW)r);
+            "' ("); tr_putdec((UW)sizeof(wblob));
     tr_puts(" B) — this node now runs the trained brain\r\n");
 }
 
@@ -333,6 +345,73 @@ static void cmd_grad(void)
             " 3 samples, every 13th param): max rel err ");
     tr_putf3(worst);
     tr_puts(worst < 0.08f ? "  [OK]\r\n" : "  [SUSPECT]\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* Wave 7 — guarded worker task + crash injection + recover_fn         */
+/* ------------------------------------------------------------------ */
+
+/* `dtr crash` arms this; the guarded worker trips on it. volatile:
+ * written from the shell task, read from the worker task. */
+volatile UB dtr_crash_req = 0;
+
+/* The guarded ring-0 inference worker. usermain registers it via
+ * guard_register("dtr-worker", ...) at boot, with recover_fn =
+ * dtr_recover_weights. Its demo job is to be killable: on `dtr crash`
+ * it (1) CORRUPTS the live in-memory weights — so a later `dtr eval`
+ * can only score trained accuracy if recovery REALLY reloaded them
+ * from p-fs, the assert is not vacuous — and (2) writes through a
+ * NULL pointer, faulting in ring-0 task context. */
+void dtr_worker_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+
+    for (;;) {
+        if (dtr_crash_req) {
+            dtr_crash_req = 0;
+
+            /* zeroed weights => uniform softmax => ~33% accuracy.
+             * static (not task-stack): 2.5 KB. */
+            static float junk[DTR_WEIGHT_FLOATS];
+            for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) junk[i] = 0.0f;
+            dtr_weights_set(junk);
+            tr_puts("[dtr] worker: weights ZEROED in memory;"
+                    " now writing through NULL...\r\n");
+
+            /* the fault. Via a volatile pointer variable so the
+             * compiler can neither warn about nor elide the store. */
+            {
+                volatile UW *p = (volatile UW *)0;
+                *p = 0xDEADBEEFUL;          /* SIGSEGV -> guard path */
+            }
+            tr_puts("[dtr] worker: STILL ALIVE after NULL write —"
+                    " fault capture is broken\r\n");
+        }
+        tk_dly_tsk(100);
+    }
+}
+
+/* guard recover_fn — runs in the guard supervisor task right before
+ * the worker is respawned. The whole point of wave 6's `dtr save`:
+ * the brain survives its body. */
+void dtr_recover_weights(void)
+{
+    INT r = load_weights_from_pfs();
+    if (r == 0) {
+        tr_puts("[guard] dtr recover: weights restored from p-fs"
+                " object '" DTR_WEIGHTS_REF "'\r\n");
+    } else {
+        tr_puts("[guard] dtr recover: no usable '" DTR_WEIGHTS_REF
+                "' object in p-fs — weights NOT restored"
+                " (train+save first)\r\n");
+    }
+}
+
+static void cmd_crash(void)
+{
+    tr_puts("[dtr] crash injection armed — worker will corrupt"
+            " weights and fault within ~100 ms\r\n");
+    dtr_crash_req = 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -365,6 +444,7 @@ void dtr_train_cmd(const UB *args, UW len)
     if (tr_tok(p, end, "save")) { cmd_save(); return; }
     if (tr_tok(p, end, "load")) { cmd_load(); return; }
     if (tr_tok(p, end, "grad")) { cmd_grad(); return; }
+    if (tr_tok(p, end, "crash")) { cmd_crash(); return; }
     if (tr_tok(p, end, "train")) {
         p += 5;
         p = tr_skip_ws(p, end);
@@ -377,5 +457,5 @@ void dtr_train_cmd(const UB *args, UW len)
     }
 
     tr_puts("usage: dtr [stat] | dtr eval | dtr train [epochs]"
-            " | dtr save | dtr load | dtr grad\r\n");
+            " | dtr save | dtr load | dtr grad | dtr crash\r\n");
 }

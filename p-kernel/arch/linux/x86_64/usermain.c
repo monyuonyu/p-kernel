@@ -29,6 +29,7 @@
 #include "pfs_block.h"
 #include "pfs_repl.h"
 #include "pfs_dag.h"
+#include "guard.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -42,6 +43,8 @@ IMPORT void dtr_stat(void);
 IMPORT void dtr_task(INT stacd, void *exinf);
 IMPORT W    dtr_infer(const B input[4]);
 IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
+IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
+IMPORT void dtr_recover_weights(void);               /* guard recover  */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -78,6 +81,8 @@ static void cmd_help(void)
     print("  dtr save  - trained weights -> versioned p-fs object dtr/weights\r\n");
     print("  dtr load  - load weights from p-fs (works on replicas too)\r\n");
     print("  dtr grad  - verify analytic gradient vs finite differences\r\n");
+    print("  dtr crash - fault-inject the guarded worker (NULL write); guard recovers\r\n");
+    print("  guard  - guarded-task table (fault isolation + auto-respawn)\r\n");
     print("  infer [a b c d] - run a Transformer inference on 4 int8 sensors\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
@@ -433,6 +438,13 @@ EXPORT INT usermain(void)
     /* p-fs P2 — version DAG + ref gossip on "pfs/ref". Manifests ride
      * the P1 block replication; only refs are mutable. */
     pfs_dag_init();
+    /* guard — ring-0 task fault isolation + auto-respawn (wave 7).
+     * The dtr worker is guarded with recover_fn = reload the trained
+     * weights from the p-fs object "dtr/weights": a fault kills the
+     * task, never the node, and the brain comes back from p-fs. */
+    guard_init();
+    guard_register("dtr-worker", (FP)dtr_worker_task, 4096, 6,
+                   dtr_recover_weights);
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
@@ -479,6 +491,8 @@ EXPORT INT usermain(void)
             /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad
              * -> R3a training verbs (dtr_train.c) */
             dtr_train_cmd(line + 3, (UW)(n - 3));
+        } else if (starts_with(line, n, "guard")) {
+            guard_print();
         } else if (starts_with(line, n, "kdds")) {
             kdds_list();
         } else if (starts_with(line, n, "pfs")) {

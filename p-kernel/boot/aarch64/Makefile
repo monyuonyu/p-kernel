@@ -103,6 +103,7 @@ COMMON_C_SRCS = \
     pmesh.c \
     sfs.c \
     heal.c \
+    guard.c \
     degrade.c \
     vital.c \
     edf.c \
