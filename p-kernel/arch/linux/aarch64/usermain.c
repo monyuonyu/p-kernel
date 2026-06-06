@@ -37,6 +37,7 @@ IMPORT void dtr_init(void);
 IMPORT void dtr_stat(void);
 IMPORT void dtr_task(INT stacd, void *exinf);
 IMPORT W    dtr_infer(const B input[4]);
+static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
 IMPORT void dkva_init(void);
@@ -160,16 +161,18 @@ static void cmd_net(void)
     }
     print("\r\n");
 
-    /* Init the IP/UDP/ARP stack so it knows our identity. */
-    if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= 8) {
+    /* Init the IP/UDP/ARP stack so it knows our identity.
+     * node id = mac[5] (1..DNODE_MAX); internal index nid = mac[5]-1 must be
+     * < DNODE_MAX. The cap tracks DNODE_MAX (was hard-wired to 8 before the
+     * 8->32 scale-up — that bound, not any kdds resource limit, was what
+     * stranded nodes 9+ in single-node mode at runtime). */
+    if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= DNODE_MAX) {
         UB  nid = (UB)(mac[5] - 1);
         UW  nip = ((UW)mac[5] << 24) | 0x0000010AUL;   /* 10.1.0.N */
         drpc_init(nid, nip);
         print("[net] DRPC initialised (10.1.0.");
-        {
-            char d[2] = { (char)('0' + mac[5]), '\0' };
-            print(d); print(")\r\n");
-        }
+        print_dec_s((W)mac[5]);
+        print(")\r\n");
     } else {
         print("[net] no cluster MAC; single-node mode only\r\n");
     }
