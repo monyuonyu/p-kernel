@@ -27,6 +27,25 @@
 static UW kdds_last_fanout = 0;
 UW kdds_pub_fanout(void) { return kdds_last_fanout; }
 
+/* --- 局所性 (locality) 計測カウンタ — wave-12 F隊 / G25 (§4 の数値検証) ----
+ * survival-network.md §4 は「region 局所ルーティング = 遠方通信を減らす =
+ * 光速とエネルギーへの答え」を掲げるが、その主張を一度も数で測っていない。
+ * kdds_pub() の実配送 (delivery) を「同 region 宛 (近傍)」と「異 region 宛
+ * (遠方)」に分けて累積する。harness が推論前後でスナップショットを取り差分を
+ * 出すことで「1 推論あたり何メッセージ・何バイトが遠方を渡ったか」を測れる。
+ * バイトは送出フレーム長 sizeof(KDDS_PKT) 固定 (UDP 上の実バイト)。 */
+static UW kdds_tx_msgs       = 0;   /* 配送総数 (= 累積 fanout)           */
+static UW kdds_tx_cross      = 0;   /* うち異 region (遠方) への配送数    */
+static UW kdds_tx_bytes      = 0;   /* 配送総バイト                       */
+static UW kdds_tx_bytes_cross = 0;  /* うち異 region (遠方) への配送バイト */
+void kdds_locality_stats(UW *msgs, UW *cross, UW *bytes, UW *bytes_cross)
+{
+    if (msgs)        *msgs        = kdds_tx_msgs;
+    if (cross)       *cross       = kdds_tx_cross;
+    if (bytes)       *bytes       = kdds_tx_bytes;
+    if (bytes_cross) *bytes_cross = kdds_tx_bytes_cross;
+}
+
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
 static void kd_puts(const char *s)
@@ -233,9 +252,11 @@ W kdds_pub(W handle, const void *data, W len)
         kd_memcpy(pkt.data, data, len);
 
         /* REGION スコープなら自 region メンバにだけ送る。region_recompute()
-         * を一度回し、ループ内は region_is_member() で安く判定する。 */
+         * を一度回し、ループ内は region_is_member() で安く判定する。
+         * locality 計測のため region 判定は GLOBAL スコープでも要るので
+         * (各配送先が近傍か遠方かを分類する)、常に一度 recompute する。 */
         BOOL region_scoped = (t->scope == KDDS_SCOPE_REGION);
-        if (region_scoped) region_recompute();
+        region_recompute();
 
         /* G9 (honesty): count DELIVERIES, not attempts. pmesh_send() returns
          * 0 only when the frame was actually handed to the link layer; on a
@@ -246,8 +267,17 @@ W kdds_pub(W handle, const void *data, W len)
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
             if (region_scoped && !region_is_member(n)) continue;
-            if (pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0)
+            if (pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0) {
                 fanout++;
+                /* locality 累積: 配送先 n が自 region 外なら「遠方 (cross)」 */
+                BOOL cross = !region_is_member(n);
+                kdds_tx_msgs++;
+                kdds_tx_bytes += (UW)sizeof(pkt);
+                if (cross) {
+                    kdds_tx_cross++;
+                    kdds_tx_bytes_cross += (UW)sizeof(pkt);
+                }
+            }
         }
         kdds_last_fanout = fanout;
     } else {
@@ -438,4 +468,14 @@ void kdds_list(void)
         kd_puts("\r\n");
     }
     if (!any) kd_puts("  (トピックなし)\r\n");
+
+    /* locality 計測カウンタ (wave-12 F隊 / G25) — harness が grep して
+     * 推論前後の差分を取る。near = 同 region 宛, far = 異 region 宛。 */
+    kd_puts("[locality] tx_msgs=");  kd_putdec(kdds_tx_msgs);
+    kd_puts(" far_msgs=");           kd_putdec(kdds_tx_cross);
+    kd_puts(" near_msgs=");          kd_putdec(kdds_tx_msgs - kdds_tx_cross);
+    kd_puts(" tx_bytes=");           kd_putdec(kdds_tx_bytes);
+    kd_puts(" far_bytes=");          kd_putdec(kdds_tx_bytes_cross);
+    kd_puts(" near_bytes=");         kd_putdec(kdds_tx_bytes - kdds_tx_bytes_cross);
+    kd_puts("\r\n");
 }

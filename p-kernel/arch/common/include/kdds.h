@@ -138,6 +138,12 @@ W kdds_open_poll_scoped(const char *name, W qos, W scope);
  * デモ/検証用。GLOBAL なら全 peer 数、REGION なら region メンバ数になる。 */
 UW kdds_pub_fanout(void);
 
+/* 局所性 (locality) 計測カウンタ — wave-12 / G25 (§4 の数値検証)。
+ * kdds_pub() の累積配送数/バイトを「近傍 (同 region)」と「遠方 (異 region)」
+ * に分けて読む。NULL を渡した項目はスキップ。`kdds` シェルコマンド
+ * (kdds_list) の [locality] 行でも同じ値が見える。 */
+void kdds_locality_stats(UW *msgs, UW *cross, UW *bytes, UW *bytes_cross);
+
 /* データをトピックへ発行する。
  * ローカルの subscriber を起こし、分散モードなら全 ALIVE ノードへ送信。
  * 成功時は 0、失敗時は負のエラーコード。 */
