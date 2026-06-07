@@ -49,7 +49,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd p-kernel/boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -65,6 +65,10 @@ jobs:
           # the reflex self-test was previously never invoked in CI).
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §2 G28: threat grounded in under-replication + actuator closes the
+          # loop (threat falls because of replication, not a timer; wave 14).
+          grep -aF '[protect-ground] PASS' selftest.log
+          grep -aF '[protect-loop] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -90,7 +94,7 @@ jobs:
         continue-on-error: true
         run: |
           cd p-kernel/boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | \
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -102,6 +106,9 @@ jobs:
           grep -aF '[moe-protect] PASS' selftest.log
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §2 G28 grounded threat + closed loop (wave 14)
+          grep -aF '[protect-ground] PASS' selftest.log
+          grep -aF '[protect-loop] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)

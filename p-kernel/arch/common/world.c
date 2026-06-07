@@ -21,6 +21,7 @@
 #include "degrade.h"
 #include "moe.h"      /* MOE_NUM_CLASSES */
 #include "reflex.h"   /* CONSERVE: reflex_threat_level() を脅威軸ビーコンへ (G20) */
+#include "protect.h"  /* G28: protect_threat_level() — under-replication で接地 */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -167,7 +168,17 @@ static UB compute_pressure(void)
 
 static UB compute_threat(void)
 {
-    return reflex_threat_level();   /* CONSERVE 中は learned_conserve, 他 0 */
+    /* 二つの脅威源の強い方を配る:
+     *   - reflex_threat_level(): 反射 CONSERVE が立てる脅威 (G20; 時定数は
+     *     reflex 側のヒステリシス)。
+     *   - protect_threat_level(): G28 で接地した脅威。宣言された「守る対象」
+     *     (p-fs オブジェクト) が >=R 近傍へ複製されていない (under-replicated)
+     *     あいだだけ HIGH で、複製が進むと実在の状態として DROP する。タイマ
+     *     ではなく実在の複製状態に縛られる = ループが閉じる。
+     * どちらも局所/ゴシップ状態だけを読み、中央集約点を作らない (§7)。 */
+    UB rt = reflex_threat_level();
+    UB pt = protect_threat_level();
+    return (pt > rt) ? pt : rt;
 }
 
 /* ------------------------------------------------------------------ */

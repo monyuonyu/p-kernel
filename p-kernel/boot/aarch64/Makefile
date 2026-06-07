@@ -129,6 +129,7 @@ COMMON_C_SRCS = \
     lookup.c \
     pfs_repl.c \
     pfs_dag.c \
+    protect.c \
     genome.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
