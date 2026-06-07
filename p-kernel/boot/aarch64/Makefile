@@ -42,9 +42,15 @@ INCDIRS = \
     -I.
 
 # ---- Compiler flags ---------------------------------------------------
+# EXTRA_CFLAGS lets a caller inject build-time defines without editing this
+# file, e.g.  make EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE  (used by
+# samples/33_ark_aarch64/run.sh to compile the bare-metal ARK smoke driver
+# into boot/main.c + arch/aarch64/ark_bdev.c).
+EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fno-common -O1 -std=gnu11 -mstrict-align \
           -D_APP_AARCH64_ \
+          $(EXTRA_CFLAGS) \
           $(INCDIRS)
 # -mstrict-align: with MMU disabled at EL1, Cortex-A53 treats RAM as
 # Device-nGnRnE, which disallows unaligned data accesses. Without this
@@ -77,6 +83,8 @@ ARCH_C_SRCS = \
     sio.c \
     pci.c \
     rtl8139.c \
+    virtio_blk.c \
+    ark_bdev.c \
     arch_reboot.c \
     vfs_stub.c
 
@@ -279,8 +287,27 @@ QEMU_FLAGS = -M virt -cpu cortex-a53 -m 256M \
              -display none \
              -no-reboot
 
+# Optional virtio-blk disk attach. Set DISK=<path> to expose it to the
+# kernel as a virtio-blk-device on the MMIO bus (the ARK durable backend):
+#     make run DISK=/tmp/ark.img
+QEMU_DISK_FLAGS = $(if $(DISK),-drive file=$(DISK),format=raw,if=none,id=ark0 \
+                              -device virtio-blk-device,drive=ark0,)
+
 run: $(TARGET)
-	qemu-system-aarch64 $(QEMU_FLAGS)
+	qemu-system-aarch64 $(QEMU_FLAGS) $(QEMU_DISK_FLAGS)
+
+# Build + boot the ARK bare-metal smoke kernel against a virtio-blk image.
+# DISK defaults to a scratch image created on the fly.
+DISK ?=
+run-smoke:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE $(TARGET)
+	@img=$${DISK:-/tmp/ark_aa64_smoke.img}; \
+	 [ -f "$$img" ] || dd if=/dev/zero of="$$img" bs=1M count=8 status=none; \
+	 echo "[run-smoke] booting with virtio-blk image $$img"; \
+	 qemu-system-aarch64 $(QEMU_FLAGS) \
+	     -drive file="$$img",format=raw,if=none,id=ark0 \
+	     -device virtio-blk-device,drive=ark0
 
 run-debug: $(TARGET)
 	qemu-system-aarch64 $(QEMU_FLAGS) -S -gdb tcp::1234 &

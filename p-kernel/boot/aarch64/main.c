@@ -17,6 +17,13 @@ extern const void *knl_c_init_task;
 /* PL011 UART init (arch/aarch64/sio.c) */
 extern void sio_init(void);
 
+#ifdef ARK_BAREMETAL_SMOKE
+/* Bare-metal ARK smoke test (arch/aarch64/ark_bdev.c). Local prototype so this
+ * TU need not pull extra headers; INT == int on LP64. Runs before T-Kernel,
+ * driving virtio-blk in polled mode, then halts with a PASS/FAIL verdict. */
+extern int ark_baremetal_smoke(void (*emit)(const char *));
+#endif
+
 /* PL011 base differs between QEMU virt and BCM2837 — keep this print
  * helper minimal so it works before sio_init() runs. */
 #ifdef BOARD_RPI3
@@ -51,6 +58,22 @@ void main(void)
                    "offset.h TCB_tskctxb out of sync with task.h");
     _Static_assert(sizeof(TCB) <= 256,
                    "TCB grew past tk_cre_tsk's assumed ceiling");
+
+#ifdef ARK_BAREMETAL_SMOKE
+    /* ARK on REAL hardware: format/write/sync/remount/read round-trip on the
+     * physical virtio-blk disk, then halt. No T-Kernel needed — virtio-blk is
+     * polled. Mirrors boot/x86/main.c's smoke hook. */
+    {
+        print("[ARK] running bare-metal smoke (virtio-blk)\r\n");
+        int rc = ark_baremetal_smoke(print);
+        if (rc == 0)
+            print("[ARK] SMOKE RESULT: PASS\r\n");
+        else
+            print("[ARK] SMOKE RESULT: FAIL\r\n");
+        print("=== ark-smoke done — halting ===\r\n");
+        for (;;) __asm__ volatile ("wfe");
+    }
+#endif
 
     print("[BOOT] Starting T-Kernel...\r\n");
     knl_t_kernel_main((void *)&knl_c_init_task);
