@@ -19,11 +19,15 @@ p-kernel で動く最初のユーザープログラムです。
 ## ビルドと実行
 
 ```bash
-# ビルド
-cd boot/x86/user_hello
-make 01_hello/hello.elf
+# 1) サンプル ELF をビルド（samples/ のソースを参照）
+cd userland/x86
+make 01_posix/01_hello/hello.elf      # または make all で全サンプル
 
-# QEMU で実行
+# 2) ディスクイメージに格納して QEMU 起動
+cd boot/x86
+make disk && make run-disk
+
+# 3) シェルから実行
 p-kernel> exec hello.elf
 ```
 

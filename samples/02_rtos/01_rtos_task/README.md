@@ -20,11 +20,15 @@ p-kernel (micro T-Kernel 2.0) のタスク（スレッド）管理 API を学ぶ
 ## ビルドと実行
 
 ```bash
-# ビルド
-cd boot/x86/user_hello
-make 03_rtos_task/rtos_task.elf
+# 1) サンプル ELF をビルド
+cd userland/x86
+make 02_rtos/01_rtos_task/rtos_task.elf   # または make all で全サンプル
 
-# QEMU で実行
+# 2) ディスクイメージに格納して QEMU 起動
+cd boot/x86
+make disk && make run-disk
+
+# 3) シェルから実行
 p-kernel> exec rtos_task.elf
 ```
 

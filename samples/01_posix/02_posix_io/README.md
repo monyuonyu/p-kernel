@@ -19,11 +19,15 @@ p-kernel 内蔵の FAT32 ファイルシステムを POSIX 互換 API で操作�
 ## ビルドと実行
 
 ```bash
-# ビルド
-cd boot/x86/user_hello
-make 02_posix_io/posix_io.elf
+# 1) サンプル ELF をビルド
+cd userland/x86
+make 01_posix/02_posix_io/posix_io.elf   # または make all で全サンプル
 
-# QEMU で実行
+# 2) ディスクイメージに格納して QEMU 起動
+cd boot/x86
+make disk && make run-disk
+
+# 3) シェルから実行
 p-kernel> exec posix_io.elf
 ```
 
@@ -59,7 +63,7 @@ p-kernel> exec posix_io.elf
 
 | fd | 意味 |
 |----|------|
-| 0  | 標準入力（未実装）|
+| 0  | 標準入力（`exec` 中はシェルがシリアル入力を中継。03_stdin_echo 参照）|
 | 1  | 標準出力 → シリアルポート |
 | 2  | 標準エラー → シリアルポート |
 | 3〜| ファイル（FAT32 ディスク上）|

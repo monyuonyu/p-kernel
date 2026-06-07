@@ -23,7 +23,7 @@ p-kernel の AI syscall とネットワーク syscall を組み合わせた、�
 ```bash
 # ビルド
 cd userland/x86
-make 06_net_infer/net_infer.elf
+make 07_network/01_net_infer/net_infer.elf
 
 # ディスクイメージに格納して QEMU 起動
 cd boot/x86

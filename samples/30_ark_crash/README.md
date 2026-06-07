@@ -13,8 +13,9 @@ a cache can **reorder** or **drop** the un-`fsync`'d tail, a sector can **tear**
 (half-written), and media can **bit-rot**. The audit
 (`docs/architecture/arkfs-audit.md`, 🟡6) called out a corner the prefix-only
 harness *cannot reach*: a **torn payload + surviving header + surviving commit**
-makes the current version read `ARK_E_CORRUPT` with **no auto-fallback** to the
-last good version. This fuzzer reaches it, and more.
+made the current version read `ARK_E_CORRUPT` with **no auto-fallback** to the
+last good version. This fuzzer reaches it, and more — and ARK-2 has since closed
+it (see the results below).
 
 ## How it stays honest and decoupled
 
@@ -59,8 +60,9 @@ reads.
   (no good version obtainable at all).
 
 `run.sh` exits **non-zero iff any BUG run** occurs. SAFE-reject does **not** fail
-the gate — it is a tolerated, documented degradation. This is the regression gate
-**ARK-2 must turn fully green**.
+the gate — it is a tolerated degradation. **ARK-2 (wave 15–16) turned this gate
+fully green:** it now runs as the CI job `ark-crash-fuzzer` and the tree holds at
+**0 BUG / 0 SAFE-reject**.
 
 ## Run
 
@@ -73,81 +75,63 @@ ARK_FUZZ_SEED=99 ARK_FUZZ_RUNS=200 ./samples/30_ark_crash/run.sh
 
 ```
  PERTURBATION                 runs  OK-old  OK-new  SAFE-rej   BUG
- (a) prefix-truncate            6       5       1         0     0
- (b) reorder/drop              65      46      15         4     0
- (c) torn-sector                2       1       0         1     0
- (d) bit-flip                  66      11      39        12     4
- TOTAL                        139      63      55        17     4
+ (a) prefix-truncate            8       5       3         0     0
+ (b) reorder/drop              65      54      11         0     0
+ (c) torn-sector                2       2       0         0     0
+ (d) bit-flip                  66       8      58         0     0
+ TOTAL                        141      69      72         0     0
 ```
+
+**0 BUG, 0 SAFE-reject across all four classes** — every perturbation now lands
+on a complete version (old or new). This is the green state ARK-2 (wave 15–16)
+delivered; the fuzzer is the standing regression gate (CI `ark-crash-fuzzer`).
 
 ### What ARK survives (cleanly)
 
+- **Self-verify is airtight: across *all* classes and seeds, ARK NEVER serves a
+  corrupt byte.** Every conceivable failure mode is *withholding* data, never
+  mis-serving it. Content addressing (sha256 == block id) genuinely does its job.
 - **(a) prefix-truncate — 0 BUG, 0 SAFE-reject.** Every prefix cut lands on
-  v2-whole or v3-whole. This is exactly what `samples/25` already proves; we
-  reproduce it as a baseline.
-- **Self-verify is airtight: across *all* classes and seeds, ARK NEVER served a
-  corrupt byte.** Every failure mode is *withholding* data, never mis-serving it.
-  Content addressing (sha256 == block id) genuinely does its job.
+  v2-whole or v3-whole. This is exactly what `samples/25` already proves.
+- **(b) reorder / drop, (c) torn-sector — 0 SAFE-reject.** A dropped/torn payload
+  with a surviving commit no longer wedges the current view: the read path
+  **auto-falls-back to the newest intact version** instead of returning CORRUPT.
+- **(d) bit-flip — 0 BUG.** Superblock rot and rotted record headers no longer
+  destroy the library (see below).
 
-### What this fuzzer EXPOSES (the prefix-only harness cannot)
+### How ARK-2 closed what the prefix-only harness could not reach
 
-1. **🟡6 — torn/dropped payload + surviving commit → no auto-fallback
-   (SAFE-reject).** Reorder and torn-with-surviving-commit reproduce it
-   deterministically.
-   Reproducer (seed-independent, class **(b)**):
-   ```
-   op: reorder DROP payload sector 14, keep [13, 15, 16, 17]
-   -> read current = CORRUPT;  version = 2;  readv 1/2 = intact.
-   ```
-   And class **(c)**:
-   ```
-   op: tear payload sector 14 but commit SURVIVES
-   -> read current = CORRUPT;  prior v2 still recoverable.
-   ```
-   ARK keeps integrity (never serves the rot) but the *current view* is
-   unreadable with no automatic rollback — **not** "always last-good." Fixing
-   this (read-path auto-fallback to the newest intact version) is ARK-2's job.
+1. **🟡6 — torn/dropped payload + surviving commit → read-path auto-fallback.**
+   When the current version's payload is unreadable but a prior committed version
+   is intact, the read path now returns the **newest intact prior version** rather
+   than CORRUPT. The old SAFE-reject corner is gone (`ark_read_file`,
+   `arch/common/arkfs.c`).
+2. **🟡5 — superblock replica.** The superblock is written to BOTH the primary
+   (sector 0) and a **replica at the last sector** (on-disk format v2). A torn or
+   rotted primary falls back to the replica on mount; either intact copy mounts
+   the library.
+3. **Header-truncation — replay resync instead of stop-at-first-bad-header.** A
+   single rotted record header no longer truncates the whole log: the mount scan
+   resyncs past a bad header and recovers the committed records after it.
 
-2. **🟡5 — superblock rot wedges the entire library (BUG).** Sector 0 has a crc
-   but **no replica**.
-   Reproducer (deterministic):
-   ```
-   op: bitflip SUPERBLOCK sector 0 byte 10
-   -> ark_mount returns CORRUPT -> MOUNT-FAIL -> total loss, unmountable.
-   ```
-
-3. **NEW finding — one rotted *header* byte silently truncates the whole log
-   (BUG).** The mount scan **stops at the first invalid record header**, so a
-   single bit-flip in an *early* record header discards every committed record
-   after it. The store still "mounts" but presents an **empty** filesystem — a
-   silent total data loss that looks like a fresh disk (arguably worse than the
-   loud SB wedge).
-   Reproducer (deterministic):
-   ```
-   op: bitflip FIRST log record header (sector 1 byte 0)
-   -> read = NOTFOUND; version = -4; ls / = 0 entries.  All versions gone.
-   ```
-   Random bit-flips hitting any header sector at/before the latest commit
-   reproduce the same truncation (e.g. seed 1337: `bitflip log [(1,41),...]`).
+(History: earlier on this harness these three were live BUG/SAFE-reject findings
+— see `docs/architecture/arkfs-audit.md` 🟡5/🟡6 and its 2026-06-07 status banner.
+The fuzzer existed to expose them honestly; ARK-2 then turned the gate green.)
 
 ## Honest verdict on ARK's crash-safety today vs its claim
 
 - **"NEVER serves corrupt data" — TRUE, and strongly so.** No perturbation in any
   class or seed ever produced a corrupt-served byte. The content-addressed
   self-verify on the read and replay paths is the real, load-bearing strength.
-- **"last committed complete OR new complete" — only TRUE for prefix crashes.**
-  Under realistic **reorder / drop / torn-with-surviving-commit**, ARK degrades to
-  **SAFE-reject**: the current view becomes unreadable with **no auto-fallback**
-  to the last good version (🟡6). It is *safe* (no corruption) but *not*
-  "always last-good."
-- **"survives the flood (bit-rot)" — FALSE for two single-byte cases.** With **no
-  superblock replica** and a **scan-stops-at-first-bad-header** replay, a single
-  rotted byte in sector 0 (wedge) or in any early record header (silent empty
-  library) destroys the whole store. These are the gating BUGs.
+- **"last committed complete OR new complete" — now TRUE across prefix, reorder,
+  drop and torn-with-surviving-commit.** Where the current view is unreadable, the
+  read path auto-falls-back to the newest intact prior version, so a complete
+  version is always served.
+- **"survives the flood (bit-rot)" — now TRUE for the single-byte cases that used
+  to wedge it.** The superblock replica survives a rotted primary, and replay
+  resync survives a rotted header.
 
-**Bottom line:** ARK is *integrity-safe* (it never lies about data) but not yet
-*availability/durability-safe* under reordering and rot. The gate is **RED by
-design today** — it documents real defects (🟡5, 🟡6, and the header-truncation
-finding). ARK-2 turns it green by adding (a) read-path auto-fallback to the
-newest intact version, (b) a superblock replica, and (c) a replay that can skip a
-rotted header instead of truncating the log.
+**Bottom line:** ARK is both *integrity-safe* (it never lies about data) and, after
+ARK-2, *availability-safe* under reordering and single-byte rot. The gate is
+**GREEN** and enforced in CI (`ark-crash-fuzzer`); it documents the formerly-open
+defects (🟡5, 🟡6, header-truncation) as closed regressions to guard.

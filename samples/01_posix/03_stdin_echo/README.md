@@ -13,7 +13,7 @@
 
 ```bash
 cd userland/x86
-make 07_stdin_echo/stdin_echo.elf
+make 01_posix/03_stdin_echo/stdin_echo.elf
 
 cd boot/x86
 make disk && make run-disk
