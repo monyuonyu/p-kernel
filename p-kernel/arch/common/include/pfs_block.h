@@ -84,3 +84,26 @@ UW   pfs_count(void);
 /* Run the P0 self-test (dedup + round-trip + miss). Prints PASS/FAIL via
  * the supplied puts-style callback. Returns 0 on PASS, non-zero on FAIL. */
 INT  pfs_self_test(void (*emit)(const char *));
+
+/* ------------------------------------------------------------------ */
+/* P0 durable backend (G24) — make the library non-volatile.           */
+/*                                                                     */
+/* When $PKERNEL_PFS_DIR names a directory (hosted/Linux only), every   */
+/* NEW block is also written there content-addressed (filename = the    */
+/* block-id hex, 64 chars) and fsync'd. Same content == same id, so the */
+/* write is idempotent. pfs_durable_restore() rescans that directory at */
+/* boot, recomputes sha256(content) for each file and rejects any whose */
+/* bytes do not match their name (content-addressed self-verification), */
+/* then reloads the survivors into the in-memory table — "记忆 returns  */
+/* after a reboot". With the env unset, or on bare-metal builds, both   */
+/* calls are no-ops and the store stays memory-only (backward compat).  */
+/* ------------------------------------------------------------------ */
+
+/* Reload persisted blocks from $PKERNEL_PFS_DIR with sha256 verification.
+ * Prints a one-line summary (loaded / rejected) via `emit`. Returns the
+ * number of blocks restored into the table (0 when disabled). */
+INT  pfs_durable_restore(void (*emit)(const char *));
+
+/* 1 if a durable directory is configured (and writes are persisting),
+ * else 0. Useful for demos / status. */
+INT  pfs_durable_active(void);

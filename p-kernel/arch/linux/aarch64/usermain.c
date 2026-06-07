@@ -509,6 +509,12 @@ EXPORT INT usermain(void)
     /* p-fs P2 — version DAG + ref gossip on "pfs/ref". Manifests ride
      * the P1 block replication; only refs are mutable. */
     pfs_dag_init();
+    /* G24 — make the library non-volatile. If PKERNEL_PFS_DIR is set,
+     * reload content-addressed blocks (sha256-verified) and the named-ref
+     * table from disk: the swarm's memory survives a total power loss and
+     * comes back on reboot. No-op (memory-only) when the env is unset. */
+    pfs_durable_restore(print);
+    pfs_dag_restore();
     /* guard — ring-0 task fault isolation + auto-respawn (wave 7).
      * The dtr worker is guarded with recover_fn = reload the trained
      * weights from the p-fs object "dtr/weights": a fault kills the
