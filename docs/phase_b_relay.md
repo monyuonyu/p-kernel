@@ -1,8 +1,10 @@
 # Phase B — the UMP relay server
 
-This is the design (and now a working prototype) of the tiny public relay
-that lets two phones running the UMP Android app find each other and
-talk, despite both being behind cellular NAT.
+This is the design — and now a shipped, tested implementation (v2 wire,
+6/6 tests green) — of the tiny public relay that lets two phones running
+the UMP Android app find each other and talk, despite both being behind
+cellular NAT. The client side (`net_relay.c`) has also shipped on both
+aarch64 and x86_64; see "Client integration" below.
 
 It is **not** STUN, **not** TURN, **not** a SIP signalling server, **not**
 a coturn deployment. It is ~150 lines of C that listens on one UDP port,
@@ -299,8 +301,8 @@ arch_linux_net_send()  → sendto each other peer's port
 arch_linux_net_recv()  → recv from own socket
 ```
 
-The Phase B work-in-progress is `arch/linux/aarch64/net_relay.c`
-(planned, not in this commit):
+Phase B sub-step 2 **has shipped**: `arch/linux/aarch64/net_relay.c`
+(and its x86_64 sibling `arch/linux/x86_64/net_relay.c`) implement:
 
 ```
 arch_linux_net_init()  → resolve PKERNEL_RELAY_HOST
@@ -346,8 +348,12 @@ $ make -C relay test
 [relay-test] PASS — both payloads round-tripped through relay
 ```
 
-Phase B sub-step 2 (`net_relay.c` on the p-kernel client side) lights
-up only after this passes.
+Phase B sub-step 2 (`net_relay.c` on the p-kernel client side) builds on
+this and has since shipped: two `./p-kernel` nodes now mesh through
+`./relay` end-to-end over the v2 wire (and the client adds its own
+inbound HMAC verification + 64-packet replay window — see the wave-10/11
+sections above). The relay-forgery and replay regression tests live in
+`samples/11_distributed/`.
 
 ## Why C and not Go / Python
 

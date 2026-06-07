@@ -1,5 +1,11 @@
 # p-kernel シェルコマンド チートシート
 
+> これは**ベアメタル x86 シェル**のコマンド集（最もコマンドが多い）。
+> UMP（`boot/linux` / `boot/linux_x86_64`）のシェルは別系統で、
+> `region` / `world` / `moe` / `dtr train`/`eval`/`save`/`load` / `pfs` /
+> `protect` / `hrw` などを持つ一方、ここの `raft`/`evolve`/`sfs`/`exec` は
+> 持たない。UMP 側は [quickstart.md](quickstart.md) を参照。
+
 ## システム
 
 | コマンド | 説明 |

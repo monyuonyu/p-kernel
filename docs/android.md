@@ -5,12 +5,16 @@ itself already runs end-to-end as a Linux process on aarch64; this
 document covers the wrapping that turns `./p-kernel` into `libpkernel.so`
 inside an APK.
 
-Status as of 2026-05-21: this guide describes the path; the actual
-Android Studio project files (`build.gradle`, `AndroidManifest.xml`,
-the Kotlin Activity) live outside this repo and are built where the
-NDK is available. The native side (`android/app/src/main/cpp/` and
-`android/app/src/main/java/io/pkernel/PKernel.java`) **is** in this
-repo and contains the JNI bridge + CMakeLists.txt the project uses.
+Status (updated 2026-06-07): **the full Gradle/NDK project now lives
+in this repo** under `android/` — `build.gradle.kts`, `settings.gradle.kts`,
+`gradlew`, and `app/src/main/{cpp,java}/…` including the JNI bridge,
+`CMakeLists.txt`, `PKernel.java`, `MainActivity.kt`, and the
+`PKernelService.kt` foreground service. Phases A→D have shipped: a real
+installable `app-debug.apk` builds via official NDK r26d
+(`./gradlew :app:assembleDebug`), boots `libpkernel.so`, joins a v2
+relay mesh, and is region-aware (see the Phase D section below). The
+sections below are kept as the build walkthrough; the "Known issues"
+list records what was fixed along the way.
 
 ## Prerequisites
 
@@ -21,11 +25,11 @@ repo and contains the JNI bridge + CMakeLists.txt the project uses.
 
 ## Project skeleton
 
-Create a new Android Studio project (Empty Activity, Kotlin, minimum
-API 26 / Android 8.0). After the wizard finishes, replace the generated
-`app/src/main/cpp/` with the contents of `android/app/src/main/cpp/`
-from this repo, and drop `android/app/src/main/java/io/pkernel/PKernel.java`
-into the appropriate Java sources directory.
+The simplest path is to **open the in-repo `android/` project directly**
+in Android Studio (or build headless with `./gradlew :app:assembleDebug`).
+The minimum is API 26 / Android 8.0. The notes below document what that
+project's `app/build.gradle.kts` contains, in case you are reconstructing
+it or wiring an equivalent project by hand.
 
 `app/build.gradle.kts` needs:
 
