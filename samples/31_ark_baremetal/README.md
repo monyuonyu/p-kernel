@@ -51,9 +51,9 @@ Exit 0 = both boots PASS. Logs: `/tmp/ark_bm_boot{1,2}.log`.
 
 ## Scope / honesty
 
-x86 only. aarch64 bare metal (QEMU `virt` / RPi3) has **no block device
-driver** in-tree today (no virtio-blk, no SD/MMC; `arch/aarch64/vfs_stub.c` is
-a stub), so there is genuinely nothing to bind an `ARK_BDEV` to there. Rather
-than fake it, this sample scopes to the x86 target that has a real disk. When
-an aarch64 block driver lands, the same `ark_bdev_bind()` pattern applies with
-zero arkfs.c changes.
+This sample is x86-only (ATA-PIO `ide0`). The aarch64 counterpart has since
+landed in **`samples/33_ark_aarch64`**: a from-scratch virtio-blk MMIO driver
+(`arch/aarch64/virtio_blk.c`) binds the same `ARK_BDEV` vtable on the QEMU
+`virt` board, so ARK now survives a power-cycle on AArch64 bare metal too — with
+the identical `ark_bdev_bind()` pattern and **zero `arch/common/arkfs.c`
+changes**, exactly as predicted here.

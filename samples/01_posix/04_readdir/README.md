@@ -12,7 +12,7 @@
 
 ```bash
 cd userland/x86
-make 09_readdir/readdir.elf
+make 01_posix/04_readdir/readdir.elf
 
 cd boot/x86
 make disk && make run-disk

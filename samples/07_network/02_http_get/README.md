@@ -13,7 +13,7 @@ TCP 接続を確立し、HTTP GET リクエストを送信してレスポンス�
 
 ```bash
 cd userland/x86
-make 08_http_get/http_get.elf
+make 07_network/02_http_get/http_get.elf
 
 cd boot/x86
 make disk && make run-disk   # ネットワーク付き (RTL8139 QEMU user-net)
