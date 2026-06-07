@@ -125,6 +125,7 @@ COMMON_C_SRCS = \
     kloader_task.c \
     demo_kdds.c \
     pfs_block.c \
+    arkfs.c \
     lookup.c \
     pfs_repl.c \
     pfs_dag.c \
