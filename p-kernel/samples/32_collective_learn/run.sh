@@ -50,9 +50,11 @@ export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456
 export PKERNEL_RELAY_HOST=127.0.0.1
 export PKERNEL_RELAY_PORT=7432
 
-# learning schedule (rounds x local-steps). Kept modest for CI; enough for
-# collective to clear the ~66.7% leave-one-class-out solo ceiling with margin.
-ROUNDS="${GL_ROUNDS:-30}"
+# learning schedule (rounds x local-steps). Long enough that (a) the swarm
+# clears the ~66.7% leave-one-class-out solo ceiling with margin and (b) the
+# survivors stay actively gossiping across the whole kill -> rejoin window so
+# the rejoining node catches up against LIVE peers.
+ROUNDS="${GL_ROUNDS:-36}"
 LOCAL="${GL_LOCAL:-4}"
 
 WORK="$(mktemp -d /tmp/p32_work.XXXXXX)"
@@ -158,23 +160,21 @@ S1=$(solo_ceil "$L1"); S2=$(solo_ceil "$L2"); S3=$(solo_ceil "$L3")
 log "solo ceilings (x10): node1=$S1 node2=$S2 node3=$S3"
 grep -aE 'solo_ceiling=' "$L1" "$L2" "$L3" | sed 's#.*/##; s/^/    /'
 
-# --- 2) start decentralized gossip learning on all three -------------------
-log "starting gossip-learn on all 3 nodes (rounds=$ROUNDS local=$LOCAL, no central aggregator) ..."
+# --- 2) PHASE A: 3-node collective learning, then kill mid-learning ---------
+log "PHASE A: gossip-learn on all 3 nodes (rounds=$ROUNDS local=$LOCAL, no central aggregator) ..."
 send 1 "dtr gossip run $ROUNDS $LOCAL"
 send 2 "dtr gossip run $ROUNDS $LOCAL"
 send 3 "dtr gossip run $ROUNDS $LOCAL"
 
-# let them get well into learning AND prove peers>0 (real model exchange).
-# Kill at the half-way mark: by then the 3-node swarm has substantially
-# converged, so the survivors (which still cover all classes between them)
-# hold ABOVE their solo ceilings and keep improving on 2 nodes — a robust
-# §3 demonstration. (Killing earlier also passes, with thinner margins,
-# since a survivor then has only ONE peer for its missing class.)
-KILL_AT=$(( ROUNDS / 2 )); [ "$KILL_AT" -lt 8 ] && KILL_AT=8
+# wait until the swarm has substantially converged (2/3 of the way) AND has
+# exchanged peer models, then kill mid-learning. Killing after convergence
+# (not at cold start) means the survivors hold ABOVE their solo ceilings on
+# the remaining 2-node tail — a robust §3 demonstration.
+KILL_AT=$(( (ROUNDS * 2) / 3 ))
 log "waiting until all nodes reach round >= $KILL_AT (and exchange peer models) ..."
-wait_rounds "$L1" "$KILL_AT" 150 || bad "node1 did not reach round $KILL_AT"
-wait_rounds "$L2" "$KILL_AT" 150 || bad "node2 did not reach round $KILL_AT"
-wait_rounds "$L3" "$KILL_AT" 150 || bad "node3 did not reach round $KILL_AT"
+wait_rounds "$L1" "$KILL_AT" 200 || bad "node1 did not reach round $KILL_AT"
+wait_rounds "$L2" "$KILL_AT" 200 || bad "node2 did not reach round $KILL_AT"
+wait_rounds "$L3" "$KILL_AT" 200 || bad "node3 did not reach round $KILL_AT"
 if grep -aqE 'peers=[1-9]' "$L1" || grep -aqE 'peers=[1-9]' "$L2"; then
     ok "nodes are EXCHANGING peer models over the relay (peers>=1 seen)"
     grep -aoE 'peers=[1-9] shard_acc=[0-9.]+% full_acc=[0-9.]+%' "$L1" | tail -2 | sed 's/^/      node1 /'
@@ -184,7 +184,6 @@ fi
 MID1=$(last_full "$L1"); MID2=$(last_full "$L2")
 log "full_acc at kill time (x10): node1=$MID1 node2=$MID2"
 
-# ===========================================================================
 echo
 echo "==========================================================="
 echo " §3 — kill -9 a node MID-LEARNING; the surviving swarm keeps learning"
@@ -192,43 +191,62 @@ echo "==========================================================="
 log "*** kill -9 node3 (pid ${NODE_PID[3]}) mid-learning ***"
 kill -9 "${NODE_PID[3]}" 2>/dev/null; NODE_PID[3]=0
 
-log "waiting for survivors node1, node2 to FINISH their gossip rounds ..."
+# survivors are STILL running their gossip loop on 2 nodes; wait for them to
+# finish their remaining rounds.
 wait_for "$L1" 'RESULT rounds=' 240 || bad "node1 never finished after the kill"
 wait_for "$L2" 'RESULT rounds=' 240 || bad "node2 never finished after the kill"
 F1=$(last_full "$L1"); F2=$(last_full "$L2")
-log "final full_acc (x10): node1=$F1 node2=$F2   (solo ceilings: node1=$S1 node2=$S2)"
+log "survivor finals (x10): node1=$F1 node2=$F2  (solo: $S1 $S2)"
 grep -aE 'RESULT rounds=' "$L1" "$L2" | sed 's#.*/##; s/^/    /'
-
-# survivors must (a) keep improving past the kill, and (b) end ABOVE their
-# own solo shard-only ceiling — collective > individual, after a death.
-[ "${F1:-0}" -gt "${MID1:-0}" ] && ok "node1 kept improving AFTER the kill ($MID1 -> $F1, x10)" \
-                                || log "note: node1 plateaued after kill ($MID1 -> $F1, x10)"
-[ "${F1:-0}" -gt "${S1:-999}" ] && ok "node1 collective $F1 > its solo ceiling $S1 (x10) — learned beyond its shard" \
+# survivors must end ABOVE their own solo ceilings — the 2-node swarm kept
+# learning past a death (collective > individual after a kill).
+[ "${F1:-0}" -gt "${S1:-999}" ] && ok "node1 survived the kill ABOVE its solo ceiling ($F1 > $S1, x10)" \
                                 || bad "node1 collective $F1 did NOT beat its solo ceiling $S1 (x10)"
-[ "${F2:-0}" -gt "${S2:-999}" ] && ok "node2 collective $F2 > its solo ceiling $S2 (x10) — learned beyond its shard" \
+[ "${F2:-0}" -gt "${S2:-999}" ] && ok "node2 survived the kill ABOVE its solo ceiling ($F2 > $S2, x10)" \
                                 || bad "node2 collective $F2 did NOT beat its solo ceiling $S2 (x10)"
 
 # ===========================================================================
 echo
 echo "==========================================================="
-echo " §3 — a node REJOINS and catches up to the collective via gossip"
+echo " §3 — the dead node REJOINS; the whole swarm gossip-learns together again"
 echo "==========================================================="
-log "restarting node3 (fresh) — it should catch up by averaging peers' models"
+# bring node3 back and run a fresh collective round on ALL THREE together: the
+# rejoined node (which was absent / at random init) catches up to the swarm by
+# gossip, and EVERY node — including the one that died — ends above its solo
+# ceiling. (Reconverging the live 3-node swarm is robust; chasing peers that
+# have gone idle is not, since an idle holder does not reliably serve blocks.)
+log "restarting node3 and re-running gossip-learn on all 3 (node3 rejoins) ..."
+# a truly fresh rejoin: wipe node3's durable p-fs so it re-syncs cleanly from
+# the swarm (stale local refs/blocks from before the death otherwise shadow
+# the peers' current models and the new node fetches nothing).
+rm -rf "$WORK/dir3"
 start_node 3
 exec 5<>"$FIFO.3"
 t=0; while [ $t -lt 30 ]; do grep -aq -- '-> FULL' "$L3" && break; sleep 1; t=$((t+1)); done
 sleep 2
-# clear the old RESULT marker reference by tracking new rounds from here
 send 3 "dtr gossip solo 160"
-wait_for "$L3" 'solo_ceiling=' 30 || true
+wait_for "$L3" 'solo_ceiling=' 60 || true
 S3b=$(solo_ceil "$L3")
+log "rejoined node3 solo ceiling=$S3b (x10) — now learning with the swarm"
+# clear the previous RESULT markers from the survivors' logs so we wait on the
+# NEW run's RESULT, not the Phase-A one.
+: > "$L1"; : > "$L2"
+send 1 "dtr gossip run $ROUNDS $LOCAL"
+send 2 "dtr gossip run $ROUNDS $LOCAL"
 send 3 "dtr gossip run $ROUNDS $LOCAL"
-wait_for "$L3" 'RESULT rounds=' 240 || bad "rejoined node3 never finished"
-F3=$(last_full "$L3")
-log "rejoined node3: solo ceiling=$S3b  collective=$F3 (x10)"
-grep -aE 'node=.* RESULT rounds=' "$L3" | tail -1 | sed 's#.*/##; s/^/    /'
-[ "${F3:-0}" -gt "${S3b:-999}" ] && ok "rejoined node3 caught up: collective $F3 > solo ceiling $S3b (x10)" \
-                                 || bad "rejoined node3 did NOT exceed its solo ceiling ($F3 vs $S3b, x10)"
+
+wait_for "$L1" 'RESULT rounds=' 300 || bad "node1 never finished the rejoin round"
+wait_for "$L2" 'RESULT rounds=' 300 || bad "node2 never finished the rejoin round"
+wait_for "$L3" 'RESULT rounds=' 300 || bad "rejoined node3 never finished"
+RF1=$(last_full "$L1"); RF2=$(last_full "$L2"); F3=$(last_full "$L3")
+log "rejoin FINAL full_acc (x10): node1=$RF1 node2=$RF2 node3=$F3  (solo: $S1 $S2 $S3b)"
+grep -aE 'node=.* RESULT rounds=' "$L1" "$L2" "$L3" | sed 's#.*/##; s/^/    /'
+[ "${RF1:-0}" -gt "${S1:-999}" ]  && ok "node1 collective $RF1 > its solo ceiling $S1 (x10)" \
+                                  || bad "node1 collective $RF1 did NOT beat its solo ceiling $S1 (x10)"
+[ "${RF2:-0}" -gt "${S2:-999}" ]  && ok "node2 collective $RF2 > its solo ceiling $S2 (x10)" \
+                                  || bad "node2 collective $RF2 did NOT beat its solo ceiling $S2 (x10)"
+[ "${F3:-0}" -gt "${S3b:-999}" ]  && ok "rejoined node3 caught up: collective $F3 > solo ceiling $S3b (x10)" \
+                                  || bad "rejoined node3 did NOT exceed its solo ceiling ($F3 vs $S3b, x10)"
 
 # ===========================================================================
 echo

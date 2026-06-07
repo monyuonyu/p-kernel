@@ -227,7 +227,10 @@ static float gl_shard_acc(UW k)
     return (float)correct * 100.0f / (float)sh_n[k];
 }
 
-/* step-decayed LR, same schedule shape dtr_train.c uses. */
+/* step-decayed LR (same shape dtr_train.c uses). A healthy LR is what lets
+ * a 2-node sub-swarm re-balance its class mix quickly after a peer dies, so
+ * the survivors hold above their solo ceilings; the rejoin demo reconverges
+ * a fresh 3-node swarm (robust at any LR) rather than chasing frozen peers. */
 static float gl_lr(UW step, UW total)
 {
     return (step <= total / 2) ? 0.10f : 0.05f;
@@ -554,7 +557,11 @@ static UW gl_merge_peers(UB me)
  * published 2.5 KB model transfers (P1 want/serve) before the next merge. */
 #define GL_SLOW_BAND_MS 2000
 
-static void gl_cmd_run(UW rounds, UW local)
+/* fresh != 0: start from the shared seed (a node joining/learning from
+ * scratch). fresh == 0 ("cont"): keep the CURRENT weights — used by peers
+ * that stay in the swarm while a fresh node rejoins, so they hold their
+ * converged model instead of restarting (and don't get reset to noise). */
+static void gl_cmd_run_ex(UW rounds, UW local, INT fresh)
 {
     if (rounds == 0) rounds = 36;
     if (local  == 0) local  = 4;     /* matches the in-process self-test  */
@@ -566,13 +573,14 @@ static void gl_cmd_run(UW rounds, UW local)
     for (UW p = 0; p < GL_MAXNODES; p++) gl_phave[p] = 0;   /* fresh cache */
 
     gp("[g22-live] node="); gpd(me);
-    gp(" START gossip-learn rounds="); gpd(rounds);
+    gp(fresh ? " START gossip-learn rounds=" : " CONT gossip-learn rounds=");
+    gpd(rounds);
     gp(" local="); gpd(local);
     gp(" shard=missing-class"); gpd(slot);
     gp(" (slow-band "); gpd((UW)GL_SLOW_BAND_MS); gp("ms/round)\r\n");
 
     dtr_ga_busy = 1;
-    dtr_reinit_weights(GL_INIT_SEED);
+    if (fresh) dtr_reinit_weights(GL_INIT_SEED);
     dtr_weights_get(gl_model[0]);
 
     float full = 0.0f;
@@ -670,7 +678,15 @@ void gl_cmd(const UB *args, UW len)
         p += 3;
         UW rounds = gl_parse_uw(&p, end);
         UW local  = gl_parse_uw(&p, end);
-        gl_cmd_run(rounds, local); return;
+        gl_cmd_run_ex(rounds, local, 1);   /* fresh: start from seed */
+        return;
     }
-    gp("usage: dtr gossip [status] | test | solo [steps] | run [rounds] [local]\r\n");
+    if (gl_tok(p, end, "cont")) {
+        p += 4;
+        UW rounds = gl_parse_uw(&p, end);
+        UW local  = gl_parse_uw(&p, end);
+        gl_cmd_run_ex(rounds, local, 0);   /* keep current converged model */
+        return;
+    }
+    gp("usage: dtr gossip [status] | test | solo [steps] | run [rounds] [local] | cont [rounds] [local]\r\n");
 }
