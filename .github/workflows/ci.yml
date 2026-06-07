@@ -233,6 +233,25 @@ jobs:
           name: plural-protect-live-logs
           path: /tmp/p28_*.log
 
+  ark-crash-fuzzer:
+    name: "ARK crash fuzzer (reorder/torn/bitflip: 0 corrupt-served, 0 wedge)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # ARK's crash-safety, enforced. A format-agnostic fuzzer drives ARK via the
+    # sample-25 CLI and perturbs the on-disk image at the sector level
+    # (prefix-truncate / reorder+drop / torn / bit-flip), remounts, and asserts:
+    # a fresh mount yields a COMPLETE version and NEVER serves a corrupt byte.
+    # Exits non-zero on any BUG (corrupt-served / wedged). Was RED by design
+    # (4 BUG) until ARK-2 added read-fallback + SB replica + header resync + GC.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3
+      - name: Run ARK crash fuzzer (0 BUG required)
+        run: timeout 400 bash p-kernel/samples/30_ark_crash/run.sh
+
   composite-loop:
     name: Composite loop (kill ∧ concurrent ∧ memory, bonus)
     runs-on: ubuntu-latest
