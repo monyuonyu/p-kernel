@@ -189,8 +189,8 @@ relay を ID 権威にしない。各ノードが自分で ID を提案し、メ
 ## 8. 検証
 
 ```
-make -C p-kernel/relay && make -C p-kernel/relay test   # 既存 6/6 green（後方互換）
-p-kernel/samples/19_dynamic_id/run_dynamic_id.sh          # lease/回収/非衝突 PASS
+make -C relay && make -C relay test   # 既存 6/6 green（後方互換）
+samples/19_dynamic_id/run_dynamic_id.sh          # lease/回収/非衝突 PASS
 ```
 
 固定 ID 経路（`run_relay_failover.sh` / `run_3node_full.sh`）は無影響。

@@ -22,7 +22,7 @@ x86/QEMU 向けシングルバイナリのビルドディレクトリです。
 ## クイックスタート
 
 ```sh
-cd p-kernel/boot/x86
+cd boot/x86
 
 # ビルド
 make

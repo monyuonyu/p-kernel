@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"          # .../p-kernel/p-kernel
+ROOT="$(cd "$HERE/../.." && pwd)"          # .../p-kernel
 
 case "$(uname -m)" in
     aarch64|arm64) BOOT="$ROOT/boot/linux" ;;

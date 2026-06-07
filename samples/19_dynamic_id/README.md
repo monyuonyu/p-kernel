@@ -29,7 +29,7 @@ behaviour:
 ## Run
 
 ```sh
-p-kernel/samples/19_dynamic_id/run_dynamic_id.sh
+samples/19_dynamic_id/run_dynamic_id.sh
 ```
 
 Prints `[dynamic-id] PASS` on success; any failed assertion exits

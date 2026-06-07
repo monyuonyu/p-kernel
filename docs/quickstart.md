@@ -33,7 +33,7 @@ changes per host).
 
 ```sh
 git clone https://github.com/monyuonyu/p-kernel.git
-cd p-kernel/p-kernel/boot/linux
+cd boot/linux
 
 make
 ./p-kernel

@@ -269,7 +269,7 @@ UNKNOWN → ALIVE → SUSPECT → DEAD
 ## QEMU 実行環境
 
 ```sh
-cd p-kernel/boot/x86
+cd boot/x86
 
 make run              # シングルノード（VGA + シリアル + RTL8139 NIC）
 make run-headless     # ヘッドレス

@@ -62,7 +62,7 @@ kdds region pub fanout（殺害後）: 4 peers = 生存数-1（期待値どお�
 ## 再現方法
 
 ```sh
-cd p-kernel/samples/11_distributed
+cd samples/11_distributed
 N=4 ./run_survival_bench.sh     # 開発デフォルト
 N=8 ./run_survival_bench.sh     # K=3 自動選択
 ```

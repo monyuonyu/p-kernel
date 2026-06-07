@@ -163,7 +163,7 @@ userspace process. No QEMU, no hardware:
 ```sh
 sudo apt install -y build-essential
 git clone https://github.com/monyuonyu/p-kernel.git
-cd p-kernel/p-kernel/boot/linux
+cd boot/linux
 make && ./p-kernel
 ```
 
@@ -190,7 +190,7 @@ sudo apt install -y \
 
 ```sh
 git clone https://github.com/monyuonyu/p-kernel.git
-cd p-kernel/p-kernel/boot/x86
+cd boot/x86
 
 # Build
 make

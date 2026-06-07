@@ -48,7 +48,7 @@ REGISTER/KEEPALIVE から独立に再学習する（だからこそ再 REGISTER 
 ## 検証
 
 ```
-p-kernel/samples/11_distributed/run_relay_failover.sh
+samples/11_distributed/run_relay_failover.sh
 ```
 
 relay 2 台 (7400/7401) + ノード 3 台で、(1) relay#1 でメッシュ形成、

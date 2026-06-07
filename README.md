@@ -9,9 +9,10 @@ micro T-Kernel 2.0 を土台に、中央を持たない分散カーネル網を�
 
 *(English summary: a research prototype toward a decentralized, no-central-anything
 kernel network where AI survives as a swarm. This file separates what **works today**,
-what is **designed/in-flight**, and what is **vision** — honestly. Code lives in
-[`p-kernel/`](p-kernel/); the architecture map with its own honest status table is
-[`p-kernel/docs/architecture/README.md`](p-kernel/docs/architecture/README.md).)*
+what is **designed/in-flight**, and what is **vision** — honestly. Code lives at the
+repo root (`arch/` `boot/` `kernel/` `lib/` `relay/` `samples/` …); the architecture
+map with its own honest status table is
+[`docs/architecture/README.md`](docs/architecture/README.md).)*
 
 ---
 
@@ -33,9 +34,9 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 
 | 能力 | 中身 | 試し方 |
 |---|---|---|
-| **micro T-Kernel 2.0 移植 ×4 ターゲット** | ベアメタル x86（QEMU）・ベアメタル AArch64（QEMU virt / RPi3 netboot 手順あり）・aarch64-linux ユーザモード・x86_64-linux ユーザモード。全てシェルまで起動 | `p-kernel/boot/{x86,aarch64,linux,linux_x86_64}/` で `make` |
-| **relay v2（NAT越え中継）** | HMAC-SHA256 認証・64パケット sliding-nonce リプレイ防御・鍵なし起動拒否・`--insecure` 明示警告。**テスト6シナリオ green** | `p-kernel/relay/` → `make test` |
-| **relay 経由の分散推論** | 2〜3ノードが1つの Transformer forward をテンソル並列＋分散KVアテンション（DKVA FULL）で分担 | `p-kernel/samples/11_distributed/run_3node_full.sh` |
+| **micro T-Kernel 2.0 移植 ×4 ターゲット** | ベアメタル x86（QEMU）・ベアメタル AArch64（QEMU virt / RPi3 netboot 手順あり）・aarch64-linux ユーザモード・x86_64-linux ユーザモード。全てシェルまで起動 | `boot/{x86,aarch64,linux,linux_x86_64}/` で `make` |
+| **relay v2（NAT越え中継）** | HMAC-SHA256 認証・64パケット sliding-nonce リプレイ防御・鍵なし起動拒否・`--insecure` 明示警告。**テスト6シナリオ green** | `relay/` → `make test` |
+| **relay 経由の分散推論** | 2〜3ノードが1つの Transformer forward をテンソル並列＋分散KVアテンション（DKVA FULL）で分担 | `samples/11_distributed/run_3node_full.sh` |
 | **regions R0–R2** | SWIM RTT EWMA → 遅延クラスタの region 形成・K-DDS の REGION/GLOBAL スコープ（O(N²)殺し）・locality-aware MoE・DKVA region 限定＋2段集約・連続容量関数 `capacity(N)` | `run_4node_regions.sh`、シェルの `region` / `rgnpub` |
 | **N=32 実走** | DNODE_MAX 8→32。32ノード実走で 6/6 PASS（world map 32/32 到達含む） | `run_Nnode_scale.sh` |
 | **world map（全網状況図）** | 中央なしで各ノードが全網の situational-awareness map を eventual に獲得 | シェルの `world` / `map`（4ターゲット全部に公開） |
@@ -43,7 +44,7 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 | **p-fs P0/P1/P2** | 内容アドレス sha256 ストア（cross-ABI で block-id 一致・重複排除）・region 限定複製（ANNOUNCE/WANT＋チャンク転送）・履歴 DAG（manifest＋append-only history＋ref gossip） | `pfs` / `pfs put <text>` / `pfs ls` / `pfs save/log/cat`、`run_3node_pfs.sh`・`run_3node_pfs_dag.sh` |
 | **lookup L0/L1** | 中央索引なしの所在引き：stateless HRW `responsible(k,r)`＋read-k 候補＋ローカル解決キャッシュ | シェルの `hrw`（self-test 同梱） |
 | **replica v2** | スナップショット announce のマルチパケット wire chunking | commit `74d4f4a` |
-| **Android UMP（APK）** | NDK ビルド・フォアグラウンドサービス・relay メッシュ参加・region 対応（Phase C/D） | `p-kernel/android/`、[docs/android.md](p-kernel/docs/android.md) |
+| **Android UMP（APK）** | NDK ビルド・フォアグラウンドサービス・relay メッシュ参加・region 対応（Phase C/D） | `android/`、[docs/android.md](docs/android.md) |
 | **死を貫く生存ループ（§3）** | 推論の最中にノードを kill -9 → 群れは全推論を完遂し `degraded(k/n)` と正直に明示・復帰ノードは再教育。**CI で強制** | `samples/13_survival_loop/kill_one.sh`、CI `survival-loop` |
 | **ゲノム発芽（§3）** | 装甲板が DNA（ゲノム）から欠けたコードを発芽させて held-out 100% に到達（攻撃下は発芽を抑止＝SHIELD 一貫） | `samples/14_genome/` |
 | **反射／熟慮の行動層（§8）** | reflex が SHIELD/CONSERVE/BEACON、二時定数で隣ノードは減衰反射（痙攣しない）。行動→知覚→ゲートの負帰還が外乱を整定 | `reflex test`（`[reflex-fb]/[reflex-learn]`）、CI |
@@ -54,7 +55,7 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 | **ARK ファイルシステム** | content-addressed・log-structured・crash-safe（並べ替え/torn/破損 fuzzer **0 BUG**）・GC・媒体スケール（旧256上限撤廃）・p-fs の durable backend。**実ブロックデバイスに乗り電源断を越える**（x86=ide / aarch64=自作 virtio-blk、QEMU で検証） | `samples/25_survival_fs` `26_ark_backend` `30_ark_crash` `31_ark_baremetal` `33_ark_aarch64`、CI `ark-crash-fuzzer` |
 | **CI（GitHub Actions 10ジョブ）** | 4ターゲット build＋self-test 群＋relay 6/6＋走行系の kill テスト（survival/protect/plural/collective）＋ARK fuzzer。**走行系を毎回 CI で強制** | `.github/workflows/ci.yml` |
 
-詳細な根拠 commit 一覧は [アーキテクチャ地図 §4 状態表](p-kernel/docs/architecture/README.md) にある。
+詳細な根拠 commit 一覧は [アーキテクチャ地図 §4 状態表](docs/architecture/README.md) にある。
 **この表に無いものは「動く」と主張しない。**
 
 ### ターゲット別シェルの実力（正直に）
@@ -69,14 +70,14 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
   ベアメタル x86 の `raft`/`evolve`/`sfs`/`exec` 等は UMP には**存在しない**。
 - **x86_64-linux UMP は普通にビルド・起動する。** 過去のドキュメントが
   「in progress」と過小に書いていたのは誤りで、aarch64-linux と同一のコマンド集合を持つ。
-  （`p-kernel/README.md` の記述が古い場合、本ファイルが正である。）
+  （コード側の旧 README は de-nest で `docs/project-readme.md` に移設。食い違う場合は本ファイルが正。）
 
 ---
 
 ## 2. 設計済み・実装中（designed / in-flight — まだ「動く」とは言わない）
 
 - **設計ドキュメント群** — 思想と設計は
-  [アーキテクチャ地図](p-kernel/docs/architecture/README.md) に一望できる
+  [アーキテクチャ地図](docs/architecture/README.md) に一望できる
   （survival-network / regions / reflex-deliberation / p-fs / decentralized-lookup /
   r3-model-widening）。各 doc は「正直な論点」節で未解決問題を自己申告している。
 - **R3a 学習・R3b 専門分化は着地済み**（§1 参照）。残る **R3 width 拡大** — 635 パラメータの
@@ -101,7 +102,7 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 - **自己進化** — ノードが自分のコードを生成・コンパイル・配備して網ごと成長する
   （オンデバイス TCC＋`evolve` ループはこの方向の最初の配管デモであり、知能ではない）。
 
-思想の全文は [survival-network.md](p-kernel/docs/architecture/survival-network.md) に逐語で置いてある。
+思想の全文は [survival-network.md](docs/architecture/survival-network.md) に逐語で置いてある。
 これらを「動く機能」のように書いていた過去の文面は撤回する。
 
 ---
@@ -137,8 +138,9 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
    上限になりつつある＝次の課題。
 6. **ARK の正直な残**: 実機検証は QEMU（x86=ide / aarch64=自作 virtio-blk）であり実 RPi3 の
    SD/EMMC ドライバは未。erasure coding（p-fs P4）・Merkle dir tree・`ARK_MAX_FILES=32` は未着手。
-7. **リポジトリ衛生** — 入れ子の `p-kernel/p-kernel/` パスは既知の負債。コミット済みバイナリ/
-   テストログは順次整理（黎明期 `git add` の取りこぼしを `.gitignore` 化＋除去）。
+7. **リポジトリ衛生** — かつての入れ子 `p-kernel/p-kernel/` は **de-nest 済み**（ソースは
+   repo root 直下：`arch/` `boot/` `kernel/` … / docs は `docs/`、旧コード README は
+   `docs/project-readme.md`）。コミット済みバイナリ/テストログも整理（`.gitignore` 化＋除去）。
 
 ---
 
@@ -151,7 +153,7 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 ---
 
 > 各器官は別の生き物ではない。**同じ脳の、別の軸**である。
-> —— 迷ったら [survival-network.md](p-kernel/docs/architecture/survival-network.md) へ戻る。
+> —— 迷ったら [survival-network.md](docs/architecture/survival-network.md) へ戻る。
 >
 > *Built with love for a future where AI belongs to everyone — and documented
 > honestly enough that you can check every claim yourself.*
