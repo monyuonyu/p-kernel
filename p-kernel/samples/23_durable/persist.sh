@@ -163,9 +163,15 @@ REJ=$(grep -cE 'durable: REJECT corrupt block' "$L3")
 grep -qE "durable: restored [0-9]+ block.*rejected [2-9].*corrupt" "$L3" \
     && ok "summary reports the rejected count" || bad "reject summary missing"
 grep -qE "cat 'greeting'|durable: restored [1-9]" "$L3" >/dev/null
-grep -qE "$PUT_ID" "$L3" \
-    && bad "corrupt block leaked into the store" \
-    || ok "corrupt block kept OUT of the store"
+# The corrupt block's id legitimately appears in the kernel's own
+# "REJECT corrupt block <id> (sha256 mismatch)" log line — that is PROOF it was
+# kept out, not a leak. A real leak = the id served from the store (cat/restored),
+# i.e. an occurrence on a line that is NOT a reject/mismatch message.
+if grep -E "$PUT_ID" "$L3" | grep -vqE "REJECT|reject|mismatch|corrupt"; then
+    bad "corrupt block leaked into the store"
+else
+    ok "corrupt block kept OUT of the store"
+fi
 
 # ---------------------------------------------------------------------------
 echo
