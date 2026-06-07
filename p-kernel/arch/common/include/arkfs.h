@@ -167,6 +167,16 @@ INT  ark_block_get(const U1 id[ARK_ID_LEN], void *buf, U4 max);
 INT  ark_block_has(const U1 id[ARK_ID_LEN]);
 U4   ark_block_count(void);
 
+/* Force a durable, fsync'd checkpoint: append a COMMIT that promotes every
+ * block appended since the last commit into the permanent index. ark_block_put
+ * alone only APPENDS a block record (uncommitted); without a following commit
+ * a remount rolls it back (correct crash semantics). The p-fs durable backend
+ * (arch/linux/pfs_ark.c) calls this after each raw block put so the block
+ * survives a remount even though no file references it yet. A torn checkpoint
+ * fails crc on replay and rolls the pending blocks back. Returns ARK_OK or
+ * negative. See survival-fs.md §7. */
+INT  ark_checkpoint(void);
+
 /* Self-test: format on a RAM bdev, then prove CRUD + versioning +
  * dedup + self-verify + crash-rollback (simulated power loss). Prints via
  * emit. Returns 0 on PASS, non-zero (= failure count) on FAIL. */

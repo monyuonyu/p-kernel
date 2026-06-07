@@ -128,7 +128,9 @@ RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 # arch/linux/ (cross-arch hosted) sources — shared with linux_x86_64
 # pfs_durable.c: G24 P0 durable backend (block + ref persistence to
 # $PKERNEL_PFS_DIR). Hosted-only; bare-metal targets keep the memory store.
-ARCH_SHARED_C_SRCS = selfc.c pfs_durable.c
+# pfs_ark.c: wave-13 white-pearl — ARK (arch/common/arkfs.c) as p-fs's
+# durable backend, selected by PKERNEL_PFS_BACKEND=ark. Hosted-only.
+ARCH_SHARED_C_SRCS = selfc.c pfs_durable.c pfs_ark.c
 ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
 
 ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \

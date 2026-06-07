@@ -459,6 +459,32 @@ static void cmd_pfs(const UB *line, INT n)
             return;
         }
         pfs_repl_put_cmd(p, (UW)(end - p));
+    } else if (p < end && starts_with(p, (INT)(end - p), "get")) {
+        /* `pfs get <text>` — recompute the block-id = sha256(text) and fetch
+         * via pfs_get. After a remount the P0 table is empty, so this
+         * exercises the durable backend's fall-through (ARK / flat). */
+        p += 3;
+        while (p < end && (*p == ' ' || *p == '\t')) p++;
+        if (p >= end) {
+            print("usage: pfs get <text>\r\n");
+            return;
+        }
+        {
+            U1 gid[PFS_ID_LEN];
+            pfs_id_compute(p, (UW)(end - p), gid);
+            static UB gbuf[PFS_BLOCK_MAX + 1];
+            INT gr = pfs_get(gid, gbuf, (UW)PFS_BLOCK_MAX);
+            if (gr < 0) {
+                print("[pfs] get: NOT FOUND\r\n");
+            } else {
+                UW gl = (UW)gr;
+                if (gl > PFS_BLOCK_MAX) gl = PFS_BLOCK_MAX;
+                gbuf[gl] = '\0';
+                print("[pfs] get: ");
+                print((const char *)gbuf);
+                print("\r\n");
+            }
+        }
     } else if (p < end && starts_with(p, (INT)(end - p), "ls")) {
         pfs_repl_ls();
     } else {

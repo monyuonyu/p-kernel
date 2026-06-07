@@ -43,6 +43,17 @@ extern int  pfs_dur_write(const char *fname, const void *data, unsigned len);
 extern int  pfs_dur_foreach(void (*cb)(const char *name, const void *data,
                                        unsigned len, void *ctx),
                             void *ctx);
+
+/* ARK durable backend (arch/linux/pfs_ark.c) — the wave-13 "white-pearl"
+ * integration: ARK becomes p-fs's durable store when PKERNEL_PFS_BACKEND=ark.
+ * Selectable against the flat backend above; mutually exclusive at every seam.
+ * Same externs-not-a-header rule as pfs_dur_* (keeps arch/linux out of the
+ * bare-metal arch/common include chain). */
+extern int  pfs_ark_configured(void);                 /* env selects ARK?   */
+extern int  pfs_ark_active(void);                      /* mounted + ready?   */
+extern int  pfs_ark_restore(void (*emit)(const char *)); /* mount at boot    */
+extern int  pfs_ark_put(const void *data, unsigned len); /* new block -> log */
+extern int  pfs_ark_get(const unsigned char *id, void *buf, unsigned maxlen);
 #endif
 
 /* NO <string.h> here. arch/common files never include libc headers
@@ -179,15 +190,22 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
             if (len) pfs_memcpy(pfs_table[i].data, buf, (size_t)len);
             pfs_table[i].used = 1;
             pfs_n++;
-            /* G24 durable backend: persist the new block content-addressed
-             * to $PKERNEL_PFS_DIR (filename = block-id hex, fsync'd). Skip
-             * while replaying from disk (pfs_loading) — those bytes already
-             * live there. No-op when the env is unset or on bare metal. */
+            /* Durable backend: persist the new block content-addressed. The
+             * backend is SELECTABLE (mutually exclusive) and skipped while
+             * replaying from disk (pfs_loading) — those bytes already live
+             * there. No-op when neither is configured or on bare metal.
+             *   PKERNEL_PFS_BACKEND=ark -> ARK log (arch/linux/pfs_ark.c)
+             *   else, $PKERNEL_PFS_DIR  -> flat file (arch/linux/pfs_durable.c,
+             *                              filename = block-id hex, fsync'd). */
 #ifdef _TK_HOSTED_LIBC_
-            if (!pfs_loading && pfs_dur_active()) {
-                char hex[2 * PFS_ID_LEN + 1];
-                id_to_hex(pfs_table[i].id, hex);
-                pfs_dur_write(hex, pfs_table[i].data, (unsigned)len);
+            if (!pfs_loading) {
+                if (pfs_ark_active()) {
+                    pfs_ark_put(pfs_table[i].data, (unsigned)len);
+                } else if (pfs_dur_active()) {
+                    char hex[2 * PFS_ID_LEN + 1];
+                    id_to_hex(pfs_table[i].id, hex);
+                    pfs_dur_write(hex, pfs_table[i].data, (unsigned)len);
+                }
             }
 #endif
             if (!pfs_loading && pfs_put_hook)
@@ -206,12 +224,37 @@ INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
 INT pfs_get(const U1 id[PFS_ID_LEN], void *buf, UW maxlen)
 {
     INT s = find_slot(id);
-    if (s < 0) return PFS_E_NOTFOUND;
+    if (s >= 0) {
+        UW len = pfs_table[s].len;
+        UW cpy = (len < maxlen) ? len : maxlen;
+        if (buf && cpy) pfs_memcpy(buf, pfs_table[s].data, (size_t)cpy);
+        return (INT)len;
+    }
 
-    UW len = pfs_table[s].len;
-    UW cpy = (len < maxlen) ? len : maxlen;
-    if (buf && cpy) pfs_memcpy(buf, pfs_table[s].data, (size_t)cpy);
-    return (INT)len;
+#ifdef _TK_HOSTED_LIBC_
+    /* P0 (in-memory) MISS: fall through to the durable ARK backend when it is
+     * the selected store. ARK self-verifies (crc + sha) on read; we ALSO
+     * re-hash the returned bytes against the requested id here, so a backend
+     * that serves rotted/wrong bytes is rejected as NOTFOUND — a p-fs-level
+     * self-verify layered on top. P0 stays a cache: we serve straight from
+     * ARK without re-populating the table (so "served FROM the log" is honest
+     * and the tiny P0 table is never thrashed). */
+    if (pfs_ark_active()) {
+        static U1 fbuf[PFS_BLOCK_MAX];      /* static: never a task-stack local */
+        int fl = pfs_ark_get(id, fbuf, (unsigned)PFS_BLOCK_MAX);
+        if (fl >= 0 && (UW)fl <= PFS_BLOCK_MAX) {
+            U1 chk[PFS_ID_LEN];
+            pfs_id_compute(fbuf, (UW)fl, chk);
+            if (id_eq(chk, id)) {
+                UW cpy = ((UW)fl < maxlen) ? (UW)fl : maxlen;
+                if (buf && cpy) pfs_memcpy(buf, fbuf, (size_t)cpy);
+                return fl;
+            }
+        }
+    }
+#endif
+
+    return PFS_E_NOTFOUND;
 }
 
 INT pfs_has(const U1 id[PFS_ID_LEN])
@@ -241,7 +284,7 @@ INT pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
 INT pfs_durable_active(void)
 {
 #ifdef _TK_HOSTED_LIBC_
-    return pfs_dur_active() ? 1 : 0;
+    return (pfs_ark_active() || pfs_dur_active()) ? 1 : 0;
 #else
     return 0;
 #endif
@@ -323,6 +366,13 @@ static void pfs_restore_cb(const char *name, const void *data,
 INT pfs_durable_restore(void (*emit)(const char *))
 {
 #ifdef _TK_HOSTED_LIBC_
+    /* ARK backend selected (PKERNEL_PFS_BACKEND=ark): mount the log image.
+     * Blocks are served lazily via pfs_get's fall-through (P0 is a cache), so
+     * we do NOT eagerly reload them into the in-memory table here. Mutually
+     * exclusive with the flat-file backend below. */
+    if (pfs_ark_configured())
+        return pfs_ark_restore(emit);
+
     if (!pfs_dur_active()) {
         if (emit)
             emit("[pfs] durable: PKERNEL_PFS_DIR unset — memory-only "

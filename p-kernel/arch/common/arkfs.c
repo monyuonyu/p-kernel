@@ -527,6 +527,16 @@ INT ark_block_get(const U1 id[ARK_ID_LEN], void *buf, U4 max)
 INT ark_block_has(const U1 id[ARK_ID_LEN]) { return idx_find(id) >= 0 ? 1 : 0; }
 U4  ark_block_count(void) { return idx_count(); }
 
+/* Durable checkpoint: append a COMMIT (fsync'd by commit_live) that makes
+ * every block appended since the last commit permanent on the next replay.
+ * Used by the p-fs durable backend so a bare ark_block_put outlives a remount.
+ * Atomicity is unchanged: a torn COMMIT fails crc and rolls the tail back. */
+INT ark_checkpoint(void)
+{
+    if (!g_bd) return ARK_E_NOTMOUNTED;
+    return commit_live();
+}
+
 /* ------------------------------------------------------------------ */
 /* file operations                                                     */
 /* ------------------------------------------------------------------ */
