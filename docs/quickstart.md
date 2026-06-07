@@ -14,10 +14,13 @@ console / network / clock.
 
 ## Requirements
 
-Anything aarch64-linux with a normal toolchain. Tested on:
+Anything Linux with a normal toolchain. **Both aarch64 and x86_64 hosts
+are supported** — the cooperative + preemptive context-switching design
+is portable, and only `arch/linux/<host-arch>/` changes per host. Tested on:
 
 - Ubuntu 24.04 aarch64 (gcc 13+)
 - Termux + proot-distro Ubuntu on Android (gcc 15+)
+- x86_64-linux (gcc 13+)
 
 ```sh
 sudo apt install -y build-essential
@@ -25,15 +28,15 @@ sudo apt install -y build-essential
 
 That's the entire dependency list.
 
-x86_64 host support is in the pipeline (the cooperative + preemptive
-context-switching design is portable; only `arch/linux/<host-arch>/`
-changes per host).
-
 ## Build and run
+
+Pick the directory for your host arch:
 
 ```sh
 git clone https://github.com/monyuonyu/p-kernel.git
-cd boot/linux
+cd boot/linux            # aarch64 host
+#   or
+cd boot/linux_x86_64     # x86_64 host
 
 make
 ./p-kernel
@@ -56,7 +59,7 @@ You should see:
 [kdds] K-DDS ready  port=7376
 [dtr] Transformer initialized
 [dtr]   arch  : Embed(4tok×8) + MHSA(h=2,dk=4) + FFN(16) + Cls(3)
-[dtr]   params: 568 floats
+[dtr]   params: 635 floats
 [dtr]   dist  : SOLO=local / REDUCED=TensorPar / FULL=Pipeline
 
   T-Kernel is alive inside a Linux process.
@@ -65,23 +68,40 @@ You should see:
 p-kernel>
 ```
 
+On an x86_64 host the banner's arch token reads `[linux / x86_64
+userspace]` instead — the rest is identical.
+
 Type `help` to see the available commands.
 
 ## Built-in shell commands
 
+The UMP shell has grown well past the original handful. The current set
+(both aarch64 and x86_64 UMP share it):
+
 | Command | What it does |
 |---------|--------------|
 | `help`  | List commands |
-| `ai`    | AI primitive statistics (inferences, jobs, FL rounds) |
-| `dtr`   | Distributed Transformer status |
-| `kdds`  | K-DDS topic table |
-| `net`   | Bring up the virtual NIC + DRPC + SWIM gossip |
-| `rx`    | RX/TX frame counters |
 | `ver`   | Build identity (host arch, kernel core, IRQ source) |
+| `ai`    | AI primitive statistics (inferences, jobs, FL rounds) |
+| `infer` | Sensor MLP inference |
+| `dtr`   | Distributed Transformer: `dtr` / `train` / `eval` / `save` / `load` / `gossip` (on-device learning + p-fs weight persistence) |
+| `moe <s0> <s1> <s2> <s3>` | §7/§8 gating: local-gradient mutual-aid routing + reflex/deliberation two-time-constant split |
+| `protect` | §2 rally-gate + grounded protected-object/actuator defense |
+| `kdds`  | K-DDS topic table |
+| `pfs`   | Content-addressed store: `pfs` / `put` / `ls` / `save` / `log` / `cat` (P0–P2) |
+| `hrw`   | Decentralized lookup (stateless HRW responsibility) self-test |
+| `region` / `rgnpub` | Latency-clustered region status / region-scoped publish |
+| `world` / `map` | Decentralized whole-network situational-awareness map |
+| `dist`  | capacity(N) / degrade status |
+| `net`   | Bring up the virtual NIC + DRPC + SWIM gossip |
+| `nodes` | Cluster node list (SWIM state) |
+| `rx`    | RX/TX frame counters (incl. `[rx-relay]` HMAC/replay drops) |
 | `exit`  | Terminate the UMP process |
 
-Anything else is echoed back so it's obvious the input path works end
-to end.
+Anything not recognized is echoed back (`[echo] …`) so it's obvious the
+input path works end to end. Note the bare-metal x86 shell has a
+*different* set (it adds `raft` / `evolve` / `sfs` / `exec` / on-device
+TCC but lacks some of the above) — see [cheatsheet.md](cheatsheet.md).
 
 ## 2-node mesh on one machine
 
@@ -134,7 +154,8 @@ from two bare-metal nodes on the same LAN.
 
 | Directory | What's in it |
 |-----------|--------------|
-| `arch/linux/aarch64/` | The Linux/aarch64 backend — `cpu_support.S` (dispatcher), `preempt.c` (SIGALRM), `sio.c` (termios), `net_unix.c` (UDP "wire"), `rtl8139.c` (NIC shim), `usermain.c` (boot + shell). |
+| `arch/linux/aarch64/` | The Linux/aarch64 backend — `cpu_support.S` (dispatcher), `preempt.c` (SIGALRM), `sio.c` (termios), `net_unix.c` (UDP "wire"), `net_relay.c` (relay transport), `rtl8139.c` (NIC shim), `usermain.c` (boot + shell). |
+| `arch/linux/x86_64/`  | The Linux/x86_64 sibling backend — same surface, host-specific `cpu_support.S` + `net_relay.c`. |
 | `arch/linux/include/`  | `arch_ctx.h`, `arch_preempt.h` — the new public APIs introduced by the Linux port. |
 | `arch/common/`         | AI primitives + distributed layer. **Identical** between bare-metal and UMP builds. |
 | `kernel/common/`       | micro T-Kernel 2.0 itself. Identical across all builds. |
