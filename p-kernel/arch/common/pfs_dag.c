@@ -26,6 +26,18 @@
 #include "drpc.h"
 #include "kernel.h"
 
+/* G24 durable backend (arch/linux/pfs_durable.c). Refs are the only
+ * mutable thing p-fs has; manifests + content survive automatically as
+ * content-addressed blocks (pfs_block.c persists them), but the name->head
+ * table must be saved separately so "dtr/weights" etc. resolve after a
+ * reboot. Externs (not a header) keep the arch/linux contract out of the
+ * bare-metal include chain; compiled out when !_TK_HOSTED_LIBC_. */
+#ifdef _TK_HOSTED_LIBC_
+extern int pfs_dur_active(void);
+extern int pfs_dur_write(const char *fname, const void *data, unsigned len);
+extern int pfs_dur_read(const char *fname, void *buf, unsigned maxlen);
+#endif
+
 /* ------------------------------------------------------------------ */
 /* wire-image guards (LP64 / cross-ABI: feedback_lp64_typedef_trap)    */
 /* ------------------------------------------------------------------ */
@@ -142,6 +154,21 @@ typedef struct {
 } PFSD_REF;
 static PFSD_REF refs[PFS_REF_MAX];
 
+/* G24 durable ref table on disk ("refs.tab" under $PKERNEL_PFS_DIR):
+ * a tiny header + the packed used PFSD_REF_ENT entries. Rewritten on every
+ * ref mutation; reloaded at boot by pfs_dag_restore(). */
+#define PFSD_REFTAB_MAGIC  0x46544650UL    /* "PFTF" LE */
+#define PFSD_REFTAB_FILE   "refs.tab"
+typedef struct {
+    UW magic;
+    UW count;                              /* number of PFSD_REF_ENT following */
+} __attribute__((packed)) PFSD_REFTAB_HDR;
+
+#ifdef _TK_HOSTED_LIBC_
+static U1 dag_loading;                      /* suppress persist during restore */
+#endif
+static void refs_persist(void);            /* fwd: ref_set writes through it */
+
 static W  h_ref_pub = -1, h_ref_sub = -1;   /* K-DDS "pfs/ref"        */
 static UW ref_seq;                          /* own beacon counter      */
 static UW last_ref_seq[DNODE_MAX];          /* rx dedup, per source    */
@@ -187,6 +214,87 @@ static void ref_set(PFSD_REF *r, const char *name, UW nlen,
     r->e.seq    = seq;
     r->e.origin = origin;
     r->used     = 1;
+
+    /* the one mutation in all of p-fs — persist the ref table so the
+     * name survives a reboot (save() and merge() both land here). */
+    refs_persist();
+}
+
+/* ------------------------------------------------------------------ */
+/* durable ref table (G24) — write/restore the name->head mapping      */
+/* ------------------------------------------------------------------ */
+
+#ifdef _TK_HOSTED_LIBC_
+/* scratch for the on-disk image; static (stack discipline). */
+static U1 reftab_buf[sizeof(PFSD_REFTAB_HDR) + PFS_REF_MAX * sizeof(PFSD_REF_ENT)];
+
+static void refs_persist(void)
+{
+    if (dag_loading || !pfs_dur_active()) return;
+
+    PFSD_REFTAB_HDR *h = (PFSD_REFTAB_HDR *)reftab_buf;
+    h->magic = PFSD_REFTAB_MAGIC;
+
+    UW n = 0;
+    U1 *out = reftab_buf + sizeof(PFSD_REFTAB_HDR);
+    for (INT i = 0; i < PFS_REF_MAX; i++) {
+        if (!refs[i].used) continue;
+        pd_memcpy(out + n * sizeof(PFSD_REF_ENT), &refs[i].e,
+                  (UW)sizeof(PFSD_REF_ENT));
+        n++;
+    }
+    h->count = n;
+    pfs_dur_write(PFSD_REFTAB_FILE, reftab_buf,
+                  (unsigned)(sizeof(PFSD_REFTAB_HDR) +
+                             n * sizeof(PFSD_REF_ENT)));
+}
+#else
+static void refs_persist(void) { }
+#endif
+
+/* Reload the named-ref table from disk at boot. Manifest + content blocks
+ * are already back (pfs_durable_restore ran first); this just restores the
+ * name->head pointers so `pfs cat`/`dtr load` resolve again. No-op when
+ * persistence is disabled or on bare metal. */
+void pfs_dag_restore(void)
+{
+#ifdef _TK_HOSTED_LIBC_
+    if (!pfs_dur_active()) return;
+
+    INT len = pfs_dur_read(PFSD_REFTAB_FILE, reftab_buf,
+                           (unsigned)sizeof reftab_buf);
+    if (len < (INT)sizeof(PFSD_REFTAB_HDR)) return;
+
+    const PFSD_REFTAB_HDR *h = (const PFSD_REFTAB_HDR *)reftab_buf;
+    if (h->magic != PFSD_REFTAB_MAGIC) {
+        pd_puts("[pfs] durable: refs.tab bad magic — ignored\r\n");
+        return;
+    }
+    UW n = h->count;
+    if (n > PFS_REF_MAX) n = PFS_REF_MAX;
+    if (len < (INT)(sizeof(PFSD_REFTAB_HDR) + n * sizeof(PFSD_REF_ENT))) {
+        pd_puts("[pfs] durable: refs.tab truncated — ignored\r\n");
+        return;
+    }
+
+    const U1 *in = reftab_buf + sizeof(PFSD_REFTAB_HDR);
+    UW loaded = 0;
+    dag_loading = 1;                        /* don't rewrite while loading */
+    for (UW i = 0; i < n; i++) {
+        const PFSD_REF_ENT *e =
+            (const PFSD_REF_ENT *)(in + i * sizeof(PFSD_REF_ENT));
+        if (e->name_len == 0 || e->name_len > PFS_NAME_MAX) continue;
+        PFSD_REF *r = ref_find(e->name, e->name_len);
+        if (!r) r = ref_alloc();
+        if (!r) break;
+        ref_set(r, e->name, e->name_len, e->head, e->seq, e->origin);
+        loaded++;
+    }
+    dag_loading = 0;
+
+    pd_puts("[pfs] durable: restored "); pd_putdec(loaded);
+    pd_puts(" named ref(s) from " PFSD_REFTAB_FILE "\r\n");
+#endif
 }
 
 /* ------------------------------------------------------------------ */

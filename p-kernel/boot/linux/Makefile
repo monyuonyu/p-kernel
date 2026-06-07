@@ -126,7 +126,9 @@ RELAY_C_SRCS = sha256.c
 RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 
 # arch/linux/ (cross-arch hosted) sources — shared with linux_x86_64
-ARCH_SHARED_C_SRCS = selfc.c
+# pfs_durable.c: G24 P0 durable backend (block + ref persistence to
+# $PKERNEL_PFS_DIR). Hosted-only; bare-metal targets keep the memory store.
+ARCH_SHARED_C_SRCS = selfc.c pfs_durable.c
 ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
 
 ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \

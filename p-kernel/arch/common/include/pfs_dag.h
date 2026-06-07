@@ -126,6 +126,12 @@ typedef struct {
  * tidy boot-banner ordering; there is no hard dependency on it). */
 void pfs_dag_init(void);
 
+/* G24 durable restore: reload the named-ref table (name -> head manifest)
+ * from $PKERNEL_PFS_DIR/refs.tab. Call right after pfs_dag_init() AND
+ * after pfs_durable_restore() (the manifest/content blocks must be back
+ * first). No-op when persistence is disabled or on bare metal. */
+void pfs_dag_restore(void);
+
 /* Ref gossip task (beacon own refs / merge peers'). Create after
  * drpc_init() — needs drpc_my_node, like pfs_repl_task. */
 void pfs_dag_task(INT stacd, void *exinf);

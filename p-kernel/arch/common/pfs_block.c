@@ -31,6 +31,20 @@
 #include "pfs_block.h"
 #include "sha256.h"          /* relay/sha256.c — zero-dep, reused kernel-side */
 
+/* Hosted durable backend (arch/linux/pfs_durable.c). Declared here as
+ * externs — not via a header — so the arch/linux contract never leaks
+ * into the bare-metal arch/common include chain (feedback_arch_common_layout,
+ * exactly how genome.c reaches selfc). Compiled out on bare metal: those
+ * targets don't define _TK_HOSTED_LIBC_, so the store stays memory-only
+ * and still links (no pfs_durable.c object). */
+#ifdef _TK_HOSTED_LIBC_
+extern int  pfs_dur_active(void);
+extern int  pfs_dur_write(const char *fname, const void *data, unsigned len);
+extern int  pfs_dur_foreach(void (*cb)(const char *name, const void *data,
+                                       unsigned len, void *ctx),
+                            void *ctx);
+#endif
+
 /* NO <string.h> here. arch/common files never include libc headers
  * directly (repo rule — see kdds.c's kd_memcpy): on hosted-LP64 builds
  * include/lib/libc/stddef.h (ptrdiff_t = int) clashes with the kernel
@@ -88,6 +102,11 @@ static UW       pfs_n;             /* number of distinct blocks stored */
  * by pfs_repl.c so a local store becomes a region announce. */
 static PFS_PUT_HOOK pfs_put_hook = 0;
 
+/* Set while pfs_durable_restore() is replaying blocks off disk into the
+ * table: suppresses re-persisting (we just read them) AND the P1 announce
+ * hook (boot reload is local recovery, not a fresh save to broadcast). */
+static U1 pfs_loading = 0;
+
 void pfs_set_put_hook(PFS_PUT_HOOK fn)
 {
     pfs_put_hook = fn;
@@ -101,6 +120,20 @@ static INT id_eq(const U1 a[PFS_ID_LEN], const U1 b[PFS_ID_LEN])
 {
     return pfs_memcmp(a, b, PFS_ID_LEN) == 0;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* block-id -> 64-char lowercase hex + NUL (the durable filename). Only the
+ * hosted durable backend names files by id, so this is hosted-only. */
+static void id_to_hex(const U1 id[PFS_ID_LEN], char out[2 * PFS_ID_LEN + 1])
+{
+    static const char hexd[] = "0123456789abcdef";
+    for (INT i = 0; i < PFS_ID_LEN; i++) {
+        out[2 * i]     = hexd[(id[i] >> 4) & 0xF];
+        out[2 * i + 1] = hexd[id[i] & 0xF];
+    }
+    out[2 * PFS_ID_LEN] = '\0';
+}
+#endif
 
 /* Linear scan for a slot holding `id`. Returns index or -1. P0 keeps the
  * table tiny (PFS_MAX_BLOCKS); a hash index is a later optimisation. */
@@ -146,9 +179,19 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
             if (len) pfs_memcpy(pfs_table[i].data, buf, (size_t)len);
             pfs_table[i].used = 1;
             pfs_n++;
-            /* TODO(P0->durable): also append (id,len,bytes) to a
-             * content-addressed file on FAT32 here; see header note. */
-            if (pfs_put_hook) pfs_put_hook(pfs_table[i].id, len, origin);
+            /* G24 durable backend: persist the new block content-addressed
+             * to $PKERNEL_PFS_DIR (filename = block-id hex, fsync'd). Skip
+             * while replaying from disk (pfs_loading) — those bytes already
+             * live there. No-op when the env is unset or on bare metal. */
+#ifdef _TK_HOSTED_LIBC_
+            if (!pfs_loading && pfs_dur_active()) {
+                char hex[2 * PFS_ID_LEN + 1];
+                id_to_hex(pfs_table[i].id, hex);
+                pfs_dur_write(hex, pfs_table[i].data, (unsigned)len);
+            }
+#endif
+            if (!pfs_loading && pfs_put_hook)
+                pfs_put_hook(pfs_table[i].id, len, origin);
             return PFS_OK;
         }
     }
@@ -189,6 +232,125 @@ INT pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
     if (len_out)    *len_out    = pfs_table[idx].len;
     if (origin_out) *origin_out = pfs_table[idx].origin;
     return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* P0 durable backend — boot restore with content-addressed self-check */
+/* ------------------------------------------------------------------ */
+
+INT pfs_durable_active(void)
+{
+#ifdef _TK_HOSTED_LIBC_
+    return pfs_dur_active() ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
+#ifdef _TK_HOSTED_LIBC_
+/* small unsigned-decimal emitter for the restore summary (no tmonitor
+ * dependency here — pfs_block.c stays output-channel-agnostic). */
+static void emit_dec(void (*emit)(const char *), UW v)
+{
+    char buf[12]; INT i = 11; buf[i] = '\0';
+    if (v == 0) { emit("0"); return; }
+    while (v > 0 && i > 0) { buf[--i] = (char)('0' + v % 10); v /= 10; }
+    emit(&buf[i]);
+}
+
+static INT hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+typedef struct {
+    void (*emit)(const char *);
+    UW loaded;
+    UW corrupt;
+} pfs_restore_ctx;
+
+/* Called once per block file by pfs_dur_foreach. The filename is the
+ * CLAIMED block-id (64 hex). We recompute sha256(content) and compare —
+ * content-addressing makes the store self-verifying, so a flipped bit or
+ * a planted file is rejected here, never loaded. */
+static void pfs_restore_cb(const char *name, const void *data,
+                           unsigned len, void *vctx)
+{
+    pfs_restore_ctx *c = (pfs_restore_ctx *)vctx;
+
+    /* decode the 64-hex name into the id it claims to be */
+    U1 want[PFS_ID_LEN];
+    for (INT i = 0; i < PFS_ID_LEN; i++) {
+        INT hi = hex_nibble(name[2 * i]);
+        INT lo = hex_nibble(name[2 * i + 1]);
+        if (hi < 0 || lo < 0) { c->corrupt++; return; }
+        want[i] = (U1)((hi << 4) | lo);
+    }
+
+    if (len > PFS_BLOCK_MAX) {
+        c->corrupt++;
+        if (c->emit) c->emit("[pfs] durable: REJECT oversize file\r\n");
+        return;
+    }
+
+    /* content-addressed self-check: bytes must hash to their own name */
+    U1 got[PFS_ID_LEN];
+    pfs_id_compute(data, (UW)len, got);
+    if (!id_eq(want, got)) {
+        c->corrupt++;
+        if (c->emit) {
+            char pfx[17];
+            for (INT k = 0; k < 16; k++) pfx[k] = name[k];
+            pfx[16] = '\0';
+            c->emit("[pfs] durable: REJECT corrupt block ");
+            c->emit(pfx);
+            c->emit("... (sha256 mismatch)\r\n");
+        }
+        return;
+    }
+
+    /* verified — replay into the table without re-persisting or announcing */
+    pfs_loading = 1;
+    pfs_put_origin(data, (UW)len, 0, PFS_ORIGIN_SELF);
+    pfs_loading = 0;
+    c->loaded++;
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
+INT pfs_durable_restore(void (*emit)(const char *))
+{
+#ifdef _TK_HOSTED_LIBC_
+    if (!pfs_dur_active()) {
+        if (emit)
+            emit("[pfs] durable: PKERNEL_PFS_DIR unset — memory-only "
+                 "(no persistence)\r\n");
+        return 0;
+    }
+
+    pfs_restore_ctx c;
+    c.emit = emit; c.loaded = 0; c.corrupt = 0;
+    INT seen = pfs_dur_foreach(pfs_restore_cb, &c);
+
+    if (emit) {
+        emit("[pfs] durable: restored ");
+        emit_dec(emit, c.loaded);
+        emit(" block(s) from PKERNEL_PFS_DIR");
+        if (c.corrupt) {
+            emit(", rejected ");
+            emit_dec(emit, c.corrupt);
+            emit(" corrupt");
+        }
+        emit(" (sha256-verified)\r\n");
+        (void)seen;
+    }
+    return (INT)c.loaded;
+#else
+    (void)emit;
+    return 0;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
