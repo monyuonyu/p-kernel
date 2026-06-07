@@ -160,6 +160,19 @@ static U1           tx_block[PFS_BLOCK_MAX];
 static UW stat_ann_tx, stat_ann_rx, stat_want_tx, stat_want_rx;
 static UW stat_blocks_tx, stat_blocks_rx, stat_hash_fail;
 
+/* G28: protected-object layer hooks (protect.c). announce_hook fires for
+ * every heard ANNOUNCE; announce_suppress mutes the ambient put-hook push so
+ * the protect actuator can be the sole driver of a protected unit. */
+static PFSR_ANN_HOOK announce_hook = 0;
+static U1            announce_suppress = 0;
+/* G28: gate for the boot-SYNC responder — non-zero return keeps a block out
+ * of the stream (a quietly-held protected unit must not leak via ambient sync). */
+static PFSR_SYNC_FILTER sync_filter = 0;
+
+void pfs_repl_set_announce_hook(PFSR_ANN_HOOK fn) { announce_hook = fn; }
+void pfs_repl_set_announce_suppress(INT on) { announce_suppress = on ? 1 : 0; }
+void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn) { sync_filter = fn; }
+
 /* ------------------------------------------------------------------ */
 /* control-plane publishes (small pkts — fine on stack)                */
 /* ------------------------------------------------------------------ */
@@ -224,8 +237,25 @@ static void publish_sync(void)
 static void on_new_block(const U1 id[PFS_ID_LEN], UW len, U1 origin)
 {
     if (drpc_my_node == 0xFF) return;       /* not distributed: local only */
+    if (announce_suppress) return;          /* G28: protected quiet put     */
     U1 org = (origin == PFS_ORIGIN_SELF) ? drpc_my_node : origin;
     publish_announce(id, len, org);
+}
+
+/* G28 actuator entry: re-announce a block we hold to drive replication. */
+void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
+{
+    if (drpc_my_node == 0xFF) return;
+    if (!pfs_has(id)) return;
+    /* recover the block's length + origin tag from the local table */
+    for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
+        U1 sid[PFS_ID_LEN]; UW slen; U1 sorg;
+        if (pfs_slot_info(i, sid, &slen, &sorg) && pr_id_eq(sid, id)) {
+            U1 org = (sorg == PFS_ORIGIN_SELF) ? drpc_my_node : sorg;
+            publish_announce(id, slen, org);
+            return;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -414,11 +444,31 @@ void pfs_repl_task(INT stacd, void *exinf)
                 a.seq != last_ann_seq[a.src_node]) {
                 last_ann_seq[a.src_node] = a.seq;
                 stat_ann_rx++;
+                /* G28: tell the protect layer this peer holds a.id, whether or
+                 * not WE hold it (the unit owner hears its replicas this way). */
+                if (announce_hook) announce_hook(a.src_node, a.id);
                 if (a.len <= PFS_BLOCK_MAX && !pfs_has(a.id)) {
                     pr_puts("[pfs] heard announce id="); pr_put_id(a.id);
                     pr_puts("  from n"); pr_putdec(a.src_node);
                     pr_puts(" -> want\r\n");
                     pending_add(a.id);
+                } else if (pfs_has(a.id) && a.src_node == a.origin) {
+                    /* G28-fix (LATEST_ONLY self-repair): the block's ORIGIN is
+                     * re-driving its replication — this is precisely the protect
+                     * actuator re-announcing a unit it owns (src==origin), never
+                     * a holder<->holder message. We already hold it durably, so
+                     * announce BACK ("I hold this") with a fresh seq. The ann
+                     * control topic is depth-1 LATEST_ONLY, so when several
+                     * holders answer one actuator tick all but one announce-back
+                     * is overwritten before the origin polls — but each actuator
+                     * tick elicits a NEW announce-back from every holder, so over
+                     * repeated ticks the origin observes each distinct holder and
+                     * its holder_count converges to R. Bounded against storms:
+                     * only origin-driven announces (src==origin) trigger this
+                     * (holder re-announces carry origin!=self, so they do NOT
+                     * cascade), and the per-(src,seq) dedup above means at most
+                     * one announce-back per actuator tick. */
+                    pfs_repl_reannounce(a.id);
                 }
             }
         }
@@ -447,8 +497,11 @@ void pfs_repl_task(INT stacd, void *exinf)
                 last_sync_seq[s.src_node] = s.seq;
                 for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
                     U1 sid[PFS_ID_LEN];
-                    if (pfs_slot_info(i, sid, 0, 0))
-                        send_block_to(s.src_node, sid);
+                    if (!pfs_slot_info(i, sid, 0, 0)) continue;
+                    /* a quietly-held protected unit is NOT streamed by ambient
+                     * sync — only the protect actuator spreads it (§2/G28) */
+                    if (sync_filter && sync_filter(sid)) continue;
+                    send_block_to(s.src_node, sid);
                 }
             }
         }

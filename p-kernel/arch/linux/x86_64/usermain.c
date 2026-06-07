@@ -31,6 +31,7 @@
 #include "pfs_block.h"
 #include "pfs_repl.h"
 #include "pfs_dag.h"
+#include "protect.h"
 #include "guard.h"
 #include "selfc.h"
 #include "genome.h"
@@ -120,6 +121,7 @@ static void cmd_help(void)
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
     print("  reflex [on|off|table|stat] - §8 reflex layer: inference -> local defence\r\n");
+    print("  protect <text>|ls|on|off|test - §2/G28 protected unit: ground threat in under-replication; actuator evacuates it\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
@@ -337,6 +339,15 @@ static void cmd_net(void)
     create_task((FP)pfs_dag_task, 7, 4096);
     print("[net] pfs ref (version DAG) gossip task started\r\n");
 
+    /* G28 — protected-object actuator. While a declared unit is under-
+     * replicated it re-announces it to drive replication into neighbours'
+     * durable store; the grounded threat falls as replicas reach R.
+     * Symmetric on every node (no central commander). */
+    /* control hook: PKERNEL_PROTECT_OFF=1 disables the actuator. */
+    if (env_uint("PKERNEL_PROTECT_OFF", 0)) protect_set_enabled(0);
+    create_task((FP)protect_task, 7, 4096);
+    print("[net] protect actuator task started\r\n");
+
     print("[net] up. Run a second ./p-kernel with PKERNEL_NODE_ID=2 to mesh.\r\n");
     net_up = 1;
 }
@@ -552,6 +563,10 @@ EXPORT INT usermain(void)
      * comes back on reboot. No-op (memory-only) when the env is unset. */
     pfs_durable_restore(print);
     pfs_dag_restore();
+    /* G28 — protected-object registry. Registers the pfs_repl announce-hook
+     * so heard announces feed the holder count that grounds the threat.
+     * Must follow pfs_repl_init(). protect_task starts in cmd_net. */
+    protect_init();
     /* guard — ring-0 task fault isolation + auto-respawn (wave 7).
      * The dtr worker is guarded with recover_fn = reload the trained
      * weights from the p-fs object "dtr/weights": a fault kills the
@@ -625,6 +640,11 @@ EXPORT INT usermain(void)
             kdds_list();
         } else if (starts_with(line, n, "pfs")) {
             cmd_pfs(line, n);
+        } else if (starts_with(line, n, "protect")) {
+            /* `protect <text>|ls|stat|on|off|test` — G28 protected-object
+             * registry: declare a unit, ground the threat in its under-
+             * replication, and drive the actuator that closes the loop. */
+            protect_cmd(line + 7, (UW)(n - 7));
         } else if (starts_with(line, n, "reflex")) {
             /* `reflex [on|off|table|stat]` — §8 reflex layer status/control */
             reflex_cmd(line + 6, (UW)(n - 6));

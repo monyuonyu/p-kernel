@@ -154,3 +154,37 @@ void pfs_repl_ls(void);
 
 /* UDP receive callback (bound to PFSR_PORT). */
 void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len);
+
+/* ------------------------------------------------------------------ */
+/* G28 hooks — let the protected-object layer (protect.c) ride P1.     */
+/* ------------------------------------------------------------------ */
+
+/* Announce observer: fires for every fresh ANNOUNCE this node HEARS from a
+ * peer (per (src_node, seq)), whether or not we already hold the block.
+ * protect.c registers here to count, from gossip alone, how many neighbours
+ * durably hold a protected unit — the grounded signal that lowers its
+ * threat. NULL clears it. Keeps pfs_repl.c oblivious to protect.c. */
+typedef void (*PFSR_ANN_HOOK)(UB src_node, const U1 id[PFS_ID_LEN]);
+void pfs_repl_set_announce_hook(PFSR_ANN_HOOK fn);
+
+/* Actuator: re-announce a block we already hold so lacking / late
+ * neighbours WANT + pull it into their durable store. No-op if we do not
+ * hold it or are not distributed. This is how the protect layer pours the
+ * network's force onto an at-risk unit (drives it toward >=R replicas). */
+void pfs_repl_reannounce(const U1 id[PFS_ID_LEN]);
+
+/* When set, a NEW local block store does NOT auto-announce to the region
+ * (the ambient P1 push is suppressed). protect.c brackets a protected put
+ * with this so the protect actuator is the *sole* driver of that unit's
+ * replication — separating the protected unit from the protecting power and
+ * making the actuator-off control experiment honest. Default off. */
+void pfs_repl_set_announce_suppress(INT on);
+
+/* SYNC filter: when set, the boot-SYNC responder calls this for every block a
+ * (re)joining peer asked for; a non-zero return EXCLUDES that block from the
+ * stream. protect.c uses it so a quietly-held, not-yet-actuator-driven
+ * protected unit does NOT escape via ambient sync — the protecting POWER is
+ * the sole spreader of a protected unit (§2 / G28). NULL clears it; ordinary
+ * blocks are then served unconditionally (P1 boot-sync unchanged). */
+typedef INT (*PFSR_SYNC_FILTER)(const U1 id[PFS_ID_LEN]);
+void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn);

@@ -16,6 +16,11 @@
 #   survival-loop     — death-piercing: 3-node DKVA inference over the relay
 #                       with SIGKILLs mid-inference (wave 8); asserts the
 #                       swarm completes every inference, marked degraded(k/n).
+#   protect-loop-live — live 3-node protected-object loop (wave 14 / G28+G32):
+#                       a declared unit's grounded threat falls to 0 BECAUSE
+#                       the swarm replicated it to R durable neighbours, then
+#                       it survives kill -9 of its owner; actuator-off control
+#                       stays AT-RISK and loses the unit. Asserts RESULT: PASS.
 #
 # Plus one BONUS (non-blocking) job:
 #   composite-loop    — the G19 composite: ONE 4-node cluster where 殺す ∧
@@ -49,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd p-kernel/boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -65,6 +70,10 @@ jobs:
           # the reflex self-test was previously never invoked in CI).
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §2 G28: threat grounded in under-replication + actuator closes the
+          # loop (threat falls because of replication, not a timer; wave 14).
+          grep -aF '[protect-ground] PASS' selftest.log
+          grep -aF '[protect-loop] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -90,7 +99,7 @@ jobs:
         continue-on-error: true
         run: |
           cd p-kernel/boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | \
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -102,6 +111,9 @@ jobs:
           grep -aF '[moe-protect] PASS' selftest.log
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §2 G28 grounded threat + closed loop (wave 14)
+          grep -aF '[protect-ground] PASS' selftest.log
+          grep -aF '[protect-loop] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
@@ -154,6 +166,36 @@ jobs:
         with:
           name: survival-loop-logs
           path: /tmp/sl13_*.log
+
+  protect-loop-live:
+    name: "Protect loop (live 3-node: threat closes by replication, unit survives kill)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # enforces the LIVE path of G28/G32, not just the in-process self-test:
+    # a declared protected unit's grounded threat must fall to 0 BECAUSE the
+    # swarm replicated it to R durable neighbours over the relay, and the unit
+    # must then survive a kill -9 of its owner; the actuator-off control must
+    # stay AT-RISK and lose the unit. (audit-5 #5 / G32.)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C p-kernel/boot/linux_x86_64
+          make -C p-kernel/relay
+      - name: Run 27_protect/run.sh and assert RESULT PASS
+        run: |
+          timeout 400 p-kernel/samples/27_protect/run.sh | tee /tmp/p27_ci.log
+          grep -q 'RESULT: PASS' /tmp/p27_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protect-loop-live-logs
+          path: /tmp/p27_*.log
 
   composite-loop:
     name: Composite loop (kill ∧ concurrent ∧ memory, bonus)
