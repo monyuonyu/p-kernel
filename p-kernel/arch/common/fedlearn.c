@@ -23,7 +23,25 @@
 #include "ai_kernel.h"
 #include "drpc.h"
 #include "netstack.h"
+#include "gossip_learn.h"   /* G22: decentralized no-central averaging */
 #include <tmonitor.h>
+
+/* G22 NOTE (wave 16): the canonical, CI-proven collective-learning
+ * implementation is gossip_learn.c on dtr.c's 635-param transformer —
+ * disjoint leave-one-class-out shards, gossip-averaged full weight
+ * bodies, no central aggregator, surviving node death ([g22-*] +
+ * samples/32). This file is the LEGACY 4->8->8->3 MLP path; wave 16
+ * retires its two documented fakes — (1) fl_local_train finite-
+ * differencing ONLY b3, and (2) dtk_fl_aggregate's E_NOSPT central
+ * aggregator — by training the FULL MLP body and folding peers in with
+ * the SAME no-central p-fs gossip-average primitive (gl_pfs_* / gl_merge).
+ * The legacy MLP path is not wired into CI; the transformer path is. */
+
+/* p-fs ref for the gossiped MLP model (decentralized, per-node). */
+#define FL_MODEL_REF      "fl/model/"
+#define FL_MODEL_REF_LEN  9      /* + node digit(s) appended            */
+#define FL_FLAT_N         (MLP_IN*MLP_H1 + MLP_H1 + MLP_H1*MLP_H2 + MLP_H2 \
+                           + MLP_H2*MLP_OUT + MLP_OUT)   /* 139 floats   */
 
 /* ------------------------------------------------------------------ */
 /* Local training: finite-difference gradient approximation           */
@@ -87,40 +105,86 @@ ER fl_local_train(const B samples[][MLP_IN], const UB labels[],
     baseline /= (float)n;
     fl_last_loss = baseline;
 
-    /* Zero deltas */
-    for (INT i = 0; i < MLP_IN*MLP_H1; i++) delta_w1[i] = 0.0f;
-    for (INT i = 0; i < MLP_H1;        i++) delta_b1[i] = 0.0f;
-    for (INT i = 0; i < MLP_H1*MLP_H2; i++) delta_w2[i] = 0.0f;
-    for (INT i = 0; i < MLP_H2;        i++) delta_b2[i] = 0.0f;
-    for (INT i = 0; i < MLP_H2*MLP_OUT; i++) delta_w3[i] = 0.0f;
-    for (INT i = 0; i < MLP_OUT;        i++) delta_b3[i] = 0.0f;
+    /* central finite-difference gradient over the WHOLE weight body.
+     *
+     * HONESTY (G22, wave 16): this used to finite-difference ONLY b3
+     * (MLP_OUT params); delta_w1/w2/w3/b1/b2 were allocated and left at
+     * 0, so w1/w2/w3 never moved — the audit's "重み本体は誰も outcome で
+     * 更新しない". Now every parameter gets a real central-difference
+     * gradient against the smooth cross-entropy loss. Helper folds the
+     * boilerplate over each of the six arrays. */
+#define FL_GRAD(arr, darr, cnt)                                            \
+    do {                                                                  \
+        for (INT _i = 0; _i < (cnt); _i++) {                              \
+            float _o = (arr)[_i];                                         \
+            (arr)[_i] = _o + FL_EPS;                                      \
+            mlp_set_weights(w1, b1, w2, b2, w3, b3);                      \
+            float _lp = 0.0f;                                            \
+            for (UW _s = 0; _s < n; _s++)                                 \
+                _lp += cross_entropy_loss(samples[_s], labels[_s]);       \
+            (arr)[_i] = _o - FL_EPS;                                      \
+            mlp_set_weights(w1, b1, w2, b2, w3, b3);                      \
+            float _lm = 0.0f;                                            \
+            for (UW _s = 0; _s < n; _s++)                                 \
+                _lm += cross_entropy_loss(samples[_s], labels[_s]);       \
+            (darr)[_i] = -FL_LR * ((_lp - _lm) / (float)n)               \
+                         / (2.0f * FL_EPS);                               \
+            (arr)[_i] = _o;   /* restore */                              \
+        }                                                                 \
+    } while (0)
 
-    /* Finite-difference gradient for W3 biases (lightweight demo) */
-    for (INT j = 0; j < MLP_OUT; j++) {
-        float orig = b3[j];
+    FL_GRAD(w1, delta_w1, MLP_IN*MLP_H1);
+    FL_GRAD(b1, delta_b1, MLP_H1);
+    FL_GRAD(w2, delta_w2, MLP_H1*MLP_H2);
+    FL_GRAD(b2, delta_b2, MLP_H2);
+    FL_GRAD(w3, delta_w3, MLP_H2*MLP_OUT);
+    FL_GRAD(b3, delta_b3, MLP_OUT);
+#undef FL_GRAD
 
-        b3[j] = orig + FL_EPS;
-        mlp_set_weights(w1, b1, w2, b2, w3, b3);
-        float lp = 0.0f;
-        for (UW s = 0; s < n; s++)
-            lp += cross_entropy_loss(samples[s], labels[s]);
-        lp /= (float)n;
-
-        b3[j] = orig - FL_EPS;
-        mlp_set_weights(w1, b1, w2, b2, w3, b3);
-        float lm = 0.0f;
-        for (UW s = 0; s < n; s++)
-            lm += cross_entropy_loss(samples[s], labels[s]);
-        lm /= (float)n;
-
-        delta_b3[j] = -FL_LR * (lp - lm) / (2.0f * FL_EPS);
-
-        b3[j] = orig;   /* restore */
-    }
-
-    /* Restore original weights */
+    /* Restore original weights (deltas are applied by dtk_fl_aggregate) */
     mlp_set_weights(w1, b1, w2, b2, w3, b3);
     return E_OK;
+}
+
+/* flatten / unflatten the 6 MLP arrays to one FL_FLAT_N float vector
+ * (same layout the shell packs and that gl_pfs_* gossips). */
+static void fl_flatten(float *out)
+{
+    float w1[MLP_IN*MLP_H1], b1[MLP_H1];
+    float w2[MLP_H1*MLP_H2], b2[MLP_H2];
+    float w3[MLP_H2*MLP_OUT], b3[MLP_OUT];
+    mlp_get_weights(w1, b1, w2, b2, w3, b3);
+    UW o = 0;
+    for (INT i = 0; i < MLP_IN*MLP_H1;  i++) out[o++] = w1[i];
+    for (INT i = 0; i < MLP_H1;         i++) out[o++] = b1[i];
+    for (INT i = 0; i < MLP_H1*MLP_H2;  i++) out[o++] = w2[i];
+    for (INT i = 0; i < MLP_H2;         i++) out[o++] = b2[i];
+    for (INT i = 0; i < MLP_H2*MLP_OUT; i++) out[o++] = w3[i];
+    for (INT i = 0; i < MLP_OUT;        i++) out[o++] = b3[i];
+}
+static void fl_unflatten(const float *in)
+{
+    float w1[MLP_IN*MLP_H1], b1[MLP_H1];
+    float w2[MLP_H1*MLP_H2], b2[MLP_H2];
+    float w3[MLP_H2*MLP_OUT], b3[MLP_OUT];
+    UW o = 0;
+    for (INT i = 0; i < MLP_IN*MLP_H1;  i++) w1[i] = in[o++];
+    for (INT i = 0; i < MLP_H1;         i++) b1[i] = in[o++];
+    for (INT i = 0; i < MLP_H1*MLP_H2;  i++) w2[i] = in[o++];
+    for (INT i = 0; i < MLP_H2;         i++) b2[i] = in[o++];
+    for (INT i = 0; i < MLP_H2*MLP_OUT; i++) w3[i] = in[o++];
+    for (INT i = 0; i < MLP_OUT;        i++) b3[i] = in[o++];
+    mlp_set_weights(w1, b1, w2, b2, w3, b3);
+}
+
+static UW fl_model_ref(char *out, UW node)
+{
+    const char *p = FL_MODEL_REF;
+    UW i = 0;
+    while (p[i]) { out[i] = p[i]; i++; }
+    if (node >= 10) out[i++] = (char)('0' + (node / 10) % 10);
+    out[i++] = (char)('0' + node % 10);
+    return i;
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,46 +204,60 @@ ER fl_local_train(const B samples[][MLP_IN], const UB labels[],
 ER dtk_fl_aggregate(UB aggregator_node,
                     const float *my_delta, UW my_n_samples, TMO tmout)
 {
-    (void)my_delta; (void)my_n_samples; (void)tmout;
+    (void)aggregator_node; (void)my_n_samples; (void)tmout;
+    if (!my_delta) return E_PAR;
 
-    /* In single-node mode, just apply own delta directly */
-    if (aggregator_node == drpc_my_node || drpc_my_node == 0xFF) {
-        /* Apply delta_b3 directly (simplified) */
+    /* (1) apply MY full-body delta to MY weights (full body now, not b3) */
+    {
         float w1[MLP_IN*MLP_H1], b1[MLP_H1];
         float w2[MLP_H1*MLP_H2], b2[MLP_H2];
         float w3[MLP_H2*MLP_OUT], b3[MLP_OUT];
         mlp_get_weights(w1, b1, w2, b2, w3, b3);
-
-        /* my_delta points to delta_b3 layout: skip w1,b1,w2,b2,w3 */
-        UW skip = MLP_IN*MLP_H1 + MLP_H1 + MLP_H1*MLP_H2 + MLP_H2 + MLP_H2*MLP_OUT;
-        const float *db3 = my_delta + skip;
-        for (INT j = 0; j < MLP_OUT; j++)
-            b3[j] += db3[j];
-
+        UW o = 0;
+        for (INT i = 0; i < MLP_IN*MLP_H1;  i++) w1[i] += my_delta[o++];
+        for (INT i = 0; i < MLP_H1;         i++) b1[i] += my_delta[o++];
+        for (INT i = 0; i < MLP_H1*MLP_H2;  i++) w2[i] += my_delta[o++];
+        for (INT i = 0; i < MLP_H2;         i++) b2[i] += my_delta[o++];
+        for (INT i = 0; i < MLP_H2*MLP_OUT; i++) w3[i] += my_delta[o++];
+        for (INT i = 0; i < MLP_OUT;        i++) b3[i] += my_delta[o++];
         mlp_set_weights(w1, b1, w2, b2, w3, b3);
-        fl_rounds++;
-        ai_stats.fl_rounds++;
-        return E_OK;
     }
 
-    /* Distributed FedAvg aggregation is NOT implemented.
-     *
-     * HONESTY (G5, wave 10): the previous code here packed delta_b3 into
-     * arg0..2 and fired a remote dtk_cre_tsk(), but the packed args were
-     * immediately discarded ((void)arg0...) and the call's result ignored
-     * ((void)r) — and crucially NO averaged weights ever return. So across
-     * real multi-node runs nothing was aggregated, yet this returned E_OK
-     * and bumped fl_rounds / ai_stats.fl_rounds. The caller (arch/x86/
-     * shell.c `fl train`) then printed "[FL] aggregate OK" for a federated
-     * round that never left this node — a false success.
-     *
-     * Until the real path exists — FL_UDP_PORT bulk delta transfer to the
-     * aggregator, an aggregator-side collection + FedAvg loop, and a
-     * broadcast of the averaged weights back (see the protocol sketch in
-     * the file header) — report the truth (E_NOSPT) and do NOT advance the
-     * round counters. */
-    (void)aggregator_node;
-    return E_NOSPT;
+    /* Single-node: nothing to average — the local update IS the round. */
+    if (drpc_my_node == 0xFF) { fl_rounds++; ai_stats.fl_rounds++; return E_OK; }
+
+    /* (2) DECENTRALIZED no-central averaging (replaces the E_NOSPT central
+     * aggregator). I publish my model and fold in whatever ALIVE peers'
+     * models are present in p-fs — the SAME gl_merge primitive the
+     * transformer path uses, peer-symmetric, no server. Shell-task ctx
+     * (gl_pfs_* share the pfs_dag scratch). */
+    static float flat[FL_FLAT_N];
+    fl_flatten(flat);
+    char ref[16]; UW rl = fl_model_ref(ref, drpc_my_node);
+    (void)gl_pfs_publish(ref, rl, flat, FL_FLAT_N);
+
+    static float peer[DNODE_MAX][FL_FLAT_N];
+    const float *ptrs[DNODE_MAX];
+    UW cnt = 0, slot = 0;
+    ptrs[cnt++] = flat;                     /* myself */
+    for (UB p = 0; p < DNODE_MAX && cnt < DNODE_MAX; p++) {
+        if (p == drpc_my_node) continue;
+        if (dnode_table[p].state != DNODE_ALIVE) continue;
+        char pref[16]; UW prl = fl_model_ref(pref, p);
+        if (gl_pfs_fetch(pref, prl, peer[slot], FL_FLAT_N) == 0) {
+            ptrs[cnt++] = peer[slot];
+            slot++;
+        }
+    }
+    if (cnt > 1) {
+        static float avg[FL_FLAT_N];
+        gl_merge(avg, ptrs, cnt, FL_FLAT_N);
+        fl_unflatten(avg);
+    }
+
+    fl_rounds++;
+    ai_stats.fl_rounds++;
+    return E_OK;
 }
 
 ER fl_apply_update(const float *new_weights)

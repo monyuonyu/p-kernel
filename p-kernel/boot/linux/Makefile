@@ -173,6 +173,7 @@ COMMON_C_SRCS = \
     dmn.c \
     ga.c \
     fedlearn.c \
+    gossip_learn.c \
     mem_store.c \
     chat.c \
     dproc.c \

@@ -109,6 +109,7 @@ COMMON_C_SRCS = \
     ga.c \
     vital.c \
     fedlearn.c \
+    gossip_learn.c \
     dtr.c \
     dtr_train.c \
     spec.c \
