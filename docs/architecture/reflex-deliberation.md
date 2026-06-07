@@ -7,7 +7,7 @@
 > p-kernel の実モジュール（`region.c` / `swim.c` / `kdds` / `moe.c` / `degrade.c` / `dkva.c`）の上に
 > 接地し、**なぜ層を分けるのか／時定数を分けないと発振するのか**を設計判断として書き下ろす。
 
-Status: **設計（DESIGN ONLY）** / 最終更新: 2026-06-06
+Status: **時定数分離まで実装・実測（§6 の D0/D1/D2 DONE）／ D3 熟慮の中身は未** / 最終更新: 2026-06-07
 関連: [survival-network.md](survival-network.md)（§8 = この設計の出自、§7 = 分散ゲーティング）、
 [regions.md](regions.md)（region = 反射層の空間的基盤）、`phase_b_relay.md`、`android.md`
 

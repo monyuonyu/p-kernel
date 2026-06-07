@@ -8,8 +8,18 @@
 > ARK は「群れ全体の記憶」である `p-fs`（[[p-fs.md]]）の **1ノード・ローカルな
 > 永続バックエンド**であり、同じ content-addressed ブロックを土台に両者は統合される。
 
-Status: **試作あり（hosted で動作）+ ベアメタルはビルド通過の opt-in** / 最終更新: 2026-06-07
-担当: 第12波・FS研究開発隊 / ブランチ: `w12-survival-fs`
+Status: **実装済（hosted＋実ブロックデバイスでマウント・往復・電源喪失耐性）／ p-fs の durable backend として配線済** / 最終更新: 2026-06-07
+担当: 第12波・FS研究開発隊（以降の波で実デバイス化・GC・索引拡張） / 起点ブランチ: `w12-survival-fs`
+
+> **状態 (2026-06-07)**: 初版は「試作あり＋ベアメタルはビルド通過の opt-in」だったが、以降 ARK は
+> **QEMU 上の実ブロックデバイスで実マウント**まで進んだ — x86（ide）と aarch64（自作 virtio-blk ドライバ）の
+> **両方**で format→マウント→往復→電源再投入後も生存（`samples/26_ark_backend`・`30_ark_crash`・
+> `31_ark_baremetal`・`33_ark_aarch64`）。クラッシュ整合性は reorder/torn/bitflip ファザで **0 BUG**。
+> **ARK は p-fs の durable backend として実配線**され（§7 の put hook / get fallback が実在）、
+> GC/コンパクションと媒体規模の索引（旧 256 block 上限を撤廃、P0 キャッシュ追い出しでカーネル経路 400+ block）が入った。
+> arkfs-audit.md の RED ブロッカー3件はすべて解消済。**残るのは実機 RPi3 の SD/EMMC（今は QEMU のみ）・
+> Merkle ディレクトリ木・`ARK_MAX_FILES=32` の可変化**。以下の設計プローズは引き続き有効で、§6〜§8 の
+> 「設計に留めた」項目のうち実装済になったものは各節で注記する。
 
 関連: [[p-fs.md]]（分散・gossip 複製層。ARK はその durable backend）、
 [[survival-network.md]]（§9「保存の図書館 → 考える器官」、G24「図書館が揮発メモリ」）、
@@ -277,6 +287,9 @@ ARK の whole-file API（`ark_write_file/read_file/stat/mkdir/unlink/readdir`）
 - ベアメタルでは `ARK_BDEV`（read/write/sync の ops 構造体）に
   `arch/x86/include/blk_ssy.h` の `ide0` を1関数で橋渡しすれば動く（arch/common を
   汚さないため ARK_BDEV は blk_ssy とは別定義にしてある）。
+  **（2026-06-07 更新）この橋渡しは実装済**：x86 は ide、aarch64 は自作 virtio-blk ドライバ越しに
+  QEMU 上の**実ブロックデバイス**で format→マウント→往復→電源再投入後生存まで通る
+  （`samples/31_ark_baremetal`・`33_ark_aarch64`）。実機 RPi3 の SD/EMMC は未（QEMU のみ）。
 
 ---
 
@@ -292,15 +305,15 @@ INT ark_block_get(const U1 id[32], void *buf, U4 max);      // = pfs_get 相当
 INT ark_block_has(const U1 id[32]);
 ```
 
-統合は2方向の一行接続で成立する（E隊の pfs durable 化と**衝突しない別モジュール**
-として実装済み。実配線は指揮官/E隊が行う想定で、ここでは設計＋互換APIまで）：
+統合は2方向の一行接続で成立する（**2026-06-07 更新：実配線済**。当初は互換 API までで実 hook 登録は
+別段の想定だったが、ARK は現在 p-fs の durable backend として実際に繋がっている）：
 
 1. **save==publish（put hook）**: `pfs_set_put_hook(...)`（`pfs_block.h:64`）に
-   「ARK へ durable 追記する shim」を登録すれば、**メモリ上の pfs block が
-   そのまま ARK のログに永続化**される。`pfs_block.c:149` の TODO の解。
+   「ARK へ durable 追記する shim」を登録すると、**メモリ上の pfs block が
+   そのまま ARK のログに永続化**される。`pfs_block.c:149` の TODO の解 — **配線済**。
 2. **durable backend（get fallback）**: `pfs_get` がメモリ表でミスしたとき
-   `ark_block_get` を引けば、**再起動を跨いで block が残る**（pfs P0 は今 in-memory
-   table のみ＝再起動で消える。ARK がその永続層になる）。
+   `ark_block_get` を引き、**再起動・電源喪失を跨いで block が残る**（pfs P0 は当初
+   in-memory table のみ＝再起動で消えたが、ARK がその永続層になった。`samples/23_durable` で実証）。
 
 こうして「ローカルにファイルを書く（ARK）」と「群れに公開する（pfs gossip）」が
 **同じ content-addressed block の海**の上で一つになる（`p-fs.md §1` の save==publish
@@ -320,19 +333,20 @@ INT ark_block_has(const U1 id[32]);
 - `ark_self_test`（RAM 裏、ロジックレベル）+ `samples/25_survival_fs`（file 裏、
   **本物の SIGKILL によるクラッシュ整合性**・dedup・rot 検出）。
 
-### 設計に留めた（理由つき）
+### 後に実装済になったもの（2026-06-07）
+- **ベアメタル実マウント**：x86（ide）／aarch64（自作 virtio-blk）の**実ブロックデバイス**で
+  format→マウント→往復→電源再投入後生存まで（`samples/26/30/31/33`）。実機 RPi3 SD/EMMC は未（QEMU のみ）。
+- **ログのガベージコレクション**：GC/コンパクションを実装。append-only の無限成長を抑える。
+- **索引の媒体規模化**：旧 256 block 上限を撤廃。P0 キャッシュ追い出しでカーネル経路は 400+ block。
+- **p-fs との実 hook 接続**：`pfs_set_put_hook` への実登録まで配線済（§7）。ARK が p-fs の durable backend。
+- **クラッシュ整合性の強化検証**：reorder/torn/bitflip ファザで **0 BUG**（arkfs-audit.md の RED 3件解消）。
+
+### なお設計に留めたまま（理由つき）
 - **VFS への実ディスパッチ配線**：x86 boot を壊さないため `vfs.c` は不変。枠は
   `vfs.h` に既存。fd 流アダプタも設計のみ（whole-file で要件は満たす）。
-- **ベアメタル実マウント**：`ARK_BDEV`↔`blk_ssy` 橋渡しは1関数だが、既存 FAT32
-  disk.img を壊さないオプトインに留め、ベアメタルはビルド通過のみ。
-- **Merkle ディレクトリ木**：試作はフラットなパス表。本来形は §2.4。
-- **ログのガベージコレクション**：append-only は永遠に増える。分散 GC の難しさ
-  （`p-fs.md §6.3`）と同型で、当面「捨てない」。容量逼迫検知は `degrade.c` 的
-  シグナルに委ねる将来課題。
-- **block 単位の上限**：試作は `ARK_MAX_FILES=32`, `ARK_MAX_BLK=16`（64KiB/file），
-  索引 256。規模が要求してから可変表へ（鶏と卵への正直な答え＝`regions.md §5` と同型）。
-- **p-fs との実 hook 接続**：互換 API までで、`pfs_set_put_hook` への実登録は
-  E隊の durable 化と統合する段で（衝突回避）。
+- **Merkle ディレクトリ木**：依然フラットなパス表。本来形は §2.4。
+- **block 単位の上限**：`ARK_MAX_FILES=32`, `ARK_MAX_BLK=16`（64KiB/file）はまだ固定上限。
+  規模が要求してから可変表へ（鶏と卵への正直な答え＝`regions.md §5` と同型）。
 
 ### 非目標（embrace）
 POSIX 完全互換・強整合・即時可視は目指さない（`p-fs.md §7` と同じ）。

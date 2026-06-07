@@ -12,7 +12,10 @@
 > **中央は、置かない。** 索引サーバも、スーパーノードも、トラッカーも。
 > それを置いた瞬間、潰す価値のある一点が生まれ、映画の AI に逆戻りする。
 >
-> **本ドキュメントは設計のみ（DESIGN ONLY）。実装は §6 の L0→L3 で段階的に行う。**
+> **状態 (2026-06-07)**: §6 の **L0（状態なし HRW 責任計算）と L1（解決キャッシュ＋read-k）は
+> `arch/common/lookup.c` に実装済**（cross-ABI byte-stable な HRW スコアリング＋自己テスト）。
+> **L2（ネット越し WANT/HAVE フォールバック＋repair-on-miss）と L3（global 昇格）は未実装＝設計のまま。**
+> §1〜§5 の設計・§7 の正直な論点は引き続き有効。以下、本文の "DESIGN ONLY" は L2 以降を指す。
 
 ---
 
@@ -321,21 +324,21 @@ G1 で見つけられる」ことだけを保証し、何をどれだけ跨い�
 [[p-fs.md]] P0→P4・[[regions.md]] R0→R3 と同じ流儀：各段が単独で動き、単独で
 検証でき、次の段の前提になる。
 
-### L0 — `responsible(k, r)`：状態なしの責任計算（最小・単体テスト可能）
+### L0 — `responsible(k, r)`：状態なしの責任計算（最小・単体テスト可能）✅ 実装済
 
 - `arch/common/lookup.c` + `include/lookup.h`。HRW の weight 計算と top-r 選出のみ。
 - 入力は `dnode_table[]`（ALIVE のみ）。出力はノード ID の配列。
-- 検証：同一 membership を与えた 2 ノードが同一集合を返す／1 台抜いたとき動く key が
-  最小限であること（ホスト側ユニットテストで決定性を確認）。
-- **依存なし。今日書ける。**
+- スコアは sha256(key‖node_id) の先頭 8 バイトを 2×U4 で辞書順比較 → **aarch64/x86_64/i686 で byte-stable**
+  （固定幅のみ・endianness 非依存）。同点は小さい node id へ。
+- 検証：同一 membership を与えた 2 ノードが同一集合を返す／1 台抜いたとき動く key が最小限（L0 自己テスト）。
 
-### L1 — read-k resolve + world-table キャッシュ
+### L1 — read-k resolve + world-table キャッシュ ✅ 実装済
 
 - `lookup_resolve(k)`：キャッシュ → responsible top-k へ順に問い合わせ。
-- world-table に解決エントリ種別を追加（TTL 付き）。
-- 検証：2〜4 ノードで put/get、キャッシュヒット率の観測（`lookup` シェルコマンド）。
+- 解決エントリ（TTL 付き）を局所キャッシュ。誤エントリは L2 で1ホップ余計に掛かるだけで正しさは保つ。
+- 検証：L1 自己テスト（L0 ランキングの上に乗るキャッシュ意味論）。
 
-### L2 — WANT/HAVE フォールバック + repair-on-miss
+### L2 — WANT/HAVE フォールバック + repair-on-miss（未実装）
 
 - K-DDS region スコープに `lookup/want`・`lookup/have` トピック。
 - miss 時の region 内 WANT、解決時の push repair。

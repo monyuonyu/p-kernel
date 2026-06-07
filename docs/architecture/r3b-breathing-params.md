@@ -113,3 +113,6 @@ specialist 不在なら generalist へ**迂回**、それも無ければ最小�
 - **実分散推論は未使用**: `net_relay.c` / `relay.c` / `dkva.c` は別系統の領分。本デモは決定的な
   in-kernel ハーネスで「呼吸」を数で示し、`breathe save`（`dtr/expert/<k>`）が実メッシュへ配る器を用意する。
   実メッシュ上で各ノードが自分の専門家 blob をロードして疎に発火する統合は次段。
+  〔関連 (2026-06-07)：実メッシュ上の分散**学習**は G22 で着地済 — disjoint シャードのノードが中央集約なしで
+  重み本体をゴシップ平均し collective 精度が solo 上限を超える（`samples/32`・CI collective-learn-live）。
+  本書の「専門家 blob を疎に発火させる」推論側の統合とは別軸だが、同じ「台数で賢くなる」道Bの実証。〕

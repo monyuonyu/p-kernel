@@ -290,22 +290,27 @@ p-kernel を分けたのは能力差ではなく、向ける方角の違いだ�
 
 ---
 
-## 第II部 実装マッピング（Claude Code 追記 2026-06-06）
+## 第II部 実装マッピング（Claude Code 追記 2026-06-06、状態更新 2026-06-07）
 
 構想を現行コードへ接地する。**思想（第I部）は変えない。** ここは「どこに刺さるか／何を作るか」だけを書く。
+
+> **状態 (2026-06-07)**: 初版（2026-06-06）以降、波3〜16 で第II部の多くが「設計／配管のみ」から
+> **実証済み**へ進んだ。§6（応援・受援の意味づけ＝閉ループ）・§8（反射/熟慮の時定数分離）・§3（死の貫通・発芽・
+> 障害復旧）・§2（保護対象アクチュエータ／多点並行防衛）が live で着地している。下表でそれを反映する。
+> 残る **本丸は §7（分散ゲーティング）の核**：学習層と防御層が**配線されていない**（G38。詳細は II-2）。
 
 ### II-1. 構想章 → 既存コードの対応表
 
 | 構想 | 現状の実体 | 状態 |
 |---|---|---|
-| §2 守る単位と守る力の分離 | relay 経由テンソル並列 / DKVA（PR #1, master） | 動作するが弱い土台（`regions.md §1`） |
-| §3 装甲板＝細胞 / 群れ | UMP フリート（Android 各インストール＝1ノード） | Phase D 進行中（`android.md`） |
+| §2 守る単位と守る力の分離 | relay 経由テンソル並列 / DKVA（PR #1）＋ `protect.c` の保護対象アクチュエータ（複製を注いで脅威を下げる） | **保護軸で実証**（G20 二軸ゲート／G28 第一級 protected-object＝複製で脅威低下・所有者 kill 後も継続、`samples/27`・CI protect-loop-live）／推論土台は玩具スケール（635 param, `dtr.h`） |
+| §3 装甲板＝細胞 / 群れ | UMP フリート（Android 各インストール＝1ノード）＋ death-piercing／genome 発芽／guard 障害復旧 | Phase D 進行中（`android.md`）／**生存ループは live**（推論中に kill→全推論完遂・degraded(k/n)・復活 `samples/13`、発芽 `samples/14`、p-fs 重みから respawn） |
 | §4 MoE スパース性 | `arch/common/moe.c`（gate=温度しきい値）＋ `spec.c`（専門分化） | **R3b で「同一コピー」を解消**（`breathe` → `r3b-breathing-params.md`）／玩具スケール（635 param, `dtr.h`） |
-| §5 同時多発・並行分散 | `arch/common/protect.c`（多点 protected-object を並行防衛）＋ `samples/28_plural_protect`（live）＋ `tools/sim`（§5 threat 軸） | **protection 軸で成立**（wave 15 / G35 🟢：多点が並行・公平・中央なしで防衛、`[plural-protect]`/live kill-test）。推論フローの多発は別軸（DKVA G1/G13） |
-| §6 応援・受援 | SWIM gossip（`swim.c`）＋ `degrade.c` の capacity(N) | 配管はある／意味づけが無い |
-| §7 分散ゲーティング | `select_expert()`（`moe.c`） | **ここが準・中央集権。R3 の標的** |
-| §8 二層構造（反射/熟慮） | region 分割（`region.c` / `regions.md`） | R0–R2 配管済 / 時定数分離は未 |
-| §9 思考する器官 | プロジェクト全体の位置づけ | 思想として確定 |
+| §5 同時多発・並行分散 | `arch/common/protect.c`（多点 protected-object を並行防衛）＋ `samples/28_plural_protect`（live）＋ `tools/sim`（§5 threat 軸） | **protection 軸で成立**（wave 15 / G35 🟢：多点が並行・公平・中央なしで防衛、`[plural-protect]`/live kill-test）。推論フロー多発も G1（per-origin Q）で live（`samples/13` concurrent）。G13（coordinator 200ms 窓の再直列化）は残課題 |
+| §6 応援・受援 | SWIM gossip（`swim.c`）＋ `degrade.c` の capacity(N)＋ **閉ループ**（reflex CONSERVE→world pressure→moe gate） | **意味づけ済・負帰還で実測**（wave 12 / G17・G18：action→perception→decision の環が収束、`closed-loop.md`・`samples/20`・`reflex test`） |
+| §7 分散ゲーティング | `select_expert()`（`moe.c`）＋ G22 分散協調学習（中央集約なしで重みをゴシップ平均、`samples/32`） | **一部前進**（locality utility R1／collective-learn は中央なしで solo 上限を超える）。だが**核は未配線**＝学習層と 0xFF 反射ゲートが side-by-side（G38 = 次の本丸。II-2） |
+| §8 二層構造（反射/熟慮） | region 分割（`region.c`）＋ reflex/deliberation（速い/遅い時定数）＋ closed-loop | **時定数分離まで実証**（D0/D1/D2 DONE：単一時定数の発振28→二層+ヒステリシス4切替、`reflex-deliberation.md §6`／Step B レイテンシ二層も実測 `samples/29`） |
+| §9 思考する器官 | プロジェクト全体の位置づけ＋ p-fs durable（記憶が電源喪失を越える, `samples/23`）＋ ARK 永続 backend | 思想として確定／**記憶の永続化は live**（`memory-thought.md` 記憶で考える＋`survival-fs.md` ARK） |
 
 ### II-2. いちばん効く一手 — §7 = regions R3
 
@@ -344,6 +349,14 @@ p-kernel を分けたのは能力差ではなく、向ける方角の違いだ�
 - テストは本番 `moe.c` の選択ロジックそのもの（`deadband_pick`/`expert_utility`/`ewma_step`）を呼ぶ
   純ローカル sim（3 ノード）。**ノード破壊しても機能維持（§3）** の大規模版（30〜100 ノード・kill 注入）は
   `samples/13_survival_loop` / death-piercing 系が担い、ここでの sim 規模拡大（`tools/sim/`）は今後の課題。
+
+§10 ステップB（二層の遅延分離：反射層は近傍で即応、熟慮層は遠方で遅延）も **実測で着地**した
+（`samples/29_latency`：reflex がほぼ即時に応答する一方で遠方の熟慮はラグする、二層の時定数差を数で確認）。
+
+> **次の本丸 (2026-06-07)**: §7 の核＝**G38（二層の結合）**。今は §9 の学習層（G22 分散協調学習）と
+> §8 の防御層（reflex/0xFF ゲート）が **side-by-side で配線されていない**。`moe.c` の確信度ゲートは
+> 死んだまま（常に 0xFF＝G30/G34）。学習した softmax 確信度で反射ゲートを置き換え、**学習が守りを
+> 賢くする**ように繋ぐのが次の一手。
 
 ### II-5. §4 を本物にする — R3b「呼吸するパラメータ」（DONE 2026-06-06）
 
