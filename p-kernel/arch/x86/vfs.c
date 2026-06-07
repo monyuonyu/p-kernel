@@ -8,9 +8,54 @@
 #include "blk_ssy.h"
 #include "fat32.h"
 #include "vfs.h"
+#include "arkfs.h"
+#include "ark_bdev.h"
 #include <tmonitor.h>
 
 BOOL vfs_ready = FALSE;
+
+/* ----------------------------------------------------------------- */
+/* Active backend dispatch.                                          */
+/* Defaults to FAT32 — vfs_init() mounts FAT32 and never changes this */
+/* so all existing behaviour is byte-for-byte unchanged. ARK becomes  */
+/* active only after an explicit vfs_ark_mount().                     */
+/* ----------------------------------------------------------------- */
+static VFS_BACKEND g_backend = VFS_BACKEND_FAT32;
+static ARK_BDEV    g_ark_bd;
+
+VFS_BACKEND vfs_active_backend(void) { return g_backend; }
+
+INT vfs_ark_mount(const char *dev, BOOL do_format)
+{
+    const BLK_OPS *blk = blk_ssy_lookup(dev ? dev : "ide0");
+    if (!blk) {
+        tm_putstring((UB *)"[vfs]  ark: block device not registered\r\n");
+        return -1;
+    }
+    INT rc = ark_bdev_bind(&g_ark_bd, blk);
+    if (rc != ARK_OK) return rc;
+    if (do_format) {
+        rc = ark_format(&g_ark_bd);
+        if (rc != ARK_OK) return rc;
+    }
+    rc = ark_mount(&g_ark_bd);
+    if (rc != ARK_OK) return rc;
+    g_backend = VFS_BACKEND_ARK;
+    tm_putstring((UB *)"[vfs]  ARK backend mounted\r\n");
+    return 0;
+}
+
+INT vfs_ark_write_file(const char *path, const void *buf, UW len)
+{
+    if (g_backend != VFS_BACKEND_ARK) return -1;
+    return ark_write_file(path, buf, (U4)len);
+}
+
+INT vfs_ark_read_file(const char *path, void *buf, UW max)
+{
+    if (g_backend != VFS_BACKEND_ARK) return -1;
+    return ark_read_file(path, buf, (U4)max);
+}
 
 /* ----------------------------------------------------------------- */
 /* Current working directory                                         */
@@ -105,6 +150,20 @@ INT  vfs_rename(const char *o, const char *n)
 INT  vfs_readdir(const char *path, VFS_DIRENT *out, INT max)
 {
     char buf[FAT32_MAX_PATH]; vfs_resolve(path, buf);
+    if (g_backend == VFS_BACKEND_ARK) {
+        /* ARK is whole-file with its own dirent shape; copy into VFS_DIRENT. */
+        ARK_DIRENT ad[ARK_MAX_FILES];
+        INT n = ark_readdir(buf, ad, (max < ARK_MAX_FILES) ? max : ARK_MAX_FILES);
+        if (n < 0) return n;
+        for (INT i = 0; i < n; i++) {
+            INT j = 0;
+            while (ad[i].name[j] && j < VFS_MAX_NAME - 1) { out[i].name[j] = ad[i].name[j]; j++; }
+            out[i].name[j] = '\0';
+            out[i].size   = (UW)ad[i].size;
+            out[i].is_dir = (BOOL)ad[i].is_dir;
+        }
+        return n;
+    }
     return fat32_readdir(buf, (FAT32_DIRENT *)out, max);
 }
 
@@ -112,6 +171,14 @@ INT  vfs_readdir(const char *path, VFS_DIRENT *out, INT max)
 INT  vfs_stat_path(const char *path, UW *size, BOOL *is_dir)
 {
     char buf[FAT32_MAX_PATH]; vfs_resolve(path, buf);
+    if (g_backend == VFS_BACKEND_ARK) {
+        U4 sz; INT dir; U4 ver;
+        INT rc = ark_stat(buf, &sz, &dir, &ver);
+        if (rc != ARK_OK) return -1;
+        if (size)   *size   = (UW)sz;
+        if (is_dir) *is_dir = (BOOL)dir;
+        return 0;
+    }
     return fat32_stat_path(buf, size, is_dir);
 }
 

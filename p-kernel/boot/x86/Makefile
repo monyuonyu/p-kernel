@@ -29,10 +29,14 @@ INCDIRS = \
     -I.
 
 # コンパイルフラグ
+# EXTRA_CFLAGS: appended last so callers can add defines without editing
+# this file, e.g.  make EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE  (used by
+# samples/31_ark_baremetal to build the bare-metal ARK smoke kernel).
+EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fcf-protection=none -O1 -m32 -std=gnu11 \
           -D_APP_X86_ \
-          $(INCDIRS)
+          $(INCDIRS) $(EXTRA_CFLAGS)
 
 LIBGCC  = $(shell $(CC) -m32 -print-libgcc-file-name)
 LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
@@ -69,6 +73,7 @@ ARCH_C_SRCS = \
     ide.c \
     fat32.c \
     vfs.c \
+    ark_bdev.c \
     net_ssy.c \
     gdt_user.c \
     syscall.c \
@@ -344,6 +349,30 @@ run-disk-net: $(TARGET) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0 $(NETDEV)
 
+# -------------------------------------------------------------------
+# ARK bare-metal smoke test (samples/31_ark_baremetal)
+# Build the kernel with the ARK_BAREMETAL_SMOKE driver in boot/x86/main.c,
+# attach a RAW disk (NOT FAT32 — ARK lays down its own superblock), and run.
+# The driver formats/writes/syncs, remounts off the physical device, and
+# sha256-verifies the read-back. Re-running on the same image proves
+# cross-reboot durability. Driven by samples/31_ark_baremetal/run.sh.
+# -------------------------------------------------------------------
+ARK_DISK_IMG  = ark_disk.img
+ARK_DISK_MB   = 8
+
+$(ARK_DISK_IMG):
+	dd if=/dev/zero of=$@ bs=1M count=$(ARK_DISK_MB)
+
+# Force a clean rebuild with the smoke define, then run with the raw disk.
+ark-smoke-build:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE $(TARGET)
+
+run-ark-smoke: ark-smoke-build $(ARK_DISK_IMG)
+	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 \
+	    -display none -no-reboot \
+	    -drive file=$(ARK_DISK_IMG),format=raw,if=ide,index=0
+
 run-nonet: $(TARGET)
 	qemu-system-x86_64 $(QEMU_MEM) -kernel $(TARGET) -serial stdio -cpu qemu64 -display none
 
@@ -443,11 +472,12 @@ clean:
 	$(MAKE) -C $(USERLAND_X86) clean 2>/dev/null || true
 
 clean-disk:
-	rm -f $(DISK_IMG)
+	rm -f $(DISK_IMG) $(ARK_DISK_IMG)
 
 .PHONY: all clean clean-disk disk run run-disk run-disk-net run-log debug run-32 run-boot \
         run-solo run-solo-disk \
         run-node0 run-node1 run-node2 run-node0-disk run-node1-disk \
         run-kloader run-kloader-boot \
         run-kloader-node0 run-kloader-node1 run-kloader-node2 \
+        ark-smoke-build run-ark-smoke \
         debug-build gdb gdb-bare
