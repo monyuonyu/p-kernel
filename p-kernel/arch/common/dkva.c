@@ -354,27 +354,38 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
     UB   rgot[DNODE_MAX];     /* 他 region 要約の重複防止 (rid 単位)  */
 
     /* --- 死を待たない / region 横断の正直な degraded -----------------
-     * (wave 8 + G2/G8, wave 10)
-     *  期待集合は 2 種類:
+     * (wave 8 + G2/G8, wave 10; gossip 鮮度の正直化 wave 12 / G12)
+     *  期待集合は 2 種類 + 不確実枠:
      *    expect[n]   : fan-out 時に SWIM 生存 (ALIVE/SUSPECT) と見ている
-     *                  自 region のピア (直接 partial を待つ)。
+     *                  自 region のピア (直接 partial を待つ)。SWIM の RTT に
+     *                  基づくので gossip 鮮度に依存しない (= 確実)。
      *    rc_expect[c]: 応答すべき他 region の coordinator c (rsum を待つ)。
-     *                  world gossip の region_id で remote ノードを region 単位に
-     *                  まとめ coordinator を特定する。gossip 未着なら各 remote
-     *                  ノードを自前 region とみなし保守的に数える (黙って
-     *                  成功にしないため)。
+     *                  ★G12: coordinator の特定は world gossip 由来なので、
+     *                  「新鮮に確認できた」region_id (world_peer_region_fresh)
+     *                  だけから組む。これが degraded の確定分母になる。
+     *    uncertain[n]: SWIM では生存 remote だが gossip 未着/古くて region を
+     *                  ★確認できないノード。以前 (wave 10) はこれを「n 自身=1
+     *                  region」と決め打ちして rc_cnt0 に積んでいた → 複数メンバ
+     *                  から成る remote region で coordinator ビーコン未着だと各
+     *                  メンバを別 region と過大計上し、実際は全寄与が畳めていても
+     *                  degraded を誤って出していた (数字が gossip-timing 依存=嘘)。
+     *                  wave 12 では確定分母に積まず、不確実 (uncertain) として
+     *                  別軸で正直に明示する (沈黙で確定値を装わない / §10)。
      *  SWIM が DEAD と判定したノード/region は待たない (ハングしない) が、
      *  欠損として degraded (k/n) に正直計上する (黙って成功にしない)。
-     *  exp_cnt0 / rc_cnt0 は fan-out 時の期待数 — degraded の分母を成す。 */
+     *  exp_cnt0 / rc_cnt0 は fan-out 時の確定期待数 — degraded の分母を成す。 */
     UB   expect[DNODE_MAX];
     UB   rc_expect[DNODE_MAX];
+    UB   uncertain[DNODE_MAX];   /* gossip 未確認の生存 remote (別軸)   */
     INT  exp_cnt0     = 0;    /* 期待した自 region ピア数            */
     INT  exp_got      = 0;    /* うち実際に応答した数                */
-    INT  rc_cnt0      = 0;    /* 期待した他 region 数 (coordinator)  */
+    INT  rc_cnt0      = 0;    /* 確認できた他 region 数 (coordinator) */
     INT  rc_got       = 0;    /* うち rsum が届いた数                */
+    INT  uncertain_cnt = 0;  /* region を確認できない生存 remote 数  */
     region_recompute();
     for (UB i = 0; i < DNODE_MAX; i++) {
         got[i] = 0; rgot[i] = 0; expect[i] = 0; rc_expect[i] = 0;
+        uncertain[i] = 0;
     }
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == me) continue;
@@ -382,11 +393,17 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
         if (region_is_member(n)) { expect[n] = 1; exp_cnt0++; }
         else {
-            /* 他 region のノード: その coordinator (= 応答すべき rsum の発行者) を
-             * world gossip から引く。未知なら n 自身を 1 region とみなす。 */
-            INT cid = world_peer_region(n);
-            if (cid < 0 || cid >= DNODE_MAX || (UB)cid == me) cid = (INT)n;
-            if (!rc_expect[cid]) { rc_expect[cid] = 1; rc_cnt0++; }
+            /* 他 region のノード: その coordinator (= 応答すべき rsum の発行者)
+             * を world gossip から引く。★新鮮に確認できたときだけ確定分母に積む
+             * (G12)。確認できない (未着/古い) ノードは別 region と決め打ちせず
+             * uncertain として別計上する — degraded の数字を gossip 鮮度に依存
+             * させない (過大計上で嘘をつかない)。 */
+            INT cid = world_peer_region_fresh(n);
+            if (cid >= 0 && cid < DNODE_MAX && (UB)cid != me) {
+                if (!rc_expect[cid]) { rc_expect[cid] = 1; rc_cnt0++; }
+            } else {
+                uncertain[n] = 1; uncertain_cnt++;
+            }
         }
     }
 
@@ -418,6 +435,15 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     rs.src_node == n && rs.origin == me) {
                     rgot[n] = 1;
                     rsum_cnt++;
+                    /* rsum が届いた = n は実在する region coordinator だと
+                     * 確定した。gossip 未確認 (uncertain) だった場合はここで
+                     * 確定分母へ昇格させる (到着 = 確証)。これで「不確実だった
+                     * が応答した」region は正しく k/n の両方に乗り、過大計上も
+                     * 取りこぼしもしない (G12)。 */
+                    if (uncertain[n]) {
+                        uncertain[n] = 0; uncertain_cnt--;
+                        rc_expect[n] = 1; rc_cnt0++;
+                    }
                     if (rc_expect[n]) rc_got++;
                     total_entries += rs.n_entries;
                     accumulate(total_out, total_sum, &rs);
@@ -435,11 +461,20 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                 dk_puts("[dkva] not waiting for node "); dk_putdec(n);
                 dk_puts(" (SWIM: DEAD)\r\n");
             }
+            /* gossip 未確認のまま死んだ remote はもう不確実枠でも待たない
+             * (生存していないので uncertain として明示する意味も無い)。 */
+            if (uncertain[n] && dnode_table[n].state == DNODE_DEAD) {
+                uncertain[n] = 0; uncertain_cnt--;
+            }
         }
         /* 期待した全寄与 (自 region ピア + 他 region coordinator) が
          * got もしくは DEAD で解決したら、窓を待たず確定する。
-         * 期待が 0 のときは早期確定しない (SWIM が peer 未発見なだけかも)。 */
-        if ((exp_cnt0 + rc_cnt0) > 0) {
+         * ★ただし uncertain な生存 remote が残る間は早期確定しない (G12):
+         * その rsum がまだ来るかもしれず、ここで打ち切ると「gossip 未収束」を
+         * 確定値で覆い隠してしまう。確実分が片付いていても窓を待ち切る。
+         * 期待も不確実も 0 のときは早期確定しない (SWIM が peer 未発見なだけ
+         * かも)。 */
+        if ((exp_cnt0 + rc_cnt0) > 0 && uncertain_cnt == 0) {
             INT pending = 0;
             for (UB n = 0; n < DNODE_MAX; n++) {
                 if (expect[n] && !got[n]) pending++;
@@ -453,25 +488,54 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         tmo_left -= 20;
     }
 
-    /* 期待も寄与も無い = 真の単独ノード → ローカル MHSA へフォールバック。 */
-    if (resp_cnt == 0 && rsum_cnt == 0 && (exp_cnt0 + rc_cnt0) == 0) {
+    /* 期待も寄与も不確実枠も無い = 真の単独ノード → ローカル MHSA へ
+     * フォールバック。uncertain な生存 remote が居る場合は単独ではない
+     * (peer は居るが gossip で region を確認できなかっただけ) ので solo 扱い
+     * しない — 自分の partial を持って下の honesty 報告へ進む (G12)。 */
+    if (resp_cnt == 0 && rsum_cnt == 0 &&
+        (exp_cnt0 + rc_cnt0) == 0 && uncertain_cnt == 0) {
         stat_timeout++;
         dk_puts("[dkva] timeout: no cluster peers\r\n");
         return E_TMOUT;
     }
 
-    /* 正直さ規約 (wave 8 + G2/G8): fan-out 時に期待した寄与 (自 region ピア +
-     * 他 region) が欠けたまま完遂するときは、黙って成功にせず必ず明示する。
-     *   k = 自分 + 応答した region ピア + 畳んだ他 region
-     *   n = 自分 + 期待した region ピア + 期待した他 region
-     * 他 region の coordinator 消失 (G8) もこの分母に乗るので無音消失しない。 */
+    /* 正直さ規約 (wave 8 + G2/G8; gossip 鮮度の正直化 wave 12 / G12):
+     * fan-out 時に期待した寄与 (自 region ピア + 他 region) が欠けたまま完遂
+     * するときは、黙って成功にせず必ず明示する。
+     *   k = 自分 + 応答した region ピア + 畳んだ (確認できた) 他 region
+     *   n = 自分 + 期待した region ピア + 確認できた他 region
+     * 他 region の coordinator 消失 (G8) もこの分母に乗るので無音消失しない。
+     * ★G12: k/n は「新鮮に確認できた」期待だけで組む (gossip 鮮度に依存して
+     * 過大計上しない)。それとは別に、gossip 未着/古さで region を確認できない
+     * 生存 remote が m 個あるなら、それを uncertain として degraded 表示に
+     * 添える: `degraded (k/n; m uncertain)`。degraded でなくても m>0 なら
+     * 「確定値を装わず」未収束を明示する (§10 古さ・不完全さの明示 / I4)。 */
     INT got_total = 1 + exp_got + rc_got;
     INT exp_total = 1 + exp_cnt0 + rc_cnt0;
     if (got_total < exp_total) {
         stat_degraded++;
         dk_puts("[dkva] degraded ("); dk_putdec((UW)got_total);
         dk_puts("/"); dk_putdec((UW)exp_total);
-        dk_puts("): completed with partial aggregation  req=");
+        if (uncertain_cnt > 0) {
+            dk_puts("; "); dk_putdec((UW)uncertain_cnt);
+            dk_puts(" uncertain");
+        }
+        dk_puts("): completed with partial aggregation");
+        if (uncertain_cnt > 0)
+            dk_puts(" (gossip unconverged — count provisional)");
+        dk_puts("  req="); dk_putdec(req_id); dk_puts("\r\n");
+    } else if (uncertain_cnt > 0) {
+        /* 確定分は全て畳めた (k==n) が、gossip 未着/古さで region を確認できない
+         * 生存 remote が残る。確定値で「完全成功」を装わず、不確実性を明示する
+         * — degraded の数字自体が gossip 収束まで暫定であることを正直に添える。 */
+        stat_degraded++;
+        dk_puts("[dkva] degraded ("); dk_putdec((UW)got_total);
+        dk_puts("/"); dk_putdec((UW)exp_total);
+        dk_puts("; "); dk_putdec((UW)uncertain_cnt);
+        dk_puts(" uncertain): confirmed contributions complete, but ");
+        dk_putdec((UW)uncertain_cnt);
+        dk_puts(" remote node(s) unconfirmed by gossip — degraded count ");
+        dk_puts("provisional until gossip converges  req=");
         dk_putdec(req_id); dk_puts("\r\n");
     }
 

@@ -93,6 +93,12 @@ static WORLD_ENTRY table[DNODE_MAX];
 static UB my_firing = 0;
 static UW my_seq    = 0;
 
+/* テスト専用フック (G12 デモ): 起動後 beacon_hold_ms の間だけ self-beacon の
+ * 発信を抑止し、gossip を意図的に未収束のまま保つ。0 = 抑止なし (既定; 本番は
+ * 常に 0 なので挙動は不変)。samples/21_honest_degraded が degraded の honesty が
+ * gossip 鮮度に依存しないことを「収束待ちで穴を隠さず」検証するために使う。 */
+static UW beacon_hold_ms = 0;
+
 /* K-DDS ハンドル (moe.c と同じ per-source topic パターン):
  *   h_pub     : 自ノード "world/beacon/<my>" へ発行
  *   h_sub[n]  : ピア "world/beacon/<n>" を購読 (n != my) */
@@ -239,6 +245,29 @@ INT world_peer_region(UB node)
     return (rid == 0xFF) ? -1 : (INT)rid;       /* coordinator ID (-1=未知) */
 }
 
+/* world_peer_region と同じだが、ビーコンが *新鮮* (age <= WORLD_STALE_MS) な
+ * ときだけ region を返す (G12, wave 12)。未受信 / 古い / region 未広告 (0xFF)
+ * なら -1。dkva の requester はこれで「gossip で新鮮に確認できた」region だけ
+ * から degraded の分母を組み、確認できない remote は『不明 (uncertain)』として
+ * 別計上する。これにより degraded(k/n) の数字が gossip 鮮度に依存して過大計上
+ * (各メンバを別 region と誤認) することを防ぐ。 */
+INT world_peer_region_fresh(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    UW now = now_ms();
+    UW age = (now >= table[node].last_ms) ? (now - table[node].last_ms) : 0;
+    if (age > WORLD_STALE_MS) return -1;        /* 古い = 不確実 */
+    UB rid = table[node].beacon.region_id;
+    return (rid == 0xFF) ? -1 : (INT)rid;
+}
+
+/* テスト専用: 起動後 ms ミリ秒だけ self-beacon を抑止する (G12 デモ用)。
+ * usermain が PKERNEL_WORLD_BEACON_HOLD_MS から注入する。0 = 無効 (既定)。 */
+void world_set_beacon_hold(UW ms)
+{
+    beacon_hold_ms = ms;
+}
+
 /* ------------------------------------------------------------------ */
 /* world-task: 発信 + 取り込み (全ノードで対称に走る)                  */
 /* ------------------------------------------------------------------ */
@@ -278,8 +307,10 @@ void world_task(INT stacd, void *exinf)
     }
 
     UW since_beacon = WORLD_BEACON_MS;   /* 起動直後に1回発信 */
+    UW uptime_ms    = 0;                 /* world_task 開始からの経過 (hold 判定) */
     for (;;) {
         tk_dly_tsk(WORLD_POLL_MS);
+        uptime_ms += WORLD_POLL_MS;
         if (drpc_my_node == 0xFF) continue;
 
         /* 近隣ビーコンを取り込む (per-source なので衝突せず全ノード蓄積) */
@@ -306,11 +337,14 @@ void world_task(INT stacd, void *exinf)
             world_observe(&self);
         }
 
-        /* 周期的に self-beacon を発信 */
+        /* 周期的に self-beacon を発信。テストフックが有効な間 (uptime <
+         * beacon_hold_ms) は発信を抑止し、gossip を意図的に未収束のまま保つ
+         * (G12 デモ; 本番は beacon_hold_ms==0 なので素通り)。 */
         since_beacon += WORLD_POLL_MS;
         if (since_beacon >= WORLD_BEACON_MS) {
             since_beacon = 0;
-            publish_beacon();
+            if (uptime_ms >= beacon_hold_ms)
+                publish_beacon();
         }
     }
 }

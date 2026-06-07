@@ -303,6 +303,17 @@ static void cmd_net(void)
      * network view from received beacons. No central collector: the same
      * symmetric task runs on every node, so killing any node never
      * destroys the map (see world.h NO-CENTRAL invariant). */
+    /* Test hook (G12 demo): PKERNEL_WORLD_BEACON_HOLD_MS>0 suppresses this
+     * node's self-beacon for the first N ms, holding world-gossip intentionally
+     * unconverged so samples/21_honest_degraded can prove degraded(k/n) honesty
+     * does not depend on gossip freshness. Default 0 = no change in production. */
+    {
+        UW hold = env_uint("PKERNEL_WORLD_BEACON_HOLD_MS", 0);
+        if (hold > 0) {
+            world_set_beacon_hold(hold);
+            print("[net] world beacon hold enabled (G12 honesty test)\r\n");
+        }
+    }
     create_task((FP)world_task, 7, 4096);
     print("[net] world situational-awareness beacon task started\r\n");
 

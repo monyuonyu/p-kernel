@@ -124,3 +124,14 @@ INT  world_peer_pressure(UB node);
  * dkva の requester はこれで他 region をまとめ、欠けた region を degraded に
  * 正直計上する (中央の真実ではなく、受信したビーコンだけから組む)。 */
 INT  world_peer_region(UB node);
+
+/* world_peer_region と同じだが、ビーコンが新鮮 (age <= WORLD_STALE_MS) な
+ * ときだけ region を返す (G12, wave 12)。未受信 / 古い / 未広告なら -1。
+ * dkva は「新鮮に確認できた」region だけで degraded の分母を組み、確認できない
+ * remote は uncertain として別計上する (degraded の数字を gossip 鮮度に依存
+ * させない = I4/I16 honesty)。 */
+INT  world_peer_region_fresh(UB node);
+
+/* テスト専用 (G12 デモ): 起動後 ms ミリ秒だけ self-beacon を抑止し、gossip を
+ * 意図的に未収束のまま保つ。0 = 無効 (既定; 本番挙動は不変)。 */
+void world_set_beacon_hold(UW ms);
