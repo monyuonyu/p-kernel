@@ -63,8 +63,28 @@
 #define REFLEX_CONF_MIN      40     /* 行動に要する最小 confidence (0..100) */
 
 /* CONSERVE 中に world ビーコンへ上乗せする pressure バイアス (0..100)。
- * これが moe の局所勾配に乗り、近傍ゲートが当ノードへの委譲を避ける。 */
+ * これが moe の局所勾配に乗り、近傍ゲートが当ノードへの委譲を避ける。
+ * これは「初期値」であり、§9 熟慮層がこの効きの強さを経験から学習で動かす
+ * (reflex_pressure_bias() は固定値ではなく learned_conserve を返す)。 */
 #define REFLEX_CONSERVE_PRESSURE 40
+
+/* ── G18 熟慮 → 学習 → 反射ループ (§9 経験から自分を書き換える環) ───────
+ * 反射層 (速い時定数) が脅威を観測して CONSERVE を engage する一方、熟慮層
+ * (遅い時定数) は蓄積した経験 — 「脅威がどれだけ滞留したか (dwell)」— を
+ * 集計し、CONSERVE の効きの強さ (learned conserve pressure) を小さく nudge
+ * する。脅威の滞留が長い = 応答が弱い → 効きを上げる。滞留が目標より短い =
+ * 過剰防御 → 少し下げる。外部 `dtr train` 無しに、稼働中の観測だけから反射
+ * の振る舞いそのものが書き換わる = 思考(熟慮)→学習→反射の環が閉じる。
+ *
+ * これは外側のゆっくりした適応ループであり、内側の速い負帰還
+ * (CONSERVE→pressure→§7 ゲート→負荷再分配) の *ゲイン* を経験で調律する。 */
+#define REFLEX_CONSERVE_MIN    8    /* 学習が下げられる下限 (過剰防御を抑える) */
+#define REFLEX_CONSERVE_MAX   80    /* 学習が上げられる上限 (発振を避ける)     */
+#define REFLEX_DWELL_TARGET    3    /* 望ましい脅威滞留 (反射 tick / 観測数)    */
+#define REFLEX_LEARN_STEP      6    /* 1 熟慮 tick あたりの learned_conserve nudge 幅 */
+/* reflex_task の何ポールごとに 1 回熟慮するか。REFLEX_POLL_MS=100ms × 50 =
+ * 5s = moe の熟慮層 (MOE_DELIB_TICK_MS=2s) より更に遅い時定数 (§8 二層)。 */
+#define REFLEX_DELIB_EVERY    50
 
 /* ── アラーム伝播の減衰 (群れ全体の一斉痙攣を防ぐ) ───────────────────
  * アラームは hop を持ち、受信側は hop>0 のときだけ hop-1 で中継する。
@@ -118,11 +138,31 @@ void reflex_on_inference(UB threat_class, UB confidence, UB src_node);
 BOOL reflex_is_shielded(void);
 
 /* CONSERVE 照会 — world.c の compute_pressure() がビーコンへ上乗せする
- * pressure バイアス (0..REFLEX_CONSERVE_PRESSURE)。CONSERVE 非発火なら 0。 */
+ * pressure バイアス。CONSERVE 発火中は learned_conserve (学習値) を、
+ * 非発火なら 0 を返す。 */
 UB reflex_pressure_bias(void);
 
-/* shell `reflex [on|off|table|stat]`:
+/* G18 熟慮 tick: 蓄積した経験 (脅威 dwell 統計) から learned_conserve を
+ * 学習で nudge する。reflex_task が遅い時定数 (REFLEX_DELIB_EVERY ポール) で
+ * 呼ぶ。`reflex test` の C 部からも本番ロジックそのものを叩く。 */
+void reflex_deliberate(void);
+
+/* 学習で動く CONSERVE 効きの現在値 (観測性・テスト用)。 */
+UB reflex_learned_conserve(void);
+
+/* §8/§9 性質テスト (philosophy-gap-audit-2 G17/G18 — 閉ループの自動検証)。
+ * shell `reflex test` から呼ぶカーネル内 self-test。0=全 PASS。
+ *   B: 行動→知覚→ゲートの負帰還が *減衰して定常へ収束* (loop on) する一方、
+ *      フィードフォワード (loop off) では脅威が滞留し続けることを数で示す。
+ *   C: 熟慮層が経験 (dwell) から learned_conserve を学習し、指標が時間と
+ *      ともに改善することを数で示す (学習 off では改善しない)。
+ * §7 ゲートの効用は本番 moe_expert_utility を使う。純ローカル計算
+ * (net/kdds 不要)・小スタックなのでベアメタルでも走る。 */
+INT reflex_self_test(void);
+
+/* shell `reflex [on|off|table|stat|test]`:
  *   (引数なし)/stat — 現在の反射状態とアクション表と統計を表示
  *   on / off        — 反射層の有効/無効 (デフォルト有効)
- *   table           — class→action のアクション表を閲覧 */
+ *   table           — class→action のアクション表を閲覧
+ *   test            — §8/§9 閉ループ性質テスト (負帰還の収束 + 熟慮学習) */
 void reflex_cmd(const UB *args, UW len);

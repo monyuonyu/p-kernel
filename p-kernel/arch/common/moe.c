@@ -40,6 +40,7 @@
 #include "swim.h"
 #include "world.h"      /* world_note_firing / world_peer_pressure — 局所勾配 */
 #include "region.h"     /* region_contains — 同 region 近傍 (反射層 §8)        */
+#include "reflex.h"     /* G17: 推論完了点 → §8 反射層 (思考→行動の片肺解消)   */
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -159,6 +160,16 @@ static W expert_utility(UB accuracy, UW rtt_ms, INT eff_pressure, int same_regio
     u -= (W)((eff_pressure * MOE_PRESS_NUM) / MOE_PRESS_DEN);
     if (same_region) u += MOE_SAME_REGION_BONUS;
     return u;
+}
+
+/* 公開ラッパー: 閉ループの負帰還を「測れる形」で検証するため、§7 ゲートの
+ * 効用関数そのものを reflex.c の自己テストへ開く (重複定義を作らない)。
+ * これで closed-loop self-test の「行動→知覚→ゲート」の知覚→ゲート部が
+ * 本番と同一の数式で回る (reflex の CONSERVE→pressure は本番 world.c の
+ * compute_pressure と同じ `+pressure_bias` で注入される)。 */
+W moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, int same_region)
+{
+    return expert_utility(accuracy, rtt_ms, pressure, same_region);
 }
 
 /* 実効逼迫度 = ゴシップされたビーコン値 (熟慮帯域の遅い信号; 未知なら中庸)
@@ -373,6 +384,15 @@ UB moe_infer(B temp, B hum, B press, B light)
     }
 
     my_total++;
+
+    /* ── G17: 思考→行動の片肺を閉じる ───────────────────────────────────
+     * これまで reflex は dtr 経路 (dtr_log_push / TP 完了点) からしか叩かれず、
+     * 「最も効く専門家が §7 ゲートで選ばれて出した結論」は虚空に消えていた。
+     * moe_infer の推論完了点でも §8 反射層へ繋ぐ。dtr_infer とは別コマンド
+     * (mlp_forward / dtk_infer 経路) なので同一ノードで二重発火しない。
+     * confidence は moe ローカル/リモート経路とも未知 → 0xFF (ゲートを通す)。 */
+    reflex_on_inference(result_class, 0xFF, drpc_my_node);
+
     return result_class;
 }
 
