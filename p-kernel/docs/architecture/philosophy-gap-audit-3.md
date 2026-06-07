@@ -155,7 +155,7 @@ master は改造前。各隊の設計意図(audit-2 の G12/G17/G18/G19)から�
 
 | # | 不変条件 | 乖離の内容 | 証拠 (file:line) | 重さ | 実証 |
 |---|---|---|---|---|---|
-| **G20** | I19, I1 | **符号の倒錯 — 守るべき一点から群れを遠ざける**。`pressure` は単一スカラで「混んでいる(仕事を送るな)」と「危ない」の両方を表すが、`expert_utility` は pressure を一律**ペナルティ**として引く (`moe.c:159`)。reflex CONSERVE はこれを +40 し (`reflex.h:67`)、`world_observe(&self)` で**自ノードも**自分の pressure を載せる (`world.c:294-307`)。結果、脅威を観測したノードは (1) 自分の緊急推論を遠方へ送り出し(§8 が禁じる光速遅延を足す, `moe.c:245-247`)、(2) BEACON→近傍が減衰 CONSERVE で pressure を上げ (`reflex.c:221-228`)、群れが threatened node を**避ける**。survival §2「全網の力を一点へ**注ぎ込む**」の真逆の符号。"忙しい"には正しく、"危ない・助けが要る"には真逆。§2 の一点集束は requester 軸(DKVA fan-out)でのみ実装され、reflex/CONSERVE はそれと逆向きに干渉する。 | `moe.c:159`(pressure=ペナルティ)、`reflex.h:67`(CONSERVE +40)、`world.c:144-148`(加算)、`world.c:294-307`(自己観測で table[me] に反映)、`moe.c:245-247`(self も候補)、`reflex.c:221-228`(alarm→近傍 CONSERVE) | 🔴 | 📖 |
+| **G20** | I19, I1 | **【第13波 FIXED — 符号を分離した】** pressure を **load 軸**(混雑→引く=避ける)と **threat 軸**(危険→足す=寄る)の2軸へ分離。`expert_utility` に `threat` 引数を追加し `+ threat*MOE_PROTECT_NUM/DEN`(ゲイン1.0, load の逆符号かつ2倍, `moe.c`/`moe.h`)。reflex CONSERVE はもう pressure へは載せず(`world.c::compute_pressure` から削除)、`reflex_threat_level()`→`WORLD_BEACON.threat`→`world_peer_threat()`→ゲート加点という別経路で流す(`reflex.c`/`world.c`/`world.h`)。**候補自身の threat がその候補の utility を上げる** = 脅威ノードへ群れが集束(rally)し、脅威ノード自身も自己効用が上がって守るべき仕事を保持(flee しない)。自己テスト `[moe-protect]` が rally-not-flee を実証(protect: 仕事保持8/8・近傍 rally 8/8 / naive: flee 8/8・rally 0/8)、`lp_run` 閉ループも flee(自分が手放す)から rally(近傍 aid が外から削る)へ反転、host sim も survived 100%(protect) vs 25%(naive)を示す。発振は既存の MOE_SWITCH_MARGIN デッドバンド/EWMA がそのまま抑える(threat は gossip 帯域の遅信号)。**残課題は下の第13波評決へ正直に記載**(§2「守る対象」のオブジェクト化、能動的 aid push、G21 actuator は未)。 | `moe.c`(expert_utility に threat 加点 + st_test_protect)、`moe.h`(MOE_PROTECT_*)、`world.c`(compute_pressure から CONSERVE 削除 + compute_threat + world_peer_threat)、`world.h`(WORLD_BEACON.threat)、`reflex.c/.h`(reflex_threat_level; lp_run を rally へ) | 🟢→**FIXED** | ✅(self-test/sim) |
 | **G21** | I20, I4 | **自己申告の閉ループ — 解除がタイマ、actuator が無い**。reflex の解除は `now >= until`(`REFLEX_HOLD_MS`=5000 固定)で**のみ**起きる (`reflex.c:243-257`, `reflex.h:55`)。脅威(threat_class の源=センサ/環境)を**縮める actuator は存在しない**(SHIELD=取り込み拒否, CONSERVE=負荷偏向, BEACON=警報のいずれも入力を変えない)。よって「危険が沈静化した」という観測は **5s タイマ満了 or class=0 新推論到着**(`reflex.c:170`)であって、ループが脅威を是正した結果ではない=task §1「外乱の自然減衰を収束に見せる」。A隊が「負帰還ループ環化 DONE」と称しても、制御量に actuator が無い限り**位相的に閉じているだけの自己申告の閉ループ**。C隊の緑(pressure 上昇→下降)はタイマ動作の証拠であって環の収束ではない。 | `reflex.c:243-257`(解除=タイマのみ)、`reflex.h:55`(HOLD 5000 固定)、`reflex.c:161-194`(action は入力を変えない)、`reflex.c:170`(class0 で streak リセット=唯一の "知覚" 経路) | 🔴 | 📖 |
 | **G22** | I18, I8 | **熟慮→学習は適応則の実行であって学習でない(局所すら 6 パラメータ)**。熟慮 tick は score gossip + accuracy 再計算のみ (`moe.c:449-468`)、分散 FedAvg は `E_NOSPT` (`fedlearn.c:165-183`)。局所 `fl_local_train` ですら 635 パラメータ中 **b3 バイアス 6 個**の有限差分しか触らない (`fedlearn.c:98-119`)。動いている適応(recent_pick 減衰/EWMA/deadband)は**事前固定の適応則の実行**。A隊が fedlearn を配線しても閉じるのは「6 バイアスの有限差分平均」の環であり、§9「経験から自分を書き換える考える器官」ではない。 | `moe.c:449-468`(熟慮=選択ローパス)、`fedlearn.c:165-183`(分散=E_NOSPT)、`fedlearn.c:98-119`(局所=b3 6個のみ)、`moe.c:179-202,217`(適応=固定則) | 🟡 | 📖 |
 | **G23** | I1, I6, I14 | **クラスタ論理が DNODE_MAX=32 で硬く頭打ち、その上の論理的フェデレーションが無い**。`DNODE_MAX=32`(`drpc.h:35`)が world/moe/reflex/dkva/swim/region/dnode_table すべての配列幅と走査上限。region は 32 を**分割**するだけで超えない(`region.c:37,47,60` が `dnode_table`/`DNODE_MAX` 走査)。relay は 256 まで REGISTER できる(`relay.c:39`)が、>=DNODE_MAX のノードはクラスタ論理に不在(既知 G7)。per-source パターンは O(32) ハンドルを開き、dkva は窓ごとに O(32²) ポール (`dkva.c:393-428` の while 内 2 重 for)。思想「数千ノード/中央なし」(§5, §3 装甲板の群れ)に対し、論理層は**絶対上限 32**で、32 を超える階層フェデレーション機構が**存在しない**。regions は橋にならない(同じ 32 の部分集合)。 | `drpc.h:35`(DNODE_MAX 32)、`relay.c:39`(relay 256)、`region.c:37,47,60`(region⊂32)、`dkva.c:393-428`(O(N²)/窓)、`moe.c:216-265`(O(N)/推論) | 🔴 | 📖 |
@@ -295,4 +295,67 @@ master は改造前。各隊の設計意図(audit-2 の G12/G17/G18/G19)から�
 - **したがって G20 は依然 🔴 OPEN・第13波の本丸**: `pressure` を **負荷軸**(混雑→流す)と
   **脅威軸**(危険→群れが注ぐ)の2軸に分離し、脅威時はゲートが threatened node へ**寄せる**符号に。
   「環は閉じた」は load について真、threat については未。**「全部緑」は勝利でない。**
+
+---
+
+## 第13波の評決（2026-06-07 A隊・G20 符号分離）
+
+第13波の本丸 G20 に着手した。**符号は分離され、群れは守る対象から逃げるのをやめ、
+寄るようになった**。だが「FIXED」を緑のスタンプにしないため、何が実装され何が
+まだ feedforward/近似かを正直に切り分ける。
+
+### 実装されたもの（本物・実証済み）
+
+- **二軸の分離(核)**: `expert_utility(acc, rtt, pressure, threat, same_region)` が
+  load を**引き**(`- pressure*1/2`)、threat を**足す**(`+ threat*1/1`)。脅威ボーナスは
+  load ペナルティの逆符号かつ2倍ゲイン =「助けを求める声は自分の忙しさを上回る」。
+  `moe.h` の `MOE_PROTECT_NUM/DEN=1/1` がカーネル唯一の定義で、host sim もこの値を写経。
+- **誰の脅威が誰のルーティングを動かすか(§2 の核心)**: **候補ノード自身の threat が、
+  その候補の utility を上げる**。つまり脅威ノード n を見るすべての観測者(近傍も自分も)が
+  n へ寄る = 守る力(近傍)が守る対象(脅威ノード)へ集束。脅威ノード自身のゲートでも
+  自己効用が上がるので、脅威下でも守るべき仕事を**手放さない**(flee しない)。
+- **経路が load から完全に外れた**: reflex CONSERVE はもう `compute_pressure()` に
+  載らない(削除)。`reflex_threat_level()` → `WORLD_BEACON.threat`(`_pad` を1バイト
+  転用, sizeof 不変12B) → `world_peer_threat()` → ゲート加点、という load と独立した
+  gossip 経路。旧 `reflex_pressure_bias()` は名ごと `reflex_threat_level()` へ改名し、
+  「避ける」から「寄る」へ効果が移ったことを名でも固定。
+- **局所のみ・中央なし(§7 不変条件を維持)**: ゲートは `world_peer_threat()`(受信した
+  gossip)と自 reflex を読むだけ。中央 argmax もグローバル配列読みも無い。
+- **数で守った**: `[moe-protect]` 自己テスト(本番 `expert_utility`+`deadband_pick` を使用)
+  が rally-not-flee を実証 — protect: 仕事保持 8/8・近傍 rally 8/8 / naive(threat==load):
+  flee 8/8・rally 0/8。符号を逆にすると即座に落ちる。`lp_run` 閉ループも flee(自分が
+  offload)から rally(近傍 aid が外から backlog を削り、P は所有を保持)へ反転し、
+  `[reflex-fb]`/`[reflex-learn]` は引き続き収束。host sim は survived 100%(protect) vs
+  25%(naive, 残り 75% は flee で散逸)。4ターゲット(linux/linux_x86_64/x86/aarch64)
+  クリーンビルド。
+- **§8 発振しない**: threat は gossip 帯域(WORLD_BEACON_MS)の遅信号で決定ごとに激変
+  せず、乗り換えは既存 MOE_SWITCH_MARGIN デッドバンド/EWMA がそのまま安定化。
+
+### まだ feedforward / 近似 / 未解決（正直に）
+
+1. **能動的 aid push は無い(反応的な選好に留まる)**: ゲートは「仕事をルーティングする時に
+   脅威ノードを**選好する**」ようになった。だが**誰も仕事をルーティングしていなければ
+   aid は流れない**。「遊んでいる近傍が、脅威の一点へ自発的に計算/複製を**送り出す**」
+   能動的アクチュエータは無い。rally は受動的(routing preference)であって proactive
+   reinforcement ではない。`lp_run`/sim の「aid が backlog を削る」は**モデル**で、
+   live では近傍が moe_infer を回し P が候補に入って初めて実効化する。
+2. **「守る対象」はまだオブジェクト化されていない(§4.1(a) は残る)**: 符号は直したが、
+   守られるのは「ノード自身の仕事/状態」という暗黙の量で、複製先を名指す first-class の
+   protected-object(「この記憶を必ず生かせ」)はまだ無い。G20 は**力学の符号**を直した
+   のであって、**守る対象の実体**(I18)を作ったわけではない。
+3. **threat 強度の学習は依然『適応則の実行』(G22 の系)**: rally ゲイン `learned_conserve`
+   は dwell ベースの homeostat nudge で動く(脅威滞留が長い→rally を強める、と符号は
+   **正しく**なった)が、これは事前固定の適応則であって重み学習ではない。
+4. **G21(自己申告の閉ループ)は別問題として残る**: threat 軸も「脅威源を物理的に縮める
+   アクチュエータ」を足したわけではない。解除は依然タイマ(REFLEX_HOLD_MS)。sim/plant の
+   relief はモデル上の因果で、real-world actuator の不在は未解決。
+5. **DKVA fan-out 軸との統合は『干渉しなくなった』止まり**: §2 のもう一方の集束軸
+   (DKVA helper fan-out)と threat 軸は**もう逆向きに干渉しない**(両方とも一点へ寄る)。
+   だが両軸を能動的に協調させる機構(脅威ノードを DKVA helper 優先先にする等)は未配線。
+
+> 第13波 G20 の結論: **符号倒錯は解消した。群れは守るべき一点から逃げるのをやめ、
+> 寄るようになった**(self-test + sim + 閉ループで実証)。これは §2 の力学の向きを
+> 初めて正しくした実装上の前進。**だが §2 が完全に接地したわけではない**: 守る対象の
+> オブジェクト化(I18)、能動的 aid push、actuator(G21)は依然未着地。
+> 「FIXED」は**符号について真**、**§2 全体については前進**であって完了ではない。
 

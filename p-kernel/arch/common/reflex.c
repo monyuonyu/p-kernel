@@ -8,7 +8,8 @@
  *  ── 責任範囲 (この 1 ファイルが本体) ────────────────────────────────
  *    推論完了 (reflex_on_inference) → アクション表 → 実在する局所操作:
  *      SHIELD   = reflex_is_shielded() を立てる (usermain が selfc/genome を拒否)
- *      CONSERVE = reflex_pressure_bias() を立てる (world ビーコン pressure へ)
+ *      CONSERVE = reflex_threat_level() を立てる (world ビーコンの *脅威軸* へ;
+ *                 moe ゲートで加点 = 群れが当ノードへ寄る rally; G20 修正)
  *      BEACON   = "reflex/alarm/<node>" へ即時 publish (隣が知る/命令ではない)
  *    受信側 (reflex_task) は他ノードのアラームを取り込み、*減衰した* 反射
  *    (CONSERVE どまり, hop 1 で打ち止め) を自分の判断で行う。
@@ -91,9 +92,11 @@ static UW st_releases    = 0;      /* ヒステリシス解除回数            
 static UW st_shield_deny = 0;      /* SHIELD が拒否した取り込み回数        */
 
 /* ── G18 熟慮 → 学習 → 反射ループの状態 (§9) ─────────────────────────────
- * learned_conserve : 反射の CONSERVE 効きの強さ。reflex_pressure_bias() が
- *                    固定値ではなくこの学習値を返す。熟慮層が dwell 経験から
- *                    nudge する (REFLEX_CONSERVE_MIN..MAX)。
+ * learned_conserve : 反射の CONSERVE 効きの強さ (= 脅威軸へ載せる強度)。
+ *                    reflex_threat_level() が固定値ではなくこの学習値を返す。
+ *                    熟慮層が dwell 経験から nudge する (REFLEX_CONSERVE_MIN..MAX):
+ *                    脅威が長く滞留した = 応援が足りない → 効きを上げて rally を
+ *                    強める。これは flee を速める方向ではなく rally を強める方向。
  * threat_run       : いま連続して観測している脅威の長さ (= 進行中の dwell)。
  * win_dwell_sum/   : 熟慮の窓で観測した「脅威エピソードの dwell」の合計と本数。
  *   win_episodes     1 エピソード = 脅威が立ち上がってから normal に戻るまで。 */
@@ -298,12 +301,13 @@ BOOL reflex_is_shielded(void)
     return TRUE;
 }
 
-UB reflex_pressure_bias(void)
+UB reflex_threat_level(void)
 {
     if (!enabled || conserve_until == 0) return 0;
     if (now_ms() >= conserve_until) return 0;
-    /* 固定値ではなく熟慮層が学習した効きを返す (§9 G18)。CONSERVE→pressure→
-     * §7 ゲートの負帰還ループの *ゲイン* がこれで経験から調律される。 */
+    /* 固定値ではなく熟慮層が学習した効きを返す (§9 G18)。CONSERVE→threat→
+     * §7 ゲート (加点) →近傍 rally の負帰還ループの *ゲイン* がこれで経験から
+     * 調律される。【G20】かつては pressure (load 軸) へ流れて避ける符号だった。 */
     return learned_conserve;
 }
 
@@ -465,8 +469,8 @@ static void print_stat(void)
     } else rf_puts("off");
     rf_puts("\r\n  CONSERVE : ");
     if (conserve_until && now < conserve_until) {
-        rf_puts("ACTIVE pressure+"); rf_putdec(reflex_pressure_bias());
-        rf_puts(" ("); rf_putdec((conserve_until - now) / 1000 + 1);
+        rf_puts("ACTIVE threat+"); rf_putdec(reflex_threat_level());
+        rf_puts(" (rally; "); rf_putdec((conserve_until - now) / 1000 + 1);
         rf_puts("s left)");
     } else rf_puts("off");
     rf_puts("\r\n  danger streak : "); rf_putdec(danger_streak); rf_puts("\r\n");
@@ -497,19 +501,21 @@ static void print_stat(void)
 /* test` から呼び、CI が PASS 行を grep する (moe test / pfs / hrw と同  */
 /* 方式)。                                                              */
 /*                                                                     */
-/*  B 負帰還の収束: 行動(CONSERVE)が知覚(pressure)を変え、§7 ゲートが    */
-/*    負荷を再分配して脅威を鎮める「一周」を回す。ループ有り(bias>0)では */
-/*    外乱(脅威 burst)が *減衰して定常へ収束* し、ループ無し=フィード     */
-/*    フォワード(bias=0, 行動が知覚に戻らない)では脅威が長く滞留すること */
-/*    を、脅威 dwell / 整定時間 / 残留分散 / 再励起回数 で示す。          */
+/*  B 負帰還の収束 (rally): 行動(CONSERVE)が脅威軸(threat)を立て、§7 ゲート */
+/*    が群れを脅威ノードへ集束させ(rally aid)脅威を鎮める「一周」を回す。  */
+/*    ループ有り(gain>0)では外乱(脅威 burst)が *減衰して定常へ収束* し、    */
+/*    ループ無し=フィードフォワード(gain=0, 脅威信号を出さない=応援を呼ば   */
+/*    ない)では脅威が長く滞留することを、脅威 dwell / 整定時間 / 残留分散 /  */
+/*    再励起回数 で示す。【G20】鎮静は P が仕事を手放す(flee)のではなく、    */
+/*    近傍 aid が外から backlog を削る(rally)結果である(lp_run 参照)。       */
 /*  C 熟慮→学習→反射: 蓄積した dwell 経験から本番 reflex_deliberate() が  */
 /*    learned_conserve を学習し、指標(dwell)が時間とともに改善すること、  */
 /*    学習 off では改善しないことを示す。                                */
 /*                                                                     */
 /* §7 ゲートの効用は本番 moe_expert_utility をそのまま使う(重複定義なし)。*/
-/* CONSERVE→pressure の注入は本番 world.c compute_pressure と同じ        */
-/* `pressure += bias` 加法 (LP_NBR_PRESS は隣の余裕、bias は自ノードの    */
-/* 収縮)。すべて純ローカル整数計算・小スタックでベアメタルでも走る。     */
+/* threat 軸の注入は本番 world.c (WORLD_BEACON.threat = reflex_threat_level)*/
+/* と同じ経路 (gain は自ノードの脅威強度、LP_HOME は近傍が留まる対抗負荷)。 */
+/* すべて純ローカル整数計算・小スタックでベアメタルでも走る。            */
 /* ================================================================== */
 
 /* 符号付き10進 (iae/utility が負になり得る箇所用)。 */
@@ -519,29 +525,40 @@ static void rf_putsdec(W v)
     rf_putdec((UW)v);
 }
 
-/* ── 閉ループ プラント (負帰還の最小モデル) ───────────────────────────
- * 状態 L = 自ノードの過負荷 (脅威を誘発する観測量 = 「知覚」)。
- * 一周:  外乱で L↑ → 脅威 class を知覚 → reflex CONSERVE が pressure に
- *        +bias (行動が知覚を変える) → §7 ゲート (本番 moe_expert_utility)
- *        が「隣の方が空いている」と判断し負荷を offload → L↓ → 脅威が鎮まる。
- * bias=0 はフィードフォワード (行動が知覚へ戻らない = 負帰還が開いている)。
+/* ── 閉ループ プラント (負帰還の最小モデル) — G20 後は *rally* ループ ──────
+ * 状態 L = 脅威ノード P が抱える「守るべき仕事 (backlog)」= 制御量。
+ * 一周:  外乱で L↑ → 脅威 class を知覚 → reflex CONSERVE が *脅威軸* (threat)
+ *        を立てる (行動) → §7 ゲート (本番 moe_expert_utility) で P の utility
+ *        が threat ぶん *加点* される → 近傍が「あそこへ寄ろう」と判断し
+ *        rally → 近傍の aid が P の backlog を *外から* 削る → L↓ → 脅威鎮静。
+ *
+ *  ── G20 修正の核心 (符号の向き) ─────────────────────────────────────
+ *    旧プラントは CONSERVE→自 pressure↑→「隣の方が空く」→`L -= SHED`
+ *    だった = P が *自分の仕事を手放して* dwell を縮める = flee (§2 の真逆)。
+ *    新プラントは threat→P の utility↑→「あそこへ寄ろう」→近傍 aid が入って
+ *    `L -= rally` = P は守るべき仕事を *保持したまま* 外から助けられる = rally。
+ *    符号が逆 (脅威を引き算) だと u_protected が下がり近傍は寄らず、aid が
+ *    入らず dwell が縮まない → loop ON/OFF が区別できず下の assert が落ちる
+ *    = テストが本当に「寄る符号」を検査している。
+ *
+ * gain=0 はフィードフォワード (脅威信号を出さない = 応援を呼ばない = 環が開く)。
  *
  * 出力: *dwell  = 脅威 (L>=ALERT) だった tick 数
  *       *iae    = Σ|L| (定常からの逸脱の積分; 小さいほど良く制御された)
  *       *settle = 最後に脅威だった tick の次 (整定時間; 小さいほど速い)
  *       *reexc  = 一度 ALERT を下回った後の再励起回数 (発振の指標; 0=収束)
  *       *tailvar= 末尾 1/4 区間の L の分散×4 (定常残留; 0=完全収束) */
-#define LP_NBR_PRESS  15    /* 隣ノードの余裕 (FULL degrade base 相当) */
-#define LP_ACC        70    /* 両 expert 同一の賢さ (純粋に負荷勾配で競う) */
+#define LP_HOME       30    /* 近傍が「手元に留まる」ときの自己負荷 (rally の対抗) */
+#define LP_ACC        70    /* 両候補同一の賢さ (純粋に符号で競う)        */
 #define LP_THR_ALERT  22    /* L>=これで脅威 (alert)                      */
 #define LP_INFLOW      4    /* burst 中に毎 tick 流入する外乱             */
-#define LP_SHED       10    /* offload された tick に減る負荷             */
+#define LP_AID_MAX     3    /* 1 tick に近傍 aid が削れる backlog の上限   */
 #define LP_DECAY       1    /* 自然完了による緩やかな減少 (背景)         */
 #define LP_HOLD        8    /* CONSERVE のヒステリシス保持 (§8 反射の hold) */
 #define LP_BURST      10    /* 外乱 burst の長さ (tick)                   */
 #define LP_T          40    /* 観測ホライズン (tick)                     */
 
-static void lp_run(W bias, INT *dwell, W *iae, INT *settle,
+static void lp_run(W gain, INT *dwell, W *iae, INT *settle,
                    INT *reexc, W *tailvar)
 {
     W   L = 0;
@@ -554,28 +571,36 @@ static void lp_run(W bias, INT *dwell, W *iae, INT *settle,
     W   ts = 0, tss = 0; INT tn = 0;
 
     for (INT t = 0; t < LP_T; t++) {
-        if (t < LP_BURST) L += LP_INFLOW;             /* 外乱 (知覚を乱す) */
+        if (t < LP_BURST) L += LP_INFLOW;             /* 外乱 (backlog を積む) */
 
         int above = (L >= LP_THR_ALERT);              /* 脅威 class>=1 を知覚 */
         if (above) {
             dw++; last_above = t;
-            if (bias > 0) hold = LP_HOLD;             /* 行動: CONSERVE engage */
+            if (gain > 0) hold = LP_HOLD;             /* 行動: CONSERVE engage */
             if (prev_above == 0 && dropped) re++;     /* 再励起 (発振) */
         }
         prev_above = above;
         if (!above && last_above >= 0) dropped = 1;   /* 一度は鎮まった */
 
-        /* 知覚 = pressure。行動(CONSERVE)が eff(>0)の間だけ +bias で *知覚を
-         * 変える* = 負帰還を閉じる。bias=0 ならこの経路が無い=フィードフォワード。 */
+        /* 行動 = 脅威軸を立てる。CONSERVE が engage している間だけ threat=gain。
+         * gain=0 はフィードフォワード (脅威信号が出ない = 応援を呼ばない)。 */
         int conserve = (hold > 0);
-        W   p_self   = L + (conserve ? bias : 0);
+        W   thr      = conserve ? gain : 0;
         if (hold > 0) hold--;
 
-        /* §7 ゲート: 本番 moe_expert_utility で「自分 vs 隣」を比較。
-         * 隣が MOE_SWITCH_MARGIN を超えて勝れば offload (負荷を隣へ流す)。 */
-        W u_self = moe_expert_utility(LP_ACC, 0, (INT)p_self, 0);
-        W u_nbr  = moe_expert_utility(LP_ACC, 0, LP_NBR_PRESS, 0);
-        if (u_nbr > u_self + MOE_SWITCH_MARGIN) L -= LP_SHED;   /* 行動の結果 */
+        /* §7 ゲート (本番 moe_expert_utility): 「脅威ノード P (threat 加点)」と
+         * 「手元に留まる近傍 (LP_HOME)」を比較。threat が強いほど P が勝ち、
+         * 近傍が rally → その差ぶん (上限 LP_AID_MAX) の aid が P の backlog を
+         * 外から削る。P は仕事を手放さない (flee ではなく rally)。 */
+        W u_protected = moe_expert_utility(LP_ACC, 0, (INT)L,   (INT)thr, 0);
+        W u_home      = moe_expert_utility(LP_ACC, 0, LP_HOME,  0,        0);
+        if (thr > 0) {
+            W rally = u_protected - (u_home + MOE_SWITCH_MARGIN);  /* 寄る余地 */
+            if (rally > 0) {
+                if (rally > LP_AID_MAX) rally = LP_AID_MAX;
+                L -= rally;                  /* 近傍 aid が backlog を外から削る */
+            }
+        }
 
         L -= LP_DECAY;
         if (L < 0) L = 0;
@@ -606,11 +631,11 @@ static INT rf_test_feedback(void)
     lp_run(0,                        &d_off, &i_off, &s_off, &r_off, &v_off); /* feedforward */
 
     rf_puts("[reflex-fb] disturbance burst, identical except action->perception path:\r\n");
-    rf_puts("[reflex-fb]  loop ON  (CONSERVE feeds pressure): dwell=");
+    rf_puts("[reflex-fb]  loop ON  (CONSERVE->threat->rally aid):  dwell=");
     rf_putdec((UW)d_on); rf_puts(" settle="); rf_putdec((UW)s_on);
     rf_puts(" iae="); rf_putsdec(i_on); rf_puts(" reexc="); rf_putdec((UW)r_on);
     rf_puts(" tailvar="); rf_putsdec(v_on); rf_puts("\r\n");
-    rf_puts("[reflex-fb]  loop OFF (feedforward, no fb):       dwell=");
+    rf_puts("[reflex-fb]  loop OFF (feedforward, no rally):     dwell=");
     rf_putdec((UW)d_off); rf_puts(" settle="); rf_putdec((UW)s_off);
     rf_puts(" iae="); rf_putsdec(i_off); rf_puts(" reexc="); rf_putdec((UW)r_off);
     rf_puts(" tailvar="); rf_putsdec(v_off); rf_puts("\r\n");

@@ -511,7 +511,7 @@ EXPORT INT usermain(void)
     world_init();
     /* Reflex layer (§8) — thought->action wiring. The reflex_task itself
      * starts in cmd_net once the node ID is known; here we just clear state
-     * so reflex_is_shielded()/reflex_pressure_bias() are safe pre-mesh. */
+     * so reflex_is_shielded()/reflex_threat_level() are safe pre-mesh. */
     reflex_init();
     /* p-fs P1 — region-scoped block replication. Opens its control
      * topics + chunk port and hooks pfs_put; must follow pmesh_init()

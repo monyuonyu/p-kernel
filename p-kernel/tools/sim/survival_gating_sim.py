@@ -221,6 +221,143 @@ def spark(series):
     return "".join(BARS[min(7, int((v - lo) / (hi - lo) * 7.999))] for v in series)
 
 
+# ----------------------------------------------------------------------------
+# §2 脅威軸 (THREAT/PROTECT) — 守る対象へ全網の力を「注ぐ」(G20)
+# ----------------------------------------------------------------------------
+# 上の load 軸 (busy→idle の拡散) は正しいが「忙しい」だけを扱う。survival §2 は
+# 「危ない/守るべき一点」へ群れが *集束* する (rally) ことを要求する。第13波で
+# カーネル moe.c は pressure を *2 軸* に分けた:
+#     load   → utility から *引く* (混んでいる→送るな = 避ける)     [正しい]
+#     threat → utility に *足す* (危ない→守れ   = 寄る)             [G20 修正]
+# このゲート効用関数は arch/common/moe.c::expert_utility と *同じ整数式* を写す。
+# 定数がカーネルと黙ってズレないよう、ここに本物の #define 値を併記する:
+#     MOE_PRESS_NUM/DEN   = 1/2  (load ペナルティ ゲイン 0.5)   — arch/common/include/moe.h
+#     MOE_PROTECT_NUM/DEN = 1/1  (threat ボーナス ゲイン 1.0)   — arch/common/include/moe.h
+#     MOE_SWITCH_MARGIN   = 12   (乗り換えデッドバンド = §8 ヒステリシス)
+#     MOE_SAME_REGION_BONUS = 5
+# threat は gossip 帯域 (WORLD_BEACON_MS) の遅い信号なので、load のような毎決定の
+# 殺到発振を起こさない。乗り換えは margin デッドバンドが安定化する (§8)。
+MOE_PRESS_NUM,   MOE_PRESS_DEN   = 1, 2
+MOE_PROTECT_NUM, MOE_PROTECT_DEN = 1, 1
+MOE_SWITCH_MARGIN     = 12
+MOE_SAME_REGION_BONUS = 5
+
+def gate_utility(acc, load, threat, same_region=0, rtt_ms=0):
+    """arch/common/moe.c::expert_utility と同じ整数式。load は引き、threat は足す。"""
+    u = acc
+    u -= rtt_ms // 20
+    u -= (load   * MOE_PRESS_NUM)   // MOE_PRESS_DEN     # 負荷: 避ける (−)
+    u += (threat * MOE_PROTECT_NUM) // MOE_PROTECT_DEN   # 脅威: 寄る   (+)
+    if same_region:
+        u += MOE_SAME_REGION_BONUS
+    return u
+
+
+def run_threat_axis(rule, T=14, V0=40.0, p_cap=4.0, help_cap=8.0,
+                    helpers=4, home=15.0, threat=40.0, shed=10.0):
+    """脅威ノード P が「守るべき仕事 V0」を抱える。1 規則ぶんを T tick 回す。
+
+    rule="protect": threat を *脅威軸* へ (本番カーネル)。
+    rule="naive"  : threat を *負荷軸* へ畳む (= G20 のバグ; 脅威==混雑)。
+
+    返り: dict(held, rallied, survived, lost) の時系列 + 最終 survived%/lost%。
+      held    = まだ P が保持している守るべき仕事 (backlog)
+      rallied = この tick に P へ寄った近傍数 (応援)
+      survived= P の管理下で処理し終えた累計 (= 守れた)
+      lost    = P から逃がして散逸した累計 (= flee で失われた)
+    決定は本番 gate_utility のみで下す。中央配列を読む行は無い (NO-CENTRAL)。
+    """
+    held = V0
+    survived = 0.0
+    lost = 0.0
+    hist = {"held": [], "rallied": [], "survived": [], "lost": []}
+    for _ in range(T):
+        # P の局所負荷 (= 抱えている守るべき仕事)。
+        load_P = held
+        if rule == "naive":      # 脅威を負荷へ畳む (避ける符号; 倒錯)
+            u_P_self = gate_utility(70, load_P + threat, 0)   # P 自身が見る自分
+            u_P_peer = gate_utility(70, load_P + threat, 0)   # 近傍が見る P
+        else:                    # 脅威を脅威軸へ (寄る符号; §2)
+            u_P_self = gate_utility(70, load_P, threat)
+            u_P_peer = gate_utility(70, load_P, threat)
+        u_alt  = gate_utility(70, home, 0)    # 「手放す/手元に留まる」対抗候補
+
+        # (A) P は守るべき仕事を保持するか手放すか (deadband: 現職=keep)。
+        if u_alt > u_P_self + MOE_SWITCH_MARGIN:
+            chunk = min(held, shed)
+            held -= chunk
+            lost += chunk          # flee: 仕事が P を離れ散逸 = 守れなかった
+        # (B) 近傍は P へ寄るか避けるか。寄った数ぶん実効処理能力が上がる。
+        rallied = helpers if (u_P_peer > u_alt + MOE_SWITCH_MARGIN) else 0
+        service = p_cap + rallied * help_cap
+        done = min(held, service)
+        held -= done
+        survived += done           # P の管理下で完遂 = 守れた
+
+        hist["held"].append(held)
+        hist["rallied"].append(rallied)
+        hist["survived"].append(survived)
+        hist["lost"].append(lost)
+    total = survived + lost
+    hist["survived_pct"] = 100.0 * survived / V0
+    hist["lost_pct"]     = 100.0 * lost / V0
+    hist["final_rallied"] = hist["rallied"][-1]
+    return hist
+
+
+def report_threat_axis():
+    print("=" * 74)
+    print(" §2 脅威軸 — 守る対象へ全網の力を「注ぐ」 (G20 符号分離の検証)")
+    print(" survival-network.md §2 / philosophy-gap-audit-3.md G20")
+    print("=" * 74)
+    print(" 脅威ノード P が守るべき仕事 V0=40 を抱える。2 規則を同条件で比較:")
+    print("   naive   : 脅威を *負荷軸* へ畳む (threat==load; G20 のバグ=避ける符号)")
+    print("   protect : 脅威を *脅威軸* へ流す (本番 moe.c; 寄る符号 §2)")
+    print(" ゲート判断は本番と同じ gate_utility のみ (load は引く / threat は足す)。")
+    print()
+
+    naive   = run_threat_axis("naive")
+    protect = run_threat_axis("protect")
+
+    def row(tag, h):
+        print(f" [{tag}]")
+        print(f"   held@P    {spark(h['held'])}  (V0=40 -> end {h['held'][-1]:5.1f})")
+        print(f"   rallied   {spark(h['rallied'])}  (helpers toward P; end {h['final_rallied']})")
+        print(f"   survived% {h['survived_pct']:5.1f}   lost%(fled) {h['lost_pct']:5.1f}")
+        print()
+    row("naive  (threat==load)  → flee", naive)
+    row("protect (threat axis)  → rally", protect)
+
+    # 近傍の力の向きを ASCII で「見える」化 (可視化=観測; 画像ではない)。
+    def neighbourhood(rallied):
+        # rally なら近傍の力は P へ *内向き*、避けるなら P の仕事は *外向き*。
+        if rallied > 0:
+            return ("   . v .        近傍 -> P : 全網の力が一点へ集束 (rally §2)\n"
+                    "   > P <\n"
+                    "   . ^ .")
+        return ("   . ^ .        P -> 近傍 : 守るべき仕事が散逸 (flee; §2 の真逆)\n"
+                "   < P >\n"
+                "   . v .")
+    print(" 近傍の力の向き (final tick):")
+    print("  naive:")
+    print(neighbourhood(naive["final_rallied"]))
+    print("  protect:")
+    print(neighbourhood(protect["final_rallied"]))
+    print()
+
+    ok = (protect["survived_pct"] >= 99.0 and naive["survived_pct"] < 60.0
+          and protect["final_rallied"] > naive["final_rallied"]
+          and naive["final_rallied"] == 0)
+    verdict = "PASS" if ok else "FAIL"
+    print(f" 判定 [{verdict}]: protect は守れた {protect['survived_pct']:.0f}% "
+          f"(rally) / naive は守れた {naive['survived_pct']:.0f}% "
+          f"(残りは flee で散逸)。")
+    print(" 構造的担保: 判断は gate_utility (局所の load/threat 勾配) のみ。")
+    print(" 脅威==負荷の倒錯では群れが守る対象から逃げ、二軸分離で初めて寄る。")
+    print()
+    return ok
+
+
 def main():
     G = 26
     # 同時多発の危機(§5): 鋭い一点集中。1ノードへ独力では捌けない量を同時注入する。
@@ -298,6 +435,10 @@ def main():
     print()
     print(" 構造的担保: ルーティング判断 Grid.step_mutual_aid() が読むのは")
     print(" self.neigh[i] と近傍の pressure のみ。大域状態を見る行は存在しない=中央なし。")
+    print()
+
+    # §2 脅威軸 (G20): load 軸とは別の「寄る」符号を検証する。
+    report_threat_axis()
 
 
 if __name__ == "__main__":
