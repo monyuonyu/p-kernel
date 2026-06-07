@@ -149,15 +149,21 @@ static UW delib_at_ms   = 0;   /* 最後の熟慮層更新の時刻             
 static UW delib_count   = 0;   /* 熟慮層更新の回数 (0 = まだ)              */
 
 /* locality-gradient 効用 (§7): 賢さ(accuracy) から 近さ(RTT) と 余力(pressure)
- * のペナルティを引く。pressure は world ビーコンの *局所* 勾配信号 (§6)。
+ * のペナルティを引き、脅威(threat) を *加点* する。
+ *   - pressure (負荷軸 §6): world ビーコンの局所勾配。高い=混んでいる→引く(避ける)。
+ *   - threat   (脅威軸 §2): 候補自身が gossip した「危険/守るべき状態」信号。
+ *     高い=守るべき一点→足す(寄る)。load とは逆符号 = 群れが threatened node へ
+ *     集束する (G20 修正: かつては threat も pressure へ畳まれて避ける符号だった)。
  * 同 region なら反射層 (§8) を優先してわずかに加点。
  * すべて局所窓口だけを読み、中央/グローバルなオラクルは見ない。 */
-static W expert_utility(UB accuracy, UW rtt_ms, INT eff_pressure, int same_region)
+static W expert_utility(UB accuracy, UW rtt_ms, INT eff_pressure, INT threat,
+                        int same_region)
 {
     if (rtt_ms == 0xFFFFFFFFUL) rtt_ms = MOE_RTT_UNKNOWN_MS;  /* 未実測 */
     W u = (W)accuracy;
     u -= (W)(rtt_ms / MOE_RTT_MS_PER_POINT);
-    u -= (W)((eff_pressure * MOE_PRESS_NUM) / MOE_PRESS_DEN);
+    u -= (W)((eff_pressure * MOE_PRESS_NUM) / MOE_PRESS_DEN);   /* 負荷: 避ける */
+    u += (W)((threat * MOE_PROTECT_NUM) / MOE_PROTECT_DEN);     /* 脅威: 寄る   */
     if (same_region) u += MOE_SAME_REGION_BONUS;
     return u;
 }
@@ -165,11 +171,12 @@ static W expert_utility(UB accuracy, UW rtt_ms, INT eff_pressure, int same_regio
 /* 公開ラッパー: 閉ループの負帰還を「測れる形」で検証するため、§7 ゲートの
  * 効用関数そのものを reflex.c の自己テストへ開く (重複定義を作らない)。
  * これで closed-loop self-test の「行動→知覚→ゲート」の知覚→ゲート部が
- * 本番と同一の数式で回る (reflex の CONSERVE→pressure は本番 world.c の
- * compute_pressure と同じ `+pressure_bias` で注入される)。 */
-W moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, int same_region)
+ * 本番と同一の数式で回る (脅威軸は world.c の WORLD_BEACON.threat /
+ * world_peer_threat と同じ経路で注入される)。 */
+W moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, INT threat,
+                     int same_region)
 {
-    return expert_utility(accuracy, rtt_ms, pressure, same_region);
+    return expert_utility(accuracy, rtt_ms, pressure, threat, same_region);
 }
 
 /* 実効逼迫度 = ゴシップされたビーコン値 (熟慮帯域の遅い信号; 未知なら中庸)
@@ -182,6 +189,18 @@ static INT eff_pressure(UB n)
     INT press = world_peer_pressure(n);
     INT base  = (press < 0) ? MOE_PRESS_UNKNOWN : press;
     return base + (INT)recent_pick[n];
+}
+
+/* 候補ノードの脅威度 (THREAT 軸 §2)。候補 *自身* が gossip した「危険/守るべき
+ * 状態を抱えている」信号 (world_peer_threat = WORLD_BEACON.threat = reflex の
+ * CONSERVE が立てる)。これが expert_utility で *加点* され、群れの計算がその
+ * 候補へ集束する (rally)。未知/未受信なら 0 (脅威なしと保守的に扱う)。
+ * recent_pick のような自己仮想負荷は載せない — 脅威は load と別物。 */
+static INT eff_threat(UB n)
+{
+    if (n >= DNODE_MAX) return MOE_THREAT_UNKNOWN;
+    INT thr = world_peer_threat(n);
+    return (thr < 0) ? MOE_THREAT_UNKNOWN : thr;
 }
 
 /* utility EWMA を 1 サンプル進める (α=1/MOE_UTIL_EWMA_DIV; swim.c の
@@ -254,8 +273,12 @@ static UB select_expert(UB gate_class)
         /* 負荷項は world ビーコン (ゴシップされた局所勾配) + 自己仮想負荷。
          * broadcast score table はここでは負荷の真実として使わない (§7)。 */
         INT eff  = eff_pressure(n);
+        /* 脅威項 (THREAT 軸 §2): 候補自身の「危険/守るべき」信号。自分なら
+         * reflex から直読 (gossip 遅延ゼロ)、ピアなら局所 world-table の gossip。
+         * load とは逆符号で *加点* され、群れがその一点へ集束する (rally)。 */
+        INT thr  = is_self ? (INT)reflex_threat_level() : eff_threat(n);
         int same = is_self ? 1 : (region_is_member(n) ? 1 : 0);
-        W   u    = expert_utility(acc, rtt, eff, same);
+        W   u    = expert_utility(acc, rtt, eff, thr, same);
 
         util_ewma[n][gate_class] = ewma_valid[n][gate_class]
                                  ? ewma_step(util_ewma[n][gate_class], u) : u;
@@ -267,6 +290,8 @@ static UB select_expert(UB gate_class)
         mo_puts(" acc="); mo_putdec(acc);
         mo_puts(" rtt="); mo_putdec(rtt == 0xFFFFFFFFUL ? MOE_RTT_UNKNOWN_MS : rtt);
         mo_puts("ms press="); mo_putdec((UW)eff);
+        mo_puts(" thr="); mo_putdec((UW)thr);
+        if (thr > 0) mo_puts("(RALLY)");
         mo_puts(same ? " rgn" : "    ");
         mo_puts(" util="); mo_putsdec(u);
         mo_puts(" ewma="); mo_putsdec(e);
@@ -590,7 +615,7 @@ static INT st_test_nocentral(void)
     for (INT obs = 0; obs < 3; obs++) {
         W u[3];
         for (INT e = 0; e < 3; e++)
-            u[e] = expert_utility(acc, 0, press[obs][e], 0);
+            u[e] = expert_utility(acc, 0, press[obs][e], 0, 0);   /* threat=0: 純負荷軸 */
         pick[obs] = (UB)st_argmax(u, 3);
         mo_puts("[moe-nocentral] obs"); mo_putdec((UW)obs);
         mo_puts(" local-press=["); mo_putdec((UW)press[obs][0]);
@@ -720,7 +745,7 @@ static INT st_herd(INT stabilized, UW *switches_out)
         /* 瞬間 utility = 本番 expert_utility (賢さ - 負荷勾配)。 */
         W u[3];
         for (INT n = 0; n < M; n++)
-            u[n] = expert_utility(acc, 0, (INT)load[n], 0);
+            u[n] = expert_utility(acc, 0, (INT)load[n], 0, 0);   /* threat=0: 純負荷軸 */
         UB pick;
         if (stabilized) {
             pick = st_reflex_step(u, M, ewma, ev, &inc);   /* EWMA+デッドバンド */
@@ -776,7 +801,7 @@ static void st_class_util(INT cls, W out[3])
 {
     /* クラス c では候補 c が最良 (賢さ高)。クラスごとに勝者が違う。 */
     for (INT n = 0; n < 3; n++)
-        out[n] = expert_utility((UB)(n == cls ? 90 : 50), 0, 0, 0);
+        out[n] = expert_utility((UB)(n == cls ? 90 : 50), 0, 0, 0, 0);
 }
 
 static INT st_test_concurrent(void)
@@ -835,16 +860,127 @@ static INT st_test_concurrent(void)
     return fails;
 }
 
-/* 公開エントリ: 4 本の性質テストを順に走らせ、合計 fail 数を返す。
+/* ── G20: 符号の分離 — 脅威時は flee でなく rally (survival §2) ──────────
+ * 「守る対象へ全網の力を *注ぐ*」を *数で* 守る。脅威ノード P が守るべき仕事を
+ * 抱えているとき:
+ *   (A) P 自身は仕事を手放す (flee) のではなく保持する (hold)。
+ *   (B) 近傍は P を避ける (load 符号) のではなく P へ寄る (rally; aid を送る)。
+ *
+ * 同一シナリオを 2 つの規則で回し、本番 expert_utility + deadband_pick
+ * (st_reflex_step 経由) をそのまま使う:
+ *   - naive  "threat==load": 脅威を *負荷軸* へ畳む (= G20 のバグ; 避ける符号)。
+ *   - protect (本番)        : 脅威を *脅威軸* へ流す (= 加点; 寄る符号)。
+ * 符号が逆 (脅威を引き算) だと protect 側の P は flee し近傍は avoid して
+ * 下の assert が落ちる = テストが本当に新コードパスを検査している。 */
+#define PT_THREAT   40   /* P の脅威度 (reflex CONSERVE 相当)            */
+#define PT_LOAD     30   /* P/N が抱える仕事 (守るべき状態; 両者同一)    */
+#define PT_ACC      70   /* 賢さは同一 (純粋に符号で競う)                 */
+#define PT_T        8    /* EWMA/デッドバンドを定常へ運ぶ決定回数        */
+
+/* 1 規則ぶんを回す。incumbent0 = この決定の現職 (A は keep=self, B は home)。
+ * 返り: keep_or_aid = 「P を選んだ (= hold / rally)」回数。 */
+static INT pt_run(int protect, int axisB, UB inc0)
+{
+    /* 候補0 = (A) P が自分の仕事を保持 / (B) 近傍が P へ寄る。
+     * 候補1 = (A) P が隣へ手放す       / (B) 近傍が手元に留まる。   */
+    W   ew[2] = { 0, 0 }; UB ev[2] = { 0, 0 }; UB inc = inc0;
+    INT chose0 = 0;
+    (void)axisB;
+    for (INT t = 0; t < PT_T; t++) {
+        /* 候補0 = 脅威ノード P。naive は脅威を負荷へ畳む (press += threat,
+         * 脅威軸 0)。protect は脅威を脅威軸へ (press は素の負荷, threat=PT)。 */
+        W u0 = protect
+             ? moe_expert_utility(PT_ACC, 0, PT_LOAD,            PT_THREAT, 0)
+             : moe_expert_utility(PT_ACC, 0, PT_LOAD + PT_THREAT, 0,        0);
+        /* 候補1 = 脅威でない側 (素の負荷のみ)。 */
+        W u1 = moe_expert_utility(PT_ACC, 0, PT_LOAD, 0, 0);
+        W inst[2] = { u0, u1 };
+        UB pick = st_reflex_step(inst, 2, ew, ev, &inc);
+        if (pick == 0) chose0++;
+    }
+    return chose0;
+}
+
+static INT st_test_protect(void)
+{
+    INT fails = 0;
+
+    /* 符号の生の確認: protect は脅威で +、naive は脅威で − (倒錯)。 */
+    W u_protect = moe_expert_utility(PT_ACC, 0, PT_LOAD, PT_THREAT, 0);
+    W u_naive   = moe_expert_utility(PT_ACC, 0, PT_LOAD + PT_THREAT, 0, 0);
+    W u_safe    = moe_expert_utility(PT_ACC, 0, PT_LOAD, 0, 0);
+    mo_puts("[moe-protect] threatened-node utility  protect=");
+    mo_putsdec(u_protect); mo_puts(" naive(threat==load)=");
+    mo_putsdec(u_naive); mo_puts(" safe-peer="); mo_putsdec(u_safe);
+    mo_puts(" (threat="); mo_putdec(PT_THREAT); mo_puts(")\r\n");
+
+    /* (A) P は守るべき仕事を保持するか (hold) / 手放すか (flee)。
+     * incumbent = keep(self,0): デッドバンドは現状維持寄り。 */
+    INT keep_protect = pt_run(1, 0, 0);   /* protect: hold を期待   */
+    INT keep_naive   = pt_run(0, 0, 0);   /* naive  : flee を期待   */
+    INT flee_protect = PT_T - keep_protect;
+    INT flee_naive   = PT_T - keep_naive;
+    mo_puts("[moe-protect] (A) own protected work:  protect keeps ");
+    mo_putdec((UW)keep_protect); mo_puts("/"); mo_putdec((UW)PT_T);
+    mo_puts(" (flee "); mo_putdec((UW)flee_protect);
+    mo_puts(")   naive keeps "); mo_putdec((UW)keep_naive);
+    mo_puts("/"); mo_putdec((UW)PT_T);
+    mo_puts(" (flee "); mo_putdec((UW)flee_naive); mo_puts(")\r\n");
+
+    /* (B) 近傍は P へ寄るか (rally→aid) / 避けるか (avoid)。
+     * incumbent = home(1): 既定は手元に留まる。寄るには margin 超えが要る。 */
+    INT aid_protect = pt_run(1, 1, 1);    /* protect: rally を期待  */
+    INT aid_naive   = pt_run(0, 1, 1);    /* naive  : avoid を期待  */
+    mo_puts("[moe-protect] (B) neighbour routing:   protect rallies ");
+    mo_putdec((UW)aid_protect); mo_puts("/"); mo_putdec((UW)PT_T);
+    mo_puts(" toward P   naive rallies "); mo_putdec((UW)aid_naive);
+    mo_puts("/"); mo_putdec((UW)PT_T); mo_puts("\r\n");
+
+    /* (1) 符号が逆: protect は脅威で utility が上がり、naive は下がる。 */
+    if (!(u_protect > u_safe && u_naive < u_safe)) {
+        mo_puts("[moe-protect] FAIL sign not separated (threat must add, not subtract)\r\n");
+        fails++;
+    }
+    /* (2) P は守るべき仕事を保持する (rally; flee しない)。 */
+    if (!(keep_protect == PT_T)) {
+        mo_puts("[moe-protect] FAIL threatened node did not hold its protected work\r\n");
+        fails++;
+    }
+    /* (3) naive 規則では P は仕事を手放す (flee; 対照)。 */
+    if (!(flee_naive >= 1)) {
+        mo_puts("[moe-protect] FAIL naive rule did not flee (control broken)\r\n");
+        fails++;
+    }
+    /* (4) 近傍は脅威ノードへ寄る (force を一点へ注ぐ §2)。 */
+    if (!(aid_protect >= 1 && aid_protect > aid_naive)) {
+        mo_puts("[moe-protect] FAIL neighbours did not rally toward threatened node\r\n");
+        fails++;
+    }
+    /* (5) naive 規則では近傍は脅威ノードを避ける (対照)。 */
+    if (!(aid_naive == 0)) {
+        mo_puts("[moe-protect] FAIL naive rule unexpectedly rallied\r\n");
+        fails++;
+    }
+
+    if (fails == 0)
+        mo_puts("[moe-protect] PASS (threat axis: protected node holds its work &"
+                " neighbours rally toward it; naive threat==load flees/avoids)\r\n");
+    else
+        mo_puts("[moe-protect] FAIL\r\n");
+    return fails;
+}
+
+/* 公開エントリ: 5 本の性質テストを順に走らせ、合計 fail 数を返す。
  * shell `moe test` から呼ばれ、CI は各 PASS 行を grep する。 */
 INT moe_self_test(void)
 {
     INT fails = 0;
-    mo_puts("[moe-test] ==== §7/§8 property tests (I7/I8/D0/§5) ====\r\n");
+    mo_puts("[moe-test] ==== §7/§8/§2 property tests (I7/I8/D0/§5/G20) ====\r\n");
     fails += st_test_nocentral();
     fails += st_test_twolayer();
     fails += st_test_oscillation();
     fails += st_test_concurrent();
+    fails += st_test_protect();
     if (fails == 0) mo_puts("[moe-test] ALL PASS\r\n");
     else { mo_puts("[moe-test] FAILURES="); mo_putdec((UW)fails);
            mo_puts("\r\n"); }

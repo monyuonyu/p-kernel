@@ -52,10 +52,11 @@ typedef struct {
     U1   node_id;       /* 発信ノード ID (0..DNODE_MAX-1)            */
     U1   device_type;   /* WORLD_DEV_*                              */
     U1   region_id;     /* 発信時の自 region ID (0xFF=未確立)       */
-    U1   pressure;      /* 逼迫度 0..100 (capacity 余力の逆 — §6)   */
+    U1   pressure;      /* 負荷軸 0..100 (LOAD; capacity 余力の逆 §6; 避ける) */
     U1   firing;        /* 発火ビットマスク (gate class ごと, §4)    */
     U1   region_size;   /* 自 region のメンバ数 (観測の補助)        */
-    U2   _pad;          /* 4 バイト境界揃え                          */
+    U1   threat;        /* 脅威軸 0..100 (THREAT; reflex CONSERVE §2; 寄る) */
+    U1   _pad;          /* 4 バイト境界揃え                          */
     U4   seq;           /* 発信ごとに増える単調シーケンス            */
 } __attribute__((packed)) WORLD_BEACON;   /* 12 bytes */
 
@@ -115,9 +116,16 @@ void world_print(void);
 BOOL world_peer_known(UB node);
 
 /* node の逼迫度 (0..100) を局所ビューから読む。未知なら -1。
- * これが §6 の応援・受援の勾配信号: 高いほど逼迫 (避ける)、
+ * これが §6 の応援・受援の勾配信号 (負荷軸 LOAD): 高いほど逼迫 (避ける)、
  * 低いほど余力あり (応援を引き受けられる)。 */
 INT  world_peer_pressure(UB node);
+
+/* node の脅威度 (0..100) を局所ビューから読む。未知なら -1 (= 脅威なし扱い)。
+ * これが §2 の一点集束の勾配信号 (脅威軸 THREAT; reflex CONSERVE が立てる):
+ * 高いほど「守るべき/危険」→ moe ゲートで *加点* され群れがそこへ寄る (rally)。
+ * load (world_peer_pressure) とは別軸・逆符号 (G20: 旧実装は両者を pressure
+ * 1 本に畳んで「脅威=避ける」の符号倒錯を起こしていた)。 */
+INT  world_peer_threat(UB node);
 
 /* node が gossip で広告した「自 region の coordinator ID (region_id)」を
  * 局所 world-table から読む。未知 / 未広告 (0xFF) なら -1 (wave 10, G2)。

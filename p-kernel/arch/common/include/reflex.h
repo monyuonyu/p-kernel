@@ -20,8 +20,13 @@
  *  ── アクションの実在性 (飾りの print ではない) ─────────────────────────
  *    SHIELD   : reflex_is_shielded() を立て、usermain が新規 selfc 実行 /
  *               genome 発芽を拒否する (攻撃下で未知コードを取り込まない)。
- *    CONSERVE : reflex_pressure_bias() を world ビーコンの pressure に上乗せ
- *               し、moe ゲートの局所勾配へ「受援不要・応援に出ない」を伝える。
+ *    CONSERVE : reflex_threat_level() を world ビーコンの *脅威軸* (threat) へ
+ *               載せる。これが moe ゲートで *加点* され (load とは逆符号)、
+ *               近傍の計算がこの一点へ集束する = 「守る対象へ全網の力を注ぐ」
+ *               (survival §2)。同時に自ノードのゲートでも自己効用が上がり、
+ *               脅威下でも守るべき仕事を手放さない (flee しない)。
+ *               【G20 修正】かつては pressure (load 軸) へ上乗せしていたため
+ *               「脅威 = 避けよ」の符号倒錯 = 群れが守る対象から逃げていた。
  *    BEACON   : K-DDS topic "reflex/alarm/<node>" へ脅威観測を即時 publish。
  *               隣の細胞が知る — ただし命令ではなく情報 (受信側が自分で判断)。
  */
@@ -62,10 +67,13 @@
 /* 確信度が低い推論では行動しない (confidence==0xFF=不明は許可)。 */
 #define REFLEX_CONF_MIN      40     /* 行動に要する最小 confidence (0..100) */
 
-/* CONSERVE 中に world ビーコンへ上乗せする pressure バイアス (0..100)。
- * これが moe の局所勾配に乗り、近傍ゲートが当ノードへの委譲を避ける。
+/* CONSERVE 中に world ビーコンの *脅威軸* (threat) へ載せる強度 (0..100)。
+ * これが moe ゲートで *加点* され (load とは逆符号)、近傍が当ノードへ寄る
+ * (rally; §2 一点集束) と同時に当ノード自身が守るべき仕事を保持する。
  * これは「初期値」であり、§9 熟慮層がこの効きの強さを経験から学習で動かす
- * (reflex_pressure_bias() は固定値ではなく learned_conserve を返す)。 */
+ * (reflex_threat_level() は固定値ではなく learned_conserve を返す)。
+ * 名は CONSERVE (収縮) のままだが、G20 後の *効果* は「避けさせる」ではなく
+ * 「寄せさせる/手放させない」。 */
 #define REFLEX_CONSERVE_PRESSURE 40
 
 /* ── G18 熟慮 → 学習 → 反射ループ (§9 経験から自分を書き換える環) ───────
@@ -137,10 +145,12 @@ void reflex_on_inference(UB threat_class, UB confidence, UB src_node);
  * TRUE のあいだ未知コードを取り込まない (攻撃下の遮蔽)。 */
 BOOL reflex_is_shielded(void);
 
-/* CONSERVE 照会 — world.c の compute_pressure() がビーコンへ上乗せする
- * pressure バイアス。CONSERVE 発火中は learned_conserve (学習値) を、
- * 非発火なら 0 を返す。 */
-UB reflex_pressure_bias(void);
+/* CONSERVE 照会 — world.c がビーコンの *脅威軸* (WORLD_BEACON.threat) へ
+ * 載せる脅威強度。CONSERVE 発火中は learned_conserve (学習値) を、非発火なら
+ * 0 を返す。moe ゲートはこれを *加点* (load の逆符号) し、群れが当ノードへ
+ * 集束する (§2)。【G20 修正】旧 reflex_pressure_bias() を改名: 効果が
+ * load 軸 (避ける) から threat 軸 (寄る) へ移ったことを名でも明示する。 */
+UB reflex_threat_level(void);
 
 /* G18 熟慮 tick: 蓄積した経験 (脅威 dwell 統計) から learned_conserve を
  * 学習で nudge する。reflex_task が遅い時定数 (REFLEX_DELIB_EVERY ポール) で

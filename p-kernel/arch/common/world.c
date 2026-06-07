@@ -20,7 +20,7 @@
 #include "region.h"
 #include "degrade.h"
 #include "moe.h"      /* MOE_NUM_CLASSES */
-#include "reflex.h"   /* CONSERVE: reflex_pressure_bias() を局所勾配へ上乗せ */
+#include "reflex.h"   /* CONSERVE: reflex_threat_level() を脅威軸ビーコンへ (G20) */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -147,13 +147,27 @@ static UB compute_pressure(void)
     for (INT c = 0; c < MOE_NUM_CLASSES; c++)
         if (my_firing & WORLD_FIRE_BIT(c)) fires++;
     UW p = (UW)base + (UW)fires * 12u;
-    /* §8 反射層 CONSERVE (収縮): reflex が危険を観測している間だけ、自ノードの
-     * 逼迫度を底上げする。これがビーコンで配られ moe ゲートの局所勾配に乗り、
-     * 近傍は当ノードへの委譲を避ける = 「受援不要・応援に出ない」(§6 応援・受援)。
-     * 反射が解除されればバイアスは 0 に戻る (ヒステリシスは reflex 側)。 */
-    p += (UW)reflex_pressure_bias();
+    /* 【G20】CONSERVE はもう load 軸 (pressure) へは載せない。脅威を pressure に
+     * 畳むと「脅威 = 避けよ」の符号倒錯になり、群れが守るべき一点から逃げる。
+     * reflex の脅威は別軸 (compute_threat / WORLD_BEACON.threat) で *寄る* 符号
+     * として配る。pressure はここでは純粋に「混んでいるか (load)」だけを表す。 */
     if (p > 100) p = 100;
     return (UB)p;
+}
+
+/* ------------------------------------------------------------------ */
+/* threat — このノードの脅威度 (0..100) を局所情報から導出 (§2)        */
+/*                                                                     */
+/* load (compute_pressure) と独立した *脅威軸*。reflex 反射層が危険を観測   */
+/* (CONSERVE engage) している間だけ立ち、ビーコンの threat フィールドで配ら  */
+/* れる。受信側 moe ゲートはこれを *加点* し (load の逆符号)、群れの計算を    */
+/* この一点へ集束させる (rally; survival §2 「守る対象へ全網の力を注ぐ」)。   */
+/* 反射が解除されれば 0 に戻る (ヒステリシスは reflex 側)。                  */
+/* ------------------------------------------------------------------ */
+
+static UB compute_threat(void)
+{
+    return reflex_threat_level();   /* CONSERVE 中は learned_conserve, 他 0 */
 }
 
 /* ------------------------------------------------------------------ */
@@ -181,6 +195,7 @@ static void publish_beacon(void)
     b.pressure    = compute_pressure();
     b.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
     b.region_size = region_size();
+    b.threat      = compute_threat();            /* 脅威軸 (§2 rally) — G20 */
     b._pad        = 0;
     b.seq         = my_seq++;
 
@@ -235,7 +250,13 @@ BOOL world_peer_known(UB node)
 INT world_peer_pressure(UB node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
-    return (INT)table[node].beacon.pressure;   /* 0..100 (-1 = 未知) */
+    return (INT)table[node].beacon.pressure;   /* 負荷軸 0..100 (-1 = 未知) */
+}
+
+INT world_peer_threat(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    return (INT)table[node].beacon.threat;     /* 脅威軸 0..100 (-1 = 未知) */
 }
 
 INT world_peer_region(UB node)
@@ -301,6 +322,7 @@ void world_task(INT stacd, void *exinf)
         self.pressure    = compute_pressure();
         self.firing      = 0;
         self.region_size = region_size();
+        self.threat      = compute_threat();
         self._pad        = 0;
         self.seq         = 0;
         world_observe(&self);
@@ -331,6 +353,7 @@ void world_task(INT stacd, void *exinf)
             self.pressure    = compute_pressure();
             self.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
             self.region_size = region_size();
+            self.threat      = compute_threat();
             self._pad        = 0;
             self.seq         = table[drpc_my_node].valid
                                  ? table[drpc_my_node].beacon.seq : 0;
@@ -457,6 +480,12 @@ void world_print(void)
             else                            wo_puts(".");
         }
         wo_puts(any ? " LIT" : " dark");
+
+        /* 脅威軸 (§2): threat>0 のノードは「守る対象」= 群れの計算が *寄る*
+         * 一点 (G20)。load の pressure bar とは別軸・逆符号であることを明示。 */
+        if (!stale && !dead && b->threat > 0) {
+            wo_puts("  threat="); wo_putdec(b->threat); wo_puts(" <-RALLY");
+        }
         wo_puts("\r\n");
     }
 

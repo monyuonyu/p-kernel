@@ -71,10 +71,34 @@
 
 /* 逼迫度ペナルティ: pressure(0..100) を a 倍して utility から引く。
  * a = NUM/DEN = 0.5。pressure 100 (=満杯) で 50 点ペナルティ ≒ accuracy を
- * 帳消しにする強さ。「余力のある方へ勾配を下る」(§6) を効かせる係数。 */
+ * 帳消しにする強さ。「余力のある方へ勾配を下る」(§6) を効かせる係数。
+ *
+ * ── 重要 (G20 — 二軸の分離): この pressure は *負荷軸* (LOAD: 混んでいる →
+ * 仕事を送るな = 避ける) だけを表す。「危ない・群れの力が要る」(THREAT) は
+ * 別軸 (下の MOE_PROTECT_*) で *逆符号* に効く。両者を 1 つの pressure
+ * スカラに畳むと「脅威 = 避けよ」の符号倒錯になる (= 守るべき一点から群れが
+ * 逃げる = §2 の真逆)。よって reflex CONSERVE は world.c で pressure へは
+ * 上乗せせず、threat 軸へ流す (world_peer_threat / WORLD_BEACON.threat)。 */
 #define MOE_PRESS_NUM   1
 #define MOE_PRESS_DEN   2
 #define MOE_PRESS_UNKNOWN  50   /* 逼迫度未知ノードの想定 (中庸) */
+
+/* ── 脅威軸 (THREAT/PROTECT) — survival §2 「守る対象へ全網の力を注ぐ」 ─────
+ * load とは *逆符号*。候補ノード自身の threat (0..100; reflex CONSERVE が
+ * gossip する「私は危険/守るべき状態を抱えている」信号) を、その候補の utility
+ * に *加点* する。結果、脅威を観測したノードは群れに *避けられる* のではなく
+ * *選ばれる* (= 計算/複製がそこへ集束する = rally)。同時に、脅威ノード自身の
+ * 自己効用も上がるので、脅威下でも自分の守るべき仕事を手放さない (flee しない)。
+ *
+ *   utility += threat * MOE_PROTECT_NUM / MOE_PROTECT_DEN
+ *
+ * ゲイン = 1 = load ペナルティ (0.5) の *2 倍* かつ逆符号。「助けを求める声は
+ * 自分の忙しさを上回る」。脅威は gossip 帯域 (WORLD_BEACON_MS) の遅い信号
+ * なので決定ごとに激しく動かず、load のような殺到発振を起こさない。乗り換えは
+ * 既存の MOE_SWITCH_MARGIN デッドバンド/EWMA がそのまま安定化する (§8)。 */
+#define MOE_PROTECT_NUM   1
+#define MOE_PROTECT_DEN   1
+#define MOE_THREAT_UNKNOWN  0   /* threat 未知ノードは「脅威なし」と保守的に扱う */
 
 /* 同一 region (反射層 §8) の近傍をわずかに優先する加点。光速で間に合う
  * 群れに即応を閉じ込め、大域の遅延に乗せない (§8 反射層/熟慮層)。 */
@@ -143,8 +167,12 @@ UB   moe_gate_predict(B temp, B hum, B press, B light);
 
 /* §7 ゲートの効用関数を公開する (重複定義なし)。reflex.c の closed-loop
  * self-test が「行動→知覚→ゲート」の負帰還を *本番と同一の数式* で測るため
- * に使う。pressure は world ビーコンの局所勾配 (reflex CONSERVE が +bias する)。 */
-W    moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, int same_region);
+ * に使う。
+ *   pressure : 負荷軸 (LOAD; world ビーコンの局所勾配)。高いほど避ける (−)。
+ *   threat   : 脅威軸 (THREAT; world_peer_threat の局所勾配)。高いほど寄る (+)。
+ * 二軸は別物 (G20): load は「混んでいる→送るな」、threat は「危ない→注げ」。 */
+W    moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, INT threat,
+                        int same_region);
 
 /* 推論結果をフィードバック (正解ラベルを学習) */
 void moe_feedback(UB pred_class, UB true_class);
