@@ -49,7 +49,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd p-kernel/boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -58,6 +58,13 @@ jobs:
           grep -aF '[moe-twolayer] PASS' selftest.log
           grep -aF '[moe-osc] PASS' selftest.log
           grep -aF '[moe-concurrent] PASS' selftest.log
+          # §2 G20: load/threat sign separation — rally, not flee (wave 13).
+          # audit-4 acceptance #5: the green MUST be CI-enforced, not sim/doc-only.
+          grep -aF '[moe-protect] PASS' selftest.log
+          # §8 reflex closed loop + deliberation learning (closes audit G27:
+          # the reflex self-test was previously never invoked in CI).
+          grep -aF '[reflex-fb] PASS' selftest.log
+          grep -aF '[reflex-learn] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -83,7 +90,7 @@ jobs:
         continue-on-error: true
         run: |
           cd p-kernel/boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nexit\n' | \
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -92,6 +99,9 @@ jobs:
           grep -aF '[moe-twolayer] PASS' selftest.log
           grep -aF '[moe-osc] PASS' selftest.log
           grep -aF '[moe-concurrent] PASS' selftest.log
+          grep -aF '[moe-protect] PASS' selftest.log
+          grep -aF '[reflex-fb] PASS' selftest.log
+          grep -aF '[reflex-learn] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
