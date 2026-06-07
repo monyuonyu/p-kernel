@@ -179,3 +179,12 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN]);
  * replication — separating the protected unit from the protecting power and
  * making the actuator-off control experiment honest. Default off. */
 void pfs_repl_set_announce_suppress(INT on);
+
+/* SYNC filter: when set, the boot-SYNC responder calls this for every block a
+ * (re)joining peer asked for; a non-zero return EXCLUDES that block from the
+ * stream. protect.c uses it so a quietly-held, not-yet-actuator-driven
+ * protected unit does NOT escape via ambient sync — the protecting POWER is
+ * the sole spreader of a protected unit (§2 / G28). NULL clears it; ordinary
+ * blocks are then served unconditionally (P1 boot-sync unchanged). */
+typedef INT (*PFSR_SYNC_FILTER)(const U1 id[PFS_ID_LEN]);
+void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn);

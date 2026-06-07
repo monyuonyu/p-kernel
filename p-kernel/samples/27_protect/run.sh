@@ -26,6 +26,26 @@
 # The contrast is in the numbers: threat 40->0 (treatment) vs 40->40 (control);
 # object SURVIVES vs LOST. The drop is caused by replication, full stop.
 #
+# SYNC/protection semantics (wave 14 fix2 — option (a), the deliberate-spread
+# rule): on boot a joining node SYNC-pulls everything its peers hold. A
+# protected unit that the actuator has NOT yet driven is EXCLUDED from that
+# ambient SYNC stream (and from ambient announce — already quiet). Rationale
+# (§2): the protecting POWER replicates the unit ON PURPOSE; it is never leaked
+# accidentally by boot-sync. Without this, a CONTROL node could survive the kill
+# purely because node2/node3 happened to SYNC-pull the block before the kill —
+# making "control loses the object" an accident, not a proof. Ordinary
+# (non-protected) blocks and already-actuator-driven units are SYNC-served
+# normally, so P1 boot-sync (samples/11_distributed, 13_survival_loop) is
+# unchanged. The actuator drives replication over the announce->WANT->transfer
+# path (NOT via SYNC), so treatment is unaffected by the SYNC exclusion.
+#
+# target_r determinism (wave 14 fix2): target_r is region-capped to
+# region_size()-1, and region_size() needs each peer's RTT measured, which lags
+# the degrade "-> FULL" (ALIVE count) signal. cluster_up now waits until node1's
+# region is size 3 before declaring, so target_r caps to 2 deterministically;
+# the kernel additionally re-caps target_r UPWARD toward the requested R when
+# the region grows after an early declare (belt-and-suspenders self-heal).
+#
 # Also runs the in-kernel property self-test ([protect-ground]/[protect-loop]).
 #
 # Exit 0 = all PASS. Logs: /tmp/p27_*.log
@@ -97,8 +117,27 @@ cluster_up() {
         grep -aq -- "-> FULL" "/tmp/p27_${tag}_node1.log" && break
         sleep 1; t=$((t + 1))
     done
-    if [ $t -ge 30 ]; then bad "($tag) cluster never reached FULL"; else
-        log "cluster FULL after ~${t}s"; sleep 2; fi
+    if [ $t -ge 30 ]; then bad "($tag) cluster never reached FULL"; return; fi
+    log "cluster FULL after ~${t}s"; sleep 2
+
+    # FULL (degrade) only counts ALIVE peers; region_size() additionally needs
+    # the RTT to each peer measured (<= tau). Declaring before region_size==3
+    # caps target_r to 1 (the old flake). Wait until node1's region is size 3 so
+    # target_r deterministically caps to 2. (The kernel also self-heals via an
+    # upward re-cap of target_r when the region grows, but waiting here keeps
+    # the demo's numbers crisp and the first SAFE transition lands at 2/2.)
+    local r=0
+    while [ $r -lt 40 ]; do
+        printf '%s\n' "region" > "$FIFO.1"
+        grep -aqE 'size=3' "/tmp/p27_${tag}_node1.log" && break
+        sleep 0.5; r=$((r + 1))
+    done
+    if [ $r -ge 40 ]; then
+        log "WARN: node1 region never reached size=3; relying on kernel re-cap"
+    else
+        log "node1 region converged to size=3 (target_r will cap to 2)"
+    fi
+    sleep 1
 }
 
 wait_for() {  # <file> <pattern> <secs>

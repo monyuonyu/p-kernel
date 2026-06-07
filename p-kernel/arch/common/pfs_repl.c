@@ -165,9 +165,13 @@ static UW stat_blocks_tx, stat_blocks_rx, stat_hash_fail;
  * the protect actuator can be the sole driver of a protected unit. */
 static PFSR_ANN_HOOK announce_hook = 0;
 static U1            announce_suppress = 0;
+/* G28: gate for the boot-SYNC responder — non-zero return keeps a block out
+ * of the stream (a quietly-held protected unit must not leak via ambient sync). */
+static PFSR_SYNC_FILTER sync_filter = 0;
 
 void pfs_repl_set_announce_hook(PFSR_ANN_HOOK fn) { announce_hook = fn; }
 void pfs_repl_set_announce_suppress(INT on) { announce_suppress = on ? 1 : 0; }
+void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn) { sync_filter = fn; }
 
 /* ------------------------------------------------------------------ */
 /* control-plane publishes (small pkts — fine on stack)                */
@@ -493,8 +497,11 @@ void pfs_repl_task(INT stacd, void *exinf)
                 last_sync_seq[s.src_node] = s.seq;
                 for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
                     U1 sid[PFS_ID_LEN];
-                    if (pfs_slot_info(i, sid, 0, 0))
-                        send_block_to(s.src_node, sid);
+                    if (!pfs_slot_info(i, sid, 0, 0)) continue;
+                    /* a quietly-held protected unit is NOT streamed by ambient
+                     * sync — only the protect actuator spreads it (§2/G28) */
+                    if (sync_filter && sync_filter(sid)) continue;
+                    send_block_to(s.src_node, sid);
                 }
             }
         }

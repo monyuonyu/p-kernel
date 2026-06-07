@@ -357,3 +357,61 @@ threat 40→20→0・2 distinct neighbours 確認・kill -9 後に近傍から s
 指摘した **reflex/温度バケツ軸(`reflex.c:283-289` の 5 秒タイマ解除)は手つかず**で、
 そちらの「self-test plant ≠ live plant」は残る。G33(dwell ホメオスタットの open-loop rail)
 も protect 軸では actuator が L 相当(under-replication)を実際に削るが、reflex 軸では未解決。
+
+## 13. 追記2 — live demo の残り flake を接地(wave 14 A3隊, 2026-06-07)
+
+A2隊が live 経路を緑にした後も、**`samples/27_protect/run.sh` は ~1/5 で FAIL** していた
+(commander 計測 1/3 PASS; 当方再現は baseline 5 連続で 4 PASS / 1 FAIL)。「self-test は緑だが
+本番は flaky」= G32 の病が**もう一段薄い層**に残っていた。実ログで2因を確定し、**アサーションを
+弱めずに**両方を接地した(HONESTY over green)。
+
+**flake(1) — target_r が宣言タイミングで揺れる(treatment 側).** `protect_declare` は
+`cap_target_r()`=`region_size()-1` で R を抑える。だが `region_size()`(`region.c:103`)は各 peer の
+**RTT 実測(≤τ)** を要し、これは degrade の `-> FULL`(ALIVE 数だけ; `degrade.c:78`)より遅れる。
+FULL 直後に宣言すると region_size=2 → **target_r=1** に抑えられ、1 複製で SAFE 到達してしまう。
+demo は「≥2 distinct neighbours が複製を確認」を hard-assert するので、SAFE 自体は出るのに
+`got 1` で FAIL(再現ログ:`replicas=0/1, threat=20 ... got 1`)。**修正(両面)**:
+- **demo 側(決定化)**: `cluster_up` が node1 の region が `size=3` になるまで `region` を叩いて
+  待ってから宣言。target_r が 2 に確定し、最初の SAFE 遷移が 2/2 で起きる。
+- **kernel 側(自己修復・堅牢化)**: `PROTECT_OBJ.requested_r` に**要求 R を保存**し、宣言後に
+  region が育ったら `protect_tick` で `target_r` を **要求 R へ向け単調 up に再cap**(`protect.c`)。
+  早すぎる宣言は「より多くの peer を知った → より多くの耐久複製を欲する」として grounded threat を
+  正当に再オープンする。peer 離脱では**下げない**(thrash 防止)。
+
+**flake(2) — 対照(actuator OFF)が boot SYNC で偶然守られる(control 側; 微妙な方).**
+起動時、各ノードは SYNC(`pfs_repl.c` 「保持しているもの全部くれ」)を投げ、保持者は**全ブロックを
+ストリーム**する。よって control でも node2/node3 が node1 の保持ブロック(静かに put した守る対象を
+**含む**)を pull してしまい、actuator OFF でも複製され kill 後に生存し得た。= demo の「control は
+オブジェクトを失う」が**偶然(タイミング)依存**で、本物の対照になっていなかった。
+
+**解決(option (a) — 意図的拡散ルールを採用; option (b) ではない).**
+**actuator にまだ駆動されていない**守る対象を **SYNC ストリームから除外**する。新フック
+`pfs_repl_set_sync_filter()`(`pfs_repl.h`/`pfs_repl.c`)を protect が `protect_sync_exclude` で実装し、
+`PROTECT_OBJ.driven`(actuator が初めて re-announce した瞬間に立つ)が偽の守る対象を SYNC 配信から
+落とす。**論拠(§2)**:守る *力*(protecting POWER)が**意図して**複製する。守る対象は ambient
+sync で**漏れない**。これで:
+- **treatment**: actuator が announce→WANT→転送で複製する(SYNC 経路ではない)ので SYNC 除外は無影響。
+  駆動後は `driven=1` で SYNC 配信も解禁。
+- **control**: 守る対象は永久に未駆動 → SYNC で漏れない → 近傍は持たない → kill で確実に LOST。
+両相のアサーションが**決定的に真**になる。**option (b)(SYNC は温存し control の主張を「threat が
+HIGH 据え置きで confirmed-SAFE に到達しない」に変える)は採らなかった**:owner の put-hook announce が
+SYNC 受信ブロックにも発火し、owner が leak 複製を数えて threat が control でも落ち得る危険があり、
+かつ option (a) の方が因果が**くっきり**(control は本当にオブジェクトを失う)。これは commander が
+予測した通りの判断分岐。
+
+**回帰の確認(option (a) の肝).** 通常(非 protected)ブロックと**駆動済み**の守る対象は従来通り
+SYNC 配信される。`sync_filter` は `find_obj(id)` が当たり**かつ** `!driven` のときだけ除外を返すので、
+P1/boot-sync は無傷:`samples/11_distributed`(3 ノードが 1 block id へ収束)・`samples/13_survival_loop`
+で確認済み。
+
+**正直な検証(5/5; アサーション据え置き).** 修正後 `samples/27_protect/run.sh` を **5 連続 PASS**
+(treatment: target_r=2 決定的・threat 40→20→0・**2 distinct neighbours** 確認・kill -9 後に近傍から
+served; control: AT-RISK 据え置き `replicas=0/2`・kill で LOST)。in-process
+(`[protect-ground]`/`[protect-loop]`)+ wave-13(`[moe-protect]`/`[reflex-fb]`/`[reflex-learn]`)+
+回帰(`26_ark_backend`, `11_distributed`, `13_survival_loop` kill_one, relay 6/6)すべて緑。
+4 ターゲット build clean。**`protect-loop-live` CI は不変のまま安定して `RESULT: PASS` を assert**。
+
+**G32 の状態(更新):** 🟢(protect 軸は live で決定的に閉環。flaky だった live demo が
+**non-flaky**になり、CI が信頼できる回帰防御になった)。**残件は不変**:reflex/温度バケツ軸の
+タイマ解除(G32 残)・holder liveness 未追跡(死んだ複製先で threat が再励起しない)・守る対象の
+複製は意図的に actuator 専管(§2 の設計選択。現実系では ambient 複製も併用したい)。

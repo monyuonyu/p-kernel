@@ -71,7 +71,9 @@ typedef struct {
     U1 id[PFS_ID_LEN];
     UW len;
     U1 active;
-    U1 target_r;                 /* desired durable replicas (neighbours)  */
+    U1 requested_r;              /* R as originally requested (pre-cap)      */
+    U1 target_r;                 /* desired durable replicas (region-capped) */
+    U1 driven;                   /* 1 once the actuator has driven this unit  */
     U1 holders[DNODE_MAX];       /* holders[n]=1: peer n announced holding  */
     U1 holder_count;             /* distinct peers (excl. self) known holders */
     UW drive_age_ms;             /* since last actuator re-announce          */
@@ -142,16 +144,21 @@ INT protect_declare(const U1 id[PFS_ID_LEN], UW len, INT target_r)
 {
     if (!pfs_has(id)) return PFS_E_NOTFOUND;   /* must hold the unit first */
 
+    INT want = (target_r <= 0) ? PROTECT_DEFAULT_R : target_r;
+
     PROTECT_OBJ *o = find_obj(id);
     if (o) {                                    /* already protected: re-arm R */
-        o->target_r = (U1)cap_target_r(target_r);
+        if (want > (INT)o->requested_r) o->requested_r = (U1)want;
+        o->target_r = (U1)cap_target_r((INT)o->requested_r);
         return PFS_OK;
     }
     for (INT i = 0; i < PROTECT_MAX_OBJS; i++) {
         if (objs[i].active) continue;
         for (INT k = 0; k < PFS_ID_LEN; k++) objs[i].id[k] = id[k];
         objs[i].len          = len;
-        objs[i].target_r     = (U1)cap_target_r(target_r);
+        objs[i].requested_r  = (U1)want;                /* remember the wish   */
+        objs[i].target_r     = (U1)cap_target_r(want);
+        objs[i].driven       = 0;
         objs[i].holder_count = 0;
         objs[i].drive_age_ms = PROTECT_REANNOUNCE_MS;   /* drive immediately */
         for (INT n = 0; n < DNODE_MAX; n++) objs[i].holders[n] = 0;
@@ -222,6 +229,21 @@ void protect_tick(UW elapsed_ms)
 
     for (INT i = 0; i < PROTECT_MAX_OBJS; i++) {
         if (!objs[i].active) continue;
+
+        /* Self-heal an early declare: if the region GREW since we declared
+         * (e.g. we declared before SWIM had measured RTT to both peers, so
+         * target_r capped low), re-cap target_r UPWARD toward the originally
+         * requested R. A node that learns of more peers legitimately wants
+         * more durable copies; this re-opens the grounded threat until the
+         * higher R is met. Monotone toward requested_r — never lowered, so a
+         * peer leaving does not thrash the target back down. */
+        INT cap = cap_target_r((INT)objs[i].requested_r);
+        if (cap > (INT)objs[i].target_r) {
+            objs[i].target_r  = (U1)cap;
+            objs[i].last_threat = protect_threat_for((INT)objs[i].holder_count,
+                                                     (INT)objs[i].target_r);
+        }
+
         UB t = protect_threat_for((INT)objs[i].holder_count,
                                   (INT)objs[i].target_r);
         if (t == 0) continue;                     /* safe: no force to pour  */
@@ -232,7 +254,11 @@ void protect_tick(UW elapsed_ms)
         objs[i].drive_age_ms = 0;
 
         /* concentrate force on the at-risk point: drive replication by
-         * re-announcing so lacking/late neighbours WANT + pull it durably. */
+         * re-announcing so lacking/late neighbours WANT + pull it durably.
+         * Mark the unit as deliberately driven: only an actuator-driven unit
+         * is allowed to spread via ambient boot-SYNC (the protecting POWER
+         * spreads it on purpose; it is never leaked accidentally — §2). */
+        objs[i].driven = 1;
         pfs_repl_reannounce(objs[i].id);
         st_drives++;
         pt_puts("[protect] ACTUATE id="); pt_put_id(objs[i].id);
@@ -258,6 +284,25 @@ void protect_task(INT stacd, void *exinf)
 /* init                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* SYNC filter (§2: a protected unit spreads ONLY by the protecting     */
+/* POWER, never leaked by ambient boot-sync)                            */
+/* ------------------------------------------------------------------ */
+
+/* pfs_repl asks, for each block a (re)joining peer SYNC-requests: may we
+ * stream this block? We answer NO (1 = exclude) for a protected unit that
+ * the actuator has NOT yet deliberately driven. Rationale (G28/§2): the
+ * protecting POWER replicates the unit on purpose; with the actuator OFF
+ * (control) the unit is held quietly and must NOT escape via ambient SYNC,
+ * or the "control loses the object" contrast would be an accident, not a
+ * proof. Ordinary (non-protected) blocks and already-driven protected units
+ * are served normally — no regression to P1/boot-sync. */
+static INT protect_sync_exclude(const U1 id[PFS_ID_LEN])
+{
+    PROTECT_OBJ *o = find_obj(id);
+    return (o && !o->driven) ? 1 : 0;
+}
+
 void protect_init(void)
 {
     for (INT i = 0; i < PROTECT_MAX_OBJS; i++) objs[i].active = 0;
@@ -266,6 +311,8 @@ void protect_init(void)
     /* heard announces feed the holder count (the only signal that lowers the
      * grounded threat). Registered here so it is live before any declare. */
     pfs_repl_set_announce_hook(protect_note_holder);
+    /* keep a quiet (undriven) protected unit out of ambient boot-SYNC */
+    pfs_repl_set_sync_filter(protect_sync_exclude);
     pt_puts("[protect] protected-object registry initialized"
             " (unit/power separated; threat grounded in replication)\r\n");
 }
