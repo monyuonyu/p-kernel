@@ -124,5 +124,8 @@ inside its kernel. Five asserted legs; any miss is a non-zero exit.
   publishers fork the ref exactly like any p-fs name (the losing version
   stays reachable in the DAG). Per-role or per-region manifests are a
   later refinement.
-- **Engrams ride along but are not installed** until wave 9-①'s loader
-  exists.
+- **Engrams ride along but are not auto-installed by sprout.** The engram
+  loader itself has since shipped (the forward pass reads `dtr/engrams`
+  from p-fs — `dtr ret on`, see `memory-thought.md`), but `genome sprout`
+  still deliberately only ensures the replica is local and leaves invoking
+  the loader to the dtr memory path.

@@ -6,7 +6,17 @@
 > 消失訂正符号**を備えた分散記憶 `p-fs` へ再設計するための一枚の絵である。
 > 目指す終着点はひとつ — **「ファイルを保存する」と「クラスタに公開する」の境界を消すこと。**
 
-Status: **設計のみ（未着手）** / 最終更新: 2026-06-06
+Status: **P0–P2 実装済（durable・gossip 複製・版 DAG が live）／ P3 一部・P4 未着手** / 最終更新: 2026-06-07
+
+> **状態 (2026-06-07)**: 本書初版は「設計のみ（未着手）」だったが、§5 の段階のうち
+> **P0（内容アドレス block：`pfs_block.c`、sha256 をカーネルへ・重複排除）／P1（block gossip 複製：
+> announce/want、region scoped）／P2（版 DAG＋ref gossip：`pfs_dag.c`、`dtr/weights`・`dtr/engrams`・
+> `genome/manifest` が版管理オブジェクトとして実在）**が着地した。p-fs は **durable**（ARK を永続
+> backend に電源喪失を越える、`samples/23_durable`／[[survival-fs.md]]）であり、重みを失って復活した
+> ノードが gossip で重みも記憶も取り戻す（death-piercing / fault-recovery / genome 発芽が実証）。
+> P0 の索引は当初 256 block 上限だったが撤廃され、キャッシュ追い出しでカーネル経路は 400+ block を扱える。
+> **残るのは P3（中央なし分散ルックアップ：HRW の L0/L1 は `lookup.c` に実装済、ネット越し WANT/HAVE は
+> 未／[[decentralized-lookup.md]]）と P4（消失訂正符号）**。設計プローズ自体は下記のまま有効。
 
 関連: [[regions.md]]（遅延クラスタ region — p-fs の複製局所性はこれを反復する）、
 [[survival-network.md]]（§9「保存の図書館 → 考える器官」。記録の継続は思考の前提条件）、
@@ -316,13 +326,13 @@ vfs_write(fd, buf, len)
 
 `regions.md` の R0→R3 に倣い、**最小で役に立つものから**。各段は単体でも価値が出る。
 
-| 段階 | 内容 | 役立ち | 依存 |
-|---|---|---|---|
-| **P0**（土台） | `relay/sha256.c` をカーネルへ移植。block 抽象（block-id=H(bytes)）と、FAT32 上に block を内容アドレスで落とす content-addressed store。重複排除がローカルで効く。 | 同じ中身を二度保存しない。`vfs.h` の第2バックエンド枠を作る。 | 非分散でも価値あり |
-| **P1**（sfs 一般化） | `sfs.c` の chunk 転送・tombstone・boot sync を **block 粒度**へ拡張。`/shared` 限定をやめ、任意 block を **region-scoped gossip**（`KDDS_SCOPE_REGION`）で複製。 | 「最後の1ノードで記憶が残る」がファイルにも効く。save==publish の第一歩。 | swim/region/kdds（既存） |
-| **P2**（履歴 DAG） | object マニフェスト + append-only version-DAG + ref ポインタ。ref を `replica.c` の seq マージに乗せる。`mem_store` を最初の本物ユーザに。 | 上書きで過去を失わない。版を遡れる。 | replica（既存） |
-| **P3**（分散ルックアップ） | block-id の一貫性ハッシュで責任集合を決定的に計算。外れたら gossip lookup（WANT）。局所キャッシュ。`heal.c`/`degrade.c` で複製数を自己修復。 | 中央索引なしで読みが当たる。ノード死で複製が自動回復。 | heal/degrade（既存）+ 新規責任計算 |
-| **P4**（消失訂正符号） | 大きく・コールドな block に Reed–Solomon (k,m)。パリティを **cross-region 配置**。1 region 喪失に耐える。 | 全複製の N 倍コスト無しで N 台喪失耐性。 | **新規 `pfs_ec.c`**、P1-P3 全部 |
+| 段階 | 内容 | 役立ち | 依存 | 状態 |
+|---|---|---|---|---|
+| **P0**（土台） | `relay/sha256.c` をカーネルへ移植。block 抽象（block-id=H(bytes)）と、block を内容アドレスで落とす content-addressed store。重複排除がローカルで効く。 | 同じ中身を二度保存しない。`vfs.h` の第2バックエンド枠を作る。 | 非分散でも価値あり | **✅ `pfs_block.c`**（256 block 上限は撤廃／キャッシュ追い出しで 400+ block。durable backend は ARK＝[[survival-fs.md]]） |
+| **P1**（sfs 一般化） | `sfs.c` の chunk 転送・tombstone・boot sync を **block 粒度**へ拡張。`/shared` 限定をやめ、任意 block を **region-scoped gossip**（`KDDS_SCOPE_REGION`）で複製。 | 「最後の1ノードで記憶が残る」がファイルにも効く。save==publish の第一歩。 | swim/region/kdds（既存） | **✅**（announce/want による block gossip。重み・記憶・genome が群れに届く） |
+| **P2**（履歴 DAG） | object マニフェスト + append-only version-DAG + ref ポインタ。ref を `replica.c` の seq マージに乗せる。`mem_store` を最初の本物ユーザに。 | 上書きで過去を失わない。版を遡れる。 | replica（既存） | **✅ `pfs_dag.c`**（`dtr/weights`・`dtr/engrams`・`genome/manifest` が版管理オブジェクト） |
+| **P3**（分散ルックアップ） | block-id の一貫性ハッシュで責任集合を決定的に計算。外れたら gossip lookup（WANT）。局所キャッシュ。`heal.c`/`degrade.c` で複製数を自己修復。 | 中央索引なしで読みが当たる。ノード死で複製が自動回復。 | heal/degrade（既存）+ 新規責任計算 | **一部**（HRW L0/L1 = `lookup.c` 実装済。ネット越し WANT/HAVE = L2+ 未／[[decentralized-lookup.md]]） |
+| **P4**（消失訂正符号） | 大きく・コールドな block に Reed–Solomon (k,m)。パリティを **cross-region 配置**。1 region 喪失に耐える。 | 全複製の N 倍コスト無しで N 台喪失耐性。 | **新規 `pfs_ec.c`**、P1-P3 全部 | 未着手 |
 
 > 鶏と卵への正直な答え（`regions.md §5` と同型）：P0–P2 は**玩具スケールでも
 > 正しく作れる**（記憶のトポロジの話だから）。P3 の分散ルックアップが「区切る意味」を

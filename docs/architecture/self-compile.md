@@ -91,8 +91,14 @@ can still *author* code for nodes that have one.
   write trashes the kernel like any other kernel bug. This is the minimal
   organ of self-evolution by design, but anyone deploying it should know
   the trust model is "whoever can write to your p-fs region owns your
-  node". The task-fault-isolation work (B隊) is the natural future safety
-  net: a compiled unit that faults should kill its task, not the kernel.
+  node". **Update (2026-06-07): the task-fault-isolation safety net has
+  since shipped** — a guarded task that faults is killed and respawned
+  while the kernel survives (`guard.c` / `fault.c`, see
+  `fault-recovery.md`), so a compiled unit that faults *in ordinary task
+  context* takes down only its task. It is still not a sandbox (a fault
+  inside an IRQ-disabled window, or memory corruption that does not fault,
+  is unprotected), and under threat the reflex layer can refuse new `selfc`
+  germination entirely (`reflex_is_shielded()`, see `reflex-action.md`).
 - **No bare-metal selfc.** `boot/x86` / `boot/aarch64` have no libtcc
   port. Embedding TCC's codegen in a freestanding kernel is a real
   (future) project: it needs an allocator shim, no-libc TCC build, and
