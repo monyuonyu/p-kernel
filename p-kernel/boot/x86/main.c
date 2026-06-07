@@ -8,6 +8,13 @@
 /* T-Kernel kernel main (kernel/common/tkstart.c) */
 extern void knl_t_kernel_main(void *inittask);
 
+#ifdef ARK_BAREMETAL_SMOKE
+/* Bare-metal ARK smoke test (arch/x86/ark_bdev.c). Local prototype so this
+ * TU need not pull in kernel.h; INT == int on i686. Runs before T-Kernel,
+ * using ATA-PIO (polled) directly, then halts with a PASS/FAIL verdict. */
+extern int ark_baremetal_smoke(void (*emit)(const char *));
+#endif
+
 /* Initial task parameters (arch/x86/inittask_def.c) */
 extern const void *knl_c_init_task;
 
@@ -60,6 +67,20 @@ void main() {
     print("[INIT] Memory...\r\n");
     memory_init();
     print("[OK]   Memory\r\n");
+
+#ifdef ARK_BAREMETAL_SMOKE
+    /* ARK on REAL hardware: format/write/sync/remount/read round-trip on the
+     * physical ATA disk, then halt. No T-Kernel needed — IDE PIO is polled. */
+    {
+        int rc = ark_baremetal_smoke(print);
+        if (rc == 0)
+            print("[ARK] SMOKE RESULT: PASS\r\n");
+        else
+            print("[ARK] SMOKE RESULT: FAIL\r\n");
+        print("=== ark-smoke done — halting ===\r\n");
+        for (;;) asm volatile ("hlt");
+    }
+#endif
 
     /* PIC初期化 (全IRQマスク - T-Kernelが必要なものを開ける) */
     print("[INIT] PIC (8259A)...\r\n");
