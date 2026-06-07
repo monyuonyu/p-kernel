@@ -448,6 +448,23 @@ void pfs_repl_task(INT stacd, void *exinf)
                     pr_puts("  from n"); pr_putdec(a.src_node);
                     pr_puts(" -> want\r\n");
                     pending_add(a.id);
+                } else if (pfs_has(a.id) && a.src_node == a.origin) {
+                    /* G28-fix (LATEST_ONLY self-repair): the block's ORIGIN is
+                     * re-driving its replication — this is precisely the protect
+                     * actuator re-announcing a unit it owns (src==origin), never
+                     * a holder<->holder message. We already hold it durably, so
+                     * announce BACK ("I hold this") with a fresh seq. The ann
+                     * control topic is depth-1 LATEST_ONLY, so when several
+                     * holders answer one actuator tick all but one announce-back
+                     * is overwritten before the origin polls — but each actuator
+                     * tick elicits a NEW announce-back from every holder, so over
+                     * repeated ticks the origin observes each distinct holder and
+                     * its holder_count converges to R. Bounded against storms:
+                     * only origin-driven announces (src==origin) trigger this
+                     * (holder re-announces carry origin!=self, so they do NOT
+                     * cascade), and the per-(src,seq) dedup above means at most
+                     * one announce-back per actuator tick. */
+                    pfs_repl_reannounce(a.id);
                 }
             }
         }
