@@ -74,6 +74,9 @@ jobs:
           # loop (threat falls because of replication, not a timer; wave 14).
           grep -aF '[protect-ground] PASS' selftest.log
           grep -aF '[protect-loop] PASS' selftest.log
+          # §2 ∧ §5 G35: MANY protected points defended IN PARALLEL — all reach
+          # R replicas in ~one-point time (not N*), fair, none starves (wave 15).
+          grep -aF '[plural-protect] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -114,6 +117,8 @@ jobs:
           # §2 G28 grounded threat + closed loop (wave 14)
           grep -aF '[protect-ground] PASS' selftest.log
           grep -aF '[protect-loop] PASS' selftest.log
+          # §2 ∧ §5 G35 plural parallel protection (wave 15)
+          grep -aF '[plural-protect] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
@@ -196,6 +201,37 @@ jobs:
         with:
           name: protect-loop-live-logs
           path: /tmp/p27_*.log
+
+  plural-protect-live:
+    name: "Plural protect (live 3-node: MANY points defended IN PARALLEL, owner killed)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # enforces the LIVE §2 ∧ §5 path (G35): FOUR protected points declared at
+    # once across TWO owners all reach R durable replicas concurrently — in ~the
+    # time of ONE point (calibrated in-run), far under the 4*t_one serialized
+    # bound — fairly, none starving; then the owner of two of them is killed and
+    # both already-replicated points survive. Proves protection is plural (no
+    # single-consciousness collapse), not just the single-point loop.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C p-kernel/boot/linux_x86_64
+          make -C p-kernel/relay
+      - name: Run 28_plural_protect/run.sh and assert RESULT PASS
+        run: |
+          timeout 400 p-kernel/samples/28_plural_protect/run.sh | tee /tmp/p28_ci.log
+          grep -q 'RESULT: PASS' /tmp/p28_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plural-protect-live-logs
+          path: /tmp/p28_*.log
 
   composite-loop:
     name: Composite loop (kill ∧ concurrent ∧ memory, bonus)

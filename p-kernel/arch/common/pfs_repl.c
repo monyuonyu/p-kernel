@@ -45,6 +45,7 @@ _Static_assert(sizeof(PFSR_WANT_PKT) == 44,  "WANT pkt must be 44 bytes");
 _Static_assert(sizeof(PFSR_SYNC_PKT) == 12,  "SYNC pkt must be 12 bytes");
 _Static_assert(sizeof(PFSR_BLK_PKT)  == 52 + PFSR_CHUNK_SIZE,
                "BLK pkt must be 564 bytes");
+_Static_assert(sizeof(PFSR_HOLD_PKT) == 40, "HOLD pkt must be 40 bytes");
 _Static_assert(sizeof(PFSR_ANN_PKT)  <= KDDS_DATA_MAX,
                "ANN must fit a K-DDS payload");
 _Static_assert(sizeof(PFSR_WANT_PKT) <= KDDS_DATA_MAX,
@@ -242,6 +243,24 @@ static void on_new_block(const U1 id[PFS_ID_LEN], UW len, U1 origin)
     publish_announce(id, len, org);
 }
 
+/* G35: unicast "I durably hold your block" straight to the origin. Point-to-
+ * point, so distinct holders never clobber each other (unlike the shared
+ * LATEST_ONLY announce slot). Drives the origin's protect holder_count
+ * reliably, so plural protection's grounded threat falls promptly. */
+static void send_hold_ack(UB origin_node, const U1 id[PFS_ID_LEN])
+{
+    if (drpc_my_node == 0xFF) return;
+    if (origin_node >= DNODE_MAX) return;       /* not a real node (e.g. 0xFF) */
+    if (origin_node == drpc_my_node) return;    /* never ack ourselves         */
+    PFSR_HOLD_PKT h;
+    pr_memset(&h, 0, (UW)sizeof(h));
+    h.magic    = PFSR_HOLD_MAGIC;
+    h.src_node = drpc_my_node;
+    h.origin   = origin_node;
+    pr_memcpy(h.id, id, PFS_ID_LEN);
+    pmesh_send(origin_node, PFSR_PORT, (const UB *)&h, (UH)sizeof(h));
+}
+
 /* G28 actuator entry: re-announce a block we hold to drive replication. */
 void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
 {
@@ -256,6 +275,18 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
             return;
         }
     }
+}
+
+static void send_block_to(UB dst_node, const U1 id[PFS_ID_LEN]);
+
+/* G35: public direct push — unicast a held block straight to one neighbour
+ * (reliable discovery for the protect actuator; see send_block_to below). */
+void pfs_repl_push(const U1 id[PFS_ID_LEN], UB dst_node)
+{
+    if (drpc_my_node == 0xFF) return;
+    if (dst_node >= DNODE_MAX || dst_node == drpc_my_node) return;
+    if (!pfs_has(id)) return;
+    send_block_to(dst_node, id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -359,6 +390,20 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
 {
     (void)src_node; (void)dst_port;
 
+    /* G35: HOLD-ACK (unicast holder confirmation) shares this port — peel it off
+     * by magic before the CHUNK path. Reliable per-holder signal to the origin:
+     * feed the protect announce-hook so holder_count counts this distinct holder
+     * even when the shared K-DDS announce slot lost the broadcast. */
+    if (len >= (UH)sizeof(PFSR_HOLD_PKT)) {
+        const PFSR_HOLD_PKT *hp = (const PFSR_HOLD_PKT *)data;
+        if (hp->magic == PFSR_HOLD_MAGIC) {
+            if (hp->src_node < DNODE_MAX && hp->src_node != drpc_my_node &&
+                announce_hook)
+                announce_hook(hp->src_node, hp->id);
+            return;
+        }
+    }
+
     if (len < (UH)sizeof(PFSR_BLK_PKT)) return;
     const PFSR_BLK_PKT *pkt = (const PFSR_BLK_PKT *)data;
 
@@ -415,6 +460,11 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
         pr_puts("  len="); pr_putdec(rx_state.total);
         pr_puts("  origin=n"); pr_putdec(rx_state.origin);
         pr_puts("\r\n");
+        /* G35: tell the origin directly that we now hold its block (reliable
+         * unicast — the broadcast announce-back can be lost under concurrency).
+         * The put-hook above also re-announces it on K-DDS for region discovery;
+         * this ack is the dependable per-holder confirmation for protect. */
+        send_hold_ack(rx_state.origin, rx_state.id);
     }
 }
 
@@ -453,22 +503,20 @@ void pfs_repl_task(INT stacd, void *exinf)
                     pr_puts(" -> want\r\n");
                     pending_add(a.id);
                 } else if (pfs_has(a.id) && a.src_node == a.origin) {
-                    /* G28-fix (LATEST_ONLY self-repair): the block's ORIGIN is
-                     * re-driving its replication — this is precisely the protect
-                     * actuator re-announcing a unit it owns (src==origin), never
-                     * a holder<->holder message. We already hold it durably, so
-                     * announce BACK ("I hold this") with a fresh seq. The ann
-                     * control topic is depth-1 LATEST_ONLY, so when several
-                     * holders answer one actuator tick all but one announce-back
-                     * is overwritten before the origin polls — but each actuator
-                     * tick elicits a NEW announce-back from every holder, so over
-                     * repeated ticks the origin observes each distinct holder and
-                     * its holder_count converges to R. Bounded against storms:
-                     * only origin-driven announces (src==origin) trigger this
-                     * (holder re-announces carry origin!=self, so they do NOT
-                     * cascade), and the per-(src,seq) dedup above means at most
-                     * one announce-back per actuator tick. */
-                    pfs_repl_reannounce(a.id);
+                    /* The block's ORIGIN is re-driving its replication (the
+                     * protect actuator re-announcing a unit it owns; src==origin,
+                     * never a holder<->holder message) and we already hold it
+                     * durably. Confirm via reliable UNICAST hold-ack straight to
+                     * the origin (G35) instead of a broadcast announce-back: the
+                     * shared LATEST_ONLY announce slot overwrites all but one
+                     * holder's reply per tick, so under concurrent multi-point
+                     * replication the origin's holder_count could lag the real
+                     * durable replicas by many ticks. The unicast path has no
+                     * shared slot — each distinct holder confirms independently,
+                     * so holder_count reaches R promptly. Bounded: only
+                     * origin-driven announces (src==origin) trigger this, so it
+                     * does not cascade between holders. */
+                    send_hold_ack(a.origin, a.id);
                 }
             }
         }
