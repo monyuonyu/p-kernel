@@ -62,7 +62,28 @@ typedef unsigned int   BOOL;
 #define ARK_NAME_MAX      64         /* full path length incl. NUL        */
 #define ARK_MAX_FILES     32         /* entries in one committed snapshot  */
 #define ARK_MAX_BLK       16         /* blocks per file -> 64 KiB max file */
-#define ARK_MAX_INDEX     256        /* in-memory block index capacity    */
+
+/* In-memory block index (block-id -> log location).
+ *
+ * This is an open-addressed hash table backed by a static pool (arch/common is
+ * freestanding — no malloc). It used to be a flat 256-entry array that capped
+ * the WHOLE store at 256 blocks (~1 MiB) regardless of media size — the audit's
+ * 🔴1. Now:
+ *   - ARK_IDX_SLOTS is the static pool (a RAM budget; power of two for fast
+ *     masking). It is the ONLY residual ceiling.
+ *   - The EFFECTIVE capacity is sized from the device at mount:
+ *         cap = min(ARK_IDX_SLOTS * load / 100, ARK_BDEV.total_sectors)
+ *     so a small image is limited by its MEDIA (the store fills the disk, then
+ *     emit_record returns ARK_E_FULL == ENOSPC), and only an image larger than
+ *     the pool can hit the pool ceiling. #blocks <= #records <= total_sectors,
+ *     hence total_sectors is a sound media-derived upper bound on the index.
+ *
+ * Tune ARK_IDX_SLOTS to trade BSS for capacity. 16384 slots * 40 B/slot ~=
+ * 640 KiB and fully indexes any image up to ARK_IDX_LOAD% of the pool, e.g. a
+ * 12288-block store (~12-48 MiB of content depending on block size). ARK-2/3
+ * can later back the index on a real allocator to remove the pool ceiling. */
+#define ARK_IDX_SLOTS     16384u     /* index hash slots (must be a power of 2) */
+#define ARK_IDX_LOAD      75u        /* max load factor (%) — keep probes short */
 
 /* Result codes (0 / >=0 = success, negative = error). */
 #define ARK_OK            0
@@ -76,17 +97,46 @@ typedef unsigned int   BOOL;
 #define ARK_E_NOTMOUNTED (-8)
 
 /* ------------------------------------------------------------------ */
-/* Block device abstraction (kept here so arch/common stays portable;  */
-/* deliberately NOT arch/x86's BLK_OPS, which lives outside common).    */
-/* read/write return 0 on success, negative on error. sync may be NULL. */
+/* ARK_BDEV — the block-device vtable ARK runs on.                      */
+/*                                                                      */
+/* This is the ONLY way arkfs.c touches storage: it contains NO host    */
+/* libc and NO arch-specific I/O. The SAME arkfs.c logic runs on ANY    */
+/* vtable, so ARK is media-agnostic. Implementations live OUTSIDE       */
+/* arch/common:                                                         */
+/*   - host file image  : arch/linux/pfs_ark.c (fd-backed; pread/       */
+/*     pwrite/fsync) — used by the Linux ports and the samples.         */
+/*   - bare metal (ARK-3): a thin blk_ssy / ide0 adapter — implement    */
+/*     these four ops over the platform block driver and ARK mounts on  */
+/*     real hardware with ZERO changes to arkfs.c.                      */
+/*                                                                      */
+/* Contract for an implementer (ARK-3):                                 */
+/*   sector_size   MUST equal ARK_SECTOR (512); ark_mount/format reject */
+/*                 anything else with ARK_E_INVAL.                      */
+/*   total_sectors device size in 512-byte sectors. Sector 0 is the     */
+/*                 superblock; sectors 1..total_sectors-1 are the log.   */
+/*                 This is the media size the index now scales to. NOTE: */
+/*                 U4 sectors => addressable media is capped at 2 TiB    */
+/*                 (matches the on-disk U4 total_sectors in the super-   */
+/*                 block); a wider address space would be a format bump. */
+/*   read (ctx,lba,n,buf)  read n sectors at `lba` into buf. Return 0 on */
+/*                 success, <0 on error. Must read the full n sectors    */
+/*                 (handle partial/short transfers internally).         */
+/*   write(ctx,lba,n,buf)  write n sectors. Same return convention.     */
+/*   sync (ctx)   flush volatile caches so prior writes are durable —   */
+/*                 the barrier behind ARK's commit/checkpoint atomicity. */
+/*                 MAY be NULL (no-op) on media with no write-back cache;*/
+/*                 then crash-durability degrades to the medium's own.   */
+/*   ctx          opaque handle passed back to every op (fd, device id). */
+/*                                                                      */
+/* Deliberately NOT arch/x86's BLK_OPS, which lives outside common.     */
 /* ------------------------------------------------------------------ */
 typedef struct {
     U4    sector_size;                                   /* must be ARK_SECTOR */
-    U4    total_sectors;
-    INT (*read )(void *ctx, U4 lba, U4 n, void *buf);
+    U4    total_sectors;                                 /* media size, sectors */
+    INT (*read )(void *ctx, U4 lba, U4 n, void *buf);    /* 0 ok, <0 err */
     INT (*write)(void *ctx, U4 lba, U4 n, const void *buf);
     INT (*sync )(void *ctx);                             /* flush; may be NULL */
-    void *ctx;
+    void *ctx;                                           /* opaque device handle */
 } ARK_BDEV;
 
 /* Directory entry returned by ark_readdir (mirrors VFS_DIRENT shape). */

@@ -155,8 +155,15 @@ static U4        g_epoch;         /* this mount's format generation       */
 static ark_dent  g_live[ARK_MAX_FILES];   /* live directory snapshot     */
 static U4        g_live_n;
 
-typedef struct { U1 id[ARK_ID_LEN]; U4 sec; U4 len; U1 used; } ark_idx;
-static ark_idx   g_idx[ARK_MAX_INDEX];    /* block-id -> log location     */
+/* Open-addressed hash table: block-id -> log location. An entry is EMPTY iff
+ * sec == 0 (sector 0 is the superblock, never a record location, so it is a
+ * safe sentinel). No tombstones are needed: entries are only ever inserted at
+ * runtime, and a remount rebuilds the whole table from scratch (reset_state +
+ * replay), so there is no individual deletion to break a probe chain. */
+typedef struct { U1 id[ARK_ID_LEN]; U4 sec; } ark_idx;   /* 40 bytes, 4-aligned */
+static ark_idx   g_idx[ARK_IDX_SLOTS];    /* block-id -> log location     */
+static U4        g_idx_n;                  /* live entry count             */
+static U4        g_idx_cap;                /* media-derived insert limit   */
 
 /* static scratch — never on a task stack (arch/common rule) */
 static U1 g_secbuf[ARK_SECTOR];
@@ -168,31 +175,54 @@ static U1 g_cbuf  [ARK_COMMIT_MAX];       /* commit serialization buffer  */
 /* block index helpers                                                 */
 /* ------------------------------------------------------------------ */
 
+/* id is sha256 (uniformly distributed), so its low 32 bits are a good hash. */
+static U4 idx_hash(const U1 id[ARK_ID_LEN])
+{
+    return (U4)id[0] | ((U4)id[1] << 8) | ((U4)id[2] << 16) | ((U4)id[3] << 24);
+}
+
 static INT idx_find(const U1 id[ARK_ID_LEN])
 {
-    for (U4 i = 0; i < ARK_MAX_INDEX; i++)
-        if (g_idx[i].used && ark_memeq(g_idx[i].id, id, ARK_ID_LEN)) return (INT)i;
-    return -1;
+    const U4 mask = ARK_IDX_SLOTS - 1u;            /* SLOTS is a power of two */
+    U4 h = idx_hash(id) & mask;
+    for (U4 i = 0; i < ARK_IDX_SLOTS; i++) {
+        U4 s = (h + i) & mask;
+        if (g_idx[s].sec == 0) return -1;          /* empty -> not present  */
+        if (ark_memeq(g_idx[s].id, id, ARK_ID_LEN)) return (INT)s;
+    }
+    return -1;                                     /* table full, absent    */
 }
 
-static INT idx_add(const U1 id[ARK_ID_LEN], U4 sec, U4 len)
+static INT idx_add(const U1 id[ARK_ID_LEN], U4 sec)
 {
-    if (idx_find(id) >= 0) return ARK_OK;          /* dedup */
-    for (U4 i = 0; i < ARK_MAX_INDEX; i++) {
-        if (!g_idx[i].used) {
-            ark_memcpy(g_idx[i].id, id, ARK_ID_LEN);
-            g_idx[i].sec = sec; g_idx[i].len = len; g_idx[i].used = 1;
+    const U4 mask = ARK_IDX_SLOTS - 1u;
+    U4 h = idx_hash(id) & mask;
+    for (U4 i = 0; i < ARK_IDX_SLOTS; i++) {
+        U4 s = (h + i) & mask;
+        if (g_idx[s].sec == 0) {                   /* first empty -> insert  */
+            if (g_idx_n >= g_idx_cap) return ARK_E_FULL;   /* media/pool cap */
+            ark_memcpy(g_idx[s].id, id, ARK_ID_LEN);
+            g_idx[s].sec = sec;
+            g_idx_n++;
             return ARK_OK;
         }
+        if (ark_memeq(g_idx[s].id, id, ARK_ID_LEN)) return ARK_OK;   /* dedup */
     }
-    return ARK_E_FULL;
+    return ARK_E_FULL;                             /* table full            */
 }
 
-static U4 idx_count(void)
+static U4 idx_count(void) { return g_idx_n; }
+
+/* Effective index capacity for a freshly-mounted device: bounded by the static
+ * pool (load-factor-limited so probe chains stay short) AND by the media (a
+ * block costs >= 1 sector, so #blocks <= total_sectors). The smaller wins, so
+ * a small image is media-limited and the store fills the actual disk. */
+static void idx_set_cap(U4 total_sectors)
 {
-    U4 c = 0;
-    for (U4 i = 0; i < ARK_MAX_INDEX; i++) { if (g_idx[i].used) c++; }
-    return c;
+    /* compile-time-safe: ARK_IDX_SLOTS*ARK_IDX_LOAD <= 2^31 by construction */
+    U4 pool_cap = (ARK_IDX_SLOTS / 100u) * ARK_IDX_LOAD
+                + ((ARK_IDX_SLOTS % 100u) * ARK_IDX_LOAD) / 100u;
+    g_idx_cap = (total_sectors < pool_cap) ? total_sectors : pool_cap;
 }
 
 /* ------------------------------------------------------------------ */
@@ -381,6 +411,7 @@ static void reset_state(void)
     g_head = g_log_start;
     g_seq  = 0;
     g_live_n = 0;
+    g_idx_n  = 0;
     ark_memset(g_idx, 0, sizeof(g_idx));
     ark_memset(g_live, 0, sizeof(g_live));
 }
@@ -404,6 +435,7 @@ INT ark_format(ARK_BDEV *bd)
     }
     g_epoch = prev_epoch + 1;
     reset_state();
+    idx_set_cap(bd->total_sectors);
 
     /* superblock */
     ark_memset(g_secbuf, 0, ARK_SECTOR);
@@ -439,39 +471,50 @@ INT ark_mount(ARK_BDEV *bd)
     g_log_start = sb->log_start;
     g_epoch     = sb->epoch;
     reset_state();
+    idx_set_cap(sb->total_sectors);
 
-    /* Replay the log. Track blocks since the last commit ("pending"); on a
-     * VALID commit they become permanent index entries and the live table is
-     * adopted (the atomic visibility point). A torn/garbage HEADER stops the
-     * scan; the uncommitted tail is dropped (rolled back). A header-valid but
-     * payload-corrupt record is skipped past (so one rotted block cannot
-     * truncate the whole log) yet, if it is a committed block, it stays in the
-     * index so reads detect the rot as CORRUPT. */
-    static ark_idx pend[ARK_MAX_INDEX];
-    U4 pend_n = 0;
+    /*
+     * Two-pass replay (no bounded "pending" staging array — that was itself a
+     * 256-entry cap on a commit-less run of block records).
+     *
+     * PASS 1 finds the END of the accepted region: the sector just past the
+     * LAST fully-valid COMMIT (head_after_commit). A torn/garbage HEADER stops
+     * the scan; a header-valid but payload-corrupt record is stepped over by
+     * its declared length so one rotted block cannot truncate the whole log;
+     * only a COMMIT whose payload self-verifies (crc + sha) moves the accepted
+     * frontier. Everything after the last valid commit is the crash-torn tail
+     * and is rolled back.
+     *
+     * PASS 2 re-scans only [log_start, head_after_commit). EVERY block record
+     * in that span necessarily precedes the final accepted commit, so it is
+     * committed — we can index it directly, with no pending set. Blocks are
+     * indexed by their (valid) HEADER even when the payload is rotted, so a
+     * committed-but-rotted block stays in the index and surfaces as CORRUPT on
+     * read instead of vanishing. The final commit's table becomes g_live.
+     */
     U4 sec = g_log_start;
     U4 head_after_commit = g_log_start;
-
     for (;;) {
+        U4 type, seq, len; INT payok;
+        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX,
+                            &type, &seq, &len, 0, &payok);
+        if (n <= 0) break;                       /* clean end or torn header */
+        if (type == ARK_REC_COMMIT && payok)
+            head_after_commit = sec + (U4)n;
+        sec += (U4)n;
+    }
+
+    sec = g_log_start;
+    while (sec < head_after_commit) {
         U4 type, seq, len; U1 id[ARK_ID_LEN]; INT payok;
         INT n = read_record(sec, g_payld, ARK_COMMIT_MAX,
                             &type, &seq, &len, id, &payok);
-        if (n <= 0) break;                       /* clean end or torn header */
-
+        if (n <= 0) break;                       /* defensive: torn mid-region */
         if (type == ARK_REC_BLOCK) {
-            /* index by header even if rotted, so read-time self-verify fires */
-            if (pend_n < ARK_MAX_INDEX) {
-                ark_memcpy(pend[pend_n].id, id, ARK_ID_LEN);
-                pend[pend_n].sec = sec; pend[pend_n].len = len;
-                pend[pend_n].used = 1; pend_n++;
-            }
+            idx_add(id, sec);                    /* committed; rot-tolerant   */
         } else if (type == ARK_REC_COMMIT && payok) {
             g_live_n = parse_commit(g_payld, len, g_live, ARK_MAX_FILES);
-            for (U4 i = 0; i < pend_n; i++)
-                idx_add(pend[i].id, pend[i].sec, pend[i].len);
-            pend_n = 0;
-            g_seq = seq;
-            head_after_commit = sec + (U4)n;
+            g_seq    = seq;                      /* last accepted commit wins */
         }
         sec += (U4)n;
     }
@@ -504,7 +547,7 @@ INT ark_block_put(const void *buf, U4 len, U1 id_out[ARK_ID_LEN])
     U4 start;
     INT r = emit_record(ARK_REC_BLOCK, g_blkbuf, len, id, &start);
     if (r != ARK_OK) return r;
-    return idx_add(id, start, len);
+    return idx_add(id, start);
 }
 
 INT ark_block_get(const U1 id[ARK_ID_LEN], void *buf, U4 max)
