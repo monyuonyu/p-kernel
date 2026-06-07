@@ -7,3 +7,4 @@ user_hello/*.elf
 
 # ARK bare-metal smoke test の生ディスクイメージ (samples/31_ark_baremetal)
 ark_disk.img
+*.log

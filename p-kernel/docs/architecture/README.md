@@ -5,8 +5,30 @@
 > 本ファイルはそれら全部を一望し、**どう噛み合うか・何が出来ていて何がまだか**を
 > 示す索引である。未来の Claude セッションも、人間も、まずここから入る。
 
-最終更新: 2026-06-06（同日第2波後 — §7 ゲーティング・p-fs P0+P1・lookup L0・N=32 検証が着地）
+最終更新: **2026-06-07（第16波後）**。**下の §1–§5 は波1–2（2026-06-06）時点の詳細地図で、
+そのまま歴史記録として残す。それ以降に着地したものは直下の §0 現状サマリと、
+`philosophy-gap-audit-{.. -7}.md`（時点ごとの自己監査）が最新の正本である。**
 ／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
+
+---
+
+## 0. 現状サマリ（2026-06-07・波3–16＋ARK 本物化）
+
+波1–2 で「配管」が通った後、思想（[[survival-network.md]]）を**走行系で・CI で**実証する波を重ねた。
+**指揮官は各成果を自分で kill テストして検証してから統合**（自己申告は信じない規律）。すべて master・CI 全10ジョブ緑。
+
+| 思想 | 着地したもの | 実証 |
+|---|---|---|
+| §3 死を貫く | kill 中に全推論完遂＋`degraded(k/n)`＋復帰再教育、guard/fault 隔離（タスクだけ殺し p-fs から再スポーン）、ゲノム発芽 | `13_survival_loop`★ `14_genome`、audit-1 |
+| §8 二層 | reflex/熟慮の時定数分離＋**行動→知覚→ゲートの負帰還**（外乱整定）、§10ステップB 光速遅延で reflex 近=即時/熟慮 遠=遅延の非干渉 | `20_closed_loop` `29_latency`、`[reflex-fb/learn]` |
+| §2 守る力を一点へ | **G20** 二軸ゲート（逃げず寄る）→**G28** 守る対象を一級オブジェクト化＋actuator が複製で脅威を0へ・所有者 kill 後も生存 | `27_protect`★、audit-3/4 |
+| §2∧§5 同時多発 | **G35** 多点を**並列に**防御（≈1点時間・公平・中央なし） | `28_plural_protect`★、audit-5/6 |
+| §8/§9 学ぶ | **R3a** dtr 実学習 26.7→95–98%、**R3b** 専門分化、**G22** 越境学習（バラバラ片→中央なしゴシップ平均→単独超え・kill 越え継続） | `18_breathing` `32_collective_learn`★、audit-7 |
+| §9 記憶＝図書館 | p-fs durable（全電源断生還）、**ARK FS**（content-addressed・版・crash-safe fuzzer **0 BUG**・GC・媒体スケール）＝p-fs の durable backend、**x86(ide)＋aarch64(自作 virtio-blk) 実機で電源断生還** | `23_durable` `25/26/30/31/33`★、`arkfs-audit.md` |
+| §4 光速/エネルギー | 局所性ベンチ（traffic/energy 実測）＋遅延二層の実測 | `24_locality` `29_latency` |
+| 規律 | **GitHub Actions 10ジョブ**＝4ビルド＋self-test＋relay 6/6＋走行系 kill テスト（survival/protect/plural/collective）＋ARK fuzzer | `.github/workflows/ci.yml` |
+
+★＝CI で毎回 kill テスト強制。**残る本丸**: **G38 §8 二層の配線**（学んだ confidence が reflex の死んだ gate を置換＝学びが守りを賢くする）、G23 federation（32超）、G13（coordinator 200ms の再直列化解消）。詳細は audit-7 §次の本丸。
 
 ---
 

@@ -1,5 +1,15 @@
 # ARK filesystem — skeptical design audit (wave 15, FS-audit隊)
 
+> **状態更新 (2026-06-07, 波15–16 で解消済み):** この監査が挙げた 🔴3 ブロッカーは
+> その後すべて修正された。**(1) 256ブロック上限** → ARK-1 で媒体スケールの open-addressed
+> ハッシュ index へ撤廃（+ ARK-2 で P0=64 のエンドツーエンド上限も有界キャッシュ化、カーネル
+> 経路で 400 ブロック実証）。**(2) GC 無し** → ARK-2 で crash-safe な `ark_compact()`。
+> **(3) ベアメタル未配線** → ARK-3 で x86(ide)、ARK-4 で aarch64(自作 virtio-blk) に実配線し、
+> QEMU で電源断生還を実証。さらに 🟡 の SBレプリカ・読みfallback・header resync も ARK-2 で実装し、
+> 崩壊フ ァザー(`samples/30_ark_crash`)が **0 BUG / 0 SAFE-reject**（CI `ark-crash-fuzzer` で強制）。
+> 残: 実 RPi3 の SD/EMMC、erasure coding(p-fs P4)、Merkle dir tree、`ARK_MAX_FILES=32`。
+> **以下の本文は修正前の評決で、歴史記録として原文のまま残す。**
+
 > The owner's question, verbatim: *"the new filesystem we R&D'd — ~800 lines —
 > is it really good? audit whether that design is actually right."*
 > This document is the answer. It is deliberately the skeptic's view, not a

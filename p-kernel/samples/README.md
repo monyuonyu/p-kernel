@@ -7,6 +7,41 @@ p-kernel の **ring-3 ユーザー空間プログラム**のサンプルコー�
 アーキテクチャ固有のビルドインフラ（`plibc.h`、リンカスクリプト）は
 `userland/<arch>/` に分離されています。
 
+> **2クラスある。** 下記の `01_*`〜`07_*` は古典的な **ring-3 ユーザ空間 ELF**（`exec foo.elf`）。
+> 一方 **`11_*`〜`33_*` は分散・生存デモ**で、ELF ではなく **`run.sh` 駆動のクラスタ実験**
+> （relay＋複数ノード＋kill テスト）。各デモは自分の `run.sh`/`README.md` を持つ。
+
+### 分散・生存デモ（shell 駆動クラスタ — `bash samples/<dir>/run.sh`）
+
+思想（[survival-network.md](../docs/architecture/survival-network.md)）を**走行系で**実証する一群。
+★＝GitHub Actions CI で毎回 kill テスト強制。
+
+| dir | 何を示すか | 思想 |
+|---|---|---|
+| `11_distributed` | relay 経由の分散推論（テンソル並列＋DKVA FULL） | §2 |
+| `13_survival_loop` ★ | 推論中に kill -9 → 全推論完遂・`degraded(k/n)` 明示・復帰再教育 | §3 |
+| `14_genome` | ゲノム（DNA）から欠けたコードを発芽（攻撃下は抑止） | §3 |
+| `15_reflex` | reflex 行動層 SHIELD/CONSERVE/BEACON | §8 |
+| `18_breathing` | R3b 専門分化（全ノード同一重み問題の解消） | §4 |
+| `19_dynamic_id` | 動的 ID（relay lease） | — |
+| `20_closed_loop` | 行動→知覚→ゲートの負帰還で外乱整定 | §8 |
+| `21_honest_degraded` | 鮮度依存に嘘をつかない `degraded(k/n)` | §10 |
+| `22_composite` ★(bonus) | 殺す∧同時多発∧記憶で考える を1クラスタで重畳 | §3+§5+§9 |
+| `23_durable` | p-fs を不揮発化（全ノード電源断でも記憶生還） | §9 |
+| `24_locality` | §4 局所性ベンチ（traffic/energy 実測） | §4 |
+| `25_survival_fs` | ARK（content-addressed・版・crash-safe） | §9 |
+| `26_ark_backend` | ARK を p-fs の durable backend に（put→kill→remount→配信） | §9 |
+| `27_protect` ★ | 守る対象＋actuator が複製力を注ぎ脅威を0へ・kill 後も生存 | §2 |
+| `28_plural_protect` ★ | 多点を**並列に**防御（直列でない・公平・中央なし） | §2∧§5 |
+| `29_latency` | §8 二層×光速遅延（reflex 近=即時 / 熟慮 遠=遅延、非干渉） | §4+§8 |
+| `30_ark_crash` ★ | ARK 崩壊フ ァザー（並べ替え/torn/破損 → 0 BUG） | §9 |
+| `31_ark_baremetal` | ARK が x86 実ブロックデバイス(ide)で電源断生還（QEMU） | §9 |
+| `32_collective_learn` ★ | 越境学習：バラバラのデータ片→中央なしゴシップ平均→単独超え | §8+§9 |
+| `33_ark_aarch64` | ARK が aarch64 実機(自作 virtio-blk)で電源断生還（QEMU） | §9 |
+
+※ UMP（`boot/linux` / `boot/linux_x86_64`）向け。kernel は stdin EOF で終了しないので各 run.sh は
+`exit` を送るか timeout を使う。以下は古典的 ring-3 ELF サンプル（01–07）の解説。
+
 ```
 p-kernel/
 ├── samples/              ← このディレクトリ（アーキ非依存ソース）

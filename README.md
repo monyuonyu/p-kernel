@@ -44,6 +44,15 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 | **lookup L0/L1** | 中央索引なしの所在引き：stateless HRW `responsible(k,r)`＋read-k 候補＋ローカル解決キャッシュ | シェルの `hrw`（self-test 同梱） |
 | **replica v2** | スナップショット announce のマルチパケット wire chunking | commit `74d4f4a` |
 | **Android UMP（APK）** | NDK ビルド・フォアグラウンドサービス・relay メッシュ参加・region 対応（Phase C/D） | `p-kernel/android/`、[docs/android.md](p-kernel/docs/android.md) |
+| **死を貫く生存ループ（§3）** | 推論の最中にノードを kill -9 → 群れは全推論を完遂し `degraded(k/n)` と正直に明示・復帰ノードは再教育。**CI で強制** | `samples/13_survival_loop/kill_one.sh`、CI `survival-loop` |
+| **ゲノム発芽（§3）** | 装甲板が DNA（ゲノム）から欠けたコードを発芽させて held-out 100% に到達（攻撃下は発芽を抑止＝SHIELD 一貫） | `samples/14_genome/` |
+| **反射／熟慮の行動層（§8）** | reflex が SHIELD/CONSERVE/BEACON、二時定数で隣ノードは減衰反射（痙攣しない）。行動→知覚→ゲートの負帰還が外乱を整定 | `reflex test`（`[reflex-fb]/[reflex-learn]`）、CI |
+| **§2 集結（G20→G28）** | ゲート効用を負荷軸／脅威軸に分離（逃げず**寄る**）。守る対象を一級オブジェクト化し、actuator が群れの複製力を注いで脅威を**タイマでなく複製で**0へ。所有者を kill しても対象は隣で生存 | `protect test`、`samples/27_protect/run.sh`、CI `protect-loop-live` |
+| **§2∧§5 多点同時防御（G35）** | 多数の守る対象を**並列に**防御（総時間 ≈ 1点分、直列でない・公平・中央なし） | `samples/28_plural_protect/run.sh`、CI `plural-protect-live` |
+| **越境学習（§8/§9 G22）** | **バラバラのデータ片**で学ぶノードがモデルを**中央なしゴシップ平均** → 全ノードが単独上限を超える（collective > individual）・kill を越えて学習継続・rejoin が追いつく | `dtr gossip test`、`samples/32_collective_learn/run.sh`、CI `collective-learn-live` |
+| **オンデバイス学習（R3a/R3b）** | dtr は解析的 backprop で **26.7%→95–98% held-out** を実学習・重みを p-fs に保存し別ノードが load（"魂のデモ"）。R3b で専門分化（全ノード同一重み問題を解消） | `dtr train/eval/save/load`、`samples/18_breathing/` |
+| **ARK ファイルシステム** | content-addressed・log-structured・crash-safe（並べ替え/torn/破損 fuzzer **0 BUG**）・GC・媒体スケール（旧256上限撤廃）・p-fs の durable backend。**実ブロックデバイスに乗り電源断を越える**（x86=ide / aarch64=自作 virtio-blk、QEMU で検証） | `samples/25_survival_fs` `26_ark_backend` `30_ark_crash` `31_ark_baremetal` `33_ark_aarch64`、CI `ark-crash-fuzzer` |
+| **CI（GitHub Actions 10ジョブ）** | 4ターゲット build＋self-test 群＋relay 6/6＋走行系の kill テスト（survival/protect/plural/collective）＋ARK fuzzer。**走行系を毎回 CI で強制** | `.github/workflows/ci.yml` |
 
 詳細な根拠 commit 一覧は [アーキテクチャ地図 §4 状態表](p-kernel/docs/architecture/README.md) にある。
 **この表に無いものは「動く」と主張しない。**
@@ -52,10 +61,11 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 
 - **ベアメタル x86** が最もコマンドが多い: FAT32 の実 `ls`/`cat`、`exec`（ELFローダ）、
   オンデバイス TCC コンパイル、`raft`、`fl train`、`evolve`（Claude API ループ）、`sfs` 等。
-  ただしどれもデモ級であり、後述の通り AI 系は未学習である。
-- **UMP（aarch64-linux / x86_64-linux）** のシェルは実装済みコマンド約20個
-  （`net` `nodes` `region` `world`/`map` `moe` `infer` `dtr` `kdds` `pfs …` `hrw`
-  `rgnpub` `kdemo` `ai` `dist` `rx` `ver` など）。**未知の入力は `[echo]` で返すだけ**であり、
+  AI 系は §4 のとおり今は学習する（dtr 95–98%）が、規模は玩具のまま。
+- **UMP（aarch64-linux / x86_64-linux）** のシェルは実装済みコマンド多数
+  （`net` `nodes` `region` `world`/`map` `moe` `infer` `dtr`（`train/eval/save/load/gossip`）
+  `protect` `kdds` `pfs …` `hrw` `rgnpub` `kdemo` `ai` `dist` `rx` `ver` など）。
+  **未知の入力は `[echo]` で返すだけ**であり、
   ベアメタル x86 の `raft`/`evolve`/`sfs`/`exec` 等は UMP には**存在しない**。
 - **x86_64-linux UMP は普通にビルド・起動する。** 過去のドキュメントが
   「in progress」と過小に書いていたのは誤りで、aarch64-linux と同一のコマンド集合を持つ。
@@ -69,9 +79,12 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
   [アーキテクチャ地図](p-kernel/docs/architecture/README.md) に一望できる
   （survival-network / regions / reflex-deliberation / p-fs / decentralized-lookup /
   r3-model-widening）。各 doc は「正直な論点」節で未解決問題を自己申告している。
-- **R3 model widening** — 635 パラメータの玩具網を実用サイズへ広げ、初めて
-  「1台に収まらない＝分散が必然」になる。doc は着地済み、**実装は本ブランチ未着手**。
-  学習側（R3a）は並行ブランチで実装中（下記 §4）。
+- **R3a 学習・R3b 専門分化は着地済み**（§1 参照）。残る **R3 width 拡大** — 635 パラメータの
+  玩具網を実用サイズへ広げ、初めて「1台に収まらない＝分散が必然」になる。doc は着地済み、
+  **width 実装は未着手**（§10「まず原理、規模は後」に従い後回し）。
+- **federation（32 超）** — 階層化で DNODE_MAX の天井を撤廃。設計のみ（`federation.md`）。
+- **§8 二層の配線（次の本丸 G38）** — 学んだ confidence が reflex の死んだ gate を置換し、
+  学びが守りを賢くする。今は「学ぶ層」と「守る層」が並ぶが未配線。設計＝監査v7。
 - **p-fs P3–P4** — 分散ルックアップとの統合・消失訂正符号。設計のみ。
 - **lookup L2+** — world-table キャッシュ統合以降。設計のみ。
 
@@ -95,27 +108,37 @@ what is **designed/in-flight**, and what is **vision** — honestly. Code lives 
 
 ## 4. 率直な現状（honest caveats）
 
-1. **AI は未学習である。** `infer` が動かす Transformer は 635 パラメータの玩具で、
-   重みは LCG 疑似乱数で初期化されたまま（`arch/common/dtr.c` の `init_weights`）、
-   **本ブランチ時点で一度も学習されていない**。つまり `infer` の出力は決定論的ノイズであり、
-   意味のある分類ではない。いま実証できているのは「分散 forward-pass の配管が
-   異種ABI・複数ノードを跨いで正しく流れること」であって、知能ではない。
-   学習の実装（R3a）は並行ブランチ `r3a-train` で進行中だが、**本ブランチには未マージ**。
-   重みが本当に学習されるまで、この網を「AI」と呼ぶ主張は配管の主張に格下げしておく。
-2. **Federated Learning の損失関数はスタブである。** `arch/common/fedlearn.c` の loss は
-   `(pred == label) ? 0.1f : 1.0f` であり、何も学習していない。FedAvg の通信経路の
-   デモであって、学習のデモではない。
+1. **AI は学習する。ただし玩具スケールである。** （かつてここには「一度も学習されていない」と
+   書いていた。それは R3a 着地前の事実で、**今は誤り**。）dtr は解析的 backprop（有限差分で
+   照合・rel err ~0.001）で **26.7%→95–98% held-out** を実学習し、重みを p-fs に保存・別ノードが
+   load できる。第16波（G22）では**バラバラのデータ片で学ぶノードが中央なしゴシップ平均で
+   単独上限（~56–67%）を超え ~85–93%** に達する。だが網は依然 **635 パラメータの玩具**であり、
+   全データ集中学習の oracle（~98%）には届かない。「分散して本当に学ぶ」原理は実証したが、
+   「規模ある知能」はまだ。R3（width 拡大）は設計のみ＝**まず原理、規模は後**（§10）。
+2. **Federated Learning のスタブは撤去した。** （かつてここには loss が `(pred==label)?0.1:1.0`
+   のスタブだと書いていた。第16波で `fl_local_train` を**重み本体（w1/w2/w3）全部**の勾配へ、
+   `dtk_fl_aggregate` の中央集約（E_NOSPT）を**中央なし p-fs ゴシップ平均**へ置換。実学習・実集約。）
+   なお越境学習の「正直な残」: 2ノード生存タールの最終精度は非IIDで揺れる（ゲートせず report）、
+   このホスト（aarch64-PRoot）は cross-node p-fs でクラッシュする環境バグがあり走行系検証は
+   x86_64（CIターゲット）で行う。
 3. **ring-0 に浮動小数点 Transformer を置く矛盾**（PR #3 指摘）には、こう答える:
    ベアメタル側では FPU 状態管理が未解決の open item であり、推論コードのバグ1つで
    そのノードは落ちる。**今日の隔離の答えは Linux / Android ユーザモード移植（UMP）の側にある**
    — そこでは p-kernel 全体（AI を含む）が普通のユーザ空間プロセスとして走り、
    1ノードのクラッシュは群れの死を意味しない。**生存の単位は個体ではなく群れである。**
-   ベアメタルはハードウェアまで降りるための研究の乗り物（research vehicle）であって、
-   現時点の「死なない」ストーリーの担い手は UMP の群れの方である。
-4. **テスト規律は relay に偏っている。** 自動テストらしい自動テストは relay の6シナリオと
-   各 self-test（pfs / hrw / N=32 ハーネス）のみ。CI は未整備。
-5. **リポジトリ衛生** — 入れ子の `p-kernel/p-kernel/` パス、コミット済みバイナリ等は
-   既知の負債であり、別途整理中。
+   さらに guard/fault 隔離で「タスクだけ殺して p-fs の重みから再スポーン」も実装済み。
+   ベアメタルはハードウェアまで降りるための研究の乗り物（research vehicle）。
+4. **CI は整備済み（GitHub Actions 10ジョブ）。** （かつてここには「CI は未整備」と書いていた。
+   今は誤り。）4ターゲット build＋self-test 群＋relay 6/6 に加え、**走行系を毎回 kill テストで強制**
+   する: survival-loop / protect-loop-live / plural-protect-live / collective-learn-live / ark-crash-fuzzer。
+   「緑の自己テスト／死んだ走行系パス」を避けるのが設計規律。
+5. **スケールの天井。** `DNODE_MAX=32`（実走 6/6 実証済み）。federation（階層化で 32 超）は
+   設計のみ（`docs/architecture/federation.md`）。越境学習が本物になった今、32 が「全体の総合力」の
+   上限になりつつある＝次の課題。
+6. **ARK の正直な残**: 実機検証は QEMU（x86=ide / aarch64=自作 virtio-blk）であり実 RPi3 の
+   SD/EMMC ドライバは未。erasure coding（p-fs P4）・Merkle dir tree・`ARK_MAX_FILES=32` は未着手。
+7. **リポジトリ衛生** — 入れ子の `p-kernel/p-kernel/` パスは既知の負債。コミット済みバイナリ/
+   テストログは順次整理（黎明期 `git add` の取りこぼしを `.gitignore` 化＋除去）。
 
 ---
 
