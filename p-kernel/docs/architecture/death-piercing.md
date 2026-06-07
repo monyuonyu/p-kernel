@@ -93,6 +93,57 @@ G8 のストレッチ (coordinator 死亡時に region 内の次点が in-flight
 肩代わりする) は未実装。今は「失われた」と正直に言うところまでで、これは
 下記「残課題 — 自動引き継ぎ」と同じ系譜の次の波。
 
+## degraded の正直さは gossip 鮮度に依存する — 不確実性を明示する (wave 12, G12)
+
+G2/G8 の修正には**致命的な副作用**があった (philosophy-gap-audit-2.md G12 🔴)。
+他 region の期待集合 `rc_expect[]` を **world-gossip の region_id** から組むため、
+**degraded(k/n) の数字自体が gossip の鮮度に依存して嘘をつく**:
+
+> 旧実装は「gossip 未着なら各 remote ノードを 1 region とみなす」保守加算をした。
+> ところが**複数メンバから成る remote region**で coordinator のビーコンがまだ
+> 届いていないと、その region の各メンバを**別々の期待 region**として `rc_cnt0` に
+> 積む。一方で実際に `rsum` を出すのは coordinator 1 台だけ → `rc_got < rc_cnt0`
+> → **実際は全寄与が畳めていても `degraded (2/3)` を誤って出す／分母が過大**。
+
+これは I16「degraded の k/n は実寄与/実期待の数であり、観測タイミング (gossip
+鮮度) の関数ではない」の違反であり、I4 honesty の核を過渡期に崩す。
+`concurrent_infer.sh` が測定前に 4 秒の収束待ちを入れていること自体が、
+honesty の数字が gossip-timing 依存である証拠だった (テスト topology の remote
+region が単一ノードなので、偶然この穴を踏んでいなかった)。
+
+**修正 (wave 12)**: 期待集合を「**新鮮に確認できた**ものだけ」で組み、確認でき
+ないものは『不明 (uncertain)』として**別軸で明示**する。
+
+- 確定分母 `rc_cnt0` は `world_peer_region_fresh()` —— ビーコンが新鮮
+  (`age <= WORLD_STALE_MS`) なときだけ region を返す —— から組む。gossip 未着/
+  古いノードは**別 region と決め打ちせず**、`uncertain` として別計上する
+  (過大計上で嘘をつかない)。
+- rsum が実際に届いたら、その発行元は実在する coordinator だと**確証**できる
+  ので、uncertain から確定分母へ昇格させる (到着 = 確証)。これで「不確実だったが
+  応答した」region は k/n の両方に正しく乗り、取りこぼしも過大計上もしない。
+- uncertain が残る間は窓を早期確定しない (その rsum がまだ来るかもしれず、
+  ここで打ち切ると「未収束」を確定値で覆い隠す)。
+- 報告は §10「古さ・不完全さの明示」に従う:
+
+  ```
+  degraded (k/n; m uncertain): ... (gossip unconverged — count provisional)
+  ```
+
+  欠損があれば `degraded (k/n; m uncertain)`、欠損は無いが gossip 未確認の生存
+  remote が `m` 個あるなら `degraded (k/k; m uncertain): ... provisional until
+  gossip converges` を出す。**沈黙で確定値 (完全成功) を装わない**。
+
+要するに **degraded の数字は「新鮮に確認できた事実」だけで作り、確認できない
+分は不確実として正直に添える**。gossip が収束していれば `m = 0` で従来どおりの
+`degraded (k/n)`、収束していなければ過大計上せず不確実性を明示する。honesty が
+過渡条件 (gossip-timing) で嘘をつくことはなくなった。
+
+`samples/21_honest_degraded/` が、**収束待ちを入れず**・world ビーコンを意図的に
+保留 (`PKERNEL_WORLD_BEACON_HOLD_MS`) した状態で、**複数メンバの remote region**へ
+推論を発行し、(a) 過大計上の偽 degraded `(2/3)` が出ない、(b) 不確実性を明示する、
+(c) fp が収束時のベースラインと一致する (= 実際には全寄与が畳めている) ことを
+アサートする。
+
 ## 起点の特権を消す
 
 - `dkva_infer` 自体にノード ID 前提はもともと無い (src_node は
@@ -124,5 +175,10 @@ G8 のストレッチ (coordinator 死亡時に region 内の次点が in-flight
   region 横断の正直な degraded (G2/G8) を実証。シナリオ A: 複数起点の
   同フレーム推論が両方完遂・fp 一致。シナリオ B: 他 region 全滅で
   `degraded (k/n)` を必ず出力して完遂。
+- `samples/21_honest_degraded/honest_degraded.sh` — degraded の正直さが
+  gossip 鮮度に依存しないこと (G12) を実証。world ビーコンを意図的に保留した
+  未収束状態で、複数メンバの remote region へ推論を発行し、過大計上の偽
+  degraded を出さず・不確実性を明示し・fp が収束ベースラインと一致することを
+  アサート (失敗時 exit 非0)。詳細は同ディレクトリの README。
 - `.github/workflows/ci.yml` の `survival-loop` job — ubuntu 上で
   boot/linux_x86_64 + relay をビルドし kill_one.sh を回す (15 分制限)。
