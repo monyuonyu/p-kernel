@@ -44,6 +44,7 @@
 #include "retrieval.h"
 #include "pfs_block.h"
 #include "pfs_dag.h"
+#include "gossip_learn.h"   /* G22: decentralized collective learning */
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -506,6 +507,7 @@ void dtr_train_cmd(const UB *args, UW len)
     if (tr_tok(p, end, "crash")) { cmd_crash(); return; }
     if (tr_tok(p, end, "remember")) { cmd_remember(); return; }
     if (tr_tok(p, end, "ret")) { cmd_ret(p + 3, end); return; }
+    if (tr_tok(p, end, "gossip")) { gl_cmd(p + 6, (UW)(end - (p + 6))); return; }
     if (tr_tok(p, end, "train")) {
         p += 5;
         p = tr_skip_ws(p, end);
@@ -519,5 +521,6 @@ void dtr_train_cmd(const UB *args, UW len)
 
     tr_puts("usage: dtr [stat] | dtr eval | dtr train [epochs]"
             " | dtr save | dtr load | dtr grad | dtr crash"
-            " | dtr remember | dtr ret [on|off|reload]\r\n");
+            " | dtr remember | dtr ret [on|off|reload]"
+            " | dtr gossip [test|solo|run|status]\r\n");
 }

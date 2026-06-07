@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd p-kernel/boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -77,6 +77,14 @@ jobs:
           # §2 ∧ §5 G35: MANY protected points defended IN PARALLEL — all reach
           # R replicas in ~one-point time (not N*), fair, none starves (wave 15).
           grep -aF '[plural-protect] PASS' selftest.log
+          # §8/§9 G22 (wave 16): DECENTRALIZED COLLECTIVE LEARNING. Nodes on
+          # DISJOINT (leave-one-class-out) shards each cap low on the full task
+          # (shard-solo); gossip-averaging full weight bodies with NO central
+          # aggregator lifts accuracy ABOVE that solo ceiling (gossip-learn);
+          # the merge is peer-symmetric, no aggregator index (no-central).
+          grep -aF '[g22-shard-solo] PASS' selftest.log
+          grep -aF '[g22-gossip-learn] PASS' selftest.log
+          grep -aF '[g22-no-central] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -102,7 +110,7 @@ jobs:
         continue-on-error: true
         run: |
           cd p-kernel/boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\nexit\n' | \
+          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -119,6 +127,10 @@ jobs:
           grep -aF '[protect-loop] PASS' selftest.log
           # §2 ∧ §5 G35 plural parallel protection (wave 15)
           grep -aF '[plural-protect] PASS' selftest.log
+          # §8/§9 G22 decentralized collective learning (wave 16)
+          grep -aF '[g22-shard-solo] PASS' selftest.log
+          grep -aF '[g22-gossip-learn] PASS' selftest.log
+          grep -aF '[g22-no-central] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
@@ -232,6 +244,39 @@ jobs:
         with:
           name: plural-protect-live-logs
           path: /tmp/p28_*.log
+
+  collective-learn-live:
+    name: "Collective learning (live 3-node: disjoint shards, gossip > solo, node killed + rejoins)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # enforces the LIVE §8/§9 path (G22): 3 nodes each train on a DISJOINT
+    # leave-one-class-out shard (no node sees the whole task), gossip-average
+    # their full 635-param weight bodies over the relay with NO central
+    # aggregator, and EVERY node ends ABOVE its own solo shard-only ceiling —
+    # collective > individual, proven in numbers, not a copy. Then a node is
+    # kill -9'd mid-learning (the survivors keep improving) and a node rejoins
+    # and catches up via gossip. The in-process [g22-*] property tests are the
+    # unit proof; this is the over-the-relay integration proof.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C p-kernel/boot/linux_x86_64
+          make -C p-kernel/relay
+      - name: Run 32_collective_learn/run.sh and assert RESULT PASS
+        run: |
+          timeout 900 p-kernel/samples/32_collective_learn/run.sh | tee /tmp/p32_ci.log
+          grep -q 'RESULT: PASS' /tmp/p32_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collective-learn-live-logs
+          path: /tmp/p32_*.log
 
   ark-crash-fuzzer:
     name: "ARK crash fuzzer (reorder/torn/bitflip: 0 corrupt-served, 0 wedge)"
