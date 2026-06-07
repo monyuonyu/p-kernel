@@ -51,7 +51,15 @@
 #define PROTECT_DEFAULT_R     2     /* desired durable replicas (neighbours) */
 #define PROTECT_THREAT_STEP  20     /* threat points per missing replica     */
 #define PROTECT_THREAT_MAX   80     /* clamp (<=100; aligns w/ reflex range)  */
-#define PROTECT_REANNOUNCE_MS 800   /* actuator drive interval while at-risk  */
+#define PROTECT_REANNOUNCE_MS 400   /* actuator re-drive interval while at-risk */
+                                    /* (the actuator pushes the unit DIRECTLY to */
+                                    /* non-holder neighbours, so one drive places */
+                                    /* all replicas; this cadence only re-pushes  */
+                                    /* to recover a rare dropped UDP chunk).      */
+#define PROTECT_DRIVE_SPACING_MS 60 /* gap between consecutive point announces */
+                                    /* (> pfs poll 50ms so each clean, no      */
+                                    /* clobber; lets ALL at-risk points kick   */
+                                    /* off within one tick = parallel, §5)     */
 
 /* ------------------------------------------------------------------ */
 /* lifecycle                                                           */
@@ -90,6 +98,12 @@ UB   protect_threat_level(void);
  * definition): threat for ONE object holding `replicas` durable copies
  * against `target_r`. Monotonically non-increasing in replicas; 0 at >=R. */
 UB   protect_threat_for(INT replicas, INT target_r);
+
+/* G35/§5: number of DISTINCT protected points that are at-risk right now
+ * (0..PROTECT_MAX_OBJS). world.c carries this in the beacon's spare byte so
+ * neighbours perceive PLURALITY — that this node defends MANY simultaneous
+ * points — which the single aggregate threat scalar folds away. Local-only. */
+INT  protect_atrisk_count(void);
 
 /* ------------------------------------------------------------------ */
 /* holder accounting (fed by gossip — §7 no central)                  */

@@ -182,6 +182,22 @@ static UB compute_threat(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* atrisk — 同時に at-risk な protected 点の数 (G35/§5)                 */
+/*                                                                     */
+/* threat は最悪 1 点ぶんの脅威スカラ (rally 信号) しか運べない。これは     */
+/* 「同時多発」(§5) を畳んでしまう。atrisk は「いま何点を並行して守って      */
+/* いるか」を別バイトで運び、近傍が *多点性* を perceive できるようにする。  */
+/* 0..PROTECT_MAX_OBJS に収まるので 12B ビーコンを増やさない。              */
+/* ------------------------------------------------------------------ */
+static UB compute_atrisk(void)
+{
+    INT n = protect_atrisk_count();
+    if (n < 0)   n = 0;
+    if (n > 255) n = 255;
+    return (UB)n;
+}
+
+/* ------------------------------------------------------------------ */
 /* 公開フック: MoE 発火を記録する                                      */
 /* ------------------------------------------------------------------ */
 
@@ -207,7 +223,7 @@ static void publish_beacon(void)
     b.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
     b.region_size = region_size();
     b.threat      = compute_threat();            /* 脅威軸 (§2 rally) — G20 */
-    b._pad        = 0;
+    b.atrisk      = compute_atrisk();
     b.seq         = my_seq++;
 
     kdds_pub(h_pub, &b, sizeof(b));
@@ -268,6 +284,12 @@ INT world_peer_threat(UB node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)table[node].beacon.threat;     /* 脅威軸 0..100 (-1 = 未知) */
+}
+
+INT world_peer_atrisk(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    return (INT)table[node].beacon.atrisk;     /* 同時 at-risk 点数 (-1=未知) */
 }
 
 INT world_peer_region(UB node)
@@ -334,7 +356,7 @@ void world_task(INT stacd, void *exinf)
         self.firing      = 0;
         self.region_size = region_size();
         self.threat      = compute_threat();
-        self._pad        = 0;
+        self.atrisk      = compute_atrisk();
         self.seq         = 0;
         world_observe(&self);
     }
@@ -365,7 +387,7 @@ void world_task(INT stacd, void *exinf)
             self.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
             self.region_size = region_size();
             self.threat      = compute_threat();
-            self._pad        = 0;
+            self.atrisk      = compute_atrisk();
             self.seq         = table[drpc_my_node].valid
                                  ? table[drpc_my_node].beacon.seq : 0;
             world_observe(&self);
@@ -496,6 +518,12 @@ void world_print(void)
          * 一点 (G20)。load の pressure bar とは別軸・逆符号であることを明示。 */
         if (!stale && !dead && b->threat > 0) {
             wo_puts("  threat="); wo_putdec(b->threat); wo_puts(" <-RALLY");
+            /* G35/§5: many points at once — perceive the PLURALITY the single
+             * threat scalar folds away (not "one crisis", "N concurrent"). */
+            if (b->atrisk > 1) {
+                wo_puts(" ("); wo_putdec(b->atrisk);
+                wo_puts(" pts defended in parallel)");
+            }
         }
         wo_puts("\r\n");
     }

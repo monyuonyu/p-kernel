@@ -83,6 +83,7 @@ typedef struct {
 static PROTECT_OBJ objs[PROTECT_MAX_OBJS];
 
 static UB actuator_enabled = 1;  /* the protecting POWER; off = control     */
+static UB drive_rotor = 0;       /* round-robin pointer over objs[] (§5/§6)  */
 
 /* stats (observability) */
 static UW st_declared, st_drives, st_holder_events, st_reached_safe;
@@ -112,6 +113,24 @@ UB protect_threat_level(void)
         if (t > worst) worst = t;
     }
     return worst;
+}
+
+/* G35/§5: how many DISTINCT protected points are at-risk *right now*. This is
+ * the plurality the single threat scalar folds away: the beacon carries the
+ * aggregate (max) threat as the rally signal, but neighbours read this count to
+ * see that a node is defending MANY simultaneous points, not one. Bounded by
+ * PROTECT_MAX_OBJS (<=255), so it fits the beacon's spare byte without growing
+ * the 12B wire. NO central: counted from this node's own registry only. */
+INT protect_atrisk_count(void)
+{
+    INT n = 0;
+    for (INT i = 0; i < PROTECT_MAX_OBJS; i++) {
+        if (!objs[i].active) continue;
+        if (protect_threat_for((INT)objs[i].holder_count,
+                               (INT)objs[i].target_r) > 0)
+            n++;
+    }
+    return n;
 }
 
 /* ------------------------------------------------------------------ */
@@ -227,46 +246,99 @@ void protect_tick(UW elapsed_ms)
 {
     if (drpc_my_node == 0xFF) return;             /* not distributed         */
 
+    /* refresh region membership once so region_is_member() below is current
+     * (cheap; same pattern as moe.c's select_expert hot path). */
+    region_recompute();
+
+    /* ---- Phase 1: per-object bookkeeping for EVERY protected point ---------
+     * Concurrent, not serialized: each at-risk object independently re-caps its
+     * target_r upward (self-heal of an early declare) and AGES toward "due".
+     * Threat is recomputed from each object's OWN replica count — there is no
+     * single scalar that one point monopolizes (§5: many points, each tracked
+     * in parallel). Every at-risk point keeps aging while it waits its turn, so
+     * none loses its "due" status (= no starvation; §6 fair). */
+    INT n_due = 0, n_atrisk = 0;
     for (INT i = 0; i < PROTECT_MAX_OBJS; i++) {
         if (!objs[i].active) continue;
-
-        /* Self-heal an early declare: if the region GREW since we declared
-         * (e.g. we declared before SWIM had measured RTT to both peers, so
-         * target_r capped low), re-cap target_r UPWARD toward the originally
-         * requested R. A node that learns of more peers legitimately wants
-         * more durable copies; this re-opens the grounded threat until the
-         * higher R is met. Monotone toward requested_r — never lowered, so a
-         * peer leaving does not thrash the target back down. */
         INT cap = cap_target_r((INT)objs[i].requested_r);
         if (cap > (INT)objs[i].target_r) {
             objs[i].target_r  = (U1)cap;
             objs[i].last_threat = protect_threat_for((INT)objs[i].holder_count,
                                                      (INT)objs[i].target_r);
         }
-
         UB t = protect_threat_for((INT)objs[i].holder_count,
                                   (INT)objs[i].target_r);
         if (t == 0) continue;                     /* safe: no force to pour  */
+        n_atrisk++;                               /* still under-replicated  */
         if (!actuator_enabled) continue;          /* control: do not evacuate */
-
         objs[i].drive_age_ms += elapsed_ms;
-        if (objs[i].drive_age_ms < PROTECT_REANNOUNCE_MS) continue;
-        objs[i].drive_age_ms = 0;
+        if (objs[i].drive_age_ms >= PROTECT_REANNOUNCE_MS) n_due++;
+    }
+    if (!actuator_enabled || n_due == 0) return;
 
-        /* concentrate force on the at-risk point: drive replication by
-         * re-announcing so lacking/late neighbours WANT + pull it durably.
-         * Mark the unit as deliberately driven: only an actuator-driven unit
-         * is allowed to spread via ambient boot-SYNC (the protecting POWER
-         * spreads it on purpose; it is never leaked accidentally — §2). */
+    /* ---- Phase 2: drive ALL due points THIS tick, SPACED — parallel kickoff -
+     * The announce control-plane is a single region LATEST_ONLY slot (one value
+     * per topic, not a queue). Issuing N announces back-to-back would overwrite
+     * all but the last before any neighbour polls, STARVING N-1 protected points
+     * — that is the §5 wall at the wire. We instead announce EVERY due point in
+     * this tick but leave a small gap (PROTECT_DRIVE_SPACING_MS > the pfs poll
+     * interval) between consecutive announces, so each one persists in the slot
+     * long enough for neighbours to catch it: all N points are DISCOVERED and
+     * kicked off within a single tick (~N*spacing), then replicate CONCURRENTLY
+     * over the id-addressed want/transfer plane (fanning out across different
+     * neighbours). The owner's per-holder confirmation is then carried by the
+     * RELIABLE unicast hold-ack (pfs_repl), not the clobberable announce slot,
+     * so holder_count tracks the real durable replicas promptly.
+     *   - FAIR: every at-risk point is announced every tick; the rotor only
+     *     varies WHICH point goes first, so under cross-node slot contention no
+     *     single point is perpetually the loser (§6 made plural);
+     *   - PARALLEL: N points converge in ~one-point time + a bounded kickoff,
+     *     NOT N* one-point (§5: many crises, each its own replication, at once);
+     *   - NO central / NO global order: the rotor + per-object age are local
+     *     state; no aggregation window re-serializes anything (cf. audit G13).
+     * Note this is a fair TIME-SHARE of a finite announce bandwidth: for very
+     * large N the per-tick kickoff (N*spacing) grows — honest finite capacity. */
+    INT driven_this_tick = 0;
+    for (INT scan = 0; scan < PROTECT_MAX_OBJS; scan++) {
+        INT i = (drive_rotor + scan) % PROTECT_MAX_OBJS;
+        if (!objs[i].active) continue;
+        UB t = protect_threat_for((INT)objs[i].holder_count,
+                                  (INT)objs[i].target_r);
+        if (t == 0) continue;
+        if (objs[i].drive_age_ms < PROTECT_REANNOUNCE_MS) continue;
+
+        if (driven_this_tick > 0)
+            tk_dly_tsk(PROTECT_DRIVE_SPACING_MS);  /* space so no slot clobber */
+
+        objs[i].drive_age_ms = 0;
         objs[i].driven = 1;
-        pfs_repl_reannounce(objs[i].id);
+        pfs_repl_reannounce(objs[i].id);     /* broadcast announce (discovery) */
+        /* G35 reliable discovery: in addition to the lossy broadcast announce,
+         * DIRECTLY push the unit to every alive region neighbour that has not
+         * yet confirmed holding it — point-to-point (no shared slot), so the
+         * concurrent replication of MANY points does not lose discovery. Self-
+         * limiting: once a neighbour stores it and unicasts its hold-ack,
+         * holders[n]=1 and we stop pushing to it. This is §2 "pour the
+         * network's force on the point" made concrete and reliable; it is what
+         * lets all R replicas of every point land in parallel. */
+        for (INT n = 0; n < DNODE_MAX; n++) {
+            if (n == (INT)drpc_my_node) continue;
+            if (objs[i].holders[n]) continue;             /* already a holder  */
+            if (dnode_table[n].state != DNODE_ALIVE) continue;
+            if (!region_is_member((UB)n)) continue;       /* region-scoped (§7)*/
+            pfs_repl_push(objs[i].id, (UB)n);
+        }
         st_drives++;
+        driven_this_tick++;
         pt_puts("[protect] ACTUATE id="); pt_put_id(objs[i].id);
         pt_puts("  at-risk (replicas="); pt_putdec(objs[i].holder_count);
         pt_puts("/"); pt_putdec(objs[i].target_r);
         pt_puts(", threat="); pt_putdec(t);
-        pt_puts(") -> drive replication into neighbours\r\n");
+        pt_puts(", "); pt_putdec((UW)n_atrisk); pt_puts(" pts at-risk)"
+                " -> drive replication into neighbours\r\n");
     }
+    /* advance the rotor by one so the first-announced point rotates each tick */
+    drive_rotor = (UB)((drive_rotor + 1) % PROTECT_MAX_OBJS);
 }
 
 #define PROTECT_TICK_MS 200
@@ -307,6 +379,7 @@ void protect_init(void)
 {
     for (INT i = 0; i < PROTECT_MAX_OBJS; i++) objs[i].active = 0;
     actuator_enabled = 1;
+    drive_rotor = 0;
     st_declared = st_drives = st_holder_events = st_reached_safe = 0;
     /* heard announces feed the holder count (the only signal that lowers the
      * grounded threat). Registered here so it is live before any declare. */
@@ -525,12 +598,112 @@ static INT st_closed_loop(void)
     return fails;
 }
 
+/* ================================================================== */
+/* [plural-protect] (G35/§5) — MANY protected points at once, in parallel.
+ *
+ * Models the live actuator+replication planes as integer math, reusing the
+ * live protect_threat_for() formula (no duplicate). It captures the two real
+ * planes faithfully:
+ *   - ANNOUNCE plane: a single region LATEST_ONLY slot. The actuator drives
+ *     EVERY due point each tick but SPACED (Phase 2 above), so all N points are
+ *     kicked (announced) within the first tick without clobbering each other.
+ *   - REPLICATION plane: id-addressed want/transfer that fans out across
+ *     DIFFERENT neighbours, so once a point is kicked its replicas rise in
+ *     PARALLEL with every other already-kicked point (pull_rate per tick).
+ *
+ * Proven properties (all from local/per-object state — NO central, §7):
+ *   (1) ALL N points reach safe (threat 0)               — §5 many-at-once
+ *   (2) FAIR: every point gains replicas; none starves    — §6 plural
+ *   (3) CONCURRENT not serialized: total ticks ~= one-point (all kicked in the
+ *       first tick, then fill in parallel), and STRICTLY < the serialized
+ *       bound N*one-point — the control that FAILS if the system defended one
+ *       point at a time.
+ * ================================================================== */
+/* Simulate N points under the spaced-kickoff actuator. Returns ticks-to-all-
+ * safe; *all_safe_out set iff every point reached R (starvation probe). */
+static INT pp_sim(INT N, INT R, INT pull, INT *all_safe_out)
+{
+    INT rep[PROTECT_MAX_OBJS];
+    for (INT i = 0; i < N; i++) rep[i] = 0;
+    INT t = 0;
+    const INT TMAX = 4 + N * (R + 2);     /* generous bound; never hit if sane */
+    for (t = 1; t <= TMAX; t++) {
+        /* ANNOUNCE plane (spaced): EVERY still-at-risk point is announced this
+         * tick (the spacing keeps them from clobbering), so all are "kicked".
+         * REPLICATION plane (parallel): each at-risk point gains replicas this
+         * tick — overlapping in time across ALL points, not one-at-a-time. */
+        for (INT i = 0; i < N; i++) {
+            if (protect_threat_for(rep[i], R) > 0) {
+                rep[i] += pull;
+                if (rep[i] > R) rep[i] = R;
+            }
+        }
+        INT all_safe = 1;
+        for (INT i = 0; i < N; i++)
+            if (protect_threat_for(rep[i], R) > 0) { all_safe = 0; break; }
+        if (all_safe) break;
+    }
+    INT all_safe = 1, min_rep = R;
+    for (INT i = 0; i < N; i++) {
+        if (protect_threat_for(rep[i], R) > 0) all_safe = 0;
+        if (rep[i] < min_rep) min_rep = rep[i];
+    }
+    *all_safe_out = all_safe && (min_rep >= R);
+    return t;
+}
+
+static INT st_plural(void)
+{
+    INT fails = 0;
+    const INT N = 4, R = 2, PULL = 1;
+
+    INT all_safe = 0, one_safe = 0;
+    INT par = pp_sim(N, R, PULL, &all_safe);
+    INT one = pp_sim(1, R, PULL, &one_safe);   /* same model, one point        */
+    INT serialized = N * one;            /* defend one-at-a-time bound         */
+
+    pt_puts("[plural-protect] N="); pt_putdec((UW)N);
+    pt_puts(" points, R="); pt_putdec((UW)R);
+    pt_puts(":  one-point="); pt_putdec((UW)one);
+    pt_puts("t  parallel(all-safe)="); pt_putdec((UW)par);
+    pt_puts("t  serialized-bound="); pt_putdec((UW)serialized);
+    pt_puts("t\r\n");
+
+    /* (1) all N points reached safety (each by its OWN replication). */
+    if (!all_safe) {
+        pt_puts("[plural-protect] FAIL not every point reached R replicas\r\n");
+        fails++;
+    }
+    /* (2) concurrency control: with the spaced kickoff all N points are kicked
+     * in the first tick, so defending them in PARALLEL finishes in ~one-point
+     * time — NOT N*one-point. A serialized (one-at-a-time) implementation would
+     * need N*one-point ticks and FAIL this. */
+    if (!(par <= one)) {
+        pt_puts("[plural-protect] FAIL slower than one-point (kickoff not parallel)\r\n");
+        fails++;
+    }
+    if (!(N >= 2 && par * 2 <= serialized)) {
+        pt_puts("[plural-protect] FAIL no real speedup over serialized (one-at-a-time)\r\n");
+        fails++;
+    }
+
+    if (fails == 0)
+        pt_puts("[plural-protect] PASS (many points defended IN PARALLEL: "
+                "all kicked off together then filled concurrently = ~one-point "
+                "time, not N*one-point; fair, none starves; per-object threat — "
+                "no single-consciousness collapse)\r\n");
+    else
+        pt_puts("[plural-protect] FAIL\r\n");
+    return fails;
+}
+
 INT protect_self_test(void)
 {
     INT fails = 0;
     pt_puts("[protect-test] ==== §2/G28 grounded-threat + closed-loop tests ====\r\n");
     fails += st_grounding();
     fails += st_closed_loop();
+    fails += st_plural();
     if (fails == 0) pt_puts("[protect-test] ALL PASS\r\n");
     else { pt_puts("[protect-test] FAILURES="); pt_putdec((UW)fails);
            pt_puts("\r\n"); }

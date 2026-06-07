@@ -301,7 +301,7 @@ p-kernel を分けたのは能力差ではなく、向ける方角の違いだ�
 | §2 守る単位と守る力の分離 | relay 経由テンソル並列 / DKVA（PR #1, master） | 動作するが弱い土台（`regions.md §1`） |
 | §3 装甲板＝細胞 / 群れ | UMP フリート（Android 各インストール＝1ノード） | Phase D 進行中（`android.md`） |
 | §4 MoE スパース性 | `arch/common/moe.c`（gate=温度しきい値）＋ `spec.c`（専門分化） | **R3b で「同一コピー」を解消**（`breathe` → `r3b-breathing-params.md`）／玩具スケール（635 param, `dtr.h`） |
-| §5 同時多発・並行分散 | — | **未実装**（現状は単一フロー前提） |
+| §5 同時多発・並行分散 | `arch/common/protect.c`（多点 protected-object を並行防衛）＋ `samples/28_plural_protect`（live）＋ `tools/sim`（§5 threat 軸） | **protection 軸で成立**（wave 15 / G35 🟢：多点が並行・公平・中央なしで防衛、`[plural-protect]`/live kill-test）。推論フローの多発は別軸（DKVA G1/G13） |
 | §6 応援・受援 | SWIM gossip（`swim.c`）＋ `degrade.c` の capacity(N) | 配管はある／意味づけが無い |
 | §7 分散ゲーティング | `select_expert()`（`moe.c`） | **ここが準・中央集権。R3 の標的** |
 | §8 二層構造（反射/熟慮） | region 分割（`region.c` / `regions.md`） | R0–R2 配管済 / 時定数分離は未 |

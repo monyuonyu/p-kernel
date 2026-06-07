@@ -56,7 +56,7 @@ typedef struct {
     U1   firing;        /* 発火ビットマスク (gate class ごと, §4)    */
     U1   region_size;   /* 自 region のメンバ数 (観測の補助)        */
     U1   threat;        /* 脅威軸 0..100 (THREAT; reflex CONSERVE §2; 寄る) */
-    U1   _pad;          /* 4 バイト境界揃え                          */
+    U1   atrisk;        /* G35/§5: 同時に at-risk な protected 点の数 (0..) */
     U4   seq;           /* 発信ごとに増える単調シーケンス            */
 } __attribute__((packed)) WORLD_BEACON;   /* 12 bytes */
 
@@ -126,6 +126,13 @@ INT  world_peer_pressure(UB node);
  * load (world_peer_pressure) とは別軸・逆符号 (G20: 旧実装は両者を pressure
  * 1 本に畳んで「脅威=避ける」の符号倒錯を起こしていた)。 */
 INT  world_peer_threat(UB node);
+
+/* G35/§5: node が今ゴシップした「同時に at-risk な protected 点の数」を局所
+ * world-table から読む。未知なら -1。threat (単一スカラ = aggregate rally 信号)
+ * が畳んでしまう *多点性* をここで perceive する: 近傍は「あのノードは 1 点で
+ * なく 3 点を同時に守っている」と見える。単一意識のボトルネックを乗り越える
+ * 観測軸 (§5「同時に数百件…並行」)。中央集約なし — 各 node 自身が数えた値。 */
+INT  world_peer_atrisk(UB node);
 
 /* node が gossip で広告した「自 region の coordinator ID (region_id)」を
  * 局所 world-table から読む。未知 / 未広告 (0xFF) なら -1 (wave 10, G2)。

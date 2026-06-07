@@ -415,3 +415,77 @@ served; control: AT-RISK 据え置き `replicas=0/2`・kill で LOST)。in-proce
 **non-flaky**になり、CI が信頼できる回帰防御になった)。**残件は不変**:reflex/温度バケツ軸の
 タイマ解除(G32 残)・holder liveness 未追跡(死んだ複製先で threat が再励起しない)・守る対象の
 複製は意図的に actuator 専管(§2 の設計選択。現実系では ambient 複製も併用したい)。
+
+---
+
+## 13. 追記 — G35 を本番経路で晴らす(wave 15 A隊, 2026-06-07)
+
+G28/G32(wave 14)は **守る対象(protected object)を 1 点**、本番経路で接地・閉環した。本追記は
+**その protection を複数点・並行へ拡張し(§5)、§2 と §5 を同時に成立させた**実装と、live で
+それを証明したことの記録である。
+
+**G35 が指摘した壁(再掲).** threat は 1 ノード 1 スカラ(`world.c` `compute_threat`/`world_peer_threat`)
+なので、§5「同時多発・並行分散」を畳んでしまう。1 ノードが同時に表現・防衛できる「守るべき点」は
+高々 1 個に見える = single-consciousness。
+
+**何が本当の壁だったか(監査の修正).** 監査は threat スカラを壁と名指したが、コードを実走させて
+見えた本丸は **2 つの transport の壁**だった:
+1. **DISCOVERY の壁** — announce 制御面は region で**単一の LATEST_ONLY スロット**
+   (`kdds.c`:トピックは 1 値のみ保持)。1 tick に N 点を announce すると最後の 1 件以外が上書きされ、
+   **N-1 点が starve**する(複数オーナーが同一スロットを叩けば cross-node でも同様)。これが §5 の
+   実際の壁だった。
+2. **CONFIRMATION の壁** — owner の holder_count を上げる announce-back も同じ単一スロットを通るため、
+   複数 holder の確認が互いに上書きし、**実複製は完了しているのに owner の grounded-threat が
+   何秒も遅れて落ちる**(計測前は最悪 26s の tail を観測)。
+
+**修正(本番経路; design はすべてローカル/ゴシップのみ — 中央なし §7).**
+- **per-object は据え置き** — `protect.c` の `objs[]` は元から複数の守る対象を保持し、`protect_tick` は
+  各点を独立に追跡(threat は点ごと)。脅威スカラの「畳み」は perception 側だけの問題だった。
+- **plurality を perceive させる** — `protect_atrisk_count()` を `WORLD_BEACON` の余りバイト
+  (旧 `_pad`→`atrisk`)に載せ(**12B 不変・static_assert 通過**)、`world_peer_atrisk()` と world マップ表示を
+  追加。近傍は「あのノードは 1 危機でなく N 点を並行に守っている」と見える。threat は aggregate rally
+  信号として温存(moe ゲートは不変)。
+- **DISCOVERY を信頼化** — actuator は at-risk な各点を **直接 push**(`pfs_repl_push`= 区間ユニキャスト)
+  で **非 holder の生存 region メンバへ**送る。共有スロットを介さないので並行多点でも discovery が
+  失われない。announce ブロードキャストも残すが、protection の収束は push が担う。「守るべき一点へ
+  全網の力を**注ぐ**」(§2)を、信頼できる形で具体化したもの。
+- **CONFIRMATION を信頼化** — 複製を保存した近傍は **ユニキャスト hold-ack**(`PFSR_HOLD_MAGIC`,
+  40B)を origin へ返す。共有スロットの上書きを受けないので、distinct holder ごとに確実に
+  holder_count が上がり、grounded-threat が**実複製に追随して即落ちる**。
+- **公平・有限の力** — 1 tick 内で複数点を announce するときは `PROTECT_DRIVE_SPACING_MS`(>poll)で
+  間隔を空け、互いの slot clobber を避ける。rotor で先頭順を回し、どの点も毎周期前進(飢餓なし=§6
+  多点化)。中央 argmax も 200ms 集約窓(G13)も導入していない。
+
+**証明(self-test + live; アサーションは weaken していない).**
+- in-process `[plural-protect] PASS`:N=4 点を同時防衛したときの total tick が ~一点ぶん
+  (全点を最初の tick で kick →並行に充填)で、直列上限 N×一点を**厳密に下回る**ことを、live と同じ
+  `protect_threat_for` で検証(飢餓なし・点ごと threat)。
+- live `samples/28_plural_protect/run.sh`:3 ノード relay クラスタで **4 点を 2 オーナーから同時宣言**。
+  単一点の収束時間 t_one を **3 試行の中央値**で校正し、4 点の収束 t_four と比較。**5/5 連続 PASS**で
+  t_four ≈ t_one(例:t_one 200–241ms に対し t_four 268–495ms)で、直列上限 4×t_one(740–964ms)を
+  大きく下回る = **4 点が一点とほぼ同時間で並行収束**。さらに 2 点のオーナーを **kill -9** すると、
+  既に複製済みの両点が近傍から served(§3)。`ACTUATE … N pts at-risk` 行で多点同時認識を、
+  beacon の `atrisk` バイトで近傍の多点 perception を観測可能。
+- sim `tools/sim/survival_gating_sim.py` に **§5 threat 軸**を追加:M=12 点同時宣言を有限の複製力で
+  並行収束(parallel 3 tick vs serialized 36 tick = 8%)、最小複製数→R(飢餓なし)、ノード kill 後も
+  全点が安全へ復帰、判断は近傍+シャッフル順のみ(中央なし)。ASCII スパークライン主・PNG 任意。
+- 回帰:wave-13(`[moe-*]`/`[reflex-*]`)・wave-14(`[protect-ground]`/`[protect-loop]` + live
+  `samples/27`)・`26_ark`・`11_distributed`・`13_survival_loop`・relay 6/6 すべて緑。4 ターゲット
+  (linux / linux_x86_64 / x86 / aarch64)build clean。新 CI ジョブ `plural-protect-live` と
+  self-test の `[plural-protect] PASS` grep を追加。
+
+**G35 の状態(更新):** 🟢(§2 ∧ §5 が本番経路で同時成立。多点が並行に・綺麗に分散して・飢餓なく・
+中央なしで防衛され、live kill-test で生存も確認)。**正直な残件:**
+- live の「並行性」は **loopback の高速収束**下で測っている。t_four≈t_one は **discovery/confirmation
+  をユニキャスト化したことで一点収束が ~1 ラウンドに低分散化した**結果でもある。実ネットワーク
+  (RTT 大・多チャンク転送)では一点収束が伸びるが、並行構造(全点を同時 kick→並行充填)は不変で、
+  「N× ではなく ~一点+立ち上げ」という主張はより明瞭になる方向。
+- **capacity 公平は近似**。rotor + spacing + per-node 受容は飢餓を防ぐが、厳密な max-min 公平の
+  最適化は入れていない(有限の力の素朴な time-share)。large-N での per-tick kickoff は N×spacing で
+  伸びる(正直な有限容量)。
+- **holder liveness は未追跡のまま**(G32 残と同根):hold-ack で「持っている」は確実になったが、
+  holder が後で死んでも threat は自動再励起しない(再 announce/push 時に再評価される)。完全な
+  「複製先の死で threat が即再点火」は別課題。
+- aggregate threat スカラ自体は据え置き(moe rally 信号として)。多点性は `atrisk` バイトと
+  per-object 複製面で表現しており、**threat 軸そのものを N 本に増やしたわけではない**(beacon 12B
+  不変の制約下での設計選択)。

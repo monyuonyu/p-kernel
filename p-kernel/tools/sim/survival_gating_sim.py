@@ -440,6 +440,171 @@ def main():
     # §2 脅威軸 (G20): load 軸とは別の「寄る」符号を検証する。
     report_threat_axis()
 
+    # §5 ∧ §2 (G35): 多点を同時に・並行に守る (single-consciousness を越える)。
+    report_protect_plural()
+
+
+# ----------------------------------------------------------------------------
+# §5 ∧ §2 脅威軸の「多点・並行」(G35) — 同時に何件もの守る対象を並行に守る
+# ----------------------------------------------------------------------------
+# report_threat_axis() は「一点」へ寄る符号 (§2) を検証した。survival §5 はその
+# 上に「同時に数百件の危機… それぞれに別々のエキスパート群が並行に立ち上がり…
+# 全体として綺麗に分散」を要求する — 単一意識の脳の比喩を乗り越える核心。
+#
+# ここではカーネル本番 (protect.c / pfs_repl.c) と同型の「多点・並行・有限の力」
+# モデルを回す:
+#   - 格子上に M 個の「守る対象 (protected point)」を *同時に* 宣言する。各点は
+#     R 個の異なる近傍へ耐久複製されねば安全にならない (= under-replicated の
+#     あいだ at-risk; protect_threat_for と同符号)。
+#   - 群れの複製の力は *有限*: 各ノードは 1 tick に高々 cap 個の複製しか受け
+#     入れ/送出できない。多点が同時に同じ近傍を欲すれば、その有限の力を *分け合
+#     う* (= §6 応援・受援を多点化)。
+#   - 各オーナーは *自分の近傍だけ* を見て複製先を選ぶ (中央 argmax なし §7)。
+#     処理順は毎 tick シャッフル = グローバル優先度も集約点も無い。
+#
+# 検証する性質:
+#   (1) 同時多発・並行: M 点が *並行に* 安全へ到達する。at-risk 数は M→0 へ数
+#       tick で落ちる (直列なら M tick 要する)。総 tick ≈ 一点 + 立ち上げ、N×
+#       ではない。
+#   (2) 綺麗に分散・公平: どの点も R 複製に到達 (最小複製数 → R; 飢餓なし)。
+#   (3) 一点突破耐性 (§3): 途中でノードを破壊しても、失った複製を別近傍へ張り
+#       直し、全点が再び安全へ戻る。
+#   (4) 中央なし (§7): ルーティングは近傍 + シャッフル順のみ。大域配列を優先度
+#       に使う行は無い。
+# ----------------------------------------------------------------------------
+def _plural_neighbors(G, i):
+    x, y = i % G, i // G; out = []
+    if x > 0:     out.append(i - 1)
+    if x < G - 1: out.append(i + 1)
+    if y > 0:     out.append(i - G)
+    if y < G - 1: out.append(i + G)
+    return out
+
+
+def run_protect_plural(G=12, M=8, R=2, cap=2, steps=24, seed=11, drive=1,
+                       serialized=False, kill_tick=None, killed=None):
+    """M protected points declared at once on a GxG lattice. Each needs R
+    durable replicas on distinct alive region members; the swarm's per-tick
+    replication force is finite — each node accepts <= cap placements/tick and
+    each owner drives <= `drive` replicas/tick (actuator pacing) — so the many
+    simultaneous points SHARE the force, ramping up in parallel. Returns a
+    history dict. NO central: each owner reads only local state; processing
+    order is shuffled (no global priority)."""
+    rnd = random.Random(seed)
+    n = G * G
+    alive = [True] * n
+    NB = [_plural_neighbors(G, i) for i in range(n)]
+    owners = rnd.sample(range(n), M)
+    holders = [set([owners[m]]) for m in range(M)]      # nodes holding point m
+    done_at = [None] * M
+    killed = killed or []
+    hist = {"atrisk": [], "minrep": [], "avgrep": [], "placed": []}
+
+    # serialized policy: a point is only driven once all earlier points are safe
+    def reps_of(m): return len(holders[m]) - 1          # replicas excl. owner
+
+    for t in range(steps):
+        if kill_tick is not None and t == kill_tick:
+            for k in killed:
+                alive[k] = False
+                for m in range(M):
+                    holders[m].discard(k)               # lost replica -> at-risk (§3)
+        budget = [cap if alive[i] else 0 for i in range(n)]   # finite force
+        placed = 0
+        order = list(range(M)); rnd.shuffle(order)      # no global priority (§7)
+        # serialized: restrict to the single lowest-index not-yet-safe point
+        if serialized:
+            active = [m for m in range(M) if reps_of(m) < R]
+            order = active[:1]
+        for m in order:
+            if reps_of(m) >= R:
+                if done_at[m] is None: done_at[m] = t
+                continue
+            # pick a driver that is alive (owner, or a surviving holder if the
+            # owner died — the replica itself can re-drive; §3 no single point).
+            drivers = [h for h in holders[m] if alive[h]]
+            if not drivers:
+                continue
+            drv = drivers[0]
+            need = min(R - reps_of(m), drive)       # actuator pacing per tick
+            # candidates = any ALIVE non-holder region member with spare capacity
+            # (the kernel's protect actuator pushes region-wide, not only to
+            # lattice-adjacent nodes), preferring NEARER nodes (locality, §8).
+            dx, dy = drv % G, drv // G
+            cand = [j for j in range(n)
+                    if alive[j] and j not in holders[m] and budget[j] > 0]
+            cand.sort(key=lambda j: abs(j % G - dx) + abs(j // G - dy))
+            for j in cand:
+                if need <= 0: break
+                holders[m].add(j); budget[j] -= 1; placed += 1; need -= 1
+            if reps_of(m) >= R and done_at[m] is None:
+                done_at[m] = t
+        reps = [reps_of(m) for m in range(M)]
+        hist["atrisk"].append(sum(1 for m in range(M) if reps[m] < R))
+        hist["minrep"].append(min(reps))
+        hist["avgrep"].append(sum(reps) / M)
+        hist["placed"].append(placed)
+    hist["done_at"] = done_at
+    hist["all_safe"] = all(reps_of(m) >= R for m in range(M))
+    # ticks to make ALL points safe (None entries = never)
+    fin = [d for d in done_at if d is not None]
+    hist["ticks_all_safe"] = (max(fin) + 1) if (len(fin) == M) else None
+    return hist
+
+
+def report_protect_plural():
+    print("=" * 74)
+    print(" §5 ∧ §2 多点・並行の防衛 (G35) — 同時に何件もの守る対象を並行に守る")
+    print(" survival-network.md §5 (同時多発・並行分散) / philosophy-gap-audit-5 G35")
+    print("=" * 74)
+    G, M, R, cap = 8, 12, 3, 2
+    rnd = random.Random(99)
+    kills = rnd.sample(range(G * G), 10)                  # 10 scattered nodes
+    print(f" 格子 {G}x{G}={G*G}, 同時宣言する守る対象 M={M} 点, 各点 R={R} 耐久複製,")
+    print(f" 複製の力は有限 (各 node <= {cap}/tick 受容, 各 owner <= 1/tick 駆動)")
+    print(f" — 多点がそれを分け合い、並行に立ち上がる (§6 応援・受援の多点化)。")
+    print()
+
+    par = run_protect_plural(G=G, M=M, R=R, cap=cap, steps=24)
+    ser = run_protect_plural(G=G, M=M, R=R, cap=cap, steps=60, serialized=True)
+    kil = run_protect_plural(G=G, M=M, R=R, cap=cap, steps=24,
+                             kill_tick=2, killed=kills)   # kill mid-convergence
+
+    def row(tag, h):
+        ta = h["ticks_all_safe"]
+        print(f" [{tag}]")
+        print(f"   at-risk   {spark(h['atrisk'])}  (M={M} -> end {h['atrisk'][-1]})")
+        print(f"   min-repl  {spark(h['minrep'])}  (worst-protected point; -> R={R} = none starves)")
+        print(f"   all-safe @ tick {ta}")
+        print()
+
+    row("parallel  (同時多発・並行; 本番 protect と同型)", par)
+    row("serialized (一点ずつ; 乗り越えるべき単一意識)", ser)
+    row("parallel + node kill @t=2 (§3 一点突破耐性)", kil)
+
+    # ASCII 「並行に分散して立ち上がる」可視化 (可視化=観測; 画像ではない)
+    print(" 立ち上がりの並行性 (at-risk 点数の推移): 並行は数 tick で M→0、")
+    print(" 直列は M 点ぶん階段状に M tick かける。")
+    print(f"   parallel   {spark(par['atrisk'])}")
+    print(f"   serialized {spark(ser['atrisk'])}")
+    print()
+
+    p_t = par["ticks_all_safe"]; s_t = ser["ticks_all_safe"]
+    ok = (par["all_safe"] and ser["all_safe"] and kil["all_safe"]
+          and p_t is not None and s_t is not None
+          and p_t * 2 <= s_t                     # parallel clearly beats serial
+          and par["minrep"][-1] >= R             # fair: nobody starves
+          and kil["atrisk"][-1] == 0)            # survived the kill
+    verdict = "PASS" if ok else "FAIL"
+    print(f" 判定 [{verdict}]: M={M} 点が並行に {p_t} tick で全安全 — 直列の {s_t}"
+          f" tick の {('%.0f%%' % (100.0*p_t/s_t)) if s_t else '?'} 。")
+    print(f"   公平: 最小複製数 -> R ({par['minrep'][-1]}/{R}; 飢餓なし)。"
+          f" §3: kill 後も全点が安全へ復帰 (end at-risk {kil['atrisk'][-1]})。")
+    print(" 構造的担保: 各オーナーは近傍 + シャッフル順のみで複製先を選ぶ。")
+    print(" 大域状態を優先度に使う行は無い = 中央なし (§7)。単一意識を越える (§5)。")
+    print()
+    return ok
+
 
 if __name__ == "__main__":
     main()

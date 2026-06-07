@@ -59,6 +59,16 @@
 #define PFSR_BLK_MAGIC   0x4B424650UL  /* "PFBK" LE */
 #define PFSR_BLK_CHUNK   0x01          /* the only type so far           */
 
+/* G35: hold-ACK magic — a UNICAST "I durably hold your block" sent point-to-
+ * point to the block's origin (same pmesh port as CHUNK, discriminated by
+ * magic). The K-DDS announce/announce-back plane is a single LATEST_ONLY slot
+ * that loses DISTINCT holders under concurrent multi-point replication, so the
+ * origin's holder_count (the grounded-threat signal) can lag far behind the
+ * real, already-durable replicas. This reliable point-to-point ack closes that
+ * perception gap without a shared, clobberable slot — each holder confirms on
+ * its own unicast path, so plural protection's threat falls promptly. */
+#define PFSR_HOLD_MAGIC  0x444C4650UL  /* "PFLD" LE */
+
 /* K-DDS topics (all REGION-scoped) */
 #define PFSR_TOPIC_ANN   "pfs/ann"
 #define PFSR_TOPIC_WANT  "pfs/want"
@@ -124,6 +134,17 @@ typedef struct {
     U1   data[PFSR_CHUNK_SIZE];
 } __attribute__((packed)) PFSR_BLK_PKT;     /* 52 + 512 = 564 B        */
 
+/* HOLD-ACK — unicast "I (src_node) durably hold block id" to its origin.
+ * Sent on PFSR_PORT; discriminated from CHUNK by magic. (G35 reliable
+ * holder confirmation — see PFSR_HOLD_MAGIC.) */
+typedef struct {
+    UW   magic;                    /* PFSR_HOLD_MAGIC                   */
+    U1   src_node;                 /* the holder confirming             */
+    U1   origin;                   /* creator (= the intended receiver) */
+    UH   _pad;
+    U1   id[PFS_ID_LEN];           /* block-id held                     */
+} __attribute__((packed)) PFSR_HOLD_PKT;    /* 4+1+1+2+32 = 40 B       */
+
 /* ------------------------------------------------------------------ */
 /* API                                                                 */
 /* ------------------------------------------------------------------ */
@@ -172,6 +193,15 @@ void pfs_repl_set_announce_hook(PFSR_ANN_HOOK fn);
  * hold it or are not distributed. This is how the protect layer pours the
  * network's force onto an at-risk unit (drives it toward >=R replicas). */
 void pfs_repl_reannounce(const U1 id[PFS_ID_LEN]);
+
+/* G35: DIRECTLY push (unicast) a block we hold to one neighbour — point-to-
+ * point, bypassing the clobberable region announce slot. The receiver stores
+ * it (idempotent: a duplicate is ignored) and unicasts a hold-ack back. The
+ * protect actuator uses this to RELIABLY place a protected unit on a specific
+ * non-holder neighbour even while many points replicate at once (the broadcast
+ * announce loses DISCOVERY under concurrency; this does not). No-op if we don't
+ * hold it / not distributed / dst invalid. */
+void pfs_repl_push(const U1 id[PFS_ID_LEN], UB dst_node);
 
 /* When set, a NEW local block store does NOT auto-announce to the region
  * (the ambient P1 push is suppressed). protect.c brackets a protected put
