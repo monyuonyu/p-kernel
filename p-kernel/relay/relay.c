@@ -21,6 +21,7 @@
 #include <time.h>
 #include <getopt.h>
 #include <stdint.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -68,6 +69,65 @@ static uint8_t     key[KEY_LEN];
 static int         have_key = 0;
 static int         idle_timeout = IDLE_TIMEOUT;  /* overridable via PKERNEL_RELAY_IDLE (testing) */
 static uint64_t    grant_nonce  = 1;             /* nonce for relay-originated v2 lease grants */
+
+/* --- distance→delay model (survival-network.md §8 two-layer prototype) ----
+ *
+ *  A per-destination forwarding delay knob. OFF by default (delay 0 = the
+ *  exact immediate path that all existing relay tests exercise). When on, it
+ *  lets us model the light-speed wall of §8: "near" destinations (reflex
+ *  layer) forward immediately, "far" destinations (deliberation layer) lag by
+ *  a configured delay. Delayed packets are NOT sent with a blocking usleep
+ *  (that would head-of-line-block the near layer behind the far one — which
+ *  would defeat the whole point). Instead they are queued with a deliver-at
+ *  timestamp and flushed by the poll()-driven main loop, so near-node
+ *  forwarding stays immediate while far packets wait their turn.
+ *
+ *  Env knobs (all unset => delay 0 => behaviour identical to pre-knob relay):
+ *    RELAY_DELAY_MS      base forward delay applied to every destination
+ *    RELAY_FAR_NODES     comma list of dst node ids that are "far"
+ *    RELAY_FAR_DELAY_MS  delay for the far nodes (overrides RELAY_DELAY_MS
+ *                        for them; if unset, far nodes use RELAY_DELAY_MS)
+ */
+static int delay_default_ms = 0;        /* RELAY_DELAY_MS */
+static int delay_far_ms     = -1;       /* RELAY_FAR_DELAY_MS; -1 = use default */
+static int is_far[NODE_MAX];            /* RELAY_FAR_NODES membership */
+
+#define DELAY_Q_MAX 1024
+typedef struct {
+    uint64_t      due_ms;
+    int           dst;
+    int           len;
+    int           used;
+    unsigned char buf[MAX_PKT];
+} DelayedPkt;
+static DelayedPkt dq[DELAY_Q_MAX];
+
+static uint64_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* Effective forward delay (ms) for a destination node. 0 => immediate. */
+static int delay_for(int dst)
+{
+    int d = delay_default_ms;
+    if (dst >= 1 && dst < NODE_MAX && is_far[dst])
+        d = (delay_far_ms >= 0) ? delay_far_ms : delay_default_ms;
+    return d < 0 ? 0 : d;
+}
+
+/* Any delay knob configured at all? Lets the main loop keep the pure blocking
+ * path (and the queue cold) when delay is off. */
+static int delay_enabled(void)
+{
+    if (delay_default_ms > 0) return 1;
+    if (delay_far_ms > 0) {
+        for (int n = 1; n < NODE_MAX; n++) if (is_far[n]) return 1;
+    }
+    return 0;
+}
 
 /* --- helpers ------------------------------------------------------------- */
 
@@ -377,8 +437,10 @@ static void handle_lease(int sock, const struct sockaddr_in *from,
 
 /* --- forwarding --------------------------------------------------------- */
 
-static void forward(int sock, int dst_node,
-                    const unsigned char *buf, int len, time_t now)
+/* Actually emit a packet to dst now. Liveness is re-checked here so that a
+ * queued (delayed) packet whose dst went idle while it waited is dropped. */
+static void deliver_now(int sock, int dst_node,
+                        const unsigned char *buf, int len, time_t now)
 {
     if (dst_node < 1 || dst_node >= NODE_MAX) {
         /* G7: an out-of-range dst is a routing dead-end — say why. */
@@ -400,6 +462,69 @@ static void forward(int sock, int dst_node,
                           sizeof(table[dst_node].addr));
     if (sent < 0 && verbose) {
         fprintf(stderr, "[relay] sendto node %d: %s\n", dst_node, strerror(errno));
+    }
+}
+
+/* Queue a packet for delayed delivery (deliver-at = now+delay). Returns 1 if
+ * queued, 0 if the queue is full (caller falls back to immediate send so a
+ * burst never silently loses traffic). */
+static int enqueue_delayed(int dst, const unsigned char *buf, int len, uint64_t due)
+{
+    for (int i = 0; i < DELAY_Q_MAX; i++) {
+        if (!dq[i].used) {
+            dq[i].used   = 1;
+            dq[i].dst    = dst;
+            dq[i].len    = len;
+            dq[i].due_ms = due;
+            memcpy(dq[i].buf, buf, (size_t)len);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Flush every queued packet whose deliver-at has passed. */
+static void flush_due(int sock)
+{
+    uint64_t t   = now_ms();
+    time_t   now = time(NULL);
+    for (int i = 0; i < DELAY_Q_MAX; i++) {
+        if (dq[i].used && dq[i].due_ms <= t) {
+            deliver_now(sock, dq[i].dst, dq[i].buf, dq[i].len, now);
+            dq[i].used = 0;
+        }
+    }
+}
+
+/* Earliest deliver-at across the queue, or UINT64_MAX if empty. */
+static uint64_t next_due_ms(void)
+{
+    uint64_t best = UINT64_MAX;
+    for (int i = 0; i < DELAY_Q_MAX; i++) {
+        if (dq[i].used && dq[i].due_ms < best) best = dq[i].due_ms;
+    }
+    return best;
+}
+
+static void forward(int sock, int dst_node,
+                    const unsigned char *buf, int len, time_t now)
+{
+    int d = delay_for(dst_node);
+    if (d <= 0) {                       /* near / no-delay: immediate path */
+        deliver_now(sock, dst_node, buf, len, now);
+        return;
+    }
+    if (dst_node < 1 || dst_node >= NODE_MAX || !table[dst_node].active) {
+        /* Don't queue traffic with no possible route; deliver_now logs why. */
+        deliver_now(sock, dst_node, buf, len, now);
+        return;
+    }
+    if (!enqueue_delayed(dst_node, buf, len, now_ms() + (uint64_t)d)) {
+        if (verbose) fprintf(stderr,
+            "[relay] delay queue full — delivering dst=%d immediately\n", dst_node);
+        deliver_now(sock, dst_node, buf, len, now);
+    } else if (verbose) {
+        fprintf(stderr, "[relay] delay: dst=%d held %d ms (far layer)\n", dst_node, d);
     }
 }
 
@@ -475,6 +600,34 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Optional distance→delay model (survival-network.md §8). All knobs
+     * default to off, so the relay's forwarding path is byte-for-byte the
+     * pre-knob behaviour unless explicitly configured. */
+    {
+        const char *d  = getenv("RELAY_DELAY_MS");
+        const char *fd = getenv("RELAY_FAR_DELAY_MS");
+        const char *fn = getenv("RELAY_FAR_NODES");
+        if (d  && *d)  delay_default_ms = atoi(d);
+        if (fd && *fd) delay_far_ms     = atoi(fd);
+        if (fn && *fn) {
+            char tmp[256];
+            snprintf(tmp, sizeof(tmp), "%s", fn);
+            for (char *tok = strtok(tmp, ","); tok; tok = strtok(NULL, ",")) {
+                int id = atoi(tok);
+                if (id >= 1 && id < NODE_MAX) is_far[id] = 1;
+            }
+        }
+        if (delay_enabled()) {
+            int nfar = 0;
+            for (int n = 1; n < NODE_MAX; n++) if (is_far[n]) nfar++;
+            fprintf(stderr,
+                "[relay] distance→delay model ON: base=%d ms, far_delay=%d ms, "
+                "far_nodes=%d (near layer = immediate)\n",
+                delay_default_ms,
+                (delay_far_ms >= 0) ? delay_far_ms : delay_default_ms, nfar);
+        }
+    }
+
     /* sigaction without SA_RESTART so recvfrom() returns EINTR on
      * SIGTERM/SIGINT — signal() defaults to SA_RESTART on glibc. */
     struct sigaction sa = {0};
@@ -499,7 +652,30 @@ int main(int argc, char **argv)
             port, verbose, insecure);
 
     unsigned char buf[MAX_PKT];
+    struct pollfd pfd = { .fd = sock, .events = POLLIN, .revents = 0 };
     while (!stop) {
+        /* Sleep until either a packet arrives or the next delayed packet is
+         * due. With the delay knob off the queue is always empty, next_due is
+         * UINT64_MAX, timeout is -1 (infinite), and poll() degrades to a plain
+         * blocking recvfrom — identical to the pre-knob loop. */
+        uint64_t nd = next_due_ms();
+        int timeout;
+        if (nd == UINT64_MAX) {
+            timeout = -1;
+        } else {
+            uint64_t t = now_ms();
+            timeout = (nd <= t) ? 0 : (int)(nd - t);
+        }
+        int pr = poll(&pfd, 1, timeout);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            perror("poll");
+            continue;
+        }
+        flush_due(sock);                 /* deliver any far-layer packets now due */
+        if (pr == 0) continue;           /* timeout only — nothing to receive */
+        if (!(pfd.revents & POLLIN)) continue;
+
         struct sockaddr_in from;
         socklen_t flen = sizeof(from);
         ssize_t n = recvfrom(sock, buf, sizeof(buf), 0,
