@@ -227,6 +227,18 @@ U4   ark_block_count(void);
  * negative. See survival-fs.md §7. */
 INT  ark_checkpoint(void);
 
+/* GC / compaction: rewrite a fresh log keeping ONLY the latest version of each
+ * LIVE block (the current commit's working set), reclaiming all superseded
+ * versions and dead blocks so the append-only log stops growing without bound
+ * (audit 🔴2 — the ENOSPC fuse). Crash-safe: the compacted log is built in free
+ * space under a NEW epoch and made live by a single superblock switch, so a
+ * power loss yields either the complete OLD library or the complete COMPACTED
+ * one, never a mix. NOTE: historical versions (ark_read_version/ark_history) do
+ * NOT survive a compaction — that is the deliberate cost of not dying by ENOSPC
+ * (policy documented in arkfs.c). Returns ARK_OK (state reloaded), ARK_E_FULL
+ * if the live set fits in no free region, or a negative error (old log intact). */
+INT  ark_compact(void);
+
 /* Self-test: format on a RAM bdev, then prove CRUD + versioning +
  * dedup + self-verify + crash-rollback (simulated power loss). Prints via
  * emit. Returns 0 on PASS, non-zero (= failure count) on FAIL. */

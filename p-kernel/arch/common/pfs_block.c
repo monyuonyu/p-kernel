@@ -181,39 +181,67 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
      * replica that already holds the block stays silent). */
     if (find_slot(id) >= 0) return PFS_OK;
 
-    /* Find a free slot. */
+    /* Pick a slot: a FREE one if any. Otherwise the table is full — and P0 is
+     * a CACHE in front of a durable backend, not the system of record. If a
+     * durable ARK backend is mounted, every block in the table is also in the
+     * ARK log (each new put below persists it), and a P0 miss on a get falls
+     * through to ARK (pfs_get). So when full we may safely EVICT a resident
+     * block and reuse its slot — the kernel pfs store's capacity becomes ARK's
+     * capacity, not PFS_MAX_BLOCKS. WITHOUT a fall-through-capable durable
+     * backend (flat-file or bare-metal memory-only), eviction would lose data,
+     * so we keep the old PFS_E_FULL behaviour there. */
+    INT slot = -1;
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        if (!pfs_table[i].used) {
-            pfs_memcpy(pfs_table[i].id, id, PFS_ID_LEN);
-            pfs_table[i].len    = len;
-            pfs_table[i].origin = origin;
-            if (len) pfs_memcpy(pfs_table[i].data, buf, (size_t)len);
-            pfs_table[i].used = 1;
-            pfs_n++;
-            /* Durable backend: persist the new block content-addressed. The
-             * backend is SELECTABLE (mutually exclusive) and skipped while
-             * replaying from disk (pfs_loading) — those bytes already live
-             * there. No-op when neither is configured or on bare metal.
-             *   PKERNEL_PFS_BACKEND=ark -> ARK log (arch/linux/pfs_ark.c)
-             *   else, $PKERNEL_PFS_DIR  -> flat file (arch/linux/pfs_durable.c,
-             *                              filename = block-id hex, fsync'd). */
+        if (!pfs_table[i].used) { slot = (INT)i; break; }
+    }
+
+    U1 evicting = 0;
+    if (slot < 0) {
 #ifdef _TK_HOSTED_LIBC_
-            if (!pfs_loading) {
-                if (pfs_ark_active()) {
-                    pfs_ark_put(pfs_table[i].data, (unsigned)len);
-                } else if (pfs_dur_active()) {
-                    char hex[2 * PFS_ID_LEN + 1];
-                    id_to_hex(pfs_table[i].id, hex);
-                    pfs_dur_write(hex, pfs_table[i].data, (unsigned)len);
-                }
-            }
+        /* Only ARK has a get fall-through, so only ARK makes eviction safe.
+         * (Persist the new block FIRST, below, so it too is durable before any
+         * resident block is dropped.) */
+        if (!pfs_loading && pfs_ark_active()) {
+            static UW evict_clk;                 /* rotating victim, FIFO-ish */
+            slot = (INT)(evict_clk % PFS_MAX_BLOCKS);
+            evict_clk++;
+            evicting = 1;
+        }
 #endif
-            if (!pfs_loading && pfs_put_hook)
-                pfs_put_hook(pfs_table[i].id, len, origin);
-            return PFS_OK;
+        if (slot < 0) return PFS_E_FULL;         /* no safe eviction possible */
+    }
+
+    /* Store into the chosen slot (fresh occupancy bumps the count; an eviction
+     * reuses an occupied slot so the resident count is unchanged). */
+    if (!pfs_table[slot].used) pfs_n++;
+    pfs_memcpy(pfs_table[slot].id, id, PFS_ID_LEN);
+    pfs_table[slot].len    = len;
+    pfs_table[slot].origin = origin;
+    if (len) pfs_memcpy(pfs_table[slot].data, buf, (size_t)len);
+    pfs_table[slot].used = 1;
+
+    /* Durable backend: persist the new block content-addressed. The backend is
+     * SELECTABLE (mutually exclusive) and skipped while replaying from disk
+     * (pfs_loading) — those bytes already live there. No-op when neither is
+     * configured or on bare metal.
+     *   PKERNEL_PFS_BACKEND=ark -> ARK log (arch/linux/pfs_ark.c)
+     *   else, $PKERNEL_PFS_DIR  -> flat file (arch/linux/pfs_durable.c,
+     *                              filename = block-id hex, fsync'd). */
+#ifdef _TK_HOSTED_LIBC_
+    if (!pfs_loading) {
+        if (pfs_ark_active()) {
+            pfs_ark_put(pfs_table[slot].data, (unsigned)len);
+        } else if (pfs_dur_active()) {
+            char hex[2 * PFS_ID_LEN + 1];
+            id_to_hex(pfs_table[slot].id, hex);
+            pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
         }
     }
-    return PFS_E_FULL;
+#endif
+    (void)evicting;
+    if (!pfs_loading && pfs_put_hook)
+        pfs_put_hook(pfs_table[slot].id, len, origin);
+    return PFS_OK;
 }
 
 INT pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
