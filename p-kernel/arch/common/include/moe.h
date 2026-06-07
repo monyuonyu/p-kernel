@@ -141,6 +141,11 @@ UB   moe_infer(B temp, B hum, B press, B light);
  * R3b spec.c が専門分化した専門家を疎に発火させるルーティングに使う。 */
 UB   moe_gate_predict(B temp, B hum, B press, B light);
 
+/* §7 ゲートの効用関数を公開する (重複定義なし)。reflex.c の closed-loop
+ * self-test が「行動→知覚→ゲート」の負帰還を *本番と同一の数式* で測るため
+ * に使う。pressure は world ビーコンの局所勾配 (reflex CONSERVE が +bias する)。 */
+W    moe_expert_utility(UB accuracy, UW rtt_ms, INT pressure, int same_region);
+
 /* 推論結果をフィードバック (正解ラベルを学習) */
 void moe_feedback(UB pred_class, UB true_class);
 
