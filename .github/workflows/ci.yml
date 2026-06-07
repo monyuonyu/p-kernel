@@ -16,6 +16,14 @@
 #   survival-loop     — death-piercing: 3-node DKVA inference over the relay
 #                       with SIGKILLs mid-inference (wave 8); asserts the
 #                       swarm completes every inference, marked degraded(k/n).
+#
+# Plus one BONUS (non-blocking) job:
+#   composite-loop    — the G19 composite: ONE 4-node cluster where 殺す ∧
+#                       同時多発 ∧ 記憶で考える overlap, plus revival + world map
+#                       (wave 12). continue-on-error while it proves stable on
+#                       hosted runners (timing-heavy: SWIM + p-fs gossip +
+#                       revival). See docs/architecture/composite-scenarios.md;
+#                       promote to blocking once stable.
 
 name: CI
 
@@ -136,3 +144,30 @@ jobs:
         with:
           name: survival-loop-logs
           path: /tmp/sl13_*.log
+
+  composite-loop:
+    name: Composite loop (kill ∧ concurrent ∧ memory, bonus)
+    runs-on: ubuntu-latest
+    # heavy: SWIM convergence + p-fs gossip + a revival on one 4-node cluster.
+    timeout-minutes: 25
+    # bonus job: surface the G19 closed loop without blocking unrelated PRs
+    # while it earns trust on hosted runners (see composite-scenarios.md).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C p-kernel/boot/linux_x86_64
+          make -C p-kernel/relay
+      - name: Run survive_think_concurrent.sh (one cluster, overlapping)
+        run: timeout 1200 p-kernel/samples/22_composite/survive_think_concurrent.sh
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composite-loop-logs
+          path: /tmp/ci22_*.log
