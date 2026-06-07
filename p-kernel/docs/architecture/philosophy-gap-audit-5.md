@@ -474,8 +474,13 @@ G28/G32(wave 14)は **守る対象(protected object)を 1 点**、本番経路�
   (linux / linux_x86_64 / x86 / aarch64)build clean。新 CI ジョブ `plural-protect-live` と
   self-test の `[plural-protect] PASS` grep を追加。
 
-**G35 の状態(更新):** 🟢(§2 ∧ §5 が本番経路で同時成立。多点が並行に・綺麗に分散して・飢餓なく・
-中央なしで防衛され、live kill-test で生存も確認)。**正直な残件:**
+**G35 の状態(更新, 指揮官の独立検証つき):** 🟢 **保護軸(parallel LIBRARY)のみ** / 🔴 **計算軸(parallel BRAIN)は OPEN**。
+指揮官が samples/28 を自分で 5/5 実走し確認:多点が並行に(t_four≈230-380ms ≪ 直列境界 4·t_one≈700ms)・
+綺麗に分散して・飢餓なく・中央なしで防衛され、live kill で生存。**= §2∧§5 は「守る力＝複製」の軸で本番成立。**
+ただし監査 v6 の `[g35-no-collapse]`(保護対象ごとの threat ベクトル)は**文字通りには未達**:aggregate threat
+スカラは据え置きで、多点性は `atrisk` バイト＋per-object 複製面が担う。つまり**「並列な図書館」は本物だが
+「並列な脳」(多数の同時推論が各点へ別々に rally)は未達**で、それは DKVA 推論軸(G1/G13、`coordinator_aggregate`
+の 200ms 同期窓が再直列化)= 別フロンティア。**正直な残件:**
 - live の「並行性」は **loopback の高速収束**下で測っている。t_four≈t_one は **discovery/confirmation
   をユニキャスト化したことで一点収束が ~1 ラウンドに低分散化した**結果でもある。実ネットワーク
   (RTT 大・多チャンク転送)では一点収束が伸びるが、並行構造(全点を同時 kick→並行充填)は不変で、
