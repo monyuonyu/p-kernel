@@ -253,16 +253,26 @@ static INT emit_record(U4 type, const void *payload, U4 len,
 }
 
 /*
- * Read & fully validate the record whose header is at sector `sec` into
- * `payout` (capacity paymax). Returns sectors consumed (>0) if the record
- * is fully valid; 0 if the slot is empty / not a record (clean end of log);
- * ARK_E_CORRUPT if the header is a record but payload integrity fails.
- * *type_out / *seq_out / *len_out are filled when >0.
+ * Read the record whose header is at sector `sec` into `payout` (capacity
+ * paymax). HEADER validity and PAYLOAD validity are deliberately separated:
+ *
+ *   return value : sectors the record occupies (1 + payload sectors) when the
+ *                  HEADER is valid (magic + hdr_crc + matching epoch); 0 when
+ *                  there is no valid record header here (clean end of log /
+ *                  torn header / stale epoch -> the scan must STOP).
+ *   *payload_ok  : 1 if the payload's crc32 AND sha256(payload)==id both check
+ *                  out; 0 if the payload is torn or rotted.
+ *
+ * This split is what lets recovery (a) advance past a header-valid record by
+ * its declared length and (b) still flag a rotted committed block as CORRUPT
+ * at read time, instead of letting one bad block truncate the whole log.
+ * type/seq/len/id come straight from the (valid) header even when payload_ok=0.
  */
 static INT read_record(U4 sec, void *payout, U4 paymax,
                        U4 *type_out, U4 *seq_out, U4 *len_out,
-                       U1 id_out[ARK_ID_LEN])
+                       U1 id_out[ARK_ID_LEN], INT *payload_ok)
 {
+    if (payload_ok) *payload_ok = 0;
     if (sec >= g_bd->total_sectors) return 0;
     if (dev_read(sec, 1, g_secbuf) < 0) return 0;
     if (!ark_memeq(((ark_rec_hdr *)g_secbuf)->magic, ARK_REC_MAGIC, 4))
@@ -281,28 +291,28 @@ static INT read_record(U4 sec, void *payout, U4 paymax,
     U4 psect = (h.len + ARK_SECTOR - 1) / ARK_SECTOR;
     if (sec + 1 + psect > g_bd->total_sectors) return 0;
 
-    /* gather payload */
-    U1 *p = (U1 *)payout;
-    for (U4 s = 0; s < psect; s++) {
-        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) return 0;
-        U4 off = s * ARK_SECTOR;
-        U4 chunk = (h.len - off < ARK_SECTOR) ? (h.len - off) : ARK_SECTOR;
-        ark_memcpy(p + off, g_secbuf, chunk);
-    }
-
-    if (ark_crc32(payout, h.len) != h.payload_crc)
-        return ARK_E_CORRUPT;                                  /* torn / rot */
-
-    /* content-address self-verify: id must equal sha256(payload) */
-    U1 chk[ARK_ID_LEN];
-    sha256(payout, (size_t)h.len, chk);
-    if (!ark_memeq(chk, h.id, ARK_ID_LEN))
-        return ARK_E_CORRUPT;
-
+    /* header is valid -> publish its fields and the record's footprint. */
     if (type_out) *type_out = h.type;
     if (seq_out)  *seq_out  = h.seq;
     if (len_out)  *len_out  = h.len;
     if (id_out)   ark_memcpy(id_out, h.id, ARK_ID_LEN);
+
+    /* gather payload and verify it (crc + content-address self-check). */
+    INT ok = 1;
+    U1 *p = (U1 *)payout;
+    for (U4 s = 0; s < psect; s++) {
+        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) { ok = 0; break; }
+        U4 off = s * ARK_SECTOR;
+        U4 chunk = (h.len - off < ARK_SECTOR) ? (h.len - off) : ARK_SECTOR;
+        ark_memcpy(p + off, g_secbuf, chunk);
+    }
+    if (ok && ark_crc32(payout, h.len) != h.payload_crc) ok = 0;
+    if (ok) {
+        U1 chk[ARK_ID_LEN];
+        sha256(payout, (size_t)h.len, chk);
+        if (!ark_memeq(chk, h.id, ARK_ID_LEN)) ok = 0;
+    }
+    if (payload_ok) *payload_ok = ok;
     return (INT)(1 + psect);
 }
 
@@ -431,26 +441,31 @@ INT ark_mount(ARK_BDEV *bd)
     reset_state();
 
     /* Replay the log. Track blocks since the last commit ("pending"); on a
-     * valid commit they become permanent index entries and the live table is
-     * adopted. A torn/garbage tail stops the scan and the pending blocks are
-     * dropped (uncommitted -> rolled back). */
+     * VALID commit they become permanent index entries and the live table is
+     * adopted (the atomic visibility point). A torn/garbage HEADER stops the
+     * scan; the uncommitted tail is dropped (rolled back). A header-valid but
+     * payload-corrupt record is skipped past (so one rotted block cannot
+     * truncate the whole log) yet, if it is a committed block, it stays in the
+     * index so reads detect the rot as CORRUPT. */
     static ark_idx pend[ARK_MAX_INDEX];
     U4 pend_n = 0;
     U4 sec = g_log_start;
     U4 head_after_commit = g_log_start;
 
     for (;;) {
-        U4 type, seq, len; U1 id[ARK_ID_LEN];
-        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, id);
-        if (n <= 0) break;                       /* clean end or torn tail */
+        U4 type, seq, len; U1 id[ARK_ID_LEN]; INT payok;
+        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX,
+                            &type, &seq, &len, id, &payok);
+        if (n <= 0) break;                       /* clean end or torn header */
 
         if (type == ARK_REC_BLOCK) {
+            /* index by header even if rotted, so read-time self-verify fires */
             if (pend_n < ARK_MAX_INDEX) {
                 ark_memcpy(pend[pend_n].id, id, ARK_ID_LEN);
                 pend[pend_n].sec = sec; pend[pend_n].len = len;
                 pend[pend_n].used = 1; pend_n++;
             }
-        } else if (type == ARK_REC_COMMIT) {
+        } else if (type == ARK_REC_COMMIT && payok) {
             g_live_n = parse_commit(g_payld, len, g_live, ARK_MAX_FILES);
             for (U4 i = 0; i < pend_n; i++)
                 idx_add(pend[i].id, pend[i].sec, pend[i].len);
@@ -498,11 +513,11 @@ INT ark_block_get(const U1 id[ARK_ID_LEN], void *buf, U4 max)
     INT s = idx_find(id);
     if (s < 0) return ARK_E_NOTFOUND;
 
-    U4 type, seq, len;
+    U4 type, seq, len; INT payok;
     INT n = read_record(g_idx[s].sec, g_payld, ARK_COMMIT_MAX,
-                        &type, &seq, &len, 0);
-    if (n == ARK_E_CORRUPT) return ARK_E_CORRUPT;  /* self-verify caught rot */
+                        &type, &seq, &len, 0, &payok);
     if (n <= 0 || type != ARK_REC_BLOCK) return ARK_E_CORRUPT;
+    if (!payok) return ARK_E_CORRUPT;              /* self-verify caught rot */
 
     U4 cpy = (len < max) ? len : max;
     if (buf && cpy) ark_memcpy(buf, g_payld, cpy);
@@ -668,10 +683,10 @@ INT ark_history(const char *path, ARK_HIST *out, INT max)
     U4 last_ver = 0;
 
     while (sec < g_head && cnt < max) {
-        U4 type, seq, len;
-        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0);
+        U4 type, seq, len; INT payok;
+        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0, &payok);
         if (n <= 0) break;
-        if (type == ARK_REC_COMMIT) {
+        if (type == ARK_REC_COMMIT && payok) {
             U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES);
             for (U4 i = 0; i < ntb; i++) {
                 if (ark_streq(tbl[i].name, path) && tbl[i].version != last_ver) {
@@ -698,10 +713,10 @@ INT ark_read_version(const char *path, U4 version, void *buf, U4 max)
     U4 sec = g_log_start;
 
     while (sec < g_head) {
-        U4 type, seq, len;
-        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0);
+        U4 type, seq, len; INT payok;
+        INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0, &payok);
         if (n <= 0) break;
-        if (type == ARK_REC_COMMIT) {
+        if (type == ARK_REC_COMMIT && payok) {
             U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES);
             for (U4 i = 0; i < ntb; i++) {
                 if (ark_streq(tbl[i].name, path) && tbl[i].version == version) {

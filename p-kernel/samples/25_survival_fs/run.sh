@@ -132,19 +132,22 @@ done
 [ "$crash_ok" = 1 ] && pass "every crash point left a clean, fully-consistent store" \
                      || fail "a crash point produced a corrupt/torn state"
 
-# one explicit torn-commit log line for the report
+# one explicit torn-commit trace for the report (fresh image, single run)
 hr; say "    raw injection trace of one torn-commit run:"; hr
 run format "$IMG" 256 >/dev/null
 run write "$IMG" /y.txt "GOOD-V1" >/dev/null
-env ARK_KILL_TORN=4 "$BIN" write "$IMG" /y.txt "BAD-V2" >/dev/null 2>&1 \
-    | sed 's/^/    /' || true
-# the above pipe hides rc; redo capturing stderr explicitly
+say "    before crash: $(run read "$IMG" /y.txt) / $(run version "$IMG" /y.txt)"
+# write #4 is the commit's payload sector -> a torn COMMIT.
 env ARK_KILL_TORN=4 "$BIN" write "$IMG" /y.txt "BAD-V2" 1>/dev/null 2>"$WORK/t.log"
-say "    writer killed by signal (rc=$?), stderr:"
-sed 's/^/    /' "$WORK/t.log"
-say "    remount after the torn commit:"
-run read "$IMG" /y.txt | sed 's/^/    /'
-run version "$IMG" /y.txt | sed 's/^/    /'
+trc=$?
+say "    writer exited rc=$trc (137 = SIGKILL); device-level injection log:"
+sed 's/^/      /' "$WORK/t.log"
+say "    remount in a fresh process after the torn commit:"
+say "      $(run read "$IMG" /y.txt)"
+say "      $(run version "$IMG" /y.txt)"
+tafter="$(run read "$IMG" /y.txt)"
+[ "$tafter" = "READ: GOOD-V1" ] && pass "torn commit rolled back to GOOD-V1" \
+                                || fail "torn-commit rollback: $tafter"
 
 # ===========================================================================
 hr

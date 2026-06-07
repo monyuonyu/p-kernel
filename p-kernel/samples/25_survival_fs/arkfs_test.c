@@ -73,10 +73,14 @@ static int fb_write(void *c, U4 lba, U4 n, const void *buf)
 
     off_t off = (off_t)lba * ARK_SECTOR;
     if (g_kill_torn == g_wcnt) {
-        /* write only the first half of the first sector -> torn sector */
+        /* A real torn sector: the first half lands, the second half is left
+         * indeterminate. Model "indeterminate" as garbage (not zeros) so the
+         * tear is genuinely destructive regardless of payload content. */
         size_t half = ARK_SECTOR / 2;
-        ssize_t w = pwrite(g_fd, buf, half, off);
-        (void)w;
+        unsigned char junk[ARK_SECTOR / 2];
+        memset(junk, 0xA5, sizeof(junk));
+        pwrite(g_fd, buf, half, off);
+        pwrite(g_fd, junk, half, off + (off_t)half);
         fsync(g_fd);
         fprintf(stderr, "[inject] torn half-sector then SIGKILL at write #%ld "
                 "(lba %u)\n", g_wcnt, lba);
