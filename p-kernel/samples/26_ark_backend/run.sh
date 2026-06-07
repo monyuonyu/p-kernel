@@ -80,11 +80,14 @@ wait_for() {
     return 1
 }
 
-# Run a node to completion (graceful EOF + timeout), feeding cmds, for read-back.
+# Run a node to completion, feeding cmds + a trailing `exit` so it quits at
+# once (the kernel does not exit on stdin EOF; without `exit` each call would
+# burn the whole timeout). timeout stays as a backstop.
 run_once() {
     local img="$1" log="$2"; shift 2
     local script=""
     for c in "$@"; do script+="$c"$'\n'; done
+    script+="exit"$'\n'
     printf '%s' "$script" | timeout 30 \
         env PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$img" "$KERNEL" \
         >"$log" 2>&1 || true
