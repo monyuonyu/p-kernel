@@ -274,7 +274,7 @@ master は改造前。各隊の設計意図(audit-2 の G12/G17/G18/G19)から�
 第12波は本書(第3版)が出した予言を、実装で検証する形になった。結論を正直に記す:
 
 - **G12 (B隊, FIXED)**: degraded を gossip 由来 region_id の確定分だけで数え、未確認は
-  `degraded (k/n; m uncertain): …count provisional` と明示。�adii鮮度依存の嘘(G12)は消えた。
+  `degraded (k/n; m uncertain): …count provisional` と明示。gossip 鮮度依存の嘘(G12)は消えた。
   正直さの再帰(uncertainty 自体の嘘)は「不確実は確定分に数えない＝過小に倒す」で打ち切り、誠実。
 - **G19 (C隊, FIXED)**: 殺す∧同時多発∧記憶を**同一クラスタで同時**に成立させる複合テスト
   (`samples/22_composite/`)。鎖が複合負荷でも保たれることを 23 checks で実証(CI は bonus)。
