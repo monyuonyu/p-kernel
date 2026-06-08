@@ -20,7 +20,7 @@
  *    dtk_wai_sem(global_semid, cnt, t) wait  (semaphore must live on local node)
  *
  *  Global Object ID encoding:
- *    bits 31..24 = node_id (0-255; cluster currently capped at DNODE_MAX)
+ *    bits 31..24 = node_id (0-254; 0xFF=sentinel; capped at DNODE_MAX)
  *    bits 23.. 0 = local T-Kernel object ID
  */
 
@@ -32,12 +32,32 @@
 /* ------------------------------------------------------------------ */
 
 #define DRPC_PORT       7374        /* UDP port for all DRPC traffic     */
-#define DNODE_MAX       32          /* max nodes in cluster (node 0-31)
+#define DNODE_MAX       64          /* max nodes in cluster (node 0-63)
                                      * Bounded by the 8-bit node_id field
                                      * (UB src_node/dst_node on the wire and
-                                     * obj_id bits 31..24) -> hard ceiling 256.
-                                     * Raised 8 -> 32 for regions scalability
-                                     * (docs/architecture/regions.md §1.2).   */
+                                     * obj_id bits 31..24). Valid ids are
+                                     * 0..254 (0xFF is the "not-a-node"
+                                     * sentinel, e.g. drpc_my_node==0xFF),
+                                     * so the 8-bit HARD ceiling is 255.
+                                     * Raised 8 -> 32 (regions, regions.md
+                                     * §1.2) -> 64 (G23: UMP "every install
+                                     * = a node"; the flat 32-cap contradicted
+                                     * an open fleet). 64 doubles capacity
+                                     * while keeping the per-node static
+                                     * tables (DNODE_MAX-sized arrays in
+                                     * drpc/swim/moe/dkva/world/kdds/...) and
+                                     * the pmesh BEACON (8+4*DNODE_MAX bytes)
+                                     * comfortably bounded.
+                                     * FOLLOW-UP: going past ~254 needs a
+                                     * 16-bit node_id, which changes the wire
+                                     * protocol (src/dst_node fields + obj_id
+                                     * layout) — a separate wave; do NOT do it
+                                     * by bumping this constant alone.
+                                     * Mixed-DNODE_MAX binaries on one wire
+                                     * stay compatible only where a count
+                                     * field bounds reads (e.g. pmesh
+                                     * entry_cnt); a full fleet should run a
+                                     * single DNODE_MAX.                       */
 
 /* ------------------------------------------------------------------ */
 /* Packet header                                                        */

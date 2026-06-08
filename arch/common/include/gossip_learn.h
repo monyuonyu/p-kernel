@@ -103,6 +103,14 @@ void gl_self_test(void);
 void gl_g38_test(void);
 
 /* ------------------------------------------------------------------ */
+/* G23 — node ceiling > 32 (gap-ledger row G23). Proves the >32 code    */
+/* path works for real: a 40-model core gl_merge() AND a 40-entry live  */
+/* membership fold over the REAL dnode_table, neither truncating at 32. */
+/*   [g23-ceiling] — run from `dtr gossip ceiling`.                     */
+/* ------------------------------------------------------------------ */
+void gl_g23_test(void);
+
+/* ------------------------------------------------------------------ */
 /* shell dispatcher for `dtr gossip ...` (live multi-node demo)        */
 /*   dtr gossip test            — run the in-process self-test         */
 /*   dtr gossip solo  [steps]   — measure THIS node's solo shard ceil  */

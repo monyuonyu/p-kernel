@@ -75,11 +75,13 @@ extern char *strerror(int);
 #define MAX_PKT            (HEAD_LEN + AUTH_LEN + MAX_PAYLOAD)
 #define DEFAULT_PORT       7400
 #define KEEPALIVE_SEC      25            /* < IDLE_TIMEOUT/2 in relay */
-/* G7: the relay wire allows node ids 1..255, but the kernel cluster (drpc)
- * only tracks 1..DNODE_MAX. Mirror DNODE_MAX here (T-Kernel headers are not
- * included in this TU); a node id above this registers with the relay but
- * never joins drpc/pmesh/kdds, so we warn at init instead of vanishing. */
-#define NET_CLUSTER_NODE_MAX 32
+/* G7/G23: the relay wire allows node ids 1..255, but the kernel cluster
+ * (drpc) only tracks 1..DNODE_MAX. This MUST mirror DNODE_MAX in
+ * arch/common/include/drpc.h (T-Kernel headers are not includable in this
+ * linux TU, so it cannot be #derived — keep the two in sync by hand). A node
+ * id above this registers with the relay but never joins drpc/pmesh/kdds, so
+ * we warn at init instead of vanishing. */
+#define NET_CLUSTER_NODE_MAX 64   /* == DNODE_MAX (drpc.h); bump together */
 
 /* Relay-HA failover/failback time constants (ms). All nodes share these,
  * so the "first live relay on the list" rule resolves identically

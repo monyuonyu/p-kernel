@@ -34,13 +34,17 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_TOPIC_MAX   160    /* カーネルが同時に管理できるトピック数。
-                                 * DNODE_MAX=32 で dkva が q(1)+resp(32)+rsum(32)=65、
-                                 * moe が score per-source(32)、world が beacon(32) を
-                                 * init で全枠 pre-open するため大幅拡張。 */
-#define KDDS_HANDLE_MAX  320    /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
-                                 * dkva は per-node に resp/rsum の pub+sub=4 ハンドル
-                                 * (=4×DNODE_MAX=128)、moe/world も per-node に開く。 */
+#define KDDS_TOPIC_MAX   (5 * DNODE_MAX)   /* カーネルが同時に管理できるトピック数。
+                                 * dkva が q/resp/rsum を per-node (=3×DNODE_MAX) で
+                                 * 全枠 pre-open し、moe(score)/world(beacon)/reflex/
+                                 * edf が per-source トピックを遅延 open するため、
+                                 * DNODE_MAX に比例させる (ONE source of truth)。
+                                 * G23: DNODE_MAX を 32→64 に倍化したのに伴い、
+                                 * 32 で検証済みの比率 (160=5×32) をそのまま保つ。 */
+#define KDDS_HANDLE_MAX  (10 * DNODE_MAX)  /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
+                                 * dkva は per-node に q/resp/rsum の pub+sub=6 ハンドル
+                                 * (=6×DNODE_MAX) を開き、moe/world も per-node に開く。
+                                 * DNODE_MAX に比例 (32 で 320=10×32; G23 で 64→640)。 */
 #define KDDS_NAME_MAX    32     /* トピック名の最大長 (null 含む)          */
 #define KDDS_DATA_MAX    192    /* トピックデータの最大バイト数 (DKVA_RESP_PKT=172B が必要) */
 #define KDDS_SUB_MAX     4      /* トピックあたりの最大サブスクライバ数    */
