@@ -38,6 +38,7 @@ p-kernel の **ring-3 ユーザー空間プログラム**のサンプルコー�
 | `31_ark_baremetal` | ARK が x86 実ブロックデバイス(ide)で電源断生還（QEMU） | §9 |
 | `32_collective_learn` ★ | 越境学習：バラバラのデータ片→中央なしゴシップ平均→単独超え | §8+§9 |
 | `33_ark_aarch64` | ARK が aarch64 実機(自作 virtio-blk)で電源断生還（QEMU） | §9 |
+| `36_relay_measure` | §4 relay 素 RTT を負荷の関数で実測 ＋ per-msg energy proxy を end-to-end 実測（実測/モデル分離） | §4 |
 
 ※ UMP（`boot/linux` / `boot/linux_x86_64`）向け。kernel は stdin EOF で終了しないので各 run.sh は
 `exit` を送るか timeout を使う。以下は古典的 ring-3 ELF サンプル（01–07）の解説。
