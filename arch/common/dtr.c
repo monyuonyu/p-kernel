@@ -72,7 +72,7 @@ static void dt_putf2(float f)
 /* 数学ヘルパー (libc 不使用)                                         */
 /* ------------------------------------------------------------------ */
 
-static float dt_relu(float x) { return x > 0.0f ? x : 0.0f; }
+float dt_relu(float x) { return x > 0.0f ? x : 0.0f; }
 
 /* IEEE754 binary32 bit-punning (2^k construction / mantissa split).
  * Every supported target (i686 bare, aarch64 bare, aarch64-linux,
@@ -129,7 +129,7 @@ float dtr_logf(float x)
 static float dt_exp(float x) { return dtr_expf(x); }
 
 /* sqrt(x): Newton-Raphson 法 */
-static float dt_sqrt(float x)
+float dt_sqrt(float x)
 {
     if (x <= 0.0f) return 0.0f;
     float r = x > 1.0f ? x * 0.5f : 1.0f;
@@ -141,7 +141,7 @@ static float dt_sqrt(float x)
 }
 
 /* y[M] = W[M×N] · x[N] + b[M] */
-static void dt_linear(const float *W, const float *b,
+void dt_linear(const float *W, const float *b,
                       const float *x, float *y, INT M, INT N)
 {
     for (INT m = 0; m < M; m++) {
@@ -152,7 +152,7 @@ static void dt_linear(const float *W, const float *b,
 }
 
 /* softmax in-place */
-static void dt_softmax(float *x, INT n)
+void dt_softmax(float *x, INT n)
 {
     float maxv = x[0];
     for (INT i = 1; i < n; i++) if (x[i] > maxv) maxv = x[i];
@@ -696,18 +696,21 @@ static DT_TCACHE tc;
 static float g_grad[DTR_WEIGHT_FLOATS];
 static float g_flatw[DTR_WEIGHT_FLOATS];
 
-/* LayerNorm forward that caches x-hat and 1/std for the backward */
-static void ln_fwd_cache(const float *x, const float *g, const float *b,
-                         float *xh, float *istd_out, float *y)
+/* LayerNorm forward that caches x-hat and 1/std for the backward.
+ * Width n is a parameter so the sensor brain (n==DM) and the R3 in-context
+ * harness (n==its own d_model) call the SAME kernel — never a fork
+ * (docs/architecture/r3-nontrivial-thought.md, anti-fork rule). */
+void dtr_ln_fwd_cache(const float *x, const float *g, const float *b,
+                      float *xh, float *istd_out, float *y, INT n)
 {
     float mean = 0.0f, var = 0.0f;
-    for (INT i = 0; i < DM; i++) mean += x[i];
-    mean /= (float)DM;
-    for (INT i = 0; i < DM; i++) { float d = x[i] - mean; var += d * d; }
-    var /= (float)DM;
+    for (INT i = 0; i < n; i++) mean += x[i];
+    mean /= (float)n;
+    for (INT i = 0; i < n; i++) { float d = x[i] - mean; var += d * d; }
+    var /= (float)n;
     float istd = 1.0f / dt_sqrt(var + 1e-5f);
     *istd_out = istd;
-    for (INT i = 0; i < DM; i++) {
+    for (INT i = 0; i < n; i++) {
         xh[i] = (x[i] - mean) * istd;
         y[i]  = xh[i] * g[i] + b[i];
     }
@@ -716,19 +719,19 @@ static void ln_fwd_cache(const float *x, const float *g, const float *b,
 /* LayerNorm backward: y = xh*g + b, xh = (x-mean)*istd.
  *   dg += dy*xh ; db += dy ; dxh = dy*g
  *   dx = istd * (dxh - mean(dxh) - xh * mean(dxh*xh))                 */
-static void ln_bwd(const float *dy, const float *xh, float istd,
-                   const float *g, float *dgam, float *dbet, float *dx)
+void dtr_ln_bwd(const float *dy, const float *xh, float istd,
+                const float *g, float *dgam, float *dbet, float *dx, INT n)
 {
-    float dxh[DM], m1 = 0.0f, m2 = 0.0f;
-    for (INT i = 0; i < DM; i++) {
+    float dxh[DTR_LN_MAXW], m1 = 0.0f, m2 = 0.0f;
+    for (INT i = 0; i < n; i++) {
         dgam[i] += dy[i] * xh[i];
         dbet[i] += dy[i];
         dxh[i]   = dy[i] * g[i];
         m1 += dxh[i];
         m2 += dxh[i] * xh[i];
     }
-    m1 /= (float)DM; m2 /= (float)DM;
-    for (INT i = 0; i < DM; i++)
+    m1 /= (float)n; m2 /= (float)n;
+    for (INT i = 0; i < n; i++)
         dx[i] = (dxh[i] - m1 - xh[i] * m2) * istd;
 }
 
@@ -779,7 +782,7 @@ static float train_forward(const B input[SEQ], UB label)
         float m[DM];
         dt_linear((float *)W_o, NULL, tc.concat[t], m, DM, DM);
         for (INT d = 0; d < DM; d++) tc.r1[t][d] = m[d] + tc.tok[t][d];
-        ln_fwd_cache(tc.r1[t], ln1_g, ln1_b, tc.xh1[t], &tc.istd1[t], tc.y1[t]);
+        dtr_ln_fwd_cache(tc.r1[t], ln1_g, ln1_b, tc.xh1[t], &tc.istd1[t], tc.y1[t], DM);
     }
 
     /* FFN + residual + LN2 */
@@ -789,7 +792,7 @@ static float train_forward(const B input[SEQ], UB label)
         float f[DM];
         dt_linear((float *)W_ffn2, b_ffn2, tc.mid[t], f, DM, DFFN);
         for (INT d = 0; d < DM; d++) tc.r2[t][d] = f[d] + tc.y1[t][d];
-        ln_fwd_cache(tc.r2[t], ln2_g, ln2_b, tc.xh2[t], &tc.istd2[t], tc.y2[t]);
+        dtr_ln_fwd_cache(tc.r2[t], ln2_g, ln2_b, tc.xh2[t], &tc.istd2[t], tc.y2[t], DM);
     }
 
     /* mean pool + cls softmax */
@@ -845,8 +848,8 @@ static void train_backward(UB label)
 
     /* LN2 -> residual -> FFN -> (residual into dy1) */
     for (INT t = 0; t < SEQ; t++) {
-        ln_bwd(dy2[t], tc.xh2[t], tc.istd2[t], ln2_g,
-               &g_grad[G_LN2_G], &g_grad[G_LN2_B], dr2[t]);
+        dtr_ln_bwd(dy2[t], tc.xh2[t], tc.istd2[t], ln2_g,
+               &g_grad[G_LN2_G], &g_grad[G_LN2_B], dr2[t], DM);
         for (INT d = 0; d < DM; d++) dy1[t][d] = dr2[t][d];  /* residual */
 
         /* f = W_ffn2 * mid + b_ffn2  (df = dr2) */
@@ -872,8 +875,8 @@ static void train_backward(UB label)
 
     /* LN1 -> residual -> W_o */
     for (INT t = 0; t < SEQ; t++) {
-        ln_bwd(dy1[t], tc.xh1[t], tc.istd1[t], ln1_g,
-               &g_grad[G_LN1_G], &g_grad[G_LN1_B], dr1[t]);
+        dtr_ln_bwd(dy1[t], tc.xh1[t], tc.istd1[t], ln1_g,
+               &g_grad[G_LN1_G], &g_grad[G_LN1_B], dr1[t], DM);
         for (INT d = 0; d < DM; d++) dtok[t][d] = dr1[t][d];  /* residual */
 
         /* m = W_o * concat  (dm = dr1) */

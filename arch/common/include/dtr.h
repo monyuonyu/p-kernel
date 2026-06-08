@@ -213,6 +213,23 @@ float dtr_eval_confidence(void);
 float dtr_expf(float x);
 float dtr_logf(float x);
 
+/* ---- shared Transformer kernels (R3: same math, sensor + in-context) ---
+ * Exposed so r3_incontext.c composes the SAME numerically-meaningful
+ * kernels the live sensor brain uses — the anti-fork rule in
+ * docs/architecture/r3-nontrivial-thought.md. Width is a parameter:
+ * the sensor path passes DTR_EMBED_DIM, the recall harness its own
+ * d_model. (dt_linear/dt_softmax were already dim-parameterized.) */
+#define DTR_LN_MAXW 32   /* max LayerNorm width across all dtr configs */
+float dt_relu(float x);
+float dt_sqrt(float x);
+void  dt_linear(const float *W, const float *b,
+                const float *x, float *y, INT M, INT N);
+void  dt_softmax(float *x, INT n);
+void  dtr_ln_fwd_cache(const float *x, const float *g, const float *b,
+                       float *xh, float *istd_out, float *y, INT n);
+void  dtr_ln_bwd(const float *dy, const float *xh, float istd,
+                 const float *g, float *dgam, float *dbet, float *dx, INT n);
+
 /* One full-batch SGD step (analytic backprop, cross-entropy).
  * Returns mean CE loss at the current weights. Call from the shell
  * task only; set dtr_ga_busy around training to block dtr_infer. */
