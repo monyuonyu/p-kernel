@@ -172,7 +172,13 @@ ok "survivors node1,node2 finished gossip-learning after the kill — the swarm 
 # --- 3) survivors' LEARNED guard score must beat their UNLEARNED baseline ---
 log "measuring survivors' LEARNED guard score (after collective learning + a death) ..."
 send 1 "dtr gossip guard"; send 2 "dtr gossip guard"
-for L in "$L1" "$L2"; do wait_for "$L" 'LEARNED guard_score=' 60 || bad "no LEARNED guard on $L"; done
+# anchor the wait on a leading space — 'LEARNED guard_score=' also matches the
+# pre-existing 'UNLEARNED guard_score=' line, so the un-anchored wait returned
+# instantly (without the real LEARNED line) and guard_x10 then read empty. This
+# bit node1 specifically on the hosted runner: as the heal heir after node3's
+# death it writes its LEARNED line late, and the false-instant wait raced it.
+# 120s so a busy heal-heir has time.
+for L in "$L1" "$L2"; do wait_for "$L" '[[:space:]]LEARNED guard_score=' 120 || bad "no LEARNED guard on $L"; done
 G1=$(guard_x10 "$L1" LEARNED); G2=$(guard_x10 "$L2" LEARNED)
 log "LEARNED guard (x10): node1=$G1 node2=$G2   (unlearned: $U1 $U2)"
 grep -aE 'LEARNED guard_score=' "$L1" "$L2" | sed 's#.*/##; s/^/    /'
