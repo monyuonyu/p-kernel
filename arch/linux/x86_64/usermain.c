@@ -50,6 +50,7 @@ IMPORT W    dtr_infer(const B input[4]);
 IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
 IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
+IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -630,6 +631,10 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "breathe")) {
             /* R3b: expert specialization — join smarter / leave graceful */
             breathe_cmd(line + 7, (UW)(n - 7));
+        } else if (starts_with(line, n, "r3")) {
+            /* R3: non-trivial thought — in-context recall capacity cert.
+             * `r3 test` proves learned >> any fixed hand-if (by construction). */
+            r3_cmd(line + 2, (UW)(n - 2));
         } else if (starts_with(line, n, "dtr")) {
             /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad/
              * remember/ret -> R3a + wave-8 verbs (dtr_train.c) */
