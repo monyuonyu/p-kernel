@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -105,6 +105,10 @@ jobs:
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
           grep -aF '[g13-parallel] PASS' selftest.log
+          # G23 (gap-ledger): NODE CEILING > 32. DNODE_MAX 32->64; the gossip
+          # merge + the REAL dnode_table membership fold both run across >32
+          # (40) participants with no 32-cap (UMP "every install = a node").
+          grep -aF '[g23-ceiling] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -130,7 +134,7 @@ jobs:
         continue-on-error: true
         run: |
           cd boot/linux
-          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | \
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -161,6 +165,8 @@ jobs:
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
           grep -aF '[g13-parallel] PASS' selftest.log
+          # G23 node ceiling > 32 (gap-ledger): >32-participant gossip merge + fold
+          grep -aF '[g23-ceiling] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)

@@ -192,7 +192,15 @@ static void gl_ds_init(void)
 /* CAN, but only by combining (averaging) — not by copying one node.    */
 /* ------------------------------------------------------------------ */
 
-#define GL_MAXNODES 4
+/* Max gossip participants == the cluster node ceiling. ONE source of truth:
+ * gossip membership can never exceed the node table (G23). Was a hardwired 4
+ * (the live merge loop + peer caches capped the swarm at 4 ids, and the
+ * in-process bank at 4 sims) — that, plus DNODE_MAX, was the real node
+ * ceiling. Now both scale with DNODE_MAX so a >32-node swarm gossips for
+ * real. (The leave-one-class-out sim only needs GL_NCLASS distinct shards,
+ * but sizing the bank to DNODE_MAX lets the [g23-ceiling] self-test drive
+ * the REAL merge across >32 in-process participants with no 32-cap.) */
+#define GL_MAXNODES DNODE_MAX
 
 static B  sh_x[GL_MAXNODES][GL_TRAIN][DTR_SEQ_LEN];
 static UB sh_y[GL_MAXNODES][GL_TRAIN];
@@ -865,12 +873,38 @@ static void gl_prefetch_peers(UB me)
 #define GL_FETCH_RETRY    3
 #define GL_FETCH_WAIT_MS  250
 
-static UW gl_merge_peers(UB me)
+/* MEMBERSHIP + MERGE step (no transport): average my own model (gl_model[0])
+ * with every ALIVE peer whose model is already cached (gl_phave[p]), folding
+ * the result back into gl_model[0]. Iterates the FULL node table (0..DNODE_MAX)
+ * so the swarm ceiling is DNODE_MAX, not a hardwired 4/32 — an alive peer with
+ * any id <DNODE_MAX is folded in. Returns the number of peers folded.
+ * Shared by the live path (gl_merge_peers, after it pulls the caches) and the
+ * [g23-ceiling] self-test (which pre-fills the caches), so the test exercises
+ * the REAL membership+merge logic. */
+static UW gl_fold_cached_peers(UB me)
 {
     const float *ptrs[GL_MAXNODES];
     UW cnt = 0;
     ptrs[cnt++] = gl_model[0];                       /* myself */
-    for (UB p = 0; p < GL_MAXNODES; p++) {
+    for (UB p = 0; p < DNODE_MAX; p++) {
+        if (p == me) continue;
+        if (dnode_table[p].state != DNODE_ALIVE) continue;
+        /* fold the peer in whether the pull was fresh this round or a
+         * cached recent model — an alive peer never silently drops out. */
+        if (gl_phave[p]) ptrs[cnt++] = gl_pcache[p];
+    }
+    if (cnt > 1) {
+        gl_merge(gl_avg, ptrs, cnt, DTR_WEIGHT_FLOATS);
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = gl_avg[i];
+    }
+    return cnt - 1;
+}
+
+static UW gl_merge_peers(UB me)
+{
+    /* transport: pull each ALIVE peer's freshest model into the cache, then
+     * fold over the symmetric set {self} U {peers cached}. */
+    for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
         if (dnode_table[p].state != DNODE_ALIVE) continue;
         char pref[20]; UW prl = gl_model_ref(pref, p);
@@ -881,15 +915,8 @@ static UW gl_merge_peers(UB me)
             }
             tk_dly_tsk(GL_FETCH_WAIT_MS);   /* let the want/serve land */
         }
-        /* fold the peer in whether the pull was fresh this round or a
-         * cached recent model — an alive peer never silently drops out. */
-        if (gl_phave[p]) ptrs[cnt++] = gl_pcache[p];
     }
-    if (cnt > 1) {
-        gl_merge(gl_avg, ptrs, cnt, DTR_WEIGHT_FLOATS);
-        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = gl_avg[i];
-    }
-    return cnt - 1;
+    return gl_fold_cached_peers(me);
 }
 
 /* §8 deliberation cadence (seconds-band). Long enough that a peer's freshly
@@ -1002,6 +1029,125 @@ static UW gl_parse_uw(const UB **pp, const UB *end)
     return v;
 }
 
+/* ================================================================== */
+/* G23 — NODE CEILING > 32 (gap-ledger row G23).                        */
+/*                                                                     */
+/* DNODE_MAX was 32, which capped the collective brain at 32 nodes and  */
+/* contradicted UMP "every install = a node". This self-test proves the */
+/* >32 code path works FOR REAL — not just that a constant was bumped:  */
+/*                                                                     */
+/*   PART A (core merge, no transport): build N=40 (>32) DISTINCT       */
+/*     in-process models (model k == constant k) and run the REAL       */
+/*     gl_merge() over all 40. The true mean is 19.5; a silent 32-cap   */
+/*     would average only the first 32 and yield 15.5. Exact-mean ==>   */
+/*     all 40 were folded (gl_merge has no 32-cap; small-int floats so  */
+/*     the sum is exact — no rounding alibi).                           */
+/*                                                                     */
+/*   PART B (live membership path): register N=40 ALIVE entries in the  */
+/*     REAL dnode_table[], cache a distinct model per peer, then run the */
+/*     REAL membership+merge step (gl_fold_cached_peers — the exact      */
+/*     function the live gossip loop calls after pulling peer models).   */
+/*     It must fold in N-1=39 peers (>32) and produce the 19.5 mean.     */
+/*     If any array/loop still capped at 32 (or the old 4), the fold     */
+/*     count or the mean would be wrong.                                */
+/*                                                                     */
+/* Run from `dtr gossip ceiling`. Restores dnode_table/drpc_my_node so  */
+/* it is safe to run alongside the live stack.                          */
+/* ================================================================== */
+
+#define GL_G23_N  40    /* participants exercised (>32; <= DNODE_MAX)    */
+
+static float gl_g23_out[DTR_WEIGHT_FLOATS];   /* merge target (static)   */
+
+void gl_g23_test(void)
+{
+    INT fails = 0;
+    const UW N = GL_G23_N;
+
+    gp("[g23] ==== node ceiling > 32 (gap-ledger G23 / UMP every-install-a-node) ====\r\n");
+    gp("[g23] DNODE_MAX="); gpd((UW)DNODE_MAX);
+    gp("  GL_MAXNODES="); gpd((UW)GL_MAXNODES);
+    gp("  participants="); gpd(N); gp(" (>32)\r\n");
+
+    /* never exceed the table we are about to drive */
+    if (N <= 32 || N > DNODE_MAX) {
+        gp("[g23-ceiling] FAIL participant count not in (32, DNODE_MAX]\r\n");
+        return;
+    }
+
+    /* ---- PART A: REAL gl_merge over N>32 distinct models ---- */
+    for (UW k = 0; k < N; k++)
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_model[k][i] = (float)k;
+    const float *ptrs[GL_MAXNODES];
+    for (UW k = 0; k < N; k++) ptrs[k] = gl_model[k];
+    gl_merge(gl_g23_out, ptrs, N, DTR_WEIGHT_FLOATS);
+
+    /* exact expected mean of 0..N-1 (small ints -> exact in float32) */
+    float exp_mean = (float)(N - 1) / 2.0f;            /* 0..39 -> 19.5  */
+    float capped32 = (float)(32 - 1) / 2.0f;           /* 15.5 if capped */
+    float merged   = gl_g23_out[0];
+    BOOL a_ok = (merged == exp_mean);
+    /* every element identical (no partial coverage of the weight body) */
+    for (INT i = 1; i < DTR_WEIGHT_FLOATS; i++)
+        if (gl_g23_out[i] != merged) { a_ok = FALSE; break; }
+
+    gp("[g23]   core merge of "); gpd(N);
+    gp(" models: mean="); gpf1(merged);
+    gp(" expected="); gpf1(exp_mean);
+    gp(" (a 32-cap would give "); gpf1(capped32); gp(")\r\n");
+    if (!a_ok) { gp("[g23-ceiling] FAIL core merge truncated/incorrect\r\n"); fails++; }
+
+    /* ---- PART B: REAL membership+merge over N>32 ALIVE dnode_table entries ---- */
+    /* save the live state we are about to perturb */
+    UB  saved_my = drpc_my_node;
+    UB  saved_state[GL_G23_N];
+    UB  saved_phave[GL_G23_N];
+    for (UW p = 0; p < N; p++) {
+        saved_state[p] = dnode_table[p].state;
+        saved_phave[p] = gl_phave[p];
+    }
+
+    UB me = 0;
+    drpc_my_node = me;
+    for (UW i = 0; i < (UW)DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = (float)me; /* my value=0 */
+    UW alive = 0;
+    for (UW p = 1; p < N; p++) {
+        dnode_table[p].node_id = (UB)p;
+        dnode_table[p].state   = DNODE_ALIVE;
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_pcache[p][i] = (float)p;
+        gl_phave[p] = 1;
+        alive++;
+    }
+
+    UW folded = gl_fold_cached_peers(me);   /* the REAL live merge step */
+    float b_mean = gl_model[0][0];
+    BOOL b_uniform = TRUE;
+    for (INT i = 1; i < DTR_WEIGHT_FLOATS; i++)
+        if (gl_model[0][i] != b_mean) { b_uniform = FALSE; break; }
+
+    gp("[g23]   membership fold: "); gpd(alive);
+    gp(" ALIVE peers + self -> folded="); gpd(folded);
+    gp(" merged_mean="); gpf1(b_mean);
+    gp(" expected="); gpf1(exp_mean); gp("\r\n");
+
+    BOOL b_ok = (folded == N - 1) && (b_mean == exp_mean) && b_uniform;
+    if (folded != N - 1)  { gp("[g23-ceiling] FAIL membership folded fewer than N-1 peers (a 32/4-cap truncated the swarm)\r\n"); fails++; }
+    else if (!b_ok)       { gp("[g23-ceiling] FAIL membership merge value wrong\r\n"); fails++; }
+
+    /* restore live state */
+    drpc_my_node = saved_my;
+    for (UW p = 0; p < N; p++) {
+        dnode_table[p].state = saved_state[p];
+        gl_phave[p]          = saved_phave[p];
+    }
+
+    if (fails == 0)
+        gp("[g23-ceiling] PASS (>32 nodes gossip-merge for real: 40-model core merge AND 40-entry live membership fold, no 32-cap)\r\n");
+    else
+        gp("[g23-ceiling] FAIL\r\n");
+    gp("[g23] ==== done ====\r\n");
+}
+
 void gl_cmd(const UB *args, UW len)
 {
     const UB *end = args + len;
@@ -1010,6 +1156,7 @@ void gl_cmd(const UB *args, UW len)
     if (p >= end || gl_tok(p, end, "status")) { gl_cmd_status(); return; }
     if (gl_tok(p, end, "test")) { gl_self_test(); return; }
     if (gl_tok(p, end, "g38"))  { gl_g38_test(); return; }   /* §8 two-layer couple */
+    if (gl_tok(p, end, "ceiling")) { gl_g23_test(); return; }  /* G23 node ceiling >32 */
     if (gl_tok(p, end, "guard")) {                            /* live guard score   */
         p += 5;
         const UB *q = gl_skip_ws(p, end);
@@ -1035,5 +1182,5 @@ void gl_cmd(const UB *args, UW len)
         gl_cmd_run_ex(rounds, local, 0);   /* keep current converged model */
         return;
     }
-    gp("usage: dtr gossip [status] | test | g38 | guard [fresh] | solo [steps] | run [rounds] [local] | cont [rounds] [local]\r\n");
+    gp("usage: dtr gossip [status] | test | g38 | ceiling | guard [fresh] | solo [steps] | run [rounds] [local] | cont [rounds] [local]\r\n");
 }

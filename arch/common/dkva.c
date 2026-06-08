@@ -119,7 +119,7 @@ static W h_rsum_pub[DNODE_MAX];
 static W h_rsum_sub[DNODE_MAX];
 
 /* "<pfx><node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁。
- * resp/rsum が共用するので DNODE_MAX=32 対応で 2 桁化) */
+ * resp/rsum が共用するので DNODE_MAX(=64, node 0..63) 対応で 2 桁化) */
 static void node_topic_name(char *out, const char *pfx, UB node)
 {
     INT i = 0;
@@ -797,10 +797,10 @@ void dkva_init(void)
                                               KDDS_SCOPE_GLOBAL);
     }
 
-    /* ── 容量検算 (DNODE_MAX=32, wave 10 G1) ───────────────────────────
-     *  dkva が pre-open する数 (1 ノードあたり):
-     *    トピック : q 32 + resp 32 + rsum 32              = 96   (< KDDS_TOPIC_MAX  160)
-     *    ハンドル : (pub+sub) × 3 × 32                    = 192  (< KDDS_HANDLE_MAX 320)
+    /* ── 容量検算 (DNODE_MAX=64, G23; 元は 32/wave 10 G1) ──────────────
+     *  dkva が pre-open する数 (1 ノードあたり、DNODE_MAX に比例):
+     *    トピック : q + resp + rsum = 3×DNODE_MAX = 192   (< KDDS_TOPIC_MAX  =5×DNODE_MAX=320)
+     *    ハンドル : (pub+sub) × 3 × DNODE_MAX     = 384   (< KDDS_HANDLE_MAX =10×DNODE_MAX=640)
      *    セマフォ : 0  ← 全て kdds_open_poll_scoped(zero-sem)(< CFN_MAX_SEMID   256)
      *  per-origin Q (G1) は単一トピック (+1) を 32 トピック (+31) に増やすが、
      *  旧実装は q/resp/rsum を blocking open して 130 個のセマフォを浪費していた。
