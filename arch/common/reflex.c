@@ -72,10 +72,17 @@ static const char *class_name(UB c)
 
 static UB enabled = 1;             /* デフォルト有効 (通常 class では何もしない) */
 
-/* エンゲージしたアクションの「保持期限」(operating time ms)。
- * 0 = 非エンゲージ。now < until のあいだアクションが効く = ヒステリシス。 */
+/* SHIELD の「保持期限」(operating time ms)。0 = 非エンゲージ。
+ * now < until のあいだ遮蔽が効く = 重い行動のヒステリシス。 */
 static UW shield_until   = 0;
-static UW conserve_until = 0;
+
+/* ── G33: CONSERVE 脅威レベルは「観測された危険量」で駆動する (タイマではない) ─
+ * danger_active : いま危険が観測されているか (発火した推論 / 受信アラームで立ち、
+ *                 SAFE (normal) 観測で *即座に* 落ちる = 制御量が安全へ戻った)。
+ * last_danger_ms: 最後に危険を観測した時刻。SAFETY CAP (スタック・ラッチ保険)
+ *                 だけが読む。正常な解除には一切使わない。 */
+static UB danger_active   = 0;
+static UW last_danger_ms  = 0;
 
 static UB danger_streak  = 0;      /* 連続 critical 回数 (SHIELD のゲート)   */
 
@@ -168,16 +175,19 @@ static void emit_beacon(UB threat_class, UB confidence, UB hop)
 
 static void engage(UB mask, const char *why)
 {
-    UW until = now_ms() + REFLEX_HOLD_MS;
+    UW now = now_ms();
     rf_puts("[reflex] FIRE ");
     rf_puts(why);
     rf_puts(" ->");
     int any = 0;
-    if (mask & REFLEX_ACT_SHIELD)   { shield_until   = until; rf_puts(" SHIELD");   any = 1; }
-    if (mask & REFLEX_ACT_CONSERVE) { conserve_until = until; rf_puts(" CONSERVE"); any = 1; }
-    if (mask & REFLEX_ACT_BEACON)   {                          rf_puts(" BEACON");   any = 1; }
+    if (mask & REFLEX_ACT_SHIELD)   { shield_until = now + REFLEX_HOLD_MS; rf_puts(" SHIELD"); any = 1; }
+    /* G33: CONSERVE は脅威レベルを *観測された危険* に縛る。タイマ期限は
+     * 持たせない: danger_active を立て、観測時刻を記録するだけ。レベルは危険が
+     * SAFE へ戻った瞬間に落ちる (タイマ満了ではない)。 */
+    if (mask & REFLEX_ACT_CONSERVE) { danger_active = 1; last_danger_ms = now; rf_puts(" CONSERVE"); any = 1; }
+    if (mask & REFLEX_ACT_BEACON)   {                                          rf_puts(" BEACON");   any = 1; }
     if (!any) rf_puts(" (none)");
-    rf_puts(" (hold ");
+    rf_puts(" (threat tracks observed danger; SHIELD hold ");
     rf_putdec(REFLEX_HOLD_MS / 1000);
     rf_puts("s)\r\n");
 }
@@ -206,6 +216,15 @@ void reflex_on_inference(UB threat_class, UB confidence, UB src_node)
     } else {                      /* threat_class == 0 → エピソード終端 */
         if (threat_run > 0) { win_dwell_sum += threat_run; win_episodes++; }
         threat_run = 0;
+        /* G33: SAFE (normal) 観測 = 危険信号が安全へ戻った → CONSERVE 脅威
+         * レベルを *即座に* 落とす (HOLD タイマの満了を待たない)。これが
+         * 「制御量が下がったから落ちる」= タイマ解除との決定的な違い。 */
+        if (danger_active) {
+            danger_active = 0;
+            st_releases++;
+            rf_puts("[reflex] CONSERVE released (danger signal returned to SAFE;"
+                    " driven by the observed quantity, NOT a timer)\r\n");
+        }
     }
 
     /* G38: アクション表ゲート + 確信度フロアを 1 述語に集約 (reflex_would_fire)。
@@ -271,7 +290,10 @@ static void on_alarm(const REFLEX_ALARM *a)
         rf_puts(" class="); rf_putdec(a->threat_class);
         rf_puts(" ("); rf_puts(class_name(a->threat_class));
         rf_puts(") -> attenuated CONSERVE (no SHIELD; my own judgement)\r\n");
-        conserve_until = now_ms() + REFLEX_HOLD_MS;
+        /* G33: heard danger sets the observed-danger latch (not a timer); it
+         * falls again when this node next observes SAFE or the cap guards it. */
+        danger_active  = 1;
+        last_danger_ms = now_ms();
 
         /* 空間の減衰: hop が残っていれば 1 回だけ中継して打ち止め。 */
         if (a->hop > 0)
@@ -294,12 +316,18 @@ static void check_release(void)
         rf_putdec(REFLEX_HOLD_MS / 1000);
         rf_puts("s elapsed)\r\n");
     }
-    if (conserve_until && now >= conserve_until) {
-        conserve_until = 0;
+    /* G33: the threat level's NORMAL release is a SAFE observation (handled in
+     * reflex_on_inference). The only time-based release here is the SAFETY CAP:
+     * danger was observed but NO further observation (danger or safe) has arrived
+     * for REFLEX_THREAT_CAP_MS — the inference stream went silent and the latch
+     * would otherwise stick. This is a guard, NOT the loop ([g33-controlled]
+     * proves the normal release is the quantity, not this cap). */
+    if (danger_active && (now - last_danger_ms) >= REFLEX_THREAT_CAP_MS) {
+        danger_active = 0;
         st_releases++;
-        rf_puts("[reflex] CONSERVE released (hysteresis ");
-        rf_putdec(REFLEX_HOLD_MS / 1000);
-        rf_puts("s elapsed)\r\n");
+        rf_puts("[reflex] CONSERVE released (SAFETY CAP ");
+        rf_putdec(REFLEX_THREAT_CAP_MS / 1000);
+        rf_puts("s: observation stream went silent — guard, not normal release)\r\n");
     }
 }
 
@@ -315,14 +343,26 @@ BOOL reflex_is_shielded(void)
     return TRUE;
 }
 
+/* G33: pure release formula shared by the live accessor and [g33-controlled]
+ * (no duplicate; mirrors protect_threat_for). The level is a function of the
+ * OBSERVED DANGER QUANTITY, not a wall clock — see reflex.h. */
+UB reflex_threat_for(BOOL danger, UW ms_since_danger, UB level)
+{
+    if (!danger) return 0;                                   /* SAFE -> 0 NOW */
+    if (ms_since_danger >= REFLEX_THREAT_CAP_MS) return 0;   /* safety cap only */
+    return level;
+}
+
 UB reflex_threat_level(void)
 {
-    if (!enabled || conserve_until == 0) return 0;
-    if (now_ms() >= conserve_until) return 0;
-    /* 固定値ではなく熟慮層が学習した効きを返す (§9 G18)。CONSERVE→threat→
-     * §7 ゲート (加点) →近傍 rally の負帰還ループの *ゲイン* がこれで経験から
-     * 調律される。【G20】かつては pressure (load 軸) へ流れて避ける符号だった。 */
-    return learned_conserve;
+    if (!enabled) return 0;
+    /* The strength returned is the deliberation-learned gain (§9 G18); WHETHER
+     * it is returned at all is the controlled quantity (danger_active), released
+     * promptly by a SAFE observation, not by a HOLD timer (G33). The cap only
+     * guards a stuck latch when observations stop entirely. */
+    return reflex_threat_for((BOOL)danger_active,
+                             now_ms() - last_danger_ms,
+                             learned_conserve);
 }
 
 UB reflex_learned_conserve(void) { return learned_conserve; }
@@ -457,7 +497,8 @@ void reflex_init(void)
 {
     enabled        = 1;
     shield_until   = 0;
-    conserve_until = 0;
+    danger_active  = 0;
+    last_danger_ms = 0;
     danger_streak  = 0;
     my_alarm_seq   = 0;
     h_pub          = -1;
@@ -514,10 +555,9 @@ static void print_stat(void)
         rf_puts("s left)");
     } else rf_puts("off");
     rf_puts("\r\n  CONSERVE : ");
-    if (conserve_until && now < conserve_until) {
+    if (reflex_threat_level() > 0) {
         rf_puts("ACTIVE threat+"); rf_putdec(reflex_threat_level());
-        rf_puts(" (rally; "); rf_putdec((conserve_until - now) / 1000 + 1);
-        rf_puts("s left)");
+        rf_puts(" (rally; driven by observed danger, releases on SAFE not a timer)");
     } else rf_puts("off");
     rf_puts("\r\n  danger streak : "); rf_putdec(danger_streak); rf_puts("\r\n");
     rf_puts("  fires="); rf_putdec(st_fires);
@@ -809,12 +849,112 @@ static INT rf_test_learning(void)
     return fails;
 }
 
+/* ── G33: 脅威レベルは「観測された危険量」で上下する (タイマ解除ではない) ──────
+ * gap-ledger G33: 旧実装は CONSERVE 脅威レベルを 5s 壁時計タイマ (conserve_until
+ * = now + HOLD) で落としていた。レベルは「タイマが切れたから」下がるのであって
+ * 「危険が去ったから」ではなかった。この self-test は両方向 + persist-vs-clear の
+ * 決定的区別を *数で* 示す (信念ではなく印字):
+ *   (A) 危険 HIGH               -> レベルが立つ。
+ *   (B) 危険 CLEAR (時計を進めず) -> レベルが *即座に* 0 (= 量で落ちる)。
+ *   (C) 危険 PERSIST + 時計を HOLD 超へ進める -> レベルは *落ちない*
+ *       (旧タイマ解除なら誤って 0 にしていた = 決定的区別)。
+ *   (D) SAFETY CAP (沈黙が CAP 超) でだけ時間で落ちる (= 正常経路ではない保険)。
+ * 純粋式 reflex_threat_for() を本番アクセサと共有して検査し、さらに本番の観測
+ * フック (reflex_on_inference) でラッチを駆動して live アクセサでも両方向を示す。
+ * すべて純ローカル整数計算で、live 部は触れた静的状態を退避/復元する。 */
+static INT rf_test_controlled(void)
+{
+    INT fails = 0;
+    const UB LV = REFLEX_CONSERVE_PRESSURE;     /* representative learned level */
+
+    rf_puts("[g33-controlled] threat level is driven by the OBSERVED DANGER"
+            " quantity, not a wall-clock timer:\r\n");
+
+    /* (A) danger observed HIGH (clock at 0) -> level rises to LV. */
+    UB t_high     = reflex_threat_for(TRUE,  0, LV);
+    /* (B) danger CLEARS, clock NOT advanced -> level drops PROMPTLY (no timer). */
+    UB t_clear    = reflex_threat_for(FALSE, 0, LV);
+    /* (C) danger PERSISTS, clock advanced PAST HOLD -> level must NOT drop
+     *     (the old HOLD timer-release would wrongly give 0 here). */
+    UB t_persist  = reflex_threat_for(TRUE,  REFLEX_HOLD_MS + 1000, LV);
+    /* (D) SAFETY CAP: a SILENT latch only clears once past the (much larger)
+     *     cap — this is the guard, never the normal release. */
+    UB t_cap      = reflex_threat_for(TRUE,  REFLEX_THREAT_CAP_MS, LV);
+
+    rf_puts("[g33-controlled]  (A) danger HIGH (since=0):              level=");
+    rf_putdec(t_high); rf_puts("\r\n");
+    rf_puts("[g33-controlled]  (B) danger CLEARED (since=0):           level=");
+    rf_putdec(t_clear); rf_puts("   (prompt: dropped by the SAFE signal, no timer)\r\n");
+    rf_puts("[g33-controlled]  (C) danger PERSISTS, clock +");
+    rf_putdec((REFLEX_HOLD_MS + 1000) / 1000);
+    rf_puts("s (>HOLD): level=");
+    rf_putdec(t_persist); rf_puts("   (HOLD expiring did NOT drop it)\r\n");
+    rf_puts("[g33-controlled]  (D) SILENT latch past SAFETY CAP ");
+    rf_putdec(REFLEX_THREAT_CAP_MS / 1000);
+    rf_puts("s: level="); rf_putdec(t_cap);
+    rf_puts("   (stuck-latch guard only)\r\n");
+
+    /* ── live path: real observations drive the real latch + accessor ──────── */
+    BOOL sv_en = (BOOL)enabled;
+    UB   sv_da = danger_active;  UW sv_ld = last_danger_ms;
+    UB   sv_ds = danger_streak;  UW sv_tr = threat_run;
+    UW   sv_wd = win_dwell_sum,  sv_we = win_episodes;
+    UW   sv_sf = st_fires, sv_sb = st_beacons, sv_sr = st_releases;
+    UW   sv_ge[REFLEX_NUM_CLASSES];
+    for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) sv_ge[c] = guard_class_exp[c];
+
+    enabled = 1; danger_active = 0; danger_streak = 0; last_danger_ms = now_ms();
+    reflex_on_inference(2, 100, drpc_my_node);   /* observe CRITICAL danger    */
+    UB live_hi   = reflex_threat_level();
+    reflex_on_inference(0, 100, drpc_my_node);   /* observe SAFE (normal)      */
+    UB live_safe = reflex_threat_level();        /* clock NOT advanced         */
+
+    rf_puts("[g33-controlled]  live: observe danger -> level=");
+    rf_putdec(live_hi); rf_puts("; observe SAFE -> level=");
+    rf_putdec(live_safe); rf_puts("   (live accessor dropped on SAFE, clock unchanged)\r\n");
+
+    /* restore live state (self-test leaves no side effects) */
+    enabled = sv_en ? 1 : 0;
+    danger_active = sv_da; last_danger_ms = sv_ld;
+    danger_streak = sv_ds; threat_run = sv_tr;
+    win_dwell_sum = sv_wd; win_episodes = sv_we;
+    st_fires = sv_sf; st_beacons = sv_sb; st_releases = sv_sr;
+    for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) guard_class_exp[c] = sv_ge[c];
+
+    /* ── verdicts ──────────────────────────────────────────────────────────── */
+    if (!(t_high == LV)) {
+        rf_puts("[g33-controlled] FAIL danger HIGH did not raise the level\r\n"); fails++; }
+    if (!(t_clear == 0)) {
+        rf_puts("[g33-controlled] FAIL danger CLEAR did not drop the level promptly\r\n"); fails++; }
+    if (!(t_persist == LV)) {
+        rf_puts("[g33-controlled] FAIL persisting danger dropped when clock passed HOLD"
+                " (still a timer!)\r\n"); fails++; }
+    /* the DISTINGUISHING property: persist-past-HOLD == danger-high (no decay),
+     * and that differs from what a HOLD timer would yield (0). */
+    if (!(t_persist == t_high && t_clear != t_high)) {
+        rf_puts("[g33-controlled] FAIL level not controlled by the quantity"
+                " (persist != high, or clear == high)\r\n"); fails++; }
+    if (!(t_cap == 0)) {
+        rf_puts("[g33-controlled] FAIL safety cap did not eventually guard a silent latch\r\n"); fails++; }
+    if (!(live_hi > 0 && live_safe == 0)) {
+        rf_puts("[g33-controlled] FAIL live accessor not driven by observed danger\r\n"); fails++; }
+
+    if (fails == 0)
+        rf_puts("[g33-controlled] PASS (threat level rises with observed danger and"
+                " falls PROMPTLY on the SAFE signal; persisting danger survives the"
+                " clock passing HOLD; the timer is only a safety cap)\r\n");
+    else
+        rf_puts("[g33-controlled] FAIL\r\n");
+    return fails;
+}
+
 INT reflex_self_test(void)
 {
     INT fails = 0;
-    rf_puts("[reflex-test] ==== §8/§9 closed-loop tests (G17 wiring / G18) ====\r\n");
+    rf_puts("[reflex-test] ==== §8/§9 closed-loop tests (G17 wiring / G18 / G33) ====\r\n");
     fails += rf_test_feedback();
     fails += rf_test_learning();
+    fails += rf_test_controlled();
     if (fails == 0) rf_puts("[reflex-test] ALL PASS\r\n");
     else { rf_puts("[reflex-test] FAILURES="); rf_putdec((UW)fails);
            rf_puts("\r\n"); }
@@ -835,7 +975,8 @@ void reflex_cmd(const UB *args, UW len)
     }
     if (rem >= 3 && p[0] == 'o' && p[1] == 'f' && p[2] == 'f') {
         enabled = 0;
-        shield_until = conserve_until = 0;
+        shield_until = 0;
+        danger_active = 0;
         rf_puts("[reflex] disabled (all actions cleared)\r\n");
         return;
     }

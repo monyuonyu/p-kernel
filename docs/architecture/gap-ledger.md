@@ -19,10 +19,9 @@
 
 | id | one-line | sev | evidence it is still open (file:line on master) | "closed" means |
 |---|---|---|---|---|
-| **G33** | Reflex threat *level* is released by a 5 s wall-clock timer + a clamped scalar nudge, not by a controlled quantity. | 🟡 | `reflex.c:304-311`, `reflex.h:60` (`HOLD=5000`), `reflex.c:321-352` (scalar nudge) | Threat level rises/falls with the controlled variable, not a timer. |
 | **AUDIT-SPRAWL** (review #5) | The self-audit became a second product (v1..v8 ≈ 2431 lines, rivalling the learning code); gaps were *versioned*, not *closed*. | 🟡 | `philosophy-gap-audit{,-2..-8}.md` (8 files) | This ledger is the sole open list; rows only shrink; no v9 is ever spawned. Closes by sustained discipline. |
 
-**Open rows: 2.** Every other G-number is closed (below).
+**Open rows: 1.** Every other G-number is closed (below).
 
 ---
 
@@ -35,6 +34,7 @@ CI-enforced and shipped, therefore removed from the open table:
 - **G35** plural protect (many points defended in parallel; survives owner kill) — CI `[plural-protect]` `ci.yml:79`, live `plural-protect-live` `ci.yml:232`, `28_plural_protect`.
 - **G22** collective > individual (disjoint shards, no-central gossip avg, survives kill+rejoin) — CI `[g22-gossip-learn]` `ci.yml:86`, live `collective-learn-live` `ci.yml:263`, `32_collective_learn`.
 - **G23** node ceiling > 32 — `DNODE_MAX` 32→64; `GL_MAXNODES`, `KDDS_TOPIC_MAX` (5×), `KDDS_HANDLE_MAX` (10×) now derive from `DNODE_MAX` (one source of truth). Per-node static tables + pmesh BEACON scale automatically; single-char node-topic encoders stay unique to id≈79. `[g23-ceiling]` exercises a 40-model `gl_merge` AND a 40-entry live `dnode_table` membership fold (no 32-cap). CI `[g23-ceiling] PASS` `ci.yml`. **Closed wave-19.** FOLLOW-UP: past id 254 needs a 16-bit `node_id` (wire-protocol change; do NOT bump `DNODE_MAX` alone). Test form: in-process (a >32 live mesh of 33–40 `./p-kernel`+`relay` is the stronger form but too heavy for CI here; the in-process test drives the REAL merge+membership code, not a stub).
+- **G33** reflex threat level is driven by the observed danger quantity, not a wall-clock timer — `reflex_threat_level()` returns `reflex_threat_for(danger_active, …)`: a SAFE (class-0) observation clears the latch promptly (no clock advance), while HOLD=5000 is demoted to SHIELD hysteresis and `REFLEX_THREAT_CAP_MS=30000` is a stuck-latch backstop only. `[g33-controlled]`: danger persisting past HOLD keeps level=40 (the old timer would read 0); SAFE drops it to 0; cap clears a silent latch. Audit confirmed case (C) drives the production formula, no coupler (G38/protect) regressed. CI `[g33-controlled] PASS`. **Closed wave-20.**
 - **G13** cross-region inference is arrival-driven, not window-gated — the coordinator finalizes the instant every expected live region member has contributed (shared predicate `quorum_core(exp,got,alive)`, used by both the live `cagg_step` and the test); the fixed window (`DKVA_RSUM_WIN_MS`, comment-only; iter cap `DKVA_RSUM_WIN_ITERS`) is a straggler-only safety backstop. Audit found the old fixed-200ms block was ALREADY removed by a prior wave (the ledger refs were stale); the genuine residual was a missing distinguishing test. `[g13-arrival]`: N=8 aggregations finalize in 1 step vs 160 for a fixed window; cap fires only for a never-arriving member. CI `[g13-arrival] PASS`. **Closed wave-20.**
 - **G24** durable memory / ARK FS (content-addressed, versioned, crash-safe, power-cut survival on real HW) — `23_durable`, `ark-crash-fuzzer` `ci.yml:358`, `arkfs-audit.md`.
 - **G27 / G32** live-path CI gates (self-test green is not promoted; live N≥3 + kill is the gate) — the live jobs above are the institution.

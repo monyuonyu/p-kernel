@@ -57,8 +57,23 @@
  * 保持されてからしか解除されない。これがヒステリシスとなり、入力が
  * チラついても反射が高速にオン/オフを繰り返す発振を防ぐ (§8 二層構造の
  * 反射層側のダンピング)。 */
-#define REFLEX_HOLD_MS       5000   /* エンゲージしたアクションの保持時間   */
+#define REFLEX_HOLD_MS       5000   /* SHIELD のヒステリシス保持時間 (遮蔽の発振防止) */
 #define REFLEX_POLL_MS       100    /* アラーム取り込み + 解除チェックの周期 (≤200ms) */
+
+/* ── G33: 脅威レベルは「観測された危険量」で上下する (タイマ解除ではない) ──
+ * CONSERVE の脅威レベル (reflex_threat_level) は、危険が *観測されている間*
+ * 立ち、危険信号が SAFE (normal 観測) に戻った瞬間に *即座に* 落ちる。
+ * 落とすのは HOLD タイマの満了ではなく「制御量 (= 観測された危険) が安全へ
+ * 戻ったこと」である (protect_threat_level が under-replication で接地するのと
+ * 同じ思想; survival §2 / philosophy-gap-audit G33)。
+ *
+ * 時間が関与するのは下の SAFETY CAP だけ: 危険を観測したまま、その後 danger
+ * とも safe とも一切観測が来ない (= 推論ストリームが沈黙した) 状態が長く続けば
+ * ラッチが固着しないよう解除する。これは *正常な解除経路ではなく* スタック・
+ * ラッチの保険であり、[g33-controlled] self-test が「正常解除は量であって CAP
+ * ではない」ことを数で示す。HOLD より十分大きくしておくこと: テストが時計を
+ * HOLD 超へ進めてもレベルが残る (= タイマで落ちていない) ことを見せるため。 */
+#define REFLEX_THREAT_CAP_MS 30000  /* スタック・ラッチ保険 (>> HOLD; 正常解除ではない) */
 
 /* SHIELD は「危険 class が連続したら」発火する。単発の誤推論で未知コード
  * 取り込みを止めてしまわないための、最も重い行動への追加ゲート。 */
@@ -174,6 +189,15 @@ BOOL reflex_is_shielded(void);
  * 集束する (§2)。【G20 修正】旧 reflex_pressure_bias() を改名: 効果が
  * load 軸 (避ける) から threat 軸 (寄る) へ移ったことを名でも明示する。 */
 UB reflex_threat_level(void);
+
+/* ── G33: 脅威レベルの純粋な解除式 (live アクセサと self-test が共有; 重複定義
+ * なし。protect_threat_for と同じ作法) ──────────────────────────────────────
+ * 脅威レベルは「観測された危険量」(danger_active) の関数であり、壁時計ではない:
+ *   danger_active==FALSE          -> 0     (SAFE 観測でレベルは *即座に* 落ちる)
+ *   danger_active==TRUE           -> level (危険が観測されている)
+ *   ただし ms_since_danger が REFLEX_THREAT_CAP_MS を超えていれば 0
+ *   (= 観測ストリームが沈黙したときの SAFETY CAP のみ; 正常解除ではない)。 */
+UB reflex_threat_for(BOOL danger_active, UW ms_since_danger, UB level);
 
 /* G18 熟慮 tick: 蓄積した経験 (脅威 dwell 統計) から learned_conserve を
  * 学習で nudge する。reflex_task が遅い時定数 (REFLEX_DELIB_EVERY ポール) で
