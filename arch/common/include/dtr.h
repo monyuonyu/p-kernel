@@ -136,6 +136,12 @@ void dtr_reinit_weights(UW seed);
  * なし)。R3b spec.c が専門家の生出力をルーティング/集約するために使う。 */
 void dtr_forward_probs(const B input[DTR_SEQ_LEN], float out[DTR_OUT_DIM]);
 
+/* ONE BRAIN (wave 18): 現在ロードされている学習脳の argmax クラス。live な
+ * 推論経路 (moe_infer ローカル / drpc DRPC_CALL_INFER リモート) はこの forward
+ * で返答・ルーティング・守りを駆動する (手書き mlp_forward を live path から
+ * 排除)。docs/review-2026-06-three-brains.md 参照。 */
+UB   dtr_classify(const B input[DTR_SEQ_LEN]);
+
 /* パイプラインタスク
  *   Node 0: "dtr/result" を subscribe し、dtr_infer() のセマフォを signal
  *   Node 1: "dtr/l0" を subscribe し、Stage1+2 を計算して "dtr/result" を pub */

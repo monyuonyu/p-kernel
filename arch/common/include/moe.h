@@ -13,11 +13,13 @@
  *  K-DDS トピック "moe/score" でスコアを定期ブロードキャスト。
  *  受信ノードはピアのスコアテーブルを更新する。
  *
- *  ルーティング:
- *    1. Gate: 入力の平均値からクラスを予測 (軽量線形分類)
+ *  ルーティング (ONE BRAIN — wave 本丸):
+ *    1. Gate: 学習 dtr Transformer の argmax からクラスを予測 (4 ch すべて)
  *    2. 最も得意なノードを選択
- *    3. DRPC で推論を委譲 (DRPC_CALL_INFER)
- *    4. フォールバック: タイムアウト時はローカル推論
+ *    3. DRPC で推論を委譲 (DRPC_CALL_INFER — リモートも同じ学習 dtr)
+ *    4. フォールバック: タイムアウト時はローカルの learned_class
+ *  返答・ルーティング・守りはすべて *同じ 1 回の dtr forward* から取る。
+ *  docs/review-2026-06-three-brains.md。
  */
 
 #pragma once
@@ -160,6 +162,13 @@ void moe_task(INT stacd, void *exinf);
 
 /* 推論実行: 最適ノードを選んで推論し、クラスを返す */
 UB   moe_infer(B temp, B hum, B press, B light);
+
+/* ONE BRAIN observability (wave 18): 直近の moe_infer が記録した
+ *   returned (返した class) / gate (ルーティング class) /
+ *   reflex_cls (守りへ渡した class) / conf (max-softmax×100)。
+ * [onebrain-unified] self-test が三者の等値 (= 三脳が一脳) を検証する。
+ * NULL を渡した項目はスキップ。 */
+void moe_infer_last(UB *returned, UB *gate, UB *reflex_cls, UB *conf);
 
 /* §7 ゲートの公開ラッパー: 入力のクラス帯を返す (0..MOE_NUM_CLASSES-1)。
  * R3b spec.c が専門分化した専門家を疎に発火させるルーティングに使う。 */

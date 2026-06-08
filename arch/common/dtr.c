@@ -1006,6 +1006,20 @@ void dtr_forward_probs(const B input[DTR_SEQ_LEN], float out[DTR_OUT_DIM])
     for (INT c = 0; c < DOUT; c++) out[c] = tc.probs[c];
 }
 
+/* ONE BRAIN (wave 18): the learned-model argmax for one input. The live
+ * inference path (moe_infer local + drpc DRPC_CALL_INFER remote) routes,
+ * returns, and guards through THIS forward — replacing ai_job.c's hand-
+ * written-constant mlp_forward in the live path. Uses all 4 sensor tokens
+ * (DTR_SEQ_LEN==4). See docs/review-2026-06-three-brains.md. */
+UB dtr_classify(const B input[DTR_SEQ_LEN])
+{
+    float p[DTR_OUT_DIM];
+    dtr_forward_probs(input, p);
+    UB cls = 0;
+    for (UB c = 1; c < (UB)DTR_OUT_DIM; c++) if (p[c] > p[cls]) cls = c;
+    return cls;
+}
+
 /* Gradient check: compares the analytic gradient against central
  * finite differences on a spread of parameter indices for one sample.
  * Returns the max relative error — the proof that train_backward is

@@ -134,6 +134,11 @@ void reflex_init(void);
  * 全ノードで対称に走る (中央なし)。 */
 void reflex_task(INT stacd, void *exinf);
 
+/* テスト隔離用 (wave 18): reflex の有効/無効を切替え、旧値を返す。moe.c の
+ * [onebrain-*] が live な moe_infer を回す間だけ反射の副作用 (guard 経験など)
+ * を止めて復元するために使う。 */
+BOOL reflex_set_enabled(BOOL on);
+
 /* 推論完了フック: 推論結果 (脅威レベル class) を反射アクションへ変換する。
  * dtr の推論完了点 (dtr_log_push) から 1 行で呼ばれる。
  *   threat_class : 0..2 (推論 class)
