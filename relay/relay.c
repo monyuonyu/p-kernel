@@ -109,6 +109,36 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
+static uint64_t now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
+
+/* --- relay-side RTT probe stamp (survival-network.md §4 latency measurement) -
+ *
+ *  OFF by default (PKERNEL_RELAY_PROBE_STAMP unset => behaviour byte-for-byte
+ *  identical to the pre-knob relay). When ON, a KEEPALIVE whose payload begins
+ *  with the 4-byte probe magic "PRB1" gets two 8-byte little-endian monotonic
+ *  microsecond stamps APPENDED to the echo before it is reflected:
+ *      [+0] relay_rx_us  — captured the instant recvfrom() returned
+ *      [+8] relay_tx_us  — captured the instant before the echo sendto()
+ *  This lets a measurement client decompose its observed round-trip into
+ *  (network transit) vs (relay residence = tx-rx) WITHOUT a blocking call and
+ *  WITHOUT changing any other path. Non-probe keepalives (no "PRB1" magic, e.g.
+ *  the relay-HA liveness pong) are echoed verbatim even when the flag is on, so
+ *  the HMAC-authenticated wire that real clients use is never mutated. The
+ *  appended stamps are advisory (outside the HMAC) — a measurement aid, not an
+ *  authenticated field.
+ */
+static int probe_stamp = 0;             /* PKERNEL_RELAY_PROBE_STAMP */
+#define PROBE_MAGIC_0 'P'
+#define PROBE_MAGIC_1 'R'
+#define PROBE_MAGIC_2 'B'
+#define PROBE_MAGIC_3 '1'
+#define PROBE_STAMP_LEN 16              /* rx_us(8) + tx_us(8) */
+
 /* Effective forward delay (ms) for a destination node. 0 => immediate. */
 static int delay_for(int dst)
 {
@@ -628,6 +658,18 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Optional relay-side RTT probe stamp (survival-network.md §4 latency
+     * measurement). Default off => keepalive echo is byte-for-byte unchanged. */
+    {
+        const char *ps = getenv("PKERNEL_RELAY_PROBE_STAMP");
+        if (ps && *ps && atoi(ps) != 0) {
+            probe_stamp = 1;
+            fprintf(stderr, "[relay] probe-stamp ON: PRB1 keepalives echoed "
+                            "with +%d B relay rx/tx us stamps (measurement aid)\n",
+                            PROBE_STAMP_LEN);
+        }
+    }
+
     /* sigaction without SA_RESTART so recvfrom() returns EINTR on
      * SIGTERM/SIGINT — signal() defaults to SA_RESTART on glibc. */
     struct sigaction sa = {0};
@@ -680,6 +722,7 @@ int main(int argc, char **argv)
         socklen_t flen = sizeof(from);
         ssize_t n = recvfrom(sock, buf, sizeof(buf), 0,
                              (struct sockaddr *)&from, &flen);
+        uint64_t rx_us = probe_stamp ? now_us() : 0;  /* stamp at the earliest */
         if (n < 0) {
             if (errno == EINTR) continue;
             perror("recvfrom");
@@ -744,19 +787,38 @@ int main(int argc, char **argv)
             }
             break;
 
-        case REL_KEEPALIVE:
+        case REL_KEEPALIVE: {
             update((int)pkt.src, &from);
             /* Relay-HA liveness pong: reflect the (already verified)
              * keepalive back to its sender so clients can distinguish
              * "relay alive" from "relay dead" and run deterministic
              * failover/failback (docs/architecture/relay-ha.md). The
-             * wire format is untouched — this echoes the same packet. */
-            if (sendto(sock, buf, (size_t)n, 0,
+             * wire format is untouched — this echoes the same packet.
+             *
+             * §4 measurement opt-in: when probe_stamp is ON *and* the payload
+             * carries the "PRB1" magic, append relay rx/tx microsecond stamps
+             * so a client can measure relay residence under load. Off by
+             * default and skipped for non-probe keepalives, so the relay-HA
+             * pong stays byte-for-byte identical. */
+            size_t echo_len = (size_t)n;
+            int is_probe = probe_stamp
+                && pkt.payload_len >= 4
+                && pkt.payload[0] == PROBE_MAGIC_0
+                && pkt.payload[1] == PROBE_MAGIC_1
+                && pkt.payload[2] == PROBE_MAGIC_2
+                && pkt.payload[3] == PROBE_MAGIC_3;
+            if (is_probe && echo_len + PROBE_STAMP_LEN <= sizeof(buf)) {
+                store_u64_le(buf + echo_len,     rx_us);
+                store_u64_le(buf + echo_len + 8, now_us());
+                echo_len += PROBE_STAMP_LEN;
+            }
+            if (sendto(sock, buf, echo_len, 0,
                        (struct sockaddr *)&from, flen) < 0 && verbose) {
                 fprintf(stderr, "[relay] keepalive echo to src=%u: %s\n",
                         pkt.src, strerror(errno));
             }
             break;
+        }
 
         case REL_DATA:
             update((int)pkt.src, &from);
