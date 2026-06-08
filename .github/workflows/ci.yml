@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 280 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nr3 test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -105,6 +105,16 @@ jobs:
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
           grep -aF '[g13-parallel] PASS' selftest.log
+          # R3 (non-trivial thought): in-context associative recall. The SAME
+          # dtr kernels (dt_linear/dt_softmax/LayerNorm fwd+bwd) learn a function
+          # NO hand-written if can — the dictionary is resampled every episode,
+          # so any fixed input->label rule is at/near chance (handif), random
+          # weights are chance (frozen), the analytic backward grad-checks, and
+          # the learned held-out accuracy beats both by >=30 pts (learned).
+          grep -aF '[r3-incontext-gradcheck] PASS' selftest.log
+          grep -aF '[r3-incontext-frozen] PASS' selftest.log
+          grep -aF '[r3-incontext-handif] PASS' selftest.log
+          grep -aF '[r3-incontext-learned] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)

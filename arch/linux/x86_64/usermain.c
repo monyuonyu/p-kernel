@@ -50,6 +50,7 @@ IMPORT W    dtr_infer(const B input[4]);
 IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
 IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
+IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
