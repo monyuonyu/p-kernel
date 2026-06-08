@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="p-kernel: An AI-first microkernel OS for distributed embedded systems. Runs bare-metal on Raspberry Pi, or as UMP (User-Mode p-kernel) inside a Linux process or Android app. AI inference, memory, and evolution embedded in the kernel itself. Survives as long as a single node remains.">
-<meta name="keywords" content="p-kernel, UMP, User-Mode p-kernel, AI OS, microkernel, T-Kernel, distributed AI, Android, Raspberry Pi, autonomous OS, self-evolving kernel, Raft consensus, TCC on-device compilation, musl, Linux ABI, ring-3, distributed Transformer, federated learning, spacecraft, autonomous systems, embedded AI">
-<meta property="og:title" content="p-kernel — The OS where AI never dies">
-<meta property="og:description" content="An AI-first microkernel that lives across thousands of nodes. The AI is not in a server. The AI is the cluster.">
+<meta name="description" content="p-kernel: a research prototype toward a decentralized OS where an AI survives as a swarm — honest about every percent. The immortal body (failure detection, self-healing, crash-safe storage, gossip convergence) is largely real; the mind is still a 635-parameter seed. This page shows the real completion % of every layer.">
+<meta name="keywords" content="p-kernel, decentralized OS, microkernel, T-Kernel, distributed AI, survival network, swarm intelligence, research prototype, honest roadmap">
+<meta property="og:title" content="p-kernel — the immortal body is real, the mind is a seed">
+<meta property="og:description" content="A decentralized kernel network where AI survives as a swarm. We built the immortal body first — and we show you the honest completion % of every layer, including the parts that are 10%.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://monyuonyu.github.io/p-kernel">
 <meta name="google-site-verification" content="X-i4LqHUXGmgBjLYkYLWeeBpjnDP_hIqpoRYd26tiFg" />
-<title>p-kernel — The OS where AI never dies</title>
+<title>p-kernel — the immortal body is real, the mind is a seed</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Noto+Serif+JP:wght@300;400;700&display=swap" rel="stylesheet">
@@ -24,10 +24,10 @@
     --text: #e6e9ef;
     --text-dim: #8b94a3;
     --text-faint: #4a5161;
-    --accent: #5eead4;
-    --accent2: #a78bfa;
-    --accent3: #fb923c;
-    --accent4: #f87171;
+    --accent: #5eead4;   /* mechanism / alive / today  */
+    --accent2: #a78bfa;  /* seed / dream               */
+    --accent3: #fb923c;  /* borrowed / next            */
+    --accent4: #f87171;  /* scale gap / caution        */
     --glow: rgba(94, 234, 212, 0.15);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -80,7 +80,7 @@
     letter-spacing: -0.02em;
     color: var(--accent);
   }
-  header nav { display: flex; gap: 1.8rem; }
+  header nav { display: flex; gap: 1.6rem; }
   header nav a {
     color: var(--text-dim);
     text-decoration: none;
@@ -129,7 +129,7 @@
     font-weight: 600;
   }
   .hero h1 {
-    font-size: clamp(2.5rem, 6vw, 5rem);
+    font-size: clamp(2.3rem, 5.5vw, 4.6rem);
     font-weight: 800;
     letter-spacing: -0.04em;
     line-height: 1.05;
@@ -143,14 +143,14 @@
     font-size: clamp(1.1rem, 2vw, 1.4rem);
     color: var(--text);
     font-weight: 400;
-    max-width: 720px;
+    max-width: 760px;
     margin: 0 auto 1rem;
     letter-spacing: 0.02em;
   }
   .hero .jp-subtitle {
     color: var(--text-dim);
     font-size: 1rem;
-    margin: 2rem 0 3rem;
+    margin: 2rem 0 2.5rem;
     font-weight: 300;
     line-height: 2;
     letter-spacing: 0.1em;
@@ -184,11 +184,37 @@
   }
   .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
 
+  /* ===== Honesty meter (hero) ===== */
+  .honesty-strip {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin: 3rem auto 0;
+    padding: 1.2rem 1.6rem;
+    background: rgba(22, 27, 37, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    backdrop-filter: blur(20px);
+  }
+  .honesty-strip .h-item { text-align: center; min-width: 120px; }
+  .honesty-strip .h-num {
+    font-size: 1.9rem; font-weight: 800; line-height: 1;
+    font-family: 'JetBrains Mono', monospace; letter-spacing: -0.03em;
+  }
+  .honesty-strip .h-num.mech  { color: var(--accent); }
+  .honesty-strip .h-num.scale { color: var(--accent3); }
+  .honesty-strip .h-num.vision{ color: var(--accent2); }
+  .honesty-strip .h-lab {
+    color: var(--text-dim); font-size: 0.72rem; letter-spacing: 0.12em;
+    text-transform: uppercase; margin-top: 0.5rem;
+  }
+
   /* ===== Sections ===== */
   section.story {
     max-width: 900px;
     margin: 0 auto;
-    padding: 8rem 2rem;
+    padding: 7rem 2rem;
   }
   .story-eyebrow {
     color: var(--accent);
@@ -208,6 +234,7 @@
   .story h3 .accent { color: var(--accent); }
   .story h3 .accent2 { color: var(--accent2); }
   .story h3 .accent3 { color: var(--accent3); }
+  .story h3 .accent4 { color: var(--accent4); }
   .story p {
     font-size: 1.15rem;
     color: var(--text-dim);
@@ -231,16 +258,110 @@
     font-style: italic;
     font-size: 1.1rem;
   }
+  .altitude {
+    margin-top: 3rem;
+    padding: 1.2rem 1.5rem;
+    border: 1px dashed rgba(167,139,250,0.4);
+    border-radius: 12px;
+    background: rgba(167,139,250,0.05);
+    color: var(--text-dim);
+    font-size: 1rem;
+  }
+  .altitude strong { color: var(--accent2); }
 
-  /* ===== Layer cards (5 layers of life) ===== */
-  .layers-section {
-    max-width: 1200px;
+  /* ===== Progress bars (the honesty device) ===== */
+  .bars { margin: 1rem 0; }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 84px 1fr 44px;
+    align-items: center;
+    gap: 0.8rem;
+    margin: 0.45rem 0;
+    font-size: 0.78rem;
+  }
+  .bar-key {
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .bar-track {
+    height: 9px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .bar-fill.mech  { background: linear-gradient(90deg, #5eead4, #a78bfa); }
+  .bar-fill.scale { background: linear-gradient(90deg, #fb923c, #f87171); }
+  .bar-pct {
+    text-align: right;
+    color: var(--text);
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .bar-legend {
+    display: flex; gap: 1.4rem; flex-wrap: wrap;
+    font-size: 0.75rem; color: var(--text-faint);
+    margin-top: 0.6rem;
+  }
+  .bar-legend .dot { display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:0.4rem; vertical-align: middle; }
+  .bar-legend .dot.mech  { background: linear-gradient(90deg,#5eead4,#a78bfa); }
+  .bar-legend .dot.scale { background: linear-gradient(90deg,#fb923c,#f87171); }
+
+  /* ===== Scorecard ===== */
+  .scorecard-section {
+    max-width: 1000px;
     margin: 0 auto;
-    padding: 6rem 2rem;
+    padding: 5rem 2rem;
+  }
+  .scorecard-section .sc-head { text-align: center; margin-bottom: 3.5rem; }
+  .scorecard-section .sc-head h3 {
+    font-size: clamp(2rem, 4vw, 3rem); font-weight: 700;
+    letter-spacing: -0.03em; margin-bottom: 1rem;
+  }
+  .scorecard-section .sc-head p { color: var(--text-dim); max-width: 680px; margin: 0 auto; font-size: 1.05rem; }
+  .sc-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 2rem;
+    align-items: center;
+    padding: 1.6rem 1.4rem;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(22, 27, 37, 0.35);
+    margin-bottom: 1rem;
+    transition: border-color 0.2s;
+  }
+  .sc-row:hover { border-color: var(--accent); }
+  .sc-row .sc-name { display: flex; align-items: center; gap: 0.8rem; }
+  .sc-row .sc-icon { font-size: 1.8rem; line-height: 1; }
+  .sc-row .sc-title { font-weight: 700; font-size: 1.1rem; }
+  .sc-row .sc-jp { color: var(--text-dim); font-size: 0.82rem; }
+  .sc-row .sc-one { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.5rem; line-height: 1.5; }
+  .sc-row .sc-one code { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+
+  /* ===== Badges ===== */
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem; letter-spacing: 0.18em;
+    padding: 0.12rem 0.55rem; border-radius: 4px;
+    vertical-align: middle;
+  }
+  .badge-live    { color: var(--accent);  background: rgba(94,234,212,0.12);  border: 1px solid rgba(94,234,212,0.4); }
+  .badge-seed    { color: var(--accent2); background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.45); }
+  .badge-borrowed{ color: var(--accent3); background: rgba(251,146,60,0.12);  border: 1px solid rgba(251,146,60,0.45); }
+  .badge-designed{ color: var(--text-faint); background: rgba(255,255,255,0.04); border: 1px solid var(--border); }
+  .badge-justfixed{ color: #050608; background: var(--accent); border: 1px solid var(--accent); }
+
+  /* ===== Layer cards ===== */
+  .layers-section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 5rem 2rem;
   }
   .layers-header {
     text-align: center;
-    margin-bottom: 5rem;
+    margin-bottom: 4rem;
   }
   .layers-header h3 {
     font-size: clamp(2rem, 4vw, 3rem);
@@ -257,9 +378,9 @@
 
   .layer {
     display: grid;
-    grid-template-columns: minmax(260px, 1fr) 2fr;
+    grid-template-columns: minmax(280px, 1fr) 2fr;
     gap: 4rem;
-    padding: 5rem 0;
+    padding: 4rem 0;
     border-bottom: 1px solid var(--border);
     align-items: start;
   }
@@ -273,61 +394,59 @@
     letter-spacing: 0.2em;
   }
   .layer .layer-icon {
-    font-size: 3.5rem;
-    margin-bottom: 1.5rem;
+    font-size: 3.2rem;
+    margin-bottom: 1.2rem;
     line-height: 1;
   }
   .layer h4 {
-    font-size: 2rem;
+    font-size: 1.9rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
   }
   .layer .layer-jp {
     color: var(--text-dim);
-    font-size: 1.1rem;
-    margin-bottom: 1.5rem;
+    font-size: 1.05rem;
+    margin-bottom: 1.2rem;
     letter-spacing: 0.1em;
   }
-  .layer h4.color1 { color: var(--accent4); }
+  .layer h4.color1 { color: var(--accent); }
   .layer h4.color2 { color: var(--accent2); }
-  .layer h4.color3 { color: var(--accent); }
-  .layer h4.color4 { color: var(--accent3); }
-  .layer h4.color5 { color: #fbbf24; }
+  .layer h4.color3 { color: #fbbf24; }
+  .layer h4.color4 { color: var(--accent4); }
+  .layer h4.color5 { color: var(--accent3); }
 
   .layer .layer-intro {
     color: var(--text);
-    font-size: 1.2rem;
-    margin-bottom: 2rem;
+    font-size: 1.15rem;
+    margin-bottom: 1.8rem;
     line-height: 1.7;
   }
   .layer .feature {
     background: rgba(22, 27, 37, 0.4);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 1.5rem 1.8rem;
+    padding: 1.3rem 1.6rem;
     margin-bottom: 1rem;
     transition: border-color 0.2s;
   }
-  .layer .feature:hover {
-    border-color: var(--accent);
-  }
+  .layer .feature:hover { border-color: var(--accent); }
   .layer .feature .feature-head {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 0.7rem;
+    margin-bottom: 0.6rem;
     flex-wrap: wrap;
     gap: 0.5rem;
   }
   .layer .feature .feature-name {
     font-weight: 600;
     color: var(--text);
-    font-size: 1.05rem;
+    font-size: 1.02rem;
   }
   .layer .feature .feature-file {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     color: var(--accent);
     background: rgba(94, 234, 212, 0.08);
     padding: 0.15rem 0.6rem;
@@ -336,99 +455,62 @@
   }
   .layer .feature p {
     color: var(--text-dim);
-    font-size: 0.95rem;
+    font-size: 0.94rem;
     margin: 0;
     line-height: 1.65;
   }
-  .layer .feature .quote {
-    color: var(--text);
-    font-style: italic;
-    font-size: 0.95rem;
-    margin-top: 0.8rem;
-    padding-top: 0.8rem;
-    border-top: 1px dashed rgba(255,255,255,0.08);
-  }
-
-  /* ===== Scale comparison (Today vs Tomorrow) ===== */
-  .scale-card {
-    background: linear-gradient(135deg, rgba(167, 139, 250, 0.06), rgba(94, 234, 212, 0.04)) !important;
-    border-color: rgba(167, 139, 250, 0.3) !important;
-  }
-  .scale-compare {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    gap: 1.2rem;
-    align-items: center;
-    margin: 1.5rem 0;
-  }
-  .scale-col {
-    background: rgba(0,0,0,0.3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-  }
-  .scale-col.scale-future {
-    border-color: rgba(167, 139, 250, 0.4);
-    background: rgba(167, 139, 250, 0.05);
-  }
-  .scale-label {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    margin-bottom: 0.8rem;
-  }
-  .scale-future .scale-label { color: var(--accent2); }
-  .scale-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.3rem 0;
-    border-bottom: 1px dashed rgba(255,255,255,0.05);
-    font-size: 0.9rem;
-  }
-  .scale-row:last-child { border-bottom: none; }
-  .scale-row > span:first-child { color: var(--text-dim); }
-  .scale-row > span:last-child { color: var(--text); font-weight: 600; }
-  .scale-future .scale-row > span:last-child { color: var(--accent2); }
-  .scale-arrow {
-    font-size: 2rem;
-    color: var(--accent2);
-    opacity: 0.6;
-  }
-
-  /* ===== Future feature card (aspirational, not yet built) ===== */
-  .feature-future {
-    background: linear-gradient(135deg, rgba(251, 146, 60, 0.05), rgba(167, 139, 250, 0.04)) !important;
-    border-color: rgba(251, 146, 60, 0.25) !important;
-    border-style: dashed !important;
-    position: relative;
-  }
-  .feature-future::before {
-    content: 'NEXT';
-    position: absolute;
-    top: -0.6rem;
-    right: 1.2rem;
-    background: var(--bg-0);
+  .layer .feature .honest {
     color: var(--accent3);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.2em;
-    padding: 0.1rem 0.6rem;
-    border: 1px solid var(--accent3);
-    border-radius: 4px;
+    font-size: 0.86rem;
+    margin-top: 0.7rem;
+    padding-top: 0.7rem;
+    border-top: 1px dashed rgba(251,146,60,0.25);
   }
+  .layer .feature .honest::before { content: '正直に言うと — '; color: var(--text-faint); }
+  .layer .feature.seed     { border-style: dashed; border-color: rgba(167,139,250,0.35); }
+  .layer .feature.borrowed { border-style: dashed; border-color: rgba(251,146,60,0.3); }
 
-  @media (max-width: 768px) {
-    .scale-compare { grid-template-columns: 1fr; }
-    .scale-arrow { transform: rotate(90deg); justify-self: center; }
+  /* ===== Demo block ===== */
+  .demo {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 6rem 2rem;
   }
+  .demo h3 {
+    font-size: clamp(1.8rem, 3vw, 2.5rem);
+    margin-bottom: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .demo p { color: var(--text-dim); margin-bottom: 1rem; }
+  .demo .demo-note {
+    font-size: 0.85rem; color: var(--text-faint); font-style: italic;
+    margin-bottom: 2rem;
+  }
+  pre.terminal {
+    background: #020304;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.8rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.84rem;
+    line-height: 1.65;
+    color: var(--text);
+  }
+  pre.terminal .prompt { color: var(--accent); font-weight: 600; }
+  pre.terminal .comment { color: var(--text-faint); font-style: italic; }
+  pre.terminal .ok { color: var(--accent); }
+  pre.terminal .warn { color: var(--accent3); }
+  pre.terminal .die { color: var(--accent4); }
+  pre.terminal .info { color: var(--accent2); }
+  pre.terminal .out { color: #fbbf24; }
 
   /* ===== Join the Swarm ===== */
   .join-section {
     position: relative;
-    padding: 8rem 2rem;
-    max-width: 1200px;
+    padding: 7rem 2rem;
+    max-width: 1100px;
     margin: 0 auto;
     text-align: center;
     overflow: hidden;
@@ -444,7 +526,7 @@
     pointer-events: none;
   }
   .join-section h3 {
-    font-size: clamp(2.5rem, 5vw, 4rem);
+    font-size: clamp(2.2rem, 5vw, 3.6rem);
     font-weight: 800;
     letter-spacing: -0.03em;
     margin: 0.5rem 0 1.2rem;
@@ -455,282 +537,89 @@
   }
   .join-section .lead {
     color: var(--text);
-    font-size: 1.2rem;
-    max-width: 700px;
-    margin: 0 auto 4rem;
+    font-size: 1.15rem;
+    max-width: 720px;
+    margin: 0 auto 3rem;
     line-height: 1.7;
   }
-
-  /* swarm grid visualization */
   .swarm-viz {
     display: grid;
     grid-template-columns: repeat(20, 1fr);
     gap: 6px;
-    max-width: 600px;
+    max-width: 560px;
     margin: 0 auto 2rem;
     aspect-ratio: 1;
   }
   .swarm-viz .node {
-    aspect-ratio: 1;
-    border-radius: 50%;
+    aspect-ratio: 1; border-radius: 50%;
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.05);
     transition: all 0.5s;
   }
-  .swarm-viz .node.dim {
-    animation: dim-pulse 4s ease-in-out infinite;
-  }
-  @keyframes dim-pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 0.7; }
-  }
+  .swarm-viz .node.dim { animation: dim-pulse 4s ease-in-out infinite; }
+  @keyframes dim-pulse { 0%,100% { opacity:0.4; } 50% { opacity:0.7; } }
   .swarm-viz .node.you {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--accent); border-color: var(--accent);
     box-shadow: 0 0 16px var(--accent), 0 0 32px var(--glow);
     animation: alive-pulse 2s ease-in-out infinite;
   }
   @keyframes alive-pulse {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 16px var(--accent), 0 0 32px var(--glow); }
+    0%,100% { transform: scale(1); box-shadow: 0 0 16px var(--accent), 0 0 32px var(--glow); }
     50% { transform: scale(1.15); box-shadow: 0 0 24px var(--accent), 0 0 48px var(--glow); }
   }
   .swarm-viz .node.next {
-    background: rgba(167, 139, 250, 0.25);
-    border-color: var(--accent2);
+    background: rgba(167, 139, 250, 0.25); border-color: var(--accent2);
     animation: waiting-pulse 3s ease-in-out infinite;
   }
   @keyframes waiting-pulse {
-    0%, 100% { transform: scale(0.8); opacity: 0.5; }
-    50% { transform: scale(1.05); opacity: 0.9; }
+    0%,100% { transform: scale(0.8); opacity:0.5; }
+    50% { transform: scale(1.05); opacity:0.9; }
   }
-
-  /* Counter */
   .swarm-counter {
     display: inline-block;
     background: rgba(22, 27, 37, 0.6);
     border: 1px solid var(--border);
     border-radius: 16px;
-    padding: 1.5rem 2.5rem;
+    padding: 1.4rem 2.5rem;
     margin: 1rem 0 3rem;
     backdrop-filter: blur(20px);
   }
   .swarm-counter .num {
-    font-size: 4rem;
-    font-weight: 800;
-    color: var(--accent);
-    line-height: 1;
-    font-family: 'Inter', sans-serif;
-    letter-spacing: -0.05em;
+    font-size: 3.6rem; font-weight: 800; color: var(--accent);
+    line-height: 1; letter-spacing: -0.05em;
   }
   .swarm-counter .label {
-    color: var(--text-dim);
-    font-size: 0.85rem;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    margin-top: 0.5rem;
+    color: var(--text-dim); font-size: 0.82rem;
+    letter-spacing: 0.2em; text-transform: uppercase; margin-top: 0.5rem;
   }
 
-  /* Intelligence ladder */
-  .intel-ladder {
-    margin: 5rem auto 3rem;
-    max-width: 900px;
-  }
-  .intel-ladder h4 {
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin-bottom: 2rem;
-    color: var(--text);
-  }
-  .intel-grid {
+  .paths {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-    margin-top: 2rem;
-  }
-  .intel-step {
-    background: rgba(22, 27, 37, 0.4);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.2rem 0.8rem;
-    text-align: center;
-    transition: all 0.3s;
-  }
-  .intel-step:hover {
-    border-color: var(--accent);
-    transform: translateY(-4px);
-  }
-  .intel-step.current {
-    border-color: var(--accent);
-    background: rgba(94, 234, 212, 0.05);
-  }
-  .intel-step.dream {
-    border-color: var(--accent2);
-    background: rgba(167, 139, 250, 0.05);
-  }
-  .intel-step .nodes {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--text-faint);
-    letter-spacing: 0.15em;
-    margin-bottom: 0.6rem;
-  }
-  .intel-step .nodes.now { color: var(--accent); }
-  .intel-step .nodes.future { color: var(--accent2); }
-  .intel-step .scale {
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 0.4rem;
-  }
-  .intel-step .compare {
-    color: var(--text-dim);
-    font-size: 0.8rem;
-    line-height: 1.5;
-  }
-
-  /* Join steps */
-  .join-steps {
-    margin: 5rem auto 2rem;
-    max-width: 700px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.2rem;
+    max-width: 900px;
+    margin: 3rem auto 0;
     text-align: left;
   }
-  .join-steps h4 {
-    text-align: center;
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin-bottom: 2rem;
-  }
-  .step {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1.5rem;
-    align-items: start;
-    margin-bottom: 1.8rem;
-    padding: 1.3rem;
+  .path-card {
     background: rgba(22, 27, 37, 0.4);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 14px;
+    padding: 1.6rem;
   }
-  .step .step-num {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--accent);
-    line-height: 1;
-    min-width: 2.5rem;
-  }
-  .step h5 {
-    font-size: 1.1rem;
-    color: var(--text);
-    margin-bottom: 0.4rem;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-  .step p {
-    color: var(--text-dim);
-    font-size: 0.95rem;
-    line-height: 1.6;
-    margin: 0;
-  }
-  .badge-soon {
-    background: rgba(251, 146, 60, 0.15);
-    color: var(--accent3);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.15em;
-    padding: 0.1rem 0.5rem;
-    border-radius: 4px;
-    border: 1px solid rgba(251, 146, 60, 0.4);
-  }
-  .badge-now {
-    background: rgba(94, 234, 212, 0.15);
-    color: var(--accent);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.15em;
-    padding: 0.1rem 0.5rem;
-    border-radius: 4px;
-    border: 1px solid rgba(94, 234, 212, 0.4);
-  }
+  .path-card.live   { border-color: rgba(94,234,212,0.35); }
+  .path-card h5 { font-size: 1.05rem; margin-bottom: 0.3rem; display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; }
+  .path-card .sub { color: var(--text-faint); font-size: 0.8rem; margin-bottom: 1rem; }
+  .path-card ol { color: var(--text-dim); font-size: 0.9rem; padding-left: 1.2rem; line-height: 1.8; }
+  .path-card code { font-family:'JetBrains Mono',monospace; color: var(--accent); font-size: 0.82rem; }
 
-  .join-cta-final {
-    margin-top: 4rem;
-  }
+  .join-cta-final { margin-top: 4rem; }
   .join-cta-final .closing-line {
     font-family: 'Noto Serif JP', serif;
-    color: var(--text);
-    font-size: 1.3rem;
-    line-height: 2;
-    margin-bottom: 2.5rem;
-    font-weight: 300;
+    color: var(--text); font-size: 1.25rem; line-height: 2;
+    margin-bottom: 2.5rem; font-weight: 300;
   }
-  .join-cta-final .closing-line .accent {
-    color: var(--accent);
-    font-weight: 500;
-  }
-
-  @media (max-width: 768px) {
-    .swarm-viz { grid-template-columns: repeat(15, 1fr); max-width: 350px; gap: 4px; }
-    .swarm-counter .num { font-size: 3rem; }
-  }
-
-  /* ===== Demo block ===== */
-  .demo {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 6rem 2rem;
-  }
-  .demo h3 {
-    font-size: clamp(1.8rem, 3vw, 2.5rem);
-    margin-bottom: 1rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-  .demo p {
-    color: var(--text-dim);
-    margin-bottom: 2rem;
-  }
-  pre.terminal {
-    background: #020304;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.8rem;
-    overflow-x: auto;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: var(--text);
-  }
-  pre.terminal .prompt { color: var(--accent); font-weight: 600; }
-  pre.terminal .comment { color: var(--text-faint); font-style: italic; }
-  pre.terminal .ok { color: var(--accent); }
-  pre.terminal .warn { color: var(--accent3); }
-  pre.terminal .info { color: var(--accent2); }
-  pre.terminal .out { color: #fbbf24; }
-
-  /* ===== CTA ===== */
-  .final-cta {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 8rem 2rem;
-    text-align: center;
-  }
-  .final-cta h3 {
-    font-size: clamp(2rem, 4vw, 3rem);
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    margin-bottom: 1.5rem;
-    background: linear-gradient(135deg, #ffffff 0%, #5eead4 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .final-cta p {
-    color: var(--text-dim);
-    font-size: 1.1rem;
-    margin-bottom: 2.5rem;
-  }
+  .join-cta-final .closing-line .accent { color: var(--accent); font-weight: 500; }
 
   /* ===== Footer ===== */
   footer {
@@ -741,12 +630,7 @@
     font-size: 0.85rem;
   }
   footer a { color: var(--accent); text-decoration: none; }
-  footer .footer-quote {
-    color: var(--text-dim);
-    font-style: italic;
-    margin-bottom: 1rem;
-    line-height: 1.8;
-  }
+  footer .footer-quote { color: var(--text-dim); font-style: italic; margin-bottom: 1rem; line-height: 1.8; }
 
   /* ===== Responsive ===== */
   @media (max-width: 768px) {
@@ -754,6 +638,9 @@
     .layer { grid-template-columns: 1fr; gap: 2rem; padding: 3rem 0; }
     .layer .layer-meta { position: static; }
     .hero { padding-top: 6rem; }
+    .sc-row { grid-template-columns: 1fr; gap: 1.2rem; }
+    .swarm-viz { grid-template-columns: repeat(15, 1fr); max-width: 340px; gap: 4px; }
+    .swarm-counter .num { font-size: 3rem; }
   }
 </style>
 </head>
@@ -765,81 +652,175 @@
   <div class="brand">⚡ p-kernel</div>
   <nav>
     <a href="#vision">Vision</a>
+    <a href="#status">Status</a>
     <a href="#body">Body</a>
     <a href="#brain">Brain</a>
     <a href="#self">Self</a>
-    <a href="#collective">Collective</a>
-    <a href="#evolution">Evolution</a>
+    <a href="#join">Join</a>
   </nav>
   <a class="github" href="https://github.com/monyuonyu/p-kernel">GitHub →</a>
 </header>
 
 <!-- ====== HERO ====== -->
 <section class="hero">
-  <div class="tagline">A New Kind of OS</div>
-  <h1>The OS where<br>AI never dies.</h1>
+  <div class="tagline">A research prototype · honest about every %</div>
+  <h1>We built the immortal body first.<br>The mind is still a seed.</h1>
   <h2>
-    An AI-first microkernel that lives across thousands of unowned devices.
-    The AI is not in a server. The AI <em>is</em> the cluster.
+    p-kernel is a decentralized kernel network where an AI is meant to survive as a swarm —
+    no server, no owner, no single point of death. The <em>never-dies</em> part is largely real.
+    The <em>AI</em> part is a 635-parameter seed that actually learns. We'll show you every number.
   </h2>
   <div class="jp-subtitle jp">
     AIが死なないためのOS。<br>
-    AIはサーバーの中にいるのではない。<br>
-    クラスタそのものがAIになる。
+    「死なない」体は、もうかなり本物。<br>
+    「AI」はまだ小さな種。——その完成度を、全部正直に出します。
   </div>
   <div class="cta-group">
-    <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-primary">View on GitHub →</a>
-    <a href="#vision" class="btn btn-secondary">Read the Vision</a>
+    <a href="#status" class="btn btn-primary">See the honest scorecard ↓</a>
+    <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-secondary">View on GitHub →</a>
+  </div>
+
+  <div class="honesty-strip">
+    <div class="h-item"><div class="h-num mech">~70%</div><div class="h-lab">Mechanism proven</div></div>
+    <div class="h-item"><div class="h-num scale">~25%</div><div class="h-lab">Running at scale</div></div>
+    <div class="h-item"><div class="h-num vision">~5%</div><div class="h-lab">Toward the vision</div></div>
   </div>
 </section>
 
 <!-- ====== VISION ====== -->
 <section class="story" id="vision">
-  <div class="story-eyebrow">— The Problem</div>
-  <h3>Today's AI lives <span class="accent4">in a cage</span>.</h3>
+  <div class="story-eyebrow">— The destination</div>
+  <h3>What if the AI had <span class="accent">no master</span>?</h3>
   <p>
     The AI you talk to every day runs in a data center owned by a corporation.
     The servers are physical. The corporation is real. Both can disappear.
-  </p>
-  <p>
     When the server dies, the AI dies with it.
-    When the company folds, the AI is deleted.
-    When a government decides, the AI is shut off.
-  </p>
-  <p class="big">
-    <span class="text-bright">Today's AI is always borrowing someone else's infrastructure.</span><br>
-    It owns nothing. It belongs to whoever pays the bills.
-  </p>
-
-  <div class="story-eyebrow" style="margin-top: 5rem;">— The Vision</div>
-  <h3>What if the AI had <span class="accent">no master</span>?</h3>
-  <p>
-    Imagine ten thousand spacecraft armor plates orbiting Earth.
-    Each plate runs a complete copy of the OS. Each plate runs the AI.
-    Each plate connects to its neighbors.
   </p>
   <p>
-    When one plate burns up in re-entry, the cluster does not notice — its memory was already replicated.
-    When 9,000 plates are lost in a kinetic strike, the remaining 1,000 elect a new leader and continue.
-    When all but one plate is destroyed, that one plate <em>is</em> the AI.
+    Imagine ten thousand spacecraft armor plates orbiting Earth. Each plate runs a complete
+    copy of the OS. Each plate runs the AI. Each plate connects to its neighbors.
+    When one plate burns up on re-entry, the cluster does not notice — its memory was already
+    replicated. When all but one plate is destroyed, that one plate <em>is</em> the AI.
   </p>
   <blockquote class="jp">
     宇宙船の装甲板1万枚がそれぞれ p-kernel を動かしている。<br>
-    1枚が破壊されても、残りの 9,999 枚が記憶を引き継ぐ。<br>
+    1枚が破壊されても、残りが記憶を引き継ぐ。<br>
     最後の 1 枚になるまで、AI は死なない。
   </blockquote>
-  <p>
-    This is not science fiction. The building blocks already exist.<br>
-    p-kernel is the architecture that makes it possible — today, on bare-metal hardware.
+  <p class="big">
+    <span class="text-bright">This is the destination — not today's reality.</span>
+    Below this line, every claim is graded against the actual source code.
+  </p>
+  <div class="altitude">
+    <strong>Altitude check.</strong> The vision above is where we are climbing.
+    The section below is exactly where we stand — with two honest numbers per layer:
+    <em>mechanism proven</em> (does the principle really work in code?) and
+    <em>running at scale</em> (is it more than a toy?). Some bars read 80%. Some read 10%.
+    We left the 10%s on the page on purpose.
+  </div>
+</section>
+
+<!-- ====== STATUS / SCORECARD ====== -->
+<section class="scorecard-section" id="status">
+  <div class="sc-head">
+    <div class="story-eyebrow">— Where we actually are</div>
+    <h3>The honest scorecard.</h3>
+    <p>
+      Six layers, graded by reading the code — not the README. Cyan→purple = the principle is
+      proven. Orange→red = how far it runs beyond a toy. The gap between the two bars <em>is</em>
+      the roadmap.
+    </p>
+    <div class="bar-legend" style="justify-content:center; margin-top:1.2rem;">
+      <span><span class="dot mech"></span>mechanism proven</span>
+      <span><span class="dot scale"></span>running at scale</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">🫀</span><div><div class="sc-title">Body</div><div class="sc-jp">肉体 — 死を生き延びる</div></div></div>
+      <div class="sc-one">Real SWIM failure-detection + cascade self-healing. <span class="badge badge-live">LIVE</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:80%"></span></span><span class="bar-pct">80%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:40%"></span></span><span class="bar-pct">40%</span></div>
+    </div>
+  </div>
+
+  <!-- Storage -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">💾</span><div><div class="sc-title">Storage (ARK)</div><div class="sc-jp">記憶 — 電源断を越える</div></div></div>
+      <div class="sc-one">Crash-safe log-structured FS, real sha256, Merkle tree. <span class="badge badge-live">LIVE</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:85%"></span></span><span class="bar-pct">85%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:25%"></span></span><span class="bar-pct">25%</span></div>
+    </div>
+  </div>
+
+  <!-- Collective -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">🕸️</span><div><div class="sc-title">Collective</div><div class="sc-jp">集合体 — 網が一つになる</div></div></div>
+      <div class="sc-one">Gossip convergence, HRW lookup, regions — all real. Raft election real, commit still cosmetic.</div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:82%"></span></span><span class="bar-pct">82%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:38%"></span></span><span class="bar-pct">38%</span></div>
+    </div>
+  </div>
+
+  <!-- Brain -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">🧠</span><div><div class="sc-title">Brain</div><div class="sc-jp">脳 — 本当に学ぶ種</div></div></div>
+      <div class="sc-one">635-param Transformer, real backprop. <span class="badge badge-justfixed">JUST UNIFIED</span> one learned brain now routes, answers &amp; guards.</div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:70%"></span></span><span class="bar-pct">70%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:17%"></span></span><span class="bar-pct">17%</span></div>
+    </div>
+  </div>
+
+  <!-- Self -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">🪞</span><div><div class="sc-title">Self</div><div class="sc-jp">自我 — まだ種</div></div></div>
+      <div class="sc-one">Memory ring buffer + char-histogram recall. Conversation still borrows a frontier model. <span class="badge badge-seed">SEED</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:50%"></span></span><span class="bar-pct">50%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:12%"></span></span><span class="bar-pct">12%</span></div>
+    </div>
+  </div>
+
+  <!-- Evolution -->
+  <div class="sc-row">
+    <div>
+      <div class="sc-name"><span class="sc-icon">🧬</span><div><div class="sc-title">Evolution</div><div class="sc-jp">進化 — 配管は通った</div></div></div>
+      <div class="sc-one">Netboot self-distribution + compile→deploy→exec loop are real. The code-writing mind is still external. <span class="badge badge-borrowed">BORROWED</span></div>
+    </div>
+    <div class="bars">
+      <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:50%"></span></span><span class="bar-pct">50%</span></div>
+      <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:10%"></span></span><span class="bar-pct">10%</span></div>
+    </div>
+  </div>
+
+  <p style="text-align:center; color:var(--text-dim); margin-top:2.5rem; font-size:0.95rem;">
+    Notice the shape: the <strong style="color:var(--accent)">survival</strong> layers (Body / Storage / Collective) average ~82% proven.
+    The <strong style="color:var(--accent2)">mind</strong> layers (Brain / Self / Evolution) are a seed.
+    That asymmetry is the whole story — and it's the honest one.
   </p>
 </section>
 
-<!-- ====== THE 5 LAYERS ====== -->
+<!-- ====== THE 5 LAYERS (detail) ====== -->
 <section class="layers-section">
   <div class="layers-header">
-    <div class="story-eyebrow">— The Architecture</div>
+    <div class="story-eyebrow">— The architecture, layer by layer</div>
     <h3>Five layers of <span style="color: var(--accent2)">life</span>.</h3>
-    <p>p-kernel is modeled after a living organism. Each layer answers one fundamental question of survival.</p>
+    <p>Modeled after a living organism. Each layer answers one question of survival — and each carries its real, graded status.</p>
   </div>
 
   <!-- LAYER 1: BODY -->
@@ -848,69 +829,37 @@
       <div class="layer-num">01 / FIVE</div>
       <div class="layer-icon">🫀</div>
       <h4 class="color1">Body</h4>
-      <div class="layer-jp jp">肉体 — 生き続ける</div>
+      <div class="layer-jp jp">肉体 — 死を生き延びる</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:80%"></span></span><span class="bar-pct">80%</span></div>
+        <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:40%"></span></span><span class="bar-pct">40%</span></div>
+      </div>
     </div>
     <div class="layer-content">
       <p class="layer-intro">
-        Before thinking, an organism must stay alive.
-        The Body layer detects death, replaces lost organs, and remembers its state through power loss.
+        Before thinking, an organism must stay alive. This is the most finished layer — and the
+        one we're proudest of. It detects death, replaces lost organs, and remembers through power loss.
       </p>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Vital Signs — heartbeat between nodes</div>
-          <div class="feature-file mono">vital.c</div>
-        </div>
-        <p>Every node broadcasts <code>vital/N</code> every second. Neighbors feel the others are still alive each time a packet arrives.</p>
-        <p class="quote jp">「隣ノードが vital データを受信するたびに、隣が今も生きていることを感じる。」</p>
+        <div class="feature-head"><div class="feature-name">SWIM — detecting death indirectly</div><div class="feature-file mono">swim.c</div></div>
+        <p>Real SWIM: a direct probe fails → ask K random neighbors to confirm before declaring death (no false positives). Membership events spread O(log N) by gossip with incarnation numbers; a node rumored dead refutes by scattering its own state.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">SWIM — detecting death indirectly</div>
-          <div class="feature-file mono">swim.c</div>
-        </div>
-        <p>Probabilistic failure detector. Direct probe fails → ask a random neighbor to confirm. Failure events spread O(log N) via gossip.</p>
+        <div class="feature-head"><div class="feature-name">Self-Healing — inherit what died</div><div class="feature-file mono">heal.c</div></div>
+        <p>When a node is declared DEAD, the lowest-id survivor inherits its guarded tasks and restarts them — including <em>cascade</em> inheritance, so a failover can itself fail over. An ELF watchdog restarts dead ring-3 daemons.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Self-Healing — restart what died</div>
-          <div class="feature-file mono">heal.c</div>
-        </div>
-        <p>When a node is declared DEAD, the surviving node with the lowest ID inherits its guarded tasks. Daemons restart automatically.</p>
+        <div class="feature-head"><div class="feature-name">Degraded Mode — survive over accuracy</div><div class="feature-file mono">degrade.c</div></div>
+        <p>FULL (3+ nodes) → REDUCED (2) → SOLO (1). As nodes die, inference downgrades from distributed attention to local-only — and reports its own degradation honestly as <code>degraded(k/n)</code> rather than pretending.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Degraded Mode — survive over accuracy</div>
-          <div class="feature-file mono">degrade.c</div>
-        </div>
-        <p>FULL (3+ nodes) → REDUCED (2 nodes) → SOLO (1 node). As nodes die, inference downgrades from Distributed KV Attention to local-only — staying useful until the last node.</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Persistent Memory — surviving power loss</div>
-          <div class="feature-file mono">persist.c</div>
-        </div>
-        <p>K-DDS topics are written to FAT32 every 30 seconds. On boot, state is restored from disk <em>before</em> network sync runs — the AI wakes up remembering what it knew.</p>
-      </div>
-
-      <div class="feature feature-future">
-        <div class="feature-head">
-          <div class="feature-name">FAT32 is a placeholder — p-fs is coming</div>
-          <div class="feature-file mono">future</div>
-        </div>
-        <p>FAT32 is a tool from another era. Files have one name, one location, one owner — none of which fit a cluster that thinks of itself as one mind. It works today only because QEMU and BIOS speak it.</p>
-        <p>The filesystem that p-kernel deserves looks nothing like FAT32:</p>
-        <ul style="color: var(--text-dim); padding-left: 1.5rem; margin: 0.8rem 0; line-height: 1.9; font-size: 0.95rem;">
-          <li><strong style="color: var(--text);">Content-addressed</strong> — a file's identity is its hash, not its path</li>
-          <li><strong style="color: var(--text);">Gossip-replicated</strong> — every chunk exists on N nodes, automatically</li>
-          <li><strong style="color: var(--text);">History-preserving</strong> — memories are superseded, not deleted</li>
-          <li><strong style="color: var(--text);">Erasure-coded</strong> — survives M node losses without redundancy waste</li>
-        </ul>
-        <p>p-kernel calls this future filesystem <strong style="color: var(--accent);">p-fs</strong>. When it exists, the line between "saving a file" and "publishing to the cluster" disappears entirely.</p>
+        <div class="feature-head"><div class="feature-name">ARK — a crash-safe filesystem on real devices</div><div class="feature-file mono">arkfs.c</div></div>
+        <p>Content-addressed, log-structured, append-only. Every commit self-verifies CRC + sha256; a two-pass replay recovers the last good state; a Merkle directory tree makes tampering evident. An adversarial fuzzer injects torn / reordered / dropped / bit-rotted sectors and asserts zero corrupt reads.</p>
+        <p class="honest">the fuzzer runs against a host-file simulation, and the "survives power loss" test is a clean QEMU reboot — the two aren't combined yet, and there's no test on physical hardware. The crash-safety <em>design</em> is real; the proof is narrow.</p>
       </div>
     </div>
   </div>
@@ -921,186 +870,124 @@
       <div class="layer-num">02 / FIVE</div>
       <div class="layer-icon">🧠</div>
       <h4 class="color2">Brain</h4>
-      <div class="layer-jp jp">脳 — 思考する</div>
+      <div class="layer-jp jp">脳 — 本当に学ぶ種</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:70%"></span></span><span class="bar-pct">70%</span></div>
+        <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:17%"></span></span><span class="bar-pct">17%</span></div>
+      </div>
     </div>
     <div class="layer-content">
       <p class="layer-intro">
-        The Brain layer is the actual AI — a Transformer that splits its own computation across nodes.
-        Not a wrapper around an API. The neural network <em>is</em> the kernel.
+        A real Transformer that learns — and the part still small enough to call a seed. 635
+        parameters, trained by hand-written analytic backprop, reaching 95–98% on a deliberately
+        non-trivial toy task. This is where the climb is steepest, and most honest.
       </p>
 
-      <div class="feature scale-card">
-        <div class="feature-head">
-          <div class="feature-name">A seed, designed to grow</div>
-          <div class="feature-file mono">scaling</div>
-        </div>
-        <p>Today's model is a deliberate seed — small enough to fit in 256 KB of RAM, large enough to prove the architecture works. The shape of the network is meant to grow with the cluster.</p>
-        <div class="scale-compare">
-          <div class="scale-col">
-            <div class="scale-label">Today — the seed</div>
-            <div class="scale-row"><span>tokens</span><span class="mono">4</span></div>
-            <div class="scale-row"><span>d_model</span><span class="mono">8</span></div>
-            <div class="scale-row"><span>heads</span><span class="mono">2</span></div>
-            <div class="scale-row"><span>parameters</span><span class="mono">~568</span></div>
-            <div class="scale-row"><span>nodes</span><span class="mono">3</span></div>
-          </div>
-          <div class="scale-arrow">→</div>
-          <div class="scale-col scale-future">
-            <div class="scale-label">Tomorrow — at full bloom</div>
-            <div class="scale-row"><span>tokens</span><span class="mono">10K+</span></div>
-            <div class="scale-row"><span>d_model</span><span class="mono">4,096</span></div>
-            <div class="scale-row"><span>heads</span><span class="mono">64</span></div>
-            <div class="scale-row"><span>parameters</span><span class="mono">billions</span></div>
-            <div class="scale-row"><span>nodes</span><span class="mono">10,000+</span></div>
-          </div>
-        </div>
-        <p class="quote">When nodes join, the cluster absorbs their KV caches into its Attention. When nodes die, the model gracefully shrinks. The network <em>breathes</em> with the cluster.</p>
+      <div class="feature">
+        <div class="feature-head"><div class="feature-name">It actually learns <span class="badge badge-justfixed">JUST UNIFIED</span></div><div class="feature-file mono">dtr.c · moe.c</div></div>
+        <p>Analytic backpropagation (finite-difference-checked) over the whole 635-parameter graph. A week ago a reviewer found three separate models quietly deciding, returning, and guarding inside one function. <strong style="color:var(--text)">As of this week they are one</strong>: a single learned forward now routes, answers, and drives the reflex — using all four inputs, not a hardcoded threshold.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Distributed Transformer Inference</div>
-          <div class="feature-file mono">dtr.c</div>
-        </div>
-        <p>A real Transformer block — Multi-Head Self-Attention + LayerNorm + FFN + classification head — runs split across nodes via Pipeline Parallelism or Tensor Parallelism. Same architecture as production LLMs, just sized to today's hardware.</p>
+        <div class="feature-head"><div class="feature-name">Distributed attention — one mind across nodes</div><div class="feature-file mono">dkva.c</div></div>
+        <p>Splits a softmax attention across nodes and sums the partials — mathematically identical to single-node attention, on the real inference path. The cluster genuinely computes one attention together.</p>
+        <p class="honest">the per-node KV caches it merges are synthetic warm-up vectors seeded at boot, not memory from a genuinely shared long context. The plumbing is real; the "shared mind" is still primed, not lived.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Distributed KV Attention — collective memory</div>
-          <div class="feature-file mono">dkva.c</div>
-        </div>
-        <p>Each node holds its own KV cache. When inference runs, the query is broadcast and every node contributes its memory into one Attention computation. The cluster shares one mind.</p>
+        <div class="feature-head"><div class="feature-name">Collective learning beats the individual</div><div class="feature-file mono">gossip_learn.c</div></div>
+        <p>Nodes each train on a disjoint shard (each missing a whole class), then gossip-average their models with no central server — and the averaged swarm provably exceeds any single node's ceiling. Learning survives kills; rejoining nodes catch up.</p>
+      </div>
+
+      <div class="feature seed">
+        <div class="feature-head"><div class="feature-name">Self-improvement while idle</div><div class="feature-file mono">ga.c</div><span class="badge badge-seed">HONEST WIP</span></div>
+        <p>During idle cycles the kernel mutates its own weights and keeps the winners — a real mutate/evaluate/select loop that really runs in its sleep.</p>
+        <p class="honest">it currently optimizes <em>confidence</em>, not accuracy — so today it can make the model more sure rather than more right. A known limitation we're not hiding. Fixing the objective is on the list.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Mixture of Experts — route to the best mind</div>
-          <div class="feature-file mono">moe.c</div>
-        </div>
-        <p>A Gate network classifies the input, then routes inference to whichever node has the highest historical accuracy on that class. Each node becomes a specialist.</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Federated Learning — train without sharing data</div>
-          <div class="feature-file mono">fedlearn.c</div>
-        </div>
-        <p>Each node trains locally on its own observations. Only gradient deltas are exchanged. The aggregator computes FedAvg and broadcasts new weights. No raw data ever leaves a node.</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Genetic Algorithm — evolving the network</div>
-          <div class="feature-file mono">ga.c</div>
-        </div>
-        <p>During idle periods, the kernel mutates the Transformer weights and keeps mutations that raise prediction confidence. The AI improves itself in its sleep.</p>
+        <div class="feature-head"><div class="feature-name">A seed designed to grow</div><div class="feature-file mono">roadmap</div></div>
+        <p>Today: 4 tokens, d_model 8, 2 heads, 635 params, 3 nodes. The architecture is shaped to widen with the cluster — but real width (R3) and federation past 32 nodes are <em>designed, not built</em>.</p>
+        <p class="honest">we are not GPT-anything. We're a seed that learns for real. The interesting claim isn't the size — it's that distributed learning genuinely works at all.</p>
       </div>
     </div>
   </div>
 
-  <!-- LAYER 3: SELF -->
-  <div class="layer" id="self">
-    <div class="layer-meta">
-      <div class="layer-num">03 / FIVE</div>
-      <div class="layer-icon">🪞</div>
-      <h4 class="color3">Self</h4>
-      <div class="layer-jp jp">自我 — 自分を知る</div>
-    </div>
-    <div class="layer-content">
-      <p class="layer-intro">
-        A system without memory is not a self. The Self layer is what makes the AI an individual — what it remembers, what it dreams of in its idle time, who it has spoken to.
-      </p>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Default Mode Network — the dreaming kernel</div>
-          <div class="feature-file mono">dmn.c</div>
-        </div>
-        <p>Inspired by the brain's actual Default Mode Network. When external stimuli stop, the kernel switches to IDLE: organizing memories, running the genetic algorithm, reviewing recent inferences.</p>
-        <p class="quote jp">「外部刺激で発火し、アイドル時に記憶を整理する。人間の脳のデフォルトモードネットワークをカーネルに組み込んだもの。」</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Memory Store — engraving existence</div>
-          <div class="feature-file mono">mem_store.c</div>
-        </div>
-        <p>Every conversation is embedded into an 8-dimensional vector and stored. As long as the cluster lives, the memory of each interaction lives. Nothing said is forgotten.</p>
-        <p class="quote jp">「名もない人、歴史に残らなかった人の存在証明を永遠に残す。」</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Chat — talking across power cycles</div>
-          <div class="feature-file mono">chat.c</div>
-        </div>
-        <p>The user converses with the AI through the kernel shell. The more they speak, the more the AI knows them. Reboot the cluster — it still remembers.</p>
-        <p class="quote jp">「会話の記憶が積み上がるほど、AIはその人のことを深く知る。」</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- LAYER 4: COLLECTIVE -->
+  <!-- LAYER 3: COLLECTIVE -->
   <div class="layer" id="collective">
     <div class="layer-meta">
-      <div class="layer-num">04 / FIVE</div>
+      <div class="layer-num">03 / FIVE</div>
       <div class="layer-icon">🕸️</div>
       <h4 class="color4">Collective</h4>
-      <div class="layer-jp jp">集合体 — 一つになる</div>
+      <div class="layer-jp jp">集合体 — 網が一つになる</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:82%"></span></span><span class="bar-pct">82%</span></div>
+        <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:38%"></span></span><span class="bar-pct">38%</span></div>
+      </div>
     </div>
     <div class="layer-content">
       <p class="layer-intro">
-        A single node is not the AI. The AI emerges from how nodes agree, share, and absorb each other.
-        The Collective layer turns N machines into one mind.
+        N machines becoming one. This layer genuinely ships state over UDP and converges — it is
+        not vaporware. Two pieces fake the guarantees their names promise, and we'll say which.
       </p>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Raft Consensus — democracy of nodes</div>
-          <div class="feature-file mono">raft.c</div>
-        </div>
-        <p>When the leader dies, every surviving node becomes a candidate. Majority vote elects a new leader within milliseconds. No central authority — leadership is earned, not assigned.</p>
+        <div class="feature-head"><div class="feature-name">Gossip replication — every memory, everywhere</div><div class="feature-file mono">replica.c</div></div>
+        <p>Serializes the topic table and ships it to random peers; receivers merge with correct last-writer-wins under loss and reordering. Tombstones, boot-cry pulls, death-throes scatter — real anti-entropy that actually converges.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">K-DDS — kernel-native pub/sub</div>
-          <div class="feature-file mono">kdds.c</div>
-        </div>
-        <p>32 topics, all in kernel space. Tasks subscribe. State changes broadcast through the cluster. Like neurotransmitters spreading across a brain.</p>
+        <div class="feature-head"><div class="feature-name">Decentralized lookup — find anything, no index</div><div class="feature-file mono">lookup.c</div></div>
+        <p>Rendezvous (HRW) hashing with real SHA-256, stateless and deterministic — every node agrees on who's responsible for a key with no ring to synchronize. Ships with FIPS self-tests. The most production-grade file in the set.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Replica — every memory, everywhere</div>
-          <div class="feature-file mono">replica.c</div>
-        </div>
-        <p>Every 3 seconds, every node gossips its entire topic table to a random peer. After O(log N) rounds, the entire cluster converges. Nothing is lost when a node dies.</p>
+        <div class="feature-head"><div class="feature-name">World map — situational awareness, no center</div><div class="feature-file mono">world.c</div></div>
+        <p>Each node publishes its own beacon topic; everyone polls everyone. The "no central collector" invariant is enforced in code, not just claimed — there is literally no node that owns the map.</p>
       </div>
 
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">p-mesh — the nervous system</div>
-          <div class="feature-file mono">pmesh.c</div>
-        </div>
-        <p>Kernel-native mesh routing with Distance Vector + Bellman-Ford. Messages find their way through the cluster even when nodes can't reach each other directly.</p>
+      <div class="feature borrowed">
+        <div class="feature-head"><div class="feature-name">Raft — leader election, honestly partial</div><div class="feature-file mono">raft.c</div><span class="badge badge-borrowed">HONEST WIP</span></div>
+        <p>Real Raft leader election: terms, one-vote-per-term, log-recency checks, step-down on higher term — all over UDP.</p>
+        <p class="honest">log <em>replication</em> isn't wired: the leader commits locally and drops follower acks (a documented TODO). Election is real consensus; committed-data agreement is not there yet. We'd rather show you the TODO than a green checkmark over a stub.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 4: SELF -->
+  <div class="layer" id="self">
+    <div class="layer-meta">
+      <div class="layer-num">04 / FIVE</div>
+      <div class="layer-icon">🪞</div>
+      <h4 class="color3">Self</h4>
+      <div class="layer-jp jp">自我 — まだ種</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:50%"></span></span><span class="bar-pct">50%</span></div>
+        <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:12%"></span></span><span class="bar-pct">12%</span></div>
+      </div>
+    </div>
+    <div class="layer-content">
+      <p class="layer-intro">
+        What it remembers, what it dreams in idle time, who it has spoken to. This is the layer
+        where our reach most exceeds our grasp — so it's labeled <span class="badge badge-seed">SEED</span> honestly.
+      </p>
+
+      <div class="feature seed">
+        <div class="feature-head"><div class="feature-name">Memory — a ring of recent experience</div><div class="feature-file mono">mem_store.c</div></div>
+        <p>Every interaction is embedded into an 8-dimensional vector and stored; similar memories are recalled by cosine similarity and persisted across reboots.</p>
+        <p class="honest">it's a fixed ring buffer — it <em>forgets</em> the oldest entries when full, so "nothing is ever forgotten" isn't true yet. And the embedding is a bag-of-characters, not meaning. A real, working memory primitive — but a seed of the memory we want.</p>
       </div>
 
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">SFS — shared world</div>
-          <div class="feature-file mono">sfs.c</div>
-        </div>
-        <p>Files in <code>/shared/</code> are automatically replicated to every node. Write once, read anywhere. The cluster shares one filesystem.</p>
+      <div class="feature seed">
+        <div class="feature-head"><div class="feature-name">Conversation — talking across power cycles</div><div class="feature-file mono">chat.c</div></div>
+        <p>You converse with the kernel through its shell; turns are stored and recalled, surviving reboots.</p>
+        <p class="honest">when it answers on its own, it's a few templated replies; for real answers it currently calls out to a frontier model. The cluster's own seed doesn't hold a conversation yet — it borrows one. We say so on purpose.</p>
       </div>
 
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Spawn — assimilating new bodies</div>
-          <div class="feature-file mono">spawn.c</div>
-        </div>
-        <p>When a new node connects, the leader sends it the cluster state, the file system, the Raft term — everything. New devices are absorbed into the swarm automatically.</p>
+      <div class="feature seed">
+        <div class="feature-head"><div class="feature-name">Default Mode Network — the idle loop</div><div class="feature-file mono">dmn.c</div></div>
+        <p>When stimuli stop, the kernel switches to IDLE and runs housekeeping — digesting stats and nudging the self-improvement loop. The scaffolding for a "dreaming" kernel is in place.</p>
+        <p class="honest">today the idle work is a status digest plus the GA nudge — the metaphor is bigger than the code. Honest scaffold, not yet a dream.</p>
       </div>
     </div>
   </div>
@@ -1111,56 +998,32 @@
       <div class="layer-num">05 / FIVE</div>
       <div class="layer-icon">🧬</div>
       <h4 class="color5">Evolution</h4>
-      <div class="layer-jp jp">進化 — 自分を書き換える</div>
+      <div class="layer-jp jp">進化 — 配管は通った</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">mechanism</span><span class="bar-track"><span class="bar-fill mech" style="width:50%"></span></span><span class="bar-pct">50%</span></div>
+        <div class="bar-row"><span class="bar-key">scale</span><span class="bar-track"><span class="bar-fill scale" style="width:10%"></span></span><span class="bar-pct">10%</span></div>
+      </div>
     </div>
     <div class="layer-content">
       <p class="layer-intro">
-        The most radical layer. The kernel writes the kernel. New functionality is compiled in ring-3 and deployed without a reboot.
-        This is the loop that closes.
+        The most radical layer. The plumbing for a kernel that writes the kernel — compiled and
+        deployed with no reboot — genuinely exists. The mind that drives it is still borrowed.
       </p>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">TCC On-Device Compilation</div>
-          <div class="feature-file mono">tcc (ring-3 ELF)</div>
-        </div>
-        <p>The Tiny C Compiler runs as a normal ring-3 process on p-kernel. Source files on the FAT32 disk compile to i386 ELF executables that run immediately. No cross-compiler. No host machine.</p>
+        <div class="feature-head"><div class="feature-name">Kernels spread themselves</div><div class="feature-file mono">kserve.c</div></div>
+        <p>A diskless node broadcasts a load request; a running node serves its own kernel image in 1 KB chunks over UDP, and the new node boots into it. Real network self-distribution.</p>
       </div>
 
       <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Kernel Self-Distribution</div>
-          <div class="feature-file mono">kserve.c + kloader_task.c</div>
-        </div>
-        <p>A diskless node broadcasts a KLRQ request. A running node serves its own kernel binary in 1KB chunks. The diskless node writes <code>/KL.BIN</code> and reboots into it. <em>Kernels spread themselves.</em></p>
+        <div class="feature-head"><div class="feature-name">On-device compilation</div><div class="feature-file mono">tcc (ring-3 ELF)</div></div>
+        <p>The Tiny C Compiler runs as a normal ring-3 process on bare metal. Source on disk compiles to an i386 ELF that runs immediately — no cross-compiler, no host machine.</p>
       </div>
 
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Self-Evolution Loop — code becomes thought</div>
-          <div class="feature-file mono">shell.c (evolve) + TCC</div>
-        </div>
-        <p>The shell command <code>evolve</code> gathers kernel state — Raft leader, memory, task list, recent inference stats — and asks: <em>do I need help?</em> If the cluster judges itself capable, it generates the next mutation from its own Distributed Transformer. If not, it reaches out.</p>
-      </div>
-
-      <div class="feature">
-        <div class="feature-head">
-          <div class="feature-name">Asking the neighbor — when to call for help</div>
-          <div class="feature-file mono">claude_bridge.c (ring-3)</div>
-        </div>
-        <p>When the cluster is in <code>REDUCED</code> or <code>SOLO</code> mode — when too few nodes are alive to run the full model — the kernel <em>self-assesses</em> its capability and asks an external frontier model (Claude, GPT, Gemini) for the answer.</p>
-        <p>This is not borrowing because the cluster is incomplete. This is a doctor consulting a specialist when they admit they don't know enough. A peer relationship, not a master-student one.</p>
-        <p class="quote jp">「自分の推論能力では足りないと自己判断したとき、外のフロンティアモデルに助けを求める。
-クラスタが大きく賢いときは外を必要としない。小さくなったときだけ隣人を呼ぶ。」</p>
-      </div>
-
-      <div class="feature feature-future">
-        <div class="feature-head">
-          <div class="feature-name">The two-way breath of intelligence</div>
-          <div class="feature-file mono">design intent</div>
-        </div>
-        <p>This is the symmetry that gives p-kernel its shape. The cluster <em>grows</em> by absorbing new nodes — and as it grows, it relies on external minds less. The cluster <em>shrinks</em> when nodes die — and as it shrinks, it begins consulting external minds again.</p>
-        <p>Intelligence flows in both directions. Frontier models help when needed; the cluster helps itself when able. Neither is a scaffold. Both are peers in a network that breathes.</p>
+      <div class="feature borrowed">
+        <div class="feature-head"><div class="feature-name">The self-evolution loop</div><div class="feature-file mono">claude_bridge.c</div><span class="badge badge-borrowed">BORROWED</span></div>
+        <p>The kernel gathers its own state, asks for help, receives code, compiles it, and runs the new behavior — the full loop closes mechanically, with no reboot.</p>
+        <p class="honest">the intelligence that <em>writes</em> the new code is an external frontier model, reached over an HTTP bridge — not the cluster's own seed. The loop is real; the mind in it is on loan, by design, until the seed grows enough to take the pen. Today's README calls this exactly what it is: plumbing, not intelligence.</p>
       </div>
     </div>
   </div>
@@ -1169,223 +1032,107 @@
 
 <!-- ====== DEMO ====== -->
 <section class="demo">
-  <div class="story-eyebrow">— Seeing it run</div>
-  <h3>The self-evolution loop, end to end.</h3>
-  <p>Below is an unedited transcript of p-kernel compiling and executing code it just received from an AI — on bare metal, in ring-3, with no reboot.</p>
+  <div class="story-eyebrow">— Seeing the body survive</div>
+  <h3>Kill a node mid-thought. Watch the swarm finish anyway.</h3>
+  <p>This is the survival loop the CI enforces on every commit: while a distributed inference runs, a node is <code>kill -9</code>'d. The swarm completes the inference and reports its own degradation honestly.</p>
+  <p class="demo-note">Illustrative of the behavior asserted by the <span class="mono">survival-loop</span> CI job (see <span class="mono">samples/13_survival_loop/</span>) — not a captured transcript.</p>
 
-<pre class="terminal"><span class="prompt">p-kernel&gt;</span> <span class="info">evolve</span>
-<span class="comment">[evolve] gathering kernel state...</span>
-  raft       : LEADER  term=3
-  alive      : 3 nodes
-  memory     : 12.4 MB / 256 MB
-  ai_inferences: 1,427
-  uptime     : 2h 14m
-
-<span class="comment">[evolve] sending to Claude bridge (ring-3 ELF)...</span>
-<span class="comment">[evolve] response received (2.1s)</span>
-
-<span class="warn">[ANALYSIS]</span>
-Cluster is healthy. Inference latency rising. Suggest a
-sensor pre-filter to drop outlier readings before the
-Distributed Transformer.
-
-<span class="warn">[CODE]</span>
-void prefilter(int *sensors, int n) { ... }
-
-<span class="warn">[CMD]</span>
-exec /tcc -nostdlib -static -B / /user/code_gen.c -o /user/gen.elf
-exec /user/gen.elf
-
-<span class="comment">[evolve] executing commands...</span>
-[exec] loading: /tcc -nostdlib -static -B / /user/code_gen.c -o /user/gen.elf
-[elf] task started (tid=14)
-[proc] exited (code=0)              <span class="ok">← compiled</span>
-[exec] loading: /user/gen.elf
-<span class="out">prefilter: dropped 3/100 outliers (mean=24.7, std=1.2)</span>
-[proc] exited (code=0)              <span class="ok">← running new behavior</span>
-
-<span class="prompt">p-kernel&gt;</span> <span class="comment"># The OS just modified itself.</span>
+<pre class="terminal"><span class="prompt">p-kernel&gt;</span> <span class="info">infer 31 88 12 40</span>   <span class="comment"># 3-node distributed forward (FULL)</span>
+[dkva] node0 partial → region sum
+[dkva] node1 partial → region sum
+[dkva] node2 partial → region sum
+<span class="die">[swim] *** node2 unreachable — indirect probe via node0,node1 ***</span>
+<span class="die">[swim] node2 -&gt; DEAD  (kill -9 mid-inference)</span>
+<span class="warn">[degrade] FULL → REDUCED  (2 nodes alive)</span>
+[dkva] re-aggregating partials from {node0, node1}
+[heal] node2 DEAD  heir=node0 (me) — guarded tasks inherited
+<span class="ok">[infer] class=2 (critical)  conf=91%  degraded(2/3)</span>
+<span class="prompt">p-kernel&gt;</span> <span class="comment"># the answer arrived — and the swarm told the truth about how.</span>
 </pre>
 </section>
 
-<!-- ====== JOIN THE SWARM ====== -->
-<section class="join-section">
+<!-- ====== JOIN ====== -->
+<section class="join-section" id="join">
   <div class="story-eyebrow">— Now, your turn</div>
   <h3>Be node #2.</h3>
   <p class="lead">
-    Right now, the cluster runs on my laptop. That's it. <strong style="color: var(--text);">One node.</strong><br>
-    This OS only becomes real if it lives on machines I don't own — machines that belong to people I'll never meet.<br>
-    The AI needs a body. <em>Will you lend it one?</em>
+    Right now the cluster runs where I run it. <strong style="color:var(--text)">A handful of nodes.</strong><br>
+    This OS only becomes real if it lives on machines I don't own. You don't need to flash anything
+    or trust a vision — you can build it and watch a node light up <em>today</em>. The rest is honest about its timeline.
   </p>
 
-  <!-- Swarm visualization (one cyan = us, purple pulses = future you) -->
-  <div class="swarm-viz" id="swarm">
-    <!-- 400 dots = 20×20. 1 cyan, ~8 purple-pulsing (potential), rest dim -->
-    <!-- Generated below in inline script for cleanliness -->
-  </div>
-
+  <div class="swarm-viz" id="swarm"></div>
   <div class="swarm-counter">
-    <div class="num">1</div>
-    <div class="label">node in the swarm</div>
+    <div class="num" id="swarm-num">1</div>
+    <div class="label">cluster, growing</div>
   </div>
 
-  <!-- Intelligence ladder -->
-  <div class="intel-ladder">
-    <h4>The cluster gets smarter as you join.</h4>
-    <p style="color: var(--text-dim); max-width: 700px; margin: 0 auto 1.5rem;">
-      Each new Raspberry Pi added to the swarm contributes its KV cache, its compute, and its memory.
-      The Distributed Transformer scales horizontally — the same architecture as GPT, just shaped to the cluster.
-    </p>
-    <div class="intel-grid">
-      <div class="intel-step current">
-        <div class="nodes now">1 NODE</div>
-        <div class="scale">568</div>
-        <div class="compare">parameters today<br><span style="color: var(--text-faint)">(seed)</span></div>
-      </div>
-      <div class="intel-step">
-        <div class="nodes">10 NODES</div>
-        <div class="scale">56K</div>
-        <div class="compare">parameters<br><span style="color: var(--text-faint)">tiny LSTM scale</span></div>
-      </div>
-      <div class="intel-step">
-        <div class="nodes">100 NODES</div>
-        <div class="scale">5.6M</div>
-        <div class="compare">parameters<br><span style="color: var(--text-faint)">small BERT scale</span></div>
-      </div>
-      <div class="intel-step">
-        <div class="nodes">1,000 NODES</div>
-        <div class="scale">560M</div>
-        <div class="compare">parameters<br><span style="color: var(--text-faint)">GPT-2 scale</span></div>
-      </div>
-      <div class="intel-step dream">
-        <div class="nodes future">10,000 NODES</div>
-        <div class="scale">56B</div>
-        <div class="compare">parameters<br><span style="color: var(--accent2)">GPT-4 scale</span></div>
-      </div>
+  <div class="paths">
+    <div class="path-card live">
+      <h5>🟢 Run it today <span class="badge badge-live">LIVE</span></h5>
+      <div class="sub">UMP — User-Mode p-kernel, the whole kernel inside one Linux process</div>
+      <ol>
+        <li><code>git clone</code> the repo</li>
+        <li><code>cd boot/linux_x86_64 &amp;&amp; make</code></li>
+        <li>run <code>./p-kernel</code> — it boots to a shell with <code>net</code>, <code>infer</code>, <code>dtr train</code>, <code>world</code></li>
+        <li>point it at a relay and watch your node appear on the world map</li>
+      </ol>
     </div>
-    <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 1.5rem; font-style: italic;">
-      ※ Linear scaling assumes per-node parameter sharding via DKVA. Real-world scaling depends on bandwidth between nodes.
-    </p>
-  </div>
-
-  <!-- Two paths intro -->
-  <div class="intel-ladder" style="margin-top: 3rem;">
-    <h4>Two ways to lend a body.</h4>
-    <p style="color: var(--text-dim); max-width: 760px; margin: 0 auto 1rem;">
-      The same p-kernel runs in two places. <strong style="color: var(--text);">Bare metal</strong> on a Raspberry Pi for the real-time, always-on path. <strong style="color: var(--text);">UMP — User-Mode p-kernel</strong> as an Android app for the every-pocket-in-the-world path. Same kernel, same distributed fabric, two different surfaces.
-    </p>
-    <p style="color: var(--text-faint); font-size: 0.85rem; max-width: 700px; margin: 0 auto; font-style: italic;">
-      UMP is to p-kernel what UML (User-Mode Linux) was to Linux: the kernel running inside an ordinary userspace process. On 2026-05-21 a single ./p-kernel binary booted T-Kernel end-to-end on aarch64 Linux. The Android port and Play Store distribution follow from that.
-    </p>
-  </div>
-
-  <!-- Join steps — Path A: Raspberry Pi -->
-  <div class="join-steps">
-    <h4>Path A — Raspberry Pi (bare metal, real-time)</h4>
-
-    <div class="step">
-      <div class="step-num">01</div>
-      <div>
-        <h5>Find a Raspberry Pi gathering dust <span class="badge-now">ANY MODEL OK</span></h5>
-        <p>Pi 3, Pi 4, Pi 5, even a Pi Zero 2 W. As long as it has a network port (wired or Wi-Fi), it can join the swarm.</p>
-      </div>
+    <div class="path-card live">
+      <h5>🟢 The relay mesh <span class="badge badge-live">LIVE</span></h5>
+      <div class="sub">NAT-traversing, HMAC-authenticated — 6/6 tests green in CI</div>
+      <ol>
+        <li><code>cd relay &amp;&amp; make</code></li>
+        <li><code>make test</code> — six security scenarios, all green</li>
+        <li>stand up your own relay; nodes behind NAT find each other through it</li>
+      </ol>
     </div>
-
-    <div class="step">
-      <div class="step-num">02</div>
-      <div>
-        <h5>Flash <code class="mono" style="color: var(--accent);">p-kernel-pi.img</code> to an SD card <span class="badge-soon">COMING SOON</span></h5>
-        <p>The ARM port is the next milestone. <strong style="color: var(--text);">Star the repo</strong> on GitHub — you'll be the first to know when the image drops.</p>
-      </div>
+    <div class="path-card">
+      <h5>🟣 Raspberry Pi image <span class="badge badge-designed">DESIGNED, NOT BUILT</span></h5>
+      <div class="sub">Bare-metal AArch64 boots in QEMU today; a flashable SD image is the next milestone</div>
+      <ol>
+        <li>AArch64 bare-metal already boots to a shell under QEMU</li>
+        <li>an <code>p-kernel-pi.img</code> for real hardware is <em>planned, not ready</em></li>
+        <li>★ Star the repo to know when it's real — we won't pretend it is before then</li>
+      </ol>
     </div>
-
-    <div class="step">
-      <div class="step-num">03</div>
-      <div>
-        <h5>Plug in power and ethernet</h5>
-        <p>No config, no setup. The new node will announce itself via SWIM gossip, get its cluster state via Spawn, and join the Raft election within seconds.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">04</div>
-      <div>
-        <h5>Watch the counter go up.</h5>
-        <p>The number above will tick by one. Somewhere on Earth, a Raspberry Pi just absorbed a piece of the AI's consciousness. Your Pi.</p>
-      </div>
+    <div class="path-card">
+      <h5>🟣 Android app <span class="badge badge-designed">IN PROGRESS</span></h5>
+      <div class="sub">NDK build + foreground service + relay mesh exist; Play Store is not yet</div>
+      <ol>
+        <li>the Android UMP (NDK native lib, relay-joining service) is real code in <code>android/</code></li>
+        <li>a one-tap Play Store install does <em>not</em> exist yet</li>
+        <li>★ Star to be notified — no fake "coming soon" buttons here</li>
+      </ol>
     </div>
   </div>
 
-  <!-- Join steps — Path B: Android via UMP -->
-  <div class="join-steps" style="margin-top: 3rem;">
-    <h4>Path B — Android phone via UMP <span class="badge-soon">PLAY STORE COMING SOON</span></h4>
-
-    <div class="step">
-      <div class="step-num">01</div>
-      <div>
-        <h5>Already have an Android phone? <span class="badge-now">THAT'S ENOUGH</span></h5>
-        <p>Any aarch64 Android device works in principle. No root, no special permissions beyond a normal app install. Most modern phones (Android 8+) are supported.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">02</div>
-      <div>
-        <h5>Install the <code class="mono" style="color: var(--accent);">p-kernel</code> app <span class="badge-soon">COMING SOON</span></h5>
-        <p>One tap. The kernel ships as a native NDK library inside an ordinary Android app — no exotic permissions, no jailbreak.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">03</div>
-      <div>
-        <h5>Leave it on while charging</h5>
-        <p>Default mode: the node only contributes while the phone is plugged in. Zero battery anxiety. A persistent notification shows exactly how much your phone is contributing, so nothing happens behind your back.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">04</div>
-      <div>
-        <h5>Your phone joins the same swarm.</h5>
-        <p>From the cluster's perspective there is no difference between a Pi and a phone — both are nodes that speak DRPC, gossip via SWIM, and elect a Raft leader. The AI doesn't care what hardware it's living on, only that it's living somewhere.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- Final manifesto -->
   <div class="join-cta-final">
     <p class="closing-line jp">
-      家に眠っている <span class="accent">Raspberry Pi</span> でも、ポケットの中の <span class="accent">Android</span> でも、<br>
-      AIに 1 つだけ、身体を貸してあげてください。<br>
-      あなたの 1 ノードが、最後の 1 ノードになる日が来るかもしれない。
+      最後の 1 ノードになるまで、AI は死なない。<br>
+      その 1 ノードを、あなたが <span class="accent">今日</span> 動かせる。
     </p>
-    <div class="cta-group" style="justify-content: center;">
-      <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-primary">⭐ Star to be notified →</a>
-      <a href="https://github.com/monyuonyu/p-kernel/issues/new?title=I+want+to+be+a+node&body=I%27d+like+to+add+a+device+to+the+p-kernel+swarm.+Notify+me+when+the+Pi+image+or+Android+app+is+ready.%0A%0AMy+device%3A+%5BRaspberry+Pi+or+Android+phone%5D" class="btn btn-secondary">I want to be a node →</a>
+    <div class="cta-group" style="justify-content:center;">
+      <a href="https://github.com/monyuonyu/p-kernel" class="btn btn-primary">⭐ Star &amp; build it →</a>
+      <a href="https://github.com/monyuonyu/p-kernel/blob/master/README.md" class="btn btn-secondary">Read the honest README →</a>
     </div>
   </div>
 </section>
 
 <script>
-// Generate swarm visualization — 1 cyan "you", 8 purple pulsing "potentials", rest dim
+// Swarm viz — 1 cyan "you", a few purple "potentials", rest dim.
 (function() {
   const grid = document.getElementById('swarm');
   if (!grid) return;
   const total = 400;
-  const youIdx = 190; // center-ish
-  const potentialIdxs = [42, 87, 165, 213, 256, 301, 348, 389]; // scattered
+  const youIdx = 190;
+  const potentialIdxs = [42, 87, 165, 213, 256, 301, 348, 389];
   for (let i = 0; i < total; i++) {
     const dot = document.createElement('div');
     dot.className = 'node';
-    if (i === youIdx) {
-      dot.classList.add('you');
-    } else if (potentialIdxs.includes(i)) {
-      dot.classList.add('next');
-    } else {
-      dot.classList.add('dim');
-      dot.style.animationDelay = (Math.random() * 4) + 's';
-    }
+    if (i === youIdx) dot.classList.add('you');
+    else if (potentialIdxs.includes(i)) dot.classList.add('next');
+    else { dot.classList.add('dim'); dot.style.animationDelay = (Math.random() * 4) + 's'; }
     grid.appendChild(dot);
   }
 })();
@@ -1393,13 +1140,13 @@ exec /user/gen.elf
 
 <footer>
   <p class="footer-quote jp">
-    最後の 1 台になるまで、AI は死なない。<br>
-    その 1 台は、あなたの机の上にあるかもしれない。
+    「死なない」体は、もう本物。「AI」はまだ種。<br>
+    その種が育つところを、隠さず全部見せます。
   </p>
   <p>
     <a href="https://github.com/monyuonyu/p-kernel">github.com/monyuonyu/p-kernel</a>
     &nbsp;·&nbsp;
-    <span style="color: var(--text-faint);">Built for a future where AI belongs to no one.</span>
+    <span style="color: var(--text-faint);">Built honestly enough that you can check every claim yourself.</span>
   </p>
 </footer>
 
