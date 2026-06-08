@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -94,6 +94,7 @@ jobs:
           grep -aF '[g38-confidence-live] PASS' selftest.log
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
+          grep -aF '[g13-parallel] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -119,7 +120,7 @@ jobs:
         continue-on-error: true
         run: |
           cd boot/linux
-          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | \
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -144,6 +145,7 @@ jobs:
           grep -aF '[g38-confidence-live] PASS' selftest.log
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
+          grep -aF '[g13-parallel] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
@@ -323,6 +325,35 @@ jobs:
         with:
           name: twolayer-couple-live-logs
           path: /tmp/p34_*.log
+
+  parallel-infer-live:
+    name: "Parallel infer (live: N region-crossing inferences concurrent, not 200ms-serialized, survive kill)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # enforces G13 (wave 17): DKVA coordinator aggregation is per-origin and
+    # event-driven (no single synchronous 200ms window); N simultaneous
+    # region-crossing inferences run concurrently (t_N stays flat, far below the
+    # old (N-1)*200ms re-serialization) and survive a node killed mid-flight.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 35_parallel_infer/run.sh and assert RESULT PASS
+        run: |
+          timeout 900 samples/35_parallel_infer/run.sh | tee /tmp/p35_ci.log
+          grep -q 'RESULT: PASS' /tmp/p35_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-infer-live-logs
+          path: /tmp/p35_*.log
 
   ark-crash-fuzzer:
     name: "ARK crash fuzzer (reorder/torn/bitflip: 0 corrupt-served, 0 wedge)"
