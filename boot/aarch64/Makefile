@@ -121,6 +121,7 @@ COMMON_C_SRCS = \
     moe.c \
     dtr.c \
     dtr_train.c \
+    r3_incontext.c \
     spec.c \
     retrieval.c \
     dkva.c \

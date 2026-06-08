@@ -630,6 +630,10 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "breathe")) {
             /* R3b: expert specialization — join smarter / leave graceful */
             breathe_cmd(line + 7, (UW)(n - 7));
+        } else if (starts_with(line, n, "r3")) {
+            /* R3: non-trivial thought — in-context recall capacity cert.
+             * `r3 test` proves learned >> any fixed hand-if (by construction). */
+            r3_cmd(line + 2, (UW)(n - 2));
         } else if (starts_with(line, n, "dtr")) {
             /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad/
              * remember/ret -> R3a + wave-8 verbs (dtr_train.c) */

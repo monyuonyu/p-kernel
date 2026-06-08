@@ -112,6 +112,7 @@ COMMON_C_SRCS = \
     gossip_learn.c \
     dtr.c \
     dtr_train.c \
+    r3_incontext.c \
     spec.c \
     retrieval.c \
     dkva.c \

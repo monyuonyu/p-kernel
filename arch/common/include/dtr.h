@@ -268,6 +268,11 @@ typedef struct {
     UB _pad[3];
 } __attribute__((packed)) DTR_WBLOB_HDR;   /* 20 bytes */
 
+/* r3_incontext.c — R3 non-trivial-thought capacity certificate.
+ * `r3 test` runs the in-context recall acceptance suite. */
+void r3_cmd(const UB *args, UW len);
+void r3_test(void);
+
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
  *   eval | train [epochs] | save | load | grad | crash | stat */
