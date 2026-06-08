@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================================================
-# 34_ark_merkle / run.sh — ARK's Merkle directory tree (wave 17, format v3).
+# 37_ark_merkle / run.sh — ARK's Merkle directory tree (wave 17, format v3).
 #
 # The flat commit snapshot caps the namespace at ARK_MAX_FILES=32 and re-
 # serializes EVERY entry into EVERY commit. The Merkle dir tree (each directory

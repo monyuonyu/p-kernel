@@ -1,4 +1,4 @@
-# 34_ark_merkle — ARK's Merkle directory tree (format v3)
+# 37_ark_merkle — ARK's Merkle directory tree (format v3)
 
 `arch/common/arkfs.c`'s original directory was a **flat snapshot** capped at
 `ARK_MAX_FILES = 32`, serialized in full into **every** commit — so it could not
