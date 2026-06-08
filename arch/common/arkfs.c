@@ -42,10 +42,18 @@
  * no longer makes the whole library unmountable. The last sector is therefore
  * reserved from the log. This is an on-disk format change, hence the magic +
  * version bump: a v1 image ("ARKLOG01") will not mount under v2 (clean reject,
- * not a mis-mount). The fuzzer reformats every run, so it stays valid. */
-#define ARK_SB_MAGIC  "ARKLOG02"     /* 8 bytes */
+ * not a mis-mount). The fuzzer reformats every run, so it stays valid.
+ *
+ * Format v3 (wave 17, Merkle dir tree): the COMMIT payload now carries the
+ * Merkle directory-tree root id (and a reserved flags word) ALONGSIDE the legacy
+ * flat dirent table — see ark_commit_hdr and the ark_mtree_* layer below. This
+ * changes the on-disk commit shape, so the magic + version bump again: a v2
+ * image ("ARKLOG02") will not mount under v3 (clean reject, never a mis-mount).
+ * Every harness (samples 25/26/30/31/33) reformats its image, so all stay valid;
+ * the Merkle root simply reads back all-zero on a fresh/legacy-only image. */
+#define ARK_SB_MAGIC  "ARKLOG03"     /* 8 bytes */
 #define ARK_REC_MAGIC "ARKR"         /* 4 bytes */
-#define ARK_FMT_VERSION 2u
+#define ARK_FMT_VERSION 3u
 
 #define ARK_REC_BLOCK  1u
 #define ARK_REC_COMMIT 2u
@@ -73,8 +81,34 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     U4 commit_seq;
-    U4 nent;
+    U4 nent;                  /* legacy flat dirent count (whole-file API)      */
+    U1 mroot[ARK_ID_LEN];     /* Merkle dir-tree root id; all-zero == empty tree */
+    U4 mflags;                /* reserved (0)                                   */
 } ark_commit_hdr;
+
+/* One Merkle directory-node entry: a single path component pointing at a child
+ * block by content-address. type tells whether `child` names a content block
+ * (a file's bytes) or another dir node. This is what makes the dir tree a
+ * Merkle tree — `child` IS the cryptographic id of the subtree it references. */
+typedef struct __attribute__((packed)) {
+    U1   type;                /* ARK_MENT_FILE | ARK_MENT_DIR */
+    U1   pad[3];
+    U4   size;                /* file size in bytes (0 for a dir entry) */
+    U1   child[ARK_ID_LEN];   /* content block-id (file) or sub-node id (dir) */
+    char name[ARK_MENT_NAME]; /* one path component, NUL-terminated */
+} ark_ment;
+
+/* A directory node's on-disk header; the node block is this followed by `nent`
+ * ark_ment, kept sorted by name so identical contents hash to the identical id
+ * (deterministic Merkle root regardless of insertion order). */
+typedef struct __attribute__((packed)) {
+    U4 magic;                 /* ARK_MNODE_MAGIC */
+    U4 nent;
+} ark_mnode_hdr;
+
+#define ARK_MNODE_MAGIC 0x314d4e44u   /* 'D''N''M''1' little-endian marker */
+#define ARK_MNODE_MAXENT \
+    ((ARK_BLOCK_MAX - (U4)sizeof(ark_mnode_hdr)) / (U4)sizeof(ark_ment))
 
 /* One directory entry, used both on disk (in a commit payload) and as the
  * in-memory live row. */
@@ -106,6 +140,14 @@ _Static_assert(sizeof(ark_dent)   == ARK_NAME_MAX + 16 + ARK_MAX_BLK * ARK_ID_LE
                "dirent layout drift");
 _Static_assert(ARK_COMMIT_MAX <= 32768, "commit payload exceeds scratch");
 _Static_assert(ARK_BLOCK_MAX % ARK_SECTOR == 0, "block max must be sector-multiple");
+_Static_assert(sizeof(ark_commit_hdr) == 44, "commit header layout drift (v3)");
+_Static_assert(sizeof(ark_ment) == 4 + 4 + ARK_ID_LEN + ARK_MENT_NAME,
+               "merkle entry layout drift");
+_Static_assert(sizeof(ark_mnode_hdr) == 8, "merkle node header layout drift");
+_Static_assert(ARK_MNODE_MAXENT > ARK_MAX_FILES,
+               "a single merkle dir node must exceed the flat 32-file cap");
+_Static_assert(sizeof(ark_mnode_hdr) + ARK_MNODE_MAXENT * sizeof(ark_ment)
+               <= ARK_BLOCK_MAX, "merkle node must fit one block");
 
 /* ------------------------------------------------------------------ */
 /* tiny local libc-free helpers                                        */
@@ -161,6 +203,12 @@ static U4        g_epoch;         /* this mount's format generation       */
 static ark_dent  g_live[ARK_MAX_FILES];   /* live directory snapshot     */
 static U4        g_live_n;
 
+/* Merkle dir-tree root for the current (committed) namespace. All-zero == empty
+ * tree. Set from the last valid commit on mount; advanced by ark_mtree_put and
+ * persisted by the next commit. Lives beside g_live so both namespaces share
+ * one atomic commit / one crash-safety story. */
+static U1        g_mroot[ARK_ID_LEN];
+
 /* Open-addressed hash table: block-id -> log location. An entry is EMPTY iff
  * sec == 0 (sector 0 is the superblock, never a record location, so it is a
  * safe sentinel). No tombstones are needed: entries are only ever inserted at
@@ -183,9 +231,19 @@ static U1 g_cbuf  [ARK_COMMIT_MAX];       /* commit serialization buffer  */
 static U4 g_log_end_override;
 
 /* De-dup scratch for ark_compact(): the set of unique live block-ids. One row
- * per possible live block reference (ARK_MAX_FILES * ARK_MAX_BLK). Static BSS,
- * never a task-stack local. */
-static U1 g_compact_seen[ARK_MAX_FILES * ARK_MAX_BLK][ARK_ID_LEN];
+ * per possible live block reference (ARK_MAX_FILES * ARK_MAX_BLK) PLUS headroom
+ * for the Merkle tree's node + content blocks (compaction must also preserve a
+ * non-empty dir tree, see ark_compact). Static BSS, never a task-stack local. */
+#define ARK_COMPACT_MAX (ARK_MAX_FILES * ARK_MAX_BLK + 1024u)
+static U1 g_compact_seen[ARK_COMPACT_MAX][ARK_ID_LEN];
+
+/* Merkle scratch — a per-level stack of parsed dir-node entries plus one node
+ * serialization buffer. All static BSS (arch/common rule: never a task stack).
+ * The stack depth bounds path depth; each level holds one parsed dir node. */
+static ark_ment g_mstack[ARK_MTREE_MAXDEPTH][ARK_MNODE_MAXENT];
+static U4       g_mstack_n[ARK_MTREE_MAXDEPTH];
+static U1       g_mser[ARK_BLOCK_MAX];     /* dir-node (de)serialization buffer */
+static U1       g_mwalk[ARK_BLOCK_MAX];    /* read-only walk scratch (get/list) */
 
 /* ------------------------------------------------------------------ */
 /* block index helpers                                                 */
@@ -377,6 +435,8 @@ static U4 serialize_live(U1 *out)
     ark_commit_hdr *ch = (ark_commit_hdr *)out;
     ch->commit_seq = g_seq + 1;
     ch->nent       = g_live_n;
+    ark_memcpy(ch->mroot, g_mroot, ARK_ID_LEN);   /* Merkle root (v3) */
+    ch->mflags     = 0;
     U1 *p = out + sizeof(ark_commit_hdr);
     for (U4 i = 0; i < g_live_n; i++) {
         ark_memcpy(p, &g_live[i], sizeof(ark_dent));
@@ -385,11 +445,14 @@ static U4 serialize_live(U1 *out)
     return (U4)(p - out);
 }
 
-/* Parse a commit payload into the provided table. Returns entry count. */
-static U4 parse_commit(const U1 *pay, U4 len, ark_dent *tbl, U4 max)
+/* Parse a commit payload into the provided table. Returns entry count. If
+ * mroot_out is non-NULL, also copies out the Merkle dir-tree root id. */
+static U4 parse_commit(const U1 *pay, U4 len, ark_dent *tbl, U4 max,
+                       U1 *mroot_out)
 {
     if (len < sizeof(ark_commit_hdr)) return 0;
     const ark_commit_hdr *ch = (const ark_commit_hdr *)pay;
+    if (mroot_out) ark_memcpy(mroot_out, ch->mroot, ARK_ID_LEN);
     U4 n = ch->nent;
     if (n > max) n = max;
     const U1 *p = pay + sizeof(ark_commit_hdr);
@@ -457,6 +520,7 @@ static void reset_state(void)
     g_idx_n  = 0;
     ark_memset(g_idx, 0, sizeof(g_idx));
     ark_memset(g_live, 0, sizeof(g_live));
+    ark_memset(g_mroot, 0, ARK_ID_LEN);
 }
 
 /* Serialize a superblock for (epoch, log_start) into g_secbuf and write it to
@@ -600,7 +664,7 @@ INT ark_mount(ARK_BDEV *bd)
         if (type == ARK_REC_BLOCK) {
             idx_add(id, sec);                    /* committed; rot-tolerant   */
         } else if (type == ARK_REC_COMMIT && payok) {
-            g_live_n = parse_commit(g_payld, len, g_live, ARK_MAX_FILES);
+            g_live_n = parse_commit(g_payld, len, g_live, ARK_MAX_FILES, g_mroot);
             g_seq    = seq;                      /* last accepted commit wins */
         }
         sec += (U4)n;
@@ -665,6 +729,307 @@ INT ark_checkpoint(void)
 {
     if (!g_bd) return ARK_E_NOTMOUNTED;
     return commit_live();
+}
+
+/* ================================================================== */
+/* Merkle directory tree (format v3)                                   */
+/*                                                                     */
+/* A directory is a content-addressed BLOCK: an ark_mnode_hdr followed */
+/* by name-sorted ark_ment[]. Each entry's `child` IS the block-id of  */
+/* the subtree it names (a file's content block, or a sub-dir node),   */
+/* so a node's own id == sha256(its bytes) cryptographically commits   */
+/* to its whole subtree. Updating a path rewrites only that path's     */
+/* nodes bottom-up and records the new ROOT id in the next commit; the */
+/* commit is the same atomic, crash-safe visibility point as before.   */
+/* Nodes ride the same self-verifying block store, so a tampered node  */
+/* fails crc+sha on read and is never served (ARK_E_CORRUPT).          */
+/* ================================================================== */
+
+static INT mid_zero(const U1 id[ARK_ID_LEN])
+{ for (U4 i = 0; i < ARK_ID_LEN; i++) if (id[i]) return 0; return 1; }
+
+static INT mstrcmp(const char *a, const char *b)
+{ while (*a && *a == *b) { a++; b++; } return (INT)(U1)*a - (INT)(U1)*b; }
+
+/* Split an absolute, '/'-separated path into components. Returns the component
+ * count (>=1), or a negative error for a malformed / too-deep / too-long path.
+ * comp[] rows are NUL-terminated. The last component is the file name; the rest
+ * are directory names along the path. */
+static INT mpath_split(const char *path, char comp[][ARK_MENT_NAME], INT maxc)
+{
+    if (!path) return ARK_E_INVAL;
+    U4 i = (path[0] == '/') ? 1u : 0u;
+    INT nc = 0;
+    while (path[i]) {
+        if (nc >= maxc) return ARK_E_INVAL;            /* too deep */
+        U4 j = 0;
+        while (path[i] && path[i] != '/') {
+            if (j + 1 >= ARK_MENT_NAME) return ARK_E_INVAL;   /* component too long */
+            comp[nc][j++] = path[i++];
+        }
+        comp[nc][j] = '\0';
+        if (j == 0) return ARK_E_INVAL;                /* empty comp ("//" / trailing) */
+        nc++;
+        if (path[i] == '/') i++;
+    }
+    if (nc == 0) return ARK_E_INVAL;                   /* "" or "/" names no file */
+    return nc;
+}
+
+/* Load a dir node (by content-id) into ment[] (capacity ARK_MNODE_MAXENT). An
+ * all-zero id is the empty tree (0 entries, ARK_OK). The block store self-
+ * verifies the bytes, so a tampered node returns ARK_E_CORRUPT here. */
+static INT mnode_load(const U1 id[ARK_ID_LEN], ark_ment *ment, U4 *n_out)
+{
+    if (mid_zero(id)) { *n_out = 0; return ARK_OK; }
+    INT bl = ark_block_get(id, g_mwalk, ARK_BLOCK_MAX);
+    if (bl == ARK_E_NOTFOUND) return ARK_E_NOTFOUND;
+    if (bl < 0) return ARK_E_CORRUPT;                  /* self-verify caught rot */
+    if ((U4)bl < sizeof(ark_mnode_hdr)) return ARK_E_CORRUPT;
+    const ark_mnode_hdr *h = (const ark_mnode_hdr *)g_mwalk;
+    if (h->magic != ARK_MNODE_MAGIC) return ARK_E_CORRUPT;
+    U4 ne = h->nent;
+    if (ne > ARK_MNODE_MAXENT) return ARK_E_CORRUPT;
+    if (sizeof(ark_mnode_hdr) + ne * sizeof(ark_ment) > (U4)bl) return ARK_E_CORRUPT;
+    const U1 *p = g_mwalk + sizeof(ark_mnode_hdr);
+    for (U4 i = 0; i < ne; i++) {
+        ark_memcpy(&ment[i], p, sizeof(ark_ment));
+        p += sizeof(ark_ment);
+    }
+    *n_out = ne;
+    return ARK_OK;
+}
+
+/* Canonical (name-sorted) order so identical dir contents always serialize to
+ * identical bytes -> identical Merkle id, regardless of insertion order. */
+static void ment_sort(ark_ment *m, U4 n)
+{
+    for (U4 i = 1; i < n; i++) {
+        ark_ment key; ark_memcpy(&key, &m[i], sizeof(key));
+        INT j = (INT)i - 1;
+        while (j >= 0 && mstrcmp(m[j].name, key.name) > 0) {
+            ark_memcpy(&m[j + 1], &m[j], sizeof(key)); j--;
+        }
+        ark_memcpy(&m[j + 1], &key, sizeof(key));
+    }
+}
+
+static INT ment_find(const ark_ment *m, U4 n, const char *name)
+{ for (U4 i = 0; i < n; i++) if (ark_streq(m[i].name, name)) return (INT)i; return -1; }
+
+/* Serialize a (name-sorted) entry set into a node block and content-address it.
+ * Appends the node as a block record (uncommitted until the caller commits). */
+static INT mnode_emit(ark_ment *m, U4 n, U1 id_out[ARK_ID_LEN])
+{
+    if (n > ARK_MNODE_MAXENT) return ARK_E_FULL;
+    ment_sort(m, n);
+    ark_memset(g_mser, 0, ARK_BLOCK_MAX);
+    ark_mnode_hdr *h = (ark_mnode_hdr *)g_mser;
+    h->magic = ARK_MNODE_MAGIC;
+    h->nent  = n;
+    U1 *p = g_mser + sizeof(ark_mnode_hdr);
+    for (U4 i = 0; i < n; i++) { ark_memcpy(p, &m[i], sizeof(ark_ment)); p += sizeof(ark_ment); }
+    return ark_block_put(g_mser, (U4)(p - g_mser), id_out);
+}
+
+INT ark_mtree_root(U1 out[ARK_ID_LEN])
+{ ark_memcpy(out, g_mroot, ARK_ID_LEN); return ARK_OK; }
+
+INT ark_mtree_put(const char *path, const void *buf, U4 len)
+{
+    if (!g_bd) return ARK_E_NOTMOUNTED;
+    if (len > ARK_BLOCK_MAX) return ARK_E_TOOBIG;       /* single-block files here */
+    static char comp[ARK_MTREE_MAXDEPTH][ARK_MENT_NAME];
+    INT d = mpath_split(path, comp, ARK_MTREE_MAXDEPTH);
+    if (d < 0) return d;
+
+    /* 1. store the file content (dedup'd). */
+    U1 cid[ARK_ID_LEN];
+    INT r = ark_block_put(buf ? buf : (const void *)"", len, cid);
+    if (r != ARK_OK) return r;
+
+    /* 2. load the chain of dir nodes from root down to the file's parent. */
+    U1 cur[ARK_ID_LEN];
+    ark_memcpy(cur, g_mroot, ARK_ID_LEN);
+    for (INT i = 0; i < d; i++) {
+        r = mnode_load(cur, g_mstack[i], &g_mstack_n[i]);
+        if (r == ARK_E_NOTFOUND) return ARK_E_CORRUPT;  /* indexed root vanished */
+        if (r != ARK_OK) return r;                      /* tampered node */
+        if (i < d - 1) {
+            INT e = ment_find(g_mstack[i], g_mstack_n[i], comp[i]);
+            if (e >= 0 && g_mstack[i][e].type == ARK_MENT_DIR)
+                ark_memcpy(cur, g_mstack[i][e].child, ARK_ID_LEN);
+            else if (e >= 0)
+                return ARK_E_INVAL;                     /* a file blocks a dir comp */
+            else
+                ark_memset(cur, 0, ARK_ID_LEN);         /* missing dir -> create */
+        }
+    }
+
+    /* 3. insert/replace the file entry in the deepest dir node. */
+    {
+        ark_ment *m = g_mstack[d - 1];
+        INT e = ment_find(m, g_mstack_n[d - 1], comp[d - 1]);
+        if (e < 0) {
+            if (g_mstack_n[d - 1] >= ARK_MNODE_MAXENT) return ARK_E_FULL;
+            e = (INT)g_mstack_n[d - 1]++;
+            ark_memset(&m[e], 0, sizeof(ark_ment));
+            ark_strncpy(m[e].name, comp[d - 1], ARK_MENT_NAME);
+        } else if (m[e].type != ARK_MENT_FILE) {
+            return ARK_E_INVAL;                         /* name is a directory */
+        }
+        m[e].type = (U1)ARK_MENT_FILE;
+        m[e].size = len;
+        ark_memcpy(m[e].child, cid, ARK_ID_LEN);
+    }
+
+    /* 4. rewrite nodes bottom-up; each new child id updates its parent entry. */
+    U1 newid[ARK_ID_LEN];
+    r = mnode_emit(g_mstack[d - 1], g_mstack_n[d - 1], newid);
+    if (r != ARK_OK) return r;
+    for (INT i = d - 2; i >= 0; i--) {
+        ark_ment *m = g_mstack[i];
+        INT e = ment_find(m, g_mstack_n[i], comp[i]);
+        if (e < 0) {
+            if (g_mstack_n[i] >= ARK_MNODE_MAXENT) return ARK_E_FULL;
+            e = (INT)g_mstack_n[i]++;
+            ark_memset(&m[e], 0, sizeof(ark_ment));
+            ark_strncpy(m[e].name, comp[i], ARK_MENT_NAME);
+        } else if (m[e].type != ARK_MENT_DIR) {
+            return ARK_E_INVAL;
+        }
+        m[e].type = (U1)ARK_MENT_DIR;
+        m[e].size = 0;
+        ark_memcpy(m[e].child, newid, ARK_ID_LEN);
+        r = mnode_emit(m, g_mstack_n[i], newid);
+        if (r != ARK_OK) return r;
+    }
+
+    /* 5. publish the new root and commit atomically. A torn commit fails crc on
+     *    replay -> the prior root stands; the new (uncommitted) nodes are tail
+     *    garbage reclaimed on remount. Identical crash-safety to ark_write_file. */
+    ark_memcpy(g_mroot, newid, ARK_ID_LEN);
+    return commit_live();
+}
+
+INT ark_mtree_get(const char *path, void *buf, U4 max)
+{
+    if (!g_bd) return ARK_E_NOTMOUNTED;
+    static char comp[ARK_MTREE_MAXDEPTH][ARK_MENT_NAME];
+    INT d = mpath_split(path, comp, ARK_MTREE_MAXDEPTH);
+    if (d < 0) return d;
+    if (mid_zero(g_mroot)) return ARK_E_NOTFOUND;
+
+    static ark_ment ment[ARK_MNODE_MAXENT];
+    U1 cur[ARK_ID_LEN];
+    ark_memcpy(cur, g_mroot, ARK_ID_LEN);
+    for (INT i = 0; i < d; i++) {
+        U4 n;
+        INT r = mnode_load(cur, ment, &n);
+        if (r != ARK_OK) return r;                      /* CORRUPT / NOTFOUND */
+        INT e = ment_find(ment, n, comp[i]);
+        if (e < 0) return ARK_E_NOTFOUND;
+        if (i < d - 1) {
+            if (ment[e].type != ARK_MENT_DIR) return ARK_E_NOTFOUND;
+            ark_memcpy(cur, ment[e].child, ARK_ID_LEN);
+        } else {
+            if (ment[e].type != ARK_MENT_FILE) return ARK_E_NOTFOUND;
+            return ark_block_get(ment[e].child, buf, max);   /* self-verifies */
+        }
+    }
+    return ARK_E_NOTFOUND;
+}
+
+INT ark_mtree_list(const char *path, ARK_DIRENT *out, INT max)
+{
+    if (!g_bd) return ARK_E_NOTMOUNTED;
+    static ark_ment ment[ARK_MNODE_MAXENT];
+    U1 cur[ARK_ID_LEN];
+    ark_memcpy(cur, g_mroot, ARK_ID_LEN);
+    U4 i = (path && path[0] == '/') ? 1u : 0u;
+    U4 n;
+    /* descend each directory component named in path */
+    while (path && path[i]) {
+        char comp[ARK_MENT_NAME]; U4 j = 0;
+        while (path[i] && path[i] != '/') {
+            if (j + 1 >= ARK_MENT_NAME) return ARK_E_INVAL;
+            comp[j++] = path[i++];
+        }
+        comp[j] = '\0';
+        if (path[i] == '/') i++;
+        if (j == 0) continue;
+        INT r = mnode_load(cur, ment, &n);
+        if (r != ARK_OK) return r;
+        INT e = ment_find(ment, n, comp);
+        if (e < 0 || ment[e].type != ARK_MENT_DIR) return ARK_E_NOTFOUND;
+        ark_memcpy(cur, ment[e].child, ARK_ID_LEN);
+    }
+    INT r = mnode_load(cur, ment, &n);
+    if (r != ARK_OK) return r;
+    INT cnt = 0;
+    for (U4 k = 0; k < n && cnt < max; k++) {
+        ark_strncpy(out[cnt].name, ment[k].name, ARK_NAME_MAX);
+        out[cnt].size    = ment[k].size;
+        out[cnt].is_dir  = (ment[k].type == ARK_MENT_DIR);
+        out[cnt].version = 1;
+        cnt++;
+    }
+    return cnt;
+}
+
+/* ---- compaction support: enumerate every block reachable from the root ---- */
+
+/* Footprint (header + payload sectors) of one stored block, or -1 if it is
+ * missing / unreadable. */
+static INT blk_foot(const U1 id[ARK_ID_LEN])
+{
+    INT s = idx_find(id);
+    if (s < 0) return -1;
+    U4 t, sq, ln; INT pk;
+    INT n = read_record(g_idx[s].sec, g_payld, ARK_COMMIT_MAX, &t, &sq, &ln, 0, &pk);
+    if (n <= 0 || t != ARK_REC_BLOCK || !pk) return -1;
+    return (INT)(1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR);
+}
+
+/* Add id to seen[] if absent. Returns 1 (newly added), 0 (duplicate), -1 (full). */
+static INT seen_add(U1 seen[][ARK_ID_LEN], U4 *pn, const U1 id[ARK_ID_LEN])
+{
+    for (U4 i = 0; i < *pn; i++) if (ark_memeq(seen[i], id, ARK_ID_LEN)) return 0;
+    if (*pn >= ARK_COMPACT_MAX) return -1;
+    ark_memcpy(seen[(*pn)++], id, ARK_ID_LEN);
+    return 1;
+}
+
+static U1 g_mq[ARK_COMPACT_MAX][ARK_ID_LEN];   /* dir-id BFS queue for collect */
+
+/* Collect every block-id reachable from the Merkle root (all node ids + all
+ * file-content ids) into seen[], extending *pn and *foot. Returns ARK_OK,
+ * ARK_E_FULL (seen[] / queue overflow), or ARK_E_CORRUPT (a node failed self-
+ * verify). Lets ark_compact preserve a non-empty dir tree. */
+static INT mtree_collect(U1 seen[][ARK_ID_LEN], U4 *pn, U4 *foot)
+{
+    if (mid_zero(g_mroot)) return ARK_OK;
+    U4 qh = 0, qt = 0;
+    ark_memcpy(g_mq[qt++], g_mroot, ARK_ID_LEN);
+    while (qh < qt) {
+        U1 nid[ARK_ID_LEN];
+        ark_memcpy(nid, g_mq[qh++], ARK_ID_LEN);
+        INT a = seen_add(seen, pn, nid);
+        if (a < 0) return ARK_E_FULL;
+        if (a == 1) { INT f = blk_foot(nid); if (f < 0) return ARK_E_CORRUPT; *foot += (U4)f; }
+        static ark_ment ment[ARK_MNODE_MAXENT]; U4 n;
+        if (mnode_load(nid, ment, &n) != ARK_OK) return ARK_E_CORRUPT;
+        for (U4 i = 0; i < n; i++) {
+            INT b = seen_add(seen, pn, ment[i].child);
+            if (b < 0) return ARK_E_FULL;
+            if (b == 1) { INT f = blk_foot(ment[i].child); if (f < 0) return ARK_E_CORRUPT; *foot += (U4)f; }
+            if (ment[i].type == ARK_MENT_DIR && b == 1) {
+                if (qt >= ARK_COMPACT_MAX) return ARK_E_FULL;
+                ark_memcpy(g_mq[qt++], ment[i].child, ARK_ID_LEN);
+            }
+        }
+    }
+    return ARK_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -734,6 +1099,13 @@ INT ark_compact(void)
             ark_memcpy(g_compact_seen[nseen++], id, ARK_ID_LEN);
             foot += 1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR;
         }
+    }
+    /* also keep every block reachable from the Merkle dir tree (its nodes and
+     * their content), so a non-empty tree survives compaction (g_mroot==0 ->
+     * no-op, leaving the flat-only path byte-for-byte unchanged). */
+    {
+        INT mc = mtree_collect(g_compact_seen, &nseen, &foot);
+        if (mc != ARK_OK) return mc;
     }
     /* the trailing commit's footprint */
     {
@@ -986,7 +1358,7 @@ INT ark_history(const char *path, ARK_HIST *out, INT max)
         INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0, &payok);
         if (n <= 0) { sec += 1u; continue; }     /* resync past a bad header */
         if (type == ARK_REC_COMMIT && payok) {
-            U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES);
+            U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES, 0);
             for (U4 i = 0; i < ntb; i++) {
                 if (ark_streq(tbl[i].name, path) && tbl[i].version != last_ver) {
                     out[cnt].version    = tbl[i].version;
@@ -1016,7 +1388,7 @@ INT ark_read_version(const char *path, U4 version, void *buf, U4 max)
         INT n = read_record(sec, g_payld, ARK_COMMIT_MAX, &type, &seq, &len, 0, &payok);
         if (n <= 0) { sec += 1u; continue; }     /* resync past a bad header */
         if (type == ARK_REC_COMMIT && payok) {
-            U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES);
+            U4 ntb = parse_commit(g_payld, len, tbl, ARK_MAX_FILES, 0);
             for (U4 i = 0; i < ntb; i++) {
                 if (ark_streq(tbl[i].name, path) && tbl[i].version == version)
                     return read_dent_blocks(&tbl[i], buf, max);
@@ -1035,7 +1407,16 @@ INT ark_read_version(const char *path, U4 version, void *buf, U4 max)
  * self-test to prove compaction actually shrinks the live log. */
 U4 ark_dbg_livespan(void) { return g_head - g_log_start; }
 
-#define ARK_TEST_SECTORS 256        /* 128 KiB RAM image (self-test only) */
+/* The PAYLOAD sector of the block currently stored under `id` (0 if absent).
+ * Test-only seam: lets a host harness corrupt a specific block (e.g. a Merkle
+ * dir node) on the device and prove self-verify rejects it on a fresh mount. */
+U4 ark_dbg_id_sector(const U1 id[ARK_ID_LEN])
+{ INT s = idx_find(id); return (s < 0) ? 0u : g_idx[s].sec + 1u; }
+
+#define ARK_TEST_SECTORS 1024       /* 512 KiB RAM image (self-test only; the
+                                     * Merkle section appends 40 growing dir
+                                     * node versions (~523 sectors live), which
+                                     * the old 128 KiB could not hold) */
 static U1  art_ram[ARK_TEST_SECTORS * ARK_SECTOR];
 static U4  art_cut;                 /* >0 => lose writes after this many */
 static U4  art_wcnt;
@@ -1194,6 +1575,92 @@ INT ark_self_test(void (*emit)(const char *))
         if (span_after >= span_before) okc = 0;       /* the live log shrank */
         if (okc) emit("[ark] ok  compaction reclaims log, live data survives\r\n");
         else   { emit("[ark] FAIL compaction\r\n"); fails++; }
+    }
+
+    /* --- Merkle dir tree: >32 entries, root-hash tamper-evidence, a tampered
+     *     node rejected on read, and crash rollback of a dir update --------- */
+    {
+        art_cut = 0; art_wcnt = 0;
+        ark_format(&bd);
+        ark_mount(&bd);
+
+        /* (1) NAMESPACE > 32: store and read back 40 files under one dir node
+         *     (ARK_MAX_FILES is 32 — the flat snapshot could not hold these). */
+        static char nm[24], cn[24], back[24];
+        INT okm = 1;
+        const U4 N = 40;
+        for (U4 i = 0; i < N; i++) {
+            /* nm = "/m/fNN", cn = "merkle-NN" (distinct content per file). */
+            INT j = 0; const char *p1 = "/m/f";
+            while (p1[j]) { nm[j] = p1[j]; j++; }
+            nm[j++] = (char)('0' + (i / 10)); nm[j++] = (char)('0' + (i % 10)); nm[j] = '\0';
+            INT k = 0; const char *p2 = "merkle-";
+            while (p2[k]) { cn[k] = p2[k]; k++; }
+            cn[k++] = (char)('0' + (i / 10)); cn[k++] = (char)('0' + (i % 10)); cn[k] = '\0';
+            if (ark_mtree_put(nm, cn, (U4)k) != ARK_OK) okm = 0;
+        }
+        /* read every one back and verify its content. */
+        for (U4 i = 0; i < N; i++) {
+            INT j = 0; const char *p1 = "/m/f";
+            while (p1[j]) { nm[j] = p1[j]; j++; }
+            nm[j++] = (char)('0' + (i / 10)); nm[j++] = (char)('0' + (i % 10)); nm[j] = '\0';
+            INT k = 0; const char *p2 = "merkle-";
+            while (p2[k]) { cn[k] = p2[k]; k++; }
+            cn[k++] = (char)('0' + (i / 10)); cn[k++] = (char)('0' + (i % 10)); cn[k] = '\0';
+            INT g = ark_mtree_get(nm, back, sizeof(back));
+            if (g != k || !ark_memeq(back, cn, (U4)k)) okm = 0;
+        }
+        ARK_DIRENT mde[ARK_MNODE_MAXENT];
+        INT mn = ark_mtree_list("/m", mde, ARK_MNODE_MAXENT);
+        if (mn != (INT)N) okm = 0;
+        if (okm) emit("[ark] ok  merkle dir holds + serves 40 entries (>32 cap)\r\n");
+        else   { emit("[ark] FAIL merkle >32 entries\r\n"); fails++; }
+
+        /* (2) ROOT HASH changes iff an entry changes (Merkle property). */
+        U1 r0[ARK_ID_LEN], r1[ARK_ID_LEN], r2[ARK_ID_LEN];
+        ark_mtree_root(r0);
+        ark_mtree_put("/m/f00", "CHANGED", 7);            /* mutate one entry */
+        ark_mtree_root(r1);
+        ark_mtree_put("/m/f00", "merkle-00", 9);          /* restore exact bytes */
+        ark_mtree_root(r2);
+        if (!ark_memeq(r0, r1, ARK_ID_LEN) && ark_memeq(r0, r2, ARK_ID_LEN))
+            emit("[ark] ok  root hash changes iff an entry changes (Merkle)\r\n");
+        else { emit("[ark] FAIL merkle root tamper-evidence\r\n"); fails++; }
+
+        /* (3) a TAMPERED dir node is rejected on read (self-verify). Flip a byte
+         *     of the ROOT node's payload on the device, then a read must fail. */
+        {
+            U1 root[ARK_ID_LEN];
+            ark_mtree_root(root);
+            INT s = idx_find(root);
+            if (s < 0) { emit("[ark] FAIL merkle root not indexed\r\n"); fails++; }
+            else {
+                U4 paysec = g_idx[s].sec + 1u;            /* payload sector */
+                art_ram[(U4)paysec * ARK_SECTOR + 16] ^= 0xFF;
+                INT g = ark_mtree_get("/m/f01", back, sizeof(back));
+                if (g == ARK_E_CORRUPT)
+                    emit("[ark] ok  tampered dir node rejected on read (self-verify)\r\n");
+                else { emit("[ark] FAIL tampered node not detected\r\n"); fails++; }
+            }
+        }
+
+        /* (4) CRASH during a dir update rolls back to the prior root cleanly. */
+        art_cut = 0; art_wcnt = 0;
+        ark_format(&bd);
+        ark_mount(&bd);
+        ark_mtree_put("/a", "ALPHA", 5);                  /* durable; root RA */
+        U1 ra[ARK_ID_LEN]; ark_mtree_root(ra);
+        U4 mmark = art_wcnt;
+        art_cut = mmark;                                  /* lose writes hereafter */
+        ark_mtree_put("/b", "BETA-lost", 9);              /* torn -> uncommitted */
+        art_cut = 0;
+        if (ark_mount(&bd) != ARK_OK) { emit("[ark] FAIL merkle remount\r\n"); fails++; }
+        U1 rb[ARK_ID_LEN]; ark_mtree_root(rb);
+        INT ga = ark_mtree_get("/a", back, sizeof(back));
+        INT gb = ark_mtree_get("/b", back, sizeof(back));
+        if (ark_memeq(ra, rb, ARK_ID_LEN) && ga == 5 && gb == ARK_E_NOTFOUND)
+            emit("[ark] ok  crash mid dir-update rolled back to prior root\r\n");
+        else { emit("[ark] FAIL merkle crash rollback\r\n"); fails++; }
     }
 
     if (fails == 0) emit("[ark] PASS (content-address + versioned + crash-safe)\r\n");

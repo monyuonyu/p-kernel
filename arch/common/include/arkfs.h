@@ -63,6 +63,29 @@ typedef unsigned int   BOOL;
 #define ARK_MAX_FILES     32         /* entries in one committed snapshot  */
 #define ARK_MAX_BLK       16         /* blocks per file -> 64 KiB max file */
 
+/* ---- Merkle directory tree (wave 17, format v3) ----------------------------
+ *
+ * The flat commit snapshot above caps the namespace at ARK_MAX_FILES=32 and
+ * re-serializes EVERY entry into EVERY commit. The Merkle dir tree removes both
+ * limits: each directory is itself a content-addressed BLOCK (a node) listing
+ * its entries {name, type, child-id}. A node's block-id == sha256(its bytes) ==
+ * that subtree's verifiable root hash, and children are referenced by block-id,
+ * so:
+ *   - the namespace scales far beyond 32 (one node holds up to ARK_MNODE_MAXENT
+ *     entries, and directories nest arbitrarily);
+ *   - changing ANY entry changes that node's bytes -> its id -> its parent's
+ *     referenced id -> ... -> the root id (tamper-evident, Merkle property);
+ *   - a commit records only the ROOT id (O(1)), not all entries, and a path
+ *     update only rewrites that path's nodes bottom-up.
+ * Nodes live in the SAME append-only block store as data, so they inherit ARK's
+ * self-verify (a tampered node fails crc+sha on read -> ARK_E_CORRUPT) and the
+ * commit's crash-safety (a torn commit rolls back to the prior root). See
+ * survival-fs.md §2.4 and the ark_mtree_* API below. */
+#define ARK_MENT_NAME     48         /* one path component (incl NUL)      */
+#define ARK_MTREE_MAXDEPTH 8         /* max path components incl filename  */
+#define ARK_MENT_FILE     1u         /* a file entry: child = content block */
+#define ARK_MENT_DIR      2u         /* a dir entry:  child = sub-node id   */
+
 /* In-memory block index (block-id -> log location).
  *
  * This is an open-addressed hash table backed by a static pool (arch/common is
@@ -238,6 +261,41 @@ INT  ark_checkpoint(void);
  * (policy documented in arkfs.c). Returns ARK_OK (state reloaded), ARK_E_FULL
  * if the live set fits in no free region, or a negative error (old log intact). */
 INT  ark_compact(void);
+
+/* ------------------------------------------------------------------ */
+/* Merkle directory tree (format v3) — a content-addressed namespace    */
+/* that scales beyond ARK_MAX_FILES and carries a verifiable root hash.  */
+/*                                                                       */
+/* Paths are absolute, '/'-separated ("/m/f00"); each component is a     */
+/* single name < ARK_MENT_NAME and a path has < ARK_MTREE_MAXDEPTH       */
+/* components. Intermediate directories are created on demand (mkdir -p). */
+/* Files are single-block (<= ARK_BLOCK_MAX bytes) in this layer.        */
+/*                                                                       */
+/* Each ark_mtree_put is ONE atomic commit (same crash-safety as the     */
+/* whole-file API): a torn commit rolls back to the prior root, and a    */
+/* tampered dir node is caught by the block store's self-verify on read  */
+/* (ARK_E_CORRUPT — never served). The Merkle namespace is independent   */
+/* of the flat whole-file namespace above; both persist in the same      */
+/* commit and the same content-addressed log. */
+/* ------------------------------------------------------------------ */
+
+/* Insert or replace a file at `path` (<= ARK_BLOCK_MAX bytes). Rewrites the
+ * path's dir nodes bottom-up and commits the new root atomically. */
+INT  ark_mtree_put(const char *path, const void *buf, U4 len);
+
+/* Read the current bytes of the file at `path` into buf (up to max). Returns
+ * the file length, ARK_E_NOTFOUND, or ARK_E_CORRUPT if any node/content block
+ * on the path fails self-verify (a tampered subtree is never served). */
+INT  ark_mtree_get(const char *path, void *buf, U4 max);
+
+/* Copy the current Merkle root id (all-zero if the tree is empty) into out.
+ * This 32-byte value is the verifiable hash of the entire namespace: it
+ * changes iff any entry anywhere in the tree changes. Returns ARK_OK. */
+INT  ark_mtree_root(U1 out[ARK_ID_LEN]);
+
+/* List the immediate children of directory `path` ("/" or "" = root). Fills
+ * out[] (up to max) and returns the count, or negative. */
+INT  ark_mtree_list(const char *path, ARK_DIRENT *out, INT max);
 
 /* Self-test: format on a RAM bdev, then prove CRUD + versioning +
  * dedup + self-verify + crash-rollback (simulated power loss). Prints via
