@@ -38,6 +38,7 @@
 #include "ai_kernel.h"
 #include "kdds.h"
 #include "heal.h"
+#include "dtr.h"        /* ONE BRAIN: distributed infer uses the learned dtr */
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -307,7 +308,11 @@ static W drpc_dispatch(UB src, UH call_id, UW obj_id, W a0, W a1, W a2)
             SENSOR_UNPACK_P(a0),
             SENSOR_UNPACK_L(a0),
         };
-        UB cls = mlp_forward(input);
+        /* ONE BRAIN (wave 18): the remote node answers with the SAME
+         * G22-gossiped learned Transformer (dtr), not ai_job.c's hand-
+         * written-constant mlp_forward. So a distributed moe_infer's
+         * returned class is the learned brain on whichever node ran it. */
+        UB cls = dtr_classify(input);
         dp_puts("[drpc/infer] from node "); dp_putdec((UW)src);
         dp_puts("  class="); dp_putdec((UW)cls); dp_puts("\r\n");
         return (W)cls;
@@ -696,7 +701,10 @@ ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout)
             SENSOR_UNPACK_P(sensor_packed),
             SENSOR_UNPACK_L(sensor_packed),
         };
-        UB cls = mlp_forward(input);
+        /* ONE BRAIN (wave 18): local distributed-infer shortcut runs the
+         * learned dtr (same brain moe_infer routes/returns/guards with),
+         * not the handwritten mlp_forward. */
+        UB cls = dtr_classify(input);
         ai_stats.inferences_local++;
         ai_stats.inferences_total++;
         ai_stats.class_count[cls < 3 ? cls : 0]++;

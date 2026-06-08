@@ -2,14 +2,16 @@
  *  moe.c (x86)
  *  Phase 10 — Mixture of Experts (MoE) 推論ルーティング
  *
- *  Gate ネットワーク (軽量線形分類):
- *    入力: センサー平均値 (1次元)
- *    出力: クラス確率 (softmax風)
- *    実装: 固定しきい値による区間分類
+ *  Gate ネットワーク (ONE BRAIN — wave 本丸):
+ *    入力: 4 センサーチャネル (temp, hum, press, light)
+ *    出力: 学習された dtr Transformer の argmax クラス + 実 max-softmax 確信度
+ *    実装: dtr_decide() = dtr_forward_probs の argmax。4 トークンすべてを使う。
  *
- *    temp < 20  → class 0 (normal/cold)
- *    temp < 35  → class 1 (alert/warm)
- *    temp >= 35 → class 2 (critical/hot)
+ *    かつてゲートは温度1チャネルの固定しきい値 if 梯子
+ *      (void)hum;(void)press;(void)light; if(temp<20)/<35
+ *    で、moe_infer が *返す* 脳 (ai_job.c の手書き MLP 定数) とも *守る* 脳
+ *    (dtr) とも別の三本目だった。いまは三つとも *同じ 1 回の dtr forward* から
+ *    取る = 一脳。docs/review-2026-06-three-brains.md。
  *
  *  ノード選択 (regions R3 — §7 分散ゲーティング):
  *    かつては accuracy[gate_class] のグローバル最大を取っていた (= 全員が
@@ -42,6 +44,7 @@
 #include "region.h"     /* region_contains — 同 region 近傍 (反射層 §8)        */
 #include "reflex.h"     /* G17: 推論完了点 → §8 反射層 (思考→行動の片肺解消)   */
 #include "dtr.h"        /* G38: 学習モデルの実 softmax 確信度で反射をゲート     */
+#include "gossip_learn.h" /* 本丸: gl_merge — no-central 集合学習で返答精度検証   */
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -80,6 +83,10 @@ static void mo_putsdec(W v)
 static MOE_SCORE peer_scores[DNODE_MAX];
 static INT       score_valid[DNODE_MAX];
 
+/* self-test の精度ループ用に moe_infer/select_expert の冗長出力を抑制する。
+ * (本丸 [onebrain-accuracy] が many-input ループを回すため。) */
+static int moe_quiet = 0;
+
 /* 自分のスコア */
 static UW  my_total       = 0;
 static UW  my_correct[MOE_NUM_CLASSES];
@@ -102,21 +109,50 @@ static void score_topic_name(char *out, UB node)
 }
 
 /* ------------------------------------------------------------------ */
-/* Gate: 入力からクラス予測                                           */
+/* Gate: 入力からクラス予測 — ONE BRAIN (wave 18 本丸)                  */
 /* ------------------------------------------------------------------ */
+
+/* ── 三つの脳を一つに (docs/review-2026-06-three-brains.md) ─────────────
+ * かつてゲートは温度1チャネルの if 梯子
+ *   (void)hum;(void)press;(void)light; if(temp<20).../<35...
+ * で、4入力のうち3つを捨てていた = moe_infer が *返す* 脳 (手書き MLP) とも
+ * *守る* 脳 (学習 dtr) とも別の、三本目の脳だった。
+ *
+ * いまゲートは学習された dtr Transformer の argmax を返す。dtr は 4 センサー
+ * トークンすべてを使う (DTR_SEQ_LEN==4)。これと *同じ 1 回の forward* の
+ * argmax を moe_infer が返し、reflex へ渡す。= ルーティング・返答・守りが
+ * 一つの学習脳。G22 で群れが学べば、この一本の forward が良くなり、三つ
+ * すべてが同時に良くなる。
+ *
+ * conf_out!=0 のとき max-softmax×100 (0..100) も返す (反射ゲート用)。 */
+static UB dtr_decide(B temp, B hum, B press, B light, INT *conf_out)
+{
+    B in[DTR_SEQ_LEN] = { (B)temp, (B)hum, (B)press, (B)light };
+    float p[DTR_OUT_DIM];
+    dtr_forward_probs(in, p);
+    UB cls = 0; float mx = p[0];
+    for (INT c = 1; c < DTR_OUT_DIM; c++)
+        if (p[c] > mx) { mx = p[c]; cls = (UB)c; }
+    if (conf_out) {
+        INT cf = (INT)(mx * 100.0f + 0.5f);   /* REAL max-softmax, 0..100 */
+        if (cf < 0)   cf = 0;
+        if (cf > 100) cf = 100;
+        *conf_out = cf;
+    }
+    return cls;
+}
 
 static UB gate_predict(B temp, B hum, B press, B light)
 {
-    (void)hum; (void)press; (void)light;
-    /* 温度を主要特徴として使用 (将来: 多次元Gate) */
-    if (temp < 20) return 0;   /* normal */
-    if (temp < 35) return 1;   /* alert  */
-    return 2;                  /* critical */
+    return dtr_decide(temp, hum, press, light, (INT *)0);
 }
 
-/* 公開ラッパー (R3b spec.c のルーティングが §7 ゲートをそのまま使うため)。
- * 専門分化した専門家のうち「この入力のクラス帯に効く」one を疎に発火させる
- * のに使う — moe_infer の expert 選択と同じゲートで、重複定義を作らない。 */
+/* 公開ラッパー: 「この入力のクラス帯」を学習脳 (dtr) の argmax で返す。
+ * これが live なゲート — DKVA / regions / 反射経路と同じ学習脳を共有する
+ * (重複定義を作らない)。注: R3b spec.c は *これを使わない*。spec のゲートは
+ * 「訓練バンド (= 入力領域) 判定」であってクラス分類ではなく、クラスを予測
+ * する dtr でルーティングすると循環するため、spec.c は自前のバンド分割器を
+ * 持つ (spec.c 冒頭の honest note 参照)。 */
 UB moe_gate_predict(B temp, B hum, B press, B light)
 {
     return gate_predict(temp, hum, press, light);
@@ -250,7 +286,7 @@ static UB select_expert(UB gate_class)
     UB me = drpc_my_node;
     if (me >= DNODE_MAX) {
         /* ノード ID 未確定 (net 未投入): 反射層はローカルに閉じる。 */
-        mo_puts("[moe] reflex local-only (no node id)\r\n");
+        if (!moe_quiet) mo_puts("[moe] reflex local-only (no node id)\r\n");
         return me;
     }
 
@@ -374,70 +410,87 @@ static void broadcast_score(void)
 /* 推論実行 (MoE ルーティング)                                        */
 /* ------------------------------------------------------------------ */
 
+/* ── ONE BRAIN observability (wave 18) — 三つの判断が *同じ 1 forward* から
+ * 出ていることを self-test が数で検証できるよう、最後の moe_infer の
+ *   returned (返した class) / gate (ルーティングした class) /
+ *   reflex_cls (守りへ渡した class) / conf
+ * を記録する。三者が常に等しい = 三脳が一脳。 */
+static UB ob_last_returned   = 0xFF;
+static UB ob_last_gate       = 0xFF;
+static UB ob_last_reflex_cls = 0xFF;
+static UB ob_last_conf       = 0xFF;
+
+void moe_infer_last(UB *returned, UB *gate, UB *reflex_cls, UB *conf)
+{
+    if (returned)   *returned   = ob_last_returned;
+    if (gate)       *gate       = ob_last_gate;
+    if (reflex_cls) *reflex_cls = ob_last_reflex_cls;
+    if (conf)       *conf       = ob_last_conf;
+}
+
 UB moe_infer(B temp, B hum, B press, B light)
 {
-    UB gate_class = gate_predict(temp, hum, press, light);
+    /* ── 本丸: ただ 1 回の dtr forward が、ルーティング・返答・守りを駆動する。
+     * learned_class = argmax(dtr softmax)、confi = max-softmax×100。
+     * gate も returned も reflex もこの learned_class から取る = 一脳。
+     * (旧: gate=温度 if 梯子 / returned=手書き MLP / 守り=dtr の三本立て。
+     *  docs/review-2026-06-three-brains.md §1。) */
+    INT confi = 0;
+    UB  learned_class = dtr_decide(temp, hum, press, light, &confi);
+
+    UB gate_class = learned_class;             /* ルーティング = 学習脳 */
     UB expert     = select_expert(gate_class);
 
     /* このノードがこの推論で発火したことを world-table へ通知する。
      * 全網マップ (world.c) の firing インジケータが点灯する。 */
     world_note_firing(gate_class);
 
-    mo_puts("[moe] gate="); mo_putdec(gate_class);
-    mo_puts("  expert=node"); mo_putdec(expert);
+    if (!moe_quiet) {
+        mo_puts("[moe] gate="); mo_putdec(gate_class);
+        mo_puts("  expert=node"); mo_putdec(expert);
+    }
 
     UB result_class;
 
     if (expert == drpc_my_node || drpc_my_node == 0xFF) {
-        /* ローカル推論 */
-        B input[MLP_IN] = { (B)temp, (B)hum, (B)press, (B)light };
-        result_class = mlp_forward(input);
-        mo_puts("  [local]\r\n");
+        /* ローカル: 返答は *同じ* dtr forward の argmax (手書き MLP は不使用)。 */
+        result_class = learned_class;
+        if (!moe_quiet) mo_puts("  [local]\r\n");
     } else {
-        /* リモート推論 (DRPC) */
+        /* リモート: expert ノードが *同じ G22-ゴシップ学習脳 (dtr)* を回す
+         * (drpc DRPC_CALL_INFER は dtr_classify; 手書き MLP は live path から
+         *  排除済み)。タイムアウト時はローカルの learned_class へフォールバック。 */
         W packed = SENSOR_PACK(temp, hum, press, light);
         UB cls = 0;
         ER er = dtk_infer(expert, packed, &cls, 800);
         if (er == E_OK) {
             result_class = cls;
-            mo_puts("  [remote] class="); mo_putdec(cls); mo_puts("\r\n");
+            if (!moe_quiet) { mo_puts("  [remote] class="); mo_putdec(cls); mo_puts("\r\n"); }
         } else {
-            /* フォールバック: ローカル推論 */
-            B input[MLP_IN] = { (B)temp, (B)hum, (B)press, (B)light };
-            result_class = mlp_forward(input);
-            mo_puts("  [fallback] class="); mo_putdec(result_class); mo_puts("\r\n");
+            result_class = learned_class;
+            if (!moe_quiet) { mo_puts("  [fallback] class="); mo_putdec(result_class); mo_puts("\r\n"); }
         }
     }
 
     my_total++;
 
-    /* ── G17 + G38: 思考→行動を、*学習した確信* でゲートする ────────────────
-     * G17 は「最も効く専門家の結論」を §8 反射層へ繋いだが、confidence は
-     * 0xFF 固定 = 死んだゲート (常に発火) だった = 低確信の誤推論でも反射が
-     * 暴発する (G34)。
-     *
-     * G38 (本丸 — 学習→守るの主アロー): 協調学習される 635-param Transformer
-     * (dtr; gossip_learn が G22 で全網平均する本体) に *同じ入力* を通し、その
-     * softmax から
-     *   learned_class = argmax           … 脅威の判断そのものを学習モデルへ接地
-     *   confidence    = max-prob × 100   … 実在の確信度で反射ゲートを開閉
-     * を取り出して反射層へ渡す。低確信 (未学習/曖昧) な入力は反射を発火させず、
-     * 高確信の脅威クラスだけが決然と発火する。= 群れが学べば守りが良くなる。
-     * 反射の脅威軸は温度バケツ + 5s タイマだけでなく、この学習信号で駆動される。 */
-    B   linput[DTR_SEQ_LEN] = { (B)temp, (B)hum, (B)press, (B)light };
-    float lprobs[DTR_OUT_DIM];
-    dtr_forward_probs(linput, lprobs);
-    UB    learned_class = 0;
-    float lmx = lprobs[0];
-    for (INT c = 1; c < DTR_OUT_DIM; c++)
-        if (lprobs[c] > lmx) { lmx = lprobs[c]; learned_class = (UB)c; }
-    INT confi = (INT)(lmx * 100.0f + 0.5f);     /* REAL max-softmax, 0..100 */
-    if (confi < 0)   confi = 0;
-    if (confi > 100) confi = 100;
-    mo_puts("[moe] learned cls="); mo_putdec(learned_class);
-    mo_puts(" conf="); mo_putdec((UW)confi);
-    mo_puts("% (gates reflex; was dead 0xFF)\r\n");
+    /* ── G17 + G38 + 本丸: 思考→行動を *同じ学習脳の確信* でゲートする ──────
+     * learned_class / confi は上の唯一の forward から取った値そのもの。
+     * 低確信 (未学習/曖昧) な入力は反射を発火させず、高確信の脅威クラスだけが
+     * 決然と発火する。= 群れが学べば守りが良くなる。 */
+    if (!moe_quiet) {
+        mo_puts("[moe] learned cls="); mo_putdec(learned_class);
+        mo_puts(" conf="); mo_putdec((UW)confi);
+        mo_puts("% (one brain: gate==returned==guard from one dtr forward)\r\n");
+    }
     reflex_on_inference(learned_class, (UB)confi, drpc_my_node);
+
+    /* 三者を記録 (self-test の [onebrain-unified] が等値を検証)。
+     * ローカル経路では returned==learned_class==gate_class。 */
+    ob_last_returned   = result_class;
+    ob_last_gate       = gate_class;
+    ob_last_reflex_cls = learned_class;
+    ob_last_conf       = (UB)confi;
 
     return result_class;
 }
@@ -991,8 +1044,280 @@ static INT st_test_protect(void)
     return fails;
 }
 
-/* 公開エントリ: 5 本の性質テストを順に走らせ、合計 fail 数を返す。
- * shell `moe test` から呼ばれ、CI は各 PASS 行を grep する。 */
+/* ================================================================== */
+/* 本丸 (wave 18) — ONE BRAIN property tests ([onebrain-*])             */
+/*                                                                     */
+/* docs/review-2026-06-three-brains.md: moe_infer は三つの違う脳で三つの  */
+/* 違うことを言っていた — ルーティング (温度 if 梯子)・返答 (手書き MLP   */
+/* 定数)・守り (学習 dtr)。本テスト群は、いまそれらが *同じ 1 回の dtr     */
+/* forward* から出ること、4 チャネルすべてが効くこと、live path に手書き   */
+/* MLP が居ないこと、そして集合学習 (G22) が *返答* 精度を持ち上げること   */
+/* を数で守る。すべて単機 (drpc_my_node==0xFF) の純ローカル計算。dtr 重みは */
+/* save/restore して既存 demo を壊さない。                              */
+/* ================================================================== */
+
+/* ── 決定的データセット (gl と同族: latent temp -> 3 class, distractor +
+ * ラベルノイズ。temp/hum/light が情報を持ち press は純ノイズ)。static で
+ * task stack を汚さない。 */
+#define OB_N      150
+#define OB_TRAIN  120
+#define OB_TEST  (OB_N - OB_TRAIN)
+#define OB_NCLS     3
+#define OB_SEED  0x0BE12018UL
+
+static B  ob_x[OB_N][DTR_SEQ_LEN];
+static UB ob_y[OB_N];
+static UB ob_ds_ready = 0;
+static UW ob_rng;
+static UW  ob_rand(void){ ob_rng = ob_rng*1664525UL + 1013904223UL; return (ob_rng>>16)&0x7FFF; }
+static INT ob_uni(INT lo, INT hi){ return lo + (INT)(ob_rand() % (UW)(hi-lo+1)); }
+static INT ob_noise(INT s){ INT v=0; for(INT i=0;i<4;i++) v+=ob_uni(-s,s); return v/2; }
+static B   ob_clamp(INT v){ if(v>127)v=127; if(v<-128)v=-128; return (B)v; }
+
+static void ob_ds_init(void)
+{
+    if (ob_ds_ready) return;
+    ob_rng = OB_SEED;
+    for (INT i = 0; i < OB_N; i++) {
+        UB c = (UB)(i % OB_NCLS);
+        INT latent = (c==0) ? ob_uni(-50,24) : (c==1) ? ob_uni(25,69) : ob_uni(70,120);
+        INT temp  = latent + ob_noise(12);
+        INT hum   = 60 - latent/2 + ob_noise(20);
+        INT press = ob_uni(-30, 90);              /* 純ノイズ (distractor)  */
+        INT light = 10 + 30*(INT)c + ob_noise(35);
+        ob_x[i][0]=ob_clamp(temp); ob_x[i][1]=ob_clamp(hum);
+        ob_x[i][2]=ob_clamp(press); ob_x[i][3]=ob_clamp(light);
+        ob_y[i] = c;
+    }
+    ob_ds_ready = 1;
+}
+
+/* RETURNED-class accuracy on held-out under currently-loaded weights.
+ * 単機では moe_infer の返り値 == dtr_classify (= [onebrain-unified] が
+ * 証明する等値) なので、ここでは副作用のない dtr_classify で測る。 */
+static float ob_returned_acc(void)
+{
+    UW correct = 0;
+    for (INT i = OB_TRAIN; i < OB_N; i++)
+        if (dtr_classify(ob_x[i]) == ob_y[i]) correct++;
+    return (float)correct * 100.0f / (float)OB_TEST;
+}
+
+/* ── [onebrain-unified] — 返答 == ルーティング == 守り、すべて 1 forward ── */
+static INT st_test_onebrain_unified(void)
+{
+    INT fails = 0;
+    static float saved[DTR_WEIGHT_FLOATS];
+    dtr_weights_get(saved);
+    dtr_reinit_weights(0x1B0A12FCUL);          /* 決定的モデル */
+
+    static const B probe[4][DTR_SEQ_LEN] = {
+        { -40,  50,  10, -50 },
+        {  10, -20,   0,  20 },
+        {  90, -60,  30,  80 },
+        {  60,   0, -20,  40 },
+    };
+    moe_quiet = 1;
+    BOOL rprev = reflex_set_enabled(0);   /* 反射の副作用を止める (経験を汚さない) */
+    for (INT i = 0; i < 4; i++) {
+        UB ret = moe_infer(probe[i][0], probe[i][1], probe[i][2], probe[i][3]);
+        UB r2, g, rx, cf; moe_infer_last(&r2, &g, &rx, &cf);
+        UB d = dtr_classify(probe[i]);
+        mo_puts("[onebrain-unified] in"); mo_putdec((UW)i);
+        mo_puts(" returned="); mo_putdec(ret);
+        mo_puts(" routed=");   mo_putdec(g);
+        mo_puts(" guarded=");  mo_putdec(rx);
+        mo_puts(" dtr=");      mo_putdec(d);
+        mo_puts(" conf=");     mo_putdec(cf); mo_puts("%\r\n");
+        if (!(ret == r2 && ret == g && g == rx && rx == d)) {
+            mo_puts("[onebrain-unified] FAIL three decisions are not one\r\n");
+            fails++;
+        }
+    }
+    reflex_set_enabled(rprev);
+    moe_quiet = 0;
+    dtr_weights_set(saved);
+    if (fails == 0)
+        mo_puts("[onebrain-unified] PASS (returned==routed==guarded, all one dtr forward)\r\n");
+    else
+        mo_puts("[onebrain-unified] FAIL\r\n");
+    return fails;
+}
+
+/* ── [onebrain-channels] — 4 チャネルすべてが出力を動かす ((void) 廃止) ── */
+static INT st_test_onebrain_channels(void)
+{
+    INT fails = 0;
+    static float saved[DTR_WEIGHT_FLOATS];
+    dtr_weights_get(saved);
+    dtr_reinit_weights(0x0C4A11E5UL);          /* 決定的モデル */
+
+    const char *nm[4] = { "temp", "hum", "press", "light" };
+    B base[DTR_SEQ_LEN] = { 0, -10, 0, -20 };  /* +90 摂動で範囲内に収まる */
+    float p0[DTR_OUT_DIM]; dtr_forward_probs(base, p0);
+
+    INT moved_nontemp = 0;
+    for (INT ch = 0; ch < 4; ch++) {
+        B x[DTR_SEQ_LEN]; for (INT k = 0; k < 4; k++) x[k] = base[k];
+        x[ch] = (B)(base[ch] + 90);
+        float p[DTR_OUT_DIM]; dtr_forward_probs(x, p);
+        float d = 0.0f;
+        for (INT c = 0; c < DTR_OUT_DIM; c++) {
+            float e = p[c] - p0[c]; if (e < 0) e = -e; if (e > d) d = e;
+        }
+        mo_puts("[onebrain-channels] perturb "); mo_puts(nm[ch]);
+        mo_puts(" -> max|dprob|x1000="); mo_putdec((UW)(d*1000.0f + 0.5f));
+        mo_puts("\r\n");
+        if (d <= 0.0f) {
+            mo_puts("[onebrain-channels] FAIL channel ignored by gate\r\n"); fails++;
+        }
+        if (ch != 0 && d > 0.001f) moved_nontemp++;
+    }
+    dtr_weights_set(saved);
+    /* 旧 if 梯子は hum/press/light を (void) で捨てていた。3 つすべてが
+     * 出力を動かせば、その破棄は live path から消えている。 */
+    if (moved_nontemp < 3) {
+        mo_puts("[onebrain-channels] FAIL not all of hum/press/light affect the gate\r\n");
+        fails++;
+    }
+    if (fails == 0)
+        mo_puts("[onebrain-channels] PASS (all 4 channels move the gate; the (void) discard is gone)\r\n");
+    else
+        mo_puts("[onebrain-channels] FAIL\r\n");
+    return fails;
+}
+
+/* ── [onebrain-nomlp] — live path は学習 dtr に従い、手書き MLP に従わない ── */
+static INT st_test_onebrain_nomlp(void)
+{
+    INT fails = 0;
+    ob_ds_init();
+    static float saved[DTR_WEIGHT_FLOATS];
+    dtr_weights_get(saved);
+    dtr_reinit_weights(0x2C0DE777UL);          /* 決定的モデル */
+
+    /* 手書き MLP (ai_job.c の定数) と学習 dtr が *食い違う* 入力を探し、
+     * moe_infer がどちらに従うかを見る。live path が dtr なら必ず dtr に従う。 */
+    INT found = 0;
+    moe_quiet = 1;
+    BOOL rprev = reflex_set_enabled(0);   /* 反射の副作用を止める (経験を汚さない) */
+    for (INT i = 0; i < OB_N && !found; i++) {
+        UB md = mlp_forward(ob_x[i]);
+        UB dd = dtr_classify(ob_x[i]);
+        if (md != dd) {
+            UB ret = moe_infer(ob_x[i][0], ob_x[i][1], ob_x[i][2], ob_x[i][3]);
+            mo_puts("[onebrain-nomlp] disagree at i="); mo_putdec((UW)i);
+            mo_puts(": handwritten-MLP="); mo_putdec(md);
+            mo_puts(" learned-dtr=");      mo_putdec(dd);
+            mo_puts(" moe_infer=");        mo_putdec(ret); mo_puts("\r\n");
+            if (!(ret == dd && ret != md)) {
+                mo_puts("[onebrain-nomlp] FAIL live path followed the handwritten MLP\r\n");
+                fails++;
+            }
+            found = 1;
+        }
+    }
+    reflex_set_enabled(rprev);
+    moe_quiet = 0;
+    dtr_weights_set(saved);
+    if (!found) {
+        mo_puts("[onebrain-nomlp] FAIL no MLP/dtr disagreement found to distinguish the brains\r\n");
+        fails++;
+    }
+    if (fails == 0)
+        mo_puts("[onebrain-nomlp] PASS (live path follows the learned dtr, not ai_job.c's handwritten-constant MLP)\r\n");
+    else
+        mo_puts("[onebrain-nomlp] FAIL\r\n");
+    return fails;
+}
+
+/* ── [onebrain-accuracy] — 集合学習 (G22) が *返答* 精度を持ち上げる ─────
+ * これがレビューの核: かつて学習 (G22) が鍛える dtr を moe_infer は *返さ*
+ * なかった (返したのは手書き MLP)。いま返答は dtr なので、群れが学べば
+ * 返答が良くなる。decentralized・no-central・leave-one-class-out shard の
+ * ゴシップ平均 (gl_merge) で「群れ」を作り、未学習と比較する。 */
+static B  ob_sh_x[OB_NCLS][OB_TRAIN][DTR_SEQ_LEN];
+static UB ob_sh_y[OB_NCLS][OB_TRAIN];
+static UW ob_sh_n[OB_NCLS];
+static float ob_model[OB_NCLS][DTR_WEIGHT_FLOATS];
+static float ob_avg[DTR_WEIGHT_FLOATS];
+
+#define OB_INIT_SEED 0xC0FFEE18UL
+#define OB_ROUNDS    40
+#define OB_LOCAL      4
+
+static void ob_build_shards(void)
+{
+    for (UW k = 0; k < OB_NCLS; k++) {
+        UW m = 0;
+        for (INT i = 0; i < OB_TRAIN; i++) {
+            if (ob_y[i] == (UB)(k % OB_NCLS)) continue;   /* leave-one-class-out */
+            for (INT t = 0; t < DTR_SEQ_LEN; t++) ob_sh_x[k][m][t] = ob_x[i][t];
+            ob_sh_y[k][m] = ob_y[i]; m++;
+        }
+        ob_sh_n[k] = m;
+    }
+}
+
+static INT st_test_onebrain_accuracy(void)
+{
+    INT fails = 0;
+    ob_ds_init();
+    ob_build_shards();
+    static float saved[DTR_WEIGHT_FLOATS];
+    dtr_weights_get(saved);
+
+    /* UNLEARNED: 群れが出発する共有 seed そのもの。 */
+    dtr_reinit_weights(OB_INIT_SEED);
+    float acc_u = ob_returned_acc();
+
+    /* LEARNED: decentralized no-central ゴシップ (各ノードは disjoint shard
+     * だけ見る = 単独では全クラスを学べない。gl_merge で peer-symmetric 平均)。 */
+    for (UW k = 0; k < OB_NCLS; k++) {
+        dtr_reinit_weights(OB_INIT_SEED);
+        dtr_weights_get(ob_model[k]);
+    }
+    UW total = OB_ROUNDS * OB_LOCAL;
+    for (UW r = 0; r < OB_ROUNDS; r++) {
+        for (UW k = 0; k < OB_NCLS; k++) {
+            dtr_weights_set(ob_model[k]);
+            for (UW s = 1; s <= OB_LOCAL; s++) {
+                UW step = r * OB_LOCAL + s;
+                float lr = (step <= total/2) ? 0.10f : 0.05f;
+                (void)dtr_train_batch(ob_sh_x[k], ob_sh_y[k], ob_sh_n[k], lr);
+            }
+            dtr_weights_get(ob_model[k]);
+        }
+        const float *ptrs[OB_NCLS];
+        for (UW k = 0; k < OB_NCLS; k++) ptrs[k] = ob_model[k];
+        gl_merge(ob_avg, ptrs, OB_NCLS, DTR_WEIGHT_FLOATS);   /* no-central merge */
+        for (UW k = 0; k < OB_NCLS; k++)
+            for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) ob_model[k][i] = ob_avg[i];
+    }
+    dtr_weights_set(ob_model[0]);
+    float acc_l = ob_returned_acc();
+
+    dtr_weights_set(saved);
+
+    mo_puts("[onebrain-accuracy] moe_infer RETURNED-class accuracy on held-out"
+            " (returned==dtr argmax; see [onebrain-unified]):\r\n");
+    mo_puts("[onebrain-accuracy]   UNLEARNED=");  mo_putdec((UW)(acc_u + 0.5f));
+    mo_puts("%   G22-LEARNED=");                  mo_putdec((UW)(acc_l + 0.5f));
+    mo_puts("%   (3 nodes, leave-one-class-out shards, no-central gossip)\r\n");
+    if (!(acc_l > acc_u + 5.0f)) {
+        mo_puts("[onebrain-accuracy] FAIL collective learning did not lift the RETURNED accuracy\r\n");
+        fails++;
+    }
+    if (fails == 0)
+        mo_puts("[onebrain-accuracy] PASS (swarm learns -> the RETURNED answer gets better;"
+                " was the brain the output never read)\r\n");
+    else
+        mo_puts("[onebrain-accuracy] FAIL\r\n");
+    return fails;
+}
+
+/* 公開エントリ: §7/§8/§2 性質テスト + 本丸 ONE BRAIN テストを順に走らせ、
+ * 合計 fail 数を返す。shell `moe test` から呼ばれ、CI は各 PASS 行を grep。 */
 INT moe_self_test(void)
 {
     INT fails = 0;
@@ -1002,6 +1327,11 @@ INT moe_self_test(void)
     fails += st_test_oscillation();
     fails += st_test_concurrent();
     fails += st_test_protect();
+    mo_puts("[moe-test] ==== 本丸 ONE BRAIN tests (wave 18 — three brains -> one) ====\r\n");
+    fails += st_test_onebrain_unified();
+    fails += st_test_onebrain_channels();
+    fails += st_test_onebrain_nomlp();
+    fails += st_test_onebrain_accuracy();
     if (fails == 0) mo_puts("[moe-test] ALL PASS\r\n");
     else { mo_puts("[moe-test] FAILURES="); mo_putdec((UW)fails);
            mo_puts("\r\n"); }

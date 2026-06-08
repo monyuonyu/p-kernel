@@ -440,6 +440,19 @@ void reflex_task(INT stacd, void *exinf)
 /* 初期化                                                              */
 /* ------------------------------------------------------------------ */
 
+/* テスト隔離用 (wave 18): reflex の有効/無効を切り替え、旧値を返す。
+ * moe.c の [onebrain-*] が live な moe_infer を回す際、reflex の副作用
+ * (guard_class_exp 等; g38-guard-feeds が読む経験) を汚さないよう一時的に
+ * 無効化してから復元するために使う。moe_infer は無効でも learned_class を
+ * reflex_on_inference へ *渡す* (= ob 観測値) ので、ONE BRAIN の等値検証は
+ * 損なわれない。 */
+BOOL reflex_set_enabled(BOOL on)
+{
+    BOOL prev = (BOOL)enabled;
+    enabled = on ? 1 : 0;
+    return prev;
+}
+
 void reflex_init(void)
 {
     enabled        = 1;

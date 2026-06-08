@@ -11,9 +11,18 @@
  *        オーバーサンプルした訓練集合で学習し、そのクラスの検出器になる。
  *    (b) 別 seed 初期化 (dtr_reinit_weights) — 各専門家は別の初期重みから
  *        学習し、自然に別解へ収束する。
- *  ルーティングは moe の §7 ゲート (moe_gate_predict) を流用。入力のクラス帯
- *  に対応する専門家だけを疎に発火させる (専門外は発火しない)。専門家が
+ *  ルーティングは「訓練バンド (= 温度で定義される入力領域)」判定 (sp_band)。
+ *  入力の領域に対応する専門家だけを疎に発火させる (専門外は発火しない)。専門家が
  *  不在ならジェネラリストへ迂回 = それ自体が縮退 (道B のルーター迂回)。
+ *
+ *  ── ONE BRAIN (wave 18) honest note ──────────────────────────────────
+ *  spec のゲートは *バンド (入力領域)* を当てる関数で、出力クラス y を当てる
+ *  分類器ではない (sp_ds_init: y=(base+band)%3 ≠ band)。live な moe ゲート
+ *  (moe_gate_predict) は wave 18 で学習 dtr の argmax = *クラス* 予測になった。
+ *  spec をその dtr ゲートに載せると「予測したいクラスで専門家をルーティング
+ *  する」循環になり、しかも専門家学習中は dtr 重みが churn して領域分割が
+ *  壊れる。よって spec は専用のバンド分割器 sp_band を持つ (両者は別関数で
+ *  あることが正しい)。docs/review-2026-06-three-brains.md。
  *
  *  arch/common 規律: <string.h> 不使用、固定幅型、大ローカルを task stack に
  *  置かない (専門家重み・データ集合はすべて static)、出力は sio_send_frame。
@@ -79,7 +88,7 @@ static void sp_putdec_w(UW v, INT width)
 /*   学べばよい (= dtr の素タスク同等の易しさ) ので、その領域で必ず勝つ。 */
 /* この *対称* な設計で 3 専門家すべてが generalist を上回り、join が単調に */
 /* 伸びる (= 監査 §4「混合 > 同一コピー」を数で成立)。                    */
-/* ゲート (moe_gate_predict = 温度帯) はほぼ正確になるよう温度ノイズは小。 */
+/* 領域ゲート (sp_band = 温度帯) はほぼ正確になるよう温度ノイズは小。 */
 /* 規則には特徴ノイズを乗せ完全分離はしない (Bayes 誤差 > 0 = 正直)。     */
 /* ------------------------------------------------------------------ */
 
@@ -119,6 +128,19 @@ static UB sp_band3(INT q, INT lo, INT hi)
 {
     if (q < lo) return 0;
     if (q < hi) return 1;
+    return 2;
+}
+
+/* spec の領域ゲート: 入力を「訓練バンド (= 温度で定義される入力領域)」へ
+ * 分割する。sp_ds_init で band は温度で構築される (band0 <20 / band1 20-34 /
+ * band2 >=35) ので、温度しきい値での分割が *この合成データの領域構造に対して
+ * 正しい* (= 情報の破棄ではない)。これは live のクラス分類ゲート (moe_infer の
+ * 学習 dtr) とは別関数 — 冒頭 honest note 参照。 */
+static UB sp_band(B temp, B hum, B press, B light)
+{
+    (void)hum; (void)press; (void)light;   /* band は温度で定義される領域ラベル */
+    if (temp < 20) return 0;
+    if (temp < 35) return 1;
     return 2;
 }
 
@@ -180,14 +202,14 @@ static B  sp_trx[SP_TRAIN][DTR_SEQ_LEN];
 static UB sp_try[SP_TRAIN];
 
 /* specialty (0xFF=全 band) の routed shard を組み立て、長さを返す。
- * routing は本番と同じ §7 ゲート (moe_gate_predict) — 専門家は自分が実際に
- * 発火させられる入力分布だけで学ぶ (canonical MoE)。 */
+ * routing は spec の領域ゲート sp_band — 専門家は自分が実際に発火させられる
+ * 入力領域 (温度バンド) の分布だけで学ぶ (canonical MoE)。 */
 static UW sp_build_trainset(UB specialty)
 {
     UW m = 0;
     for (INT i = 0; i < SP_TRAIN; i++) {
         if (specialty != 0xFF) {
-            UB g = moe_gate_predict(sp_x[i][0], sp_x[i][1], sp_x[i][2], sp_x[i][3]);
+            UB g = sp_band(sp_x[i][0], sp_x[i][1], sp_x[i][2], sp_x[i][3]);
             if (g != specialty) continue;
         }
         for (INT t = 0; t < DTR_SEQ_LEN; t++) sp_trx[m][t] = sp_x[i][t];
@@ -241,7 +263,7 @@ static float sp_eval_team(UW active, UW dom_correct[SP_BANDS],
     INT last_e = -1;
     for (INT i = SP_TRAIN; i < SP_N; i++) {
         const B *x = sp_x[i];
-        UB gate = moe_gate_predict(x[0], x[1], x[2], x[3]);   /* §7 ゲート */
+        UB gate = sp_band(x[0], x[1], x[2], x[3]);   /* spec 領域ゲート */
         INT e   = sp_route(active, gate);
         if (e != last_e) { dtr_weights_set(sp_ew[e]); last_e = e; }
         float probs[DTR_OUT_DIM];
