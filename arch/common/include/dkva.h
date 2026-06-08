@@ -78,7 +78,13 @@
  * rsum を確定し、resp と同じ round-robin 時間多重で rsum/<me> へ再発行する。
  * これで「同時に多数の問いが region をまたいで並行に集約される」(NO 中央窓・
  * NO グローバル順序)。締切はループ周期 (10ms) 単位の反復回数で持つ。 */
-#define DKVA_RSUM_WIN_ITERS 20  /* per-origin 集約締切 (×10ms ループ ≒ 200ms 上限) */
+/* per-origin 集約の straggler 安全キャップ (×10ms ループ ≒ 200ms 上限)。
+ * ★これは通常完了経路ではない: 集約は quorum_core() が真になった瞬間 (期待した
+ * region メンバの partial が出揃った瞬間) に確定する (event/arrival 駆動)。この
+ * キャップは「生存メンバが永遠に黙る」異常時にだけ発火する保険 (liveness)。
+ * [g13-arrival] 自己テストが「通常経路は arrival 発火・窓には padding されない」を
+ * 数で証明する (FAST: N 集約が ≪ N×CAP で完了; CAP: never-arrive のみが窓で確定)。*/
+#define DKVA_RSUM_WIN_ITERS 20
 
 /* モデル次元 (dtr.h と合わせる) */
 #define DKVA_SEQ   4   /* トークン数    */
@@ -156,6 +162,16 @@ void dkva_stat(void);
  * 戻り値 = 失敗数 (0 で全 PASS)。
  */
 INT dkva_self_test(void);
+
+/*
+ * G13 distinguishing self-test (純ローカル): coordinator の region 集約は固定窓を
+ * 待ち切らず、期待寄与が ARRIVE した瞬間に確定する (event/quorum 駆動) ことを数で
+ * 証明する。固定窓 (DKVA_RSUM_WIN_ITERS) は never-arrive な straggler 用の安全
+ * キャップであり通常経路ではない、を A1/A2/A3 で区別する。shell `dkva test` から
+ * dkva_self_test と並べて呼び、CI が "[g13-arrival] PASS" を grep する。
+ * 戻り値 = 失敗数 (0 で全 PASS)。
+ */
+INT dkva_arrival_test(void);
 
 /*
  * シェルコマンド "dkva [infer [a b c d]]"。

@@ -105,6 +105,12 @@ jobs:
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
           grep -aF '[g13-parallel] PASS' selftest.log
+          # G13 (gap-ledger): cross-region inference is NOT gated by a fixed
+          # blocking window. Aggregation finalizes on ARRIVAL (quorum_core, the
+          # same predicate the live coordinator uses); the fixed window is a
+          # straggler-only safety cap. N concurrent aggregations complete in
+          # << N*window; the cap fires only for a never-arriving live member.
+          grep -aF '[g13-arrival] PASS' selftest.log
           # R3 (non-trivial thought): in-context associative recall. The SAME
           # dtr kernels (dt_linear/dt_softmax/LayerNorm fwd+bwd) learn a function
           # no hand-written if can win at — the dictionary is resampled every
@@ -175,6 +181,8 @@ jobs:
           grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
           grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
           grep -aF '[g13-parallel] PASS' selftest.log
+          # G13 cross-region inference not gated by a fixed window (arrival-driven)
+          grep -aF '[g13-arrival] PASS' selftest.log
           # G23 node ceiling > 32 (gap-ledger): >32-participant gossip merge + fold
           grep -aF '[g23-ceiling] PASS' selftest.log
 

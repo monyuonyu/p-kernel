@@ -302,8 +302,22 @@ static void cagg_start(UB o, const DKVA_Q_PKT *qpkt, const DKVA_RESP_PKT *self_p
     cagg_phase[o] = 1;                    /* 収集開始 */
 }
 
+/* G13 完了判定 (arrival/quorum) — 純関数。origin の期待集合 exp[] のうち、
+ * まだ未着 (got==0) かつ生存 (alive==1) のメンバが 1 つでも在れば「未達」。
+ * 全ての期待メンバが「着いた or もう生きていない (DEAD)」なら quorum 成立。
+ * これが coordinator 集約の *通常完了経路* (最後の必要寄与が ARRIVE した瞬間に
+ * 真になる)。cagg_step の実 finalize も [g13-arrival] 自己テストも同じこの関数を
+ * 使うので、テストが守るのは production の完了判定そのものになる。
+ * 中央調停もグローバル順序も無い — local な exp/got/alive だけを読む (§7)。 */
+static BOOL quorum_core(const UB *exp, const UB *got, const UB *alive)
+{
+    for (UB n = 0; n < DNODE_MAX; n++)
+        if (exp[n] && !got[n] && alive[n]) return FALSE;   /* 生存メンバ未着 */
+    return TRUE;
+}
+
 /* responder ループ毎反復で 1 回呼ぶ。活性な全 origin の収集を少しずつ進め、
- * 出揃い or 締切で確定 (phase 2 へ)。何もブロックしない。 */
+ * 出揃い (quorum_core) or straggler キャップで確定 (phase 2 へ)。何もブロックしない。*/
 static void cagg_step(void)
 {
     BOOL any = FALSE;
@@ -311,6 +325,12 @@ static void cagg_step(void)
     if (!any) return;
 
     region_recompute();   /* 全 origin で 1 回だけ */
+    /* G13: SWIM 生存マスク (DEAD は待たない = 死を待たない)。期待メンバが
+     * 「未着 かつ 生存」の間だけ待つ。cagg_step も [g13-arrival] 自己テストも
+     * 同じ quorum_core(exp,got,alive) を完了判定に使う。 */
+    UB alive[DNODE_MAX];
+    for (UB n = 0; n < DNODE_MAX; n++)
+        alive[n] = (UB)(dnode_table[n].state != DNODE_DEAD);
     for (UB o = 0; o < DNODE_MAX; o++) {
         if (cagg_phase[o] != 1) continue;
 
@@ -329,23 +349,24 @@ static void cagg_step(void)
             }
         }
 
-        /* 期待メンバのうち未着で、かつ SWIM が DEAD と判定したものは待たない
-         * (死を待たない; その欠損は requester 側の degraded(k/n) が正直に計上)。 */
-        INT pending = 0;
-        for (UB n = 0; n < DNODE_MAX; n++) {
-            if (cagg_exp[o][n] && !cagg_got[o][n] &&
-                dnode_table[n].state != DNODE_DEAD) pending++;
-        }
+        /* 通常完了経路 = arrival/quorum: 期待メンバの partial が出揃った瞬間
+         * (= 最後の必要寄与が ARRIVE した瞬間) に true。固定窓を待ち切らない。
+         * 未着で DEAD と判定済みのものは待たない (死を待たない; その欠損は
+         * requester 側の degraded(k/n) が正直に計上)。 */
+        BOOL by_arrival = quorum_core(cagg_exp[o], cagg_got[o], alive);
 
         cagg_dl[o]--;
-        if (pending == 0 || cagg_dl[o] <= 0) {
+        /* cagg_dl<=0 は never-arrive な straggler 用の安全キャップのみ。
+         * これは通常経路ではなく、生存メンバが永遠に黙ったときの保険 (liveness)。*/
+        if (by_arrival || cagg_dl[o] <= 0) {
             /* region 要約を確定 → round-robin 再発行フェーズへ */
             cagg[o].n_entries = (UB)(cagg_entries[o] > 255 ? 255 : cagg_entries[o]);
             cagg_phase[o] = 2;
             cagg_rttl[o]  = DKVA_ANSWER_ITERS;
             dk_puts("[dkva] region summary published  rid="); dk_putdec(drpc_my_node);
             dk_puts("  origin="); dk_putdec(o);
-            dk_puts("  entries="); dk_putdec(cagg_entries[o]); dk_puts("\r\n");
+            dk_puts("  entries="); dk_putdec(cagg_entries[o]);
+            dk_puts(by_arrival ? "  (arrival)\r\n" : "  (straggler-cap)\r\n");
         }
     }
 }
@@ -928,6 +949,115 @@ INT dkva_self_test(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* G13 distinguishing self-test: arrival-driven vs window-padded        */
+/*                                                                     */
+/* §5「同時多発・並行分散」の TIMING 軸を「数で」守る。[g13-parallel] が    */
+/* 集約「値」の不変量 (順序非依存・origin 非汚染・同時数不変) を守るのに対し、 */
+/* これは集約「完了の発火条件」を守る: coordinator の region 集約は固定 200ms */
+/* 窓を待ち切らず、期待した寄与が ARRIVE した瞬間に確定する (event/quorum 駆動)。*/
+/* 固定窓 (DKVA_RSUM_WIN_ITERS) は never-arrive な straggler 用の安全キャップ    */
+/* であって通常経路ではない、を区別して証明する (parallel-infer-live が部分的に  */
+/* しか突いていなかった残差を閉じる)。                                          */
+/*                                                                     */
+/* ★ live coordinator (cagg_step) が finalize 判定に使うのと *同じ* quorum_core */
+/* を駆動するので、PASS は production の完了経路が arrival 駆動である証拠になる。 */
+/* 純ローカル (network/kdds 非依存) なのでベアメタルでも走る。値も整数で厳密。  */
+/* ------------------------------------------------------------------ */
+
+INT dkva_arrival_test(void)
+{
+    INT fails = 0;
+    const INT CAP = DKVA_RSUM_WIN_ITERS;   /* straggler 安全キャップ (iters) */
+    const INT N   = 8;                     /* 同時に集約する cross-region 数 */
+    const INT M   = 3;                     /* origin あたりの期待メンバ数    */
+
+    /* test-only state (タスクスタックを汚さない static)。各 origin は cagg と
+     * 同形の exp[]/got[] を持ち、live と同じ quorum_core で完了判定する。 */
+    static UB  exp[16][DNODE_MAX];
+    static UB  got[16][DNODE_MAX];
+    static UB  alive[DNODE_MAX];
+    static INT dl[16];
+    static UB  done[16];
+    static INT fin_iter[16];
+    static UB  fin_by_cap[16];
+
+    dk_puts("[g13-arrival] ==== §5 arrival- vs window-driven completion ====\r\n");
+    dk_puts("[g13-arrival] cap(window)="); dk_putdec((UW)CAP);
+    dk_puts(" iters;  N="); dk_putdec((UW)N);
+    dk_puts(" concurrent aggregations, M="); dk_putdec((UW)M);
+    dk_puts(" members each\r\n");
+
+    for (UB n = 0; n < DNODE_MAX; n++) alive[n] = 1;   /* 全メンバ生存 */
+    for (INT o = 0; o < N; o++) {
+        for (UB n = 0; n < DNODE_MAX; n++) { exp[o][n] = 0; got[o][n] = 0; }
+        for (INT m = 0; m < M; m++) exp[o][1 + o * M + m] = 1;   /* 別 slot */
+        dl[o] = CAP; done[o] = 0; fin_iter[o] = -1; fin_by_cap[o] = 0;
+    }
+
+    /* --- FAST PATH: 全メンバの partial が iter 1 で ARRIVE する -------- */
+    /* responder ループを模した driver。完了判定は live と同じ quorum_core。 */
+    INT total_iters = 0, all_done = 0;
+    for (INT it = 1; it <= CAP && !all_done; it++) {
+        total_iters++;
+        if (it == 1)                       /* 入力が揃って到着 */
+            for (INT o = 0; o < N; o++)
+                for (UB n = 0; n < DNODE_MAX; n++) if (exp[o][n]) got[o][n] = 1;
+        all_done = 1;
+        for (INT o = 0; o < N; o++) {
+            if (done[o]) continue;
+            dl[o]--;
+            BOOL by_arrival = quorum_core(exp[o], got[o], alive);   /* 実 finalize 判定 */
+            if (by_arrival || dl[o] <= 0) {
+                done[o] = 1; fin_iter[o] = it; fin_by_cap[o] = (UB)!by_arrival;
+            } else all_done = 0;
+        }
+    }
+    INT max_fin = 0, any_cap = 0, n_done = 0;
+    for (INT o = 0; o < N; o++) {
+        if (done[o]) n_done++;
+        if (fin_iter[o] > max_fin) max_fin = fin_iter[o];
+        if (fin_by_cap[o]) any_cap = 1;
+    }
+    dk_puts("[g13-arrival] FAST: "); dk_putdec((UW)n_done); dk_puts("/");
+    dk_putdec((UW)N); dk_puts(" finalized by ARRIVAL; last at iter ");
+    dk_putdec((UW)max_fin); dk_puts(";  total steps="); dk_putdec((UW)total_iters);
+    dk_puts("  (a fixed-window design would spend "); dk_putdec((UW)(N * CAP));
+    dk_puts(")\r\n");
+    if (n_done == N && !any_cap && max_fin == 1)
+        dk_puts("[g13-arrival] A1 fires-on-arrival    : PASS\r\n");
+    else { fails++; dk_puts("[g13-arrival] A1 fires-on-arrival    : FAIL\r\n"); }
+    /* 総ステップ数が N×CAP より遥かに小さい = 窓に padding されていない証拠。 */
+    if (total_iters < N * CAP && total_iters <= N)
+        dk_puts("[g13-arrival] A2 not-window-padded   : PASS\r\n");
+    else { fails++; dk_puts("[g13-arrival] A2 not-window-padded   : FAIL\r\n"); }
+
+    /* --- STRAGGLER CAP: 1 メンバが永遠に着かず、かつ生存し続ける ------- */
+    /* このときだけ window/CAP が完了させる (= 通常経路ではなく安全弁である)。 */
+    for (UB n = 0; n < DNODE_MAX; n++) { exp[0][n] = 0; got[0][n] = 0; }
+    exp[0][5] = 1;                          /* member 5 を期待するが配達しない */
+    alive[5]  = 1;                          /* SWIM も DEAD と言わない        */
+    dl[0] = CAP; done[0] = 0; fin_iter[0] = -1; fin_by_cap[0] = 0;
+    for (INT it = 1; it <= CAP + 8 && !done[0]; it++) {
+        dl[0]--;
+        BOOL by_arrival = quorum_core(exp[0], got[0], alive);
+        if (by_arrival || dl[0] <= 0) {
+            done[0] = 1; fin_iter[0] = it; fin_by_cap[0] = (UB)!by_arrival;
+        }
+    }
+    dk_puts("[g13-arrival] CAP: straggler finalized at iter ");
+    dk_putdec((UW)fin_iter[0]); dk_puts(" by ");
+    dk_puts(fin_by_cap[0] ? "cap" : "arrival"); dk_puts("\r\n");
+    if (done[0] && fin_by_cap[0] && fin_iter[0] == CAP)
+        dk_puts("[g13-arrival] A3 cap-is-straggler-only: PASS\r\n");
+    else { fails++; dk_puts("[g13-arrival] A3 cap-is-straggler-only: FAIL\r\n"); }
+
+    if (fails == 0) dk_puts("[g13-arrival] PASS\r\n");
+    else { dk_puts("[g13-arrival] FAIL  failures="); dk_putdec((UW)fails);
+           dk_puts("\r\n"); }
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
 /* 統計表示                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -985,7 +1115,7 @@ void dkva_cmd(const UB *args, UW len)
         static const char tverb[] = "test";
         INT ti = 0;
         while (tverb[ti] && p + ti < end && (char)p[ti] == tverb[ti]) ti++;
-        if (tverb[ti] == '\0') { dkva_self_test(); return; }
+        if (tverb[ti] == '\0') { dkva_self_test(); dkva_arrival_test(); return; }
     }
 
     /* verb "infer" 以外は統計表示 */
