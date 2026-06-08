@@ -105,6 +105,13 @@ static UW threat_run       = 0;
 static UW win_dwell_sum    = 0;
 static UW win_episodes     = 0;
 
+/* ── G38 第二アロー: 守る → 学習 への観測供給 ─────────────────────────────
+ * guard_class_exp[c] = 反射が「危険」として実際に発火したクラス c の経験回数。
+ * 「近傍が今 守った経験」(どのクラスが脅威だったか) を、協調学習 (gossip_learn)
+ * が *優先度信号* として読む (reflex_threat_experience)。これが §8 の二本目の
+ * 配線: 守った経験が全体の未来の学習を形作る。反射 tick では使わない (供給のみ)。 */
+static UW guard_class_exp[REFLEX_NUM_CLASSES];
+
 /* 学習の可観測性 */
 static UW st_delib      = 0;       /* 熟慮 tick 回数                       */
 static UW st_learn_up   = 0;       /* 効きを上げた回数 (脅威が滞留した)    */
@@ -201,11 +208,18 @@ void reflex_on_inference(UB threat_class, UB confidence, UB src_node)
         threat_run = 0;
     }
 
+    /* G38: アクション表ゲート + 確信度フロアを 1 述語に集約 (reflex_would_fire)。
+     * 学習モデルが低確信 (未学習/曖昧) なら反射は発火しない = 思考が守りを変える。
+     * かつて moe 経路は confidence=0xFF 固定で「常に発火」だった (G34)。いまは
+     * moe_infer が学習モデルの実 max-softmax を渡すので、ここが本当のゲートになる。 */
+    if (!reflex_would_fire(threat_class, confidence)) return;
     UB mask = act_table[threat_class];
-    if (mask == REFLEX_ACT_NONE) return;   /* 通常 class では何もしない */
 
-    /* 確信度ゲート: 低確信の推論では行動しない (0xFF=不明は通す)。 */
-    if (confidence != 0xFF && confidence < REFLEX_CONF_MIN) return;
+    /* G38 第二アロー: 「いまこのクラスを守った」経験を蓄積する。協調学習が
+     * 優先度として読む (reflex_threat_experience)。確信度ゲートを通った =
+     * モデルが本当に危険と判断した発火だけを数える。 */
+    if (threat_class >= 1 && threat_class < REFLEX_NUM_CLASSES)
+        guard_class_exp[threat_class]++;
 
     /* SHIELD は連続 critical が閾値に達するまで保留 (重い行動の慎重化)。 */
     if ((mask & REFLEX_ACT_SHIELD) && danger_streak < REFLEX_SHIELD_STREAK)
@@ -312,6 +326,24 @@ UB reflex_threat_level(void)
 }
 
 UB reflex_learned_conserve(void) { return learned_conserve; }
+
+/* ── G38 主アロー: 反射の発火ゲートの純述語 (状態なし) ───────────────────
+ * reflex_on_inference の判定そのもの (アクション表 + 確信度フロア) を 1 箇所に。
+ * self-test (gossip_learn の [g38-*]) が本番と同じゲートを叩けるよう公開する。 */
+BOOL reflex_would_fire(UB threat_class, UB confidence)
+{
+    if (threat_class >= REFLEX_NUM_CLASSES) return FALSE;
+    if (act_table[threat_class] == REFLEX_ACT_NONE) return FALSE;   /* normal は黙る */
+    if (confidence != 0xFF && confidence < REFLEX_CONF_MIN) return FALSE; /* 低確信 */
+    return TRUE;
+}
+
+/* ── G38 第二アロー: 守った経験 (クラス別発火回数) を学習へ供給する窓口 ──── */
+UW reflex_threat_experience(UB cls)
+{
+    if (cls >= REFLEX_NUM_CLASSES) return 0;
+    return guard_class_exp[cls];
+}
 
 /* ------------------------------------------------------------------ */
 /* G18 熟慮 tick: 経験 (脅威 dwell) から learned_conserve を学習で nudge   */
@@ -421,6 +453,7 @@ void reflex_init(void)
     threat_run     = 0;
     win_dwell_sum  = 0;
     win_episodes   = 0;
+    for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) guard_class_exp[c] = 0;
     st_delib = st_learn_up = st_learn_down = 0;
     for (INT n = 0; n < DNODE_MAX; n++) { h_sub[n] = -1; peer_last_seq[n] = 0; }
     rf_puts("[reflex] reflex layer initialized (thought->action; no central)\r\n");
@@ -491,6 +524,13 @@ static void print_stat(void)
     rf_puts(" learn_up="); rf_putdec(st_learn_up);
     rf_puts(" learn_down="); rf_putdec(st_learn_down);
     rf_puts(" cur_threat_run="); rf_putdec(threat_run);
+    rf_puts("\r\n");
+    /* G38 第二アロー: 守った経験 (クラス別) — 協調学習が優先度として読む。 */
+    rf_puts("  guard_exp (class->fires for learning): ");
+    for (UB c = 0; c < REFLEX_NUM_CLASSES; c++) {
+        rf_puts("cls"); rf_putdec(c); rf_puts("=");
+        rf_putdec(guard_class_exp[c]); rf_puts(" ");
+    }
     rf_puts("\r\n");
 }
 

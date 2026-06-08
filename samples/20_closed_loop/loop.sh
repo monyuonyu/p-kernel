@@ -48,13 +48,20 @@ LOG=/tmp/closed_loop_${ARCH}.log
 # Drive a single node through the closed-loop demo. No net: moe_infer takes the
 # local path (drpc_my_node=0xFF) so the G17 hook fires from the gate's own
 # inference completion; `reflex test` is pure-local deterministic math.
+#
+# G38 (wave 17): the moe->reflex hook is now gated by the LEARNED model's REAL
+# max-softmax confidence (was a dead 0xFF that always fired). The critical input
+# only reaches the reflex once the model is trained and CONFIDENT it is class 2
+# — thinking changes guarding. We train first; an UNTRAINED model is (correctly)
+# not confident and would NOT fire — that is the whole point of G38.
 {
-    echo "moe 120 5 0 90"     # (a) critical input -> gate class 2 -> reflex FIRE
-    echo "moe 10 80 30 10"    # (a) normal input   -> gate class 0 -> reflex silent
+    echo "dtr train 200"      # G38: make the model confident so it can guard
+    echo "moe 120 5 0 90"     # (a) critical input -> learned class 2 (confident) -> reflex FIRE
+    echo "moe 10 80 30 10"    # (a) normal input   -> learned class 0             -> reflex silent
     echo "reflex test"        # (b)+(c) closed-loop negative-feedback + learning
     echo "moe test"           # regression: §7/§8 property tests still green
     echo "exit"
-} | timeout 60 "$BOOT/p-kernel" >"$LOG" 2>&1
+} | timeout 90 "$BOOT/p-kernel" >"$LOG" 2>&1
 
 echo "===================================================================="
 echo " Wave 12 — closed control loop (chain -> ring)   [$ARCH]"

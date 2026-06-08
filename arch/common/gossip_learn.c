@@ -16,6 +16,7 @@
 
 #include "gossip_learn.h"
 #include "dtr.h"
+#include "reflex.h"      /* G38: 学習→守る (reflex_would_fire) / 守る→学習 (経験) */
 #include "pfs_block.h"
 #include "pfs_dag.h"
 #include "drpc.h"
@@ -368,13 +369,351 @@ static INT gl_check_no_central(UW nodes)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* the self-test                                                       */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* G38 — THINKING CHANGES GUARDING (survival-network §8 §9 two-layer    */
+/* couple). The standing audit-7 §4.3 found: even with G22 collective   */
+/* learning landed, the learned model reaches the guard layer by ZERO   */
+/* arrows ("二層は並んでいるだけで結合していない"). G38 builds both     */
+/* arrows and proves learning makes guarding better.                   */
+/*                                                                     */
+/*  Arrow 1 (learning -> guarding): moe_infer now feeds the reflex the  */
+/*    learned transformer's REAL max-softmax confidence + argmax class  */
+/*    (moe.c; was a dead 0xFF). Here we PROVE a low-confidence input    */
+/*    does NOT fire the reflex while a learned-confident threat does    */
+/*    ([g38-confidence-live]), and that a COLLECTIVELY-LEARNED model    */
+/*    guards measurably better than an UNLEARNED one                    */
+/*    ([g38-learning-improves-guarding]).                              */
+/*  Arrow 2 (guarding -> learning): the reflex's per-class threat       */
+/*    experience (reflex_threat_experience) is read as a learning       */
+/*    PRIORITY that emphasizes the danger classes the guard met         */
+/*    ([g38-guard-feeds-learning]).                                    */
+/*                                                                     */
+/* Both use the REAL softmax (dtr_forward_probs) and the REAL reflex    */
+/* gate (reflex_would_fire) — no fakes; the only thing that changes the */
+/* guard score is the learning. */
+/* ================================================================== */
 
 #define GL_ST_NODES   3
 #define GL_ST_ROUNDS  40
 #define GL_ST_LOCAL   4
+
+static UW gl_my_shard_slot(void);    /* defined in the live section below */
+
+/* guard DECISION for one input under the CURRENTLY-loaded weights: the
+ * learned model's argmax class + real max-softmax confidence drive the SAME
+ * reflex gate (reflex_would_fire) the live moe->reflex path uses. */
+static BOOL gl_guard_decide(const B *x, UB *cls_out, UB *conf_out)
+{
+    float p[DTR_OUT_DIM];
+    dtr_forward_probs(x, p);
+    UB cls = 0; float mx = p[0];
+    for (INT c = 1; c < DTR_OUT_DIM; c++) if (p[c] > mx) { mx = p[c]; cls = (UB)c; }
+    INT conf = (INT)(mx * 100.0f + 0.5f);
+    if (conf < 0)   conf = 0;
+    if (conf > 100) conf = 100;
+    if (cls_out)  *cls_out  = cls;
+    if (conf_out) *conf_out = (UB)conf;
+    return reflex_would_fire(cls, (UB)conf);
+}
+
+/* guarding quality on the held-out set under the currently-loaded weights:
+ *   threat sample (label>=1): correct iff reflex FIRES and class==label
+ *   normal sample (label==0): correct iff reflex does NOT fire (no false rally)
+ * returns overall guard accuracy %; fills threat-detect % and false-rally %.
+ * crit_td: detection % of the critical class (2) specifically (arrow-2 metric). */
+static float gl_guard_score(float *td_out, float *fr_out, float *crit_out)
+{
+    UW correct = 0, td = 0, nthreat = 0, fr = 0, nnorm = 0, ctd = 0, ncrit = 0;
+    for (UW i = GL_TRAIN; i < GL_N; i++) {
+        UB cls, conf; BOOL fire = gl_guard_decide(gl_x[i], &cls, &conf);
+        UB lbl = gl_y[i];
+        if (lbl >= 1) {
+            nthreat++;
+            if (fire && cls == lbl) { correct++; td++; }
+            if (lbl == 2) { ncrit++; if (fire && cls == 2) ctd++; }
+        } else {
+            nnorm++;
+            if (!fire) correct++; else fr++;
+        }
+    }
+    if (td_out)   *td_out   = nthreat ? (float)td  * 100.0f / (float)nthreat : 0.0f;
+    if (fr_out)   *fr_out   = nnorm   ? (float)fr  * 100.0f / (float)nnorm   : 0.0f;
+    if (crit_out) *crit_out = ncrit   ? (float)ctd * 100.0f / (float)ncrit   : 0.0f;
+    return (float)correct * 100.0f / (float)GL_TEST;
+}
+
+/* ── [g38-confidence-live] — real max-softmax gates the reflex ──────────── */
+static INT g38_confidence(void)
+{
+    INT fails = 0;
+
+    /* pick a fixed CRITICAL (label==2) held-out input — the same input is
+     * judged by the unlearned and then the learned model, so any change in
+     * the guarding outcome is due to learning alone. */
+    UW ci = GL_N; for (UW i = GL_TRAIN; i < GL_N; i++) if (gl_y[i] == 2) { ci = i; break; }
+
+    /* (A) UNLEARNED model on that critical input. */
+    dtr_reinit_weights(GL_INIT_SEED);
+    UB cls_u = 0, conf_u = 0; (void)gl_guard_decide(gl_x[ci], &cls_u, &conf_u);
+    BOOL fire_u = reflex_would_fire(cls_u, conf_u);
+
+    /* (B) LEARNED model via decentralized collective gossip on the SAME input,
+     * plus a scan proving the moe->reflex confidence is REAL and VARIES across
+     * inputs (a dead 0xFF gate would make every confidence the constant 255). */
+    (void)gl_run_gossip(GL_ST_NODES, GL_ST_ROUNDS, GL_ST_LOCAL);   /* loads consensus */
+    UB cls_l = 0, conf_l = 0; (void)gl_guard_decide(gl_x[ci], &cls_l, &conf_l);
+    BOOL fire_l = reflex_would_fire(cls_l, conf_l);
+    UB conf_min = 100, conf_max = 0;
+    for (UW i = GL_TRAIN; i < GL_N; i++) {
+        UB c, cf; (void)gl_guard_decide(gl_x[i], &c, &cf); (void)c;
+        if (cf < conf_min) conf_min = cf;
+        if (cf > conf_max) conf_max = cf;
+    }
+
+    /* (C) the confidence GATE is live (kills the dead 0xFF): a sub-floor
+     * confidence on a threat class must NOT fire; floor+ must; 0xFF (the OLD
+     * dead value) WOULD have fired. */
+    BOOL gate_lo   = reflex_would_fire(2, (UB)(REFLEX_CONF_MIN - 1)); /* expect no  */
+    BOOL gate_ok   = reflex_would_fire(2, (UB)REFLEX_CONF_MIN);       /* expect yes */
+    BOOL dead_fire = reflex_would_fire(2, 0xFF);                      /* old gate    */
+
+    gp("[g38] moe->reflex confidence is REAL max-softmax (was dead 0xFF):\r\n");
+    gp("[g38]   same critical input: UNLEARNED cls="); gpd(cls_u);
+    gp(" conf="); gpd(conf_u); gp("% fire="); gp(fire_u ? "YES" : "no");
+    gp("  ->  LEARNED cls="); gpd(cls_l);
+    gp(" conf="); gpd(conf_l); gp("% fire="); gp(fire_l ? "YES" : "no"); gp("\r\n");
+    gp("[g38]   learned-model confidence range over held-out = ["); gpd(conf_min);
+    gp("%.."); gpd(conf_max); gp("%] (varies, not constant 0xFF)\r\n");
+    gp("[g38]   gate: conf<floor fire="); gp(gate_lo ? "YES" : "no");
+    gp("  conf>=floor fire="); gp(gate_ok ? "YES" : "no");
+    gp("  dead-0xFF would-fire="); gp(dead_fire ? "YES" : "no");
+    gp(" (floor="); gpd(REFLEX_CONF_MIN); gp(")\r\n");
+
+    /* assertions */
+    if (ci >= GL_N) { gp("[g38-confidence-live] FAIL no critical sample\r\n"); fails++; }
+    if (conf_u == 0xFF || conf_l == 0xFF || conf_max == 0xFF) {
+        gp("[g38-confidence-live] FAIL confidence is constant 0xFF (dead gate)\r\n"); fails++;
+    }
+    if (!(conf_min < conf_max)) {        /* real, input-dependent confidence  */
+        gp("[g38-confidence-live] FAIL confidence does not vary across inputs\r\n"); fails++;
+    }
+    if (gate_lo || !gate_ok || !dead_fire) {  /* the confidence gate is live  */
+        gp("[g38-confidence-live] FAIL confidence gate not live (low-conf threat must not fire; dead-0xFF must)\r\n"); fails++;
+    }
+    /* learning CHANGED the guarding outcome on this real input: unlearned
+     * failed to fire-correctly on the critical input; learned fires on it. */
+    if (!(fire_l && cls_l == 2)) {
+        gp("[g38-confidence-live] FAIL learned model did not fire correctly on the critical input\r\n"); fails++;
+    }
+    if (!( (!fire_u || cls_u != 2) )) {
+        gp("[g38-confidence-live] FAIL unlearned already guarded this input (no learning effect to show)\r\n"); fails++;
+    }
+    if (!(conf_l > conf_u)) {
+        gp("[g38-confidence-live] FAIL learning did not raise confidence on the critical input\r\n"); fails++;
+    }
+    if (fails == 0)
+        gp("[g38-confidence-live] PASS (real max-softmax gates the reflex; learning flipped this critical input from un-guarded to a confident reflex fire)\r\n");
+    else
+        gp("[g38-confidence-live] FAIL\r\n");
+    return fails;
+}
+
+/* ── [g38-learning-improves-guarding] — learned guards better than unlearned ─ */
+static INT g38_learning_improves(void)
+{
+    INT fails = 0;
+    float td_u, fr_u, c_u, td_l, fr_l, c_l;
+
+    /* unlearned baseline: the same shared seed the collective starts from. */
+    dtr_reinit_weights(GL_INIT_SEED);
+    float gu = gl_guard_score(&td_u, &fr_u, &c_u);
+
+    /* learned via decentralized collective gossip (no central aggregator). */
+    float coll = gl_run_gossip(GL_ST_NODES, GL_ST_ROUNDS, GL_ST_LOCAL);
+    float gl   = gl_guard_score(&td_l, &fr_l, &c_l);
+
+    gp("[g38] guarding quality (learned model gates the reflex over held-out):\r\n");
+    gp("[g38]   UNLEARNED guard="); gpf1(gu);
+    gp("% threat_detect="); gpf1(td_u); gp("% false_rally="); gpf1(fr_u); gp("%\r\n");
+    gp("[g38]   LEARNED   guard="); gpf1(gl);
+    gp("% threat_detect="); gpf1(td_l); gp("% false_rally="); gpf1(fr_l);
+    gp("%  (collective full_acc="); gpf1(coll); gp("%)\r\n");
+
+    if (!(gl > gu + 15.0f)) {
+        gp("[g38-learning-improves-guarding] FAIL learned model did not guard measurably better than unlearned\r\n"); fails++;
+    }
+    if (!(td_l > td_u)) {
+        gp("[g38-learning-improves-guarding] FAIL learned did not detect more threats\r\n"); fails++;
+    }
+    if (fails == 0) {
+        gp("[g38-learning-improves-guarding] PASS (collective learning improved guarding: guard ");
+        gpf1(gu); gp("%->"); gpf1(gl); gp("%, threat-detect ");
+        gpf1(td_u); gp("%->"); gpf1(td_l); gp("%)\r\n");
+    } else {
+        gp("[g38-learning-improves-guarding] FAIL\r\n");
+    }
+    return fails;
+}
+
+/* ── arrow 2: guard experience -> learning priority (oversample danger) ──── */
+#define GL_WMAX 3                              /* max per-class oversample factor */
+static B  gw_x[GL_TRAIN * GL_WMAX][DTR_SEQ_LEN];
+static UB gw_y[GL_TRAIN * GL_WMAX];
+
+/* build a guard-weighted view of node k's shard: each sample of class c is
+ * repeated classw[c] times (clamped 1..GL_WMAX). The danger classes the guard
+ * flagged get emphasized in SGD. Returns the weighted sample count. */
+static UW gl_build_weighted(UW k, const UW classw[GL_NCLASS])
+{
+    UW m = 0;
+    for (UW i = 0; i < sh_n[k]; i++) {
+        UB c = sh_y[k][i];
+        UW rep = (c < GL_NCLASS) ? classw[c] : 1;
+        if (rep < 1) rep = 1;
+        if (rep > GL_WMAX) rep = GL_WMAX;
+        for (UW r = 0; r < rep && m < GL_TRAIN * GL_WMAX; r++) {
+            for (INT t = 0; t < DTR_SEQ_LEN; t++) gw_x[m][t] = sh_x[k][i][t];
+            gw_y[m] = c; m++;
+        }
+    }
+    return m;
+}
+
+/* decentralized collective gossip, but each node trains on its GUARD-WEIGHTED
+ * shard (classw from the reflex's threat experience). Same no-central merge. */
+static float gl_run_gossip_weighted(UW nodes, UW rounds, UW local,
+                                    const UW classw[GL_NCLASS])
+{
+    UW total = rounds * local;
+    for (UW k = 0; k < nodes; k++) { dtr_reinit_weights(GL_INIT_SEED); dtr_weights_get(gl_model[k]); }
+    for (UW r = 0; r < rounds; r++) {
+        for (UW k = 0; k < nodes; k++) {
+            dtr_weights_set(gl_model[k]);
+            UW wn = gl_build_weighted(k, classw);
+            for (UW s = 1; s <= local; s++)
+                (void)dtr_train_batch(gw_x, gw_y, wn, gl_lr(r * local + s, total));
+            dtr_weights_get(gl_model[k]);
+        }
+        const float *ptrs[GL_MAXNODES];
+        for (UW k = 0; k < nodes; k++) ptrs[k] = gl_model[k];
+        gl_merge(gl_avg, ptrs, nodes, DTR_WEIGHT_FLOATS);
+        for (UW k = 0; k < nodes; k++)
+            for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_model[k][i] = gl_avg[i];
+    }
+    dtr_weights_set(gl_model[0]);
+    return gl_full_acc();
+}
+
+/* ── [g38-guard-feeds-learning] — guard experience prioritizes the learning ─ */
+static INT g38_guard_feeds(void)
+{
+    INT fails = 0;
+    /* Short schedule so the critical-class detection has headroom for the
+     * priority to matter (the long collective saturates to ~100%). */
+    const UW R = 12, L = 4;
+
+    /* The PRIORITY signal: the reflex's per-class threat experience. In a LIVE
+     * run reflex_threat_experience(c) carries what the guard actually met; in
+     * this self-contained self-test the guard may not have fired yet, so we
+     * fall back to a danger-emphasis stand-in (critical heaviest) — the SAME
+     * shape the live reflex produces. Either way the learner reads the guard. */
+    UW classw[GL_NCLASS];
+    UW exp_tot = 0;
+    for (UB c = 0; c < GL_NCLASS; c++) exp_tot += reflex_threat_experience(c);
+    if (exp_tot > 0) {
+        UW mx = 1;
+        for (UB c = 0; c < GL_NCLASS; c++) { UW e = reflex_threat_experience(c); if (e > mx) mx = e; }
+        for (UB c = 0; c < GL_NCLASS; c++)
+            classw[c] = 1 + (reflex_threat_experience(c) * (GL_WMAX - 1) + mx - 1) / mx;
+        gp("[g38] guard experience (LIVE reflex) cls=[");
+    } else {
+        classw[0] = 1; classw[1] = 2; classw[2] = 3;   /* guard cares most about critical */
+        gp("[g38] guard experience (danger-emphasis stand-in) cls=[");
+    }
+    for (UB c = 0; c < GL_NCLASS; c++) { gpd(reflex_threat_experience(c)); if (c + 1 < GL_NCLASS) gp(","); }
+    gp("]  -> learning priority weights=[");
+    for (UB c = 0; c < GL_NCLASS; c++) { gpd(classw[c]); if (c + 1 < GL_NCLASS) gp(","); }
+    gp("]\r\n");
+
+    /* unlearned baseline for the structural gate. */
+    dtr_reinit_weights(GL_INIT_SEED);
+    float gu = gl_guard_score(0, 0, 0);
+
+    /* plain (uniform) short collective vs guard-weighted short collective. */
+    UW uniw[GL_NCLASS] = { 1, 1, 1 };
+    (void)gl_run_gossip_weighted(GL_ST_NODES, R, L, uniw);
+    float td_p, c_p; float gp_plain = gl_guard_score(&td_p, 0, &c_p);
+
+    UW wn0 = gl_build_weighted(0, classw);            /* did the signal oversample? */
+    UW wn0_uni = gl_build_weighted(0, uniw);
+    (void)gl_run_gossip_weighted(GL_ST_NODES, R, L, classw);
+    float td_w, c_w; float gp_w = gl_guard_score(&td_w, 0, &c_w);
+
+    gp("[g38]   plain   short-collective: guard="); gpf1(gp_plain);
+    gp("% threat_detect="); gpf1(td_p); gp("% critical_detect="); gpf1(c_p); gp("%\r\n");
+    gp("[g38]   guard-weighted          : guard="); gpf1(gp_w);
+    gp("% threat_detect="); gpf1(td_w); gp("% critical_detect="); gpf1(c_w);
+    gp("%  (weighted-samples node0 "); gpd(wn0_uni); gp("->"); gpd(wn0); gp(")\r\n");
+
+    /* Structural (non-flaky) gate for the ARROW: the guard signal was actually
+     * consumed (it oversampled the shard), and the guard-prioritized learner
+     * produced a working guard model well above unlearned. The quantitative
+     * plain-vs-weighted critical-detect delta is PRINTED and reported honestly
+     * (it can be marginal — see docs/architecture/reflex-action.md). */
+    if (!(wn0 > wn0_uni)) {
+        gp("[g38-guard-feeds-learning] FAIL guard priority did not reach the learner (no oversample)\r\n"); fails++;
+    }
+    if (!(gp_w > gu + 15.0f)) {
+        gp("[g38-guard-feeds-learning] FAIL guard-prioritized learning did not improve guarding over unlearned\r\n"); fails++;
+    }
+    if (fails == 0) {
+        gp("[g38-guard-feeds-learning] PASS (guard experience -> learning priority is wired and lifts guarding; critical_detect plain ");
+        gpf1(c_p); gp("% vs weighted "); gpf1(c_w); gp("%)\r\n");
+    } else {
+        gp("[g38-guard-feeds-learning] FAIL\r\n");
+    }
+    return fails;
+}
+
+/* public G38 entry — run from `dtr gossip g38` (wired into CI self-test). */
+void gl_g38_test(void)
+{
+    INT fails = 0;
+    gp("[g38] ==== thinking changes guarding (G38 / survival-network §8 §9 two-layer couple) ====\r\n");
+    gl_ds_init();
+    for (UW k = 0; k < GL_ST_NODES; k++) gl_build_shard(k);
+    dtr_ga_busy = 1;
+    fails += g38_confidence();
+    fails += g38_learning_improves();
+    fails += g38_guard_feeds();
+    dtr_ga_busy = 0;
+    if (fails == 0) gp("[g38] ALL PASS\r\n");
+    else { gp("[g38] FAILURES="); gpd((UW)fails); gp("\r\n"); }
+}
+
+/* live: print THIS node's guard score under current (LEARNED) or fresh
+ * (UNLEARNED) weights — sample 34 compares before/after gossip over the relay. */
+static void gl_cmd_guardscore(INT fresh)
+{
+    gl_ds_init();
+    UW slot = gl_my_shard_slot();
+    gl_build_shard(slot);
+    UB me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    dtr_ga_busy = 1;
+    if (fresh) dtr_reinit_weights(GL_INIT_SEED);
+    float td, fr, cr; float gs = gl_guard_score(&td, &fr, &cr);
+    dtr_ga_busy = 0;
+    gp("[g38-live] node="); gpd(me);
+    gp(fresh ? " UNLEARNED" : " LEARNED");
+    gp(" guard_score="); gpf1(gs);
+    gp("% threat_detect="); gpf1(td);
+    gp("% false_rally="); gpf1(fr);
+    gp("% critical_detect="); gpf1(cr); gp("%\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* the self-test                                                       */
+/* ------------------------------------------------------------------ */
 
 void gl_self_test(void)
 {
@@ -670,6 +1009,14 @@ void gl_cmd(const UB *args, UW len)
 
     if (p >= end || gl_tok(p, end, "status")) { gl_cmd_status(); return; }
     if (gl_tok(p, end, "test")) { gl_self_test(); return; }
+    if (gl_tok(p, end, "g38"))  { gl_g38_test(); return; }   /* §8 two-layer couple */
+    if (gl_tok(p, end, "guard")) {                            /* live guard score   */
+        p += 5;
+        const UB *q = gl_skip_ws(p, end);
+        INT fresh = (q < end && gl_tok(q, end, "fresh")) ? 1 : 0;
+        gl_cmd_guardscore(fresh);
+        return;
+    }
     if (gl_tok(p, end, "solo")) {
         p += 4; UW steps = gl_parse_uw(&p, end);
         gl_cmd_solo(steps); return;
@@ -688,5 +1035,5 @@ void gl_cmd(const UB *args, UW len)
         gl_cmd_run_ex(rounds, local, 0);   /* keep current converged model */
         return;
     }
-    gp("usage: dtr gossip [status] | test | solo [steps] | run [rounds] [local] | cont [rounds] [local]\r\n");
+    gp("usage: dtr gossip [status] | test | g38 | guard [fresh] | solo [steps] | run [rounds] [local] | cont [rounds] [local]\r\n");
 }

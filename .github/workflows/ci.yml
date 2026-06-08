@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -85,6 +85,15 @@ jobs:
           grep -aF '[g22-shard-solo] PASS' selftest.log
           grep -aF '[g22-gossip-learn] PASS' selftest.log
           grep -aF '[g22-no-central] PASS' selftest.log
+          # §8/§9 G38 (wave 17): THINKING CHANGES GUARDING. The learned
+          # transformer's REAL max-softmax confidence gates the reflex (was a
+          # dead 0xFF that always fired = G34); a COLLECTIVELY-LEARNED model
+          # guards measurably better than an UNLEARNED one; and the reflex's
+          # per-class threat experience prioritizes the learning (two-layer
+          # couple — audit-7 §4.3).
+          grep -aF '[g38-confidence-live] PASS' selftest.log
+          grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
+          grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
@@ -110,7 +119,7 @@ jobs:
         continue-on-error: true
         run: |
           cd boot/linux
-          timeout 120 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\nexit\n' | \
+          timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
@@ -131,6 +140,10 @@ jobs:
           grep -aF '[g22-shard-solo] PASS' selftest.log
           grep -aF '[g22-gossip-learn] PASS' selftest.log
           grep -aF '[g22-no-central] PASS' selftest.log
+          # §8/§9 G38 two-layer couple — thinking changes guarding (wave 17)
+          grep -aF '[g38-confidence-live] PASS' selftest.log
+          grep -aF '[g38-learning-improves-guarding] PASS' selftest.log
+          grep -aF '[g38-guard-feeds-learning] PASS' selftest.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
@@ -277,6 +290,39 @@ jobs:
         with:
           name: collective-learn-live-logs
           path: /tmp/p32_*.log
+
+  twolayer-couple-live:
+    name: "Two-layer couple (live 3-node: collective learning improves GUARDING, node killed mid-flight)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # enforces the LIVE §8/§9 path (G38, wave 17): the learned transformer's
+    # REAL max-softmax confidence gates the reflex (was a dead 0xFF = G34); 3
+    # nodes on DISJOINT shards gossip-learn over the relay with NO central
+    # aggregator, and EACH node's GUARD score (the learned model gating the
+    # same reflex used live) ends ABOVE its own UNLEARNED baseline — learning
+    # improved guarding, in numbers. A node is kill -9'd mid-learning and the
+    # surviving swarm still guards. The in-process [g38-*] property tests are
+    # the unit proof; this is the over-the-relay integration proof.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 34_twolayer/run.sh and assert RESULT PASS
+        run: |
+          timeout 900 samples/34_twolayer/run.sh | tee /tmp/p34_ci.log
+          grep -q 'RESULT: PASS' /tmp/p34_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twolayer-couple-live-logs
+          path: /tmp/p34_*.log
 
   ark-crash-fuzzer:
     name: "ARK crash fuzzer (reorder/torn/bitflip: 0 corrupt-served, 0 wedge)"

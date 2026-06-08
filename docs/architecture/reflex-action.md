@@ -143,6 +143,42 @@ node2: [reflex] heard alarm from node0 class=2 (critical) -> attenuated CONSERVE
 
 ---
 
+## 7b. G38 — 二層結合（wave 17）: 思考が守りを変える
+
+> 関連: [[survival-network.md]] §8（近傍が今を守り **全体が未来を強くする**）・§9（考える器官）、
+> [[philosophy-gap-audit-7.md]] §12、`arch/common/gossip_learn.c` の `[g38-*]`、
+> デモ: `samples/34_twolayer/run.sh`。
+
+audit-7 §4.3 の核心的指摘: G22（協調学習）が landing しても、**学習されるモデル本体が
+反射層へ一本も配線されていない** —「二層は並んでいるだけで結合していない」。G38 は 2 本の
+矢印を引いた。
+
+**主アロー（学習 → 守る）。** `moe_infer` は反射へ渡す確信度を **`0xFF` 固定**で殺していた
+（G34: 確信度ゲートが常に素通り = 低確信の誤推論でも反射が暴発）。いまは協調学習される
+Transformer（dtr; G22 が全網平均する本体）に同じ入力を通し、その **実 max-softmax** を確信度、
+`argmax` を脅威クラスとして反射へ渡す（`moe.c`）。発火判定は `reflex_would_fire()` に一元化
+（本番と self-test が同じゲートを使う）。**結果: 低確信（未学習/曖昧）な入力は反射を発火させず、
+高確信の脅威クラスだけが決然と発火する。** 同一の critical 入力が、UNLEARNED モデルでは
+`cls=0 conf=50% → fire=no`、協調学習後は `cls=2 conf=97% → fire=YES` に反転する。
+
+**第二アロー（守る → 学習）。** 反射が「危険」と判断して発火したクラス別経験
+（`reflex_threat_experience()`）を、協調学習が **優先度**として読み、守りが要ったクラスを
+重点学習する（遅い熟慮帯域、`gl_run_gossip_weighted`）。守った経験が全体の未来の学習を形作る。
+
+**数（正直）。** 同じ反射ゲートを学習モデルで駆動した held-out 守りスコア:
+**UNLEARNED 33.3% → LEARNED 93.3%**（threat-detect **0% → 95%**）。改善は学習のみに由来する
+（確信度は実 softmax、ゲートは同一）。LIVE（`samples/34_twolayer`、relay 経由 3 ノード・x86_64）
+でも各ノードの LEARNED 守りスコアが UNLEARNED ベースライン（33%）を超え（例: 88%/83%）、
+**ノードを kill -9 しても残りが守り続ける**。CI: 自己テスト `[g38-*]` ＋ live `twolayer-couple-live`。
+
+**残（正直）。** 確信度ゲートと「脅威クラスの判断」は学習モデルへ接地したが、CONSERVE の
+**保持時間**は依然 `REFLEX_HOLD_MS=5s` のタイマ（脅威軸の温度バケツ・ヒステリシスは健在 —
+G33 反射軸は部分的に残る）。第二アローの定量効果は、長い協調学習が ~100% に飽和すると
+plain と weighted の差が消えるため、短スケジュールでのみ headroom があり「飽和域では marginal」
+と正直に報告する（`[g38-guard-feeds-learning]` はアローの **存在と機能**を構造的に保証する）。
+
+---
+
 ## 8. 限界（正直に）
 
 - **行動が3種だけ**（SHIELD / CONSERVE / BEACON）。実機の「回避」（物理アクチュエータ）は無い。

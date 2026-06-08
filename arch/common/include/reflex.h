@@ -141,6 +141,24 @@ void reflex_task(INT stacd, void *exinf);
  *   src_node     : 観測ノード (drpc_my_node, 単機なら 0xFF) */
 void reflex_on_inference(UB threat_class, UB confidence, UB src_node);
 
+/* ── G38 主アロー: 学習 → 守る (思考が守りを変える) ──────────────────────
+ * 反射の発火ゲートそのものの純述語 (状態なし)。reflex_on_inference の
+ * アクション表ゲート + 確信度フロアと *同一* の判定を 1 箇所に置く
+ * (deadband_pick と同じ思想): こうすると self-test が本番と同じゲートを
+ * 検査でき、確信度ゲートの規則が二重定義でズレない。
+ *   threat_class : 学習モデルの判断 (argmax)
+ *   confidence   : 学習モデルの max-softmax×100 (0..100; 0xFF=不明は通す)
+ * 低確信 (未学習/曖昧) は FALSE = 反射を発火させない。高確信の脅威クラスは
+ * TRUE = 決然と発火。死んだ 0xFF 固定ゲート (G34) を殺す配線の核。 */
+BOOL reflex_would_fire(UB threat_class, UB confidence);
+
+/* ── G38 第二アロー: 守る → 学習 (近傍が今守った経験が全体の未来を強くする) ──
+ * 反射/protect 層が「危険」と判断して発火したクラスごとの経験回数。協調学習
+ * (gossip_learn, G22) がこれを *優先度* として読み、守りが要ったクラスを
+ * 重点的に学ぶ → ラウンドを重ねるほど群れの守りが良くなる (§8 二層結合)。
+ * 遅い熟慮帯域で読むこと (反射 tick で読まない)。 */
+UW reflex_threat_experience(UB cls);
+
 /* SHIELD 照会 — usermain が新規 selfc 実行 / genome 発芽の前に参照する。
  * TRUE のあいだ未知コードを取り込まない (攻撃下の遮蔽)。 */
 BOOL reflex_is_shielded(void);
