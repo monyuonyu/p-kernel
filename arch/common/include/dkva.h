@@ -63,7 +63,22 @@
  * (regions R2, Y — docs/architecture/regions.md)。rid = coordinator のノード ID。*/
 #define DKVA_TOPIC_RSUM_PFX "dtr/dkva/rsum/"   /* + 1 桁 coordinator ID    */
 #define DKVA_INFER_TMO    600   /* 分散 Attention タイムアウト (ms) */
-#define DKVA_RSUM_WIN_MS  200   /* coordinator が region partial を集める窓 */
+#define DKVA_RSUM_WIN_MS  200   /* (deprecated) 旧: coordinator が region partial を
+                                 * 集める単一同期窓。G13 で撤去 — 下記参照。 */
+/* G13 (§5「同時多発・並行分散」, COMPUTE 軸): 旧実装は coordinator が問いを
+ * 受けるたび coordinator_aggregate() を responder ループ内から *同期呼び* し、
+ * DKVA_RSUM_WIN_MS (=200ms) のあいだ tk_dly_tsk で region partial を集め続けた。
+ * その 200ms 間 responder のラウンドロビン応答 (時間多重) が凍り、複数 origin が
+ * region をまたいで同時に問うと「1 問ずつ 200ms」に再直列化されていた (G1 が
+ * 単一 region で解いた同時性が multi-region で破れる)。
+ *
+ * 新実装: coordinator の region 集約を「origin ごとの event-driven 状態機械」に
+ * する。各 origin の fan-in は responder ループの毎反復で *少しずつ* 進み、何も
+ * ブロックしない。完了 (region メンバの partial が出揃う) か per-origin 締切で
+ * rsum を確定し、resp と同じ round-robin 時間多重で rsum/<me> へ再発行する。
+ * これで「同時に多数の問いが region をまたいで並行に集約される」(NO 中央窓・
+ * NO グローバル順序)。締切はループ周期 (10ms) 単位の反復回数で持つ。 */
+#define DKVA_RSUM_WIN_ITERS 20  /* per-origin 集約締切 (×10ms ループ ≒ 200ms 上限) */
 
 /* モデル次元 (dtr.h と合わせる) */
 #define DKVA_SEQ   4   /* トークン数    */
@@ -133,6 +148,14 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               UW req_id);
 
 void dkva_stat(void);
+
+/*
+ * 純ローカル (network/kdds 非依存) の in-process プロパティ自己テスト (G13)。
+ * 「per-origin の集約は順序非依存・origin 間で相互非汚染・単一共有窓なし」を
+ * 数で守る。shell `dkva test` から呼び、CI が "[g13-parallel] PASS" を grep する。
+ * 戻り値 = 失敗数 (0 で全 PASS)。
+ */
+INT dkva_self_test(void);
 
 /*
  * シェルコマンド "dkva [infer [a b c d]]"。

@@ -207,6 +207,18 @@ static void accumulate(float total_out[DKVA_SEQ][DKVA_NH][DKVA_DH],
         }
 }
 
+/* rp の {分子, 分母} を別の RESP_PKT acc へ畳む (区分和は単純加算)。
+ * G13 の event-driven 集約で running region 要約 (cagg[o]) を更新する。 */
+static void accumulate_pkt(DKVA_RESP_PKT *acc, const DKVA_RESP_PKT *rp)
+{
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++) {
+            acc->attn_sum[t][h] += rp->attn_sum[t][h];
+            for (INT d = 0; d < DKVA_DH; d++)
+                acc->partial_out[t][h][d] += rp->partial_out[t][h][d];
+        }
+}
+
 /* 自分以外に「自 region 外の生存ノード」が居るか (= rsum を読む他 region が
  * 存在するか)。region_is_member() を使うので呼ぶ前に region_recompute() 済みの
  * こと (region_coordinator() が直前に再計算する)。単一 region では coordinator が
@@ -223,68 +235,137 @@ static BOOL have_remote_region(void)
 
 /* ------------------------------------------------------------------ */
 /* Coordinator: 自 region の partial を集約して region 要約を発行       */
+/*  ── G13: per-origin・event-driven (単一 200ms 同期窓を撤去) ──      */
 /*                                                                     */
 /* 全 region 内ノードが resp/<n> (region スコープ) へ partial を出すので、 */
 /* coordinator はそれらを畳んで {分子, 分母} の region 要約を作り、       */
 /* rsum/<my_node> (GLOBAL) へ発行する。requester はこれを region 間で      */
 /* 疎に集約する。softmax の分子Σa·V と分母Σa は単純和なので、region 分割 */
 /* → 和 → 最後に1回正規化、で単一ノード全体 attention と厳密に一致する。  */
+/*                                                                     */
+/* 旧実装は問いを受けるたびこの集約を responder ループ内で 200ms ブロック  */
+/* していた → region 横断の同時多発を再直列化 (G13)。新実装は origin ごとに */
+/* 独立した集約状態 (cagg[]) を持ち、responder ループの毎反復で少しずつ進め */
+/* (cagg_step)、何もブロックしない。完了 (region メンバ出揃い) か per-origin */
+/* 締切で確定し、resp と同じ round-robin 時間多重で rsum/<me> へ再発行する。 */
+/* どの判断も local/region_recompute() の結果だけを読む — 中央調停も        */
+/* グローバル順序も無い (§7)。                                            */
 /* ------------------------------------------------------------------ */
-static void coordinator_aggregate(const DKVA_Q_PKT *qpkt,
-                                  const DKVA_RESP_PKT *self_partial)
+
+/* origin o ごとの coordinator 集約状態 (すべて static — タスクスタックを汚さない)。
+ *   phase: 0 = 非活性, 1 = 収集中 (region partial を fan-in), 2 = 確定済 (再発行中)
+ *   cagg[o] : running region 要約 ({分子, 分母} を畳み込み中)。確定後そのまま rsum。
+ *   exp[o][n]/got[o][n] : 期待した自 region メンバ / 既に畳んだメンバ
+ *   dl[o]   : 収集締切 (残りループ反復数)。出揃わなくても締切で確定 (死を待たない)。
+ *   rttl[o] : 確定後の rsum 再発行 TTL (round-robin で 1 反復 1 件)。 */
+static DKVA_RESP_PKT cagg[DNODE_MAX];
+static UB  cagg_phase[DNODE_MAX];
+static UB  cagg_exp[DNODE_MAX][DNODE_MAX];
+static UB  cagg_got[DNODE_MAX][DNODE_MAX];
+static INT cagg_dl  [DNODE_MAX];
+static INT cagg_rttl[DNODE_MAX];
+static UW  cagg_entries[DNODE_MAX];
+static UB  cagg_rr = 0;   /* rsum 再発行のラウンドロビン位置 */
+
+static void cagg_reset_all(void)
 {
-    float total_out[DKVA_SEQ][DKVA_NH][DKVA_DH];
-    float total_sum[DKVA_SEQ][DKVA_NH];
-    for (INT t = 0; t < DKVA_SEQ; t++)
-        for (INT h = 0; h < DKVA_NH; h++) {
-            total_sum[t][h] = 0.0f;
-            for (INT d = 0; d < DKVA_DH; d++) total_out[t][h][d] = 0.0f;
-        }
+    for (UB o = 0; o < DNODE_MAX; o++) {
+        cagg_phase[o] = 0; cagg_dl[o] = 0; cagg_rttl[o] = 0; cagg_entries[o] = 0;
+        for (UB n = 0; n < DNODE_MAX; n++) { cagg_exp[o][n] = 0; cagg_got[o][n] = 0; }
+    }
+    cagg_rr = 0;
+}
 
-    /* 自分の partial を含める */
-    UW entries = self_partial->n_entries;
-    accumulate(total_out, total_sum, self_partial);
+/* 新しい問い (origin o, req_id) に対する coordinator 集約を開始/再起動する。
+ * 自分の partial で seed し、いま自 region に生存するメンバを期待集合に取る。
+ * region_recompute() は呼び出し側 (region_coordinator()) が直前に実行済み。 */
+static void cagg_start(UB o, const DKVA_Q_PKT *qpkt, const DKVA_RESP_PKT *self_partial)
+{
+    /* running 要約 = 自分の partial。確定後そのまま rsum/<me> へ出すのでヘッダも整える。 */
+    cagg[o] = *self_partial;
+    cagg[o].magic    = DKVA_RESP_MAGIC;
+    cagg[o].req_id   = qpkt->req_id;
+    cagg[o].src_node = drpc_my_node;     /* = region id (coordinator)        */
+    cagg[o].origin   = o;                /* この要約の宛先 = 問いの起点 (G1) */
+    cagg_entries[o]  = self_partial->n_entries;
 
-    /* 自 region の他メンバの resp を窓内で収集 */
-    region_recompute();
-    UB got[DNODE_MAX];
-    for (UB i = 0; i < DNODE_MAX; i++) got[i] = 0;
-    INT win = DKVA_RSUM_WIN_MS;
-    while (win > 0) {
+    for (UB n = 0; n < DNODE_MAX; n++) { cagg_exp[o][n] = 0; cagg_got[o][n] = 0; }
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == drpc_my_node) continue;
+        UB st = dnode_table[n].state;
+        if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
+        if (!region_is_member(n)) continue;
+        cagg_exp[o][n] = 1;
+    }
+    cagg_dl[o]    = DKVA_RSUM_WIN_ITERS;
+    cagg_rttl[o]  = 0;
+    cagg_phase[o] = 1;                    /* 収集開始 */
+}
+
+/* responder ループ毎反復で 1 回呼ぶ。活性な全 origin の収集を少しずつ進め、
+ * 出揃い or 締切で確定 (phase 2 へ)。何もブロックしない。 */
+static void cagg_step(void)
+{
+    BOOL any = FALSE;
+    for (UB o = 0; o < DNODE_MAX; o++) if (cagg_phase[o] == 1) { any = TRUE; break; }
+    if (!any) return;
+
+    region_recompute();   /* 全 origin で 1 回だけ */
+    for (UB o = 0; o < DNODE_MAX; o++) {
+        if (cagg_phase[o] != 1) continue;
+
+        /* 自 region メンバの per-source partial を非ブロッキングで取り込む */
         for (UB n = 0; n < DNODE_MAX; n++) {
-            if (n == drpc_my_node || got[n] || h_resp_sub[n] < 0) continue;
-            if (!region_is_member(n)) continue;
+            if (n == drpc_my_node || cagg_got[o][n] || h_resp_sub[n] < 0) continue;
+            if (!cagg_exp[o][n]) continue;
             DKVA_RESP_PKT rp = { 0 };
             W r = kdds_sub(h_resp_sub[n], &rp, (W)sizeof(rp), 0);
             if (r >= (W)sizeof(DKVA_RESP_PKT) &&
-                rp.magic == DKVA_RESP_MAGIC && rp.req_id == qpkt->req_id &&
-                rp.src_node == n && rp.origin == qpkt->src_node) {
-                got[n] = 1;
-                entries += rp.n_entries;
-                accumulate(total_out, total_sum, &rp);
+                rp.magic == DKVA_RESP_MAGIC && rp.req_id == cagg[o].req_id &&
+                rp.src_node == n && rp.origin == o) {
+                cagg_got[o][n] = 1;
+                cagg_entries[o] += rp.n_entries;
+                accumulate_pkt(&cagg[o], &rp);
             }
         }
-        tk_dly_tsk(20);
-        win -= 20;
-    }
 
-    /* region 要約を rsum/<my_node> (GLOBAL) へ発行 */
-    if (h_rsum_pub[drpc_my_node] < 0) return;
-    DKVA_RESP_PKT sum = { 0 };
-    sum.magic    = DKVA_RESP_MAGIC;
-    sum.req_id   = qpkt->req_id;
-    sum.src_node = drpc_my_node;          /* = region id (coordinator) */
-    sum.origin   = qpkt->src_node;        /* この要約の宛先 = 問いの起点 (G1) */
-    sum.n_entries = (UB)(entries > 255 ? 255 : entries);
-    for (INT t = 0; t < DKVA_SEQ; t++)
-        for (INT h = 0; h < DKVA_NH; h++) {
-            sum.attn_sum[t][h] = total_sum[t][h];
-            for (INT d = 0; d < DKVA_DH; d++)
-                sum.partial_out[t][h][d] = total_out[t][h][d];
+        /* 期待メンバのうち未着で、かつ SWIM が DEAD と判定したものは待たない
+         * (死を待たない; その欠損は requester 側の degraded(k/n) が正直に計上)。 */
+        INT pending = 0;
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            if (cagg_exp[o][n] && !cagg_got[o][n] &&
+                dnode_table[n].state != DNODE_DEAD) pending++;
         }
-    kdds_pub(h_rsum_pub[drpc_my_node], &sum, (W)sizeof(sum));
-    dk_puts("[dkva] region summary published  rid="); dk_putdec(drpc_my_node);
-    dk_puts("  entries="); dk_putdec(entries); dk_puts("\r\n");
+
+        cagg_dl[o]--;
+        if (pending == 0 || cagg_dl[o] <= 0) {
+            /* region 要約を確定 → round-robin 再発行フェーズへ */
+            cagg[o].n_entries = (UB)(cagg_entries[o] > 255 ? 255 : cagg_entries[o]);
+            cagg_phase[o] = 2;
+            cagg_rttl[o]  = DKVA_ANSWER_ITERS;
+            dk_puts("[dkva] region summary published  rid="); dk_putdec(drpc_my_node);
+            dk_puts("  origin="); dk_putdec(o);
+            dk_puts("  entries="); dk_putdec(cagg_entries[o]); dk_puts("\r\n");
+        }
+    }
+}
+
+/* responder ループ毎反復で 1 回呼ぶ。確定済 (phase 2) の origin の rsum を
+ * round-robin で 1 件だけ rsum/<me> へ再発行する (resp と同じ時間多重)。
+ * これで複数 origin の rsum が単一 LATEST_ONLY スロットを潰し合わず、各起点が
+ * 自分宛 (origin==自ノード) の要約を自分のポーリング窓内で取り出せる。 */
+static void cagg_republish(void)
+{
+    if (drpc_my_node >= DNODE_MAX || h_rsum_pub[drpc_my_node] < 0) return;
+    for (INT scan = 0; scan < DNODE_MAX; scan++) {
+        cagg_rr = (UB)((cagg_rr + 1) % DNODE_MAX);
+        if (cagg_phase[cagg_rr] == 2 && cagg_rttl[cagg_rr] > 0) {
+            kdds_pub(h_rsum_pub[drpc_my_node], &cagg[cagg_rr],
+                     (W)sizeof(DKVA_RESP_PKT));
+            if (--cagg_rttl[cagg_rr] == 0) cagg_phase[cagg_rr] = 0;
+            break;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -603,6 +684,7 @@ void dkva_task(INT stacd, void *exinf)
     static INT pend_ttl[DNODE_MAX];
     for (UB i = 0; i < DNODE_MAX; i++) { pend_req[i] = 0; pend_ttl[i] = 0; }
     UB rr = 0;
+    cagg_reset_all();   /* G13: per-origin event-driven coordinator 集約状態 */
 
     for (;;) {
         /* 1) 全 origin の q/<o> を走査。新しい req_id には partial を計算して
@@ -633,11 +715,14 @@ void dkva_task(INT stacd, void *exinf)
 
             /* 自 region の coordinator かつ他 region が存在するときだけ、region
              * partial を畳んで rsum/<me> を発行する (regions R2, Y)。単一 region
-             * では rsum は誰も読まないので集約 (200ms 窓) を省き、同時多発の
-             * 時間多重をブロックしない (G1)。region_coordinator() が
-             * region_recompute() するので have_remote_region() は最新を見る。 */
+             * では rsum は誰も読まないので集約自体を省く。
+             * ★G13: 集約は「この origin の event-driven 状態」を *開始* するだけ
+             * (cagg_start)。実際の fan-in は下の cagg_step が毎反復で少しずつ進める
+             * ので、ここで 200ms ブロックして同時多発を直列化しない。
+             * region_coordinator() が region_recompute() するので have_remote_region()
+             * / cagg_start の生存判定は最新を見る。 */
             if (region_coordinator() == me && have_remote_region())
-                coordinator_aggregate(&qpkt, rc);
+                cagg_start(o, &qpkt, rc);
         }
 
         /* 2) pending な応答を 1 つラウンドロビンで resp/<me> へ再発行 (時間多重)。
@@ -654,6 +739,13 @@ void dkva_task(INT stacd, void *exinf)
                 }
             }
         }
+
+        /* 3) G13: coordinator の per-origin 集約を 1 ステップ進め (cagg_step)、
+         *    確定済の rsum を round-robin で 1 件再発行する (cagg_republish)。
+         *    どちらもブロックしないので、何件の問いが region をまたいで同時に
+         *    来ても responder ループは凍らず、全 origin が並行に集約される。 */
+        cagg_step();
+        cagg_republish();
 
         tk_dly_tsk(10);
     }
@@ -724,6 +816,118 @@ void dkva_init(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* In-process プロパティ自己テスト (G13)                               */
+/*                                                                     */
+/* §5「同時多発・並行分散」の COMPUTE 側の核を「数で」守る。証明したい   */
+/* 不変量は 3 つ:                                                       */
+/*   P1 順序非依存 : ある origin の region 要約は partial の畳み込み順序 */
+/*                   に依らず同じ (到着順がどうであれ同じ答え)。         */
+/*   P2 origin 非汚染: 複数 origin の集約を *交互に* 進めても、各 origin */
+/*                   の結果はその origin の partial だけの和に等しい     */
+/*                   (単一共有 accumulator/窓が無い ⇔ 相互非干渉)。       */
+/*   P3 同時数不変 : ある origin の結果は「同時に集約中の他 origin の数」 */
+/*                   に依らない (= 並行しても直列と同じ; 単一窓が無い証拠)。*/
+/* 値は小整数 float なので加算は厳密 — 順序差を浮動小数誤差で誤魔化さない。*/
+/* 純ローカル (network/kdds 非依存) なのでベアメタルでも走る。           */
+/* ------------------------------------------------------------------ */
+
+static void st_zero(DKVA_RESP_PKT *p)
+{
+    UB *b = (UB *)p;
+    for (INT i = 0; i < (INT)sizeof(*p); i++) b[i] = 0;
+    p->magic = DKVA_RESP_MAGIC;
+}
+
+/* origin/seed から決定論的に小整数 partial を作る (1..n の整数 float)。 */
+static void st_fill(DKVA_RESP_PKT *p, UB origin, INT seed)
+{
+    st_zero(p);
+    p->origin = origin;
+    p->src_node = (UB)seed;
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++) {
+            p->attn_sum[t][h] = (float)((seed * 7 + t * 2 + h) % 5 + 1);
+            for (INT d = 0; d < DKVA_DH; d++)
+                p->partial_out[t][h][d] =
+                    (float)((seed * 3 + t + h * 2 + d) % 7 + 1);
+        }
+}
+
+static INT st_eq(const DKVA_RESP_PKT *a, const DKVA_RESP_PKT *b)
+{
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++) {
+            if (a->attn_sum[t][h] != b->attn_sum[t][h]) return 0;
+            for (INT d = 0; d < DKVA_DH; d++)
+                if (a->partial_out[t][h][d] != b->partial_out[t][h][d]) return 0;
+        }
+    return 1;
+}
+
+INT dkva_self_test(void)
+{
+    /* test-only バッファ (タスクスタックを汚さない) */
+    static DKVA_RESP_PKT s0, s1, s2;
+    static DKVA_RESP_PKT accA, accB, refA, refB;
+    INT fails = 0;
+
+    dk_puts("[g13-parallel] ==== §5 concurrent-aggregation property tests ====\r\n");
+
+    /* --- P1: 順序非依存 ------------------------------------------------ */
+    st_fill(&s0, 1, 1); st_fill(&s1, 1, 2); st_fill(&s2, 1, 3);
+    st_zero(&accA); st_zero(&accB);
+    accumulate_pkt(&accA, &s0); accumulate_pkt(&accA, &s1); accumulate_pkt(&accA, &s2);
+    accumulate_pkt(&accB, &s2); accumulate_pkt(&accB, &s0); accumulate_pkt(&accB, &s1);
+    if (st_eq(&accA, &accB)) dk_puts("[g13-parallel] P1 order-independent  : PASS\r\n");
+    else { fails++; dk_puts("[g13-parallel] P1 order-independent  : FAIL\r\n"); }
+
+    /* --- P2: origin 非汚染 (交互に集約しても混ざらない) ---------------- */
+    /* origin A = {seed 10, 11}, origin B = {seed 20, 21}. 独立した参照和。 */
+    st_zero(&refA); st_fill(&s0, 1, 10); st_fill(&s1, 1, 11);
+    accumulate_pkt(&refA, &s0); accumulate_pkt(&refA, &s1);
+    st_zero(&refB); st_fill(&s0, 2, 20); st_fill(&s1, 2, 21);
+    accumulate_pkt(&refB, &s0); accumulate_pkt(&refB, &s1);
+
+    st_zero(&accA); st_zero(&accB);
+    /* インターリーブ畳み込み (responder が A/B を並行に進めるのを模す) */
+    st_fill(&s0, 1, 10); accumulate_pkt(&accA, &s0);
+    st_fill(&s0, 2, 20); accumulate_pkt(&accB, &s0);
+    st_fill(&s0, 1, 11); accumulate_pkt(&accA, &s0);
+    st_fill(&s0, 2, 21); accumulate_pkt(&accB, &s0);
+    if (st_eq(&accA, &refA) && st_eq(&accB, &refB) && !st_eq(&accA, &accB))
+        dk_puts("[g13-parallel] P2 origin-isolated    : PASS\r\n");
+    else { fails++; dk_puts("[g13-parallel] P2 origin-isolated    : FAIL\r\n"); }
+
+    /* --- P3: 同時数不変 (他 origin が何件並行しても A の結果は不変) ---- */
+    /* A を「単独」で集約 → resultA. 次に B/C を同時に走らせながら A を集約。 */
+    st_zero(&accA);
+    st_fill(&s0, 1, 30); accumulate_pkt(&accA, &s0);
+    st_fill(&s1, 1, 31); accumulate_pkt(&accA, &s1);
+    /* now: A interleaved with two other concurrent origins B,C */
+    st_zero(&accB);   /* reuse accB as "A under concurrency" */
+    st_zero(&refB);   /* reuse refB/refA as throwaway B,C accumulators */
+    st_zero(&refA);
+    st_fill(&s0, 1, 30); accumulate_pkt(&accB, &s0);
+    st_fill(&s2, 2, 99); accumulate_pkt(&refB, &s2);   /* B noise */
+    st_fill(&s2, 3, 77); accumulate_pkt(&refA, &s2);   /* C noise */
+    st_fill(&s1, 1, 31); accumulate_pkt(&accB, &s1);
+    st_fill(&s2, 2, 98); accumulate_pkt(&refB, &s2);   /* more B noise */
+    if (st_eq(&accA, &accB))
+        dk_puts("[g13-parallel] P3 concurrency-invariant: PASS\r\n");
+    else { fails++; dk_puts("[g13-parallel] P3 concurrency-invariant: FAIL\r\n"); }
+
+    /* --- 構造: per-origin スロットが DNODE_MAX 本ある (単一共有窓でない) - */
+    if ((INT)(sizeof(cagg) / sizeof(cagg[0])) == DNODE_MAX)
+        dk_puts("[g13-parallel] P4 per-origin slots    : PASS\r\n");
+    else { fails++; dk_puts("[g13-parallel] P4 per-origin slots    : FAIL\r\n"); }
+
+    if (fails == 0) dk_puts("[g13-parallel] PASS\r\n");
+    else { dk_puts("[g13-parallel] FAIL  failures="); dk_putdec((UW)fails);
+           dk_puts("\r\n"); }
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
 /* 統計表示                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -775,6 +979,14 @@ void dkva_cmd(const UB *args, UW len)
     const UB *p   = args;
     const UB *end = args + len;
     while (p < end && (*p == ' ' || *p == '\t')) p++;
+
+    /* verb "test" — G13 同時集約プロパティ自己テスト (純ローカル, mesh 不要) */
+    {
+        static const char tverb[] = "test";
+        INT ti = 0;
+        while (tverb[ti] && p + ti < end && (char)p[ti] == tverb[ti]) ti++;
+        if (tverb[ti] == '\0') { dkva_self_test(); return; }
+    }
 
     /* verb "infer" 以外は統計表示 */
     static const char verb[] = "infer";
