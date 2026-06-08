@@ -19,6 +19,12 @@
 >
 > 重さ: 🔴 思想の核に反する／🟡 思想を弱める／🟢 軽微・前進。実証: ✅ 実機/CI　📖 コード読み
 > 検証時点: master tip `ed18b8a`（worktree clean）。G22 実装はまだ master に着地していない（`git status` clean、`samples/` に collective-learn 系なし）。
+>
+> **[訂正 第8版より]** 本書 §4.3 / §8 の「学習→反射への矢印は無い／二層は完全に分離」は **dtr 経路を
+> 見落としていた**。dtr 推論経路は実 max-softmax 確信度を反射へ渡し（`dtr.c:1246/1342`）、G22 の live
+> gossip は収束モデルを live dtr 重みへ書き戻す（`gossip_learn.c:608`）— 前向き矢印の半本は既に実在する。
+> 死んでいるのは moe §7 経路の 0xFF（`moe.c:419`）と、逆矢印（guard 経験→学習）と、実証。詳細は
+> philosophy-gap-audit-8.md §2.3。
 
 ---
 
