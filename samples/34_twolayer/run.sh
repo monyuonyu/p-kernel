@@ -90,7 +90,11 @@ start_node() {  # <i>  — (re)start node i on its own durable p-fs dir
 
 # guard_score for the LEARNED ('') or UNLEARNED ('fresh') line, as integer x10.
 guard_x10() {  # <logfile> <LEARNED|UNLEARNED>
-    grep -aoE "$2 guard_score=[0-9]+\.[0-9]" "$1" 2>/dev/null | tail -1 \
+    # NOTE: anchor on a leading space — "UNLEARNED" contains "LEARNED" as a
+    # substring, so an un-anchored "LEARNED guard_score=" also matched the
+    # UNLEARNED line; with both lines in one log, tail -1 then non-deterministically
+    # picked the wrong one (passed on qemu, FAILED on the hosted x86_64 runner).
+    grep -aoE "[[:space:]]$2 guard_score=[0-9]+\.[0-9]" "$1" 2>/dev/null | tail -1 \
         | grep -aoE '[0-9]+\.[0-9]' | tr -d .
 }
 wait_for() {  # <file> <pattern> <secs>
