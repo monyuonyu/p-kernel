@@ -1,3 +1,5 @@
+> **[歴史記録・凍結 / superseded by `gap-ledger.md`]** 本書は時点監査の歴史記録。いま master で開いている gap の正本は [[gap-ledger.md]] に一本化した。本文は当時のまま保存。`audit-9` は作らない（レビュー #5）。
+
 # 思想⇄実装 乖離監査 — philosophy-gap-audit
 
 > 監査隊の地図。**掲げる設計思想と実装の乖離点・実装が弱い点**を、コードの
