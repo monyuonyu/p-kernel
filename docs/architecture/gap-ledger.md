@@ -19,13 +19,12 @@
 
 | id | one-line | sev | evidence it is still open (file:line on master) | "closed" means |
 |---|---|---|---|---|
-| **R3** | The "thinking" is a 635-param, 3-class, 4-channel toy whose routing answer is analytically a 3-line temp threshold. Even with the neurons wired, the *content* of thought is trivial. | 🔴 | `dtr.h:168` (635 params), `dtr.h:34` (3 classes), `dtr.h:37` (4ch), `moe.c:107-114` (analytic temp threshold) | A non-trivial task/model where learned beats frozen by a margin that does **not** collapse to a hand-written if. |
 | **G23** | `DNODE_MAX=32` caps the collective brain at 32 nodes — contradicts UMP "every install = a node". | 🔴 | `drpc.h:35` (=32), `drpc.h:103` (table), `drpc.h:23` (8-bit id), `gossip_learn.c:243/493` (`GL_MAXNODES` assumed) | Node ceiling raised past 32 in code, with a live test exercising >32 participants. |
 | **G33** | Reflex threat *level* is released by a 5 s wall-clock timer + a clamped scalar nudge, not by a controlled quantity. | 🟡 | `reflex.c:304-311`, `reflex.h:60` (`HOLD=5000`), `reflex.c:321-352` (scalar nudge) | Threat level rises/falls with the controlled variable, not a timer. |
 | **G13** | Cross-region inference is re-serialized by the coordinator's fixed 200 ms blocking window. (Partly probed by `parallel-infer-live`; residual remains.) | 🟡 | `dkva.c:252-269/640`, `dkva.h:66` (`WIN=200`) | Cross-region inference not gated by a fixed blocking window. |
 | **AUDIT-SPRAWL** (review #5) | The self-audit became a second product (v1..v8 ≈ 2431 lines, rivalling the learning code); gaps were *versioned*, not *closed*. | 🟡 | `philosophy-gap-audit{,-2..-8}.md` (8 files) | This ledger is the sole open list; rows only shrink; no v9 is ever spawned. Closes by sustained discipline. |
 
-**Open rows: 5.** Every other G-number is closed (below).
+**Open rows: 4.** Every other G-number is closed (below).
 
 ---
 
@@ -40,6 +39,7 @@ CI-enforced and shipped, therefore removed from the open table:
 - **G24** durable memory / ARK FS (content-addressed, versioned, crash-safe, power-cut survival on real HW) — `23_durable`, `ark-crash-fuzzer` `ci.yml:358`, `arkfs-audit.md`.
 - **G27 / G32** live-path CI gates (self-test green is not promoted; live N≥3 + kill is the gate) — the live jobs above are the institution.
 - **G29** + the earlier gaps **G1–G19, G21, G25, G26, G30, G31, G36, G37** — closed across waves 1–16; full provenance in `philosophy-gap-audit-{,-2..-8}.md`.
+- **R3** the thinking is no longer a toy — the SAME dtr kernels (anti-fork: shared `dt_linear`/`dt_softmax`/width-parameterized LayerNorm) learn an in-context associative-recall task whose label is resampled every episode. Independently audited on a clean rebuild (gradcheck re-run at stride 1/eps 5e-4: 21516/21516 params agree, zero kink-exclusions): learned **100%** held-out vs handif 35.2% (= chance + bounded value-copy edge) vs frozen 24.7% → margin **+64.8 pts**. CI `[r3-incontext-gradcheck/frozen/handif/learned]`, 28/28 self-tests, all 4 builds. **Closed wave-19** (capacity certificate for the substrate; NOT a live-sensor swap — the conversational mind builds on top). Doc `r3-nontrivial-thought.md`.
 - **3BRAIN / G38** (review #1·#3) the three brains are one — `moe_infer` runs **one** dtr forward whose argmax is the routed, returned, and guarded class; gate if-ladder + `(void)hum/press/light` and `mlp_forward` are gone from the live path (`drpc` infer uses `dtr_classify`). CI `[onebrain-unified]/[onebrain-channels]/[onebrain-nomlp]/[onebrain-accuracy]` `ci.yml:75-78`, RETURNED accuracy 33%→83% via G22. **Closed wave-18-A.** Residual (honest, out of live path): `spec.c` band partitioner predicts band≠class by design; `mlp_forward` remains only in demo paths (edf/pipeline/fedlearn/ai_job task).
 
 ---

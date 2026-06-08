@@ -1,11 +1,14 @@
 /* ------------------------------------------------------------------ *
  *  r3_incontext.c — R3: non-trivial thought (in-context associative
- *  recall). The proof that this substrate learns a function NO
- *  hand-written if can: each episode carries its own key->value
+ *  recall). The proof that this substrate learns a function no
+ *  hand-written if can win at: each episode carries its own key->value
  *  dictionary; the label is the value bound to the query THIS episode.
- *  Because the dictionary is resampled every episode, any fixed
- *  input->label rule is <= chance BY CONSTRUCTION (the [handif] test
- *  prints the number), yet attention solves it by reading the prompt.
+ *  Because the dictionary is resampled every episode, no fixed
+ *  input->label rule wins by a meaningful margin: the best one
+ *  ("copy value@p") sits at chance + (1/R_NPAIR)(1-1/R_VALV), a small
+ *  edge that vanishes as R_NPAIR grows (the [handif] test prints it).
+ *  Attention solves it for real by reading the prompt; the certificate
+ *  measures the learned margin over max(frozen, handif), not vs chance.
  *
  *  Anti-fork rule (docs/architecture/r3-nontrivial-thought.md): the
  *  numerically-meaningful kernels (dt_linear / dt_softmax / LayerNorm

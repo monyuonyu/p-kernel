@@ -29,11 +29,21 @@ that this substrate can *think*.
 > **not** collapse to a hand-written if."
 
 To make "does not collapse to a hand-written if" **unfakeable**, R3 uses a task
-where *any fixed input→output rule is provably ≤ chance* — not by argument, by
-construction. Then the "best hand-written if" baseline is pinned at chance as a
-theorem, and the only way to beat chance is to do the thing the toy could not:
-read information that is present **in this episode's context** and is different
-next episode.
+where *no fixed input→output rule can win by a meaningful margin* — because the
+key→value dictionary is resampled every episode, so the map (query token →
+label) carries almost no fixed signal. The best possible fixed rule is pinned
+near chance (see the honest bound below), and the only way to do substantially
+better is the thing the toy could not: read information present **in this
+episode's context** that is different next episode.
+
+> HONEST BOUND (verified, not "by construction"): for literal recall the label
+> equals a stored value, so the single fixed rule "copy the value at position p"
+> scores `chance + (1/R_NPAIR)(1 − 1/R_VALV)` — the queried entry lands on a
+> fixed position `1/R_NPAIR` of the time. This structural edge is small and
+> **vanishes as R_NPAIR grows** (≈ +9 pts at R_NPAIR=8), but it is NOT exactly
+> chance. The certificate therefore measures the learned margin against
+> `max(frozen, handif)`, not against a claimed chance floor — so the edge is
+> fully accounted for and "no hand-if wins by a meaningful margin" still holds.
 
 ## The task — in-context associative recall (the seed of the north star)
 
@@ -48,11 +58,13 @@ episode t:   dict = { k0→v0, k1→v1, k2→v2 }   (keys, values resampled each
 
 Why this is the right task:
 
-1. **Hand-if is provably ≤ chance.** Because the dictionary is resampled every
-   episode, the map (query token → label) is uniform across episodes. *Any*
-   function of the input that ignores the in-context dictionary — every fixed
-   threshold, every "output token at position p", every most-frequent-class — is
-   at chance by construction. A `grep`-able hand-if **cannot** win. (A
+1. **Hand-if cannot win by a meaningful margin (≈ chance + a vanishing edge).**
+   Because the dictionary is resampled every episode, the map (query token →
+   label) carries almost no fixed signal. Every fixed threshold and every
+   most-frequent-class rule is at chance; the *only* fixed rule with any edge is
+   "copy the value at position p", bounded at `chance + (1/R_NPAIR)(1−1/R_VALV)`
+   (the HONEST BOUND above) which → chance as R_NPAIR grows. A `grep`-able
+   hand-if **cannot win by the +30-pt margin the certificate demands**. (A
    content-addressed *search loop* could, but that is no longer "a hand-written
    if" — it is the very match-and-copy operation attention has to learn. We
    present the dictionary as token **content**, not as a position index, so a
@@ -93,7 +105,9 @@ All of the following, on a clean local rebuild, then CI-enforced, all 4 targets:
   of calling the *same* kernels the live `dtr` uses → it would prove a different
   brain, not this one. (Shared helpers, no duplicated math.)
 - The dictionary is *not* resampled per episode (then a hand-if could win and
-  the bar is not actually met) → `[r3-incontext-handif]` must come out at chance.
+  the bar is not actually met) → `[r3-incontext-handif]` must come out at
+  chance + at most the bounded value-copy edge (1/R_NPAIR)(1−1/R_VALV); if it
+  rises materially above that, the generator is leaking a fixed signal.
 - "learned" number measured on the training episodes, not held-out fresh
   episodes with unseen dictionaries.
 
