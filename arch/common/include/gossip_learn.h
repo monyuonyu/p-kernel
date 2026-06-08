@@ -89,6 +89,20 @@ INT  gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n);
 void gl_self_test(void);
 
 /* ------------------------------------------------------------------ */
+/* G38 — THINKING CHANGES GUARDING (survival-network §8 §9 two-layer    */
+/* couple). In-process property tests, greppable, wired to CI:         */
+/*   [g38-confidence-live]          — real max-softmax gates the reflex */
+/*                                    (low-conf stays quiet; learned-   */
+/*                                    confident threat fires; not 0xFF) */
+/*   [g38-learning-improves-guarding]— a COLLECTIVELY-LEARNED model     */
+/*                                    guards measurably better than an  */
+/*                                    UNLEARNED one (numbers printed)    */
+/*   [g38-guard-feeds-learning]     — the reflex's per-class threat     */
+/*                                    experience prioritizes the learn  */
+/* Run from `dtr gossip g38`. */
+void gl_g38_test(void);
+
+/* ------------------------------------------------------------------ */
 /* shell dispatcher for `dtr gossip ...` (live multi-node demo)        */
 /*   dtr gossip test            — run the in-process self-test         */
 /*   dtr gossip solo  [steps]   — measure THIS node's solo shard ceil  */

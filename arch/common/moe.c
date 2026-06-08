@@ -41,6 +41,7 @@
 #include "world.h"      /* world_note_firing / world_peer_pressure — 局所勾配 */
 #include "region.h"     /* region_contains — 同 region 近傍 (反射層 §8)        */
 #include "reflex.h"     /* G17: 推論完了点 → §8 反射層 (思考→行動の片肺解消)   */
+#include "dtr.h"        /* G38: 学習モデルの実 softmax 確信度で反射をゲート     */
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -410,13 +411,33 @@ UB moe_infer(B temp, B hum, B press, B light)
 
     my_total++;
 
-    /* ── G17: 思考→行動の片肺を閉じる ───────────────────────────────────
-     * これまで reflex は dtr 経路 (dtr_log_push / TP 完了点) からしか叩かれず、
-     * 「最も効く専門家が §7 ゲートで選ばれて出した結論」は虚空に消えていた。
-     * moe_infer の推論完了点でも §8 反射層へ繋ぐ。dtr_infer とは別コマンド
-     * (mlp_forward / dtk_infer 経路) なので同一ノードで二重発火しない。
-     * confidence は moe ローカル/リモート経路とも未知 → 0xFF (ゲートを通す)。 */
-    reflex_on_inference(result_class, 0xFF, drpc_my_node);
+    /* ── G17 + G38: 思考→行動を、*学習した確信* でゲートする ────────────────
+     * G17 は「最も効く専門家の結論」を §8 反射層へ繋いだが、confidence は
+     * 0xFF 固定 = 死んだゲート (常に発火) だった = 低確信の誤推論でも反射が
+     * 暴発する (G34)。
+     *
+     * G38 (本丸 — 学習→守るの主アロー): 協調学習される 635-param Transformer
+     * (dtr; gossip_learn が G22 で全網平均する本体) に *同じ入力* を通し、その
+     * softmax から
+     *   learned_class = argmax           … 脅威の判断そのものを学習モデルへ接地
+     *   confidence    = max-prob × 100   … 実在の確信度で反射ゲートを開閉
+     * を取り出して反射層へ渡す。低確信 (未学習/曖昧) な入力は反射を発火させず、
+     * 高確信の脅威クラスだけが決然と発火する。= 群れが学べば守りが良くなる。
+     * 反射の脅威軸は温度バケツ + 5s タイマだけでなく、この学習信号で駆動される。 */
+    B   linput[DTR_SEQ_LEN] = { (B)temp, (B)hum, (B)press, (B)light };
+    float lprobs[DTR_OUT_DIM];
+    dtr_forward_probs(linput, lprobs);
+    UB    learned_class = 0;
+    float lmx = lprobs[0];
+    for (INT c = 1; c < DTR_OUT_DIM; c++)
+        if (lprobs[c] > lmx) { lmx = lprobs[c]; learned_class = (UB)c; }
+    INT confi = (INT)(lmx * 100.0f + 0.5f);     /* REAL max-softmax, 0..100 */
+    if (confi < 0)   confi = 0;
+    if (confi > 100) confi = 100;
+    mo_puts("[moe] learned cls="); mo_putdec(learned_class);
+    mo_puts(" conf="); mo_putdec((UW)confi);
+    mo_puts("% (gates reflex; was dead 0xFF)\r\n");
+    reflex_on_inference(learned_class, (UB)confi, drpc_my_node);
 
     return result_class;
 }
