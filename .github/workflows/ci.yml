@@ -80,6 +80,11 @@ jobs:
           # the reflex self-test was previously never invoked in CI).
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §8 G33 (gap-ledger): reflex THREAT LEVEL is driven by the observed
+          # danger quantity, NOT a 5s wall-clock timer. It falls promptly on the
+          # SAFE signal; persisting danger survives the clock passing HOLD; the
+          # timeout remains only as a safety cap. (emitted by `reflex test`)
+          grep -aF '[g33-controlled] PASS' selftest.log
           # §2 G28: threat grounded in under-replication + actuator closes the
           # loop (threat falls because of replication, not a timer; wave 14).
           grep -aF '[protect-ground] PASS' selftest.log
@@ -161,6 +166,8 @@ jobs:
           grep -aF '[onebrain-accuracy] PASS' selftest.log
           grep -aF '[reflex-fb] PASS' selftest.log
           grep -aF '[reflex-learn] PASS' selftest.log
+          # §8 G33: reflex threat level driven by observed danger, not a timer
+          grep -aF '[g33-controlled] PASS' selftest.log
           # §2 G28 grounded threat + closed loop (wave 14)
           grep -aF '[protect-ground] PASS' selftest.log
           grep -aF '[protect-loop] PASS' selftest.log
