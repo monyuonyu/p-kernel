@@ -51,6 +51,7 @@ IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
 IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
+IMPORT void lm_test(void);                            /* living-mind DMN */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -631,6 +632,15 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "breathe")) {
             /* R3b: expert specialization — join smarter / leave graceful */
             breathe_cmd(line + 7, (UW)(n - 7));
+        } else if (starts_with(line, n, "dmn")) {
+            /* living-mind first slice (docs/architecture/living-mind.md II):
+             * `dmn test` runs the DMN sleep-consolidation acceptance suite
+             * (replay engrams -> distill via gl_merge; no catastrophic
+             * forgetting; decentralized; survives kill+rejoin). */
+            const UB *a = line + 3; UW al = (UW)(n - 3);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_test();
+            else print("usage: dmn test\r\n");
         } else if (starts_with(line, n, "r3")) {
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */

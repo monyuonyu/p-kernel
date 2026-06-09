@@ -483,10 +483,16 @@ static void cmd_vital(const char *arg)
     sout("Usage: vital stat\r\n");
 }
 
+IMPORT void lm_test(void);   /* living-mind DMN sleep-consolidation suite */
+
 static void cmd_dmn(const char *arg)
 {
-    /* "dmn set idle <n>" or "dmn set log <n>" */
+    /* "dmn set idle <n>" or "dmn set log <n>" or "dmn test" */
     while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        lm_test();   /* living-mind first slice (living-mind.md II) */
+        return;
+    }
     if (arg[0]=='s' && arg[1]=='e' && arg[2]=='t' && arg[3]==' ') {
         const char *p = arg + 4;
         while (*p == ' ') p++;

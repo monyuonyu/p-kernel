@@ -22,6 +22,7 @@
 #include "dtr.h"
 #include "degrade.h"
 #include "ga.h"
+#include "lm_consolidate.h"   /* living-mind: rest-time sleep-consolidation */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -96,6 +97,16 @@ static void dmn_idle_work(void)
     /* Phase 14: GA による重み自己改善 (GA_INTERVAL アイドルに 1 回) */
     if (dmn_stats.idle_runs % GA_INTERVAL == 1)
         ga_step();
+
+    /* living-mind (docs/architecture/living-mind.md II.7): rest-time
+     * "sleep" consolidation — replay durable engrams and distill them
+     * into the dtr slow weights. ALONGSIDE ga_step (not replacing the
+     * organ). No-op until engrams are pending (e.g. captured by a prior
+     * `dmn test` run or, later, the live conversational fast layer). */
+    if (dmn_stats.idle_runs % GA_INTERVAL == 1 && lm_engrams_pending()) {
+        if (lm_consolidate_idle_round())
+            dmn_puts("[dmn] sleep: replayed engrams -> consolidated weights\r\n");
+    }
 
     /* dmn_log_interval パルスに 1 回だけ詳細ログを出す */
     if (dmn_stats.idle_runs % dmn_log_interval != 1) return;
