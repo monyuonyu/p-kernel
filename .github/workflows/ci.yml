@@ -144,6 +144,17 @@ jobs:
           grep -aF '[dmn-distributed] PASS' selftest.log
           grep -aF '[dmn-survive] PASS' selftest.log
           grep -aF '[dmn-gradcheck] PASS' selftest.log
+          # living-mind Part IV (salience-weighted replay = the DMN's
+          # imagination): under a FIXED replay budget (B_RING unchanged),
+          # weighting the engram ring by EARNED salience (the per-class guard
+          # experience reflex_threat_experience() that accrued from real reflex
+          # firings) retains the high-salience (danger) class better than
+          # uniform replay -- a real reallocation tradeoff measured on FRESH
+          # held-out. salience EARNED not hand-set (gated precondition); the
+          # uniform path is byte-identical when no danger met. (`dmn test`)
+          grep -aF '[salience-earned] PASS' selftest.log
+          grep -aF '[salience-retains] PASS' selftest.log
+          grep -aF '[salience-noregress] PASS' selftest.log
           # living-mind Self layer (docs/architecture/living-mind.md III): a
           # distributed autobiographical self -- a per-node, hash-chained
           # "self/lin" lineage (LM_SELF_ENTRY versions, content-level walk via

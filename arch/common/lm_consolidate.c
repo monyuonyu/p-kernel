@@ -33,6 +33,9 @@
 #include "lm_consolidate.h"
 #include "dtr.h"            /* dtr_train_batch/eval/reinit/get/set/grad_check */
 #include "gossip_learn.h"   /* gl_merge -- the no-central consolidation merge  */
+#include "reflex.h"         /* G38 earned salience (Part IV): reflex_on_inference,
+                            * reflex_threat_experience, guard_class_exp save/restore */
+#include "drpc.h"           /* drpc_my_node (src for reflex_on_inference)      */
 #include "pfs_block.h"
 #include "pfs_dag.h"        /* durable engram store (II.4)                    */
 #include "kernel.h"
@@ -93,6 +96,18 @@ static void lpf3(float f)
 #define B_RING      24                /* engrams per task               */
 
 _Static_assert(B_RING * 4 < LM_NTR, "B_RING must be << per-task data");
+
+/* ── salience-weighted replay (living-mind.md Part IV) ───────────────────
+ * The danger class is the MIDDLE/HARDEST class (reflex 'alert' = class 1):
+ * lm_gen places class centers at 0/14/28, so the extreme classes (0,2)
+ * overlap on one side only (easier) while the middle class (1) overlaps on
+ * both sides (Bayes-error highest). Retaining the HARD class better is a
+ * genuine win, not metric saturation (IV.6 option (a)). The safe baseline
+ * is class 0, whose act_table[0]==NONE so it never accrues guard experience
+ * (classw[safe] stays 1). LM_WMAX mirrors GL_WMAX (gossip_learn.c:567). */
+#define LM_DANGER   1                 /* danger = middle/hardest (reflex alert) */
+#define LM_SAFE     0                 /* act_table NONE -> never earns exp       */
+#define LM_WMAX     3                 /* mirrors GL_WMAX; max per-class weight    */
 
 /* per-task class label permutation pi_t (II.2 (A)-style permutation, but
  * applied within (B) disjoint regions). Distinct, contradictory mappings
@@ -191,6 +206,52 @@ static float lm_acc(UB t)
     return (float)correct * 100.0f / (float)LM_NTE;
 }
 
+/* per-class held-out accuracy (%), AGGREGATED ACROSS ALL TASKS (the salience
+ * weight is class-global), on FRESH episodes (lm_tex/lm_tey), never the
+ * replayed engrams (IV.4/IV.6). A held-out episode i has class i%LM_NCLASS
+ * (lm_ds_init generates round-robin) and identity label, so we argmax
+ * dtr_forward_probs and compare. Reuses only shared dtr kernels (no fork). */
+static float lm_acc_class(UB cls)
+{
+    UW correct = 0, total = 0;
+    for (UB t = 0; t < LM_T; t++)
+        for (INT i = 0; i < LM_NTE; i++) {
+            if ((UB)(i % LM_NCLASS) != cls) continue;
+            float p[DTR_OUT_DIM];
+            dtr_forward_probs(lm_tex[t][i], p);
+            UB arg = 0; float best = p[0];
+            for (UB k = 1; k < DTR_OUT_DIM; k++) if (p[k] > best) { best = p[k]; arg = k; }
+            if (arg == lm_tey[t][i]) correct++;
+            total++;
+        }
+    return total ? (float)correct * 100.0f / (float)total : 0.0f;
+}
+/* macro (mean per-class) held-out accuracy (%). */
+static float lm_acc_macro(void)
+{
+    float s = 0.0f;
+    for (UB c = 0; c < LM_NCLASS; c++) s += lm_acc_class(c);
+    return s / (float)LM_NCLASS;
+}
+
+/* Part IV (IV.7): derive the per-class replay weight from EARNED guard
+ * experience using the SAME clamp formula G22 uses (gossip_learn.c:635) —
+ * MIRRORED, not called (gl_build_weighted is file-static there and its
+ * minibatch-inflation body would break our fixed B_RING budget). With every
+ * exp[c]==0 this yields all-1 (the no-regress hinge). The single source of
+ * truth for the weighting math in this file. */
+static void lm_classw_from_exp(const UW exp[LM_NCLASS], UW out[LM_NCLASS])
+{
+    UW mx = 1;
+    for (UB c = 0; c < LM_NCLASS; c++) if (exp[c] > mx) mx = exp[c];
+    for (UB c = 0; c < LM_NCLASS; c++) {
+        UW w = 1 + (exp[c] * ((UW)LM_WMAX - 1) + mx - 1) / mx;   /* mirror :635 */
+        if (w < 1) w = 1;
+        if (w > (UW)LM_WMAX) w = (UW)LM_WMAX;
+        out[c] = w;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* the engram ring (II.3) -- the "hippocampus"                          */
 /* ------------------------------------------------------------------ */
@@ -203,24 +264,87 @@ static void lm_ring_clear(void)
     for (UB t = 0; t < LM_T; t++) lm_ring_n[t] = 0;
 }
 
-/* capture B_RING engrams of task t into the ring. UNIFORM sampling
- * (stride over the train set). Salience-weighted replay (II.3) is
- * OPTIONAL and would reuse reflex_threat_experience(); in this self-
- * contained certificate the live reflex has met no danger yet, so we do
- * honest UNIFORM replay and set salience=1. (gl_build_weighted, cited by
- * the doc, lives file-static in gossip_learn.c and is class-oversample,
- * not engram-priority; uniform is the cheap, sufficient choice here.) */
+/* per-class earned replay weight (living-mind.md IV). Default {1,1,1} =
+ * NO earned salience -> lm_ring_capture is byte-identical to LM-1 uniform
+ * (the no-regress hinge, IV.5 #3). The salience cert sets it from
+ * reflex_threat_experience() via the mirrored G22 clamp (IV.7) and resets
+ * it back to all-1 afterwards, so the live DMN path is never weighted. */
+static UW lm_classw[LM_NCLASS] = { 1, 1, 1 };
+
+/* capture B_RING engrams of task t into the ring.
+ *
+ * Part IV — SALIENCE-WEIGHTED, FIXED-BUDGET REALLOCATION. The ring still
+ * holds EXACTLY B_RING engrams/task (budget unchanged; NOT a bigger ring,
+ * NOT minibatch inflation — IV.2/IV.6). Salience changes only WHICH engrams
+ * fill the fixed slots: the per-class share of the B_RING slots is
+ * proportional to lm_classw[c] (danger gets more, low-salience fewer), and
+ * each engram's salience field carries its EARNED class weight (a real
+ * reflex-derived number, not the constant 1).
+ *
+ * NO-REGRESS HINGE: when every lm_classw[c]==1 (no earned experience) this
+ * reduces to the EXACT LM-1 uniform stride — byte-identical engrams in the
+ * same slots — so all [dmn-*] stay unchanged (IV.5 #3). (gl_build_weighted,
+ * cited by the doc, is file-static in gossip_learn.c and its minibatch-
+ * inflation loop would break the fixed budget; we MIRROR only its clamp
+ * FORMULA, IV.7, not its body.) */
 static void lm_ring_capture(UB t)
 {
-    UW step = LM_NTR / B_RING; if (step == 0) step = 1;
+    /* no-regress hinge: no earned salience -> exact LM-1 uniform stride. */
+    BOOL uniform = TRUE;
+    for (UB c = 0; c < LM_NCLASS; c++) if (lm_classw[c] != 1) uniform = FALSE;
+    if (uniform) {
+        UW step = LM_NTR / B_RING; if (step == 0) step = 1;
+        UW m = 0;
+        for (UW i = 0; i < (UW)LM_NTR && m < B_RING; i += step) {
+            for (INT k = 0; k < DTR_SEQ_LEN; k++) lm_ring[t][m].input[k] = lm_trx[t][i][k];
+            lm_ring[t][m].label    = lm_try[t][i];
+            lm_ring[t][m].task_id  = t;
+            lm_ring[t][m].salience = 1;
+            lm_ring[t][m]._pad     = 0;
+            m++;
+        }
+        lm_ring_n[t] = m;
+        return;
+    }
+
+    /* weighted: split the FIXED B_RING slots across classes proportional to
+     * lm_classw (largest-remainder so the counts sum to EXACTLY B_RING). */
+    UW wsum = 0;
+    for (UB c = 0; c < LM_NCLASS; c++) wsum += lm_classw[c];
+    UW target[LM_NCLASS], rem[LM_NCLASS], base_sum = 0;
+    for (UB c = 0; c < LM_NCLASS; c++) {
+        UW prod = lm_classw[c] * (UW)B_RING;
+        target[c] = prod / wsum;
+        rem[c]    = prod - target[c] * wsum;   /* fractional part * wsum */
+        base_sum += target[c];
+    }
+    /* hand out the leftover slots (< LM_NCLASS) to the largest remainders;
+     * ties -> lowest class index (deterministic across nodes/ABIs). */
+    for (UW left = (UW)B_RING - base_sum; left > 0; left--) {
+        UB best = 0;
+        for (UB c = 1; c < LM_NCLASS; c++) if (rem[c] > rem[best]) best = c;
+        target[best]++;
+        rem[best] = 0;
+    }
+
+    /* fill: class c episodes are at train indices i = p*LM_NCLASS + c (the
+     * dataset is generated round-robin, lm_gen(t, i%LM_NCLASS, ...)); pick
+     * target[c] of them by an in-class stride. salience = the class weight. */
     UW m = 0;
-    for (UW i = 0; i < (UW)LM_NTR && m < B_RING; i += step) {
-        for (INT k = 0; k < DTR_SEQ_LEN; k++) lm_ring[t][m].input[k] = lm_trx[t][i][k];
-        lm_ring[t][m].label    = lm_try[t][i];
-        lm_ring[t][m].task_id  = t;
-        lm_ring[t][m].salience = 1;
-        lm_ring[t][m]._pad     = 0;
-        m++;
+    UW pool = (UW)LM_NTR / LM_NCLASS;          /* episodes per class */
+    for (UB c = 0; c < LM_NCLASS; c++) {
+        if (target[c] == 0) continue;
+        UW step = pool / target[c]; if (step == 0) step = 1;
+        UW picked = 0;
+        for (UW p = 0; p < pool && picked < target[c] && m < B_RING; p += step) {
+            UW i = p * LM_NCLASS + c;
+            for (INT k = 0; k < DTR_SEQ_LEN; k++) lm_ring[t][m].input[k] = lm_trx[t][i][k];
+            lm_ring[t][m].label    = lm_try[t][i];
+            lm_ring[t][m].task_id  = t;
+            lm_ring[t][m].salience = (UB)lm_classw[c];
+            lm_ring[t][m]._pad     = 0;
+            m++; picked++;
+        }
     }
     lm_ring_n[t] = m;
 }
@@ -388,6 +512,29 @@ static float lm_run_replay(float *last_out)
     return lm_acc(0);
 }
 
+/* Part IV: run the full LM-1 stream once under a given per-class replay
+ * weight vector (uniform {1,1,1} or earned salience), capturing engrams
+ * after each task. Same seed + same B_RING as lm_run_replay (the ONLY
+ * change is the capture allocation). Counts the danger-class engrams that
+ * landed in the fixed ring (*n_danger_out). Leaves lm_classw reset to
+ * all-1 so the live DMN path is never left weighted. Leaves the trained
+ * weights loaded so per-class held-out can be measured by the caller. */
+static void lm_run_replay_classw(const UW classw[LM_NCLASS], UW *n_danger_out)
+{
+    for (UB c = 0; c < LM_NCLASS; c++) lm_classw[c] = classw[c];
+    dtr_reinit_weights(LM_INIT_SEED);
+    lm_ring_clear();
+    for (UB t = 0; t < LM_T; t++) { lm_train_task(t, 1); lm_ring_capture(t); }
+    if (n_danger_out) {
+        UW nd = 0;
+        for (UB t = 0; t < LM_T; t++)
+            for (UW j = 0; j < lm_ring_n[t]; j++)
+                if (lm_ring[t][j].label == LM_DANGER) nd++;
+        *n_danger_out = nd;
+    }
+    for (UB c = 0; c < LM_NCLASS; c++) lm_classw[c] = 1;   /* restore uniform default */
+}
+
 void lm_test(void)
 {
     INT fails = 0;
@@ -542,6 +689,166 @@ void lm_test(void)
             lp("[dmn-gradcheck] FAIL\r\n");
             fails++;
         }
+    }
+
+    /* ---- 6. [salience-*] -- salience-weighted replay (living-mind.md IV) -- */
+    /* The DMN's third function: rehearse the survival-critical (danger) class
+     * MORE under a FIXED replay budget. Salience is EARNED from real reflex
+     * guard firings (not hand-set); the budget B_RING is unchanged; the gain
+     * is a REALLOCATION tradeoff measured on FRESH held-out (IV.1/IV.6). */
+    {
+        #define LM_KFIRE  8     /* reflex guard firings to EARN salience */
+
+        /* (a) EARN salience: drive K real reflex firings on the danger class
+         * through the PUBLIC accrual hook (reflex_on_inference). Save/restore
+         * the live G38 counters exactly as reflex_self_test (~ln 904) so we do
+         * not pollute production experience; run with reflex enabled; observe
+         * SAFE after to release the CONSERVE latch (IV.3). */
+        UW sv_exp[REFLEX_NUM_CLASSES];
+        reflex_guard_exp_save(sv_exp);
+        BOOL sv_en = reflex_set_enabled(TRUE);
+        {
+            UW zero[REFLEX_NUM_CLASSES];
+            for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) zero[c] = 0;
+            reflex_guard_exp_restore(zero);                  /* clean probe slate */
+            for (UW f = 0; f < LM_KFIRE; f++)
+                reflex_on_inference(LM_DANGER, 100, drpc_my_node);  /* alert fires */
+            reflex_on_inference(LM_SAFE, 100, drpc_my_node);  /* SAFE: release latch */
+        }
+        UW exp_vec[LM_NCLASS];
+        for (UB c = 0; c < LM_NCLASS; c++) exp_vec[c] = reflex_threat_experience(c);
+        UW exp_danger = exp_vec[LM_DANGER];
+        UW exp_safe   = exp_vec[LM_SAFE];
+
+        /* derive classw via the MIRRORED G22 clamp formula (gossip_learn.c:635),
+         * NOT a call (it is file-static + minibatch-inflation; IV.7). */
+        UW classw[LM_NCLASS];
+        lm_classw_from_exp(exp_vec, classw);
+
+        /* restore live G38 counters + reflex enable state (no pollution). */
+        reflex_guard_exp_restore(sv_exp);
+        reflex_set_enabled(sv_en);
+
+        /* uniform vs salience capture: SAME seed, SAME B_RING (IV.5 #2). */
+        UW uniw[LM_NCLASS] = { 1, 1, 1 };
+        UW n_danger_uni = 0, n_danger_sal = 0;
+
+        lm_run_replay_classw(uniw, &n_danger_uni);
+        float acc_d_uni = lm_acc_class(LM_DANGER);
+        float acc_s_uni = lm_acc_class(LM_SAFE);
+        float macro_uni = lm_acc_macro();
+
+        lm_run_replay_classw(classw, &n_danger_sal);
+        float acc_d_sal = lm_acc_class(LM_DANGER);
+        float acc_s_sal = lm_acc_class(LM_SAFE);
+        float macro_sal = lm_acc_macro();
+
+        float dgain = acc_d_sal - acc_d_uni;     /* danger retained better? */
+        float sloss = acc_s_uni - acc_s_sal;     /* safe class traded away  */
+
+        lp("[salience] ==== salience-weighted replay (living-mind.md IV) ====\r\n");
+        lp("[salience] danger class="); lpd(LM_DANGER);
+        lp(" (middle/hardest, reflex 'alert'); safe class="); lpd(LM_SAFE);
+        lp("; B_RING="); lpd(B_RING); lp(" (FIXED budget, reallocation only)\r\n");
+        lp("[salience] EARNED experience: reflex_threat_experience(danger)=");
+        lpd(exp_danger); lp(" > (safe)="); lpd(exp_safe);
+        lp("  -> classw=["); for (UB c = 0; c < LM_NCLASS; c++) { lpd(classw[c]); if (c+1<LM_NCLASS) lp(","); }
+        lp("] (WMAX="); lpd(LM_WMAX); lp(")\r\n");
+        lp("[salience] danger engrams in ring: uniform="); lpd(n_danger_uni);
+        lp("  salience="); lpd(n_danger_sal); lp(" (same B_RING)\r\n");
+        lp("[salience] held-out danger: uniform="); lpf1(acc_d_uni);
+        lp("%  salience="); lpf1(acc_d_sal); lp("%  (dgain "); lpf1(dgain); lp(" pts)\r\n");
+        lp("[salience] held-out safe  : uniform="); lpf1(acc_s_uni);
+        lp("%  salience="); lpf1(acc_s_sal); lp("%  (sloss "); lpf1(sloss); lp(" pts)\r\n");
+        lp("[salience] macro held-out : uniform="); lpf1(macro_uni);
+        lp("%  salience="); lpf1(macro_sal); lp("%\r\n");
+
+        /* ---- [salience-earned] -- salience is EARNED, not hand-set (gate) -- */
+        {
+            INT ok = (exp_danger > exp_safe)
+                  && (classw[LM_DANGER] > 1) && (classw[LM_SAFE] == 1)
+                  && (n_danger_sal > n_danger_uni);
+            if (ok) {
+                lp("[salience-earned] PASS (reflex experience accrued ");
+                lpd(exp_danger); lp(">"); lpd(exp_safe);
+                lp("; classw[danger]="); lpd(classw[LM_DANGER]);
+                lp(">1, classw[safe]=1; ring reallocated "); lpd(n_danger_uni);
+                lp("->"); lpd(n_danger_sal); lp(" danger engrams at fixed B_RING)\r\n");
+            } else {
+                lp("[salience-earned] FAIL (salience not earned -- fix the accrual, do NOT hand-set the weight)\r\n");
+                fails++;
+            }
+        }
+
+        /* ---- [salience-retains] -- danger retained better at EQUAL budget -- */
+        {
+            INT ok = (dgain >= 5.0f)
+                  && (dgain >= sloss)
+                  && (macro_sal >= macro_uni - 3.0f)
+                  && (acc_d_uni <= 90.0f);
+            if (ok) {
+                lp("[salience-retains] PASS (dgain "); lpf1(dgain);
+                lp(" >= +5 AND dgain >= sloss "); lpf1(sloss);
+                lp(" (net survival-favoring) AND macro "); lpf1(macro_sal);
+                lp(" >= macro_uni-3 "); lpf1(macro_uni - 3.0f);
+                lp(" AND danger headroom acc_uni "); lpf1(acc_d_uni);
+                lp(" <= 90)\r\n");
+            } else {
+                lp("[salience-retains] FAIL (dgain="); lpf1(dgain);
+                lp(" sloss="); lpf1(sloss);
+                lp(" macro_sal="); lpf1(macro_sal); lp(" macro_uni="); lpf1(macro_uni);
+                lp(" acc_d_uni="); lpf1(acc_d_uni); lp(")\r\n");
+                fails++;
+            }
+        }
+
+        /* ---- [salience-noregress] -- uniform DMN path unchanged ----------- */
+        /* With guard_class_exp all-zero, the mirrored formula yields every
+         * classw[c]==1, and the salience capture is BYTE-IDENTICAL to the
+         * LM-1 uniform capture (same engrams in the same slots) -- the safety
+         * hinge that keeps every [dmn-*] green when no danger has been met. */
+        {
+            UW zexp[LM_NCLASS];
+            for (UB c = 0; c < LM_NCLASS; c++) zexp[c] = 0;
+            UW zclassw[LM_NCLASS];
+            lm_classw_from_exp(zexp, zclassw);     /* zero experience -> all 1 */
+            INT all_one = 1;
+            for (UB c = 0; c < LM_NCLASS; c++) if (zclassw[c] != 1) all_one = 0;
+
+            /* capture uniform, snapshot; capture under zero-derived classw,
+             * compare every engram byte. (capture reads only the dataset.) */
+            static LM_ENGRAM lm_snap[LM_T][B_RING];
+            static UW        lm_snap_n[LM_T];
+            for (UB c = 0; c < LM_NCLASS; c++) lm_classw[c] = 1;
+            lm_ring_clear();
+            for (UB t = 0; t < LM_T; t++) lm_ring_capture(t);
+            for (UB t = 0; t < LM_T; t++) {
+                lm_snap_n[t] = lm_ring_n[t];
+                for (UW j = 0; j < B_RING; j++) lm_snap[t][j] = lm_ring[t][j];
+            }
+            for (UB c = 0; c < LM_NCLASS; c++) lm_classw[c] = zclassw[c];
+            lm_ring_clear();
+            for (UB t = 0; t < LM_T; t++) lm_ring_capture(t);
+
+            INT identical = 1;
+            for (UB t = 0; t < LM_T && identical; t++) {
+                if (lm_ring_n[t] != lm_snap_n[t]) { identical = 0; break; }
+                const UB *a = (const UB *)lm_ring[t];
+                const UB *b = (const UB *)lm_snap[t];
+                for (UW k = 0; k < B_RING * sizeof(LM_ENGRAM); k++)
+                    if (a[k] != b[k]) { identical = 0; break; }
+            }
+            for (UB c = 0; c < LM_NCLASS; c++) lm_classw[c] = 1;   /* restore default */
+
+            if (all_one && identical) {
+                lp("[salience-noregress] PASS (no earned experience -> classw all 1 -> capture byte-identical to LM-1 uniform)\r\n");
+            } else {
+                lp("[salience-noregress] FAIL (all_one="); lpd((UW)all_one);
+                lp(" identical="); lpd((UW)identical); lp(")\r\n");
+                fails++;
+            }
+        }
+        #undef LM_KFIRE
     }
 
     dtr_ga_busy = 0;

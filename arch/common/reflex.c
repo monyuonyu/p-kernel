@@ -385,6 +385,23 @@ UW reflex_threat_experience(UB cls)
     return guard_class_exp[cls];
 }
 
+/* ── LM-3 salience cert support (living-mind Part IV) ─────────────────────
+ * Snapshot / restore the per-class guard experience. The DMN salience
+ * certificate (lm_consolidate.c) must DRIVE real reflex firings through the
+ * public reflex_on_inference hook to EARN salience, then leave the LIVE G38
+ * counters untouched — the exact save/restore discipline reflex_self_test
+ * performs internally (~ln 904). Read-only callers use
+ * reflex_threat_experience(); these are the write path a self-isolating probe
+ * needs (the only public way to restore the file-private guard_class_exp). */
+void reflex_guard_exp_save(UW out[REFLEX_NUM_CLASSES])
+{
+    for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) out[c] = guard_class_exp[c];
+}
+void reflex_guard_exp_restore(const UW in[REFLEX_NUM_CLASSES])
+{
+    for (INT c = 0; c < REFLEX_NUM_CLASSES; c++) guard_class_exp[c] = in[c];
+}
+
 /* ------------------------------------------------------------------ */
 /* G18 熟慮 tick: 経験 (脅威 dwell) から learned_conserve を学習で nudge   */
 /* (遅い時定数。反射の瞬間スパイクではなく窓で均した経験に反応する §8)    */
