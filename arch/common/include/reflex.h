@@ -179,6 +179,15 @@ BOOL reflex_would_fire(UB threat_class, UB confidence);
  * 遅い熟慮帯域で読むこと (反射 tick で読まない)。 */
 UW reflex_threat_experience(UB cls);
 
+/* ── LM-3 salience cert support (living-mind Part IV) ─────────────────────
+ * Snapshot / restore the per-class guard experience so a self-isolating probe
+ * (the DMN salience certificate, lm_consolidate.c) can DRIVE real reflex
+ * firings to EARN salience, then restore the LIVE G38 counters untouched —
+ * the same save/restore reflex_self_test performs internally (~ln 904).
+ * reflex_threat_experience() is the read path; this is the write/restore path. */
+void reflex_guard_exp_save(UW out[REFLEX_NUM_CLASSES]);
+void reflex_guard_exp_restore(const UW in[REFLEX_NUM_CLASSES]);
+
 /* SHIELD 照会 — usermain が新規 selfc 実行 / genome 発芽の前に参照する。
  * TRUE のあいだ未知コードを取り込まない (攻撃下の遮蔽)。 */
 BOOL reflex_is_shielded(void);
