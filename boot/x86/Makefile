@@ -106,6 +106,7 @@ COMMON_C_SRCS = \
     replica.c \
     degrade.c \
     dmn.c \
+    lm_consolidate.c \
     ga.c \
     vital.c \
     fedlearn.c \
