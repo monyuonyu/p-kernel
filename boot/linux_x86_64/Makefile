@@ -158,6 +158,7 @@ COMMON_C_SRCS = \
     dkva.c \
     dmn.c \
     lm_consolidate.c \
+    lm_self.c \
     ga.c \
     fedlearn.c \
     gossip_learn.c \
