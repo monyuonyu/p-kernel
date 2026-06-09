@@ -721,3 +721,301 @@ on the commander's binary — not the implementer's. Per `gap-ledger.md` discipl
 when it ships and is CI-enforced, it earns ONE epitaph line; it does not lengthen the
 ledger. No `philosophy-gap-audit-9`. The audit makes the acceptance test; the
 commander reads the gate formula line-by-line.
+
+---
+
+## Part IV — salience-weighted replay (the DMN's imagination)
+
+> Status: **design + acceptance test** (written before implementation, like Part II /
+> III / R3). Owner of *this* slice: the next wave (separate implementer + separate
+> auditor). Builds ON: **LM-1 / DMN** (Part II, `arch/common/lm_consolidate.c`, **closed**
+> — the engram ring + uniform replay + the held-out generator), **G38** (`reflex.c`
+> arrow-2, `reflex_threat_experience`, **closed**), **G22** (`gl_build_weighted`
+> class-oversample *pattern*, **closed**). All three closed in `gap-ledger.md`, so this is
+> unblocked.
+
+The DMN's third function — *future imagination / threat rehearsal* (I.3, row 3) — is the
+last of the three to be specced. LM-1 deliberately shipped **uniform** replay and wrote
+the honest reason verbatim in `lm_ring_capture` (`lm_consolidate.c` ~ln 213): *"Salience-
+weighted replay (II.3) is OPTIONAL … in this self-contained certificate the live reflex
+has met no danger yet, so we do honest UNIFORM replay and set salience=1."* This Part
+makes replay **salience-weighted**: during DMN sleep, the danger class — the one the
+**reflex actually guarded** — is rehearsed MORE, turning consolidation from a passive
+even-handed rewind into a **proactive, survival-biased** rewind. It mirrors Part II/III's
+rigor exactly: a claim stated as a tradeoff, a falsifiable certificate with numeric
+thresholds + bracket tags, a named honest bound (no false "by construction" theorem), a
+HARD anti-fork surface naming exact functions, an explicit "what this does NOT prove,"
+and a CI verb plan.
+
+### IV.1 The claim to prove
+
+> Under a **FIXED replay budget** (`B_RING` unchanged), weighting the engram ring by
+> **EARNED salience** — the per-class guard experience `reflex_threat_experience(cls)`
+> that accrued from the reflex actually firing on a danger class — **retains the
+> high-salience (danger) class better than uniform replay at the SAME budget.** This is a
+> real **reallocation** of fixed replay capacity toward survival-critical memory.
+
+Stated as a **tradeoff, not a free lunch** (IV.6): the danger class goes up *because* the
+fixed slots stolen from the low-salience class make its retention go down (or no better).
+The headline is the *net survival-favoring* reallocation, measured on held-out, never the
+replayed engrams.
+
+The honesty crux — and the by-construction trap this Part exists to avoid — is that
+salience must be **EARNED from real reflex experience, not hand-set.** The analog of R3's
+"`handif` must land near chance" and DMN's "`[dmn-forgetting]` must be real": if salience
+is a hard-coded weight, the certificate proves nothing. So the cert **drives real reflex
+guard firings** on a chosen danger class through the public inference hook, shows the
+experience **accrued** in `guard_class_exp` (read back via `reflex_threat_experience`),
+and shows the ring's `salience` field **derives from that count** (not the constant `1`).
+
+### IV.2 What changes vs LM-1 (the precise delta)
+
+LM-1's `lm_ring_capture(t)` walks the per-task train set with a uniform stride and writes
+`B_RING` engrams with `salience = 1`. The classes land round-robin (`lm_ds_init` generates
+episodes `i % LM_NCLASS`), so the ring is ~balanced 1/3 per class. The slow weights are
+distilled by interleaving earlier tasks' rings into later tasks' SGD (`lm_train_task`).
+
+Part IV changes **only the capture allocation**, not the ring size, not the SGD path, not
+the merge:
+
+- **Earn a per-class weight.** `classw[c]` is derived from `reflex_threat_experience(c)`
+  using the **same clamp formula** G22 already uses (IV.7) — `classw[c] = 1 + (exp[c]·
+  (WMAX−1) + mx − 1)/mx`, clamped `1..WMAX`, where `mx = max_c exp[c]`. With **no earned
+  experience** every `classw[c] == 1` → identical to LM-1 uniform (the no-regress hinge,
+  IV.5 #3).
+- **Reallocate the FIXED `B_RING` slots by class weight.** The ring still holds **exactly
+  `B_RING` engrams per task** (budget unchanged — *not* a bigger ring). Salience changes
+  *which* engrams occupy the slots: the danger class gets a larger share, the low-salience
+  class a smaller share, in proportion to `classw`. `salience` per engram is set to its
+  class weight (a real number from the reflex, not `1`).
+- **Replay is otherwise byte-identical.** `lm_train_task` / `lm_reconsolidate_from_engrams`
+  / `lm_consolidate_idle_round` consume the ring exactly as today; they never learn that
+  the allocation changed. (This is why the no-regress hinge is clean.)
+
+> **Design decision — reallocate the fixed slots; do NOT inflate the minibatch.** There
+> are two ways to "oversample by class weight." (a) *Slot reallocation* (chosen): keep the
+> ring at `B_RING`, change the class mix of which engrams are stored. (b) *Minibatch
+> inflation* (the literal shape of `gl_build_weighted`): keep a balanced ring but `rep`-eat
+> danger engrams when building the SGD batch, growing the effective replay count. We pick
+> (a) because the **budget must stay fixed** (IV.6) — inflation (b) silently spends more
+> replay than uniform and would make any "retention gain" the trivial result of *more*
+> rehearsal, not *reallocated* rehearsal. We reuse `gl_build_weighted`'s **weight formula**
+> (IV.7), not its inflation loop.
+
+### IV.3 Driving earned salience (the public accrual path — verified)
+
+The cert needs a public way to make `guard_class_exp[danger]` accrue **before** capture.
+It exists and is already exercised by a sibling self-test:
+
+- **Accrue:** call `reflex_on_inference(danger_cls, conf, drpc_my_node)` with
+  `danger_cls ∈ {1,2}` (`act_table[1]=CONSERVE|BEACON`, `act_table[2]=SHIELD|CONSERVE|
+  BEACON`, both non-`NONE`) and `conf ≥ REFLEX_CONF_MIN` (40) or `0xFF`. This passes
+  `reflex_would_fire` and hits `guard_class_exp[danger_cls]++` (`reflex.c` ln 240–241,
+  gated on `threat_class ≥ 1`). Repeat it `K` times to build a clear gap over the safe
+  class. **Precedent:** `reflex_self_test` (`reflex.c` ~ln 904–922) drives
+  `reflex_on_inference(2,100,…)` / `(0,100,…)` and **save/restores `guard_class_exp`**
+  around the probe — the cert should follow the same save/restore discipline so it does not
+  pollute the live G38 experience counters, then *re-drive* its own accrual for the
+  measurement.
+- **Read back:** `reflex_threat_experience(danger) > reflex_threat_experience(safe)` —
+  printed; this is the EARNED evidence, not a literal.
+- **Side-effects to manage (honest note):** `reflex_on_inference` also moves
+  `danger_streak`, `threat_run`, sets `danger_active` / `shield_until`, and would
+  `emit_beacon` (in-process `h_pub < 0`, so BEACON is a print no-op). After accrual the
+  cert should observe SAFE (`reflex_on_inference(0,100,…)`) to release the CONSERVE latch,
+  and **must run with `enabled == TRUE`** (the default; `reflex_set_enabled` toggles it).
+
+> Mapping note: the LM task's class index and the reflex threat class share the same
+> 3-class space (`DTR_OUT_DIM == REFLEX_NUM_CLASSES == 3`), so "danger = class `d`" is the
+> same `d` for the ring and the reflex. See IV.6 for *which* `d` to pick so the win is not
+> trivial.
+
+### IV.4 A per-class held-out metric is needed (small extension, flagged)
+
+LM-1 measures **per-task** accuracy only (`lm_acc(t)` → `dtr_eval_batch` over
+`lm_tex[t]`/`lm_tey[t]`). Salience is **per-class**, so Part IV needs a **per-class**
+held-out accuracy. Add a small helper inside `lm_consolidate.c` (no new organ): either
+(a) filter the held-out episodes of class `c` into a sub-array and call the existing
+`dtr_eval_batch`, or (b) loop `dtr_forward_probs` + argmax over held-out, counting hits
+per class. Both reuse shared kernels only. Measure the danger class **aggregated across
+all tasks** (the salience weight is class-global), on **fresh** held-out (`lm_tex`/`lm_tey`),
+never the replayed engrams. *This helper does not exist yet — implementer adds it; it is
+an extension of LM-1, not a fork.*
+
+### IV.5 The falsifiable acceptance test (the certificate)
+
+All emitted as printed numbers **then** a canonical `[tag] PASS/FAIL` line (the R3 / DMN
+way; numbers are the honest evidence, the verdict greps in CI). `chance = 33.3%`.
+Thresholds are **proposed bars**; the implementer reports the **actual** measured numbers
+and, per the audit-is-the-engine rule, may only *lower* a bar to the measured value minus a
+flake margin — never inflate to make green.
+
+1. **`[salience-earned]` — salience is EARNED, not hand-set (the anti-by-construction
+   gate; the precondition).**
+   Drive `K` real reflex guard firings on the danger class via
+   `reflex_on_inference(danger,100,…)` (IV.3). PASS requires ALL:
+   - `reflex_threat_experience(danger) > reflex_threat_experience(safe)` — experience
+     **accrued from the reflex**, both counts printed, AND
+   - the danger class's derived `classw[danger] > 1` while `classw[safe] == 1` (the ring
+     weight **derives from** the reflex count, NOT the constant `1`) — printed, AND
+   - the captured ring holds **strictly more** danger-class engrams than the uniform ring
+     would at the same `B_RING` (`n_danger_salience > n_danger_uniform`, both printed) —
+     the reallocation actually happened in the fixed budget.
+   If this FAILS, salience is fake and the rest of the certificate is vacuous — fix the
+   accrual path, do **not** hand-set the weight.
+
+2. **`[salience-retains]` — earned salience retains the danger class better, at EQUAL
+   budget (the headline; a tradeoff, not a free lunch).**
+   Run the full LM-1 stream twice from the **same** shared seed and the **same** `B_RING`:
+   once with uniform capture, once with salience-weighted capture. Measure per-class
+   held-out accuracy (IV.4) on **fresh** episodes. Let
+   `dgain = acc_danger_salience − acc_danger_uniform` and
+   `sloss = acc_safe_uniform − acc_safe_salience` (sign: positive `sloss` = the safe class
+   got worse). PASS requires ALL:
+   - `dgain ≥ +5 pts` (the danger class is retained measurably better — a real, non-flaky
+     reallocation effect; **not** R3/DMN's +25/+30, which were disease-vs-cure, whereas
+     this is a subtler within-budget reallocation — report the actual number), AND
+   - the reallocation is **net survival-favoring**: `dgain ≥ sloss` (the danger gain is at
+     least the non-danger loss — honest, since slots are conserved), AND
+   - macro (mean per-class) held-out does **not collapse**: `macro_salience ≥ macro_uniform
+     − ε` with `ε = 3 pts` (the tradeoff stays bounded; salience does not wreck the whole
+     model to pump one class).
+   **Both `dgain` and `sloss` are printed** so the tradeoff is visible, not hidden behind a
+   one-sided number. (If `sloss ≤ 0`, say so plainly — it would be a *near* free lunch at
+   this toy scale, which is fine to report but not what we claim.)
+
+3. **(optional) `[salience-noregress]` — the uniform DMN path is unchanged.**
+   With `guard_class_exp` all-zero (no earned experience), assert every `classw[c] == 1`
+   and the salience capture is **byte-identical** to LM-1 uniform capture (same engrams in
+   the same slots). PASS = boolean. This is the safety hinge that keeps all `[dmn-*]` green
+   when no danger has been met (the honest default: no experience ⇒ uniform).
+
+### IV.6 The honest bound (do NOT assert a false theorem)
+
+- **It is a REALLOCATION of a fixed budget → a tradeoff, NOT free retention.** Danger up,
+  low-salience possibly down. The budget knob `B_RING` is **unchanged** and printed; the
+  ring is **not** enlarged and the SGD is **not** given more replay (that is exactly why we
+  reallocate slots rather than inflate the minibatch, IV.2). Anyone who "improves
+  retention" by spending more replay has changed the budget and proved nothing.
+- **Salience must be EARNED.** Hand-setting class weights is the by-construction sin (the
+  R3/DMN/Self lesson). `[salience-earned]` (IV.5 #1) is a gated precondition exactly so the
+  weight cannot be a literal: it must trace to `guard_class_exp` accrued by real
+  `reflex_on_inference` firings.
+- **Measure on held-out, never the replayed engrams.** Per-class accuracy is on fresh
+  `lm_tex`/`lm_tey` draws (the R3 "held-out, not training episodes" discipline).
+- **The danger class must NOT be trivially easiest** (else the gain is saturation, not
+  retention). LM-1's generator places class centers at `0 / 14 / 28` (+ per-task region
+  offset): the **extreme** classes (0, 2) overlap on one side only and are *easier*; the
+  **middle** class (1) overlaps on both sides and is the *hardest* (Bayes-error > 0, by
+  design). Two honest ways to keep the win real (implementer picks one, reports which):
+  **(a)** choose the **middle/hardest class as the danger class** (drive guard firings on
+  reflex class 1 = *alert*, whose `act_table[1]` fires), so retaining it better is a
+  genuine win on the hard class, **or** **(b)** symmetrize the generator so all three
+  classes carry equal Bayes error, then any class may be "danger." Either way the cert
+  **prints the danger class's uniform-replay accuracy** and requires it to have **headroom**
+  (e.g. `acc_danger_uniform ≤ 90%`) so the claimed `dgain` is real improvement, not noise
+  on a saturated metric.
+- **No false "by construction" theorem.** Every PASS bound is a printed runtime number, not
+  a belief.
+
+### IV.7 Anti-fork constraint (HARD) — exact reuse surface
+
+The implementation **MUST** reuse the existing substrate. **NO forked weighting math, NO
+new organ, NO bigger ring.** Verified-present functions the implementer calls:
+
+**Earned salience (from `reflex.h`, G38 arrow-2 — all confirmed public):**
+- `reflex_threat_experience(cls)` (`reflex.h:180`, def `reflex.c:382` → `guard_class_exp[cls]`)
+  — THE earned-salience source. Read, never recompute.
+- `reflex_on_inference(threat_class, confidence, src_node)` (`reflex.h:162`) — the **public
+  accrual entry** that increments `guard_class_exp` (IV.3). Confirmed public; precedent
+  `reflex_self_test` `reflex.c:907`. Follow its **save/restore of `guard_class_exp`** so the
+  cert does not corrupt live G38 counters.
+- `reflex_would_fire(cls, conf)` (`reflex.h:173`) — optional, to assert the gate the firing
+  passes (so the accrual is the *same* gate G38 / production use).
+
+**The class-weight PATTERN — MIRROR, do NOT call (decision + rationale):**
+- `gl_build_weighted(k, classw)` lives at `gossip_learn.c:574` and is **`static`
+  (file-private)** — it is **not** in `gossip_learn.h`. It also operates on gossip_learn's
+  **shard** arrays (`sh_x`/`sh_y`), not on `LM_ENGRAM` rings, and its body is a
+  **minibatch-inflation** loop (`rep`-eat up to `GL_TRAIN·GL_WMAX`) — which would violate
+  the fixed-`B_RING` budget if copied. **Decision: MIRROR its class-weight FORMULA, do not
+  call it.** Reuse the exact clamp shape used at `gossip_learn.c:635`
+  (`classw[c] = 1 + (exp[c]·(WMAX−1) + mx − 1)/mx`, clamp `1..WMAX`) and apply it to
+  **fixed-slot reallocation** in `lm_ring_capture`. Rationale: (1) it is private — calling
+  it would require promoting it to `gossip_learn.h`, a shared-P2 change needing its own
+  audit, against minimal-touch; (2) wrong data source (shards, not engrams); (3) its
+  inflation loop breaks the fixed budget. Mirroring the *formula* (a one-liner) is the
+  smallest honest reuse. `WMAX` mirrors `GL_WMAX = 3` (`gossip_learn.c:567`, also private)
+  as a local `LM_WMAX = 3`.
+
+**Training / eval / weights (from `dtr.h`, the SAME brain LM-1/G22 use):**
+- `dtr_train_batch` / `dtr_eval_batch` / `dtr_reinit_weights` / `dtr_weights_get` /
+  `dtr_weights_set` — reuse exactly as LM-1 does; the SGD/merge path is untouched.
+- `dtr_forward_probs` (`dtr.h:137`) — for the per-class argmax held-out helper (IV.4),
+  if option (b) is taken.
+
+**EXTEND `lm_consolidate.c` (do NOT fork):**
+- `LM_ENGRAM.salience` (`lm_consolidate.h:37`, UB) — already present; now **derived** from
+  the reflex count, not the constant `1`.
+- `lm_ring_capture` (`lm_consolidate.c:213`) — the ONE function whose allocation changes
+  (uniform stride → class-weighted fixed-slot reallocation). `lm_ds_init` / `lm_gen` /
+  `lm_tex`/`lm_tey` / `lm_train_task` / `lm_run_replay` / `lm_run_noreplay` reused as-is.
+- `lm_test` (`lm_consolidate.c:391`) — extended to emit the three new tags after the
+  `[dmn-*]` block (IV.8).
+
+**FLAGGED — names that are NOT public / do NOT exist (commander resolves before coding):**
+- `gl_build_weighted` and `GL_WMAX` are **`static` in `gossip_learn.c`** — not callable
+  from `lm_consolidate.c`. → MIRROR the formula (above), do not call. (This is the one the
+  prompt asked to confirm.)
+- **No per-class held-out accuracy helper exists in LM-1** (only per-task `lm_acc`). →
+  implementer adds a small one inside `lm_consolidate.c` (IV.4) — an extension, not a fork.
+- The public reflex accrual path **does** exist (`reflex_on_inference`) — *no* missing
+  entry to flag here; the G38 arrow-2 wiring is complete.
+
+### IV.8 CI verb plan (specify only — do NOT edit `ci.yml`)
+
+The next wave should:
+
+1. **Extend the existing `dmn test` verb** (`lm_test()` in `lm_consolidate.c`) to also emit
+   the salience tags — keep them in the **same** self-test so the salience path is gated on
+   the same binary as `[dmn-*]`, and so `[salience-noregress]` can assert the uniform path
+   it shares is untouched. (A separate `dmn salience` verb is acceptable; **decision: extend
+   `dmn test`**, because the no-regress claim and the uniform/salience comparison are most
+   honestly made side-by-side in one run. Tags stay `salience-` regardless.)
+2. Emit these bracket-tagged lines (PASS/FAIL), greppable like the rest of the suite:
+   - `[salience-earned] PASS`     — salience is earned, not hand-set (IV.5 #1)
+   - `[salience-retains] PASS`    — earned salience retains the danger class better at equal
+     budget; tradeoff printed (IV.5 #2, the headline)
+   - `[salience-noregress] PASS`  — *optional*, uniform DMN path unchanged when no
+     experience exists (IV.5 #3)
+3. **Wire into the native sequence** at `ci.yml:57` — `dmn test` already runs there, so **no
+   sequence edit is needed**; add three matching `grep -aF '[salience-*] PASS' selftest.log`
+   lines next to the `[dmn-*]` block (`ci.yml:142-146`). The aarch64-qemu subset
+   (`ci.yml:172`) already omits `dmn test`, so the salience tags ride only the native line —
+   consistent with DMN. In-process gate (the aarch64-PRoot host crashes on cross-node live
+   p-fs). **This document does NOT modify `ci.yml`; the implementer wave does.**
+
+### IV.9 What this does NOT prove yet (honesty)
+
+- **Prioritized experience replay, NOT generative imagination.** This rehearses *stored*
+  danger engrams more; it does **not** synthesize counterfactual / not-yet-happened episodes
+  (true DMN "future simulation"). Generative replay is a later slice.
+- **"Danger" is the synthetic sensor class, not a real threat.** Same scope caveat as Part
+  II / R3: a capacity certificate for the substrate, not a product. The reflex firing is
+  driven by the cert (`reflex_on_inference`), not by a live thermostat under attack.
+- **Toy scale.** 635-param body, `T ≈ 3` tasks, `B_RING ≈ 24` engrams/task, `WMAX = 3`.
+- **A tradeoff at toy scale, not a universal anti-forgetting law.** We claim a measurable,
+  earned, budget-conserving reallocation toward the danger class — not that salience replay
+  dominates uniform on every metric, nor that it is the best prioritization scheme (PER /
+  importance-sampling theory is out of scope).
+- **Not real language.** Episodes are the LM-1 sensor stream, not natural-language
+  experience.
+
+### IV.10 Provenance / closes-on
+
+Design only. This slice closes when `[salience-earned]`, `[salience-retains]` (and, if kept,
+`[salience-noregress]`) are green on a clean rebuild AND CI-enforced (native targets),
+audited by a **separate** agent on the **commander's** binary — not the implementer's. Per
+`gap-ledger.md` discipline: when it ships and is CI-enforced it earns ONE epitaph line; it
+does not lengthen the ledger and spawns no new `philosophy-gap-audit`. The audit makes the
+acceptance test; the commander reads the gate formula line-by-line.
