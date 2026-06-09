@@ -1019,3 +1019,305 @@ audited by a **separate** agent on the **commander's** binary — not the implem
 `gap-ledger.md` discipline: when it ships and is CI-enforced it earns ONE epitaph line; it
 does not lengthen the ledger and spawns no new `philosophy-gap-audit`. The audit makes the
 acceptance test; the commander reads the gate formula line-by-line.
+
+---
+
+## Part V — the fast→slow handoff (in-context knowledge becomes weights)
+
+> Status: **design + acceptance test** (written before implementation, like Part II / III /
+> IV / R3). Owner of *this* slice: the next wave (separate implementer + separate auditor).
+> Builds ON: **R3** (`arch/common/r3_incontext.c`, in-context associative recall, **closed**
+> — the FAST layer) and **LM-1 / DMN** (`arch/common/lm_consolidate.c`, replay→distill rest-
+> time consolidation, **closed** — the SLOW-layer *pattern*). Both closed in `gap-ledger.md`,
+> so this is unblocked.
+
+Part II.10 left this as explicit homework: *"Fast→slow handoff is described, not measured.
+The certificate measures slow-layer retention. The fast layer (R3) is reused and cited; a
+falsifiable test of the live fast→slow conversational handoff is a later slice."* **This Part
+makes that handoff falsifiable.** It is the §8 two-layer (I.2 Rung 3) turned into a measured
+mechanism: a fact the mind learns ONLY in-context (FAST layer, frozen weights, the fact lives
+in the prompt) is **transferred into the WEIGHTS** by DMN sleep-consolidation, so that AFTER
+sleep the mind answers it **without the prompt** — the literal mechanism of *随時 会話から学ぶ
+that sticks.* It mirrors Parts II/III/IV's rigor exactly: a claim, a falsifiable certificate
+with numeric thresholds + bracket tags, a named honest bound (no false "by construction"
+theorem), a HARD anti-fork surface naming exact functions (and flagging names that do not
+exist), an explicit "what this does NOT prove yet," and a CI verb plan.
+
+### V.0 IMPORTANT — read this BEFORE coding: the two organs are DIFFERENT networks
+
+The wave brief said "wire the two existing organs together: R3 (fast) + lm_consolidate
+(slow)." **Reading the code shows that is not literally possible, and the commander must
+correct the plan before implementation.** R3 and the DMN consolidate **different neural
+networks with different input/output spaces:**
+
+| | FAST organ (R3) | SLOW organ (DMN / lm_consolidate) |
+|---|---|---|
+| file | `arch/common/r3_incontext.c` | `arch/common/lm_consolidate.c` |
+| network | its own Transformer, `rw[R_NP]` (`R_DM=32`, `R_SEQ=9`, key→value recall) | the **dtr sensor body**, `DTR_WEIGHT_FLOATS=635` (`DTR_SEQ_LEN=4` in, 3 classes out) |
+| input | 8 dict tokens + 1 query token (key/value vocab) | 4 int8 sensor channels |
+| training | its own static `r_backward`/`r_train_epoch` | `dtr_train_batch` (dtr.h) |
+
+`dtr_train_batch` / `dtr_weights_get|set` / `gl_merge` (the lm_consolidate slow path) **train
+the dtr sensor body, which has no in-context mechanism at all** — it cannot ingest R3's 9-token
+prompt, and R3's recall task cannot be expressed in 4 sensor channels. Feeding R3's in-context
+output into `dtr_train_batch` would be a fork of the task, not reuse.
+
+**The faithful handoff therefore lives WITHIN the R3 model.** R3 *is* both layers: in **fast
+mode** it answers a query by reading a dictionary from the prompt (frozen `rw[]`, zero weight
+change — exactly what R3 already proved); the **slow layer is R3's own weights `rw[]`**,
+consolidated by R3's own already-grad-checked `r_backward`. The reuse of "lm_consolidate's
+consolidation" is the **DMN cadence/discipline** (engram-replay → distill, the bounded rest-
+time round, the held-out eval rule, the `[tag] PASS/FAIL` print convention) — **not** a call
+into `lm_test`/`dtr_train_batch` (wrong network). This is the single biggest correction to the
+wave framing; it is honest reuse (no new math — R3's forward/backward already exist) and it is
+the only construction where "the SAME organ moves a fact from prompt-resident to weight-
+resident" is true rather than asserted.
+
+### V.1 The claim to prove
+
+> A fact the mind learned **ONLY in-context** — a fixed key→value dictionary `D*` presented in
+> the prompt, answered by R3's FAST layer with **frozen weights** — is **transferred into the
+> WEIGHTS** by a DMN-style sleep-consolidation round, such that **after sleep** the mind answers
+> `D*` queries **with the prompt support REMOVED** at ≥ chance + margin, while **before sleep
+> (or with frozen weights and the support removed) it is at chance.** The handoff is real and
+> measured: the only place `D*` ever lived was the in-context computation; consolidation
+> distills that computation **into** the weights.
+
+The disease/precondition must be **real** — exactly as R3 makes `handif` land near chance and
+DMN makes `[dmn-forgetting]` collapse to chance. Here the precondition is that **weights alone
+cannot answer `D*`**: if the frozen R3 weights already answered `D*` with the support removed,
+nothing was learned in-context and the whole certificate is vacuous.
+
+### V.2 The task — a fixed dictionary `D*` (one conversation's fact)
+
+R3's generator (`gen_episode`, `r3_incontext.c:123`) **resamples** the dictionary every episode
+on purpose, so no single binding persists. The handoff needs the opposite: **one fixed fact-set
+to be taught.** Define `D*`: a fixed map of each of the `R_KEYV=8` keys to a value in
+`{0..R_VALV-1}` (`R_VALV=4`). `D*` is "what this conversation told the mind" — 8 bindings. The
+implementer adds a small **fixed-dictionary** prompt builder (a variant of `gen_episode`,
+reusing the identical token layout — NO new math) with three modes:
+
+- **SUPPORT** — the normal R3 prompt: 8 dict tokens carry `D*`'s real bindings, query = a chosen
+  key, label = `D*[key]`. This is the FAST layer's input; frozen R3 reads `D*` and answers.
+- **MASKED** (support removed) — same query token, but the dict value slots carry `R_UNK` (no
+  binding is visible). The only path to the answer is the **weights**. Arrangement (key order,
+  query position, distractor padding) varies, so there is a genuine held-out distribution.
+- **SCRAMBLED** (the by-construction control, V.5) — SUPPORT-shaped, but the visible dictionary
+  is a *different* random `D'` ≠ `D*`. A teacher reading this prompt does NOT know `D*`.
+
+`chance = 100/R_VALV = 25%`. The R3 substrate is first trained to its in-context-competent state
+**exactly as `r3_test` already does** (`r_train_epoch` over resampled dictionaries) — `D*` is
+just one of the combinatorially many dictionaries, so `D*` is provably **not** baked into the
+trained weights (that is what `[handoff-fast-only]` measures).
+
+### V.3 How the in-context (fast) knowledge becomes the slow-layer target (the circularity, honestly)
+
+This is the crux the wave asked to nail. **The teacher is the FAST layer itself** (self-
+distillation), and we address the circularity head-on:
+
+1. **Teacher = frozen R3 + SUPPORT prompt.** For each key `k`, run the frozen, in-context-
+   competent R3 on the SUPPORT prompt for `(D*, k)`; its argmax is the **teacher label** `ŷ_k`.
+   This is the in-context computation, the only place `D*` is readable.
+2. **Student = the SAME R3 weights, MASKED prompt.** The consolidation SGD (R3's own
+   `r_backward`/update, the **bounded rest-time round** of the DMN pattern) trains `rw[]` on
+   `(MASKED prompt for k → ŷ_k)` over the keys of `D*`, fresh arrangements. The weights memorize
+   an 8-entry key→value table (an associative memory baked into the embedding/readout).
+3. **Eval = MASKED prompt, scored against GROUND-TRUTH `D*`, on a DISJOINT held-out stream.**
+   The headline accuracy is **vs the oracle `D*`**, never vs the teacher, on `R_SEED_HELD`
+   arrangements that are never among the `R_SEED_TRAIN` consolidation items.
+
+Why this is not circular / not leakage:
+- The training signal comes from the **fast layer's in-context output**, not from the oracle and
+  not from the eval set. We train on `ŷ_k` (teacher) but **grade on `D*[k]`** (oracle) on a
+  separate stream. If the teacher is wrong on some key, the weights memorize the wrong value and
+  the oracle-graded eval **shows it** — the test cannot hide a bad teacher.
+- The teacher's competence is **bounded by R3's measured in-context accuracy** (the
+  `[r3-incontext-learned]` number). We **print teacher-vs-oracle agreement** so the ceiling is
+  visible, not assumed.
+- The by-construction guard (`[handoff-grounded]`, V.4 #3): consolidating from a **SCRAMBLED**
+  teacher (reads `D'`≠`D*`) must give **no** gain on `D*`. Since the architecture has no prior
+  toward `D*`, it memorizes whatever the teacher says — so a real gain on `D*` is attributable
+  *only* to the fast layer having genuinely read `D*`. This is the analog of "`[dmn-forgetting]`
+  must be real" / "salience must be EARNED": it forbids the trap where *any* training pumps the
+  metric.
+
+### V.4 The falsifiable acceptance test (the certificate)
+
+All emitted as printed numbers **then** a canonical `[tag] PASS/FAIL` line (the R3 / DMN way;
+numbers are the honest evidence, the verdict greps in CI). `chance = 25%`. Thresholds are
+**proposed bars**; the implementer reports the **actual** measured numbers and, per the audit-
+is-the-engine rule, may only *lower* a bar to the measured value minus a flake margin — never
+inflate to make green.
+
+1. **`[handoff-fast-only]` — the fact is FAST-only (precondition / the disease).**
+   With the in-context-competent but `D*`-naive frozen R3 weights, print BOTH:
+   - SUPPORT accuracy on `D*` queries `acc_support` (in-context recall works), AND
+   - MASKED accuracy on the SAME `D*` queries `acc_masked_pre` (weights alone).
+   PASS requires ALL:
+   - `acc_support ≥ chance + 25` (the fast layer can answer `D*` *with* the prompt), AND
+   - `acc_masked_pre ≤ chance + 8` (weights alone are at/near chance — `D*` is NOT yet in the
+     weights), AND
+   - `acc_support − acc_masked_pre ≥ 25` pts (the knowledge demonstrably lives in the prompt,
+     not the weights).
+   If this FAILS, either in-context recall is broken or the weights already knew `D*` — fix the
+   setup, do **not** weaken the bar.
+
+2. **`[handoff-consolidated]` — sleep moves it into the weights (the headline).**
+   Run the DMN-style consolidation round (V.3) distilling the fast layer's `D*` reading into
+   `rw[]`. Measure MASKED accuracy on **held-out** `D*` queries (disjoint stream), scored vs the
+   oracle `D*`. Let `acc_masked_post` be that number. PASS requires BOTH:
+   - `acc_masked_post ≥ chance + 25` (after sleep the mind answers `D*` **without the prompt**),
+     AND
+   - `acc_masked_post − acc_masked_pre ≥ +20` pts (the gain over the pre-sleep no-prompt baseline
+     is large and non-flaky — the handoff happened).
+
+3. **`[handoff-grounded]` — the gain traces to the real in-context reading (the anti-by-
+   construction gate).**
+   Print teacher-vs-oracle agreement, then run a SCRAMBLED-teacher control. PASS requires ALL:
+   - `teacher_agree ≥ chance + 25` (the consolidation targets really are the fast layer reading
+     `D*`, not noise — printed), AND
+   - the held-out eval is scored **vs oracle `D*`** on a stream **disjoint** from the
+     consolidation items (printed: train seed ≠ eval seed; no shared arrangement), AND
+   - SCRAMBLED control: after an identical consolidation round whose teacher read `D'`≠`D*`,
+     MASKED accuracy vs `D*` stays `acc_masked_scrambled ≤ chance + 8` (a teacher that did not
+     read `D*` produces **no** transfer to `D*` — so the headline gain is attributable to the
+     genuine in-context computation, not to generic training).
+   If this FAILS, the "handoff" could be leakage or a fitted artifact — fix it, do not relax.
+
+(Considered and **dropped** as near-trivial, per the `[self-other]` lesson: a separate
+`[handoff-gradcheck]` — the consolidation SGD is R3's own `r_backward`, **already** grad-checked
+by `[r3-incontext-gradcheck]` on the same kernels, so a second gradcheck tag would be padding.
+We cite the existing R3 gradcheck instead. Also **dropped**: a `[handoff-distributed]` tag —
+`gl_merge` is generic over param count and *could* average R3 models, but distributing the
+consolidated weights is a separate axis (G22 already owns "no-central"); adding it here would be
+sprawl. The handoff is a within-node fast↔slow claim.)
+
+### V.5 The honest bound (do NOT assert a false theorem)
+
+**What is 真 (claimed):** a fact that is **provably answerable only in-context** (`acc_support`
+high, `acc_masked_pre` at chance — the *same* frozen weights) becomes **weight-resident** after
+a sleep-consolidation round, measured **without the prompt against ground truth** on a held-out
+stream, AND a scrambled teacher yields **no** transfer (the gain traces to the genuine in-context
+reading). Every PASS bound is a printed runtime number, not a belief.
+
+**What is NOT claimed (no overclaim):**
+
+- **Toy synthetic mapping, NOT natural language.** `D*` is an 8-key→4-value dictionary in R3's
+  synthetic vocab — the R3 scope caveat. "Learns from conversation" is shown only structurally
+  (a fact held in-context is consolidated into weights), not on natural-language dialogue.
+- **Supervised SELF-distillation, NOT unsupervised label discovery.** The consolidation target
+  is the **fast layer's own in-context prediction** `ŷ_k` (V.3). We do not discover labels from
+  raw text; we distill the in-context *computation* into weights. The training signal comes from
+  the fast layer, **not** from the oracle and **not** from the eval set — eval is oracle-graded
+  on a disjoint stream so a wrong teacher is exposed, never hidden.
+- **The teacher's competence is the ceiling.** A key the fast layer reads wrong is memorized
+  wrong; `teacher_agree` is **printed** so this ceiling is visible. The handoff cannot exceed
+  what the in-context layer actually knew.
+- **"Held-out" is held-out ARRANGEMENT, not held-out FACTS.** `D*`'s 8 bindings ARE the fact
+  being taught — you cannot hold out a fact you are deliberately memorizing (that is the nature
+  of "learning what you were told"). The falsifiability is **not** generalization to unseen
+  facts; it is that the **same** MASKED held-out distribution reads at **chance before sleep**
+  and **well above chance after sleep**, scored vs the oracle, with a scrambled-teacher control
+  showing no free transfer. Named explicitly so the auditor holds the line.
+- **Within ONE frozen-architecture R3 model.** The slow layer is R3's own `rw[]`, not the dtr
+  sensor body (V.0). Only weights change; the architecture is frozen (the Evolution layer, I.4,
+  stays future).
+- **Single fact-set, single sleep — not lifelong.** One `D*`, one consolidation round. A stream
+  of conversational facts consolidated over many sleeps (and their interaction with DMN anti-
+  forgetting, Part II) is future.
+- **CI in-process certificate, not the live `dmn_idle_work` path.** Like R3/DMN, the gate is an
+  in-process self-test; wiring the handoff into the live idle hook is future. (The handoff is
+  within-node — no cross-node p-fs — so it is even simpler to gate than DMN.)
+
+No false "by construction" theorem is asserted.
+
+### V.6 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+The implementation **MUST** reuse R3's existing in-context forward/backward and the shared dtr
+kernels. **NO forked math, NO new organ, NO second Transformer.**
+
+**Shared kernels (from `dtr.h`, the SAME math R3 already composes):**
+- `dt_linear` / `dt_softmax` / `dt_relu` / `dt_sqrt` / `dtr_ln_fwd_cache` / `dtr_ln_bwd` /
+  `dtr_logf` — already used by `r_forward`/`r_backward`; reused transitively, never re-derived.
+
+**R3 fast/slow path (INSIDE `r3_incontext.c` — see the FLAG below):**
+- the in-context forward `r_forward` (`r3_incontext.c:143`) — the FAST teacher and the eval.
+- the analytic backward + SGD update `r_backward` (`:212`) / the update loop in `r_train_epoch`
+  (`:399`) — the SLOW-layer consolidation step (R3's own grad-checked gradients).
+- the weight buffer `rw[R_NP]` (`:92`) + `r_init_weights` (`:332`) — the substrate to train to
+  in-context competence, snapshot, and restore between the real-teacher and scrambled-teacher
+  runs.
+- the held-out discipline `R_SEED_TRAIN` / `R_SEED_HELD` (`:474-475`) — disjoint train/eval
+  streams, reused verbatim.
+- `r_grad_check` (`:437`) / `[r3-incontext-gradcheck]` — cited as the gradient guarantee (V.4).
+
+**DMN slow-layer PATTERN (from `lm_consolidate.c` — mirror the discipline, do NOT call):**
+- the engram-replay → distill cadence, the bounded rest-time round
+  (`lm_consolidate_idle_round`), the `[tag] PASS/FAIL` print convention, the "measure on held-
+  out, never the trained items" rule. Reuse the **shape**; the SGD is R3's, not `dtr_train_batch`.
+
+**FLAGGED — names that do NOT exist as callable API (commander must resolve BEFORE coding):**
+- **`r3_incontext.c` is SELF-TEST-ONLY — it exposes NO in-context hook.** Every function
+  (`gen_episode`, `r_forward`, `r_backward`, `r_train_epoch`, `r_eval`, `r_init_weights`,
+  `r_grad_check`) and both weight arrays (`rw[]`/`rg[]`) are `static`; the only public symbols
+  are `r3_cmd` / `r3_test` (`dtr.h:273-274`). → **The handoff self-test MUST live INSIDE
+  `r3_incontext.c`** (a sibling to `r3_test`, reaching the statics directly), exposing exactly
+  ONE new public entry `r3_handoff_test()` (declared in `dtr.h` next to `r3_test`). No wide
+  exposure of internals. The implementer also adds, **inside the file** (small, reusing the
+  existing token layout / forward / backward — NO new math): (1) the fixed-`D*` prompt builder
+  with SUPPORT/MASKED/SCRAMBLED modes; (2) a 1-episode argmax `predict`; (3) a consolidation
+  loop over MASKED prompts with teacher labels; (4) `memcpy` snapshot/restore of `rw[]`.
+- **`dtr_train_batch` / `dtr_weights_get|set` / `gl_merge` train the dtr SENSOR body (635
+  params, 4-ch input), NOT the R3 model** — they **cannot** serve as the handoff's slow layer
+  (V.0). The slow layer is R3's `r_backward`. (This is the framing correction the wave most
+  needs.)
+- **`LM_ENGRAM` (8 bytes, 4-ch sensor input, `lm_consolidate.h:33`) does NOT fit an R3 recall
+  episode** (9 tokens, key/value vocab). Reuse the engram *concept/discipline*, not the struct;
+  the handoff keeps its fixed-`D*` episodes in its own in-RAM representation.
+
+### V.7 What this does NOT prove yet (honesty)
+
+- **Not real language / not a tokenizer.** `D*` is the R3 synthetic key→value vocab, same scope
+  caveat as R3, DMN, Self, salience.
+- **Not the Evolution layer.** Only `rw[]` weights change; the R3 architecture is frozen.
+- **Toy scale.** R3's `R_NP`-param Transformer, an 8-key dictionary, 4 values, one `D*`, one
+  sleep round — a capacity certificate for the substrate, not a product.
+- **One fact-set, one sleep — not a lifelong conversational stream.** Multi-fact, multi-sleep
+  consolidation and its interaction with DMN anti-forgetting (Part II) is future.
+- **Not distributed in this slice.** `gl_merge`-ing consolidated R3 weights across nodes is
+  possible (it is generic over param count) but is the G22 axis; left out to avoid sprawl.
+- **Not wired to the live `dmn_idle_work` hook.** Like R3/DMN the CI gate is in-process; live
+  idle-time handoff is future.
+
+### V.8 CI verb plan (specify only — do NOT edit `ci.yml`)
+
+The next wave should:
+
+1. Add a shell verb **`handoff test`** dispatching into `r3_handoff_test()` (which lives in
+   `r3_incontext.c`, V.6). Register it in `arch/x86/shell.c`'s command table (mirroring `cmd_dmn`
+   → `lm_test` at `shell.c:500` and `cmd_self` → `lm_self_test` at `:489`) and the equivalent in
+   the three `usermain.c`. (Acceptable alternative — and the **only** change if a sequence edit
+   is unwanted: extend the existing **`r3 test`** to also emit the handoff tags, since it already
+   runs at `ci.yml:57` and shares the file; tags stay `handoff-` regardless. **Decision: a
+   dedicated `handoff test` verb** for namespace clarity — it is a distinct claim from R3 recall.)
+2. Emit these bracket-tagged lines (PASS/FAIL), greppable like the rest of the suite:
+   - `[handoff-fast-only] PASS`    — the fact is fast-only; weights alone at chance (V.4 #1)
+   - `[handoff-consolidated] PASS` — sleep moved it into the weights; answered without the prompt
+     (V.4 #2, the headline)
+   - `[handoff-grounded] PASS`     — gain traces to the real in-context reading; scrambled control
+     gives no transfer; oracle-graded on a disjoint stream (V.4 #3)
+3. Wire `handoff test` into the **native** stdin verb sequence at `ci.yml:57` (after `r3 test`,
+   before `dmn test`/`exit`) and add three matching `grep -aF '[handoff-*] PASS' selftest.log`
+   lines next to the `[dmn-*]`/`[salience-*]` block (`ci.yml:142-157`). The aarch64-qemu subset
+   (`ci.yml:193`) already omits `r3 test`/`dmn test`, so the handoff tags ride only the native
+   line — consistent with R3/DMN. In-process gate (no live p-fs; the handoff is within-node).
+   **This document does NOT modify `ci.yml`; the implementer wave does.**
+
+### V.9 Provenance / closes-on
+
+Design only. This slice closes when `[handoff-fast-only]`, `[handoff-consolidated]`,
+`[handoff-grounded]` are green on a clean rebuild AND CI-enforced (native targets), audited by a
+**separate** agent on the **commander's** binary — not the implementer's. Per `gap-ledger.md`
+discipline: when it ships and is CI-enforced it earns ONE epitaph line; it does not lengthen the
+ledger and spawns no new `philosophy-gap-audit`. The audit makes the acceptance test; the
+commander reads the gate formula line-by-line.
