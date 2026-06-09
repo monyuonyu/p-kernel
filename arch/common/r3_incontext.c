@@ -539,6 +539,255 @@ void r3_test(void)
     r_puts("[r3-test] DONE — learned reads the in-context dictionary; no hand-if can.\r\n");
 }
 
+/* ------------------------------------------------------------------ *
+ *  LM-4 — the fast->slow handoff (living-mind.md Part V).
+ *
+ *  In-context knowledge becomes weights, WITHIN the R3 model (V.0): R3
+ *  IS both layers. FAST = frozen rw[] reading a dictionary from the
+ *  prompt (zero weight change). SLOW = rw[] itself, consolidated by
+ *  R3's OWN r_backward + the rw -= lr*rg update (the same grad-checked
+ *  gradients [r3-incontext-gradcheck] certifies). We do NOT touch the
+ *  dtr sensor body / dtr_train_batch / gl_merge (wrong network, V.6).
+ *
+ *  A fixed dictionary D* (the "one conversation's fact", 8 bindings) is
+ *  taught ONLY in-context (SUPPORT prompt), then self-distilled into the
+ *  weights from MASKED prompts (support removed). After consolidation
+ *  the model answers D* with the prompt REMOVED, scored vs the oracle on
+ *  a held-out arrangement stream. A SCRAMBLED-teacher control proves the
+ *  gain traces to the genuine in-context reading, not generic training.
+ * ------------------------------------------------------------------ */
+
+#define H_CHANCE   (100.0f / (float)R_VALV)   /* = 25 */
+
+/* The one fixed fact-set D*: key k -> value DSTAR[k]. Fixed (NOT
+ * resampled) so it is a single conversation's fact. Deterministically
+ * derived so it is not silently special; it is just one of the
+ * combinatorially many dictionaries the substrate was trained over, so
+ * the trained weights are D*-naive (that is what [handoff-fast-only]
+ * proves). */
+static UB DSTAR[R_KEYV];
+static UB DSCRAM[R_KEYV];   /* D' != D* for the SCRAMBLED control */
+
+static void h_make_dstar(void)
+{
+    /* fixed bindings, each in {0..R_VALV-1}; chosen to use all classes */
+    static const UB fixed[R_KEYV] = { 2, 0, 3, 1, 0, 2, 1, 3 };
+    for (INT k = 0; k < R_KEYV; k++) DSTAR[k] = fixed[k];
+    /* D' = D* shifted by 1 mod R_VALV at every key -> differs at EVERY
+     * key, so a teacher reading D' never agrees with D* anywhere. */
+    for (INT k = 0; k < R_KEYV; k++)
+        DSCRAM[k] = (UB)((DSTAR[k] + 1) % R_VALV);
+}
+
+/* Prompt modes for the fixed-dictionary builder. */
+#define H_SUPPORT   0   /* real bindings visible (FAST layer's input)   */
+#define H_MASKED    1   /* value slots = R_UNK (only the weights help)  */
+#define H_SCRAMBLED 2   /* visible dict = DICT arg (D'!=D*)             */
+
+/* Build ONE fixed-D* episode into key[]/val[], using the SAME token
+ * layout as gen_episode (8 dict tokens + 1 query at R_QPOS). The 8 keys
+ * 0..R_KEYV-1 are placed in a freshly shuffled order (the "arrangement"
+ * that varies for a genuine held-out distribution); `qi_key` selects
+ * which key is queried. Returns the ground-truth label = DSTAR[qkey].
+ *
+ *  mode SUPPORT   : val[p] = DSTAR[key[p]]            (real bindings)
+ *  mode MASKED    : val[p] = R_UNK                    (no binding shown)
+ *  mode SCRAMBLED : val[p] = dict[key[p]]             (a different D')
+ *
+ * The query token always carries val=R_UNK (recall), exactly like
+ * gen_episode. NO new math: this only chooses tokens; r_forward is the
+ * unchanged in-context computation. */
+static UB h_build(UB key[R_SEQ], UB val[R_SEQ], INT mode,
+                  const UB dict[R_KEYV], INT qkey)
+{
+    /* shuffle the 8 keys (Fisher-Yates over r_rand, the same RNG R3
+     * uses) so dict-token order / query position vary per call. */
+    UB pool[R_KEYV];
+    for (INT i = 0; i < R_KEYV; i++) pool[i] = (UB)i;
+    for (INT i = R_KEYV-1; i > 0; i--) {
+        INT j = r_uni(0, i);
+        UB t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    for (INT p = 0; p < R_NPAIR; p++) {
+        UB kk = pool[p];
+        key[p] = kk;
+        if (mode == H_SUPPORT)        val[p] = DSTAR[kk];
+        else if (mode == H_SCRAMBLED) val[p] = dict[kk];
+        else                          val[p] = (UB)R_UNK;   /* MASKED */
+    }
+    key[R_QPOS] = (UB)qkey;            /* query carries the asked key */
+    val[R_QPOS] = (UB)R_UNK;           /* value unknown -> recall */
+    return DSTAR[qkey];                /* ORACLE ground truth */
+}
+
+/* 1-episode argmax predict over the current forward (reuses r_forward
+ * + rc.probs, the SAME readout r_eval uses). */
+static UB h_predict(const UB key[R_SEQ], const UB val[R_SEQ])
+{
+    r_forward(key, val, 0);            /* label arg only affects loss, not probs */
+    UB pred = 0; float mx = rc.probs[0];
+    for (INT c = 1; c < R_VALV; c++)
+        if (rc.probs[c] > mx) { mx = rc.probs[c]; pred = (UB)c; }
+    return pred;
+}
+
+/* Accuracy over n fixed-D* episodes in a given mode, scored vs the
+ * ORACLE label, on the `seed` arrangement stream. For each episode a
+ * random key is queried; the arrangement (key order / query pos) is
+ * drawn fresh from `seed`'s RNG so train and held-out streams are
+ * disjoint (V.3 #3). */
+static float h_eval_mode(UW seed, INT n, INT mode)
+{
+    UW save = r_rng; r_rng = seed;
+    INT correct = 0;
+    for (INT e = 0; e < n; e++) {
+        INT qkey = r_uni(0, R_KEYV-1);
+        UB key[R_SEQ], val[R_SEQ];
+        UB y = h_build(key, val, mode, DSCRAM, qkey);
+        UB pred = h_predict(key, val);
+        if (pred == y) correct++;
+    }
+    r_rng = save;
+    return 100.0f * (float)correct / (float)n;
+}
+
+/* teacher-vs-oracle agreement: the FAST layer (frozen rw[]) reads the
+ * SUPPORT prompt; how often does its argmax match DSTAR? This is the
+ * CEILING of the handoff (V.5) and is printed, not assumed. */
+static float h_teacher_agree(UW seed, INT n)
+{
+    UW save = r_rng; r_rng = seed;
+    INT agree = 0;
+    for (INT e = 0; e < n; e++) {
+        INT qkey = r_uni(0, R_KEYV-1);
+        UB key[R_SEQ], val[R_SEQ];
+        UB y = h_build(key, val, H_SUPPORT, DSCRAM, qkey);  /* oracle = DSTAR[qkey] */
+        UB tlabel = h_predict(key, val);                    /* FAST teacher */
+        if (tlabel == y) agree++;
+    }
+    r_rng = save;
+    return 100.0f * (float)agree / (float)n;
+}
+
+/* The DMN-style consolidation round (V.3): distill the FAST layer's
+ * in-context reading into rw[]. For each step:
+ *   teacher = frozen-this-step R3 on the SUPPORT prompt (label = its
+ *             argmax y_hat) -- the only place the dictionary is readable;
+ *   student = the SAME rw[], MASKED prompt (support removed);
+ *   update  = R3's OWN r_backward + rw -= lr*rg (the slow layer).
+ * `teach_dict` is the dictionary the SUPPORT prompt shows the teacher:
+ * DSTAR for the real run, DSCRAM for the scrambled control. The teacher
+ * and student arrangements are drawn fresh (varied) from `seed`. */
+static void h_consolidate(UW seed, INT rounds, INT per_round, float lr,
+                          const UB teach_dict[R_KEYV], INT teach_mode)
+{
+    UW save = r_rng; r_rng = seed;
+    for (INT rd = 0; rd < rounds; rd++) {
+        for (INT it = 0; it < per_round; it++) {
+            INT qkey = r_uni(0, R_KEYV-1);
+            /* (a) TEACHER reads the support prompt (frozen this step). */
+            UB tk[R_SEQ], tv[R_SEQ];
+            h_build(tk, tv, teach_mode, teach_dict, qkey);
+            UB yhat = h_predict(tk, tv);          /* self-distillation target */
+            /* (b) STUDENT: MASKED prompt, fresh arrangement, train rw[]
+             *     toward yhat via R3's own backward + SGD update. */
+            UB sk[R_SEQ], sv[R_SEQ];
+            h_build(sk, sv, H_MASKED, teach_dict, qkey);
+            for (INT i = 0; i < R_NP; i++) rg[i] = 0.0f;
+            r_forward(sk, sv, yhat);
+            r_backward(yhat);
+            for (INT i = 0; i < R_NP; i++) rw[i] -= lr * rg[i];
+        }
+    }
+    r_rng = save;
+}
+
+/* dedicated seeds for the handoff (disjoint from R3's, and disjoint
+ * teacher/eval streams so held-out is truly held-out). */
+#define H_SEED_TRAIN  0xC0FFEE11UL    /* consolidation arrangement stream  */
+#define H_SEED_HELD   0x5EED44A0UL    /* eval arrangement stream (disjoint)*/
+#define H_EVAL_N      400
+#define H_TEACH_N     400
+#define H_ROUNDS      40
+#define H_PER_ROUND   64
+
+void r3_handoff_test(void)
+{
+    static float rw_snapshot[R_NP];   /* memcpy snapshot/restore of rw[]  */
+
+    r_puts("[handoff] ==== LM-4 fast->slow handoff (in-context -> weights) ====\r\n");
+    r_puts("[handoff] D*: one fixed 8-key->4-value dictionary (a conversation's fact).\r\n");
+
+    h_make_dstar();
+
+    /* --- Train the substrate to in-context competence EXACTLY as r3_test
+     * does: r_train_epoch over RESAMPLED dictionaries. D* is just one of
+     * the combinatorially many dicts, so it is provably NOT baked into the
+     * trained weights ([handoff-fast-only] measures that). */
+    r_init_weights(0xA5A5u);
+    float lr = 0.05f;
+    for (INT ep = 0; ep < R_EPOCHS; ep++) {
+        if (ep == R_EPOCHS*2/3)  lr = 0.02f;
+        if (ep == R_EPOCHS*9/10) lr = 0.008f;
+        r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
+    }
+    /* snapshot the in-context-competent, D*-naive frozen weights. */
+    for (INT i = 0; i < R_NP; i++) rw_snapshot[i] = rw[i];
+
+    /* ---- [handoff-fast-only] : the fact is FAST-only (the disease) ---- */
+    float acc_support    = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_SUPPORT);
+    float acc_masked_pre = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[handoff] fast-only: acc_support ");      r_putf1(acc_support);
+    r_puts("%  acc_masked_pre ");                     r_putf1(acc_masked_pre);
+    r_puts("%  (chance ");                            r_putf1(H_CHANCE);
+    r_puts("%, support-masked gap ");                 r_putf1(acc_support - acc_masked_pre);
+    r_puts(" pts)\r\n");
+    INT fast_ok = (acc_support >= 50.0f)
+               && (acc_masked_pre <= 33.0f)
+               && ((acc_support - acc_masked_pre) >= 25.0f);
+    r_puts(fast_ok ? "[handoff-fast-only] PASS\r\n" : "[handoff-fast-only] FAIL\r\n");
+
+    /* ---- [handoff-grounded] precursor: teacher-vs-oracle agreement ----
+     * printed BEFORE consolidation so the ceiling is visible (V.5). */
+    float teacher_agree = h_teacher_agree(H_SEED_TRAIN, H_TEACH_N);
+    r_puts("[handoff] teacher_agree (FAST reads D* on SUPPORT vs oracle) ");
+    r_putf1(teacher_agree); r_puts("%\r\n");
+
+    /* ---- [handoff-consolidated] : sleep moves it into the weights ----
+     * real teacher reads D*; consolidate into rw[]; measure MASKED held-out
+     * vs the oracle. */
+    for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];   /* restore frozen */
+    h_consolidate(H_SEED_TRAIN, H_ROUNDS, H_PER_ROUND, 0.02f, DSTAR, H_SUPPORT);
+    float acc_masked_post = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[handoff] consolidated: acc_masked_post "); r_putf1(acc_masked_post);
+    r_puts("%  (gain over pre +");                       r_putf1(acc_masked_post - acc_masked_pre);
+    r_puts(" pts)\r\n");
+    INT cons_ok = (acc_masked_post >= 50.0f)
+               && ((acc_masked_post - acc_masked_pre) >= 20.0f);
+    r_puts(cons_ok ? "[handoff-consolidated] PASS\r\n" : "[handoff-consolidated] FAIL\r\n");
+
+    /* ---- [handoff-grounded] : SCRAMBLED-teacher control gives no transfer.
+     * Restore the SAME frozen weights, run an IDENTICAL consolidation round
+     * whose teacher reads D'!=D* (SCRAMBLED support prompt), then measure
+     * MASKED-vs-DSTAR. A teacher that never read D* must produce no gain on
+     * D* -> the headline gain traces to the genuine in-context reading. */
+    for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];   /* restore frozen */
+    h_consolidate(H_SEED_TRAIN, H_ROUNDS, H_PER_ROUND, 0.02f, DSCRAM, H_SCRAMBLED);
+    float acc_masked_scrambled = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[handoff] grounded: train_seed ");  r_putdec((UW)H_SEED_TRAIN);
+    r_puts(" eval_seed ");                       r_putdec((UW)H_SEED_HELD);
+    r_puts(" (disjoint) acc_masked_scrambled "); r_putf1(acc_masked_scrambled);
+    r_puts("%\r\n");
+    INT grounded_ok = (teacher_agree >= 50.0f)
+                   && (H_SEED_TRAIN != H_SEED_HELD)
+                   && (acc_masked_scrambled <= 33.0f);
+    r_puts(grounded_ok ? "[handoff-grounded] PASS\r\n" : "[handoff-grounded] FAIL\r\n");
+
+    /* restore the snapshot so the harness leaves no surprising state. */
+    for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];
+    r_puts("[handoff] DONE — a fact learned only in-context now lives in the weights.\r\n");
+}
+
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
 void r3_cmd(const UB *args, UW len)
 {

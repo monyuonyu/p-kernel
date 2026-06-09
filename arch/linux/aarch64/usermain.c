@@ -51,6 +51,7 @@ IMPORT void dtr_train_cmd(const UB *args, UW len);   /* R3a training  */
 IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
+IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
@@ -652,6 +653,17 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_self_test();
             else print("usage: self test\r\n");
+        } else if (starts_with(line, n, "handoff") && (n == 7 || line[7] == ' ')) {
+            /* living-mind LM-4 (docs/architecture/living-mind.md Part V):
+             * `handoff test` runs the fast->slow handoff acceptance suite
+             * (a fact learned ONLY in-context by R3's FAST layer is
+             * self-distilled into R3's OWN weights rw[] via r_backward, so
+             * after a sleep-consolidation round the mind answers it WITHOUT
+             * the prompt; scrambled-teacher control proves the grounding). */
+            const UB *a = line + 7; UW al = (UW)(n - 7);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') r3_handoff_test();
+            else print("usage: handoff test\r\n");
         } else if (starts_with(line, n, "r3")) {
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */

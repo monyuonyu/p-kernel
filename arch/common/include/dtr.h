@@ -272,6 +272,7 @@ typedef struct {
  * `r3 test` runs the in-context recall acceptance suite. */
 void r3_cmd(const UB *args, UW len);
 void r3_test(void);
+void r3_handoff_test(void);
 
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
