@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\ndmn test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -144,6 +144,20 @@ jobs:
           grep -aF '[dmn-distributed] PASS' selftest.log
           grep -aF '[dmn-survive] PASS' selftest.log
           grep -aF '[dmn-gradcheck] PASS' selftest.log
+          # living-mind Self layer (docs/architecture/living-mind.md III): a
+          # distributed autobiographical self -- a per-node, hash-chained
+          # "self/lin" lineage (LM_SELF_ENTRY versions, content-level walk via
+          # pfs_id_compute, pfs_dag.c untouched) that (1) SURVIVES the node's
+          # death and is continued by a successor (reconstructed hash-for-hash
+          # from the persisted store after a RAM drop; successor seq==N+1 links
+          # to the restored head), (2) is TAMPER-EVIDENT and fail-closed (a
+          # one-byte flip moves the content-id; a forged splice is rejected;
+          # a clean chain still verifies), and (3) reconstructs OWNERLESS from
+          # a peer subset with the origin store emptied. Tamper-EVIDENT, not
+          # tamper-proof (no signature primitive -- III.6). (`self test`)
+          grep -aF '[self-continuity] PASS' selftest.log
+          grep -aF '[self-tamperevident] PASS' selftest.log
+          grep -aF '[self-ownerless] PASS' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)

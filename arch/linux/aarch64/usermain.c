@@ -52,6 +52,7 @@ IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void lm_test(void);                            /* living-mind DMN */
+IMPORT void lm_self_test(void);                       /* living-mind Self */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -641,6 +642,16 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_test();
             else print("usage: dmn test\r\n");
+        } else if (starts_with(line, n, "self") && (n == 4 || line[4] == ' ')) {
+            /* living-mind Self layer (docs/architecture/living-mind.md III):
+             * `self test` runs the distributed-autobiographical-self suite
+             * (hash-chained "self/lin" lineage that survives death, is
+             * tamper-evident, and reconstructs from a peer excluding the
+             * origin). Guarded against shadowing the `selfc` verb below. */
+            const UB *a = line + 4; UW al = (UW)(n - 4);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_self_test();
+            else print("usage: self test\r\n");
         } else if (starts_with(line, n, "r3")) {
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */

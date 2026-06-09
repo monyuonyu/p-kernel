@@ -484,6 +484,18 @@ static void cmd_vital(const char *arg)
 }
 
 IMPORT void lm_test(void);   /* living-mind DMN sleep-consolidation suite */
+IMPORT void lm_self_test(void); /* living-mind Self-layer autobiography suite */
+
+static void cmd_self(const char *arg)
+{
+    /* "self test" -> the Self-layer acceptance suite (living-mind.md III) */
+    while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        lm_self_test();
+        return;
+    }
+    sout("Usage: self test\r\n");
+}
 
 static void cmd_dmn(const char *arg)
 {
@@ -2125,6 +2137,9 @@ static void execute(const char *cmd)
         { cmd_dtr(cmd + 3); return; }
     if (cmd[0]=='d' && cmd[1]=='m' && cmd[2]=='n')
         { cmd_dmn(cmd + 3); return; }
+    if (cmd[0]=='s' && cmd[1]=='e' && cmd[2]=='l' && cmd[3]=='f' &&
+        (cmd[4]==' ' || cmd[4]=='\0'))
+        { cmd_self(cmd + 4); return; }
     if (cmd[0]=='g' && cmd[1]=='a')
         { cmd_ga(cmd + 2); return; }
     if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&
