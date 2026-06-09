@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -144,6 +144,16 @@ jobs:
           grep -aF '[dmn-distributed] PASS' selftest.log
           grep -aF '[dmn-survive] PASS' selftest.log
           grep -aF '[dmn-gradcheck] PASS' selftest.log
+          # living-mind Part V (LM-4, the fast->slow handoff): a fact learned
+          # ONLY in-context by R3's FAST layer (frozen rw[], the dictionary
+          # lives in the prompt) is self-distilled into R3's OWN weights rw[]
+          # via r_backward, so AFTER a sleep-consolidation round the mind
+          # answers it WITHOUT the prompt; a scrambled-teacher control gives
+          # no transfer (the gain traces to the real in-context reading).
+          # (`handoff test`)
+          grep -aF '[handoff-fast-only] PASS' selftest.log
+          grep -aF '[handoff-consolidated] PASS' selftest.log
+          grep -aF '[handoff-grounded] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard
