@@ -138,6 +138,8 @@
  *    0x210  SYS_INFER       — local MLP inference (arg0=packed sensor)
  *    0x211  SYS_AI_SUBMIT   — submit async AI job (arg0=packed sensor)
  *    0x212  SYS_AI_WAIT     — wait AI job completion (arg0=handle, arg1=tmout_ms)
+ *    0x213  SYS_DTR_WEIGHTS_GET — live dtr weights → user buf (ring3-core Wave C)
+ *    0x214  SYS_MIND_NOTE   — ring3 inference → world/reflex hooks (Wave C)
  *
  *  Distributed Transformer (Phase 12, 0x240+):
  *    0x240  SYS_DTR_SUBMIT  — Transformer推論 submit (arg0=packed sensor)
@@ -316,6 +318,18 @@
 #define SYS_INFER       0x210
 #define SYS_AI_SUBMIT   0x211
 #define SYS_AI_WAIT     0x212
+
+/* ring3-core Wave C (docs/architecture/ring3-core.md III.2 / CDN-6,7):
+ *   SYS_DTR_WEIGHTS_GET — copy the LIVE learned dtr weights into a user
+ *     buffer.  arg0 = user float* (capacity arg1 floats); requires
+ *     arg1 >= DTR_WEIGHT_FLOATS (635 floats = 2,540 B); returns
+ *     DTR_WEIGHT_FLOATS.  The ring-3 mind computes on this snapshot.
+ *   SYS_MIND_NOTE — the guard/observability hooks crossing back from a
+ *     ring-3 moe_infer: arg0 = op (0 = world_note_firing,
+ *     1 = reflex_on_inference), arg1 = cls | conf<<8.  Keeps ring-3
+ *     inferences visible to the world map and the reflex layer. */
+#define SYS_DTR_WEIGHTS_GET  0x213
+#define SYS_MIND_NOTE        0x214
 
 /* ----------------------------------------------------------------- */
 /* EDF リアルタイム AI スケジューリング (p-kernel Phase 4)           */

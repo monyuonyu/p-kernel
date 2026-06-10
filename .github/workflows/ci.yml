@@ -273,14 +273,18 @@ jobs:
         run: make -C boot/aarch64
 
   ring3-survival:
-    # ring3-core Wave B acceptance gate (docs/architecture/ring3-core.md II.3):
-    # boot the bare-metal i686 kernel in QEMU with the FAT32 user-ELF disk,
-    # type `ring3 test` over serial, and require the greppable PASS tag.
-    # The verb compares the ring-3 SYS_INFER class against a LIVE ring-0
-    # moe_infer oracle, crashes a ring-3 task (#PF) and requires the kernel
-    # to reap it (exactly once, from ring 3), proves the scheduler advanced
-    # AFTER the crash via a sentinel counter, and re-runs the inference.
-    name: ring3 survival gate (boot QEMU x86, fault -> reap -> restart)
+    # ring3-core Wave B + C acceptance gates (docs/architecture/ring3-core.md
+    # II.3 + III.4): boot the bare-metal i686 kernel in QEMU with the FAT32
+    # user-ELF disk, type `ring3 test` then `ring3 mind` over serial, and
+    # require BOTH greppable PASS tags.  One boot, two verbs (III.6).
+    #   ring3 test — Wave B: ring-3 SYS_INFER class == LIVE ring-0 oracle,
+    #     fault -> reap (exactly once, from ring 3) -> scheduler alive ->
+    #     restart.
+    #   ring3 mind — Wave C: the moe_infer/dtr forward COMPUTED IN RING 3
+    #     on a user-space weights copy; kernel_infer_count delta == 0 across
+    #     every ring-3 run; the -poison clause proves the user COPY is what
+    #     computes; the crash triple re-proven against the fat ELF.
+    name: ring3 survival + mind gate (boot QEMU x86)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -292,28 +296,38 @@ jobs:
             gcc-i686-linux-gnu make qemu-system-x86 dosfstools mtools
       - name: Build kernel + disk image
         run: make -C boot/x86 all disk
-      - name: Boot QEMU, run `ring3 test`, grep the gate
+      - name: Static link tripwire — the REAL forward lives in core_mind.elf (III.3c)
+        # A build that links a stub forward instead of the real moe.c/dtr.c
+        # loses these global symbols from the --gc-sections live set.
+        # Necessary-not-sufficient: the runtime clauses (kdelta==0 + poison)
+        # are the fence; this catches build rot one minute into CI.
+        run: |
+          i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T moe_infer$'
+          i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T dtr_forward_probs$'
+          i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T dtr_weights_set$'
+      - name: Boot QEMU, run `ring3 test` + `ring3 mind`, grep both gates
         run: |
           cd boot/x86
-          # Send the verb after the shell is up; keep stdin open while it runs.
-          # Sent twice: if a slow boot eats the first line, the second
-          # still lands (the verb is re-runnable; its counters are deltas).
-          ( sleep 25; printf 'ring3 test\n'; sleep 60; printf 'ring3 test\n'; sleep 60 ) | \
-            timeout 150 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
+          # Send the verbs after the shell is up; keep stdin open while
+          # they run (III.6: one boot, two verbs).
+          ( sleep 25; printf 'ring3 test\n'; sleep 90; printf 'ring3 mind\n'; sleep 90 ) | \
+            timeout 230 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
               -serial stdio -display none -cpu qemu64 \
               -netdev user,id=n0 -device rtl8139,netdev=n0 \
               -drive file=disk.img,format=raw,if=ide,index=0 \
               > ring3.log 2>&1 &
           QPID=$!
-          # Poll for the gate tag, then stop QEMU early.
-          for i in $(seq 1 140); do
-            grep -aqF '[ring3-survival]' ring3.log && break
+          # Poll for BOTH gate tags, then stop QEMU early.
+          for i in $(seq 1 220); do
+            grep -aqF '[ring3-survival]' ring3.log && \
+              grep -aqF '[ring3-mind]' ring3.log && break
             sleep 1
           done
           kill $QPID 2>/dev/null || true
           wait $QPID 2>/dev/null || true
           cat ring3.log
           grep -aF '[ring3-survival] PASS' ring3.log
+          grep -aF '[ring3-mind] PASS' ring3.log
 
   relay-tests:
     name: Relay round-trip suite (6 scenarios)

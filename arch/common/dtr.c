@@ -72,6 +72,11 @@ static void dt_putf2(float f)
 /* 数学ヘルパー (libc 不使用)                                         */
 /* ------------------------------------------------------------------ */
 
+/* ring3-core Wave C (III.3a): the kernel-compute counter — see dtr.h.
+ * Defined here so both compute entries below can bump it; the dual-
+ * compiled user ELF gets its own private copy of this very definition. */
+volatile UW kernel_infer_count = 0;
+
 float dt_relu(float x) { return x > 0.0f ? x : 0.0f; }
 
 /* IEEE754 binary32 bit-punning (2^k construction / mantissa split).
@@ -390,6 +395,7 @@ static W h_head1_sub  = -1;   /* Node0: "dtr/head1" sub  */
  */
 static void run_embed_seq(const B input[SEQ], float tok[SEQ][DM])
 {
+    kernel_infer_count++;   /* ring3-core III.3a: kernel-side compute */
     for (INT t = 0; t < SEQ; t++) {
         float in_f = (float)input[t] / 127.0f;
         for (INT d = 0; d < DM; d++) {
@@ -740,6 +746,7 @@ void dtr_ln_bwd(const float *dy, const float *xh, float istd,
  * loss -ln p[label]; fills tc. */
 static float train_forward(const B input[SEQ], UB label)
 {
+    kernel_infer_count++;   /* ring3-core III.3a: kernel-side compute */
     float scale = 1.0f / dt_sqrt((float)DH);
 
     /* embed (+ positional cols, mirrors run_embed_seq) */

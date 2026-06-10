@@ -210,6 +210,7 @@ static void cmd_help(void)
     sout("  raft                   - Raftコンセンサス状態表示\r\n");
     sout("  moe                    - MoE推論ルーター統計表示\r\n");
     sout("  ring3 test             - ring3生存ゲート (フォールト→reap→再起動)\r\n");
+    sout("  ring3 mind             - ring3-mindゲート (推論の数学そのものをring3で)\r\n");
     sout("  world                  - 全網状況マップ表示 (alias: map) — ゴシップ由来、中央なし\r\n");
     sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
@@ -1405,11 +1406,13 @@ static void r3_sentinel_task(INT stacd, void *exinf)
 }
 
 /* Run a user ELF and wait (bounded) until SYS_EXIT or the fault reap
- * signals the exit semaphore.  E_OK = the task terminated.            */
-static ER r3_run_elf(const char *path)
+ * signals the exit semaphore.  E_OK = the task terminated.
+ * cmdline is tokenised into the user argc/argv frame (elf_loader.c) —
+ * `ring3 mind` selects core_mind.elf modes (-poison/-crash) with it.  */
+static ER r3_run_elf(const char *path, const char *cmdline)
 {
     stdin_activate();
-    ID tid = elf_exec(path, path);
+    ID tid = elf_exec(path, cmdline);
     if (tid < E_OK) {
         stdin_deactivate();
         return (ER)tid;
@@ -1419,13 +1422,10 @@ static ER r3_run_elf(const char *path)
     return er;
 }
 
-static void cmd_ring3(const char *arg)
+static void ring3_mind(void);   /* Wave C gate — defined below */
+
+static void ring3_test(void)
 {
-    while (*arg == ' ') arg++;
-    if (!(arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t')) {
-        sout("Usage: ring3 test\r\n");
-        return;
-    }
     if (!vfs_ready) {
         sout("ring3: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
         sout("[ring3-survival] FAIL\r\n");
@@ -1469,7 +1469,7 @@ static void cmd_ring3(const char *arg)
 
     /* ---- gate 1 (R3-INFER): ring3 SYS_INFER == ring0 oracle ------- */
     if (!fail) {
-        if (r3_run_elf("core_moe.elf") != E_OK) fail = "g1-no-exit";
+        if (r3_run_elf("core_moe.elf", "core_moe.elf") != E_OK) fail = "g1-no-exit";
         else {
             r3_class = user_last_exit_code();
             if (r3_class != (W)r0_class) fail = "g1-class-mismatch";
@@ -1482,7 +1482,7 @@ static void cmd_ring3(const char *arg)
          * returned control to the kernel instead of hlt-ing (the reap
          * path signals it); this very shell task observing it is the
          * "handler returned, no halt" condition. */
-        if (r3_run_elf("core_crash.elf") != E_OK) fail = "g2-no-reap";
+        if (r3_run_elf("core_crash.elf", "core_crash.elf") != E_OK) fail = "g2-no-reap";
         ticks_at_crash = r3s_ticks;
         reaped_delta   = ring3_faults_reaped - reaped0;
         from_ring      = last_fault_from_ring;
@@ -1502,7 +1502,7 @@ static void cmd_ring3(const char *arg)
 
     /* ---- gate 4 (RESTART-OK): restart reproduces the oracle ------- */
     if (!fail) {
-        if (r3_run_elf("core_moe.elf") != E_OK) fail = "g4-no-exit";
+        if (r3_run_elf("core_moe.elf", "core_moe.elf") != E_OK) fail = "g4-no-exit";
         else {
             restart_class = user_last_exit_code();
             if (restart_class != (W)r0_class) fail = "g4-class-mismatch";
@@ -1537,6 +1537,205 @@ static void cmd_ring3(const char *arg)
         sout(")\r\n");
         sout("[ring3-survival] FAIL\r\n");
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* ring3 mind — ring3-core Wave C acceptance gate (ring3-core.md III.4)*/
+/*                                                                     */
+/* THE claim: the class-inference computation (moe_infer's full dtr    */
+/* forward) executes inside a ring-3 user task, on a user-space copy   */
+/* of the weights, with ZERO kernel-side inference during the run.     */
+/* core_mind.elf links the REAL arch/common/moe.c + dtr.c (whole-file  */
+/* dual-compile, --gc-sections); the kernel supplies only weights      */
+/* (SYS_DTR_WEIGHTS_GET), console, the CDN-7 hooks, and the fault net. */
+/*                                                                     */
+/* M1-M8, every comparison EXACT (==, never >=):                       */
+/*   M1 normal run class == live ring-0 oracle                         */
+/*   M2 kernel_infer_count delta == 0 across the run                   */
+/*   M3 poison run: c_pre == oracle AND c_post != oracle (the user     */
+/*      COPY is what computes — a ring-0 answer cannot feel the poison)*/
+/*   M4 kdelta == 0 across the poison run                              */
+/*   M5 -crash on the FAT elf: reaped delta == 1, from_ring == 3,      */
+/*      exit == -86 (the Wave B crash triple re-proven)                */
+/*   M6 sentinel ticks strictly advance post-crash                     */
+/*   M7 restart (normal) == oracle (poison did not leak back)          */
+/*   M8 final kdelta == 0 overall (excluding the oracle call)          */
+/* ------------------------------------------------------------------ */
+static void ring3_mind(void)
+{
+    if (!vfs_ready) {
+        sout("ring3-mind: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
+        sout("[ring3-mind] FAIL\r\n");
+        return;
+    }
+
+    /* ---- quiesce — Wave B preamble verbatim (CDN-4a single space) -- */
+    heal_elf_pause(TRUE);
+    dproc_kill_by_name("infer_d.elf");   /* ignore result if absent */
+    tk_dly_tsk(100);
+
+    /* ---- ring-0 oracle FIRST (it bumps the counter), THEN snapshot.
+     * The expected class is NEVER a constant: it is whatever the live
+     * trained/merged weights say right now.                           */
+    UB r0_class = moe_infer(R3_V0_T, R3_V0_H, R3_V0_P, R3_V0_L);
+    UW k0       = kernel_infer_count;    /* snapshot AFTER the oracle  */
+    UW reaped0  = ring3_faults_reaped;
+
+    /* ---- sentinel (gate M6) — same task as Wave B ------------------ */
+    r3s_ticks = 0;
+    r3s_stop  = 0;
+    T_CTSK ct;
+    ct.exinf   = NULL;
+    ct.tskatr  = TA_HLNG | TA_RNG0;
+    ct.task    = r3_sentinel_task;
+    ct.itskpri = 10;
+    ct.stksz   = 2048;
+    ID sent_tid = tk_cre_tsk(&ct);
+    const char *fail = NULL;
+    if (sent_tid < E_OK || tk_sta_tsk(sent_tid, 0) < E_OK)
+        fail = "m6-sentinel-create";
+
+    W  m1 = -1, pexit = -1, crash_exit = 0, m7 = -1;
+    UW c_pre = 0xFF, c_post = 0xFF;
+    UW k1 = k0, k2 = k0, k3 = k0;
+    UW reaped_delta = 0, from_ring = 0;
+    UW ticks_at_crash = 0, ticks_after = 0;
+
+    /* FPU caveat (ring3-core.md III.5, flagged not fixed): there is NO
+     * x87 save/restore anywhere in the x86 port.  The fat ELF below
+     * does float math in ring 3; it stays correct ONLY because this
+     * gate is sequenced + quiesced — the oracle completed above, the
+     * daemons are dead, and the sentinel/shell do no float.  Before
+     * concurrent ring-3 minds the dispatcher needs CR0.TS lazy
+     * switching or eager FXSAVE.                                      */
+
+    /* ---- M1 (R3-COMPUTE): ring-3 moe_infer == ring-0 oracle -------- */
+    if (!fail) {
+        if (r3_run_elf("core_mind.elf", "core_mind.elf") != E_OK)
+            fail = "m1-no-exit";
+        else {
+            m1 = user_last_exit_code();
+            if (m1 != (W)r0_class) fail = "m1-class-mismatch";
+        }
+    }
+
+    /* ---- M2 (KERNEL-FROZEN): zero kernel computes during the run --- */
+    if (!fail) {
+        k1 = kernel_infer_count;
+        if (k1 - k0 != 0) fail = "m2-kdelta!=0";
+    }
+
+    /* ---- M3 (POISON): the user-space COPY is what computes --------- */
+    if (!fail) {
+        if (r3_run_elf("core_mind.elf", "core_mind.elf -poison") != E_OK)
+            fail = "m3-no-exit";
+        else {
+            pexit  = user_last_exit_code();
+            c_pre  = ((UW)pexit >> 4) & 0xF;
+            c_post = (UW)pexit & 0xF;
+            if (pexit < 0)                 fail = "m3-elf-error";
+            else if (c_pre != r0_class)    fail = "m3-pre-mismatch";
+            else if (c_post == r0_class)   fail = "m3-poison-not-felt";
+        }
+    }
+
+    /* ---- M4 (KERNEL-FROZEN under poison) ---------------------------- */
+    if (!fail) {
+        k2 = kernel_infer_count;
+        if (k2 - k1 != 0) fail = "m4-kdelta!=0";
+    }
+
+    /* ---- M5 (CRASH-CAUGHT): the FAT elf is still reapable ----------- */
+    if (!fail) {
+        if (r3_run_elf("core_mind.elf", "core_mind.elf -crash") != E_OK)
+            fail = "m5-no-reap";
+        ticks_at_crash = r3s_ticks;
+        reaped_delta   = ring3_faults_reaped - reaped0;
+        from_ring      = last_fault_from_ring;
+        crash_exit     = user_last_exit_code();
+        if (!fail && reaped_delta != 1) fail = "m5-reaped!=1";
+        if (!fail && from_ring != 3)    fail = "m5-from-ring!=3";
+        if (!fail && crash_exit != R3_EXIT_FAULT) fail = "m5-no-fault-exit";
+    }
+
+    /* ---- M6 (SCHED-ALIVE): sentinel advances AFTER the crash -------- */
+    if (!fail) {
+        tk_dly_tsk(100);
+        ticks_after = r3s_ticks;
+        if (ticks_after <= ticks_at_crash) fail = "m6-sched-dead";
+    }
+
+    /* ---- M7 (RESTART): fresh run == oracle (poison did not leak) ---- */
+    if (!fail) {
+        if (r3_run_elf("core_mind.elf", "core_mind.elf") != E_OK)
+            fail = "m7-no-exit";
+        else {
+            m7 = user_last_exit_code();
+            if (m7 != (W)r0_class) fail = "m7-class-mismatch";
+        }
+    }
+
+    /* ---- M8 (KERNEL-FROZEN overall): crash run + restart bumped
+     *      NOTHING kernel-side ------------------------------------- */
+    if (!fail) {
+        k3 = kernel_infer_count;
+        if (k3 - k2 != 0) fail = "m8-kdelta!=0";
+    }
+
+    /* stop + reclaim the sentinel; resume the ELF watchdog */
+    r3s_stop = 1;
+    if (sent_tid >= E_OK) {
+        tk_dly_tsk(60);
+        tk_del_tsk(sent_tid);
+    }
+    heal_elf_pause(FALSE);
+
+    if (!fail) {
+        sout("ring3-mind: PASS  infer=");
+        sout_dec((UW)r0_class);
+        sout(" ring3==ring0:Y  kdelta=");
+        sout_dec(k1 - k0); sout("/");
+        sout_dec(k2 - k1); sout("/");
+        sout_dec(k3 - k2);
+        sout("  poison=");
+        sout_dec(c_pre);  sout("->");
+        sout_dec(c_post); sout(":Y  reaped=1 from_ring=3  sched_post=Y  restart=");
+        sout_dec((UW)m7);
+        sout(":Y\r\n");
+        sout("[ring3-mind] PASS\r\n");
+    } else {
+        sout("ring3-mind: FAIL ");
+        sout(fail);
+        sout("  (r0=");      sout_dec((UW)r0_class);
+        sout(" m1=");        sout_dec((UW)m1);
+        sout(" pexit=");     sout_dec((UW)pexit);
+        sout(" pre=");       sout_dec(c_pre);
+        sout(" post=");      sout_dec(c_post);
+        sout(" kdelta=");    sout_dec(k1 - k0);
+        sout("/");           sout_dec(k2 - k1);
+        sout("/");           sout_dec(k3 - k2);
+        sout(" m7=");        sout_dec((UW)m7);
+        sout(" reaped=");    sout_dec(reaped_delta);
+        sout(" from_ring="); sout_dec(from_ring);
+        sout(" ticks=");     sout_dec(ticks_at_crash);
+        sout("/");           sout_dec(ticks_after);
+        sout(")\r\n");
+        sout("[ring3-mind] FAIL\r\n");
+    }
+}
+
+static void cmd_ring3(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        ring3_test();   /* Wave B regression — byte-for-byte clauses */
+        return;
+    }
+    if (arg[0]=='m' && arg[1]=='i' && arg[2]=='n' && arg[3]=='d') {
+        ring3_mind();   /* Wave C gate — the math itself in ring 3   */
+        return;
+    }
+    sout("Usage: ring3 test|mind\r\n");
 }
 
 /* ------------------------------------------------------------------ */
