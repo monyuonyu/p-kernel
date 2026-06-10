@@ -54,7 +54,13 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
+          # LM-6 (living-mind Part VII): the mind verbs run LAST (after every
+          # amnesia-bomb cert, VII.0 #5) and before exit. (k*,v*)=(2,3) is the
+          # MEASURED off-bias pair: the 0xA5A5 substrate's modal masked guess
+          # for key 2 is class 1 (57.5%); class 3 measures pre_share 0.0% at
+          # N=100 (printed by the teach itself — the in-log evidence).
+          # timeout 300->420: `mind wait` is ~15s nominal/120s worst-case.
+          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\ndmn test\nself test\nmind teach 2 3\nmind wait 120\nmind ask 2\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -193,6 +199,22 @@ jobs:
           grep -aF '[self-continuity] PASS' selftest.log
           grep -aF '[self-tamperevident] PASS' selftest.log
           grep -aF '[self-ownerless] PASS' selftest.log
+          # living-mind Part VII (LM-6, the mouth): the OWNER teaches the LIVE
+          # mind at the shell — `mind teach 2 3` enqueues a singleton fact via
+          # r3_fact_learn (frozen-teacher agree==100; pre_share<=33 = not
+          # already in the weights); with NO further verbs the DMN task's OWN
+          # idle pulses (real 1000ms heartbeat, real ACTIVE->IDLE) consolidate
+          # it (`mind wait 120` only yields + polls; dmn-round delta >= 10
+          # counted ONLY at the dmn.c hook site); `mind ask 2` then answers
+          # from the weights on a MASKED prompt (share >= 75 vs pre <= 33).
+          grep -aF '[teach-arrival] PASS' selftest.log
+          grep -aF '[teach-live] PASS' selftest.log
+          grep -aF '[teach-consolidated] PASS' selftest.log
+          # the line this Part exists to make real: the PRODUCTION dmn idle
+          # hook consolidated a conversational fact (it appears only if the
+          # dmn task itself ran the round — never printed by cert-driven
+          # direct calls).
+          grep -aF '[dmn] sleep: distilled in-context facts -> rw[]' selftest.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)

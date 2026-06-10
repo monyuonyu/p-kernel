@@ -300,6 +300,15 @@ INT  r3_facts_pending(void);
 INT  r3_consolidate_idle_round(void);
 void r3_stream_test(void);
 
+/* LM-6 (living-mind.md Part VII) -- the mouth: the `mind` shell verb.
+ * `mind teach <k> <v>` enqueues one owner-taught binding through
+ * r3_fact_learn; the DMN's OWN idle pulses consolidate it (mind_cmd
+ * never calls the round); `mind ask <k>` answers from the weights on a
+ * MASKED prompt; `mind wait [s]` polls drain; bare `mind` = status.
+ * The ONLY public LM-6 entry — all sub-verb logic, the substrate
+ * bootstrap and the quiesce flag stay file-static (VII.9). */
+void mind_cmd(const UB *args, UW len);
+
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
  *   eval | train [epochs] | save | load | grad | crash | stat */

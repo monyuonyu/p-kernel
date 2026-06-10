@@ -482,8 +482,51 @@ static float r_grad_check(UW seed)
                                * TRUE accuracy of each rule on a big stream. */
 #define R_EPOCHS      60
 
+/* ------------------------------------------------------------------ *
+ *  LM-6 (living-mind.md Part VII) — shared substrate bootstrap + the
+ *  VI.8-named quiesce flag, now built (VII.3 / VII.4).
+ * ------------------------------------------------------------------ */
+
+/* Set/cleared by s_round() ONLY (VII.4). The DMN task is priority 13 —
+ * strictly LOWEST — so the shell PREEMPTS it mid-round the moment input
+ * arrives; a `mind` verb (or a cert) that then ran h_predict/r_forward
+ * would tear the SAME shared rc/rg/r_rng the half-finished round
+ * resumes into, and the resumed r_backward would push a corrupted
+ * gradient into rw[]. Every mind sub-verb and every cert entry waits on
+ * this flag FIRST; the wait is bounded by construction (one round =
+ * R3_IDLE_STEPS SGD steps, milliseconds) and the waiting shell sleeping
+ * is precisely what lets the prio-13 round finish. A flag, not a mutex:
+ * sufficient ONLY because strict priority means the round can never
+ * preempt a verb (the reverse direction is safe by construction). */
+static volatile UB r3_round_busy = 0;
+
+static void m_quiesce(void)
+{
+    while (r3_round_busy) tk_dly_tsk(20);
+}
+
+/* substrate ready? rw[] is a zeroed static at boot (VII.0 #2); the
+ * mouth pretrains lazily on first use, printed (VII.3). */
+static UB m_ready = 0;
+
+/* THE one pretrain recipe (seed 0xA5A5 + the 60-epoch schedule),
+ * hoisted verbatim from r3_stream_test (which now calls it too) so the
+ * live path and the cert measure the SAME deterministic substrate. */
+static void s_pretrain(void)
+{
+    r_init_weights(0xA5A5u);
+    float lr = 0.05f;
+    for (INT ep = 0; ep < R_EPOCHS; ep++) {
+        if (ep == R_EPOCHS*2/3)  lr = 0.02f;
+        if (ep == R_EPOCHS*9/10) lr = 0.008f;
+        r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
+    }
+    m_ready = 1;
+}
+
 void r3_test(void)
 {
+    m_quiesce();   /* VII.4: never reset rw[] under an in-flight round */
     r_puts("[r3-test] ==== R3 in-context recall (the thinking is NOT a toy) ====\r\n");
     r_puts("[r3-test] task: per-episode key->value dict + query; label = bound value.\r\n");
 
@@ -716,6 +759,7 @@ void r3_handoff_test(void)
 {
     static float rw_snapshot[R_NP];   /* memcpy snapshot/restore of rw[]  */
 
+    m_quiesce();   /* VII.4: never reset rw[]/queue under an in-flight round */
     r_puts("[handoff] ==== LM-4 fast->slow handoff (in-context -> weights) ====\r\n");
     r_puts("[handoff] D*: one fixed 8-key->4-value dictionary (a conversation's fact).\r\n");
 
@@ -986,12 +1030,13 @@ INT r3_facts_pending(void)
  * arrangement stream (per-step RNG consumption is identical). */
 static INT s_round(INT with_replay)
 {
+    r3_round_busy = 1;            /* VII.4: verbs/certs m_quiesce() on this */
     INT pi = -1; UW pseq = 0xFFFFFFFFUL;
     for (INT i = 0; i < (INT)r3_fq_n; i++)
         if (r3_fq[i].state == R3F_PENDING && r3_fq[i].seq < pseq) {
             pi = i; pseq = r3_fq[i].seq;
         }
-    if (pi < 0) return 0;
+    if (pi < 0) { r3_round_busy = 0; return 0; }
 
     /* item list: pending fact's engrams (+ retained facts' on replay) */
     UB fi[R3_FQ_MAX * R_KEYV], bi[R3_FQ_MAX * R_KEYV];
@@ -1020,13 +1065,14 @@ static INT s_round(INT with_replay)
 
     if (++r3_fq[pi].rounds_done >= R3_SLEEPS_PER_FACT)
         r3_fq[pi].state = R3F_RETAINED;
+    r3_round_busy = 0;
     return 1;
 }
 
 /* the LIVE idle round — the EXACT symbol dmn_idle_work() calls (VI.5).
- * Nothing live reads rw[] (R3 is self-test + this loop), so no busy
- * flag is needed yet — named for the slice that first serves live R3
- * queries, not built (VI.8). */
+ * VI.8's "no busy flag needed" expired with LM-6: `mind` verbs now
+ * serve live R3 queries, so s_round() sets/clears r3_round_busy and
+ * every verb/cert quiesces on it first (VII.4). */
 INT r3_consolidate_idle_round(void) { return s_round(1); }
 
 /* MASKED accuracy on fact f's keys vs the oracle SDICT, on a held-out
@@ -1072,6 +1118,7 @@ void r3_stream_test(void)
     float acc_pre[R3_NFACTS], acc_naive[R3_NFACTS];
     float acc_replay[R3_NFACTS], acc_scr[R3_NFACTS], agree[R3_NFACTS];
 
+    m_quiesce();   /* VII.4: never reset rw[]/queue under an in-flight round */
     r_puts("[stream] ==== LM-5 随時 stream (facts arrive, many sleeps, one queue) ====\r\n");
     r_puts("[stream] F="); r_putdec(R3_NFACTS); r_puts(" facts x ");
     r_putdec(R3_FKEYS);
@@ -1084,15 +1131,10 @@ void r3_stream_test(void)
     s_make_facts();
 
     /* substrate: pretrain to in-context competence EXACTLY as r3_test /
-     * r3_handoff_test do (resampled dicts). Every fact is then FAST-
-     * readable but absent from the weights — gated per fact below. */
-    r_init_weights(0xA5A5u);
-    float lr = 0.05f;
-    for (INT ep = 0; ep < R_EPOCHS; ep++) {
-        if (ep == R_EPOCHS*2/3)  lr = 0.02f;
-        if (ep == R_EPOCHS*9/10) lr = 0.008f;
-        r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
-    }
+     * r3_handoff_test do (resampled dicts) — via the ONE shared recipe
+     * the live mouth also uses (s_pretrain, VII.3). Every fact is then
+     * FAST-readable but absent from the weights — gated per fact below. */
+    s_pretrain();
     for (INT i = 0; i < R_NP; i++) snap[i] = rw[i];
 
     /* ================= run A — the DISEASE (naive) ================= */
@@ -1232,6 +1274,291 @@ void r3_stream_test(void)
     for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
     s_fq_reset();
     r_puts("[stream] DONE — a stream of facts now survives its own arrival order.\r\n");
+}
+
+/* ------------------------------------------------------------------ *
+ *  LM-6 — the mouth: a real conversational producer
+ *  (living-mind.md Part VII; the `mind` shell verb).
+ *
+ *  The OWNER, at the shell prompt, teaches the LIVE mind one binding
+ *  (`mind teach <k> <v>`); the fact enters the SAME bounded queue via
+ *  r3_fact_learn (the frozen FAST layer reads a SUPPORT prompt at
+ *  arrival, teacher_agree printed); with NO further verbs the DMN
+ *  task's OWN idle pulses consolidate it into rw[] — `mind wait`
+ *  merely polls r3_facts_pending() while the sleeping shell IS the
+ *  idle window; `mind ask <k>` then answers from the weights on a
+ *  MASKED prompt. mind_cmd NEVER calls r3_consolidate_idle_round /
+ *  s_round: the sleep belongs to the DMN, and [teach-live] is
+ *  attributable to the dmn.c call site ALONE via dmn_r3_rounds()
+ *  (the G33 discipline, extended — VII.5).
+ *
+ *  Honest bound (VII.8): the vocabulary is R3's synthetic 8 keys x 4
+ *  values. The MOUTH is real (a human, a prompt, no harness); the
+ *  WORDS are not natural language. Within ONE node; re-teach refused
+ *  (belief revision is a future slice); cert verbs still erase the
+ *  live mind (VII.0 #5 — printed by `mind` status, not fixed here).
+ * ------------------------------------------------------------------ */
+
+#define M_PRE_N   100    /* teach pre-sleep novelty-read sample (VII.2) */
+#define M_ASK_N   40     /* ask masked majority-vote sample (VII.2)     */
+
+static UW m_round_snap = 0;   /* dmn_r3_rounds() at last teach (VII.5)  */
+
+/* lazy substrate bootstrap (VII.3): deterministic, printed. */
+static void m_boot(void)
+{
+    SYSTIM t0, t1;
+    if (m_ready) return;
+    tk_get_otm(&t0);
+    s_pretrain();
+    tk_get_otm(&t1);
+    UW el = t1.lo - t0.lo;
+    r_puts("[mind] substrate pretrained (first use, seed 0xA5A5) in ");
+    r_putdec(el / 1000); r_puts("."); r_putdec((el % 1000) / 100);
+    r_puts("s\r\n");
+}
+
+/* masked majority vote for key k over n held-out arrangements, drawn
+ * from the S_SEED_HELD-derived per-key stream (the s_eval_fact
+ * pattern) — NEVER the arrival/consolidation stream r3_s_rng, so
+ * asking does not consume the training stream. Fills share[] (percent
+ * per class), returns the modal class. */
+static UB m_masked_vote(INT k, INT n, float share[R_VALV])
+{
+    UW save = r_rng; r_rng = S_SEED_HELD + (UW)k * 0x9E3779B9UL;
+    INT votes[R_VALV];
+    for (INT c = 0; c < R_VALV; c++) votes[c] = 0;
+    for (INT e = 0; e < n; e++) {
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 0, NULL, NULL, 0, k);          /* MASKED prompt */
+        votes[h_predict(kk, vv)]++;
+    }
+    r_rng = save;
+    UB best = 0;
+    for (INT c = 0; c < R_VALV; c++) {
+        share[c] = 100.0f * (float)votes[c] / (float)n;
+        if (votes[c] > votes[best]) best = (UB)c;
+    }
+    return best;
+}
+
+/* the queued fact (if any) binding key k; returns fact index or -1,
+ * *bind = the binding slot inside it. */
+static INT m_find_key(INT k, INT *bind)
+{
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        for (INT b = 0; b < (INT)r3_fq[i].n; b++)
+            if ((INT)r3_fq[i].key[b] == k) { *bind = b; return i; }
+    return -1;
+}
+
+static INT m_parse_uint(const UB **pp, const UB *end, INT *out)
+{
+    const UB *p = *pp;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (p >= end || *p < '0' || *p > '9') return 0;
+    INT v = 0;
+    while (p < end && *p >= '0' && *p <= '9') { v = v*10 + (INT)(*p - '0'); p++; }
+    *pp = p; *out = v;
+    return 1;
+}
+
+static INT m_kw(const UB **pp, const UB *end, const char *kw)
+{
+    const UB *p = *pp;
+    for (INT i = 0; kw[i]; i++, p++)
+        if (p >= end || *p != (UB)kw[i]) return 0;
+    *pp = p;
+    return 1;
+}
+
+static void m_status(void)
+{
+    static const char *sname[] = { "PENDING", "RETAINED" };
+    r_puts("[mind] substrate: ");
+    r_puts(m_ready ? "READY (pretrained)" : "not pretrained (lazy: first teach/ask runs it)");
+    r_puts("  queue "); r_putdec(r3_fq_n); r_puts("/"); r_putdec(R3_FQ_MAX);
+    r_puts("  lifetime dmn rounds "); r_putdec(dmn_r3_rounds());
+    r_puts("\r\n");
+    for (INT i = 0; i < (INT)r3_fq_n; i++) {
+        r_puts("[mind]   seq="); r_putdec(r3_fq[i].seq);
+        r_puts(" keys=");
+        for (INT b = 0; b < (INT)r3_fq[i].n; b++) {
+            if (b) r_puts(",");
+            r_putdec(r3_fq[i].key[b]);
+        }
+        r_puts(" state="); r_puts(r3_fq[i].state <= 1 ? sname[r3_fq[i].state] : "?");
+        r_puts(" rounds="); r_putdec(r3_fq[i].rounds_done);
+        r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT);
+        r_puts("\r\n");
+    }
+    r_puts("[mind] NOTE: cert verbs (r3/handoff test|stream) reset rw[] + this queue — they erase live teaching (VII.0 #5)\r\n");
+}
+
+/* `mind teach <k> <v>` — VII.2, in the spec's order: quiesce,
+ * bootstrap, pre-sleep novelty read, re-teach refusal, enqueue via THE
+ * live API, teacher_agree, tag. The verb does NOT consolidate anything:
+ * r3_fact_learn already calls dmn_trigger(); the sleep is the DMN's. */
+static void m_teach(const UB *p, const UB *end)
+{
+    INT k, v;
+    if (!m_parse_uint(&p, end, &k) || !m_parse_uint(&p, end, &v)
+        || k < 0 || k >= R_KEYV || v < 0 || v >= R_VALV) {
+        r_puts("usage: mind teach <k 0-7> <v 0-3>\r\n");
+        return;
+    }
+    m_quiesce();                                   /* (1) VII.4          */
+    m_boot();                                      /* (2) VII.3          */
+
+    float share[R_VALV];                           /* (3) novelty read   */
+    (void)m_masked_vote(k, M_PRE_N, share);
+    float pre_share = share[v];
+
+    INT bind;                                      /* (4) re-teach: refused
+                                                    * (COMMANDER DECISION 1) */
+    if (m_find_key(k, &bind) >= 0) {
+        r_puts("[mind] key "); r_putdec((UW)k);
+        r_puts(" already taught — re-teach is belief revision (future slice); refused\r\n");
+        return;
+    }
+
+    m_round_snap = dmn_r3_rounds();                /* (5) snapshot, then  */
+    UB kk = (UB)k, vv = (UB)v;                     /* enqueue a SINGLETON */
+    INT rc = r3_fact_learn(&kk, &vv, 1);           /* fact-set (VII.0 #1) */
+    if (rc != 0) {
+        r_puts("[mind] r3_fact_learn refused the arrival (queue full of PENDING facts)\r\n");
+        r_puts("[teach-arrival] FAIL\r\n");
+        return;
+    }
+    /* (6) teacher_agree = stored engram yhat vs the taught value (the
+     * majority-of-R3_TEACH_READS frozen SUPPORT read r3_fact_learn
+     * just performed; singleton fact -> binary 100/0). */
+    INT agree = (r3_fq[r3_fq_n-1].yhat[0] == (UB)v) ? 100 : 0;
+    INT pend  = r3_facts_pending();
+
+    r_puts("[mind] teach k="); r_putdec((UW)k); r_puts(" v="); r_putdec((UW)v);
+    r_puts(": substrate ready, learn rc=0, pending="); r_putdec((UW)pend);
+    r_puts(", queue "); r_putdec(r3_fq_n); r_puts("/"); r_putdec(R3_FQ_MAX);
+    r_puts("\r\n");
+    r_puts("[mind]   teacher_agree "); r_putdec((UW)agree);
+    r_puts("  (frozen majority-of-"); r_putdec(R3_TEACH_READS);
+    r_puts(" SUPPORT read == taught value; gate ==100)\r\n");
+    r_puts("[mind]   pre_share "); r_putf1(pre_share);
+    r_puts("%  (masked share of v pre-sleep, N="); r_putdec(M_PRE_N);
+    r_puts(" held-out; gate <=33)\r\n");
+
+    if (pre_share > 33.0f)                         /* (7) the tag (VII.6) */
+        r_puts("[teach-arrival] REDUNDANT (already leaning)\r\n");
+    else if (pend == 1 && agree == 100)
+        r_puts("[teach-arrival] PASS\r\n");
+    else
+        r_puts("[teach-arrival] FAIL\r\n");
+}
+
+/* `mind ask <k>` — majority vote + share over N=40 MASKED held-out
+ * arrangements; emits [teach-consolidated] when k is held by a
+ * RETAINED fact. Asking IS a stimulus (dmn_trigger), like any
+ * inference — the cert sequences ask AFTER wait, so this costs
+ * nothing (VII.2). */
+static void m_ask(const UB *p, const UB *end)
+{
+    INT k;
+    if (!m_parse_uint(&p, end, &k) || k < 0 || k >= R_KEYV) {
+        r_puts("usage: mind ask <k 0-7>\r\n");
+        return;
+    }
+    m_quiesce();
+    m_boot();
+
+    float share[R_VALV];
+    UB pred = m_masked_vote(k, M_ASK_N, share);
+    r_puts("[mind] ask k="); r_putdec((UW)k);
+    r_puts("  pred="); r_putdec(pred);
+    r_puts(" share="); r_putf1(share[pred]);
+    r_puts("%  (masked, N="); r_putdec(M_ASK_N); r_puts(" held-out)\r\n");
+
+    dmn_trigger();        /* a question is a stimulus exactly as an
+                           * inference is (dtr.c does the same)        */
+
+    INT bind, fi = m_find_key(k, &bind);
+    if (fi < 0) {
+        r_puts("[mind]   key not in the live queue — answer is the substrate prior only\r\n");
+        return;
+    }
+    r_puts("[mind]   fact seq="); r_putdec(r3_fq[fi].seq);
+    r_puts(" state=");
+    r_puts(r3_fq[fi].state == R3F_RETAINED ? "RETAINED" : "PENDING");
+    r_puts(" yhat="); r_putdec(r3_fq[fi].yhat[bind]);
+    r_puts(" rounds="); r_putdec(r3_fq[fi].rounds_done);
+    r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT); r_puts("\r\n");
+    if (r3_fq[fi].state != R3F_RETAINED) {
+        r_puts("[mind]   still PENDING — no verdict yet; `mind wait` yields the idle window\r\n");
+        return;
+    }
+    /* pred==yhat closes the chain owner-value -> teacher-reading ->
+     * weight-answer (yhat==v* was already gated at arrival); share>=75
+     * leaves flake margin for the 40-sample vote (VII.6). */
+    INT ok = (pred == r3_fq[fi].yhat[bind]) && (share[pred] >= 75.0f);
+    r_puts(ok ? "[teach-consolidated] PASS\r\n"
+              : "[teach-consolidated] FAIL\r\n");
+}
+
+/* `mind wait [secs]` (default 120) — poll r3_facts_pending() every
+ * 500ms. The sleeping shell IS the idle window: priority 13 runs
+ * precisely while the waiter sleeps, so this verb does not merely
+ * observe the sleep, it yields the machine to it. Gates END STATE
+ * within a BOUND (elapsed is printed, never gated — VII.5). */
+static void m_wait(const UB *p, const UB *end)
+{
+    INT secs = 120;
+    (void)m_parse_uint(&p, end, &secs);
+    if (secs < 1) secs = 1;
+    m_quiesce();
+
+    SYSTIM t0, t1;
+    tk_get_otm(&t0);
+    UW limit_ms = (UW)secs * 1000u, waited = 0;
+    INT drained = (r3_facts_pending() == 0);
+    while (!drained && waited < limit_ms) {
+        tk_dly_tsk(500);
+        waited += 500;
+        drained = (r3_facts_pending() == 0);
+    }
+    if (drained) {
+        /* the counter ++ sits in dmn.c AFTER the round returns (that is
+         * what makes it attributable); the busy flag covers s_round
+         * only. One more yield lets the prio-13 hook land its increment
+         * before the delta is read. */
+        m_quiesce();
+        tk_dly_tsk(500);
+    }
+    tk_get_otm(&t1);
+    UW el    = t1.lo - t0.lo;
+    UW delta = dmn_r3_rounds() - m_round_snap;
+
+    r_puts("[mind] wait: "); r_puts(drained ? "drained" : "TIMEOUT");
+    r_puts("  elapsed "); r_putdec(el / 1000); r_puts(".");
+    r_putdec((el % 1000) / 100);
+    r_puts("s (bound "); r_putdec((UW)secs);
+    r_puts("s)  dmn-round delta "); r_putdec(delta);
+    r_puts(" (gate >="); r_putdec(R3_SLEEPS_PER_FACT);
+    r_puts("; counted ONLY at the dmn.c idle-hook site)\r\n");
+    r_puts((drained && delta >= R3_SLEEPS_PER_FACT)
+           ? "[teach-live] PASS\r\n" : "[teach-live] FAIL\r\n");
+}
+
+/* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
+ * wait [secs] | (bare = status)`, dispatched from both hosted
+ * usermains beside the `handoff` branch. */
+void mind_cmd(const UB *args, UW len)
+{
+    const UB *p = args, *end = args + len;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (p >= end) { m_quiesce(); m_status(); return; }
+    if (m_kw(&p, end, "teach"))      m_teach(p, end);
+    else if (m_kw(&p, end, "ask"))   m_ask(p, end);
+    else if (m_kw(&p, end, "wait"))  m_wait(p, end);
+    else r_puts("usage: mind [teach <k> <v> | ask <k> | wait [secs]]  (bare = status)\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
