@@ -112,6 +112,27 @@ knl_dispatch:
     call    knl_fpu_restore_ctx
     addl    $4, %esp
 
+    /* KILL-TIMER-RACE root-cause (stale TSS.RSP0): refresh RSP0 to the
+     * INCOMING task's kernel stack top on EVERY dispatch.  RSP0 was
+     * previously set only in user_exec() (initial ring3 launch), never
+     * on a context switch.  So after a ring3 task was killed (its kernel
+     * stack knl_Ifree'd) or the scheduler switched between/after ring3
+     * tasks, RSP0 kept pointing at a PREVIOUS, possibly freed+reused,
+     * stack.  The next ring3->ring0 transition (INT 0x80 syscall or an
+     * IRQ taken from ring3) makes the CPU push the trap/IRQ frame at
+     * that stale RSP0, smashing whatever now occupies that memory ->
+     * the intermittent garbage-PC #PF seen during heal-restart of a
+     * killed infer_d.elf (NOT a stale timer-queue event: the timer
+     * queue was verified intact at the fault).  isstack = top of this
+     * task's kernel stack (same value user_exec uses); the write is
+     * harmless for pure ring0 tasks (RSP0 unused without a ring3 tenant).
+     * NB: this fixes the dominant case; a deeper IRQ-on-deep-stack
+     * overflow remains under heavy churn (see gap-ledger follow-up). */
+    movl    (knl_ctxtsk), %eax
+    pushl   TCB_isstack(%eax)
+    call    gdt_set_kernel_stack
+    addl    $4, %esp
+
     /* Enable dispatch */
     movl    $0, (knl_dispatch_disabled)
 
