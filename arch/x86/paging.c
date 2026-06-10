@@ -63,6 +63,21 @@ static void pool_free(PTE *pt)
 }
 
 /* ----------------------------------------------------------------- */
+/* Pool observability — `dproc test` leak gate (debt wave)            */
+/* Number of page-table pool slots currently in use.  Every live user */
+/* process holds exactly 3 (PML4+PDPT+PD); after a full teardown the  */
+/* count must return to its pre-exec baseline.                        */
+/* ----------------------------------------------------------------- */
+
+W paging_pool_used(void)
+{
+    W n = 0;
+    for (INT i = 0; i < POOL_SIZE; i++)
+        if (pt_used[i]) n++;
+    return n;
+}
+
+/* ----------------------------------------------------------------- */
 /* State                                                             */
 /* ----------------------------------------------------------------- */
 

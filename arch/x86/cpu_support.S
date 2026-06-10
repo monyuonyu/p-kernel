@@ -78,6 +78,15 @@ knl_dispatch:
     testl   %eax, %eax
     jz      .Lno_save
     movl    %esp, TCB_SSP(%eax)
+
+    /* Eager FPU save (debt wave): fxsave the outgoing task's
+     * x87/MMX/SSE state into its side-table slot (arch/x86/fpu.c).
+     * cdecl: %eax/%ecx/%edx are clobbered by the call — none are
+     * live here (ESP is already saved; ctxtsk is cleared below).
+     * No-op until fpu_init() arms it. */
+    pushl   %eax
+    call    knl_fpu_save_ctx
+    addl    $4, %esp
 .Lno_save:
     movl    $0, (knl_ctxtsk)        /* ctxtsk = NULL */
 
@@ -93,6 +102,15 @@ knl_dispatch:
     /* Switch to schedtsk */
     movl    %eax, (knl_ctxtsk)
     movl    TCB_SSP(%eax), %esp     /* load new task's stack pointer */
+
+    /* Eager FPU restore (debt wave): fxrstor the incoming task's
+     * x87/MMX/SSE state (or the clean template on its first run).
+     * Runs on the incoming task's stack, below its saved frame —
+     * interrupts are still disabled.  %eax is dead after the call
+     * (the pops below only use %esp). */
+    pushl   %eax
+    call    knl_fpu_restore_ctx
+    addl    $4, %esp
 
     /* Enable dispatch */
     movl    $0, (knl_dispatch_disabled)

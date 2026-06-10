@@ -15,3 +15,6 @@ test_results.log
 
 # Claude Code tool state (subagent worktrees etc.) — never commit
 .claude/
+
+# userland sample ELF — built from samples/ by userland/x86/Makefile (make disk)
+userland/x86/**/*.elf
