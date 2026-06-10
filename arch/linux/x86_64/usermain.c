@@ -33,6 +33,7 @@
 #include "pfs_dag.h"
 #include "protect.h"
 #include "guard.h"
+#include "dmn.h"
 #include "selfc.h"
 #include "genome.h"
 
@@ -52,6 +53,7 @@ IMPORT void dtr_worker_task(INT stacd, void *exinf); /* guarded worker */
 IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
+IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
@@ -579,6 +581,20 @@ EXPORT INT usermain(void)
     guard_register("dtr-worker", (FP)dtr_worker_task, 4096, 6,
                    dtr_recover_weights);
 
+    /* DMN — the idle-time organ (Phase 13; living-mind Part VI VI.0 #3
+     * / COMMANDER DECISION 1). Until LM-5 this was x86-only dead code:
+     * the hosted fleet (the binary CI actually tests) never created the
+     * task, so the live sleep hooks (lm_consolidate_idle_round + the
+     * LM-5 r3_consolidate_idle_round) could never fire. Lowest priority
+     * (13, below every 3-7 task above): it runs only when everything
+     * else blocks, and consolidation runs only when engrams/facts are
+     * pending. Params mirror arch/x86/usermain.c (DMN_PRIORITY/STACK). */
+    dmn_init();
+    if (create_task((FP)dmn_task, 13, 8192) < E_OK)
+        print("[ERR] DMN task\r\n");
+    else
+        print("[OK]  DMN task\r\n");
+
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
      * its shell. */
@@ -663,7 +679,8 @@ EXPORT INT usermain(void)
             const UB *a = line + 7; UW al = (UW)(n - 7);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') r3_handoff_test();
-            else print("usage: handoff test\r\n");
+            else if (al >= 6 && a[0]=='s'&&a[1]=='t'&&a[2]=='r'&&a[3]=='e'&&a[4]=='a'&&a[5]=='m') r3_stream_test();
+            else print("usage: handoff test|stream\r\n");
         } else if (starts_with(line, n, "r3")) {
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */

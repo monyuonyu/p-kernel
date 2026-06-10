@@ -108,6 +108,18 @@ static void dmn_idle_work(void)
             dmn_puts("[dmn] sleep: replayed engrams -> consolidated weights\r\n");
     }
 
+    /* living-mind Part VI (LM-5, 随時): in-context conversation facts
+     * pending in the R3 stream queue are the most urgent rest work —
+     * consolidate EVERY idle pulse while pending (DECISION 3; the round
+     * is bounded by R3_IDLE_STEPS, and a fact drains in
+     * ~R3_SLEEPS_PER_FACT idle seconds at the 1000ms pulse). Trains
+     * R3's own rw[], a DIFFERENT network from the lm round above —
+     * non-interference is structural (disjoint weight buffers). */
+    if (r3_facts_pending()) {
+        if (r3_consolidate_idle_round())
+            dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
+    }
+
     /* dmn_log_interval パルスに 1 回だけ詳細ログを出す */
     if (dmn_stats.idle_runs % dmn_log_interval != 1) return;
 

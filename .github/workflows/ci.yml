@@ -54,7 +54,7 @@ jobs:
       - name: Kernel self-tests (pfs + hrw via shell stdin)
         run: |
           cd boot/linux_x86_64
-          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 300 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\ndmn test\nself test\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -154,6 +154,20 @@ jobs:
           grep -aF '[handoff-fast-only] PASS' selftest.log
           grep -aF '[handoff-consolidated] PASS' selftest.log
           grep -aF '[handoff-grounded] PASS' selftest.log
+          # living-mind Part VI (LM-5, 随時 — the living consolidation loop): a
+          # STREAM of facts taught in-context at different times is consolidated
+          # into R3's own rw[] across MULTIPLE bounded sleep rounds via the SAME
+          # r3_fact_learn/r3_consolidate_idle_round symbols the DMN idle hook
+          # drives (dmn.c). Naive sequential consolidation destroys fact 1 (the
+          # multi-fact disease, measured first); interleaved replay of retained
+          # fact-engrams cures it (every fact answerable prompt-removed, newest
+          # still lands); a scrambled-arrival stream transfers nothing; the fact
+          # queue is budget-bounded with printed FIFO forgetting.
+          # (`handoff stream`)
+          grep -aF '[stream-interference] PASS' selftest.log
+          grep -aF '[stream-consolidated] PASS' selftest.log
+          grep -aF '[stream-grounded] PASS' selftest.log
+          grep -aF '[stream-livehook] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard
