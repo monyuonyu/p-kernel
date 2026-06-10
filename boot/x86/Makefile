@@ -334,6 +334,7 @@ $(DISK_IMG): $(TARGET) kernel.elf
 	mcopy -i $@ $(USERLAND_X86)/11_ai/02_cluster_stat/cluster_stat.elf   ::cluster_stat.elf
 	mcopy -i $@ $(USERLAND_X86)/12_ring3/01_core_moe/core_moe.elf       ::core_moe.elf
 	mcopy -i $@ $(USERLAND_X86)/12_ring3/02_core_crash/core_crash.elf   ::core_crash.elf
+	mcopy -i $@ $(USERLAND_X86)/12_ring3/03_core_mind/core_mind.elf     ::core_mind.elf
 	mmd   -i $@ ::etc 2>/dev/null || true
 	mcopy -i $@ ../../samples/08_system/init.rc                            ::etc/init.rc
 

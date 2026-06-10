@@ -317,7 +317,12 @@ ID elf_exec(const char *path, const char *cmdline)
         tls[3] = 0;
         gdt_set_user_tls(tls_addr);
     } else {
-        stack_top = USER_STACK_TOP;
+        /* ring3-core Wave C (III.1.4): native p-kernel ELFs also get the
+         * Linux-style argc/argv frame — core_mind.elf selects its mode
+         * (-poison / -crash) by argv.  Existing native samples' _start
+         * never reads the stack, so they are unaffected (ESP just starts
+         * a few words lower, with the frame above it). */
+        stack_top = build_argv_stack(cmdline, USER_STACK_TOP);
     }
 
     /* ---- Create ring-0 launcher task ------------------------------ */

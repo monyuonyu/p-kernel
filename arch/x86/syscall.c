@@ -21,6 +21,9 @@
 #include "edf.h"
 #include "dtr.h"
 #include "moe.h"
+#include "world.h"     /* ring3-core Wave C: SYS_MIND_NOTE → world_note_firing */
+#include "reflex.h"    /* ring3-core Wave C: SYS_MIND_NOTE → reflex_on_inference */
+#include "drpc.h"      /* ring3-core Wave C: drpc_my_node for the reflex hook */
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -1017,6 +1020,42 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
                             SENSOR_UNPACK_H(arg0),
                             SENSOR_UNPACK_P(arg0),
                             SENSOR_UNPACK_L(arg0));
+    }
+
+    case SYS_DTR_WEIGHTS_GET: {
+        /* ring3-core Wave C (III.2, CDN-6): copy the LIVE learned dtr
+         * weights into a ring-3 buffer so the user-space mind computes
+         * on the same weights the ring-0 oracle uses.
+         *   arg0 = user float* buffer (synchronous deref — the
+         *          established struct-passing pattern, cf. SYS_TOPIC_SUB)
+         *   arg1 = buffer capacity in floats
+         * Returns DTR_WEIGHT_FLOATS (635) on success, -1 on bad args.
+         * A single 2,540-byte copy — microseconds.  This is a fetch-time
+         * SNAPSHOT (staleness honesty: III.2); re-fetch per decision. */
+        float *ubuf = (float *)(UW)arg0;
+        if (!ubuf) return -1;
+        if (arg1 < (W)DTR_WEIGHT_FLOATS) return -1;
+        dtr_weights_get(ubuf);
+        return (W)DTR_WEIGHT_FLOATS;
+    }
+
+    case SYS_MIND_NOTE: {
+        /* ring3-core Wave C (CDN-7): a ring-3 moe_infer stays visible
+         * to the world map and the reflex/defense layer — 可視化 is a
+         * mechanism, not decoration.  The reflex ACTION table stays
+         * ring-0; only the hook crosses the boundary.
+         *   arg0 = op: 0 = world_note_firing, 1 = reflex_on_inference
+         *   arg1 = cls | conf<<8 (cls in [0..255], conf in [0..100]) */
+        UB cls  = (UB)((UW)arg1 & 0xFF);
+        UB conf = (UB)(((UW)arg1 >> 8) & 0xFF);
+        if (arg0 == 0) {
+            world_note_firing(cls);
+        } else if (arg0 == 1) {
+            reflex_on_inference(cls, conf, drpc_my_node);
+        } else {
+            return -1;
+        }
+        return 0;
     }
 
     case SYS_AI_SUBMIT: {

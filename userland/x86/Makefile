@@ -36,6 +36,7 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 SAMPLES = \
     12_ring3/01_core_moe/core_moe.elf \
     12_ring3/02_core_crash/core_crash.elf \
+    12_ring3/03_core_mind/core_mind.elf \
     11_ai/01_persist_demo/persist_demo.elf \
     11_ai/02_cluster_stat/cluster_stat.elf \
     10_ai/01_claude_bridge/claude_bridge.elf \
@@ -300,6 +301,44 @@ all: $(SAMPLES)
 	mkdir -p 12_ring3/02_core_crash
 	$(CC) $(CFLAGS) -c $< -o 12_ring3/02_core_crash/core_crash.o
 	$(LD) $(LDFLAGS) -o $@ 12_ring3/02_core_crash/core_crash.o
+
+# -------------------------------------------------------------------
+# 12_ring3/03_core_mind — ring3-core Wave C: the mind's math in ring3
+# (docs/architecture/ring3-core.md III.1)
+#
+# arch/common/moe.c + arch/common/dtr.c are dual-compiled WHOLE-FILE
+# into the user ELF.  Load-bearing pieces:
+#   * separate objdir (12_ring3/03_core_mind/*.o) — the kernel's
+#     moe.o/dtr.o live under boot/x86/; no clobbering, no recursive-
+#     make races
+#   * kernel-identical -D_APP_X86_ + INCDIRS — typedef widths (W/UW/B)
+#     and struct layouts must be bit-identical to the kernel build or
+#     the fetched weights blob silently diverges (the LP64 typedef
+#     trap, x86 edition)
+#   * -ffunction-sections -fdata-sections + ld --gc-sections — the GC
+#     boundary IS the link cut: references inside discarded sections
+#     (kdds_*, dkva_cache_update, tk_cre_sem, ...) need no definitions;
+#     the live set is exactly what _start reaches
+#   * ushim.c — the III.1.3 interface shim, ZERO math
+# -------------------------------------------------------------------
+ROOT      = ../..
+CORE_INC  = -I$(ROOT)/arch/x86/include -I$(ROOT)/arch/common/include \
+            -I$(ROOT)/relay -I$(ROOT)/include/kernel/tkernel \
+            -I$(ROOT)/include -I$(ROOT)/include/lib/libc
+CORE_CFLAGS = $(CFLAGS) -D_APP_X86_ $(CORE_INC) \
+              -ffunction-sections -fdata-sections
+CORE_DIR  = 12_ring3/03_core_mind
+
+$(CORE_DIR)/core_mind.elf: $(S)/12_ring3/03_core_mind/core_mind.c \
+                           $(ROOT)/arch/common/moe.c $(ROOT)/arch/common/dtr.c \
+                           ushim.c user.ld
+	mkdir -p $(CORE_DIR)
+	$(CC) $(CORE_CFLAGS) -c $(S)/12_ring3/03_core_mind/core_mind.c -o $(CORE_DIR)/core_mind.o
+	$(CC) $(CORE_CFLAGS) -c $(ROOT)/arch/common/moe.c -o $(CORE_DIR)/moe_user.o
+	$(CC) $(CORE_CFLAGS) -c $(ROOT)/arch/common/dtr.c -o $(CORE_DIR)/dtr_user.o
+	$(CC) $(CORE_CFLAGS) -c ushim.c -o $(CORE_DIR)/ushim.o
+	$(LD) $(LDFLAGS) --gc-sections -o $@ $(CORE_DIR)/core_mind.o \
+	      $(CORE_DIR)/moe_user.o $(CORE_DIR)/dtr_user.o $(CORE_DIR)/ushim.o
 
 clean:
 	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai 12_ring3 11_ai

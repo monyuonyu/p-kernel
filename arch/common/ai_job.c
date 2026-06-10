@@ -20,6 +20,7 @@
 
 #include "kernel.h"
 #include "ai_kernel.h"
+#include "dtr.h"       /* ring3-core III.3a: kernel_infer_count */
 #include <tmonitor.h>
 
 /* ================================================================== */
@@ -131,6 +132,7 @@ static void mlp_logits(const B input[MLP_IN], float out[MLP_OUT])
 
 UB mlp_forward(const B input[MLP_IN])
 {
+    kernel_infer_count++;   /* ring3-core III.3a: kernel-side compute */
     float out[MLP_OUT];
     mlp_logits(input, out);
 

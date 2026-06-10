@@ -173,6 +173,21 @@ void dtr_seed_kv_cache(UB node);
  *   +W_cls(24)+b_cls(3) = 635                                        */
 #define DTR_WEIGHT_FLOATS  635
 
+/* ------------------------------------------------------------------ */
+/* ring3-core Wave C (III.3a) — the kernel-compute counter             */
+/*                                                                     */
+/* Incremented at the entry of EVERY kernel-resident compute path that */
+/* can produce a class (train_forward / run_embed_seq in dtr.c,        */
+/* mlp_forward in ai_job.c).  The `ring3 mind` gate snapshots it after */
+/* its ring-0 oracle call and requires delta == 0 across every ring-3  */
+/* run: a ring-3 "mind" that secretly answers via SYS_INFER /          */
+/* SYS_DTR_SUBMIT / SYS_AI_* bumps this counter and FAILS.             */
+/* The user ELF dual-compiles the same dtr.c and gets its own private  */
+/* copy in its own .data — no interference.  One increment per         */
+/* forward: a no-op cost on hosted builds (linux_x86_64 / aarch64).    */
+/* ------------------------------------------------------------------ */
+extern volatile UW kernel_infer_count;
+
 /* 推論ログのリングバッファサイズ */
 #define DTR_LOG_SIZE  16
 
