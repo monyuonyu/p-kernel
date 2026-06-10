@@ -233,9 +233,15 @@ W dproc_kill_by_name(const char *name)
             if (e.state != DPROC_RUNNING) continue;
             if (!dp_name_match(e.path, name)) continue;
 
-            /* T-Kernel タスクを終了させる (ローカルの場合のみ) */
+            /* T-Kernel タスクを終了させる (ローカルの場合のみ)
+             * Debt wave (RING3-B follow-up): ter/del alone leaked the
+             * victim's kernel-side resources (page tables, fds, ssy
+             * state).  user_proc_teardown() is the context-independent
+             * half of the SYS_EXIT unwind, callable on a foreign task
+             * once it is terminated.  Gate: `dproc test`.            */
             if (e.node_id == drpc_my_node) {
                 tk_ter_tsk((ID)e.tid);
+                user_proc_teardown((ID)e.tid);
                 tk_del_tsk((ID)e.tid);
             }
 

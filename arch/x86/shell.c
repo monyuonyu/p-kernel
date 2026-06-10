@@ -41,6 +41,7 @@
 #include "chat.h"
 #include "elf_loader.h"
 #include "kernel.h"
+#include "paging.h"   /* paging_pool_used — `dproc test` leak gate */
 
 #define SHELL_LINE_MAX  128
 #define PS_MAX_TSKID    CFN_MAX_TSKID
@@ -211,6 +212,8 @@ static void cmd_help(void)
     sout("  moe                    - MoE推論ルーター統計表示\r\n");
     sout("  ring3 test             - ring3生存ゲート (フォールト→reap→再起動)\r\n");
     sout("  ring3 mind             - ring3-mindゲート (推論の数学そのものをring3で)\r\n");
+    sout("  dproc test             - killパス teardown リークゲート (page-table pool)\r\n");
+    sout("  fpu test               - x87/FPUコンテキスト保存ゲート (並行float)\r\n");
     sout("  world                  - 全網状況マップ表示 (alias: map) — ゴシップ由来、中央なし\r\n");
     sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
@@ -638,13 +641,18 @@ static void cmd_kill(const char *arg)
     }
 }
 
+static void dproc_test(void);   /* kill-path teardown gate — defined after r3_run_elf */
+
 static void cmd_dproc(const char *arg)
 {
     while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        dproc_test();
+        return;
+    }
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     dproc_list();
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-    (void)arg;
 }
 
 static void cmd_dtask(const char *arg)
@@ -1601,13 +1609,11 @@ static void ring3_mind(void)
     UW reaped_delta = 0, from_ring = 0;
     UW ticks_at_crash = 0, ticks_after = 0;
 
-    /* FPU caveat (ring3-core.md III.5, flagged not fixed): there is NO
-     * x87 save/restore anywhere in the x86 port.  The fat ELF below
-     * does float math in ring 3; it stays correct ONLY because this
-     * gate is sequenced + quiesced — the oracle completed above, the
-     * daemons are dead, and the sentinel/shell do no float.  Before
-     * concurrent ring-3 minds the dispatcher needs CR0.TS lazy
-     * switching or eager FXSAVE.                                      */
+    /* FPU note (debt wave closed the III.5 caveat): the dispatcher now
+     * does eager per-task FXSAVE/FXRSTOR (arch/x86/fpu.c), so the fat
+     * ELF's ring-3 float math survives concurrent FP users.  The
+     * dedicated gate is `fpu test` (register-residency ping-pong +
+     * a concurrent disturber against this very ELF).                  */
 
     /* ---- M1 (R3-COMPUTE): ring-3 moe_infer == ring-0 oracle -------- */
     if (!fail) {
@@ -1736,6 +1742,277 @@ static void cmd_ring3(const char *arg)
         return;
     }
     sout("Usage: ring3 test|mind\r\n");
+}
+
+
+/* ------------------------------------------------------------------ */
+/* dproc test — kill-path teardown leak gate (debt wave, RING3-B debt) */
+/*                                                                     */
+/* DISEASE (pre-fix): dproc_kill_by_name() terminated the victim with  */
+/* tk_ter_tsk+tk_del_tsk but released NONE of its kernel-side          */
+/* resources (no ssy/fd cleanup, no exit-sem, no page-table destroy):  */
+/* every `kill` leaked the victim's 3 page tables (PML4+PDPT+PD) from  */
+/* the 24-slot pool, exhausting it after 8 leaked processes.           */
+/*                                                                     */
+/* GATE: N exec→kill cycles of infer_d.elf; paging_pool_used() must    */
+/* return to the pre-cycle baseline after EVERY cycle.  Falsifiable:   */
+/* the unfixed kill path prints pool=base+3,+6,... and FAILs the first */
+/* cycle.                                                              */
+/* ------------------------------------------------------------------ */
+#define DPT_CYCLES 4
+
+static void dproc_test(void)
+{
+    if (!vfs_ready) {
+        sout("dproc-test: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
+        sout("[dproc-teardown] FAIL\r\n");
+        return;
+    }
+
+    /* quiesce — same preamble as the ring3 gates (single user space) */
+    heal_elf_pause(TRUE);
+    dproc_kill_by_name("infer_d.elf");   /* ignore result if absent */
+    tk_dly_tsk(100);
+
+    W base = paging_pool_used();
+    W after = base;
+    const char *fail = NULL;
+
+    sout("dproc-test: baseline pool="); sout_dec((UW)base); sout("\r\n");
+
+    for (INT c = 0; c < DPT_CYCLES && !fail; c++) {
+        ID tid = elf_exec("/infer_d.elf", "/infer_d.elf");
+        if (tid < E_OK) { fail = "exec-failed"; break; }
+        dproc_register("/infer_d.elf", tid);
+        tk_dly_tsk(50);
+        if (dproc_kill_by_name("infer_d.elf") < 0) { fail = "kill-not-found"; break; }
+        tk_dly_tsk(50);
+        after = paging_pool_used();
+        sout("dproc-test: cycle "); sout_dec((UW)(c + 1));
+        sout("  pool="); sout_dec((UW)after);
+        sout(" (base="); sout_dec((UW)base); sout(")\r\n");
+        if (after != base) fail = "pool-leak";
+    }
+
+    heal_elf_pause(FALSE);
+
+    if (!fail) {
+        sout("dproc-test: PASS  cycles="); sout_dec((UW)DPT_CYCLES);
+        sout("  pool "); sout_dec((UW)base);
+        sout(" -> ");    sout_dec((UW)after);
+        sout(" (kill teardown leak-free)\r\n");
+        sout("[dproc-teardown] PASS\r\n");
+    } else {
+        sout("dproc-test: FAIL "); sout(fail);
+        sout("  pool base="); sout_dec((UW)base);
+        sout(" end=");        sout_dec((UW)after);
+        sout("\r\n");
+        sout("[dproc-teardown] FAIL\r\n");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* fpu test — x87/SSE context-save gate (debt wave, RING3-C debt)      */
+/*                                                                     */
+/* DISEASE (pre-fix): the dispatcher (cpu_support.S) switched ONLY the */
+/* callee-saved integer registers; the x86 port had ZERO fxsave/fnsave */
+/* /CR0.TS handling.  Two tasks computing floats concurrently corrupt  */
+/* each other's x87 state silently.                                    */
+/*                                                                     */
+/* Phase 1 (deterministic, diskless): two ring-0 tasks ping-pong via   */
+/* semaphores.  Each leaves a known float REGISTER-RESIDENT on the x87 */
+/* stack across the forced context switch, while the peer clobbers the */
+/* FPU (fninit + fld of its own value).  Without per-task fxsave the   */
+/* read-back is the peer's value (or an empty-stack QNaN) on EVERY     */
+/* iteration — bit-exact compare, 100%% deterministic FAIL.  With the  */
+/* dispatcher fix: 0 mismatches.                                       */
+/*                                                                     */
+/* Phase 2 (disk present): a higher-priority FP disturber clobbers the */
+/* FPU on a 2ms cadence WHILE core_mind.elf computes the dtr forward   */
+/* in ring 3.  Gate: ring-3 class == live ring-0 oracle AND the        */
+/* disturber's own register-resident value survives every sleep.  This */
+/* is the concurrent-ring3-mind claim the RING3-C epitaph deferred.    */
+/* ------------------------------------------------------------------ */
+#define FPT_ITERS 16
+
+typedef union { float f; UW u; } FPT_BITS;
+
+static ID fpt_semA, fpt_semB;
+static volatile W  fpt_errsA, fpt_errsB;
+static volatile W  fpt_doneA, fpt_doneB;
+static volatile UW fpt_badA_exp, fpt_badA_got;   /* first A mismatch */
+
+static void fpt_taskA(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    for (INT i = 0; i < FPT_ITERS; i++) {
+        FPT_BITS in, out; out.u = 0;
+        in.f = 1.5f + (float)i;
+        /* load the value and leave it ON the x87 register stack ...  */
+        asm volatile("fninit; flds %0" :: "m"(in.f));
+        /* ... force a switch to task B while it is register-resident */
+        tk_sig_sem(fpt_semB, 1);
+        tk_wai_sem(fpt_semA, 1, 2000);
+        /* ... and read it back (B ran fninit + fld in between)       */
+        asm volatile("fstps %0; fninit" : "=m"(out.f));
+        if (out.u != in.u) {
+            if (fpt_errsA == 0) { fpt_badA_exp = in.u; fpt_badA_got = out.u; }
+            fpt_errsA++;
+        }
+    }
+    fpt_doneA = 1;
+    tk_ext_tsk();
+}
+
+static void fpt_taskB(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    FPT_BITS in, out;
+    in.u = 0;
+    for (INT i = 0; i < FPT_ITERS; i++) {
+        tk_wai_sem(fpt_semB, 1, 2000);
+        /* check the value WE left register-resident last iteration
+         * (A loaded its own value in between)                       */
+        if (i > 0) {
+            out.u = 0;
+            asm volatile("fstps %0; fninit" : "=m"(out.f));
+            if (out.u != in.u) fpt_errsB++;
+        }
+        in.f = 1000.25f + (float)i * 2.0f;
+        asm volatile("fninit; flds %0" :: "m"(in.f));
+        tk_sig_sem(fpt_semA, 1);
+    }
+    asm volatile("fninit");
+    fpt_doneB = 1;
+    tk_ext_tsk();
+}
+
+/* Phase-2 disturber: keeps a value register-resident across tk_dly    */
+/* sleeps while the ring-3 mind computes — both must stay exact.       */
+static volatile W fpt_dist_stop, fpt_dist_errs, fpt_dist_loops, fpt_dist_done;
+
+static void fpt_disturber(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    while (!fpt_dist_stop) {
+        FPT_BITS in, out; out.u = 0;
+        in.f = 3.14159f;
+        asm volatile("fninit; flds %0" :: "m"(in.f));
+        tk_dly_tsk(2);   /* switch away with the value live on the x87 stack */
+        asm volatile("fstps %0; fninit" : "=m"(out.f));
+        if (out.u != in.u) fpt_dist_errs++;
+        fpt_dist_loops++;
+    }
+    fpt_dist_done = 1;
+    tk_ext_tsk();
+}
+
+static void fpu_test(void)
+{
+    const char *fail = NULL;
+
+    /* ---- Phase 1: deterministic register-residency ping-pong ------- */
+    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
+    fpt_semA = tk_cre_sem(&cs);
+    fpt_semB = tk_cre_sem(&cs);
+    fpt_errsA = fpt_errsB = 0;
+    fpt_doneA = fpt_doneB = 0;
+    fpt_badA_exp = fpt_badA_got = 0;
+
+    if (fpt_semA < E_OK || fpt_semB < E_OK) fail = "p1-sem-create";
+
+    if (!fail) {
+        T_CTSK ct = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                      .itskpri = 10, .stksz = 4096 };
+        ct.task = fpt_taskA;
+        ID ta = tk_cre_tsk(&ct);
+        ct.task = fpt_taskB;
+        ID tb = tk_cre_tsk(&ct);
+        if (ta < E_OK || tb < E_OK ||
+            tk_sta_tsk(ta, 0) < E_OK || tk_sta_tsk(tb, 0) < E_OK)
+            fail = "p1-task-create";
+        else {
+            for (INT w = 0; w < 100 && !(fpt_doneA && fpt_doneB); w++)
+                tk_dly_tsk(50);
+            if (!(fpt_doneA && fpt_doneB)) fail = "p1-timeout";
+        }
+        if (ta >= E_OK) tk_del_tsk(ta);
+        if (tb >= E_OK) tk_del_tsk(tb);
+    }
+    if (fpt_semA >= E_OK) tk_del_sem(fpt_semA);
+    if (fpt_semB >= E_OK) tk_del_sem(fpt_semB);
+
+    sout("fpu-test: phase1 pingpong  itersA="); sout_dec((UW)FPT_ITERS);
+    sout(" errsA="); sout_dec((UW)fpt_errsA);
+    sout(" errsB="); sout_dec((UW)fpt_errsB);
+    if (fpt_errsA > 0) {
+        sout("  first A mismatch: expected=0x"); sout_hex(fpt_badA_exp);
+        sout(" got=0x"); sout_hex(fpt_badA_got);
+    }
+    sout("\r\n");
+    if (!fail && (fpt_errsA != 0 || fpt_errsB != 0)) fail = "p1-x87-corrupt";
+
+    /* ---- Phase 2: concurrent ring-3 mind + FP disturber ------------ */
+    W  mind_class = -1;
+    UB oracle = 0;
+    if (!fail && vfs_ready) {
+        heal_elf_pause(TRUE);
+        dproc_kill_by_name("infer_d.elf");   /* quiesce, as ring3 verbs do */
+        tk_dly_tsk(100);
+
+        oracle = moe_infer(R3_V0_T, R3_V0_H, R3_V0_P, R3_V0_L);
+
+        fpt_dist_stop = 0; fpt_dist_errs = 0;
+        fpt_dist_loops = 0; fpt_dist_done = 0;
+        T_CTSK ct = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                      .task = fpt_disturber, .itskpri = 7, .stksz = 4096 };
+        ID td = tk_cre_tsk(&ct);
+        if (td < E_OK || tk_sta_tsk(td, 0) < E_OK) fail = "p2-disturber-create";
+
+        if (!fail) {
+            if (r3_run_elf("core_mind.elf", "core_mind.elf") != E_OK)
+                fail = "p2-no-exit";
+            else
+                mind_class = user_last_exit_code();
+        }
+
+        fpt_dist_stop = 1;
+        for (INT w = 0; w < 50 && !fpt_dist_done; w++) tk_dly_tsk(10);
+        if (td >= E_OK) tk_del_tsk(td);
+        heal_elf_pause(FALSE);
+
+        sout("fpu-test: phase2 concurrent-mind  oracle="); sout_dec((UW)oracle);
+        sout(" ring3="); sout_dec((UW)mind_class);
+        sout(" disturber loops="); sout_dec((UW)fpt_dist_loops);
+        sout(" errs=");            sout_dec((UW)fpt_dist_errs);
+        sout("\r\n");
+        if (!fail && mind_class != (W)oracle)  fail = "p2-mind-class-mismatch";
+        if (!fail && fpt_dist_errs != 0)       fail = "p2-disturber-corrupt";
+        if (!fail && fpt_dist_loops == 0)      fail = "p2-disturber-idle";
+    } else if (!fail) {
+        sout("fpu-test: phase2 SKIPPED (no disk — only phase1 proven this run)\r\n");
+    }
+
+    if (!fail) {
+        sout("fpu-test: PASS  pingpong=0errs  concurrent-mind=");
+        if (vfs_ready) { sout_dec((UW)mind_class); sout("==oracle"); }
+        else           sout("skipped");
+        sout("\r\n");
+        sout("[fpu-ctx] PASS\r\n");
+    } else {
+        sout("fpu-test: FAIL "); sout(fail); sout("\r\n");
+        sout("[fpu-ctx] FAIL\r\n");
+    }
+}
+
+static void cmd_fpu(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        fpu_test();
+        return;
+    }
+    sout("Usage: fpu test\r\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -2520,6 +2797,8 @@ static void execute(const char *cmd)
         { cmd_dmn(cmd + 3); return; }
     if (cmd[0]=='r' && cmd[1]=='i' && cmd[2]=='n' && cmd[3]=='g' && cmd[4]=='3')
         { cmd_ring3(cmd + 5); return; }
+    if (cmd[0]=='f' && cmd[1]=='p' && cmd[2]=='u')
+        { cmd_fpu(cmd + 3); return; }
     if (cmd[0]=='s' && cmd[1]=='e' && cmd[2]=='l' && cmd[3]=='f' &&
         (cmd[4]==' ' || cmd[4]=='\0'))
         { cmd_self(cmd + 4); return; }

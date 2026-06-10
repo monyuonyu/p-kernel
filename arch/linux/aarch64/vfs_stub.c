@@ -34,3 +34,7 @@ ID   elf_exec(const char *path, const char *cmdline)
     (void)path; (void)cmdline;
     return -1;
 }
+
+/* Foreign-context user-process teardown (arch/common/dproc.c kill
+ * path).  No ring-3 ELF processes on this target — nothing to free. */
+void user_proc_teardown(ID tid) { (void)tid; }

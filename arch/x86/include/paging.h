@@ -52,6 +52,13 @@ UW   paging_get_task_cr3(ID tid);   /* returns kernel_cr3 if tid unknown */
 /* Returns the kernel CR3 established by paging_init() */
 UW paging_get_kernel_cr3(void);
 
+/*
+ * paging_pool_used()
+ *   Observability for the `dproc test` leak gate: number of page-table
+ *   pool slots currently allocated.  3 per live user process.
+ */
+W paging_pool_used(void);
+
 /* Per-task brk (heap end) — used by SYS_BRK (Linux syscall #45) */
 void paging_set_task_brk(ID tid, UW brk);
 UW   paging_get_task_brk(ID tid);

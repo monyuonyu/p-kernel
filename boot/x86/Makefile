@@ -78,6 +78,7 @@ ARCH_C_SRCS = \
     gdt_user.c \
     syscall.c \
     userspace.c \
+    fpu.c \
     elf_loader.c \
     paging.c
 

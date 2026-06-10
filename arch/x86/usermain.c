@@ -36,6 +36,7 @@
 IMPORT void kserve_init(void);
 #include "vfs.h"
 #include "gdt_user.h"
+#include "fpu.h"
 #include "paging.h"
 #include "p_syscall.h"
 #include "blk_ssy.h"
@@ -110,6 +111,7 @@ EXPORT INT usermain(void)
 
     /* ---- Ring-3 userspace infrastructure -------------------------- */
     paging_init();          /* kernel CR3: strip U/S from all PD entries */
+    fpu_init();             /* eager per-task FXSAVE in the dispatcher   */
     gdt_init_userspace();   /* ring3 GDT entries + 64-bit TSS         */
     syscall_init();         /* INT 0x80 trap gate (DPL=3, CS=0x18)    */
     vfs_init();             /* IDE + FAT32 (optional — ok if no disk) */

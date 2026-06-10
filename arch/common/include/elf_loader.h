@@ -21,3 +21,14 @@
  * Returns task ID (≥ 1) on success, or negative error code on failure.
  */
 ID elf_exec(const char *path, const char *cmdline);
+
+/*
+ * Tear down a user process's kernel-side resources from ANOTHER
+ * task's context (the killer's): subsystem/fd cleanup, shell-relay
+ * exit-sem, per-process page tables (bare-metal x86), per-task FPU
+ * image.  Call AFTER tk_ter_tsk(tid) and BEFORE tk_del_tsk(tid).
+ * Implemented for real in arch/x86/syscall.c; hosted and aarch64
+ * targets (no ring-3 ELF processes) provide a no-op stub next to
+ * their elf_exec stub in vfs_stub.c.
+ */
+void user_proc_teardown(ID tid);

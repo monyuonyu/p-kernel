@@ -16,6 +16,7 @@
 #include "vfs.h"
 #include "ai_kernel.h"
 #include "paging.h"
+#include "fpu.h"
 #include "gdt_user.h"
 #include "kdds.h"
 #include "edf.h"
@@ -121,13 +122,26 @@ static W user_last_exit = USER_EXIT_NONE;
 
 W user_last_exit_code(void) { return user_last_exit; }
 
-/* Common tail of SYS_EXIT: release subsystem resources, unblock the
- * shell relay loop, drop the process page tables, and exit the task.
- * NEVER returns (tk_ext_tsk dispatches the next task).              */
-static void user_proc_unwind(void)
+/* Context-independent teardown of a user process's kernel-side
+ * resources: subsystem cleanup (sockets, fds), shell-relay unblock,
+ * page-table destroy, FPU slot reset.
+ *
+ * Debt wave (RING3-B follow-up): this is the part of the old
+ * user_proc_unwind() that does NOT need to run in the victim's own
+ * context, factored out so the KILLER (dproc_kill_by_name) can call
+ * it on a foreign task.  Contract: when called on a foreign tid the
+ * victim must already be stopped (tk_ter_tsk'd) — on this UP kernel
+ * the shell/killer outprioritises the launcher tasks, so the victim
+ * is never mid-run here.
+ *
+ * paging_switch(kernel_cr3) before the destroy is required in BOTH
+ * contexts: the CPU may currently be running on the victim's CR3
+ * (the dispatcher never switches CR3; only user_exec does), and
+ * destroying the live tables would hand them to the next exec.      */
+void user_proc_teardown(ID tid)
 {
     /* Release subsystem resources (sockets, fds, etc.) */
-    knl_ssy_cleanup(knl_ctxtsk->tskid);
+    knl_ssy_cleanup(tid);
     /* Unblock shell relay loop */
     if (stdin_active) {
         stdin_active = FALSE;
@@ -135,12 +149,23 @@ static void user_proc_unwind(void)
     }
     /* Free process page tables and restore kernel address space */
     {
-        ID  tid      = knl_ctxtsk->tskid;
-        UW  proc_cr3 = paging_get_task_cr3(tid);
+        UW proc_cr3 = paging_get_task_cr3(tid);
         paging_switch(paging_get_kernel_cr3());
-        paging_proc_destroy(proc_cr3);
-        paging_set_task_cr3(tid, 0);
+        if (proc_cr3 != paging_get_kernel_cr3()) {
+            paging_proc_destroy(proc_cr3);
+            paging_set_task_cr3(tid, 0);
+        }
     }
+    /* Drop the per-task FPU image: a reused tid starts clean */
+    fpu_task_reset(tid);
+}
+
+/* Common tail of SYS_EXIT: full teardown, then exit the task.
+ * Runs in the VICTIM's own context (syscall or fault-reap path).
+ * NEVER returns (tk_ext_tsk dispatches the next task).              */
+static void user_proc_unwind(void)
+{
+    user_proc_teardown(knl_ctxtsk->tskid);
     tk_ext_tsk();
 }
 
