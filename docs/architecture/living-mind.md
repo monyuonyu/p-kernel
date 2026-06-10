@@ -1688,3 +1688,355 @@ audit makes the acceptance test; the commander reads the gate formula — and th
    `R3_FQ_MAX` so the cert never evicts (defers the budget-honesty sub-claim of
    `[stream-livehook]`). FIFO is recommended because a bounded mind that cannot say what it
    forgot is the AUDIT-SPRAWL failure mode applied to memory.
+
+## Part VII — the mouth: a real conversational producer (the owner teaches the live mind)
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–VI).
+> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> **LM-5** (Part VI, `r3_fact_learn`/`r3_facts_pending`/`r3_consolidate_idle_round` in
+> `arch/common/r3_incontext.c:918/975/1030`, the DMN task live on BOTH hosted usermains —
+> **closed** wave-26) and the DMN organ (`dmn.c:118-120` already consolidates pending facts
+> every idle pulse). All closed in `gap-ledger.md`, so this is unblocked.
+
+LM-5's own audit named the hole this Part closes, verbatim in the VI.3 honest note and the
+gap-ledger epitaph: *"no conversational producer yet (the cert is the only `r3_fact_learn`
+caller today)"*. The mind has a digestion system but no mouth: the live
+`[dmn] sleep: distilled in-context facts -> rw[]` print (`dmn.c:120`) can NEVER fire outside
+a test, because nothing in production ever enqueues a fact. This Part gives the fleet the
+smallest honest mouth: **the OWNER, at the shell prompt, teaches the mind a fact; with NO
+further verbs, the mind's own idle pulses consolidate it; the owner asks and the mind answers
+from its weights.** It is the north star's 随時 (I.1) finally fired by a human hand instead
+of a harness — and it is deliberately NOT natural language (VII.8): the vocabulary is still
+R3's synthetic 8 keys × 4 values. Own that bound loudly; do not dress it up.
+
+### VII.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Five load-bearing facts, two of which EXPIRE promises made by Part VI:
+
+1. **`r3_fact_learn(const UB *keys, const UB *vals, INT n)` accepts `n = 1..R_KEYV`**
+   (`r3_incontext.c:918-920`, decl `dtr.h:298`). The 2-keys-per-fact F-shape was CERT
+   geometry (`R3_FKEYS = R_KEYV/R3_NFACTS = 2`, `:818`), not an API constraint. A single
+   `teach k v` maps honestly onto a **singleton fact-set (n=1)** — no batching trick, no
+   pairing heuristic, no second key invented to please the cert's shape (VII.2).
+2. **At a fresh boot the mind has no brain.** `rw[]` is a zeroed static (`:93`); the
+   substrate is pretrained ONLY inside the certs (`r_init_weights(0xA5A5)` + the 60-epoch
+   recipe at `:1089-1095`, same at `:496/:504/:728`). A live `teach` against zero weights
+   would have the "frozen FAST layer" read garbage. The mouth needs a substrate bootstrap
+   (VII.3) — lazy, deterministic, printed.
+3. **VI.8's "no `rw[]` busy flag is needed (nothing live reads `rw[]`)" expires NOW.** This
+   slice is exactly "the slice that first serves live R3 queries" that VI.8 named. The
+   hazard is real and one-directional: the DMN task is priority 13 — strictly LOWEST
+   (`usermain.c:593`) — so it runs only while the shell task blocks, and the shell PREEMPTS
+   it mid-`s_round` (`:987`) the moment input arrives. A `mind ask`/`teach` then runs
+   `h_predict`→`r_forward` (`:626/:143`) over the SAME shared activation struct `rc`
+   (`:110-115`), gradient buffer `rg` (`:94`) and RNG `r_rng` (`:116`) that the half-finished
+   round will resume into — the resumed `r_backward` would push a corrupted gradient into
+   `rw[]`. The named flag must now be BUILT (VII.4). The reverse direction is safe by
+   construction: prio-13 can never preempt the shell, so a verb's own eval is atomic.
+4. **Latency is already decided by shipped constants — design the wait around them, do not
+   invent new ones.** Arrival calls `dmn_trigger()` (`r3_incontext.c:971`) → ACTIVE; idle
+   re-entry needs `dmn_idle_threshold = 5` quiet pulses at `DMN_PULSE_MS = 1000`
+   (`dmn.h:38-39`, `dmn.c:158`); then `dmn.c:118` runs one bounded round EVERY idle pulse
+   while pending, and a fact flips RETAINED after `R3_SLEEPS_PER_FACT = 10` rounds (`:821`,
+   `:1021`). Expected teach→consolidated wall clock ≈ **15 s**; that number sizes the cert
+   timeout (VII.5).
+5. **Cert verbs are amnesia bombs.** `r3_stream_test` restores `rw[]` to its OWN pretrain
+   snapshot and wipes the queue on exit (`:1232-1233`); `r3_handoff_test` likewise (`:788`).
+   Any later cert run erases everything the owner taught live. This slice does NOT fix that
+   (it would mean persisting `rw[]`, a different axis); it PRINTS it (VII.8) and orders the
+   CI verbs so the mind verbs come after all certs (VII.10).
+
+### VII.1 The claim to prove
+
+> An owner at the shell types `mind teach <k> <v>` — ONE verb, no harness. The fact enters
+> the LIVE queue through `r3_fact_learn` (the frozen FAST layer reads a SUPPORT prompt at
+> arrival; `teacher_agree` printed). With **NO further verbs**, the DMN task's own idle
+> pulses — the real 1000 ms heartbeat, the real ACTIVE→IDLE transition, the real
+> `dmn_idle_work` call site at `dmn.c:118-120` — consolidate the fact into `rw[]`, and the
+> live print `[dmn] sleep: distilled in-context facts -> rw[]` fires **in production for the
+> first time**. Afterwards `mind ask <k>` answers the fact from the weights on a MASKED
+> prompt. The consolidation is attributable to the dmn.c call site by a counter that ONLY
+> that call site increments — the cert never calls the round function itself.
+
+This is strictly stronger than LM-5's `[stream-livehook]` ("the cert drives the production
+FORMULA"): here the production TRIGGER fires, timer and all. The G33 rule is kept and
+extended: the cert drives the production formula *through the production schedule*.
+
+### VII.2 The verbs — `mind teach | ask | wait | (bare)` (the whole mouth)
+
+One new top-level shell verb `mind` on BOTH hosted usermains (next to the `handoff` branch,
+`arch/linux/{x86_64,aarch64}/usermain.c:672-683`), dispatching to ONE new public
+`mind_cmd(const UB *args, UW len)` that lives in `r3_incontext.c` — so every helper it needs
+(`s_build :896`, `h_predict :626`, `s_eval`-style loops, the queue) stays file-static, the
+V.6/VI.8 discipline unchanged. No `mind` verb exists today (FLAGGED, VII.9). Sub-verbs:
+
+- **`mind teach <k> <v>`** (`k` 0..7, `v` 0..3, decimal): the owner teaches one binding.
+  Semantics, in order: (1) quiesce (VII.4); (2) substrate bootstrap if first use (VII.3);
+  (3) **pre-sleep novelty read**: masked vote share of `v` for key `k` over N=100 held-out
+  arrangements (`S_SEED_HELD` stream, the `s_eval_fact :1034` pattern) — printed as
+  `pre_share`; (4) **refuse re-teach**: if `k` is already bound by any queued fact, print
+  `[mind] key K already taught — re-teach is belief revision (future slice); refused` and
+  return — replay provably cannot hold a contradiction (`lm_consolidate.c:14-26`, the VI.2
+  bound); (5) call `r3_fact_learn(&k, &v, 1)` — a SINGLETON fact-set (VII.0 #1); a full-of-
+  PENDING queue refuses loudly (`:932`), a full queue with RETAINED facts FIFO-evicts with
+  the printed forgetting LM-5 shipped (`:925-944`); (6) print `teacher_agree` (= stored
+  `yhat == v`, the majority-of-5 frozen read, `R3_TEACH_READS :824`) and the queue occupancy;
+  (7) emit the `[teach-arrival]` line (VII.6). The verb does NOT consolidate anything —
+  `r3_fact_learn` already calls `dmn_trigger()`; the sleep belongs to the DMN.
+- **`mind ask <k>`**: quiesce, then majority vote + vote share over **N=40** MASKED held-out
+  arrangements (same `S_SEED_HELD`-derived stream as the certs — asking does not consume the
+  arrival/training stream `r3_s_rng :851`); print `pred=<v> share=<x>%`, and, when `k` is
+  held by a RETAINED queued fact, compare `pred` against the stored engram `yhat` and emit
+  `[teach-consolidated]` (VII.6). Asking is a read: it must NOT call `dmn_trigger()` —
+  wait, it MUST: a question is a stimulus exactly as an inference is (`dtr.c:1251`), and
+  skipping it would special-case the mouth. It does call `dmn_trigger()`; the cert sequences
+  `ask` AFTER `wait`, so this costs nothing (VII.5).
+- **`mind wait [secs]`** (default 120): poll `r3_facts_pending()` every 500 ms via
+  `tk_dly_tsk` until 0 or timeout. The sleeping shell IS the idle window — priority 13 runs
+  precisely while the waiter sleeps, so this verb does not merely observe the sleep, it
+  *yields the machine to it*, which is honest (an idle organ needs idle). On drain: print
+  elapsed seconds, the dmn-round delta (VII.5), and emit `[teach-live]`. On timeout: FAIL.
+- **`mind`** (bare): status — substrate ready?, queue occupancy `n/R3_FQ_MAX` with per-fact
+  `key/state/rounds_done`, lifetime `dmn_r3_rounds()`. Costs ~20 lines and is the owner's
+  only window into the queue; included.
+
+**Decision logic for singleton facts (#1 answered concretely):** `r3_fact_learn` takes
+`n=1..8` (VII.0 #1), and a 1-key fact flows through `s_round` unchanged (`m=1` engram for
+the pending fact, `:995-1004`; replay interleave unchanged). Per-fact budget stays
+`R3_SLEEPS_PER_FACT × R3_IDLE_STEPS = 2560` steps — generous for one binding (LM-5 landed
+2-key facts at 100% with the same budget), and NOT retuned this slice (no new constants, the
+VI.4 budget argument inherited). The alternative — buffering teaches in pairs to mimic the
+cert's 2-key shape — was rejected: it adds a hidden half-taught state ("your fact is waiting
+for a sibling") that the owner cannot see, for zero mechanistic benefit.
+
+### VII.3 The substrate bootstrap — lazy pretrain, printed, deterministic
+
+First `mind teach`/`ask` checks a file-static `m_ready`; if unset it runs EXACTLY the cert
+pretrain — `r_init_weights(0xA5A5)` + the 60-epoch `r_train_epoch(R_SEED_TRAIN, 192, lr)`
+schedule, lifted verbatim from `:1089-1095` into ONE shared static `s_pretrain()` that
+`r3_stream_test` is refactored to call too (in-file de-dup, not a public symbol; the recipe
+already exists three more times at `:496/:504/:728` — consolidating r3_test/handoff onto it
+is allowed but NOT required this slice, to keep the diff reviewable). Prints
+`[mind] substrate pretrained (first use, seed 0xA5A5)` with elapsed time. Same seed + same
+recipe = the same deterministic substrate the certs measure, byte-identical cross-arch
+(LM-5's audited property), so the cert's chosen (k,v) bias measurement (VII.6) holds on the
+live path. The alternative — a separate `mind init` verb — was rejected: a mouth that errors
+with "run init first" is ceremony; lazy + printed is one fewer way to misuse it.
+
+### VII.4 The quiesce handshake — the VI.8 named flag, now built
+
+File-static in `r3_incontext.c`:
+
+    static volatile UB r3_round_busy = 0;   /* set/cleared by s_round() */
+
+`s_round` sets it on entry, clears on exit (`:987-1023`). Every `mind` sub-verb begins:
+
+    while (r3_round_busy) tk_dly_tsk(20);   /* shell sleeps -> prio-13 finishes the round */
+
+Bounded by construction: one round is ≤ `R3_IDLE_STEPS = 256` SGD steps (milliseconds), and
+the shell sleeping is precisely what lets the lower-priority round complete — no deadlock,
+no semaphore object needed, no change to the round's hot path beyond two byte-stores. The
+same quiesce line is added at the TOP of `r3_stream_test`/`r3_handoff_test`/`r3_test`: with
+live facts now possible, a cert that starts while a round is in flight would reset the queue
+and pretrain `rw[]` under a half-finished SGD step (VII.0 #5 made certs amnesia bombs; this
+keeps them at least ATOMIC bombs). It is a flag, not a lock: sufficient ONLY because of the
+strict-priority argument in VII.0 #3 (verbs cannot be preempted by the round). If R3 queries
+ever move off the shell task, this becomes a real mutex — named for that slice, not built.
+
+### VII.5 The live proof — `dmn_r3_rounds` and the flakiness story (#3 answered)
+
+**The counter.** A new static `UW dmn_r3_round_count` in `dmn.c`, incremented at EXACTLY ONE
+site — inside the existing hook, beside the live print:
+
+    if (r3_facts_pending()) {
+        if (r3_consolidate_idle_round()) {
+            dmn_r3_round_count++;                       /* the ONLY ++ site */
+            dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
+        }
+    }
+
+read through a new public `UW dmn_r3_rounds(void)` (`dmn.h`, FLAGGED). It is NOT inside
+`r3_consolidate_idle_round()` itself — so `r3_stream_test`'s 40+ direct calls (`:1141` etc.)
+do not move it, and a nonzero delta is attributable to the dmn.c call site alone.
+`mind teach` snapshots the counter at enqueue; `mind wait` prints the delta at drain and
+gates `delta >= R3_SLEEPS_PER_FACT` (a fact cannot drain in fewer rounds, `:1021`).
+
+**Fakeability, stated honestly:** in one flat address space nothing is unfakeable by code in
+the same image (the standing pre-ring3 caveat — the REAL fix is the ring3/EL0 relocation
+project, where the counter becomes kernel-owned). The discipline that makes it trustworthy is
+the LM-5/G33 one, extended: (a) the auditor greps that `dmn_r3_round_count++` appears ONCE,
+in `dmn.c`, inside the `r3_consolidate_idle_round()` success branch; (b) the auditor greps
+that `mind_cmd`'s body contains NO call to `r3_consolidate_idle_round` or `s_round` (in
+`r3_incontext.c` the round symbols stay referenced only by their definitions, the dmn hook,
+and `r3_stream_test`); (c) the commander reads the `mind wait` loop and the dmn.c hook
+line-by-line (the standing rule). Stated, not overclaimed.
+
+**The flakiness story, confronted:** the gate is on END STATE within a BOUND, never on when
+pulses land. (i) The weight math cannot flake: rounds consume the dedicated arrival stream
+`r3_s_rng` (`:851`, saved/restored around every round `:1006/:1018`), so the post-sleep
+`rw[]` is bit-identical whether the 10 rounds take 15 s or 90 s — only elapsed time varies,
+and elapsed time is printed, not gated. (ii) Expected drain is ~15 s (VII.0 #4: 5 idle-
+threshold pulses + 10 round pulses at 1000 ms); the cert timeout is **120 s = 8× margin**.
+(iii) What could spend the margin: stray `dmn_trigger()`s during the wait (each costs ≤5 s
+of idle re-entry). In the CI sequence the mind verbs run LAST (VII.10) — no net is up, no
+inference traffic exists, stdin is the only stimulus source, and `mind wait` itself triggers
+nothing. A pathological CI-runner stall >120 s fails the gate; that residual risk is the
+same class as the existing `timeout 300` on the whole job (`ci.yml:57`) and is accepted, not
+hidden. (iv) `dmn test`/certs earlier in the sequence leave no pending facts (`:1233`), so
+the counter delta window is clean.
+
+### VII.6 The falsifiable acceptance test (the certificate) — 3 tags
+
+No new in-process cert FUNCTION exists for this slice — that is the point. The certificate
+IS the production verbs, driven over stdin, each printing numbers then a canonical line.
+The cert's chosen binding `(k*, v*)` must be measured OFF-BIAS by the implementer on the
+0xA5A5 substrate (the frozen mind emits key-conditional bias on all-UNK prompts — the LM-5
+SDICT note (a), `:866-880`); the doc proposes `teach 2 3` but the implementer substitutes
+the measured pick and records it. Bars are proposals: report actuals; lower ONLY to
+measured-minus-margin, flagged — never inflate.
+
+1. **`[teach-arrival]` — the mouth genuinely feeds the queue** (printed by `mind teach`).
+   PASS requires ALL, each printed: substrate ready (bootstrapped or already trained);
+   `r3_fact_learn` returned 0 and `r3_facts_pending()==1` after; `teacher_agree == 100`
+   (the majority-of-5 frozen read returned `v*` — deterministic at the fixed substrate; if
+   the measured pick cannot reach 100, lower to ≥80 WITH FLAG); `pre_share <= 33` (chance
+   25 + 8: the fact is NOT already in the weights — the disease half of the pair, inherited
+   from `[handoff-fast-only]`). A production teach whose `pre_share > 33` prints
+   `[teach-arrival] REDUNDANT (already leaning)` and still enqueues — honest three-way
+   outcome, but the CERT pick must print PASS.
+2. **`[teach-live]` — the production trigger fired** (printed by `mind wait 120`). PASS
+   requires ALL: queue drained within the 120 s bound (elapsed printed);
+   `dmn_r3_rounds() delta >= R3_SLEEPS_PER_FACT` (=10) since the teach snapshot — rounds
+   that ONLY the `dmn.c:118` call site can count; the `[dmn] sleep: distilled in-context
+   facts -> rw[]` live print observed in the same log (CI greps it — the print this whole
+   Part exists to make real).
+3. **`[teach-consolidated]` — the mind answers from weights** (printed by `mind ask <k*>`).
+   PASS requires ALL: fact RETAINED; `pred == yhat` (and `yhat == v*` was already gated at
+   arrival — the chain owner-value → teacher-reading → weight-answer is closed end-to-end);
+   `share >= 75` over N=40 masked held-out arrangements (LM-5 measured 100.0 post-sleep on
+   harder 2-key facts; 75 leaves flake margin for the 40-sample vote — lower only with
+   flag). Before the sleep the same number was `pre_share <= 33` (tag 1): disease→cure on
+   the live path, two prints apart.
+
+(Considered and **dropped**: an eviction tag — `[stream-livehook]` already gates FIFO
+eviction and re-gating it via 5 teaches would add ~75 s of waits to CI for no new mechanism;
+a scrambled-teach tag — grounding is `[stream-grounded]`'s axis and the arrival path here is
+byte-identical to the certified one; a multi-fact live tag — one fact proves the trigger,
+N facts prove only patience.) **No-regress is CI-level:** all existing greps stay green; the
+`handoff stream`/`handoff test` numbers must stay BYTE-IDENTICAL (the refactor in VII.3
+moves the pretrain recipe without changing it; the quiesce lines are no-ops when no round is
+in flight; the mind verbs run after all certs).
+
+### VII.7 Cross-node teaching — examined and deferred (#2 answered: NO)
+
+The plumbing would be genuinely cheap: `kdds_open("mind/teach", ...)` + `kdds_pub` of a
+3-byte `(k, v, origin)` and a subscriber task calling `r3_fact_learn` — the K-DDS surface
+(`kdds.h:117-160`) makes it an afternoon. It is still the wrong slice, for three reasons:
+(1) **divergence without reconciliation** — each node's `rw[]` would drift with its own
+arrival timing and interleave; merging consolidated `rw[]` across nodes is `gl_merge`-of-
+`rw[]`, the G22 axis Parts V/VI explicitly fenced off, and shipping the gossip without the
+merge gives the fleet inconsistent minds with no observability story; (2) **no provenance**
+— any node could feed every mind; the Self layer is tamper-EVIDENT lineage with NO signing
+primitive (III.6), so "who taught this" is unanswerable today — a mouth the whole network
+can shout into needs an immune system first; (3) **the cert would need two nodes and real
+timing**, exactly the flake surface VII.5 just spent a section draining. The future slice is
+named: **"the shared mind" — `mind/teach` gossip + periodic `rw[]` merge (G22) + taught-fact
+provenance via the Self lineage.** Within-node first. → COMMANDER DECISION 2.
+
+### VII.8 The honest bound (what is NOT claimed)
+
+- **Synthetic vocabulary, NOT language.** `teach 2 3` binds key 2 to value 3 in an 8×4 toy
+  space. The MOUTH is real (a human, a prompt, no harness); the WORDS are not. Claiming
+  "the mind learns from conversation" without this caveat would be the project lying to
+  itself.
+- **Owner-typed, not autonomous extraction.** Nothing parses dialogue; `chat.c` still feeds
+  the dtr path, untouched. Extraction is a different organ.
+- **Within ONE node** (VII.7). Single shell = single implicit owner; facts carry no
+  identity, no provenance, no signature.
+- **Re-teach refused** — belief revision stays the named future slice (VI.2/VI.7); the
+  refusal is printed, not silent.
+- **The budget is 4 FACTS, not 8 keys** (`R3_FQ_MAX = 4`, `:819`): with singleton teaches
+  the owner holds at most 4 of the 8 keys before printed FIFO eviction. Not enlarged this
+  slice (budget honesty; enlarging is a knob, not a mechanism). → COMMANDER DECISION 3.
+- **Cert verbs erase the live mind** (VII.0 #5) — `handoff test|stream` after a live teach
+  wipes it, printed nowhere today; the `mind` status verb at least makes the loss visible.
+  Persistence of `rw[]`/queue across runs (p-fs) is a named non-goal here.
+- **The live proof is wall-clock-BOUNDED, not wall-clock-gated** (VII.5) — and counter
+  attribution rests on auditor greps + commander read, not memory protection, until the
+  ring3 relocation puts the counter behind a privilege boundary.
+
+No false "by construction" theorem is asserted.
+
+### VII.9 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+**Reuse (MUST — no forked math, no new organ, no second queue):**
+- The ENTIRE LM-5 live API as-is: `r3_fact_learn` (`:918`), `r3_facts_pending` (`:975`),
+  `r3_consolidate_idle_round` (`:1030`), the queue/eviction/refusal logic (`:925-944`),
+  `s_round` (`:987`) — **zero signature changes, zero constant changes** (`R3_FQ_MAX`,
+  `R3_IDLE_STEPS`, `R3_SLEEPS_PER_FACT`, `R3_TEACH_READS`, `R3_STREAM_LR`, `:817-827`).
+- `s_build` (`:896`) for the verb's masked eval prompts; `h_predict` (`:626`); the
+  `s_eval_fact` eval-loop pattern (`:1034`) with `S_SEED_HELD`; the pretrain recipe
+  (`:1089-1095`) hoisted to in-file `s_pretrain()`.
+- The dmn hook stays the SAME three lines (`dmn.c:118-120`) plus the one counter increment
+  (VII.5); `dmn_trigger` semantics untouched.
+- Shell-verb shape: the `handoff` branch pattern (`usermain.c:672-683`), `starts_with` +
+  manual arg scan like every existing verb.
+
+**FLAGGED — names that do NOT exist (create exactly as scoped, nothing more):**
+- `mind_cmd(const UB*, UW)` — the ONLY new public in `r3_incontext.c`, declared in `dtr.h`
+  beside `r3_stream_test` (`dtr.h:301`). All sub-verb logic, `m_ready`, `r3_round_busy`,
+  `s_pretrain` stay file-static.
+- `dmn_r3_rounds(void)` + static `dmn_r3_round_count` — `dmn.c`/`dmn.h`, the only new dmn
+  surface.
+- The `mind` shell verb — exists on NO dispatcher today (both linux usermains get it;
+  `grep` confirms no collision: no existing verb starts with "mind").
+- **arch/x86 bare-metal shell: NOT this slice** (recommendation, with reason): the x86
+  shell has NO r3 verbs today (`arch/x86/usermain.c` greps clean for r3/handoff), the x86
+  boot CI job drives only `ring3 test|mind` (`ci.yml:313`), so a `mind` verb there would be
+  permanently ungated surface — the AUDIT-SPRAWL failure mode. It arrives with the first
+  wave that gates an x86-shell r3 verb. → COMMANDER DECISION 4.
+- **Do NOT:** add a new pretrain variant (one recipe, one seed); call `lm_consolidate_*` /
+  `dtr_train_batch` / `gl_merge` (wrong network, the standing V.0 correction); add kdds
+  topics (VII.7); parse anything beyond two decimal ints; touch `r3_stream_test`'s gates or
+  numbers.
+
+### VII.10 CI verb plan (specify only — do NOT edit `ci.yml` in this Part)
+
+1. stdin sequence at `ci.yml:57`: append, AFTER `self test` (so every amnesia-bomb cert has
+   already fired, VII.0 #5) and before `exit`:
+   `mind teach 2 3\nmind wait 120\nmind ask 2\n` (the implementer substitutes the measured
+   off-bias `(k*, v*)`, VII.6).
+2. **Raise the native job timeout** `300 → 420` (`ci.yml:57`): the wait contributes ~15 s
+   nominal/120 s worst-case + lazy pretrain seconds; 300 was already snug with LM-5 aboard.
+   State the measured end-to-end time in the PR.
+3. Four greps next to the `[stream-*]` block (`ci.yml:167-170`):
+   `grep -aF '[teach-arrival] PASS'`, `grep -aF '[teach-live] PASS'`,
+   `grep -aF '[teach-consolidated] PASS'`, and — the line this Part exists for —
+   `grep -aF '[dmn] sleep: distilled in-context facts -> rw[]'` (now a PRODUCTION
+   occurrence, not a cert print; it appears only if the dmn task itself consolidated).
+4. ALL existing greps stay (no-regress); the aarch64-qemu subset (`ci.yml:221`) continues to
+   omit r3-family verbs — consistent with R3/LM-4/LM-5. **The implementer wave edits
+   `ci.yml`, not this document.**
+
+### VII.11 Provenance / closes-on
+
+Design only. This slice closes when `[teach-arrival]`, `[teach-live]`,
+`[teach-consolidated]` and the production `[dmn] sleep: distilled in-context facts -> rw[]`
+grep are green on a clean rebuild AND CI-enforced (native job), audited by a **separate**
+agent on the **commander's** binary. The audit makes the acceptance test; the commander
+reads the gate formula — the `mind wait` loop, the dmn.c counter site, and the quiesce flag
+— line-by-line. One epitaph line in `gap-ledger.md`; no new ledger entries.
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Re-teach policy** (VII.2 step 4): refuse with printed reason (**recommended**) vs
+   evict-and-replace the same-key fact. Replace is tempting ("the owner corrects the mind")
+   but is belief revision wearing eviction's clothes: the old weight trace persists and
+   nothing measures whether the new binding actually overwrites it — an unmeasured claim.
+   Refusal is honest; revision gets its own slice with its own disease/cure cert.
+2. **Cross-node teaching** (VII.7): defer (**recommended NO**, within-node first) vs ship
+   the `mind/teach` kdds topic now. Deferral names the follow-up slice ("the shared mind").
+3. **Queue budget** (VII.8): keep `R3_FQ_MAX = 4` (**recommended**) vs raise to 8 for
+   singleton teaches. Keeping it preserves LM-5's audited eviction numbers byte-identical
+   and the budget-honesty story; 4 live facts are enough to prove a mouth.
+4. **x86 bare-metal shell verb** (VII.9): not this slice (**recommended**) vs wire it
+   ungated. Ungated surface on the least-tested shell is sprawl, not generosity.
