@@ -10,6 +10,10 @@ mk_pino が「あなたが指揮官になってダイナミックワークフロ
 コスト容認)と依頼。並列 worktree エージェントで開発を加速する運用。第1波(p-fs doc /
 world map / DNODE_MAX)の実体験から:
 
+**Standing rule (mk_pino 2026-06-10, session-limit economy):** dispatch ALL subagents with
+`model: "opus"` (Opus 4.8) — the commander stays Fable 5, agents run on Opus. Set it on
+every Agent call going forward; the user need not re-ask.
+
 **Why / How to apply (次の波で必ず効く):**
 1. **worktree エージェントは現在ブランチではなく master 基点で起動される。** 第1波で
    A2(DNODE_MAX)は master 基点のまま作業し、regions R0-R2 を欠いた古い dkva.c/kdds.h に
