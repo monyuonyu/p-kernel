@@ -18,3 +18,8 @@ test_results.log
 
 # userland sample ELF — built from samples/ by userland/x86/Makefile (make disk)
 userland/x86/**/*.elf
+
+# galaxy v1 (galaxy.md D3): build-time generated page array (regenerated
+# from arch/common/web/galaxy.html by tools/galaxy/gen_page.py; never commit)
+boot/linux/galaxy_page.h
+boot/linux_x86_64/galaxy_page.h

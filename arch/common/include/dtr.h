@@ -309,6 +309,15 @@ void r3_stream_test(void);
  * bootstrap and the quiesce flag stay file-static (VII.9). */
 void mind_cmd(const UB *args, UW len);
 
+/* galaxy v1 (docs/architecture/galaxy.md §6): a snapshot of the LAST
+ * `mind ask <k>` result, written at the single site in m_ask where the
+ * masked majority vote computes pred/share. The galaxy POST /ask bridge
+ * calls mind_cmd("ask k") (the production mouth) then reads this — the
+ * console output stays the verb's primary record; the JSON is a reading
+ * of the same state, not a second path. *share is the modal class's
+ * percent share *10 (e.g. 750 = 75.0%). */
+void mind_last_answer(UB *k, UB *v, UW *share);
+
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
  *   eval | train [epochs] | save | load | grad | crash | stat */

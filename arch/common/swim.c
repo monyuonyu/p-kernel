@@ -16,6 +16,7 @@
 #include "replica.h"
 #include "degrade.h"
 #include "dmn.h"
+#include "galaxy.h"     /* galaxy v1: S1 membership emit hook */
 #include "netstack.h"
 #include "kernel.h"
 
@@ -54,6 +55,16 @@ typedef struct {
 
 static GOSSIP_QUEUED gq[GOSSIP_Q_MAX];
 static INT           gq_cnt = 0;
+
+/* galaxy v1 (galaxy.md S1): ONE file-static emitter called at each
+ * existing SWIM state-change print site, so a star appears / dims / goes
+ * dark in the window exactly when SWIM's belief changes — with SWIM's
+ * latency, no new gossip (the membership table itself is read directly
+ * by /galaxy.json). old==0xFF where the prior state was not in hand. */
+static void sw_note(UB nid, UB oldst, UB newst)
+{
+    galaxy_emit(EV_SWIM, nid, GALAXY_NODE_NONE, (UH)oldst, (UH)newst);
+}
 
 static void gossip_add(UB node_id, UB state)
 {
@@ -116,7 +127,8 @@ static void gossip_apply(const SWIM_PKT *pkt)
 
         if (nid >= DNODE_MAX) continue;
         if (dnode_table[nid].state == st) continue;
-        dnode_table[nid].state = st;
+        { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
+          sw_note(nid, oldst, st); }
         sw_puts("[swim] gossip: node "); sw_putdec(nid);
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
@@ -225,6 +237,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         UB old = dnode_table[snid].state;
         dnode_table[snid].ip     = src_ip;
         dnode_table[snid].state  = DNODE_ALIVE;
+        if (old != DNODE_ALIVE) sw_note(snid, old, DNODE_ALIVE);
         dnode_table[snid].missed = 0;
         suspect_count[snid]      = 0;
         if (old != DNODE_ALIVE) {
@@ -364,7 +377,9 @@ void swim_task(INT stacd, void *exinf)
             SYSTIM t_ack; tk_get_otm(&t_ack);
             rtt_observe(target, (UW)(t_ack.lo - t_ping.lo));
             if (dnode_table[target].state != DNODE_ALIVE) {
+                UB oldst = dnode_table[target].state;
                 dnode_table[target].state = DNODE_ALIVE;
+                sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
                 gossip_add(target, DNODE_ALIVE);
@@ -393,7 +408,9 @@ void swim_task(INT stacd, void *exinf)
         er = tk_wai_sem(probe_sem, 1, SWIM_IND_TMO_MS);
         if (er == E_OK) {
             if (dnode_table[target].state != DNODE_ALIVE) {
+                UB oldst = dnode_table[target].state;
                 dnode_table[target].state = DNODE_ALIVE;
+                sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
                 gossip_add(target, DNODE_ALIVE);
@@ -418,6 +435,7 @@ void swim_task(INT stacd, void *exinf)
          * so a single dropped UDP datagram must not be a death sentence. */
         if (st == DNODE_ALIVE && suspect_count[target] >= SWIM_SUSPECT_ROUNDS) {
             dnode_table[target].state  = DNODE_SUSPECT;
+            sw_note(target, DNODE_ALIVE, DNODE_SUSPECT);
             dnode_table[target].missed = 0;
             suspect_count[target]      = 0;   /* count fresh toward DEAD */
             sw_puts("[swim] node "); sw_putdec(target);
@@ -425,6 +443,7 @@ void swim_task(INT stacd, void *exinf)
             gossip_add(target, DNODE_SUSPECT);
         } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_ROUNDS) {
             dnode_table[target].state  = DNODE_DEAD;
+            sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
             dnode_table[target].missed = 0;
             suspect_count[target]      = 0;
             sw_puts("[swim] node "); sw_putdec(target);

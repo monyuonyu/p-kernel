@@ -34,6 +34,7 @@
 #include "protect.h"
 #include "guard.h"
 #include "dmn.h"
+#include "galaxy.h"  /* galaxy v1: the observation window task */
 #include "selfc.h"
 #include "genome.h"
 
@@ -595,6 +596,23 @@ EXPORT INT usermain(void)
         print("[ERR] DMN task\r\n");
     else
         print("[OK]  DMN task\r\n");
+
+    /* galaxy v1 (docs/architecture/galaxy.md) — the per-node observation
+     * window: a loopback HTTP/1.0 server (port 7800+(id-1)) serving THIS
+     * node's gossip-bounded view + an SSE event stream of real organism
+     * events. Default ON for hosted builds; PKERNEL_GALAXY=0 opts out.
+     * Priority 8: below net/swim (3/6), above the dmn (13) — a web `mind`
+     * verb cannot be preempted by the prio-13 consolidation round (§3.3,
+     * §6). Bind is 127.0.0.1 ONLY (galaxy_posix.c, hard-coded). */
+    galaxy_init();
+    if (galaxy_on) {
+        if (create_task((FP)galaxy_task, 8, 8192) < E_OK)
+            print("[ERR] galaxy task\r\n");
+        else
+            print("[OK]  galaxy observation window task\r\n");
+    } else {
+        print("[net] galaxy disabled (PKERNEL_GALAXY=0)\r\n");
+    }
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via

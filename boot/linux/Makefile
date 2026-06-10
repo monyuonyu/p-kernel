@@ -47,6 +47,7 @@ INC_LIB    = $(ROOT)/include/lib
 # Linux POSIX headers (signal.h, termios.h, etc.) resolve to the real
 # system libc instead of the T-Kernel placeholder stubs.
 INCDIRS = \
+    -I. \
     -I$(ARCH_LINUX)/aarch64/include \
     -I$(ARCH_LINUX)/include \
     -I$(ARCH_AA64)/include \
@@ -110,6 +111,7 @@ ARCH_C_SRCS = \
     net_unix.c \
     net_relay.c \
     net_dispatch.c \
+    galaxy_posix.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
@@ -142,6 +144,9 @@ ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \
 # (rtl8139_*, pci_*, sio_*, arch_reboot, vfs_*) that arch/linux already
 # provides as either real implementations (sio) or stubs (NIC, VFS).
 ARCH_COMMON = $(ROOT)/arch/common
+GALAXY_HTML = $(ARCH_COMMON)/web/galaxy.html
+GALAXY_GEN  = $(ROOT)/tools/galaxy/gen_page.py
+GALAXY_PAGE = galaxy_page.h
 COMMON_C_SRCS = \
     tensor.c \
     ai_job.c \
@@ -168,6 +173,7 @@ COMMON_C_SRCS = \
     dtr.c \
     dtr_train.c \
     r3_incontext.c \
+    galaxy.c \
     spec.c \
     retrieval.c \
     dkva.c \
@@ -369,6 +375,14 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
+# galaxy v1 (galaxy.md D3): build-time HTML -> C array (both .o and .lo
+# paths, since galaxy.c builds into the .so too). galaxy.o/.lo are the
+# only TUs that #include galaxy_page.h.
+$(GALAXY_PAGE): $(GALAXY_HTML) $(GALAXY_GEN)
+	python3 $(GALAXY_GEN) $(GALAXY_HTML) $@
+
+galaxy.o galaxy.lo: $(GALAXY_PAGE)
+
 # libc string sources
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
@@ -377,7 +391,7 @@ run: $(TARGET)
 	$(RUN) ./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) \
+	rm -f $(ALL_OBJS) $(SO_OBJS) $(TARGET) $(SO_TARGET) $(GALAXY_PAGE) \
 	      test_so_load test_so_load_relay so_node
 
 .PHONY: all run run-so-test run-so-relay-test clean

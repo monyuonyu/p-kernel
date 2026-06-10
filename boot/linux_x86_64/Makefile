@@ -26,6 +26,9 @@ ARCH_LINUX  = $(ROOT)/arch/linux
 ARCH_X86_64 = $(ROOT)/arch/linux/x86_64
 KERNEL      = $(ROOT)/kernel/common
 ARCH_COMMON = $(ROOT)/arch/common
+GALAXY_HTML = $(ARCH_COMMON)/web/galaxy.html
+GALAXY_GEN  = $(ROOT)/tools/galaxy/gen_page.py
+GALAXY_PAGE = galaxy_page.h
 INC_TK      = $(ROOT)/include/kernel/tkernel
 INC_TOP     = $(ROOT)/include
 INC_LIB     = $(ROOT)/include/lib
@@ -46,6 +49,7 @@ INC_LIB     = $(ROOT)/include/lib
 # include/lib/libc deliberately stays OUT so Linux POSIX headers
 # resolve to system libc.
 INCDIRS = \
+    -I. \
     -I$(ARCH_X86_64)/include \
     -I$(ARCH_LINUX)/include \
     -I$(ROOT)/arch/common/include/lp64 \
@@ -101,6 +105,7 @@ ARCH_C_SRCS = \
     net_unix.c \
     net_relay.c \
     net_dispatch.c \
+    galaxy_posix.c \
     arch_reboot.c \
     vfs_stub.c \
     preempt.c \
@@ -153,6 +158,7 @@ COMMON_C_SRCS = \
     dtr.c \
     dtr_train.c \
     r3_incontext.c \
+    galaxy.c \
     spec.c \
     retrieval.c \
     dkva.c \
@@ -255,6 +261,14 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
+# galaxy v1 (galaxy.md D3): build-time HTML -> C array so the embedded
+# page can never drift from source. galaxy.o (the only TU that #includes
+# galaxy_page.h) depends on it.
+$(GALAXY_PAGE): $(GALAXY_HTML) $(GALAXY_GEN)
+	python3 $(GALAXY_GEN) $(GALAXY_HTML) $@
+
+galaxy.o: $(GALAXY_PAGE)
+
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
@@ -262,6 +276,6 @@ run: $(TARGET)
 	$(RUN) ./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET)
+	rm -f $(ALL_OBJS) $(TARGET) $(GALAXY_PAGE)
 
 .PHONY: all run clean

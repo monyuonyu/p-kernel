@@ -147,6 +147,14 @@ INT  world_peer_region(UB node);
  * させない = I4/I16 honesty)。 */
 INT  world_peer_region_fresh(UB node);
 
+/* galaxy v1 (galaxy.md §9): the beacon-carried device_type of a peer
+ * (WORLD_DEV_*), -1 if unknown. The galaxy is world.c's FACE. */
+INT  world_peer_device(UB node);
+
+/* galaxy v1: ms since `node`'s beacon was last freshly observed, -1 if
+ * unknown — so the window fades stale peers honestly (古さの尊重). */
+INT  world_peer_age_ms(UB node);
+
 /* テスト専用 (G12 デモ): 起動後 ms ミリ秒だけ self-beacon を抑止し、gossip を
  * 意図的に未収束のまま保つ。0 = 無効 (既定; 本番挙動は不変)。 */
 void world_set_beacon_hold(UW ms);

@@ -39,6 +39,7 @@
 #include "kdds.h"
 #include "heal.h"
 #include "dtr.h"        /* ONE BRAIN: distributed infer uses the learned dtr */
+#include "galaxy.h"     /* galaxy v1: S5 drpc emit hooks */
 
 /* ------------------------------------------------------------------ */
 /* Serial output helpers                                               */
@@ -313,6 +314,7 @@ static W drpc_dispatch(UB src, UH call_id, UW obj_id, W a0, W a1, W a2)
          * written-constant mlp_forward. So a distributed moe_infer's
          * returned class is the learned brain on whichever node ran it. */
         UB cls = dtr_classify(input);
+        galaxy_emit(EV_DRPC_IN, src, drpc_my_node, DRPC_CALL_INFER, (UH)cls);  /* S5: an arriving ripple hits my star (galaxy.md) */
         dp_puts("[drpc/infer] from node "); dp_putdec((UW)src);
         dp_puts("  class="); dp_putdec((UW)cls); dp_puts("\r\n");
         return (W)cls;
@@ -421,6 +423,9 @@ W drpc_call(UB dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
         dp_puts("[drpc] node "); dp_putdec(dst_node); dp_puts(" is DEAD\r\n");
         return E_NOEXS;
     }
+
+    /* S5 (galaxy.md): an outgoing ray leaves my star toward dst_node. */
+    galaxy_emit(EV_DRPC_OUT, drpc_my_node, dst_node, call_id, 0);
 
     /* Find a free pending slot */
     INT slot = -1;
