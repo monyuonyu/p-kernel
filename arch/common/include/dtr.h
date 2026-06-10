@@ -274,6 +274,17 @@ void r3_cmd(const UB *args, UW len);
 void r3_test(void);
 void r3_handoff_test(void);
 
+/* LM-5 (living-mind.md Part VI) -- the 随時 stream: facts taught
+ * in-context at different times are consolidated into R3's own rw[]
+ * across multiple bounded sleep rounds. r3_fact_learn / r3_facts_pending
+ * / r3_consolidate_idle_round are the LIVE API the DMN idle hook drives
+ * (dmn.c dmn_idle_work); r3_stream_test is the CI certificate
+ * (`handoff stream`). The fact queue itself stays file-static. */
+INT  r3_fact_learn(const UB *keys, const UB *vals, INT n);
+INT  r3_facts_pending(void);
+INT  r3_consolidate_idle_round(void);
+void r3_stream_test(void);
+
 /* dtr_train.c — dataset + train/eval/save/load shell verbs.
  * args points just past "dtr"; handles
  *   eval | train [epochs] | save | load | grad | crash | stat */

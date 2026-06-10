@@ -24,6 +24,7 @@
 
 #include "dtr.h"       /* shared kernels: dt_linear/dt_softmax/dt_relu/
                           dt_sqrt/dtr_ln_fwd_cache/dtr_ln_bwd/dtr_logf */
+#include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -786,6 +787,451 @@ void r3_handoff_test(void)
     /* restore the snapshot so the harness leaves no surprising state. */
     for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];
     r_puts("[handoff] DONE — a fact learned only in-context now lives in the weights.\r\n");
+}
+
+/* ------------------------------------------------------------------ *
+ *  LM-5 — 随時: the living consolidation loop (living-mind.md Part VI).
+ *
+ *  A STREAM of facts, each taught ONLY in-context at a different time,
+ *  is consolidated into rw[] across MULTIPLE bounded sleep rounds —
+ *  the SAME r3_consolidate_idle_round() the DMN idle hook calls
+ *  (dmn.c dmn_idle_work) — without destroying earlier facts.
+ *
+ *  Mechanism (VI.3/VI.4, no new math): r3_fact_learn() builds SUPPORT
+ *  prompts from what the conversation shows, lets the FROZEN fast layer
+ *  read each bound key (h_predict), and enqueues the readings (k, ŷ_k)
+ *  as fact-engrams — the hippocampal trace; the oracle only grades,
+ *  never trains. Each bounded sleep round then runs MASKED-student SGD
+ *  (r_forward/r_backward + rw -= lr*rg, R3's OWN gradients) over the
+ *  interleaved union of the pending fact's engrams + ALL RETAINED
+ *  facts' engrams — the LM-1 with_replay discipline transplanted to
+ *  rw[] (mirrored, NOT called: dtr_train_batch/gl_merge/LM_ENGRAM are
+ *  the dtr sensor body, the wrong network — the V.0 correction).
+ *
+ *  Queue: bounded (R3_FQ_MAX), FIFO eviction of the oldest RETAINED
+ *  fact with PRINTED forgetting (DECISION 4); a PENDING fact is never
+ *  evicted. salience is reserved at 1 (no earned accrual source for
+ *  conversational facts yet — VI.3).
+ * ------------------------------------------------------------------ */
+
+#define R3_NFACTS          4                    /* F fact-sets (DECISION 2)   */
+#define R3_FKEYS           (R_KEYV / R3_NFACTS) /* keys per fact = 2          */
+#define R3_FQ_MAX          4    /* fact-queue budget (printed; B_RING honesty) */
+#define R3_IDLE_STEPS      256  /* SGD steps per bounded round (4x H_PER_ROUND)*/
+#define R3_SLEEPS_PER_FACT 10   /* rounds to flip PENDING->RETAINED; total per
+                                 * fact = 2560 = the H_ROUNDS*H_PER_ROUND
+                                 * budget LM-4 measured as sufficient (VI.4)  */
+#define R3_TEACH_READS     5    /* frozen-teacher arrangements per key at
+                                 * arrival (majority vote; still the frozen
+                                 * FAST layer — only arrangement noise drops) */
+#define R3_STREAM_LR       0.02f /* the LM-4 consolidation lr, unchanged      */
+
+#define R3F_PENDING        0
+#define R3F_RETAINED       1
+
+/* cert seeds: arrival/consolidation vs eval arrangement streams are
+ * DISJOINT (the H_SEED_TRAIN/H_SEED_HELD discipline, printed). */
+#define S_SEED_TRAIN  0x5EEDFAC7UL
+#define S_SEED_HELD   0x0DDE7A1AUL
+#define S_EVAL_N      200        /* masked eval episodes per fact (VI: N>=200) */
+
+typedef struct {
+    UB key[R_KEYV];     /* the fact's bound keys                       */
+    UB yhat[R_KEYV];    /* the FAST layer's reading per key            */
+    UB n;               /* bindings in this fact (<= R_KEYV)           */
+    UB state;           /* R3F_PENDING -> R3F_RETAINED                 */
+    UB rounds_done;     /* idle rounds spent on this fact              */
+    UB salience;        /* reserved, default 1 (VI.3)                  */
+    UW seq;             /* arrival order (the autobiographical when)   */
+} R3_FACT;
+_Static_assert(sizeof(R3_FACT) == 24, "R3_FACT fixed size");
+
+static R3_FACT r3_fq[R3_FQ_MAX];          /* the bounded queue          */
+static UB r3_fq_n   = 0;
+static UW r3_fq_seq = 0;                  /* arrival counter            */
+static UW r3_s_rng  = S_SEED_TRAIN;       /* dedicated arrangement stream for
+                                           * arrivals + rounds; persists ACROSS
+                                           * bounded rounds so 随時 chunks
+                                           * continue one deterministic stream */
+
+/* structural counters for [stream-livehook] (printed + gated) */
+static UW s_steps_last_round = 0;
+static UW s_evictions        = 0;
+static UB s_occ_max          = 0;
+
+/* The cert's F=4 disjoint fact-sets: K_f = {2f, 2f+1}; the union oracle
+ * SDICT is a fixed 8-binding table using all four classes, so the union
+ * of all facts = exactly the LM-4-proven capacity (VI.2).
+ *
+ * HONEST derivation note (the table is chosen, and here is exactly how):
+ * (a) per key, the value is picked AWAY from the pretrained (seed
+ *     0xA5A5) substrate's modal masked-prompt guess. The frozen mind,
+ *     shown an all-UNK prompt, still emits a key-conditional bias
+ *     (e.g. key 7 -> class 3 at ~65%); a "fact" coinciding with that
+ *     bias is not a NEW fact, and the [stream-interference]
+ *     precondition acc_pre(f) <= 33 -- printed per fact, inherited
+ *     from [handoff-fast-only] -- requires the facts not be pre-known.
+ *     (Reusing the DSTAR table naively put fact 4 at a measured 44.5%
+ *     pre-accuracy by this accident.)
+ * (b) fact 1's value classes {2,0} are disjoint from every later
+ *     fact's {3,1} -- the arrangement under which naive sequential
+ *     consolidation interferes HARDEST with fact 1 (later facts never
+ *     rehearse its output classes). The disease is measured at its
+ *     strongest, not dodged; the cure must beat exactly this stream.
+ * The gates themselves were never touched. */
+static UB SDICT[R_KEYV];
+static void s_make_facts(void)
+{
+    static const UB fixed[R_KEYV] = { 2, 0, 3, 3, 1, 3, 1, 1 };
+    for (INT k = 0; k < R_KEYV; k++) SDICT[k] = fixed[k];
+}
+
+/* Build ONE stream episode with the SAME token layout as gen_episode /
+ * h_build (token choice only; r_forward is the unchanged math).
+ *  support!=0 : shown keys sk[]->sv[] carry the conversation's bindings;
+ *               every OTHER key's value slot is a fresh random filler,
+ *               resampled per episode — exactly the pretraining
+ *               distribution, so it averages out (VI.2).
+ *  support==0 : MASKED — every value slot is R_UNK; only weights help. */
+static void s_build(UB key[R_SEQ], UB val[R_SEQ], INT support,
+                    const UB *sk, const UB *sv, INT ns, INT qkey)
+{
+    UB pool[R_KEYV];
+    for (INT i = 0; i < R_KEYV; i++) pool[i] = (UB)i;
+    for (INT i = R_KEYV-1; i > 0; i--) {              /* Fisher-Yates */
+        INT j = r_uni(0, i);
+        UB t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    for (INT p = 0; p < R_NPAIR; p++) {
+        UB kk = pool[p];
+        key[p] = kk;
+        if (!support) { val[p] = (UB)R_UNK; continue; }
+        INT shown = -1;
+        for (INT j = 0; j < ns; j++) if (sk[j] == kk) { shown = j; break; }
+        val[p] = (shown >= 0) ? sv[shown] : (UB)r_uni(0, R_VALV-1);
+    }
+    key[R_QPOS] = (UB)qkey;
+    val[R_QPOS] = (UB)R_UNK;
+}
+
+/* ---- the LIVE arrival API (VI.3) ---------------------------------- */
+INT r3_fact_learn(const UB *keys, const UB *vals, INT n)
+{
+    if (n < 1 || n > R_KEYV) return -1;
+
+    /* budget: FIFO eviction of the OLDEST RETAINED fact (DECISION 4).
+     * A PENDING fact is never evicted; an all-pending full queue
+     * refuses the arrival LOUDLY rather than dropping it silently. */
+    if (r3_fq_n >= R3_FQ_MAX) {
+        INT vi = -1; UW vseq = 0xFFFFFFFFUL;
+        for (INT i = 0; i < (INT)r3_fq_n; i++)
+            if (r3_fq[i].state == R3F_RETAINED && r3_fq[i].seq < vseq) {
+                vi = i; vseq = r3_fq[i].seq;
+            }
+        if (vi < 0) {
+            r_puts("[r3-fq] queue full of PENDING facts; arrival refused\r\n");
+            return -1;
+        }
+        r_puts("[r3-fq] EVICT fact seq=");
+        r_putdec(r3_fq[vi].seq);
+        r_puts(" (FIFO, budget R3_FQ_MAX=");
+        r_putdec(R3_FQ_MAX);
+        r_puts("): no longer rehearsed; its weight trace may decay — honest forgetting\r\n");
+        s_evictions++;
+        for (INT i = vi; i < (INT)r3_fq_n - 1; i++) r3_fq[i] = r3_fq[i+1];
+        r3_fq_n--;
+    }
+
+    /* arrival: the FROZEN fast layer reads SUPPORT prompts built from
+     * what the conversation shows; the queue stores its READING
+     * (k, yhat_k) — the hippocampal trace. The oracle never trains;
+     * a misread binding is memorized wrong and the eval shows it. */
+    R3_FACT *f = &r3_fq[r3_fq_n];
+    f->n = (UB)n; f->state = R3F_PENDING; f->rounds_done = 0;
+    f->salience = 1; f->seq = ++r3_fq_seq;
+    UW save = r_rng; r_rng = r3_s_rng;
+    for (INT i = 0; i < n; i++) {
+        INT votes[R_VALV];
+        for (INT c = 0; c < R_VALV; c++) votes[c] = 0;
+        for (INT t = 0; t < R3_TEACH_READS; t++) {
+            UB kk[R_SEQ], vv[R_SEQ];
+            s_build(kk, vv, 1, keys, vals, n, keys[i]);
+            votes[h_predict(kk, vv)]++;
+        }
+        UB best = 0;
+        for (INT c = 1; c < R_VALV; c++)
+            if (votes[c] > votes[best]) best = (UB)c;
+        f->key[i]  = keys[i];
+        f->yhat[i] = best;
+    }
+    r3_s_rng = r_rng; r_rng = save;
+    r3_fq_n++;
+    if (r3_fq_n > s_occ_max) s_occ_max = r3_fq_n;
+
+    dmn_trigger();           /* a conversation IS a stimulus (VI.3) */
+    return 0;
+}
+
+INT r3_facts_pending(void)
+{
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        if (r3_fq[i].state == R3F_PENDING) return 1;
+    return 0;
+}
+
+/* ONE bounded sleep round (VI.4). with_replay!=0 (the production path)
+ * interleaves the oldest PENDING fact's engrams with ALL RETAINED
+ * facts' engrams; ==0 is the naive control the disease run measures.
+ * The ONLY difference is the interleave — same steps, same lr, same
+ * arrangement stream (per-step RNG consumption is identical). */
+static INT s_round(INT with_replay)
+{
+    INT pi = -1; UW pseq = 0xFFFFFFFFUL;
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        if (r3_fq[i].state == R3F_PENDING && r3_fq[i].seq < pseq) {
+            pi = i; pseq = r3_fq[i].seq;
+        }
+    if (pi < 0) return 0;
+
+    /* item list: pending fact's engrams (+ retained facts' on replay) */
+    UB fi[R3_FQ_MAX * R_KEYV], bi[R3_FQ_MAX * R_KEYV];
+    INT m = 0;
+    for (INT b = 0; b < (INT)r3_fq[pi].n; b++) { fi[m] = (UB)pi; bi[m] = (UB)b; m++; }
+    if (with_replay)
+        for (INT i = 0; i < (INT)r3_fq_n; i++) {
+            if (r3_fq[i].state != R3F_RETAINED) continue;
+            for (INT b = 0; b < (INT)r3_fq[i].n; b++) { fi[m] = (UB)i; bi[m] = (UB)b; m++; }
+        }
+
+    UW save = r_rng; r_rng = r3_s_rng;
+    s_steps_last_round = 0;
+    for (INT st = 0; st < R3_IDLE_STEPS; st++) {
+        const R3_FACT *f = &r3_fq[fi[st % m]];
+        UB k = f->key[bi[st % m]], y = f->yhat[bi[st % m]];
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 0, NULL, NULL, 0, k);          /* MASKED student */
+        for (INT i = 0; i < R_NP; i++) rg[i] = 0.0f;
+        r_forward(kk, vv, y);                          /* R3's own fwd   */
+        r_backward(y);                                 /* R3's own bwd   */
+        for (INT i = 0; i < R_NP; i++) rw[i] -= R3_STREAM_LR * rg[i];
+        s_steps_last_round++;
+    }
+    r3_s_rng = r_rng; r_rng = save;
+
+    if (++r3_fq[pi].rounds_done >= R3_SLEEPS_PER_FACT)
+        r3_fq[pi].state = R3F_RETAINED;
+    return 1;
+}
+
+/* the LIVE idle round — the EXACT symbol dmn_idle_work() calls (VI.5).
+ * Nothing live reads rw[] (R3 is self-test + this loop), so no busy
+ * flag is needed yet — named for the slice that first serves live R3
+ * queries, not built (VI.8). */
+INT r3_consolidate_idle_round(void) { return s_round(1); }
+
+/* MASKED accuracy on fact f's keys vs the oracle SDICT, on a held-out
+ * arrangement stream (queries restricted to K_f). */
+static float s_eval_fact(UW seed, INT n, INT f)
+{
+    UW save = r_rng; r_rng = seed + (UW)f * 0x9E3779B9UL;
+    INT correct = 0;
+    for (INT e = 0; e < n; e++) {
+        INT qkey = f * R3_FKEYS + r_uni(0, R3_FKEYS - 1);
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 0, NULL, NULL, 0, qkey);
+        if (h_predict(kk, vv) == SDICT[qkey]) correct++;
+    }
+    r_rng = save;
+    return 100.0f * (float)correct / (float)n;
+}
+
+static void s_fq_reset(void)
+{
+    r3_fq_n = 0; r3_fq_seq = 0; r3_s_rng = S_SEED_TRAIN;
+    s_steps_last_round = 0; s_evictions = 0; s_occ_max = 0;
+}
+
+/* arrive cert fact f through the LIVE API; scrambled!=0 shifts every
+ * shown value +1 mod R_VALV (the h_make_dstar trick): the prompt then
+ * NEVER shows D_f, so a grounded mind must transfer nothing. */
+static void s_arrive(INT f, INT scrambled)
+{
+    UB keys[R3_FKEYS], vals[R3_FKEYS];
+    for (INT i = 0; i < R3_FKEYS; i++) {
+        keys[i] = (UB)(f * R3_FKEYS + i);
+        vals[i] = scrambled ? (UB)((SDICT[keys[i]] + 1) % R_VALV)
+                            : SDICT[keys[i]];
+    }
+    (void)r3_fact_learn(keys, vals, R3_FKEYS);
+}
+
+/* ---- the certificate (VI.6): `handoff stream` --------------------- */
+void r3_stream_test(void)
+{
+    static float snap[R_NP];
+    float acc_pre[R3_NFACTS], acc_naive[R3_NFACTS];
+    float acc_replay[R3_NFACTS], acc_scr[R3_NFACTS], agree[R3_NFACTS];
+
+    r_puts("[stream] ==== LM-5 随時 stream (facts arrive, many sleeps, one queue) ====\r\n");
+    r_puts("[stream] F="); r_putdec(R3_NFACTS); r_puts(" facts x ");
+    r_putdec(R3_FKEYS);
+    r_puts(" keys; union = the LM-4-proven 8 bindings; chance 25%\r\n");
+    r_puts("[stream] budgets: R3_FQ_MAX="); r_putdec(R3_FQ_MAX);
+    r_puts("  R3_IDLE_STEPS="); r_putdec(R3_IDLE_STEPS);
+    r_puts("  R3_SLEEPS_PER_FACT="); r_putdec(R3_SLEEPS_PER_FACT);
+    r_puts("\r\n");
+
+    s_make_facts();
+
+    /* substrate: pretrain to in-context competence EXACTLY as r3_test /
+     * r3_handoff_test do (resampled dicts). Every fact is then FAST-
+     * readable but absent from the weights — gated per fact below. */
+    r_init_weights(0xA5A5u);
+    float lr = 0.05f;
+    for (INT ep = 0; ep < R_EPOCHS; ep++) {
+        if (ep == R_EPOCHS*2/3)  lr = 0.02f;
+        if (ep == R_EPOCHS*9/10) lr = 0.008f;
+        r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
+    }
+    for (INT i = 0; i < R_NP; i++) snap[i] = rw[i];
+
+    /* ================= run A — the DISEASE (naive) ================= */
+    s_fq_reset();
+    INT pre_ok = 1;
+    r_puts("[stream] acc_pre (frozen, masked):");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        acc_pre[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("=");
+        r_putf1(acc_pre[f]); r_puts("%");
+        if (acc_pre[f] > 33.0f) pre_ok = 0;
+    }
+    r_puts("  (gate <=33 each)\r\n");
+
+    s_arrive(0, 0);
+    while (r3_facts_pending()) (void)s_round(0);       /* naive control */
+    float acc_f1_post = s_eval_fact(S_SEED_HELD, S_EVAL_N, 0);
+    r_puts("[stream] naive: acc_f1_post "); r_putf1(acc_f1_post);
+    r_puts("%  (fact 1 consolidated alone)\r\n");
+    for (INT f = 1; f < R3_NFACTS; f++) {
+        s_arrive(f, 0);
+        while (r3_facts_pending()) (void)s_round(0);
+    }
+    r_puts("[stream] naive end:");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        acc_naive[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("=");
+        r_putf1(acc_naive[f]); r_puts("%");
+    }
+    r_puts("  (drop_f1 "); r_putf1(acc_f1_post - acc_naive[0]);
+    r_puts(" pts)\r\n");
+    INT dis_ok = pre_ok && (acc_f1_post >= 50.0f)
+              && (acc_naive[0] <= 40.0f)
+              && ((acc_f1_post - acc_naive[0]) >= 25.0f);
+    r_puts(dis_ok ? "[stream-interference] PASS\r\n"
+                  : "[stream-interference] FAIL\r\n");
+
+    /* ====== run B — the CURE (the production idle round, replay) ===== */
+    for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
+    s_fq_reset();
+    INT rounds_ok = 1, steps_ok = 1;
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        s_arrive(f, 0);
+        UW rounds = 0;
+        while (r3_facts_pending()) {
+            (void)r3_consolidate_idle_round();   /* THE live symbol */
+            rounds++;
+            if (s_steps_last_round != R3_IDLE_STEPS) steps_ok = 0;
+        }
+        if (rounds != R3_SLEEPS_PER_FACT) rounds_ok = 0;
+        /* teacher agreement = stored engram vs oracle (the ceiling:
+         * what is rehearsed forever after is exactly this reading). */
+        INT ag = 0;
+        for (INT b = 0; b < (INT)r3_fq[f].n; b++)
+            if (r3_fq[f].yhat[b] == SDICT[r3_fq[f].key[b]]) ag++;
+        agree[f] = 100.0f * (float)ag / (float)r3_fq[f].n;
+    }
+    float mn = 200.0f;
+    r_puts("[stream] replay end:");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        acc_replay[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+        if (acc_replay[f] < mn) mn = acc_replay[f];
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("=");
+        r_putf1(acc_replay[f]); r_puts("%");
+    }
+    r_puts("  (min "); r_putf1(mn); r_puts("%, cure_f1 +");
+    r_putf1(acc_replay[0] - acc_naive[0]); r_puts(" pts over naive)\r\n");
+    INT cure_ok = (mn >= 50.0f)
+               && ((acc_replay[0] - acc_naive[0]) >= 20.0f)
+               && (acc_replay[R3_NFACTS-1] >= 50.0f);
+    r_puts(cure_ok ? "[stream-consolidated] PASS\r\n"
+                   : "[stream-consolidated] FAIL\r\n");
+
+    /* run B tail — exercise the budget ONCE (the FIFO clause of
+     * [stream-livehook]): a 5th arrival on the full queue evicts the
+     * OLDEST RETAINED fact (fact 1) and re-binds its keys; the evicted
+     * fact is no longer in the replay set, so no contradiction enters
+     * the queue. Its decayed accuracy is PRINTED, not gated. */
+    s_arrive(0, 1);
+    while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+    float acc_evicted = s_eval_fact(S_SEED_HELD, S_EVAL_N, 0);
+    r_puts("[stream] evicted fact 1 masked acc after further sleeps: ");
+    r_putf1(acc_evicted);
+    r_puts("%  (printed, NOT gated — honest forgetting; occupancy max ");
+    r_putdec(s_occ_max); r_puts("/"); r_putdec(R3_FQ_MAX); r_puts(")\r\n");
+    UW  evictions_b = s_evictions;          /* before run C resets it */
+    INT evict_once  = (evictions_b == 1);
+    INT occ_ok      = (s_occ_max <= R3_FQ_MAX);
+
+    /* ================ run C — grounding (SCRAMBLED) ================= */
+    for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
+    s_fq_reset();
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        s_arrive(f, 1);                    /* prompts show D' != D_f */
+        while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+    }
+    INT grd_ok = (S_SEED_TRAIN != S_SEED_HELD);
+    r_puts("[stream] grounded: train_seed "); r_putdec((UW)S_SEED_TRAIN);
+    r_puts(" eval_seed "); r_putdec((UW)S_SEED_HELD);
+    r_puts(" (disjoint)\r\n");
+    r_puts("[stream] teacher_agree:");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("=");
+        r_putf1(agree[f]); r_puts("%");
+        if (agree[f] < 50.0f) grd_ok = 0;
+    }
+    r_puts("   scrambled end:");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        acc_scr[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("=");
+        r_putf1(acc_scr[f]); r_puts("%");
+        if (acc_scr[f] > 33.0f) grd_ok = 0;
+    }
+    r_puts("  (gate <=33 each)\r\n");
+    r_puts(grd_ok ? "[stream-grounded] PASS\r\n"
+                  : "[stream-grounded] FAIL\r\n");
+
+    /* ============== [stream-livehook] — structural gates ============= */
+    r_puts("[stream] livehook: facts entered ONLY via r3_fact_learn(); every round\r\n");
+    r_puts("[stream]   ran ONLY via r3_consolidate_idle_round() — the SAME public\r\n");
+    r_puts("[stream]   symbols dmn_idle_work() calls (in-process the cert gates the\r\n");
+    r_puts("[stream]   formula, not the 1000ms timer; the dmn.c wiring is read by the\r\n");
+    r_puts("[stream]   commander line-by-line — stated, not overclaimed).\r\n");
+    r_puts("[stream] steps_per_round "); r_putdec(s_steps_last_round);
+    r_puts(steps_ok ? " (== R3_IDLE_STEPS every round)" : " VIOLATED");
+    r_puts("  rounds_per_fact "); r_putdec(R3_SLEEPS_PER_FACT);
+    r_puts(rounds_ok ? " (== R3_SLEEPS_PER_FACT every fact)" : " VIOLATED");
+    r_puts("  evictions "); r_putdec(evictions_b);
+    r_puts(evict_once ? " (exercised once)" : " VIOLATED");
+    r_puts("\r\n");
+    INT live_ok = steps_ok && rounds_ok && evict_once && occ_ok;
+    r_puts(live_ok ? "[stream-livehook] PASS\r\n"
+                   : "[stream-livehook] FAIL\r\n");
+
+    /* leave no surprising state: weights restored, queue empty (the
+     * idle hook stays a no-op until a real arrival). */
+    for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
+    s_fq_reset();
+    r_puts("[stream] DONE — a stream of facts now survives its own arrival order.\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
