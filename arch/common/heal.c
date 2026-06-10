@@ -226,6 +226,16 @@ static void hl_strcpy(char *dst, const char *src, INT max)
     dst[i] = '\0';
 }
 
+/* ring3-core Wave B: shell `ring3 test` pauses the ELF watchdog while
+ * the acceptance gate runs.  The gate needs the SINGLE user address
+ * space (CDN-4a) to itself — a mid-test auto-restart of a guarded
+ * daemon would clobber core_moe/core_crash at 0x400000 and fault at an
+ * unpredictable time, poisoning the reaped==1 exact check.  Resumed at
+ * the end of the verb; the watchdog then revives anything that died. */
+static volatile INT elf_guard_paused = 0;
+
+void heal_elf_pause(BOOL on) { elf_guard_paused = on ? 1 : 0; }
+
 void heal_elf_register(const char *path, W priority)
 {
     for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
@@ -260,7 +270,7 @@ void heal_elf_task(INT stacd, void *exinf)
     tk_dly_tsk(5000);
 
     for (;;) {
-        if (vfs_ready) {
+        if (vfs_ready && !elf_guard_paused) {
             for (INT i = 0; i < HEAL_ELF_GUARD_MAX; i++) {
                 if (!elf_guards[i].active) continue;
                 if (elf_guards[i].tid < 0)  continue;

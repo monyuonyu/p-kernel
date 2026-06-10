@@ -80,6 +80,10 @@ void heal_elf_init(void);
 /* ELF デーモンを watchdog に登録する。heal_elf_init() の後に呼ぶ。 */
 void heal_elf_register(const char *path, W priority);
 
+/* ring3-core Wave B: pause/resume the ELF watchdog (shell `ring3 test`
+ * quiesces the single user address space for the acceptance gate). */
+void heal_elf_pause(BOOL on);
+
 /* spawn / re-exec 後に TID を更新する。 */
 void heal_elf_update_tid(const char *path, ID tid);
 

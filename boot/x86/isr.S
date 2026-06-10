@@ -123,32 +123,87 @@ isr19:
     .byte 0x48, 0x6a, 0x13      # pushq $19 (例外番号)
     jmp isr_common_stub
 
-# 共通例外ハンドラスタブ（簡素版）
+# ============================================================
+# 共通例外ハンドラスタブ (ring3-core Wave B)
+#
+# 旧版は 64 ビットモードのまま 32 ビット C の exception_handler を
+# call していた (引数も rdi/rsi 渡しで cdecl と不一致)。本版は
+# irq_common_stub / syscall_isr と同じ作法で 32 ビット互換モードへ
+# far jump してから C を呼ぶ。さらに CPU がプッシュした saved CS と
+# RIP を引数で渡す — exception_handler はこれで「ring0 のカーネル
+# バグ (halt)」と「ring3 テナントのフォールト (reap して生存)」を
+# 見分ける (docs/architecture/ring3-core.md I.3)。
+#
+# isr_common_stub エントリ時のスタック (64 ビットモード, 8 バイト/要素):
+#   [rsp+ 0] exception_num (各 isrN スタブが pushq)
+#   [rsp+ 8] error_code    (CPU または スタブのダミー)
+#   [rsp+16] RIP   ← CPU の割り込みフレーム
+#   [rsp+24] CS    ← ring 判定の決め手 (0x23 = ring3)
+#   [rsp+32] RFLAGS
+#   [rsp+40] RSP   (IA-32e モードでは常にプッシュされる)
+#   [rsp+48] SS
+#
+# ring3 フォールト時、CPU は TSS.RSP0 (= user_exec が設定した当該
+# タスクのカーネルスタック頂上) へスタック切替済み。C ハンドラの
+# ring3 分岐は tk_ext_tsk() でタスクを終了させ、ここへは戻らない
+# (この捨てられたフレームごとスタックは破棄される)。ring0 分岐は
+# halt するか (#BP のみ) return し、下の復帰パスで iretq する。
 isr_common_stub:
-    # C例外ハンドラ呼び出し（引数はスタック上）
-    # 簡易版: レジスタ保存は最小限
+    # ---- 64 ビットモード: レジスタ保存 (5 本 × 8 = 40 バイト) ----
     .byte 0x48, 0x50            # pushq %rax
     .byte 0x48, 0x51            # pushq %rcx
     .byte 0x48, 0x52            # pushq %rdx
+    .byte 0x48, 0x53            # pushq %rbx
     .byte 0x48, 0x56            # pushq %rsi
-    .byte 0x48, 0x57            # pushq %rdi
-    
-    # 引数設定: exception_num, error_code
-    .byte 0x48, 0x8b, 0x7c, 0x24, 0x30  # movq 48(%rsp), %rdi (例外番号)
-    .byte 0x48, 0x8b, 0x74, 0x24, 0x38  # movq 56(%rsp), %rsi (エラーコード)
-    
+
+    # 引数を 32 ビットレジスタへ (保存後オフセット = 元 + 40)
+    .byte 0x8b, 0x44, 0x24, 0x28  # movl 0x28(%rsp), %eax  (exception_num)
+    .byte 0x8b, 0x4c, 0x24, 0x30  # movl 0x30(%rsp), %ecx  (error_code low32)
+    .byte 0x8b, 0x54, 0x24, 0x38  # movl 0x38(%rsp), %edx  (saved RIP low32)
+    .byte 0x8b, 0x5c, 0x24, 0x40  # movl 0x40(%rsp), %ebx  (saved CS)
+
+    # 32 ビット互換モードへ far jump: pushq CS; pushq offset; rex.W retf
+    .byte 0x48, 0x6a, 0x08      # pushq $0x08  (32 ビット互換 CS)
+    .byte 0x68                  # push imm32
+    .long exc_call32_stub
+    .byte 0x48, 0xcb            # rex.W retf
+
+# ---- 32 ビット互換モードで実行される部分 (CS=0x08) ----
+exc_call32_stub:
+    # DS/ES/SS をカーネルデータセレクタへ再ロード。
+    # ring3 からのフォールトでは CPU が SS=null をセットし、DS には
+    # USER_DS が残る (syscall_call32_stub と同じ理由)。
+    mov  $0x10, %esi
+    mov  %si, %ds
+    mov  %si, %es
+    mov  %si, %ss
+
+    # exception_handler(num, err, cs, eip) — cdecl
+    push %edx                   # eip
+    push %ebx                   # cs
+    push %ecx                   # err
+    push %eax                   # num
     call exception_handler
-    
-    # レジスタ復帰
-    .byte 0x48, 0x5f            # popq %rdi
+    add  $16, %esp
+
+    # 戻ってきた場合 (= 復帰可能と判定された場合) のみここへ来る。
+    # 64 ビットモードへ戻る: push CS; push offset; retf
+    push $0x18
+    .byte 0x68                  # push imm32
+    .long exc_back64_stub
+    retf
+
+# ---- 64 ビットモードで実行される部分 (CS=0x18) ----
+exc_back64_stub:
     .byte 0x48, 0x5e            # popq %rsi
+    .byte 0x48, 0x5b            # popq %rbx
     .byte 0x48, 0x5a            # popq %rdx
     .byte 0x48, 0x59            # popq %rcx
     .byte 0x48, 0x58            # popq %rax
-    
-    # スタッククリーンアップ (例外番号 + エラーコード)
+
+    # 例外番号 + エラーコードを除去 (16 バイト)
     .byte 0x48, 0x83, 0xc4, 0x10  # addq $16, %rsp
-    
+
     # 例外から復帰
     .byte 0x48, 0xcf            # iretq
 

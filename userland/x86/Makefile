@@ -34,6 +34,8 @@ LDFLAGS = -m elf_i386 -static -nostdlib -T user.ld
 
 # ビルド対象の ELF ファイル一覧
 SAMPLES = \
+    12_ring3/01_core_moe/core_moe.elf \
+    12_ring3/02_core_crash/core_crash.elf \
     11_ai/01_persist_demo/persist_demo.elf \
     11_ai/02_cluster_stat/cluster_stat.elf \
     10_ai/01_claude_bridge/claude_bridge.elf \
@@ -283,5 +285,21 @@ all: $(SAMPLES)
 	$(CC) $(CFLAGS) -c $< -o 11_ai/02_cluster_stat/cluster_stat.o
 	$(LD) $(LDFLAGS) -o $@ 11_ai/02_cluster_stat/cluster_stat.o
 
+# -------------------------------------------------------------------
+# 12_ring3/01_core_moe — ring3-core Wave B: SYS_INFER + exit(class)
+# -------------------------------------------------------------------
+12_ring3/01_core_moe/core_moe.elf: $(S)/12_ring3/01_core_moe/core_moe.c plibc.h user.ld
+	mkdir -p 12_ring3/01_core_moe
+	$(CC) $(CFLAGS) -c $< -o 12_ring3/01_core_moe/core_moe.o
+	$(LD) $(LDFLAGS) -o $@ 12_ring3/01_core_moe/core_moe.o
+
+# -------------------------------------------------------------------
+# 12_ring3/02_core_crash — ring3-core Wave B: deliberate ring3 #PF
+# -------------------------------------------------------------------
+12_ring3/02_core_crash/core_crash.elf: $(S)/12_ring3/02_core_crash/core_crash.c plibc.h user.ld
+	mkdir -p 12_ring3/02_core_crash
+	$(CC) $(CFLAGS) -c $< -o 12_ring3/02_core_crash/core_crash.o
+	$(LD) $(LDFLAGS) -o $@ 12_ring3/02_core_crash/core_crash.o
+
 clean:
-	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai 11_ai
+	rm -rf 01_posix 02_rtos 03_ipc 04_memory 05_time 06_system 07_network 08_system 09_ai 10_ai 12_ring3 11_ai
