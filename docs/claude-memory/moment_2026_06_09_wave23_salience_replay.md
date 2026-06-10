@@ -1,0 +1,23 @@
+---
+name: moment_2026_06_09_wave23_salience_replay
+description: 2026-06-09 wave-23 — living-mind THIRD slice: salience-weighted replay (the DMN's imagination). Danger-class engrams rehearsed more, salience EARNED from real reflex firings, fixed-budget reallocation. Implementer ran out of context; commander persisted the verified diff; separate auditor PASS.
+metadata:
+  node_type: memory
+  type: project
+  originSessionId: 53149c59-d57f-4589-aa45-bb25220e2df2
+---
+
+**2026-06-09 — the DMN's third function lands: imagination as prioritized rehearsal.** Third living-mind slice (after [[moment_2026_06_09_wave21_dmn_consolidation]] DMN + [[moment_2026_06_09_wave22_self_layer]] Self), closing the I.3 DMN table (consolidation + self-referential + imagination). Full dynamic-workflow separation ([[feedback_development_method_is_the_life]]): design / implement / audit each a SEPARATE worktree agent; Claude commander only.
+
+**What shipped:** salience-weighted replay in `arch/common/lm_consolidate.c`. During DMN sleep the **danger class — the one the reflex actually GUARDED — is rehearsed MORE**, turning consolidation from even-handed into survival-biased. The honesty crux (the by-construction trap): salience is **EARNED from real reflex experience, not hand-set**. Cert (3 tags, extends `dmn test`):
+- `[salience-earned]`: drive 8 real `reflex_on_inference(1,100,…)` firings → `guard_class_exp[1]++` → `classw=[1,3,1]` COMPUTED from the read-back (not the literal 1); ring reallocated 24→42 danger engrams **at fixed total 72**.
+- `[salience-retains]` (headline, a TRADEOFF not a free lunch): same seed, same budget, uniform vs salience. danger held-out 60.0→76.7 (**dgain +16.7** ≥ +5), safe 93.3→78.3 (**sloss 15.0**, printed — the visible tradeoff), dgain ≥ sloss (net survival-favoring), macro 71.1→73.9 (not collapsed), danger headroom acc_uni 60.0 ≤ 90 (not saturated). Held-out, never the replayed engrams.
+- `[salience-noregress]`: no earned experience → `classw` all 1 → capture byte-identical to LM-1 uniform; all 5 `[dmn-*]` stay green.
+
+**Design decisions (commander):** danger = the HARD MIDDLE class (reflex class 1 = alert), generator UNCHANGED (option a, so `[dmn-*]` stay byte-identical and the win is on the genuinely hard class, not saturation); MIRROR `gl_build_weighted`'s clamp formula (it's static + shard-based + its inflation loop would break the budget) — reuse the formula, not the loop; **SLOT REALLOCATION at fixed `B_RING`, NOT minibatch inflation** (inflation = spending more replay = trivial gain). New minimal reflex extension: public `reflex_guard_exp_save/restore` so the cert earns salience then restores live G38 counters.
+
+**Process note worth remembering:** the implementer agent **ran out of context** and terminated WITHOUT committing or writing a final report — its work sat UNCOMMITTED in the worktree (4 files, +359 lines). The commander (a) inspected the worktree, (b) confirmed the reflex diff was a clean minimal extension, (c) built + ran the full suite on the commander's own tree (55/0, all numbers honest), (d) **persisted the verified diff as a commit himself** (`f75ac56` — authored NONE of the salience code, only `git commit` + verification), then (e) dispatched the SEPARATE auditor. So a context-killed implementer does NOT mean lost work: check the worktree for uncommitted changes, verify, persist, then audit. The separation held (commander's verification is the gate-read, NOT a substitute for the independent audit).
+
+**Auditor PASS (merge-ready)** on a clean rebuild: budget genuinely fixed (n_danger 42 + other 30 = 72 = uniform total; ring not enlarged; SGD same sample count), salience genuinely earned (traces to real firings, would be 1 with no firing), held-out + non-saturated, tradeoff honest, `[dmn-*]` byte-identical, anti-fork clean. **Non-blocking audit note (tracked, not dropped — the audit is the engine):** the cert restores only `guard_class_exp`+`enabled`, not all 11 reflex fields `reflex_self_test` restores (win_dwell_sum/st_fires/last_danger_ms left polluted) → `dmn test` isn't fully hermetic. Harmless (salience block is last in `lm_test`, no downstream CI reader); queued as a low-priority follow-up micro-wave, not blocked on.
+
+Merge `2e7de7f` (+ ledger epitaph). Commander re-built all 4 himself: 55 PASS / 0 FAIL. gap-ledger open rows still **1** (AUDIT-SPRAWL). **The DMN's three functions now all ship** (consolidation=w21, self=w22 grounds the Self layer, imagination=w23). **Next living-mind slices** (living-mind.md): measured fast→slow conversational handoff, a learned/semantic self-model on the Self lineage, signatures (unforgeable self), generative imagination, real language/tokenizer, the Evolution layer.
