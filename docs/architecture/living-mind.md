@@ -1321,3 +1321,370 @@ Design only. This slice closes when `[handoff-fast-only]`, `[handoff-consolidate
 discipline: when it ships and is CI-enforced it earns ONE epitaph line; it does not lengthen the
 ledger and spawns no new `philosophy-gap-audit`. The audit makes the acceptance test; the
 commander reads the gate formula line-by-line.
+
+---
+
+## Part VI — 随時: the living consolidation loop (a stream of facts, many sleeps, the real idle hook)
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–V).
+> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> **LM-4** (Part V, `r3_handoff_test()` in `arch/common/r3_incontext.c`, **closed** — ONE fact,
+> ONE sleep, hand-called), **LM-1** (Part II, the engram-replay→distill cadence + the live
+> `dmn_idle_work` hook pattern in `arch/common/lm_consolidate.c` / `arch/common/dmn.c`,
+> **closed**) and the DMN organ itself (`dmn.c`). All closed in `gap-ledger.md`, so this is
+> unblocked.
+
+Part V.5/V.7 left this as explicit homework, in three named bounds: *"Single fact-set, single
+sleep — not lifelong"*, *"no interaction with DMN anti-forgetting (Part II)"*, and *"not wired
+to the live `dmn_idle_work` hook."* **This Part closes all three** — it is the 随時 of the
+north star (I.1: *the mind learns continuously from conversation, 随時, not batch*) turned
+into a measured mechanism: a STREAM of facts taught in-context at different times, consolidated
+across MULTIPLE bounded sleep rounds **without destroying previously consolidated facts**,
+driven by the SAME function the mind's own idle-time hook calls — not a hand-called harness.
+It mirrors Parts II–V's rigor exactly: a claim, a falsifiable certificate with numeric
+thresholds + bracket tags, named honest bounds, a HARD anti-fork surface flagging names that
+do not exist, and a CI verb plan.
+
+### VI.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Three load-bearing facts from the code, two expected and one that corrects the wave framing:
+
+1. **`r3_incontext.c` is still self-test-only.** Every function and both weight arrays are
+   `static`; the only public symbols are `r3_cmd` / `r3_test` / `r3_handoff_test`
+   (`dtr.h:273-275`). The whole stream machinery — queue, arrival, idle round, cert — must
+   live INSIDE `r3_incontext.c`, exporting a minimal new surface (VI.8), exactly the V.6
+   discipline that saved the LM-4 wave.
+2. **The LM-1 idle-hook pattern exists and is the template.** `dmn_idle_work()` (`dmn.c:93`)
+   already calls a consolidation round, gated by pending work:
+   `if (dmn_stats.idle_runs % GA_INTERVAL == 1 && lm_engrams_pending()) {
+   lm_consolidate_idle_round(); }` (`dmn.c:106-109`); the round is BOUNDED
+   (`LM_IDLE_STEPS=4`, `lm_consolidate.c:865-888`) and the public pair
+   `lm_consolidate_idle_round()`/`lm_engrams_pending()` (`lm_consolidate.h:56-59`) is the
+   exact shape the R3 stream must mirror. Idle is decided in `dmn_task` (`dmn.c:144-166`):
+   `idle_for = dmn_pulse_count - dmn_last_trigger >= dmn_idle_threshold` (pulse = 1000 ms,
+   threshold = 5; `dmn.h:37-38`), and ACTIVE is re-entered by `dmn_trigger()` (`dmn.c:78-87`),
+   called on inference requests (`dtr.c:1251`) and node-state changes (`swim.c:126`).
+3. **The DMN task does not run on the binary CI actually tests.** `dmn_init()` and
+   `create_task(dmn_task, DMN_PRIORITY=13, DMN_STACK=8192)` exist ONLY in
+   `arch/x86/usermain.c:155,167` (constants at `:84-85`). The two hosted usermains that the
+   CI native job drives (`ci.yml:57` runs `./p-kernel`) create net/swim/dtr/reflex/pfs/...
+   tasks (`arch/linux/x86_64/usermain.c:259-352`) but **never the DMN task** — so today even
+   LM-1's "live idle hook" is live only on bare-metal x86 and is dead code on the hosted
+   fleet. Part VI's claim "driven by the mind's own idle-time" is hollow unless this is fixed
+   → **COMMANDER DECISION 1** (VI.5; recommended: wire it in this wave).
+
+### VI.1 The claim to prove
+
+> A **stream** of facts, each taught ONLY in-context at a different time (arrival order, not a
+> batch), is consolidated into the weights `rw[]` across **multiple bounded sleep rounds** —
+> the SAME `r3_consolidate_idle_round()` the DMN idle hook calls — such that: (1) **naive**
+> sequential consolidation demonstrably **destroys earlier facts** (multi-fact interference,
+> the new disease, measured first); (2) **interleaved replay of retained fact-engrams** during
+> each sleep cures it — after the full stream EVERY fact is answerable **with the prompt
+> removed**, at ≥ chance + margin, while the newest fact still consolidates (plasticity); (3)
+> the gain still traces to the genuine in-context reading (a stream of **scrambled** arrivals
+> transfers nothing — the LM-4 grounding survives into the stream setting); (4) the pending
+> queue is **budget-bounded** with honest, printed forgetting on eviction.
+
+The disease must be **real** before the cure is credited — exactly the `[dmn-forgetting]` /
+`[handoff-fast-only]` discipline. If naive sequential consolidation does NOT collapse earlier
+facts, the implementer raises the pressure (steps / lr), never lowers the bar.
+
+### VI.2 The stream — F disjoint fact-sets (and why disjoint, honestly)
+
+Partition the `R_KEYV=8` keys into **F disjoint key subsets** `K_1..K_F`; fact `D_f` binds the
+keys of `K_f` to values in `{0..R_VALV-1}` (chance stays 25%). **Why disjoint, named up
+front:** two facts binding the SAME key to different values *contradict*; replay cannot retain
+both — `lm_consolidate.c:14-26` chose region-shift over class-permutation for exactly this
+reason (*"a replayed task-0 engram (X, y0) directly CONTRADICTS the current task's (same X,
+y_t) — the model cannot satisfy both and replay cannot cure forgetting"*). Contradiction is
+fact UPDATE / belief revision — a different, later slice (VI.7). This slice is the R3 analog
+of LM-1's instantiation (B): disjoint regions of prompt space (here: of query-key space), so
+an old fact's engram never contradicts a new fact's training signal — yet interference is
+still expected and must be measured, because all facts share every weight.
+
+Per-fact episodes extend the LM-4 prompt builder `h_build` (`r3_incontext.c:600`) — token
+choice only, NO new math (`r_forward` unchanged):
+
+- **SUPPORT(f, k∈K_f)** — keys in `K_f` show `D_f`'s real bindings; the OTHER keys' value
+  slots show **fresh random values, resampled per episode** — i.e. exactly the pretraining
+  distribution `gen_episode` (`r3_incontext.c:123`) produces, so the frozen teacher reads it
+  in-distribution and the random fillers carry no persistent signal (they average out; the
+  student never sees them — it trains on MASKED prompts). Query = `k`, oracle = `D_f[k]`.
+- **MASKED(f, k∈K_f)** — the LM-4 MASKED mode unchanged: all dict value slots `R_UNK`; query
+  restricted to `K_f`. The only path to the answer is the weights.
+- **SCRAMBLED(f)** — SUPPORT-shaped but `K_f` shows `D'_f ≠ D_f` (every binding shifted
+  `+1 mod R_VALV`, the `h_make_dstar` pattern, `r3_incontext.c:571-580`).
+
+Note the end-state sanity check: with the recommended F=4×2 (DECISION 2), the union of all
+facts is 8 bindings — exactly the LM-4 task size that `[handoff-consolidated]` already drove
+to 100% masked. The cure asks the weights to hold no more than LM-4 proved they can hold;
+what is new is *surviving the arrival ORDER*.
+
+### VI.3 Fact arrival = engrams, not API calls
+
+A "fact taught in conversation" becomes a pending-consolidation item at **arrival time**: the
+new public entry `r3_fact_learn(keys[], vals[], n)` (FLAGGED — does not exist, VI.8) builds
+SUPPORT prompts from what the conversation shows, runs the **frozen FAST layer** on each key
+(`h_predict`, `r3_incontext.c:625`), and enqueues the readings as **fact-engrams** — then
+calls `dmn_trigger()` (a conversation IS a stimulus, mirroring `dtr.c:1251`). The engram
+stores the **teacher's in-context reading `ŷ_k`, NOT the oracle** — that is the hippocampal
+trace of the conversation, and it preserves LM-4's grounding: the oracle is used only to
+grade, never to train; a misread binding is memorized wrong and the eval shows it.
+
+Minimal in-RAM representation (file-static in `r3_incontext.c`; `LM_ENGRAM` at
+`lm_consolidate.h:33-39` is 4-channel sensor-shaped and does NOT fit — reuse the concept, not
+the struct, the Part V flag re-affirmed):
+
+    typedef struct {
+        UB key[R_KEYV];   /* the fact's bound keys                  */
+        UB yhat[R_KEYV];  /* the FAST layer's reading per key       */
+        UB n;             /* bindings in this fact (<= R_KEYV)       */
+        UB state;         /* R3F_PENDING -> R3F_RETAINED            */
+        UB rounds_done;   /* idle rounds spent on this fact          */
+        UB salience;      /* reserved, default 1 (see below)         */
+        UW seq;           /* arrival order (the autobiographical when)*/
+    } R3_FACT;            /* fixed size; _Static_assert it           */
+    static R3_FACT r3_fq[R3_FQ_MAX];          /* the bounded queue   */
+
+**Budget:** `R3_FQ_MAX = F` (4 under DECISION 2) fact-sets — the B_RING honesty knob applied
+to facts: fixed, small, PRINTED at test time. **Eviction: FIFO** (oldest RETAINED evicted on
+overflow; a PENDING fact is never evicted), and every eviction is **printed** — an evicted
+fact stops being rehearsed and its weight trace may decay over later sleeps: honest, visible
+forgetting, not silent loss. **Why FIFO and not LM-3 salience:** earned salience needs a real
+accrual source, and `reflex_threat_experience` is per dtr **sensor class**, not per R3 key —
+no conversational fact earns threat experience today. Deriving a salience for facts by hand
+would be hand-set salience, the exact thing `[salience-earned]` forbids. The `salience` byte
+is reserved at default 1 (the LM-3 no-regress hinge shape) so a later slice can earn it; this
+slice does not force the tie-in (→ DECISION 4).
+
+Honest note: **today the only caller of `r3_fact_learn` is the cert.** No live conversational
+producer exists yet (`chat.c` feeds the dtr/chat path, not R3). The arrival API is the real
+production entry; the conversation source is future (VI.7).
+
+### VI.4 The cure — interleaved replay across sleeps (ONE mechanism, no new math)
+
+The LM-1 pattern applied to R3's own consolidation, and nothing else: each sleep round runs
+MASKED-student SGD (`r_forward`/`r_backward` + `rw -= lr*rg`, `r3_incontext.c:143/212/696-699`
+— the V.0 correction stands: NOT `dtr_train_batch`/`gl_merge`, wrong network) over the
+**interleaved union** of (the PENDING fact's engrams) + (ALL RETAINED facts' engrams), exactly
+the `with_replay` discipline of `lm_train_task` (`lm_consolidate.c:384-402`) transplanted to
+the `rw[]` slow layer. Training items are `MASKED(f,k) → stored ŷ_k` on fresh arrangements
+from the train seed; no teacher re-run is needed for old facts — their reading was captured
+at arrival (VI.3), which is precisely what an engram is.
+
+**Bounded and incremental — a real idle round, not a batch job:**
+`r3_consolidate_idle_round()` runs ONE bounded chunk (`R3_IDLE_STEPS`, the `LM_IDLE_STEPS`
+analog; propose 4×`H_PER_ROUND`=256 interleaved steps) and returns 1; a PENDING fact flips to
+RETAINED after `R3_SLEEPS_PER_FACT` chunks (propose 10, totalling the `H_ROUNDS×H_PER_ROUND`
+= 40×64 budget LM-4 measured as sufficient, `r3_incontext.c:711-712`). So one fact genuinely
+takes MULTIPLE sleeps — 随時 is literal, and the cert calling the same function in a loop is
+not a simulation shortcut but the actual production cadence.
+
+**The disease run (naive path)** is identical in every respect — same arrivals, same per-fact
+step budget, same lr schedule — except the minibatch contains ONLY the pending fact's engrams
+(the `with_replay=0` knob). The ONLY difference between disease and cure is the interleaving;
+nothing else moves, so the cure is attributable.
+
+### VI.5 The live idle hook — and the honest split
+
+The wiring, 3 lines next to the LM-1 hook in `dmn_idle_work()` (`dmn.c:106-109`):
+
+    if (r3_facts_pending()) {
+        if (r3_consolidate_idle_round())
+            dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
+    }
+
+Gating: LM-1 runs 1-in-`GA_INTERVAL`(=10, `ga.h:39`) idle pulses; for pending conversation
+facts we recommend **every idle pulse while pending** (a fresh fact is the most urgent rest
+work; the round is bounded, and a fact drains in ~`R3_SLEEPS_PER_FACT` idle seconds at the
+1000 ms pulse) → DECISION 3. No busy flag is needed: `dtr_ga_busy` (`dtr.c:267`, checked by
+`dtr_infer` at `dtr.c:1248`) protects the dtr body, and **nothing live reads `rw[]`** — R3 is
+self-test + this loop. If a later slice serves live R3 queries, an `rw[]` busy flag is added
+then (named, not built).
+
+**Interaction with Part II anti-forgetting (the LM-4 bound), answered honestly:** the two
+consolidations now share one roof (`dmn_idle_work`) but train **different networks** —
+`lm_consolidate_idle_round` distills engrams into the dtr sensor body; this round distills
+fact-engrams into R3's `rw[]`. Non-interference is *structural* (disjoint weight buffers),
+and the only shared resource is idle time, which both rounds bound. That is the whole claim;
+no stronger interaction theorem is asserted (VI.7).
+
+**The honest split (the G33 lesson: the test must drive the production formula):**
+
+- **CI in-process cert** (`r3_stream_test()`): enters facts ONLY through `r3_fact_learn()`
+  and consolidates ONLY through `r3_consolidate_idle_round()` — the exact symbols the dmn.c
+  hook calls — looped deterministically until the queue drains. This is CI-gated.
+- **Genuinely on the idle path**: the 3 wired lines above + the DMN task itself. NOT CI-gated
+  on wall-clock timing (5 s idle threshold × ~40 sleeps would add minutes and flake); instead
+  `[stream-livehook]` gates code-path identity structurally (VI.6 #4) and the commander reads
+  the dmn.c wiring line-by-line (the standing rule). The live print `[dmn] sleep: ...` is
+  observable in a manual run, like LM-1's (`dmn.c:108`).
+
+**COMMANDER DECISION 1 — wire the DMN task into the hosted builds (recommended: YES, this
+wave).** Add `dmn_init()` + `create_task((FP)dmn_task, 13, 8192)` (params from
+`arch/x86/usermain.c:84-85,155,167`) to `arch/linux/{x86_64,aarch64}/usermain.c`. Without it,
+"driven by the mind's own idle-time" is dead code on the binary CI tests (VI.0 #3) — and
+LM-1's live hook has silently been x86-only too; this fixes both. Tradeoff: a new always-on
+lowest-priority task on the hosted fleet (priority 13, below every existing 3–7 task at
+`usermain.c:259-352`; heartbeat work is a few comparisons per second, the consolidation only
+runs when facts/engrams are pending). Alternative: defer and demote the slice's claim to
+"hand-callable idle round" — honest but it punts the very gap this Part exists to close.
+
+### VI.6 The falsifiable acceptance test (the certificate)
+
+All emitted as printed numbers **then** a canonical `[tag] PASS/FAIL` line. `chance = 25%`.
+Thresholds are **proposed bars**; the implementer reports actuals and may only LOWER a bar to
+measured-minus-flake-margin, flagged — never inflate to make green. Substrate discipline as
+LM-4: pretrain once to in-context competence (`r_train_epoch` over resampled dicts,
+`r3_incontext.c:727-733`), snapshot `rw[]`, restore before EACH of the three runs below and
+at the end (no state leaks into later verbs; `r3_incontext.c:716,735,759,787` pattern). Seeds:
+train/eval arrangement streams disjoint, the `H_SEED_TRAIN`/`H_SEED_HELD` discipline
+(`r3_incontext.c:707-708`); per-fact masked eval queries only `K_f`, graded vs oracle `D_f`.
+
+1. **`[stream-interference]` — the multi-fact disease is real (precondition).**
+   From the frozen snapshot: print `acc_pre(f) ≤ 33` for EVERY fact (no fact is baked in —
+   the `[handoff-fast-only]` precondition inherited per-fact). Arrive fact 1, consolidate to
+   RETAINED, print `acc_f1_post ≥ 50`. Then arrive + consolidate facts 2..F **naively** (no
+   interleave). PASS requires ALL:
+   - every `acc_pre(f) ≤ chance + 8` (= 33), AND
+   - `acc_f1_post ≥ chance + 25` (= 50: fact 1 was really consolidated), AND
+   - `acc_f1_naive_end ≤ 40` AND `acc_f1_post − acc_f1_naive_end ≥ 25` pts
+     (the `[dmn-forgetting]` bars, `lm_consolidate.c:565`: later sleeps ATE fact 1).
+   If interference is not real, raise the pressure (steps/lr) — do NOT weaken the bar.
+
+2. **`[stream-consolidated]` — interleaved sleeps retain the whole stream (the headline).**
+   Restore the snapshot; same arrivals; every sleep interleaves retained engrams (VI.4);
+   loop `r3_consolidate_idle_round()` until the queue drains. PASS requires ALL:
+   - `min over f of acc_replay_end(f) ≥ chance + 25` (= 50: EVERY fact answerable with the
+     prompt removed, after the full stream), AND
+   - `acc_f1_replay_end − acc_f1_naive_end ≥ +20` pts (the cure over the measured disease),
+     AND
+   - `acc_fF_replay_end ≥ 50` (the NEWEST fact also landed — plasticity not sacrificed,
+     the `[dmn-consolidated]` third clause).
+
+3. **`[stream-grounded]` — the stream's gain traces to genuine in-context reading.**
+   Restore the snapshot; identical stream, but every arrival's prompt shows `D'_f ≠ D_f`
+   (SCRAMBLED). PASS requires ALL:
+   - `teacher_agree(f) ≥ chance + 25` printed per fact on the REAL run (the ceiling visible,
+     V.3 discipline), AND
+   - train seed ≠ eval seed printed (disjoint arrangement streams), AND
+   - `acc_scrambled_end(f) ≤ chance + 8` (= 33) for EVERY fact — arrivals that never showed
+     the real bindings transfer nothing; the LM-4 control, stream-wide.
+
+4. **`[stream-livehook]` — the loop is the production formula, bounded, budget-honest.**
+   Structural gates, all printed:
+   - facts entered ONLY via `r3_fact_learn()`; consolidation reached ONLY via
+     `r3_consolidate_idle_round()` — the SAME public symbols `dmn_idle_work` calls (the cert
+     cannot see the dmn.c call site from in-process; the PASS text says so, and the commander
+     reads the 3 wired lines — stated, not overclaimed), AND
+   - every round bounded: `steps_per_round == R3_IDLE_STEPS` printed; rounds-per-fact
+     `== R3_SLEEPS_PER_FACT` printed; state flips PENDING→RETAINED only inside the round, AND
+   - queue budget honest: arrive an `R3_FQ_MAX+1`-th fact → the OLDEST RETAINED fact is
+     evicted, the eviction PRINTED, queue occupancy never exceeds `R3_FQ_MAX` (printed with
+     the budget, the B_RING convention); the evicted fact's masked accuracy after further
+     sleeps is PRINTED but not gated (honest forgetting is allowed to decay).
+
+(Considered and **dropped**, the V.4/[self-other] lesson: a gradcheck tag — the SGD is the
+already-certified `r_backward` (`[r3-incontext-gradcheck]`); a distributed tag — `gl_merge`
+of `rw[]` is the G22 axis, sprawl here; a salience tag — no earned source exists for facts,
+VI.3.) **No-regress is CI-level, not a new tag:** all existing 18 greps stay green
+(`[r3-*]`×4, `[handoff-*]`×3, `[dmn-*]`×5, `[salience-*]`×3, `[self-*]`×3) — the stream code
+extends `r3_incontext.c` without touching the LM-4 gates, and the snapshot/restore discipline
+leaves `rw[]` as found.
+
+### VI.7 The honest bound (what is NOT claimed)
+
+- **Toy synthetic vocab, NOT natural language** — the standing R3 scope caveat; "learns from
+  conversation 随時" is shown structurally on key→value facts, not on dialogue.
+- **Facts are DISJOINT by construction.** Contradiction — re-teaching key `k` a NEW value
+  (belief revision / fact update) — is explicitly out of scope, and naive replay provably
+  cannot do it (the `lm_consolidate.c:14-26` trap). A future slice; named, not hidden.
+- **The engram is the reading, not the conversation.** Arrival keeps `(k, ŷ_k)`; the teacher
+  ceiling applies at arrival time and a misread binding is rehearsed wrong forever after
+  (printed `teacher_agree(f)` keeps the ceiling visible).
+- **FIFO forgetting, no earned salience.** Eviction is honest and printed but arbitrary in
+  the salience sense; the LM-3 tie-in waits for a real accrual source.
+- **"Live" means: the same function, wired at the idle path.** CI gates the formula and the
+  bounds, NOT the wall-clock idle timing; and no conversational producer calls
+  `r3_fact_learn` yet — the cert is its only caller today.
+- **Part II interaction is structural non-interference only** (different weight buffers, both
+  rounds bounded, one shared idle budget) — no starvation/ordering theorem is asserted.
+- **Within ONE frozen-architecture R3 model, within ONE node.** Weights only (Evolution layer
+  stays future); no `gl_merge` of `rw[]` (G22 axis).
+- **Held-out is held-out ARRANGEMENT, not held-out facts** — the Part V bound stands,
+  per-fact.
+
+No false "by construction" theorem is asserted.
+
+### VI.8 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+**Reuse (MUST — no forked math, no new organ, no second Transformer):**
+- `r_forward` (`r3_incontext.c:143`) / `r_backward` (`:212`) / the SGD update shape
+  (`:399`, `:696-699`) — the only training path for `rw[]`.
+- `h_build` (`:600`) — EXTENDED in-file with the key-subset + random-filler SUPPORT mode and
+  `K_f`-restricted queries (token choice only); `h_predict` (`:625`); `h_eval_mode` (`:639`)
+  extended per-fact; `h_teacher_agree` (`:657`); `h_make_dstar`'s shift trick (`:571-580`)
+  for the per-fact scramble; the snapshot/restore discipline (`:716,735,759,787`).
+- Seed discipline: `R_SEED_TRAIN/HELD` (`:474-475`), `H_SEED_TRAIN/HELD` (`:707-708`).
+- The DMN cadence as PATTERN (mirror, do NOT call): the bounded idle round
+  (`lm_consolidate.c:865-888`), the `with_replay` interleave (`:384-402`), the pending/round
+  public pair shape (`lm_consolidate.h:56-59`), the `dmn_idle_work` wiring (`dmn.c:106-109`),
+  `dmn_trigger()` on arrival (`dmn.c:78`, mirroring `dtr.c:1251`).
+
+**FLAGGED — names that do NOT exist as callable API (create exactly as scoped, nothing more):**
+- `r3_fact_learn()`, `r3_facts_pending()`, `r3_consolidate_idle_round()`, `r3_stream_test()`
+  — the ONLY new public symbols, declared in `dtr.h` next to `r3_handoff_test`
+  (`dtr.h:273-275`). The queue (`r3_fq[]`), `R3_FACT`, and all stream helpers stay
+  file-static in `r3_incontext.c`.
+- The `handoff stream` sub-verb — the dispatchers accept only `test` today
+  (`arch/linux/{x86_64,aarch64}/usermain.c:656-666`).
+- The DMN task on hosted builds — `dmn_init`/`dmn_task` are created only at
+  `arch/x86/usermain.c:155,167` today (DECISION 1).
+- **Do NOT call:** `dtr_train_batch` / `dtr_weights_get|set` / `gl_merge` (the dtr sensor
+  body — wrong network, the V.0 correction stands); `LM_ENGRAM` (4-ch sensor struct);
+  `lm_consolidate_idle_round` (the dtr body's round); `lm_ring_capture` (file-static, dtr
+  dataset). Reuse their DISCIPLINE, never their symbols.
+- No `rw[]` busy flag exists and none is added (nothing live reads `rw[]`) — named for the
+  slice that first serves live R3 queries.
+
+### VI.9 CI verb plan (specify only — do NOT edit `ci.yml` in this Part)
+
+1. **Sub-verb `handoff stream`** → `r3_stream_test()`, extending the existing `handoff`
+   dispatcher (`usermain.c:656-666`: today only `test`). **Recommended over** (a) a new
+   top-level verb — the stream IS the handoff grown to 随時, same namespace — and (b) folding
+   into `handoff test` — a distinct claim deserves a distinct greppable verb, and LM-4's cert
+   stays untouched for bisection.
+2. stdin sequence at `ci.yml:57`: insert `handoff stream\n` after `handoff test`, before
+   `dmn test`.
+3. Four greps next to the `[handoff-*]` block (`ci.yml:154-156`):
+   `[stream-interference] PASS`, `[stream-consolidated] PASS`, `[stream-grounded] PASS`,
+   `[stream-livehook] PASS`. Native job only — the aarch64-qemu subset already omits
+   `r3 test`/`dmn test`, consistent with R3/DMN/LM-4.
+4. ALL existing 18 greps stay — the no-regress gate. **The implementer wave edits `ci.yml`,
+   not this document.**
+
+### VI.10 Provenance / closes-on
+
+Design only. This slice closes when `[stream-interference]`, `[stream-consolidated]`,
+`[stream-grounded]`, `[stream-livehook]` are green on a clean rebuild AND CI-enforced (native
+targets), audited by a **separate** agent on the **commander's** binary — not the
+implementer's. Per `gap-ledger.md` discipline: when it ships and is CI-enforced it earns ONE
+epitaph line; it does not lengthen the ledger and spawns no new `philosophy-gap-audit`. The
+audit makes the acceptance test; the commander reads the gate formula — and the 3 wired
+`dmn.c` lines — line-by-line.
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Wire the DMN task into the hosted usermains** (VI.5) — recommend **YES, this wave**;
+   else the live-hook claim must be demoted (tradeoff: one new priority-13 task on the fleet).
+2. **Stream shape:** **F=4 facts × 2 keys (recommended)** vs F=2 × 4 keys. 4 arrivals/sleeps
+   make 随時 and the interference test real (fact 1 must survive 3 later sleeps); the union
+   (8 bindings) stays exactly the LM-4-proven capacity. Tradeoff: 2-key facts give the
+   teacher an easier read but each fact a coarser per-query eval (mitigated by N≥200
+   arrangement-varied eval episodes per fact).
+3. **Idle gating for the fact round:** every idle pulse while pending (**recommended**;
+   facts drain in ~10 idle seconds) vs LM-1's 1-in-`GA_INTERVAL` (uniform but ~100 s/fact).
+4. **Eviction policy:** FIFO with printed forgetting (**recommended**) vs sizing
+   `R3_FQ_MAX` so the cert never evicts (defers the budget-honesty sub-claim of
+   `[stream-livehook]`). FIFO is recommended because a bounded mind that cannot say what it
+   forgot is the AUDIT-SPRAWL failure mode applied to memory.
