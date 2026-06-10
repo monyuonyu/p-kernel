@@ -77,6 +77,11 @@ void dmn_trigger(void);
 /* 現在の状態を返す (DMN_ACTIVE / DMN_IDLE) */
 UB   dmn_state_get(void);
 
+/* LM-6 (living-mind.md Part VII): lifetime count of R3 idle rounds run
+ * by THE dmn.c idle-hook call site (the only ++ site) — the
+ * attribution counter behind `mind wait`'s [teach-live] (VII.5). */
+UW   dmn_r3_rounds(void);
+
 /* 統計表示 (shell `dmn` コマンド用) */
 void dmn_stat(void);
 

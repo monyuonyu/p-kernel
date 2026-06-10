@@ -90,6 +90,17 @@ void dmn_trigger(void)
 /* アイドル整理処理                                                    */
 /* ------------------------------------------------------------------ */
 
+/* LM-6 (living-mind.md Part VII, VII.5): lifetime count of R3 idle
+ * rounds run by the dmn_idle_work hook below — incremented at EXACTLY
+ * ONE site, deliberately NOT inside r3_consolidate_idle_round() itself,
+ * so the cert's direct calls (r3_stream_test) cannot move it and a
+ * nonzero delta is attributable to the production trigger (the real
+ * 1000ms heartbeat + ACTIVE->IDLE transition) alone. Read through
+ * dmn_r3_rounds(). Pre-ring3 caveat stands: in one flat address space
+ * nothing is unfakeable by code in the same image; the discipline is
+ * the auditor's one-++-site grep + the commander's line-by-line read. */
+static UW dmn_r3_round_count = 0;
+
 static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
@@ -116,8 +127,10 @@ static void dmn_idle_work(void)
      * R3's own rw[], a DIFFERENT network from the lm round above —
      * non-interference is structural (disjoint weight buffers). */
     if (r3_facts_pending()) {
-        if (r3_consolidate_idle_round())
+        if (r3_consolidate_idle_round()) {
+            dmn_r3_round_count++;            /* the ONLY ++ site (VII.5) */
             dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
+        }
     }
 
     /* dmn_log_interval パルスに 1 回だけ詳細ログを出す */
@@ -217,6 +230,8 @@ void dmn_init(void)
 /* ------------------------------------------------------------------ */
 
 UB dmn_state_get(void) { return dmn_state; }
+
+UW dmn_r3_rounds(void) { return dmn_r3_round_count; }
 
 void dmn_stat(void)
 {

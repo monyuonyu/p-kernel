@@ -54,6 +54,7 @@ IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
 IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
+IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
@@ -685,6 +686,12 @@ EXPORT INT usermain(void)
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */
             r3_cmd(line + 2, (UW)(n - 2));
+        } else if (starts_with(line, n, "mind")) {
+            /* living-mind LM-6 (docs/architecture/living-mind.md Part VII):
+             * the mouth — the OWNER teaches the live mind at this prompt;
+             * the DMN task's own idle pulses consolidate (no harness).
+             * mind teach <k> <v> | mind ask <k> | mind wait [s] | mind */
+            mind_cmd(line + 4, (UW)(n - 4));
         } else if (starts_with(line, n, "dtr")) {
             /* "dtr" / "dtr stat" -> stats; eval/train/save/load/grad/
              * remember/ret -> R3a + wave-8 verbs (dtr_train.c) */
