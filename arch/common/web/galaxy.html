@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>p-kernel · galaxy</title>
+<style>
+  html,body{margin:0;height:100%;background:#05060a;color:#cdd6f4;
+    font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+  #sky{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;left:12px;top:10px;font-size:12px;line-height:1.5;
+    text-shadow:0 0 4px #000;pointer-events:none}
+  #hud b{color:#89b4fa}
+  #panel{position:fixed;right:0;top:0;height:100%;width:320px;max-width:80vw;
+    background:rgba(10,12,20,.92);border-left:1px solid #1e2030;
+    transform:translateX(100%);transition:transform .18s;padding:14px;
+    box-sizing:border-box;font-size:12px;overflow:auto}
+  #panel.open{transform:none}
+  #panel h2{font-size:13px;color:#f9e2af;margin:.2em 0 .6em}
+  #panel pre{white-space:pre-wrap;word-break:break-all;color:#a6adc8}
+  #panel .x{position:absolute;right:10px;top:8px;cursor:pointer;color:#f38ba8}
+  #ctl{position:fixed;left:12px;bottom:12px;font-size:12px}
+  #ctl select,#ctl button{background:#181825;color:#cdd6f4;border:1px solid #313244;
+    border-radius:4px;padding:3px 6px;font-family:inherit;margin-right:4px}
+  #ctl button{cursor:pointer}
+  #foot{position:fixed;right:12px;bottom:10px;font-size:11px;color:#6c7086;
+    text-align:right;text-shadow:0 0 4px #000}
+  #note{position:fixed;left:50%;bottom:42px;transform:translateX(-50%);
+    font-size:11px;color:#9399b2}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div id="hud"></div>
+<div id="note">this mind speaks 8 symbols today — it is an infant, truthfully shown</div>
+<div id="ctl">
+  teach k<select id="tk"></select> v<select id="tv"></select>
+  <button id="bteach">teach</button>
+  &nbsp; ask k<select id="ak"></select>
+  <button id="bask">ask</button>
+  <span id="msg" style="color:#a6e3a1"></span>
+</div>
+<div id="foot"></div>
+<div id="panel"><span class="x" onclick="closePanel()">close</span>
+  <h2 id="ptitle"></h2><pre id="pbody"></pre></div>
+<script>
+"use strict";
+// ── ALL data is REAL, from THIS node's /galaxy.json + /events. No fake
+//    stars, no decorative nebulae (galaxy.md §5 sparse-galaxy stance).
+const cv=document.getElementById("sky"),ctx=cv.getContext("2d");
+let W=0,H=0;
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+addEventListener("resize",resize);resize();
+
+let snap={me:{id:0},peers:[],dropped:0};
+let dreaming=false;              // EV_DMN_IDLE state (galaxy.md §5)
+const flashes=[];                // transient rays/ripples
+const orbiters=[];               // taught fact-particles awaiting consolidation
+let t0=performance.now();
+
+// deterministic per-node placement around my star (no god-view).
+function pos(id){
+  if(id===snap.me.id) return {x:W/2,y:H/2};
+  const a=(id*2.39996323),r=Math.min(W,H)*0.30*(0.5+((id*97)%100)/200);
+  return {x:W/2+Math.cos(a)*r, y:H/2+Math.sin(a)*r};
+}
+const STATE=["UNKNOWN","ALIVE","SUSPECT","DEAD"];
+function stateColor(st,threat){
+  if(st===3) return "#45475a";           // DEAD husk
+  if(st===2) return "#f9e2af";           // SUSPECT flicker
+  const hue=200-(threat||0)*1.6;         // threat red-shift
+  return `hsl(${hue},70%,65%)`;
+}
+
+function draw(){
+  const now=performance.now(),tms=now-t0;
+  ctx.clearRect(0,0,W,H);
+  // gossip threads = drawn only for flashes (real events), §5
+  for(const f of flashes){
+    const age=now-f.t, life=f.kind==="ripple"?1400:900;
+    if(age>life){continue;}
+    const al=1-age/life;
+    const a=pos(f.src||snap.me.id), b=pos(f.dst!=null?f.dst:snap.me.id);
+    ctx.strokeStyle=`rgba(${f.rgb},${al*0.8})`;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    if(f.kind==="ripple"){
+      const me=pos(snap.me.id);ctx.strokeStyle=`rgba(${f.rgb},${al})`;
+      ctx.beginPath();ctx.arc(me.x,me.y,40+age/14,0,7);ctx.stroke();
+    }
+  }
+  flashes.splice(0,flashes.length,...flashes.filter(f=>now-f.t<1500));
+
+  // peer stars (real membership)
+  for(const p of snap.peers){
+    if(p.state===0) continue;            // UNKNOWN = not drawn (§5)
+    const q=pos(p.id);
+    let r=4+(100-(p.pressure<0?50:p.pressure))/22;   // brightness ~ spare cap
+    let col=stateColor(p.state,p.threat);
+    let al=1;
+    if(p.state===2) al=0.4+0.4*Math.abs(Math.sin(tms/200));   // flicker
+    if(p.state===3) al=0.30;
+    if(p.fresh>9000) al*=0.45;           // stale = faded (古さの尊重)
+    ctx.globalAlpha=al;ctx.fillStyle=col;
+    ctx.beginPath();ctx.arc(q.x,q.y,r,0,7);ctx.fill();
+    ctx.globalAlpha=1;ctx.fillStyle="#9399b2";ctx.font="10px monospace";
+    ctx.fillText("node"+p.id+(p.fresh>9000?" (stale "+Math.round(p.fresh/1000)+"s)":""),q.x+r+3,q.y+3);
+  }
+
+  // my star — center; breathing pulse iff literally dreaming
+  const me=pos(snap.me.id);
+  let mr=10, pulse=1;
+  if(dreaming) pulse=0.6+0.4*Math.abs(Math.sin(tms/700));   // slow breath
+  ctx.fillStyle=dreaming?"#94e2d5":"#89b4fa";
+  ctx.globalAlpha=pulse;
+  ctx.beginPath();ctx.arc(me.x,me.y,mr+(dreaming?6*(1-pulse):0),0,7);ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
+  ctx.fillText("★ ME (node"+snap.me.id+")"+(dreaming?" — dreaming":""),me.x+mr+5,me.y+4);
+
+  // orbiting taught fact-particles (real pending engrams)
+  for(const o of orbiters){
+    const a=tms/600+o.ph, rr=34;
+    const x=me.x+Math.cos(a)*rr, y=me.y+Math.sin(a)*rr*0.6;
+    ctx.fillStyle="#fab387";ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();
+    ctx.fillStyle="#9399b2";ctx.fillText("k"+o.k+"="+o.v,x+5,y);
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+function flash(kind,src,dst,rgb){flashes.push({kind,src,dst,rgb,t:performance.now()});}
+
+// ── SSE: every photon is a real event (galaxy.md §1) ──────────────
+function connectEvents(){
+  const es=new EventSource("/events");
+  es.onmessage=(e)=>{
+    let v;try{v=JSON.parse(e.data);}catch(_){return;}
+    switch(v.type){
+      case "dmn_idle": dreaming=true; break;
+      case "dmn_wake": dreaming=false; break;
+      case "teach": orbiters.push({k:v.a,v:v.b,ph:Math.random()*6}); break;
+      case "consolidate": orbiters.shift(); break;   // a particle sinks in
+      case "ask": flash("ray",snap.me.id,null,"203,166,247"); break;
+      case "drpc_in": flash("ripple",v.src,snap.me.id,"166,227,161"); break;
+      case "drpc_out": flash("ray",snap.me.id,v.dst,"137,180,250"); break;
+      case "moe": flash("ray",snap.me.id,v.dst,"249,226,175"); break;
+      case "swim": break;   // membership reflected by /galaxy.json snapshot
+    }
+  };
+  es.onerror=()=>{};   // EventSource auto-reconnects
+}
+connectEvents();
+
+// ── 1 Hz snapshot ────────────────────────────────────────────────
+async function poll(){
+  try{
+    const r=await fetch("/galaxy.json");snap=await r.json();
+    const m=snap.me;
+    document.getElementById("hud").innerHTML=
+      `<b>node ${m.id}</b> · region ${m.region} · dmn ${m.dmn===1?"IDLE (dreaming)":"ACTIVE"}`+
+      `<br>pending facts: ${m.pending} · lifetime sleep-rounds: ${m.rounds}`+
+      `<br>pressure ${m.pressure} · threat ${m.threat} · dropped events ${snap.dropped}`;
+    document.getElementById("foot").innerHTML=
+      `this is node ${m.id}'s view — gossip-bounded · peers known: ${snap.peers.filter(p=>p.state>0).length}`;
+    dreaming=(m.dmn===1);
+    // keep orbiter count honest with real pending
+    while(orbiters.length>m.pending) orbiters.pop();
+  }catch(_){}
+}
+setInterval(poll,1000);poll();
+
+// ── pickers ──────────────────────────────────────────────────────
+function fill(id,n){const s=document.getElementById(id);
+  for(let i=0;i<n;i++){const o=document.createElement("option");o.value=i;o.text=i;s.add(o);}}
+fill("tk",8);fill("tv",4);fill("ak",8);
+function msg(t,ok){const m=document.getElementById("msg");
+  m.style.color=ok?"#a6e3a1":"#f38ba8";m.textContent=t;
+  setTimeout(()=>{m.textContent="";},4000);}
+async function postForm(path,body){
+  const r=await fetch(path,{method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
+  return r.json();
+}
+document.getElementById("bteach").onclick=async()=>{
+  const k=tk.value,v=tv.value;
+  try{const j=await postForm("/teach",`k=${k}&v=${v}`);
+    msg(j.ok?`taught k=${k} v=${v} (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);}
+  catch(_){msg("teach failed",false);}
+};
+document.getElementById("bask").onclick=async()=>{
+  const k=ak.value;
+  try{const j=await postForm("/ask",`k=${k}`);
+    msg(`ask k=${k} -> pred ${j.pred} (share ${(j.share/10).toFixed(1)}%)`,true);}
+  catch(_){msg("ask failed",false);}
+};
+
+// ── click a star -> /self.json (mine) or peer world-row ───────────
+async function openSelf(){
+  const r=await fetch("/self.json");const j=await r.json();
+  document.getElementById("ptitle").textContent="self/lin — my autobiography";
+  document.getElementById("pbody").textContent=
+    (j.present
+      ? `self_id ${j.self_id}\nseq     ${j.seq}\nhash    ${j.hash}\nprev    ${j.prev}\n\n`+
+        `tamper-evident, not unforgeable (signatures deferred) — the Self layer's caveat.`
+      : "no committed self lineage yet on this node.");
+  document.getElementById("panel").classList.add("open");
+}
+function openPeer(p){
+  document.getElementById("ptitle").textContent="node"+p.id+" — as gossiped";
+  document.getElementById("pbody").textContent=
+    `state    ${STATE[p.state]}\nregion   ${p.region}\ndevice   ${p.device}\n`+
+    `pressure ${p.pressure}\nthreat   ${p.threat}\nat-risk  ${p.atrisk}\n`+
+    `as gossiped ${Math.round(p.fresh/1000)}s ago`;
+  document.getElementById("panel").classList.add("open");
+}
+function closePanel(){document.getElementById("panel").classList.remove("open");}
+window.closePanel=closePanel;
+cv.addEventListener("click",(e)=>{
+  const me=pos(snap.me.id);
+  if(Math.hypot(e.clientX-me.x,e.clientY-me.y)<22){openSelf();return;}
+  for(const p of snap.peers){if(p.state===0)continue;const q=pos(p.id);
+    if(Math.hypot(e.clientX-q.x,e.clientY-q.y)<14){openPeer(p);return;}}
+});
+</script>
+</body>
+</html>

@@ -22,6 +22,8 @@
 #include "dtr.h"
 #include "degrade.h"
 #include "ga.h"
+#include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
+#include "galaxy.h"   /* galaxy v1: S2/S3 emit hooks */
 #include "lm_consolidate.h"   /* living-mind: rest-time sleep-consolidation */
 #include "kernel.h"
 
@@ -83,6 +85,7 @@ void dmn_trigger(void)
     if (dmn_state == DMN_IDLE) {
         dmn_state = DMN_ACTIVE;
         dmn_stats.idle_to_active++;
+        galaxy_emit(EV_DMN_WAKE, drpc_my_node, GALAXY_NODE_NONE, 0, 0);  /* S2: the star wakes (galaxy.md) */
     }
 }
 
@@ -115,8 +118,10 @@ static void dmn_idle_work(void)
      * organ). No-op until engrams are pending (e.g. captured by a prior
      * `dmn test` run or, later, the live conversational fast layer). */
     if (dmn_stats.idle_runs % GA_INTERVAL == 1 && lm_engrams_pending()) {
-        if (lm_consolidate_idle_round())
+        if (lm_consolidate_idle_round()) {
+            galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 0, 0);  /* S3: an engram sinks (galaxy.md) */
             dmn_puts("[dmn] sleep: replayed engrams -> consolidated weights\r\n");
+        }
     }
 
     /* living-mind Part VI (LM-5, 随時): in-context conversation facts
@@ -129,6 +134,7 @@ static void dmn_idle_work(void)
     if (r3_facts_pending()) {
         if (r3_consolidate_idle_round()) {
             dmn_r3_round_count++;            /* the ONLY ++ site (VII.5) */
+            galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 1, 0);  /* S3: the taught fact sinks into rw[] (galaxy.md) */
             dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
         }
     }
@@ -179,6 +185,7 @@ void dmn_task(INT stacd, void *exinf)
             if (dmn_state == DMN_ACTIVE) {
                 dmn_state = DMN_IDLE;
                 dmn_stats.active_to_idle++;
+                galaxy_emit(EV_DMN_IDLE, drpc_my_node, GALAXY_NODE_NONE, 0, 0);  /* S2: my star starts dreaming (galaxy.md) */
                 dmn_puts("[dmn] -> IDLE  (no stimulus for ");
                 dmn_putdec(idle_for);
                 dmn_puts("s)\r\n");

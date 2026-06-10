@@ -315,6 +315,26 @@ INT world_peer_region_fresh(UB node)
     return (rid == 0xFF) ? -1 : (INT)rid;
 }
 
+/* galaxy v1 (galaxy.md §9, S1/S12): the table already stores device_type
+ * from each beacon; expose it so /galaxy.json can label a peer star by
+ * arch+role. Returns WORLD_DEV_* or -1 if the node is unknown. */
+INT world_peer_device(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    return (INT)table[node].beacon.device_type;
+}
+
+/* galaxy v1 (galaxy.md §5, S11/S12 honesty): age in ms since this node
+ * last freshly observed `node`'s beacon, so the page can fade stale
+ * peers (古さの尊重). Returns -1 if the node is unknown. */
+INT world_peer_age_ms(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    UW now = now_ms();
+    UW age = (now >= table[node].last_ms) ? (now - table[node].last_ms) : 0;
+    return (INT)age;
+}
+
 /* テスト専用: 起動後 ms ミリ秒だけ self-beacon を抑止する (G12 デモ用)。
  * usermain が PKERNEL_WORLD_BEACON_HOLD_MS から注入する。0 = 無効 (既定)。 */
 void world_set_beacon_hold(UW ms)

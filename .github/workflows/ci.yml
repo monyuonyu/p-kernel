@@ -215,6 +215,20 @@ jobs:
           # dmn task itself ran the round — never printed by cert-driven
           # direct calls).
           grep -aF '[dmn] sleep: distilled in-context facts -> rw[]' selftest.log
+      # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
+      # data-plane gate — curl-driven, non-flaky (end-state within a bound).
+      # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
+      # [galaxy-events] (3-node FULL mesh: a remote drpc INFER produces a
+      # matching SSE drpc_in), [galaxy-teach] (POST /teach -> drains via REAL
+      # DMN pulses <=120s -> POST /ask returns the taught value, riding the
+      # LM-6 mouth end-to-end through HTTP). Pixels are NOT certified (§7).
+      # curl + python3 are already on ubuntu-latest.
+      - name: Galaxy observation-window cert (galaxy.md §8)
+        run: |
+          timeout 300 samples/38_galaxy/galaxy_cert.sh | tee galaxy_cert.log
+          grep -aF '[galaxy-serve] PASS'  galaxy_cert.log
+          grep -aF '[galaxy-events] PASS' galaxy_cert.log
+          grep -aF '[galaxy-teach] PASS'  galaxy_cert.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)

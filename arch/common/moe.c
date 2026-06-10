@@ -45,6 +45,7 @@
 #include "reflex.h"     /* G17: 推論完了点 → §8 反射層 (思考→行動の片肺解消)   */
 #include "dtr.h"        /* G38: 学習モデルの実 softmax 確信度で反射をゲート     */
 #include "gossip_learn.h" /* 本丸: gl_merge — no-central 集合学習で返答精度検証   */
+#include "galaxy.h"     /* galaxy v1: S6 moe firing emit hook */
 #include "ai_kernel.h"
 #include "kernel.h"
 
@@ -440,6 +441,10 @@ UB moe_infer(B temp, B hum, B press, B light)
 
     UB gate_class = learned_class;             /* ルーティング = 学習脳 */
     UB expert     = select_expert(gate_class);
+
+    /* S6 (galaxy.md): an inference flash — my star fires toward the
+     * chosen expert star. ONE emit at the single select_expert site. */
+    galaxy_emit(EV_MOE, drpc_my_node, expert, gate_class, learned_class);
 
     /* このノードがこの推論で発火したことを world-table へ通知する。
      * 全網マップ (world.c) の firing インジケータが点灯する。 */

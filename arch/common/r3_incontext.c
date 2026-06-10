@@ -25,6 +25,8 @@
 #include "dtr.h"       /* shared kernels: dt_linear/dt_softmax/dt_relu/
                           dt_sqrt/dtr_ln_fwd_cache/dtr_ln_bwd/dtr_logf */
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
+#include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
+#include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -503,6 +505,47 @@ static volatile UB r3_round_busy = 0;
 static void m_quiesce(void)
 {
     while (r3_round_busy) tk_dly_tsk(20);
+}
+
+/* galaxy v1 (galaxy.md §6 — "The concurrency slice Part VII named, now
+ * due"). VII.4 said the r3_round_busy quiesce is "a flag, not a lock:
+ * sufficient ONLY because... verbs cannot be preempted by the round. If
+ * R3 queries ever move off the shell task, this becomes a real mutex —
+ * named for that slice, not built." The galaxy task IS a second caller
+ * task, so this slice builds the named mutex: ONE maxsem-1 semaphore,
+ * acquired at mind_cmd entry, released at exit. Putting the gate INSIDE
+ * mind_cmd means no caller (shell, web, future) can forget it. The inner
+ * r3_round_busy quiesce spin-sleep is UNCHANGED. Lazily created (no
+ * mind_init exists); m_gate<0 until first mind_cmd. */
+static ID m_gate = -1;
+
+static void m_gate_acquire(void)
+{
+    if (m_gate < 0) {
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
+                      .isemcnt = 1, .maxsem = 1 };
+        m_gate = tk_cre_sem(&cs);
+    }
+    if (m_gate >= 0) tk_wai_sem(m_gate, 1, TMO_FEVR);
+}
+
+static void m_gate_release(void)
+{
+    if (m_gate >= 0) tk_sig_sem(m_gate, 1);
+}
+
+/* galaxy.md §6: snapshot of the last `mind ask` result, written at the
+ * single m_ask site below; read by the web /ask bridge via the public
+ * mind_last_answer(). Console output remains the verb's primary record. */
+static UB m_last_k     = 0;
+static UB m_last_v     = 0;
+static UW m_last_share = 0;   /* modal class percent *10 (750 = 75.0%) */
+
+void mind_last_answer(UB *k, UB *v, UW *share)
+{
+    if (k)     *k     = m_last_k;
+    if (v)     *v     = m_last_v;
+    if (share) *share = m_last_share;
 }
 
 /* substrate ready? rw[] is a zeroed static at boot (VII.0 #2); the
@@ -1447,6 +1490,7 @@ static void m_teach(const UB *p, const UB *end)
     r_puts("%  (masked share of v pre-sleep, N="); r_putdec(M_PRE_N);
     r_puts(" held-out; gate <=33)\r\n");
 
+    galaxy_emit(EV_TEACH, drpc_my_node, GALAXY_NODE_NONE, (UH)k, (UH)v);  /* S4: a fact-particle starts orbiting my star (galaxy.md) */
     if (pre_share > 33.0f)                         /* (7) the tag (VII.6) */
         r_puts("[teach-arrival] REDUNDANT (already leaning)\r\n");
     else if (pend == 1 && agree == 100)
@@ -1472,6 +1516,12 @@ static void m_ask(const UB *p, const UB *end)
 
     float share[R_VALV];
     UB pred = m_masked_vote(k, M_ASK_N, share);
+    /* galaxy.md §6: the single site where ask computes pred/share — the
+     * web /ask bridge reads this snapshot after mind_cmd("ask k"). */
+    m_last_k     = (UB)k;
+    m_last_v     = pred;
+    m_last_share = (UW)(share[pred] * 10.0f + 0.5f);
+    galaxy_emit(EV_ASK, drpc_my_node, GALAXY_NODE_NONE, (UH)k, (UH)pred);  /* S4: an outgoing question ray (galaxy.md) */
     r_puts("[mind] ask k="); r_putdec((UW)k);
     r_puts("  pred="); r_putdec(pred);
     r_puts(" share="); r_putf1(share[pred]);
@@ -1552,13 +1602,20 @@ static void m_wait(const UB *p, const UB *end)
  * usermains beside the `handoff` branch. */
 void mind_cmd(const UB *args, UW len)
 {
+    /* galaxy.md §6: the named VII.4 mutex — acquired here so EVERY caller
+     * (shell, galaxy web, future) is serialized; no caller can forget it.
+     * Strict priority (galaxy pri 8 / shell, both >> dmn pri 13) still
+     * guarantees the round cannot preempt a verb; the gate adds caller-
+     * vs-caller exclusion now that the web task is a second caller. */
+    m_gate_acquire();
     const UB *p = args, *end = args + len;
     while (p < end && (*p == ' ' || *p == '\t')) p++;
-    if (p >= end) { m_quiesce(); m_status(); return; }
-    if (m_kw(&p, end, "teach"))      m_teach(p, end);
+    if (p >= end)                    { m_quiesce(); m_status(); }
+    else if (m_kw(&p, end, "teach")) m_teach(p, end);
     else if (m_kw(&p, end, "ask"))   m_ask(p, end);
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else r_puts("usage: mind [teach <k> <v> | ask <k> | wait [secs]]  (bare = status)\r\n");
+    m_gate_release();
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
