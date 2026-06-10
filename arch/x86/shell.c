@@ -209,6 +209,7 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  raft                   - Raftコンセンサス状態表示\r\n");
     sout("  moe                    - MoE推論ルーター統計表示\r\n");
+    sout("  ring3 test             - ring3生存ゲート (フォールト→reap→再起動)\r\n");
     sout("  world                  - 全網状況マップ表示 (alias: map) — ゴシップ由来、中央なし\r\n");
     sout("  spawn-stat             - 自己増殖統計表示\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
@@ -1358,6 +1359,187 @@ static void cmd_guard(const char *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/* ring3 — ring3-core Wave B acceptance gate                           */
+/* (docs/architecture/ring3-core.md II.3 — falsifiable, fake-resistant)*/
+/*                                                                     */
+/* What this slice proves (honest bound, II.4): the moe class-         */
+/* inference computation is exercised FROM a ring-3 task (behind       */
+/* SYS_INFER — the math body still runs ring-0; relocating it into     */
+/* the user ELF is Wave C), and a deliberate ring-3 fault is SURVIVED  */
+/* by the kernel: the task is reaped, the scheduler keeps running,     */
+/* and a restart reproduces the live ring-0 oracle.                    */
+/* ------------------------------------------------------------------ */
+
+/* Survival counters — boot/x86/idt.c (the survival branch itself). */
+IMPORT volatile UW ring3_faults_reaped;
+IMPORT volatile UW last_fault_from_ring;
+/* gate-1 class channel — arch/x86/syscall.c.  core_moe.elf returns the
+ * class it got from SYS_INFER as its SYS_EXIT code; the kernel records
+ * it.  A fault-reap records -86 (never a valid class), so a crashed
+ * run can never masquerade as a clean inference. */
+IMPORT W user_last_exit_code(void);
+#define R3_EXIT_FAULT  (-86)   /* must match USER_EXIT_FAULT in syscall.c */
+
+/* V0 — the fixed test vector.  MUST match
+ * samples/12_ring3/01_core_moe/core_moe.c and 02_core_crash/core_crash.c.
+ * The expected class C0 is NOT hard-coded anywhere: it is whatever the
+ * live ring-0 moe_infer(V0) returns at run time (gate 1).             */
+#define R3_V0_T  30
+#define R3_V0_H  10
+#define R3_V0_P  5
+#define R3_V0_L  90
+
+/* gate-3 sentinel: a ring-0 task that sleeps across the crash and bumps
+ * a counter.  "Scheduler alive" = the counter ADVANCES after the crash
+ * (a counter comparison, not a print).                                */
+static volatile UW  r3s_ticks;
+static volatile INT r3s_stop;
+static void r3_sentinel_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    while (!r3s_stop) {
+        tk_dly_tsk(20);
+        r3s_ticks++;
+    }
+    tk_ext_tsk();
+}
+
+/* Run a user ELF and wait (bounded) until SYS_EXIT or the fault reap
+ * signals the exit semaphore.  E_OK = the task terminated.            */
+static ER r3_run_elf(const char *path)
+{
+    stdin_activate();
+    ID tid = elf_exec(path, path);
+    if (tid < E_OK) {
+        stdin_deactivate();
+        return (ER)tid;
+    }
+    ER er = tk_wai_sem(stdin_get_exit_sem(), 1, 15000);
+    stdin_deactivate();
+    return er;
+}
+
+static void cmd_ring3(const char *arg)
+{
+    while (*arg == ' ') arg++;
+    if (!(arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t')) {
+        sout("Usage: ring3 test\r\n");
+        return;
+    }
+    if (!vfs_ready) {
+        sout("ring3: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
+        sout("[ring3-survival] FAIL\r\n");
+        return;
+    }
+
+    /* ---- quiesce the single user address space (CDN-4a) ----------
+     * All user ELFs share USER_CODE_BASE 0x400000; a resident daemon
+     * (init.rc: `guard /infer_d.elf`) would be clobbered by our execs
+     * and fault at an unpredictable time, poisoning the reaped==1
+     * exact check.  Pause the watchdog and kill the daemon; resumed
+     * at the end (heal then revives it). */
+    heal_elf_pause(TRUE);
+    dproc_kill_by_name("infer_d.elf");   /* ignore result if absent */
+    tk_dly_tsk(100);
+
+    /* gate-1 oracle: ONE live ring-0 moe_infer(V0) call.  The ring-3
+     * result is compared against THIS value, so the gate cannot be
+     * greened by returning a constant. */
+    UB r0_class = moe_infer(R3_V0_T, R3_V0_H, R3_V0_P, R3_V0_L);
+
+    UW reaped0 = ring3_faults_reaped;
+
+    /* start the gate-3 sentinel */
+    r3s_ticks = 0;
+    r3s_stop  = 0;
+    T_CTSK ct;
+    ct.exinf   = NULL;
+    ct.tskatr  = TA_HLNG | TA_RNG0;
+    ct.task    = r3_sentinel_task;
+    ct.itskpri = 10;
+    ct.stksz   = 2048;
+    ID sent_tid = tk_cre_tsk(&ct);
+    const char *fail = NULL;
+    if (sent_tid < E_OK || tk_sta_tsk(sent_tid, 0) < E_OK)
+        fail = "g3-sentinel-create";
+
+    W  r3_class = -1, restart_class = -1, crash_exit = 0;
+    UW reaped_delta = 0, from_ring = 0;
+    UW ticks_at_crash = 0, ticks_after = 0;
+
+    /* ---- gate 1 (R3-INFER): ring3 SYS_INFER == ring0 oracle ------- */
+    if (!fail) {
+        if (r3_run_elf("core_moe.elf") != E_OK) fail = "g1-no-exit";
+        else {
+            r3_class = user_last_exit_code();
+            if (r3_class != (W)r0_class) fail = "g1-class-mismatch";
+        }
+    }
+
+    /* ---- gate 2 (CRASH-CAUGHT): exactly one reap, from ring 3 ----- */
+    if (!fail) {
+        /* The exit semaphore being signalled at all == exception_handler
+         * returned control to the kernel instead of hlt-ing (the reap
+         * path signals it); this very shell task observing it is the
+         * "handler returned, no halt" condition. */
+        if (r3_run_elf("core_crash.elf") != E_OK) fail = "g2-no-reap";
+        ticks_at_crash = r3s_ticks;
+        reaped_delta   = ring3_faults_reaped - reaped0;
+        from_ring      = last_fault_from_ring;
+        crash_exit     = user_last_exit_code();
+        if (!fail && reaped_delta != 1) fail = "g2-reaped!=1";
+        if (!fail && from_ring != 3)    fail = "g2-from-ring!=3";
+        /* a clean SYS_EXIT here would mean the fault never fired */
+        if (!fail && crash_exit != R3_EXIT_FAULT) fail = "g2-no-fault-exit";
+    }
+
+    /* ---- gate 3 (SCHED-ALIVE): sentinel advances AFTER the crash -- */
+    if (!fail) {
+        tk_dly_tsk(100);
+        ticks_after = r3s_ticks;
+        if (ticks_after <= ticks_at_crash) fail = "g3-sched-dead";
+    }
+
+    /* ---- gate 4 (RESTART-OK): restart reproduces the oracle ------- */
+    if (!fail) {
+        if (r3_run_elf("core_moe.elf") != E_OK) fail = "g4-no-exit";
+        else {
+            restart_class = user_last_exit_code();
+            if (restart_class != (W)r0_class) fail = "g4-class-mismatch";
+        }
+    }
+
+    /* stop + reclaim the sentinel; resume the ELF watchdog */
+    r3s_stop = 1;
+    if (sent_tid >= E_OK) {
+        tk_dly_tsk(60);
+        tk_del_tsk(sent_tid);
+    }
+    heal_elf_pause(FALSE);
+
+    if (!fail) {
+        sout("ring3: PASS  infer=");
+        sout_dec((UW)r0_class);
+        sout(" ring3==ring0:Y  reaped=1 from_ring=3  sched_post=Y  restart=");
+        sout_dec((UW)restart_class);
+        sout(":Y\r\n");
+        sout("[ring3-survival] PASS\r\n");
+    } else {
+        sout("ring3: FAIL ");
+        sout(fail);
+        sout("  (r0=");      sout_dec((UW)r0_class);
+        sout(" r3=");        sout_dec((UW)r3_class);
+        sout(" restart=");   sout_dec((UW)restart_class);
+        sout(" reaped=");    sout_dec(reaped_delta);
+        sout(" from_ring="); sout_dec(from_ring);
+        sout(" ticks=");     sout_dec(ticks_at_crash);
+        sout("/");           sout_dec(ticks_after);
+        sout(")\r\n");
+        sout("[ring3-survival] FAIL\r\n");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* New filesystem write commands                                       */
 /* ------------------------------------------------------------------ */
 
@@ -2137,6 +2319,8 @@ static void execute(const char *cmd)
         { cmd_dtr(cmd + 3); return; }
     if (cmd[0]=='d' && cmd[1]=='m' && cmd[2]=='n')
         { cmd_dmn(cmd + 3); return; }
+    if (cmd[0]=='r' && cmd[1]=='i' && cmd[2]=='n' && cmd[3]=='g' && cmd[4]=='3')
+        { cmd_ring3(cmd + 5); return; }
     if (cmd[0]=='s' && cmd[1]=='e' && cmd[2]=='l' && cmd[3]=='f' &&
         (cmd[4]==' ' || cmd[4]=='\0'))
         { cmd_self(cmd + 4); return; }

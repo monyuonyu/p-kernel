@@ -258,6 +258,49 @@ jobs:
       - name: Build boot/aarch64 (QEMU virt kernel.elf)
         run: make -C boot/aarch64
 
+  ring3-survival:
+    # ring3-core Wave B acceptance gate (docs/architecture/ring3-core.md II.3):
+    # boot the bare-metal i686 kernel in QEMU with the FAT32 user-ELF disk,
+    # type `ring3 test` over serial, and require the greppable PASS tag.
+    # The verb compares the ring-3 SYS_INFER class against a LIVE ring-0
+    # moe_infer oracle, crashes a ring-3 task (#PF) and requires the kernel
+    # to reap it (exactly once, from ring 3), proves the scheduler advanced
+    # AFTER the crash via a sentinel counter, and re-runs the inference.
+    name: ring3 survival gate (boot QEMU x86, fault -> reap -> restart)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain + QEMU + FAT tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-i686-linux-gnu make qemu-system-x86 dosfstools mtools
+      - name: Build kernel + disk image
+        run: make -C boot/x86 all disk
+      - name: Boot QEMU, run `ring3 test`, grep the gate
+        run: |
+          cd boot/x86
+          # Send the verb after the shell is up; keep stdin open while it runs.
+          # Sent twice: if a slow boot eats the first line, the second
+          # still lands (the verb is re-runnable; its counters are deltas).
+          ( sleep 25; printf 'ring3 test\n'; sleep 60; printf 'ring3 test\n'; sleep 60 ) | \
+            timeout 150 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
+              -serial stdio -display none -cpu qemu64 \
+              -netdev user,id=n0 -device rtl8139,netdev=n0 \
+              -drive file=disk.img,format=raw,if=ide,index=0 \
+              > ring3.log 2>&1 &
+          QPID=$!
+          # Poll for the gate tag, then stop QEMU early.
+          for i in $(seq 1 140); do
+            grep -aqF '[ring3-survival]' ring3.log && break
+            sleep 1
+          done
+          kill $QPID 2>/dev/null || true
+          wait $QPID 2>/dev/null || true
+          cat ring3.log
+          grep -aF '[ring3-survival] PASS' ring3.log
+
   relay-tests:
     name: Relay round-trip suite (6 scenarios)
     runs-on: ubuntu-latest

@@ -20,6 +20,7 @@
 #include "kdds.h"
 #include "edf.h"
 #include "dtr.h"
+#include "moe.h"
 #include <syscall.h>       /* tk_cre_tsk, tk_sta_tsk, ... */
 #include <subsystem.h>     /* SSYCB, knl_ssy_cleanup */
 
@@ -96,6 +97,66 @@ void stdin_feed(UB c)
 
 /* Returns the exit semaphore ID so shell.c can poll it */
 ID stdin_get_exit_sem(void) { return stdin_exit_sem; }
+
+/* ----------------------------------------------------------------- */
+/* ring3-core Wave B — user-process unwind (shared by SYS_EXIT and   */
+/* the ring-3 fault reap)                                            */
+/*                                                                   */
+/* user_last_exit is the gate-1 class channel: core_moe.elf passes   */
+/* the class it received from SYS_INFER back as its SYS_EXIT code,   */
+/* so the value makes the full round trip                            */
+/*   kernel moe_infer → ring3 EAX → user code → SYS_EXIT(arg0) →    */
+/*   here → shell `ring3 test` (via user_last_exit_code()).          */
+/* The shell verb therefore cannot be greened by a kernel-side       */
+/* recording alone — the ring-3 task must really have run and        */
+/* returned the value.                                               */
+/* ----------------------------------------------------------------- */
+#define USER_EXIT_NONE   (-9999)   /* no user task has exited yet     */
+#define USER_EXIT_FAULT  (-86)     /* task was reaped by a ring3 fault */
+
+static W user_last_exit = USER_EXIT_NONE;
+
+W user_last_exit_code(void) { return user_last_exit; }
+
+/* Common tail of SYS_EXIT: release subsystem resources, unblock the
+ * shell relay loop, drop the process page tables, and exit the task.
+ * NEVER returns (tk_ext_tsk dispatches the next task).              */
+static void user_proc_unwind(void)
+{
+    /* Release subsystem resources (sockets, fds, etc.) */
+    knl_ssy_cleanup(knl_ctxtsk->tskid);
+    /* Unblock shell relay loop */
+    if (stdin_active) {
+        stdin_active = FALSE;
+        tk_sig_sem(stdin_exit_sem, 1);
+    }
+    /* Free process page tables and restore kernel address space */
+    {
+        ID  tid      = knl_ctxtsk->tskid;
+        UW  proc_cr3 = paging_get_task_cr3(tid);
+        paging_switch(paging_get_kernel_cr3());
+        paging_proc_destroy(proc_cr3);
+        paging_set_task_cr3(tid, 0);
+    }
+    tk_ext_tsk();
+}
+
+/* Called from exception_handler (boot/x86/idt.c) when a fault came
+ * from CS=USER_CS (ring 3): terminate the offending user task via the
+ * exact SYS_EXIT unwind and return control to the scheduler.  The
+ * kernel survives; the caller's (dead) exception frame is abandoned
+ * with the task.  NEVER returns.
+ *
+ * Honest bound (ring3-core.md II.4): this slice's crash binary faults
+ * in PURE USER CODE.  A fault *inside* a syscall (kernel lock held,
+ * half-written p-fs block) is NOT handled here — that is a later
+ * wave's problem (the existing fs_ssy cleanupfn path is the model). */
+void user_fault_reap(void)
+{
+    user_last_exit = USER_EXIT_FAULT;
+    user_proc_unwind();
+    /* NOTREACHED */
+}
 
 /* TCP handle table has moved to net_ssy.c */
 
@@ -711,22 +772,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         tm_putstring((UB *)"\r\n[proc] exited (code=");
         sout_num(arg0);
         tm_putstring((UB *)")\r\np-kernel> ");
-        /* Release subsystem resources (sockets, etc.) */
-        knl_ssy_cleanup(knl_ctxtsk->tskid);
-        /* Unblock shell relay loop */
-        if (stdin_active) {
-            stdin_active = FALSE;
-            tk_sig_sem(stdin_exit_sem, 1);
-        }
-        /* Free process page tables and restore kernel address space */
-        {
-            ID  tid      = knl_ctxtsk->tskid;
-            UW  proc_cr3 = paging_get_task_cr3(tid);
-            paging_switch(paging_get_kernel_cr3());
-            paging_proc_destroy(proc_cr3);
-            paging_set_task_cr3(tid, 0);
-        }
-        tk_ext_tsk();
+        user_last_exit = arg0;   /* gate-1 class channel (see above) */
+        user_proc_unwind();      /* never returns */
         return 0;
     }
 
@@ -958,14 +1005,18 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     /* ------------------------------------------------------------- */
 
     case SYS_INFER: {
-        /* arg0 = sensor_packed (SENSOR_PACK(t,h,p,l)) */
-        B input[MLP_IN] = {
-            SENSOR_UNPACK_T(arg0),
-            SENSOR_UNPACK_H(arg0),
-            SENSOR_UNPACK_P(arg0),
-            SENSOR_UNPACK_L(arg0),
-        };
-        return (W)mlp_forward(input);
+        /* arg0 = sensor_packed (SENSOR_PACK(t,h,p,l))
+         *
+         * ring3-core Wave B (II.1): the ring-3 path exercises the core
+         * computation moe_infer() — the same entry the ring-0 oracle in
+         * shell `ring3 test` calls — instead of the handwritten
+         * mlp_forward.  The math still executes in ring-0 behind this
+         * syscall for THIS slice; relocating the moe.c body into the
+         * ring-3 ELF is the next slice (Wave C). */
+        return (W)moe_infer(SENSOR_UNPACK_T(arg0),
+                            SENSOR_UNPACK_H(arg0),
+                            SENSOR_UNPACK_P(arg0),
+                            SENSOR_UNPACK_L(arg0));
     }
 
     case SYS_AI_SUBMIT: {

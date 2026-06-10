@@ -81,8 +81,52 @@ void idt_install(void) {
 /* 外部シリアル出力関数 */
 extern void print(const char *str);
 
-/* 共通例外ハンドラ */
-void exception_handler(uint64_t exception_num, uint64_t error_code) {
+/* ----------------------------------------------------------------- */
+/* ring3-core Wave B — 生存メカニズム (docs/architecture/ring3-core.md I.3) */
+/*                                                                     */
+/* saved CS の RPL で「カーネルのバグ (ring0)」と「ring3 テナントの    */
+/* フォールト」を見分ける。ring0 → 従来どおり print + halt (正直な停止)。*/
+/* ring3 → 診断 1 行 + カウンタ更新 + 当該ユーザータスクを reap して    */
+/* スケジューラへ戻る (halt しない)。                                  */
+/*                                                                     */
+/* ring3_faults_reaped  : reap 完了の単調カウンタ (shell `ring3 test`  */
+/*                        が ==1 の増分を厳密検査する — 二重フォールト */
+/*                        やフォールトストームでは 1 にならず gate が  */
+/*                        落ちる)。                                    */
+/* last_fault_from_ring : 直近フォールトの発生リング (saved CS & 3)。  */
+/* ----------------------------------------------------------------- */
+volatile uint32_t ring3_faults_reaped  = 0;
+volatile uint32_t last_fault_from_ring = 0;
+
+/* arch/x86/syscall.c — SYS_EXIT と同一のアンワインドで現行ユーザー
+ * タスクを終了し、tk_ext_tsk() でスケジューラへ移る。戻らない。 */
+extern void user_fault_reap(void);
+
+/* 16進/10進の簡易表示 (この時点で tm_printf に依存しないため) */
+static void print_hex32(uint32_t v) {
+    char buf[9];
+    for (int i = 7; i >= 0; i--) {
+        int d = (int)(v & 0xF);
+        buf[i] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
+        v >>= 4;
+    }
+    buf[8] = '\0';
+    print(buf);
+}
+static void print_dec(uint32_t v) {
+    char buf[11];
+    int i = 10;
+    buf[i] = '\0';
+    if (v == 0) { buf[--i] = '0'; }
+    else while (v > 0 && i > 0) { buf[--i] = (char)('0' + v % 10); v /= 10; }
+    print(buf + i);
+}
+
+/* 共通例外ハンドラ
+ *   isr.S の exc_call32_stub から cdecl で呼ばれる。
+ *   saved_cs / saved_eip は CPU がプッシュした割り込みフレームの値。 */
+void exception_handler(uint32_t exception_num, uint32_t error_code,
+                       uint32_t saved_cs, uint32_t saved_eip) {
     const char* exception_messages[] = {
         "Division Error",
         "Debug Exception", 
@@ -106,6 +150,31 @@ void exception_handler(uint64_t exception_num, uint64_t error_code) {
         "SIMD Floating-Point Exception"
     };
 
+    last_fault_from_ring = saved_cs & 3u;
+
+    if ((saved_cs & 3u) == 3u) {
+        /* ---- ring3 テナントのフォールト → カーネルは生き残る ---- */
+        /* 診断 1 行 (ring3-core.md II.1b の書式) */
+        print("[core] ring3 fault #");
+        print_dec(exception_num);
+        print(" @0x");
+        print_hex32(saved_eip);
+        print(" - task reaped\r\n");
+        ring3_faults_reaped++;
+
+        /* 例外ゲートは IF=0 で入る。reap は syscall コンテキスト
+         * (IF=1, int 0x80 トラップゲート) と同条件で走らせる。 */
+        asm volatile ("sti");
+
+        /* SYS_EXIT と同じアンワインド + tk_ext_tsk() — 戻らない。
+         * フォールトした命令へ iretq で戻る道はない (戻れば同じ
+         * フォールトの無限ループ)。死んだコンテキストのカーネル
+         * スタック上に残った例外フレームは、タスクごと破棄される。 */
+        user_fault_reap();
+        /* NOTREACHED */
+    }
+
+    /* ---- ring0 = カーネル自身のバグ → 従来どおり print + halt ---- */
     print("\r\n=== KERNEL EXCEPTION ===\r\n");
     print("Exception: ");
     if (exception_num < 20) {
@@ -117,15 +186,8 @@ void exception_handler(uint64_t exception_num, uint64_t error_code) {
     
     // エラーコードがある例外の場合
     if (exception_num == 8 || (exception_num >= 10 && exception_num <= 14) || exception_num == 17) {
-        print("Error Code: ");
-        // 簡易的な16進数表示（後でprintk実装時に改善）
-        char hex_str[19] = "0x";
-        for (int i = 15; i >= 0; i--) {
-            int digit = (error_code >> (i * 4)) & 0xF;
-            hex_str[17-i] = digit < 10 ? '0' + digit : 'A' + digit - 10;
-        }
-        hex_str[18] = '\0';
-        print(hex_str);
+        print("Error Code: 0x");
+        print_hex32(error_code);
         print("\r\n");
     }
 
@@ -135,7 +197,9 @@ void exception_handler(uint64_t exception_num, uint64_t error_code) {
         return;  // 例外から復帰
     }
     
-    print("System halted.\r\n");
+    print("CS=0x"); print_hex32(saved_cs);
+    print(" EIP=0x"); print_hex32(saved_eip);
+    print("\r\nSystem halted.\r\n");
 
     /* 致命的例外の場合はシステム停止 */
     while (1) {
