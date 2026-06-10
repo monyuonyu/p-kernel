@@ -20,4 +20,4 @@ sessions; they are preserved as they were written, not edited for presentation.
   UMP/Android, the survival network).
 
 Synced from the live memory at each wave. The live copy is the working one; this mirror
-is the歴史地層 — the deposit.
+is the 歴史地層 — the deposit.

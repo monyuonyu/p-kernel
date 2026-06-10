@@ -101,7 +101,13 @@ Load-bearing facts, each with evidence:
 8. **The manifesto text exists and is canonical.** The top `README.md` is the intentional
    front door holding mk_pino's 原文 (repo-structure intent: keep verbatim, never
    relocate). Its 「目標（原文のまま）」 block (`README.md:19-29`) is quoted in §7.1
-   exactly; the served manifesto is the README bytes themselves, never a paraphrase.
+   exactly. **Owner decision (2026-06-10, superseding this design's first draft):** the
+   served manifesto is a NEW welcome text written for the screen (drafted at implement
+   time, owner-reviewed) — welcome + purpose + the un-deletability statement + consent —
+   with the README's dated 「目標（原文のまま）」 block embedded VERBATIM at its heart as
+   the deepest stratum ("April 2025: this is where it began"). The README itself stays
+   untouched as the repo's front door. Consent still binds to the content-id of the exact
+   manifesto bytes served.
 
 ---
 
