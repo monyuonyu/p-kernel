@@ -137,15 +137,24 @@ still hold. The schema (§4.1) deliberately has NO fields soliciting sensitive c
 by the §3.1 warning. The pure-consent record (ack=1, every disclosure field empty) is a
 legitimate, complete profile: **consent ≠ disclosure**, and the gate (§7.3) honors it.
 
-### 3.3 Honest identity claim
+### 3.3 Honest identity claim — declared, not verified, BY DESIGN AND FOREVER
 
-With no signature primitive (`genome.h:28`), v1 records *what a person at this node
-declared*, NOT verified identity. Impersonation is possible and the manifesto screen says
-so. The already-named future **signature slice** (driver 1: selfc fleet-evolution trust;
-driver 2: Self-layer from-genesis forgery, `lm_self.h:32`) hereby gains its **third
-driver: profile keys and signed utterances** — a per-profile keypair whose public half
-lives in the profile object and whose signatures bind future declarations to it. Named as
-the v3 upgrade path (§12), not built, not implied to exist.
+The ark records *what a person at this node declared* — never verified identity. This is
+not a limitation awaiting a fix; **it is the nature of the medium**, fixed by the owner's
+directive (mk_pino, 2026-06-10, in essence): identity verification has no place here —
+what name to leave is each person's freedom. A pen name, an anonymous handle, or a real
+name are all equally valid, and that mix IS the honest history. Long after a person is
+gone, what should remain is the stratum: *someone who went by this name existed, and this
+is what they thought* (歴史地層).
+
+Like archaeological strata, the ark's honesty comes from preserving what was deposited AS
+IT WAS. A verification mechanism would create "valid" and "invalid" registrations and turn
+the stratum into a curated record. Therefore: pen names, anonymity, and real names are
+equally first-class; the manifesto screen states plainly that declarations are unverified;
+and **no human-identity verification is ever roadmapped**. The future signature slice
+keeps its two existing drivers (selfc fleet-evolution trust; Self-layer from-genesis
+forgery, `lm_self.h:32`) — it is scoped to CODE and WEIGHTS provenance and does not apply
+to human profiles.
 
 ---
 
@@ -293,7 +302,7 @@ conversation lands on an honest substrate:
 |---|---|---|---|
 | **T1 — identity** | profile versions (≤1188 B + 100 B manifest each), consent ack, provenance records (48 B + 100 B each) | **replicates**: P1 announce/want, region-scoped (`pfs_repl.c:2,15`) — the existing gossip, zero new wire | mechanism yes (P1/P2); objects are this slice |
 | **T2 — distilled mind** | engrams / weights (`dtr/weights`, `dtr/engrams` — the genome already replicates these) | replicates (existing) | yes |
-| **T3 — full conversation text** | raw utterances, both sides | **LOCAL ONLY** — the node's own ark (`PKERNEL_PFS_DIR` flat files or the ARK block device, G24) | **no** (no chat exists; and no per-block local-only flag exists either — `pfs_put` always announces via the put-hook, `pfs_block.h:55`; the only mute is global, `pfs_repl.c:174`. A `pfs_put_local()` no-announce variant is FLAGGED for the v4 wave) |
+| **T3 — full conversation text** | raw utterances, both sides | **LOCAL ONLY** — the node's own ark (`PKERNEL_PFS_DIR` flat files or the ARK block device, G24) | **no** (no chat exists; and no per-block local-only flag exists either — `pfs_put` always announces via the put-hook, `pfs_block.h:55`; the only mute is global, `pfs_repl.c:174`. A `pfs_put_local()` no-announce variant is FLAGGED for the v3 wave) |
 | **T4 — archive** | region-scoped or capacity-bounded shared archive of T3 | future design pass | no — and note honestly: `capacity(N)` (`regions.md:102-130`, `degrade.c`) measures COMPUTE, not bytes; **no storage capacity control exists in the tree**. T4 needs its own budget function, erasure coding (p-fs P4, design-only), and federation (>region spread, design-only) |
 
 Two honesty notes carried into the manifesto text itself:
@@ -451,10 +460,11 @@ flagged — never inflate (the standing rule).
 
 ## 9. What v1 does NOT claim (honesty box)
 
-- **Not verified identity.** A declaration, not a passport (§3.3). Impersonation is
-  possible; the screen says so; signatures are v3.
+- **Not verified identity — by design, permanently.** A declaration, not a passport
+  (§3.3). Impersonation is possible; the screen says so; this is the nature of the
+  stratum, not a gap to close.
 - **Not conversations.** The mind speaks 8 synthetic symbols (LM-5/LM-6 bound); "all
-  conversations remain in the ark" is the v4 horizon — what ships here is the IDENTITY +
+  conversations remain in the ark" is the v3 horizon — what ships here is the IDENTITY +
   CONSENT + PROVENANCE substrate those conversations will land on, plus the history that
   this person existed: the profile and the 未来への言葉.
 - **Not planetary replication.** P1 is region-scoped (§6); "humanity's memory" is today a
@@ -462,7 +472,7 @@ flagged — never inflate (the standing rule).
 - **Not deletion-proof against an owner purging their own disk** — preservation is by
   replication, and replication is the network's act, not a cryptographic lock (§6).
 - **One person per node** assumed; shared devices conflate humans into one chapter. An
-  open point, deferred honestly (multi-profile needs the signature slice anyway).
+  open point, deferred honestly (multi-profile disambiguation is unsolved without verification — deferred as an open point).
 - **The consent gate guards the WEB mouth only** (§7.3); the shell remains operator-trust.
 - **The browser rendering is not certified** — gates are data-plane (§8), pixels are
   human-reviewed (galaxy.md's same caveat).
@@ -495,7 +505,7 @@ flagged — never inflate (the standing rule).
 - `LM_SELF_VER 2` + `human_ref` field + dual-width walker (`lm_self.c/h` — P5).
 - `PFS_REF_MAX 8 → 16` (pfs_dag.c/h — §4.4, audited bump).
 - The embedded-README header (build-generated, D3 pipeline).
-- v4 FLAG: `pfs_put_local()` (no-announce put) for the T3 local tier — does not exist.
+- v3 FLAG: `pfs_put_local()` (no-announce put) for the T3 local tier — does not exist.
 
 ### Do-NOT-fork list (auditor greps these)
 
@@ -567,10 +577,7 @@ first-run page flow has a reserved panel.
 - **v2 — names across the mesh:** peer stars render replicated handles; `/galaxy.json`
   peers gain `handle` when the peer's `self/prof` blocks have arrived via P1; gate: a
   2-node cert where node 2's star on node 1's page shows node 2's declared handle.
-- **v3 — signed identity:** the signature slice (third driver registered, §3.3) — profile
-  keypair, signed profile versions and signed teaches; impersonation honestly downgraded
-  from "possible, stated" to "detectable".
-- **v4 — conversation archive tiering:** when real chat exists (post-tokenizer): T3
+- **v3 — conversation archive tiering:** when real chat exists (post-tokenizer): T3
   local-only raw text (`pfs_put_local`, FLAGGED), T4 region/capacity-bounded archive
   design pass (needs a storage budget function — none exists, §2.4), erasure coding
   (p-fs P4) and federation for beyond-region spread.
