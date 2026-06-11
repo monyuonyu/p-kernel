@@ -46,11 +46,17 @@ export PKERNEL_RELAY_HOST=127.0.0.1
 export PKERNEL_RELAY_PORT="${PKERNEL_RELAY_PORT:-7441}"
 
 # The off-bias (k*,v*) pick — the LM-6 cert's pair on the 0xA5A5 substrate.
-KSTAR=2
+# LM-8 (living-mind Part IX): teach/ask now carry REAL WORDS. The off-bias
+# pair is the SAME proven token ids (key 2, val 3) spelled as words:
+# key word index 2 = "sun", answer word index 3 = "yellow". The shared mind
+# now crosses the region as WORDS over the versioned wire (MT_WIRE_VER_LANG).
+KWORD=sun           # = key token id 2
+VWORD=yellow        # = answer token id 3
+KSTAR=2             # the token id (still printed by the kernel logs)
 VSTAR=3
-CHANCE=25            # 1/R_VALV
-SHARE_GATE=75        # the LM-6 bar; LM-6 measured 100 post-sleep
-PRE_GATE=33          # chance+8: the fact is NOT already in B's weights
+CHANCE=3            # 100/R_VALV (R_VALV 4->32, LM-8 re-baseline)
+SHARE_GATE=75       # the LM-6 bar; LM-6 measured 100 post-sleep
+PRE_GATE=33         # the fact is NOT already in B's weights
 
 WORK="$(mktemp -d /tmp/p41_work.XXXXXX)"
 declare -A NODE_PID
@@ -171,7 +177,7 @@ fi
 echo
 echo "--- [shared-arrival]: teach k=$KSTAR v=$VSTAR on A; B receives via mind/teach ---"
 TEACH_T=$(date +%s)
-send 1 "mind teach $KSTAR $VSTAR"
+send 1 "mind teach $KWORD $VWORD"     # LM-8: REAL WORDS (= token ids 2,3)
 wait_for "$L1" 'published mind/teach' 15 || bad "A never published mind/teach"
 # B's arrival print comes from the REAL poll of the REAL topic (no injection).
 if wait_for "$L2" '\[shared-arrival\] PASS' 40; then
@@ -203,12 +209,19 @@ wait_for "$L2" 'distilled in-context facts -> rw\[\]' 90 \
     || bad "B's DMN never printed the consolidation line"
 wait_for "$L2" 'wait: drained' 30 || true
 # now ask B on a MASKED prompt: it must answer v* from its OWN weights.
-send 2 "mind ask $KSTAR"
+send 2 "mind ask $KWORD"             # LM-8: ask in WORDS
 ANSWER_T=$(date +%s)
 wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 20 || true
-ASK_LINE=$(grep -a "ask k=$KSTAR " "$L2" | tail -1)
+ASK_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 SHARE=$(echo "$ASK_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]')
 echo "    $ASK_LINE"
+# [lang-wire]: B's answer WORD must equal A's taught word (the real-word
+# flight over the versioned wire — living-mind Part IX, [lang-wire]).
+if echo "$ASK_LINE" | grep -aq "\"$KWORD\" -> \"$VWORD\""; then
+    ok "[lang-wire] PASS — \"$KWORD\"->\"$VWORD\" taught on A answered in WORDS on B (versioned wire)"
+else
+    bad "[lang-wire] — B did not answer \"$VWORD\" in words for \"$KWORD\""
+fi
 grep -a 'fact seq=.*RETAINED' "$L2" | tail -1 | sed 's/^/    /'
 SHARE_INT=$(echo "${SHARE:-0}" | cut -d. -f1)
 DELTA=$((ANSWER_T - TEACH_T))
@@ -245,7 +258,7 @@ if grep -aqE '\[shared-arrival\] PASS|remote teach arrived' "$L3"; then
 else
     ok "C never received the fact (no arrival on C — region scope held)"
 fi
-C_ASK=$(grep -a "ask k=$KSTAR " "$L3" | tail -1)
+C_ASK=$(grep -a "ask \"$KWORD\"" "$L3" | tail -1)
 echo "    C: ${C_ASK:-<no ask output>}"
 # C's answer is the substrate prior only — key NOT in C's queue.
 if grep -aq 'key not in the live queue' "$L3"; then
@@ -304,6 +317,25 @@ fi
 if grep -aqE 'remote teach key .* refused|duplicate .*dropped' "$L2"; then
     grep -aE 'remote teach key .* refused|duplicate .*dropped' "$L2" | tail -1 | sed 's/^/    (guard print) /'
 fi
+
+# ---------------------------------------------------------------------------
+# [lang-wire-verdrop] — the version-mismatch DROP (living-mind Part IX.7/IX.8)
+# ---------------------------------------------------------------------------
+# A receiver whose MT_TEACH_PKT.wire_ver != its own DROPS the packet and PRINTS
+# it (the ONE place the region's shared mind partitions by version, made
+# observable). Exercising it LIVE needs a peer on a DIFFERENT wire_ver (an old
+# LM-7 binary); this 3-node sample is single-version, so the drop CANNOT fire
+# here by construction. The mechanism is in r3_incontext.c (mind_net_task: the
+# `wire_ver != MT_WIRE_VER_LANG -> [lang-wire-verdrop] PASS` branch) and is
+# unit-greppable; a true cross-version cluster is a follow-up sample. We assert
+# the POSITIVE half (no spurious drop fired in this single-version run).
+echo
+echo "--- [lang-wire-verdrop]: single-version cluster -> NO spurious version drop ---"
+if grep -aq 'wire_ver mismatch' "$L2" "$L3" 2>/dev/null; then
+    bad "[lang-wire-verdrop] — a spurious version-mismatch drop fired in a single-version cluster"
+else
+    ok "[lang-wire-verdrop] — no spurious drop (all nodes on MT_WIRE_VER_LANG); the drop branch is code-present + unit-greppable, a cross-version cluster is a follow-up"
+fi
 log "note: same-key/DIFFERENT-value cross-node conflict is partition-gated (a converged region can't stage it) — the REFUSE branch is the same code, exercised in-process by the LM-6 re-teach refusal"
 
 # kill A AFTER B consolidated (B's rw[] already holds the fact).
@@ -311,12 +343,12 @@ log "*** kill -9 node A (pid ${NODE_PID[1]}) — the teacher dies ***"
 kill -9 "${NODE_PID[1]}" 2>/dev/null; NODE_PID[1]=0
 sleep 3
 # B still answers v from its OWN weights — the fact survived its teacher's death.
-send 2 "mind ask $KSTAR"
+send 2 "mind ask $KWORD"
 wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 20 || true
-LIVE_LINE=$(grep -a "ask k=$KSTAR " "$L2" | tail -1)
+LIVE_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 echo "    after A's death: $LIVE_LINE"
 POST_SHARE=$(echo "$LIVE_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)
-if [ "${POST_SHARE:-0}" -ge "$SHARE_GATE" ] && grep -a "ask k=$KSTAR " "$L2" | tail -1 | grep -aq 'share='; then
+if [ "${POST_SHARE:-0}" -ge "$SHARE_GATE" ] && echo "$LIVE_LINE" | grep -aq 'share='; then
     ok "B still answers v=$VSTAR (share=${POST_SHARE}%) AFTER A's death — the Collective survived the source"
 else
     bad "[shared-live] — B failed to answer after A's death (share=${POST_SHARE:-?})"; LIVE=0

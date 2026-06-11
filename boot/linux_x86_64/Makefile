@@ -164,6 +164,7 @@ COMMON_C_SRCS = \
     dtr.c \
     dtr_train.c \
     r3_incontext.c \
+    r3_vocab.c \
     galaxy.c \
     spec.c \
     retrieval.c \

@@ -64,7 +64,7 @@
 <canvas id="sky"></canvas>
 <div id="lang"><select id="langsel" title="language"></select></div>
 <div id="hud"></div>
-<div id="note">this mind speaks 8 symbols today — it is an infant, truthfully shown</div>
+<div id="note">this mind speaks N English words today — still an infant, truthfully shown (word list v1: English)</div>
 <div id="ark"><div class="card">
   <h1 id="arkh">…</h1>
   <pre id="arktext">…</pre>
@@ -89,10 +89,14 @@
   <div class="mid" id="arkmid"></div>
 </div></div>
 <div id="ctl">
-  <span id="lblteach">teach</span> k<select id="tk"></select> v<select id="tv"></select>
+  <span id="lblteach">teach</span>
+  <input id="tk" list="vkeys" size="7" placeholder="word"> →
+  <input id="tv" list="vvals" size="7" placeholder="word">
   <button id="bteach">teach</button>
-  &nbsp; <span id="lblask">ask</span> k<select id="ak"></select>
+  &nbsp; <span id="lblask">ask</span>
+  <input id="ak" list="vkeys" size="7" placeholder="word">
   <button id="bask">ask</button>
+  <datalist id="vkeys"></datalist><datalist id="vvals"></datalist>
   <span id="msg" style="color:#a6e3a1"></span>
 </div>
 <div id="foot"></div>
@@ -377,10 +381,20 @@ async function poll(){
 }
 setInterval(poll,1000);poll();
 
-// ── pickers ──────────────────────────────────────────────────────
-function fill(id,n){const s=document.getElementById(id);
-  for(let i=0;i<n;i++){const o=document.createElement("option");o.value=i;o.text=i;s.add(o);}}
-fill("tk",8);fill("tv",4);fill("ak",8);
+// ── vocab (LM-8): real WORDS, fetched from GET /vocab so the page and
+//    the kernel PROVABLY share the same list (content-id). The datalists
+//    show exactly the words that exist; OOV is refused by the kernel.
+let VOCAB={keys:[],vals:[],kid:"",vid:""};
+function fillList(id,words){const dl=document.getElementById(id);dl.innerHTML="";
+  for(const w of words){const o=document.createElement("option");o.value=w;dl.appendChild(o);}}
+async function loadVocab(){
+  try{const r=await fetch("/vocab");const j=await r.json();
+    VOCAB=j; fillList("vkeys",j.keys||[]); fillList("vvals",j.vals||[]);
+    const note=document.getElementById("note");
+    if(note) note.textContent=`this mind speaks ${(j.keys||[]).length} English key words + ${(j.vals||[]).length} answer words today — still an infant, truthfully shown (word list v1: English)`;
+  }catch(_){/* kernel may predate /vocab; leave free-text inputs */}
+}
+loadVocab();
 function msg(t,ok){const m=document.getElementById("msg");
   m.style.color=ok?"#a6e3a1":"#f38ba8";m.textContent=t;
   setTimeout(()=>{m.textContent="";},4000);}
@@ -390,19 +404,31 @@ async function postForm(path,body){
   return r.json();
 }
 document.getElementById("bteach").onclick=async()=>{
-  const k=tk.value,v=tv.value;
+  const k=tk.value.trim(),v=tv.value.trim();
+  if(!k||!v){ msg("type a key word and an answer word",false); return; }
   try{
     const r=await fetch("/teach",{method:"POST",
-      headers:{"Content-Type":"application/x-www-form-urlencoded"},body:`k=${k}&v=${v}`});
-    if(r.status===403){ msg(S("mustread"),false); arkOpen(); return; }
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:`k=${encodeURIComponent(k)}&v=${encodeURIComponent(v)}`});
+    if(r.status===403){
+      const j=await r.json().catch(()=>({}));
+      if(j&&j.refused==="oov"){ msg(`"${j.word}" not in the ${j.which} vocabulary (English words v1) — refused`,false); return; }
+      msg(S("mustread"),false); arkOpen(); return;
+    }
     const j=await r.json();
-    msg(j.ok?`taught k=${k} v=${v} (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);
+    msg(j.ok?`taught "${k}" → "${v}" (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);
   }catch(_){msg("teach failed",false);}
 };
 document.getElementById("bask").onclick=async()=>{
-  const k=ak.value;
-  try{const j=await postForm("/ask",`k=${k}`);
-    msg(`ask k=${k} -> pred ${j.pred} (share ${(j.share/10).toFixed(1)}%)`,true);}
+  const k=ak.value.trim();
+  if(!k){ msg("type a key word",false); return; }
+  try{const r=await fetch("/ask",{method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:`k=${encodeURIComponent(k)}`});
+    if(r.status===403){ const j=await r.json().catch(()=>({}));
+      msg(`"${j.word||k}" not in the key vocabulary (English words v1) — refused`,false); return; }
+    const j=await r.json();
+    msg(`ask "${k}" → "${j.word!==undefined?j.word:j.pred}" (share ${(j.share/10).toFixed(1)}%)`,true);}
   catch(_){msg("ask failed",false);}
 };
 

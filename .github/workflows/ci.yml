@@ -59,12 +59,14 @@ jobs:
         run: |
           cd boot/linux_x86_64
           # LM-6 (living-mind Part VII): the mind verbs run LAST (after every
-          # amnesia-bomb cert, VII.0 #5) and before exit. (k*,v*)=(2,3) is the
-          # MEASURED off-bias pair: the 0xA5A5 substrate's modal masked guess
-          # for key 2 is class 1 (57.5%); class 3 measures pre_share 0.0% at
-          # N=100 (printed by the teach itself — the in-log evidence).
+          # amnesia-bomb cert, VII.0 #5) and before exit. LM-8 (Part IX): the
+          # teach/ask now carry REAL WORDS. "sun"->"yellow" is the off-bias
+          # pair (= the proven k*=2,v*=3 token ids: key word index 2 = "sun",
+          # answer word index 3 = "yellow"): teacher_agree==100, pre_share
+          # 0.0% at N=100 (printed by the teach itself — the in-log evidence).
+          # `mind lang` runs the LM-8 capacity/recall/oov cert.
           # timeout 300->420: `mind wait` is ~15s nominal/120s worst-case.
-          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\ndmn test\nself test\nmind teach 2 3\nmind wait 120\nmind ask 2\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -178,6 +180,15 @@ jobs:
           grep -aF '[stream-consolidated] PASS' selftest.log
           grep -aF '[stream-grounded] PASS' selftest.log
           grep -aF '[stream-livehook] PASS' selftest.log
+          # living-mind Part IX (LM-8, the language slice): REAL WORDS in,
+          # one REAL WORD out. The widened substrate grad-checks; the
+          # capacity curve (N real word-bindings vs masked recall, bar
+          # DISCOVERED from the curve) holds; a specific binding round-trips
+          # in words; OOV is refused, not guessed. (`mind lang`)
+          grep -aF '[lang-gradcheck] PASS' selftest.log
+          grep -aF '[lang-capacity] PASS' selftest.log
+          grep -aF '[lang-recall] PASS' selftest.log
+          grep -aF '[lang-oov] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard

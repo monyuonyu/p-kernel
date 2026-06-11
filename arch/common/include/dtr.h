@@ -301,6 +301,12 @@ INT  r3_facts_pending(void);
 INT  r3_consolidate_idle_round(void);
 void r3_stream_test(void);
 
+/* LM-8 (living-mind.md Part IX) -- the language slice cert: `mind lang`.
+ * The capacity curve (real word-bindings vs masked recall), the sky->blue
+ * round-trip in WORDS, the OOV refusal, and the named live-wire tags.
+ * Re-baselines LM-4..7 against the widened R_VALV (stricter-only). */
+void r3_lang_test(void);
+
 /* LM-6 (living-mind.md Part VII) -- the mouth: the `mind` shell verb.
  * `mind teach <k> <v>` enqueues one owner-taught binding through
  * r3_fact_learn; the DMN's OWN idle pulses consolidate it (mind_cmd
@@ -321,17 +327,28 @@ void mind_cmd(const UB *args, UW len);
  * a remote teach of an already-bound key is REFUSED and printed (VIII.5). */
 #define MIND_TEACH_TOPIC  "mind/teach"
 #define MT_MAGIC          0x444E494DUL   /* "MIND" LE — free magic (VIII.9)  */
+/* LM-8 (living-mind.md Part IX.8): the wire now carries TOKEN IDS (real
+ * words, IX.3), not synthetic k<8/v<4. The key/val fields stay U1 (v1
+ * keeps R_KEYV<=256, R_VALV<=256 so the width is UNCHANGED — only the
+ * MEANING changes: id-into-vocab, not a small int). A `wire_ver` byte is
+ * added: a receiver whose version does not match its own DROPS the packet
+ * and PRINTS it — the ONE place the region partitions by version, made
+ * OBSERVABLE (IX.7 mixed-version honesty). Old (LM-7) nodes set/expect
+ * MT_WIRE_VER_LEGACY; LM-8 nodes set MT_WIRE_VER_LANG. */
+#define MT_WIRE_VER_LEGACY  0    /* LM-7: synthetic k<8/v<4 (no version field)*/
+#define MT_WIRE_VER_LANG    1    /* LM-8: token ids into the embedded vocab   */
 typedef struct {
     UW magic;                    /* MT_MAGIC                                */
     UW fact_seq;                 /* A's R3_FACT.seq — the autobiographical  */
                                  /* "when" (per-origin dedup high-water)    */
     U1 origin_node;              /* drpc_my_node of A (the teacher's node)  */
-    U1 key, val;                 /* the declared singleton binding (n=1)    */
+    U1 key, val;                 /* token ids (LM-8) — was k<8/v<4 (LM-7)   */
     U1 src;                      /* ARK_PROV_SRC_SHELL/WEB (carried for prov)*/
+    U1 wire_ver;                 /* MT_WIRE_VER_LANG (mismatch = drop+print) */
     U1 prov_head[PFS_ID_LEN];    /* content-id of A's ARK_PROV — resolves   */
                                  /* the teacher via the P1-replicated       */
                                  /* self/prov + self/prof (VIII.4)          */
-} __attribute__((packed)) MT_TEACH_PKT;   /* 4+4+1+1+1+1+32 = 44 B          */
+} __attribute__((packed)) MT_TEACH_PKT;   /* 4+4+1+1+1+1+1+32 = 45 B        */
 
 /* Reserve the "mind/teach" topic slot at boot — call from the hosted
  * usermain right AFTER kdds_init() and BEFORE dkva_init(), so the cluster-
