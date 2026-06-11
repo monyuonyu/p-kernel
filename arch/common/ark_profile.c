@@ -26,7 +26,7 @@
 #include "drpc.h"         /* drpc_my_node — the node stamp                */
 #include "kernel.h"
 
-#include "manifesto_page.h"   /* GENERATED: manifesto[] + manifesto_len   */
+#include "manifesto_page.h"   /* GENERATED: manifesto_table[] + manifesto[] */
 
 /* ------------------------------------------------------------------ */
 /* tiny byte helpers (arch/common rule: no libc here)                  */
@@ -72,7 +72,90 @@ UW         ark_manifesto_len(void)  { return (UW)manifesto_len; }
 
 void ark_manifesto_id(U1 out[PFS_ID_LEN])
 {
+    /* the CANONICAL (ja, table row 0) content address — the default served
+     * id. Per-language ids come from ark_manifesto_at(); validity checks go
+     * through ark_manifesto_id_valid() (the whole table). */
     pfs_id_compute(manifesto, (UW)manifesto_len, out);   /* THE content address */
+}
+
+/* ------------------------------------------------------------------ */
+/* i18n (§7.5) — the manifesto table: N languages, N content-ids       */
+/* ------------------------------------------------------------------ */
+
+UW ark_manifesto_count(void) { return (UW)manifesto_count; }
+
+const char *ark_manifesto_code(UW i)
+{
+    return i < (UW)manifesto_count ? manifesto_table[i].code : 0;
+}
+const char *ark_manifesto_endonym(UW i)
+{
+    return i < (UW)manifesto_count ? manifesto_table[i].endonym : 0;
+}
+
+INT ark_manifesto_at(UW i, const U1 **bytes_out, UW *len_out,
+                     U1 id_out[PFS_ID_LEN])
+{
+    if (i >= (UW)manifesto_count) return 0;
+    const MANIFESTO_ROW *r = &manifesto_table[i];
+    if (bytes_out) *bytes_out = r->bytes;
+    if (len_out)   *len_out   = (UW)r->len;
+    if (id_out)    pfs_id_compute(r->bytes, (UW)r->len, id_out);
+    return 1;
+}
+
+/* lower-case an ASCII byte (BCP-47 codes are ASCII; case-insensitive). */
+static char ap_lc(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+
+/* case-insensitive ASCII compare up to a NUL or '-'/'_' subtag boundary in a;
+ * returns 1 if a's primary subtag equals b exactly (b is a table code). */
+static INT ap_code_eq(const char *a, const char *b)
+{
+    UW i = 0;
+    for (; a[i] && b[i]; i++) if (ap_lc(a[i]) != ap_lc(b[i])) return 0;
+    return a[i] == 0 && b[i] == 0;
+}
+/* a's primary subtag (up to '-'/'_'/NUL) equals the whole code b. */
+static INT ap_prefix_eq(const char *a, const char *b)
+{
+    UW i = 0;
+    for (; b[i]; i++) {
+        char ca = a[i];
+        if (ca == 0 || ca == '-' || ca == '_') return 0;
+        if (ap_lc(ca) != ap_lc(b[i])) return 0;
+    }
+    char nx = a[i];
+    return nx == 0 || nx == '-' || nx == '_';   /* b consumed a's whole subtag */
+}
+
+INT ark_manifesto_find(const char *code)
+{
+    if (!code || !code[0]) return -1;
+    /* 1) exact (case-insensitive) full-code match (e.g. "zh-Hans"). */
+    for (UW i = 0; i < (UW)manifesto_count; i++)
+        if (ap_code_eq(code, manifesto_table[i].code)) return (INT)i;
+    /* 2) primary-subtag prefix: "en-US" -> "en", "pt-BR" -> "pt". Skip table
+     * codes that themselves carry a subtag (zh-Hans/zh-Hant) so a bare "zh"
+     * does NOT silently map to one script. */
+    for (UW i = 0; i < (UW)manifesto_count; i++) {
+        const char *tc = manifesto_table[i].code;
+        INT has_sub = 0;
+        for (UW k = 0; tc[k]; k++) if (tc[k] == '-' || tc[k] == '_') { has_sub = 1; break; }
+        if (has_sub) continue;
+        if (ap_prefix_eq(code, tc)) return (INT)i;
+    }
+    return -1;
+}
+
+INT ark_manifesto_id_valid(const U1 mid[PFS_ID_LEN])
+{
+    if (!mid) return 0;
+    U1 id[PFS_ID_LEN];
+    for (UW i = 0; i < (UW)manifesto_count; i++) {
+        pfs_id_compute(manifesto_table[i].bytes, (UW)manifesto_table[i].len, id);
+        if (ap_id_eq(mid, id)) return 1;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,10 +183,12 @@ INT ark_consent_ok(void)
 {
     if (!ark_profile_head(&ap_head_scratch)) return 0; /* no profile -> closed */
     if (ap_head_scratch.consent_ack != 1) return 0;    /* never acked          */
-    U1 mid[PFS_ID_LEN]; ark_manifesto_id(mid);
-    /* consent is to the EXACT words: if the served text changed since the
-     * ack, the stored id no longer matches and the gate re-asks (§3.1). */
-    return ap_id_eq(ap_head_scratch.manifesto_id, mid) ? 1 : 0;
+    /* consent is to the EXACT words the person READ (§3.1 / §7.5): the stored
+     * manifesto_id must still match ANY embedded language version's id. We
+     * keep the per-language id, so we know which words they agreed to; if
+     * that version's bytes changed, its id no longer matches and the gate
+     * re-asks — honest per-language. */
+    return ark_manifesto_id_valid(ap_head_scratch.manifesto_id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,10 +203,13 @@ INT ark_profile_save(U1 ack, const U1 mid[PFS_ID_LEN],
                      const char *msg, UW msg_len,
                      U1 id_out[PFS_ID_LEN], U4 *seq_out)
 {
-    /* consent must be real and bound to the EXACT served bytes (§3.1). */
+    /* consent must be real and bound to the EXACT bytes the person READ
+     * (§3.1 / §7.5): mid must equal the content-id of SOME embedded language
+     * version — not only the canonical one. The stored manifesto_id is the
+     * per-language id the person actually sent, so the record honestly keeps
+     * which words they agreed to. */
     if (ack != 1) return 0;
-    U1 cur_mid[PFS_ID_LEN]; ark_manifesto_id(cur_mid);
-    if (!mid || !ap_id_eq(mid, cur_mid)) return 0;  /* wrong mid -> 409 caller */
+    if (!mid || !ark_manifesto_id_valid(mid)) return 0;  /* wrong mid -> 409 caller */
 
     /* seq = head.seq + 1 (edit = append a new version, §4.3). Static head
      * read (1188 B off the bounded task stack). */
@@ -146,7 +234,7 @@ INT ark_profile_save(U1 ack, const U1 mid[PFS_ID_LEN],
     p.seq         = next_seq;
     p.age_ms      = ap_now_ms();
     p.wallclock   = ap_wallclock();
-    ap_memcpy(p.manifesto_id, cur_mid, PFS_ID_LEN);
+    ap_memcpy(p.manifesto_id, mid, PFS_ID_LEN);   /* the per-language id read (§7.5) */
 
     /* lineage_head = the current "self/lin" head id (anchors the human
      * chapter to the machine autobiography). all-zero if none yet. */

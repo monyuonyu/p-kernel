@@ -23,6 +23,13 @@ COMMON  = $(ROOT)/arch/common
 GALAXY_GEN     = $(ROOT)/tools/galaxy/gen_page.py
 MANIFESTO_TXT  = $(COMMON)/web/manifesto.txt
 MANIFESTO_PAGE = manifesto_page.h
+# i18n wave: bare metal has NO web UI — embed ja+en ONLY (lean kernel; the
+# manifesto here serves the future netstack-tcp-server slice). ark-profile.md
+# §7.5. The shared spec keys off $(ARCH_COMMON).
+ARCH_COMMON    = $(COMMON)
+MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
+include $(COMMON)/web/manifesto_langs.mk
+MANIFESTO_SET  = $(MANIFESTO_LANGS_LEAN)
 KERNEL  = $(ROOT)/kernel/common
 INC_TK  = $(ROOT)/include/kernel/tkernel
 INC_LIB = $(ROOT)/include/lib
@@ -276,12 +283,12 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 $(COMMON_OBJS): %.o: $(COMMON)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# ark-profile v1 (ark-profile.md §7.1): the manifesto is embedded
-# at build via the galaxy D3 pipeline (symbol "manifesto"). bare
-# metal compiles ark_profile.c (pfs_dag exists here) but NOT
-# galaxy.c, so this is the only consumer of manifesto_page.h.
-$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(GALAXY_GEN)
-	python3 $(GALAXY_GEN) $(MANIFESTO_TXT) $@ manifesto
+# ark-profile v1 + i18n (ark-profile.md §7.1/§7.5): the manifesto TABLE.
+# Bare metal embeds ja+en ONLY (lean; no web UI). It compiles ark_profile.c
+# (pfs_dag exists here) but NOT galaxy.c, so this is the only consumer of
+# manifesto_page.h.
+$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(COMMON)/web/manifesto.en.txt $(MANIFESTO_GEN)
+	python3 $(MANIFESTO_GEN) $@ $(MANIFESTO_SET)
 
 ark_profile.o: $(MANIFESTO_PAGE)
 

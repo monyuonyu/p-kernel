@@ -112,9 +112,42 @@ _Static_assert(sizeof(ARK_PROV) == 48, "LP64-stable wire image");
 void ark_manifesto_id(U1 out[PFS_ID_LEN]);
 
 /* The served manifesto bytes + length (the embedded image). The galaxy
- * GET /manifesto route streams these; ark_manifesto_id() hashes them. */
+ * GET /manifesto route streams these; ark_manifesto_id() hashes them.
+ * These return the CANONICAL (ja) version — the default. */
 const U1 *ark_manifesto_bytes(void);
 UW         ark_manifesto_len(void);
+
+/* ------------------------------------------------------------------ */
+/* i18n (ark-profile.md §7.5) — the manifesto speaks many languages    */
+/* ------------------------------------------------------------------ */
+/* Each embedded language version is its OWN byte string -> its own
+ * pfs_id_compute content-id. The consent ack records the id of the
+ * version the person actually READ; ark_consent_ok / ark_manifesto_id_valid
+ * accept ANY of the table's ids. The hosted build embeds ~32 languages;
+ * the bare-metal build embeds ja+en only (no web UI; lean kernel). */
+
+/* How many language versions are embedded in THIS build (>=1; ja always). */
+UW ark_manifesto_count(void);
+
+/* The i-th language's BCP-47 code + endonym (its name in its OWN language),
+ * 0-based, i < ark_manifesto_count(). Returns 0 (NUL) on out-of-range. The
+ * galaxy /langs route serializes these. */
+const char *ark_manifesto_code(UW i);
+const char *ark_manifesto_endonym(UW i);
+
+/* The i-th language's bytes/len/content-id (i < ark_manifesto_count()).
+ * id_out may be NULL. Returns 1 ok, 0 out-of-range. */
+INT ark_manifesto_at(UW i, const U1 **bytes_out, UW *len_out, U1 id_out[PFS_ID_LEN]);
+
+/* Resolve a BCP-47 code (case-insensitive, exact then primary-subtag prefix)
+ * to a table index; -1 if no match. "en-US" -> the "en" row; "pt-BR" -> "pt".
+ * The galaxy GET /manifesto?lang=xx and Accept-Language matcher use this. */
+INT ark_manifesto_find(const char *code);
+
+/* 1 iff mid equals the content-id of ANY embedded language version (the
+ * consent-id TABLE). The galaxy POST /profile validates `mid` with this so a
+ * person who read the Spanish words may ack the Spanish id. */
+INT ark_manifesto_id_valid(const U1 mid[PFS_ID_LEN]);
 
 /* Read the head "self/prof" profile into *out. Returns 1 if a profile
  * exists (out filled), 0 if none yet. Pure read; no side effects. */

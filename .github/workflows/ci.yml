@@ -250,6 +250,17 @@ jobs:
           grep -aF '[ark-profile] PASS'    ark_profile_cert.log
           grep -aF '[ark-provenance] PASS' ark_profile_cert.log
 
+      # i18n manifesto wave (ark-profile.md §7.5): the manifesto speaks many
+      # languages and consent binds to the EXACT words READ. [i18n-manifesto]
+      # — every embedded language serves with a self-consistent content-id
+      # (sha256(served)==X-Manifesto-Id), the count is printed, a NON-ja
+      # (Spanish) ack unlocks teach (the consent-id table works), a bogus
+      # ?lang= falls back to en, and Accept-Language auto-defaults.
+      - name: i18n manifesto cert (ark-profile.md §7.5)
+        run: |
+          timeout 300 samples/40_i18n_manifesto/i18n_cert.sh | tee i18n_cert.log
+          grep -aF '[i18n-manifesto] PASS' i18n_cert.log
+
       - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
         run: |
           cd boot/linux_x86_64
