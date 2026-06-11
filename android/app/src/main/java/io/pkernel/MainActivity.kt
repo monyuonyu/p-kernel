@@ -48,8 +48,9 @@ class MainActivity : AppCompatActivity() {
         logView        = findViewById(R.id.log_view)
         logView.movementMethod = ScrollingMovementMethod()
 
-        findViewById<Button>(R.id.btn_start).setOnClickListener { startKernel() }
-        findViewById<Button>(R.id.btn_stop ).setOnClickListener { stopKernel()  }
+        findViewById<Button>(R.id.btn_start ).setOnClickListener { startKernel() }
+        findViewById<Button>(R.id.btn_stop  ).setOnClickListener { stopKernel()  }
+        findViewById<Button>(R.id.btn_galaxy).setOnClickListener { openGalaxy()  }
 
         /* Pull the service's tail-log every 250 ms while we're foregrounded. */
         val handler = Handler(Looper.getMainLooper())
@@ -83,6 +84,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopKernel() {
         stopService(Intent(this, PKernelService::class.java))
+    }
+
+    /* galaxy.md D4: open the observation window. The galaxy port follows the
+     * node id (7800 + node_id - 1), so pass the same id the service booted. */
+    private fun openGalaxy() {
+        val nodeId = nodeIdField.text.toString().toIntOrNull() ?: 1
+        startActivity(Intent(this, GalaxyActivity::class.java).apply {
+            putExtra(GalaxyActivity.EXTRA_NODE_ID, nodeId)
+        })
     }
 
     private fun ensureNotificationChannel() {

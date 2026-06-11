@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  network_security_config.xml — galaxy.md D4.
+
+  The galaxy observation window (galaxy.c / galaxy_posix.c) serves plain
+  HTTP on 127.0.0.1:7800+(node_id-1), loopback ONLY (hard-coded
+  htonl(0x7F000001) bind; there is no INADDR_ANY path — galaxy.md §3.5,
+  verified adversarially in wave-30). Android 9+ blocks cleartext by
+  default, so we must explicitly permit it — but ONLY for localhost, so
+  this never relaxes TLS for any real network endpoint (the relay wire is
+  UDP+HMAC, unaffected).
+
+  cleartextTrafficPermitted is scoped to the loopback domains; everything
+  else inherits the secure base-config (cleartext denied).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false"/>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
