@@ -2040,3 +2040,448 @@ reads the gate formula — the `mind wait` loop, the dmn.c counter site, and the
    and the budget-honesty story; 4 live facts are enough to prove a mouth.
 4. **x86 bare-metal shell verb** (VII.9): not this slice (**recommended**) vs wire it
    ungated. Ungated surface on the least-tested shell is sprawl, not generosity.
+
+## Part VIII — the shared mind: a fact taught on node A is answerable from node B
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–VII).
+> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> **LM-6** (Part VII, `mind teach|ask|wait` + `mind_cmd` at `r3_incontext.c:1619`, the live
+> DMN consolidation, the ONE provenance write site `ark_prov_record` at `:1496`, the galaxy
+> `EV_TEACH`/`EV_CONSOLIDATE` emissions, the web POST `/teach` bridge `galaxy.c:814`),
+> **LM-5** (the bounded fact queue + `r3_fact_learn`/`r3_facts_pending`/
+> `r3_consolidate_idle_round` at `r3_incontext.c:1006/1063/1120`), **p-fs P1**
+> (region-scoped gossip replication, `pfs_repl.h`, `pfs_dag_save`/`pfs_dag_read`
+> `pfs_dag.h:145/153`), **ark-profile** (`self/prof` 1188 B + `self/prov` 48 B objects that
+> already P1-replicate, `ark_profile.h:71/97`), **region** (`region_id()`
+> `region.c:77`; region = peers within `REGION_TAU_MS=50` ms RTT, `region.h:24`). All closed
+> in `gap-ledger.md`, so this is unblocked.
+
+LM-5's VI.3 honest note, LM-6's VII.7 ("cross-node teaching — examined and deferred: NO"),
+and the gap-ledger all named the SAME hole and the SAME successor: *"the shared mind —
+`mind/teach` gossip + taught-fact provenance via the Self lineage … within-node first."*
+This Part closes the within-node bound: **a fact taught on node A becomes answerable from
+node B, from B's OWN weights, with B's OWN DMN doing the consolidating, and with the human
+who taught it remembered across the mesh.** It is the literal Collective layer applied to the
+Self layer — 人類の記憶 going collective. It is deliberately **region-scoped** (VIII.7): the
+region's shared mind, not the planet's; federation is a later slice. And it is still the
+synthetic 8×4 vocabulary (VII.8 stands) — own that loudly. It mirrors Parts II–VII's rigor
+exactly: a claim, a falsifiable certificate with bracket tags + numeric bars, named honest
+bounds, a HARD anti-fork surface flagging names that do not exist, a 2-process live cert, and
+a CI verb plan.
+
+### VIII.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Six load-bearing facts. The first three pre-decide **the W-vs-E fork below** by arithmetic;
+the rest correct the wave framing.
+
+1. **The R3 model is 7172 floats — 28 688 bytes.** `R_NP = 7172` (`r3_incontext.c:94`,
+   layout `:77-94`; verify by build, do not trust this number blind). A fact-ENGRAM is the
+   `R3_FACT` struct, **24 bytes** (`_Static_assert(sizeof(R3_FACT)==24)`, `:935`); the
+   minimal taught binding on the wire is **3 bytes** `(key, val, origin)`. The ratio is
+   **~9 500×** (weights) vs **~1×** (an engram fits any single packet).
+2. **One p-fs block is 4096 bytes; one K-DDS payload is 192 bytes.** `PFS_BLOCK_MAX = 4096`
+   (`pfs_block.h:28`), `KDDS_DATA_MAX = 192` (`kdds.h:49`). The G22 carrier `gl_pfs_publish`
+   **statically asserts the whole blob fits ONE block** (`gossip_learn.c:94`, `GL_MAXFLOATS =
+   DTR_WEIGHT_FLOATS = 635`, 2548 B — fits). **The R3 model does NOT fit:** 28 688 B is 7×
+   `PFS_BLOCK_MAX`, so Path W cannot even reuse `gl_pfs_publish` as-is — it needs a NEW
+   multi-block split / chunked transport (the `pfs_repl.c` 512 B `PFSR_CHUNK_SIZE` path
+   generalizes, but that is new code on a hot, weight-corrupting axis). A fact-engram, by
+   contrast, fits one K-DDS payload with **189 bytes to spare**.
+3. **`self/prof` and `self/prov` ALREADY cross the mesh.** p-fs P1 is region-scoped gossip
+   replication of EVERY content-addressed block over K-DDS `pfs/ann`+`pfs/want`+a private
+   512 B-chunk UDP port, all `KDDS_SCOPE_REGION` (`pfs_repl.h:10-21,72-75`). The
+   `ark_prov_record` write site (`r3_incontext.c:1496` → `pfs_dag_save("self/prov", …)`,
+   `ark_profile.c:309`) and `ark_profile_save("self/prof", …)` (`:257`) therefore **already
+   replicate to same-region peers today** — provenance crossing the mesh is, to first order,
+   *free and already shipping*. What does NOT cross today is the FACT itself (the `(k, ŷ_k)`
+   that drives B's training) and the SIGNAL that tells B to enqueue it.
+4. **`r3_fact_learn` is the only production mouth into the queue, and it is the right one for
+   a remote arrival too.** It takes `(const UB *keys, const UB *vals, INT n)` with `n=1..8`
+   (`:1006`, VII.0 #1), runs the frozen FAST read, enqueues the engram, calls `dmn_trigger()`
+   (`:1037-…`), and is FIFO-budget-bounded at `R3_FQ_MAX=4` with printed eviction
+   (`:1013-1029`). A fact arriving from B's network must enter through THIS function — the G33
+   rule (the production mouth, not a test injection) extended across nodes.
+5. **`dmn_trigger()` from a network task is safe; nothing live reads `rw[]` off the shell.**
+   VII.0 #3/VII.4 built the `r3_round_busy` quiesce flag precisely because the shell verb path
+   and the prio-13 round share `rc`/`rg`/`r_rng`. A remote-arrival task that calls
+   `r3_fact_learn` runs the frozen FAST read over the SAME shared scratch — so it MUST take
+   the same `m_quiesce()` discipline (VIII.2). The arrival task is otherwise just another
+   producer, exactly like the shell `mind teach`.
+6. **Region is emergent, not configured.** `region_id()` returns the lowest-id ALIVE peer
+   within `REGION_TAU_MS=50` ms RTT (`region.c:60-82`); region-scoped K-DDS reaches exactly
+   that set. So "the region's shared mind" has a real, observable boundary: a node at >50 ms
+   RTT is OUTSIDE and provably does NOT receive the fact — which is the honest negative half
+   of the `[shared-grounded]` cert (VIII.6 #3), not a limitation to apologize for.
+
+### VIII.1 The claim to prove
+
+> An owner at node **A** types `mind teach <k> <v>` (LM-6 unchanged): the fact enters A's queue
+> with consent + provenance (`ark_prov_record`, the human resolved to A's profile). Within a
+> **bounded** time and with **NO operator action on B**, the fact crosses the **region** via
+> existing replication machinery, enters **B's** live queue through **`r3_fact_learn`** (the
+> production mouth, G33), and **B's OWN DMN idle pulses** consolidate it into **B's `rw[]`**.
+> Afterwards `mind ask <k>` **on B** answers **v** from B's weights on a MASKED prompt — and
+> can name **who** taught it (A's profile, replicated via `self/prof`). A node OUTSIDE the
+> region does **NOT** receive it. Cross-arch (aarch64 + x86_64 in one region).
+
+This is strictly stronger than LM-6's within-node claim: there, one mind learned from its
+owner; here, **B's mind learns from A's owner** — the thread crosses the galaxy and a distant
+star answers. The Collective layer (the mesh) now carries not telemetry but *taught knowledge*,
+and the Self layer (the human chapter) rides with it.
+
+### VIII.2 THE FORK — Path W (weights travel) vs Path E (engrams travel)
+
+Both were investigated to the numbers (VIII.0 #1–#3). **Recommendation: Path E for v1.** Path W
+is the deeper "the mind literally becomes one" and is named as a later slice with ITS OWN
+disease/cure cert (VIII.7) — but it is gated on an **unanswered empirical question** that this
+slice should NOT smuggle past its audit.
+
+**Path E (engrams travel) — RECOMMENDED.** After A enqueues, gossip the tiny fact-engram
+`(k, ŷ_k, origin, fact_seq)` to region peers; each peer calls its OWN `r3_fact_learn` and its
+OWN DMN consolidates it with its OWN gradients. The fact arrives at B as a *thing to learn*,
+not as a weight delta.
+- **Wire cost: one packet.** 24 B engram (or 3 B minimal binding) ≤ `KDDS_DATA_MAX=192`
+  (VIII.0 #1-2). No chunking, no new transport, no multi-block split.
+- **Each mind stays self-consistent.** B trains on B's own `r_backward`; B's `rw[]` is always a
+  coherent product of B's own SGD — never a foreign average. There is no "two minds that
+  learned different facts got blended" hazard, because nothing is blended.
+- **Provenance rides naturally** — the engram carries `origin` + `fact_seq`, and `self/prov` +
+  `self/prof` already replicate (VIII.0 #3); B's `mind ask` resolves the human (VIII.4).
+- **The queue/FIFO/refusal semantics already exist** — a remote arrival is just another
+  `r3_fact_learn` caller (VIII.0 #4); budget honesty, eviction, re-teach refusal all inherit.
+- **Cost, owned:** the region's minds are **N copies converging**, not one substrate. They can
+  momentarily disagree (A has consolidated, B has not yet) — but they converge to the SAME
+  binding, and the disagreement window is bounded and observable (VIII.7). Conflicts (same key,
+  different values from different people) surface EARLIER than in Path W — and that is GOOD: we
+  set the honest v1 rule now (VIII.3) instead of discovering it inside a weight average.
+
+**Path W (weights travel) — DEFERRED, with its cert named.** After consolidation, `gl_merge`
+the R3 `rw[]` across nodes (the G22 pattern applied to R3). Pros: rides the proven no-central
+machinery; the mind becomes literally one substrate. **Cons that gate it:**
+- **Wire cost ~28 KB/merge round** (VIII.0 #1) — 11× the dtr body — and `gl_pfs_publish` does
+  not fit it in one block (VIII.0 #2): new chunked-publish code on the weight axis.
+- **THE empirical crux, unanswered:** G22's `gl_merge` was certified averaging models trained
+  on DISJOINT shards of the SAME task (`gossip_learn.c` header; `samples/32_collective_learn`).
+  Here A and B learned **DIFFERENT facts** (k1 on A, k2 on B). Does averaging two minds that
+  each consolidated a different binding **preserve both** facts, or **corrupt both**? LM-1
+  averaged dtr weights trained on the same stream's shards; this is categorically different —
+  and `lm_consolidate.c:14-26` already warns that contradictory engrams cannot both survive a
+  naive merge. **No measurement of "average two R3 minds, ask both for BOTH facts" exists.**
+  Until a disease/cure cert answers it — *teach k1 on A, k2 on B, merge; do BOTH nodes answer
+  BOTH keys, at what accuracy, and does interleaved post-merge replay rescue what the raw
+  average loses?* — shipping Path W would be asserting an unmeasured "the mind becomes one"
+  claim, the exact AUDIT-SPRAWL failure mode the project forbids.
+
+**Verdict:** E ships the buzz demo (teach on your phone → friend's node answers) at one packet,
+with every mind self-consistent and provenance free; W is the more beautiful "one mind" but is
+**its own slice with its own cert** (VIII.7). This fork is **not genuinely close** once the
+numbers are in (9 500× wire, an unanswered averaging question on the weight path) — so it is a
+*recommendation, not a COMMANDER DECISION*. The commander may still elect W-first; if so, the
+averaging-of-divergent-minds cert (VIII.7) is mandatory and replaces VIII.6 wholesale.
+
+### VIII.3 The transport (Path E) — which existing machinery carries the fact
+
+Two honest sub-options for the engram hop; **recommend the K-DDS topic** (cheapest, matches the
+"a fact is a small live message" shape), with the p-fs-object fallback named.
+
+**Recommended: a region-scoped K-DDS topic `mind/teach`.** Open once at boot with
+`kdds_open_poll_scoped("mind/teach", KDDS_QOS_LATEST_ONLY, KDDS_SCOPE_REGION)`
+(`kdds.h:139`, the dkva poll pattern — no `CFN_MAX_SEMID` cost). The publisher is A's
+`mind teach` AFTER a successful local enqueue; the payload is a fixed wire struct **well under
+`KDDS_DATA_MAX=192`**:
+
+    #define MT_MAGIC  0x4854454DUL          /* "METH"? -> pick a free LE magic, FLAGGED */
+    typedef struct {
+        UW magic;            /* MT_MAGIC                                      */
+        UW fact_seq;         /* A's R3_FACT.seq — the autobiographical when    */
+        U1 origin_node;      /* drpc_my_node of A (the teacher's node)         */
+        U1 key, val;         /* the declared binding (n=1 singleton, VII.0#1)  */
+        U1 src;              /* ARK_PROV_SRC_SHELL/WEB (carried for the prov)  */
+        U1 prov_head[PFS_ID_LEN];  /* content-id of A's ARK_PROV (resolves the */
+                             /* human via the already-replicated self/prov)    */
+    } __attribute__((packed)) MT_TEACH_PKT;  /* 4+4+1+1+1+1+32 = 44 B          */
+
+A subscriber **task on B** (a new low-priority `mind_net_task`, mirroring `pfs_repl_task`) polls
+the topic, and for each unseen `(origin_node, fact_seq)` pair (the dkva.c-style
+once-per-(src,seq) dedup, `pfs_repl.h:89-90`):
+1. **dedup + loop-prevention:** ignore packets where `origin_node == drpc_my_node` (A's own
+   fact gossiped back to A — the standing gossip loop trap); track a small per-origin
+   last-seq high-water so a re-published LATEST_ONLY slot is acted on **once**.
+2. **quiesce** (VIII.0 #5): `while (r3_round_busy) tk_dly_tsk(20);` — the VII.4 flag, now also
+   guarding a network producer (the frozen read shares `rc`/`rg`/`r_rng`).
+3. **arrival = `r3_fact_learn(&key, &val, 1)`** — THE production mouth (VIII.0 #4, G33). B's
+   frozen FAST layer reads its OWN SUPPORT prompt and stores ŷ_k (B may read differently from
+   A — honest: each mind memorizes its own reading; the engram is the reading, not the oracle,
+   VI.3/VII.8). `r3_fact_learn` calls `dmn_trigger()` → B goes ACTIVE → idle → B's own pulses
+   consolidate.
+4. **provenance:** record B's view of the remote prov — `ark_prov_record(fact_seq, key, val,
+   src)` with `prov_head` retained so `mind ask` on B resolves it to A's profile (VIII.4). (B
+   does NOT re-author the human's consent; it records "node A's owner taught this, here is the
+   pointer," the tamper-evident lineage stance of III.6.)
+5. **budget honesty inherited:** B's `R3_FQ_MAX=4` is shared by local + remote facts; a remote
+   flood FIFO-evicts the oldest RETAINED fact with the LM-5 printed forgetting (`:1013-1029`) —
+   a remote node cannot silently evict B's locally-taught facts beyond the same honest, printed
+   rule. **Rate rule:** at most one `r3_fact_learn` per polled `(origin, seq)`; the poll cadence
+   (≥500 ms, `pfs_repl_task` style) bounds the arrival rate structurally — no remote node can
+   spin B's queue faster than B polls.
+
+**Fallback (named, not built): a p-fs object `mind/teach/<origin>`.** `pfs_dag_save` of the
+44 B `MT_TEACH_PKT` would replicate identically to `self/prov` (VIII.0 #3), giving durable,
+content-addressed, death-surviving delivery for free — at the cost of a per-origin ref and the
+pfs_dag versioning ceremony. Recommended ONLY if the cert needs delivery to survive A's death
+mid-gossip (out of v1 scope; the K-DDS LATEST_ONLY slot is sufficient for "A teaches, B answers"
+while both live). **COMMANDER DECISION 1** (VIII.10).
+
+**Loop prevention, stated once more because it is the classic trap:** every node both publishes
+and subscribes `mind/teach`; the `origin_node == me` drop (step 1) is the only thing preventing
+a fact from ping-ponging. The auditor greps for that guard explicitly (VIII.9).
+
+### VIII.4 Provenance across the mesh — the star's name from another galaxy
+
+The human is already on B. `ark_profile_save` writes `self/prof` (1188 B, one block,
+`ark_profile.h:71-74`) and it P1-replicates region-wide (VIII.0 #3); `ark_prov_record` writes
+`self/prov` carrying `profile_head[PFS_ID_LEN]` (`ark_profile.h:94`), the content-id of the
+exact profile version in force. The `MT_TEACH_PKT` carries `prov_head` = the content-id of A's
+`ARK_PROV` for this fact. So on B:
+- `mind ask <k>` for a fact whose engram came from a remote origin prints, beyond `pred`/`share`,
+  a provenance line: `taught by node <origin>` and, when B has received A's `self/prof` block
+  (it has, region-replicated), the handle/name the human chose to disclose (or "anonymous" when
+  `profile_head` is all-zero — the consent-without-disclosure case, `ark_profile.h:95-96`,
+  honored honestly).
+- The chain is end-to-end: A's owner → A's `ARK_PROV` (`prov_head`) → A's `ARK_PROFILE`
+  (`profile_head`) → replicated to B → resolved at B's `mind ask`. **人類の記憶 going
+  collective**, with the consent gate intact (B never invents a human; it points at A's
+  consented record).
+
+Honest bound: this is **tamper-EVIDENT**, not unforgeable — there is no signing primitive yet
+(III.6); a malicious node could publish a `mind/teach` with a forged `prov_head`, and B would
+resolve it to whatever profile that id names (or fail to resolve → "unknown teacher"). The
+immune system (signed provenance) is named in VIII.7, not built — exactly VII.7's reason #2,
+now scoped to a SINGLE region of mutually-RTT-close (≤50 ms) peers, a far smaller trust surface
+than the planet.
+
+### VIII.5 Conflict honesty — same key taught differently on two nodes
+
+The belief-revision trap surfaces earlier here than within-node (VIII.2), so set the honest v1
+rule explicitly:
+
+> **v1 rule: LOCAL teach wins; a remote arrival for a key already QUEUED on B is REFUSED and
+> printed.** This mirrors LM-6's within-node re-teach refusal (VII.2 step 4, `:1469-1473`)
+> extended across nodes: if B already holds key `k` (locally taught OR a prior remote arrival),
+> an incoming `mind/teach` for `k` with a different `val` prints
+> `[mind] remote teach key K from node N refused — already bound here (belief revision is a
+> future slice)` and does NOT enqueue. If the remote `val` MATCHES B's binding, it is a
+> harmless duplicate (dedup drops it silently).
+
+Rationale, the standing one: replay provably cannot hold a contradiction
+(`lm_consolidate.c:14-26`), so "the network overwrites B's binding" would be an unmeasured
+belief-revision claim. Refusal is honest and printed; **belief revision (local OR remote) stays
+its own slice with its own disease/cure cert** (VIII.7). **What the galaxy shows:** the refused
+remote teach still emits a galaxy event (a fact-particle that arrived but did not land — a
+deflected ray), so the conflict is *observable*, not silent (VIII.9).
+
+Region-scoped means conflicts are bounded to ≤50 ms-RTT peers; cross-region reconciliation is
+federation (VIII.7). **COMMANDER DECISION 2** (last-writer-wins vs refuse) — recommend
+**refuse**, for the same reason VII chose refuse over evict-and-replace.
+
+### VIII.6 The falsifiable acceptance test (the certificate) — 4 tags
+
+The cert is a **2-process region mesh** (A and B, mirroring `samples/32_collective_learn/run.sh`
+and the `[galaxy-events]` 3-node pattern, `ci.yml:225`): both `./p-kernel` with `AUTONET`, same
+relay, RTT < `REGION_TAU_MS` so they form ONE region; a third node placed OUTSIDE the region for
+the negative half of tag 3. All numbers printed, then a canonical `[tag] PASS/FAIL` line.
+`chance = 25%`. Bars are **proposals**; the implementer reports actuals and may LOWER only to
+measured-minus-flake-margin, FLAGGED — never inflate. The cert's `(k*, v*)` is the LM-6
+off-bias pick (VII.6), measured on the 0xA5A5 substrate.
+
+1. **`[shared-arrival]` — B's queue gains A's fact via the REAL transport, not a test
+   injection.** On A: `mind teach k* v*` (the unchanged LM-6 verb). On B, with NO operator
+   action: within a bound (propose 30 s), `r3_facts_pending()` on B becomes 1 for a fact whose
+   `origin_node == A` and `seq == ` A's printed seq. PASS requires ALL, printed: B received the
+   `mind/teach` packet (poll log line); B's enqueue came through `r3_fact_learn` (the auditor
+   greps that `mind_net_task` calls ONLY `r3_fact_learn`, never an internal queue poke); the
+   loop-guard fired on A (A dropped its own echo: `origin==me` count ≥ 1). A node whose
+   `origin==me` enqueues nothing (no self-teaching from the echo).
+
+2. **`[shared-consolidated]` — B answers v from B's OWN weights after B's OWN dmn pulses.**
+   Pre-state on B: `pre_share(k*) <= chance+8` (=33) — the fact is NOT already in B's weights
+   (the disease half, inherited from `[handoff-fast-only]`). Then with NO operator action, B's
+   DMN drains the fact: `dmn_r3_rounds()` on B increments by `>= R3_SLEEPS_PER_FACT` (=10) —
+   rounds only B's `dmn.c:135` call site can count — and the live print
+   `[dmn] sleep: distilled in-context facts -> rw[]` appears in **B's** log. Then `mind ask k*`
+   on B: `share(k*) >= 75` over N=40 masked held-out arrangements (the LM-6 bar; LM-6 measured
+   100 post-sleep). PASS requires ALL the above AND a printed
+   **`teach@A=<t_A>  answer@B=<t_B>  delta=<s>`** wall line (A's teach time → B's answer time —
+   the thread's flight time, bounded, printed not gated, the VII.5 flakiness discipline).
+
+3. **`[shared-grounded]` — provenance resolves to A's profile; the region boundary is real.**
+   ALL printed: on B, `mind ask k*` names the teacher — `taught by node A` and A's disclosed
+   handle (or "anonymous" if A declined disclosure — print which, honestly), resolved through
+   the region-replicated `self/prof`/`self/prov` (VIII.4); AND the **negative half**: a third
+   node **C placed OUTSIDE the region** (RTT > `REGION_TAU_MS`, or simply not in A/B's
+   region-scoped K-DDS fanout) has `r3_facts_pending()==0` for k* and `mind ask k*` answers
+   only the substrate prior (`pre_share`-level) — the region-scope honesty made falsifiable: the
+   shared mind is the REGION's, and a node outside does not receive it.
+
+4. **`[shared-live]` — a 2-process mesh, kill-tolerant, galaxy-visible (the discipline tag).**
+   Structural + live gates, printed: facts entered ONLY via `r3_fact_learn` on BOTH nodes (the
+   auditor greps `mind_net_task` for the single `r3_fact_learn` call and NO direct queue/round
+   poke); the loop-prevention guard present (`origin==me` drop, greppable); the conflict rule
+   exercised (a remote teach of an already-bound key on B prints the refusal line, VIII.5); AND
+   the galaxy shows the thread — `EV_REMOTE_TEACH` (VIII.9) emitted ONCE on B at the arrival
+   site, observable in B's `/events` stream, with A's star and B's star both flashing in the
+   same region (the `kill_one.sh`-style 2-process harness; killing A AFTER B consolidated does
+   NOT un-teach B — B's `rw[]` already holds it, the Collective survives the source's death,
+   §3). Budget honesty: a remote flood beyond `R3_FQ_MAX` FIFO-evicts with the LM-5 printed
+   forgetting; printed, not gated.
+
+(Considered and **dropped**: a weight-merge tag — that is Path W's `gl_merge`-of-`rw[]` axis,
+explicitly deferred (VIII.2/VIII.7), and gating it here would smuggle the unanswered averaging
+question past the audit; a multi-fact-flood tag — `[shared-live]` already gates eviction with
+ONE extra fact, N facts prove only patience; a cross-region federation tag — VIII.7's slice.)
+**No-regress is CI-level:** every existing grep stays green — the LM-6/LM-5 in-process certs
+(`[teach-*]`, `[stream-*]`, `[handoff-*]`, `[dmn-*]`, `[salience-*]`, `[self-*]`, `[r3-*]`) are
+UNTOUCHED; the shared-mind code ADDS a network task + one publish in `mind teach`, changing no
+existing math, no existing constant, no existing number.
+
+### VIII.7 The honest bound (what is NOT claimed)
+
+- **Region-scoped, NOT planetary.** The shared mind is the set of peers within
+  `REGION_TAU_MS=50` ms RTT (`region.c`). Cross-region propagation is **federation**
+  (`docs/architecture/federation.md`) — a named future slice; this slice proves and BOUNDS the
+  region's mind, and tag 3 makes the boundary falsifiable, not hidden.
+- **Path W (one-mind weight merge) is DEFERRED with its cert stated.** The future "one
+  substrate" slice is: `gl_merge` the R3 `rw[]` across nodes (G22 generalized off dtr's 635
+  params to R_NP=7172), chunked over `PFSR_CHUNK_SIZE` since it exceeds one block. **Its
+  acceptance test is mandatory and is the question this slice refuses to smuggle:** *teach k1
+  on A, k2 on B, merge `rw[]`; gate that BOTH nodes answer BOTH k1 AND k2 at ≥ chance+margin
+  (does raw averaging of two divergent minds preserve both facts, or corrupt both?), and that
+  interleaved post-merge replay rescues whatever the raw average loses (the disease→cure shape,
+  on the merge).* Until that cert is green, "the mind is literally one" is unproven.
+- **Synthetic vocabulary, NOT language** (VII.8 stands) — `teach 2 3` is a key→value binding.
+- **N converging copies, not one substrate (Path E).** A and B answer the same binding but
+  have distinct `rw[]`; there is a bounded, observable disagreement window before B consolidates.
+  Convergence to the SAME binding is the claim; weight-identity is NOT (that is Path W).
+- **Each mind memorizes its OWN reading.** B's frozen FAST layer reads the SUPPORT prompt with
+  B's substrate; a misread on B is rehearsed wrong on B (the VI.3/VII.8 ceiling, per-node).
+- **Tamper-EVIDENT provenance, not unforgeable** (VIII.4) — no signing primitive (III.6); a
+  region of ≤50 ms-RTT peers is a smaller trust surface, but the immune system (signed
+  `mind/teach`) is named, not built.
+- **No belief revision** (local OR remote) — same-key conflict is REFUSED and printed (VIII.5);
+  revision is its own slice with its own cert.
+- **Delivery is best-effort while both live** (K-DDS LATEST_ONLY); durable, death-surviving
+  delivery is the p-fs-object fallback (VIII.3, DECISION 1), out of v1 scope.
+- **Cert verbs remain amnesia bombs** (VII.0 #5); persisting `rw[]` across runs is a named
+  non-goal here.
+
+No false "by construction" theorem is asserted.
+
+### VIII.8 The live idle path is unchanged (B uses the LM-6 machinery exactly)
+
+The whole point of Path E is that **B's consolidation side is byte-identical to LM-6.** The
+remote arrival enters B's queue through the same `r3_fact_learn`; B's `dmn_idle_work`
+(`dmn.c:134-139`) consolidates pending facts every idle pulse with the same bounded round and
+the same `dmn_r3_round_count++` at the same single site; `mind ask` reads B's `rw[]` with the
+same masked vote. The ONLY new code is **the mouth that feeds B's queue from the network**
+(`mind_net_task` + the `mind/teach` publish in A's `mind teach`) — the dmn.c hook, the round,
+the counter, the queue, the eviction are all reused verbatim (VIII.9). This is why the slice is
+small and why its no-regress story is strong: it adds a producer, not a second brain.
+
+### VIII.9 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+**Reuse (MUST — no forked queue, no second consolidation path, no second Transformer):**
+- The ENTIRE LM-6/LM-5 live API as-is: `r3_fact_learn` (`:1006`), `r3_facts_pending` (`:1063`),
+  `r3_consolidate_idle_round` (`:1120`), the queue/eviction/refusal logic (`:1013-1029`),
+  `mind_cmd`/`m_quiesce`/`m_masked_vote`/`m_find_key` (`:1619`/VII path) — zero signature
+  changes, zero constant changes (`R3_FQ_MAX`, `R3_IDLE_STEPS`, `R3_SLEEPS_PER_FACT`).
+- The dmn hook stays the SAME (`dmn.c:134-139`) + the SAME counter; `dmn_trigger` untouched.
+- The transport machinery: `kdds_open_poll_scoped`/`kdds_pub`/`kdds_sub` (`kdds.h:139/154/160`),
+  `KDDS_SCOPE_REGION`; the `pfs_repl_task` poll/dedup PATTERN (`pfs_repl.h`, mirror, do NOT
+  fork its block plane); `region_id()` (`region.c:77`).
+- Provenance as-is: `ark_prov_record` (`:1496`), `ark_profile_head`/`self/prof` replication
+  (`ark_profile.c`), `prov_head`/`profile_head` resolution — record B's view, do NOT re-author
+  consent.
+- The galaxy hook PATTERN: one `galaxy_emit` at one site (mirror `dmn.c:137`, `r3_incontext.c:1509`).
+
+**FLAGGED — names that do NOT exist as callable API (create exactly as scoped, nothing more):**
+- `mind_net_task(INT, void*)` — the new region subscriber task (in `r3_incontext.c`, so its
+  helpers stay file-static; declared in `dtr.h` beside `mind_cmd`). Created in BOTH hosted
+  usermains next to `pfs_repl_task`/the DMN task. The ONLY new public callable for arrival.
+- `MT_TEACH_PKT` + `MT_MAGIC` + the `"mind/teach"` topic name — new wire surface; pin its size
+  with `_Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX)`; pick a free LE magic (grep the
+  existing `*_MAGIC` set first — `GL_BLOB_MAGIC`, `KDDS_MAGIC`, `PFSR_*_MAGIC`, `ARK_*_MAGIC` —
+  to avoid collision).
+- `EV_REMOTE_TEACH` = **15** in `galaxy.h` (next after `EV_SUMMARY=14`; `a = origin_node`,
+  `b = key`) — the ONE new galaxy event; emitted at EXACTLY ONE site, B's arrival in
+  `mind_net_task`, the thread crossing the galaxy + the distant star flashing (VIII.10).
+- The `mind/teach` PUBLISH line inside `mind teach` (`m_teach`, `:1446`): added AFTER the
+  successful local enqueue + `ark_prov_record`, gated on `n==1` (singleton; the cert geometry),
+  carrying `r3_fq[r3_fq_n-1].seq`/`yhat`-or-`val`/`drpc_my_node`/`prov_head`. **One publish,
+  one site.**
+- **Do NOT:** call `gl_merge`/`gl_pfs_publish` on `rw[]` (Path W, deferred — VIII.2/VIII.7);
+  add a second queue or a second consolidation path; let `mind_net_task` call
+  `r3_consolidate_idle_round`/`s_round` directly (arrival ONLY via `r3_fact_learn`; the round
+  belongs to the DMN — the auditor greps this); re-author consent on B; parse natural language;
+  touch any existing cert's numbers; open `mind/teach` GLOBAL-scoped (region-scope is the claim).
+
+### VIII.10 The galaxy hook — the thread crossing the galaxy
+
+ONE emission point: inside `mind_net_task`, at the moment a remote arrival is accepted into B's
+queue (right after the `r3_fact_learn` returns 0), emit
+`galaxy_emit(EV_REMOTE_TEACH, A_origin_node, drpc_my_node, (UH)key, (UH)val)`. In the galaxy UI
+this is the literal buzz image: a thread leaves A's star, crosses the region, and B's distant
+star flashes as the fact lands — `src = A` (where it came from), `dst = B = me` (where it
+landed). A REFUSED remote teach (conflict, VIII.5) emits the same event with a deflect flag in a
+spare bit (or simply is NOT emitted as ARRIVAL but logged) so the conflict is observable, not
+silent. This is the only new event; `EV_TEACH`/`EV_CONSOLIDATE`/`EV_ASK` on B fire unchanged
+from LM-6 (B's own consolidation and answer), so the full cross-node story is already visible:
+`EV_TEACH`@A → `EV_REMOTE_TEACH`@B → `EV_CONSOLIDATE`@B → `EV_ASK`@B.
+
+### VIII.11 CI verb plan (specify only — do NOT edit `ci.yml` in this Part)
+
+1. A NEW live multi-node cert job `shared-mind-live` (mirror `collective-learn-live`
+   `ci.yml:529-559` and `samples/32_collective_learn/run.sh`): a new
+   `samples/NN_shared_mind/run.sh` that boots a relay + node A + node B in ONE region (RTT <
+   `REGION_TAU_MS`) + node C OUTSIDE the region (tag 3 negative half); drives `mind teach k* v*`
+   on A over stdin; polls B until `[shared-arrival]`/`[shared-consolidated]`/`[shared-grounded]`/
+   `[shared-live]` print PASS; greps `RESULT: PASS`. Cross-arch via the existing
+   `PKERNEL_BOOT_DIR`/`PKERNEL_WRAP` overrides (aarch64 A + x86_64 B in one region, the
+   `moment_2026_05_22_xarch_mesh` property).
+2. Timeout: `timeout 600` (the `survival-loop` budget, `ci.yml:459`) — the teach→arrive→
+   consolidate→answer chain is ~30 s nominal (idle re-entry + 10 rounds + poll latency); 600 is
+   ~20× margin and matches the existing live-mesh jobs.
+3. Four greps in the new job: `[shared-arrival] PASS`, `[shared-consolidated] PASS`,
+   `[shared-grounded] PASS`, `[shared-live] PASS`, plus the production
+   `[dmn] sleep: distilled in-context facts -> rw[]` grep on **B's** log (the print this slice
+   makes fire on a node that was never directly taught).
+4. ALL existing greps stay (no-regress); the native in-process job (`ci.yml:67`) is UNCHANGED —
+   the shared-mind cert is LIVE-only (two processes), like every other Collective-layer proof.
+   **The implementer wave edits `ci.yml` + adds the sample, not this document.**
+
+### VIII.12 Provenance / closes-on
+
+Design only. This slice closes when `[shared-arrival]`, `[shared-consolidated]`,
+`[shared-grounded]`, `[shared-live]` are green on a clean rebuild AND CI-enforced (the new live
+2-process job), audited by a **separate** agent on the **commander's** binary — not the
+implementer's. The audit makes the acceptance test; the commander reads the gate formula —
+the `mind_net_task` arrival path (single `r3_fact_learn`, no direct round call), the loop-guard
+(`origin==me` drop), the `mind/teach` publish site, and the ONE `EV_REMOTE_TEACH` emission —
+line-by-line. One epitaph line in `gap-ledger.md`; no new ledger entries; no new
+`philosophy-gap-audit`.
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Engram transport** (VIII.3): region-scoped K-DDS `mind/teach` topic (**recommended** —
+   cheapest, "a fact is a live message") vs a p-fs `mind/teach/<origin>` object (durable,
+   death-surviving, more ceremony). K-DDS is enough for "both live"; the p-fs fallback is the
+   federation/durability slice.
+2. **Same-key cross-node conflict** (VIII.5): LOCAL-wins + remote-refused-and-printed
+   (**recommended**, mirrors VII's refuse) vs last-writer-wins. Refuse keeps belief revision a
+   measured future slice; last-writer is an unmeasured overwrite claim.
+3. **Path W vs E** (VIII.2): **Path E for v1 (recommended; not a close fork — 9 500× wire +
+   an unanswered averaging-of-divergent-minds question gate W)**. Surfaced as a decision only
+   because W is the deeper "one mind" north star; if the commander elects W-first, the
+   averaging disease/cure cert (VIII.7) is MANDATORY and replaces VIII.6.
+4. **The negative-control node C** (VIII.6 #3): include an out-of-region node to falsify the
+   region boundary (**recommended** — it is the honest half of `[shared-grounded]`) vs a
+   2-node cert only (cheaper CI, weaker claim). Recommend include; it is the difference between
+   "B got it" and "the REGION'S mind got it, and only the region."
