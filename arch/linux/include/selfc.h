@@ -31,12 +31,21 @@
 ER selfc_compile_and_run(const char *src, const char *entry_sym,
                          const char *what);
 
+/* selfc-ring3 §6 reused path: read unit/<name>@seq source from p-fs,
+ * compile it ISOLATED (proxy API table), register the RWX image in the
+ * unit table, and return the resolved selfc_main entry (or NULL). The
+ * germ supervisor (arch/linux/selfc_proc.c) forks AFTER this resolution
+ * so the child inherits the compiled image via COW. */
+void *selfc_resolve_unit(const char *name, U4 seq);
+
 /* Shell dispatcher for the line "selfc ..." (full line passed in):
- *   selfc demo            — compile + run the built-in demo source
- *   selfc save <name>     — save the demo source as p-fs object <name>
- *                           (replicates to region peers like any block)
- *   selfc run <name>      — read C source from p-fs object <name>,
- *                           compile it here, run it as a task
- *   selfc ls              — list compiled units
+ *   selfc demo            — compile + run the built-in demo (LEGACY in-task)
+ *   selfc save <name>     — save the demo source as p-fs object unit/<name>
+ *   selfc adopt <name>    — explicitly accept a unit for germination (§3)
+ *   selfc run <name>      — germinate unit/<name> in a germ process (the
+ *                           crash boundary; the v1 DEFAULT, selfc-ring3 §2.1)
+ *   selfc test            — the [selfc-isolated]/[selfc-rollback]/
+ *                           [selfc-lineage] acceptance gates (§5)
+ *   selfc ls              — list compiled units + germ reap count
  */
 void selfc_cmd(const UB *line, INT n);
