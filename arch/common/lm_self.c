@@ -293,6 +293,95 @@ static void self_build_chain(U1 self_id)
 }
 
 /* ================================================================== */
+/* selfc-ring3 §1.3 — append a unit-lifecycle event to "self/lin"       */
+/* ================================================================== */
+/* Reuses the EXISTING chain: read the current head LM_SELF_ENTRY (if any)
+ * to find the prev content-id + the next seq, build a new entry whose
+ * prev_entry is the head's content-id, encode the event into age_ms,
+ * summarize the event descriptor into eng_digest via pfs_id_compute, and
+ * commit with pfs_dag_save (the SAME path lm_self_test uses; P1 replicates
+ * the appended blocks for free). No second chain, no new hash. */
+
+INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig)
+{
+    self_compute_model_ver();               /* stamp the brain we run on   */
+
+    /* find the current head: its content-id becomes the new entry's prev,
+     * and its seq+1 is the new seq. If "self/lin" has no head yet, this is
+     * a genesis entry (prev all-zero, seq 1). */
+    LM_SELF_ENTRY head;
+    U1  prev[PFS_ID_LEN];
+    self_memset(prev, 0, PFS_ID_LEN);
+    U4  next_seq = 1;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                          &head, (UW)sizeof head);
+    if (rd == (INT)sizeof head && head.magic == LM_SELF_MAGIC) {
+        pfs_id_compute(&head, (UW)sizeof head, prev);   /* content-id of head */
+        next_seq = head.seq + 1;
+    }
+
+    LM_SELF_ENTRY e;
+    self_memset(&e, 0, sizeof e);
+    e.magic   = LM_SELF_MAGIC;
+    e.version = LM_SELF_VER;
+    e.self_id = drpc_my_node;
+    e.seq     = next_seq;
+    e.age_ms  = LM_UNIT_EV_ENCODE(kind, unit_ver, sig);  /* the event payload */
+    if (!self_id_zero(prev)) self_memcpy(e.prev_entry, prev, PFS_ID_LEN);
+    /* eng_digest summarizes the event descriptor (deterministic image, the
+     * same content-address path self_eng_digest uses — NO new hash). */
+    {
+        U4 desc[3] = { (U4)kind, unit_ver, (U4)sig };
+        pfs_id_compute(desc, (UW)sizeof desc, e.eng_digest);
+    }
+    self_memcpy(e.model_ver, self_model_ver, PFS_ID_LEN);
+
+    return pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                        &e, (UW)sizeof e);
+}
+
+/* selfc-ring3 §5.3 — walk the live "self/lin" chain head->genesis, verify it
+ * hash-chains end-to-end (reusing the wave-22 self_walk verifier), and count
+ * the unit-lifecycle events by kind. The walk yields ids head-first; we read
+ * each entry's age_ms and decode the event. Returns 1 if the chain verifies,
+ * 0 (fail-closed) otherwise; *germ/*reap/*roll receive the event counts and
+ * *ok_chain the hash-verify verdict. */
+INT lm_self_unit_lineage_check(INT *n_germ, INT *n_reap, INT *n_roll,
+                               INT *ok_chain)
+{
+    if (n_germ) *n_germ = 0;
+    if (n_reap) *n_reap = 0;
+    if (n_roll) *n_roll = 0;
+    if (ok_chain) *ok_chain = 0;
+
+    /* read the head manifest content (an LM_SELF_ENTRY), hash it to get the
+     * head content-id, then walk to genesis with the SAME verifier the Self
+     * layer uses (content-address integrity + fail-closed). */
+    LM_SELF_ENTRY head;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                          &head, (UW)sizeof head);
+    if (rd != (INT)sizeof head || head.magic != LM_SELF_MAGIC) return 0;
+    U1 head_id[PFS_ID_LEN];
+    pfs_id_compute(&head, (UW)sizeof head, head_id);
+
+    INT ok = 0;
+    static U1 ids[LM_SELF_WALK_MAX][PFS_ID_LEN];
+    UW len = self_walk(self_get_pfs, 0, head_id, &ok, ids);
+    if (ok_chain) *ok_chain = ok;
+    if (!ok) return 0;                  /* fail-closed: a broken chain REJECTs */
+
+    for (UW i = 0; i < len; i++) {
+        LM_SELF_ENTRY e;
+        if (self_get_pfs(0, ids[i], &e, sizeof e) != (INT)sizeof e) continue;
+        UB kind = (UB)LM_UNIT_EV_KIND(e.age_ms);
+        if (kind == LM_UNIT_EV_GERM     && n_germ) (*n_germ)++;
+        else if (kind == LM_UNIT_EV_REAP     && n_reap) (*n_reap)++;
+        else if (kind == LM_UNIT_EV_ROLLBACK && n_roll) (*n_roll)++;
+    }
+    return 1;
+}
+
+/* ================================================================== */
 /* the acceptance suite (living-mind.md III.5)                          */
 /* ================================================================== */
 

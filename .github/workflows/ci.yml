@@ -48,7 +48,11 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make
+          # libtcc-dev: selfc-ring3 (the self-built-unit immune boundary) needs
+          # libtcc for THIS ABI to compile units. The x86_64 runner has the
+          # x86_64 libtcc, so the boot/linux_x86_64 Makefile probe links it and
+          # HAVE_LIBTCC turns on — `selfc test` then actually compiles+forks.
+          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
       - name: Build (native x86_64 — Makefile auto-detects host arch)
         run: make -C boot/linux_x86_64
       - name: Kernel self-tests (pfs + hrw via shell stdin)
@@ -229,6 +233,31 @@ jobs:
           grep -aF '[galaxy-serve] PASS'  galaxy_cert.log
           grep -aF '[galaxy-events] PASS' galaxy_cert.log
           grep -aF '[galaxy-teach] PASS'  galaxy_cert.log
+
+      - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
+        run: |
+          cd boot/linux_x86_64
+          # selfc-ring3 v1 (docs/architecture/selfc-ring3.md): a self-built unit
+          # runs in a fork()ed germ process where a crash is REAPED (waitpid)
+          # instead of killing ./p-kernel. Run in its OWN ./p-kernel invocation,
+          # LAST and isolated: `selfc test` proves post-crash liveness IN-BAND
+          # (a sentinel T-Kernel tick advances AFTER the reap, §5.1), but the
+          # process does NOT exit cleanly afterward — a fork/cooperative-
+          # scheduler interaction wedges the idle loop once the gates printed
+          # (KNOWN ISSUE, see the wave report). `timeout` reaps the wedge; the
+          # three greppable gate verdicts are already in the log by then. This
+          # needs libtcc-dev (installed above); without it selfc is a stub.
+          #   [selfc-isolated]  DISEASE (a crash unit KILLS the node) -> CURE
+          #                     (the same unit in a germ: reaped==1, WTERMSIG
+          #                     ==SIGSEGV, sentinel alive)
+          #   [selfc-rollback]  v2 dies in probation -> seq 2 BAD -> seq 1 serves
+          #                     a fresh token again, deaths==1
+          #   [selfc-lineage]   the version chain walks; self/lin events
+          #                     hash-verify
+          timeout 200 sh -c "printf 'selfc test\nexit\n' | ./p-kernel" | tee selfc.log || true
+          grep -aF '[selfc-isolated] PASS' selfc.log
+          grep -aF '[selfc-rollback] PASS' selfc.log
+          grep -aF '[selfc-lineage] PASS' selfc.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)

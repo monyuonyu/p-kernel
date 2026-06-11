@@ -207,6 +207,13 @@ void world_note_firing(UB gate_class)
         my_firing |= WORLD_FIRE_BIT(gate_class);
 }
 
+/* selfc-ring3 §8 — a self-built unit germinated or rolled back; mark the
+ * star as visibly rebuilding for one beacon period (decays with firing). */
+void world_note_rebuild(void)
+{
+    my_firing |= WORLD_REBUILD_BIT;
+}
+
 /* ------------------------------------------------------------------ */
 /* self-beacon を組み立てて publish する                               */
 /* ------------------------------------------------------------------ */
@@ -220,7 +227,7 @@ static void publish_beacon(void)
     b.device_type = my_device_type();
     b.region_id   = region_id();                 /* 自 region (局所ビュー)  */
     b.pressure    = compute_pressure();
-    b.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
+    b.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
     b.region_size = region_size();
     b.threat      = compute_threat();            /* 脅威軸 (§2 rally) — G20 */
     b.atrisk      = compute_atrisk();
@@ -404,7 +411,7 @@ void world_task(INT stacd, void *exinf)
             self.device_type = my_device_type();
             self.region_id   = region_id();
             self.pressure    = compute_pressure();
-            self.firing      = (UB)(my_firing & WORLD_FIRE_MASK);
+            self.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
             self.region_size = region_size();
             self.threat      = compute_threat();
             self.atrisk      = compute_atrisk();

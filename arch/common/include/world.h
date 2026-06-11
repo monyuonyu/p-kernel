@@ -68,6 +68,15 @@ _Static_assert(sizeof(U1) == 1 && sizeof(U2) == 2 && sizeof(U4) == 4,
 #define WORLD_FIRE_BIT(c)   ((U1)(1u << (c)))
 #define WORLD_FIRE_MASK     0x07   /* 下位 3 bit = MOE_NUM_CLASSES 個     */
 
+/* selfc-ring3 galaxy hook (docs/architecture/selfc-ring3.md §8): a node
+ * that germinated / rolled back a self-built unit sets this bit in the
+ * beacon's `firing` byte for ONE beacon period — every peer's world-table
+ * (and therefore the galaxy observation window) sees a star visibly
+ * rebuilding itself, with zero new packet types. Bits 3..7 are free above
+ * WORLD_FIRE_MASK; this uses bit 7 (0x80). */
+#define WORLD_REBUILD_BIT   0x80
+#define WORLD_BEACON_FIRE_MASK  (WORLD_FIRE_MASK | WORLD_REBUILD_BIT)
+
 /* topic prefix: "world/beacon/" + 1 桁ノード ID                        */
 #define WORLD_BEACON_TOPIC_PFX "world/beacon/"
 
@@ -95,6 +104,12 @@ void world_observe(const WORLD_BEACON *b);
 /* この瞬間の自ノードの逼迫度 (0..100) を計算する (degrade/capacity 由来)。
  * firing ビットを MoE 発火が立てるための公開フック。 */
 void world_note_firing(UB gate_class);
+
+/* selfc-ring3 §8 galaxy hook — emitted from EXACTLY ONE place (the germ
+ * supervisor's germinate/rollback transition, arch/linux/selfc_proc.c).
+ * Sets WORLD_REBUILD_BIT in the next beacon's firing byte for one period;
+ * decays with the firing bits. No central collector. */
+void world_note_rebuild(void);
 
 /* shell `world` / `map` コマンド: 全網の状況をテキストで描画する。
  * 各既知ノードの id / device_type / region / alive・age / pressure bar /

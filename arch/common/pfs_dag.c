@@ -547,6 +547,45 @@ INT pfs_dag_read(const UB *name, UW nlen, void *buf, UW maxlen)
 }
 
 /* ------------------------------------------------------------------ */
+/* read_at — programmatic read of a SPECIFIC version <seq> (selfc-ring3 */
+/* §1.3 rollback: run the content at seq-1). Walks the manifest         */
+/* prev-chain back from the head, same as dag_cat's @seq path, but with */
+/* its OWN scratch (rd_at_man) so a supervisor task can call it without  */
+/* clobbering the shell's man_scratch, and silently (a WANT, no print).  */
+/* ------------------------------------------------------------------ */
+
+static PFSD_MANIFEST rd_at_man;          /* read_at-private manifest scratch */
+
+INT pfs_dag_read_at(const UB *name, UW nlen, UW seq, void *buf, UW maxlen)
+{
+    if (!name || nlen == 0 || nlen > PFS_NAME_MAX || !buf || seq == 0)
+        return PFS_E_INVAL;
+
+    PFSD_REF *r = ref_find((const char *)name, nlen);
+    if (!r) return PFS_E_NOTFOUND;
+
+    U1 id[PFS_ID_LEN];
+    pd_memcpy(id, r->e.head, PFS_ID_LEN);
+    for (INT depth = 0; depth < PFSD_LOG_MAX; depth++) {
+        if (!pfs_has(id)) { pfs_repl_want(id); return PFS_E_NOTFOUND; }
+        INT glen = pfs_get(id, &rd_at_man, (UW)sizeof(rd_at_man));
+        if (glen != (INT)sizeof(rd_at_man) ||
+            rd_at_man.magic   != PFSD_MAN_MAGIC ||
+            rd_at_man.version != PFSD_VERSION)
+            return PFS_E_INVAL;
+        if (rd_at_man.seq == seq) {                   /* found target version */
+            INT clen = pfs_get(rd_at_man.content, buf, maxlen);
+            if (clen < 0) { pfs_repl_want(rd_at_man.content); return PFS_E_NOTFOUND; }
+            return clen;
+        }
+        if (rd_at_man.seq < seq || pd_id_zero(rd_at_man.prev))
+            return PFS_E_NOTFOUND;                     /* seq not on this chain */
+        pd_memcpy(id, rd_at_man.prev, PFS_ID_LEN);
+    }
+    return PFS_E_NOTFOUND;                             /* chain longer than LOG_MAX */
+}
+
+/* ------------------------------------------------------------------ */
 /* shell dispatcher — "save <name> <text>" / "log <name>" /            */
 /* "cat <name> [@<seq>]" (args points at the verb)                     */
 /* ------------------------------------------------------------------ */

@@ -149,6 +149,16 @@ INT  pfs_dag_save(const UB *name, UW nlen, const void *buf, UW len);
  * R3a uses this to load the trained dtr weight blob ("dtr/weights"). */
 INT  pfs_dag_read(const UB *name, UW nlen, void *buf, UW maxlen);
 
+/* Programmatic read of a SPECIFIC version <seq> of <name> into buf (up to
+ * maxlen bytes), by walking the manifest prev-chain back from the head
+ * until manifest.seq == seq. Returns the content length, or PFS_E_NOTFOUND
+ * (unknown ref / seq not reachable / manifest|content not local yet — a P1
+ * WANT is issued so a retry may succeed) or PFS_E_INVAL. Uses its OWN
+ * scratch (no shared man_scratch), so it is safe to call from a non-shell
+ * (supervisor) task. selfc-ring3 rollback (docs/architecture/selfc-ring3.md
+ * §1.3) uses this to run the content at seq-1. */
+INT  pfs_dag_read_at(const UB *name, UW nlen, UW seq, void *buf, UW maxlen);
+
 /* Shell dispatcher for the verbs after "pfs ":
  *   save <name> <text> / log <name> / cat <name> [@<seq>]
  * args points at the verb. Prints results/usage via tmonitor. */

@@ -72,6 +72,45 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
 #define LM_SELF_REF_LEN  8
 
 /* ------------------------------------------------------------------ */
+/* selfc-ring3 §1.3 — self-built-unit lineage events                   */
+/* ------------------------------------------------------------------ */
+/* Germination, reap and rollback of a self-built unit are autobiographical
+ * events. Each appends ONE LM_SELF_ENTRY to the EXISTING hash-chained
+ * "self/lin" lineage — no second chain (anti-fork §6). The event kind +
+ * the unit's version are encoded deterministically into the entry's age_ms
+ * field (so the same event yields the same content-id on every ABI and the
+ * walker still hash-verifies); eng_digest summarizes the event descriptor
+ * via the SAME pfs_id_compute content address used everywhere. A node's
+ * history of rebuilding itself thus rides the autobiography that already
+ * survives death and reconstructs ownerless. */
+
+#define LM_UNIT_EV_GERM      1     /* a unit version germinated (forked)     */
+#define LM_UNIT_EV_REAP      2     /* a unit version was reaped (died)       */
+#define LM_UNIT_EV_ROLLBACK  3     /* rolled back from one seq to the prev   */
+
+/* age_ms layout for a unit event: [31:28]=kind [27:20]=sig [19:0]=uv|to<<10 */
+#define LM_UNIT_EV_ENCODE(kind, uv, sig) \
+    (((U4)((kind) & 0xF) << 28) | ((U4)((sig) & 0xFF) << 20) | ((U4)(uv) & 0xFFFFF))
+#define LM_UNIT_EV_KIND(age)  (((age) >> 28) & 0xF)
+#define LM_UNIT_EV_SIG(age)   (((age) >> 20) & 0xFF)
+#define LM_UNIT_EV_UV(age)    ((age) & 0xFFFFF)
+
+/* Append one unit-lifecycle event to the live "self/lin" chain (the same
+ * pfs_dag_save path lm_self_test uses). kind is LM_UNIT_EV_*; unit_ver is
+ * the unit's pfs_dag seq the event concerns; sig is the reap signal (0 for
+ * germ/rollback). Returns PFS_OK or a negative PFS_E_* code. Local-store
+ * only; P1 replicates the appended blocks like any other self entry. */
+INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig);
+
+/* selfc-ring3 §5.3 [selfc-lineage]: walk the live "self/lin" chain, verify it
+ * hash-chains end-to-end (the wave-22 verifier), and count the unit events by
+ * kind. Returns 1 iff the chain verifies (fail-closed otherwise). Out params
+ * (any may be NULL) receive the germ/reap/rollback counts and the verify
+ * verdict. */
+INT lm_self_unit_lineage_check(INT *n_germ, INT *n_reap, INT *n_roll,
+                               INT *ok_chain);
+
+/* ------------------------------------------------------------------ */
 /* API                                                                 */
 /* ------------------------------------------------------------------ */
 

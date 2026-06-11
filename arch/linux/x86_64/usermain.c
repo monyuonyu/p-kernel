@@ -36,6 +36,9 @@
 #include "dmn.h"
 #include "galaxy.h"  /* galaxy v1: the observation window task */
 #include "selfc.h"
+#ifdef HAVE_LIBTCC
+#include "selfc_proc.h"
+#endif
 #include "genome.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -347,6 +350,7 @@ static void cmd_net(void)
     create_task((FP)pfs_dag_task, 7, 4096);
     print("[net] pfs ref (version DAG) gossip task started\r\n");
 
+
     /* G28 — protected-object actuator. While a declared unit is under-
      * replicated it re-announces it to drive replication into neighbours'
      * durable store; the grounded threat falls as replicas reach R.
@@ -613,6 +617,18 @@ EXPORT INT usermain(void)
     } else {
         print("[net] galaxy disabled (PKERNEL_GALAXY=0)\r\n");
     }
+
+#ifdef HAVE_LIBTCC
+    /* selfc-ring3 §2.1: the germ supervisor task — runs at BOOT (not just
+     * after `net`) so `selfc test`/`selfc run` work standalone. It owns ALL
+     * germ lifecycle: it is the task that fork()s germs, waitpid(WNOHANG)s
+     * them, drains their capability frames and rolls back bad builds (§1.4).
+     * CRUCIAL: germ fork()s happen in THIS task, NOT the shell task — forking
+     * from the shell task corrupts the shell's stdin (the COW child can
+     * re-enter the cooperative scheduler and steal console input). */
+    create_task((FP)selfc_proc_task, 7, 65536);
+    print("[OK]  selfc germ supervisor task\r\n");
+#endif
 
     /* If PKERNEL_AUTONET is set, bring up the network automatically
      * so a backgrounded node-2 process doesn't have to be driven via
