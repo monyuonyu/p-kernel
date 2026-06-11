@@ -2485,3 +2485,374 @@ line-by-line. One epitaph line in `gap-ledger.md`; no new ledger entries; no new
    region boundary (**recommended** — it is the honest half of `[shared-grounded]`) vs a
    2-node cert only (cheaper CI, weaker claim). Recommend include; it is the difference between
    "B got it" and "the REGION'S mind got it, and only the region."
+
+## Part IX — the language slice: REAL WORDS in, REAL WORDS out (one-token answers)
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–VIII).
+> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> **LM-7** (Part VIII, the shared mind: `mind_net_task` + the `MT_TEACH_PKT` wire `dtr.h:324`,
+> `m_publish_teach`/`mind_net_open` `r3_incontext.c`, the region-scoped `mind/teach` topic),
+> **LM-6** (Part VII, `mind teach|ask|wait` + `mind_cmd`, the ONE provenance write site
+> `ark_prov_record`, the web POST `/teach`/`/ask` bridge `galaxy.c:815/849`, the `galaxy.html`
+> teach/ask dropdowns), **LM-5** (the bounded fact queue + `r3_fact_learn`/`r3_facts_pending`/
+> `r3_consolidate_idle_round`), **R3** (the in-context substrate `r_forward`/`r_backward`,
+> `R_NP`/`R_KEYV`/`R_VALV`/`R_DM`/`R_NPAIR`, the `[r3-incontext-gradcheck]` discipline),
+> **ark-profile i18n** (`ark_manifesto_*` — the 32-language audience). All closed in
+> `gap-ledger.md`, so this is unblocked.
+
+This is **the longest-named honest bound in the whole ledger.** EVERY living-mind epitaph since
+wave-21 carries the same disclaimer, verbatim: *"toy R3 synthetic vocab (NOT natural language)"*
+(LM-4), *"a teach is `k∈0..7 → v∈0..3`, NOT language"* (LM-6), *"synthetic vocab"* (LM-7). The
+mouth is real (a human, a prompt, a region of machines). The WORDS are not. This Part moves the
+mind **from `teach k∈0..7 → v∈0..3` toward REAL WORDS** — and does so by the smallest falsifiable
+step that the substrate's measured capacity can actually carry, NOT the dream. The headline of the
+certificate is **a number: how many real word-bindings the substrate honestly holds at ≥75%
+recall** — the capacity curve IS the claim. It mirrors Parts II–VIII's rigor exactly: a claim, a
+falsifiable certificate with bracket tags + numeric bars, a HARD anti-fork surface, named honest
+bounds, a versioned wire, the i18n-honest UI, and a CI verb plan.
+
+### IX.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Seven load-bearing facts. The first four pre-decide **the (a)/(b)/(c) fork below by arithmetic**;
+the rest correct the wave framing. **Verify every number by build; do not trust this doc blind.**
+
+1. **The R3 substrate is 7172 floats, and its capacity is set by `R_DM`, NOT by vocab size.**
+   `R_NP = 7172` (`r3_incontext.c:100`, layout `:82-100`). The parameter families are: embeddings
+   **704 B** (`R_KEYV·R_DM + R_VALEMB·R_DM + R_SEQ·R_DM = 8·32 + 5·32 + 9·32`), attention **4096**
+   (`3·R_NH·R_DH·R_DM + R_DM·R_DM`), FFN **2112**, LayerNorm **128**, classifier **132**
+   (`R_VALV·R_DM + R_VALV`). The comment at `:76-77` is the load-bearing fact: *"8-way recall needs
+   `R_DM=32` capacity; `R_DM=16`/`R_NH=2` stays at chance — measured, not assumed."* So the
+   **associative-reasoning bottleneck is the attention width `R_DM`**, which scales the model
+   quadratically; the **vocabulary** lives only in the embedding (`R_KEYV·R_DM`, `R_VALEMB·R_DM`)
+   and classifier (`R_VALV·R_DM`) tables, which scale **linearly** and are independent lookups.
+2. **Widening the vocabulary is cheap; widening the reasoning is expensive.** Measured `R_NP` by
+   the layout formula (verify by build): `(R_KEYV=256, R_VALV=64, R_DM=32)` → **19 008 floats**
+   (≈2.65× today, still one allocation of statics); `(256, 64, R_DM=48)` → **31 536**;
+   `(256, 64, R_DM=64)` → **50 240**. The vocab knobs `R_KEYV`/`R_VALV` move `R_NP` by ~1–2 K each;
+   the reasoning knob `R_DM` moves it by 12 K per step. **The honest v1 widens vocab at `R_DM=32`
+   and lets the capacity cert MEASURE whether 32-wide attention disambiguates the words** — it may
+   need `R_DM=48`; the cert decides, and the doc forbids guessing.
+3. **The per-episode binding budget is `R_NPAIR`, NOT the vocabulary.** `gen_episode` (`:133`)
+   places `R_NPAIR=8` distinct key→value pairs per prompt + 1 query; the model must read the ONE
+   binding the query asks for. Vocabulary is **how many distinct words can be NAMED** across
+   episodes; `R_NPAIR` is **how many bindings coexist in ONE prompt**. A 256-word vocabulary with
+   `R_NPAIR=8` means "any of 256 words may appear, 8 at a time." Raising `R_NPAIR` lengthens
+   `R_SEQ` and costs attention quadratically (fact #1); the cert below holds `R_NPAIR` and sweeps
+   the **number of taught word-bindings carried in the live queue** (`R3_FQ_MAX`-bounded), which is
+   the user-visible "how much can I tell it" number.
+4. **The wire has 189 bytes to spare; token ids fit trivially.** `MT_TEACH_PKT` is **44 B**
+   (`dtr.h:334`, `_Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX)` at `r3_incontext.c:38`,
+   `KDDS_DATA_MAX=192`). Today `key`/`val` are `U1` (`dtr.h:329`). A 256-word vocabulary still fits
+   `U1`; a >256-word vocabulary needs `U2` token ids (+2 B → 46 B, still 146 B to spare). **The
+   wire change is a 2-byte field-width bump + a version field, NOT a new transport** — the Path E
+   "one packet" property (VIII.0 #1) is preserved with enormous headroom.
+5. **The tokenizer must be SHARED by the kernel and the UI, and must live where both can reach it.**
+   The kernel maps a word → token id at `mind teach`/`mind ask`; the galaxy page maps the user's
+   typed word → the same id (or shows the kernel's word back). The current dropdowns
+   (`galaxy.html:383` `fill("tk",8);fill("tv",4)`) hard-code 8/4 as integers. A word list embedded
+   like the manifestos (`ark_manifesto_*`, one byte image hashed by `pfs_id_compute`) is the
+   established pattern — the vocab is a content-addressed asset, served to the UI by a new
+   `GET /vocab` route, so **the UI and kernel provably agree by content-id** (a vocab mismatch is
+   detectable, not silent). It lives in `arch/common/` (a new `r3_vocab.c` + `r3_vocab.h`),
+   reachable by `r3_incontext.c`, `galaxy.c`, and the cert.
+6. **OOV is an honest REFUSAL, not a guess.** A word not in the fixed list has no token id. The
+   mouth must PRINT the refusal (`[mind] word "..." not in vocabulary (N words); refused`) exactly
+   as re-teach is refused today (`r3_incontext.c:1618`). Silently hashing OOV words into collisions
+   would manufacture fake bindings — the opposite of the project's honesty discipline.
+7. **The certs are pinned to the OLD dims; widening forces a re-baseline that must be LOUD.**
+   `r3_test`/`r3_handoff_test`/`r3_stream_test` all hard-code `R_KEYV=8`/`R_VALV=4` numbers (the
+   `DSTAR`/`SDICT` tables `:668/:979` are 8 entries; gates like `acc_masked_pre <= 33` assume
+   `chance = 100/R_VALV = 25%`). Changing `R_VALV` changes `chance` and every margin. **The certs
+   either (a) compile against a frozen `R_VALV_LEGACY` view, or (b) are re-baselined with new
+   printed numbers.** This Part RECOMMENDS (b) with a loud epitaph (IX.5) — a silent re-baseline
+   that lowered a bar would be exactly the immune-system failure the audit exists to catch.
+
+### IX.1 The claim to prove
+
+> A person types **real words** in the galaxy page (or `mind teach sky blue` at the shell): the
+> word "sky" maps to a vocabulary token, the word "blue" to an answer token; the fact enters the
+> SAME bounded queue via `r3_fact_learn` (LM-5/6 unchanged in mechanism); B's — or the same node's
+> — OWN DMN consolidates it during sleep; `mind ask sky` answers **"blue"** (a real word) from the
+> weights on a MASKED prompt; the answer crosses the region over the **versioned** `mind/teach`
+> wire (LM-7, token-id payload); and the certificate **MEASURES and PRINTS how many real
+> word-bindings the substrate holds at ≥75% recall** — the capacity curve is the headline.
+
+The task stays **associative recall** — the proven machinery (LM-4..7 all transfer unchanged in
+structure) — but over **real word tokens** instead of `k∈0..7 → v∈0..3`. This is the honest
+"the mind remembers what you tell it, in words." It is **NOT generation, NOT grammar, NOT chat,
+NOT multi-token answers, NOT belief revision** (IX.7 owns each bound loudly).
+
+### IX.2 THE FORK — (a) word-level recall vs (b) byte/char sequences vs (c) BPE generative LM
+
+The wave must pick ONE. The arithmetic of IX.0 #1–3 pre-decides it.
+
+- **(c) a real BPE tokenizer + a tiny GENERATIVE LM.** The full dream: subword tokenization, a
+  causal LM that *produces* novel word sequences. **Capacity math says NO at 7 K params, and says
+  so with a number.** A useful generative English LM needs an embedding table of (≥8 K subwords ·
+  d_model) PLUS a reasoning stack deep/wide enough to model grammar — at `d_model=32` that
+  embedding alone is **256 K floats** (>35× the whole current model), and the reasoning capacity
+  (fact #1: grammar is not 32-wide-attention-shaped) is the harder wall. **What WOULD it take?** A
+  conservative tiny-but-real generative LM (≈8 K-token BPE, `d_model=256`, 4 layers) is
+  **~25–50 M params** — **~3 500–7 000×** today. That is not a knob; it is a different organism,
+  and it ties directly to the fleet: such a model **cannot live in one node's `rw[]`** and would
+  have to run **tensor-parallel across the region**, which is *exactly the machinery the dtr sensor
+  side already proved* (DKVA / distributed KV attention over the relay, `gap-ledger.md`). **(c) is
+  named here as the future arc and explicitly handed to the distributed-inference substrate**, not
+  attempted in this slice. Naming the param budget IS the honest deliverable for (c).
+- **(b) byte/char-level sequence memory.** Tokenizer = bytes (language-neutral, zero word list).
+  But teaching arbitrary strings requires a **sequence OUTPUT** — multi-token answers — which is a
+  **structural change to R3's single-class readout** (`r_forward` reads `R_VALV` classes from ONE
+  query position, `:213-215`; `r_backward` `dlog[R_VALV]` `:230`). That means autoregressive
+  decoding, a new loss over a sequence, and a new gradcheck surface. It is a real, honest slice —
+  but it is a **bigger structural lift than the substrate's proven single-token recall**, and it
+  buys multi-byte words at the cost of leaving the LM-4..7 machinery that all transfers. **Named as
+  the slice AFTER (a): "the mind answers in a SHORT PHRASE, not one word."**
+- **(a) WORD-level associative recall — THE RECOMMENDED v1.** A fixed small vocabulary of common
+  words; `key` words = the things asked-about, `val` words = the one-word answers. The task stays
+  **single-token associative recall** — `r_forward`/`r_backward` UNCHANGED in structure (only
+  `R_KEYV`/`R_VALV`/the embedding-table sizes change, exactly the "legitimately task-specific"
+  surface the anti-fork rule already blesses at `:16-18`). Real words in, **one real word out.**
+  The wire carries token ids. The UI becomes text fields. The honest claim — *"the mind remembers
+  what you tell it in words"* — is true, falsifiable, and small.
+
+> **VERDICT: (a). RECOMMENDED, not a COMMANDER DECISION** — the capacity math forecloses (c) at
+> 7 K params, and (b)'s multi-token readout is a strictly larger structural change for a phrase
+> the user does not yet need. (b) and (c) are named successors. **The commander may still elect (b)
+> first**; if so, the multi-token autoregressive readout + its gradcheck become MANDATORY and
+> replace IX.6's single-token cert.
+
+### IX.3 The tokenizer / vocabulary — exact mechanism (the (a) design)
+
+**Mechanism: a fixed, embedded, content-addressed word list — NO hashing, NO BPE, NO OOV
+collisions.** Two tables, because keys (questions) and values (answers) are different roles in the
+substrate (mirroring `R_KEYV` vs `R_VALV` today):
+
+- `r3_vocab_key[]`: the **key vocabulary** — the words a person can ask ABOUT. Size `R_KEYV` (the
+  capacity cert sets this; start candidate 64–256, IX.4 measures).
+- `r3_vocab_val[]`: the **answer vocabulary** — the one-word answers. Size `R_VALV` (candidate
+  16–64). The classifier still reads `R_VALV` classes; each class IS an answer word.
+
+Each list is **one embedded UTF-8 byte image** (newline-separated words), exactly like the
+manifesto images (`ark_manifesto_at`, hashed by `pfs_id_compute`). Token id = the word's **0-based
+line index**. The image has a **content-id** (`pfs_id_compute`), served to the UI via a new
+`GET /vocab` route so the page and the kernel **provably share the same list** (a mismatch is a
+detectable id disagreement, not a silent fake binding). Lookup is a linear scan (lists are small,
+bounded, cold-path — `mind teach`/`ask` are human-paced).
+
+- **OOV handling (IX.0 #6):** a typed word not on the list → **PRINTED refusal**, no token, no
+  enqueue. `[mind] "<word>" not in key vocabulary (N=<R_KEYV> words); refused — vocab is fixed v1`.
+  The cert gates that a known OOV word is refused (a positive falsification of "it would never just
+  guess").
+- **i18n honesty (the 32-language audience will type non-English).** Two options, weighed:
+  - **English-only word list (v1 RECOMMENDED).** Smallest, cleanest, measurable; the cert's
+    capacity number is unambiguous. The honest bound printed in the UI: *"this mind's words are
+    English v1; your language is a future slice"* — said in the user's language via the existing
+    i18n string table (`galaxy.html` `STR`). A non-English typer gets a clear refusal, not a
+    mojibake binding.
+  - **Byte-token language-neutrality** is the (b) path (multi-token), deferred.
+  > **COMMANDER DECISION 1 — vocab language: English-only word list v1 (RECOMMENDED — one
+  > measurable capacity number, honest refusal in the typer's language) vs a multilingual word
+  > list (N× the table, blurs the capacity headline, and most non-English single "answer words"
+  > want morphology the single-token readout cannot carry).** Recommend English-only v1; the
+  > manifesto audience is told the bound truthfully in their language. The *manifesto* stays 32
+  > languages (ark-profile unchanged); only the toy *vocabulary* is English v1.
+
+### IX.4 The substrate widening — which knobs, the new `R_NP`, the gradcheck, the CI budget
+
+**Knobs that change (and ONLY these — the anti-fork surface IX.9 pins it):** `R_KEYV` (key vocab),
+`R_VALV` (answer vocab / output classes). **`R_DM` changes ONLY if the capacity cert proves 32-wide
+attention cannot disambiguate the widened vocab** (IX.0 #2) — and that change is a measured
+decision printed by the cert, never a guess. `R_NPAIR`/`R_SEQ` are **unchanged** (the per-prompt
+binding budget is orthogonal to vocab size, IX.0 #3).
+
+- New `R_NP` at the v1 candidate `(R_KEYV=256, R_VALV=64, R_DM=32)`: **≈19 008 floats** (verify by
+  build) — 2.65× today, still a single block of statics, still well inside `DTR_LN_MAXW` widths
+  (R_DM unchanged at 32).
+- **Gradcheck stays MANDATORY and UNCHANGED in form.** `r3_grad_check` (`:447`) strides by 7 over
+  `R_NP` with the ReLU-kink exclusion + absolute-floor disciplines; widening only grows the param
+  count it sweeps (stride 7 still covers every weight family since gcd(7, R_DM=32)=1). `R_DM`
+  unchanged ⇒ the `DTR_LN_MAXW` LayerNorm bound is untouched. `[r3-incontext-gradcheck]` must stay
+  PASS at the new `R_NP` — the FIRST gate the cert prints.
+- **CI time budget (the pretrain runs in CI — keep it bounded, print the time).** Cost model:
+  pretrain is `R_EPOCHS·R_TRAIN_N` fwd+bwd passes; the dominant cost is attention + linear layers,
+  which scale with `R_SEQ²·R_DM` and `R_SEQ·R_DM²` — **NOT with vocab size** (embeddings are O(R_SEQ·R_DM)
+  lookups, classifier is O(R_VALV·R_DM) once per fwd). Estimated relative cost at `(256, 64, R_DM=32,
+  R_SEQ=9)`: **≈1.03×** today (vocab adds ~3% via the larger classifier). At `R_DM=48` it is **≈2.0×**;
+  at a longer `R_SEQ=13` (more bindings/prompt) **≈1.5×**. **So vocab widening at R_DM=32 is
+  essentially free in CI time.** The cert PRINTS the measured pretrain seconds (the `m_boot`
+  `tk_get_otm` pattern, `:1358`); the gate is *printed, not asserted* (host-speed-dependent), but
+  the implementer wave must report it stays in the same order as LM-6's ~15 s native.
+
+### IX.5 Compatibility — the LM-4..7 certs, re-baselined LOUDLY
+
+`R_VALV` changing from 4 → 64 changes `chance = 100/R_VALV` from **25% → ~1.6%**, and every gate in
+`r3_test`/`r3_handoff_test`/`r3_stream_test` that compares to `chance`/`33`/`25`. Two strategies:
+
+- **(b) RE-BASELINE — RECOMMENDED.** The synthetic certs keep their STRUCTURE (the disease/cure/
+  grounded shape is the proof, not the literal 25%) and re-print honest new numbers against the new
+  `chance`. Every changed bar is called out in the epitaph and read line-by-line by the auditor.
+  This is honest *because* it is loud: the cert's job is to certify the substrate as shipped, not a
+  frozen historical view. **The recommended gate discipline: a re-baselined bar may only become
+  STRICTER relative to the new chance, never looser — a gate that drops below its old margin-over-
+  chance is a FAIL the auditor must catch (the validator-trap lesson).**
+- **(a) frozen `*_LEGACY` compile-time path** (the certs run against a frozen 8×4 view via a
+  separate small parameter block) keeps the old numbers byte-identical but **certifies a model that
+  no longer ships** — a silent divergence between the certified and the live substrate. Rejected as
+  the default for exactly that reason; named only as a fallback if re-baselining proves to destabilize.
+
+> **COMMANDER DECISION 2 — cert compatibility: re-baseline the LM-4..7 certs against the new
+> `R_VALV` with a LOUD epitaph and the stricter-only gate rule (RECOMMENDED) vs a frozen
+> `*_LEGACY` 8×4 view (byte-identical history, certifies a non-shipping model).** Recommend
+> re-baseline; the auditor reads every changed gate against the new chance.
+
+### IX.6 The falsifiable acceptance test (the certificate) — the capacity curve IS the headline
+
+Verb: `mind lang test` (or a `lang` cert verb). All numbers PRINTED, then canonical `[tag]
+PASS/FAIL` lines, greppable like the rest of the suite. Pretrain via the SHARED `s_pretrain` recipe
+(IX.0, the live mouth's path), re-baselined chance printed.
+
+1. **`[lang-gradcheck]`** — the widened substrate's gradients are real. `r3_grad_check` at the new
+   `R_NP`, max rel err `< 0.05` (the unchanged discipline). The FIRST gate — a widening that broke
+   the gradient is rejected before any capacity claim.
+2. **`[lang-capacity]` — THE HEADLINE.** Teach **N real word-bindings** (drawn from the embedded
+   vocab) through the LIVE `r3_fact_learn` mouth across DMN sleeps, for N sweeping a printed ladder
+   (e.g. N = 2, 4, 8, 12, 16, 24, 32, bounded by `R3_FQ_MAX` rehearsal + the cert's own larger
+   sweep buffer); MEASURE masked held-out recall vs N; PRINT the curve. The **disease** = the old
+   8-key ceiling (the substrate could only ever hold the synthetic 8). PASS requires the
+   **measured-comfortable N** to be **≥ a bar the cert sets from the curve** (candidate: **≥16
+   word-bindings at ≥75% recall** — the implementer reports the curve and the auditor sets the bar
+   from it; **the number is discovered, not assumed** — IX.0 forbids guessing it). The printed curve
+   is the deliverable even if the bar is renegotiated.
+3. **`[lang-recall]`** — a SPECIFIC real binding round-trips in words. Teach `sky→blue`
+   (real tokens); after sleep `mind ask sky` returns the token whose word is "blue", masked share
+   `≥75%`, N=40 (the LM-6 `[teach-consolidated]` discipline, now over real words). The word, not
+   the int, is printed.
+4. **`[lang-oov]`** — OOV is refused, not guessed. A word provably absent from the list is REFUSED
+   with the printed message; no queue entry is created (gated by `r3_facts_pending()` unchanged).
+   The honest negative half: the mind does NOT invent a binding for a word it has no token for.
+5. **`[lang-wire]`** (live, 2-process — rides the LM-7 path) — a real word taught on A is answered
+   in words on B over the **versioned** wire. Teach `sky→blue` on A; `mind ask sky` on B returns
+   "blue"; the `MT_TEACH_PKT` carried token ids with the version field set; an old-version node
+   (or a malformed version) **drops the packet and prints it** (IX.0 #4, IX.7 mixed-version
+   honesty). PASS requires B's answer word == A's taught word AND the version-mismatch drop is
+   exercised + printed at least once.
+
+### IX.7 The honest bound (what is NOT claimed)
+
+- **NOT generation, NOT grammar, NOT chat.** One-token associative recall over a fixed vocabulary.
+  "sky → blue" is a remembered binding, not a sentence the mind composed. No syntax, no novelty.
+- **One-word answers only.** The readout is `R_VALV` single classes (IX.0 #3). Multi-token / phrase
+  answers are the (b) successor slice.
+- **Vocabulary is fixed and bounded** (the embedded list); growing it is a knob (re-embed + widen),
+  not a mechanism, and OOV is an honest refusal (IX.6 #4), never a guess.
+- **English-only v1** (COMMANDER DECISION 1); the manifesto stays 32-language, the toy vocab does
+  not. A non-English typer is told the bound truthfully, in their language.
+- **Belief revision still future.** Re-teaching a word a new answer is refused (the LM-6/7 rule
+  unchanged). "sky → blue" then "sky → grey" is the belief-revision slice, not this one.
+- **The capacity number is the substrate's, not language's.** "≥16 word-bindings" means the 7 K
+  substrate, widened, holds ~16 real bindings at recall — it is NOT a claim about vocabulary
+  *coverage* of a language. A 256-word list is still an infant's words.
+- **Mixed-version region honesty.** A node on the old wire drops new-version packets (printed),
+  and vice-versa; the region's shared mind is then *partitioned by version* — stated, gated
+  (`[lang-wire]`), not hidden. The version field makes the partition observable.
+
+### IX.8 The wire — `MT_TEACH_PKT` version bump (token ids)
+
+Today `MT_TEACH_PKT.key`/`val` are `U1` carrying `k∈0..7`/`v∈0..3` (`dtr.h:329`). The language slice
+carries **token ids**. The change (IX.0 #4):
+
+- Add a `U1 wire_ver` field (or repurpose a reserved byte): `MT_WIRE_VER_LANG`. Old nodes set/expect
+  the legacy version; a receiver whose `wire_ver` does not match its own **drops the packet and
+  prints it** (the mixed-version honesty of IX.7). This is the ONE place the region partitions by
+  version, and it is observable.
+- Token-id width: if `R_KEYV ≤ 256` and `R_VALV ≤ 256`, `key`/`val` stay `U1` (no width change, only
+  *meaning* changes — id-into-vocab, not a small synthetic int). If a future vocab exceeds 256,
+  widen to `U2` (+2 B → 46 B, `_Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX)` still holds
+  with 146 B to spare). **v1 recommends `R_KEYV ≤ 256`, `R_VALV ≤ 256` so the wire width is
+  UNCHANGED — only the version field is new.**
+- `prov_head`/`fact_seq`/`origin_node`/`src` UNCHANGED — provenance across the mesh (LM-7 VIII.4) is
+  untouched; the teacher is still named.
+
+### IX.9 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+The numerically-meaningful kernels stay the SAME ones `dtr.c`/`r3_incontext.c` already use (the
+`:13-18` anti-fork rule). This slice's *only* legitimate task-specific surface is **(i) the size of
+the embedding/classifier tables** (already blessed as "token lookup vs scalar projection … which is
+legitimately task-specific") and **(ii) a new cold-path word↔id tokenizer**. EXPLICITLY:
+
+- **REUSE, do not fork:** `r_forward`/`r_backward`/`r_grad_check`/`r_train_epoch`/`s_pretrain`/
+  `r3_fact_learn`/`r3_consolidate_idle_round`/`m_masked_vote`/`mind_cmd`/`mind_net_task`/
+  `m_publish_teach` — the math + the mouth + the wire path are UNCHANGED in structure. Only
+  `R_KEYV`/`R_VALV`/the dependent offsets change.
+- **NEW, file-static or one TU:** `r3_vocab.c`/`r3_vocab.h` (the embedded lists + `r3_vocab_id`/
+  `r3_vocab_word` lookup, content-id), the `GET /vocab` route in `galaxy.c`, the `[lang-*]` cert.
+- **FLAGGED names that do NOT exist yet (the implementer creates them; the auditor greps that NO
+  other symbol was forked):** `r3_vocab_id`, `r3_vocab_word`, `r3_vocab_count`, `r3_vocab_id_blob`,
+  `MT_WIRE_VER_LANG`, `R_VALV_LEGACY` (only if COMMANDER DECISION 2 picks the frozen path).
+  **`dtr_train_batch`/`gl_merge`/`LM_ENGRAM` must NOT appear** (the wrong network — the V.0 rule;
+  they may appear only inside a do-NOT-use comment).
+
+### IX.10 The UI — galaxy teach/ask become text inputs
+
+`galaxy.html:383` (`fill("tk",8);fill("tv",4)`) and the `/teach` POST `body:`k=${k}&v=${v}``
+(`:396`) change minimally:
+
+- The `tk`/`tv`/`ak` `<select>` integer dropdowns become **text `<input>`** fields (or a datalist
+  populated from `GET /vocab` so the user sees the available words — RECOMMENDED, since the vocab is
+  fixed and small, a datalist is honest about what words exist).
+- `POST /teach` sends `k=sky&v=blue` (words); `galaxy.c`'s `/teach` bridge (`:815`) maps words→ids
+  via `r3_vocab_id` BEFORE building the `mind teach` command, and returns a **403/refusal** for OOV
+  (the existing 403-until-ack gate pattern extends to OOV). `mind ask` returns the answer WORD
+  (`m_last_v` resolved through `r3_vocab_word`), shown in the page.
+- **The i18n chrome** (`STR` table) gains the honest-bound string ("English words v1; your language
+  is a future slice") in every existing language, and the OOV-refusal message. The note line
+  (`galaxy.html:67`, *"this mind speaks 8 symbols today — it is an infant, truthfully shown"*)
+  becomes *"this mind speaks N English words today — still an infant, truthfully shown."*
+
+### IX.11 Tags + bars (summary), CI plan, provenance
+
+**Tags (5):** `[lang-gradcheck]` (the widened gradients are real — the precondition),
+`[lang-capacity]` (**the headline curve** — N word-bindings at ≥75%, disease = the 8-key ceiling),
+`[lang-recall]` (a specific real binding round-trips in words — the cure), `[lang-oov]` (OOV
+refused, not guessed — the honest negative), `[lang-wire]` (real words cross the region on the
+versioned wire — the shared-discipline tag, live 2-process). Disease→cure→capacity→shared
+discipline all covered.
+
+**CI plan (specify only — do NOT edit `ci.yml` in this Part).** The implementer wave adds: a native
+job running `mind lang test` and grepping `[lang-gradcheck] PASS`, `[lang-capacity] PASS`,
+`[lang-recall] PASS`, `[lang-oov] PASS`; the live 2-process job (rides the LM-7 `[shared-*]`
+harness) grepping `[lang-wire] PASS`. The re-baselined LM-4..7 greps (`[r3-incontext-*]`,
+`[handoff-*]`, `[stream-*]`, `[teach-*]`, `[shared-*]`) must ALL stay green at the new dims — the
+no-regress gate. **The implementer wave edits `ci.yml` + the sample, not this document.**
+
+### IX.12 Provenance / closes-on
+
+Design only. This slice closes when `[lang-gradcheck]`, `[lang-capacity]`, `[lang-recall]`,
+`[lang-oov]`, `[lang-wire]` are green on a clean rebuild AND CI-enforced, the LM-4..7 certs are
+re-baselined-and-green at the new dims, audited by a **separate** agent on the **commander's**
+binary — not the implementer's. The audit makes the acceptance test; the commander reads the gate
+formula — the widened `R_NP` (built, not trusted), the `[lang-capacity]` curve + the bar set FROM
+it, the tokenizer's OOV-refusal path (no silent binding), the wire version-drop, and the re-baselined
+gates (each stricter-only vs the new chance) — line-by-line. One epitaph line in `gap-ledger.md`;
+the LM epitaph's longest-standing disclaimer ("synthetic vocab, NOT real language") is finally
+**downgraded, honestly: real WORDS in/out, one-token, bounded vocab — NOT generation/grammar/chat.**
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Vocab language** (IX.3): **English-only word list v1 (RECOMMENDED** — one measurable capacity
+   number; honest refusal in the typer's language; manifesto stays 32-language) vs a multilingual
+   word list (N× the table, blurs the headline, morphology breaks single-token answers).
+2. **Cert compatibility** (IX.5): **re-baseline LM-4..7 against the new `R_VALV` with a LOUD epitaph
+   + stricter-only gate rule (RECOMMENDED)** vs a frozen `R_VALV_LEGACY` 8×4 view (byte-identical
+   history but certifies a non-shipping model).
+3. **The (a)/(b)/(c) fork** (IX.2): **(a) word-level single-token recall for v1 (RECOMMENDED;
+   capacity math forecloses (c) at 7 K params — the future arc is ~25–50 M params, tensor-parallel
+   over the region via the existing DKVA substrate; (b) multi-token phrases is the next slice).**
+   Surfaced as a decision because (b)/(c) are the deeper "real language" north star; if the
+   commander elects (b)-first, the autoregressive multi-token readout + its gradcheck become
+   MANDATORY and replace IX.6.
+4. **`[lang-capacity]` bar** (IX.6 #2): the comfortable-N bar is **set FROM the measured curve by
+   the auditor, not assumed** (candidate ≥16 bindings at ≥75%). The commander reads the curve before
+   ratifying the bar — the headline number must be discovered, never guessed.
+5. **The `R_DM` widening** (IX.4): hold `R_DM=32` UNLESS `[lang-capacity]` proves 32-wide attention
+   cannot disambiguate the widened vocab; any `R_DM` bump is a MEASURED decision printed by the
+   cert (it ~doubles `R_NP` and CI time per step), never a guess.
