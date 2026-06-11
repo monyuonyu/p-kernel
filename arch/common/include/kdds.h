@@ -34,13 +34,23 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_TOPIC_MAX   (5 * DNODE_MAX)   /* カーネルが同時に管理できるトピック数。
+#define KDDS_SINGLETON_TOPICS 8 /* cluster-wide SINGLE topics (NOT per-node):
+                                 * pfs ann/want/sync/ref + "mind/teach" (LM-7,
+                                 * the shared mind) + headroom. dkva pre-opens
+                                 * fill the per-node budget (3×DNODE_MAX) exactly,
+                                 * leaving no slot for a cluster-singleton, so
+                                 * these get their OWN fixed headroom — they do
+                                 * NOT scale with DNODE_MAX. */
+#define KDDS_TOPIC_MAX   (5 * DNODE_MAX + KDDS_SINGLETON_TOPICS)
+                                /* カーネルが同時に管理できるトピック数。
                                  * dkva が q/resp/rsum を per-node (=3×DNODE_MAX) で
                                  * 全枠 pre-open し、moe(score)/world(beacon)/reflex/
                                  * edf が per-source トピックを遅延 open するため、
                                  * DNODE_MAX に比例させる (ONE source of truth)。
                                  * G23: DNODE_MAX を 32→64 に倍化したのに伴い、
-                                 * 32 で検証済みの比率 (160=5×32) をそのまま保つ。 */
+                                 * 32 で検証済みの比率 (160=5×32) をそのまま保つ。
+                                 * LM-7: + KDDS_SINGLETON_TOPICS for the cluster-
+                                 * wide "mind/teach" topic (per-node 枠は満杯)。 */
 #define KDDS_HANDLE_MAX  (10 * DNODE_MAX)  /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
                                  * dkva は per-node に q/resp/rsum の pub+sub=6 ハンドル
                                  * (=6×DNODE_MAX) を開き、moe/world も per-node に開く。

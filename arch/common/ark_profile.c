@@ -309,3 +309,59 @@ void ark_prov_record(U4 fact_seq, U1 key, U1 val, U1 src)
     (void)pfs_dag_save((const UB *)ARK_PROV_REF, ARK_PROV_REF_LEN,
                        &r, (UW)sizeof r);
 }
+
+void ark_prov_head_id(U1 out[PFS_ID_LEN])
+{
+    /* LM-7 (VIII.3): the content-id of the head self/prov record — the id a
+     * region peer resolves the teacher through. Read the head bytes (static
+     * scratch off the bounded task stack) and hash exactly them; all-zero
+     * when no prov exists yet. Shell/galaxy-task context (pfs_dag_read). */
+    static ARK_PROV ph;
+    ap_memset(out, 0, PFS_ID_LEN);
+    INT rd = pfs_dag_read((const UB *)ARK_PROV_REF, ARK_PROV_REF_LEN,
+                          &ph, (UW)sizeof ph);
+    if (rd == (INT)sizeof ph && ph.magic == ARK_PROV_MAGIC)
+        pfs_id_compute(&ph, (UW)sizeof ph, out);
+}
+
+/* LM-7 (VIII.4): resolve a TEACHER's disclosed handle from the content-id of
+ * the teacher's ARK_PROV (carried in MT_TEACH_PKT.prov_head, region-replicated
+ * via P1 alongside self/prof). Walks prov_head -> ARK_PROV.profile_head ->
+ * ARK_PROFILE.handle, all by content-id via pfs_get (supervisor-safe; no
+ * shell man_scratch). Returns 1 and fills *origin/*handle (NUL-terminated,
+ * <= ARK_HANDLE_MAX+1) when the teacher's profile is replicated AND discloses
+ * a handle; returns 0 (anonymous / not-yet-replicated) leaving handle empty.
+ * The chain is end-to-end the teacher's own consented record — B re-authors
+ * nothing (tamper-EVIDENT, III.6/VIII.4). */
+INT ark_prov_resolve_remote(const U1 prov_head[PFS_ID_LEN],
+                            U1 *origin_out, char *handle_out, UW handle_max)
+{
+    if (handle_out && handle_max) handle_out[0] = 0;
+    if (origin_out) *origin_out = 0xFF;
+    if (!prov_head) return 0;
+
+    /* prov_head -> the teacher's ARK_PROV (their self/prov head version). */
+    static ARK_PROV pv;     /* static: 48 B, but keep the net path stack lean */
+    INT n = pfs_get(prov_head, &pv, (UW)sizeof pv);
+    if (n != (INT)sizeof pv || pv.magic != ARK_PROV_MAGIC) return 0;
+    if (origin_out) *origin_out = pv.origin_node;
+
+    /* ARK_PROV.profile_head -> the teacher's ARK_PROFILE. all-zero = the
+     * teacher declared anonymously (consent w/o disclosure) — honest. */
+    static const U1 zero[PFS_ID_LEN] = {0};
+    if (ap_id_eq(pv.profile_head, zero)) return 0;
+
+    static ARK_PROFILE pr;  /* 1188 B static: NEVER a task-stack local       */
+    n = pfs_get(pv.profile_head, &pr, (UW)sizeof pr);
+    if (n != (INT)sizeof pr || pr.magic != ARK_PROF_MAGIC) return 0;
+    if (pr.handle_len == 0) return 0;       /* pseudonymity declined too      */
+
+    UW hl = pr.handle_len;
+    if (hl > ARK_HANDLE_MAX) hl = ARK_HANDLE_MAX;
+    if (handle_out && handle_max) {
+        UW cpy = (hl < handle_max - 1) ? hl : handle_max - 1;
+        ap_memcpy(handle_out, pr.handle, cpy);
+        handle_out[cpy] = 0;
+    }
+    return 1;
+}

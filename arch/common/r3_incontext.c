@@ -28,8 +28,14 @@
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
 #include "ark_profile.h" /* ark-profile v1: the ONE provenance write site (§5) */
+#include "kdds.h"      /* LM-7: the region-scoped "mind/teach" topic (VIII.3) */
+#include "region.h"   /* LM-7: region_id() — observable shared-mind boundary  */
 #include "kernel.h"
 #include <tmonitor.h>
+
+/* LM-7 (VIII.9): the wire engram must fit ONE K-DDS payload — no chunking,
+ * no new transport (the Path E "one packet" property, VIII.0 #1-2). */
+_Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX, "mind/teach fits one K-DDS payload");
 
 /* ---- output helpers (sio frame channel, like dtr_train.c) --------- */
 static void r_puts(const char *s) { tm_putstring((UB *)s); }
@@ -1396,6 +1402,149 @@ static INT m_find_key(INT k, INT *bind)
     return -1;
 }
 
+/* ================================================================== *
+ *  LM-7 (living-mind.md Part VIII) — the shared mind                    *
+ *                                                                       *
+ *  Path E: after a LOCAL teach, m_publish_teach() gossips the tiny      *
+ *  engram on the region-scoped K-DDS topic "mind/teach". mind_net_task  *
+ *  on each peer polls it and feeds each unseen (origin,seq) fact into   *
+ *  its OWN r3_fact_learn — the SAME production mouth, never a forked    *
+ *  queue or a second consolidation path (VIII.8/VIII.9). B's own DMN    *
+ *  consolidates it into B's own rw[]. The remote provenance is kept in  *
+ *  a small side-table so `mind ask` on B names the teacher through A's  *
+ *  P1-replicated self/prov + self/prof (VIII.4).                        *
+ * ================================================================== */
+
+/* The "mind/teach" topic must be RESERVED at boot, before dkva pre-opens
+ * its per-node topics and saturates the bounded K-DDS topic table (the table
+ * holds KDDS_SINGLETON_TOPICS of headroom for exactly this cluster-wide
+ * singleton). mind_net_open() — called from the hosted usermain right after
+ * kdds_init(), before dkva_init() — creates the topic slot once; the
+ * publisher + the poll task then reuse it (topic_find_or_create returns the
+ * existing slot, consuming NO further topic slots). */
+static W mt_topic_open = 0;
+/* the LATEST_ONLY poll handle (region scope); -1 until opened. Shared by
+ * mind_net_open (reserves the topic at boot) and mind_net_task (polls it). */
+static W mt_sub_h = -1;
+
+void mind_net_open(void)
+{
+    if (mt_topic_open) return;
+    /* create the region-scoped topic slot now; the handle is discarded —
+     * the slot persists in the topic table for the pub/sub handles below. */
+    W h = kdds_open_poll_scoped(MIND_TEACH_TOPIC, KDDS_QOS_LATEST_ONLY,
+                                KDDS_SCOPE_REGION);
+    if (h >= 0) { mt_topic_open = 1; mt_sub_h = h; }   /* reuse h for the poll */
+}
+
+/* one publish handle, opened lazily (region scope); -1 until first use. */
+static W mt_pub_h = -1;
+/* file-static publish scratch — NEVER a task-stack local (the hosted-relay
+ * stack-overflow lesson: per-packet buffers on the bounded task stack crash
+ * multi-node runs). m_teach is serialized behind the mind_cmd gate. */
+static MT_TEACH_PKT mt_pub_pkt;
+/* the last LOCALLY-taught fact's wire packet, retained so mind_net_task can
+ * RE-PUBLISH it each poll cycle (best-effort delivery, re-driven like
+ * pfs_repl's announce): region membership measures peer RTT only after a SWIM
+ * probe round, so the FIRST publish can leave with fanout 0 (region not yet
+ * formed); re-driving lets a peer that becomes region-visible later still
+ * receive it. Idempotent at B (the per-origin (origin,seq) high-water acts
+ * exactly once). mt_pub_have=1 once we have something to (re)send. */
+static MT_TEACH_PKT mt_pub_last;
+static UB mt_pub_have = 0;
+
+static W m_pub_handle(void)
+{
+    if (mt_pub_h < 0)
+        mt_pub_h = kdds_open_poll_scoped(MIND_TEACH_TOPIC,
+                                         KDDS_QOS_LATEST_ONLY,
+                                         KDDS_SCOPE_REGION);
+    return mt_pub_h;
+}
+
+static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
+{
+    /* solo node (no mesh): nothing to gossip to — stay silent and free. */
+    if (drpc_my_node == 0xFF) return;
+    if (m_pub_handle() < 0) return;
+
+    mt_pub_pkt.magic       = MT_MAGIC;
+    mt_pub_pkt.fact_seq    = fact_seq;
+    mt_pub_pkt.origin_node = drpc_my_node;
+    mt_pub_pkt.key         = k;
+    mt_pub_pkt.val         = v;
+    mt_pub_pkt.src         = src;
+    /* prov_head = content-id of the self/prov record m_teach just wrote;
+     * all-zero when no profile/prov is in force (anonymous teacher). */
+    ark_prov_head_id(mt_pub_pkt.prov_head);
+
+    (void)kdds_pub(mt_pub_h, &mt_pub_pkt, (W)sizeof mt_pub_pkt);
+    mt_pub_last = mt_pub_pkt; mt_pub_have = 1;     /* retain for re-drive    */
+    r_puts("[mind] published mind/teach k="); r_putdec((UW)k);
+    r_puts(" v="); r_putdec((UW)v);
+    r_puts(" seq="); r_putdec(fact_seq);
+    r_puts(" -> region "); r_putdec((UW)region_id());
+    r_puts(" (fanout "); r_putdec(kdds_pub_fanout());
+    r_puts(")\r\n");
+}
+
+/* re-drive the last local teach to the region (silent; the FIRST publish
+ * already printed). No-op until the first local teach. Called once per
+ * mind_net_task poll cycle so late-forming region members still receive it. */
+static void m_republish_last(void)
+{
+    if (!mt_pub_have || drpc_my_node == 0xFF) return;
+    if (m_pub_handle() < 0) return;
+    (void)kdds_pub(mt_pub_h, &mt_pub_last, (W)sizeof mt_pub_last);
+}
+
+/* ---- remote-provenance side-table (VIII.4) ----------------------- *
+ *  Records, per remotely-arrived fact_seq, the teacher's node + the    *
+ *  content-id of the teacher's ARK_PROV (carried in the packet). It is *
+ *  bounded to the queue budget; mind ask resolves the teacher's handle *
+ *  from it via ark_prov_resolve_remote (by content-id, supervisor-safe *
+ *  — B writes NO self/prov for a fact it did not locally author; it    *
+ *  POINTS at A's consented record, the one-site discipline + III.6).   */
+typedef struct {
+    UW seq;                       /* B's local R3_FACT.seq for the fact   */
+    U1 used;
+    U1 origin_node;               /* the teacher's node (A)               */
+    U1 prov_head[PFS_ID_LEN];     /* content-id of A's ARK_PROV           */
+} MT_REMOTE_PROV;
+static MT_REMOTE_PROV mt_rprov[R3_FQ_MAX];
+
+static void mt_rprov_put(UW local_seq, U1 origin, const U1 prov_head[PFS_ID_LEN])
+{
+    /* reuse a slot for a seq no longer in the bounded queue, else any free. */
+    INT slot = -1;
+    for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (!mt_rprov[i].used) { slot = i; break; }
+    if (slot < 0) {
+        /* drop an entry whose fact_seq is no longer present in r3_fq[]
+         * (the engram was evicted/forgotten — its prov is stale). */
+        for (INT i = 0; i < R3_FQ_MAX; i++) {
+            UB present = 0;
+            for (INT j = 0; j < (INT)r3_fq_n; j++)
+                if (r3_fq[j].seq == mt_rprov[i].seq) { present = 1; break; }
+            if (!present) { slot = i; break; }
+        }
+    }
+    if (slot < 0) slot = 0;            /* last resort: overwrite slot 0     */
+    mt_rprov[slot].used        = 1;
+    mt_rprov[slot].seq         = local_seq;
+    mt_rprov[slot].origin_node = origin;
+    for (INT i = 0; i < PFS_ID_LEN; i++)
+        mt_rprov[slot].prov_head[i] = prov_head[i];
+}
+
+static MT_REMOTE_PROV *mt_rprov_find(UW local_seq)
+{
+    for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (mt_rprov[i].used && mt_rprov[i].seq == local_seq)
+            return &mt_rprov[i];
+    return 0;
+}
+
 static INT m_parse_uint(const UB **pp, const UB *end, INT *out)
 {
     const UB *p = *pp;
@@ -1495,6 +1644,15 @@ static void m_teach(const UB *p, const UB *end)
      * (shell default; the galaxy POST /teach bridge sets WEB). */
     ark_prov_record(r3_fq[r3_fq_n-1].seq, (U1)k, (U1)v, prov_src);
 
+    /* LM-7 (VIII.3 / VIII.9): the ONE "mind/teach" publish. AFTER the local
+     * enqueue + the provenance write, gossip this singleton engram to the
+     * region so every same-region peer's OWN r3_fact_learn can learn it
+     * (Path E — the tiny engram travels, never the weights). The prov_head
+     * is the content-id of the self/prov record we just wrote, so a peer
+     * resolves the teacher through the already-P1-replicated self/prov +
+     * self/prof (VIII.4). One publish, one site. */
+    m_publish_teach(r3_fq[r3_fq_n-1].seq, (U1)k, (U1)v, prov_src);
+
     r_puts("[mind] teach k="); r_putdec((UW)k); r_puts(" v="); r_putdec((UW)v);
     r_puts(": substrate ready, learn rc=0, pending="); r_putdec((UW)pend);
     r_puts(", queue "); r_putdec(r3_fq_n); r_puts("/"); r_putdec(R3_FQ_MAX);
@@ -1557,6 +1715,23 @@ static void m_ask(const UB *p, const UB *end)
     r_puts(" yhat="); r_putdec(r3_fq[fi].yhat[bind]);
     r_puts(" rounds="); r_putdec(r3_fq[fi].rounds_done);
     r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT); r_puts("\r\n");
+
+    /* LM-7 (VIII.4): if this fact arrived from a region peer, name the
+     * teacher — resolved through A's P1-replicated self/prov -> self/prof,
+     * by content-id (B re-authors nothing). The thread crossed the galaxy;
+     * the distant owner is remembered on B. */
+    {
+        MT_REMOTE_PROV *rp = mt_rprov_find(r3_fq[fi].seq);
+        if (rp) {
+            U1 torig = 0xFF; char handle[ARK_HANDLE_MAX + 1];
+            INT named = ark_prov_resolve_remote(rp->prov_head, &torig,
+                                                handle, sizeof handle);
+            r_puts("[mind]   taught by node "); r_putdec((UW)rp->origin_node);
+            if (named && handle[0]) { r_puts(" ("); r_puts(handle); r_puts(")"); }
+            else                    r_puts(" (anonymous)");
+            r_puts(" — remote teach, provenance via self/prov\r\n");
+        }
+    }
     if (r3_fq[fi].state != R3F_RETAINED) {
         r_puts("[mind]   still PENDING — no verdict yet; `mind wait` yields the idle window\r\n");
         return;
@@ -1632,6 +1807,139 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else r_puts("usage: mind [teach <k> <v> | ask <k> | wait [secs]]  (bare = status)\r\n");
     m_gate_release();
+}
+
+/* ================================================================== *
+ *  LM-7 mind_net_task — the region subscriber (VIII.3 / VIII.9)        *
+ *                                                                       *
+ *  Polls the region-scoped "mind/teach" topic. For each unseen          *
+ *  (origin, fact_seq):                                                  *
+ *    1. drop own-origin (the gossip-loop guard — the classic trap);     *
+ *    2. per-origin last-seq high-water so a re-published LATEST_ONLY    *
+ *       slot is acted on exactly once;                                  *
+ *    3. quiesce on r3_round_busy (the VII.4 flag, now also guarding a   *
+ *       network producer — the frozen read shares rc/rg/r_rng);         *
+ *    4. conflict rule (VIII.5): if the key is already bound here, REFUSE *
+ *       and print — LOCAL teach wins; belief revision is a future slice; *
+ *    5. arrival via r3_fact_learn ONLY (G33, the production mouth) — no  *
+ *       direct queue poke, no direct round call;                        *
+ *    6. record the remote provenance pointer + emit EV_REMOTE_TEACH.     *
+ * ================================================================== */
+
+/* per-origin high-water of the last acted (origin -> fact_seq). 0 = none. */
+static UW mt_last_seq[DNODE_MAX];
+/* own-echo drop counter — the [shared-arrival] cert greps origin==me >= 1. */
+static UW mt_self_drops = 0;
+/* file-static receive scratch — NEVER a task-stack local (the hosted-relay
+ * stack-overflow lesson). mind_net_task is the sole reader. */
+static MT_TEACH_PKT mt_rx_pkt;
+
+#define MT_POLL_MS 500   /* >= the pfs_repl cadence; bounds B's arrival rate */
+
+void mind_net_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+
+    /* the topic slot was reserved at boot (mind_net_open, before dkva floods
+     * the table); fall back to a late open if the usermain did not call it. */
+    if (mt_sub_h < 0) mind_net_open();
+    if (mt_sub_h < 0) {
+        r_puts("[mind] mind_net_task: could not open mind/teach — disabled\r\n");
+        return;
+    }
+    /* let SWIM find peers + a region form before we start acting on it. */
+    tk_dly_tsk(3000);
+    r_puts("[mind] mind_net_task up — polling region topic mind/teach\r\n");
+
+    for (;;) {
+        W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+        if (r >= (W)sizeof mt_rx_pkt && mt_rx_pkt.magic == MT_MAGIC) {
+            U1 org = mt_rx_pkt.origin_node;
+
+            /* (1) loop-prevention: drop my own gossiped fact (origin==me).
+             * Print ONLY the first drop (the cert greps origin==me >= 1);
+             * the periodic re-drive would otherwise flood the log — count
+             * silently after that. */
+            if (org == drpc_my_node) {
+                mt_self_drops++;
+                if (mt_self_drops == 1) {
+                    r_puts("[mind] mind/teach origin==me (n");
+                    r_putdec((UW)org);
+                    r_puts(") — own echo dropped, no self-teach (loop guard)\r\n");
+                }
+            } else if (org < DNODE_MAX &&
+                       mt_rx_pkt.fact_seq != mt_last_seq[org]) {
+                /* (2) per-origin once-per-seq. */
+                mt_last_seq[org] = mt_rx_pkt.fact_seq;
+
+                U1 k = mt_rx_pkt.key, v = mt_rx_pkt.val;
+                if (k >= R_KEYV || v >= R_VALV) {
+                    r_puts("[mind] mind/teach: out-of-range k/v dropped\r\n");
+                } else {
+                    /* serialize against shell verbs + the round (VIII.0 #5). */
+                    m_gate_acquire();
+                    m_quiesce();              /* (3) VII.4 quiesce            */
+                    m_boot();                 /* the substrate, like m_teach  */
+
+                    INT bind, fi = m_find_key((INT)k, &bind);
+                    if (fi >= 0) {
+                        /* (4) conflict: LOCAL teach (or a prior remote) wins. */
+                        UB cur = r3_fq[fi].yhat[bind];
+                        if (cur == v) {
+                            r_puts("[mind] remote teach key ");
+                            r_putdec((UW)k); r_puts(" from node ");
+                            r_putdec((UW)org);
+                            r_puts(" — duplicate (already bound to same v), dropped\r\n");
+                        } else {
+                            r_puts("[mind] remote teach key ");
+                            r_putdec((UW)k); r_puts(" from node ");
+                            r_putdec((UW)org);
+                            r_puts(" refused — already bound here"
+                                   " (belief revision is a future slice)\r\n");
+                            /* the deflected ray is still observable (VIII.5):
+                             * emit with dst=NONE so the conflict is not silent. */
+                            galaxy_emit(EV_REMOTE_TEACH, org, GALAXY_NODE_NONE,
+                                        (UH)k, (UH)v);
+                        }
+                    } else {
+                        /* (5) arrival ONLY via the production mouth (G33). */
+                        UB kk = k, vv = v;
+                        INT rc = r3_fact_learn(&kk, &vv, 1);
+                        if (rc == 0) {
+                            UW local_seq = r3_fq[r3_fq_n-1].seq;
+                            /* (6) record B's view of the remote provenance:
+                             * a pointer at A's consented record (do NOT
+                             * re-author consent — VIII.4). */
+                            mt_rprov_put(local_seq, org, mt_rx_pkt.prov_head);
+                            r_puts("[mind] remote teach arrived: key ");
+                            r_putdec((UW)k); r_puts(" v="); r_putdec((UW)v);
+                            r_puts(" from node "); r_putdec((UW)org);
+                            r_puts(" seq="); r_putdec(mt_rx_pkt.fact_seq);
+                            r_puts(" -> r3_fact_learn rc=0 (local seq ");
+                            r_putdec(local_seq); r_puts(", pending ");
+                            r_putdec((UW)r3_facts_pending()); r_puts(")\r\n");
+                            /* the ONE EV_REMOTE_TEACH (VIII.10): A's star ->
+                             * my star flashes as the fact lands. */
+                            galaxy_emit(EV_REMOTE_TEACH, org, drpc_my_node,
+                                        (UH)k, (UH)v);
+                            r_puts("[shared-arrival] PASS\r\n");
+                        } else {
+                            r_puts("[mind] remote teach from node ");
+                            r_putdec((UW)org);
+                            r_puts(": r3_fact_learn refused"
+                                   " (queue full of PENDING facts)\r\n");
+                        }
+                    }
+                    m_gate_release();
+                }
+            }
+        }
+        /* re-drive my own last local teach so a peer whose region RTT only
+         * became measurable after my first publish still receives it
+         * (best-effort, idempotent at the receiver — VIII.3). */
+        m_republish_last();
+        tk_dly_tsk(MT_POLL_MS);
+    }
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */

@@ -558,6 +558,48 @@ jobs:
           name: collective-learn-live-logs
           path: /tmp/p32_*.log
 
+  shared-mind-live:
+    name: "Shared mind (live 3-node: fact taught on A answered from B; region-scoped; teacher killed)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # LM-7 (living-mind.md Part VIII): a fact taught on node A becomes
+    # answerable from node B — from B's OWN weights, with B's OWN DMN doing the
+    # consolidating. Path E (engrams travel): A gossips the tiny fact-engram on
+    # the REGION-scoped K-DDS topic "mind/teach"; B's mind_net_task feeds it into
+    # B's OWN r3_fact_learn (G33, the production mouth) and B's idle DMN distils
+    # it into B's rw[]. A third node C is placed OUTSIDE A/B's region (RTT zone)
+    # and provably never receives it — the shared mind is the REGION's. Killing
+    # the teacher A does NOT un-teach B (the Collective survives the source).
+    # The in-process LM-6 [teach-*] tests are the within-node unit proof; this is
+    # the cross-node, over-the-relay integration proof.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make curl
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 41_shared_mind/run.sh and assert the four tags + RESULT PASS
+        run: |
+          timeout 600 samples/41_shared_mind/run.sh | tee /tmp/p41_ci.log
+          grep -q '\[shared-arrival\] PASS'      /tmp/p41_ci.log
+          grep -q '\[shared-consolidated\] PASS' /tmp/p41_ci.log
+          grep -q '\[shared-grounded\] PASS'     /tmp/p41_ci.log
+          grep -q '\[shared-live\] PASS'         /tmp/p41_ci.log
+          # the production print this slice makes fire on a node never directly
+          # taught (B's DMN distilling a fact that arrived over the network):
+          grep -q 'distilled in-context facts -> rw\[\]' /tmp/p41_nodeB.log
+          grep -q 'RESULT: PASS' /tmp/p41_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-mind-live-logs
+          path: /tmp/p41_*.log
+
   twolayer-couple-live:
     name: "Two-layer couple (live 3-node: collective learning improves GUARDING, node killed mid-flight)"
     runs-on: ubuntu-latest

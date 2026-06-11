@@ -24,6 +24,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pfs_block.h"   /* PFS_ID_LEN — LM-7 MT_TEACH_PKT.prov_head width */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -308,6 +309,40 @@ void r3_stream_test(void);
  * The ONLY public LM-6 entry — all sub-verb logic, the substrate
  * bootstrap and the quiesce flag stay file-static (VII.9). */
 void mind_cmd(const UB *args, UW len);
+
+/* LM-7 (living-mind.md Part VIII) -- the shared mind: a fact taught on node
+ * A becomes answerable from node B. After a successful LOCAL teach, m_teach
+ * publishes ONE MT_TEACH_PKT on the region-scoped K-DDS topic "mind/teach"
+ * (Path E: the tiny ENGRAM travels, never the weights). mind_net_task on
+ * each peer polls that topic and feeds each unseen (origin,seq) fact into
+ * its OWN r3_fact_learn (G33, the production mouth) — its OWN DMN then
+ * consolidates it into its OWN rw[]. Region-scoped = the REGION's shared
+ * mind (VIII.7); own-origin packets are dropped (the gossip-loop guard);
+ * a remote teach of an already-bound key is REFUSED and printed (VIII.5). */
+#define MIND_TEACH_TOPIC  "mind/teach"
+#define MT_MAGIC          0x444E494DUL   /* "MIND" LE — free magic (VIII.9)  */
+typedef struct {
+    UW magic;                    /* MT_MAGIC                                */
+    UW fact_seq;                 /* A's R3_FACT.seq — the autobiographical  */
+                                 /* "when" (per-origin dedup high-water)    */
+    U1 origin_node;              /* drpc_my_node of A (the teacher's node)  */
+    U1 key, val;                 /* the declared singleton binding (n=1)    */
+    U1 src;                      /* ARK_PROV_SRC_SHELL/WEB (carried for prov)*/
+    U1 prov_head[PFS_ID_LEN];    /* content-id of A's ARK_PROV — resolves   */
+                                 /* the teacher via the P1-replicated       */
+                                 /* self/prov + self/prof (VIII.4)          */
+} __attribute__((packed)) MT_TEACH_PKT;   /* 4+4+1+1+1+1+32 = 44 B          */
+
+/* Reserve the "mind/teach" topic slot at boot — call from the hosted
+ * usermain right AFTER kdds_init() and BEFORE dkva_init(), so the cluster-
+ * wide singleton gets a slot before dkva's per-node pre-opens saturate the
+ * bounded topic table. Idempotent; no-op-safe on solo nodes. */
+void mind_net_open(void);
+
+/* The region subscriber task (VIII.9 FLAGGED). Created in BOTH hosted
+ * usermains beside pfs_repl_task. The ONLY new public callable for arrival;
+ * every arrival helper stays file-static in r3_incontext.c. */
+void mind_net_task(INT stacd, void *exinf);
 
 /* galaxy v1 (docs/architecture/galaxy.md §6): a snapshot of the LAST
  * `mind ask <k>` result, written at the single site in m_ask where the

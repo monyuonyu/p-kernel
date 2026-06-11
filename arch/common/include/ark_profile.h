@@ -83,6 +83,11 @@ _Static_assert(sizeof(ARK_PROFILE) <= PFS_BLOCK_MAX, "one p-fs block");
 #define ARK_PROV_MAGIC   0x564F5250UL   /* "PROV" LE                       */
 #define ARK_PROV_SRC_SHELL  0
 #define ARK_PROV_SRC_WEB    1
+#define ARK_PROV_SRC_REMOTE 2          /* LM-7: a fact that arrived from a    */
+                                       /* region peer over "mind/teach". The  */
+                                       /* origin_node + profile_head point at  */
+                                       /* the TEACHER's consented record (B    */
+                                       /* never re-authors consent, VIII.4).   */
 
 typedef struct {
     U4 magic;                      /* ARK_PROV_MAGIC                        */
@@ -184,6 +189,26 @@ INT ark_profile_save(U1 ack, const U1 mid[PFS_ID_LEN],
  * time. Defined as a real appender on every target (pfs_dag exists on bare
  * metal); only the mouth's src differs. */
 void ark_prov_record(U4 fact_seq, U1 key, U1 val, U1 src);
+
+/* The content-id of the CURRENT head "self/prov" version (the record
+ * ark_prov_record just wrote). out must hold PFS_ID_LEN bytes; filled with
+ * all-zero when no prov head exists yet. Pure read; shell/galaxy-task
+ * context only (shares pfs_dag_read scratch). LM-7 (VIII.3): the publisher
+ * stamps this id into MT_TEACH_PKT.prov_head so a region peer can resolve
+ * the teacher through the already-replicated self/prov + self/prof. */
+void ark_prov_head_id(U1 out[PFS_ID_LEN]);
+
+/* LM-7 (VIII.4): resolve a remote TEACHER from the content-id of their
+ * ARK_PROV (MT_TEACH_PKT.prov_head, region-replicated via P1). Walks
+ * prov_head -> ARK_PROV.profile_head -> ARK_PROFILE.handle entirely by
+ * content-id (pfs_get; supervisor-safe — NO shell man_scratch, callable from
+ * the mind_net/ask path). Returns 1 with *origin_out = the teacher's node and
+ * handle_out = the disclosed handle (NUL-terminated) when the teacher's
+ * profile is replicated AND discloses a handle; 0 (handle empty) when the
+ * teacher is anonymous or the profile has not replicated yet. B re-authors
+ * nothing — this points at the teacher's OWN consented record (III.6). */
+INT ark_prov_resolve_remote(const U1 prov_head[PFS_ID_LEN],
+                            U1 *origin_out, char *handle_out, UW handle_max);
 
 /* Which mouth is currently driving mind_cmd's teach verb — set by the
  * caller right before mind_cmd("teach ...") so the single prov site can

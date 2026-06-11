@@ -391,6 +391,7 @@ static const char *gx_type_name(UB t)
     case EV_PMESH_TX:    return "pmesh_tx";
     case EV_PMESH_RX:    return "pmesh_rx";
     case EV_SUMMARY:     return "summary";
+    case EV_REMOTE_TEACH:return "remote_teach";
     default:             return "ev";
     }
 }

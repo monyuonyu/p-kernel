@@ -52,6 +52,10 @@ _Static_assert(sizeof(GALAXY_EV) == 12, "GALAXY_EV must be 12 bytes (LP64-safe)"
 #define EV_PMESH_TX     12   /* directed mesh send (SAMPLED)                 */
 #define EV_PMESH_RX     13   /* directed mesh recv (SAMPLED)                 */
 #define EV_SUMMARY      14   /* a = the suppressed EV_* type, b = count      */
+#define EV_REMOTE_TEACH 15   /* LM-7: a fact taught on node A landed in MY    */
+                             /* queue. src = A (origin), dst = me; a = key,   */
+                             /* b = val. ONE site: mind_net_task arrival       */
+                             /* (living-mind.md VIII.10).                      */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */
