@@ -13,6 +13,11 @@
 
     <string name="btn_start">Start</string>
     <string name="btn_stop">Stop</string>
+    <string name="btn_galaxy">Open galaxy</string>
+
+    <string name="galaxy_title">Galaxy</string>
+    <string name="galaxy_starting">Your star is waking…\n\nconnecting to the galaxy on 127.0.0.1:%1$d</string>
+    <string name="galaxy_still_starting">Still waking the kernel on 127.0.0.1:%1$d.\n\nIf this persists, the node may be in charge-only mode — connect power, or press Start on the previous screen.</string>
 
     <string name="notif_channel_name">p-kernel node</string>
     <string name="notif_channel_desc">Persistent notification while the kernel is running.</string>

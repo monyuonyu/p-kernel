@@ -30,7 +30,9 @@
         android:icon="@android:drawable/sym_def_app_icon"
         android:theme="@style/Theme.UMP"
         android:allowBackup="false"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"
@@ -41,6 +43,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- galaxy.md D4: the WebView window onto 127.0.0.1:7800+(node_id-1).
+             Cleartext is permitted ONLY for loopback (network_security_config). -->
+        <activity
+            android:name=".GalaxyActivity"
+            android:exported="false"
+            android:label="@string/galaxy_title"/>
 
         <service
             android:name=".PKernelService"

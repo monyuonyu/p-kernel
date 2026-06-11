@@ -86,10 +86,24 @@ set(ARCH_SRC
     ${ARCH_LX}/aarch64/net_unix.c
     ${ARCH_LX}/aarch64/net_relay.c
     ${ARCH_LX}/aarch64/net_dispatch.c
+    ${ARCH_LX}/aarch64/galaxy_posix.c
     ${ARCH_LX}/aarch64/arch_reboot.c
     ${ARCH_LX}/aarch64/vfs_stub.c
     ${ARCH_LX}/aarch64/preempt.c
+    ${ARCH_LX}/aarch64/fault.c
+    ${ARCH_LX}/aarch64/time.c
     ${ARCH_LX}/aarch64/cpu_support.S
+)
+
+# arch/linux (cross-arch hosted) shared sources — same list as
+# boot/linux/Makefile's ARCH_SHARED_C_SRCS. selfc/pfs_durable/pfs_ark are
+# needed by the now-included p-fs + ARK profile stack (galaxy /self.json,
+# ark-profile manifesto consent).
+set(ARCH_SHARED_SRC
+    ${ARCH_LX}/selfc.c
+    ${ARCH_LX}/selfc_proc.c
+    ${ARCH_LX}/pfs_durable.c
+    ${ARCH_LX}/pfs_ark.c
 )
 
 # relay-side sha256 — same canonical source as boot/linux/Makefile.
@@ -111,11 +125,14 @@ set(COMMON_SRC
     ${ARCH_CO}/drpc.c
     ${ARCH_CO}/swim.c
     ${ARCH_CO}/region.c
+    ${ARCH_CO}/world.c
+    ${ARCH_CO}/reflex.c
     ${ARCH_CO}/kdds.c
     ${ARCH_CO}/replica.c
     ${ARCH_CO}/pmesh.c
     ${ARCH_CO}/sfs.c
     ${ARCH_CO}/heal.c
+    ${ARCH_CO}/guard.c
     ${ARCH_CO}/degrade.c
     ${ARCH_CO}/vital.c
     ${ARCH_CO}/edf.c
@@ -124,15 +141,30 @@ set(COMMON_SRC
     ${ARCH_CO}/moe.c
     ${ARCH_CO}/dtr.c
     ${ARCH_CO}/dtr_train.c
+    ${ARCH_CO}/r3_incontext.c
+    ${ARCH_CO}/galaxy.c
+    ${ARCH_CO}/spec.c
+    ${ARCH_CO}/retrieval.c
     ${ARCH_CO}/dkva.c
     ${ARCH_CO}/dmn.c
+    ${ARCH_CO}/lm_consolidate.c
+    ${ARCH_CO}/lm_self.c
+    ${ARCH_CO}/ark_profile.c
     ${ARCH_CO}/ga.c
     ${ARCH_CO}/fedlearn.c
+    ${ARCH_CO}/gossip_learn.c
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c
     ${ARCH_CO}/dproc.c
     ${ARCH_CO}/kloader_task.c
     ${ARCH_CO}/demo_kdds.c
+    ${ARCH_CO}/pfs_block.c
+    ${ARCH_CO}/arkfs.c
+    ${ARCH_CO}/lookup.c
+    ${ARCH_CO}/pfs_repl.c
+    ${ARCH_CO}/pfs_dag.c
+    ${ARCH_CO}/protect.c
+    ${ARCH_CO}/genome.c
 )
 
 # kernel/common — same explicit list as boot/linux/Makefile's KERNEL_SRCS.
@@ -187,12 +219,99 @@ set(LIBSTR_SRC
 set_source_files_properties(${LIBSTR_SRC} PROPERTIES
     COMPILE_OPTIONS "-idirafter;${KCOMMON_EXTRA_INC}")
 
+# --- generated web assets (galaxy v1 + i18n manifesto, galaxy.md D3/D4) ---
+#
+# Mirror boot/linux/Makefile's build-time HTML/manifesto -> C array steps so
+# the Android .so embeds the SAME bytes (gen_page.py / gen_manifestos.py),
+# never drifting from arch/common/web/*. galaxy.c #includes galaxy_page.h;
+# ark_profile.c #includes manifesto_page.h; galaxy.c uses ark_profile's
+# manifesto accessors, so it depends on manifesto_page.h being present too.
+#
+# Hosted/Android embeds the FULL ~32-language set (the WebView offers a
+# selector + Accept-Language auto-default). The language set is the single
+# source of truth in arch/common/web/manifesto_langs.mk; the explicit list
+# below is kept in lock-step (CMake cannot include a .mk). A drift here only
+# changes WHICH languages embed, never correctness — the host Makefile build
+# (boot/linux) is the canonical i18n cert path.
+set(GEN_DIR     ${CMAKE_CURRENT_BINARY_DIR}/gen)
+set(GALAXY_GEN  ${PK_ROOT}/tools/galaxy/gen_page.py)
+set(MANI_GEN    ${PK_ROOT}/tools/galaxy/gen_manifestos.py)
+set(WEB         ${ARCH_CO}/web)
+set(GALAXY_PAGE ${GEN_DIR}/galaxy_page.h)
+set(MANI_PAGE   ${GEN_DIR}/manifesto_page.h)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+file(MAKE_DIRECTORY ${GEN_DIR})
+
+add_custom_command(
+    OUTPUT  ${GALAXY_PAGE}
+    COMMAND ${Python3_EXECUTABLE} ${GALAXY_GEN} ${WEB}/galaxy.html ${GALAXY_PAGE}
+    DEPENDS ${WEB}/galaxy.html ${GALAXY_GEN}
+    COMMENT "gen_page.py: galaxy.html -> galaxy_page.h"
+    VERBATIM)
+
+# The full hosted language set, lock-stepped with manifesto_langs.mk's
+# MANIFESTO_LANGS_FULL. ja (manifesto.txt) is FIRST = canonical/default.
+set(MANI_SPECS
+    "ja:日本語:${WEB}/manifesto.txt"
+    "en:English:${WEB}/manifesto.en.txt"
+    "zh-Hans:简体中文:${WEB}/manifesto.zh-Hans.txt"
+    "zh-Hant:繁體中文:${WEB}/manifesto.zh-Hant.txt"
+    "hi:हिन्दी:${WEB}/manifesto.hi.txt"
+    "es:Español:${WEB}/manifesto.es.txt"
+    "fr:Français:${WEB}/manifesto.fr.txt"
+    "ar:العربية:${WEB}/manifesto.ar.txt"
+    "bn:বাংলা:${WEB}/manifesto.bn.txt"
+    "pt:Português:${WEB}/manifesto.pt.txt"
+    "ru:Русский:${WEB}/manifesto.ru.txt"
+    "ur:اردو:${WEB}/manifesto.ur.txt"
+    "id:Bahasa Indonesia:${WEB}/manifesto.id.txt"
+    "de:Deutsch:${WEB}/manifesto.de.txt"
+    "sw:Kiswahili:${WEB}/manifesto.sw.txt"
+    "mr:मराठी:${WEB}/manifesto.mr.txt"
+    "te:తెలుగు:${WEB}/manifesto.te.txt"
+    "tr:Türkçe:${WEB}/manifesto.tr.txt"
+    "ta:தமிழ்:${WEB}/manifesto.ta.txt"
+    "vi:Tiếng Việt:${WEB}/manifesto.vi.txt"
+    "ko:한국어:${WEB}/manifesto.ko.txt"
+    "it:Italiano:${WEB}/manifesto.it.txt"
+    "th:ไทย:${WEB}/manifesto.th.txt"
+    "fil:Filipino:${WEB}/manifesto.fil.txt"
+    "pl:Polski:${WEB}/manifesto.pl.txt"
+    "fa:فارسی:${WEB}/manifesto.fa.txt"
+    "uk:Українська:${WEB}/manifesto.uk.txt"
+    "ms:Bahasa Melayu:${WEB}/manifesto.ms.txt"
+    "pa:ਪੰਜਾਬੀ:${WEB}/manifesto.pa.txt"
+    "ro:Română:${WEB}/manifesto.ro.txt"
+    "nl:Nederlands:${WEB}/manifesto.nl.txt"
+    "gu:ગુજરાતી:${WEB}/manifesto.gu.txt"
+)
+# Dependency list = just the manifesto files (re-gen when any changes).
+file(GLOB MANI_FILES ${WEB}/manifesto*.txt)
+add_custom_command(
+    OUTPUT  ${MANI_PAGE}
+    COMMAND ${Python3_EXECUTABLE} ${MANI_GEN} ${MANI_PAGE} ${MANI_SPECS}
+    DEPENDS ${MANI_FILES} ${MANI_GEN}
+    COMMENT "gen_manifestos.py: ${WEB}/manifesto.*.txt -> manifesto_page.h"
+    VERBATIM)
+
+add_custom_target(pkernel_web_gen DEPENDS ${GALAXY_PAGE} ${MANI_PAGE})
+
+# galaxy.o needs galaxy_page.h; galaxy.o + ark_profile.o need manifesto_page.h.
+set_source_files_properties(${ARCH_CO}/galaxy.c ${ARCH_CO}/ark_profile.c
+    PROPERTIES OBJECT_DEPENDS "${GALAXY_PAGE};${MANI_PAGE}")
+
 # JNI shim
 set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c)
 
 add_library(pkernel SHARED
-    ${BOOT} ${ARCH_SRC} ${RELAY_SRC} ${COMMON_SRC} ${KCOMMON_SRC}
-    ${LIBSTR_SRC} ${JNI_SRC})
+    ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
+    ${KCOMMON_SRC} ${LIBSTR_SRC} ${JNI_SRC})
+
+# galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and
+# ark_profile.c #include them by bare name.
+target_include_directories(pkernel PRIVATE ${GEN_DIR})
+add_dependencies(pkernel pkernel_web_gen)
 
 # Bionic's libc + posix timers (timer_create lives there); no -lrt.
 target_link_libraries(pkernel log android)

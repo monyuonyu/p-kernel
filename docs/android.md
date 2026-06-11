@@ -190,3 +190,119 @@ the next UX step.
 - A public relay reachable by phones behind NAT (Phase B relay, hosted).
 - Real devices installing the APK + joining that relay.
 - τ tuned from the fleet's measured cross-device RTT distribution.
+
+## D4 — the galaxy in the app (2026-06-11)
+
+galaxy.md decision **D4**: the UMP app gains the observation window. Once
+`libpkernel.so` boots, the kernel's `galaxy_task` (already created in
+`arch/linux/aarch64/usermain.c`) serves the canvas star-field page +
+`/galaxy.json`, `/events` (SSE), `/manifesto` (i18n), `/teach`, `/ask` on
+`127.0.0.1:7800 + (node_id - 1)`, loopback only. The app opens that in a
+WebView so the phone's owner sees their own star, teaches the mind, and
+reads the manifesto in their device language.
+
+### Native side (CMakeLists drift fix)
+
+The Android `app/src/main/cpp/CMakeLists.txt` had drifted far behind
+`boot/linux/Makefile`: it predated the world/reflex/R3/living-mind/galaxy/
+ark waves. D4 brought the explicit source lists back in lock-step with the
+Makefile's full `.so` set, adding:
+
+- **arch (`ARCH_SRC`)**: `galaxy_posix.c` (the POSIX TCP-listen transport),
+  plus `fault.c` + `time.c` (already in the Makefile set).
+- **arch/linux shared (`ARCH_SHARED_SRC`, new var)**: `selfc.c`,
+  `selfc_proc.c`, `pfs_durable.c`, `pfs_ark.c` (p-fs + self lineage that
+  galaxy `/self.json` and ark-profile lean on).
+- **arch/common (`COMMON_SRC`)**: `world.c`, `reflex.c`, `guard.c`,
+  `r3_incontext.c`, `galaxy.c`, `spec.c`, `retrieval.c`, `lm_consolidate.c`,
+  `lm_self.c`, `ark_profile.c`, `gossip_learn.c`, `pfs_block.c`, `arkfs.c`,
+  `lookup.c`, `pfs_repl.c`, `pfs_dag.c`, `protect.c`, `genome.c`.
+
+**Generated web assets** — the same build-time embedding as
+`boot/linux/Makefile` (galaxy.md D3), now as CMake `add_custom_command`s:
+
+- `gen_page.py galaxy.html → galaxy_page.h` (the canvas page).
+- `gen_manifestos.py … → manifesto_page.h` (the FULL ~32-language manifesto
+  table; the language list is lock-stepped with
+  `arch/common/web/manifesto_langs.mk`'s `MANIFESTO_LANGS_FULL` — CMake
+  cannot `include` a `.mk`, so the list is duplicated with a comment).
+
+Both land in `${CMAKE_CURRENT_BINARY_DIR}/gen` (added to the target include
+path); `galaxy.c` and `ark_profile.c` get `OBJECT_DEPENDS` on them. Requires
+`python3` on the build host (`find_package(Python3)`), which the NDK PRoot
+already has.
+
+### App side
+
+- **`GalaxyActivity.kt`** — a full-screen `WebView` at
+  `http://127.0.0.1:<7800 + node_id-1>/`. JS enabled (the canvas page needs
+  it), `LOAD_NO_CACHE` (always the live page), in-app `WebViewClient`,
+  back-button walks WebView history then finishes. A background thread
+  probes the loopback port (400 ms connect timeout, 500 ms cadence) and
+  only loads the WebView once the kernel's galaxy task answers — a
+  "your star is waking…" splash shows until then, with a charge-only hint
+  after ~4 s. A dead/slow kernel never wedges the UI.
+- **`MainActivity`** gains an "Open galaxy" button that launches
+  `GalaxyActivity` with the entered node id.
+- **`res/xml/network_security_config.xml`** — `cleartextTrafficPermitted`
+  is `false` in `base-config` and `true` ONLY for the `127.0.0.1` /
+  `localhost` `domain-config`. The manifest sets
+  `android:usesCleartextTraffic="false"` + `android:networkSecurityConfig`.
+  The galaxy bind is hard-coded loopback (`galaxy_posix.c`), so this never
+  relaxes TLS for any real endpoint; the relay wire is UDP+HMAC, unaffected.
+- The WebView sends the device locale as `Accept-Language` automatically;
+  `/manifesto` (ark_profile.c's prefix matcher) auto-selects — no app code
+  needed (verified on-host: `Accept-Language: ja` → Japanese,
+  `fr` → French).
+
+### Build + proof (this host: aarch64 PRoot, NDK r26d under qemu wrappers)
+
+```sh
+cd android
+printf 'sdk.dir=/root/android-sdk\n' > local.properties   # gitignored
+ANDROID_SDK_ROOT=/root/android-sdk ./gradlew --offline --no-daemon :app:assembleDebug
+```
+
+Result (2026-06-11): **BUILD SUCCESSFUL in ~6 min**, `app-debug.apk` =
+3.96 MB (~+80 KB native from the galaxy page + manifesto table vs Phase D).
+No NEW pipeline traps — the 11-trap doc (`feedback_ndk_proot_pipeline.md`)
+still covers it; only the pre-existing `NULL`-redefine / unused-param
+warnings appeared. The new TUs (galaxy.c, world.c, lm_*.c, ark_profile.c,
+r3_incontext.c, pfs_*.c, …) compiled clean under Bionic.
+
+Static proof on the shipped APK:
+
+- `unzip -l` shows `lib/arm64-v8a/libpkernel.so`,
+  `res/xml/network_security_config.xml`, `classes*.dex`.
+- `aapt2 dump xmltree AndroidManifest.xml` shows `io.pkernel.GalaxyActivity`
+  registered + `networkSecurityConfig` + `usesCleartextTraffic=false`.
+- `strings` on the stripped `.so` shows the embedded page (`<canvas`,
+  `/galaxy.json`, `/events`, `/manifesto`, `/teach`, `/ask`), the
+  `[galaxy] listening on 127.0.0.1:%d` log, and ALL 32 manifesto endonyms
+  + bodies (the `.so` is stripped, so symbol-table proof uses the
+  unstripped host `boot/linux/libpkernel.so` from the same source set:
+  `nm` shows `galaxy_task`, `galaxy_init`, `galaxy_emit`, `galaxy_io_init`,
+  `galaxy_page`, `manifesto_table`, `ark_manifesto_at`).
+
+Live host smoke (the strongest, since this host can't run the APK): the
+**same `.so` source set** boots via `boot/linux` `so_node` and serves the
+galaxy on `127.0.0.1:7800` — `curl /galaxy.json` returns valid JSON,
+`GET /` returns the `<canvas` page, and `/manifesto` honors `Accept-Language`
+(ja→日本語, fr→français). The APK packages this identical `.so`.
+
+### What awaits a real device (mk_pino has it)
+
+CI on this host cannot build the APK (NDK under qemu = minutes), so nothing
+was added to `ci.yml`; the host-side galaxy cert (`samples/14_galaxy/`)
+already gates the data plane. On a phone:
+
+```sh
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+# open UMP → Start (plug in power if charge-only) → Open galaxy
+```
+
+Look for: the dark galaxy field with your star at center, breathing when
+the DMN is idle; the manifesto in your phone's language under "about this
+galaxy"; teach a k/v and watch the particle orbit, then sink into the star
+at the next consolidation tick. That last step is the product — the visible
+difference between hearing and learning.
