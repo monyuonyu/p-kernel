@@ -413,6 +413,57 @@ v2 (after profiles replicate): peer stars whose profile blocks have arrived rend
 handles — the galaxy slowly fills with NAMES, each one a person who consented to be
 remembered. That is the 箱舟 mk_pino described, made visible.
 
+### 7.5 The manifesto speaks many languages (i18n)
+
+mk_pino's wish: this is for people of every language — cover **90%+ of the world's
+population**, let the reader pick a language, and auto-default from the browser/device
+language. The ethics text is the contract, so it is translated *meaning-faithfully* into
+~32 languages (the un-deletable sentence「ここに書かれたものは、消せません」kept
+unambiguous and prominent in every one; the three walls — names are free / nobody
+verifies / walking away costs nothing / don't enter others' info — survive exactly).
+Files: `arch/common/web/manifesto.<bcp47>.txt` (UTF-8); `manifesto.txt` stays the
+canonical **ja** source, byte-identical (`manifesto.ja.txt` is a convenience alias).
+
+**The load-bearing consent rule.** Each language version is its **own byte string** →
+its **own `pfs_id_compute` content-id**. The ack records the content-id of the version
+the person actually **READ** — not a single canonical id. So:
+
+- The build embeds the languages into ONE generated header
+  (`tools/galaxy/gen_manifestos.py` → `manifesto_page.h`): N per-language byte arrays +
+  a `manifesto_table[]` of `{code, endonym, bytes, len}`. The id is computed **at
+  runtime** from the served bytes (the ONE hash, `pfs_id_compute`) — never precomputed,
+  so it can never drift from what is served. The language set + endonyms live in one
+  shared spec, `arch/common/web/manifesto_langs.mk`, included by every `boot/*/Makefile`.
+- `ark_consent_ok()` and `POST /profile` validate `mid` against the **whole table**
+  (`ark_manifesto_id_valid` — any embedded version's id is accepted), not one canonical
+  id. The consent record keeps the **per-language id** the person sent: we honestly know
+  *which words* they agreed to. If that version's bytes ever change, its id stops
+  matching and the gate re-asks (§3.1, now per-language).
+- `GET /manifesto?lang=xx` serves a specific version (`X-Manifesto-Id` + `X-Manifesto-Lang`
+  headers); with no `?lang=` it auto-defaults from the `Accept-Language` header (a minimal
+  q-less prefix matcher — `en-US`→`en`, `pt-BR`→`pt`; bare `zh` is NOT silently mapped to
+  a script), falling back to **en**. `GET /langs` returns `{code: endonym, …}` (each name
+  in its OWN language) for the UI selector.
+- The page (`galaxy.html`) carries a top-right language selector populated from `/langs`,
+  defaulting to `navigator.language(s)`; all chrome strings come from a compact in-page
+  JS table (`I18N`, same languages, en fallback); RTL is set for ar/ur/fa. The manifesto
+  text itself is always the served per-language bytes (never duplicated in JS), so the
+  consent id always matches exactly what was shown.
+
+**Bare-metal bound.** Hosted builds (`boot/linux`, `boot/linux_x86_64`) embed the FULL
+~32-language table (the web UI offers the selector; +~68 KB of read-only data). Bare-metal
+(`boot/aarch64`, which links `ark_profile.c` but NOT `galaxy.c`) embeds **ja + en only**
+behind the same `MANIFESTO_LANGS_LEAN` spec — there is no web UI there, so the manifesto
+serves only the future `netstack-tcp-server` slice; keep the kernel lean. The
+`manifesto_table[]` shape is identical on every target, so the consent logic is
+arch-uniform.
+
+Acceptance: the **`[i18n-manifesto]`** cert (`samples/40_i18n_manifesto/i18n_cert.sh`,
+wired into `ci.yml` next to the ark step) curls every embedded `/manifesto?lang=xx`,
+asserts `sha256(served) == X-Manifesto-Id` for each (count printed), proves a **non-ja
+(Spanish) ack unlocks teach** and that the stored `manifesto_id` IS the Spanish id, and
+that a bogus `?lang=` falls back to en (still 200).
+
 ---
 
 ## 8. The falsifiable acceptance gate

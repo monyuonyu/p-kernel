@@ -27,6 +27,10 @@
     text-align:right;text-shadow:0 0 4px #000}
   #note{position:fixed;left:50%;bottom:42px;transform:translateX(-50%);
     font-size:11px;color:#9399b2}
+  /* i18n: top-right language selector (ark-profile.md §7.5) */
+  #lang{position:fixed;right:12px;top:10px;z-index:40;font-size:12px}
+  #lang select{background:#181825;color:#cdd6f4;border:1px solid #313244;
+    border-radius:4px;padding:3px 6px;font-family:inherit}
   /* ark-profile v1 first-run flow (ark-profile.md §7.4) — self-contained */
   #ark{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:50;
     display:none;align-items:center;justify-content:center}
@@ -58,41 +62,36 @@
 </head>
 <body>
 <canvas id="sky"></canvas>
+<div id="lang"><select id="langsel" title="language"></select></div>
 <div id="hud"></div>
 <div id="note">this mind speaks 8 symbols today — it is an infant, truthfully shown</div>
 <div id="ark"><div class="card">
-  <h1 id="arkh">ようこそ — この銀河について</h1>
+  <h1 id="arkh">…</h1>
   <pre id="arktext">…</pre>
-  <div class="warn" id="arkwarn">
-    ここに書かれたものは <b>消せません</b>。内容アドレスで保存され、参加者の
-    デバイスへ複製され、ノードの死を越えて生き残ります。<br>
-    ・名前は自由です（本名・ペンネーム・匿名）。<b>誰もそれを検証しません。</b><br>
-    ・何も書かずに立ち去っても、あなたのノードは完全に機能します。<br>
-    ・<b>他人の情報を書かないでください。</b>
-  </div>
+  <div class="warn" id="arkwarn"></div>
   <div class="row" id="arkack">
-    <button class="primary" id="arkagree">同意して刻む</button>
-    <button id="arkdecline">今はやめておく</button>
+    <button class="primary" id="arkagree">…</button>
+    <button id="arkdecline">…</button>
   </div>
   <div class="opt" id="arkfields">
-    <label>ハンドル / 名乗り（任意・ペンネーム可・検証されません）</label>
-    <input id="arkhandle" maxlength="24" placeholder="任意">
-    <label>未来への言葉（任意・他人の情報は書かないでください）</label>
-    <textarea id="arkmsg" maxlength="1024" placeholder="任意"></textarea>
-    <label>本名（任意・折りたたみ）</label>
-    <input id="arkname" maxlength="48" placeholder="任意">
+    <label id="lblhandle">…</label>
+    <input id="arkhandle" maxlength="24">
+    <label id="lblmsg">…</label>
+    <textarea id="arkmsg" maxlength="1024"></textarea>
+    <label id="lblname">…</label>
+    <input id="arkname" maxlength="48">
     <div class="row">
-      <button class="primary" id="arksave">星に名前を灯す</button>
-      <button id="arkskip">名乗らず同意だけ</button>
+      <button class="primary" id="arksave">…</button>
+      <button id="arkskip">…</button>
     </div>
-    <div class="tiny">過去の版は消えません。新しい版が追加されるだけです。</div>
+    <div class="tiny" id="arkappend">…</div>
   </div>
   <div class="mid" id="arkmid"></div>
 </div></div>
 <div id="ctl">
-  teach k<select id="tk"></select> v<select id="tv"></select>
+  <span id="lblteach">teach</span> k<select id="tk"></select> v<select id="tv"></select>
   <button id="bteach">teach</button>
-  &nbsp; ask k<select id="ak"></select>
+  &nbsp; <span id="lblask">ask</span> k<select id="ak"></select>
   <button id="bask">ask</button>
   <span id="msg" style="color:#a6e3a1"></span>
 </div>
@@ -101,6 +100,159 @@
   <h2 id="ptitle"></h2><pre id="pbody"></pre></div>
 <script>
 "use strict";
+// ── i18n (ark-profile.md §7.5) ────────────────────────────────────
+//    UI chrome strings per language; the MANIFESTO itself is served
+//    per-language by the node (/manifesto?lang=xx) — never duplicated
+//    here. Missing keys fall back to en. The star field needs no words.
+//    Keys: title, agree, decline, save, skip, lblhandle, lblmsg,
+//          lblname, append, optional, teach, ask, mustread,
+//          consentmark, namemark, updated, profilefail.
+const I18N = {
+  en:{title:"Welcome — about this galaxy",agree:"Agree and inscribe",decline:"Not now",
+      save:"Light my name on my star",skip:"Consent only, no name",
+      lblhandle:"Handle / name you go by (optional · pen name OK · not verified)",
+      lblmsg:"Words for the future (optional · do not write others' information)",
+      lblname:"Real name (optional)",append:"Past versions are never erased; a new version is only added.",
+      optional:"optional",teach:"teach",ask:"ask",
+      mustread:"Please read about this galaxy first",
+      consentmark:"Your consent is inscribed",namemark:"Your name is lit upon your star",
+      updated:"The text was updated — please read it once more",profilefail:"profile failed"},
+  ja:{title:"ようこそ — この銀河について",agree:"同意して刻む",decline:"今はやめておく",
+      save:"星に名前を灯す",skip:"名乗らず同意だけ",
+      lblhandle:"ハンドル / 名乗り（任意・ペンネーム可・検証されません）",
+      lblmsg:"未来への言葉（任意・他人の情報は書かないでください）",
+      lblname:"本名（任意）",append:"過去の版は消えません。新しい版が追加されるだけです。",
+      optional:"任意",teach:"teach",ask:"ask",
+      mustread:"まず、この銀河について読んでください",
+      consentmark:"同意を刻みました",namemark:"星に名前が灯りました",
+      updated:"確認テキストが更新されました。もう一度お読みください",profilefail:"profile failed"},
+  "zh-Hans":{title:"欢迎 —— 关于这片星系",agree:"同意并镌刻",decline:"暂时不要",
+      save:"在我的星上点亮名字",skip:"仅同意，不留名",
+      lblhandle:"代号 / 名号（可选·可用笔名·不会核实）",
+      lblmsg:"给未来的话（可选·请勿写他人信息）",lblname:"真实姓名（可选）",
+      append:"过去的版本不会被抹去，只会追加新的版本。",optional:"可选",teach:"教",ask:"问",
+      mustread:"请先阅读关于这片星系的内容",consentmark:"已镌刻你的同意",
+      namemark:"你的名字已在星上点亮",updated:"确认文本已更新，请再读一遍",profilefail:"提交失败"},
+  "zh-Hant":{title:"歡迎 —— 關於這片星系",agree:"同意並鐫刻",decline:"暫時不要",
+      save:"在我的星上點亮名字",skip:"僅同意，不留名",
+      lblhandle:"代號 / 名號（可選·可用筆名·不會查驗）",
+      lblmsg:"給未來的話（可選·請勿寫他人資訊）",lblname:"真實姓名（可選）",
+      append:"過去的版本不會被抹去，只會追加新的版本。",optional:"可選",teach:"教",ask:"問",
+      mustread:"請先閱讀關於這片星系的內容",consentmark:"已鐫刻你的同意",
+      namemark:"你的名字已在星上點亮",updated:"確認文字已更新，請再讀一遍",profilefail:"提交失敗"},
+  es:{title:"Bienvenida — sobre esta galaxia",agree:"Aceptar e inscribir",decline:"Ahora no",
+      save:"Encender mi nombre en mi estrella",skip:"Solo consentir, sin nombre",
+      lblhandle:"Alias / nombre que usas (opcional · seudónimo válido · no se verifica)",
+      lblmsg:"Palabras para el futuro (opcional · no escribas datos de otros)",
+      lblname:"Nombre real (opcional)",append:"Las versiones pasadas nunca se borran; solo se añade una nueva.",
+      optional:"opcional",teach:"enseñar",ask:"preguntar",mustread:"Por favor, lee primero sobre esta galaxia",
+      consentmark:"Tu consentimiento queda inscrito",namemark:"Tu nombre se enciende en tu estrella",
+      updated:"El texto se actualizó — léelo una vez más",profilefail:"error al enviar"},
+  fr:{title:"Bienvenue — à propos de cette galaxie",agree:"Accepter et inscrire",decline:"Pas maintenant",
+      save:"Allumer mon nom sur mon étoile",skip:"Consentir seulement, sans nom",
+      lblhandle:"Pseudo / nom d'usage (facultatif · pseudonyme accepté · non vérifié)",
+      lblmsg:"Mots pour l'avenir (facultatif · n'écrivez pas les infos d'autrui)",
+      lblname:"Nom réel (facultatif)",append:"Les versions passées ne sont jamais effacées ; une nouvelle est ajoutée.",
+      optional:"facultatif",teach:"enseigner",ask:"demander",mustread:"Veuillez d'abord lire au sujet de cette galaxie",
+      consentmark:"Votre consentement est inscrit",namemark:"Votre nom s'allume sur votre étoile",
+      updated:"Le texte a été mis à jour — relisez-le",profilefail:"échec de l'envoi"},
+  ar:{title:"أهلاً بك — عن هذه المجرّة",agree:"الموافقة والنقش",decline:"ليس الآن",
+      save:"أضِئ اسمي على نجمتي",skip:"الموافقة فقط، دون اسم",
+      lblhandle:"اسم مستعار / ما تُعرَف به (اختياري · يُقبل الاسم المستعار · لا يُتحقَّق منه)",
+      lblmsg:"كلمات إلى المستقبل (اختياري · لا تكتب معلومات الآخرين)",
+      lblname:"الاسم الحقيقي (اختياري)",append:"النسخ السابقة لا تُمحى أبداً؛ تُضاف نسخة جديدة فقط.",
+      optional:"اختياري",teach:"علّم",ask:"اسأل",mustread:"اقرأ أولاً عن هذه المجرّة من فضلك",
+      consentmark:"نُقشت موافقتك",namemark:"أُضيء اسمك على نجمتك",
+      updated:"تم تحديث النص — اقرأه مرة أخرى",profilefail:"فشل الإرسال"},
+  pt:{title:"Bem-vindo — sobre esta galáxia",agree:"Concordar e inscrever",decline:"Agora não",
+      save:"Acender meu nome na minha estrela",skip:"Apenas consentir, sem nome",
+      lblhandle:"Apelido / nome que usa (opcional · pseudônimo aceito · não verificado)",
+      lblmsg:"Palavras para o futuro (opcional · não escreva dados de outros)",
+      lblname:"Nome real (opcional)",append:"Versões passadas nunca são apagadas; só se adiciona uma nova.",
+      optional:"opcional",teach:"ensinar",ask:"perguntar",mustread:"Por favor, leia primeiro sobre esta galáxia",
+      consentmark:"Seu consentimento foi inscrito",namemark:"Seu nome se acende na sua estrela",
+      updated:"O texto foi atualizado — leia-o mais uma vez",profilefail:"falha ao enviar"},
+  ru:{title:"Добро пожаловать — об этой галактике",agree:"Согласиться и записать",decline:"Не сейчас",
+      save:"Зажечь моё имя на моей звезде",skip:"Только согласие, без имени",
+      lblhandle:"Псевдоним / как вас называть (необязательно · псевдоним допустим · не проверяется)",
+      lblmsg:"Слова в будущее (необязательно · не пишите чужие данные)",
+      lblname:"Настоящее имя (необязательно)",append:"Прошлые версии не стираются; добавляется лишь новая.",
+      optional:"необязательно",teach:"учить",ask:"спросить",mustread:"Сначала прочитайте об этой галактике",
+      consentmark:"Ваше согласие записано",namemark:"Ваше имя зажжено на вашей звезде",
+      updated:"Текст обновился — прочтите его ещё раз",profilefail:"ошибка отправки"},
+  hi:{title:"स्वागत है — इस आकाशगंगा के बारे में",agree:"सहमत हों और अंकित करें",decline:"अभी नहीं",
+      save:"मेरे तारे पर मेरा नाम जलाएँ",skip:"केवल सहमति, बिना नाम",
+      lblhandle:"उपनाम / जिस नाम से जाने जाते हैं (वैकल्पिक · उपनाम मान्य · जाँचा नहीं जाता)",
+      lblmsg:"भविष्य के लिए शब्द (वैकल्पिक · दूसरों की जानकारी न लिखें)",
+      lblname:"असली नाम (वैकल्पिक)",append:"पुराने संस्करण कभी नहीं मिटते; केवल नया संस्करण जुड़ता है।",
+      optional:"वैकल्पिक",teach:"सिखाएँ",ask:"पूछें",mustread:"कृपया पहले इस आकाशगंगा के बारे में पढ़ें",
+      consentmark:"आपकी सहमति अंकित हो गई",namemark:"आपका नाम आपके तारे पर जल उठा",
+      updated:"पाठ अद्यतन हुआ — कृपया फिर से पढ़ें",profilefail:"भेजने में विफल"},
+  bn:{title:"স্বাগতম — এই ছায়াপথ সম্পর্কে",agree:"সম্মত হয়ে খোদাই করুন",decline:"এখন নয়",
+      save:"আমার তারায় আমার নাম জ্বালান",skip:"শুধু সম্মতি, নাম ছাড়া",
+      lblhandle:"ডাকনাম / যে নামে পরিচিত (ঐচ্ছিক · ছদ্মনাম চলবে · যাচাই হয় না)",
+      lblmsg:"ভবিষ্যতের জন্য কথা (ঐচ্ছিক · অন্যের তথ্য লিখবেন না)",
+      lblname:"আসল নাম (ঐচ্ছিক)",append:"পুরোনো সংস্করণ কখনও মোছে না; কেবল নতুন সংস্করণ যোগ হয়।",
+      optional:"ঐচ্ছিক",teach:"শেখান",ask:"জিজ্ঞাসা",mustread:"অনুগ্রহ করে আগে এই ছায়াপথ সম্পর্কে পড়ুন",
+      consentmark:"আপনার সম্মতি খোদাই হলো",namemark:"আপনার তারায় আপনার নাম জ্বলে উঠল",
+      updated:"লেখাটি হালনাগাদ হয়েছে — আরেকবার পড়ুন",profilefail:"পাঠাতে ব্যর্থ"},
+  de:{title:"Willkommen — über diese Galaxie",agree:"Zustimmen und einschreiben",decline:"Jetzt nicht",
+      save:"Meinen Namen auf meinem Stern entzünden",skip:"Nur zustimmen, ohne Namen",
+      lblhandle:"Handle / Name, den du nutzt (optional · Pseudonym erlaubt · nicht geprüft)",
+      lblmsg:"Worte für die Zukunft (optional · keine fremden Daten schreiben)",
+      lblname:"Echter Name (optional)",append:"Frühere Versionen werden nie gelöscht; nur eine neue kommt hinzu.",
+      optional:"optional",teach:"lehren",ask:"fragen",mustread:"Bitte lies zuerst über diese Galaxie",
+      consentmark:"Deine Zustimmung ist eingeschrieben",namemark:"Dein Name leuchtet auf deinem Stern",
+      updated:"Der Text wurde aktualisiert — lies ihn noch einmal",profilefail:"Senden fehlgeschlagen"},
+  id:{title:"Selamat datang — tentang galaksi ini",agree:"Setuju dan torehkan",decline:"Tidak sekarang",
+      save:"Nyalakan namaku di bintangku",skip:"Hanya setuju, tanpa nama",
+      lblhandle:"Nama panggilan (opsional · nama pena boleh · tidak diverifikasi)",
+      lblmsg:"Kata untuk masa depan (opsional · jangan tulis info orang lain)",
+      lblname:"Nama asli (opsional)",append:"Versi lama tak pernah dihapus; hanya versi baru yang ditambahkan.",
+      optional:"opsional",teach:"ajari",ask:"tanya",mustread:"Silakan baca dulu tentang galaksi ini",
+      consentmark:"Persetujuanmu telah ditorehkan",namemark:"Namamu menyala di bintangmu",
+      updated:"Teks diperbarui — bacalah sekali lagi",profilefail:"gagal mengirim"},
+  ko:{title:"환영합니다 — 이 은하에 대하여",agree:"동의하고 새기기",decline:"지금은 안 할게요",
+      save:"내 별에 이름 밝히기",skip:"이름 없이 동의만",
+      lblhandle:"닉네임 / 부를 이름 (선택 · 필명 가능 · 검증 안 함)",
+      lblmsg:"미래를 향한 말 (선택 · 타인의 정보를 쓰지 마세요)",
+      lblname:"실명 (선택)",append:"과거 버전은 지워지지 않습니다; 새 버전이 더해질 뿐입니다.",
+      optional:"선택",teach:"가르치기",ask:"묻기",mustread:"먼저 이 은하에 대해 읽어 주세요",
+      consentmark:"동의를 새겼습니다",namemark:"당신의 별에 이름이 밝혀졌습니다",
+      updated:"확인 텍스트가 갱신되었습니다 — 다시 읽어 주세요",profilefail:"전송 실패"}
+};
+function L(){ return I18N[curLang] || I18N.en; }
+function S(k){ const t=L(); return (t && t[k]!=null) ? t[k] : I18N.en[k]; }
+let curLang = "en";
+let LANGS = {};   // code -> endonym, from /langs
+
+// pick the best available code for a BCP-47 tag (exact, then primary subtag).
+function bestLang(tag){
+  if(!tag) return null;
+  tag=String(tag);
+  const lower=s=>String(s).toLowerCase();
+  for(const c in LANGS) if(lower(c)===lower(tag)) return c;          // exact
+  const prim=tag.split(/[-_]/)[0];
+  // exact primary-subtag among table codes WITHOUT a subtag
+  for(const c in LANGS) if(c.indexOf("-")<0 && lower(c)===lower(prim)) return c;
+  return null;
+}
+// apply UI chrome strings for the current language + RTL where needed.
+function applyStrings(){
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  set("arkh",S("title"));
+  set("arkagree",S("agree")); set("arkdecline",S("decline"));
+  set("arksave",S("save")); set("arkskip",S("skip"));
+  set("lblhandle",S("lblhandle")); set("lblmsg",S("lblmsg"));
+  set("lblname",S("lblname")); set("arkappend",S("append"));
+  set("lblteach",S("teach")); set("lblask",S("ask"));
+  const ph=S("optional");
+  ["arkhandle","arkmsg","arkname"].forEach(id=>{const e=document.getElementById(id);if(e)e.placeholder=ph;});
+  const rtl=(curLang==="ar"||curLang==="ur"||curLang==="fa");
+  const card=document.querySelector("#ark .card");
+  if(card) card.dir = rtl?"rtl":"ltr";
+}
+
 // ── ALL data is REAL, from THIS node's /galaxy.json + /events. No fake
 //    stars, no decorative nebulae (galaxy.md §5 sparse-galaxy stance).
 const cv=document.getElementById("sky"),ctx=cv.getContext("2d");
@@ -242,7 +394,7 @@ document.getElementById("bteach").onclick=async()=>{
   try{
     const r=await fetch("/teach",{method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded"},body:`k=${k}&v=${v}`});
-    if(r.status===403){ msg("まず、この銀河について読んでください",false); arkOpen(); return; }
+    if(r.status===403){ msg(S("mustread"),false); arkOpen(); return; }
     const j=await r.json();
     msg(j.ok?`taught k=${k} v=${v} (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);
   }catch(_){msg("teach failed",false);}
@@ -259,11 +411,18 @@ document.getElementById("bask").onclick=async()=>{
 //    Self-contained: served bytes + id come from THIS node's /manifesto.
 let arkMid=null;
 async function arkLoadManifesto(){
-  const r=await fetch("/manifesto");
+  // serve the manifesto in the CURRENT language; the X-Manifesto-Id binds the
+  // ack to exactly these words (each language is its own content-id, §7.5).
+  const r=await fetch("/manifesto?lang="+encodeURIComponent(curLang));
   arkMid=r.headers.get("X-Manifesto-Id");
+  const served=r.headers.get("X-Manifesto-Lang")||curLang;
   const txt=await r.text();
   document.getElementById("arktext").textContent=txt;
-  document.getElementById("arkmid").textContent="manifesto-id "+(arkMid||"?");
+  // the warn block re-states the un-deletable sentence + 3 bullets; the full
+  // text above already carries them in-language, so mirror the served text's
+  // tail (the bullets) is unnecessary — keep the card lean and authoritative.
+  document.getElementById("arkwarn").textContent="";
+  document.getElementById("arkmid").textContent="manifesto-id "+(arkMid||"?")+" · "+served;
 }
 function arkOpen(){
   document.getElementById("arkfields").classList.remove("open");
@@ -295,25 +454,44 @@ async function arkSubmit(withFields){
       headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
     const j=await r.json();
     if(j.ok){ arkClose(); poll();   // your star gains its name (real state change)
-      msg(withFields?"星に名前が灯りました":"同意を刻みました",true);
+      msg(withFields?S("namemark"):S("consentmark"),true);
     } else {
       // mid changed since load -> re-ask with the new text (consent to words)
-      msg("確認テキストが更新されました。もう一度お読みください",false);
+      msg(S("updated"),false);
       arkMid=j.manifesto_id||null; arkLoadManifesto();
       document.getElementById("arkfields").classList.remove("open");
       document.getElementById("arkack").style.display="";
     }
-  }catch(_){ msg("profile failed",false); }
+  }catch(_){ msg(S("profilefail"),false); }
 }
 document.getElementById("arksave").onclick=()=>arkSubmit(true);
 document.getElementById("arkskip").onclick=()=>arkSubmit(false);
+
+// ── i18n init: populate the selector from /langs, default from the
+//    device/browser language (navigator.language), then first-run. ──
+async function langInit(){
+  try{ LANGS = await (await fetch("/langs")).json(); }catch(_){ LANGS={en:"English"}; }
+  const sel=document.getElementById("langsel");
+  sel.innerHTML="";
+  for(const c in LANGS){ const o=document.createElement("option");
+    o.value=c; o.text=LANGS[c]; sel.add(o); }
+  // auto-default: navigator.languages (ordered) -> first that resolves; else en.
+  let pick=null;
+  const cands=(navigator.languages&&navigator.languages.length)?navigator.languages:[navigator.language];
+  for(const t of cands){ const b=bestLang(t); if(b){ pick=b; break; } }
+  curLang = pick || (LANGS.en?"en":Object.keys(LANGS)[0]) || "en";
+  sel.value=curLang;
+  applyStrings();
+  sel.onchange=async()=>{ curLang=sel.value; applyStrings();
+    if(document.getElementById("ark").classList.contains("open")){ await arkLoadManifesto(); } };
+}
 // first-run trigger: a node with no profile yet dims and rises the manifesto.
 async function arkFirstRun(){
   try{ const j=await (await fetch("/profile.json")).json();
     if(j && j.none){ await arkLoadManifesto(); arkOpen(); }
   }catch(_){}
 }
-arkFirstRun();
+(async()=>{ await langInit(); await arkFirstRun(); })();
 
 // ── click a star -> /self.json (mine) or peer world-row ───────────
 async function openSelf(){

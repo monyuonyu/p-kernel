@@ -421,6 +421,8 @@ static void gx_sse_event(INT slot, const GALAXY_EV *e)
 typedef struct {
     INT  is_post;
     char path[64];
+    char query[64];     /* raw query string after '?' (i18n: lang=xx)     */
+    char accept_lang[64];/* Accept-Language header value (i18n auto-detect)*/
     INT  clen;
     const char *body;   /* into the read buffer (POST form)               */
     INT  body_len;
@@ -430,6 +432,7 @@ typedef struct {
 static INT gx_parse(const char *buf, INT len, GX_REQ *q)
 {
     q->is_post = 0; q->clen = 0; q->body = 0; q->body_len = 0; q->path[0] = 0;
+    q->query[0] = 0; q->accept_lang[0] = 0;
 
     INT i = 0;
     /* method */
@@ -441,13 +444,15 @@ static INT gx_parse(const char *buf, INT len, GX_REQ *q)
     } else {
         return -1;                              /* unsupported method      */
     }
-    /* path up to space, bounded; reject query strings (none used) */
-    INT p = 0;
+    /* path up to space; split off the query string at '?' (i18n lang=xx). */
+    INT p = 0, inq = 0, qp = 0;
     while (i < len && buf[i] != ' ' && buf[i] != '\r' && buf[i] != '\n') {
-        if (p < (INT)sizeof(q->path) - 1) q->path[p++] = buf[i];
+        if (!inq && buf[i] == '?') { inq = 1; i++; continue; }
+        if (inq) { if (qp < (INT)sizeof(q->query) - 1) q->query[qp++] = buf[i]; }
+        else     { if (p  < (INT)sizeof(q->path)  - 1) q->path[p++]   = buf[i]; }
         i++;
     }
-    q->path[p] = 0;
+    q->path[p] = 0; q->query[qp] = 0;
     if (i >= len) return -1;
 
     /* find header end (\r\n\r\n) and scan for Content-Length on POST. */
@@ -455,6 +460,30 @@ static INT gx_parse(const char *buf, INT len, GX_REQ *q)
     for (INT j = 0; j + 3 < len; j++) {
         if (buf[j]=='\r' && buf[j+1]=='\n' && buf[j+2]=='\r' && buf[j+3]=='\n') {
             hdr_end = j + 4; break;
+        }
+    }
+
+    /* i18n: capture Accept-Language (case-insensitive header name) so GET
+     * /manifesto with no ?lang= can auto-default to the browser language. We
+     * store the raw value; the route runs a minimal q-less prefix matcher. */
+    for (INT j = 0; j + 16 < len; j++) {
+        if (j != 0 && !(buf[j-1]=='\n')) continue;   /* header line start */
+        const char *k = "accept-language:";
+        INT m = 0;
+        for (; k[m]; m++) {
+            char ch = buf[j+m];
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+            if (ch != k[m]) break;
+        }
+        if (k[m] == 0) {
+            INT z = j + m;
+            while (z < len && (buf[z]==' ' || buf[z]=='\t')) z++;
+            INT a = 0;
+            while (z < len && buf[z] != '\r' && buf[z] != '\n'
+                   && a < (INT)sizeof(q->accept_lang) - 1)
+                q->accept_lang[a++] = buf[z++];
+            q->accept_lang[a] = 0;
+            break;
         }
     }
     if (q->is_post) {
@@ -545,6 +574,68 @@ static INT gx_form_field(const char *b, INT n, const char *name,
 }
 
 /* ------------------------------------------------------------------ */
+/* i18n language resolution (ark-profile.md §7.5)                       */
+/* ------------------------------------------------------------------ */
+
+/* copy a token (up to a delimiter / NUL) into out, NUL-terminated. */
+static void gx_copy_tok(const char *s, INT n, char *out, INT outmax)
+{
+    INT o = 0;
+    for (INT i = 0; i < n && s[i] && o < outmax - 1; i++) {
+        char c = s[i];
+        if (c == ',' || c == ';' || c == ' ' || c == '&' || c == '\r' || c == '\n') break;
+        out[o++] = c;
+    }
+    out[o] = 0;
+}
+
+/* extract lang=<code> from a raw query string -> idx, or -1 if absent. */
+static INT gx_lang_from_query(const char *qy)
+{
+    for (INT i = 0; qy[i]; i++) {
+        if ((i == 0 || qy[i-1] == '&') &&
+            qy[i]=='l' && qy[i+1]=='a' && qy[i+2]=='n' && qy[i+3]=='g' && qy[i+4]=='=') {
+            char code[24]; gx_copy_tok(qy + i + 5, 23, code, (INT)sizeof code);
+            return ark_manifesto_find(code);
+        }
+    }
+    return -1;
+}
+
+/* best language for an Accept-Language value: scan comma-separated tags in
+ * order (a minimal q-less matcher — the FIRST tag whose code or primary
+ * subtag resolves wins). Returns a table index, or -1 if none match. */
+static INT gx_lang_from_accept(const char *al)
+{
+    INT i = 0;
+    while (al[i]) {
+        while (al[i] == ' ' || al[i] == ',') i++;
+        if (!al[i]) break;
+        char tag[24]; gx_copy_tok(al + i, 23, tag, (INT)sizeof tag);
+        if (tag[0]) {
+            INT idx = ark_manifesto_find(tag);
+            if (idx >= 0) return idx;
+        }
+        /* advance past this tag to the next comma */
+        while (al[i] && al[i] != ',') i++;
+    }
+    return -1;
+}
+
+/* resolve the language a /manifesto request wants: ?lang= first, then
+ * Accept-Language, then fall back en (index found via "en"), then row 0. */
+static INT gx_resolve_lang(const GX_REQ *q)
+{
+    INT idx = gx_lang_from_query(q->query);
+    if (idx >= 0) return idx;
+    idx = gx_lang_from_accept(q->accept_lang);
+    if (idx >= 0) return idx;
+    idx = ark_manifesto_find("en");
+    if (idx >= 0) return idx;
+    return 0;                                 /* canonical (ja) last resort */
+}
+
+/* ------------------------------------------------------------------ */
 /* response writers                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -600,13 +691,22 @@ static INT gx_route(INT slot, GX_REQ *q)
      * content-id they hash to, so the consent ack binds to the exact words
      * (the cert computes sha256 host-side and matches X-Manifesto-Id). */
     if (!q->is_post && gx_streq(path, "/manifesto")) {
-        U1 mid[PFS_ID_LEN]; ark_manifesto_id(mid);
+        /* i18n (§7.5): ?lang=xx, else Accept-Language, else en, else ja.
+         * Each version is its own byte string -> its own content-id; the
+         * X-Manifesto-Id advertised is THIS version's id, and the ack binds
+         * to exactly the words served. X-Manifesto-Lang names the version. */
+        INT li = gx_resolve_lang(q);
+        const U1 *mb = 0; UW ml = 0; U1 mid[PFS_ID_LEN];
+        if (!ark_manifesto_at((UW)li, &mb, &ml, mid)) {
+            ark_manifesto_at(0, &mb, &ml, mid); li = 0;   /* defensive */
+        }
         gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8"
                     "\r\nX-Manifesto-Id: ");
         gx_hex_id(slot, mid);
+        gx_qs(slot, "\r\nX-Manifesto-Lang: ");
+        gx_qs(slot, ark_manifesto_code((UW)li));
         gx_qs(slot, "\r\nConnection: close\r\n\r\n");
         gx_flush(slot);
-        const U1 *mb = ark_manifesto_bytes(); UW ml = ark_manifesto_len();
         UW off = 0;
         while (off < ml) {
             INT chunk = (INT)(ml - off); if (chunk > 1024) chunk = 1024;
@@ -615,6 +715,25 @@ static INT gx_route(INT slot, GX_REQ *q)
             if (w == 0) { tk_dly_tsk(5); continue; }
             off += (UW)w;
         }
+        return 0;
+    }
+    /* §7.5: GET /langs — the available languages as {code:endonym,...} JSON,
+     * each name in its OWN language; the UI populates its selector from this
+     * and picks navigator.language. */
+    if (!q->is_post && gx_streq(path, "/langs")) {
+        gx_resp_head(slot, "200 OK", "application/json");
+        gx_qs(slot, "{");
+        UW n = ark_manifesto_count();
+        for (UW li = 0; li < n; li++) {
+            if (li) gx_qs(slot, ",");
+            const char *code = ark_manifesto_code(li);
+            const char *endo = ark_manifesto_endonym(li);
+            gx_qs(slot, "\""); gx_qs(slot, code); gx_qs(slot, "\":\"");
+            INT en = 0; while (endo[en]) en++;
+            gx_json_str(slot, endo, en);
+            gx_qs(slot, "\"");
+        }
+        gx_qs(slot, "}");
         return 0;
     }
     /* §7.2: GET /profile.json — the head profile, or {none:true}. */

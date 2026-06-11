@@ -31,6 +31,10 @@ GALAXY_GEN  = $(ROOT)/tools/galaxy/gen_page.py
 GALAXY_PAGE = galaxy_page.h
 MANIFESTO_TXT  = $(ARCH_COMMON)/web/manifesto.txt
 MANIFESTO_PAGE = manifesto_page.h
+# i18n wave: hosted embeds ALL ~32 manifesto languages.
+MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
+include $(ARCH_COMMON)/web/manifesto_langs.mk
+MANIFESTO_SET  = $(MANIFESTO_LANGS_FULL)
 INC_TK      = $(ROOT)/include/kernel/tkernel
 INC_TOP     = $(ROOT)/include
 INC_LIB     = $(ROOT)/include/lib
@@ -272,11 +276,11 @@ $(GALAXY_PAGE): $(GALAXY_HTML) $(GALAXY_GEN)
 
 galaxy.o: $(GALAXY_PAGE)
 
-# ark-profile v1 (ark-profile.md §7.1): same D3 embed pipeline, a second
-# generated header (symbol "manifesto"). ark_profile.o and galaxy.o are
-# the only TUs that #include manifesto_page.h.
-$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(GALAXY_GEN)
-	python3 $(GALAXY_GEN) $(MANIFESTO_TXT) $@ manifesto
+# ark-profile v1 + i18n (ark-profile.md §7.1/§7.5): the manifesto TABLE
+# (N per-language byte arrays + manifesto_table[]). Hosted embeds the FULL
+# set. ark_profile.o and galaxy.o are the only TUs that #include it.
+$(MANIFESTO_PAGE): $(MANIFESTO_SRCS) $(MANIFESTO_GEN)
+	python3 $(MANIFESTO_GEN) $@ $(MANIFESTO_SET)
 
 ark_profile.o galaxy.o: $(MANIFESTO_PAGE)
 
