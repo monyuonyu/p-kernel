@@ -23,3 +23,8 @@ userland/x86/**/*.elf
 # from arch/common/web/galaxy.html by tools/galaxy/gen_page.py; never commit)
 boot/linux/galaxy_page.h
 boot/linux_x86_64/galaxy_page.h
+# ark-profile v1 (ark-profile.md §7.1): build-time generated manifesto array
+# (regenerated from arch/common/web/manifesto.txt; never commit)
+boot/linux/manifesto_page.h
+boot/linux_x86_64/manifesto_page.h
+boot/aarch64/manifesto_page.h

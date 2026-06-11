@@ -20,6 +20,9 @@ OBJCOPY = $(CROSS)objcopy
 ROOT    = ../..
 ARCH    = $(ROOT)/arch/aarch64
 COMMON  = $(ROOT)/arch/common
+GALAXY_GEN     = $(ROOT)/tools/galaxy/gen_page.py
+MANIFESTO_TXT  = $(COMMON)/web/manifesto.txt
+MANIFESTO_PAGE = manifesto_page.h
 KERNEL  = $(ROOT)/kernel/common
 INC_TK  = $(ROOT)/include/kernel/tkernel
 INC_LIB = $(ROOT)/include/lib
@@ -128,6 +131,7 @@ COMMON_C_SRCS = \
     dmn.c \
     lm_consolidate.c \
     lm_self.c \
+    ark_profile.c \
     ga.c \
     fedlearn.c \
     gossip_learn.c \
@@ -272,6 +276,15 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 $(COMMON_OBJS): %.o: $(COMMON)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# ark-profile v1 (ark-profile.md §7.1): the manifesto is embedded
+# at build via the galaxy D3 pipeline (symbol "manifesto"). bare
+# metal compiles ark_profile.c (pfs_dag exists here) but NOT
+# galaxy.c, so this is the only consumer of manifesto_page.h.
+$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(GALAXY_GEN)
+	python3 $(GALAXY_GEN) $(MANIFESTO_TXT) $@ manifesto
+
+ark_profile.o: $(MANIFESTO_PAGE)
+
 # kernel/common C sources
 %.o: $(KERNEL)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -352,6 +365,6 @@ tftp: rpi3
 	@echo "[tftp] Power-cycle the Pi (or type 'reset' at the U-Boot prompt) to load."
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) kernel.rpi3.elf kernel8.img
+	rm -f $(ALL_OBJS) $(TARGET) $(MANIFESTO_PAGE) kernel.rpi3.elf kernel8.img
 
 .PHONY: all run run-debug clean

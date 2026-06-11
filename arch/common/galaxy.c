@@ -27,6 +27,7 @@
 #include "dtr.h"         /* r3_facts_pending(), mind_cmd, mind_last_answer */
 #include "lm_self.h"     /* LM_SELF_REF / LM_SELF_ENTRY — /self.json       */
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
+#include "ark_profile.h" /* ark-profile v1: /manifesto, /profile, consent  */
 #include "kernel.h"
 
 #include "galaxy_page.h" /* GENERATED: galaxy_page[] + galaxy_page_len     */
@@ -138,6 +139,11 @@ typedef struct {
 
 static GX_CLIENT g_cli[GALAXY_MAX_CLIENTS];
 
+/* ark-profile: ARK_PROFILE is 1188 B — too large for the galaxy task's
+ * bounded stack (the hosted-relay stack-overflow lesson). The server is a
+ * SINGLE task, so one file-static scratch serves every route's head read. */
+static ARK_PROFILE gx_prof;
+
 /* queue bytes to a client's out-buffer; returns 0 ok, -1 overflow (drop) */
 static INT gx_q(INT slot, const char *s, INT n)
 {
@@ -192,6 +198,23 @@ static UB gx_my_id(void)
     return (UB)v;
 }
 
+/* emit a JSON-escaped string body (no surrounding quotes). Bounds: the
+ * caller passes a length; control chars and "/\\ are escaped. Used for the
+ * star-name (handle) + the human chapter's name/msg. The bytes are emitted
+ * AS DECLARED — never verified (§3.3). */
+static void gx_json_str(INT slot, const char *s, INT n)
+{
+    for (INT i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { char e[2] = {'\\', (char)c}; gx_q(slot, e, 2); }
+        else if (c == '\n') gx_qs(slot, "\\n");
+        else if (c == '\r') gx_qs(slot, "\\r");
+        else if (c == '\t') gx_qs(slot, "\\t");
+        else if (c < 0x20)  gx_qs(slot, " ");           /* drop other ctrl   */
+        else { char e[1] = { (char)c }; gx_q(slot, e, 1); }
+    }
+}
+
 static void gx_build_galaxy_json(INT slot)
 {
     UB me = gx_my_id();
@@ -201,6 +224,14 @@ static void gx_build_galaxy_json(INT slot)
     INT mydv = world_peer_device(me);   /* my own beaconed device, -1 if not yet */
 
     gx_qs(slot, "{\"me\":{\"id\":");           gx_qdec(slot, me);
+    /* ark-profile §7.4: your star gains its name — the head profile's
+     * handle iff the person chose to be named (handle_len>0); a consent-
+     * only profile keeps the node label (empty star). */
+    gx_qs(slot, ",\"star\":\"");
+    if (ark_profile_head(&gx_prof) && gx_prof.handle_len > 0)
+        gx_json_str(slot, gx_prof.handle,
+                    gx_prof.handle_len > ARK_HANDLE_MAX ? ARK_HANDLE_MAX : gx_prof.handle_len);
+    gx_qs(slot, "\"");
     gx_qs(slot, ",\"device\":");               gx_qdec(slot, mydv < 0 ? 0u : (UW)mydv);
     gx_qs(slot, ",\"region\":");               gx_qdec(slot, (UW)region_id());
     gx_qs(slot, ",\"dmn\":");                  gx_qdec(slot, (UW)dmn_state_get());
@@ -255,12 +286,46 @@ static void gx_hex8(INT slot, const U1 *b)
     gx_qs(slot, out);
 }
 
+/* full 32-byte id as 64 lowercase hex (the content-id, X-Manifesto-Id +
+ * /profile.json id). */
+static void gx_hex_id(INT slot, const U1 *b)
+{
+    static const char hx[] = "0123456789abcdef";
+    char out[2 * PFS_ID_LEN + 1];
+    for (INT i = 0; i < PFS_ID_LEN; i++) {
+        out[i*2]   = hx[(b[i] >> 4) & 0xF];
+        out[i*2+1] = hx[b[i] & 0xF];
+    }
+    out[2 * PFS_ID_LEN] = 0;
+    gx_qs(slot, out);
+}
+
+/* parse 64 hex chars at p into id (PFS_ID_LEN bytes). returns 1 ok. */
+static INT gx_parse_hex_id(const char *p, INT n, U1 id[PFS_ID_LEN])
+{
+    if (n < 2 * PFS_ID_LEN) return 0;
+    for (INT i = 0; i < PFS_ID_LEN; i++) {
+        INT hi = -1, lo = -1;
+        char a = p[i*2], b = p[i*2+1];
+        if (a >= '0' && a <= '9') hi = a - '0';
+        else if (a >= 'a' && a <= 'f') hi = a - 'a' + 10;
+        else if (a >= 'A' && a <= 'F') hi = a - 'A' + 10;
+        if (b >= '0' && b <= '9') lo = b - '0';
+        else if (b >= 'a' && b <= 'f') lo = b - 'a' + 10;
+        else if (b >= 'A' && b <= 'F') lo = b - 'A' + 10;
+        if (hi < 0 || lo < 0) return 0;
+        id[i] = (U1)((hi << 4) | lo);
+    }
+    return 1;
+}
+
 static void gx_build_self_json(INT slot)
 {
     LM_SELF_ENTRY e;
     INT r = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
                          &e, (UW)sizeof(e));
-    if (r < (INT)sizeof(e) || e.magic == 0) {
+    /* dual-width: accept a v1 (116 B) or v2 (148 B) head. */
+    if ((r != (INT)sizeof(e) && r != LM_SELF_ENTRY_V1_SIZE) || e.magic == 0) {
         gx_qs(slot, "{\"present\":false}");
         return;
     }
@@ -268,7 +333,41 @@ static void gx_build_self_json(INT slot)
     gx_qs(slot, ",\"seq\":");                      gx_qdec(slot, (UW)e.seq);
     gx_qs(slot, ",\"hash\":\"");                   gx_hex8(slot, e.eng_digest);
     gx_qs(slot, "\",\"prev\":\"");                 gx_hex8(slot, e.prev_entry);
-    gx_qs(slot, "\"}");
+    /* ark-profile §7.2/§7.4: the human chapter. human_ref hex is present
+     * only on a v2 entry; the human{} object renders iff the person chose
+     * to be named (handle_len>0). A consent-only profile -> 「名もなき同意」
+     * (human:{named:false}). The standing footnote (改竄検出可・偽造不可で
+     * はない) lives in the page, exactly as galaxy.md §5 carries it. */
+    gx_qs(slot, "\",\"version\":");                gx_qdec(slot, (UW)e.version);
+    if (r == (INT)sizeof(e)) {
+        gx_qs(slot, ",\"human_ref\":\"");          gx_hex_id(slot, e.human_ref);
+        gx_qs(slot, "\"");
+    }
+    if (ark_profile_head(&gx_prof) && gx_prof.consent_ack) {
+        gx_qs(slot, ",\"human\":{\"prof_seq\":"); gx_qdec(slot, (UW)gx_prof.seq);
+        gx_qs(slot, ",\"named\":");
+        gx_qs(slot, gx_prof.handle_len > 0 ? "true" : "false");
+        if (gx_prof.handle_len > 0) {
+            gx_qs(slot, ",\"handle\":\"");
+            gx_json_str(slot, gx_prof.handle,
+                        gx_prof.handle_len > ARK_HANDLE_MAX ? ARK_HANDLE_MAX : gx_prof.handle_len);
+            gx_qs(slot, "\"");
+        }
+        if (gx_prof.name_len > 0) {
+            gx_qs(slot, ",\"name\":\"");
+            gx_json_str(slot, gx_prof.name,
+                        gx_prof.name_len > ARK_NAME_MAX ? ARK_NAME_MAX : gx_prof.name_len);
+            gx_qs(slot, "\"");
+        }
+        if (gx_prof.msg_len > 0) {
+            INT mn = (INT)gx_prof.msg_len; if (mn > ARK_MSG_MAX) mn = ARK_MSG_MAX;
+            gx_qs(slot, ",\"msg\":\"");
+            gx_json_str(slot, gx_prof.msg, mn);
+            gx_qs(slot, "\"");
+        }
+        gx_qs(slot, "}");
+    }
+    gx_qs(slot, "}");
 }
 
 /* ------------------------------------------------------------------ */
@@ -311,7 +410,13 @@ static void gx_sse_event(INT slot, const GALAXY_EV *e)
 /* HTTP request parsing (§3.6) — first line + Content-Length only       */
 /* ------------------------------------------------------------------ */
 
-#define GX_REQ_MAX  640    /* request-line guard 512 + small headers/body */
+/* request-line guard + headers + body. ark-profile.md §7.2 raises the
+ * POST limit to 2 KB for the one /profile route (handle+name+1 KB msg,
+ * URL-encoded); 3072 leaves room for the request line + headers above a
+ * 2 KB body. /teach and /ask stay bounded at GX_POST_SMALL (256). */
+#define GX_REQ_MAX     3072
+#define GX_POST_SMALL  256     /* /teach, /ask body cap                   */
+#define GX_POST_PROF   2048    /* /profile body cap (§7.2)                */
 
 typedef struct {
     INT  is_post;
@@ -399,6 +504,46 @@ static INT gx_form_kv(const char *b, INT n, INT *k, INT *v)
     return (*k >= 0);
 }
 
+/* one hex nibble or -1 */
+static INT gx_hexv(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Extract a URL-encoded form field `name=value` from a &-delimited body
+ * into out (NUL-terminated, bounded by outmax-1). Returns the decoded
+ * length, or -1 if the field is absent. '+' -> space, %XX -> byte. The
+ * profile fields (handle/name/msg) are stored AS DECODED — never verified
+ * (ark-profile.md §3.3: 誰もそれを検証しません). */
+static INT gx_form_field(const char *b, INT n, const char *name,
+                         char *out, INT outmax)
+{
+    INT nl = 0; while (name[nl]) nl++;
+    for (INT i = 0; i < n; i++) {
+        /* field starts at i if (i==0 or b[i-1]=='&') and matches name '=' */
+        if (i != 0 && b[i-1] != '&') continue;
+        INT m = 0;
+        while (m < nl && i + m < n && b[i+m] == name[m]) m++;
+        if (m != nl || i + m >= n || b[i+m] != '=') continue;
+        INT j = i + m + 1, o = 0;
+        while (j < n && b[j] != '&' && o < outmax - 1) {
+            char c = b[j];
+            if (c == '+') { out[o++] = ' '; j++; }
+            else if (c == '%' && j + 2 < n) {
+                INT hi = gx_hexv(b[j+1]), lo = gx_hexv(b[j+2]);
+                if (hi >= 0 && lo >= 0) { out[o++] = (char)((hi<<4)|lo); j += 3; }
+                else { out[o++] = c; j++; }
+            } else { out[o++] = c; j++; }
+        }
+        out[o] = 0;
+        return o;
+    }
+    return -1;
+}
+
 /* ------------------------------------------------------------------ */
 /* response writers                                                     */
 /* ------------------------------------------------------------------ */
@@ -451,6 +596,93 @@ static INT gx_route(INT slot, GX_REQ *q)
         gx_build_self_json(slot);
         return 0;
     }
+    /* ark-profile.md §7.2: GET /manifesto — the embedded bytes + the
+     * content-id they hash to, so the consent ack binds to the exact words
+     * (the cert computes sha256 host-side and matches X-Manifesto-Id). */
+    if (!q->is_post && gx_streq(path, "/manifesto")) {
+        U1 mid[PFS_ID_LEN]; ark_manifesto_id(mid);
+        gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8"
+                    "\r\nX-Manifesto-Id: ");
+        gx_hex_id(slot, mid);
+        gx_qs(slot, "\r\nConnection: close\r\n\r\n");
+        gx_flush(slot);
+        const U1 *mb = ark_manifesto_bytes(); UW ml = ark_manifesto_len();
+        UW off = 0;
+        while (off < ml) {
+            INT chunk = (INT)(ml - off); if (chunk > 1024) chunk = 1024;
+            INT w = galaxy_io_write(slot, mb + off, chunk);
+            if (w < 0) return 0;
+            if (w == 0) { tk_dly_tsk(5); continue; }
+            off += (UW)w;
+        }
+        return 0;
+    }
+    /* §7.2: GET /profile.json — the head profile, or {none:true}. */
+    if (!q->is_post && gx_streq(path, "/profile.json")) {
+        gx_resp_head(slot, "200 OK", "application/json");
+        if (!ark_profile_head(&gx_prof)) { gx_qs(slot, "{\"none\":true}"); return 0; }
+        U1 pid[PFS_ID_LEN]; pfs_id_compute(&gx_prof, (UW)sizeof gx_prof, pid);
+        gx_qs(slot, "{\"seq\":");        gx_qdec(slot, (UW)gx_prof.seq);
+        gx_qs(slot, ",\"node\":");       gx_qdec(slot, (UW)gx_prof.self_id);
+        gx_qs(slot, ",\"handle_len\":"); gx_qdec(slot, (UW)gx_prof.handle_len);
+        gx_qs(slot, ",\"name_len\":");   gx_qdec(slot, (UW)gx_prof.name_len);
+        gx_qs(slot, ",\"msg_len\":");    gx_qdec(slot, (UW)gx_prof.msg_len);
+        gx_qs(slot, ",\"consent\":{\"acked\":");
+        gx_qdec(slot, (UW)(gx_prof.consent_ack ? 1 : 0));
+        gx_qs(slot, ",\"manifesto_id\":\""); gx_hex_id(slot, gx_prof.manifesto_id);
+        gx_qs(slot, "\"},\"id\":\""); gx_hex_id(slot, pid);
+        gx_qs(slot, "\"}");
+        return 0;
+    }
+    /* §7.2: POST /profile — validate mid, build + save, link the chapter. */
+    if (q->is_post && gx_streq(path, "/profile")) {
+        if (q->clen > GX_POST_PROF || q->body_len > GX_POST_PROF) {
+            gx_resp_head(slot, "413 Payload Too Large", "application/json");
+            gx_qs(slot, "{\"ok\":false}");
+            return 0;
+        }
+        /* ack=1 required, mid must equal the served manifesto id. */
+        char ackbuf[8];
+        INT acked = (gx_form_field(q->body, q->body_len, "ack", ackbuf, 8) >= 0
+                     && ackbuf[0] == '1');
+        static char midhex[2 * PFS_ID_LEN + 8];
+        INT mlen = gx_form_field(q->body, q->body_len, "mid", midhex,
+                                 (INT)sizeof midhex);
+        U1 mid[PFS_ID_LEN], cur[PFS_ID_LEN];
+        ark_manifesto_id(cur);
+        INT mid_ok = (mlen >= 2 * PFS_ID_LEN)
+                  && gx_parse_hex_id(midhex, mlen, mid);
+        /* §7.3: a wrong/absent mid -> 409 + the current id (consent is to
+         * the exact words, not a brand). */
+        if (!acked || !mid_ok) {
+            gx_resp_head(slot, "409 Conflict", "application/json");
+            gx_qs(slot, "{\"ok\":false,\"reason\":\"mid\",\"manifesto_id\":\"");
+            gx_hex_id(slot, cur); gx_qs(slot, "\"}");
+            return 0;
+        }
+        /* pseudonymous first-class: every disclosure field optional. */
+        static char hbuf[ARK_HANDLE_MAX + 1], nbuf[ARK_NAME_MAX + 1];
+        static char mbuf[ARK_MSG_MAX + 1];
+        INT hl = gx_form_field(q->body, q->body_len, "handle", hbuf, sizeof hbuf);
+        INT nl = gx_form_field(q->body, q->body_len, "name",   nbuf, sizeof nbuf);
+        INT ml = gx_form_field(q->body, q->body_len, "msg",    mbuf, sizeof mbuf);
+        U1 pid[PFS_ID_LEN]; U4 seq = 0;
+        INT rc = ark_profile_save(1, mid,
+                                  hl > 0 ? hbuf : 0, hl > 0 ? (UW)hl : 0,
+                                  nl > 0 ? nbuf : 0, nl > 0 ? (UW)nl : 0,
+                                  ml > 0 ? mbuf : 0, ml > 0 ? (UW)ml : 0,
+                                  pid, &seq);
+        if (rc != 1) {
+            gx_resp_head(slot, "409 Conflict", "application/json");
+            gx_qs(slot, "{\"ok\":false,\"reason\":\"mid\",\"manifesto_id\":\"");
+            gx_hex_id(slot, cur); gx_qs(slot, "\"}");
+            return 0;
+        }
+        gx_resp_head(slot, "200 OK", "application/json");
+        gx_qs(slot, "{\"ok\":true,\"seq\":"); gx_qdec(slot, (UW)seq);
+        gx_qs(slot, ",\"id\":\""); gx_hex_id(slot, pid); gx_qs(slot, "\"}");
+        return 0;
+    }
     if (!q->is_post && gx_streq(path, "/events")) {
         gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\n"
                     "Cache-Control: no-cache\r\nConnection: close\r\n\r\n");
@@ -461,14 +693,27 @@ static INT gx_route(INT slot, GX_REQ *q)
         return 1;
     }
     if (q->is_post && gx_streq(path, "/teach")) {
-        if (q->clen > 256 || q->body_len > 256) {
+        if (q->clen > GX_POST_SMALL || q->body_len > GX_POST_SMALL) {
             gx_resp_head(slot, "413 Payload Too Large", "application/json");
             gx_qs(slot, "{\"ok\":false}");
             return 0;
         }
+        /* ark-profile.md §7.3: the 共感 gate. The mind will not take a
+         * human's words into permanent memory from someone who has not
+         * been told what permanent means. consent != disclosure: an
+         * ack-only empty profile unlocks teach (ark_consent_ok honors it).
+         * /ask is NOT gated; the SHELL mouth is NOT gated (operator trust). */
+        if (!ark_consent_ok()) {
+            gx_resp_head(slot, "403 Forbidden", "application/json");
+            gx_qs(slot, "{\"refused\":\"manifesto\",\"see\":\"/manifesto\"}");
+            return 0;
+        }
         INT k, v;
         if (gx_form_kv(q->body, q->body_len, &k, &v) && k >= 0 && v >= 0) {
-            /* §6: build "teach k v" and drive THE production mouth. */
+            /* §6: build "teach k v" and drive THE production mouth. §5: tag
+             * the provenance as a WEB teach for the ONE prov site in
+             * m_teach (reset to shell there, one-shot). */
+            ark_teach_src_set(ARK_PROV_SRC_WEB);
             char cmd[24]; INT cn = 0;
             cmd[cn++]='t';cmd[cn++]='e';cmd[cn++]='a';cmd[cn++]='c';cmd[cn++]='h';cmd[cn++]=' ';
             cn += gx_itoa(cmd+cn, k); cmd[cn++]=' ';
@@ -482,7 +727,7 @@ static INT gx_route(INT slot, GX_REQ *q)
         return 0;
     }
     if (q->is_post && gx_streq(path, "/ask")) {
-        if (q->clen > 256 || q->body_len > 256) {
+        if (q->clen > GX_POST_SMALL || q->body_len > GX_POST_SMALL) {
             gx_resp_head(slot, "413 Payload Too Large", "application/json");
             gx_qs(slot, "{\"ok\":false}");
             return 0;
@@ -622,7 +867,8 @@ void galaxy_task(INT stacd, void *exinf)
                     gx_qs(i, "bad request\n"); gx_flush(i);
                     galaxy_io_close(i); g_cli[i].in_use = 0; continue;
                 }
-                if (q.is_post && (g_reqn[i] - hdr_end) < q.clen && q.clen <= 256)
+                if (q.is_post && (g_reqn[i] - hdr_end) < q.clen
+                    && q.clen <= GX_POST_PROF)
                     continue;                       /* wait for the body     */
 
                 INT keep = gx_route(i, &q);

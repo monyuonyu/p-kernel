@@ -59,7 +59,10 @@
 /* ------------------------------------------------------------------ */
 
 #define PFS_NAME_MAX     16            /* object-name chars (no NUL)   */
-#define PFS_REF_MAX      8             /* named objects per node       */
+#define PFS_REF_MAX      16            /* named objects per node       */
+                                       /* (ark-profile.md §4.4 / P6:    */
+                                       /* 8->16 for "self/prof" +       */
+                                       /* "self/prov" + shell pfs save) */
 #define PFSD_VERSION     1
 
 #define PFSD_MAN_MAGIC   0x4E4D4650UL  /* "PFMN" LE                    */
