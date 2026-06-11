@@ -27,6 +27,7 @@
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
+#include "ark_profile.h" /* ark-profile v1: the ONE provenance write site (§5) */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -1444,6 +1445,12 @@ static void m_status(void)
  * r3_fact_learn already calls dmn_trigger(); the sleep is the DMN's. */
 static void m_teach(const UB *p, const UB *end)
 {
+    /* ark-profile §5: capture which mouth is teaching (set by the caller
+     * just before mind_cmd) and reset the one-shot global immediately, so
+     * the prov src is correct regardless of which exit path we take. */
+    U1 prov_src = ark_teach_src_get();
+    ark_teach_src_set(ARK_PROV_SRC_SHELL);
+
     INT k, v;
     if (!m_parse_uint(&p, end, &k) || !m_parse_uint(&p, end, &v)
         || k < 0 || k >= R_KEYV || v < 0 || v >= R_VALV) {
@@ -1478,6 +1485,15 @@ static void m_teach(const UB *p, const UB *end)
      * just performed; singleton fact -> binary 100/0). */
     INT agree = (r3_fq[r3_fq_n-1].yhat[0] == (UB)v) ? 100 : 0;
     INT pend  = r3_facts_pending();
+
+    /* ark-profile v1 §5: THE ONE provenance write site. A human teach now
+     * leaves a content-addressed "self/prov" record resolving to the
+     * profile in force. Hooked HERE (inside mind_cmd's teach verb), not in
+     * r3_fact_learn — the certs are the only other r3_fact_learn callers
+     * and their synthetic facts are NOT human declarations, so cert numbers
+     * stay byte-identical. Covers both mouths: src is set by the caller
+     * (shell default; the galaxy POST /teach bridge sets WEB). */
+    ark_prov_record(r3_fq[r3_fq_n-1].seq, (U1)k, (U1)v, prov_src);
 
     r_puts("[mind] teach k="); r_putdec((UW)k); r_puts(" v="); r_putdec((UW)v);
     r_puts(": substrate ready, learn rc=0, pending="); r_putdec((UW)pend);

@@ -128,6 +128,13 @@ gate_teach() {
     sleep 3
     ( curl -sN --max-time 140 127.0.0.1:7800/events > /tmp/gx38_tsse.log 2>&1 ) & PIDS+=($!)
     sleep 1
+    # ark-profile v1 (ark-profile.md §7.3): the web /teach now passes the
+    # 共感 consent gate first. An ack-ONLY profile (consent != disclosure)
+    # unlocks teaching without any pseudonym; bind to the served manifesto
+    # id. This is the intended behavior change galaxy v1 reserved a seam for.
+    local MID; MID=$(curl -s -D - -o /dev/null --max-time 5 127.0.0.1:7800/manifesto \
+                     | grep -i 'X-Manifesto-Id' | tr -d '\r' | awk '{print $2}')
+    curl -s --max-time 5 -d "ack=1&mid=$MID" 127.0.0.1:7800/profile >/dev/null
     # (k*,v*)=(2,3): LM-6's MEASURED off-bias pair (pre_share 0.0% at N=100).
     local R; R=$(curl -s --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach)
     log "teach: $R"

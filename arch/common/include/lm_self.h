@@ -47,7 +47,7 @@
 /* ------------------------------------------------------------------ */
 
 #define LM_SELF_MAGIC  0x464C4553UL    /* "SELF" LE                     */
-#define LM_SELF_VER    1
+#define LM_SELF_VER    2
 
 typedef struct {
     U4  magic;                     /* LM_SELF_MAGIC                      */
@@ -60,10 +60,18 @@ typedef struct {
     U1  prev_entry[PFS_ID_LEN];    /* content-id of prev entry (chain)   */
     U1  eng_digest[PFS_ID_LEN];    /* pfs_id_compute over LM_ENGRAM ring */
     U1  model_ver [PFS_ID_LEN];    /* content-id of "dtr/weights" blob   */
-} __attribute__((packed)) LM_SELF_ENTRY;   /* 116 B */
+    U1  human_ref [PFS_ID_LEN];    /* ark-profile v2: content-id of the   */
+                                   /* ARK_PROFILE in force; all-zero = no  */
+                                   /* human chapter (ark-profile.md §4.2)  */
+} __attribute__((packed)) LM_SELF_ENTRY;   /* 148 B (v2; v1 was 116) */
 
-_Static_assert(sizeof(LM_SELF_ENTRY) == 116,
-               "LM_SELF_ENTRY must be 116 bytes (LP64-stable wire image)");
+/* The v1 entry width — the dual-width walker accepts BOTH (reads
+ * magic+version first, then size-checks per version). Old v1 stores still
+ * verify; v2 adds the human_ref tail. (ark-profile.md §4.2 / P5.) */
+#define LM_SELF_ENTRY_V1_SIZE  116
+
+_Static_assert(sizeof(LM_SELF_ENTRY) == 148,
+               "LM_SELF_ENTRY must be 148 bytes (v2 LP64-stable wire image)");
 _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
                "a self entry must fit one p-fs block");
 
@@ -82,3 +90,12 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
  *   [self-ownerless]      reconstruct from a peer subset excluding the origin
  * Wired to CI via the `self test` shell verb. */
 void lm_self_test(void);
+
+/* ark-profile v1 (ark-profile.md §4.2): append ONE new "self/lin" v2 entry
+ * whose human_ref is the content-id of the ARK_PROFILE just saved, linking
+ * the human chapter into the ONE autobiographical chain (no parallel chain).
+ * Reads the current head version as prev_entry; genesis-safe (all-zero prev
+ * when there is no head yet). Returns 1 on success, 0 on a save failure.
+ * The PRODUCTION append path (lm_self_test builds its own synthetic chain);
+ * called by ark_profile_save(). */
+INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN]);

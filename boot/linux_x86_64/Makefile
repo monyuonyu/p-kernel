@@ -29,6 +29,8 @@ ARCH_COMMON = $(ROOT)/arch/common
 GALAXY_HTML = $(ARCH_COMMON)/web/galaxy.html
 GALAXY_GEN  = $(ROOT)/tools/galaxy/gen_page.py
 GALAXY_PAGE = galaxy_page.h
+MANIFESTO_TXT  = $(ARCH_COMMON)/web/manifesto.txt
+MANIFESTO_PAGE = manifesto_page.h
 INC_TK      = $(ROOT)/include/kernel/tkernel
 INC_TOP     = $(ROOT)/include
 INC_LIB     = $(ROOT)/include/lib
@@ -165,6 +167,7 @@ COMMON_C_SRCS = \
     dmn.c \
     lm_consolidate.c \
     lm_self.c \
+    ark_profile.c \
     ga.c \
     fedlearn.c \
     gossip_learn.c \
@@ -269,6 +272,14 @@ $(GALAXY_PAGE): $(GALAXY_HTML) $(GALAXY_GEN)
 
 galaxy.o: $(GALAXY_PAGE)
 
+# ark-profile v1 (ark-profile.md §7.1): same D3 embed pipeline, a second
+# generated header (symbol "manifesto"). ark_profile.o and galaxy.o are
+# the only TUs that #include manifesto_page.h.
+$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(GALAXY_GEN)
+	python3 $(GALAXY_GEN) $(MANIFESTO_TXT) $@ manifesto
+
+ark_profile.o galaxy.o: $(MANIFESTO_PAGE)
+
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
@@ -276,6 +287,6 @@ run: $(TARGET)
 	$(RUN) ./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) $(GALAXY_PAGE)
+	rm -f $(ALL_OBJS) $(TARGET) $(GALAXY_PAGE) $(MANIFESTO_PAGE)
 
 .PHONY: all run clean

@@ -196,11 +196,18 @@ static UW self_walk(self_getf get, void *ctx, const U1 head[PFS_ID_LEN],
         if (self_id_zero(cur)) { *ok = 1; return len; }   /* reached genesis */
         LM_SELF_ENTRY e;
         INT g = get(ctx, cur, &e, (UW)sizeof e);
-        if (g != (INT)sizeof e) { *ok = 0; return len; }  /* missing -> REJECT */
+        /* DUAL-WIDTH (ark-profile.md §4.2 / P5): accept a v1 (116 B) OR a
+         * v2 (148 B) entry. The getter returns the block's FULL length, so
+         * size-check per version; magic+version live at the same offset in
+         * both, and prev_entry precedes the v2-only human_ref tail. Any
+         * other width REJECTs (fail-closed). */
+        if (g != (INT)sizeof e && g != LM_SELF_ENTRY_V1_SIZE) { *ok = 0; return len; }
         U1 rid[PFS_ID_LEN];
-        pfs_id_compute(&e, (UW)sizeof e, rid);
+        pfs_id_compute(&e, (UW)g, rid);                   /* hash EXACT bytes */
         if (!self_id_eq(rid, cur)) { *ok = 0; return len; } /* bytes!=address */
         if (e.magic != LM_SELF_MAGIC) { *ok = 0; return len; }
+        if (g == LM_SELF_ENTRY_V1_SIZE && e.version != 1) { *ok = 0; return len; }
+        if (g == (INT)sizeof e && e.version != LM_SELF_VER) { *ok = 0; return len; }
         if (ids_out && len < LM_SELF_WALK_MAX) self_memcpy(ids_out[len], cur, PFS_ID_LEN);
         len++;
         if (len > LM_SELF_WALK_MAX) { *ok = 0; return len; }  /* loop guard */
@@ -290,6 +297,40 @@ static void self_build_chain(U1 self_id)
         pfs_id_compute(&self_chain[k], (UW)sizeof(LM_SELF_ENTRY), self_ids[k]);
         self_memcpy(prev, self_ids[k], PFS_ID_LEN);
     }
+}
+
+/* ================================================================== */
+/* ark-profile v1 (ark-profile.md §4.2): the PRODUCTION human-chapter     */
+/* append. Reads the current "self/lin" head as prev_entry, fills a v2    */
+/* entry carrying human_ref = the saved ARK_PROFILE content-id, and       */
+/* commits it under LM_SELF_REF via pfs_dag_save — the SAME append        */
+/* mechanism + the SAME walker the Self certs use. NO parallel chain.     */
+/* ================================================================== */
+
+INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN])
+{
+    self_compute_model_ver();           /* the brain this entry ran on */
+
+    /* prev_entry = content-id of the current head (genesis-safe). */
+    U1 prev[PFS_ID_LEN]; self_memset(prev, 0, PFS_ID_LEN);
+    U4 next_seq = 1;
+    LM_SELF_ENTRY head;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                          &head, (UW)sizeof head);
+    /* accept a v1 (116 B) or v2 (148 B) head; compute its id over the
+     * EXACT bytes read so prev links by content address either way. */
+    if ((rd == (INT)sizeof head || rd == LM_SELF_ENTRY_V1_SIZE)
+        && head.magic == LM_SELF_MAGIC) {
+        pfs_id_compute(&head, (UW)rd, prev);
+        next_seq = head.seq + 1;
+    }
+
+    LM_SELF_ENTRY e;
+    self_fill(&e, drpc_my_node, next_seq, self_id_zero(prev) ? (const U1 *)0 : prev);
+    self_memcpy(e.human_ref, human_ref, PFS_ID_LEN);
+
+    return (pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                         &e, (UW)sizeof e) == PFS_OK) ? 1 : 0;
 }
 
 /* ================================================================== */

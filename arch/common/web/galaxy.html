@@ -27,12 +27,68 @@
     text-align:right;text-shadow:0 0 4px #000}
   #note{position:fixed;left:50%;bottom:42px;transform:translateX(-50%);
     font-size:11px;color:#9399b2}
+  /* ark-profile v1 first-run flow (ark-profile.md §7.4) — self-contained */
+  #ark{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:50;
+    display:none;align-items:center;justify-content:center}
+  #ark.open{display:flex}
+  #ark .card{max-width:680px;max-height:88vh;overflow:auto;margin:16px;
+    background:#0a0c14;border:1px solid #1e2030;border-radius:8px;padding:22px;
+    box-shadow:0 0 40px #000}
+  #ark h1{font-size:16px;color:#f9e2af;margin:0 0 12px}
+  #ark pre{white-space:pre-wrap;word-break:break-word;color:#cdd6f4;
+    font-size:12px;line-height:1.6;background:#05060a;border:1px solid #181825;
+    border-radius:6px;padding:12px;margin:0 0 14px}
+  #ark .warn{color:#fab387;font-size:12px;line-height:1.6;margin:0 0 14px}
+  #ark .warn b{color:#f38ba8}
+  #ark .row{display:flex;gap:10px;margin:10px 0}
+  #ark .row button{flex:1;padding:10px;border-radius:6px;cursor:pointer;
+    border:1px solid #313244;background:#181825;color:#cdd6f4;
+    font-family:inherit;font-size:13px}
+  #ark .row button.primary{background:#1e2a3a;border-color:#89b4fa;color:#89b4fa}
+  #ark label{display:block;font-size:11px;color:#9399b2;margin:10px 0 3px}
+  #ark input,#ark textarea{width:100%;box-sizing:border-box;background:#05060a;
+    color:#cdd6f4;border:1px solid #313244;border-radius:5px;padding:7px;
+    font-family:inherit;font-size:12px}
+  #ark textarea{height:70px;resize:vertical}
+  #ark .opt{display:none}
+  #ark .opt.open{display:block}
+  #ark .tiny{font-size:11px;color:#6c7086;margin:6px 0 0}
+  #ark .mid{font-size:10px;color:#45475a;word-break:break-all;margin-top:10px}
 </style>
 </head>
 <body>
 <canvas id="sky"></canvas>
 <div id="hud"></div>
 <div id="note">this mind speaks 8 symbols today — it is an infant, truthfully shown</div>
+<div id="ark"><div class="card">
+  <h1 id="arkh">ようこそ — この銀河について</h1>
+  <pre id="arktext">…</pre>
+  <div class="warn" id="arkwarn">
+    ここに書かれたものは <b>消せません</b>。内容アドレスで保存され、参加者の
+    デバイスへ複製され、ノードの死を越えて生き残ります。<br>
+    ・名前は自由です（本名・ペンネーム・匿名）。<b>誰もそれを検証しません。</b><br>
+    ・何も書かずに立ち去っても、あなたのノードは完全に機能します。<br>
+    ・<b>他人の情報を書かないでください。</b>
+  </div>
+  <div class="row" id="arkack">
+    <button class="primary" id="arkagree">同意して刻む</button>
+    <button id="arkdecline">今はやめておく</button>
+  </div>
+  <div class="opt" id="arkfields">
+    <label>ハンドル / 名乗り（任意・ペンネーム可・検証されません）</label>
+    <input id="arkhandle" maxlength="24" placeholder="任意">
+    <label>未来への言葉（任意・他人の情報は書かないでください）</label>
+    <textarea id="arkmsg" maxlength="1024" placeholder="任意"></textarea>
+    <label>本名（任意・折りたたみ）</label>
+    <input id="arkname" maxlength="48" placeholder="任意">
+    <div class="row">
+      <button class="primary" id="arksave">星に名前を灯す</button>
+      <button id="arkskip">名乗らず同意だけ</button>
+    </div>
+    <div class="tiny">過去の版は消えません。新しい版が追加されるだけです。</div>
+  </div>
+  <div class="mid" id="arkmid"></div>
+</div></div>
 <div id="ctl">
   teach k<select id="tk"></select> v<select id="tv"></select>
   <button id="bteach">teach</button>
@@ -115,7 +171,7 @@ function draw(){
   ctx.beginPath();ctx.arc(me.x,me.y,mr+(dreaming?6*(1-pulse):0),0,7);ctx.fill();
   ctx.globalAlpha=1;
   ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
-  ctx.fillText("★ ME (node"+snap.me.id+")"+(dreaming?" — dreaming":""),me.x+mr+5,me.y+4);
+  ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))+(dreaming?" — dreaming":""),me.x+mr+5,me.y+4);
 
   // orbiting taught fact-particles (real pending engrams)
   for(const o of orbiters){
@@ -183,9 +239,13 @@ async function postForm(path,body){
 }
 document.getElementById("bteach").onclick=async()=>{
   const k=tk.value,v=tv.value;
-  try{const j=await postForm("/teach",`k=${k}&v=${v}`);
-    msg(j.ok?`taught k=${k} v=${v} (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);}
-  catch(_){msg("teach failed",false);}
+  try{
+    const r=await fetch("/teach",{method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},body:`k=${k}&v=${v}`});
+    if(r.status===403){ msg("まず、この銀河について読んでください",false); arkOpen(); return; }
+    const j=await r.json();
+    msg(j.ok?`taught k=${k} v=${v} (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);
+  }catch(_){msg("teach failed",false);}
 };
 document.getElementById("bask").onclick=async()=>{
   const k=ak.value;
@@ -194,15 +254,87 @@ document.getElementById("bask").onclick=async()=>{
   catch(_){msg("ask failed",false);}
 };
 
+// ── ark-profile v1 first-run flow (ark-profile.md §7.4) ───────────
+//    manifesto -> ack -> optional disclosure -> your star gains its name.
+//    Self-contained: served bytes + id come from THIS node's /manifesto.
+let arkMid=null;
+async function arkLoadManifesto(){
+  const r=await fetch("/manifesto");
+  arkMid=r.headers.get("X-Manifesto-Id");
+  const txt=await r.text();
+  document.getElementById("arktext").textContent=txt;
+  document.getElementById("arkmid").textContent="manifesto-id "+(arkMid||"?");
+}
+function arkOpen(){
+  document.getElementById("arkfields").classList.remove("open");
+  document.getElementById("arkack").style.display="";
+  if(!arkMid){ arkLoadManifesto(); }
+  document.getElementById("ark").classList.add("open");
+}
+function arkClose(){ document.getElementById("ark").classList.remove("open"); }
+window.arkOpen=arkOpen;
+document.getElementById("arkdecline").onclick=()=>{ arkClose(); };  // node fully works
+document.getElementById("arkagree").onclick=()=>{
+  // consent recorded only on a successful POST /profile; first reveal fields.
+  document.getElementById("arkack").style.display="none";
+  document.getElementById("arkfields").classList.add("open");
+};
+async function arkSubmit(withFields){
+  if(!arkMid){ await arkLoadManifesto(); }
+  let body="ack=1&mid="+encodeURIComponent(arkMid);
+  if(withFields){
+    const h=document.getElementById("arkhandle").value.trim();
+    const m=document.getElementById("arkmsg").value;
+    const n=document.getElementById("arkname").value.trim();
+    if(h) body+="&handle="+encodeURIComponent(h);
+    if(m) body+="&msg="+encodeURIComponent(m);
+    if(n) body+="&name="+encodeURIComponent(n);
+  }
+  try{
+    const r=await fetch("/profile",{method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
+    const j=await r.json();
+    if(j.ok){ arkClose(); poll();   // your star gains its name (real state change)
+      msg(withFields?"星に名前が灯りました":"同意を刻みました",true);
+    } else {
+      // mid changed since load -> re-ask with the new text (consent to words)
+      msg("確認テキストが更新されました。もう一度お読みください",false);
+      arkMid=j.manifesto_id||null; arkLoadManifesto();
+      document.getElementById("arkfields").classList.remove("open");
+      document.getElementById("arkack").style.display="";
+    }
+  }catch(_){ msg("profile failed",false); }
+}
+document.getElementById("arksave").onclick=()=>arkSubmit(true);
+document.getElementById("arkskip").onclick=()=>arkSubmit(false);
+// first-run trigger: a node with no profile yet dims and rises the manifesto.
+async function arkFirstRun(){
+  try{ const j=await (await fetch("/profile.json")).json();
+    if(j && j.none){ await arkLoadManifesto(); arkOpen(); }
+  }catch(_){}
+}
+arkFirstRun();
+
 // ── click a star -> /self.json (mine) or peer world-row ───────────
 async function openSelf(){
   const r=await fetch("/self.json");const j=await r.json();
   document.getElementById("ptitle").textContent="self/lin — my autobiography";
-  document.getElementById("pbody").textContent=
-    (j.present
-      ? `self_id ${j.self_id}\nseq     ${j.seq}\nhash    ${j.hash}\nprev    ${j.prev}\n\n`+
-        `tamper-evident, not unforgeable (signatures deferred) — the Self layer's caveat.`
-      : "no committed self lineage yet on this node.");
+  let body = j.present
+      ? `self_id ${j.self_id}\nseq     ${j.seq}\nhash    ${j.hash}\nprev    ${j.prev}\n`
+      : "no committed self lineage yet on this node.";
+  if(j.present && j.human){
+    body += `\n—— 人類の記憶 (the human chapter) ——\n`;
+    if(j.human.named){
+      if(j.human.handle) body += `handle  ${j.human.handle}\n`;
+      if(j.human.name)   body += `name    ${j.human.name}\n`;
+    } else {
+      body += `名もなき同意 (consent without disclosure)\n`;
+    }
+    if(j.human.msg) body += `\n未来への言葉:\n${j.human.msg}\n`;
+    body += `prof_seq ${j.human.prof_seq}\n`;
+  }
+  if(j.present) body += `\n改竄検出可・偽造不可ではない（署名は未実装）`;
+  document.getElementById("pbody").textContent = body;
   document.getElementById("panel").classList.add("open");
 }
 function openPeer(p){

@@ -229,6 +229,22 @@ jobs:
           grep -aF '[galaxy-serve] PASS'  galaxy_cert.log
           grep -aF '[galaxy-events] PASS' galaxy_cert.log
           grep -aF '[galaxy-teach] PASS'  galaxy_cert.log
+      # ark-profile v1 (docs/architecture/ark-profile.md §8): 人類の記憶 — the
+      # human chapter of the autobiography. curl-driven, non-flaky (end-state
+      # within a bound). [ark-consent] (the 共感 gate: teach 403 before a
+      # profile, served bytes hash == X-Manifesto-Id, ack-ONLY unlocks teach =
+      # consent != disclosure, wrong-mid 409), [ark-profile] (the declaration
+      # hash-verifies, is linked into self/lin via human_ref, survives a
+      # restart on the same PKERNEL_PFS_DIR, edit-by-append -> pfs log len 2),
+      # [ark-provenance] (web teach -> ARK_PROV src=1 + profile_head; shell
+      # teach -> src=0; ONE write site, both mouths). NO identity verification
+      # anywhere (§3.3). curl + python3 are already on ubuntu-latest.
+      - name: Ark-profile human-chapter cert (ark-profile.md §8)
+        run: |
+          timeout 300 samples/39_ark_profile/profile_cert.sh | tee ark_profile_cert.log
+          grep -aF '[ark-consent] PASS'    ark_profile_cert.log
+          grep -aF '[ark-profile] PASS'    ark_profile_cert.log
+          grep -aF '[ark-provenance] PASS' ark_profile_cert.log
 
   ump-aarch64-cross:
     name: UMP aarch64 (cross-build on x86_64)
