@@ -59,6 +59,8 @@ IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
 IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
+IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
+IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
@@ -344,10 +346,26 @@ static void cmd_net(void)
     create_task((FP)pfs_repl_task, 7, 4096);
     print("[net] pfs block replication task started\r\n");
 
+    /* LM-7 (living-mind.md Part VIII) — the shared mind. Polls the region-
+     * scoped "mind/teach" topic; a fact taught on any region peer enters
+     * THIS node's queue through r3_fact_learn and THIS node's DMN
+     * consolidates it. Symmetric on every node (no teacher of record). */
+    /* 16K stack: the arrival path runs the FULL R3 substrate (m_boot's
+     * s_pretrain + r3_fact_learn's frozen reads), the same deep call chain
+     * the DMN task uses an 8K stack for — give margin (the 4K net-task
+     * default overflows it; the hosted-relay stack-overflow lesson). */
+    create_task((FP)mind_net_task, 7, 16384);
+    print("[net] mind shared-teach (LM-7) task started\r\n");
+
     /* p-fs P2 ref gossip — beacons this node's name->head-manifest refs
      * on the region topic and merges peers' (LWW by version seq). Same
      * symmetric task everywhere: refs are gossip, not a registry. */
-    create_task((FP)pfs_dag_task, 7, 4096);
+    /* 8K stack (was 4K): a CROSS-NODE ref adoption (e.g. a peer's self/prov
+     * replicated in by P1 — LM-7 is the first slice to exercise it) walks
+     * merge_entry -> ref_set -> refs_persist -> pfs_dur_write, whose 2x1KB
+     * path[] locals overflowed the 4K stack (garbage-PC crash, the hosted-
+     * relay stack lesson). 8K matches the DMN task's depth budget. */
+    create_task((FP)pfs_dag_task, 7, 8192);
     print("[net] pfs ref (version DAG) gossip task started\r\n");
 
 
@@ -545,6 +563,9 @@ EXPORT INT usermain(void)
     pmesh_init();
     /* K-DDS — pub/sub. Single-node mode without a NIC. */
     kdds_init();
+    /* LM-7 — reserve the cluster-wide "mind/teach" topic slot NOW, before
+     * dkva_init()'s per-node pre-opens saturate the bounded topic table. */
+    mind_net_open();
     /* DTR — distributed Transformer (the AI brain layer). */
     dtr_init();
     /* DKVA — distributed KV attention topics (FULL-mode responder). */
