@@ -25,6 +25,7 @@
 #include "region.h"      /* region_id() — my constellation                 */
 #include "dmn.h"         /* dmn_state_get(), dmn_r3_rounds()               */
 #include "dtr.h"         /* r3_facts_pending(), mind_cmd, mind_last_answer */
+#include "r3_vocab.h"    /* LM-8 (IX.3/IX.10): word<->id, GET /vocab        */
 #include "lm_self.h"     /* LM_SELF_REF / LM_SELF_ENTRY — /self.json       */
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
 #include "ark_profile.h" /* ark-profile v1: /manifesto, /profile, consent  */
@@ -516,7 +517,10 @@ static INT gx_parse(const char *buf, INT len, GX_REQ *q)
     return 0;
 }
 
-/* parse k=<0-7>[&v=<0-3>] from a POST form body. returns 1 ok. */
+/* parse k=<int>[&v=<int>] from a POST form body. returns 1 ok. LM-8: the
+ * teach/ask routes now use gx_form_field + r3_vocab (WORDS); kept for the
+ * numeric-id path / future callers. */
+__attribute__((unused))
 static INT gx_form_kv(const char *b, INT n, INT *k, INT *v)
 {
     *k = -1; *v = -1;
@@ -718,6 +722,31 @@ static INT gx_route(INT slot, GX_REQ *q)
         }
         return 0;
     }
+    /* LM-8 (living-mind.md IX.3): GET /vocab — the embedded word lists +
+     * their content-ids, so the UI and the kernel PROVABLY share the same
+     * vocabulary (a mismatch is a detectable id disagreement, not a silent
+     * fake binding). The page's datalists are populated from this. */
+    if (!q->is_post && gx_streq(path, "/vocab")) {
+        gx_resp_head(slot, "200 OK", "application/json");
+        U1 kid[PFS_ID_LEN], vid[PFS_ID_LEN];
+        r3_vocab_key_id_blob(kid); r3_vocab_val_id_blob(vid);
+        gx_qs(slot, "{\"lang\":\"en\",\"v\":1,\"kid\":\"");
+        gx_hex_id(slot, kid);
+        gx_qs(slot, "\",\"vid\":\"");
+        gx_hex_id(slot, vid);
+        gx_qs(slot, "\",\"keys\":[");
+        for (UW i = 0; i < r3_vocab_key_count(); i++) {
+            if (i) gx_qs(slot, ",");
+            gx_qs(slot, "\""); gx_qs(slot, r3_vocab_key_word((INT)i)); gx_qs(slot, "\"");
+        }
+        gx_qs(slot, "],\"vals\":[");
+        for (UW i = 0; i < r3_vocab_val_count(); i++) {
+            if (i) gx_qs(slot, ",");
+            gx_qs(slot, "\""); gx_qs(slot, r3_vocab_val_word((INT)i)); gx_qs(slot, "\"");
+        }
+        gx_qs(slot, "]}");
+        return 0;
+    }
     /* §7.5: GET /langs — the available languages as {code:endonym,...} JSON,
      * each name in its OWN language; the UI populates its selector from this
      * and picks navigator.language. */
@@ -828,11 +857,29 @@ static INT gx_route(INT slot, GX_REQ *q)
             gx_qs(slot, "{\"refused\":\"manifesto\",\"see\":\"/manifesto\"}");
             return 0;
         }
-        INT k, v;
-        if (gx_form_kv(q->body, q->body_len, &k, &v) && k >= 0 && v >= 0) {
-            /* §6: build "teach k v" and drive THE production mouth. §5: tag
-             * the provenance as a WEB teach for the ONE prov site in
-             * m_teach (reset to shell there, one-shot). */
+        /* LM-8 (IX.10): the form carries WORDS (k=sky&v=blue). Resolve to
+         * token ids via the SHARED vocab BEFORE building the command; an
+         * OOV word is REFUSED (403) with the word named — never hashed. */
+        char kw[40], vw[40];
+        INT kl = gx_form_field(q->body, q->body_len, "k", kw, sizeof kw);
+        INT vl = gx_form_field(q->body, q->body_len, "v", vw, sizeof vw);
+        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
+        INT v = (vl > 0) ? r3_vocab_val_id(vw, (UW)vl) : -1;
+        if (kl > 0 && k < 0) {
+            gx_resp_head(slot, "403 Forbidden", "application/json");
+            gx_qs(slot, "{\"refused\":\"oov\",\"which\":\"key\",\"word\":\"");
+            gx_qs(slot, kw); gx_qs(slot, "\"}");
+            return 0;
+        }
+        if (vl > 0 && v < 0) {
+            gx_resp_head(slot, "403 Forbidden", "application/json");
+            gx_qs(slot, "{\"refused\":\"oov\",\"which\":\"answer\",\"word\":\"");
+            gx_qs(slot, vw); gx_qs(slot, "\"}");
+            return 0;
+        }
+        if (k >= 0 && v >= 0) {
+            /* §6: build "teach k v" (token ids) and drive THE production
+             * mouth. §5: tag the provenance as a WEB teach. */
             ark_teach_src_set(ARK_PROV_SRC_WEB);
             char cmd[24]; INT cn = 0;
             cmd[cn++]='t';cmd[cn++]='e';cmd[cn++]='a';cmd[cn++]='c';cmd[cn++]='h';cmd[cn++]=' ';
@@ -852,9 +899,19 @@ static INT gx_route(INT slot, GX_REQ *q)
             gx_qs(slot, "{\"ok\":false}");
             return 0;
         }
-        INT k, v;
+        /* LM-8 (IX.10): ask carries a key WORD; resolve to a token id, OOV
+         * refused (403); the answer is returned as a WORD. */
         UB ak = 0, av = 0; UW ash = 0;
-        if (gx_form_kv(q->body, q->body_len, &k, &v) && k >= 0) {
+        char kw[40];
+        INT kl = gx_form_field(q->body, q->body_len, "k", kw, sizeof kw);
+        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
+        if (kl > 0 && k < 0) {
+            gx_resp_head(slot, "403 Forbidden", "application/json");
+            gx_qs(slot, "{\"refused\":\"oov\",\"which\":\"key\",\"word\":\"");
+            gx_qs(slot, kw); gx_qs(slot, "\"}");
+            return 0;
+        }
+        if (k >= 0) {
             char cmd[16]; INT cn = 0;
             cmd[cn++]='a';cmd[cn++]='s';cmd[cn++]='k';cmd[cn++]=' ';
             cn += gx_itoa(cmd+cn, k);
@@ -863,7 +920,8 @@ static INT gx_route(INT slot, GX_REQ *q)
         }
         gx_resp_head(slot, "200 OK", "application/json");
         gx_qs(slot, "{\"pred\":"); gx_qdec(slot, (UW)av);
-        gx_qs(slot, ",\"share\":"); gx_qdec(slot, ash);
+        gx_qs(slot, ",\"word\":\""); gx_qs(slot, r3_vocab_val_word((INT)av));
+        gx_qs(slot, "\",\"share\":"); gx_qdec(slot, ash);
         gx_qs(slot, "}");
         return 0;
     }
