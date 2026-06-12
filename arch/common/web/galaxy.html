@@ -9,7 +9,8 @@
     font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
   #sky{display:block;width:100vw;height:100vh}
   #hud{position:fixed;left:12px;top:10px;font-size:12px;line-height:1.5;
-    text-shadow:0 0 4px #000;pointer-events:none}
+    text-shadow:0 0 4px #000;pointer-events:none;
+    max-width:calc(100vw - 195px)}   /* leave room for #lang (top-right) */
   #hud b{color:#89b4fa}
   #panel{position:fixed;right:0;top:0;height:100%;width:320px;max-width:80vw;
     background:rgba(10,12,20,.92);border-left:1px solid #1e2030;
@@ -19,14 +20,37 @@
   #panel h2{font-size:13px;color:#f9e2af;margin:.2em 0 .6em}
   #panel pre{white-space:pre-wrap;word-break:break-all;color:#a6adc8}
   #panel .x{position:absolute;right:10px;top:8px;cursor:pointer;color:#f38ba8}
-  #ctl{position:fixed;left:12px;bottom:12px;font-size:12px}
+  /* bottom dock: ONE fixed column holding note -> ctl -> foot, so the
+     three never overlap (wave-47 mobile fix). On desktop it sits bottom-
+     left and is content-width; on a phone the media query makes it span
+     full width and the ctl bar wraps. The star canvas stays full-bleed
+     behind it; the dock only catches pointer events on its controls. */
+  #dock{position:fixed;left:12px;bottom:10px;z-index:30;
+    display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+    max-width:calc(100vw - 24px);box-sizing:border-box;pointer-events:none}
+  #dock>*{pointer-events:auto}
+  /* control bar: a real flex bar that WRAPS so the teach/ask inputs never
+     overflow + overlap on a phone. Translucent backing for readability. */
+  #ctl{font-size:14px;display:flex;flex-wrap:wrap;align-items:center;
+    gap:6px 4px;max-width:100%;box-sizing:border-box;
+    background:rgba(10,12,20,.82);border:1px solid #1e2030;border-radius:8px;
+    padding:8px 10px}
+  #ctl input{font-size:16px;background:#181825;color:#cdd6f4;
+    border:1px solid #313244;border-radius:4px;padding:4px 6px;
+    font-family:inherit;width:5.5em}   /* >=16px: no Android focus-zoom */
   #ctl select,#ctl button{background:#181825;color:#cdd6f4;border:1px solid #313244;
-    border-radius:4px;padding:3px 6px;font-family:inherit;margin-right:4px}
+    border-radius:4px;padding:4px 8px;font-family:inherit;font-size:14px}
   #ctl button{cursor:pointer}
-  #foot{position:fixed;right:12px;bottom:10px;font-size:11px;color:#6c7086;
-    text-align:right;text-shadow:0 0 4px #000}
-  #note{position:fixed;left:50%;bottom:42px;transform:translateX(-50%);
-    font-size:11px;color:#9399b2}
+  #ctl #msg{flex-basis:100%;font-size:12px}   /* status drops to its own line */
+  #foot{font-size:11px;color:#6c7086;text-shadow:0 0 4px #000;
+    pointer-events:none}
+  #note{font-size:11px;color:#9399b2;text-shadow:0 0 4px #000;
+    pointer-events:none}
+  /* phones / narrow WebViews: full-width dock, inputs grow to fill. */
+  @media (max-width:640px){
+    #dock{left:8px;right:8px;bottom:8px;max-width:none}
+    #ctl input{flex:1 1 5.5em;min-width:4.5em}
+  }
   /* i18n: top-right language selector (ark-profile.md §7.5) */
   #lang{position:fixed;right:12px;top:10px;z-index:40;font-size:12px}
   #lang select{background:#181825;color:#cdd6f4;border:1px solid #313244;
@@ -81,7 +105,6 @@
 <canvas id="sky"></canvas>
 <div id="lang"><select id="langsel" title="language"></select></div>
 <div id="hud"></div>
-<div id="note">this mind speaks N English words today — still an infant, truthfully shown (word list v1: English)</div>
 <div id="ark"><div class="card">
   <h1 id="arkh">…</h1>
   <pre id="arktext">…</pre>
@@ -105,17 +128,23 @@
   </div>
   <div class="mid" id="arkmid"></div>
 </div></div>
-<div id="ctl">
-  <span id="lblteach">teach</span>
-  <input id="tk" list="vkeys" size="7" placeholder="word"> →
-  <input id="tv" list="vvals" size="7" placeholder="word">
-  <button id="bteach">teach</button>
-  &nbsp; <span id="lblask">ask</span>
-  <input id="ak" list="vkeys" size="7" placeholder="word">
-  <button id="bask">ask</button>
-  <datalist id="vkeys"></datalist><datalist id="vvals"></datalist>
-  &nbsp; <button id="blog" title="copy this node's recent log">&#128203; log</button>
-  <span id="msg" style="color:#a6e3a1"></span>
+<!-- bottom dock: note -> ctl -> foot in ONE column so they never overlap
+     (wave-47 mobile fix). The canvas stays full-bleed behind it. -->
+<div id="dock">
+  <div id="note">this mind speaks N English words today — still an infant, truthfully shown (word list v1: English)</div>
+  <div id="ctl">
+    <span id="lblteach">teach</span>
+    <input id="tk" list="vkeys" size="7" placeholder="word"> →
+    <input id="tv" list="vvals" size="7" placeholder="word">
+    <button id="bteach">teach</button>
+    &nbsp; <span id="lblask">ask</span>
+    <input id="ak" list="vkeys" size="7" placeholder="word">
+    <button id="bask">ask</button>
+    <datalist id="vkeys"></datalist><datalist id="vvals"></datalist>
+    &nbsp; <button id="blog" title="copy this node's recent log">&#128203; log</button>
+    <span id="msg" style="color:#a6e3a1"></span>
+  </div>
+  <div id="foot"></div>
 </div>
 <!-- log overlay: a selectable textarea so a phone user can always long-
      press-select even if both clipboard APIs are refused (http WebView). -->
@@ -130,7 +159,6 @@
   <textarea id="logtext" readonly></textarea>
   <div id="loghint"></div>
 </div></div>
-<div id="foot"></div>
 <div id="panel"><span class="x" onclick="closePanel()">close</span>
   <h2 id="ptitle"></h2><pre id="pbody"></pre></div>
 <script>

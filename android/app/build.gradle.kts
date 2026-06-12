@@ -31,7 +31,7 @@ android {
         // real words (r3_vocab), Path W/W2 merge, Ed25519 signing
         // (ed25519/sign/sign_entropy), and the 32-language manifesto.
         versionCode   = 3
-        versionName   = "0.2.1"
+        versionName   = "0.3.0"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.

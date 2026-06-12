@@ -1854,11 +1854,13 @@ void r3_lang_test(void)
      * greppable record; the in-process cert cannot drive two nodes. */
     r_puts("[lang] wire: the live 2-process word-flight ([lang-wire]) + the\r\n");
     r_puts("[lang]   version-mismatch drop ([lang-wire-verdrop]) are exercised by\r\n");
-    r_puts("[lang]   samples/41_shared_mind (MT_WIRE_VER_LANG, IX.8) — not in-process.\r\n");
-    r_puts("[lang] LM-9 X.4: wire FORMAT unchanged (key/val U1, R_KEYV=16/R_VALV=64\r\n");
-    r_puts("[lang]   <=256); wire_ver UNCHANGED. The vocab GREW, so a Part-X node and\r\n");
-    r_puts("[lang]   an LM-8 node share wire_ver but NOT /vocab content-id — the\r\n");
-    r_puts("[lang]   partition is by VOCABULARY, surfaced by content-id, not a ver drop.\r\n");
+    r_puts("[lang]   samples/41_shared_mind (MT_WIRE_VER_VOCAB) — not in-process.\r\n");
+    r_puts("[lang] wave-47 FIX: the wire now carries vocab_fp (the /vocab content-id\r\n");
+    r_puts("[lang]   fingerprint). A receiver on a DIFFERENT word list REFUSES the\r\n");
+    r_puts("[lang]   engram ([lang-vocab-refuse]) instead of mis-binding the ids — the\r\n");
+    r_puts("[lang]   first-phone scramble (sky->light/fire->stale/night->blue) was a\r\n");
+    r_puts("[lang]   foreign-vocab engram applied as if local. Partition by VOCABULARY\r\n");
+    r_puts("[lang]   is now ENFORCED on the wire, not merely surfaced.\r\n");
 
     /* leave no surprising state. */
     for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
@@ -2011,6 +2013,28 @@ static W m_pub_handle(void)
     return mt_pub_h;
 }
 
+/* wave-47: THIS node's vocab content-id fingerprint = key-id[0..3] ++
+ * val-id[0..3] (the same /vocab content-ids the [lang] cert prints and the
+ * web UI agrees by). The publisher stamps it; the receiver compares it to
+ * its OWN — a difference means the token ids index a DIFFERENT word list. */
+static void mt_vocab_fp_fill(U1 out[MT_VOCAB_FP_LEN])
+{
+    U1 kid[PFS_ID_LEN], vid[PFS_ID_LEN];
+    r3_vocab_key_id_blob(kid);
+    r3_vocab_val_id_blob(vid);
+    for (INT i = 0; i < 4; i++) { out[i] = kid[i]; out[i + 4] = vid[i]; }
+}
+
+/* 1 iff fp equals THIS node's own vocab fingerprint (a matching word list). */
+static INT mt_vocab_fp_ok(const U1 fp[MT_VOCAB_FP_LEN])
+{
+    U1 mine[MT_VOCAB_FP_LEN];
+    mt_vocab_fp_fill(mine);
+    for (INT i = 0; i < MT_VOCAB_FP_LEN; i++)
+        if (mine[i] != fp[i]) return 0;
+    return 1;
+}
+
 static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
 {
     /* solo node (no mesh): nothing to gossip to — stay silent and free. */
@@ -2023,10 +2047,13 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
     mt_pub_pkt.key         = k;
     mt_pub_pkt.val         = v;
     mt_pub_pkt.src         = src;
-    mt_pub_pkt.wire_ver    = MT_WIRE_VER_LANG;     /* LM-8 (IX.8): token-id wire */
+    mt_pub_pkt.wire_ver    = MT_WIRE_VER_VOCAB;    /* wave-47: token-id + vocab_fp */
     /* prov_head = content-id of the self/prov record m_teach just wrote;
      * all-zero when no profile/prov is in force (anonymous teacher). */
     ark_prov_head_id(mt_pub_pkt.prov_head);
+    /* wave-47: stamp THIS node's vocab content-id fingerprint so a receiver
+     * on a DIFFERENT word list refuses the engram instead of mis-binding. */
+    mt_vocab_fp_fill(mt_pub_pkt.vocab_fp);
 
     (void)kdds_pub(mt_pub_h, &mt_pub_pkt, (W)sizeof mt_pub_pkt);
     mt_pub_last = mt_pub_pkt; mt_pub_have = 1;     /* retain for re-drive    */
@@ -2493,16 +2520,35 @@ void mind_net_task(INT stacd, void *exinf)
              * observable (the [lang-wire] cert exercises it at least once).
              * Print only the FIRST mismatch per origin to avoid log flood
              * (a re-driven LATEST_ONLY slot re-arrives every poll). */
-            if (mt_rx_pkt.wire_ver != MT_WIRE_VER_LANG) {
+            if (mt_rx_pkt.wire_ver != MT_WIRE_VER_VOCAB) {
                 U1 vorg = mt_rx_pkt.origin_node;
                 if (vorg >= DNODE_MAX || mt_ver_drop_seen[vorg] == 0) {
                     if (vorg < DNODE_MAX) mt_ver_drop_seen[vorg] = 1;
                     r_puts("[mind] mind/teach wire_ver mismatch (got ");
                     r_putdec((UW)mt_rx_pkt.wire_ver);
-                    r_puts(", expect "); r_putdec((UW)MT_WIRE_VER_LANG);
+                    r_puts(", expect "); r_putdec((UW)MT_WIRE_VER_VOCAB);
                     r_puts(") from node "); r_putdec((UW)mt_rx_pkt.origin_node);
                     r_puts(" — packet DROPPED (version-partitioned region, IX.7)\r\n");
                     r_puts("[lang-wire-verdrop] PASS\r\n");
+                }
+                m_republish_last();
+                tk_dly_tsk(MT_POLL_MS);
+                continue;
+            }
+            /* wave-47: vocab content-id gate — even at the right wire_ver, a
+             * peer on a DIFFERENT word list would have its token ids mean
+             * different words. REFUSE rather than mis-bind (the engram analog
+             * of the weight-merge n_floats==R_NP guard). This is the fix for
+             * the first-phone scramble (sky->light/fire->stale/night->blue). */
+            if (!mt_vocab_fp_ok(mt_rx_pkt.vocab_fp)) {
+                U1 forg = mt_rx_pkt.origin_node;
+                if (forg >= DNODE_MAX || mt_ver_drop_seen[forg] == 0) {
+                    if (forg < DNODE_MAX) mt_ver_drop_seen[forg] = 1;
+                    r_puts("[mind] mind/teach vocab mismatch from node ");
+                    r_putdec((UW)forg);
+                    r_puts(" — engram REFUSED (different word list; ids would"
+                           " mis-bind), reinitializing nothing, staying clean\r\n");
+                    r_puts("[lang-vocab-refuse] PASS\r\n");
                 }
                 m_republish_last();
                 tk_dly_tsk(MT_POLL_MS);
