@@ -63,6 +63,7 @@ IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
+IMPORT void sign_self_test(void);                      /* signing.md sign suite */
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -725,6 +726,17 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_self_test();
             else print("usage: self test\r\n");
+        } else if (starts_with(line, n, "sign") && (n == 4 || line[4] == ' ')) {
+            /* signing.md: `sign test` runs the Ed25519 provenance suite —
+             * [sign-roundtrip] (incl. the RFC 8032 KATs), [sign-selflayer]
+             * (forged-from-genesis by an unpinned key REJECTED), [sign-unit]
+             * (unsigned/wrong-key unit refused, adopted-key runs) and
+             * [sign-keyrotation] (succession preserves verifiability). The
+             * signature attests an ARTIFACT came from a KEY, never a human. */
+            const UB *a = line + 4; UW al = (UW)(n - 4);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') sign_self_test();
+            else print("usage: sign test\r\n");
         } else if (starts_with(line, n, "handoff") && (n == 7 || line[7] == ' ')) {
             /* living-mind LM-4 (docs/architecture/living-mind.md Part V):
              * `handoff test` runs the fast->slow handoff acceptance suite

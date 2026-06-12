@@ -80,7 +80,8 @@ ARCH_C_SRCS = \
     userspace.c \
     fpu.c \
     elf_loader.c \
-    paging.c
+    paging.c \
+    sign_entropy.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -136,7 +137,9 @@ COMMON_C_SRCS = \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \
-    genome.c
+    genome.c \
+    ed25519.c \
+    sign.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

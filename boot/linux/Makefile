@@ -132,7 +132,7 @@ RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 # $PKERNEL_PFS_DIR). Hosted-only; bare-metal targets keep the memory store.
 # pfs_ark.c: wave-13 white-pearl — ARK (arch/common/arkfs.c) as p-fs's
 # durable backend, selected by PKERNEL_PFS_BACKEND=ark. Hosted-only.
-ARCH_SHARED_C_SRCS = selfc.c selfc_proc.c pfs_durable.c pfs_ark.c
+ARCH_SHARED_C_SRCS = selfc.c selfc_proc.c pfs_durable.c pfs_ark.c sign_entropy.c
 ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
 
 ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \
@@ -203,7 +203,9 @@ COMMON_C_SRCS = \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \
-    genome.c
+    genome.c \
+    ed25519.c \
+    sign.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

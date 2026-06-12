@@ -96,7 +96,8 @@ ARCH_C_SRCS = \
     virtio_blk.c \
     ark_bdev.c \
     arch_reboot.c \
-    vfs_stub.c
+    vfs_stub.c \
+    sign_entropy.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -154,7 +155,9 @@ COMMON_C_SRCS = \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \
-    genome.c
+    genome.c \
+    ed25519.c \
+    sign.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
