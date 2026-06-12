@@ -344,6 +344,19 @@ void mind_cmd(const UB *args, UW len);
  * MT_WIRE_VER_LEGACY; LM-8 nodes set MT_WIRE_VER_LANG. */
 #define MT_WIRE_VER_LEGACY  0    /* LM-7: synthetic k<8/v<4 (no version field)*/
 #define MT_WIRE_VER_LANG    1    /* LM-8: token ids into the embedded vocab   */
+/* wave-47: the LM-8->LM-9 grow (R_KEYV 8->16, R_VALV 32->64) widened the
+ * VOCABULARY but kept wire_ver==MT_WIRE_VER_LANG and carried NO vocab id on
+ * the wire. A peer still on the LM-8 word list could send ver-1 token ids
+ * that pass the receiver's range check (v<R_VALV) yet MEAN a different word,
+ * so the binding lands on the wrong answer — the scrambled / slot-shifted
+ * answers seen on the first phone (sky->light, fire->stale, night->blue).
+ * MT_WIRE_VER_VOCAB adds vocab_fp (the /vocab content-id fingerprint); a
+ * receiver REFUSES an engram whose fingerprint != its own vocab. ver-1 is
+ * now treated as an OLD/foreign word list and dropped by the version gate. */
+#define MT_WIRE_VER_VOCAB   2    /* LM-9+: token ids + vocab_fp (refuse-on-    */
+                                 /* vocab-mismatch; the live wire version)     */
+#define MT_VOCAB_FP_LEN     8    /* key-id[0..3] ++ val-id[0..3] of /vocab     */
+                                 /* content-ids: detects a different word list */
 typedef struct {
     UW magic;                    /* MT_MAGIC                                */
     UW fact_seq;                 /* A's R3_FACT.seq — the autobiographical  */
@@ -351,11 +364,16 @@ typedef struct {
     U1 origin_node;              /* drpc_my_node of A (the teacher's node)  */
     U1 key, val;                 /* token ids (LM-8) — was k<8/v<4 (LM-7)   */
     U1 src;                      /* ARK_PROV_SRC_SHELL/WEB (carried for prov)*/
-    U1 wire_ver;                 /* MT_WIRE_VER_LANG (mismatch = drop+print) */
+    U1 wire_ver;                 /* MT_WIRE_VER_VOCAB (mismatch = drop+print)*/
     U1 prov_head[PFS_ID_LEN];    /* content-id of A's ARK_PROV — resolves   */
                                  /* the teacher via the P1-replicated       */
                                  /* self/prov + self/prof (VIII.4)          */
-} __attribute__((packed)) MT_TEACH_PKT;   /* 4+4+1+1+1+1+1+32 = 45 B        */
+    U1 vocab_fp[MT_VOCAB_FP_LEN];/* wave-47: vocab content-id fingerprint.   */
+                                 /* Mismatch with the receiver's own vocab   */
+                                 /* means the ids index a DIFFERENT word list*/
+                                 /* -> REFUSE (engram analog of the weight-  */
+                                 /* merge n_floats==R_NP guard, line ~2823). */
+} __attribute__((packed)) MT_TEACH_PKT;   /* 45 + 8 = 53 B (<= KDDS_DATA_MAX)*/
 
 /* Reserve the "mind/teach" topic slot at boot — call from the hosted
  * usermain right AFTER kdds_init() and BEFORE dkva_init(), so the cluster-
