@@ -68,21 +68,20 @@ static void r_putf3(float f)
 }
 
 /* ---- model config (its own dims; all widths <= DTR_LN_MAXW) -------- *
- *  LM-8 (living-mind.md Part IX): the substrate carries REAL WORDS. The
- *  design HOPED for R_KEYV=256/R_VALV=64 ("vocab widening is essentially
- *  free at R_DM=32", IX.0 #2). THE CERT DECIDED OTHERWISE (the measured
- *  decision IX.0 #2 / COMMANDER DECISION 5 demanded): at R_DM=32 the
- *  in-context KEY recall collapses past ~8 keys (K=12/16/256 measured at
- *  chance) and the ANSWER classifier collapses past ~32 classes (V=64
- *  measured at chance) — see the [lang-capacity] curve + the commit msg.
- *  So v1 ships the LARGEST HONESTLY-LEARNABLE real-word dims at R_DM=32:
- *  R_VALV 4->32 (a genuine 8x answer-space widening, real words), R_KEYV
- *  stays 8 (the measured key ceiling). R_NP = 8992 (built, not trusted).
- *  Widening to 256/64 needs R_DM=48 (a shared-kernel DTR_LN_MAXW bump +
- *  hidden-width audit) — NAMED as the measured follow-up, NOT forced here
- *  (the audit/anti-fork boundary; honest > a green bar). */
-#define R_KEYV    8            /* key vocabulary (measured ceiling at R_DM=32)*/
-#define R_VALV    32           /* answer vocab == output classes (was 4)      */
+ *  LM-9 (living-mind.md Part X): THE CAPACITY SURGERY. LM-8 (Part IX) MEASURED
+ *  the wall instead of asserting past it: at R_DM=32 the [lang-capacity] curve
+ *  collapsed below 75% recall by N=6 (comfortable-N=4) — the bottleneck is the
+ *  attention WIDTH R_DM (IX.0 #1), not the vocab. Part X widens the thinking
+ *  width: R_DM 32->48 (the surgery), and grows the vocab in lock-step so the
+ *  curve can be SWEPT past 8: R_KEYV 8->16 (key ladder), R_VALV 32->64 (answer
+ *  space), R_FFN=R_DM (proportional MLP, X.2 B). R_NP = 21568 (2.40x LM-8's
+ *  8992, BUILT not trusted — the _Static_assert below is the proof). The
+ *  shared LayerNorm kernel is reused (DTR_LN_MAXW capacity-cap bump 32->64,
+ *  X.3 — proven FREE for the dtr sensor brain by [lang-sensor-intact]). The
+ *  MEASURED gain: comfortable-N 4->12 ([lang-capacity-v2]). NOT grammar/
+ *  generation/multi-token — still single-token recall over a bounded vocab. */
+#define R_KEYV    16           /* key vocab (LM-9 Part X: 8->16, ladder sweeps N>8)*/
+#define R_VALV    64           /* answer vocab == output classes (LM-9: 32->64)*/
 #define R_NPAIR   8            /* dictionary entries per episode        */
 /* LM-8: the per-prompt binding budget (R_NPAIR) and the cert working-key
  * set are ORTHOGONAL to vocab size (IX.0 #3). The fixed-fact certs
@@ -94,10 +93,10 @@ static void r_putf3(float f)
 #define R_CERTKEYS 8           /* fixed-fact cert working-key count     */
 #define R_SEQ     (R_NPAIR+1)  /* dict tokens + 1 query                 */
 #define R_QPOS    (R_SEQ-1)    /* query token position (readout point)  */
-#define R_DM      32           /* d_model (8-way recall needs this      */
-#define R_NH      4            /*  capacity; R_DM=16/R_NH=2 stays at     */
-#define R_DH      (R_DM/R_NH)  /*  chance — measured, not assumed)       */
-#define R_FFN     32           /* FFN hidden                           */
+#define R_DM      48           /* d_model (LM-9 Part X surgery: 32->48,  */
+#define R_NH      4            /*  the thinking WIDTH that disambiguates */
+#define R_DH      (R_DM/R_NH)  /*  simultaneous bindings; R_DH=48/4=12)  */
+#define R_FFN     R_DM         /* FFN hidden (LM-9 X.2 B: =R_DM, proportional MLP)*/
 #define R_VALEMB  (R_VALV+1)   /* +1 = UNK value for the query token   */
 #define R_UNK     (R_VALV)     /* the query's value id (= "ask")       */
 
@@ -121,9 +120,11 @@ static void r_putf3(float f)
 #define O_BCLS  (O_WCLS + R_VALV * R_DM)
 #define R_NP    (O_BCLS + R_VALV)
 
-/* LM-8 (IX.4): the param count is BUILT, not trusted. At the v1 honest
- * dims (R_KEYV=8, R_VALV=32, R_DM=32) the layout formula gives 8992. */
-_Static_assert(R_NP == 8992, "LM-8 v1 R_NP must equal 8992 (verify by build, IX.0 #2)");
+/* LM-9 (living-mind Part X.2): the param count is BUILT, not trusted. At the
+ * widened dims (R_KEYV=16, R_VALV=64, R_DM=48, R_FFN=48) the layout formula
+ * gives 21568 (2.40x LM-8's 8992; verify by build — the _Static_assert is the
+ * proof, not the doc's estimate). The auditor reads this line-by-line. */
+_Static_assert(R_NP == 21568, "LM-9 R_NP must equal 21568 (verify by build, X.2)");
 /* the substrate's vocab dims MUST equal the embedded word-list sizes, or
  * a token id from r3_vocab_*_id could index past the embedding/classifier
  * tables (the kernel and the word list can never silently disagree). */
@@ -490,8 +491,9 @@ static float r_grad_check(UW seed)
         for (INT i = 0; i < R_NP; i++) rg[i] = 0.0f;
         r_forward(key, val, y);
         r_backward(y);
-        /* stride 7 keeps every weight family covered (gcd(7,R_DM)=1 so
-         * row/col positions rotate) while keeping the check CI-cheap. */
+        /* stride 7 keeps every weight family covered (gcd(7,R_DM)=gcd(7,48)=1
+         * so row/col positions rotate; coprime to R_DH=12, R_FFN=48, R_VALV=64,
+         * R_KEYV=16 too — LM-9 X.0 #6) while keeping the check CI-cheap. */
         for (INT i = 0; i < R_NP; i += 7) {
             float w0 = rw[i];
             UB mp[R_FFN], mm[R_FFN];
@@ -517,13 +519,33 @@ static float r_grad_check(UW seed)
  * ------------------------------------------------------------------ */
 #define R_SEED_TRAIN  0x1C0FFEEUL
 #define R_SEED_HELD   0x5A11AD00UL
-#define R_TRAIN_N     192
+/* LM-9 (living-mind Part X): the widened 2.40x substrate (R_DM 32->48) over a
+ * 2x answer space (R_VALV 32->64) needs more EPISODE DIVERSITY per epoch to
+ * reach in-context COMPETENCE — and the design's ~4s estimate was optimistic.
+ * MEASURED, honestly:
+ *   - LM-8 budget (192 x 60): [r3-incontext-learned] sits at ~8% (under-
+ *     trained; gradcheck still PASSES — the gradients are right, the optimizer
+ *     just hadn't seen enough distinct dictionaries). train_n is the LEVER:
+ *     256 alone stays ~24%, train_n=384 reaches ~72%.
+ *   - BUT [handoff-consolidated] (LM-4) needs the substrate to read its D*
+ *     FAST: at train_n=384 teacher_agree caps ~58% and post ~47% (< the 50
+ *     floor). train_n=512 lifts acc_support to ~100%, teacher_agree to 100%,
+ *     post to ~88% — a SHARP competence threshold near 512 episodes/epoch.
+ *   - At 512 x 80 the WHOLE battery clears: r3-learned ~95%, handoff ~88%,
+ *     stream f1..f4 = 100%, AND the capacity comfortable-N rises from 4 to 16
+ *     (the FULL R_KEYV=16 ladder at >=75%). LR schedule UNCHANGED (0.05 ->
+ *     0.02 @2/3 -> 0.008 @9/10; gradcheck green at the new R_NP).
+ * Cost: shared s_pretrain ~23s host (LM-8 ~3s; PRINTED, gate-not-asserted —
+ * the HONEST CI-cost of the wider mind, X.2 flagged this; ~5.7x the original,
+ * the price of the in-context competence the +12 comfortable-N gain rides on). */
+#define R_TRAIN_N     512    /* LM-9: 192->512 (episode diversity = the in-context
+                              * competence threshold; the dominant lever) */
 #define R_EVAL_N      300
 #define R_HANDIF_N    6000   /* large: the best-fixed-rule baseline takes a
                                * MAX over many rules, so a small sample would
                                * inflate it via selection noise; measure the
                                * TRUE accuracy of each rule on a big stream. */
-#define R_EPOCHS      60
+#define R_EPOCHS      80     /* LM-9: 60->80 (the wider model's convergence) */
 
 /* ------------------------------------------------------------------ *
  *  LM-6 (living-mind.md Part VII) — shared substrate bootstrap + the
@@ -690,14 +712,14 @@ void r3_test(void)
  *  gain traces to the genuine in-context reading, not generic training.
  * ------------------------------------------------------------------ */
 
-#define H_CHANCE   (100.0f / (float)R_VALV)   /* LM-8: =3.125 (was 25, R_VALV 4->32) */
-/* LM-8 (IX.5 re-baseline): the fixed-fact tables were chosen in {0..3}
- * to avoid the R_VALV=4 substrate's masked bias. With R_VALV=32 the
- * answer space is 8x wider; spread the four original classes across it
- * (x H_VSPREAD) so they stay mutually separated AND land away from the
- * wider substrate's low-class bias — the SAME derivation discipline, on
- * the wider space. Verified by the re-baselined gates below. */
-#define H_VSPREAD  (R_VALV / 4)                /* = 8: spread {0,1,2,3}->{0,8,16,24} */
+#define H_CHANCE   (100.0f / (float)R_VALV)   /* LM-9: =1.5625 (R_VALV 32->64; auto-tracks) */
+/* LM-8 (IX.5) / LM-9 (X.4) re-baseline: the fixed-fact tables were chosen
+ * in {0..3} to avoid the substrate's masked low-class bias. With R_VALV=64
+ * the answer space is 16x wider than the original 4; spread the four classes
+ * across it (x H_VSPREAD) so they stay mutually separated AND land away from
+ * the substrate's low-class bias — the SAME derivation discipline, on the
+ * wider space. AUTO-tracks R_VALV; verified by the re-baselined gates below. */
+#define H_VSPREAD  (R_VALV / 4)                /* LM-9: =16: spread {0,1,2,3}->{0,16,32,48} */
 
 /* The one fixed fact-set D*: key k -> value DSTAR[k]. Fixed (NOT
  * resampled) so it is a single conversation's fact. Deterministically
@@ -1450,30 +1472,34 @@ void r3_stream_test(void)
  *  the bar is DISCOVERED from the curve (IX.0 forbids guessing it).
  * ================================================================== */
 
-/* the capacity sweep ladder (IX.6 #2). N word-bindings, masked recall.
- * Bounded by R_KEYV=8 (you cannot bind more DISTINCT keys than exist).
- * The design's {…16,24,32} ladder is UNREACHABLE: the substrate's
- * measured key ceiling at R_DM=32 is ~8 (K>=12 base recall = chance —
- * see commit msg + base [r3-incontext-learned]). The ladder runs to the
- * honest ceiling; the disease = the OLD 4-answer space (chance 25%); the
- * widening = a learnable 32-answer space (chance 3.1%) over 8 real keys. */
-#define LANG_LADDER_N   4
-static const INT lang_ladder[LANG_LADDER_N] = { 2, 4, 6, 8 };
-#define LANG_NMAX       8           /* the widest N on the ladder (= R_KEYV)*/
+/* LM-9 (living-mind Part X.7 #2): the capacity sweep ladder, EXTENDED past 8.
+ * N word-bindings, masked recall. Bounded by R_KEYV=16 (you cannot bind more
+ * DISTINCT keys than exist). LM-8's R_DM=32 substrate collapsed below 75% by
+ * N=6 (comfortable-N=4) BEFORE the old R_KEYV=8 ceiling; the R_DM 32->48
+ * surgery + R_KEYV 8->16 lets the ladder sweep N to 16 to MEASURE whether the
+ * wider thinking width raises comfortable-N. The dict holds N bindings; each
+ * prompt still shows R_NPAIR=8 keys (the queried one forced in, lang_build),
+ * so N>R_NPAIR is the genuine many-bindings regime. The bar is DISCOVERED
+ * from the printed curve, never assumed (IX.0 forbids guessing). */
+#define LANG_LADDER_N   5
+static const INT lang_ladder[LANG_LADDER_N] = { 2, 4, 8, 12, 16 };
+#define LANG_NMAX       16          /* the widest N on the ladder (= R_KEYV)*/
 #define LANG_SEED_DICT  0x1A2B3C4DUL  /* which vocab words form the dict    */
 #define LANG_SEED_TRAIN 0x715A0DE1UL  /* consolidation arrangement stream   */
 #define LANG_SEED_HELD  0x0B16F00DUL  /* eval arrangement stream (disjoint) */
 #define LANG_ROUNDS     40            /* == H_ROUNDS (the LM-4 budget)       */
 #define LANG_PER_ROUND  64            /* == H_PER_ROUND                      */
 #define LANG_EVAL_N     400
-/* the bar is DISCOVERED from the curve, not assumed (IX.6 #2). The design
- * proposed >=16; the MEASURED curve at R_DM=32 / 8x32 is
- *   N= 2 -> 100%,  N= 4 -> 100%,  N= 6 -> 63%,  N= 8 -> 72%
- * so the honest v1 bar the curve SUPPORTS is >=4 real word-bindings at
- * >=75% recall (4 sits at 100%, a full margin). The auditor re-derives
- * from the printed curve — the headline (4) is honest, not the dream. */
-#define LANG_CAP_BARN   4
-#define LANG_CAP_BARPCT 75.0f         /* ... bindings at >=75% recall        */
+/* LM-9 (living-mind Part X.7 #2): the bar is DISCOVERED from THIS curve, never
+ * assumed. The RECORDED LM-8 curve (R_DM=32, R_KEYV=8/R_VALV=32) is
+ *   N= 2 -> 100%,  N= 4 -> 100%,  N= 6 -> 63%,  N= 8 -> 72%   comfortable-N = 4
+ * (recall fell below 75% by N=6, BEFORE the old key ceiling). [lang-capacity-v2]
+ * PASSES iff the WIDENED substrate's measured comfortable-N is STRICTLY GREATER
+ * than LM-8's 4 (a real capacity GAIN, Part X.1) — the headline Delta is
+ * comfortable-N: 4 -> (measured). The auditor re-derives the new comfortable-N
+ * from the printed curve and confirms the strict gain. */
+#define LM8_COMFORTABLE_N 4           /* the prior to BEAT (recorded LM-8 curve)*/
+#define LANG_CAP_BARPCT   75.0f       /* a binding counts at >=75% recall      */
 
 /* one fixed dictionary over N real word-bindings: working key id
  * lang_dkey[i] (a vocab key token) -> answer id lang_dval[i] (a vocab
@@ -1587,10 +1613,10 @@ void r3_lang_test(void)
     static float snap[R_NP];
 
     m_quiesce();   /* VII.4: never reset rw[]/queue under an in-flight round */
-    r_puts("[lang] ==== LM-8 the language slice: REAL WORDS in, one REAL WORD out ====\r\n");
-    r_puts("[lang] word list v1: ENGLISH, K="); r_putdec(r3_vocab_key_count());
+    r_puts("[lang] ==== LM-9 the capacity surgery: R_DM 32->48, the mind held wider ====\r\n");
+    r_puts("[lang] word list v2 (LM-9): ENGLISH, K="); r_putdec(r3_vocab_key_count());
     r_puts(" key words + V="); r_putdec(r3_vocab_val_count());
-    r_puts(" answer words (multilingual = capacity follow-up)\r\n");
+    r_puts(" answer words (8/32 kept as prefix; multilingual = follow-up)\r\n");
     {
         U1 kid[PFS_ID_LEN], vid[PFS_ID_LEN];
         r3_vocab_key_id_blob(kid); r3_vocab_val_id_blob(vid);
@@ -1601,8 +1627,9 @@ void r3_lang_test(void)
         r_puts(" (GET /vocab serves these; the UI agrees by content-id)\r\n");
     }
     r_puts("[lang] R_NP="); r_putdec((UW)R_NP);
-    r_puts(" (widened, built — gradcheck below), chance=100/V=");
-    r_putf1(100.0f/(float)R_VALV); r_puts("%\r\n");
+    r_puts(" (LM-9 widened to 21568=2.40x LM-8's 8992, built — gradcheck below)");
+    r_puts(", R_DM="); r_putdec((UW)R_DM);
+    r_puts(", chance=100/V="); r_putf1(100.0f/(float)R_VALV); r_puts("%\r\n");
 
     /* ---- [lang-gradcheck]: the widened substrate's gradients are real -- */
     SYSTIM gt0, gt1; tk_get_otm(&gt0);
@@ -1623,38 +1650,48 @@ void r3_lang_test(void)
     r_puts("s (PRINTED, host-speed; gate not asserted — IX.4)\r\n");
     for (INT i = 0; i < R_NP; i++) snap[i] = rw[i];
 
-    /* ---- [lang-capacity] THE HEADLINE: recall vs N word-bindings ------ *
-     * The widening here is the ANSWER SPACE (4 -> 32 real words): the
-     * disease is the OLD 4-class toy answer vocab; the cure is that the
-     * substrate holds REAL word-bindings over a 32-answer space, recall
-     * measured honestly. We sweep N (bounded by R_KEYV=8), consolidate N
-     * REAL word-bindings into rw[] each time, and PRINT masked recall. */
-    r_puts("[lang] capacity curve (N real word-bindings -> masked recall %):\r\n");
+    /* ---- [lang-capacity-v2] THE HEADLINE: recall vs N, the R_DM 32->48 *
+     * surgery's gain SUPERIMPOSED on LM-8's recorded R_DM=32 curve. We sweep
+     * N over the EXTENDED ladder (bounded by R_KEYV=16), consolidate N REAL
+     * word-bindings into rw[] each step (the SHARED LM-4 recipe), and PRINT
+     * masked held-out recall at the WIDENED dims beside LM-8's number at the
+     * same N. The headline is Delta comfortable-N over LM-8's 4 (X.1). */
+    /* LM-8's recorded curve (R_DM=32), keyed by N: -1 = LM-8 did not measure
+     * that N. The strict-gain gate compares OUR comfortable-N to LM-8's 4. */
+    r_puts("[lang] capacity curve v2 (N bindings -> masked recall %), "
+           "R_DM=48 vs LM-8's R_DM=32:\r\n");
     float curve[LANG_LADDER_N];
     INT comfortable_n = 0;     /* the largest N still >= the recall bar     */
     for (INT li = 0; li < LANG_LADDER_N; li++) {
         INT N = lang_ladder[li];
+        /* LM-8's recorded recall at this N (R_DM=32), or -1 if unmeasured. */
+        float lm8 = (N==2) ? 100.0f : (N==4) ? 100.0f
+                  : (N==6) ? 63.0f  : (N==8) ? 72.3f : -1.0f;
         for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];   /* fresh substrate */
         lang_make_dict(N, LANG_SEED_DICT);
         lang_consolidate(LANG_SEED_TRAIN, LANG_ROUNDS, LANG_PER_ROUND, 0.02f);
         curve[li] = lang_eval(LANG_SEED_HELD, LANG_EVAL_N);
         r_puts("[lang]   N="); if (N < 10) r_puts(" "); r_putdec((UW)N);
-        r_puts("  recall="); r_putf1(curve[li]); r_puts("%");
-        r_puts(curve[li] >= LANG_CAP_BARPCT ? "  (>= bar)" : "  (< bar)");
+        r_puts("  R_DM=48 recall="); r_putf1(curve[li]); r_puts("%");
+        r_puts(curve[li] >= LANG_CAP_BARPCT ? " (>=bar)" : " (<bar) ");
+        r_puts("  | LM-8 R_DM=32: ");
+        if (lm8 < 0.0f) r_puts("(not measured)"); else { r_putf1(lm8); r_puts("%"); }
         r_puts("\r\n");
         if (curve[li] >= LANG_CAP_BARPCT && N > comfortable_n) comfortable_n = N;
     }
     r_puts("[lang] disease: the LM-4..7 toy answer vocab was 4 classes (chance 25%); "
-           "v1 binds REAL words over 32 answer classes (chance 3.1%).\r\n");
-    r_puts("[lang] HONEST BOUND (measured, IX.0 #2): the R_DM=32 substrate's KEY recall "
-           "ceiling is ~8 (K>=12 base recall = chance); 256/64 needs R_DM=48 (follow-up).\r\n");
+           "LM-9 binds REAL words over 64 answer classes (chance 1.6%).\r\n");
     r_puts("[lang] comfortable-N (largest N with recall>=");
-    r_putf1(LANG_CAP_BARPCT); r_puts("%) = "); r_putdec((UW)comfortable_n);
-    r_puts("  (bar >="); r_putdec((UW)LANG_CAP_BARN);
-    r_puts(" DISCOVERED from this curve, NOT the design's unreachable >=16 — "
-           "the auditor re-derives from the printed curve)\r\n");
-    r_puts((comfortable_n >= LANG_CAP_BARN)
-           ? "[lang-capacity] PASS\r\n" : "[lang-capacity] FAIL\r\n");
+    r_putf1(LANG_CAP_BARPCT); r_puts("%): LM-8 R_DM=32 = ");
+    r_putdec((UW)LM8_COMFORTABLE_N); r_puts("  ->  LM-9 R_DM=48 = ");
+    r_putdec((UW)comfortable_n);
+    r_puts("   (Delta=");
+    if (comfortable_n >= LM8_COMFORTABLE_N) { r_puts("+"); r_putdec((UW)(comfortable_n - LM8_COMFORTABLE_N)); }
+    else { r_puts("-"); r_putdec((UW)(LM8_COMFORTABLE_N - comfortable_n)); }
+    r_puts(", DISCOVERED from the printed curve — PASS iff strictly > LM-8's ");
+    r_putdec((UW)LM8_COMFORTABLE_N); r_puts(")\r\n");
+    r_puts((comfortable_n > LM8_COMFORTABLE_N)
+           ? "[lang-capacity-v2] PASS\r\n" : "[lang-capacity-v2] FAIL\r\n");
 
     /* ---- [lang-recall]: a SPECIFIC real binding round-trips in words --- *
      * sky -> blue: teach the real tokens, consolidate, ask sky, expect the
@@ -1662,11 +1699,14 @@ void r3_lang_test(void)
     for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
     INT ksky = r3_vocab_key_id("sky", 0);
     INT vblue = r3_vocab_val_id("blue", 0);
-    /* build a dict of N=LANG_CAP_BARN bindings (the recall-reliable regime
-     * the capacity curve PROVES, 100%) that INCLUDES sky->blue at slot 0,
-     * so the round-trip is a genuine in-context-then-consolidated binding
-     * scored at the substrate's measured-comfortable N. */
-    lang_dn = LANG_CAP_BARN;
+    /* build a dict over the MEASURED comfortable-N regime (the recall-reliable
+     * regime the capacity-v2 curve just PROVED) that INCLUDES sky->blue at
+     * slot 0, so the round-trip is a genuine in-context-then-consolidated
+     * binding scored at the substrate's measured-comfortable N (LM-9: the
+     * wider regime the R_DM=48 surgery bought, not LM-8's fixed 4). */
+    INT recall_n = (comfortable_n > 0) ? comfortable_n : 1;
+    if (recall_n > R_KEYV) recall_n = R_KEYV;
+    lang_dn = recall_n;
     {
         UW save = r_rng; r_rng = 0x5C0FFEE5UL;
         static UB kp[R_KEYV];
@@ -1738,12 +1778,49 @@ void r3_lang_test(void)
         r_puts(oov_ok ? "[lang-oov] PASS\r\n" : "[lang-oov] FAIL\r\n");
     }
 
+    /* ---- [lang-sensor-intact]: THE SAFETY GATE (LM-9 Part X.3/X.7 #6) ----- *
+     * The shared-cap bump DTR_LN_MAXW 32->64 must be FREE for the dtr sensor
+     * brain (which calls dtr_ln_bwd with n=DM=8 and touches only dxh[0..7]).
+     * We call the SHARED dtr_ln_bwd kernel at n=8 on fixed inputs and assert
+     * the dx[] output is BIT-EXACT to the reference captured PRE-bump (the
+     * dxh[64] array is longer but the n=8 arithmetic writes/reads exactly its
+     * first 8 entries — byte-identical). The full [onebrain-*]/moe/dkva certs
+     * re-run BYTE-IDENTICAL in CI + the sample; this in-process check makes
+     * the freeness falsifiable in the SAME binary the cert runs in. */
+    {
+        const float dy[8]={0.1f,-0.2f,0.3f,-0.4f,0.5f,-0.6f,0.7f,-0.8f};
+        const float xh[8]={0.5f,-1.0f,0.25f,0.75f,-0.5f,1.25f,-0.25f,0.0f};
+        const float g[8] ={1.0f,1.1f,0.9f,1.0f,1.2f,0.8f,1.0f,1.05f};
+        const float istd = 1.3f;
+        /* reference dx[] bits captured from the n=8 sensor arithmetic (the
+         * cap raise cannot move these — dtr_ln_bwd does not call dt_sqrt;
+         * istd is a parameter, so the result is independent of any dt_* impl). */
+        const UW ref[8]={0x3e842f1aUL,0xbed249bbUL,0x3edfc18aUL,0xbeb30937UL,
+                         0x3f3d54fdUL,0xbebd1fbfUL,0x3f6966e8UL,0xbf8628f5UL};
+        float dg[8]={0},db[8]={0},dx[8]={0};
+        dtr_ln_bwd(dy, xh, istd, g, dg, db, dx, 8);
+        INT intact = 1;
+        for (INT i = 0; i < 8; i++) {
+            union { float f; UW u; } pun; pun.f = dx[i];
+            if (pun.u != ref[i]) intact = 0;
+        }
+        r_puts("[lang] sensor-intact: shared dtr_ln_bwd(n=DM=8) dx[] bit-exact to "
+               "pre-bump ref (DTR_LN_MAXW 32->64 is a capacity cap, X.3) -> ");
+        r_puts(intact ? "MATCH\r\n" : "MOVED!\r\n");
+        r_puts(intact ? "[lang-sensor-intact] PASS\r\n"
+                      : "[lang-sensor-intact] FAIL\r\n");
+    }
+
     /* ---- [lang-wire]: the live 2-process tag is exercised by the sample
      * (samples/41_shared_mind over the versioned wire). Named here for the
      * greppable record; the in-process cert cannot drive two nodes. */
     r_puts("[lang] wire: the live 2-process word-flight ([lang-wire]) + the\r\n");
     r_puts("[lang]   version-mismatch drop ([lang-wire-verdrop]) are exercised by\r\n");
     r_puts("[lang]   samples/41_shared_mind (MT_WIRE_VER_LANG, IX.8) — not in-process.\r\n");
+    r_puts("[lang] LM-9 X.4: wire FORMAT unchanged (key/val U1, R_KEYV=16/R_VALV=64\r\n");
+    r_puts("[lang]   <=256); wire_ver UNCHANGED. The vocab GREW, so a Part-X node and\r\n");
+    r_puts("[lang]   an LM-8 node share wire_ver but NOT /vocab content-id — the\r\n");
+    r_puts("[lang]   partition is by VOCABULARY, surfaced by content-id, not a ver drop.\r\n");
 
     /* leave no surprising state. */
     for (INT i = 0; i < R_NP; i++) rw[i] = snap[i];
