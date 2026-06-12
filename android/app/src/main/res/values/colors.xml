@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The galaxy.html palette, shared by the entry screen so MainActivity and
+     the WebView galaxy feel like one universe. -->
+<resources>
+    <color name="sky_bg">#05060a</color>
+    <color name="star_white">#cdd6f4</color>
+    <color name="star_blue">#89b4fa</color>
+    <color name="star_gold">#f9e2af</color>
+    <color name="sky_dim">#9399b2</color>
+    <color name="sky_faint">#6c7086</color>
+    <color name="panel_line">#1e2030</color>
+    <color name="hero_fill">#1e2a3a</color>
+    <color name="log_bg">#101010</color>
+    <color name="log_text">#33ff33</color>
+</resources>
