@@ -393,6 +393,7 @@ static const char *gx_type_name(UB t)
     case EV_PMESH_RX:    return "pmesh_rx";
     case EV_SUMMARY:     return "summary";
     case EV_REMOTE_TEACH:return "remote_teach";
+    case EV_MERGE:       return "merge";
     default:             return "ev";
     }
 }

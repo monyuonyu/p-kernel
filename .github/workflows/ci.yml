@@ -66,11 +66,12 @@ jobs:
           # 0.0% at N=100 (printed by the teach itself — the in-log evidence).
           # `mind lang` runs the LM-9 capacity-v2/recall/oov/sensor-intact cert;
           # `sign test` runs the Ed25519 RFC-8032 KAT + provenance gates.
-          # timeout 420->720 (LM-9 Part X): the widened R_DM=48 substrate's shared
-          # s_pretrain is ~23s host (512 episodes x 80 epochs — the in-context
-          # competence threshold), and r3/handoff/stream/lang/teach each bootstrap
-          # it; plus `mind wait` ~15s nominal/120s worst-case.
-          timeout 720 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nsign test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          # timeout 720->900 (LM-9 Part X + LM-10 Part XI): the widened R_DM=48
+          # substrate's shared s_pretrain is ~23s host (512 episodes x 80 epochs
+          # — the in-context competence threshold), and r3/handoff/stream/lang/
+          # teach each bootstrap it; `mind onemind` pretrains+consolidates several
+          # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\ndmn test\nself test\nsign test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -198,6 +199,20 @@ jobs:
           grep -aF '[lang-recall] PASS' selftest.log
           grep -aF '[lang-oov] PASS' selftest.log
           grep -aF '[lang-sensor-intact] PASS' selftest.log
+          # living-mind Part XI (LM-10, Path W — the one mind): the weight-states
+          # converge. `mind onemind` MEASURES the disease (naive gl_merge of two
+          # divergent minds -> the 2x2 node x fact matrix, classified (a)/(b)/(c))
+          # and the cure (post-merge UNION replay of the retained engrams, the
+          # LM-5 discipline). The MEASURED answer: plain averaging is LOSSY (one
+          # fact collapses to ~chance — classification (c) PARTIAL), but the
+          # union-replay cure recovers BOTH facts to 100% (the mind is ONE at the
+          # substrate). `mind nocentral` proves the merge is order-independent at
+          # n=R_NP (|fwd-rev| float-rounding only) + single-model identity. The
+          # cross-node 84 KB chunk transport + survive-kill is the live job
+          # (one-mind-live, samples/42_one_mind/run.sh).
+          grep -aF '[onemind-divergent] PASS' selftest.log
+          grep -aF '[onemind-cured] PASS' selftest.log
+          grep -aF '[onemind-nocentral] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard
@@ -625,6 +640,53 @@ jobs:
         with:
           name: shared-mind-live-logs
           path: /tmp/p41_*.log
+
+  one-mind-live:
+    name: "One mind / Path W (live 3-node: divergent weights merge over the 84 KB chunk wire; survive kill)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # LM-10 (living-mind.md Part XI): the WEIGHT-states converge. Where Path E
+    # spreads the tiny engram (sample 41), Path W merges the rw[] themselves:
+    # each node publishes its 84 KB rw[] as 22 content-addressed p-fs chunks
+    # under one per-origin manifest ref and gl_merge()s the region into ONE
+    # shared weight-state. The HEADLINE is the in-process disease/cure
+    # measurement (the 2x2 matrix on node A): naive averaging of two divergent
+    # minds is LOSSY (one fact collapses — classification (c) PARTIAL), but the
+    # post-merge UNION replay of the retained engrams (the LM-5 discipline)
+    # recovers BOTH facts to >= the bar — the mind is ONE at the substrate. This
+    # job ALSO proves the REAL cross-node 84 KB chunk transport + that the
+    # merged mind SURVIVES the teacher node's death ([onemind-survive]).
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make curl
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 42_one_mind/run.sh and assert the tags + RESULT PASS
+        run: |
+          timeout 900 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log
+          # the disease/cure headline (in-process, deterministic, on node A):
+          grep -q '\[onemind-divergent\] PASS'  /tmp/p42_nodeA.log
+          grep -q '\[onemind-cured\] PASS'      /tmp/p42_nodeA.log
+          grep -q '\[onemind-nocentral\] PASS'  /tmp/p42_nodeA.log
+          # the REAL cross-node weight merge (gl_merge at n=R_NP, 84 KB chunks)
+          # fired on a node never directly taught the other's fact:
+          grep -q '\[onemind\] FOLD' /tmp/p42_nodeB.log
+          # the 84 KB Path W wire cost is owned + printed:
+          grep -q '86272 B' /tmp/p42_nodeA.log
+          # the merged mind survived the teacher node's death:
+          grep -q '\[onemind-survive\] PASS' /tmp/p42_ci.log
+          grep -q 'RESULT: PASS' /tmp/p42_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: one-mind-live-logs
+          path: /tmp/p42_*.log
 
   twolayer-couple-live:
     name: "Two-layer couple (live 3-node: collective learning improves GUARDING, node killed mid-flight)"

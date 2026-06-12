@@ -368,6 +368,27 @@ void mind_net_open(void);
  * every arrival helper stays file-static in r3_incontext.c. */
 void mind_net_task(INT stacd, void *exinf);
 
+/* LM-10 (living-mind.md Part XI) — Path W: the one mind. The weight-states
+ * themselves converge: after consolidation a node publishes its rw[] (84 KB,
+ * chunked over content-addressed p-fs blocks under ONE per-origin manifest
+ * ref) and gl_merge()s the region's set into ONE shared weight-state (the
+ * Collective made literal at the weight level). The merge is no-central,
+ * order-independent, region-scoped, death-surviving. `mind merge` drives it
+ * on demand (M-b); mind_merge_task is the fleet-DMN slow-band pulse (M-a, the
+ * "collective sleep" cadence). The disease/cure headline is MEASURED, not
+ * asserted: `mind onemind` prints the 2x2 (node x fact) accuracy matrix of
+ * the merged weights + classifies (a)/(b)/(c); `mind nocentral` proves
+ * order-independence at n=R_NP. r3_weights_get/set are the ONLY new R3
+ * surface (the dtr-accessor mirror; rw[] stays file-static). */
+void r3_weights_get(float *out);            /* R_NP floats out of rw[]       */
+void r3_weights_set(const float *in);       /* R_NP floats into rw[]         */
+UW   r3_merge_epoch(void);                  /* the version high-water        */
+void r3_onemind_test(void);                 /* the disease/cure cert (XI.4)  */
+void r3_onemind_nocentral_test(void);       /* order-independence at n=R_NP  */
+/* the fleet-DMN slow-band merge pulse; created in both hosted usermains
+ * beside mind_net_task (Path W's production cadence). */
+void mind_merge_task(INT stacd, void *exinf);
+
 /* galaxy v1 (docs/architecture/galaxy.md §6): a snapshot of the LAST
  * `mind ask <k>` result, written at the single site in m_ask where the
  * masked majority vote computes pred/share. The galaxy POST /ask bridge

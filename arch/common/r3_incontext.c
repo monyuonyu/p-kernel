@@ -31,6 +31,9 @@
 #include "kdds.h"      /* LM-7: the region-scoped "mind/teach" topic (VIII.3) */
 #include "region.h"   /* LM-7: region_id() — observable shared-mind boundary  */
 #include "r3_vocab.h"  /* LM-8 (IX.3): the embedded, content-addressed words   */
+#include "gossip_learn.h" /* LM-10 Path W: gl_merge (the no-central averager)  */
+#include "pfs_dag.h"   /* LM-10 Path W: chunked weight transport (T-a, XI.3)   */
+#include "pfs_repl.h"  /* LM-10 Path W: pfs_repl_want (chunk all-or-nothing)   */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -569,6 +572,35 @@ static void m_quiesce(void)
 {
     while (r3_round_busy) tk_dly_tsk(20);
 }
+
+/* ================================================================== *
+ *  LM-10 (living-mind.md Part XI) — Path W: the one mind.              *
+ *                                                                       *
+ *  The weight-states themselves converge. After local consolidation a   *
+ *  node publishes its rw[] (84 KB, chunked) to region peers and         *
+ *  gl_merge()s the set into ONE shared weight-state. XI.0 #5: rw[] is    *
+ *  file-static with NO accessor today — these are the dtr-accessor       *
+ *  mirror, the ONLY genuinely new R3 surface (the merge itself reuses    *
+ *  gl_merge + s_round + the LM-7 subscriber shape). Both are             *
+ *  m_quiesce()-guarded by their CALLERS (VII.4: never touch rw[] under   *
+ *  an in-flight round).                                                  *
+ * ================================================================== */
+
+/* merge_epoch: bumped each LOCAL consolidation round; the published blob
+ * carries it; a node folds a peer only if its epoch is NEWER than the last
+ * folded from that peer (XI.3 loop/version honesty). Read by the cert +
+ * galaxy emit. */
+static UW merge_epoch = 0;
+
+void r3_weights_get(float *out)
+{
+    for (INT i = 0; i < R_NP; i++) out[i] = rw[i];
+}
+void r3_weights_set(const float *in)
+{
+    for (INT i = 0; i < R_NP; i++) rw[i] = in[i];
+}
+UW r3_merge_epoch(void) { return merge_epoch; }
 
 /* galaxy v1 (galaxy.md §6 — "The concurrency slice Part VII named, now
  * due"). VII.4 said the r3_round_busy quiesce is "a flag, not a lock:
@@ -1246,7 +1278,13 @@ static INT s_round(INT with_replay)
  * VI.8's "no busy flag needed" expired with LM-6: `mind` verbs now
  * serve live R3 queries, so s_round() sets/clears r3_round_busy and
  * every verb/cert quiesces on it first (VII.4). */
-INT r3_consolidate_idle_round(void) { return s_round(1); }
+INT r3_consolidate_idle_round(void)
+{
+    INT r = s_round(1);
+    if (r) merge_epoch++;   /* LM-10 XI.3: a local consolidation = a newer
+                             * weight-state; the merge version high-water. */
+    return r;
+}
 
 /* MASKED accuracy on fact f's keys vs the oracle SDICT, on a held-out
  * arrangement stream (queries restricted to K_f). */
@@ -1930,6 +1968,11 @@ static W mt_topic_open = 0;
  * mind_net_open (reserves the topic at boot) and mind_net_task (polls it). */
 static W mt_sub_h = -1;
 
+/* LM-10 Path W: reserve the "mind/w" merge-announce topic at boot (defined
+ * with the rest of the Path W transport below; forward-declared here so
+ * mind_net_open can call it before dkva floods the topic table). */
+static void mw_ann_open(void);
+
 void mind_net_open(void)
 {
     if (mt_topic_open) return;
@@ -1938,6 +1981,9 @@ void mind_net_open(void)
     W h = kdds_open_poll_scoped(MIND_TEACH_TOPIC, KDDS_QOS_LATEST_ONLY,
                                 KDDS_SCOPE_REGION);
     if (h >= 0) { mt_topic_open = 1; mt_sub_h = h; }   /* reuse h for the poll */
+    /* LM-10 Path W: reserve the "mind/w" merge-announce topic now too, before
+     * dkva's per-node pre-opens saturate the bounded topic table. */
+    mw_ann_open();
 }
 
 /* one publish handle, opened lazily (region scope); -1 until first use. */
@@ -2360,6 +2406,12 @@ static void m_wait(const UB *p, const UB *end)
            ? "[teach-live] PASS\r\n" : "[teach-live] FAIL\r\n");
 }
 
+/* LM-10 (Part XI): forward decls — definitions follow mind_net_task so they
+ * see the transport helpers; the verbs dispatch them here. */
+static void m_merge(void);
+void r3_onemind_test(void);
+void r3_onemind_nocentral_test(void);
+
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
  * usermains beside the `handoff` branch. */
@@ -2378,7 +2430,10 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "ask"))   m_ask(p, end);
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else if (m_kw(&p, end, "lang"))  r3_lang_test();
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "merge")) m_merge();                /* LM-10 M-b  */
+    else if (m_kw(&p, end, "onemind")) r3_onemind_test();      /* LM-10 cert */
+    else if (m_kw(&p, end, "nocentral")) r3_onemind_nocentral_test();
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -2540,6 +2595,636 @@ void mind_net_task(INT stacd, void *exinf)
         m_republish_last();
         tk_dly_tsk(MT_POLL_MS);
     }
+}
+
+/* ================================================================== *
+ *  LM-10 (living-mind.md Part XI) — Path W transport + merge + cert    *
+ *                                                                       *
+ *  XI.3 (T-a): publish rw[] (84 KB) as N_WCHUNK content-addressed       *
+ *  blocks under ONE per-origin manifest ref "mw<origin>" (budget-safe:  *
+ *  1 ref/peer, not 22 — XI.3 sub-decision). A peer fetches the          *
+ *  manifest, then every chunk by content-id; ALL-OR-NOTHING (a partial  *
+ *  84 KB blob is a corrupted mind — XI.0 #3 — so a missing chunk DROPS   *
+ *  the peer for this round, WANTs reissued, retried next round). Then    *
+ *  gl_merge({self} U {peers}) at n=R_NP — the SAME no-central averager   *
+ *  G22 uses at n=635 (XI.0 #1; do NOT fork it). EV_MERGE on the fold.    *
+ * ================================================================== */
+
+#define W_FLOATS_PER_CHUNK 1020                 /* 4080 B + 16 B hdr <= 4096*/
+#define N_WCHUNK   ((R_NP + W_FLOATS_PER_CHUNK - 1) / W_FLOATS_PER_CHUNK)
+_Static_assert(N_WCHUNK == 22, "R_NP=21568 -> 22 chunks of 1020 floats (XI.0 #2)");
+#define W_BYTES    (R_NP * 4)                    /* 86272 = ~84.2 KB        */
+#define MW_MAGIC   0x5747574DUL                  /* "MWGW" LE — weight merge*/
+#define MW_WANT_BURST 6   /* missing chunks WANTed per fetch round — under the
+                           * P1 8-slot pending budget; paced so the holder does
+                           * not flood 22 interleaved streams into the 1-slot
+                           * receive assembler. Combined with a rotating push
+                           * (MW_PUSH_BURST) so the last few stragglers always
+                           * get delivered even if a WANT is lost. */
+#define MW_PUSH_BURST 4   /* chunks the publisher pushes per round, ROTATING the
+                           * window each publish so every chunk gets pushed over
+                           * a few rounds — fills gaps the receiver's WANTs miss */
+
+/* per-origin chunk-manifest: ONE ref "mw<origin>" -> this, P1-replicated
+ * for free (a manifest IS a block). Holds the content-ids of all 22 chunks
+ * for THIS origin's CURRENT merge_epoch. ~712 B, one p-fs block. */
+typedef struct {
+    UW magic;                         /* MW_MAGIC                          */
+    UW epoch;                         /* the origin's merge_epoch           */
+    UW n_floats;                      /* == R_NP (sanity)                   */
+    U1 origin;                        /* the publishing node                */
+    U1 n_chunks;                      /* == N_WCHUNK                        */
+    UH _pad;
+    U1 chunk[N_WCHUNK][PFS_ID_LEN];   /* content-id of each chunk block     */
+} __attribute__((packed)) MW_MANIFEST;
+_Static_assert(sizeof(MW_MANIFEST) <= PFS_BLOCK_MAX, "mw manifest fits one block");
+
+/* one chunk block: header + up to W_FLOATS_PER_CHUNK floats (the LAST chunk
+ * is short). Content-addressed via pfs_put. CRITICAL (the moving-target bug):
+ * the header carries NO epoch — only idx + n + the weight bytes — so identical
+ * weight content always yields the SAME content-id. A peer's accumulated WANTs
+ * stay valid as the publishing node's epoch advances; only the manifest ref
+ * (which holds the epoch) changes per merge round, not the chunk ids. */
+typedef struct {
+    UW magic;                         /* MW_MAGIC                          */
+    UH idx;
+    UH n;                             /* floats valid in w[]               */
+    float w[W_FLOATS_PER_CHUNK];
+} __attribute__((packed, aligned(4))) MW_CHUNK;
+_Static_assert(sizeof(MW_CHUNK) <= PFS_BLOCK_MAX, "mw chunk fits one block");
+
+/* The cross-node manifest discovery rides the PROVEN region K-DDS channel
+ * (the Path E "mind/teach" shape, VIII.3 — region-scoped LATEST_ONLY), NOT
+ * the pfs/ref gossip (whose rotating beacon starves a churning ref under the
+ * self/prov+self/prof+mw load). A 38 B announce carries {origin, epoch,
+ * manifest content-id}; the manifest + chunk BLOCKS still ride P1 (announce/
+ * want) + a direct push. The peer reads the manifest by CONTENT-ID (pfs_get),
+ * never by ref — so no ref-gossip dependency. */
+#define MIND_W_TOPIC "mind/w"
+typedef struct {
+    UW magic;                         /* MW_MAGIC                          */
+    UW epoch;                         /* the origin's published epoch       */
+    U1 origin;                        /* the publishing node                */
+    U1 _pad[3];
+    U1 man_id[PFS_ID_LEN];            /* content-id of the MW_MANIFEST block */
+} __attribute__((packed)) MW_ANNOUNCE;       /* 4+4+1+3+32 = 44 B           */
+_Static_assert(sizeof(MW_ANNOUNCE) <= 192, "mw announce fits one K-DDS payload");
+
+/* file-static scratch — NEVER task-stack locals (the 84 KB-buffer lesson,
+ * feedback_hosted_relay_stack_overflow). The merge subscriber + the verb +
+ * the cert are all serialized behind the mind_cmd gate / single-task, so
+ * one shared set is safe. */
+static MW_MANIFEST mw_man;            /* publish/fetch manifest scratch    */
+static MW_CHUNK    mw_chunk;          /* one-chunk publish/fetch scratch   */
+static float       mw_self[R_NP];     /* my rw[] snapshot for the merge     */
+static float       mw_peer[R_NP];     /* one fetched peer's rw[]            */
+static float       mw_out[R_NP];      /* gl_merge output                    */
+static MW_ANNOUNCE mw_ann;            /* publish/recv announce scratch      */
+
+/* region announce pub/sub handles (lazy, region scope) + per-origin latest
+ * announced {epoch, manifest-id} (the subscriber records, the fold reads). */
+static W  mw_ann_pub = -1, mw_ann_sub = -1;
+static UW mw_ann_epoch[DNODE_MAX];
+static U1 mw_ann_man[DNODE_MAX][PFS_ID_LEN];
+static UB mw_ann_have[DNODE_MAX];
+
+static W mw_ann_pub_h(void)
+{
+    if (mw_ann_pub < 0)
+        mw_ann_pub = kdds_open_poll_scoped(MIND_W_TOPIC, KDDS_QOS_LATEST_ONLY,
+                                           KDDS_SCOPE_REGION);
+    return mw_ann_pub;
+}
+static W mw_ann_sub_h(void)
+{
+    if (mw_ann_sub < 0)
+        mw_ann_sub = kdds_open_poll_scoped(MIND_W_TOPIC, KDDS_QOS_LATEST_ONLY,
+                                           KDDS_SCOPE_REGION);
+    return mw_ann_sub;
+}
+/* reserve the topic slot at boot (called from mind_net_open). */
+static void mw_ann_open(void) { (void)mw_ann_sub_h(); }
+
+/* drain the mind/w topic: record each peer's latest {epoch, manifest-id} and
+ * issue a WANT for the manifest block so P1 pulls it. Called each fold + each
+ * merge-pulse poll. */
+static void mw_ann_poll(void)
+{
+    if (mw_ann_sub_h() < 0) return;
+    for (INT guard = 0; guard < 8; guard++) {
+        W r = kdds_sub(mw_ann_sub, &mw_ann, (W)sizeof mw_ann, 0);
+        if (r < (W)sizeof mw_ann || mw_ann.magic != MW_MAGIC) break;
+        U1 o = mw_ann.origin;
+        if (o >= DNODE_MAX || o == drpc_my_node) continue;
+        mw_ann_epoch[o] = mw_ann.epoch;
+        for (INT i=0;i<PFS_ID_LEN;i++) mw_ann_man[o][i] = mw_ann.man_id[i];
+        mw_ann_have[o] = 1;
+        if (!pfs_has(mw_ann.man_id)) pfs_repl_want(mw_ann.man_id);  /* pull it */
+    }
+}
+
+/* build the per-origin ref name "mw" + 2 decimal digits of origin. */
+static UW mw_refname(char *out, U1 origin)
+{
+    out[0]='m'; out[1]='w';
+    out[2]=(char)('0' + (origin/10)%10);
+    out[3]=(char)('0' + origin%10);
+    return 4;
+}
+
+/* publish rw[] as 22 content blocks + one manifest ref. Returns 0 on success.
+ * PRINTS the ~84 KB cost (XI.0 #2 — own it). Caller m_quiesce()s first. */
+static INT mw_publish_weights(void)
+{
+    if (drpc_my_node == 0xFF) return -1;           /* solo: nobody to merge */
+    r3_weights_get(mw_self);
+
+    mw_man.magic    = MW_MAGIC;
+    mw_man.epoch    = merge_epoch;
+    mw_man.n_floats = R_NP;
+    mw_man.origin   = drpc_my_node;
+    mw_man.n_chunks = N_WCHUNK;
+    mw_man._pad     = 0;
+
+    UW off = 0;
+    for (INT c = 0; c < N_WCHUNK; c++) {
+        UW n = R_NP - off; if (n > W_FLOATS_PER_CHUNK) n = W_FLOATS_PER_CHUNK;
+        mw_chunk.magic = MW_MAGIC;
+        mw_chunk.idx = (UH)c; mw_chunk.n = (UH)n;
+        for (UW i = 0; i < n; i++) mw_chunk.w[i] = mw_self[off + i];
+        for (UW i = n; i < W_FLOATS_PER_CHUNK; i++) mw_chunk.w[i] = 0.0f;
+        /* content-addressed put: the put-hook announces it to the region
+         * (P1) on the FIRST store, so peers can WANT it; identical bytes dedup.
+         * The chunk id is STABLE (no epoch in the chunk header), so a peer's
+         * paced WANTs (mw_fetch_peer) are satisfied across rounds — no flood. */
+        if (pfs_put(&mw_chunk, sizeof mw_chunk, mw_man.chunk[c]) != PFS_OK)
+            return -1;
+        off += n;
+    }
+    /* store the manifest as a CONTENT block (id = its hash) — the announce
+     * carries this id so peers read the manifest by content-id (no ref-gossip
+     * dependency). Also keep the pfs_dag ref for durability/`pfs log`. */
+    U1 man_id[PFS_ID_LEN];
+    if (pfs_put(&mw_man, sizeof mw_man, man_id) != PFS_OK) return -1;
+    char ref[8]; UW rl = mw_refname(ref, drpc_my_node);
+    (void)pfs_dag_save((const UB *)ref, rl, &mw_man, sizeof mw_man);
+
+    /* PUSH the small MANIFEST + a ROTATING window of MW_PUSH_BURST chunks to
+     * each region peer. The full 22 are NOT pushed at once (the P1 receive
+     * assembler is SINGLE-SLOT — a 22-block flood drops ~half); instead a few
+     * per round, rotating the window each publish so every chunk is pushed over
+     * a handful of rounds. This proactively delivers the stragglers the peer's
+     * paced WANTs (mw_fetch_peer) might miss — the two together converge cleanly
+     * in BOTH directions. */
+    static UW push_rot = 0;
+    UW pstart = push_rot % N_WCHUNK; push_rot += MW_PUSH_BURST;
+    for (U1 o = 0; o < DNODE_MAX; o++) {
+        if (o == drpc_my_node || !region_contains(o)) continue;
+        pfs_repl_push(man_id, o);
+        for (UW j = 0; j < MW_PUSH_BURST; j++)
+            pfs_repl_push(mw_man.chunk[(pstart + j) % N_WCHUNK], o);
+    }
+
+    /* publish the compact region announce {origin, epoch, manifest-id} on the
+     * PROVEN mind/w K-DDS region topic (the Path E channel shape). */
+    if (mw_ann_pub_h() >= 0) {
+        mw_ann.magic = MW_MAGIC; mw_ann.epoch = merge_epoch;
+        mw_ann.origin = drpc_my_node;
+        mw_ann._pad[0]=mw_ann._pad[1]=mw_ann._pad[2]=0;
+        for (INT i=0;i<PFS_ID_LEN;i++) mw_ann.man_id[i] = man_id[i];
+        (void)kdds_pub(mw_ann_pub, &mw_ann, (W)sizeof mw_ann);
+    }
+
+    r_puts("[onemind] published rw[] epoch="); r_putdec(merge_epoch);
+    r_puts(" as "); r_putdec((UW)N_WCHUNK);
+    r_puts(" chunks ("); r_putdec(W_BYTES);
+    r_puts(" B = ~84KB, ref mw"); r_putdec((UW)drpc_my_node);
+    r_puts(") -> region "); r_putdec((UW)region_id());
+    r_puts(" + pushed to peers + announced on mind/w");
+    r_puts("  [Path W wire cost: ~1900x Path E's 45 B engram]\r\n");
+    return 0;
+}
+
+/* fetch peer `origin`'s rw[] (current epoch) into mw_peer, ALL-OR-NOTHING
+ * (XI.0 #3). Returns the peer's epoch on success, or -1 (manifest or any
+ * chunk missing -> WANTs reissued, peer DROPPED this round). Reads the
+ * manifest by CONTENT-ID from the mind/w announce — NOT the pfs/ref gossip. */
+static INT mw_fetch_peer(U1 origin)
+{
+    if (origin >= DNODE_MAX || !mw_ann_have[origin]) return -1;  /* no announce */
+    if (!pfs_has(mw_ann_man[origin])) {
+        pfs_repl_want(mw_ann_man[origin]);          /* manifest not local yet */
+        return -1;
+    }
+    INT mr = pfs_get(mw_ann_man[origin], &mw_man, sizeof mw_man);
+    if (mr != (INT)sizeof mw_man || mw_man.magic != MW_MAGIC ||
+        mw_man.n_floats != R_NP || mw_man.n_chunks != N_WCHUNK ||
+        mw_man.origin != origin)
+        return -1;                                  /* manifest bad/partial   */
+
+    /* The P1 receive assembler is SINGLE-SLOT (pfs_repl.c: one block in flight
+     * at a time): WANTing all 22 chunks at once makes the holder flood 22
+     * interleaved block-streams into that one slot and almost all get dropped.
+     * So we request the missing chunks a FEW at a time (<= MW_WANT_BURST), and
+     * re-drive across rounds (the verb + the autonomous merge pulse). The fetch
+     * is all-or-nothing for the FOLD (a partial blob is never merged), but the
+     * WANT pacing matches the assembler's drain rate so it actually converges. */
+    UW off = 0; INT missing = 0, wanted = 0;
+    for (INT c = 0; c < N_WCHUNK; c++) {
+        INT gr = pfs_get(mw_man.chunk[c], &mw_chunk, sizeof mw_chunk);
+        if (gr != (INT)sizeof mw_chunk || mw_chunk.magic != MW_MAGIC ||
+            mw_chunk.idx != (UH)c) {
+            if (wanted < MW_WANT_BURST) {           /* pace the WANTs         */
+                pfs_repl_want(mw_man.chunk[c]); wanted++;
+            }
+            missing++; continue;
+        }
+        UW n = mw_chunk.n; if (off + n > R_NP) n = R_NP - off;
+        for (UW i = 0; i < n; i++) mw_peer[off + i] = mw_chunk.w[i];
+        off += mw_chunk.n;
+    }
+    if (missing || off < R_NP) {
+        r_puts("[onemind] peer "); r_putdec((UW)origin);
+        r_puts(" epoch="); r_putdec(mw_man.epoch);
+        r_puts(": "); r_putdec((UW)missing);
+        r_puts(" of "); r_putdec((UW)N_WCHUNK);
+        r_puts(" chunks still in flight — peer not yet foldable (all-or-nothing), "); r_putdec((UW)wanted);
+        r_puts(" WANT(s) paced this round\r\n");
+        return -1;
+    }
+    r_puts("[onemind] peer "); r_putdec((UW)origin);
+    r_puts(" epoch="); r_putdec(mw_man.epoch);
+    r_puts(": ALL "); r_putdec((UW)N_WCHUNK);
+    r_puts(" chunks reassembled ("); r_putdec(W_BYTES);
+    r_puts(" B) — foldable\r\n");
+    return (INT)mw_man.epoch;
+}
+
+/* per-origin last-folded epoch high-water (XI.3 loop guard: never re-fold a
+ * stale peer-state; a peer is folded only if its epoch is NEWER). */
+static UW mw_peer_epoch[DNODE_MAX];
+
+/* THE merge: fold {self} U {region peers with a NEWER epoch} via gl_merge at
+ * n=R_NP (the no-central averager, XI.0 #1). Sets rw[] to the mean, bumps
+ * merge_epoch, emits ONE EV_MERGE. Returns peers folded (0 = nobody new).
+ * Caller m_quiesce()s + m_boot()s first. */
+static INT mw_fold_region(void)
+{
+    if (drpc_my_node == 0xFF) return 0;
+    /* drain peer announces (record {epoch, manifest-id}, WANT the manifests). */
+    mw_ann_poll();
+    /* publish my current state so peers can fold me too (symmetric). */
+    (void)mw_publish_weights();
+    mw_ann_poll();                                  /* catch a same-tick peer */
+
+    r3_weights_get(mw_self);
+    /* equal-weight mean of {self} U {folded peers}: accumulate a running SUM,
+     * divide ONCE at the end. This IS gl_merge's arithmetic (XI.0 #1: sum of
+     * sources / count) — done incrementally because only one mw_peer buffer
+     * is held; order-independent to float rounding (the [onemind-nocentral]
+     * proof bounds |fwd-rev| at n=R_NP). */
+    for (INT i = 0; i < R_NP; i++) mw_out[i] = mw_self[i];   /* {self} */
+    INT folded = 0;
+    for (U1 o = 0; o < DNODE_MAX; o++) {
+        if (o == drpc_my_node) continue;
+        if (!region_contains(o)) continue;          /* REGION-scoped (XI.0 #7)*/
+        INT pe = mw_fetch_peer(o);
+        if (pe < 0) continue;                        /* dropped (partial)     */
+        if ((UW)pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) continue; /* stale */
+        mw_peer_epoch[o] = (UW)pe;
+        for (INT i = 0; i < R_NP; i++) mw_out[i] += mw_peer[i];
+        folded++;
+    }
+    if (folded == 0) {
+        r_puts("[onemind] fold: no region peer with a newer epoch — rw[] unchanged\r\n");
+        return 0;
+    }
+    float inv = 1.0f / (float)(1 + folded);
+    for (INT i = 0; i < R_NP; i++) mw_out[i] *= inv;
+    r3_weights_set(mw_out);
+    /* NOTE: a fold does NOT bump merge_epoch — the PUBLISHED epoch tracks local
+     * CONSOLIDATION only (r3_consolidate_idle_round), so a peer's chunk-ids are
+     * STABLE between teaches and its accumulated WANTs stay valid (the moving-
+     * target fix). A re-fold of an already-folded peer is guarded by the
+     * per-origin epoch high-water below. */
+
+    galaxy_emit(EV_MERGE, drpc_my_node, GALAXY_NODE_NONE,
+                (UH)merge_epoch, (UH)folded);        /* XI.7: stars in unison */
+
+    r_puts("[onemind] FOLD: merged {self} U "); r_putdec((UW)folded);
+    r_puts(" peer(s) into rw[] via gl_merge at n="); r_putdec((UW)R_NP);
+    r_puts(" -> merge_epoch="); r_putdec(merge_epoch);
+    r_puts(" (no central aggregator — every node folds locally)\r\n");
+    return folded;
+}
+
+/* ---- the fleet-DMN merge pulse (M-a, XI.3) ----------------------- *
+ *  The production "collective sleep" cadence: every node, on a SLOW-band  *
+ *  timer, publishes its rw[] epoch and folds whatever region peers are    *
+ *  locally available — the collective-sleep heartbeat made literal. Gated *
+ *  + quiesced exactly like the verb. Created in the hosted usermains       *
+ *  beside mind_net_task. The cert is driven by the VERB (deterministic     *
+ *  CI), so this pulse is the production path, not the test path.          */
+#define MW_PULSE_MS  4000   /* >= 2x GL_SLOW_BAND_MS (2000) — fleet sleep    */
+#define MW_ANN_POLL_MS 400  /* fast announce drain (catch a peer's mind/w in   */
+                            /* the LATEST_ONLY slot between MY own publishes)   */
+
+void mind_merge_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    /* let SWIM form a region + the substrate exist before merging. */
+    tk_dly_tsk(8000);
+    r_puts("[onemind] mind_merge_task up — fleet-DMN slow-band weight merge (Path W)\r\n");
+    UW since_pulse = 0;
+    for (;;) {
+        tk_dly_tsk(MW_ANN_POLL_MS);
+        if (drpc_my_node == 0xFF) continue;          /* solo: nothing to do  */
+        /* FAST announce drain every tick: a shared LATEST_ONLY "mind/w" slot
+         * holds only the last writer, so a node publishing frequently would
+         * keep overwriting its own announce and never SEE a peer's. Draining
+         * faster than the publish cadence catches each peer's announce as it
+         * flits through the slot (records {epoch, manifest-id}, WANTs it). */
+        if (region_size() >= 2) {
+            m_gate_acquire(); mw_ann_poll(); m_gate_release();
+        }
+        since_pulse += MW_ANN_POLL_MS;
+        if (since_pulse < MW_PULSE_MS) continue;
+        since_pulse = 0;
+        if (!m_ready) continue;                       /* no weights to merge  */
+        if (region_size() < 2) continue;             /* region of one        */
+        m_gate_acquire();
+        m_quiesce();
+        (void)mw_fold_region();
+        m_gate_release();
+    }
+}
+
+/* `mind merge` verb (M-b, XI.3) — drives the cert + a debugging handle.
+ * Caller already holds the mind_cmd gate. */
+static void m_merge(void)
+{
+    m_quiesce();
+    m_boot();
+    if (drpc_my_node == 0xFF) {
+        r_puts("[onemind] solo node (no mesh) — nothing to merge with\r\n");
+        return;
+    }
+    INT f = mw_fold_region();
+    r_puts(f > 0 ? "[onemind-merge] PASS (folded the region)\r\n"
+                 : "[onemind-merge] PASS (no newer peer — fold was a no-op, honest)\r\n");
+}
+
+/* ================================================================== *
+ *  THE in-process disease/cure certificate (XI.4) — the HEADLINE.      *
+ *  `mind onemind`. Measures, does NOT assume. Two divergent minds are   *
+ *  modelled by save/restore of rw[]: node0 learns k1->v1, node1 learns  *
+ *  k2->v2, each from the SAME pretrained substrate (the worst case for  *
+ *  averaging — same seed, different optima, XI.1). Then gl_merge and     *
+ *  the 2x2 (node x fact) MASKED accuracy matrix is PRINTED + classified. *
+ * ================================================================== */
+
+/* the divergent bindings: two DISTINCT keys, two DISTINCT values, both
+ * off the pretrained substrate's bias (the SDICT derivation, XI.4). key 2
+ * = "sun"->val 3 = "yellow" (the LM-6 proven off-bias pair) for node0;
+ * key 4 ->val 1 for node1 (SDICT[4]=1 is the proven off-bias for key 4). */
+#define OM_K1  2
+#define OM_V1  3
+#define OM_K2  4
+#define OM_V2  1
+#define OM_VOTE_N 80     /* masked majority-vote sample (>= M_ASK_N)       */
+
+/* consolidate the single queued PENDING fact to RETAINED (drive the LIVE
+ * round directly — the cert is allowed to, like r3_stream_test). */
+static void om_consolidate(void)
+{
+    INT guard = 0;
+    while (r3_facts_pending() && guard++ < 64) (void)s_round(1);
+}
+
+/* masked accuracy (%) that key k answers value v, N votes. */
+static float om_acc(INT k, INT v)
+{
+    float share[R_VALV];
+    (void)m_masked_vote(k, OM_VOTE_N, share);
+    return share[v];
+}
+
+/* snapshot/restore the live fact queue (so each modelled node keeps its OWN
+ * retained fact for the post-merge replay cure — XI.0 #4). */
+typedef struct { R3_FACT fq[R3_FQ_MAX]; UB n; UW seq; UW srng; } OM_QSNAP;
+static void om_q_save(OM_QSNAP *s)
+{
+    for (INT i=0;i<R3_FQ_MAX;i++) s->fq[i]=r3_fq[i];
+    s->n=r3_fq_n; s->seq=r3_fq_seq; s->srng=r3_s_rng;
+}
+static void om_q_load(const OM_QSNAP *s)
+{
+    for (INT i=0;i<R3_FQ_MAX;i++) r3_fq[i]=s->fq[i];
+    r3_fq_n=s->n; r3_fq_seq=s->seq; r3_s_rng=s->srng;
+}
+
+static void om_print_matrix(const char *tag, float n0k1,float n0k2,
+                            float n1k1,float n1k2)
+{
+    r_puts("[onemind] "); r_puts(tag);
+    r_puts("  n0:k1="); r_putf1(n0k1); r_puts("% k2="); r_putf1(n0k2);
+    r_puts("%  n1:k1="); r_putf1(n1k1); r_puts("% k2="); r_putf1(n1k2);
+    r_puts("%\r\n");
+}
+
+/* the naive-cell stash + the cure verdict, kept in tiny statics so the cure
+ * print can show the per-cell GAIN (cured - naive). */
+static float om_naive_k1=0, om_naive_k2=0;
+static void om_stash(float n0k1,float n0k2) { om_naive_k1=n0k1; om_naive_k2=n0k2; }
+
+static void om_cured_report(float c0k1, float c0k2, float chance)
+{
+    float g1 = c0k1 - om_naive_k1, g2 = c0k2 - om_naive_k2;
+    r_puts("[onemind]   gain (cured-naive): k1=");
+    if (g1>=0) r_puts("+"); r_putf1(g1); r_puts("%  k2=");
+    if (g2>=0) r_puts("+"); r_putf1(g2); r_puts("%\r\n");
+    /* PASS: BOTH facts answerable >= the measured bar on the merged mind,
+     * AND no catastrophic re-forgetting. The bar candidate is 75% masked
+     * (the LM-6 share gate); if the cure cannot reach it, FAIL honestly. */
+    float bar = 75.0f;
+    INT both = (c0k1 >= bar && c0k2 >= bar);
+    r_puts("[onemind]   cure bar="); r_putf1(bar);
+    r_puts("% (LM-6 share gate); both-facts="); r_puts(both?"YES":"NO");
+    r_puts("\r\n");
+    if (both) {
+        r_puts("[onemind]   VERDICT: the merged mind answers BOTH facts >= bar — the mind is ONE at the substrate\r\n");
+        r_puts("[onemind-cured] PASS\r\n");
+    } else if (c0k1 >= chance+10.0f && c0k2 >= chance+10.0f) {
+        r_puts("[onemind]   VERDICT: both facts ABOVE CHANCE but below the 75% bar — averaging is LOSSY by the printed amount; plain mean+replay partial (weighted/Fisher merge = the named follow-up, XI.5)\r\n");
+        r_puts("[onemind-cured] FAIL\r\n");
+    } else {
+        r_puts("[onemind]   VERDICT: the HONEST NEGATIVE — plain mean averages divergent minds destructively; the cure did not rescue both facts above chance. Weighted/Fisher merge named as the next slice (XI.5)\r\n");
+        r_puts("[onemind-cured] FAIL\r\n");
+    }
+}
+
+void r3_onemind_test(void)
+{
+    static float w_base[R_NP], w_a[R_NP], w_b[R_NP];
+    OM_QSNAP qa, qb;
+    float chance = 100.0f / (float)R_VALV;
+
+    m_quiesce();
+    r_puts("[onemind] ==== LM-10 Path W: the one mind (MEASURE, do not assume) ====\r\n");
+    r_puts("[onemind] model: 2 divergent minds, SAME pretrained seed, DIFFERENT facts\r\n");
+    r_puts("[onemind]   node0: k1="); r_putdec(OM_K1); r_puts("->v1="); r_putdec(OM_V1);
+    r_puts("   node1: k2="); r_putdec(OM_K2); r_puts("->v2="); r_putdec(OM_V2);
+    r_puts("   chance="); r_putf1(chance); r_puts("% (=100/R_VALV)\r\n");
+    r_puts("[onemind]   R_NP="); r_putdec((UW)R_NP);
+    r_puts(" floats, "); r_putdec(W_BYTES); r_puts(" B/peer/round (~84KB, XI.0 #2)\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    /* ---- node0 learns k1->v1 from the base substrate ---- */
+    s_fq_reset();
+    { UB k=OM_K1, v=OM_V1; (void)r3_fact_learn(&k,&v,1); }
+    om_consolidate();
+    r3_weights_get(w_a); om_q_save(&qa);
+    float a_k1 = om_acc(OM_K1, OM_V1);
+    /* ---- node1 learns k2->v2 from the SAME base ---- */
+    r3_weights_set(w_base); s_fq_reset();
+    { UB k=OM_K2, v=OM_V2; (void)r3_fact_learn(&k,&v,1); }
+    om_consolidate();
+    r3_weights_get(w_b); om_q_save(&qb);
+    float b_k2 = om_acc(OM_K2, OM_V2);
+
+    r_puts("[onemind] solo: node0 answers k1 at "); r_putf1(a_k1);
+    r_puts("%  node1 answers k2 at "); r_putf1(b_k2);
+    r_puts("%  (each mind learned its OWN fact)\r\n");
+    INT solo_ok = (a_k1 >= 75.0f && b_k2 >= 75.0f);
+    r_puts(solo_ok ? "[onemind] solo precondition met (both >= 75%)\r\n"
+                   : "[onemind] WARN: a solo mind did not reach 75% — disease test is weak\r\n");
+
+    /* ================= [onemind-divergent]: the DISEASE ============== *
+     * naive gl_merge, NO post-merge replay (with_replay=0 analogue).    */
+    {
+        const float *models[2] = { w_a, w_b };
+        gl_merge(mw_out, models, 2, R_NP);          /* THE no-central mean   */
+        r3_weights_set(mw_out);
+        UW dmerge_epoch = ++merge_epoch;
+        float n0k1=om_acc(OM_K1,OM_V1), n0k2=om_acc(OM_K2,OM_V2);
+        float n1k1=om_acc(OM_K1,OM_V1), n1k2=om_acc(OM_K2,OM_V2);
+        /* node0 and node1 share the SAME merged rw[] -> the matrix rows are
+         * identical by construction (one substrate); we print both rows to
+         * make the "both nodes, both facts" claim explicit + falsifiable. */
+        r_puts("[onemind] --- THE DISEASE MATRIX (naive gl_merge, NO replay), epoch=");
+        r_putdec(dmerge_epoch); r_puts(" ---\r\n");
+        om_print_matrix("naive ", n0k1,n0k2,n1k1,n1k2);
+        r_puts("[onemind]   vs solo k1="); r_putf1(a_k1);
+        r_puts("% k2="); r_putf1(b_k2); r_puts("%  vs chance ");
+        r_putf1(chance); r_puts("%\r\n");
+
+        /* classify (a) preservation / (b) catastrophic / (c) partial. */
+        float bar = chance + 10.0f;                 /* "above chance" margin */
+        INT k1_ok = (n0k1 >= bar), k2_ok = (n0k2 >= bar);
+        const char *cls;
+        if (k1_ok && k2_ok)      cls = "(a) PRESERVATION — both facts survive the raw average";
+        else if (!k1_ok&&!k2_ok) cls = "(b) CATASTROPHIC — neither fact survives the raw average";
+        else                     cls = "(c) PARTIAL — one fact survives, one collapses";
+        r_puts("[onemind]   classification: "); r_puts(cls); r_puts("\r\n");
+        r_puts("[onemind]   (the cure tag is ");
+        r_puts((k1_ok&&k2_ok) ? "a NO-REGRESS check" : "MANDATORY");
+        r_puts(" given this)\r\n");
+        /* the diagnostic gate: the measurement ran + printed a well-formed
+         * matrix at a recorded epoch (XI.4 #1). Science gate is #2. */
+        r_puts((n0k1>=0.0f && n0k2>=0.0f && dmerge_epoch>0)
+               ? "[onemind-divergent] PASS\r\n" : "[onemind-divergent] FAIL\r\n");
+
+        /* stash the naive numbers for the cure delta. */
+        om_stash(n0k1, n0k2);
+    }
+
+    /* ================= [onemind-cured]: post-merge replay ============ *
+     * THE LM-5 discipline applied fleet-wide (XI.0 #4): after the merge   *
+     * PERTURBS rw[], replay the RETAINED facts' engrams interleaved via   *
+     * s_round(1) so the blended weights re-ground on the bindings. The    *
+     * honest model: in the live fleet Path E ALSO runs, so post-merge a   *
+     * node holds BOTH facts' engrams (its own + the peer's, both          *
+     * RETAINED). The cure replays the UNION — the strongest honest cure   *
+     * the existing machinery gives (no new training path, no fork). We    *
+     * also print the per-node OWN-fact-only variant for comparison.       */
+    {
+        const float *models[2] = { w_a, w_b };
+
+        /* --- variant 1: per-node OWN-fact replay then re-merge (the literal
+         * "each node replays its own retained fact" reading) --- */
+        gl_merge(mw_out, models, 2, R_NP);
+        r3_weights_set(mw_out); om_q_load(&qa);
+        for (INT r=0; r<R3_SLEEPS_PER_FACT; r++) (void)s_round(1);
+        r3_weights_get(w_a);
+        gl_merge(mw_out, models, 2, R_NP);
+        r3_weights_set(mw_out); om_q_load(&qb);
+        for (INT r=0; r<R3_SLEEPS_PER_FACT; r++) (void)s_round(1);
+        r3_weights_get(w_b);
+        { const float *cu[2]={w_a,w_b}; gl_merge(mw_out, cu, 2, R_NP); }
+        r3_weights_set(mw_out);
+        float o0k1=om_acc(OM_K1,OM_V1), o0k2=om_acc(OM_K2,OM_V2);
+        r_puts("[onemind] --- CURE A (per-node own-fact replay, then re-merge) ---\r\n");
+        om_print_matrix("cureA ", o0k1,o0k2,o0k1,o0k2);
+
+        /* --- variant 2: UNION replay — both retained facts in ONE queue,
+         * interleaved on the merged weights (the true LM-5 union replay,
+         * what the fleet holds once Path E has spread both facts) --- */
+        gl_merge(mw_out, models, 2, R_NP);
+        r3_weights_set(mw_out);
+        s_fq_reset();
+        { UB k=OM_K1,v=OM_V1; (void)r3_fact_learn(&k,&v,1); }
+        { UB k=OM_K2,v=OM_V2; (void)r3_fact_learn(&k,&v,1); }
+        /* drain both PENDING facts (each gets R3_SLEEPS_PER_FACT rounds; the
+         * round interleaves the pending fact's engrams with all RETAINED —
+         * exactly s_round(1)'s union replay). */
+        { INT g=0; while (r3_facts_pending() && g++<256) (void)s_round(1); }
+        merge_epoch++;
+        float c0k1=om_acc(OM_K1,OM_V1), c0k2=om_acc(OM_K2,OM_V2);
+        r_puts("[onemind] --- CURE B (UNION replay: both facts interleaved on merged rw[]) ---\r\n");
+        om_print_matrix("cureB ", c0k1,c0k2,c0k1,c0k2);
+        /* the VERDICT uses the best honest cure (union replay = what the live
+         * fleet actually has via E+W co-running). */
+        om_cured_report(c0k1, c0k2, chance);
+    }
+    r_puts("[onemind] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
+}
+
+/* [onemind-nocentral] — order-independence at n=R_NP (the [g22-no-central]
+ * proof shape, XI.4 #3). Distinct per-node models so order would matter by
+ * O(1) if the merge privileged a position; |fwd-rev| must be float-rounding
+ * only. Plus single-model identity. */
+void r3_onemind_nocentral_test(void)
+{
+    static float m0[R_NP], m1[R_NP], m2[R_NP], a[R_NP], b[R_NP];
+    m_quiesce();
+    s_make_facts(); s_pretrain();
+    /* three distinct minds: base, +k1, +k2 (real divergent states). */
+    r3_weights_get(m0);
+    s_fq_reset(); { UB k=OM_K1,v=OM_V1; (void)r3_fact_learn(&k,&v,1); } om_consolidate();
+    r3_weights_get(m1);
+    r3_weights_set(m0); s_fq_reset(); { UB k=OM_K2,v=OM_V2; (void)r3_fact_learn(&k,&v,1); } om_consolidate();
+    r3_weights_get(m2);
+
+    const float *fwd[3] = { m0, m1, m2 };
+    const float *rev[3] = { m2, m1, m0 };
+    gl_merge(a, fwd, 3, R_NP);
+    gl_merge(b, rev, 3, R_NP);
+    float worst = 0.0f;
+    for (INT i=0;i<R_NP;i++){ float d=a[i]-b[i]; if(d<0)d=-d; if(d>worst)worst=d; }
+    r_puts("[onemind] no-central: |merge(fwd)-merge(rev)| max=");
+    r_putf3(worst*1000.0f); r_puts("e-3 at n="); r_putdec((UW)R_NP);
+    r_puts(" (rounding only; structural privilege would be O(1))\r\n");
+    /* identity: single-model merge == that model exactly. */
+    gl_merge(a, fwd, 1, R_NP);
+    INT ident = 1;
+    for (INT i=0;i<R_NP;i++) if (a[i] != m0[i]) { ident = 0; break; }
+    r_puts("[onemind] single-model merge identity: "); r_puts(ident?"exact":"BROKEN");
+    r_puts("\r\n");
+    r_puts((worst < 1e-3f && ident) ? "[onemind-nocentral] PASS\r\n"
+                                    : "[onemind-nocentral] FAIL\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
