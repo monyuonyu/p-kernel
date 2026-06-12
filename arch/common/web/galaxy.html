@@ -58,6 +58,23 @@
   #ark .opt.open{display:block}
   #ark .tiny{font-size:11px;color:#6c7086;margin:6px 0 0}
   #ark .mid{font-size:10px;color:#45475a;word-break:break-all;margin-top:10px}
+  /* log overlay (copy-log button) — selectable textarea, mobile-safe */
+  #logov{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:55;
+    display:none;align-items:center;justify-content:center}
+  #logov.open{display:flex}
+  #logov .logcard{display:flex;flex-direction:column;width:680px;max-width:92vw;
+    height:80vh;max-height:88vh;margin:16px;background:#0a0c14;
+    border:1px solid #1e2030;border-radius:8px;padding:14px;box-shadow:0 0 40px #000}
+  #logov .logbar{display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:8px;color:#f9e2af;font-size:13px}
+  #logov .logbar button{background:#181825;color:#cdd6f4;border:1px solid #313244;
+    border-radius:4px;padding:4px 8px;font-family:inherit;font-size:12px;
+    cursor:pointer;margin-left:6px}
+  #logtext{flex:1;width:100%;box-sizing:border-box;background:#05060a;
+    color:#a6adc8;border:1px solid #181825;border-radius:6px;padding:10px;
+    font-family:inherit;font-size:11px;line-height:1.5;resize:none;
+    white-space:pre;overflow:auto}
+  #loghint{font-size:10px;color:#6c7086;margin-top:8px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -97,8 +114,22 @@
   <input id="ak" list="vkeys" size="7" placeholder="word">
   <button id="bask">ask</button>
   <datalist id="vkeys"></datalist><datalist id="vvals"></datalist>
+  &nbsp; <button id="blog" title="copy this node's recent log">&#128203; log</button>
   <span id="msg" style="color:#a6e3a1"></span>
 </div>
+<!-- log overlay: a selectable textarea so a phone user can always long-
+     press-select even if both clipboard APIs are refused (http WebView). -->
+<div id="logov"><div class="logcard">
+  <div class="logbar">
+    <span id="logttl">node log</span>
+    <span>
+      <button id="logcopy">&#128203; copy</button>
+      <button id="logclose">close</button>
+    </span>
+  </div>
+  <textarea id="logtext" readonly></textarea>
+  <div id="loghint"></div>
+</div></div>
 <div id="foot"></div>
 <div id="panel"><span class="x" onclick="closePanel()">close</span>
   <h2 id="ptitle"></h2><pre id="pbody"></pre></div>
@@ -551,6 +582,57 @@ function openPeer(p){
 }
 function closePanel(){document.getElementById("panel").classList.remove("open");}
 window.closePanel=closePanel;
+
+// ── copy-log (可視化=仕組み): one tap copies this node's recent event
+//    history so the owner can share it for diagnosis. THREE layers of
+//    fallback because Android WebView on http://127.0.0.1 may refuse the
+//    async Clipboard API (insecure context):
+//      1) navigator.clipboard.writeText (modern/secure contexts)
+//      2) a textarea + document.execCommand('copy') (legacy, works on
+//         many WebViews from a user gesture)
+//      3) the overlay ALWAYS shows the text in a selectable textarea, so a
+//         manual long-press-select + copy is always possible on a phone.
+function logHint(ok){
+  const h=document.getElementById("loghint");
+  h.textContent = ok
+    ? "copied to clipboard. (if your paste is empty, long-press the text above and Copy.)"
+    : "could not auto-copy (WebView blocked it). long-press the text above, then Select all → Copy.";
+  h.style.color = ok ? "#a6e3a1" : "#fab387";
+}
+async function copyText(s){
+  // try the modern API first (works in Chrome / secure contexts)
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(s); return true;
+    }
+  }catch(_){/* fall through to execCommand */}
+  // legacy fallback: select a hidden textarea and execCommand('copy')
+  try{
+    const ta=document.getElementById("logtext");
+    ta.focus(); ta.select(); ta.setSelectionRange(0, s.length);
+    const ok=document.execCommand("copy");
+    return !!ok;
+  }catch(_){ return false; }
+}
+async function openLog(){
+  const ov=document.getElementById("logov"), ta=document.getElementById("logtext");
+  ta.value="loading…";
+  document.getElementById("loghint").textContent="";
+  ov.classList.add("open");
+  let txt="";
+  try{ txt=await (await fetch("/log.txt")).text(); }
+  catch(_){ txt="(failed to fetch /log.txt — is the node still running?)"; }
+  ta.value=txt;
+  document.getElementById("logttl").textContent="node log · "+
+    (txt.split("\n").length-1)+" lines";
+}
+function closeLog(){ document.getElementById("logov").classList.remove("open"); }
+document.getElementById("blog").onclick=openLog;
+document.getElementById("logclose").onclick=closeLog;
+document.getElementById("logcopy").onclick=async()=>{
+  const ok=await copyText(document.getElementById("logtext").value);
+  logHint(ok);
+};
 cv.addEventListener("click",(e)=>{
   const me=pos(snap.me.id);
   if(Math.hypot(e.clientX-me.x,e.clientY-me.y)<22){openSelf();return;}
