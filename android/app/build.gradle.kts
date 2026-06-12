@@ -26,8 +26,12 @@ android {
         applicationId = "io.pkernel.ump"
         minSdk        = 26   // Oreo — required by foreground services
         targetSdk     = 34
-        versionCode   = 1
-        versionName   = "0.1.0-phase-c"
+        // Bumped from 1 (wave-36 D4 build) so an installed wave-36 APK
+        // upgrades cleanly. This build carries the living mind (LM-7..11),
+        // real words (r3_vocab), Path W/W2 merge, Ed25519 signing
+        // (ed25519/sign/sign_entropy), and the 32-language manifesto.
+        versionCode   = 2
+        versionName   = "0.2.0-living-mind"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.
