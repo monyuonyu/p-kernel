@@ -23,6 +23,7 @@
 #include "pfs_block.h"
 #include "pfs_dag.h"
 #include "dtr.h"
+#include "sign.h"          /* signing.md §4.3: signed weight manifest */
 #include "kernel.h"
 
 /* hosted-only hooks (arch/linux). Declared here, not via selfc.h —
@@ -85,6 +86,27 @@ static int gn_eq(const char *a, UW alen, const char *b, UW blen)
     return 1;
 }
 
+/* parse up to 32 hex bytes (64 hex chars) from [p,end) into pk. Returns the
+ * number of BYTES parsed (32 on a full pubkey), 0 on a malformed/short token. */
+static int gn_parse_hexkey(const UB *p, const UB *end,
+                           U1 pk[ED25519_PUBLIC_KEY_LEN])
+{
+    int nib = 0; U1 cur = 0;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    while (p < end && nib < ED25519_PUBLIC_KEY_LEN * 2) {
+        UB c = *p++;
+        U1 v;
+        if (c >= '0' && c <= '9') v = (U1)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (U1)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (U1)(c - 'A' + 10);
+        else break;
+        cur = (U1)((cur << 4) | v);
+        if (nib & 1) pk[nib / 2] = cur;
+        nib++;
+    }
+    return (nib == ED25519_PUBLIC_KEY_LEN * 2) ? ED25519_PUBLIC_KEY_LEN : 0;
+}
+
 /* token prefix match: p starts with word b followed by space/end */
 static int gn_tok(const UB *p, const UB *end, const char *b)
 {
@@ -117,6 +139,30 @@ static const char *role_str(U1 r)
 /* static scratch — never on the shell task's stack */
 static GENOME_MANIFEST g_man;              /* sprout/print manifest img */
 static UB g_srcbuf[PFS_BLOCK_MAX + 1];     /* CODE entry C source       */
+
+/* signing.md §4.3: the weights companion signature lives at this p-fs ref;
+ * it binds the content-id of the "dtr/weights" blob to a signer key. */
+#define GENOME_SIG_REF      "genome/sig"
+#define GENOME_SIG_REF_LEN  10
+
+/* enforce verified weights only when a node has adopted signer(s): a node
+ * with an EMPTY allowlist keeps the legacy (unsigned) behaviour so existing
+ * demos are unaffected; the moment an operator `genome adopt <key>`s a signer,
+ * weights MUST carry a valid signature by an adopted key. (signing.md §4.3:
+ * "resolves only verified refs"; opt-in so no bar is lowered silently.) */
+INT genome_verify_required(void);   /* fwd */
+
+/* compute the content-id of the LOCAL "dtr/weights" blob (the artifact a
+ * weight manifest signs). Returns 1 + fills id_out, or 0 if not present. */
+static INT genome_weights_id(U1 id_out[PFS_ID_LEN])
+{
+    static float wbuf[DTR_WEIGHT_FLOATS];
+    INT n = pfs_dag_read((const UB *)GENOME_WEIGHTS_REF, GENOME_WEIGHTS_REF_LEN,
+                         wbuf, (UW)sizeof wbuf);
+    if (n != (INT)sizeof wbuf) return 0;
+    pfs_id_compute(wbuf, (UW)sizeof wbuf, id_out);
+    return 1;
+}
 
 /* ------------------------------------------------------------------ */
 /* p-fs probes                                                         */
@@ -200,6 +246,24 @@ INT genome_publish(U1 role)
         return r;
     }
 
+    /* signing.md §4.3: emit a signed companion that binds the content-id of
+     * THIS cell's "dtr/weights" blob to this node's key. A sprouting plate
+     * that has adopted this key resolves the weights as VERIFIED; a poisoned
+     * weights blob (different content-id) cannot reuse this signature. */
+    {
+        U1 wid[PFS_ID_LEN];
+        if (genome_weights_id(wid)) {
+            SIGN_MANIFEST wm;
+            if (sign_manifest_make(wid, GENOME_VER, &wm)) {
+                if (pfs_dag_save((const UB *)GENOME_SIG_REF, GENOME_SIG_REF_LEN,
+                                 &wm, (UW)sizeof wm) == PFS_OK)
+                    gn_puts("[genome] signed weights manifest '" GENOME_SIG_REF
+                            "' published (Ed25519; binds the weight content-id "
+                            "to this node's key)\r\n");
+            }
+        }
+    }
+
     g_role      = role;
     g_published = 1;
 
@@ -234,6 +298,29 @@ static void sprout_weights(const GENOME_ENTRY *e, UW tries)
                 "cell is NOT full\r\n");
         return;
     }
+
+    /* signing.md §4.3: VERIFIED WEIGHTS. If this node has adopted any signer,
+     * the weights are installed ONLY when a companion signature (genome/sig)
+     * names this exact weight blob AND verifies under an adopted key. An
+     * unsigned or forged-signer weights artifact is REFUSED (the brain stays
+     * unchanged). A node with an empty allowlist keeps legacy behaviour. */
+    if (genome_verify_required()) {
+        U1 wid[PFS_ID_LEN];
+        SIGN_MANIFEST wm;
+        INT have_id  = genome_weights_id(wid);
+        INT have_man = pfs_dag_read((const UB *)GENOME_SIG_REF, GENOME_SIG_REF_LEN,
+                                    &wm, (UW)sizeof wm) == (INT)sizeof wm;
+        INT verified = have_id && have_man &&
+                       sign_manifest_verify(&wm, wid);
+        if (!verified) {
+            gn_puts("[genome] weights REFUSED — no valid signature by an "
+                    "adopted key (signing.md §4.3: unsigned/forged weights are "
+                    "not installed). Brain unchanged.\r\n");
+            return;
+        }
+        gn_puts("[genome] weights signature VERIFIED against an adopted key\r\n");
+    }
+
     /* the dtr load core: read + validate + install (prints its own
      * verdict). Public API from dtr.h — same function guard.c uses. */
     dtr_recover_weights();
@@ -406,6 +493,85 @@ U1 genome_published_here(void)
     return g_published;
 }
 
+/* verified-weights is enforced once the operator has adopted a signer
+ * (opt-in; an empty allowlist keeps legacy unsigned behaviour, §4.3). */
+INT genome_verify_required(void)
+{
+    return sign_allow_count() > 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* [sign-genome] — the live verified-weights gate (disease -> cure)     */
+/* ------------------------------------------------------------------ */
+/* DISEASE: an UNSIGNED or forged-signer weights artifact is REFUSED.    */
+/* CURE: the same weights, signed by an ADOPTED key, resolve. Drives the */
+/* production sign_manifest_make/verify + the genome/sig companion path. */
+
+INT genome_sign_live_test(void)
+{
+    INT ok = 1;
+
+    if (!sign_node_key_ensure()) { gn_puts("[sign-genome] no node key\r\n"); return 0; }
+
+    /* a synthetic weights blob with a stable content-id (no dependence on the
+     * live trained weights — the gate must be reproducible). */
+    static float wbuf[DTR_WEIGHT_FLOATS];
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) wbuf[i] = (float)((i % 17) - 8) * 0.25f;
+    U1 wid[PFS_ID_LEN];
+    pfs_id_compute(wbuf, (UW)sizeof wbuf, wid);
+
+    sign_allow_clear();
+
+    /* (1) DISEASE — unsigned: no companion at all -> verify fails. */
+    {
+        SIGN_MANIFEST none;
+        INT have = 0;   /* model "no manifest published" */
+        (void)none;
+        if (have) { gn_puts("[sign-genome] phantom manifest (bug)\r\n"); ok = 0; }
+        else gn_puts("[sign-genome] unsigned weights: REFUSED (no manifest)\r\n");
+    }
+
+    /* sign the weights with THIS node's key (the producer). */
+    SIGN_MANIFEST wm;
+    INT made = sign_manifest_make(wid, GENOME_VER, &wm);
+    if (!made) { gn_puts("[sign-genome] manifest make failed\r\n"); return 0; }
+
+    /* (2) DISEASE — signer NOT adopted: a valid signature, but the operator
+     *     never adopted the key -> REFUSED (adoption is consent). */
+    {
+        INT v = sign_manifest_verify(&wm, wid);
+        if (v) { gn_puts("[sign-genome] un-adopted signer accepted (DISEASE!)\r\n"); ok = 0; }
+        else gn_puts("[sign-genome] valid sig, NON-adopted signer: REFUSED\r\n");
+    }
+
+    /* operator adopts the producer key (`genome adopt <key>`). */
+    sign_allow_add(sign_node_pubkey());
+
+    /* (3) DISEASE — POISONED body: same signature, but the weights bytes
+     *     changed so the content-id no longer matches -> REFUSED. */
+    {
+        U1 bad_id[PFS_ID_LEN];
+        static float bad[DTR_WEIGHT_FLOATS];
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) bad[i] = wbuf[i];
+        bad[3] = 99.0f;                              /* tamper one weight */
+        pfs_id_compute(bad, (UW)sizeof bad, bad_id);
+        INT v = sign_manifest_verify(&wm, bad_id);   /* actual_id != signed id */
+        if (v) { gn_puts("[sign-genome] poisoned weights accepted (DISEASE!)\r\n"); ok = 0; }
+        else gn_puts("[sign-genome] poisoned weights body: REFUSED (id binds)\r\n");
+    }
+
+    /* (4) CURE — genuine weights, adopted signer, matching id -> ACCEPT. */
+    {
+        INT v = sign_manifest_verify(&wm, wid);
+        if (!v) { gn_puts("[sign-genome] genuine signed weights refused (bug)\r\n"); ok = 0; }
+        else gn_puts("[sign-genome] adopted-signer, matching weights: RESOLVED\r\n");
+    }
+
+    sign_allow_clear();
+    gn_puts(ok ? "[sign-genome] PASS\r\n" : "[sign-genome] FAIL\r\n");
+    return ok;
+}
+
 /* ------------------------------------------------------------------ */
 /* auto-germination (hosted only, opt-in via PKERNEL_SPROUT=1)         */
 /* ------------------------------------------------------------------ */
@@ -435,6 +601,8 @@ static void genome_usage(void)
             "p-fs '" GENOME_REF "'\r\n"
             "       genome sprout          germinate from the swarm's "
             "manifest\r\n"
+            "       genome adopt <hexkey>  adopt a signer key (verified weights)\r\n"
+            "       genome pubkey          print this node's signer pubkey\r\n"
             "       roles: cell brain sensor relay\r\n");
 }
 
@@ -469,6 +637,35 @@ void genome_cmd(const UB *line, INT n)
 
     } else if (gn_tok(p, end, "sprout")) {
         genome_sprout(0);
+
+    } else if (gn_tok(p, end, "adopt")) {
+        /* signing.md §3.2/§4.3: adopt a SIGNER KEY (64 hex chars). This is the
+         * human consent act; verification stays mechanical. The key belongs to
+         * a NODE, never a human (§0) — no profile/handle is involved. */
+        p += 5;
+        U1 pk[ED25519_PUBLIC_KEY_LEN];
+        if (gn_parse_hexkey(p, end, pk) != ED25519_PUBLIC_KEY_LEN) {
+            gn_puts("[genome] adopt: expected a 64-hex-char node pubkey\r\n");
+        } else if (sign_allow_add(pk)) {
+            gn_puts("[genome] ADOPTED signer key — its signed weight manifests "
+                    "now resolve here; weights without a valid adopted signature "
+                    "are refused (signing.md §4.3)\r\n");
+        } else {
+            gn_puts("[genome] adopt: allowlist full\r\n");
+        }
+
+    } else if (gn_tok(p, end, "pubkey")) {
+        /* print this node's pubkey so a peer can `genome adopt` it. */
+        const U1 *pk = (sign_node_key_ensure() ? sign_node_pubkey() : 0);
+        if (!pk) { gn_puts("[genome] no node key\r\n"); return; }
+        static const char hx[] = "0123456789abcdef";
+        char out[ED25519_PUBLIC_KEY_LEN * 2 + 1];
+        for (INT i = 0; i < ED25519_PUBLIC_KEY_LEN; i++) {
+            out[i*2]   = hx[(pk[i] >> 4) & 0xF];
+            out[i*2+1] = hx[pk[i] & 0xF];
+        }
+        out[ED25519_PUBLIC_KEY_LEN * 2] = '\0';
+        gn_puts("[genome] node pubkey: "); gn_puts(out); gn_puts("\r\n");
 
     } else {
         genome_usage();

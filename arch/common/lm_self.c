@@ -36,6 +36,7 @@
 #include "genome.h"           /* GENOME_WEIGHTS_REF -- the model_ver object   */
 #include "drpc.h"             /* drpc_my_node -- the self_id stamp            */
 #include "dtr.h"              /* dtr_reinit_weights / dtr_weights_get         */
+#include "sign.h"             /* signing.md §4.1: companion-sig per entry     */
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -95,6 +96,9 @@ static INT self_id_zero(const U1 a[PFS_ID_LEN])
     for (UW i = 0; i < PFS_ID_LEN; i++) if (a[i]) return 0;
     return 1;
 }
+
+/* signing.md §4.1 companion-sig (defined below; used by the append paths) */
+INT lm_self_sign_entry(const U1 entry_id[PFS_ID_LEN], U4 seq);
 
 /* ------------------------------------------------------------------ */
 /* lineage parameters (III.5: N small, compiled-in)                    */
@@ -346,8 +350,17 @@ INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig)
     }
     self_memcpy(e.model_ver, self_model_ver, PFS_ID_LEN);
 
-    return pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
-                        &e, (UW)sizeof e);
+    INT r = pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                         &e, (UW)sizeof e);
+    if (r == PFS_OK) {
+        /* signing.md §4.1: commit a companion signature for the new entry so
+         * the chain is tamper-PROOF, not just tamper-EVIDENT. Best-effort (a
+         * node without a key still records the autobiography). */
+        U1 eid[PFS_ID_LEN];
+        pfs_id_compute(&e, (UW)sizeof e, eid);
+        (void)lm_self_sign_entry(eid, e.seq);
+    }
+    return r;
 }
 
 /* selfc-ring3 §5.3 — walk the live "self/lin" chain head->genesis, verify it
@@ -423,8 +436,136 @@ INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN])
     self_fill(&e, drpc_my_node, next_seq, self_id_zero(prev) ? (const U1 *)0 : prev);
     self_memcpy(e.human_ref, human_ref, PFS_ID_LEN);
 
-    return (pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
-                         &e, (UW)sizeof e) == PFS_OK) ? 1 : 0;
+    INT r = pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                         &e, (UW)sizeof e);
+    if (r == PFS_OK) {
+        /* signing.md §4.1: companion-sign the entry. The signature attests
+         * the NODE authored this chain entry — NEVER that the human in
+         * human_ref is "verified" (signing.md §0 / D4). Best-effort. */
+        U1 eid[PFS_ID_LEN];
+        pfs_id_compute(&e, (UW)sizeof e, eid);
+        (void)lm_self_sign_entry(eid, e.seq);
+    }
+    return (r == PFS_OK) ? 1 : 0;
+}
+
+/* ================================================================== */
+/* signing.md §4.1 — the Self chain becomes tamper-PROOF.               */
+/*                                                                      */
+/* Each committed entry gets a COMPANION signature object (a            */
+/* SIGN_MANIFEST whose artifact_id = the entry's content-id), stored    */
+/* under the p-fs ref "self/sig". The walker verifies every entry's     */
+/* companion against the chain's TOFU-PINNED origin key. A from-genesis */
+/* forgery by an UNPINNED key fails: the forger does not hold the key    */
+/* the verifier pinned. LM_SELF_ENTRY's 148 B image is UNTOUCHED — the   */
+/* signature is a separate content-addressed companion (NOT a struct     */
+/* field), so the wave-22 [self-*] certs stay green (signing is additive)*/
+/* and pfs_dag.c is untouched.                                          */
+/* ================================================================== */
+
+#define LM_SELF_SIG_REF      "self/sig"
+#define LM_SELF_SIG_REF_LEN  8
+
+/* commit a companion signature for an entry already saved under "self/lin".
+ * entry_id is the entry's content-id; seq binds the version. Signs with THIS
+ * node's key (the production origin). Returns 1 on success. */
+INT lm_self_sign_entry(const U1 entry_id[PFS_ID_LEN], U4 seq)
+{
+    SIGN_MANIFEST man;
+    if (!sign_manifest_make(entry_id, seq, &man)) return 0;
+    return (pfs_dag_save((const UB *)LM_SELF_SIG_REF, LM_SELF_SIG_REF_LEN,
+                         &man, (UW)sizeof man) == PFS_OK) ? 1 : 0;
+}
+
+/* verify the companion signature most recently committed for entry_id against
+ * an explicit pinned origin key. Reads the head "self/sig" manifest; returns 1
+ * iff it names entry_id AND verifies under pinned_pk. fail-closed. */
+static INT lm_self_verify_companion(const U1 entry_id[PFS_ID_LEN], U4 seq,
+                                    const U1 pinned_pk[ED25519_PUBLIC_KEY_LEN])
+{
+    SIGN_MANIFEST man;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_SIG_REF, LM_SELF_SIG_REF_LEN,
+                          &man, (UW)sizeof man);
+    if (rd != (INT)sizeof man) return 0;
+    if (man.magic != SIGN_MANIFEST_MAGIC) return 0;
+    if (!self_id_eq(man.artifact_id, entry_id)) return 0;   /* binds the id */
+    if (man.artifact_ver != seq) return 0;                  /* binds the seq */
+    /* the signature itself must verify under the PINNED key (NOT the key the
+     * manifest names — a forger names its own key; we check the pinned one). */
+    U1 body[36];
+    self_memcpy(body, man.artifact_id, PFS_ID_LEN);
+    body[32] = (U1)(man.artifact_ver       & 0xFF);
+    body[33] = (U1)((man.artifact_ver >> 8) & 0xFF);
+    body[34] = (U1)((man.artifact_ver >> 16)& 0xFF);
+    body[35] = (U1)((man.artifact_ver >> 24)& 0xFF);
+    return sign_verify(body, (UW)sizeof body, man.sig, pinned_pk) ? 1 : 0;
+}
+
+/* [sign-selflayer-live]: the production cure. A genuine entry signed by THIS
+ * node's pinned key VERIFIES; a from-genesis entry forged under an UNPINNED
+ * key is REJECTED by the SAME live verifier (wave-22 left this tamper-EVIDENT
+ * only). Drives lm_self_sign_entry + the companion verify. 1 = PASS. */
+INT lm_self_sign_live_test(void)
+{
+    INT ok = 1;
+
+    self_compute_model_ver();
+
+    /* the verifier pins THIS node's key (TOFU: first valid entry seen). */
+    if (!sign_node_key_ensure()) { lp("[sign-selflayer-live] no node key\r\n"); return 0; }
+    U1 pinned[ED25519_PUBLIC_KEY_LEN];
+    self_memcpy(pinned, sign_node_pubkey(), ED25519_PUBLIC_KEY_LEN);
+
+    /* (1) GENUINE: build + commit a real entry, sign it with the node key,
+     *     verify the companion against the pinned key -> ACCEPT. */
+    LM_SELF_ENTRY e;
+    self_fill(&e, drpc_my_node, 1, (const U1 *)0);   /* a genesis entry */
+    U1 eid[PFS_ID_LEN];
+    pfs_id_compute(&e, (UW)sizeof e, eid);
+    (void)pfs_put(&e, (UW)sizeof e, 0);
+    INT signed_ok  = lm_self_sign_entry(eid, 1);
+    INT genuine_ok = signed_ok && lm_self_verify_companion(eid, 1, pinned);
+    if (genuine_ok) lp("[sign-test] genuine signed entry under pinned key: ACCEPTED\r\n");
+    else { lp("[sign-test] genuine signed entry REJECTED (bug)\r\n"); ok = 0; }
+
+    /* (2) DISEASE: a forger authors a fresh from-genesis entry and a companion
+     *     signed by ITS OWN (unpinned) key. The forged companion verifies
+     *     under the FORGER's key but is REJECTED under the PINNED origin key. */
+    {
+        U1 fseed[ED25519_SEED_LEN], fpk[ED25519_PUBLIC_KEY_LEN], fsk[ED25519_SECRET_KEY_LEN];
+        for (INT i = 0; i < ED25519_SEED_LEN; i++) fseed[i] = (U1)(0x99 + i * 7u);
+        ed25519_keypair_from_seed(fseed, fpk, fsk);
+
+        LM_SELF_ENTRY fe;
+        self_fill(&fe, drpc_my_node, 1, (const U1 *)0);
+        ((U1 *)&fe)[40] ^= 0x5A;                 /* a different (fake) entry */
+        U1 fid[PFS_ID_LEN];
+        pfs_id_compute(&fe, (UW)sizeof fe, fid);
+
+        /* forge the companion under the forger key (body = id||seq) */
+        SIGN_MANIFEST fm;
+        fm.magic = SIGN_MANIFEST_MAGIC; fm.version = SIGN_MANIFEST_VER;
+        fm.artifact_ver = 1; fm._pad = 0;
+        self_memcpy(fm.artifact_id, fid, PFS_ID_LEN);
+        self_memcpy(fm.signer_pk,   fpk, ED25519_PUBLIC_KEY_LEN);
+        U1 fbody[36];
+        self_memcpy(fbody, fid, PFS_ID_LEN);
+        fbody[32]=1; fbody[33]=0; fbody[34]=0; fbody[35]=0;
+        ed25519_sign(fm.sig, fbody, (UW)sizeof fbody, fsk);
+        (void)pfs_dag_save((const UB *)LM_SELF_SIG_REF, LM_SELF_SIG_REF_LEN,
+                           &fm, (UW)sizeof fm);
+
+        /* the forged companion DOES verify under the forger's own key... */
+        INT under_forger = lm_self_verify_companion(fid, 1, fpk);
+        /* ...but is REJECTED under the PINNED origin key (the cure). */
+        INT under_pinned = lm_self_verify_companion(fid, 1, pinned);
+        if (under_forger && !under_pinned)
+            lp("[sign-test] forged-from-genesis under PINNED key: REJECTED (cured)\r\n");
+        else { lp("[sign-test] forged-from-genesis NOT rejected (DISEASE!)\r\n"); ok = 0; }
+    }
+
+    lp(ok ? "[sign-selflayer-live] PASS\r\n" : "[sign-selflayer-live] FAIL\r\n");
+    return ok;
 }
 
 /* ================================================================== */
