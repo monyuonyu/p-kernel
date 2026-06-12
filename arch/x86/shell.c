@@ -502,6 +502,21 @@ static void cmd_self(const char *arg)
     sout("Usage: self test\r\n");
 }
 
+IMPORT void sign_self_test(void);  /* signing.md Ed25519 provenance suite */
+
+static void cmd_sign(const char *arg)
+{
+    /* "sign test" -> the Ed25519 provenance suite (signing.md). [sign-roundtrip]
+     * with the RFC 8032 KATs runs here on bare metal too; a signature attests an
+     * ARTIFACT came from a KEY, never a human. */
+    while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        sign_self_test();
+        return;
+    }
+    sout("Usage: sign test\r\n");
+}
+
 static void cmd_dmn(const char *arg)
 {
     /* "dmn set idle <n>" or "dmn set log <n>" or "dmn test" */
@@ -2802,6 +2817,9 @@ static void execute(const char *cmd)
     if (cmd[0]=='s' && cmd[1]=='e' && cmd[2]=='l' && cmd[3]=='f' &&
         (cmd[4]==' ' || cmd[4]=='\0'))
         { cmd_self(cmd + 4); return; }
+    if (cmd[0]=='s' && cmd[1]=='i' && cmd[2]=='g' && cmd[3]=='n' &&
+        (cmd[4]==' ' || cmd[4]=='\0'))
+        { cmd_sign(cmd + 4); return; }
     if (cmd[0]=='g' && cmd[1]=='a')
         { cmd_ga(cmd + 2); return; }
     if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&

@@ -66,7 +66,7 @@ jobs:
           # 0.0% at N=100 (printed by the teach itself — the in-log evidence).
           # `mind lang` runs the LM-8 capacity/recall/oov cert.
           # timeout 300->420: `mind wait` is ~15s nominal/120s worst-case.
-          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nsign test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -214,6 +214,12 @@ jobs:
           grep -aF '[self-continuity] PASS' selftest.log
           grep -aF '[self-tamperevident] PASS' selftest.log
           grep -aF '[self-ownerless] PASS' selftest.log
+          # signing.md — Ed25519 provenance (RFC 8032 KAT-gated). A signature
+          # attests an ARTIFACT came from a KEY, never a human (the §0 boundary).
+          grep -aF '[sign-roundtrip] PASS' selftest.log
+          grep -aF '[sign-selflayer] PASS' selftest.log
+          grep -aF '[sign-unit] PASS' selftest.log
+          grep -aF '[sign-keyrotation] PASS' selftest.log
           # living-mind Part VII (LM-6, the mouth): the OWNER teaches the LIVE
           # mind at the shell — `mind teach 2 3` enqueues a singleton fact via
           # r3_fact_learn (frozen-teacher agree==100; pre_share<=33 = not
