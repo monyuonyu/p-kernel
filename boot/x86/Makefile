@@ -11,6 +11,14 @@ LD      = $(CROSS)ld
 ROOT    = ../..
 ARCH    = $(ROOT)/arch/x86
 COMMON  = $(ROOT)/arch/common
+# i18n manifesto: ark_profile.c #includes the GENERATED manifesto_page.h.
+# Bare metal embeds ja+en ONLY (lean kernel, no web UI) — same as aarch64.
+MANIFESTO_TXT  = $(COMMON)/web/manifesto.txt
+MANIFESTO_PAGE = manifesto_page.h
+ARCH_COMMON    = $(COMMON)
+MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
+include $(COMMON)/web/manifesto_langs.mk
+MANIFESTO_SET  = $(MANIFESTO_LANGS_LEAN)
 KERNEL  = $(ROOT)/kernel/common
 INC_TK  = $(ROOT)/include/kernel/tkernel
 INC_LIB = $(ROOT)/include/lib
@@ -118,6 +126,7 @@ COMMON_C_SRCS = \
     dtr_train.c \
     r3_incontext.c \
     r3_vocab.c \
+    ark_profile.c \
     spec.c \
     retrieval.c \
     dkva.c \
@@ -260,6 +269,13 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 # arch/x86 アセンブリ
 $(ARCH_S_SRCS:.S=.o): %.o: $(ARCH)/%.S
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# i18n manifesto header generation (ark_profile.o is the only consumer
+# on bare metal — galaxy.c is hosted-only).
+$(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(COMMON)/web/manifesto.en.txt $(MANIFESTO_GEN)
+	python3 $(MANIFESTO_GEN) $@ $(MANIFESTO_SET)
+
+ark_profile.o: $(MANIFESTO_PAGE)
 
 # arch/common C ソース (分散層・kloader)
 $(COMMON_OBJS): %.o: $(COMMON)/%.c

@@ -78,6 +78,70 @@ void idt_install(void) {
     asm volatile ("lidt %0" : : "m" (idt_pointer));
 }
 
+/* ----------------------------------------------------------------- */
+/* #DF honest-halt net on a dedicated IST stack (general hardening).   */
+/*                                                                     */
+/* This x86 port runs in IA-32e LONG MODE (64-bit IDT gates, CS=0x18), */
+/* so the 64-bit Interrupt Stack Table (TSS.IST1..7 + the gate IST     */
+/* field) DOES exist — contrary to a 32-bit-i686 reading.  A non-zero  */
+/* 3-bit IST index in a 64-bit interrupt gate (gate byte offset 4,     */
+/* bits[2:0]) makes the CPU UNCONDITIONALLY load RSP from TSS.IST<n>    */
+/* on entry, even on a ring0->ring0 interrupt where no privilege       */
+/* change occurs and RSP0 is NOT consulted.                            */
+/*                                                                     */
+/* WHY ONLY #DF (and NOT the IRQ/#PF vectors): routing IRQs onto a     */
+/* shared IST stack is INCOMPATIBLE with this dispatcher.  The PIT     */
+/* IRQ0 handler calls knl_timer_handler -> END_CRITICAL_SECTION ->     */
+/* knl_dispatch() SYNCHRONOUSLY, inside the IRQ, and knl_dispatch      */
+/* saves the CURRENT %esp into ctxtsk->ssp (cpu_support.S).  An IRQ    */
+/* on a shared IST stack persists an IST-relative ssp that the next    */
+/* interrupt overwrites -> corruption (verified: a #PF in              */
+/* knl_make_wait_reltim at first boot when IRQs were on IST1).  IRQs   */
+/* MUST keep running on the preempted task's own kernel stack here.    */
+/*                                                                     */
+/* WHAT IST BUYS US: #DF (double fault).  A #DF is the fault raised    */
+/* when the CPU cannot even PUSH a fault frame — the kernel-stack-     */
+/* overflow case.  Without an IST stack the #DF push also fails ->     */
+/* triple fault -> silent reset.  Routed to its OWN IST2 stack, a true */
+/* overflow surfaces as an HONEST "Double Fault / System halted"       */
+/* instead of silent corruption.  #DF never returns/dispatches, so the */
+/* shared-stack/dispatch conflict above does not apply to it.          */
+/*                                                                     */
+/* SCOPE HONESTY — this does NOT close gap-ledger KILL-CHURN-CRASH.    */
+/* The wave-32 audit framed the residual as an "IRQ-frame-on-deep-     */
+/* stack overflow".  That framing is FALSIFIED here: the residual      */
+/* garbage-PC #PF (always EIP in knl_make_wait_reltim, write to a      */
+/* non-present knl_ctxtsk/TCB) reproduces IDENTICALLY with 2 KB, 8 KB  */
+/* AND 16 KB kernel stacks — so it is NOT a stack overflow, and this   */
+/* #DF net never fires for it (the corruption is a dangling pointer,   */
+/* not a frame the CPU failed to push).  The real root cause is a      */
+/* KILL-PATH TCB USE-AFTER-FREE: infer_d blocks in a timed sem wait    */
+/* (kdds_sub -> tk_wai_sem, on the timer + semaphore queues); the      */
+/* kill/heal churn (tk_ter_tsk + user_proc_teardown + tk_del_tsk)      */
+/* leaves a queue node referencing the freed victim TCB, which a later */
+/* knl_make_wait_reltim/knl_timer_insert dereferences.  That fix       */
+/* belongs in the kill/teardown path, not here.  This #DF net is kept  */
+/* as correct general hardening (and documents the IST reality).       */
+/*                                                                     */
+/* TSS.IST2 is populated by gdt_init_userspace() (arch/x86/gdt_user.c) */
+/* just before it calls this function.                                 */
+/* ----------------------------------------------------------------- */
+#define IDT_IST_DF   2u   /* TSS.IST2 — #DF only */
+
+void idt_enable_ist(void) {
+    unsigned long flags;
+    asm volatile ("pushf\n\tpop %0\n\tcli" : "=r"(flags) :: "memory");
+
+    /* #DF onto its own IST stack: an honest halt on kernel-stack
+     * overflow instead of a triple-fault reset / garbage-PC #PF.
+     * ist byte low 3 bits = IST index; upper bits reserved (0). */
+    idt_table[EXCEPTION_DF].ist = IDT_IST_DF & 0x7u;
+
+    /* IDT is already loaded (lidt); editing the in-memory table is
+     * picked up on the next interrupt — no re-lidt needed. */
+    if (flags & 0x200u) asm volatile ("sti" ::: "memory");
+}
+
 /* 外部シリアル出力関数 */
 extern void print(const char *str);
 

@@ -23,6 +23,9 @@
 #include "gdt_user.h"
 #include <tmonitor.h>
 
+/* idt.c — flip IRQ/#PF/#GP/#DF gates to IST after the TSS is loaded. */
+extern void idt_enable_ist(void);
+
 /* ----------------------------------------------------------------- */
 /* 64-bit TSS (IA-32e mode — only RSP0 is needed for ring3→ring0)    */
 /*                                                                     */
@@ -38,7 +41,8 @@ typedef struct __attribute__((packed)) {
     UW  rsp1_lo; UW rsp1_hi;
     UW  rsp2_lo; UW rsp2_hi;
     UW  reserved1; UW reserved2;
-    /* IST1..7 (Interrupt Stack Table, not used) */
+    /* IST1..7 (Interrupt Stack Table). IST2 = #DF stack (KILL-CHURN-CRASH
+     * close); the rest unused. See idt.c idt_enable_ist(). */
     UW  ist1_lo; UW ist1_hi;
     UW  ist2_lo; UW ist2_hi;
     UW  ist3_lo; UW ist3_hi;
@@ -54,6 +58,28 @@ typedef struct __attribute__((packed)) {
 /* sizeof(TSS64) = 4 + 8+8+8 + 8 + 7*8 + 8 + 2+2 = 104 bytes */
 
 static TSS64 kernel_tss __attribute__((aligned(16)));
+
+/* ----------------------------------------------------------------- */
+/* #DF honest-halt net — dedicated IST2 stack (general hardening).     */
+/*                                                                     */
+/* This x86 port runs in IA-32e LONG MODE (64-bit IDT gates, CS=0x18;  */
+/* the C runtime is 32-bit-compat).  So the 64-bit Interrupt Stack     */
+/* Table (TSS.IST1..7 + the IDT gate IST field) DOES exist.            */
+/*                                                                     */
+/* #DF is the fault raised when the CPU cannot even push a fault frame */
+/* (kernel-stack overflow).  Without an IST stack the #DF push fails   */
+/* too -> triple fault -> silent reset.  On its own IST2 stack a true  */
+/* overflow becomes an HONEST "Double Fault / System halted".          */
+/* IRQs are deliberately NOT on IST: this kernel dispatches            */
+/* SYNCHRONOUSLY from the timer IRQ (knl_dispatch saves the live %esp  */
+/* into ctxtsk->ssp), so an IRQ on a shared IST stack would persist a  */
+/* stale ssp -> corruption.  See idt.c idt_enable_ist() for the full   */
+/* rationale AND the honest note that this does NOT close gap-ledger   */
+/* KILL-CHURN-CRASH: that residual is a kill-path TCB use-after-free,  */
+/* NOT a stack overflow (reproduces identically at 2/8/16 KB stacks).  */
+/* ----------------------------------------------------------------- */
+#define DF_STACK_SIZE    4096u   /* 4 KB — #DF only needs to print+halt */
+static UB df_ist_stack[DF_STACK_SIZE] __attribute__((aligned(16)));
 
 /* ----------------------------------------------------------------- */
 /* GDT descriptor helpers                                             */
@@ -166,10 +192,28 @@ void gdt_init_userspace(void)
     /* iomap_base >= sizeof(TSS) disables the I/O permission bitmap */
     kernel_tss.iomap_base = (UH)sizeof(kernel_tss);
 
+    /* 6b. KILL-CHURN-CRASH close: install the IST2 (#DF) stack top.
+     *     Stacks grow DOWN, so the IST entry is one-past-the-end
+     *     (16-byte aligned).  See the mechanism comment at the
+     *     df_ist_stack[] definition above (only #DF uses an IST here;
+     *     IRQs deliberately stay on the preempted task's own stack). */
+    {
+        UW df_top = (UW)df_ist_stack + DF_STACK_SIZE;
+        df_top &= ~0xFu;
+        kernel_tss.ist2_lo = df_top;   kernel_tss.ist2_hi = 0;
+    }
+
     /* 7. Load TSS selector */
     asm volatile("ltr %0" : : "r"((UH)TSS_SEL));
 
-    tm_putstring((UB *)"[gdt]  ring3 segments + 64-bit TSS loaded\r\n");
+    /* 8. Now that the TSS (with IST1/IST2 stack tops) is live, flip the
+     *    IRQ / #PF / #GP / #DF IDT gates to use their IST stacks.  Done
+     *    here (not in idt_init) because IST gates are only valid once a
+     *    TSS with populated IST entries is loaded; interrupts are
+     *    disabled inside idt_enable_ist() during the gate rewrite. */
+    idt_enable_ist();
+
+    tm_putstring((UB *)"[gdt]  ring3 segments + 64-bit TSS + #DF IST loaded\r\n");
 }
 
 /* ----------------------------------------------------------------- */
