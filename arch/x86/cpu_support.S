@@ -148,6 +148,25 @@ knl_dispatch:
     call    gdt_set_kernel_stack
     addl    $4, %esp
 
+    /* KILL-CHURN-CRASH ROOT FIX (gap-ledger): reload CR3 to the INCOMING
+     * task's own address space on EVERY dispatch.  Before this, the
+     * dispatcher switched stacks but never CR3, so a task could keep
+     * running on a PREVIOUS ring3 tenant's process CR3; when that tenant
+     * was killed (paging_proc_destroy -> page-table pool slot freed) and
+     * the next elf_exec recycled+zeroed those slots, the live CR3's
+     * translation of kernel addresses went non-present -> the ring0 #PF
+     * (CR2 in garbage, EIP in knl_make_wait_reltim via tk_dly_tsk; the
+     * fault's CR3 was &pt_pool[0], not kernel_cr3).  knl_dispatch_set_cr3
+     * loads kernel_cr3 for a ring0 task (no proc CR3 registered) or the
+     * tenant's own live CR3 — the latter cannot be freed while it is the
+     * running ctxtsk.  cdecl: clobbers %eax/%ecx/%edx; %eax is reloaded
+     * below from nothing live here (the pops use only %esp).  Mechanism
+     * named in arch/x86/paging.c:knl_dispatch_set_cr3. */
+    movl    (knl_ctxtsk), %eax
+    pushl   TCB_tskid(%eax)
+    call    knl_dispatch_set_cr3
+    addl    $4, %esp
+
     /* Enable dispatch */
     movl    $0, (knl_dispatch_disabled)
 
