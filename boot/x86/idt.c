@@ -265,6 +265,29 @@ void exception_handler(uint32_t exception_num, uint32_t error_code,
     print(" EIP=0x"); print_hex32(saved_eip);
     print("\r\n");
 
+#ifdef KCC_DIAG
+    /* KILL-CHURN-CRASH diagnostic (gap-ledger): print the decisive state
+     * at a ring0 #PF — faulting linear address (CR2), the active CR3, and
+     * the kernel's dispatch pointers (raw, no struct deref so this TU need
+     * not see the TCB layout).  Temporary; behind -DKCC_DIAG; drop at
+     * merge. */
+    {
+        extern void *knl_ctxtsk;
+        extern void *knl_schedtsk;
+        unsigned int cr2, cr3;
+        asm volatile ("mov %%cr2, %0" : "=r"(cr2));
+        asm volatile ("mov %%cr3, %0" : "=r"(cr3));
+        print("CR2=0x"); print_hex32(cr2);
+        print(" CR3=0x"); print_hex32(cr3);
+        print("\r\n");
+        print("knl_ctxtsk=0x");
+        print_hex32((unsigned int)(unsigned long)knl_ctxtsk);
+        print(" knl_schedtsk=0x");
+        print_hex32((unsigned int)(unsigned long)knl_schedtsk);
+        print("\r\n");
+    }
+#endif
+
 #ifdef KCC_TRACE
     {
         extern volatile unsigned int kcc_trace[16][3];
