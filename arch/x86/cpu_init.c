@@ -36,37 +36,25 @@ EXPORT ER knl_cpu_initialize(void)
         knl_intvec[i] = NULL;
     }
 
-    /* Set up kernel memory area for T-Kernel imalloc.
+    /* Set up kernel memory area for T-Kernel imalloc
+     * lowmem_top: just after kernel image, aligned to 4-byte boundary
+     * lowmem_limit: SYSTEMAREA_END (64MB)
      *
-     * KILL-CHURN-CRASH ROOT FIX (gap-ledger): imalloc hands out the
-     * kernel-side TASK STACKS (tk_cre_tsk -> knl_Imalloc).  The x86
-     * ring3 grant (paging_proc_create, Region A) maps 0x400000-0xFFFFFF
-     * — the SAME 4..16 MB window — as PTE_US|PTE_RW into EVERY user
-     * address space, and the p-kernel native user stack top is
-     * USER_STACK_TOP = 0x1000000 (16 MB).  With _kernel_end ~= 13.5 MB,
-     * imalloc previously started INSIDE that ring3-writable window, so
-     * task stacks landed at ~0x00D8xxxx (just above _kernel_end).  Under
-     * kill/heal churn of infer_d.elf, a ring3 user write (its own user
-     * stack/heap, all in the shared Region A) CLOBBERS a live task's
-     * kernel stack -> the saved dispatch frame is corrupted -> the
-     * dispatcher "ret"s into a garbage PC == the intermittent #PF whose
-     * EIP is always inside knl_make_wait_reltim (CS=0x08).  This is NOT
-     * a TCB use-after-free and NOT a stack overflow (it reproduces at
-     * 2/8/16 KB stacks because the clobber is EXTERNAL); the prior
-     * waves' framing is corrected here, proven by a dispatch-trace dump
-     * showing the faulting task stacks at 0x00D8xxxx in the ring3 window.
-     *
-     * Fix: float imalloc's base ABOVE the ring3-reachable window (>= 16
-     * MB) so kernel task stacks can NEVER alias user-writable memory.
-     * The kernel image/BSS still lives below 16 MB; only the heap moves
-     * up.  Region A's top (USER_REGION_TOP) is the 16 MB granted by
-     * paging_proc_create; keep these two numbers in lock-step. */
-    {
-        UW after_image = ((UW)_kernel_end + 3) & ~3UL;
-        UW above_ring3 = 0x01000000UL;   /* 16 MB == top of Region A */
-        knl_lowmem_top = (void *)(after_image > above_ring3
-                                  ? after_image : above_ring3);
-    }
+     * KILL-CHURN-CRASH investigation note (gap-ledger): an earlier
+     * hypothesis blamed an EXTERNAL ring3 clobber of kernel task stacks
+     * — imalloc hands out task stacks just above _kernel_end (~0xD8xxxx),
+     * which overlaps the x86 ring3-writable Region A (0x400000–0xFFFFFF,
+     * see arch/x86/paging.c) — and floated this base above 16 MB to
+     * dodge it.  That was DISPROVEN by the closure stress: relocating the
+     * heap moved the faulting stacks 0x00D8xxxx -> 0x0100xxxx but left the
+     * ~42% fault rate unchanged, because the real corruption lives in the
+     * GLOBAL timer LINKED LIST (a freed TCB's still-armed wtmeb), not at a
+     * fixed VA.  The real fix is in kernel/common/task_manage.c
+     * (knl_del_tsk now unlinks tcb->wtmeb before freeing).  The base is
+     * therefore left at master's value.  (A genuine-but-separate hardening
+     * — kernel stacks should not alias ring3 memory — is deferred so this
+     * row's diff is exactly the proven cure.) */
+    knl_lowmem_top   = (void *)(((UW)_kernel_end + 3) & ~3UL);
     knl_lowmem_limit = (void *)SYSTEMAREA_END;
 
     /* Initialize internal memory allocator */

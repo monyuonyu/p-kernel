@@ -112,6 +112,17 @@ EXPORT ER knl_task_initialize( void )
 #if CFN_MAX_PORID > 0
 		tcb->wrdvno = tskid;
 #endif
+		/* KILL-CHURN-CRASH hardening (gap-ledger): self-link every TCB's
+		 * wait-timer event block ONCE here.  knl_tcb_table is Noinit
+		 * (BSS) so wtmeb.queue is NULL/NULL at boot; the defensive
+		 * knl_timer_delete (= QueRemove) added to knl_make_dormant and
+		 * knl_del_tsk relies on the node being self-referential (empty)
+		 * when the timer was never armed — QueRemove's no-op guard is
+		 * `next != entry`, which a NULL/NULL node would fail, faulting on
+		 * NULL->next.  This single QueInit makes every later delete safe
+		 * and idempotent.  (Prerequisite for the timer hygiene; the row
+		 * is NOT closed — see knl_del_tsk in task_manage.c.) */
+		QueInit(&tcb->wtmeb.queue);
 		QueInsert(&tcb->tskque, &knl_free_tcb);
 	}
 
@@ -157,6 +168,32 @@ EXPORT void knl_make_dormant( TCB *tcb )
 #endif
 
 	tcb->wercd = NULL;  /* 待ち要因コードクリア */
+
+	/* KILL-CHURN-CRASH hardening (gap-ledger) — PARTIAL, row still OPEN.
+	 * Make termination ALWAYS unlink this task's wait-timer event block
+	 * from the GLOBAL timer queue.  knl_make_dormant is the single reset
+	 * point reached by every teardown — tk_ter_tsk_impl (knl_ter_tsk +
+	 * knl_make_dormant), tk_ext_tsk and tk_exd_tsk — so this is the one
+	 * choke point that covers the foreign kill/heal churn.  knl_ter_tsk()
+	 * only deletes the timer on its TS_WAIT branch, so a victim killed
+	 * from a non-WAIT instant could otherwise leave a stale wtmeb linked
+	 * in the timer queue (callback knl_wait_release_tmout(tcb)); this is
+	 * correct hygiene.  knl_timer_delete (QueRemove + QueInit) repairs the
+	 * node's neighbours (NOT a bare QueInit, which would ORPHAN a still-
+	 * linked node).
+	 *
+	 * HONEST STATUS: this does NOT close the row — see the long note in
+	 * knl_del_tsk (task_manage.c).  The recycled-daemon garbage-PC #PF in
+	 * knl_wait_release_tmout still reproduces ~42% WITH this fix; the
+	 * external-clobber and stale-timer theories were both empirically
+	 * refuted.  The residual is an unpinned intrinsic teardown race.
+	 *
+	 * Safe/idempotent because the TCB pool init (knl_task_initialize)
+	 * self-links every wtmeb once, so a never-armed node satisfies
+	 * QueRemove's `next != entry` no-op guard
+	 * — the BSS-zeroed (NULL/NULL) state that would dereference NULL never
+	 * reaches here. */
+	knl_timer_delete(&tcb->wtmeb);
 
 #if CFN_MAX_MTXID > 0
 	tcb->mtxlist	= NULL;  /* ミューテックスリストクリア */

@@ -169,6 +169,39 @@ SYSCALL ID tk_cre_tsk_impl P1( CONST T_CTSK *pk_ctsk )
  */
 EXPORT void knl_del_tsk( TCB *tcb )
 {
+	/* KILL-CHURN-CRASH hardening (gap-ledger) — PARTIAL, row still OPEN.
+	 *
+	 * Defensively unlink this task's wait-timer event block from the
+	 * GLOBAL timer queue before the TCB is freed/recycled.  The wtmeb
+	 * (TMEB) is embedded in the TCB; while armed (tk_wai_sem/tk_dly_tsk
+	 * with a timeout -> knl_make_wait_reltim) it is a live node in the
+	 * kernel-wide timer queue whose callback is knl_wait_release_tmout(
+	 * tcb).  knl_ter_tsk() only cancels it on the TS_WAIT branch, so under
+	 * foreign kill/heal churn a non-WAIT-instant victim could leave a
+	 * stale wtmeb; removing it here (and in knl_make_dormant) is correct
+	 * timer hygiene.  knl_timer_delete is safe/idempotent because
+	 * knl_task_initialize self-links every wtmeb once (so QueRemove's
+	 * `next != entry` no-op guard holds for a never-armed node).
+	 *
+	 * HONEST STATUS: this hygiene is CORRECT but does NOT close the
+	 * ledger row.  The kill-churn garbage-PC #PF (write, err=0x2, EIP in
+	 * knl_wait_release_tmout doing QueRemove through a smashed
+	 * tcb->tskque; the faulting daemon is a recycled TCB at ssp 0xD8E84C,
+	 * ret==knl_task_entry_trampoline) STILL reproduces at ~42% with this
+	 * fix in place.  Empirically refuted root-cause theories: (a) external
+	 * ring3 clobber of kernel stacks — floating imalloc above 16 MB moved
+	 * the stacks 0xD8xxxx->0x100xxxx with NO change in fault rate, and
+	 * making the kernel-BSS page (PD[6], holding knl_tcb_table 0xD79980 /
+	 * knl_timer_queue 0xD7D8A0) ring3 read-only did NOT cure it either;
+	 * (b) simple stale-timer-on-recycle — this very fix.  The residual is
+	 * an as-yet-unpinned intrinsic race in the task/wait/timer teardown
+	 * under concurrent heal re-exec (suspect: dproc_kill_by_name killing a
+	 * STALE tid while the live daemon's wait-queue/timer state outlives
+	 * its TCB recycle).  Next diagnostic: instrument knl_wait_release_tmout
+	 * to log when tcb->tskque.prev is outside [knl_tcb_table, +sizeof] or
+	 * the SEMCB table, to identify the orphan's origin. */
+	knl_timer_delete(&tcb->wtmeb);
+
 #if USE_IMALLOC
 	if ( (tcb->tskatr & TA_USERBUF) == 0 ) {
 		/* User buffer is not used */
@@ -204,28 +237,27 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 	if ( state != TS_DORMANT ) {
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
 	} else if ( tcb == knl_ctxtsk || tcb == knl_schedtsk ) {
-		/* KILL-CHURN-CRASH fix (gap-ledger): NEVER free the TCB the
-		 * CPU is standing on (knl_ctxtsk) or is scheduled to switch
-		 * INTO next (knl_schedtsk).  dproc_kill_by_name() runs
-		 * tk_ter_tsk + user_proc_teardown + tk_del_tsk and these are
-		 * NOT one critical section: user_proc_teardown calls
-		 * tk_sig_sem / paging ops whose END_CRITICAL_SECTION can
-		 * DISPATCH, and the PIT IRQ can preempt+reschedule in the
-		 * gap.  A DORMANT victim that is ALSO the live ctxtsk/schedtsk
-		 * (the killer was itself reaped, or a churn dispatch re-pinned
-		 * the victim as the next task) would, once freed here, have its
-		 * stale tskctxb.ssp loaded by the dispatcher .Ldispatch_loop ->
-		 * "ret" into freed+reused memory == the garbage-PC #PF in
-		 * knl_make_wait_reltim (write through a non-present knl_ctxtsk)
-		 * documented in boot/x86/idt.c.  Refusing here is correct and
-		 * safe: a task standing on the CPU cannot be in TS_DORMANT in
-		 * the first place under a sane caller; the foreign-kill churn
-		 * is the only producer of this window, and E_OBJ makes the
-		 * killer's own retry (or the next heal sweep) reclaim it once
-		 * the dispatch pointers have moved off it.  Does NOT affect the
-		 * wave-25 ring3 fault-reap (tk_ext_tsk frees via knl_del_tsk on
-		 * the OUTGOING context AFTER knl_force_dispatch has already
-		 * repointed ctxtsk/schedtsk — see knl_exd_tsk path) nor the
+		/* KILL-CHURN-CRASH guard (gap-ledger) — DEFENCE-IN-DEPTH.
+		 *
+		 * NOTE: this row is NOT closed — the recycled-daemon garbage-PC
+		 * #PF still reproduces ~42% (see the long status note in
+		 * knl_del_tsk above).  This guard is one of several correct
+		 * hardenings shipped while the intrinsic teardown race is still
+		 * being pinned; it is NOT the cure.
+		 *
+		 * This guard protects against the DISTINCT
+		 * (and also real) hazard of freeing the TCB the CPU is standing
+		 * on / is scheduled INTO next: dproc_kill_by_name() runs
+		 * tk_ter_tsk + user_proc_teardown + tk_del_tsk, which are NOT one
+		 * critical section, so a churn dispatch could in principle leave
+		 * a DORMANT victim as knl_ctxtsk/knl_schedtsk when tk_del_tsk
+		 * runs; freeing it then would feed the dispatcher a stale ssp.
+		 * Refusing with E_OBJ is safe — a task that is genuinely on the
+		 * CPU cannot legitimately be TS_DORMANT, and the next heal sweep
+		 * reclaims the TCB once the dispatch pointers move off it.  Does
+		 * NOT affect the wave-25 ring3 fault-reap (tk_exd_tsk frees via
+		 * knl_del_tsk DIRECTLY on the outgoing ctxtsk after
+		 * knl_force_dispatch, bypassing this syscall path) nor the
 		 * wave-28 user_proc_teardown (context-independent, no del). */
 		ercd = E_OBJ;
 	} else {
