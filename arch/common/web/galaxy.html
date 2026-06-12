@@ -7,7 +7,7 @@
 <style>
   html,body{margin:0;height:100%;background:#05060a;color:#cdd6f4;
     font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
-  #sky{display:block;width:100vw;height:100vh}
+  #sky{display:block;width:100vw;height:100vh;touch-action:none}
   #hud{position:fixed;left:12px;top:10px;font-size:12px;line-height:1.5;
     text-shadow:0 0 4px #000;pointer-events:none;
     max-width:calc(100vw - 195px)}   /* leave room for #lang (top-right) */
@@ -345,8 +345,8 @@ let t0=performance.now();
 
 // ── 3D core: scene centered on MY star at the origin; camera orbits ──
 const FOV=520, CAMD=860;         // perspective strength / camera distance
-let yaw=0;
-const PITCH=-0.18, CP=Math.cos(PITCH), SP=Math.sin(PITCH);
+let yaw=0, yawUser=0, vyaw=0;     // auto-drift + the owner's hand + inertia
+let pitchCur=-0.18, CP=Math.cos(-0.18), SP=Math.sin(-0.18);
 function project(x,y,z){
   const cy=Math.cos(yaw),sy=Math.sin(yaw);
   const X=x*cy+z*sy, Z0=-x*sy+z*cy;
@@ -422,7 +422,9 @@ document.addEventListener("visibilitychange",()=>{
 function draw(){
   if(!rafOn) return;
   const now=performance.now(),tms=now-t0;
-  yaw=tms*0.000055;                      // one slow drift, ~115s/rev
+  if(!dragging){ yawUser+=vyaw; vyaw*=0.94; }        // inertia after a fling
+  yaw=tms*0.000055+yawUser;              // slow drift + the owner's hand
+  CP=Math.cos(pitchCur); SP=Math.sin(pitchCur);
   ctx.clearRect(0,0,W,H);
 
   // ① ambient depth field (parallax = the 3D feel)
@@ -789,7 +791,25 @@ document.getElementById("logcopy").onclick=async()=>{
   const ok=await copyText(document.getElementById("logtext").value);
   logHint(ok);
 };
+// ── drag the sky: 360° yaw + clamped pitch, with fling inertia.
+//    A real drag (>8px) suppresses the star-tap so the two never fight.
+let dragging=false, dragMoved=0, lx=0, ly=0;
+cv.addEventListener("pointerdown",(e)=>{
+  dragging=true; dragMoved=0; lx=e.clientX; ly=e.clientY; vyaw=0;
+  if(cv.setPointerCapture) try{cv.setPointerCapture(e.pointerId);}catch(_){}
+});
+addEventListener("pointermove",(e)=>{
+  if(!dragging) return;
+  const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  dragMoved+=Math.abs(dx)+Math.abs(dy);
+  yawUser+=dx*0.005; vyaw=dx*0.005*0.6;
+  pitchCur=Math.max(-0.95,Math.min(0.65,pitchCur+dy*0.0035));
+});
+addEventListener("pointerup",()=>{ dragging=false; });
+addEventListener("pointercancel",()=>{ dragging=false; });
+
 cv.addEventListener("click",(e)=>{
+  if(dragMoved>8) return;                 // it was a drag, not a tap
   // hit-test against the per-frame projected positions (3D-aware)
   if(Math.hypot(e.clientX-HIT.me.x,e.clientY-HIT.me.y)<HIT.me.r){openSelf();return;}
   for(const p of snap.peers){
