@@ -221,38 +221,6 @@ UW paging_get_task_cr3(ID tid)
 UW paging_get_kernel_cr3(void) { return kernel_cr3; }
 
 /* ----------------------------------------------------------------- */
-/* KILL-CHURN-CRASH ROOT FIX (gap-ledger) — dispatch-time CR3 reload. */
-/*                                                                    */
-/* Mechanism (convicted from a KCC_DIAG ring0 #PF dump):              */
-/*   The dispatcher (cpu_support.S) switched kernel STACKS but NEVER  */
-/*   CR3.  Only user_exec() ever loaded a process CR3, and it stayed  */
-/*   the live CR3 across context switches into OTHER tasks (the       */
-/*   kernel is mapped in every address space, so this "worked").      */
-/*   When dproc_kill_by_name/user_proc_teardown then destroyed that   */
-/*   process (paging_proc_destroy -> pool_free of its PML4/PDPT/PD    */
-/*   slots) and the next elf_exec re-allocated the SAME pool slots    */
-/*   (pool_alloc zeroes all 512 entries before re-filling), the still-*/
-/*   active CR3 of whatever task was running translated kernel        */
-/*   addresses through a mid-rewrite / freed table -> a non-present   */
-/*   ring0 #PF with CR2 in garbage (e.g. 0xF000FF53) and the saved    */
-/*   EIP wherever that task happened to be (classically               */
-/*   knl_make_wait_reltim, via tk_dly_tsk).  Proof: at the fault      */
-/*   CR3 == &pt_pool[0] (a process table), NOT kernel_cr3.            */
-/*                                                                    */
-/* Fix: on EVERY dispatch, reload CR3 to the INCOMING task's own      */
-/* address space — kernel_cr3 for a ring0 task (no registered CR3),   */
-/* or its live process CR3 for a ring3 tenant.  A ring0 task then     */
-/* never runs on a recyclable process table, and a tenant runs only   */
-/* on its OWN live table (which cannot be freed while it is the       */
-/* running ctxtsk — the killer is the one running).  Idempotent and   */
-/* cheap (a CR3 reload == a TLB flush, already paid by user_exec).    */
-/* Called from .Ldispatch_loop with the incoming task's tid.          */
-void knl_dispatch_set_cr3(ID tid)
-{
-    paging_switch(paging_get_task_cr3(tid));
-}
-
-/* ----------------------------------------------------------------- */
 /* Per-task brk (heap end) registry — used by SYS_BRK (Linux #45)  */
 /* ----------------------------------------------------------------- */
 
