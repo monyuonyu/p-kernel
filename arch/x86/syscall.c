@@ -140,6 +140,25 @@ W user_last_exit_code(void) { return user_last_exit; }
  * destroying the live tables would hand them to the next exec.      */
 void user_proc_teardown(ID tid)
 {
+#ifdef KCC_DIAG
+    /* KILL-CHURN-CRASH diag: is the tid we are about to TEAR DOWN actually
+     * terminal (DORMANT/NONEXIST)?  If it is still alive (READY/WAIT) we
+     * are freeing the page tables of a LIVE task — the convicted hazard. */
+    {
+        extern void print(const char *str);
+        T_RTSK rt;
+        ER er = tk_ref_tsk(tid, &rt);
+        unsigned int st = (er == E_OK) ? (unsigned int)rt.tskstat : 0xEEEE;
+        /* TTS_DMT bit indicates dormant; anything else alive = danger */
+        print("[KCC] teardown tid=0x");
+        { char b[9]; unsigned int v=(unsigned int)tid; for(int i=7;i>=0;i--){int d=v&0xF;b[i]=d<10?'0'+d:'A'+d-10;v>>=4;} b[8]=0; print(b); }
+        print(" refstat=0x");
+        { char b[9]; unsigned int v=st; for(int i=7;i>=0;i--){int d=v&0xF;b[i]=d<10?'0'+d:'A'+d-10;v>>=4;} b[8]=0; print(b); }
+        print(" cr3=0x");
+        { char b[9]; unsigned int v=(unsigned int)paging_get_task_cr3(tid); for(int i=7;i>=0;i--){int d=v&0xF;b[i]=d<10?'0'+d:'A'+d-10;v>>=4;} b[8]=0; print(b); }
+        print("\r\n");
+    }
+#endif
     /* Release subsystem resources (sockets, fds, etc.) */
     knl_ssy_cleanup(tid);
     /* Unblock shell relay loop */
@@ -147,13 +166,21 @@ void user_proc_teardown(ID tid)
         stdin_active = FALSE;
         tk_sig_sem(stdin_exit_sem, 1);
     }
-    /* Free process page tables and restore kernel address space */
+    /* Free process page tables and restore kernel address space.
+     *
+     * KILL-CHURN-CRASH ROOT FIX (gap-ledger): UNREGISTER the task's CR3
+     * (paging_set_task_cr3(tid,0)) BEFORE freeing the page-table pool
+     * slots.  Previously the order was destroy-then-unregister; a
+     * preemption in that window left tid pointing at a freed (and possibly
+     * already-recycled) CR3, so the dispatcher could load it.  Unregister
+     * first => once the slot is freed, no path can resolve tid back to it.
+     * Also switch the CPU off proc_cr3 first (it may be the live CR3). */
     {
         UW proc_cr3 = paging_get_task_cr3(tid);
         paging_switch(paging_get_kernel_cr3());
         if (proc_cr3 != paging_get_kernel_cr3()) {
-            paging_proc_destroy(proc_cr3);
-            paging_set_task_cr3(tid, 0);
+            paging_set_task_cr3(tid, 0);     /* unregister BEFORE free */
+            paging_proc_destroy(proc_cr3);   /* now safe to recycle    */
         }
     }
     /* Drop the per-task FPU image: a reused tid starts clean */
