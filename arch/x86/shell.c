@@ -657,12 +657,17 @@ static void cmd_kill(const char *arg)
 }
 
 static void dproc_test(void);   /* kill-path teardown gate — defined after r3_run_elf */
+static void dproc_churn(void);  /* KILL-CHURN-CRASH stress gate — defined below */
 
 static void cmd_dproc(const char *arg)
 {
     while (*arg == ' ') arg++;
     if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
         dproc_test();
+        return;
+    }
+    if (arg[0]=='c' && arg[1]=='h' && arg[2]=='u' && arg[3]=='r' && arg[4]=='n') {
+        dproc_churn();
         return;
     }
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
@@ -1823,6 +1828,126 @@ static void dproc_test(void)
         sout(" end=");        sout_dec((UW)after);
         sout("\r\n");
         sout("[dproc-teardown] FAIL\r\n");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* dproc churn — KILL-CHURN-CRASH stress + closure gate (gap-ledger)   */
+/*                                                                     */
+/* DISEASE (pre-fix): kill/heal churn of a ring3 daemon (infer_d.elf)  */
+/* that blocks in a timed sem wait races the foreign-kill teardown     */
+/* (tk_ter_tsk + user_proc_teardown + tk_del_tsk — NOT one critical    */
+/* section).  A DORMANT victim that is still/again knl_ctxtsk or       */
+/* knl_schedtsk gets its TCB freed by tk_del_tsk; the dispatcher then  */
+/* loads its stale ssp and "ret"s into freed+reused memory == the      */
+/* historic garbage-PC #PF in knl_make_wait_reltim (CS=0x08).          */
+/* Reproduced ~43% (3/7) across churn boots on master.                 */
+/*                                                                     */
+/* This verb drives that churn HARD and DETERMINISTICALLY in one boot: */
+/* CHURN_CYCLES tight exec->(tiny varying settle)->kill cycles with    */
+/* the ELF watchdog LIVE (so heal re-execs infer_d concurrently, the   */
+/* real churn).  The fix (tk_del_tsk ctxtsk/schedtsk guard) keeps the  */
+/* freed TCB off the dispatch pointers; the poison net                 */
+/* (knl_dispatch_poison_check) HALTS with [kill-churn] CAUGHT if a      */
+/* freed TCB ever reaches the dispatcher.  PASS == survived all cycles */
+/* with the scheduler still advancing and no CAUGHT/#PF.               */
+/* ------------------------------------------------------------------ */
+#ifndef CHURN_CYCLES
+#define CHURN_CYCLES 40
+#endif
+
+static volatile UW churn_sentinel_ticks;
+static volatile W  churn_sentinel_stop;
+
+static void churn_sentinel_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    while (!churn_sentinel_stop) {
+        churn_sentinel_ticks++;
+        tk_dly_tsk(10);
+    }
+    tk_ext_tsk();
+}
+
+static void dproc_churn(void)
+{
+    if (!vfs_ready) {
+        sout("dproc-churn: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
+        sout("[kill-churn] FAIL\r\n");
+        return;
+    }
+
+    /* A live scheduler witness: if a freed TCB ever wedged the
+     * dispatcher (the pre-fix failure short of a clean #PF), this
+     * counter would stop advancing. */
+    churn_sentinel_ticks = 0;
+    churn_sentinel_stop  = 0;
+    T_CTSK cs = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                  .task = churn_sentinel_task, .itskpri = 9, .stksz = 2048 };
+    ID sent = tk_cre_tsk(&cs);
+    if (sent < E_OK || tk_sta_tsk(sent, 0) < E_OK) {
+        sout("dproc-churn: FAIL sentinel-create\r\n");
+        sout("[kill-churn] FAIL\r\n");
+        return;
+    }
+
+    sout("dproc-churn: START cycles="); sout_dec((UW)CHURN_CYCLES);
+    sout(" (watchdog LIVE — real heal/kill churn)\r\n");
+
+    /* NOTE: the ELF watchdog stays LIVE on purpose — heal re-execs the
+     * killed infer_d concurrently with our kills, which is exactly the
+     * churn that produced the UAF.  init.rc `guard /infer_d.elf` arms
+     * it; if the daemon isn't guarded we still exec/kill it ourselves. */
+    W started = 0, killed = 0;
+    UW base_ticks = churn_sentinel_ticks;
+
+    for (INT c = 0; c < CHURN_CYCLES; c++) {
+        ID tid = elf_exec("/infer_d.elf", "/infer_d.elf");
+        if (tid >= E_OK) { dproc_register("/infer_d.elf", tid); started++; }
+        /* Vary the settle window 0..7 ms so the kill lands at every
+         * phase of the victim's sem-wait / dispatch cycle. */
+        tk_dly_tsk((RELTIM)(c & 7));
+        if (dproc_kill_by_name("infer_d.elf") >= 0) killed++;
+        /* let heal notice + the dispatcher churn before the next exec */
+        tk_dly_tsk((RELTIM)(3 + (c & 3)));
+        if ((c & 7) == 7) {
+            sout("dproc-churn: cycle "); sout_dec((UW)(c + 1));
+            sout("  started="); sout_dec((UW)started);
+            sout(" killed=");   sout_dec((UW)killed);
+            sout(" ticks=");    sout_dec(churn_sentinel_ticks);
+            sout("\r\n");
+        }
+    }
+
+    /* drain any in-flight heal restart, then quiesce */
+    tk_dly_tsk(200);
+    dproc_kill_by_name("infer_d.elf");
+
+    UW end_ticks = churn_sentinel_ticks;
+    churn_sentinel_stop = 1;
+    tk_dly_tsk(40);
+    if (sent >= E_OK) tk_del_tsk(sent);
+
+    BOOL sched_alive = (end_ticks > base_ticks);
+
+    sout("dproc-churn: cycles="); sout_dec((UW)CHURN_CYCLES);
+    sout("  started="); sout_dec((UW)started);
+    sout("  killed=");  sout_dec((UW)killed);
+    sout("  sched_ticks "); sout_dec(base_ticks);
+    sout("->"); sout_dec(end_ticks); sout("\r\n");
+
+    /* Reaching here at all == no garbage-PC #PF and no poison halt
+     * (those never return to the shell).  Plus the scheduler kept
+     * advancing through the whole storm. */
+    if (sched_alive && started > 0 && killed > 0) {
+        sout("dproc-churn: PASS  (no UAF #PF, no poison-catch, sched alive)\r\n");
+        sout("[kill-churn] PASS\r\n");
+    } else {
+        sout("dproc-churn: FAIL  (sched_alive=");
+        sout_dec((UW)sched_alive);
+        sout(" started="); sout_dec((UW)started);
+        sout(" killed=");  sout_dec((UW)killed); sout(")\r\n");
+        sout("[kill-churn] FAIL\r\n");
     }
 }
 

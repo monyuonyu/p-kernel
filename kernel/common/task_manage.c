@@ -203,6 +203,31 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 	state = (TSTAT)tcb->state;
 	if ( state != TS_DORMANT ) {
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
+	} else if ( tcb == knl_ctxtsk || tcb == knl_schedtsk ) {
+		/* KILL-CHURN-CRASH fix (gap-ledger): NEVER free the TCB the
+		 * CPU is standing on (knl_ctxtsk) or is scheduled to switch
+		 * INTO next (knl_schedtsk).  dproc_kill_by_name() runs
+		 * tk_ter_tsk + user_proc_teardown + tk_del_tsk and these are
+		 * NOT one critical section: user_proc_teardown calls
+		 * tk_sig_sem / paging ops whose END_CRITICAL_SECTION can
+		 * DISPATCH, and the PIT IRQ can preempt+reschedule in the
+		 * gap.  A DORMANT victim that is ALSO the live ctxtsk/schedtsk
+		 * (the killer was itself reaped, or a churn dispatch re-pinned
+		 * the victim as the next task) would, once freed here, have its
+		 * stale tskctxb.ssp loaded by the dispatcher .Ldispatch_loop ->
+		 * "ret" into freed+reused memory == the garbage-PC #PF in
+		 * knl_make_wait_reltim (write through a non-present knl_ctxtsk)
+		 * documented in boot/x86/idt.c.  Refusing here is correct and
+		 * safe: a task standing on the CPU cannot be in TS_DORMANT in
+		 * the first place under a sane caller; the foreign-kill churn
+		 * is the only producer of this window, and E_OBJ makes the
+		 * killer's own retry (or the next heal sweep) reclaim it once
+		 * the dispatch pointers have moved off it.  Does NOT affect the
+		 * wave-25 ring3 fault-reap (tk_ext_tsk frees via knl_del_tsk on
+		 * the OUTGOING context AFTER knl_force_dispatch has already
+		 * repointed ctxtsk/schedtsk — see knl_exd_tsk path) nor the
+		 * wave-28 user_proc_teardown (context-independent, no del). */
+		ercd = E_OBJ;
 	} else {
 		knl_del_tsk(tcb);
 	}

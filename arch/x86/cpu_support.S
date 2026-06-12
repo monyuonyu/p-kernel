@@ -99,6 +99,21 @@ knl_dispatch:
     testl   %eax, %eax
     jz      .Lidle
 
+    /* KILL-CHURN-CRASH proof tool (gap-ledger): before we trust this
+     * TCB's saved ssp, verify it is not a FREED block.  A TCB returned
+     * to the FreeQue by knl_del_tsk has state == TS_NONEXIST (0).  If
+     * the kill/heal churn ever leaves a freed TCB as knl_schedtsk, the
+     * "ret" below jumps into reused memory == the historic garbage-PC
+     * #PF.  knl_dispatch_poison_check() turns that into a deterministic,
+     * grep-able halt instead.  cdecl: it preserves nothing we need here
+     * (%eax is reloaded from knl_ctxtsk after; %ecx/%edx are scratch and
+     * dead).  movzbl TCB_state -> arg.  With the tk_del_tsk ctxtsk/
+     * schedtsk guard in place this call must never trip. */
+    pushl   %eax                    /* arg: the TCB about to be dispatched */
+    call    knl_dispatch_poison_check
+    addl    $4, %esp
+    movl    (knl_schedtsk), %eax    /* reload (call clobbered %eax) */
+
     /* Switch to schedtsk */
     movl    %eax, (knl_ctxtsk)
     movl    TCB_SSP(%eax), %esp     /* load new task's stack pointer */
