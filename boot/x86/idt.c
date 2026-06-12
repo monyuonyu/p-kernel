@@ -263,7 +263,26 @@ void exception_handler(uint32_t exception_num, uint32_t error_code,
     
     print("CS=0x"); print_hex32(saved_cs);
     print(" EIP=0x"); print_hex32(saved_eip);
-    print("\r\nSystem halted.\r\n");
+    print("\r\n");
+
+#ifdef KCC_TRACE
+    {
+        extern volatile unsigned int kcc_trace[16][3];
+        extern volatile unsigned int kcc_trace_pos;
+        print("--- dispatch trace (newest last) ---\r\n");
+        unsigned int n = kcc_trace_pos < 16 ? kcc_trace_pos : 16;
+        unsigned int start = kcc_trace_pos >= 16 ? kcc_trace_pos - 16 : 0;
+        for (unsigned int k = 0; k < n; k++) {
+            unsigned int idx = (start + k) % 16;
+            print("  tid=0x");  print_hex32(kcc_trace[idx][0]);
+            print(" ssp=0x");   print_hex32(kcc_trace[idx][1]);
+            print(" ret=0x");   print_hex32(kcc_trace[idx][2]);
+            print("\r\n");
+        }
+    }
+#endif
+
+    print("System halted.\r\n");
 
     /* 致命的例外の場合はシステム停止 */
     while (1) {
