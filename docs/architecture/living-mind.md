@@ -3546,3 +3546,422 @@ loss/cure named.**
 5. **Path-W-vs-E shipping scope** (XI.2): **ship Path W ALONGSIDE Path E, complementary —
    E=fast-synapse, W=fleet-DMN-sleep (RECOMMENDED)** vs ship W as a replacement for E (rejected — E's
    one-packet self-consistent spread is strictly cheaper for the buzz demo; they are different jobs).
+
+## Part XII — Path W²: the weighted / Fisher merge (does a SMARTER merge beat the plain mean?)
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–XI). Owner of
+> *this* slice: the next wave (separate implementer + separate auditor). Builds ON: **LM-10 / Path W**
+> (Part XI — the one-mind weight merge, `gl_merge` at `n=R_NP`, `r3_weights_get/set`, `merge_epoch`,
+> the chunked 84 KB transport, the `[onemind-*]` 2×2 divergent-minds matrix harness `r3_incontext.c`),
+> **G22** (`gl_accumulate`/`gl_scale`/`gl_merge` `gossip_learn.c:57-77` — the plain mean), **LM-9**
+> (Part X, `R_NP=21568`, `rw[R_NP]`, `rg[R_NP]`, R3's own `r_backward` `r3_incontext.c:260` that
+> accumulates per-parameter gradients into `rg[]`), **LM-5** (Part VI, `s_round(1)` union replay — the
+> LM-10 cure). LM-10 is closed in `gap-ledger.md` (wave-41), so this is unblocked.
+
+LM-10 **MEASURED the disease and named THIS slice as its own follow-up**: *"plain mean is lossy (the
+disease is real), union replay makes the mind one (the cure is real) … Follow-ups: weighted/Fisher
+merge for higher divergence."* XI.5 names it precisely: *"provenance-weighted/Fisher merge named as
+the next slice IF plain mean is the bottleneck."* **This Part closes that homework — but it refuses
+to assume the answer, exactly as LM-10 refused to assume averaging preserved both facts.** The
+disease is KNOWN (wave-41, MEASURED on the `0xA5A5` substrate): two divergent minds (k1=2→3 on node0,
+k2=4→1 on node1, SAME seed), each solo at **100%**; naive `gl_merge` answers **k1=100%, k2=8.8%**
+(chance 1.5625%) — classification **(c) PARTIAL**, one fact survives, one collapses toward chance.
+The union-replay cure recovered BOTH to 100%. **The question THIS Part measures is sharper:** can a
+**weighted** merge — provenance/count-weighted (W1), Fisher-information-weighted (W2), or
+task-arithmetic/sign-aligned (W3) — **preserve BOTH facts with LESS (or NO) reliance on the replay
+crutch, and/or survive HIGHER divergence than plain mean?** The headline is a **comparison number**
+(weighted-merge matrix vs plain-mean matrix, BOTH printed, the Δ is the result), not an assertion —
+and **"the mean is hard to beat at this scale" is a legitimate, honest outcome the cert is designed
+to surface truthfully.**
+
+### XII.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Eight load-bearing facts. The first three give the Fisher its machinery for FREE; #4–#5 set the
+honest baseline + the "3× prior" trap; #6–#8 bound the surface and the wire.
+
+1. **`gl_merge` is a PLAIN UNWEIGHTED mean — there is NO per-parameter weighting today.**
+   `gl_merge(out, models, count, n)` (`gossip_learn.c:69`) zeroes `out`, accumulates each model with
+   the SCALAR-uniform `gl_accumulate` (`acc[i] += w[i]`, `:57`), and scales by the SCALAR `1/count`
+   (`gl_scale`, `:63`). There is no weight vector, no count-of-samples bias, no Fisher. **A weighted
+   merge needs a per-parameter (or per-model) weight — and the anti-fork mandate is to GENERALIZE the
+   existing primitives, not write a second averager (XII.6).** The minimal honest generalization:
+   a `gl_accumulate_w(acc, w, wt, n)` that does `acc[i] += wt[i] * w[i]` (per-param weight) and a
+   normalizing pass `acc[i] /= wsum[i]` — i.e. a per-parameter weighted mean `Σ wtₖ[i]·wₖ[i] / Σ wtₖ[i]`.
+   This is a 2-line sibling of `gl_accumulate`/`gl_scale`, NOT a fork of `gl_merge`'s no-central
+   structure (the `[g22-no-central]` order-independence proof transfers verbatim — a per-param
+   weighted sum is STILL order-independent to float rounding, and the cert re-proves it at `n=R_NP`).
+
+2. **`r_backward` ALREADY accumulates the per-parameter gradient into `rg[R_NP]` — so the diagonal
+   Fisher is one squaring loop away, reusing EXISTING kernels (no new math class).** `r_backward(label)`
+   (`r3_incontext.c:260`) runs the full backprop and writes `rg[O_BCLS+c] += …`, `rg[O_WCLS+…] += …`,
+   etc. — every one of the `R_NP=21568` parameters gets its gradient. The diagonal Fisher of a node is
+   the **expected squared gradient over the node's own data**: `F[i] = (1/M) Σ_examples rg[i]²`. The
+   training loop ALREADY does `for i: rg[i]=0; r_forward; r_backward; rw -= lr*rg` (`:454-457`); the
+   Fisher accumulation is the SAME loop with `F[i] += rg[i]*rg[i]` instead of (or alongside) the SGD
+   step — over the node's RETAINED engrams (the `s_round` item list, XII.0 #4). **The Fisher is cheap
+   and reuses `r_forward`/`r_backward` verbatim; the ONLY new storage is one `float F[R_NP]` per node
+   (~84 KB scratch, file-static `.bss`, the stack-overflow lesson) and the diagonal-Fisher
+   accumulation loop. Own the cost: ~`R_NP` extra floats + one backward pass per retained engram.**
+
+3. **R3 has a SHARED pretrain seed (`0xA5A5`) — so the task VECTORS (W3) are well-defined.** `s_pretrain()`
+   (`r3_incontext.c`) calls `r_init_weights(0xA5A5u)` then the fixed 60-epoch schedule; BOTH modelled
+   nodes in the `[onemind-*]` harness start from the SAME `w_base` (`r3_onemind_test`: `r3_weights_get(w_base)`
+   then each node trains from `w_base`). The **task vector** of node k is `τₖ = rwₖ − w_base` (the delta
+   the node's own consolidation pushed). TIES/task-arithmetic (W3) merges `w_base + Σ (sign-resolved,
+   trimmed) τₖ` instead of the raw `rwₖ`. `w_base` is ALREADY captured in the harness, so the deltas
+   are FREE to compute — no new state, just a subtraction.
+
+4. **The disease's "3× prior" is a STABLE substrate property, NOT a seed artifact — and it is exactly
+   what a weighted merge must overcome.** wave-41's WHY (gap-ledger, the LM-10 epitaph): the SURVIVING
+   value `OM_V1=3` clears the halved-gradient margin **because value 3 appears 3× in the SDICT prior**
+   (`SDICT = {2,0,3,3,1,3,5,7}` `r3_incontext.c:1101` — class 3 at keys 2,3,5). The pretrained substrate
+   already biases its readout toward class 3, so after the merge halves k1's gradient pull, the prior
+   carries it; the COLLAPSING value `OM_V2=1` appears only ONCE (key 4) and has no such prior support,
+   so the halved pull drops it to chance. **This means the plain mean's "win" on k1 is partly the
+   PRIOR doing the work, not the average preserving the fact.** A weighted merge that up-weights node1's
+   k2-bearing parameters is the principled fix — BUT the cert must measure whether it ACTUALLY recovers
+   k2 above the plain mean's 8.8%, or whether the prior asymmetry is too strong to beat without replay.
+   **(XII.4 mandates a `[wmerge-symmetric]` control: re-run the matrix with a SYMMETRIC binding — two
+   values that BOTH have equal prior support — so the comparison is not contaminated by the 3× prior.)**
+
+5. **The honest baseline the weighted merge must BEAT is the naive `gl_merge` (k1=100%/k2=8.8%), NOT
+   the cured one.** The cure (union replay) already reaches 100%/100% (LM-10). A weighted merge that
+   STILL needs the full replay to pass has not earned its complexity — the cert's reason to exist is
+   **does the weighted merge reduce or remove the replay dependency?** So the comparison axis is:
+   {plain mean, weighted merge} × {no replay, with replay}, and the headline cells are the **no-replay**
+   ones. **If weighted-merge-no-replay ≈ plain-mean-no-replay (i.e. k2 still ~chance), the honest
+   result is "the weighting does not help at this scale; the prior asymmetry / subspace misalignment
+   dominates; union replay remains the cure" — and that ships as the truthful negative (XII.4, XII.6
+   bounds), weighted merge NOT adopted for v1.** The number decides, not the design.
+
+6. **The `[onemind-*]` harness is the EXACT infrastructure to reuse — save/restore `rw[]`, the 2×2
+   matrix, `om_acc`, `om_print_matrix`, the divergent bindings.** `r3_onemind_test` (`r3_incontext.c`)
+   already: pretrains the shared `w_base`; trains `w_a` (node0, k1→v1) and `w_b` (node1, k2→v2) by
+   save/restore; calls `gl_merge(mw_out, {w_a,w_b}, 2, R_NP)`; prints the matrix via `om_print_matrix`;
+   measures `om_acc(k,v)` = masked majority vote share. **The weighted-merge cert is a NEW branch in
+   the SAME harness that, after computing `w_a`/`w_b`, ALSO computes each node's Fisher `F_a`/`F_b`
+   (W2) or task vectors (W3), runs the weighted merge into a second output, and prints the SECOND
+   matrix beside the plain one. Zero new harness scaffolding — extend `r3_onemind_test` or add a
+   sibling `r3_wmerge_test()` that reuses `om_acc`/`om_print_matrix`/the divergent bindings.**
+
+7. **Fisher needs NO extra wire if computed LOCALLY from each node's own RETAINED engrams (RECOMMENDED).**
+   The diagonal Fisher of node k is computed from node k's OWN data — and node k STILL HOLDS its own
+   retained engrams in `r3_fq[]` after consolidation (XI.0 #4, the same fact the LM-10 cure exploited).
+   So **each node computes ITS OWN Fisher locally and publishes it ALONGSIDE its `rw[]`** — OR, the
+   cheaper option, each node publishes only `rw[]` (the existing 84 KB chunks) and a RECEIVING node
+   computes the Fisher of EACH peer from… no — a node cannot compute a peer's Fisher without the peer's
+   data. **So the honest fork (COMMANDER DECISION 2): local-Fisher-on-wire (each node sends its `F[R_NP]`
+   diagonal = a SECOND 84 KB blob/peer, doubling Path W's wire to ~168 KB/peer/round) vs.
+   approximate-Fisher-from-shared-engrams (in the live fleet, Path E has ALREADY spread both facts'
+   engrams to every node — so every node can compute EACH fact's Fisher from the engrams it locally
+   holds, NO extra wire).** The second is the beautiful one and the recommendation: **Path E's engram
+   spread makes the Fisher a LOCAL computation — no Fisher on the wire — because the receiving node
+   already has the data to weight by.** The cert measures both; the wire-cost verdict is PRINTED.
+
+8. **The new surface is SMALL and FLAGGED: a weighted accumulator + a Fisher loop + a weighted-merge
+   cert branch. NO new R3, NO new transport, NO fork of `gl_merge`'s no-central core.** Flagged names
+   that DO NOT EXIST today (XII.6): `gl_accumulate_w` (per-param weighted accumulate), `gl_merge_w`
+   (the weighted-mean wrapper, normalizing by the per-param weight sum), `r3_fisher_diag(float *out)`
+   (accumulate `rg[i]²` over the node's retained engrams into `out[R_NP]`), and the cert branch
+   `[wmerge-*]`. Everything else — `r_forward`/`r_backward`/`s_round`/`rw[]`/`om_acc`/the chunk
+   transport — is reused verbatim. The auditor greps that `gl_merge` (the plain mean) is UNCHANGED and
+   still drives LM-10, and that the weighted path is a SIBLING, not a mutation.
+
+### XII.1 The claim to prove
+
+> Two divergent minds (the LM-10 `[onemind-divergent]` model — k1→v1 on node0, k2→v2 on node1, SAME
+> `0xA5A5` seed, each consolidated into its OWN `rw[]`) are merged by a **weighted** rule instead of
+> the plain mean: each parameter is averaged weighted by **how much it MATTERS to each node's learned
+> fact** (W2, the diagonal Fisher `Fₖ[i] = E[rg[i]²]` over node k's own retained engrams) — so the
+> node that actually LEARNED a fact dominates that fact's parameters. On the SAME 2×2 (node × fact)
+> MASKED matrix, **WITHOUT post-merge replay**, the weighted merge answers k1 AND k2 at an accuracy
+> that is **MEASURED against the plain mean's (100% / 8.8%)** — BOTH matrices printed side by side,
+> the per-cell Δ being the result. The weighted merge is still **order-independent** (a per-param
+> weighted sum re-proves `[g22-no-central]` at `n=R_NP`) and needs **NO extra wire** if the Fisher is
+> computed locally from Path-E-spread engrams (XII.0 #7).
+>
+> **The expectation is a RANGE to MEASURE, stated honestly both ways.** OPTIMISTIC (the principled-ML
+> hope): Fisher up-weights node1's k2-readout parameters, so the merged readout keeps k2's class-1
+> mass that the plain mean halved → k2 recovers toward the solo 100% with NO replay, and the merge
+> survives HIGHER divergence (more facts, larger value separation) before either fact collapses.
+> PESSIMISTIC (the honest null): at R3's TOY scale (R_DM=48, R_NP=21568, a SINGLE binding per node)
+> the two facts live in a SHARED, heavily-overlapping hidden subspace and the diagonal Fisher cannot
+> separate them — the weighting moves k2 from 8.8% to, say, 30–50% but NOT to the 75% bar without
+> replay, OR the prior asymmetry (XII.0 #4, the 3× SDICT support for v1) dominates the Fisher signal.
+> **In that case the truthful result is "the diagonal Fisher does not beat the plain mean enough to
+> remove the replay crutch at this scale" — and the slice ships that negative, naming full-Fisher /
+> larger-scale as the future, NOT lowering a bar to pass.** The cert is built so BOTH outcomes are a
+> clean, greppable, honest PASS-of-the-measurement.
+
+This is strictly a follow-up to LM-10's XI.1, not a replacement: LM-10 proved the mind is one *with*
+the replay cure; XII asks whether a smarter MERGE buys the same oneness with *less* replay, or holds
+at divergence where replay alone would not.
+
+### XII.2 The recommended primitive — W2 (diagonal Fisher), with W1/W3 named and measured
+
+**The fork the commander owns (DECISION 1):** which weighted rule is v1. Three candidates, ALL
+evaluated by the cert (XII.4 runs the matrix under each that is built); **recommend W2 for the
+PRIMARY, W1 as the cheap baseline-of-the-weighted-family, W3 as the named alternative.**
+
+**(W2) RECOMMENDED — diagonal Fisher-weighted merge (EWC/elastic-merge style).** Per parameter:
+`rw_merged[i] = (F_a[i]·w_a[i] + F_b[i]·w_b[i]) / (F_a[i] + F_b[i] + ε)`, where `Fₖ[i]` is node k's
+diagonal Fisher over its own retained engrams (XII.0 #2). This is the **classic principled
+model-merging answer** (Fisher-weighted averaging / elastic weight consolidation): a parameter that
+MATTERS to node1's fact (large `F_b[i]`) is pulled toward node1's value, regardless of node0. **WHY
+it is the right primary:** (a) it directly targets the disease's mechanism — the plain mean halves
+BOTH facts' gradients equally, but Fisher RESTORES the asymmetry the facts earned; (b) the cost is
+freestanding and OWNED — `F[R_NP]` floats + one backward pass per retained engram, reusing
+`r_backward` (XII.0 #2), `~R_NP` extra floats per node, no new math class; (c) it composes with the
+existing no-central proof (a per-param weighted sum is order-independent). **The freestanding cost,
+named:** one `float F[R_NP]` scratch per node (84 KB `.bss`), `M` extra `r_forward`+`r_backward`
+passes (M = node's retained-engram count, ~8–16 at toy scale — cheap), and the `ε` floor (a small
+constant so a parameter neither node trained falls back to the plain mean — `Fₖ[i]≈0` for both ⇒ the
+formula → `(w_a+w_b)/2`, exactly the plain mean, which is the CORRECT fallback for the shared
+pretrained backbone).
+
+**(W1) — count/confidence-weighted mean (the cheap baseline of the weighted family).** Weight each
+node's WHOLE model by a scalar confidence (e.g. its solo masked-accuracy on its own fact, or its
+retained-engram count): `rw_merged = (c_a·w_a + c_b·w_b)/(c_a+c_b)`. This is a SCALAR weight, not
+per-parameter — it cannot separate facts that share parameters, so at this single-binding scale it is
+likely **indistinguishable from the plain mean when both nodes are equally confident** (both solo at
+100% ⇒ c_a=c_b ⇒ exactly the mean). **It is in the cert as the cheap control** (does ANY weighting
+help, or specifically the PER-PARAMETER Fisher?) — the expected result is "W1 ≈ plain mean here,"
+which is itself an honest, informative measurement (it isolates that W2's gain, IF any, comes from
+per-parameter resolution, not mere weighting).
+
+**(W3) — task-arithmetic / TIES (sign-aligned delta merge).** Merge the task VECTORS `τₖ = rwₖ −
+w_base` (XII.0 #3): `rw_merged = w_base + Σₖ trim(τₖ)` with TIES sign-resolution (per parameter,
+keep only the deltas agreeing with the dominant sign, average them). **This is the strongest
+candidate for HIGHER divergence / MORE facts** (it is designed to add many task vectors without
+destructive interference) but it is the MOST new code (the trim + sign-elect pass) and its win at the
+2-fact toy scale may be marginal. **Recommend it as the NAMED alternative the cert measures if W2
+underperforms — the escalation for the "survive higher divergence" half, not the v1 primary.**
+
+**Anti-fork (XII.0 #1):** all three are expressed through `gl_accumulate_w`/`gl_merge_w` (the
+per-param weighted-mean generalization) — W2 passes `Fₖ` as the weight, W1 passes a broadcast scalar,
+W3 operates on `τₖ` with a sign-elected per-param weight ∈ {0,1}. **One weighted-mean primitive, three
+weight-vector recipes — `gl_merge` (the plain mean) stays UNCHANGED and keeps driving LM-10.**
+
+### XII.3 Transport — the Fisher needs NO extra wire (compute it LOCALLY)
+
+**The fork the commander owns (DECISION 2):** does the weighting add data to the wire? Path W already
+pays ~84 KB/peer/round for `rw[]` (XI.0 #2). The Fisher diagonal `F[R_NP]` is ANOTHER 84 KB if sent.
+Two honest options — **recommend (F-local)**:
+
+**(F-local) RECOMMENDED — compute every contributor's Fisher LOCALLY, NO Fisher on the wire.** In
+the live fleet, **Path E has already spread both facts' engrams to every node** (LM-7, the 44 B
+`MT_TEACH_PKT` — that is its whole job). So a node that received peer's `rw[]` (84 KB) ALSO holds
+peer's FACT-engram (44 B, via E) in its `r3_fq[]`. It can therefore compute the Fisher of EACH
+contributing weight-state from the LOCAL engrams: `F_peer[i] = Σ_{peer's engrams} rg[i]²` evaluated
+**on the peer's `rw[]`** (the node has both — peer's weights from W's chunks, peer's data from E's
+engram). **This is the unification XII exists to surface: Path E (fast fact spread) is what makes
+Path W's Fisher a free LOCAL computation — E carries the DATA, W carries the WEIGHTS, and the Fisher
+that fuses them needs no third channel.** Wire cost UNCHANGED at ~84 KB/peer (the cert PRINTS that
+the weighted merge adds 0 bytes to the wire vs LM-10).
+
+**(F-wire) — each node publishes its own Fisher diagonal alongside `rw[]`.** A second 22-chunk 84 KB
+blob `mf<node>` (the `mw<node>` manifest sibling), doubling Path W's wire to ~168 KB/peer/round.
+**Pro:** correct even WITHOUT Path E running (a node that only got weights, never the engram, still
+gets the exact local Fisher). **Con:** 2× the already-1900×-Path-E wire; couples W to nothing but
+itself but pays double. **Recommend F-wire ONLY as the fallback when E is not co-running** (the cert
+runs in-process where both `rw[]` and engrams are local anyway, so the cert itself never needs the
+wire — the wire fork is a LIVE-path decision the `[wmerge-*]` in-process cert does NOT gate on).
+
+**For the in-process cert:** there is NO wire at all — `w_a`,`w_b`,`F_a`,`F_b` are all local statics
+(the LM-10 harness model). The transport fork is named for the LIVE `42_one_mind` extension, which is
+a NAMED FUTURE for this slice (the in-process `[wmerge-*]` matrix is the headline; a live weighted
+merge over the relay inherits LM-10's `[onemind-survive]` shape and is the follow-up — XII.8).
+
+### XII.4 The acceptance test (the certificate) — THE comparison headline
+
+All numbers PRINTED, then canonical `[tag] PASS/FAIL`, greppable. **The headline is a COMPARISON: the
+SAME divergent-minds matrix under plain mean vs weighted merge, BOTH printed, the Δ the result. Bars
+DISCOVERED from the disease measurement, lower-only-with-flag (IX.0 rule). If the weighted merge does
+NOT beat the plain mean, that is an HONEST PASS-of-the-measurement reported truthfully — `[wmerge-vs-mean]`
+PASS means the comparison RAN and printed a well-formed Δ, NOT that weighted won.**
+
+1. **`[wmerge-vs-mean]` — THE HEADLINE (the comparison).** On the LM-10 divergent model (k1→v1 node0,
+   k2→v2 node1, same seed, each consolidated), compute BOTH merges from the SAME `w_a`/`w_b`:
+   `gl_merge` (plain mean, the LM-10 control) and `gl_merge_w` with the chosen weight (W2 Fisher
+   primary). PRINT both 2×2 matrices and the **per-cell Δ (weighted − mean)**, vs the solo accuracies
+   and chance. **PASS = the comparison ran and printed a well-formed Δ at a recorded epoch** (the
+   diagnostic gate, the LM-10 `[onemind-divergent]` discipline). The auditor reads the Δ and
+   classifies: **WEIGHTED-WINS** (k2 materially higher under weighted, both ≥ the discovered bar) →
+   weighted merge adopted; **TIE** (|Δ| within the matrix's measurement noise on every cell) →
+   "weighting does not help at this scale, plain mean + replay remains the recommendation," honest
+   negative; **WEIGHTED-LOSES** (weighted is WORSE — possible if the diagonal Fisher mis-weights a
+   shared parameter) → reported truthfully, weighted REJECTED. The science gate is #2.
+
+2. **`[wmerge-noreplay]` — does the weighted merge alone clear the bar WITHOUT `s_round` replay?**
+   The reason-to-exist measurement (XII.0 #5). Take the weighted-merge matrix from #1 (NO post-merge
+   replay) and gate: do BOTH facts answer ≥ the bar **on the raw weighted merge**? The bar is
+   DISCOVERED — candidate ≥ 75% masked (the LM-6 share gate, the LM-10 cure bar) but **the auditor
+   sets it FROM the weighted-merge curve**; a weighted merge that lands k2 at 50% (better than the
+   mean's 8.8% but below 75%) is a MEASURED PARTIAL that FAILS the "removes the replay crutch" claim
+   honestly while the prose records the real gain. PASS = BOTH facts ≥ bar on the raw weighted merge
+   (the replay crutch is REMOVED). FAIL-honest = the printed partial, with "union replay still
+   required; weighted merge reduces but does not remove the dependency by Δ=…%." **Both are clean
+   greppable outcomes; neither lowers a bar.**
+
+3. **`[wmerge-divergence]` — the honest CEILING (sweep divergence, find where even weighted fails).**
+   The "survive higher divergence" half. Sweep the divergence and PRINT, for plain-mean vs weighted,
+   the point at which the SECOND fact collapses toward chance. Divergence knobs (pick the cleanest):
+   (a) MORE facts — 2 → 3 → 4 divergent bindings merged (each on its own modelled node); (b) value
+   SEPARATION — bindings whose values share less prior support; (c) the `[wmerge-symmetric]` control
+   (XII.0 #4) — re-run with two values of EQUAL prior support so the 3× SDICT asymmetry does not
+   contaminate the comparison. PRINT, per merge rule, the highest divergence at which BOTH facts stay
+   ≥ bar (no replay). **PASS = the sweep ran and printed a well-formed ceiling curve for both rules**
+   (the honest ceiling is the deliverable — whether weighted's ceiling is HIGHER than mean's is the
+   measured result the prose states plainly, not a gate that can fail to "weighted didn't win").
+
+4. **`[wmerge-nocentral]`** — the weighted merge is STILL order-independent + aggregator-free at
+   `n=R_NP`. Reuse the `[onemind-nocentral]` proof shape (`r3_onemind_nocentral_test`) but through
+   `gl_merge_w`: merge {node0,node1,node2} weighted, forward vs reverse, assert `|fwd−rev| max <
+   1e-3` (a per-param weighted SUM is order-independent to float rounding — if it isn't, the weight
+   normalization has a position bug). PLUS single-model identity (`gl_merge_w` of one model with any
+   positive weight == that model). **The weighted merge must NOT smuggle a central aggregator.**
+
+5. **`[wmerge-noregress]` — LM-10 plain Path W still works (HARD anti-regress).** The `[onemind-divergent]`,
+   `[onemind-cured]`, `[onemind-nocentral]` tags stay byte-identically green (the disease matrix is
+   still 100%/8.8%, the union cure still 100%/100%) — the weighted path is ADDITIVE, `gl_merge`
+   UNCHANGED. The auditor greps that LM-10's three tags + the LM-7 `[shared-*]` + `[g22-*]` + `[lang-*]`
+   are all still PASS. Path W² adds a path, regresses nothing.
+
+**Live multi-node cert** is a NAMED FUTURE (XII.8): the in-process `[wmerge-vs-mean/noreplay/divergence/nocentral]`
+matrix is THIS slice's headline (the comparison is fully measurable in-process — `w_a`,`w_b`,`F_a`,`F_b`
+all local). A LIVE `42_one_mind`-style weighted merge over the relay (real chunked weights + Path-E
+engrams → local Fisher → weighted fold) inherits the `[onemind-survive]` shape and ships as the
+follow-up once the in-process comparison says weighted is worth the wire.
+
+**CI plan (specify only — do NOT edit `ci.yml` in this Part).** The implementer wave adds an in-process
+native job grepping `[wmerge-vs-mean] PASS`, `[wmerge-noreplay] PASS` (PASS or honest-negative — the
+tag is greppable either way; the WIN/TIE/LOSE classification is in the printed prose the auditor
+reads), `[wmerge-divergence] PASS`, `[wmerge-nocentral] PASS`, `[wmerge-noregress] PASS`. The LM-10
+`[onemind-*]` + LM-7 `[shared-*]` + `[g22-*]` + `[lang-*]` greps stay green. **The implementer edits
+`ci.yml` + the harness, not this document.**
+
+### XII.5 Conflict / blending semantics under weighting (vs LM-10's plain blend)
+
+LM-10's XI.5: the plain mean BLENDS a same-key conflict (k→v on A, k→v' on B → the merged readout is
+the mean of two readouts, the answer is MEASURED, belief-BLENDING not revision). **Under weighting the
+semantics SHIFT, and the cert measures the shift:** a Fisher-weighted merge of a same-key conflict
+pulls the readout toward whichever node's k-parameters have HIGHER Fisher — i.e. **the node that
+learned k harder (more engrams / sharper gradient) DOMINATES the blend.** This is a step TOWARD
+belief-revision (the more-confident teacher wins) without an explicit policy — **but it is still
+emergent from the weighting, NOT an engineered revision rule.** The cert prints the same-key blend
+under W2 (the `[wmerge-vs-mean]` fifth diagnostic, mirroring LM-10's XI.5 print): teach k→v on node0,
+k→v' on node1, weighted-merge, ask k, record argmax + confidence vs the plain-mean blend. **Honest
+semantics, stated loudly: Fisher-weighting makes the blend CONFIDENCE-DOMINATED, which LOOKS like
+provenance-weighted revision but is NOT a trust/identity policy** (the ark never verifies humans —
+provenance-weighted-by-IDENTITY is a different, future thing coupled to the unbuilt signing immune
+system, XII.6 bounds). v1 ships the MEASUREMENT of the confidence-dominated blend, names
+identity/trust-weighted revision as its own future slice.
+
+### XII.6 Anti-fork surface — reuse, do NOT fork
+
+- **`gl_merge` (the plain mean, `gossip_learn.c:69`) stays UNCHANGED and keeps driving LM-10.** The
+  auditor greps that LM-10's `gl_merge(mw_out, models, 2, R_NP)` call site is byte-identical and the
+  `[onemind-*]` tags stay green. The weighted path is a SIBLING.
+- **REUSE `gl_accumulate`/`gl_scale` (`:57/63`) by GENERALIZING, not forking:** the only new gossip
+  surface is `gl_accumulate_w(acc, w, wt, n)` (per-param weighted accumulate) + `gl_merge_w(out,
+  models, weights, count, n)` (normalize by `Σ wt`) — the 2-line weighted siblings, NOT a second
+  no-central averager (the order-independence proof transfers; `[wmerge-nocentral]` re-certifies it).
+- **REUSE `r_forward`/`r_backward`/`rg[R_NP]` (`r3_incontext.c:191/260`) for the Fisher** — the
+  diagonal Fisher is `rg[i]²` accumulated over the node's retained engrams using the EXISTING backward
+  pass; the only new R3 surface is `r3_fisher_diag(float *out)` (the accumulation loop, the `s_round`
+  item-list discipline reused) + one `float F[R_NP]` `.bss` scratch. Do NOT write a new gradient path.
+- **REUSE the `[onemind-*]` harness** (`r3_onemind_test`/`om_acc`/`om_print_matrix`/the divergent
+  bindings + the save/restore-`rw[]` divergent-mind model) — the `[wmerge-*]` cert is a new BRANCH in
+  the same harness, not a new test scaffold.
+- **REUSE `s_round(1)` (the LM-10 union cure)** for the {weighted}×{with-replay} comparison cell — do
+  NOT write a second replay loop.
+- **The ONLY new surfaces (FLAGGED — they do NOT exist today):** `gl_accumulate_w`, `gl_merge_w`
+  (gossip_learn), `r3_fisher_diag` + the `F[R_NP]` scratch + the `[wmerge-*]` cert branch
+  (r3_incontext). For W3: a `gl_ties_elect` sign-trim pass (only if W3 is built). NO new R3, NO new
+  transport (F-local, XII.3), NO fork of `gl_merge`.
+
+**Honest bounds (what is NOT claimed):**
+- **The diagonal Fisher is a DIAGONAL approximation** — it ignores parameter covariance (the
+  off-diagonal Fisher / true natural gradient). At R3's toy scale with facts sharing a hidden
+  subspace, the diagonal may be too coarse to separate them; the cert MEASURES whether it suffices,
+  does not assume it.
+- **Weighted merge may NOT beat the plain mean at this scale — and the slice ships that negative
+  honestly.** R3 is TOY (R_DM=48, single binding/node, heavily-shared subspace); "the mean is hard to
+  beat" is a legitimate measured outcome (XII.0 #5). The cert is built so the TIE/LOSE classification
+  is a clean greppable PASS-of-the-measurement, never a bar lowered to manufacture a win.
+- **The 3× SDICT prior contaminates the naive comparison (XII.0 #4)** — the `[wmerge-symmetric]`
+  control quarantines it; the honest read is on the symmetric binding, not the prior-favored one.
+- **F-local correctness depends on Path E co-running (XII.3)** — a node that got weights but never the
+  engram cannot compute the peer's local Fisher; F-wire is the fallback at 2× wire. The in-process
+  cert has all data local, so this is a LIVE-path bound, not a cert bound.
+- **Toy scale, in-process headline, cert verbs are amnesia bombs** — the LIVE weighted merge over the
+  relay is a NAMED FUTURE (XII.8); persisting the merged `rw[]` across runs stays a non-goal (VII.0 #5).
+- **Confidence-dominated blend ≠ identity/trust revision (XII.5)** — provenance-weighted-by-IDENTITY
+  couples to the unbuilt signing immune system + the ark's no-verification ethic; future slice.
+
+No false "by construction" theorem is asserted. **The headline is a COMPARISON number, measured both
+ways, with "the mean wins" a fully honest possible result.**
+
+### XII.7 Galaxy hook — a weighted merge is the SAME pulse, annotated
+
+Path W² does NOT add a new galaxy event type — a weighted fold IS a fold. It reuses LM-10's ONE
+`galaxy_emit(EV_MERGE, me, peer, merge_epoch16, peers_folded)` (XI.7) at the live weighted-fold site,
+**with a one-bit annotation** in the spare payload field distinguishing a weighted fold from a plain
+one (so the galaxy view can later render "the region slept with Fisher-weighting" vs a plain pulse —
+the collective-sleep heartbeat, now with a quality flag). **COMMANDER DECISION 4:** annotate the
+existing `EV_MERGE` (RECOMMENDED — one bit, no new event, the auditor greps zero new `galaxy_emit`
+call sites) vs a distinct `EV_WMERGE` type (rejected for v1 — a weighted fold is the same collective
+sleep, just smarter; a new type forks the galaxy label surface for no behavioral difference). Since
+the LIVE weighted fold is a NAMED FUTURE (XII.8), the galaxy hook ships WITH that follow-up, not the
+in-process cert (which emits nothing).
+
+### XII.8 Provenance / closes-on
+
+Design only. This slice closes when `[wmerge-vs-mean]` (both matrices + the per-cell Δ printed and
+classified WIN/TIE/LOSE), `[wmerge-noreplay]` (the raw weighted merge measured against the 75% bar —
+clears it OR the honest partial), `[wmerge-divergence]` (the ceiling curve for both rules printed,
+including the `[wmerge-symmetric]` prior-quarantined control), `[wmerge-nocentral]` (order-independence
+at `n=R_NP` through `gl_merge_w`), and `[wmerge-noregress]` (LM-10 `[onemind-*]` + LM-7 `[shared-*]` +
+`[g22-*]` + `[lang-*]` byte-identically green) are green on a clean rebuild AND CI-enforced; the
+zero-extra-wire verdict (F-local) is PRINTED. Audited by a **separate** agent on the **commander's**
+binary, not the implementer's. **The audit MAKES the acceptance test (the `[wmerge-noreplay]` bar and
+the WIN/TIE/LOSE Δ-classification discovered from the comparison curve, line-by-line); the commander
+reads the gate formula — the two matrices, the per-cell Δ, the no-central `|fwd−rev|` at `n=R_NP`, the
+Fisher accumulation loop (is it `rg[i]²` over the RIGHT engrams?), the `gl_merge`-unchanged grep —
+line-by-line** (the validator-trap memory: certify on production code, not a sim; the implementer ≠
+auditor ≠ commander). One epitaph line in `gap-ledger.md`: LM-10's *"weighted/Fisher merge for higher
+divergence"* follow-up is **discharged — the smarter-merge question is MEASURED: a diagonal-Fisher
+weighted merge {beats / ties / loses to} the plain mean on the divergent-minds matrix by the printed
+Δ, {removes / reduces / does-not-reduce} the replay crutch, computed with {zero / 2×} extra wire — the
+number decides, and "the mean is hard to beat at this scale" is an honest result if that is what the
+matrix says.**
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Which weighted rule is v1** (XII.2): **(W2) diagonal Fisher (RECOMMENDED** — the principled
+   EWC-style answer, directly targets the disease, cheap via `r_backward`) vs **(W1)** scalar
+   count/confidence (the cheap control — likely ≈ plain mean at this scale, kept to ISOLATE whether
+   per-parameter resolution is what helps) vs **(W3)** TIES/task-arithmetic (the named escalation for
+   the higher-divergence / more-facts half — most new code, defer to the `[wmerge-divergence]` sweep).
+   The cert measures every rule that is built; **W2 primary, W1 as the in-cert control, W3 if W2
+   under-delivers on the divergence sweep.**
+2. **Fisher transport** (XII.3): **(F-local) compute every contributor's Fisher LOCALLY from
+   Path-E-spread engrams, ZERO extra wire (RECOMMENDED** — E carries the data, W carries the weights,
+   the Fisher fuses them locally) vs **(F-wire)** each node publishes its 84 KB Fisher diagonal (2×
+   Path W's wire — the fallback when Path E is NOT co-running). The in-process cert has all data local,
+   so this is a LIVE-path decision the cert does not gate on.
+3. **Replace vs complement the LM-10 replay cure** (XII.0 #5, XII.4 #2): **COMPLEMENT — the weighted
+   merge is measured as a way to REDUCE the replay dependency, and union replay (LM-10) stays the
+   fallback cure (RECOMMENDED** — if weighted-no-replay clears the bar, the crutch is removed; if it
+   only reduces the gap, replay remains and the slice reports the honest partial) vs claiming weighted
+   merge REPLACES replay (rejected — only the MEASURED `[wmerge-noreplay]` result can earn that, and
+   only if it clears the bar; the design refuses to pre-assert it).
+4. **Galaxy** (XII.7): **annotate the existing `EV_MERGE` with a one-bit weighted flag (RECOMMENDED**
+   — a weighted fold is the same collective-sleep pulse, no new event) vs a distinct `EV_WMERGE`
+   (rejected — forks the galaxy label surface for no behavioral difference). Ships with the LIVE
+   follow-up (XII.8), not the in-process cert.
+5. **In-process headline vs live now** (XII.4): **ship the in-process `[wmerge-*]` comparison as THIS
+   slice's headline; LIVE weighted merge over the relay (the `42_one_mind` extension) is the NAMED
+   FUTURE (RECOMMENDED** — the comparison is fully measurable in-process with all data local; the live
+   path inherits `[onemind-survive]` and ships once the comparison says weighted is worth the wire) vs
+   forcing the live path now (rejected — the live transport adds no NEW measurement over the in-process
+   matrix; it is delivery, not science, and gates on the in-process WIN/TIE result first).
