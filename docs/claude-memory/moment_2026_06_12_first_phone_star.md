@@ -41,12 +41,16 @@ overlaps status line; user cannot type. Screenshot evidence /tmp/ump_screen3.png
 Fix = responsive CSS (+ viewport meta?) in arch/common/web/galaxy.html. NOT yet
 dispatched (waiting for log-button merge to avoid same-file conflict).
 
-**IN FLIGHT:** log-copy feature (worktree-agent-a3be62f0b7f7ec253, commits
-d17f606+deaca06: /log.txt + 📋 button + 3-stage clipboard fallback, all targets
-build, parity OK, versionCode 3 / 0.2.1) — audit agent aa474cea0bf98ad48 was
-still running at session end. NEXT SESSION: check audit result → merge → dispatch
-mobile-CSS fix → diagnose wrong-answers → build APK 0.2.1 (carries log button +
-layout fix + answer fix) → cp to /sdcard/Download/.
+**log-copy feature: MERGED to master 915a353** (audit PASS 7/7; /log.txt +
+📋 button + 3-stage clipboard fallback; versionCode 3 / 0.2.1 staged in gradle).
+Audit's honest bounds (in merge msg): ring lap during one stream reorders lines;
+/teach blocks the single galaxy task (synchronous mind_cmd training) so other
+routes starve behind it. TRAP CORRECTED: the auditor thought port 7800 had a
+"transparent proxy with canned responses" — it was actually mk_pino's PHONE APP
+(0.2.0, no /log.txt → 404) answering on the shared loopback. On this device,
+7800 = the UMP app; test host nodes on PKERNEL_GALAXY_PORT=7853+.
+NEXT SESSION: dispatch mobile-CSS fix → diagnose wrong-answers → build APK 0.2.1
+(log button + layout fix + answer fix) → cp to /sdcard/Download/.
 
 Interoception design (master 2e0f717) awaits slice-1 implementation — user
 approved direction but phone-bugs first.
