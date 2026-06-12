@@ -69,7 +69,8 @@ map with its own honest status table is
 ### ターゲット別シェルの実力（正直に）
 
 - **ベアメタル x86** が最もコマンドが多い: FAT32 の実 `ls`/`cat`、`exec`（ELFローダ）、
-  オンデバイス TCC コンパイル、`raft`、`fl train`、`evolve`（Claude API ループ）、`sfs` 等。
+  `raft`、`fl train`、`evolve`（Claude API ループ — オンデバイスコンパイルではない）、`sfs` 等。
+  オンデバイス TCC コンパイル（selfc）は **UMP（ホスト版）専用**であり、ベアメタルには無い。
   AI 系は §4 のとおり今は学習する（dtr 95–98%）が、規模は玩具のまま。
 - **UMP（aarch64-linux / x86_64-linux）** のシェルは実装済みコマンド多数
   （`net` `nodes` `region` `world`/`map` `moe` `infer` `dtr`（`train/eval/save/load/gossip`）
