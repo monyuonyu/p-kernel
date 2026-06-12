@@ -3213,3 +3213,336 @@ E. **`R_KEYV`/`R_VALV` target** (X.2): **`R_KEYV=16`/`R_VALV=64` (RECOMMENDED** 
    sweep N to 16, lands the dreamed 64-answer vocab) vs a smaller bump if the curve shows R_DM=48
    still collapses before N=16 (then R_KEYV=12 matches the reachable N — don't ship an unreachable
    ladder).
+
+## Part XI — Path W: the one mind (the weight-states literally converge)
+
+> Status: **design + acceptance test** (written before implementation, like Parts II–X). Owner of
+> *this* slice: the next wave (separate implementer + separate auditor). Builds ON: **LM-7**
+> (Part VIII, the shared mind — `mind_net_task` + the region-scoped K-DDS topic `mind/teach`,
+> the `MT_TEACH_PKT` wire `r3_incontext.c:39`, B's `r3_fact_learn` arrival mouth, the
+> `EV_REMOTE_TEACH` galaxy emission `galaxy.h:55`, **Path E shipped**), **G22** (the no-central
+> weight-averaging primitive `gl_merge`/`gl_accumulate`/`gl_scale` `gossip_learn.c:57-77`, the
+> live `gl_merge_peers`/`gl_fold_cached_peers` round `gossip_learn.c:903`, the `[g22-no-central]`
+> structural proof `gossip_learn.c:347`, the kill+rejoin `collective-learn-live` job
+> `ci.yml:554`), **LM-5** (Part VI, `s_round(with_replay)` `r3_incontext.c:1204` — interleaved
+> replay of RETAINED facts' engrams, the live `r3_consolidate_idle_round` `:1249`), **LM-9**
+> (Part X, `R_NP = 21568` floats, `rw[R_NP]` `r3_incontext.c:127/137`, R3's own `r_backward`
+> `:257`), **pfs_repl** (the 512 B chunked block transport `PFSR_CHUNK_SIZE`, `pfs_repl.c:293`).
+> All closed in `gap-ledger.md`, so this is unblocked.
+
+LM-7 explicitly **DEFERRED** this slice with its cert named (VIII.7): *"Path W (one-mind weight
+merge) is DEFERRED with its cert stated … teach k1 on A, k2 on B, merge `rw[]`; gate that BOTH
+nodes answer BOTH k1 AND k2 … (does raw averaging of two divergent minds preserve both facts,
+or corrupt both?), and that interleaved post-merge replay rescues whatever the raw average loses
+(the disease→cure shape, on the merge). Until that cert is green, 'the mind is literally one' is
+unproven."* **This Part closes that homework.** Where Path E spreads *facts* (each node trains its
+OWN weights on a gossiped engram, so the minds CONVERGE to the same bindings but keep distinct
+`rw[]`), Path W merges the *weights* themselves: after consolidation, every node averages its
+`rw[]` with its region peers' `rw[]` so the weight-states **literally become one substrate**.
+mk_pino's words: 「心をひとつに」. It is the Collective layer made literal at the weight level — and
+it is gated on an **empirical question the project refuses to assert past**: does the average of
+two minds that learned DIFFERENT things answer BOTH, or NEITHER? The headline of this Part is the
+disease/cure certificate that MEASURES the answer. It mirrors Parts II–X's rigor exactly: a claim,
+a falsifiable certificate with bracket tags + numeric bars **discovered from measurement**, named
+honest bounds, a HARD anti-fork surface flagging names that do not exist, a live multi-node cert,
+and a CI verb plan.
+
+### XI.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Seven load-bearing facts. The first three set the transport by arithmetic; #4–#5 give the cure its
+machinery for free; #6–#7 correct the wave framing.
+
+1. **`gl_merge` is a plain unweighted mean, fully generic over param count.** `gl_merge(out,
+   models, count, n)` (`gossip_learn.c:69`) zeroes `out[0..n)`, accumulates every model, scales by
+   `1/count` — NO weighting, NO count-of-samples bias, NO param-count assumption. It already
+   averages `DTR_WEIGHT_FLOATS=635` arrays in the live path; passing `n=R_NP=21568` is a **one-arg
+   change, not a new averager** (the anti-fork mandate: reuse it, VIII/XI flagged names). The
+   `[g22-no-central]` structural proof (`gossip_learn.c:347`: order-independence to float-rounding
+   + single-model identity) is param-count-agnostic and transfers verbatim. **Confirm by build:**
+   `gl_merge` has no `DTR_WEIGHT_FLOATS` baked into its body.
+
+2. **The R3 model is 21568 floats = 86 272 bytes = 84.2 KB ≈ 22 p-fs blocks.** `R_NP=21568`
+   (`_Static_assert`, `r3_incontext.c:127`); `rw[R_NP]` is 86 272 B. `PFS_BLOCK_MAX=4096`
+   (`pfs_block.h`), so `rw[]` is **21.05 → 22 blocks** with the 8 B `GL_BLOB_HDR`. **`gl_pfs_publish`
+   CANNOT carry it:** it `_Static_assert`s the whole blob ≤ one block (`gossip_learn.c:94`,
+   `GL_MAXFLOATS=DTR_WEIGHT_FLOATS=635`, 2548 B). **`pfs_dag_save` CANNOT carry it either:** it
+   returns `PFS_E_TOOBIG` for `len > PFS_BLOCK_MAX` (`pfs_dag.c:378`) — a DAG "object" is ONE
+   content-addressed block, not a multi-block file. **So Path W needs chunked multi-block weight
+   transport** — and it already exists: `pfs_repl.c`'s 512 B `PFSR_CHUNK_SIZE` in-order chunk path
+   (`pfs_repl.c:293-440`) moves an arbitrary block; generalizing it to a 84 KB payload (or
+   N×4 KB-DAG-chunks under one ref prefix) is the transport work. **Own the byte cost: ~84 KB per
+   peer per merge round per node** (vs Path E's 44 B engram — a **~1900× wire premium**). This is
+   the single biggest honest cost of Path W and the cert PRINTS it.
+
+3. **The dtr 635-param body fit one block; that is WHY G22 never needed chunking.** The live
+   `gl_merge_peers` (`gossip_learn.c:903`) pulls each peer's 2.5 KB model via `gl_pfs_fetch` (one
+   `pfs_dag_read`) and folds it. R3's 84 KB does NOT fit that path — Path W is the FIRST consumer
+   that forces multi-block weight transport into the gossip layer. Treat the new transport as a
+   **hot, weight-corrupting axis** (a half-received 84 KB blob folded into `rw[]` is a corrupted
+   mind): the chunk receiver must be all-or-nothing (the `pfs_repl.c:417` `chunk_idx==0` reinit +
+   in-order `next_chunk` guard is the template; a partial blob is DROPPED, never merged).
+
+4. **`s_round(with_replay=1)` is the cure mechanism, already built.** `r3_consolidate_idle_round`
+   (`:1249`) calls `s_round(1)` (`:1204`), which interleaves the oldest PENDING fact's engrams with
+   **ALL RETAINED facts' engrams** and runs R3's own `r_forward`/`r_backward`/`rw -= lr*rg`. Each
+   node's RETAINED facts persist in `r3_fq[]` after consolidation, so **post-merge interleaved
+   replay of a node's OWN facts is FREE local data** — no new engrams, no new math, no fork. If raw
+   averaging is the disease, the cure candidate is: after folding the merged `rw[]` back, run a
+   bounded burst of `s_round(1)` so each node re-grounds the blended weights on its own retained
+   bindings (the LM-5 discipline applied fleet-wide). **This is the LM-1/LM-5 "sleep after a
+   perturbation" pattern — Path W's merge IS a perturbation, and replay is how the DMN already
+   heals perturbations.**
+
+5. **`rw[]` is a file-static array with NO public accessor today.** `static float rw[R_NP]`
+   (`:137`) — unlike dtr's `dtr_weights_get/set`, R3 exposes no get/set. Path W needs a **minimal
+   FLAGGED pair** `r3_weights_get(float *out)` / `r3_weights_set(const float *in)` (R_NP floats,
+   memcpy-equivalent, `m_quiesce()`-guarded per VII.4 so no round is mid-flight) — the dtr accessor
+   mirror, NOT a new weight buffer. This is the ONLY genuinely new R3 surface; everything else
+   reuses `gl_merge` + `s_round` + the LM-7 subscriber shape.
+
+6. **No central consolidator, kill+rejoin — the template is `collective-learn-live`.** The merge
+   MUST be peer-symmetric (every node folds {self} ∪ {peers it fetched}, no aggregator index —
+   `gl_fold_cached_peers` `:885` is the exact pattern), order-independent (the `[g22-no-central]`
+   proof), and survive a node kill+rejoin (the survivors hold the merged mind; a rejoiner pulls it).
+   `samples/32_collective_learn/run.sh` (3-node disjoint-shard gossip, node kill -9'd mid-run,
+   rejoin) is the integration template; `samples/41_shared_mind/run.sh` is the Path-E sibling.
+
+7. **Region-scoped, version-honest, loop-guarded — inherit LM-7's discipline verbatim.** The merge
+   is the REGION's (peers within `REGION_TAU_MS=50` ms, `region.c`); a node OUTSIDE the region does
+   NOT merge (the honest negative half of the cert). Merging already-merged weights is a real
+   hazard (a round-counter / merge-epoch prevents folding the same peer-state twice and lets the
+   cert show convergence is monotone, not oscillating); the `origin_node==me` drop and a per-peer
+   last-merge-epoch high-water are the loop guards (the LM-7 `:2463` pattern on the weight axis).
+
+### XI.1 The claim to prove
+
+> An owner teaches **k1→v1** on node **A** and a DIFFERENT binding **k2→v2** on node **B** (LM-6
+> mouth unchanged); each node's OWN DMN consolidates its OWN fact into its OWN `rw[]` (LM-5/LM-6
+> unchanged). Then, with **NO operator action and NO central aggregator**, each node publishes its
+> consolidated `rw[]` (84 KB, chunked) to its region peers and **`gl_merge`s the set into a single
+> shared weight-state**. Afterwards `mind ask k1` AND `mind ask k2` — **on BOTH A and B, from the
+> MERGED `rw[]`, on MASKED prompts** — answer **v1 and v2** at a **measured** accuracy. The merge is
+> **order-independent** (A-folds-B == B-folds-A to float rounding), **survives a node's death**
+> (kill A after the merge; B still answers both), and a **rejoining node converges** to the shared
+> state. A node OUTSIDE the region does **NOT** merge. Cross-arch (aarch64 + x86_64 in one region).
+>
+> **The honest accuracy expectation is a RANGE to be MEASURED, not asserted.** R3 facts are SPARSE
+> (a binding lives in a small key-embedding + readout subspace; `O_WKE`/`O_WCLS` `:104/119`), which
+> gives REASON to hope averaging preserves both (possibility (a), preservation) — but two minds that
+> each ran SGD from the SAME seed toward DIFFERENT optima may have rotated their shared hidden
+> subspaces into destructive misalignment (possibility (b), catastrophic averaging). **The cert
+> measures which, and by how much; the design does not pre-decide it.**
+
+This is strictly stronger than Path E's LM-7 claim. There, A and B converge to the same binding but
+keep **distinct `rw[]`** ("N converging copies," VIII.7). Here the `rw[]` **are byte-converged into
+one** (up to float rounding + per-node replay) — the Self/Collective boundary dissolves at the
+weight level: there is no longer "A's mind" and "B's mind," there is the region's mind, instanced.
+
+### XI.2 Path W vs Path E — complementary, not competing (and what ships HERE)
+
+LM-7's VIII.2 recommended Path E for v1 *"not a close fork once the numbers are in,"* and shipped it.
+Path W does NOT replace it — **they are complementary, and the framing that unifies them is the
+beautiful one:**
+
+> **Path E is the fleet's FAST fact-spread (the synapse); Path W is the fleet's DMN — periodic
+> weight-merge = collective SLEEP/consolidation across devices (the night).** E carries a single new
+> fact in one packet, immediately, so a friend's node can answer within seconds. W periodically
+> reconciles the whole fleet's accumulated learning into one weight-state — the way a single brain's
+> DMN reconciles a day's episodes into weights overnight (Part II), but now ACROSS bodies.
+
+This is not decoration; it sets the **merge trigger** (XI.3): Path W's natural cadence is the
+SLOW band (the G22 `GL_SLOW_BAND_MS=2000` deliberation tempo / a fleet idle-DMN pulse), NOT every
+teach. Fast facts ride Path E; the fleet "sleeps together" on a slow timer and merges. **What ships
+in THIS slice:** the divergent-minds disease/cure cert + the no-central + survive certs, on a
+2-node-then-3-node region, with Path E LEFT RUNNING (the certs co-exist; a node may both gossip a
+fact via E and merge weights via W). **What stays future:** federation (cross-region merge), the
+`R_DM`-scale generative model, signed merge packets (the immune system), and a Fisher/weighted merge
+if the cert shows plain mean is the bottleneck (XI.5 names it as the cure-escalation, not v1).
+
+### XI.3 The transport — chunked multi-block weight publish (own the 84 KB)
+
+**The fork the commander owns (DECISION 1):** how to move 84 KB of `rw[]` to region peers. Two
+honest options, both reusing existing machinery — **recommend (T-a)**:
+
+**(T-a) RECOMMENDED — N×4 KB DAG-chunk objects under a per-node ref prefix.** Publish `rw[]` as
+`ceil(R_NP*4 / (PFS_BLOCK_MAX-8))` = **22 named DAG objects** `mind/w/<node>/<chunk>`, each a
+`gl_pfs_publish`-shaped ≤4 KB blob (the EXISTING one-block `gl_blob` carrier, `gossip_learn.c:84`,
+unchanged — just called 22 times with a chunk header `{epoch, chunk_idx, n_chunks}`). They P1-
+replicate region-wide for free exactly as `self/prof` does (VIII.0 #3). The subscriber reassembles
+all 22 chunks for a peer's current epoch (drop the peer for this round if any chunk is missing —
+all-or-nothing, XI.0 #3) and only THEN folds. **Pro:** zero new transport code — it is the proven
+DAG path, 22×; durable, content-addressed, death-surviving (a rejoiner pulls the chunks). **Con:**
+22 refs/peer (the `PFS_REF_MAX=16` per-node ref budget, `pfs_dag.h:62`, is exceeded — so use ONE
+ref `mind/w/<node>` holding a manifest of 22 content-ids, OR raise the budget — a sub-decision the
+implementer measures).
+
+**(T-b) — the `pfs_repl.c` 512 B unicast chunk path generalized.** Send `rw[]` as a 169-chunk
+in-order stream over the private pmesh UDP port (`pfs_repl.c:293`, the `PFSR_BLK_PKT` machinery).
+**Pro:** one transfer, no ref-budget pressure, the in-order `chunk_idx` guard already enforces
+all-or-nothing. **Con:** unicast per-peer (N-1 sends/round), not the gossip-replicate-once model;
+new code on the hot axis.
+
+**Merge trigger (DECISION 2):** **(M-a) RECOMMENDED — a fleet-DMN slow pulse:** every node, on its
+idle-DMN tick AND when the SLOW band has elapsed since its last merge, publishes its current `rw[]`
+epoch and folds whatever peer-epochs are local — the "collective sleep" framing made literal. **(M-b)
+on-demand `mind merge` verb** (a human/cert triggers a fleet merge) — recommended for the CERT and as
+a debugging handle, likely BOTH ship (M-b drives the test, M-a is the production cadence).
+
+**Version/loop honesty (XI.0 #7):** a `merge_epoch` counter per node, bumped each local
+consolidation; the published blob carries it; a node folds a peer only if its epoch is NEWER than
+the last one folded from that peer (the `pfs_repl.h:89` once-per-(src,seq) dedup on the weight axis).
+This prevents re-folding a stale peer-state and makes "is convergence monotone or oscillating?" a
+PRINTED, falsifiable quantity (XI.4 `[onemind-nocentral]` measures the inter-round delta shrinking).
+
+### XI.4 The acceptance test (the certificate) — THE disease/cure headline
+
+All numbers PRINTED, then canonical `[tag] PASS/FAIL`, greppable. The first two tags are the
+headline (the question LM-7 refused to smuggle); the last two are the no-central + survival gates.
+**Bars are DISCOVERED from the disease measurement, not guessed (IX.0 rule); lower-only-with-flag.**
+
+1. **`[onemind-divergent]` — THE HEADLINE, the DISEASE measurement.** Teach k1→v1 on node 0, k2→v2
+   on node 1 (DIFFERENT bindings); each node's DMN consolidates ITS OWN fact (assert each answers
+   ITS OWN key ≥ a strong solo bar first — the disease is only meaningful if each mind learned its
+   fact). Then `gl_merge` the two `rw[]` with **NO post-merge replay** (the naive control, exactly
+   `s_round`'s `with_replay=0` analogue on the merge). **PRINT the 2×2 matrix:** node0-asks-k1,
+   node0-asks-k2, node1-asks-k1, node1-asks-k2, MASKED, vs the pre-merge solo accuracies and vs
+   chance (`100/R_VALV = 1.5625%`). **This tag does not assert preservation** — it RECORDS the
+   number that decides possibility (a)/(b)/(c). PASS here means **the measurement ran and printed a
+   well-formed matrix at a recorded merge_epoch** (the diagnostic gate); the SCIENCE gate is #2. The
+   auditor reads this matrix and classifies: if both keys survive at ≥ chance+margin from the RAW
+   merge, possibility (a) — the cure tag degenerates to "no cure needed, proven." If either key
+   collapses toward chance, possibility (b)/(c) — the cure tag #2 becomes mandatory.
+
+2. **`[onemind-cured]` — the CURE measurement (conditional on #1 showing degradation).** After the
+   raw merge, run a bounded burst of post-merge **interleaved replay of each node's OWN RETAINED
+   facts** (`s_round(1)`, XI.0 #4) on the merged `rw[]`, on BOTH nodes. **PRINT the same 2×2 matrix
+   post-cure**, and the **gain (cured − naive)** per cell. PASS requires: (i) BOTH nodes answer BOTH
+   keys at **≥ chance + a margin the auditor sets FROM the curve** (candidate ≥ 75% masked, but the
+   bar is MEASURED — a fact that the cure cannot recover above chance FAILS, honestly), AND (ii) the
+   cure does not destroy the OTHER node's fact (no catastrophic re-forgetting — the LM-1 disease must
+   not reappear under the cure). **If #1 already shows preservation (possibility (a)), `[onemind-
+   cured]` still runs and must show replay does not REGRESS the already-good matrix** (replay is then
+   a no-op-or-better, never a harm). The disease→cure DELTA is the headline number; if the delta is
+   ~0 because there was no disease, the prose says so loudly (preservation proven, cure unnecessary)
+   — the honest both-ways result.
+
+3. **`[onemind-nocentral]`** — the merge is order-independent + has no aggregator. Reuse the
+   `[g22-no-central]` structural proof (`gossip_learn.c:347`) AT `n=R_NP`: merge {node0,node1}
+   in forward vs reverse order, assert `|fwd−rev| max < 1e-4` (float-rounding only; an O(1) shift
+   would mean a privileged position), and single-model-merge identity. PLUS the live half: print the
+   inter-round max-`|rw|`-delta shrinking across ≥3 merge rounds (convergence is monotone, not
+   oscillating — the merge_epoch honesty, XI.3). No node index is special; every node runs the same
+   `gl_merge` over {self} ∪ {peers fetched}.
+
+4. **`[onemind-survive]`** — kill a node, the merged mind persists. After a successful merge (BOTH
+   facts answerable region-wide), `kill -9` node 0; assert node 1 STILL answers BOTH k1 AND k2 from
+   its merged `rw[]` (the fact taught on the DEAD node lives on in the survivor's weights — the
+   Collective outliving the Self at the weight level, strictly stronger than LM-7's `[shared-*]`
+   teacher-kill which only proved B kept its OWN copy). PLUS rejoin: a fresh node joins and pulls the
+   merged state (the `collective-learn-live` rejoin shape).
+
+**Live multi-node cert** (`samples/42_one_mind/run.sh`, the 32_/41_ template): a 2-node region (then
+3-node) over the relay, real chunked transport, teach-divergent → merge → ask-both-on-both, kill,
+rejoin. Cross-arch (aarch64 + x86_64) — `gl_merge` is byte-portable (IEEE754 binary32, asserted
+`gossip_learn.c:90`), and the chunk wire is fixed-endian.
+
+**CI plan (specify only — do NOT edit `ci.yml` in this Part).** The implementer wave adds an
+in-process native job grepping `[onemind-divergent] PASS`, `[onemind-cured] PASS`,
+`[onemind-nocentral] PASS`; and a live job (the `collective-learn-live` shape, `ci.yml:554`)
+running `samples/42_one_mind/run.sh` and grepping `[onemind-survive] PASS` + `RESULT: PASS` + the
+production print a merge fires on a node never directly taught the other's fact. The LM-7
+`shared-mind-live` + all `[g22-*]`/`[shared-*]`/`[teach-*]`/`[lang-*]` greps stay green — Path W
+ADDS a path, regresses nothing. **The implementer edits `ci.yml` + the sample, not this document.**
+
+### XI.5 Conflict semantics — averaging BLENDS (belief-blending, not belief-revision)
+
+Path E REFUSES a same-key conflict (VIII.5: k taught v on A and v'≠v on B → the second is refused +
+printed). **Path W cannot refuse — it AVERAGES.** If A consolidated k→v and B consolidated the SAME
+k→v', the merged `rw[]` is the mean of two weight-states pulled toward different readout classes for
+the same key. **The cert MEASURES what the blend answers** (a fifth diagnostic print under
+`[onemind-divergent]`: teach k→v on A, k→v' on B, merge, ask k on both — record the argmax and its
+confidence). The honest semantics, stated loudly: **this is belief-BLENDING — a categorically
+different thing from belief-revision.** The merged mind may answer v, v', a third class entirely, or
+low-confidence noise; whatever it does is RECORDED, not engineered. v1 does NOT promise a
+conflict-resolution policy on the weight path — it ships the honest measurement and names
+belief-revision-over-merge as its own future slice (the immune system + provenance-weighted merge,
+where the higher-trust teacher's weights dominate — that is the Fisher/weighted-merge escalation,
+NOT plain `gl_merge`). **COMMANDER DECISION 4.**
+
+### XI.6 Anti-fork surface — reuse, do NOT fork
+
+- **REUSE `gl_merge`/`gl_accumulate`/`gl_scale`** (`gossip_learn.c:57-77`) at `n=R_NP` — do NOT
+  write a second averager. The auditor greps that the R3 merge call site passes `gl_merge`.
+- **REUSE `s_round(1)`/`r3_consolidate_idle_round`** (`:1204/1249`) for the cure — do NOT write a
+  second replay loop. The cure is the EXISTING interleaved-replay round run post-merge.
+- **REUSE the LM-7 `mind_net_task` subscriber shape + `EV_REMOTE_TEACH` galaxy pattern** — the merge
+  subscriber mirrors it; do NOT fork a second region-poll task style.
+- **REUSE `pfs_dag`/`gl_pfs_publish`/`pfs_repl` chunk transport** (XI.3) — do NOT invent a new wire.
+- **The ONLY new R3 surface:** `r3_weights_get`/`r3_weights_set` (FLAGGED — they do NOT exist today,
+  XI.0 #5), the dtr-accessor mirror; a `merge_epoch` field; one merge subscriber task; one
+  `EV_MERGE` galaxy type (XI.7). Do NOT fork a second `rw[]` buffer or a second R3.
+
+**Honest bounds (what is NOT claimed):**
+- **R3 toy scale** (R_DM=48, 8×64 synthetic vocab, VII.8/X stands) — `teach 2 3` is a key→value
+  binding, NOT language; this is one-mind at the SUBSTRATE level, not a generative LM.
+- **Averaging is lossy by the MEASURED amount** — `[onemind-divergent]` records exactly how much;
+  if the cure cannot reach the bar, the slice ships the HONEST negative (plain mean insufficient at
+  this divergence; weighted/Fisher merge named as the next slice) — it does NOT lower the bar to
+  pass. The whole point is to refuse "the mind is one" without the number.
+- **~84 KB wire cost per peer per merge round** (XI.0 #2, ~1900× Path E) — the cert PRINTS it; Path W
+  is the SLOW-band fleet-sleep, not the per-teach hot path (that is Path E).
+- **Region-scoped, best-effort, tamper-EVIDENT** — federation, signed-merge immune system, and
+  durable death-surviving delivery beyond the DAG-chunk path inherit LM-7's VIII.7 bounds verbatim.
+- **Belief-BLENDING, not revision** (XI.5) — same-key conflict averages; the answer is measured.
+- **Cert verbs remain amnesia bombs** (VII.0 #5) — persisting the merged `rw[]` across runs is a
+  named non-goal.
+
+No false "by construction" theorem is asserted. **The headline is a number, measured both ways.**
+
+### XI.7 Galaxy hook — the stars pulse in unison (collective sleep)
+
+ONE new emission point: `galaxy_emit(EV_MERGE, me, peer, merge_epoch16, peers_folded)` at the moment
+a node folds its region into `rw[]` (XI.3, after `gl_fold_cached_peers`'s R3 analogue returns). In
+the galaxy view, a fleet weight-merge renders as **the region's stars pulsing in unison** — the
+collective-sleep heartbeat, distinct from Path E's `EV_REMOTE_TEACH` single-fact spark. The web
+bridge (`galaxy.c`) gains the `EV_MERGE` case label only (the "merge" string, mirroring the
+`EV_CONSOLIDATE`/`EV_REMOTE_TEACH` labels `galaxy.c:384`). Sampled like the chatty types if needed;
+ONE call site, named here so the auditor greps exactly one new `galaxy_emit(EV_MERGE`.
+
+### XI.8 Provenance / closes-on
+
+Design only. This slice closes when `[onemind-divergent]` (the disease matrix printed + classified),
+`[onemind-cured]` (BOTH facts on BOTH nodes ≥ the auditor's measured bar, OR the honest negative
+with the weighted-merge follow-up named), `[onemind-nocentral]`, and `[onemind-survive]` are green
+on a clean rebuild AND CI-enforced; the LM-7 `[shared-*]` + `[g22-*]` + `[lang-*]` certs stay green
+(Path W adds, regresses nothing); the ~84 KB wire cost is PRINTED. Audited by a **separate** agent on
+the **commander's** binary, not the implementer's. **The audit MAKES the acceptance test (the
+`[onemind-cured]` bar discovered from the disease curve, line-by-line); the commander reads the gate
+formula — the disease matrix, the cure delta, the no-central `|fwd−rev|` bound at `n=R_NP`, the
+survive-kill, the chunk-transport all-or-nothing guard — line-by-line** (the validator-trap memory:
+certify on production code, not a sim). One epitaph line in `gap-ledger.md`: LM-7's VIII.7 deferral
+("Path W is DEFERRED with its cert stated") is **discharged — the averaging-of-divergent-minds
+question is MEASURED, the mind is one at the substrate to the measured accuracy, with the honest
+loss/cure named.**
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+1. **Weight transport** (XI.3): **(T-a) N×4 KB DAG-chunk objects (RECOMMENDED** — zero new transport,
+   reuses the proven `gl_pfs_publish`/`pfs_dag` path 22×, durable + death-surviving; sub-decision: one
+   manifest-ref vs raise `PFS_REF_MAX`) vs **(T-b)** the `pfs_repl.c` 512 B unicast chunk stream (one
+   transfer, no ref pressure, but new code on the hot weight axis). The implementer measures the
+   reassembly all-or-nothing guard either way.
+2. **Merge trigger** (XI.3): **BOTH (RECOMMENDED** — (M-a) fleet-DMN slow-band pulse as the
+   production "collective sleep" cadence + (M-b) `mind merge` verb to drive the cert/debug) vs M-b
+   only for v1 (defer the autonomous cadence — simpler, but punts the "fleet sleeps together"
+   framing this Part exists for).
+3. **The cure mechanism IF the disease is real** (XI.0 #4 / XI.4 #2): **post-merge interleaved
+   `s_round(1)` replay of each node's OWN retained facts (RECOMMENDED** — zero new math, the LM-5
+   discipline, free local data) vs **more merge rounds** (cheaper if the disease is mild — measure
+   first) vs **a weighted/Fisher merge** (forks `gl_merge` into a weighted variant — ONLY if plain
+   mean + replay both miss the bar; named as the escalation, NOT v1).
+4. **Conflict policy on the weight path** (XI.5): **measure-and-report the blend, NO resolution
+   policy in v1 (RECOMMENDED** — belief-blending is honest; revision-over-merge is its own slice) vs
+   a provenance-weighted merge now (couples to the unbuilt signing immune system — rejected for v1).
+5. **Path-W-vs-E shipping scope** (XI.2): **ship Path W ALONGSIDE Path E, complementary —
+   E=fast-synapse, W=fleet-DMN-sleep (RECOMMENDED)** vs ship W as a replacement for E (rejected — E's
+   one-packet self-consistent spread is strictly cheaper for the buzz demo; they are different jobs).
