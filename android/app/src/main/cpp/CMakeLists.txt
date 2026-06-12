@@ -59,7 +59,7 @@ add_compile_definitions(_APP_AARCH64_ _APP_LINUX_ _TK_HOSTED_LIBC_)
 # defines the C-standard subset. The host glibc build doesn't trigger
 # this because glibc defaults FORTIFY off; NDK clang on Bionic defaults
 # it on. Re-arming our own bounds checks lives in the kernel, not libc.
-add_compile_options(-Wall -Wextra -O2 -fPIC -fvisibility=hidden
+add_compile_options(-Wall -Wextra -O1 -fPIC -fvisibility=hidden
                     -fno-stack-protector -fno-common -std=gnu11
                     -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
 # -fvisibility=hidden: only the JNI bridge's JNIEXPORT'd symbols and the
