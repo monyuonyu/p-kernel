@@ -235,7 +235,14 @@ float dtr_logf(float x);
  * docs/architecture/r3-nontrivial-thought.md. Width is a parameter:
  * the sensor path passes DTR_EMBED_DIM, the recall harness its own
  * d_model. (dt_linear/dt_softmax were already dim-parameterized.) */
-#define DTR_LN_MAXW 32   /* max LayerNorm width across all dtr configs */
+#define DTR_LN_MAXW 64   /* LM-9 (living-mind Part X.3): a CAPACITY CAP for the
+                          * one scratch array dxh[DTR_LN_MAXW] in dtr_ln_bwd —
+                          * NOT a behavioral constant. The dtr sensor brain
+                          * still calls dtr_ln_bwd with n=DM=8 and touches only
+                          * dxh[0..7]; its arithmetic is byte-identical after
+                          * the bump ([lang-sensor-intact] proves it). R3 calls
+                          * with n=R_DM up to 64 — sized so a future R_DM=64
+                          * needs no second bump. */
 float dt_relu(float x);
 float dt_sqrt(float x);
 void  dt_linear(const float *W, const float *b,

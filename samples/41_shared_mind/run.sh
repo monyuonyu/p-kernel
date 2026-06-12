@@ -54,7 +54,8 @@ KWORD=sun           # = key token id 2
 VWORD=yellow        # = answer token id 3
 KSTAR=2             # the token id (still printed by the kernel logs)
 VSTAR=3
-CHANCE=3            # 100/R_VALV (R_VALV 4->32, LM-8 re-baseline)
+CHANCE=3            # 100/R_VALV: LM-9 R_VALV 32->64 => chance 1.56% (CHANCE=3
+                    # stays a valid LOOSER printed bound; share gate is 75)
 SHARE_GATE=75       # the LM-6 bar; LM-6 measured 100 post-sleep
 PRE_GATE=33         # the fact is NOT already in B's weights
 
@@ -178,7 +179,12 @@ echo
 echo "--- [shared-arrival]: teach k=$KSTAR v=$VSTAR on A; B receives via mind/teach ---"
 TEACH_T=$(date +%s)
 send 1 "mind teach $KWORD $VWORD"     # LM-8: REAL WORDS (= token ids 2,3)
-wait_for "$L1" 'published mind/teach' 15 || bad "A never published mind/teach"
+# LM-9 (living-mind Part X): A's FIRST teach lazily pretrains the WIDENED
+# R_DM=48 substrate (~23s host, 512 episodes x 80 epochs — the in-context
+# competence threshold) before it can publish. The publish wait 15->75s
+# tracks that pretrain latency (the honest cost of the wider mind; the tag
+# itself is unchanged — A still publishes the SAME mind/teach packet).
+wait_for "$L1" 'published mind/teach' 75 || bad "A never published mind/teach"
 # B's arrival print comes from the REAL poll of the REAL topic (no injection).
 if wait_for "$L2" '\[shared-arrival\] PASS' 40; then
     ok "[shared-arrival] PASS — B's queue gained A's fact via the mind/teach topic"

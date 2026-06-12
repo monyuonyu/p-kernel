@@ -2,7 +2,8 @@
  *  r3_vocab.c — LM-8 (living-mind.md Part IX): the fixed, embedded,
  *  content-addressed word list. Real WORDS in, one real WORD out.
  *
- *  WORD LIST v1: ENGLISH, 8 key words + 32 answer words.
+ *  WORD LIST v2 (LM-9 Part X): ENGLISH, 16 key words + 64 answer words
+ *  (the LM-8 8/32 kept as a prefix — see vk_img/vv_img below).
  *
  *  HONEST DIMS (measured, not the 256/64 the design hoped — IX.0 #2): the
  *  R_DM=32 substrate's in-context KEY recall caps near 8 keys, and the
@@ -28,14 +29,23 @@
 
 /* ---- the two embedded word images (newline-separated, v1 English) -- */
 static const char vk_img[] =
+    /* LM-9 Part X: 8->16 key words. The original 8 stay as a PREFIX (ids 0..7
+     * unchanged) so /vocab content-id change is HONEST; ids 8..15 are new. */
     "sky\nsea\nsun\ngrass\nblood\nnight\ngold\nsnow\n"
+    "fire\nleaf\nstone\nwater\ncloud\nrose\nbone\nink\n"
     ;
 
 static const char vv_img[] =
+    /* LM-9 Part X: 32->64 answer words. The original 32 stay as a PREFIX
+     * (ids 0..31 unchanged) so /vocab content-id change is HONEST. */
     "blue\ngreen\nred\nyellow\nblack\nwhite\ngold\nsilver\n"
     "warm\ncold\nbright\ndark\ndeep\nhigh\nclear\ncalm\n"
     "soft\nhard\nwet\ndry\nbig\nsmall\nfast\nslow\n"
     "near\nfar\nnorth\nsouth\neast\nwest\nup\ndown\n"
+    "heavy\nlight\nthick\nthin\nrough\nsmooth\nsharp\nblunt\n"
+    "loud\nquiet\nfull\nempty\nopen\nshut\nrich\npoor\n"
+    "young\nold\nfresh\nstale\nsweet\nbitter\nsour\nsalty\n"
+    "left\nright\nfront\nback\ninner\nouter\nfirst\nlast\n"
     ;
 
 /* ---- content-ids of the EXACT bytes (computed once, lazily) -------- */

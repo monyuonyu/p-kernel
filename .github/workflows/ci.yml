@@ -64,9 +64,12 @@ jobs:
           # pair (= the proven k*=2,v*=3 token ids: key word index 2 = "sun",
           # answer word index 3 = "yellow"): teacher_agree==100, pre_share
           # 0.0% at N=100 (printed by the teach itself — the in-log evidence).
-          # `mind lang` runs the LM-8 capacity/recall/oov cert.
-          # timeout 300->420: `mind wait` is ~15s nominal/120s worst-case.
-          timeout 420 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          # `mind lang` runs the LM-9 capacity-v2/recall/oov/sensor-intact cert.
+          # timeout 420->720 (LM-9 Part X): the widened R_DM=48 substrate's shared
+          # s_pretrain is ~23s host (512 episodes x 80 epochs — the in-context
+          # competence threshold), and r3/handoff/stream/lang/teach each bootstrap
+          # it; plus `mind wait` ~15s nominal/120s worst-case.
+          timeout 720 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\ndmn test\nself test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -186,9 +189,14 @@ jobs:
           # DISCOVERED from the curve) holds; a specific binding round-trips
           # in words; OOV is refused, not guessed. (`mind lang`)
           grep -aF '[lang-gradcheck] PASS' selftest.log
-          grep -aF '[lang-capacity] PASS' selftest.log
+          # LM-9 Part X: [lang-capacity] -> [lang-capacity-v2] (the R_DM 32->48
+          # surgery; comfortable-N strictly > LM-8's 4) + the new safety gate
+          # [lang-sensor-intact] (DTR_LN_MAXW 32->64 is FREE for the dtr sensor
+          # brain — the onebrain/moe/dkva certs above stay byte-identical).
+          grep -aF '[lang-capacity-v2] PASS' selftest.log
           grep -aF '[lang-recall] PASS' selftest.log
           grep -aF '[lang-oov] PASS' selftest.log
+          grep -aF '[lang-sensor-intact] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard
