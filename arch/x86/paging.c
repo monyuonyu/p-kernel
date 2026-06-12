@@ -39,57 +39,16 @@ typedef unsigned long long PTE;
 static PTE  pt_pool[POOL_SIZE][PT_ENTRIES] __attribute__((aligned(4096)));
 static BOOL pt_used[POOL_SIZE];
 
-#ifdef KCC_DIAG
-extern void print(const char *str);
-static void kcc_hex(unsigned int v)
-{
-    char b[9]; for (int i=7;i>=0;i--){int d=v&0xF;b[i]=d<10?'0'+d:'A'+d-10;v>>=4;} b[8]=0; print(b);
-}
-extern void *knl_ctxtsk;
-static unsigned int kcc_curtid(void)
-{
-    /* TCB.tskid is at byte offset 8 (offset.h TCB_tskid). */
-    void *c = knl_ctxtsk;
-    if (!c) return 0;
-    return *(volatile unsigned int *)((char *)c + 8);
-}
-#endif
-
-/* KILL-CHURN-CRASH ROOT FIX (gap-ledger): the page-table pool's alloc/free
- * MUST be interrupt-atomic.  elf_exec() (paging_proc_create) is called
- * concurrently from BOTH the shell/churn task (pri 2) and the heal
- * watchdog (pri 4), and dproc_kill_by_name's teardown (paging_proc_destroy
- * -> pool_free) races them — none of these run in a critical section.  A
- * preemption inside the claim/zero window let two processes get the SAME
- * slot, or freed-then-zeroed a slot under a live CR3, producing the ring0
- * #PF (CR3 == a pt_pool slot, CR2 garbage).  Bracketing the claim and the
- * release with cli/popf makes slot ownership consistent. */
-static inline unsigned long kcc_irq_save(void)
-{
-    unsigned long fl;
-    __asm__ volatile ("pushf\n\tpop %0\n\tcli" : "=r"(fl) :: "memory");
-    return fl;
-}
-static inline void kcc_irq_restore(unsigned long fl)
-{
-    __asm__ volatile ("push %0\n\tpopf" :: "r"(fl) : "memory", "cc");
-}
-
 static PTE *pool_alloc(void)
 {
-    unsigned long fl = kcc_irq_save();
     for (INT i = 0; i < POOL_SIZE; i++) {
         if (!pt_used[i]) {
             pt_used[i] = TRUE;
-            kcc_irq_restore(fl);
-            /* Zero outside the lock is fine: the slot is now privately
-             * owned (pt_used==TRUE) and not yet handed to any CR3. */
             for (INT j = 0; j < PT_ENTRIES; j++)
                 pt_pool[i][j] = 0;
             return pt_pool[i];
         }
     }
-    kcc_irq_restore(fl);
     return NULL;
 }
 
@@ -97,24 +56,7 @@ static void pool_free(PTE *pt)
 {
     for (INT i = 0; i < POOL_SIZE; i++) {
         if (pt_pool[i] == pt) {
-#ifdef KCC_DIAG
-            /* Is this slot the CURRENTLY ACTIVE CR3? Freeing the table the
-             * CPU is translating through == the convicted hazard. */
-            {
-                unsigned int cur;
-                asm volatile ("mov %%cr3, %0" : "=r"(cur));
-                if ((cur & ~0xFFFu) == ((unsigned int)(unsigned long)pt & ~0xFFFu)) {
-                    print("[KCC] pool_free of ACTIVE CR3 slot=0x"); kcc_hex(i);
-                    print(" pt=0x"); kcc_hex((unsigned int)(unsigned long)pt);
-                    print(" curtid=0x"); kcc_hex(kcc_curtid()); print("\r\n");
-                }
-            }
-#endif
-            {
-                unsigned long fl = kcc_irq_save();
-                pt_used[i] = FALSE;
-                kcc_irq_restore(fl);
-            }
+            pt_used[i] = FALSE;
             return;
         }
     }
@@ -307,32 +249,7 @@ UW paging_get_kernel_cr3(void) { return kernel_cr3; }
 /* Called from .Ldispatch_loop with the incoming task's tid.          */
 void knl_dispatch_set_cr3(ID tid)
 {
-    /* paging_init() runs LATE (inside usermain(), after the first
-     * knl_force_dispatch), so kernel_cr3 is 0 during early boot
-     * dispatches.  Loading CR3=0 would fault; until paging is armed,
-     * leave the boot CR3 (set by start.S) in place.  Likewise never
-     * load a 0 task CR3. */
-    UW cr3 = paging_get_task_cr3(tid);
-#ifdef KCC_DIAG
-    /* Catch a dispatch onto a process CR3 whose pool slot is FREE
-     * (pt_used==FALSE) — i.e. the table was destroyed but the task is
-     * still being dispatched on it.  This is the convicted hazard, caught
-     * at the exact dispatch. */
-    if (cr3 != 0 && cr3 != kernel_cr3) {
-        for (INT i = 0; i < POOL_SIZE; i++) {
-            if ((UW)(unsigned long)pt_pool[i] == (cr3 & ~0xFFFUL)) {
-                if (!pt_used[i]) {
-                    print("[KCC] DISPATCH onto FREED CR3 tid=0x"); kcc_hex((unsigned int)tid);
-                    print(" cr3=0x"); kcc_hex((unsigned int)cr3);
-                    print(" slot=0x"); kcc_hex((unsigned int)i); print("\r\n");
-                }
-                break;
-            }
-        }
-    }
-#endif
-    if (cr3 != 0)
-        paging_switch(cr3);
+    paging_switch(paging_get_task_cr3(tid));
 }
 
 /* ----------------------------------------------------------------- */
