@@ -119,7 +119,68 @@ INT sign_allow_has(const U1 pk[ED25519_PUBLIC_KEY_LEN])
     return 0;
 }
 
+INT sign_allow_count(void) { return allow_n; }
+
 void sign_allow_clear(void) { allow_n = 0; }
+
+/* ------------------------------------------------------------------ */
+/* the signed artifact manifest (selfc unit + genome weights; §4.2/§4.3) */
+/* ------------------------------------------------------------------ */
+
+_Static_assert(sizeof(SIGN_MANIFEST) == 16 + 32 + 32 + 64,
+               "SIGN_MANIFEST wire image must be 144 B (LP64-stable)");
+
+/* the bytes a manifest signature covers: {artifact_id || artifact_ver}.
+ * Binding the version stops a valid old signature being replayed onto a
+ * different artifact id. 36 bytes, fixed-width, byte-identical cross-ABI. */
+static void sign_manifest_body(const U1 artifact_id[ED25519_PUBLIC_KEY_LEN],
+                               U4 artifact_ver, U1 out[36])
+{
+    sg_memcpy(out, artifact_id, ED25519_PUBLIC_KEY_LEN);
+    out[32] = (U1)(artifact_ver       & 0xFF);
+    out[33] = (U1)((artifact_ver >> 8) & 0xFF);
+    out[34] = (U1)((artifact_ver >> 16)& 0xFF);
+    out[35] = (U1)((artifact_ver >> 24)& 0xFF);
+}
+
+INT sign_manifest_make(const U1 artifact_id[ED25519_PUBLIC_KEY_LEN],
+                       U4 artifact_ver, SIGN_MANIFEST *out)
+{
+    const U1 *pk;
+    U1 body[36];
+    if (!out) return 0;
+    if (!sign_node_key_ensure()) return 0;
+    pk = sign_node_pubkey();
+    if (!pk) return 0;
+
+    out->magic        = SIGN_MANIFEST_MAGIC;
+    out->version      = SIGN_MANIFEST_VER;
+    out->artifact_ver = artifact_ver;
+    out->_pad         = 0;
+    sg_memcpy(out->artifact_id, artifact_id, ED25519_PUBLIC_KEY_LEN);
+    sg_memcpy(out->signer_pk,   pk,          ED25519_PUBLIC_KEY_LEN);
+    sign_manifest_body(artifact_id, artifact_ver, body);
+    /* sign with the node's secret key (sign_artifact uses node_sk) */
+    return sign_artifact(body, (UW)sizeof body, out->sig);
+}
+
+INT sign_manifest_verify(const SIGN_MANIFEST *m,
+                         const U1 actual_id[ED25519_PUBLIC_KEY_LEN])
+{
+    U1 body[36];
+    if (!m || !actual_id) return 0;
+    if (m->magic != SIGN_MANIFEST_MAGIC || m->version != SIGN_MANIFEST_VER)
+        return 0;
+    /* (1) the manifest's artifact_id MUST equal the bytes the caller resolved
+     *     — a poisoned body whose content-id differs is refused here. */
+    if (!sg_eq(m->artifact_id, actual_id, ED25519_PUBLIC_KEY_LEN)) return 0;
+    /* (2) the signature MUST verify under the named signer key. */
+    sign_manifest_body(m->artifact_id, m->artifact_ver, body);
+    if (!sign_verify(body, (UW)sizeof body, m->sig, m->signer_pk)) return 0;
+    /* (3) the signer MUST be in THIS node's allowlist (adoption is consent). */
+    if (!sign_allow_has(m->signer_pk)) return 0;
+    return 1;   /* ALL three, ANDed, fail-closed */
+}
 
 /* ================================================================== */
 /* THE FALSIFIABLE SUITE — `sign test`                                 */
@@ -392,6 +453,12 @@ static INT gate_keyrotation(void)
     return ok;
 }
 
+/* the LIVE production-path gates (wave-39) live in their own TUs (arch/common,
+ * driving the real call sites). Declared in sign.h; called here so `sign test`
+ * exercises both the in-process MODELS above and the LIVE production paths. */
+IMPORT INT lm_self_sign_live_test(void);   /* [sign-selflayer-live]  */
+IMPORT INT genome_sign_live_test(void);    /* [sign-genome]          */
+
 void sign_self_test(void)
 {
     INT all = 1;
@@ -407,6 +474,10 @@ void sign_self_test(void)
     all &= gate_selflayer();
     all &= gate_unit();
     all &= gate_keyrotation();
+
+    /* LIVE production-path gates: tamper-proof Self chain + verified weights. */
+    all &= lm_self_sign_live_test();
+    all &= genome_sign_live_test();
 
     sg_puts(all ? "== sign test: ALL PASS ==\r\n"
                 : "== sign test: FAIL ==\r\n");

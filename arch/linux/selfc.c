@@ -36,6 +36,7 @@
 #include "pfs_dag.h"
 #include "pfs_block.h"
 #include "lm_self.h"
+#include "sign.h"          /* signing.md §4.2: signed unit manifest + allowlist */
 #include "selfc.h"
 #include "selfc_proc.h"
 
@@ -108,6 +109,29 @@ static int tok_is(const UB *p, const UB *end, const char *b)
         if (p + i >= end || p[i] != (UB)b[i]) return 0;
     }
     return (p + i >= end) || p[i] == ' ' || p[i] == '\t';
+}
+
+/* parse 64 hex chars from [*pp,end) into a 32-byte node pubkey; advance *pp.
+ * Returns the byte count (32 on success, 0 on a short/malformed token). Used
+ * by `selfc adopt key <hex>` (signing.md §4.2). */
+static int selfc_parse_hexkey(const UB **pp, const UB *end,
+                              U1 pk[ED25519_PUBLIC_KEY_LEN])
+{
+    const UB *p = *pp;
+    int nib = 0; U1 cur = 0;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    while (p < end && nib < ED25519_PUBLIC_KEY_LEN * 2) {
+        UB c = *p; U1 v;
+        if (c >= '0' && c <= '9') v = (U1)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (U1)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (U1)(c - 'A' + 10);
+        else break;
+        cur = (U1)((cur << 4) | v);
+        if (nib & 1) pk[nib / 2] = cur;
+        nib++; p++;
+    }
+    *pp = p;
+    return (nib == ED25519_PUBLIC_KEY_LEN * 2) ? ED25519_PUBLIC_KEY_LEN : 0;
 }
 
 #ifdef HAVE_LIBTCC
@@ -418,24 +442,110 @@ static int selfc_is_accepted(const char *name)
         || name_in(selfc_adopted, selfc_nadopted, name);
 }
 
+/* ------------------------------------------------------------------ */
+/* signing.md §4.2 — FLEET evolution: a signed unit manifest.           */
+/*                                                                      */
+/* The unit SOURCE lives at p-fs ref "unit/<name>"; its content-id is   */
+/* pfs_id_compute over the EXACT source bytes. A COMPANION manifest at   */
+/* "unitsig/<name>" (a SIGN_MANIFEST) binds that content-id + version to */
+/* the author NODE's key. A node germinates a GOSSIPED (non-local) unit  */
+/* iff: a valid manifest names the unit's actual bytes AND its signer is */
+/* in this node's allowlist (selfc adopt key). This DROPS LOCAL-ONLY for */
+/* signed+adopted units; the germ sandbox is UNCHANGED (signing is       */
+/* provenance, the germ is still the runtime boundary).                  */
+/* ------------------------------------------------------------------ */
+
+/* build "unitsig/<name>" from the short name. */
+static INT selfc_unitsig_ref(const char *name, char *out, INT max)
+{
+    INT i = 0; const char *pfx = "unitsig/";
+    for (INT k = 0; pfx[k] && i < max - 1; k++) out[i++] = pfx[k];
+    for (INT k = 0; name[k] && i < max - 1; k++) out[i++] = name[k];
+    out[i] = '\0';
+    return i;
+}
+
+/* content-id of unit/<name>@seq's source bytes (the artifact a manifest
+ * signs). Returns 1 + fills id_out, or 0 if the source is not resolvable. */
+static int selfc_unit_id(const char *name, U4 seq, U1 id_out[PFS_ID_LEN])
+{
+    static UB src[PFS_BLOCK_MAX + 1];      /* static: off the task stack */
+    char ref[PFS_NAME_MAX + 1];
+    INT rl = selfc_unit_ref(name, ref, sizeof ref);
+    INT len = pfs_dag_read_at((const UB *)ref, (UW)rl, (UW)seq, src, PFS_BLOCK_MAX);
+    if (len < 0) return 0;
+    pfs_id_compute(src, (UW)len, id_out);
+    return 1;
+}
+
+/* author-side: publish a signed manifest for unit/<name>@seq under
+ * "unitsig/<name>", signed by THIS node's key. Called from `selfc save`. */
+static void selfc_sign_unit(const char *name, U4 seq)
+{
+    U1 uid[PFS_ID_LEN];
+    if (!selfc_unit_id(name, seq, uid)) return;
+    SIGN_MANIFEST m;
+    if (!sign_manifest_make(uid, seq, &m)) return;
+    char sref[PFS_NAME_MAX + 1];
+    INT  sl = selfc_unitsig_ref(name, sref, sizeof sref);
+    if (pfs_dag_save((const UB *)sref, (UW)sl, &m, (UW)sizeof m) == PFS_OK)
+        tm_printf((const UB *)"[selfc] signed unit manifest '%s' published "
+                  "(Ed25519; an adopting node may germinate it remotely)\n",
+                  (const UB *)sref);
+}
+
+/* verifier-side: is there a VALID signed manifest for unit/<name>@seq whose
+ * signer this node has ADOPTED, binding the unit's ACTUAL bytes? This is the
+ * (signed) half of the AND that lets a non-local unit run. Returns 1/0. */
+static int selfc_signed_accept(const char *name, U4 seq)
+{
+    U1 uid[PFS_ID_LEN];
+    if (!selfc_unit_id(name, seq, uid)) return 0;     /* no resolvable source */
+    char sref[PFS_NAME_MAX + 1];
+    INT  sl = selfc_unitsig_ref(name, sref, sizeof sref);
+    SIGN_MANIFEST m;
+    if (pfs_dag_read((const UB *)sref, (UW)sl, &m, (UW)sizeof m) != (INT)sizeof m)
+        return 0;                                     /* unsigned -> refuse */
+    /* sign_manifest_verify ANDs: id matches actual bytes + sig valid + signer
+     * adopted. fail-closed. (artifact_ver is informational here; the binding
+     * that matters for germination is the content-id over the real source.) */
+    return sign_manifest_verify(&m, uid) ? 1 : 0;
+}
+
 /* `selfc run <name>` default path: germinate the head version in a germ
  * process (the crash boundary). Refuses non-local, non-adopted units (§3). */
 static void selfc_run_germ(const char *name)
 {
-    if (!selfc_is_accepted(name)) {
-        tm_printf((const UB *)"[selfc] REFUSING to run '%s' — not locally "
-                  "authored and not adopted. selfc-ring3.md §3: v1 is "
-                  "LOCAL-ONLY evolution (gossip replicates bytes; germination "
-                  "is gated). Type `selfc adopt %s` to accept it explicitly.\n",
-                  (const UB *)name, (const UB *)name);
-        return;
-    }
     U4 seq = selfc_head_seq(name);
     if (seq == 0) {
         tm_printf((const UB *)"[selfc] unit '%s' has no version in p-fs yet "
                   "(save it first, or it is still replicating)\n", (const UB *)name);
         return;
     }
+
+    /* The germination gate (signing.md §4.2). A unit may run if EITHER:
+     *   (a) it is locally authored / name-adopted (the legacy LOCAL path), OR
+     *   (b) it is SIGNED by a key this node has ADOPTED, and the signature
+     *       binds the unit's ACTUAL bytes (FLEET evolution — drops LOCAL-ONLY
+     *       ONLY for signed+adopted units).
+     * Unsigned / wrong-key / un-adopted units are REFUSED. In BOTH cases the
+     * germ sandbox still wraps execution (signing is provenance, not the
+     * runtime boundary). */
+    int local  = selfc_is_accepted(name);
+    int fleet  = selfc_signed_accept(name, seq);
+    if (!local && !fleet) {
+        tm_printf((const UB *)"[selfc] REFUSING to run '%s' — not locally "
+                  "authored/adopted AND no valid signature by an adopted key "
+                  "(signing.md §4.2). A gossiped unit germinates remotely ONLY "
+                  "when signed+adopted. `selfc adopt key <hex>` to adopt the "
+                  "author, or `selfc adopt %s` for a local accept.\n",
+                  (const UB *)name, (const UB *)name);
+        return;
+    }
+    if (!local && fleet)
+        tm_printf((const UB *)"[selfc] '%s' is REMOTE but SIGNED by an adopted "
+                  "key — fleet evolution: germinating in the germ sandbox\n",
+                  (const UB *)name);
     /* enqueue: the supervisor task compiles + forks (never the shell task). */
     selfc_germ_launch(name, seq);
 }
@@ -484,6 +594,22 @@ static const char selfc_gate_v1_src[] =
     "  const char *tok = \"A:1\";\n"
     "  for(;;){ if(h>=0) kdds_pub(h, tok, 3);\n"
     "    tm_printf((const unsigned char *)\"gate v1 served A:1\\n\");\n"
+    "    tk_dly_tsk(300); }\n"
+    "}\n";
+
+/* fleet unit: GOOD — a non-local (gossiped) unit an ADOPTED author signed;
+ * publishes a token on its own topic forever (proves it really runs in the
+ * germ sandbox after the signature gate lets it through). */
+static const char selfc_fleet_src[] =
+    "int tm_printf(const unsigned char *fmt, ...);\n"
+    "int tk_dly_tsk(unsigned int ms);\n"
+    "int kdds_open(const char *name, int qos);\n"
+    "int kdds_pub(int h, const void *data, int len);\n"
+    "void selfc_main(void){\n"
+    "  int h = kdds_open(\"unit/fleetu/out\", 0);\n"
+    "  const char *tok = \"F:1\";\n"
+    "  for(;;){ if(h>=0) kdds_pub(h, tok, 3);\n"
+    "    tm_printf((const unsigned char *)\"fleet unit served F:1\\n\");\n"
     "    tk_dly_tsk(300); }\n"
     "}\n";
 
@@ -650,6 +776,120 @@ static void selfc_test(void)
             tm_printf((const UB *)"[selfc-lineage] FAIL\n");
     }
 
+    /* ================= [sign-fleet] (the headline unlock) ============ */
+    /* signing.md §4.2: a self-compiled unit AUTHORED + SIGNED by node A may
+     * germinate on node B once B has ADOPTED A's key — dropping LOCAL-ONLY for
+     * signed+adopted units. Unsigned / wrong-key / un-adopted units are
+     * REFUSED. Modeled in-process: "node A" is a derived test keypair; the unit
+     * source + its signed manifest are gossiped objects (saved to p-fs but
+     * NOT noted local), exactly as a remote unit arrives. The germ sandbox
+     * still wraps the unit (signing is provenance; the germ is the boundary). */
+    {
+        INT pass = 1;
+        selfc_sup_reset();
+        selfc_sup_set_probation(10000);
+        sign_allow_clear();
+
+        /* derive node A's keypair (the remote author) + an EVIL keypair. */
+        U1 a_seed[ED25519_SEED_LEN], a_pk[ED25519_PUBLIC_KEY_LEN], a_sk[ED25519_SECRET_KEY_LEN];
+        U1 e_seed[ED25519_SEED_LEN], e_pk[ED25519_PUBLIC_KEY_LEN], e_sk[ED25519_SECRET_KEY_LEN];
+        for (INT i = 0; i < ED25519_SEED_LEN; i++) { a_seed[i] = (U1)(0x21 + i*5u); e_seed[i] = (U1)(0x42 + i*9u); }
+        ed25519_keypair_from_seed(a_seed, a_pk, a_sk);
+        ed25519_keypair_from_seed(e_seed, e_pk, e_sk);
+
+        /* the gossiped unit source lands at unit/fleetu (NOT noted local). */
+        INT su = pfs_dag_save((const UB *)"unit/fleetu", 11,
+                              selfc_fleet_src, (UW)s_len(selfc_fleet_src));
+        U4 fseq = selfc_head_seq("fleetu");
+        U1 uid[PFS_ID_LEN];
+        INT have_id = selfc_unit_id("fleetu", fseq, uid);
+
+        /* (1) DISEASE — UNSIGNED + non-local: no manifest, allowlist empty. */
+        INT unsigned_refused = !selfc_is_accepted("fleetu")
+                            && !selfc_signed_accept("fleetu", fseq);
+        tm_printf((const UB *)"[sign-test] fleet: unsigned+non-local refused=%d\n",
+                  unsigned_refused);
+        if (!unsigned_refused) pass = 0;
+
+        /* helper: publish a manifest for fleetu signed by an explicit key. */
+        /* body = artifact_id(32) || ver_le(4) — must match sign.c exactly. */
+        #define FLEET_PUBLISH_SIG(SK, PK) do { \
+            SIGN_MANIFEST _m; _m.magic = SIGN_MANIFEST_MAGIC; _m.version = SIGN_MANIFEST_VER; \
+            _m.artifact_ver = fseq; _m._pad = 0; \
+            memcpy(_m.artifact_id, uid, PFS_ID_LEN); memcpy(_m.signer_pk, (PK), 32); \
+            U1 _b[36]; memcpy(_b, uid, PFS_ID_LEN); \
+            _b[32]=(U1)(fseq&0xFF);_b[33]=(U1)((fseq>>8)&0xFF);_b[34]=(U1)((fseq>>16)&0xFF);_b[35]=(U1)((fseq>>24)&0xFF); \
+            ed25519_sign(_m.sig, _b, sizeof _b, (SK)); \
+            (void)pfs_dag_save((const UB *)"unitsig/fleetu", 14, &_m, (UW)sizeof _m); \
+        } while (0)
+
+        /* (2) DISEASE — signed by EVIL, who is NOT adopted: a VALID signature
+         *     but the operator never adopted that key -> REFUSED. */
+        FLEET_PUBLISH_SIG(e_sk, e_pk);
+        INT evil_refused = !selfc_signed_accept("fleetu", fseq);
+        tm_printf((const UB *)"[sign-test] fleet: valid sig by NON-adopted (evil) "
+                  "key refused=%d\n", evil_refused);
+        if (!evil_refused) pass = 0;
+
+        /* (3) re-publish the manifest signed by author A, and adopt A's key. */
+        FLEET_PUBLISH_SIG(a_sk, a_pk);
+        sign_allow_add(a_pk);                       /* `selfc adopt key <A>` */
+        INT adopted_accept = selfc_signed_accept("fleetu", fseq);
+        tm_printf((const UB *)"[sign-test] fleet: signed-by-adopted-A accept=%d "
+                  "(non-local!)\n", adopted_accept);
+        if (!adopted_accept) pass = 0;
+
+        /* (3b) DISEASE — POISONED body: change the gossiped source AFTER A
+         *      signed it, so its content-id moves -> the A signature no longer
+         *      binds the bytes -> REFUSED even though A is adopted. */
+        {
+            static char poison[sizeof selfc_fleet_src + 4];
+            INT pl = 0; for (; selfc_fleet_src[pl]; pl++) poison[pl] = selfc_fleet_src[pl];
+            poison[1] ^= 0x01;                      /* mutate one source byte */
+            INT sp = pfs_dag_save((const UB *)"unit/fleetu", 11, poison, (UW)pl);
+            U4 pseq = selfc_head_seq("fleetu");     /* head moved to the poison */
+            INT poison_refused = !selfc_signed_accept("fleetu", pseq);
+            tm_printf((const UB *)"[sign-test] fleet: poisoned body (sig no longer "
+                      "binds) refused=%d\n", poison_refused);
+            if (!(sp == PFS_OK) || !poison_refused) pass = 0;
+            /* restore the genuine source + A's manifest as the head for the run. */
+            (void)pfs_dag_save((const UB *)"unit/fleetu", 11,
+                               selfc_fleet_src, (UW)s_len(selfc_fleet_src));
+            fseq = selfc_head_seq("fleetu");
+            have_id = selfc_unit_id("fleetu", fseq, uid);
+            FLEET_PUBLISH_SIG(a_sk, a_pk);
+        }
+
+        /* (4) CURE — actually germinate the signed+adopted non-local unit and
+         *     prove it RUNS inside the germ sandbox (its OWN process publishes
+         *     F:1 — a parent print cannot fake it). selfc_run_germ enforces the
+         *     same gate the shell does; here we go straight to germ_launch with
+         *     the gate already asserted (adopted_accept). */
+        INT served = 0;
+        if (adopted_accept && have_id && su == PFS_OK) {
+            selfc_germ_launch("fleetu", fseq);
+            W gh = kdds_open_poll("unit/fleetu/out", KDDS_QOS_LATEST_ONLY);
+            if (gh >= 0) {
+                UB rb[8];
+                for (INT t = 0; t < 80; t++) {
+                    W g = kdds_sub(gh, rb, sizeof rb, 0);
+                    if (g == 3 && rb[0]=='F' && rb[1]==':' && rb[2]=='1') { served = 1; break; }
+                    tk_dly_tsk(SELFC_T_POLL_MS);
+                }
+                kdds_close(gh);
+            }
+        }
+        tm_printf((const UB *)"[sign-test] fleet: signed+adopted unit RAN in germ "
+                  "sandbox served_F:1=%d\n", served);
+        if (!served) pass = 0;
+
+        #undef FLEET_PUBLISH_SIG
+        sign_allow_clear();
+        selfc_sup_reset();
+        if (pass) tm_printf((const UB *)"[sign-fleet] PASS\n");
+        else      tm_printf((const UB *)"[sign-fleet] FAIL\n");
+    }
+
     /* tidy up: ensure no germ lingers; restore the shipped probation. */
     selfc_sup_reset();
     selfc_sup_set_probation(10000);
@@ -705,6 +945,13 @@ static void selfc_run_germ(const char *name)
     tm_printf((const UB *)"[selfc] this build has no libtcc — cannot "
               "germinate units. install libtcc-dev and rebuild.\n");
 }
+/* signing the unit manifest needs no compiler — but the demo `save` path
+ * writes a bare-name ref the unit/<name> convention does not read, so on a
+ * no-libtcc node the manifest publish is a no-op (honest: such a node has no
+ * germination path of its own; a compiler-equipped peer that adopts its key
+ * would re-sign on its own save). Kept a stub to keep the save verb building. */
+static U4   selfc_head_seq(const char *name) { (void)name; return 0; }
+static void selfc_sign_unit(const char *name, U4 seq) { (void)name; (void)seq; }
 static void selfc_test(void)
 {
     tm_printf((const UB *)"[selfc] no libtcc in this build — selfc-ring3 "
@@ -731,7 +978,9 @@ static void selfc_usage(void)
     tm_printf((const UB *)
         "usage: selfc demo            compile+run the built-in demo (LEGACY in-task)\n"
         "       selfc save <name>     save demo C source to p-fs <name>\n"
-        "       selfc adopt <name>    explicitly accept a unit for germination (§3)\n"
+        "       selfc adopt <name>    accept a LOCAL unit for germination (§3)\n"
+        "       selfc adopt key <hex> adopt a signer key (fleet evolution, §4.2)\n"
+        "       selfc pubkey          print this node's signer pubkey\n"
         "       selfc run <name>      germinate <name> in a germ process (crash boundary)\n"
         "       selfc test            run the selfc-ring3 acceptance gates (§5)\n"
         "       selfc ls              list compiled units + germ reaps\n");
@@ -777,19 +1026,43 @@ void selfc_cmd(const UB *line, INT n)
                       "saved as p-fs object '%s' — locally authored, "
                       "runnable; it now replicates like any block\n",
                       s_len(selfc_demo_src), (const UB *)nm);
+            /* signing.md §4.2: publish a signed manifest so an ADOPTING peer
+             * can germinate this unit remotely (fleet evolution). */
+            selfc_sign_unit(nm, selfc_head_seq(nm));
         } else
             tm_printf((const UB *)"[selfc] pfs save failed (%d)\n", r);
 
     } else if (p < end && tok_is(p, end, "adopt")) {
         p += 5;
+        while (p < end && (*p == ' ' || *p == '\t')) p++;
+        if (p < end && tok_is(p, end, "key")) {
+            /* signing.md §3.2/§4.2: `selfc adopt key <64-hex>` adopts a SIGNER
+             * NODE KEY into the allowlist. A unit signed by this key may now
+             * germinate here EVEN IF non-local (fleet evolution). The key
+             * belongs to a NODE, never a human (§0): no profile/handle. */
+            p += 3;
+            U1 pk[ED25519_PUBLIC_KEY_LEN];
+            if (selfc_parse_hexkey(&p, end, pk) != ED25519_PUBLIC_KEY_LEN) {
+                tm_printf((const UB *)"[selfc] adopt key: expected a 64-hex-char "
+                          "node pubkey\n");
+            } else if (sign_allow_add(pk)) {
+                tm_printf((const UB *)"[selfc] ADOPTED signer key — units signed "
+                          "by it may now germinate here even if non-local "
+                          "(signing.md §4.2 fleet evolution; germ sandbox "
+                          "still wraps execution)\n");
+            } else {
+                tm_printf((const UB *)"[selfc] adopt key: allowlist full\n");
+            }
+            return;
+        }
         char nm[PFS_NAME_MAX + 1];
         INT  nl = selfc_token(&p, end, nm, sizeof nm);
         if (nl == 0) { selfc_usage(); return; }
         selfc_note_adopt(nm);
         tm_printf((const UB *)"[selfc] ADOPTED '%s' — explicit operator accept "
-                  "(selfc-ring3.md §3). It may now be germinated. (Isolation "
-                  "is not trust: this is the LOCAL accept that stands in for "
-                  "signatures, deferred to v3.)\n", (const UB *)nm);
+                  "(selfc-ring3.md §3). It may now be germinated locally. (A "
+                  "non-local unit needs `selfc adopt key <hex>` + a signature.)\n",
+                  (const UB *)nm);
 
     } else if (p < end && tok_is(p, end, "run")) {
         p += 3;
@@ -825,6 +1098,19 @@ void selfc_cmd(const UB *line, INT n)
 
     } else if (p < end && tok_is(p, end, "ls")) {
         selfc_ls();
+
+    } else if (p < end && tok_is(p, end, "pubkey")) {
+        /* print this node's signer pubkey so a peer can `selfc adopt key`. */
+        const U1 *pk = (sign_node_key_ensure() ? sign_node_pubkey() : 0);
+        if (!pk) { tm_printf((const UB *)"[selfc] no node key\n"); return; }
+        static const char hx[] = "0123456789abcdef";
+        char out[ED25519_PUBLIC_KEY_LEN * 2 + 1];
+        for (INT i = 0; i < ED25519_PUBLIC_KEY_LEN; i++) {
+            out[i*2]   = hx[(pk[i] >> 4) & 0xF];
+            out[i*2+1] = hx[pk[i] & 0xF];
+        }
+        out[ED25519_PUBLIC_KEY_LEN * 2] = '\0';
+        tm_printf((const UB *)"[selfc] node pubkey: %s\n", (const UB *)out);
 
     } else {
         selfc_usage();
