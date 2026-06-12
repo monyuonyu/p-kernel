@@ -56,6 +56,11 @@ _Static_assert(sizeof(GALAXY_EV) == 12, "GALAXY_EV must be 12 bytes (LP64-safe)"
                              /* queue. src = A (origin), dst = me; a = key,   */
                              /* b = val. ONE site: mind_net_task arrival       */
                              /* (living-mind.md VIII.10).                      */
+#define EV_MERGE        16   /* LM-10 Path W: I folded my region into rw[].    */
+                             /* src = me, dst = NONE; a = merge_epoch16,       */
+                             /* b = peers folded. ONE site: mw_fold_region     */
+                             /* (living-mind.md XI.7) — the region's stars     */
+                             /* pulse in unison (collective sleep).            */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

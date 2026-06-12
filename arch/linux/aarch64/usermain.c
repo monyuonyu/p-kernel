@@ -61,6 +61,7 @@ IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
+IMPORT void mind_merge_task(INT stacd, void *exinf);  /* LM-10 Path W merge */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 IMPORT void sign_self_test(void);                      /* signing.md sign suite */
@@ -357,6 +358,16 @@ static void cmd_net(void)
      * default overflows it; the hosted-relay stack-overflow lesson). */
     create_task((FP)mind_net_task, 7, 16384);
     print("[net] mind shared-teach (LM-7) task started\r\n");
+
+    /* LM-10 (living-mind.md Part XI) — Path W: the one mind. The fleet-DMN
+     * slow-band weight-merge pulse ("collective sleep"): each node publishes
+     * its rw[] (84 KB, 22 chunks) and gl_merge()s the region into ONE shared
+     * weight-state. Symmetric, no aggregator, region-scoped. 16K stack: the
+     * fold path holds the 84 KB transfer buffers in .bss (file-static, NOT on
+     * the task stack — the hosted-relay stack lesson) but still runs the R3
+     * publish/fetch + gl_merge call chain. */
+    create_task((FP)mind_merge_task, 7, 16384);
+    print("[net] mind one-mind weight-merge (LM-10 Path W) task started\r\n");
 
     /* p-fs P2 ref gossip — beacons this node's name->head-manifest refs
      * on the region topic and merges peers' (LWW by version seq). Same
