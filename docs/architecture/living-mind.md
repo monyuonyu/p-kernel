@@ -2856,3 +2856,360 @@ the LM epitaph's longest-standing disclaimer ("synthetic vocab, NOT real languag
 5. **The `R_DM` widening** (IX.4): hold `R_DM=32` UNLESS `[lang-capacity]` proves 32-wide attention
    cannot disambiguate the widened vocab; any `R_DM` bump is a MEASURED decision printed by the
    cert (it ~doubles `R_NP` and CI time per step), never a guess.
+
+## Part X — the capacity surgery: widen the mind's thinking width (R_DM 32→48/64)
+
+LM-8 (Part IX) shipped REAL WORDS and then did the honest thing the audit demands: it **measured the
+capacity wall instead of asserting it past**. The printed `[lang-capacity]` curve at `(R_KEYV=8,
+R_VALV=32, R_DM=32)` was
+
+```
+N= 2 -> 100%    N= 4 -> 100%    N= 6 -> 63%    N= 8 -> 72%
+comfortable-N (>=75% recall) = 4
+```
+
+So the mind holds **4 word-bindings comfortably** today — and recall has already collapsed below the
+75% bar by N=6, *before* the R_KEYV=8 vocabulary ceiling is even reached. The dreamed 256/64 vocab
+"collapsed to chance" (IX.0 #2). **The bottleneck is not the vocabulary tables; it is the 32-wide
+attention** (`R_DM`) trying to disambiguate too many simultaneous key→value bindings in one prompt
+(IX.0 #1: *"the associative-reasoning bottleneck is the attention width R_DM, which scales the model
+quadratically"*). This Part performs the **measured `R_DM` surgery** Part IX named as the follow-up
+(IX.4, COMMANDER DECISION 5) and the gap-ledger epitaph recorded — widen the thinking width so the
+capacity curve rises, and PRINT the new comfortable-N superimposed on LM-8's.
+
+### X.0 IMPORTANT — what the tree actually says (read BEFORE coding)
+
+Eight load-bearing facts. The first three are the **safety crux** (the shared LayerNorm); the rest
+size the surgery. **Verify every number by build; do not trust this doc blind.**
+
+1. **`DTR_LN_MAXW` is a pure STACK-BUFFER CAPACITY CAP, not a behavioral constant — this is the
+   whole safety question and the answer is GREEN.** Its ONLY runtime use anywhere in the tree
+   (`grep -rn DTR_LN_MAXW arch/ boot/ android/`) is one line: `float dxh[DTR_LN_MAXW]` in
+   `dtr_ln_bwd` (`dtr.c:731`). It is the size of a scratch array, indexed `dxh[0..n-1]` where `n` is
+   the **runtime width argument**. The dtr SENSOR brain calls `dtr_ln_bwd(..., n=DM=8)` and touches
+   only `dxh[0..7]`; R3 calls it with `n=R_DM`. **Raising the cap 32→64 makes the array longer but
+   the sensor still writes/reads exactly its first 8 entries — its arithmetic is byte-for-byte
+   identical.** A capacity cap, not a behavioral one (the IX-prose hedge "crashes as-is" is true and
+   benign: at `R_DM=48` the R3 path would write `dxh[0..47]` into a `dxh[32]` array — a stack smash
+   — which is *precisely* a buffer-size bug a size bump fixes, NOT a numerics change). **This is the
+   crux the design exists to settle: the bump is FREE for the sensor brain. The cert proves it.**
+2. **The dtr sensor brain's dims are `DM=8, FFN=16, SEQ=4, NH=2, DH=4` (`dtr.h:33-40`), 635 weights
+   (`DTR_WEIGHT_FLOATS`).** None of these change. The sensor certs are `[onebrain-*]` (and `moe`/
+   `dkva`), NOT `[r3-incontext-*]`/`[lang-*]`. The surgery touches `DTR_LN_MAXW` (a `dtr.h` constant)
+   and the R3-private `R_DM`/`R_FFN`/`R_KEYV`/`R_VALV` — **never `DTR_EMBED_DIM` or any dtr dim.**
+   The unaffected-sensor proof (X.3) is a cert requirement, not a hope.
+3. **`dtr_ln_fwd_cache` has NO width-capped buffer** (`dtr.c:709`) — it writes `xh[]`/`y[]` provided
+   by the caller, loops to `n`, allocates nothing. Only `dtr_ln_bwd`'s `dxh[DTR_LN_MAXW]` is capped.
+   So the LayerNorm forward is already width-safe at any R_DM; the bump is a one-constant change.
+4. **The capacity wall is the ATTENTION width, measured. LM-8's curve already collapses at N=6
+   (63%) — before R_KEYV=8.** Widening `R_DM` alone is necessary but NOT sufficient to RAISE
+   comfortable-N past 8: the `[lang-capacity]` ladder is bounded by `R_KEYV` (`LANG_NMAX = 8 =
+   R_KEYV`, `:1462`; `lang_make_dict` draws N distinct keys from `R_KEYV`, `:1493`). To MEASURE a
+   comfortable-N of 12 or 16 the cert must sweep N>8, which needs **both** (a) `R_DM` wide enough to
+   disambiguate them AND (b) `R_KEYV` ≥ that N AND (c) the embedded `vk_img` word list grown to ≥
+   that many key words (`r3_vocab.c:31` holds exactly 8 keys today; `R3_VOCAB_KEYS=8`,
+   `r3_vocab.h:32`). **The headline gain needs a coordinated R_DM + R_KEYV + word-list widening,
+   not R_DM alone.** The answer vocab `R_VALV=32` already has 32 real words (`vv_img`, 4 lines × 8),
+   and can grow to 64 only if `vv_img` gains 32 more answer words.
+5. **Every R3 activation buffer is a macro-sized STATIC, not a stack local — they grow automatically
+   and safely with `R_DM`.** The forward cache `R_TC rc` (`:140-156`) and the `r_backward` scratch
+   arrays (`dy2`/`dr2`/`dy1`/`dr1`/`dtok`/`dconcat`/`dQ`/`dK`/`dV`, declared `static`, `:259-261`)
+   are all dimensioned `[R_SEQ][R_DM]`/`[R_SEQ][R_DH]` etc. Bumping `R_DM` resizes them at compile
+   time into `.bss`, NOT onto the task stack — so the stack-overflow lesson
+   (`feedback_hosted_relay_stack_overflow.md`, `feedback_validator_and_learner_traps.md`) does NOT
+   bite here, *as long as the implementer keeps them `static`*. Measured `.bss` for `rc`+backward
+   scratch: ~26.8 KB today (DM=32) → ~39.5 KB (DM=48, FFN=48, VALV=64) → ~52.1 KB (DM=64). The ONE
+   thing to watch: `lang_make_dict`'s `static UB kpool[R_KEYV]` and the `[lang-recall]` `kp[R_KEYV]`
+   (`:1672`) — these grow with R_KEYV, also static, fine. **No new stack locals; the auditor greps
+   that the bumped arrays stayed `static`.**
+6. **Gradcheck stride-7 stays valid at every candidate R_DM.** `r_grad_check` (`:481`) strides by 7
+   over `R_NP` with ReLU-kink exclusion + absolute-floor (`:493` comment: *"gcd(7,R_DM)=1 so row/col
+   positions rotate"*). `gcd(7,48)=1`, `gcd(7,64)=1`, and 7 is coprime to every family width that
+   appears (`R_DH∈{12,16}`, `R_FFN∈{32,48,64}`, `R_VALV∈{32,48,64}`, `R_KEYV∈{12,16}`). **No stride
+   change is needed** — the comment's coprimality argument holds at the new R_DM unchanged. The
+   `:493` comment must be updated to name the new R_DM, but the stride is 7.
+7. **`R_DH = R_DM/R_NH` must stay an integer.** `R_NH=4` today. `48/4=12 ✓`, `64/4=16 ✓`. If the
+   commander elects to scale `R_NH` (X.2's third fork), only `R_NH∈{R_DM divisors}` are legal:
+   `R_DM=48 → R_NH∈{1,2,3,4,6,8,12,16,24}`; `R_DM=64 → R_NH∈{1,2,4,8,16}`. v1 holds `R_NH=4` (the
+   `:96-99` comment: *"8-way recall needs R_DM=32 capacity; R_DM=16/R_NH=2 stays at chance —
+   measured, not assumed"* — head count was already tuned; widening per-head dim, not head count,
+   is the conservative first move).
+8. **The wire and `/vocab` follow the vocab dims, not R_DM.** `MT_TEACH_PKT.key`/`val` stay `U1`
+   while `R_KEYV ≤ 256` and `R_VALV ≤ 256` (`dtr.h:345`; the `_Static_assert` at `:134`). Growing
+   `R_KEYV` 8→16 and `R_VALV` 32→64 leaves the wire width UNCHANGED — only the embedded vocab images
+   change content-id, which `GET /vocab` already serves to the UI (IX.10). A vocab-dim change is a
+   `wire_ver` non-event (the version field already exists, `MT_WIRE_VER_LANG`); but it IS a
+   `/vocab` content-id change, so the UI's datalist re-fetches — the design must state that honestly
+   (X.4). **R_DM is invisible to the wire and the UI** (it changes only `rw[]`, never a packet).
+
+### X.1 The claim to prove
+
+> The mind's **thinking width** is widened (`R_DM` 32→the cut, the attention that disambiguates
+> simultaneous bindings) so the `[lang-capacity]` curve **RISES**: where LM-8 collapsed below 75%
+> recall by N=6 (comfortable-N = 4), the widened substrate holds **MORE real word-bindings at ≥75%
+> recall** — the new comfortable-N is MEASURED, PRINTED, and superimposed on LM-8's curve, and the
+> headline is the **capacity GAIN** (Δ comfortable-N) over LM-8's 4. The widening reuses the SAME
+> shared LayerNorm kernels (the `DTR_LN_MAXW` cap raised — proven free for the dtr sensor brain,
+> whose `[onebrain-*]`/moe/dkva numbers stay BYTE-IDENTICAL), the SAME `r_forward`/`r_backward`
+> math (only the dims change), and the SAME gradcheck discipline (stride-7, now over the larger
+> `R_NP`). The gain BUYS more words held at once — it does NOT buy grammar, generation, or
+> multi-token answers (the IX.7 bounds stand, restated in X.5).
+
+This is **the same associative-recall task, wider** — the legitimately-task-specific surface the
+anti-fork rule already blesses (`r3_incontext.c:16-18`: embedding/readout dims may differ; the
+kernels may not). It is NOT a new mechanism; it is the substrate finally given the width its own
+LM-8 cert proved it lacked.
+
+### X.2 The cut — `R_DM = 48` vs `64`, the knobs, the new `R_NP`, the expected vocab gain
+
+**Knobs that change (and ONLY these — the anti-fork surface X.6 pins it):**
+
+- `R_DM` (the surgery): **48 or 64** (the fork below). `R_DH = R_DM/R_NH` follows (12 or 16).
+- `R_KEYV` (key vocab): **8 → 16** — REQUIRED to let the ladder sweep N>8 (X.0 #4). Needs `vk_img`
+  grown to 16 key words + `R3_VOCAB_KEYS=16`.
+- `R_VALV` (answer vocab / classes): **32 → 64** — to give the wider attention a wider answer space
+  to separate (and to finally land the dreamed 64-answer vocab IX hoped for). Needs `vv_img` grown
+  to 64 answer words + `R3_VOCAB_VALS=64`.
+- `R_FFN`: **the third fork.** Today `R_FFN=32` is hard-coded (`:100`), independent of R_DM. Scaling
+  it to R_DM (`R_FFN=R_DM`) gives the wider model proportional MLP capacity; holding it at 32 saves
+  params. v1 RECOMMENDS `R_FFN = R_DM` (a wider attention deserves a wider MLP; the cost is small —
+  see R_NP below) but flags it as a COMMANDER DECISION.
+- `R_NPAIR`/`R_SEQ`: **UNCHANGED** (`R_NPAIR=8`, `R_SEQ=9`) — the per-prompt binding budget is
+  orthogonal to thinking width (IX.0 #3). Widening R_DM lets the model disambiguate the 8 bindings
+  it already carries; it does not add more per prompt.
+- `DTR_LN_MAXW`: **32 → 64** (one constant in `dtr.h`, X.3) — sized to the largest R_DM the cut may
+  ever reach, so a future R_DM=64 needs no second bump.
+
+**The new `R_NP` (built, not trusted — the `_Static_assert` updates to the measured value):**
+
+| dims `(R_KEYV, R_VALV, R_DM, R_FFN)` | `R_NP` | × LM-8 (8992) | CI pretrain cost vs LM-8 |
+|---|---|---|---|
+| LM-8 v1 `(8, 32, 32, 32)` | **8 992** | 1.00× | 1.0× (~2 s host) |
+| **`(16, 64, 48, 48)` — v1 RECOMMENDED** | **21 568** | 2.40× | **≈2.0×** (~4 s) |
+| `(16, 64, 48, 32)` (R_FFN held) | 20 016 | 2.23× | ≈2.0× |
+| `(16, 64, 64, 64)` | 34 880 | 3.88× | **≈4.0×** (~8 s) |
+| `(16, 64, 64, 32)` (R_FFN held) | 30 752 | 3.42× | ≈4.0× |
+
+CI-cost model (IX.4, verified): attention + linears scale `R_SEQ²·R_DM + R_SEQ·R_DM²`, dominated by
+the `R_DM²` term ⇒ **cost ∝ R_DM²**. `(48/32)² ≈ 2.25×`, `(64/32)² = 4×`. R_SEQ unchanged (9), vocab
+adds only ~3% via the larger classifier. **Pretrain at R_DM=48 ≈ 4 s host (well inside LM-6's ~15 s
+budget); at R_DM=64 ≈ 8 s** (still bounded, but 2× the 48 cost for a curve gain the cert must prove
+is worth it). The cert PRINTS measured seconds (the `tk_get_otm` pattern, gate *printed not
+asserted*).
+
+**Expected vocab gain (the design EXPECTS; the cert DISCOVERS).** LM-8 collapsed at N=6 with R_DM=32.
+Doubling the per-head dimension (R_DH 8→16 at R_DM=64, or 8→12 at R_DM=48) gives attention markedly
+more room to keep 8+ key directions near-orthogonal. **Expectation: R_DM=48 lifts comfortable-N from
+4 to ~8 (the full R_NPAIR=8 prompt cleanly recalled); R_DM=64 may reach 12–16** (the ladder swept to
+16 once R_KEYV=16). **But IX.0's discipline binds: the bar is DISCOVERED from the printed curve by
+the auditor, never asserted.** The headline is whatever Δ the curve shows — if R_DM=48 only reaches
+6, that is the honest gain, printed.
+
+> **THE CUT — RECOMMENDED `R_DM = 48`.** It is the measured sweet spot: 2.4× params / 2.0× CI for an
+> expected comfortable-N of ~8 (doubling LM-8's 4) — a real, falsifiable gain at half the R_DM=64
+> cost. `R_DM=64` is the reach option if the implementer's curve shows 48 still collapses before N=8
+> (then 64 is justified BY THE MEASUREMENT, not the guess). **The design proposes 48; the
+> implementer measures both behind a build flag (`R_DM` is one `#define`) and the auditor ratifies
+> the smaller R_DM that clears the discovered bar — the stricter-is-cheaper rule.**
+
+### X.3 The shared-LayerNorm surgery — the safety proof (the crux)
+
+**Exactly what changes in `dtr.c`/`dtr.h`:** ONE line.
+
+```
+- #define DTR_LN_MAXW 32   /* max LayerNorm width across all dtr configs */
++ #define DTR_LN_MAXW 64   /* max LayerNorm width: R3 R_DM up to 64 (LM-9) */
+```
+
+`dtr_ln_bwd`'s `float dxh[DTR_LN_MAXW]` (`dtr.c:731`) becomes `float dxh[64]`. **Nothing else in
+`dtr.c` changes.**
+
+**Why the dtr SENSOR brain is provably unaffected (byte-identical `[onebrain-*]`/moe/dkva — a cert
+requirement, not a hope):**
+
+1. **It is a pure capacity cap (X.0 #1).** `dxh` is scratch, written `dxh[i]` and read `dxh[i]` for
+   `i < n` only. The sensor passes `n = DM = 8` and touches `dxh[0..7]`. Enlarging the array to
+   `[64]` leaves `dxh[0..7]` at the same offsets with the same values — the loop bounds, the
+   arithmetic (`m1`, `m2`, `dx[i]`), and every float written are **identical bit-for-bit**. A larger
+   uninitialized tail the sensor never reads cannot change a sensor output.
+2. **No struct layout moves.** `DTR_LN_MAXW` sizes a *function-local* array, not any persisted
+   struct, weight buffer, or wire field. `DT_TCACHE`, `DTR_WEIGHT_FLOATS=635`, the `.tdtr` checkpoint
+   header — all unchanged. So no checkpoint, no wire, no replay re-baselines.
+3. **The cert PROVES it (the X.7 `[lang-sensor-intact]` tag).** The acceptance suite runs the
+   EXISTING `[onebrain-*]` (and moe/dkva) certs at the bumped `DTR_LN_MAXW` and greps they print
+   their SAME PASS lines with their SAME numbers. The audit re-runs them on the commander's binary.
+   **If any `[onebrain-*]` number moves by a single digit, the bump is rejected** — but X.0 #1's
+   analysis says it cannot, and the cert exists to make that falsifiable, not assumed.
+
+**The honest weighing (anti-fork vs safety) — and why the free path wins.** The alternative is an
+**R3-local LayerNorm width** (an R3-private `dxh[R_DM]` that does NOT touch the shared cap). That
+would isolate the sensor *by construction* — but it would mean R3 calling a kernel the sensor does
+NOT, which is **exactly the fork the `:13-18` anti-fork rule forbids** (the kernels must be the SAME
+functions). Since X.0 #1 proves the shared bump is already free for the sensor, **the shared-cap
+bump is BOTH safer for anti-fork AND safe for the sensor** — there is no tension to trade. The
+R3-local path is named here only to be rejected with its reason: it would manufacture a fork to
+solve a problem the shared bump does not have. **RECOMMENDED: raise the shared `DTR_LN_MAXW` to 64;
+the `[lang-sensor-intact]` cert makes the freeness falsifiable.**
+
+> **COMMANDER DECISION C — LayerNorm surgery: raise the shared `DTR_LN_MAXW` 32→64 (RECOMMENDED —
+> free for the sensor by X.0 #1, preserves anti-fork, cert-proven by `[lang-sensor-intact]`) vs an
+> R3-local LayerNorm width (isolates the sensor but FORKS the shared kernel — rejected by the
+> `:13-18` rule for a problem the shared bump does not have).**
+
+### X.4 Re-baseline (again) — `R_VALV` 32→64 moves the bars; the wire/UI follow
+
+LM-8 already re-baselined LM-4..7 to `R_VALV=32` (chance 25%→3.125%, IX.5). **Part X moves chance
+AGAIN: `R_VALV` 32→64 ⇒ `chance = 100/R_VALV` 3.125% → 1.5625%.** The stricter-only rule (IX.5)
+binds: every re-baselined gate may only get STRICTER relative to the new chance, never looser.
+
+- **`H_CHANCE`/`chance`/`handif_gate`** auto-track `R_VALV` already (they are computed `100/R_VALV`
+  and `(100/R_NPAIR)(1-1/R_VALV)`, not frozen constants — IX.5's deliberate design, `:633,648,693`).
+  So the structural certs (`[r3-incontext-*]`, `[handoff-*]`, `[stream-*]`, `[teach-*]`) re-baseline
+  by recompile; the auditor reads each printed gate against chance=1.56% and confirms each margin
+  did not shrink. `H_VSPREAD = R_VALV/4` (`:700`) becomes 16 (spread {0,1,2,3}→{0,16,32,48}) — still
+  mutually separated across the wider space, the SAME derivation discipline.
+- **`R_CERTKEYS`/`R_NPAIR` unchanged** (8) — the fixed-fact cert working-key arrangement stays
+  byte-identical (IX's R_CERTKEYS==R_NPAIR property), so the LM-4..7 cert STRUCTURE is untouched;
+  only the chance/margins re-print.
+- **The wire (`MT_TEACH_PKT`)**: `R_KEYV=16 ≤ 256` and `R_VALV=64 ≤ 256` ⇒ `key`/`val` stay `U1`,
+  **wire width UNCHANGED** (X.0 #8). `MT_WIRE_VER_LANG` is unchanged (still token-ids semantics) —
+  a same-version node decodes fine. **BUT** the vocab *content* grew, so a node with the OLD 8/32
+  word list would resolve a token id 8..15 (a new key) or 32..63 (a new answer) to a DIFFERENT word
+  or OOB. **Honesty:** the `/vocab` content-id (IX.3, `GET /vocab`) CHANGES (the images grew), and
+  that is the detectable signal — a peer whose `/vocab` content-id differs is on a different
+  vocabulary and the UI shows the mismatch. The design does NOT bump `wire_ver` for a vocab-size
+  change (the wire FORMAT is identical); it relies on the content-id channel that IX.3 already built
+  to make the vocab divergence observable. **The implementer must state this in the epitaph: a
+  Part-X node and an LM-8 node share `wire_ver` but NOT `/vocab` content-id — the partition is by
+  vocabulary, surfaced by content-id, not by a version drop.**
+- **`/vocab` + the galaxy datalist** re-fetch the grown images (the datalist auto-populates from
+  `GET /vocab`, IX.10) — the UI shows 16 key words / 64 answer words with no code change beyond the
+  images. The note line ("this mind speaks N English words today") prints the new N.
+
+> **COMMANDER DECISION D — vocab-divergence signal: rely on the existing `/vocab` content-id
+> channel to make the Part-X-vs-LM-8 vocabulary partition observable (RECOMMENDED — the wire FORMAT
+> is identical, only content grew; IX.3 already built content-id agreement) vs bump `wire_ver` to a
+> new value (forces a hard drop between Part-X and LM-8 nodes — cleaner partition but discards
+> interoperable same-format packets the receiver could still decode against ITS own vocab).**
+
+### X.5 The honest bound (what is NOT claimed)
+
+- **This BUYS more words held at once, NOT grammar/generation.** A higher comfortable-N means the
+  mind disambiguates more simultaneous bindings — it is still **single-token associative recall over
+  a fixed, bounded vocabulary** (IX.7 stands verbatim). No syntax, no novelty, no multi-token
+  answers, no belief revision.
+- **The generative LM still needs the DKVA substrate + millions of params** (IX.2's (c) arc:
+  ~25–50 M params, tensor-parallel over the region). Widening R_DM 32→64 is a knob within the
+  one-node `rw[]`, not a step toward (c) — it is the *recall* substrate getting wider, not the
+  *generation* substrate appearing.
+- **The capacity number is the substrate's, not the language's.** "comfortable-N = 8 (or 12/16)"
+  means the widened ~21 K–35 K substrate holds that many real bindings at recall — NOT a claim about
+  vocabulary coverage. 16 key words is still an infant's vocabulary.
+- **The gain is MEASURED, and may be smaller than hoped.** If R_DM=48 only lifts comfortable-N to 6,
+  that is the honest headline, printed; the dream (16) is not asserted. The curve is the deliverable
+  even if the bar is renegotiated downward.
+- **The sensor brain is untouched** — a cert requirement (`[lang-sensor-intact]`), not an assumption.
+
+### X.6 Anti-fork constraint (HARD) — exact reuse surface (+ FLAGGED names)
+
+The numerically-meaningful kernels stay the SAME ones `dtr.c`/`r3_incontext.c` already use (`:13-18`).
+This Part's *only* legitimate change surface is **(i) the shared `DTR_LN_MAXW` capacity cap** (a
+buffer size, not a kernel fork — X.3), **(ii) the R3-private dims `R_DM`/`R_FFN`/`R_KEYV`/`R_VALV`
+and their dependent offsets** (the "legitimately task-specific" embedding/classifier sizes), and
+**(iii) the grown `vk_img`/`vv_img` word images** (content, not mechanism).
+
+- **REUSE, do not fork:** `r_forward`/`r_backward`/`r_grad_check`/`r_train_epoch`/`s_pretrain`/
+  `dtr_ln_fwd_cache`/`dtr_ln_bwd`/`dt_linear`/`dt_softmax`/`r3_fact_learn`/`lang_*`/`mind_cmd`/
+  `m_publish_teach` — UNCHANGED in structure. Only the dims and the one cap change.
+- **CHANGED constants (the whole surgery — the auditor greps NOTHING ELSE forked):** `DTR_LN_MAXW`
+  (`dtr.h`, 32→64), `R_DM` (`:97`, 32→the cut), `R_FFN` (`:100`, → R_DM or held), `R_KEYV` (`:84`,
+  8→16), `R_VALV` (`:85`, 32→64), `R3_VOCAB_KEYS`/`R3_VOCAB_VALS` (`r3_vocab.h`, to match), the
+  `lang_ladder`/`LANG_NMAX`/`LANG_LADDER_N` (`:1460-1462`, to sweep N>8), the `R_NP`
+  `_Static_assert` (`:126`, to the new built value), the gradcheck `:493` comment (name the new
+  R_DM; stride STAYS 7).
+- **GROWN content:** `vk_img` (8→16 key words), `vv_img` (32→64 answer words) in `r3_vocab.c`.
+- **MUST NOT appear (the wrong network — the V.0 rule):** `dtr_train_batch`/`gl_merge`/`LM_ENGRAM`,
+  and **NO new R3-local LayerNorm function** (the X.3-rejected fork — its appearance is the anti-fork
+  violation the auditor catches). **NO new stack locals in `r_forward`/`r_backward`** (X.0 #5 — the
+  buffers stay `static`; a non-static `[R_DM]` array at R_DM=64 is the stack-smash regression).
+- **FLAGGED names that do NOT exist yet (the implementer may create; the auditor greps no other
+  symbol forked):** none required — the surgery is constants + grown images + the new cert tags
+  below. (`R_DM_LEGACY` only if a frozen-dims fallback is elected, X.4's analog of IX's
+  `R_VALV_LEGACY` — NOT recommended.)
+
+### X.7 The falsifiable acceptance test (the certificate) — the capacity curve RISES
+
+Verb: `mind lang test` (the EXISTING `r3_lang_test`, re-run at the widened dims — NOT a new verb).
+All numbers PRINTED, then canonical `[tag] PASS/FAIL`, greppable. Six tags (the five LM-8 `[lang-*]`
+tags re-measured at the new dims, PLUS the sensor-intact tag the shared-cap bump mandates):
+
+1. **`[lang-gradcheck]`** — the WIDENED substrate's gradients are real. `r_grad_check` at the new
+   `R_NP` (stride 7, ReLU-kink exclusion, absolute floor — unchanged), max rel err `< 0.05`. The
+   FIRST gate: a widening that broke the gradient (e.g. a mis-sized offset) is rejected before any
+   capacity claim. PRINTS `R_NP` and `R_DM`.
+2. **`[lang-capacity]` — THE HEADLINE, v2.** Sweep N over a ladder extended past 8 (e.g.
+   `{2, 4, 8, 12, 16}`, bounded by the new `R_KEYV=16`); consolidate N real word-bindings into
+   `rw[]` each step (the SHARED LM-4 recipe); PRINT masked held-out recall vs N. **PRINT BOTH curves
+   superimposed:** the LM-8 R_DM=32 curve (the recorded `N2→100 N4→100 N6→63 N8→72`, comfortable-N=4)
+   and the new R_DM-widened curve, with the **Δ comfortable-N called out as the headline gain.** PASS
+   requires the new comfortable-N **> LM-8's 4** (a strict gain — the bar is DISCOVERED from the new
+   curve by the auditor; candidate ≥8, but the number is measured, IX.0 forbids guessing). Tag:
+   **`[lang-capacity-v2]`** (distinct from LM-8's `[lang-capacity]` so the CI grep sees the new
+   gate; the prose calls it "the curve at the new R_DM superimposed on LM-8's").
+3. **`[lang-recall]`** — a SPECIFIC real binding still round-trips in words, now at the new
+   comfortable-N. Teach `sky→blue`; after sleep `mind ask sky` returns "blue", masked share ≥75%,
+   N=40 — but the surrounding dict is now sized to the MEASURED comfortable-N (was hard-coded to
+   `LANG_CAP_BARN`), so the round-trip is scored in the wider regime the capacity curve proved.
+4. **`[lang-oov]`** — OOV still refused, not guessed (unchanged mechanism; re-run because the vocab
+   grew — a word absent from the *new* 16/64 list is still refused, no queue entry).
+5. **`[lang-wire]`** (live, 2-process) — a real word taught on A answered in words on B over the
+   versioned wire (unchanged format; re-run at the new vocab to confirm a token id 8..15 / 32..63
+   round-trips). PLUS: a node with the OLD `/vocab` content-id is shown as a vocabulary partition
+   (X.4 — content-id mismatch surfaced, not a silent wrong-word binding).
+6. **`[lang-sensor-intact]` — THE SAFETY GATE (new this Part).** Run the EXISTING `[onebrain-*]`
+   (and moe/dkva) sensor certs at the bumped `DTR_LN_MAXW=64` and assert they print their SAME PASS
+   lines with their SAME numbers — the dtr sensor brain is BYTE-IDENTICAL after the shared-cap bump
+   (X.3). The audit re-runs them on the commander's binary. **A single moved sensor digit fails this
+   gate and rejects the bump.**
+
+**CI plan (specify only — do NOT edit `ci.yml` in this Part).** The implementer wave: the native
+`mind lang test` job greps `[lang-gradcheck] PASS`, `[lang-capacity-v2] PASS`, `[lang-recall] PASS`,
+`[lang-oov] PASS`, `[lang-sensor-intact] PASS`; the live 2-process job greps `[lang-wire] PASS`; the
+re-baselined LM-4..7 greps (`[r3-incontext-*]`, `[handoff-*]`, `[stream-*]`, `[teach-*]`,
+`[shared-*]`) AND the sensor greps (`[onebrain-*]`, moe, dkva) must ALL stay green at the new dims —
+the no-regress gate. Pretrain seconds PRINTED (gate not asserted). **The implementer edits `ci.yml`
++ the sample, not this document.**
+
+### X.8 Provenance / closes-on
+
+Design only. This slice closes when `[lang-gradcheck]`, `[lang-capacity-v2]` (comfortable-N strictly
+> LM-8's 4), `[lang-recall]`, `[lang-oov]`, `[lang-wire]`, and **`[lang-sensor-intact]`** are green
+on a clean rebuild AND CI-enforced; the LM-4..7 certs are re-baselined-and-green at the new
+`R_VALV=64`; and the dtr sensor certs (`[onebrain-*]`/moe/dkva) are BYTE-IDENTICAL — audited by a
+**separate** agent on the **commander's** binary, not the implementer's. The audit makes the
+acceptance test; the commander reads the gate formula line-by-line — the bumped `DTR_LN_MAXW` (the
+sensor-intact proof), the widened `R_NP` (built, not trusted), the `[lang-capacity-v2]` curve + the
+Δ-comfortable-N bar set FROM it, the stride-7 coverage at the new `R_NP`, and the re-baselined gates
+(each stricter-only vs the new chance) — line-by-line. One epitaph line in `gap-ledger.md`: LM-8's
+disclaimer ("the R_DM=32 substrate's KEY recall ceiling is ~8 / comfortable-N=4") is **downgraded,
+honestly: the thinking width is widened, comfortable-N rises to the measured value — still
+single-token, still bounded vocab, NOT generation/grammar.**
+
+**COMMANDER DECISIONS NEEDED (recommended defaults):**
+A. **The R_DM cut** (X.2): **`R_DM=48` (RECOMMENDED** — 2.4× params / 2.0× CI for an expected
+   comfortable-N ~8, double LM-8's 4) vs `R_DM=64` (3.9× / 4.0× CI, reach for comfortable-N 12–16).
+   The implementer measures both behind the `R_DM` `#define`; the auditor ratifies the smaller R_DM
+   that clears the discovered bar.
+B. **`R_FFN` scaling** (X.2): **`R_FFN = R_DM` (RECOMMENDED** — proportional MLP for the wider
+   attention; +~1.5 K params at R_DM=48) vs `R_FFN = 32` held (saves params; the cert measures if
+   the MLP is the bottleneck — likely not, attention is, IX.0 #1).
+C. **The LayerNorm surgery** (X.3): **raise the shared `DTR_LN_MAXW` 32→64 (RECOMMENDED** — free for
+   the sensor by X.0 #1, preserves anti-fork, `[lang-sensor-intact]`-proven) vs an R3-local
+   LayerNorm width (forks the shared kernel — rejected for a non-problem).
+D. **Vocab-divergence signal** (X.4): **rely on the existing `/vocab` content-id channel
+   (RECOMMENDED** — wire FORMAT identical, only content grew) vs bump `wire_ver` (hard partition
+   between Part-X and LM-8 nodes — cleaner but discards decodable same-format packets).
+E. **`R_KEYV`/`R_VALV` target** (X.2): **`R_KEYV=16`/`R_VALV=64` (RECOMMENDED** — lets the ladder
+   sweep N to 16, lands the dreamed 64-answer vocab) vs a smaller bump if the curve shows R_DM=48
+   still collapses before N=16 (then R_KEYV=12 matches the reachable N — don't ship an unreachable
+   ladder).
