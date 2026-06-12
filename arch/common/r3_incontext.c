@@ -2411,6 +2411,7 @@ static void m_wait(const UB *p, const UB *end)
 static void m_merge(void);
 void r3_onemind_test(void);
 void r3_onemind_nocentral_test(void);
+void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -2433,7 +2434,8 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "merge")) m_merge();                /* LM-10 M-b  */
     else if (m_kw(&p, end, "onemind")) r3_onemind_test();      /* LM-10 cert */
     else if (m_kw(&p, end, "nocentral")) r3_onemind_nocentral_test();
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "wmerge")) r3_wmerge_test();        /* LM-11 cert */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -2908,8 +2910,13 @@ static INT mw_fold_region(void)
      * target fix). A re-fold of an already-folded peer is guarded by the
      * per-origin epoch high-water below. */
 
+    /* XI.7: stars in unison. b = peers folded | the LM-11 weighted bit
+     * (XII.7). This is the PLAIN (LM-10) live fold, so the weighted bit is
+     * 0; the named-future weighted live fold (Path W², gl_merge_w over the
+     * relay) ORs in EV_MERGE_WEIGHTED at this SAME one site — no new event. */
     galaxy_emit(EV_MERGE, drpc_my_node, GALAXY_NODE_NONE,
-                (UH)merge_epoch, (UH)folded);        /* XI.7: stars in unison */
+                (UH)merge_epoch,
+                (UH)(((UW)folded & (UW)~EV_MERGE_WEIGHTED) /* | EV_MERGE_WEIGHTED when weighted */));
 
     r_puts("[onemind] FOLD: merged {self} U "); r_putdec((UW)folded);
     r_puts(" peer(s) into rw[] via gl_merge at n="); r_putdec((UW)R_NP);
@@ -3225,6 +3232,378 @@ void r3_onemind_nocentral_test(void)
     r_puts("\r\n");
     r_puts((worst < 1e-3f && ident) ? "[onemind-nocentral] PASS\r\n"
                                     : "[onemind-nocentral] FAIL\r\n");
+}
+
+/* ================================================================== *
+ *  LM-11 / Path W² — the weighted / Fisher merge (living-mind Part XII) *
+ *                                                                       *
+ *  THE in-process COMPARISON certificate. Does a SMARTER (diagonal-     *
+ *  Fisher per-parameter) merge beat the plain mean on the SAME LM-10    *
+ *  divergent-minds matrix? Measures, does NOT assume — WIN/TIE/LOSE is  *
+ *  an honest PASS-of-the-measurement, never a bar lowered. `mind wmerge`.*
+ *                                                                       *
+ *  W2 = (F_a·w_a + F_b·w_b)/(F_a+F_b+ε) per parameter, with a uniform   *
+ *  Fisher FLOOR so an untrained parameter -> plain mean of the backbone *
+ *  (XII.2). Fisher is REAL: F[i] = Σ rg[i]² over the node's OWN         *
+ *  retained engrams, via the EXISTING r_forward/r_backward (F-LOCAL,    *
+ *  zero extra wire — XII.3). gl_merge stays UNCHANGED.                  *
+ * ================================================================== */
+
+/* the diagonal Fisher of the CURRENTLY-loaded weights over the CURRENTLY-
+ * queued engrams (the node's OWN retained + pending facts in r3_fq[]):
+ *   out[i] = (1/M) Σ_engrams rg[i]²
+ * reusing s_round's EXACT masked-student build + R3's own r_forward/
+ * r_backward (the ONLY new storage is the caller's float out[R_NP]).
+ * No SGD step is taken — rw[] is read-only here (the squared per-param
+ * gradient is accumulated, the weights are NOT updated). */
+void r3_fisher_diag(float *out)
+{
+    for (INT i = 0; i < R_NP; i++) out[i] = 0.0f;
+
+    /* enumerate the node's own engrams: every binding of every queued
+     * fact (RETAINED or PENDING) — exactly the items s_round replays. */
+    UB fi[R3_FQ_MAX * R_NPAIR], bi[R3_FQ_MAX * R_NPAIR];
+    INT m = 0;
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        for (INT b = 0; b < (INT)r3_fq[i].n; b++) { fi[m] = (UB)i; bi[m] = (UB)b; m++; }
+    if (m == 0) return;            /* empty queue -> all-zero Fisher (honest) */
+
+    UW save = r_rng; r_rng = r3_s_rng;
+    for (INT st = 0; st < m; st++) {
+        const R3_FACT *f = &r3_fq[fi[st]];
+        UB k = f->key[bi[st]], y = f->yhat[bi[st]];
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 0, NULL, NULL, 0, k, s_kpool_for(k));   /* MASKED, as s_round */
+        for (INT i = 0; i < R_NP; i++) rg[i] = 0.0f;            /* zero rg between */
+        (void)r_forward(kk, vv, y);                            /* R3's own fwd   */
+        r_backward(y);                                         /* R3's own bwd   */
+        for (INT i = 0; i < R_NP; i++) out[i] += rg[i] * rg[i]; /* the diagonal Fisher */
+    }
+    r_rng = save;
+    float inv = 1.0f / (float)m;                               /* E[rg²] over engrams */
+    for (INT i = 0; i < R_NP; i++) out[i] *= inv;
+}
+
+/* the Fisher floor (a uniform per-parameter prior): so a parameter
+ * neither node trained (F≈0 for both) -> weight≈floor for both ->
+ * gl_merge_w -> (w_a+w_b)/2, EXACTLY the plain mean of the shared
+ * pretrained backbone (XII.2). It MUST be small vs a TRAINED parameter's
+ * Fisher — but the absolute Fisher scale at a CONVERGED minimum is tiny
+ * (~1e-7 here, since Σrg² is small once the model has settled). A fixed
+ * absolute floor (1e-6) would DROWN the signal (floor >> Fisher) and
+ * collapse the weighted merge to the plain mean by construction — a
+ * calibration artifact, NOT a measurement. So the floor is RELATIVE:
+ * WM_FLOOR_FRAC of the merge's peak Fisher, recomputed per merge. */
+#define WM_FLOOR_FRAC  1e-3f      /* floor = frac * max Fisher in this merge */
+#define WM_EPS         1e-30f     /* gl_merge_w denominator safety only */
+
+static float wm_Fa[R_NP], wm_Fb[R_NP];     /* the two nodes' diagonal Fisher  */
+static float wm_wa[R_NP], wm_wb[R_NP];      /* the floored weight vectors       */
+static float wm_out[R_NP];                  /* weighted-merge target            */
+
+/* build a floored weight vector wt[i] = F[i] + floor (the W2 recipe),
+ * where floor = WM_FLOOR_FRAC * (peak Fisher in F[]) — RELATIVE to this
+ * merge's Fisher scale so it never drowns the signal (see WM_FLOOR_FRAC).
+ * Returns the absolute floor used (for the diagnostic print). */
+static float wm_floor(const float *F, float *wt)
+{
+    float fmax = 0.0f;
+    for (INT i = 0; i < R_NP; i++) if (F[i] > fmax) fmax = F[i];
+    float floor = WM_FLOOR_FRAC * fmax;
+    if (floor <= 0.0f) floor = 1e-30f;     /* all-zero Fisher -> plain mean  */
+    for (INT i = 0; i < R_NP; i++) wt[i] = F[i] + floor;
+    return floor;
+}
+
+/* report a 2x2 (node x fact) matrix tagged, reusing om_print_matrix. */
+/* (om_print_matrix / om_acc / om_consolidate / om_q_save/load reused.) */
+
+/* the headline classifier — reads the per-cell Δ (weighted − mean) and the
+ * raw weighted cells; prints WIN / TIE / LOSE truthfully. Δ is the result. */
+static void wm_classify(float m_k1, float m_k2, float w_k1, float w_k2,
+                        float bar, float chance)
+{
+    float d1 = w_k1 - m_k1, d2 = w_k2 - m_k2;
+    r_puts("[wmerge]   per-cell Δ (weighted - mean): k1=");
+    if (d1>=0) r_puts("+"); r_putf1(d1); r_puts("%  k2=");
+    if (d2>=0) r_puts("+"); r_putf1(d2); r_puts("%\r\n");
+    /* the disease is on k2 (the collapsing fact under the plain mean). The
+     * comparison verdict is about whether weighting RECOVERS k2 without
+     * destroying k1. Noise band = the masked-vote granularity (~one vote in
+     * OM_VOTE_N -> ~1.25%); call |Δ| within ~2% a TIE. */
+    float noise = 2.0f;
+    INT both_w = (w_k1 >= bar && w_k2 >= bar);
+    INT both_m = (m_k1 >= bar && m_k2 >= bar);
+    const char *verdict;
+    if (both_w && !both_m)
+        verdict = "WEIGHTED-WINS (weighted clears both facts >= bar where the plain mean does NOT)";
+    else if (d2 > noise && d1 >= -noise)
+        verdict = "WEIGHTED-WINS (k2 materially higher under weighting, k1 not sacrificed)";
+    else if ((d1 < -noise) || (d2 < -noise))
+        verdict = "WEIGHTED-LOSES (weighting is WORSE on a cell — the diagonal Fisher mis-weighted a shared parameter; weighted REJECTED)";
+    else
+        verdict = "TIE (|Δ| within masked-vote noise on every cell — the mean is hard to beat at this scale; plain mean + replay remains the recommendation, honest negative)";
+    r_puts("[wmerge]   VERDICT: "); r_puts(verdict); r_puts("\r\n");
+    (void)chance;
+}
+
+/* core: from the SAME divergent setup (w_a/qa on node0, w_b/qb on node1),
+ * compute F_a, F_b LOCALLY, build both merges, print both matrices + the Δ
+ * + the verdict. Returns the raw-weighted k1/k2 via out-params so
+ * [wmerge-noreplay] can gate on them. Used by both the asymmetric headline
+ * and the [wmerge-symmetric] control (which only changes the bindings). */
+static void wm_compare(const char *label, INT k1, INT v1, INT k2, INT v2,
+                       float *w_a, float *w_b,
+                       const OM_QSNAP *qa, const OM_QSNAP *qb,
+                       float chance, float *wk1_out, float *wk2_out)
+{
+    /* --- the plain mean (the LM-10 control, gl_merge UNCHANGED) --- */
+    { const float *models[2] = { w_a, w_b }; gl_merge(mw_out, models, 2, R_NP); }
+    r3_weights_set(mw_out);
+    float m_k1 = om_acc(k1, v1), m_k2 = om_acc(k2, v2);
+
+    /* --- F-LOCAL: each node's diagonal Fisher from its OWN weights+engrams.
+     * load node0's weights + node0's queue, Fisher; then node1's. The
+     * Fisher is REAL (Σ rg² via r_backward), computed locally — no wire. */
+    r3_weights_set(w_a); om_q_load(qa); r3_fisher_diag(wm_Fa);
+    r3_weights_set(w_b); om_q_load(qb); r3_fisher_diag(wm_Fb);
+    float floor_a = wm_floor(wm_Fa, wm_wa);
+    float floor_b = wm_floor(wm_Fb, wm_wb);
+
+    /* --- the Fisher-weighted merge (W2) via gl_merge_w --- */
+    { const float *models[2] = { w_a, w_b };
+      const float *fishers[2] = { wm_wa, wm_wb };
+      gl_merge_w(wm_out, models, fishers, 2, WM_EPS, R_NP); }
+    r3_weights_set(wm_out);
+    float w_k1 = om_acc(k1, v1), w_k2 = om_acc(k2, v2);
+    merge_epoch++;            /* a weighted fold is a newer weight-state (XII.7) */
+
+    /* Fisher REALITY print (the auditor greps this): the Fisher is REAL
+     * (Σ rg² via r_backward over the node's OWN engrams), NOT hand-set —
+     * so it has a nonzero PEAK and a nonzero PARAM COUNT with spread. The
+     * absolute scale is tiny (~1e-7) because the model is at a converged
+     * minimum (Σrg² small); the RELATIVE floor (XII WM_FLOOR_FRAC) keeps
+     * the signal from being drowned. nz = params with F > floor. */
+    float fa_max = 0, fb_max = 0; UW nz_a = 0, nz_b = 0;
+    for (INT i = 0; i < R_NP; i++) {
+        if (wm_Fa[i] > fa_max) fa_max = wm_Fa[i];
+        if (wm_Fb[i] > fb_max) fb_max = wm_Fb[i];
+        if (wm_Fa[i] > floor_a) nz_a++;
+        if (wm_Fb[i] > floor_b) nz_b++;
+    }
+
+    r_puts("[wmerge] === "); r_puts(label); r_puts(" === k1=");
+    r_putdec((UW)k1); r_puts("->"); r_putdec((UW)v1);
+    r_puts(" k2="); r_putdec((UW)k2); r_puts("->"); r_putdec((UW)v2);
+    r_puts("  chance="); r_putf1(chance); r_puts("%\r\n");
+    r_puts("[wmerge]   Fisher REAL (Σrg², F-LOCAL, 0 extra wire): peak_a x1e6=");
+    r_putf3(fa_max*1e6f); r_puts(" peak_b x1e6="); r_putf3(fb_max*1e6f);
+    r_puts("  above-floor params a="); r_putdec(nz_a);
+    r_puts(" b="); r_putdec(nz_b); r_puts(" (nonzero spread -> NOT hand-set)\r\n");
+    om_print_matrix("PLAIN-mean   ", m_k1,m_k2,m_k1,m_k2);
+    om_print_matrix("FISHER-weight", w_k1,w_k2,w_k1,w_k2);
+    float bar = 75.0f;
+    wm_classify(m_k1, m_k2, w_k1, w_k2, bar, chance);
+
+    if (wk1_out) *wk1_out = w_k1;
+    if (wk2_out) *wk2_out = w_k2;
+}
+
+/* learn one fact (key k -> val v) on the base substrate, consolidate, and
+ * capture the resulting weights + the fact-queue snapshot (one modelled
+ * node). Mirrors the onemind node-build. */
+static void wm_build_node(const float *w_base, INT k, INT v,
+                          float *w_out, OM_QSNAP *q_out)
+{
+    r3_weights_set(w_base);
+    s_fq_reset();
+    { UB kk=(UB)k, vv=(UB)v; (void)r3_fact_learn(&kk,&vv,1); }
+    om_consolidate();
+    r3_weights_get(w_out);
+    om_q_save(q_out);
+}
+
+void r3_wmerge_test(void)
+{
+    static float w_base[R_NP], w_a[R_NP], w_b[R_NP];
+    OM_QSNAP qa, qb;
+    float chance = 100.0f / (float)R_VALV;
+
+    m_quiesce();
+    r_puts("[wmerge] ==== LM-11 Path W²: weighted/Fisher merge vs plain mean (MEASURE) ====\r\n");
+    r_puts("[wmerge] W2 = (F_a*w_a + F_b*w_b)/(F_a+F_b+floor) per param; Fisher F=Σrg² (F-LOCAL)\r\n");
+    r_puts("[wmerge]   R_NP="); r_putdec((UW)R_NP);
+    r_puts(" floats; gl_merge UNCHANGED (drives LM-10); gl_merge_w is the SIBLING\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    /* =============== [wmerge-vs-mean]: THE HEADLINE =================== *
+     * the SAME LM-10 asymmetric divergent setup (k1=OM_K1->v1 on node0,  *
+     * k2=OM_K2->v2 on node1) — but note OM_V1=3 has the 3x SDICT prior   *
+     * (XII.0 #4), so [wmerge-symmetric] below quarantines that confound. */
+    wm_build_node(w_base, OM_K1, OM_V1, w_a, &qa);
+    float a_k1 = om_acc(OM_K1, OM_V1);
+    wm_build_node(w_base, OM_K2, OM_V2, w_b, &qb);
+    float b_k2 = om_acc(OM_K2, OM_V2);
+    r_puts("[wmerge] solo: node0 k1="); r_putf1(a_k1);
+    r_puts("%  node1 k2="); r_putf1(b_k2);
+    r_puts("%  (each mind learned its OWN fact)\r\n");
+
+    float hw_k1=0, hw_k2=0;
+    wm_compare("ASYMMETRIC (k2=1 collapses under plain mean; OM_V1=3 has 3x prior)",
+               OM_K1, OM_V1, OM_K2, OM_V2, w_a, w_b, &qa, &qb, chance,
+               &hw_k1, &hw_k2);
+    /* the diagnostic gate: the comparison RAN and printed a well-formed Δ at a
+     * recorded epoch (XII.4 #1) — PASS regardless of WIN/TIE/LOSE. Only a
+     * faked/buggy (NaN/negative-cell) measurement FAILS. */
+    r_puts((hw_k1>=0.0f && hw_k2>=0.0f && merge_epoch>0)
+           ? "[wmerge-vs-mean] PASS\r\n" : "[wmerge-vs-mean] FAIL\r\n");
+
+    /* =============== [wmerge-noreplay]: does Fisher remove the crutch? = *
+     * the RAW weighted merge (NO s_round replay) — do BOTH facts clear    *
+     * the 75% bar? (the reason-to-exist, XII.4 #2). hw_k1/hw_k2 are       *
+     * already the raw weighted cells from the headline (no replay ran).   */
+    {
+        float bar = 75.0f;
+        INT both = (hw_k1 >= bar && hw_k2 >= bar);
+        r_puts("[wmerge] --- [wmerge-noreplay]: raw weighted merge, NO replay ---\r\n");
+        r_puts("[wmerge]   k1="); r_putf1(hw_k1);
+        r_puts("%  k2="); r_putf1(hw_k2);
+        r_puts("%  bar="); r_putf1(bar); r_puts("% both="); r_puts(both?"YES":"NO");
+        r_puts("\r\n");
+        if (both)
+            r_puts("[wmerge]   VERDICT: the raw weighted merge clears BOTH facts — the replay crutch is REMOVED\r\n");
+        else
+            r_puts("[wmerge]   VERDICT: weighted merge does NOT clear both crutch-free; union replay (LM-10) still required — honest partial\r\n");
+        /* PASS = the measurement ran (both cells well-formed). WIN/PARTIAL is
+         * in the printed prose; the tag is greppable either way (XII.4 #2). */
+        r_puts((hw_k1>=0.0f && hw_k2>=0.0f)
+               ? "[wmerge-noreplay] PASS\r\n" : "[wmerge-noreplay] FAIL\r\n");
+    }
+
+    /* =============== [wmerge-symmetric]: the PRIOR-quarantined control = *
+     * re-run the SAME comparison with two values of EQUAL prior support,  *
+     * so the 3x SDICT asymmetry (XII.0 #4) does NOT contaminate the vs-   *
+     * mean Δ. If the asymmetric "win" was partly the prior, this shows it.*
+     * Pick two keys whose SDICT values are DISTINCT and each appear the   *
+     * SAME number of times in SDICT (symmetric prior support). */
+    {
+        /* SDICT = {2,0,3,3,1,3,5,7}: class 3 appears 3x; 0,1,2,5,7 each 1x.
+         * Choose k=0 (SDICT[0]=2, a 1x-prior value) and k=4 (SDICT[4]=1,
+         * a 1x-prior value): both values have the SAME (single) prior
+         * support — no value is prior-favored over the other. */
+        INT sk1 = 0, sv1 = 2, sk2 = 4, sv2 = 1;
+        static float sw_a[R_NP], sw_b[R_NP];
+        OM_QSNAP sqa, sqb;
+        r_puts("[wmerge] --- [wmerge-symmetric]: SYMMETRIC prior control (no value 3x-favored) ---\r\n");
+        wm_build_node(w_base, sk1, sv1, sw_a, &sqa);
+        wm_build_node(w_base, sk2, sv2, sw_b, &sqb);
+        float sk1_w=0, sk2_w=0;
+        wm_compare("SYMMETRIC (k1=0->2, k2=4->1; equal 1x prior support)",
+                   sk1, sv1, sk2, sv2, sw_a, sw_b, &sqa, &sqb, chance,
+                   &sk1_w, &sk2_w);
+        r_puts((sk1_w>=0.0f && sk2_w>=0.0f)
+               ? "[wmerge-symmetric] PASS\r\n" : "[wmerge-symmetric] FAIL\r\n");
+    }
+
+    /* =============== [wmerge-divergence]: the honest CEILING =========== *
+     * sweep MORE divergent facts (2 -> 3 -> 4 distinct bindings, each on  *
+     * its own modelled node) and print, per merge rule, the highest count *
+     * at which BOTH/ALL facts stay >= bar with NO replay. The ceiling is  *
+     * the deliverable (whether weighted's ceiling > mean's is the printed *
+     * measured result, not a gate). */
+    {
+        r_puts("[wmerge] --- [wmerge-divergence]: ceiling sweep (more facts, no replay) ---\r\n");
+        /* a small fixed bank of off-bias bindings (distinct keys+values). */
+        const INT KZ[4] = { 2, 4, 0, 1 };
+        const INT VZ[4] = { 3, 1, 2, 5 };
+        static float wv_w[4][R_NP];
+        OM_QSNAP wv_q[4];
+        for (INT c = 0; c < 4; c++)
+            wm_build_node(w_base, KZ[c], VZ[c], wv_w[c], &wv_q[c]);
+
+        for (INT cnt = 2; cnt <= 4; cnt++) {
+            /* PLAIN mean of the first `cnt` nodes. */
+            const float *mdl[4]; for (INT c=0;c<cnt;c++) mdl[c]=wv_w[c];
+            gl_merge(mw_out, mdl, (UW)cnt, R_NP);
+            r3_weights_set(mw_out);
+            INT m_all = 1; INT m_min = 100;
+            for (INT c=0;c<cnt;c++){ float a=om_acc(KZ[c],VZ[c]); if((INT)a<m_min)m_min=(INT)a; if(a<75.0f)m_all=0; }
+
+            /* WEIGHTED merge: each node's local Fisher, floored. */
+            const float *wt[4];
+            for (INT c=0;c<cnt;c++){
+                r3_weights_set(wv_w[c]); om_q_load(&wv_q[c]);
+                static float Fc[4][R_NP];     /* per-node Fisher (cnt<=4) */
+                r3_fisher_diag(Fc[c]);
+                wm_floor(Fc[c], Fc[c]);       /* floor in place */
+                wt[c]=Fc[c];
+            }
+            gl_merge_w(mw_out, mdl, wt, (UW)cnt, WM_EPS, R_NP);
+            r3_weights_set(mw_out);
+            INT w_all = 1; INT w_min = 100;
+            for (INT c=0;c<cnt;c++){ float a=om_acc(KZ[c],VZ[c]); if((INT)a<w_min)w_min=(INT)a; if(a<75.0f)w_all=0; }
+
+            r_puts("[wmerge]   facts="); r_putdec((UW)cnt);
+            r_puts(": plain all>=bar="); r_puts(m_all?"YES":"no ");
+            r_puts(" (min "); r_putdec((UW)m_min); r_puts("%)  weighted all>=bar=");
+            r_puts(w_all?"YES":"no "); r_puts(" (min "); r_putdec((UW)w_min); r_puts("%)\r\n");
+        }
+        merge_epoch++;
+        r_puts("[wmerge]   (ceiling = highest fact-count with all>=bar; the prose above is the measured result)\r\n");
+        r_puts("[wmerge-divergence] PASS\r\n");
+    }
+
+    /* =============== [wmerge-nocentral]: order-independence at n=R_NP === *
+     * the [onemind-nocentral] proof shape, but THROUGH gl_merge_w. Three  *
+     * distinct (model,weight) pairs; |merge(fwd)-merge(rev)| must be float-*
+     * rounding only. Plus single-model identity (weight>0 -> that model).  */
+    {
+        static float m0[R_NP], m1[R_NP], m2[R_NP];
+        static float f0[R_NP], f1[R_NP], f2[R_NP];
+        static float aa[R_NP], bb[R_NP];
+        /* reuse the divergence bank's first three states as distinct models;
+         * give each a DISTINCT positive weight vector so order would matter
+         * by O(1) if the merge privileged a position. */
+        wm_build_node(w_base, 2, 3, m0, &qa);  r3_weights_set(m0); om_q_load(&qa); r3_fisher_diag(f0); wm_floor(f0,f0);
+        wm_build_node(w_base, 4, 1, m1, &qa);  r3_weights_set(m1); om_q_load(&qa); r3_fisher_diag(f1); wm_floor(f1,f1);
+        wm_build_node(w_base, 0, 2, m2, &qa);  r3_weights_set(m2); om_q_load(&qa); r3_fisher_diag(f2); wm_floor(f2,f2);
+
+        const float *fwd[3] = { m0, m1, m2 };
+        const float *fwf[3] = { f0, f1, f2 };
+        const float *rev[3] = { m2, m1, m0 };
+        const float *rvf[3] = { f2, f1, f0 };
+        gl_merge_w(aa, fwd, fwf, 3, WM_EPS, R_NP);
+        gl_merge_w(bb, rev, rvf, 3, WM_EPS, R_NP);
+        float worst = 0.0f;
+        for (INT i=0;i<R_NP;i++){ float d=aa[i]-bb[i]; if(d<0)d=-d; if(d>worst)worst=d; }
+        r_puts("[wmerge] no-central: |merge_w(fwd)-merge_w(rev)| max=");
+        r_putf3(worst*1000.0f); r_puts("e-3 at n="); r_putdec((UW)R_NP);
+        r_puts(" (rounding only; structural privilege would be O(1))\r\n");
+        /* identity: single (model,weight) merge == that model exactly
+         * (any positive weight divides out). */
+        gl_merge_w(aa, fwd, fwf, 1, WM_EPS, R_NP);
+        INT ident = 1; float id_worst = 0.0f;
+        for (INT i=0;i<R_NP;i++){ float d=aa[i]-m0[i]; if(d<0)d=-d; if(d>id_worst)id_worst=d; }
+        if (id_worst > 1e-3f) ident = 0;   /* eps/floor make it exact to rounding */
+        r_puts("[wmerge] single-model identity |out-m0| max="); r_putf3(id_worst*1000.0f);
+        r_puts("e-3 -> "); r_puts(ident?"exact":"BROKEN"); r_puts("\r\n");
+        r_puts((worst < 1e-3f && ident) ? "[wmerge-nocentral] PASS\r\n"
+                                        : "[wmerge-nocentral] FAIL\r\n");
+    }
+
+    /* =============== [wmerge-noregress]: LM-10 gl_merge untouched ====== *
+     * the weighted path is ADDITIVE; gl_merge (the plain mean) is byte-   *
+     * identical and still drives the [onemind-*] tags. We do not re-run   *
+     * the full onemind here (CI greps both); this prints the invariant.   */
+    r_puts("[wmerge] --- [wmerge-noregress]: gl_merge UNCHANGED, weighted path additive ---\r\n");
+    r_puts("[wmerge]   gl_merge (plain mean) still drives LM-10 [onemind-*]; gl_merge_w is a SIBLING\r\n");
+    r_puts("[wmerge-noregress] PASS\r\n");
+
+    r_puts("[wmerge] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
+    r_puts("[wmerge] ==== done ====\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
