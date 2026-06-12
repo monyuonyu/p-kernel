@@ -71,7 +71,7 @@ jobs:
           # — the in-context competence threshold), and r3/handoff/stream/lang/
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\ndmn test\nself test\nsign test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nself test\nsign test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -213,6 +213,23 @@ jobs:
           grep -aF '[onemind-divergent] PASS' selftest.log
           grep -aF '[onemind-cured] PASS' selftest.log
           grep -aF '[onemind-nocentral] PASS' selftest.log
+          # living-mind Part XII (LM-11, Path W² — the weighted/Fisher merge):
+          # `mind wmerge` MEASURES whether a SMARTER (diagonal-Fisher per-param)
+          # merge beats the plain mean on the SAME divergent-minds matrix. It
+          # prints BOTH 2x2 matrices (plain gl_merge vs gl_merge_w) + the per-
+          # cell Δ + a WIN/TIE/LOSE verdict; the tags PASS on a valid MEASUREMENT
+          # regardless of who wins (a TIE/LOSE is an honest shippable result, not
+          # a failure). Fisher is REAL (Σrg² via r_backward over each node's OWN
+          # retained engrams, F-LOCAL = zero extra wire). [wmerge-symmetric] is
+          # the prior-quarantined control (no value 3x-favored in SDICT, XII.0
+          # #4). gl_merge (the plain mean) is UNCHANGED and still drives LM-10
+          # ([wmerge-noregress]); the weighted path is an additive sibling.
+          grep -aF '[wmerge-vs-mean] PASS' selftest.log
+          grep -aF '[wmerge-noreplay] PASS' selftest.log
+          grep -aF '[wmerge-symmetric] PASS' selftest.log
+          grep -aF '[wmerge-divergence] PASS' selftest.log
+          grep -aF '[wmerge-nocentral] PASS' selftest.log
+          grep -aF '[wmerge-noregress] PASS' selftest.log
           # living-mind Part IV (salience-weighted replay = the DMN's
           # imagination): under a FIXED replay budget (B_RING unchanged),
           # weighting the engram ring by EARNED salience (the per-class guard

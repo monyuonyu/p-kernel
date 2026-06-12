@@ -71,6 +71,34 @@ void gl_scale(float *w, float s, UW n);
  * peer models; this is exactly what makes the merge no-central. */
 void gl_merge(float *out, const float *const *models, UW count, UW n);
 
+/* ------------------------------------------------------------------ */
+/* LM-11 / Path W² — per-parameter WEIGHTED merge (living-mind Part XII) */
+/*                                                                     */
+/* gl_merge (above) is the PLAIN UNWEIGHTED mean — it halves every      */
+/* contributor's pull equally. The weighted siblings below generalize   */
+/* it to a per-parameter weighted mean WITHOUT forking gl_merge (which  */
+/* keeps driving LM-10): each parameter i is averaged weighted by how   */
+/* much it MATTERS to each model (the diagonal Fisher Fₖ[i], XII.2 W2). */
+/* gl_merge stays byte-identical; these are ADDITIVE.                   */
+/* ------------------------------------------------------------------ */
+
+/* Weighted accumulate: acc[i] += wt[i]*w[i] AND wsum[i] += wt[i], for
+ * i<n. The per-parameter sibling of gl_accumulate — fold one more model
+ * into a running WEIGHTED sum + the per-param weight running sum. */
+void gl_accumulate_w(float *acc, float *wsum,
+                     const float *w, const float *wt, UW n);
+
+/* Per-parameter Fisher-weighted mean (XII.2 W2):
+ *   out[i] = (Σₖ wtₖ[i]·wₖ[i]) / (Σₖ wtₖ[i] + eps)
+ * where weights[k] is model k's per-parameter weight vector (e.g. its
+ * diagonal Fisher). The eps floor means a parameter NEITHER model
+ * trained (Fₖ[i]≈0 for all k) falls back toward the plain mean of the
+ * shared pretrained backbone — the correct fallback (XII.2). Still
+ * order-independent (a per-param weighted SUM, [wmerge-nocentral]).
+ * NO aggregator index: a flat, order-independent set of (model,weight). */
+void gl_merge_w(float *out, const float *const *models,
+                const float *const *weights, UW count, float eps, UW n);
+
 /* Publish `w` (n floats) to the p-fs named ref `ref` (a versioned,
  * region-replicated object). Returns 0 on success, <0 on pfs error.
  * Shell-task context only (shares pfs_dag scratch). */

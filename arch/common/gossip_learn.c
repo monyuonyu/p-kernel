@@ -75,6 +75,48 @@ void gl_merge(float *out, const float *const *models, UW count, UW n)
 }
 
 /* ------------------------------------------------------------------ */
+/* LM-11 / Path W² — per-parameter WEIGHTED merge siblings.            */
+/* gl_merge (above) is UNCHANGED and keeps driving LM-10; these are    */
+/* purely ADDITIVE (living-mind Part XII, anti-fork XII.6).            */
+/* ------------------------------------------------------------------ */
+
+void gl_accumulate_w(float *acc, float *wsum,
+                     const float *w, const float *wt, UW n)
+{
+    for (UW i = 0; i < n; i++) {
+        acc[i]  += wt[i] * w[i];
+        wsum[i] += wt[i];
+    }
+}
+
+/* gl_merge_w needs one per-parameter weight-sum scratch. The largest
+ * body merged is the R3 weight-state (R_NP=21568 floats, the [wmerge-*]
+ * cert), far larger than the dtr body (DTR_WEIGHT_FLOATS=635). Size the
+ * scratch to that ceiling, static .bss (never the task stack — the
+ * stack-overflow lesson). Shell/cert task only, no concurrent use. */
+#define GL_MERGE_MAXFLOATS  21568u   /* >= R_NP; the largest weighted body */
+static float gl_wsum[GL_MERGE_MAXFLOATS];
+
+void gl_merge_w(float *out, const float *const *models,
+                const float *const *weights, UW count, float eps, UW n)
+{
+    if (count == 0) return;
+    if (n > GL_MERGE_MAXFLOATS) return;        /* scratch bound (defensive) */
+    for (UW i = 0; i < n; i++) { out[i] = 0.0f; gl_wsum[i] = 0.0f; }
+    for (UW k = 0; k < count; k++)
+        gl_accumulate_w(out, gl_wsum, models[k], weights[k], n);
+    /* normalize per-parameter by Σ wt + eps (denominator safety only).
+     * The plain-mean FALLBACK for a parameter neither model trained is
+     * delivered by the CALLER adding a uniform floor to each model's
+     * weight vector (W2: wtₖ[i] = Fₖ[i] + floor), so Fₖ[i]≈0 for all k
+     * -> wtₖ[i]≈floor -> out[i] -> (Σ floor·wₖ)/(C·floor) = plain mean of
+     * the shared backbone (XII.2). eps here is the SAME small constant
+     * for every parameter, so the per-param SUM stays order-independent
+     * ([wmerge-nocentral]); it only guards a literal all-zero weight. */
+    for (UW i = 0; i < n; i++) out[i] /= (gl_wsum[i] + eps);
+}
+
+/* ------------------------------------------------------------------ */
 /* p-fs transport (public pfs_dag API only)                            */
 /* ------------------------------------------------------------------ */
 

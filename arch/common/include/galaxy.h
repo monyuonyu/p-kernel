@@ -58,9 +58,18 @@ _Static_assert(sizeof(GALAXY_EV) == 12, "GALAXY_EV must be 12 bytes (LP64-safe)"
                              /* (living-mind.md VIII.10).                      */
 #define EV_MERGE        16   /* LM-10 Path W: I folded my region into rw[].    */
                              /* src = me, dst = NONE; a = merge_epoch16,       */
-                             /* b = peers folded. ONE site: mw_fold_region     */
-                             /* (living-mind.md XI.7) — the region's stars     */
-                             /* pulse in unison (collective sleep).            */
+                             /* b = peers folded (low 15 bits) | the LM-11     */
+                             /* weighted flag (bit 15). ONE site: mw_fold_     */
+                             /* region (living-mind.md XI.7 / XII.7) — the     */
+                             /* region's stars pulse in unison (collective     */
+                             /* sleep), now with a quality bit: a Fisher-      */
+                             /* weighted fold (Path W²) vs a plain fold.       */
+/* LM-11 Path W² (living-mind XII.7): one-bit annotation in EV_MERGE's b
+ * payload — no new event type. A weighted (Fisher) fold sets it; a plain
+ * fold clears it, so the galaxy view can later render "the region slept
+ * with Fisher-weighting" vs a plain pulse. Peer count uses the low 15
+ * bits (<=DNODE_MAX, fits). */
+#define EV_MERGE_WEIGHTED  0x8000u   /* bit 15 of b = a Fisher-weighted fold */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */
