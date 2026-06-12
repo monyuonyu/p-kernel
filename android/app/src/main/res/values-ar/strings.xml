@@ -16,4 +16,8 @@
     <string name="btn_galaxy">افتح المجرّة</string>
     <string name="galaxy_lighting">نُضيء نجمتك الآن…</string>
     <string name="galaxy_charge">تُضاء نجمتك أثناء الشحن — وصِّل الشاحن</string>
+    <string name="star_lit">نجمتك تتلألأ الآن</string>
+    <string name="star_dark">نجمتك نائمة الآن</string>
+    <string name="btn_sleep">دعها تنام</string>
+    <string name="btn_copy">نسخ</string>
 </resources>

@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Galaxie öffnen</string>
     <string name="galaxy_lighting">Dein Stern wird entzündet…</string>
     <string name="galaxy_charge">Dein Stern leuchtet nur beim Laden — bitte Ladegerät anschließen</string>
+    <string name="star_lit">Dein Stern leuchtet gerade</string>
+    <string name="star_dark">Dein Stern schläft gerade</string>
+    <string name="btn_sleep">Schlafen lassen</string>
+    <string name="btn_copy">Kopieren</string>
 </resources>

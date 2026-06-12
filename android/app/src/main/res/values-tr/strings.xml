@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Galaksiyi aç</string>
     <string name="galaxy_lighting">Yıldızın yakılıyor…</string>
     <string name="galaxy_charge">Yıldızın şarj olurken yanar — lütfen şarja tak</string>
+    <string name="star_lit">Yıldızın şu anda parlıyor</string>
+    <string name="star_dark">Yıldızın şu anda uyuyor</string>
+    <string name="btn_sleep">Uyumasına izin ver</string>
+    <string name="btn_copy">Kopyala</string>
 </resources>

@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Abrir galáxia</string>
     <string name="galaxy_lighting">Acendendo a sua estrela…</string>
     <string name="galaxy_charge">Sua estrela acende enquanto carrega — conecte o carregador</string>
+    <string name="star_lit">Sua estrela está brilhando agora</string>
+    <string name="star_dark">Sua estrela está dormindo agora</string>
+    <string name="btn_sleep">Deixar dormir</string>
+    <string name="btn_copy">Copiar</string>
 </resources>

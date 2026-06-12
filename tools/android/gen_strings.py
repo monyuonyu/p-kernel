@@ -67,6 +67,10 @@ KEYS = [
     ("galaxy",      "btn_galaxy"),
     ("lighting",    "galaxy_lighting"),   # waking splash (no tech jargon)
     ("charge",      "galaxy_charge"),     # the charge-only gate, said kindly
+    ("star_lit",    "star_lit"),          # advanced screen: state, human words
+    ("star_dark",   "star_dark"),
+    ("sleep",       "btn_sleep"),
+    ("copy",        "btn_copy"),
 ]
 
 

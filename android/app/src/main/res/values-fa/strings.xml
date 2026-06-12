@@ -16,4 +16,8 @@
     <string name="btn_galaxy">باز کردن کهکشان</string>
     <string name="galaxy_lighting">در حال افروختن ستارهٔ شما…</string>
     <string name="galaxy_charge">ستارهٔ شما هنگام شارژ روشن می‌شود — شارژر را وصل کنید</string>
+    <string name="star_lit">ستارهٔ شما اکنون می‌درخشد</string>
+    <string name="star_dark">ستارهٔ شما اکنون خفته است</string>
+    <string name="btn_sleep">بگذار بخوابد</string>
+    <string name="btn_copy">کپی</string>
 </resources>

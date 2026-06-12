@@ -97,7 +97,19 @@
                 android:fontFamily="monospace"
                 android:paddingBottom="20dp"/>
 
-            <!-- HERO: the one button. "Shine" / 光れ (localized). -->
+            <!-- state, in human words: shining / asleep (localized) -->
+            <TextView
+                android:id="@+id/star_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/star_blue"
+                android:textSize="15sp"
+                android:gravity="center"
+                android:fontFamily="monospace"
+                android:paddingBottom="12dp"/>
+
+            <!-- HERO: the one button. 灯す (localized); hidden while shining. -->
             <Button
                 android:id="@+id/btn_start"
                 android:layout_width="match_parent"
@@ -238,6 +250,14 @@
                 android:fontFamily="monospace"
                 android:paddingTop="8dp"
                 android:paddingBottom="4dp"/>
+
+            <Button
+                android:id="@+id/btn_copy_log"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_copy"
+                android:textSize="12sp"
+                android:fontFamily="monospace"/>
 
             <TextView
                 android:id="@+id/log_view"

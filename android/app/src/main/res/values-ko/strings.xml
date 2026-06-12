@@ -16,4 +16,8 @@
     <string name="btn_galaxy">갤럭시 열기</string>
     <string name="galaxy_lighting">당신의 별을 밝히는 중…</string>
     <string name="galaxy_charge">별은 충전 중에만 밝혀집니다 — 충전기를 연결해 주세요</string>
+    <string name="star_lit">당신의 별이 지금 빛나고 있어요</string>
+    <string name="star_dark">당신의 별이 지금 잠들어 있어요</string>
+    <string name="btn_sleep">재우기</string>
+    <string name="btn_copy">복사</string>
 </resources>

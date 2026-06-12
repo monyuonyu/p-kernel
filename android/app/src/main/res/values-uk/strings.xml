@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Відкрити галактику</string>
     <string name="galaxy_lighting">Запалюємо вашу зірку…</string>
     <string name="galaxy_charge">Ваша зірка загоряється під час заряджання — підключіть живлення</string>
+    <string name="star_lit">Ваша зірка зараз сяє</string>
+    <string name="star_dark">Ваша зірка зараз спить</string>
+    <string name="btn_sleep">Дати поспати</string>
+    <string name="btn_copy">Копіювати</string>
 </resources>

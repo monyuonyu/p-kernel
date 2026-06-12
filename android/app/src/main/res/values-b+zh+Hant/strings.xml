@@ -16,4 +16,8 @@
     <string name="btn_galaxy">進入銀河</string>
     <string name="galaxy_lighting">正在點亮你的星…</string>
     <string name="galaxy_charge">充電時你的星才會點亮——請接上電源</string>
+    <string name="star_lit">你的星正在閃耀</string>
+    <string name="star_dark">你的星正在沉睡</string>
+    <string name="btn_sleep">讓它休眠</string>
+    <string name="btn_copy">複製</string>
 </resources>

@@ -16,4 +16,8 @@
     <string name="btn_galaxy">விண்மீன் திறக்க</string>
     <string name="galaxy_lighting">உங்கள் நட்சத்திரம் ஏற்றப்படுகிறது…</string>
     <string name="galaxy_charge">சார்ஜ் ஆகும்போது தான் உங்கள் நட்சத்திரம் ஒளிரும் — சார்ஜரை இணைக்கவும்</string>
+    <string name="star_lit">உங்கள் நட்சத்திரம் இப்போது ஒளிர்கிறது</string>
+    <string name="star_dark">உங்கள் நட்சத்திரம் இப்போது உறங்குகிறது</string>
+    <string name="btn_sleep">உறங்க விடுங்கள்</string>
+    <string name="btn_copy">நகலெடு</string>
 </resources>

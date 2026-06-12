@@ -16,4 +16,8 @@
     <string name="btn_galaxy">เปิดกาแล็กซี</string>
     <string name="galaxy_lighting">กำลังจุดดาวของคุณ…</string>
     <string name="galaxy_charge">ดาวของคุณจะสว่างเมื่อชาร์จอยู่ — กรุณาเสียบสายชาร์จ</string>
+    <string name="star_lit">ดาวของคุณกำลังส่องแสงอยู่</string>
+    <string name="star_dark">ดาวของคุณกำลังหลับอยู่</string>
+    <string name="btn_sleep">ปล่อยให้หลับ</string>
+    <string name="btn_copy">คัดลอก</string>
 </resources>

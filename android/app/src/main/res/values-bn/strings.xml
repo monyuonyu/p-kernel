@@ -16,4 +16,8 @@
     <string name="btn_galaxy">গ্যালাক্সি খুলুন</string>
     <string name="galaxy_lighting">আপনার তারা জ্বালানো হচ্ছে…</string>
     <string name="galaxy_charge">চার্জে থাকলে তবেই আপনার তারা জ্বলে — চার্জার লাগান</string>
+    <string name="star_lit">আপনার তারা এখন জ্বলছে</string>
+    <string name="star_dark">আপনার তারা এখন ঘুমিয়ে আছে</string>
+    <string name="btn_sleep">ঘুমাতে দিন</string>
+    <string name="btn_copy">কপি</string>
 </resources>

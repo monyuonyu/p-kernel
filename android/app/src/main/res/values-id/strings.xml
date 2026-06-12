@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Buka galaksi</string>
     <string name="galaxy_lighting">Menyalakan bintangmu…</string>
     <string name="galaxy_charge">Bintangmu menyala saat mengisi daya — colokkan pengisi daya</string>
+    <string name="star_lit">Bintangmu sedang bersinar</string>
+    <string name="star_dark">Bintangmu sedang tidur</string>
+    <string name="btn_sleep">Biarkan tidur</string>
+    <string name="btn_copy">Salin</string>
 </resources>

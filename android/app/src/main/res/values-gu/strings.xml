@@ -16,4 +16,8 @@
     <string name="btn_galaxy">ગૅલેક્સી ખોલો</string>
     <string name="galaxy_lighting">તમારો તારો પ્રગટાવી રહ્યા છીએ…</string>
     <string name="galaxy_charge">ચાર્જિંગ વખતે જ તમારો તારો પ્રગટે છે — ચાર્જર લગાવો</string>
+    <string name="star_lit">તમારો તારો અત્યારે ચમકી રહ્યો છે</string>
+    <string name="star_dark">તમારો તારો અત્યારે સૂતો છે</string>
+    <string name="btn_sleep">સૂવા દો</string>
+    <string name="btn_copy">કૉપિ</string>
 </resources>

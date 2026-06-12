@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() {
          * reached from the ⋮ corner of the galaxy. */
         if (!intent.getBooleanExtra(EXTRA_ADVANCED, false)) {
             val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+            if (!prefs.contains(PREF_NODE_ID))   // first light: mint a random id
+                prefs.edit().putInt(PREF_NODE_ID, 2 + (Math.random() * 60).toInt()).apply()
             val nodeId = prefs.getInt(PREF_NODE_ID, 1)
             startKernelWith(
                 nodeId,
@@ -78,9 +80,47 @@ class MainActivity : AppCompatActivity() {
         logView        = findViewById(R.id.log_view)
         logView.movementMethod = ScrollingMovementMethod()
 
+        /* prefill from the persisted settings (the auto path uses the same);
+         * first run mints a RANDOM node id instead of everyone being "1"
+         * (honest bound: ids live in 0..63 — true uniqueness needs a
+         * key-derived id, a named future wave). */
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (!prefs.contains(PREF_NODE_ID))
+            prefs.edit().putInt(PREF_NODE_ID, 2 + (Math.random() * 60).toInt()).apply()
+        nodeIdField.setText(prefs.getInt(PREF_NODE_ID, 1).toString())
+        relayHostField.setText(prefs.getString(PREF_RELAY_HOST, "") ?: "")
+        relayPortField.setText(prefs.getInt(PREF_RELAY_PORT, 7400).toString())
+        relayKeyField.setText(prefs.getString(PREF_RELAY_KEY, "") ?: "")
+
         findViewById<Button>(R.id.btn_start ).setOnClickListener { startKernel() }
         findViewById<Button>(R.id.btn_stop  ).setOnClickListener { stopKernel()  }
         findViewById<Button>(R.id.btn_galaxy).setOnClickListener { openGalaxy()  }
+        findViewById<Button>(R.id.btn_stop).text = getString(R.string.btn_sleep)
+        findViewById<Button>(R.id.btn_copy_log).setOnClickListener {
+            val cm = getSystemService(android.content.ClipboardManager::class.java)
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("ark log", logView.text))
+        }
+
+        /* state, in human words: poll the star's window; swap 灯す/眠らせる
+         * so the screen never asks you to light an already-shining star. */
+        Thread({
+            while (!isFinishing) {
+                val id = nodeIdField.text.toString().toIntOrNull() ?: 1
+                val lit = try {
+                    java.net.Socket().use { sk ->
+                        sk.connect(java.net.InetSocketAddress("127.0.0.1", 7800 + id - 1), 300); true }
+                } catch (_: Throwable) { false }
+                runOnUiThread {
+                    findViewById<TextView>(R.id.star_status).text =
+                        getString(if (lit) R.string.star_lit else R.string.star_dark)
+                    findViewById<Button>(R.id.btn_start).visibility =
+                        if (lit) View.GONE else View.VISIBLE
+                    findViewById<Button>(R.id.btn_stop).visibility =
+                        if (lit) View.VISIBLE else View.GONE
+                }
+                try { Thread.sleep(1200) } catch (_: InterruptedException) { return@Thread }
+            }
+        }, "star-status").apply { isDaemon = true; start() }
 
         /* "Advanced — join a fleet": reveal the relay fields on tap. Solo is
          * the default; the relay is opt-in. */

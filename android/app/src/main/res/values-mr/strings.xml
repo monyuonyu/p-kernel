@@ -16,4 +16,8 @@
     <string name="btn_galaxy">गॅलेक्सी उघडा</string>
     <string name="galaxy_lighting">तुमचा तारा उजळवत आहोत…</string>
     <string name="galaxy_charge">चार्जिंग सुरू असतानाच तुमचा तारा उजळतो — चार्जर लावा</string>
+    <string name="star_lit">तुमचा तारा आत्ता चमकत आहे</string>
+    <string name="star_dark">तुमचा तारा आत्ता झोपला आहे</string>
+    <string name="btn_sleep">झोपू द्या</string>
+    <string name="btn_copy">कॉपी</string>
 </resources>

@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Otwórz galaktykę</string>
     <string name="galaxy_lighting">Zapalamy twoją gwiazdę…</string>
     <string name="galaxy_charge">Twoja gwiazda świeci podczas ładowania — podłącz ładowarkę</string>
+    <string name="star_lit">Twoja gwiazda właśnie świeci</string>
+    <string name="star_dark">Twoja gwiazda właśnie śpi</string>
+    <string name="btn_sleep">Pozwól jej spać</string>
+    <string name="btn_copy">Kopiuj</string>
 </resources>

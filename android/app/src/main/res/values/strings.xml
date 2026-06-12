@@ -10,7 +10,7 @@
   channel) live only here on purpose.
 -->
 <resources>
-    <string name="app_name">UMP</string>
+    <string name="app_name">ark</string>
 
     <!-- Entry screen (in the i18n table — keep English value in sync here). -->
     <string name="entry_tagline">This is p-kernel — a home for an AI that belongs to no one.</string>
@@ -40,4 +40,8 @@
     <string name="galaxy_lighting">Lighting your star…</string>
     <string name="galaxy_charge">Your star lights while charging — plug in to begin</string>
     <string name="galaxy_menu_desc">advanced settings</string>
+    <string name="star_lit">Your star is shining right now</string>
+    <string name="star_dark">Your star is asleep right now</string>
+    <string name="btn_sleep">Let it sleep</string>
+    <string name="btn_copy">Copy</string>
 </resources>

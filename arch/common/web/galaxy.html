@@ -8,8 +8,8 @@
   html,body{margin:0;height:100%;background:#05060a;color:#cdd6f4;
     font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
   #sky{display:block;width:100vw;height:100vh;touch-action:none}
-  #hud{position:fixed;left:12px;top:10px;font-size:12px;line-height:1.5;
-    text-shadow:0 0 4px #000;pointer-events:none;
+  #hud{position:fixed;left:12px;top:10px;font-size:13px;line-height:1.6;
+    text-shadow:0 0 4px #000;pointer-events:auto;
     max-width:calc(100vw - 195px)}   /* leave room for #lang (top-right) */
   #hud b{color:#89b4fa}
   #panel{position:fixed;right:0;top:0;height:100%;width:320px;max-width:80vw;
@@ -179,16 +179,42 @@ const I18N = {
       optional:"optional",teach:"teach",ask:"ask",
       mustread:"Please read about this galaxy first",
       consentmark:"Your consent is inscribed",namemark:"Your name is lit upon your star",
-      updated:"The text was updated — please read it once more",profilefail:"profile failed"},
+      updated:"The text was updated — please read it once more",profilefail:"profile failed",
+      st_dream:"your star is dreaming — tidying what it learned",
+      st_learn:"your star is learning something new",
+      st_link:"your star is linked with {n} other stars",
+      st_alone:"your star shines alone for now",
+      st_awake:"your star is awake",
+      notew:"this star only knows {k} words and {v} answers yet — honestly, still a baby",
+      word:"word",btnteach:"teach",btnask:"ask",btnlog:"log",
+      teachok:"taught — watch it circle and sink into your star",
+      teachfail:"that word is not known yet — pick from the list",
+      askpre:"it answers",detail:"details",
+      logttl:"your star's diary",logcopy:"copy",logclose:"close",
+      logok:"copied. paste it anywhere.",
+      logng:"could not auto-copy — long-press the text, then Copy."},
   ja:{title:"ようこそ — この銀河について",agree:"同意して刻む",decline:"今はやめておく",
       save:"星に名前を灯す",skip:"名乗らず同意だけ",
       lblhandle:"ハンドル / 名乗り（任意・ペンネーム可・検証されません）",
       lblmsg:"未来への言葉（任意・他人の情報は書かないでください）",
       lblname:"本名（任意）",append:"過去の版は消えません。新しい版が追加されるだけです。",
-      optional:"任意",teach:"teach",ask:"ask",
+      optional:"任意",teach:"教える",ask:"聞く",
       mustread:"まず、この銀河について読んでください",
       consentmark:"同意を刻みました",namemark:"星に名前が灯りました",
-      updated:"確認テキストが更新されました。もう一度お読みください",profilefail:"profile failed"},
+      updated:"確認テキストが更新されました。もう一度お読みください",profilefail:"送信に失敗しました",
+      st_dream:"あなたの星は夢を見ています — 学んだことを整理中",
+      st_learn:"あなたの星は、いま新しいことを学んでいます",
+      st_link:"あなたの星は {n} 個の星とつながっています",
+      st_alone:"あなたの星は、いまはひとりで輝いています",
+      st_awake:"あなたの星は目を覚ましています",
+      notew:"この星はまだ {k} 個のことばと {v} 個のこたえしか知りません — 正直、まだ赤ちゃんです",
+      word:"ことば",btnteach:"教える",btnask:"聞く",btnlog:"記録",
+      teachok:"教えました — ことばが星のまわりを回って、沈むのを見ていてください",
+      teachfail:"そのことばは まだ知りません — 一覧から選んでください",
+      askpre:"こたえ",detail:"くわしく",
+      logttl:"あなたの星の日記",logcopy:"コピー",logclose:"とじる",
+      logok:"コピーしました。どこにでも貼れます。",
+      logng:"自動コピーできませんでした — 文字を長押しして「コピー」してください。"},
   "zh-Hans":{title:"欢迎 —— 关于这片星系",agree:"同意并镌刻",decline:"暂时不要",
       save:"在我的星上点亮名字",skip:"仅同意，不留名",
       lblhandle:"代号 / 名号（可选·可用笔名·不会核实）",
@@ -309,6 +335,14 @@ function applyStrings(){
   set("lblhandle",S("lblhandle")); set("lblmsg",S("lblmsg"));
   set("lblname",S("lblname")); set("arkappend",S("append"));
   set("lblteach",S("teach")); set("lblask",S("ask"));
+  set("bteach",S("btnteach")); set("bask",S("btnask"));
+  const bl=document.getElementById("blog"); if(bl) bl.textContent="\u{1F4CB} "+S("btnlog");
+  ["tk","tv","ak"].forEach(id=>{const e=document.getElementById(id);if(e)e.placeholder=S("word");});
+  const lt=document.getElementById("logttl"); if(lt) lt.textContent=S("logttl");
+  const lc=document.getElementById("logcopy"); if(lc) lc.textContent="\u{1F4CB} "+S("logcopy");
+  const lx=document.getElementById("logclose"); if(lx) lx.textContent=S("logclose");
+  const vb=document.getElementById("note"); if(vb&&VOCAB.keys.length) vb.textContent=S("notew").replace("{k}",VOCAB.keys.length).replace("{v}",VOCAB.vals.length);
+  poll();
   const ph=S("optional");
   ["arkhandle","arkmsg","arkname"].forEach(id=>{const e=document.getElementById(id);if(e)e.placeholder=ph;});
   const rtl=(curLang==="ar"||curLang==="ur"||curLang==="fa");
@@ -338,6 +372,7 @@ function resize(){
 addEventListener("resize",resize);resize();
 
 let snap={me:{id:0},peers:[],dropped:0};
+let hudTech=false;   // ⓘ reveals the numbers; default = human words only
 let dreaming=false;              // EV_DMN_IDLE state (galaxy.md §5)
 const flashes=[];                // transient rays/ripples
 const orbiters=[];               // taught fact-particles awaiting consolidation
@@ -557,12 +592,23 @@ async function poll(){
   try{
     const r=await fetch("/galaxy.json");snap=await r.json();
     const m=snap.me;
+    const nPeers=snap.peers.filter(p=>p.state>0).length;
+    // human words first (UX constitution): what is my star DOING right now?
+    let line = m.pending>0 ? S("st_learn")
+             : m.dmn===1   ? S("st_dream")
+             : nPeers>0    ? S("st_link").replace("{n}",nPeers)
+             : S("st_alone");
     document.getElementById("hud").innerHTML=
-      `<b>node ${m.id}</b> · region ${m.region} · dmn ${m.dmn===1?"IDLE (dreaming)":"ACTIVE"}`+
-      `<br>pending facts: ${m.pending} · lifetime sleep-rounds: ${m.rounds}`+
-      `<br>pressure ${m.pressure} · threat ${m.threat} · dropped events ${snap.dropped}`;
-    document.getElementById("foot").innerHTML=
-      `this is node ${m.id}'s view — gossip-bounded · peers known: ${snap.peers.filter(p=>p.state>0).length}`;
+      `<span style="color:#cdd6f4">${line}</span>`+
+      ` <span id="hudinfo" style="cursor:pointer;color:#45475a">&#9432;</span>`+
+      `<span id="hudtech" style="display:${hudTech?"inline":"none"};color:#6c7086">`+
+      `<br>node ${m.id} · region ${m.region} · dmn ${m.dmn===1?"IDLE":"ACTIVE"}`+
+      ` · pending ${m.pending} · rounds ${m.rounds}`+
+      `<br>pressure ${m.pressure} · threat ${m.threat} · dropped ${snap.dropped}`+
+      ` · peers ${nPeers}</span>`;
+    const hi=document.getElementById("hudinfo");
+    if(hi) hi.onclick=()=>{ hudTech=!hudTech; poll(); };
+    document.getElementById("foot").innerHTML="";
     dreaming=(m.dmn===1);
     // keep orbiter count honest with real pending
     while(orbiters.length>m.pending) orbiters.pop();
@@ -580,7 +626,7 @@ async function loadVocab(){
   try{const r=await fetch("/vocab");const j=await r.json();
     VOCAB=j; fillList("vkeys",j.keys||[]); fillList("vvals",j.vals||[]);
     const note=document.getElementById("note");
-    if(note) note.textContent=`this mind speaks ${(j.keys||[]).length} English key words + ${(j.vals||[]).length} answer words today — still an infant, truthfully shown (word list v1: English)`;
+    if(note) note.textContent=S("notew").replace("{k}",(j.keys||[]).length).replace("{v}",(j.vals||[]).length);
   }catch(_){/* kernel may predate /vocab; leave free-text inputs */}
 }
 loadVocab();
@@ -601,11 +647,11 @@ document.getElementById("bteach").onclick=async()=>{
       body:`k=${encodeURIComponent(k)}&v=${encodeURIComponent(v)}`});
     if(r.status===403){
       const j=await r.json().catch(()=>({}));
-      if(j&&j.refused==="oov"){ msg(`"${j.word}" not in the ${j.which} vocabulary (English words v1) — refused`,false); return; }
+      if(j&&j.refused==="oov"){ msg(`"${j.word}" — ${S("teachfail")}`,false); return; }
       msg(S("mustread"),false); arkOpen(); return;
     }
     const j=await r.json();
-    msg(j.ok?`taught "${k}" → "${v}" (queued, pending ${j.pending}) — watch it sink`:"teach refused",j.ok);
+    msg(j.ok?`"${k}" → "${v}" — ${S("teachok")}`:S("teachfail"),j.ok);
   }catch(_){msg("teach failed",false);}
 };
 document.getElementById("bask").onclick=async()=>{
@@ -615,9 +661,9 @@ document.getElementById("bask").onclick=async()=>{
       headers:{"Content-Type":"application/x-www-form-urlencoded"},
       body:`k=${encodeURIComponent(k)}`});
     if(r.status===403){ const j=await r.json().catch(()=>({}));
-      msg(`"${j.word||k}" not in the key vocabulary (English words v1) — refused`,false); return; }
+      msg(`"${j.word||k}" — ${S("teachfail")}`,false); return; }
     const j=await r.json();
-    msg(`ask "${k}" → "${j.word!==undefined?j.word:j.pred}" (share ${(j.share/10).toFixed(1)}%)`,true);}
+    msg(`"${k}" → "${j.word!==undefined?j.word:j.pred}"`,true);}
   catch(_){msg("ask failed",false);}
 };
 
@@ -728,6 +774,7 @@ async function openSelf(){
   }
   if(j.present) body += `\n改竄検出可・偽造不可ではない（署名は未実装）`;
   document.getElementById("pbody").textContent = body;
+  panelOpenedAt=performance.now();
   document.getElementById("panel").classList.add("open");
 }
 function openPeer(p){
@@ -736,10 +783,19 @@ function openPeer(p){
     `state    ${STATE[p.state]}\nregion   ${p.region}\ndevice   ${p.device}\n`+
     `pressure ${p.pressure}\nthreat   ${p.threat}\nat-risk  ${p.atrisk}\n`+
     `as gossiped ${Math.round(p.fresh/1000)}s ago`;
+  panelOpenedAt=performance.now();
   document.getElementById("panel").classList.add("open");
 }
 function closePanel(){document.getElementById("panel").classList.remove("open");}
 window.closePanel=closePanel;
+let panelOpenedAt=0;
+(function(){const orig=document.getElementById("panel");
+  document.addEventListener("click",(e)=>{
+    if(!orig.classList.contains("open"))return;
+    if(orig.contains(e.target))return;
+    if(performance.now()-panelOpenedAt<250)return;   // not the opening tap
+    closePanel();
+  });})();
 
 // ── copy-log (可視化=仕組み): one tap copies this node's recent event
 //    history so the owner can share it for diagnosis. THREE layers of
@@ -752,9 +808,7 @@ window.closePanel=closePanel;
 //         manual long-press-select + copy is always possible on a phone.
 function logHint(ok){
   const h=document.getElementById("loghint");
-  h.textContent = ok
-    ? "copied to clipboard. (if your paste is empty, long-press the text above and Copy.)"
-    : "could not auto-copy (WebView blocked it). long-press the text above, then Select all → Copy.";
+  h.textContent = ok ? S("logok") : S("logng");
   h.style.color = ok ? "#a6e3a1" : "#fab387";
 }
 async function copyText(s){
@@ -781,8 +835,8 @@ async function openLog(){
   try{ txt=await (await fetch("/log.txt")).text(); }
   catch(_){ txt="(failed to fetch /log.txt — is the node still running?)"; }
   ta.value=txt;
-  document.getElementById("logttl").textContent="node log · "+
-    (txt.split("\n").length-1)+" lines";
+  document.getElementById("logttl").textContent=S("logttl")+" · "+
+    (txt.split("\n").length-1);
 }
 function closeLog(){ document.getElementById("logov").classList.remove("open"); }
 document.getElementById("blog").onclick=openLog;

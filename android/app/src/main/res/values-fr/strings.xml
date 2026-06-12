@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Ouvrir la galaxie</string>
     <string name="galaxy_lighting">Allumage de votre étoile…</string>
     <string name="galaxy_charge">Votre étoile s\'allume pendant la charge — branchez l\'appareil</string>
+    <string name="star_lit">Votre étoile brille en ce moment</string>
+    <string name="star_dark">Votre étoile dort en ce moment</string>
+    <string name="btn_sleep">La laisser dormir</string>
+    <string name="btn_copy">Copier</string>
 </resources>

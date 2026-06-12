@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Buksan ang galaxy</string>
     <string name="galaxy_lighting">Sinisindihan ang iyong bituin…</string>
     <string name="galaxy_charge">Lumiliwanag ang bituin mo habang nagcha-charge — ikabit ang charger</string>
+    <string name="star_lit">Kumikinang ngayon ang bituin mo</string>
+    <string name="star_dark">Natutulog ngayon ang bituin mo</string>
+    <string name="btn_sleep">Hayaang matulog</string>
+    <string name="btn_copy">Kopyahin</string>
 </resources>

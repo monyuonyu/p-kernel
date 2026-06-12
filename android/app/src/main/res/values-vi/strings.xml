@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Mở thiên hà</string>
     <string name="galaxy_lighting">Đang thắp sáng ngôi sao của bạn…</string>
     <string name="galaxy_charge">Ngôi sao của bạn chỉ sáng khi đang sạc — hãy cắm sạc</string>
+    <string name="star_lit">Ngôi sao của bạn đang tỏa sáng</string>
+    <string name="star_dark">Ngôi sao của bạn đang ngủ</string>
+    <string name="btn_sleep">Để nó ngủ</string>
+    <string name="btn_copy">Sao chép</string>
 </resources>

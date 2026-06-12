@@ -16,4 +16,8 @@
     <string name="btn_galaxy">ਗਲੈਕਸੀ ਖੋਲ੍ਹੋ</string>
     <string name="galaxy_lighting">ਤੁਹਾਡਾ ਤਾਰਾ ਜਗਾਇਆ ਜਾ ਰਿਹਾ ਹੈ…</string>
     <string name="galaxy_charge">ਚਾਰਜਿੰਗ ਦੌਰਾਨ ਹੀ ਤੁਹਾਡਾ ਤਾਰਾ ਜਗਦਾ ਹੈ — ਚਾਰਜਰ ਲਾਓ</string>
+    <string name="star_lit">ਤੁਹਾਡਾ ਤਾਰਾ ਹੁਣ ਚਮਕ ਰਿਹਾ ਹੈ</string>
+    <string name="star_dark">ਤੁਹਾਡਾ ਤਾਰਾ ਹੁਣ ਸੌਂ ਰਿਹਾ ਹੈ</string>
+    <string name="btn_sleep">ਸੌਣ ਦਿਓ</string>
+    <string name="btn_copy">ਕਾਪੀ</string>
 </resources>

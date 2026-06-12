@@ -16,4 +16,8 @@
     <string name="btn_galaxy">Deschide galaxia</string>
     <string name="galaxy_lighting">Îți aprindem steaua…</string>
     <string name="galaxy_charge">Steaua ta se aprinde în timpul încărcării — conectează încărcătorul</string>
+    <string name="star_lit">Steaua ta strălucește acum</string>
+    <string name="star_dark">Steaua ta doarme acum</string>
+    <string name="btn_sleep">Las-o să doarmă</string>
+    <string name="btn_copy">Copiază</string>
 </resources>
