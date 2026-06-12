@@ -14,4 +14,6 @@
     <string name="label_relay_key">રિલે કી (હેક્સ)</string>
     <string name="btn_stop">રોકો</string>
     <string name="btn_galaxy">ગૅલેક્સી ખોલો</string>
+    <string name="galaxy_lighting">તમારો તારો પ્રગટાવી રહ્યા છીએ…</string>
+    <string name="galaxy_charge">ચાર્જિંગ વખતે જ તમારો તારો પ્રગટે છે — ચાર્જર લગાવો</string>
 </resources>

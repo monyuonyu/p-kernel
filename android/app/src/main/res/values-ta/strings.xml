@@ -14,4 +14,6 @@
     <string name="label_relay_key">ரிலே சாவி (hex)</string>
     <string name="btn_stop">நிறுத்து</string>
     <string name="btn_galaxy">விண்மீன் திறக்க</string>
+    <string name="galaxy_lighting">உங்கள் நட்சத்திரம் ஏற்றப்படுகிறது…</string>
+    <string name="galaxy_charge">சார்ஜ் ஆகும்போது தான் உங்கள் நட்சத்திரம் ஒளிரும் — சார்ஜரை இணைக்கவும்</string>
 </resources>

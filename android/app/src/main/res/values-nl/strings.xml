@@ -14,4 +14,6 @@
     <string name="label_relay_key">Relay-sleutel (hex)</string>
     <string name="btn_stop">Stop</string>
     <string name="btn_galaxy">Open melkweg</string>
+    <string name="galaxy_lighting">Je ster wordt ontstoken…</string>
+    <string name="galaxy_charge">Je ster brandt alleen tijdens het opladen — sluit de oplader aan</string>
 </resources>

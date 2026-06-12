@@ -14,4 +14,6 @@
     <string name="label_relay_key">Ufunguo wa relay (hex)</string>
     <string name="btn_stop">Simamisha</string>
     <string name="btn_galaxy">Fungua galaksi</string>
+    <string name="galaxy_lighting">Tunawasha nyota yako…</string>
+    <string name="galaxy_charge">Nyota yako huwaka wakati wa kuchaji — chomeka chaja</string>
 </resources>

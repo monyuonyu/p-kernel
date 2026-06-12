@@ -317,10 +317,24 @@ function applyStrings(){
 }
 
 // ── ALL data is REAL, from THIS node's /galaxy.json + /events. No fake
-//    stars, no decorative nebulae (galaxy.md §5 sparse-galaxy stance).
+//    NODE stars (galaxy.md §5 sparse-galaxy stance): every labeled, clickable
+//    star is a real node. The tiny unlabeled background points are AMBIENCE
+//    (depth reference for the 3D parallax), visually distinct from data —
+//    dim, small, nameless, unclickable. 可視化=仕組み: the sky is the UI.
+//
+//    3D: hand-rolled perspective projection on canvas 2D (NO external libs —
+//    this page is embedded in the .so and must work offline). A slow camera
+//    yaw gives parallax; depth scales size+alpha; glow via pre-rendered
+//    radial-gradient sprites (cheap — no per-frame shadowBlur).
 const cv=document.getElementById("sky"),ctx=cv.getContext("2d");
-let W=0,H=0;
-function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR=Math.min(devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;
+  cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);
+  cv.style.width=W+"px";cv.style.height=H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
 addEventListener("resize",resize);resize();
 
 let snap={me:{id:0},peers:[],dropped:0};
@@ -329,11 +343,65 @@ const flashes=[];                // transient rays/ripples
 const orbiters=[];               // taught fact-particles awaiting consolidation
 let t0=performance.now();
 
-// deterministic per-node placement around my star (no god-view).
-function pos(id){
-  if(id===snap.me.id) return {x:W/2,y:H/2};
-  const a=(id*2.39996323),r=Math.min(W,H)*0.30*(0.5+((id*97)%100)/200);
-  return {x:W/2+Math.cos(a)*r, y:H/2+Math.sin(a)*r};
+// ── 3D core: scene centered on MY star at the origin; camera orbits ──
+const FOV=520, CAMD=860;         // perspective strength / camera distance
+let yaw=0;
+const PITCH=-0.18, CP=Math.cos(PITCH), SP=Math.sin(PITCH);
+function project(x,y,z){
+  const cy=Math.cos(yaw),sy=Math.sin(yaw);
+  const X=x*cy+z*sy, Z0=-x*sy+z*cy;
+  const Y=y*CP-Z0*SP, Z=y*SP+Z0*CP;
+  const s=FOV/(FOV+Z+CAMD);
+  return {x:W/2+X*s, y:H/2+Y*s, s:s, z:Z};
+}
+
+// glow sprites (one offscreen radial gradient per palette color)
+function mkGlow(r,g,b){
+  const c=document.createElement("canvas");c.width=c.height=64;
+  const x=c.getContext("2d"),gr=x.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,`rgba(${r},${g},${b},1)`);
+  gr.addColorStop(0.25,`rgba(${r},${g},${b},0.55)`);
+  gr.addColorStop(0.6,`rgba(${r},${g},${b},0.12)`);
+  gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
+  x.fillStyle=gr;x.fillRect(0,0,64,64);return c;
+}
+const GLOW={blue:mkGlow(137,180,250),teal:mkGlow(148,226,213),
+            amber:mkGlow(250,179,135),gold:mkGlow(249,226,175),
+            white:mkGlow(205,214,244),red:mkGlow(243,139,168)};
+function glowAt(spr,x,y,r,al){
+  ctx.globalAlpha=al;ctx.drawImage(spr,x-r,y-r,r*2,r*2);ctx.globalAlpha=1;
+}
+
+// ambient sky: a tilted galactic band + a thin sphere shell. Generated once,
+// deterministic enough to feel stable; carries NO data (see header comment).
+const BG=[];
+(function(){
+  let seed=42;const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;};
+  for(let i=0;i<560;i++){
+    const band=i<280;let x,y,z;
+    if(band){ const a=rnd()*6.2832, r=260+rnd()*900;
+      x=Math.cos(a)*r; z=Math.sin(a)*r; y=(rnd()-0.5)*80+x*0.20; }
+    else{ const a=rnd()*6.2832, b=Math.acos(2*rnd()-1), r=380+rnd()*820;
+      x=r*Math.sin(b)*Math.cos(a); y=r*Math.cos(b)*0.7; z=r*Math.sin(b)*Math.sin(a); }
+    const tint=rnd();
+    BG.push({x,y,z,m:0.35+rnd()*0.9,tw:rnd()*7,
+      c:tint<0.72?"205,214,244":tint<0.84?"137,180,250":tint<0.94?"249,226,175":"245,194,231"});
+  }
+})();
+
+// real-node placement: angle deterministic by id; DISTANCE is the living
+// signal — stress-as-distance (interoception.md §3.3). Until /intero.json
+// ships, the SWIM RTT EWMA (peers[].rtt) is the proximity proxy: a calm,
+// near peer orbits close; unknown/far drifts to the rim. S_n slots in here.
+const ORBIT_TILT=0.55, OT_S=Math.sin(ORBIT_TILT), OT_C=Math.cos(ORBIT_TILT);
+function peerWorld(p){
+  const a=p.id*2.39996323;                    // golden-angle spread
+  const rtt=(p.rtt>0)?p.rtt:520;              // 0 = unmeasured -> far
+  const d=130+Math.min(520,rtt*1.5);
+  const wob=Math.sin(p.id*1.7)*40;            // slight per-star plane offset
+  return {x:Math.cos(a)*d,
+          y:Math.sin(a)*d*OT_S*0.45+wob*0.3,
+          z:Math.sin(a)*d*OT_C};
 }
 const STATE=["UNKNOWN","ALIVE","SUSPECT","DEAD"];
 function stateColor(st,threat){
@@ -342,58 +410,118 @@ function stateColor(st,threat){
   const hue=200-(threat||0)*1.6;         // threat red-shift
   return `hsl(${hue},70%,65%)`;
 }
+// screen-position cache for hit-testing (filled per-frame by draw)
+const HIT={me:{x:0,y:0,r:18},peers:{}};
+
+let rafOn=true;
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){ rafOn=false; }
+  else if(!rafOn){ rafOn=true; requestAnimationFrame(draw); }
+});
 
 function draw(){
+  if(!rafOn) return;
   const now=performance.now(),tms=now-t0;
+  yaw=tms*0.000055;                      // one slow drift, ~115s/rev
   ctx.clearRect(0,0,W,H);
-  // gossip threads = drawn only for flashes (real events), §5
+
+  // ① ambient depth field (parallax = the 3D feel)
+  for(const s of BG){
+    const q=project(s.x,s.y,s.z);
+    if(q.s<=0.18) continue;
+    const tw=0.55+0.45*Math.sin(tms/900+s.tw);
+    const r=s.m*q.s*2.2;
+    ctx.globalAlpha=Math.min(0.9,0.22+q.s*1.05)*tw*0.85;
+    ctx.fillStyle=`rgb(${s.c})`;
+    ctx.beginPath();ctx.arc(q.x,q.y,Math.max(0.4,r),0,7);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // ② project the real nodes (sorted far→near so glows layer correctly)
+  const me3=project(0,0,0);
+  const drawables=[];
+  for(const p of snap.peers){
+    if(p.state===0) continue;            // UNKNOWN = not drawn (§5)
+    const w=peerWorld(p),q=project(w.x,w.y,w.z);
+    drawables.push({p,q});
+  }
+  drawables.sort((a,b)=>b.q.z-a.q.z);
+
+  // ③ connection threads: me -> each known peer (the fleet is a constellation;
+  //    line strength fades with staleness — gossip keeps the thread warm)
+  for(const d of drawables){
+    const p=d.p,q=d.q;
+    let al=(p.state===3)?0.06:0.22;
+    if(p.fresh>9000) al*=0.45;
+    const grad=ctx.createLinearGradient(me3.x,me3.y,q.x,q.y);
+    grad.addColorStop(0,`rgba(137,180,250,${al})`);
+    grad.addColorStop(1,`rgba(205,214,244,${al*0.4})`);
+    ctx.strokeStyle=grad;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(me3.x,me3.y);ctx.lineTo(q.x,q.y);ctx.stroke();
+  }
+
+  // ④ gossip flashes = real events only, §5 (drawn over the idle threads)
   for(const f of flashes){
     const age=now-f.t, life=f.kind==="ripple"?1400:900;
-    if(age>life){continue;}
+    if(age>life) continue;
     const al=1-age/life;
-    const a=pos(f.src||snap.me.id), b=pos(f.dst!=null?f.dst:snap.me.id);
-    ctx.strokeStyle=`rgba(${f.rgb},${al*0.8})`;ctx.lineWidth=1.5;
+    const pa=f.src!=null&&f.src!==snap.me.id?HIT.peers[f.src]:HIT.me;
+    const pb=f.dst!=null&&f.dst!==snap.me.id?HIT.peers[f.dst]:HIT.me;
+    const a=pa||HIT.me,b=pb||HIT.me;
+    ctx.strokeStyle=`rgba(${f.rgb},${al*0.85})`;ctx.lineWidth=1.6;
     ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
     if(f.kind==="ripple"){
-      const me=pos(snap.me.id);ctx.strokeStyle=`rgba(${f.rgb},${al})`;
-      ctx.beginPath();ctx.arc(me.x,me.y,40+age/14,0,7);ctx.stroke();
+      ctx.strokeStyle=`rgba(${f.rgb},${al})`;
+      ctx.beginPath();ctx.arc(HIT.me.x,HIT.me.y,40+age/14,0,7);ctx.stroke();
     }
   }
   flashes.splice(0,flashes.length,...flashes.filter(f=>now-f.t<1500));
 
-  // peer stars (real membership)
-  for(const p of snap.peers){
-    if(p.state===0) continue;            // UNKNOWN = not drawn (§5)
-    const q=pos(p.id);
-    let r=4+(100-(p.pressure<0?50:p.pressure))/22;   // brightness ~ spare cap
+  // ⑤ peer stars (far→near)
+  const newHit={};
+  for(const d of drawables){
+    const p=d.p,q=d.q;
+    let r=(4+(100-(p.pressure<0?50:p.pressure))/22)*q.s*1.4;
     let col=stateColor(p.state,p.threat);
-    let al=1;
-    if(p.state===2) al=0.4+0.4*Math.abs(Math.sin(tms/200));   // flicker
-    if(p.state===3) al=0.30;
+    let al=Math.min(1,0.35+q.s*0.75);
+    if(p.state===2) al*=0.4+0.4*Math.abs(Math.sin(tms/200));   // flicker
+    if(p.state===3) al*=0.32;
     if(p.fresh>9000) al*=0.45;           // stale = faded (古さの尊重)
+    const spr=(p.state===3)?GLOW.white:(p.threat>30?GLOW.red:GLOW.blue);
+    glowAt(spr,q.x,q.y,r*3.2,al*0.5);
     ctx.globalAlpha=al;ctx.fillStyle=col;
     ctx.beginPath();ctx.arc(q.x,q.y,r,0,7);ctx.fill();
-    ctx.globalAlpha=1;ctx.fillStyle="#9399b2";ctx.font="10px monospace";
-    ctx.fillText("node"+p.id+(p.fresh>9000?" (stale "+Math.round(p.fresh/1000)+"s)":""),q.x+r+3,q.y+3);
+    ctx.globalAlpha=Math.min(1,al+0.2);ctx.fillStyle="#9399b2";
+    ctx.font=`${Math.max(9,Math.round(10*q.s+2))}px monospace`;
+    ctx.fillText("node"+p.id+(p.fresh>9000?" (stale "+Math.round(p.fresh/1000)+"s)":""),q.x+r+4,q.y+3);
+    ctx.globalAlpha=1;
+    newHit[p.id]={x:q.x,y:q.y,r:Math.max(12,r+6)};
   }
+  HIT.peers=newHit;
 
-  // my star — center; breathing pulse iff literally dreaming
-  const me=pos(snap.me.id);
-  let mr=10, pulse=1;
+  // ⑥ my star — the origin; layered glow; breathing iff literally dreaming
+  let mr=11, pulse=1;
   if(dreaming) pulse=0.6+0.4*Math.abs(Math.sin(tms/700));   // slow breath
+  const mc=dreaming?GLOW.teal:GLOW.blue;
+  glowAt(mc,me3.x,me3.y,mr*6,0.35*pulse);
+  glowAt(mc,me3.x,me3.y,mr*2.6,0.8*pulse);
   ctx.fillStyle=dreaming?"#94e2d5":"#89b4fa";
   ctx.globalAlpha=pulse;
-  ctx.beginPath();ctx.arc(me.x,me.y,mr+(dreaming?6*(1-pulse):0),0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(me3.x,me3.y,mr+(dreaming?5*(1-pulse):0),0,7);ctx.fill();
   ctx.globalAlpha=1;
   ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
-  ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))+(dreaming?" — dreaming":""),me.x+mr+5,me.y+4);
+  ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))+(dreaming?" — dreaming":""),me3.x+mr+6,me3.y+4);
+  HIT.me={x:me3.x,y:me3.y,r:mr+10};
 
-  // orbiting taught fact-particles (real pending engrams)
+  // ⑦ taught fact-particles: a tilted 3D orbit; depth modulates size
   for(const o of orbiters){
-    const a=tms/600+o.ph, rr=34;
-    const x=me.x+Math.cos(a)*rr, y=me.y+Math.sin(a)*rr*0.6;
-    ctx.fillStyle="#fab387";ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();
-    ctx.fillStyle="#9399b2";ctx.fillText("k"+o.k+"="+o.v,x+5,y);
+    const a=tms/600+o.ph, rr=46;
+    const q=project(Math.cos(a)*rr, Math.sin(a)*rr*0.35, Math.sin(a)*rr*0.8);
+    const pr=2.2+q.s*1.6;
+    glowAt(GLOW.amber,q.x,q.y,pr*3,0.5);
+    ctx.fillStyle="#fab387";ctx.beginPath();ctx.arc(q.x,q.y,pr,0,7);ctx.fill();
+    ctx.fillStyle="#9399b2";ctx.font="10px monospace";
+    ctx.fillText("k"+o.k+"="+o.v,q.x+5,q.y);
   }
   requestAnimationFrame(draw);
 }
@@ -662,10 +790,13 @@ document.getElementById("logcopy").onclick=async()=>{
   logHint(ok);
 };
 cv.addEventListener("click",(e)=>{
-  const me=pos(snap.me.id);
-  if(Math.hypot(e.clientX-me.x,e.clientY-me.y)<22){openSelf();return;}
-  for(const p of snap.peers){if(p.state===0)continue;const q=pos(p.id);
-    if(Math.hypot(e.clientX-q.x,e.clientY-q.y)<14){openPeer(p);return;}}
+  // hit-test against the per-frame projected positions (3D-aware)
+  if(Math.hypot(e.clientX-HIT.me.x,e.clientY-HIT.me.y)<HIT.me.r){openSelf();return;}
+  for(const p of snap.peers){
+    if(p.state===0)continue;
+    const q=HIT.peers[p.id];if(!q)continue;
+    if(Math.hypot(e.clientX-q.x,e.clientY-q.y)<q.r){openPeer(p);return;}
+  }
 });
 </script>
 </body>

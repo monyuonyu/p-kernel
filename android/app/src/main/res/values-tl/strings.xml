@@ -14,4 +14,6 @@
     <string name="label_relay_key">Relay key (hex)</string>
     <string name="btn_stop">Itigil</string>
     <string name="btn_galaxy">Buksan ang galaxy</string>
+    <string name="galaxy_lighting">Sinisindihan ang iyong bituin…</string>
+    <string name="galaxy_charge">Lumiliwanag ang bituin mo habang nagcha-charge — ikabit ang charger</string>
 </resources>

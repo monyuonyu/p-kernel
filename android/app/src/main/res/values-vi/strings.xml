@@ -14,4 +14,6 @@
     <string name="label_relay_key">Khóa relay (hex)</string>
     <string name="btn_stop">Dừng</string>
     <string name="btn_galaxy">Mở thiên hà</string>
+    <string name="galaxy_lighting">Đang thắp sáng ngôi sao của bạn…</string>
+    <string name="galaxy_charge">Ngôi sao của bạn chỉ sáng khi đang sạc — hãy cắm sạc</string>
 </resources>

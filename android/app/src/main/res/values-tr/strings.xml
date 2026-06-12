@@ -14,4 +14,6 @@
     <string name="label_relay_key">Aktarıcı anahtarı (hex)</string>
     <string name="btn_stop">Durdur</string>
     <string name="btn_galaxy">Galaksiyi aç</string>
+    <string name="galaxy_lighting">Yıldızın yakılıyor…</string>
+    <string name="galaxy_charge">Yıldızın şarj olurken yanar — lütfen şarja tak</string>
 </resources>

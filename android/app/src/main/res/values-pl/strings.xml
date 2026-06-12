@@ -14,4 +14,6 @@
     <string name="label_relay_key">Klucz przekaźnika (hex)</string>
     <string name="btn_stop">Zatrzymaj</string>
     <string name="btn_galaxy">Otwórz galaktykę</string>
+    <string name="galaxy_lighting">Zapalamy twoją gwiazdę…</string>
+    <string name="galaxy_charge">Twoja gwiazda świeci podczas ładowania — podłącz ładowarkę</string>
 </resources>

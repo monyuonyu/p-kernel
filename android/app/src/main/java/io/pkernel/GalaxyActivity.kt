@@ -23,6 +23,7 @@
 package io.pkernel
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -65,15 +66,37 @@ class GalaxyActivity : AppCompatActivity() {
             settings.mediaPlaybackRequiresUserGesture = false
             webViewClient = WebViewClient()            // keep navigation in-app
         }
+        /* The waiting screen speaks human, not kernel (UX constitution):
+         * no ports, no "kernel", no console. Just the star being lit — and
+         * if the charge-only gate is holding it, say THAT kindly. */
         splash = TextView(this).apply {
-            text = getString(R.string.galaxy_starting, galaxyPort)
-            textSize = 16f
-            setPadding(48, 96, 48, 48)
+            text = getString(R.string.galaxy_lighting)
+            textSize = 17f
+            gravity = android.view.Gravity.CENTER
+            setPadding(64, 96, 64, 96)
             setBackgroundColor(0xFF05060A.toInt())     // the dark galaxy field
             setTextColor(0xFFAAB6FF.toInt())
         }
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(splash, FrameLayout.LayoutParams(-1, -1))
+
+        /* ⋮ — the only visible piece of machinery: a dim corner button to the
+         * advanced screen (node id / fleet relay). Everything else is sky. */
+        val menu = TextView(this).apply {
+            text = "⋮"
+            textSize = 22f
+            contentDescription = getString(R.string.galaxy_menu_desc)
+            setTextColor(0x66CDD6F4)
+            setPadding(36, 24, 36, 24)
+            setOnClickListener {
+                startActivity(Intent(this@GalaxyActivity, MainActivity::class.java)
+                    .putExtra(MainActivity.EXTRA_ADVANCED, true))
+            }
+        }
+        root.addView(menu, FrameLayout.LayoutParams(-2, -2,
+            android.view.Gravity.TOP or android.view.Gravity.END).apply {
+            topMargin = (44 * resources.displayMetrics.density).toInt()
+        })  // sits BELOW the page's own top-right language selector
         setContentView(root)
 
         // Back button: walk the WebView history first, then leave.
@@ -97,10 +120,15 @@ class GalaxyActivity : AppCompatActivity() {
                     ui.post { showGalaxy() }
                     return@Thread
                 }
-                if (attempt == HINT_AFTER_ATTEMPTS) {
+                if (attempt >= HINT_AFTER_ATTEMPTS && attempt % 4 == 0) {
+                    /* the likeliest reason the star isn't lit yet is the
+                     * charge-only gate — check the battery and say so kindly,
+                     * in the user's language, with zero kernel jargon. */
+                    val charging = isCharging()
                     ui.post {
-                        if (!loaded) splash.text =
-                            getString(R.string.galaxy_still_starting, galaxyPort)
+                        if (!loaded) splash.text = getString(
+                            if (charging) R.string.galaxy_lighting
+                            else R.string.galaxy_charge)
                     }
                 }
                 try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return@Thread }
@@ -114,6 +142,16 @@ class GalaxyActivity : AppCompatActivity() {
         web.loadUrl("http://127.0.0.1:$galaxyPort/")
         web.visibility = View.VISIBLE
         splash.visibility = View.GONE
+    }
+
+    /** sticky-intent battery check — no permission needed. */
+    private fun isCharging(): Boolean {
+        val i = registerReceiver(null,
+            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+            ?: return true                       // unknown -> don't nag
+        val st = i.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+        return st == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+               st == android.os.BatteryManager.BATTERY_STATUS_FULL
     }
 
     override fun onDestroy() {

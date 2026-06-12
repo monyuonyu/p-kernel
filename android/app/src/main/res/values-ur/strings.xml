@@ -14,4 +14,6 @@
     <string name="label_relay_key">ریلے کلید (hex)</string>
     <string name="btn_stop">روکیں</string>
     <string name="btn_galaxy">کہکشاں کھولیں</string>
+    <string name="galaxy_lighting">آپ کا ستارہ روشن کیا جا رہا ہے…</string>
+    <string name="galaxy_charge">آپ کا ستارہ چارجنگ کے دوران روشن ہوتا ہے — چارجر لگائیں</string>
 </resources>

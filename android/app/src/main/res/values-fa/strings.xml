@@ -14,4 +14,6 @@
     <string name="label_relay_key">کلید رله (هگز)</string>
     <string name="btn_stop">توقف</string>
     <string name="btn_galaxy">باز کردن کهکشان</string>
+    <string name="galaxy_lighting">در حال افروختن ستارهٔ شما…</string>
+    <string name="galaxy_charge">ستارهٔ شما هنگام شارژ روشن می‌شود — شارژر را وصل کنید</string>
 </resources>

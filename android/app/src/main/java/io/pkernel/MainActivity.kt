@@ -44,9 +44,31 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
         ensureNotificationChannel()
+
+        /* UX constitution (feedback_ump_ux_principles): users don't care
+         * about kernels. The DEFAULT path has no form, no start button, no
+         * stop button — the node lights itself and the first thing a person
+         * sees is the galaxy's own introduction (the manifesto gate).
+         * This settings-like screen survives ONLY as the "advanced" screen,
+         * reached from the ⋮ corner of the galaxy. */
+        if (!intent.getBooleanExtra(EXTRA_ADVANCED, false)) {
+            val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+            val nodeId = prefs.getInt(PREF_NODE_ID, 1)
+            startKernelWith(
+                nodeId,
+                prefs.getString(PREF_RELAY_HOST, "") ?: "",
+                prefs.getInt(PREF_RELAY_PORT, 7400),
+                prefs.getString(PREF_RELAY_KEY, "") ?: "")
+            startActivity(Intent(this, GalaxyActivity::class.java).apply {
+                putExtra(GalaxyActivity.EXTRA_NODE_ID, nodeId)
+            })
+            finish()
+            return
+        }
+
+        setContentView(R.layout.activity_main)
 
         nodeIdField    = findViewById(R.id.field_node_id)
         relayHostField = findViewById(R.id.field_relay_host)
@@ -84,11 +106,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startKernel() {
+        val nodeId = nodeIdField.text.toString().toIntOrNull() ?: 1
+        val host   = relayHostField.text.toString().trim()
+        val port   = relayPortField.text.toString().toIntOrNull() ?: 7400
+        val key    = relayKeyField.text.toString().trim()
+        /* advanced-screen settings persist so the no-form default path
+         * relights the same star next launch. */
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(PREF_NODE_ID, nodeId).putString(PREF_RELAY_HOST, host)
+            .putInt(PREF_RELAY_PORT, port).putString(PREF_RELAY_KEY, key)
+            .apply()
+        startKernelWith(nodeId, host, port, key)
+    }
+
+    private fun startKernelWith(nodeId: Int, host: String, port: Int, key: String) {
         val intent = Intent(this, PKernelService::class.java).apply {
-            putExtra(PKernelService.EXTRA_NODE_ID,    nodeIdField.text.toString().toIntOrNull() ?: 1)
-            putExtra(PKernelService.EXTRA_RELAY_HOST, relayHostField.text.toString().trim())
-            putExtra(PKernelService.EXTRA_RELAY_PORT, relayPortField.text.toString().toIntOrNull() ?: 7400)
-            putExtra(PKernelService.EXTRA_RELAY_KEY,  relayKeyField.text.toString().trim())
+            putExtra(PKernelService.EXTRA_NODE_ID,    nodeId)
+            putExtra(PKernelService.EXTRA_RELAY_HOST, host)
+            putExtra(PKernelService.EXTRA_RELAY_PORT, port)
+            putExtra(PKernelService.EXTRA_RELAY_KEY,  key)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -108,6 +144,15 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(this, GalaxyActivity::class.java).apply {
             putExtra(GalaxyActivity.EXTRA_NODE_ID, nodeId)
         })
+    }
+
+    companion object {
+        const val EXTRA_ADVANCED = "advanced"
+        private const val PREFS = "ump"
+        private const val PREF_NODE_ID = "node_id"
+        private const val PREF_RELAY_HOST = "relay_host"
+        private const val PREF_RELAY_PORT = "relay_port"
+        private const val PREF_RELAY_KEY = "relay_key"
     }
 
     private fun ensureNotificationChannel() {

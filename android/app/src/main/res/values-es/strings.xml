@@ -14,4 +14,6 @@
     <string name="label_relay_key">Clave del relé (hex)</string>
     <string name="btn_stop">Detener</string>
     <string name="btn_galaxy">Abrir galaxia</string>
+    <string name="galaxy_lighting">Encendiendo tu estrella…</string>
+    <string name="galaxy_charge">Tu estrella se enciende mientras carga — conecta el cargador</string>
 </resources>

@@ -14,4 +14,6 @@
     <string name="label_relay_key">Kunci relay (heks)</string>
     <string name="btn_stop">Hentikan</string>
     <string name="btn_galaxy">Buka galaksi</string>
+    <string name="galaxy_lighting">Menyalakan bintang anda…</string>
+    <string name="galaxy_charge">Bintang anda menyala semasa mengecas — pasang pengecas</string>
 </resources>

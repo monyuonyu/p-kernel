@@ -65,6 +65,8 @@ KEYS = [
     ("relay_key",   "label_relay_key"),
     ("stop",        "btn_stop"),
     ("galaxy",      "btn_galaxy"),
+    ("lighting",    "galaxy_lighting"),   # waking splash (no tech jargon)
+    ("charge",      "galaxy_charge"),     # the charge-only gate, said kindly
 ]
 
 

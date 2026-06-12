@@ -23,6 +23,7 @@
 #include "drpc.h"        /* dnode_table[], drpc_my_node, DNODE_*           */
 #include "world.h"       /* world_peer_* accessors — the galaxy's organs   */
 #include "region.h"      /* region_id() — my constellation                 */
+#include "swim.h"        /* swim_rtt_ms() — peer proximity for the page    */
 #include "dmn.h"         /* dmn_state_get(), dmn_r3_rounds()               */
 #include "dtr.h"         /* r3_facts_pending(), mind_cmd, mind_last_answer */
 #include "r3_vocab.h"    /* LM-8 (IX.3/IX.10): word<->id, GET /vocab        */
@@ -263,6 +264,11 @@ static void gx_build_galaxy_json(INT slot)
         gx_qs(slot, ",\"threat\":");    gx_qdec(slot, pth < 0 ? 0u : (UW)pth);
         gx_qs(slot, ",\"atrisk\":");    gx_qdec(slot, par < 0 ? 0u : (UW)par);
         gx_qs(slot, ",\"device\":");    gx_qdec(slot, pdv < 0 ? 0u : (UW)pdv);
+        /* rtt: the page's spatial-distance signal (interoception.md §3.3 —
+         * S_n replaces this as the layout input once slice 1 ships; until
+         * then the SWIM RTT EWMA is the honest proximity proxy). 0 = no
+         * measurement yet; the page treats 0 as "far, unknown". */
+        gx_qs(slot, ",\"rtt\":");       gx_qdec(slot, swim_rtt_ms((UB)n));
         gx_qs(slot, "}");
     }
     gx_qs(slot, "],\"dropped\":");  gx_qdec(slot, g_dropped);

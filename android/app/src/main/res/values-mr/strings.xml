@@ -14,4 +14,6 @@
     <string name="label_relay_key">रिले की (हेक्स)</string>
     <string name="btn_stop">थांबवा</string>
     <string name="btn_galaxy">गॅलेक्सी उघडा</string>
+    <string name="galaxy_lighting">तुमचा तारा उजळवत आहोत…</string>
+    <string name="galaxy_charge">चार्जिंग सुरू असतानाच तुमचा तारा उजळतो — चार्जर लावा</string>
 </resources>

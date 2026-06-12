@@ -14,4 +14,6 @@
     <string name="label_relay_key">Relay-Schlüssel (Hex)</string>
     <string name="btn_stop">Stopp</string>
     <string name="btn_galaxy">Galaxie öffnen</string>
+    <string name="galaxy_lighting">Dein Stern wird entzündet…</string>
+    <string name="galaxy_charge">Dein Stern leuchtet nur beim Laden — bitte Ladegerät anschließen</string>
 </resources>

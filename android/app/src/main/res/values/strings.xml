@@ -37,4 +37,7 @@
 
     <string name="notif_channel_name">p-kernel node</string>
     <string name="notif_channel_desc">Persistent notification while the kernel is running.</string>
+    <string name="galaxy_lighting">Lighting your star…</string>
+    <string name="galaxy_charge">Your star lights while charging — plug in to begin</string>
+    <string name="galaxy_menu_desc">advanced settings</string>
 </resources>

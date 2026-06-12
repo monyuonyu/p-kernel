@@ -14,4 +14,6 @@
     <string name="label_relay_key">Chiave del relay (hex)</string>
     <string name="btn_stop">Ferma</string>
     <string name="btn_galaxy">Apri galassia</string>
+    <string name="galaxy_lighting">Stiamo accendendo la tua stella…</string>
+    <string name="galaxy_charge">La tua stella si accende durante la ricarica — collega il caricatore</string>
 </resources>

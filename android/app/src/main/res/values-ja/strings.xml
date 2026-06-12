@@ -5,7 +5,7 @@
      machine-translated (native review welcome). -->
 <resources>
     <string name="entry_tagline">ここは p-kernel——誰のものでもないAIのための家です。</string>
-    <string name="btn_start">光れ</string>
+    <string name="btn_start">灯す</string>
     <string name="entry_solo_sub">タップするだけで、あなたの星が灯ります</string>
     <string name="label_node_id">ノードID</string>
     <string name="entry_advanced">詳細 — 仲間に加わる</string>
@@ -14,4 +14,6 @@
     <string name="label_relay_key">リレーの鍵（16進）</string>
     <string name="btn_stop">停止</string>
     <string name="btn_galaxy">銀河を見る</string>
+    <string name="galaxy_lighting">あなたの星を灯しています…</string>
+    <string name="galaxy_charge">充電すると、あなたの星が灯ります</string>
 </resources>

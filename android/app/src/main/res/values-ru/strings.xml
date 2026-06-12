@@ -14,4 +14,6 @@
     <string name="label_relay_key">Ключ реле (hex)</string>
     <string name="btn_stop">Стоп</string>
     <string name="btn_galaxy">Открыть галактику</string>
+    <string name="galaxy_lighting">Зажигаем вашу звезду…</string>
+    <string name="galaxy_charge">Ваша звезда загорается во время зарядки — подключите питание</string>
 </resources>

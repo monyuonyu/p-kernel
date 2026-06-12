@@ -14,4 +14,6 @@
     <string name="label_relay_key">Clé du relais (hex)</string>
     <string name="btn_stop">Arrêter</string>
     <string name="btn_galaxy">Ouvrir la galaxie</string>
+    <string name="galaxy_lighting">Allumage de votre étoile…</string>
+    <string name="galaxy_charge">Votre étoile s\'allume pendant la charge — branchez l\'appareil</string>
 </resources>

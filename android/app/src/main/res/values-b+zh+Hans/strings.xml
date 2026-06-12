@@ -14,4 +14,6 @@
     <string name="label_relay_key">中继密钥（十六进制）</string>
     <string name="btn_stop">停止</string>
     <string name="btn_galaxy">进入银河</string>
+    <string name="galaxy_lighting">正在点亮你的星…</string>
+    <string name="galaxy_charge">充电时你的星才会点亮——请接上电源</string>
 </resources>

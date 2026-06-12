@@ -14,4 +14,6 @@
     <string name="label_relay_key">릴레이 키 (16진수)</string>
     <string name="btn_stop">중지</string>
     <string name="btn_galaxy">갤럭시 열기</string>
+    <string name="galaxy_lighting">당신의 별을 밝히는 중…</string>
+    <string name="galaxy_charge">별은 충전 중에만 밝혀집니다 — 충전기를 연결해 주세요</string>
 </resources>

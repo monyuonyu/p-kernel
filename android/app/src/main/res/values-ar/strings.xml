@@ -14,4 +14,6 @@
     <string name="label_relay_key">مفتاح المُرحِّل (ست عشري)</string>
     <string name="btn_stop">إيقاف</string>
     <string name="btn_galaxy">افتح المجرّة</string>
+    <string name="galaxy_lighting">نُضيء نجمتك الآن…</string>
+    <string name="galaxy_charge">تُضاء نجمتك أثناء الشحن — وصِّل الشاحن</string>
 </resources>

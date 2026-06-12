@@ -14,4 +14,6 @@
     <string name="label_relay_key">ਰਿਲੇ ਕੁੰਜੀ (ਹੈਕਸ)</string>
     <string name="btn_stop">ਰੋਕੋ</string>
     <string name="btn_galaxy">ਗਲੈਕਸੀ ਖੋਲ੍ਹੋ</string>
+    <string name="galaxy_lighting">ਤੁਹਾਡਾ ਤਾਰਾ ਜਗਾਇਆ ਜਾ ਰਿਹਾ ਹੈ…</string>
+    <string name="galaxy_charge">ਚਾਰਜਿੰਗ ਦੌਰਾਨ ਹੀ ਤੁਹਾਡਾ ਤਾਰਾ ਜਗਦਾ ਹੈ — ਚਾਰਜਰ ਲਾਓ</string>
 </resources>

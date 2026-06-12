@@ -14,4 +14,6 @@
     <string name="label_relay_key">రిలే కీ (హెక్స్)</string>
     <string name="btn_stop">ఆపండి</string>
     <string name="btn_galaxy">గెలాక్సీ తెరవండి</string>
+    <string name="galaxy_lighting">మీ నక్షత్రాన్ని వెలిగిస్తున్నాం…</string>
+    <string name="galaxy_charge">ఛార్జింగ్‌లో ఉన్నప్పుడే మీ నక్షత్రం వెలుగుతుంది — ఛార్జర్ పెట్టండి</string>
 </resources>
