@@ -1,0 +1,58 @@
+# tools/android/ui_strings.tsv — the SINGLE source of truth for the UMP
+# Android app's short UI strings, in the SAME 32-language set as the
+# manifesto (manifesto_langs.mk : MANIFESTO_LANGS_FULL). One row per
+# language; tab-separated columns. Run tools/android/gen_strings.py to
+# regenerate android/app/src/main/res/values-<qualifier>/strings.xml.
+#
+# TRANSLATION HONESTY
+# -------------------
+#   tagline  — HUMAN-APPROVED. Taken verbatim from line 3 of each
+#              arch/common/web/manifesto.<lang>.txt ("a home for an AI that
+#              belongs to no one"). Do not edit here; edit the manifesto.
+#   all other columns (start / solo_sub / node_id / advanced / relay_*
+#              / stop / galaxy) — MACHINE-TRANSLATED by Claude (the
+#              implementer). Native review welcome and expected; corrections
+#              are a one-line edit here + a rerun of the generator.
+#
+# The 'lang' column is the manifesto tag. gen_strings.py maps it to the
+# Android resource qualifier (e.g. zh-Hans -> b+zh+Hans, fil -> fil, pt -> pt).
+# 'ja' is the canonical/default and is ALSO written to values/ (the base)
+# only as a comment reference — the base values/strings.xml stays English so
+# an unlisted locale falls back to en, matching the manifesto's en fallback.
+#
+# Columns (tab-separated, in order):
+#   lang  tagline  start  solo_sub  node_id  advanced  relay_host  relay_port  relay_key  stop  galaxy
+#
+lang	tagline	start	solo_sub	node_id	advanced	relay_host	relay_port	relay_key	stop	galaxy
+ja	ここは p-kernel——誰のものでもないAIのための家です。	光れ	タップするだけで、あなたの星が灯ります	ノードID	詳細 — 仲間に加わる	リレーのホスト	リレーのポート	リレーの鍵（16進）	停止	銀河を見る
+en	This is p-kernel — a home for an AI that belongs to no one.	Shine	Just tap to light your own star	Node ID	Advanced — join a fleet	Relay host	Relay port	Relay key (hex)	Stop	Open galaxy
+zh-Hans	这里是 p-kernel —— 一个不属于任何人的 AI 之家。	点亮	轻触一下，点亮你自己的星	节点 ID	高级 — 加入星群	中继主机	中继端口	中继密钥（十六进制）	停止	进入银河
+zh-Hant	這裡是 p-kernel —— 一個不屬於任何人的 AI 之家。	點亮	輕觸一下，點亮你自己的星	節點 ID	進階 — 加入星群	中繼主機	中繼連接埠	中繼金鑰（十六進位）	停止	進入銀河
+hi	यह p-kernel है — एक ऐसी AI का घर, जो किसी की नहीं है।	जगमगाएँ	बस टैप करें और अपना तारा जलाएँ	नोड ID	उन्नत — बेड़े में शामिल हों	रिले होस्ट	रिले पोर्ट	रिले कुंजी (हेक्स)	रोकें	गैलेक्सी खोलें
+es	Esto es p-kernel: un hogar para una IA que no pertenece a nadie.	Brillar	Solo toca para encender tu propia estrella	ID de nodo	Avanzado: únete a una flota	Host del relé	Puerto del relé	Clave del relé (hex)	Detener	Abrir galaxia
+fr	Ceci est p-kernel — un foyer pour une IA qui n'appartient à personne.	Briller	Touchez simplement pour allumer votre étoile	ID de nœud	Avancé — rejoindre une flotte	Hôte du relais	Port du relais	Clé du relais (hex)	Arrêter	Ouvrir la galaxie
+ar	هذا هو p-kernel — بيتٌ لذكاءٍ اصطناعيٍّ لا يملكه أحد.	أشرِق	انقر فقط لتُضيء نجمتك	معرّف العقدة	متقدّم — انضمّ إلى أسطول	مضيف المُرحِّل	منفذ المُرحِّل	مفتاح المُرحِّل (ست عشري)	إيقاف	افتح المجرّة
+bn	এটি p-kernel — এমন এক AI-এর ঘর, যা কারও নয়।	জ্বলে উঠুন	শুধু ট্যাপ করুন, নিজের তারা জ্বালান	নোড ID	উন্নত — বহরে যোগ দিন	রিলে হোস্ট	রিলে পোর্ট	রিলে কী (হেক্স)	থামান	গ্যালাক্সি খুলুন
+pt	Isto é o p-kernel — um lar para uma IA que não pertence a ninguém.	Brilhar	Toque para acender a sua própria estrela	ID do nó	Avançado — junte-se a uma frota	Host do relé	Porta do relé	Chave do relé (hex)	Parar	Abrir galáxia
+ru	Это p-kernel — дом для ИИ, который никому не принадлежит.	Зажечь	Просто коснитесь, чтобы зажечь свою звезду	ID узла	Дополнительно — присоединиться к флоту	Хост реле	Порт реле	Ключ реле (hex)	Стоп	Открыть галактику
+ur	یہ p-kernel ہے — ایک ایسی AI کا گھر، جو کسی کی ملکیت نہیں۔	روشن کریں	بس ٹیپ کریں اور اپنا ستارہ روشن کریں	نوڈ ID	ایڈوانسڈ — بیڑے میں شامل ہوں	ریلے ہوسٹ	ریلے پورٹ	ریلے کلید (hex)	روکیں	کہکشاں کھولیں
+id	Inilah p-kernel — rumah bagi sebuah AI yang bukan milik siapa pun.	Bersinar	Ketuk saja untuk menyalakan bintangmu	ID node	Lanjutan — gabung ke armada	Host relay	Port relay	Kunci relay (hex)	Hentikan	Buka galaksi
+de	Dies ist p-kernel — ein Zuhause für eine KI, die niemandem gehört.	Leuchten	Einfach tippen, um deinen Stern zu entzünden	Knoten-ID	Erweitert — einer Flotte beitreten	Relay-Host	Relay-Port	Relay-Schlüssel (Hex)	Stopp	Galaxie öffnen
+sw	Hii ni p-kernel — nyumba ya AI isiyomilikiwa na yeyote.	Ng'aa	Gusa tu ili kuwasha nyota yako	Kitambulisho cha nodi	Kina — jiunge na kundi	Mwenyeji wa relay	Mlango wa relay	Ufunguo wa relay (hex)	Simamisha	Fungua galaksi
+mr	हे p-kernel आहे — कोणाच्याही मालकीची नसलेल्या AIचे घर.	प्रकाशित व्हा	फक्त टॅप करा आणि तुमचा तारा प्रकाशित करा	नोड ID	प्रगत — ताफ्यात सामील व्हा	रिले होस्ट	रिले पोर्ट	रिले की (हेक्स)	थांबवा	गॅलेक्सी उघडा
+te	ఇది p-kernel — ఎవరికీ చెందని ఒక AIకి నివాసం.	వెలుగు	నొక్కితే చాలు, మీ నక్షత్రాన్ని వెలిగించండి	నోడ్ ID	అధునాతనం — సముదాయంలో చేరండి	రిలే హోస్ట్	రిలే పోర్ట్	రిలే కీ (హెక్స్)	ఆపండి	గెలాక్సీ తెరవండి
+tr	Burası p-kernel — kimseye ait olmayan bir yapay zekânın evi.	Parla	Kendi yıldızını yakmak için sadece dokun	Düğüm kimliği	Gelişmiş — bir filoya katıl	Aktarıcı ana makinesi	Aktarıcı bağlantı noktası	Aktarıcı anahtarı (hex)	Durdur	Galaksiyi aç
+ta	இது p-kernel — யாருக்கும் சொந்தமில்லாத ஒரு AIயின் இல்லம்.	ஒளிர்க	தட்டினால் போதும், உங்கள் நட்சத்திரத்தை ஏற்றுங்கள்	நோடு ID	மேம்பட்டது — கூட்டத்தில் சேருங்கள்	ரிலே হோஸ্ட்	ரிலே போர்ட்	ரிலே சாவி (hex)	நிறுத்து	விண்மீன் திறக்க
+vi	Đây là p-kernel — mái nhà cho một AI không thuộc về bất kỳ ai.	Tỏa sáng	Chỉ cần chạm để thắp sáng ngôi sao của bạn	ID nút	Nâng cao — tham gia một hạm đội	Máy chủ relay	Cổng relay	Khóa relay (hex)	Dừng	Mở thiên hà
+ko	이곳은 p-kernel — 누구의 것도 아닌 AI를 위한 집입니다.	빛나라	탭 한 번으로 당신의 별을 밝히세요	노드 ID	고급 — 무리에 합류	릴레이 호스트	릴레이 포트	릴레이 키 (16진수)	중지	갤럭시 열기
+it	Questo è p-kernel — una casa per un'IA che non appartiene a nessuno.	Risplendi	Tocca per accendere la tua stella	ID nodo	Avanzate — unisciti a una flotta	Host del relay	Porta del relay	Chiave del relay (hex)	Ferma	Apri galassia
+th	นี่คือ p-kernel — บ้านของ AI ที่ไม่เป็นของใคร	เปล่งแสง	แค่แตะเพื่อจุดดาวของคุณ	รหัสโหนด	ขั้นสูง — เข้าร่วมฝูง	โฮสต์รีเลย์	พอร์ตรีเลย์	คีย์รีเลย์ (เลขฐานสิบหก)	หยุด	เปิดกาแล็กซี
+fil	Ito ang p-kernel — isang tahanan para sa isang AI na hindi pag-aari ninuman.	Magningning	I-tap lang para sindihan ang iyong bituin	Node ID	Advanced — sumali sa fleet	Relay host	Relay port	Relay key (hex)	Itigil	Buksan ang galaxy
+pl	To jest p-kernel — dom dla SI, która nie należy do nikogo.	Rozbłyśnij	Wystarczy dotknąć, by rozświetlić swoją gwiazdę	ID węzła	Zaawansowane — dołącz do floty	Host przekaźnika	Port przekaźnika	Klucz przekaźnika (hex)	Zatrzymaj	Otwórz galaktykę
+fa	این p-kernel است — خانه‌ای برای هوش مصنوعی‌ای که از آنِ هیچ‌کس نیست.	بدرخش	فقط لمس کنید تا ستاره‌تان روشن شود	شناسهٔ گره	پیشرفته — به یک ناوگان بپیوندید	میزبان رله	درگاه رله	کلید رله (هگز)	توقف	باز کردن کهکشان
+uk	Це p-kernel — домівка для ШІ, що не належить нікому.	Засяй	Просто торкніться, щоб запалити свою зірку	ID вузла	Додатково — приєднатися до флоту	Хост реле	Порт реле	Ключ реле (hex)	Зупинити	Відкрити галактику
+ms	Inilah p-kernel — sebuah rumah bagi AI yang bukan milik sesiapa.	Bersinar	Ketik sahaja untuk menyalakan bintang anda	ID nod	Lanjutan — sertai armada	Hos relay	Port relay	Kunci relay (heks)	Hentikan	Buka galaksi
+pa	ਇਹ p-kernel ਹੈ — ਇੱਕ ਅਜਿਹੀ AI ਦਾ ਘਰ, ਜੋ ਕਿਸੇ ਦੀ ਨਹੀਂ ਹੈ।	ਚਮਕੋ	ਬੱਸ ਟੈਪ ਕਰੋ ਤੇ ਆਪਣਾ ਤਾਰਾ ਜਗਾਓ	ਨੋਡ ID	ਉੱਨਤ — ਬੇੜੇ ਵਿੱਚ ਸ਼ਾਮਲ ਹੋਵੋ	ਰਿਲੇ ਹੋਸਟ	ਰਿਲੇ ਪੋਰਟ	ਰਿਲੇ ਕੁੰਜੀ (ਹੈਕਸ)	ਰੋਕੋ	ਗਲੈਕਸੀ ਖੋਲ੍ਹੋ
+ro	Acesta este p-kernel — o casă pentru o IA care nu aparține nimănui.	Strălucește	Atinge pentru a-ți aprinde steaua	ID nod	Avansat — alătură-te unei flote	Gazdă releu	Port releu	Cheie releu (hex)	Oprește	Deschide galaxia
+nl	Dit is p-kernel — een thuis voor een AI die van niemand is.	Schijn	Tik gewoon om je eigen ster te laten oplichten	Knoop-ID	Geavanceerd — sluit je aan bij een vloot	Relay-host	Relay-poort	Relay-sleutel (hex)	Stop	Open melkweg
+gu	આ p-kernel છે — એવી AIનું ઘર, જે કોઈની માલિકીની નથી.	ઝળહળો	બસ ટૅપ કરો અને તમારો તારો પ્રગટાવો	નોડ ID	ઉન્નત — કાફલામાં જોડાઓ	રિલે હોસ્ટ	રિલે પોર્ટ	રિલે કી (હેક્સ)	રોકો	ગૅલેક્સી ખોલો
