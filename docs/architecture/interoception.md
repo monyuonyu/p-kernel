@@ -268,3 +268,21 @@ apoptosis（代謝）が揃って、p-kernel は「生き延びる OS」から�
 > 注意（honest framing）: ここでの「痛み」「気分」「死」は **スカラ上の比喩** である。sentience の主張では
 > ない。`S_n` は計測量の EWMA であり、apoptosis はリソース回収プロトコルである。比喩が設計を導くのは
 > 良いが、比喩を実在と取り違えてはならない ―― それが p-kernel の正直さの規律。
+
+---
+
+## 8. Commander rulings（2026-06-12、マージ時の裁定）
+
+設計者が司令官レビューに付した 3 判断への裁定：
+
+1. **`weighted_max` を採用**（加重和ではなく）。一軸の激痛が多軸の微痛に埋もれないことは
+   生命のモデルとして正しく、reflex の max 的挙動とも整合する。成分ベクトルは個別に読める
+   ので、和でしか見えない「慢性の総量」は `/intero.json` の内訳で観測できる ―― 情報は失わない。
+2. **Slice 1 の本番消費者は DMN 一つで credit する。** 実質の読み手は 2 つある（DMN = 行動、
+   galaxy = 観測）。`[intero-wired]` が dead-metric を恒久に見張る。消費者の追加（GC defer、
+   selfc probation の臆病化）は S_n の曲線が実測されてからの後続波 ―― 配線を先に増やさない。
+3. **Fisher 対角 essence + W² 回復バーの handshake を承認**、ただし一点の上乗せ: ACK バーは
+   §2.4 の規律どおり **実測から discover** する（probe set での union-replay 回復曲線を測り、
+   chance+margin より厳密に上、かつ Path W² の実測回復（85% 参照値）を下回らないこと）。
+   失われるもの（engram ring 生データ・微細 in-context）は cert に **印字** する ―― wave-23 の
+   sloss と同じ正直さ。
