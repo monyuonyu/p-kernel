@@ -410,6 +410,67 @@ static void gx_sse_event(INT slot, const GALAXY_EV *e)
 }
 
 /* ------------------------------------------------------------------ */
+/* GET /log.txt — the recent event history as plain text, one event    */
+/* per line, so a node owner can one-tap copy it for diagnosis. This is */
+/* a LAZY read of the SAME event ring the SSE stream drains (NO second  */
+/* ring, NO recording when nobody asks — the §4.1 honesty stance): the  */
+/* line format is "<ms>ms <type> src=<n> dst=<n> a=<n> b=<n>". Scope is  */
+/* EVENTS ONLY (galaxy_emit's organism events); raw kernel console lines */
+/* are NOT captured — tm_putstring is a per-char T-Kernel-core path with */
+/* no cheap whole-line chokepoint, and hooking it would be a cross-      */
+/* cutting core edit the bare-metal targets don't want. Stated honestly  */
+/* in the served header and the docs.                                   */
+/* ------------------------------------------------------------------ */
+
+/* one ring event -> one text line into the out-buffer. Same field set as
+ * gx_sse_event, but human-readable. NONE node ids are omitted. */
+static void gx_log_line(INT slot, const GALAXY_EV *e)
+{
+    gx_qdec(slot, e->ms);              gx_qs(slot, "ms ");
+    gx_qs(slot, gx_type_name(e->type));
+    if (e->src != GALAXY_NODE_NONE) { gx_qs(slot, " src="); gx_qdec(slot, (UW)e->src); }
+    if (e->dst != GALAXY_NODE_NONE) { gx_qs(slot, " dst="); gx_qdec(slot, (UW)e->dst); }
+    gx_qs(slot, " a=");               gx_qdec(slot, (UW)e->a);
+    gx_qs(slot, " b=");               gx_qdec(slot, (UW)e->b);
+    gx_qs(slot, "\n");
+}
+
+/* stream the whole ring (oldest-surviving .. newest) as text/plain. The
+ * body can exceed GX_OUTBUF (256 events), so flush as it fills — the same
+ * best-effort streaming /galaxy.html and /manifesto use. A snapshot of
+ * g_head is taken once so a concurrent producer can't make us walk past
+ * the end; events that arrive mid-stream simply show up on the next copy. */
+static void gx_serve_log(INT slot)
+{
+    UW head = g_head;                       /* monotone snapshot          */
+    UW count = head;
+    if (count > GALAXY_RING) count = GALAXY_RING;
+    UW start = head - count;                /* oldest still in the ring   */
+
+    gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8"
+                "\r\nConnection: close\r\n\r\n");
+    /* a tiny header line so the copied text is self-describing. */
+    gx_qs(slot, "# p-kernel galaxy log (events only) node=");
+    gx_qdec(slot, (UW)gx_my_id());
+    gx_qs(slot, " events=");      gx_qdec(slot, count);
+    gx_qs(slot, " dropped=");     gx_qdec(slot, g_dropped);
+    gx_qs(slot, "\n");
+    gx_flush(slot);
+
+    for (UW i = start; i < head; i++) {
+        GALAXY_EV ev;
+        GX_LOCK();                           /* one-event copy under lock  */
+        ev = g_ring[i & (GALAXY_RING - 1)];
+        GX_UNLOCK();
+        gx_log_line(slot, &ev);
+        if (g_cli[slot].ob_len > GX_OUTBUF - 128) {  /* keep flush room    */
+            if (gx_flush(slot) < 0) return;
+        }
+    }
+    gx_flush(slot);
+}
+
+/* ------------------------------------------------------------------ */
 /* HTTP request parsing (§3.6) — first line + Content-Length only       */
 /* ------------------------------------------------------------------ */
 
@@ -691,6 +752,14 @@ static INT gx_route(INT slot, GX_REQ *q)
     if (!q->is_post && gx_streq(path, "/self.json")) {
         gx_resp_head(slot, "200 OK", "application/json");
         gx_build_self_json(slot);
+        return 0;
+    }
+    /* GET /log.txt — the recent event ring as copy-pasteable text so a
+     * node owner can one-tap share their node's history with a diagnoser.
+     * Lazy (no recording beyond the existing ring); events-only (see
+     * gx_serve_log). */
+    if (!q->is_post && gx_streq(path, "/log.txt")) {
+        gx_serve_log(slot);
         return 0;
     }
     /* ark-profile.md §7.2: GET /manifesto — the embedded bytes + the
