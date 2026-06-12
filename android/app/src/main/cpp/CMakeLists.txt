@@ -98,12 +98,15 @@ set(ARCH_SRC
 # arch/linux (cross-arch hosted) shared sources — same list as
 # boot/linux/Makefile's ARCH_SHARED_C_SRCS. selfc/pfs_durable/pfs_ark are
 # needed by the now-included p-fs + ARK profile stack (galaxy /self.json,
-# ark-profile manifesto consent).
+# ark-profile manifesto consent). sign_entropy.c is the hosted entropy
+# source (/dev/urandom; Bionic-compatible) that arch/common/sign.c +
+# ed25519.c draw node-key randomness from (Ed25519 signing, wave-38).
 set(ARCH_SHARED_SRC
     ${ARCH_LX}/selfc.c
     ${ARCH_LX}/selfc_proc.c
     ${ARCH_LX}/pfs_durable.c
     ${ARCH_LX}/pfs_ark.c
+    ${ARCH_LX}/sign_entropy.c
 )
 
 # relay-side sha256 — same canonical source as boot/linux/Makefile.
@@ -116,6 +119,12 @@ set(RELAY_SRC
 # boot/linux/Makefile's COMMON_C_SRCS. Earlier this used file(GLOB *.c)
 # but that hauled in driver-host files that the hosted port doesn't
 # need (and that pull in T-Kernel-only error constants).
+#
+# Lock-step is enforced by tools/android/check_parity.sh (run it after
+# touching EITHER this list or boot/linux/Makefile). r3_vocab.c (LM-8 real
+# words), ed25519.c + sign.c (wave-38 Ed25519 manifest signing) are the
+# wave-37..45 additions. sign.c references selfc ONLY in comments (no
+# tcc_/selfc_ calls), so it links on Bionic with selfc itself absent.
 set(COMMON_SRC
     ${ARCH_CO}/tensor.c
     ${ARCH_CO}/ai_job.c
@@ -142,6 +151,7 @@ set(COMMON_SRC
     ${ARCH_CO}/dtr.c
     ${ARCH_CO}/dtr_train.c
     ${ARCH_CO}/r3_incontext.c
+    ${ARCH_CO}/r3_vocab.c
     ${ARCH_CO}/galaxy.c
     ${ARCH_CO}/spec.c
     ${ARCH_CO}/retrieval.c
@@ -165,6 +175,8 @@ set(COMMON_SRC
     ${ARCH_CO}/pfs_dag.c
     ${ARCH_CO}/protect.c
     ${ARCH_CO}/genome.c
+    ${ARCH_CO}/ed25519.c
+    ${ARCH_CO}/sign.c
 )
 
 # kernel/common — same explicit list as boot/linux/Makefile's KERNEL_SRCS.
