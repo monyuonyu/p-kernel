@@ -146,9 +146,16 @@ static void distributed_init(UB nid, UW nip)
     dkva_init();
     try_task((FP)dkva_task, DKVA_PRIORITY, DKVA_STACK, "dkva task");
 
-    raft_init();
-    try_task((FP)raft_task, RAFT_PRIORITY, RAFT_STACK, "raft task");
+    /* Raft は BOOT サービスにしない (NOCENTRAL-RAFT, wave-55)。
+     * Raft リーダー = 特権的な中央コーディネータ → 「中央なし」のテーゼに反する。
+     * linux ビルドに合わせて raft_init()/raft_task の boot 起動を撤去。
+     * 中央調停の代わりに swim/world の分散スタックが走る (下記 world_task)。
+     * Raft は legacy/optional のデモとして残り、シェルの `raft` verb で
+     * 必要時に遅延起動できる (本ファイル下部の raft 処理を参照)。 */
 
+    /* spawn プロトコルのポート bind のみ。旧来の自動配布は raft リーダー
+     * 選出時にのみ発火していた (spawn_on_leader) — raft を boot しない今は
+     * 自動発火しない (linux ビルドと同じ)。 */
     spawn_init();
 
     moe_init();
@@ -227,7 +234,7 @@ EXPORT INT usermain(void)
      * distributed_init() once the node ID is known. */
     world_init();
 
-    print("\r\nCommands: ai (show stats) | net (init RTL8139) | world/map (network map) | echo: any text\r\n");
+    print("\r\nCommands: ai (show stats) | net (init RTL8139) | world/map (network map) | raft (optional consensus demo) | echo: any text\r\n");
     print("p-kernel> ");
 
     for (;;) {
@@ -247,6 +254,19 @@ EXPORT INT usermain(void)
         } else if ((n >= 5 && strneq(line, "world", 5)) ||
                    (n >= 3 && strneq(line, "map", 3))) {
             world_print();
+        } else if (n >= 4 && strneq(line, "raft", 4)) {
+            /* Raft は boot サービスではない (NOCENTRAL-RAFT)。
+             * 必要時にのみ遅延起動する legacy/optional のデモ。
+             * 初回だけ init + コンセンサスタスクを起動する。 */
+            static INT raft_started = 0;
+            if (!raft_started) {
+                raft_started = 1;
+                raft_init();
+                try_task((FP)raft_task, RAFT_PRIORITY, RAFT_STACK,
+                         "raft task (on-demand)");
+                print("[raft] on-demand consensus started (legacy/optional)\r\n");
+            }
+            raft_stat();
         } else if (n >= 2 && strneq(line, "rx", 2)) {
             extern unsigned long rtl_mmio_for_diag;
             extern volatile UW net_rx_arp, net_rx_udp, net_rx_icmp_req, net_rx_tcp;

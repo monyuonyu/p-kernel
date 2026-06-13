@@ -1353,6 +1353,36 @@ static void cmd_spawn(const char *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/* raft — legacy/optional コンセンサスデモ (NOCENTRAL-RAFT, wave-55)  */
+/*                                                                    */
+/* Raft リーダーは特権的な中央コーディネータなので boot サービスから  */
+/* 外した (「中央なし」のテーゼ)。capability は消さず、この verb で    */
+/* 必要時にだけ遅延起動できるようにしてある。初回呼び出しで           */
+/* raft_init() + コンセンサスタスクを起動し、以降は状態を表示する。   */
+/* ------------------------------------------------------------------ */
+
+static void cmd_raft(void)
+{
+    static INT raft_started = 0;
+    if (!raft_started) {
+        raft_started = 1;
+        raft_init();
+        T_CTSK ct;
+        ct.exinf  = NULL;
+        ct.tskatr = TA_HLNG | TA_RNG0;
+        ct.task   = (FP)raft_task;
+        ct.itskpri = 5;        /* = usermain.c RAFT_PRIORITY */
+        ct.stksz   = 2048;     /* = usermain.c RAFT_STACK    */
+        ID tid = tk_cre_tsk(&ct);
+        if (tid < E_OK || tk_sta_tsk(tid, 0) < E_OK)
+            sout("[raft] WARN: on-demand task start failed\r\n");
+        else
+            sout("[raft] on-demand consensus started (legacy/optional)\r\n");
+    }
+    raft_stat();
+}
+
+/* ------------------------------------------------------------------ */
 /* guard — spawn + heal ELF watchdog 登録                            */
 /* ------------------------------------------------------------------ */
 
@@ -2968,7 +2998,7 @@ static void execute(const char *cmd)
     if (str_eq(cmd, "evolve"))     { cmd_evolve(); return; }
 
     if (cmd[0]=='r' && cmd[1]=='a' && cmd[2]=='f' && cmd[3]=='t')
-        { raft_stat(); return; }
+        { cmd_raft(); return; }
     if (cmd[0]=='m' && cmd[1]=='o' && cmd[2]=='e')
         { moe_stat(); return; }
     if (cmd[0]=='d' && cmd[1]=='k' && cmd[2]=='v' && cmd[3]=='a')

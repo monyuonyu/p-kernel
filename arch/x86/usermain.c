@@ -268,14 +268,20 @@ EXPORT INT usermain(void)
             else
                 tm_putstring((UB *)"[OK]  dkva task\r\n");
 
-            /* Phase 10: Raft コンセンサス */
-            raft_init();
-            if (create_task(raft_task, RAFT_PRIORITY, RAFT_STACK) < E_OK)
-                tm_putstring((UB *)"[ERR] raft task\r\n");
-            else
-                tm_putstring((UB *)"[OK]  raft task\r\n");
+            /* Raft は BOOT サービスにしない (NOCENTRAL-RAFT, wave-55)。
+             * Raft リーダーは特権的な中央コーディネータであり、
+             * 「中央なし」のテーゼに反する (README / manifesto)。
+             * linux ビルドは既に raft を boot 起動しない — bare metal も合わせる。
+             * 中央調停の代わりに swim/world の分散スタック (下記 world_task) が走る。
+             * Raft 自体は legacy/optional のデモとして残し、シェルの
+             * `raft` verb で必要時に遅延起動できる (arch/x86/shell.c)。
+             * したがって raft_init() / raft_task の boot 起動は撤去した。 */
 
-            /* Phase 10: 自己増殖 */
+            /* 自己増殖 (spawn プロトコルのポートを bind するだけ。
+             * 旧来の自動配布は raft リーダー選出時にのみ発火していた
+             * (spawn_on_leader, raft.c) — raft を boot 起動しない今は
+             * 自動発火しない。linux ビルドと同じ挙動。spawn / spawn-stat の
+             * シェル verb と spawn_on_new_node 発見経路は raft 非依存。) */
             spawn_init();
 
             /* Phase 10: MoE 推論ルーティング */
