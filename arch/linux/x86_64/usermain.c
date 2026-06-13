@@ -710,7 +710,15 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "dist")) {
             degrade_stat();
         } else if (starts_with(line, n, "nodes")) {
-            swim_nodes_print();
+            /* SWIM-INCARN cert (external audit 2026-06-13): `nodes test` drives
+             * the REAL gossip_apply and proves the anti-stale-rumor mechanism
+             * is alive — a fresh-incarnation ALIVE refutes a stale DEAD rumor
+             * about self (node NOT marked dead) and stale lower-incarnation
+             * peer rumors lose the (incarnation,state) LWW. */
+            const UB *a = line + 5; UW al = (UW)(n - 5);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
+            else swim_nodes_print();
         } else if (starts_with(line, n, "region")) {
             region_print();
         } else if (starts_with(line, n, "hrw")) {
@@ -790,7 +798,14 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "guard")) {
             guard_print();
         } else if (starts_with(line, n, "kdds")) {
-            kdds_list();
+            /* KDDS-DELCLUSTER cert (external audit 2026-06-13): `kdds test`
+             * opens handles on a cluster topic, deletes the cluster via the
+             * REAL kdds_delete_cluster, and confirms NO handle to the deleted
+             * topic leaks open (the old close-loop body was empty). */
+            const UB *a = line + 4; UW al = (UW)(n - 4);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') kdds_delcluster_self_test(print);
+            else kdds_list();
         } else if (starts_with(line, n, "pfs")) {
             cmd_pfs(line, n);
         } else if (starts_with(line, n, "protect")) {

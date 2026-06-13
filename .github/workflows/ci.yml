@@ -69,12 +69,16 @@ jobs:
           # (the KAT now also covers SEC-SIGN-TRUNC: oversize sign fail-CLOSED).
           # `drpc test` runs the SEC-OOB-DRPC cert (node id >= DNODE_MAX is
           # rejected at every drpc_call/dtk_* reach, no OOB dnode_table access).
+          # `nodes test` runs the SWIM-INCARN cert (a fresh-incarnation ALIVE
+          # refutes a stale DEAD rumor about self; peer (incarnation,state) LWW).
+          # `kdds test` runs the KDDS-DELCLUSTER cert (delete-cluster closes the
+          # deleted topic's handles — the old close-loop body leaked them).
           # timeout 720->900 (LM-9 Part X + LM-10 Part XI): the widened R_DM=48
           # substrate's shared s_pretrain is ~23s host (512 episodes x 80 epochs
           # — the in-context competence threshold), and r3/handoff/stream/lang/
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nself test\nsign test\ndrpc test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -268,6 +272,15 @@ jobs:
           # rejected at every drpc_call/dtk_cre_tsk/dtk_sig_sem reach (no
           # out-of-bounds dnode_table[] access); a valid in-range id still flows.
           grep -aF '[drpc-oob] PASS' selftest.log
+          # SWIM-INCARN (external audit 2026-06-13): the incarnation anti-stale
+          # mechanism is alive — gossip_apply does (incarnation,state) LWW; a
+          # fresh-incarnation ALIVE refutes a stale DEAD rumor about SELF (node
+          # NOT marked dead), and a peer's stale lower-incarnation DEAD loses.
+          grep -aF '[swim-incarn] PASS' selftest.log
+          # KDDS-DELCLUSTER (external audit 2026-06-13): kdds_delete_cluster now
+          # actually closes the deleted topic's handles (the old close-loop body
+          # was empty -> leaked handles); an unrelated topic's handle survives.
+          grep -aF '[kdds-delcluster] PASS' selftest.log
           # living-mind Part VII (LM-6, the mouth): the OWNER teaches the LIVE
           # mind at the shell — `mind teach 2 3` enqueues a singleton fact via
           # r3_fact_learn (frozen-teacher agree==100; pre_share<=33 = not
