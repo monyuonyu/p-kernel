@@ -456,6 +456,12 @@ jobs:
         run: make -C boot/x86 all
       - name: Build boot/aarch64 (QEMU virt kernel.elf)
         run: make -C boot/aarch64
+      - name: NOCENTRAL-RAFT gate (no raft leader at boot; verb stays opt-in)
+        # wave-55: the bare-metal boot path must NOT elect a privileged Raft
+        # leader (thesis = "no central anything"). Raft is demoted to the
+        # opt-in `raft` shell verb. Source-level assertion (the bare-metal
+        # boot is a qemu-serial flow, not a self-test harness).
+        run: bash samples/45_nocentral_boot/nocentral_cert.sh
 
   ring3-survival:
     # ring3-core Wave B + C acceptance gates (docs/architecture/ring3-core.md
