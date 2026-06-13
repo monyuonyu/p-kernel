@@ -160,10 +160,15 @@ map with its own honest status table is
 7. **リポジトリ衛生** — かつての入れ子 `p-kernel/p-kernel/` は **de-nest 済み**（ソースは
    repo root 直下：`arch/` `boot/` `kernel/` … / docs は `docs/`、旧コード README は
    `docs/project-readme.md`）。コミット済みバイナリ/テストログも整理（`.gitignore` 化＋除去）。
-8. **既知の未解決バグを名指しで残す**: ベアメタル x86 で ring3 デーモンを kill/再生で回すと
-   **約42% のブートでカーネルが #PF で死ぬ**（KILL-CHURN-CRASH）。仮説を 6 つ実証で潰し、
-   本物の修正 2 つで頻度を下げたが、根因は未特定（現容疑: リサイクルされた TCB への
-   use-after-free）。再現は `dproc churn` 一発、狩りの全履歴は gap-ledger に逐語。診断継続中。
+8. **既知の未解決バグを名指しで残す**: KILL-CHURN-CRASH（ring3 デーモンの kill/再生中の
+   ring0 #PF）。歴史的に〜42% のブートで落ち、仮説を計 7 つ実証で潰した（うち 1 つは
+   「修正」自身が病気だったことを対照実験で暴いた）。本物の修正 2 つ（RSP0 更新＋硬化）の
+   後、**現在の master では再現しなくなった**（`dproc churn` 24/24 PASS）— ただし「治った
+   証明」ではないため行は **OPEN（観測待ち）**: 次に触る者はまず master で落ちる再現器を
+   再確立せよ、が台帳のルール。狩りの全履歴は gap-ledger に逐語。
+   なお実機 Android の「教えても覚えない」バグ（salty）は wave-49 で死亡 — 犯人はコードでも
+   端末でもなく **コンパイラの FMA 融合の丸め順**（-ffp-contract=off で治癒、実機で確認済み）。
+   教訓として残る正直な宿題: 丸め順で生死が分かれる訓練は脆い（頑健化の波が未着手）。
 9. **開発手法も公開している** — 実装と監査は**別の AI エージェント**が行い（実装者≠監査者）、
    未解決課題は gap-ledger の一表に集約（行は減るだけ・墓碑銘で閉じる）、この開発の AI 側の
    記憶は [`docs/claude-memory/`](docs/claude-memory/) にそのままミラーしている。
