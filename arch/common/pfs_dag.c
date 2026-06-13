@@ -143,6 +143,21 @@ static INT pd_name_eq(const char *a, UW alen, const char *b, UW blen)
     return 1;
 }
 
+/* DUR-REFTAB: reflected CRC32 (poly 0xEDB88420), the same variant arkfs.c
+ * uses — kept local here (no cross-TU coupling; arch/common rule). Bit-at-a-
+ * time: refs.tab is tiny, so the table-free form is plenty. */
+static UW pd_crc32(const void *data, UW len)
+{
+    const U1 *p = (const U1 *)data;
+    UW crc = 0xFFFFFFFFUL;
+    for (UW i = 0; i < len; i++) {
+        crc ^= p[i];
+        for (INT b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0xEDB88420UL & (~(crc & 1UL) + 1UL));
+    }
+    return crc ^ 0xFFFFFFFFUL;
+}
+
 /* ------------------------------------------------------------------ */
 /* module state                                                        */
 /* ------------------------------------------------------------------ */
@@ -156,12 +171,24 @@ static PFSD_REF refs[PFS_REF_MAX];
 
 /* G24 durable ref table on disk ("refs.tab" under $PKERNEL_PFS_DIR):
  * a tiny header + the packed used PFSD_REF_ENT entries. Rewritten on every
- * ref mutation; reloaded at boot by pfs_dag_restore(). */
-#define PFSD_REFTAB_MAGIC  0x46544650UL    /* "PFTF" LE */
+ * ref mutation (atomically: pfs_dur_write does temp+rename+fsync); reloaded
+ * at boot by pfs_dag_restore().
+ *
+ * DUR-REFTAB (🟠): refs.tab is the one persistent p-fs state that is neither
+ * content-addressed nor CRC'd, so a SAME-LENGTH torn write (e.g. a half-flushed
+ * sector that keeps the byte count but corrupts the body) loaded garbage
+ * head/seq with no way to tell. Fix: a CRC32 over {count + entry bytes} in the
+ * header; on restore a mismatch REFUSES the load (the previous good in-RAM
+ * state survives) instead of adopting garbage. The magic is bumped to V2 so a
+ * pre-CRC same-length file is also caught (treated as not-ours -> ignored). */
+#define PFSD_REFTAB_MAGIC  0x32465450UL    /* "PTF2" LE — CRC'd ref table v2 */
 #define PFSD_REFTAB_FILE   "refs.tab"
 typedef struct {
     UW magic;
+    UW crc;                                /* crc32 over {count + entry bytes} */
     UW count;                              /* number of PFSD_REF_ENT following */
+    /* crc covers this `count` field and the entries — a contiguous run that
+     * starts right here, so a torn count OR a torn entry is both caught. */
 } __attribute__((packed)) PFSD_REFTAB_HDR;
 
 #ifdef _TK_HOSTED_LIBC_
@@ -244,6 +271,13 @@ static void refs_persist(void)
         n++;
     }
     h->count = n;
+
+    /* CRC covers {count + entry bytes} — the contiguous run from &h->count to
+     * the end of the entries. A torn write that preserves the file LENGTH but
+     * corrupts the body now changes this CRC, so restore can refuse it. */
+    UW crc_len = (UW)sizeof(h->count) + n * (UW)sizeof(PFSD_REF_ENT);
+    h->crc = pd_crc32((const U1 *)&h->count, crc_len);
+
     pfs_dur_write(PFSD_REFTAB_FILE, reftab_buf,
                   (unsigned)(sizeof(PFSD_REFTAB_HDR) +
                              n * sizeof(PFSD_REF_ENT)));
@@ -267,14 +301,35 @@ void pfs_dag_restore(void)
 
     const PFSD_REFTAB_HDR *h = (const PFSD_REFTAB_HDR *)reftab_buf;
     if (h->magic != PFSD_REFTAB_MAGIC) {
+        /* Wrong/absent magic (incl. the pre-CRC v1 format): not ours — keep
+         * the current in-RAM state (started empty at boot), never adopt it. */
         pd_puts("[pfs] durable: refs.tab bad magic — ignored\r\n");
         return;
     }
+
+    /* The on-disk count drives both the length check and the CRC span, so
+     * validate it BEFORE dereferencing the entry bytes it claims. */
     UW n = h->count;
-    if (n > PFS_REF_MAX) n = PFS_REF_MAX;
+    if (n > PFS_REF_MAX) {
+        pd_puts("[pfs] durable: refs.tab count out of range — REJECTED\r\n");
+        return;
+    }
     if (len < (INT)(sizeof(PFSD_REFTAB_HDR) + n * sizeof(PFSD_REF_ENT))) {
         pd_puts("[pfs] durable: refs.tab truncated — ignored\r\n");
         return;
+    }
+
+    /* DUR-REFTAB: verify the CRC over {count + entry bytes}. A same-length torn
+     * write (length preserved, body corrupted) fails here and is REFUSED — the
+     * previous good in-RAM ref state survives; we never load garbage head/seq. */
+    {
+        UW crc_len = (UW)sizeof(h->count) + n * (UW)sizeof(PFSD_REF_ENT);
+        UW want = pd_crc32((const U1 *)&h->count, crc_len);
+        if (want != h->crc) {
+            pd_puts("[pfs] durable: refs.tab CRC mismatch — REFUSED "
+                    "(keeping previous good state)\r\n");
+            return;
+        }
     }
 
     const U1 *in = reftab_buf + sizeof(PFSD_REFTAB_HDR);
@@ -751,4 +806,129 @@ void pfs_dag_init(void)
 
     pd_puts("[pfs] P2 version DAG ready (refs gossip on " PFSD_TOPIC_REF
             ", region)\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* DUR-REFTAB cert — a same-length torn refs.tab must be REFUSED at     */
+/* load (CRC), and a clean refs.tab must round-trip. Drives the real    */
+/* refs_persist (via ref_set) and pfs_dag_restore production paths.     */
+/* ------------------------------------------------------------------ */
+
+INT pfs_dag_self_test(void (*emit)(const char *))
+{
+#ifdef _TK_HOSTED_LIBC_
+    INT fails = 0;
+
+    if (!pfs_dur_active()) {
+        emit("[pfs-dagrefs] no durable backend active (set PKERNEL_PFS_DIR) — "
+             "cert cannot run\r\n");
+        emit("[pfs-dagrefs] FAIL (durable not active)\r\n");
+        return 1;
+    }
+
+    static const char SENT[] = "__durtest__";
+    UW snlen = (UW)(sizeof(SENT) - 1);
+
+    /* A distinctive head id so we can tell "clean reload" from "garbage". */
+    U1 good_head[PFS_ID_LEN];
+    for (INT i = 0; i < PFS_ID_LEN; i++) good_head[i] = (U1)(0xC0 + i);
+
+    /* (A) write a clean refs.tab through the production persist path. */
+    PFSD_REF *r = ref_find(SENT, snlen);
+    if (!r) r = ref_alloc();
+    if (!r) {
+        emit("[pfs-dagrefs] FAIL ref table full — cannot run cert\r\n");
+        return 1;
+    }
+    ref_set(r, SENT, snlen, good_head, 7, PFS_ORIGIN_SELF);   /* -> refs_persist */
+
+    /* (B) clean round-trip: read refs.tab back and verify magic + CRC. */
+    INT len = pfs_dur_read(PFSD_REFTAB_FILE, reftab_buf, (unsigned)sizeof reftab_buf);
+    if (len < (INT)sizeof(PFSD_REFTAB_HDR)) {
+        emit("[pfs-dagrefs] FAIL refs.tab not written\r\n");
+        return 1;
+    }
+    {
+        const PFSD_REFTAB_HDR *h = (const PFSD_REFTAB_HDR *)reftab_buf;
+        UW crc_len = (UW)sizeof(h->count) + h->count * (UW)sizeof(PFSD_REF_ENT);
+        UW have = pd_crc32((const U1 *)&h->count, crc_len);
+        if (h->magic == PFSD_REFTAB_MAGIC && have == h->crc) {
+            emit("[pfs-dagrefs] ok  clean refs.tab carries a valid CRC\r\n");
+        } else {
+            emit("[pfs-dagrefs] FAIL clean refs.tab CRC did not verify\r\n");
+            fails++;
+        }
+    }
+
+    /* Clobber the LIVE head with a sentinel so a successful clean reload is
+     * observable (restore overwrites it back to good_head). */
+    {
+        PFSD_REF *lr = ref_find(SENT, snlen);
+        if (lr) { for (INT i = 0; i < PFS_ID_LEN; i++) lr->e.head[i] = 0x11; }
+    }
+
+    /* (C) clean restore reloads the good head from disk. */
+    pfs_dag_restore();
+    {
+        PFSD_REF *lr = ref_find(SENT, snlen);
+        INT okhead = lr ? 1 : 0;
+        if (lr) for (INT i = 0; i < PFS_ID_LEN; i++)
+            if (lr->e.head[i] != good_head[i]) { okhead = 0; break; }
+        if (okhead) emit("[pfs-dagrefs] ok  clean refs.tab round-trips (head reloaded)\r\n");
+        else { emit("[pfs-dagrefs] FAIL clean refs.tab did not round-trip\r\n"); fails++; }
+    }
+
+    /* (D) SAME-LENGTH torn write: flip ONE body byte, keep the file length,
+     * write it straight to disk (bypassing refs_persist's CRC recompute) so
+     * the stored CRC no longer matches the body — exactly a torn sector. */
+    len = pfs_dur_read(PFSD_REFTAB_FILE, reftab_buf, (unsigned)sizeof reftab_buf);
+    if (len <= (INT)sizeof(PFSD_REFTAB_HDR)) {
+        emit("[pfs-dagrefs] FAIL refs.tab body missing for torn test\r\n");
+        return fails + 1;
+    }
+    {
+        /* flip a byte in the FIRST entry's head (a value a blind load would
+         * adopt as garbage) — same length, different CRC. */
+        U1 *body = reftab_buf + sizeof(PFSD_REFTAB_HDR);
+        body[0] ^= 0xFF;
+        (void)pfs_dur_write(PFSD_REFTAB_FILE, reftab_buf, (unsigned)len);
+    }
+
+    /* Plant a sentinel in the LIVE head; a correct restore must REFUSE the
+     * torn file and leave this sentinel (NOT adopt the flipped garbage). */
+    {
+        PFSD_REF *lr = ref_find(SENT, snlen);
+        if (lr) for (INT i = 0; i < PFS_ID_LEN; i++) lr->e.head[i] = 0x22;
+    }
+
+    pfs_dag_restore();         /* must hit the CRC-mismatch REFUSE branch */
+    {
+        PFSD_REF *lr = ref_find(SENT, snlen);
+        INT untouched = lr ? 1 : 0;
+        if (lr) for (INT i = 0; i < PFS_ID_LEN; i++)
+            if (lr->e.head[i] != 0x22) { untouched = 0; break; }
+        if (untouched)
+            emit("[pfs-dagrefs] ok  torn refs.tab REFUSED — garbage not adopted\r\n");
+        else {
+            emit("[pfs-dagrefs] FAIL torn refs.tab loaded garbage head/seq\r\n");
+            fails++;
+        }
+    }
+
+    /* Leave disk in a good state for any later cert / reboot. */
+    {
+        PFSD_REF *cr = ref_find(SENT, snlen);
+        if (!cr) cr = ref_alloc();
+        if (cr) ref_set(cr, SENT, snlen, good_head, 7, PFS_ORIGIN_SELF);
+    }
+
+    if (fails == 0)
+        emit("[pfs-dagrefs] PASS (clean round-trips, torn refused)\r\n");
+    else
+        emit("[pfs-dagrefs] FAIL\r\n");
+    return fails;
+#else
+    (void)emit;
+    return 0;     /* bare metal: no durable ref table */
+#endif
 }

@@ -166,3 +166,9 @@ INT  pfs_dag_read_at(const UB *name, UW nlen, UW seq, void *buf, UW maxlen);
  *   save <name> <text> / log <name> / cat <name> [@<seq>]
  * args points at the verb. Prints results/usage via tmonitor. */
 void pfs_dag_cmd(const UB *args, UW len);
+
+/* DUR-REFTAB cert (hosted, durable-active only): prove a clean refs.tab
+ * round-trips AND a same-length torn refs.tab is REFUSED at restore (CRC
+ * mismatch) without adopting garbage refs. Prints [pfs-dagrefs] PASS/FAIL.
+ * Returns 0 on PASS, non-zero on FAIL or when durable is not active. */
+INT  pfs_dag_self_test(void (*emit)(const char *));
