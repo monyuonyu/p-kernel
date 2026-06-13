@@ -418,6 +418,17 @@ void drpc_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
 W drpc_call(UB dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
 {
+    /* SEC-OOB-DRPC (external audit 2026-06-13): dst_node is UB (0..255) but
+     * dnode_table has DNODE_MAX(==64) slots. Reject out-of-range ids BEFORE
+     * any dnode_table[dst_node] access below (:422,:482) — the same bound the
+     * wire-rx path (:359) and dtk_infer (:720) already enforce. id 64..255
+     * was an out-of-bounds read AND write. */
+    if (dst_node >= DNODE_MAX) {
+        dp_puts("[drpc] bad node id "); dp_putdec(dst_node);
+        dp_puts(" (>= DNODE_MAX)\r\n");
+        return E_PAR;
+    }
+
     /* Early out: dead node */
     if (dnode_table[dst_node].state == DNODE_DEAD) {
         dp_puts("[drpc] node "); dp_putdec(dst_node); dp_puts(" is DEAD\r\n");
@@ -681,6 +692,13 @@ ER dtk_sig_sem(UW gsemid, INT cnt)
     if (GOBJ_NODE(gsemid) == drpc_my_node)
         return tk_sig_sem((ID)GOBJ_LOCAL(gsemid), cnt);
 
+    /* SEC-OOB-DRPC: GOBJ_NODE() returns the full byte (0..255); guard the
+     * dnode_table index below before drpc_call's own guard can run. */
+    if (GOBJ_NODE(gsemid) >= DNODE_MAX) {
+        dp_puts("[dsem] bad node id in gsemid\r\n");
+        return E_PAR;
+    }
+
     if (dnode_table[GOBJ_NODE(gsemid)].state == DNODE_DEAD) {
         dp_puts("[dsem] target node is DEAD\r\n");
         return E_NOEXS;
@@ -730,4 +748,68 @@ ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout)
     ai_stats.class_count[cls < 3 ? cls : 0]++;
     if (class_out) *class_out = cls;
     return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* SEC-OOB-DRPC self-test (external audit 2026-06-13)                  */
+/*                                                                     */
+/* dnode_table[] has DNODE_MAX slots, but node ids on the wire are UB  */
+/* (0..255). Every reach that indexes dnode_table[id] must reject      */
+/* id >= DNODE_MAX BEFORE touching the array. This cert drives the     */
+/* REAL production entry points with an out-of-range id and confirms   */
+/* each one is rejected (E_PAR) — no out-of-bounds read or write — and */
+/* that a legitimate in-range id still flows past the bound guard.     */
+/* Emits "[drpc-oob] PASS" / "[drpc-oob] FAIL ...". Returns 0 on PASS. */
+/* ------------------------------------------------------------------ */
+
+INT drpc_oob_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+
+    /* (1) drpc_call itself rejects id 64 and id 255 (the UB extremes). */
+    if (drpc_call((UB)DNODE_MAX, DRPC_CALL_PING, 0, 0, 0, 0) != E_PAR) {
+        emit("[drpc-oob] FAIL drpc_call(64) not rejected\r\n"); fails++;
+    }
+    if (drpc_call(255, DRPC_CALL_PING, 0, 0, 0, 0) != E_PAR) {
+        emit("[drpc-oob] FAIL drpc_call(255) not rejected\r\n"); fails++;
+    }
+
+    /* (2) dtk_cre_tsk routes a remote id through drpc_call — id 64 rejected. */
+    if (dtk_cre_tsk((UB)DNODE_MAX, 0x0001, 4) != E_PAR) {
+        emit("[drpc-oob] FAIL dtk_cre_tsk(64) not rejected\r\n"); fails++;
+    }
+
+    /* (3) dtk_sig_sem derives the node from GOBJ_NODE (a full byte) and would
+     *     index dnode_table[64] BEFORE drpc_call's guard — its own guard must
+     *     reject. Build a gsemid whose node field is 64 (!= drpc_my_node). */
+    if (dtk_sig_sem(GOBJ_MAKE((UB)DNODE_MAX, 1), 1) != E_PAR) {
+        emit("[drpc-oob] FAIL dtk_sig_sem(node=64) not rejected\r\n"); fails++;
+    }
+
+    /* NOTE: dtk_infer already guarded id>=DNODE_MAX before this audit (:720)
+     * AND it short-circuits to LOCAL inference when drpc_my_node==0xFF (a
+     * single hosted node), so it never reaches dnode_table[id] in either
+     * case — it is not part of the convicted unguarded set and is not
+     * exercised here. */
+
+    /* (4) a LEGITIMATE in-range id still flows PAST the bound guard unchanged.
+     *     Pick id 63 (highest valid), force it DEAD, and confirm drpc_call
+     *     reaches the existing dead-node check (E_NOEXS) — proving the new
+     *     guard did not break valid 0..63 traffic. No network I/O. Restore. */
+    {
+        UB tid = (UB)(DNODE_MAX - 1);
+        if (tid == drpc_my_node) tid = (UB)(DNODE_MAX - 2);  /* avoid self */
+        UB saved = dnode_table[tid].state;
+        dnode_table[tid].state = DNODE_DEAD;
+        W r = drpc_call(tid, DRPC_CALL_PING, 0, 0, 0, 0);
+        dnode_table[tid].state = saved;
+        if (r != E_NOEXS) {
+            emit("[drpc-oob] FAIL valid in-range id 63 mis-handled "
+                 "(expected E_NOEXS via dead-check)\r\n"); fails++;
+        }
+    }
+
+    if (fails == 0) emit("[drpc-oob] PASS\r\n");
+    else            emit("[drpc-oob] FAIL\r\n");
+    return fails;
 }

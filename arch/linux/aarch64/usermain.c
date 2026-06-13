@@ -757,6 +757,15 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') sign_self_test();
             else print("usage: sign test\r\n");
+        } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
+            /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
+             * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and
+             * confirms each rejects it (no out-of-bounds dnode_table access),
+             * and that a legitimate id still flows past the bound guard. */
+            const UB *a = line + 4; UW al = (UW)(n - 4);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') drpc_oob_self_test(print);
+            else print("usage: drpc test\r\n");
         } else if (starts_with(line, n, "handoff") && (n == 7 || line[7] == ' ')) {
             /* living-mind LM-4 (docs/architecture/living-mind.md Part V):
              * `handoff test` runs the fast->slow handoff acceptance suite
