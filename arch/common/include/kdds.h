@@ -34,14 +34,28 @@
 /* ------------------------------------------------------------------ */
 
 #define KDDS_PORT        7376
-#define KDDS_SINGLETON_TOPICS 8 /* cluster-wide SINGLE topics (NOT per-node):
+#define KDDS_SINGLETON_TOPICS 16 /* cluster-wide SINGLE topics (NOT per-node):
                                  * pfs ann/want/sync/ref + "mind/teach" (LM-7,
                                  * the shared mind) + headroom. dkva pre-opens
                                  * fill the per-node budget (3×DNODE_MAX) exactly,
                                  * leaving no slot for a cluster-singleton, so
                                  * these get their OWN fixed headroom — they do
                                  * NOT scale with DNODE_MAX. */
-#define KDDS_TOPIC_MAX   (5 * DNODE_MAX + KDDS_SINGLETON_TOPICS)
+#define KDDS_TOPIC_MAX   (6 * DNODE_MAX + KDDS_SINGLETON_TOPICS)
+                                /* 6×, not 5× (wave-48 fix, found by mk_pino's
+                                 * phone boot log): with the FULL net stack up
+                                 * (autonet, as the Android app always runs),
+                                 * the EAGER per-node opens alone are 5 families
+                                 * (dkva q/resp/rsum + moe/score + world/beacon)
+                                 * = 5*DNODE_MAX, and singletons (mind/teach,
+                                 * mind/w, dtr l0/result/input/head1, pfs
+                                 * ann/want/sync/ref, ...) plus the LAZY
+                                 * per-source families (reflex/edf) landed on a
+                                 * table that was already full -> 65x "topic
+                                 * table full" at boot on DNODE_MAX=64; the
+                                 * star was blind to world/beacon of nodes
+                                 * 46..63. G23 kept the 32-node 5x ratio but
+                                 * never booted a 64-table AUTONET node. */
                                 /* カーネルが同時に管理できるトピック数。
                                  * dkva が q/resp/rsum を per-node (=3×DNODE_MAX) で
                                  * 全枠 pre-open し、moe(score)/world(beacon)/reflex/
