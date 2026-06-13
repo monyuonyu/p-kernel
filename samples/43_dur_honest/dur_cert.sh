@@ -42,21 +42,36 @@ trap cleanup EXIT
 echo "==========================================================="
 echo " SLICE 0 — durable honesty: DUR-SWALLOW + DUR-REFTAB"
 echo "==========================================================="
-printf 'pfs durtest\npfs dagtest\nexit\n' \
-    | timeout 120 env PKERNEL_PFS_DIR="$WORK/ark" "$KERNEL" >"$LOG" 2>&1
-
-echo "----- cert log -----"
-grep -E '\[pfs-durswallow\]|\[pfs-dagrefs\]|durable: refs.tab|durable failure' "$LOG" \
-    | sed 's/^/    /'
-echo "--------------------"
 
 FAIL=0
-grep -aqF '[pfs-durswallow] PASS' "$LOG" \
-    && echo "  [PASS] DUR-SWALLOW: failed durable write is honest, sole copy un-evictable" \
-    || { echo "  [FAIL] DUR-SWALLOW cert did not PASS"; FAIL=1; }
-grep -aqF '[pfs-dagrefs] PASS' "$LOG" \
-    && echo "  [PASS] DUR-REFTAB: torn refs.tab refused, clean refs.tab round-trips" \
-    || { echo "  [FAIL] DUR-REFTAB cert did not PASS"; FAIL=1; }
+
+# Run the certs under each durable backend. CRITICAL (auditor's finding):
+# the FLAT backend never evicts, so the eviction-skip loop — the actual
+# sole-copy-preservation surface DUR-SWALLOW adds — is ONLY exercised under
+# ARK. Gating only flat would let a regression in that loop pass CI silently.
+# So we run a second pass with PKERNEL_PFS_BACKEND=ark.
+run_pass() {
+    local name="$1"; shift
+    local plog="$WORK/$name.log"
+    printf 'pfs durtest\npfs dagtest\nexit\n' \
+        | timeout 120 env "$@" "$KERNEL" >"$plog" 2>&1
+    echo "----- cert log ($name) -----"
+    grep -E '\[pfs-durswallow\]|\[pfs-dagrefs\]|durable: refs.tab|durable failure' "$plog" \
+        | sed 's/^/    /'
+    echo "--------------------"
+    grep -aqF '[pfs-durswallow] PASS' "$plog" \
+        && echo "  [PASS] DUR-SWALLOW ($name): failed durable write is honest, sole copy un-evictable" \
+        || { echo "  [FAIL] DUR-SWALLOW ($name) cert did not PASS"; FAIL=1; }
+    grep -aqF '[pfs-dagrefs] PASS' "$plog" \
+        && echo "  [PASS] DUR-REFTAB ($name): torn refs.tab refused, clean refs.tab round-trips" \
+        || { echo "  [FAIL] DUR-REFTAB ($name) cert did not PASS"; FAIL=1; }
+}
+
+# Pass 1: FLAT backend (one-file-per-block under $PKERNEL_PFS_DIR).
+run_pass flat PKERNEL_PFS_DIR="$WORK/flat"
+# Pass 2: ARK backend (the one that actually evicts — gates the skip loop).
+run_pass ark  PKERNEL_PFS_DIR="$WORK/arkdir" \
+              PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark.img"
 
 echo
 if [ "$FAIL" = 0 ]; then
