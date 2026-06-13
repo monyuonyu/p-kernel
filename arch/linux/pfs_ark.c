@@ -210,11 +210,19 @@ int pfs_ark_restore(void (*emit)(const char *))
 /* the put / get seam (called inline by pfs_block.c)                    */
 /* ------------------------------------------------------------------ */
 
+/* DUR-SWALLOW cert hook (ARK backend): when set non-zero the NEXT pfs_ark_put
+ * FAILS (returns -1) WITHOUT mutating the log, then auto-clears. Mirrors
+ * pfs_dur_force_fail so the cert exercises the eviction-skip on the one
+ * backend that actually evicts (ARK has the pfs_get fall-through). */
+static int ark_force_fail_once;
+void pfs_ark_force_fail(int on) { ark_force_fail_once = on ? 1 : 0; }
+
 /* Persist a NEW p-fs block into the ARK log: append + durable checkpoint.
  * ark_block_put dedups against the on-disk index for free. Returns 0 / -1. */
 int pfs_ark_put(const void *data, unsigned len)
 {
     if (ark_state != 1) return -1;
+    if (ark_force_fail_once) { ark_force_fail_once = 0; return -1; }
     U1 id[ARK_ID_LEN];
     if (ark_block_put(data, (U4)len, id) != ARK_OK) return -1;
     /* Promote the appended block into the permanent index with a durable,

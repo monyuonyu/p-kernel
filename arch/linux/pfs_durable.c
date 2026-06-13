@@ -84,12 +84,21 @@ int pfs_dur_active(void)
     return pfs_dur_dir() != (const char *)0;
 }
 
+/* DUR-SWALLOW cert hook: when set non-zero, the very next pfs_dur_write FAILS
+ * (returns -1) WITHOUT touching the disk, then auto-clears. This drives the
+ * REAL production write seam through its failure branch so pfs_self_test can
+ * prove pfs_put returns non-OK AND the block survives eviction — no sim. */
+static int dur_force_fail_once;
+void pfs_dur_force_fail(int on) { dur_force_fail_once = on ? 1 : 0; }
+
 /* Atomic, fsync'd write of `len` bytes to <dir>/<fname>. Returns 0 on
  * success, -1 on any failure (or when persistence is disabled). */
 int pfs_dur_write(const char *fname, const void *data, unsigned len)
 {
     const char *dir = pfs_dur_dir();
     if (!dir) return -1;
+
+    if (dur_force_fail_once) { dur_force_fail_once = 0; return -1; }
 
     char path[PFS_DUR_PATH_MAX], tmp[PFS_DUR_PATH_MAX];
     if (snprintf(path, sizeof path, "%s/%s", dir, fname) >= (int)sizeof path)

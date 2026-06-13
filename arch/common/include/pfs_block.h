@@ -39,6 +39,11 @@
 #define PFS_E_TOOBIG   (-2)        /* len > PFS_BLOCK_MAX */
 #define PFS_E_FULL     (-3)        /* block table is full */
 #define PFS_E_INVAL    (-4)        /* bad argument */
+#define PFS_E_DURABLE  (-5)        /* DUR-SWALLOW: durable write FAILED — the
+                                    * in-memory copy is now the ONLY copy. The
+                                    * block is kept (marked un-evictable) but
+                                    * the put is reported NON-OK so the caller
+                                    * knows the ark did not persist it. */
 
 /* Compute block-id = sha256(buf[0..len)) into id_out (no store). */
 void pfs_id_compute(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
@@ -84,6 +89,13 @@ UW   pfs_count(void);
 /* Run the P0 self-test (dedup + round-trip + miss). Prints PASS/FAIL via
  * the supplied puts-style callback. Returns 0 on PASS, non-zero on FAIL. */
 INT  pfs_self_test(void (*emit)(const char *));
+
+/* DUR-SWALLOW cert (hosted, durable-active only): inject a durable-write
+ * failure and prove pfs_put returns NON-OK AND the sole in-memory copy
+ * survives FIFO eviction (still readable via pfs_get). Prints
+ * [pfs-durswallow] PASS/FAIL. Returns 0 on PASS, non-zero on FAIL or when
+ * durable is not active (so the cert can only PASS where it is meaningful). */
+INT  pfs_durswallow_self_test(void (*emit)(const char *));
 
 /* ------------------------------------------------------------------ */
 /* P0 durable backend (G24) — make the library non-volatile.           */
