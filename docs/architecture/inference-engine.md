@@ -84,6 +84,11 @@ GGUF = llama.cpp の重み形式（PyTorch 非依存配布の標準）。
 - **M2**: 同じ forward を **2ノードに Pipeline 分割**（既存 dtr Pipeline）、relay 越しに
   **M1 と同一出力**。cert `[llm-pipeline]`: 1ノード出力 == 2ノード分割出力。
   ← 「1台に収まらないモデルを群れで動かす」が初めて本物に。
+  **ここで dense層シャード vs MoEエキスパート分散を決める**（conversation.md §3.5）。
+- **M2-survive**: 生成中にシャード保持ノードを **kill -9 → 文が完成する**。
+  base を r重複製（凍結ゆえ安い）+ SWIM 死検知 + 複製先へ再ルート +
+  落ちたトークンを最後の完了ステージから再実行。cert `[llm-survive]`:
+  「kill 後も同一プロンプトの生成が完走」。← 生命体の核心（mk_pino の問い）。
 - **M3**: **凍結 base + 学んだ差分**。教えた事実を軽量学習（base 凍結、差分のみ）で載せ、
   Path E で群れに伝播。cert `[llm-teach]`: 教えた内容を base が答える、教師の死を越える。
   ← ark の魂（育てる・残す）が会話モデルに載る。
