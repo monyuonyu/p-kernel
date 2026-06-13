@@ -56,6 +56,37 @@ typedef struct {
 static GOSSIP_QUEUED gq[GOSSIP_Q_MAX];
 static INT           gq_cnt = 0;
 
+/* ------------------------------------------------------------------ */
+/* Incarnation numbers (canonical SWIM anti-stale-rumor)               */
+/*                                                                     */
+/* SWIM-INCARN (external audit 2026-06-13): the `incarnation` field was */
+/* on the wire but never assigned a real value and never compared, so   */
+/* a node could not refute an OLD DEAD/SUSPECT rumor about itself with a */
+/* FRESHER incarnation — the rumor's TTL could re-kill it.              */
+/*                                                                     */
+/* Fix: each node keeps a monotonic `my_incarnation`, bumped whenever it */
+/* must refute a SUSPECT/DEAD rumor about ITSELF (re-asserting ALIVE at  */
+/* a strictly higher incarnation). `dnode_incarn[nid]` mirrors the last  */
+/* incarnation we accepted for each peer, and gossip_apply does a        */
+/* (incarnation, state-severity) lexicographic last-writer-wins:         */
+/*   - a strictly HIGHER incarnation always wins (regardless of state);  */
+/*   - within the SAME incarnation, more-dead wins (ALIVE<SUSPECT<DEAD); */
+/*   - a strictly LOWER incarnation is ignored (the stale rumor).        */
+/* incarnation is a UB on the wire (swim.h) so it wraps at 256; bumps    */
+/* are a plain ++ and the compare is on equality + a single-step ladder, */
+/* so a wrap only loses one anti-stale round (self re-bumps next time it  */
+/* is rumored) — sane and never UB. */
+static UB my_incarnation        = 0;
+static UB dnode_incarn[DNODE_MAX];
+
+/* state severity ladder for same-incarnation tie-break (ALIVE<SUSPECT<DEAD) */
+static INT state_rank(UB st)
+{
+    if (st == DNODE_DEAD)    return 2;
+    if (st == DNODE_SUSPECT) return 1;
+    return 0;   /* ALIVE / UNKNOWN */
+}
+
 /* galaxy v1 (galaxy.md S1): ONE file-static emitter called at each
  * existing SWIM state-change print site, so a star appears / dims / goes
  * dark in the window exactly when SWIM's belief changes — with SWIM's
@@ -66,25 +97,26 @@ static void sw_note(UB nid, UB oldst, UB newst)
     galaxy_emit(EV_SWIM, nid, GALAXY_NODE_NONE, (UH)oldst, (UH)newst);
 }
 
-static void gossip_add(UB node_id, UB state)
+static void gossip_add(UB node_id, UB state, UB incarnation)
 {
     /* Update existing entry if present */
     for (INT i = 0; i < gq_cnt; i++) {
         if (gq[i].node_id == node_id) {
-            gq[i].state     = state;
-            gq[i].remaining = GOSSIP_TTL;
+            gq[i].state       = state;
+            gq[i].incarnation = incarnation;
+            gq[i].remaining   = GOSSIP_TTL;
             return;
         }
     }
     if (gq_cnt < GOSSIP_Q_MAX) {
-        gq[gq_cnt++] = (GOSSIP_QUEUED){ node_id, state, 0, GOSSIP_TTL };
+        gq[gq_cnt++] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL };
         return;
     }
     /* Queue full: evict oldest (lowest remaining) */
     INT min_i = 0;
     for (INT i = 1; i < gq_cnt; i++)
         if (gq[i].remaining < gq[min_i].remaining) min_i = i;
-    gq[min_i] = (GOSSIP_QUEUED){ node_id, state, 0, GOSSIP_TTL };
+    gq[min_i] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL };
 }
 
 static void gossip_fill(SWIM_PKT *pkt)
@@ -106,34 +138,58 @@ static void gossip_fill(SWIM_PKT *pkt)
     gq_cnt = w;
 }
 
+/* (incarnation, state) lexicographic last-writer-wins: does the incoming
+ * rumor (inc_in, st_in) supersede what we currently hold (inc_cur, st_cur)?
+ *   - strictly higher incarnation always wins;
+ *   - same incarnation: a more-dead state wins (ALIVE<SUSPECT<DEAD);
+ *   - strictly lower incarnation never wins (the stale rumor is refuted). */
+static INT gossip_supersedes(UB inc_in, UB st_in, UB inc_cur, UB st_cur)
+{
+    if (inc_in != inc_cur) return inc_in > inc_cur;
+    return state_rank(st_in) > state_rank(st_cur);
+}
+
 static void gossip_apply(const SWIM_PKT *pkt)
 {
     for (UB i = 0; i < pkt->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
-        UB nid = pkt->gossip[i].node_id;
-        UB st  = pkt->gossip[i].state;
+        UB nid    = pkt->gossip[i].node_id;
+        UB st     = pkt->gossip[i].state;
+        UB inc_in = pkt->gossip[i].incarnation;
 
-        /* 自分自身が SUSPECT/DEAD と噂されていたら断末魔散布 */
+        /* 自分自身が SUSPECT/DEAD と噂されていたら断末魔散布 +
+         * incarnation を進めて ALIVE を再表明し、古い噂を論駁する。 */
         if (nid == drpc_my_node) {
             if (st == DNODE_SUSPECT || st == DNODE_DEAD) {
                 sw_puts("[swim] *** SELF-SUSPICION *** I'm rumored ");
                 sw_puts(st == DNODE_SUSPECT ? "SUSPECT" : "DEAD");
-                sw_puts(" — triggering death throes\r\n");
+                sw_puts(" — refuting with fresh incarnation\r\n");
                 replica_scatter_all();
-                /* 自分が生きていることを再アナウンス */
-                gossip_add(drpc_my_node, DNODE_ALIVE);
+                /* refute: bump strictly above the rumor's incarnation so the
+                 * ALIVE re-assertion supersedes the stale DEAD/SUSPECT
+                 * everywhere it has spread (UB ++ wraps sanely at 256). */
+                if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
+                else                          my_incarnation = (UB)(my_incarnation + 1);
+                gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation);
             }
             continue;
         }
 
         if (nid >= DNODE_MAX) continue;
-        if (dnode_table[nid].state == st) continue;
+
+        /* anti-stale: accept only if (incarnation,state) supersedes our view */
+        if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state))
+            continue;
+
+        dnode_incarn[nid] = inc_in;
+        if (dnode_table[nid].state == st) continue;   /* incarnation bumped, state same */
+
         { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
           sw_note(nid, oldst, st); }
         sw_puts("[swim] gossip: node "); sw_putdec(nid);
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
         else if (st == DNODE_DEAD)    sw_puts(" -> DEAD\r\n");
-        gossip_add(nid, st);   /* re-propagate */
+        gossip_add(nid, st, inc_in);   /* re-propagate at the same incarnation */
         degrade_update();
         dmn_trigger();   /* ノード状態変化 = 外部刺激 */
     }
@@ -244,7 +300,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
             sw_puts("[swim] node "); sw_putdec(snid);
             sw_puts(old == DNODE_UNKNOWN ? " discovered" : " recovered");
             sw_puts("  (via rx)\r\n");
-            gossip_add(snid, DNODE_ALIVE);
+            gossip_add(snid, DNODE_ALIVE, dnode_incarn[snid]);
             replica_push_to(snid);
             degrade_update();
         }
@@ -382,7 +438,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
-                gossip_add(target, DNODE_ALIVE);
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target]);
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -413,7 +469,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
-                gossip_add(target, DNODE_ALIVE);
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target]);
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -440,7 +496,7 @@ void swim_task(INT stacd, void *exinf)
             suspect_count[target]      = 0;   /* count fresh toward DEAD */
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> SUSPECT (no response)\r\n");
-            gossip_add(target, DNODE_SUSPECT);
+            gossip_add(target, DNODE_SUSPECT, dnode_incarn[target]);
         } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_ROUNDS) {
             dnode_table[target].state  = DNODE_DEAD;
             sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
@@ -448,7 +504,7 @@ void swim_task(INT stacd, void *exinf)
             suspect_count[target]      = 0;
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> DEAD\r\n");
-            gossip_add(target, DNODE_DEAD);
+            gossip_add(target, DNODE_DEAD, dnode_incarn[target]);
             heal_on_node_dead(target);
             degrade_update();
         }
@@ -461,7 +517,8 @@ void swim_task(INT stacd, void *exinf)
 
 void swim_init(void)
 {
-    for (INT i = 0; i < DNODE_MAX; i++) suspect_count[i] = 0;
+    for (INT i = 0; i < DNODE_MAX; i++) { suspect_count[i] = 0; dnode_incarn[i] = 0; }
+    my_incarnation = 0;
     udp_bind(SWIM_PORT, swim_rx);
     sw_puts("[swim] SWIM ready  port=7375\r\n");
 }
@@ -505,4 +562,118 @@ void swim_nodes_print(void)
             sw_puts("\r\n");
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* SWIM-INCARN self-test (external audit 2026-06-13, gap-ledger)       */
+/*                                                                     */
+/* Drives the REAL gossip_apply()/gossip_supersedes() with crafted     */
+/* SWIM_PKTs and asserts the canonical anti-stale-rumor behaviour:     */
+/*  (a) a STALE DEAD rumor about SELF is REFUTED — the node is NOT      */
+/*      marked dead, my_incarnation is bumped strictly above the rumor, */
+/*      and an ALIVE-about-self is queued at the fresh incarnation;     */
+/*  (b) a peer's stale LOWER-incarnation DEAD does NOT override the     */
+/*      higher-incarnation ALIVE we already hold (the dead mechanism    */
+/*      is now alive), while a strictly HIGHER-incarnation rumor does.  */
+/* Emits "[swim-incarn] PASS" (returns 0) or "[swim-incarn] FAIL ...". */
+/* ------------------------------------------------------------------ */
+
+/* find the incarnation a node_id is currently queued for in gq[] (or -1) */
+static INT gq_find_incarn(UB node_id, UB state)
+{
+    for (INT i = 0; i < gq_cnt; i++)
+        if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
+            return (INT)gq[i].incarnation;
+    return -1;
+}
+
+INT swim_incarn_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    /* --- save global/file state we will perturb, restore at the end --- */
+    UB  saved_my      = drpc_my_node;
+    UB  saved_inc     = my_incarnation;
+    INT saved_gq_cnt  = gq_cnt;
+
+    const UB SELF = 0;          /* pretend to be node 0 for the test */
+    const UB PEER = 1;
+
+    drpc_my_node            = SELF;
+    gq_cnt                  = 0;            /* clear the gossip queue */
+    my_incarnation          = 0;
+    dnode_table[SELF].state = DNODE_ALIVE;
+    dnode_incarn[SELF]      = 0;
+    dnode_table[PEER].state = DNODE_UNKNOWN;
+    dnode_incarn[PEER]      = 0;
+
+    /* (a) a STALE DEAD rumor about SELF at incarnation 1 ------------- */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt           = 1;
+        p.gossip[0].node_id    = SELF;
+        p.gossip[0].state      = DNODE_DEAD;
+        p.gossip[0].incarnation = 1;
+        gossip_apply(&p);
+
+        if (dnode_table[SELF].state == DNODE_DEAD) {
+            say("[swim-incarn] FAIL self-marked-dead (stale DEAD rumor killed me)\r\n");
+            fails++;
+        }
+        if (my_incarnation <= 1) {
+            say("[swim-incarn] FAIL self-incarnation-not-bumped-above-rumor\r\n");
+            fails++;
+        }
+        INT q = gq_find_incarn(SELF, DNODE_ALIVE);
+        if (q < 0) {
+            say("[swim-incarn] FAIL self-ALIVE-refutation-not-queued\r\n");
+            fails++;
+        } else if ((UB)q != my_incarnation) {
+            say("[swim-incarn] FAIL self-refutation-incarnation-mismatch\r\n");
+            fails++;
+        }
+    }
+
+    /* (b) peer anti-stale LWW: hold PEER ALIVE @ incarnation 5 ------- */
+    dnode_table[PEER].state = DNODE_ALIVE;
+    dnode_incarn[PEER]      = 5;
+    {
+        /* stale LOWER-incarnation DEAD must be IGNORED */
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = PEER;
+        p.gossip[0].state       = DNODE_DEAD;
+        p.gossip[0].incarnation = 3;
+        gossip_apply(&p);
+        if (dnode_table[PEER].state != DNODE_ALIVE) {
+            say("[swim-incarn] FAIL peer-killed-by-stale-rumor (LWW dead)\r\n");
+            fails++;
+        }
+    }
+    {
+        /* strictly HIGHER-incarnation DEAD MUST be accepted */
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = PEER;
+        p.gossip[0].state       = DNODE_DEAD;
+        p.gossip[0].incarnation = 6;
+        gossip_apply(&p);
+        if (dnode_table[PEER].state != DNODE_DEAD) {
+            say("[swim-incarn] FAIL fresh-rumor-not-accepted (LWW stuck)\r\n");
+            fails++;
+        }
+    }
+
+    /* --- restore --- */
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq_cnt;
+    dnode_table[SELF].state = DNODE_UNKNOWN;
+    dnode_table[PEER].state = DNODE_UNKNOWN;
+    dnode_incarn[SELF]      = 0;
+    dnode_incarn[PEER]      = 0;
+
+    if (fails == 0) say("[swim-incarn] PASS\r\n");
+    return fails;
 }
