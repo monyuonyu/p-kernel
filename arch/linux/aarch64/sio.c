@@ -82,9 +82,14 @@ EXPORT void sio_init(void)
     }
 }
 
+/* console_ring.c (hosted-only TU): tee every printed byte so the galaxy
+ * can serve GET /console.txt — the remote-diagnosis API. */
+extern void console_ring_note(const unsigned char *buf, int size);
+
 EXPORT void sio_send_frame(const UB *buf, INT size)
 {
     INT off = 0;
+    console_ring_note(buf, size);
     while (off < size) {
         ssize_t n = write(STDOUT_FILENO, buf + off, (size_t)(size - off));
         if (n < 0) return;       /* SA_RESTART means we only see real errors */

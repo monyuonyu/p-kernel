@@ -764,6 +764,38 @@ static INT gx_route(INT slot, GX_REQ *q)
      * node owner can one-tap share their node's history with a diagnoser.
      * Lazy (no recording beyond the existing ring); events-only (see
      * gx_serve_log). */
+#ifdef _TK_HOSTED_LIBC_
+    /* GET /console.txt — the node's recent CONSOLE output (tm_putstring
+     * tee, console_ring.c). The remote-diagnosis API: the [mind] teach
+     * gates, boot banners, every printed line — curl-able. Hosted ports
+     * only (bare metal has no console ring; route absent there = 404). */
+    if (!q->is_post && gx_streq(path, "/console.txt")) {
+        extern int console_ring_read(char *out, int max);
+        static char cr_snap[32768 + 1];     /* file-static: stack lesson  */
+        INT n = console_ring_read(cr_snap, (INT)sizeof cr_snap - 1);
+        cr_snap[n] = 0;
+        gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
+                    "charset=utf-8\r\nConnection: close\r\n\r\n");
+        gx_qs(slot, "# p-kernel console (newest 32KB) node=");
+        gx_qdec(slot, (UW)gx_my_id());
+        gx_qs(slot, "\n");
+        gx_flush(slot);
+        /* emit in bounded chunks so one gx_qs never overruns the outbuf */
+        for (INT off = 0; off < n; ) {
+            INT room = GX_OUTBUF - (INT)g_cli[slot].ob_len - 16;
+            if (room < 256) { if (gx_flush(slot) < 0) return 0; continue; }
+            INT take = n - off; if (take > room) take = room;
+            char saved = cr_snap[off + take];
+            cr_snap[off + take] = 0;
+            gx_qs(slot, cr_snap + off);
+            cr_snap[off + take] = saved;
+            off += take;
+        }
+        gx_flush(slot);
+        return 0;
+    }
+#endif
+
     if (!q->is_post && gx_streq(path, "/log.txt")) {
         gx_serve_log(slot);
         return 0;

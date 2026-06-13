@@ -105,6 +105,7 @@ set(ARCH_SHARED_SRC
     ${ARCH_LX}/selfc.c
     ${ARCH_LX}/selfc_proc.c
     ${ARCH_LX}/pfs_durable.c
+    ${ARCH_LX}/console_ring.c
     ${ARCH_LX}/pfs_ark.c
     ${ARCH_LX}/sign_entropy.c
 )
