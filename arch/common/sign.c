@@ -83,8 +83,8 @@ INT sign_node_keygen_was_strong(void) { return node_keygen_strong; }
 INT sign_artifact(const U1 *msg, UW msg_len, U1 sig_out[ED25519_SIGNATURE_LEN])
 {
     if (!node_have_key) { if (!sign_node_key_ensure()) return 0; }
-    ed25519_sign(sig_out, msg, (size_t)msg_len, node_sk);
-    return 1;
+    /* propagate the fail-CLOSED return: oversize msg => no signature, 0 (SEC-SIGN-TRUNC) */
+    return ed25519_sign(sig_out, msg, (size_t)msg_len, node_sk);
 }
 
 INT sign_verify(const U1 *msg, UW msg_len,

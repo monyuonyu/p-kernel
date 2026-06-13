@@ -168,3 +168,10 @@ ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);
  * DEAD ノードの代わりにローカルで rfunc タスクを起動する。
  */
 W drpc_local_restart(UH func_id, INT pri, UB caller_node);
+
+/* SEC-OOB-DRPC cert (external audit 2026-06-13): drives the real drpc_call /
+ * dtk_cre_tsk / dtk_sig_sem / dtk_infer entry points with a node id >=
+ * DNODE_MAX and confirms each is rejected (no out-of-bounds dnode_table
+ * access), and that a legitimate in-range id still flows past the guard.
+ * Emits "[drpc-oob] PASS"/"FAIL ...". Returns 0 on PASS, else the fail count. */
+INT drpc_oob_self_test(void (*emit)(const char *));
