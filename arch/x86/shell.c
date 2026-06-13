@@ -1750,6 +1750,86 @@ static void ring3_mind(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* iso-userptr — ISO-USERPTR acceptance gate                           */
+/* (gap-ledger ISO-USERPTR 🟠 / docs/review-2026-06-13-external-audit.md)*/
+/*                                                                     */
+/* Proves the confused-deputy hole is closed: a pointer-taking syscall */
+/* handed a KERNEL-range pointer is REJECTED with the fault error and  */
+/* the kernel memory it pointed at is NOT written; the same syscall    */
+/* with a VALID user-region pointer still succeeds.  Fake-resistant:   */
+/* the kernel destination is a live sentinel whose value is checked    */
+/* byte-for-byte after the rejected call.                              */
+/* ------------------------------------------------------------------ */
+#include "p_syscall.h"     /* SYS_GETCWD, syscall numbers */
+#include "user_range.h"    /* user_range_ok + region constants */
+
+IMPORT W syscall_dispatch(W nr, W arg0, W arg1, W arg2);
+
+/* Kernel-BSS sentinel: its address lives in kernel memory, far outside
+ * both ring-3 regions.  A confused-deputy SYS_GETCWD would overwrite it. */
+static volatile char iso_kernel_sentinel[64];
+
+static void iso_userptr_test(void)
+{
+    if (!vfs_ready) {
+        sout("iso: FAIL no-vfs (boot with the FAT32 disk: make run-disk)\r\n");
+        sout("[iso-userptr] FAIL\r\n");
+        return;
+    }
+
+    int ok = 1;
+
+    /* iso_kernel_sentinel links into LOW kernel BSS (≈0x18A000, below
+     * USER_RA_LO) — a genuine kernel-range address, outside both user
+     * regions, that we own and may safely poison/verify.  The valid-user
+     * buffer uses Region B (0x08000000+), which is entirely ABOVE all
+     * kernel data and the kernel heap (SYSTEMAREA_END=0x04000000) — free
+     * identity-mapped RAM, so the cert never clobbers live kernel state.  */
+
+    /* ---- 1. helper-level: accept user, reject kernel/overflow/zero ---- */
+    if (!user_range_ok((void *)(UW)0x08800000UL, 64)) ok = 0;  /* accept B */
+    if (!user_range_ok((void *)(UW)0x00800000UL, 64)) ok = 0;  /* accept A */
+    if ( user_range_ok((void *)iso_kernel_sentinel, 1)) ok = 0; /* reject kernel */
+    if ( user_range_ok((void *)(UW)0, 1))        ok = 0;   /* reject NULL page */
+    /* straddle the top of Region A by one byte → reject */
+    if ( user_range_ok((void *)(UW)(USER_RA_HI - 4), 64)) ok = 0;
+    /* overflow: ptr near top of address space + large len must not wrap-accept */
+    if ( user_range_ok((void *)(UW)0xFFFFFFF0UL, 0x100)) ok = 0;
+    /* len==0 at a kernel base is still rejected (no smuggling) */
+    if ( user_range_ok((void *)iso_kernel_sentinel, 0)) ok = 0;
+
+    /* ---- 2. end-to-end: SYS_GETCWD with a KERNEL-range buffer -------- */
+    /* Poison the sentinel so a confused-deputy write would change it. */
+    for (int i = 0; i < 64; i++) iso_kernel_sentinel[i] = (char)0x5A;
+    W r_bad = syscall_dispatch(SYS_GETCWD,
+                               (W)(UW)iso_kernel_sentinel, 64, 0);
+    if (r_bad != -1) ok = 0;                      /* must be rejected */
+    /* the kernel memory must be UNTOUCHED (still all 0x5A) */
+    for (int i = 0; i < 64; i++)
+        if (iso_kernel_sentinel[i] != (char)0x5A) ok = 0;
+
+    /* ---- 3. end-to-end: SYS_GETCWD with a VALID user buffer ---------- */
+    /* Region B free RAM (above the kernel heap) — a real in-range pointer
+     * the guard must let THROUGH. */
+    char *ubuf = (char *)(UW)0x08800000UL;
+    for (int i = 0; i < 64; i++) ubuf[i] = 0;
+    W r_ok = syscall_dispatch(SYS_GETCWD, (W)(UW)ubuf, 64, 0);
+    if (r_ok != 0) ok = 0;                        /* must succeed */
+    if (ubuf[0] == 0) ok = 0;                     /* cwd actually written */
+
+    sout("[iso-userptr] reject_kernel="); sout_dec((UW)(r_bad == -1));
+    sout(" sentinel_intact=");
+    { int intact = 1;
+      for (int i = 0; i < 64; i++)
+          if (iso_kernel_sentinel[i] != (char)0x5A) intact = 0;
+      sout_dec((UW)intact); }
+    sout(" accept_user="); sout_dec((UW)(r_ok == 0 && ubuf[0] != 0));
+    sout("\r\n");
+
+    sout(ok ? "[iso-userptr] PASS\r\n" : "[iso-userptr] FAIL\r\n");
+}
+
 static void cmd_ring3(const char *arg)
 {
     while (*arg == ' ') arg++;
@@ -1761,7 +1841,11 @@ static void cmd_ring3(const char *arg)
         ring3_mind();   /* Wave C gate — the math itself in ring 3   */
         return;
     }
-    sout("Usage: ring3 test|mind\r\n");
+    if (arg[0]=='i' && arg[1]=='s' && arg[2]=='o') {
+        iso_userptr_test();   /* ISO-USERPTR confused-deputy gate */
+        return;
+    }
+    sout("Usage: ring3 test|mind|iso\r\n");
 }
 
 
