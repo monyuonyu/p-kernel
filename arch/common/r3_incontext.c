@@ -662,6 +662,167 @@ static void s_pretrain(void)
     m_ready = 1;
 }
 
+/* =================================================================== *
+ *  persistence SLICE 2 (docs/architecture/persistence.md) —            *
+ *  the learned mind (rw[]) survives a reboot.                          *
+ *                                                                       *
+ *  rw[] = R_NP consolidated weights (~84 KB). With NO save path it      *
+ *  evaporates on kill; sky->blue is forgotten. Here we give it a        *
+ *  durable home: after a DMN consolidation tick (NOT every teach — see  *
+ *  the flash-wear honest-issue), serialize rw[] + a header into a       *
+ *  dedicated durable file "mind.rw" via pfs_dur_write; at boot, read it  *
+ *  back and load via r3_weights_set ONLY IF the header's version, R_NP,  *
+ *  and vocab content-ids all match the current build (the wave-47       *
+ *  stale-weights trap, structurally sealed: a mismatch is REFUSED, one   *
+ *  honest line printed, and the normal lazy pretrain rebuilds).         *
+ *                                                                       *
+ *  DESIGN CALL (flagged for the commander): rw[] is 86,272 bytes, far   *
+ *  over PFS_BLOCK_MAX (4096) — a single pfs_put block CANNOT hold it.    *
+ *  So this uses a DEDICATED durable file (pfs_dur_write/read), NOT a     *
+ *  content-addressed pfs_put block. The file is content-GUARDED by the   *
+ *  header (version + dims + vocab content-id) and a payload sha256, so   *
+ *  a torn/stale/foreign blob is rejected exactly like a content-address  *
+ *  mismatch would be. pfs_dur_* is the SLICE-0-honest streaming seam     *
+ *  (temp+rename+fsync) and has no 4 KB cap, so it is the right tool.     *
+ *                                                                       *
+ *  HOSTED-ONLY: pfs_dur_* live in arch/linux. Bare-metal targets         *
+ *  (!_TK_HOSTED_LIBC_) compile r3_weights_persist / _restore_or_pretrain *
+ *  as no-ops (the store stays memory-only, exactly the SLICE 0 pattern). *
+ * =================================================================== */
+#ifdef _TK_HOSTED_LIBC_
+extern int pfs_dur_write(const char *fname, const void *data, unsigned len);
+extern int pfs_dur_read(const char *fname, void *buf, unsigned maxlen);
+extern int pfs_dur_active(void);
+#endif
+
+#define R3_WP_FILE   "mind.rw"          /* the durable weights blob name   */
+#define R3_WP_MAGIC  0x33574d50u        /* "PMW3" little-endian (mind v3)  */
+#define R3_WP_VER    1u                 /* on-disk format version          */
+
+/* On-disk header. Fixed-width fields only (the payload follows, R_NP
+ * floats). Vocab content-ids pin the blob to the EXACT embedded word
+ * list; a vocab edit changes them, so old weights are refused. payload_id
+ * is sha256(rw bytes) — the no-op-write key AND a torn-write tripwire. */
+typedef struct {
+    U4 magic;                           /* R3_WP_MAGIC                     */
+    U4 version;                         /* R3_WP_VER                       */
+    U4 r_np;                            /* R_NP (dimension guard)          */
+    U4 reserved;                        /* 0 (8-byte align the floats)     */
+    U1 vocab_key_id[PFS_ID_LEN];        /* r3_vocab_key_id_blob            */
+    U1 vocab_val_id[PFS_ID_LEN];        /* r3_vocab_val_id_blob            */
+    U1 payload_id[PFS_ID_LEN];          /* sha256(rw[] bytes)              */
+} R3_WP_HDR;
+
+/* last payload_id we wrote — content-id no-op compare avoids re-writing
+ * ~84 KB when consolidation produced an identical weight image (flash
+ * wear honest-issue). Zeroed at boot; set on every successful write AND
+ * on a successful restore (so the first post-boot save is also skipped if
+ * nothing changed). */
+static U1 r3_wp_last_id[PFS_ID_LEN];
+static UB r3_wp_have_last = 0;
+
+static INT r3_id_eq(const U1 a[PFS_ID_LEN], const U1 b[PFS_ID_LEN])
+{
+    for (INT i = 0; i < PFS_ID_LEN; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+/* Persist rw[] durably IF its content changed. Called from the DMN after a
+ * consolidation tick (the sleep-then-save policy). No-op when persistence
+ * is off (bare metal, or hosted without PKERNEL_PFS_DIR) or rw[] is
+ * unchanged since the last write/restore. Returns 1 on a write, 0 on
+ * skip/no-op, -1 on a durable-write failure (honest: the caller logs). */
+INT r3_weights_persist(void)
+{
+#ifdef _TK_HOSTED_LIBC_
+    if (!pfs_dur_active()) return 0;
+
+    static float wbuf[R_NP];
+    r3_weights_get(wbuf);
+
+    U1 pid[PFS_ID_LEN];
+    pfs_id_compute(wbuf, (UW)sizeof wbuf, pid);
+    if (r3_wp_have_last && r3_id_eq(pid, r3_wp_last_id)) return 0;  /* no-op */
+
+    /* header + payload in one buffer -> one atomic temp+rename write. */
+    static U1 blob[sizeof(R3_WP_HDR) + sizeof(float) * R_NP];
+    R3_WP_HDR *h = (R3_WP_HDR *)blob;
+    h->magic = R3_WP_MAGIC; h->version = R3_WP_VER;
+    h->r_np = (U4)R_NP; h->reserved = 0;
+    r3_vocab_key_id_blob(h->vocab_key_id);
+    r3_vocab_val_id_blob(h->vocab_val_id);
+    for (INT i = 0; i < PFS_ID_LEN; i++) h->payload_id[i] = pid[i];
+    for (UW i = 0; i < sizeof wbuf; i++) blob[sizeof(R3_WP_HDR) + i] = ((const U1 *)wbuf)[i];
+
+    if (pfs_dur_write(R3_WP_FILE, blob, (unsigned)sizeof blob) != 0)
+        return -1;                                  /* honest failure      */
+
+    for (INT i = 0; i < PFS_ID_LEN; i++) r3_wp_last_id[i] = pid[i];
+    r3_wp_have_last = 1;
+    return 1;
+#else
+    return 0;   /* bare metal: memory-only, no durable seam (SLICE 0 pattern) */
+#endif
+}
+
+/* Boot-time restore. If a valid weights blob exists AND its header matches
+ * the current build (version + R_NP + both vocab content-ids) AND the
+ * payload hashes to its recorded id, load it via r3_weights_set, mark the
+ * substrate ready (skips the lazy pretrain — a faster-boot side effect),
+ * and return 1. On ANY mismatch/absence: print one honest line, leave
+ * rw[] untouched (lazy pretrain rebuilds on first teach/ask), return 0.
+ * Bare metal / no PKERNEL_PFS_DIR: quiet no-op (returns 0). */
+INT r3_weights_restore_or_pretrain(void)
+{
+#ifdef _TK_HOSTED_LIBC_
+    if (!pfs_dur_active()) return 0;             /* memory-only: stay lazy  */
+
+    static U1 blob[sizeof(R3_WP_HDR) + sizeof(float) * R_NP];
+    int n = pfs_dur_read(R3_WP_FILE, blob, (unsigned)sizeof blob);
+    if (n < 0) return 0;                          /* absent: first boot      */
+    if (n != (int)sizeof blob) {
+        r_puts("[mind] persisted weights truncated -> reinitializing (lazy)\r\n");
+        return 0;
+    }
+
+    R3_WP_HDR *h = (R3_WP_HDR *)blob;
+    U1 vk[PFS_ID_LEN], vv[PFS_ID_LEN];
+    r3_vocab_key_id_blob(vk);
+    r3_vocab_val_id_blob(vv);
+
+    INT ok = h->magic == R3_WP_MAGIC && h->version == R3_WP_VER
+          && h->r_np == (U4)R_NP
+          && r3_id_eq(h->vocab_key_id, vk)
+          && r3_id_eq(h->vocab_val_id, vv);
+    if (!ok) {
+        r_puts("[mind] stale persisted weights (dims/vocab mismatch) "
+               "-> reinitializing\r\n");
+        return 0;                                 /* REFUSE the blind load   */
+    }
+
+    /* payload integrity: sha256(rw bytes) must equal the recorded id (a
+     * torn write that survived the dims/vocab gate is still rejected). */
+    const float *payload = (const float *)(blob + sizeof(R3_WP_HDR));
+    U1 pid[PFS_ID_LEN];
+    pfs_id_compute(payload, (UW)(sizeof(float) * R_NP), pid);
+    if (!r3_id_eq(pid, h->payload_id)) {
+        r_puts("[mind] persisted weights corrupt (payload hash) "
+               "-> reinitializing\r\n");
+        return 0;
+    }
+
+    r3_weights_set(payload);
+    m_ready = 1;                                  /* skip lazy pretrain      */
+    for (INT i = 0; i < PFS_ID_LEN; i++) r3_wp_last_id[i] = pid[i];
+    r3_wp_have_last = 1;
+    r_puts("[mind] restored learned weights from durable store "
+           "(no pretrain needed)\r\n");
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 void r3_test(void)
 {
     m_quiesce();   /* VII.4: never reset rw[] under an in-flight round */

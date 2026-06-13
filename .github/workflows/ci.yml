@@ -339,6 +339,21 @@ jobs:
           grep -aF '[pfs-durswallow] PASS' dur_honest_cert.log
           grep -aF '[pfs-dagrefs] PASS'    dur_honest_cert.log
 
+      # persistence SLICE 1 + 2 (docs/architecture/persistence.md): the ark
+      # REMEMBERS across an actual kill+restart on the same PKERNEL_PFS_DIR.
+      # [persist-identity]: a shell-taught self/prov ref comes back byte-
+      # identical via pfs_durable_restore + pfs_dag_restore. [persist-mind]:
+      # sky->blue, the DMN persists rw[] after consolidation, reboot ->
+      # `ask sky`->blue via the RESTORE path (no pretrain line). [persist-
+      # mind-stale]: a header-corrupted blob is REFUSED (the wave-47 stale-
+      # weights trap) -> lazy pretrain -> answer at chance, never blind-loaded.
+      - name: Persistence cert (persistence.md SLICE 1 + SLICE 2)
+        run: |
+          timeout 800 samples/44_persist/persist_cert.sh | tee persist_cert.log
+          grep -aF '[persist-identity] PASS'   persist_cert.log
+          grep -aF '[persist-mind] PASS'       persist_cert.log
+          grep -aF '[persist-mind-stale] PASS' persist_cert.log
+
       - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
         run: |
           cd boot/linux_x86_64

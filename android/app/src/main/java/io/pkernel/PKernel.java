@@ -23,9 +23,19 @@ public final class PKernel {
     }
 
     public native void   nativeBoot(int nodeId);
+    public native void   nativeSetDataDir(String dir);
     public native void   nativeConfigureRelay(String host, int port, String keyHex);
     public native int    nativeReadStdout(byte[] dst, int maxlen);
     public native int    nativeWriteStdin(byte[] src, int len);
+
+    /**
+     * Point the durable p-fs store at a directory (persistence SLICE 1/2).
+     * Pass the app's getFilesDir().getAbsolutePath(); the native side
+     * appends "/ark". Must be called BEFORE boot()/bootWithRelay() so the
+     * kernel's boot-time restore path sees PKERNEL_PFS_DIR. Without this the
+     * node is memory-only (identity + learned mind evaporate on restart).
+     */
+    public void setDataDir(String dir) { nativeSetDataDir(dir); }
 
     /** Boot the kernel using the loopback transport (no relay). */
     public void boot(int nodeId) { nativeBoot(nodeId); }
