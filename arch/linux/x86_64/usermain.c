@@ -58,6 +58,7 @@ IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
 IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
+IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
@@ -615,6 +616,14 @@ EXPORT INT usermain(void)
      * comes back on reboot. No-op (memory-only) when the env is unset. */
     pfs_durable_restore(print);
     pfs_dag_restore();
+    /* persistence SLICE 2 (docs/architecture/persistence.md): the LEARNED
+     * mind survives the reboot. If a durable weights blob exists AND its
+     * header matches THIS build (version + R_NP + vocab content-id), load
+     * rw[] now (so `ask sky`->blue answers WITHOUT a re-learn, and the lazy
+     * pretrain is skipped). On any mismatch it refuses + one honest line +
+     * lazy pretrain rebuilds (the wave-47 stale-weights trap, sealed).
+     * No-op without PKERNEL_PFS_DIR. Must follow pfs_durable_restore. */
+    r3_weights_restore_or_pretrain();
     /* G28 — protected-object registry. Registers the pfs_repl announce-hook
      * so heard announces feed the holder count that grounds the threat.
      * Must follow pfs_repl_init(). protect_task starts in cmd_net. */

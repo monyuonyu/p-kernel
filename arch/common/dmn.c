@@ -136,6 +136,20 @@ static void dmn_idle_work(void)
             dmn_r3_round_count++;            /* the ONLY ++ site (VII.5) */
             galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 1, 0);  /* S3: the taught fact sinks into rw[] (galaxy.md) */
             dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
+            /* persistence SLICE 2 (docs/architecture/persistence.md): the
+             * sleep-then-save policy. Only once the batch has fully drained
+             * (no more pending facts) is rw[] in its settled post-sleep
+             * state — persist it THEN (not every round) so a reboot answers
+             * `ask sky`->blue from the durable store. r3_weights_persist is
+             * a content-id no-op when rw[] is unchanged (flash-wear honest-
+             * issue) and a no-op without PKERNEL_PFS_DIR / on bare metal. */
+            if (!r3_facts_pending()) {
+                INT wr = r3_weights_persist();
+                if (wr == 1)
+                    dmn_puts("[dmn] sleep: persisted rw[] -> durable store\r\n");
+                else if (wr < 0)
+                    dmn_puts("[dmn] sleep: WARN durable weights write failed\r\n");
+            }
         }
     }
 

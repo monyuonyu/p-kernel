@@ -30,8 +30,12 @@ android {
         // upgrades cleanly. This build carries the living mind (LM-7..11),
         // real words (r3_vocab), Path W/W2 merge, Ed25519 signing
         // (ed25519/sign/sign_entropy), and the 32-language manifesto.
-        versionCode   = 10
-        versionName   = "0.4.6"
+        // 0.4.7: persistence SLICE 1+2 — the durable store is pointed at the
+        // app's private files dir (PKERNEL_PFS_DIR via nativeSetDataDir), so
+        // the identity (Self lineage) AND the learned mind (rw[]) survive a
+        // process death / reboot instead of evaporating on every launch.
+        versionCode   = 11
+        versionName   = "0.4.7"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.

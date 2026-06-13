@@ -403,6 +403,15 @@ void r3_weights_set(const float *in);       /* R_NP floats into rw[]         */
 UW   r3_merge_epoch(void);                  /* the version high-water        */
 void r3_onemind_test(void);                 /* the disease/cure cert (XI.4)  */
 void r3_onemind_nocentral_test(void);       /* order-independence at n=R_NP  */
+/* persistence SLICE 2 (docs/architecture/persistence.md): the learned mind
+ * survives a reboot. r3_weights_persist() durably saves rw[] (header-guarded
+ * by version+R_NP+vocab content-id, content-id no-op compare) — called by
+ * the DMN after a consolidation tick. r3_weights_restore_or_pretrain() loads
+ * it at boot IF the header matches the current build, else refuses + lets the
+ * lazy pretrain rebuild (the wave-47 stale-weights trap, sealed). Both are
+ * no-ops on bare metal / without PKERNEL_PFS_DIR (memory-only). */
+INT  r3_weights_persist(void);              /* 1=wrote 0=no-op -1=durable err */
+INT  r3_weights_restore_or_pretrain(void);  /* 1=restored 0=lazy-pretrain     */
 /* the fleet-DMN slow-band merge pulse; created in both hosted usermains
  * beside mind_net_task (Path W's production cadence). */
 void mind_merge_task(INT stacd, void *exinf);
