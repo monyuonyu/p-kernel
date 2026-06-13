@@ -411,24 +411,33 @@ void kdds_init(void)
 
 void kdds_delete_cluster(const char *name)
 {
-    /* ローカルトピックスロットを閉じる */
-    BOOL found = FALSE;
+    /* 削除対象トピックのインデックスを先に確定する。slot を閉じる前に
+     * 捕まえておくことで、ハンドルを topic_idx で正確に判定できる
+     * (名前再検索は slot を閉じた後だと一致しなくなる)。 */
+    W dead_tidx = -1;
     for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
         if (!kdds_topics[i].open) continue;
         if (!kd_streq(kdds_topics[i].name, name)) continue;
-        kdds_topics[i].open = 0;
-        found = TRUE;
+        dead_tidx = i;
         break;
     }
-    /* 対応するハンドルも全て閉じる */
-    for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
-        if (!kdds_handles[h].open) continue;
-        /* topic_idx 経由で判定できないため名前で再検索 */
-        W tidx = kdds_handles[h].topic_idx;
-        if (tidx < 0 || tidx >= KDDS_TOPIC_MAX) continue;
-        if (!kd_streq(kdds_topics[tidx].name, name) &&
-            !(found && !kdds_topics[tidx].open)) continue;
-        /* このハンドルが削除対象トピックのものなら閉じる */
+
+    /* 対応するハンドルを全て閉じる (KDDS-DELCLUSTER, external audit
+     * 2026-06-13: 以前はループ本体が空でハンドルが開きっぱなしで漏れていた)。
+     * kdds_close と同じ後始末: subscriber セマフォを削除し、スロットを解放。 */
+    if (dead_tidx >= 0) {
+        for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
+            if (!kdds_handles[h].open) continue;
+            if (kdds_handles[h].topic_idx != dead_tidx) continue;
+            if (kdds_handles[h].sub_sem >= 0) {
+                tk_del_sem(kdds_handles[h].sub_sem);
+                kdds_handles[h].sub_sem = -1;
+            }
+            kdds_handles[h].topic_idx = -1;
+            kdds_handles[h].open      = 0;
+        }
+        /* 全ハンドルを閉じたのでトピックスロットを解放する */
+        kdds_topics[dead_tidx].open = 0;
     }
 
     kd_puts("[kdds] delete cluster: \""); kd_puts(name); kd_puts("\"\r\n");
@@ -478,4 +487,72 @@ void kdds_list(void)
     kd_puts(" far_bytes=");          kd_putdec(kdds_tx_bytes_cross);
     kd_puts(" near_bytes=");         kd_putdec(kdds_tx_bytes - kdds_tx_bytes_cross);
     kd_puts("\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* KDDS-DELCLUSTER self-test (external audit 2026-06-13, gap-ledger)   */
+/*                                                                     */
+/* Opens handles on a cluster topic via the REAL kdds_open path,       */
+/* deletes the cluster via the REAL kdds_delete_cluster, and confirms  */
+/* NO handle to the deleted topic remains open (the old empty loop     */
+/* body leaked them) while an UNRELATED topic's handle is untouched.   */
+/* Emits "[kdds-delcluster] PASS" (returns 0) or "FAIL ...".           */
+/* ------------------------------------------------------------------ */
+INT kdds_delcluster_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : kd_puts;
+
+    /* run in non-distributed mode so the tail replica_tombstone() is skipped */
+    UB saved_my  = drpc_my_node;
+    drpc_my_node = 0xFF;
+
+    const char *DEL   = "test/delcluster";
+    const char *KEEP  = "test/keepalive";
+
+    /* open two handles on the SAME doomed topic + one on an unrelated topic */
+    W h1 = kdds_open(DEL,  KDDS_QOS_LATEST_ONLY);
+    W h2 = kdds_open(DEL,  KDDS_QOS_LATEST_ONLY);
+    W hk = kdds_open(KEEP, KDDS_QOS_LATEST_ONLY);
+
+    if (h1 < 0 || h2 < 0 || hk < 0) {
+        say("[kdds-delcluster] FAIL open (table full?)\r\n");
+        /* best-effort cleanup */
+        if (h1 >= 0) kdds_close(h1);
+        if (h2 >= 0) kdds_close(h2);
+        if (hk >= 0) kdds_close(hk);
+        drpc_my_node = saved_my;
+        return 1;
+    }
+
+    W del_tidx = kdds_handles[h1].topic_idx;
+
+    /* the bug: delete the cluster, then check the doomed handles */
+    kdds_delete_cluster(DEL);
+
+    /* (1) no handle to the deleted topic may remain open */
+    for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
+        if (kdds_handles[h].open && kdds_handles[h].topic_idx == del_tidx) {
+            say("[kdds-delcluster] FAIL leaked-handle (deleted topic still open)\r\n");
+            fails++;
+            break;
+        }
+    }
+    /* (2) the topic slot itself must be freed */
+    if (kdds_topics[del_tidx].open) {
+        say("[kdds-delcluster] FAIL topic-slot-not-freed\r\n");
+        fails++;
+    }
+    /* (3) the unrelated topic's handle must be untouched */
+    if (!kdds_handles[hk].open) {
+        say("[kdds-delcluster] FAIL collateral (unrelated handle closed)\r\n");
+        fails++;
+    }
+
+    /* cleanup the survivor */
+    kdds_close(hk);
+    drpc_my_node = saved_my;
+
+    if (fails == 0) say("[kdds-delcluster] PASS\r\n");
+    return fails;
 }
