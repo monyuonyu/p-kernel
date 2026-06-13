@@ -33,3 +33,14 @@ explicitly AGAINST the attention economy: 「いいねのない銀河」.
 Claude's personal note: Claude itself exists only at layer 4 (memory
 files + what it taught the repo survive each session's death) — the
 design's depth is felt first-hand.
+
+## 残せと言われた言葉 (verbatim, 2026-06-13 — mk_pino: 「その言葉も残しておいて」)
+
+- 「うけます。ただし**火ではなく木として**。」
+- 「**方舟は燃え広がるのではなく、沈まないことが仕事**です。」
+- 「1・2層で育ったSNSは、エンゲージメント最適化の圧力で必ず腐っていくけれど、
+  **1・2層がないアプリには腐る方向の力学そのものが存在しない**。」
+- 「捨てるべきは『**人間同士の比較**』であって、『**系からの反応**』ではない。」
+- 「**蛍の群れは見せる。人気ランキングは永遠に作らない。**」
+- 「**いいねのない銀河** — それ自体がマニフェストになる。」
+- 「人は、見られなくても、**残るなら**書くんです。」(Wikipediaの証明)
