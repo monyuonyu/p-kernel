@@ -536,6 +536,15 @@ static void cmd_pfs(const UB *line, INT n)
                 print("\r\n");
             }
         }
+    } else if (p < end && starts_with(p, (INT)(end - p), "durtest")) {
+        /* DUR-SWALLOW cert: a failed durable write must be reported non-OK and
+         * the sole copy must survive eviction. Meaningful only with a durable
+         * backend active (PKERNEL_PFS_DIR / ARK). */
+        pfs_durswallow_self_test(print);
+    } else if (p < end && starts_with(p, (INT)(end - p), "dagtest")) {
+        /* DUR-REFTAB cert: a torn-but-same-length refs.tab must be REJECTED at
+         * load (CRC), a clean refs.tab must round-trip. */
+        pfs_dag_self_test(print);
     } else if (p < end && starts_with(p, (INT)(end - p), "ls")) {
         pfs_repl_ls();
     } else {

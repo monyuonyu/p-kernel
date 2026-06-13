@@ -54,6 +54,12 @@ extern int  pfs_ark_active(void);                      /* mounted + ready?   */
 extern int  pfs_ark_restore(void (*emit)(const char *)); /* mount at boot    */
 extern int  pfs_ark_put(const void *data, unsigned len); /* new block -> log */
 extern int  pfs_ark_get(const unsigned char *id, void *buf, unsigned maxlen);
+
+/* DUR-SWALLOW cert: force the NEXT durable write to fail (no disk touch,
+ * auto-clears). Drives the real production write seam through its failure
+ * branch from pfs_durswallow_self_test() — one hook per backend. */
+extern void pfs_dur_force_fail(int on);
+extern void pfs_ark_force_fail(int on);
 #endif
 
 /* NO <string.h> here. arch/common files never include libc headers
@@ -103,6 +109,11 @@ typedef struct {
     UW   len;                      /* block length in bytes */
     U1   used;                     /* slot occupied? */
     U1   origin;                   /* creator node id / PFS_ORIGIN_SELF */
+    U1   unevict;                  /* DUR-SWALLOW: durable write FAILED for this
+                                    * block, so the in-memory copy is the ONLY
+                                    * copy. FIFO eviction must SKIP it until a
+                                    * later durable write for it succeeds (then
+                                    * this clears) — never drop the sole copy. */
     U1   data[PFS_BLOCK_MAX];      /* block bytes */
 } PFS_SLOT;
 
@@ -178,8 +189,35 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
 
     /* Dedup: same content -> same id -> do not re-store (and do NOT
      * fire the hook — that is what stops announce loops in P1: a
-     * replica that already holds the block stays silent). */
-    if (find_slot(id) >= 0) return PFS_OK;
+     * replica that already holds the block stays silent).
+     *
+     * DUR-SWALLOW recovery: if the resident copy is un-evictable because its
+     * durable write failed earlier, a re-put is the natural retry point — try
+     * the durable write again; on success the block is durable, so clear the
+     * pin (it may be evicted again) and report PFS_OK. On a repeated failure
+     * keep it pinned and report PFS_E_DURABLE (still the only copy). */
+    {
+        INT ds = find_slot(id);
+        if (ds >= 0) {
+#ifdef _TK_HOSTED_LIBC_
+            if (!pfs_loading && pfs_table[ds].unevict) {
+                INT dur_rc = 0;
+                if (pfs_ark_active()) {
+                    dur_rc = pfs_ark_put(pfs_table[ds].data,
+                                         (unsigned)pfs_table[ds].len);
+                } else if (pfs_dur_active()) {
+                    char hex[2 * PFS_ID_LEN + 1];
+                    id_to_hex(pfs_table[ds].id, hex);
+                    dur_rc = pfs_dur_write(hex, pfs_table[ds].data,
+                                           (unsigned)pfs_table[ds].len);
+                }
+                if (dur_rc != 0) return PFS_E_DURABLE;   /* still unsaved */
+                pfs_table[ds].unevict = 0;               /* durable now */
+            }
+#endif
+            return PFS_OK;
+        }
+    }
 
     /* Pick a slot: a FREE one if any. Otherwise the table is full — and P0 is
      * a CACHE in front of a durable backend, not the system of record. If a
@@ -200,23 +238,32 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
 #ifdef _TK_HOSTED_LIBC_
         /* Only ARK has a get fall-through, so only ARK makes eviction safe.
          * (Persist the new block FIRST, below, so it too is durable before any
-         * resident block is dropped.) */
+         * resident block is dropped.) DUR-SWALLOW: a victim marked `unevict`
+         * is the ONLY copy of its content (its durable write failed earlier),
+         * so FIFO eviction MUST skip it — dropping it would lose data even with
+         * ARK mounted. Probe up to PFS_MAX_BLOCKS slots for an evictable one. */
         if (!pfs_loading && pfs_ark_active()) {
             static UW evict_clk;                 /* rotating victim, FIFO-ish */
-            slot = (INT)(evict_clk % PFS_MAX_BLOCKS);
-            evict_clk++;
-            evicting = 1;
+            for (UW probe = 0; probe < PFS_MAX_BLOCKS; probe++) {
+                INT cand = (INT)(evict_clk % PFS_MAX_BLOCKS);
+                evict_clk++;
+                if (!pfs_table[cand].unevict) { slot = cand; evicting = 1; break; }
+            }
         }
 #endif
-        if (slot < 0) return PFS_E_FULL;         /* no safe eviction possible */
+        /* No free slot AND no safe eviction victim (table full, or every
+         * resident block is an un-evictable sole copy): refuse honestly. */
+        if (slot < 0) return PFS_E_FULL;
     }
 
     /* Store into the chosen slot (fresh occupancy bumps the count; an eviction
-     * reuses an occupied slot so the resident count is unchanged). */
+     * reuses an occupied slot so the resident count is unchanged). A fresh
+     * store starts evictable; the durable-write result below may flip it. */
     if (!pfs_table[slot].used) pfs_n++;
     pfs_memcpy(pfs_table[slot].id, id, PFS_ID_LEN);
-    pfs_table[slot].len    = len;
-    pfs_table[slot].origin = origin;
+    pfs_table[slot].len     = len;
+    pfs_table[slot].origin  = origin;
+    pfs_table[slot].unevict = 0;
     if (len) pfs_memcpy(pfs_table[slot].data, buf, (size_t)len);
     pfs_table[slot].used = 1;
 
@@ -226,15 +273,35 @@ INT pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
      * configured or on bare metal.
      *   PKERNEL_PFS_BACKEND=ark -> ARK log (arch/linux/pfs_ark.c)
      *   else, $PKERNEL_PFS_DIR  -> flat file (arch/linux/pfs_durable.c,
-     *                              filename = block-id hex, fsync'd). */
+     *                              filename = block-id hex, fsync'd).
+     *
+     * DUR-SWALLOW (🔴): the rc was discarded here, so a FAILED durable write
+     * (disk full, fsync error, bad permissions) was reported as PFS_OK and the
+     * FIFO eviction above could then drop the only copy — the ark forgot
+     * silently. Now: when durable is ACTIVE and the write FAILS, mark the slot
+     * un-evictable (the in-memory copy is the sole copy) AND return non-OK so
+     * the caller learns the block did NOT reach the ark. The bare-metal path is
+     * unchanged: the #ifdef block compiles out, durable is never active there,
+     * the store is correctly memory-only, and we return PFS_OK as before. */
 #ifdef _TK_HOSTED_LIBC_
     if (!pfs_loading) {
+        INT dur_rc = 0;
+        U1  dur_on = 0;
         if (pfs_ark_active()) {
-            pfs_ark_put(pfs_table[slot].data, (unsigned)len);
+            dur_on = 1;
+            dur_rc = pfs_ark_put(pfs_table[slot].data, (unsigned)len);
         } else if (pfs_dur_active()) {
+            dur_on = 1;
             char hex[2 * PFS_ID_LEN + 1];
             id_to_hex(pfs_table[slot].id, hex);
-            pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
+            dur_rc = pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
+        }
+        if (dur_on && dur_rc != 0) {
+            /* The ONLY copy now lives in RAM — pin it against FIFO eviction
+             * and tell the caller the ark did not persist it. */
+            pfs_table[slot].unevict = 1;
+            (void)evicting;
+            return PFS_E_DURABLE;
         }
     }
 #endif
@@ -428,6 +495,108 @@ INT pfs_durable_restore(void (*emit)(const char *))
 #else
     (void)emit;
     return 0;
+#endif
+}
+
+/* ------------------------------------------------------------------ */
+/* DUR-SWALLOW cert — a failed durable write must NOT be reported as     */
+/* PFS_OK, and the sole in-memory copy must survive FIFO eviction.       */
+/* Exercises the PRODUCTION pfs_put path with a real backend fail        */
+/* injection (pfs_dur_force_fail / pfs_ark_force_fail); hosted-only and  */
+/* meaningful only when a durable backend is active.                     */
+/* ------------------------------------------------------------------ */
+
+INT pfs_durswallow_self_test(void (*emit)(const char *))
+{
+#ifdef _TK_HOSTED_LIBC_
+    INT fails = 0;
+    INT ark   = pfs_ark_active();
+    INT flat  = (!ark && pfs_dur_active());
+
+    if (!ark && !flat) {
+        emit("[pfs-durswallow] no durable backend active "
+             "(set PKERNEL_PFS_DIR) — cert cannot run\r\n");
+        emit("[pfs-durswallow] FAIL (durable not active)\r\n");
+        return 1;
+    }
+
+    /* A unique block so this cert never dedups against a resident one. */
+    static U1 victim[64];
+    pfs_memset(victim, 0xD0, sizeof victim);
+    victim[0] = (U1)pfs_count();          /* perturb so re-runs differ */
+    victim[1] = ark ? 0xA1 : 0xF1;
+
+    U1 vid[PFS_ID_LEN];
+    pfs_id_compute(victim, sizeof victim, vid);
+
+    /* Inject a durable-write failure on the active backend, then put. */
+    if (ark) pfs_ark_force_fail(1); else pfs_dur_force_fail(1);
+    INT rc = pfs_put(victim, (UW)sizeof victim, 0);
+
+    /* (1) the failed durable write must be reported NON-OK. */
+    if (rc == PFS_OK) {
+        emit("[pfs-durswallow] FAIL pfs_put swallowed the durable error "
+             "(returned PFS_OK)\r\n");
+        fails++;
+    } else {
+        emit("[pfs-durswallow] ok  failed durable write -> pfs_put non-OK\r\n");
+    }
+
+    /* (2) the block must still be present in RAM (the only copy). */
+    if (!pfs_has(vid)) {
+        emit("[pfs-durswallow] FAIL block not stored after durable failure\r\n");
+        fails++;
+    }
+
+    /* (3) it must survive eviction pressure. Under ARK (the backend that
+     * evicts) drive >PFS_MAX_BLOCKS fresh puts so the FIFO clock sweeps the
+     * whole table; the un-evictable victim must be skipped and stay readable.
+     * Under the flat backend the table never evicts, so the same puts also
+     * leave it readable — either way pfs_get must still return it. */
+    INT pressure = (INT)PFS_MAX_BLOCKS + 4;
+    static U1 filler[16];
+    for (INT k = 0; k < pressure; k++) {
+        filler[0] = (U1)(k & 0xFF);
+        filler[1] = (U1)((k >> 8) & 0xFF);
+        filler[2] = 0x5A;
+        (void)pfs_put(filler, (UW)sizeof filler, 0);
+    }
+
+    U1 rd[64];
+    INT glen = pfs_get(vid, rd, sizeof rd);
+    if (glen != (INT)sizeof victim ||
+        pfs_memcmp(rd, victim, sizeof victim) != 0) {
+        emit("[pfs-durswallow] FAIL sole copy was evicted after a durable "
+             "failure (the ark forgot)\r\n");
+        fails++;
+    } else {
+        emit("[pfs-durswallow] ok  un-evictable sole copy survived "
+             "eviction pressure\r\n");
+    }
+
+    /* (4) a SUCCEEDING durable write for the same content clears unevict
+     * (the block is durable now, so it becomes evictable again). Re-put with
+     * no injection; the slot's unevict flag should drop. We can't read the
+     * flag directly across the API, but a clean re-put returning PFS_OK proves
+     * the honest path still works after a failure. */
+    if (ark) pfs_ark_force_fail(0); else pfs_dur_force_fail(0);
+    INT rc2 = pfs_put(victim, (UW)sizeof victim, 0);
+    if (rc2 != PFS_OK) {
+        emit("[pfs-durswallow] FAIL clean re-put after recovery not PFS_OK\r\n");
+        fails++;
+    } else {
+        emit("[pfs-durswallow] ok  durable write recovered -> PFS_OK\r\n");
+    }
+
+    if (fails == 0)
+        emit("[pfs-durswallow] PASS (durable failure honest + sole copy "
+             "un-evictable)\r\n");
+    else
+        emit("[pfs-durswallow] FAIL\r\n");
+    return fails;
+#else
+    (void)emit;
+    return 0;     /* bare metal: no durable backend, nothing to swallow */
 #endif
 }
 
