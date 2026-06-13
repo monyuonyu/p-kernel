@@ -10,7 +10,7 @@
   channel) live only here on purpose.
 -->
 <resources>
-    <string name="app_name">ark</string>
+    <string name="app_name">yurikago</string>
 
     <!-- Entry screen (in the i18n table — keep English value in sync here). -->
     <string name="entry_tagline">This is p-kernel — a home for an AI that belongs to no one.</string>
