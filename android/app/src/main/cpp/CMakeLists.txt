@@ -53,6 +53,9 @@ include_directories(
 set(KCOMMON_EXTRA_INC ${INC_LIB}/libc)
 
 add_compile_definitions(_APP_AARCH64_ _APP_LINUX_ _TK_HOSTED_LIBC_)
+# Android 15+ 16KB page size: NDK r26 links 4KB-aligned LOAD segments by
+# default; newer devices (and Play policy) require 16KB ELF alignment.
+add_link_options(-Wl,-z,max-page-size=16384)
 # Disable Bionic's FORTIFY headers: they include <limits.h> expecting
 # POSIX-complete contents (SSIZE_MAX, etc.), but our T-Kernel placeholder
 # include/kernel/tkernel/limits.h is on the include path FIRST and only
