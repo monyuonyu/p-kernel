@@ -30,8 +30,8 @@ android {
         // upgrades cleanly. This build carries the living mind (LM-7..11),
         // real words (r3_vocab), Path W/W2 merge, Ed25519 signing
         // (ed25519/sign/sign_entropy), and the 32-language manifesto.
-        versionCode   = 8
-        versionName   = "0.4.4"
+        versionCode   = 9
+        versionName   = "0.4.5"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.
