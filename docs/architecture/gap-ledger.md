@@ -20,8 +20,20 @@
 | id | one-line | sev | evidence it is still open (file:line on master) | "closed" means |
 |---|---|---|---|---|
 | **AUDIT-SPRAWL** (review #5) | The self-audit became a second product (v1..v8 ≈ 2431 lines, rivalling the learning code); gaps were *versioned*, not *closed*. | 🟡 | `philosophy-gap-audit{,-2..-8}.md` (8 files) | This ledger is the sole open list; rows only shrink; no v9 is ever spawned. Closes by sustained discipline. |
+| **SEC-OOB-DRPC** | `drpc_call(UB dst_node)` indexes `dnode_table[dst_node]` with no bound; `DNODE_MAX==64`; `dtk_sig_sem`/`dtk_cre_tsk` reach it unguarded → OOB for id 64–255. | 🔴 | `arch/common/drpc.c:419,422,482,657,689` | `dst_node<DNODE_MAX` guard at every `drpc_call` reach; self-test rejects id≥64. |
+| **DUR-SWALLOW** | `pfs_put` discards `pfs_ark_put`/`pfs_dur_write` rc → returns `PFS_OK` on a failed durable write; FIFO eviction then loses the only copy (the ark forgets). | 🔴 | `arch/common/pfs_block.c` (`_TK_HOSTED_LIBC_` block, ~`:233`), eviction `:198-221` | durable-write-failure injection makes `pfs_put` non-OK and the block un-evictable. |
+| **SEC-SIGN-TRUNC** | `ed25519_sign` truncates oversize msg and signs anyway (fail-open, `void`), while `ed25519_verify` rejects it (fail-closed) — signer/verifier can disagree. | 🟠 | `arch/common/ed25519.c:549` vs `:563` | sign returns failure (not a prefix signature) on oversize; KAT covers it. |
+| **NOCENTRAL-RAFT** | Live Raft elects a privileged LEADER on the bare-metal builds — contradicts the "no central anything" thesis (linux x86_64 already runs swim/world/lookup instead). | 🟠 | `arch/x86/usermain.c:272-273`, `arch/aarch64/usermain.c:149-150`, `arch/common/spawn.c:200` | no boot-time leader election on any build, or raft explicitly labeled legacy/optional. |
+| **SWIM-INCARN** | `incarnation` is wired on the wire but never assigned a real value and never compared in `gossip_apply` — the anti-stale-rumor mechanism is dead. | 🟠 | `arch/common/swim.c:97` (copied, never set), `gossip_apply` (no compare); `swim.h:54` | a fresh-incarnation ALIVE refutes a stale DEAD rumor in a self-test. |
+| **ISO-USERPTR** | Pointer-taking syscalls + the ELF loader dereference user addresses with no kernel-range check (confused-deputy; masked today only by the flat identity map). | 🟠 | `arch/x86/syscall.c:346,366,696,742,683`, `arch/x86/elf_loader.c:258` | `user_range_ok(tid,ptr,len)` at every pointer syscall + segment placement; self-test rejects a kernel-range pointer. |
+| **DUR-REFTAB** | `pfs_dag` ref table is the one persistent state that is neither content-addressed nor CRC'd; a same-length torn `refs.tab` loads garbage `head`/`seq`. | 🟠 | `arch/common/pfs_dag.c:231-250`, restore `:264-278` | ref table CRC'd + written temp+rename (or moved onto ARK). |
+| **HONEST-REORDER** | "fuzzer 0 BUG on reorder" overstates it: the in-tree power-loss model is prefix-truncation only; reorder safety rests on the commit self-check being *detectable*, not on a tested fsync barrier. | 🟡 | `arch/common/arkfs.c:1431`; README §1 / arkfs header claim | wording corrected to "reorder *detectable*", or a real fsync-barrier test harness. |
+| **KDDS-DELCLUSTER** | `kdds_delete_cluster` handle-close loop computes the predicate but its body is empty — handles to a deleted topic leak open. | 🟡 | `arch/common/kdds.c:412-439` (second loop, no `open=0`) | the loop actually closes matching handles; self-test shows no leaked handle. |
 
-**Open rows: 1.** Every other G-number is closed (below).
+**Open rows: 10.** Nine added 2026-06-13 by an external peer audit (detail + file:line + praise in
+[`../review-2026-06-13-external-audit.md`](../review-2026-06-13-external-audit.md)); each "closed" is
+CI-self-test-enforceable. Detail lives in the review doc, not here — the ledger stays one line per row
+(the AUDIT-SPRAWL discipline). Every G-number is still closed (below).
 
 ---
 
