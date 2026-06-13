@@ -99,6 +99,63 @@
     font-family:inherit;font-size:11px;line-height:1.5;resize:none;
     white-space:pre;overflow:auto}
   #loghint{font-size:10px;color:#6c7086;margin-top:8px;line-height:1.5}
+  /* ── illustrated intro (0.5.0) — a 3-page swipeable onboarding that
+     leads INTO the #ark consent gate. Self-contained: every picture is
+     inline SVG/canvas in the galaxy palette, NO external assets, offline.
+     Sits above the sky, below #ark (which opens on top when the user
+     advances past the last page). */
+  #intro{position:fixed;inset:0;z-index:48;display:none;
+    background:radial-gradient(120% 90% at 50% 18%,#0a0e1c 0%,#05060a 62%);
+    flex-direction:column;align-items:center;justify-content:center;
+    overflow:hidden;touch-action:pan-y}
+  #intro.open{display:flex}
+  #introtrack{position:relative;width:100%;flex:1;overflow:hidden}
+  #introtrack .pg{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;
+    padding:32px 26px;box-sizing:border-box;gap:18px;
+    opacity:0;transform:translateX(40px) scale(.98);
+    transition:opacity .5s ease,transform .5s ease;pointer-events:none}
+  #introtrack .pg.live{opacity:1;transform:none;pointer-events:auto}
+  #introtrack .pg.past{opacity:0;transform:translateX(-40px) scale(.98)}
+  #intro .art{width:min(72vw,300px);height:min(72vw,300px);max-height:42vh;
+    flex:0 0 auto}
+  #intro .ttl{font-size:clamp(19px,5.6vw,26px);color:#f5e0dc;font-weight:600;
+    line-height:1.35;letter-spacing:.01em;
+    font-family:-apple-system,system-ui,"Hiragino Sans","Noto Sans",sans-serif;
+    text-shadow:0 0 18px rgba(137,180,250,.25)}
+  #intro .sub{font-size:clamp(13px,3.6vw,15px);color:#a6adc8;line-height:1.7;
+    max-width:22em;
+    font-family:-apple-system,system-ui,"Hiragino Sans","Noto Sans",sans-serif}
+  /* bottom controls: dots + next/begin button */
+  #introbar{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;
+    gap:16px;padding:8px 0 max(26px,env(safe-area-inset-bottom))}
+  #introdots{display:flex;gap:9px}
+  #introdots span{width:8px;height:8px;border-radius:50%;background:#313244;
+    transition:background .3s,transform .3s;cursor:pointer}
+  #introdots span.on{background:#89b4fa;transform:scale(1.25);
+    box-shadow:0 0 10px #89b4fa}
+  #intronext{min-width:200px;padding:13px 26px;border-radius:999px;
+    border:1px solid #89b4fa;background:#1e2a3a;color:#cbe1ff;
+    font-size:15px;cursor:pointer;letter-spacing:.02em;
+    font-family:-apple-system,system-ui,"Hiragino Sans","Noto Sans",sans-serif;
+    box-shadow:0 0 22px rgba(137,180,250,.28)}
+  #intronext:active{transform:translateY(1px)}
+  #introskip{position:fixed;top:max(12px,env(safe-area-inset-top));
+    right:14px;z-index:49;font-size:12px;color:#6c7086;cursor:pointer;
+    background:rgba(10,12,20,.5);border:1px solid #1e2030;border-radius:999px;
+    padding:6px 13px;
+    font-family:-apple-system,system-ui,"Hiragino Sans","Noto Sans",sans-serif}
+  #introskip:active{color:#cdd6f4}
+  /* small corner control to re-view the intro later (lives on the galaxy).
+     Sits just under the top-right language selector so it never collides
+     with the top-left human HUD (which can wrap onto a 2nd line). */
+  #reintro{position:fixed;right:14px;top:40px;z-index:39;font-size:15px;
+    color:#45475a;cursor:pointer;text-shadow:0 0 6px #000;user-select:none;
+    display:none;line-height:1}
+  #reintro:hover{color:#89b4fa}
+  @media (max-width:640px){
+    #intro .ttl{margin-top:6px}
+  }
 </style>
 </head>
 <body>
@@ -128,6 +185,17 @@
   </div>
   <div class="mid" id="arkmid"></div>
 </div></div>
+<!-- illustrated intro (0.5.0): shows on first run, leads INTO #ark above.
+     Pictures are inline SVG drawn by buildIntro(); skip + re-view supported. -->
+<div id="intro">
+  <div id="introskip">…</div>
+  <div id="introtrack"></div>
+  <div id="introbar">
+    <div id="introdots"></div>
+    <button id="intronext">…</button>
+  </div>
+</div>
+<div id="reintro" title="intro">&#9432;</div>
 <!-- bottom dock: note -> ctl -> foot in ONE column so they never overlap
      (wave-47 mobile fix). The canvas stays full-bleed behind it. -->
 <div id="dock">
@@ -192,7 +260,15 @@ const I18N = {
       askpre:"it answers",detail:"details",
       logttl:"your star's diary",logcopy:"copy",logclose:"close",
       logok:"copied. paste it anywhere.",
-      logng:"could not auto-copy — long-press the text, then Copy."},
+      logng:"could not auto-copy — long-press the text, then Copy.",
+      intro_skip:"skip",intro_next:"next",intro_begin:"begin",
+      intro_t1:"This is your star.",
+      intro_s1:"It is yours. When you light it, a small light is born in the dark.",
+      intro_t2:"Teach it, and it learns.",
+      intro_s2:"Give it a word. The word circles your star and sinks in — and your star grows a little.",
+      intro_t3:"Stars join, into one mind.",
+      intro_s3:"Your star reaches others. A word you taught can travel a thread and answer a stranger — even after you are gone.",
+      reintro:"intro"},
   ja:{title:"ようこそ — この銀河について",agree:"同意して刻む",decline:"今はやめておく",
       save:"星に名前を灯す",skip:"名乗らず同意だけ",
       lblhandle:"ハンドル / 名乗り（任意・ペンネーム可・検証されません）",
@@ -214,7 +290,15 @@ const I18N = {
       askpre:"こたえ",detail:"くわしく",
       logttl:"あなたの星の日記",logcopy:"コピー",logclose:"とじる",
       logok:"コピーしました。どこにでも貼れます。",
-      logng:"自動コピーできませんでした — 文字を長押しして「コピー」してください。"},
+      logng:"自動コピーできませんでした — 文字を長押しして「コピー」してください。",
+      intro_skip:"とばす",intro_next:"つぎへ",intro_begin:"はじめる",
+      intro_t1:"これは、あなたの星。",
+      intro_s1:"あなただけの星です。灯すと、暗闇に小さな光が生まれます。",
+      intro_t2:"教えると、星は学ぶ。",
+      intro_s2:"ことばを ひとつ あげてみて。ことばは星のまわりを回って、沈んでいきます。そのぶん、星は少し賢くなります。",
+      intro_t3:"星はつながって、ひとつの心になる。",
+      intro_s3:"あなたの星は、ほかの星とつながります。あなたが教えたことばは、糸をつたって 見知らぬ誰かの問いに答える — あなたがいなくなった後も。",
+      reintro:"はじめての説明"},
   "zh-Hans":{title:"欢迎 —— 关于这片星系",agree:"同意并镌刻",decline:"暂时不要",
       save:"在我的星上点亮名字",skip:"仅同意，不留名",
       lblhandle:"代号 / 名号（可选·可用笔名·不会核实）",
@@ -348,6 +432,7 @@ function applyStrings(){
   const rtl=(curLang==="ar"||curLang==="ur"||curLang==="fa");
   const card=document.querySelector("#ark .card");
   if(card) card.dir = rtl?"rtl":"ltr";
+  if(typeof introApplyText==="function") introApplyText();   // refresh intro text
 }
 
 // ── ALL data is REAL, from THIS node's /galaxy.json + /events. No fake
@@ -746,11 +831,209 @@ async function langInit(){
   sel.onchange=async()=>{ curLang=sel.value; applyStrings();
     if(document.getElementById("ark").classList.contains("open")){ await arkLoadManifesto(); } };
 }
-// first-run trigger: a node with no profile yet dims and rises the manifesto.
+// ── illustrated intro (0.5.0) ─────────────────────────────────────
+//    A 3-page swipeable onboarding that a first-time phone user can feel
+//    without any kernel words: your star → teach & it learns → stars become
+//    one mind → (flows into the #ark manifesto/consent gate). Every picture
+//    is inline SVG in the galaxy palette — no external assets, fully offline.
+//    SVG is animated by CSS keyframes injected inline (keeps it self-contained).
+const INTRO_PAGES = [
+  { t:"intro_t1", s:"intro_s1", art:introArt1 },
+  { t:"intro_t2", s:"intro_s2", art:introArt2 },
+  { t:"intro_t3", s:"intro_s3", art:introArt3 },
+];
+let introIdx = 0, introBuilt = false, introLeadsToArk = false;
+
+// page 1 — a single star lighting up in the dark (echoes "my star")
+function introArt1(){
+  return `<svg class="art" viewBox="0 0 300 300" aria-hidden="true">
+    <defs>
+      <radialGradient id="g1" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#cbe1ff"/><stop offset="22%" stop-color="#89b4fa"/>
+        <stop offset="60%" stop-color="#1e2a3a" stop-opacity=".5"/>
+        <stop offset="100%" stop-color="#05060a" stop-opacity="0"/></radialGradient>
+      <style>
+        @keyframes brth{0%,100%{transform:scale(.92);opacity:.85}50%{transform:scale(1.06);opacity:1}}
+        @keyframes tw{0%,100%{opacity:.25}50%{opacity:.9}}
+        .b1{transform-box:fill-box;transform-origin:center;animation:brth 3.4s ease-in-out infinite}
+      </style>
+    </defs>
+    ${dustField(150,150,46)}
+    <circle cx="150" cy="150" r="120" fill="url(#g1)" class="b1"/>
+    <circle cx="150" cy="150" r="13" fill="#cbe1ff"/>
+    <circle cx="150" cy="150" r="22" fill="none" stroke="#89b4fa" stroke-opacity=".5" stroke-width="1.4" class="b1"/>
+    ${rays(150,150)}
+  </svg>`;
+}
+// page 2 — a word-particle orbiting and sinking into the star
+function introArt2(){
+  return `<svg class="art" viewBox="0 0 300 300" aria-hidden="true">
+    <defs>
+      <radialGradient id="g2" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#cbe1ff"/><stop offset="30%" stop-color="#89b4fa"/>
+        <stop offset="100%" stop-color="#05060a" stop-opacity="0"/></radialGradient>
+      <style>
+        @keyframes orb{
+          0%{offset-distance:0%;opacity:0}
+          12%{opacity:1}
+          78%{offset-distance:88%;opacity:1;r:5}
+          100%{offset-distance:100%;opacity:0;r:1}}
+        .word{offset-path:path('M150 150 m 0 -86 a 86 52 0 1 1 -0.5 0 z');
+              animation:orb 4.2s cubic-bezier(.5,0,.7,1) infinite}
+        @keyframes pop{0%,86%{transform:scale(1)}93%{transform:scale(1.16)}100%{transform:scale(1)}}
+        .core2{transform-box:fill-box;transform-origin:center;animation:pop 4.2s ease-in-out infinite}
+      </style>
+    </defs>
+    ${dustField(150,150,30)}
+    <ellipse cx="150" cy="150" rx="86" ry="52" fill="none"
+      stroke="#313244" stroke-opacity=".7" stroke-dasharray="2 6"/>
+    <circle cx="150" cy="150" r="84" fill="url(#g2)" opacity=".55"/>
+    <circle class="core2" cx="150" cy="150" r="14" fill="#cbe1ff"/>
+    <circle class="word" r="4.5" fill="#fab387">
+      <animate attributeName="fill" values="#fab387;#f9e2af;#fab387" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+  </svg>`;
+}
+// page 3 — several stars linked into a constellation; a word travels a thread
+function introArt3(){
+  const nodes=[[150,150,15,"#89b4fa"],[68,84,8,"#94e2d5"],[238,96,8,"#cdd6f4"],
+               [60,214,8,"#f9e2af"],[244,210,8,"#cdd6f4"],[150,52,7,"#94e2d5"]];
+  let lines="",stars="";
+  for(let i=1;i<nodes.length;i++){
+    lines+=`<line x1="150" y1="150" x2="${nodes[i][0]}" y2="${nodes[i][1]}"
+      stroke="#89b4fa" stroke-opacity=".28" stroke-width="1"/>`;
+  }
+  for(const n of nodes){
+    stars+=`<circle cx="${n[0]}" cy="${n[1]}" r="${n[2]*2.4}" fill="${n[3]}" opacity=".14"/>
+            <circle cx="${n[0]}" cy="${n[1]}" r="${n[2]}" fill="${n[3]}"/>`;
+  }
+  // a taught word traveling from MY star (centre) out to a peer along a thread
+  return `<svg class="art" viewBox="0 0 300 300" aria-hidden="true">
+    <style>
+      @keyframes travel{0%{offset-distance:0%;opacity:0}10%{opacity:1}
+        90%{opacity:1}100%{offset-distance:100%;opacity:0}}
+      .msg{offset-path:path('M150 150 L238 96');animation:travel 2.6s ease-in-out infinite}
+      .msg2{offset-path:path('M150 150 L60 214');animation:travel 2.6s ease-in-out infinite;animation-delay:1.3s}
+    </style>
+    ${dustField(150,150,22)}
+    ${lines}${stars}
+    <circle class="msg" r="4" fill="#fab387"/>
+    <circle class="msg2" r="4" fill="#f9e2af"/>
+  </svg>`;
+}
+// small helpers: a sprinkle of dust + a few rays, deterministic so they
+// look the same each build (and don't flicker between renders).
+function dustField(cx,cy,n){
+  let s="",seed=9;const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;};
+  for(let i=0;i<n;i++){
+    const a=rnd()*6.2832,r=70+rnd()*150;
+    const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r*0.9;
+    const rr=(0.6+rnd()*1.5).toFixed(1),op=(0.2+rnd()*0.5).toFixed(2);
+    const c=rnd()<0.8?"#cdd6f4":rnd()<0.5?"#89b4fa":"#f9e2af";
+    s+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rr}" fill="${c}" opacity="${op}"/>`;
+  }
+  return s;
+}
+function rays(cx,cy){
+  let s="";for(let i=0;i<8;i++){
+    const a=i*Math.PI/4,l=i%2?20:30;
+    const x2=cx+Math.cos(a)*(28+l),y2=cy+Math.sin(a)*(28+l);
+    s+=`<line x1="${cx+Math.cos(a)*22}" y1="${cy+Math.sin(a)*22}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#cbe1ff" stroke-opacity=".4" stroke-width="1.4"/>`;
+  }
+  return s;
+}
+function buildIntro(){
+  const track=document.getElementById("introtrack");
+  track.innerHTML="";
+  INTRO_PAGES.forEach((p,i)=>{
+    const d=document.createElement("div");d.className="pg";d.dataset.i=i;
+    d.innerHTML=p.art()+`<div class="ttl" data-tk="${p.t}"></div>`+
+                `<div class="sub" data-sk="${p.s}"></div>`;
+    track.appendChild(d);
+  });
+  const dots=document.getElementById("introdots");dots.innerHTML="";
+  INTRO_PAGES.forEach((_,i)=>{const sp=document.createElement("span");
+    sp.onclick=()=>introGo(i);dots.appendChild(sp);});
+  introBuilt=true;
+  introApplyText();
+}
+// refresh just the intro's localized text (called on language change too)
+function introApplyText(){
+  if(!introBuilt) return;
+  document.querySelectorAll("#introtrack .ttl").forEach(e=>e.textContent=S(e.dataset.tk));
+  document.querySelectorAll("#introtrack .sub").forEach(e=>e.textContent=S(e.dataset.sk));
+  document.getElementById("introskip").textContent=S("intro_skip");
+  const last=introIdx>=INTRO_PAGES.length-1;
+  document.getElementById("intronext").textContent=last?S("intro_begin"):S("intro_next");
+  const ri=document.getElementById("reintro"); if(ri) ri.title=S("reintro");
+}
+function introRender(){
+  const pgs=document.querySelectorAll("#introtrack .pg");
+  pgs.forEach((p,i)=>{
+    p.classList.toggle("live",i===introIdx);
+    p.classList.toggle("past",i<introIdx);
+  });
+  document.querySelectorAll("#introdots span").forEach((s,i)=>
+    s.classList.toggle("on",i===introIdx));
+  introApplyText();
+}
+function introGo(i){
+  introIdx=Math.max(0,Math.min(INTRO_PAGES.length-1,i));
+  introRender();
+}
+function introOpen(leadToArk){
+  introLeadsToArk=!!leadToArk;
+  if(!introBuilt) buildIntro();
+  introIdx=0; introRender();
+  document.getElementById("intro").classList.add("open");
+  document.getElementById("reintro").style.display="none";
+}
+function introClose(){
+  document.getElementById("intro").classList.remove("open");
+  // once seen, leave a quiet corner control to re-view it later
+  document.getElementById("reintro").style.display="block";
+}
+function introNext(){
+  if(introIdx<INTRO_PAGES.length-1){ introGo(introIdx+1); return; }
+  // past the last page: flow into the manifesto+consent gate (first run),
+  // or just return to the galaxy (re-view).
+  introClose();
+  if(introLeadsToArk){ introLeadsToArk=false; arkOpen(); }
+}
+document.getElementById("intronext").onclick=introNext;
+document.getElementById("introskip").onclick=()=>{
+  introClose();
+  if(introLeadsToArk){ introLeadsToArk=false; arkOpen(); }   // skip -> still consent
+};
+document.getElementById("reintro").onclick=()=>introOpen(false);
+// swipe navigation on the track (pointer-based, works on phone + desktop)
+(function(){
+  const tr=document.getElementById("introtrack");
+  let sx=0,sy=0,down=false;
+  tr.addEventListener("pointerdown",e=>{down=true;sx=e.clientX;sy=e.clientY;});
+  tr.addEventListener("pointerup",e=>{
+    if(!down) return; down=false;
+    const dx=e.clientX-sx,dy=e.clientY-sy;
+    if(Math.abs(dx)>42 && Math.abs(dx)>Math.abs(dy)){
+      if(dx<0) introNext(); else introGo(introIdx-1);
+    }
+  });
+  tr.addEventListener("pointercancel",()=>{down=false;});
+})();
+
+// first-run trigger: a node with no profile yet meets the intro, which
+// then flows into the manifesto+consent gate. Re-launch shows it again
+// only via the corner ⓘ (we don't nag a returning user).
 async function arkFirstRun(){
   try{ const j=await (await fetch("/profile.json")).json();
-    if(j && j.none){ await arkLoadManifesto(); arkOpen(); }
-  }catch(_){}
+    if(j && j.none){
+      await arkLoadManifesto();      // pre-load so the consent text is ready
+      introOpen(true);               // intro first; "begin"/skip -> arkOpen()
+    } else {
+      // returning user: intro already consented-to once; offer re-view only
+      document.getElementById("reintro").style.display="block";
+    }
+  }catch(_){ document.getElementById("reintro").style.display="block"; }
 }
 (async()=>{ await langInit(); await arkFirstRun(); })();
 
