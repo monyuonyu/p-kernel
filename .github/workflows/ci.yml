@@ -509,24 +509,29 @@ jobs:
           i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T moe_infer$'
           i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T dtr_forward_probs$'
           i686-linux-gnu-nm userland/x86/12_ring3/03_core_mind/core_mind.elf | grep -E ' T dtr_weights_set$'
-      - name: Boot QEMU, run `ring3 test` + `ring3 mind` + `dproc test` + `fpu test`, grep all four gates
+      - name: Boot QEMU, run `ring3 iso` + `ring3 test` + `ring3 mind` + `dproc test` + `fpu test`, grep all five gates
         run: |
           cd boot/x86
           # Send the verbs after the shell is up; keep stdin open while
-          # they run (III.6: one boot).  Debt wave adds the kill-path
+          # they run (III.6: one boot).  `ring3 iso` is the ISO-USERPTR
+          # confused-deputy gate (a kernel-range pointer syscall is rejected
+          # with the fault error and the kernel memory is NOT written; a
+          # valid user pointer still succeeds).  Debt wave adds the kill-path
           # teardown gate ([dproc-teardown]) and the x87 context-save
           # gate ([fpu-ctx]) — both FAIL on the pre-wave kernel.
-          ( sleep 25; printf 'ring3 test\n'; sleep 90; printf 'ring3 mind\n'; sleep 90; \
+          ( sleep 25; printf 'ring3 iso\n'; sleep 8; printf 'ring3 test\n'; sleep 90; \
+            printf 'ring3 mind\n'; sleep 90; \
             printf 'dproc test\n'; sleep 40; printf 'fpu test\n'; sleep 90 ) | \
-            timeout 360 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
+            timeout 380 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
               -serial stdio -display none -cpu qemu64 \
               -netdev user,id=n0 -device rtl8139,netdev=n0 \
               -drive file=disk.img,format=raw,if=ide,index=0 \
               > ring3.log 2>&1 &
           QPID=$!
-          # Poll for ALL FOUR gate tags, then stop QEMU early.
-          for i in $(seq 1 350); do
-            grep -aqF '[ring3-survival]' ring3.log && \
+          # Poll for ALL FIVE gate tags, then stop QEMU early.
+          for i in $(seq 1 370); do
+            grep -aqF '[iso-userptr]' ring3.log && \
+              grep -aqF '[ring3-survival]' ring3.log && \
               grep -aqF '[ring3-mind]' ring3.log && \
               grep -aqF '[dproc-teardown]' ring3.log && \
               grep -aqF '[fpu-ctx]' ring3.log && break
@@ -535,6 +540,7 @@ jobs:
           kill $QPID 2>/dev/null || true
           wait $QPID 2>/dev/null || true
           cat ring3.log
+          grep -aF '[iso-userptr] PASS' ring3.log
           grep -aF '[ring3-survival] PASS' ring3.log
           grep -aF '[ring3-mind] PASS' ring3.log
           grep -aF '[dproc-teardown] PASS' ring3.log

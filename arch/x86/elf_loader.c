@@ -17,6 +17,7 @@
 #include "paging.h"
 #include "userspace.h"
 #include "paging.h"
+#include "user_range.h"   /* ISO-USERPTR — validate segment placement */
 #include <tmonitor.h>
 
 /* ----------------------------------------------------------------- */
@@ -254,6 +255,19 @@ ID elf_exec(const char *path, const char *cmdline)
 
         if (phdr.p_type != PT_LOAD) continue;
         if (phdr.p_memsz == 0)      continue;
+
+        /* ISO-USERPTR: a malformed ELF could target a segment at a KERNEL
+         * address; the loader would then blindly copy file bytes / zero-fill
+         * there.  Require [p_vaddr, p_vaddr+p_memsz) to land entirely inside
+         * a ring-3-accessible region before writing.  (p_filesz <= p_memsz
+         * is enforced too, so the file-copy span is covered by the memsz
+         * check.) */
+        if (phdr.p_filesz > phdr.p_memsz ||
+            !user_range_ok((const void *)(UW)phdr.p_vaddr, phdr.p_memsz)) {
+            vfs_close(fd);
+            tm_putstring((UB *)"[elf] segment out of user range (rejected)\r\n");
+            return (ID)-1;
+        }
 
         UB *dest = (UB *)(UW)phdr.p_vaddr;
 

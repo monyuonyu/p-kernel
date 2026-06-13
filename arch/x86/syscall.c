@@ -18,6 +18,7 @@
 #include "paging.h"
 #include "fpu.h"
 #include "gdt_user.h"
+#include "user_range.h"   /* ISO-USERPTR — user_range_ok() kernel-range guard */
 #include "kdds.h"
 #include "edf.h"
 #include "dtr.h"
@@ -346,6 +347,9 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         const char *buf = (const char *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
+        /* ISO-USERPTR: the buffer is READ on the user's behalf — reject a
+         * kernel-range source pointer (confused deputy). */
+        if (!user_range_ok(buf, (UW)len)) return -1;
         if (IS_STD_FD(arg0)) { serial_write(buf, len); return len; }
         if (IS_PIPE_FD(arg0) && IS_PIPE_WRITE(arg0)) {
             INT pi = PIPE_IDX(arg0);
@@ -366,6 +370,9 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         void *buf = (void *)(UW)arg1;
         W len = arg2;
         if (len < 0 || len > 65536) return -1;
+        /* ISO-USERPTR: the kernel WRITES len bytes into buf — a kernel-range
+         * destination would let a ring-3 caller scribble over kernel memory. */
+        if (!user_range_ok(buf, (UW)len)) return -1;
         if (arg0 == 0) {
             if (!stdin_active || len == 0) return -1;
             if (tk_wai_sem(stdin_sem, 1, TMO_FEVR) != E_OK) return -1;
@@ -435,12 +442,14 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_MKDIR: {
         const char *path = (const char *)(UW)arg0;
         if (!vfs_ready) return -1;
+        if (!user_range_ok(path, 1)) return -1;   /* ISO-USERPTR */
         return vfs_mkdir(path);
     }
 
     case SYS_UNLINK: {
         const char *path = (const char *)(UW)arg0;
         if (!vfs_ready) return -1;
+        if (!user_range_ok(path, 1)) return -1;   /* ISO-USERPTR */
         return vfs_unlink(path);
     }
 
@@ -448,6 +457,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         const char *old = (const char *)(UW)arg0;
         const char *nw  = (const char *)(UW)arg1;
         if (!vfs_ready) return -1;
+        if (!user_range_ok(old, 1) || !user_range_ok(nw, 1)) return -1; /* ISO-USERPTR */
         return vfs_rename(old, nw);
     }
 
@@ -468,6 +478,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_CHDIR: {
         const char *path = (const char *)(UW)arg0;
         if (!vfs_ready) return -1;
+        if (!user_range_ok(path, 1)) return -1;   /* ISO-USERPTR */
         return (W)vfs_chdir(path);
     }
 
@@ -476,6 +487,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         char *buf = (char *)(UW)arg0;
         INT   len = (INT)arg1;
         if (!buf || len <= 0) return -1;
+        if (!user_range_ok(buf, (UW)len)) return -1;   /* ISO-USERPTR (kernel writes) */
         vfs_getcwd(buf, len);
         return 0;
     }
@@ -485,6 +497,9 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         const char *path = (const char *)(UW)arg0;
         PK_STAT    *st   = (PK_STAT *)(UW)arg1;
         if (!st || !vfs_ready) return -1;
+        /* ISO-USERPTR: path is read, st is written by the kernel. */
+        if (!user_range_ok(path, 1) || !user_range_ok(st, sizeof(PK_STAT)))
+            return -1;
         UW size; BOOL is_dir;
         if (vfs_stat_path(path, &size, &is_dir) < 0) return -1;
         st->st_mode  = is_dir ? S_IFDIR : S_IFREG;
@@ -498,6 +513,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0=posix_fd, arg1=struct p_stat* */
         PK_STAT *st = (PK_STAT *)(UW)arg1;
         if (!st || IS_STD_FD(arg0)) return -1;
+        if (!user_range_ok(st, sizeof(PK_STAT))) return -1;   /* ISO-USERPTR (kernel writes) */
         if (IS_PIPE_FD(arg0)) {
             /* pipes are always regular files for stat purposes */
             st->st_mode = S_IFREG; st->st_size = 0;
@@ -535,6 +551,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0 = int[2]* — filled with [read_fd, write_fd] */
         W *fds = (W *)(UW)arg0;
         if (!fds) return -1;
+        if (!user_range_ok(fds, 2 * sizeof(W))) return -1;   /* ISO-USERPTR (kernel writes 2 ints) */
         /* Find a free pipe slot */
         for (INT i = 0; i < PIPE_MAX; i++) {
             if (!pipes[i].in_use) {
@@ -571,6 +588,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     /* access: Linux=#33 — check if file is accessible */
     case 33: {
+        if (!user_range_ok((const void *)(UW)arg0, 1)) return -1;  /* ISO-USERPTR */
         INT fd = vfs_open((const char *)(UW)arg0);
         if (fd < 0) return -2;   /* ENOENT */
         vfs_close(fd);
@@ -579,11 +597,14 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     /* rename: Linux=#38, p-kernel=10 */
     case 38:
+        if (!user_range_ok((const void *)(UW)arg0, 1) ||
+            !user_range_ok((const void *)(UW)arg1, 1)) return -1;  /* ISO-USERPTR */
         return (W)vfs_rename((const char *)(UW)arg0,
                              (const char *)(UW)arg1);
 
     /* mkdir: Linux=#39, p-kernel=8 */
     case 39:
+        if (!user_range_ok((const void *)(UW)arg0, 1)) return -1;  /* ISO-USERPTR */
         return (W)vfs_mkdir((const char *)(UW)arg0);
 
     /* rmdir: Linux=#40 — stub (not implemented) */
@@ -640,6 +661,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         } kstat64;
         kstat64 *ks = (kstat64 *)(UW)arg1;
         if (!ks) return -14;
+        if (!user_range_ok(ks, sizeof(kstat64))) return -14;  /* ISO-USERPTR (kernel writes) */
         INT posix_fd = (INT)arg0;
         UW sz = 0;
         unsigned int mode = 0100644; /* S_IFREG | 0644 */
@@ -678,6 +700,9 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         kstat64 *ks = (kstat64 *)(UW)arg1;
         const char *path = (const char *)(UW)arg0;
         if (!ks || !path || !vfs_ready) return -2;
+        /* ISO-USERPTR: path is read, ks is written by the kernel. */
+        if (!user_range_ok(path, 1) || !user_range_ok(ks, sizeof(kstat64)))
+            return -2;
         UW sz; BOOL is_dir;
         if (vfs_stat_path(path, &sz, &is_dir) < 0) return -2;
         ks->st_dev = 1; ks->__ino = 1; ks->st_ino = 1;
@@ -698,8 +723,15 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         iovec_t *iov      = (iovec_t *)(UW)arg1;
         INT      iovcnt   = (INT)arg2;
         W total = 0;
+        /* ISO-USERPTR: the iovec ARRAY itself is read by the kernel. */
+        if (iovcnt < 0 || iovcnt > 1024) return -1;
+        if (iovcnt > 0 && !user_range_ok(iov, (UW)iovcnt * sizeof(iovec_t)))
+            return -1;
         for (INT i = 0; i < iovcnt; i++) {
             if (!iov[i].base || iov[i].len == 0) continue;
+            /* ISO-USERPTR: each scatter buffer is read on the user's behalf. */
+            if (!user_range_ok(iov[i].base, iov[i].len))
+                return total > 0 ? total : -1;
             W r;
             if (IS_STD_FD(posix_fd)) {
                 sio_send_frame((const UB *)iov[i].base, (INT)iov[i].len);
@@ -741,6 +773,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
          * already set up; just update the base to musl's TLS block address. */
         if (arg0) {
             unsigned int *ud = (unsigned int *)(UW)arg0;
+            /* ISO-USERPTR: ud[0] is written, ud[1] is read (user_desc). */
+            if (!user_range_ok(ud, 2 * sizeof(unsigned int))) return -1;
             UW base = (UW)ud[1];
             if (base) gdt_set_user_tls(base);   /* update GDT[8] base */
             ud[0] = 8;   /* entry_number = 8 → GS = (8*8)|3 = 0x43 */
@@ -812,7 +846,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_TSK: {
         /* arg0 = PK_CRE_TSK* */
         PK_CRE_TSK *pk = (PK_CRE_TSK *)(UW)arg0;
-        if (!pk || !pk->task) return -1;
+        if (!pk || !user_range_ok(pk, sizeof(*pk))) return -1;  /* ISO-USERPTR */
+        if (!pk->task) return -1;
 
         /* find a free stack slot */
         void *stk = alloc_user_stack();
@@ -924,7 +959,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0=tid, arg1=PK_REF_TSK* */
         ID tid = (ID)arg0;
         PK_REF_TSK *out = (PK_REF_TSK *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RTSK rtsk;
         W r = (W)tk_ref_tsk(tid, &rtsk);
         if (r < 0) return r;
@@ -946,6 +981,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
          * TA_WMUL (0x08) allows cnt > 1 in tk_wai_sem / tk_sig_sem. */
         struct { void *exinf; INT isemcnt; INT maxsem; } *upk =
             (void *)(UW)arg0;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CSEM pk;
         pk.exinf   = upk->exinf;
         pk.sematr  = TA_TFIFO;  /* 0: FIFO queue, cnt>1 allowed without TA_WMUL */
@@ -977,6 +1013,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
          * Build proper T_CFLG (has flgatr field between exinf and iflgptn). */
         struct { void *exinf; UINT iflgptn; } *upk =
             (void *)(UW)arg0;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CFLG pk;
         pk.exinf   = upk->exinf;
         pk.flgatr  = TA_TFIFO | TA_WMUL;
@@ -1001,11 +1038,15 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_WAI_FLG: {
         /* arg0 = PK_WAI_FLG* */
         PK_WAI_FLG *pk = (PK_WAI_FLG *)(UW)arg0;
-        if (!pk) return -1;
+        if (!pk || !user_range_ok(pk, sizeof(*pk))) return -1;  /* ISO-USERPTR */
         UINT flgptn = 0;
         W r = (W)tk_wai_flg(pk->flgid, pk->waiptn, pk->wfmode,
                              &flgptn, pk->tmout);
-        if (pk->p_flgptn) *pk->p_flgptn = flgptn;
+        /* ISO-USERPTR: p_flgptn is a user out-pointer the kernel writes. */
+        if (pk->p_flgptn) {
+            if (!user_range_ok((void *)(UW)pk->p_flgptn, sizeof(UINT))) return -1;
+            *pk->p_flgptn = flgptn;
+        }
         return r;
     }
 
@@ -1060,6 +1101,13 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         float *ubuf = (float *)(UW)arg0;
         if (!ubuf) return -1;
         if (arg1 < (W)DTR_WEIGHT_FLOATS) return -1;
+        /* ISO-USERPTR: the kernel WRITES DTR_WEIGHT_FLOATS floats into ubuf.
+         * Post-relocation (ring3-core III) this is THE pointer that crosses
+         * the privilege boundary on the AI core path — a kernel-range ubuf
+         * would let a ring-3 mind scribble the live weights snapshot over
+         * kernel memory. */
+        if (!user_range_ok(ubuf, (UW)DTR_WEIGHT_FLOATS * sizeof(float)))
+            return -1;
         dtr_weights_get(ubuf);
         return (W)DTR_WEIGHT_FLOATS;
     }
@@ -1171,23 +1219,24 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TOPIC_OPEN: {
         /* arg0 = name (const char*), arg1 = qos */
         const char *name = (const char *)(UW)arg0;
-        if (!name) return -1;
+        if (!name || !user_range_ok(name, 1)) return -1;  /* ISO-USERPTR */
         return kdds_open(name, arg1);
     }
 
     case SYS_TOPIC_PUB: {
         /* arg0 = handle, arg1 = data ptr, arg2 = len */
         const void *data = (const void *)(UW)arg1;
-        if (!data) return -1;
+        if (!data || !user_range_ok(data, (UW)arg2)) return -1;  /* ISO-USERPTR (read) */
         return kdds_pub(arg0, data, arg2);
     }
 
     case SYS_TOPIC_SUB: {
         /* arg0 = PK_TOPIC_SUB* */
         PK_TOPIC_SUB *pk = (PK_TOPIC_SUB *)(UW)arg0;
-        if (!pk) return -1;
+        if (!pk || !user_range_ok(pk, sizeof(*pk))) return -1;  /* ISO-USERPTR */
         void *buf = (void *)(UW)pk->buf_ptr;
-        if (!buf) return -1;
+        /* ISO-USERPTR: kdds_sub WRITES up to buflen bytes into buf. */
+        if (!buf || !user_range_ok(buf, (UW)pk->buflen)) return -1;
         return kdds_sub(pk->handle, buf, pk->buflen, pk->timeout_ms);
     }
 
@@ -1233,7 +1282,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_MTX: {
         /* arg0 = PK_CRE_MTX* */
         PK_CRE_MTX *upk = (PK_CRE_MTX *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CMTX pk;
         pk.exinf   = NULL;
         pk.mtxatr  = (ATR)upk->mtxatr;
@@ -1268,11 +1317,15 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_SND_MBX:
         /* arg0=mbxid, arg1=T_MSG* */
+        /* ISO-USERPTR: the kernel links into this user message header. */
+        if (!user_range_ok((void *)(UW)arg1, sizeof(T_MSG))) return -1;
         return (W)tk_snd_mbx((ID)arg0, (T_MSG *)(UW)arg1);
 
     case SYS_TK_RCV_MBX: {
         /* arg0=mbxid, arg1=T_MSG** (out), arg2=tmout_ms */
         T_MSG *msg = NULL;
+        /* ISO-USERPTR: arg1 is a user out-pointer the kernel writes. */
+        if (!user_range_ok((void *)(UW)arg1, sizeof(T_MSG *))) return -1;
         ER er = tk_rcv_mbx((ID)arg0, &msg, (TMO)arg2);
         if (er < E_OK) return (W)er;
         *(T_MSG **)(UW)arg1 = msg;
@@ -1286,7 +1339,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_MBF: {
         /* arg0 = PK_CRE_MBF* */
         PK_CRE_MBF *upk = (PK_CRE_MBF *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CMBF pk;
         pk.exinf  = NULL;
         pk.mbfatr = (ATR)upk->mbfatr | TA_USERBUF;
@@ -1302,14 +1355,20 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_SND_MBF: {
         /* arg0 = PK_SND_MBF* (mbfid, msg_ptr, msgsz, tmout) */
         PK_SND_MBF *upk = (PK_SND_MBF *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        /* ISO-USERPTR: msg_ptr is a user buffer read by the kernel. */
+        if (!user_range_ok((void *)(UW)upk->msg_ptr, (UW)upk->msgsz)) return -1;
         return (W)tk_snd_mbf((ID)upk->mbfid,
                                (void *)(UW)upk->msg_ptr,
                                (INT)upk->msgsz, (TMO)upk->tmout);
     }
 
     case SYS_TK_RCV_MBF:
-        /* arg0=mbfid, arg1=buf_ptr, arg2=tmout_ms — returns received size */
+        /* arg0=mbfid, arg1=buf_ptr, arg2=tmout_ms — returns received size.
+         * ISO-USERPTR: the kernel writes the received message into buf_ptr.
+         * The message size is bounded by the mbf's maxmsz (set at create
+         * time, not visible here); reject at least a kernel-range base. */
+        if (!user_range_ok((void *)(UW)arg1, 1)) return -1;
         return (W)tk_rcv_mbf((ID)arg0, (void *)(UW)arg1, (TMO)arg2);
 
     /* ------------------------------------------------------------- */
@@ -1319,7 +1378,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_MPL: {
         /* arg0 = PK_CRE_MPL* */
         PK_CRE_MPL *upk = (PK_CRE_MPL *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CMPL pk;
         pk.exinf  = NULL;
         pk.mplatr = (ATR)upk->mplatr | TA_USERBUF;
@@ -1340,7 +1399,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_TK_REL_MPL:
-        /* arg0=mplid, arg1=blk_ptr */
+        /* arg0=mplid, arg1=blk_ptr (a block GET_MPL handed back) */
+        if (!user_range_ok((void *)(UW)arg1, 1)) return -1;  /* ISO-USERPTR */
         return (W)tk_rel_mpl((ID)arg0, (void *)(UW)arg1);
 
     /* ------------------------------------------------------------- */
@@ -1350,7 +1410,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_MPF: {
         /* arg0 = PK_CRE_MPF* */
         PK_CRE_MPF *upk = (PK_CRE_MPF *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CMPF pk;
         pk.exinf  = NULL;
         pk.mpfatr = (ATR)upk->mpfatr | TA_USERBUF;
@@ -1372,7 +1432,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     }
 
     case SYS_TK_REL_MPF:
-        /* arg0=mpfid, arg1=blf_ptr */
+        /* arg0=mpfid, arg1=blf_ptr (a block GET_MPF handed back) */
+        if (!user_range_ok((void *)(UW)arg1, 1)) return -1;  /* ISO-USERPTR */
         return (W)tk_rel_mpf((ID)arg0, (void *)(UW)arg1);
 
     /* ------------------------------------------------------------- */
@@ -1382,7 +1443,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_CYC: {
         /* arg0 = PK_CRE_CYC* */
         PK_CRE_CYC *upk = (PK_CRE_CYC *)(UW)arg0;
-        if (!upk || !upk->cychdr) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        if (!upk->cychdr) return -1;
         T_CCYC pk;
         pk.exinf   = NULL;
         pk.cycatr  = (ATR)upk->cycatr | TA_HLNG;
@@ -1408,7 +1470,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_ALM: {
         /* arg0 = PK_CRE_ALM* */
         PK_CRE_ALM *upk = (PK_CRE_ALM *)(UW)arg0;
-        if (!upk || !upk->almhdr) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        if (!upk->almhdr) return -1;
         T_CALM pk;
         pk.exinf  = NULL;
         pk.almatr = (ATR)upk->almatr | TA_HLNG;
@@ -1457,7 +1520,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_SEM: {
         PK_REF_SEM *out = (PK_REF_SEM *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RSEM rsem;
         ER er = tk_ref_sem((ID)arg0, &rsem);
         if (er < E_OK) return (W)er;
@@ -1468,7 +1531,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_FLG: {
         PK_REF_FLG *out = (PK_REF_FLG *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RFLG rflg;
         ER er = tk_ref_flg((ID)arg0, &rflg);
         if (er < E_OK) return (W)er;
@@ -1479,7 +1542,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_MTX: {
         PK_REF_MTX *out = (PK_REF_MTX *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RMTX rmtx;
         ER er = tk_ref_mtx((ID)arg0, &rmtx);
         if (er < E_OK) return (W)er;
@@ -1490,7 +1553,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_MBX: {
         PK_REF_MBX *out = (PK_REF_MBX *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RMBX rmbx;
         ER er = tk_ref_mbx((ID)arg0, &rmbx);
         if (er < E_OK) return (W)er;
@@ -1500,7 +1563,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_MBF: {
         PK_REF_MBF *out = (PK_REF_MBF *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RMBF rmbf;
         ER er = tk_ref_mbf((ID)arg0, &rmbf);
         if (er < E_OK) return (W)er;
@@ -1514,7 +1577,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_MPL: {
         PK_REF_MPL *out = (PK_REF_MPL *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RMPL rmpl;
         ER er = tk_ref_mpl((ID)arg0, &rmpl);
         if (er < E_OK) return (W)er;
@@ -1526,7 +1589,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_MPF: {
         PK_REF_MPF *out = (PK_REF_MPF *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RMPF rmpf;
         ER er = tk_ref_mpf((ID)arg0, &rmpf);
         if (er < E_OK) return (W)er;
@@ -1537,7 +1600,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_CYC: {
         PK_REF_CYC *out = (PK_REF_CYC *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RCYC rcyc;
         ER er = tk_ref_cyc((ID)arg0, &rcyc);
         if (er < E_OK) return (W)er;
@@ -1548,7 +1611,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_REF_ALM: {
         PK_REF_ALM *out = (PK_REF_ALM *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RALM ralm;
         ER er = tk_ref_alm((ID)arg0, &ralm);
         if (er < E_OK) return (W)er;
@@ -1564,7 +1627,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_GET_TIM: {
         /* arg0 = PK_SYSTIM* */
         PK_SYSTIM *out = (PK_SYSTIM *)(UW)arg0;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         SYSTIM tim;
         ER er = tk_get_tim(&tim);
         if (er < E_OK) return (W)er;
@@ -1584,7 +1647,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CRE_POR: {
         /* arg0 = PK_CPOR* */
         PK_CPOR *upk = (PK_CPOR *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
         T_CPOR pk;
         pk.exinf   = NULL;
         pk.poratr  = (ATR)upk->poratr;
@@ -1599,7 +1662,9 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_CAL_POR: {
         /* arg0 = PK_CAL_POR* */
         PK_CAL_POR *upk = (PK_CAL_POR *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        /* ISO-USERPTR: msg_ptr is a user call-message buffer (read+reply). */
+        if (!user_range_ok((void *)(UW)upk->msg_ptr, (UW)upk->cmsgsz)) return -1;
         return (W)tk_cal_por((ID)upk->porid, (UINT)upk->calptn,
                               (void *)(UW)upk->msg_ptr,
                               (INT)upk->cmsgsz, (TMO)upk->tmout);
@@ -1608,19 +1673,27 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_ACP_POR: {
         /* arg0 = PK_ACP_POR* */
         PK_ACP_POR *upk = (PK_ACP_POR *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        /* ISO-USERPTR: msg_ptr receives the accepted call message (kernel
+         * writes up to the port's maxcmsz, not visible here → base check). */
+        if (!user_range_ok((void *)(UW)upk->msg_ptr, 1)) return -1;
         RNO rdvno = 0;
         W r = (W)tk_acp_por((ID)upk->porid, (UINT)upk->acpptn,
                               &rdvno, (void *)(UW)upk->msg_ptr,
                               (TMO)upk->tmout);
-        if (upk->p_rdvno) *(RNO *)(UW)upk->p_rdvno = rdvno;
+        if (upk->p_rdvno) {
+            if (!user_range_ok((void *)(UW)upk->p_rdvno, sizeof(RNO))) return -1;
+            *(RNO *)(UW)upk->p_rdvno = rdvno;
+        }
         return r;
     }
 
     case SYS_TK_FWD_POR: {
         /* arg0 = PK_FWD_POR* */
         PK_FWD_POR *upk = (PK_FWD_POR *)(UW)arg0;
-        if (!upk) return -1;
+        if (!upk || !user_range_ok(upk, sizeof(*upk))) return -1;  /* ISO-USERPTR */
+        /* ISO-USERPTR: msg_ptr is a user call-message buffer (read). */
+        if (!user_range_ok((void *)(UW)upk->msg_ptr, (UW)upk->cmsgsz)) return -1;
         return (W)tk_fwd_por((ID)upk->porid, (UINT)upk->calptn,
                                (RNO)upk->rdvno,
                                (void *)(UW)upk->msg_ptr,
@@ -1629,6 +1702,8 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
 
     case SYS_TK_RPL_RDV:
         /* arg0=rdvno, arg1=msg_ptr, arg2=rmsgsz */
+        /* ISO-USERPTR: msg_ptr is a user reply buffer (read). */
+        if (!user_range_ok((void *)(UW)arg1, (UW)arg2)) return -1;
         return (W)tk_rpl_rdv((RNO)arg0, (void *)(UW)arg1, (INT)arg2);
 
     /* ------------------------------------------------------------- */
@@ -1638,7 +1713,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_REF_VER: {
         /* arg0 = PK_RVER* */
         PK_RVER *out = (PK_RVER *)(UW)arg0;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RVER rver;
         ER er = tk_ref_ver(&rver);
         if (er < E_OK) return (W)er;
@@ -1653,7 +1728,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_REF_SYS: {
         /* arg0 = PK_RSYS* */
         PK_RSYS *out = (PK_RSYS *)(UW)arg0;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RSYS rsys;
         ER er = tk_ref_sys(&rsys);
         if (er < E_OK) return (W)er;
@@ -1670,7 +1745,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_REF_POR: {
         /* arg0=porid, arg1=PK_RPOR* */
         PK_RPOR *out = (PK_RPOR *)(UW)arg1;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         T_RPOR rpor;
         ER er = tk_ref_por((ID)arg0, &rpor);
         if (er < E_OK) return (W)er;
@@ -1688,7 +1763,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_GET_OTM: {
         /* arg0 = PK_SYSTIM* — operational time (monotonic uptime) */
         PK_SYSTIM *out = (PK_SYSTIM *)(UW)arg0;
-        if (!out) return -1;
+        if (!out || !user_range_ok(out, sizeof(*out))) return -1;  /* ISO-USERPTR */
         SYSTIM tim;
         ER er = tk_get_otm(&tim);
         if (er < E_OK) return (W)er;
@@ -1700,7 +1775,7 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
     case SYS_TK_SET_TIM: {
         /* arg0 = PK_SYSTIM* */
         PK_SYSTIM *in = (PK_SYSTIM *)(UW)arg0;
-        if (!in) return -1;
+        if (!in || !user_range_ok(in, sizeof(*in))) return -1;  /* ISO-USERPTR */
         SYSTIM tim;
         tim.hi = (W)in->hi;
         tim.lo = (UW)in->lo;
