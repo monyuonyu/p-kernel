@@ -84,6 +84,14 @@ class PKernelService : Service() {
         if (!running.compareAndSet(false, true)) return
         appendLog("[ump] starting kernel (node $nodeId, relay='$relayHost:$relayPort')\n")
         val pk = PKernel()
+        // persistence SLICE 1/2 (docs/architecture/persistence.md): point the
+        // durable p-fs store at app-private storage so the identity (Self
+        // layer) and the learned mind (rw[]) survive a process death / reboot.
+        // getFilesDir() is app-private + backup-excluded (no permission, no
+        // cloud sync — the ark survives by replicating across the mesh, not by
+        // Google Drive). MUST precede boot so the boot-time restore sees it.
+        pk.setDataDir(filesDir.absolutePath)
+        appendLog("[ump] durable store: ${filesDir.absolutePath}/ark\n")
         if (relayHost.isNotEmpty()) {
             pk.bootWithRelay(nodeId, relayHost, relayPort,
                              relayKey.ifEmpty { null })

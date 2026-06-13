@@ -59,6 +59,36 @@ static void *kernel_thread_main(void *arg)
     return NULL;
 }
 
+/*
+ *  nativeSetDataDir — persistence SLICE 1 (docs/architecture/persistence.md):
+ *  point the durable p-fs store at the app's private files dir so the Self
+ *  layer (profile + hash-chain lineage) AND the learned-mind weights (rw[],
+ *  SLICE 2) survive a process death / reboot. Must be invoked BEFORE
+ *  nativeBoot(): pfs_dur_dir() resolves $PKERNEL_PFS_DIR lazily at first use,
+ *  which happens inside the kernel thread's boot path (pfs_durable_restore).
+ *
+ *  `dir` is the app's getFilesDir() (app-private, backup-excluded, no
+ *  permission needed). We append "/ark" and the kernel mkdir()s it on first
+ *  use (pfs_dur_dir). Pass null/empty to leave persistence OFF (memory-only,
+ *  the pre-SLICE-1 Android behaviour).
+ */
+JNIEXPORT void JNICALL
+Java_io_pkernel_PKernel_nativeSetDataDir(JNIEnv *env, jobject self,
+                                         jstring jdir)
+{
+    (void)self;
+    if (!jdir) { unsetenv("PKERNEL_PFS_DIR"); return; }
+    const char *dir = (*env)->GetStringUTFChars(env, jdir, NULL);
+    if (dir && *dir) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/ark", dir);
+        setenv("PKERNEL_PFS_DIR", path, 1);
+    } else {
+        unsetenv("PKERNEL_PFS_DIR");
+    }
+    if (dir) (*env)->ReleaseStringUTFChars(env, jdir, dir);
+}
+
 JNIEXPORT void JNICALL
 Java_io_pkernel_PKernel_nativeBoot(JNIEnv *env, jobject self, jint node_id)
 {
