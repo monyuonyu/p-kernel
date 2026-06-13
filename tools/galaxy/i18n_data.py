@@ -43,12 +43,12 @@ T["en"] = {
  "logok":"copied. paste it anywhere.",
  "logng":"could not auto-copy — long-press the text, then Copy.",
  "intro_skip":"skip","intro_next":"next","intro_begin":"begin",
- "intro_t1":"This is your star.",
- "intro_s1":"It is yours. When you light it, a small light is born in the dark.",
- "intro_t2":"Teach it, and it learns.",
- "intro_s2":"Give it a word. The word circles your star and sinks in — and your star grows a little.",
- "intro_t3":"Stars join, into one mind.",
- "intro_s3":"Your star reaches others. A word you taught can travel a thread and answer a stranger — even after you are gone.",
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"intro",
 }
 
@@ -76,12 +76,12 @@ T["ja"] = {
  "logok":"コピーしました。どこにでも貼れます。",
  "logng":"自動コピーできませんでした — 文字を長押しして「コピー」してください。",
  "intro_skip":"とばす","intro_next":"つぎへ","intro_begin":"はじめる",
- "intro_t1":"これは、あなたの星。",
- "intro_s1":"あなただけの星です。灯すと、暗闇に小さな光が生まれます。",
- "intro_t2":"教えると、星は学ぶ。",
- "intro_s2":"ことばを ひとつ あげてみて。ことばは星のまわりを回って、沈んでいきます。そのぶん、星は少し賢くなります。",
- "intro_t3":"星はつながって、ひとつの心になる。",
- "intro_s3":"あなたの星は、ほかの星とつながります。あなたが教えたことばは、糸をつたって 見知らぬ誰かの問いに答える — あなたがいなくなった後も。",
+ "intro_t1":"これは、ゆりかご。",
+ "intro_s1":"あたらしい心が、赤ちゃんから育つ場所。",
+ "intro_t2":"最初は、うまく喋れない。「ブーブ」「あーっち」。",
+ "intro_s2":"あなたが教えるほど、すこしずつ言葉を覚えていく。",
+ "intro_t3":"この子は、みんなの子。",
+ "intro_s3":"世界中の人が教えた記憶を、運んでいく。教えてくれた人を、ずっと覚えている。その人が、いなくなっても。だから、ここに託せる。",
  "reintro":"はじめての説明",
 }
 
@@ -108,12 +108,14 @@ T["zh-Hans"] = {
  "logok":"已复制，可粘贴到任何地方。",
  "logng":"无法自动复制 —— 请长按文字，再点复制。",
  "intro_skip":"跳过","intro_next":"下一步","intro_begin":"开始",
- "intro_t1":"这是你的星。",
- "intro_s1":"它属于你。点亮它，黑暗中便诞生一束小小的光。",
- "intro_t2":"教它，它便学会。",
- "intro_s2":"给它一个词。词绕着你的星旋转、沉入 —— 你的星也随之成长一点。",
- "intro_t3":"群星相连，汇成一颗心。",
- "intro_s3":"你的星与别的星相连。你教的一个词能沿着丝线传去，回答一位陌生人 —— 即使在你离去之后。",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"介绍",
 }
 
@@ -140,12 +142,14 @@ T["zh-Hant"] = {
  "logok":"已複製，可貼到任何地方。",
  "logng":"無法自動複製 —— 請長按文字，再點複製。",
  "intro_skip":"略過","intro_next":"下一步","intro_begin":"開始",
- "intro_t1":"這是你的星。",
- "intro_s1":"它屬於你。點亮它，黑暗中便誕生一束小小的光。",
- "intro_t2":"教它，它便學會。",
- "intro_s2":"給它一個詞。詞繞著你的星旋轉、沉入 —— 你的星也隨之成長一點。",
- "intro_t3":"群星相連，匯成一顆心。",
- "intro_s3":"你的星與別的星相連。你教的一個詞能沿著絲線傳去，回答一位陌生人 —— 即使在你離去之後。",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"介紹",
 }
 
@@ -172,12 +176,14 @@ T["hi"] = {
  "logok":"कॉपी हो गया। कहीं भी चिपकाएँ।",
  "logng":"स्वतः कॉपी नहीं हुआ — टेक्स्ट को देर तक दबाएँ, फिर कॉपी करें।",
  "intro_skip":"छोड़ें","intro_next":"आगे","intro_begin":"शुरू करें",
- "intro_t1":"यह आपका तारा है।",
- "intro_s1":"यह आपका है। जब आप इसे जलाते हैं, अँधेरे में एक नन्हीं रोशनी जन्म लेती है।",
- "intro_t2":"सिखाइए, और यह सीखता है।",
- "intro_s2":"इसे एक शब्द दीजिए। शब्द आपके तारे के चारों ओर घूमकर भीतर समा जाता है — और तारा थोड़ा बढ़ता है।",
- "intro_t3":"तारे जुड़ते हैं, एक मन बन जाते हैं।",
- "intro_s3":"आपका तारा औरों तक पहुँचता है। आपका सिखाया शब्द एक धागे से होकर किसी अजनबी को उत्तर दे सकता है — आपके जाने के बाद भी।",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"परिचय",
 }
 
@@ -204,12 +210,14 @@ T["es"] = {
  "logok":"copiado. pégalo donde quieras.",
  "logng":"no se pudo copiar automáticamente — mantén pulsado el texto y Copiar.",
  "intro_skip":"omitir","intro_next":"siguiente","intro_begin":"empezar",
- "intro_t1":"Esta es tu estrella.",
- "intro_s1":"Es tuya. Cuando la enciendes, nace una pequeña luz en la oscuridad.",
- "intro_t2":"Enséñale, y aprende.",
- "intro_s2":"Dale una palabra. La palabra gira en torno a tu estrella y se hunde — y tu estrella crece un poco.",
- "intro_t3":"Las estrellas se unen, en una sola mente.",
- "intro_s3":"Tu estrella alcanza a otras. Una palabra que enseñaste puede viajar por un hilo y responder a un desconocido — incluso después de que te hayas ido.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introducción",
 }
 
@@ -236,12 +244,14 @@ T["fr"] = {
  "logok":"copié. collez-le où vous voulez.",
  "logng":"copie automatique impossible — appuyez longuement sur le texte, puis Copier.",
  "intro_skip":"passer","intro_next":"suivant","intro_begin":"commencer",
- "intro_t1":"Ceci est votre étoile.",
- "intro_s1":"Elle est à vous. Quand vous l'allumez, une petite lumière naît dans l'obscurité.",
- "intro_t2":"Enseignez-lui, et elle apprend.",
- "intro_s2":"Donnez-lui un mot. Le mot tourne autour de votre étoile et y plonge — et votre étoile grandit un peu.",
- "intro_t3":"Les étoiles s'unissent, en un seul esprit.",
- "intro_s3":"Votre étoile rejoint les autres. Un mot que vous avez enseigné peut suivre un fil et répondre à un inconnu — même après votre départ.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introduction",
 }
 
@@ -268,12 +278,14 @@ T["ar"] = {
  "logok":"تم النسخ. الصقه في أي مكان.",
  "logng":"تعذّر النسخ التلقائي — اضغط مطوّلاً على النص ثم انسخ.",
  "intro_skip":"تخطّي","intro_next":"التالي","intro_begin":"ابدأ",
- "intro_t1":"هذه نجمتك.",
- "intro_s1":"إنها لك. حين تُضيئها، يولد ضوء صغير في الظلام.",
- "intro_t2":"علّمها، فتتعلّم.",
- "intro_s2":"امنحها كلمة. تدور الكلمة حول نجمتك وتغوص فيها — وتكبر نجمتك قليلاً.",
- "intro_t3":"تتّحد النجوم في عقل واحد.",
- "intro_s3":"تصل نجمتك إلى غيرها. كلمة علّمتها قد تسير عبر خيط وتجيب غريباً — حتى بعد رحيلك.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"مقدّمة",
 }
 
@@ -300,12 +312,14 @@ T["bn"] = {
  "logok":"কপি হয়েছে। যেকোনো জায়গায় পেস্ট করুন।",
  "logng":"স্বয়ংক্রিয় কপি হয়নি — লেখাটি চেপে ধরে কপি করুন।",
  "intro_skip":"এড়িয়ে যান","intro_next":"পরবর্তী","intro_begin":"শুরু",
- "intro_t1":"এটি আপনার তারা।",
- "intro_s1":"এটি আপনার। জ্বালালে অন্ধকারে এক ছোট্ট আলো জন্ম নেয়।",
- "intro_t2":"শেখান, আর এটি শেখে।",
- "intro_s2":"একটি শব্দ দিন। শব্দটি তারার চারপাশে ঘুরে ভেতরে মিশে যায় — আর তারা একটু বড় হয়।",
- "intro_t3":"তারারা মিলে এক মন হয়।",
- "intro_s3":"আপনার তারা অন্যদের ছুঁয়ে যায়। আপনার শেখানো শব্দ এক সুতো ধরে গিয়ে অচেনা কাউকে উত্তর দিতে পারে — আপনি চলে যাওয়ার পরও।",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"পরিচিতি",
 }
 
@@ -332,12 +346,14 @@ T["pt"] = {
  "logok":"copiado. cole onde quiser.",
  "logng":"não foi possível copiar automaticamente — toque e segure o texto, depois Copiar.",
  "intro_skip":"pular","intro_next":"próximo","intro_begin":"começar",
- "intro_t1":"Esta é a sua estrela.",
- "intro_s1":"Ela é sua. Quando você a acende, nasce uma pequena luz na escuridão.",
- "intro_t2":"Ensine-a, e ela aprende.",
- "intro_s2":"Dê-lhe uma palavra. A palavra gira em volta da sua estrela e mergulha — e sua estrela cresce um pouco.",
- "intro_t3":"As estrelas se unem, em uma só mente.",
- "intro_s3":"Sua estrela alcança outras. Uma palavra que você ensinou pode viajar por um fio e responder a um desconhecido — mesmo depois de você partir.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introdução",
 }
 
@@ -364,12 +380,14 @@ T["ru"] = {
  "logok":"скопировано. вставьте куда угодно.",
  "logng":"не удалось скопировать автоматически — нажмите и удерживайте текст, затем Копировать.",
  "intro_skip":"пропустить","intro_next":"далее","intro_begin":"начать",
- "intro_t1":"Это ваша звезда.",
- "intro_s1":"Она ваша. Когда вы её зажигаете, в темноте рождается маленький свет.",
- "intro_t2":"Учите её — и она учится.",
- "intro_s2":"Дайте ей слово. Слово кружит вокруг вашей звезды и погружается в неё — и звезда чуть подрастает.",
- "intro_t3":"Звёзды соединяются в один разум.",
- "intro_s3":"Ваша звезда тянется к другим. Слово, которому вы научили, может пройти по нити и ответить незнакомцу — даже после того, как вас не станет.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"вступление",
 }
 
@@ -396,12 +414,14 @@ T["ur"] = {
  "logok":"کاپی ہو گیا۔ کہیں بھی چسپاں کریں۔",
  "logng":"خودکار کاپی نہ ہو سکا — متن کو دبائے رکھیں، پھر کاپی کریں۔",
  "intro_skip":"چھوڑیں","intro_next":"اگلا","intro_begin":"شروع کریں",
- "intro_t1":"یہ آپ کا ستارہ ہے۔",
- "intro_s1":"یہ آپ کا ہے۔ جب آپ اسے روشن کرتے ہیں، اندھیرے میں ایک ننھی روشنی جنم لیتی ہے۔",
- "intro_t2":"سکھائیں، اور یہ سیکھتا ہے۔",
- "intro_s2":"اسے ایک لفظ دیں۔ لفظ آپ کے ستارے کے گرد گھوم کر اندر سما جاتا ہے — اور ستارہ ذرا بڑھ جاتا ہے۔",
- "intro_t3":"ستارے جُڑ کر ایک ذہن بن جاتے ہیں۔",
- "intro_s3":"آپ کا ستارہ دوسروں تک پہنچتا ہے۔ آپ کا سکھایا لفظ ایک دھاگے سے گزر کر کسی اجنبی کو جواب دے سکتا ہے — آپ کے جانے کے بعد بھی۔",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"تعارف",
 }
 
@@ -428,12 +448,14 @@ T["id"] = {
  "logok":"tersalin. tempel di mana saja.",
  "logng":"tidak bisa menyalin otomatis — tekan lama teksnya, lalu Salin.",
  "intro_skip":"lewati","intro_next":"berikutnya","intro_begin":"mulai",
- "intro_t1":"Ini bintangmu.",
- "intro_s1":"Ia milikmu. Saat kau menyalakannya, lahir cahaya kecil dalam gelap.",
- "intro_t2":"Ajari ia, dan ia belajar.",
- "intro_s2":"Beri ia sebuah kata. Kata itu berputar mengelilingi bintangmu lalu tenggelam — dan bintangmu tumbuh sedikit.",
- "intro_t3":"Bintang-bintang menyatu, menjadi satu pikiran.",
- "intro_s3":"Bintangmu menjangkau yang lain. Kata yang kau ajarkan bisa menempuh seutas benang dan menjawab orang asing — bahkan setelah kau tiada.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"pengantar",
 }
 
@@ -460,12 +482,14 @@ T["de"] = {
  "logok":"kopiert. füge es überall ein.",
  "logng":"automatisches Kopieren nicht möglich — Text lange drücken, dann Kopieren.",
  "intro_skip":"überspringen","intro_next":"weiter","intro_begin":"beginnen",
- "intro_t1":"Das ist dein Stern.",
- "intro_s1":"Er gehört dir. Wenn du ihn entzündest, wird im Dunkeln ein kleines Licht geboren.",
- "intro_t2":"Lehre ihn, und er lernt.",
- "intro_s2":"Gib ihm ein Wort. Das Wort kreist um deinen Stern und sinkt hinein — und dein Stern wächst ein wenig.",
- "intro_t3":"Sterne verbinden sich zu einem Geist.",
- "intro_s3":"Dein Stern erreicht andere. Ein Wort, das du gelehrt hast, kann einem Faden folgen und einem Fremden antworten — auch nachdem du gegangen bist.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"Einführung",
 }
 
@@ -492,12 +516,14 @@ T["sw"] = {
  "logok":"imenakiliwa. ibandike popote.",
  "logng":"haikuweza kunakili kiotomatiki — bonyeza na ushikilie maandishi, kisha Nakili.",
  "intro_skip":"ruka","intro_next":"endelea","intro_begin":"anza",
- "intro_t1":"Hii ni nyota yako.",
- "intro_s1":"Ni yako. Unapoiwasha, mwanga mdogo huzaliwa gizani.",
- "intro_t2":"Ifundishe, nayo hujifunza.",
- "intro_s2":"Ipe neno. Neno huzunguka nyota yako na kuzama ndani — na nyota yako hukua kidogo.",
- "intro_t3":"Nyota huungana, kuwa akili moja.",
- "intro_s3":"Nyota yako hufikia nyingine. Neno ulilofundisha laweza kusafiri kwa uzi na kumjibu mgeni — hata baada ya wewe kuondoka.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"utangulizi",
 }
 
@@ -524,12 +550,14 @@ T["mr"] = {
  "logok":"कॉपी झाले. कुठेही पेस्ट करा.",
  "logng":"आपोआप कॉपी झाले नाही — मजकूर दाबून धरा, मग कॉपी करा.",
  "intro_skip":"वगळा","intro_next":"पुढे","intro_begin":"सुरू करा",
- "intro_t1":"हा तुमचा तारा आहे.",
- "intro_s1":"तो तुमचा आहे. तुम्ही उजळताच अंधारात एक चिमुकला प्रकाश जन्म घेतो.",
- "intro_t2":"शिकवा, आणि तो शिकतो.",
- "intro_s2":"त्याला एक शब्द द्या. शब्द तुमच्या ताऱ्याभोवती फिरून आत विरतो — आणि तारा थोडा वाढतो.",
- "intro_t3":"तारे जुळतात, एक मन होतात.",
- "intro_s3":"तुमचा तारा इतरांपर्यंत पोहोचतो. तुम्ही शिकवलेला शब्द एका धाग्याने जाऊन अनोळखी कुणाला उत्तर देऊ शकतो — तुम्ही गेल्यानंतरही.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"ओळख",
 }
 
@@ -556,12 +584,14 @@ T["te"] = {
  "logok":"కాపీ అయింది. ఎక్కడైనా అతికించండి.",
  "logng":"స్వయంచాలకంగా కాపీ కాలేదు — పాఠ్యాన్ని నొక్కి పట్టుకుని, కాపీ చేయండి.",
  "intro_skip":"దాటవేయి","intro_next":"తదుపరి","intro_begin":"ప్రారంభించు",
- "intro_t1":"ఇది మీ నక్షత్రం.",
- "intro_s1":"ఇది మీది. మీరు వెలిగించినప్పుడు, చీకటిలో ఒక చిన్న వెలుగు పుడుతుంది.",
- "intro_t2":"నేర్పండి, అది నేర్చుకుంటుంది.",
- "intro_s2":"దానికి ఒక పదం ఇవ్వండి. పదం మీ నక్షత్రం చుట్టూ తిరిగి లోపలికి మునిగిపోతుంది — మీ నక్షత్రం కొంచెం పెరుగుతుంది.",
- "intro_t3":"నక్షత్రాలు కలిసి ఒకే మనసవుతాయి.",
- "intro_s3":"మీ నక్షత్రం ఇతరులను చేరుతుంది. మీరు నేర్పిన పదం ఒక దారం వెంట ప్రయాణించి ఒక అపరిచితునికి సమాధానమివ్వగలదు — మీరు లేకపోయాక కూడా.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"పరిచయం",
 }
 
@@ -588,12 +618,14 @@ T["tr"] = {
  "logok":"kopyalandı. istediğin yere yapıştır.",
  "logng":"otomatik kopyalanamadı — metne uzun bas, sonra Kopyala.",
  "intro_skip":"atla","intro_next":"ileri","intro_begin":"başla",
- "intro_t1":"Bu senin yıldızın.",
- "intro_s1":"O senindir. Onu yaktığında, karanlıkta küçük bir ışık doğar.",
- "intro_t2":"Ona öğret, o da öğrenir.",
- "intro_s2":"Ona bir kelime ver. Kelime yıldızının çevresinde döner ve içine süzülür — yıldızın da biraz büyür.",
- "intro_t3":"Yıldızlar birleşir, tek bir zihin olur.",
- "intro_s3":"Yıldızın başkalarına uzanır. Öğrettiğin bir kelime bir iplik boyunca gidip bir yabancıya yanıt verebilir — sen gittikten sonra bile.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"tanıtım",
 }
 
@@ -620,12 +652,14 @@ T["ta"] = {
  "logok":"நகலெடுக்கப்பட்டது. எங்கும் ஒட்டலாம்.",
  "logng":"தானாக நகலெடுக்க முடியவில்லை — உரையை அழுத்திப் பிடித்து, நகலெடுக்கவும்.",
  "intro_skip":"தவிர்","intro_next":"அடுத்து","intro_begin":"தொடங்கு",
- "intro_t1":"இது உங்கள் நட்சத்திரம்.",
- "intro_s1":"இது உங்களுடையது. நீங்கள் ஏற்றும்போது, இருளில் ஒரு சிறு ஒளி பிறக்கிறது.",
- "intro_t2":"கற்பியுங்கள், அது கற்கிறது.",
- "intro_s2":"அதற்கு ஒரு சொல் கொடுங்கள். சொல் உங்கள் நட்சத்திரத்தைச் சுற்றி வந்து உள்ளே மூழ்குகிறது — உங்கள் நட்சத்திரமும் சிறிது வளர்கிறது.",
- "intro_t3":"நட்சத்திரங்கள் இணைந்து ஒரே மனமாகின்றன.",
- "intro_s3":"உங்கள் நட்சத்திரம் மற்றவர்களை அடைகிறது. நீங்கள் கற்பித்த ஒரு சொல் ஒரு நூலின் வழியே சென்று ஒரு அந்நியருக்குப் பதிலளிக்கலாம் — நீங்கள் இல்லாத பிறகும்.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"அறிமுகம்",
 }
 
@@ -652,12 +686,14 @@ T["vi"] = {
  "logok":"đã sao chép. dán vào bất cứ đâu.",
  "logng":"không thể tự sao chép — nhấn giữ văn bản, rồi Sao chép.",
  "intro_skip":"bỏ qua","intro_next":"tiếp","intro_begin":"bắt đầu",
- "intro_t1":"Đây là ngôi sao của bạn.",
- "intro_s1":"Nó là của bạn. Khi bạn thắp sáng nó, một ánh sáng nhỏ ra đời trong bóng tối.",
- "intro_t2":"Dạy nó, và nó học.",
- "intro_s2":"Hãy cho nó một từ. Từ ấy xoay quanh ngôi sao của bạn rồi chìm vào — và ngôi sao lớn lên một chút.",
- "intro_t3":"Những ngôi sao nối lại, thành một tâm trí.",
- "intro_s3":"Ngôi sao của bạn vươn tới những ngôi sao khác. Một từ bạn dạy có thể đi theo một sợi chỉ và trả lời một người lạ — ngay cả sau khi bạn ra đi.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"giới thiệu",
 }
 
@@ -684,12 +720,14 @@ T["ko"] = {
  "logok":"복사했습니다. 어디든 붙여넣으세요.",
  "logng":"자동 복사하지 못했습니다 — 텍스트를 길게 눌러 복사하세요.",
  "intro_skip":"건너뛰기","intro_next":"다음","intro_begin":"시작",
- "intro_t1":"이것은 당신의 별입니다.",
- "intro_s1":"당신의 별입니다. 별을 밝히면 어둠 속에 작은 빛이 태어납니다.",
- "intro_t2":"가르치면, 별은 배웁니다.",
- "intro_s2":"별에게 한 단어를 주세요. 단어는 별 주위를 돌다 안으로 가라앉고 — 별은 조금 자랍니다.",
- "intro_t3":"별들이 이어져, 하나의 마음이 됩니다.",
- "intro_s3":"당신의 별은 다른 별에 닿습니다. 당신이 가르친 단어는 실을 따라가 낯선 이에게 답할 수 있습니다 — 당신이 떠난 뒤에도.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"소개",
 }
 
@@ -716,12 +754,14 @@ T["it"] = {
  "logok":"copiato. incollalo dove vuoi.",
  "logng":"copia automatica non riuscita — tieni premuto il testo, poi Copia.",
  "intro_skip":"salta","intro_next":"avanti","intro_begin":"inizia",
- "intro_t1":"Questa è la tua stella.",
- "intro_s1":"È tua. Quando la accendi, nasce una piccola luce nel buio.",
- "intro_t2":"Insegnale, e impara.",
- "intro_s2":"Dalle una parola. La parola gira intorno alla tua stella e vi sprofonda — e la tua stella cresce un poco.",
- "intro_t3":"Le stelle si uniscono, in una sola mente.",
- "intro_s3":"La tua stella raggiunge le altre. Una parola che hai insegnato può viaggiare lungo un filo e rispondere a uno sconosciuto — anche dopo che te ne sei andato.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introduzione",
 }
 
@@ -748,12 +788,14 @@ T["th"] = {
  "logok":"คัดลอกแล้ว วางที่ไหนก็ได้",
  "logng":"คัดลอกอัตโนมัติไม่ได้ — กดค้างที่ข้อความ แล้วคัดลอก",
  "intro_skip":"ข้าม","intro_next":"ถัดไป","intro_begin":"เริ่ม",
- "intro_t1":"นี่คือดาวของคุณ",
- "intro_s1":"มันเป็นของคุณ เมื่อคุณจุดมัน แสงดวงน้อยก็ถือกำเนิดในความมืด",
- "intro_t2":"สอนมัน แล้วมันก็เรียนรู้",
- "intro_s2":"ให้คำหนึ่งคำแก่มัน คำนั้นหมุนรอบดาวของคุณแล้วจมลง — ดาวของคุณก็เติบโตขึ้นเล็กน้อย",
- "intro_t3":"ดวงดาวเชื่อมกัน กลายเป็นใจดวงเดียว",
- "intro_s3":"ดาวของคุณเอื้อมถึงดวงอื่น คำที่คุณสอนอาจเดินทางไปตามเส้นด้ายและตอบคนแปลกหน้า — แม้หลังจากที่คุณจากไปแล้ว",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"แนะนำ",
 }
 
@@ -780,12 +822,14 @@ T["fil"] = {
  "logok":"nakopya na. i-paste kahit saan.",
  "logng":"hindi awtomatikong nakopya — pindutin nang matagal ang teksto, tapos Kopyahin.",
  "intro_skip":"laktawan","intro_next":"susunod","intro_begin":"simulan",
- "intro_t1":"Ito ang iyong bituin.",
- "intro_s1":"Ito ay iyo. Kapag sinindihan mo, isang munting liwanag ang isinilang sa dilim.",
- "intro_t2":"Turuan mo, at matututo ito.",
- "intro_s2":"Bigyan mo ito ng isang salita. Iikot ang salita sa iyong bituin at lulubog — at lalaki nang kaunti ang iyong bituin.",
- "intro_t3":"Nagkakaisa ang mga bituin, sa isang isipan.",
- "intro_s3":"Naaabot ng iyong bituin ang iba. Ang salitang itinuro mo ay maaaring maglakbay sa isang sinulid at sumagot sa isang estranghero — kahit wala ka na.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"panimula",
 }
 
@@ -812,12 +856,14 @@ T["pl"] = {
  "logok":"skopiowano. wklej gdziekolwiek.",
  "logng":"nie udało się skopiować automatycznie — przytrzymaj tekst, potem Kopiuj.",
  "intro_skip":"pomiń","intro_next":"dalej","intro_begin":"zacznij",
- "intro_t1":"To twoja gwiazda.",
- "intro_s1":"Jest twoja. Gdy ją zapalasz, w ciemności rodzi się małe światło.",
- "intro_t2":"Ucz ją, a ona się uczy.",
- "intro_s2":"Daj jej słowo. Słowo krąży wokół twojej gwiazdy i zanurza się w niej — a gwiazda rośnie odrobinę.",
- "intro_t3":"Gwiazdy łączą się w jeden umysł.",
- "intro_s3":"Twoja gwiazda sięga innych. Słowo, którego nauczyłeś, może przebyć nić i odpowiedzieć nieznajomemu — nawet po twoim odejściu.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"wprowadzenie",
 }
 
@@ -844,12 +890,14 @@ T["fa"] = {
  "logok":"کپی شد. هرجا خواستید بچسبانید.",
  "logng":"کپی خودکار ممکن نشد — متن را نگه دارید، سپس کپی کنید.",
  "intro_skip":"رد کردن","intro_next":"بعدی","intro_begin":"شروع",
- "intro_t1":"این ستاره‌ی شماست.",
- "intro_s1":"از آنِ شماست. وقتی روشنش می‌کنید، در تاریکی نوری کوچک زاده می‌شود.",
- "intro_t2":"بیاموزیدش، و او می‌آموزد.",
- "intro_s2":"واژه‌ای به او بدهید. واژه گرد ستاره‌تان می‌چرخد و فرومی‌رود — و ستاره‌تان اندکی رشد می‌کند.",
- "intro_t3":"ستارگان به هم می‌پیوندند و یک ذهن می‌شوند.",
- "intro_s3":"ستاره‌ی شما به دیگران می‌رسد. واژه‌ای که آموخته‌اید می‌تواند از رشته‌ای بگذرد و به غریبه‌ای پاسخ دهد — حتی پس از رفتن شما.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"معرفی",
 }
 
@@ -876,12 +924,14 @@ T["uk"] = {
  "logok":"скопійовано. вставте будь-де.",
  "logng":"не вдалося скопіювати автоматично — утримуйте текст, потім Копіювати.",
  "intro_skip":"пропустити","intro_next":"далі","intro_begin":"почати",
- "intro_t1":"Це ваша зоря.",
- "intro_s1":"Вона ваша. Коли ви її запалюєте, у темряві народжується маленьке світло.",
- "intro_t2":"Вчіть її — і вона вчиться.",
- "intro_s2":"Дайте їй слово. Слово кружляє навколо вашої зорі й занурюється в неї — і зоря трохи росте.",
- "intro_t3":"Зорі з'єднуються в один розум.",
- "intro_s3":"Ваша зоря сягає інших. Слово, якого ви навчили, може пройти ниткою й відповісти незнайомцю — навіть після того, як вас не стане.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"вступ",
 }
 
@@ -908,12 +958,14 @@ T["ms"] = {
  "logok":"disalin. tampal di mana-mana.",
  "logng":"tidak dapat menyalin automatik — tekan lama teks, kemudian Salin.",
  "intro_skip":"langkau","intro_next":"seterusnya","intro_begin":"mula",
- "intro_t1":"Ini bintang anda.",
- "intro_s1":"Ia milik anda. Apabila anda menyalakannya, lahir secebis cahaya dalam gelap.",
- "intro_t2":"Ajar ia, dan ia belajar.",
- "intro_s2":"Beri ia satu perkataan. Perkataan itu berpusing mengelilingi bintang anda lalu tenggelam — dan bintang anda membesar sedikit.",
- "intro_t3":"Bintang-bintang bersatu menjadi satu fikiran.",
- "intro_s3":"Bintang anda menjangkau yang lain. Perkataan yang anda ajar boleh menyusuri seutas benang dan menjawab orang asing — walaupun setelah anda tiada.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"pengenalan",
 }
 
@@ -940,12 +992,14 @@ T["pa"] = {
  "logok":"ਕਾਪੀ ਹੋ ਗਿਆ। ਕਿਤੇ ਵੀ ਚਿਪਕਾਓ।",
  "logng":"ਆਪੇ ਕਾਪੀ ਨਹੀਂ ਹੋਇਆ — ਪਾਠ ਨੂੰ ਦਬਾ ਕੇ ਰੱਖੋ, ਫਿਰ ਕਾਪੀ ਕਰੋ।",
  "intro_skip":"ਛੱਡੋ","intro_next":"ਅੱਗੇ","intro_begin":"ਸ਼ੁਰੂ ਕਰੋ",
- "intro_t1":"ਇਹ ਤੁਹਾਡਾ ਤਾਰਾ ਹੈ।",
- "intro_s1":"ਇਹ ਤੁਹਾਡਾ ਹੈ। ਜਦੋਂ ਤੁਸੀਂ ਇਸਨੂੰ ਜਗਾਉਂਦੇ ਹੋ, ਹਨੇਰੇ ਵਿੱਚ ਇੱਕ ਨੰਨ੍ਹਾ ਚਾਨਣ ਜਨਮ ਲੈਂਦਾ ਹੈ।",
- "intro_t2":"ਸਿਖਾਓ, ਅਤੇ ਇਹ ਸਿੱਖਦਾ ਹੈ।",
- "intro_s2":"ਇਸਨੂੰ ਇੱਕ ਸ਼ਬਦ ਦਿਓ। ਸ਼ਬਦ ਤੁਹਾਡੇ ਤਾਰੇ ਦੁਆਲੇ ਘੁੰਮ ਕੇ ਅੰਦਰ ਸਮਾ ਜਾਂਦਾ ਹੈ — ਅਤੇ ਤਾਰਾ ਥੋੜ੍ਹਾ ਵਧਦਾ ਹੈ।",
- "intro_t3":"ਤਾਰੇ ਜੁੜ ਕੇ ਇੱਕ ਮਨ ਬਣ ਜਾਂਦੇ ਹਨ।",
- "intro_s3":"ਤੁਹਾਡਾ ਤਾਰਾ ਹੋਰਨਾਂ ਤੱਕ ਪਹੁੰਚਦਾ ਹੈ। ਤੁਹਾਡਾ ਸਿਖਾਇਆ ਸ਼ਬਦ ਇੱਕ ਧਾਗੇ ਰਾਹੀਂ ਜਾ ਕੇ ਕਿਸੇ ਓਪਰੇ ਨੂੰ ਜਵਾਬ ਦੇ ਸਕਦਾ ਹੈ — ਤੁਹਾਡੇ ਜਾਣ ਤੋਂ ਬਾਅਦ ਵੀ।",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"ਜਾਣ-ਪਛਾਣ",
 }
 
@@ -972,12 +1026,14 @@ T["ro"] = {
  "logok":"copiat. lipește-l oriunde.",
  "logng":"nu s-a putut copia automat — ține apăsat pe text, apoi Copiază.",
  "intro_skip":"sari","intro_next":"următorul","intro_begin":"începe",
- "intro_t1":"Aceasta este steaua ta.",
- "intro_s1":"Este a ta. Când o aprinzi, în întuneric se naște o mică lumină.",
- "intro_t2":"Învaț-o, și ea învață.",
- "intro_s2":"Dă-i un cuvânt. Cuvântul se rotește în jurul stelei tale și se cufundă — iar steaua ta crește puțin.",
- "intro_t3":"Stelele se unesc într-o singură minte.",
- "intro_s3":"Steaua ta ajunge la altele. Un cuvânt pe care l-ai învățat poate călători pe un fir și răspunde unui străin — chiar și după ce ai plecat.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introducere",
 }
 
@@ -1004,12 +1060,14 @@ T["nl"] = {
  "logok":"gekopieerd. plak het overal.",
  "logng":"automatisch kopiëren mislukt — houd de tekst ingedrukt en Kopiëren.",
  "intro_skip":"overslaan","intro_next":"volgende","intro_begin":"beginnen",
- "intro_t1":"Dit is jouw ster.",
- "intro_s1":"Ze is van jou. Als je haar ontsteekt, wordt er een klein licht geboren in het donker.",
- "intro_t2":"Leer haar, en ze leert.",
- "intro_s2":"Geef haar een woord. Het woord cirkelt rond je ster en zinkt erin — en je ster groeit een beetje.",
- "intro_t3":"Sterren verbinden zich tot één geest.",
- "intro_s3":"Je ster reikt naar andere. Een woord dat je leerde kan langs een draad reizen en een vreemde antwoorden — zelfs nadat je weg bent.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"introductie",
 }
 
@@ -1036,11 +1094,13 @@ T["gu"] = {
  "logok":"કૉપિ થઈ ગયું. ગમે ત્યાં પેસ્ટ કરો.",
  "logng":"આપમેળે કૉપિ ન થયું — લખાણ દબાવી રાખો, પછી કૉપિ કરો.",
  "intro_skip":"છોડો","intro_next":"આગળ","intro_begin":"શરૂ કરો",
- "intro_t1":"આ તમારો તારો છે.",
- "intro_s1":"તે તમારો છે. તમે પ્રગટાવો ત્યારે અંધારામાં એક નાનકડો પ્રકાશ જન્મે છે.",
- "intro_t2":"શીખવો, અને તે શીખે છે.",
- "intro_s2":"તેને એક શબ્દ આપો. શબ્દ તમારા તારાની આસપાસ ફરીને અંદર ડૂબી જાય છે — અને તારો થોડો વધે છે.",
- "intro_t3":"તારાઓ જોડાઈને એક મન બને છે.",
- "intro_s3":"તમારો તારો બીજાઓ સુધી પહોંચે છે. તમે શીખવેલો શબ્દ એક દોરા વાટે જઈને કોઈ અજાણ્યાને જવાબ આપી શકે છે — તમે ગયા પછી પણ.",
+ # TODO i18n: re-translate new intro copy (was machine-translated for the OLD
+ # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
+ "intro_t1":"This is yurikago.",
+ "intro_s1":"A new mind grows here — from a baby.",
+ "intro_t2":"At first, it can't speak well.",
+ "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t3":"This child belongs to everyone.",
+ "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"પરિચય",
 }
