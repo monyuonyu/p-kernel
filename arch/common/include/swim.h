@@ -96,3 +96,11 @@ UW swim_rtt_ms(UB node);
  * 無効。localhost で人工的に複数 region を作って region 形成を検証するため。
  * arch 非依存を保つため env は読まず、linux usermain が呼ぶ。 */
 void swim_set_sim_zone(UB zone_size, UW penalty_ms);
+
+/* SWIM-INCARN cert (external audit 2026-06-13): drives the REAL gossip_apply
+ * with crafted SWIM_PKTs and asserts canonical anti-stale-rumor behaviour —
+ * a fresh-incarnation ALIVE refutes a stale DEAD rumor about SELF (the node
+ * is NOT marked dead) and a peer's stale lower-incarnation DEAD does not
+ * override a higher-incarnation ALIVE. Emits "[swim-incarn] PASS"/"FAIL ...".
+ * Returns 0 on PASS, else the fail count. */
+INT swim_incarn_self_test(void (*emit)(const char *));

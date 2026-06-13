@@ -195,3 +195,10 @@ void kdds_list(void);
 /* トピックをクラスタ全体から削除する (tombstone gossip で全ノードへ伝播)。
  * ローカルスロットを解放し、分散モードでは replica_tombstone() を呼ぶ。 */
 void kdds_delete_cluster(const char *name);
+
+/* KDDS-DELCLUSTER cert (external audit 2026-06-13): opens handles on a cluster
+ * topic, deletes the cluster via the REAL kdds_delete_cluster, and confirms NO
+ * handle to the deleted topic remains open (the old empty close-loop leaked
+ * them) while an unrelated topic's handle is untouched. Emits
+ * "[kdds-delcluster] PASS"/"FAIL ...". Returns 0 on PASS, else the fail count. */
+INT kdds_delcluster_self_test(void (*emit)(const char *));
