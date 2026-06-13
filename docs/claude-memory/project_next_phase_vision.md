@@ -54,3 +54,22 @@ by nature:
   But B is the hardest. Possible path: prove the distributed-big-model PLUMBING
   (D + tensor/pipeline parallel already exist) on a model just big enough to not
   fit one phone, before chasing true conversational quality.
+
+## D-foothold verification result (2026-06-13)
+Ran cross-ARCH mesh: A=aarch64 (native boot/linux), B=x86_64 (boot/linux_x86_64
+under qemu-x86_64 user-mode), one relay. PROVEN:
+- relay registered BOTH ABIs (node 1 aarch64 + node 2 x86_64).
+- cross-ABI pfs block replication: an aarch64-origin block (origin=n0) replicated
+  into the x86_64 node over the relay.
+- same-arch full teach→answer PASSES (sample 41_shared_mind).
+- A's full mind path incl. wave-51 persistence ("persisted rw[] -> durable") fired.
+NOT demonstrated: the FULL cross-arch MIND-level teach→answer. Root cause is
+NOT ABI/wire (registration + replication cross ABI fine) — it's qemu-x86_64
+user-mode emulation being too SLOW: the x86_64 node's lazy substrate pretrain
+(native 8-15s) takes minutes under qemu, so consolidation never completed in
+budget. ALSO found a config gotcha: mind/teach is REGION-scoped, so a manual
+2-node test MUST set PKERNEL_RTT_ZONE_SIZE=2 (+PENALTY) to put both nodes in one
+region, else the teach is filtered (the sample does this; my first scripts didn't).
+CONCLUSION: multi-platform comms work; the full cross-arch mind demo belongs on
+REAL x86 hardware or via the phone+host-node over a relay (the "外の環境" step),
+NOT qemu. This de-risks bucket B's distribution plumbing.
