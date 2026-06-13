@@ -319,6 +319,19 @@ jobs:
           timeout 300 samples/40_i18n_manifesto/i18n_cert.sh | tee i18n_cert.log
           grep -aF '[i18n-manifesto] PASS' i18n_cert.log
 
+      # SLICE 0 — the durable layer stops lying (persistence.md; gap-ledger
+      # DUR-SWALLOW 🔴 + DUR-REFTAB 🟠). [pfs-durswallow]: a failed durable
+      # write makes pfs_put return NON-OK and pins the sole in-memory copy
+      # un-evictable (FIFO no longer drops the only copy). [pfs-dagrefs]: a
+      # same-length torn refs.tab is REFUSED at load (CRC32 over {count+
+      # entries}) and a clean refs.tab round-trips. Both run against the real
+      # pfs_put / refs_persist / pfs_dag_restore paths under PKERNEL_PFS_DIR.
+      - name: Durable-honesty cert (persistence.md SLICE 0)
+        run: |
+          timeout 300 samples/43_dur_honest/dur_cert.sh | tee dur_honest_cert.log
+          grep -aF '[pfs-durswallow] PASS' dur_honest_cert.log
+          grep -aF '[pfs-dagrefs] PASS'    dur_honest_cert.log
+
       - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
         run: |
           cd boot/linux_x86_64
