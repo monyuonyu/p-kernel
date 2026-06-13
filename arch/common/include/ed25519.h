@@ -58,8 +58,11 @@ void ed25519_keypair_from_seed(const unsigned char seed[ED25519_SEED_LEN],
                                unsigned char pk_out[ED25519_PUBLIC_KEY_LEN],
                                unsigned char sk_out[ED25519_SECRET_KEY_LEN]);
 
-/* Detached sign: sig_out = Ed25519(sk, msg). Deterministic. */
-void ed25519_sign(unsigned char sig_out[ED25519_SIGNATURE_LEN],
+/* Detached sign: sig_out = Ed25519(sk, msg). Deterministic. Returns 1 on
+ * success, 0 (fail-CLOSED) if msg_len exceeds the bound — in which case NO
+ * signature is written, symmetric with ed25519_verify's oversize rejection.
+ * Never truncates-and-signs (SEC-SIGN-TRUNC). */
+int  ed25519_sign(unsigned char sig_out[ED25519_SIGNATURE_LEN],
                   const unsigned char *msg, size_t msg_len,
                   const unsigned char sk[ED25519_SECRET_KEY_LEN]);
 

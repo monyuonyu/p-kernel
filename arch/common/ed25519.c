@@ -539,16 +539,22 @@ void ed25519_keypair_from_seed(const unsigned char seed[32],
  * scratch is sized for that. */
 #define ED25519_MAX_MSG  4096
 
-void ed25519_sign(unsigned char sig_out[64],
-                  const unsigned char *msg, size_t msg_len,
-                  const unsigned char sk[64])
+int ed25519_sign(unsigned char sig_out[64],
+                 const unsigned char *msg, size_t msg_len,
+                 const unsigned char sk[64])
 {
   static u8 sm[ED25519_MAX_MSG + 64];   /* static: not task stack (mem rule) */
   u64 smlen;
   size_t i;
-  if (msg_len > ED25519_MAX_MSG) msg_len = ED25519_MAX_MSG; /* fail-safe clamp */
+  /* Fail-CLOSED on oversize, symmetric with ed25519_verify (:563): never
+   * emit a signature over a TRUNCATED message — a signer and verifier must
+   * never disagree on WHAT was signed. (SEC-SIGN-TRUNC, external audit
+   * 2026-06-13.) sig_out is left untouched so a caller that ignores the
+   * return value still cannot ship a stale/partial signature. */
+  if (msg_len > ED25519_MAX_MSG) return 0;
   crypto_sign(sm, &smlen, msg, (u64)msg_len, sk);
   for (i = 0;i < 64;++i) sig_out[i] = sm[i];
+  return 1;
 }
 
 int ed25519_verify(const unsigned char sig[64],
@@ -667,6 +673,30 @@ int ed25519_self_test(void)
     if (ed25519_verify(sig, msg, 2, pk) != 1) return 32;
     { u8 bs[64]; size_t i; for (i=0;i<64;++i) bs[i]=sig[i]; bs[63]^=0x01;
       if (ed25519_verify(bs, msg, 2, pk) != 0) return 33; }
+  }
+
+  /* ---- SEC-SIGN-TRUNC: oversize message is fail-CLOSED, symmetric with
+   * verify. A within-bound sign succeeds (==1); an oversize sign REFUSES
+   * (==0) and emits NO signature, instead of silently signing a truncated
+   * body. (external audit 2026-06-13) ---- */
+  {
+    static const u8 sk[32] = {
+      0x9d,0x61,0xb1,0x9d,0xef,0xfd,0x5a,0x60,0xba,0x84,0x4a,0xf4,0x92,0xec,0x2c,0xc4,
+      0x44,0x49,0xc5,0x69,0x7b,0x32,0x69,0x19,0x70,0x3b,0xac,0x03,0x1c,0xae,0x7f,0x60 };
+    static u8 big[ED25519_MAX_MSG + 1];   /* one byte past the bound */
+    u8 dpk[32], dsk[64], gsig[64];
+    size_t i;
+    ed25519_keypair_from_seed(sk, dpk, dsk);
+    for (i = 0; i < sizeof big; ++i) big[i] = (u8)i;
+    /* at the bound: signs (==1) and verifies */
+    if (ed25519_sign(gsig, big, ED25519_MAX_MSG, dsk) != 1) return 40;
+    if (ed25519_verify(gsig, big, ED25519_MAX_MSG, dpk) != 1) return 41;
+    /* one byte over: REFUSES (==0); leaves the buffer untouched (no partial
+     * signature), and verify likewise refuses the oversize message */
+    for (i = 0; i < 64; ++i) gsig[i] = 0xAB;   /* sentinel: must stay untouched */
+    if (ed25519_sign(gsig, big, sizeof big, dsk) != 0) return 42;
+    for (i = 0; i < 64; ++i) if (gsig[i] != 0xAB) return 43;
+    if (ed25519_verify(gsig, big, sizeof big, dpk) != 0) return 44;
   }
 
   return 0;
