@@ -28,4 +28,7 @@
     <string name="reintro_btn">はじめての説明をもう一度</string>
     <string name="settings_header">設定</string>
     <string name="app_version_fmt">yurikago %1$s</string>
+    <string name="engineer_resources">リソース / CPU</string>
+    <string name="engineer_measuring">計測中…</string>
+    <string name="engineer_gpu_unused">未使用（CPUで推論）</string>
 </resources>

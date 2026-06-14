@@ -76,4 +76,12 @@
     <!-- Fleet / relay (advanced) fields, moved here from the friendly layer. -->
     <string name="engineer_fleet">Fleet / relay (advanced)</string>
     <string name="engineer_fleet_save">Save &amp; relight node</string>
+    <!-- Resources / CPU section (engineer-stats wave): REAL measurements off
+         /proc — system CPU% + this node's process CPU% + core count. GPU is
+         stated honestly (no fabricated %) because Android exposes no portable
+         GPU-usage API and inference runs on the CPU. (en+ja in the table; the
+         other 30 fall back to English, like the rest of the engineer page.) -->
+    <string name="engineer_resources">Resources / CPU</string>
+    <string name="engineer_measuring">measuring…</string>
+    <string name="engineer_gpu_unused">not used (CPU inference)</string>
 </resources>
