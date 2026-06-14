@@ -15,17 +15,28 @@
  *      {"node":id,"build":"...","modules":[{"name":"swim","version":1},...]}).
  *      If it isn't reachable yet, the rows degrade to "—" — never a crash.
  *
- * Reached only from MainActivity's collapsed advanced settings;
+ *   4. App version — "yurikago <versionName>", read off the PackageManager
+ *      (no BuildConfig needed), so the engineer can see exactly which build.
+ *
+ *   5. Fleet / relay (advanced) — node id + relay host/port/key, moved here
+ *      from the friendly Settings layer (3-layer-discover wave). They persist
+ *      to the "ump" prefs and feed PKernelService via the SAME intent extras;
+ *      "Save & relight" restarts the node with the new values.
+ *
+ * Reached only from the "Engineer / advanced" button on the Settings layer;
  * manifest-declared exported=false.
  */
 package io.pkernel
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
@@ -37,6 +48,10 @@ class LogActivity : AppCompatActivity() {
     private lateinit var logView: TextView
     private lateinit var internalsView: TextView
     private lateinit var modulesView: TextView
+    private lateinit var nodeIdField: EditText
+    private lateinit var relayHostField: EditText
+    private lateinit var relayPortField: EditText
+    private lateinit var relayKeyField: EditText
     private val ui = Handler(Looper.getMainLooper())
     @Volatile private var stopped = false
     private var galaxyPort = BASE_PORT
@@ -49,6 +64,14 @@ class LogActivity : AppCompatActivity() {
         logView       = findViewById(R.id.log_view)
         internalsView = findViewById(R.id.internals_view)
         modulesView   = findViewById(R.id.modules_view)
+        nodeIdField    = findViewById(R.id.field_node_id)
+        relayHostField = findViewById(R.id.field_relay_host)
+        relayPortField = findViewById(R.id.field_relay_port)
+        relayKeyField  = findViewById(R.id.field_relay_key)
+
+        /* App version — straight off the PackageManager (no BuildConfig). */
+        findViewById<TextView>(R.id.app_version).text =
+            getString(R.string.app_version_fmt, appVersionName())
 
         /* The galaxy/modules port follows the live node id (7800 + id - 1). */
         val nodeId = PKernelService.snapNodeId.let { if (it > 0) it else 1 }
@@ -62,6 +85,50 @@ class LogActivity : AppCompatActivity() {
             cm?.setPrimaryClip(ClipData.newPlainText("yurikago log", logView.text))
         }
 
+        /* Fleet / relay fields, prefilled from the persisted "ump" prefs (the
+         * same keys the service reads). "Save & relight" persists + restarts. */
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        nodeIdField.setText(prefs.getInt(PKernelService.EXTRA_NODE_ID, 1).toString())
+        relayHostField.setText(prefs.getString(PKernelService.EXTRA_RELAY_HOST, "") ?: "")
+        relayPortField.setText(prefs.getInt(PKernelService.EXTRA_RELAY_PORT, 7400).toString())
+        relayKeyField.setText(prefs.getString(PKernelService.EXTRA_RELAY_KEY, "") ?: "")
+        findViewById<Button>(R.id.btn_relay_save).setOnClickListener { saveAndRelight() }
+
+        renderInternals()
+        fetchModules()
+    }
+
+    /** "yurikago 0.6.3" — read off the PackageManager (no BuildConfig). */
+    private fun appVersionName(): String =
+        try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" }
+        catch (_: Throwable) { "?" }
+
+    /**
+     * Persist the fleet/relay fields to the "ump" prefs and (re)start the
+     * service with them — the SAME intent-extra plumbing the friendly layer
+     * used before these fields moved here. Does NOT touch the power gate.
+     */
+    private fun saveAndRelight() {
+        val nodeId = nodeIdField.text.toString().toIntOrNull() ?: 1
+        val host   = relayHostField.text.toString().trim()
+        val port   = relayPortField.text.toString().toIntOrNull() ?: 7400
+        val key    = relayKeyField.text.toString().trim()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(PKernelService.EXTRA_NODE_ID, nodeId)
+            .putString(PKernelService.EXTRA_RELAY_HOST, host)
+            .putInt(PKernelService.EXTRA_RELAY_PORT, port)
+            .putString(PKernelService.EXTRA_RELAY_KEY, key)
+            .apply()
+        val intent = Intent(this, PKernelService::class.java).apply {
+            putExtra(PKernelService.EXTRA_NODE_ID,    nodeId)
+            putExtra(PKernelService.EXTRA_RELAY_HOST, host)
+            putExtra(PKernelService.EXTRA_RELAY_PORT, port)
+            putExtra(PKernelService.EXTRA_RELAY_KEY,  key)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+        else startService(intent)
+        /* The galaxy/modules port follows the new id; refresh the table. */
+        galaxyPort = BASE_PORT + (nodeId - 1)
         renderInternals()
         fetchModules()
     }
@@ -149,5 +216,6 @@ class LogActivity : AppCompatActivity() {
 
     companion object {
         private const val BASE_PORT = 7800   // galaxy.c §D1 (modules.json sibling)
+        private const val PREFS = "ump"      // same prefs the service reads
     }
 }

@@ -82,14 +82,18 @@ class GalaxyActivity : AppCompatActivity() {
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         root.addView(splash, FrameLayout.LayoutParams(-1, -1))
 
-        /* ⋮ — the only visible piece of machinery: a dim corner button to the
-         * advanced screen (node id / fleet relay). Everything else is sky. */
+        /* ⚙ — the visible settings button: a clear corner gear into the
+         * Settings layer (MainActivity in advanced mode). Tasteful but
+         * FINDABLE — a first-time owner must be able to reach settings without
+         * a treasure hunt (0.6.3 feedback: the old ⋮ at ~40% alpha was
+         * invisible). High-alpha glyph, generous tap padding; everything else
+         * is sky. */
         val menu = TextView(this).apply {
-            text = "⋮"
-            textSize = 22f
+            text = "⚙"
+            textSize = 24f
             contentDescription = getString(R.string.galaxy_menu_desc)
-            setTextColor(0x66CDD6F4)
-            setPadding(36, 24, 36, 24)
+            setTextColor(0xCCCDD6F4.toInt())
+            setPadding(40, 28, 40, 28)
             setOnClickListener {
                 startActivity(Intent(this@GalaxyActivity, MainActivity::class.java)
                     .putExtra(MainActivity.EXTRA_ADVANCED, true))

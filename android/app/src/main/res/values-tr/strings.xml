@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Yalnızca Wi-Fi (sınırsız)</string>
     <string name="pref_start_on_boot">Telefon açıldığında başlat</string>
     <string name="reintro_btn">Tanıtımı tekrar gör</string>
+    <string name="settings_header">Ayarlar</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

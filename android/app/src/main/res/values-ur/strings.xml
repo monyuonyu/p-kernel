@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">صرف Wi-Fi (بغیر ڈیٹا حد)</string>
     <string name="pref_start_on_boot">فون آن ہونے پر شروع کریں</string>
     <string name="reintro_btn">تعارف دوبارہ دیکھیں</string>
+    <string name="settings_header">ترتیبات</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

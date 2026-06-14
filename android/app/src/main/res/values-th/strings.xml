@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">เฉพาะ Wi-Fi (ไม่จำกัดดาต้า)</string>
     <string name="pref_start_on_boot">เริ่มเมื่อเปิดเครื่อง</string>
     <string name="reintro_btn">ดูคำแนะนำอีกครั้ง</string>
+    <string name="settings_header">การตั้งค่า</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

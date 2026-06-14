@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">फक्त Wi-Fi (डेटा-मर्यादेशिवाय)</string>
     <string name="pref_start_on_boot">फोन सुरू होताच चालू करा</string>
     <string name="reintro_btn">ओळख पुन्हा पाहा</string>
+    <string name="settings_header">सेटिंग्ज</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">واي-فاي فقط (بلا حدّ بيانات)</string>
     <string name="pref_start_on_boot">ابدأ عند تشغيل الهاتف</string>
     <string name="reintro_btn">عرض المقدمة مرة أخرى</string>
+    <string name="settings_header">الإعدادات</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

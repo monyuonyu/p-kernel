@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Solo Wi-Fi (senza limiti di dati)</string>
     <string name="pref_start_on_boot">Avvia all\'accensione del telefono</string>
     <string name="reintro_btn">Rivedi l\'introduzione</string>
+    <string name="settings_header">Impostazioni</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

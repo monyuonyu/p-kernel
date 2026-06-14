@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Лише Wi-Fi (без ліміту)</string>
     <string name="pref_start_on_boot">Запускати при ввімкненні телефону</string>
     <string name="reintro_btn">Переглянути вступ знову</string>
+    <string name="settings_header">Налаштування</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

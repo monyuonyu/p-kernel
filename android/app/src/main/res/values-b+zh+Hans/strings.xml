@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">仅 Wi-Fi（非计量网络）</string>
     <string name="pref_start_on_boot">开机时自动启动</string>
     <string name="reintro_btn">再次查看介绍</string>
+    <string name="settings_header">设置</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

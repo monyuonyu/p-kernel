@@ -3,9 +3,15 @@
   activity_log.xml — the ENGINEER page (LogActivity), layer 3.
 
   Deliberately technical / console-styled (the ONE place jargon is allowed,
-  per docs/product-soul.md): monospace, near-black background, the raw kernel
-  stdout tail, node internals, and a name->version module table. Reached only
-  from the collapsed advanced settings on MainActivity; exported=false.
+  per docs/product-soul.md): monospace, near-black background. It carries:
+    · app version (yurikago <versionName>) + build id,
+    · node internals,
+    · the name->version module table (GET /modules.json),
+    · the raw kernel stdout tail (with a copy button), and
+    · the Fleet / relay (advanced) fields — node id / relay host/port/key,
+      moved here from the friendly Settings layer (3-layer-discover wave).
+  Reached only from the "Engineer / advanced" button on the Settings layer;
+  exported=false.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -26,6 +32,18 @@
             android:textSize="16sp"
             android:textStyle="bold"
             android:fontFamily="monospace"
+            android:paddingBottom="2dp"/>
+
+        <!-- App version (yurikago <versionName>) — filled at runtime. -->
+        <TextView
+            android:id="@+id/app_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="@color/sky_dim"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
             android:paddingBottom="12dp"/>
 
         <!-- Node internals -->
@@ -101,5 +119,110 @@
             android:textSize="11sp"
             android:textIsSelectable="true"
             android:padding="6dp"/>
+
+        <!-- ============ Fleet / relay (advanced) ======================
+             The technical fleet fields, moved out of the friendly Settings
+             layer (3-layer-discover wave): node id + relay host/port/key.
+             These persist to the "ump" prefs and feed PKernelService via the
+             same intent-extra plumbing; "Save &amp; relight" restarts the
+             node with the new values. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="10dp"
+            android:background="@color/sky_faint"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_fleet"
+            android:textColor="@color/log_text"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:paddingBottom="8dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/label_node_id"
+            android:textColor="@color/sky_faint"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingBottom="2dp"/>
+        <EditText
+            android:id="@+id/field_node_id"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="number"
+            android:textColor="@color/log_text"
+            android:textColorHint="@color/sky_faint"
+            android:fontFamily="monospace"
+            android:paddingBottom="12dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/label_relay_host"
+            android:textColor="@color/sky_faint"
+            android:textSize="12sp"
+            android:fontFamily="monospace"/>
+        <EditText
+            android:id="@+id/field_relay_host"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:hint="@string/hint_relay_host"
+            android:textColor="@color/log_text"
+            android:textColorHint="@color/sky_faint"
+            android:fontFamily="monospace"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/label_relay_port"
+            android:textColor="@color/sky_faint"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingTop="8dp"/>
+        <EditText
+            android:id="@+id/field_relay_port"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="number"
+            android:textColor="@color/log_text"
+            android:textColorHint="@color/sky_faint"
+            android:fontFamily="monospace"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/label_relay_key"
+            android:textColor="@color/sky_faint"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingTop="8dp"/>
+        <EditText
+            android:id="@+id/field_relay_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:hint="@string/hint_relay_key"
+            android:textColor="@color/log_text"
+            android:textColorHint="@color/sky_faint"
+            android:fontFamily="monospace"/>
+
+        <Button
+            android:id="@+id/btn_relay_save"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_fleet_save"
+            android:textColor="@color/log_text"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="8dp"/>
     </LinearLayout>
 </ScrollView>
