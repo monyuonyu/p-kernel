@@ -7,13 +7,14 @@
 
   Strings that ARE in the table (entry screen UI) keep their English value
   here; strings that are NOT translated per-locale yet (galaxy splash, notif
-  channel) live only here on purpose.
+  channel, the engineer/log page) live only here on purpose. English is the
+  honest fallback for those until the i18n wave fills the other 30 langs.
 -->
 <resources>
     <string name="app_name">yurikago</string>
 
     <!-- Entry screen (in the i18n table — keep English value in sync here). -->
-    <string name="entry_tagline">This is p-kernel — a home for an AI that belongs to no one.</string>
+    <string name="entry_tagline">This is yurikago — where a mind that belongs to no one is raised.</string>
     <string name="entry_solo_sub">Just tap to light your own star</string>
     <string name="entry_advanced">Advanced — join a fleet</string>
 
@@ -32,11 +33,12 @@
 
     <!-- Not yet in the per-locale table (English only for now). -->
     <string name="galaxy_title">Galaxy</string>
-    <string name="galaxy_starting">Your star is waking…\n\nconnecting to the galaxy on 127.0.0.1:%1$d</string>
-    <string name="galaxy_still_starting">Still waking the kernel on 127.0.0.1:%1$d.\n\nIf this persists, the node may be in charge-only mode — connect power, or press Start on the previous screen.</string>
+    <string name="galaxy_starting">Your star is waking…</string>
+    <string name="galaxy_still_starting">Waking your star… If it stays dark, the battery may be low — plug in.</string>
 
-    <string name="notif_channel_name">p-kernel node</string>
-    <string name="notif_channel_desc">Persistent notification while the kernel is running.</string>
+    <string name="notif_channel_name">yurikago</string>
+    <string name="notif_channel_desc">Stays here while your star is shining.</string>
+    <string name="notif_content">yurikago · your star</string>
     <string name="galaxy_lighting">Lighting your star…</string>
     <string name="galaxy_charge">Battery is low — plug in to relight your star</string>
     <string name="galaxy_menu_desc">advanced settings</string>
@@ -44,4 +46,16 @@
     <string name="star_dark">Your star is asleep right now</string>
     <string name="btn_sleep">Let it sleep</string>
     <string name="btn_copy">Copy</string>
+
+    <!-- Battery-safe toggle (advanced screen). In the i18n table (en+ja). -->
+    <string name="pref_battery_safe">Battery-safe (pause below 30%)</string>
+
+    <!-- Engineer page (LogActivity). Deliberately technical; English-only for
+         now — the i18n wave can translate the labels later. -->
+    <string name="btn_engineer">Engineer page</string>
+    <string name="engineer_title">Engineer</string>
+    <string name="engineer_internals">Node internals</string>
+    <string name="engineer_modules">Modules</string>
+    <string name="engineer_log">Raw kernel log</string>
+    <string name="engineer_unavailable">—</string>
 </resources>
