@@ -28,7 +28,6 @@
  */
 package io.pkernel
 
-import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -39,7 +38,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
-import android.view.MotionEvent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ScrollView
@@ -84,7 +82,6 @@ class LogActivity : AppCompatActivity() {
         try { Os.sysconf(OsConstants._SC_CLK_TCK).coerceAtLeast(1L) }
         catch (_: Throwable) { 100L }   // 100 Hz is the near-universal default
 
-    @SuppressLint("ClickableViewAccessibility")  // touch listener forwards to the ScrollView; it is not a click target
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_log)
@@ -108,27 +105,18 @@ class LogActivity : AppCompatActivity() {
         val nodeId = PKernelService.snapNodeId.let { if (it > 0) it else 1 }
         galaxyPort = BASE_PORT + (nodeId - 1)
 
-        /* Seed the log with the whole ring buffer, then tail it. The inner
+        /* Seed the log with the whole ring buffer, then tail it. The log
          * ScrollView starts pinned to the bottom so the latest line shows. */
         logView.text = PKernelService.snapshotLog()
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
 
-        /* Bug 4 (log can't scroll): the fixed-height log ScrollView is nested
-         * INSIDE the page's outer ScrollView. Two vertically-nested ScrollViews
-         * fight for the vertical drag, and the OUTER one wins by default — so
-         * the inner log never scrolls. Claim the gesture for the inner view: on
-         * touch-down/move ask the parent NOT to intercept, releasing it on
-         * up/cancel so the rest of the page still scrolls normally. The copy
-         * button is a separate view and is unaffected. */
-        logScroll.setOnTouchListener { v, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                    v.parent?.requestDisallowInterceptTouchEvent(false)
-            }
-            false              // do NOT consume — let ScrollView scroll itself
-        }
+        /* Bug 3 (log can't scroll) is fixed in the LAYOUT, not here: the log
+         * ScrollView is no longer nested inside the page's outer ScrollView —
+         * it is a SIBLING of the upper (facts/fleet) scroll region in a
+         * non-scrolling LinearLayout root (see activity_log.xml). Siblings
+         * don't fight for the drag, so the log scrolls on its own. The previous
+         * requestDisallowInterceptTouchEvent shim (which did not work on the
+         * real device) is therefore removed. */
 
         /* Resources/CPU: seed with the immediate readable facts (cores + the
          * honest GPU line); the % numbers fill in on the first refresh tick. */
@@ -319,16 +307,23 @@ class LogActivity : AppCompatActivity() {
         prevWallMs = nowMs
 
         val measuring = getString(R.string.engineer_measuring)
+        /* Bug 2: device-wide CPU is HONESTLY unavailable — /proc/stat's
+         * aggregate line is denied to third-party apps by SELinux on API 26+,
+         * and there is no fake-free way to get it. So lead with THIS NODE's own
+         * CPU% (from /proc/self/stat — always readable, always resolves) and
+         * label the device-wide row as OS-restricted rather than a bare "n/a"
+         * that reads like a bug. On the rare device/build where /proc/stat IS
+         * readable, the live device-wide % shows. */
         resourcesView.text = buildString {
-            append("system CPU  : ")
-                .append(when {
-                    sysPct >= 0 -> "$sysPct%"
-                    sysPct == -2 -> "n/a (restricted)"  // /proc/stat denied by SELinux (API 26+)
-                    else -> measuring
-                })
-                .append('\n')
             append("this node   : ")
                 .append(if (procPct >= 0) "$procPct%" else measuring)
+                .append('\n')
+            append("device-wide : ")
+                .append(when {
+                    sysPct >= 0 -> "$sysPct%"
+                    sysPct == -2 -> getString(R.string.engineer_cpu_restricted)  // OS-denied (SELinux, API 26+)
+                    else -> measuring
+                })
                 .append('\n')
             append("CPU cores   : ").append(cores).append('\n')
             append("GPU         : ").append(gpuStatusLine())

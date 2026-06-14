@@ -7,257 +7,294 @@
     · app version (yurikago <versionName>) + build id,
     · node internals,
     · the name->version module table (GET /modules.json),
-    · the raw kernel stdout tail (with a copy button), and
-    · the Fleet / relay (advanced) fields — node id / relay host/port/key,
-      moved here from the friendly Settings layer (3-layer-discover wave).
+    · the Resources / CPU section (this node's CPU% + cores + GPU),
+    · the Fleet / relay (advanced) fields — node id / relay host/port/key, and
+    · the raw kernel stdout tail (with a copy button).
   Reached only from the "Advanced" button on the Settings layer;
   exported=false.
+
+  LAYOUT (Bug 3 — the log could not be scrolled): the previous structure
+  nested the fixed-height log ScrollView INSIDE the page's outer ScrollView.
+  Two vertically-nested ScrollViews fight for the drag and the OUTER wins by
+  default; a requestDisallowInterceptTouchEvent shim did NOT fix it on the
+  real device. The robust fix is to STOP nesting: the root is now a
+  non-scrolling vertical LinearLayout with TWO SIBLING scroll regions —
+    (1) an upper ScrollView (weight 1) for all the static facts + fleet
+        fields, and
+    (2) the log's own ScrollView (weight 1, height 0dp) at the bottom.
+  Siblings never fight for the gesture, so each scrolls independently: you
+  can drag the log back through history AND scroll the facts above it. The
+  log still tails (auto-scrolls to bottom on append) and the copy button is
+  unaffected.
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/log_bg">
+    android:orientation="vertical"
+    android:background="@color/log_bg"
+    android:padding="14dp">
 
-    <LinearLayout
+    <!-- ============ Upper region: static facts + fleet fields ===========
+         All non-log content, in its OWN scroll region (sibling of the log,
+         never nested) so it scrolls without fighting the log's drag. -->
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="14dp">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="vertical">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/engineer_title"
-            android:textColor="@color/log_text"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:fontFamily="monospace"
-            android:paddingBottom="2dp"/>
-
-        <!-- App version (yurikago <versionName>) — filled at runtime. -->
-        <TextView
-            android:id="@+id/app_version"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text=""
-            android:textColor="@color/sky_dim"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:textIsSelectable="true"
-            android:paddingBottom="12dp"/>
-
-        <!-- Node internals -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/engineer_internals"
-            android:textColor="@color/sky_dim"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingBottom="4dp"/>
-        <TextView
-            android:id="@+id/internals_view"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/log_text"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:textIsSelectable="true"
-            android:paddingBottom="14dp"/>
-
-        <!-- Module-version table (GET /modules.json) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/engineer_modules"
-            android:textColor="@color/sky_dim"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingBottom="4dp"/>
-        <TextView
-            android:id="@+id/modules_view"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/log_text"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:textIsSelectable="true"
-            android:paddingBottom="14dp"/>
-
-        <!-- ============ Resources / CPU (REAL measurements) =============
-             System CPU% sampled off /proc/stat (no permission needed) +
-             core count + this node's own process CPU%. GPU is shown HONESTLY:
-             Android exposes no portable GPU-usage API and inference runs on
-             the CPU, so we say so rather than fabricate a number. -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/engineer_resources"
-            android:textColor="@color/sky_dim"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingBottom="4dp"/>
-        <TextView
-            android:id="@+id/resources_view"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="@color/log_text"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:textIsSelectable="true"
-            android:paddingBottom="14dp"/>
-
-        <!-- Raw kernel log -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingBottom="4dp">
+            android:orientation="vertical">
+
             <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/engineer_log"
-                android:textColor="@color/sky_dim"
-                android:textSize="12sp"
-                android:fontFamily="monospace"/>
-            <Button
-                android:id="@+id/btn_copy_log"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/btn_copy"
+                android:text="@string/engineer_title"
                 android:textColor="@color/log_text"
-                android:textSize="12sp"
-                android:fontFamily="monospace"/>
-        </LinearLayout>
-        <!-- Bounded, independently-scrollable log region. The page's outer
-             ScrollView would otherwise grow without limit as the log fills;
-             this fixed-height inner ScrollView keeps the latest tail visible
-             (LogActivity auto-scrolls it to the bottom on append) while the
-             reader can still drag up through the history. -->
-        <ScrollView
-            android:id="@+id/log_scroll"
-            android:layout_width="match_parent"
-            android:layout_height="260dp"
-            android:background="@color/log_bg"
-            android:scrollbars="vertical"
-            android:fadeScrollbars="false">
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingBottom="2dp"/>
+
+            <!-- App version (yurikago <versionName>) — filled at runtime. -->
             <TextView
-                android:id="@+id/log_view"
+                android:id="@+id/app_version"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/sky_dim"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true"
+                android:paddingBottom="12dp"/>
+
+            <!-- Node internals -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/engineer_internals"
+                android:textColor="@color/sky_dim"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="4dp"/>
+            <TextView
+                android:id="@+id/internals_view"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="@color/log_text"
                 android:fontFamily="monospace"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textIsSelectable="true"
-                android:padding="6dp"/>
-        </ScrollView>
+                android:paddingBottom="14dp"/>
 
-        <!-- ============ Fleet / relay (advanced) ======================
-             The technical fleet fields, moved out of the friendly Settings
-             layer (3-layer-discover wave): node id + relay host/port/key.
-             These persist to the "ump" prefs and feed PKernelService via the
-             same intent-extra plumbing; "Save &amp; relight" restarts the
-             node with the new values. -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="10dp"
-            android:background="@color/sky_faint"/>
+            <!-- Module-version table (GET /modules.json) -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/engineer_modules"
+                android:textColor="@color/sky_dim"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="4dp"/>
+            <TextView
+                android:id="@+id/modules_view"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/log_text"
+                android:fontFamily="monospace"
+                android:textSize="12sp"
+                android:textIsSelectable="true"
+                android:paddingBottom="14dp"/>
 
+            <!-- ============ Resources / CPU (REAL measurements) =============
+                 THIS NODE's own process CPU% (from /proc/self/stat — always
+                 readable) is shown first/prominently + core count. The
+                 device-wide line is OS-restricted: /proc/stat's aggregate cpu
+                 line is denied to third-party apps by SELinux on API 26+, so it
+                 reads "unavailable (OS restriction)" rather than a bare "n/a"
+                 (Bug 2). GPU is shown HONESTLY: Android exposes no portable
+                 GPU-usage API and inference runs on the CPU, so we say so
+                 rather than fabricate a number. -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/engineer_resources"
+                android:textColor="@color/sky_dim"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="4dp"/>
+            <TextView
+                android:id="@+id/resources_view"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/log_text"
+                android:fontFamily="monospace"
+                android:textSize="12sp"
+                android:textIsSelectable="true"
+                android:paddingBottom="14dp"/>
+
+            <!-- ============ Fleet / relay (advanced) ======================
+                 The technical fleet fields, moved out of the friendly Settings
+                 layer (3-layer-discover wave): node id + relay host/port/key.
+                 These persist to the "ump" prefs and feed PKernelService via
+                 the same intent-extra plumbing; "Save &amp; relight" restarts
+                 the node with the new values. -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="10dp"
+                android:background="@color/sky_faint"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/engineer_fleet"
+                android:textColor="@color/log_text"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingBottom="8dp"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_node_id"
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="2dp"/>
+            <EditText
+                android:id="@+id/field_node_id"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:textColor="@color/log_text"
+                android:textColorHint="@color/sky_faint"
+                android:fontFamily="monospace"
+                android:paddingBottom="12dp"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_relay_host"
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:fontFamily="monospace"/>
+            <EditText
+                android:id="@+id/field_relay_host"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:hint="@string/hint_relay_host"
+                android:textColor="@color/log_text"
+                android:textColorHint="@color/sky_faint"
+                android:fontFamily="monospace"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_relay_port"
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingTop="8dp"/>
+            <EditText
+                android:id="@+id/field_relay_port"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:textColor="@color/log_text"
+                android:textColorHint="@color/sky_faint"
+                android:fontFamily="monospace"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_relay_key"
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingTop="8dp"/>
+            <EditText
+                android:id="@+id/field_relay_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:hint="@string/hint_relay_key"
+                android:textColor="@color/log_text"
+                android:textColorHint="@color/sky_faint"
+                android:fontFamily="monospace"/>
+
+            <Button
+                android:id="@+id/btn_relay_save"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/engineer_fleet_save"
+                android:textColor="@color/log_text"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="4dp"/>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- ============ Raw kernel log (its OWN scroll region) ==============
+         Header + copy button, then the log's own ScrollView as a SIBLING of
+         the upper region (NOT nested inside it) — so dragging the log scrolls
+         the log, never the page. Weighted to share the screen with the facts
+         above; LogActivity auto-scrolls it to the bottom on append (tail). -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="6dp"
+        android:background="@color/sky_faint"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="4dp">
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="@string/engineer_fleet"
-            android:textColor="@color/log_text"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:fontFamily="monospace"
-            android:paddingBottom="8dp"/>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/label_node_id"
-            android:textColor="@color/sky_faint"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingBottom="2dp"/>
-        <EditText
-            android:id="@+id/field_node_id"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="number"
-            android:textColor="@color/log_text"
-            android:textColorHint="@color/sky_faint"
-            android:fontFamily="monospace"
-            android:paddingBottom="12dp"/>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/label_relay_host"
-            android:textColor="@color/sky_faint"
+            android:layout_weight="1"
+            android:text="@string/engineer_log"
+            android:textColor="@color/sky_dim"
             android:textSize="12sp"
             android:fontFamily="monospace"/>
-        <EditText
-            android:id="@+id/field_relay_host"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:hint="@string/hint_relay_host"
-            android:textColor="@color/log_text"
-            android:textColorHint="@color/sky_faint"
-            android:fontFamily="monospace"/>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/label_relay_port"
-            android:textColor="@color/sky_faint"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingTop="8dp"/>
-        <EditText
-            android:id="@+id/field_relay_port"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="number"
-            android:textColor="@color/log_text"
-            android:textColorHint="@color/sky_faint"
-            android:fontFamily="monospace"/>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/label_relay_key"
-            android:textColor="@color/sky_faint"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:paddingTop="8dp"/>
-        <EditText
-            android:id="@+id/field_relay_key"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:hint="@string/hint_relay_key"
-            android:textColor="@color/log_text"
-            android:textColorHint="@color/sky_faint"
-            android:fontFamily="monospace"/>
-
         <Button
-            android:id="@+id/btn_relay_save"
+            android:id="@+id/btn_copy_log"
             style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_copy"
+            android:textColor="@color/log_text"
+            android:textSize="12sp"
+            android:fontFamily="monospace"/>
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/log_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/log_bg"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false">
+        <TextView
+            android:id="@+id/log_view"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/engineer_fleet_save"
             android:textColor="@color/log_text"
-            android:textSize="13sp"
             android:fontFamily="monospace"
-            android:layout_marginTop="12dp"
-            android:layout_marginBottom="8dp"/>
-    </LinearLayout>
-</ScrollView>
+            android:textSize="11sp"
+            android:textIsSelectable="true"
+            android:padding="6dp"/>
+    </ScrollView>
+</LinearLayout>
