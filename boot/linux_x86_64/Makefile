@@ -65,8 +65,14 @@ INCDIRS = \
     -I$(INC_TOP)
 
 # ---- Compiler flags ---------------------------------------------------
+# -ffp-contract=off: never fuse a*b+c into an FMA, so the mind's float
+#   math (dtr.c) rounds identically to every other target — "one mind,
+#   one math". Without it clang's FMA contraction diverged from gcc and
+#   the on-device mind learned 5% instead of 95% (wave-49 salty bug).
+#   The `dtr fpdet` golden-logit cert guards this. Keep on every config.
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
           -fno-stack-protector -fno-common -std=gnu11 \
+          -ffp-contract=off \
           -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
           $(INCDIRS)
 

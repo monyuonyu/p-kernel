@@ -41,8 +41,12 @@ INCDIRS = \
 # this file, e.g.  make EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE  (used by
 # samples/31_ark_baremetal to build the bare-metal ARK smoke kernel).
 EXTRA_CFLAGS ?=
+# -ffp-contract=off: never fuse a*b+c into an FMA so the mind's float
+#   math (dtr.c) rounds identically to every other target — "one mind,
+#   one math" (guards the wave-49 salty-bug class; see `dtr fpdet`).
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fcf-protection=none -O1 -m32 -std=gnu11 \
+          -ffp-contract=off \
           -D_APP_X86_ \
           $(INCDIRS) $(EXTRA_CFLAGS)
 

@@ -63,8 +63,15 @@ INCDIRS = \
 # -D_APP_AARCH64_ tells T-Kernel internals this is a 64-bit ARM target.
 # -D_APP_LINUX_ is for arch/linux files to know they're being built
 #   for the userspace port (orthogonal to host arch).
+# -ffp-contract=off forces gcc/clang NOT to fuse a*b+c into an FMA, so
+#   the mind's float math (dtr.c) rounds identically on every target —
+#   the "one mind, one math" rule. Without it, clang's FMA contraction
+#   diverged from gcc on a knife-edge recipe and the on-device mind
+#   learned 5% instead of 95% (the wave-49 "salty bug"). The `dtr fpdet`
+#   golden-logit cert guards this; keep this flag on EVERY build config.
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
           -fno-stack-protector -fno-common -std=gnu11 \
+          -ffp-contract=off \
           -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
           $(INCDIRS)
 
@@ -288,6 +295,7 @@ $(TARGET): $(ALL_OBJS)
 SO_TARGET = libpkernel.so
 SO_CFLAGS = -Wall -Wextra -g -O1 -fPIC -fvisibility=hidden \
             -fno-stack-protector -fno-common -std=gnu11 \
+            -ffp-contract=off \
             -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
             -Dmain=pkernel_main $(INCDIRS)
 SO_KCFLAGS = $(SO_CFLAGS) -I$(INC_LIB)/libc

@@ -57,8 +57,12 @@ INCDIRS = \
 # samples/33_ark_aarch64/run.sh to compile the bare-metal ARK smoke driver
 # into boot/main.c + arch/aarch64/ark_bdev.c).
 EXTRA_CFLAGS ?=
+# -ffp-contract=off: never fuse a*b+c into an FMA so the mind's float
+#   math (dtr.c) rounds identically to every other target — "one mind,
+#   one math" (guards the wave-49 salty-bug class; see `dtr fpdet`).
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fno-common -O1 -std=gnu11 -mstrict-align \
+          -ffp-contract=off \
           -D_APP_AARCH64_ \
           $(EXTRA_CFLAGS) \
           $(INCDIRS)
