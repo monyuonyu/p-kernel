@@ -123,6 +123,13 @@ kv_context(N)       = Σ_{n∈region} kv_count[n]    # region 内の KV を合�
 degrade の3段は**この連続関数の粗いバンド**として残す（SOLO/REDUCED/FULL は
 人間が読むラベル）。内部判断は `capacity(N)` の数値で行う。
 
+> **DEVICE 軸の継ぎ足し**: 上式は**ノード数 N**で容量を駆動し、全ノードを等価
+> （1 ノード = 1 expert）とみなす。だが実艦隊は強端末〜廉価機の異種混在。
+> **端末性能（cores/RAM/GPU/CPU マイクロベンチ）で各ノードの取り分を連続変調**する
+> 設計は [device-capacity.md](device-capacity.md) ―― `capacity_score()` を**フォークせず**
+> `device` 係数を一本乗せ、強い端末が太い expert/層/KV を担い、熱い/電池僅少では `S_n`
+> 経由で生きたまま縮む。本書 §6（provisioning）/ §3.3（utility に太さを足す）と接続。
+
 > **実装済み (R2)**: `degrade.c` / `degrade.h` に `capacity_experts()` /
 > `capacity_depth()` / `capacity_kv()` / `capacity_score()` を追加。
 > breadth は ALIVE 全ノード (global MoE) を `clamp(N,1,CAP_E_MAX)`、depth は
