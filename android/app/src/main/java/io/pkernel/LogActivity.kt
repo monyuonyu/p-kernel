@@ -291,7 +291,17 @@ class LogActivity : AppCompatActivity() {
      * on a Vulkan-less device available() is false and we say so.
      */
     private fun gpuStatusLine(): String =
-        if (!PKernel.Gpu.available()) {
+        /* "available vs not" keys off CAPABILITY (capable()), not in-use
+         * (available()). A capable GPU is honestly "available" even with the
+         * enable flag OFF — that is the DEFAULT state. The on/off sub-state is
+         * a SEPARATE read (isEnabled()): so by default a capable device shows
+         * "<name> · available · off · not yet used for inference (CPU)", and
+         * after toggling "<name> · available · enabled (settings) · …". The
+         * engineer_gpu_off branch used to be dead (the available() branch
+         * required the flag ON); splitting capability from enablement reaches
+         * it. The suffix stays honestly "not yet used for inference (CPU)" —
+         * GPU-3 wires the matmul; this wave only surfaces status. */
+        if (!PKernel.Gpu.capable()) {
             getString(R.string.engineer_gpu_unavailable)
         } else {
             val name = PKernel.Gpu.name().ifBlank { "GPU" }

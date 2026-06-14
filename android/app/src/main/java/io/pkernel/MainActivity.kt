@@ -142,17 +142,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         /* Use-GPU toggle: PREF_USE_GPU (default OFF — honestly experimental and
-         * matching the native gpu_set_enabled default). On entry we read the
-         * stored pref, push it into the native flag (nativeGpuSetEnabled), and
-         * set the switch. If the device has NO usable Vulkan (nativeGpuAvailable
-         * == false) we DISABLE the toggle (greyed) and relabel it so the switch
-         * is honest about device compatibility. This wave only surfaces the
-         * flag; the mind still runs inference on the CPU (GPU-3 wires the
-         * matmul). We do NOT touch the inference path. */
-        val gpuAvailable = PKernel.Gpu.available()
-        if (gpuAvailable) {
+         * matching the native gpu_set_enabled default). The toggle's ENABLED-ness
+         * keys off CAPABILITY (Gpu.capable() — does a usable Vulkan device
+         * EXIST?), NOT availability (Gpu.available() — capable AND already
+         * switched ON). Using available() here deadlocked the UI: the flag
+         * defaults OFF, so available() returned false, so the toggle was greyed,
+         * so the user could never turn the flag ON — greyed because OFF, OFF
+         * because greyed. capable() probes the hardware regardless of the flag.
+         *
+         * When capable: enable the toggle, set it from the stored pref, AND
+         * re-apply that persisted state to native (setEnabled) on entry so a
+         * saved ON survives a relaunch. On toggle: persist + setEnabled. This
+         * wave only surfaces the flag; the mind still runs inference on the CPU
+         * (GPU-3 wires the matmul). We do NOT touch the inference path. */
+        val gpuCapable = PKernel.Gpu.capable()
+        if (gpuCapable) {
             val gpuOn = prefs.getBoolean(PREF_USE_GPU, false)
-            PKernel.Gpu.setEnabled(gpuOn)        // push stored pref to native
+            PKernel.Gpu.setEnabled(gpuOn)        // re-apply persisted pref to native
             useGpuSwitch.isChecked = gpuOn
             useGpuSwitch.isEnabled = true
             useGpuSwitch.setText(R.string.pref_use_gpu)
@@ -162,7 +168,7 @@ class MainActivity : AppCompatActivity() {
                 PKernel.Gpu.setEnabled(checked)
             }
         } else {
-            /* No usable GPU: greyed + honest label, never checked. */
+            /* No usable GPU on this device: greyed + honest label, never checked. */
             useGpuSwitch.isChecked = false
             useGpuSwitch.isEnabled = false
             useGpuSwitch.setText(R.string.pref_use_gpu_unavailable)
