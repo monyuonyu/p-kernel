@@ -16,6 +16,7 @@
     <string name="btn_galaxy">銀河を見る</string>
     <string name="galaxy_lighting">あなたの星を灯しています…</string>
     <string name="galaxy_charge">充電すると、あなたの星が灯ります</string>
+    <string name="galaxy_wifi_wait">Wi-Fiにつながると星が灯ります</string>
     <string name="star_lit">あなたの星は、いま輝いています</string>
     <string name="star_dark">あなたの星は、いま眠っています</string>
     <string name="btn_sleep">眠らせる</string>
