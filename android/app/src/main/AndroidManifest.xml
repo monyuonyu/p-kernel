@@ -12,9 +12,10 @@
     POST_NOTIFICATIONS — Android 13+ runtime permission for the persistent
                          notification the foreground service posts.
     WAKE_LOCK         — keep CPU running while the kernel is up. Combined
-                         with charge-only default mode this stays battery-safe.
-    BATTERY_STATS     — read plug state for charge-only gating (BATTERY_STATS
-                         is normal-permission since API 26, no runtime grant).
+                         with the battery-safe floor (run to ~30%, then pause
+                         until plugged in) this stays battery-safe.
+  Battery state (level + plug) is read from the sticky ACTION_BATTERY_CHANGED
+  broadcast, which needs no permission.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -56,6 +57,19 @@
             android:name=".PKernelService"
             android:exported="false"
             android:foregroundServiceType="dataSync"/>
+
+        <!-- battery-safe RESUME: after a low-battery stopSelf() (which kills
+             the process + its runtime receiver) this manifest receiver wakes
+             on plug-in and relaunches the service with the persisted boot
+             params. ACTION_POWER_CONNECTED is a protected system broadcast,
+             so exported=false is correct (only the system delivers it). -->
+        <receiver
+            android:name=".PowerConnectedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED"/>
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>
