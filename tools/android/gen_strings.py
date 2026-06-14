@@ -67,6 +67,7 @@ KEYS = [
     ("galaxy",      "btn_galaxy"),
     ("lighting",    "galaxy_lighting"),   # waking splash (no tech jargon)
     ("charge",      "galaxy_charge"),     # the charge-only gate, said kindly
+    ("wifi_wait",   "galaxy_wifi_wait"),  # WiFi-only pause: waiting for WiFi (en+ja; else en fallback)
     ("star_lit",    "star_lit"),          # advanced screen: state, human words
     ("star_dark",   "star_dark"),
     ("sleep",       "btn_sleep"),
