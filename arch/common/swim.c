@@ -79,6 +79,12 @@ static INT           gq_cnt = 0;
 static UB my_incarnation        = 0;
 static UB dnode_incarn[DNODE_MAX];
 
+/* deterministic peer address (10.1.0.(n+1)); defined below, used by the
+ * transitive-discovery path in gossip_apply() to resolve a gossip-introduced
+ * peer's IP from its node id alone (no address rides the gossip frame). */
+static UW swim_node_ip(UB n);
+static UB suspect_count[DNODE_MAX];    /* fwd: cleared on gossip discovery */
+
 /* state severity ladder for same-incarnation tie-break (ALIVE<SUSPECT<DEAD) */
 static INT state_rank(UB st)
 {
@@ -176,6 +182,44 @@ static void gossip_apply(const SWIM_PKT *pkt)
 
         if (nid >= DNODE_MAX) continue;
 
+        /* NET-DISCOVERY-STAR (wave-discovery-mesh): TRANSITIVE membership.
+         * A peer we have never heard of (UNKNOWN) cannot be introduced by the
+         * (incarnation,state) LWW alone: state_rank(ALIVE)==state_rank(UNKNOWN)
+         * and the rumour's incarnation usually ties ours (both 0 at bring-up),
+         * so gossip_supersedes() returns false and the rumour is dropped. That
+         * is the defect — standard SWIM disseminates MEMBERSHIP epidemically
+         * (B tells A that C exists), but here a node could only ever learn a
+         * peer from a DIRECT packet, capping the live mesh hub-centric.
+         *
+         * Fix: treat the FIRST non-DEAD sighting of an UNKNOWN peer as a
+         * discovery — adopt it. The peer's address is deterministic
+         * (node_base_ip / swim_node_ip == 10.1.0.(nid+1), pre-seeded into ARP
+         * by drpc_init), so node_id alone resolves it; no address needs to ride
+         * the gossip frame (no wire change). We seed dnode_table[nid].ip so any
+         * later unicast (and `nodes`) has the right address even before our own
+         * direct probe RTT lands. We do NOT fabricate an RTT: region_recompute
+         * still requires a real swim_rtt_ms(), which the now-round-robin probe
+         * loop measures directly within a couple of rounds. A DEAD rumour about
+         * an UNKNOWN peer is ignored (we never saw it alive — gossiping it dead
+         * would only seed a grave). */
+        if (dnode_table[nid].state == DNODE_UNKNOWN &&
+            (st == DNODE_ALIVE || st == DNODE_SUSPECT)) {
+            dnode_table[nid].node_id = nid;
+            dnode_table[nid].ip      = swim_node_ip(nid);
+            dnode_table[nid].state   = st;
+            dnode_table[nid].missed  = 0;
+            dnode_incarn[nid]        = inc_in;
+            suspect_count[nid]       = 0;
+            sw_note(nid, DNODE_UNKNOWN, st);
+            sw_puts("[swim] gossip: node "); sw_putdec(nid);
+            sw_puts(st == DNODE_ALIVE ? " discovered (via gossip)\r\n"
+                                      : " SUSPECT (via gossip)\r\n");
+            gossip_add(nid, st, inc_in);   /* re-propagate: keep the epidemic alive */
+            degrade_update();
+            dmn_trigger();
+            continue;
+        }
+
         /* anti-stale: accept only if (incarnation,state) supersedes our view */
         if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state))
             continue;
@@ -202,7 +246,8 @@ static void gossip_apply(const SWIM_PKT *pkt)
 static ID probe_sem          = -1;     /* signalled by swim_rx on ACK    */
 static UH probe_seq          = 1;
 static UB probe_waiting_node = 0xFF;   /* node currently being probed    */
-static UB suspect_count[DNODE_MAX];    /* consecutive no-response rounds */
+/* suspect_count[] defined above (consecutive no-response rounds) — moved up so
+ * the transitive-discovery path in gossip_apply() can clear it on adoption. */
 
 /* ------------------------------------------------------------------ */
 /* RTT estimation (R0, regions design — docs/architecture/regions.md)  */
@@ -372,17 +417,25 @@ static UB probe_cursor = 0;
 
 static UB pick_probe_target(void)
 {
-    /* Try round-robin among known (non-unknown) nodes first */
+    /* NET-DISCOVERY-STAR (wave-discovery-mesh): a single round-robin cursor
+     * over the WHOLE id space, advanced once per call. Crucially this probes
+     * UNKNOWN ids too, not only already-known peers — otherwise a node whose
+     * table is all-UNKNOWN (the bring-up state of every node) fell into the
+     * old fallback that returned the FIRST non-self id (always the minimum-id
+     * node 0) on every round, so two non-hub peers NEVER directly probed each
+     * other and discovery collapsed into a star centred on the lowest id.
+     * Cycling through every id makes each node eventually PING every reachable
+     * peer directly (peer-symmetric, no central node), so a fresh ALIVE/RTT is
+     * measured for every peer — which is exactly what region_recompute needs.
+     * Confirmed-DEAD ids are skipped to avoid wasting rounds on graves; they
+     * are re-probed only after gossip/heartbeat resurrects them. */
     for (UB tries = 0; tries < DNODE_MAX; tries++) {
         probe_cursor = (UB)((probe_cursor + 1) % DNODE_MAX);
         if (probe_cursor == drpc_my_node) continue;
-        if (dnode_table[probe_cursor].state != DNODE_UNKNOWN) return probe_cursor;
+        if (dnode_table[probe_cursor].state == DNODE_DEAD) continue;
+        return probe_cursor;
     }
-    /* Fallback: any non-self node (trigger initial discovery) */
-    for (UB i = 0; i < DNODE_MAX; i++) {
-        if (i != drpc_my_node) return i;
-    }
-    return drpc_my_node;
+    return drpc_my_node;   /* only self is non-DEAD — nothing to probe */
 }
 
 static void pick_helpers(UB exclude, UB helpers[SWIM_K_HELPERS], INT *cnt)
