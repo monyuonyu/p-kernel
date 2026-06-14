@@ -72,6 +72,9 @@ KEYS = [
     ("sleep",       "btn_sleep"),
     ("copy",        "btn_copy"),
     ("battery_safe","pref_battery_safe"),  # advanced screen toggle (en+ja now)
+    ("floor_label", "pref_floor_label"),   # battery-floor SeekBar label (%1$d%%; en+ja now)
+    ("wifi_only",   "pref_wifi_only"),     # WiFi-only toggle (en+ja now)
+    ("start_on_boot","pref_start_on_boot"),# start-on-boot toggle (en+ja now)
 ]
 
 

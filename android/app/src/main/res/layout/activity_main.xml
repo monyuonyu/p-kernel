@@ -171,6 +171,49 @@
                     android:paddingTop="6dp"
                     android:paddingBottom="14dp"/>
 
+                <!-- Battery floor %: a SeekBar (10..50, step 5, default 30).
+                     The label above shows the live value ("Pause below 30%").
+                     Stored in PREF_BATTERY_FLOOR; powerAllowed() reads it. -->
+                <TextView
+                    android:id="@+id/label_battery_floor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pref_floor_label"
+                    android:textColor="@color/sky_faint"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:paddingBottom="2dp"/>
+                <SeekBar
+                    android:id="@+id/seek_battery_floor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="8"
+                    android:paddingBottom="14dp"/>
+
+                <!-- WiFi-only (PREF_WIFI_ONLY; default off): run only on
+                     unmetered WiFi. SwitchCompat (not <Switch>) for the cast. -->
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_wifi_only"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pref_wifi_only"
+                    android:textColor="@color/sky_dim"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:paddingBottom="14dp"/>
+
+                <!-- Start-on-boot (PREF_START_ON_BOOT; default off): relight
+                     the node after the device boots. SwitchCompat. -->
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_start_on_boot"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pref_start_on_boot"
+                    android:textColor="@color/sky_dim"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:paddingBottom="14dp"/>
+
                 <!-- Node id — only needed when joining a fleet. -->
                 <TextView
                     android:layout_width="wrap_content"

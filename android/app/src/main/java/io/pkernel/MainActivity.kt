@@ -30,6 +30,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
@@ -42,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var relayKeyField: EditText
     private lateinit var advancedGroup: LinearLayout
     private lateinit var batterySafeSwitch: SwitchCompat
+    private lateinit var floorLabel: TextView
+    private lateinit var floorSeek: SeekBar
+    private lateinit var wifiOnlySwitch: SwitchCompat
+    private lateinit var startOnBootSwitch: SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +83,10 @@ class MainActivity : AppCompatActivity() {
         relayKeyField  = findViewById(R.id.field_relay_key)
         advancedGroup  = findViewById(R.id.advanced_group)
         batterySafeSwitch = findViewById(R.id.switch_battery_safe)
+        floorLabel        = findViewById(R.id.label_battery_floor)
+        floorSeek         = findViewById(R.id.seek_battery_floor)
+        wifiOnlySwitch    = findViewById(R.id.switch_wifi_only)
+        startOnBootSwitch = findViewById(R.id.switch_start_on_boot)
 
         /* prefill from the persisted settings (the auto path uses the same);
          * first run mints a RANDOM node id instead of everyone being "1"
@@ -99,6 +108,45 @@ class MainActivity : AppCompatActivity() {
         batterySafeSwitch.setOnCheckedChangeListener { _, checked ->
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putBoolean(PKernelService.PREF_CHARGE_ONLY, checked).apply()
+        }
+
+        /* Battery floor SeekBar: range 10..50 step 5 (9 stops => max=8).
+         * progress p maps to floor = FLOOR_MIN + p*FLOOR_STEP. The label shows
+         * the live value; PREF_BATTERY_FLOOR is what powerAllowed() reads. The
+         * pref persists; it takes effect at the next gate check — we do NOT
+         * touch the pause/resume/JobScheduler logic, only the threshold value. */
+        val savedFloor = prefs.getInt(PKernelService.PREF_BATTERY_FLOOR,
+                                      PKernelService.BATTERY_FLOOR_PCT)
+                             .coerceIn(FLOOR_MIN, FLOOR_MAX)
+        floorSeek.progress = (savedFloor - FLOOR_MIN) / FLOOR_STEP
+        floorLabel.text = getString(R.string.pref_floor_label, savedFloor)
+        floorSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                val floor = FLOOR_MIN + progress * FLOOR_STEP
+                floorLabel.text = getString(R.string.pref_floor_label, floor)
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putInt(PKernelService.PREF_BATTERY_FLOOR, floor).apply()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
+        /* WiFi-only toggle: PREF_WIFI_ONLY (default OFF). Takes effect at the
+         * next gate check (runAllowed()); the service's NetworkCallback then
+         * pauses/resumes the node as connectivity changes. */
+        wifiOnlySwitch.isChecked = prefs.getBoolean(PKernelService.PREF_WIFI_ONLY, false)
+        wifiOnlySwitch.setOnCheckedChangeListener { _, checked ->
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PKernelService.PREF_WIFI_ONLY, checked).apply()
+        }
+
+        /* Start-on-boot toggle: PREF_START_ON_BOOT (default OFF). Read by
+         * BootReceiver on ACTION_BOOT_COMPLETED. */
+        startOnBootSwitch.isChecked =
+            prefs.getBoolean(PKernelService.PREF_START_ON_BOOT, false)
+        startOnBootSwitch.setOnCheckedChangeListener { _, checked ->
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PKernelService.PREF_START_ON_BOOT, checked).apply()
         }
 
         findViewById<Button>(R.id.btn_start ).setOnClickListener { startKernel() }
@@ -181,6 +229,10 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_ADVANCED = "advanced"
         private const val PREFS = "ump"
+        // Battery-floor SeekBar range (10..50, step 5 -> 9 stops, SeekBar max=8).
+        private const val FLOOR_MIN = 10
+        private const val FLOOR_MAX = 50
+        private const val FLOOR_STEP = 5
         private const val PREF_NODE_ID = "node_id"
         private const val PREF_RELAY_HOST = "relay_host"
         private const val PREF_RELAY_PORT = "relay_port"

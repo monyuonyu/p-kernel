@@ -50,6 +50,12 @@
     <!-- Battery-safe toggle (advanced screen). In the i18n table (en+ja). -->
     <string name="pref_battery_safe">Battery-safe (pause below 30%)</string>
 
+    <!-- New advanced-screen settings (i18n table: en+ja now; 30 langs later).
+         pref_floor_label takes the live floor % via getString(..., floor). -->
+    <string name="pref_floor_label">Pause below %1$d%%</string>
+    <string name="pref_wifi_only">Wi-Fi only (unmetered)</string>
+    <string name="pref_start_on_boot">Start when the phone turns on</string>
+
     <!-- Engineer page (LogActivity). Deliberately technical; English-only for
          now — the i18n wave can translate the labels later. -->
     <string name="btn_engineer">Engineer page</string>

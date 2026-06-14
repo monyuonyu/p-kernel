@@ -21,4 +21,7 @@
     <string name="btn_sleep">眠らせる</string>
     <string name="btn_copy">コピー</string>
     <string name="pref_battery_safe">バッテリー安全（30%で休む）</string>
+    <string name="pref_floor_label">%1$d%%で休む</string>
+    <string name="pref_wifi_only">Wi-Fiのみ（従量制以外）</string>
+    <string name="pref_start_on_boot">スマホ起動時に始める</string>
 </resources>
