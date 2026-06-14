@@ -67,6 +67,8 @@ IMPORT void mind_merge_task(INT stacd, void *exinf);  /* LM-10 Path W merge */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 IMPORT void sign_self_test(void);                      /* signing.md sign suite */
+IMPORT void tcb_churn(W cycles, W concurrency);        /* KILL-CHURN-CRASH repro */
+IMPORT void tcb_churn_pri(W cycles, W concurrency, W vpri);
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
@@ -872,6 +874,21 @@ EXPORT INT usermain(void)
             } else {
                 genome_cmd(line, n);
             }
+        } else if (starts_with(line, n, "tcbchurn")) {
+            /* KILL-CHURN-CRASH portable reproducer (gap-ledger). Strips the
+             * historic ring3-daemon kill/heal churn down to portable TCB
+             * recycle: spawn timed-wait victims, foreign-kill at varied
+             * phase, immediately recycle the freed TCB while its wtmeb may
+             * fire. Usage: tcbchurn [cycles] [concurrency]. */
+            const UB *a = line + 8; INT al = n - 8;
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            W cyc = 0, con = 0, vpri = 0;
+            while (al > 0 && *a >= '0' && *a <= '9') { cyc = cyc*10 + (*a-'0'); a++; al--; }
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            while (al > 0 && *a >= '0' && *a <= '9') { con = con*10 + (*a-'0'); a++; al--; }
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            while (al > 0 && *a >= '0' && *a <= '9') { vpri = vpri*10 + (*a-'0'); a++; al--; }
+            tcb_churn_pri(cyc, con, vpri);
         } else if (starts_with(line, n, "kdemo")) {
             cmd_kdemo("aarch64");
         } else if (starts_with(line, n, "net")) {

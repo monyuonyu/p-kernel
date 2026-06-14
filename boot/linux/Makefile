@@ -202,6 +202,7 @@ COMMON_C_SRCS = \
     mem_store.c \
     chat.c \
     dproc.c \
+    tcb_churn.c \
     kloader_task.c \
     demo_kdds.c \
     pfs_block.c \

@@ -29,6 +29,9 @@
 #include "kernel.h"
 #include "task.h"
 #include "wait.h"
+#ifdef KCC_DIAG
+#include <tmonitor.h>   /* KILL-CHURN-CRASH diagnostic: tm_putstring/tm_monitor */
+#endif
 /** [END Common Definitions] */
 
 #ifdef USE_FUNC_WAIT_RELEASE_OK
@@ -108,6 +111,26 @@ EXPORT void knl_wait_release_ng( TCB *tcb, ER ercd )
  */
 EXPORT void knl_wait_release_tmout( TCB *tcb )
 {
+#ifdef KCC_DIAG
+	/* KILL-CHURN-CRASH diagnostic (gap-ledger) — OFF in shipped builds.
+	 *
+	 * The historic crash was a garbage-PC #PF here, doing QueRemove
+	 * through a smashed tcb->tskque on a TCB freed by tk_del_tsk and
+	 * recycled.  The T-Kernel TCB pool is a STATIC array (knl_tcb_table),
+	 * so ASAN/valgrind cannot catch this UAF — the memory is always
+	 * mapped; the hazard is LOGICAL reuse.  This guard is the equivalent
+	 * loud diagnostic: a live wait-timer must never fire on a TCB that is
+	 * TS_NONEXIST (freed) or TS_DORMANT (terminated) — both states mean
+	 * the wtmeb should already have been unlinked by the
+	 * knl_make_dormant / knl_del_tsk choke point.  If this halts, the
+	 * stale-timer-on-recycle hypothesis is CONFIRMED and the offending
+	 * state is printed. */
+	if ( tcb->state == TS_NONEXIST || tcb->state == TS_DORMANT ) {
+		tm_putstring((UB *)"[kill-churn] CAUGHT: wait-timer fired on freed/dormant TCB state=");
+		{ char b[4]; b[0]=(char)('0'+((tcb->state>>4)&0xf)); b[1]=(char)('0'+(tcb->state&0xf)); b[2]='\r'; b[3]='\n'; tm_putstring((UB*)b); }
+		tm_monitor();
+	}
+#endif
 	QueRemove(&tcb->tskque);
 	QueInit(&tcb->tskque);
 	knl_make_non_wait(tcb);
