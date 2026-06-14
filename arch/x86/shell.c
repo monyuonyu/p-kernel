@@ -128,8 +128,6 @@ static void cmd_help(void)
     sout("  sensor <t> <h> <p> <l>      - push sensor frame (°C, %, hPa, lux)\r\n");
     sout("  infer <t> <h> <p> <l>       - local MLP inference (no pipeline)\r\n");
     sout("  aistat                      - AI statistics\r\n");
-    sout("  fl train                    - federated learning local train step\r\n");
-    sout("  fl status                   - FL round count + last loss\r\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     sout("Filesystem commands:\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -1101,71 +1099,8 @@ static void cmd_evolve(void)
     ev_save_code(resp, rlen);
 }
 
-/* Tiny labelled training dataset — covers all three classes */
-static const B fl_samples[6][MLP_IN] = {
-    /* normal: t=22C h=50% p=1013hPa l=500lux */
-    {  4, 0, 0, 0 },
-    {  0, 0, 0, 0 },
-    /* alert: t=38C h=80% p=950hPa l=2000lux */
-    { 36, 60, -31, 62 },
-    { 30, 50, -20, 50 },
-    /* critical: t=50C h=95% p=900hPa l=5000lux */
-    { 60, 90, -56, 112 },
-    { 55, 85, -50, 100 },
-};
-static const UB fl_labels[6] = { 0, 0, 1, 1, 2, 2 };
-
-static void cmd_fl(const char *arg)
-{
-    while (*arg == ' ') arg++;
-
-    if (str_starts(arg, "train")) {
-        sout("[FL] local train step...\r\n");
-
-        float delta_w1[MLP_IN*MLP_H1], delta_b1[MLP_H1];
-        float delta_w2[MLP_H1*MLP_H2], delta_b2[MLP_H2];
-        float delta_w3[MLP_H2*MLP_OUT], delta_b3[MLP_OUT];
-
-        ER er = fl_local_train(fl_samples, fl_labels, 6,
-                               delta_w1, delta_b1,
-                               delta_w2, delta_b2,
-                               delta_w3, delta_b3);
-        if (er != E_OK) {
-            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-            sout("[FL] train failed\r\n");
-            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-            return;
-        }
-
-        /* Pack all deltas into one flat array for dtk_fl_aggregate */
-        static float flat_delta[MLP_IN*MLP_H1 + MLP_H1 +
-                                 MLP_H1*MLP_H2 + MLP_H2 +
-                                 MLP_H2*MLP_OUT + MLP_OUT];
-        UW i = 0, j;
-        for (j = 0; j < MLP_IN*MLP_H1;  j++) flat_delta[i++] = delta_w1[j];
-        for (j = 0; j < MLP_H1;         j++) flat_delta[i++] = delta_b1[j];
-        for (j = 0; j < MLP_H1*MLP_H2;  j++) flat_delta[i++] = delta_w2[j];
-        for (j = 0; j < MLP_H2;         j++) flat_delta[i++] = delta_b2[j];
-        for (j = 0; j < MLP_H2*MLP_OUT; j++) flat_delta[i++] = delta_w3[j];
-        for (j = 0; j < MLP_OUT;        j++) flat_delta[i++] = delta_b3[j];
-
-        ER er2 = dtk_fl_aggregate(0, flat_delta, 6, 3000);
-        if (er2 == E_OK) {
-            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-            sout("[FL] aggregate OK\r\n");
-            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-        } else {
-            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-            sout("[FL] aggregate failed\r\n");
-            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-        }
-
-    } else if (str_starts(arg, "status")) {
-        fl_status();
-    } else {
-        sout("Usage: fl train | fl status\r\n");
-    }
-}
+/* The 'fl' (federated-learning) verb was removed: fedlearn.c is deleted
+ * dead code, superseded by gossip_learn.c. See wave-rm-fedlearn. */
 
 /* ------------------------------------------------------------------ */
 /* Filesystem commands (ls / cat / exec)                               */
@@ -3013,8 +2948,6 @@ static void execute(const char *cmd)
         { cmd_sensor(cmd + 6); return; }
     if (cmd[0]=='i' && cmd[1]=='n' && cmd[2]=='f' && cmd[3]=='e' && cmd[4]=='r')
         { cmd_infer(cmd + 5); return; }
-    if (cmd[0]=='f' && cmd[1]=='l')
-        { cmd_fl(cmd + 2); return; }
     if (cmd[0]=='l' && cmd[1]=='s')
         { cmd_ls(cmd + 2); return; }
     if (cmd[0]=='c' && cmd[1]=='a' && cmd[2]=='t')

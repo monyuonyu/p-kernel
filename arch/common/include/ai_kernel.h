@@ -9,7 +9,6 @@
  *
  *  Distributed extensions (via DRPC):
  *    dtk_infer()        — route inference to any node transparently
- *    dtk_fl_aggregate() — FedAvg gradient aggregation across cluster
  *
  *  Design principles:
  *    - Data never moves; pointers move (zero-copy end-to-end)
@@ -207,42 +206,10 @@ void ai_infer_task(INT stacd, void *exinf);
  */
 ER   dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);
 
-/* ================================================================== */
-/* Federated Learning — FedAvg across cluster nodes                   */
-/* ================================================================== */
-
-/*
- *  Simplified FedAvg protocol:
- *    1. Each node runs fl_local_train() to compute weight deltas
- *    2. dtk_fl_aggregate() broadcasts deltas via DRPC to node 0
- *    3. Node 0 averages (weighted by n_samples) and broadcasts back
- *    4. All nodes apply the update with fl_apply_update()
- *
- *  Weights are transmitted as float32 (sizeof(float)×MLP_WEIGHT_BYTES/4).
- *  For packets larger than DRPC_PKT payload, a two-step protocol is used:
- *    Step A: DRPC notifies node 0 of incoming weight data
- *    Step B: raw UDP on port 7375 carries the weight payload
- */
-
-#define FL_UDP_PORT    7375    /* separate port for weight transfers  */
-
-/* Simulate one local training step on provided sensor data.          */
-/* Computes gradient via finite differences (demo-grade).             */
-ER   fl_local_train(const B samples[][MLP_IN], const UB labels[],
-                    UW n, float delta_w1[MLP_IN*MLP_H1],
-                    float delta_b1[MLP_H1], float delta_w2[MLP_H1*MLP_H2],
-                    float delta_b2[MLP_H2], float delta_w3[MLP_H2*MLP_OUT],
-                    float delta_b3[MLP_OUT]);
-
-/* FedAvg aggregation: send local delta, receive global update.       */
-ER   dtk_fl_aggregate(UB aggregator_node,
-                      const float *my_delta, UW my_n_samples, TMO tmout);
-
-/* Apply aggregated weights received from aggregator.                 */
-ER   fl_apply_update(const float *new_weights);
-
-/* Print FL round statistics.                                         */
-void fl_status(void);
+/* Federated Learning (fedlearn.c) was removed as dead code, superseded
+ * by the decentralized gossip_learn.c collective-learning path. The
+ * fl_rounds counter below is retained in AI_STATS for ABI stability and
+ * now reads 0. See wave-rm-fedlearn. */
 
 /* ================================================================== */
 /* Global AI statistics                                               */

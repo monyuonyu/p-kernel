@@ -57,7 +57,7 @@ typedef struct {
 } __attribute__((packed)) GL_BLOB_HDR;     /* 8 bytes */
 
 /* ------------------------------------------------------------------ */
-/* generic decentralized primitives (shared with fedlearn.c)           */
+/* generic decentralized primitives                                    */
 /* ------------------------------------------------------------------ */
 
 /* acc[i] += w[i] for i<n — fold one more model into a running sum. */

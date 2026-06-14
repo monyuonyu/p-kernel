@@ -283,68 +283,8 @@ static int run_t7_mlp_bounds(void)
     return 1;
 }
 
-/* ================================================================== */
-/* T8: FedLearn local_train returns E_OK                               */
-/* ================================================================== */
-
-static int run_t8_fedlearn_train(void)
-{
-    static const B samples[2][MLP_IN] = {
-        { 10, 30,  90, 100 },
-        { 40, 70, 110, 127 },
-    };
-    static const UB labels[2] = { 0, 2 };
-
-    float dw1[MLP_IN*MLP_H1], db1[MLP_H1];
-    float dw2[MLP_H1*MLP_H2], db2[MLP_H2];
-    float dw3[MLP_H2*MLP_OUT], db3[MLP_OUT];
-
-    ER r = fl_local_train(samples, labels, 2,
-                          dw1, db1, dw2, db2, dw3, db3);
-    if (r != E_OK) {
-        st_puts("[FAIL] T8: fl_local_train er="); st_puti((W)r); st_puts("\r\n");
-        return 0;
-    }
-    st_puts("[PASS] T8: fedlearn local train\r\n");
-    return 1;
-}
-
-/* ================================================================== */
-/* T9: FedLearn gradient — delta_b3 nonzero after finite-diff          */
-/* ================================================================== */
-
-static int run_t9_fedlearn_gradient(void)
-{
-    static const B samples[3][MLP_IN] = {
-        { 10, 30,  90, 100 },
-        { 28, 55, 100, 110 },
-        { 40, 70, 110, 127 },
-    };
-    static const UB labels[3] = { 0, 1, 2 };
-
-    float dw1[MLP_IN*MLP_H1], db1[MLP_H1];
-    float dw2[MLP_H1*MLP_H2], db2[MLP_H2];
-    float dw3[MLP_H2*MLP_OUT], db3[MLP_OUT];
-
-    ER r = fl_local_train(samples, labels, 3,
-                          dw1, db1, dw2, db2, dw3, db3);
-    if (r != E_OK) {
-        st_puts("[FAIL] T9: fl_local_train er="); st_puti((W)r); st_puts("\r\n");
-        return 0;
-    }
-    /* delta_b3 が全ゼロでないことを確認 (finite-diff が実際に動いた証拠) */
-    float sum = 0.0f;
-    for (INT j = 0; j < MLP_OUT; j++) {
-        float v = db3[j];
-        sum += (v < 0.0f ? -v : v);
-    }
-    if (sum == 0.0f) {
-        st_puts("[FAIL] T9: fedlearn gradient all-zero\r\n");
-        return 0;
-    }
-    st_puts("[PASS] T9: fedlearn gradient nonzero\r\n");
-    return 1;
-}
+/* T8/T9 (FedLearn local_train + gradient) removed: fedlearn.c deleted as
+ * dead code (superseded by gossip_learn.c). See wave-rm-fedlearn. */
 
 /* ================================================================== */
 /* T10: Raft initial state                                             */
@@ -534,8 +474,6 @@ EXPORT void kernel_selftest(void)
     pass += run_t5_config();
     pass += run_t6_mlp_determinism();
     pass += run_t7_mlp_bounds();
-    pass += run_t8_fedlearn_train();
-    pass += run_t9_fedlearn_gradient();
     pass += run_t10_raft_init_state();
     pass += run_t11_raft_write_guard();
     pass += run_t12_degrade_init_level();
@@ -545,8 +483,8 @@ EXPORT void kernel_selftest(void)
 
     st_puts("[SELFTEST] ");
     st_puti(pass);
-    st_puts("/15 passed");
-    if (pass == 15) {
+    st_puts("/13 passed");
+    if (pass == 13) {
         st_puts(" -- OK\r\n\r\n");
     } else {
         st_puts(" -- KERNEL UNHEALTHY\r\n\r\n");
