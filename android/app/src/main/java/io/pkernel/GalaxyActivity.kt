@@ -28,13 +28,16 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -45,6 +48,8 @@ class GalaxyActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
     private lateinit var splash: TextView
+    private lateinit var splashBox: LinearLayout
+    private lateinit var relightBtn: Button
     private var loaded = false
     private val ui = Handler(Looper.getMainLooper())
     @Volatile private var stopped = false
@@ -54,13 +59,14 @@ class GalaxyActivity : AppCompatActivity() {
     @Volatile private var probing = false
 
     private var galaxyPort = DEFAULT_PORT
+    private var nodeId = 1
     private var showIntro = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val nodeId = intent.getIntExtra(EXTRA_NODE_ID, 1).coerceIn(1, 255)
+        nodeId = intent.getIntExtra(EXTRA_NODE_ID, 1).coerceIn(1, 255)
         galaxyPort = BASE_PORT + (nodeId - 1)
         showIntro = intent.getBooleanExtra(EXTRA_SHOW_INTRO, false)
 
@@ -76,17 +82,38 @@ class GalaxyActivity : AppCompatActivity() {
         }
         /* The waiting screen speaks human, not kernel (UX constitution):
          * no ports, no "kernel", no console. Just the star being lit — and
-         * if the charge-only gate is holding it, say THAT kindly. */
+         * if the charge-only gate is holding it, say THAT kindly.
+         *
+         * Bug 1 (state-aware splash): when the star is asleep BY CHOICE (the
+         * owner tapped 眠らせる, which stopSelf()s and kills the process), the
+         * old splash showed "Lighting your star…" forever — a lie: nothing is
+         * lighting it, and there was no way to relight from here. So the splash
+         * is a vertical box: the message + a 灯す (relight) button that is shown
+         * ONLY when the star is dark by choice (not battery/WiFi gated). The
+         * button restarts the foreground service and re-arms the port probe. */
         splash = TextView(this).apply {
             text = getString(R.string.galaxy_lighting)
             textSize = 17f
-            gravity = android.view.Gravity.CENTER
-            setPadding(64, 96, 64, 96)
-            setBackgroundColor(0xFF05060A.toInt())     // the dark galaxy field
+            gravity = Gravity.CENTER
             setTextColor(0xFFAAB6FF.toInt())
         }
+        relightBtn = Button(this).apply {
+            text = getString(R.string.btn_start)       // "灯す" (localized)
+            textSize = 18f
+            setTextColor(0xFFAAB6FF.toInt())
+            visibility = View.GONE                     // shown only when asleep-by-choice
+            setOnClickListener { relight() }
+        }
+        splashBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(64, 96, 64, 96)
+            setBackgroundColor(0xFF05060A.toInt())     // the dark galaxy field
+            addView(splash, LinearLayout.LayoutParams(-1, -2))
+            addView(relightBtn, LinearLayout.LayoutParams(-2, -2).apply { topMargin = 48 })
+        }
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
-        root.addView(splash, FrameLayout.LayoutParams(-1, -1))
+        root.addView(splashBox, FrameLayout.LayoutParams(-1, -1))
 
         /* ⚙ — the visible settings button: a clear corner gear into the
          * Settings layer (MainActivity in advanced mode). Tasteful but
@@ -154,9 +181,10 @@ class GalaxyActivity : AppCompatActivity() {
                      * to ~30% and only pauses below that while unplugged. So
                      * only show the "plug in" nudge when the floor is actually
                      * holding (low AND unplugged); otherwise it's just waking.
-                     * Said kindly, in the user's language, no kernel jargon. */
-                    val msg = restingMessage()
-                    ui.post { if (!loaded) splash.text = getString(msg) }
+                     * After several attempts with NO gate holding, the star is
+                     * asleep BY CHOICE (the owner tapped 眠らせる) — say so and
+                     * offer 灯す. Said kindly, in the user's language. */
+                    ui.post { if (!loaded) applySplashState(asleepByChoice = true) }
                 }
                 try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return@Thread }
             }
@@ -167,16 +195,61 @@ class GalaxyActivity : AppCompatActivity() {
     }
 
     /**
-     * The kind reason the star is dark right now, as a strings resource id.
-     * Mirrors PKernelService's run-gate so the splash never lies: charge-only
-     * floor holding -> "plug in"; WiFi-only on and not on WiFi -> "waiting for
-     * Wi-Fi"; otherwise it's simply waking. Said in the user's language, no
-     * kernel jargon (UX constitution).
+     * Drive the splash's message AND the relight button from the REAL reason
+     * the star is dark right now — so it never lies (Bug 1). Mirrors
+     * PKernelService's run-gate:
+     *   · charge-only floor holding -> "plug in"   (no relight button: the
+     *     gate, not the owner, is holding it — relighting would just re-pause)
+     *   · WiFi-only on & not on WiFi -> "waiting for Wi-Fi"  (likewise)
+     *   · otherwise, while still WAKING -> "Lighting your star…" (no button)
+     *   · otherwise, AFTER several dead probes (asleepByChoice) -> "Your star
+     *     is asleep right now" + a 灯す button that restarts the node.
+     * Said in the user's language, no kernel jargon (UX constitution).
      */
-    private fun restingMessage(): Int = when {
-        batteryLowAndUnplugged() -> R.string.galaxy_charge
-        wifiOnlyAndNotOnWifi()   -> R.string.galaxy_wifi_wait
-        else                     -> R.string.galaxy_lighting
+    private fun applySplashState(asleepByChoice: Boolean = false) {
+        when {
+            batteryLowAndUnplugged() -> {
+                splash.text = getString(R.string.galaxy_charge)
+                relightBtn.visibility = View.GONE
+            }
+            wifiOnlyAndNotOnWifi() -> {
+                splash.text = getString(R.string.galaxy_wifi_wait)
+                relightBtn.visibility = View.GONE
+            }
+            asleepByChoice -> {
+                // No gate is holding it AND it has stayed dark: the owner put it
+                // to sleep. Tell the truth and offer to relight it from here.
+                splash.text = getString(R.string.star_dark)
+                relightBtn.visibility = View.VISIBLE
+            }
+            else -> {
+                splash.text = getString(R.string.galaxy_lighting)
+                relightBtn.visibility = View.GONE
+            }
+        }
+    }
+
+    /**
+     * 灯す from the galaxy splash: restart the foreground service with the
+     * persisted "ump" prefs (the SAME extras MainActivity/LogActivity use),
+     * hide the button, show "Lighting…", and re-arm the port probe so the page
+     * loads automatically once the node answers again.
+     */
+    private fun relight() {
+        val prefs = getSharedPreferences("ump", MODE_PRIVATE)
+        val intent = Intent(this, PKernelService::class.java).apply {
+            // Relight the SAME node this galaxy is watching, so the port we
+            // probe (galaxyPort = BASE_PORT + nodeId-1) is the one it serves.
+            putExtra(PKernelService.EXTRA_NODE_ID,    nodeId)
+            putExtra(PKernelService.EXTRA_RELAY_HOST, prefs.getString(PKernelService.EXTRA_RELAY_HOST, "") ?: "")
+            putExtra(PKernelService.EXTRA_RELAY_PORT, prefs.getInt(PKernelService.EXTRA_RELAY_PORT, 7400))
+            putExtra(PKernelService.EXTRA_RELAY_KEY,  prefs.getString(PKernelService.EXTRA_RELAY_KEY, "") ?: "")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+        else startService(intent)
+        relightBtn.visibility = View.GONE
+        splash.text = getString(R.string.galaxy_lighting)
+        startProbe()
     }
 
     private fun showGalaxy() {
@@ -187,7 +260,7 @@ class GalaxyActivity : AppCompatActivity() {
         val url = "http://127.0.0.1:$galaxyPort/" + if (showIntro) "?intro=1" else ""
         web.loadUrl(url)
         web.visibility = View.VISIBLE
-        splash.visibility = View.GONE
+        splashBox.visibility = View.GONE
     }
 
     /**
@@ -274,8 +347,8 @@ class GalaxyActivity : AppCompatActivity() {
             // Blank the WebView so no stale error frame lingers behind the splash.
             view.loadUrl("about:blank")
             view.visibility = View.GONE
-            splash.text = getString(restingMessage())
-            splash.visibility = View.VISIBLE
+            applySplashState()
+            splashBox.visibility = View.VISIBLE
             loaded = false
             startProbe()                         // reload automatically when the node is back
         }
