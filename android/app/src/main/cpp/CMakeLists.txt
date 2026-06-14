@@ -165,7 +165,6 @@ set(COMMON_SRC
     ${ARCH_CO}/lm_self.c
     ${ARCH_CO}/ark_profile.c
     ${ARCH_CO}/ga.c
-    ${ARCH_CO}/fedlearn.c
     ${ARCH_CO}/gossip_learn.c
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c

@@ -180,7 +180,6 @@ COMMON_C_SRCS = \
     lm_self.c \
     ark_profile.c \
     ga.c \
-    fedlearn.c \
     gossip_learn.c \
     mem_store.c \
     chat.c \
