@@ -30,6 +30,12 @@
 #ifndef PKERNEL_LLM_STUDENT_H
 #define PKERNEL_LLM_STUDENT_H
 
+/* NS-1 carries its own version (modver registry; compatibility.md): the
+ * Cradle baby (organism-native MoE student) contract. v1 = the born-small
+ * baby (256-byte vocab, E=4 top-2, d=128, 4 layers) with its own libc-free
+ * grad-checked forward+backward. */
+#define NS_STUDENT_VER  1
+
 #include <stdint.h>
 #include <stddef.h>
 

@@ -30,6 +30,7 @@
 #include "lm_self.h"     /* LM_SELF_REF / LM_SELF_ENTRY — /self.json       */
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
 #include "ark_profile.h" /* ark-profile v1: /manifesto, /profile, consent  */
+#include "modver.h"      /* module-version registry — GET /modules.json    */
 #include "kernel.h"
 
 #include "galaxy_page.h" /* GENERATED: galaxy_page[] + galaxy_page_len     */
@@ -792,6 +793,38 @@ static INT gx_route(INT slot, GX_REQ *q)
             off += take;
         }
         gx_flush(slot);
+        return 0;
+    }
+    /* GET /modules.json — the fine-grained MODULE-VERSION REGISTRY
+     * (modver.c). The observability side of the compatibility/evolution
+     * architecture (compatibility.md): every subsystem's contract version,
+     * made visible so the engineer page can show exactly which versions this
+     * node speaks. Hosted-only (the engine-module rows are host-side), takes
+     * NO input, emits a BOUNDED static table — no path/user data anywhere.
+     * Loopback-bound like every other endpoint (galaxy_posix binds lo). */
+    if (!q->is_post && gx_streq(path, "/modules.json")) {
+        gx_resp_head(slot, "200 OK", "application/json");
+        gx_qs(slot, "{\"node\":");   gx_qdec(slot, (UW)gx_my_id());
+        gx_qs(slot, ",\"build\":\"");
+        {
+            const char *b = modver_build_id();
+            INT bn = 0; while (b[bn]) bn++;
+            gx_json_str(slot, b, bn);    /* JSON-escaped; static literal      */
+        }
+        gx_qs(slot, "\",\"modules\":[");
+        INT mn = modver_count();
+        for (INT mi = 0; mi < mn; mi++) {
+            if (mi) gx_qs(slot, ",");
+            gx_qs(slot, "{\"name\":\"");
+            const char *nm = modver_name(mi);
+            INT nn = 0; while (nm[nn]) nn++;
+            gx_json_str(slot, nm, nn);   /* JSON-escaped; static literal      */
+            gx_qs(slot, "\",\"version\":");
+            INT v = modver_version(mi);
+            gx_qdec(slot, v < 0 ? 0u : (UW)v);
+            gx_qs(slot, "}");
+        }
+        gx_qs(slot, "]}");
         return 0;
     }
 #endif

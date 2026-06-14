@@ -32,6 +32,11 @@
 #ifndef PKERNEL_LLM_TOKENIZER_H
 #define PKERNEL_LLM_TOKENIZER_H
 
+/* M1d carries its own version (modver registry; compatibility.md): the
+ * GPT-2-family byte-level BPE tokenizer contract. v1 = encode/decode driven
+ * entirely from GGUF metadata (vocab + merges). */
+#define LLM_TOKENIZER_VER  1
+
 #include <stdint.h>
 #include <stddef.h>
 #include "gguf.h"
