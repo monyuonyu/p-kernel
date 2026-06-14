@@ -182,11 +182,11 @@ EXPORT void knl_make_dormant( TCB *tcb )
 	 * node's neighbours (NOT a bare QueInit, which would ORPHAN a still-
 	 * linked node).
 	 *
-	 * HONEST STATUS: this does NOT close the row — see the long note in
-	 * knl_del_tsk (task_manage.c).  The recycled-daemon garbage-PC #PF in
-	 * knl_wait_release_tmout still reproduces ~42% WITH this fix; the
-	 * external-clobber and stale-timer theories were both empirically
-	 * refuted.  The residual is an unpinned intrinsic teardown race.
+	 * HONEST STATUS: this wtmeb unlink is timer-QUEUE hygiene, not the
+	 * cure — see the long note in knl_del_tsk (task_manage.c).  The
+	 * recycled-daemon garbage-PC #PF in knl_wait_release_tmout is now
+	 * CURED at the callback action site (the TS_WAIT early-return in
+	 * wait.c); certified x86-only via `dproc churn` under qemu-system.
 	 *
 	 * Safe/idempotent because the TCB pool init (knl_task_initialize)
 	 * self-links every wtmeb once, so a never-armed node satisfies

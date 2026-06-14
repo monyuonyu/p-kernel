@@ -183,23 +183,26 @@ EXPORT void knl_del_tsk( TCB *tcb )
 	 * knl_task_initialize self-links every wtmeb once (so QueRemove's
 	 * `next != entry` no-op guard holds for a never-armed node).
 	 *
-	 * HONEST STATUS: this hygiene is CORRECT but does NOT close the
-	 * ledger row.  The kill-churn garbage-PC #PF (write, err=0x2, EIP in
+	 * HONEST STATUS: this hygiene is CORRECT but is timer-QUEUE hygiene,
+	 * not the cure.  The kill-churn garbage-PC #PF (write, err=0x2, EIP in
 	 * knl_wait_release_tmout doing QueRemove through a smashed
-	 * tcb->tskque; the faulting daemon is a recycled TCB at ssp 0xD8E84C,
-	 * ret==knl_task_entry_trampoline) STILL reproduces at ~42% with this
-	 * fix in place.  Empirically refuted root-cause theories: (a) external
-	 * ring3 clobber of kernel stacks — floating imalloc above 16 MB moved
-	 * the stacks 0xD8xxxx->0x100xxxx with NO change in fault rate, and
-	 * making the kernel-BSS page (PD[6], holding knl_tcb_table 0xD79980 /
-	 * knl_timer_queue 0xD7D8A0) ring3 read-only did NOT cure it either;
-	 * (b) simple stale-timer-on-recycle — this very fix.  The residual is
-	 * an as-yet-unpinned intrinsic race in the task/wait/timer teardown
-	 * under concurrent heal re-exec (suspect: dproc_kill_by_name killing a
-	 * STALE tid while the live daemon's wait-queue/timer state outlives
-	 * its TCB recycle).  Next diagnostic: instrument knl_wait_release_tmout
-	 * to log when tcb->tskque.prev is outside [knl_tcb_table, +sizeof] or
-	 * the SEMCB table, to identify the orphan's origin. */
+	 * tcb->tskque; the faulting daemon is a recycled TCB,
+	 * ret==knl_task_entry_trampoline) is CURED at the callback ACTION
+	 * site: knl_wait_release_tmout (wait.c) now returns early unless the
+	 * task still carries the TS_WAIT bit, so a stale timer firing on a
+	 * recycled slot is a no-op instead of a QueRemove through a wild
+	 * prev.  Repro/cure certified x86-only under `dproc churn` (qemu-
+	 * system-x86_64): unfixed control faulted with CR2=0xF000FF53 and a
+	 * recycled-TCB dispatch trace; with the guard the identical 400-cycle
+	 * churn runs clean (the #PF never recurs).  Empirically refuted
+	 * root-cause theories earlier: (a) external ring3 clobber of kernel
+	 * stacks (moving stacks / making the kernel-BSS page ring3 read-only
+	 * changed nothing); the actual root cause was (b) stale-timer-on-
+	 * recycle, fixed at the action site rather than the queue.
+	 * NOTE: sustained churn (>200 cycles) surfaces a DISTINCT bug — kdds
+	 * topic/handle exhaustion when a killed daemon never closes its
+	 * topics ("cannot open ai/rsp"), leading to a downstream #DE; that is
+	 * a separate ledger concern, not this #PF. */
 	knl_timer_delete(&tcb->wtmeb);
 
 #if USE_IMALLOC
@@ -239,11 +242,12 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 	} else if ( tcb == knl_ctxtsk || tcb == knl_schedtsk ) {
 		/* KILL-CHURN-CRASH guard (gap-ledger) — DEFENCE-IN-DEPTH.
 		 *
-		 * NOTE: this row is NOT closed — the recycled-daemon garbage-PC
-		 * #PF still reproduces ~42% (see the long status note in
-		 * knl_del_tsk above).  This guard is one of several correct
-		 * hardenings shipped while the intrinsic teardown race is still
-		 * being pinned; it is NOT the cure.
+		 * NOTE: the recycled-daemon garbage-PC #PF is now CURED at the
+		 * timer-callback action site (the TS_WAIT early-return in
+		 * knl_wait_release_tmout, wait.c); see the long status note in
+		 * knl_del_tsk above.  This guard remains a correct, distinct
+		 * hardening (do not free the TCB the CPU stands on / is scheduled
+		 * INTO next); it is defence-in-depth, not the cure.
 		 *
 		 * This guard protects against the DISTINCT
 		 * (and also real) hazard of freeing the TCB the CPU is standing
