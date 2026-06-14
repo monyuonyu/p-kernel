@@ -48,6 +48,7 @@ class GalaxyActivity : AppCompatActivity() {
     @Volatile private var stopped = false
 
     private var galaxyPort = DEFAULT_PORT
+    private var showIntro = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,6 +56,7 @@ class GalaxyActivity : AppCompatActivity() {
 
         val nodeId = intent.getIntExtra(EXTRA_NODE_ID, 1).coerceIn(1, 255)
         galaxyPort = BASE_PORT + (nodeId - 1)
+        showIntro = intent.getBooleanExtra(EXTRA_SHOW_INTRO, false)
 
         val root = FrameLayout(this)
 
@@ -142,7 +144,10 @@ class GalaxyActivity : AppCompatActivity() {
     private fun showGalaxy() {
         if (loaded) return
         loaded = true
-        web.loadUrl("http://127.0.0.1:$galaxyPort/")
+        // ?intro=1 replays the picture-book intro (pictures only, no re-consent)
+        // for a returning user who tapped "view introduction again" in settings.
+        val url = "http://127.0.0.1:$galaxyPort/" + if (showIntro) "?intro=1" else ""
+        web.loadUrl(url)
         web.visibility = View.VISIBLE
         splash.visibility = View.GONE
     }
@@ -153,6 +158,11 @@ class GalaxyActivity : AppCompatActivity() {
      * keeps the star dark only holds when the battery is at/below the floor
      * AND the phone is unplugged. (When >floor or plugged in, the node runs
      * on battery, so the star is merely waking, not gated.)
+     *
+     * The floor is a USER SETTING (PREF_BATTERY_FLOOR) since the
+     * settings-expansion wave; read the SAME dynamic value powerAllowed's
+     * batteryFloor() does (default BATTERY_FLOOR_PCT, clamped 10..50) so this
+     * "battery low" hint always matches the actual gate.
      */
     private fun batteryLowAndUnplugged(): Boolean {
         val i = registerReceiver(null,
@@ -164,7 +174,10 @@ class GalaxyActivity : AppCompatActivity() {
         val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
         if (level < 0 || scale <= 0) return false // unknown -> don't nag
         val pct = level * 100 / scale
-        return pct <= PKernelService.BATTERY_FLOOR_PCT
+        val floor = getSharedPreferences("ump", MODE_PRIVATE)
+            .getInt(PKernelService.PREF_BATTERY_FLOOR, PKernelService.BATTERY_FLOOR_PCT)
+            .coerceIn(10, 50)
+        return pct <= floor
     }
 
     override fun onDestroy() {
@@ -175,6 +188,7 @@ class GalaxyActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_NODE_ID = "node_id"
+        const val EXTRA_SHOW_INTRO = "show_intro"
         private const val BASE_PORT = 7800            // galaxy.c §D1
         private const val DEFAULT_PORT = BASE_PORT
         private const val CONNECT_TIMEOUT_MS = 400
