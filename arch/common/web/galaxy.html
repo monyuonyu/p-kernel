@@ -126,6 +126,14 @@
   #intro .sub{font-size:clamp(13px,3.6vw,15px);color:#a6adc8;line-height:1.7;
     max-width:22em;
     font-family:-apple-system,system-ui,"Hiragino Sans","Noto Sans",sans-serif}
+  /* the consent page = the FINAL step of the onboarding (wave-intro-integrate).
+     It hosts the SAME #ark .card (manifesto + ack), just mounted inside the
+     intro frame so the read-and-consent reads as one flow with the pictures.
+     It is taller and top-aligned (the manifesto scrolls), not art-centred. */
+  #introtrack .pg.consent{justify-content:flex-start;padding:18px 14px;gap:0}
+  #intromount{width:100%;display:flex;align-items:flex-start;
+    justify-content:center;flex:1;min-height:0}
+  #intromount .card{margin:0}
   /* bottom controls: dots + next/begin button */
   #introbar{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;
     gap:16px;padding:8px 0 max(26px,env(safe-area-inset-bottom))}
@@ -659,15 +667,32 @@ async function arkLoadManifesto(){
   document.getElementById("arkwarn").textContent="";
   document.getElementById("arkmid").textContent="manifesto-id "+(arkMid||"?")+" · "+served;
 }
-function arkOpen(){
+// reset the card to the read+ack state (used by BOTH the standalone overlay and
+// the in-intro consent page). Loads the manifesto so the content-id is bound to
+// exactly the words shown (each language is its own id, §7.5).
+function arkResetToAck(){
   document.getElementById("arkfields").classList.remove("open");
   document.getElementById("arkack").style.display="";
   if(!arkMid){ arkLoadManifesto(); }
+}
+// standalone overlay path: the teach-403 fallback + the manifesto-updated
+// re-consent. The card must be back in #ark (not mounted in the intro) here.
+function arkOpen(){
+  unmountArkToOverlay();
+  arkResetToAck();
   document.getElementById("ark").classList.add("open");
 }
+// in-intro consent path: same card, same reset, but it stays mounted in the
+// intro frame (the intro is already open and on the consent page).
+function arkEnterConsent(){ arkResetToAck(); }
 function arkClose(){ document.getElementById("ark").classList.remove("open"); }
 window.arkOpen=arkOpen;
-document.getElementById("arkdecline").onclick=()=>{ arkClose(); };  // node fully works
+// "Not now": close whichever container is showing the card. Consent is NOT
+// recorded; the node still works for browsing and teaching stays 403-gated
+// (server-enforced) — trying to teach later re-presents the manifesto.
+document.getElementById("arkdecline").onclick=()=>{
+  if(onConsentPage()){ introClose(); } else { arkClose(); }
+};
 document.getElementById("arkagree").onclick=()=>{
   // consent recorded only on a successful POST /profile; first reveal fields.
   document.getElementById("arkack").style.display="none";
@@ -688,7 +713,12 @@ async function arkSubmit(withFields){
     const r=await fetch("/profile",{method:"POST",
       headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
     const j=await r.json();
-    if(j.ok){ arkClose(); poll();   // your star gains its name (real state change)
+    if(j.ok){
+      // consent recorded. Close whichever container is showing the card and
+      // enter the galaxy; if this was the onboarding's consent page, the whole
+      // intro closes here (the one continuous flow ends on the live galaxy).
+      if(onConsentPage()){ introClose(); } else { arkClose(); }
+      poll();   // your star gains its name (real state change)
       msg(withFields?S("namemark"):S("consentmark"),true);
     } else {
       // mid changed since load -> re-ask with the new text (consent to words)
@@ -726,12 +756,23 @@ async function langInit(){
 //    one mind → (flows into the #ark manifesto/consent gate). Every picture
 //    is inline SVG in the galaxy palette — no external assets, fully offline.
 //    SVG is animated by CSS keyframes injected inline (keeps it self-contained).
+// The picture pages, then a FINAL consent page (wave-intro-integrate): the
+// manifesto + ack is no longer a separate modal that pops later — it is the
+// last step of this one continuous onboarding. The consent page reuses the
+// SAME #ark card + the SAME /manifesto content-id binding + arkSubmit; we are
+// restructuring WHERE consent appears, not the consent logic. ARK-1 preserved:
+// you cannot leave this page (enter/teach) without a real ack.
 const INTRO_PAGES = [
   { t:"intro_t1", s:"intro_s1", art:introArt1 },
   { t:"intro_t2", s:"intro_s2", art:introArt2 },
   { t:"intro_t3", s:"intro_s3", art:introArt3 },
+  { consent:true },
 ];
-let introIdx = 0, introBuilt = false, introLeadsToArk = false;
+const CONSENT_IDX = INTRO_PAGES.length - 1;
+// When the intro is used for the first-run onboarding it INCLUDES the consent
+// page; when re-viewed later (the corner ⓘ) it shows ONLY the pictures so a
+// returning, already-consented user is never re-gated.
+let introIdx = 0, introBuilt = false, introWithConsent = false;
 
 // page 1 — a single star lighting up in the dark (echoes "my star")
 function introArt1(){
@@ -831,20 +872,47 @@ function rays(cx,cy){
   }
   return s;
 }
+// how many pages are live right now: pictures only on re-view, pictures+consent
+// during the first-run onboarding.
+function introPageCount(){ return introWithConsent ? INTRO_PAGES.length : CONSENT_IDX; }
 function buildIntro(){
   const track=document.getElementById("introtrack");
   track.innerHTML="";
   INTRO_PAGES.forEach((p,i)=>{
     const d=document.createElement("div");d.className="pg";d.dataset.i=i;
-    d.innerHTML=p.art()+`<div class="ttl" data-tk="${p.t}"></div>`+
-                `<div class="sub" data-sk="${p.s}"></div>`;
+    if(p.consent){
+      // the consent page: a mount point that the #ark card slides into, so the
+      // manifesto+ack is the same frame as the pictures. The card itself (with
+      // all its buttons + content-id binding) is moved in by mountArkInIntro().
+      d.className="pg consent";
+      d.innerHTML=`<div id="intromount"></div>`;
+    } else {
+      d.innerHTML=p.art()+`<div class="ttl" data-tk="${p.t}"></div>`+
+                  `<div class="sub" data-sk="${p.s}"></div>`;
+    }
     track.appendChild(d);
   });
   const dots=document.getElementById("introdots");dots.innerHTML="";
-  INTRO_PAGES.forEach((_,i)=>{const sp=document.createElement("span");
-    sp.onclick=()=>introGo(i);dots.appendChild(sp);});
+  INTRO_PAGES.forEach((p,i)=>{const sp=document.createElement("span");
+    sp.dataset.i=i;
+    sp.onclick=()=>{ if(i<introPageCount()) introGo(i); };dots.appendChild(sp);});
   introBuilt=true;
   introApplyText();
+}
+// The #ark card lives in #ark (the standalone overlay used for the teach-403
+// fallback + manifesto-updated re-consent). For the onboarding we MOVE the very
+// same card into the intro's consent page — one card, one set of handlers, one
+// content-id binding. These two helpers just relocate it.
+function mountArkInIntro(){
+  const card=document.querySelector("#ark .card")||document.querySelector("#intromount .card");
+  const mount=document.getElementById("intromount");
+  if(card&&mount&&card.parentElement!==mount){ mount.appendChild(card); }
+}
+function unmountArkToOverlay(){
+  const card=document.getElementById("intromount") &&
+             document.querySelector("#intromount .card");
+  const ark=document.getElementById("ark");
+  if(card&&ark&&card.parentElement!==ark){ ark.appendChild(card); }
 }
 // refresh just the intro's localized text (called on language change too)
 function introApplyText(){
@@ -852,47 +920,66 @@ function introApplyText(){
   document.querySelectorAll("#introtrack .ttl").forEach(e=>e.textContent=S(e.dataset.tk));
   document.querySelectorAll("#introtrack .sub").forEach(e=>e.textContent=S(e.dataset.sk));
   document.getElementById("introskip").textContent=S("intro_skip");
-  const last=introIdx>=INTRO_PAGES.length-1;
-  document.getElementById("intronext").textContent=last?S("intro_begin"):S("intro_next");
+  // on the last PICTURE page the button reads "begin" (it leads into consent);
+  // the consent page hides this bar entirely (the card's own ack drives it).
+  const lastPic=introIdx>=CONSENT_IDX-1;
+  document.getElementById("intronext").textContent=lastPic?S("intro_begin"):S("intro_next");
   const ri=document.getElementById("reintro"); if(ri) ri.title=S("reintro");
 }
+function onConsentPage(){ return introWithConsent && introIdx===CONSENT_IDX; }
 function introRender(){
   const pgs=document.querySelectorAll("#introtrack .pg");
   pgs.forEach((p,i)=>{
     p.classList.toggle("live",i===introIdx);
     p.classList.toggle("past",i<introIdx);
   });
-  document.querySelectorAll("#introdots span").forEach((s,i)=>
-    s.classList.toggle("on",i===introIdx));
+  const cnt=introPageCount();
+  document.querySelectorAll("#introdots span").forEach((s,i)=>{
+    s.style.display = i<cnt ? "" : "none";          // hide the consent dot on re-view
+    s.classList.toggle("on",i===introIdx);
+  });
+  // the consent page carries its own Agree/Decline buttons; hide the generic
+  // next-bar + the skip affordance there so the user must make a real choice.
+  const onConsent=onConsentPage();
+  document.getElementById("introbar").style.display=onConsent?"none":"";
+  document.getElementById("introskip").style.display=onConsent?"none":"";
+  if(onConsent){ mountArkInIntro(); arkEnterConsent(); }
   introApplyText();
 }
 function introGo(i){
-  introIdx=Math.max(0,Math.min(INTRO_PAGES.length-1,i));
+  introIdx=Math.max(0,Math.min(introPageCount()-1,i));
   introRender();
 }
-function introOpen(leadToArk){
-  introLeadsToArk=!!leadToArk;
+// first-run onboarding = pictures + the consent page; re-view = pictures only.
+function introOpen(withConsent){
+  introWithConsent=!!withConsent;
   if(!introBuilt) buildIntro();
+  if(!introWithConsent) unmountArkToOverlay();   // re-view never gates
   introIdx=0; introRender();
   document.getElementById("intro").classList.add("open");
   document.getElementById("reintro").style.display="none";
 }
 function introClose(){
   document.getElementById("intro").classList.remove("open");
+  document.getElementById("introbar").style.display="";   // restore for next open
+  document.getElementById("introskip").style.display="";
+  unmountArkToOverlay();   // hand the card back to its standalone overlay
   // once seen, leave a quiet corner control to re-view it later
   document.getElementById("reintro").style.display="block";
 }
 function introNext(){
-  if(introIdx<INTRO_PAGES.length-1){ introGo(introIdx+1); return; }
-  // past the last page: flow into the manifesto+consent gate (first run),
-  // or just return to the galaxy (re-view).
-  introClose();
-  if(introLeadsToArk){ introLeadsToArk=false; arkOpen(); }
+  // advance through pictures; the last picture's "begin" lands on the consent
+  // page (NOT past it) so ARK-1 is preserved — you reach the ack, never skip it.
+  if(introIdx<introPageCount()-1){ introGo(introIdx+1); return; }
+  // no consent page (re-view): just return to the galaxy.
+  if(!introWithConsent){ introClose(); }
+  // with consent: the consent page is the last page; its own buttons take over.
 }
 document.getElementById("intronext").onclick=introNext;
 document.getElementById("introskip").onclick=()=>{
-  introClose();
-  if(introLeadsToArk){ introLeadsToArk=false; arkOpen(); }   // skip -> still consent
+  // skipping the pictures must STILL land on the consent step (never past it).
+  if(introWithConsent){ introGo(CONSENT_IDX); }
+  else { introClose(); }
 };
 document.getElementById("reintro").onclick=()=>introOpen(false);
 // swipe navigation on the track (pointer-based, works on phone + desktop)
@@ -910,14 +997,16 @@ document.getElementById("reintro").onclick=()=>introOpen(false);
   tr.addEventListener("pointercancel",()=>{down=false;});
 })();
 
-// first-run trigger: a node with no profile yet meets the intro, which
-// then flows into the manifesto+consent gate. Re-launch shows it again
-// only via the corner ⓘ (we don't nag a returning user).
+// first-run trigger: a node with no profile yet meets the ONE onboarding —
+// the picture pages then the manifesto+consent as its final page. A returning,
+// already-consented node (profile present, mid unchanged) is NOT re-gated; it
+// only gets the corner ⓘ to re-view the pictures. The manifesto-updated
+// re-consent still fires via the teach-403 -> arkOpen() path (server-enforced).
 async function arkFirstRun(){
   try{ const j=await (await fetch("/profile.json")).json();
     if(j && j.none){
       await arkLoadManifesto();      // pre-load so the consent text is ready
-      introOpen(true);               // intro first; "begin"/skip -> arkOpen()
+      introOpen(true);               // pictures -> consent page (the final step)
     } else {
       // returning user: intro already consented-to once; offer re-view only
       document.getElementById("reintro").style.display="block";
