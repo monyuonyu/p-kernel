@@ -170,6 +170,7 @@ set(COMMON_SRC
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c
     ${ARCH_CO}/dproc.c
+    ${ARCH_CO}/tcb_churn.c
     ${ARCH_CO}/kloader_task.c
     ${ARCH_CO}/demo_kdds.c
     ${ARCH_CO}/pfs_block.c
