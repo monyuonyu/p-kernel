@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Hanya Wi-Fi (tanpa kuota)</string>
     <string name="pref_start_on_boot">Mulai saat ponsel dinyalakan</string>
     <string name="reintro_btn">Lihat pengantar lagi</string>
+    <string name="settings_header">Pengaturan</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

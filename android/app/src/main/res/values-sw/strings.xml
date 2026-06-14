@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Wi-Fi pekee (isiyo na kikomo)</string>
     <string name="pref_start_on_boot">Anza simu inapowashwa</string>
     <string name="reintro_btn">Tazama utangulizi tena</string>
+    <string name="settings_header">Mipangilio</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Wi-Fi만 (데이터 무제한)</string>
     <string name="pref_start_on_boot">휴대폰이 켜질 때 시작</string>
     <string name="reintro_btn">소개 다시 보기</string>
+    <string name="settings_header">설정</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

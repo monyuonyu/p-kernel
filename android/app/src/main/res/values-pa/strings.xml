@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">ਸਿਰਫ਼ Wi-Fi (ਡੇਟਾ-ਸੀਮਾ ਤੋਂ ਬਿਨਾਂ)</string>
     <string name="pref_start_on_boot">ਫ਼ੋਨ ਚਾਲੂ ਹੋਣ \'ਤੇ ਸ਼ੁਰੂ ਕਰੋ</string>
     <string name="reintro_btn">ਜਾਣ-ਪਛਾਣ ਮੁੜ ਵੇਖੋ</string>
+    <string name="settings_header">ਸੈਟਿੰਗਾਂ</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

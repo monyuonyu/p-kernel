@@ -57,12 +57,22 @@
     <string name="pref_start_on_boot">Start when the phone turns on</string>
     <string name="reintro_btn">View introduction again</string>
 
+    <!-- Settings layer (3-layer-discover wave): a clear header so a first-time
+         owner knows this is settings, and the app version line (en+ja in the
+         table; other langs fall back to English). app_version_fmt takes the
+         versionName via getString(..., name). -->
+    <string name="settings_header">Settings</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
+
     <!-- Engineer page (LogActivity). Deliberately technical; English-only for
          now — the i18n wave can translate the labels later. -->
-    <string name="btn_engineer">Engineer page</string>
+    <string name="btn_engineer">Engineer / advanced</string>
     <string name="engineer_title">Engineer</string>
     <string name="engineer_internals">Node internals</string>
     <string name="engineer_modules">Modules</string>
     <string name="engineer_log">Raw kernel log</string>
     <string name="engineer_unavailable">—</string>
+    <!-- Fleet / relay (advanced) fields, moved here from the friendly layer. -->
+    <string name="engineer_fleet">Fleet / relay (advanced)</string>
+    <string name="engineer_fleet_save">Save &amp; relight node</string>
 </resources>

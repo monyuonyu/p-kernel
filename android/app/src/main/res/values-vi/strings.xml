@@ -25,4 +25,6 @@
     <string name="pref_wifi_only">Chỉ Wi-Fi (không giới hạn dữ liệu)</string>
     <string name="pref_start_on_boot">Khởi động khi bật điện thoại</string>
     <string name="reintro_btn">Xem lại phần giới thiệu</string>
+    <string name="settings_header">Cài đặt</string>
+    <string name="app_version_fmt">yurikago %1$s</string>
 </resources>

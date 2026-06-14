@@ -76,6 +76,8 @@ KEYS = [
     ("wifi_only",   "pref_wifi_only"),     # WiFi-only toggle (en+ja now)
     ("start_on_boot","pref_start_on_boot"),# start-on-boot toggle (en+ja now)
     ("reintro",     "reintro_btn"),        # "view introduction again" (advanced)
+    ("settings_header", "settings_header"),# Settings layer header (en+ja+most; else en fallback)
+    ("app_version",     "app_version_fmt"),# "yurikago %1$s" (product name untranslated)
 ]
 
 
