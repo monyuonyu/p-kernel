@@ -150,6 +150,26 @@ class PKernelService : Service() {
         snapRunning = false
         appendLog("[ump] service stopped.\n")
         super.onDestroy()
+
+        /* Bug 1 (眠らせる was a no-op): there is NO native kernel shutdown — the
+         * pkernel_main pthread (and its galaxy HTTP server on 7800+id-1) runs
+         * for the life of the PROCESS. stopService()/stopSelf() tears down only
+         * the Android service wrapper; the native kernel keeps running, so the
+         * galaxy port stays open, the MainActivity poller keeps seeing the star
+         * "lit", and the button never flips back to 灯す. The kernel can only be
+         * stopped by ending the process. Both pause paths funnel through
+         * onDestroy (manual stopService AND the battery-floor stopSelf), so we
+         * exit here AFTER super.onDestroy() — the durable store has already
+         * persisted the Self lineage + learned mind, and the charge-resume job
+         * (scheduled BEFORE stopSelf on the battery path) survives this exit and
+         * relights a fresh process when plugged in. We post the exit so any
+         * pending teardown completes first; killProcess is the deterministic
+         * "the star is now truly asleep". */
+        if (running.getAndSet(false)) {
+            android.os.Handler(mainLooper).post {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 
     /* --- kernel boot ---------------------------------------------------- */
