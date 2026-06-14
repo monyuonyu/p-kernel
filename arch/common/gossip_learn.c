@@ -886,17 +886,23 @@ static void gl_cmd_solo(UW steps)
 static float gl_pcache[GL_MAXNODES][DTR_WEIGHT_FLOATS];
 static UB    gl_phave[GL_MAXNODES];
 
-/* issue a p-fs WANT for every ALIVE peer's model so the (2.5 KB) content
- * transfers during the slow-band delay — by the next round's merge it is
- * usually local. We deliberately touch only ALIVE peers (dnode_table) and
- * not all 32 ids, to keep the read rate low (the ref table is shared with
- * the gossip task). Return value ignored: this is a prefetch. */
+/* issue a p-fs WANT for every peer's model so the (2.5 KB) content transfers
+ * during the slow-band delay — by the next round's merge it is usually local.
+ *
+ * THE FAN-IN FIX (peer discovery is content-driven, not SWIM-gated): we warm
+ * EVERY id, not only the ones the local SWIM view has already marked ALIVE. A
+ * fresh node's failure detector converges slowly, so an early round can see a
+ * real peer as NOTALIVE and starve the marginal disjoint-shard node of cross-
+ * shard signal. But only swarm members publish dtr/model/<n>, so a fetch that
+ * SUCCEEDS is itself proof of membership: issuing the WANT for every id lets a
+ * published-but-not-yet-ALIVE peer be discovered by its CONTENT. A WANT for an
+ * unpublished id is a cheap miss. Still peer-symmetric (every node probes the
+ * same id space) and no central aggregator. Return value ignored: prefetch. */
 static void gl_prefetch_peers(UB me)
 {
     static float discard[DTR_WEIGHT_FLOATS];
     for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
-        if (dnode_table[p].state != DNODE_ALIVE) continue;
         char pref[20]; UW prl = gl_model_ref(pref, p);
         (void)gl_pfs_fetch(pref, prl, discard, DTR_WEIGHT_FLOATS);
     }
@@ -907,19 +913,29 @@ static void gl_prefetch_peers(UB me)
  * locally over the symmetric set {self} U {peers it gossiped}). Returns
  * the number of peers actually folded in.
  *
- * Collective learning needs each round to actually fold in EVERY live
- * peer; a 2.5 KB model can lag a P1 want/serve, so we give a missing peer
- * a couple of bounded retries (re-issue the want via the fetch, brief
- * wait) before giving up for this round. Robust to transfer jitter
- * without changing any transport code. */
-#define GL_FETCH_RETRY    3
+ * Collective learning needs each round to actually fold in EVERY peer; a
+ * 2.5 KB model can lag a P1 want/serve, so we give a missing peer bounded
+ * retries (re-issue the want via the fetch, brief wait) before giving up for
+ * THIS round — but a peer once cached stays folded, so a future round only has
+ * to land each still-missing peer once. Robust to transfer jitter without
+ * changing any transport code. */
+#define GL_FETCH_RETRY    6
 #define GL_FETCH_WAIT_MS  250
 
 /* MEMBERSHIP + MERGE step (no transport): average my own model (gl_model[0])
- * with every ALIVE peer whose model is already cached (gl_phave[p]), folding
- * the result back into gl_model[0]. Iterates the FULL node table (0..DNODE_MAX)
- * so the swarm ceiling is DNODE_MAX, not a hardwired 4/32 — an alive peer with
- * any id <DNODE_MAX is folded in. Returns the number of peers folded.
+ * with every peer whose model is cached (gl_phave[p]), folding the result back
+ * into gl_model[0]. Iterates the FULL node table (0..DNODE_MAX) so the swarm
+ * ceiling is DNODE_MAX, not a hardwired 4/32 — a peer with any id <DNODE_MAX is
+ * folded in. Returns the number of peers folded.
+ *
+ * Fold-eligibility is ANY cached peer (gl_phave[p]), NOT the live SWIM ALIVE
+ * flag: once I have gossiped a peer's weight body it stays folded across
+ * rounds, so a transient SWIM flap (a missed ping while the big 2.5 KB pull
+ * was in flight) can never silently halve a marginal node's fan-in. A peer
+ * that truly leaves is reaped by the kill path (the rejoin demo), and its
+ * lingering model is exactly what §3 says the swarm keeps; this fold does not
+ * resurrect a dead peer's membership, it only averages weight bodies I hold.
+ *
  * Shared by the live path (gl_merge_peers, after it pulls the caches) and the
  * [g23-ceiling] self-test (which pre-fills the caches), so the test exercises
  * the REAL membership+merge logic. */
@@ -930,9 +946,8 @@ static UW gl_fold_cached_peers(UB me)
     ptrs[cnt++] = gl_model[0];                       /* myself */
     for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
-        if (dnode_table[p].state != DNODE_ALIVE) continue;
         /* fold the peer in whether the pull was fresh this round or a
-         * cached recent model — an alive peer never silently drops out. */
+         * cached recent model — a gossiped peer never silently drops out. */
         if (gl_phave[p]) ptrs[cnt++] = gl_pcache[p];
     }
     if (cnt > 1) {
@@ -944,17 +959,33 @@ static UW gl_fold_cached_peers(UB me)
 
 static UW gl_merge_peers(UB me)
 {
-    /* transport: pull each ALIVE peer's freshest model into the cache, then
-     * fold over the symmetric set {self} U {peers cached}. */
+    /* transport: pull each CANDIDATE peer's freshest model into the cache,
+     * then fold over the symmetric set {self} U {peers cached}.
+     *
+     * Candidacy is content-driven (gl_peer_candidate): a peer is probed if it
+     * is SWIM-ALIVE, already cached, OR — the fan-in fix — we have NOT yet
+     * cached it but its model ref might now be published. To cover that last
+     * case without waiting on SWIM, we probe EVERY id we do not already hold
+     * (a fetch of an unpublished ref fails fast and cheap), so the first
+     * round in which a peer's 2.5 KB body lands folds it in for good. This is
+     * what guarantees the marginal disjoint-shard node receives cross-shard
+     * signal from ALL its peers within a bounded window, no matter how slowly
+     * the failure detector converges. */
     for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
-        if (dnode_table[p].state != DNODE_ALIVE) continue;
+        /* Probe EVERY id (not just SWIM-ALIVE ones) so a published-but-not-
+         * yet-ALIVE peer is discovered by its content. The retry WAIT, though,
+         * is only spent on a peer we have reason to believe is really there
+         * (SWIM-ALIVE or already cached) — an unpublished id fails its first
+         * fetch fast and we move on without sleeping GL_FETCH_RETRY×. */
+        BOOL believed = (dnode_table[p].state == DNODE_ALIVE) || gl_phave[p];
         char pref[20]; UW prl = gl_model_ref(pref, p);
         for (INT a = 0; a < GL_FETCH_RETRY; a++) {
             if (gl_pfs_fetch(pref, prl, gl_pcache[p], DTR_WEIGHT_FLOATS) == 0) {
-                gl_phave[p] = 1;        /* fresh model cached */
+                gl_phave[p] = 1;        /* fresh model cached, folded for good */
                 break;
             }
+            if (!believed) break;           /* don't burn waits on a phantom id */
             tk_dly_tsk(GL_FETCH_WAIT_MS);   /* let the want/serve land */
         }
     }
