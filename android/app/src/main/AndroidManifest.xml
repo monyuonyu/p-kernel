@@ -58,6 +58,14 @@
             android:exported="false"
             android:label="@string/galaxy_title"/>
 
+        <!-- The ENGINEER page (layer 3): raw kernel log + node internals +
+             module versions. Deliberately technical; reached only from the
+             advanced settings on MainActivity. exported=false. -->
+        <activity
+            android:name=".LogActivity"
+            android:exported="false"
+            android:label="@string/engineer_title"/>
+
         <service
             android:name=".PKernelService"
             android:exported="false"

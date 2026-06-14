@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  activity_log.xml — the ENGINEER page (LogActivity), layer 3.
+
+  Deliberately technical / console-styled (the ONE place jargon is allowed,
+  per docs/product-soul.md): monospace, near-black background, the raw kernel
+  stdout tail, node internals, and a name->version module table. Reached only
+  from the collapsed advanced settings on MainActivity; exported=false.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/log_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_title"
+            android:textColor="@color/log_text"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:paddingBottom="12dp"/>
+
+        <!-- Node internals -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_internals"
+            android:textColor="@color/sky_dim"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingBottom="4dp"/>
+        <TextView
+            android:id="@+id/internals_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/log_text"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:textIsSelectable="true"
+            android:paddingBottom="14dp"/>
+
+        <!-- Module-version table (GET /modules.json) -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_modules"
+            android:textColor="@color/sky_dim"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingBottom="4dp"/>
+        <TextView
+            android:id="@+id/modules_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/log_text"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:textIsSelectable="true"
+            android:paddingBottom="14dp"/>
+
+        <!-- Raw kernel log -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingBottom="4dp">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/engineer_log"
+                android:textColor="@color/sky_dim"
+                android:textSize="12sp"
+                android:fontFamily="monospace"/>
+            <Button
+                android:id="@+id/btn_copy_log"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_copy"
+                android:textColor="@color/log_text"
+                android:textSize="12sp"
+                android:fontFamily="monospace"/>
+        </LinearLayout>
+        <TextView
+            android:id="@+id/log_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="240dp"
+            android:textColor="@color/log_text"
+            android:fontFamily="monospace"
+            android:textSize="11sp"
+            android:textIsSelectable="true"
+            android:padding="6dp"/>
+    </LinearLayout>
+</ScrollView>
