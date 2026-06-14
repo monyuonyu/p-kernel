@@ -84,6 +84,29 @@
             android:textIsSelectable="true"
             android:paddingBottom="14dp"/>
 
+        <!-- ============ Resources / CPU (REAL measurements) =============
+             System CPU% sampled off /proc/stat (no permission needed) +
+             core count + this node's own process CPU%. GPU is shown HONESTLY:
+             Android exposes no portable GPU-usage API and inference runs on
+             the CPU, so we say so rather than fabricate a number. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/engineer_resources"
+            android:textColor="@color/sky_dim"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingBottom="4dp"/>
+        <TextView
+            android:id="@+id/resources_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/log_text"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:textIsSelectable="true"
+            android:paddingBottom="14dp"/>
+
         <!-- Raw kernel log -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -109,16 +132,28 @@
                 android:textSize="12sp"
                 android:fontFamily="monospace"/>
         </LinearLayout>
-        <TextView
-            android:id="@+id/log_view"
+        <!-- Bounded, independently-scrollable log region. The page's outer
+             ScrollView would otherwise grow without limit as the log fills;
+             this fixed-height inner ScrollView keeps the latest tail visible
+             (LogActivity auto-scrolls it to the bottom on append) while the
+             reader can still drag up through the history. -->
+        <ScrollView
+            android:id="@+id/log_scroll"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="240dp"
-            android:textColor="@color/log_text"
-            android:fontFamily="monospace"
-            android:textSize="11sp"
-            android:textIsSelectable="true"
-            android:padding="6dp"/>
+            android:layout_height="260dp"
+            android:background="@color/log_bg"
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false">
+            <TextView
+                android:id="@+id/log_view"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/log_text"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:textIsSelectable="true"
+                android:padding="6dp"/>
+        </ScrollView>
 
         <!-- ============ Fleet / relay (advanced) ======================
              The technical fleet fields, moved out of the friendly Settings
