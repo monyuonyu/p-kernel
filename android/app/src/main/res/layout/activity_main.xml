@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  activity_main.xml — the FRIENDLY surface (app-polish wave).
+  activity_main.xml — the SETTINGS layer (3-layer-discover wave).
 
-  Three layers (docs/product-soul.md: users don't care about kernels):
-    1. SURFACE (this column, always visible): app name · localized tagline ·
-       star status (shining/asleep) · the one hero button (灯す/眠らせる) ·
-       Open galaxy. NO raw kernel log here, NO jargon.
-    2. SETTINGS ("▸ Advanced — join a fleet", collapsed): battery-safe toggle,
-       relay host/port/key (opt-in fleet join), and the door to the engineer
-       page. Intent extras to PKernelService are UNCHANGED.
-    3. ENGINEER (LogActivity, opened from the button below): the raw stdout
-       tail + node internals + module versions. Deliberately technical.
+  Three CLEAN, FINDABLE layers (docs/product-soul.md: users don't care about
+  kernels; 0.6.3 feedback: the layers were undiscoverable):
+    1. GALAXY (GalaxyActivity): the sky + a VISIBLE ⚙ gear into Settings.
+    2. SETTINGS (THIS screen, reached via the gear): a clear "Settings"
+       header, the FRIENDLY controls (battery-safe · battery floor · Wi-Fi
+       only · start-on-boot), "View introduction again", the app version,
+       and ONE clearly-labelled "Engineer / advanced" door. NO raw relay
+       host/port/hex-key here — those moved to the engineer page.
+    3. ENGINEER (LogActivity): build id + 24-module version table + node
+       internals + raw log + the technical Fleet/relay fields. Jargon lives
+       here and only here.
+
+  The friendly settings are shown DIRECTLY (no "Advanced" tap to reveal);
+  the only opt-in/collapse left is the deeper engineer page.
 
   StarfieldView backdrop (the galaxy.html universe). start/end (not left/right)
   so RTL locales (ar, fa, ur) mirror correctly.
@@ -135,182 +140,126 @@
                 android:fontFamily="monospace"
                 android:paddingBottom="18dp"/>
 
-            <!-- ============ SETTINGS layer (collapsed by default) ========= -->
+            <!-- ============ SETTINGS layer (always visible) =============== -->
+            <!-- A clear header so a first-time owner KNOWS this is settings. -->
             <TextView
-                android:id="@+id/advanced_toggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/entry_advanced"
+                android:text="@string/settings_header"
+                android:textColor="@color/sky_dim"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.08"
+                android:gravity="center"
+                android:paddingTop="18dp"
+                android:paddingBottom="2dp"/>
+
+            <View
+                android:layout_width="40dp"
+                android:layout_height="1dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="10dp"
+                android:background="@color/sky_faint"/>
+
+            <!-- Battery-safe toggle (PREF_CHARGE_ONLY; default on).
+                 SwitchCompat (not <Switch>) so the Kotlin cast matches
+                 under the AppCompat theme's auto-inflation. -->
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_battery_safe"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/pref_battery_safe"
                 android:textColor="@color/sky_dim"
                 android:textSize="13sp"
                 android:fontFamily="monospace"
-                android:gravity="center"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp"
-                android:background="?android:attr/selectableItemBackground"/>
+                android:paddingTop="6dp"
+                android:paddingBottom="14dp"/>
 
-            <LinearLayout
-                android:id="@+id/advanced_group"
+            <!-- Battery floor %: a SeekBar (10..50, step 5, default 30).
+                 The label above shows the live value ("Pause below 30%").
+                 Stored in PREF_BATTERY_FLOOR; powerAllowed() reads it. -->
+            <TextView
+                android:id="@+id/label_battery_floor"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone"
-                android:paddingTop="6dp">
+                android:text="@string/pref_floor_label"
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="2dp"/>
+            <SeekBar
+                android:id="@+id/seek_battery_floor"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="8"
+                android:paddingBottom="14dp"/>
 
-                <!-- Battery-safe toggle (PREF_CHARGE_ONLY; default on).
-                     SwitchCompat (not <Switch>) so the Kotlin cast matches
-                     under the AppCompat theme's auto-inflation. -->
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switch_battery_safe"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/pref_battery_safe"
-                    android:textColor="@color/sky_dim"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="14dp"/>
+            <!-- WiFi-only (PREF_WIFI_ONLY; default off): run only on
+                 unmetered WiFi. SwitchCompat (not <Switch>) for the cast. -->
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_wifi_only"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/pref_wifi_only"
+                android:textColor="@color/sky_dim"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="14dp"/>
 
-                <!-- Battery floor %: a SeekBar (10..50, step 5, default 30).
-                     The label above shows the live value ("Pause below 30%").
-                     Stored in PREF_BATTERY_FLOOR; powerAllowed() reads it. -->
-                <TextView
-                    android:id="@+id/label_battery_floor"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/pref_floor_label"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"
-                    android:paddingBottom="2dp"/>
-                <SeekBar
-                    android:id="@+id/seek_battery_floor"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="8"
-                    android:paddingBottom="14dp"/>
+            <!-- Start-on-boot (PREF_START_ON_BOOT; default off): relight
+                 the node after the device boots. SwitchCompat. -->
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_start_on_boot"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/pref_start_on_boot"
+                android:textColor="@color/sky_dim"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="14dp"/>
 
-                <!-- WiFi-only (PREF_WIFI_ONLY; default off): run only on
-                     unmetered WiFi. SwitchCompat (not <Switch>) for the cast. -->
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switch_wifi_only"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/pref_wifi_only"
-                    android:textColor="@color/sky_dim"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    android:paddingBottom="14dp"/>
+            <!-- Replay the picture-book intro (pictures only, no re-consent). -->
+            <Button
+                android:id="@+id/btn_reintro"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/reintro_btn"
+                android:textColor="@color/sky_faint"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="8dp"/>
 
-                <!-- Start-on-boot (PREF_START_ON_BOOT; default off): relight
-                     the node after the device boots. SwitchCompat. -->
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switch_start_on_boot"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/pref_start_on_boot"
-                    android:textColor="@color/sky_dim"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    android:paddingBottom="14dp"/>
+            <!-- App version — so the owner can SEE which yurikago they run
+                 (0.6.3 feedback: the version was shown nowhere). Filled at
+                 runtime: "yurikago <versionName>". -->
+            <TextView
+                android:id="@+id/app_version"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/sky_faint"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:fontFamily="monospace"
+                android:paddingTop="18dp"
+                android:paddingBottom="6dp"/>
 
-                <!-- Node id — only needed when joining a fleet. -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/label_node_id"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"
-                    android:paddingBottom="2dp"/>
-                <EditText
-                    android:id="@+id/field_node_id"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="number"
-                    android:text="1"
-                    android:textColor="@color/star_white"
-                    android:textColorHint="@color/sky_faint"
-                    android:fontFamily="monospace"
-                    android:paddingBottom="12dp"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/label_relay_host"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"/>
-                <EditText
-                    android:id="@+id/field_relay_host"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="text"
-                    android:hint="@string/hint_relay_host"
-                    android:textColor="@color/star_white"
-                    android:textColorHint="@color/sky_faint"
-                    android:fontFamily="monospace"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/label_relay_port"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"
-                    android:paddingTop="8dp"/>
-                <EditText
-                    android:id="@+id/field_relay_port"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="number"
-                    android:text="7400"
-                    android:textColor="@color/star_white"
-                    android:textColorHint="@color/sky_faint"
-                    android:fontFamily="monospace"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/label_relay_key"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="12sp"
-                    android:fontFamily="monospace"
-                    android:paddingTop="8dp"/>
-                <EditText
-                    android:id="@+id/field_relay_key"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="text"
-                    android:hint="@string/hint_relay_key"
-                    android:textColor="@color/star_white"
-                    android:textColorHint="@color/sky_faint"
-                    android:fontFamily="monospace"/>
-
-                <!-- Replay the picture-book intro (pictures only, no re-consent). -->
-                <Button
-                    android:id="@+id/btn_reintro"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/reintro_btn"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    android:layout_marginTop="16dp"/>
-
-                <!-- The door to the engineer page (raw log + internals). -->
-                <Button
-                    android:id="@+id/btn_engineer"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/btn_engineer"
-                    android:textColor="@color/sky_faint"
-                    android:textSize="13sp"
-                    android:fontFamily="monospace"
-                    android:layout_marginTop="8dp"/>
-            </LinearLayout>
+            <!-- The ONE clearly-labelled door to the engineer / advanced
+                 layer: raw log + module versions + the technical fleet/relay
+                 fields. -->
+            <Button
+                android:id="@+id/btn_engineer"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_engineer"
+                android:textColor="@color/sky_dim"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="2dp"/>
         </LinearLayout>
     </ScrollView>
 </FrameLayout>
