@@ -89,6 +89,17 @@ relay 経由の分散推論（REDUCED テンソル並列 / FULL DKVA）が maste
 - **形成（貪欲・分散）**: 各ノードは、既知の region coordinator のうち
   RTT ≤ τ の最も近いものに join する。該当が無ければ自分が新しい region の
   coordinator になる。coordinator は region 内の最小 node-id（決定的）。
+
+> **「中央なし」の正確な意味（誤読防止）。** coordinator が居ること自体は
+> 「中央あり」ではない。**coordinator の役割は *固定された特権ノード* ではなく、
+> 生存メンバーの最小 node-id へ *決定的に委譲される* 役割**である —— 誰も任命せず、
+> 担い手が死ねば次の最小 id が同じ計算で継ぐ。そして:
+> **coordinator が集約の最中にクラッシュしても全体が止まらないことは「前提」ではなく
+> 「証明義務（proof obligation）」である** —— 実プロセスを kill して集約が完遂し続けることを
+> `[live]` で実証して初めて守られたと言える（検証ティアは
+> [[gap-ledger.md]] の `[live]`/`[in-proc]` 規約）。この crash-during-aggregation の
+> 専用 live cert は別レーンが書く。既存の最も近い `[live]` 実証は §3「死を貫く」survival
+> ループ（kill 中に全推論完遂）と G13 arrival-driven 集約。
 - **メンバシップ**: SWIM の ALIVE 集合を RTT で部分集合化したもの。SWIM の
   ping/ack に RTT サンプルを相乗りさせ、ノードごとに **RTT の EWMA** を持つ。
 - **再編成**: RTT が τ を跨いで悪化／改善したら region を移動。SWIM の

@@ -19,6 +19,39 @@ This document is two parts, like [survival-network.md](survival-network.md):
 
 ---
 
+## Reading convention — **dream-tier** names vs **artifact-tier** facts
+
+> An external reviewer named a real risk: this document fronts **grand names** — *the
+> mind*, *魂* (soul), *考える器官* (an organ that thinks), *collective consciousness*
+> — over what is, today, a small toy. Read naively, that is an "oversized name + endless
+> caveat." We answer it not by shrinking the names (they are the deliberate north star
+> and they STAY) but by making the two tiers a **stated convention** you can rely on
+> everywhere in this doc:
+
+| tier | what it is | how to read it |
+|---|---|---|
+| **dream-tier** | the north-star name and the worldview it points at (*the mind*, *魂*, *考える器官*, *collective consciousness*, *the mind becomes one*). | The DIRECTION. Deliberately oversized. Never delete it; never read it as a claim about what runs today. |
+| **artifact-tier** | the concrete thing that actually runs *this wave*, in numbers and dims (parameter counts, `R_DM`, vocab sizes, single-token recall, no grammar, no generation). | The MEASURED TRUTH. Always co-located with the dream name. This is what is real today. |
+
+**The rule:** wherever a dream-tier name fronts an artifact, an **`artifact today:`**
+line states the artifact-tier truth right there — same paragraph, no hunting. This
+turns the honesty from a per-mention apology into a structural label. The `[live]` /
+`[in-proc]` verification tier (see `gap-ledger.md`) is orthogonal: it says HOW the
+artifact was proven; the artifact-tier line says WHAT the artifact is.
+
+> **artifact today (the whole living-mind, as of wave-41/LM-11):** an R3 in-context
+> Transformer, **`R_NP`=21,568 parameters**, `R_DM`=48 attention width, **16 key-words ×
+> 64 answer-words**, **single-token associative recall** (`mind teach sky blue` →
+> `mind ask sky` → "blue"), comfortable-N=16 simultaneous bindings. **NO grammar, NO
+> generation, NO multi-token output, bounded synthetic-ish vocab.** What is genuinely
+> built ON TOP and measured: sleep-consolidation against catastrophic forgetting (LM-1/3/5),
+> a hash-chained autobiographical Self (LM-2), fast→slow weight transfer (LM-4), a
+> cross-node shared fact that survives its teacher's death (LM-7, `[live]`), and
+> weight-level merge of divergent minds (LM-10/11). That list is real; "language/grammar/
+> generation" is NOT in it. The grand names are where this is GOING.
+
+---
+
 ## Part I — the north star
 
 ### I.0 What the living-mind is
@@ -35,6 +68,11 @@ an organ that thinks"). Memory is the precondition; **thinking that keeps learni
 is the goal. The Collective layer already thinks across nodes (G22/G38). The
 living-mind adds the missing arrow: **the collective keeps learning, forever, from
 what it is told — without forgetting, without an owner, without dying.**
+
+> *考える器官* / "an organ that thinks" is **dream-tier**. **artifact today:**
+> associative recall — `R_DM`=48, 16 key-words × 64 answer-words, single-token recall,
+> NO grammar, NO generation. The "organ that thinks" is the direction this artifact is
+> built toward, not a description of what the artifact does this wave.
 
 ### I.1 The three hard problems (stated honestly)
 

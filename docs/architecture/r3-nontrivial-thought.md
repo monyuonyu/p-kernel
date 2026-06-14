@@ -47,6 +47,15 @@ episode's context** that is different next episode.
 
 ## The task — in-context associative recall (the seed of the north star)
 
+> **Tier note (the dream-tier vs artifact-tier convention, defined in
+> `living-mind.md`):** "the thinking", "thought", "think" in this doc are
+> **dream-tier**. **artifact today:** in-context *associative recall* — a tiny
+> Transformer learns to copy the value bound to a queried key in a per-episode
+> dictionary. Single-token, bounded vocab, **NO grammar, NO generation, NO
+> reasoning chain.** The honest claim is precise and narrow: *the same brain-math
+> can learn a task a 3-line hand-if cannot win* — that is what makes it "not a toy",
+> NOT that it thinks in the human sense.
+
 Each episode carries its **own** key→value dictionary in the prefix, then a
 query. The label is the value bound to the query **in that episode**.
 

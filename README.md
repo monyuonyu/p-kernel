@@ -14,6 +14,10 @@ repo root (`arch/` `boot/` `kernel/` `lib/` `relay/` `samples/` …); the archit
 map with its own honest status table is
 [`docs/architecture/README.md`](docs/architecture/README.md).)*
 
+> **初めての方・専門外の方へ → [`docs/START-HERE.md`](docs/START-HERE.md)（plain-language front door）。**
+> p-kernel とは何か・5レイヤー（Body / Brain / Self / Collective / Evolution）・1ノードの起動を、
+> 専門用語抜きで説明する人間向けの入口。「AI は誰のものでもない」には、人間が読める入口が要る。
+
 ---
 
 ## 目標（原文のまま）
