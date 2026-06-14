@@ -131,6 +131,33 @@ EXPORT void knl_wait_release_tmout( TCB *tcb )
 		tm_monitor();
 	}
 #endif
+	/* KILL-CHURN-CRASH cure (gap-ledger) — stale-timer-on-recycle guard.
+	 *
+	 * A wait-timer callback must only fire on a task that is STILL in a
+	 * timed wait.  Under foreign kill/heal churn of a ring3 daemon the
+	 * victim's TCB (a slot in the STATIC knl_tcb_table) can be freed by
+	 * tk_del_tsk and RECYCLED into a brand-new task before this — its own,
+	 * embedded — wtmeb's pending timer is serviced.  When that happens the
+	 * callback runs on the new occupant, whose tcb->tskque now links a
+	 * DIFFERENT object queue (or, freshly recycled with ret==task-entry
+	 * trampoline, a garbage prev): the unconditional QueRemove below then
+	 * stores through tcb->tskque.prev == a wild pointer == the historic
+	 * ring0 #PF (write, err=0x2; EIP here in knl_wait_release_tmout; CR2 a
+	 * BIOS-region garbage address; reproduced x86-only under `dproc churn`,
+	 * confirmed CLEAN on the portable aarch64/linux harness).
+	 *
+	 * The wtmeb unlink in knl_make_dormant / knl_del_tsk is correct timer
+	 * hygiene but does not close the intrinsic teardown race: the timer
+	 * IRQ can dequeue this event in the same tick the slot is recycled.
+	 * Guard the ACTION, not just the queue: a genuine timeout always finds
+	 * the task with the TS_WAIT bit set (knl_make_wait set it; only
+	 * release clears it).  If TS_WAIT is absent the task is no longer
+	 * waiting on anything we own — the timer is stale; drop it.  Safe: a
+	 * real pending timeout is never reached with TS_WAIT clear, so no
+	 * legitimate wakeup is lost. */
+	if ( (tcb->state & TS_WAIT) == 0 ) {
+		return;
+	}
 	QueRemove(&tcb->tskque);
 	QueInit(&tcb->tskque);
 	knl_make_non_wait(tcb);
