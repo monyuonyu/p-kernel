@@ -16,6 +16,10 @@ test_results.log
 # Claude Code tool state (subagent worktrees etc.) — never commit
 .claude/
 
+# NS-1 student: teacher byte-targets are harvested at runtime (run_student.sh) —
+# never commit the generated fixture blob
+tests/llm/*.bytes
+
 # userland sample ELF — built from samples/ by userland/x86/Makefile (make disk)
 userland/x86/**/*.elf
 
