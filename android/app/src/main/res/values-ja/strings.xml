@@ -39,4 +39,5 @@
     <string name="engineer_gpu_off">オフ</string>
     <string name="btn_engineer">アドバンスド</string>
     <string name="engineer_title">アドバンスド</string>
+    <string name="engineer_cpu_restricted">取得不可（OS制限）</string>
 </resources>

@@ -101,6 +101,11 @@ KEYS = [
     # back to the English base ("Advanced") — never "Engineer".
     ("adv_screen",      "btn_engineer"),
     ("adv_screen",      "engineer_title"),
+    # Device-wide CPU% is OS-restricted on API 26+ (SELinux denies /proc/stat
+    # to third-party apps). The engineer page shows THIS string instead of a
+    # bare "n/a" (Bug 2). en+ja in the table; other langs fall back to the
+    # English base.
+    ("cpu_restricted",  "engineer_cpu_restricted"),
 ]
 
 

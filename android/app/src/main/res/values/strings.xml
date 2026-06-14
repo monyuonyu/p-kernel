@@ -94,6 +94,10 @@
          other 30 fall back to English, like the rest of the engineer page.) -->
     <string name="engineer_resources">Resources / CPU</string>
     <string name="engineer_measuring">measuring…</string>
+    <!-- Device-wide CPU% is denied to third-party apps by SELinux (API 26+):
+         /proc/stat's aggregate line is unreadable and there is no fake-free
+         way to get it. Shown honestly instead of a bare "n/a" (Bug 2). -->
+    <string name="engineer_cpu_restricted">unavailable (OS restriction)</string>
     <string name="engineer_gpu_unused">not used (CPU inference)</string>
     <!-- HONEST GPU status (gpu-ui wave): read from the GPU-1/GPU-2 natives.
          The mind STILL runs inference on the CPU — GPU-3 wires the matmul to
