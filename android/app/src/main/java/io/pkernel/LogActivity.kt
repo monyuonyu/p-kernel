@@ -273,9 +273,43 @@ class LogActivity : AppCompatActivity() {
                 .append(if (procPct >= 0) "$procPct%" else getString(R.string.engineer_measuring))
                 .append('\n')
             append("CPU cores   : ").append(cores).append('\n')
-            append("GPU         : ").append(getString(R.string.engineer_gpu_unused))
+            append("GPU         : ").append(gpuStatusLine())
         }
     }
+
+    /**
+     * HONEST GPU status, read from the GPU-1/GPU-2 natives (gpu_compute.h):
+     *
+     *   · not available -> "not available on this device"
+     *   · available     -> "<gpu_name()> · available · <enabled|off> ·
+     *                        not yet used for inference (CPU)"
+     *
+     * The mind STILL computes inference on the CPU — GPU-3 wires the matmul to
+     * the GPU. So the available line ALWAYS ends with "not yet used for
+     * inference (CPU)": we never claim GPU inference work that isn't happening
+     * (product-soul: no fake progress). The natives are crash-free at any time;
+     * on a Vulkan-less device available() is false and we say so.
+     */
+    private fun gpuStatusLine(): String =
+        /* "available vs not" keys off CAPABILITY (capable()), not in-use
+         * (available()). A capable GPU is honestly "available" even with the
+         * enable flag OFF — that is the DEFAULT state. The on/off sub-state is
+         * a SEPARATE read (isEnabled()): so by default a capable device shows
+         * "<name> · available · off · not yet used for inference (CPU)", and
+         * after toggling "<name> · available · enabled (settings) · …". The
+         * engineer_gpu_off branch used to be dead (the available() branch
+         * required the flag ON); splitting capability from enablement reaches
+         * it. The suffix stays honestly "not yet used for inference (CPU)" —
+         * GPU-3 wires the matmul; this wave only surfaces status. */
+        if (!PKernel.Gpu.capable()) {
+            getString(R.string.engineer_gpu_unavailable)
+        } else {
+            val name = PKernel.Gpu.name().ifBlank { "GPU" }
+            val state = getString(
+                if (PKernel.Gpu.isEnabled()) R.string.engineer_gpu_enabled
+                else R.string.engineer_gpu_off)
+            getString(R.string.engineer_gpu_available, name, state)
+        }
 
     /* Carries the most recent /proc/stat totalΔ so the process-CPU math can
      * reuse the exact same interval the system% was computed over. */

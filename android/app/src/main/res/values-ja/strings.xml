@@ -31,4 +31,10 @@
     <string name="engineer_resources">リソース / CPU</string>
     <string name="engineer_measuring">計測中…</string>
     <string name="engineer_gpu_unused">未使用（CPUで推論）</string>
+    <string name="pref_use_gpu">GPUを使う（実験的）</string>
+    <string name="pref_use_gpu_unavailable">この端末ではGPUを使えません</string>
+    <string name="engineer_gpu_unavailable">この端末では使えません</string>
+    <string name="engineer_gpu_available">%1$s ・ 利用可能 ・ %2$s ・ まだ推論には未使用（CPU）</string>
+    <string name="engineer_gpu_enabled">有効（設定）</string>
+    <string name="engineer_gpu_off">オフ</string>
 </resources>

@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var floorSeek: SeekBar
     private lateinit var wifiOnlySwitch: SwitchCompat
     private lateinit var startOnBootSwitch: SwitchCompat
+    private lateinit var useGpuSwitch: SwitchCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         floorSeek         = findViewById(R.id.seek_battery_floor)
         wifiOnlySwitch    = findViewById(R.id.switch_wifi_only)
         startOnBootSwitch = findViewById(R.id.switch_start_on_boot)
+        useGpuSwitch      = findViewById(R.id.switch_use_gpu)
 
         /* node id / relay live in prefs now (the engineer page edits them, the
          * service persists them). First run mints a RANDOM node id instead of
@@ -137,6 +139,39 @@ class MainActivity : AppCompatActivity() {
         startOnBootSwitch.setOnCheckedChangeListener { _, checked ->
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putBoolean(PKernelService.PREF_START_ON_BOOT, checked).apply()
+        }
+
+        /* Use-GPU toggle: PREF_USE_GPU (default OFF — honestly experimental and
+         * matching the native gpu_set_enabled default). The toggle's ENABLED-ness
+         * keys off CAPABILITY (Gpu.capable() — does a usable Vulkan device
+         * EXIST?), NOT availability (Gpu.available() — capable AND already
+         * switched ON). Using available() here deadlocked the UI: the flag
+         * defaults OFF, so available() returned false, so the toggle was greyed,
+         * so the user could never turn the flag ON — greyed because OFF, OFF
+         * because greyed. capable() probes the hardware regardless of the flag.
+         *
+         * When capable: enable the toggle, set it from the stored pref, AND
+         * re-apply that persisted state to native (setEnabled) on entry so a
+         * saved ON survives a relaunch. On toggle: persist + setEnabled. This
+         * wave only surfaces the flag; the mind still runs inference on the CPU
+         * (GPU-3 wires the matmul). We do NOT touch the inference path. */
+        val gpuCapable = PKernel.Gpu.capable()
+        if (gpuCapable) {
+            val gpuOn = prefs.getBoolean(PREF_USE_GPU, false)
+            PKernel.Gpu.setEnabled(gpuOn)        // re-apply persisted pref to native
+            useGpuSwitch.isChecked = gpuOn
+            useGpuSwitch.isEnabled = true
+            useGpuSwitch.setText(R.string.pref_use_gpu)
+            useGpuSwitch.setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_USE_GPU, checked).apply()
+                PKernel.Gpu.setEnabled(checked)
+            }
+        } else {
+            /* No usable GPU on this device: greyed + honest label, never checked. */
+            useGpuSwitch.isChecked = false
+            useGpuSwitch.isEnabled = false
+            useGpuSwitch.setText(R.string.pref_use_gpu_unavailable)
         }
 
         /* App version — read straight off the PackageManager so we never need
@@ -241,6 +276,9 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_RELAY_HOST = "relay_host"
         private const val PREF_RELAY_PORT = "relay_port"
         private const val PREF_RELAY_KEY = "relay_key"
+        // GPU enable flag (gpu-ui wave). Default OFF; mirrors the native
+        // gpu_set_enabled default + it's honestly experimental.
+        const val PREF_USE_GPU = "use_gpu"
     }
 
     private fun ensureNotificationChannel() {

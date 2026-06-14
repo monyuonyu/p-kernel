@@ -375,8 +375,12 @@ set(GPU_SRC ${GPU_DIR}/gpu_vk.c)
 # gpu_vk.c #includes matmul_f32_spv.h by bare name from GPU_GEN_DIR.
 set_source_files_properties(${GPU_SRC} PROPERTIES OBJECT_DEPENDS ${MATMUL_SPV_H})
 
-# JNI shim
-set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c)
+# JNI shim. gpu_jni.c is the GPU-UI bridge (availability + enable flag +
+# device name -> Kotlin); it calls the dlopen'd backend via gpu_compute.h and
+# adds NO libvulkan link, so the .so keeps no libvulkan DT_NEEDED. Android-only:
+# there is no host (boot/linux) equivalent, so check_parity stays clean.
+set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/gpu_jni.c)
 
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}

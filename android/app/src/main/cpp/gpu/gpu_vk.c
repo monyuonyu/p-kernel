@@ -475,6 +475,26 @@ int gpu_available(void)
     return (G.state == GPU_READY) ? 1 : 0;
 }
 
+int gpu_capable(void)
+{
+    /* CAPABILITY, not "in use". Probe for a usable Vulkan compute device
+     * REGARDLESS of the enable flag. The settings toggle defaults OFF, so the
+     * flag-gated gpu_available() reports a perfectly capable device as
+     * un-available — a chicken-and-egg deadlock (can't enable the GPU because
+     * the toggle is greyed because the flag is OFF). gpu_capable() breaks it by
+     * asking only "does a device exist?", never "is it switched on?".
+     *
+     * We deliberately do NOT read or write G.enabled: probing != enabling.
+     * gpu_init() itself performs the bringup WITHOUT consulting G.enabled, so a
+     * direct trigger here probes the hardware without turning anything on. On a
+     * device with no usable Vulkan the bringup fails, the state caches DEAD, and
+     * we return 0 — no crash; every GPU-1/2 invariant holds (libvulkan stays
+     * dlopen'd / never a DT_NEEDED, bounded fence, CPU fallback). On success
+     * gpu_init() also populates G.name, so gpu_name() is valid afterwards. */
+    if (G.state == GPU_UNINIT) gpu_init();
+    return (G.state == GPU_READY) ? 1 : 0;
+}
+
 void gpu_describe(char *buf, size_t buflen)
 {
     if (!buf || buflen == 0) return;
