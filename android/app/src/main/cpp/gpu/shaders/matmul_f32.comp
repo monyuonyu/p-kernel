@@ -1,45 +1,118 @@
 #version 450
 //
-// matmul_f32.comp — GPU-1 plain-float matmul compute shader.
+// matmul_f32.comp — GPU-2 tiled plain-float matvec (GEMV) compute shader.
 //
 // Computes y[i] = sum_j A[i*in + j] * x[j]  for i in [0, out).
-// This is the GPU mirror of the CPU reference contract (qz_matmul_q8_0 with
-// the quantization stripped away): row-major weights A, dense float x, dense
-// float y. GPU-2 will swap this shader for a dequant-while-you-matmul kernel
-// over Q8_0/Q4_0 blocks; the host Vulkan harness (gpu_vk.c) is shader-agnostic
-// and reused unchanged.
+// A is row-major (out rows x in cols); x is length `in`; y is length `out`.
+// This is the GPU mirror of the CPU reference contract (qz_matmul with the
+// quantization stripped). GPU-3 swaps this for a dequant-while-you-matmul
+// kernel over Q8_0/Q4_0 blocks; the host Vulkan harness (gpu_vk.c) is
+// shader-agnostic and reused unchanged.
 //
-// One invocation = one output row y[i]. Work is dispatched as
-// ceil(out / LOCAL_SIZE) groups of LOCAL_SIZE invocations.
+// ============================ GPU-2: THE SPEED WIN ==========================
+// The GPU-1 shader used "1 invocation = 1 output row", striding A by `in`
+// across adjacent threads — uncoalesced, one ALU lane per row, and it re-read
+// x[] from global memory `out`x. On the S25's Adreno that lost to the CPU even
+// at 4096^2 (cpu 18ms vs gpu 34ms). This shader fixes the GPU side of that:
+//
+//   * COOPERATIVE ROW REDUCTION (coalesced A). A workgroup is laid out as
+//     ROWS_PER_WG row-lanes x COLS_PER_ROW column-threads (= local_size). The
+//     COLS_PER_ROW threads working on the SAME row read CONSECUTIVE A elements
+//     (A[row*in + (k0 + lane)] for lane = 0..COLS_PER_ROW-1), so the hardware
+//     coalesces those reads into wide bursts instead of a strided gather. Each
+//     thread accumulates a partial dot product over its strided slice of K,
+//     then the COLS_PER_ROW partials are reduced in shared memory.
+//
+//   * x STAGED IN SHARED MEMORY. x[] is reused by every one of the `out` rows.
+//     Each workgroup streams x through a `shared` tile (xs[]) in K-tiles of
+//     COLS_PER_ROW, loaded once per tile (coalesced) and then read by all
+//     ROWS_PER_WG row-lanes from fast on-chip memory — instead of every row
+//     re-reading x from global memory.
+//
+//   * MULTIPLE ROWS PER WORKGROUP keeps occupancy high (a single-row-per-
+//     workgroup reduction would idle most of a big GPU on the per-row tail).
+//
+// Layout (TUNE here only; gpu_vk.c reads these via specialization-free
+// constants below and dispatches ceil(out / ROWS_PER_WG) groups):
+//   local_size_x = COLS_PER_ROW  (threads cooperating on one row's K)
+//   local_size_y = ROWS_PER_WG   (independent rows handled per workgroup)
+//   COLS_PER_ROW * ROWS_PER_WG = 256  (a full, GPU-friendly workgroup)
 //
 // Build: glslc -fshader-stage=comp -O matmul_f32.comp -o matmul_f32.spv
 // (see CMakeLists.txt — the .spv bytes are embedded as a C array at build
 // time so no runtime shader compiler is shipped.)
+//
+// NOTE: keep COLS_PER_ROW / ROWS_PER_WG in sync with GPU_COLS_PER_ROW /
+// GPU_ROWS_PER_WG in gpu_vk.c (the dispatch math depends on ROWS_PER_WG).
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+#define COLS_PER_ROW 32u   // threads cooperating on one row's K reduction
+#define ROWS_PER_WG   8u   // independent output rows per workgroup (32*8=256)
+
+layout(local_size_x = 32, local_size_y = 8, local_size_z = 1) in;
 
 // Weight matrix A, row-major: A[i*in + j]. Read-only.
-layout(std430, binding = 0) readonly buffer BufA { float A[]; };
+layout(std430, binding = 0) readonly  buffer BufA { float A[]; };
 // Input vector x, length `in`. Read-only.
-layout(std430, binding = 1) readonly buffer BufX { float x[]; };
+layout(std430, binding = 1) readonly  buffer BufX { float x[]; };
 // Output vector y, length `out`. Write.
 layout(std430, binding = 2) writeonly buffer BufY { float y[]; };
 
-// Dimensions pushed as constants (in, out). Kept as a tiny uniform-like
-// push-constant block so the same pipeline serves any matmul size.
+// Dimensions pushed as constants (in, out). The same pipeline serves any size.
 layout(push_constant) uniform Dims {
     uint nin;   // length of x / columns of A
     uint nout;  // length of y / rows of A
 } dims;
 
-void main() {
-    uint i = gl_GlobalInvocationID.x;   // output row index
-    if (i >= dims.nout) return;         // guard the ragged last group
+// Shared staging for x (one K-tile of COLS_PER_ROW floats, reused by every
+// row-lane) + the per-row partial sums for the cross-lane reduction.
+shared float xs[COLS_PER_ROW];
+shared float partial[ROWS_PER_WG][COLS_PER_ROW];
 
-    uint base = i * dims.nin;
+void main() {
+    uint lane = gl_LocalInvocationID.x;            // 0..COLS_PER_ROW-1 (K slice)
+    uint rloc = gl_LocalInvocationID.y;            // 0..ROWS_PER_WG-1  (which row)
+    uint row  = gl_WorkGroupID.x * ROWS_PER_WG + rloc;  // global output row
+
+    uint nin  = dims.nin;
+    uint base = row * nin;                         // row start in A (row-major)
+    bool live = (row < dims.nout);                 // ragged last group guard
+
     float acc = 0.0;
-    for (uint j = 0u; j < dims.nin; ++j) {
-        acc += A[base + j] * x[j];
+
+    // Stream K in tiles of COLS_PER_ROW. All ROWS_PER_WG row-lanes share the
+    // same xs[] tile, so x is fetched from global memory once per tile per
+    // workgroup, not once per row.
+    for (uint k0 = 0u; k0 < nin; k0 += COLS_PER_ROW) {
+        // Cooperatively load this K-tile of x into shared memory. One row-lane
+        // (rloc==0) does the load; every thread reads it after the barrier.
+        // Reads x[k0 + lane] — consecutive lanes -> consecutive addresses
+        // (coalesced).
+        if (rloc == 0u) {
+            uint k = k0 + lane;
+            xs[lane] = (k < nin) ? x[k] : 0.0;
+        }
+        barrier();
+
+        // Each thread MACs its lane's element of this tile for its own row.
+        // For a fixed lane across the COLS_PER_ROW threads of one row, the A
+        // addresses A[base + k0 + lane] are consecutive -> coalesced burst.
+        uint k = k0 + lane;
+        if (live && k < nin) {
+            acc += A[base + k] * xs[lane];
+        }
+        barrier();   // protect xs[] before the next tile overwrites it
     }
-    y[i] = acc;
+
+    // Cross-lane reduction of the COLS_PER_ROW partials for this row.
+    partial[rloc][lane] = acc;
+    barrier();
+    // Tree reduction within the row's COLS_PER_ROW lanes.
+    for (uint s = COLS_PER_ROW >> 1; s > 0u; s >>= 1) {
+        if (lane < s) partial[rloc][lane] += partial[rloc][lane + s];
+        barrier();
+    }
+
+    if (live && lane == 0u) {
+        y[row] = partial[rloc][0];
+    }
 }
