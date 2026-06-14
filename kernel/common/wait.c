@@ -154,7 +154,18 @@ EXPORT void knl_wait_release_tmout( TCB *tcb )
 	 * release clears it).  If TS_WAIT is absent the task is no longer
 	 * waiting on anything we own — the timer is stale; drop it.  Safe: a
 	 * real pending timeout is never reached with TS_WAIT clear, so no
-	 * legitimate wakeup is lost. */
+	 * legitimate wakeup is lost (TS_WAITSUS = TS_WAIT|TS_SUSPEND still
+	 * carries the bit, so a suspended timed-wait is not missed; verified
+	 * E_TMOUT still delivered on schedule for sem-wait / tk_slp_tsk /
+	 * tk_dly_tsk on the guarded build — no timeout regressed).
+	 *
+	 * EIP signature, honest note: the exact faulting PC is STOCHASTIC.  A
+	 * wild-pointer store here can resolve at the clean QueRemove store
+	 * (knl_wait_release_tmout+0x11) OR cascade into the off-boundary
+	 * "garbage-PC" variant near knl_make_wait_reltim that the predecessor
+	 * note described; both observed under the same recycled-daemon
+	 * mechanism (err=0x2, CS=0x08, ring0).  Same root cause; the guard
+	 * cures both. */
 	if ( (tcb->state & TS_WAIT) == 0 ) {
 		return;
 	}
