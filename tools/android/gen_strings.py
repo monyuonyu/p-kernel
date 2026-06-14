@@ -82,6 +82,18 @@ KEYS = [
     ("resources",       "engineer_resources"),  # engineer Resources/CPU header (en+ja; else en fallback)
     ("measuring",       "engineer_measuring"),   # CPU% placeholder while priming the delta (en+ja)
     ("gpu_unused",      "engineer_gpu_unused"),  # honest GPU line — no fabricated % (en+ja)
+    # GPU-UI wave: the settings GPU toggle (default OFF, disabled when no
+    # usable Vulkan) + the honest engineer-page GPU status read from the
+    # GPU-1/GPU-2 natives. gpu_available is a format string (%1$s=device name,
+    # %2$s=enabled/off) that ALWAYS says "not yet used for inference (CPU)" —
+    # GPU-3 wires the matmul; this wave only surfaces availability. (en+ja in
+    # the table; the other 30 langs fall back to English.)
+    ("use_gpu",         "pref_use_gpu"),
+    ("use_gpu_unavail", "pref_use_gpu_unavailable"),
+    ("gpu_unavailable", "engineer_gpu_unavailable"),
+    ("gpu_available",   "engineer_gpu_available"),
+    ("gpu_enabled",     "engineer_gpu_enabled"),
+    ("gpu_off",         "engineer_gpu_off"),
 ]
 
 

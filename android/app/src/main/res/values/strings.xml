@@ -56,6 +56,12 @@
     <string name="pref_floor_label">Pause below %1$d%%</string>
     <string name="pref_wifi_only">Wi-Fi only (unmetered)</string>
     <string name="pref_start_on_boot">Start when the phone turns on</string>
+    <!-- GPU toggle (advanced screen). Default OFF (honestly experimental + the
+         native default is disabled). pref_use_gpu_unavailable replaces the
+         label, greyed, when the device has no usable Vulkan. (en+ja in the
+         table; other langs fall back to English.) -->
+    <string name="pref_use_gpu">Use GPU (experimental)</string>
+    <string name="pref_use_gpu_unavailable">GPU not available on this device</string>
     <string name="reintro_btn">View introduction again</string>
 
     <!-- Settings layer (3-layer-discover wave): a clear header so a first-time
@@ -84,4 +90,15 @@
     <string name="engineer_resources">Resources / CPU</string>
     <string name="engineer_measuring">measuring…</string>
     <string name="engineer_gpu_unused">not used (CPU inference)</string>
+    <!-- HONEST GPU status (gpu-ui wave): read from the GPU-1/GPU-2 natives.
+         The mind STILL runs inference on the CPU — GPU-3 wires the matmul to
+         the GPU — so the available line MUST say "not yet used for inference
+         (CPU)". Never claim GPU inference work that isn't happening.
+         engineer_gpu_available is a format string:
+           %1$s = device name (gpu_name(), e.g. "Adreno (TM) 840")
+           %2$s = enabled state (engineer_gpu_enabled / engineer_gpu_off) -->
+    <string name="engineer_gpu_unavailable">not available on this device</string>
+    <string name="engineer_gpu_available">%1$s · available · %2$s · not yet used for inference (CPU)</string>
+    <string name="engineer_gpu_enabled">enabled (settings)</string>
+    <string name="engineer_gpu_off">off</string>
 </resources>

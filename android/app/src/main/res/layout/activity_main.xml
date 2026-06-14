@@ -220,6 +220,20 @@
                 android:fontFamily="monospace"
                 android:paddingBottom="14dp"/>
 
+            <!-- Use-GPU toggle (PREF_USE_GPU; default OFF — honestly
+                 experimental, matches the native default). Disabled + relabelled
+                 "GPU not available on this device" when nativeGpuAvailable() is
+                 false. SwitchCompat (not <Switch>) so the Kotlin cast matches. -->
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_use_gpu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/pref_use_gpu"
+                android:textColor="@color/sky_dim"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:paddingBottom="14dp"/>
+
             <!-- Replay the picture-book intro (pictures only, no re-consent). -->
             <Button
                 android:id="@+id/btn_reintro"
