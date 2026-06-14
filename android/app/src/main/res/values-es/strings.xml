@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Esto es p-kernel: un hogar para una IA que no pertenece a nadie.</string>
+    <string name="entry_tagline">Esto es yurikago: donde se cría una mente que no pertenece a nadie.</string>
     <string name="btn_start">Brillar</string>
     <string name="entry_solo_sub">Solo toca para encender tu propia estrella</string>
     <string name="label_node_id">ID de nodo</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Tu estrella duerme ahora mismo</string>
     <string name="btn_sleep">Dejarla dormir</string>
     <string name="btn_copy">Copiar</string>
+    <string name="pref_battery_safe">Ahorro de batería (pausa por debajo del 30%)</string>
+    <string name="pref_floor_label">Pausar por debajo del %1$d%%</string>
+    <string name="pref_wifi_only">Solo Wi-Fi (sin límite de datos)</string>
+    <string name="pref_start_on_boot">Iniciar al encender el teléfono</string>
 </resources>

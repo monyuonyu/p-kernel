@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Acesta este p-kernel — o casă pentru o IA care nu aparține nimănui.</string>
+    <string name="entry_tagline">Acesta este yurikago — unde crește o minte care nu aparține nimănui.</string>
     <string name="btn_start">Strălucește</string>
     <string name="entry_solo_sub">Atinge pentru a-ți aprinde steaua</string>
     <string name="label_node_id">ID nod</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Steaua ta doarme acum</string>
     <string name="btn_sleep">Las-o să doarmă</string>
     <string name="btn_copy">Copiază</string>
+    <string name="pref_battery_safe">Economisire baterie (pauză sub 30%)</string>
+    <string name="pref_floor_label">Pauză sub %1$d%%</string>
+    <string name="pref_wifi_only">Doar Wi-Fi (fără limită de date)</string>
+    <string name="pref_start_on_boot">Pornește la pornirea telefonului</string>
 </resources>

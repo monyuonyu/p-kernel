@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">این p-kernel است — خانه‌ای برای هوش مصنوعی‌ای که از آنِ هیچ‌کس نیست.</string>
+    <string name="entry_tagline">این yurikago است — جایی که ذهنی پرورش می‌یابد که از آنِ هیچ‌کس نیست.</string>
     <string name="btn_start">بدرخش</string>
     <string name="entry_solo_sub">فقط لمس کنید تا ستاره‌تان روشن شود</string>
     <string name="label_node_id">شناسهٔ گره</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">ستارهٔ شما اکنون خفته است</string>
     <string name="btn_sleep">بگذار بخوابد</string>
     <string name="btn_copy">کپی</string>
+    <string name="pref_battery_safe">حفاظت از باتری (توقف زیر ۳۰٪)</string>
+    <string name="pref_floor_label">توقف زیر %1$d%%</string>
+    <string name="pref_wifi_only">فقط Wi-Fi (بدون محدودیت داده)</string>
+    <string name="pref_start_on_boot">هنگام روشن شدن گوشی شروع شود</string>
 </resources>

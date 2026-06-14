@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Це p-kernel — домівка для ШІ, що не належить нікому.</string>
+    <string name="entry_tagline">Це yurikago — місце, де зростає розум, що не належить нікому.</string>
     <string name="btn_start">Засяй</string>
     <string name="entry_solo_sub">Просто торкніться, щоб запалити свою зірку</string>
     <string name="label_node_id">ID вузла</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Ваша зірка зараз спить</string>
     <string name="btn_sleep">Дати поспати</string>
     <string name="btn_copy">Копіювати</string>
+    <string name="pref_battery_safe">Бережу батарею (пауза нижче 30%)</string>
+    <string name="pref_floor_label">Пауза нижче %1$d%%</string>
+    <string name="pref_wifi_only">Лише Wi-Fi (без ліміту)</string>
+    <string name="pref_start_on_boot">Запускати при ввімкненні телефону</string>
 </resources>

@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Ito ang p-kernel — isang tahanan para sa isang AI na hindi pag-aari ninuman.</string>
+    <string name="entry_tagline">Ito ang yurikago — kung saan inaalagaan ang isang isip na hindi pag-aari ninuman.</string>
     <string name="btn_start">Magningning</string>
     <string name="entry_solo_sub">I-tap lang para sindihan ang iyong bituin</string>
     <string name="label_node_id">Node ID</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Natutulog ngayon ang bituin mo</string>
     <string name="btn_sleep">Hayaang matulog</string>
     <string name="btn_copy">Kopyahin</string>
+    <string name="pref_battery_safe">Battery-safe (huminto kapag mababa sa 30%)</string>
+    <string name="pref_floor_label">Huminto kapag mababa sa %1$d%%</string>
+    <string name="pref_wifi_only">Wi-Fi lamang (walang limitasyon sa data)</string>
+    <string name="pref_start_on_boot">Magsimula kapag binuksan ang telepono</string>
 </resources>

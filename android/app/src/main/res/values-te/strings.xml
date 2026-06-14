@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">ఇది p-kernel — ఎవరికీ చెందని ఒక AIకి నివాసం.</string>
+    <string name="entry_tagline">ఇది yurikago — ఎవరికీ చెందని ఒక మనసు పెంచబడే చోటు.</string>
     <string name="btn_start">వెలుగు</string>
     <string name="entry_solo_sub">నొక్కితే చాలు, మీ నక్షత్రాన్ని వెలిగించండి</string>
     <string name="label_node_id">నోడ్ ID</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">మీ నక్షత్రం ఇప్పుడు నిద్రలో ఉంది</string>
     <string name="btn_sleep">నిద్రపోనివ్వండి</string>
     <string name="btn_copy">కాపీ</string>
+    <string name="pref_battery_safe">బ్యాటరీ-సురక్షితం (30% కంటే తక్కువైతే ఆగు)</string>
+    <string name="pref_floor_label">%1$d%% కంటే తక్కువైతే ఆగు</string>
+    <string name="pref_wifi_only">Wi-Fi మాత్రమే (పరిమితి లేని)</string>
+    <string name="pref_start_on_boot">ఫోన్ ఆన్ అయినప్పుడు ప్రారంభించు</string>
 </resources>
