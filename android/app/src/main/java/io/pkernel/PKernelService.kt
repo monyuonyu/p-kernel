@@ -2,9 +2,11 @@
  * PKernelService.kt — UMP foreground service.
  *
  * Owns the libpkernel.so kernel thread for the lifetime of the
- * service. Posts a persistent notification ("p-kernel node #N —
- * connected to relay") so Android keeps the process alive past
- * the 5-minute background limit.
+ * service. Posts a persistent notification ("yurikago · your star")
+ * so Android keeps the process alive past the 5-minute background
+ * limit. (User-facing text carries no "kernel" jargon — see
+ * docs/product-soul.md; the engineer-facing LogActivity is the one
+ * place jargon is allowed.)
  *
  * Battery-safe floor (formerly "charge-only"): if the user hasn't
  * disabled it, the service runs on battery down to BATTERY_FLOOR_PCT
@@ -90,9 +92,10 @@ class PKernelService : Service() {
         bootRelayKey  = intent?.getStringExtra(EXTRA_RELAY_KEY)
                             ?: prefs.getString(EXTRA_RELAY_KEY, "") ?: ""
 
-        // Persist the boot params so the manifest-declared PowerConnectedReceiver
-        // can relaunch this service after a low-battery stopSelf() (which kills
-        // the process). Same "ump" prefs file MainActivity already writes.
+        // Persist the boot params so the charge-resume path (the JobScheduler
+        // ResumeJobService) can relaunch this service after a low-battery
+        // stopSelf() (which kills the process + its runtime receiver). Same
+        // "ump" prefs file MainActivity already writes.
         prefs.edit()
             .putInt(EXTRA_NODE_ID, bootNodeId)
             .putString(EXTRA_RELAY_HOST, bootRelayHost)
@@ -121,6 +124,7 @@ class PKernelService : Service() {
             powerReceiver = null
         }
         pollerThread?.interrupt()
+        snapRunning = false
         appendLog("[ump] service stopped.\n")
         super.onDestroy()
     }
@@ -143,6 +147,12 @@ class PKernelService : Service() {
         // Google Drive). MUST precede boot so the boot-time restore sees it.
         pk.setDataDir(filesDir.absolutePath)
         appendLog("[ump] durable store: ${filesDir.absolutePath}/ark\n")
+        // Engineer-page snapshot of the live boot facts (read by LogActivity).
+        snapNodeId    = nodeId
+        snapRelayHost = relayHost
+        snapRelayPort = relayPort
+        snapDataDir   = "${filesDir.absolutePath}/ark"
+        snapRunning   = true
         if (relayHost.isNotEmpty()) {
             pk.bootWithRelay(nodeId, relayHost, relayPort,
                              relayKey.ifEmpty { null })
@@ -274,9 +284,12 @@ class PKernelService : Service() {
         else                     "relay $relayHost:$relayPort"
 
     private fun buildNotification(nodeId: Int, status: String): Notification {
+        // De-jargon: the surface (lockscreen/shade) shows no "kernel" and no
+        // node number. The relay/loopback status stays as the (collapsed)
+        // second line for the curious; it never says "kernel".
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_def_app_icon)
-            .setContentTitle("p-kernel node #$nodeId")
+            .setContentTitle(getString(R.string.notif_content))
             .setContentText(status)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -304,6 +317,21 @@ class PKernelService : Service() {
         private val logBuf = StringBuilder(LOG_CAP)
         private val pending = StringBuilder()
 
+        /* --- engineer-page snapshot (read by LogActivity) -----------------
+         * The most recent boot params + durable store path, captured the
+         * moment the kernel (re)boots. These are read-only facts a developer
+         * may want to see; they are NOT shown on the friendly surface. */
+        @Volatile var snapNodeId    = 0
+            private set
+        @Volatile var snapRelayHost = ""
+            private set
+        @Volatile var snapRelayPort = 0
+            private set
+        @Volatile var snapDataDir   = ""
+            private set
+        @Volatile var snapRunning   = false
+            private set
+
         @Synchronized
         fun appendLog(s: String) {
             if (logBuf.length + s.length > LOG_CAP) {
@@ -321,5 +349,9 @@ class PKernelService : Service() {
             pending.setLength(0)
             return out
         }
+
+        /** The whole ring buffer (engineer page renders the full tail). */
+        @Synchronized
+        fun snapshotLog(): String = logBuf.toString()
     }
 }

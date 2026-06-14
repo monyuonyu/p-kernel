@@ -1,21 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  activity_main.xml — UMP entry screen, redesigned (i18n + ワクワク wave).
+  activity_main.xml — the FRIENDLY surface (app-polish wave).
 
-  A StarfieldView backdrop (the same dark galaxy.html universe) behind a
-  scrollable column:
-      app name  ·  localized tagline (manifesto line 3)
-      node id
-      [ SHINE ]  hero button  ·  solo subtitle
-      ▸ Advanced — join a fleet   (collapsed; relay host/port/key)
-      Stop · Open galaxy
-      kernel log (tail)
+  Three layers (docs/product-soul.md: users don't care about kernels):
+    1. SURFACE (this column, always visible): app name · localized tagline ·
+       star status (shining/asleep) · the one hero button (灯す/眠らせる) ·
+       Open galaxy. NO raw kernel log here, NO jargon.
+    2. SETTINGS ("▸ Advanced — join a fleet", collapsed): battery-safe toggle,
+       relay host/port/key (opt-in fleet join), and the door to the engineer
+       page. Intent extras to PKernelService are UNCHANGED.
+    3. ENGINEER (LogActivity, opened from the button below): the raw stdout
+       tail + node internals + module versions. Deliberately technical.
 
-  Solo works with no relay: a first-time user just taps SHINE. The relay
-  fields live in the collapsed "advanced" group. Intent extras to
-  PKernelService are UNCHANGED — the fields still exist, just hidden by
-  default. Uses start/end (not left/right) so RTL locales (ar, fa, ur)
-  mirror correctly.
+  StarfieldView backdrop (the galaxy.html universe). start/end (not left/right)
+  so RTL locales (ar, fa, ur) mirror correctly.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -77,26 +75,6 @@
                 android:paddingEnd="4dp"
                 android:paddingBottom="36dp"/>
 
-            <!-- Node id — the only field a solo star needs (defaults to 1). -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/label_node_id"
-                android:textColor="@color/sky_faint"
-                android:textSize="12sp"
-                android:fontFamily="monospace"
-                android:paddingBottom="2dp"/>
-            <EditText
-                android:id="@+id/field_node_id"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="number"
-                android:text="1"
-                android:textColor="@color/star_white"
-                android:textColorHint="@color/sky_faint"
-                android:fontFamily="monospace"
-                android:paddingBottom="20dp"/>
-
             <!-- state, in human words: shining / asleep (localized) -->
             <TextView
                 android:id="@+id/star_status"
@@ -123,6 +101,18 @@
                 android:letterSpacing="0.1"
                 android:background="@drawable/bg_hero"/>
 
+            <!-- 眠らせる: hidden while asleep; swapped in by the poller. -->
+            <Button
+                android:id="@+id/btn_stop"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="4dp"
+                android:text="@string/btn_sleep"
+                android:textColor="@color/sky_dim"
+                android:textSize="18sp"
+                android:fontFamily="monospace"/>
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -132,9 +122,20 @@
                 android:gravity="center"
                 android:fontFamily="monospace"
                 android:paddingTop="10dp"
-                android:paddingBottom="20dp"/>
+                android:paddingBottom="14dp"/>
 
-            <!-- Advanced toggle (collapsed by default). -->
+            <!-- Open galaxy (the observation window). -->
+            <Button
+                android:id="@+id/btn_galaxy"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_galaxy"
+                android:textColor="@color/star_blue"
+                android:fontFamily="monospace"
+                android:paddingBottom="18dp"/>
+
+            <!-- ============ SETTINGS layer (collapsed by default) ========= -->
             <TextView
                 android:id="@+id/advanced_toggle"
                 android:layout_width="match_parent"
@@ -148,7 +149,6 @@
                 android:paddingBottom="10dp"
                 android:background="?android:attr/selectableItemBackground"/>
 
-            <!-- Advanced group: relay host/port/key. GONE until tapped. -->
             <LinearLayout
                 android:id="@+id/advanced_group"
                 android:layout_width="match_parent"
@@ -156,6 +156,40 @@
                 android:orientation="vertical"
                 android:visibility="gone"
                 android:paddingTop="6dp">
+
+                <!-- Battery-safe toggle (PREF_CHARGE_ONLY; default on).
+                     SwitchCompat (not <Switch>) so the Kotlin cast matches
+                     under the AppCompat theme's auto-inflation. -->
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_battery_safe"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pref_battery_safe"
+                    android:textColor="@color/sky_dim"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="14dp"/>
+
+                <!-- Node id — only needed when joining a fleet. -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/label_node_id"
+                    android:textColor="@color/sky_faint"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:paddingBottom="2dp"/>
+                <EditText
+                    android:id="@+id/field_node_id"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:text="1"
+                    android:textColor="@color/star_white"
+                    android:textColorHint="@color/sky_faint"
+                    android:fontFamily="monospace"
+                    android:paddingBottom="12dp"/>
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -209,67 +243,19 @@
                     android:textColor="@color/star_white"
                     android:textColorHint="@color/sky_faint"
                     android:fontFamily="monospace"/>
-            </LinearLayout>
 
-            <!-- Stop · Open galaxy -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingTop="22dp"
-                android:paddingBottom="8dp">
-
+                <!-- The door to the engineer page (raw log + internals). -->
                 <Button
-                    android:id="@+id/btn_stop"
+                    android:id="@+id/btn_engineer"
                     style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/btn_stop"
-                    android:textColor="@color/sky_dim"
-                    android:fontFamily="monospace"/>
-
-                <Button
-                    android:id="@+id/btn_galaxy"
-                    style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/btn_galaxy"
-                    android:textColor="@color/star_blue"
-                    android:fontFamily="monospace"/>
+                    android:text="@string/btn_engineer"
+                    android:textColor="@color/sky_faint"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="16dp"/>
             </LinearLayout>
-
-            <!-- Kernel log (tail). -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/label_log"
-                android:textColor="@color/sky_faint"
-                android:textSize="11sp"
-                android:fontFamily="monospace"
-                android:paddingTop="8dp"
-                android:paddingBottom="4dp"/>
-
-            <Button
-                android:id="@+id/btn_copy_log"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/btn_copy"
-                android:textSize="12sp"
-                android:fontFamily="monospace"/>
-
-            <TextView
-                android:id="@+id/log_view"
-                android:layout_width="match_parent"
-                android:layout_height="180dp"
-                android:background="@color/log_bg"
-                android:textColor="@color/log_text"
-                android:fontFamily="monospace"
-                android:textSize="11sp"
-                android:padding="6dp"
-                android:scrollbars="vertical"
-                android:gravity="top"/>
         </LinearLayout>
     </ScrollView>
 </FrameLayout>
