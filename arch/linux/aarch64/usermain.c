@@ -69,6 +69,7 @@ IMPORT void sign_self_test(void);                      /* signing.md sign suite 
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
 IMPORT void degrade_init(void);
 IMPORT void degrade_stat(void);
+IMPORT INT  capacity_self_test(void);   /* capacity(N) cert (regions.md §3.2) */
 IMPORT void dkva_init(void);
 IMPORT void dkva_task(INT stacd, void *exinf);
 IMPORT void dkva_cmd(const UB *args, UW len);
@@ -719,6 +720,13 @@ EXPORT INT usermain(void)
              * attention with THIS node as the requester (any node may
              * be the origin — survival, wave 8) */
             dkva_cmd(line + 4, (UW)(n - 4));
+        } else if (starts_with(line, n, "capacity")) {
+            /* capacity(N) cert (regions.md §3.2): `capacity test` runs the
+             * product-identity / monotonicity / boundary-clamp assertions. */
+            const UB *a = line + 8; UW al = (UW)(n - 8);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') capacity_self_test();
+            else degrade_stat();
         } else if (starts_with(line, n, "dist")) {
             degrade_stat();
         } else if (starts_with(line, n, "nodes")) {

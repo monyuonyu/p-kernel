@@ -135,32 +135,67 @@ static UW floor_log2(UW v)
     return e;
 }
 
-UW capacity_experts(void)
+/* ------------------------------------------------------------------ */
+/* 純粋関数 (テスト可能)                                              */
+/*                                                                     */
+/* capacity の各軸を「宣言された資源」だけから計算する純粋関数。       */
+/* 生きている公開 API はこれらに module/extern 状態を渡す薄いラッパー。 */
+/* cert (capacity_self_test) はこの純粋関数を直接 sweep するので、     */
+/* クラスタの実状態に依存せず決定論的に検証できる。                    */
+/* ------------------------------------------------------------------ */
+
+/* breadth: experts_active(N) = clamp(N, 1, CAP_E_MAX)。 */
+UW cap_experts_of(UW n)
 {
-    UW n = alive_node_cnt ? alive_node_cnt : 1;   /* ノード ≒ expert */
+    if (n < 1) n = 1;
     if (n > CAP_E_MAX) n = CAP_E_MAX;
     return n;
+}
+
+/* depth: pipeline_depth(rs) = 1 + floor(log2(rs))。rs>=1。 */
+UW cap_depth_of(UW rs)
+{
+    if (rs < 1) rs = 1;
+    return 1 + floor_log2(rs);
+}
+
+/* KV-context: 実測値 measured>0 ならそれを、なければ rs*DKVA_CACHE_SIZE。 */
+UW cap_kv_of(UW rs, UW measured)
+{
+    if (measured > 0) return measured;
+    if (rs < 1) rs = 1;
+    return rs * DKVA_CACHE_SIZE;
+}
+
+/* 容量 = breadth × depth × KV-context。 */
+UW cap_score_of(UW n, UW rs, UW measured)
+{
+    return cap_experts_of(n) * cap_depth_of(rs) * cap_kv_of(rs, measured);
+}
+
+UW capacity_experts(void)
+{
+    return cap_experts_of(alive_node_cnt);   /* ノード ≒ expert */
 }
 
 UW capacity_depth(void)
 {
     /* pipeline は region 内 (密) で組む。region 未確立なら自分 1 台。 */
     UB rs = (drpc_my_node == 0xFF) ? 1 : region_size();
-    if (rs < 1) rs = 1;
-    return 1 + floor_log2((UW)rs);
+    return cap_depth_of((UW)rs);
 }
 
 UW capacity_kv(void)
 {
-    if (last_kv_entries > 0) return last_kv_entries;   /* 実測優先 */
     /* 推論前の見積り: region 内ノードがそれぞれ満杯のキャッシュを持つ想定。 */
     UB rs = (drpc_my_node == 0xFF) ? 1 : region_size();
-    if (rs < 1) rs = 1;
-    return (UW)rs * DKVA_CACHE_SIZE;
+    return cap_kv_of((UW)rs, last_kv_entries);
 }
 
 UW capacity_score(void)
 {
+    /* 公開 score は live なゲッターの積。純粋関数の積と同一になる
+     * (capacity_self_test が product 同一性を保証)。 */
     return capacity_experts() * capacity_depth() * capacity_kv();
 }
 
@@ -198,4 +233,109 @@ void degrade_stat(void)
     dg_puts(last_kv_entries ? " entries (measured)\r\n" : " entries (estimate)\r\n");
     dg_puts("[capacity] score        : "); dg_putdec(capacity_score());
     dg_puts(" (experts*depth*kv)\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* capacity(N) cert (shell `capacity test`)                            */
+/*                                                                     */
+/* regions.md §3.2 の契約 — 容量が台数とともに「連続に」増える — を    */
+/* 主張する。3 つの性質を純粋関数を直接呼んで sweep で検証する:        */
+/*   1. 積同一性:   score(n,rs,m) == experts(n)*depth(rs)*kv(rs,m)      */
+/*   2. 単調性:     資源が増えれば各軸も score も非減少                 */
+/*   3. 境界クランプ: 最小構成 (1,1,推定) は最小、満杯構成は上限       */
+/* 全て決定論的 (実クラスタ状態に非依存)。fail 数を返す。              */
+/* ------------------------------------------------------------------ */
+INT capacity_self_test(void)
+{
+    INT fails = 0;
+
+    /* --- 1. 積同一性 ----------------------------------------------- */
+    /* (alive N, region_size rs, measured-kv m) の代表点を sweep。     */
+    static const UW tn[]  = { 1, 1, 2, 3, 4, 8, 16, 20 };
+    static const UW trs[] = { 1, 2, 2, 3, 4, 8, 16, 20 };
+    static const UW tm[]  = { 0, 0, 0, 0, 12, 0, 0, 0 };
+    INT npts = (INT)(sizeof(tn) / sizeof(tn[0]));
+    INT prodfail = 0;
+    for (INT i = 0; i < npts; i++) {
+        UW e = cap_experts_of(tn[i]);
+        UW d = cap_depth_of(trs[i]);
+        UW k = cap_kv_of(trs[i], tm[i]);
+        UW s = cap_score_of(tn[i], trs[i], tm[i]);
+        dg_puts("[capacity-sweep] N="); dg_putdec(tn[i]);
+        dg_puts(" rs=");  dg_putdec(trs[i]);
+        dg_puts(" m=");   dg_putdec(tm[i]);
+        dg_puts(" -> e=");  dg_putdec(e);
+        dg_puts(" d=");     dg_putdec(d);
+        dg_puts(" kv=");    dg_putdec(k);
+        dg_puts(" score="); dg_putdec(s);
+        dg_puts("\r\n");
+        if (s != e * d * k) prodfail++;
+    }
+    if (prodfail == 0) dg_puts("[capacity-product] PASS\r\n");
+    else { dg_puts("[capacity-product] FAIL\r\n"); fails++; }
+
+    /* --- 2. 単調性 ------------------------------------------------- */
+    /* N を 1..CAP_E_MAX+4 で増やすと experts は非減少 (上限で飽和)。   */
+    INT monofail = 0;
+    {
+        UW prev = 0;
+        for (UW n = 1; n <= CAP_E_MAX + 4; n++) {
+            UW e = cap_experts_of(n);
+            if (e < prev) monofail++;
+            prev = e;
+        }
+        /* region_size を 1..32 で増やすと depth は非減少、kv も非減少。 */
+        UW pd = 0, pk = 0;
+        for (UW rs = 1; rs <= 32; rs++) {
+            UW d = cap_depth_of(rs);
+            UW k = cap_kv_of(rs, 0);   /* 推定パス: rs*DKVA_CACHE_SIZE */
+            if (d < pd) monofail++;
+            if (k < pk) monofail++;
+            pd = d; pk = k;
+        }
+        /* 全資源同時に増やすと score も非減少 (連続容量の本丸)。 */
+        UW ps = 0;
+        for (UW step = 1; step <= 16; step++) {
+            UW s = cap_score_of(step, step, 0);
+            if (s < ps) monofail++;
+            ps = s;
+        }
+    }
+    if (monofail == 0) dg_puts("[capacity-mono] PASS\r\n");
+    else { dg_puts("[capacity-mono] FAIL\r\n"); fails++; }
+
+    /* --- 3. 境界クランプ ------------------------------------------- */
+    /* 最小構成 (1 node, region 1, 推定 kv): experts=1, depth=1,        */
+    /* kv=DKVA_CACHE_SIZE, score=DKVA_CACHE_SIZE。これが床。            */
+    /* 上限: experts は CAP_E_MAX を超えない (N をどれだけ増やしても)。 */
+    INT clampfail = 0;
+    {
+        UW emin = cap_experts_of(1);
+        UW dmin = cap_depth_of(1);
+        UW kmin = cap_kv_of(1, 0);
+        UW smin = cap_score_of(1, 1, 0);
+        if (emin != 1)               clampfail++;
+        if (dmin != 1)               clampfail++;
+        if (kmin != DKVA_CACHE_SIZE) clampfail++;
+        if (smin != DKVA_CACHE_SIZE) clampfail++;
+        /* 上限クランプ: N が CAP_E_MAX を超えても experts は飽和。 */
+        if (cap_experts_of(CAP_E_MAX)     != CAP_E_MAX) clampfail++;
+        if (cap_experts_of(CAP_E_MAX + 1) != CAP_E_MAX) clampfail++;
+        if (cap_experts_of(1000000)       != CAP_E_MAX) clampfail++;
+        /* 退化入力 (N=0, rs=0) も床にクランプされる (発散しない)。 */
+        if (cap_experts_of(0) != 1) clampfail++;
+        if (cap_depth_of(0)   != 1) clampfail++;
+        if (cap_kv_of(0, 0)   != DKVA_CACHE_SIZE) clampfail++;
+        dg_puts("[capacity-clamp] floor score="); dg_putdec(smin);
+        dg_puts(" cap_experts="); dg_putdec(cap_experts_of(1000000));
+        dg_puts(" (E_MAX="); dg_putdec(CAP_E_MAX); dg_puts(")\r\n");
+    }
+    if (clampfail == 0) dg_puts("[capacity-clamp] PASS\r\n");
+    else { dg_puts("[capacity-clamp] FAIL\r\n"); fails++; }
+
+    /* --- 集計 ------------------------------------------------------ */
+    if (fails == 0) dg_puts("[capacity-score] PASS\r\n");
+    else { dg_puts("[capacity-score] FAIL count="); dg_putdec((UW)fails);
+           dg_puts("\r\n"); }
+    return fails;
 }

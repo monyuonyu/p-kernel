@@ -85,3 +85,17 @@ UW capacity_score(void);
 /* dkva.c が階層集約のたびに、実測した KV エントリ総数を通知する。
  * capacity_kv() がこの実測値を返すようになる。 */
 void capacity_note_kv(UW entries);
+
+/* ------------------------------------------------------------------ */
+/* capacity(N) 純粋関数 (テスト可能) — 宣言資源のみから計算する。      */
+/* live なゲッターはこれらに module/extern 状態を渡す薄いラッパー。    */
+/* ------------------------------------------------------------------ */
+UW cap_experts_of(UW n);              /* clamp(n, 1, CAP_E_MAX)        */
+UW cap_depth_of(UW rs);               /* 1 + floor(log2(rs))           */
+UW cap_kv_of(UW rs, UW measured);     /* measured>0 ? measured : rs*KV */
+UW cap_score_of(UW n, UW rs, UW measured);  /* experts*depth*kv        */
+
+/* capacity(N) cert: 積同一性・単調性・境界クランプを純粋関数の sweep  */
+/* で主張する。`[capacity-score] PASS/FAIL` を印字し fail 数を返す。   */
+/* shell `capacity test` / CI が叩く。決定論的 (クラスタ状態に非依存)。*/
+INT capacity_self_test(void);
