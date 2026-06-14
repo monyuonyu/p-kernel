@@ -29,9 +29,16 @@ ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 MK="$ROOT/boot/linux/Makefile"
 CM="$ROOT/android/app/src/main/cpp/CMakeLists.txt"
+# MK2: the x86_64 host Makefile. boot/linux/Makefile is the aarch64 host build;
+# boot/linux_x86_64/Makefile is the x86_64 host build. The AI/common + shared
+# module source lists MUST be identical between the two — that is exactly the
+# modver-drift hole that only the real x86_64 host caught (a module added to one
+# host Makefile but not the other silently ships a different mind per arch).
+MK2="$ROOT/boot/linux_x86_64/Makefile"
 
-[ -f "$MK" ] || { echo "check_parity: missing $MK" >&2; exit 2; }
-[ -f "$CM" ] || { echo "check_parity: missing $CM" >&2; exit 2; }
+[ -f "$MK" ]  || { echo "check_parity: missing $MK" >&2; exit 2; }
+[ -f "$CM" ]  || { echo "check_parity: missing $CM" >&2; exit 2; }
+[ -f "$MK2" ] || { echo "check_parity: missing $MK2" >&2; exit 2; }
 
 # --- allowlists: basenames that may legitimately appear in only one side ---
 # Keep these EMPTY unless there is a real Bionic/host reason; document each.
@@ -49,6 +56,8 @@ ALLOW_CM_ONLY=""      # basenames CMake may have that the Makefile omits
 # continuation lines, whether the content starts on the `=` line or not.
 # Splits on whitespace, keeps only *.c / *.S basenames.
 mk_list() {
+    # $1 = variable name; optional $2 = Makefile path (default $MK).
+    _mkf="${2:-$MK}"
     awk -v var="$1" '
         # Start: the assignment line for this variable.
         $0 ~ "^"var" *=" {
@@ -66,10 +75,10 @@ mk_list() {
             print
             f = cont
         }
-    ' "$MK" | tr ' \t' '\n\n' | grep -E '\.(c|S)$' | sort -u
+    ' "$_mkf" | tr ' \t' '\n\n' | grep -E '\.(c|S)$' | sort -u
 }
 # alias: same robust extractor handles inline single/multi-line lists too.
-mk_inline() { mk_list "$1"; }
+mk_inline() { mk_list "$1" "${2:-$MK}"; }
 # CMake: pull a `set(NAME ... )` block, take the basename of each path.
 cm_list() {
     awk -v var="$1" '
@@ -95,6 +104,26 @@ compare() {
     for f in $only_cm; do
         case " $allow_cm " in *" $f "*) continue;; esac
         echo "DRIFT [$section] in CMake but MISSING from Makefile: $f"
+        DRIFT=1
+    done
+}
+
+# --- compare one section between the two HOST Makefiles -------------------
+# Same drift logic as compare(), but both sides are Makefile variables (one
+# from boot/linux/Makefile, one from boot/linux_x86_64/Makefile). The shared
+# AI/common + kernel + libc lists are arch-INDEPENDENT and MUST match exactly.
+compare_hosts() {
+    section="$1"; a_file="$2"; b_file="$3"
+
+    only_a=$(comm -23 "$a_file" "$b_file")
+    only_b=$(comm -13 "$a_file" "$b_file")
+
+    for f in $only_a; do
+        echo "DRIFT [$section] in boot/linux/Makefile but MISSING from boot/linux_x86_64/Makefile: $f"
+        DRIFT=1
+    done
+    for f in $only_b; do
+        echo "DRIFT [$section] in boot/linux_x86_64/Makefile but MISSING from boot/linux/Makefile: $f"
         DRIFT=1
     done
 }
@@ -132,12 +161,41 @@ mk_inline RELAY_C_SRCS        > "$TMP/mk_relay"
 cm_list RELAY_SRC             > "$TMP/cm_relay"
 compare RELAY "$TMP/mk_relay" "$TMP/cm_relay" "$ALLOW_MK_ONLY" "$ALLOW_CM_ONLY"
 
+# --- host-vs-host parity: boot/linux (aarch64) vs boot/linux_x86_64 -------
+# The arch-INDEPENDENT source lists must be byte-identical between the two host
+# builds. COMMON_C_SRCS is the AI/common (arch/common) module list — the mind
+# itself — and is the load-bearing one (the modver-drift hole the real x86_64
+# host caught: a module added to one host but not the other). KERNEL/LIBSTR/
+# RELAY/ARCH_SHARED are likewise arch-independent. ARCH_C_SRCS/ARCH_S_SRCS are
+# DELIBERATELY per-arch (arch/linux/aarch64 vs arch/linux/x86_64) and so are NOT
+# parity-checked here; their basenames happening to match is incidental.
+mk_list COMMON_C_SRCS       "$MK"  > "$TMP/h_common_a"
+mk_list COMMON_C_SRCS       "$MK2" > "$TMP/h_common_b"
+compare_hosts COMMON-HOST "$TMP/h_common_a" "$TMP/h_common_b"
+
+mk_inline ARCH_SHARED_C_SRCS "$MK"  > "$TMP/h_shared_a"
+mk_inline ARCH_SHARED_C_SRCS "$MK2" > "$TMP/h_shared_b"
+compare_hosts ARCH_SHARED-HOST "$TMP/h_shared_a" "$TMP/h_shared_b"
+
+mk_list KERNEL_SRCS         "$MK"  > "$TMP/h_kern_a"
+mk_list KERNEL_SRCS         "$MK2" > "$TMP/h_kern_b"
+compare_hosts KERNEL-HOST "$TMP/h_kern_a" "$TMP/h_kern_b"
+
+mk_inline LIBSTR_SRCS       "$MK"  > "$TMP/h_libstr_a"
+mk_inline LIBSTR_SRCS       "$MK2" > "$TMP/h_libstr_b"
+compare_hosts LIBSTR-HOST "$TMP/h_libstr_a" "$TMP/h_libstr_b"
+
+mk_inline RELAY_C_SRCS      "$MK"  > "$TMP/h_relay_a"
+mk_inline RELAY_C_SRCS      "$MK2" > "$TMP/h_relay_b"
+compare_hosts RELAY-HOST "$TMP/h_relay_a" "$TMP/h_relay_b"
+
 if [ "$DRIFT" -ne 0 ]; then
     echo ""
-    echo "check_parity: FAIL — Android CMakeLists.txt has drifted from boot/linux/Makefile."
+    echo "check_parity: FAIL — a source list has drifted (Android CMake vs boot/linux/Makefile,"
+    echo "or boot/linux/Makefile vs boot/linux_x86_64/Makefile)."
     echo "Fix the source list (or add a documented allowlist entry) and re-run."
     exit 1
 fi
 
-echo "check_parity: OK — Android CMakeLists.txt is in lock-step with boot/linux/Makefile."
+echo "check_parity: OK — Android CMakeLists.txt and both host Makefiles are in lock-step."
 exit 0
