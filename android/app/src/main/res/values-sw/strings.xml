@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Hii ni p-kernel — nyumba ya AI isiyomilikiwa na yeyote.</string>
+    <string name="entry_tagline">Hii ni yurikago — mahali ambapo akili isiyomilikiwa na yeyote inalelewa.</string>
     <string name="btn_start">Ng\'aa</string>
     <string name="entry_solo_sub">Gusa tu ili kuwasha nyota yako</string>
     <string name="label_node_id">Kitambulisho cha nodi</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Nyota yako imelala sasa</string>
     <string name="btn_sleep">Iache ilale</string>
     <string name="btn_copy">Nakili</string>
+    <string name="pref_battery_safe">Hifadhi betri (pumzika chini ya 30%)</string>
+    <string name="pref_floor_label">Pumzika chini ya %1$d%%</string>
+    <string name="pref_wifi_only">Wi-Fi pekee (isiyo na kikomo)</string>
+    <string name="pref_start_on_boot">Anza simu inapowashwa</string>
 </resources>

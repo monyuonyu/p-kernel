@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Dit is p-kernel — een thuis voor een AI die van niemand is.</string>
+    <string name="entry_tagline">Dit is yurikago — waar een geest opgroeit die van niemand is.</string>
     <string name="btn_start">Schijn</string>
     <string name="entry_solo_sub">Tik gewoon om je eigen ster te laten oplichten</string>
     <string name="label_node_id">Knoop-ID</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Je ster slaapt nu</string>
     <string name="btn_sleep">Laat haar slapen</string>
     <string name="btn_copy">Kopiëren</string>
+    <string name="pref_battery_safe">Accuvriendelijk (pauze onder 30%)</string>
+    <string name="pref_floor_label">Pauze onder %1$d%%</string>
+    <string name="pref_wifi_only">Alleen wifi (ongelimiteerd)</string>
+    <string name="pref_start_on_boot">Starten als de telefoon aangaat</string>
 </resources>

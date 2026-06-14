@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Inilah p-kernel — sebuah rumah bagi AI yang bukan milik sesiapa.</string>
+    <string name="entry_tagline">Inilah yurikago — tempat sebuah minda yang bukan milik sesiapa dipupuk.</string>
     <string name="btn_start">Bersinar</string>
     <string name="entry_solo_sub">Ketik sahaja untuk menyalakan bintang anda</string>
     <string name="label_node_id">ID nod</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Bintang anda sedang tidur</string>
     <string name="btn_sleep">Biarkan tidur</string>
     <string name="btn_copy">Salin</string>
+    <string name="pref_battery_safe">Jimat bateri (jeda di bawah 30%)</string>
+    <string name="pref_floor_label">Jeda di bawah %1$d%%</string>
+    <string name="pref_wifi_only">Wi-Fi sahaja (tanpa had data)</string>
+    <string name="pref_start_on_boot">Mula apabila telefon dihidupkan</string>
 </resources>

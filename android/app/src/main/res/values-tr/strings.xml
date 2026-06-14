@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Burası p-kernel — kimseye ait olmayan bir yapay zekânın evi.</string>
+    <string name="entry_tagline">Burası yurikago — kimseye ait olmayan bir zihnin yetiştirildiği yer.</string>
     <string name="btn_start">Parla</string>
     <string name="entry_solo_sub">Kendi yıldızını yakmak için sadece dokun</string>
     <string name="label_node_id">Düğüm kimliği</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Yıldızın şu anda uyuyor</string>
     <string name="btn_sleep">Uyumasına izin ver</string>
     <string name="btn_copy">Kopyala</string>
+    <string name="pref_battery_safe">Pil koruma (%30 altında duraklat)</string>
+    <string name="pref_floor_label">%%%1$d altında duraklat</string>
+    <string name="pref_wifi_only">Yalnızca Wi-Fi (sınırsız)</string>
+    <string name="pref_start_on_boot">Telefon açıldığında başlat</string>
 </resources>

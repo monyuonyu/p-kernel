@@ -4,7 +4,7 @@
      tagline = human-approved manifesto line 3; the rest are
      machine-translated (native review welcome). -->
 <resources>
-    <string name="entry_tagline">Đây là p-kernel — mái nhà cho một AI không thuộc về bất kỳ ai.</string>
+    <string name="entry_tagline">Đây là yurikago — nơi một tâm trí không thuộc về bất kỳ ai được nuôi dưỡng.</string>
     <string name="btn_start">Tỏa sáng</string>
     <string name="entry_solo_sub">Chỉ cần chạm để thắp sáng ngôi sao của bạn</string>
     <string name="label_node_id">ID nút</string>
@@ -20,4 +20,8 @@
     <string name="star_dark">Ngôi sao của bạn đang ngủ</string>
     <string name="btn_sleep">Để nó ngủ</string>
     <string name="btn_copy">Sao chép</string>
+    <string name="pref_battery_safe">Tiết kiệm pin (tạm dừng dưới 30%)</string>
+    <string name="pref_floor_label">Tạm dừng dưới %1$d%%</string>
+    <string name="pref_wifi_only">Chỉ Wi-Fi (không giới hạn dữ liệu)</string>
+    <string name="pref_start_on_boot">Khởi động khi bật điện thoại</string>
 </resources>
