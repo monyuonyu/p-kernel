@@ -9,12 +9,20 @@
  * place jargon is allowed.)
  *
  * Battery-safe floor (formerly "charge-only"): if the user hasn't
- * disabled it, the service runs on battery down to BATTERY_FLOOR_PCT
- * (~30%), then pauses to protect the battery and resumes when the
+ * disabled it, the service runs on battery down to a USER-CONFIGURABLE
+ * floor (PREF_BATTERY_FLOOR, default BATTERY_FLOOR_PCT = 30%, clamped
+ * 10..50), then pauses to protect the battery and resumes when the
  * phone is plugged in. (The old name PREF_CHARGE_ONLY is kept for
  * back-compat with installs that already wrote that pref; its meaning
  * is now "battery-safe mode", default on.) Users who want always-on
  * can flip the SharedPreferences boolean off.
+ *
+ * WiFi-only (PREF_WIFI_ONLY, default off): when on, the node runs ONLY
+ * on unmetered WiFi. The run-gate is powerAllowed() && networkAllowed();
+ * a ConnectivityManager.NetworkCallback observes connectivity so the
+ * node pauses when WiFi is lost and resumes when it returns. The gate
+ * fails OPEN on unknown connectivity state (don't pause on missing data,
+ * matching batteryPct() returning 100 on unknown).
  *
  * Because there is NO native kernel shutdown (PKernel only exposes
  * nativeBoot), the only way to pause is stopSelf() — which kills the
@@ -52,6 +60,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
@@ -65,6 +77,7 @@ class PKernelService : Service() {
     private val running = AtomicBoolean(false)
     private lateinit var prefs: SharedPreferences
     private var powerReceiver: BroadcastReceiver? = null
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
     // Boot params for this service instance, captured on first start so the
     // runtime power receiver can (re)boot the kernel without a fresh intent.
     private var bootNodeId = 1
@@ -108,12 +121,17 @@ class PKernelService : Service() {
         // The runtime receiver lives for the whole service lifetime: it both
         // boots when power becomes allowed and pauses (stopSelf) at the floor.
         registerPowerReceiver()
+        // The network callback observes connectivity changes for WiFi-only mode.
+        registerNetworkCallback()
 
-        if (powerAllowed()) {
+        if (runAllowed()) {
             bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
-        } else {
+        } else if (!powerAllowed()) {
             appendLog("[ump] battery-safe mode: battery is low and unplugged — " +
                       "the star will relight when you plug in.\n")
+        } else {
+            appendLog("[ump] WiFi-only mode: not on unmetered WiFi — " +
+                      "the star will relight when you're back on WiFi.\n")
         }
         return START_STICKY
     }
@@ -122,6 +140,11 @@ class PKernelService : Service() {
         powerReceiver?.let {
             try { unregisterReceiver(it) } catch (_: IllegalArgumentException) {}
             powerReceiver = null
+        }
+        netCallback?.let {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            try { cm?.unregisterNetworkCallback(it) } catch (_: IllegalArgumentException) {}
+            netCallback = null
         }
         pollerThread?.interrupt()
         snapRunning = false
@@ -196,15 +219,86 @@ class PKernelService : Service() {
         return i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
     }
 
+    /** The configured battery floor %, clamped to the SeekBar's range so a
+     *  bad pref can never push the floor out of [10..50]. Defaults to the
+     *  BATTERY_FLOOR_PCT const. */
+    private fun batteryFloor(): Int =
+        prefs.getInt(PREF_BATTERY_FLOOR, BATTERY_FLOOR_PCT).coerceIn(10, 50)
+
     /**
      * Battery-safe floor policy. If the user turned battery-safe mode OFF,
      * always run. Otherwise run while plugged in OR while the battery is
-     * strictly above the floor. (Strictly-above so the pause condition —
-     * at/below floor AND unplugged — is the exact complement and never flaps.)
+     * strictly above the (user-configurable) floor. (Strictly-above so the
+     * pause condition — at/below floor AND unplugged — is the exact complement
+     * and never flaps.)
      */
     private fun powerAllowed(): Boolean {
         if (!prefs.getBoolean(PREF_CHARGE_ONLY, true)) return true
-        return isPlugged() || batteryPct() > BATTERY_FLOOR_PCT
+        return isPlugged() || batteryPct() > batteryFloor()
+    }
+
+    /* --- WiFi-only network gate ---------------------------------------- */
+
+    /**
+     * WiFi-only policy. If the user did NOT turn WiFi-only on, always allow.
+     * Otherwise allow ONLY when the active network is unmetered WiFi
+     * (TRANSPORT_WIFI && NET_CAPABILITY_NOT_METERED).
+     *
+     * Fail-OPEN on unknown: if ConnectivityManager or the active network's
+     * capabilities can't be read, we do NOT pause (return true) — matching
+     * batteryPct() returning 100 on an unreadable battery state. This avoids
+     * pausing the node on transient/unknown connectivity, at the honest cost
+     * that a momentary "unknown" while on cellular would not pause.
+     */
+    private fun networkAllowed(): Boolean {
+        if (!prefs.getBoolean(PREF_WIFI_ONLY, false)) return true
+        return onUnmeteredWifi()
+    }
+
+    /** True iff the active network is WiFi AND not metered. Fail-OPEN (true)
+     *  when the state is unreadable (no ConnectivityManager / no caps). */
+    private fun onUnmeteredWifi(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return true   // unknown -> fail open (don't pause)
+        val net = cm.activeNetwork ?: return false  // no network -> not on wifi
+        val caps = cm.getNetworkCapabilities(net) ?: return true  // unknown caps -> fail open
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+               caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    /** The overall run-gate: power AND network must both allow. */
+    private fun runAllowed(): Boolean = powerAllowed() && networkAllowed()
+
+    /**
+     * One pause/resume tick shared by the battery receiver and the network
+     * callback. Boots when the (combined) gate is newly allowed and we aren't
+     * running; pauses (stopSelf) when it is no longer allowed and we are.
+     * stopSelf() is the only stop available (no native shutdown).
+     */
+    private fun reconcileGate() {
+        val allowed = runAllowed()
+        if (allowed && !running.get()) {
+            appendLog("[ump] run-gate OK (battery above ${batteryFloor()}% or plugged; " +
+                      "network OK) — relighting the star.\n")
+            bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
+        } else if (!allowed && running.get()) {
+            if (!powerAllowed()) {
+                appendLog("[ump] battery ≤${batteryFloor()}% and unplugged — pausing to " +
+                          "protect the battery; will resume when charging.\n")
+                // Charge-constrained resume job survives the stopSelf() process
+                // death (the network gate is re-evaluated on the next boot).
+                scheduleResumeJob()
+            } else {
+                appendLog("[ump] WiFi-only is on and you're not on unmetered WiFi — " +
+                          "pausing; will resume when WiFi is back.\n")
+                // No charge job here: the resume trigger is connectivity, which
+                // the manifest receiver can't observe after process death. The
+                // node resumes when the app/galaxy is reopened on WiFi, or via
+                // the charge job if it was ALSO low on battery. (Honest bound,
+                // see the report; matches the no-native-shutdown constraint.)
+            }
+            stopSelf()
+        }
     }
 
     /**
@@ -217,22 +311,44 @@ class PKernelService : Service() {
         if (powerReceiver != null) return
         powerReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                val allowed = powerAllowed()
-                if (allowed && !running.get()) {
-                    appendLog("[ump] power OK (plugged or battery above ${BATTERY_FLOOR_PCT}%) — relighting the star.\n")
-                    bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
-                } else if (!allowed && running.get()) {
-                    appendLog("[ump] battery ≤${BATTERY_FLOOR_PCT}% and unplugged — pausing to protect the battery; will resume when charging.\n")
-                    // Schedule the charge-constrained resume job BEFORE stopSelf()
-                    // — while we are still foreground, so scheduling is
-                    // unambiguous. This replaces the old (broken on Android 12+)
-                    // ACTION_POWER_CONNECTED → startForegroundService() path.
-                    scheduleResumeJob()
-                    stopSelf()
-                }
+                // Combined battery + WiFi gate; scheduleResumeJob() is called
+                // (only on the low-battery branch) BEFORE stopSelf(), while we
+                // are still foreground, so scheduling is unambiguous. This
+                // replaces the old (broken on Android 12+) ACTION_POWER_CONNECTED
+                // → startForegroundService() resume path.
+                reconcileGate()
             }
         }
         registerReceiver(powerReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    /* --- WiFi-only network callback ------------------------------------ */
+
+    /**
+     * Observe connectivity changes so WiFi-only mode pauses when WiFi is lost
+     * and resumes when it returns. The callback delegates to the same
+     * reconcileGate() the battery receiver uses, so the two gates stay
+     * consistent. Wrapped: a callback-registration failure must never crash
+     * the service (then the battery-receiver tick is the only re-check).
+     */
+    private fun registerNetworkCallback() {
+        if (netCallback != null) return
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = reconcileGate()
+            override fun onLost(network: Network) = reconcileGate()
+            override fun onCapabilitiesChanged(network: Network,
+                                               caps: NetworkCapabilities) = reconcileGate()
+        }
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        try {
+            cm.registerNetworkCallback(req, cb)
+            netCallback = cb
+        } catch (_: Exception) {
+        }
     }
 
     /* --- charge-constrained resume job --------------------------------- */
@@ -305,7 +421,10 @@ class PKernelService : Service() {
         const val CHANNEL_ID    = "ump-kernel"
         const val NOTIF_ID      = 1
         const val PREF_CHARGE_ONLY = "charge_only"   // now means "battery-safe mode"
-        const val BATTERY_FLOOR_PCT = 30             // pause below this when unplugged
+        const val BATTERY_FLOOR_PCT = 30             // DEFAULT floor; the live value is PREF_BATTERY_FLOOR
+        const val PREF_BATTERY_FLOOR = "battery_floor" // int %, user-configurable (10..50); default BATTERY_FLOOR_PCT
+        const val PREF_WIFI_ONLY   = "wifi_only"     // bool; when on, run only on unmetered WiFi (default off)
+        const val PREF_START_ON_BOOT = "start_on_boot" // bool; auto-start on device boot (default off)
         const val RESUME_JOB_ID = 7401               // fixed JobScheduler id for the charge-resume job
 
         const val EXTRA_NODE_ID    = "node_id"

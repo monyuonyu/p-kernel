@@ -83,5 +83,19 @@
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false"/>
 
+        <!-- Optional start-on-boot (PREF_START_ON_BOOT, default off): relight
+             the node after the device boots. A BOOT_COMPLETED receiver IS an
+             allowed context to start a foreground service (it is on Android's
+             closed exemption list), unlike a background ACTION_POWER_CONNECTED
+             receiver. exported=false; only the system delivers BOOT_COMPLETED.
+             RECEIVE_BOOT_COMPLETED is already declared above. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>
