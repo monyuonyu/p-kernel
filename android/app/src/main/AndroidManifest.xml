@@ -12,9 +12,10 @@
     POST_NOTIFICATIONS — Android 13+ runtime permission for the persistent
                          notification the foreground service posts.
     WAKE_LOCK         — keep CPU running while the kernel is up. Combined
-                         with charge-only default mode this stays battery-safe.
-    BATTERY_STATS     — read plug state for charge-only gating (BATTERY_STATS
-                         is normal-permission since API 26, no runtime grant).
+                         with the battery-safe floor (run to ~30%, then pause
+                         until plugged in) this stays battery-safe.
+  Battery state (level + plug) is read from the sticky ACTION_BATTERY_CHANGED
+  broadcast, which needs no permission.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -24,6 +25,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- RECEIVE_BOOT_COMPLETED — a NORMAL permission. Required by
+         JobInfo.setPersisted(true) so the charge-resume job survives a reboot:
+         a node paused at the battery floor resumes if the phone is rebooted
+         while charging. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <application
         android:label="@string/app_name"
@@ -56,6 +62,18 @@
             android:name=".PKernelService"
             android:exported="false"
             android:foregroundServiceType="dataSync"/>
+
+        <!-- battery-safe RESUME: after a low-battery stopSelf() (which kills
+             the process + its runtime receiver) the JobScheduler runs this
+             JobService when the charging constraint is met. A running
+             JobService is an allowed context to start an FGS on Android 12+,
+             unlike a background ACTION_POWER_CONNECTED receiver (which throws
+             ForegroundServiceStartNotAllowedException). BIND_JOB_SERVICE lets
+             only the system bind it; exported=false. -->
+        <service
+            android:name=".ResumeJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
 
     </application>
 </manifest>

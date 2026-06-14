@@ -122,13 +122,16 @@ class GalaxyActivity : AppCompatActivity() {
                 }
                 if (attempt >= HINT_AFTER_ATTEMPTS && attempt % 4 == 0) {
                     /* the likeliest reason the star isn't lit yet is the
-                     * charge-only gate — check the battery and say so kindly,
-                     * in the user's language, with zero kernel jargon. */
-                    val charging = isCharging()
+                     * battery-safe floor — the node now runs on battery down
+                     * to ~30% and only pauses below that while unplugged. So
+                     * only show the "plug in" nudge when the floor is actually
+                     * holding (low AND unplugged); otherwise it's just waking.
+                     * Said kindly, in the user's language, no kernel jargon. */
+                    val lowAndUnplugged = batteryLowAndUnplugged()
                     ui.post {
                         if (!loaded) splash.text = getString(
-                            if (charging) R.string.galaxy_lighting
-                            else R.string.galaxy_charge)
+                            if (lowAndUnplugged) R.string.galaxy_charge
+                            else R.string.galaxy_lighting)
                     }
                 }
                 try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return@Thread }
@@ -144,14 +147,24 @@ class GalaxyActivity : AppCompatActivity() {
         splash.visibility = View.GONE
     }
 
-    /** sticky-intent battery check — no permission needed. */
-    private fun isCharging(): Boolean {
+    /**
+     * sticky-intent battery check — no permission needed. Mirrors the
+     * battery-safe floor in PKernelService.powerAllowed(): the gate that
+     * keeps the star dark only holds when the battery is at/below the floor
+     * AND the phone is unplugged. (When >floor or plugged in, the node runs
+     * on battery, so the star is merely waking, not gated.)
+     */
+    private fun batteryLowAndUnplugged(): Boolean {
         val i = registerReceiver(null,
             android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-            ?: return true                       // unknown -> don't nag
-        val st = i.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
-        return st == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-               st == android.os.BatteryManager.BATTERY_STATUS_FULL
+            ?: return false                      // unknown -> don't nag
+        val plugged = i.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+        if (plugged != 0) return false           // charging/plugged: never gated
+        val level = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+        val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return false // unknown -> don't nag
+        val pct = level * 100 / scale
+        return pct <= PKernelService.BATTERY_FLOOR_PCT
     }
 
     override fun onDestroy() {
