@@ -180,6 +180,10 @@ static W kdds_open_core(const char *name, W qos, W scope, int blocking)
 
             kdds_handles[h].topic_idx = tidx;
             kdds_handles[h].sub_sem   = sem;
+            kdds_handles[h].owner     = 0;   /* 既定: 所有者なし (カーネル所有)。
+                                              * ring3 デーモンのハンドルは
+                                              * SYS_TOPIC_OPEN が kdds_set_owner()
+                                              * で所有タスクを刻む。 */
             kdds_handles[h].open      = 1;
 
             kd_puts("[kdds] open  topic=\""); kd_puts(name);
@@ -338,6 +342,7 @@ void kdds_close(W handle)
     }
 
     W tidx = kdds_handles[handle].topic_idx;
+    kdds_handles[handle].owner = 0;
     kdds_handles[handle].open = 0;
 
     /* このトピックを参照するハンドルが他になければトピックスロットも解放 */
@@ -349,6 +354,59 @@ void kdds_close(W handle)
         }
     }
     if (!still_used) kdds_topics[tidx].open = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* kdds_set_owner / kdds_close_by_owner / kdds_handle_count           */
+/*                                                                     */
+/* KDDS-HANDLE-LEAK fix (wave-56, found during the kill-churn x86      */
+/* work): a ring3 daemon (e.g. /infer_d.elf) opens "ai/req"+"ai/rsp"  */
+/* each life via SYS_TOPIC_OPEN, but its kill/teardown                 */
+/* (dproc_kill_by_name -> user_proc_teardown) never closed those       */
+/* kdds handles.  The dying task vanished while its handle slots       */
+/* stayed open; >~200 kill/respawn cycles exhausted KDDS_HANDLE_MAX    */
+/* ("cannot open ai/rsp") and a downstream #DE.                        */
+/*                                                                     */
+/* The mechanism: tag each handle with the owning task id at           */
+/* SYS_TOPIC_OPEN, then sweep-close all of a dying task's handles at   */
+/* user_proc_teardown.  owner==0 (MIN_TSKID==1, so 0 is never a valid  */
+/* task) marks kernel-internal handles (dproc/dkva/world/pfs/...) —    */
+/* those are NEVER swept, because a real teardown always passes a      */
+/* tid>=1 and the per-handle match requires owner==tid.                */
+/* ------------------------------------------------------------------ */
+
+void kdds_set_owner(W handle, ID tid)
+{
+    if (handle < 0 || handle >= KDDS_HANDLE_MAX) return;
+    if (!kdds_handles[handle].open) return;
+    if (tid <= 0) return;   /* 0/負は所有者なしのまま (掃き出し対象外) */
+    kdds_handles[handle].owner = tid;
+}
+
+INT kdds_close_by_owner(ID tid)
+{
+    if (tid <= 0) return 0;   /* カーネル所有 (owner==0) は決して掃かない */
+    INT closed = 0;
+    for (W h = 0; h < KDDS_HANDLE_MAX; h++) {
+        if (!kdds_handles[h].open) continue;
+        if (kdds_handles[h].owner != tid) continue;
+        kdds_close(h);   /* sem 削除 + owner クリア + 必要ならトピック解放 */
+        closed++;
+    }
+    if (closed > 0) {
+        kd_puts("[kdds] teardown closed "); kd_putdec((UW)closed);
+        kd_puts(" handle(s) of tid="); kd_putdec((UW)tid);
+        kd_puts("\r\n");
+    }
+    return closed;
+}
+
+INT kdds_handle_count(void)
+{
+    INT n = 0;
+    for (W h = 0; h < KDDS_HANDLE_MAX; h++)
+        if (kdds_handles[h].open) n++;
+    return n;
 }
 
 /* ------------------------------------------------------------------ */
@@ -400,6 +458,7 @@ void kdds_init(void)
         kdds_handles[h].open      = 0;
         kdds_handles[h].sub_sem   = -1;
         kdds_handles[h].topic_idx = -1;
+        kdds_handles[h].owner     = 0;
     }
     pmesh_bind(KDDS_PORT, kdds_rx);
     kd_puts("[kdds] K-DDS ready  port=7376\r\n");
@@ -434,6 +493,7 @@ void kdds_delete_cluster(const char *name)
                 kdds_handles[h].sub_sem = -1;
             }
             kdds_handles[h].topic_idx = -1;
+            kdds_handles[h].owner     = 0;
             kdds_handles[h].open      = 0;
         }
         /* 全ハンドルを閉じたのでトピックスロットを解放する */

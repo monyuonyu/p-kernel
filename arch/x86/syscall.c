@@ -143,6 +143,15 @@ void user_proc_teardown(ID tid)
 {
     /* Release subsystem resources (sockets, fds, etc.) */
     knl_ssy_cleanup(tid);
+    /* KDDS-HANDLE-LEAK fix (wave-56): close any K-DDS topic handles the
+     * dying task opened via SYS_TOPIC_OPEN (e.g. infer_d.elf's ai/req +
+     * ai/rsp).  Without this, every kill/respawn of a ring3 daemon leaked
+     * its handles; sustained `dproc churn` exhausted KDDS_HANDLE_MAX
+     * ("cannot open ai/rsp") -> downstream #DE.  owner==0 kernel-internal
+     * handles (dproc/dkva/world/...) are untouched: a real tid is >=1. */
+#ifndef KDDS_LEAK_DISEASE_CONTROL    /* matched-control build: omit the cure */
+    kdds_close_by_owner(tid);
+#endif
     /* Unblock shell relay loop */
     if (stdin_active) {
         stdin_active = FALSE;
@@ -1220,7 +1229,13 @@ W syscall_dispatch(W nr, W arg0, W arg1, W arg2)
         /* arg0 = name (const char*), arg1 = qos */
         const char *name = (const char *)(UW)arg0;
         if (!name || !user_range_ok(name, 1)) return -1;  /* ISO-USERPTR */
-        return kdds_open(name, arg1);
+        W h = kdds_open(name, arg1);
+        /* KDDS-HANDLE-LEAK fix (wave-56): tag the handle with the calling
+         * (ring3 daemon) task so a kill/teardown reclaims it.  Kernel-
+         * internal kdds_open() callers never go through here, so their
+         * handles stay owner==0 and are never swept. */
+        if (h >= 0) kdds_set_owner(h, knl_ctxtsk->tskid);
+        return h;
     }
 
     case SYS_TOPIC_PUB: {

@@ -108,6 +108,11 @@ extern KDDS_TOPIC kdds_topics[KDDS_TOPIC_MAX];
 typedef struct {
     W   topic_idx;  /* kdds_topics[] へのインデックス (-1 = 未使用)  */
     ID  sub_sem;    /* subscriber がブロックするセマフォ (-1 = なし) */
+    ID  owner;      /* このハンドルを開いたタスク id (0 = カーネル所有 / 所有者なし)。
+                     * MIN_TSKID=1 なので 0 は決して有効な task id ではなく、
+                     * 「所有者なし」の番兵として安全に使える。SYS_TOPIC_OPEN
+                     * から開かれた ring3 デーモンのハンドルだけが非ゼロ owner を
+                     * 持ち、kdds_close_by_owner() の teardown で回収される。 */
     UB  open;       /* 1 = 使用中                                    */
 } KDDS_HANDLE_SLOT;
 
@@ -185,6 +190,22 @@ W kdds_sub(W handle, void *buf, W buflen, W timeout_ms);
 
 /* ハンドルを閉じる */
 void kdds_close(W handle);
+
+/* このハンドルの所有タスク id を記録する (SYS_TOPIC_OPEN から ring3 デーモンの
+ * 開いたハンドルに刻む)。tid<=0 は無視 (= 所有者なしのまま)。所有者付きハンドル
+ * だけが kdds_close_by_owner() の teardown 掃き出し対象になる。
+ * KDDS-HANDLE-LEAK fix (wave-56): 殺されたデーモンの ai/req・ai/rsp ハンドルが
+ * teardown で閉じられず、churn でハンドルテーブルを枯渇させていた。 */
+void kdds_set_owner(W handle, ID tid);
+
+/* tid が所有する全ハンドルを閉じる (kdds_close と同じ後始末)。タスク teardown
+ * から呼ぶ。tid<=0 や owner==0 (カーネル所有) のハンドルには決して触れない —
+ * dproc/dkva/world 等のカーネル内部ハンドルは tid<=0 ではマッチしない。
+ * 閉じた数を返す。 */
+INT kdds_close_by_owner(ID tid);
+
+/* 現在オープン中のハンドル数 (リーク計測 / churn harness 用)。 */
+INT kdds_handle_count(void);
 
 /* UDP 受信コールバック (KDDS_PORT に登録) */
 void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len);
