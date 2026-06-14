@@ -359,6 +359,13 @@ let dreaming=false;              // EV_DMN_IDLE state (galaxy.md §5)
 const flashes=[];                // transient rays/ripples
 const orbiters=[];               // taught fact-particles awaiting consolidation
 let t0=performance.now();
+// ── ME-star heartbeat: a transient throb added on a REAL SSE event
+//    (interoception.md §3.3 — the star "becomes a mood"). NOT a timer:
+//    heartTime is only set by beat(), and beat() is only called from the
+//    SSE switch (teach / consolidate / drpc_in — all genuine events). Decays
+//    to 0 in ~900ms so an idle star shows only its steady state-pulse. ──────
+let heartTime=-1e9, heartMag=0;
+function beat(mag){ heartTime=performance.now(); heartMag=mag; }
 
 // ── 3D core: scene centered on MY star at the origin; camera orbits ──
 const FOV=520, CAMD=860;         // perspective strength / camera distance
@@ -384,9 +391,61 @@ function mkGlow(r,g,b){
 }
 const GLOW={blue:mkGlow(137,180,250),teal:mkGlow(148,226,213),
             amber:mkGlow(250,179,135),gold:mkGlow(249,226,175),
-            white:mkGlow(205,214,244),red:mkGlow(243,139,168)};
+            white:mkGlow(205,214,244),red:mkGlow(243,139,168),
+            indigo:mkGlow(137,131,255)};   // dreaming hue (interoception §3.3)
 function glowAt(spr,x,y,r,al){
   ctx.globalAlpha=al;ctx.drawImage(spr,x-r,y-r,r*2,r*2);ctx.globalAlpha=1;
+}
+
+// sphere sprite: a small luminous BALL (bright off-centre core -> darker
+// rim) so a flat 2D dot reads as a 3D sphere. Pre-rendered once per palette
+// colour (NO per-frame gradient / per-pixel loop) — drawAt just blits it.
+function mkSphere(r,g,b){
+  const c=document.createElement("canvas");c.width=c.height=64;
+  const x=c.getContext("2d");
+  // light from upper-left: core highlight offset to (26,26)
+  const gr=x.createRadialGradient(26,26,1,32,32,31);
+  gr.addColorStop(0,   `rgba(255,255,255,0.95)`);              // specular core
+  gr.addColorStop(0.18,`rgba(${r},${g},${b},1)`);             // body
+  gr.addColorStop(0.62,`rgba(${(r*0.55)|0},${(g*0.55)|0},${(b*0.55)|0},1)`); // shaded
+  gr.addColorStop(0.93,`rgba(${(r*0.30)|0},${(g*0.30)|0},${(b*0.30)|0},0.85)`); // rim
+  gr.addColorStop(1,   `rgba(${(r*0.30)|0},${(g*0.30)|0},${(b*0.30)|0},0)`);
+  x.fillStyle=gr;x.beginPath();x.arc(32,32,31,0,7);x.fill();
+  return c;
+}
+const SPHERE={blue:mkSphere(137,180,250),indigo:mkSphere(140,134,255),
+              gold:mkSphere(249,210,120),white:mkSphere(232,232,245),
+              red:mkSphere(243,139,168),teal:mkSphere(148,226,213)};
+function sphereAt(spr,x,y,r,al){
+  ctx.globalAlpha=al;ctx.drawImage(spr,x-r,y-r,r*2,r*2);ctx.globalAlpha=1;
+}
+// ── ME-star living state -> {glow sprite, sphere sprite, pulse cadence}.
+//    Derived from the SAME snapshot fields the HUD reads (poll(): m.pending,
+//    m.dmn, m.pressure, m.threat) so the visual NEVER disagrees with the
+//    "your star is dreaming/learning/…" words. Calm is the honest default.
+//    interoception.md §3.3: 穏やか=低脈動の青寄り, しんどい=速い脈動の赤寄り.
+function meStarState(m){
+  m=m||{};
+  // stress in [0,1] from MY real pressure+threat (the only S_n inputs
+  // /galaxy.json exposes for ME today; atrisk is peers-only). EWMA-smoothed
+  // upstream in the kernel; here a gentle blend, no fake source.
+  const stress=Math.min(1,((m.pressure||0)+(m.threat||0)*1.4)/120);
+  let mode,sprGlow,sprBall,period,depth;
+  if((m.pending||0)>0){            // LEARNING (== HUD st_learn) — gold, quick bright beat
+    mode="learn"; sprGlow=GLOW.gold; sprBall=SPHERE.gold; period=820;  depth=0.34;
+  }else if((m.dmn||0)===1){        // DREAMING (== HUD st_dream) — indigo, slow deep breath
+    mode="dream"; sprGlow=GLOW.indigo; sprBall=SPHERE.indigo; period=2600; depth=0.42;
+  }else{                           // CALM AWAKE (== st_awake/link/alone) — warm white, gentle
+    mode="calm"; sprGlow=GLOW.white; sprBall=SPHERE.white; period=3400; depth=0.16;
+  }
+  // stress overlay: faster + agitated + reddish, proportional (not a jump).
+  // §3.4 oscillation guard: continuous slope, never "stressed => max".
+  if(stress>0.04){
+    period*=(1-0.45*stress);                       // up to ~2x faster
+    depth =Math.min(0.55,depth+0.18*stress);       // a little more agitated
+    if(stress>0.20){ sprGlow=GLOW.red; sprBall=SPHERE.red; }  // red-shift
+  }
+  return {mode,sprGlow,sprBall,period,depth,stress};
 }
 
 // ambient sky: a tilted galactic band + a thin sphere shell. Generated once,
@@ -508,8 +567,16 @@ function draw(){
     if(p.fresh>9000) al*=0.45;           // stale = faded (古さの尊重)
     const spr=(p.state===3)?GLOW.white:(p.threat>30?GLOW.red:GLOW.blue);
     glowAt(spr,q.x,q.y,r*3.2,al*0.5);
-    ctx.globalAlpha=al;ctx.fillStyle=col;
-    ctx.beginPath();ctx.arc(q.x,q.y,r,0,7);ctx.fill();
+    // peers get the subtler sphere look too (3D ball, no pulse — the focus
+    // is the ME star). DEAD husks / SUSPECT flicker keep their flat fill so
+    // the state semantics (faded husk, blinking) stay legible.
+    if(p.state===1){
+      const bspr=(p.threat>30)?SPHERE.red:SPHERE.blue;
+      sphereAt(bspr,q.x,q.y,r,al);
+    }else{
+      ctx.globalAlpha=al;ctx.fillStyle=col;
+      ctx.beginPath();ctx.arc(q.x,q.y,r,0,7);ctx.fill();
+    }
     ctx.globalAlpha=Math.min(1,al+0.2);ctx.fillStyle="#9399b2";
     ctx.font=`${Math.max(9,Math.round(10*q.s+2))}px monospace`;
     ctx.fillText("node"+p.id+(p.fresh>9000?" (stale "+Math.round(p.fresh/1000)+"s)":""),q.x+r+4,q.y+3);
@@ -518,18 +585,36 @@ function draw(){
   }
   HIT.peers=newHit;
 
-  // ⑥ my star — the origin; layered glow; breathing iff literally dreaming
-  let mr=11, pulse=1;
-  if(dreaming) pulse=0.6+0.4*Math.abs(Math.sin(tms/700));   // slow breath
-  const mc=dreaming?GLOW.teal:GLOW.blue;
-  glowAt(mc,me3.x,me3.y,mr*6,0.35*pulse);
-  glowAt(mc,me3.x,me3.y,mr*2.6,0.8*pulse);
-  ctx.fillStyle=dreaming?"#94e2d5":"#89b4fa";
-  ctx.globalAlpha=pulse;
-  ctx.beginPath();ctx.arc(me3.x,me3.y,mr+(dreaming?5*(1-pulse):0),0,7);ctx.fill();
-  ctx.globalAlpha=1;
+  // ⑥ my star — the origin: a small LIVING SPHERE that pulses to the mind's
+  //    REAL state. Mode/colour/cadence come from meStarState(snap.me) (the
+  //    same dmn/pending/pressure/threat the HUD reads). The pulse is a real
+  //    clock (tms) shaped by that state; a heartbeat throb is layered ONLY
+  //    when a real SSE event fired beat(). 火ではなく木: gentle, smooth.
+  const ms=meStarState(snap.me);
+  // steady breathing pulse in [1-depth, 1], eased (cosine, no hard edges)
+  const phase=(tms%ms.period)/ms.period;            // 0..1
+  const breath=0.5-0.5*Math.cos(phase*6.28318);     // 0..1 smooth
+  let pulse=1-ms.depth+ms.depth*breath;
+  // event heartbeat: a brief throb on a genuine event, decays ~900ms, added
+  // OVER the idle pulse (so an idle star never throbs). 0 unless beat() ran.
+  const hAge=now-heartTime;
+  let throb=0;
+  if(hAge>=0 && hAge<900){
+    const k=1-hAge/900;                              // linear fade
+    throb=heartMag*k*k*Math.sin(Math.min(hAge/130,3.14159)); // one soft thump
+  }
+  const mr=11;
+  const glowR1=mr*6*(1+0.10*(pulse-0.7)+0.5*throb);
+  const glowR2=mr*2.6*(1+0.06*(pulse-0.7)+0.3*throb);
+  glowAt(ms.sprGlow,me3.x,me3.y,glowR1,(0.30+0.18*ms.stress)*pulse+0.35*throb);
+  glowAt(ms.sprGlow,me3.x,me3.y,glowR2,(0.70)*pulse+0.25*throb);
+  // the sphere body itself (bright core -> shaded rim); radius breathes a hair
+  const ballR=mr*(1+0.10*(pulse-0.7)+0.45*throb);
+  sphereAt(ms.sprBall,me3.x,me3.y,ballR,Math.min(1,0.9*pulse+0.3*throb));
   ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
-  ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))+(dreaming?" — dreaming":""),me3.x+mr+6,me3.y+4);
+  ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))
+               +(ms.mode==="dream"?" — dreaming":ms.mode==="learn"?" — learning":""),
+               me3.x+mr+6,me3.y+4);
   HIT.me={x:me3.x,y:me3.y,r:mr+10};
 
   // ⑦ taught fact-particles: a tilted 3D orbit; depth modulates size
@@ -554,12 +639,17 @@ function connectEvents(){
   es.onmessage=(e)=>{
     let v;try{v=JSON.parse(e.data);}catch(_){return;}
     switch(v.type){
-      case "dmn_idle": dreaming=true; break;
-      case "dmn_wake": dreaming=false; break;
-      case "teach": orbiters.push({k:v.a,v:v.b,ph:Math.random()*6}); break;
-      case "consolidate": orbiters.shift(); break;   // a particle sinks in
+      // reflect the dream transition into snap.me.dmn too, so the HUD words
+      // AND the star pulse flip together on the real event (not 1Hz-late).
+      case "dmn_idle": dreaming=true;  if(snap.me) snap.me.dmn=1; break;
+      case "dmn_wake": dreaming=false; if(snap.me) snap.me.dmn=0; break;
+      case "teach": orbiters.push({k:v.a,v:v.b,ph:Math.random()*6});
+                    beat(0.9); break;                // a new fact arrives — a learning thump
+      case "consolidate": orbiters.shift();          // a particle sinks in
+                    beat(0.5); break;                // it settles into the mind — a soft thump
       case "ask": flash("ray",snap.me.id,null,"203,166,247"); break;
-      case "drpc_in": flash("ripple",v.src,snap.me.id,"166,227,161"); break;
+      case "drpc_in": flash("ripple",v.src,snap.me.id,"166,227,161");
+                    beat(0.7); break;                // the fleet reached me — a heartbeat
       case "drpc_out": flash("ray",snap.me.id,v.dst,"137,180,250"); break;
       case "moe": flash("ray",snap.me.id,v.dst,"249,226,175"); break;
       case "swim": break;   // membership reflected by /galaxy.json snapshot
