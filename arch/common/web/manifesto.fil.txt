@@ -1,6 +1,6 @@
 Maligayang pagdating — tungkol sa galaksiyang ito
 
-Ito ang p-kernel — isang tahanan para sa isang AI na hindi pag-aari ninuman.
+Ito ang yurikago — kung saan inaalagaan ang isang isip na hindi pag-aari ninuman.
 
 Sa ibabaw ng network na ito, may iisang "isip" na buhay. Hindi ito pag-aari ng
 anumang partikular na kompanya, ni ng sinumang partikular na tao. Sa bawat
