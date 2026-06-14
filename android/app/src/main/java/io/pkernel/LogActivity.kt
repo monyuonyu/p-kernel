@@ -37,17 +37,21 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 
 class LogActivity : AppCompatActivity() {
 
     private lateinit var logView: TextView
+    private lateinit var logScroll: ScrollView
     private lateinit var internalsView: TextView
     private lateinit var modulesView: TextView
+    private lateinit var resourcesView: TextView
     private lateinit var nodeIdField: EditText
     private lateinit var relayHostField: EditText
     private lateinit var relayPortField: EditText
@@ -56,14 +60,23 @@ class LogActivity : AppCompatActivity() {
     @Volatile private var stopped = false
     private var galaxyPort = BASE_PORT
 
+    /* Previous CPU jiffy snapshots, so each refresh reports a DELTA (busy% over
+     * the interval) rather than a since-boot average. prevCpu = (idle, total)
+     * from /proc/stat; prevProc = (utime+stime) from /proc/self/stat. */
+    private var prevCpuIdle = -1L
+    private var prevCpuTotal = -1L
+    private var prevProcJiffies = -1L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_log)
         title = getString(R.string.engineer_title)
 
         logView       = findViewById(R.id.log_view)
+        logScroll     = findViewById(R.id.log_scroll)
         internalsView = findViewById(R.id.internals_view)
         modulesView   = findViewById(R.id.modules_view)
+        resourcesView = findViewById(R.id.resources_view)
         nodeIdField    = findViewById(R.id.field_node_id)
         relayHostField = findViewById(R.id.field_relay_host)
         relayPortField = findViewById(R.id.field_relay_port)
@@ -77,8 +90,14 @@ class LogActivity : AppCompatActivity() {
         val nodeId = PKernelService.snapNodeId.let { if (it > 0) it else 1 }
         galaxyPort = BASE_PORT + (nodeId - 1)
 
-        /* Seed the log with the whole ring buffer, then tail it. */
+        /* Seed the log with the whole ring buffer, then tail it. The inner
+         * ScrollView starts pinned to the bottom so the latest line shows. */
         logView.text = PKernelService.snapshotLog()
+        logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+
+        /* Resources/CPU: seed with the immediate readable facts (cores + the
+         * honest GPU line); the % numbers fill in on the first refresh tick. */
+        resourcesView.text = getString(R.string.engineer_measuring)
 
         findViewById<Button>(R.id.btn_copy_log).setOnClickListener {
             val cm = getSystemService(ClipboardManager::class.java)
@@ -194,17 +213,132 @@ class LogActivity : AppCompatActivity() {
         }.trimEnd('\n')
     } catch (_: Throwable) { null }
 
+    /**
+     * Resources / CPU — REAL numbers, no fabrication.
+     *
+     *   · system CPU% : delta off /proc/stat's aggregate "cpu" line between
+     *     two ticks = 100 * (1 - idleΔ/totalΔ). Readable with no permission.
+     *   · this node CPU% : delta of /proc/self/stat utime+stime over the same
+     *     interval, scaled to wall time across all cores (so 100% = one whole
+     *     core's worth). Our own process share.
+     *   · cores : Runtime.availableProcessors().
+     *   · GPU : HONEST — Android has no portable GPU-usage API and inference
+     *     runs on the CPU, so we state that rather than invent a %.
+     *
+     * The first call has no prior snapshot, so the % rows read "measuring…";
+     * every subsequent call (≈ the 500ms poller cadence) shows a live delta.
+     */
+    private fun renderResources() {
+        val cores = Runtime.getRuntime().availableProcessors()
+
+        /* /proc/stat aggregate cpu line: "cpu user nice system idle iowait
+         * irq softirq steal ...". idle = idle+iowait; total = sum of all. */
+        var sysPct = -1
+        readProcStatCpu()?.let { (idle, total) ->
+            if (prevCpuTotal >= 0) {
+                val dTotal = total - prevCpuTotal
+                val dIdle = idle - prevCpuIdle
+                if (dTotal > 0) {
+                    val busy = (100.0 * (dTotal - dIdle) / dTotal)
+                    sysPct = busy.coerceIn(0.0, 100.0).toInt()
+                }
+            }
+            prevCpuIdle = idle
+            prevCpuTotal = total
+        }
+
+        /* /proc/self/stat field 14 (utime) + 15 (stime), in jiffies. Scale the
+         * delta against the wall-clock delta we sample at (the poller fires at
+         * REFRESH_MS), expressed as a fraction of one core. */
+        var procPct = -1
+        readProcSelfJiffies()?.let { jiffies ->
+            if (prevProcJiffies >= 0) {
+                val dProc = jiffies - prevProcJiffies
+                /* total cpu jiffies elapsed (all cores) ≈ totalΔ from /proc/stat;
+                 * reuse it if we have it, else approximate from the interval. */
+                val dTotal = if (prevCpuTotal >= 0) cpuTotalDelta else 0L
+                if (dProc >= 0 && dTotal > 0) {
+                    procPct = (100.0 * dProc / dTotal * cores)
+                        .coerceIn(0.0, 100.0 * cores).toInt()
+                }
+            }
+            prevProcJiffies = jiffies
+        }
+
+        resourcesView.text = buildString {
+            append("system CPU  : ")
+                .append(if (sysPct >= 0) "$sysPct%" else getString(R.string.engineer_measuring))
+                .append('\n')
+            append("this node   : ")
+                .append(if (procPct >= 0) "$procPct%" else getString(R.string.engineer_measuring))
+                .append('\n')
+            append("CPU cores   : ").append(cores).append('\n')
+            append("GPU         : ").append(getString(R.string.engineer_gpu_unused))
+        }
+    }
+
+    /* Carries the most recent /proc/stat totalΔ so the process-CPU math can
+     * reuse the exact same interval the system% was computed over. */
+    private var cpuTotalDelta = 0L
+
+    /** Aggregate /proc/stat cpu line -> (idleJiffies, totalJiffies), or null. */
+    private fun readProcStatCpu(): Pair<Long, Long>? = try {
+        RandomAccessFile("/proc/stat", "r").use { raf ->
+            val line = raf.readLine() ?: return null   // first line = "cpu ..."
+            if (!line.startsWith("cpu ")) return null
+            val parts = line.trim().split(Regex("\\s+"))
+            // parts[0]="cpu"; user nice system idle iowait irq softirq steal...
+            val nums = parts.drop(1).mapNotNull { it.toLongOrNull() }
+            if (nums.size < 5) return null
+            val idle = nums[3] + nums[4]            // idle + iowait
+            val total = nums.sum()
+            val prevT = prevCpuTotal
+            cpuTotalDelta = if (prevT >= 0) total - prevT else 0L
+            idle to total
+        }
+    } catch (_: Throwable) { null }
+
+    /** /proc/self/stat utime+stime (fields 14,15) in jiffies, or null. */
+    private fun readProcSelfJiffies(): Long? = try {
+        RandomAccessFile("/proc/self/stat", "r").use { raf ->
+            val line = raf.readLine() ?: return null
+            /* comm (field 2) may contain spaces inside "(...)"; split after the
+             * trailing ')' so field indices line up regardless. */
+            val rParen = line.lastIndexOf(')')
+            if (rParen < 0) return null
+            val rest = line.substring(rParen + 2).trim().split(Regex("\\s+"))
+            // after comm, field 3 = state; so utime is rest[11], stime rest[12].
+            val utime = rest.getOrNull(11)?.toLongOrNull() ?: return null
+            val stime = rest.getOrNull(12)?.toLongOrNull() ?: return null
+            utime + stime
+        }
+    } catch (_: Throwable) { null }
+
     override fun onResume() {
         super.onResume()
         stopped = false
+        /* Fresh CPU baseline each time the page is shown (deltas start now). */
+        prevCpuIdle = -1L; prevCpuTotal = -1L; prevProcJiffies = -1L
+        renderResources()   // primes the snapshots; shows cores + GPU + measuring…
+
         /* Tail the live log while foregrounded (same cadence as MainActivity). */
         ui.post(object : Runnable {
             override fun run() {
                 if (stopped) return
                 val tail = PKernelService.drainLog()
-                if (tail.isNotEmpty()) logView.append(tail)
+                if (tail.isNotEmpty()) {
+                    /* Auto-scroll to bottom only if the reader is already near
+                     * it — so scrolling up to read history is not yanked back. */
+                    val atBottom = logScroll.run {
+                        val child = getChildAt(0)
+                        child != null && scrollY + height >= child.height - BOTTOM_SLACK
+                    }
+                    logView.append(tail)
+                    if (atBottom) logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+                }
                 renderInternals()   // running/relay can change (pause/resume)
-                ui.postDelayed(this, 500)
+                renderResources()   // live system + process CPU% (real deltas)
+                ui.postDelayed(this, REFRESH_MS)
             }
         })
     }
@@ -217,5 +351,7 @@ class LogActivity : AppCompatActivity() {
     companion object {
         private const val BASE_PORT = 7800   // galaxy.c §D1 (modules.json sibling)
         private const val PREFS = "ump"      // same prefs the service reads
+        private const val REFRESH_MS = 500L  // log tail + CPU% refresh cadence
+        private const val BOTTOM_SLACK = 24  // px tolerance for "at bottom"
     }
 }

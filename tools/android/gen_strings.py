@@ -79,6 +79,9 @@ KEYS = [
     ("reintro",     "reintro_btn"),        # "view introduction again" (advanced)
     ("settings_header", "settings_header"),# Settings layer header (en+ja+most; else en fallback)
     ("app_version",     "app_version_fmt"),# "yurikago %1$s" (product name untranslated)
+    ("resources",       "engineer_resources"),  # engineer Resources/CPU header (en+ja; else en fallback)
+    ("measuring",       "engineer_measuring"),   # CPU% placeholder while priming the delta (en+ja)
+    ("gpu_unused",      "engineer_gpu_unused"),  # honest GPU line — no fabricated % (en+ja)
 ]
 
 
