@@ -62,4 +62,45 @@ public final class PKernel {
 
     public int readStdout(byte[] dst, int maxlen) { return nativeReadStdout(dst, maxlen); }
     public int writeStdin(byte[] src, int len)    { return nativeWriteStdin(src, len); }
+
+    /* --- GPU (GPU-1/GPU-2 Vulkan compute backend) UI surface ----------------
+     *
+     * These are STATIC: the GPU backend's state (availability, the runtime
+     * enable flag, the picked device name) is process-global in gpu_vk.c, so
+     * no PKernel instance is needed. The settings toggle and the engineer page
+     * read them via the Gpu object below. They are crash-free at any time,
+     * including on a device with no usable Vulkan (then available()==false).
+     *
+     * IMPORTANT: this only surfaces availability + the enable flag. It does NOT
+     * route any inference through the GPU — the mind still computes on the CPU
+     * (GPU-3 wires the matmul to the GPU). The engineer page says so honestly.
+     */
+    public static native boolean nativeGpuAvailable();
+    public static native String  nativeGpuName();
+    public static native boolean nativeGpuGetEnabled();
+    public static native void    nativeGpuSetEnabled(boolean enabled);
+
+    /**
+     * Gpu — the Kotlin/Java-friendly facade over the GPU natives. Ensures
+     * libpkernel.so is loaded (the PKernel static initialiser does it) before
+     * any GPU call. Pure read/flag surface; never touches inference.
+     */
+    public static final class Gpu {
+        private Gpu() {}
+
+        /** True iff a usable Vulkan compute device is live RIGHT NOW. When
+         *  false the device has no usable GPU path and the toggle is disabled. */
+        public static boolean available() { return nativeGpuAvailable(); }
+
+        /** The picked GPU's device name (e.g. "Adreno (TM) 840"), or "" if
+         *  no GPU / not yet initialised. Never null. */
+        public static String name() { return nativeGpuName(); }
+
+        /** The runtime enable flag (the settings toggle drives it). */
+        public static boolean isEnabled() { return nativeGpuGetEnabled(); }
+
+        /** Flip the runtime enable flag. Persisting it to prefs is the
+         *  caller's job (the settings screen does both). */
+        public static void setEnabled(boolean enabled) { nativeGpuSetEnabled(enabled); }
+    }
 }
