@@ -116,7 +116,7 @@ width（玩具の核 d_model=8）を太らせるのは別レイヤー（学習�
 
 ```
 experts_active(N)   = clamp(N, 1, E_max)          # ノード ≒ エキスパート
-pipeline_depth(N)   = 1 + floor(log2(N))          # 台数の対数で深くする
+pipeline_depth(rs)  = 1 + floor(log2(region_size)) # region 内台数の対数で深くする
 kv_context(N)       = Σ_{n∈region} kv_count[n]    # region 内の KV を合算
 ```
 
