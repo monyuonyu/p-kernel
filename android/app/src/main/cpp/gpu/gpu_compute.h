@@ -63,6 +63,20 @@ PK_GPU_API int  gpu_init(void);
 PK_GPU_API int  gpu_available(void);
 
 /*
+ * 1 iff this device HAS a usable Vulkan compute device + pipeline, REGARDLESS
+ * of the enable flag. This is the CAPABILITY query (does the hardware exist?),
+ * distinct from gpu_available() which is the IN-USE query (capable AND switched
+ * on). The settings toggle greys itself on !gpu_capable() (not !gpu_available),
+ * so a capable device shows a working toggle that defaults OFF but CAN be
+ * turned on — without this the flag-gated gpu_available() deadlocks the UI
+ * (greyed because OFF, can't turn ON because greyed). Probing here does NOT
+ * enable the GPU and does NOT change the flag. Lazily triggers gpu_init() the
+ * first time; crash-free on a Vulkan-less device (returns 0). Also populates
+ * gpu_name() on success. Always safe to call.
+ */
+PK_GPU_API int  gpu_capable(void);
+
+/*
  * Plain-float matmul on the GPU:  y[i] = sum_j A[i*in + j] * x[j],
  * for i in [0, out).  A is row-major (out rows x in cols), x has length `in`,
  * y has length `out`. This is the GPU-1 reference op (dequant arrives in
