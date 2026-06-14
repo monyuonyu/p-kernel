@@ -26,6 +26,11 @@
 #ifndef PKERNEL_LLM_FORWARD_H
 #define PKERNEL_LLM_FORWARD_H
 
+/* M1c carries its own version (modver registry; compatibility.md): the
+ * Llama forward + greedy generation contract. v1 = SmolLM2-family forward
+ * (pre-tokenized ids in, ids out), self-contained transcendental math. */
+#define LLM_FORWARD_VER  1
+
 #include <stdint.h>
 #include <stddef.h>
 #include "gguf.h"

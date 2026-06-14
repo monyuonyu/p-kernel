@@ -35,6 +35,11 @@
 #ifndef PKERNEL_GGUF_H
 #define PKERNEL_GGUF_H
 
+/* M1a carries its own version (modver registry; compatibility.md): the
+ * GGUF reader's contract version. v1 = GGUF v2/v3 header + metadata KV +
+ * tensor-table reader (no dequant; that is GGUF data parsing only). */
+#define GGUF_VER  1
+
 #include <stdint.h>
 #include <stddef.h>
 

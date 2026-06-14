@@ -181,6 +181,7 @@ set(COMMON_SRC
     ${ARCH_CO}/genome.c
     ${ARCH_CO}/ed25519.c
     ${ARCH_CO}/sign.c
+    ${ARCH_CO}/modver.c
 )
 
 # kernel/common — same explicit list as boot/linux/Makefile's KERNEL_SRCS.
