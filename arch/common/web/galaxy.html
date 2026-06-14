@@ -375,6 +375,13 @@ const FOV=520, CAMD=860;         // perspective strength / DEFAULT camera distan
 //    you can get right up to a star but never invert through it or fly away.
 const CAM_MIN=180, CAM_MAX=2200;
 let camD=CAMD, camDTarget=CAMD;  // current + eased target distance
+// the projection scale `s` the ME star (world origin, Z=0) gets at the DEFAULT
+// distance. We normalise the me-star's perspective growth by this so the calm
+// default view is byte-for-byte today's look (factor==1 at camD==CAMD), and it
+// only grows/shrinks as you actually dolly. Without this the me-star was drawn
+// at a FIXED pixel size and zoom moved the camera but never enlarged the star
+// (mk_pino 0.7.0: 拡大しても星が拡大されない).
+const ME_S0=FOV/(FOV+CAMD);      // == project(0,0,0).s at camD==CAMD
 // pan offset so a tap-to-focus can bring an off-centre star toward the middle
 // as we zoom in (world-space translation applied before projection).
 let panX=0, panY=0, panXTarget=0, panYTarget=0;
@@ -525,6 +532,66 @@ function drawMeBlob(cx,cy,baseR,spr,al,tms,ms,throb){
   ctx.stroke();
   ctx.globalAlpha=1;
 }
+
+// ── INTERIOR view groundwork: "see the organs" (mk_pino's dream) ────────────
+//   pscale at which the close-up interior begins to reveal. pscale==1 is the
+//   default view; because the me-star sits at the origin its perspective scale
+//   maxes out at (FOV+CAMD)/(FOV+CAM_MIN) ≈ 1.97 at full dolly (CAM_MIN). We
+//   start the reveal at 1.5x (you've clearly dollied well IN) and reach full
+//   opacity by ~1.9x (near max zoom), so it fades in smoothly instead of
+//   popping — and is actually reachable at the deepest zoom.
+const INTERIOR_AT=1.5, INTERIOR_FULL=1.9;
+// The "organs" the full design should map each ring to — the mind's real
+// modules / observability surfaces. Kept as data (not yet wired to live state)
+// so the design follow-on has a concrete contract to fill in: replace the
+// fixed `frac`/label with a live reading (e.g. DMN dreaming flag, engram ring
+// fill, weight L2, peer count) pulled from snap/SSE. NO per-frame allocation:
+// this array is built once, reused every frame.
+const ME_ORGANS=[
+  {frac:0.82,rgb:"137,131,255",label:"DMN"},      // dream consolidation (sleep)
+  {frac:0.60,rgb:"148,226,213",label:"R3"},       // the weights (slow memory)
+  {frac:0.40,rgb:"249,210,120",label:"engram"},   // the replay ring (fast memory)
+  {frac:0.22,rgb:"243,139,168",label:"self"},     // hash-chained self-lineage
+];
+// draw the interior detail INSIDE the blob. Cheap: a few stroked arcs + short
+// labels, clipped to a circle so it stays within the star. Opacity ramps with
+// proximity (rev) so it's a smooth reveal, and a slow rotation (tms) makes the
+// organs feel alive, not a static diagram.
+function meStarInterior(cx,cy,baseR,pscale,ms,tms){
+  const rev=Math.min(1,(pscale-INTERIOR_AT)/(INTERIOR_FULL-INTERIOR_AT));
+  if(rev<=0) return;
+  ctx.save();
+  // clip to the star body so the rings never spill past the rim
+  ctx.beginPath();ctx.arc(cx,cy,baseR*1.05,0,7);ctx.clip();
+  const spin=tms*0.00018;
+  for(let i=0;i<ME_ORGANS.length;i++){
+    const o=ME_ORGANS[i], rr=baseR*o.frac;
+    // a soft breathing per-organ so the interior reads as living tissue
+    const br=rr*(1+0.04*Math.sin(tms*0.0011+i*1.7));
+    ctx.globalAlpha=rev*0.5;
+    ctx.lineWidth=1.2;ctx.strokeStyle=`rgba(${o.rgb},0.9)`;
+    ctx.beginPath();ctx.arc(cx,cy,br,0,7);ctx.stroke();
+    // a small "nucleus" marker on each organ ring (rotates slowly)
+    const a=spin+i*1.9, nx=cx+Math.cos(a)*br, ny=cy+Math.sin(a)*br;
+    ctx.globalAlpha=rev*0.8;ctx.fillStyle=`rgba(${o.rgb},1)`;
+    ctx.beginPath();ctx.arc(nx,ny,Math.max(1.5,baseR*0.04),0,7);ctx.fill();
+    // organ label, only once we're close enough to read it without clutter
+    if(rev>0.5 && baseR>20){
+      ctx.globalAlpha=(rev-0.5)*2*0.85;
+      ctx.fillStyle=`rgba(${o.rgb},1)`;ctx.font="10px monospace";
+      ctx.fillText(o.label,nx+4,ny-3);
+    }
+  }
+  // a faint "interior" marker at the core so the state is unmistakable
+  ctx.globalAlpha=rev*0.9;
+  ctx.fillStyle=`rgba(${ms.rgb},1)`;ctx.font="11px monospace";
+  ctx.textAlign="center";
+  ctx.fillText("内部 · interior",cx,cy+baseR*0.02);
+  ctx.textAlign="left";
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
 // ── ME-star living state -> {glow sprite, sphere sprite, pulse cadence}.
 //    Derived from the SAME snapshot fields the HUD reads (poll(): m.pending,
 //    m.dmn, m.pressure, m.threat) so the visual NEVER disagrees with the
@@ -721,7 +788,22 @@ function draw(){
     const k=1-hAge/900;                              // linear fade
     throb=heartMag*k*k*Math.sin(Math.min(hAge/130,3.14159)); // one soft thump
   }
-  const mr=11;
+  // PERSPECTIVE SCALE: the me-star sits at the world origin, so project(0,0,0)
+  // already returns a valid scale me3.s that grows as the camera dollies in
+  // (camD↓ => s↑). The old code threw this away and used a fixed mr=11, so
+  // zooming never enlarged your own star. Normalise by ME_S0 so the calm
+  // default view (camD==CAMD) is unchanged (pscale==1), and the star genuinely
+  // approaches/fills the screen as you zoom in. Clamp the low end so a fully
+  // zoomed-OUT star never vanishes to a sub-pixel speck.
+  //   The raw geometric factor (me3.s/ME_S0) maxes at ~1.97x at full dolly
+  //   (origin star, CAM_MIN). That alone reads as "a bit bigger", not "I flew
+  //   right up to it". So past the default view we add a gentle super-linear
+  //   gain (only for the ME star, which is the UX focus) so a full zoom-in
+  //   genuinely FILLS more of the screen — while pscale stays exactly 1 at the
+  //   default distance (the calm look is untouched). Monotonic, no jump.
+  const praw=Math.max(0.35,me3.s/ME_S0);
+  const pscale=(praw<=1)?praw:1+(praw-1)*(1+0.85*(praw-1));   // ==1 at default
+  const mr=11*pscale;
   const glowR1=mr*6*(1+0.10*(pulse-0.7)+0.5*throb);
   const glowR2=mr*2.6*(1+0.06*(pulse-0.7)+0.3*throb);
   glowAt(ms.sprGlow,me3.x,me3.y,glowR1,(0.30+0.18*ms.stress)*pulse+0.35*throb);
@@ -730,8 +812,25 @@ function draw(){
   // scale (pulse/throb) stays as a SUBTLE size component; the headline motion
   // is the rippling OUTLINE from drawMeBlob (a deterministic function of the
   // clock + meStarState's wspeed/wamp/wlobe — real mind state, no random).
+  // baseR carries the perspective (mr) so the amoeba deformation, which is a
+  // *fraction* of baseR, scales WITH the zoom and keeps deforming at every
+  // distance (drag-rotate + amoeba both keep working up close).
   const ballR=mr*(1+0.10*(pulse-0.7)+0.45*throb);
   drawMeBlob(me3.x,me3.y,ballR,ms.sprBall,Math.min(1,0.9*pulse+0.3*throb),tms,ms,throb);
+  // ── INTERIOR HOOK: when you've dollied right up to your own star (pscale past
+  //   a proximity threshold) we stop reading it as just a bigger blob and begin
+  //   revealing what's INSIDE — groundwork toward mk_pino's dream
+  //   「本当ならその星の中の臓器まで見えると面白い」. The "organs" are meant to map
+  //   to the mind's real modules / observability (see meStarInterior below):
+  //   the DMN (dream consolidation), the R3 weights, the engram ring, the
+  //   self-lineage, the relay links — each an internal structure with its own
+  //   live state. For now this is a real, performant placeholder layer: faint
+  //   concentric "organ" rings drawn INSIDE the blob, fading in with proximity,
+  //   plus an 内部 (interior) label, so the zoom-into-a-star gesture leads
+  //   somewhere instead of dead-ending at a large droplet.
+  if(pscale>INTERIOR_AT){
+    meStarInterior(me3.x,me3.y,ballR,pscale,ms,tms);
+  }
   ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
   ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))
                +(ms.mode==="dream"?" — dreaming":ms.mode==="learn"?" — learning":""),
