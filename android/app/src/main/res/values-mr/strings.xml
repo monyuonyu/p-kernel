@@ -24,4 +24,5 @@
     <string name="pref_floor_label">%1$d%% खाली थांबा</string>
     <string name="pref_wifi_only">फक्त Wi-Fi (डेटा-मर्यादेशिवाय)</string>
     <string name="pref_start_on_boot">फोन सुरू होताच चालू करा</string>
+    <string name="reintro_btn">ओळख पुन्हा पाहा</string>
 </resources>

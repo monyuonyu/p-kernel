@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Pause unter %1$d%%</string>
     <string name="pref_wifi_only">Nur WLAN (ohne Datenlimit)</string>
     <string name="pref_start_on_boot">Beim Einschalten des Telefons starten</string>
+    <string name="reintro_btn">Einführung erneut ansehen</string>
 </resources>

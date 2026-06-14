@@ -75,6 +75,7 @@ KEYS = [
     ("floor_label", "pref_floor_label"),   # battery-floor SeekBar label (%1$d%%; en+ja now)
     ("wifi_only",   "pref_wifi_only"),     # WiFi-only toggle (en+ja now)
     ("start_on_boot","pref_start_on_boot"),# start-on-boot toggle (en+ja now)
+    ("reintro",     "reintro_btn"),        # "view introduction again" (advanced)
 ]
 
 

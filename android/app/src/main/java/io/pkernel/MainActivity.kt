@@ -155,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_engineer).setOnClickListener {
             startActivity(Intent(this, LogActivity::class.java))
         }
+        findViewById<Button>(R.id.btn_reintro).setOnClickListener { replayIntro() }
 
         /* state, in human words: poll the star's window; swap 灯す/眠らせる
          * so the screen never asks you to light an already-shining star. */
@@ -223,6 +224,18 @@ class MainActivity : AppCompatActivity() {
         val nodeId = nodeIdField.text.toString().toIntOrNull() ?: 1
         startActivity(Intent(this, GalaxyActivity::class.java).apply {
             putExtra(GalaxyActivity.EXTRA_NODE_ID, nodeId)
+        })
+    }
+
+    /* "View introduction again": open the galaxy and replay the picture-book
+     * intro (pictures only, no re-consent — EXTRA_SHOW_INTRO -> ?intro=1 ->
+     * introOpen(false) in galaxy.html). For a returning, already-consented
+     * user who wants to re-read the welcome. */
+    private fun replayIntro() {
+        val nodeId = nodeIdField.text.toString().toIntOrNull() ?: 1
+        startActivity(Intent(this, GalaxyActivity::class.java).apply {
+            putExtra(GalaxyActivity.EXTRA_NODE_ID, nodeId)
+            putExtra(GalaxyActivity.EXTRA_SHOW_INTRO, true)
         })
     }
 

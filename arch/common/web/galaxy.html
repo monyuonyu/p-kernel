@@ -1103,7 +1103,17 @@ async function arkFirstRun(){
     }
   }catch(_){ document.getElementById("reintro").style.display="block"; }
 }
-(async()=>{ await langInit(); await arkFirstRun(); })();
+(async()=>{
+  await langInit();
+  // ?intro=1 (the app's "view introduction again" button): a returning,
+  // already-consented user replays the PICTURES only — introOpen(false) never
+  // gates, so this does NOT re-consent. arkFirstRun still runs to wire the
+  // server-enforced manifesto-updated re-consent path; the replay layers on top.
+  await arkFirstRun();
+  try{
+    if(new URLSearchParams(location.search).get("intro")==="1") introOpen(false);
+  }catch(_){}
+})();
 
 // ── click a star -> /self.json (mine) or peer world-row ───────────
 async function openSelf(){

@@ -55,6 +55,7 @@
     <string name="pref_floor_label">Pause below %1$d%%</string>
     <string name="pref_wifi_only">Wi-Fi only (unmetered)</string>
     <string name="pref_start_on_boot">Start when the phone turns on</string>
+    <string name="reintro_btn">View introduction again</string>
 
     <!-- Engineer page (LogActivity). Deliberately technical; English-only for
          now — the i18n wave can translate the labels later. -->

@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Huminto kapag mababa sa %1$d%%</string>
     <string name="pref_wifi_only">Wi-Fi lamang (walang limitasyon sa data)</string>
     <string name="pref_start_on_boot">Magsimula kapag binuksan ang telepono</string>
+    <string name="reintro_btn">Tingnan muli ang panimula</string>
 </resources>

@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Пауза нижче %1$d%%</string>
     <string name="pref_wifi_only">Лише Wi-Fi (без ліміту)</string>
     <string name="pref_start_on_boot">Запускати при ввімкненні телефону</string>
+    <string name="reintro_btn">Переглянути вступ знову</string>
 </resources>

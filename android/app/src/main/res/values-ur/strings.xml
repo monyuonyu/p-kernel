@@ -24,4 +24,5 @@
     <string name="pref_floor_label">%1$d%% سے نیچے رُک جائیں</string>
     <string name="pref_wifi_only">صرف Wi-Fi (بغیر ڈیٹا حد)</string>
     <string name="pref_start_on_boot">فون آن ہونے پر شروع کریں</string>
+    <string name="reintro_btn">تعارف دوبارہ دیکھیں</string>
 </resources>

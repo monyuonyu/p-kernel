@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Pausar por debajo del %1$d%%</string>
     <string name="pref_wifi_only">Solo Wi-Fi (sin límite de datos)</string>
     <string name="pref_start_on_boot">Iniciar al encender el teléfono</string>
+    <string name="reintro_btn">Ver la introducción de nuevo</string>
 </resources>
