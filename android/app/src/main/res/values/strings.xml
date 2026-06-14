@@ -49,7 +49,7 @@
     <string name="btn_copy">Copy</string>
 
     <!-- Battery-safe toggle (advanced screen). In the i18n table (en+ja). -->
-    <string name="pref_battery_safe">Battery-safe (pause below 30%)</string>
+    <string name="pref_battery_safe">Battery protection</string>
 
     <!-- New advanced-screen settings (i18n table: en+ja now; 30 langs later).
          pref_floor_label takes the live floor % via getString(..., floor). -->
@@ -71,10 +71,15 @@
     <string name="settings_header">Settings</string>
     <string name="app_version_fmt">yurikago %1$s</string>
 
-    <!-- Engineer page (LogActivity). Deliberately technical; English-only for
-         now — the i18n wave can translate the labels later. -->
-    <string name="btn_engineer">Engineer / advanced</string>
-    <string name="engineer_title">Engineer</string>
+    <!-- Advanced page (LogActivity). Deliberately technical; the body labels
+         are English-only for now (i18n wave can translate later). The page
+         TITLE + entry button are now in the i18n table (adv_screen column:
+         en "Advanced" / ja "アドバンスド"; other langs fall back to base
+         "Advanced") — never "Engineer". -->
+    <!-- engineer_title / btn_engineer are GENERATED per-locale from the
+         adv_screen column; the base values keep the English "Advanced". -->
+    <string name="btn_engineer">Advanced</string>
+    <string name="engineer_title">Advanced</string>
     <string name="engineer_internals">Node internals</string>
     <string name="engineer_modules">Modules</string>
     <string name="engineer_log">Raw kernel log</string>

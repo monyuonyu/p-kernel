@@ -94,6 +94,13 @@ KEYS = [
     ("gpu_available",   "engineer_gpu_available"),
     ("gpu_enabled",     "engineer_gpu_enabled"),
     ("gpu_off",         "engineer_gpu_off"),
+    # Advanced-screen wording (UI-fixes wave): mk_pino — the deep page is
+    # "Advanced (アドバンスド)", NOT "Engineer". One source column feeds BOTH
+    # the MainActivity entry button (btn_engineer) and the LogActivity heading
+    # + manifest label (engineer_title). en+ja in the table; the other 30 fall
+    # back to the English base ("Advanced") — never "Engineer".
+    ("adv_screen",      "btn_engineer"),
+    ("adv_screen",      "engineer_title"),
 ]
 
 

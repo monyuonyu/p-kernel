@@ -10,7 +10,7 @@
     · the raw kernel stdout tail (with a copy button), and
     · the Fleet / relay (advanced) fields — node id / relay host/port/key,
       moved here from the friendly Settings layer (3-layer-discover wave).
-  Reached only from the "Engineer / advanced" button on the Settings layer;
+  Reached only from the "Advanced" button on the Settings layer;
   exported=false.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"

@@ -21,8 +21,8 @@
     <string name="star_dark">あなたの星は、いま眠っています</string>
     <string name="btn_sleep">眠らせる</string>
     <string name="btn_copy">コピー</string>
-    <string name="pref_battery_safe">バッテリー安全（30%で休む）</string>
-    <string name="pref_floor_label">%1$d%%で休む</string>
+    <string name="pref_battery_safe">バッテリー保護</string>
+    <string name="pref_floor_label">%1$d%% で休止</string>
     <string name="pref_wifi_only">Wi-Fiのみ（従量制以外）</string>
     <string name="pref_start_on_boot">スマホ起動時に始める</string>
     <string name="reintro_btn">はじめての説明をもう一度</string>
@@ -37,4 +37,6 @@
     <string name="engineer_gpu_available">%1$s ・ 利用可能 ・ %2$s ・ まだ推論には未使用（CPU）</string>
     <string name="engineer_gpu_enabled">有効（設定）</string>
     <string name="engineer_gpu_off">オフ</string>
+    <string name="btn_engineer">アドバンスド</string>
+    <string name="engineer_title">アドバンスド</string>
 </resources>

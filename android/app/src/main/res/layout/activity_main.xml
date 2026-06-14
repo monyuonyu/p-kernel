@@ -8,7 +8,7 @@
     2. SETTINGS (THIS screen, reached via the gear): a clear "Settings"
        header, the FRIENDLY controls (battery-safe · battery floor · Wi-Fi
        only · start-on-boot), "View introduction again", the app version,
-       and ONE clearly-labelled "Engineer / advanced" door. NO raw relay
+       and ONE clearly-labelled "Advanced" door. NO raw relay
        host/port/hex-key here — those moved to the engineer page.
     3. ENGINEER (LogActivity): build id + 24-module version table + node
        internals + raw log + the technical Fleet/relay fields. Jargon lives
