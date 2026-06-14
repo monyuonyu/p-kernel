@@ -1,0 +1,45 @@
+#version 450
+//
+// matmul_f32.comp — GPU-1 plain-float matmul compute shader.
+//
+// Computes y[i] = sum_j A[i*in + j] * x[j]  for i in [0, out).
+// This is the GPU mirror of the CPU reference contract (qz_matmul_q8_0 with
+// the quantization stripped away): row-major weights A, dense float x, dense
+// float y. GPU-2 will swap this shader for a dequant-while-you-matmul kernel
+// over Q8_0/Q4_0 blocks; the host Vulkan harness (gpu_vk.c) is shader-agnostic
+// and reused unchanged.
+//
+// One invocation = one output row y[i]. Work is dispatched as
+// ceil(out / LOCAL_SIZE) groups of LOCAL_SIZE invocations.
+//
+// Build: glslc -fshader-stage=comp -O matmul_f32.comp -o matmul_f32.spv
+// (see CMakeLists.txt — the .spv bytes are embedded as a C array at build
+// time so no runtime shader compiler is shipped.)
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Weight matrix A, row-major: A[i*in + j]. Read-only.
+layout(std430, binding = 0) readonly buffer BufA { float A[]; };
+// Input vector x, length `in`. Read-only.
+layout(std430, binding = 1) readonly buffer BufX { float x[]; };
+// Output vector y, length `out`. Write.
+layout(std430, binding = 2) writeonly buffer BufY { float y[]; };
+
+// Dimensions pushed as constants (in, out). Kept as a tiny uniform-like
+// push-constant block so the same pipeline serves any matmul size.
+layout(push_constant) uniform Dims {
+    uint nin;   // length of x / columns of A
+    uint nout;  // length of y / rows of A
+} dims;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;   // output row index
+    if (i >= dims.nout) return;         // guard the ragged last group
+
+    uint base = i * dims.nin;
+    float acc = 0.0;
+    for (uint j = 0u; j < dims.nin; ++j) {
+        acc += A[base + j] * x[j];
+    }
+    y[i] = acc;
+}

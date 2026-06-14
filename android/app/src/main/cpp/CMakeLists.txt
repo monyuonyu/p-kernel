@@ -318,17 +318,90 @@ add_custom_target(pkernel_web_gen DEPENDS ${GALAXY_PAGE} ${MANI_PAGE})
 set_source_files_properties(${ARCH_CO}/galaxy.c ${ARCH_CO}/ark_profile.c
     PROPERTIES OBJECT_DEPENDS "${GALAXY_PAGE};${MANI_PAGE}")
 
+# --- GPU-1 Vulkan compute backend (Android/host-only accelerator) ---------
+#
+# Optional GPU matmul. The CPU path stays the permanent reference/fallback;
+# this module is a *purely optional* accelerator that must never break a
+# device. Two compatibility rules are enforced by the build itself:
+#
+#   1. libvulkan is NOT linked. gpu_vk.c loads it via dlopen at runtime and
+#      resolves every Vulkan entry point with vkGetInstanceProcAddr. So
+#      libpkernel.so gets NO libvulkan DT_NEEDED — a device without Vulkan
+#      still loads the .so and runs on the CPU. (Verify with:
+#      llvm-readelf -d libpkernel.so | grep -i needed  -> no libvulkan.)
+#   2. The GLSL compute shader is compiled to SPIR-V AT BUILD TIME (glslc,
+#      shipped in the NDK at ${ANDROID_NDK}/shader-tools) and embedded as a
+#      C array header. No runtime shader compiler is shipped.
+set(GPU_DIR ${CMAKE_CURRENT_SOURCE_DIR}/gpu)
+
+# Locate glslc (the NDK's shaderc-based GLSL->SPIR-V compiler). The host tag
+# is x86_64 here (NDK-under-qemu); CMAKE_HOST_SYSTEM_NAME picks the dir.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    set(_NDK_HOST_TAG windows-x86_64)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(_NDK_HOST_TAG darwin-x86_64)
+else()
+    set(_NDK_HOST_TAG linux-x86_64)
+endif()
+find_program(GLSLC_BIN
+    NAMES glslc
+    HINTS ${ANDROID_NDK}/shader-tools/${_NDK_HOST_TAG}
+          ${ANDROID_NDK}/shader-tools
+    PATHS ${ANDROID_NDK}/shader-tools/${_NDK_HOST_TAG})
+if(NOT GLSLC_BIN)
+    message(FATAL_ERROR
+        "glslc not found under ${ANDROID_NDK}/shader-tools — needed to compile "
+        "the GPU-1 compute shader to SPIR-V. (Ships with NDK r19+.)")
+endif()
+message(STATUS "GPU-1: glslc = ${GLSLC_BIN}")
+
+set(GPU_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/gpu_gen)
+file(MAKE_DIRECTORY ${GPU_GEN_DIR})
+set(MATMUL_SPV_H ${GPU_GEN_DIR}/matmul_f32_spv.h)
+add_custom_command(
+    OUTPUT  ${MATMUL_SPV_H}
+    COMMAND ${CMAKE_COMMAND}
+            -DGLSLC=${GLSLC_BIN}
+            -DSRC=${GPU_DIR}/shaders/matmul_f32.comp
+            -DOUT=${MATMUL_SPV_H}
+            -DSYM=matmul_f32_spv
+            -P ${GPU_DIR}/embed_spv.cmake
+    DEPENDS ${GPU_DIR}/shaders/matmul_f32.comp ${GPU_DIR}/embed_spv.cmake
+    COMMENT "embed_spv: matmul_f32.comp -> SPIR-V header"
+    VERBATIM)
+add_custom_target(pkernel_gpu_spv DEPENDS ${MATMUL_SPV_H})
+
+set(GPU_SRC ${GPU_DIR}/gpu_vk.c)
+# gpu_vk.c #includes matmul_f32_spv.h by bare name from GPU_GEN_DIR.
+set_source_files_properties(${GPU_SRC} PROPERTIES OBJECT_DEPENDS ${MATMUL_SPV_H})
+
 # JNI shim
 set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c)
 
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
-    ${KCOMMON_SRC} ${LIBSTR_SRC} ${JNI_SRC})
+    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC})
 
 # galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and
-# ark_profile.c #include them by bare name.
-target_include_directories(pkernel PRIVATE ${GEN_DIR})
-add_dependencies(pkernel pkernel_web_gen)
+# ark_profile.c #include them by bare name. gpu_gen holds the SPIR-V header.
+target_include_directories(pkernel PRIVATE ${GEN_DIR} ${GPU_GEN_DIR} ${GPU_DIR})
+add_dependencies(pkernel pkernel_web_gen pkernel_gpu_spv)
+
+# --- GPU-1 device-test harness (standalone arm64 exe for /data/local/tmp) --
+# Built alongside the .so so it cross-compiles for the SAME arm64 target.
+# It links ONLY gpu_vk.c + its own CPU reference (no kernel, no JNI). Push it
+# to the S25 with adb and run it on the real Adreno (design doc §4.1).
+add_executable(gpu_test ${GPU_DIR}/gpu_test.c ${GPU_SRC})
+set_source_files_properties(${GPU_DIR}/gpu_test.c PROPERTIES
+    OBJECT_DEPENDS ${MATMUL_SPV_H})
+target_include_directories(gpu_test PRIVATE ${GPU_GEN_DIR} ${GPU_DIR})
+add_dependencies(gpu_test pkernel_gpu_spv)
+# log only on Android; dl for dlopen. NO libvulkan link (dlopen at runtime).
+if(ANDROID)
+    target_link_libraries(gpu_test log dl m)
+else()
+    target_link_libraries(gpu_test dl m)
+endif()
 
 # Bionic's libc + posix timers (timer_create lives there); no -lrt.
 target_link_libraries(pkernel log android)
