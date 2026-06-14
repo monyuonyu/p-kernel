@@ -15,6 +15,8 @@
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
+/* dtr_infer() is declared in dtr.h (included above); the cert calls the
+ * SOLO path to seed the inference log deterministically. */
 
 /* ------------------------------------------------------------------ */
 /* ユーティリティ                                                      */
@@ -171,4 +173,85 @@ void ga_stat(void)
     ga_puts("[ga]  interval      : every ");
     ga_putdec(GA_INTERVAL);
     ga_puts(" idle runs\r\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* ga_test — Evolution-layer 自己テスト (shell `ga test`)             */
+/*                                                                    */
+/* 主張: 変異 (ga_mutate) → 選択 (baseline より良い候補のみ採用)      */
+/* が、測定可能な fitness (推論ログ上の平均 max-softmax) を実際に      */
+/* 改善する。決定論的に固定シードで走らせ、N 世代後の平均 fitness が  */
+/* 初期 fitness より大きいことを確認する。                            */
+/*                                                                    */
+/* なぜ no-op ではないか:                                              */
+/*   ga_step は fit > baseline + 0.005 の候補のみ採用するため、       */
+/*   fitness は単調非減少。改善 0 のままなら improvements==0 となり    */
+/*   FAIL する。つまり「採用が一度も起きない」退化版を弾く。          */
+/* ------------------------------------------------------------------ */
+
+#define GA_TEST_GENERATIONS  40
+
+void ga_test(void)
+{
+    ga_puts("[ga-test] ==== Evolution layer: GA weight self-improvement ====\r\n");
+
+    /* 1. 推論ログを決定論的に満たす (SOLO パスが dtr_log_push する)。
+     *    GA_LOG_MIN 以上のエントリが要る。様々な入力で評価対象を作る。 */
+    static const B seed_inputs[6][4] = {
+        { 10, 30,  90, 100 },
+        { 40, 70, 110, 127 },
+        { 28, 55, 100, 110 },
+        {  5, 15,  45,  60 },
+        { 60, 80, 120, 125 },
+        { 20, 40,  80,  95 },
+    };
+    INT logged = 0;
+    for (INT i = 0; i < 6; i++) {
+        if (dtr_infer(seed_inputs[i]) >= 0) logged++;
+    }
+    ga_puts("[ga-test] seeded inference log entries="); ga_putdec(dtr_log_avail());
+    ga_puts(" (need >="); ga_putdec(GA_LOG_MIN); ga_puts(")\r\n");
+
+    if (dtr_log_avail() < GA_LOG_MIN) {
+        ga_puts("[ga-evolve] FAIL (could not seed inference log -- dtr SOLO path unavailable)\r\n");
+        return;
+    }
+
+    /* 2. 固定シードで初期化 (決定論性) し、baseline fitness を測る。 */
+    ga_init();
+    dtr_ga_busy = 1;
+    float fit_before = dtr_eval_confidence();
+    dtr_ga_busy = 0;
+    ga_puts("[ga-test] baseline mean max-softmax fitness="); ga_putf2(fit_before); ga_puts("\r\n");
+
+    /* 3. N 世代の進化を走らせる。 */
+    for (INT g = 0; g < GA_TEST_GENERATIONS; g++) ga_step();
+
+    /* 4. 進化後の fitness を測る。 */
+    dtr_ga_busy = 1;
+    float fit_after = dtr_eval_confidence();
+    dtr_ga_busy = 0;
+    ga_puts("[ga-test] after "); ga_putdec(GA_TEST_GENERATIONS);
+    ga_puts(" generations: fitness="); ga_putf2(fit_after);
+    ga_puts(" improvements="); ga_putdec(ga_stats.improvements); ga_puts("\r\n");
+
+    /* 5. 判定:
+     *    (a) 選択が一度以上採用を起こした (improvements > 0) —
+     *        変異+選択が「効いた」証拠。改善ゼロの退化版を弾く。
+     *    (b) 平均 fitness が厳密に上昇した (fit_after > fit_before) —
+     *        測定可能な目的関数が実際に良くなった。
+     *    ga_step は非改善候補を採用しないので fit_after >= fit_before は
+     *    構造的に保証されるが、ここでは「厳密な改善」を要求して
+     *    本当に進化が起きたことを確かめる。 */
+    INT pass = (ga_stats.improvements > 0) && (fit_after > fit_before);
+
+    if (pass) {
+        ga_puts("[ga-evolve] PASS (mutation+selection improved mean fitness ");
+        ga_putf2(fit_before); ga_puts(" -> "); ga_putf2(fit_after);
+        ga_puts(" over "); ga_putdec(GA_TEST_GENERATIONS); ga_puts(" generations)\r\n");
+    } else {
+        ga_puts("[ga-evolve] FAIL (no measurable improvement: before=");
+        ga_putf2(fit_before); ga_puts(" after="); ga_putf2(fit_after);
+        ga_puts(" improvements="); ga_putdec(ga_stats.improvements); ga_puts(")\r\n");
+    }
 }

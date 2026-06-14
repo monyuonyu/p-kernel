@@ -64,3 +64,8 @@ void ga_step(void);
 
 /* 統計表示 (shell `ga` コマンド用) */
 void ga_stat(void);
+
+/* 自己テスト (shell `ga test` コマンド用)
+ * 変異→選択が測定可能な fitness (平均 max-softmax) を改善することを
+ * 決定論的に検証する。PASS なら "[ga-evolve] PASS" を出力する。 */
+void ga_test(void);

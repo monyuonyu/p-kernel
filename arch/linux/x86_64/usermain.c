@@ -34,6 +34,7 @@
 #include "protect.h"
 #include "guard.h"
 #include "dmn.h"
+#include "ga.h"      /* Phase 14: Evolution-layer GA (ga_init/ga_step/ga_test) */
 #include "galaxy.h"  /* galaxy v1: the observation window task */
 #include "selfc.h"
 #ifdef HAVE_LIBTCC
@@ -646,6 +647,9 @@ EXPORT INT usermain(void)
      * (13, below every 3-7 task above): it runs only when everything
      * else blocks, and consolidation runs only when engrams/facts are
      * pending. Params mirror arch/x86/usermain.c (DMN_PRIORITY/STACK). */
+    /* Phase 14 (Evolution layer): seed the GA stats/LCG before the DMN
+     * task starts — dmn_idle_work() calls ga_step() on the idle heartbeat. */
+    ga_init();
     dmn_init();
     if (create_task((FP)dmn_task, 13, 8192) < E_OK)
         print("[ERR] DMN task\r\n");
@@ -762,6 +766,16 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_test();
             else print("usage: dmn test\r\n");
+        } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
+            /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
+             * GA self-improvement cert (mutation+selection improves a
+             * measurable fitness = mean max-softmax over the inference log;
+             * prints "[ga-evolve] PASS"). ga.c's ga_step() is the LIVE path
+             * driven by dmn_idle_work() on the DMN idle heartbeat. */
+            const UB *a = line + 2; UW al = (UW)(n - 2);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') ga_test();
+            else ga_stat();
         } else if (starts_with(line, n, "self") && (n == 4 || line[4] == ' ')) {
             /* living-mind Self layer (docs/architecture/living-mind.md III):
              * `self test` runs the distributed-autobiographical-self suite

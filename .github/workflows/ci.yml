@@ -78,7 +78,7 @@ jobs:
           # — the in-context competence threshold), and r3/handoff/stream/lang/
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -168,6 +168,13 @@ jobs:
           grep -aF '[dmn-distributed] PASS' selftest.log
           grep -aF '[dmn-survive] PASS' selftest.log
           grep -aF '[dmn-gradcheck] PASS' selftest.log
+          # Evolution layer (Phase 14, ga.c): the GA self-improvement organ
+          # driven by dmn_idle_work()'s idle heartbeat. `ga test` seeds the
+          # inference log deterministically, then runs N seeded generations of
+          # mutate->evaluate(mean max-softmax fitness)->keep-if-improved and
+          # asserts the mean fitness STRICTLY rose (not a no-op): >0 candidate
+          # adoptions AND fit_after > fit_before. (`ga test`)
+          grep -aF '[ga-evolve] PASS' selftest.log
           # living-mind Part V (LM-4, the fast->slow handoff): a fact learned
           # ONLY in-context by R3's FAST layer (frozen rw[], the dictionary
           # lives in the prompt) is self-distilled into R3's OWN weights rw[]

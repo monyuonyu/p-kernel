@@ -550,7 +550,11 @@ static void cmd_dmn(const char *arg)
 
 static void cmd_ga(const char *arg)
 {
-    (void)arg;
+    while (*arg == ' ') arg++;
+    if (arg[0]=='t' && arg[1]=='e' && arg[2]=='s' && arg[3]=='t') {
+        ga_test();   /* Evolution-layer self-test (ga.c) */
+        return;
+    }
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     ga_stat();
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
