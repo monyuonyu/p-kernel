@@ -32,6 +32,10 @@
 #ifndef PKERNEL_QUANT_H
 #define PKERNEL_QUANT_H
 
+/* M1b carries its own version (modver registry; compatibility.md): the
+ * dequant-while-you-matmul contract. v1 = Q8_0 + Q4_0 single matmul. */
+#define LLM_QUANT_VER  1
+
 #include <stdint.h>
 #include <stddef.h>
 
