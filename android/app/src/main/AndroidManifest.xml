@@ -25,6 +25,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- RECEIVE_BOOT_COMPLETED — a NORMAL permission. Required by
+         JobInfo.setPersisted(true) so the charge-resume job survives a reboot:
+         a node paused at the battery floor resumes if the phone is rebooted
+         while charging. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <application
         android:label="@string/app_name"
@@ -59,17 +64,16 @@
             android:foregroundServiceType="dataSync"/>
 
         <!-- battery-safe RESUME: after a low-battery stopSelf() (which kills
-             the process + its runtime receiver) this manifest receiver wakes
-             on plug-in and relaunches the service with the persisted boot
-             params. ACTION_POWER_CONNECTED is a protected system broadcast,
-             so exported=false is correct (only the system delivers it). -->
-        <receiver
-            android:name=".PowerConnectedReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.ACTION_POWER_CONNECTED"/>
-            </intent-filter>
-        </receiver>
+             the process + its runtime receiver) the JobScheduler runs this
+             JobService when the charging constraint is met. A running
+             JobService is an allowed context to start an FGS on Android 12+,
+             unlike a background ACTION_POWER_CONNECTED receiver (which throws
+             ForegroundServiceStartNotAllowedException). BIND_JOB_SERVICE lets
+             only the system bind it; exported=false. -->
+        <service
+            android:name=".ResumeJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
 
     </application>
 </manifest>

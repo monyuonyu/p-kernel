@@ -20,10 +20,17 @@
  * policy is split:
  *   - LEVEL-based PAUSE uses a RUNTIME ACTION_BATTERY_CHANGED receiver
  *     (that broadcast cannot be manifest-declared); while the service
- *     is alive it watches the level and stopSelf()s at the floor.
- *   - CHARGE-based RESUME uses a MANIFEST-declared receiver for
- *     ACTION_POWER_CONNECTED (which survives the process death); it
- *     re-launches the service with the persisted boot params.
+ *     is alive it watches the level and stopSelf()s at the floor. At the
+ *     moment of pause it schedules a JobScheduler job constrained on
+ *     charging (setRequiresCharging(true), setPersisted(true)).
+ *   - CHARGE-based RESUME uses that JobScheduler job (ResumeJobService),
+ *     which survives the process death and, on a reboot-while-charging,
+ *     survives a reboot too. A running JobService is an allowed context
+ *     to start a foreground service on Android 12+, whereas a background
+ *     ACTION_POWER_CONNECTED receiver calling startForegroundService()
+ *     throws ForegroundServiceStartNotAllowedException — which is why the
+ *     old manifest receiver could never resume. On a successful (re)boot
+ *     the pending job is cancelled so it can't double-fire.
  *
  * Tail log: drains stdout from the kernel via PKernel.readStdout()
  * on a worker thread and keeps the last ~64 KB in a ring buffer so
@@ -35,7 +42,10 @@ package io.pkernel
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.Service
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -120,6 +130,9 @@ class PKernelService : Service() {
     private fun bootKernelOnce(nodeId: Int, relayHost: String,
                                relayPort: Int, relayKey: String) {
         if (!running.compareAndSet(false, true)) return
+        // The kernel is (re)booting, so any pending charge-resume job is stale.
+        // Cancel it so it can't double-fire when the phone is next plugged in.
+        cancelResumeJob()
         appendLog("[ump] starting kernel (node $nodeId, relay='$relayHost:$relayPort')\n")
         val pk = PKernel()
         // persistence SLICE 1/2 (docs/architecture/persistence.md): point the
@@ -200,11 +213,58 @@ class PKernelService : Service() {
                     bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
                 } else if (!allowed && running.get()) {
                     appendLog("[ump] battery ≤${BATTERY_FLOOR_PCT}% and unplugged — pausing to protect the battery; will resume when charging.\n")
+                    // Schedule the charge-constrained resume job BEFORE stopSelf()
+                    // — while we are still foreground, so scheduling is
+                    // unambiguous. This replaces the old (broken on Android 12+)
+                    // ACTION_POWER_CONNECTED → startForegroundService() path.
+                    scheduleResumeJob()
                     stopSelf()
                 }
             }
         }
         registerReceiver(powerReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    /* --- charge-constrained resume job --------------------------------- */
+
+    /**
+     * Schedule the ResumeJobService to run when the phone is charging. Called
+     * at the moment of the low-battery pause (while still foreground). The job
+     * is the Android-12+-safe replacement for the old ACTION_POWER_CONNECTED
+     * receiver: a running JobService is an allowed context to start an FGS.
+     *
+     * Guard: only schedule when battery-safe mode is on and boot params exist
+     * (mirrors the job's own resume guard). setPersisted(true) survives a
+     * reboot-while-charging (needs RECEIVE_BOOT_COMPLETED). Wrapped so a
+     * scheduling failure can never crash the pausing receiver.
+     */
+    private fun scheduleResumeJob() {
+        if (!prefs.getBoolean(PREF_CHARGE_ONLY, true)) return
+        if (!prefs.contains(EXTRA_NODE_ID)) return
+        try {
+            val js = getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
+                ?: return
+            val job = JobInfo.Builder(
+                    RESUME_JOB_ID,
+                    ComponentName(this, ResumeJobService::class.java))
+                .setRequiresCharging(true)
+                .setPersisted(true)
+                .build()
+            js.schedule(job)
+            appendLog("[ump] scheduled charge-resume job (fires when plugged in).\n")
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Cancel any pending charge-resume job (called when the kernel (re)boots
+     *  so a stale job can't double-fire). */
+    private fun cancelResumeJob() {
+        try {
+            val js = getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
+                ?: return
+            js.cancel(RESUME_JOB_ID)
+        } catch (_: Exception) {
+        }
     }
 
     /* --- notification --------------------------------------------------- */
@@ -233,6 +293,7 @@ class PKernelService : Service() {
         const val NOTIF_ID      = 1
         const val PREF_CHARGE_ONLY = "charge_only"   // now means "battery-safe mode"
         const val BATTERY_FLOOR_PCT = 30             // pause below this when unplugged
+        const val RESUME_JOB_ID = 7401               // fixed JobScheduler id for the charge-resume job
 
         const val EXTRA_NODE_ID    = "node_id"
         const val EXTRA_RELAY_HOST = "relay_host"
