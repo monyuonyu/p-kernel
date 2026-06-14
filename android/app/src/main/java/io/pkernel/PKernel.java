@@ -76,6 +76,7 @@ public final class PKernel {
      * (GPU-3 wires the matmul to the GPU). The engineer page says so honestly.
      */
     public static native boolean nativeGpuAvailable();
+    public static native boolean nativeGpuCapable();
     public static native String  nativeGpuName();
     public static native boolean nativeGpuGetEnabled();
     public static native void    nativeGpuSetEnabled(boolean enabled);
@@ -88,9 +89,16 @@ public final class PKernel {
     public static final class Gpu {
         private Gpu() {}
 
-        /** True iff a usable Vulkan compute device is live RIGHT NOW. When
-         *  false the device has no usable GPU path and the toggle is disabled. */
+        /** True iff a usable Vulkan compute device is live RIGHT NOW, i.e.
+         *  capable AND the enable flag is ON. This is the "in use" query. */
         public static boolean available() { return nativeGpuAvailable(); }
+
+        /** True iff this device HAS a usable Vulkan compute device, REGARDLESS
+         *  of the enable flag — the CAPABILITY query. The settings toggle greys
+         *  itself on !capable() (not !available()), so a capable device with the
+         *  flag OFF still shows a working, switchable toggle. Without this the
+         *  flag-gated available() would deadlock the UI (greyed because OFF). */
+        public static boolean capable() { return nativeGpuCapable(); }
 
         /** The picked GPU's device name (e.g. "Adreno (TM) 840"), or "" if
          *  no GPU / not yet initialised. Never null. */

@@ -37,6 +37,16 @@ Java_io_pkernel_PKernel_nativeGpuAvailable(JNIEnv *env, jclass cls)
     return gpu_available() ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_io_pkernel_PKernel_nativeGpuCapable(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    /* CAPABILITY (a usable Vulkan device exists), independent of the enable
+     * flag. The settings toggle greys on !capable, not !available, so a capable
+     * device shows a working (default-OFF) toggle instead of a dead one. */
+    return gpu_capable() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_io_pkernel_PKernel_nativeGpuName(JNIEnv *env, jclass cls)
 {
