@@ -1944,7 +1944,17 @@ static void dproc_churn(void)
         return;
     }
 
+    /* KDDS-HANDLE-LEAK gate (wave-56): infer_d.elf opens ai/req+ai/rsp
+     * each life.  Pre-fix, a killed daemon's handles were never closed at
+     * teardown, so the open handle count climbed ~2/cycle until
+     * KDDS_HANDLE_MAX exhausted ("cannot open ai/rsp") -> downstream #DE.
+     * Snapshot the baseline, track the peak across the storm, and assert
+     * the count returns to (and never wildly exceeds) baseline. */
+    INT kdds_base = kdds_handle_count();
+    INT kdds_peak = kdds_base;
+
     sout("dproc-churn: START cycles="); sout_dec((UW)CHURN_CYCLES);
+    sout(" kdds_handles="); sout_dec((UW)kdds_base);
     sout(" (watchdog LIVE — real heal/kill churn)\r\n");
 
     /* NOTE: the ELF watchdog stays LIVE on purpose — heal re-execs the
@@ -1963,10 +1973,12 @@ static void dproc_churn(void)
         if (dproc_kill_by_name("infer_d.elf") >= 0) killed++;
         /* let heal notice + the dispatcher churn before the next exec */
         tk_dly_tsk((RELTIM)(3 + (c & 3)));
+        { INT hc = kdds_handle_count(); if (hc > kdds_peak) kdds_peak = hc; }
         if ((c & 7) == 7) {
             sout("dproc-churn: cycle "); sout_dec((UW)(c + 1));
             sout("  started="); sout_dec((UW)started);
             sout(" killed=");   sout_dec((UW)killed);
+            sout(" kdds_h=");   sout_dec((UW)kdds_handle_count());
             sout(" ticks=");    sout_dec(churn_sentinel_ticks);
             sout("\r\n");
         }
@@ -1975,6 +1987,9 @@ static void dproc_churn(void)
     /* drain any in-flight heal restart, then quiesce */
     tk_dly_tsk(200);
     dproc_kill_by_name("infer_d.elf");
+    tk_dly_tsk(50);   /* let that last kill's teardown sweep its handles */
+
+    INT kdds_end = kdds_handle_count();
 
     UW end_ticks = churn_sentinel_ticks;
     churn_sentinel_stop = 1;
@@ -1983,24 +1998,42 @@ static void dproc_churn(void)
 
     BOOL sched_alive = (end_ticks > base_ticks);
 
+    /* KDDS-HANDLE-LEAK gate: with the teardown sweep, the open handle
+     * count returns to baseline (allow +2 slack for ONE in-flight heal
+     * restart still holding ai/req+ai/rsp) and the peak never approaches
+     * KDDS_HANDLE_MAX.  Pre-fix the count climbs ~2/cycle without bound.
+     * Peak bound = baseline + a generous transient window; a true leak
+     * over CHURN_CYCLES cycles blows past it. */
+    INT kdds_end_slack = kdds_base + 2;
+    INT kdds_peak_bound = kdds_base + 8;   /* a few concurrent daemons mid-churn */
+    BOOL kdds_bounded = (kdds_end <= kdds_end_slack) && (kdds_peak <= kdds_peak_bound);
+
     sout("dproc-churn: cycles="); sout_dec((UW)CHURN_CYCLES);
     sout("  started="); sout_dec((UW)started);
     sout("  killed=");  sout_dec((UW)killed);
     sout("  sched_ticks "); sout_dec(base_ticks);
-    sout("->"); sout_dec(end_ticks); sout("\r\n");
+    sout("->"); sout_dec(end_ticks);
+    sout("  kdds_h base="); sout_dec((UW)kdds_base);
+    sout(" peak="); sout_dec((UW)kdds_peak);
+    sout(" end="); sout_dec((UW)kdds_end);
+    sout(" (max="); sout_dec((UW)KDDS_HANDLE_MAX); sout(")\r\n");
 
     /* Reaching here at all == no garbage-PC #PF and no poison halt
      * (those never return to the shell).  Plus the scheduler kept
-     * advancing through the whole storm. */
-    if (sched_alive && started > 0 && killed > 0) {
-        sout("dproc-churn: PASS  (no UAF #PF, no poison-catch, sched alive)\r\n");
+     * advancing through the whole storm and the kdds handle table did
+     * not leak toward exhaustion. */
+    if (sched_alive && started > 0 && killed > 0 && kdds_bounded) {
+        sout("dproc-churn: PASS  (no UAF #PF, no poison-catch, sched alive, kdds bounded)\r\n");
         sout("[kill-churn] PASS\r\n");
+        sout("[kdds-leak] PASS\r\n");
     } else {
         sout("dproc-churn: FAIL  (sched_alive=");
         sout_dec((UW)sched_alive);
         sout(" started="); sout_dec((UW)started);
-        sout(" killed=");  sout_dec((UW)killed); sout(")\r\n");
+        sout(" killed=");  sout_dec((UW)killed);
+        sout(" kdds_bounded="); sout_dec((UW)kdds_bounded); sout(")\r\n");
         sout("[kill-churn] FAIL\r\n");
+        if (!kdds_bounded) sout("[kdds-leak] FAIL\r\n");
     }
 }
 
