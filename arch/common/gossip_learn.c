@@ -959,18 +959,16 @@ static UW gl_fold_cached_peers(UB me)
 
 static UW gl_merge_peers(UB me)
 {
-    /* transport: pull each CANDIDATE peer's freshest model into the cache,
-     * then fold over the symmetric set {self} U {peers cached}.
+    /* transport: pull each peer's freshest model into the cache, then fold
+     * over the symmetric set {self} U {peers cached}.
      *
-     * Candidacy is content-driven (gl_peer_candidate): a peer is probed if it
-     * is SWIM-ALIVE, already cached, OR — the fan-in fix — we have NOT yet
-     * cached it but its model ref might now be published. To cover that last
-     * case without waiting on SWIM, we probe EVERY id we do not already hold
-     * (a fetch of an unpublished ref fails fast and cheap), so the first
-     * round in which a peer's 2.5 KB body lands folds it in for good. This is
-     * what guarantees the marginal disjoint-shard node receives cross-shard
-     * signal from ALL its peers within a bounded window, no matter how slowly
-     * the failure detector converges. */
+     * Peer discovery is content-driven (the fan-in fix): we probe EVERY id,
+     * not just the SWIM-ALIVE ones. A peer is folded the first round its model
+     * ref is published and its 2.5 KB body lands — and once cached it stays
+     * folded for good. A fetch of an unpublished ref fails fast and cheap, so
+     * probing all ids is harmless. This guarantees the marginal disjoint-shard
+     * node receives cross-shard signal from ALL its peers within a bounded
+     * window, no matter how slowly the failure detector converges. */
     for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
         /* Probe EVERY id (not just SWIM-ALIVE ones) so a published-but-not-
