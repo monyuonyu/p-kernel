@@ -416,8 +416,72 @@ function mkSphere(r,g,b){
 const SPHERE={blue:mkSphere(137,180,250),indigo:mkSphere(140,134,255),
               gold:mkSphere(249,210,120),white:mkSphere(232,232,245),
               red:mkSphere(243,139,168),teal:mkSphere(148,226,213)};
+// the same palette triples as RGB strings, so the ME-star blob's radial
+// gradient (clipped to its wobbling outline) matches its sphere sprite's hue.
+const ME_RGB={blue:"137,180,250",indigo:"140,134,255",gold:"249,210,120",
+              white:"232,232,245",red:"243,139,168",teal:"148,226,213"};
 function sphereAt(spr,x,y,r,al){
   ctx.globalAlpha=al;ctx.drawImage(spr,x-r,y-r,r*2,r*2);ctx.globalAlpha=1;
+}
+
+// ── ME-star undulating blob ─────────────────────────────────────────────
+//   The owner's own star is NOT a rigid scaling circle: its OUTLINE ripples
+//   like a water droplet / jellyfish. The shape = a closed path of NB points
+//   whose radius is baseR*(1 + Σ small sine lobes) at angular freqs 2/3/5
+//   with fixed phase offsets, travelling around the rim over the clock — a
+//   deterministic function of (clock, state), NEVER Math.random (product-soul
+//   honest-growth law). meStarState supplies wspeed/wamp/wlobe so the motion
+//   is driven by the mind's REAL mode (dream slow&large / learn quick&fine /
+//   calm shimmer / stress agitated). Drawn by clipping the path and blitting
+//   the cached sphere sprite (no per-frame gradient) so it still reads 3D.
+const NB=28;                                   // outline points (smooth, cheap)
+// three travelling lobes: [angular frequency, weight, phase offset]. The
+// weights sum the deformation; freqs 2,3,5 give an organic non-repeating edge.
+const ME_LOBES=[[2,0.55,0.0],[3,0.30,2.1],[5,0.15,4.7]];
+const ME_TWO_PI=6.28318530718;
+// scratch arrays reused every frame (no per-frame allocation)
+const _bx=new Float32Array(NB), _by=new Float32Array(NB);
+function drawMeBlob(cx,cy,baseR,spr,al,tms,ms,throb){
+  // 1) deform the outline. Each lobe travels around the rim at wspeed*freq.
+  const amp=ms.wamp+0.9*throb*ms.wamp;          // a real SSE beat = a brief swell
+  let rmax=0;
+  for(let i=0;i<NB;i++){
+    const a=i/NB*ME_TWO_PI;
+    let d=0;
+    for(let l=0;l<ME_LOBES.length;l++){
+      const f=ME_LOBES[l][0]*ms.wlobe;           // state scales how many lobes
+      d+=ME_LOBES[l][1]*Math.sin(f*a + tms*ms.wspeed*ME_LOBES[l][0] + ME_LOBES[l][2]);
+    }
+    const r=baseR*(1+amp*d);
+    _bx[i]=cx+Math.cos(a)*r; _by[i]=cy+Math.sin(a)*r;
+    const rr=baseR*(1+amp*Math.abs(d)); if(rr>rmax) rmax=rr;
+  }
+  // 2) trace a smooth closed curve through the points (midpoint quadratics =
+  //    a soft blob, not a spiky polygon) — one path, cheap.
+  ctx.beginPath();
+  let px=(_bx[NB-1]+_bx[0])/2, py=(_by[NB-1]+_by[0])/2;
+  ctx.moveTo(px,py);
+  for(let i=0;i<NB;i++){
+    const j=(i+1)%NB;
+    const mx=(_bx[i]+_bx[j])/2, my=(_by[i]+_by[j])/2;
+    ctx.quadraticCurveTo(_bx[i],_by[i],mx,my);
+  }
+  ctx.closePath();
+  // 3) fill it with the 3D look: clip to the wobbling outline, blit the cached
+  //    sphere sprite (bright off-centre core -> shaded rim). NO per-frame
+  //    gradient; the sprite is pre-rendered once per palette colour.
+  ctx.save();
+  ctx.clip();
+  ctx.globalAlpha=al;
+  const sr=rmax*1.18;                            // cover the whole wobble
+  ctx.drawImage(spr,cx-sr,cy-sr,sr*2,sr*2);
+  ctx.restore();
+  // 4) a soft luminous rim so the jellyfish edge catches the light
+  ctx.globalAlpha=Math.min(1,al)*0.5;
+  ctx.lineWidth=1.1;
+  ctx.strokeStyle=`rgba(${ms.rgb},0.9)`;
+  ctx.stroke();
+  ctx.globalAlpha=1;
 }
 // ── ME-star living state -> {glow sprite, sphere sprite, pulse cadence}.
 //    Derived from the SAME snapshot fields the HUD reads (poll(): m.pending,
@@ -430,22 +494,31 @@ function meStarState(m){
   // /galaxy.json exposes for ME today; atrisk is peers-only). EWMA-smoothed
   // upstream in the kernel; here a gentle blend, no fake source.
   const stress=Math.min(1,((m.pressure||0)+(m.threat||0)*1.4)/120);
-  let mode,sprGlow,sprBall,period,depth;
-  if((m.pending||0)>0){            // LEARNING (== HUD st_learn) — gold, quick bright beat
-    mode="learn"; sprGlow=GLOW.gold; sprBall=SPHERE.gold; period=820;  depth=0.34;
-  }else if((m.dmn||0)===1){        // DREAMING (== HUD st_dream) — indigo, slow deep breath
-    mode="dream"; sprGlow=GLOW.indigo; sprBall=SPHERE.indigo; period=2600; depth=0.42;
-  }else{                           // CALM AWAKE (== st_awake/link/alone) — warm white, gentle
-    mode="calm"; sprGlow=GLOW.white; sprBall=SPHERE.white; period=3400; depth=0.16;
+  let mode,sprGlow,sprBall,period,depth,rgb;
+  // wobble = the SHAPE-undulation character (interoception §3.3): how fast the
+  //   outline ripples (wspeed), how deep the lobes push (wamp, as a fraction of
+  //   radius), and how many travelling lobes dominate (wlobe ~ angular freq).
+  let wspeed,wamp,wlobe;
+  if((m.pending||0)>0){            // LEARNING (== HUD st_learn) — gold, quick fine ripples
+    mode="learn"; sprGlow=GLOW.gold; sprBall=SPHERE.gold; rgb=ME_RGB.gold;
+    period=820;  depth=0.34; wspeed=0.0019; wamp=0.085; wlobe=1.30;   // quick & fine
+  }else if((m.dmn||0)===1){        // DREAMING (== HUD st_dream) — indigo, slow deep swell
+    mode="dream"; sprGlow=GLOW.indigo; sprBall=SPHERE.indigo; rgb=ME_RGB.indigo;
+    period=2600; depth=0.42; wspeed=0.0008; wamp=0.130; wlobe=0.80;   // slow & large
+  }else{                           // CALM AWAKE — warm white, near-still shimmer
+    mode="calm"; sprGlow=GLOW.white; sprBall=SPHERE.white; rgb=ME_RGB.white;
+    period=3400; depth=0.16; wspeed=0.0006; wamp=0.055; wlobe=0.90;   // gentle shimmer
   }
   // stress overlay: faster + agitated + reddish, proportional (not a jump).
   // §3.4 oscillation guard: continuous slope, never "stressed => max".
   if(stress>0.04){
     period*=(1-0.45*stress);                       // up to ~2x faster
     depth =Math.min(0.55,depth+0.18*stress);       // a little more agitated
-    if(stress>0.20){ sprGlow=GLOW.red; sprBall=SPHERE.red; }  // red-shift
+    wspeed*=(1+1.4*stress);                         // edge ripples faster
+    wamp  =Math.min(0.20,wamp+0.07*stress);         // a little more pronounced wobble
+    if(stress>0.20){ sprGlow=GLOW.red; sprBall=SPHERE.red; rgb=ME_RGB.red; }  // red-shift
   }
-  return {mode,sprGlow,sprBall,period,depth,stress};
+  return {mode,sprGlow,sprBall,rgb,period,depth,stress,wspeed,wamp,wlobe};
 }
 
 // ambient sky: a tilted galactic band + a thin sphere shell. Generated once,
@@ -608,9 +681,12 @@ function draw(){
   const glowR2=mr*2.6*(1+0.06*(pulse-0.7)+0.3*throb);
   glowAt(ms.sprGlow,me3.x,me3.y,glowR1,(0.30+0.18*ms.stress)*pulse+0.35*throb);
   glowAt(ms.sprGlow,me3.x,me3.y,glowR2,(0.70)*pulse+0.25*throb);
-  // the sphere body itself (bright core -> shaded rim); radius breathes a hair
+  // the body itself: an UNDULATING droplet, not a scaled circle. The breathing
+  // scale (pulse/throb) stays as a SUBTLE size component; the headline motion
+  // is the rippling OUTLINE from drawMeBlob (a deterministic function of the
+  // clock + meStarState's wspeed/wamp/wlobe — real mind state, no random).
   const ballR=mr*(1+0.10*(pulse-0.7)+0.45*throb);
-  sphereAt(ms.sprBall,me3.x,me3.y,ballR,Math.min(1,0.9*pulse+0.3*throb));
+  drawMeBlob(me3.x,me3.y,ballR,ms.sprBall,Math.min(1,0.9*pulse+0.3*throb),tms,ms,throb);
   ctx.fillStyle="#f5e0dc";ctx.font="12px monospace";
   ctx.fillText((snap.me.star?("★ "+snap.me.star):("★ ME (node"+snap.me.id+")"))
                +(ms.mode==="dream"?" — dreaming":ms.mode==="learn"?" — learning":""),
