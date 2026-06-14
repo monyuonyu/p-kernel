@@ -44,6 +44,30 @@ region-A requester's query reaches only its same-region peer and the
 region-B nodes never participate — distributed attention stays inside the
 latency cluster. See `docs/architecture/regions.md`.
 
+## `run_coord_crash.sh` — coordinator crash re-delegates to next min id ([live])
+
+The region coordinator is **not fixed** — it is the region's *minimum live
+node-id*, re-derived locally by `region_recompute()` (arch/common/region.c).
+This cert proves, with real processes and a real `kill -9`, that the role
+**deterministically re-delegates** when the coordinator crashes, and that
+distributed aggregation still converges through whoever takes over — no
+election, no central single-point-of-failure.
+
+* **Part A** (the invariant itself): a 2-node region `{id0,id1}` viewed from
+  the requester `id1`; `kill -9` the coordinator `id0`; after SWIM declares it
+  DEAD the requester's `region` print flips `coordinator=node0` →
+  `coordinator=node1 (self)` (the next min live id). Disease = a stale
+  coordinator; cure = local re-derivation. The node keeps answering (no hang).
+* **Part B** (aggregation reconverges): a hub requester folds two remote region
+  summaries (rid=2 and rid=3); `kill -9` the `rid=2` coordinator mid-run; the
+  requester keeps converging through the survivor (rid=3) and accounts the loss
+  honestly as `degraded (k/n)` — no hang, no silent wrong result.
+
+Gate tag: `[coord-crash] PASS`. Scope note: a two-non-hub-node remote region
+re-publishing the *same* region's summary after its min dies is blocked by a
+separate discovery-layer limitation of the co-located relay harness (non-hub
+nodes reliably SWIM-mesh only the hub), not by the re-delegation invariant.
+
 ## `run_2node_train_propagate.sh` — R3a: trained weights propagate as memory
 
 Two nodes. Node 1 shows the honest before/after (`dtr eval` at random init
