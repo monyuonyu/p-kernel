@@ -337,6 +337,15 @@ static INT ip_send(UW dst_ip, UB proto, const UB *payload, UH plen)
     if (is_mcast(dst_ip)) {
         /* Multicast: derive Ethernet MAC directly — no ARP needed */
         make_mcast_mac(dst_ip, dst_mac);
+    } else if (dst_ip == IP4(255,255,255,255) || dst_ip == NET_BCAST) {
+        /* NET-DISCOVERY-STAR (wave-discovery-mesh): IP broadcast maps to the
+         * Ethernet broadcast MAC (ff:ff:ff:ff:ff:ff) directly — no ARP, no
+         * gateway hop. Previously next_hop() pushed a 255.255.255.255 frame at
+         * the (often unresolvable) gateway and ip_send dropped it, so the SWIM
+         * discovery beacon could never leave. The relay fan-out and QEMU's
+         * virtual switch both deliver a broadcast frame to every node, which is
+         * exactly what peer-symmetric membership discovery needs. */
+        for (INT i = 0; i < 6; i++) dst_mac[i] = 0xFF;
     } else {
         UW  hop = next_hop(dst_ip);
         if (!arp_lookup(hop, dst_mac)) {

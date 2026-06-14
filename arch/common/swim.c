@@ -417,25 +417,17 @@ static UB probe_cursor = 0;
 
 static UB pick_probe_target(void)
 {
-    /* NET-DISCOVERY-STAR (wave-discovery-mesh): a single round-robin cursor
-     * over the WHOLE id space, advanced once per call. Crucially this probes
-     * UNKNOWN ids too, not only already-known peers — otherwise a node whose
-     * table is all-UNKNOWN (the bring-up state of every node) fell into the
-     * old fallback that returned the FIRST non-self id (always the minimum-id
-     * node 0) on every round, so two non-hub peers NEVER directly probed each
-     * other and discovery collapsed into a star centred on the lowest id.
-     * Cycling through every id makes each node eventually PING every reachable
-     * peer directly (peer-symmetric, no central node), so a fresh ALIVE/RTT is
-     * measured for every peer — which is exactly what region_recompute needs.
-     * Confirmed-DEAD ids are skipped to avoid wasting rounds on graves; they
-     * are re-probed only after gossip/heartbeat resurrects them. */
+    /* Try round-robin among known (non-unknown) nodes first */
     for (UB tries = 0; tries < DNODE_MAX; tries++) {
         probe_cursor = (UB)((probe_cursor + 1) % DNODE_MAX);
         if (probe_cursor == drpc_my_node) continue;
-        if (dnode_table[probe_cursor].state == DNODE_DEAD) continue;
-        return probe_cursor;
+        if (dnode_table[probe_cursor].state != DNODE_UNKNOWN) return probe_cursor;
     }
-    return drpc_my_node;   /* only self is non-DEAD — nothing to probe */
+    /* Fallback: any non-self node (trigger initial discovery) */
+    for (UB i = 0; i < DNODE_MAX; i++) {
+        if (i != drpc_my_node) return i;
+    }
+    return drpc_my_node;
 }
 
 static void pick_helpers(UB exclude, UB helpers[SWIM_K_HELPERS], INT *cnt)
@@ -461,6 +453,39 @@ void swim_task(INT stacd, void *exinf)
     for (;;) {
         tk_dly_tsk(SWIM_PROBE_INTERVAL_MS);
         if (drpc_my_node == 0xFF) continue;
+
+        /* NET-DISCOVERY-STAR (wave-discovery-mesh): broadcast membership beacon.
+         *
+         * The defect: a peer left UNKNOWN until a DIRECT packet arrived, and the
+         * only direct traffic a non-hub node reliably saw was its own round-robin
+         * probe — whose all-UNKNOWN fallback always targeted the minimum-id node
+         * (the hub). So two NON-hub peers never exchanged a direct packet and the
+         * live mesh collapsed into a star centred on the lowest id; region_recompute
+         * kept the two at size=1, capping the cluster hub-centric and blocking
+         * federation.
+         *
+         * Fix (peer-symmetric, no central node, no wire change): once per round
+         * each node emits ONE SWIM packet to the LIMITED BROADCAST address. Over
+         * the relay (a broadcast fan-out bus) and over QEMU socket networking this
+         * reaches EVERY node; swim_rx() already (a) marks the SENDER ALIVE on any
+         * SWIM packet and (b) applies the piggybacked gossip. So a single beacon
+         * makes A learn B directly AND carries B's knowledge of C to A
+         * (transitive membership / infection-style dissemination). It is typed
+         * SWIM_ACK with seq=0 so no receiver treats it as a probe to answer (no
+         * ACK storm) and it never matches an outstanding probe's (seq,target).
+         * Cost: one extra datagram per node per second — bounded and tiny. The
+         * directed PING/ACK probing below is UNTOUCHED, so RTT measurement and
+         * SUSPECT/DEAD liveness detection keep their exact prior cadence. */
+        {
+            SWIM_PKT beacon = { 0 };
+            beacon.magic        = SWIM_MAGIC;
+            beacon.version      = SWIM_VERSION;
+            beacon.type         = SWIM_ACK;   /* seq=0 => not a probe reply to anyone */
+            beacon.seq          = 0;
+            beacon.src_node     = drpc_my_node;
+            beacon.probe_target = drpc_my_node;
+            swim_send(IP4(255, 255, 255, 255), &beacon);
+        }
 
         UB target = pick_probe_target();
         if (target == drpc_my_node) continue;

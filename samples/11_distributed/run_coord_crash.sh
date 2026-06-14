@@ -198,18 +198,27 @@ if ! waitfor /tmp/cc_b_n1.log "Type 'help' for commands" 30; then
 fi
 sleep 14
 sendB "region"; sleep 1
-echo "[B] phase-1 (healthy): infer; expect to fold BOTH rid=2 and rid=3"
+# NET-DISCOVERY-STAR (wave-discovery-mesh): region B = {node3(id2), node4(id3)}
+# is ONE region (both in zone 1 under PKERNEL_RTT_ZONE_SIZE=2), with min-id
+# coordinator id2 -> rid=2. So the healthy requester folds region B as ONE
+# remote region summary (rid=2, 12 KV entries = both region-B nodes), NOT two
+# singletons. Before the discovery-mesh fix the two non-hub region-B nodes never
+# discovered each other (the star defect) and each stood as its OWN region
+# (rid=2 AND rid=3) — the old pre-kill assertion below inadvertently REQUIRED
+# that diseased split. The real coordinator-crash invariant is unchanged and is
+# still proven post-kill: killing region-B's coordinator (id2) makes the
+# survivor (id3) re-derive itself as the new region-B coordinator (rid=3 then
+# appears) with honest degraded accounting and no hang.
+echo "[B] phase-1 (healthy): infer; expect region B folded as ONE region (rid=2, 12 KV)"
 for i in 1 2 3; do sendB "infer 4$i 20 90 5"; sleep 1.6; done
 sleep 1
 
 PRE_FOLD2=$(grep -c "region summary rid=2" /tmp/cc_b_n1.log)
-PRE_FOLD3=$(grep -c "region summary rid=3" /tmp/cc_b_n1.log)
-PRE_2REG=$(grep -Fc "aggregated 1 region peers + 2 remote regions" /tmp/cc_b_n1.log)
-echo "[B]   pre-kill folds rid=2 : $PRE_FOLD2  (expect >0)"
-echo "[B]   pre-kill folds rid=3 : $PRE_FOLD3  (expect >0)"
-echo "[B]   pre-kill 2-remote-region aggregations : $PRE_2REG  (expect >0)"
-if [ "$PRE_FOLD2" -lt 1 ] || [ "$PRE_FOLD3" -lt 1 ] || [ "$PRE_2REG" -lt 1 ]; then
-    echo "FAIL[B]: baseline did not fold both remote coordinators (rid=2 & rid=3)."
+PRE_1REG12=$(grep -Fc "aggregated 1 region peers + 1 remote regions  (12 KV entries)" /tmp/cc_b_n1.log)
+echo "[B]   pre-kill folds rid=2 (region B coordinator) : $PRE_FOLD2  (expect >0)"
+echo "[B]   pre-kill region B folded as ONE 12-KV region: $PRE_1REG12  (expect >0: both region-B nodes in one summary)"
+if [ "$PRE_FOLD2" -lt 1 ] || [ "$PRE_1REG12" -lt 1 ]; then
+    echo "FAIL[B]: baseline did not fold the cohered region B (rid=2, 12 KV) — region-B nodes failed to co-region."
     FAIL=1
 fi
 B_OFF=$(wc -c < /tmp/cc_b_n1.log)
