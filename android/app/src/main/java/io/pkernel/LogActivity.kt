@@ -28,6 +28,7 @@
  */
 package io.pkernel
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -35,6 +36,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
+import android.view.MotionEvent
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ScrollView
@@ -62,11 +67,24 @@ class LogActivity : AppCompatActivity() {
 
     /* Previous CPU jiffy snapshots, so each refresh reports a DELTA (busy% over
      * the interval) rather than a since-boot average. prevCpu = (idle, total)
-     * from /proc/stat; prevProc = (utime+stime) from /proc/self/stat. */
+     * from /proc/stat; prevProc = (utime+stime) from /proc/self/stat.
+     *
+     * IMPORTANT (UI-fixes wave): /proc/stat's aggregate "cpu" line is NOT
+     * readable by a third-party app on API 26+ — SELinux denies it — so the
+     * system% may stay unavailable on real devices. The PROCESS% therefore must
+     * NOT depend on /proc/stat's total jiffies: it is timed against WALL CLOCK
+     * (prevWallMs, via SystemClock.elapsedRealtime) and the kernel tick rate
+     * (clkTck = sysconf(_SC_CLK_TCK), Hz). That makes "this node" resolve even
+     * when the system line is blocked. */
     private var prevCpuIdle = -1L
     private var prevCpuTotal = -1L
     private var prevProcJiffies = -1L
+    private var prevWallMs = -1L
+    private val clkTck: Long =
+        try { Os.sysconf(OsConstants._SC_CLK_TCK).coerceAtLeast(1L) }
+        catch (_: Throwable) { 100L }   // 100 Hz is the near-universal default
 
+    @SuppressLint("ClickableViewAccessibility")  // touch listener forwards to the ScrollView; it is not a click target
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_log)
@@ -94,6 +112,23 @@ class LogActivity : AppCompatActivity() {
          * ScrollView starts pinned to the bottom so the latest line shows. */
         logView.text = PKernelService.snapshotLog()
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+
+        /* Bug 4 (log can't scroll): the fixed-height log ScrollView is nested
+         * INSIDE the page's outer ScrollView. Two vertically-nested ScrollViews
+         * fight for the vertical drag, and the OUTER one wins by default — so
+         * the inner log never scrolls. Claim the gesture for the inner view: on
+         * touch-down/move ask the parent NOT to intercept, releasing it on
+         * up/cancel so the rest of the page still scrolls normally. The copy
+         * button is a separate view and is unaffected. */
+        logScroll.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            false              // do NOT consume — let ScrollView scroll itself
+        }
 
         /* Resources/CPU: seed with the immediate readable facts (cores + the
          * honest GPU line); the % numbers fill in on the first refresh tick. */
@@ -216,25 +251,40 @@ class LogActivity : AppCompatActivity() {
     /**
      * Resources / CPU — REAL numbers, no fabrication.
      *
-     *   · system CPU% : delta off /proc/stat's aggregate "cpu" line between
-     *     two ticks = 100 * (1 - idleΔ/totalΔ). Readable with no permission.
-     *   · this node CPU% : delta of /proc/self/stat utime+stime over the same
-     *     interval, scaled to wall time across all cores (so 100% = one whole
-     *     core's worth). Our own process share.
+     *   · this node CPU% : delta of /proc/self/stat utime+stime (jiffies)
+     *     over the WALL-CLOCK interval (elapsedRealtime), converted to seconds
+     *     via clkTck and expressed as a % of one whole core (so 100% = a core).
+     *     /proc/self is OUR process, always readable — this resolves on every
+     *     device. (Bug 5 root cause: the old code divided by /proc/stat's total
+     *     jiffies, which is unreadable on API 26+, so this stayed "計算中"
+     *     forever. Now it is independent of /proc/stat.)
+     *   · system CPU% : delta off /proc/stat's aggregate "cpu" line. This file
+     *     is DENIED to third-party apps by SELinux on API 26+, so on most real
+     *     phones it is honestly "unavailable" rather than a perpetual
+     *     placeholder. On devices/builds where it IS readable, a live % shows.
      *   · cores : Runtime.availableProcessors().
      *   · GPU : HONEST — Android has no portable GPU-usage API and inference
      *     runs on the CPU, so we state that rather than invent a %.
      *
      * The first call has no prior snapshot, so the % rows read "measuring…";
-     * every subsequent call (≈ the 500ms poller cadence) shows a live delta.
+     * every subsequent call (≈ the 500ms poller cadence) shows a live delta,
+     * EXCEPT system% which reads "unavailable" when /proc/stat is blocked.
      */
     private fun renderResources() {
         val cores = Runtime.getRuntime().availableProcessors()
+        val nowMs = SystemClock.elapsedRealtime()
 
         /* /proc/stat aggregate cpu line: "cpu user nice system idle iowait
-         * irq softirq steal ...". idle = idle+iowait; total = sum of all. */
+         * irq softirq steal ...". idle = idle+iowait; total = sum of all.
+         * sysState: -2 = file unreadable (blocked) -> "unavailable";
+         *           -1 = readable but no prior snapshot yet -> "measuring…";
+         *          >=0 = a live %. */
         var sysPct = -1
-        readProcStatCpu()?.let { (idle, total) ->
+        val stat = readProcStatCpu()
+        if (stat == null) {
+            sysPct = -2                       // /proc/stat denied (API 26+ SELinux)
+        } else {
+            val (idle, total) = stat
             if (prevCpuTotal >= 0) {
                 val dTotal = total - prevCpuTotal
                 val dIdle = idle - prevCpuIdle
@@ -248,29 +298,37 @@ class LogActivity : AppCompatActivity() {
         }
 
         /* /proc/self/stat field 14 (utime) + 15 (stime), in jiffies. Scale the
-         * delta against the wall-clock delta we sample at (the poller fires at
-         * REFRESH_MS), expressed as a fraction of one core. */
+         * delta against the WALL-CLOCK delta (elapsedRealtime) — NOT against
+         * /proc/stat's total — so this is computable even when the system line
+         * is blocked. procJiffies/clkTck = CPU-seconds; / wallSeconds = cores
+         * busy; *100 = % of one core. */
         var procPct = -1
         readProcSelfJiffies()?.let { jiffies ->
-            if (prevProcJiffies >= 0) {
-                val dProc = jiffies - prevProcJiffies
-                /* total cpu jiffies elapsed (all cores) ≈ totalΔ from /proc/stat;
-                 * reuse it if we have it, else approximate from the interval. */
-                val dTotal = if (prevCpuTotal >= 0) cpuTotalDelta else 0L
-                if (dProc >= 0 && dTotal > 0) {
-                    procPct = (100.0 * dProc / dTotal * cores)
+            if (prevProcJiffies >= 0 && prevWallMs >= 0) {
+                val dProc = jiffies - prevProcJiffies            // CPU jiffies
+                val dWallMs = nowMs - prevWallMs                 // wall ms
+                if (dProc >= 0 && dWallMs > 0) {
+                    val cpuSec = dProc.toDouble() / clkTck
+                    val wallSec = dWallMs.toDouble() / 1000.0
+                    procPct = (100.0 * cpuSec / wallSec)
                         .coerceIn(0.0, 100.0 * cores).toInt()
                 }
             }
             prevProcJiffies = jiffies
         }
+        prevWallMs = nowMs
 
+        val measuring = getString(R.string.engineer_measuring)
         resourcesView.text = buildString {
             append("system CPU  : ")
-                .append(if (sysPct >= 0) "$sysPct%" else getString(R.string.engineer_measuring))
+                .append(when {
+                    sysPct >= 0 -> "$sysPct%"
+                    sysPct == -2 -> "n/a (restricted)"  // /proc/stat denied by SELinux (API 26+)
+                    else -> measuring
+                })
                 .append('\n')
             append("this node   : ")
-                .append(if (procPct >= 0) "$procPct%" else getString(R.string.engineer_measuring))
+                .append(if (procPct >= 0) "$procPct%" else measuring)
                 .append('\n')
             append("CPU cores   : ").append(cores).append('\n')
             append("GPU         : ").append(gpuStatusLine())
@@ -311,11 +369,11 @@ class LogActivity : AppCompatActivity() {
             getString(R.string.engineer_gpu_available, name, state)
         }
 
-    /* Carries the most recent /proc/stat totalΔ so the process-CPU math can
-     * reuse the exact same interval the system% was computed over. */
-    private var cpuTotalDelta = 0L
-
-    /** Aggregate /proc/stat cpu line -> (idleJiffies, totalJiffies), or null. */
+    /** Aggregate /proc/stat cpu line -> (idleJiffies, totalJiffies), or null.
+     *  Returns null when the file is unreadable — which is the NORMAL case for a
+     *  third-party app on API 26+ (SELinux denies /proc/stat). renderResources()
+     *  maps that null to an honest "n/a (restricted)" for the system% row, while
+     *  the process% row (driven by /proc/self/stat + wall clock) stays live. */
     private fun readProcStatCpu(): Pair<Long, Long>? = try {
         RandomAccessFile("/proc/stat", "r").use { raf ->
             val line = raf.readLine() ?: return null   // first line = "cpu ..."
@@ -326,8 +384,6 @@ class LogActivity : AppCompatActivity() {
             if (nums.size < 5) return null
             val idle = nums[3] + nums[4]            // idle + iowait
             val total = nums.sum()
-            val prevT = prevCpuTotal
-            cpuTotalDelta = if (prevT >= 0) total - prevT else 0L
             idle to total
         }
     } catch (_: Throwable) { null }
@@ -352,7 +408,7 @@ class LogActivity : AppCompatActivity() {
         super.onResume()
         stopped = false
         /* Fresh CPU baseline each time the page is shown (deltas start now). */
-        prevCpuIdle = -1L; prevCpuTotal = -1L; prevProcJiffies = -1L
+        prevCpuIdle = -1L; prevCpuTotal = -1L; prevProcJiffies = -1L; prevWallMs = -1L
         renderResources()   // primes the snapshots; shows cores + GPU + measuring…
 
         /* Tail the live log while foregrounded (same cadence as MainActivity). */
