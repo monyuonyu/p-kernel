@@ -31,8 +31,43 @@
 #include "../../arch/common/llm/gguf.h"
 #include "../../arch/common/llm/forward.h"
 
+/* GPT-2 / SmolLM2 byte-level BPE uses a bijection bytes<->unicode so every
+ * byte renders as a printable codepoint (e.g. space 0x20 -> U+0120 'Ġ', newline
+ * 0x0A -> U+010A). build the INVERSE map codepoint -> original byte. */
+static int g_cp2byte[512];
+static void build_byte_decoder(void)
+{
+    for (int i = 0; i < 512; i++) g_cp2byte[i] = -1;
+    int n = 0;
+    /* the "kept as themselves" ranges, exactly as GPT-2's bytes_to_unicode() */
+    for (int b = 0; b < 256; b++) {
+        int keep = (b >= '!' && b <= '~') || (b >= 0xA1 && b <= 0xAC) || (b >= 0xAE && b <= 0xFF);
+        if (keep) g_cp2byte[b] = b;
+    }
+    for (int b = 0; b < 256; b++) {
+        int keep = (b >= '!' && b <= '~') || (b >= 0xA1 && b <= 0xAC) || (b >= 0xAE && b <= 0xFF);
+        if (!keep) { g_cp2byte[256 + n] = b; n++; }
+    }
+}
+/* decode one UTF-8 codepoint at s[*i]; advance *i; return codepoint or -1. */
+static int utf8_next(const uint8_t *s, uint64_t L, uint64_t *i)
+{
+    if (*i >= L) return -1;
+    uint8_t c = s[*i];
+    if (c < 0x80) { (*i)++; return c; }
+    if ((c & 0xE0) == 0xC0 && *i + 1 < L) {
+        int cp = ((c & 0x1F) << 6) | (s[*i+1] & 0x3F); *i += 2; return cp;
+    }
+    if ((c & 0xF0) == 0xE0 && *i + 2 < L) {
+        int cp = ((c & 0x0F) << 12) | ((s[*i+1] & 0x3F) << 6) | (s[*i+2] & 0x3F);
+        *i += 3; return cp;
+    }
+    (*i)++; return c;   /* malformed: pass the raw byte */
+}
+
 int main(int argc, char **argv)
 {
+    build_byte_decoder();
     if (argc < 4) {
         fprintf(stderr, "usage: %s <model.gguf> <n_tokens> <out_path>\n", argv[0]);
         return 2;
@@ -55,9 +90,26 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* try to resolve the tokenizer token-string table for id->text rendering */
-    const char **toks = NULL; int n_toks = 0;
-    gguf_get_str_array(&gf, "tokenizer.ggml.tokens", &toks, &n_toks);
+    /* Resolve the tokenizer token-string table for id->text rendering. M1a
+     * (gguf.c) keeps arrays unexpanded (raw arr_data), so we walk the STRING
+     * array ourselves: build, for each token id, a (ptr,len) view into the
+     * mmap. Cheap one-pass scan. */
+    const uint8_t **tok_ptr = NULL; uint64_t *tok_len = NULL; uint64_t n_toks = 0;
+    {
+        const gguf_kv *kv = gguf_find(&gf, "tokenizer.ggml.tokens");
+        if (kv && kv->type == GGUF_T_ARRAY && kv->arr_type == GGUF_T_STRING) {
+            n_toks = kv->arr_len;
+            tok_ptr = (const uint8_t **)malloc(n_toks * sizeof(*tok_ptr));
+            tok_len = (uint64_t *)malloc(n_toks * sizeof(*tok_len));
+            const uint8_t *p = kv->arr_data;
+            const uint8_t *end = gf.base + gf.size;
+            for (uint64_t i = 0; i < n_toks && p + 8 <= end; i++) {
+                uint64_t len; memcpy(&len, p, 8); p += 8;
+                if (p + len > end) { n_toks = i; break; }
+                tok_ptr[i] = p; tok_len[i] = len; p += len;
+            }
+        }
+    }
 
     /* seed prompt: a few low/common ids. SmolLM2 BOS is typically id 1; we keep
      * it minimal and let greedy decoding do the talking. */
@@ -76,17 +128,21 @@ int main(int argc, char **argv)
     if (!f) { fprintf(stderr, "[harvest] cannot open %s\n", out); free(gen); lm_free(&m); gguf_close(&gf); return 1; }
 
     long bytes_out = 0;
-    if (toks && n_toks > 0) {
-        /* render each generated id to its token string; SentencePiece uses
-         * U+2581 (0xE2 0x96 0x81) for a leading space — translate to ' '. */
+    if (tok_ptr && n_toks > 0) {
+        /* render each generated id to its token string, decoding GPT-2 byte-
+         * level BPE back to the ORIGINAL raw bytes (so the fixture is the real
+         * text the teacher produced, the cleanest sequence-level signal). */
         for (int i = 0; i < g; i++) {
             int id = gen[i];
-            if (id < 0 || id >= n_toks || !toks[id]) continue;
-            const char *s = toks[id];
-            for (const char *p = s; *p; ) {
-                if ((unsigned char)p[0] == 0xE2 && (unsigned char)p[1] == 0x96 &&
-                    (unsigned char)p[2] == 0x81) { fputc(' ', f); p += 3; bytes_out++; }
-                else { fputc((unsigned char)*p, f); p++; bytes_out++; }
+            if (id < 0 || (uint64_t)id >= n_toks) continue;
+            const uint8_t *s = tok_ptr[id]; uint64_t L = tok_len[id];
+            uint64_t k = 0;
+            while (k < L) {
+                int cp = utf8_next(s, L, &k);
+                if (cp < 0) break;
+                int b = (cp >= 0 && cp < 512) ? g_cp2byte[cp] : -1;
+                if (b < 0) b = cp & 0xff;     /* fallback for special tokens */
+                fputc(b, f); bytes_out++;
             }
         }
     }
@@ -102,7 +158,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "[harvest] %d tokens -> %ld bytes\n", g, bytes_out);
 
     free(gen);
-    if (toks) free((void *)toks);
+    free(tok_ptr); free(tok_len);
     lm_free(&m);
     gguf_close(&gf);
     return 0;

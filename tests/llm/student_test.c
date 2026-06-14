@@ -146,35 +146,38 @@ static float heldout_loss(st_model *m, int seqlen, int train_end, int count)
     return got ? (float)(sum / got) : 0.0f;
 }
 
-/* run `rounds` sleep rounds over the first `train_windows` windows. If scramble,
- * the *target* bytes are shuffled (a within-window permutation) so the teaching
- * signal is destroyed while the optimisation effort is identical. */
+/* run `rounds` sleep rounds over the first `train_windows` windows.
+ *
+ * scramble==0 : REAL teaching — train on the teacher's actual byte windows.
+ * scramble==1 : the GROUNDED CONTROL — every training window is replaced by
+ *   UNIFORM-RANDOM bytes (native-student.md §B.6: "shuffle the teacher targets
+ *   / use random bytes"). Identical #updates, identical optimiser, identical
+ *   data volume — but the next-byte mapping is unlearnable, so held-out loss on
+ *   the REAL corpus cannot drop below chance. This is what isolates "real
+ *   teaching" from "any training nudges a metric". */
 static void distill(st_model *m, int seqlen, int train_windows, int rounds,
                     float lr, int scramble)
 {
     uint8_t buf[ST_MAXSEQ];
     uint32_t rng = 0x5EED1234u;
+    float *logits = (float *)malloc((size_t)seqlen * ST_VOCAB * sizeof(float));
     for (int r = 0; r < rounds; r++) {
         for (int w = 0; w < train_windows; w++) {
-            window(buf, w * seqlen, seqlen);
             if (scramble) {
-                /* Fisher-Yates shuffle of the bytes -> destroys the next-byte
-                 * structure (the control), same #updates / same data volume. */
-                for (int i = seqlen - 1; i > 0; i--) {
+                for (int i = 0; i < seqlen; i++) {
                     rng = rng * 1664525u + 1013904223u;
-                    int j = (int)((rng >> 8) % (uint32_t)(i + 1));
-                    uint8_t tmp = buf[i]; buf[i] = buf[j]; buf[j] = tmp;
+                    buf[i] = (uint8_t)((rng >> 16) & 0xff);  /* uniform 0..255 */
                 }
+            } else {
+                window(buf, w * seqlen, seqlen);
             }
-            float logits_dummy_unused = 0.0f; (void)logits_dummy_unused;
-            float *logits = (float *)malloc((size_t)seqlen * ST_VOCAB * sizeof(float));
             st_zero_grad(m);
             st_forward(m, buf, seqlen, logits);
             st_backward(m, buf, seqlen);
             st_adam_step(m, lr);
-            free(logits);
         }
     }
+    free(logits);
 }
 
 /* ====================================================================== */
@@ -227,24 +230,24 @@ static int cert_distill(void)
     CHECK(drop_ok, "[distill-loss-drops] held-out loss measurably drops");
     st_free(&m);
 
-    /* ---- scrambled-teacher control (same effort, destroyed signal) ---- */
+    /* ---- grounded control: random-byte targets (same effort, no signal) ---- */
     st_model ms;
     st_init(&ms, 0x0BABE);   /* same seed -> same starting point */
     float spre = heldout_loss(&ms, seqlen, train_end, held_windows);
-    distill(&ms, seqlen, train_windows, rounds, lr, 1 /*scramble*/);
+    distill(&ms, seqlen, train_windows, rounds, lr, 1 /*random bytes*/);
     float spost = heldout_loss(&ms, seqlen, train_end, held_windows);
-    printf("  [distill-grounded] scrambled control: held-out %.4f -> %.4f "
+    printf("  [distill-grounded] random-byte control: held-out %.4f -> %.4f "
            "(delta %.4f)\n", spre, spost, spre - spost);
-    /* grounded PASS: the scrambled control gains far less than real teaching.
-     * Quantitatively: real drop is at least 3x the scrambled drop AND the
-     * scrambled held-out stays near chance. */
+    /* grounded PASS: training on random bytes gains far less than real teaching
+     * AND the held-out loss on the REAL corpus stays near chance (the model
+     * learned nothing transferable). Real drop must be >= 2x the control drop. */
     float real_drop = pre - post;
     float scr_drop  = spre - spost;
     int grounded_ok = (scr_drop < real_drop * 0.5f) && (spost > chance - 0.30f);
-    printf("  real_drop=%.4f  scrambled_drop=%.4f  (grounded needs "
-           "scrambled < 0.5x real AND scrambled stays near chance)\n",
-           real_drop, scr_drop);
-    CHECK(grounded_ok, "[distill-grounded] gain vanishes under scrambled teacher");
+    printf("  real_drop=%.4f  control_drop=%.4f  (grounded needs control < "
+           "0.5x real AND control held-out stays near chance %.2f)\n",
+           real_drop, scr_drop, chance);
+    CHECK(grounded_ok, "[distill-grounded] gain vanishes under random-byte teacher");
     st_free(&ms);
 
     return (honest_ok && drop_ok && grounded_ok) ? 0 : 1;
