@@ -368,14 +368,24 @@ let heartTime=-1e9, heartMag=0;
 function beat(mag){ heartTime=performance.now(); heartMag=mag; }
 
 // ── 3D core: scene centered on MY star at the origin; camera orbits ──
-const FOV=520, CAMD=860;         // perspective strength / camera distance
+const FOV=520, CAMD=860;         // perspective strength / DEFAULT camera distance
+// ── dolly zoom: camD is the live camera distance (wheel + pinch move it).
+//    Smaller camD = closer = bigger stars. camDTarget is eased toward each
+//    frame so wheel/pinch/tap-focus all feel smooth, not jumpy. Clamped so
+//    you can get right up to a star but never invert through it or fly away.
+const CAM_MIN=180, CAM_MAX=2200;
+let camD=CAMD, camDTarget=CAMD;  // current + eased target distance
+// pan offset so a tap-to-focus can bring an off-centre star toward the middle
+// as we zoom in (world-space translation applied before projection).
+let panX=0, panY=0, panXTarget=0, panYTarget=0;
 let yaw=0, yawUser=0, vyaw=0;     // auto-drift + the owner's hand + inertia
 let pitchCur=-0.18, CP=Math.cos(-0.18), SP=Math.sin(-0.18);
 function project(x,y,z){
+  x-=panX; y-=panY; z-=0;        // pan the whole scene (focus-zoom recentre)
   const cy=Math.cos(yaw),sy=Math.sin(yaw);
   const X=x*cy+z*sy, Z0=-x*sy+z*cy;
   const Y=y*CP-Z0*SP, Z=y*SP+Z0*CP;
-  const s=FOV/(FOV+Z+CAMD);
+  const s=FOV/(FOV+Z+camD);
   return {x:W/2+X*s, y:H/2+Y*s, s:s, z:Z};
 }
 
@@ -437,13 +447,37 @@ function sphereAt(spr,x,y,r,al){
 const NB=28;                                   // outline points (smooth, cheap)
 // three travelling lobes: [angular frequency, weight, phase offset]. The
 // weights sum the deformation; freqs 2,3,5 give an organic non-repeating edge.
+// This is the CALM baseline (mk_pino's "今すごく良い"): a gentle smooth
+// undulation. It is NEVER weakened — stress only LAYERS extra irregular motion
+// ON TOP of it (ME_AMEBA below), so at real S_n=0 the star == today's look.
 const ME_LOBES=[[2,0.55,0.0],[3,0.30,2.1],[5,0.15,4.7]];
+// ── stress-driven amoeba irregularity (interoception.md §3.3/§3.4) ──────────
+//   A STRESSED star (real S_n>0) stops being a clean droplet and becomes
+//   restless / spiky / amoeba-like. We get that from a SECOND bank of higher,
+//   incommensurate spatial frequencies (7/11/17 — no common period, so the
+//   edge never repeats: reads as organic noise, not a tidy sine) that travel
+//   faster than the calm band (a stressed edge jitters). Cheap: same Σ-sin
+//   pattern, summed only when stress warrants. The whole bank is multiplied by
+//   `stress` in drawMeBlob, so at S_n=0 every amoeba term is exactly 0 and the
+//   shape collapses to ME_LOBES (today's calm). NO Math.random (product-soul
+//   honest-growth law): deterministic function of (clock, real state).
+const ME_AMEBA=[[7,0.42,1.0,1.7],[11,0.30,3.3,2.6],[17,0.20,5.1,3.9]];
+//                ^angFreq ^weight ^phase ^timeRateMul (× wspeed, ×4 below)
 const ME_TWO_PI=6.28318530718;
 // scratch arrays reused every frame (no per-frame allocation)
 const _bx=new Float32Array(NB), _by=new Float32Array(NB);
 function drawMeBlob(cx,cy,baseR,spr,al,tms,ms,throb){
   // 1) deform the outline. Each lobe travels around the rim at wspeed*freq.
   const amp=ms.wamp+0.9*throb*ms.wamp;          // a real SSE beat = a brief swell
+  // amoeba strength = the REAL S_n (ms.stress in [0,1], from pressure+threat —
+  // the SAME signal that red-shifts the hue, so wobble and colour move together
+  // honestly). 0 => no extra motion (calm baseline preserved exactly). It rises
+  // super-linearly so a faint stress barely perturbs, a high stress clearly
+  // agitates — a continuous slope, never a jump (§3.4 oscillation guard). The
+  // amoeba displacement is a fraction of the calm lobe depth (amp), so it
+  // scales with the star.
+  const s=ms.stress||0;
+  const ameba=amp*s*(0.55+0.85*s);              // 0 at s=0; ~1.4*amp at s=1
   let rmax=0;
   for(let i=0;i<NB;i++){
     const a=i/NB*ME_TWO_PI;
@@ -452,9 +486,17 @@ function drawMeBlob(cx,cy,baseR,spr,al,tms,ms,throb){
       const f=ME_LOBES[l][0]*ms.wlobe;           // state scales how many lobes
       d+=ME_LOBES[l][1]*Math.sin(f*a + tms*ms.wspeed*ME_LOBES[l][0] + ME_LOBES[l][2]);
     }
-    const r=baseR*(1+amp*d);
+    // amoeba band: high-freq, faster-travelling, ONLY when stressed.
+    let g=0;
+    if(ameba>0){
+      for(let l=0;l<ME_AMEBA.length;l++){
+        g+=ME_AMEBA[l][1]*Math.sin(ME_AMEBA[l][0]*a
+              + tms*ms.wspeed*ME_AMEBA[l][3]*4.0 + ME_AMEBA[l][2]);
+      }
+    }
+    const r=baseR*(1+amp*d+ameba*g);
     _bx[i]=cx+Math.cos(a)*r; _by[i]=cy+Math.sin(a)*r;
-    const rr=baseR*(1+amp*Math.abs(d)); if(rr>rmax) rmax=rr;
+    const rr=baseR*(1+amp*Math.abs(d)+ameba*Math.abs(g)); if(rr>rmax) rmax=rr;
   }
   // 2) trace a smooth closed curve through the points (midpoint quadratics =
   //    a soft blob, not a spiky polygon) — one path, cheap.
@@ -573,6 +615,9 @@ function draw(){
   const now=performance.now(),tms=now-t0;
   if(!dragging){ yawUser+=vyaw; vyaw*=0.94; }        // inertia after a fling
   yaw=tms*0.000055+yawUser;              // slow drift + the owner's hand
+  // ease the camera dolly + focus-pan toward their targets (smooth zoom).
+  camD+=(camDTarget-camD)*0.18;
+  panX+=(panXTarget-panX)*0.12; panY+=(panYTarget-panY)*0.12;
   CP=Math.cos(pitchCur); SP=Math.sin(pitchCur);
   ctx.clearRect(0,0,W,H);
 
@@ -1284,30 +1329,110 @@ document.getElementById("logcopy").onclick=async()=>{
 };
 // ── drag the sky: 360° yaw + clamped pitch, with fling inertia.
 //    A real drag (>8px) suppresses the star-tap so the two never fight.
+//    Two-finger touch = PINCH ZOOM (dolly the camera), NOT rotate: while
+//    two pointers are down we suspend single-finger rotation and map finger
+//    spread -> camDTarget. Mouse wheel = the desktop equivalent.
 let dragging=false, dragMoved=0, lx=0, ly=0;
+const ptrs=new Map();            // active pointers: id -> {x,y} (for pinch)
+let pinchD0=0;                   // finger spread when the 2nd finger landed
+function clampCam(v){ return Math.max(CAM_MIN,Math.min(CAM_MAX,v)); }
+// dolly toward a target distance; a focus-pan can ride along (tap-to-focus).
+function zoomTo(dist){ camDTarget=clampCam(dist); }
+
 cv.addEventListener("pointerdown",(e)=>{
-  dragging=true; dragMoved=0; lx=e.clientX; ly=e.clientY; vyaw=0;
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(cv.setPointerCapture) try{cv.setPointerCapture(e.pointerId);}catch(_){}
+  if(ptrs.size===2){                       // pinch begins — stop rotating
+    dragging=false; vyaw=0;
+    const a=[...ptrs.values()];
+    pinchD0=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)||1;
+  }else if(ptrs.size===1){
+    dragging=true; dragMoved=0; lx=e.clientX; ly=e.clientY; vyaw=0;
+  }
 });
 addEventListener("pointermove",(e)=>{
+  if(ptrs.has(e.pointerId)) ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size>=2){                        // PINCH: spread -> camera distance
+    const a=[...ptrs.values()];
+    const d=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)||1;
+    if(pinchD0>0){
+      // closer (bigger spread) -> smaller camD. Move the *eased target* by the
+      // ratio so it tracks the fingers; reset baseline so it's incremental.
+      zoomTo(camDTarget*(pinchD0/d));
+      pinchD0=d;
+    }
+    dragMoved+=99;                          // a pinch is never a tap
+    return;
+  }
   if(!dragging) return;
   const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
   dragMoved+=Math.abs(dx)+Math.abs(dy);
   yawUser+=dx*0.005; vyaw=dx*0.005*0.6;
   pitchCur=Math.max(-0.95,Math.min(0.65,pitchCur+dy*0.0035));
 });
-addEventListener("pointerup",()=>{ dragging=false; });
-addEventListener("pointercancel",()=>{ dragging=false; });
+function ptrEnd(e){
+  ptrs.delete(e.pointerId);
+  if(ptrs.size<2) pinchD0=0;
+  if(ptrs.size===0) dragging=false;
+  else if(ptrs.size===1){                  // one finger lifted off a pinch
+    dragging=true; dragMoved=99;            // don't treat the leftover as a tap
+    const p=[...ptrs.values()][0]; lx=p.x; ly=p.y;
+  }
+}
+addEventListener("pointerup",ptrEnd);
+addEventListener("pointercancel",ptrEnd);
 
-cv.addEventListener("click",(e)=>{
-  if(dragMoved>8) return;                 // it was a drag, not a tap
-  // hit-test against the per-frame projected positions (3D-aware)
-  if(Math.hypot(e.clientX-HIT.me.x,e.clientY-HIT.me.y)<HIT.me.r){openSelf();return;}
+// mouse wheel = dolly (desktop zoom). Exponential step so each notch feels even
+// at any distance; passive:false so the page itself never scrolls.
+cv.addEventListener("wheel",(e)=>{
+  e.preventDefault();
+  zoomTo(camDTarget*Math.exp(e.deltaY*0.0013));
+},{passive:false});
+
+// hit-test helper: which star (if any) is under a screen point.
+function starAt(px,py){
+  if(Math.hypot(px-HIT.me.x,py-HIT.me.y)<HIT.me.r) return {me:true};
   for(const p of snap.peers){
     if(p.state===0)continue;
     const q=HIT.peers[p.id];if(!q)continue;
-    if(Math.hypot(e.clientX-q.x,e.clientY-q.y)<q.r){openPeer(p);return;}
+    if(Math.hypot(px-q.x,py-q.y)<q.r) return {me:false,p};
   }
+  return null;
+}
+// smoothly fly the camera in to centre on a star and get close (focus-zoom).
+//   We pan the scene so the star's WORLD position moves to the origin, and
+//   dolly in. me-star is at world (0,0,0); a peer at peerWorld(p).
+function focusStar(hit){
+  if(!hit){ panXTarget=0; panYTarget=0; zoomTo(CAMD); return; } // reset view
+  let w={x:0,y:0,z:0};
+  if(!hit.me) w=peerWorld(hit.p);
+  panXTarget=w.x; panYTarget=w.y;          // bring it to centre
+  zoomTo(Math.max(CAM_MIN,420));           // get up close
+}
+
+// single tap on a star = open its panel; DOUBLE-tap = focus-zoom to it (and a
+// double-tap on empty space = reset to the default view). The single-tap open
+// is deferred ~300ms so a following double-tap can cancel it (no panel flash
+// behind the zoom). Drag/pinch (dragMoved>8) is never a tap.
+let lastTap=0, lastTapXY=[0,0], tapTimer=0;
+cv.addEventListener("click",(e)=>{
+  if(dragMoved>8) return;                 // it was a drag/pinch, not a tap
+  const now=performance.now();
+  const px=e.clientX, py=e.clientY;
+  const dbl=(now-lastTap<340)&&Math.hypot(px-lastTapXY[0],py-lastTapXY[1])<28;
+  lastTap=now; lastTapXY=[px,py];
+  const hit=starAt(px,py);
+  if(dbl){                                // double-tap / double-click = focus-zoom
+    if(tapTimer){ clearTimeout(tapTimer); tapTimer=0; }  // cancel pending open
+    focusStar(hit);                        // on empty space -> reset to default view
+    return;
+  }
+  if(!hit) return;                        // single tap on empty space = nothing
+  if(tapTimer) clearTimeout(tapTimer);
+  tapTimer=setTimeout(()=>{               // single tap on a star = open its panel
+    tapTimer=0;
+    if(hit.me) openSelf(); else openPeer(hit.p);
+  },300);
 });
 </script>
 </body>
