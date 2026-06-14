@@ -39,6 +39,24 @@ on:
     branches: [master, 'feat/**']
 
 jobs:
+  parity:
+    # Drift guard (BLOCKING). check_parity.sh asserts the AI/common + shared
+    # module source lists are in lock-step across all three builds:
+    #   - Android CMakeLists.txt  vs  boot/linux/Makefile        (wave-36 hole:
+    #       galaxy/R3/living-mind/signing organs fell out of the shipped .so)
+    #   - boot/linux/Makefile (aarch64)  vs  boot/linux_x86_64/Makefile
+    #       (the modver-drift hole only the real x86_64 host caught: a module
+    #        added to one host build but not the other ships a different mind).
+    # Pure-shell, no toolchain — fast and cheap, guards the highest-value drift
+    # class. Nonzero exit fails the build.
+    name: Source-list parity (Android CMake + both host Makefiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: check_parity.sh (Android .so + host x86_64<->aarch64 module lists)
+        run: tools/android/check_parity.sh
+
   ump-x86_64:
     name: UMP x86_64 (build + self-tests)
     runs-on: ubuntu-latest
@@ -78,7 +96,7 @@ jobs:
           # — the in-context competence threshold), and r3/handoff/stream/lang/
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -150,6 +168,24 @@ jobs:
           grep -aF '[r3-incontext-frozen] PASS' selftest.log
           grep -aF '[r3-incontext-handif] PASS' selftest.log
           grep -aF '[r3-incontext-learned] PASS' selftest.log
+          # FP-determinism golden-logit cert ("one mind, one math", wave-49
+          # salty-bug guard): the REAL production forward (dt_linear multiply-
+          # accumulate) over a fixed seed + input bank folds the RAW IEEE-754
+          # bit patterns of every logit into one hash that MUST equal the
+          # golden DTR_FPDET_GOLDEN (0xe2391516). -ffp-contract=off (now on
+          # every host Makefile + the Android CMake) makes a*b+c round
+          # identically on gcc AND clang; a clang build that contracts to an
+          # fmadd flips low mantissa bits -> a different hash -> [fpdet] FAIL.
+          # The golden is byte-identical on x86_64 and aarch64 (the cross-arch
+          # one-math proof; the aarch64-fpdet job below now asserts the SAME
+          # tag as a BLOCKING gate). (`dtr fpdet`)
+          grep -aF '[fpdet] PASS' selftest.log
+          # capacity(N) cert (degrade.c, region-size pipeline depth): the pure
+          # capacity functions (comfortable-N, pipeline_depth = 1+floor(log2
+          # (region_size)), per-stage assignment) are asserted against a golden
+          # table — monotone, saturating, and matching the authoritative R2
+          # prose in docs/architecture/regions.md §3.2. (`capacity test`)
+          grep -aF '[capacity-score] PASS' selftest.log
           # G23 (gap-ledger): NODE CEILING > 32. DNODE_MAX 32->64; the gossip
           # merge + the REAL dnode_table membership fold both run across >32
           # (40) participants with no 32-cap (UMP "every install = a node").
@@ -460,6 +496,20 @@ jobs:
           grep -aF '[g13-arrival] PASS' selftest.log
           # G23 node ceiling > 32 (gap-ledger): >32-participant gossip merge + fold
           grep -aF '[g23-ceiling] PASS' selftest.log
+      - name: aarch64 FP-determinism golden (BLOCKING — "one mind, one math")
+        # Focused, fast (~few s) BLOCKING gate, deliberately separate from the
+        # heavy continue-on-error self-test step above. "One mind, one math" is
+        # only fully certified when BOTH arches assert the IDENTICAL golden
+        # logit hash (DTR_FPDET_GOLDEN = 0xe2391516) in CI; the x86_64 blocking
+        # job already gates [fpdet] PASS, so this run proves the aarch64 build
+        # — same dtr.c, -ffp-contract=off — folds byte-identical logits. We run
+        # ONLY `dtr fpdet` (no preamble) so the gate is cheap enough to block
+        # without flipping the whole 150s aarch64 self-test to blocking.
+        run: |
+          cd boot/linux
+          timeout 60 sh -c "printf 'dtr fpdet\nexit\n' | \
+            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fpdet.log
+          grep -aF '[fpdet] PASS' fpdet.log
 
   bare-metal:
     name: Bare-metal (i686 + aarch64, build-only)
