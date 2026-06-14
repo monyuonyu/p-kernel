@@ -29,6 +29,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -46,6 +48,10 @@ class GalaxyActivity : AppCompatActivity() {
     private var loaded = false
     private val ui = Handler(Looper.getMainLooper())
     @Volatile private var stopped = false
+    /* Guards against stacking probe threads: a main-frame error re-arms the
+     * probe, but only one poll loop may run at a time (else recovery would
+     * spawn a new thread on every error/retry). */
+    @Volatile private var probing = false
 
     private var galaxyPort = DEFAULT_PORT
     private var showIntro = false
@@ -66,7 +72,7 @@ class GalaxyActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.cacheMode = WebSettings.LOAD_NO_CACHE   // always the live page
             settings.mediaPlaybackRequiresUserGesture = false
-            webViewClient = WebViewClient()            // keep navigation in-app
+            webViewClient = resilientClient()          // keep nav in-app + never show the raw error page
         }
         /* The waiting screen speaks human, not kernel (UX constitution):
          * no ports, no "kernel", no console. Just the star being lit — and
@@ -115,10 +121,26 @@ class GalaxyActivity : AppCompatActivity() {
         startProbe()
     }
 
-    /** Poll 127.0.0.1:<galaxyPort> until the kernel's galaxy task answers. */
+    /**
+     * Poll 127.0.0.1:<galaxyPort> until the kernel's galaxy task answers, then
+     * show (or re-show) the galaxy page.
+     *
+     * Re-entrant: it is called once at startup AND again whenever a main-frame
+     * load fails (the star "rested" — battery floor / WiFi-only pause / a
+     * transient mid-navigation). Only ONE poll thread runs at a time (the
+     * `probing` guard), so repeated errors don't stack threads; `stopped`
+     * stays false across re-probes (only onDestroy sets it) so recovery works.
+     */
     private fun startProbe() {
+        if (stopped) return
+        synchronized(this) {
+            if (probing) return          // a poll loop is already running; don't stack
+            probing = true
+        }
+        loaded = false                   // we are (re)entering the waiting state
         Thread({
             var attempt = 0
+            try {
             while (!stopped && !loaded) {
                 attempt++
                 val up = portOpen("127.0.0.1", galaxyPort, CONNECT_TIMEOUT_MS)
@@ -133,16 +155,28 @@ class GalaxyActivity : AppCompatActivity() {
                      * only show the "plug in" nudge when the floor is actually
                      * holding (low AND unplugged); otherwise it's just waking.
                      * Said kindly, in the user's language, no kernel jargon. */
-                    val lowAndUnplugged = batteryLowAndUnplugged()
-                    ui.post {
-                        if (!loaded) splash.text = getString(
-                            if (lowAndUnplugged) R.string.galaxy_charge
-                            else R.string.galaxy_lighting)
-                    }
+                    val msg = restingMessage()
+                    ui.post { if (!loaded) splash.text = getString(msg) }
                 }
                 try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return@Thread }
             }
+            } finally {
+                probing = false          // allow a future re-probe to start a fresh loop
+            }
         }, "galaxy-port-probe").apply { isDaemon = true; start() }
+    }
+
+    /**
+     * The kind reason the star is dark right now, as a strings resource id.
+     * Mirrors PKernelService's run-gate so the splash never lies: charge-only
+     * floor holding -> "plug in"; WiFi-only on and not on WiFi -> "waiting for
+     * Wi-Fi"; otherwise it's simply waking. Said in the user's language, no
+     * kernel jargon (UX constitution).
+     */
+    private fun restingMessage(): Int = when {
+        batteryLowAndUnplugged() -> R.string.galaxy_charge
+        wifiOnlyAndNotOnWifi()   -> R.string.galaxy_wifi_wait
+        else                     -> R.string.galaxy_lighting
     }
 
     private fun showGalaxy() {
@@ -182,6 +216,69 @@ class GalaxyActivity : AppCompatActivity() {
             .getInt(PKernelService.PREF_BATTERY_FLOOR, PKernelService.BATTERY_FLOOR_PCT)
             .coerceIn(10, 50)
         return pct <= floor
+    }
+
+    /**
+     * Mirrors PKernelService's WiFi-only gate (PREF_WIFI_ONLY + onUnmeteredWifi):
+     * the network gate that pauses the node holds only when the user turned
+     * WiFi-only ON and the device is NOT on unmetered WiFi. Read-only, no
+     * permission; fail-OPEN (return false = "not the reason") when the network
+     * state is unreadable, exactly like the service's own fail-open. This only
+     * drives a kinder splash message — never a gate decision.
+     */
+    private fun wifiOnlyAndNotOnWifi(): Boolean {
+        val on = getSharedPreferences("ump", MODE_PRIVATE)
+            .getBoolean(PKernelService.PREF_WIFI_ONLY, false)
+        if (!on) return false                    // WiFi-only off -> not the reason
+        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return false   // unknown -> don't claim it
+        val net = cm.activeNetwork ?: return true               // no network -> not on WiFi
+        val caps = cm.getNetworkCapabilities(net) ?: return false // unknown caps -> don't claim it
+        val onUnmeteredWifi =
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        return !onUnmeteredWifi
+    }
+
+    /**
+     * A WebViewClient that keeps navigation in-app AND — critically — NEVER
+     * lets the system "webpage not available / cannot access" error frame show.
+     *
+     * Why: galaxy.c serves the page from inside the node. When the star
+     * "rests" mid-session (battery-safe floor, WiFi-only pause, or a transient
+     * during navigation), a reload / sub-resource / SSE-reconnect can fail and
+     * the default client renders the raw browser error page. The owner sees a
+     * scary "cannot access" screen for what is really their star simply
+     * sleeping. (mk_pino sees this a lot while tapping around.)
+     *
+     * Policy:
+     *  - MAIN-FRAME failure (request.isForMainFrame): the page itself is
+     *    unreachable -> stop, blank any half-rendered error frame, fall back to
+     *    the friendly splash with a kind reason, and RE-ARM the port probe so
+     *    the page reloads automatically when the node comes back up.
+     *  - SUB-RESOURCE failure (!isForMainFrame): a /events SSE drop or a
+     *    /galaxy.json blip — the page's own JS already tolerates these
+     *    (auto-reconnecting SSE). Do NOT splash-flap on every blip; leave it
+     *    to the page. (Default client behaviour: ignore.)
+     */
+    private fun resilientClient(): WebViewClient = object : WebViewClient() {
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: WebResourceError
+        ) {
+            // Only the MAIN frame going unreachable warrants the splash; sub-
+            // resource blips (SSE/fetch) are the page's JS to recover from.
+            if (!request.isForMainFrame) return
+            view.stopLoading()
+            // Blank the WebView so no stale error frame lingers behind the splash.
+            view.loadUrl("about:blank")
+            view.visibility = View.GONE
+            splash.text = getString(restingMessage())
+            splash.visibility = View.VISIBLE
+            loaded = false
+            startProbe()                         // reload automatically when the node is back
+        }
     }
 
     override fun onDestroy() {
