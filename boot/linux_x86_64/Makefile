@@ -189,7 +189,8 @@ COMMON_C_SRCS = \
     protect.c \
     genome.c \
     ed25519.c \
-    sign.c
+    sign.c \
+    modver.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
