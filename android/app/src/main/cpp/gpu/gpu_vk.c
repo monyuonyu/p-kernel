@@ -36,6 +36,7 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -141,7 +142,17 @@ static struct {
     VkCommandPool         cmd_pool;
 
     char             desc[160];      /* gpu_describe() readout                */
+    char             name[256];      /* picked physical-device name (gpu_name) */
 } G;  /* zero-initialized */
+
+/* ------------------------------------------------------------------------ */
+/* Workgroup geometry — MUST stay in sync with the compute shader's         */
+/* local_size_x / local_size_y (COLS_PER_ROW / ROWS_PER_WG). The shader     */
+/* handles ROWS_PER_WG output rows per workgroup, so we dispatch            */
+/* ceil(out / ROWS_PER_WG) groups in X.                                     */
+/* ------------------------------------------------------------------------ */
+#define GPU_COLS_PER_ROW 32u
+#define GPU_ROWS_PER_WG   8u
 
 /* ------------------------------------------------------------------------ */
 /* Small helpers.                                                           */
@@ -277,6 +288,15 @@ static int bringup(void)
     VkPhysicalDeviceProperties props;
     pvkGetPhysicalDeviceProperties(G.phys, &props);
     pvkGetPhysicalDeviceMemoryProperties(G.phys, &G.memprops);
+    /* Stash the device name for gpu_name() (the status/toggle UI). Bounded
+     * copy; props.deviceName is a fixed NUL-terminated VK array. */
+    {
+        size_t i = 0;
+        while (props.deviceName[i] && i + 1 < sizeof(G.name)) {
+            G.name[i] = props.deviceName[i]; i++;
+        }
+        G.name[i] = '\0';
+    }
     {
         char b[160];
         snprintf(b, sizeof(b), "GPU ready: %s (qf=%u)",
@@ -464,6 +484,12 @@ void gpu_describe(char *buf, size_t buflen)
     buf[i] = '\0';
 }
 
+const char *gpu_name(void)
+{
+    /* Always-valid, NUL-terminated. Empty before a successful init / no GPU. */
+    return G.name;
+}
+
 /* ---- one SSBO (host-visible) ------------------------------------------- */
 typedef struct {
     VkBuffer       buf;
@@ -547,37 +573,20 @@ static void mem_invalidate(VkDeviceMemory m)
     pvkInvalidateMappedMemoryRanges(G.device, 1, &rng);
 }
 
-int gpu_matmul_f32(const float *A, size_t in, size_t out,
-                   const float *x, float *y)
+/* ------------------------------------------------------------------------ */
+/* Shared dispatch core: bind {bA, bX, bY}, push (in,out), dispatch, fence,  */
+/* invalidate bY. Returns 0 on success. Used by BOTH the upload-each-call    */
+/* path (gpu_matmul_f32) and the resident-weight path (gpu_matmul_resident); */
+/* the ONLY difference between them is whether bA is rebuilt + reuploaded.   */
+/* Assumes bX/bY are already filled + flushed by the caller.                 */
+/* ------------------------------------------------------------------------ */
+static int dispatch_matmul(const ssbo_t *bA, const ssbo_t *bX, ssbo_t *bY,
+                           size_t in, size_t out)
 {
-    /* Availability + enable gate. Either off => caller uses CPU. */
-    if (!gpu_available())            return -1;
-    if (!A || !x || !y)              return -1;
-    if (in == 0 || out == 0)         return -1;
-    /* Guard against absurd sizes overflowing VkDeviceSize math. */
-    if (in > (size_t)1 << 28 || out > (size_t)1 << 28) return -1;
-
     int rc = -1;
-    ssbo_t bA = {0}, bX = {0}, bY = {0};
     VkDescriptorPool dpool = VK_NULL_HANDLE;
     VkCommandBuffer  cmd   = VK_NULL_HANDLE;
     VkFence          fence = VK_NULL_HANDLE;
-
-    const VkDeviceSize szA = (VkDeviceSize)in * out * sizeof(float);
-    const VkDeviceSize szX = (VkDeviceSize)in       * sizeof(float);
-    const VkDeviceSize szY = (VkDeviceSize)out      * sizeof(float);
-
-    if (ssbo_create(&bA, szA) != 0) goto done;
-    if (ssbo_create(&bX, szX) != 0) goto done;
-    if (ssbo_create(&bY, szY) != 0) goto done;
-
-    /* Upload A and x. */
-    memcpy(bA.mapped, A, (size_t)szA);
-    memcpy(bX.mapped, x, (size_t)szX);
-    memset(bY.mapped, 0, (size_t)szY);
-    mem_flush(bA.mem);
-    mem_flush(bX.mem);
-    mem_flush(bY.mem);
 
     /* Descriptor pool + set. */
     VkDescriptorPoolSize ps;
@@ -605,9 +614,9 @@ int gpu_matmul_f32(const float *A, size_t in, size_t out,
 
     VkDescriptorBufferInfo bi[3];
     memset(bi, 0, sizeof(bi));
-    bi[0].buffer = bA.buf; bi[0].range = bA.size;
-    bi[1].buffer = bX.buf; bi[1].range = bX.size;
-    bi[2].buffer = bY.buf; bi[2].range = bY.size;
+    bi[0].buffer = bA->buf; bi[0].range = bA->size;
+    bi[1].buffer = bX->buf; bi[1].range = bX->size;
+    bi[2].buffer = bY->buf; bi[2].range = bY->size;
     VkWriteDescriptorSet w[3];
     memset(w, 0, sizeof(w));
     for (int i = 0; i < 3; i++) {
@@ -643,9 +652,10 @@ int gpu_matmul_f32(const float *A, size_t in, size_t out,
     pvkCmdPushConstants(cmd, G.pipe_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                         0, sizeof(dims), dims);
 
-    /* local_size_x = 64 in the shader. */
-    const uint32_t LSX = 64;
-    uint32_t groups = (uint32_t)((out + LSX - 1) / LSX);
+    /* The shader handles GPU_ROWS_PER_WG output rows per workgroup (2D local
+     * size COLS_PER_ROW x ROWS_PER_WG). Dispatch ceil(out / ROWS_PER_WG)
+     * groups in X. */
+    uint32_t groups = (uint32_t)((out + GPU_ROWS_PER_WG - 1) / GPU_ROWS_PER_WG);
     pvkCmdDispatch(cmd, groups, 1, 1);
 
     /* Barrier so the host read of y sees the shader writes. */
@@ -679,19 +689,143 @@ int gpu_matmul_f32(const float *A, size_t in, size_t out,
                          (uint64_t)10 * 1000 * 1000 * 1000) != VK_SUCCESS)
         goto done;
 
-    /* Read back y. */
-    mem_invalidate(bY.mem);
-    memcpy(y, bY.mapped, (size_t)szY);
+    mem_invalidate(bY->mem);
     rc = 0;
 
 done:
     if (fence) pvkDestroyFence(G.device, fence, NULL);
     if (cmd)   pvkFreeCommandBuffers(G.device, G.cmd_pool, 1, &cmd);
     if (dpool) pvkDestroyDescriptorPool(G.device, dpool, NULL);
+    return rc;
+}
+
+int gpu_matmul_f32(const float *A, size_t in, size_t out,
+                   const float *x, float *y)
+{
+    /* Availability + enable gate. Either off => caller uses CPU. */
+    if (!gpu_available())            return -1;
+    if (!A || !x || !y)              return -1;
+    if (in == 0 || out == 0)         return -1;
+    /* Guard against absurd sizes overflowing VkDeviceSize math. */
+    if (in > (size_t)1 << 28 || out > (size_t)1 << 28) return -1;
+
+    int rc = -1;
+    ssbo_t bA = {0}, bX = {0}, bY = {0};
+
+    const VkDeviceSize szA = (VkDeviceSize)in * out * sizeof(float);
+    const VkDeviceSize szX = (VkDeviceSize)in       * sizeof(float);
+    const VkDeviceSize szY = (VkDeviceSize)out      * sizeof(float);
+
+    if (ssbo_create(&bA, szA) != 0) goto done;
+    if (ssbo_create(&bX, szX) != 0) goto done;
+    if (ssbo_create(&bY, szY) != 0) goto done;
+
+    /* Upload A and x (this path re-uploads A every call — the one-shot/cert
+     * path; the resident path below avoids the A re-upload). */
+    memcpy(bA.mapped, A, (size_t)szA);
+    memcpy(bX.mapped, x, (size_t)szX);
+    memset(bY.mapped, 0, (size_t)szY);
+    mem_flush(bA.mem);
+    mem_flush(bX.mem);
+    mem_flush(bY.mem);
+
+    if (dispatch_matmul(&bA, &bX, &bY, in, out) != 0) goto done;
+
+    /* Read back y. */
+    memcpy(y, bY.mapped, (size_t)szY);
+    rc = 0;
+
+done:
     ssbo_destroy(&bY);
     ssbo_destroy(&bX);
     ssbo_destroy(&bA);
     return rc;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Resident weights: A stays on the GPU across many matmuls (the inference   */
+/* pattern — same weights, new x every token). bX/bY are kept resident too   */
+/* so a steady-state call only memcpy's x in and y out, no per-call alloc.   */
+/* ------------------------------------------------------------------------ */
+struct gpu_weight {
+    ssbo_t bA;       /* resident weight matrix (out x in)                    */
+    ssbo_t bX;       /* resident input  vector (length in)                   */
+    ssbo_t bY;       /* resident output vector (length out)                  */
+    size_t in;
+    size_t out;
+};
+
+gpu_weight_t gpu_upload_weight(const float *A, size_t in, size_t out)
+{
+    if (!gpu_available())    return NULL;
+    if (!A)                  return NULL;
+    if (in == 0 || out == 0) return NULL;
+    if (in > (size_t)1 << 28 || out > (size_t)1 << 28) return NULL;
+
+    struct gpu_weight *h =
+        (struct gpu_weight *)malloc(sizeof(struct gpu_weight));
+    if (!h) return NULL;
+    memset(h, 0, sizeof(*h));
+    h->in  = in;
+    h->out = out;
+
+    const VkDeviceSize szA = (VkDeviceSize)in * out * sizeof(float);
+    const VkDeviceSize szX = (VkDeviceSize)in       * sizeof(float);
+    const VkDeviceSize szY = (VkDeviceSize)out      * sizeof(float);
+
+    if (ssbo_create(&h->bA, szA) != 0) goto fail;
+    if (ssbo_create(&h->bX, szX) != 0) goto fail;
+    if (ssbo_create(&h->bY, szY) != 0) goto fail;
+
+    /* Upload A ONCE — the whole point of the resident path. */
+    memcpy(h->bA.mapped, A, (size_t)szA);
+    mem_flush(h->bA.mem);
+    return h;
+
+fail:
+    ssbo_destroy(&h->bY);
+    ssbo_destroy(&h->bX);
+    ssbo_destroy(&h->bA);
+    free(h);
+    return NULL;
+}
+
+int gpu_matmul_resident(gpu_weight_t h, const float *x, float *y)
+{
+    if (!gpu_available()) return -1;
+    if (!h || !x || !y)   return -1;
+    /* If the device was torn down (gpu_shutdown) the buffers are stale; the
+     * available() gate above already rules that out for a live handle. */
+    if (!h->bA.buf || !h->bX.buf || !h->bY.buf) return -1;
+
+    const size_t in  = h->in;
+    const size_t out = h->out;
+    const VkDeviceSize szX = (VkDeviceSize)in  * sizeof(float);
+    const VkDeviceSize szY = (VkDeviceSize)out * sizeof(float);
+
+    /* Upload only x; A is already resident. */
+    memcpy(h->bX.mapped, x, (size_t)szX);
+    memset(h->bY.mapped, 0, (size_t)szY);
+    mem_flush(h->bX.mem);
+    mem_flush(h->bY.mem);
+
+    if (dispatch_matmul(&h->bA, &h->bX, &h->bY, in, out) != 0) return -1;
+
+    memcpy(y, h->bY.mapped, (size_t)szY);
+    return 0;
+}
+
+void gpu_free_weight(gpu_weight_t h)
+{
+    if (!h) return;
+    /* Only touch device objects if the device is still alive. After
+     * gpu_shutdown the device + fn-ptrs are gone; just free the host struct. */
+    if (G.device && pvkDestroyBuffer) {
+        ssbo_destroy(&h->bY);
+        ssbo_destroy(&h->bX);
+        ssbo_destroy(&h->bA);
+    }
+    free(h);
 }
 
 void gpu_shutdown(void)

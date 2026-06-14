@@ -77,6 +77,46 @@ PK_GPU_API int  gpu_available(void);
 PK_GPU_API int  gpu_matmul_f32(const float *A, size_t in, size_t out,
                     const float *x, float *y);
 
+/*
+ * ----------------------------------------------------------------------------
+ * RESIDENT WEIGHTS (GPU-2): upload A to a GPU SSBO ONCE, reuse across calls.
+ * ----------------------------------------------------------------------------
+ * gpu_matmul_f32 re-uploads the whole weight matrix A on EVERY call. For the
+ * inference path that dominates: the SAME weights are multiplied by a new x
+ * for every token. These two calls keep A resident on the GPU so only x is
+ * uploaded and y read back per matmul — the realistic inference pattern.
+ *
+ * gpu_upload_weight(A, in, out): copies A (out rows x in cols, row-major) into
+ *   a GPU-resident storage buffer ONCE. Returns an opaque non-NULL handle on
+ *   success, or NULL on ANY failure (no GPU, disabled, OOM, bad args) — in
+ *   which case the caller MUST use the CPU path for these weights. The handle
+ *   stays valid until gpu_free_weight() (or gpu_shutdown()).
+ *
+ * gpu_matmul_resident(h, x, y): y[i] = sum_j A[i*in+j] * x[j], reusing the
+ *   resident A behind handle h (the in/out are remembered from upload). Only x
+ *   is uploaded and y read back. Returns 0 on success (y filled), <0 on ANY
+ *   failure (y untouched -> caller falls back to CPU). Never crashes.
+ *
+ * gpu_free_weight(h): release the resident buffer. NULL-safe, idempotent.
+ *
+ * All three are safe to call any time; if the GPU is unavailable/disabled
+ * gpu_upload_weight returns NULL and the caller simply stays on the CPU.
+ */
+typedef struct gpu_weight *gpu_weight_t;
+PK_GPU_API gpu_weight_t gpu_upload_weight(const float *A, size_t in, size_t out);
+PK_GPU_API int          gpu_matmul_resident(gpu_weight_t h,
+                                            const float *x, float *y);
+PK_GPU_API void         gpu_free_weight(gpu_weight_t h);
+
+/*
+ * The picked GPU's device name (e.g. "Adreno (TM) 840"), read from the Vulkan
+ * physical-device properties at gpu_init(). Returns a pointer to an internal,
+ * always-NUL-terminated static string; never NULL. Before a successful init
+ * (or with no GPU) it returns "" (empty). For the status/toggle UI. Always
+ * safe to call.
+ */
+PK_GPU_API const char *gpu_name(void);
+
 /* Destroy the Vulkan objects and dlclose libvulkan. Idempotent. */
 PK_GPU_API void gpu_shutdown(void);
 
