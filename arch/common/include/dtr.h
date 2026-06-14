@@ -143,6 +143,22 @@ void dtr_forward_probs(const B input[DTR_SEQ_LEN], float out[DTR_OUT_DIM]);
  * 排除)。docs/review-2026-06-three-brains.md 参照。 */
 UB   dtr_classify(const B input[DTR_SEQ_LEN]);
 
+/* FP-determinism golden-logit cert ("one mind, one math"). Reseeds the
+ * weights with a fixed seed, runs the REAL production forward over a
+ * fixed input bank, and FNV-1a folds the raw IEEE-754 bit patterns of
+ * every output logit into one hash. Must equal DTR_FPDET_GOLDEN on every
+ * target built with -ffp-contract=off; an FMA-contracting build (clang
+ * without the flag) flips low mantissa bits and changes the hash. Pure:
+ * saves/restores the live weights. See `dtr fpdet`. */
+UW   dtr_fpdet_hash(void);
+
+/* Golden constant: computed on x86_64-linux with -ffp-contract=off and
+ * reproduced byte-identically on aarch64 (native cc) — the "one math"
+ * proof. Both arches print 0xe2391516 with -ffp-contract=off. If you
+ * change the forward math, the input bank, or the hash, this MUST be
+ * recomputed (and must still match across both arches). */
+#define DTR_FPDET_GOLDEN  0xe2391516UL
+
 /* パイプラインタスク
  *   Node 0: "dtr/result" を subscribe し、dtr_infer() のセマフォを signal
  *   Node 1: "dtr/l0" を subscribe し、Stage1+2 を計算して "dtr/result" を pub */

@@ -1030,6 +1030,77 @@ UB dtr_classify(const B input[DTR_SEQ_LEN])
     return cls;
 }
 
+/* ------------------------------------------------------------------ */
+/* FP-determinism golden-logit cert ("one mind, one math")             */
+/*                                                                     */
+/* Reseeds the weights with a FIXED seed (no dependence on training    */
+/* history), runs the REAL production forward (train_forward via       */
+/* dtr_forward_probs — the same dt_linear multiply-accumulate the live */
+/* inference path uses) over a fixed bank of inputs, and folds the     */
+/* RAW 32-bit IEEE-754 bit patterns of every output logit into one     */
+/* FNV-1a hash.  Hashing the bit patterns (not the float values) is    */
+/* the whole point: a 1-ULP difference from FMA contraction flips low  */
+/* mantissa bits and changes the hash, so a clang build that contracts */
+/* a*b+c into an fmadd produces a DIFFERENT hash than a gcc build that */
+/* rounds the multiply and the add separately.  -ffp-contract=off on   */
+/* every target makes them agree — that agreement is what this cert    */
+/* asserts.  Pure: saves and restores the live weights, so calling it  */
+/* from the shell does not disturb a trained mind.                     */
+
+#define FPDET_SEED   0x0F9DE7A1UL   /* fixed reseed — history-independent */
+
+/* FNV-1a over a 32-bit word's 4 bytes (LE order, deterministic). */
+static UW fpdet_fold(UW h, UW word)
+{
+    for (INT k = 0; k < 4; k++) {
+        h ^= (word >> (k * 8)) & 0xFFu;
+        h *= 16777619UL;
+        h &= 0xFFFFFFFFUL;
+    }
+    return h;
+}
+
+UW dtr_fpdet_hash(void)
+{
+    /* save the live (possibly trained) weights so the cert is pure */
+    dtr_weights_get(g_flatw);
+
+    /* deterministic, history-independent weights */
+    UB rprev = ret_set(0);
+    dtr_reinit_weights(FPDET_SEED);
+
+    /* fixed input bank — spans the int8 sensor range so every linear
+     * row sees non-trivial magnitudes (more bits => stronger guard). */
+    static const B bank[8][DTR_SEQ_LEN] = {
+        {   0,   0,   0,   0 },
+        {  10,  20,  30,  40 },
+        { -40, -30, -20, -10 },
+        { 127, 127, 127, 127 },
+        {-128,-128,-128,-128 },
+        {  17, -53,  91, -11 },
+        { -99,  42,   7, 120 },
+        {  63, -64,  31, -32 },
+    };
+
+    UW h = 2166136261UL;             /* FNV offset basis */
+    for (INT i = 0; i < 8; i++) {
+        float p[DTR_OUT_DIM];
+        (void)train_forward(bank[i], 0);   /* REAL forward, fills tc.probs */
+        for (INT c = 0; c < DOUT; c++) p[c] = tc.probs[c];
+        for (INT c = 0; c < DOUT; c++) {
+            UW word;
+            /* type-pun the float to its raw IEEE-754 bits */
+            __builtin_memcpy(&word, &p[c], 4);
+            h = fpdet_fold(h, word);
+        }
+    }
+
+    /* restore the live weights and retrieval state */
+    dtr_weights_set(g_flatw);
+    ret_set(rprev);
+    return h;
+}
+
 /* Gradient check: compares the analytic gradient against central
  * finite differences on a spread of parameter indices for one sample.
  * Returns the max relative error — the proof that train_backward is

@@ -447,6 +447,32 @@ static void cmd_crash(void)
     dtr_crash_req = 1;
 }
 
+/* print a 32-bit value as 0xXXXXXXXX (8 hex digits) */
+static void tr_puthex32(UW v)
+{
+    static const char hx[] = "0123456789abcdef";
+    char buf[11];
+    buf[0] = '0'; buf[1] = 'x';
+    for (INT i = 0; i < 8; i++)
+        buf[2 + i] = hx[(v >> ((7 - i) * 4)) & 0xF];
+    buf[10] = '\0';
+    tr_puts(buf);
+}
+
+/* `dtr fpdet` — FP-determinism golden-logit cert ("one mind, one math").
+ * Hashes the raw bit patterns of the production forward's logits and
+ * compares to DTR_FPDET_GOLDEN. Prints the hash so a fresh golden can be
+ * read off the first run; prints [fpdet] PASS/FAIL for CI to grep. */
+static void cmd_fpdet(void)
+{
+    UW h = dtr_fpdet_hash();
+    tr_puts("[fpdet] hash="); tr_puthex32(h);
+    tr_puts(" golden=");      tr_puthex32(DTR_FPDET_GOLDEN);
+    tr_puts("\r\n");
+    tr_puts(h == DTR_FPDET_GOLDEN ? "[fpdet] PASS\r\n"
+                                  : "[fpdet] FAIL\r\n");
+}
+
 /* ------------------------------------------------------------------ */
 /* shell dispatcher — args points just past "dtr"                      */
 /* ------------------------------------------------------------------ */
@@ -504,6 +530,7 @@ void dtr_train_cmd(const UB *args, UW len)
     if (tr_tok(p, end, "save")) { cmd_save(); return; }
     if (tr_tok(p, end, "load")) { cmd_load(); return; }
     if (tr_tok(p, end, "grad")) { cmd_grad(); return; }
+    if (tr_tok(p, end, "fpdet")) { cmd_fpdet(); return; }
     if (tr_tok(p, end, "crash")) { cmd_crash(); return; }
     if (tr_tok(p, end, "remember")) { cmd_remember(); return; }
     if (tr_tok(p, end, "ret")) { cmd_ret(p + 3, end); return; }
@@ -520,7 +547,7 @@ void dtr_train_cmd(const UB *args, UW len)
     }
 
     tr_puts("usage: dtr [stat] | dtr eval | dtr train [epochs]"
-            " | dtr save | dtr load | dtr grad | dtr crash"
+            " | dtr save | dtr load | dtr grad | dtr fpdet | dtr crash"
             " | dtr remember | dtr ret [on|off|reload]"
             " | dtr gossip [test|solo|run|status]\r\n");
 }
