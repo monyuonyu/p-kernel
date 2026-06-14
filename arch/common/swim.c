@@ -198,8 +198,8 @@ static void gossip_apply(const SWIM_PKT *pkt)
          * the gossip frame (no wire change). We seed dnode_table[nid].ip so any
          * later unicast (and `nodes`) has the right address even before our own
          * direct probe RTT lands. We do NOT fabricate an RTT: region_recompute
-         * still requires a real swim_rtt_ms(), which the now-round-robin probe
-         * loop measures directly within a couple of rounds. A DEAD rumour about
+         * still requires a real swim_rtt_ms(), which the directed PING/ACK probe
+         * measures directly within a couple of rounds. A DEAD rumour about
          * an UNKNOWN peer is ignored (we never saw it alive — gossiping it dead
          * would only seed a grave). */
         if (dnode_table[nid].state == DNODE_UNKNOWN &&
@@ -457,7 +457,7 @@ void swim_task(INT stacd, void *exinf)
         /* NET-DISCOVERY-STAR (wave-discovery-mesh): broadcast membership beacon.
          *
          * The defect: a peer left UNKNOWN until a DIRECT packet arrived, and the
-         * only direct traffic a non-hub node reliably saw was its own round-robin
+         * only direct traffic a non-hub node reliably saw was its own directed
          * probe — whose all-UNKNOWN fallback always targeted the minimum-id node
          * (the hub). So two NON-hub peers never exchanged a direct packet and the
          * live mesh collapsed into a star centred on the lowest id; region_recompute

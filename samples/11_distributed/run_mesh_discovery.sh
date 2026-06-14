@@ -10,7 +10,7 @@
 # Today (disease, on wave-i18n-galaxy) each node only ever PINGs the lowest
 # non-self id (drpc node 0, the absent hub), so the two non-hub peers never
 # directly probe each other and never form a region: region size=1, members =
-# self only. With the fix (round-robin probe over the whole id space +
+# self only. With the fix (a broadcast membership beacon each round +
 # transitive-membership gossip) they discover each other WITHOUT a hub and
 # co-region: size=2.
 #
