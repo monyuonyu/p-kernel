@@ -24,4 +24,5 @@
     <string name="pref_floor_label">%%%1$d altında duraklat</string>
     <string name="pref_wifi_only">Yalnızca Wi-Fi (sınırsız)</string>
     <string name="pref_start_on_boot">Telefon açıldığında başlat</string>
+    <string name="reintro_btn">Tanıtımı tekrar gör</string>
 </resources>

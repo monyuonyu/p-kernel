@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Tạm dừng dưới %1$d%%</string>
     <string name="pref_wifi_only">Chỉ Wi-Fi (không giới hạn dữ liệu)</string>
     <string name="pref_start_on_boot">Khởi động khi bật điện thoại</string>
+    <string name="reintro_btn">Xem lại phần giới thiệu</string>
 </resources>

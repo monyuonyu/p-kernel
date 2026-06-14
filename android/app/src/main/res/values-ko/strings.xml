@@ -24,4 +24,5 @@
     <string name="pref_floor_label">%1$d%% 아래에서 멈춤</string>
     <string name="pref_wifi_only">Wi-Fi만 (데이터 무제한)</string>
     <string name="pref_start_on_boot">휴대폰이 켜질 때 시작</string>
+    <string name="reintro_btn">소개 다시 보기</string>
 </resources>

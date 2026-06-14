@@ -24,4 +24,5 @@
     <string name="pref_floor_label">Pause sous %1$d%%</string>
     <string name="pref_wifi_only">Wi-Fi uniquement (sans forfait limité)</string>
     <string name="pref_start_on_boot">Démarrer à l\'allumage du téléphone</string>
+    <string name="reintro_btn">Revoir l\'introduction</string>
 </resources>

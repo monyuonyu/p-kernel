@@ -24,4 +24,5 @@
     <string name="pref_floor_label">%1$d%%-க்குக் கீழே நிறுத்து</string>
     <string name="pref_wifi_only">Wi-Fi மட்டும் (வரம்பற்றது)</string>
     <string name="pref_start_on_boot">ஃபோன் இயக்கப்படும்போது தொடங்கு</string>
+    <string name="reintro_btn">அறிமுகத்தை மீண்டும் காண்க</string>
 </resources>

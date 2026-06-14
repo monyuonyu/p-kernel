@@ -24,4 +24,5 @@
     <string name="pref_floor_label">พักเมื่อต่ำกว่า %1$d%%</string>
     <string name="pref_wifi_only">เฉพาะ Wi-Fi (ไม่จำกัดดาต้า)</string>
     <string name="pref_start_on_boot">เริ่มเมื่อเปิดเครื่อง</string>
+    <string name="reintro_btn">ดูคำแนะนำอีกครั้ง</string>
 </resources>

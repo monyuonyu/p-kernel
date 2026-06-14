@@ -287,6 +287,18 @@
                     android:textColorHint="@color/sky_faint"
                     android:fontFamily="monospace"/>
 
+                <!-- Replay the picture-book intro (pictures only, no re-consent). -->
+                <Button
+                    android:id="@+id/btn_reintro"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/reintro_btn"
+                    android:textColor="@color/sky_faint"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="16dp"/>
+
                 <!-- The door to the engineer page (raw log + internals). -->
                 <Button
                     android:id="@+id/btn_engineer"
@@ -297,7 +309,7 @@
                     android:textColor="@color/sky_faint"
                     android:textSize="13sp"
                     android:fontFamily="monospace"
-                    android:layout_marginTop="16dp"/>
+                    android:layout_marginTop="8dp"/>
             </LinearLayout>
         </LinearLayout>
     </ScrollView>

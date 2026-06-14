@@ -24,4 +24,5 @@
     <string name="pref_floor_label">توقّف تحت %1$d%%</string>
     <string name="pref_wifi_only">واي-فاي فقط (بلا حدّ بيانات)</string>
     <string name="pref_start_on_boot">ابدأ عند تشغيل الهاتف</string>
+    <string name="reintro_btn">عرض المقدمة مرة أخرى</string>
 </resources>
