@@ -216,8 +216,15 @@ RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
                -fno-common -O1 -std=gnu11 -mstrict-align \
                -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
 
+# student_stub.o — WEAK no-op fallbacks for the resident-baby ABI
+# (student_dmn_consolidate / student_dmn_heldout_loss / student_chat_generate).
+# dmn.c references the first two; the real (strong) defs live in
+# arch/common/llm/student_shell.c, which is HOSTED-ONLY (needs malloc/libm). On
+# bare metal student_shell.c is not built, so these weak no-ops resolve the link.
+STUDENT_STUB_OBJ = student_stub.o
+
 # ---- All objects -------------------------------------------------------
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS) $(STUDENT_STUB_OBJ)
 
 TARGET = kernel.elf
 
@@ -288,6 +295,10 @@ $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH)/%.c
 
 # arch/common C sources (portable distributed/AI layer)
 $(COMMON_OBJS): %.o: $(COMMON)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# arch/common/llm/student_stub.c — WEAK student-ABI fallbacks (see ALL_OBJS).
+$(STUDENT_STUB_OBJ): %.o: $(COMMON)/llm/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # ark-profile v1 + i18n (ark-profile.md §7.1/§7.5): the manifesto TABLE.

@@ -212,7 +212,14 @@ RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
                -fcf-protection=none -O1 -m32 -std=gnu11 \
                -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS)
+# student_stub.o — WEAK no-op fallbacks for the resident-baby ABI
+# (student_dmn_consolidate / student_dmn_heldout_loss / student_chat_generate).
+# dmn.c references the first two; the real (strong) defs live in
+# arch/common/llm/student_shell.c, which is HOSTED-ONLY (needs malloc/libm). On
+# bare metal student_shell.c is not built, so these weak no-ops resolve the link.
+STUDENT_STUB_OBJ = student_stub.o
+
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS) $(STUDENT_STUB_OBJ)
 
 TARGET = bootloader.bin
 
@@ -282,6 +289,10 @@ ark_profile.o: $(MANIFESTO_PAGE)
 
 # arch/common C ソース (分散層・kloader)
 $(COMMON_OBJS): %.o: $(COMMON)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# arch/common/llm/student_stub.c — WEAK student-ABI fallbacks (see ALL_OBJS).
+$(STUDENT_STUB_OBJ): %.o: $(COMMON)/llm/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # kernel/common C ソース

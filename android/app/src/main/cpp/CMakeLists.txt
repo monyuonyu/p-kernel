@@ -383,9 +383,21 @@ set_source_files_properties(${GPU_SRC} PROPERTIES OBJECT_DEPENDS ${MATMUL_SPV_H}
 set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c
             ${CMAKE_CURRENT_SOURCE_DIR}/gpu_jni.c)
 
+# student-ABI weak fallbacks. dmn.c (COMMON_SRC) calls student_dmn_consolidate()
+# + student_dmn_heldout_loss(), and galaxy.c (COMMON_SRC) calls
+# student_chat_generate(). Their STRONG defs live in arch/common/llm/
+# student_shell.c, which is HOSTED-ONLY (boot/linux LLM_C_SRCS — it needs the
+# real libc/malloc/libm and is NOT in this Android build). Without a definition
+# the .so fails to link (undefined symbols). student_stub.c provides WEAK no-op
+# defs so the Android link resolves; on the host the strong student_shell.c
+# overrides them. This is its OWN list (not COMMON_SRC) so tools/android/
+# check_parity.sh stays green: student_shell.c is host-only and lives in the host
+# Makefiles' LLM_C_SRCS, which check_parity does not compare against COMMON.
+set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c)
+
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
-    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC})
+    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC} ${LLM_STUB_SRC})
 
 # galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and
 # ark_profile.c #include them by bare name. gpu_gen holds the SPIR-V header.
