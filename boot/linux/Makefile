@@ -189,6 +189,7 @@ COMMON_C_SRCS = \
     r3_incontext.c \
     r3_vocab.c \
     galaxy.c \
+    gx_sha1.c \
     spec.c \
     retrieval.c \
     dkva.c \

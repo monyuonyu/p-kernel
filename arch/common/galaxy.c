@@ -31,7 +31,9 @@
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
 #include "ark_profile.h" /* ark-profile v1: /manifesto, /profile, consent  */
 #include "modver.h"      /* module-version registry — GET /modules.json    */
+#include "gx_sha1.h"     /* §3.7 chat-ws: RFC 6455 handshake (SHA1+base64) */
 #include "kernel.h"
+#include <tmonitor.h>    /* tm_putstring — the boot-time KAT verdict line   */
 
 #include "galaxy_page.h" /* GENERATED: galaxy_page[] + galaxy_page_len     */
 
@@ -133,9 +135,10 @@ void galaxy_emit(UB type, UB src, UB dst, UH a, UH b)
 
 typedef struct {
     INT  in_use;
-    INT  is_sse;          /* held-open event stream                       */
-    UW   sse_cursor;      /* next ring index this SSE client will send    */
-    UW   last_ping;       /* ms of last : ping (SSE keepalive)            */
+    INT  is_sse;          /* held-open SSE event stream                   */
+    INT  is_ws;           /* §3.7 held-open WebSocket (chat + events)     */
+    UW   sse_cursor;      /* next ring index this SSE/WS client will send */
+    UW   last_ping;       /* ms of last keepalive (SSE comment / WS ping) */
     INT  ob_len;          /* pending bytes in ob[]                        */
     char ob[GX_OUTBUF];
 } GX_CLIENT;
@@ -414,6 +417,177 @@ static void gx_sse_event(INT slot, const GALAXY_EV *e)
     gx_qs(slot, ",\"a\":");            gx_qdec(slot, (UW)e->a);
     gx_qs(slot, ",\"b\":");            gx_qdec(slot, (UW)e->b);
     gx_qs(slot, "}\n\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* §3.7 WebSocket transport (RFC 6455) — a held-open chat+event stream  */
+/* layered on the SAME 5-function galaxy_io_* byte ABI as everything     */
+/* else. The SSE path (/events) stays fully working as the fallback;    */
+/* /ws is the additive chat channel the page upgrades to when it can.    */
+/*                                                                       */
+/* CONTRACT (both the browser implementer and this file honor it         */
+/* verbatim — the contract field; interoperability depends on it):       */
+/*   handshake : GET /ws  with Upgrade: websocket + Sec-WebSocket-Key.   */
+/*               server -> 101 + Sec-WebSocket-Accept =                  */
+/*               base64(SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))*/
+/*   server->client (TEXT, unmasked) JSON objects, each its own frame:   */
+/*     - on open, ONE  {"type":"state", ...galaxy.json fields... }       */
+/*     - then each ring event:  {"type":"<name>","ms":..,"src"?:,"dst"?:,*/
+/*       "a":..,"b":..}  (the SSE event body, verbatim shape)            */
+/*     - a chat answer:  {"type":"reply","k":"<word>","pred":<id>,       */
+/*       "word":"<word>","share":<n>}                                    */
+/*     - a teach ack:    {"type":"taught","ok":true,"pending":<n>,       */
+/*       "rounds":<n>}  OR a refusal {"type":"refused","reason":"..",..}  */
+/*   client->server (TEXT, MASKED per RFC 6455) JSON objects:            */
+/*     - {"t":"say","k":"<word>"}        -> ask the mind, reply frame     */
+/*     - {"t":"teach","k":"<w>","v":"<w>"} -> teach (consent-gated), ack  */
+/*   control: server answers PING with PONG; CLOSE -> echo + drop.       */
+/* All client text is bounded; an oversize/over-fragmented frame drops    */
+/* the client (never wedges the task). Masked frames are required from    */
+/* the client (an unmasked client frame is a protocol error -> drop).    */
+/* ------------------------------------------------------------------ */
+
+#define WS_GUID  "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+/* WS opcodes */
+#define WS_OP_CONT   0x0
+#define WS_OP_TEXT   0x1
+#define WS_OP_BIN    0x2
+#define WS_OP_CLOSE  0x8
+#define WS_OP_PING   0x9
+#define WS_OP_PONG   0xA
+
+/* one file-static staging buffer for building a server frame's JSON
+ * payload (the server is a SINGLE task — the hosted-relay stack lesson:
+ * never a task-stack buffer). 2 KB easily holds the state snapshot for
+ * GALAXY_MAX_CLIENTS-bounded peer counts and any event/reply line. */
+#define WS_STAGE_MAX 2048
+static char  gx_ws_stage[WS_STAGE_MAX];
+static INT   gx_ws_stagen;
+
+static void ws_reset(void) { gx_ws_stagen = 0; }
+static void ws_putc(char c) { if (gx_ws_stagen < WS_STAGE_MAX) gx_ws_stage[gx_ws_stagen++] = c; }
+static void ws_s(const char *s) { while (*s) ws_putc(*s++); }
+static void ws_dec(UW v)
+{
+    char buf[12]; INT i = 11; buf[11] = 0;
+    if (v == 0) { ws_putc('0'); return; }
+    while (v && i > 0) { buf[--i] = (char)('0' + v % 10); v /= 10; }
+    ws_s(&buf[i]);
+}
+/* JSON-escape a word into the stage (the vocab words are clean ASCII, but
+ * escape defensively so a future vocabulary can't break the frame). */
+static void ws_str(const char *s)
+{
+    for (INT i = 0; s[i]; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
+        else if (c == '\n') ws_s("\\n");
+        else if (c == '\r') ws_s("\\r");
+        else if (c == '\t') ws_s("\\t");
+        else if (c < 0x20)  ws_putc(' ');
+        else ws_putc((char)c);
+    }
+}
+
+/* frame the staged payload as ONE server TEXT frame (FIN=1, unmasked) and
+ * queue it. Server frames are NEVER masked (RFC 6455 §5.1). Payload <=
+ * WS_STAGE_MAX so the 2-byte (or 4-byte) length header suffices. Returns
+ * 0 ok / -1 outbuf overflow (caller drops the client). */
+static INT gx_ws_send_stage(INT slot)
+{
+    INT n = gx_ws_stagen;
+    char hdr[4]; INT hn = 0;
+    hdr[hn++] = (char)(0x80 | WS_OP_TEXT);          /* FIN + text           */
+    if (n < 126) {
+        hdr[hn++] = (char)n;                         /* 7-bit length         */
+    } else {
+        hdr[hn++] = (char)126;                       /* 16-bit length follows*/
+        hdr[hn++] = (char)((n >> 8) & 0xFF);
+        hdr[hn++] = (char)(n & 0xFF);
+    }
+    if (gx_q(slot, hdr, hn) < 0) return -1;
+    return gx_q(slot, gx_ws_stage, n);
+}
+
+/* queue a tiny control frame (close/pong) with an optional payload that is
+ * already small (<125). Server control frames are unmasked. */
+static INT gx_ws_send_ctrl(INT slot, UB opcode, const char *payload, INT n)
+{
+    char hdr[2];
+    hdr[0] = (char)(0x80 | opcode);
+    hdr[1] = (char)n;                                /* control payload <125 */
+    if (gx_q(slot, hdr, 2) < 0) return -1;
+    if (n > 0) return gx_q(slot, payload, n);
+    return 0;
+}
+
+/* build the {"type":"state",...} snapshot into the stage. Same field set
+ * as /galaxy.json's me{} + peers[] (NO second node table — reuses the same
+ * dnode_table + world accessors), tagged so the page routes it like an
+ * event. */
+static void gx_ws_build_state(void)
+{
+    UB me = gx_my_id();
+    INT pr = world_peer_pressure(me); if (pr < 0) pr = 0;
+    INT th = world_peer_threat(me);   if (th < 0) th = 0;
+    INT mydv = world_peer_device(me);
+
+    ws_reset();
+    ws_s("{\"type\":\"state\",\"me\":{\"id\":"); ws_dec(me);
+    ws_s(",\"star\":\"");
+    if (ark_profile_head(&gx_prof) && gx_prof.handle_len > 0) {
+        INT hn = gx_prof.handle_len > ARK_HANDLE_MAX ? ARK_HANDLE_MAX : gx_prof.handle_len;
+        for (INT i = 0; i < hn; i++) {              /* inline escape (bounded)*/
+            char w[2] = { gx_prof.handle[i], 0 };
+            unsigned char c = (unsigned char)w[0];
+            if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
+            else if (c < 0x20) ws_putc(' ');
+            else ws_putc((char)c);
+        }
+    }
+    ws_s("\",\"device\":");  ws_dec(mydv < 0 ? 0u : (UW)mydv);
+    ws_s(",\"region\":");    ws_dec((UW)region_id());
+    ws_s(",\"dmn\":");       ws_dec((UW)dmn_state_get());
+    ws_s(",\"pending\":");   ws_dec((UW)r3_facts_pending());
+    ws_s(",\"rounds\":");    ws_dec(dmn_r3_rounds());
+    ws_s(",\"pressure\":");  ws_dec((UW)pr);
+    ws_s(",\"threat\":");    ws_dec((UW)th);
+    ws_s("},\"peers\":[");
+    INT first = 1;
+    for (INT n = 0; n < DNODE_MAX; n++) {
+        if ((UB)n == me) continue;
+        UB st = dnode_table[n].state;
+        if (st == DNODE_UNKNOWN && !world_peer_known((UB)n)) continue;
+        if (gx_ws_stagen > WS_STAGE_MAX - 160) break;  /* stay bounded       */
+        if (!first) ws_s(",");
+        first = 0;
+        INT ppr = world_peer_pressure((UB)n);
+        INT pth = world_peer_threat((UB)n);
+        INT prg = world_peer_region_fresh((UB)n);
+        ws_s("{\"id\":");        ws_dec((UW)n);
+        ws_s(",\"state\":");     ws_dec((UW)st);
+        ws_s(",\"region\":");    ws_dec(prg < 0 ? 255u : (UW)prg);
+        ws_s(",\"pressure\":");  ws_dec(ppr < 0 ? 0u : (UW)ppr);
+        ws_s(",\"threat\":");    ws_dec(pth < 0 ? 0u : (UW)pth);
+        ws_s(",\"rtt\":");       ws_dec(swim_rtt_ms((UB)n));
+        ws_s("}");
+    }
+    ws_s("],\"dropped\":"); ws_dec(g_dropped);
+    ws_s("}");
+}
+
+/* build a single ring event into the stage (the SSE body shape, verbatim).*/
+static void gx_ws_build_event(const GALAXY_EV *e)
+{
+    ws_reset();
+    ws_s("{\"type\":\""); ws_s(gx_type_name(e->type));
+    ws_s("\",\"ms\":");   ws_dec(e->ms);
+    if (e->src != GALAXY_NODE_NONE) { ws_s(",\"src\":"); ws_dec((UW)e->src); }
+    if (e->dst != GALAXY_NODE_NONE) { ws_s(",\"dst\":"); ws_dec((UW)e->dst); }
+    ws_s(",\"a\":"); ws_dec((UW)e->a);
+    ws_s(",\"b\":"); ws_dec((UW)e->b);
+    ws_s("}");
 }
 
 /* ------------------------------------------------------------------ */
@@ -738,6 +912,204 @@ static void gx_serve_page(INT slot)
     }
 }
 
+/* the per-slot request scratch (defined below, near galaxy_task) — the
+ * /ws route needs the RAW request bytes to read Sec-WebSocket-Key, which
+ * gx_parse does not keep. */
+static char  g_req[GALAXY_MAX_CLIENTS][GX_REQ_MAX];
+static INT   g_reqn[GALAXY_MAX_CLIENTS];
+
+/* ------------------------------------------------------------------ */
+/* §3.7 WebSocket handshake. Extract Sec-WebSocket-Key from the raw      */
+/* request (gx_parse keeps only the request line + Content-Length, so we */
+/* scan the buffer here), compute the accept, write the 101.            */
+/* ------------------------------------------------------------------ */
+
+/* case-insensitive scan for header `name:` at a line start; copy its
+ * value (trimmed) into out. returns the value length, or -1 if absent. */
+static INT gx_header_val(const char *buf, INT len, const char *name,
+                         char *out, INT outmax)
+{
+    INT nl = 0; while (name[nl]) nl++;
+    for (INT j = 0; j + nl < len; j++) {
+        if (j != 0 && buf[j-1] != '\n') continue;    /* header line start    */
+        INT m = 0;
+        for (; m < nl; m++) {
+            char ch = buf[j+m];
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+            char nc = name[m];
+            if (nc >= 'A' && nc <= 'Z') nc = (char)(nc + 32);
+            if (ch != nc) break;
+        }
+        if (m != nl || j + m >= len || buf[j+m] != ':') continue;
+        INT z = j + m + 1;
+        while (z < len && (buf[z] == ' ' || buf[z] == '\t')) z++;
+        INT a = 0;
+        while (z < len && buf[z] != '\r' && buf[z] != '\n' && a < outmax - 1)
+            out[a++] = buf[z++];
+        out[a] = 0;
+        return a;
+    }
+    return -1;
+}
+
+/* perform the RFC 6455 §1.3 opening handshake on slot, using the raw
+ * request bytes in `raw` (g_req[slot]). returns 1 on a successful upgrade
+ * (the 101 is queued; caller flips is_ws and keeps the slot), 0 if this
+ * was not a valid WS upgrade (caller falls through to normal routing). */
+static INT gx_ws_handshake(INT slot, const char *raw, INT rawn)
+{
+    char key[64];
+    INT kn = gx_header_val(raw, rawn, "sec-websocket-key", key, (INT)sizeof key);
+    if (kn <= 0) return 0;                            /* not a WS request     */
+
+    /* accept = base64(SHA1(key + GUID)). Bounded concat scratch. */
+    char concat[64 + 40];
+    INT cn = 0;
+    for (INT i = 0; i < kn && cn < (INT)sizeof concat - 40; i++) concat[cn++] = key[i];
+    const char *g = WS_GUID;
+    while (*g && cn < (INT)sizeof concat - 1) concat[cn++] = *g++;
+    char accept[40];
+    gx_sha1_base64(concat, (unsigned)cn, accept, (unsigned)sizeof accept);
+
+    gx_qs(slot, "HTTP/1.1 101 Switching Protocols\r\n"
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                "Sec-WebSocket-Accept: ");
+    gx_qs(slot, accept);
+    gx_qs(slot, "\r\n\r\n");
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* §3.7 incoming WS message handling — JSON {"t":..,"k":..,"v":..}.     */
+/* Drives the SAME production mouth (mind_cmd) + SAME consent/vocab     */
+/* gates as POST /ask and POST /teach (NO second mind path). The reply  */
+/* is queued as a server TEXT frame; on overflow the caller drops.       */
+/* ------------------------------------------------------------------ */
+
+/* extract a JSON string field "name":"value" from a flat object into out.
+ * Minimal (no nesting); handles the \" and \\ escapes the page can send.
+ * returns the value length, or -1 if absent. */
+static INT gx_json_field(const char *b, INT n, const char *name,
+                         char *out, INT outmax)
+{
+    INT nl = 0; while (name[nl]) nl++;
+    for (INT i = 0; i + nl + 2 < n; i++) {
+        if (b[i] != '"') continue;
+        INT m = 0;
+        while (m < nl && b[i+1+m] == name[m]) m++;
+        if (m != nl) continue;
+        INT z = i + 1 + nl;
+        if (b[z] != '"') continue;                    /* end of key quote     */
+        z++;
+        while (z < n && (b[z] == ' ' || b[z] == '\t')) z++;
+        if (z >= n || b[z] != ':') continue;
+        z++;
+        while (z < n && (b[z] == ' ' || b[z] == '\t')) z++;
+        if (z >= n || b[z] != '"') continue;          /* string values only   */
+        z++;
+        INT o = 0;
+        while (z < n && b[z] != '"' && o < outmax - 1) {
+            if (b[z] == '\\' && z + 1 < n) {           /* unescape \" \\ \n... */
+                char c = b[z+1];
+                if (c == 'n') out[o++] = '\n';
+                else if (c == 'r') out[o++] = '\r';
+                else if (c == 't') out[o++] = '\t';
+                else out[o++] = c;
+                z += 2;
+            } else out[o++] = b[z++];
+        }
+        out[o] = 0;
+        return o;
+    }
+    return -1;
+}
+
+/* handle one decoded WS text message (the unmasked payload, len n). Queues
+ * exactly one reply frame. */
+static void gx_ws_on_message(INT slot, const char *msg, INT n)
+{
+    char t[16];
+    INT tn = gx_json_field(msg, n, "t", t, (INT)sizeof t);
+    if (tn <= 0) return;                              /* no verb -> ignore    */
+
+    if (gx_streq(t, "say")) {
+        /* mirror POST /ask: a key WORD -> token id (OOV refused), ask the
+         * production mouth, read the snapshot, reply with the WORD. */
+        char kw[40];
+        INT kl = gx_json_field(msg, n, "k", kw, (INT)sizeof kw);
+        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
+        if (kl > 0 && k < 0) {
+            ws_reset();
+            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"key\",\"word\":\"");
+            ws_str(kw); ws_s("\"}");
+            gx_ws_send_stage(slot);
+            return;
+        }
+        UB ak = 0, av = 0; UW ash = 0;
+        if (k >= 0) {
+            char cmd[16]; INT cn = 0;
+            cmd[cn++]='a';cmd[cn++]='s';cmd[cn++]='k';cmd[cn++]=' ';
+            cn += gx_itoa(cmd+cn, k);
+            mind_cmd((const UB *)cmd, (UW)cn);         /* §6: production mouth */
+            mind_last_answer(&ak, &av, &ash);
+        }
+        ws_reset();
+        ws_s("{\"type\":\"reply\",\"k\":\""); ws_str(kw);
+        ws_s("\",\"pred\":");  ws_dec((UW)av);
+        ws_s(",\"word\":\""); ws_str(r3_vocab_val_word((INT)av));
+        ws_s("\",\"share\":"); ws_dec(ash);
+        ws_s("}");
+        gx_ws_send_stage(slot);
+        return;
+    }
+
+    if (gx_streq(t, "teach")) {
+        /* mirror POST /teach: consent-gated (the 共感 gate, ark §7.3),
+         * WORDS -> token ids (OOV refused), drive the production mouth. */
+        if (!ark_consent_ok()) {
+            ws_reset();
+            ws_s("{\"type\":\"refused\",\"reason\":\"manifesto\",\"see\":\"/manifesto\"}");
+            gx_ws_send_stage(slot);
+            return;
+        }
+        char kw[40], vw[40];
+        INT kl = gx_json_field(msg, n, "k", kw, (INT)sizeof kw);
+        INT vl = gx_json_field(msg, n, "v", vw, (INT)sizeof vw);
+        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
+        INT v = (vl > 0) ? r3_vocab_val_id(vw, (UW)vl) : -1;
+        if (kl > 0 && k < 0) {
+            ws_reset();
+            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"key\",\"word\":\"");
+            ws_str(kw); ws_s("\"}");
+            gx_ws_send_stage(slot);
+            return;
+        }
+        if (vl > 0 && v < 0) {
+            ws_reset();
+            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"answer\",\"word\":\"");
+            ws_str(vw); ws_s("\"}");
+            gx_ws_send_stage(slot);
+            return;
+        }
+        if (k >= 0 && v >= 0) {
+            ark_teach_src_set(ARK_PROV_SRC_WEB);       /* §5: WEB provenance   */
+            char cmd[24]; INT cn = 0;
+            cmd[cn++]='t';cmd[cn++]='e';cmd[cn++]='a';cmd[cn++]='c';cmd[cn++]='h';cmd[cn++]=' ';
+            cn += gx_itoa(cmd+cn, k); cmd[cn++]=' ';
+            cn += gx_itoa(cmd+cn, v);
+            mind_cmd((const UB *)cmd, (UW)cn);
+        }
+        ws_reset();
+        ws_s("{\"type\":\"taught\",\"ok\":true,\"pending\":");
+        ws_dec((UW)r3_facts_pending());
+        ws_s(",\"rounds\":"); ws_dec(dmn_r3_rounds());
+        ws_s("}");
+        gx_ws_send_stage(slot);
+        return;
+    }
+    /* unknown verb -> silently ignored (forward-compatible). */
+}
+
 /* ------------------------------------------------------------------ */
 /* route one fully-read request. Returns 1 if the slot is now a held-    */
 /* open SSE stream (keep it), 0 if it should be closed after flush.      */
@@ -973,6 +1345,24 @@ static INT gx_route(INT slot, GX_REQ *q)
         gx_qs(slot, ",\"id\":\""); gx_hex_id(slot, pid); gx_qs(slot, "\"}");
         return 0;
     }
+    /* §3.7 GET /ws — the additive WebSocket chat+event channel. The SSE
+     * /events route above stays the fallback; /ws upgrades the SAME byte
+     * transport. On a valid handshake we keep the slot, send ONE state
+     * snapshot, and stream ring events as WS text frames. */
+    if (!q->is_post && gx_streq(path, "/ws")) {
+        if (!gx_ws_handshake(slot, g_req[slot], g_reqn[slot])) {
+            /* a /ws GET without the Upgrade headers -> 400 (not a stream). */
+            gx_resp_head(slot, "400 Bad Request", "text/plain");
+            gx_qs(slot, "expected websocket upgrade\n");
+            return 0;
+        }
+        g_cli[slot].is_ws      = 1;
+        g_cli[slot].sse_cursor = g_head;     /* start at "now"             */
+        g_cli[slot].last_ping  = gx_now_ms();
+        gx_ws_build_state();                 /* one snapshot on open       */
+        gx_ws_send_stage(slot);
+        return 1;
+    }
     if (!q->is_post && gx_streq(path, "/events")) {
         gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\n"
                     "Cache-Control: no-cache\r\nConnection: close\r\n\r\n");
@@ -1109,13 +1499,22 @@ void galaxy_init(void)
         galaxy_port = 7800 + (INT)id - 1;          /* §D1 per-node offset   */
     }
     for (INT i = 0; i < 16; i++) { g_bucket[i] = 4; g_suppress[i] = 0; }
+
+    /* §3.7 honesty: certify the WebSocket handshake math at boot (two
+     * SHA-1 vectors + the exact RFC 6455 §1.3 accept example). A miscompiled
+     * hash would silently break /ws; this prints the verdict so it can never
+     * ship unnoticed. The SSE fallback is unaffected either way. */
+    if (gx_sha1_self_test() == 0)
+        tm_putstring((UB *)"[galaxy] ws handshake KAT ok (sha1+base64)\r\n");
+    else
+        tm_putstring((UB *)"[galaxy] WARN ws handshake KAT FAILED — /ws disabled-equivalent\r\n");
+
     galaxy_on = 1;                                  /* hooks live from here  */
 }
 
-/* accumulate a request into a per-slot scratch (static — never a task
- * stack buffer, the hosted-relay stack-overflow lesson). */
-static char  g_req[GALAXY_MAX_CLIENTS][GX_REQ_MAX];
-static INT   g_reqn[GALAXY_MAX_CLIENTS];
+/* g_req[]/g_reqn[] (the per-slot request scratch — static, never a task
+ * stack buffer, the hosted-relay stack-overflow lesson) are defined above,
+ * before gx_route, because the /ws handshake reads the raw bytes there. */
 
 void galaxy_task(INT stacd, void *exinf)
 {
@@ -1136,7 +1535,7 @@ void galaxy_task(INT stacd, void *exinf)
         /* accept up to one new connection per tick. */
         INT s = galaxy_io_accept();
         if (s >= 0) {
-            g_cli[s].in_use = 1; g_cli[s].is_sse = 0;
+            g_cli[s].in_use = 1; g_cli[s].is_sse = 0; g_cli[s].is_ws = 0;
             g_cli[s].ob_len = 0; g_reqn[s] = 0;
         }
 
@@ -1157,7 +1556,7 @@ void galaxy_task(INT stacd, void *exinf)
         for (INT i = 0; i < GALAXY_MAX_CLIENTS; i++) {
             if (!g_cli[i].in_use) continue;
 
-            if (!g_cli[i].is_sse) {
+            if (!g_cli[i].is_sse && !g_cli[i].is_ws) {
                 /* read request bytes into the slot scratch. */
                 INT room = GX_REQ_MAX - 1 - g_reqn[i];
                 if (room > 0) {
@@ -1193,6 +1592,95 @@ void galaxy_task(INT stacd, void *exinf)
                 INT keep = gx_route(i, &q);
                 gx_flush(i);
                 if (!keep) { galaxy_io_close(i); g_cli[i].in_use = 0; }
+                /* a /ws upgrade flips is_ws and KEEPS the slot; reset the
+                 * scratch so the WS frame reader starts clean (the consumed
+                 * HTTP request bytes are no longer needed). */
+                else if (g_cli[i].is_ws) g_reqn[i] = 0;
+                continue;
+            }
+
+            /* §3.7 WebSocket: read masked client frames + drain the ring as
+             * server text frames. Frame reassembly accumulates into the same
+             * per-slot scratch; an oversize/over-fragmented frame drops the
+             * client (it can never wedge the task). */
+            if (g_cli[i].is_ws) {
+                /* read available bytes into the slot scratch. */
+                INT room = GX_REQ_MAX - g_reqn[i];
+                if (room > 0) {
+                    INT n = galaxy_io_read(i, g_req[i] + g_reqn[i], room);
+                    if (n < 0) { galaxy_io_close(i); g_cli[i].in_use = 0; continue; }
+                    if (n > 0) g_reqn[i] += n;
+                }
+                /* decode as many complete frames as the buffer holds. */
+                INT closed = 0;
+                for (;;) {
+                    INT avail = g_reqn[i];
+                    if (avail < 2) break;                  /* need the 2-byte hdr */
+                    const unsigned char *p = (const unsigned char *)g_req[i];
+                    UB op   = (UB)(p[0] & 0x0F);
+                    INT mask = (p[1] & 0x80) ? 1 : 0;
+                    INT hlen = 2;
+                    UW  plen = (UW)(p[1] & 0x7F);
+                    if (plen == 126) {
+                        if (avail < 4) break;
+                        plen = ((UW)p[2] << 8) | (UW)p[3];
+                        hlen = 4;
+                    } else if (plen == 127) {
+                        /* 64-bit length: anything this big is a protocol abuse
+                         * on a loopback chat channel -> drop. */
+                        galaxy_io_close(i); g_cli[i].in_use = 0; closed = 1; break;
+                    }
+                    /* RFC 6455 §5.1: a client frame MUST be masked. */
+                    if (!mask) { galaxy_io_close(i); g_cli[i].in_use = 0; closed = 1; break; }
+                    INT need = hlen + 4 + (INT)plen;       /* + 4-byte mask key   */
+                    if (plen > (UW)(GX_REQ_MAX - hlen - 4)) {
+                        /* a frame too big to ever buffer -> drop the client.   */
+                        galaxy_io_close(i); g_cli[i].in_use = 0; closed = 1; break;
+                    }
+                    if (avail < need) break;               /* wait for the rest  */
+
+                    const unsigned char *mk = p + hlen;
+                    unsigned char *pl = (unsigned char *)g_req[i] + hlen + 4;
+                    for (UW b = 0; b < plen; b++) pl[b] ^= mk[b & 3];  /* unmask  */
+
+                    if (op == WS_OP_CLOSE) {
+                        gx_ws_send_ctrl(i, WS_OP_CLOSE, 0, 0); gx_flush(i);
+                        galaxy_io_close(i); g_cli[i].in_use = 0; closed = 1; break;
+                    } else if (op == WS_OP_PING) {
+                        INT cn = (INT)plen; if (cn > 125) cn = 125;
+                        gx_ws_send_ctrl(i, WS_OP_PONG, (const char *)pl, cn);
+                    } else if (op == WS_OP_TEXT || op == WS_OP_CONT) {
+                        gx_ws_on_message(i, (const char *)pl, (INT)plen);
+                    }   /* WS_OP_PONG / WS_OP_BIN: ignored                       */
+
+                    /* slide the consumed frame off the front of the scratch. */
+                    INT consumed = need;
+                    INT rest = g_reqn[i] - consumed;
+                    for (INT b = 0; b < rest; b++) g_req[i][b] = g_req[i][consumed + b];
+                    g_reqn[i] = rest;
+                }
+                if (closed) continue;
+
+                /* drain the event ring into this client as WS text frames
+                 * (the SAME ring the SSE path drains; NO second ring). */
+                GX_CLIENT *c = &g_cli[i];
+                if (g_head - c->sse_cursor > GALAXY_RING) {
+                    g_dropped += (g_head - c->sse_cursor) - GALAXY_RING;
+                    c->sse_cursor = g_head - GALAXY_RING;
+                }
+                while (c->sse_cursor < g_head) {
+                    GALAXY_EV ev = g_ring[c->sse_cursor & (GALAXY_RING - 1)];
+                    gx_ws_build_event(&ev);
+                    if (gx_ws_send_stage(i) < 0) break;    /* outbuf full: later */
+                    c->sse_cursor++;
+                    if (c->ob_len > GX_OUTBUF - 256) break;
+                }
+                /* keepalive PING every 15s so dead clients fail on write. */
+                if (now - c->last_ping >= 15000) {
+                    c->last_ping = now;
+                    gx_ws_send_ctrl(i, WS_OP_PING, 0, 0);
+                }
+                if (gx_flush(i) < 0) { galaxy_io_close(i); c->in_use = 0; }
                 continue;
             }
 
