@@ -784,11 +784,23 @@ EXPORT INT usermain(void)
             /* living-mind first slice (docs/architecture/living-mind.md II):
              * `dmn test` runs the DMN sleep-consolidation acceptance suite
              * (replay engrams -> distill via gl_merge; no catastrophic
-             * forgetting; decentralized; survives kill+rejoin). */
+             * forgetting; decentralized; survives kill+rejoin).
+             * Step ④ (wave-dmn-student-distill): `dmn distill [N]` drives the
+             * REAL sleep path N times and shows the resident NS-1 baby's
+             * held-out loss DROP across the sleeps (sleep = learning) while
+             * confirming the R3 track still runs. Set PKERNEL_PFS_DIR. */
             const UB *a = line + 3; UW al = (UW)(n - 3);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') lm_test();
-            else print("usage: dmn test\r\n");
+            else if (al >= 7 && a[0]=='d'&&a[1]=='i'&&a[2]=='s'&&a[3]=='t'&&a[4]=='i'&&a[5]=='l'&&a[6]=='l') {
+                const UB *b = a + 7; UW bl = al - 7;
+                while (bl && (*b==' '||*b=='\t')) { b++; bl--; }
+                UW cnt = 0;
+                while (bl && *b >= '0' && *b <= '9') { cnt = cnt*10 + (UW)(*b - '0'); b++; bl--; }
+                if (cnt == 0) cnt = 5;
+                dmn_student_distill_test(cnt);
+            }
+            else print("usage: dmn test | dmn distill [N]\r\n");
         } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
             /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
              * GA self-improvement cert (mutation+selection improves a

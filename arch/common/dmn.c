@@ -29,6 +29,16 @@
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
+/* Step ④ (wave-dmn-student-distill): the SECOND consolidation track. The DMN
+ * sleep tick distills the resident NS-1 Cradle baby (arch/common/llm/
+ * student_shell.c, host-libc tier) one bounded round from its teacher fixture
+ * and persists it — sleep = the ownerless student LEARNS. Plain C symbol across
+ * the kernel/LLM tier seam (same pattern student_shell.c uses for pfs_dur_*);
+ * dmn.c does NOT include any student header. STRICT no-op (returns 0) unless
+ * the node is actually raising a baby with persistence on, so a baby-less node
+ * is completely unaffected. Returns 1 if it ran a round. */
+IMPORT int student_dmn_consolidate(void);
+
 /* ------------------------------------------------------------------ */
 /* ユーティリティ                                                      */
 /* ------------------------------------------------------------------ */
@@ -104,6 +114,12 @@ void dmn_trigger(void)
  * the auditor's one-++-site grep + the commander's line-by-line read. */
 static UW dmn_r3_round_count = 0;
 
+/* Step ④ proof seam: the resident baby's held-out loss over its fixture (host-
+ * libc tier, arch/common/llm/student_shell.c). Read-only; chance (~5.545) when
+ * no baby is resident. Used by dmn_student_distill_test below to SHOW the loss
+ * dropping across real DMN sleep ticks. */
+IMPORT float student_dmn_heldout_loss(void);
+
 static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
@@ -153,6 +169,20 @@ static void dmn_idle_work(void)
         }
     }
 
+    /* Step ④ (native-student.md, wave-dmn-student-distill): the SECOND
+     * consolidation track — AFTER (not instead of) the R3 living-mind work
+     * above. While the node sleeps, distill the resident NS-1 baby one bounded
+     * round from its teacher fixture and persist it: sleep = the ownerless
+     * student LEARNS, and the gain survives a reboot. A DIFFERENT network from
+     * R3's rw[] and from the lm engram round — non-interference is structural
+     * (disjoint weight buffers in a separate tier). STRICT no-op on a node that
+     * isn't raising a baby / has no persistence, so a baby-less node is
+     * unaffected. Drives the SAME symbol the proof hook uses. */
+    if (student_dmn_consolidate()) {
+        galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 2, 0);  /* S3: the baby's weights settle a little (galaxy.md) */
+        dmn_puts("[dmn] sleep: distilled teacher -> resident student (baby)\r\n");
+    }
+
     /* dmn_log_interval パルスに 1 回だけ詳細ログを出す */
     if (dmn_stats.idle_runs % dmn_log_interval != 1) return;
 
@@ -170,6 +200,73 @@ static void dmn_idle_work(void)
 
     /* 推論統計を出力 */
     dtr_stat();
+}
+
+/* ------------------------------------------------------------------ */
+/* Step ④ proof: drive the REAL sleep path and watch the baby learn    */
+/* ------------------------------------------------------------------ */
+
+/* small fixed-point printer: v rounded to 4 decimals (loss is small/positive) */
+static void dmn_putf4(float v)
+{
+    if (v < 0) { dmn_puts("-"); v = -v; }
+    UW whole = (UW)v;
+    UW frac  = (UW)((v - (float)whole) * 10000.0f + 0.5f);
+    if (frac >= 10000) { whole++; frac -= 10000; }
+    dmn_putdec(whole);
+    dmn_puts(".");
+    /* zero-pad the 4-digit fraction */
+    if (frac < 1000) dmn_puts("0");
+    if (frac < 100)  dmn_puts("0");
+    if (frac < 10)   dmn_puts("0");
+    dmn_putdec(frac);
+}
+
+/* `dmn distill [N]` — drive the EXACT production sleep path (dmn_idle_work) N
+ * times and SHOW the resident baby's held-out loss drop across the sleeps
+ * (sleep = learning). Also reports the R3 idle-round delta so we can confirm
+ * the existing living-mind consolidation track STILL RUNS alongside the new
+ * student track (non-interference). This calls the SAME static dmn_idle_work
+ * the 1000ms heartbeat calls — not a private copy — so the proof certifies the
+ * real path. NO-OP-honest: with no PKERNEL_PFS_DIR / no baby the student track
+ * inside dmn_idle_work is a no-op and the loss simply stays at chance. */
+void dmn_student_distill_test(UW n)
+{
+    if (n < 1) n = 1;
+    if (n > 64) n = 64;   /* keep the shell responsive */
+
+    float chance = student_dmn_heldout_loss();   /* chance if no baby resident */
+
+    dmn_puts("[dmn-distill] driving "); dmn_putdec(n);
+    dmn_puts(" REAL sleep tick(s) (dmn_idle_work)\r\n");
+
+    UW r3_before = dmn_r3_round_count;
+    float pre = student_dmn_heldout_loss();
+    dmn_puts("[dmn-distill] student held-out loss (before) = ");
+    dmn_putf4(pre); dmn_puts(" nats\r\n");
+
+    for (UW i = 0; i < n; i++) {
+        dmn_idle_work();                         /* the production sleep path */
+        float l = student_dmn_heldout_loss();
+        dmn_puts("[dmn-distill]   after sleep "); dmn_putdec(i + 1);
+        dmn_puts(": student loss = "); dmn_putf4(l); dmn_puts(" nats\r\n");
+    }
+
+    float post = student_dmn_heldout_loss();
+    UW r3_after = dmn_r3_round_count;
+
+    dmn_puts("[dmn-distill] student held-out loss (after)  = ");
+    dmn_putf4(post); dmn_puts(" nats  (chance="); dmn_putf4(chance);
+    dmn_puts(")\r\n");
+    dmn_puts("[dmn-distill] R3 idle rounds this run        = ");
+    dmn_putdec(r3_after - r3_before);
+    dmn_puts(" (living-mind track intact)\r\n");
+
+    if (post < pre - 0.01f)
+        dmn_puts("[dmn-distill] PASS: the baby LEARNED while it slept\r\n");
+    else
+        dmn_puts("[dmn-distill] (no drop: no baby / no PKERNEL_PFS_DIR — "
+                 "student track no-op, expected on a baby-less node)\r\n");
 }
 
 /* ------------------------------------------------------------------ */

@@ -88,3 +88,9 @@ void dmn_stat(void);
 /* 実行時パラメータ変更 (GA/RL / shell から呼ぶ) */
 void dmn_set_idle_threshold(UW v);
 void dmn_set_log_interval(UW v);
+
+/* Step ④ proof (wave-dmn-student-distill): drive the REAL sleep path
+ * (dmn_idle_work) N times and show the resident NS-1 baby's held-out loss drop
+ * across the sleeps, plus confirm the R3 living-mind track still runs. Shell:
+ * `dmn distill [N]`. A no-op-honest cert on a baby-less / PFS-less node. */
+void dmn_student_distill_test(UW n);

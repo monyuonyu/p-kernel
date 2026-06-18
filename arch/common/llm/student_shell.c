@@ -26,11 +26,17 @@
  *  only ever allocated when the verb (or boot-restore) first touches it, so a
  *  student-less boot is completely unaffected.
  *
+ *  Step ④ (wave-dmn-student-distill): the DMN sleep tick now DRIVES one
+ *  bounded distillation round into the resident baby — sleep = consolidation.
+ *  student_dmn_consolidate() is the exact symbol dmn.c's idle hook calls after
+ *  the existing R3 living-mind consolidation (a SECOND track, not a
+ *  replacement). It is a strict NO-OP when there is no persistence and no
+ *  resident baby (a node that isn't raising a baby is completely unaffected:
+ *  no 30MB arena, no work, no print).
+ *
  *  Honesty / scope (what this is NOT):
- *    - The teacher is a SMALL COMMITTED fixture, not in-kernel SmolLM2 token
- *      generation. Live-teacher harvesting is step ④.
- *    - Distillation is driven by the HUMAN verb, NOT yet by the live DMN sleep
- *      tick. Wiring the DMN heartbeat to call this is also step ④.
+ *    - The teacher is STILL a SMALL COMMITTED fixture, not in-kernel SmolLM2
+ *      token generation. Live-teacher harvesting is step ⑤.
  *    - Single node. No weight diffusion / merge across the fleet (NS-2+).
  */
 #include "student.h"
@@ -152,6 +158,20 @@ static int student_persist(emit_fn emit)
     return 0;
 }
 
+/* Cheap probe: is there a saved baby on the durable backend WITHOUT
+ * allocating the ~30MB arena? Reads only the first few bytes of the durable
+ * file. Returns 1 if a non-empty saved student is present, 0 otherwise (no
+ * persistence, absent, or empty). Deliberately does NOT validate magic/dims
+ * (st_load does that on the real restore) — this only decides whether it is
+ * worth spending the arena to TRY a restore. */
+static int student_have_saved(void)
+{
+    if (!pfs_dur_active()) return 0;
+    unsigned char probe[16];
+    int n = pfs_dur_read(STUDENT_DUR_FILE, probe, (unsigned)sizeof probe);
+    return n > 0;
+}
+
 /* Try to RESTORE g_student from disk. Caller has already st_init'd g_student
  * (so the arena exists). Returns 1 on a successful load, 0 if absent / disabled
  * / rejected (caller keeps the fresh init). */
@@ -179,8 +199,13 @@ static int student_restore(emit_fn emit)
     return 1;
 }
 
-/* Ensure the resident baby exists. On first touch: st_init a fresh baby, then
- * try to restore saved weights over it. Idempotent. Returns 0 on success. */
+/* Ensure the resident baby exists, ALLOCATING it on first touch. This is the
+ * "I am actively raising a baby" path (the `student` verb, or a DMN tick on a
+ * node that already has a saved baby): st_init a fresh ~30MB arena, then try to
+ * restore saved weights over it. Idempotent after the first call. Returns 0 on
+ * success. Callers that must NOT pay the arena cost unless a baby genuinely
+ * exists (boot restore, the DMN tick) gate this behind student_have_saved()
+ * (or, for the verb, the human's explicit intent). */
 static int student_ensure(emit_fn emit)
 {
     if (g_have_student) return 0;
@@ -200,13 +225,95 @@ static int student_ensure(emit_fn emit)
 }
 
 /* ---------------------------------------------------------------------------
- * Boot hook: restore-or-init the resident baby once at startup, so a node that
- * slept yesterday wakes up remembering. Off the critical boot path otherwise.
- * Safe no-op on a node without persistence (stays a lazy fresh init).
+ * Boot hook: wake up REMEMBERING a baby that slept yesterday — but only if
+ * there is one. Step-③ audit nit fix (wave-dmn-student-distill): the previous
+ * version st_init'd the ~30MB arena and printed "initialised FRESH" at EVERY
+ * boot, even on a PFS-less node with no baby — contradicting its own
+ * "no-op/lazy" docs. Now it is a TRUE no-op unless persistence is active AND a
+ * saved baby is actually present on disk (probed cheaply, no arena). A
+ * PFS-less / baby-less boot allocates nothing and prints nothing; the baby is
+ * deferred to first real use (the `student` verb st_init's it then).
  * ------------------------------------------------------------------------- */
 int student_boot_restore(emit_fn emit)
 {
+    if (!student_have_saved()) return 0;   /* nothing to remember -> no-op */
     return student_ensure(emit);
+}
+
+/* ---------------------------------------------------------------------------
+ * DMN sleep tick (step ④, wave-dmn-student-distill): the consolidation track
+ * the DMN idle hook (dmn.c dmn_idle_work) drives ON EVERY sleep round, AFTER
+ * the existing R3 living-mind consolidation. ONE small bounded distillation
+ * round from the teacher fixture into the resident baby, then a durable save —
+ * so the node LEARNS while it sleeps and the gain SURVIVES a reboot.
+ *
+ *   sleep = consolidation: the ownerless student grows during DMN rest.
+ *
+ * STRICT NO-OP (returns 0, allocates nothing, prints nothing) unless:
+ *   - persistence is active (PKERNEL_PFS_DIR set: nowhere to save = pointless
+ *     to train, and a memory-only/bare-metal node must be unaffected), AND
+ *   - the node is actually raising a baby — either one is already resident in
+ *     this boot (g_have_student, e.g. the human ran `student`), or a saved baby
+ *     exists on disk (student_have_saved, e.g. boot restored it).
+ *
+ * So a node that never touched the baby and has no saved baby does NOTHING on
+ * its DMN heartbeat (no arena, no round). Cheap per tick: ST_DMN_ROUNDS small
+ * rounds over the fixture's train windows (the MECHANISM, not a full train),
+ * so the sleep stays responsive.
+ *
+ * Returns 1 if it ran a round (caller may emit a sleep line / galaxy event),
+ * 0 if it was a no-op.  No emit_fn: the DMN owns the sleep narration.
+ * ------------------------------------------------------------------------- */
+#define ST_DMN_SEQLEN  32
+#define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
+#define ST_DMN_LR      3e-3f
+
+int student_dmn_consolidate(void)
+{
+    /* No persistence -> no save target -> nothing to do (and don't allocate). */
+    if (!pfs_dur_active()) return 0;
+
+    /* Only act for a node that is genuinely raising a baby. If none is resident
+     * yet, but one is saved on disk, adopt it (st_init + restore) — sleeping is
+     * exactly when a restored baby should keep growing. Otherwise NO-OP. */
+    if (!g_have_student) {
+        if (!student_have_saved()) return 0;      /* baby-less node: untouched */
+        if (student_ensure(0) != 0) return 0;     /* arena now; quiet on the tick */
+    }
+
+    int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+    int total    = corpus_n / ST_DMN_SEQLEN;
+    int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
+
+    sleep_rounds(&g_student, ST_DMN_SEQLEN, trainw, ST_DMN_ROUNDS, ST_DMN_LR);
+
+    /* persist the post-sleep state so the gain survives a reboot. Quiet: the
+     * durable seam is a content-id no-op when unchanged (flash-wear honest),
+     * and the DMN prints the human-visible sleep line. */
+    if (pfs_dur_active()) {
+        size_t need = st_blob_size(&g_student);
+        unsigned char *blob = (unsigned char *)malloc(need);
+        if (blob) {
+            long w = st_save(&g_student, blob, need);
+            if (w >= 0) pfs_dur_write(STUDENT_DUR_FILE, blob, (unsigned)w);
+            free(blob);
+        }
+    }
+    return 1;
+}
+
+/* Held-out loss of the resident baby over the fixture's held-out windows, for
+ * proofs/observability. Returns chance (logf 256) if there is no baby yet, so
+ * a caller sees "no learning" rather than a misleading 0. Pure read. */
+float student_dmn_heldout_loss(void)
+{
+    if (!g_have_student) return st_logf(256.0f);
+    int corpus_n  = (int)sizeof(TEACHER_FIXTURE) - 1;
+    int total     = corpus_n / ST_DMN_SEQLEN;
+    int trainw    = total * 3 / 4; if (trainw < 2) trainw = 2;
+    int heldw     = total - trainw; if (heldw < 1) heldw = 1;
+    int train_end = trainw * ST_DMN_SEQLEN;
+    return heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
 }
 
 /* ---------------------------------------------------------------------------
