@@ -977,7 +977,9 @@ function flash(kind,src,dst,rgb){flashes.push({kind,src,dst,rgb,t:performance.no
 //    ONE dispatch(v) is shared by BOTH transports — the WebSocket (primary)
 //    and the EventSource SSE (fallback) — so the star renders identically no
 //    matter which channel delivered the frame. The kernel emits the SAME JSON
-//    event objects on either; chat replies arrive as type:"chat" frames.
+//    event objects on either. Over the WS the kernel ALSO answers a typed
+//    line with its own reply/taught/refused frames (see chatRecv); those are
+//    routed here so the one dispatch stays the single entry point.
 function dispatch(v){
   if(!v || typeof v!=="object") return;
   switch(v.type){
@@ -995,7 +997,10 @@ function dispatch(v){
     case "drpc_out": flash("ray",snap.me.id,v.dst,"137,180,250"); break;
     case "moe": flash("ray",snap.me.id,v.dst,"249,226,175"); break;
     case "swim": break;   // membership reflected by /galaxy.json snapshot
-    case "chat": chatRecv(v); break;   // a reply over the WS chat channel
+    // the mind's chat answers over the WS — the server's real frame shapes:
+    case "reply":   chatRecv(v); break;   // {k,pred,word,share} the answer word
+    case "taught":  chatRecv(v); break;   // {ok,pending,rounds} a teach landed
+    case "refused": chatRecv(v); break;   // {reason:"oov"|"manifesto",...}
   }
 }
 
@@ -1004,7 +1009,8 @@ function dispatch(v){
 //    127.0.0.1:7800, a phone's loopback WebView, or any served host). On a
 //    handshake/connect failure we fall back to the existing read-only SSE
 //    stream and keep retrying the WS with backoff. The kernel speaks the SAME
-//    event JSON on both; only the WS carries the upstream {op:"say"} chat.
+//    event JSON on both; only the WS carries the upstream chat verbs
+//    ({"t":"say"|"teach",...}) and the mind's reply/taught/refused answers.
 let ws=null, wsReady=false, usingWS=false, wsBackoff=1000, sse=null;
 function wsURL(){
   const proto = (location.protocol==="https:") ? "wss:" : "ws:";
@@ -1131,12 +1137,14 @@ document.getElementById("bask").onclick=async()=>{
 
 // ── chat (wave-chat-ws-ui): a scrolling user/mind conversation over the
 //    galaxy. The talk button opens the bottom sheet; words go up over the
-//    live WebSocket as {op:"say",text}; the kernel runs its mind path and
-//    replies with a {type:"chat",role:"mind",...} frame (delivered through
-//    dispatch). teach ("a -> b" / "a = b") and ask (a bare word) are folded
-//    into this ONE flow. When only the read-only SSE fallback is up, a say
-//    degrades to the existing HTTP POST /teach or /ask so the page still works
-//    against a kernel that has no WS yet.
+//    live WebSocket as the SERVER's verbs — {"t":"say","k":<word>} for an ask
+//    and {"t":"teach","k":<word>,"v":<value>} for a teach (galaxy.c §3.7).
+//    The kernel runs its mind path and replies with {type:"reply"|"taught"|
+//    "refused"} frames (delivered through dispatch -> chatRecv). teach
+//    ("a -> b" / "a = b") and ask (a bare word) are folded into this ONE flow.
+//    When only the read-only SSE fallback is up, a say degrades to the existing
+//    HTTP POST /teach or /ask so the page still works against a kernel that has
+//    no WS yet.
 function chatScroll(){const l=document.getElementById("chatlog");if(l)l.scrollTop=l.scrollHeight;}
 function chatAdd(role,text){
   const l=document.getElementById("chatlog");if(!l)return;
@@ -1159,23 +1167,26 @@ function chatParse(text){
   if(m.length>=2) return {k:m[0],v:m[1]};       // "a b" / "a -> b" / "a = b"
   return {k:m[0]};                               // a bare word = ask
 }
-// a reply frame from the kernel (over WS). role/answer mirror the HTTP shape:
-//   {type:"chat",role:"mind",k,v}      — the mind's one-word answer to an ask
-//   {type:"chat",role:"mind",k,v,taught:true} — a teach landed
-//   {type:"chat",role:"system",text}   — a status line (e.g. consent needed)
-//   {type:"chat",role:"error",text|refused} — a refusal (OOV / mustread)
+// a frame from the kernel over WS — the SERVER's real shapes (galaxy.c §3.7):
+//   {type:"reply",k,pred,word,share}            — the mind's one-word answer
+//   {type:"taught",ok,pending,rounds}           — a teach landed
+//   {type:"refused",reason:"oov",which,word}    — that word isn't known yet
+//   {type:"refused",reason:"manifesto",see}     — consent needed first
 function chatRecv(v){
-  if(v.role==="error"){
-    if(v.refused==="mustread"){ chatAdd("err",S("mustread")); arkOpen(); return; }
+  if(v.type==="refused"){
+    if(v.reason==="manifesto"){ chatAdd("err",S("mustread")); arkOpen(); return; }
+    // oov (or any other refusal): the baby only knows a few words yet.
     const w=v.word||v.k||"";
-    chatAdd("err", w ? `"${w}" — ${S("teachfail")}` : (v.text||S("teachfail")));
+    chatAdd("err", w ? `"${w}" — ${S("teachfail")}` : S("teachfail"));
     return;
   }
-  if(v.role==="system"){ chatAdd("sys", v.text||""); return; }
-  // mind reply
-  if(v.taught){ chatAdd("mind", `"${v.k}" → "${v.v}" — ${S("teachok")}`); return; }
-  const ans = (v.v!==undefined) ? v.v : (v.word!==undefined ? v.word : v.pred);
-  chatAdd("mind", `"${v.k}" → "${ans}"`);
+  if(v.type==="taught"){ chatAdd("sys", S("teachok")); return; }
+  // {type:"reply"} — the answer is `word`; show 0..1000 share as a % of trust.
+  const ans = (v.word!==undefined && v.word!=="") ? v.word
+            : (v.pred!==undefined ? v.pred : "");
+  const conf = (typeof v.share==="number")
+             ? ` (${Math.round(v.share/10)}%)` : "";
+  chatAdd("mind", `"${v.k}" → "${ans}"${conf}`);
 }
 // HTTP fallback (SSE mode): run the same teach/ask path and echo the result
 // as a mind bubble, so the chat works even without a live WS upstream.
@@ -1207,7 +1218,12 @@ function sendSay(text){
   if(!p) return;
   chatAdd("me",text);                              // echo the owner's words
   if(usingWS && ws && wsReady){
-    try{ ws.send(JSON.stringify({op:"say",text})); return; }
+    // the server's wire verbs: {t:"teach",k,v} when chatParse found a pair,
+    // {t:"say",k} for a bare word (an ask). NOT op/text.
+    const frame = (p.v!==undefined)
+      ? {t:"teach", k:p.k, v:p.v}
+      : {t:"say",   k:p.k};
+    try{ ws.send(JSON.stringify(frame)); return; }
     catch(_){/* fall through to HTTP */}
   }
   chatHTTP(p);                                     // SSE/offline fallback
