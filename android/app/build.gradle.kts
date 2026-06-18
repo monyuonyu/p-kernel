@@ -34,8 +34,8 @@ android {
         // app's private files dir (PKERNEL_PFS_DIR via nativeSetDataDir), so
         // the identity (Self lineage) AND the learned mind (rw[]) survive a
         // process death / reboot instead of evaporating on every launch.
-        versionCode   = 23
-        versionName   = "0.8.1"
+        versionCode   = 24
+        versionName   = "0.8.2"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.
