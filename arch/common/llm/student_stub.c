@@ -61,3 +61,12 @@ __attribute__((weak)) int student_chat_generate(const char *intext, int inlen,
     (void)intext; (void)inlen; (void)emit_chunk; (void)ctx;
     return 0;   /* no baby resident -> nothing generated */
 }
+
+/* Matches student_shell.c's `unsigned student_dmn_save_count(void)` — the
+ * flash-wear throttle counter dmn.c reads to report 22.8MB durable writes.
+ * (Added with the throttle wave; bare-metal/Android have no resident baby and
+ * thus zero saves.) */
+__attribute__((weak)) unsigned student_dmn_save_count(void)
+{
+    return 0;   /* no baby resident -> no durable saves */
+}
