@@ -97,6 +97,25 @@ int  st_forward(st_model *m, const uint8_t *bytes, int n, float *logits);
  * in nats; writes the per-call token count to *n_pred if non-NULL. */
 float st_eval_loss(st_model *m, const uint8_t *bytes, int n, int *n_pred);
 
+/* ---- generation (step ⑥, the chat mouth) ----
+ * Feed `prompt` (n_prompt raw bytes) as context, then autoregressively sample
+ * up to max_gen next bytes into out[] (byte-level, 256 vocab, OOV-free). temp
+ * + top_k sampling with a seeded, libc-free xorshift RNG (reproducible; built
+ * -O1 -ffp-contract=off). temp<=0 is greedy. The running context is CAPPED at
+ * ST_MAXSEQ and max_gen is clamped to an internal ~96-byte cap (bounded/fast).
+ * `out` must have room for max_gen bytes. Returns the count produced, or a
+ * negative ST_E_* on bad args / OOM. */
+int  st_generate(st_model *m, const uint8_t *prompt, int n_prompt,
+                 uint8_t *out, int max_gen, float temp, int top_k, uint64_t seed);
+
+/* Streaming variant: identical sampling, but each produced byte is also handed
+ * to emit(ctx, byte) AS IT IS GENERATED, so the caller can flush it
+ * progressively (the slow baby's reply appears as it thinks). `out` still
+ * receives the full sequence. emit may be NULL (== st_generate). */
+int  st_generate_stream(st_model *m, const uint8_t *prompt, int n_prompt,
+                        uint8_t *out, int max_gen, float temp, int top_k,
+                        uint64_t seed, void (*emit)(void *, int), void *ctx);
+
 /* Accumulate the gradient of the mean next-byte cross-entropy of `bytes`
  * (length n) into m->g (which the caller zeroed). Must follow an st_forward on
  * the SAME bytes. Returns the loss it differentiated. */

@@ -49,6 +49,15 @@
 extern char *getenv(const char *);
 extern int   atoi(const char *);
 
+/* the resident-baby chat bridge (arch/common/llm/student_shell.c; plain C ABI,
+ * LLM tier — this file never sees a student header). Runs free-form byte-level
+ * generation on the RESIDENT student and streams reply bytes back through the
+ * callback (one or more chunks). Returns bytes produced (0 if there is no baby
+ * to speak — caller streams a gentle placeholder). Step ⑥. */
+extern int student_chat_generate(const char *intext, int inlen,
+                                 void (*emit_chunk)(void *ctx, const char *bytes, int n),
+                                 void *ctx);
+
 /* the 5-function transport ABI (galaxy_posix.c; C ABI, no T-Kernel types) */
 int  galaxy_io_init(int port);
 int  galaxy_io_accept(void);
@@ -433,14 +442,17 @@ static void gx_sse_event(INT slot, const GALAXY_EV *e)
 /*   server->client (TEXT, unmasked) JSON objects, each its own frame:   */
 /*     - on open, ONE  {"type":"state", ...galaxy.json fields... }       */
 /*     - then each ring event:  {"type":"<name>","ms":..,"src"?:,"dst"?:,*/
-/*       "a":..,"b":..}  (the SSE event body, verbatim shape)            */
-/*     - a chat answer:  {"type":"reply","k":"<word>","pred":<id>,       */
-/*       "word":"<word>","share":<n>}                                    */
-/*     - a teach ack:    {"type":"taught","ok":true,"pending":<n>,       */
-/*       "rounds":<n>}  OR a refusal {"type":"refused","reason":"..",..}  */
+/*       "a":..,"b":..}  (the SSE event body, verbatim shape) — the       */
+/*       backdrop keeps streaming throughout a chat.                     */
+/*     - a chat reply STREAM: zero or more {"type":"tok","text":"<chunk>"}*/
+/*       frames (as the resident baby generates), then exactly one        */
+/*       {"type":"done"}.  text is JSON-escaped raw bytes.                */
 /*   client->server (TEXT, MASKED per RFC 6455) JSON objects:            */
-/*     - {"t":"say","k":"<word>"}        -> ask the mind, reply frame     */
-/*     - {"t":"teach","k":"<w>","v":"<w>"} -> teach (consent-gated), ack  */
+/*     - {"t":"chat","text":"<free-text message>"}  -> the resident       */
+/*       student speaks (its OWN byte-level generation; pure-A, the       */
+/*       SmolLM2 teacher is sleep-time only). FREE conversation — NO       */
+/*       word->word verbs, NO vocab/OOV, NO consent gate on the chat box.*/
+/*       (Step ⑥; the old {t:"say"}/{t:"teach"} toy verbs were removed.) */
 /*   control: server answers PING with PONG; CLOSE -> echo + drop.       */
 /* All client text is bounded; an oversize/over-fragmented frame drops    */
 /* the client (never wedges the task). Masked frames are required from    */
@@ -480,6 +492,25 @@ static void ws_dec(UW v)
 static void ws_str(const char *s)
 {
     for (INT i = 0; s[i]; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
+        else if (c == '\n') ws_s("\\n");
+        else if (c == '\r') ws_s("\\r");
+        else if (c == '\t') ws_s("\\t");
+        else if (c < 0x20)  ws_putc(' ');
+        else ws_putc((char)c);
+    }
+}
+
+/* JSON-escape a run of raw BYTES (length n) into the stage. Same escapes as
+ * ws_str but length-delimited, for the chat tok stream where the baby emits
+ * arbitrary bytes (partial UTF-8, control chars). Bytes >= 0x20 (incl. the
+ * high half of multibyte UTF-8 sequences) pass through verbatim so the page
+ * can reassemble them; control bytes < 0x20 (other than the named ones) are
+ * shown as a space so they can't break the frame. */
+static void ws_strn(const char *s, INT n)
+{
+    for (INT i = 0; i < n; i++) {
         unsigned char c = (unsigned char)s[i];
         if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
         else if (c == '\n') ws_s("\\n");
@@ -1024,86 +1055,74 @@ static INT gx_json_field(const char *b, INT n, const char *name,
     return -1;
 }
 
-/* handle one decoded WS text message (the unmasked payload, len n). Queues
- * exactly one reply frame. */
+/* ------------------------------------------------------------------ */
+/* free-form chat with the RESIDENT baby (step ⑥).                      */
+/*                                                                      */
+/* The old word->word toy verbs ({t:"say"}/{t:"teach"} and the reply/   */
+/* taught/refused/oov responses) are GONE: the chat is now free         */
+/* conversation. The client sends {"t":"chat","text":"<message>"}; the  */
+/* server runs the resident student's own byte-level generation and     */
+/* streams the reply as zero or more {"type":"tok","text":"<chunk>"}    */
+/* frames, then exactly one {"type":"done"}. The galaxy event frames    */
+/* (state/dmn_idle/teach/consolidate/...) still stream the backdrop.    */
+/* ------------------------------------------------------------------ */
+
+/* the slot the in-flight chat is streaming to. The galaxy server is a SINGLE
+ * task and a chat message is handled synchronously to completion, so a plain
+ * file-static is safe (no reentrancy) and keeps the byte callback's signature
+ * to the minimal (void*,bytes,n) the LLM bridge expects. */
+static INT g_chat_slot = -1;
+
+/* the chunk sink the resident-baby bridge calls as it generates: frame this run
+ * of reply bytes as ONE {"type":"tok"} WS frame and FLUSH it, so the slow
+ * baby's text appears progressively on the page rather than all at the end.
+ * Bytes are JSON-escaped (arbitrary byte stream -> ws_strn). On an outbuf-full
+ * we simply stop flushing this chunk (the next drain retries); we never wedge
+ * the task. */
+static void gx_chat_chunk(void *ctx, const char *bytes, INT n)
+{
+    (void)ctx;
+    INT slot = g_chat_slot;
+    if (slot < 0 || n <= 0) return;
+    ws_reset();
+    ws_s("{\"type\":\"tok\",\"text\":\"");
+    ws_strn(bytes, n);
+    ws_s("\"}");
+    if (gx_ws_send_stage(slot) < 0) return;           /* outbuf full: drop chunk */
+    gx_flush(slot);                                   /* progressive: push now   */
+}
+
+/* handle one decoded WS text message (the unmasked payload, len n). For the
+ * chat verb this may queue several frames (the streamed reply) then done. */
 static void gx_ws_on_message(INT slot, const char *msg, INT n)
 {
     char t[16];
     INT tn = gx_json_field(msg, n, "t", t, (INT)sizeof t);
     if (tn <= 0) return;                              /* no verb -> ignore    */
 
-    if (gx_streq(t, "say")) {
-        /* mirror POST /ask: a key WORD -> token id (OOV refused), ask the
-         * production mouth, read the snapshot, reply with the WORD. */
-        char kw[40];
-        INT kl = gx_json_field(msg, n, "k", kw, (INT)sizeof kw);
-        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
-        if (kl > 0 && k < 0) {
-            ws_reset();
-            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"key\",\"word\":\"");
-            ws_str(kw); ws_s("\"}");
-            gx_ws_send_stage(slot);
-            return;
-        }
-        UB ak = 0, av = 0; UW ash = 0;
-        if (k >= 0) {
-            char cmd[16]; INT cn = 0;
-            cmd[cn++]='a';cmd[cn++]='s';cmd[cn++]='k';cmd[cn++]=' ';
-            cn += gx_itoa(cmd+cn, k);
-            mind_cmd((const UB *)cmd, (UW)cn);         /* §6: production mouth */
-            mind_last_answer(&ak, &av, &ash);
-        }
-        ws_reset();
-        ws_s("{\"type\":\"reply\",\"k\":\""); ws_str(kw);
-        ws_s("\",\"pred\":");  ws_dec((UW)av);
-        ws_s(",\"word\":\""); ws_str(r3_vocab_val_word((INT)av));
-        ws_s("\",\"share\":"); ws_dec(ash);
-        ws_s("}");
-        gx_ws_send_stage(slot);
-        return;
-    }
+    if (gx_streq(t, "chat")) {
+        /* free-form conversation with the resident baby. Pull the user's text,
+         * stream the student's own generation back as tok frames, then done.
+         * NO consent gate / NO vocab / NO OOV: this is the baby talking, not a
+         * fact being written (teaching happens via the existing /teach path
+         * and DMN sleep, not the chat box). */
+        char text[256];
+        INT tl = gx_json_field(msg, n, "text", text, (INT)sizeof text);
+        if (tl < 0) tl = 0;
 
-    if (gx_streq(t, "teach")) {
-        /* mirror POST /teach: consent-gated (the 共感 gate, ark §7.3),
-         * WORDS -> token ids (OOV refused), drive the production mouth. */
-        if (!ark_consent_ok()) {
+        g_chat_slot = slot;
+        int produced = student_chat_generate(text, (int)tl, gx_chat_chunk, 0);
+        g_chat_slot = -1;
+
+        if (produced <= 0) {
+            /* no resident baby (or a hard error): a single gentle placeholder
+             * so the page shows the mouth is there but quiet — never a crash. */
             ws_reset();
-            ws_s("{\"type\":\"refused\",\"reason\":\"manifesto\",\"see\":\"/manifesto\"}");
+            ws_s("{\"type\":\"tok\",\"text\":\"…\"}");
             gx_ws_send_stage(slot);
-            return;
-        }
-        char kw[40], vw[40];
-        INT kl = gx_json_field(msg, n, "k", kw, (INT)sizeof kw);
-        INT vl = gx_json_field(msg, n, "v", vw, (INT)sizeof vw);
-        INT k = (kl > 0) ? r3_vocab_key_id(kw, (UW)kl) : -1;
-        INT v = (vl > 0) ? r3_vocab_val_id(vw, (UW)vl) : -1;
-        if (kl > 0 && k < 0) {
-            ws_reset();
-            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"key\",\"word\":\"");
-            ws_str(kw); ws_s("\"}");
-            gx_ws_send_stage(slot);
-            return;
-        }
-        if (vl > 0 && v < 0) {
-            ws_reset();
-            ws_s("{\"type\":\"refused\",\"reason\":\"oov\",\"which\":\"answer\",\"word\":\"");
-            ws_str(vw); ws_s("\"}");
-            gx_ws_send_stage(slot);
-            return;
-        }
-        if (k >= 0 && v >= 0) {
-            ark_teach_src_set(ARK_PROV_SRC_WEB);       /* §5: WEB provenance   */
-            char cmd[24]; INT cn = 0;
-            cmd[cn++]='t';cmd[cn++]='e';cmd[cn++]='a';cmd[cn++]='c';cmd[cn++]='h';cmd[cn++]=' ';
-            cn += gx_itoa(cmd+cn, k); cmd[cn++]=' ';
-            cn += gx_itoa(cmd+cn, v);
-            mind_cmd((const UB *)cmd, (UW)cn);
         }
         ws_reset();
-        ws_s("{\"type\":\"taught\",\"ok\":true,\"pending\":");
-        ws_dec((UW)r3_facts_pending());
-        ws_s(",\"rounds\":"); ws_dec(dmn_r3_rounds());
-        ws_s("}");
+        ws_s("{\"type\":\"done\"}");
         gx_ws_send_stage(slot);
         return;
     }

@@ -317,6 +317,88 @@ float student_dmn_heldout_loss(void)
 }
 
 /* ---------------------------------------------------------------------------
+ * Chat bridge (step ⑥): the yurikago talks to the RESIDENT baby.
+ *
+ * galaxy.c's /ws handler calls this with the user's free-text message; we
+ * locate the resident student and run st_generate over it, streaming the
+ * baby's reply bytes back through `emit_chunk` (galaxy.c frames each chunk as a
+ * {"type":"tok"} WS frame and flushes, so the slow baby's text appears
+ * progressively).
+ *
+ * Pure-A (the student generates ON ITS OWN): the SmolLM2 teacher is NOT loaded
+ * or consulted here — sleep-time only. This is free-form byte-level generation
+ * from whatever the resident baby has learned.
+ *
+ * RESIDENCY rule (honesty): chat does NOT *birth* a brand-new untrained baby
+ * (that would only emit noise and pay a 30MB arena for nothing). It speaks only
+ * if a baby is ALREADY resident this boot, OR one is saved on disk (adopt it).
+ * Otherwise it returns 0 produced and galaxy streams a gentle placeholder — no
+ * crash, no allocation.
+ *
+ * Bounded/fast (the relay stack lesson): max_gen capped at CHAT_MAXGEN (<=
+ * st_generate's own ST_GEN_CAP); the only scratch is one small stack buffer for
+ * the prompt bytes, plus the chunk staging the callback owns.
+ *
+ * Returns the number of reply bytes produced (>=0), or negative on a hard
+ * error (galaxy still streams a placeholder + done on <=0).
+ * ------------------------------------------------------------------------- */
+#define CHAT_MAXGEN  96
+#define CHAT_TEMP    0.8f
+#define CHAT_TOPK    40
+
+/* the streaming callback galaxy.c gives us: hand it a run of reply bytes. */
+typedef void (*chat_emit_fn)(void *ctx, const char *bytes, int n);
+
+/* adapter state: st_generate_stream hands us ONE byte at a time; we forward
+ * each immediately to the galaxy chunk sink (galaxy.c flushes per chunk, so a
+ * 1-byte chunk == maximally progressive; galaxy may coalesce its own framing). */
+struct chat_sink {
+    chat_emit_fn emit;
+    void        *ctx;
+};
+static void chat_byte_emit(void *vp, int byte)
+{
+    struct chat_sink *s = (struct chat_sink *)vp;
+    char ch = (char)(unsigned char)byte;
+    if (s->emit) s->emit(s->ctx, &ch, 1);
+}
+
+int student_chat_generate(const char *intext, int inlen,
+                          chat_emit_fn emit_chunk, void *ctx)
+{
+    /* Speak only for a node actually raising a baby. If none is resident this
+     * boot but one is saved on disk, adopt it (sleeping it grew yesterday). */
+    if (!g_have_student) {
+        if (!student_have_saved()) return 0;          /* no baby -> placeholder */
+        if (student_ensure(0) != 0)  return -1;        /* arena now, quiet       */
+    }
+
+    if (inlen < 0) inlen = 0;
+
+    /* prompt bytes: take the message TAIL that fits the model's context (the
+     * generator caps it too, but keep the bridge's stack buffer bounded). One
+     * small fixed buffer — never a network-sized stack array. */
+    uint8_t prompt[ST_MAXSEQ];
+    int np = 0;
+    int start = (inlen > ST_MAXSEQ) ? (inlen - ST_MAXSEQ) : 0;
+    for (int i = start; i < inlen && np < ST_MAXSEQ; i++)
+        prompt[np++] = (uint8_t)intext[i];
+
+    /* per-message reproducible seed: mix the bytes so different messages diverge
+     * but the SAME message replays identically (one-math determinism). */
+    uint64_t seed = 0x9E3779B97F4A7C15ULL;
+    for (int i = 0; i < np; i++) seed = seed * 1099511628211ULL + prompt[i] + 1;
+    if (!seed) seed = 0xBABEULL;
+
+    struct chat_sink sink = { emit_chunk, ctx };
+    uint8_t out[CHAT_MAXGEN];
+    int produced = st_generate_stream(&g_student, prompt, np, out, CHAT_MAXGEN,
+                                      CHAT_TEMP, CHAT_TOPK, seed,
+                                      chat_byte_emit, &sink);
+    return produced;
+}
+
+/* ---------------------------------------------------------------------------
  * The `student` / `baby` shell verb.
  *
  *   student                         one round @ defaults; print + save
