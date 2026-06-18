@@ -118,6 +118,39 @@ int  lm_argmax(const lm_model *m);
  * KV cache is reset at entry. */
 int  lm_generate(lm_model *m, const int *in, int n_in, int *out, int n_gen);
 
+/* ----------------------------- sampling (sample.c) ---------------------- */
+/*
+ *  lm_generate_sampled — generation with a sampler + EOS stop.
+ *
+ *  Prefill `n_in` prompt ids, then generate UP TO `max_gen` tokens, each drawn
+ *  from the logits by:  repetition-penalty -> temperature -> top-k -> top-p
+ *  (nucleus) -> categorical sample from the surviving mass.  Generation stops
+ *  early the moment `eos_id` is produced (it is NOT written to out[]), or when
+ *  `max_gen` is reached.  KV cache is reset at entry.  Returns the number of
+ *  tokens actually written to out[] (0..max_gen), or a negative LM_E_* code.
+ *
+ *  Determinism / reproducibility (wave-49 "one math" discipline): the RNG is an
+ *  explicit, seedable, self-contained xorshift64* — NO libc rand(), NO global
+ *  state.  Same (model, prompt, params, seed) => same output, on every target.
+ *  Built -O1 -ffp-contract=off like the rest of arch/common/llm/.
+ *
+ *  Parameters:
+ *    temp     temperature (>0). temp == 0 (or <= 0) => exact greedy argmax,
+ *             bit-identical to lm_generate(); the other knobs are then ignored.
+ *    top_k    keep only the top_k highest-logit tokens (<=0 => no top-k cap).
+ *    top_p    nucleus: keep the smallest set whose cumulative prob >= top_p
+ *             (top_p <= 0 or >= 1 => no nucleus cut).
+ *    rep_pen  repetition penalty on any token already in the running sequence
+ *             (prompt + generated): >1.0 discourages repeats, 1.0 == off
+ *             (llama.cpp convention: positive logits /= rep_pen, negative *=).
+ *    eos_id   stop token id; pass < 0 to disable early stop (SmolLM2 eos = 2).
+ *    seed     RNG seed (any 64-bit value; 0 is mapped to a fixed nonzero state).
+ */
+int  lm_generate_sampled(lm_model *m, const int *in, int n_in,
+                         int *out, int max_gen,
+                         float temp, int top_k, float top_p, float rep_pen,
+                         int eos_id, uint64_t seed);
+
 /* Libc-free math used internally — exposed for the unit test's hand-checks. */
 float lm_expf(float x);
 float lm_rsqrtf(float x);   /* 1/sqrt(x) */

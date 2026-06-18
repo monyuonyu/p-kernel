@@ -65,6 +65,13 @@ IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
 IMPORT void mind_merge_task(INT stacd, void *exinf);  /* LM-10 Path W merge */
 IMPORT void lm_test(void);                            /* living-mind DMN */
+/* arch/common/llm/llm_shell.c — the real SmolLM2 inference engine bridge.
+ * Loads the GGUF (env PKERNEL_LLM_GGUF, default /tmp/smollm2-135m.gguf),
+ * tokenizes the prompt, runs the self-built forward + sampler, prints text.
+ * Built with the REAL system libc (host/Android tier); the kernel side only
+ * NUL-terminates the arg tail and passes a plain line-printer. The bridge
+ * parses the sampler flags (temp<=0 => greedy; >0 => sampled). */
+IMPORT int  llm_shell_cmd(const char *args, void (*emit)(const char *));
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 IMPORT void sign_self_test(void);                      /* signing.md sign suite */
 IMPORT void tcb_churn(W cycles, W concurrency);        /* KILL-CHURN-CRASH repro */
@@ -122,6 +129,8 @@ static void cmd_help(void)
     print("  moe [a b c d] - route to best expert (locality MoE); `moe test` = §7/§8 property tests\r\n");
     print("  breathe - R3b: expert specialization; join smarter / leave graceful (numbers)\r\n");
     print("  dkva [infer [a b c d]] - distributed KV attention from THIS node\r\n");
+    print("  llm <prompt> - real SmolLM2-135M text gen INSIDE the kernel (greedy)\r\n");
+    print("  llm -t 0.8 [-k 40 -p 0.95 -r 1.1 -s 42 -n 32] <prompt> - sampled gen\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
     print("  kdds   - K-DDS topic table\r\n");
     print("  kdemo  - cross-arch K-DDS heartbeat demo (pub+sub on demo/heartbeat)\r\n");
@@ -824,6 +833,23 @@ EXPORT INT usermain(void)
             /* R3: non-trivial thought — in-context recall capacity cert.
              * `r3 test` proves learned >> any fixed hand-if (by construction). */
             r3_cmd(line + 2, (UW)(n - 2));
+        } else if (starts_with(line, n, "llm")) {
+            /* Step ① real-LLM chat: drive the self-built SmolLM2-135M engine
+             * (arch/common/llm/) FROM INSIDE the kernel. Loads the GGUF (env
+             * PKERNEL_LLM_GGUF, default /tmp/smollm2-135m.gguf), tokenizes,
+             * runs forward + sampler, detokenizes, prints the text. OFF the
+             * boot path — only runs when invoked. Greedy by default; pass
+             * `-t <temp>` (e.g. -t 0.8) to sample.
+             *   llm The capital of France is
+             *   llm -t 0.8 -k 40 -p 0.95 -s 42 Once upon a time          */
+            const UB *a = line + 3; INT al = n - 3;
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            char argbuf[160];
+            if (al < 0) al = 0;
+            if (al > (INT)sizeof(argbuf) - 1) al = (INT)sizeof(argbuf) - 1;
+            for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
+            argbuf[al] = '\0';
+            llm_shell_cmd(argbuf, print);
         } else if (starts_with(line, n, "mind")) {
             /* living-mind LM-6 (docs/architecture/living-mind.md Part VII):
              * the mouth — the OWNER teaches the live mind at this prompt;

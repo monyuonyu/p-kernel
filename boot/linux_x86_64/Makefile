@@ -201,6 +201,28 @@ COMMON_C_SRCS = \
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
+# ---- arch/common/llm sources (self-built SmolLM2 inference engine) ----
+# Mirror of boot/linux/Makefile (kept verbatim so the two host minds are
+# identical). HOST/Android tier: these TUs use the REAL system libc
+# (malloc/calloc/mmap/<stdint.h>/<stdio.h>), so they compile with $(CFLAGS)
+# (system headers), NOT $(KERNEL_CFLAGS) (T-Kernel placeholder libc). They are
+# a SEPARATE group from COMMON_C_SRCS (different libc tier; no place on bare
+# metal). check_parity.sh compares the NAMED lists only — this new variable is
+# not one of them, so it creates no Android-CMake drift; the host-vs-host check
+# likewise only diffs the named lists, but we keep this list identical to
+# boot/linux anyway. student.c is NOT here (separate toy, not the engine).
+LLM_DIR     = $(ARCH_COMMON)/llm
+LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c
+LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
+# Own flag set (mirror of boot/linux): the engine includes ONLY system libc +
+# its sibling headers, and must NOT see the kernel include/ dirs (include/
+# stdint.h typedefs int64_t as `long long`, conflicting with glibc's `long`
+# once <stdlib.h> pulls bits/stdint-intn.h — the LP64 typedef trap). Drop all
+# kernel -I, keep -O1 -ffp-contract=off (one math). Matches run_forward.sh.
+LLM_CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
+              -fno-stack-protector -fno-common -std=gnu11 \
+              -ffp-contract=off -I$(LLM_DIR)
+
 # ---- kernel/common sources -------------------------------------------
 KERNEL_SRCS = \
     task.c \
@@ -243,7 +265,7 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
               strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 
 TARGET = p-kernel
 
@@ -278,6 +300,12 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+# arch/common/llm — self-built SmolLM2 engine; HOST libc tier with its OWN
+# flag set ($(LLM_CFLAGS)): no kernel -I dirs (system <stdint.h> wins, see the
+# LP64 typedef trap above), same -O1 -ffp-contract=off discipline.
+$(LLM_OBJS): %.o: $(LLM_DIR)/%.c
+	$(CC) $(LLM_CFLAGS) -c -o $@ $<
 
 # galaxy v1 (galaxy.md D3): build-time HTML -> C array so the embedded
 # page can never drift from source. galaxy.o (the only TU that #includes

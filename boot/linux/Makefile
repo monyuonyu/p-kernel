@@ -218,6 +218,36 @@ COMMON_C_SRCS = \
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
+# ---- arch/common/llm sources (self-built SmolLM2 inference engine) ----
+# Step ①: build the real LLM engine INTO the hosted kernel. These TUs are
+# HOST/Android tier ("身体"): unlike COMMON_C_SRCS they use the REAL system
+# libc (malloc/calloc/mmap/<stdint.h>/<stdio.h>), NOT the T-Kernel placeholder
+# libc — so they MUST be compiled with $(CFLAGS) (the arch/linux flag set that
+# resolves to system headers), NEVER $(KERNEL_CFLAGS). They are deliberately a
+# SEPARATE group from COMMON_C_SRCS for two reasons: (1) the libc tier above,
+# and (2) they have no place on bare-metal boot/x86|aarch64 (no malloc/mmap/
+# libm there). NOTE for parity: tools/android/check_parity.sh compares the
+# NAMED lists COMMON_C_SRCS/ARCH_SHARED_C_SRCS/KERNEL_SRCS/LIBSTR_SRCS/
+# RELAY_C_SRCS — this NEW variable is not one of them, so adding it here does
+# NOT create Android-CMake drift (Android LLM wiring is a later step). It is
+# still mirrored verbatim into boot/linux_x86_64/Makefile to keep the two host
+# minds identical. student.c is NOT here (separate toy, not the engine).
+LLM_DIR     = $(ARCH_COMMON)/llm
+LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c
+LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
+# The engine is pure host-libc code and includes ONLY <stdint.h>/<stddef.h>/
+# <stdlib.h>/<stdio.h>/<string.h>/<time.h> + its own sibling headers. It must
+# NOT see the kernel's include/ dirs: include/stdint.h typedefs int64_t as
+# `long long`, which conflicts with glibc's `long` once <stdlib.h> drags in
+# bits/stdint-intn.h (the LP64 typedef trap). So LLM_CFLAGS drops every kernel
+# -I and points only at the llm dir, letting the SYSTEM <stdint.h> win. The
+# load-bearing flags survive: -O1, -ffp-contract=off (one math), -fno-common.
+# This matches the certified host harness recipe in tests/llm/run_forward.sh
+# (cc -O1 -ffp-contract=off forward.c quant.c gguf.c tokenizer.c -lm).
+LLM_CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
+              -fno-stack-protector -fno-common -std=gnu11 \
+              -ffp-contract=off -I$(LLM_DIR)
+
 # ---- kernel/common sources -------------------------------------------
 KERNEL_SRCS = \
     task.c \
@@ -260,7 +290,7 @@ LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
               strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
 LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
 
 TARGET = p-kernel
 
@@ -331,6 +361,12 @@ $(KERNEL_SRCS:.c=.lo): %.lo: $(KERNEL)/%.c
 $(COMMON_C_SRCS:.c=.lo): %.lo: $(ARCH_COMMON)/%.c
 	$(CC) $(SO_KCFLAGS) -c -o $@ $<
 
+# arch/common/llm .lo siblings — HOST libc tier with the engine's own flags
+# (no kernel -I; system <stdint.h>) plus PIC. Keeps the .so/Android pipeline
+# able to compile the engine even though its JNI wiring lands in a later step.
+$(LLM_C_SRCS:.c=.lo): %.lo: $(LLM_DIR)/%.c
+	$(CC) $(LLM_CFLAGS) -fPIC -fvisibility=hidden -c -o $@ $<
+
 $(LIBSTR_SRCS:.c=.lo): %.lo: $(LIBSTR_DIR)/%.c
 	$(CC) $(SO_KCFLAGS) -c -o $@ $<
 
@@ -395,6 +431,12 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 # arch/common — portable AI + distributed layer; same libc as kernel/common
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+# arch/common/llm — self-built SmolLM2 engine; HOST libc tier with its OWN
+# flag set ($(LLM_CFLAGS)): no kernel -I dirs (so system <stdint.h> wins, see
+# the LP64 typedef trap above), but the same -O1 -ffp-contract=off discipline.
+$(LLM_OBJS): %.o: $(LLM_DIR)/%.c
+	$(CC) $(LLM_CFLAGS) -c -o $@ $<
 
 # galaxy v1 (galaxy.md D3): build-time HTML -> C array (both .o and .lo
 # paths, since galaxy.c builds into the .so too). galaxy.o/.lo are the
