@@ -845,6 +845,134 @@ void st_adam_step(st_model *m, float lr)
 }
 
 /* ================================================================== */
+/* persistence — pure serialization into a caller buffer              */
+/* ================================================================== */
+/*
+ *  st_save/st_load are libc-light (no file IO here — the kernel's durable
+ *  layer lives a tier up, in student_shell.c). They just (de)serialize the
+ *  trainable state into a flat byte blob with a fixed-width header that pins
+ *  the blob to THIS build's architecture (vocab/d_model/layers/experts/dff)
+ *  and n_params. The payload is w[] + Adam moments mu[]/vu[] + adam_t, so a
+ *  reloaded baby continues training from exactly where it slept (not just a
+ *  weight snapshot). All scalars are little-endian on the wire by virtue of
+ *  raw byte copy — the format is single-host (one node's own ark file), not
+ *  a cross-arch interchange, so no endianness swap is performed (honest).
+ *
+ *  On-disk layout:
+ *    [ ST_BLOB_HDR ][ w  : n_params float ][ mu : n_params float ]
+ *                   [ vu : n_params float ][ adam_t : int32      ]
+ */
+
+/* fixed magic 'N','S','1','W' so a stray file can't be mistaken for weights */
+#define ST_BLOB_MAGIC 0x5731534Eu    /* "NS1W" little-endian                 */
+#define ST_BLOB_VER   1u
+
+typedef struct {
+    uint32_t magic;      /* ST_BLOB_MAGIC                                     */
+    uint32_t version;    /* ST_BLOB_VER                                       */
+    uint32_t ns_ver;     /* NS_STUDENT_VER (student contract version)         */
+    uint32_t n_params;   /* dimension guard                                  */
+    uint32_t vocab;      /* ST_VOCAB                                          */
+    uint32_t d_model;    /* ST_DMODEL                                         */
+    uint32_t n_layer;    /* ST_NLAYER                                         */
+    uint32_t n_expert;   /* ST_NEXPERT                                        */
+    uint32_t dff;        /* ST_DFF                                            */
+    uint32_t reserved;   /* 0 — keeps the float payload 8-byte aligned       */
+} ST_BLOB_HDR;
+
+/* Exact byte size of a saved student for THIS build. The caller sizes its
+ * durable buffer with this (compile-time-derivable, but a fn keeps n_params
+ * encapsulated). */
+size_t st_blob_size(const st_model *m)
+{
+    if (!m) return 0;
+    size_t np = (size_t)m->n_params;
+    return sizeof(ST_BLOB_HDR)
+         + np * sizeof(float)       /* w  */
+         + np * sizeof(float)       /* mu */
+         + np * sizeof(float)       /* vu */
+         + sizeof(int32_t);         /* adam_t */
+}
+
+/* Serialize the trainable state into buf[cap]. Returns the number of bytes
+ * written, or negative (ST_E_ARG) if buf is too small / model unallocated. */
+long st_save(const st_model *m, void *buf, size_t cap)
+{
+    if (!m || !m->w || !buf) return ST_E_ARG;
+    size_t need = st_blob_size(m);
+    if (cap < need) return ST_E_ARG;
+
+    unsigned char *p = (unsigned char *)buf;
+    ST_BLOB_HDR h;
+    h.magic    = ST_BLOB_MAGIC;
+    h.version  = ST_BLOB_VER;
+    h.ns_ver   = (uint32_t)NS_STUDENT_VER;
+    h.n_params = (uint32_t)m->n_params;
+    h.vocab    = (uint32_t)ST_VOCAB;
+    h.d_model  = (uint32_t)ST_DMODEL;
+    h.n_layer  = (uint32_t)ST_NLAYER;
+    h.n_expert = (uint32_t)ST_NEXPERT;
+    h.dff      = (uint32_t)ST_DFF;
+    h.reserved = 0;
+
+    size_t np = (size_t)m->n_params, off = 0;
+    size_t fbytes = np * sizeof(float);
+    for (size_t i = 0; i < sizeof h; i++) p[off + i] = ((const unsigned char *)&h)[i];
+    off += sizeof h;
+    for (size_t i = 0; i < fbytes; i++) p[off + i] = ((const unsigned char *)m->w )[i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) p[off + i] = ((const unsigned char *)m->mu)[i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) p[off + i] = ((const unsigned char *)m->vu)[i];
+    off += fbytes;
+    int32_t t = (int32_t)m->adam_t;
+    for (size_t i = 0; i < sizeof t; i++) p[off + i] = ((const unsigned char *)&t)[i];
+    off += sizeof t;
+    return (long)off;
+}
+
+/* Load a previously-saved blob into m (which MUST already be st_init'd to the
+ * same build — st_load reuses its arena). Verifies magic/version/dims against
+ * THIS build and refuses any mismatch (returns negative). On success the
+ * weights, Adam moments, and timestep are overwritten and ST_OK is returned. */
+int st_load(st_model *m, const void *buf, size_t len)
+{
+    if (!m || !m->w || !buf) return ST_E_ARG;
+    if (len < sizeof(ST_BLOB_HDR)) return ST_E_ARG;
+
+    ST_BLOB_HDR h;
+    const unsigned char *p = (const unsigned char *)buf;
+    for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
+
+    if (h.magic    != ST_BLOB_MAGIC)        return ST_E_ARG;
+    if (h.version  != ST_BLOB_VER)          return ST_E_ARG;
+    if (h.ns_ver   != (uint32_t)NS_STUDENT_VER) return ST_E_ARG;
+    if (h.n_params != (uint32_t)m->n_params)    return ST_E_ARG;
+    if (h.vocab    != (uint32_t)ST_VOCAB)   return ST_E_ARG;
+    if (h.d_model  != (uint32_t)ST_DMODEL)  return ST_E_ARG;
+    if (h.n_layer  != (uint32_t)ST_NLAYER)  return ST_E_ARG;
+    if (h.n_expert != (uint32_t)ST_NEXPERT) return ST_E_ARG;
+    if (h.dff      != (uint32_t)ST_DFF)     return ST_E_ARG;
+
+    size_t np = (size_t)m->n_params;
+    size_t fbytes = np * sizeof(float);
+    size_t need = st_blob_size(m);
+    if (len < need) return ST_E_ARG;   /* truncated payload — refuse */
+
+    size_t off = sizeof h;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->w )[i] = p[off + i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->mu)[i] = p[off + i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->vu)[i] = p[off + i];
+    off += fbytes;
+    int32_t t = 0;
+    for (size_t i = 0; i < sizeof t; i++) ((unsigned char *)&t)[i] = p[off + i];
+    m->adam_t = (int)t;
+    return ST_OK;
+}
+
+/* ================================================================== */
 /* grad check                                                         */
 /* ================================================================== */
 

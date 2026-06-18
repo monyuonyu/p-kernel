@@ -113,6 +113,21 @@ void st_zero_grad(st_model *m);
  * max relative error. (`stride` picks the spread; eps the FD step.) */
 float st_grad_check(st_model *m, const uint8_t *bytes, int n, int stride, float eps);
 
+/* ---- persistence (pure serialization; file IO lives a tier up) ---- */
+
+/* Exact byte size of a saved student for THIS build (header + w + Adam
+ * moments + timestep). Use to size the durable buffer. */
+size_t st_blob_size(const st_model *m);
+
+/* Serialize the trainable state (w + mu + vu + adam_t) into buf[cap].
+ * Returns bytes written, or negative (ST_E_ARG) when cap is too small. */
+long st_save(const st_model *m, void *buf, size_t cap);
+
+/* Load a saved blob into m (already st_init'd to the SAME build — st_load
+ * reuses its arena). Verifies magic/version/dims; refuses any mismatch.
+ * Returns ST_OK on success, negative on reject. */
+int  st_load(st_model *m, const void *buf, size_t len);
+
 /* libc-free math, exposed for the test's hand-checks / reuse. */
 float st_expf(float x);
 float st_logf(float x);

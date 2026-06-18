@@ -210,9 +210,15 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # metal). check_parity.sh compares the NAMED lists only — this new variable is
 # not one of them, so it creates no Android-CMake drift; the host-vs-host check
 # likewise only diffs the named lists, but we keep this list identical to
-# boot/linux anyway. student.c is NOT here (separate toy, not the engine).
+# boot/linux anyway.
+#
+# Step ③ (wave-student-in-kernel): student.c (NS-1 Cradle baby) + its bridge
+# student_shell.c build IN the hosted kernel — the RESIDENT, PERSISTED student.
+# Same host-libc tier + LLM_CFLAGS as the engine; NOT on bare metal (stays out
+# of COMMON_C_SRCS). Mirror of boot/linux/Makefile (kept verbatim).
 LLM_DIR     = $(ARCH_COMMON)/llm
-LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c
+LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c \
+              student.c student_shell.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # Own flag set (mirror of boot/linux): the engine includes ONLY system libc +
 # its sibling headers, and must NOT see the kernel include/ dirs (include/

@@ -231,9 +231,18 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # RELAY_C_SRCS — this NEW variable is not one of them, so adding it here does
 # NOT create Android-CMake drift (Android LLM wiring is a later step). It is
 # still mirrored verbatim into boot/linux_x86_64/Makefile to keep the two host
-# minds identical. student.c is NOT here (separate toy, not the engine).
+# minds identical.
+#
+# Step ③ (wave-student-in-kernel): student.c (the NS-1 Cradle baby) + its
+# bridge student_shell.c now build IN the hosted kernel too — the RESIDENT,
+# PERSISTED student the owner talks to. They share the SmolLM2 engine's
+# host-libc tier and LLM_CFLAGS recipe (system <stdint.h>, -O1 -ffp-contract=
+# off). student.c was previously test-only (tests/llm); it is NOT on bare metal
+# (no malloc/libm there) so it stays OUT of COMMON_C_SRCS. student_shell.c
+# calls the durable seam (pfs_dur_write/read, ARCH_SHARED_C_SRCS) by extern.
 LLM_DIR     = $(ARCH_COMMON)/llm
-LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c
+LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c \
+              student.c student_shell.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # The engine is pure host-libc code and includes ONLY <stdint.h>/<stddef.h>/
 # <stdlib.h>/<stdio.h>/<string.h>/<time.h> + its own sibling headers. It must

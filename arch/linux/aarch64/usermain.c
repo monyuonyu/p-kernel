@@ -72,6 +72,14 @@ IMPORT void lm_test(void);                            /* living-mind DMN */
  * NUL-terminates the arg tail and passes a plain line-printer. The bridge
  * parses the sampler flags (temp<=0 => greedy; >0 => sampled). */
 IMPORT int  llm_shell_cmd(const char *args, void (*emit)(const char *));
+/* arch/common/llm/student_shell.c — the RESIDENT, PERSISTED Cradle baby
+ * (NS-1). student_boot_restore() restores-or-inits the in-kernel student at
+ * boot (no-op without PKERNEL_PFS_DIR); student_shell_cmd() runs one bounded
+ * distillation round from a small teacher fixture, prints held-out loss
+ * before/after, and saves the baby durably (it survives a reboot). Host tier;
+ * the kernel side passes a plain line-printer. */
+IMPORT int  student_boot_restore(void (*emit)(const char *));
+IMPORT int  student_shell_cmd(const char *args, void (*emit)(const char *));
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 IMPORT void sign_self_test(void);                      /* signing.md sign suite */
 IMPORT void tcb_churn(W cycles, W concurrency);        /* KILL-CHURN-CRASH repro */
@@ -640,6 +648,12 @@ EXPORT INT usermain(void)
      * No-op without PKERNEL_PFS_DIR. Must follow pfs_durable_restore (same
      * dir resolution). */
     r3_weights_restore_or_pretrain();
+    /* Step ③ (wave-student-in-kernel): the RESIDENT NS-1 Cradle baby. Restore
+     * the durable student blob (ns1_student.bin) over a fresh st_init so a node
+     * that slept yesterday wakes up remembering; falls back to fresh init when
+     * absent / on a memory-only node. Off the critical path; one honest line.
+     * Must follow pfs_durable_restore (same dir resolution). */
+    student_boot_restore(print);
     /* G28 — protected-object registry. Registers the pfs_repl announce-hook
      * so heard announces feed the holder count that grounds the threat.
      * Must follow pfs_repl_init(). protect_task starts in cmd_net. */
@@ -850,6 +864,25 @@ EXPORT INT usermain(void)
             for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
             argbuf[al] = '\0';
             llm_shell_cmd(argbuf, print);
+        } else if (starts_with(line, n, "student") || starts_with(line, n, "baby")) {
+            /* Step ③ real living-chat substrate: the RESIDENT, PERSISTED NS-1
+             * Cradle baby. Runs ONE bounded distillation round from a small
+             * teacher-byte fixture into the in-kernel student, prints held-out
+             * loss before/after, and SAVES it durably so the gain survives a
+             * reboot ("the ark remembers"). OFF the boot path; teacher is a
+             * fixture (live-DMN drive is step ④).
+             *   student                  one round @ defaults; print + save
+             *   student <rounds> <lr> <seqlen>
+             *   student loss             report held-out loss only (no train)   */
+            INT kw = starts_with(line, n, "student") ? 7 : 4;
+            const UB *a = line + kw; INT al = n - kw;
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            char argbuf[64];
+            if (al < 0) al = 0;
+            if (al > (INT)sizeof(argbuf) - 1) al = (INT)sizeof(argbuf) - 1;
+            for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
+            argbuf[al] = '\0';
+            student_shell_cmd(argbuf, print);
         } else if (starts_with(line, n, "mind")) {
             /* living-mind LM-6 (docs/architecture/living-mind.md Part VII):
              * the mouth — the OWNER teaches the live mind at this prompt;
