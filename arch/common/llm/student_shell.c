@@ -82,6 +82,38 @@ static st_model g_student;
 static int      g_have_student = 0;   /* 1 once g_student is st_init'd        */
 static int      g_loaded_from_disk = 0; /* 1 if restored, 0 if fresh st_init  */
 
+/* FLASH-WEAR skip-write state (wave-student-throttle). The DMN tick used to
+ * rewrite the full ~22.8MB blob (open+write+fsync+rename+dir-fsync — NOT a
+ * content no-op: pfs_dur_write is a raw filename write, the "content-id no-op"
+ * only applies to pfs_dag's content-addressed path) every single round, even
+ * after the baby plateaued. We now persist a DMN round only when the held-out
+ * loss IMPROVED meaningfully since the last DMN save: track the loss at the
+ * last save and the high-water adam_t we last persisted. Until the first DMN
+ * save, g_dmn_saved==0 forces the next round's write through unconditionally
+ * (the g_dmn_saved_loss value is ignored while the flag is clear), so the first
+ * improvement always lands. The human `student` verb (student_persist) is
+ * intentionally NOT throttled — an explicit "raise the baby" always saves. */
+static int      g_dmn_saved = 0;          /* 1 once a DMN round has persisted   */
+static float    g_dmn_saved_loss = 0.0f;  /* held-out loss at the last DMN save */
+static int      g_dmn_saved_adam_t = 0;   /* adam_t at the last DMN save        */
+static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs)  */
+
+/* How much the held-out loss must drop (nats) below the last DMN-persisted
+ * value before we are willing to rewrite the 22.8MB blob again. Smaller than
+ * a single round's early gain (~1 nat) but well above float noise, so a baby
+ * that is still genuinely learning keeps persisting and a converged one stops.
+ * A modest improvement is also forced through once adam_t has advanced by
+ * ST_DMN_SAVE_DT steps even if under epsilon, so slow late-stage gains are
+ * not lost forever (bounded staleness of the durable checkpoint). */
+#define ST_DMN_SAVE_EPS  0.01f
+#define ST_DMN_SAVE_DT   200
+
+/* Per-DMN-tick distill geometry (used by both student_persist's baseline math
+ * and student_dmn_consolidate). Defined here, above the first use. */
+#define ST_DMN_SEQLEN  32
+#define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
+#define ST_DMN_LR      3e-3f
+
 #define STUDENT_SEED 0x0BABEu          /* same seed distill_proof uses         */
 
 /* corpus windowing (identical math to distill_proof.c) */
@@ -148,6 +180,20 @@ static int student_persist(emit_fn emit)
     int rc = pfs_dur_write(STUDENT_DUR_FILE, blob, (unsigned)n);
     free(blob);
     if (rc != 0) { if (emit) emit("[baby] durable write FAILED\r\n"); return -1; }
+
+    /* An explicit human checkpoint resets the DMN throttle baseline so a sleep
+     * tick right after `student` does not immediately rewrite the just-saved
+     * blob; the next DMN write waits for a real improvement past this point. */
+    {
+        int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+        int total    = corpus_n / ST_DMN_SEQLEN;
+        int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
+        int heldw    = total - trainw; if (heldw < 1) heldw = 1;
+        int train_end = trainw * ST_DMN_SEQLEN;
+        g_dmn_saved        = 1;
+        g_dmn_saved_loss   = heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
+        g_dmn_saved_adam_t = g_student.adam_t;
+    }
 
     if (emit) {
         snprintf(line, sizeof line,
@@ -263,11 +309,9 @@ int student_boot_restore(emit_fn emit)
  *
  * Returns 1 if it ran a round (caller may emit a sleep line / galaxy event),
  * 0 if it was a no-op.  No emit_fn: the DMN owns the sleep narration.
+ * (ST_DMN_SEQLEN / ST_DMN_ROUNDS / ST_DMN_LR are defined near the top so
+ * student_persist's throttle-baseline math can also see them.)
  * ------------------------------------------------------------------------- */
-#define ST_DMN_SEQLEN  32
-#define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
-#define ST_DMN_LR      3e-3f
-
 int student_dmn_consolidate(void)
 {
     /* No persistence -> no save target -> nothing to do (and don't allocate). */
@@ -284,18 +328,40 @@ int student_dmn_consolidate(void)
     int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
     int total    = corpus_n / ST_DMN_SEQLEN;
     int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
+    int heldw    = total - trainw; if (heldw < 1) heldw = 1;
+    int train_end = trainw * ST_DMN_SEQLEN;
 
     sleep_rounds(&g_student, ST_DMN_SEQLEN, trainw, ST_DMN_ROUNDS, ST_DMN_LR);
 
-    /* persist the post-sleep state so the gain survives a reboot. Quiet: the
-     * durable seam is a content-id no-op when unchanged (flash-wear honest),
-     * and the DMN prints the human-visible sleep line. */
-    if (pfs_dur_active()) {
+    /* SKIP-WRITE-WHEN-NOT-WORTH-IT (wave-student-throttle): persist the
+     * post-sleep state ONLY when the baby actually improved meaningfully since
+     * the last DMN save, so a converged/idle baby STOPS rewriting the ~22.8MB
+     * blob (and stops fsync'ing flash) every tick. The latest MEANINGFUL
+     * weights are always the ones on disk: the last write captured the best
+     * loss so far; a later non-improving round has nothing worth persisting,
+     * and restart-survival restores that best checkpoint. We still force a
+     * write through once adam_t has advanced ST_DMN_SAVE_DT steps past the last
+     * save even under epsilon, so slow late gains eventually land (bounded
+     * checkpoint staleness). Honest heuristic: a baby that genuinely keeps
+     * learning keeps persisting; the wear stops exactly when learning does. */
+    float cur = heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
+    int improved   = !g_dmn_saved || (cur < g_dmn_saved_loss - ST_DMN_SAVE_EPS);
+    int dt_elapsed = g_dmn_saved &&
+                     (g_student.adam_t - g_dmn_saved_adam_t) >= ST_DMN_SAVE_DT &&
+                     cur < g_dmn_saved_loss;     /* never persist a regression */
+    int worth_save = improved || dt_elapsed;
+
+    if (worth_save && pfs_dur_active()) {
         size_t need = st_blob_size(&g_student);
         unsigned char *blob = (unsigned char *)malloc(need);
         if (blob) {
             long w = st_save(&g_student, blob, need);
-            if (w >= 0) pfs_dur_write(STUDENT_DUR_FILE, blob, (unsigned)w);
+            if (w >= 0 && pfs_dur_write(STUDENT_DUR_FILE, blob, (unsigned)w) == 0) {
+                g_dmn_saved        = 1;
+                g_dmn_saved_loss   = cur;
+                g_dmn_saved_adam_t = g_student.adam_t;
+                g_dmn_save_count++;
+            }
             free(blob);
         }
     }
@@ -315,6 +381,13 @@ float student_dmn_heldout_loss(void)
     int train_end = trainw * ST_DMN_SEQLEN;
     return heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
 }
+
+/* Lifetime count of FULL ~22.8MB durable writes the DMN sleep tick has actually
+ * performed (wave-student-throttle). Pure read, for the flash-wear proof: with
+ * the every-tick code this equalled the number of rounds; with the skip-write
+ * heuristic it stops climbing once the baby plateaus. A NEW symbol — no existing
+ * student_* signature changes. */
+unsigned student_dmn_save_count(void) { return g_dmn_save_count; }
 
 /* ---------------------------------------------------------------------------
  * Chat bridge (step ⑥): the yurikago talks to the RESIDENT baby.

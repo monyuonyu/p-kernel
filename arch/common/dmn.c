@@ -39,6 +39,18 @@ IMPORT void sio_send_frame(const UB *buf, INT size);
  * is completely unaffected. Returns 1 if it ran a round. */
 IMPORT int student_dmn_consolidate(void);
 
+/* FLASH-WEAR / CPU throttle (wave-student-throttle): how many idle pulses
+ * between resident-baby distill rounds. Mirrors GA_INTERVAL's "1-in-N idle"
+ * cadence (ga_step runs at idle_runs % GA_INTERVAL == 1). Before this gate the
+ * baby distilled AND rewrote the full ~22.8MB blob (fsync'd) on EVERY 1000ms
+ * heartbeat forever — continuous flash wear + CPU on an idle "finished" node.
+ * Aligned with GA_INTERVAL (10) so the two self-improvement organs share one
+ * unobtrusive rest cadence; the second half of the cure (skip the write when
+ * the baby did not meaningfully improve) is inside student_dmn_consolidate(). */
+#ifndef ST_DMN_INTERVAL
+#define ST_DMN_INTERVAL  GA_INTERVAL
+#endif
+
 /* ------------------------------------------------------------------ */
 /* ユーティリティ                                                      */
 /* ------------------------------------------------------------------ */
@@ -120,6 +132,10 @@ static UW dmn_r3_round_count = 0;
  * dropping across real DMN sleep ticks. */
 IMPORT float student_dmn_heldout_loss(void);
 
+/* Lifetime count of FULL ~22.8MB durable writes the student DMN track has
+ * actually done (wave-student-throttle flash-wear proof). Read-only. */
+IMPORT unsigned student_dmn_save_count(void);
+
 static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
@@ -177,8 +193,17 @@ static void dmn_idle_work(void)
      * R3's rw[] and from the lm engram round — non-interference is structural
      * (disjoint weight buffers in a separate tier). STRICT no-op on a node that
      * isn't raising a baby / has no persistence, so a baby-less node is
-     * unaffected. Drives the SAME symbol the proof hook uses. */
-    if (student_dmn_consolidate()) {
+     * unaffected. Drives the SAME symbol the proof hook uses.
+     *
+     * FLASH-WEAR throttle (wave-student-throttle): cadence-limited to ~1-in-
+     * ST_DMN_INTERVAL idle pulses exactly like ga_step above, NOT every pulse.
+     * Before this gate a "finished" idle baby re-ran a round AND rewrote the
+     * full ~22.8MB blob (fsync'd) on every 1000ms heartbeat forever. The R3
+     * living-mind track above is deliberately left at every-pulse — it only
+     * runs WHILE r3_facts_pending(), so it self-limits and is unaffected here.
+     * The other half of the cure (skip the 22.8MB write when the baby did not
+     * meaningfully improve) lives inside student_dmn_consolidate(). */
+    if (dmn_stats.idle_runs % ST_DMN_INTERVAL == 1 && student_dmn_consolidate()) {
         galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 2, 0);  /* S3: the baby's weights settle a little (galaxy.md) */
         dmn_puts("[dmn] sleep: distilled teacher -> resident student (baby)\r\n");
     }
@@ -233,27 +258,32 @@ static void dmn_putf4(float v)
 void dmn_student_distill_test(UW n)
 {
     if (n < 1) n = 1;
-    if (n > 64) n = 64;   /* keep the shell responsive */
+    if (n > 256) n = 256;   /* bounded; enough ticks to reach plateau in proof */
 
     float chance = student_dmn_heldout_loss();   /* chance if no baby resident */
 
     dmn_puts("[dmn-distill] driving "); dmn_putdec(n);
     dmn_puts(" REAL sleep tick(s) (dmn_idle_work)\r\n");
 
-    UW r3_before = dmn_r3_round_count;
+    UW r3_before   = dmn_r3_round_count;
+    UW save_before = student_dmn_save_count();   /* flash-wear: 22.8MB writes */
     float pre = student_dmn_heldout_loss();
     dmn_puts("[dmn-distill] student held-out loss (before) = ");
     dmn_putf4(pre); dmn_puts(" nats\r\n");
 
     for (UW i = 0; i < n; i++) {
         dmn_idle_work();                         /* the production sleep path */
-        float l = student_dmn_heldout_loss();
-        dmn_puts("[dmn-distill]   after sleep "); dmn_putdec(i + 1);
-        dmn_puts(": student loss = "); dmn_putf4(l); dmn_puts(" nats\r\n");
+        /* only log per-tick loss for short runs to keep the shell responsive */
+        if (n <= 32) {
+            float l = student_dmn_heldout_loss();
+            dmn_puts("[dmn-distill]   after sleep "); dmn_putdec(i + 1);
+            dmn_puts(": student loss = "); dmn_putf4(l); dmn_puts(" nats\r\n");
+        }
     }
 
     float post = student_dmn_heldout_loss();
-    UW r3_after = dmn_r3_round_count;
+    UW r3_after   = dmn_r3_round_count;
+    UW save_after = student_dmn_save_count();
 
     dmn_puts("[dmn-distill] student held-out loss (after)  = ");
     dmn_putf4(post); dmn_puts(" nats  (chance="); dmn_putf4(chance);
@@ -261,6 +291,13 @@ void dmn_student_distill_test(UW n)
     dmn_puts("[dmn-distill] R3 idle rounds this run        = ");
     dmn_putdec(r3_after - r3_before);
     dmn_puts(" (living-mind track intact)\r\n");
+    dmn_puts("[dmn-distill] ticks driven                   = ");
+    dmn_putdec(n); dmn_puts("\r\n");
+    dmn_puts("[dmn-distill] 22.8MB durable writes this run  = ");
+    dmn_putdec(save_after - save_before);
+    dmn_puts("  (every-tick would be ~");
+    dmn_putdec(n / ST_DMN_INTERVAL);
+    dmn_puts(" student rounds; pre-throttle = 1 write/round)\r\n");
 
     if (post < pre - 0.01f)
         dmn_puts("[dmn-distill] PASS: the baby LEARNED while it slept\r\n");
