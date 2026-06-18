@@ -373,7 +373,14 @@ const FOV=520, CAMD=860;         // perspective strength / DEFAULT camera distan
 //    Smaller camD = closer = bigger stars. camDTarget is eased toward each
 //    frame so wheel/pinch/tap-focus all feel smooth, not jumpy. Clamped so
 //    you can get right up to a star but never invert through it or fly away.
-const CAM_MIN=180, CAM_MAX=2200;
+const CAM_MIN=100, CAM_MAX=2200;   // (was 180) deeper dolly: mk_pino もう少しズーム
+// dolly math (verify, mk_pino 0.8.x deeper-zoom): the ME star sits at world Z=0,
+// so its projection denominator is FOV+Z+camD = 520+0+100 = 620 at full dolly —
+// safely > 0 (never inverts through / past the origin star). The raw geometric
+// perspective factor praw = (FOV+CAMD)/(FOV+CAM_MIN) = 1380/620 ≈ 2.226 (was
+// 1.971 at CAM_MIN=180). After the me-star super-linear gain in drawSelf
+// (pscale = 1+(praw-1)*(1+0.85*(praw-1))) the MAX pscale is now ≈ 3.50 (was
+// ≈ 2.77) — the organs fill noticeably more of the screen at full zoom.
 let camD=CAMD, camDTarget=CAMD;  // current + eased target distance
 // the projection scale `s` the ME star (world origin, Z=0) gets at the DEFAULT
 // distance. We normalise the me-star's perspective growth by this so the calm
@@ -536,11 +543,14 @@ function drawMeBlob(cx,cy,baseR,spr,al,tms,ms,throb){
 // ── INTERIOR view groundwork: "see the organs" (mk_pino's dream) ────────────
 //   pscale at which the close-up interior begins to reveal. pscale==1 is the
 //   default view; because the me-star sits at the origin its perspective scale
-//   maxes out at (FOV+CAMD)/(FOV+CAM_MIN) ≈ 1.97 at full dolly (CAM_MIN). We
-//   start the reveal at 1.5x (you've clearly dollied well IN) and reach full
-//   opacity by ~1.9x (near max zoom), so it fades in smoothly instead of
-//   popping — and is actually reachable at the deepest zoom.
-const INTERIOR_AT=1.5, INTERIOR_FULL=1.9;
+//   now maxes out at pscale ≈ 3.50 at full dolly (CAM_MIN=100; see the dolly
+//   math by CAM_MIN above — the raw geometric praw maxes at ≈ 2.226, the
+//   me-star super-linear gain takes that to ≈ 3.50). Retuned for the deeper
+//   zoom range [1 .. 3.50] (was [1.5 .. 1.9] for the old ~2.77 max): we start
+//   the reveal at 1.6x (you've clearly dollied well IN) and reach full opacity
+//   by 3.1x (near — but not exactly at — max zoom), so the organs fade in
+//   smoothly across the new, wider span instead of popping or saturating early.
+const INTERIOR_AT=1.6, INTERIOR_FULL=3.1;
 // The "organs" the full design should map each ring to — the mind's real
 // modules / observability surfaces. Kept as data (not yet wired to live state)
 // so the design follow-on has a concrete contract to fill in: replace the
@@ -553,32 +563,75 @@ const ME_ORGANS=[
   {frac:0.40,rgb:"249,210,120",label:"engram"},   // the replay ring (fast memory)
   {frac:0.22,rgb:"243,139,168",label:"self"},     // hash-chained self-lineage
 ];
-// draw the interior detail INSIDE the blob. Cheap: a few stroked arcs + short
-// labels, clipped to a circle so it stays within the star. Opacity ramps with
-// proximity (rev) so it's a smooth reveal, and a slow rotation (tms) makes the
-// organs feel alive, not a static diagram.
+// ── unit-sphere sample points, built ONCE (NO per-frame allocation) ─────────
+//   The organs are drawn as genuine 3D nested SHELLS: a cloud of points spread
+//   evenly over a unit sphere (Fibonacci/golden-spiral lattice → no clumping,
+//   no random — product-soul honest-growth law). Each organ scales this same
+//   unit lattice by its own radius and rotates it through the SCENE yaw/pitch,
+//   so every shell spins WITH the star (auto-drift + the owner's drag) and
+//   nests inside the next. Stored flat as [x,y,z, x,y,z, …] in a Float32Array
+//   so the draw loop only reads — it never allocates.
+const ORGAN_PTS=48;                                  // points per shell (cheap)
+const _organSphere=(function(){
+  const a=new Float32Array(ORGAN_PTS*3);
+  const ga=Math.PI*(3-Math.sqrt(5));                 // golden angle
+  for(let i=0;i<ORGAN_PTS;i++){
+    const y=1-(i+0.5)/ORGAN_PTS*2;                   // y: +1 .. -1
+    const r=Math.sqrt(Math.max(0,1-y*y));
+    const th=ga*i;
+    a[i*3]=Math.cos(th)*r; a[i*3+1]=y; a[i*3+2]=Math.sin(th)*r;
+  }
+  return a;
+})();
+// draw the interior detail INSIDE the blob as genuine 3D nested shells. Each
+// organ is the precomputed unit-sphere lattice (_organSphere) scaled by its
+// radius and rotated through the SAME scene yaw/pitch as project() (module
+// `yaw`,`CP`,`SP`), so the shells spin WITH the star as the auto-yaw drifts and
+// as the owner drag-rotates. Depth cue: a point's rotated Z (>0 = far side)
+// dims & shrinks it vs the near side, so nesting + rotation are unmistakable.
+// The per-organ "nucleus" is itself a point ON the sphere (orbits in 3D, not on
+// a flat circle). Labels are billboarded (screen-space text at the projected
+// nucleus) — never rotated in 3D. Clipped to the star body; opacity ramps with
+// proximity (rev) for a smooth reveal; cheap + allocation-free (read-only loop).
 function meStarInterior(cx,cy,baseR,pscale,ms,tms){
   const rev=Math.min(1,(pscale-INTERIOR_AT)/(INTERIOR_FULL-INTERIOR_AT));
   if(rev<=0) return;
   ctx.save();
-  // clip to the star body so the rings never spill past the rim
+  // clip to the star body so the shells never spill past the rim
   ctx.beginPath();ctx.arc(cx,cy,baseR*1.05,0,7);ctx.clip();
-  const spin=tms*0.00018;
+  // scene orientation — identical rotation maths to project() so the organs
+  // share the star's pose exactly (yaw = auto-drift + owner drag; CP/SP pitch).
+  const cyaw=Math.cos(yaw), syaw=Math.sin(yaw);
+  const dot=Math.max(1,baseR*0.012);                 // base point radius
   for(let i=0;i<ME_ORGANS.length;i++){
-    const o=ME_ORGANS[i], rr=baseR*o.frac;
+    const o=ME_ORGANS[i], rr0=baseR*o.frac;
     // a soft breathing per-organ so the interior reads as living tissue
-    const br=rr*(1+0.04*Math.sin(tms*0.0011+i*1.7));
-    ctx.globalAlpha=rev*0.5;
-    ctx.lineWidth=1.2;ctx.strokeStyle=`rgba(${o.rgb},0.9)`;
-    ctx.beginPath();ctx.arc(cx,cy,br,0,7);ctx.stroke();
-    // a small "nucleus" marker on each organ ring (rotates slowly)
-    const a=spin+i*1.9, nx=cx+Math.cos(a)*br, ny=cy+Math.sin(a)*br;
-    ctx.globalAlpha=rev*0.8;ctx.fillStyle=`rgba(${o.rgb},1)`;
-    ctx.beginPath();ctx.arc(nx,ny,Math.max(1.5,baseR*0.04),0,7);ctx.fill();
-    // organ label, only once we're close enough to read it without clutter
+    const br=rr0*(1+0.04*Math.sin(tms*0.0011+i*1.7));
+    ctx.fillStyle=`rgba(${o.rgb},1)`;
+    let nx=cx,ny=cy,nzBest=2;                         // track the near-most pt -> label
+    for(let p=0;p<ORGAN_PTS;p++){
+      const ux=_organSphere[p*3], uy=_organSphere[p*3+1], uz=_organSphere[p*3+2];
+      // rotate the unit point by scene yaw then fixed pitch (mirrors project())
+      const X=ux*cyaw+uz*syaw, Z0=-ux*syaw+uz*cyaw;
+      const Y=uy*CP-Z0*SP,     Z=uy*SP+Z0*CP;         // +Z = far side
+      const sx=cx+X*br, sy=cy+Y*br;
+      // depth in [-1(near)..+1(far)]: near = brighter & bigger, far = dim & small
+      const depth=(Z+1)*0.5;                          // 0 near .. 1 far
+      const da=rev*(0.85-0.6*depth);                  // alpha fades with depth
+      const dr=dot*(1.15-0.55*depth);                 // size shrinks with depth
+      ctx.globalAlpha=Math.max(0,da);
+      ctx.beginPath();ctx.arc(sx,sy,dr,0,7);ctx.fill();
+      if(Z<nzBest){nzBest=Z; nx=sx; ny=sy;}           // remember the near-most pt
+    }
+    // the organ "nucleus": a bright marker riding the near-most surface point —
+    // because that point orbits as the shell spins, the nucleus orbits in 3D.
+    ctx.globalAlpha=rev*0.95;
+    ctx.beginPath();ctx.arc(nx,ny,Math.max(1.6,baseR*0.045),0,7);ctx.fill();
+    // organ label (billboarded screen-space text at the nucleus), only once
+    // we're close enough to read it without clutter.
     if(rev>0.5 && baseR>20){
       ctx.globalAlpha=(rev-0.5)*2*0.85;
-      ctx.fillStyle=`rgba(${o.rgb},1)`;ctx.font="10px monospace";
+      ctx.font="10px monospace";
       ctx.fillText(o.label,nx+4,ny-3);
     }
   }
