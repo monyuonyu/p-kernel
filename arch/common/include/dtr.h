@@ -324,6 +324,13 @@ INT  r3_facts_pending(void);
 INT  r3_consolidate_idle_round(void);
 void r3_stream_test(void);
 
+/* living-body inspector (living-body-inspector.md): O(1) read-only vitals
+ * for the R3 organ. r3_round_busy_get() = an SGD round is in flight (the
+ * "training" flicker); r3_retained_count() = facts the slow weight memory
+ * has actually RETAINED (the teal shell's size). Pure reads, no mutation. */
+INT  r3_round_busy_get(void);
+INT  r3_retained_count(void);
+
 /* LM-8 (living-mind.md Part IX) -- the language slice cert: `mind lang`.
  * The capacity curve (real word-bindings vs masked recall), the sky->blue
  * round-trip in WORDS, the OOV refusal, and the named live-wire tags.

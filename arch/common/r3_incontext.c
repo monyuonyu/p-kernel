@@ -573,6 +573,11 @@ static void m_quiesce(void)
     while (r3_round_busy) tk_dly_tsk(20);
 }
 
+/* living-body inspector (living-body-inspector.md): O(1) read of the
+ * in-flight-round flag so the galaxy can flicker the R3 organ "training".
+ * A pure read of the volatile; never mutates state. */
+INT r3_round_busy_get(void) { return r3_round_busy ? 1 : 0; }
+
 /* ================================================================== *
  *  LM-10 (living-mind.md Part XI) — Path W: the one mind.              *
  *                                                                       *
@@ -1386,6 +1391,18 @@ INT r3_facts_pending(void)
     for (INT i = 0; i < (INT)r3_fq_n; i++)
         if (r3_fq[i].state == R3F_PENDING) return 1;
     return 0;
+}
+
+/* living-body inspector (living-body-inspector.md): the R3 organ's SIZE =
+ * how many facts the slow weight memory has actually RETAINED (state flipped
+ * PENDING->RETAINED by enough sleep rounds). O(R3_FQ_MAX), cheap. NOT the
+ * static vocab — only truly-learned facts grow the teal shell. */
+INT r3_retained_count(void)
+{
+    INT n = 0;
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        if (r3_fq[i].state == R3F_RETAINED) n++;
+    return n;
 }
 
 /* ONE bounded sleep round (VI.4). with_replay!=0 (the production path)

@@ -57,3 +57,10 @@ INT  lm_consolidate_idle_round(void);
 
 /* TRUE if the engram ring currently holds replayable episodes. */
 BOOL lm_engrams_pending(void);
+
+/* living-body inspector (living-body-inspector.md): the engram organ's
+ * fill gauge. lm_ring_fill() = total replayable engrams across all tasks;
+ * lm_ring_cap() = the fixed ring budget (LM_T * B_RING). Both O(1)/cheap
+ * reads of file-static state; never mutate. */
+INT  lm_ring_fill(void);
+INT  lm_ring_cap(void);

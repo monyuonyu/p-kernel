@@ -355,6 +355,15 @@ BOOL lm_engrams_pending(void)
     return FALSE;
 }
 
+/* living-body inspector: the engram organ's fill gauge (see header). */
+INT lm_ring_fill(void)
+{
+    UW n = 0;
+    for (UB t = 0; t < LM_T; t++) n += lm_ring_n[t];
+    return (INT)n;
+}
+INT lm_ring_cap(void) { return (INT)((UW)LM_T * (UW)B_RING); }
+
 /* ------------------------------------------------------------------ */
 /* replay-SGD: the consolidation training step                         */
 /* ------------------------------------------------------------------ */

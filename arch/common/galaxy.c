@@ -24,8 +24,12 @@
 #include "world.h"       /* world_peer_* accessors — the galaxy's organs   */
 #include "region.h"      /* region_id() — my constellation                 */
 #include "swim.h"        /* swim_rtt_ms() — peer proximity for the page    */
-#include "dmn.h"         /* dmn_state_get(), dmn_r3_rounds()               */
-#include "dtr.h"         /* r3_facts_pending(), mind_cmd, mind_last_answer */
+#include "dmn.h"         /* dmn_state_get(), dmn_r3_rounds(), dmn_stats    */
+#include "dtr.h"         /* r3_facts_pending(), mind_cmd, mind_last_answer,
+                          * r3_round_busy_get/r3_retained_count/r3_merge_epoch,
+                          * kernel_infer_count — living-body inspector vitals */
+#include "moe.h"         /* moe_infer_last() — last reflex decision (vitals) */
+#include "lm_consolidate.h" /* lm_ring_fill()/lm_ring_cap() — engram gauge   */
 #include "r3_vocab.h"    /* LM-8 (IX.3/IX.10): word<->id, GET /vocab        */
 #include "lm_self.h"     /* LM_SELF_REF / LM_SELF_ENTRY — /self.json       */
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
@@ -254,6 +258,37 @@ static void gx_build_galaxy_json(INT slot)
     gx_qs(slot, ",\"rounds\":");               gx_qdec(slot, dmn_r3_rounds());
     gx_qs(slot, ",\"pressure\":");             gx_qdec(slot, (UW)pr);
     gx_qs(slot, ",\"threat\":");               gx_qdec(slot, (UW)th);
+
+    /* living-body inspector (living-body-inspector.md): the organism's REAL
+     * vitals, all O(1) scalar reads — the browser differences successive
+     * snaps for rates (idle_runs/min, infer/s). NO new buffer, NO rw[] L2
+     * copy on the task stack; HONEST-GLOW: every byte is a live read. */
+    gx_qs(slot, ",\"training\":");             gx_qdec(slot, (UW)r3_round_busy_get());
+    gx_qs(slot, ",\"facts_learned\":");        gx_qdec(slot, (UW)r3_retained_count());
+    gx_qs(slot, ",\"epoch\":");                gx_qdec(slot, r3_merge_epoch());
+    gx_qs(slot, ",\"idle_runs\":");            gx_qdec(slot, dmn_stats.idle_runs);
+    gx_qs(slot, ",\"engram_fill\":");          gx_qdec(slot, (UW)lm_ring_fill());
+    gx_qs(slot, ",\"engram_cap\":");           gx_qdec(slot, (UW)lm_ring_cap());
+    gx_qs(slot, ",\"infer_count\":");          gx_qdec(slot, kernel_infer_count);
+    {
+        /* the reflex brain's last decision — class + max-softmax confidence
+         * (0..100). Scalars only; NULL-skips the routing/reflex fields. */
+        UB lc = 0, lcf = 0;
+        moe_infer_last(&lc, (UB *)0, (UB *)0, &lcf);
+        gx_qs(slot, ",\"last_class\":");        gx_qdec(slot, (UW)lc);
+        gx_qs(slot, ",\"last_conf\":");         gx_qdec(slot, (UW)lcf);
+    }
+    {
+        /* lineage = the self DAG sequence number (hash-chained lineage that
+         * survives death). Mirror gx_build_self_json's HEAD read — a lazy
+         * O(1) pfs_dag_read, no second self table. 0 when no self entry yet. */
+        LM_SELF_ENTRY se;
+        INT sr = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                              &se, (UW)sizeof(se));
+        UW lin = ((sr == (INT)sizeof(se) || sr == LM_SELF_ENTRY_V1_SIZE) && se.magic)
+                 ? (UW)se.seq : 0u;
+        gx_qs(slot, ",\"lineage\":");           gx_qdec(slot, lin);
+    }
     gx_qs(slot, "},\"peers\":[");
 
     INT first = 1;
