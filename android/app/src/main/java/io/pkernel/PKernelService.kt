@@ -180,6 +180,12 @@ class PKernelService : Service() {
         // The kernel is (re)booting, so any pending charge-resume job is stale.
         // Cancel it so it can't double-fire when the phone is next plugged in.
         cancelResumeJob()
+        // relight-fix: the star is being (re)lit, so it is no longer asleep BY
+        // CHOICE. Clear the explicit-sleep flag the moment we actually boot, so
+        // the galaxy splash stops offering 灯す and shows "lighting…" instead.
+        // (This covers EVERY boot path: first launch, gate-resume, and the
+        // galaxy/Settings relight tap — none of them leaves a stale sleep flag.)
+        prefs.edit().putBoolean(PREF_SLEPT_BY_CHOICE, false).apply()
         appendLog("[ump] starting kernel (node $nodeId, relay='$relayHost:$relayPort')\n")
         val pk = PKernel()
         // persistence SLICE 1/2 (docs/architecture/persistence.md): point the
@@ -317,6 +323,11 @@ class PKernelService : Service() {
                 // the charge job if it was ALSO low on battery. (Honest bound,
                 // see the report; matches the no-native-shutdown constraint.)
             }
+            // relight-fix: a GATE pause is NOT "asleep by choice". The splash
+            // has dedicated battery/WiFi branches and these paths resume
+            // themselves; leave PREF_SLEPT_BY_CHOICE untouched (it stays false
+            // from the last boot) so the galaxy never offers a 灯す that would
+            // just re-pause.
             stopSelf()
         }
     }
@@ -445,6 +456,15 @@ class PKernelService : Service() {
         const val PREF_BATTERY_FLOOR = "battery_floor" // int %, user-configurable (10..50); default BATTERY_FLOOR_PCT
         const val PREF_WIFI_ONLY   = "wifi_only"     // bool; when on, run only on unmetered WiFi (default off)
         const val PREF_START_ON_BOOT = "start_on_boot" // bool; auto-start on device boot (default off)
+        /* EXPLICIT sleep state (relight-fix wave). True iff the owner DELIBERATELY
+         * put the star to sleep (tapped 眠らせる -> stopService). This is the ONLY
+         * truthful source for "asleep by choice" — the galaxy splash must NOT infer
+         * it from a dead port (a slow cold boot is misclassified as asleep). Set
+         * true by MainActivity.stopKernel() BEFORE stopService(); cleared to false
+         * every time the kernel actually (re)boots (bootKernelOnce). A gate PAUSE
+         * (battery/WiFi -> stopSelf) must NEVER set this true — those have their own
+         * splash branches and resume themselves. */
+        const val PREF_SLEPT_BY_CHOICE = "slept_by_choice"
         const val RESUME_JOB_ID = 7401               // fixed JobScheduler id for the charge-resume job
 
         const val EXTRA_NODE_ID    = "node_id"

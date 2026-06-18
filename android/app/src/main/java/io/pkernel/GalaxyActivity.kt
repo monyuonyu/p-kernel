@@ -90,7 +90,15 @@ class GalaxyActivity : AppCompatActivity() {
          * lighting it, and there was no way to relight from here. So the splash
          * is a vertical box: the message + a 灯す (relight) button that is shown
          * ONLY when the star is dark by choice (not battery/WiFi gated). The
-         * button restarts the foreground service and re-arms the port probe. */
+         * button restarts the foreground service and re-arms the port probe.
+         *
+         * relight-fix (this wave): "asleep by choice" is now read from the
+         * EXPLICIT PREF_SLEPT_BY_CHOICE flag (set by 眠らせる, cleared on every
+         * real boot), NOT inferred from "the port has been dead for ~4s". The
+         * inference was wrong: the galaxy HTTP port opens late in the node's
+         * boot, so a genuine cold/first-run boot (which can take many seconds)
+         * was misclassified as asleep and the 灯す button appeared mid-boot. A
+         * still-waking node now stays "Lighting your star…" with no button. */
         splash = TextView(this).apply {
             text = getString(R.string.galaxy_lighting)
             textSize = 17f
@@ -176,15 +184,18 @@ class GalaxyActivity : AppCompatActivity() {
                     return@Thread
                 }
                 if (attempt >= HINT_AFTER_ATTEMPTS && attempt % 4 == 0) {
-                    /* the likeliest reason the star isn't lit yet is the
-                     * battery-safe floor — the node now runs on battery down
-                     * to ~30% and only pauses below that while unplugged. So
-                     * only show the "plug in" nudge when the floor is actually
-                     * holding (low AND unplugged); otherwise it's just waking.
-                     * After several attempts with NO gate holding, the star is
-                     * asleep BY CHOICE (the owner tapped 眠らせる) — say so and
-                     * offer 灯す. Said kindly, in the user's language. */
-                    ui.post { if (!loaded) applySplashState(asleepByChoice = true) }
+                    /* relight-fix: the port being dead is NOT proof the star is
+                     * "asleep by choice" — a genuine cold boot / first-run can
+                     * take well past the old ~4s hint window (the galaxy HTTP
+                     * port only opens late in usermain), so the old code lit a
+                     * premature, lying 灯す button mid-boot. Now we drive the
+                     * splash from the REAL reasons: the battery/WiFi gate
+                     * branches (still inferred, since those are observable), OR
+                     * the EXPLICIT slept-by-choice flag the service/Settings
+                     * set when the owner tapped 眠らせる. With no gate holding
+                     * AND no explicit sleep, we are simply still WAKING, so the
+                     * splash stays "Lighting your star…" (no 灯す button). */
+                    ui.post { if (!loaded) applySplashState(asleepByChoice = sleptByChoice()) }
                 }
                 try { Thread.sleep(POLL_MS) } catch (_: InterruptedException) { return@Thread }
             }
@@ -262,6 +273,16 @@ class GalaxyActivity : AppCompatActivity() {
         web.visibility = View.VISIBLE
         splashBox.visibility = View.GONE
     }
+
+    /**
+     * relight-fix: the ONLY truthful source for "the owner put the star to
+     * sleep". Read the explicit PREF_SLEPT_BY_CHOICE flag the service clears on
+     * every boot and MainActivity.stopKernel() sets on 眠らせる. A dead port
+     * alone (slow boot) must NEVER be read as asleep-by-choice.
+     */
+    private fun sleptByChoice(): Boolean =
+        getSharedPreferences("ump", MODE_PRIVATE)
+            .getBoolean(PKernelService.PREF_SLEPT_BY_CHOICE, false)
 
     /**
      * sticky-intent battery check — no permission needed. Mirrors the
@@ -347,7 +368,10 @@ class GalaxyActivity : AppCompatActivity() {
             // Blank the WebView so no stale error frame lingers behind the splash.
             view.loadUrl("about:blank")
             view.visibility = View.GONE
-            applySplashState()
+            // relight-fix: respect the explicit slept-by-choice flag here too, so a
+            // main-frame drop right after the owner tapped 眠らせる offers 灯す, while a
+            // transient mid-session drop stays "Lighting…" until the probe recovers.
+            applySplashState(asleepByChoice = sleptByChoice())
             splashBox.visibility = View.VISIBLE
             loaded = false
             startProbe()                         // reload automatically when the node is back

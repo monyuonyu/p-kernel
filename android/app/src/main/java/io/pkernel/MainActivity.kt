@@ -243,6 +243,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopKernel() {
+        /* relight-fix: this is the owner DELIBERATELY putting the star to sleep
+         * (眠らせる). Record it as an explicit choice BEFORE stopService(), so the
+         * galaxy splash can truthfully offer 灯す instead of inferring "asleep"
+         * from a dead port (which misclassifies a slow cold boot). bootKernelOnce
+         * clears the flag again the next time the star actually lights. */
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(PKernelService.PREF_SLEPT_BY_CHOICE, true).apply()
         stopService(Intent(this, PKernelService::class.java))
     }
 
