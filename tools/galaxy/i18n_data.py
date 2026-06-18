@@ -1204,3 +1204,36 @@ for _c in LANG_ORDER:
     _src = _CHAT.get(_c, _CHAT["en"])
     for _k in _CHAT_KEYS:
         T[_c][_k] = _src.get(_k, _CHAT["en"][_k])
+
+# ── living-body inspector (living-body-inspector.md) ───────────────────────
+#   Billboarded organ metric labels (insp_link/dream/rest/learn/engram/self/
+#   infer) + the HUD vitals task-manager list (insp_v_*). en + ja are human-
+#   phrased; every other language falls back to the en text (honest, one-line
+#   fixable — same policy as _CHAT above). {n}{r}{f}{e}{c}{p} are filled in JS.
+#   Applied to EVERY language so build_i18n.py's KEY_ORDER never KeyErrors.
+_INSP_KEYS = ["insp_link","insp_dream","insp_rest","insp_learn","insp_engram",
+              "insp_self","insp_infer","insp_v_consol","insp_v_facts",
+              "insp_v_pending","insp_v_epoch","insp_v_train","insp_v_engram",
+              "insp_v_infer","insp_v_decision","insp_v_stress","insp_v_lineage"]
+_INSP = {
+ "en": {"insp_link":"linked {n}","insp_dream":"dream · consolidating {r}/min",
+        "insp_rest":"dmn at rest {r}/min","insp_learn":"learned {f} ep{e}",
+        "insp_engram":"engram {f}/{c} ({p}%)","insp_self":"lineage {n}",
+        "insp_infer":"{r}/s cls{c}@{p}%",
+        "insp_v_consol":"consolidation","insp_v_facts":"facts","insp_v_pending":"pending",
+        "insp_v_epoch":"epoch","insp_v_train":"training","insp_v_engram":"engram",
+        "insp_v_infer":"inference","insp_v_decision":"decision","insp_v_stress":"stress",
+        "insp_v_lineage":"lineage"},
+ "ja": {"insp_link":"接続 {n}","insp_dream":"夢 · 整理中 {r}/分",
+        "insp_rest":"DMN 休止 {r}/分","insp_learn":"習得 {f} 世代{e}",
+        "insp_engram":"記憶痕跡 {f}/{c} ({p}%)","insp_self":"系譜 {n}",
+        "insp_infer":"{r}/秒 種別{c}@{p}%",
+        "insp_v_consol":"整理","insp_v_facts":"知識","insp_v_pending":"保留",
+        "insp_v_epoch":"世代","insp_v_train":"学習","insp_v_engram":"記憶痕跡",
+        "insp_v_infer":"推論","insp_v_decision":"判断","insp_v_stress":"ストレス",
+        "insp_v_lineage":"系譜"},
+}
+for _c in LANG_ORDER:
+    _src = _INSP.get(_c, _INSP["en"])
+    for _k in _INSP_KEYS:
+        T[_c][_k] = _src.get(_k, _INSP["en"][_k])
