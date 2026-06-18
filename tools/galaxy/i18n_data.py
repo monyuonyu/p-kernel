@@ -1104,3 +1104,58 @@ T["gu"] = {
  "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
  "reintro":"પરિચય",
 }
+
+# ── chat UI (wave-chat-ws-ui) ─────────────────────────────────────────────
+# New keys for the conversational chat sheet (talk button, sheet title,
+# input placeholder, send button, and the WS live/offline indicator).
+# en + ja are human-phrased; a handful of major languages carry native
+# strings; the rest fall back to the English text (honest, one-line fixable —
+# same policy as the rest of this file). Applied to EVERY language so
+# build_i18n.py's KEY_ORDER (= en keys) never KeyErrors.
+_CHAT_KEYS = ["btntalk", "chatttl", "chatph", "chatsend", "chat_live", "chat_offline"]
+_CHAT = {
+ "en":   {"btntalk":"talk","chatttl":"talk with your star","chatph":"say a word",
+          "chatsend":"send","chat_live":"live","chat_offline":"offline"},
+ "ja":   {"btntalk":"はなす","chatttl":"星とはなす","chatph":"ことばを送る",
+          "chatsend":"送る","chat_live":"つながっている","chat_offline":"オフライン"},
+ "zh-Hans":{"btntalk":"对话","chatttl":"与你的星对话","chatph":"说一个词",
+          "chatsend":"发送","chat_live":"已连接","chat_offline":"离线"},
+ "zh-Hant":{"btntalk":"對話","chatttl":"與你的星對話","chatph":"說一個詞",
+          "chatsend":"傳送","chat_live":"已連線","chat_offline":"離線"},
+ "es":   {"btntalk":"hablar","chatttl":"habla con tu estrella","chatph":"di una palabra",
+          "chatsend":"enviar","chat_live":"en vivo","chat_offline":"sin conexión"},
+ "fr":   {"btntalk":"parler","chatttl":"parle avec ton étoile","chatph":"dis un mot",
+          "chatsend":"envoyer","chat_live":"en direct","chat_offline":"hors ligne"},
+ "de":   {"btntalk":"reden","chatttl":"sprich mit deinem Stern","chatph":"sag ein Wort",
+          "chatsend":"senden","chat_live":"verbunden","chat_offline":"offline"},
+ "pt":   {"btntalk":"falar","chatttl":"fale com sua estrela","chatph":"diga uma palavra",
+          "chatsend":"enviar","chat_live":"ao vivo","chat_offline":"offline"},
+ "ru":   {"btntalk":"говорить","chatttl":"поговори со своей звездой","chatph":"скажи слово",
+          "chatsend":"отправить","chat_live":"на связи","chat_offline":"не в сети"},
+ "ko":   {"btntalk":"대화","chatttl":"별과 대화하기","chatph":"한 단어 말하기",
+          "chatsend":"보내기","chat_live":"연결됨","chat_offline":"오프라인"},
+ "it":   {"btntalk":"parla","chatttl":"parla con la tua stella","chatph":"di' una parola",
+          "chatsend":"invia","chat_live":"in linea","chat_offline":"offline"},
+ "ar":   {"btntalk":"تحدث","chatttl":"تحدث مع نجمتك","chatph":"قل كلمة",
+          "chatsend":"إرسال","chat_live":"متصل","chat_offline":"غير متصل"},
+ "hi":   {"btntalk":"बात करें","chatttl":"अपने तारे से बात करें","chatph":"एक शब्द कहें",
+          "chatsend":"भेजें","chat_live":"लाइव","chat_offline":"ऑफ़लाइन"},
+ "id":   {"btntalk":"bicara","chatttl":"bicara dengan bintangmu","chatph":"ucapkan satu kata",
+          "chatsend":"kirim","chat_live":"daring","chat_offline":"luring"},
+ "vi":   {"btntalk":"trò chuyện","chatttl":"trò chuyện với ngôi sao của bạn","chatph":"nói một từ",
+          "chatsend":"gửi","chat_live":"trực tuyến","chat_offline":"ngoại tuyến"},
+ "tr":   {"btntalk":"konuş","chatttl":"yıldızınla konuş","chatph":"bir kelime söyle",
+          "chatsend":"gönder","chat_live":"çevrimiçi","chat_offline":"çevrimdışı"},
+ "nl":   {"btntalk":"praten","chatttl":"praat met je ster","chatph":"zeg een woord",
+          "chatsend":"versturen","chat_live":"verbonden","chat_offline":"offline"},
+ "pl":   {"btntalk":"rozmawiaj","chatttl":"porozmawiaj ze swoją gwiazdą","chatph":"powiedz słowo",
+          "chatsend":"wyślij","chat_live":"na żywo","chat_offline":"offline"},
+ "uk":   {"btntalk":"говорити","chatttl":"поговори зі своєю зіркою","chatph":"скажи слово",
+          "chatsend":"надіслати","chat_live":"на зв'язку","chat_offline":"офлайн"},
+ "th":   {"btntalk":"คุย","chatttl":"คุยกับดาวของคุณ","chatph":"พูดหนึ่งคำ",
+          "chatsend":"ส่ง","chat_live":"ออนไลน์","chat_offline":"ออฟไลน์"},
+}
+for _c in LANG_ORDER:
+    _src = _CHAT.get(_c, _CHAT["en"])
+    for _k in _CHAT_KEYS:
+        T[_c][_k] = _src[_k]
