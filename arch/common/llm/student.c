@@ -686,6 +686,220 @@ int st_last_fire_experts(int *out, int max)
 }
 
 /* ================================================================== */
+/* KV cache (wave-kv-cache) — incremental generation forward          */
+/* ================================================================== */
+/*
+ *  WHY: st_generate today re-runs the FULL st_forward over the whole growing
+ *  context window every step (O(nctx) positions recomputed per byte, the ~1s/
+ *  byte chat-speed pain and the SS-6 cross-node blocker). But this is a CAUSAL
+ *  transformer with NO positional encoding (see the file header): the residual
+ *  stream — and therefore the per-layer key/value — at position s depends ONLY
+ *  on positions 0..s. Appending a NEW token at position t does NOT change any
+ *  earlier position's k/v at any layer. So we can cache k[l][s] and v[l][s] for
+ *  every prior position and, for a new token, compute ONLY its own q/k/v and
+ *  attend over the CACHED k/v of positions 0..t — O(1) new position instead of
+ *  re-deriving the whole prefix.
+ *
+ *  BYTE-IDENTICAL (the gate): caching changes WHAT is recomputed, never the
+ *  math or the rounding order of any single position's attention sum. The new
+ *  position's q.k dot iterates i=0..D-1, the softmax scans s=0..t finding the
+ *  same max then the same st_expf, and the value mix accumulates s=0..t,
+ *  i=0..D-1 — EXACTLY the recompute path's loop nest in st_forward. Same scale,
+ *  same router_pick, same st_sample_byte. So (model,prompt,params,seed) -> the
+ *  same logits, same sampled bytes, same FNV hash, on both arches under -O1
+ *  -ffp-contract=off. The kv-equivalence cert proves this by hash + bytes.
+ *
+ *  BOUNDED: the cache is sized for ST_MAXSEQ positions at the L (MAX) tier dims
+ *  (heap, one malloc reused across steps) so it is never a VLA and never grows.
+ *  Every single-token scratch array is bound to DMAX/DFFMAX/EMAX/KMAX/V (fixed).
+ *  When the generation window SLIDES (only after ST_MAXSEQ bytes), the position
+ *  indices shift, so the cache is reset and that one step rebuilds from scratch
+ *  — still byte-identical (it just refills the cache token by token).
+ *
+ *  SCOPE: inference/generation ONLY. st_forward / st_backward / training are
+ *  UNTOUCHED — no cache there. This path feeds st_generate_core; st_forward's
+ *  full activation cache (st_cache) is the backward's, and is left exactly as is.
+ */
+
+/* The KV cache: per-layer, per-position k and v, plus the count already filled.
+ * k/v sized to the L-tier MAX dims (heap; bounded by ST_MAXSEQ positions). The
+ * slot stride is DMAX so the same arena serves any tier (the resident model
+ * uses only its own D <= DMAX of each slot). */
+typedef struct {
+    int   filled;            /* positions 0..filled-1 have valid k/v          */
+    int   d, nlayer;         /* dims this cache was provisioned for (sanity)   */
+    float *k;                /* [L][ST_MAXSEQ][DMAX]                            */
+    float *v;                /* [L][ST_MAXSEQ][DMAX]                            */
+} st_kvcache;
+
+/* floats per k (or v) plane: bound to the FIXED maxima — no VLA, no growth. */
+#define KV_PLANE_FLOATS ((size_t)LMAX * ST_MAXSEQ * DMAX)
+
+/* Allocate the KV cache for model m (sized to MAX, used at the resident dims).
+ * One malloc for both k and v planes. Returns NULL on OOM. */
+static st_kvcache *kv_alloc(const st_model *m)
+{
+    ST_DIMS(m);
+    size_t need = sizeof(st_kvcache) + 2 * KV_PLANE_FLOATS * sizeof(float);
+    char *blob = (char *)malloc(need);
+    if (!blob) return NULL;
+    st_kvcache *kv = (st_kvcache *)blob;
+    float *fp = (float *)(blob + sizeof(st_kvcache));
+    kv->k = fp;
+    kv->v = fp + KV_PLANE_FLOATS;
+    kv->filled = 0;
+    kv->d = D;
+    kv->nlayer = L;
+    return kv;
+}
+
+/* Incremental forward of ONE new token (raw byte `b`) at sequence position
+ * `pos` (== kv->filled on entry, 0-based). Computes this position's per-layer
+ * q/k/v, STORES its k/v into the cache at slot `pos`, attends over the cached
+ * k/v of positions 0..pos (causal), runs the MoE FFN, and writes the V next-byte
+ * logits for THIS position into `logits_row[V]`. kv->filled becomes pos+1.
+ *
+ * The math body mirrors st_forward's per-(l,t) loop EXACTLY for t==pos, but reads
+ * cached k/v for s<pos instead of recomputing them — byte-identical reductions.
+ * No st_cache mutation, no backward dependency. Returns ST_OK / negative. */
+static int kv_step(st_model *m, st_kvcache *kv, uint8_t b, int pos,
+                   float *logits_row)
+{
+    ST_DIMS(m);
+    if (pos < 0 || pos >= ST_MAXSEQ) return ST_E_ARG;
+    if (pos != kv->filled) return ST_E_ARG;   /* must extend contiguously     */
+    const float *W = m->w;
+    const float scale = st_rsqrtf((float)D);
+
+    /* x = the residual stream for THIS position, flowing up through the layers.
+     * Bound to DMAX (fixed) — no VLA. Seed with the byte embedding (== st_forward
+     * embed: resid[layer 0][t] = embed[bytes[t]]). */
+    float x[DMAX];
+    {
+        const float *emb = W + m->o_embed + (size_t)b * D;
+        for (int i = 0; i < D; i++) x[i] = emb[i];
+    }
+
+    for (int l = 0; l < L; l++) {
+        const float *anorm = W + m->o_attn_norm + (size_t)l * D;
+        const float *fnorm = W + m->o_ffn_norm  + (size_t)l * D;
+        const float *Wq = W + m->o_wq + (size_t)l * D * D;
+        const float *Wk = W + m->o_wk + (size_t)l * D * D;
+        const float *Wv = W + m->o_wv + (size_t)l * D * D;
+        const float *Wo = W + m->o_wo + (size_t)l * D * D;
+
+        /* ---- attention (this position only; attend over cached prefix) ----
+         * a_in = rmsnorm(x); q/k/v = Wq/Wk/Wv a_in. Store k/v for slot `pos`. */
+        float a_in[DMAX];
+        (void)rmsnorm_fwd(x, anorm, a_in, D);
+        float qcur[DMAX];
+        mv(Wq, a_in, qcur, D, D);
+        float *kslot = kv->k + ((size_t)l * ST_MAXSEQ + pos) * DMAX;
+        float *vslot = kv->v + ((size_t)l * ST_MAXSEQ + pos) * DMAX;
+        mv(Wk, a_in, kslot, D, D);
+        mv(Wv, a_in, vslot, D, D);
+
+        /* causal attention over s = 0..pos. SAME reduction order as st_forward:
+         * dot loops i=0..D-1, softmax scans s=0..pos, value mix s then i.
+         * aw scratch bound to ST_MAXSEQ (fixed) — no VLA. */
+        float aw[ST_MAXSEQ];
+        float mx = -1e30f;
+        for (int s = 0; s <= pos; s++) {
+            const float *ks = kv->k + ((size_t)l * ST_MAXSEQ + s) * DMAX;
+            float dot = 0.0f;
+            for (int i = 0; i < D; i++) dot += qcur[i] * ks[i];
+            aw[s] = dot * scale;
+            if (aw[s] > mx) mx = aw[s];
+        }
+        float sum = 0.0f;
+        for (int s = 0; s <= pos; s++) { aw[s] = st_expf(aw[s] - mx); sum += aw[s]; }
+        for (int s = 0; s <= pos; s++) aw[s] /= sum;
+        float ao[DMAX];
+        for (int i = 0; i < D; i++) ao[i] = 0.0f;
+        for (int s = 0; s <= pos; s++) {
+            float w = aw[s];
+            const float *vs = kv->v + ((size_t)l * ST_MAXSEQ + s) * DMAX;
+            for (int i = 0; i < D; i++) ao[i] += w * vs[i];
+        }
+        /* residual: x += Wo ao  (== st_forward's rout = rin + Wo attn_o) */
+        float tmp[DMAX];
+        mv(Wo, ao, tmp, D, D);
+        for (int i = 0; i < D; i++) x[i] += tmp[i];
+
+        /* ---- MoE FFN (this position) ---- identical to st_forward's body. */
+        float fin[DMAX];
+        (void)rmsnorm_fwd(x, fnorm, fin, D);
+        float gt[EMAX];
+        for (int e = 0; e < E; e++) {
+            const float *re = W + m->o_router + ((size_t)l * E + e) * D;
+            float acc = 0.0f;
+            for (int i = 0; i < D; i++) acc += re[i] * fin[i];
+            gt[e] = acc;
+        }
+        int   te[EMAX];
+        float tw[EMAX];
+        int   nk = router_pick(gt, te, tw, E);   /* st_freeze_routing==0 here */
+
+        float moe[DMAX];
+        for (int i = 0; i < D; i++) moe[i] = 0.0f;
+        float eh[DFFMAX];
+        for (int j = 0; j < nk; j++) {
+            int e = te[j]; float wj = tw[j];
+            const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
+            const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
+            const float *w2 = W + m->o_w2 + ((size_t)l * E + e) * D * DFF;
+            for (int h = 0; h < DFF; h++) {
+                const float *w1h = w1 + (size_t)h * D;
+                const float *w3h = w3 + (size_t)h * D;
+                float g = 0.0f, u = 0.0f;
+                for (int i = 0; i < D; i++) { g += w1h[i] * fin[i]; u += w3h[i] * fin[i]; }
+                eh[h] = st_silu(g) * u;
+            }
+            for (int i = 0; i < D; i++) {
+                const float *w2r = w2 + (size_t)i * DFF;
+                float acc = 0.0f;
+                for (int h = 0; h < DFF; h++) acc += w2r[h] * eh[h];
+                moe[i] += wj * acc;
+            }
+        }
+        for (int i = 0; i < D; i++) x[i] += moe[i];
+    }
+
+    /* ---- output head (this position) ---- identical to st_forward. */
+    const float *onorm = W + m->o_out_norm;
+    const float *Out   = W + m->o_out;
+    float oin[DMAX];
+    (void)rmsnorm_fwd(x, onorm, oin, D);
+    mv(Out, oin, logits_row, V, D);
+
+    kv->filled = pos + 1;
+    return ST_OK;
+}
+
+/* ---- KV-cache enable toggle + logit-hash observability (test hooks) ----
+ * st_generate uses the KV-cache path by DEFAULT (the whole point — chat speed).
+ * The cert flips it OFF to obtain the recompute oracle, ON to obtain the cached
+ * run, and asserts byte-identical. The per-step logit FNV lets the cert prove
+ * the LOGITS (not just the sampled bytes) are bit-identical between the paths. */
+static int      st_kv_enabled = 1;
+static uint64_t st_gen_logit_fnv = 1469598103934665603ULL; /* FNV-1a offset */
+
+void     st_kv_set_enabled(int on) { st_kv_enabled = on ? 1 : 0; }
+int      st_kv_get_enabled(void)   { return st_kv_enabled; }
+void     st_gen_logit_hash_reset(void) { st_gen_logit_fnv = 1469598103934665603ULL; }
+uint64_t st_gen_logit_hash(void)       { return st_gen_logit_fnv; }
+
+/* fold the V-float logit row (the row generation actually sampled from) into the
+ * running FNV-1a over its raw bytes — order-stable, libc-free. */
+static void st_gen_hash_row(const float *row)
+{
+    const unsigned char *p = (const unsigned char *)row;
+    uint64_t h = st_gen_logit_fnv;
+    for (size_t i = 0; i < (size_t)V * sizeof(float); i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    st_gen_logit_fnv = h;
+}
+
+/* ================================================================== */
 /* generation (autoregressive sampling) — step ⑥, the chat mouth      */
 /* ================================================================== */
 /*
@@ -797,16 +1011,58 @@ static int st_generate_core(st_model *m, const uint8_t *prompt, int n_prompt,
     for (int i = pstart; i < n_prompt; i++) ctxbuf[nctx++] = prompt[i];
     if (nctx == 0) ctxbuf[nctx++] = (uint8_t)'\n';   /* a neutral seed byte */
 
+    uint64_t rng = seed ? seed : 0x9E3779B97F4A7C15ULL;
+
+    /* ---- KV-cache path (default): O(1) new position per byte ----
+     * Maintain the SAME ctxbuf/nctx semantics as the recompute path; a parallel
+     * kv cache holds k/v for ctxbuf[0..filled-1]. Each step we extend the cache
+     * up to nctx (kv_step the bytes it hasn't seen — normally just the one fresh
+     * byte), sample from the last position's logits, then append/slide. On a
+     * window SLIDE the position indices shift, so kv->filled is reset to 0 and
+     * the next step re-primes from the slid window — still byte-identical (it
+     * just refills via the same per-position reductions). */
+    if (st_kv_enabled) {
+        st_kvcache *kv = kv_alloc(m);
+        if (!kv) return ST_E_OOM;
+        float row[V];                 /* this position's logits (V fixed)       */
+        int produced = 0;
+        int rc = ST_OK;
+        for (int g = 0; g < max_gen; g++) {
+            /* extend the cache to cover ctxbuf[0..nctx-1]; row holds the logits
+             * of the LAST extended position (== what we sample from). */
+            for (int p = kv->filled; p < nctx; p++) {
+                rc = kv_step(m, kv, ctxbuf[p], p, row);
+                if (rc != ST_OK) break;
+            }
+            if (rc != ST_OK) break;
+            st_gen_hash_row(row);
+            int b = st_sample_byte(row, temp, top_k, &rng);
+
+            out[produced++] = (uint8_t)b;
+            if (emit) emit(ctx, b);
+
+            if (nctx < ST_MAXSEQ) {
+                ctxbuf[nctx++] = (uint8_t)b;   /* cache stays valid: extend next */
+            } else {
+                for (int i = 0; i < ST_MAXSEQ - 1; i++) ctxbuf[i] = ctxbuf[i + 1];
+                ctxbuf[ST_MAXSEQ - 1] = (uint8_t)b;
+                kv->filled = 0;                /* positions shifted -> re-prime  */
+            }
+        }
+        free(kv);
+        return produced;
+    }
+
+    /* ---- recompute path (the oracle / fallback): full O(nctx) forward/byte ---- */
     float *logits = (float *)malloc((size_t)ST_MAXSEQ * V * sizeof(float));
     if (!logits) return ST_E_OOM;
-
-    uint64_t rng = seed ? seed : 0x9E3779B97F4A7C15ULL;
 
     int produced = 0;
     for (int g = 0; g < max_gen; g++) {
         int rc = st_forward(m, ctxbuf, nctx, logits);
         if (rc != ST_OK) break;
         const float *row = logits + (size_t)(nctx - 1) * V;   /* after last byte */
+        st_gen_hash_row(row);
         int b = st_sample_byte(row, temp, top_k, &rng);
 
         out[produced++] = (uint8_t)b;

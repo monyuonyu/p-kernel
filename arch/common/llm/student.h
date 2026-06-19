@@ -283,4 +283,26 @@ float st_expf(float x);
 float st_logf(float x);
 float st_rsqrtf(float x);
 
+/* ---- KV cache (wave-kv-cache): incremental generation ----
+ * st_generate caches per-layer per-position K/V across generation steps so a
+ * NEW token computes only its OWN position's q/k/v and attends over the CACHED
+ * k/v of prior positions (O(1) new position vs O(nctx) recompute). This is the
+ * st_generate path ONLY; st_forward / st_backward / training are UNCHANGED.
+ *
+ * The cached generation is BYTE-IDENTICAL to the no-cache recompute (same
+ * logits, same sampled bytes, same FNV hash, both arches, -O1 -ffp-contract=
+ * off): caching changes WHAT is recomputed, never the reduction/rounding order
+ * of any single position's attention sum. The cache is bounded to ST_MAXSEQ
+ * positions sized at the MAX (L) tier dims (heap, no VLA, no growth).
+ *
+ * These are TEST/observability hooks (NOT a generation-API change — st_generate
+ * keeps its exact signature). st_kv_set_enabled flips the cached vs recompute
+ * path so a cert can run BOTH and assert byte-identical; the per-step logit FNV
+ * proves the LOGITS (not just the sampled bytes) match. Caching is ON by
+ * default (the point: chat speed). */
+void     st_kv_set_enabled(int on);     /* 1 = KV cache (default), 0 = recompute */
+int      st_kv_get_enabled(void);
+void     st_gen_logit_hash_reset(void); /* reset the per-step logit FNV-1a       */
+uint64_t st_gen_logit_hash(void);       /* FNV-1a over every step's sampled row   */
+
 #endif /* PKERNEL_LLM_STUDENT_H */
