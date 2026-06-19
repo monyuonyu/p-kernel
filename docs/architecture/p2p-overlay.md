@@ -47,18 +47,56 @@ The **deterministic selector only** is implemented, exactly mirroring `region_co
   the role converges with NO vote/election and survives death by recomputation.
 - Capability is a **LOCAL** per-node table `super_capable[DNODE_MAX]` with setter
   `region_set_super_capable()` + self opt-in `PKERNEL_SUPERNODE=1` (read once on hosted nodes,
-  default NOT capable — conservative). It is **NOT gossiped yet**.
+  default NOT capable — conservative). In slice 1 it was LOCAL only; **slice 2b (below) now
+  gossips this bit over SWIM** so the table reflects a converged fleet view.
 - Host cert `region_supernode_test()` (shell `region test`, wired in both
   `arch/linux/{aarch64,x86_64}/usermain.c`): 8/8 PASS — lowest-capable-wins (lowest *member* if
   incapable is skipped), convergence/determinism (same id over one synthetic view), survives-death
   (kill the current supernode in the view → next-lowest capable, no election call), relay-fallback
   (0 capable → `0xFF`), non-member-capable ignored, setter bounds-check.
 
+### N-2 slice 2b — SWIM capability-bit gossip (DONE, wave-n2b-capability-gossip)
+Makes slice-1's `super_capable[]` table **fleet-real**: each node's self-declared capability now
+propagates across the mesh via SWIM, so every node converges on the same supernode with NO vote.
+- **Wire (`arch/common/include/swim.h`):** the reserved zero `_pad` byte of `SWIM_GOSSIP_EVT` is
+  reused as `UB capability`. The on-wire layout/size is **byte-identical** (entry = 4B, packet =
+  24B — static-checked), so **`SWIM_VERSION` is NOT bumped**. Bumping it would make a v1 node
+  (`swim_rx` gates on `version != SWIM_VERSION`) DROP the whole packet, losing membership/gossip
+  interop, for a strictly-additive zero-default field. **Backward-compat:** an old node emits
+  `capability=0` → read as non-capable → relay fallback (safe degrade); a new node ignores the
+  field on old peers and never crashes.
+- **Self-authoritative origination (`arch/common/swim.c`):** capability is meaningful **only** in a
+  node's OWN gossip about itself (`cap_self()` = `region_is_super_capable(drpc_my_node)`, sourced
+  from `PKERNEL_SUPERNODE=1`). It rides the node's per-round self-ALIVE beacon gossip
+  (`swim_task`, swim.c:~525) and its self-suspicion refutation (swim.c:~197). Every other node
+  **relays the byte VERBATIM** (epidemic) — no third party originates a peer's capability.
+- **Apply under the SAME LWW gate (`gossip_apply`):** when a peer entry supersedes per the existing
+  `(incarnation,state)` last-writer-wins rule (swim.c:~258), it ALSO calls
+  `region_set_super_capable(nid, entry.capability)` — done **before** the state-same short-circuit
+  so a capability flip carried by a fresh incarnation lands. A **stale lower-incarnation** rumor is
+  rejected by the same gate, so capability **cannot regress** on a stale rumor and converges in
+  lock-step with membership state. Transitive-discovery (UNKNOWN→adopt) sets/re-propagates the byte
+  verbatim too.
+- **No change to the selection math** — `region_supernode()`/`supernode_select()` already read
+  `super_capable[]`; this slice just makes that table reflect a real converged fleet view.
+  Integer-only / deterministic / no-VLA, same on every arch.
+- **Host cert `swim_cap_gossip_self_test()` (shell `nodes cap`, both linux usermains):** drives the
+  REAL `gossip_apply`. **[cap-gossip-converge]** a fresh `capability=1` self-rumor about X →
+  `region_is_super_capable(X)==TRUE` AND `region_supernode()` selects X; two capable peers (X<Y) →
+  all views converge on X with no vote (NOCENTRAL). **[cap-gossip-staleness]** a stale
+  lower-incarnation rumor that would flip X off is IGNORED; a fresh higher one DOES update it.
+  **[cap-gossip-falsifiable]** a `capability=0` self-rumor leaves the node non-capable, and the
+  cert FAILS if the apply ignores the byte (verified by a sabotage rebuild). PASS on aarch64-linux
+  AND x86_64-linux; `nodes test` (swim-incarn) and `region test` (8/8) regress clean.
+- **Honest bound:** in this slice a node's capability is **env-fixed at init** (`PKERNEL_SUPERNODE`),
+  so it never changes at runtime. A *runtime* capability flip would need an incarnation bump to
+  supersede (same mechanism as the self-suspicion refutation) — deferred, out of scope here. A
+  true multi-process LIVE mesh converging the bit over UDP is left as a deferred `[live]` row (the
+  in-process cert drives the identical real `gossip_apply` code path).
+
 **DEFERRED to later N-2/N-3/N-4 slices (NOT in this slice — honest scope):**
-- **SWIM capability gossip** — propagating the capability bit so every node's `super_capable[]`
-  reflects a real converged fleet view (this slice sets the table locally / in the self-test only).
-- **Supernode packet forwarding** — the relay `REL_DATA`/`REL_BROADCAST` forwarder relocation into
-  the elected supernode (no datagrams are forwarded yet).
+- **Supernode packet forwarding (N-2c)** — the relay `REL_DATA`/`REL_BROADCAST` forwarder
+  relocation into the elected supernode (no datagrams are forwarded yet).
 - **NAT hole-punch (N-3)** — supernode-assisted STUN / rendezvous / promote-to-P2P-direct.
 - **Bootstrap/seed (N-4)** — `PKERNEL_SEED` list; relay as one optional well-known seed.
 - NAT hole-punching: supernode-assisted STUN (it already holds the peer's reflexive tuple);

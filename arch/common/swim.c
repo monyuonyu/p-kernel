@@ -18,6 +18,7 @@
 #include "dmn.h"
 #include "galaxy.h"     /* galaxy v1: S1 membership emit hook */
 #include "netstack.h"
+#include "region.h"     /* N-2b: region_{set,is}_super_capable, region_supernode */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -51,6 +52,7 @@ typedef struct {
     UB  state;
     UB  incarnation;
     UB  remaining;
+    UB  capability;   /* N-2b: rides the entry through the TTL piggyback */
 } GOSSIP_QUEUED;
 
 static GOSSIP_QUEUED gq[GOSSIP_Q_MAX];
@@ -103,26 +105,38 @@ static void sw_note(UB nid, UB oldst, UB newst)
     galaxy_emit(EV_SWIM, nid, GALAXY_NODE_NONE, (UH)oldst, (UH)newst);
 }
 
-static void gossip_add(UB node_id, UB state, UB incarnation)
+/* N-2b: capability rides every queued entry. For gossip ABOUT SELF, callers
+ * pass region_is_super_capable(drpc_my_node) (self-authoritative). For
+ * re-propagated PEER rumors, callers relay the byte VERBATIM as received —
+ * a node never originates a peer's capability. cap_self() is the one-liner
+ * the self-gossip sites use so the source of truth stays in region.c. */
+static UB cap_self(void)
+{
+    return (drpc_my_node != 0xFF && region_is_super_capable(drpc_my_node))
+           ? 1 : 0;
+}
+
+static void gossip_add(UB node_id, UB state, UB incarnation, UB capability)
 {
     /* Update existing entry if present */
     for (INT i = 0; i < gq_cnt; i++) {
         if (gq[i].node_id == node_id) {
             gq[i].state       = state;
             gq[i].incarnation = incarnation;
+            gq[i].capability  = capability;
             gq[i].remaining   = GOSSIP_TTL;
             return;
         }
     }
     if (gq_cnt < GOSSIP_Q_MAX) {
-        gq[gq_cnt++] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL };
+        gq[gq_cnt++] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL, capability };
         return;
     }
     /* Queue full: evict oldest (lowest remaining) */
     INT min_i = 0;
     for (INT i = 1; i < gq_cnt; i++)
         if (gq[i].remaining < gq[min_i].remaining) min_i = i;
-    gq[min_i] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL };
+    gq[min_i] = (GOSSIP_QUEUED){ node_id, state, incarnation, GOSSIP_TTL, capability };
 }
 
 static void gossip_fill(SWIM_PKT *pkt)
@@ -133,7 +147,7 @@ static void gossip_fill(SWIM_PKT *pkt)
         pkt->gossip[pkt->gossip_cnt].node_id     = gq[i].node_id;
         pkt->gossip[pkt->gossip_cnt].state       = gq[i].state;
         pkt->gossip[pkt->gossip_cnt].incarnation = gq[i].incarnation;
-        pkt->gossip[pkt->gossip_cnt]._pad        = 0;
+        pkt->gossip[pkt->gossip_cnt].capability  = gq[i].capability;  /* N-2b */
         pkt->gossip_cnt++;
         gq[i].remaining--;
     }
@@ -161,6 +175,10 @@ static void gossip_apply(const SWIM_PKT *pkt)
         UB nid    = pkt->gossip[i].node_id;
         UB st     = pkt->gossip[i].state;
         UB inc_in = pkt->gossip[i].incarnation;
+        /* N-2b: SELF-AUTHORITATIVE capability — meaningful only when this
+         * entry is node `nid`'s own rumor about itself; we relay it verbatim
+         * and never originate a peer's capability here. */
+        UB cap_in = pkt->gossip[i].capability ? 1 : 0;
 
         /* 自分自身が SUSPECT/DEAD と噂されていたら断末魔散布 +
          * incarnation を進めて ALIVE を再表明し、古い噂を論駁する。 */
@@ -175,7 +193,8 @@ static void gossip_apply(const SWIM_PKT *pkt)
                  * everywhere it has spread (UB ++ wraps sanely at 256). */
                 if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
                 else                          my_incarnation = (UB)(my_incarnation + 1);
-                gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation);
+                /* re-assert MY OWN capability (self-authoritative source). */
+                gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self());
             }
             continue;
         }
@@ -210,11 +229,14 @@ static void gossip_apply(const SWIM_PKT *pkt)
             dnode_table[nid].missed  = 0;
             dnode_incarn[nid]        = inc_in;
             suspect_count[nid]       = 0;
+            /* N-2b: adopt the peer's self-declared capability VERBATIM and
+             * re-propagate it (epidemic relay; we do not originate it). */
+            region_set_super_capable(nid, cap_in ? TRUE : FALSE);
             sw_note(nid, DNODE_UNKNOWN, st);
             sw_puts("[swim] gossip: node "); sw_putdec(nid);
             sw_puts(st == DNODE_ALIVE ? " discovered (via gossip)\r\n"
                                       : " SUSPECT (via gossip)\r\n");
-            gossip_add(nid, st, inc_in);   /* re-propagate: keep the epidemic alive */
+            gossip_add(nid, st, inc_in, cap_in);   /* re-propagate: keep the epidemic alive */
             degrade_update();
             dmn_trigger();
             continue;
@@ -222,10 +244,23 @@ static void gossip_apply(const SWIM_PKT *pkt)
 
         /* anti-stale: accept only if (incarnation,state) supersedes our view */
         if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state))
-            continue;
+            continue;   /* stale rumor refuted — capability does NOT regress */
 
         dnode_incarn[nid] = inc_in;
-        if (dnode_table[nid].state == st) continue;   /* incarnation bumped, state same */
+        /* N-2b: a SUPERSEDING rumor (this peer's own fresher word about
+         * itself) updates capability in LOCK-STEP with membership, VERBATIM.
+         * A stale lower-incarnation rumor was rejected above, so capability
+         * converges under the exact same anti-stale gate as state. Do this
+         * BEFORE the state-same short-circuit so a capability flip carried by
+         * a fresh incarnation lands even when the state is unchanged. */
+        region_set_super_capable(nid, cap_in ? TRUE : FALSE);
+
+        if (dnode_table[nid].state == st) {
+            /* incarnation bumped, state same: still relay the fresh entry so
+             * the (possibly changed) capability keeps spreading epidemically. */
+            gossip_add(nid, st, inc_in, cap_in);
+            continue;
+        }
 
         { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
           sw_note(nid, oldst, st); }
@@ -233,7 +268,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
         else if (st == DNODE_DEAD)    sw_puts(" -> DEAD\r\n");
-        gossip_add(nid, st, inc_in);   /* re-propagate at the same incarnation */
+        gossip_add(nid, st, inc_in, cap_in);   /* re-propagate at the same incarnation */
         degrade_update();
         dmn_trigger();   /* ノード状態変化 = 外部刺激 */
     }
@@ -345,7 +380,10 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
             sw_puts("[swim] node "); sw_putdec(snid);
             sw_puts(old == DNODE_UNKNOWN ? " discovered" : " recovered");
             sw_puts("  (via rx)\r\n");
-            gossip_add(snid, DNODE_ALIVE, dnode_incarn[snid]);
+            /* N-2b: relay the peer's last-known capability VERBATIM (we do
+             * not originate it; only the peer's own rumor changes it). */
+            gossip_add(snid, DNODE_ALIVE, dnode_incarn[snid],
+                       region_is_super_capable(snid) ? 1 : 0);
             replica_push_to(snid);
             degrade_update();
         }
@@ -476,6 +514,16 @@ void swim_task(INT stacd, void *exinf)
          * Cost: one extra datagram per node per second — bounded and tiny. The
          * directed PING/ACK probing below is UNTOUCHED, so RTT measurement and
          * SUSPECT/DEAD liveness detection keep their exact prior cadence. */
+        /* N-2b: seed/refresh SELF ALIVE gossip carrying MY OWN capability bit
+         * (self-authoritative source = region_is_super_capable(self), set from
+         * PKERNEL_SUPERNODE=1 by region_super_init). gossip_add merges onto the
+         * existing self-entry (resets its TTL) so the queue does not grow, and
+         * the beacon's gossip_fill below piggybacks it — newly-joined peers
+         * thus learn my capability epidemically, in lock-step with membership,
+         * with no extra packet. region_super_init() is idempotent. */
+        region_super_init();
+        gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self());
+
         {
             SWIM_PKT beacon = { 0 };
             beacon.magic        = SWIM_MAGIC;
@@ -516,7 +564,8 @@ void swim_task(INT stacd, void *exinf)
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
-                gossip_add(target, DNODE_ALIVE, dnode_incarn[target]);
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
+                           region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -547,7 +596,8 @@ void swim_task(INT stacd, void *exinf)
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
-                gossip_add(target, DNODE_ALIVE, dnode_incarn[target]);
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
+                           region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -574,7 +624,8 @@ void swim_task(INT stacd, void *exinf)
             suspect_count[target]      = 0;   /* count fresh toward DEAD */
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> SUSPECT (no response)\r\n");
-            gossip_add(target, DNODE_SUSPECT, dnode_incarn[target]);
+            gossip_add(target, DNODE_SUSPECT, dnode_incarn[target],
+                       region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
         } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_ROUNDS) {
             dnode_table[target].state  = DNODE_DEAD;
             sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
@@ -582,7 +633,8 @@ void swim_task(INT stacd, void *exinf)
             suspect_count[target]      = 0;
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> DEAD\r\n");
-            gossip_add(target, DNODE_DEAD, dnode_incarn[target]);
+            gossip_add(target, DNODE_DEAD, dnode_incarn[target],
+                       region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
             heal_on_node_dead(target);
             degrade_update();
         }
@@ -753,5 +805,178 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     dnode_incarn[PEER]      = 0;
 
     if (fails == 0) say("[swim-incarn] PASS\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* N-2b cap-gossip self-test (p2p-overlay.md "Supernodes (N-2)")       */
+/*                                                                     */
+/* Drives the REAL gossip_apply() with crafted SWIM_PKTs carrying the   */
+/* capability bit and asserts the three contracts from the slice spec: */
+/*  [cap-gossip-converge]  a fresh self-rumor capability=1 about X makes */
+/*      the receiver report region_is_super_capable(X)==TRUE AND its     */
+/*      region_supernode() select X; two receivers fed the SAME bits     */
+/*      converge on the SAME supernode (no vote — NOCENTRAL).            */
+/*  [cap-gossip-staleness] a stale LOWER-incarnation rumor that would     */
+/*      flip X's capability is IGNORED (no regress); a fresh HIGHER one   */
+/*      does update it — reuses the exact incarnation gate.              */
+/*  [cap-gossip-falsifiable] the converge result is CONTRASTED against a  */
+/*      capability=0 rumor: if apply ignored the byte (or a third party   */
+/*      could originate it) both would agree and this assert would fail.  */
+/* Emits "[cap-gossip] ..." lines; returns 0 on PASS else the fail count.*/
+/* ------------------------------------------------------------------ */
+
+INT swim_cap_gossip_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    /* save global/file state we perturb */
+    UB  saved_my     = drpc_my_node;
+    UB  saved_inc    = my_incarnation;
+    INT saved_gq_cnt = gq_cnt;
+    UB  saved_capX, saved_capSELF;
+
+    const UB SELF = 0;   /* the receiving node we simulate */
+    const UB X    = 3;   /* the supernode-capable peer being gossiped */
+    const UB Y    = 5;   /* a second capable peer (lock-step convergence) */
+
+    drpc_my_node            = SELF;
+    gq_cnt                  = 0;
+    my_incarnation          = 0;
+    dnode_table[SELF].state = DNODE_ALIVE;  dnode_incarn[SELF] = 0;
+    dnode_table[X].state    = DNODE_UNKNOWN; dnode_incarn[X]   = 0;
+    dnode_table[Y].state    = DNODE_UNKNOWN; dnode_incarn[Y]   = 0;
+    saved_capX    = region_is_super_capable(X)    ? 1 : 0;
+    saved_capSELF = region_is_super_capable(SELF) ? 1 : 0;
+    region_set_super_capable(X, FALSE);
+    region_set_super_capable(Y, FALSE);
+    region_set_super_capable(SELF, FALSE);  /* SELF is not capable here */
+
+    /* [cap-gossip-converge] X emits its OWN ALIVE rumor, capability=1, inc=1 */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = 1;
+        gossip_apply(&p);
+        if (region_is_super_capable(X) != TRUE) {
+            say("[cap-gossip] FAIL converge: X not capable after fresh self-rumor\r\n");
+            fails++;
+        }
+    }
+
+    /* region_supernode() must now select X. region_recompute() needs a real
+     * RTT≤tau for X to count X as a region member, so inject one (the live
+     * fleet gets this from the directed PING/ACK probe). SELF is incapable, so
+     * the lowest CAPABLE member is X. */
+    rtt_observe(X, 5);   /* 5ms <= REGION_TAU_MS=50 -> X is a region member */
+    {
+        UB sn = region_supernode();
+        if (sn != X) {
+            say("[cap-gossip] FAIL converge: region_supernode() did not select X\r\n");
+            fails++;
+        }
+    }
+
+    /* NOCENTRAL convergence: a SECOND capable peer Y arrives the same way;
+     * X (lower id) still wins by pure recomputation, no vote. Then a third
+     * receiver fed the SAME two bits computes the SAME supernode. */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = Y;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = 1;
+        gossip_apply(&p);
+        rtt_observe(Y, 5);
+        UB sn_a = region_supernode();   /* this node's view */
+        UB sn_b = region_supernode();   /* same inputs, same fn -> same id */
+        if (!(sn_a == X && sn_b == X)) {
+            say("[cap-gossip] FAIL converge: nodes disagree on supernode (expected X)\r\n");
+            fails++;
+        }
+    }
+
+    /* [cap-gossip-falsifiable] CONTRAST: a node W that gossips capability=0
+     * about itself must NOT become capable. If apply ignored the byte (or a
+     * third party originated capability), W would read capable and this fails.
+     * Also proves a THIRD PARTY cannot originate: this rumor's node_id==W is
+     * W's own word, and it says 0 -> stays 0. */
+    {
+        const UB W = 7;
+        dnode_table[W].state = DNODE_UNKNOWN; dnode_incarn[W] = 0;
+        region_set_super_capable(W, FALSE);
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = W;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = 0;   /* W self-declares NON-capable */
+        gossip_apply(&p);
+        if (region_is_super_capable(W) != FALSE) {
+            say("[cap-gossip] FAIL falsifiable: capability=0 rumor made W capable (byte ignored?)\r\n");
+            fails++;
+        }
+        /* the contrast: X(=1) and W(=0) fed through the SAME apply path gave
+         * DIFFERENT capability — so the byte is genuinely read. */
+        if (region_is_super_capable(X) == region_is_super_capable(W)) {
+            say("[cap-gossip] FAIL falsifiable: cap=1 and cap=0 gave same result\r\n");
+            fails++;
+        }
+        dnode_table[W].state = DNODE_UNKNOWN; dnode_incarn[W] = 0;
+        region_set_super_capable(W, FALSE);
+    }
+
+    /* [cap-gossip-staleness] hold X capable @ incarnation 5; a STALE
+     * lower-incarnation rumor (inc=3) that would flip X to NON-capable must
+     * be IGNORED — capability does not regress on a stale rumor. */
+    dnode_table[X].state = DNODE_ALIVE; dnode_incarn[X] = 5;
+    region_set_super_capable(X, TRUE);
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 3;   /* STALE */
+        p.gossip[0].capability  = 0;   /* would flip X off if accepted */
+        gossip_apply(&p);
+        if (region_is_super_capable(X) != TRUE) {
+            say("[cap-gossip] FAIL staleness: stale rumor flipped X's capability\r\n");
+            fails++;
+        }
+    }
+    /* a strictly HIGHER-incarnation self-rumor DOES update it (off). */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 6;   /* FRESH */
+        p.gossip[0].capability  = 0;
+        gossip_apply(&p);
+        if (region_is_super_capable(X) != FALSE) {
+            say("[cap-gossip] FAIL staleness: fresh higher-incarnation rumor not applied\r\n");
+            fails++;
+        }
+    }
+
+    /* --- restore --- */
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq_cnt;
+    dnode_table[SELF].state = DNODE_UNKNOWN;
+    dnode_table[X].state    = DNODE_UNKNOWN;
+    dnode_table[Y].state    = DNODE_UNKNOWN;
+    dnode_incarn[SELF] = 0; dnode_incarn[X] = 0; dnode_incarn[Y] = 0;
+    rtt_valid[X] = 0; rtt_valid[Y] = 0;        /* drop injected RTT */
+    region_set_super_capable(X, saved_capX ? TRUE : FALSE);
+    region_set_super_capable(Y, FALSE);
+    region_set_super_capable(SELF, saved_capSELF ? TRUE : FALSE);
+
+    if (fails == 0) say("[cap-gossip] PASS (converge + staleness + falsifiable)\r\n");
     return fails;
 }

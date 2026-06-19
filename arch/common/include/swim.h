@@ -41,6 +41,14 @@
 /* ------------------------------------------------------------------ */
 
 #define SWIM_MAGIC    0x4D494D53UL   /* "SWIM" little-endian */
+/* N-2b: NOT bumped. The capability bit reuses the already-reserved zero
+ * `_pad` byte of SWIM_GOSSIP_EVT, so the wire layout/size are byte-identical
+ * to v1. Bumping the version would make v1 nodes (which gate on
+ * `version != SWIM_VERSION` in swim_rx) DROP the whole packet — losing
+ * membership/gossip interop — for a strictly-additive, zero-default field.
+ * Mixed fleet: an old node emits capability=0 → read as non-capable →
+ * relay fallback (safe); a new node ignores the field on old peers and
+ * never crashes. So compatibility is best served by keeping v1. */
 #define SWIM_VERSION  1
 
 #define SWIM_PING      0x20   /* 直接プローブ; SWIM_ACK を期待         */
@@ -52,7 +60,17 @@ typedef struct {
     UB  node_id;
     UB  state;          /* DNODE_ALIVE / DNODE_SUSPECT / DNODE_DEAD */
     UB  incarnation;    /* より新しい incarnation で古い疑惑を上書き */
-    UB  _pad;
+    /* N-2b supernode capability bit (p2p-overlay.md "Supernodes (N-2)").
+     * Was the reserved zero `_pad`; reusing it is WIRE-COMPATIBLE — the
+     * layout, size (24B packet) and SWIM_VERSION are unchanged, and old
+     * emitters already zero this byte. An old node therefore sends 0 and
+     * a new node reads it as "non-capable" → safe degrade to the relay.
+     * SELF-AUTHORITATIVE: only node X's own gossip about X sets a real
+     * value here; every other node relays the byte VERBATIM (epidemic),
+     * it never originates a peer's capability. Converges in lock-step with
+     * membership state under the SAME (incarnation,state) last-writer-wins
+     * gate, so a stale rumor cannot flip it. */
+    UB  capability;     /* 1 = node self-declares supernode-capable */
 } __attribute__((packed)) SWIM_GOSSIP_EVT;
 
 /* SWIM パケット本体 (24 bytes) */
@@ -104,3 +122,14 @@ void swim_set_sim_zone(UB zone_size, UW penalty_ms);
  * override a higher-incarnation ALIVE. Emits "[swim-incarn] PASS"/"FAIL ...".
  * Returns 0 on PASS, else the fail count. */
 INT swim_incarn_self_test(void (*emit)(const char *));
+
+/* N-2b cap-gossip cert (p2p-overlay.md "Supernodes (N-2)"): drives the REAL
+ * gossip_apply() with crafted SWIM_PKTs carrying the capability bit and
+ * asserts (a) a fresh self-rumor with capability=1 makes the receiver report
+ * region_is_super_capable(X)==TRUE and region_supernode() select X (multi-node
+ * convergence, NO vote / NOCENTRAL); (b) a STALE lower-incarnation rumor does
+ * NOT flip capability (reuses the incarnation gate), a fresh higher one does;
+ * (c) FALSIFIABLE — the same craft FAILS if the apply ignored the byte or let
+ * a third party originate it. Emits "[cap-gossip] ..." lines; returns 0 on
+ * PASS else the fail count. */
+INT swim_cap_gossip_self_test(void (*emit)(const char *));

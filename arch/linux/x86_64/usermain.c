@@ -777,7 +777,11 @@ EXPORT INT usermain(void)
              * peer rumors lose the (incarnation,state) LWW. */
             const UB *a = line + 5; UW al = (UW)(n - 5);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
-            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
+            /* N-2b cap-gossip cert (p2p-overlay.md): `nodes cap` drives the REAL
+             * gossip_apply with capability-bearing SWIM_PKTs and proves the bit
+             * converges under the SAME (incarnation,state) LWW gate as state. */
+            if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
+            else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             else swim_nodes_print();
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`
