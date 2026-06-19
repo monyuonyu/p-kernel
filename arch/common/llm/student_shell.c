@@ -270,20 +270,68 @@ static int student_ensure(emit_fn emit)
     return 0;
 }
 
+/* How many small distill rounds a FRESH baby gets at birth, so the very first
+ * chat babbles real bytes instead of "…". Kept tiny (a handful of rounds over
+ * the small fixture's train windows) so boot is not slowed much; the baby is
+ * still weak ("babbling") and improves as it sleeps — the intended
+ * developmental arc. Same geometry as the DMN tick (ST_DMN_SEQLEN). */
+#define ST_BIRTH_ROUNDS  6
+#define ST_BIRTH_LR      3e-3f
+
+/* Give the freshly-born resident baby a small initial distill burst from the
+ * committed teacher fixture, then persist it so the first chat produces bytes
+ * AND a restart restores it. Cheap + bounded. Caller has already ensured the
+ * baby is resident (g_have_student). */
+static void student_birth_warmup(emit_fn emit)
+{
+    char line[160];
+    int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+    int total    = corpus_n / ST_DMN_SEQLEN;
+    int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
+
+    sleep_rounds(&g_student, ST_DMN_SEQLEN, trainw, ST_BIRTH_ROUNDS, ST_BIRTH_LR);
+    if (emit) {
+        snprintf(line, sizeof line,
+                 "[baby] newborn given %d initial distill round(s) — it babbles "
+                 "now, and grows as it sleeps\r\n", ST_BIRTH_ROUNDS);
+        emit(line);
+    }
+    /* student_persist resets the DMN throttle baseline to this newborn loss, so
+     * the first DMN sleep waits for a real improvement before rewriting flash. */
+    student_persist(emit);
+}
+
 /* ---------------------------------------------------------------------------
- * Boot hook: wake up REMEMBERING a baby that slept yesterday — but only if
- * there is one. Step-③ audit nit fix (wave-dmn-student-distill): the previous
- * version st_init'd the ~30MB arena and printed "initialised FRESH" at EVERY
- * boot, even on a PFS-less node with no baby — contradicting its own
- * "no-op/lazy" docs. Now it is a TRUE no-op unless persistence is active AND a
- * saved baby is actually present on disk (probed cheaply, no arena). A
- * PFS-less / baby-less boot allocates nothing and prints nothing; the baby is
- * deferred to first real use (the `student` verb st_init's it then).
+ * Boot hook: on a node where the ark REMEMBERS (persistence active), make sure
+ * there is a baby to talk to and grow.
+ *
+ *  - If a saved baby exists on disk -> RESTORE it (wake up remembering
+ *    yesterday's sleep). Unchanged.
+ *  - Else if persistence is active (the app / phone: PKERNEL_PFS_DIR set) and
+ *    there is NO saved baby -> BIRTH a fresh one (st_init) and give it a small
+ *    initial distill burst, so a brand-new install has a real (babbling)
+ *    student for the chat AND something the DMN sleep tick can grow. The app's
+ *    whole premise is "a new mind grows from a baby"; without this a fresh
+ *    phone install would chat "…" forever and the DMN would never have a baby.
+ *  - Else (PFS-less / relay / bare node: persistence INACTIVE) -> TRUE no-op:
+ *    allocate nothing, print nothing, no 30MB arena. The step-③ audit nit and
+ *    the "30MB on every node" concern are preserved: birth ONLY when the node
+ *    actually persists. The flash-wear throttle (student_persist baseline) is
+ *    respected — birth writes exactly once.
  * ------------------------------------------------------------------------- */
 int student_boot_restore(emit_fn emit)
 {
-    if (!student_have_saved()) return 0;   /* nothing to remember -> no-op */
-    return student_ensure(emit);
+    if (student_have_saved())                  /* remember yesterday's baby   */
+        return student_ensure(emit);
+
+    if (!pfs_dur_active()) return 0;           /* PFS-less/bare -> TRUE no-op  */
+
+    /* Persistence active, no saved baby: a fresh ark. Birth one. */
+    if (emit) emit("[baby] no saved baby on this persistent node — "
+                   "a new mind is born\r\n");
+    if (student_ensure(emit) != 0) return -1;  /* st_init the ~30MB arena      */
+    student_birth_warmup(emit);                /* babble now, grow asleep      */
+    return 0;
 }
 
 /* ---------------------------------------------------------------------------
