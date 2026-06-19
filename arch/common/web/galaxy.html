@@ -653,12 +653,18 @@ const INTERIOR_AT=1.6, INTERIOR_FULL=3.1;
 // The Collective shell (NEW, ~0.95) is the outermost; the inference nucleus is
 // NOT a shell (kind:"core") — it pulses at the centre. Order = outer→inner so
 // nesting reads correctly. NO per-frame allocation: built once, read-only.
+// Each organ is a RING (輪): a flat circle in 3D, tilted by its own `tilt`
+// (radians about the local X axis) so the nested rings are NOT coplanar — viewed
+// through the shared scene yaw/pitch they read as distinct ellipses instead of a
+// single edge-on line. `lblAng` is the fixed angle (radians, around the ring)
+// where this organ's billboard label anchors, spread apart so the labels do NOT
+// overlap. `abbr` is the short tag shown for distant/unfocused rings.
 const ME_ORGANS=[
-  {frac:0.95,rgb:"137,180,250",label:"collective",kind:"collective"}, // the swarm shell
-  {frac:0.82,rgb:"137,131,255",label:"DMN",       kind:"dmn"},        // dream consolidation
-  {frac:0.62,rgb:"148,226,213",label:"R3",        kind:"r3"},         // slow weight memory
-  {frac:0.42,rgb:"249,210,120",label:"engram",    kind:"engram"},     // fast replay ring
-  {frac:0.24,rgb:"243,139,168",label:"self",      kind:"self"},       // hash-chained lineage
+  {frac:0.95,rgb:"137,180,250",label:"collective",kind:"collective",tilt:0.10,lblAng:-0.45,abbr:"⬡"}, // the swarm shell
+  {frac:0.82,rgb:"137,131,255",label:"DMN",       kind:"dmn",       tilt:0.55,lblAng: 0.85,abbr:"D"},  // dream consolidation
+  {frac:0.62,rgb:"148,226,213",label:"R3",        kind:"r3",        tilt:-0.45,lblAng:2.30,abbr:"R3"}, // slow weight memory
+  {frac:0.42,rgb:"249,210,120",label:"engram",    kind:"engram",    tilt:0.85,lblAng:3.75,abbr:"E"},   // fast replay ring
+  {frac:0.24,rgb:"243,139,168",label:"self",      kind:"self",      tilt:-0.80,lblAng:5.15,abbr:"S"},  // hash-chained lineage
 ];
 // glow_rule (THE HONESTY CONTRACT, living-body-inspector.md): given an organ +
 // the live snapshot m + the derived VIT rates + now (wallclock), return how this
@@ -764,50 +770,52 @@ const ME_VIT={peers:0};
 // the wallclock of the last DMN idle-tick beat, set when a real consolidation
 // raised idle_runs (vitUpdate flags it via VIT.idleRate; we latch a beat in poll).
 let _dmnBeatAt=-1e9;
-// ── unit-sphere sample points, built ONCE (NO per-frame allocation) ─────────
-//   The organs are drawn as genuine 3D nested SHELLS: a cloud of points spread
-//   evenly over a unit sphere (Fibonacci/golden-spiral lattice → no clumping,
-//   no random — product-soul honest-growth law). Each organ scales this same
-//   unit lattice by its own radius and rotates it through the SCENE yaw/pitch,
-//   so every shell spins WITH the star (auto-drift + the owner's drag) and
-//   nests inside the next. Stored flat as [x,y,z, x,y,z, …] in a Float32Array
-//   so the draw loop only reads — it never allocates.
-const ORGAN_PTS=48;                                  // points per shell (cheap)
-const _organSphere=(function(){
+// ── unit-RING sample points, built ONCE (NO per-frame allocation) ───────────
+//   mk_pino on-device: the organs were "scattered dots like a scatter plot" —
+//   he wants RINGS (輪). So each organ is now a clean CIRCLE in its own (tilted)
+//   plane, NOT a Fibonacci point cloud. _organRing is one unit circle in the
+//   local XY plane (z=0): [cosθ, sinθ, 0] for ORGAN_PTS angles. Each organ tilts
+//   this plane by its `tilt`, scales by its radius, then rotates the result
+//   through the SAME scene yaw/pitch as project() — so a ring viewed at an angle
+//   becomes an ELLIPSE (reads 3D) and spins WITH the star (auto-drift + the
+//   owner's drag). cos/sin of each ring angle are precomputed (read-only loop).
+//   ORGAN_PTS is the polyline resolution of the circle — high enough to read as
+//   a smooth ring, cheap enough to stay 60fps.
+const ORGAN_PTS=48;                                  // ring polyline resolution
+const _organRing=(function(){
   const a=new Float32Array(ORGAN_PTS*3);
-  const ga=Math.PI*(3-Math.sqrt(5));                 // golden angle
   for(let i=0;i<ORGAN_PTS;i++){
-    const y=1-(i+0.5)/ORGAN_PTS*2;                   // y: +1 .. -1
-    const r=Math.sqrt(Math.max(0,1-y*y));
-    const th=ga*i;
-    a[i*3]=Math.cos(th)*r; a[i*3+1]=y; a[i*3+2]=Math.sin(th)*r;
+    const th=i/ORGAN_PTS*6.28318530718;
+    a[i*3]=Math.cos(th); a[i*3+1]=Math.sin(th); a[i*3+2]=0;
   }
   return a;
 })();
-// draw the interior detail INSIDE the blob as genuine 3D nested shells. Each
-// organ is the precomputed unit-sphere lattice (_organSphere) scaled by its
-// radius and rotated through the SAME scene yaw/pitch as project() (module
-// `yaw`,`CP`,`SP`), so the shells spin WITH the star as the auto-yaw drifts and
-// as the owner drag-rotates. Depth cue: a point's rotated Z (>0 = far side)
-// dims & shrinks it vs the near side, so nesting + rotation are unmistakable.
-// The per-organ "nucleus" is itself a point ON the sphere (orbits in 3D, not on
-// a flat circle). Labels are billboarded (screen-space text at the projected
-// nucleus) — never rotated in 3D. Clipped to the star body; opacity ramps with
-// proximity (rev) for a smooth reveal; cheap + allocation-free (read-only loop).
-// per-point depth-sort scratch (NO per-frame allocation): we collect every
-// organ point as flat parallel arrays, sort an index array, then draw far→near
-// for honest parallax/occlusion in the world-space (immersion) path. Sized for
-// all shells at once; reused every frame.
-const _PT_MAX=ME_ORGANS.length*ORGAN_PTS;
-const _ptX=new Float32Array(_PT_MAX), _ptY=new Float32Array(_PT_MAX);
-const _ptZ=new Float32Array(_PT_MAX), _ptR=new Float32Array(_PT_MAX);
-const _ptA=new Float32Array(_PT_MAX);          // alpha
-const _ptC=new Array(_PT_MAX);                 // rgb string (per organ; few distinct)
-const _ptSolid=new Uint8Array(_PT_MAX);        // 1 = filled, 0 = faint outline
-const _ptIdx=new Int32Array(_PT_MAX);
+// draw the interior detail INSIDE the blob as genuine 3D nested RINGS (輪). Each
+// organ is the precomputed unit circle (_organRing), tilted by its own `tilt`,
+// scaled by its radius, and rotated through the SAME scene yaw/pitch as project()
+// (module `yaw`,`CP`,`SP`) — so each ring spins WITH the star as the auto-yaw
+// drifts and as the owner drag-rotates, and a ring seen at an angle reads as an
+// ELLIPSE (3D), not a flat circle. Depth cue: each ring SEGMENT is brighter &
+// thicker on the near side (rotated Z<0) and dimmer & thinner on the far side, so
+// the ring reads as a 3D loop rather than a flat outline. The rings nest
+// concentrically (outer collective → inner self). The engram ring shows fill as a
+// SOLID arc proportional to engram_fill/cap, the empty remainder dashed-faint.
+// Labels are billboarded (screen-space text, never rotated) anchored at each
+// organ's fixed `lblAng` point on its own ring, so they spread apart instead of
+// piling at the centre. Clipped to the star body; opacity ramps with proximity
+// (rev); cheap + allocation-free (read-only loop, one ring's vertices at a time).
+// per-ring vertex scratch (ONE ring's worth, reused for every organ → NO
+// per-frame allocation): projected screen x/y of each ring vertex, plus a
+// normalised depth dz∈[0,1] (0=near, 1=far) and a cull flag for the immersion
+// path (a vertex behind the camera is dropped, its segments skipped).
+const _rx=new Float32Array(ORGAN_PTS), _ry=new Float32Array(ORGAN_PTS);
+const _rz=new Float32Array(ORGAN_PTS);          // normalised depth 0=near 1=far
+const _rok=new Uint8Array(ORGAN_PTS);           // 1 = in front of camera (drawable)
 // billboarded label anchors (one per organ + the nucleus), reused each frame.
+// _lblFront marks the nearest ring (its full label shows; the rest abbreviate).
 const _lblX=new Float32Array(ME_ORGANS.length+1), _lblY=new Float32Array(ME_ORGANS.length+1);
-const _lblTxt=new Array(ME_ORGANS.length+1), _lblRGB=new Array(ME_ORGANS.length+1);
+const _lblTxt=new Array(ME_ORGANS.length+1), _lblAbbr=new Array(ME_ORGANS.length+1);
+const _lblRGB=new Array(ME_ORGANS.length+1), _lblZ=new Float32Array(ME_ORGANS.length+1);
 let _lblN=0;
 // meStarInterior — the living organs, wired to REAL vitals via organGlow().
 //   `m` is the live snapshot (snap.me); `revI` is rev_inner (camera immersion,
@@ -829,12 +837,13 @@ function meStarInterior(cx,cy,baseR,pscale,ms,tms,m,revI){
     ctx.beginPath();ctx.arc(cx,cy,baseR*1.05*(1-revI)+baseR*3*revI,0,7);ctx.clip();
   }
   const cyaw=Math.cos(yaw), syaw=Math.sin(yaw);
-  const dot=Math.max(1,baseR*0.012);                 // base point radius (screen path)
+  const lw=Math.max(0.8,baseR*0.012);                // base ring line width
   // the ≤4% idle shimmer — the ONLY tms-driven motion permitted by the CORE LAW.
   // Applied as a tiny shared radius wobble; everything else is state-driven.
   const shimmer=1+0.04*Math.sin(tms*0.0011);
   _lblN=0;
-  let nP=0;                                          // world-path point count
+  ctx.lineJoin="round"; ctx.lineCap="round";
+  let nearestZ=1e9, nearestLbl=-1;                   // track the closest ring's label
   for(let i=0;i<ME_ORGANS.length;i++){
     const o=ME_ORGANS[i];
     const g=organGlow(o,m,now);                       // REAL vital -> look
@@ -843,93 +852,122 @@ function meStarInterior(cx,cy,baseR,pscale,ms,tms,m,revI){
     const fr=o.frac*(1+g.grow);
     const br=baseR*fr*shimmer;
     const wr=Math.min(ME_WORLD_R, ME_WORLD_R*fr)*shimmer;
-    // a real beat briefly swells the shell; bloom lifts its baseline brightness.
+    // a real beat briefly swells the ring; bloom lifts its baseline brightness.
     const swell=1+0.06*g.beat;
     const baseA=reveal*(0.55+0.45*g.bloom);
     const rgb=g.tint||o.rgb;
-    let nx=cx,ny=cy,nzNear=2, nzc=1e9;                // near-most pt (screen / world)
+    const ct=Math.cos(o.tilt), st=Math.sin(o.tilt);   // ring-plane tilt (local X)
+    // ── project every ring vertex ONCE into the shared per-ring scratch, then
+    //    stroke the loop segment-by-segment with a near/far depth cue. The
+    //    screen-space (surface reveal) and world-space (immersion) paths differ
+    //    only in the projection scale; the ring math is identical.
+    let lblZbest=2;                                   // pick this ring's nearest vertex near lblAng
     for(let p=0;p<ORGAN_PTS;p++){
-      const ux=_organSphere[p*3], uy=_organSphere[p*3+1], uz=_organSphere[p*3+2];
-      // engram fill: the FIRST solid*ORGAN_PTS points are SOLID, the rest faint
-      // outlines (an honestly fuller/emptier hippocampus). Deterministic, no rng.
-      const isSolid=(p < (g.solid*ORGAN_PTS));
+      // unit circle (z=0) tilted into 3D about the local X axis:
+      const ux=_organRing[p*3];
+      const cy0=_organRing[p*3+1];                    // circle y before tilt
+      const uy=cy0*ct, uz=cy0*st;                     // tilt lifts the ring out of plane
       if(revI<=0){
         // ── SCREEN-SPACE path (calm surface reveal — today's behaviour) ──
         const X=ux*cyaw+uz*syaw, Z0=-ux*syaw+uz*cyaw;
         const Y=uy*CP-Z0*SP,     Z=uy*SP+Z0*CP;        // +Z far
-        const sx=cx+X*br*swell, sy=cy+Y*br*swell;
-        const depth=(Z+1)*0.5;
-        let da=baseA*(0.85-0.6*depth); if(!isSolid) da*=0.25;
-        const dr=dot*(1.15-0.55*depth);
-        ctx.globalAlpha=Math.max(0,da);
-        ctx.fillStyle=`rgba(${rgb},1)`;
-        ctx.beginPath();ctx.arc(sx,sy,dr,0,7);ctx.fill();
-        if(Z<nzNear){nzNear=Z; nx=sx; ny=sy;}
+        _rx[p]=cx+X*br*swell; _ry[p]=cy+Y*br*swell;
+        _rz[p]=(Z+1)*0.5;                              // 0 near .. 1 far
+        _rok[p]=1;
       }else{
-        // ── WORLD-SPACE path (immersion): the organ shell at world radius wr,
-        //    projected through the SAME camera as everything else. Per-point cull
-        //    (never divide through/behind the camera). Collected for a depth sort.
+        // ── WORLD-SPACE path (immersion): ring at world radius wr, projected
+        //    through the SAME camera as everything else. Per-vertex cull.
         const wx=ux*wr*swell, wy=uy*wr*swell, wz=uz*wr*swell;
         const X=wx*cyaw+wz*syaw, Z0=-wx*syaw+wz*cyaw;
         const Y=wy*CP-Z0*SP,     Z=wy*SP+Z0*CP;
         const zc=FOV+Z+camD;                            // projection denominator
-        if(zc<=8) continue;                             // MANDATORY cull
+        if(zc<=8){ _rok[p]=0; continue; }               // MANDATORY cull
         const s=FOV/zc;
-        const sx=cx+X*s, sy=cy+Y*s;                     // cx/cy = projected origin
-        // blend screen↔world so there is no geometric POP at the crossfade seam:
-        // at revI just above 0 the world point sits where the screen point was.
-        let da=baseA; if(!isSolid) da*=0.25;
-        _ptX[nP]=sx; _ptY[nP]=sy; _ptZ[nP]=zc; _ptR[nP]=Math.max(0.8,dot*1.3*s/ME_S0*0.5+0.8);
-        _ptA[nP]=Math.max(0,da); _ptC[nP]=rgb; _ptSolid[nP]=isSolid?1:0; _ptIdx[nP]=nP;
-        if(zc<nzc){ nzc=zc; nx=sx; ny=sy; }
-        nP++;
+        _rx[p]=cx+X*s; _ry[p]=cy+Y*s;                   // cx/cy = projected origin
+        // normalise camera-space depth across the ring's extent for the cue:
+        _rz[p]=Math.max(0,Math.min(1,(zc-(FOV+camD)+wr)/(2*wr+1)));
+        _rok[p]=1;
       }
+      // label anchor: the vertex nearest this organ's fixed lblAng (so labels
+      // sit at distinct angles around their rings and do not pile up).
+      const ang=p/ORGAN_PTS*6.28318530718;
+      let da=Math.abs(((ang-o.lblAng+Math.PI*3)%(Math.PI*2))-Math.PI);
+      if(_rok[p] && da<lblZbest){ lblZbest=da;
+        _lblX[i]=_rx[p]; _lblY[i]=_ry[p]; _lblZ[i]=_rz[p]; }
     }
-    // nucleus marker + billboarded label anchor for this organ (drawn after the
-    // world depth-sort, or inline for the screen path).
-    if(revI<=0){
+    // ── stroke the ring as connected segments. Near side (low dz) brighter &
+    //    thicker; far side dimmer & thinner → the loop reads as a 3D ring. For
+    //    the engram, the SOLID arc covers solid·ORGAN_PTS segments (honest fill);
+    //    the empty remainder is drawn faint & dashed (skip alternate segments).
+    const solidSeg=Math.round(g.solid*ORGAN_PTS);
+    for(let p=0;p<ORGAN_PTS;p++){
+      const q=(p+1)%ORGAN_PTS;
+      if(!_rok[p]||!_rok[q]) continue;                 // segment touches a culled vertex
+      const isFill=(p<solidSeg);                       // within the honest-fill arc
+      if(!isFill && (p&1)) continue;                   // dashed look on the empty arc
+      const dz=(_rz[p]+_rz[q])*0.5;                     // segment mid-depth 0..1
+      let segA=baseA*(0.95-0.6*dz);                     // near brighter, far dimmer
+      if(!isFill) segA*=0.22;                           // empty engram slots = faint
+      ctx.globalAlpha=Math.max(0,segA);
+      ctx.strokeStyle=`rgba(${rgb},1)`;
+      ctx.lineWidth=Math.max(0.6,lw*(1.25-0.7*dz)*(1+0.3*g.beat));
+      ctx.beginPath();ctx.moveTo(_rx[p],_ry[p]);ctx.lineTo(_rx[q],_ry[q]);ctx.stroke();
+    }
+    // a small node bead at the label anchor marks the ring (and ties the leader);
+    // its size/brightness follow the beat (honest), never tms. Skip entirely if
+    // every vertex of this ring was culled (lblZbest stayed at its 2 sentinel) so
+    // we never draw a bead/label at a stale anchor from a previous organ.
+    const visible=(lblZbest<2);
+    if(visible){
       ctx.globalAlpha=baseA*0.95+0.3*g.beat;
       ctx.fillStyle=`rgba(${rgb},1)`;
-      ctx.beginPath();ctx.arc(nx,ny,Math.max(1.6,baseR*0.045)*(1+0.4*g.beat),0,7);ctx.fill();
+      ctx.beginPath();ctx.arc(_lblX[i],_lblY[i],Math.max(1.4,baseR*0.03)*(1+0.4*g.beat),0,7);ctx.fill();
     }
-    if(reveal>0.5){ _lblX[_lblN]=nx; _lblY[_lblN]=ny; _lblTxt[_lblN]=g.txt; _lblRGB[_lblN]=rgb; _lblN++; }
-  }
-  // ── WORLD-SPACE: depth-sort all collected points far→near, then draw, so the
-  //    nested shells genuinely occlude/parallax as you fly among them. The sort
-  //    is over a fixed Int32Array index range (no allocation).
-  if(revI>0 && nP>0){
-    const idx=_ptIdx;
-    // insertion sort by descending zc (nP is small, ~240; allocation-free)
-    for(let a=1;a<nP;a++){ const k=idx[a]; const kz=_ptZ[k]; let b=a-1;
-      while(b>=0 && _ptZ[idx[b]]<kz){ idx[b+1]=idx[b]; b--; } idx[b+1]=k; }
-    for(let a=0;a<nP;a++){ const k=idx[a];
-      ctx.globalAlpha=_ptA[k];
-      ctx.fillStyle=_ptSolid[k]?`rgba(${_ptC[k]},1)`:`rgba(${_ptC[k]},0.5)`;
-      ctx.beginPath();ctx.arc(_ptX[k],_ptY[k],_ptR[k],0,7);ctx.fill();
+    if(reveal>0.5 && visible){
+      _lblTxt[i]=g.txt; _lblAbbr[i]=o.abbr; _lblRGB[i]=rgb;
+      if(_lblZ[i]<nearestZ){ nearestZ=_lblZ[i]; nearestLbl=i; }
+    }else{
+      _lblTxt[i]=""; _lblAbbr[i]="";          // culled ring: no label this frame
     }
   }
   // the inference nucleus (NOT a shell): a central heartbeat tinted by the last
-  // decision. Resting infer rate 0 ⇒ no pulse (only the shimmer).
+  // decision. Resting infer rate 0 ⇒ no pulse (only the shimmer). Its label takes
+  // the extra (ME_ORGANS.length) slot.
+  const ni=ME_ORGANS.length;
   const nuc=nucleusGlow(m,now,tms);
   ctx.globalAlpha=reveal*(0.45+0.5*nuc.beat);
   ctx.fillStyle=`rgba(${nuc.tint},1)`;
   ctx.beginPath();ctx.arc(cx,cy,Math.max(2,baseR*0.05)*(1+0.6*nuc.beat),0,7);ctx.fill();
-  if(reveal>0.5){ _lblX[_lblN]=cx; _lblY[_lblN]=cy; _lblTxt[_lblN]=nuc.txt; _lblRGB[_lblN]=nuc.tint; _lblN++; }
+  if(reveal>0.5){ _lblX[ni]=cx; _lblY[ni]=cy; _lblTxt[ni]=nuc.txt; _lblAbbr[ni]="◉";
+                  _lblRGB[ni]=nuc.tint; _lblZ[ni]=0.5; _lblN=ni+1; }
+  else _lblN=ni;
   ctx.restore();   // release clip BEFORE the billboarded labels (screen-space text)
   // ── billboarded metric labels (screen-space, NEVER rotated) — the in-body
-  //    task-manager readout. Drawn last, unclipped, so text stays crisp.
+  //    task-manager readout. Drawn last, unclipped, so text stays crisp. To stop
+  //    the overlap mk_pino saw on the phone, only the NEAREST ring shows its full
+  //    metric line; every other ring shows just a small colour-coded abbr tag at
+  //    its own anchor. Tag boxes are nudged off the bead by a short leader so the
+  //    text never sits on the glow. Smaller font + DPR-aware sizing keep it legible
+  //    on the 412×915 dock.
   if(reveal>0.5 && baseR>16){
     const la=(reveal-0.5)*2*0.9;
-    ctx.font="10px ui-monospace,monospace";
+    const big=Math.max(10,Math.min(13,baseR*0.06));   // focused-label px
+    const sm=Math.max(8,big-2);                        // abbr tag px
     for(let i=0;i<_lblN;i++){
       if(!_lblTxt[i]) continue;
-      ctx.globalAlpha=la*0.5;          // a faint dark backing so text reads on glow
-      ctx.fillStyle="rgba(5,6,10,0.7)";
-      const tw=ctx.measureText(_lblTxt[i]).width;
-      ctx.fillRect(_lblX[i]+3,_lblY[i]-11,tw+4,13);
-      ctx.globalAlpha=la;
+      const focused=(i===nearestLbl);
+      const txt=focused?_lblTxt[i]:_lblAbbr[i];
+      if(!txt) continue;
+      ctx.font=(focused?big:sm)+"px ui-monospace,monospace";
+      const ox=_lblX[i]+6, oy=_lblY[i]-2;              // anchor just off the bead
+      const tw=ctx.measureText(txt).width;
+      const fh=focused?big+3:sm+2;
+      ctx.globalAlpha=la*(focused?0.62:0.42);          // dark backing for contrast
+      ctx.fillStyle="rgba(5,6,10,0.72)";
+      ctx.fillRect(ox-2,oy-fh+2,tw+4,fh);
+      ctx.globalAlpha=la*(focused?1:0.85);
       ctx.fillStyle=`rgba(${_lblRGB[i]},1)`;
-      ctx.fillText(_lblTxt[i],_lblX[i]+5,_lblY[i]-1);
+      ctx.fillText(txt,ox,oy);
     }
   }
   ctx.globalAlpha=1;
