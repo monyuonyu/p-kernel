@@ -363,6 +363,38 @@ INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig)
     return r;
 }
 
+/* ================================================================== */
+/* self-access R0 §3 (Q3=YES) — record a body-touch onto "self/lin".    */
+/* ================================================================== */
+/* A self-introspection (the operator/mind READING tasks/files/devices/   */
+/* stats) is an autobiographical event: append ONE LM_SELF_ENTRY to the   */
+/* EXISTING chain via the SAME pfs_dag_save path the unit events use. The */
+/* event kind is LM_SELF_EV_INTROSPECT; the `domains` bitmask of what was  */
+/* read rides the unit_ver slot of the age_ms encoding (no read CONTENT is */
+/* ever stored — only the FACT that the body was examined). No new chain,  */
+/* no new hash (anti-fork §6).                                            */
+
+INT lm_self_append_introspect(U4 domains)
+{
+    /* delegate to the shared unit-event append: same prev-link / next-seq /
+     * companion-sign machinery; the kind marks it a self-introspection and
+     * `domains` records what was read. */
+    return lm_self_append_unit_event(LM_SELF_EV_INTROSPECT,
+                                     domains & 0xFFFFF, 0);
+}
+
+/* READ-ONLY head-seq probe (self-access R0): read the current "self/lin"
+ * head manifest and return its seq, or 0 if there is no readable head. */
+U4 lm_self_head_seq(void)
+{
+    LM_SELF_ENTRY head;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                          &head, (UW)sizeof head);
+    if ((rd != (INT)sizeof head && rd != LM_SELF_ENTRY_V1_SIZE)
+        || head.magic != LM_SELF_MAGIC) return 0;
+    return head.seq;
+}
+
 /* selfc-ring3 §5.3 — walk the live "self/lin" chain head->genesis, verify it
  * hash-chains end-to-end (reusing the wave-22 self_walk verifier), and count
  * the unit-lifecycle events by kind. The walk yields ids head-first; we read

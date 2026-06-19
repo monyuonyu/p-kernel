@@ -172,3 +172,13 @@ void pfs_dag_cmd(const UB *args, UW len);
  * mismatch) without adopting garbage refs. Prints [pfs-dagrefs] PASS/FAIL.
  * Returns 0 on PASS, non-zero on FAIL or when durable is not active. */
 INT  pfs_dag_self_test(void (*emit)(const char *));
+
+/* self-access R0 (docs/architecture/self-access.md): READ-ONLY iterate the
+ * local named-object table. For each used ref the callback receives the
+ * object NAME (NUL-terminated, <=PFS_NAME_MAX chars), its head version `seq`,
+ * and the head manifest's `origin` node — names + metadata only, NEVER block
+ * contents, and the table is not mutated. `ctx` is passed through opaquely.
+ * Returns the number of refs visited. The mind uses this to "see" which
+ * objects its body holds without being able to alter them. */
+UW   pfs_dag_foreach_ref(void (*cb)(void *ctx, const char *name, UW seq,
+                                    UB origin), void *ctx);

@@ -932,3 +932,29 @@ INT pfs_dag_self_test(void (*emit)(const char *))
     return 0;     /* bare metal: no durable ref table */
 #endif
 }
+
+/* ------------------------------------------------------------------ */
+/* self-access R0 — READ-ONLY ref enumeration (see pfs_dag.h).         */
+/* Walks the in-RAM ref table and reports NAME + head seq + origin for  */
+/* each used slot. Touches no block contents and mutates nothing.       */
+/* ------------------------------------------------------------------ */
+UW pfs_dag_foreach_ref(void (*cb)(void *ctx, const char *name, UW seq,
+                                  UB origin), void *ctx)
+{
+    UW n = 0;
+    if (!cb) return 0;
+    for (INT i = 0; i < PFS_REF_MAX; i++) {
+        if (!refs[i].used) continue;
+        /* NUL-terminate the (NUL-padded, but length-bounded) name into a
+         * local before handing it out — the callback never sees raw table
+         * memory, and name_len bounds the copy. */
+        char nm[PFS_NAME_MAX + 1];
+        UW   ln = refs[i].e.name_len;
+        if (ln > PFS_NAME_MAX) ln = PFS_NAME_MAX;
+        for (UW k = 0; k < ln; k++) nm[k] = refs[i].e.name[k];
+        nm[ln] = '\0';
+        cb(ctx, nm, refs[i].e.seq, refs[i].e.origin);
+        n++;
+    }
+    return n;
+}

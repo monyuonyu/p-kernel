@@ -122,6 +122,7 @@ COMMON_C_SRCS = \
     dmn.c \
     lm_consolidate.c \
     lm_self.c \
+    self_access.c \
     ga.c \
     vital.c \
     gossip_learn.c \

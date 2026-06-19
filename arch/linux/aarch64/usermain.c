@@ -41,6 +41,7 @@
 #include "selfc_proc.h"
 #endif
 #include "genome.h"
+#include "self_access.h"   /* self-access R0: the `body` introspection verb */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -157,6 +158,7 @@ static void cmd_help(void)
     print("  genome sprout - empty plate germinates from the swarm's manifest\r\n");
     print("  net    - bring up the AF_UNIX virtual NIC and DRPC stack\r\n");
     print("  world  - whole-network situational map (alias: map), from gossip, no central\r\n");
+    print("  body   - self-access R0: READ-ONLY introspection (tasks/files/devices/stats); logs to self/lin\r\n");
     print("  reflex [on|off|table|stat] - §8 reflex layer: inference -> local defence\r\n");
     print("  protect <text>|ls|on|off|test - §2/G28 protected unit: ground threat in under-replication; actuator evacuates it\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
@@ -823,6 +825,17 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') ga_test();
             else ga_stat();
+        } else if (starts_with(line, n, "body") && (n == 4 || line[4] == ' ')) {
+            /* self-access R0 (docs/architecture/self-access.md; BACKLOG 🅰):
+             * "自分の体を触る" — READ-ONLY introspection of this node's own
+             * body. Prints its tasks/processes, p-fs/ark objects (names +
+             * versions, NOT contents), devices/sensors, and self-stats
+             * (uptime / node id / alive peers). Q3=YES: each invocation
+             * appends ONE event to the "self/lin" autobiography so the
+             * mind's self-examination joins its honest history. R0 exposes
+             * NO write/exec/drive path; the mind invoking this autonomously
+             * is R1+ (Q1/Q2-gated, deferred). */
+            (void)self_access_body();
         } else if (starts_with(line, n, "self") && (n == 4 || line[4] == ' ')) {
             /* living-mind Self layer (docs/architecture/living-mind.md III):
              * `self test` runs the distributed-autobiographical-self suite

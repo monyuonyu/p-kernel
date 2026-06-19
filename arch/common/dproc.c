@@ -365,3 +365,26 @@ void dproc_list(void)
     }
     if (!any) dp_puts("  (no processes registered)\r\n");
 }
+
+/* ------------------------------------------------------------------ */
+/* dproc_running_count — READ-ONLY count of cluster processes in the    */
+/* RUNNING state (self-access R0). Iterates the SAME K-DDS-backed slot   */
+/* topics dproc_list reads; mutates nothing.                            */
+/* ------------------------------------------------------------------ */
+UW dproc_running_count(void)
+{
+    UW running = 0;
+    char tname[8];
+    for (INT s = 0; s < DPROC_MAX; s++) {
+        slot_topic_name(s, tname);
+        for (W i = 0; i < KDDS_TOPIC_MAX; i++) {
+            if (!kdds_topics[i].open) continue;
+            if (!dp_streq(kdds_topics[i].name, tname)) continue;
+            if (kdds_topics[i].data_len < (UH)sizeof(DPROC_ENTRY)) continue;
+            DPROC_ENTRY e;
+            dp_memcpy(&e, kdds_topics[i].data, (INT)sizeof(e));
+            if (e.state == DPROC_RUNNING) running++;
+        }
+    }
+    return running;
+}

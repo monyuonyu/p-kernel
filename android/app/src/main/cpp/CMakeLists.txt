@@ -169,6 +169,7 @@ set(COMMON_SRC
     ${ARCH_CO}/dmn.c
     ${ARCH_CO}/lm_consolidate.c
     ${ARCH_CO}/lm_self.c
+    ${ARCH_CO}/self_access.c
     ${ARCH_CO}/ark_profile.c
     ${ARCH_CO}/ga.c
     ${ARCH_CO}/gossip_learn.c

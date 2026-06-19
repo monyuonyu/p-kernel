@@ -95,6 +95,7 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
 #define LM_UNIT_EV_GERM      1     /* a unit version germinated (forked)     */
 #define LM_UNIT_EV_REAP      2     /* a unit version was reaped (died)       */
 #define LM_UNIT_EV_ROLLBACK  3     /* rolled back from one seq to the prev   */
+#define LM_SELF_EV_INTROSPECT 4    /* self-access R0: the body was READ      */
 
 /* age_ms layout for a unit event: [31:28]=kind [27:20]=sig [19:0]=uv|to<<10 */
 #define LM_UNIT_EV_ENCODE(kind, uv, sig) \
@@ -109,6 +110,22 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
  * germ/rollback). Returns PFS_OK or a negative PFS_E_* code. Local-store
  * only; P1 replicates the appended blocks like any other self entry. */
 INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig);
+
+/* self-access R0 (docs/architecture/self-access.md): record ONE
+ * self-introspection ("body-touch") event onto the live "self/lin" chain.
+ * Q3=YES: each explicit READ-ONLY self-examination becomes part of the
+ * mind's honest autobiography. Encodes LM_SELF_EV_INTROSPECT as the event
+ * kind; `domains` is a bitmask of what was read (bits: 1=stats 2=tasks
+ * 4=files 8=devices) carried in the unit_ver slot, so the lineage records
+ * WHAT the mind looked at without storing any read CONTENT. ONE entry per
+ * explicit invocation (do not spam the lineage). Returns PFS_OK or a
+ * negative PFS_E_* code. */
+INT lm_self_append_introspect(U4 domains);
+
+/* READ-ONLY: the seq of the current "self/lin" head (0 if the chain is
+ * empty / has no readable head). Lets a caller prove an append landed by
+ * observing the head seq increment. Reads the head manifest only. */
+U4  lm_self_head_seq(void);
 
 /* selfc-ring3 §5.3 [selfc-lineage]: walk the live "self/lin" chain, verify it
  * hash-chains end-to-end (the wave-22 verifier), and count the unit events by

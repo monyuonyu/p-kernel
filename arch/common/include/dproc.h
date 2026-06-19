@@ -79,3 +79,7 @@ void dproc_on_node_dead(UB dead_node);
 
 /* クラスタ全体のプロセス一覧を表示 */
 void dproc_list(void);
+
+/* self-access R0: READ-ONLY count of cluster processes currently RUNNING.
+ * Reads the same slot topics as dproc_list; mutates nothing. */
+UW dproc_running_count(void);
