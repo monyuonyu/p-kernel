@@ -228,6 +228,28 @@
                 android:textColorHint="@color/sky_faint"
                 android:fontFamily="monospace"/>
 
+            <!-- N-1b: LAN-direct mesh toggle. OFF by default. When ON, two of
+                 the owner's own phones on the same WiFi mesh with NO relay
+                 (net_lan). Both phones must share the relay key (above) as the
+                 PSK; a blank key falls back to v1 plaintext (trusted WiFi). -->
+            <Switch
+                android:id="@+id/switch_lan_mesh"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/label_lan_mesh"
+                android:textColor="@color/log_text"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="12dp"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/hint_lan_mesh"
+                android:textColor="@color/sky_faint"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:paddingTop="2dp"/>
+
             <Button
                 android:id="@+id/btn_relay_save"
                 style="?android:attr/borderlessButtonStyle"

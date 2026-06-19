@@ -27,6 +27,9 @@
     <string name="hint_relay_host">e.g. relay.example.com</string>
     <string name="hint_relay_key">aabbcc… (64 chars)</string>
 
+    <string name="label_lan_mesh">LAN mesh (same WiFi, no relay)</string>
+    <string name="hint_lan_mesh">Both phones must use the same relay key above. Blank key = plaintext, trusted WiFi only.</string>
+
     <string name="btn_start">Shine</string>
     <string name="btn_stop">Stop</string>
     <string name="btn_galaxy">Open galaxy</string>

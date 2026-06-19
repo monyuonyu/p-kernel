@@ -14,6 +14,11 @@
     WAKE_LOCK         — keep CPU running while the kernel is up. Combined
                          with the battery-safe floor (run to ~30%, then pause
                          until plugged in) this stays battery-safe.
+    CHANGE_WIFI_MULTICAST_STATE
+                      — N-1b LAN-DIRECT mesh: lets the app hold a
+                         WifiManager.MulticastLock so inbound UDP broadcast is
+                         delivered (Android drops it otherwise). Only used when
+                         the off-by-default "LAN mesh" toggle is ON.
   Battery state (level + plug) is read from the sticky ACTION_BATTERY_CHANGED
   broadcast, which needs no permission.
 -->
@@ -25,6 +30,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- CHANGE_WIFI_MULTICAST_STATE — N-1b LAN-DIRECT mesh. Android SILENTLY
+         drops inbound UDP broadcast/multicast to an app without a held
+         WifiManager.MulticastLock; the lock requires this permission. Only
+         exercised while the (off-by-default) "LAN mesh" toggle is ON. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <!-- RECEIVE_BOOT_COMPLETED — a NORMAL permission. Required by
          JobInfo.setPersisted(true) so the charge-resume job survives a reboot:
          a node paused at the battery floor resumes if the phone is rebooted

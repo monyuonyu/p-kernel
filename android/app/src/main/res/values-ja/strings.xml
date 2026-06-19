@@ -12,6 +12,8 @@
     <string name="label_relay_host">リレーのホスト</string>
     <string name="label_relay_port">リレーのポート</string>
     <string name="label_relay_key">リレーの鍵（16進）</string>
+    <string name="label_lan_mesh">LANメッシュ（同じWiFi・リレーなし）</string>
+    <string name="hint_lan_mesh">両方のスマホで上のリレーの鍵を同じにしてください。鍵が空のときは平文・信頼できるWiFiのみ。</string>
     <string name="btn_stop">停止</string>
     <string name="btn_galaxy">銀河を見る</string>
     <string name="galaxy_lighting">あなたの星を灯しています…</string>

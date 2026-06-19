@@ -64,6 +64,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
@@ -78,12 +79,18 @@ class PKernelService : Service() {
     private lateinit var prefs: SharedPreferences
     private var powerReceiver: BroadcastReceiver? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
+    // N-1b: held only while the LAN-direct mesh is ON. Android SILENTLY drops
+    // inbound UDP broadcast/multicast to an app without an acquired
+    // MulticastLock, so net_lan's peer discovery would never hear anyone.
+    // Acquired in bootKernelOnce when LAN is on, released in onDestroy.
+    private var multicastLock: WifiManager.MulticastLock? = null
     // Boot params for this service instance, captured on first start so the
     // runtime power receiver can (re)boot the kernel without a fresh intent.
     private var bootNodeId = 1
     private var bootRelayHost = ""
     private var bootRelayPort = 7400
     private var bootRelayKey = ""
+    private var bootLanOn = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -104,6 +111,11 @@ class PKernelService : Service() {
                             ?: prefs.getInt(EXTRA_RELAY_PORT, 7400)
         bootRelayKey  = intent?.getStringExtra(EXTRA_RELAY_KEY)
                             ?: prefs.getString(EXTRA_RELAY_KEY, "") ?: ""
+        // N-1b: LAN-direct opt-in. OFF by default, so nothing changes for users
+        // who don't opt in. The intent may not carry it (sticky restart /
+        // charge-resume), so fall back to the persisted pref.
+        bootLanOn     = intent?.let { if (it.hasExtra(EXTRA_LAN_ON)) it.getBooleanExtra(EXTRA_LAN_ON, false) else null }
+                            ?: prefs.getBoolean(EXTRA_LAN_ON, false)
 
         // Persist the boot params so the charge-resume path (the JobScheduler
         // ResumeJobService) can relaunch this service after a low-battery
@@ -114,6 +126,7 @@ class PKernelService : Service() {
             .putString(EXTRA_RELAY_HOST, bootRelayHost)
             .putInt(EXTRA_RELAY_PORT, bootRelayPort)
             .putString(EXTRA_RELAY_KEY, bootRelayKey)
+            .putBoolean(EXTRA_LAN_ON, bootLanOn)
             .apply()
 
         startForeground(NOTIF_ID, buildNotification(bootNodeId, statusText(bootRelayHost, bootRelayPort)))
@@ -125,7 +138,7 @@ class PKernelService : Service() {
         registerNetworkCallback()
 
         if (runAllowed()) {
-            bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
+            bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey, bootLanOn)
         } else if (!powerAllowed()) {
             appendLog("[ump] battery-safe mode: battery is low and unplugged — " +
                       "the star will relight when you plug in.\n")
@@ -147,6 +160,7 @@ class PKernelService : Service() {
             netCallback = null
         }
         pollerThread?.interrupt()
+        releaseMulticastLock()   // N-1b: drop the LAN inbound lock if held
         snapRunning = false
         appendLog("[ump] service stopped.\n")
         super.onDestroy()
@@ -175,7 +189,8 @@ class PKernelService : Service() {
     /* --- kernel boot ---------------------------------------------------- */
 
     private fun bootKernelOnce(nodeId: Int, relayHost: String,
-                               relayPort: Int, relayKey: String) {
+                               relayPort: Int, relayKey: String,
+                               lanOn: Boolean) {
         if (!running.compareAndSet(false, true)) return
         // The kernel is (re)booting, so any pending charge-resume job is stale.
         // Cancel it so it can't double-fire when the phone is next plugged in.
@@ -202,13 +217,56 @@ class PKernelService : Service() {
         snapRelayPort = relayPort
         snapDataDir   = "${filesDir.absolutePath}/ark"
         snapRunning   = true
-        if (relayHost.isNotEmpty()) {
+        snapLanOn     = lanOn
+        if (lanOn) {
+            // N-1b LAN-DIRECT (relay-free same-WiFi mesh). The dispatcher checks
+            // PKERNEL_LAN before the relay, so this wins over any relay host.
+            // The shared PSK is the EXISTING relay key: plumb it through the
+            // relay key path (host left empty so the dispatcher's relay branch
+            // is NOT taken — only the key env var is set). Both phones must use
+            // the same key; blank = v1 plaintext, trusted-LAN only.
+            pk.configureRelay("", relayPort, relayKey.ifEmpty { null })
+            pk.configureLan(true, LAN_PORT)
+            acquireMulticastLock()   // inbound UDP broadcast is dropped without it
+            appendLog("[ump] LAN-direct mesh ON (port $LAN_PORT" +
+                      (if (relayKey.isEmpty()) ", v1 plaintext — trusted WiFi only" else ", shared key")
+                      + ")\n")
+            pk.boot(nodeId)
+        } else if (relayHost.isNotEmpty()) {
             pk.bootWithRelay(nodeId, relayHost, relayPort,
                              relayKey.ifEmpty { null })
         } else {
             pk.boot(nodeId)
         }
         startLogPoller(pk)
+    }
+
+    /* --- N-1b MulticastLock -------------------------------------------------
+     * Android delivers inbound UDP broadcast/multicast to an app ONLY while a
+     * WifiManager.MulticastLock is held; without it net_lan's peer-discovery
+     * broadcasts go out but nothing comes back. Acquired when the LAN mesh
+     * boots, released in onDestroy (process death also releases it). Idempotent
+     * + crash-free: getApplicationContext's WifiManager, never null-deref. */
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val lock = wifi?.createMulticastLock("yurikago-lan")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            multicastLock = lock
+            appendLog("[ump] MulticastLock acquired (LAN inbound enabled)\n")
+        } catch (t: Throwable) {
+            appendLog("[ump] MulticastLock unavailable: ${t.message}\n")
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        try {
+            multicastLock?.let { if (it.isHeld) it.release() }
+        } catch (_: Throwable) {}
+        multicastLock = null
     }
 
     private fun startLogPoller(pk: PKernel) {
@@ -306,7 +364,7 @@ class PKernelService : Service() {
         if (allowed && !running.get()) {
             appendLog("[ump] run-gate OK (battery above ${batteryFloor()}% or plugged; " +
                       "network OK) — relighting the star.\n")
-            bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey)
+            bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey, bootLanOn)
         } else if (!allowed && running.get()) {
             if (!powerAllowed()) {
                 appendLog("[ump] battery ≤${batteryFloor()}% and unplugged — pausing to " +
@@ -471,6 +529,10 @@ class PKernelService : Service() {
         const val EXTRA_RELAY_HOST = "relay_host"
         const val EXTRA_RELAY_PORT = "relay_port"
         const val EXTRA_RELAY_KEY  = "relay_key"
+        // N-1b: LAN-direct opt-in (relay-free same-WiFi mesh). OFF by default.
+        const val EXTRA_LAN_ON     = "lan_on"
+        // UDP port net_lan binds + broadcasts on; matches net_lan.c's default.
+        const val LAN_PORT         = 7351
 
         private const val LOG_CAP = 64 * 1024
         private val logBuf = StringBuilder(LOG_CAP)
@@ -489,6 +551,8 @@ class PKernelService : Service() {
         @Volatile var snapDataDir   = ""
             private set
         @Volatile var snapRunning   = false
+            private set
+        @Volatile var snapLanOn     = false
             private set
 
         @Synchronized

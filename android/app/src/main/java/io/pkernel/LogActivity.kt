@@ -41,6 +41,7 @@ import android.system.OsConstants
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
@@ -59,6 +60,7 @@ class LogActivity : AppCompatActivity() {
     private lateinit var relayHostField: EditText
     private lateinit var relayPortField: EditText
     private lateinit var relayKeyField: EditText
+    private lateinit var lanSwitch: Switch
     private val ui = Handler(Looper.getMainLooper())
     @Volatile private var stopped = false
     private var galaxyPort = BASE_PORT
@@ -96,6 +98,7 @@ class LogActivity : AppCompatActivity() {
         relayHostField = findViewById(R.id.field_relay_host)
         relayPortField = findViewById(R.id.field_relay_port)
         relayKeyField  = findViewById(R.id.field_relay_key)
+        lanSwitch      = findViewById(R.id.switch_lan_mesh)
 
         /* App version — straight off the PackageManager (no BuildConfig). */
         findViewById<TextView>(R.id.app_version).text =
@@ -134,6 +137,7 @@ class LogActivity : AppCompatActivity() {
         relayHostField.setText(prefs.getString(PKernelService.EXTRA_RELAY_HOST, "") ?: "")
         relayPortField.setText(prefs.getInt(PKernelService.EXTRA_RELAY_PORT, 7400).toString())
         relayKeyField.setText(prefs.getString(PKernelService.EXTRA_RELAY_KEY, "") ?: "")
+        lanSwitch.isChecked = prefs.getBoolean(PKernelService.EXTRA_LAN_ON, false)
         findViewById<Button>(R.id.btn_relay_save).setOnClickListener { saveAndRelight() }
 
         renderInternals()
@@ -155,17 +159,20 @@ class LogActivity : AppCompatActivity() {
         val host   = relayHostField.text.toString().trim()
         val port   = relayPortField.text.toString().toIntOrNull() ?: 7400
         val key    = relayKeyField.text.toString().trim()
+        val lanOn  = lanSwitch.isChecked
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putInt(PKernelService.EXTRA_NODE_ID, nodeId)
             .putString(PKernelService.EXTRA_RELAY_HOST, host)
             .putInt(PKernelService.EXTRA_RELAY_PORT, port)
             .putString(PKernelService.EXTRA_RELAY_KEY, key)
+            .putBoolean(PKernelService.EXTRA_LAN_ON, lanOn)
             .apply()
         val intent = Intent(this, PKernelService::class.java).apply {
             putExtra(PKernelService.EXTRA_NODE_ID,    nodeId)
             putExtra(PKernelService.EXTRA_RELAY_HOST, host)
             putExtra(PKernelService.EXTRA_RELAY_PORT, port)
             putExtra(PKernelService.EXTRA_RELAY_KEY,  key)
+            putExtra(PKernelService.EXTRA_LAN_ON,     lanOn)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
@@ -178,8 +185,11 @@ class LogActivity : AppCompatActivity() {
     /** Node internals — engineer-facing facts, jargon OK here. */
     private fun renderInternals() {
         val s = PKernelService
-        val relay = if (s.snapRelayHost.isEmpty()) "local-loopback mesh"
-                    else "${s.snapRelayHost}:${s.snapRelayPort}"
+        val relay = when {
+            s.snapLanOn               -> "LAN-direct (no relay, port ${PKernelService.LAN_PORT})"
+            s.snapRelayHost.isEmpty() -> "local-loopback mesh"
+            else                      -> "${s.snapRelayHost}:${s.snapRelayPort}"
+        }
         val store = s.snapDataDir.ifEmpty { getString(R.string.engineer_unavailable) }
         internalsView.text = buildString {
             append("node id     : ").append(if (s.snapNodeId > 0) s.snapNodeId else "—").append('\n')

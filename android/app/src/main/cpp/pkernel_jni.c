@@ -154,6 +154,44 @@ Java_io_pkernel_PKernel_nativeConfigureRelay(JNIEnv *env, jobject self,
     }
 }
 
+/*
+ *  nativeConfigureLan — N-1b: wire the LAN-DIRECT transport (relay-free
+ *  same-WiFi mesh) into the upcoming nativeBoot() by setting PKERNEL_LAN /
+ *  PKERNEL_LAN_PORT before the kernel thread starts. Mirrors
+ *  nativeConfigureRelay exactly: it ONLY sets env vars; net_dispatch.c reads
+ *  them at arch_linux_net_init() time and selects net_lan.c when PKERNEL_LAN
+ *  is set to a non-"0" value (the LAN check runs BEFORE the relay check, so an
+ *  explicit LAN opt-in wins). Must be invoked BEFORE nativeBoot().
+ *
+ *  The shared PSK that net_lan authenticates with is PKERNEL_RELAY_KEY — the
+ *  SAME env var the relay uses — so the LAN PSK is plumbed through
+ *  nativeConfigureRelay's key path, NOT here. Two of the owner's phones mesh
+ *  only when both carry the same key (blank key = v1 plaintext, trusted-LAN
+ *  only). See net_lan.c.
+ *
+ *  Args:
+ *    on    — true to opt into the LAN mesh (sets PKERNEL_LAN=1); false clears
+ *            it (unsetenv), so the dispatcher falls through to relay/loopback.
+ *    port  — UDP port net_lan binds + broadcasts on (default 7351). Ignored
+ *            if <= 0 (net_lan then uses its built-in default).
+ */
+JNIEXPORT void JNICALL
+Java_io_pkernel_PKernel_nativeConfigureLan(JNIEnv *env, jobject self,
+                                           jboolean on, jint port)
+{
+    (void)env; (void)self;
+
+    if (on) {
+        setenv("PKERNEL_LAN", "1", 1);
+        if (port > 0) {
+            char val[16]; snprintf(val, sizeof(val), "%d", (int)port);
+            setenv("PKERNEL_LAN_PORT", val, 1);
+        }
+    } else {
+        unsetenv("PKERNEL_LAN");
+    }
+}
+
 JNIEXPORT jint JNICALL
 Java_io_pkernel_PKernel_nativeReadStdout(JNIEnv *env, jobject self,
                                           jbyteArray dst, jint maxlen)

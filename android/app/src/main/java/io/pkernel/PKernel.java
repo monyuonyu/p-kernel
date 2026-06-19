@@ -25,6 +25,7 @@ public final class PKernel {
     public native void   nativeBoot(int nodeId);
     public native void   nativeSetDataDir(String dir);
     public native void   nativeConfigureRelay(String host, int port, String keyHex);
+    public native void   nativeConfigureLan(boolean on, int port);
     public native int    nativeReadStdout(byte[] dst, int maxlen);
     public native int    nativeWriteStdin(byte[] src, int len);
 
@@ -58,6 +59,25 @@ public final class PKernel {
     /** Set relay env vars without booting (e.g. for staged init). */
     public void configureRelay(String host, int port, String keyHex) {
         nativeConfigureRelay(host, port, keyHex);
+    }
+
+    /**
+     * N-1b: opt into the LAN-DIRECT transport (relay-free same-WiFi mesh)
+     * without booting. Must be called BEFORE boot(); net_dispatch selects
+     * net_lan when PKERNEL_LAN=1, ahead of the relay/loopback paths.
+     *
+     * The shared PSK is the EXISTING relay key (PKERNEL_RELAY_KEY): set it via
+     * configureRelay(host, port, keyHex) — even with an empty host — so two of
+     * the owner's own phones authenticate with the SAME key. Both phones must
+     * carry the same key; a blank key falls back to v1 plaintext (trusted-LAN
+     * only). The MulticastLock must be held by the caller for inbound
+     * broadcast to be delivered (PKernelService does this while LAN is ON).
+     *
+     * @param on   true to join the LAN mesh; false to clear the opt-in
+     * @param port UDP port (default 7351 when <= 0)
+     */
+    public void configureLan(boolean on, int port) {
+        nativeConfigureLan(on, port);
     }
 
     public int readStdout(byte[] dst, int maxlen) { return nativeReadStdout(dst, maxlen); }
