@@ -41,8 +41,8 @@ android {
         // wakes a saved baby (ns1_student.bin under the app's /ark dir, flash-
         // wear throttled). Before this the chat hit the weak no-op stubs ("…").
         // Paired with the living-body inspector (organs wired to real vitals).
-        versionCode   = 27
-        versionName   = "0.9.1"
+        versionCode   = 28
+        versionName   = "0.9.2"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.
