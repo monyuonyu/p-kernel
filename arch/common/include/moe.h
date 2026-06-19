@@ -154,6 +154,35 @@ typedef struct {
 } MOE_SCORE;
 
 /* ------------------------------------------------------------------ */
+/* MOE_CAND — 反射層の純粋な選択ステップ (moe_select_step) への入力     */
+/* (Wave G38.0 testable-seam refactor; touchpoint 0)                    */
+/*                                                                      */
+/* select_expert は I/O (SWIM/world/region/printf) を伴う候補列挙で各    */
+/* 候補の {node_id, acc, rtt, eff_pressure, threat, same_region} を計算  */
+/* し、この構造体の配列を埋めてから純粋関数 moe_select_step を呼ぶ。      */
+/* moe_select_step は expert_utility + ewma_step + deadband_pick +       */
+/* recent_pick 書き込みという「決定の数式」だけを行う (I/O なし)。本番と  */
+/* self-test (st_test_seam) が *同一の* moe_select_step を呼ぶことで、    */
+/* 選択ロジックが reconstruction でなく本番そのものだと数で守られる      */
+/* (philosophy-gap-audit trap A2 を閉じる)。                            */
+typedef struct {
+    UB  node_id;        /* 候補ノード ID (cand 配列の添字とは別; 観測用) */
+    UB  acc;            /* gate_class の accuracy 0..100 (熟慮層テーブル) */
+    UW  rtt;            /* RTT ms (0xFFFFFFFF = 未実測)                   */
+    INT eff_pressure;   /* 実効逼迫度 (負荷軸 §6; world 勾配 + 仮想負荷)  */
+    INT threat;         /* 脅威度 (THREAT 軸 §2; rally 加点)             */
+    int same_region;    /* 同一 region (反射層 §8) なら 1                */
+    /* moe_select_step が書き戻す観測値 (本番 printf がそのまま使う)。     */
+    W   util_out;       /* この候補の瞬間 utility (expert_utility の結果) */
+    W   ewma_out;       /* この候補の更新後 utility EWMA                  */
+} MOE_CAND;
+
+/* 純粋な反射層 1 決定: 候補集合 cand[0..ncand) から 1 つ選び、その添字を
+ * 返す。incumbent_io は gate_class の現職スロットを指す (in/out)。I/O なし
+ * (SWIM/drpc/printf に触れない)。select_expert と st_test_seam が共有する。 */
+UB   moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io);
+
+/* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
 /* ------------------------------------------------------------------ */
 

@@ -269,13 +269,84 @@ static UB deadband_pick(UB inc, int inc_ok, W inc_e, UB chal, W chal_e,
     return inc;
 }
 
+/* ── Wave G38.0 testable seam (touchpoint 0) — 純粋な反射層 1 決定 ─────
+ * select_expert の「決定の数式」だけをここへ抜き出す (pure code-move):
+ *   1. 候補ごとに瞬間 utility (expert_utility) を計り、EWMA (ewma_step) に
+ *      畳む (単発ノイズ除去)。EWMA の最大を「挑戦者」とする。
+ *   2. 現職 (incumbent) が健在なら、挑戦者が EWMA で MOE_SWITCH_MARGIN 以上
+ *      勝らない限り現職を保持 (deadband_pick = ヒステリシス §4.2)。
+ *   3. 選んだノードへ §8 の仮想負荷 (recent_pick) を上乗せ。
+ *
+ * I/O なし: SWIM/drpc/world/printf に一切触れない。候補は select_expert が
+ * I/O を伴って列挙し MOE_CAND[] に詰めたものだけを受け取る。本番 select_expert
+ * と self-test st_test_seam が *この同一関数* を呼ぶことで、選択ロジックが
+ * reconstruction でなく本番そのものだと数で守られる (philosophy-gap-audit
+ * trap A2 を閉じる)。数式は select_expert から *バイト等価に* 移しただけ —
+ * expert_utility / ewma_step / deadband_pick / recent_pick は不変。新しい
+ * 挙動・gacc・学習は一切含まない (Wave G38.1+ で mk_pino の review 待ち)。
+ *
+ * cand[i].node_id は大域テーブル (util_ewma/ewma_valid/recent_pick) の添字
+ * でもある。incumbent_io は gate_class の現職スロット (in/out)。現職の健在
+ * 判定は「現職が今回の候補集合に含まれるか」で行う — select_expert の元の
+ * inc_ok (inc==me もしくは score_valid && ALIVE) は「候補であること」と同値
+ * であり、候補ループが毎回 ewma_valid[node][gate_class]=1 を立てるので、元の
+ * ewma_valid 条件込みでバイト等価。返り値は cand[] 内の添字 (picked index)。
+ * cand[i].util_out / ewma_out に観測値を書き戻す (本番 printf がそのまま使う)。 */
+UB moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io)
+{
+    UB chal_i = 0xFF;        /* 挑戦者の cand[] 添字 */
+    W  chal_e = 0;
+    for (UB i = 0; i < ncand; i++) {
+        UB  n = cand[i].node_id;
+        W   u = expert_utility(cand[i].acc, cand[i].rtt, cand[i].eff_pressure,
+                               cand[i].threat, cand[i].same_region);
+        util_ewma[n][gate_class] = ewma_valid[n][gate_class]
+                                 ? ewma_step(util_ewma[n][gate_class], u) : u;
+        ewma_valid[n][gate_class] = 1;
+        W e = util_ewma[n][gate_class];
+        cand[i].util_out = u;        /* 観測値を書き戻す (本番 printf 用) */
+        cand[i].ewma_out = e;
+#ifdef MOE_SEAM_SABOTAGE
+        /* falsification hook (cert §1.0 / risk #1 A2): 最高効用→最低効用へ
+         * 反転させると [moe-seam] が RED になる。本番ビルドでは未定義。 */
+        if (chal_i == 0xFF || e < chal_e) { chal_i = i; chal_e = e; }
+#else
+        if (chal_i == 0xFF || e > chal_e) { chal_i = i; chal_e = e; }
+#endif
+    }
+
+    /* デッドバンド (§4.2 ヒステリシス): 現職が健在なら、挑戦者は margin を
+     * 超えて勝らない限り選ばれない。現職の健在 = 今回の候補集合に居ること。 */
+    UB  inc    = *incumbent_io;
+    UB  inc_i  = 0xFF;
+    for (UB i = 0; i < ncand; i++)
+        if (cand[i].node_id == inc) { inc_i = i; break; }
+    int inc_ok = (inc < DNODE_MAX) && (inc_i != 0xFF);
+    const char *verdict;
+    W   inc_e  = inc_ok ? util_ewma[inc][gate_class] : 0;
+    UB  chal_n = (chal_i != 0xFF) ? cand[chal_i].node_id : 0xFF;
+    UB  pick_n = deadband_pick(inc, inc_ok, inc_e, chal_n, chal_e, &verdict);
+    *incumbent_io = pick_n;
+
+    /* §8: 選んだノードへ自己観測の仮想負荷を即座に上乗せ (反射層の速い側)。 */
+    if (pick_n < DNODE_MAX)
+        recent_pick[pick_n] += MOE_PICK_LOAD;
+
+    /* picked index を返す (deadband_pick は現職 inc か挑戦者 chal_n のみ返す)。 */
+    if (pick_n == inc && inc_i != 0xFF) return inc_i;
+    return chal_i;
+}
+
 /* 反射層の決定 (reflex-deliberation.md §4.3 / D1):
  *   1. 候補ごとに瞬間 utility を計り、EWMA に畳む (単発ノイズ除去)。
  *   2. EWMA の最大を「挑戦者」とする。
  *   3. 現職 (incumbent) が健在なら、挑戦者が EWMA で MOE_SWITCH_MARGIN
  *      以上勝らない限り現職を保持 (デッドバンド = ヒステリシス)。
  * 入力は accuracy テーブル (熟慮層が遅い帯域で更新) + RTT/pressure/region
- * (局所窓口) のみ。決定そのものは要求駆動 — 反射層の最速の時定数。 */
+ * (局所窓口) のみ。決定そのものは要求駆動 — 反射層の最速の時定数。
+ *
+ * Wave G38.0: 候補列挙 (I/O) → MOE_CAND[] 充填 → 純粋 moe_select_step、の
+ * 三段に整理した。数式は moe_select_step へバイト等価に移しただけ。 */
 static UB select_expert(UB gate_class)
 {
     /* §8 ダンピング: 毎決定の冒頭で recent_pick を減衰させる。直近の選択ほど
@@ -294,67 +365,76 @@ static UB select_expert(UB gate_class)
     /* region のメンバ判定をこの選択の間だけ固定する (ホットパス: 再計算回避)。 */
     region_recompute();
 
-    /* 候補列挙: 自分も応援先の一候補にすぎない — ローカルが常に勝つわけでは
-     * ない (相互応援)。瞬間 utility を EWMA に畳み、EWMA で挑戦者を選ぶ。 */
-    UB chal = 0xFF;
-    W  chal_e = 0;
+    /* 候補列挙 (I/O 段): 自分も応援先の一候補にすぎない — ローカルが常に勝つ
+     * わけではない (相互応援)。SWIM/world/region を読み MOE_CAND[] を詰める。
+     * scratch は DNODE_MAX 固定 (no-VLA; 実行時次元には依存しない)。 */
+    MOE_CAND cand[DNODE_MAX];
+    UB ncand = 0;
     for (UB n = 0; n < DNODE_MAX; n++) {
         int is_self = (n == me);
         if (!is_self) {
             if (!score_valid[n]) continue;
             if (dnode_table[n].state != DNODE_ALIVE) continue;
         }
-
-        UB  acc  = is_self ? my_accuracy[gate_class]
-                           : peer_scores[n].accuracy[gate_class];
-        UW  rtt  = is_self ? 0 : swim_rtt_ms(n);
+        cand[ncand].node_id      = n;
+        cand[ncand].acc          = is_self ? my_accuracy[gate_class]
+                                           : peer_scores[n].accuracy[gate_class];
+        cand[ncand].rtt          = is_self ? 0 : swim_rtt_ms(n);
         /* 負荷項は world ビーコン (ゴシップされた局所勾配) + 自己仮想負荷。
          * broadcast score table はここでは負荷の真実として使わない (§7)。 */
-        INT eff  = eff_pressure(n);
+        cand[ncand].eff_pressure = eff_pressure(n);
         /* 脅威項 (THREAT 軸 §2): 候補自身の「危険/守るべき」信号。自分なら
          * reflex から直読 (gossip 遅延ゼロ)、ピアなら局所 world-table の gossip。
          * load とは逆符号で *加点* され、群れがその一点へ集束する (rally)。 */
-        INT thr  = is_self ? (INT)reflex_threat_level() : eff_threat(n);
-        int same = is_self ? 1 : (region_is_member(n) ? 1 : 0);
-        W   u    = expert_utility(acc, rtt, eff, thr, same);
-
-        util_ewma[n][gate_class] = ewma_valid[n][gate_class]
-                                 ? ewma_step(util_ewma[n][gate_class], u) : u;
-        ewma_valid[n][gate_class] = 1;
-        W e = util_ewma[n][gate_class];
-
-        if (is_self) { mo_puts("[moe] cand self "); }
-        else         { mo_puts("[moe] cand node"); mo_putdec(n); }
-        mo_puts(" acc="); mo_putdec(acc);
-        mo_puts(" rtt="); mo_putdec(rtt == 0xFFFFFFFFUL ? MOE_RTT_UNKNOWN_MS : rtt);
-        mo_puts("ms press="); mo_putdec((UW)eff);
-        mo_puts(" thr="); mo_putdec((UW)thr);
-        if (thr > 0) mo_puts("(RALLY)");
-        mo_puts(same ? " rgn" : "    ");
-        mo_puts(" util="); mo_putsdec(u);
-        mo_puts(" ewma="); mo_putsdec(e);
-        mo_puts("\r\n");
-
-        if (chal == 0xFF || e > chal_e) { chal = n; chal_e = e; }
+        cand[ncand].threat       = is_self ? (INT)reflex_threat_level()
+                                           : eff_threat(n);
+        cand[ncand].same_region  = is_self ? 1 : (region_is_member(n) ? 1 : 0);
+        ncand++;
     }
 
-    /* デッドバンド (§4.2 ヒステリシス): 現職が健在なら、挑戦者は margin を
-     * 超えて勝らない限り選ばれない。応援に行く閾値と引き上げる閾値をずらす。 */
-    UB inc = incumbent[gate_class];
-    int inc_ok = (inc < DNODE_MAX) && ewma_valid[inc][gate_class] &&
-                 (inc == me || (score_valid[inc] &&
-                                dnode_table[inc].state == DNODE_ALIVE));
-    const char *verdict;
-    W inc_e = inc_ok ? util_ewma[inc][gate_class] : 0;
-    UB pick = deadband_pick(inc, inc_ok, inc_e, chal, chal_e, &verdict);
-    incumbent[gate_class] = pick;
+    /* 純粋な決定段: 本番と self-test (st_test_seam) が共有する唯一の選択数式。
+     * 更新前の現職を控えてから呼ぶ (可観測行の inc/verdict 復元に使う)。 */
+    UB inc0 = incumbent[gate_class];
+    UB pick_i = moe_select_step(cand, ncand, gate_class, &incumbent[gate_class]);
+    UB pick   = (pick_i < ncand) ? cand[pick_i].node_id : me;
 
-    /* 反射 vs 熟慮の可観測行 (D2): 現職/挑戦者の EWMA、margin、判定、
-     * 熟慮層の情報が何 ms 前のものか。 */
+    /* 候補ごとの可観測行 (D2): moe_select_step が書き戻した util/ewma を、
+     * 元と同じ順序・同じ書式で出す (バイト等価)。 */
+    for (UB i = 0; i < ncand; i++) {
+        UB n = cand[i].node_id;
+        if (n == me) { mo_puts("[moe] cand self "); }
+        else         { mo_puts("[moe] cand node"); mo_putdec(n); }
+        mo_puts(" acc="); mo_putdec(cand[i].acc);
+        mo_puts(" rtt="); mo_putdec(cand[i].rtt == 0xFFFFFFFFUL
+                                    ? MOE_RTT_UNKNOWN_MS : cand[i].rtt);
+        mo_puts("ms press="); mo_putdec((UW)cand[i].eff_pressure);
+        mo_puts(" thr="); mo_putdec((UW)cand[i].threat);
+        if (cand[i].threat > 0) mo_puts("(RALLY)");
+        mo_puts(cand[i].same_region ? " rgn" : "    ");
+        mo_puts(" util="); mo_putsdec(cand[i].util_out);
+        mo_puts(" ewma="); mo_putsdec(cand[i].ewma_out);
+        mo_puts("\r\n");
+    }
+
+    /* 反射 vs 熟慮の可観測行 (D2): 更新前の現職 inc0 / 挑戦者 chal / verdict を
+     * moe_select_step と *同一の* deadband_pick で復元する (重複ロジックなし;
+     * deadband_pick は副作用なしなので再呼び出しはバイト等価)。 */
+    UB chal = 0xFF; W chal_e = 0;
+    for (UB i = 0; i < ncand; i++)
+        if (chal == 0xFF || cand[i].ewma_out > chal_e) {
+            chal = cand[i].node_id; chal_e = cand[i].ewma_out;
+        }
+    int inc_ok = 0;
+    for (UB i = 0; i < ncand; i++)
+        if (cand[i].node_id == inc0) { inc_ok = (inc0 < DNODE_MAX); break; }
+    const char *verdict;
+    W inc_e = inc_ok ? util_ewma[inc0][gate_class] : 0;
+    (void)deadband_pick(inc0, inc_ok, inc_e, chal, chal_e, &verdict);
+
     mo_puts("[moe] reflex cls="); mo_putdec(gate_class);
-    mo_puts(" inc=");  if (inc < DNODE_MAX) { mo_puts("node"); mo_putdec(inc); }
+    mo_puts(" inc=");  if (inc0 < DNODE_MAX) { mo_puts("node"); mo_putdec(inc0); }
                        else mo_puts("none");
-    if (inc_ok) { mo_puts(" ewma="); mo_putsdec(util_ewma[inc][gate_class]); }
+    if (inc_ok) { mo_puts(" ewma="); mo_putsdec(util_ewma[inc0][gate_class]); }
     mo_puts(" chal=node"); mo_putdec(chal);
     mo_puts(" ewma="); mo_putsdec(chal_e);
     mo_puts(" margin="); mo_putdec(MOE_SWITCH_MARGIN);
@@ -363,13 +443,6 @@ static UB select_expert(UB gate_class)
     if (delib_count == 0) mo_puts("-");
     else { mo_putdec(moe_uptime_ms - delib_at_ms); mo_puts("ms"); }
     mo_puts("\r\n");
-
-    /* §8: 選んだノードへ自己観測の仮想負荷を即座に上乗せ (反射層の速い側)。
-     * 次の連続選択ではこのノードがわずかに「混んで見える」ので、空き先が
-     * 一点に殺到せず近傍へ分散する。ゴシップで本物の逼迫度が届けば自然に
-     * 引き継がれる。 */
-    if (pick < DNODE_MAX)
-        recent_pick[pick] += MOE_PICK_LOAD;
 
     return pick;
 }
@@ -1049,6 +1122,134 @@ static INT st_test_protect(void)
     return fails;
 }
 
+/* ── Wave G38.0: [moe-seam] — 純粋選択関数 moe_select_step の直接 cert ──
+ * (cert §1.0; philosophy-gap-audit trap A2 を閉じる)
+ *
+ * 既存の [moe-osc]/[moe-twolayer]/[moe-nocentral] は leaf helper を呼んで
+ * 候補ループを *再構成* したテスト (reconstruction) であり、本番 select_expert
+ * の選択ロジックそのものは検査していない。本テストは select_expert が実際に
+ * 呼ぶ関数 moe_select_step を *逐語的に* (scripted MOE_CAND[] で) 叩き、
+ * その選択 (最高効用 / 現職ヒステリシス / same-region 規則) が refactor 前の
+ * select_expert 算術と完全に一致することを数で示す。これにより:
+ *   - 抽出した moe_select_step が「本番が通る本物の選択ロジック」であること、
+ *   - 将来 gacc cert がこの seam を rubber-stamp にできないこと
+ * が保証される。MOE_SEAM_SABOTAGE を定義して最高→最低効用へ反転させると
+ * 本テストは RED になる (KV/N-2b cert と同形の falsifiability)。
+ *
+ * 各シナリオは別々の node_id 群を使い (moe_init 後の ewma_valid=0 から開始)、
+ * incumbent は呼び出し側ローカルに保持するので相互に汚染しない。
+ * 効用 u = acc - rtt/MOE_RTT_MS_PER_POINT - eff_pressure*PRESS_NUM/DEN
+ *          + threat*PROTECT_NUM/DEN + (same_region?MOE_SAME_REGION_BONUS:0)。
+ * 単発決定では ewma_valid=0 ゆえ EWMA == 瞬間効用 (手計算で picked が決まる)。 */
+static void sm_set(MOE_CAND *c, UB node, UB acc, UW rtt, INT press,
+                   INT threat, int same_rgn)
+{
+    c->node_id = node; c->acc = acc; c->rtt = rtt;
+    c->eff_pressure = press; c->threat = threat; c->same_region = same_rgn;
+    c->util_out = 0; c->ewma_out = 0;
+}
+
+static INT st_test_seam(void)
+{
+    INT fails = 0;
+    moe_init();   /* 反射状態 (util_ewma/ewma_valid/incumbent/recent_pick) を 0 へ */
+    mo_puts("[moe-seam] direct cert of moe_select_step — THE function"
+            " select_expert() calls (production path), not a reconstruction\r\n");
+
+    /* S1: 現職なし (seed) → 最高効用が勝つ。3 候補 acc=70, press={80,10,50}
+     *     → u = {30,65,45} → node1 (index 1) が最高。最低が勝つなら index 0/2。 */
+    {
+        MOE_CAND c[3];
+        sm_set(&c[0], 0, 70, 0, 80, 0, 0);   /* u = 70-40        = 30 */
+        sm_set(&c[1], 1, 70, 0, 10, 0, 0);   /* u = 70-5         = 65 */
+        sm_set(&c[2], 2, 70, 0, 50, 0, 0);   /* u = 70-25        = 45 */
+        UB inc = 0xFF;
+        UB pick = moe_select_step(c, 3, 0, &inc);
+        mo_puts("[moe-seam] S1 seed pick=index"); mo_putdec(pick);
+        mo_puts(" node"); mo_putdec(c[pick].node_id);
+        mo_puts(" util="); mo_putsdec(c[pick].util_out);
+        mo_puts(" (expect index1/node1/util65)\r\n");
+        if (!(pick == 1 && c[pick].node_id == 1 && c[1].util_out == 65 &&
+              inc == 1)) {
+            mo_puts("[moe-seam] FAIL S1 seed did not pick highest utility\r\n");
+            fails++;
+        }
+    }
+
+    /* S2: 現職 node3 (u=60), 挑戦者 node4 (u=65)。差 5 <= MOE_SWITCH_MARGIN(12)
+     *     → HOLD 現職 (deadband ヒステリシス)。挑戦者は選ばれない。 */
+    {
+        MOE_CAND c[2];
+        sm_set(&c[0], 3, 70, 0, 20, 0, 0);   /* inc node3: u = 70-10 = 60 */
+        sm_set(&c[1], 4, 70, 0, 10, 0, 0);   /* chal node4: u = 70-5 = 65 */
+        UB inc = 3;
+        UB pick = moe_select_step(c, 2, 0, &inc);
+        mo_puts("[moe-seam] S2 inc=node3 chal=node4(+5) pick=node");
+        mo_putdec(c[pick].node_id);
+        mo_puts(" (expect HOLD node3; margin="); mo_putdec(MOE_SWITCH_MARGIN);
+        mo_puts(")\r\n");
+        if (!(c[pick].node_id == 3 && inc == 3)) {
+            mo_puts("[moe-seam] FAIL S2 deadband did not hold incumbent\r\n");
+            fails++;
+        }
+    }
+
+    /* S3: 現職 node5 (u=45), 挑戦者 node6 (u=70)。差 25 > MOE_SWITCH_MARGIN
+     *     → SWITCH to node6。 */
+    {
+        MOE_CAND c[2];
+        sm_set(&c[0], 5, 70, 0, 50, 0, 0);   /* inc node5: u = 70-25 = 45 */
+        sm_set(&c[1], 6, 70, 0,  0, 0, 0);   /* chal node6: u = 70     = 70 */
+        UB inc = 5;
+        UB pick = moe_select_step(c, 2, 0, &inc);
+        mo_puts("[moe-seam] S3 inc=node5 chal=node6(+25) pick=node");
+        mo_putdec(c[pick].node_id);
+        mo_puts(" (expect SWITCH node6)\r\n");
+        if (!(c[pick].node_id == 6 && inc == 6)) {
+            mo_puts("[moe-seam] FAIL S3 deadband did not switch on margin\r\n");
+            fails++;
+        }
+    }
+
+    /* S4: same-region 加点が pick を決める。node7 acc70 press0 rgn0 → u=70。
+     *     node8 acc68 press0 rgn1 → u = 68+MOE_SAME_REGION_BONUS = 73。
+     *     region bonus が無ければ node7(70) が勝つはず → node8 勝利が bonus の証拠。 */
+    {
+        MOE_CAND c[2];
+        sm_set(&c[0], 7, 70, 0, 0, 0, 0);    /* u = 70                       */
+        sm_set(&c[1], 8, 68, 0, 0, 0, 1);    /* u = 68 + 5 (same_region) = 73 */
+        UB inc = 0xFF;
+        UB pick = moe_select_step(c, 2, 0, &inc);
+        mo_puts("[moe-seam] S4 region-bonus pick=node"); mo_putdec(c[pick].node_id);
+        mo_puts(" util="); mo_putsdec(c[pick].util_out);
+        mo_puts(" (expect node8/util73 via same_region+");
+        mo_putdec(MOE_SAME_REGION_BONUS); mo_puts(")\r\n");
+        if (!(c[pick].node_id == 8 && c[pick].util_out == 73)) {
+            mo_puts("[moe-seam] FAIL S4 same-region bonus did not enter the pick\r\n");
+            fails++;
+        }
+    }
+
+    /* S5: recent_pick の §8 仮想負荷が picked node へ加算される (本番副作用)。
+     *     S4 で node8 (index1) が picked。moe_select_step は recent_pick[8] へ
+     *     MOE_PICK_LOAD を足したはず。 */
+    if (recent_pick[8] != MOE_PICK_LOAD) {
+        mo_puts("[moe-seam] FAIL S5 recent_pick virtual-load not applied to pick\r\n");
+        fails++;
+    } else {
+        mo_puts("[moe-seam] S5 recent_pick[node8]="); mo_putdec(recent_pick[8]);
+        mo_puts(" (= MOE_PICK_LOAD, §8 self-load applied by the real function)\r\n");
+    }
+
+    moe_init();   /* テストが汚した反射状態を片付ける */
+    if (fails == 0)
+        mo_puts("[moe-seam] PASS (moe_select_step IS select_expert's selection"
+                " logic: highest-utility + hysteresis + region + §8 load)\r\n");
+    else
+        mo_puts("[moe-seam] FAIL\r\n");
+    return fails;
+}
+
 /* ================================================================== */
 /* 本丸 (wave 18) — ONE BRAIN property tests ([onebrain-*])             */
 /*                                                                     */
@@ -1332,6 +1533,7 @@ INT moe_self_test(void)
     fails += st_test_oscillation();
     fails += st_test_concurrent();
     fails += st_test_protect();
+    fails += st_test_seam();        /* Wave G38.0: direct cert of moe_select_step */
     mo_puts("[moe-test] ==== 本丸 ONE BRAIN tests (wave 18 — three brains -> one) ====\r\n");
     fails += st_test_onebrain_unified();
     fails += st_test_onebrain_channels();
