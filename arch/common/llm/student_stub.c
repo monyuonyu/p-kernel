@@ -1,5 +1,6 @@
 /*
- *  student_stub.c — WEAK no-op fallbacks for the resident-baby (student) ABI.
+ *  student_stub.c — WEAK no-op fallbacks for the resident-baby (student) ABI
+ *                   AND the SmolLM2-engine console ABI (llm_shell_cmd).
  *
  *  WHY THIS FILE EXISTS (build regression fix, wave-student-link-fix):
  *  ------------------------------------------------------------------
@@ -69,4 +70,35 @@ __attribute__((weak)) int student_chat_generate(const char *intext, int inlen,
 __attribute__((weak)) unsigned student_dmn_save_count(void)
 {
     return 0;   /* no baby resident -> no durable saves */
+}
+
+/* ---- SmolLM2-engine console ABI (wave-android-student) ------------------
+ *
+ *  arch/linux/{aarch64,x86_64}/usermain.c expose a dev-console `llm` verb that
+ *  calls llm_shell_cmd() — the SmolLM2 TEACHER inference engine bridge, whose
+ *  STRONG def lives in arch/common/llm/llm_shell.c (the 138MB engine tier:
+ *  gguf.c/forward.c/tokenizer.c/quant.c/sample.c). That engine is HOST-ONLY
+ *  (boot/linux LLM_C_SRCS) and is DELIBERATELY NOT shipped in the Android .so:
+ *  the resident-baby chat is pure-A (the student generates ON ITS OWN; the
+ *  teacher is never consulted at inference) and the DMN distills from a small
+ *  COMMITTED teacher-byte fixture, so the phone never needs the teacher engine.
+ *
+ *  But usermain.c is compiled into the Android .so, and the NDK link uses
+ *  `-Wl,--no-undefined` (strict) — so the unresolved llm_shell_cmd failed the
+ *  link once student_shell.c (which DOES define student_boot_restore /
+ *  student_shell_cmd) was added and they stopped masking the problem. This weak
+ *  no-op resolves the link without pulling the teacher engine in. On a HOSTED
+ *  build the strong llm_shell.c def overrides it (student_stub.c is not even
+ *  compiled there); on Android/bare-metal the `llm` verb gracefully reports
+ *  "no engine" — the chat UI never calls it (it goes through the student).
+ *
+ *  Signature matches usermain.c's
+ *    IMPORT int llm_shell_cmd(const char *args, void (*emit)(const char *)); */
+__attribute__((weak)) int llm_shell_cmd(const char *args,
+                                        void (*emit)(const char *))
+{
+    if (emit) emit("[llm] SmolLM2 teacher engine not built on this target "
+                   "(the resident baby is pure-A; use `student`/chat)\r\n");
+    (void)args;
+    return 0;
 }

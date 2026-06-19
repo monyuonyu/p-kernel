@@ -34,8 +34,15 @@ android {
         // app's private files dir (PKERNEL_PFS_DIR via nativeSetDataDir), so
         // the identity (Self lineage) AND the learned mind (rw[]) survive a
         // process death / reboot instead of evaporating on every launch.
-        versionCode   = 25
-        versionName   = "0.8.3"
+        // 0.9.0: the RESIDENT student engine ships in the APK — the claude.ai-
+        // style chat ⑥ is now POWERED by the in-kernel NS-1 Cradle baby (it
+        // generates on its own, pure-A), the DMN sleep tick ④ distills it from
+        // the committed teacher fixture on the phone, and student_boot_restore ③
+        // wakes a saved baby (ns1_student.bin under the app's /ark dir, flash-
+        // wear throttled). Before this the chat hit the weak no-op stubs ("…").
+        // Paired with the living-body inspector (organs wired to real vitals).
+        versionCode   = 26
+        versionName   = "0.9.0"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.

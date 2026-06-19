@@ -395,9 +395,56 @@ set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c
 # Makefiles' LLM_C_SRCS, which check_parity does not compare against COMMON.
 set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c)
 
+# --- the RESIDENT student engine (wave-android-student) --------------------
+# The chat ⑥ + DMN sleep ④ + boot-restore ③ on the phone are POWERED by the
+# in-kernel NS-1 Cradle baby. Its STRONG definitions of
+#   student_chat_generate / student_dmn_consolidate / student_dmn_heldout_loss /
+#   student_dmn_save_count   (which OVERRIDE the weak student_stub.c no-ops —
+#   a strong symbol always beats a weak one of the same name), plus
+#   student_boot_restore / student_shell_cmd (called by usermain.c with NO weak
+#   fallback — previously left UNDEFINED in the Android .so).
+# live in arch/common/llm/student_shell.c, which calls the math engine in
+# arch/common/llm/student.c.
+#
+# MINIMAL SET = JUST these two TUs. The chat is pure-A (the student generates on
+# its OWN; SmolLM2 is NOT consulted at inference) and the DMN distillation learns
+# from a small COMMITTED teacher-byte FIXTURE inside student_shell.c (TEACHER_
+# FIXTURE[], NOT live SmolLM2). VERIFIED by reading the TUs: student.c includes
+# ONLY student.h + <stdlib.h> and has its OWN st_forward / st_sample_byte / libc-
+# free math (the "sample.c"/"forward.c"/"dtr.c" mentions are COMMENTS — same
+# recipe, no link dep); student_shell.c includes ONLY student.h + libc and calls
+# the durable seam (pfs_dur_*, in ARCH_SHARED_SRC) by extern. So the 138MB SmolLM2
+# teacher engine (gguf.c/forward.c/tokenizer.c/quant.c/sample.c/llm_shell.c) is
+# DELIBERATELY NOT pulled in. (The dev-console `llm` verb's llm_shell_cmd stays
+# UNDEFINED in the .so exactly as before this wave — the chat UI never calls it.)
+#
+# OWN list (not COMMON_SRC) so tools/android/check_parity.sh stays green:
+# student.c + student_shell.c are the host LLM_C_SRCS tier (boot/linux Makefile),
+# which check_parity does NOT compare against COMMON_SRC.
+#
+# Flags (mirror boot/linux/Makefile LLM_CFLAGS, "one mind one math"):
+#   -ffp-contract=off — already global here, but pinned per-source too: Bionic
+#     clang FMA contraction vs gcc rounding order is the salty-bug class that
+#     broke on-device student TRAINING before (wave-49). One math, both tiers.
+#   INCLUDE_DIRECTORIES = the llm dir first (for the sibling student.h). The host
+#     LLM_CFLAGS drops every kernel -I so the SYSTEM <stdint.h> wins (the LP64
+#     typedef trap). On the NDK/Bionic build that trap does NOT fire — both TUs
+#     compile clean with the global kernel include path present (verified: the
+#     kernel int64_t == `long long` is type-compatible with Bionic's under clang
+#     C11), so we keep the global path and only PREPEND the llm dir. No fragile
+#     full-drop needed; the engine itself includes only <stdint.h>/<stddef.h>/
+#     <stdlib.h>/<string.h>/<stdio.h> + its sibling header.
+set(LLM_STUDENT_SRC
+    ${ARCH_CO}/llm/student.c
+    ${ARCH_CO}/llm/student_shell.c)
+set_source_files_properties(${LLM_STUDENT_SRC} PROPERTIES
+    COMPILE_OPTIONS "-ffp-contract=off"
+    INCLUDE_DIRECTORIES "${ARCH_CO}/llm")
+
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
-    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC} ${LLM_STUB_SRC})
+    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC}
+    ${LLM_STUDENT_SRC} ${LLM_STUB_SRC})
 
 # galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and
 # ark_profile.c #include them by bare name. gpu_gen holds the SPIR-V header.
