@@ -335,35 +335,34 @@ static int student_ensure(emit_fn emit)
     return 0;
 }
 
-/* How many small distill rounds a FRESH baby gets at birth, so the very first
- * chat babbles real bytes instead of "…". Kept tiny (a handful of rounds over
- * the small fixture's train windows) so boot is not slowed much; the baby is
- * still weak ("babbling") and improves as it sleeps — the intended
- * developmental arc. Same geometry as the DMN tick (ST_DMN_SEQLEN). */
-#define ST_BIRTH_ROUNDS  6
-#define ST_BIRTH_LR      3e-3f
-
-/* Give the freshly-born resident baby a small initial distill burst from the
- * committed teacher fixture, then persist it so the first chat produces bytes
- * AND a restart restores it. Cheap + bounded. Caller has already ensured the
- * baby is resident (g_have_student). */
+/* Birth the freshly-born resident baby and persist it so a restart restores it.
+ * Caller has already ensured the baby is resident (g_have_student).
+ *
+ * DEFERRED-WARMUP (wave-note10-boot): the initial distill burst is NO LONGER run
+ * synchronously here. It used to run a few sleep_rounds() of distill inline on
+ * the boot path, INSIDE the init/usermain task. Two problems surfaced on a slow
+ * device (Galaxy Note10+):
+ *   1) Scheduler monopoly: T-Kernel is strictly priority-scheduled and the init
+ *      task outranks the prio-8 galaxy server task, so the burst STARVED the
+ *      galaxy port — the "lighting your star" splash probes that port and hung
+ *      until the whole burst finished.
+ *   2) Stack: the burst runs at the DEEP boot call depth (every *_init nested),
+ *      and st_forward/backward/adam over the ~30MB model needs real stack —
+ *      enough to overflow the modest init-task stack on top of that depth.
+ * The DMN sleep tick (student_dmn_consolidate) ALREADY distills this exact baby
+ * every idle round, from a FRESH low-depth task stack and at the lowest priority
+ * (it cannot starve the port). So we birth the baby CHEAPLY (st_init + one
+ * durable save) and let it grow asleep — the intended developmental arc, just
+ * without blocking the port or risking the boot stack. The very first chat may
+ * babble weakly until the first DMN round lands; the model is identical work,
+ * only MOVED off the boot critical path. */
 static void student_birth_warmup(emit_fn emit)
 {
-    char line[160];
-    int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
-    int total    = corpus_n / ST_DMN_SEQLEN;
-    int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
-
-    sleep_rounds(&g_student, ST_DMN_SEQLEN, trainw, ST_BIRTH_ROUNDS, ST_BIRTH_LR);
-    if (emit) {
-        snprintf(line, sizeof line,
-                 "[baby] newborn given %d initial distill round(s) — it babbles "
-                 "now, and grows as it sleeps\r\n", ST_BIRTH_ROUNDS);
-        emit(line);
-    }
     /* student_persist resets the DMN throttle baseline to this newborn loss, so
      * the first DMN sleep waits for a real improvement before rewriting flash. */
     student_persist(emit);
+    if (emit) emit("[baby] newborn — it will babble after its first sleep "
+                   "(the DMN grows it; warmup deferred off the boot path)\r\n");
 }
 
 /* ---------------------------------------------------------------------------

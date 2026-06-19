@@ -648,6 +648,33 @@ EXPORT INT usermain(void)
      * No-op without PKERNEL_PFS_DIR. Must follow pfs_durable_restore (same
      * dir resolution). */
     r3_weights_restore_or_pretrain();
+
+    /* galaxy v1 (docs/architecture/galaxy.md) — the per-node observation
+     * window: a loopback HTTP/1.0 server (port 7800+(id-1)) serving THIS
+     * node's gossip-bounded view + an SSE event stream of real organism
+     * events. Default ON for hosted builds; PKERNEL_GALAXY=0 opts out.
+     * Priority 8: below net/swim (3/6), above the dmn (13) — a web `mind`
+     * verb cannot be preempted by the prio-13 consolidation round (§3.3,
+     * §6). Bind is 127.0.0.1 ONLY (galaxy_posix.c, hard-coded).
+     *
+     * ORDERING (wave-note10-boot): open the port + create the server task
+     * BEFORE the heavy student birth/warmup below. The "lighting your star"
+     * splash probes this port to know the star is lit; on a slow device,
+     * doing the ~30MB baby st_init + birth warmup first delayed the port
+     * open and hung the splash. The galaxy server only needs the gossip view
+     * (already initialised above), not the baby; the baby chat bridge tolerates
+     * a not-yet-resident student (gentle placeholder) for the brief window
+     * before student_boot_restore() runs. */
+    galaxy_init();
+    if (galaxy_on) {
+        if (create_task((FP)galaxy_task, 8, 8192) < E_OK)
+            print("[ERR] galaxy task\r\n");
+        else
+            print("[OK]  galaxy observation window task\r\n");
+    } else {
+        print("[net] galaxy disabled (PKERNEL_GALAXY=0)\r\n");
+    }
+
     /* Step ③ (wave-student-in-kernel): the RESIDENT NS-1 Cradle baby. Restore
      * the durable student blob (ns1_student.bin) over a fresh st_init so a node
      * that slept yesterday wakes up remembering; falls back to fresh init when
@@ -682,23 +709,6 @@ EXPORT INT usermain(void)
         print("[ERR] DMN task\r\n");
     else
         print("[OK]  DMN task\r\n");
-
-    /* galaxy v1 (docs/architecture/galaxy.md) — the per-node observation
-     * window: a loopback HTTP/1.0 server (port 7800+(id-1)) serving THIS
-     * node's gossip-bounded view + an SSE event stream of real organism
-     * events. Default ON for hosted builds; PKERNEL_GALAXY=0 opts out.
-     * Priority 8: below net/swim (3/6), above the dmn (13) — a web `mind`
-     * verb cannot be preempted by the prio-13 consolidation round (§3.3,
-     * §6). Bind is 127.0.0.1 ONLY (galaxy_posix.c, hard-coded). */
-    galaxy_init();
-    if (galaxy_on) {
-        if (create_task((FP)galaxy_task, 8, 8192) < E_OK)
-            print("[ERR] galaxy task\r\n");
-        else
-            print("[OK]  galaxy observation window task\r\n");
-    } else {
-        print("[net] galaxy disabled (PKERNEL_GALAXY=0)\r\n");
-    }
 
 #ifdef HAVE_LIBTCC
     /* selfc-ring3 §2.1: the germ supervisor task — runs at BOOT (not just
