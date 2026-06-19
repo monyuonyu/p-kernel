@@ -13,8 +13,14 @@ weak-stub fix, flash-wear throttle. Ed25519 signing, persistence, living-mind LM
 inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all already live
 (their docs' "not started"/"実装前" Status lines are STALE → fix them, see bottom).
 
-## 🟡 IN FLIGHT (background lanes → integrate into 0.9.3)
-- KV cache (faster chat) · ⑤ better-baby (diverse teacher corpus) · Note10 boot-hang fix.
+## 🟡 IN FLIGHT (background lanes)
+- **KV cache** (faster chat) — in separate audit; on PASS → 0.9.3 build (with Note10 fix + ⑤).
+- **survival-§7/G38 design-harden** — automated cert-first design workflow → an implementation-ready plan doc (read-only on code).
+
+## ✅ DONE THIS SESSION (on trunk, NOT yet in an APK — next APK = 0.9.3)
+- **self-access R0** (`d730175e`): READ-ONLY body introspection verb `body` + Q3 self/lin lineage append (1/invocation, tamper-evident). Separate audit PASS / ledger CLOSE.
+- **N-2 slice 1** (`1f656c3c`): the emergent-supernode deterministic selector + host cert (see Thread N below). Separate audit PASS-WITH-NITS / CLOSE (auditor falsified the cert by sabotage → it correctly went RED).
+- **interoception slice-1** (`9e5529a2`): the unified stress **S_n bus** (`arch/common/interocept.c`, integer EWMA over REAL sources: reflex-threat/SWIM-RTT/in-context-surprise/ring3-fault/degrade) → **DMN idle-threshold modulation** (stress shrinks the sleep gap, deadband-16 + hysteresis, only pulls down) + **galaxy me-star real mood/hue** (`me.s_n`/`me.s_axis`). Separate audit PASS. Apoptosis (slice-2) still queued.
 
 ## ▶ ORDERED QUEUE (the marathon)
 
@@ -31,12 +37,12 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 - **T-fix** NOCENTRAL teacher selection (gossip the has-GGUF capability) + BPE↔byte tokenizer reconcile. **T-1** 2-node teach demo (A teaches B a fact via a lesson pack over the mesh, B distills it). Depends on Thread N (mesh) + the teacher engine.
 
 ### Thread B — the 🅰 big designs (each its own multi-wave)
-- **interoception / 負のエネルギー**: unified stress S_n bus → DMN-tick modulation + galaxy star hue (slice 1); apoptosis via Path-W² essence handoff (slice 2). (interoception.md)
-- **self-access / 自分の体を触る**: R0 read-only introspection → drive own shell/storage/devices → self-write+compile drivers. Q3=YES (log body-touch to lineage). Decide Q1 (how free is read-only) / Q2 (driver consent once vs each). (project_self_access_embodiment)
+- **interoception / 負のエネルギー**: ✅ slice-1 DONE (`9e5529a2`: S_n bus → DMN modulation + galaxy hue). **REMAINING: slice-2 apoptosis** via Path-W² essence handoff (delicate — controlled node death + essence transfer; touches dproc lifecycle + gl_merge). Follow-up: discover per-axis normalization bands from measured curves (§2.4; current maps are honest first-cut linear defaults). (interoception.md)
+- **self-access / 自分の体を触る**: ✅ R0 read-only introspection DONE (`d730175e`). **REMAINING: R1** the mind invokes `body` AUTONOMOUSLY (DMN idle hook) → **BLOCKED on user decision Q1** (how free is autonomous read-only) **/ Q2** (driver consent once vs each); then drive own shell/storage/devices → self-write+compile drivers. Q3=YES already (log body-touch to lineage). (project_self_access_embodiment)
 - **imaginary-UI**: conversation conjures ephemeral GUIs on demand ("電卓が欲しい"→builds one). (web-os.md)
 - **compatibility / 凍結なし進化** (DECIDED 2026-06-14): generational succession + per-version migration chain + signed-OTA. (compatibility.md, project_compat_evolution)
 - **federation** 254→10k staircase, R0 2-cluster live cert. (federation.md)
-- **survival-network「考える器官」**: §7 distributed gating (= regions R3 / mutual-aid) · §8 two-layer oscillation fix · decentralized whole-network situational-awareness map. (survival-network.md)
+- **survival-network「考える器官」**: §7 distributed gating (= regions R3 / mutual-aid) · §8 two-layer oscillation fix · decentralized whole-network situational-awareness map. (survival-network.md) — 🟡 §7/G38 **cert-first design-harden IN FLIGHT** → docs/architecture/survival-g38-impl-plan.md (then a separate impl→audit wave).
 - **r3-nontrivial-thought**: multi-step non-trivial reasoning. (r3-nontrivial-thought.md)
 
 ### Thread R — roadmap remainders
