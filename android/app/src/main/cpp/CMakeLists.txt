@@ -112,6 +112,10 @@ set(ARCH_SHARED_SRC
     ${ARCH_LX}/console_ring.c
     ${ARCH_LX}/pfs_ark.c
     ${ARCH_LX}/sign_entropy.c
+    # N-0: per-install stable/distinct default node id (used by net_lan /
+    # net_relay / galaxy when PKERNEL_NODE_ID is unset). Lock-stepped with
+    # boot/linux/Makefile's ARCH_SHARED_C_SRCS.
+    ${ARCH_LX}/node_id.c
 )
 
 # relay-side sha256 — same canonical source as boot/linux/Makefile.

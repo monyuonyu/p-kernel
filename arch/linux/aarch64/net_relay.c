@@ -64,6 +64,9 @@ extern int *__errno_location(void) __attribute__((__const__));
 #define errno (*__errno_location())
 extern char *strerror(int);
 
+/* N-0: stable, distinct per-install default id (arch/linux/node_id.c). */
+extern int pkernel_default_node_id(void);
+
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" little-endian */
 #define RELAY_VER_V1       1
 #define RELAY_VER_V2       2
@@ -578,7 +581,8 @@ int net_relay_init(void)
     const char *env_port = getenv("PKERNEL_RELAY_PORT");
     const char *env_key  = getenv("PKERNEL_RELAY_KEY");
 
-    my_node_id = env_id ? atoi(env_id) : 1;
+    /* N-0: distinct, stable per-install id when PKERNEL_NODE_ID is unset. */
+    my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
     if (my_node_id < 1 || my_node_id > 255) {
         /* G7: don't silently rewrite a bad id to 1 (which would collide with
          * node 1) — say what happened. */

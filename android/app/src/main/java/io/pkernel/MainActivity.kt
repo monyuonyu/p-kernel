@@ -60,9 +60,8 @@ class MainActivity : AppCompatActivity() {
          * "advanced" screen, reached from the ⋮ corner of the galaxy. */
         if (!intent.getBooleanExtra(EXTRA_ADVANCED, false)) {
             val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-            if (!prefs.contains(PREF_NODE_ID))   // first light: mint a random id
-                prefs.edit().putInt(PREF_NODE_ID, 2 + (Math.random() * 60).toInt()).apply()
-            val nodeId = prefs.getInt(PREF_NODE_ID, 1)
+            // first light: derive a STABLE id from a persistent per-install seed.
+            val nodeId = ensureNodeId(prefs)
             startKernelWith(
                 nodeId,
                 prefs.getString(PREF_RELAY_HOST, "") ?: "",
@@ -85,12 +84,12 @@ class MainActivity : AppCompatActivity() {
         useGpuSwitch      = findViewById(R.id.switch_use_gpu)
 
         /* node id / relay live in prefs now (the engineer page edits them, the
-         * service persists them). First run mints a RANDOM node id instead of
-         * everyone being "1" (honest bound: ids live in 0..63 — true
-         * uniqueness needs a key-derived id, a named future wave). */
+         * service persists them). First run DERIVES a stable node id from a
+         * persistent per-install random seed (N-0) instead of everyone being
+         * "1" (honest bound: ids live in 1..63 — true uniqueness needs a
+         * key-derived id, a named future wave). */
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        if (!prefs.contains(PREF_NODE_ID))
-            prefs.edit().putInt(PREF_NODE_ID, 2 + (Math.random() * 60).toInt()).apply()
+        ensureNodeId(prefs)
 
         /* Battery-safe toggle: bound to PKernelService.PREF_CHARGE_ONLY in the
          * "ump" prefs (default ON). Toggling persists; it takes effect at the
@@ -212,7 +211,7 @@ class MainActivity : AppCompatActivity() {
     /** The persisted "ump" prefs — node id / relay are edited on the engineer
      *  page and persisted by the service; the Settings layer just reads them. */
     private fun currentNodeId(): Int =
-        getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_NODE_ID, 1)
+        ensureNodeId(getSharedPreferences(PREFS, MODE_PRIVATE))
 
     /** "yurikago 0.6.3" — straight off the PackageManager (no BuildConfig). */
     private fun appVersionName(): String =
@@ -221,7 +220,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startKernel() {
         val prefs  = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val nodeId = prefs.getInt(PREF_NODE_ID, 1)
+        val nodeId = ensureNodeId(prefs)
         val host   = prefs.getString(PREF_RELAY_HOST, "") ?: ""
         val port   = prefs.getInt(PREF_RELAY_PORT, 7400)
         val key    = prefs.getString(PREF_RELAY_KEY, "") ?: ""
@@ -280,6 +279,56 @@ class MainActivity : AppCompatActivity() {
         private const val FLOOR_MAX = 50
         private const val FLOOR_STEP = 5
         private const val PREF_NODE_ID = "node_id"
+        // N-0: a per-install RANDOM secret (hex), minted once and persisted.
+        // The node id is DERIVED from it (sha256 -> [1..63]) so two fresh
+        // installs reliably get DISTINCT, STABLE ids instead of both being 1
+        // (which makes SWIM self-echo-filter them and never mesh). The old
+        // Math.random()*60 was weak and not a real per-install secret.
+        // Honest bound: 63 usable ids -> a hash collision is possible for a
+        // large fleet; true uniqueness needs the key-derived / Ed25519 id (a
+        // named future wave). Reliable for 2-3 phones.
+        private const val PREF_NODE_SEED = "node_seed"
+        private const val DNODE_MAX = 64
+
+        /** Mint (once) a persistent random per-install seed and derive a
+         *  STABLE node id in [1..DNODE_MAX-1] from it. Idempotent: the same
+         *  install always returns the same id. Persists BOTH the seed and the
+         *  derived id into "ump" prefs. */
+        fun ensureNodeId(prefs: android.content.SharedPreferences): Int {
+            // honour an already-derived id (also lets the engineer page pin one).
+            val existing = prefs.getInt(PREF_NODE_ID, 0)
+            if (existing in 1 until DNODE_MAX) return existing
+
+            val stored = prefs.getString(PREF_NODE_SEED, null)
+            val seedHex: String = if (!stored.isNullOrEmpty()) {
+                stored
+            } else {
+                val seed = ByteArray(16)
+                java.security.SecureRandom().nextBytes(seed)
+                val hex = seed.joinToString("") { "%02x".format(it) }
+                prefs.edit().putString(PREF_NODE_SEED, hex).apply()
+                hex
+            }
+            val id = nodeIdFromSeedHex(seedHex)
+            prefs.edit().putInt(PREF_NODE_ID, id).apply()
+            return id
+        }
+
+        /** sha256(seed) -> first 4 bytes -> [1..DNODE_MAX-1]. Mirrors
+         *  arch/linux/node_id.c::digest_to_id so the Kotlin-passed id and the
+         *  native seed-file path agree on the derivation. */
+        fun nodeIdFromSeedHex(seedHex: String): Int {
+            val seed = ByteArray(seedHex.length / 2) {
+                seedHex.substring(it * 2, it * 2 + 2).toInt(16).toByte()
+            }
+            val d = java.security.MessageDigest.getInstance("SHA-256").digest(seed)
+            val v = ((d[0].toLong() and 0xff) shl 24) or
+                    ((d[1].toLong() and 0xff) shl 16) or
+                    ((d[2].toLong() and 0xff) shl 8) or
+                    (d[3].toLong() and 0xff)
+            return (v % (DNODE_MAX - 1L)).toInt() + 1   // 1..63
+        }
+
         private const val PREF_RELAY_HOST = "relay_host"
         private const val PREF_RELAY_PORT = "relay_port"
         private const val PREF_RELAY_KEY = "relay_key"

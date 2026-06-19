@@ -63,6 +63,9 @@ extern int *__errno_location(void) __attribute__((__const__));
 #define errno (*__errno_location())
 extern char *strerror(int);
 
+/* N-0: stable, distinct per-install default id (arch/linux/node_id.c). */
+extern int pkernel_default_node_id(void);
+
 /* --- wire constants (byte-identical to net_relay.c's v1/v2 framing) ----- */
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" little-endian */
 #define RELAY_VER_V1       1
@@ -292,7 +295,10 @@ int net_lan_init(void)
     const char *env_key  = getenv("PKERNEL_RELAY_KEY");
     const char *env_port = getenv("PKERNEL_LAN_PORT");
 
-    my_node_id = env_id ? atoi(env_id) : 1;
+    /* N-0: distinct, stable per-install id when PKERNEL_NODE_ID is unset
+     * (two fresh nodes both defaulting to 1 self-echo-filter in SWIM and
+     * never mesh). pkernel_default_node_id honours the env override. */
+    my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
     if (my_node_id < 1 || my_node_id > 255) {
         dprintf(2, "[net_lan] PKERNEL_NODE_ID=%d out of range (1..255) — "
                    "defaulting to 1\n", my_node_id);
