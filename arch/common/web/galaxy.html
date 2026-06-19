@@ -790,6 +790,49 @@ const _organRing=(function(){
   }
   return a;
 })();
+// ── AMOEBA undulation (mk_pino: 「うねうね」) ──────────────────────────────────
+//   mk_pino's note: the organ ring should NOT be a tidy circle — it should
+//   UNDULATE like an amoeba, and the harder that organ is working (its USAGE %)
+//   the bigger and faster the うねうね. We reuse drawMeBlob's amoeba recipe: a
+//   small bank of incommensurate (non-integer-ratio) angular harmonics summed
+//   into a RADIAL displacement that travels slowly around the ring, so the
+//   outline reads organic — never a single clean sine, never a repeating period.
+//   Lower harmonics than the ME-star (the ring is thinner/closer) so the wobble
+//   is a gentle membrane, not spikes. [angFreq, weight, phase, timeRateMul].
+const ORGAN_AMEBA=[[3,0.55,0.4,0.6],[5,0.30,2.7,0.9],[8,0.15,4.9,1.3]];
+// CORE LAW (honest-glow): the undulation AMPLITUDE and SPEED come ONLY from the
+// organ's REAL usage %, never from the clock alone. usage% = organUsage(): a
+// value in [0,1] read from the SAME live vitals organGlow uses (peers / dreaming
+// / training / engram-fill / lineage). It is gated by snapFresh() so a FROZEN
+// poll decays the wobble to 0 within 2.5s and the ring settles back to a calm
+// circle (only the bounded ≤4% idle shimmer survives). The monotone resting size
+// (g.grow) is a settled real value and may persist when frozen — calm is about
+// MOTION, not size. NOTE (forward-compat): when SS-1 adaptive-K lands, the MoE
+// firing WIDTH is the richest per-organ usage signal — feed it here.
+// per-organ EASED radius factor (b += (t-b)*ease) so the ring expands/contracts
+// SMOOTHLY toward its usage-driven target, never jumps. Seeded on first use
+// (-1 sentinel). Module-level: NO per-frame allocation.
+const _organRadF=new Float32Array(ME_ORGANS.length).fill(-1);
+const _organUseEase=new Float32Array(ME_ORGANS.length);   // eased usage% (smooth amp/speed)
+// usage% in [0,1] for organ o, given its glow g and snapshot m. Reads ONLY real
+// vitals (same sources as organGlow); the ACTIVITY-bearing parts (rates/beats)
+// already decay to 0 when frozen via their recency windows, and the caller
+// further multiplies by snapFresh() so a frozen ring is provably calm.
+function organUsage(o,g,m){
+  switch(o.kind){
+    // swarm density: more alive peers = a busier shell.
+    case "collective": return Math.min(1,(ME_VIT.peers|0)/8);
+    // dreaming = sustained work; a fresh consolidation beat spikes it.
+    case "dmn":        return Math.min(1,((m.dmn|0)===1?0.5:0)+0.6*g.beat);
+    // a real training round is the work; facts add a gentle resting floor.
+    case "r3":         return Math.min(1,0.7*g.beat+0.3*Math.min(1,(m.facts_learned|0)/24));
+    // engram is literally a fill %: a fuller hippocampus = a busier ring.
+    case "engram":     return Math.min(1,g.solid);
+    // lineage advance is the work (g.beat already recency-windowed → 0 frozen).
+    case "self":       return Math.min(1,g.beat);
+  }
+  return 0;
+}
 // draw the interior detail INSIDE the blob as genuine 3D nested RINGS (輪). Each
 // organ is the precomputed unit circle (_organRing), tilted by its own `tilt`,
 // scaled by its radius, and rotated through the SAME scene yaw/pitch as project()
@@ -849,7 +892,20 @@ function meStarInterior(cx,cy,baseR,pscale,ms,tms,m,revI){
     const g=organGlow(o,m,now);                       // REAL vital -> look
     // resting radius + honest growth (monotone state). br is the screen radius,
     // wr the WORLD radius (Rw[i]=ME_WORLD_R*frac*(1+grow)), both ≤ their caps.
-    const fr=o.frac*(1+g.grow);
+    // ── USAGE % drives radius + undulation (mk_pino's うねうね). use∈[0,1] is a
+    //    REAL-vital read; gated by snapFresh() so a frozen poll → 0 (calm ring).
+    const useRaw=organUsage(o,g,m)*snapFresh();
+    // ease the usage itself so the amoeba amplitude/speed swell & subside smoothly
+    // (no jump when a beat fires or a poll lands).
+    _organUseEase[i]+=(useRaw-_organUseEase[i])*0.1;
+    const use=_organUseEase[i];
+    // radius TARGET: resting frac + honest monotone growth + a usage-driven
+    // expansion (higher usage → larger ring, up to +18%). Eased toward, never
+    // jumped (b+=(t-b)*0.1). Seeded to the target on first frame (no grow-in pop).
+    const radTarget=o.frac*(1+g.grow)*(1+0.18*use);
+    if(_organRadF[i]<0) _organRadF[i]=radTarget;
+    _organRadF[i]+=(radTarget-_organRadF[i])*0.1;
+    const fr=_organRadF[i];
     const br=baseR*fr*shimmer;
     const wr=Math.min(ME_WORLD_R, ME_WORLD_R*fr)*shimmer;
     // a real beat briefly swells the ring; bloom lifts its baseline brightness.
@@ -857,15 +913,34 @@ function meStarInterior(cx,cy,baseR,pscale,ms,tms,m,revI){
     const baseA=reveal*(0.55+0.45*g.bloom);
     const rgb=g.tint||o.rgb;
     const ct=Math.cos(o.tilt), st=Math.sin(o.tilt);   // ring-plane tilt (local X)
+    // amoeba undulation: amplitude AND travel-speed scale with usage. At use≈0 the
+    // ring is a calm circle (amp 0 → only the ≤4% shimmer survives a freeze); at
+    // high usage the wobble is BIG (super-linear in use) and travels FAST.
+    const wAmp=0.16*use*(0.5+0.5*use);                // 0 at rest; ~0.16 at use=1
+    const wSpd=tms*0.0006*(0.4+1.6*use);              // slow at rest, fast when busy
     // ── project every ring vertex ONCE into the shared per-ring scratch, then
     //    stroke the loop segment-by-segment with a near/far depth cue. The
     //    screen-space (surface reveal) and world-space (immersion) paths differ
     //    only in the projection scale; the ring math is identical.
     let lblZbest=2;                                   // pick this ring's nearest vertex near lblAng
     for(let p=0;p<ORGAN_PTS;p++){
+      // amoeba RADIAL displacement at this ring angle: a sum of incommensurate
+      // travelling harmonics (organic, non-repeating). Scales the unit-circle
+      // point radially so the closed loop UNDULATES. wAmp/wSpd are usage-driven
+      // (CORE LAW), so at rest this term is 0 and the ring is a clean circle.
+      let wob=1;
+      if(wAmp>0){
+        const a=p/ORGAN_PTS*6.28318530718;
+        let d=0;
+        for(let l=0;l<ORGAN_AMEBA.length;l++){
+          d+=ORGAN_AMEBA[l][1]*Math.sin(ORGAN_AMEBA[l][0]*a
+                + wSpd*ORGAN_AMEBA[l][3]*ORGAN_AMEBA[l][0] + ORGAN_AMEBA[l][2]);
+        }
+        wob=1+wAmp*d;
+      }
       // unit circle (z=0) tilted into 3D about the local X axis:
-      const ux=_organRing[p*3];
-      const cy0=_organRing[p*3+1];                    // circle y before tilt
+      const ux=_organRing[p*3]*wob;
+      const cy0=_organRing[p*3+1]*wob;                // circle y before tilt
       const uy=cy0*ct, uz=cy0*st;                     // tilt lifts the ring out of plane
       if(revI<=0){
         // ── SCREEN-SPACE path (calm surface reveal — today's behaviour) ──
