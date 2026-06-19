@@ -41,8 +41,15 @@ android {
         // wakes a saved baby (ns1_student.bin under the app's /ark dir, flash-
         // wear throttled). Before this the chat hit the weak no-op stubs ("…").
         // Paired with the living-body inspector (organs wired to real vitals).
-        versionCode   = 28
-        versionName   = "0.9.2"
+        // 0.9.3: KV cache (O(1)-per-byte incremental generation — byte-identical
+        // to recompute on both arches, 4.66x→50x faster chat); ⑤ diverse-teacher
+        // corpus baby; Note10 slow-boot galaxy fix; self-access R0 (`body`
+        // READ-ONLY introspection + Q3 self/lin lineage); N-2 emergent-supernode
+        // deterministic selector (NOCENTRAL, region test 8/8); interoception
+        // slice-1 (the unified stress S_n bus → DMN sleep-timing modulation +
+        // the galaxy me-star's real mood/hue).
+        versionCode   = 29
+        versionName   = "0.9.3"
 
         ndk {
             // Phones are aarch64; the kernel's cpu_support.S is aarch64.
