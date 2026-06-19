@@ -86,6 +86,15 @@ typedef struct {
     SWIM_GOSSIP_EVT gossip[SWIM_GOSSIP_MAX]; /* ピギーバックイベント    */
 } __attribute__((packed)) SWIM_PKT;
 
+/* N-2b wire-identity tripwire: the capability bit reused the reserved `_pad`,
+ * so the on-wire layout MUST stay byte-identical (entry=4B, packet=24B) or
+ * old↔new membership interop silently breaks. Make that claim self-enforcing
+ * at compile time (an audit nit: the docs said "static-checked" — now it is). */
+_Static_assert(sizeof(SWIM_GOSSIP_EVT) == 4,
+               "SWIM_GOSSIP_EVT must stay 4 bytes (wire-compatible with pre-N-2b nodes)");
+_Static_assert(sizeof(SWIM_PKT) == 24,
+               "SWIM_PKT must stay 24 bytes (wire-compatible with pre-N-2b nodes)");
+
 /* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
 /* ------------------------------------------------------------------ */
