@@ -35,6 +35,7 @@
 #include "pfs_dag.h"     /* pfs_dag_read — lazy self lineage read          */
 #include "ark_profile.h" /* ark-profile v1: /manifesto, /profile, consent  */
 #include "modver.h"      /* module-version registry — GET /modules.json    */
+#include "interocept.h"  /* interoception: me.s_n / me.s_axis (the mood)    */
 #include "gx_sha1.h"     /* §3.7 chat-ws: RFC 6455 handshake (SHA1+base64) */
 #include "kernel.h"
 #include <tmonitor.h>    /* tm_putstring — the boot-time KAT verdict line   */
@@ -258,6 +259,12 @@ static void gx_build_galaxy_json(INT slot)
     gx_qs(slot, ",\"rounds\":");               gx_qdec(slot, dmn_r3_rounds());
     gx_qs(slot, ",\"pressure\":");             gx_qdec(slot, (UW)pr);
     gx_qs(slot, ",\"threat\":");               gx_qdec(slot, (UW)th);
+    /* interoception.md §3.3: the REAL unified stress S_n (0..255) + dominant
+     * axis. The browser drives the me-star hue/agitation from THIS, unifying
+     * its old client-side pressure+threat estimate into one kernel-computed
+     * mood. HONEST-GLOW: O(1) live read; on a frozen snapshot S_n flats -> calm. */
+    gx_qs(slot, ",\"s_n\":");                  gx_qdec(slot, (UW)intero_scalar());
+    gx_qs(slot, ",\"s_axis\":");               gx_qdec(slot, (UW)intero_dominant_axis());
 
     /* living-body inspector (living-body-inspector.md): the organism's REAL
      * vitals, all O(1) scalar reads — the browser differences successive
@@ -619,6 +626,8 @@ static void gx_ws_build_state(void)
     ws_s(",\"rounds\":");    ws_dec(dmn_r3_rounds());
     ws_s(",\"pressure\":");  ws_dec((UW)pr);
     ws_s(",\"threat\":");    ws_dec((UW)th);
+    ws_s(",\"s_n\":");       ws_dec((UW)intero_scalar());     /* interoception §3.3 */
+    ws_s(",\"s_axis\":");    ws_dec((UW)intero_dominant_axis());
     ws_s("},\"peers\":[");
     INT first = 1;
     for (INT n = 0; n < DNODE_MAX; n++) {

@@ -119,6 +119,7 @@ COMMON_C_SRCS = \
     edf.c \
     replica.c \
     degrade.c \
+    interocept.c \
     dmn.c \
     lm_consolidate.c \
     lm_self.c \

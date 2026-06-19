@@ -27,6 +27,7 @@
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
+#include "interocept.h" /* interoception: a surprising answer raises S_n (§2) */
 #include "ark_profile.h" /* ark-profile v1: the ONE provenance write site (§5) */
 #include "kdds.h"      /* LM-7: the region-scoped "mind/teach" topic (VIII.3) */
 #include "region.h"   /* LM-7: region_id() — observable shared-mind boundary  */
@@ -2516,6 +2517,11 @@ static void m_ask(const UB *p, const UB *end)
     m_last_k     = (UB)k;
     m_last_v     = pred;
     m_last_share = (UW)(share[pred] * 10.0f + 0.5f);
+    /* interoception.md §2.1/§2.2: an in-context answer is a prediction; a flat/
+     * uncertain one (low modal share) is SURPRISE. Push it onto the S_n bus
+     * arrival-driven (G13) — the normalizer reads m_last_share authoritatively,
+     * so the raw here is informational. A confident answer barely moves S_n. */
+    intero_note(INTERO_AX_SURPRISE, m_last_share);
     galaxy_emit(EV_ASK, drpc_my_node, GALAXY_NODE_NONE, (UH)k, (UH)pred);  /* S4: an outgoing question ray (galaxy.md) */
     r_puts("[mind] ask \""); r_puts(r3_vocab_key_word(k));
     r_puts("\" -> \""); r_puts(r3_vocab_val_word(pred));

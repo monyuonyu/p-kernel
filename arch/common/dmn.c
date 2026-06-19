@@ -25,6 +25,7 @@
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S2/S3 emit hooks */
 #include "lm_consolidate.h"   /* living-mind: rest-time sleep-consolidation */
+#include "interocept.h"       /* interoception: the S_n stress bus (mind-body) */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -83,6 +84,64 @@ static ID           dmn_cyc;               /* cyclic handler ID (将来拡張用
 /* 実行時可変パラメータ (GA/RL から動的調整可能) */
 volatile UW  dmn_idle_threshold = DMN_IDLE_THRESHOLD_DEFAULT;
 volatile UW  dmn_log_interval   = DMN_LOG_INTERVAL_DEFAULT;
+
+/* ── mind-body coupling: S_n modulates the effective idle threshold ─────────
+ * interoception.md §3.2/§3.4. The DMN is the ONE production consumer of the
+ * S_n bus ([intero-wired]). It maps the 0..255 stress scalar to a CONTINUOUS
+ * effective idle threshold:
+ *   calm  (low S_n)  -> threshold STRETCHED  -> sleep deep & late (good GC).
+ *   hurt  (high S_n) -> threshold SHRUNK     -> wake shallow & fast (defer GC).
+ * Oscillation guard (§3.4 / survival-network §8 / reflex-deliberation §6):
+ *   (1) S_n is itself an EWMA (fast jitter already damped upstream);
+ *   (2) a DEADBAND: changes inside ±DMN_SN_DEADBAND of the held S_n are ignored,
+ *       so the threshold holds steady near a boundary (moe.c deadband_pick);
+ *   (3) the map is a CONTINUOUS slope, never "stressed => fastest".
+ * The base threshold (dmn_idle_threshold, GA/RL-tunable) is the CALM anchor;
+ * stress can only pull it DOWN toward a floor, never above the operator value. */
+#define DMN_SN_DEADBAND     16u   /* hold the modulation within this S_n band   */
+#define DMN_IDLE_FLOOR      1u    /* shallowest sleep (highest stress)          */
+
+static UB  dmn_sn_held    = 0;    /* last S_n that actually moved the threshold */
+static UB  dmn_sn_have    = 0;    /* deadband seeded?                           */
+static UW  dmn_eff_thresh = DMN_IDLE_THRESHOLD_DEFAULT;  /* last effective value */
+
+/* Map a held S_n (0..255) to an effective idle threshold in [FLOOR, base].
+ * Linear: at S_n=0 -> base; at S_n=255 -> FLOOR. Integer, no float. */
+static UW dmn_thresh_for_sn(UW base, UB sn)
+{
+    if (base <= DMN_IDLE_FLOOR) return base;
+    UW span = base - DMN_IDLE_FLOOR;            /* how far stress may pull down */
+    UW cut  = (span * (UW)sn + 127u) / 255u;    /* proportional, rounded       */
+    UW eff  = (cut >= span) ? DMN_IDLE_FLOOR : (base - cut);
+    if (eff < DMN_IDLE_FLOOR) eff = DMN_IDLE_FLOOR;
+    return eff;
+}
+
+/* Recompute the effective idle threshold from the live S_n bus, applying the
+ * deadband+hysteresis so a flat/near-flat S_n leaves the threshold untouched.
+ * Returns the effective threshold the task loop should compare against. */
+static UW dmn_effective_idle_threshold(void)
+{
+    UB sn = intero_scalar();                    /* the ONE production read */
+    if (!dmn_sn_have) {
+        dmn_sn_have    = 1;
+        dmn_sn_held    = sn;
+        dmn_eff_thresh = dmn_thresh_for_sn(dmn_idle_threshold, sn);
+        return dmn_eff_thresh;
+    }
+    UW d = (sn >= dmn_sn_held) ? (UW)(sn - dmn_sn_held) : (UW)(dmn_sn_held - sn);
+    if (d >= DMN_SN_DEADBAND) {                  /* moved enough to re-modulate */
+        dmn_sn_held    = sn;
+        dmn_eff_thresh = dmn_thresh_for_sn(dmn_idle_threshold, sn);
+    }
+    return dmn_eff_thresh;
+}
+
+/* Read-only accessors for the [intero-tick] cert (production symbols, not a
+ * sim): the cert drives S_n and reads the SAME effective threshold the live
+ * task loop steers on, counting state changes to prove the deadband holds. */
+UW   dmn_intero_effective_threshold(void) { return dmn_effective_idle_threshold(); }
+UB   dmn_intero_held_sn(void)             { return dmn_sn_held; }
 
 /* ------------------------------------------------------------------ */
 /* Cyclic handler — タスク独立コンテキスト (割り込みレベル)           */
@@ -307,6 +366,90 @@ void dmn_student_distill_test(UW n)
 }
 
 /* ------------------------------------------------------------------ */
+/* interoception mind-body cert (interoception.md §3.5 [intero-tick])   */
+/* ------------------------------------------------------------------ */
+/* Drives the S_n bus low->high through the cert-only deterministic
+ * injection and proves, on the SAME production symbol the live task loop
+ * steers on (dmn_intero_effective_threshold), that:
+ *   (1) the effective idle threshold falls MONOTONICALLY as S_n rises
+ *       (calm = late deep sleep, stressed = early shallow wake);
+ *   (2) the DEADBAND suppresses oscillation: a sweep of TINY S_n wiggles
+ *       (< DMN_SN_DEADBAND) around a point changes the effective threshold
+ *       strictly FEWER times than the same number of LARGE swings.
+ * Returns 0 = PASS. Also runs intero_self_test first (sources + EWMA). */
+INT dmn_intero_modulation_test(void)
+{
+    INT fail = 0;
+
+    /* part A: the source bus self-test ([intero-sources]/[intero-ewma]). */
+    if (intero_self_test() != 0) fail = 1;
+
+    dmn_puts("[dmn] intero modulation: S_n low->high shrinks effective idle\r\n");
+
+    /* anchor the calm base so the sweep is interpretable. */
+    UW base = dmn_idle_threshold;
+    dmn_puts("[dmn]   calm base threshold = "); dmn_putdec(base); dmn_puts("s\r\n");
+
+    /* (1) MONOTONIC fall. Reset the deadband state, then step S_n in big jumps
+     *     well past the deadband so each step re-modulates. */
+    dmn_sn_have = 0;
+    intero_test_force(1, 0);
+    UW prev = dmn_effective_idle_threshold();   /* S_n=0 -> base */
+    dmn_puts("[dmn]   S_n=0   -> eff="); dmn_putdec(prev); dmn_puts("\r\n");
+    const UB sweep[] = { 64, 128, 192, 255 };
+    for (INT i = 0; i < 4; i++) {
+        intero_test_force(1, sweep[i]);
+        UW eff = dmn_effective_idle_threshold();
+        dmn_puts("[dmn]   S_n="); dmn_putdec((UW)sweep[i]);
+        dmn_puts(" -> eff="); dmn_putdec(eff); dmn_puts("\r\n");
+        if (eff > prev) { dmn_puts("[dmn]   NON-MONOTONIC FAIL\r\n"); fail = 1; }
+        prev = eff;
+    }
+    /* the high-stress end must be strictly shallower than the calm end. */
+    intero_test_force(1, 0);   dmn_sn_have = 0; UW calm_eff = dmn_effective_idle_threshold();
+    intero_test_force(1, 255); UW hurt_eff = dmn_effective_idle_threshold();
+    if (!(hurt_eff < calm_eff)) {
+        dmn_puts("[dmn]   stress did not shrink the window FAIL\r\n"); fail = 1;
+    }
+
+    /* (2) DEADBAND damps oscillation. Count effective-threshold CHANGES under
+     *     N tiny wiggles vs N large swings about a midpoint. */
+    UW mid = 120;
+    UW small_changes = 0, big_changes = 0;
+    /* tiny wiggles: +/- (DEADBAND-1) — must be largely absorbed. */
+    dmn_sn_have = 0; intero_test_force(1, (UB)mid);
+    UW e0 = dmn_effective_idle_threshold();
+    for (INT i = 0; i < 20; i++) {
+        UB v = (UB)(mid + ((i & 1) ? (DMN_SN_DEADBAND - 1) : 0));
+        intero_test_force(1, v);
+        UW e = dmn_effective_idle_threshold();
+        if (e != e0) { small_changes++; e0 = e; }
+    }
+    /* large swings: +/- 80 — must move many times. */
+    dmn_sn_have = 0; intero_test_force(1, (UB)mid);
+    UW e1 = dmn_effective_idle_threshold();
+    for (INT i = 0; i < 20; i++) {
+        UB v = (UB)((i & 1) ? (mid + 80) : (mid > 80 ? mid - 80 : 0));
+        intero_test_force(1, v);
+        UW e = dmn_effective_idle_threshold();
+        if (e != e1) { big_changes++; e1 = e; }
+    }
+    dmn_puts("[dmn]   deadband: tiny-wiggle changes="); dmn_putdec(small_changes);
+    dmn_puts("  large-swing changes="); dmn_putdec(big_changes); dmn_puts("\r\n");
+    if (!(small_changes < big_changes)) {
+        dmn_puts("[dmn]   deadband did not damp oscillation FAIL\r\n"); fail = 1;
+    }
+
+    /* release the injection; the live read restores real-source modulation. */
+    intero_test_force(0, 0);
+    dmn_sn_have = 0;
+    (void)dmn_effective_idle_threshold();
+
+    dmn_puts(fail ? "[intero-tick] FAIL\r\n" : "[intero-tick] PASS\r\n");
+    return fail;
+}
+
+/* ------------------------------------------------------------------ */
 /* DMN タスク本体                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -328,7 +471,13 @@ void dmn_task(INT stacd, void *exinf)
 
         UW idle_for = dmn_pulse_count - dmn_last_trigger;
 
-        if (idle_for >= dmn_idle_threshold) {
+        /* mind-body coupling (interoception.md §3.2): the threshold we compare
+         * against is the S_n-modulated EFFECTIVE one — calm stretches it (deep
+         * late sleep), stress shrinks it (shallow fast wake). Deadband-guarded
+         * so a steady S_n never makes this oscillate. */
+        UW eff_threshold = dmn_effective_idle_threshold();
+
+        if (idle_for >= eff_threshold) {
             /* ACTIVE → IDLE 遷移 */
             if (dmn_state == DMN_ACTIVE) {
                 dmn_state = DMN_IDLE;

@@ -1180,10 +1180,15 @@ function snapFresh(){
 //    interoception.md §3.3: 穏やか=低脈動の青寄り, しんどい=速い脈動の赤寄り.
 function meStarState(m){
   m=m||{};
-  // stress in [0,1] from MY real pressure+threat (the only S_n inputs
-  // /galaxy.json exposes for ME today; atrisk is peers-only). EWMA-smoothed
-  // upstream in the kernel; here a gentle blend, no fake source.
-  const stress=Math.min(1,((m.pressure||0)+(m.threat||0)*1.4)/120);
+  // stress in [0,1] = the REAL kernel-computed unified S_n bus (interoception.md
+  // §3.3): me.s_n is 0..255, EWMA-smoothed IN THE KERNEL over all pain axes
+  // (threat/latency/surprise/fault/degrade). The browser no longer estimates
+  // stress from pressure+threat — it READS the organism's own mood. Fallback to
+  // the old client-side estimate only for snapshots predating s_n (so an old
+  // node / frozen capture still renders), never inventing a source.
+  const stress=(m.s_n!==undefined)
+      ? Math.min(1,(m.s_n||0)/255)
+      : Math.min(1,((m.pressure||0)+(m.threat||0)*1.4)/120);
   let mode,sprGlow,sprBall,period,depth,rgb;
   // wobble = the SHAPE-undulation character (interoception §3.3): how fast the
   //   outline ripples (wspeed), how deep the lobes push (wamp, as a fraction of

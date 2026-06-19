@@ -129,6 +129,7 @@ COMMON_C_SRCS = \
     heal.c \
     guard.c \
     degrade.c \
+    interocept.c \
     vital.c \
     edf.c \
     raft.c \

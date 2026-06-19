@@ -94,3 +94,16 @@ void dmn_set_log_interval(UW v);
  * across the sleeps, plus confirm the R3 living-mind track still runs. Shell:
  * `dmn distill [N]`. A no-op-honest cert on a baby-less / PFS-less node. */
 void dmn_student_distill_test(UW n);
+
+/* ── interoception mind-body coupling (interoception.md §3.2/§3.5) ──────────
+ * The S_n stress bus modulates the DMN's effective idle threshold. These expose
+ * the SAME production values the live dmn_task loop steers on, for the
+ * [intero-tick] acceptance cert (production symbols, not a sim). */
+UW   dmn_intero_effective_threshold(void);  /* re-reads S_n, applies deadband  */
+UB   dmn_intero_held_sn(void);              /* the deadband-held S_n           */
+
+/* `intero` shell verb cert (interoception.md §3.5 [intero-tick]): sweeps S_n
+ * low->high and proves the effective idle threshold falls MONOTONICALLY while
+ * the deadband suppresses oscillation under a flat S_n. Prints
+ * "[intero-tick] PASS/FAIL". Returns 0 = PASS. Calls intero_self_test first. */
+INT  dmn_intero_modulation_test(void);

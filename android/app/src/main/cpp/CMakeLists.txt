@@ -152,6 +152,7 @@ set(COMMON_SRC
     ${ARCH_CO}/heal.c
     ${ARCH_CO}/guard.c
     ${ARCH_CO}/degrade.c
+    ${ARCH_CO}/interocept.c
     ${ARCH_CO}/vital.c
     ${ARCH_CO}/edf.c
     ${ARCH_CO}/raft.c

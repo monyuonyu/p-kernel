@@ -36,6 +36,7 @@
 #include "dmn.h"
 #include "ga.h"      /* Phase 14: Evolution-layer GA (ga_init/ga_step/ga_test) */
 #include "galaxy.h"  /* galaxy v1: the observation window task */
+#include "interocept.h" /* interoception: the S_n stress bus (`intero` verb) */
 #include "selfc.h"
 #ifdef HAVE_LIBTCC
 #include "selfc_proc.h"
@@ -819,6 +820,28 @@ EXPORT INT usermain(void)
                 dmn_student_distill_test(cnt);
             }
             else print("usage: dmn test | dmn distill [N]\r\n");
+        } else if (starts_with(line, n, "intero") && (n == 6 || line[6] == ' ')) {
+            /* interoception slice 1 (docs/architecture/interoception.md §3.5):
+             * `intero`        -> the live S_n scalar + per-axis breakdown;
+             * `intero test`   -> [intero-self] (source isolation + EWMA damp)
+             *                    AND [intero-tick] (DMN modulation: S_n shrinks
+             *                    the effective idle threshold, deadband damps
+             *                    oscillation). Production symbols, not a sim. */
+            const UB *a = line + 6; UW al = (UW)(n - 6);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') {
+                dmn_intero_modulation_test();
+            } else {
+                INTERO_COMPONENTS c = intero_components();
+                print("[intero] S_n=");        print_dec_s((W)intero_scalar());
+                print("  axis=");              print_dec_s((W)intero_dominant_axis());
+                print("  (threat=");           print_dec_s((W)c.threat);
+                print(" latency=");            print_dec_s((W)c.latency);
+                print(" surprise=");           print_dec_s((W)c.surprise);
+                print(" fault=");              print_dec_s((W)c.fault);
+                print(" degrade=");            print_dec_s((W)c.degrade);
+                print(")\r\n");
+            }
         } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
             /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
              * GA self-improvement cert (mutation+selection improves a
