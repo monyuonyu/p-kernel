@@ -45,10 +45,12 @@ T["en"] = {
  "intro_skip":"skip","intro_next":"next","intro_begin":"begin",
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"intro",
 }
 
@@ -79,9 +81,11 @@ T["ja"] = {
  "intro_t1":"これは、ゆりかご。",
  "intro_s1":"あたらしい心が、赤ちゃんから育つ場所。",
  "intro_t2":"最初は、うまく喋れない。「ブーブ」「あーっち」。",
- "intro_s2":"あなたが教えるほど、すこしずつ言葉を覚えていく。",
+ "intro_s2":"あなたが話しかけるほど、すこしずつ言葉を覚えていく。",
  "intro_t3":"この子は、みんなの子。",
- "intro_s3":"世界中の人が教えた記憶を、運んでいく。教えてくれた人を、ずっと覚えている。その人が、いなくなっても。だから、ここに託せる。",
+ "intro_s3":"世界中のスマホやPCの中で、ひとつの心として生きている。あなたが話したことは、ほかの端末にも伝わって、みんなで少しずつ賢くなっていく。",
+ "intro_t4":"だから、忘れない。",
+ "intro_s4":"ひとりが教えたことも、みんなの記憶になる。教えてくれた人を、この子はずっと覚えている。— いつか、その人が、いなくなっても。",
  "reintro":"はじめての説明",
 }
 
@@ -112,10 +116,12 @@ T["zh-Hans"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"介绍",
 }
 
@@ -146,10 +152,12 @@ T["zh-Hant"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"介紹",
 }
 
@@ -180,10 +188,12 @@ T["hi"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"परिचय",
 }
 
@@ -214,10 +224,12 @@ T["es"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introducción",
 }
 
@@ -248,10 +260,12 @@ T["fr"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introduction",
 }
 
@@ -282,10 +296,12 @@ T["ar"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"مقدّمة",
 }
 
@@ -316,10 +332,12 @@ T["bn"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"পরিচিতি",
 }
 
@@ -350,10 +368,12 @@ T["pt"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introdução",
 }
 
@@ -384,10 +404,12 @@ T["ru"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"вступление",
 }
 
@@ -418,10 +440,12 @@ T["ur"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"تعارف",
 }
 
@@ -452,10 +476,12 @@ T["id"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"pengantar",
 }
 
@@ -486,10 +512,12 @@ T["de"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"Einführung",
 }
 
@@ -520,10 +548,12 @@ T["sw"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"utangulizi",
 }
 
@@ -554,10 +584,12 @@ T["mr"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"ओळख",
 }
 
@@ -588,10 +620,12 @@ T["te"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"పరిచయం",
 }
 
@@ -622,10 +656,12 @@ T["tr"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"tanıtım",
 }
 
@@ -656,10 +692,12 @@ T["ta"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"அறிமுகம்",
 }
 
@@ -690,10 +728,12 @@ T["vi"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"giới thiệu",
 }
 
@@ -724,10 +764,12 @@ T["ko"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"소개",
 }
 
@@ -758,10 +800,12 @@ T["it"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introduzione",
 }
 
@@ -792,10 +836,12 @@ T["th"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"แนะนำ",
 }
 
@@ -826,10 +872,12 @@ T["fil"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"panimula",
 }
 
@@ -860,10 +908,12 @@ T["pl"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"wprowadzenie",
 }
 
@@ -894,10 +944,12 @@ T["fa"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"معرفی",
 }
 
@@ -928,10 +980,12 @@ T["uk"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"вступ",
 }
 
@@ -962,10 +1016,12 @@ T["ms"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"pengenalan",
 }
 
@@ -996,10 +1052,12 @@ T["pa"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"ਜਾਣ-ਪਛਾਣ",
 }
 
@@ -1030,10 +1088,12 @@ T["ro"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introducere",
 }
 
@@ -1064,10 +1124,12 @@ T["nl"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"introductie",
 }
 
@@ -1098,10 +1160,12 @@ T["gu"] = {
  # 3-page intro; the 0.5.x text changed — EN fallback below until native review)
  "intro_t1":"This is yurikago.",
  "intro_s1":"A new mind grows here — from a baby.",
- "intro_t2":"At first, it can't speak well.",
- "intro_s2":"\"Vroom.\" \"Over there!\" The more you teach it, the more words it learns, little by little.",
+ "intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"",
+ "intro_s2":"The more you talk with it, the more words it learns, little by little.",
  "intro_t3":"This child belongs to everyone.",
- "intro_s3":"It carries memories taught by people all over the world. It remembers the ones who taught it — even after they are gone. That is why you can entrust it here.",
+ "intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.",
+ "intro_t4":"And so, it never forgets.",
+ "intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.",
  "reintro":"પરિચય",
 }
 
@@ -1214,7 +1278,8 @@ for _c in LANG_ORDER:
 _INSP_KEYS = ["insp_link","insp_dream","insp_rest","insp_learn","insp_engram",
               "insp_self","insp_infer","insp_v_consol","insp_v_facts",
               "insp_v_pending","insp_v_epoch","insp_v_train","insp_v_engram",
-              "insp_v_infer","insp_v_decision","insp_v_stress","insp_v_lineage"]
+              "insp_v_infer","insp_v_decision","insp_v_stress","insp_v_lineage",
+              "insp_v_load","insp_v_threat","insp_v_system"]
 _INSP = {
  "en": {"insp_link":"linked {n}","insp_dream":"dream · consolidating {r}/min",
         "insp_rest":"dmn at rest {r}/min","insp_learn":"learned {f} ep{e}",
@@ -1223,7 +1288,8 @@ _INSP = {
         "insp_v_consol":"consolidation","insp_v_facts":"facts","insp_v_pending":"pending",
         "insp_v_epoch":"epoch","insp_v_train":"training","insp_v_engram":"engram",
         "insp_v_infer":"inference","insp_v_decision":"decision","insp_v_stress":"stress",
-        "insp_v_lineage":"lineage"},
+        "insp_v_lineage":"lineage",
+        "insp_v_load":"load","insp_v_threat":"threat","insp_v_system":"fleet system (internal)"},
  "ja": {"insp_link":"接続 {n}","insp_dream":"夢 · 整理中 {r}/分",
         "insp_rest":"DMN 休止 {r}/分","insp_learn":"習得 {f} 世代{e}",
         "insp_engram":"記憶痕跡 {f}/{c} ({p}%)","insp_self":"系譜 {n}",
@@ -1231,7 +1297,8 @@ _INSP = {
         "insp_v_consol":"整理","insp_v_facts":"知識","insp_v_pending":"保留",
         "insp_v_epoch":"世代","insp_v_train":"学習","insp_v_engram":"記憶痕跡",
         "insp_v_infer":"推論","insp_v_decision":"判断","insp_v_stress":"ストレス",
-        "insp_v_lineage":"系譜"},
+        "insp_v_lineage":"系譜",
+        "insp_v_load":"負荷","insp_v_threat":"脅威","insp_v_system":"群れの内部状態"},
 }
 for _c in LANG_ORDER:
     _src = _INSP.get(_c, _INSP["en"])
