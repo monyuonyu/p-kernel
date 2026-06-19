@@ -90,9 +90,14 @@ static float st_silu_grad(float x)
 #define D    ST_DMODEL
 #define L    ST_NLAYER
 #define E    ST_NEXPERT
-#define K    ST_TOPK
+#define K    ST_TOPK      /* K_min — the floor firing width                  */
+#define KMAX ST_KMAX      /* fixed ceiling (= E): ALL per-token K scratch is  */
+                          /* bound to KMAX, never to the runtime K (no-VLA).  */
 #define DFF  ST_DFF
 #define V    ST_VOCAB
+
+_Static_assert(KMAX <= E, "K_MAX must not exceed the expert count E");
+_Static_assert(K <= KMAX, "K_min must not exceed K_MAX");
 
 /* sizes of each weight family (in floats) */
 #define SZ_EMBED     (V * D)
@@ -124,9 +129,10 @@ typedef struct {
     float *f_in;             /* [L][n][D]  rmsnorm(resid after attn)       */
     float *f_rstd;           /* [L][n]                                     */
     float *gate;             /* [L][n][E]  router logits                   */
-    int   *topk_e;           /* [L][n][K]  chosen expert ids               */
-    float *topk_w;           /* [L][n][K]  softmax weight over chosen      */
-    float *e_g, *e_u, *e_h;  /* [L][n][K][DFF] gate=w1x, up=w3x, h=silu(g)*u */
+    int   *topk_e;           /* [L][n][KMAX] chosen expert ids (KMAX-bound) */
+    float *topk_w;           /* [L][n][KMAX] softmax weight over chosen     */
+    int   *topk_n;           /* [L][n]     runtime firing width (K..KMAX)  */
+    float *e_g, *e_u, *e_h;  /* [L][n][KMAX][DFF] gate/up/h (KMAX-bound)    */
     /* output */
     float *o_in;             /* [n][D]  rmsnorm(final resid)               */
     float *o_rstd;           /* [n]                                        */
@@ -147,14 +153,14 @@ static size_t cache_floats(int n)
     s += (size_t)L * n * D;            /* f_in     */
     s += (size_t)L * n;                /* f_rstd   */
     s += (size_t)L * n * E;            /* gate     */
-    s += (size_t)L * n * K * DFF * 3;  /* e_g,e_u,e_h */
+    s += (size_t)L * n * KMAX * DFF * 3; /* e_g,e_u,e_h (KMAX-bound, no-VLA) */
     s += (size_t)n * D;                /* o_in     */
     s += (size_t)n;                    /* o_rstd   */
     s += (size_t)n * V;                /* probs    */
     return s;
 }
-/* topk_e is ints: L*n*K */
-static size_t cache_ints(int n) { return (size_t)L * n * K; }
+/* topk_e (KMAX-bound) + topk_n (per-token width): ints L*n*KMAX + L*n. */
+static size_t cache_ints(int n) { return (size_t)L * n * KMAX + (size_t)L * n; }
 
 /* ================================================================== */
 /* tiny host allocator shim (libc-light: one malloc/free for the arena) */
@@ -274,17 +280,17 @@ static st_cache *cache_get(st_model *m, int n)
     c->f_in   = fp + off; off += (size_t)L * n * D;
     c->f_rstd = fp + off; off += (size_t)L * n;
     c->gate   = fp + off; off += (size_t)L * n * E;
-    c->e_g    = fp + off; off += (size_t)L * n * K * DFF;
-    c->e_u    = fp + off; off += (size_t)L * n * K * DFF;
-    c->e_h    = fp + off; off += (size_t)L * n * K * DFF;
+    c->e_g    = fp + off; off += (size_t)L * n * KMAX * DFF;
+    c->e_u    = fp + off; off += (size_t)L * n * KMAX * DFF;
+    c->e_h    = fp + off; off += (size_t)L * n * KMAX * DFF;
     c->o_in   = fp + off; off += (size_t)n * D;
     c->o_rstd = fp + off; off += (size_t)n;
     c->probs  = fp + off; off += (size_t)n * V;
-    c->topk_e = ip;
-    /* topk_w lives in the float pool too: reuse the tail? Allocate explicitly. */
+    c->topk_e = ip;                              /* [L][n][KMAX] expert ids */
+    c->topk_n = ip + (size_t)L * n * KMAX;       /* [L][n] runtime width    */
+    /* topk_w lives in a separate static-grown float buffer (set in st_forward,
+     * sized L*n*KMAX) so it survives the per-FD cache realloc in grad-check. */
     c->topk_w = NULL; /* set below */
-    /* we need L*n*K floats for topk_w — extend the float pool usage: it was
-     * accounted? No. Put topk_w right after probs by re-malloc'ing exactly. */
     (void)hdr;
     m->cache = c;
     return c;
@@ -350,44 +356,82 @@ static void rmsnorm_bwd(const float *x, const float *gain, float rstd,
 /* forward                                                            */
 /* ================================================================== */
 
-/* router: compute gate logits, pick top-K by logit, softmax-normalize over the
- * K chosen. Writes chosen ids (topk_e), weights (topk_w). */
-/* When non-zero, router_pick REUSES the expert ids already in topk_e instead of
- * re-running the (discontinuous) top-K argmax. The softmax gate weights are
- * still recomputed from the current logits, so they remain differentiable. This
- * is set ONLY by st_grad_check so finite differences don't straddle a routing
- * boundary (top-K selection is non-differentiable — the analytic gradient is
- * the derivative AT FIXED routing, which is what an Adam step actually uses). */
+/* router: compute gate logits, ADAPTIVE-K pick (SS-1, special-structure-mind.md
+ * §4), softmax-normalize over the chosen.  An EASY token (one expert dominates
+ * -> big router margin) fires K_min experts; a HARD/ambiguous token (flat gate
+ * -> small margin) widens toward K_MAX = E.  Writes chosen ids (topk_e[KMAX]),
+ * softmax weights (topk_w[KMAX]), and returns the runtime firing width nk
+ * (K_min..K_MAX).  Hardness signal = router MARGIN gate[top0]-gate[topj], the
+ * cheapest order-stable signal under -ffp-contract=off (no transcendental in
+ * the comparison, so (weights,bytes) -> identical nk on every target).
+ *
+ * When st_freeze_routing is set, router_pick REPLAYS the frozen ids AND the
+ * frozen width instead of re-deriving them (the discontinuous selection is
+ * non-differentiable; the analytic gradient is the derivative AT FIXED routing,
+ * which is what an Adam step actually uses).  The softmax weights are still
+ * recomputed from the current logits so they remain differentiable. */
 static int   st_freeze_routing = 0;
-static int  *st_frozen_route = NULL;  /* [L*n*K] snapshot, survives cache realloc */
-static int   st_frozen_pos = 0;       /* running index as forward visits (l,t)    */
+static int  *st_frozen_route = NULL;  /* [L*n*KMAX] ids snapshot (survives realloc) */
+static int  *st_frozen_n     = NULL;  /* [L*n]      width snapshot                  */
+static int   st_frozen_pos = 0;       /* running index as forward visits (l,t)      */
 
-static void router_pick(const float *gate, int *topk_e, float *topk_w)
+/* ---- firing-width observability (SS-1) — read-only via st_last_fire_width().
+ * Updated at the END of each st_forward from the cached per-token widths. */
+static int   st_fw_last  = 0;   /* width of the final token's final layer        */
+static int   st_fw_milli = 0;   /* mean width across all (l,t), x1000 (libc-free) */
+static int   st_fw_experts[ST_KMAX]; /* final token's final-layer chosen expert ids */
+
+static int router_pick(const float *gate, int *topk_e, float *topk_w)
 {
-    /* selection of top-K from E (E small) */
-    int chosen[E];
-    for (int j = 0; j < K; j++) chosen[j] = -1;
-    if (st_freeze_routing && st_frozen_route) {
-        for (int j = 0; j < K; j++) chosen[j] = st_frozen_route[st_frozen_pos * K + j];
-        st_frozen_pos++;
-    } else
-    for (int j = 0; j < K; j++) {
+    /* full descending order of the E experts by gate logit (E tiny: selection
+     * sort).  order[0] = top1.  Scratch bound to E (compile-time) — no VLA. */
+    int order[E];
+    int used[E];
+    for (int e = 0; e < E; e++) used[e] = 0;
+    for (int r = 0; r < E; r++) {
         int best = -1; float bv = -1e30f;
         for (int e = 0; e < E; e++) {
-            int taken = 0;
-            for (int p = 0; p < j; p++) if (chosen[p] == e) taken = 1;
-            if (taken) continue;
-            if (gate[e] > bv) { bv = gate[e]; best = e; }
+            if (used[e]) continue;
+            if (best < 0 || gate[e] > bv) { bv = gate[e]; best = e; }
         }
-        chosen[j] = best;
+        order[r] = best; used[best] = 1;
     }
-    /* softmax over the K chosen logits */
+
+    int nk;
+    if (st_freeze_routing && st_frozen_route && st_frozen_n) {
+        /* replay the exact frozen selection (ids + width) for FD probes */
+        nk = st_frozen_n[st_frozen_pos];
+        for (int j = 0; j < nk; j++)
+            topk_e[j] = st_frozen_route[st_frozen_pos * KMAX + j];
+        st_frozen_pos++;
+    } else {
+        /* margin widening: start at K_min, admit the next expert while the gap
+         * from top1 to it is below THETA and we are under K_MAX. */
+        nk = K;
+        float top1 = gate[order[0]];
+        while (nk < KMAX && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
+        for (int j = 0; j < nk; j++) topk_e[j] = order[j];
+    }
+
+    /* softmax over the nk chosen logits (max-subtracted, libc-free expf) */
     float mx = -1e30f;
-    for (int j = 0; j < K; j++) if (gate[chosen[j]] > mx) mx = gate[chosen[j]];
+    for (int j = 0; j < nk; j++) if (gate[topk_e[j]] > mx) mx = gate[topk_e[j]];
     float sum = 0.0f;
-    for (int j = 0; j < K; j++) { topk_w[j] = st_expf(gate[chosen[j]] - mx); sum += topk_w[j]; }
+    for (int j = 0; j < nk; j++) { topk_w[j] = st_expf(gate[topk_e[j]] - mx); sum += topk_w[j]; }
     if (sum < 1e-20f) sum = 1e-20f;
-    for (int j = 0; j < K; j++) { topk_w[j] /= sum; topk_e[j] = chosen[j]; }
+    for (int j = 0; j < nk; j++) topk_w[j] /= sum;
+    return nk;
+}
+
+/* TEST HOOK: exercise the EXACT production selection on a crafted gate. */
+int st_router_pick_width(const float *gate, int *chosen)
+{
+    float w[KMAX];
+    int   was_freeze = st_freeze_routing;
+    st_freeze_routing = 0;                 /* never replay frozen routing here */
+    int nk = router_pick(gate, chosen, w);
+    st_freeze_routing = was_freeze;
+    return nk;
 }
 
 int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
@@ -395,11 +439,10 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
     if (n < 1 || n > ST_MAXSEQ) return ST_E_ARG;
     st_cache *c = cache_get(m, n);
     if (!c) return ST_E_OOM;
-    /* topk_w needs L*n*K floats — carve from a static-free spot: allocate via
-     * the model's own small buffer. Simplest: stash inside probs tail is wrong;
-     * instead reuse e_h? No. Allocate a dedicated piece. */
+    /* topk_w needs L*n*KMAX floats (KMAX-bound per token, no-VLA) in a separate
+     * static-grown buffer so it survives the per-FD cache realloc in grad-check. */
     static float *tw_buf = NULL; static size_t tw_cap = 0;
-    size_t tw_need = (size_t)L * n * K;
+    size_t tw_need = (size_t)L * n * KMAX;
     if (tw_need > tw_cap) { free(tw_buf); tw_buf = (float *)malloc(tw_need * sizeof(float)); tw_cap = tw_need; }
     if (!tw_buf) return ST_E_OOM;
     c->topk_w = tw_buf;
@@ -487,20 +530,21 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
                 for (int i = 0; i < D; i++) acc += re[i] * fin[i];
                 gt[e] = acc;
             }
-            int   *te = c->topk_e + ((size_t)l * n + t) * K;
-            float *tw = c->topk_w + ((size_t)l * n + t) * K;
-            router_pick(gt, te, tw);
+            int   *te = c->topk_e + ((size_t)l * n + t) * KMAX;
+            float *tw = c->topk_w + ((size_t)l * n + t) * KMAX;
+            int    nk = router_pick(gt, te, tw);
+            c->topk_n[(size_t)l * n + t] = nk;   /* runtime firing width      */
 
             float moe[D];
             for (int i = 0; i < D; i++) moe[i] = 0.0f;
-            for (int j = 0; j < K; j++) {
+            for (int j = 0; j < nk; j++) {
                 int e = te[j]; float wj = tw[j];
                 const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
                 const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
                 const float *w2 = W + m->o_w2 + ((size_t)l * E + e) * D * DFF;
-                float *eg = c->e_g + (((size_t)l * n + t) * K + j) * DFF;
-                float *eu = c->e_u + (((size_t)l * n + t) * K + j) * DFF;
-                float *eh = c->e_h + (((size_t)l * n + t) * K + j) * DFF;
+                float *eg = c->e_g + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eu = c->e_u + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eh = c->e_h + (((size_t)l * n + t) * KMAX + j) * DFF;
                 for (int h = 0; h < DFF; h++) {
                     const float *w1h = w1 + (size_t)h * D;
                     const float *w3h = w3 + (size_t)h * D;
@@ -539,7 +583,35 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
         if (sum < 1e-20f) sum = 1e-20f;
         for (int o = 0; o < V; o++) pr[o] /= sum;
     }
+
+    /* ---- firing-width observability (SS-1) ----
+     * last  = the final token's final-layer width ("answer token" width).
+     * milli = mean width across all (layer, token) experts x1000 (libc-free
+     * integer; no float division of the count, so it stays deterministic). */
+    {
+        size_t fcell = (size_t)(L - 1) * n + (n - 1);   /* final token, final layer */
+        st_fw_last = c->topk_n[fcell];
+        const int *fe = c->topk_e + fcell * KMAX;
+        for (int j = 0; j < KMAX; j++)
+            st_fw_experts[j] = (j < st_fw_last) ? fe[j] : -1;
+        long sumw = 0;
+        for (int l = 0; l < L; l++)
+            for (int t = 0; t < n; t++) sumw += c->topk_n[(size_t)l * n + t];
+        long cells = (long)L * n;
+        st_fw_milli = cells ? (int)((sumw * 1000) / cells) : 0;
+    }
     return ST_OK;
+}
+
+/* ---- firing-width accessors (SS-1 observability; NOT wired to galaxy) ---- */
+int st_last_fire_width(void)            { return st_fw_last; }
+int st_last_fire_width_mean_milli(void) { return st_fw_milli; }
+int st_last_fire_experts(int *out, int max)
+{
+    int nk = st_fw_last;
+    if (nk > max) nk = max;
+    for (int j = 0; j < nk; j++) out[j] = st_fw_experts[j];
+    return nk;
 }
 
 /* ================================================================== */
@@ -806,15 +878,16 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
             float *grout = g_r + (size_t)t * D;     /* dL/d(rout_t) */
             /* residual: rout = (rin+Wo a) + moe. moe path: */
             float *fin = f_in + (size_t)t * D;
-            int   *te = c->topk_e + ((size_t)l * n + t) * K;
-            float *tw = c->topk_w + ((size_t)l * n + t) * K;
+            int    nk = c->topk_n[(size_t)l * n + t];  /* runtime firing width */
+            int   *te = c->topk_e + ((size_t)l * n + t) * KMAX;
+            float *tw = c->topk_w + ((size_t)l * n + t) * KMAX;
             float g_fin[D];
             for (int i = 0; i < D; i++) g_fin[i] = 0.0f;
             float g_gate[E];
             for (int e = 0; e < E; e++) g_gate[e] = 0.0f;
-            float gw_chosen[K];   /* dL/d(gate-weight tw[j]) per chosen expert */
+            float gw_chosen[KMAX]; /* dL/d(gate-weight tw[j]); KMAX-bound, no-VLA */
 
-            for (int j = 0; j < K; j++) {
+            for (int j = 0; j < nk; j++) {
                 int e = te[j]; float wj = tw[j];
                 const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
                 const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
@@ -822,9 +895,9 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
                 float *gw1 = G + m->o_w1 + ((size_t)l * E + e) * DFF * D;
                 float *gw3 = G + m->o_w3 + ((size_t)l * E + e) * DFF * D;
                 float *gw2 = G + m->o_w2 + ((size_t)l * E + e) * D * DFF;
-                float *eg = c->e_g + (((size_t)l * n + t) * K + j) * DFF;
-                float *eu = c->e_u + (((size_t)l * n + t) * K + j) * DFF;
-                float *eh = c->e_h + (((size_t)l * n + t) * K + j) * DFF;
+                float *eg = c->e_g + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eu = c->e_u + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eh = c->e_h + (((size_t)l * n + t) * KMAX + j) * DFF;
 
                 /* expert output eo[i] = sum_h w2[i][h] eh[h]; moe += wj*eo
                  * grout flows to eo as wj*grout; and to gate weight wj as
@@ -872,11 +945,11 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
                  * after the loop, since tw[j] = softmax over the K chosen). */
                 gw_chosen[j] = g_wj;
             }
-            /* softmax-over-chosen backward: tw[j] = softmax(gate[te[j]]).
-             * dL/dgate[te[a]] = sum_j gw_chosen[j] * tw[j]*(delta_aj - tw[a]). */
-            for (int a = 0; a < K; a++) {
+            /* softmax-over-chosen backward: tw[j] = softmax(gate[te[j]]) over
+             * the nk chosen. dL/dgate[te[a]] = sum_j gw[j] tw[j](delta_aj-tw[a]). */
+            for (int a = 0; a < nk; a++) {
                 float ga = 0.0f;
-                for (int j = 0; j < K; j++) {
+                for (int j = 0; j < nk; j++) {
                     float d = (a == j) ? 1.0f : 0.0f;
                     ga += gw_chosen[j] * tw[j] * (d - tw[a]);
                 }
@@ -1180,13 +1253,18 @@ float st_grad_check(st_model *m, const uint8_t *bytes, int n, int stride, float 
     st_zero_grad(m);
     st_forward(m, bytes, n, logits);   /* this also caches the routing choice */
     st_backward(m, bytes, n);
-    /* snapshot the routing decision (l,t,j) so it survives the cache realloc
-     * inside each FD st_eval_loss, then freeze it for the probes. */
+    /* snapshot the routing decision (chosen ids AND the adaptive per-token
+     * width nk) so the FD probes replay the EXACT same selection — the FD step
+     * must not straddle a routing boundary (selection AND width are both
+     * non-differentiable). The snapshot survives the cache realloc each FD does. */
     st_cache *cc = (st_cache *)m->cache;
-    int nroute = (int)((size_t)L * n * K);
+    size_t ncells = (size_t)L * n;
+    int nroute = (int)(ncells * KMAX);
     st_frozen_route = (int *)malloc((size_t)nroute * sizeof(int));
+    st_frozen_n     = (int *)malloc(ncells * sizeof(int));
     if (st_frozen_route) for (int i = 0; i < nroute; i++) st_frozen_route[i] = cc->topk_e[i];
-    st_freeze_routing = 1;             /* FD probes reuse the frozen routing  */
+    if (st_frozen_n)     for (size_t i = 0; i < ncells; i++) st_frozen_n[i] = cc->topk_n[i];
+    st_freeze_routing = (st_frozen_route && st_frozen_n) ? 1 : 0;  /* replay routing */
 
     int off[16], sz[16];
     int nfam = st_families(m, off, sz);
@@ -1232,6 +1310,7 @@ float st_grad_check(st_model *m, const uint8_t *bytes, int n, int stride, float 
 
     st_freeze_routing = 0;
     free(st_frozen_route); st_frozen_route = NULL;
+    free(st_frozen_n);     st_frozen_n     = NULL;
     /* re-run forward so the cache matches the unperturbed weights again. */
     st_forward(m, bytes, n, logits);
     free(logits);

@@ -44,9 +44,37 @@
 #define ST_DMODEL   128
 #define ST_NLAYER   4
 #define ST_NEXPERT  4
-#define ST_TOPK     2
+#define ST_TOPK     2     /* K_min — the floor firing width (legacy fixed K) */
 #define ST_DFF      256   /* per-expert SwiGLU hidden (= 2 * d_model)       */
 #define ST_MAXSEQ   64    /* training/eval context cap (NS-1 fixture len)   */
+
+/* ---- adaptive top-K (SS-1, special-structure-mind.md §4) ----
+ * Firing width is now a DETERMINISTIC function of (weights, bytes): an easy
+ * token (one expert dominates the router gate -> big margin) fires K_min
+ * experts; a hard/ambiguous token (flat gate -> small margin) widens toward
+ * K_MAX = E. The hardness signal is the ROUTER MARGIN gate[top1]-gate[topj]
+ * (the cheapest order-stable signal under -ffp-contract=off — no new
+ * transcendental, so (weights,bytes) -> identical K on every target).
+ *
+ * [no-vla] DISCIPLINE: K is now a RUNTIME value, so every scratch array that
+ * was sized by K is bound to the FIXED maximum ST_KMAX (= E). Never a VLA.   */
+#define ST_KMIN     ST_TOPK     /* floor: always fire at least this many      */
+#define ST_KMAX     ST_NEXPERT  /* ceiling: at most all E experts (bounded)   */
+/* Margin threshold (in router-logit nats). While the gap from top1 to the
+ * next candidate is BELOW this, the token is "ambiguous" and we admit that
+ * expert. Larger THETA -> more tokens widen. A compile-time const so the
+ * widening is one-math deterministic across targets (wave-49).
+ *
+ * 0.30 chosen by a THETA sweep on the NS-1 teacher fixture (run_ss1.sh): it
+ * widens a measurable amount on hard tokens (mean firing width ~2.1, ambiguous
+ * tokens -> up to K_MAX) WITHOUT regressing held-out loss vs fixed K=2 — the
+ * [no-loss-regression] gate. Aggressive THETA (>=0.5) over-widens the tiny
+ * baby during early training and DOES regress (honest: the win is small until
+ * the baby is bigger; the MECHANISM is what ships here). A fixed-K=2 build is
+ * recovered with -DST_K_THETA=0.0f (the router then never widens). */
+#ifndef ST_K_THETA
+#define ST_K_THETA  0.30f
+#endif
 
 /* Return codes. */
 #define ST_OK      0
@@ -146,6 +174,30 @@ long st_save(const st_model *m, void *buf, size_t cap);
  * reuses its arena). Verifies magic/version/dims; refuses any mismatch.
  * Returns ST_OK on success, negative on reject. */
 int  st_load(st_model *m, const void *buf, size_t len);
+
+/* ---- firing-width observability (SS-1) ----
+ * Read-only: the number of experts the LAST st_forward fired on its FINAL
+ * (most recent) token, final layer — the "answer token" firing width. This is
+ * the amoeba organ-ring's usage signal (heavy task -> wider region) that the
+ * UI/observability will later read. NOT wired to galaxy in this wave. Returns
+ * 0 before any forward. Deterministic in (weights, bytes). */
+int  st_last_fire_width(void);
+/* Mean firing width across ALL (layer, token) experts of the last st_forward,
+ * scaled by 1000 (integer, libc-free): e.g. 2500 == mean 2.5 experts. Lets the
+ * observability layer see the whole forward's sparsity, not just one token. */
+int  st_last_fire_width_mean_milli(void);
+/* Copy the chosen expert ids of the LAST forward's final-token final layer into
+ * out[max] (the "answer token"); returns the count written (== firing width,
+ * <= max). Lets a cert assert the SAME bytes select the IDENTICAL experts. */
+int  st_last_fire_experts(int *out, int max);
+
+/* TEST HOOK (SS-1): run the REAL adaptive router-margin selection on a
+ * caller-supplied gate-logit vector of length ST_NEXPERT. Writes the chosen
+ * expert ids into chosen[ST_NEXPERT] (first nk valid) and returns the firing
+ * width nk (ST_TOPK..ST_NEXPERT). Lets a cert exercise the margin-widening on
+ * a CRAFTED flat vs peaked gate without depending on training luck. This calls
+ * the exact production selection (no logic duplicated). */
+int  st_router_pick_width(const float *gate, int *chosen);
 
 /* libc-free math, exposed for the test's hand-checks / reuse. */
 float st_expf(float x);
