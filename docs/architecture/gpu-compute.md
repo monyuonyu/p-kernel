@@ -1,7 +1,12 @@
 # gpu-compute — 端末の GPU で心の数理を実際に回す（the body's accelerator）
 
-> Status: **design DRAFT**（実装前・commander + mk_pino が叩くための叩き台）。
-> 確信を装わない。提案し、未解決を §「open problems」と §「mk_pino への確認」で
+> Status: **design DRAFT（統合目標は実装前）／ ただし Vulkan matmul バックエンドは SHIP 済**
+> — 2026-06-19 doc-status note。本書の看板目標（GPU を**心の数理に実際に使う**）はまだ未達だが、
+> その手前の **実体のある Vulkan f32 matmul バックエンドは APK に載っている**
+> （`android/app/src/main/cpp/gpu/gpu_vk.c` — dlopen libvulkan・SPIR-V `matmul_f32`・dispatch+readback、
+> `gpu_available()` ゲート）。ただし `moe.c`/`dtr.c`/`r3_incontext.c` から呼ばれてはいない
+> （= GPU-3 配線は意図的に DEFER、gpu-3-wiring.md 参照）。だから「実装前」は backend ではなく
+> **推論経路への統合**を指す。確信を装わない。提案し、未解決を §「open problems」と §「mk_pino への確認」で
 > 正直に旗立てる。確定設計ではなく、最小の決定的実験で**賭けを検証してから**広げる。
 >
 > 位置づけ: conversation.md **§4「身体との接続 — GPU・資源適応」** の直接の実装章。

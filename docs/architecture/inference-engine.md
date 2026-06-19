@@ -1,6 +1,16 @@
 # inference-engine — p-kernel 版・自前 LLM 推論エンジン（M1）
 
-> Status: **design**（実装前）。位置づけ: conversation.md の path A2 の最初の実装章。
+> Status: **M1 IMPLEMENTED**（M1a–M1d 実装済・オラクル検証あり）／2026-06-19 doc-status fix。
+> 下の「実装前」は STALE。What actually shipped: `arch/common/llm/gguf.c`（GGUF ローダ）+
+> `quant.c`（量子化 dequant/matmul）+ `forward.c`（`lm_forward` / `lm_generate` /
+> `lm_generate_sampled` — greedy & サンプリング生成）+ `tokenizer.c`（BPE）。参照オラクルで
+> 検証（`tests/llm/` の `gguf_test` / `qmatmul_test`+`qmatmul_oracle.py` /
+> `forward_test`+`oracle_llama` / `tokenizer_test`+`oracle_tok`）。これが **in-kernel
+> SmolLM2 teacher engine** として student パイプラインから使われている。
+> 正直な headline 状態: エンジン（M1a–d）は動く。ただし baby を教える teacher は今は
+> **小さなコミット済み fixture**（`student_shell.c` の `TEACHER_FIXTURE`）であり、
+> ライブ SmolLM2 GGUF からの token 生成（「1ノードで本物の文を1文生成」）の常時運用は
+> step ⑤（live-teacher harvest, 進行中）。位置づけ: conversation.md の path A2 の最初の実装章。
 > base = **SmolLM2-135M（Apache-2.0, 素の Llama）**（base-model-survey.md）。
 > 目標は「玩具語彙を脱して、1ノードで本物の文を1文生成する」。PyTorch/Python 非依存、
 > libc-free C、p-kernel の中で動く（＝最小の llama.cpp 相当を自作）。

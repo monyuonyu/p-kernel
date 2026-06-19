@@ -1,8 +1,14 @@
 # ring3-core — moving the self-modifying AI core down to ring3/EL0
 
-> Status: **design + acceptance test** (written before implementation, like
-> [living-mind.md](living-mind.md) / [regions.md](regions.md)).
-> Owner of the *first slice*: the next wave (separate implementer + auditor).
+> Status: **SHIPPED for the inference path (Waves A+B+C); training modules still design** —
+> 2026-06-19 doc-status fix. The "written before implementation" line below is STALE.
+> What actually shipped: Wave A (design), **Wave B survival** (a ring3 core crash is reaped
+> via the SYS_EXIT unwind — `boot/x86/idt.c` saved-CS branch, `user_fault_reap` in
+> `arch/x86/syscall.c`, `ring3 test`, the user ELFs under `samples/12_ring3/`; wave-25), and
+> **Wave C the mind's math in ring3** (`samples/12_ring3/03_core_mind/core_mind.c` dual-compiles
+> `moe.c`+`dtr.c`; weights via 0x213, visibility via 0x214; `arch/x86/elf_loader.c` ring3-core
+> path; wave-27). Genuine remainder: dtr training / lm / dmn / gl modules into ring3, async
+> 0x240/0x241, x87 FXSAVE before concurrent minds (`arch/x86/fpu.c` debt note), aarch64 EL0 mirror.
 > Builds ON: the ring-3 scaffolding that already boots Linux/musl ELFs on
 > bare-metal x86 (`arch/x86/userspace.c`, `arch/x86/gdt_user.c`,
 > `arch/x86/elf_loader.c`, `arch/x86/syscall.c`, `boot/x86/isr.S`) and the
@@ -452,9 +458,12 @@ with `from_ring==3` replaced by `from_EL==0` (`SPSR_EL1.M == 0`).
 
 ## Part III — Wave C: the mind's math moves into ring3
 
-> Status: **design + acceptance test** (written before implementation, same
-> discipline as Parts I/II). Owner of the slice: the next wave (separate
-> implementer + auditor). Builds ON the shipped Wave B: the survival branch
+> Status: **SHIPPED (Wave C — the mind's math runs in ring3)** — wave-27; 2026-06-19
+> doc-status fix. The "written before implementation" line below is STALE. What shipped:
+> `samples/12_ring3/03_core_mind/core_mind.c` dual-compiles the SAME `moe.c`+`dtr.c` into
+> `core_mind.elf` (a 14-symbol zero-math shim), weights flow via 0x213 and visibility via
+> 0x214; proven by `kernel_infer_count` delta==0 (all routes counted in ring3) + a user-copy
+> poison flipping the answer + an `nm` tripwire. Builds ON the shipped Wave B: the survival branch
 > in `boot/x86/idt.c:153-173`, `user_fault_reap` (`arch/x86/syscall.c:154`),
 > the `ring3 test` verb (`arch/x86/shell.c:1422-1540`), the user ELFs under
 > `samples/12_ring3/`, and the `ring3-survival` CI job

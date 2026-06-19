@@ -1,8 +1,14 @@
 # persistence — 忘れない方舟（the ark must remember）
 
-> Status: **design** (実装前に書く規律). 位置づけ: product-soul.md のロードマップ
-> 筆頭「忘れる方舟は方舟ではない」を実装に落とす本丸。死なないことが魂なのに、
-> 今は再起動で全部忘れる — 思想と実装の最大の乖離を閉じる。
+> Status: **SHIPPED (SLICE 0+1+2)** — 0.4.7／2026-06-19 doc-status fix. 下の
+> 「実装前」「再起動で全部忘れる」は STALE。今は身元も学んだ心も再起動を生き延びる。
+> What actually shipped: durable 層が正直になった（`pfs_block.c` の `pfs_dur_write` 失敗を
+> 飲み込まない、`pfs_durable.c`）+ 起動時復元（`pfs_durable_restore`→`pfs_dag_restore`,
+> `lm_self.c:608-614`）で **Self 系譜（SLICE 1）** が、DMN sleep の `rw[]→durable`
+> 永続（`dmn.c:181`）と `st_save`/`st_load`（`student.c` / `student_shell.c`,
+> `student_boot_restore`）で **学んだ心の重み（SLICE 2）** が生き残る。Android では
+> `PKERNEL_PFS_DIR`（`nativeSetDataDir`）をアプリ専用領域に向けて配線済み（build.gradle.kts の
+> 0.4.7 / 0.9.0 コメント参照）。残課題は本文の SLICE 3+（eviction/アポトーシス接続など）。
 >
 > 最終更新: 2026-06-13 ／ 関連: [gap-ledger](gap-ledger.md)（DUR-SWALLOW 🔴 /
 > DUR-REFTAB 🟠 はこの設計の SLICE 0）, [living-mind.md](living-mind.md),

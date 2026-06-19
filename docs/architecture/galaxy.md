@@ -1,6 +1,11 @@
 # Galaxy — 銀河の観測窓 (the per-node observation window)
 
-**Status: DESIGN (v1 not started). Design-doc-first, like regions.md / living-mind.md.**
+**Status: SHIPPED (v1 live; on the phones). 2026-06-19 doc-status fix.**
+What actually shipped: the per-node web galaxy is live — `arch/common/galaxy.c` runs the
+minimal HTTP/1.0 + SSE server on port 7800+(node_id-1), serves the UI compiled in from
+`arch/common/web/galaxy.html` (→ generated `galaxy_page.h`), and the ark app opens it as a
+WebView (`GalaxyActivity`, wave-30 / wave-36). Teach/ask, real organism events, and the
+living-body vitals snapshot all flow over it. (Original design-doc-first intent below.)
 
 mk_pino の意図 (2026-06-10, verbatim intent): every node runs a tiny web server; the owner
 opens localhost in a browser and sees **a galaxy** — their own device floating in it, visibly

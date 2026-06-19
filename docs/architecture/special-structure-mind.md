@@ -1,7 +1,13 @@
 # special-structure-mind — the unified, fleet-sized, sparse, cross-node mind
 
-**Status: ROADMAP (design, pre-impl). 2026-06-19. Grounds every claim in code on
-`wave-i18n-galaxy`.** This is the multi-wave plan to turn mk_pino's four-feature
+**Status: ROADMAP — PARTIALLY SHIPPED (SS-1 + SS-2 live; SS-3..7 still design). 2026-06-19.
+Grounds every claim in code on `wave-i18n-galaxy`.**
+What actually shipped: **SS-1** (adaptive-K firing — heavy tokens fire a WIDER expert set;
+the router + runtime `topk_n` + `st_last_fire_width` observability in `arch/common/llm/student.c`)
+and **SS-2** (the S/M/L tier scaffolding — runtime dims + the `ST_TIERS` table, M-tier
+byte-identical to the legacy baby). SS-3 (merge cohorts), SS-4 (function-preserving expert
+growth), SS-5 (deterministic placement), SS-6 (cross-node firing; needs the KV cache), SS-7
+(bigger baby) remain genuine design. This is the multi-wave plan to turn mk_pino's four-feature
 vision (脳サイズがノード数で伸縮 / 真の疎 MoE / 重い仕事ほど広い領域が発火 / 分散合意 /
 複数ノードをまたぐ一回の forward) from today's hariboté into a real unified mind.
 

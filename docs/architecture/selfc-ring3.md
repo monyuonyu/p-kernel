@@ -1,8 +1,12 @@
 # selfc × ring3 — self-built units behind the immune boundary
 
-> Status: **design + acceptance test** (written before implementation, same
-> discipline as [ring3-core.md](ring3-core.md) / [living-mind.md](living-mind.md)).
-> Owner of the first slice: the next wave (separate implementer + auditor).
+> Status: **SHIPPED (v1 germ)** — wave-31; 2026-06-19 doc-status fix. The "written before
+> implementation" line below is STALE. What shipped: self-compiled code can no longer kill
+> the node — `arch/linux/selfc.c` (+ `selfc_proc.c`) runs a unit behind a `fork()` germ with
+> the v1 ISOLATED capability set (a SHRINK: e.g. `tk_slp_tsk` removed, no cross-process
+> wakeup), the fork point inserted AFTER entry resolution (same compiled image in-task or in
+> germ), and the `selfc adopt key` allowlist as the only local trust anchor (signing.md §4.2,
+> LOCAL-ONLY bound). Disease was real (crashing germ RC=139, now contained). Remainder per body.
 > Parents: [self-compile.md](self-compile.md) (the kernel compiles C of itself,
 > hosted, in its OWN address space) and [ring3-core.md](ring3-core.md) Parts I–III
 > (the bare-metal x86 reap machinery: `elf_exec`, `user_fault_reap`, the survival

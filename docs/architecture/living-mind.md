@@ -1,11 +1,15 @@
 # living-mind — an ownerless mind that learns from conversation and sleeps to remember
 
-> Status: **design + acceptance test** (written before implementation, like R3 / wave-18).
-> Owner of the *first slice*: the next wave (separate implementer + auditor).
-> Builds ON: R3 (in-context recall capacity certificate, **closed**) and G22/G38
-> (decentralized gossip learning + the two-layer couple, **closed**).
-> Sequencing gate (from `project_living_mind_vision`): "after G38/R3" — both are
-> closed in `gap-ledger.md`, so this is unblocked.
+> Status: **SHIPPED (LM-1..11; Parts II/III/IV all live)** — 2026-06-19 doc-status fix.
+> The "design + acceptance test / written before implementation" framing below is now
+> STALE for the slices that shipped.
+> What actually shipped: DMN sleep-consolidation (Part II, `arch/common/dmn.c` +
+> `arch/common/lm_consolidate.c`, waves 21/26), the distributed autobiographical Self layer
+> (Part III, `arch/common/lm_self.c`, wave-22), salience-weighted replay (Part IV,
+> `lm_consolidate.c` §"salience-weighted replay", wave-23), fast→slow handoff (wave-24),
+> and the conversational **mouth** `mind_cmd` (the production teach/ask path, driven by the
+> shell AND galaxy; LM-6/wave-29) + the shared mind (wave-35). LM-1,3-11 markers are present
+> across `arch/common/`. Remaining genuinely-future items are noted inline per part.
 
 This document is two parts, like [survival-network.md](survival-network.md):
 
@@ -453,11 +457,14 @@ The next wave should:
 
 ## Part III — the Self layer (first slice): a distributed autobiographical self
 
-> Status: **design + acceptance test** (written before implementation, like Part II /
-> R3). Owner of *this* slice: the next wave (separate implementer + separate auditor).
+> Status: **SHIPPED** (wave-22; 2026-06-19 doc-status fix). The "written before
+> implementation" line below is STALE.
+> What actually shipped: `arch/common/lm_self.c` — the hash-chained self/lineage that
+> survives death, is tamper-evident & fail-closed, and reconstructs ownerless (continuity
+> cert in wave-22). Per-manifest signatures are now also live (signing.md / `sign.c`).
 > Builds ON: **G24** (durable content-addressed blocks), **P2 pfs_dag** (the manifest
 > hash-chain), **G22** (no-central gossip), **LM-1 / DMN** (the `LM_ENGRAM` episode
-> unit). All four are closed in `gap-ledger.md`, so this is unblocked.
+> unit). All four are closed in `gap-ledger.md`.
 
 The 5-layer worldview is Body / Brain / Self / Collective / Evolution. The DMN slice
 (Part II) built the **consolidation** arm of the Default Mode Network (I.3, row 1). The
@@ -764,9 +771,13 @@ commander reads the gate formula line-by-line.
 
 ## Part IV — salience-weighted replay (the DMN's imagination)
 
-> Status: **design + acceptance test** (written before implementation, like Part II /
-> III / R3). Owner of *this* slice: the next wave (separate implementer + separate
-> auditor). Builds ON: **LM-1 / DMN** (Part II, `arch/common/lm_consolidate.c`, **closed**
+> Status: **SHIPPED** (wave-23; 2026-06-19 doc-status fix). The "written before
+> implementation" line below is STALE.
+> What actually shipped: salience-weighted, FIXED-budget replay reallocation in
+> `arch/common/lm_consolidate.c` (the §"salience-weighted replay (living-mind.md Part IV)"
+> block) — danger-class engrams rehearsed more via EARNED salience (`reflex_threat_experience`),
+> with the no-regress hinge (zero salience ⇒ byte-identical to LM-1 uniform replay).
+> Builds ON: **LM-1 / DMN** (Part II, `arch/common/lm_consolidate.c`, **closed**
 > — the engram ring + uniform replay + the held-out generator), **G38** (`reflex.c`
 > arrow-2, `reflex_threat_experience`, **closed**), **G22** (`gl_build_weighted`
 > class-oversample *pattern*, **closed**). All three closed in `gap-ledger.md`, so this is
@@ -1062,8 +1073,10 @@ acceptance test; the commander reads the gate formula line-by-line.
 
 ## Part V — the fast→slow handoff (in-context knowledge becomes weights)
 
-> Status: **design + acceptance test** (written before implementation, like Part II / III /
-> IV / R3). Owner of *this* slice: the next wave (separate implementer + separate auditor).
+> Status: **SHIPPED (LM-4)** (wave-24; 2026-06-19 doc-status fix). The "written before
+> implementation" line below is STALE. What shipped: a fact taught ONLY in-context (frozen
+> weights) becomes weight-resident after a self-distillation sleep round via the slow layer's
+> own `rw[]` through `r_backward` — `r3_handoff_test()` in `arch/common/r3_incontext.c`.
 > Builds ON: **R3** (`arch/common/r3_incontext.c`, in-context associative recall, **closed**
 > — the FAST layer) and **LM-1 / DMN** (`arch/common/lm_consolidate.c`, replay→distill rest-
 > time consolidation, **closed** — the SLOW-layer *pattern*). Both closed in `gap-ledger.md`,
@@ -1364,8 +1377,11 @@ commander reads the gate formula line-by-line.
 
 ## Part VI — 随時: the living consolidation loop (a stream of facts, many sleeps, the real idle hook)
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–V).
-> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> Status: **SHIPPED (LM-5, 随時)** (wave-26; 2026-06-19 doc-status fix). The "written before
+> implementation" line below is STALE. What shipped: a STREAM of facts consolidated by many
+> sleeps via the REAL idle hook — `r3_fact_learn` / `r3_facts_pending` /
+> `r3_consolidate_idle_round` (`arch/common/r3_incontext.c`) driving the production
+> `dmn_idle_work` (G33) on the fleet's linux nodes (no longer x86-only dead code). Builds ON:
 > **LM-4** (Part V, `r3_handoff_test()` in `arch/common/r3_incontext.c`, **closed** — ONE fact,
 > ONE sleep, hand-called), **LM-1** (Part II, the engram-replay→distill cadence + the live
 > `dmn_idle_work` hook pattern in `arch/common/lm_consolidate.c` / `arch/common/dmn.c`,
@@ -1729,8 +1745,11 @@ audit makes the acceptance test; the commander reads the gate formula — and th
 
 ## Part VII — the mouth: a real conversational producer (the owner teaches the live mind)
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–VI).
-> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> Status: **SHIPPED (LM-6, the mouth)** (wave-29; 2026-06-19 doc-status fix). The "written
+> before implementation" line below is STALE. What shipped: the first real conversational
+> producer — `mind teach|ask|wait` driving the production mouth `mind_cmd`
+> (`arch/common/r3_incontext.c`), the real DMN heartbeat consolidating, the ONE provenance
+> write site `ark_prov_record`, also driven from the galaxy UI. Builds ON:
 > **LM-5** (Part VI, `r3_fact_learn`/`r3_facts_pending`/`r3_consolidate_idle_round` in
 > `arch/common/r3_incontext.c:918/975/1030`, the DMN task live on BOTH hosted usermains —
 > **closed** wave-26) and the DMN organ (`dmn.c:118-120` already consolidates pending facts
@@ -2081,8 +2100,11 @@ reads the gate formula — the `mind wait` loop, the dmn.c counter site, and the
 
 ## Part VIII — the shared mind: a fact taught on node A is answerable from node B
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–VII).
-> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> Status: **SHIPPED (LM-7, the shared mind)** (wave-35; 2026-06-19 doc-status fix). The
+> "written before implementation" line below is STALE. What shipped: teach on node A →
+> node B answers AND names the teacher; kill A and B still answers — via `mind_net_task` +
+> the `MT_TEACH_PKT` wire and the region-scoped `mind/teach` K-DDS topic
+> (`arch/common/r3_incontext.c`). Builds ON:
 > **LM-6** (Part VII, `mind teach|ask|wait` + `mind_cmd` at `r3_incontext.c:1619`, the live
 > DMN consolidation, the ONE provenance write site `ark_prov_record` at `:1496`, the galaxy
 > `EV_TEACH`/`EV_CONSOLIDATE` emissions, the web POST `/teach` bridge `galaxy.c:814`),
@@ -2526,8 +2548,11 @@ line-by-line. One epitaph line in `gap-ledger.md`; no new ledger entries; no new
 
 ## Part IX — the language slice: REAL WORDS in, REAL WORDS out (one-token answers)
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–VIII).
-> Owner of *this* slice: the next wave (separate implementer + separate auditor). Builds ON:
+> Status: **SHIPPED (LM-9, REAL WORDS + capacity surgery)** (wave-39; 2026-06-19 doc-status
+> fix). The "written before implementation" line below is STALE. What shipped: real words in
+> / real words out via `arch/common/r3_vocab.c`, and the Part X capacity surgery
+> (`R_DM` 32→48/64; the attention width is the comfortable-N lever, see `r3_vocab.h` /
+> `dtr.h` "R_DM up to 64"). Builds ON:
 > **LM-7** (Part VIII, the shared mind: `mind_net_task` + the `MT_TEACH_PKT` wire `dtr.h:324`,
 > `m_publish_teach`/`mind_net_open` `r3_incontext.c`, the region-scoped `mind/teach` topic),
 > **LM-6** (Part VII, `mind teach|ask|wait` + `mind_cmd`, the ONE provenance write site
@@ -3254,8 +3279,12 @@ E. **`R_KEYV`/`R_VALV` target** (X.2): **`R_KEYV=16`/`R_VALV=64` (RECOMMENDED** 
 
 ## Part XI — Path W: the one mind (the weight-states literally converge)
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–X). Owner of
-> *this* slice: the next wave (separate implementer + separate auditor). Builds ON: **LM-7**
+> Status: **SHIPPED (LM-10, Path W)** (wave-41; 2026-06-19 doc-status fix). The "written
+> before implementation" line below is STALE. What shipped (MEASURED): the one-mind weight
+> merge `gl_merge` (`arch/common/gossip_learn.c`, `n=R_NP`) + `r3_weights_get/set` +
+> `merge_epoch` + the chunked 84 KB transport. The measured truth: naive averaging of two
+> minds that learned DIFFERENT facts is LOSSY; union-replay consolidation after merge recovers
+> BOTH — so the mind is one, but needs collective sleep, not just the average. Builds ON: **LM-7**
 > (Part VIII, the shared mind — `mind_net_task` + the region-scoped K-DDS topic `mind/teach`,
 > the `MT_TEACH_PKT` wire `r3_incontext.c:39`, B's `r3_fact_learn` arrival mouth, the
 > `EV_REMOTE_TEACH` galaxy emission `galaxy.h:55`, **Path E shipped**), **G22** (the no-central
@@ -3587,8 +3616,11 @@ loss/cure named.**
 
 ## Part XII — Path W²: the weighted / Fisher merge (does a SMARTER merge beat the plain mean?)
 
-> Status: **design + acceptance test** (written before implementation, like Parts II–XI). Owner of
-> *this* slice: the next wave (separate implementer + separate auditor). Builds ON: **LM-10 / Path W**
+> Status: **SHIPPED (LM-11, Path W²)** (waves 42-44; 2026-06-19 doc-status fix). The "written
+> before implementation" line below is STALE. What shipped: the per-parameter WEIGHTED /
+> Fisher merge `gl_merge_w` (`arch/common/gossip_learn.c`; `gl_merge` stays UNCHANGED driving
+> LM-10) — Fisher merge rescues the collapsing fact WITHOUT replay (measured 8.8%→85%, robust
+> across 4 decades of the relative floor). Builds ON: **LM-10 / Path W**
 > (Part XI — the one-mind weight merge, `gl_merge` at `n=R_NP`, `r3_weights_get/set`, `merge_epoch`,
 > the chunked 84 KB transport, the `[onemind-*]` 2×2 divergent-minds matrix harness `r3_incontext.c`),
 > **G22** (`gl_accumulate`/`gl_scale`/`gl_merge` `gossip_learn.c:57-77` — the plain mean), **LM-9**

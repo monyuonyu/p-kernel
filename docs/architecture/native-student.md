@@ -1,6 +1,13 @@
 # native-student — 赤子から育つ、器に合った脳（the growable native student）
 
-> Status: **design DRAFT**（実装前・commander + mk_pino が叩くための叩き台）。
+> Status: **NS-1 SHIPPED**（赤子＝Cradle baby は実装済・APK 0.9.0 で chat ⑥ を駆動）／
+> 2026-06-19 doc-status fix。下の「design DRAFT 実装前」は STALE。
+> What actually shipped: `arch/common/llm/student.c`（NS-1 Cradle baby — 白紙から育つ
+> in-kernel student、単頭 attention・位置エンコードなし）+ `student_shell.c`（RESIDENT・
+> PERSISTED baby、`student_boot_restore`、pure-A 生成＝student が自力で生成、teacher は
+> ボランティア駆動の DMN 蒸留で拡散）。SS-1（adaptive-K）/ SS-2（tier S/M/L）も同居実装済
+> （special-structure-mind.md 参照）。残りの育成ロードマップ（多様な教師コーパス等）は本文の
+> §「open problems」「mk_pino への確認」のとおり前進中。
 > 確信を装わない。提案し、未解決を正直に旗立てし、二読みできる意図は §「open
 > problems」と §「mk_pino への確認」で commander に返す。
 >

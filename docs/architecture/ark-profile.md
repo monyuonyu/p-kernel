@@ -1,7 +1,11 @@
 # Ark-profile — 人類の記憶 (humanity's memory): the human chapter of the autobiography
 
-**Status: DESIGN (v1 not started). Design-doc-first, like galaxy.md / living-mind.md.
-Depends on galaxy v1 + LM-6, BOTH of which are themselves design-only today (§2, §12).**
+**Status: SHIPPED (v1 live). wave-33; 2026-06-19 doc-status fix.**
+What actually shipped: `arch/common/ark_profile.c` (+ `include/ark_profile.h`) implements the
+manifesto store (`ark_manifesto_*`), the consent gate (`ark_consent_ok` / `ark_profile_save`),
+and fact provenance (`ark_prov_record` / `ark_prov_head_id` / `ark_prov_resolve_remote`). The
+v1 first-run consent + profile-entry flow + language selector are live in `galaxy.html` (#ark).
+Both dependencies it cited as "design-only" (galaxy v1, LM-6) have since shipped.
 
 mk_pino の意図 (2026-06-10, verbatim intent): when conversation becomes possible, all
 conversations should remain as humanity's memory in the ark — including the history that

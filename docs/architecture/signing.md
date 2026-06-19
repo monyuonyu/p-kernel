@@ -1,8 +1,14 @@
 # signing — a provenance signature for CODE and WEIGHTS, never for humans
 
-> Status: **design only** (written before implementation, same discipline as
-> [selfc-ring3.md](selfc-ring3.md) / [living-mind.md](living-mind.md) /
-> [genome.md](genome.md)). ZERO production code in this slice.
+> Status: **SHIPPED** (wave-38; 2026-06-19 doc-status fix). The "ZERO production
+> code" line below is STALE — Ed25519 signing is live.
+> What actually shipped: `arch/common/ed25519.c` (zero-dep Ed25519 sign/verify/
+> keypair, byte-identical to OpenSSL in the triple-oracle, with `ed25519_self_test`)
+> + `arch/common/sign.c` (`sign_artifact` / `sign_verify`, `sign_manifest_make` /
+> `sign_manifest_verify` which re-derives the artifact_id so a body-swap is refused,
+> the `sign_allow_*` allow-list, and `sign_self_test`) + per-arch entropy in
+> `arch/{linux,x86,aarch64}/sign_entropy.c`. It signs CODE and WEIGHTS, never humans.
+> The deferrals listed below have since been discharged by this code.
 > Parents — the three deferrals that all point HERE, by file:line:
 > - [living-mind.md](living-mind.md) III.6 / `arch/common/include/lm_self.h:26-32`
 >   — the Self layer is **tamper-EVIDENT, not tamper-PROOF**: a malicious node

@@ -1,7 +1,13 @@
 # Living-body inspector — wire the star's organs to REAL vitals (design)
 
-**Status: design complete + ready 2026-06-18 (open questions: none). Implementation
-queued behind the chat rework (shares galaxy.c/galaxy.html). HONEST-GLOW is the law.**
+**Status: SHIPPED (organs wired to REAL vitals; on the phones) — 2026-06-19 doc-status fix.
+HONEST-GLOW is the law and is enforced in code.**
+What actually shipped: `arch/common/galaxy.c` (lines ~262-291) emits the organism's REAL,
+O(1)-read vitals in the snapshot JSON — `training`, `facts_learned`, `epoch`, `idle_runs`,
+`engram_fill/cap`, `infer_count`, `last_class`, `last_conf`, `lineage`. The browser side
+(`arch/common/web/galaxy.html`: `ME_ORGANS[]` + `organGlow()`) maps each ring/organ to its
+matching live vital, so an organ only brightens/grows/pulses from a value that really changed
+between two honest reads (3D rings, amoeba, full interior immersion). (Original design below.)
 
 mk_pino's want: the star interior must be REALLY connected to the mind's live state
 ("ちゃんと中身と繋がってるか"), active organs GLOW, you fully immerse INSIDE the body,
