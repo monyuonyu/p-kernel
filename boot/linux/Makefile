@@ -117,6 +117,7 @@ ARCH_C_SRCS = \
     rtl8139.c \
     net_unix.c \
     net_relay.c \
+    net_lan.c \
     net_dispatch.c \
     galaxy_posix.c \
     arch_reboot.c \

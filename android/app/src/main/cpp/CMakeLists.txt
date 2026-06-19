@@ -88,6 +88,7 @@ set(ARCH_SRC
     ${ARCH_LX}/aarch64/rtl8139.c
     ${ARCH_LX}/aarch64/net_unix.c
     ${ARCH_LX}/aarch64/net_relay.c
+    ${ARCH_LX}/aarch64/net_lan.c
     ${ARCH_LX}/aarch64/net_dispatch.c
     ${ARCH_LX}/aarch64/galaxy_posix.c
     ${ARCH_LX}/aarch64/arch_reboot.c
