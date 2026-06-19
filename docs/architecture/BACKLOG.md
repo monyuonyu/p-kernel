@@ -42,7 +42,7 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 - **imaginary-UI**: conversation conjures ephemeral GUIs on demand ("電卓が欲しい"→builds one). (web-os.md)
 - **compatibility / 凍結なし進化** (DECIDED 2026-06-14): generational succession + per-version migration chain + signed-OTA. (compatibility.md, project_compat_evolution)
 - **federation** 254→10k staircase, R0 2-cluster live cert. (federation.md)
-- **survival-network「考える器官」**: §7 distributed gating (= regions R3 / mutual-aid) · §8 two-layer oscillation fix · decentralized whole-network situational-awareness map. (survival-network.md) — 🟡 §7/G38 **cert-first design-harden IN FLIGHT** → docs/architecture/survival-g38-impl-plan.md (then a separate impl→audit wave).
+- **survival-network「考える器官」**: §7 distributed gating (= regions R3 / mutual-aid) · §8 two-layer oscillation fix · decentralized whole-network situational-awareness map. (survival-network.md) — ✅ §7/G38 **cert-first impl PLAN DONE** (`docs/architecture/survival-g38-impl-plan.md`): winner = minimal-diff `gacc` skeleton; auditor owns the PASS/FAIL formula; highest-risk gate = the COUPLED pressure+gacc-sum oscillation proof (a slow bias does NOT low-pass a fast oscillation in a shared `expert_utility` sum). **NEXT: a separate impl→audit wave** — touches moe.c (serializes after KV/Thread-M frees the student path; commander reads the gate formula line-by-line before crediting). §8 map + slice-2 still queued.
 - **r3-nontrivial-thought**: multi-step non-trivial reasoning. (r3-nontrivial-thought.md)
 
 ### Thread R — roadmap remainders
