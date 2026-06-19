@@ -87,19 +87,48 @@ static float st_silu_grad(float x)
 /* weight layout / arena                                               */
 /* ================================================================== */
 
-#define D    ST_DMODEL
-#define L    ST_NLAYER
-#define E    ST_NEXPERT
-#define K    ST_TOPK      /* K_min — the floor firing width                  */
-#define KMAX ST_KMAX      /* fixed ceiling (= E): ALL per-token K scratch is  */
-                          /* bound to KMAX, never to the runtime K (no-VLA).  */
-#define DFF  ST_DFF
-#define V    ST_VOCAB
+/* ---- SS-2: the model dims are RUNTIME (m->d/dff/nlayer/nexpert), the legacy
+ * D/L/E/DFF #defines are GONE.  Each function brings the runtime dims into
+ * scope with ST_DIMS(m) (below) so the math body reads them unchanged.  Every
+ * STACK scratch array binds to the FIXED *MAX constants — never the runtime
+ * value — which is the [no-vla] gate (§3.2).  V (byte vocab) and K_min are
+ * tier-invariant, so they stay compile-time constants.                        */
+#define V    ST_VOCAB            /* byte vocab — FIXED across tiers             */
+#define K    ST_TOPK             /* K_min — the floor firing width (FIXED)      */
 
-_Static_assert(KMAX <= E, "K_MAX must not exceed the expert count E");
-_Static_assert(K <= KMAX, "K_min must not exceed K_MAX");
+/* fixed stack-scratch ceilings (== the L tier).  ALL stack arrays size by these. */
+#define DMAX   ST_D_MAX
+#define DFFMAX ST_DFF_MAX
+#define LMAX   ST_L_MAX
+#define EMAX   ST_E_MAX
+#define KMAX   ST_KMAX          /* == ST_E_MAX: per-token K scratch ceiling     */
 
-/* sizes of each weight family (in floats) */
+/* the MAX constants MUST equal the L tier (the table's largest), or a scratch
+ * array could be smaller than a runtime dim — the VLA-equivalent overflow. */
+_Static_assert(ST_D_MAX   == ST_D_L,   "ST_D_MAX must == the L tier d_model");
+_Static_assert(ST_DFF_MAX == ST_DFF_L, "ST_DFF_MAX must == the L tier dff");
+_Static_assert(ST_L_MAX   == ST_L_L,   "ST_L_MAX must == the L tier layers");
+_Static_assert(ST_E_MAX   == ST_E_L,   "ST_E_MAX must == the L tier experts");
+/* every tier's dims must fit under the MAX (else its scratch would overflow). */
+_Static_assert(ST_D_S   <= ST_D_MAX   && ST_D_M   <= ST_D_MAX,   "S/M d <= MAX");
+_Static_assert(ST_DFF_S <= ST_DFF_MAX && ST_DFF_M <= ST_DFF_MAX, "S/M dff <= MAX");
+_Static_assert(ST_L_S   <= ST_L_MAX   && ST_L_M   <= ST_L_MAX,   "S/M L <= MAX");
+_Static_assert(ST_E_S   <= ST_E_MAX   && ST_E_M   <= ST_E_MAX,   "S/M E <= MAX");
+_Static_assert(KMAX <= ST_E_MAX, "K_MAX must not exceed the L-tier expert count");
+_Static_assert(K <= ST_E_S, "K_min must not exceed even the SMALLEST tier's E");
+
+/* Bring the resident model's runtime dims into local scope.  The math body then
+ * reads D/L/E/DFF exactly as before, but they are now per-model integers.  V is
+ * the file-scope #define (tier-invariant).  Use at the top of every fn that
+ * touches the layout. */
+#define ST_DIMS(m) \
+    const int D   = (m)->d;       (void)D;   \
+    const int DFF = (m)->dff;     (void)DFF; \
+    const int L   = (m)->nlayer;  (void)L;   \
+    const int E   = (m)->nexpert; (void)E
+
+/* sizes of each weight family (in floats) — read the in-scope runtime D/L/E/DFF
+ * (NOT the MAX): the arena is heap, sized exactly to the resident tier. */
 #define SZ_EMBED     (V * D)
 #define SZ_ANORM     (L * D)
 #define SZ_W         (L * D * D)        /* one of Wq/Wk/Wv/Wo */
@@ -129,19 +158,23 @@ typedef struct {
     float *f_in;             /* [L][n][D]  rmsnorm(resid after attn)       */
     float *f_rstd;           /* [L][n]                                     */
     float *gate;             /* [L][n][E]  router logits                   */
-    int   *topk_e;           /* [L][n][KMAX] chosen expert ids (KMAX-bound) */
-    float *topk_w;           /* [L][n][KMAX] softmax weight over chosen     */
-    int   *topk_n;           /* [L][n]     runtime firing width (K..KMAX)  */
-    float *e_g, *e_u, *e_h;  /* [L][n][KMAX][DFF] gate/up/h (KMAX-bound)    */
+    int   *topk_e;           /* [L][n][E]  chosen expert ids (E-slot, heap) */
+    float *topk_w;           /* [L][n][E]  softmax weight over chosen       */
+    int   *topk_n;           /* [L][n]     runtime firing width (K..E)      */
+    float *e_g, *e_u, *e_h;  /* [L][n][E][DFF] gate/up/h (E-slot, heap)     */
     /* output */
     float *o_in;             /* [n][D]  rmsnorm(final resid)               */
     float *o_rstd;           /* [n]                                        */
     float *probs;            /* [n][V] softmax(logits)                     */
 } st_cache;
 
-/* total floats for the cache (function of n) */
-static size_t cache_floats(int n)
+/* total floats for the cache (function of n AND the resident tier's dims).  The
+ * cache lives in the malloc'd arena, so it is sized to the RUNTIME dims (heap,
+ * bounded by the tier) — NOT a stack array, so no VLA concern.  The per-token K
+ * slot stride is the model's own E (a token fires at most E experts). */
+static size_t cache_floats(const st_model *m, int n)
 {
+    ST_DIMS(m);
     size_t s = 0;
     s += (size_t)(L + 1) * n * D;      /* resid    */
     s += (size_t)L * n * D;            /* a_in     */
@@ -153,14 +186,18 @@ static size_t cache_floats(int n)
     s += (size_t)L * n * D;            /* f_in     */
     s += (size_t)L * n;                /* f_rstd   */
     s += (size_t)L * n * E;            /* gate     */
-    s += (size_t)L * n * KMAX * DFF * 3; /* e_g,e_u,e_h (KMAX-bound, no-VLA) */
+    s += (size_t)L * n * E * DFF * 3;  /* e_g,e_u,e_h (E-slot, runtime/heap) */
     s += (size_t)n * D;                /* o_in     */
     s += (size_t)n;                    /* o_rstd   */
     s += (size_t)n * V;                /* probs    */
     return s;
 }
-/* topk_e (KMAX-bound) + topk_n (per-token width): ints L*n*KMAX + L*n. */
-static size_t cache_ints(int n) { return (size_t)L * n * KMAX + (size_t)L * n; }
+/* topk_e (E-slot) + topk_n (per-token width): ints L*n*E + L*n. */
+static size_t cache_ints(const st_model *m, int n)
+{
+    ST_DIMS(m);
+    return (size_t)L * n * E + (size_t)L * n;
+}
 
 /* ================================================================== */
 /* tiny host allocator shim (libc-light: one malloc/free for the arena) */
@@ -180,9 +217,36 @@ static float runi(uint32_t *s, float a)
     return (u * 2.0f - 1.0f) * a;
 }
 
+/* ---- the const tier table (SS-2, §3.2): {d, dff, nlayer, nexpert} per tier.
+ * Indexed by ST_TIER_S/_M/_L.  M reproduces the legacy dims exactly. */
+typedef struct { int d, dff, nlayer, nexpert; } st_tier_dims;
+static const st_tier_dims ST_TIERS[ST_NTIER] = {
+    /* S */ { ST_D_S, ST_DFF_S, ST_L_S, ST_E_S },
+    /* M */ { ST_D_M, ST_DFF_M, ST_L_M, ST_E_M },
+    /* L */ { ST_D_L, ST_DFF_L, ST_L_L, ST_E_L },
+};
+
 int st_init(st_model *m, uint32_t seed)
 {
+    /* DEFAULT tier == M: byte-identical to the pre-SS-2 baby (all callers). */
+    return st_init_tier(m, seed, ST_TIER_DEFAULT);
+}
+
+int st_init_tier(st_model *m, uint32_t seed, int tier)
+{
+    if (!m) return ST_E_ARG;
+    /* out-of-range tier fails SAFE to the default (never undersizes scratch). */
+    if (tier < 0 || tier >= ST_NTIER) tier = ST_TIER_DEFAULT;
+
     for (int i = 0; i < (int)sizeof(*m); i++) ((char *)m)[i] = 0;
+
+    /* select the resident tier's dims (runtime, read by every loop below). */
+    m->tier    = tier;
+    m->d       = ST_TIERS[tier].d;
+    m->dff     = ST_TIERS[tier].dff;
+    m->nlayer  = ST_TIERS[tier].nlayer;
+    m->nexpert = ST_TIERS[tier].nexpert;
+    ST_DIMS(m);   /* D/DFF/L/E now in scope for SZ_* below */
 
     /* assign offsets */
     int o = 0;
@@ -255,10 +319,11 @@ void st_free(st_model *m)
 /* ensure cache is allocated for sequence length n. */
 static st_cache *cache_get(st_model *m, int n)
 {
+    ST_DIMS(m);
     /* layout: a struct header followed by a float pool then an int pool. */
     size_t hdr   = sizeof(st_cache);
-    size_t fpool = cache_floats(n) * sizeof(float);
-    size_t ipool = cache_ints(n)   * sizeof(int);
+    size_t fpool = cache_floats(m, n) * sizeof(float);
+    size_t ipool = cache_ints(m, n)   * sizeof(int);
     /* (re)alloc on demand; NS-1 always uses one n, so this happens once. */
     if (m->cache) { free(m->cache); m->cache = NULL; }
     char *blob = (char *)malloc(hdr + fpool + ipool);
@@ -280,14 +345,14 @@ static st_cache *cache_get(st_model *m, int n)
     c->f_in   = fp + off; off += (size_t)L * n * D;
     c->f_rstd = fp + off; off += (size_t)L * n;
     c->gate   = fp + off; off += (size_t)L * n * E;
-    c->e_g    = fp + off; off += (size_t)L * n * KMAX * DFF;
-    c->e_u    = fp + off; off += (size_t)L * n * KMAX * DFF;
-    c->e_h    = fp + off; off += (size_t)L * n * KMAX * DFF;
+    c->e_g    = fp + off; off += (size_t)L * n * E * DFF;
+    c->e_u    = fp + off; off += (size_t)L * n * E * DFF;
+    c->e_h    = fp + off; off += (size_t)L * n * E * DFF;
     c->o_in   = fp + off; off += (size_t)n * D;
     c->o_rstd = fp + off; off += (size_t)n;
     c->probs  = fp + off; off += (size_t)n * V;
-    c->topk_e = ip;                              /* [L][n][KMAX] expert ids */
-    c->topk_n = ip + (size_t)L * n * KMAX;       /* [L][n] runtime width    */
+    c->topk_e = ip;                              /* [L][n][E] expert ids    */
+    c->topk_n = ip + (size_t)L * n * E;          /* [L][n] runtime width    */
     /* topk_w lives in a separate static-grown float buffer (set in st_forward,
      * sized L*n*KMAX) so it survives the per-FD cache realloc in grad-check. */
     c->topk_w = NULL; /* set below */
@@ -381,16 +446,19 @@ static int   st_fw_last  = 0;   /* width of the final token's final layer       
 static int   st_fw_milli = 0;   /* mean width across all (l,t), x1000 (libc-free) */
 static int   st_fw_experts[ST_KMAX]; /* final token's final-layer chosen expert ids */
 
-static int router_pick(const float *gate, int *topk_e, float *topk_w)
+/* `ne` = the resident model's expert count (m->nexpert) — the RUNTIME widening
+ * ceiling (K_min..ne).  Scratch is bound to EMAX (fixed L-tier) — no VLA.  The
+ * frozen-route slot stride is ne (the cache's E-slot stride; see cache_get). */
+static int router_pick(const float *gate, int *topk_e, float *topk_w, int ne)
 {
-    /* full descending order of the E experts by gate logit (E tiny: selection
-     * sort).  order[0] = top1.  Scratch bound to E (compile-time) — no VLA. */
-    int order[E];
-    int used[E];
-    for (int e = 0; e < E; e++) used[e] = 0;
-    for (int r = 0; r < E; r++) {
+    /* full descending order of the ne experts by gate logit (E tiny: selection
+     * sort).  order[0] = top1.  Scratch bound to EMAX (compile-time) — no VLA. */
+    int order[EMAX];
+    int used[EMAX];
+    for (int e = 0; e < ne; e++) used[e] = 0;
+    for (int r = 0; r < ne; r++) {
         int best = -1; float bv = -1e30f;
-        for (int e = 0; e < E; e++) {
+        for (int e = 0; e < ne; e++) {
             if (used[e]) continue;
             if (best < 0 || gate[e] > bv) { bv = gate[e]; best = e; }
         }
@@ -402,14 +470,14 @@ static int router_pick(const float *gate, int *topk_e, float *topk_w)
         /* replay the exact frozen selection (ids + width) for FD probes */
         nk = st_frozen_n[st_frozen_pos];
         for (int j = 0; j < nk; j++)
-            topk_e[j] = st_frozen_route[st_frozen_pos * KMAX + j];
+            topk_e[j] = st_frozen_route[st_frozen_pos * ne + j];
         st_frozen_pos++;
     } else {
         /* margin widening: start at K_min, admit the next expert while the gap
-         * from top1 to it is below THETA and we are under K_MAX. */
+         * from top1 to it is below THETA and we are under the model's E. */
         nk = K;
         float top1 = gate[order[0]];
-        while (nk < KMAX && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
+        while (nk < ne && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
         for (int j = 0; j < nk; j++) topk_e[j] = order[j];
     }
 
@@ -423,26 +491,29 @@ static int router_pick(const float *gate, int *topk_e, float *topk_w)
     return nk;
 }
 
-/* TEST HOOK: exercise the EXACT production selection on a crafted gate. */
+/* TEST HOOK: exercise the EXACT production selection on a crafted gate of length
+ * ST_NEXPERT (the M-tier expert count — the SS-1 cert's contract; the gate
+ * vector the caller supplies is ST_NEXPERT long).  Scratch bound to KMAX. */
 int st_router_pick_width(const float *gate, int *chosen)
 {
     float w[KMAX];
     int   was_freeze = st_freeze_routing;
     st_freeze_routing = 0;                 /* never replay frozen routing here */
-    int nk = router_pick(gate, chosen, w);
+    int nk = router_pick(gate, chosen, w, ST_NEXPERT);
     st_freeze_routing = was_freeze;
     return nk;
 }
 
 int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
 {
+    ST_DIMS(m);
     if (n < 1 || n > ST_MAXSEQ) return ST_E_ARG;
     st_cache *c = cache_get(m, n);
     if (!c) return ST_E_OOM;
-    /* topk_w needs L*n*KMAX floats (KMAX-bound per token, no-VLA) in a separate
+    /* topk_w needs L*n*E floats (E-slot per token; heap, no-VLA) in a separate
      * static-grown buffer so it survives the per-FD cache realloc in grad-check. */
     static float *tw_buf = NULL; static size_t tw_cap = 0;
-    size_t tw_need = (size_t)L * n * KMAX;
+    size_t tw_need = (size_t)L * n * E;
     if (tw_need > tw_cap) { free(tw_buf); tw_buf = (float *)malloc(tw_need * sizeof(float)); tw_cap = tw_need; }
     if (!tw_buf) return ST_E_OOM;
     c->topk_w = tw_buf;
@@ -505,7 +576,7 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
         }
         /* residual: rout = rin + Wo attn_o */
         for (int t = 0; t < n; t++) {
-            float tmp[D];
+            float tmp[DMAX];   /* [no-vla] bound to the L-tier d_model */
             mv(Wo, attn_o + (size_t)t * D, tmp, D, D);
             const float *x = rin + (size_t)t * D;
             float *y = rout + (size_t)t * D;
@@ -530,21 +601,21 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
                 for (int i = 0; i < D; i++) acc += re[i] * fin[i];
                 gt[e] = acc;
             }
-            int   *te = c->topk_e + ((size_t)l * n + t) * KMAX;
-            float *tw = c->topk_w + ((size_t)l * n + t) * KMAX;
-            int    nk = router_pick(gt, te, tw);
+            int   *te = c->topk_e + ((size_t)l * n + t) * E;
+            float *tw = c->topk_w + ((size_t)l * n + t) * E;
+            int    nk = router_pick(gt, te, tw, E);
             c->topk_n[(size_t)l * n + t] = nk;   /* runtime firing width      */
 
-            float moe[D];
+            float moe[DMAX];   /* [no-vla] bound to the L-tier d_model */
             for (int i = 0; i < D; i++) moe[i] = 0.0f;
             for (int j = 0; j < nk; j++) {
                 int e = te[j]; float wj = tw[j];
                 const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
                 const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
                 const float *w2 = W + m->o_w2 + ((size_t)l * E + e) * D * DFF;
-                float *eg = c->e_g + (((size_t)l * n + t) * KMAX + j) * DFF;
-                float *eu = c->e_u + (((size_t)l * n + t) * KMAX + j) * DFF;
-                float *eh = c->e_h + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eg = c->e_g + (((size_t)l * n + t) * E + j) * DFF;
+                float *eu = c->e_u + (((size_t)l * n + t) * E + j) * DFF;
+                float *eh = c->e_h + (((size_t)l * n + t) * E + j) * DFF;
                 for (int h = 0; h < DFF; h++) {
                     const float *w1h = w1 + (size_t)h * D;
                     const float *w3h = w3 + (size_t)h * D;
@@ -591,8 +662,8 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
     {
         size_t fcell = (size_t)(L - 1) * n + (n - 1);   /* final token, final layer */
         st_fw_last = c->topk_n[fcell];
-        const int *fe = c->topk_e + fcell * KMAX;
-        for (int j = 0; j < KMAX; j++)
+        const int *fe = c->topk_e + fcell * E;          /* E-slot stride (heap) */
+        for (int j = 0; j < KMAX; j++)                  /* st_fw_experts[KMAX] fixed */
             st_fw_experts[j] = (j < st_fw_last) ? fe[j] : -1;
         long sumw = 0;
         for (int l = 0; l < L; l++)
@@ -802,6 +873,7 @@ float st_eval_loss(st_model *m, const uint8_t *bytes, int n, int *n_pred)
 
 float st_backward(st_model *m, const uint8_t *bytes, int n)
 {
+    ST_DIMS(m);
     st_cache *c = (st_cache *)m->cache;
     if (!c || c->n != n) return 0.0f;
     const float *W = m->w;
@@ -822,8 +894,8 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
     const float *onorm = W + m->o_out_norm;
     float *rfinal = c->resid + (size_t)L * n * D;
     double loss = 0.0;
-    float g_logit[V];
-    float g_oin[D];
+    float g_logit[V];      /* V is tier-invariant (byte vocab)  */
+    float g_oin[DMAX];     /* [no-vla] bound to the L-tier d_model */
     for (int t = 0; t < n - 1; t++) {
         int tgt = bytes[t + 1];
         const float *pr = c->probs + (size_t)t * V;
@@ -879,11 +951,11 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
             /* residual: rout = (rin+Wo a) + moe. moe path: */
             float *fin = f_in + (size_t)t * D;
             int    nk = c->topk_n[(size_t)l * n + t];  /* runtime firing width */
-            int   *te = c->topk_e + ((size_t)l * n + t) * KMAX;
-            float *tw = c->topk_w + ((size_t)l * n + t) * KMAX;
-            float g_fin[D];
+            int   *te = c->topk_e + ((size_t)l * n + t) * E;
+            float *tw = c->topk_w + ((size_t)l * n + t) * E;
+            float g_fin[DMAX];     /* [no-vla] bound to the L-tier d_model */
             for (int i = 0; i < D; i++) g_fin[i] = 0.0f;
-            float g_gate[E];
+            float g_gate[EMAX];    /* [no-vla] bound to the L-tier expert count */
             for (int e = 0; e < E; e++) g_gate[e] = 0.0f;
             float gw_chosen[KMAX]; /* dL/d(gate-weight tw[j]); KMAX-bound, no-VLA */
 
@@ -895,14 +967,14 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
                 float *gw1 = G + m->o_w1 + ((size_t)l * E + e) * DFF * D;
                 float *gw3 = G + m->o_w3 + ((size_t)l * E + e) * DFF * D;
                 float *gw2 = G + m->o_w2 + ((size_t)l * E + e) * D * DFF;
-                float *eg = c->e_g + (((size_t)l * n + t) * KMAX + j) * DFF;
-                float *eu = c->e_u + (((size_t)l * n + t) * KMAX + j) * DFF;
-                float *eh = c->e_h + (((size_t)l * n + t) * KMAX + j) * DFF;
+                float *eg = c->e_g + (((size_t)l * n + t) * E + j) * DFF;
+                float *eu = c->e_u + (((size_t)l * n + t) * E + j) * DFF;
+                float *eh = c->e_h + (((size_t)l * n + t) * E + j) * DFF;
 
                 /* expert output eo[i] = sum_h w2[i][h] eh[h]; moe += wj*eo
                  * grout flows to eo as wj*grout; and to gate weight wj as
                  * dot(grout, eo). */
-                float g_eo[D];
+                float g_eo[DMAX];   /* [no-vla] bound to the L-tier d_model */
                 float g_wj = 0.0f;
                 /* recompute eo for the gate-weight grad */
                 for (int i = 0; i < D; i++) {
@@ -913,7 +985,7 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
                     g_eo[i] = wj * grout[i];
                 }
                 /* down proj backward: eo = w2 . eh */
-                float g_eh[DFF];
+                float g_eh[DFFMAX];   /* [no-vla] bound to the L-tier dff */
                 for (int h = 0; h < DFF; h++) g_eh[h] = 0.0f;
                 for (int i = 0; i < D; i++) {
                     float ge = g_eo[i];
@@ -1021,7 +1093,7 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
         /* q,k,v = Wq/Wk/Wv a_in ; backward into a_in and weights */
         for (int t = 0; t < n; t++) {
             const float *ain = a_in + (size_t)t * D;
-            float g_ain[D];
+            float g_ain[DMAX];   /* [no-vla] bound to the L-tier d_model */
             for (int i = 0; i < D; i++) g_ain[i] = 0.0f;
             mv_bwd(Wq, ain, g_q + (size_t)t * D, g_ain, gWq, D, D);
             mv_bwd(Wk, ain, g_k + (size_t)t * D, g_ain, gWk, D, D);
@@ -1095,7 +1167,13 @@ void st_adam_step(st_model *m, float lr)
  *                   [ vu : n_params float ][ adam_t : int32      ]
  */
 
-/* fixed magic 'N','S','1','W' so a stray file can't be mistaken for weights */
+/* fixed magic 'N','S','1','W' so a stray file can't be mistaken for weights.
+ * SS-2: the header now carries the resident TIER + the RUNTIME dims (m->*), and
+ * st_load REFUSES a blob whose tier/dims do not match the resident model (fail-
+ * closed -> the caller keeps its fresh-init weights, never loads a wrong shape).
+ * The wire format is the SAME 10 u32 fields as before (reserved -> tier), so
+ * the M-tier blob byte size + layout is UNCHANGED — only the reserved field,
+ * which an M-tier save always wrote as 0, now equals ST_TIER_M (==1).          */
 #define ST_BLOB_MAGIC 0x5731534Eu    /* "NS1W" little-endian                 */
 #define ST_BLOB_VER   1u
 
@@ -1103,13 +1181,13 @@ typedef struct {
     uint32_t magic;      /* ST_BLOB_MAGIC                                     */
     uint32_t version;    /* ST_BLOB_VER                                       */
     uint32_t ns_ver;     /* NS_STUDENT_VER (student contract version)         */
-    uint32_t n_params;   /* dimension guard                                  */
-    uint32_t vocab;      /* ST_VOCAB                                          */
-    uint32_t d_model;    /* ST_DMODEL                                         */
-    uint32_t n_layer;    /* ST_NLAYER                                         */
-    uint32_t n_expert;   /* ST_NEXPERT                                        */
-    uint32_t dff;        /* ST_DFF                                            */
-    uint32_t reserved;   /* 0 — keeps the float payload 8-byte aligned       */
+    uint32_t n_params;   /* dimension guard (derived from the runtime dims)   */
+    uint32_t vocab;      /* ST_VOCAB (tier-invariant)                         */
+    uint32_t d_model;    /* m->d      (RUNTIME tier dim)                      */
+    uint32_t n_layer;    /* m->nlayer (RUNTIME tier dim)                      */
+    uint32_t n_expert;   /* m->nexpert(RUNTIME tier dim)                      */
+    uint32_t dff;        /* m->dff    (RUNTIME tier dim)                      */
+    uint32_t tier;       /* SS-2: m->tier (ST_TIER_S/_M/_L) — was 'reserved'  */
 } ST_BLOB_HDR;
 
 /* Exact byte size of a saved student for THIS build. The caller sizes its
@@ -1140,12 +1218,12 @@ long st_save(const st_model *m, void *buf, size_t cap)
     h.version  = ST_BLOB_VER;
     h.ns_ver   = (uint32_t)NS_STUDENT_VER;
     h.n_params = (uint32_t)m->n_params;
-    h.vocab    = (uint32_t)ST_VOCAB;
-    h.d_model  = (uint32_t)ST_DMODEL;
-    h.n_layer  = (uint32_t)ST_NLAYER;
-    h.n_expert = (uint32_t)ST_NEXPERT;
-    h.dff      = (uint32_t)ST_DFF;
-    h.reserved = 0;
+    h.vocab    = (uint32_t)ST_VOCAB;     /* tier-invariant */
+    h.d_model  = (uint32_t)m->d;         /* RUNTIME tier dims */
+    h.n_layer  = (uint32_t)m->nlayer;
+    h.n_expert = (uint32_t)m->nexpert;
+    h.dff      = (uint32_t)m->dff;
+    h.tier     = (uint32_t)m->tier;      /* SS-2 tier byte */
 
     size_t np = (size_t)m->n_params, off = 0;
     size_t fbytes = np * sizeof(float);
@@ -1176,15 +1254,21 @@ int st_load(st_model *m, const void *buf, size_t len)
     const unsigned char *p = (const unsigned char *)buf;
     for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
 
+    /* fail-closed: a blob whose TIER or any dim differs from the resident model
+     * is REFUSED (the caller keeps its fresh-init weights).  Never load a
+     * mismatched-shape blob — that would mis-read the flat float payload.  The
+     * tier check is the SS-2 addition; the per-dim checks (now against the
+     * RUNTIME m->* dims) catch any same-tier shape drift across builds too. */
     if (h.magic    != ST_BLOB_MAGIC)        return ST_E_ARG;
     if (h.version  != ST_BLOB_VER)          return ST_E_ARG;
     if (h.ns_ver   != (uint32_t)NS_STUDENT_VER) return ST_E_ARG;
+    if (h.tier     != (uint32_t)m->tier)    return ST_E_ARG;   /* SS-2 tier guard */
     if (h.n_params != (uint32_t)m->n_params)    return ST_E_ARG;
     if (h.vocab    != (uint32_t)ST_VOCAB)   return ST_E_ARG;
-    if (h.d_model  != (uint32_t)ST_DMODEL)  return ST_E_ARG;
-    if (h.n_layer  != (uint32_t)ST_NLAYER)  return ST_E_ARG;
-    if (h.n_expert != (uint32_t)ST_NEXPERT) return ST_E_ARG;
-    if (h.dff      != (uint32_t)ST_DFF)     return ST_E_ARG;
+    if (h.d_model  != (uint32_t)m->d)       return ST_E_ARG;
+    if (h.n_layer  != (uint32_t)m->nlayer)  return ST_E_ARG;
+    if (h.n_expert != (uint32_t)m->nexpert) return ST_E_ARG;
+    if (h.dff      != (uint32_t)m->dff)     return ST_E_ARG;
 
     size_t np = (size_t)m->n_params;
     size_t fbytes = np * sizeof(float);
@@ -1211,6 +1295,7 @@ int st_load(st_model *m, const void *buf, size_t len)
 /* The 13 weight families, as (offset, size) pairs, filled from the model. */
 static int st_families(const st_model *m, int *off, int *sz)
 {
+    ST_DIMS(m);
     int k = 0;
     off[k] = m->o_embed;     sz[k++] = SZ_EMBED;
     off[k] = m->o_attn_norm; sz[k++] = SZ_ANORM;
@@ -1245,6 +1330,7 @@ static int st_families(const st_model *m, int *off, int *sz)
  */
 float st_grad_check(st_model *m, const uint8_t *bytes, int n, int stride, float eps)
 {
+    ST_DIMS(m);
     (void)stride;
     if (eps <= 0.0f) eps = 1e-2f;
     float *logits = (float *)malloc((size_t)n * V * sizeof(float));
@@ -1259,7 +1345,7 @@ float st_grad_check(st_model *m, const uint8_t *bytes, int n, int stride, float 
      * non-differentiable). The snapshot survives the cache realloc each FD does. */
     st_cache *cc = (st_cache *)m->cache;
     size_t ncells = (size_t)L * n;
-    int nroute = (int)(ncells * KMAX);
+    int nroute = (int)(ncells * E);   /* cache topk_e is E-slot (runtime) */
     st_frozen_route = (int *)malloc((size_t)nroute * sizeof(int));
     st_frozen_n     = (int *)malloc(ncells * sizeof(int));
     if (st_frozen_route) for (int i = 0; i < nroute; i++) st_frozen_route[i] = cc->topk_e[i];

@@ -39,14 +39,65 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* ---- the baby's decided dimensions (native-student.md §A.2) ---- */
-#define ST_VOCAB    256   /* raw bytes — mergeless, OOV-free                */
-#define ST_DMODEL   128
-#define ST_NLAYER   4
-#define ST_NEXPERT  4
-#define ST_TOPK     2     /* K_min — the floor firing width (legacy fixed K) */
-#define ST_DFF      256   /* per-expert SwiGLU hidden (= 2 * d_model)       */
-#define ST_MAXSEQ   64    /* training/eval context cap (NS-1 fixture len)   */
+/* ---- the baby's decided dimensions (native-student.md §A.2) ----
+ *
+ * SS-2 (special-structure-mind.md §3.2): the four model dims D/DFF/L/E are now
+ * TIER-SELECTABLE at runtime (S/M/L) instead of compile-time fixed. They live
+ * in a const tier table (student.c) and are copied into st_model by st_init
+ * from a tier byte. The DEFAULT tier is M, whose values are EXACTLY the legacy
+ * NS-1/SS-1 dims below — so the M-tier model is BYTE-IDENTICAL to the pre-SS-2
+ * baby ([m-identical] cert). V (byte vocab) and K_min stay FIXED across tiers.
+ *
+ * ST_DMODEL/ST_NLAYER/ST_NEXPERT/ST_DFF are KEPT as the M-tier (== legacy)
+ * values so existing callers, the persistence header, and the SS-1 KMAX wiring
+ * read the same numbers as before. The L-tier (max) values are ST_*_MAX, which
+ * bound EVERY stack scratch array (the [no-vla] gate, §3.2): a scratch array is
+ * NEVER sized by the runtime m->* value, always by the fixed ST_*_MAX.         */
+#define ST_VOCAB    256   /* raw bytes — mergeless, OOV-free (FIXED all tiers) */
+#define ST_DMODEL   128   /* == ST_D_M : the default (M) tier d_model           */
+#define ST_NLAYER   4     /* == ST_L_M : the default (M) tier layer count       */
+#define ST_NEXPERT  4     /* == ST_E_M : the default (M) tier expert count      */
+#define ST_TOPK     2     /* K_min — the floor firing width (FIXED all tiers)   */
+#define ST_DFF      256   /* == ST_DFF_M : default (M) per-expert SwiGLU hidden */
+#define ST_MAXSEQ   64    /* training/eval context cap (FIXED all tiers)        */
+
+/* ---- the three tiers (SS-2, §3.2) ----
+ * Discrete {D, DFF, L, E} dim-sets selected at st_init from a tier byte. NOT
+ * arbitrary runtime dims (that re-opens VLAs + makes every node pair a merge-
+ * island). M is EXACTLY today's baby. S is smaller (weak device), L larger
+ * (strong device). K_min=ST_TOPK and V=ST_VOCAB are tier-invariant. The merge
+ * cohort is the tier (SS-3): S averages with S, L with L — never across tiers. */
+#define ST_TIER_S   0
+#define ST_TIER_M   1     /* DEFAULT — byte-identical to the pre-SS-2 student   */
+#define ST_TIER_L   2
+#define ST_TIER_DEFAULT  ST_TIER_M
+#define ST_NTIER    3
+
+/* S tier — small (weak device): half the width, fewer experts/layers. */
+#define ST_D_S      64
+#define ST_DFF_S    128
+#define ST_L_S      2
+#define ST_E_S      2
+
+/* M tier — EXACTLY today's dims (the running model; do NOT change). */
+#define ST_D_M      ST_DMODEL   /* 128 */
+#define ST_DFF_M    ST_DFF      /* 256 */
+#define ST_L_M      ST_NLAYER   /* 4   */
+#define ST_E_M      ST_NEXPERT  /* 4   */
+
+/* L tier — large (strong device): wider, deeper, more experts. */
+#define ST_D_L      256
+#define ST_DFF_L    512
+#define ST_L_L      6
+#define ST_E_L      8
+
+/* The MAX (== L-tier) values. EVERY stack scratch array sized by a dim binds to
+ * these fixed constants ([no-vla]); the malloc'd arena/cache may size by the
+ * runtime m->* (heap, bounded). _Static_assert (student.c) pins MAX == L tier. */
+#define ST_D_MAX    ST_D_L
+#define ST_DFF_MAX  ST_DFF_L
+#define ST_L_MAX    ST_L_L
+#define ST_E_MAX    ST_E_L
 
 /* ---- adaptive top-K (SS-1, special-structure-mind.md §4) ----
  * Firing width is now a DETERMINISTIC function of (weights, bytes): an easy
@@ -58,8 +109,13 @@
  *
  * [no-vla] DISCIPLINE: K is now a RUNTIME value, so every scratch array that
  * was sized by K is bound to the FIXED maximum ST_KMAX (= E). Never a VLA.   */
-#define ST_KMIN     ST_TOPK     /* floor: always fire at least this many      */
-#define ST_KMAX     ST_NEXPERT  /* ceiling: at most all E experts (bounded)   */
+#define ST_KMIN     ST_TOPK     /* floor: always fire at least this many        */
+/* SS-2: the FIXED scratch ceiling is the L-tier expert count (ST_E_MAX), so the
+ * per-token K scratch is bound to a compile-time constant across ALL tiers (no
+ * VLA). The RUNTIME widening ceiling is the model's own m->nexpert (<= ST_KMAX),
+ * applied in router_pick — an easy token fires K_min, a hard one widens toward
+ * the resident model's expert count, never past ST_KMAX.                       */
+#define ST_KMAX     ST_E_MAX    /* ceiling: at most all L-tier experts (bounded) */
 /* Margin threshold (in router-logit nats). While the gap from top1 to the
  * next candidate is BELOW this, the token is "ambiguous" and we admit that
  * expert. Larger THETA -> more tokens widen. A compile-time const so the
@@ -94,6 +150,19 @@ typedef struct {
     float *vu;          /* [n_params]  Adam 2nd moment                      */
     int    adam_t;      /* Adam timestep                                    */
 
+    /* ---- SS-2 runtime dims (set by st_init from a tier byte) ----
+     * The forward/backward/router/adam loops + the o_* offsets read THESE
+     * (runtime), never the legacy #defines. Every stack scratch array stays
+     * bound to ST_*_MAX (fixed) so these runtime dims never produce a VLA.
+     * tier is one of ST_TIER_S/M/L; M (default) reproduces the legacy dims
+     * exactly (the [m-identical] cert). d<=ST_D_MAX, dff<=ST_DFF_MAX,
+     * nlayer<=ST_L_MAX, nexpert<=ST_E_MAX (st_init enforces / clamps).        */
+    int    tier;        /* ST_TIER_S / _M / _L                              */
+    int    d;           /* d_model   (== ST_D_<tier>)                       */
+    int    dff;         /* expert SwiGLU hidden (== ST_DFF_<tier>)          */
+    int    nlayer;      /* layer count (== ST_L_<tier>)                     */
+    int    nexpert;     /* expert count E (== ST_E_<tier>; K_MAX ceiling)   */
+
     /* offsets into w[] for each named weight family (set by st_init). */
     int o_embed;        /* [VOCAB][D]                                       */
     int o_attn_norm;    /* [L][D]                                           */
@@ -111,8 +180,18 @@ typedef struct {
 } st_model;
 
 /* Allocate + LCG-seed all weights (small-random embed/out, He-ish linears,
- * RMSNorm gains = 1). 0 on success. */
+ * RMSNorm gains = 1). 0 on success. This is the DEFAULT-tier (M) entry point:
+ * st_init(m,seed) == st_init_tier(m,seed,ST_TIER_DEFAULT), so every existing
+ * caller (boot/birth/chat) keeps the byte-identical M baby — 0.9.x behaviour is
+ * unchanged. */
 int  st_init(st_model *m, uint32_t seed);
+
+/* SS-2: tier-selectable init. `tier` is ST_TIER_S / _M / _L; an out-of-range
+ * tier clamps to ST_TIER_DEFAULT (fail-safe, never undersizes the arena). The
+ * model's d/dff/nlayer/nexpert are set from the const tier table; n_params and
+ * the o_* offsets are computed from THOSE runtime dims. The same LCG seed +
+ * same tier reproduces the same weights deterministically. Returns 0 / ST_E_*. */
+int  st_init_tier(st_model *m, uint32_t seed, int tier);
 void st_free(st_model *m);
 
 /* Forward a sequence of `n` raw bytes (each 0..255). Writes per-position

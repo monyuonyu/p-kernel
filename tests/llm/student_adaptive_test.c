@@ -129,12 +129,18 @@ static float heldout_loss(st_model *m, int seqlen, int train_end, int count)
 static int cert_margin(void)
 {
     printf("\n[adaptive-k-margin] hard (flat gate) fires wider than easy (peaked)\n");
-    printf("  K_min=%d  K_MAX=%d  THETA=%.4f  E=%d\n",
-           ST_TOPK, ST_KMAX, (float)ST_K_THETA, ST_NEXPERT);
+    /* SS-2: ST_KMAX is now the FIXED scratch ceiling (== the L-tier expert
+     * count, ST_E_MAX).  The per-token widening ceiling is the RESIDENT model's
+     * own expert count E — for this test hook that is ST_NEXPERT (the M/default
+     * tier).  So a FLAT gate over ST_NEXPERT experts fires ST_NEXPERT, the model
+     * ceiling (which equals ST_KMAX only when E == ST_E_MAX). */
+    const int E_CEIL = ST_NEXPERT;   /* the M-tier model's per-token ceiling */
+    printf("  K_min=%d  K_MAX(scratch)=%d  model-E ceiling=%d  THETA=%.4f\n",
+           ST_TOPK, ST_KMAX, E_CEIL, (float)ST_K_THETA);
 
     /* (a) CRAFTED gate vectors through the production selection. A PEAKED gate
      * (one logit far above the rest) must fire K_min; a FLAT gate (all equal)
-     * must fire K_MAX. A near-tie (two close leaders, rest far) fires between. */
+     * must fire the model's E ceiling. A near-tie fires between. */
     int ok_craft = 1;
     {
         float peaked[ST_NEXPERT];
@@ -145,8 +151,8 @@ static int cert_margin(void)
         int kp = st_router_pick_width(peaked, cp);
         int kf = st_router_pick_width(flat, cf);
         printf("  crafted: peaked-gate width=%d  flat-gate width=%d\n", kp, kf);
-        ok_craft = (kp == ST_TOPK) && (kf == ST_KMAX) && (kf > kp);
-        CHECK(ok_craft, "[adaptive-k-margin] peaked fires K_min, flat fires K_MAX");
+        ok_craft = (kp == ST_TOPK) && (kf == E_CEIL) && (kf > kp);
+        CHECK(ok_craft, "[adaptive-k-margin] peaked fires K_min, flat fires model-E ceiling");
 
         /* monotonicity: as the runner-up logit climbs toward the leader, width
          * grows monotonically from K_min toward K_MAX (heavier -> wider). */
