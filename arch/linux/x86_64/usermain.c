@@ -779,7 +779,13 @@ EXPORT INT usermain(void)
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             else swim_nodes_print();
         } else if (starts_with(line, n, "region")) {
-            region_print();
+            /* N-2 supernode-selection cert (p2p-overlay.md): `region test`
+             * runs region_supernode_test() (deterministic select / convergence
+             * / survives-death / relay-fallback). Plain `region` = view. */
+            const UB *a = line + 6; UW al = (UW)(n - 6);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') region_supernode_test();
+            else region_print();
         } else if (starts_with(line, n, "hrw")) {
             lookup_self_test(print);
             lookup_l1_self_test(print);

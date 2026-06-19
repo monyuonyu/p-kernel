@@ -46,3 +46,30 @@ UB   region_size(void);
 
 /* shell `region` 表示。 */
 void region_print(void);
+
+/* ------------------------------------------------------------------ */
+/* Supernode selection (N-2 first slice — selection function only)     */
+/*                                                                     */
+/* p2p-overlay.md "Supernodes (N-2)": the per-region supernode is the   */
+/* LOWEST-id node that is BOTH a current region member AND              */
+/* supernode-capable, recomputed locally by all → convergence with no   */
+/* vote, survives death by recomputation.                              */
+/* DEFERRED to later slices: SWIM capability gossip, supernode packet   */
+/* forwarding, NAT hole-punch. Capability is a LOCAL table for now.    */
+
+/* The self's per-region supernode for the current local view; 0xFF if  */
+/* no capable member exists (fall back to the central relay).          */
+UB   region_supernode(void);
+
+/* Mark/unmark a node as supernode-capable (reachable + volunteered).   */
+/* Local only this slice — NOT yet gossiped over SWIM.                 */
+void region_set_super_capable(UB node, BOOL yes);
+BOOL region_is_super_capable(UB node);
+
+/* Read the self capability opt-in once (env PKERNEL_SUPERNODE=1 on      */
+/* hosted nodes; default NOT capable). Idempotent. */
+void region_super_init(void);
+
+/* Host cert: deterministic-selection / convergence / survives-death /   */
+/* relay-fallback. Prints PASS/FAIL + "[region-super] N PASS, M FAIL".  */
+void region_supernode_test(void);

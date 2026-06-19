@@ -36,6 +36,31 @@ fall back to 224.0.0.x link-local multicast via the existing `udp_join_group`, o
   node in its region, recomputed locally by all → convergence with no vote; relay.c's
   REL_DATA/REL_BROADCAST forwarder lifts in (relocation, not new logic); a capability bit is
   gossiped. Survives death like a region coordinator.
+
+### N-2 slice 1 — the selection function + host cert (DONE, wave-n2-supernode-select)
+The **deterministic selector only** is implemented, exactly mirroring `region_coordinator()`:
+- `arch/common/region.c` / `region.h`: `region_supernode()` recomputes membership (same source of
+  truth — `region_recompute()`'s `member[]`), then returns the **LOWEST node id that is BOTH a
+  current region member AND supernode-capable**; returns `0xFF` when no capable member exists
+  (== "fall back to the central relay", the correct Skype-style degrade). Pure, allocation-free,
+  O(N), **integer-only (reads no float) → every arch / every node computes the IDENTICAL id**, so
+  the role converges with NO vote/election and survives death by recomputation.
+- Capability is a **LOCAL** per-node table `super_capable[DNODE_MAX]` with setter
+  `region_set_super_capable()` + self opt-in `PKERNEL_SUPERNODE=1` (read once on hosted nodes,
+  default NOT capable — conservative). It is **NOT gossiped yet**.
+- Host cert `region_supernode_test()` (shell `region test`, wired in both
+  `arch/linux/{aarch64,x86_64}/usermain.c`): 8/8 PASS — lowest-capable-wins (lowest *member* if
+  incapable is skipped), convergence/determinism (same id over one synthetic view), survives-death
+  (kill the current supernode in the view → next-lowest capable, no election call), relay-fallback
+  (0 capable → `0xFF`), non-member-capable ignored, setter bounds-check.
+
+**DEFERRED to later N-2/N-3/N-4 slices (NOT in this slice — honest scope):**
+- **SWIM capability gossip** — propagating the capability bit so every node's `super_capable[]`
+  reflects a real converged fleet view (this slice sets the table locally / in the self-test only).
+- **Supernode packet forwarding** — the relay `REL_DATA`/`REL_BROADCAST` forwarder relocation into
+  the elected supernode (no datagrams are forwarded yet).
+- **NAT hole-punch (N-3)** — supernode-assisted STUN / rendezvous / promote-to-P2P-direct.
+- **Bootstrap/seed (N-4)** — `PKERNEL_SEED` list; relay as one optional well-known seed.
 - NAT hole-punching: supernode-assisted STUN (it already holds the peer's reflexive tuple);
   RENDEZVOUS → simultaneous open → promote to P2P-direct. Cone NATs succeed; **both-symmetric stays
   supernode-relayed permanently (correct — the relay IS the fallback, no TURN needed).** CGNAT
