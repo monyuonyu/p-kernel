@@ -48,7 +48,13 @@ MK2="$ROOT/boot/linux_x86_64/Makefile"
 #  never defined for the NDK build, so no fork() under Bionic/SELinux. That
 #  is a compile-time guard inside selfc.c, NOT a source-list difference, so
 #  selfc.c does NOT belong in an allowlist.)
-ALLOW_MK_ONLY=""      # basenames the Makefile may have that CMake omits
+# ss6_live.c (SS-6-live remote-expert UDP transport): host-only FOR NOW. Its
+# capability (cross-node expert firing) is wired into st_forward, NOT the chat's
+# kv_step, so it is unreachable from the APK today; and its NDK/Bionic compile is
+# unverified in this sandbox (no Android SDK). TODO: move to lock-step (add to the
+# CMake COMMON_SRC) when the kv_step-live wiring lands AND the NDK compile is
+# confirmed — at which point a meshed phone can actually cross-node-fire.
+ALLOW_MK_ONLY="ss6_live.c"   # basenames the Makefile may have that CMake omits
 ALLOW_CM_ONLY=""      # basenames CMake may have that the Makefile omits
 
 # --- extractor ------------------------------------------------------------
