@@ -495,3 +495,58 @@ count including odd/over-cap/looped, on the REAL teacher forward. No real bug fo
 LEDGER: row CLOSED. A parked aarch64 secondary wakes via PSCI CPU_ON, runs a
 deterministic tile, and the kernel survives it — the literal first step of ②
 full SMP, with the dispatcher untouched. No real bug found.
+
+## MC-2.1a N-core byte-identity matmul — commit bba18e19 (impl b7d1f4f0)
+- Auditor: independent adversarial WORKFLOW (5 parallel dimensions, each in its
+  own isolated worktree, + per-finding adversarial-verify), 2026-06-20. Did NOT
+  write the code. This is the CROWN determinism cert: "one mind, one math" across
+  PHYSICAL cores. Every dimension reproduced from a fresh build, not trust.
+- Verdict: **MERGEABLE (ledger row CLOSED).** All 5 dimension gates PASS;
+  confirmed_material_findings = [] ; blockers = [].
+- [equiv-is-real-NOT-vacuous] The deadliest failure mode (a "byte-identical" cert
+  that secretly ran SERIALLY on one core, proving nothing) is REFUTED. Per-slot
+  row-execution instrumentation proves PHYSICAL cores 2 and 3 computed DISTINCT,
+  non-overlapping, correct ranges of the nw=4 matmul ([1024,1536) and [1536,2048))
+  — not one core doing everything. The three FNV hashes are byte-identical
+  (0xd4c96f986cbafb17 for nw=1,2,4). Byte-identity attacked FOUR ways: nw=3
+  odd/ragged stayed identical; a different seed kept identity but produced a
+  GENUINELY different hash (data-dependence, not a constant); corrupting ONE row
+  (1100) correctly produced MC2-EQUIV: FAIL @1100 (the hash observes real output);
+  Tooth A (reduction reassociation) correctly FAILs. The §1.6 MPIDR-derived-slot
+  fix is verified — each core ran its OWN slice, no slot-1 stomping.
+- [the-two-bugfixes] BOTH implementer-self-reported fixes VERIFIED real + correct.
+  JOIN-ON-NHELPERS: the auditor EMPIRICALLY reproduced the original hazard —
+  reverting the join to `done>=nw-1` made the cert FLAKE 4/6 runs on QEMU itself
+  (mismatches in slot-1's range, reading the poison -987654.0 before slot 1 wrote;
+  a SCHEDULING race a do-nothing slot 2/3 wins, which TCG DOES expose, unlike
+  Tooth B). The fix (join on all released secondaries) ran 6/6 PASS, introduces NO
+  hang (every secondary ++done unconditionally each gen, gated by wait_woken +
+  the MAX_TRIES=2e8 watchdog; slot>=nw workers still execute the dmb-ld/dmb-st
+  around an empty body so the primary's post-join acquire can't read stale stores).
+  DOUBLE-SELFTEST: the combined -DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST build was
+  confirmed to print "MC2-EQUIV: FAIL secondary-not-woken"; the two self-tests are
+  now disjoint (equiv = EQUIV flag only, boot-survives = SMP flag only), each
+  independently green.
+- [barriers-and-boundary] start.S AND cpu_support.S diffs EMPTY (reused unchanged).
+  Every §3.3 barrier present + correctly ordered in the DISASSEMBLY: dispatch
+  done=0 -> `dsb ish` (before gen++) -> gen++ -> `stlr` unlock -> sev -> slice-0 ->
+  `dmb st` -> bounded join -> `dmb ld` acquire; worker wfe-on-gen -> `dmb ld` ->
+  compute -> `dmb st` -> ++done under the ldaxr/stlr lock -> sev. SMPEN bit6 set on
+  every core. Stacks (nm-verified) contiguous 16KB, zero overlap, below
+  _kernel_end. pk_slice_bm byte-identical to the hosted golden (pk_parallel.c
+  :57-63). No knl_ctxtsk/knl_schedtsk reference in the worker path.
+- [no-regression-scope] Single-core boots clean, ZERO MC2 output (the 4.2MB
+  synthetic-W is gated — default BSS 14.68MB vs equiv 18.89MB). [mc2-boot-survives]
+  still green. dtr.c/moe.c/r3_incontext.c/pk_parallel.c UNTOUCHED. check_parity OK.
+- [honesty] Tooth B (barrier/SMPEN teeth, obligation O4) is recorded as
+  PASS-because-masked-on-QEMU, deferred to RPi3 MC-2.2 — the harness prints "does
+  NOT mean 'barriers verified'". No speedup is claimed (the cert matmul is
+  synthetic; dt_linear NOT wired to the seam — the real R3 48x48 is below the gate).
+  The pk_slice_bm hand-copy drift surface is guarded by self-consistency; a
+  standalone partition unit-check is a named MC-2.1b follow-up, NOT silently dropped.
+LEDGER: row CLOSED. Across 1/2/4 physical cores the parallel matmul is BYTE-
+IDENTICAL to serial (0xd4c96f986cbafb17) — the mind stays one across cores. The
+parallelism is PROVEN real (cores 2,3 ran distinct ranges), the cert has teeth
+(Tooth A bites; 4 attacks caught), and the only un-certified obligation (the
+barrier teeth) is honestly deferred to RPi3. No real bug survived (two were found
++ fixed during impl, both independently re-verified here).
