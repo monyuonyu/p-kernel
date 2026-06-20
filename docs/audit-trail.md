@@ -438,3 +438,60 @@ references these symbols (LLM tier not compiled). Stale doc, not a defect.
 
 LEDGER: row CLOSED. The one mind stays one — byte-identical across every worker
 count including odd/over-cap/looped, on the REAL teacher forward. No real bug found.
+
+## MC-2.0 bare-metal secondary-core bringup — commit b5bacd89 (impl 488d4232)
+- Auditor: independent adversarial WORKFLOW (5 parallel dimensions, each in its
+  own isolated worktree, + a per-finding adversarial-verify stage), 2026-06-20.
+  Did NOT write the code (the implementer crashed; a commander smoke-verified +
+  salvaged; this row is the SEPARATE trace). The boot/reset path is the repo's
+  highest-risk class — every dimension reproduced from a fresh build, not trust.
+- Verdict: **MERGEABLE (ledger row CLOSED).** All 5 dimension gates PASS;
+  confirmed_material_findings = [] ; blockers = []. MC-2.0 correctly claims ONLY
+  [mc2-boot-survives] (a parked core wakes + the kernel survives), never
+  byte-identity (that is MC-2.1).
+- [cert-teeth] The [mc2-boot-survives] cert is FALSIFIABLE, not paper — proven to
+  turn red FOUR independent ways under -smp 4, primary surviving every time:
+  - corrupt the worker tile -> "MC2-BOOT: FAIL tile-mismatch@0"
+  - stub the PSCI CPU_ON release -> "MC2-BOOT: FAIL join-timeout (primary survives)"
+  - built-in -DMC2_FAULTING_TILE -> "MC2-BOOT: FAIL join-timeout (primary survives)"
+  - worker wakes+done but writes no tile -> "MC2-BOOT: FAIL tile-mismatch@0"
+  In ALL four, "[BOOT] Starting T-Kernel..." + "[T-Kernel] Initial task started"
+  still printed (the primary NEVER wedged). The cert asserts REAL work via a
+  salted index fn (0x5A5A0000) so an untouched all-zero BSS buffer FAILS; the
+  primary's reads of done/woken/tile sit behind real `dmb ld` acquire barriers
+  (verified in disassembly), paired with the worker's `dmb st` releases and
+  SMPEN=1 on both cores (s3_1_c15_c2_1 bit 6, confirmed in objdump).
+- [safety-boundary] The HARD BOUNDARY holds: `git diff 280c9887..488d4232 --
+  arch/aarch64/cpu_support.S` is EMPTY (dispatcher .Ldispatch_loop/.Lidle
+  byte-for-byte untouched). The secondary path references knl_ctxtsk/knl_schedtsk
+  ONLY in a doc comment (mc2_smp.c:23), never in code. The primary boot path
+  (_from_el2/_el1_entry) is byte-for-byte identical to trunk; the secondary
+  re-derives the SAME EL1 bits in a parallel path and additionally sets SMPEN.
+  PSCI CPU_ON is issued in main() after core init and is fully gated behind
+  #ifdef MC2_SMP_SELFTEST — a plain build wakes no secondary.
+- [smp-correctness] SMPEN bit 6 set on BOTH cores before any shared access;
+  the publish/handoff chain is textbook message-passing: primary `dsb ish` before
+  CPU_ON, worker `dmb st` (release) after the tile, primary `dmb ld` (acquire)
+  before reading g_done and again before reading output. PSCI uses fid 0xC4000003
+  (SMC64) over hvc, hands off entry PA + context_id=&g_cpu[1] + own stack; the
+  secondary lands at EL1h with its own SP. The _Static_assert offsets (0/8/16/24)
+  match the start.S [x19,#0] stack load. Worker parks on `wfe` (no busy-spin); the
+  join has a hard bounded fallback (MAX_TRIES=200000000) so a dead worker can't
+  wedge the primary.
+- [no-regression] Plain build (no flag, no -smp) boots to "[T-Kernel] Initial
+  task started" + the p-kernel> shell with ZERO MC2/secondary output (selftest
+  correctly gated). Selftest flag on a 1-CPU VM fails GRACEFULLY ("MC2-BOOT: FAIL
+  cpu_on rc=-2") rather than falsely passing, and still boots. check_parity OK.
+- [diff-discipline] Touches ONLY arch/aarch64, boot/aarch64, tests/aarch64 (6
+  files, 620 insertions). No new compiler warnings (base 280c9887 = 206 warning
+  lines; mc2 selftest = 206; comm diff EMPTY). Linker stacks: _stack_top_cpu1
+  16KB contiguous after the 64KB primary stack, no overlap, below _kernel_end.
+- HONEST BOUND (disclosed by the design doc itself, §4.1/§8.2, NOT hidden): QEMU
+  TCG models memory strongly and may MASK a missing-barrier / SMPEN=0 race. So the
+  QEMU PASS proves the bringup MECHANISM + the partition/FP determinism, but the
+  barrier discipline's TEETH are only fully load-bearing [live] on real RPi3
+  hardware — correctly DEFERRED to MC-2.2. A green QEMU run is NOT "barriers
+  verified". This bound is a property of the emulator, not a defect in MC-2.0.
+LEDGER: row CLOSED. A parked aarch64 secondary wakes via PSCI CPU_ON, runs a
+deterministic tile, and the kernel survives it — the literal first step of ②
+full SMP, with the dispatcher untouched. No real bug found.
