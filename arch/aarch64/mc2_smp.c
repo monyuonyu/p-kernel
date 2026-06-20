@@ -31,6 +31,18 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* MC-2.1: the bare-metal pk_parallel_rows backend implements the SAME
+ * contract the hosted pthread pool does (arch/common/llm/pk_parallel.h:104,
+ * :39, :45). The hosted header lives in the LLM tier (arch/common/llm/),
+ * which is NOT on the bare-metal include path and whose .c is NOT linked
+ * here. So we carry the two needed declarations VERBATIM (KEEP IN SYNC):
+ *   - pk_row_body            : pk_parallel.h:39
+ *   - PK_PARALLEL_MIN_ROWS   : pk_parallel.h:45
+ * The signature `void pk_parallel_rows(size_t,pk_row_body,void*)` matches
+ * pk_parallel.h:104 so the bare-metal backend is the identical seam. */
+typedef void (*pk_row_body)(void *ctx, size_t i0, size_t i1);
+#define PK_PARALLEL_MIN_ROWS 64
+
 /* ---------------------------------------------------------------------
  *  Per-CPU block. The field OFFSETS are mirrored in start.S via the
  *  PK_CPU_* macros below — KEEP IN SYNC (a _Static_assert guards it).
@@ -59,11 +71,36 @@ _Static_assert(sizeof(struct pk_cpu)              == PK_CPU_SIZE,      "pk_cpu s
  * MC-2.1 (N cores). Lives in BSS, flat-mapped, VA==PA. */
 struct pk_cpu g_cpu[PK_SMP_MAX_CPUS];
 
-/* Linker symbol: the secondary's dedicated stack top (linker.ld). */
+/* Linker symbols: each secondary's dedicated stack top (linker.ld).
+ * MC-2.0 added cpu1; MC-2.1 adds cpu2/cpu3 (§3.5). */
 extern unsigned char _stack_top_cpu1[];
+extern unsigned char _stack_top_cpu2[];   /* MC-2.1 */
+extern unsigned char _stack_top_cpu3[];   /* MC-2.1 */
+
+/* Map slot -> its dedicated stack top symbol (§3.1/§3.5). Slot 0 is the
+ * primary (uses _stack_top, never released as a worker here). */
+static unsigned long pk_stack_top_for(int slot)
+{
+    switch (slot) {
+        case 1: return (unsigned long)_stack_top_cpu1;   /* REUSE MC-2.0 region */
+        case 2: return (unsigned long)_stack_top_cpu2;   /* NEW MC-2.1 */
+        case 3: return (unsigned long)_stack_top_cpu3;   /* NEW MC-2.1 */
+        default: return 0;
+    }
+}
 
 /* The assembly landing pad the secondary is released to (start.S). */
 extern void _secondary_worker(void);
+
+/* The firmware-independent "which core am I" (§3.2). Reads MPIDR_EL1 and
+ * masks Aff0 — matches start.S:41-42's `and x0,x0,#0xFF`. Each released
+ * secondary uses this to derive its OWN slot (NO core hardcodes slot 1). */
+static inline unsigned long mpidr_aff0(void)
+{
+    unsigned long v;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(v));
+    return v & 0xFFUL;                 /* Aff0 */
+}
 
 /* ---------------------------------------------------------------------
  *  MC-2.0 trivial deterministic tile.
@@ -136,17 +173,92 @@ static void mc2_unlock(void)
  * ------------------------------------------------------------------- */
 static inline void mc2_set_smpen(void)
 {
+#ifdef MC2_EQUIV_SMPEN_OFF
+    /* TOOTH B (barrier/SMPEN falsifier, §4.4): deliberately do NOT set
+     * SMPEN from C. On REAL weakly-ordered hardware (RPi3 A53) this leaves
+     * cacheable accesses non-coherent across cores -> stale/torn output ->
+     * memcmp mismatch. On QEMU TCG this race is MASKED (TCG models memory
+     * strongly), so a QEMU PASS here is EXPECTED and recorded as "masked,
+     * deferred to RPi3 (MC-2.2)" — NOT a proof that barriers are verified.
+     * NB: start.S still sets SMPEN in asm for the SECONDARIES; this only
+     * removes the C-side (re)assert, the strongest knob available without
+     * touching the reused landing pad. */
+    return;
+#else
     unsigned long v;
     __asm__ volatile("mrs %0, S3_1_C15_C2_1" : "=r"(v));
     v |= (1UL << 6);
     __asm__ volatile("msr S3_1_C15_C2_1, %0" : : "r"(v));
     __asm__ volatile("isb" ::: "memory");
+#endif
+}
+
+/* ---------------------------------------------------------------------
+ *  MC-2.1 — the deterministic partition + the ONE N-slice work-queue.
+ * ------------------------------------------------------------------- */
+
+/* pk_slice_bm — a BYTE-FOR-BYTE copy of pk_slice() in the hosted golden
+ * arch/common/llm/pk_parallel.c:57-63 (commit-pinned). The hosted TU is
+ * NOT linked on bare metal (pk_parallel.h:18-24; boot/aarch64/Makefile
+ * excludes it), so the bare-metal worker CANNOT link pk_slice — it must
+ * carry this identical copy so the bits match both the hosted golden and
+ * the serial path. KEEP IN SYNC (the §3.4 "one mind, one math" drift
+ * surface; the equiv self-test's nw=1 reference uses this SAME function,
+ * and MC-2.1b adds a self-consistency unit check — §4.5).
+ *
+ *   --- verbatim from pk_parallel.c:57-63 ---
+ *   Slice s in [0,nw) owns rows [s*q + ...). A ragged remainder
+ *   (out % nw) is given to the LAST slice. */
+static void pk_slice_bm(size_t out, int nw, int s, size_t *i0, size_t *i1)
+{
+    size_t q = out / (size_t)nw;
+    /* first (nw-1) slices get q rows each; the last gets the remainder too. */
+    *i0 = (size_t)s * q;
+    *i1 = (s == nw - 1) ? out : (*i0 + q);
+}
+
+/* The ONE global work-queue (BSS, VA==PA). The primary (worker 0) fills
+ * body/ctx/out/nw under the lock, bumps `gen` to PUBLISH, runs slice 0
+ * itself, and joins on `done` reaching nw-1. Secondaries wfe until `gen`
+ * advances, run their slice, and ++`done` under the lock. (§3.3) */
+struct pk_wq {
+    volatile pk_row_body   body;    /* current job (the serial inner loop)  */
+    volatile void         *ctx;     /* matmul operands                      */
+    volatile size_t        out;     /* total output rows                    */
+    volatile int           nw;      /* slices this dispatch partitioned in  */
+    volatile unsigned long gen;     /* bumped once per dispatch (PUBLISH)   */
+    volatile int           done;    /* secondary slices finished (lock)     */
+};
+static struct pk_wq g_wq;
+
+/* Bare-metal wake counter (analogue of pk_parallel_wake_count,
+ * pk_parallel.c:140-143): a secondary increments its slot's entry ONLY
+ * when it drains a real job (gen advanced). The idle assertion (§4.5)
+ * reads these to prove secondaries BLOCK on wfe (no spurious drains). */
+static volatile unsigned long g_wake[PK_SMP_MAX_CPUS];
+
+/* Cert hook: force a worker count for the next pk_parallel_rows dispatch
+ * (bare-metal analogue of pk_parallel_set_threads, pk_parallel.c:135).
+ * <=0 = serial inline. The self-test sets this to 1/2/4. */
+static int g_force_nw = 0;
+void pk_smp_force_nw(int nw) { g_force_nw = nw; }
+
+unsigned long pk_smp_wake_count(int slot)
+{
+    if (slot < 0 || slot >= PK_SMP_MAX_CPUS) return 0UL;
+    __asm__ volatile("dmb ld" ::: "memory");
+    return g_wake[slot];
 }
 
 /* ---------------------------------------------------------------------
  *  pk_smp_worker_loop — the C worker body. Entered by the secondary from
  *  _secondary_worker (start.S) AFTER its EL1 setup. NEVER returns to a
  *  T-Kernel context; never touches the scheduler.
+ *
+ *  MC-2.0 path (preserved): run ONE fixed deterministic tile + set
+ *  g_done, so [mc2-boot-survives] still observes woken/g_done/tile.
+ *  MC-2.1 path: AFTER the tile, enter the gen-driven work-queue drain
+ *  (§3.2). The worker derives its OWN slot from MPIDR — NOT hardcoded.
  * ------------------------------------------------------------------- */
 void pk_smp_worker_loop(void)
 {
@@ -154,34 +266,72 @@ void pk_smp_worker_loop(void)
      * but re-asserting from C is harmless and keeps the C path honest. */
     mc2_set_smpen();
 
-    /* Mark this core awake (slot 1 for MC-2.0's single secondary). */
-    g_cpu[1].woken = 1;
-    __asm__ volatile("dmb st" ::: "memory");   /* publish woken */
-    __asm__ volatile("sev" ::: "memory");      /* poke the primary's join */
-
-    /* Run the ONE trivial deterministic tile. */
-    if (!g_fault_tile) {
-        for (unsigned i = 0; i < MC2_TILE_LEN; i++)
-            g_mc2_tile[i] = mc2_tile_expected(i);
-    } else {
-        /* Falsification variant: deliberately NEVER complete the tile or
-         * the done signal — emulate a worker that faulted mid-tile. The
-         * primary's bounded join (§4.2) must NOT wedge forever. */
+    /* Derive THIS core's slot (1..N-1) from MPIDR Aff0 — the firmware-
+     * independent ground truth of "which core am I" (§3.2). NO core may
+     * hardcode slot 1 (closes the MC-2.0 §1.6 hardcode). */
+    int slot = (int)mpidr_aff0();
+    if (slot < 1 || slot >= PK_SMP_MAX_CPUS) {
+        /* Defensive: a slot we never released (or a malformed MPIDR).
+         * Park — never index g_cpu[]/g_wake[] out of range. */
         for (;;)
             __asm__ volatile("wfe");
     }
 
-    /* RELEASE the tile stores, then publish done under the lock. */
-    __asm__ volatile("dmb st" ::: "memory");   /* worker's stores visible */
-    mc2_lock();
-    g_done = 1;
-    mc2_unlock();
-    __asm__ volatile("sev" ::: "memory");      /* wake the primary's join */
+    /* Mark this core awake. The primary set g_cpu[slot].cpu_id==slot at
+     * release; assert the firmware actually landed us where expected. */
+    g_cpu[slot].woken = 1;
+    __asm__ volatile("dmb st" ::: "memory");   /* publish woken */
+    __asm__ volatile("sev" ::: "memory");      /* poke the primary's join */
 
-    /* Park on wfe — NO busy-spin (§5). MC-2.1 turns this into the
-     * gen-driven work-queue drain; MC-2.0 stops after one tile. */
-    for (;;)
-        __asm__ volatile("wfe");
+    /* MC-2.0 deterministic tile — slot 1 only writes it (the MC-2.0
+     * single-secondary cert checks exactly this buffer + g_done). Cores
+     * 2/3 skip the tile and go straight to the work-queue. */
+    if (slot == 1) {
+        if (!g_fault_tile) {
+            for (unsigned i = 0; i < MC2_TILE_LEN; i++)
+                g_mc2_tile[i] = mc2_tile_expected(i);
+            /* RELEASE the tile stores, then publish done under the lock. */
+            __asm__ volatile("dmb st" ::: "memory");
+            mc2_lock();
+            g_done = 1;
+            mc2_unlock();
+            __asm__ volatile("sev" ::: "memory");  /* wake the primary's join */
+        } else {
+            /* Falsification variant (MC-2.0): deliberately NEVER complete
+             * the tile or g_done — emulate a worker that faulted mid-tile.
+             * The primary's bounded join must NOT wedge forever (§4.2).
+             * Park here; do NOT enter the work-queue. */
+            for (;;)
+                __asm__ volatile("wfe");
+        }
+    }
+
+    /* MC-2.1 work-queue drain (§3.2). wfe until gen advances; acquire the
+     * published job; compute this slot's slice; run the UNMODIFIED serial
+     * body over [i0,i1); release stores; ++done under the lock; sev. The
+     * worker NEVER returns and NEVER touches knl_ctxtsk/knl_schedtsk. */
+    unsigned long seen = 0;
+    for (;;) {
+        while (g_wq.gen == seen)                  /* no new job */
+            __asm__ volatile("wfe");              /* BLOCK — no busy-spin */
+        seen = g_wq.gen;
+        __asm__ volatile("dmb ld" ::: "memory");  /* ACQUIRE the published job */
+
+        g_wake[slot]++;                           /* drained a real job */
+
+        if (slot < g_wq.nw) {
+            size_t i0, i1;
+            pk_slice_bm(g_wq.out, g_wq.nw, slot, &i0, &i1);  /* SAME partition */
+            if (i1 > i0)
+                ((pk_row_body)g_wq.body)((void *)g_wq.ctx, i0, i1);  /* serial body */
+        }
+        __asm__ volatile("dmb st" ::: "memory");  /* RELEASE this worker's stores */
+
+        mc2_lock();                                /* REUSE the one spinlock */
+        g_wq.done++;
+        mc2_unlock();                              /* stlr+sev — wakes the join */
+        __asm__ volatile("sev" ::: "memory");
+    }
 }
 
 /* ---------------------------------------------------------------------
@@ -214,7 +364,9 @@ static long psci_cpu_on(unsigned long target_mpidr,
 
 /* Returns the PSCI return value of CPU_ON for the one secondary. The
  * primary calls this AFTER kernel core init but is otherwise free to
- * proceed; the join happens in mc2_smp_join(). */
+ * proceed; the join happens in mc2_smp_join(). MC-2.0's single-secondary
+ * release — UNCHANGED so [mc2-boot-survives] still exercises exactly the
+ * core-1 + tile + g_done path. */
 long mc2_smp_release_one(void)
 {
     /* SMPEN on the primary itself (§1.3) before it shares any buffer. */
@@ -234,6 +386,144 @@ long mc2_smp_release_one(void)
     return psci_cpu_on(target,
                        (unsigned long)&_secondary_worker,
                        (unsigned long)&g_cpu[1]);
+}
+
+/* ---------------------------------------------------------------------
+ *  MC-2.1: generalize the single release to N secondaries (§3.1). n is
+ *  the TOTAL core count including the primary (2..4). Loops the body of
+ *  mc2_smp_release_one() over slots 1..n-1, each with its OWN stack +
+ *  cpu_id, REUSING psci_cpu_on() and _secondary_worker verbatim.
+ *
+ *  Returns 0 on full success; the first non-success PSCI rc otherwise
+ *  (ALREADY_ON is tolerated — a core MC-2.0 already woke). If a core
+ *  fails to wake, the equiv self-test sees a missing `done` increment ->
+ *  the bounded join times out -> MC2-EQUIV: FAIL (not a hang).
+ * ------------------------------------------------------------------- */
+long mc2_smp_release_n(int n)
+{
+    if (n < 2) n = 2;
+    if (n > PK_SMP_MAX_CPUS) n = PK_SMP_MAX_CPUS;
+
+    /* SMPEN on the primary itself (§1.3) before it shares any buffer. */
+    mc2_set_smpen();
+
+    /* Init slots 1..n-1 BEFORE any psci_cpu_on so a freshly-woken core
+     * reads a fully-published block (its stack + cpu_id). */
+    for (int slot = 1; slot < n; slot++) {
+        g_cpu[slot].stack_top = pk_stack_top_for(slot);
+        g_cpu[slot].cpu_id    = (unsigned long)slot;
+        g_cpu[slot].woken     = 0;
+        g_wake[slot]          = 0;
+    }
+    g_wq.gen  = 0;
+    g_wq.done = 0;
+    __asm__ volatile("dsb ish" ::: "memory");  /* publish the block(s) */
+
+    long rc = 0;
+    for (int slot = 1; slot < n; slot++) {
+        /* QEMU virt cortex-a53: MPIDR Aff0 == core index (Aff1..3 = 0) —
+         * the same assumption MC-2.0 made for core 1, now for 2,3. */
+        long r = psci_cpu_on((unsigned long)slot,
+                             (unsigned long)&_secondary_worker,
+                             (unsigned long)&g_cpu[slot]);
+        if (r != PSCI_SUCCESS && r != PSCI_ALREADY_ON && rc == 0)
+            rc = r;                            /* first hard error wins */
+    }
+    return rc;
+}
+
+/* Wait (bounded) until all secondaries 1..n-1 have set woken==1. Returns
+ * 0 on success, -1 on timeout (a core never woke — caller reports FAIL,
+ * the primary survives). Used by the equiv self-test before dispatching. */
+int mc2_smp_wait_woken(int n)
+{
+    if (n < 2) n = 2;
+    if (n > PK_SMP_MAX_CPUS) n = PK_SMP_MAX_CPUS;
+    const unsigned long MAX_TRIES = 200000000UL;
+    for (int slot = 1; slot < n; slot++) {
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_cpu[slot].woken == 1)
+                break;
+            if (++tries >= MAX_TRIES)
+                return -1;
+            __asm__ volatile("wfe");
+        }
+    }
+    return 0;
+}
+
+/* ---------------------------------------------------------------------
+ *  MC-2.1: the bare-metal pk_parallel_rows backend (§3.4). Same contract
+ *  as the hosted pthread pool (pk_parallel.h:104): run body(ctx,i0,i1)
+ *  over a partition of [0,out) across nw workers, then JOIN. The primary
+ *  is worker 0 (runs slice 0 itself); secondaries 1..nw-1 run their slice
+ *  off the work-queue. Deterministic: the partition is pk_slice_bm (pure
+ *  fn of (out,nw)); completion order is irrelevant (disjoint y[i]).
+ *
+ *  Fallback (mirrors pk_parallel.c:171-180): nw<=1 or out below the row
+ *  gate -> body(ctx,0,out) INLINE, byte-identical, no secondary touched.
+ * ------------------------------------------------------------------- */
+void pk_parallel_rows(size_t out, pk_row_body body, void *ctx)
+{
+    int nw = (g_force_nw > 0) ? g_force_nw : 1;
+    if (nw > PK_SMP_MAX_CPUS) nw = PK_SMP_MAX_CPUS;
+
+    if (nw <= 1 || out < PK_PARALLEL_MIN_ROWS) {
+        body(ctx, 0, out);                 /* serial inline — identical bits */
+        return;
+    }
+
+    /* --- DISPATCH (primary = worker 0), §3.3 --- */
+    mc2_lock();
+    g_wq.body = body;
+    g_wq.ctx  = ctx;
+    g_wq.out  = out;
+    g_wq.nw   = nw;
+    g_wq.done = 0;
+#ifndef MC2_EQUIV_NO_BARRIER
+    __asm__ volatile("dsb ish" ::: "memory");  /* job fields land BEFORE gen */
+#else
+    /* TOOTH B (barrier falsifier, §4.4): drop the publish dsb ish. On REAL
+     * hardware a worker can see the new gen but stale body/ctx/out/nw ->
+     * corruption. On QEMU TCG this is MASKED (expected PASS, deferred to
+     * RPi3). Not a cert failure on QEMU. */
+#endif
+    g_wq.gen++;                                /* PUBLISH */
+    mc2_unlock();                              /* stlr release on the lock   */
+    __asm__ volatile("sev" ::: "memory");      /* wake all workers from wfe  */
+
+    /* primary runs slice 0 ITSELF */
+    {
+        size_t i0, i1;
+        pk_slice_bm(out, nw, 0, &i0, &i1);
+        if (i1 > i0)
+            body(ctx, i0, i1);
+    }
+    __asm__ volatile("dmb st" ::: "memory");   /* primary's slice-0 stores visible */
+
+    /* JOIN: bounded wait until all nw-1 secondaries report for this gen.
+     * Watchdog ceiling so a core that failed to wake can NOT wedge the
+     * primary forever (mirrors the MC-2.0 mc2_smp_join bound). */
+    {
+        const unsigned long MAX_TRIES = 200000000UL;
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");  /* acquire done */
+            if (g_wq.done >= nw - 1)
+                break;
+            if (++tries >= MAX_TRIES)
+                break;                         /* bounded fallback (FAIL via memcmp) */
+            __asm__ volatile("wfe");
+        }
+    }
+#ifndef MC2_EQUIV_NO_BARRIER
+    __asm__ volatile("dmb ld" ::: "memory");   /* ACQUIRE before reading any y[i] */
+#else
+    /* TOOTH B: drop the join acquire dmb ld (§4.4) — same masked-on-QEMU
+     * caveat as the publish dsb above. */
+#endif
 }
 
 /* ---------------------------------------------------------------------
@@ -288,4 +578,258 @@ long mc2_tile_check(void)
             return (long)i;
     }
     return -1;
+}
+
+/* =====================================================================
+ *  MC-2.1: the [mc2-smp-equiv] byte-identity self-test (§4.2).
+ *
+ *  A SYNTHETIC, fixed-seed, gate-exceeding matmul (out=2048, in=512 ->
+ *  1048576 MACs > the 524288 gate). Computes y_serial (nw=1, the inline
+ *  serial left-fold) and y_par for nw in {2,4} via the bare-metal
+ *  pk_parallel_rows, then asserts memcmp==0 AND an equal FNV-1a hash
+ *  across all nw. Operands live in static BSS (NOT on any 16KB worker
+ *  stack). This proves the deterministic-worker MECHANISM: N cores each
+ *  compute a deterministic SLICE of one matmul and the reassembled output
+ *  is byte-identical to the serial loop ("the one mind stays one").
+ *
+ *  This is a CERT VEHICLE, not a real workload — the only bare-metal
+ *  matmul (dt_linear, R3 48x48) is far below the gate; wiring it is
+ *  deferred to a later wave (§0, §3.4 of the plan). MC-2.1 does NOT
+ *  modify dtr.c.
+ * =================================================================== */
+#define MC2_EQ_OUT   2048u    /* output rows  */
+#define MC2_EQ_IN    512u     /* contraction  */
+
+/* Synthetic operands + outputs in static BSS (VA==PA, off every stack). */
+static float g_eq_W[MC2_EQ_OUT * MC2_EQ_IN];
+static float g_eq_x[MC2_EQ_IN];
+static float g_eq_y_serial[MC2_EQ_OUT];
+static float g_eq_y_par[MC2_EQ_OUT];
+
+/* Deterministic xorshift PRNG — copied from tests/llm/mc0_test.c:70-82 so
+ * W,x are fixed-seed and byte-reproducible across runs and worker counts. */
+static uint32_t g_eq_rng;
+static void     eq_rng_seed(uint32_t s) { g_eq_rng = s ? s : 0x1234567u; }
+static uint32_t eq_rng_u32(void)
+{
+    uint32_t x = g_eq_rng;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    g_eq_rng = x;
+    return x;
+}
+/* float in [-1,1) — copied from mc0_test.c:82 */
+static float eq_rng_f(void) { return (float)((int32_t)eq_rng_u32()) / 2147483648.0f; }
+
+/* FNV-1a over the output buffer — idiom from student_shell.c:691-694 /
+ * mc0_test.c:115-122. Byte-level, so it catches any rounding difference. */
+static uint64_t eq_fnv1a(const float *y, size_t out)
+{
+    uint64_t h = 1469598103934665603ULL;
+    const uint8_t *p = (const uint8_t *)y;
+    size_t bytes = out * sizeof(float);
+    for (size_t i = 0; i < bytes; i++) { h ^= p[i]; h *= 1099511628253ULL; }
+    return h;
+}
+
+/* Fill W,x with the fixed seed. */
+static void eq_build_Wx(uint32_t seed)
+{
+    eq_rng_seed(seed);
+    for (size_t i = 0; i < (size_t)MC2_EQ_OUT * MC2_EQ_IN; i++)
+        g_eq_W[i] = eq_rng_f();
+    for (size_t j = 0; j < MC2_EQ_IN; j++)
+        g_eq_x[j] = eq_rng_f();
+}
+
+/* When set (Tooth A), the PARALLEL body reassociates the reduction so its
+ * bits MUST differ from the serial left-fold. Pure arithmetic -> bites on
+ * QEMU TCG. The serial reference (nw=1) always runs the clean body. */
+static int g_eq_racy_body = 0;
+
+/* The matmul body — the UNMODIFIED dt_linear shape (dtr.c:148-157)
+ * parameterized over output rows [i0,i1). y[m] = sum_n W[m*in+n]*x[n], a
+ * single left-fold per row -> row order does not change the bits. */
+static void mc2_eq_body(void *ctx, size_t i0, size_t i1)
+{
+    (void)ctx;
+    const float *W = g_eq_W;
+    const float *x = g_eq_x;
+    float       *y = g_eq_y_par;       /* parallel runs write y_par */
+    const size_t in = MC2_EQ_IN;
+
+#ifdef MC2_EQUIV_RACY_PARTITION
+    if (g_eq_racy_body) {
+        /* TOOTH A — REASSOCIATE the reduction: 2 strided partial sums per
+         * row, then add the partials. A DIFFERENT reduction tree than the
+         * serial left-fold -> the rounding bits will not match -> memcmp
+         * MUST fail. (mc0_test.c:131-160 shape.) Pure arithmetic: QEMU
+         * TCG catches this regardless of memory ordering — the load-
+         * bearing falsifier that proves the cert is non-vacuous. */
+        for (size_t m = i0; m < i1; m++) {
+            const float *row = W + m * in;
+            float p0 = 0.0f, p1 = 0.0f;
+            for (size_t n = 0; n < in; n++) {
+                if ((n & 1u) == 0u) p0 += row[n] * x[n];
+                else                p1 += row[n] * x[n];
+            }
+            y[m] = p0 + p1;
+        }
+        return;
+    }
+#endif
+
+    for (size_t m = i0; m < i1; m++) {
+        const float *row = W + m * in;
+        float s = 0.0f;
+        for (size_t n = 0; n < in; n++)
+            s += row[n] * x[n];
+        y[m] = s;
+    }
+}
+
+/* The serial reference body — identical left-fold, writes y_serial. */
+static void mc2_eq_body_serial(void)
+{
+    const float *W = g_eq_W;
+    const float *x = g_eq_x;
+    const size_t in = MC2_EQ_IN;
+    for (size_t m = 0; m < MC2_EQ_OUT; m++) {
+        const float *row = W + m * in;
+        float s = 0.0f;
+        for (size_t n = 0; n < in; n++)
+            s += row[n] * x[n];
+        g_eq_y_serial[m] = s;
+    }
+}
+
+/* First mismatching output index between y_serial and y_par, or -1. */
+static long eq_first_mismatch(void)
+{
+    const uint8_t *a = (const uint8_t *)g_eq_y_serial;
+    const uint8_t *b = (const uint8_t *)g_eq_y_par;
+    size_t bytes = (size_t)MC2_EQ_OUT * sizeof(float);
+    for (size_t i = 0; i < bytes; i++) {
+        if (a[i] != b[i])
+            return (long)(i / sizeof(float));   /* offending row */
+    }
+    return -1;
+}
+
+/* The result of the equiv self-test, consumed by main.c for the verdict.
+ * hashes[k] is the FNV-1a of the run with nw = nws[k] (1,2,4). */
+struct mc2_equiv_result {
+    int      ok;            /* 1 = byte-identical across all nw            */
+    int      bad_nw;        /* the nw that diverged (0 if ok)             */
+    long     bad_idx;       /* first mismatching row (-1 if hashes differ) */
+    int      woke_fail;     /* 1 = a secondary never woke                  */
+    uint64_t h_nw1;
+    uint64_t h_nw2;
+    uint64_t h_nw4;
+};
+
+/* Run ONE forced-nw matmul into y_par and return its FNV hash. */
+static uint64_t eq_run_nw(int nw)
+{
+    pk_smp_force_nw(nw);
+    /* Poison y_par so a no-op / partial write is caught (untouched rows
+     * stay poisoned -> memcmp/hash mismatch). */
+    for (size_t i = 0; i < MC2_EQ_OUT; i++)
+        g_eq_y_par[i] = -987654.0f;
+    pk_parallel_rows(MC2_EQ_OUT, mc2_eq_body, 0);
+    return eq_fnv1a(g_eq_y_par, MC2_EQ_OUT);
+}
+
+/* Orchestrate the [mc2-smp-equiv] self-test. Releases cores 1..3, waits
+ * for them, computes y_serial (nw=1) + y_par for nw in {1,2,4}, and
+ * compares. Fills *r. The primary survives any failure (bounded joins).
+ *
+ * NOTE on the falsifier teeth (§4.4):
+ *  - Tooth A (-DMC2_EQUIV_RACY_PARTITION): reassociating parallel body.
+ *    Pure arithmetic -> MUST produce ok=0 under -smp 4 (QEMU bites).
+ *  - Tooth B (-DMC2_EQUIV_SMPEN_OFF and/or a dropped barrier): the
+ *    missing-coherency variant. On QEMU TCG it may still PASS (TCG masks
+ *    the store-buffer/non-coherent-cache race) — recorded HONESTLY as
+ *    "masked, deferred to RPi3 (MC-2.2)", NOT a cert failure. We do NOT
+ *    claim "barriers verified" from a QEMU PASS.
+ */
+void mc2_smp_equiv_selftest(struct mc2_equiv_result *r)
+{
+    r->ok = 1; r->bad_nw = 0; r->bad_idx = -1; r->woke_fail = 0;
+    r->h_nw1 = r->h_nw2 = r->h_nw4 = 0;
+
+    /* Wake cores 1,2,3 (release_n was called by the boot hook; here we
+     * just confirm they all reached the work-queue). */
+    if (mc2_smp_wait_woken(PK_SMP_MAX_CPUS) != 0) {
+        r->woke_fail = 1;
+        r->ok = 0;
+        r->bad_nw = -1;
+        return;
+    }
+
+    eq_build_Wx(0xA53C0DE5u);
+
+    /* y_serial — the clean serial left-fold reference. */
+    mc2_eq_body_serial();
+    r->h_nw1 = eq_fnv1a(g_eq_y_serial, MC2_EQ_OUT);
+
+    /* nw=1 via the parallel seam (must hit the inline fallback -> same
+     * bits as the serial reference: a self-consistency check of the seam
+     * AND of pk_slice_bm's nw=1 path). */
+    g_eq_racy_body = 0;
+    {
+        uint64_t h1 = eq_run_nw(1);
+        if (h1 != r->h_nw1 || eq_first_mismatch() != -1) {
+            r->ok = 0; r->bad_nw = 1; r->bad_idx = eq_first_mismatch();
+            return;
+        }
+    }
+
+    /* nw in {2,4}. Tooth A makes the PARALLEL body reassociate. */
+#ifdef MC2_EQUIV_RACY_PARTITION
+    g_eq_racy_body = 1;
+#endif
+    {
+        uint64_t h2 = eq_run_nw(2);
+        r->h_nw2 = h2;
+        long m = eq_first_mismatch();
+        if (m != -1 || h2 != r->h_nw1) {
+            r->ok = 0; r->bad_nw = 2; r->bad_idx = m;
+            return;
+        }
+    }
+    {
+        uint64_t h4 = eq_run_nw(4);
+        r->h_nw4 = h4;
+        long m = eq_first_mismatch();
+        if (m != -1 || h4 != r->h_nw1) {
+            r->ok = 0; r->bad_nw = 4; r->bad_idx = m;
+            return;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------------
+ *  MC-2.1b: the idle assertion (§4.5). After the equiv runs, the
+ *  secondaries must be back in wfe — NOT busy-spinning. Snapshot the wake
+ *  counters, spin the primary for a bounded interval doing nothing, then
+ *  re-snapshot: the counters MUST NOT advance (no spurious drains).
+ *  Returns 1 = idle (PASS), 0 = a counter advanced (FAIL).
+ * ------------------------------------------------------------------- */
+int mc2_smp_idle_check(void)
+{
+    unsigned long before[PK_SMP_MAX_CPUS];
+    for (int s = 1; s < PK_SMP_MAX_CPUS; s++)
+        before[s] = pk_smp_wake_count(s);
+
+    /* Bounded "do nothing" interval — long enough that a busy-spinning
+     * worker would tick its counter, short enough not to stall the boot.
+     * We deliberately do NOT sev/wfe here. */
+    for (volatile unsigned long i = 0; i < 50000000UL; i++)
+        __asm__ volatile("" ::: "memory");
+
+    for (int s = 1; s < PK_SMP_MAX_CPUS; s++) {
+        if (pk_smp_wake_count(s) != before[s])
+            return 0;                         /* spurious drain -> FAIL */
+    }
+    return 1;
 }

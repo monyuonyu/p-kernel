@@ -390,6 +390,36 @@ run-smp-fault:
 mc2-test:
 	../../tests/aarch64/run_mc2_boot.sh
 
+# ---- MC-2.1 [mc2-smp-equiv]: N-core byte-identity cert -----------------
+# Interactive: build the kernel WITH the N-core equivalence self-test and
+# boot it under -smp 4 (streams serial to stdio). Wakes cores 1,2,3, runs a
+# synthetic gate-exceeding matmul for nw in {1,2,4}, and prints
+# MC2-EQUIV: PASS/FAIL + the three FNV hashes. See docs/architecture/
+# mc2-1-ncore-equiv-plan.md §4.
+run-equiv:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Same, but with TOOTH A (the partition/arithmetic falsifier) — the
+# reassociated reduction MUST produce MC2-EQUIV: FAIL (proves teeth).
+run-equiv-toothA:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Same, but with TOOTH B (the barrier/SMPEN falsifier) — on QEMU this may
+# still PASS (TCG masks the race); recorded honestly, deferred to RPi3.
+run-equiv-toothB:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: byte-identity across nw in {1,2,4} + Tooth A FAILS +
+# Tooth B honest QEMU record. This is the [mc2-smp-equiv] harness (§4.3).
+mc2-equiv-test:
+	../../tests/aarch64/run_mc2_equiv.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -427,4 +457,5 @@ tftp: rpi3
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) $(MANIFESTO_PAGE) kernel.rpi3.elf kernel8.img
 
-.PHONY: all run run-debug clean run-smp run-smp-fault mc2-test
+.PHONY: all run run-debug clean run-smp run-smp-fault mc2-test \
+        run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test

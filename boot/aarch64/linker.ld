@@ -55,6 +55,20 @@ SECTIONS {
     . += 0x4000;
     _stack_top_cpu1 = .;
 
+    /* MC-2.1 (docs/architecture/mc2-1-ncore-equiv-plan.md §3.5):
+     * dedicated 16KB stacks for secondary CPUs 2 and 3, mirroring the
+     * cpu1 region exactly (contiguous, no overlap, below _kernel_end).
+     * Each worker runs a leaf matmul body (no deep call chain); the
+     * synthetic W/x/y operands live in static BSS, NOT on these stacks. */
+    . = ALIGN(16);
+    _stack_start_cpu2 = .;
+    . += 0x4000;
+    _stack_top_cpu2 = .;
+    . = ALIGN(16);
+    _stack_start_cpu3 = .;
+    . += 0x4000;
+    _stack_top_cpu3 = .;
+
     . = ALIGN(4096);
     _kernel_end = .;
 

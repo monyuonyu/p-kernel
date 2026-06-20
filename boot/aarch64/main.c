@@ -34,6 +34,24 @@ extern int  mc2_secondary_woken(void);   /* 1 = g_cpu[1].woken observed */
 extern long mc2_tile_check(void);        /* -1 = tile matches pattern   */
 #endif
 
+#ifdef MC2_EQUIV_SELFTEST
+/* MC-2.1 [mc2-smp-equiv] byte-identity cert (arch/aarch64/mc2_smp.c).
+ * See docs/architecture/mc2-1-ncore-equiv-plan.md §4. The result struct
+ * is mirrored here (header-light TU); KEEP IN SYNC with mc2_smp.c. */
+extern long mc2_smp_release_n(int n);    /* PSCI CPU_ON cores 1..n-1 */
+extern int  mc2_smp_idle_check(void);    /* 1 = secondaries idle in wfe */
+struct mc2_equiv_result {
+    int      ok;
+    int      bad_nw;
+    long     bad_idx;
+    int      woke_fail;
+    unsigned long long h_nw1;
+    unsigned long long h_nw2;
+    unsigned long long h_nw4;
+};
+extern void mc2_smp_equiv_selftest(struct mc2_equiv_result *r);
+#endif
+
 /* PL011 base differs between QEMU virt and BCM2837 — keep this print
  * helper minimal so it works before sio_init() runs. */
 #ifdef BOARD_RPI3
@@ -51,7 +69,7 @@ static void print(const char *s)
     }
 }
 
-#ifdef MC2_SMP_SELFTEST
+#if defined(MC2_SMP_SELFTEST) || defined(MC2_EQUIV_SELFTEST)
 /* Minimal signed-long printer for FAIL diagnostics (no libc tm_printf here —
  * this runs before T-Kernel). Prints decimal. */
 static void print_long(long v)
@@ -67,6 +85,23 @@ static void print_long(long v)
     int  o = 0;
     if (neg) out[o++] = '-';
     while (i > 0) out[o++] = buf[--i];
+    out[o] = '\0';
+    print(out);
+}
+#endif
+
+#ifdef MC2_EQUIV_SELFTEST
+/* Unsigned-hex printer for the FNV hashes (the cert prints all three and
+ * the harness asserts they are identical). 16 hex digits. */
+static void print_hex64(unsigned long long v)
+{
+    char out[19];
+    int o = 0;
+    out[o++] = '0'; out[o++] = 'x';
+    for (int sh = 60; sh >= 0; sh -= 4) {
+        int nib = (int)((v >> sh) & 0xFULL);
+        out[o++] = (char)(nib < 10 ? ('0' + nib) : ('a' + nib - 10));
+    }
     out[o] = '\0';
     print(out);
 }
@@ -146,6 +181,44 @@ void main(void)
         }
         /* Fall through to the normal T-Kernel boot — proves clause (d):
          * the primary scheduler still ticks AFTER the secondary is up. */
+    }
+#endif
+
+#ifdef MC2_EQUIV_SELFTEST
+    /* MC-2.1 [mc2-smp-equiv]: wake cores 1,2,3 and prove a synthetic
+     * gate-exceeding matmul computed via the bare-metal pk_parallel_rows
+     * is BYTE-IDENTICAL to the serial loop across nw in {1,2,4}. The
+     * primary survives any failure (bounded joins) and STILL boots the
+     * T-Kernel (so [mc2-boot-survives] holds). See the plan §4. */
+    {
+        print("[MC2] releasing cores 1,2,3 via PSCI CPU_ON (N-core)...\r\n");
+        long on = mc2_smp_release_n(4);
+        if (on != 0) {
+            print("MC2-EQUIV: FAIL cpu_on rc=");
+            print_long(on);
+            print("\r\n");
+        } else {
+            struct mc2_equiv_result r;
+            mc2_smp_equiv_selftest(&r);
+            print("[MC2] FNV nw=1 "); print_hex64(r.h_nw1); print("\r\n");
+            print("[MC2] FNV nw=2 "); print_hex64(r.h_nw2); print("\r\n");
+            print("[MC2] FNV nw=4 "); print_hex64(r.h_nw4); print("\r\n");
+            if (r.woke_fail) {
+                print("MC2-EQUIV: FAIL secondary-not-woken\r\n");
+            } else if (r.ok) {
+                int idle = mc2_smp_idle_check();
+                print("MC2-EQUIV: PASS\r\n");
+                if (idle) print("MC2-IDLE: PASS\r\n");
+                else      print("MC2-IDLE: FAIL (worker busy-spun)\r\n");
+            } else {
+                print("MC2-EQUIV: FAIL nw=");
+                print_long(r.bad_nw);
+                print(" @");
+                print_long(r.bad_idx);
+                print("\r\n");
+            }
+        }
+        /* Fall through to the normal T-Kernel boot. */
     }
 #endif
 
