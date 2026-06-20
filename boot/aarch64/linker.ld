@@ -46,6 +46,15 @@ SECTIONS {
     . += 0x10000;
     _stack_top = .;         /* SP initialized here in start.S */
 
+    /* MC-2.0: a dedicated 16KB stack for secondary CPU 1's worker.
+     * The worker runs a leaf tile-loop (no deep call chain), so 16KB
+     * is ample. Kept separate from the primary's _stack_top so the
+     * two cores never share a stack. VA==PA (MMU off). */
+    . = ALIGN(16);
+    _stack_start_cpu1 = .;
+    . += 0x4000;
+    _stack_top_cpu1 = .;
+
     . = ALIGN(4096);
     _kernel_end = .;
 

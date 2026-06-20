@@ -140,9 +140,127 @@ _halt:
 
 /* -----------------------------------------------------------------------
  *  Secondary core parking loop
+ *
+ *  Reached at RESET by every non-primary core (mpidr Aff0 != 0). These
+ *  cores have done NONE of the primary's EL2->EL1 setup. MC-2.0 does not
+ *  wake cores from here — it releases them via PSCI CPU_ON to the fresh
+ *  landing pad _secondary_worker below. This park stays as the safety
+ *  net for any core not explicitly released.
  * --------------------------------------------------------------------- */
 _secondary_park:
     wfe
     b _secondary_park
+
+/* -----------------------------------------------------------------------
+ *  MC-2.0 secondary worker bringup (docs/architecture/
+ *  mc2-baremetal-smp-plan.md §3.2, §7).
+ *
+ *  Entered via PSCI CPU_ON (mc2_smp.c). The firmware (QEMU's PSCI impl)
+ *  starts this core at the boot EL (EL2 on QEMU virt) with:
+ *      x0 = context_id  = &g_cpu[1]   (the per-CPU struct ptr)
+ *      MMU off, caches off, no stack, no vectors.
+ *
+ *  We must: preserve x0, drop EL2->EL1 (matching the primary), set up
+ *  this core's own EL1 (SCTLR caches + I-cache, CPACR FP, vbar, and
+ *  CRUCIALLY CPUECTLR.SMPEN=1 for inner-shareable coherency), load this
+ *  core's own stack from the per-CPU block, then enter the C worker.
+ *
+ *  The primary boot path (_from_el2 / _el1_entry) is UNTOUCHED — this is
+ *  a parallel path that re-derives the SAME EL1 bits (NOT a branch into
+ *  the primary's BSS-clearing sequence, which a secondary must skip).
+ * --------------------------------------------------------------------- */
+    .global _secondary_worker
+_secondary_worker:
+    /* x0 holds context_id (&g_cpu[slot]); preserve it across the EL drop
+     * in a callee-stable register the EL1 setup does not clobber. */
+    mov x19, x0
+
+    /* ---- Drop to EL1 if needed (mirrors the primary's EL check) ---- */
+    mrs x0, CurrentEL
+    lsr x0, x0, #2
+    cmp x0, #2
+    b.eq _sec_from_el2
+    cmp x0, #3
+    b.eq _sec_from_el3
+    /* Already at EL1 — fall through to the EL1 setup. */
+    b   _secondary_el1_setup
+
+_sec_from_el3:
+    mov x0, #0x531              /* NS|EA|FIQ|IRQ|RW(AArch64) — as primary */
+    msr scr_el3, x0
+    mov x0, #0x3C5              /* SPSR: EL1h, DAIF masked */
+    msr spsr_el3, x0
+    adr x0, _secondary_el1_setup
+    msr elr_el3, x0
+    isb
+    eret
+
+_sec_from_el2:
+    mov x0, #(1 << 31)          /* HCR_EL2.RW: EL1 is AArch64 — as primary */
+    msr hcr_el2, x0
+    mov x0, #0x0800             /* SCTLR_EL1 minimal — as primary :81 */
+    orr x0, x0, #(1 << 11)     /* EOS — as primary :82 */
+    msr sctlr_el1, x0
+    mov x0, #0x3C5              /* SPSR_EL2: EL1h, DAIF masked — as primary */
+    msr spsr_el2, x0
+    adr x0, _secondary_el1_setup
+    msr elr_el2, x0
+    isb
+    eret
+
+/* -----------------------------------------------------------------------
+ *  _secondary_el1_setup — bring this core's EL1 to the SAME config the
+ *  primary set in _el1_entry (caches + I-cache + FP + vbar), PLUS
+ *  CPUECTLR.SMPEN=1 (§1.3). The secondary must NOT clear BSS (the primary
+ *  already did, and BSS is shared) and must NOT call main().
+ *
+ *  On entry: x19 = context_id (&g_cpu[slot]), now at EL1h.
+ * --------------------------------------------------------------------- */
+    .global _secondary_el1_setup
+_secondary_el1_setup:
+    /* Install the SAME EL1 exception vectors the primary uses. */
+    ldr x0, =el1_vectors
+    msr vbar_el1, x0
+    isb
+
+    /* Enable D-cache + I-cache — IDENTICAL bits to the primary
+     * (_el1_entry :118-121): SCTLR_EL1.C (bit 2) and .I (bit 12). MMU
+     * (bit 0, M) stays CLEAR — VA==PA, no TTBR. */
+    mrs x0, sctlr_el1
+    orr x0, x0, #(1 << 2)      /* C — data cache enable */
+    orr x0, x0, #(1 << 12)     /* I — instruction cache enable */
+    msr sctlr_el1, x0
+    isb
+
+    /* Enable FP/SIMD access at EL1 — IDENTICAL to the primary
+     * (_el1_entry :128-130): CPACR_EL1.FPEN[21:20] = 0b11. The C worker
+     * may touch FP/SIMD in future tiles; match the primary now. */
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
+    /* CPUECTLR_EL1.SMPEN (S3_1_C15_C2_1, bit 6) — join the
+     * inner-shareable coherency domain so dsb ish / dmb are sound
+     * across cores (§1.3). The primary sets its own bit in
+     * mc2_smp_release_one() (C). */
+    mrs x0, S3_1_C15_C2_1
+    orr x0, x0, #(1 << 6)
+    msr S3_1_C15_C2_1, x0
+    isb
+
+    /* Load THIS core's own stack from the per-CPU block (x19 =
+     * &g_cpu[slot]; offset PK_CPU_STACK_TOP == 0). stack_top is the TOP
+     * of the region; SP grows down. */
+    ldr x0, [x19, #0]          /* PK_CPU_STACK_TOP */
+    mov sp, x0
+
+    /* Enter the C worker loop — never returns. (It reads its own slot
+     * via g_cpu[1] in C; x19 is no longer needed by the worker.) */
+    bl  pk_smp_worker_loop
+
+    /* Defensive: if the worker ever returns, park forever. */
+1:  wfe
+    b   1b
 
     .size _start, . - _start

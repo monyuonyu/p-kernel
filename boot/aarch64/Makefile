@@ -101,7 +101,8 @@ ARCH_C_SRCS = \
     ark_bdev.c \
     arch_reboot.c \
     vfs_stub.c \
-    sign_entropy.c
+    sign_entropy.c \
+    mc2_smp.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -358,6 +359,37 @@ run-debug: $(TARGET)
 	qemu-system-aarch64 $(QEMU_FLAGS) -S -gdb tcp::1234 &
 	@echo "GDB: aarch64-linux-gnu-gdb -ex 'target remote :1234' kernel.elf"
 
+# ---- MC-2.0 bare-metal constrained-SMP ($(N) secondary cores) ---------
+# QEMU virt with -smp 4 actually instantiates the parked secondaries the
+# MC-2 bringup wakes (the default `run` target is single-core, so the
+# secondaries don't even exist in the VM). See docs/architecture/
+# mc2-baremetal-smp-plan.md §4.3.
+QEMU_SMP_FLAGS = -M virt -cpu cortex-a53 -smp 4 -m 256M \
+                 -kernel $(TARGET) \
+                 -serial stdio \
+                 -display none \
+                 -no-reboot
+
+# Interactive: build the kernel WITH the MC-2 boot self-test and boot it
+# under -smp 4 (streams serial to stdio so a human can watch the verdict).
+run-smp:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS=-DMC2_SMP_SELFTEST $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Same, but with a deliberately faulting worker tile — proves the
+# primary's bounded join does NOT wedge forever (the verdict is
+# MC2-BOOT: FAIL join-timeout, and the kernel STILL boots the T-Kernel).
+run-smp-fault:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_FAULTING_TILE" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4 with a timeout and grep the
+# UART for the verdict. This is the [mc2-boot-survives] harness (§4.3).
+mc2-test:
+	../../tests/aarch64/run_mc2_boot.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -395,4 +427,4 @@ tftp: rpi3
 clean:
 	rm -f $(ALL_OBJS) $(TARGET) $(MANIFESTO_PAGE) kernel.rpi3.elf kernel8.img
 
-.PHONY: all run run-debug clean
+.PHONY: all run run-debug clean run-smp run-smp-fault mc2-test
