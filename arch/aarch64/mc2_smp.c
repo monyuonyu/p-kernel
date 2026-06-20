@@ -237,6 +237,15 @@ static struct pk_wq g_wq;
  * reads these to prove secondaries BLOCK on wfe (no spurious drains). */
 static volatile unsigned long g_wake[PK_SMP_MAX_CPUS];
 
+/* Number of secondaries released into the work-queue (1..N-1). EVERY
+ * released secondary drains EVERY published gen and reports `done`,
+ * INDEPENDENT of nw — exactly like the hosted pool joins on `nhelpers`
+ * not `nw` (pk_parallel.c:99,203). The dispatch join therefore waits for
+ * g_wq_nhelpers reports, NOT nw-1: a slot that did no work (slot>=nw)
+ * still ++done, so joining on nw-1 could break BEFORE the slice that
+ * actually did the work has finished its store. Set by mc2_smp_release_n. */
+static volatile int g_wq_nhelpers = 0;
+
 /* Cert hook: force a worker count for the next pk_parallel_rows dispatch
  * (bare-metal analogue of pk_parallel_set_threads, pk_parallel.c:135).
  * <=0 = serial inline. The self-test sets this to 1/2/4. */
@@ -415,8 +424,9 @@ long mc2_smp_release_n(int n)
         g_cpu[slot].woken     = 0;
         g_wake[slot]          = 0;
     }
-    g_wq.gen  = 0;
-    g_wq.done = 0;
+    g_wq.gen      = 0;
+    g_wq.done     = 0;
+    g_wq_nhelpers = n - 1;                      /* secondaries that will drain */
     __asm__ volatile("dsb ish" ::: "memory");  /* publish the block(s) */
 
     long rc = 0;
@@ -503,15 +513,20 @@ void pk_parallel_rows(size_t out, pk_row_body body, void *ctx)
     }
     __asm__ volatile("dmb st" ::: "memory");   /* primary's slice-0 stores visible */
 
-    /* JOIN: bounded wait until all nw-1 secondaries report for this gen.
-     * Watchdog ceiling so a core that failed to wake can NOT wedge the
-     * primary forever (mirrors the MC-2.0 mc2_smp_join bound). */
+    /* JOIN: bounded wait until ALL released secondaries report for this
+     * gen — NOT nw-1. Every awake secondary drains every gen and ++done
+     * even if its slot did no work (slot>=nw), exactly like the hosted
+     * pool joins on `nhelpers` (pk_parallel.c:203). Joining on nw-1 could
+     * break BEFORE the slice that actually did the work has finished its
+     * store, since a do-nothing slot may report first. Watchdog ceiling so
+     * a core that failed to wake can NOT wedge the primary forever
+     * (mirrors the MC-2.0 mc2_smp_join bound). */
     {
         const unsigned long MAX_TRIES = 200000000UL;
         unsigned long tries = 0;
         for (;;) {
             __asm__ volatile("dmb ld" ::: "memory");  /* acquire done */
-            if (g_wq.done >= nw - 1)
+            if (g_wq.done >= g_wq_nhelpers)
                 break;
             if (++tries >= MAX_TRIES)
                 break;                         /* bounded fallback (FAIL via memcmp) */
@@ -596,7 +611,12 @@ long mc2_tile_check(void)
  *  matmul (dt_linear, R3 48x48) is far below the gate; wiring it is
  *  deferred to a later wave (§0, §3.4 of the plan). MC-2.1 does NOT
  *  modify dtr.c.
+ *
+ *  Gated behind MC2_EQUIV_SELFTEST so the 4MB synthetic-W BSS + the
+ *  self-test only exist in the cert build — the plain/shipped kernel
+ *  carries NONE of it (and wakes no secondary).
  * =================================================================== */
+#ifdef MC2_EQUIV_SELFTEST
 #define MC2_EQ_OUT   2048u    /* output rows  */
 #define MC2_EQ_IN    512u     /* contraction  */
 
@@ -833,3 +853,4 @@ int mc2_smp_idle_check(void)
     }
     return 1;
 }
+#endif /* MC2_EQUIV_SELFTEST */

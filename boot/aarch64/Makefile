@@ -398,21 +398,21 @@ mc2-test:
 # mc2-1-ncore-equiv-plan.md §4.
 run-equiv:
 	$(MAKE) clean
-	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST" $(TARGET)
+	$(MAKE) EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
 
 # Same, but with TOOTH A (the partition/arithmetic falsifier) — the
 # reassociated reduction MUST produce MC2-EQUIV: FAIL (proves teeth).
 run-equiv-toothA:
 	$(MAKE) clean
-	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" $(TARGET)
+	$(MAKE) EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
 
 # Same, but with TOOTH B (the barrier/SMPEN falsifier) — on QEMU this may
 # still PASS (TCG masks the race); recorded honestly, deferred to RPi3.
 run-equiv-toothB:
 	$(MAKE) clean
-	$(MAKE) EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" $(TARGET)
+	$(MAKE) EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
 
 # Automated cert: byte-identity across nw in {1,2,4} + Tooth A FAILS +

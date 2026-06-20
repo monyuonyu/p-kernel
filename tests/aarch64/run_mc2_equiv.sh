@@ -5,7 +5,7 @@
 # mc2-1-ncore-equiv-plan.md §4).
 #
 # Builds the aarch64 bare-metal kernel WITH the MC-2.1 N-core equivalence
-# self-test (-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST), boots it under QEMU
+# self-test (-DMC2_EQUIV_SELFTEST), boots it under QEMU
 # virt with -smp 4 (so cores 1,2,3 actually exist in the VM), captures the
 # UART, and asserts the deterministic-worker MECHANISM:
 #
@@ -77,7 +77,7 @@ assert_hashes_equal() {
 echo "=== [mc2-smp-equiv] : byte-identity across nw in {1,2,4} under -smp 4 ==="
 cd "$BOOT"
 make clean >/dev/null 2>&1
-make EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST" >/dev/null 2>&1 \
+make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST" >/dev/null 2>&1 \
     || fail "build (MC2_EQUIV_SELFTEST) failed"
 
 EQUIV_LOG="$(mktemp)"
@@ -99,7 +99,7 @@ echo
 # -------------------------------------------------------------------------
 echo "=== [mc2-smp-equiv] : TOOTH A (partition/arithmetic falsifier) MUST FAIL ==="
 make clean >/dev/null 2>&1
-make EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" \
+make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" \
     >/dev/null 2>&1 || fail "build (MC2_EQUIV_RACY_PARTITION) failed"
 
 TOOTHA_LOG="$(mktemp)"
@@ -118,7 +118,7 @@ echo
 # -------------------------------------------------------------------------
 echo "=== [mc2-smp-equiv] : TOOTH B (barrier/SMPEN falsifier) — honest QEMU record ==="
 make clean >/dev/null 2>&1
-make EXTRA_CFLAGS="-DMC2_SMP_SELFTEST -DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" \
+make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" \
     >/dev/null 2>&1 || fail "build (Tooth B) failed"
 
 TOOTHB_LOG="$(mktemp)"
