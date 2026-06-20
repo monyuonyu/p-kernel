@@ -214,7 +214,18 @@ static void pk_slice_bm(size_t out, int nw, int s, size_t *i0, size_t *i1)
     size_t q = out / (size_t)nw;
     /* first (nw-1) slices get q rows each; the last gets the remainder too. */
     *i0 = (size_t)s * q;
+#ifdef MC2_SLICE_BREAK
+    /* FALSIFIER (MC-2.1b §2): deliberately perturb the PARTITION so the
+     * standalone unit-check (mc2_slice_unitcheck) MUST report MC2-SLICE: FAIL.
+     * This DROPS the ragged remainder — the last slice ends at i0+q instead of
+     * `out`, so out%nw rows [out-(out%nw),out) are NEVER covered (a TOTAL/
+     * DISJOINT gap) AND the last slice no longer matches the hosted golden
+     * (pk_parallel.c:62). A build flag, never in the default kernel; it gives
+     * the check teeth (proves it would catch a real drift of this hand-copy). */
+    *i1 = *i0 + q;
+#else
     *i1 = (s == nw - 1) ? out : (*i0 + q);
+#endif
 }
 
 /* The ONE global work-queue (BSS, VA==PA). The primary (worker 0) fills
@@ -854,3 +865,154 @@ int mc2_smp_idle_check(void)
     return 1;
 }
 #endif /* MC2_EQUIV_SELFTEST */
+
+/* =====================================================================
+ *  MC-2.1b — the STANDALONE pk_slice_bm partition unit-check (§4.5).
+ *
+ *  The MC-2.1a equiv cert exercises pk_slice_bm only INDIRECTLY (the
+ *  matmul reassembles correctly => the partition was sound). The MC-2.1a
+ *  audit flagged that as a drift surface: the hand-copy of pk_slice()
+ *  (arch/common/llm/pk_parallel.c:57-63 — the "one mind, one math" golden)
+ *  has NO direct guard. MC-2.1b adds one.
+ *
+ *  This is a PURE INTEGER unit-check: it needs NO secondary cores (it runs
+ *  on the primary alone, before any matmul) and is cheap. For a set of
+ *  (out, nw) pairs — including ragged ones — it asserts pk_slice_bm
+ *  satisfies the three partition invariants DIRECTLY:
+ *
+ *    (1) DISJOINT + TOTAL — the union of all nw slices covers [0,out)
+ *        exactly once: a coverage array is incremented per index; every
+ *        index in [0,out) must be hit EXACTLY once (no gap, no overlap).
+ *    (2) ORDER            — slice s starts where slice s-1 ended
+ *        (contiguous ascending), slice 0 starts at 0, slice nw-1 ends at
+ *        out, and the ragged remainder lands on the LAST slice (matching
+ *        pk_parallel.c:57-63 semantics: first nw-1 slices get q rows each).
+ *    (3) MATCHES THE GOLDEN — the (i0,i1) pk_slice_bm produces equals what
+ *        the hosted pk_slice formula produces for the same (out,nw,s). The
+ *        hosted TU is NOT linked on bare metal (pk_parallel.h:18-24), so we
+ *        re-derive the golden formula INLINE here (slice_golden, pinned to
+ *        pk_parallel.c:57-63) rather than linking it.
+ *
+ *  Gated behind MC2_SLICE_SELFTEST so the plain kernel carries none of it;
+ *  it is ALSO compiled when MC2_EQUIV_SELFTEST is set (so main.c can run it
+ *  as an extra assertion block BEFORE the matmul). The falsifier
+ *  (-DMC2_SLICE_BREAK) perturbs pk_slice_bm itself (drops the ragged
+ *  remainder) and MUST make this report MC2-SLICE: FAIL.
+ * =================================================================== */
+#if defined(MC2_SLICE_SELFTEST) || defined(MC2_EQUIV_SELFTEST)
+
+/* The golden partition formula, re-derived INLINE — a VERBATIM copy of
+ * pk_slice() at arch/common/llm/pk_parallel.c:57-63 (commit-pinned). This
+ * is the independent reference the check measures pk_slice_bm against; it
+ * does NOT call pk_slice_bm and is NEVER perturbed by MC2_SLICE_BREAK (so a
+ * broken pk_slice_bm diverges from this golden and the check bites). KEEP
+ * IN SYNC with pk_parallel.c:57-63 alongside pk_slice_bm. */
+static void slice_golden(size_t out, int nw, int s, size_t *i0, size_t *i1)
+{
+    size_t q = out / (size_t)nw;
+    /* first (nw-1) slices get q rows each; the last gets the remainder too. */
+    *i0 = (size_t)s * q;
+    *i1 = (s == nw - 1) ? out : (*i0 + q);
+}
+
+/* Coverage scratch in static BSS (off every 16KB worker stack). Sized to
+ * the largest `out` the check exercises (2049). The check runs on the
+ * primary only; a single static buffer is fine (no concurrency). */
+#define MC2_SLICE_COV_MAX 2049u
+static uint8_t g_slice_cov[MC2_SLICE_COV_MAX];
+
+/* Verdict, consumed by main.c. On FAIL, (bad_out,bad_nw,bad_idx) localizes
+ * the first offending case; reason names which invariant tripped. */
+struct mc2_slice_result {
+    int      ok;          /* 1 = all invariants held for every case        */
+    size_t   bad_out;     /* the `out` of the first failing case           */
+    int      bad_nw;      /* the `nw`  of the first failing case            */
+    long     bad_idx;     /* offending index/slice (-1 if N/A)             */
+    int      reason;      /* 1=order 2=golden 3=coverage (0 if ok)         */
+    int      n_cases;     /* how many (out,nw) pairs were exercised        */
+};
+
+/* Check ONE (out,nw) pair against all three invariants. Returns 0 = PASS,
+ * else sets *idx/*reason and returns nonzero. Walks the nw slices once. */
+static int mc2_slice_check_one(size_t out, int nw, long *idx, int *reason)
+{
+    /* Reset the coverage window for [0,out). */
+    for (size_t i = 0; i < out; i++) g_slice_cov[i] = 0;
+
+    size_t prev_end = 0;                       /* where the previous slice ended */
+    for (int s = 0; s < nw; s++) {
+        size_t i0 = 0, i1 = 0;
+        pk_slice_bm(out, nw, s, &i0, &i1);
+
+        /* (2) ORDER: slice 0 starts at 0; slice s starts where s-1 ended;
+         * bounds are sane (i0<=i1, i1<=out); slice nw-1 ends exactly at out. */
+        if (i0 != prev_end || i1 < i0 || i1 > out) {
+            *idx = (long)s; *reason = 1; return 1;
+        }
+        if (s == nw - 1 && i1 != out) {        /* ragged remainder NOT on last */
+            *idx = (long)s; *reason = 1; return 1;
+        }
+
+        /* (3) MATCHES THE GOLDEN: re-derive (g0,g1) from the inline golden
+         * and require pk_slice_bm produced the identical pair. */
+        size_t g0 = 0, g1 = 0;
+        slice_golden(out, nw, s, &g0, &g1);
+        if (i0 != g0 || i1 != g1) {
+            *idx = (long)s; *reason = 2; return 1;
+        }
+
+        /* Accumulate coverage for this slice's rows. */
+        for (size_t r = i0; r < i1; r++) {
+            if (r < out) g_slice_cov[r]++;     /* clamp guard (r<out always) */
+        }
+        prev_end = i1;
+    }
+
+    /* (1) DISJOINT + TOTAL: every index in [0,out) hit EXACTLY once. */
+    for (size_t i = 0; i < out; i++) {
+        if (g_slice_cov[i] != 1) {
+            *idx = (long)i; *reason = 3; return 1; /* gap (0) or overlap (>1) */
+        }
+    }
+    return 0;
+}
+
+/* Run the standalone unit-check over a representative set of (out,nw)
+ * pairs, including ragged ones (out not a multiple of nw, and out<nw, and
+ * out==0/1 edges). Fills *r. Pure integer; no cores, no matmul. */
+void mc2_slice_unitcheck(struct mc2_slice_result *r)
+{
+    /* out values: edges (0,1,2), small ragged (7), the gate boundary
+     * (63,64,65 around PK_PARALLEL_MIN_ROWS), and the cert size (2048) plus
+     * a ragged sibling (2049). */
+    static const size_t outs[] = { 0, 1, 2, 7, 63, 64, 65, 2048, 2049 };
+    static const int     nws[]  = { 1, 2, 3, 4 };
+
+    r->ok = 1; r->bad_out = 0; r->bad_nw = 0; r->bad_idx = -1;
+    r->reason = 0; r->n_cases = 0;
+
+    for (size_t oi = 0; oi < sizeof(outs)/sizeof(outs[0]); oi++) {
+        size_t out = outs[oi];
+        if (out > MC2_SLICE_COV_MAX) continue;     /* never overrun the scratch */
+        for (size_t ni = 0; ni < sizeof(nws)/sizeof(nws[0]); ni++) {
+            int nw = nws[ni];
+            /* The golden requires nw>=1 and (for a sensible partition) nw
+             * not exceeding out — except out==0 which is the empty matmul
+             * (every slice empty: still must be disjoint+total over the
+             * empty range). pk_parallel_rows only ever partitions out>=nw
+             * (it falls back to serial below the gate / when nw>out), so we
+             * mirror that contract: skip nw>out for out>0. out==0 is checked
+             * at every nw (all-empty must still be consistent). */
+            if (out > 0 && (size_t)nw > out) continue;
+
+            long idx = -1; int reason = 0;
+            r->n_cases++;
+            if (mc2_slice_check_one(out, nw, &idx, &reason) != 0) {
+                r->ok = 0; r->bad_out = out; r->bad_nw = nw;
+                r->bad_idx = idx; r->reason = reason;
+                return;                            /* first failure wins */
+            }
+        }
+    }
+}
+#endif /* MC2_SLICE_SELFTEST || MC2_EQUIV_SELFTEST */

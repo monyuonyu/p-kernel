@@ -420,6 +420,35 @@ run-equiv-toothB:
 mc2-equiv-test:
 	../../tests/aarch64/run_mc2_equiv.sh
 
+# ---- MC-2.1b: the STANDALONE pk_slice_bm partition unit-check ----------
+# Interactive: build the kernel WITH the standalone partition unit-check and
+# boot it under QEMU (NO -smp — it is a pure integer check on the primary,
+# needs no secondaries). Prints MC2-SLICE: PASS/FAIL. The check guards the
+# pk_slice_bm hand-copy drift surface (mc2_smp.c, the "one mind, one math"
+# golden at arch/common/llm/pk_parallel.c:57-63) DIRECTLY — the equiv cert
+# above only exercises it INDIRECTLY via the matmul.
+QEMU_SLICE_FLAGS = -M virt -cpu cortex-a53 -m 256M \
+                   -kernel $(TARGET) \
+                   -serial stdio \
+                   -display none \
+                   -no-reboot
+run-slice:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SLICE_SELFTEST" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SLICE_FLAGS)
+
+# Same, but with the FALSIFIER (-DMC2_SLICE_BREAK): pk_slice_bm drops the
+# ragged remainder, so the unit-check MUST print MC2-SLICE: FAIL (teeth).
+run-slice-break:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DMC2_SLICE_SELFTEST -DMC2_SLICE_BREAK" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SLICE_FLAGS)
+
+# Automated cert: partition invariants PASS + falsifier FAILS. This is the
+# MC-2.1b [mc2-slice] harness.
+mc2-slice-test:
+	../../tests/aarch64/run_mc2_slice.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -458,4 +487,5 @@ clean:
 	rm -f $(ALL_OBJS) $(TARGET) $(MANIFESTO_PAGE) kernel.rpi3.elf kernel8.img
 
 .PHONY: all run run-debug clean run-smp run-smp-fault mc2-test \
-        run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test
+        run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test \
+        run-slice run-slice-break mc2-slice-test

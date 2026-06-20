@@ -52,6 +52,23 @@ struct mc2_equiv_result {
 extern void mc2_smp_equiv_selftest(struct mc2_equiv_result *r);
 #endif
 
+#if defined(MC2_SLICE_SELFTEST) || defined(MC2_EQUIV_SELFTEST)
+/* MC-2.1b STANDALONE pk_slice_bm partition unit-check (arch/aarch64/
+ * mc2_smp.c). A PURE INTEGER check of the hand-copied partition function —
+ * needs NO secondary cores, runs on the primary before any matmul. The
+ * result struct is mirrored here (header-light TU); KEEP IN SYNC with
+ * mc2_smp.c's struct mc2_slice_result. */
+struct mc2_slice_result {
+    int           ok;
+    unsigned long bad_out;
+    int           bad_nw;
+    long          bad_idx;
+    int           reason;     /* 1=order 2=golden 3=coverage */
+    int           n_cases;
+};
+extern void mc2_slice_unitcheck(struct mc2_slice_result *r);
+#endif
+
 /* PL011 base differs between QEMU virt and BCM2837 — keep this print
  * helper minimal so it works before sio_init() runs. */
 #ifdef BOARD_RPI3
@@ -69,7 +86,7 @@ static void print(const char *s)
     }
 }
 
-#if defined(MC2_SMP_SELFTEST) || defined(MC2_EQUIV_SELFTEST)
+#if defined(MC2_SMP_SELFTEST) || defined(MC2_EQUIV_SELFTEST) || defined(MC2_SLICE_SELFTEST)
 /* Minimal signed-long printer for FAIL diagnostics (no libc tm_printf here —
  * this runs before T-Kernel). Prints decimal. */
 static void print_long(long v)
@@ -107,6 +124,36 @@ static void print_hex64(unsigned long long v)
 }
 #endif
 
+#if defined(MC2_SLICE_SELFTEST) || defined(MC2_EQUIV_SELFTEST)
+/* Print the MC2-SLICE verdict a harness greps. PASS prints the case count;
+ * FAIL localizes (out,nw,@idx) and names the invariant that tripped. The
+ * falsifier build (-DMC2_SLICE_BREAK) must drive this to MC2-SLICE: FAIL. */
+static void mc2_slice_print_verdict(void)
+{
+    struct mc2_slice_result sr;
+    mc2_slice_unitcheck(&sr);
+    if (sr.ok) {
+        print("[MC2] pk_slice_bm partition unit-check: ");
+        print_long((long)sr.n_cases);
+        print(" (out,nw) cases — DISJOINT+TOTAL, ORDER, MATCHES-GOLDEN\r\n");
+        print("MC2-SLICE: PASS\r\n");
+    } else {
+        const char *why = sr.reason == 1 ? "order"
+                        : sr.reason == 2 ? "golden-mismatch"
+                        : sr.reason == 3 ? "coverage" : "?";
+        print("MC2-SLICE: FAIL out=");
+        print_long((long)sr.bad_out);
+        print(" nw=");
+        print_long((long)sr.bad_nw);
+        print(" @");
+        print_long(sr.bad_idx);
+        print(" reason=");
+        print(why);
+        print("\r\n");
+    }
+}
+#endif
+
 void main(void)
 {
     /* UART init — must be first for debug output */
@@ -138,6 +185,20 @@ void main(void)
             print("[ARK] SMOKE RESULT: FAIL\r\n");
         print("=== ark-smoke done — halting ===\r\n");
         for (;;) __asm__ volatile ("wfe");
+    }
+#endif
+
+#ifdef MC2_SLICE_SELFTEST
+    /* MC-2.1b STANDALONE pk_slice_bm partition unit-check. A PURE INTEGER
+     * check (no secondary cores, no matmul) of the hand-copied partition
+     * function against its three invariants + the hosted golden. Runs on
+     * the primary alone, then falls through to the normal T-Kernel boot
+     * (so a plain-flag run still reaches the banner). The falsifier build
+     * (-DMC2_SLICE_BREAK) must drive this to MC2-SLICE: FAIL. */
+    {
+        print("[MC2] pk_slice_bm STANDALONE partition unit-check...\r\n");
+        mc2_slice_print_verdict();
+        /* Fall through to the normal T-Kernel boot. */
     }
 #endif
 
@@ -191,6 +252,13 @@ void main(void)
      * primary survives any failure (bounded joins) and STILL boots the
      * T-Kernel (so [mc2-boot-survives] holds). See the plan §4. */
     {
+        /* MC-2.1b: run the STANDALONE pk_slice_bm partition unit-check FIRST
+         * (pure integer, no cores) — the equiv matmul below exercises the
+         * partition only indirectly, so this directly guards the hand-copy
+         * drift surface before we depend on it. */
+        print("[MC2] pk_slice_bm partition unit-check (pre-matmul)...\r\n");
+        mc2_slice_print_verdict();
+
         print("[MC2] releasing cores 1,2,3 via PSCI CPU_ON (N-core)...\r\n");
         long on = mc2_smp_release_n(4);
         if (on != 0) {
