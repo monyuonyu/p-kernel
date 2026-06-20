@@ -144,7 +144,15 @@ static UW floor_log2(UW v)
 /* クラスタの実状態に依存せず決定論的に検証できる。                    */
 /* ------------------------------------------------------------------ */
 
-/* breadth: experts_active(N) = clamp(N, 1, CAP_E_MAX)。 */
+/* breadth: experts_active(N) = clamp(N, 1, CAP_E_MAX)。
+ *
+ * HONEST LABEL (2026-06-20 harsh review): this is a DEGRADE-CAPACITY estimate
+ * (consumed by capacity_self_test + the degrade-level math at :173/:178), NOT
+ * the model-sizing mechanism. It does NOT size the router / the student's
+ * expert table — every model is fixed compile-time today. "脳がフリートで育つ"
+ * (the brain grows with N) is the SS-4 wave (function-preserving expert growth
+ * that makes THIS number size the router), still future. Do not read this clamp
+ * as the growth mechanism; it is the capacity *display/degrade* number only. */
 UW cap_experts_of(UW n)
 {
     if (n < 1) n = 1;
