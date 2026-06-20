@@ -50,6 +50,10 @@ void ss6_live_install(void *m);  /* m: st_model* (opaque here to keep this heade
 /* Clear the hook + unbind (back to the single-node path). */
 void ss6_live_uninstall(void);
 
+/* Opt-in toggle (env PKERNEL_REMOTE_EXPERTS=1). Read on the host tier where
+ * getenv is safe; OFF by default -> single-node byte-unchanged. */
+void ss6_live_set_enabled(int on);
+
 /* UDP receive callback (registered on SS6L_PORT by ss6_live_install). Public so
  * the bind site / a self-test can reference it; NOT for direct calls. */
 void ss6_live_rx(UW src_ip, UH src_port, const UB *data, UH len);

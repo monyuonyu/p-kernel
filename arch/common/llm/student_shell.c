@@ -671,10 +671,15 @@ int student_chat_generate(const char *intext, int inlen,
  * ------------------------------------------------------------------------- */
 extern void ss6_live_install(void *m);
 extern void ss6_live_uninstall(void);
+extern void ss6_live_set_enabled(int on);
 extern unsigned ss6_live_req_sent(void);
 extern unsigned ss6_live_req_served(void);
 
-#define SS6LIVE_SEED   (0x5A5A0000u + (unsigned)ST_TIER_L)   /* == in-proc L battery */
+#define SS6LIVE_SEED   (0x5A5A0000u + (unsigned)ST_TIER_M)   /* == in-proc M battery */
+#define SS6LIVE_TIER   ST_TIER_M   /* M widens (E=4 > K_min=2) and fits the shell-task stack
+                                   * (the L tier's d=256/dff=512 forward overflows the small
+                                   * shell stack — same constraint `baby` (M) already respects;
+                                   * L byte-identity is already proven in-process by run_ss6). */
 static const uint8_t SS6LIVE_CORPUS[] =
     "the cat sat on the mat. the dog ran in the sun. she said the sea is "
     "blue and the sky is blue too. a bird sang and the wind blew softly.";
@@ -717,7 +722,7 @@ static int      g_ss6live_have = 0;
 static st_model *ss6live_model(emit_fn emit)
 {
     if (g_ss6live_have) return &g_ss6live;
-    if (st_init_tier(&g_ss6live, SS6LIVE_SEED, ST_TIER_L) != ST_OK) {
+    if (st_init_tier(&g_ss6live, SS6LIVE_SEED, SS6LIVE_TIER) != ST_OK) {
         if (emit) emit("[ss6-live] model init OOM\r\n");
         return NULL;
     }
@@ -726,16 +731,22 @@ static st_model *ss6live_model(emit_fn emit)
     return &g_ss6live;
 }
 
-/* Boot hook: build the cert model + install the LIVE transport so this node
- * answers remote-expert requests from boot (responder role). Called on EVERY
- * hosted node from usermain. The hook fail-closes when PKERNEL_REMOTE_EXPERTS
- * is unset, so a default single node is byte-unchanged. */
-void ss6live_responder_init(emit_fn emit)
+/* Responder task body (spawned from usermain with a BIG stack). Builds the
+ * deterministic cert model + installs the LIVE transport so this node answers
+ * remote-expert requests (responder role). The model build runs HERE — on a
+ * fresh, large task stack — NOT on the deep boot/init-task stack: st_forward
+ * over the model needs real stack, and building it at boot depth overflows the
+ * init stack (the documented student_birth_warmup hazard). The hook fail-closes
+ * when PKERNEL_REMOTE_EXPERTS is unset, so a default node is byte-unchanged. */
+void ss6live_responder_init(int stacd, void *exinf)
 {
-    st_model *m = ss6live_model(emit);
+    (void)stacd; (void)exinf;
+    st_model *m = ss6live_model(NULL);
     if (!m) return;
-    ss6_live_install(m);   /* binds SS6L_PORT, installs the hook+gate */
-    if (emit) emit("[ss6-live] responder ready (cert model resident; serves remote experts)\r\n");
+    ss6_live_install(m);   /* binds SS6L_PORT, installs the hook+gate.
+                            * enable flag is set at boot from usermain. */
+    /* the rx callback + requester transport are now live; the model sits
+     * resident. Fall off the end -> the task exits (no busy-loop). */
 }
 
 void ss6live_cmd(const char *args, emit_fn emit)
@@ -750,7 +761,8 @@ void ss6live_cmd(const char *args, emit_fn emit)
     st_model *m = ss6live_model(emit);
     if (!m) return;
     /* make sure the transport is installed (idempotent) so the requester can
-     * reach owners AND so observability counters are live. */
+     * reach owners AND so observability counters are live. The enable flag was
+     * set at boot from usermain (init-task getenv). */
     ss6_live_install(m);
 
     int n   = (int)sizeof(SS6LIVE_CORPUS) - 1;

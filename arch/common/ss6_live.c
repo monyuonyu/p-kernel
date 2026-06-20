@@ -27,8 +27,6 @@
 #include "netstack.h"
 #include "kernel.h"
 
-extern char *getenv(const char *);
-
 /* ------------------------------------------------------------------ */
 /* output helper                                                       */
 /* ------------------------------------------------------------------ */
@@ -265,11 +263,10 @@ void ss6_live_install(void *mp)
 {
     st_model *m = (st_model *)mp;
     sl_model = m;
-
-    const char *e = getenv("PKERNEL_REMOTE_EXPERTS");
-    sl_enabled = (e && e[0] == '1') ? 1 : 0;
-
-    if (!sl_bound) {
+    /* Bind SS6L_PORT only once the netstack/drpc is up (drpc_my_node set). On a
+     * standalone node (no `net`/autonet) udp_bind has no bound socket to attach
+     * to; skip it — the gate fail-closes so the forward stays single-node. */
+    if (!sl_bound && drpc_my_node != 0xFF) {
         for (INT i = 0; i < SL_PENDING; i++) {
             sl_pend[i].in_use = 0; sl_pend[i].seq = 0;
         }
@@ -280,8 +277,7 @@ void ss6_live_install(void *mp)
         sl_puts("\r\n");
     }
 
-    /* install the hook. When disabled the gate fail-closes (returns 0 for every
-     * slot), so st_forward stays byte-identical to the single-node path. */
+    /* install the hook. */
     st_set_remote_expert(ss6_live_remote_expert, ss6_live_gate, NULL);
 }
 
@@ -289,6 +285,12 @@ void ss6_live_uninstall(void)
 {
     st_set_remote_expert(NULL, NULL, NULL);
 }
+
+/* Opt-in (PKERNEL_REMOTE_EXPERTS=1). The env is read on the LLM/host tier
+ * (student_shell.c) where getenv is safe to call from the shell task; this
+ * setter just records it. Off by default -> gate fail-closes -> single-node
+ * byte-unchanged. */
+void ss6_live_set_enabled(int on) { sl_enabled = on ? 1 : 0; }
 
 unsigned ss6_live_req_sent(void)   { return sl_sent;   }
 unsigned ss6_live_req_served(void) { return sl_served; }

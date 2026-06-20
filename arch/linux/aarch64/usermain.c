@@ -95,7 +95,8 @@ IMPORT void dkva_init(void);
 IMPORT void dkva_task(INT stacd, void *exinf);
 IMPORT void dkva_cmd(const UB *args, UW len);
 IMPORT void ss6live_cmd(const char *args, void (*emit)(const char *));      /* SS-6 LIVE cert */
-IMPORT void ss6live_responder_init(void (*emit)(const char *));              /* SS-6 LIVE responder boot hook */
+IMPORT void ss6live_responder_init(INT stacd, void *exinf);                  /* SS-6 LIVE responder task body */
+IMPORT void ss6_live_set_enabled(int on);                                    /* SS-6 LIVE opt-in toggle */
 
 extern char *getenv(const char *);
 
@@ -344,7 +345,11 @@ static void cmd_net(void)
      * experts from boot (responder role). The hook fail-closes unless
      * PKERNEL_REMOTE_EXPERTS=1, so a default node is byte-unchanged. drpc/
      * region are up by here, so st_expert_owner placement is live. */
-    ss6live_responder_init(print);
+    ss6_live_set_enabled((int)env_uint("PKERNEL_REMOTE_EXPERTS", 0));
+    /* spawn the SS-6-live responder on a BIG stack (model build + st_forward
+     * need real stack; NOT the deep init stack — student_birth_warmup hazard). */
+    create_task((FP)ss6live_responder_init, 7, 262144);
+    print("[net] ss6-live remote-expert responder task started\r\n");
 
     /* MoE score gossip — broadcasts this node's per-class accuracy and
      * collects peers'. `moe` then routes a query to the best expert by
