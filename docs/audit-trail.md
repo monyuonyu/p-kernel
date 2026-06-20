@@ -550,3 +550,35 @@ parallelism is PROVEN real (cores 2,3 ran distinct ranges), the cert has teeth
 (Tooth A bites; 4 attacks caught), and the only un-certified obligation (the
 barrier teeth) is honestly deferred to RPi3. No real bug survived (two were found
 + fixed during impl, both independently re-verified here).
+
+## MC-2.1b pk_slice_bm partition unit-check — commit 0ab9e548 (impl 44363611)
+- Auditor: independent focused auditor (single agent, proportionate to the small
+  test-only scope), 2026-06-20. Did NOT write the code. The named MC-2.1a
+  follow-up: a STANDALONE pure-integer drift guard on pk_slice_bm (the hand-copied
+  partition fn that keeps the bare-metal multicore matmul byte-identical to the
+  hosted golden — "one mind, one math"), guarding it DIRECTLY where the equiv cert
+  only exercised it via the matmul.
+- Verdict: **MERGEABLE (ledger row CLOSED).** PASS, no findings above minor.
+- REPRODUCED: `-DMC2_SLICE_SELFTEST` -> "MC2-SLICE: PASS" over 31 (out,nw) cases
+  (DISJOINT+TOTAL, ORDER, MATCHES-GOLDEN); falsifier `-DMC2_SLICE_BREAK` ->
+  "MC2-SLICE: FAIL out=7 nw=2 @1 reason=order" (teeth).
+- THE LOAD-BEARING CHECK (MATCHES-GOLDEN is NOT circular): the auditor confirmed
+  the inline slice_golden (mc2_smp.c:927-933) is a verbatim copy of the hosted
+  pk_slice formula (pk_parallel.c:57-63), does NOT call pk_slice_bm, and has no
+  MC2_SLICE_BREAK guard — and PROVED the golden branch isn't dead code by authoring
+  its OWN independent probe (MC2_SLICE_GOLDEN_ONLY: contiguous+total but diverging
+  from floor-division) -> "MC2-SLICE: FAIL @0 reason=golden-mismatch". So the
+  golden check catches drift the order/coverage checks miss; it is independent and
+  bites.
+- NO REGRESSION: default build .text BYTE-IDENTICAL to base 457e959d (md5
+  7fd674967ee622c1411829b65d13260b both; sizes 419442/1304/14676716). Plain boot:
+  0 MC2 output, reaches the T-Kernel banner + shell. [mc2-smp-equiv] still PASS (3
+  identical FNV 0xd4c96f986cbafb17). [mc2-boot-survives] ALL PASS. cpu_support.S +
+  start.S diffs EMPTY. check_parity OK. No committed binaries.
+- COVERAGE HONESTY: the nw>out skip is justified (traced both dispatch gates —
+  out<64 falls back to serial, nw capped 8/4 — so nw>out can NEVER reach
+  pk_slice_bm in production). A documented mirror of an enforced contract, not a gap.
+LEDGER: row CLOSED. The partition that keeps the mind one across cores is now
+drift-guarded DIRECTLY (not only via the matmul), with a golden reference proven
+independent. The ③ multicore arc (MC-0 → MC-1 → MC-2.0 → MC-2.1 → MC-2.1b) is
+complete and audited; the ② full-SMP bringup foundation is laid.
