@@ -647,6 +647,152 @@ int student_chat_generate(const char *intext, int inlen,
 }
 
 /* ---------------------------------------------------------------------------
+ * SS-6 LIVE cert verb (`ss6live`) — wave-ss6-live.
+ *
+ * Proves the SS-6 cross-node expert firing LIVE over the mesh: builds a
+ * DETERMINISTIC L-tier model (fixed seed + fixed warm-train, so EVERY node in
+ * the fleet holds a byte-identical model), installs the REAL remote-expert
+ * transport (ss6_live_install -> st_set_remote_expert over UDP SS6L_PORT), and
+ * runs st_forward over a fixed corpus.
+ *
+ *   ss6live single   run the SINGLE-NODE oracle (hook OFF): print the logit hash.
+ *   ss6live live     run the LIVE forward (hook ON): the WIDE experts a PEER owns
+ *                    (SS-5 placement) are computed on that peer over the wire and
+ *                    summed in the SAME canonical order. Print the logit hash +
+ *                    remote-fired / fallback counts. With >=2 region members and
+ *                    PKERNEL_REMOTE_EXPERTS=1, the live hash == the single hash
+ *                    iff the cross-node forward is byte-identical (the deliverable).
+ *   ss6live          prints both lines (single then live) so a one-process run
+ *                    shows the hook-off==hook-on equivalence end to end.
+ *
+ * The cert model is INDEPENDENT of the resident baby (g_student) so training
+ * state never perturbs cross-node byte-identity. The forward path is st_forward
+ * (the SS-6 caveat — kv_step / live chat is NOT wired here).
+ * ------------------------------------------------------------------------- */
+extern void ss6_live_install(void *m);
+extern void ss6_live_uninstall(void);
+extern unsigned ss6_live_req_sent(void);
+extern unsigned ss6_live_req_served(void);
+
+#define SS6LIVE_SEED   (0x5A5A0000u + (unsigned)ST_TIER_L)   /* == in-proc L battery */
+static const uint8_t SS6LIVE_CORPUS[] =
+    "the cat sat on the mat. the dog ran in the sun. she said the sea is "
+    "blue and the sky is blue too. a bird sang and the wind blew softly.";
+
+/* FNV-1a over a logits buffer (n_tok x 256 floats) — identical to the in-process
+ * student_ss6_test.c hash, so the live hash is directly comparable. */
+static uint64_t ss6live_logit_hash(const float *logits, int n_tok)
+{
+    uint64_t h = 1469598103934665603ULL;
+    const uint8_t *p = (const uint8_t *)logits;
+    size_t bytes = (size_t)n_tok * 256 * sizeof(float);
+    for (size_t i = 0; i < bytes; i++) { h ^= p[i]; h *= 1099511628253ULL; }
+    return h;
+}
+
+static void ss6live_warm_train(st_model *m, int steps)
+{
+    int n   = (int)sizeof(SS6LIVE_CORPUS) - 1;
+    int win = n < ST_MAXSEQ ? n : ST_MAXSEQ;
+    float *logits = (float *)malloc((size_t)win * 256 * sizeof(float));
+    if (!logits) return;
+    for (int s = 0; s < steps; s++) {
+        st_zero_grad(m);
+        st_forward(m, SS6LIVE_CORPUS, win, logits);
+        st_backward(m, SS6LIVE_CORPUS, win);
+        st_adam_step(m, 0.02f);
+    }
+    free(logits);
+}
+
+/* The deterministic SS-6-live cert model: a singleton, lazily built with a
+ * FIXED seed + tier + 1-step warm-train, so EVERY node in the fleet holds a
+ * byte-identical model. The responder (any node) serves remote-expert requests
+ * against it; the requester runs st_forward against the SAME model. Kept
+ * SEPARATE from the resident baby (g_student) so training state never perturbs
+ * cross-node byte-identity. */
+static st_model g_ss6live;
+static int      g_ss6live_have = 0;
+
+static st_model *ss6live_model(emit_fn emit)
+{
+    if (g_ss6live_have) return &g_ss6live;
+    if (st_init_tier(&g_ss6live, SS6LIVE_SEED, ST_TIER_L) != ST_OK) {
+        if (emit) emit("[ss6-live] model init OOM\r\n");
+        return NULL;
+    }
+    ss6live_warm_train(&g_ss6live, 1);   /* same 1-step warmup as the in-proc cert */
+    g_ss6live_have = 1;
+    return &g_ss6live;
+}
+
+/* Boot hook: build the cert model + install the LIVE transport so this node
+ * answers remote-expert requests from boot (responder role). Called on EVERY
+ * hosted node from usermain. The hook fail-closes when PKERNEL_REMOTE_EXPERTS
+ * is unset, so a default single node is byte-unchanged. */
+void ss6live_responder_init(emit_fn emit)
+{
+    st_model *m = ss6live_model(emit);
+    if (!m) return;
+    ss6_live_install(m);   /* binds SS6L_PORT, installs the hook+gate */
+    if (emit) emit("[ss6-live] responder ready (cert model resident; serves remote experts)\r\n");
+}
+
+void ss6live_cmd(const char *args, emit_fn emit)
+{
+    char line[200];
+    const char *p = args ? args : "";
+    while (*p == ' ' || *p == '\t') p++;
+    int want_single = (p[0]=='s');     /* "single" */
+    int want_live   = (p[0]=='l');     /* "live"   */
+    int want_both   = (!want_single && !want_live);
+
+    st_model *m = ss6live_model(emit);
+    if (!m) return;
+    /* make sure the transport is installed (idempotent) so the requester can
+     * reach owners AND so observability counters are live. */
+    ss6_live_install(m);
+
+    int n   = (int)sizeof(SS6LIVE_CORPUS) - 1;
+    int win = n < ST_MAXSEQ ? n : ST_MAXSEQ;
+    float *logits = (float *)malloc((size_t)win * 256 * sizeof(float));
+    if (!logits) { emit("[ss6-live] logits OOM\r\n"); return; }
+
+    if (want_single || want_both) {
+        /* single-node oracle: hook OFF (byte-identical to pre-SS-6 forward). */
+        st_set_remote_expert(NULL, NULL, NULL);
+        st_forward(m, SS6LIVE_CORPUS, win, logits);
+        uint64_t h = ss6live_logit_hash(logits, win);
+        snprintf(line, sizeof line,
+                 "[ss6-live] single  logit-hash=%016llx (hook OFF, single-node oracle)\r\n",
+                 (unsigned long long)h);
+        emit(line);
+        /* re-arm the transport for the live run / future requests. */
+        ss6_live_install(m);
+    }
+
+    if (want_live || want_both) {
+        /* LIVE: the WIDE peer-owned experts fire over the wire (SS-5 placement)
+         * and student.c sums them in the canonical ascending-slot order. */
+        unsigned sent0 = ss6_live_req_sent();
+        st_forward(m, SS6LIVE_CORPUS, win, logits);
+        uint64_t h = ss6live_logit_hash(logits, win);
+        int fired    = st_last_remote_fired();
+        int fallback = st_last_remote_fallback();
+        unsigned sent = ss6_live_req_sent() - sent0;
+        snprintf(line, sizeof line,
+                 "[ss6-live] live    logit-hash=%016llx  remote_fired=%d fallback=%d wire_sent=%u\r\n",
+                 (unsigned long long)h, fired, fallback, sent);
+        emit(line);
+        emit("[ss6-live] (live hash MUST equal the single hash: byte-identical "
+             "cross-node forward; fallback>0 = honest degraded, still identical)\r\n");
+    }
+
+    free(logits);
+}
+
+
+/* ---------------------------------------------------------------------------
  * The `student` / `baby` shell verb.
  *
  *   student                         one round @ defaults; print + save

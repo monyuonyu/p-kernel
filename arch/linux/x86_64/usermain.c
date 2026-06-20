@@ -92,6 +92,8 @@ IMPORT INT  capacity_self_test(void);   /* capacity(N) cert (regions.md §3.2) *
 IMPORT void dkva_init(void);
 IMPORT void dkva_task(INT stacd, void *exinf);
 IMPORT void dkva_cmd(const UB *args, UW len);
+IMPORT void ss6live_cmd(const char *args, void (*emit)(const char *));      /* SS-6 LIVE cert */
+IMPORT void ss6live_responder_init(void (*emit)(const char *));              /* SS-6 LIVE responder boot hook */
 
 extern char *getenv(const char *);
 
@@ -138,6 +140,7 @@ static void cmd_help(void)
     print("  moe [a b c d] - route to best expert (locality MoE); `moe test` = §7/§8 property tests\r\n");
     print("  breathe - R3b: expert specialization; join smarter / leave graceful (numbers)\r\n");
     print("  dkva [infer [a b c d]] - distributed KV attention from THIS node\r\n");
+    print("  ss6live [single|live]  - SS-6 LIVE cross-node expert firing cert\r\n");
     print("  llm <prompt> - real SmolLM2-135M text gen INSIDE the kernel (greedy)\r\n");
     print("  llm -t 0.8 [-k 40 -p 0.95 -r 1.1 -s 42 -n 32] <prompt> - sampled gen\r\n");
     print("  dist   - distributed degrade level (SOLO/REDUCED/FULL)\r\n");
@@ -334,6 +337,13 @@ static void cmd_net(void)
      * DKVA path broadcasts Q, aggregating partial attention from the mesh. */
     create_task((FP)dkva_task, 7, 4096);
     print("[net] dkva attention responder started\r\n");
+
+    /* SS-6 LIVE remote-expert transport (wave-ss6-live): build the
+     * deterministic cert model + bind SS6L_PORT so this node serves remote
+     * experts from boot (responder role). The hook fail-closes unless
+     * PKERNEL_REMOTE_EXPERTS=1, so a default node is byte-unchanged. drpc/
+     * region are up by here, so st_expert_owner placement is live. */
+    ss6live_responder_init(print);
 
     /* MoE score gossip — broadcasts this node's per-class accuracy and
      * collects peers'. `moe` then routes a query to the best expert by
@@ -936,6 +946,24 @@ EXPORT INT usermain(void)
             for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
             argbuf[al] = '\0';
             llm_shell_cmd(argbuf, print);
+        } else if (starts_with(line, n, "ss6live")) {
+            /* SS-6 LIVE cert (wave-ss6-live): run st_forward on the deterministic
+             * cert model with the LIVE remote-expert transport. With >=2 region
+             * members + PKERNEL_REMOTE_EXPERTS=1, WIDE peer-owned experts (SS-5)
+             * fire on the owner over the wire; the live logit-hash must equal the
+             * single-node hash (byte-identical cross-node forward). A killed owner
+             * -> local fallback (honest degraded), no stall.
+             *   ss6live          print single then live hash (one-process equiv)
+             *   ss6live single   single-node oracle hash only (hook OFF)
+             *   ss6live live     live forward hash + remote_fired/fallback/wire   */
+            const UB *a = line + 7; INT al = n - 7;
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            char argbuf[64];
+            if (al < 0) al = 0;
+            if (al > (INT)sizeof(argbuf) - 1) al = (INT)sizeof(argbuf) - 1;
+            for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
+            argbuf[al] = '\0';
+            ss6live_cmd(argbuf, print);
         } else if (starts_with(line, n, "student") || starts_with(line, n, "baby")) {
             /* Step ③ real living-chat substrate: the RESIDENT, PERSISTED NS-1
              * Cradle baby. Runs ONE bounded distillation round from a small

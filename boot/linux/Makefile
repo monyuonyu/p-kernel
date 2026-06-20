@@ -212,6 +212,7 @@ COMMON_C_SRCS = \
     arkfs.c \
     lookup.c \
     placement.c \
+    ss6_live.c \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \
@@ -444,6 +445,14 @@ $(KERNEL_OBJS): %.o: $(KERNEL)/%.c
 # arch/common — portable AI + distributed layer; same libc as kernel/common
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+# ss6_live.c (SS-6 LIVE remote-expert transport, wave-ss6-live) is a KERNEL-tier
+# TU (udp/region/degrade/drpc + T-Kernel syscalls) that ALSO needs the LLM
+# student.h POD struct (st_model) + st_expert_forward_ref/st_set_remote_expert.
+# Add -I$(LLM_DIR) for JUST this object so "student.h" resolves; it stays on
+# the KERNEL_CFLAGS tier (kernel <stdint.h>) — the struct is LP64-safe (int/
+# float/void* only), so no typedef-trap. Hosted-only (NOT on bare metal).
+ss6_live.o: KERNEL_CFLAGS += -I$(LLM_DIR)
 
 # arch/common/llm — self-built SmolLM2 engine; HOST libc tier with its OWN
 # flag set ($(LLM_CFLAGS)): no kernel -I dirs (so system <stdint.h> wins, see
