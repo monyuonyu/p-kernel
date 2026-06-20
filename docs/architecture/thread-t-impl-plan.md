@@ -100,7 +100,9 @@ The **only** change to the math path is the **corpus SOURCE**. The genuinely zer
 
 This is the proven `sleep_rounds → st_backward → st_adam_step` loop that `distill_proof.c` certifies weight-resident; the lesson bytes enter it unchanged. The DMN sleep tick (`dmn.c:265`) is the **only** distill driver; the fetch seam is *inside* `student_dmn_consolidate()`, so `dmn.c` itself is untouched.
 
-### 2.3 NOCENTRAL teacher selection (unanimous N-2b reuse) — wire-compat choice pinned
+### 2.3 NOCENTRAL teacher selection (unanimous N-2b reuse) — wire-compat choice pinned — ✅ T-fix-a DONE
+
+> **STATUS: ✅ IMPLEMENTED & CERTIFIED (T-fix-a, branch `wave-tfix-a-teacher-cap`).** This entire subsection shipped as the swim.c/region.c half of Thread T. `capability` bit 1 = teacher-capable; `teacher_self()` gates it on a verifiable loaded teacher GGUF via a weak `teacher_gguf_loaded()` hook (strong override in student_shell.c: one-time cached `gguf_open`+`lm_load` probe, `PKERNEL_TEACHER=1` necessary-not-sufficient; weak default 0 on bare-metal/Android). Bit-packed at both origination sites (self-beacon swim.c, self-refutation swim.c), applied under the SAME `(incarnation,state)` LWW gate at every apply site. `region_teacher()`/`teacher_capable[]`/`region_{set,is}_teacher_capable()` mirror the supernode selector. Cert `swim_teacher_gossip_self_test()` (`nodes teacher`) PASS [teacher-converge]/[teacher-selector]/[teacher-determinism]/[teacher-staleness]/[teacher-falsifiable] (RED when the apply ignores bit 1); `region test` adds `[region-teacher] 5/5`; NO regression (`[cap-gossip]`/`[swim-incarn]`/`[region-super] 8/8` still green); wire still 4B/24B (`_Static_assert`s hold). 4-build clean + cross-arch cert green under qemu. **SELECTION ONLY — the lesson bridge (CRADLE_TEACH_PKT + p-fs body + distill seam) is T-fix-b/T-1, DEFERRED (serializes on student_shell.c after SS-3).** A true multi-process live teacher-convergence test is a deferred `[live]` row.
 
 **WIRE-COMPAT CHOICE = Option A: bit 1 of the existing `capability` byte.** Explicitly **NOT** Option C (new field → packet-size bump → `SWIM_VERSION` bump → old nodes drop packets, mesh interop breaks).
 
@@ -115,15 +117,17 @@ This is the proven `sleep_rounds → st_backward → st_adam_step` loop that `di
 
 ## 3. EXACT file:line touchpoints
 
-**Teacher selection (T-fix):**
-- `arch/common/include/swim.h:59-74` — document `capability` bit 1 = teacher-capable (no layout change; asserts at `:93-96` stay).
-- `arch/common/swim.c:113-117` — add `teacher_self()` mirroring `cap_self()`.
-- `arch/common/swim.c:197, 525` — bit-pack `(cap_self()<<0)|(teacher_self()<<1)` in self-refutation + self-beacon.
-- `arch/common/swim.c:181, 234, 256` — extract `teacher_in` and `region_set_teacher_capable()` under the existing LWW gate (and the rx-marks-alive `gossip_add` site).
-- `arch/common/region.c:50` — add file-static `UB teacher_capable[DNODE_MAX]`.
-- `arch/common/region.c:132-148` — add `teacher_select()` + `region_teacher()` mirroring `supernode_select()`/`region_supernode()`.
-- `arch/common/include/region.h:62-67` — declare `region_teacher()`, `region_set_teacher_capable()`, `region_is_teacher_capable()`.
-- `arch/common/swim.c:829-982` (mirror) — add `swim_teacher_gossip_self_test()` (converge / selector / determinism / staleness).
+**Teacher selection (T-fix-a) — ✅ DONE (branch `wave-tfix-a-teacher-cap`):**
+- ✅ `arch/common/include/swim.h` — documented `capability` bit 1 = teacher-capable (no layout change; the 4B/24B `_Static_assert`s stay).
+- ✅ `arch/common/swim.c` — added the weak `teacher_gguf_loaded()` hook + `teacher_self()` mirroring `cap_self()`, plus `cap_self_byte()`/`cap_byte()` two-axis packers.
+- ✅ `arch/common/swim.c` — bit-pack `(cap_self()<<0)|(teacher_self()<<1)` via `cap_self_byte()` in self-refutation + self-beacon; peer relays use `cap_byte(node)` (both axes).
+- ✅ `arch/common/swim.c` — extract `teacher_in=(capability>>1)&1` and call `region_set_teacher_capable()` under the existing LWW gate at transitive-discovery, the superseding `(incarnation,state)` gate, and every rx-marks-alive `gossip_add` site.
+- ✅ `arch/common/region.c` — added file-static `UB teacher_capable[DNODE_MAX]`.
+- ✅ `arch/common/region.c` — added `teacher_select()` + `region_teacher()` mirroring `supernode_select()`/`region_supernode()`, plus `[region-teacher] 5/5` in `region_supernode_test()`.
+- ✅ `arch/common/include/region.h` — declared `region_teacher()`, `region_set_teacher_capable()`, `region_is_teacher_capable()`.
+- ✅ `arch/common/swim.c` — added `swim_teacher_gossip_self_test()` (converge / selector / determinism / staleness / falsifiable + no-leak between the two capability axes).
+- ✅ `arch/common/llm/student_shell.c` — strong `teacher_gguf_loaded()` override (one-time cached `gguf_open`+`lm_load` probe; `PKERNEL_TEACHER`/`PKERNEL_TEACHER_GGUF` env).
+- ✅ `arch/linux/{aarch64,x86_64}/usermain.c` — `nodes teacher` verb drives the cert (one else-if each).
 
 **Lesson transport + distill (T-1):**
 - `arch/common/include/dtr.h` (near `MIND_TEACH_TOPIC`) — add `CRADLE_TEACH_TOPIC "cradle/teach"` + `CRADLE_TEACH_PKT` + `LESSON_FMT_BYTE` / reserve `LESSON_FMT_SOFT`; gate on `vocab_fp` mirroring `MT_WIRE_VER_VOCAB`.
@@ -158,9 +162,9 @@ What the bridge **CAN** transfer is exactly what the `[cradle-teach]` cert measu
 ## 5. Sequencing — small falsifiable waves
 
 ### Wave **T-fix** — teacher selection + the bridge decision
-- Ship Option A teacher-capable bit (§2.3, §3), `region_teacher()`, and `swim_teacher_gossip_self_test()`.
+- **T-fix-a (teacher SELECTION) ✅ DONE** — branch `wave-tfix-a-teacher-cap`. Shipped Option A teacher-capable bit (§2.3, §3), `region_teacher()`, and `swim_teacher_gossip_self_test()`. **Gate MET:** `[teacher-gossip]` PASS (converge/selector/determinism/staleness/falsifiable) + the existing `[cap-gossip]`/`[swim-incarn]`/`[region-super] 8/8` still green (no SWIM wire regression; `_Static_assert`s hold; 4B/24B). 4-build clean + cross-arch cert green. `teacher_self()` truth-source (§7.7) discharged via the weak `teacher_gguf_loaded()` hook + cached `gguf_open`+`lm_load` probe — env never sufficient alone. **HONEST BOUND:** verifies the teacher GGUF LOADS; it does not yet harvest lessons in-kernel (that is the bridge below). The lesson transport + distill (T-fix-b) is **NOT** in this branch.
 - **Decision recorded:** the BPE↔byte bridge ships as **`LESSON_FMT_BYTE` (byte-CE) only**; soft targets deferred with the `fmt` byte reserved. No soft-target claim is permitted until §6's paired cert passes.
-- **Gate:** `[teacher-gossip]` PASS (converge/selector/determinism/staleness) + the existing `[cap-gossip-*]` suite still green (no SWIM wire regression; static asserts hold).
+- **T-fix-b (lesson BRIDGE) — DEFERRED**, serializes on student_shell.c after SS-3: `CRADLE_TEACH_PKT` + p-fs body, the `g_lesson_ring` corpus seam, `cradle_poll_and_pull()`. Folds into Wave T-1's `[cradle-teach]` demo cert.
 
 ### Wave **T-1** — the 2-node teach demo cert
 - Ship the lesson wire (`CRADLE_TEACH_PKT` + p-fs body), the `g_lesson_ring` corpus-source seam, and `cradle_poll_and_pull()`.

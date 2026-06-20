@@ -40,11 +40,74 @@
  *    - Single node. No weight diffusion / merge across the fleet (NS-2+).
  */
 #include "student.h"
-#include <stdlib.h>     /* malloc / free                          */
+#include "gguf.h"        /* gguf_open / gguf_close — teacher GGUF probe */
+#include "forward.h"     /* lm_load / lm_free      — teacher GGUF probe */
+#include <stdlib.h>     /* malloc / free / getenv                 */
 #include <string.h>     /* memcpy / strlen                        */
 #include <stdio.h>      /* snprintf (output formatting only)      */
 
 typedef void (*emit_fn)(const char *);
+
+extern char *getenv(const char *);
+
+/* ---------------------------------------------------------------------------
+ * T-fix-a (thread-t-impl-plan.md §2.3): the STRONG override of swim.c's WEAK
+ * teacher_gguf_loaded() hook. swim.c::teacher_self() calls this to decide
+ * whether to set capability bit 1 (teacher-capable) in its SWIM gossip.
+ *
+ * HONEST TRUTH-SOURCE (open risk §7.7): the bit must key off a GENUINELY-
+ * loadable teacher GGUF, never a bare env decree — else a lying node could
+ * self-elect. So this hook:
+ *   1) requires the opt-in env PKERNEL_TEACHER=1 (a node volunteers, like
+ *      PKERNEL_SUPERNODE) — necessary but NOT sufficient;
+ *   2) THEN verifies a real teacher GGUF is present AND loadable: gguf_open()
+ *      (mmap + header parse + magic/version/tensor-bounds validation) followed
+ *      by a full lm_load() (resolves the config + every required tensor +
+ *      allocates scratch/KV — i.e. the model actually loads). Either failing
+ *      means "not a teacher", regardless of the env.
+ * The probe runs ONCE and is cached (it allocates the full model arena; doing
+ * it every SWIM round would be wasteful), so teacher_self() stays cheap. The
+ * teacher GGUF path is $PKERNEL_TEACHER_GGUF (falls back to $PKERNEL_LLM_GGUF,
+ * then the llm_shell default) so a node can point at a model explicitly.
+ *
+ * HONEST BOUND: this verifies the teacher GGUF LOADS; it does NOT yet harvest
+ * lessons in-kernel from it (the live teacher harvest + lesson transport is
+ * T-1/CT-2, DEFERRED). On a stock hosted node with no teacher GGUF and/or no
+ * PKERNEL_TEACHER=1, the probe returns 0 and the node is not a teacher — the
+ * safe degrade (region_teacher() -> 0xFF, child keeps its fixture). */
+static int g_teacher_probe_done = 0;   /* 1 once the one-time probe ran */
+static int g_teacher_probe_ok   = 0;   /* cached result of the probe    */
+
+int teacher_gguf_loaded(void)   /* STRONG override of swim.c's weak default */
+{
+    if (g_teacher_probe_done) return g_teacher_probe_ok;
+    g_teacher_probe_done = 1;
+    g_teacher_probe_ok   = 0;
+
+    /* (1) opt-in env gate — necessary, never sufficient. */
+    const char *opt = getenv("PKERNEL_TEACHER");
+    if (!opt || opt[0] != '1') return 0;
+
+    /* (2) a real teacher GGUF must be present AND loadable. */
+    const char *path = getenv("PKERNEL_TEACHER_GGUF");
+    if (!path || !path[0]) path = getenv("PKERNEL_LLM_GGUF");
+#ifdef PKERNEL_LLM_DEFAULT_GGUF
+    if (!path || !path[0]) path = PKERNEL_LLM_DEFAULT_GGUF;
+#else
+    if (!path || !path[0]) path = "/tmp/smollm2-135m.gguf";
+#endif
+
+    gguf_file gf;
+    if (gguf_open(&gf, path) != GGUF_OK) return 0;   /* no/invalid GGUF -> not a teacher */
+    lm_model m;
+    int rc = lm_load(&m, &gf);
+    if (rc == LM_OK) {
+        g_teacher_probe_ok = 1;   /* a real teacher model actually loaded */
+        lm_free(&m);
+    }
+    gguf_close(&gf);
+    return g_teacher_probe_ok;
+}
 
 /* ---- durable seam (arch/linux/pfs_durable.c; linked into the hosted
  * binary via ARCH_SHARED_C_SRCS). Plain C symbols, declared here so this

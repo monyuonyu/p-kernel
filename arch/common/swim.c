@@ -116,6 +116,51 @@ static UB cap_self(void)
            ? 1 : 0;
 }
 
+/* T-fix-a (thread-t-impl-plan.md §2.3): teacher_self() mirrors cap_self() for
+ * capability bit 1. It is TRUE iff this node actually holds a successfully
+ * lm_load'ed teacher GGUF — a VERIFIABLE runtime property, NOT a bare env
+ * decree (a lying node could otherwise self-elect; opt-in PKERNEL_TEACHER=1 is
+ * gated by GGUF presence inside the hook, never sufficient alone).
+ *
+ * swim.c lives in arch/common/ and links on EVERY target (incl. bare-metal x86
+ * & aarch64, which have NO llm/student layer), so it cannot call the llm tier
+ * directly without breaking those links. So the truth-source is a WEAK hook —
+ * the SAME pattern as interocept.c's intero_fault_count_hook() and
+ * student_stub.c's weak student symbols: a weak default of 0 here, overridden
+ * by a STRONG definition in the hosted student layer (student_shell.c) that
+ * does a one-time, cached gguf_open+lm_load probe of the configured teacher
+ * GGUF. On bare-metal/Android (no override) the weak 0 means "not a teacher" —
+ * the safe degrade. HONEST BOUND: an in-kernel teacher GGUF is not yet wired
+ * onto the boot path (that is T-1/CT-2, deferred), so on a stock hosted node
+ * with no teacher GGUF present the probe fails and teacher_self()==0; the bit
+ * goes high only on a node explicitly given a loadable teacher GGUF. */
+__attribute__((weak)) int teacher_gguf_loaded(void) { return 0; }
+
+static UB teacher_self(void)
+{
+    return (drpc_my_node != 0xFF && teacher_gguf_loaded()) ? 1 : 0;
+}
+
+/* Self-authoritative capability BYTE for gossip ABOUT SELF: pack both axes
+ * (bit0=supernode, bit1=teacher) from this node's own verifiable state.
+ * Old nodes that never set bit 1 still emit a byte a new node reads as
+ * teacher=0 → safe degrade. */
+static UB cap_self_byte(void)
+{
+    return (UB)((cap_self() << 0) | (teacher_self() << 1));
+}
+
+/* Capability BYTE for RELAYING a PEER's already-converged capability (never
+ * originates it): pack both axes from the local region tables, which were set
+ * verbatim from that peer's own gossip under the LWW gate. Keeps bit 0
+ * byte-identical to the prior region_is_super_capable(target)?1:0 relay while
+ * carrying bit 1 forward so the teacher axis spreads epidemically too. */
+static UB cap_byte(UB node)
+{
+    return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
+              | (region_is_teacher_capable(node) ? 1 : 0) << 1);
+}
+
 static void gossip_add(UB node_id, UB state, UB incarnation, UB capability)
 {
     /* Update existing entry if present */
@@ -175,10 +220,14 @@ static void gossip_apply(const SWIM_PKT *pkt)
         UB nid    = pkt->gossip[i].node_id;
         UB st     = pkt->gossip[i].state;
         UB inc_in = pkt->gossip[i].incarnation;
-        /* N-2b: SELF-AUTHORITATIVE capability — meaningful only when this
-         * entry is node `nid`'s own rumor about itself; we relay it verbatim
-         * and never originate a peer's capability here. */
-        UB cap_in = pkt->gossip[i].capability ? 1 : 0;
+        /* N-2b / T-fix-a: SELF-AUTHORITATIVE capability bits — meaningful only
+         * when this entry is node `nid`'s own rumor about itself; we relay them
+         * verbatim and never originate a peer's capability here.
+         *   cap_in     = bit 0 (supernode-capable)
+         *   teacher_in = bit 1 (teacher-capable)  — extracted under the SAME
+         *                LWW gate so a stale rumor cannot flip it (mirror N-2b). */
+        UB cap_in     = (pkt->gossip[i].capability >> 0) & 1;
+        UB teacher_in = (pkt->gossip[i].capability >> 1) & 1;
 
         /* 自分自身が SUSPECT/DEAD と噂されていたら断末魔散布 +
          * incarnation を進めて ALIVE を再表明し、古い噂を論駁する。 */
@@ -193,8 +242,9 @@ static void gossip_apply(const SWIM_PKT *pkt)
                  * everywhere it has spread (UB ++ wraps sanely at 256). */
                 if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
                 else                          my_incarnation = (UB)(my_incarnation + 1);
-                /* re-assert MY OWN capability (self-authoritative source). */
-                gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self());
+                /* re-assert MY OWN capability bits, both axes (self-authoritative
+                 * source: supernode + teacher). */
+                gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
             }
             continue;
         }
@@ -229,14 +279,16 @@ static void gossip_apply(const SWIM_PKT *pkt)
             dnode_table[nid].missed  = 0;
             dnode_incarn[nid]        = inc_in;
             suspect_count[nid]       = 0;
-            /* N-2b: adopt the peer's self-declared capability VERBATIM and
-             * re-propagate it (epidemic relay; we do not originate it). */
+            /* N-2b / T-fix-a: adopt the peer's self-declared capability bits
+             * VERBATIM (bit0=supernode, bit1=teacher) and re-propagate them
+             * (epidemic relay; we do not originate them). */
             region_set_super_capable(nid, cap_in ? TRUE : FALSE);
+            region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
             sw_note(nid, DNODE_UNKNOWN, st);
             sw_puts("[swim] gossip: node "); sw_putdec(nid);
             sw_puts(st == DNODE_ALIVE ? " discovered (via gossip)\r\n"
                                       : " SUSPECT (via gossip)\r\n");
-            gossip_add(nid, st, inc_in, cap_in);   /* re-propagate: keep the epidemic alive */
+            gossip_add(nid, st, inc_in, cap_byte(nid));   /* re-propagate both axes: keep the epidemic alive */
             degrade_update();
             dmn_trigger();
             continue;
@@ -247,18 +299,19 @@ static void gossip_apply(const SWIM_PKT *pkt)
             continue;   /* stale rumor refuted — capability does NOT regress */
 
         dnode_incarn[nid] = inc_in;
-        /* N-2b: a SUPERSEDING rumor (this peer's own fresher word about
-         * itself) updates capability in LOCK-STEP with membership, VERBATIM.
-         * A stale lower-incarnation rumor was rejected above, so capability
-         * converges under the exact same anti-stale gate as state. Do this
-         * BEFORE the state-same short-circuit so a capability flip carried by
-         * a fresh incarnation lands even when the state is unchanged. */
+        /* N-2b / T-fix-a: a SUPERSEDING rumor (this peer's own fresher word
+         * about itself) updates BOTH capability axes in LOCK-STEP with
+         * membership, VERBATIM. A stale lower-incarnation rumor was rejected
+         * above, so both bits converge under the exact same anti-stale gate as
+         * state. Do this BEFORE the state-same short-circuit so a capability
+         * flip carried by a fresh incarnation lands even when state is same. */
         region_set_super_capable(nid, cap_in ? TRUE : FALSE);
+        region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
 
         if (dnode_table[nid].state == st) {
             /* incarnation bumped, state same: still relay the fresh entry so
              * the (possibly changed) capability keeps spreading epidemically. */
-            gossip_add(nid, st, inc_in, cap_in);
+            gossip_add(nid, st, inc_in, cap_byte(nid));
             continue;
         }
 
@@ -268,7 +321,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
         else if (st == DNODE_DEAD)    sw_puts(" -> DEAD\r\n");
-        gossip_add(nid, st, inc_in, cap_in);   /* re-propagate at the same incarnation */
+        gossip_add(nid, st, inc_in, cap_byte(nid));   /* re-propagate both axes at the same incarnation */
         degrade_update();
         dmn_trigger();   /* ノード状態変化 = 外部刺激 */
     }
@@ -380,10 +433,15 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
             sw_puts("[swim] node "); sw_putdec(snid);
             sw_puts(old == DNODE_UNKNOWN ? " discovered" : " recovered");
             sw_puts("  (via rx)\r\n");
-            /* N-2b: relay the peer's last-known capability VERBATIM (we do
-             * not originate it; only the peer's own rumor changes it). */
-            gossip_add(snid, DNODE_ALIVE, dnode_incarn[snid],
-                       region_is_super_capable(snid) ? 1 : 0);
+            /* N-2b/T-fix-a: relay the peer's last-known capability VERBATIM on
+             * BOTH axes (bit0=supernode, bit1=teacher; we do not originate it,
+             * only the peer's own rumor changes it). This rx-rediscovery relay
+             * MUST carry bit 1 too — dropping it would re-propagate a genuine
+             * teacher as teacher=0 for GOSSIP_TTL rounds at the same incarnation,
+             * and a third node that FIRST learns the peer through this relay
+             * would latch teacher=FALSE until an incarnation bump (the LWW gate
+             * drops the teacher's own same-incarnation correcting beacon). */
+            gossip_add(snid, DNODE_ALIVE, dnode_incarn[snid], cap_byte(snid));
             replica_push_to(snid);
             degrade_update();
         }
@@ -522,7 +580,10 @@ void swim_task(INT stacd, void *exinf)
          * thus learn my capability epidemically, in lock-step with membership,
          * with no extra packet. region_super_init() is idempotent. */
         region_super_init();
-        gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self());
+        /* T-fix-a: seed/refresh SELF ALIVE gossip carrying BOTH capability
+         * bits (bit0=supernode via region_is_super_capable, bit1=teacher via
+         * teacher_self()'s GGUF probe). Self-authoritative on both axes. */
+        gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
 
         {
             SWIM_PKT beacon = { 0 };
@@ -565,7 +626,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
                 gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
-                           region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
+                           cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -597,7 +658,7 @@ void swim_task(INT stacd, void *exinf)
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
                 gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
-                           region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
+                           cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
@@ -625,7 +686,7 @@ void swim_task(INT stacd, void *exinf)
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> SUSPECT (no response)\r\n");
             gossip_add(target, DNODE_SUSPECT, dnode_incarn[target],
-                       region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
+                       cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
         } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_ROUNDS) {
             dnode_table[target].state  = DNODE_DEAD;
             sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
@@ -634,7 +695,7 @@ void swim_task(INT stacd, void *exinf)
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> DEAD\r\n");
             gossip_add(target, DNODE_DEAD, dnode_incarn[target],
-                       region_is_super_capable(target) ? 1 : 0);  /* N-2b relay */
+                       cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
             heal_on_node_dead(target);
             degrade_update();
         }
@@ -714,6 +775,18 @@ static INT gq_find_incarn(UB node_id, UB state)
     for (INT i = 0; i < gq_cnt; i++)
         if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
             return (INT)gq[i].incarnation;
+    return -1;
+}
+
+/* find the capability BYTE a node_id is currently queued for in gq[] (or -1).
+ * Used by the teacher cert to inspect what an rx-rediscovery relay ENQUEUED
+ * for epidemic re-propagation (the bit-1 drop the auditor caught lived here,
+ * invisible to a cert that only drives gossip_apply). */
+static INT gq_find_cap(UB node_id, UB state)
+{
+    for (INT i = 0; i < gq_cnt; i++)
+        if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
+            return (INT)gq[i].capability;
     return -1;
 }
 
@@ -978,5 +1051,263 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     region_set_super_capable(SELF, saved_capSELF ? TRUE : FALSE);
 
     if (fails == 0) say("[cap-gossip] PASS (converge + staleness + falsifiable)\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* T-fix-a teacher-gossip self-test (thread-t-impl-plan.md §2.3)        */
+/*                                                                     */
+/* EXACT mirror of swim_cap_gossip_self_test for capability BIT 1       */
+/* (teacher-capable). Drives the REAL gossip_apply() with crafted       */
+/* SWIM_PKTs carrying capability bit 1 and asserts:                     */
+/*  [teacher-converge]   a fresh self-rumor with teacher-bit=1 about X   */
+/*      makes the receiver report region_is_teacher_capable(X)==TRUE AND */
+/*      region_teacher() select X; a second capable peer Y arrives the   */
+/*      same way and X (lower id) still wins by pure recomputation; two  */
+/*      receivers fed the SAME bits converge on the SAME teacher — NO    */
+/*      vote (NOCENTRAL).                                                */
+/*  [teacher-selector]/[teacher-determinism]  region_teacher() = lowest- */
+/*      id teacher-capable MEMBER, identical no matter who computes it.  */
+/*  [teacher-staleness]  a stale LOWER-incarnation rumor that would flip  */
+/*      X's teacher bit is IGNORED (no regress); a fresh HIGHER one does. */
+/*  [teacher-falsifiable]  a teacher-bit=0 self-rumor must NOT make W a   */
+/*      teacher; cap=1 vs cap=0 through the SAME apply give DIFFERENT     */
+/*      results (proves bit 1 is genuinely read); and a rumor that sets   */
+/*      ONLY bit 0 (supernode) leaves the teacher axis UNTOUCHED, while a */
+/*      rumor that sets ONLY bit 1 leaves the supernode axis UNTOUCHED    */
+/*      (the two capability axes do not leak into each other).           */
+/* Emits "[teacher-gossip] ..." lines; returns 0 on PASS else fails.     */
+/* ------------------------------------------------------------------ */
+
+INT swim_teacher_gossip_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    /* save global/file state we perturb */
+    UB  saved_my     = drpc_my_node;
+    UB  saved_inc    = my_incarnation;
+    INT saved_gq_cnt = gq_cnt;
+    UB  saved_tchX, saved_tchSELF;
+
+    const UB SELF = 0;   /* the receiving node we simulate */
+    const UB X    = 3;   /* the teacher-capable peer being gossiped */
+    const UB Y    = 5;   /* a second capable peer (lock-step convergence) */
+
+    drpc_my_node            = SELF;
+    gq_cnt                  = 0;
+    my_incarnation          = 0;
+    dnode_table[SELF].state = DNODE_ALIVE;  dnode_incarn[SELF] = 0;
+    dnode_table[X].state    = DNODE_UNKNOWN; dnode_incarn[X]   = 0;
+    dnode_table[Y].state    = DNODE_UNKNOWN; dnode_incarn[Y]   = 0;
+    saved_tchX    = region_is_teacher_capable(X)    ? 1 : 0;
+    saved_tchSELF = region_is_teacher_capable(SELF) ? 1 : 0;
+    region_set_teacher_capable(X, FALSE);
+    region_set_teacher_capable(Y, FALSE);
+    region_set_teacher_capable(SELF, FALSE);  /* SELF is not a teacher here */
+    /* clear the supernode axis on these ids too so the no-leak checks below
+     * start from a known (supernode=0) baseline. */
+    region_set_super_capable(X, FALSE);
+    region_set_super_capable(Y, FALSE);
+    region_set_super_capable(SELF, FALSE);
+
+    /* [teacher-converge] X emits its OWN ALIVE rumor, teacher-bit=1 (capability
+     * = 1<<1 = 2), inc=1. bit 0 (supernode) is left 0. */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = (UB)(1u << 1);   /* teacher only */
+        gossip_apply(&p);
+        if (region_is_teacher_capable(X) != TRUE) {
+            say("[teacher-gossip] FAIL converge: X not teacher after fresh self-rumor\r\n");
+            fails++;
+        }
+        /* no-leak: a teacher-only rumor must NOT make X supernode-capable. */
+        if (region_is_super_capable(X) != FALSE) {
+            say("[teacher-gossip] FAIL no-leak: teacher-bit rumor flipped X's supernode bit\r\n");
+            fails++;
+        }
+    }
+
+    /* region_teacher() must now select X. region_recompute() needs a real
+     * RTT≤tau for X to count X as a region member, so inject one (the live
+     * fleet gets this from the directed PING/ACK probe). SELF is not a teacher,
+     * so the lowest TEACHER-CAPABLE member is X. */
+    rtt_observe(X, 5);   /* 5ms <= REGION_TAU_MS=50 -> X is a region member */
+    {
+        UB tn = region_teacher();
+        if (tn != X) {
+            say("[teacher-gossip] FAIL selector: region_teacher() did not select X\r\n");
+            fails++;
+        }
+    }
+
+    /* NOCENTRAL convergence: a SECOND capable peer Y arrives the same way;
+     * X (lower id) still wins by pure recomputation, no vote. Then the same
+     * inputs computed twice give the SAME teacher (determinism). */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = Y;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = (UB)(1u << 1);   /* teacher only */
+        gossip_apply(&p);
+        rtt_observe(Y, 5);
+        UB tn_a = region_teacher();   /* this node's view */
+        UB tn_b = region_teacher();   /* same inputs, same fn -> same id */
+        if (!(tn_a == X && tn_b == X)) {
+            say("[teacher-gossip] FAIL determinism: disagree on teacher (expected X)\r\n");
+            fails++;
+        }
+    }
+
+    /* [teacher-staleness-death] survives teacher death by recomputation: mark
+     * X DEAD (drops out of membership) → region_teacher() must hand off to the
+     * next teacher-capable member Y, with NO election call. */
+    {
+        UB oldst = dnode_table[X].state;
+        dnode_table[X].state = DNODE_DEAD;
+        UB tn = region_teacher();
+        if (tn != Y) {
+            say("[teacher-gossip] FAIL survives-death: X dead but teacher did not hand off to Y\r\n");
+            fails++;
+        }
+        dnode_table[X].state = oldst;   /* restore for the staleness arm */
+    }
+
+    /* [teacher-falsifiable] CONTRAST: a node W that gossips teacher-bit=0
+     * about itself must NOT become a teacher. If apply ignored bit 1 (or a
+     * third party originated it), W would read teacher-capable and this fails.
+     * Also a SUPERNODE-only rumor (bit 0) about W must NOT make W a teacher —
+     * proves the apply reads bit 1 specifically, not "any nonzero byte". */
+    {
+        const UB W = 7;
+        dnode_table[W].state = DNODE_UNKNOWN; dnode_incarn[W] = 0;
+        region_set_teacher_capable(W, FALSE);
+        region_set_super_capable(W, FALSE);
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = W;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 1;
+        p.gossip[0].capability  = (UB)(1u << 0);   /* supernode ONLY, teacher=0 */
+        gossip_apply(&p);
+        if (region_is_teacher_capable(W) != FALSE) {
+            say("[teacher-gossip] FAIL falsifiable: supernode-only rumor made W a teacher (bit1 ignored?)\r\n");
+            fails++;
+        }
+        /* and the supernode axis DID land for W (the byte was read, just not as
+         * a teacher) — confirms the apply distinguishes the two bits. */
+        if (region_is_super_capable(W) != TRUE) {
+            say("[teacher-gossip] FAIL no-leak: supernode-only rumor did not set W's supernode bit\r\n");
+            fails++;
+        }
+        /* the contrast: X(teacher=1) and W(teacher=0) fed through the SAME apply
+         * path gave DIFFERENT teacher-capability — so bit 1 is genuinely read. */
+        if (region_is_teacher_capable(X) == region_is_teacher_capable(W)) {
+            say("[teacher-gossip] FAIL falsifiable: teacher=1 and teacher=0 gave same result\r\n");
+            fails++;
+        }
+        dnode_table[W].state = DNODE_UNKNOWN; dnode_incarn[W] = 0;
+        region_set_teacher_capable(W, FALSE);
+        region_set_super_capable(W, FALSE);
+    }
+
+    /* [teacher-staleness] hold X teacher @ incarnation 5; a STALE
+     * lower-incarnation rumor (inc=3) that would flip X to NON-teacher must be
+     * IGNORED — teacher-capability does not regress on a stale rumor. */
+    dnode_table[X].state = DNODE_ALIVE; dnode_incarn[X] = 5;
+    region_set_teacher_capable(X, TRUE);
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 3;          /* STALE */
+        p.gossip[0].capability  = 0;          /* would flip X off if accepted */
+        gossip_apply(&p);
+        if (region_is_teacher_capable(X) != TRUE) {
+            say("[teacher-gossip] FAIL staleness: stale rumor flipped X's teacher bit\r\n");
+            fails++;
+        }
+    }
+    /* a strictly HIGHER-incarnation self-rumor DOES update it (off). */
+    {
+        SWIM_PKT p = { 0 };
+        p.gossip_cnt            = 1;
+        p.gossip[0].node_id     = X;
+        p.gossip[0].state       = DNODE_ALIVE;
+        p.gossip[0].incarnation = 6;          /* FRESH */
+        p.gossip[0].capability  = 0;
+        gossip_apply(&p);
+        if (region_is_teacher_capable(X) != FALSE) {
+            say("[teacher-gossip] FAIL staleness: fresh higher-incarnation rumor not applied\r\n");
+            fails++;
+        }
+    }
+
+    /* [teacher-rx-relay] (audit fix, swim.c rx-rediscovery): the FOUR relay
+     * sites in swim_task were converted to cap_byte(); the FIFTH — the
+     * rediscovery re-propagation in swim_rx() — was originally left as the
+     * supernode-only relay, dropping bit 1. That site is INVISIBLE to a cert
+     * that only drives gossip_apply, so exercise the REAL swim_rx() here:
+     * hold a teacher-capable peer Z in a non-ALIVE state, deliver a SWIM packet
+     * from Z, and assert the ENQUEUED re-propagation carries bit 1 (teacher).
+     * Falsifiable: if the relay drops bit 1, the queued capability is 0. */
+    {
+        const UB Z = 9;
+        UB saved_Zst  = dnode_table[Z].state;
+        UB saved_Zinc = dnode_incarn[Z];
+        dnode_table[Z].state    = DNODE_UNKNOWN;   /* not ALIVE -> triggers relay */
+        dnode_incarn[Z]         = 2;
+        region_set_teacher_capable(Z, TRUE);       /* Z is a known teacher locally */
+        region_set_super_capable(Z, FALSE);        /* but NOT a supernode          */
+        gq_cnt = 0;                                /* clear so the relay is isolated */
+
+        SWIM_PKT rxp = { 0 };
+        rxp.magic        = SWIM_MAGIC;
+        rxp.version      = SWIM_VERSION;
+        rxp.type         = SWIM_ACK;   /* seq=0 beacon-style: no probe reply */
+        rxp.seq          = 0;
+        rxp.src_node     = Z;
+        rxp.probe_target = Z;
+        rxp.gossip_cnt   = 0;          /* no piggybacked gossip; isolate the relay */
+        swim_rx(swim_node_ip(Z), SWIM_PORT, (const UB *)&rxp, (UH)sizeof(rxp));
+
+        INT qcap = gq_find_cap(Z, DNODE_ALIVE);
+        if (qcap < 0) {
+            say("[teacher-gossip] FAIL rx-relay: rediscovery did not enqueue Z\r\n");
+            fails++;
+        } else if (((UB)qcap & (UB)(1u << 1)) == 0) {
+            say("[teacher-gossip] FAIL rx-relay: rediscovery relay dropped teacher bit 1\r\n");
+            fails++;
+        }
+        dnode_table[Z].state = saved_Zst; dnode_incarn[Z] = saved_Zinc;
+        region_set_teacher_capable(Z, FALSE);
+        region_set_super_capable(Z, FALSE);
+    }
+
+    /* --- restore --- */
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq_cnt;
+    dnode_table[SELF].state = DNODE_UNKNOWN;
+    dnode_table[X].state    = DNODE_UNKNOWN;
+    dnode_table[Y].state    = DNODE_UNKNOWN;
+    dnode_incarn[SELF] = 0; dnode_incarn[X] = 0; dnode_incarn[Y] = 0;
+    rtt_valid[X] = 0; rtt_valid[Y] = 0;        /* drop injected RTT */
+    region_set_teacher_capable(X, saved_tchX ? TRUE : FALSE);
+    region_set_teacher_capable(Y, FALSE);
+    region_set_teacher_capable(SELF, saved_tchSELF ? TRUE : FALSE);
+    region_set_super_capable(X, FALSE);
+    region_set_super_capable(Y, FALSE);
+    region_set_super_capable(SELF, FALSE);
+
+    if (fails == 0)
+        say("[teacher-gossip] PASS (converge + selector + determinism + staleness + falsifiable + rx-relay)\r\n");
     return fails;
 }

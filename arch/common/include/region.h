@@ -73,3 +73,26 @@ void region_super_init(void);
 /* Host cert: deterministic-selection / convergence / survives-death /   */
 /* relay-fallback. Prints PASS/FAIL + "[region-super] N PASS, M FAIL".  */
 void region_supernode_test(void);
+
+/* ------------------------------------------------------------------ */
+/* Teacher selection (T-fix-a — thread-t-impl-plan.md §2.3)            */
+/*                                                                     */
+/* EXACT mirror of the supernode selector for the Cradle teacher: the  */
+/* per-region teacher is the LOWEST-id node that is BOTH a current      */
+/* region member AND teacher-capable (holds a loaded teacher GGUF),     */
+/* recomputed locally by every node → convergence with NO vote, and it  */
+/* survives the teacher's death by recomputation (kill the teacher →    */
+/* member[]=0 → next teacher-capable id wins). 0xFF = no teacher this   */
+/* region (degrade: the child keeps its ring / falls back to fixture).  */
+/* SWIM bit 1 (capability>>1) feeds this table verbatim under the same  */
+/* LWW gate as the supernode bit; teacher SELECTION only — the lesson   */
+/* transport (CRADLE_TEACH_PKT + p-fs body) is T-fix-b/T-1, deferred. */
+
+/* The self's per-region teacher for the current local view; 0xFF if no */
+/* teacher-capable member exists. */
+UB   region_teacher(void);
+
+/* Mark/unmark a node as teacher-capable. Fed VERBATIM by swim.c's      */
+/* gossip_apply (capability bit 1) under the same anti-stale LWW gate.  */
+void region_set_teacher_capable(UB node, BOOL yes);
+BOOL region_is_teacher_capable(UB node);

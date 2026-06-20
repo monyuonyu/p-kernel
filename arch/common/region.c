@@ -51,6 +51,17 @@ static UB super_capable[DNODE_MAX]; /* 1 = node volunteered & reachable */
 static BOOL super_init_done = FALSE;
 
 /* ------------------------------------------------------------------ */
+/* Teacher capability (T-fix-a, thread-t-impl-plan.md §2.3)            */
+/*                                                                     */
+/* EXACT mirror of super_capable[]: 1 = node holds a successfully       */
+/* lm_load'ed teacher GGUF (a verifiable runtime property, set from     */
+/* SWIM gossip bit 1 verbatim by swim.c's gossip_apply, under the same  */
+/* anti-stale (incarnation,state) LWW gate as the supernode bit). This  */
+/* table is the SELECTION input only; teacher truth originates in       */
+/* swim.c::teacher_self() (gated on a real GGUF, never a bare env). */
+static UB teacher_capable[DNODE_MAX]; /* 1 = node self-declares teacher-capable */
+
+/* ------------------------------------------------------------------ */
 /* 再計算                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -145,6 +156,49 @@ UB region_supernode(void)
     region_super_init();
     region_recompute();
     return supernode_select(member, super_capable);
+}
+
+/* ------------------------------------------------------------------ */
+/* Teacher selection (T-fix-a — thread-t-impl-plan.md §2.3)            */
+/*                                                                     */
+/* EXACT mirror of supernode_select()/region_supernode(): the per-region */
+/* teacher is the LOWEST-id node that is BOTH a current region member    */
+/* AND teacher-capable. Recomputed locally by every node → convergence   */
+/* with NO vote/election (NOCENTRAL), survives the teacher's death by     */
+/* recomputation (kill the teacher → member[]=0 → next teacher-capable    */
+/* id wins). 0xFF = no teacher-capable member → degrade (the child keeps   */
+/* its lesson ring / falls back to the committed TEACHER_FIXTURE).        */
+/* ------------------------------------------------------------------ */
+
+void region_set_teacher_capable(UB node, BOOL yes)
+{
+    if (node < DNODE_MAX) teacher_capable[node] = yes ? 1 : 0;
+}
+
+BOOL region_is_teacher_capable(UB node)
+{
+    return (node < DNODE_MAX && teacher_capable[node]) ? TRUE : FALSE;
+}
+
+/* Pure core: lowest id that is BOTH a member (mbr[id]) AND teacher-capable
+ * (tch[id]); 0xFF if none. Deterministic, allocation-free, O(N), integer-only
+ * (reads no float). Same result on every arch / node — the byte-identical
+ * twin of supernode_select(). */
+static UB teacher_select(const UB *mbr, const UB *tch)
+{
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (mbr[n] && tch[n]) return n;   /* lowest id wins */
+    }
+    return 0xFF;                          /* no teacher member → degrade */
+}
+
+/* The per-region teacher for the self's current local view. Recomputes
+ * membership (same source of truth as region_coordinator()/region_supernode()),
+ * then picks the lowest teacher-capable member. 0xFF = none → degrade. */
+UB region_teacher(void)
+{
+    region_recompute();
+    return teacher_select(member, teacher_capable);
 }
 
 /* ------------------------------------------------------------------ */
@@ -303,4 +357,68 @@ void region_supernode_test(void)
     rg_puts(" PASS, ");
     rg_putdec((UW)super_fail);
     rg_puts(" FAIL\r\n");
+
+    /* ---------------------------------------------------------------- *
+     * T-fix-a: teacher_select() is the byte-identical twin of           *
+     * supernode_select(); a focused mirror cert so `region test` also   *
+     * gates the teacher selector (deterministic / lowest-id-member /    *
+     * survives-death / degrade). Kept on a SEPARATE counter+line so the *
+     * supernode "[region-super] 8/8" headline does not regress.         *
+     * ---------------------------------------------------------------- */
+    {
+        INT tch_fail = 0;
+        UB  m2[DNODE_MAX], t2[DNODE_MAX];
+        for (UB i = 0; i < DNODE_MAX; i++) { m2[i] = 0; t2[i] = 0; }
+        /* members {1,2,5,7}; teacher-capable {2,5,7} (1 is a member but not a
+         * teacher). Expected teacher = 2 (lowest CAPABLE member, not member 1). */
+        m2[1] = 1; m2[2] = 1; m2[5] = 1; m2[7] = 1;
+        t2[2] = 1; t2[5] = 1; t2[7] = 1;
+
+        UB tn = teacher_select(m2, t2);
+        if (tn != 2) tch_fail++;
+        rg_puts(tn == 2 ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("lowest-capable wins (member 1 not a teacher -> 2)\r\n");
+
+        /* determinism: pure fn of (mbr,tch); repeated calls give the SAME id. */
+        UB d0 = teacher_select(m2, t2), d1 = teacher_select(m2, t2),
+           d2 = teacher_select(m2, t2);
+        if (!(d0 == tn && d1 == tn && d2 == tn)) tch_fail++;
+        rg_puts((d0 == tn && d1 == tn && d2 == tn)
+                ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("determinism: every node computes the same teacher, no vote\r\n");
+
+        /* survives death: teacher (2) leaves membership -> next teacher (5). */
+        m2[2] = 0;
+        UB tn2 = teacher_select(m2, t2);
+        if (tn2 != 5) tch_fail++;
+        rg_puts(tn2 == 5 ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("survives death: teacher 2 dead -> 5 by recompute\r\n");
+        m2[2] = 1;
+
+        /* degrade: ZERO teacher-capable members -> 0xFF (no teacher region). */
+        for (UB i = 0; i < DNODE_MAX; i++) t2[i] = 0;
+        UB tnf = teacher_select(m2, t2);
+        if (tnf != 0xFF) tch_fail++;
+        rg_puts(tnf == 0xFF ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("degrade: no teacher-capable member -> 0xFF\r\n");
+
+        /* the public setter feeds the real table; bounds-checked. */
+        region_set_teacher_capable(11, TRUE);
+        region_set_teacher_capable(11, FALSE);
+        if (region_is_teacher_capable(11) != FALSE) tch_fail++;
+        rg_puts(region_is_teacher_capable(11) == FALSE
+                ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("setter toggles teacher table\r\n");
+        region_set_teacher_capable(DNODE_MAX + 5, TRUE);  /* out of range no-op */
+        if (region_is_teacher_capable(DNODE_MAX + 5) != FALSE) tch_fail++;
+        rg_puts(region_is_teacher_capable(DNODE_MAX + 5) == FALSE
+                ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
+        rg_puts("setter bounds-checks out-of-range node\r\n");
+
+        rg_puts("[region-teacher] ");
+        rg_putdec((UW)(6 - tch_fail));
+        rg_puts(" PASS, ");
+        rg_putdec((UW)tch_fail);
+        rg_puts(" FAIL\r\n");
+    }
 }

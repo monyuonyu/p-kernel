@@ -60,17 +60,25 @@ typedef struct {
     UB  node_id;
     UB  state;          /* DNODE_ALIVE / DNODE_SUSPECT / DNODE_DEAD */
     UB  incarnation;    /* より新しい incarnation で古い疑惑を上書き */
-    /* N-2b supernode capability bit (p2p-overlay.md "Supernodes (N-2)").
-     * Was the reserved zero `_pad`; reusing it is WIRE-COMPATIBLE — the
-     * layout, size (24B packet) and SWIM_VERSION are unchanged, and old
-     * emitters already zero this byte. An old node therefore sends 0 and
-     * a new node reads it as "non-capable" → safe degrade to the relay.
-     * SELF-AUTHORITATIVE: only node X's own gossip about X sets a real
-     * value here; every other node relays the byte VERBATIM (epidemic),
-     * it never originates a peer's capability. Converges in lock-step with
+    /* Capability bitfield (was the reserved zero `_pad`; reusing it is
+     * WIRE-COMPATIBLE — the layout, size (24B packet) and SWIM_VERSION are
+     * unchanged, and old emitters already zero this byte. An old node sends 0
+     * and a new node reads it as "non-capable" on EVERY bit → safe degrade).
+     *
+     *   bit 0 = supernode-capable (N-2b, p2p-overlay.md "Supernodes (N-2)")
+     *   bit 1 = teacher-capable   (T-fix-a, thread-t-impl-plan.md §2.3:
+     *           this node holds a successfully lm_load'ed teacher GGUF —
+     *           a verifiable runtime property, NOT a bare env decree)
+     *   bits 2..7 reserved (must stay 0 on the wire; future caps extend here
+     *           without a layout/size/version change — same Option-A choice).
+     *
+     * SELF-AUTHORITATIVE: only node X's own gossip about X sets real bits
+     * here; every other node relays the byte VERBATIM (epidemic), it never
+     * originates a peer's capability. Each bit converges in lock-step with
      * membership state under the SAME (incarnation,state) last-writer-wins
-     * gate, so a stale rumor cannot flip it. */
-    UB  capability;     /* 1 = node self-declares supernode-capable */
+     * gate, so a stale rumor cannot flip either bit. Old nodes emit 0 →
+     * (supernode=0, teacher=0) → safe degrade on both axes. */
+    UB  capability;     /* bit0=supernode-capable  bit1=teacher-capable */
 } __attribute__((packed)) SWIM_GOSSIP_EVT;
 
 /* SWIM パケット本体 (24 bytes) */
@@ -142,3 +150,22 @@ INT swim_incarn_self_test(void (*emit)(const char *));
  * a third party originate it. Emits "[cap-gossip] ..." lines; returns 0 on
  * PASS else the fail count. */
 INT swim_cap_gossip_self_test(void (*emit)(const char *));
+
+/* T-fix-a teacher-gossip cert (thread-t-impl-plan.md §2.3): the EXACT mirror
+ * of swim_cap_gossip_self_test for bit 1 (teacher-capable). Drives the REAL
+ * gossip_apply() with crafted SWIM_PKTs carrying capability bit 1 and asserts:
+ *  [teacher-converge]    a fresh self-rumor with teacher-bit=1 about X makes
+ *      the receiver report region_is_teacher_capable(X)==TRUE AND its
+ *      region_teacher() select X; two receivers fed the SAME bits converge on
+ *      the SAME teacher (NO vote — NOCENTRAL).
+ *  [teacher-selector] / [teacher-determinism]  region_teacher() = lowest-id
+ *      teacher-capable MEMBER, identical no matter who computes it.
+ *  [teacher-staleness]   a stale LOWER-incarnation rumor that would flip X's
+ *      teacher-capability is IGNORED (no regress); a fresh HIGHER one does —
+ *      reuses the exact incarnation gate.
+ *  [teacher-falsifiable] a teacher-bit=0 self-rumor must NOT make a node a
+ *      teacher; cap=1 and cap=0 through the SAME apply give DIFFERENT results,
+ *      and bit 0 (supernode) carried alongside is left UNCHANGED (no leakage
+ *      between the two capability axes).
+ * Emits "[teacher-gossip] ..." lines; returns 0 on PASS else the fail count. */
+INT swim_teacher_gossip_self_test(void (*emit)(const char *));
