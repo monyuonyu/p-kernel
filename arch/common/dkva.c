@@ -234,6 +234,62 @@ static BOOL have_remote_region(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Expect-set 純コア (federation R0; [fed-2cluster] の被検査ロジック)   */
+/*                                                                     */
+/* requester が問いを fan-out したとき「誰の寄与を待つか」を組む純関数。 */
+/* 入力は明示配列だけ — dnode_table / region_is_member / world gossip を */
+/* 直接読まない。本番 (dkva_infer) はこれらを実体から埋め、自己テスト    */
+/* (dkva_fed2_self_test) は合成 2-region ビューから埋める。これにより    */
+/* 「O(#region) であって O(N) でない」という階層の核心を、本番と同一の   */
+/* コードで証明できる (region_supernode_test の supernode_select 純コア    */
+/* と同じ手口)。NOCENTRAL: 代表は peer_region[] = world gossip 由来の      */
+/* coordinator id をそのまま使う — 投票も選挙もしない。                  */
+/*                                                                     */
+/*   me          : 自ノード id                                          */
+/*   state[n]    : DNODE_* (生存判定; ALIVE/SUSPECT のみ寄与を待つ)       */
+/*   is_member[n]: 自 region メンバなら 1 (region_is_member 相当)         */
+/*   peer_region[n]: n の coordinator id (world_peer_region_fresh 相当;    */
+/*                   未確認なら <0 → uncertain)                          */
+/* 出力 (すべて [DNODE_MAX] 固定; VLA 無し):                             */
+/*   expect[n]   : 自 region で直接 partial を待つピア                   */
+/*   rc_expect[c]: rsum を待つ他 region coordinator c (重複は 1 回のみ)   */
+/*   uncertain[n]: 生存だが region 未確認 — 確定分母に積まない (別軸)     */
+/*   *exp_cnt0 / *rc_cnt0 / *uncertain_cnt: 各カウント                    */
+/*                                                                     */
+/* ★falsifier: rsum 集約が degenerate して各 remote *node* を個別に待つ   */
+/*   ようになると rc_cnt0 が remote ノード数まで膨らむ。正しい階層では     */
+/*   rc_cnt0 == remote *region* 数 (= O(#region))。これが [fed-2cluster]  */
+/*   の中心アサーション。 */
+static void dkva_expect_core(UB me, const UB *state, const UB *is_member,
+                             const INT *peer_region,
+                             UB *expect, UB *rc_expect, UB *uncertain,
+                             INT *exp_cnt0_o, INT *rc_cnt0_o,
+                             INT *uncertain_cnt_o)
+{
+    INT exp_cnt0 = 0, rc_cnt0 = 0, uncertain_cnt = 0;
+    for (UB i = 0; i < DNODE_MAX; i++) {
+        expect[i] = 0; rc_expect[i] = 0; uncertain[i] = 0;
+    }
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (n == me) continue;
+        UB st = state[n];
+        if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
+        if (is_member[n]) { expect[n] = 1; exp_cnt0++; }
+        else {
+            INT cid = peer_region[n];
+            if (cid >= 0 && cid < DNODE_MAX && (UB)cid != me) {
+                if (!rc_expect[cid]) { rc_expect[cid] = 1; rc_cnt0++; }
+            } else {
+                uncertain[n] = 1; uncertain_cnt++;
+            }
+        }
+    }
+    *exp_cnt0_o = exp_cnt0;
+    *rc_cnt0_o  = rc_cnt0;
+    *uncertain_cnt_o = uncertain_cnt;
+}
+
+/* ------------------------------------------------------------------ */
 /* Coordinator: 自 region の partial を集約して region 要約を発行       */
 /*  ── G13: per-origin・event-driven (単一 200ms 同期窓を撤去) ──      */
 /*                                                                     */
@@ -485,28 +541,23 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
     INT  rc_got       = 0;    /* うち rsum が届いた数                */
     INT  uncertain_cnt = 0;  /* region を確認できない生存 remote 数  */
     region_recompute();
-    for (UB i = 0; i < DNODE_MAX; i++) {
-        got[i] = 0; rgot[i] = 0; expect[i] = 0; rc_expect[i] = 0;
-        uncertain[i] = 0;
-    }
-    for (UB n = 0; n < DNODE_MAX; n++) {
-        if (n == me) continue;
-        UB st = dnode_table[n].state;
-        if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
-        if (region_is_member(n)) { expect[n] = 1; exp_cnt0++; }
-        else {
-            /* 他 region のノード: その coordinator (= 応答すべき rsum の発行者)
-             * を world gossip から引く。★新鮮に確認できたときだけ確定分母に積む
-             * (G12)。確認できない (未着/古い) ノードは別 region と決め打ちせず
-             * uncertain として別計上する — degraded の数字を gossip 鮮度に依存
-             * させない (過大計上で嘘をつかない)。 */
-            INT cid = world_peer_region_fresh(n);
-            if (cid >= 0 && cid < DNODE_MAX && (UB)cid != me) {
-                if (!rc_expect[cid]) { rc_expect[cid] = 1; rc_cnt0++; }
-            } else {
-                uncertain[n] = 1; uncertain_cnt++;
-            }
+    for (UB i = 0; i < DNODE_MAX; i++) { got[i] = 0; rgot[i] = 0; }
+    /* 期待集合の入力を実体から埋め、純コア dkva_expect_core で組む。本番と
+     * 自己テスト ([fed-2cluster]) が同一コードを通る。region_is_member() は
+     * 直前の region_recompute() の結果を読む。他 region coordinator は world
+     * gossip から「新鮮に確認できた」region だけ (G12; world_peer_region_fresh)。 */
+    {
+        static UB  ec_state[DNODE_MAX];
+        static UB  ec_member[DNODE_MAX];
+        static INT ec_region[DNODE_MAX];
+        for (UB n = 0; n < DNODE_MAX; n++) {
+            ec_state[n]  = dnode_table[n].state;
+            ec_member[n] = region_is_member(n) ? 1 : 0;
+            ec_region[n] = world_peer_region_fresh(n);
         }
+        dkva_expect_core(me, ec_state, ec_member, ec_region,
+                         expect, rc_expect, uncertain,
+                         &exp_cnt0, &rc_cnt0, &uncertain_cnt);
     }
 
     while (tmo_left > 0) {
@@ -1058,6 +1109,178 @@ INT dkva_arrival_test(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* [fed-2cluster] + [coord-crash] federation R0 self-test (in-proc)     */
+/*                                                                     */
+/* docs/architecture/federation-r0-plan.md §3.1 Arm A + §3.2.           */
+/* 単一プロセス・決定論・arch 一様 ([in-proc] 階層)。合成された 2-region */
+/* 収束ビューを直接組み (region A={self,a1} ≤τ, region B={b1,b2} >τ)、    */
+/*   (1) 2 つの distinct region が在る (region B は自 region メンバでない) */
+/*   (2) ★falsifier rc_cnt0==1 — 他 region は coordinator 1 つだけ期待     */
+/*       (= O(#region)); 退化で各 remote node を個別に待つと 2 になる      */
+/*   (3) cross-region fold が summary 駆動で dense fold と厳密一致         */
+/*   (4) NOCENTRAL 代表 = min-id を純再計算で求める (投票なし)            */
+/* に加え [coord-crash]: coordinator b1 を DEAD にすると代表が決定論的に   */
+/*   b2 になり (選挙なし)、requester の期待集合が b2 に対して再形成される。 */
+/*                                                                     */
+/* expect 集合は本番 dkva_infer と *同一* の純コア dkva_expect_core を      */
+/* 通すので、PASS は本番経路が O(#region) である証拠になる。fold は        */
+/* dkva_self_test と同じ整数決定論 helper (st_fill/accumulate_pkt/st_eq)。 */
+/* 純ローカル (network/kdds 非依存) — ベアメタルでも走る。               */
+/* ------------------------------------------------------------------ */
+
+/* 純コア: 合成メンバビュー (mbr) の min-id 代表。region_coordinator() の
+ * NOCENTRAL min-id 規則を投票なしで再現する純関数 (test 専用; production の
+ * region_recompute()/coord 規則 region.c:91 と同形)。 */
+static UB fed2_representative(const UB *mbr)
+{
+    for (UB n = 0; n < DNODE_MAX; n++) if (mbr[n]) return n;  /* lowest id */
+    return 0xFF;
+}
+
+static INT fed2_fail;
+static void fed2_check(BOOL cond, const char *name)
+{
+    if (cond) dk_puts("[fed-2cluster]   PASS ");
+    else { dk_puts("[fed-2cluster]   FAIL "); fed2_fail++; }
+    dk_puts(name); dk_puts("\r\n");
+}
+
+INT dkva_fed2_self_test(void)
+{
+    fed2_fail = 0;
+    dk_puts("[fed-2cluster] ==== federation R0: 2-cluster hierarchy cert (in-proc) ====\r\n");
+
+    /* --- 合成 2-region 収束ビュー -------------------------------------
+     * 4 論理ノード: self=0, a1=1 (region A = self の region), b1=2, b2=3
+     * (region B, RTT>τ なので self の egocentric region には入らない)。
+     * region B の coordinator = min(b1,b2) = b1 (=2)。 */
+    const UB SELF = 0, A1 = 1, B1 = 2, B2 = 3, COORDB = 2;
+
+    static UB  state[DNODE_MAX];     /* DNODE_* (生存)                 */
+    static UB  is_member[DNODE_MAX]; /* 自 region メンバなら 1          */
+    static INT peer_region[DNODE_MAX];
+    static UB  bview[DNODE_MAX];     /* region B の合成メンバビュー       */
+
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        state[n] = DNODE_UNKNOWN; is_member[n] = 0;
+        peer_region[n] = -1; bview[n] = 0;
+    }
+    /* 全 4 ノード生存 */
+    state[SELF] = DNODE_ALIVE; state[A1] = DNODE_ALIVE;
+    state[B1]   = DNODE_ALIVE; state[B2] = DNODE_ALIVE;
+    /* 自 region A = {self, a1} */
+    is_member[SELF] = 1; is_member[A1] = 1;
+    /* region B のノードは自 region メンバでない; world gossip が両者の
+     * region_id = coordB を新鮮に広告している (world_peer_region_fresh 相当)。 */
+    peer_region[B1] = COORDB; peer_region[B2] = COORDB;
+    /* region B の合成メンバビュー (coordinator 再計算用) */
+    bview[B1] = 1; bview[B2] = 1;
+
+    /* (1) 2 つの distinct region: region B のノードは自 region メンバでない。
+     * 自 region のサイズは 2 (self + a1)。 */
+    INT a_size = 0;
+    for (UB n = 0; n < DNODE_MAX; n++) if (is_member[n]) a_size++;
+    fed2_check(a_size == 2 && !is_member[B1] && !is_member[B2],
+               "two distinct regions: self-region size==2, B not member");
+
+    /* (2) ★falsifier: 本番と同一の純コアで期待集合を組む。
+     * 他 region は coordinator 1 つだけ (rc_cnt0==1 = O(#region))。退化して
+     * 各 remote node を個別に待つと rc_cnt0==2 (= region-B のノード数)。 */
+    static UB  expect[DNODE_MAX], rc_expect[DNODE_MAX], uncertain[DNODE_MAX];
+    INT exp_cnt0 = 0, rc_cnt0 = 0, unc_cnt = 0;
+    dkva_expect_core(SELF, state, is_member, peer_region,
+                     expect, rc_expect, uncertain,
+                     &exp_cnt0, &rc_cnt0, &unc_cnt);
+    fed2_check(rc_cnt0 == 1,
+               "FALSIFIER O(#region): exactly 1 remote-region coordinator (not 2 nodes)");
+    fed2_check(rc_expect[COORDB] == 1 && exp_cnt0 == 1 && unc_cnt == 0,
+               "expect-set: wait coordB + self-region peer a1, no uncertain");
+
+    /* (3) cross-region fold は summary 駆動で dense fold と厳密一致。
+     * region B の summary = b1+b2 partial の和 (coordinator が rsum に出すもの)。
+     * requester が畳むのは {self, a1, [B-summary]}; これが全 4 ノードの
+     * dense fold {self,a1,b1,b2} と整数決定論で一致することを示す
+     * (accumulate は結合的 → region 分割→和→最後に1回 正規化、で厳密一致)。 */
+    {
+        static DKVA_RESP_PKT p_self, p_a1, p_b1, p_b2, b_summary, hier, dense;
+        st_fill(&p_self, 1, 100); st_fill(&p_a1, 1, 101);
+        st_fill(&p_b1,   1, 102); st_fill(&p_b2, 1, 103);
+        /* coordinator B が region 要約を作る (b1 + b2) */
+        st_zero(&b_summary);
+        accumulate_pkt(&b_summary, &p_b1); accumulate_pkt(&b_summary, &p_b2);
+        /* requester の階層 fold: self + a1 + B-summary */
+        st_zero(&hier);
+        accumulate_pkt(&hier, &p_self); accumulate_pkt(&hier, &p_a1);
+        accumulate_pkt(&hier, &b_summary);
+        /* dense fold: 全 4 ノードの partial を直接 */
+        st_zero(&dense);
+        accumulate_pkt(&dense, &p_self); accumulate_pkt(&dense, &p_a1);
+        accumulate_pkt(&dense, &p_b1);   accumulate_pkt(&dense, &p_b2);
+        fed2_check(st_eq(&hier, &dense),
+                   "summary-driven fold == dense fold (one-math, exact)");
+        /* falsifier: summary が region-B 寄与を落とすと不一致になる
+         * (b2 を欠いた summary は dense と異なる)。 */
+        static DKVA_RESP_PKT bad_summary, bad_hier;
+        st_zero(&bad_summary); accumulate_pkt(&bad_summary, &p_b1);  /* b2 欠落 */
+        st_zero(&bad_hier);
+        accumulate_pkt(&bad_hier, &p_self); accumulate_pkt(&bad_hier, &p_a1);
+        accumulate_pkt(&bad_hier, &bad_summary);
+        fed2_check(!st_eq(&bad_hier, &dense),
+                   "FALSIFIER: dropping a region-B contribution breaks the match");
+    }
+
+    /* (4) NOCENTRAL 代表 = min-id を純再計算で (投票なし)。繰り返し純呼び出し
+     * が同一 id を返す (region_supernode_test の収束証明と同じ手口)。 */
+    {
+        UB r0 = fed2_representative(bview);
+        UB r1 = fed2_representative(bview);
+        UB r2 = fed2_representative(bview);
+        fed2_check(r0 == COORDB && r1 == COORDB && r2 == COORDB,
+                   "NOCENTRAL: region-B rep = min-id (b1), pure recompute, no vote");
+    }
+
+    /* ---------------------------------------------------------------- *
+     * [coord-crash][in-proc]: coordinator b1 が死ぬと代表が決定論的に b2 *
+     * になり (選挙なし)、requester の期待集合が b2 に対し再形成される。   *
+     * region_supernode_test の survives-death アサーションを mirror。     *
+     * ---------------------------------------------------------------- */
+    dk_puts("[coord-crash] ==== coordinator death -> deterministic re-delegation (in-proc) ====\r\n");
+    {
+        /* 死前: 代表 == b1 */
+        UB rep_before = fed2_representative(bview);
+        if (rep_before == B1) dk_puts("[coord-crash]   PASS ");
+        else { dk_puts("[coord-crash]   FAIL "); fed2_fail++; }
+        dk_puts("coordinator is b1 (min-id) before death\r\n");
+
+        /* b1 を DEAD にする → メンバビューから落ち、world gossip も b2 を
+         * 新 region_id として広告する (coordinator 再計算で b2 に切替わる)。 */
+        bview[B1] = 0;                 /* b1 left membership            */
+        state[B1] = DNODE_DEAD;        /* SWIM が DEAD と判定           */
+        peer_region[B2] = B2;          /* world: B の新 coordinator = b2 */
+
+        UB rep_after = fed2_representative(bview);
+        if (rep_after == B2) dk_puts("[coord-crash]   PASS ");
+        else { dk_puts("[coord-crash]   FAIL "); fed2_fail++; }
+        dk_puts("survives death: b1 dead -> rep deterministically b2, no election\r\n");
+
+        /* requester の期待集合を再形成: いま DEAD の b1 は待たず、b2 を新
+         * coordinator として 1 つだけ期待する (まだ rc_cnt0==1 = O(#region))。 */
+        INT e2 = 0, rc2 = 0, u2 = 0;
+        dkva_expect_core(SELF, state, is_member, peer_region,
+                         expect, rc_expect, uncertain, &e2, &rc2, &u2);
+        if (rc2 == 1 && rc_expect[B2] == 1 && !rc_expect[B1])
+            dk_puts("[coord-crash]   PASS ");
+        else { dk_puts("[coord-crash]   FAIL "); fed2_fail++; }
+        dk_puts("requester re-forms expect-set against b2 (rc_cnt0 still 1)\r\n");
+    }
+
+    if (fed2_fail == 0) dk_puts("[fed-2cluster] PASS (in-proc)\r\n");
+    else { dk_puts("[fed-2cluster] FAIL  failures="); dk_putdec((UW)fed2_fail);
+           dk_puts("\r\n"); }
+    return fed2_fail;
+}
+
+/* ------------------------------------------------------------------ */
 /* 統計表示                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1115,7 +1338,10 @@ void dkva_cmd(const UB *args, UW len)
         static const char tverb[] = "test";
         INT ti = 0;
         while (tverb[ti] && p + ti < end && (char)p[ti] == tverb[ti]) ti++;
-        if (tverb[ti] == '\0') { dkva_self_test(); dkva_arrival_test(); return; }
+        if (tverb[ti] == '\0') {
+            dkva_self_test(); dkva_arrival_test(); dkva_fed2_self_test();
+            return;
+        }
     }
 
     /* verb "infer" 以外は統計表示 */

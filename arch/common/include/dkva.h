@@ -174,6 +174,17 @@ INT dkva_self_test(void);
 INT dkva_arrival_test(void);
 
 /*
+ * [fed-2cluster] + [coord-crash] federation R0 self-test (純ローカル, in-proc).
+ * docs/architecture/federation-r0-plan.md §3.1 Arm A + §3.2。合成 2-region 収束
+ * ビューで「2 つの distinct region が在り、cross-region 期待は O(#region) (=1
+ * coordinator) であって O(N) でない」+「summary 駆動 fold == dense fold」+
+ * 「NOCENTRAL min-id 代表」+「coordinator 死 → 決定論的 b2 へ再委譲」を数で守る。
+ * 本番 dkva_infer と同一の純コア dkva_expect_core を通す。shell `dkva test` から
+ * 呼び、CI が "[fed-2cluster] PASS (in-proc)" を grep する。戻り値 = 失敗数。
+ */
+INT dkva_fed2_self_test(void);
+
+/*
  * シェルコマンド "dkva [infer [a b c d]]"。
  * 引数から決定論的に Q を合成し、このノードを起点に dkva_infer を回す。
  * ノード ID に依存しない: 起点が死んでも、生き残りのどのノードからでも

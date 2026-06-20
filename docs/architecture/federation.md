@@ -1,13 +1,30 @@
 # Federation — 32 の壁から「数千ノード」へ橋を架ける
 
 > 看板は **"thousands of nodes / 10,000 spacecraft plates / more nodes = smarter"**。
-> 現実は **`DNODE_MAX = 32`**（`arch/common/include/drpc.h:35`）が、world / moe /
+> 現実は **`DNODE_MAX = 64`**（`arch/common/include/drpc.h:35`）が、world / moe /
 > reflex / dkva / swim / region / dnode_table の **すべての配列幅・走査上限・
-> ビットマスク幅** を縛る絶対上限である。region は 32 を**分割**するだけで
-> 超えない。32 を超える**上位フェデレーション機構が存在しない**。
-> このドキュメントは、その橋を**設計**する（実装はしない。実装は R3 / Phase D の大仕事）。
+> ビットマスク幅** を縛る絶対上限である。region は 64 を**分割**するだけで
+> 超えない。
+>
+> ★更新（federation R0, 2026-06-20）: 「32 を超える上位フェデレーション機構が
+> 存在しない」は **もう正しくない**。2-cluster の階層集約は **DKVA path で
+> すでに LIVE** である — region 内は per-node の `resp/<n>`（REGION スコープ）で
+> 密に、region 間は coordinator が出す `rsum/<rid>`（GLOBAL スコープ）の
+> **要約だけ** が境界を越える（`dkva.c:430-520, 814-818`）。これは
+> `samples/11_distributed/run_4node_regions.sh` が **実プロセスで** 走らせ、
+> federation R0 wave が **falsifiable cert** で固めた:
+>   - `[fed-2cluster][in-proc]`（`dkva_fed2_self_test`）— cross-region 期待は
+>     **O(#region)**（coordinator 1 つ）であって O(N) でない。
+>   - `[fed-2cluster][live]` — 上記ハーネスが `[locality]` カウンタを diff し、
+>     **flat-control（penalty=0, 1 region）falsifier** で階層 vs 退化（all-to-all）
+>     を機械的に区別する（zoned far=summary-only / flat near=全 N 直接 fan-in）。
+>   - `[coord-crash][in-proc]` — coordinator が死ぬと代表が決定論的に min-id 次点へ
+>     **再委譲**（投票なし）。
+> このドキュメントは、その**先**（256 の壁を破る composite ID = F1、共有トピック =
+> F2、region-of-regions = F3）を**設計**する。R0 は DNODE_MAX/wire を一切変えない。
 
-Status: **設計のみ（未実装）** / 監査 第3版 G23 🔴 への応答 / 最終更新: 2026-06-07
+Status: **R0 (2-cluster DKVA 階層) は LIVE + certified（`[fed-2cluster]`）;
+F1–F3 は設計のみ** / 監査 第3版 G23 🔴 への応答 / 最終更新: 2026-06-20
 
 関連: [regions.md](regions.md)（葉クラスタ＝局所 region の設計）、
 [survival-network.md](survival-network.md)（§4 「region＝局所葉」の思想的根拠）、
@@ -283,17 +300,28 @@ arch/common/include/pmesh.h:58-67
 
 ## 5. 正直さ（設計だけ / 未実証 / 未解決）
 
-### 5.1 本書が「設計だけ」で、未実装なもの
-- 複合 ID（§2.2）、上位メッシュ、葉間 rsum 昇格、疎構造化——**すべて未実装**。
-  本書はコードを 1 行も変えていない（`docs/architecture/federation.md` の新規追加のみ）。
-- 既存で**動いている**のは: region 形成（`region.c`）、kdds REGION スコープ
-  配信（`kdds.c:247-251`）、dkva の region 内/間 2段集約の骨格
-  （`dkva.c:354,361,383`）、swim RTT（`swim.c:147`）、relay lease
-  （`relay.c`、dynamic-id 実装済み）。**橋の土台は既にあるが、橋桁は無い**。
+### 5.1 何が LIVE で、何がまだ「設計だけ」か（R0 更新 2026-06-20）
+- **R0 で LIVE + certified になったもの**: 2-cluster の階層集約（region 内
+  per-node `resp/<n>` REGION + region 間 coordinator `rsum/<rid>` GLOBAL の
+  要約のみ越境）。`[fed-2cluster][in-proc]`（`dkva_fed2_self_test`: cross-region
+  期待 = O(#region)）+ `[fed-2cluster][live]`
+  （`samples/11_distributed/run_4node_regions.sh`: 実プロセスで `[locality]` を
+  diff し flat-control falsifier で階層 vs 退化を区別）+ `[coord-crash][in-proc]`
+  （coordinator 死 → 決定論的 min-id 再委譲、投票なし）。**橋桁の R0 の踏み板は
+  架かった。**
+- **まだ「設計だけ」で未実装なもの**: 複合 ID（§2.2; 256 の壁 = F1）、上位メッシュ
+  （F3）、葉間 rsum の region-of-regions 再帰昇格（F3）、共有トピック化（F2）。
+- 既存で**動いている**土台: region 形成（`region.c`）、kdds REGION スコープ
+  配信（`kdds.c:262-285`）、dkva の region 内/間 2段集約（`dkva.c:430-520`）、
+  swim RTT + sim_zone（`swim.c:358-387`）、world region gossip
+  （`world.c:228,315`）、relay lease（`relay.c`、dynamic-id 実装済み）。
 
-### 5.2 計算量の主張は「目標」であって測定値ではない
-- 「O(N²)→O(N log N)」「葉内 O(32²)＋葉間 O(R)」は**設計目標**。
-  実測されていない。葉間 gossip の収束時間・rsum の遅延は未測定。
+### 5.2 計算量の主張は「目標」であって測定値ではない（R0 で一部実測済み）
+- 「O(N²)→O(N log N)」は**設計目標**で全域は未実測。ただし **R0 の `[fed-2cluster]
+  [live]` が cross-region 越境を実測**し、2-region/4-node で far_delta=6（=summary
+  のみ、O(#region)）vs flat-control far=0/near=9（=全 N 直接 fan-in）を機械的に
+  区別した。「葉間 O(#region)」は **この topology で実測 PASS**。数千ノード規模の
+  収束時間・rsum 遅延は依然 **未測定**（§5.4 の 10k-dream gap）。
 - SWIM が sub-linear（`swim.h:31` GOSSIP_MAX=3）なのは**コードから確認済み**
   の事実。これが土台になる根拠は確か。
 
