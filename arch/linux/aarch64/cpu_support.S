@@ -127,8 +127,9 @@ knl_dispatch:
 /* -----------------------------------------------------------------------
  *  Dispatcher loop — pick schedtsk and switch sp to its dormant frame.
  *  If schedtsk is NULL we idle until something becomes runnable; in
- *  this userspace port "idle" is sched_yield (the timer signal will
- *  still arrive and may set schedtsk via knl_timer_handler).
+ *  this userspace port "idle" SLEEPS until the next SIGALRM tick (via
+ *  knl_idle_wait -> sigsuspend; preempt.c). The old sched_yield busy-
+ *  spun at ~100% CPU and starved the UI — see knl_idle_wait's banner.
  * --------------------------------------------------------------------- */
 .Ldispatch_loop:
     adrp x0, knl_schedtsk
@@ -173,10 +174,15 @@ knl_dispatch:
     ret
 
 .Lidle:
-    /* Briefly relinquish the CPU. When the signal arrives our handler
-     * may set knl_schedtsk; we'll loop again and find something. */
+    /* Sleep until the next SIGALRM tick instead of busy-spinning.
+     * IRQ_FLAG_CLEAR before the wait so the tick handler runs directly
+     * (advancing time / possibly setting knl_schedtsk) while we sleep;
+     * IRQ_DISABLE after, restoring the dispatcher's IRQ-off invariant
+     * before we re-read knl_schedtsk. knl_idle_wait re-checks schedtsk
+     * under a SIGALRM block, so a task made runnable in the gap is not
+     * missed (no busy spin, no missed-wakeup hang). */
     IRQ_FLAG_CLEAR
-    bl  sched_yield
+    bl  knl_idle_wait
     IRQ_DISABLE
     b .Ldispatch_loop
 

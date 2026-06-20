@@ -105,6 +105,56 @@ void arch_irq_enable_with_drain(void)
     }
 }
 
+/* Examined opaquely (NULL / non-NULL only) so preempt.c stays free of
+ * T-Kernel headers, per the file banner. Real type is TCB *. */
+extern void * volatile knl_schedtsk;
+
+/*
+ *  knl_idle_wait — sleep the kernel thread until the next SIGALRM tick.
+ *
+ *  Called from the dispatcher's idle path (.Lidle in cpu_support.S) in
+ *  place of the old sched_yield() busy-spin, which returned immediately
+ *  and pegged a core at ~100% CPU when no task was runnable (observed
+ *  live: a kernel pthread eating one core for 25 min, starving the UI).
+ *
+ *  A task can become runnable only from running-task context (then we
+ *  are not idle) or from the SIGALRM handler (knl_timer_handler_startup
+ *  may set knl_schedtsk). So sleeping until SIGALRM is exactly correct.
+ *
+ *  Race-free: block SIGALRM, then re-check knl_schedtsk. If a task is
+ *  now runnable the tick that made it so is held PENDING (not lost), so
+ *  we return at once without sleeping. Otherwise sigsuspend() atomically
+ *  installs a mask that unblocks SIGALRM and sleeps; the pending/next
+ *  tick delivers, sigalrm_handler runs (arch_irq_disabled_flag is 0 on
+ *  this path — .Lidle did IRQ_FLAG_CLEAR — so the tick runs directly and
+ *  may set knl_schedtsk), and sigsuspend returns with EINTR. We restore
+ *  the prior mask and the dispatcher loops to re-check schedtsk.
+ *
+ *  Worst-case wake latency is one tick (~10 ms at 100 Hz): the bounded,
+ *  documented tradeoff for going from 100% CPU to idle. The periodic
+ *  timer keeps firing, so a missed-wakeup HANG is impossible.
+ *
+ *  Mask choice: we unblock exactly SIGALRM and leave everything else as
+ *  the caller had it — fault signals (SIGSEGV/SIGBUS/SIGFPE) and term
+ *  signals (SIGINT/SIGTERM) stay deliverable, so crash handling and
+ *  Ctrl-C behave exactly as before.
+ */
+void knl_idle_wait(void)
+{
+    sigset_t block_alrm, prev, wait_mask;
+    sigemptyset(&block_alrm);
+    sigaddset(&block_alrm, SIGALRM);
+    sigprocmask(SIG_BLOCK, &block_alrm, &prev);
+
+    if (knl_schedtsk == 0) {
+        wait_mask = prev;
+        sigdelset(&wait_mask, SIGALRM);
+        sigsuspend(&wait_mask);   /* sleeps; -1/EINTR after a signal */
+    }
+
+    sigprocmask(SIG_SETMASK, &prev, NULL);
+}
+
 static void sigalrm_handler(int sig)
 {
     (void)sig;

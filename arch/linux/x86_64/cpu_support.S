@@ -14,7 +14,9 @@
  *      to arch_irq_disabled_flag, defined in preempt.c (Linux SIGALRM
  *      is the timer IRQ).
  *    - No exception/interrupt vector table. Signals replace it.
- *    - Idle path uses sched_yield instead of `hlt`.
+ *    - Idle path SLEEPS until the next SIGALRM tick (knl_idle_wait ->
+ *      sigsuspend, in preempt.c) instead of `hlt`. It formerly busy-
+ *      spun on sched_yield at ~100% CPU.
  *
  *  Dormant task stack frame (64 bytes, see cpu_task.h):
  *    [rsp+ 0] r12  (= stacd for new task)
@@ -154,10 +156,15 @@ knl_dispatch:
     ret                          /* pops rip; rsp += 8; jumps */
 
 .Lidle:
-    /* Briefly relinquish the CPU. The SIGALRM handler may set
-     * knl_schedtsk; we'll loop and find something. */
+    /* Sleep until the next SIGALRM tick instead of busy-spinning.
+     * IRQ_FLAG_CLEAR before the wait so the tick handler runs directly
+     * (advancing time / possibly setting knl_schedtsk) while we sleep;
+     * IRQ_DISABLE after, restoring the dispatcher's IRQ-off invariant
+     * before we re-read knl_schedtsk. knl_idle_wait re-checks schedtsk
+     * under a SIGALRM block, so a task made runnable in the gap is not
+     * missed (no busy spin, no missed-wakeup hang). */
     IRQ_FLAG_CLEAR
-    call    sched_yield
+    call    knl_idle_wait
     IRQ_DISABLE
     jmp     .Ldispatch_loop
 
