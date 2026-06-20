@@ -56,3 +56,69 @@ trace in the repository's own history. A row here is that trace.
     documented follow-up. run_kv byte-identity is unchanged by SS-6.
   - The in-process cert drives the REAL canonical-sum + fallback code with a STUB
     peer (no network). S tier is proven INERT (E=2==K_min, no widening), not skipped.
+
+## Federation R0 — commit 3df129d0 (audit: wave-fed-r0-audit)
+
+Independent adversarial audit. BASE ok: HEAD==3df129d0, HEAD~1==eac5e7bd (trunk).
+One commit. All 4 builds clean (linux, linux_x86_64, aarch64 bare, x86 bootloader);
+no new warnings from dkva.c. Regressions green: region-super 8/8, region-teacher 6/6,
+kdds-delcluster PASS, dkva g13-parallel/g13-arrival/self-test PASS. check_parity OK.
+
+VERDICT: **PASS — this is a GENUINE [live] cert, not in-process-dressed-as-live.**
+
+[live] REPRODUCED on REAL processes (3/3 runs, STABLE, byte-identical numbers):
+  Counted 4 distinct ./boot/linux/p-kernel PIDs (24024/24025/24027/24029) + ./relay
+  in one run; relay -v log shows each node registering a DISTINCT UDP source port
+  (127.0.0.1:51625/36944/44627/53704) over wire v2 — real UDP, not a fake.
+  zoned [locality] delta: far=6  near=3   (summary-only crossing + own-region fan-in)
+  flat  [locality] delta: far=0  near=9   (no boundary -> direct fan-in to all N)
+  (a) O(#region): zoned far 6 <= 1*K(6)=6 : PASS
+  (b1) boundary: zoned far 6>0, flat far 0==0 : PASS
+  (b2) FALSIFIER: zoned near 3 < flat near 9 : PASS
+  (c) ONE-MATH: => class 0 identical zoned vs flat : PASS
+  -> [fed-2cluster][live] PASS
+
+FALSIFIER HONEST (not gamed) — verified by TWO independent break-the-hierarchy tests:
+  * [live] I forced region_is_member()->TRUE (collapse all into one region). The
+    zoned run then produced far=0/near=9 (== flat) and BOTH (b1) and (b2) went RED ->
+    [fed-2cluster][live] FAIL. The gate has teeth against the degeneration it claims.
+  * [in-proc] I degenerated dkva_expect_core() to wait per-NODE instead of
+    per-REGION. rc_cnt0 became 2 and the "FALSIFIER O(#region)" line went RED ->
+    [fed-2cluster] FAIL failures=1. Because dkva_infer (:558) and the self-test
+    (:1191/:1269) share the SAME dkva_expect_core (:263), this falsifier genuinely
+    guards the PRODUCTION expect-set (trap A2 satisfied, empirically).
+  The (b2) near-comparison is a REAL measure: near = node1's same-region deliveries;
+  a smaller region => smaller fan-out. Not a coincidental counter.
+
+COVERAGE GAP (ledger OPEN, honest — does NOT make the cert gamed):
+  A THIRD sabotage — flipping resp/<n> from REGION to GLOBAL — did NOT trip the
+  [live] gate (numbers unchanged). Reason: the gate measures only node1 (the
+  requester); resp-scope degeneration manifests on the RESPONDER nodes' TX, which
+  node1 never sees. Neither arm exercises resp delivery-scope directly (the in-proc
+  arm tests the expect-set, not scoped fanout). The rsum=GLOBAL/resp=REGION scope
+  assignment IS statically correct (dkva.c:861-869) and verified, but it is NOT
+  dynamically falsified. Recommend R0.1 add a responder-side or all-node locality
+  gate (or measure coordB's far/near). FLAGGED, not blocking.
+
+rsum scope GLOBAL: CONFIRMED. dkva.c:866-869 rsum=KDDS_SCOPE_GLOBAL, :861-864
+  resp=KDDS_SCOPE_REGION, :856-859 q=KDDS_SCOPE_GLOBAL. (Note: the commit message's
+  "dkva.c:809-818" citation is slightly off — scopes are at :853-869; cosmetic.)
+
+expect-core shared (trap A2): CONFIRMED + empirically proven (sabotage above).
+coord-crash HONEST TAG: [in-proc] only; [live] explicitly deferred to R0.1; no
+  false live-kill claim in commit/docs/plan.
+NOCENTRAL/no-VLA/one-math: nm tripwire clean (no vote/elect symbol; only
+  supernode_select/teacher_select). All cert arrays [DNODE_MAX] fixed, no VLA.
+  one-math: => class identical zoned vs flat (live) + summary==dense fold (in-proc).
+
+GAPS DISCLOSED / NO OVERCLAIM: single-host (no SSH 2-machine); in-proc uses
+  synthetic seeded membership (does not exercise egocentric-region disagreement);
+  10k-dream gap (256 node_id wall / MTU / array fan-out) stays WIDE OPEN. federation.md
+  §1/§5 corrected 32->64, "未実装"->"R0 LIVE+certified; F1-F3 design-only", title still
+  "橋を架ける" (bridge under construction). No doc reads "federation works" / "10k works".
+  BACKLOG/commit say "8 OS processes" = 4+4 across the two sequential runs (a single
+  run is 4 p-kernel + 1 relay = 5); loose phrasing, not false.
+
+LEDGER: the [fed-2cluster][in-proc] + [live] + [coord-crash][in-proc] claim is TRUE
+  and falsifiable. Row CLOSED. One coverage gap (resp-scope not dynamically
+  falsified) ledgered OPEN for R0.1.
