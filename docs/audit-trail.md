@@ -364,3 +364,77 @@ BUILDS: all 4 green — linux (aarch64), linux_x86_64, bare x86 (kloader.bin), b
 
 LEDGER: row CLOSED. No missed-wakeup path found; worst-case latency provably bounded
   to one tick. No real bug found.
+
+## MC-1 size-gated parallel teacher matmul — commit 0481b5ed
+
+VERDICT: PASS. Independent adversarial reproduction. BASE ok (HEAD 0481b5ed,
+HEAD~1 == efec4748). The one-mind byte-identity crown HOLDS; speedup is real
+(not gamed); the gate is correct in both directions; no regression; salvage
+complete (no TODO/stub/half-applied hunk).
+
+BYTE-IDENTITY (the crown) — GGUF-REAL, not synthetic:
+- /tmp/smollm2-135m.gguf (144MB, real SmolLM2-135M) present -> the FULL teacher
+  forward equivalence is REAL. Full-forward FNV hash = 0xfed93d680c1dcb55,
+  argmax 3807, IDENTICAL across NW{1,2,4,8} (matches the claimed 0xfed93d68...).
+- HAMMERED: odd/non-dividing NW{3,5,7} and over-cap NW{16,32} via
+  PKERNEL_MATMUL_THREADS -> all 0xfed93d680c1dcb55 (over-cap clamps to host
+  cores in pk_effective_nw, partition still deterministic).
+- LOOPED: synthetic F32+Q4_0 equiv 35x + full forward 30x at NW=4 -> ZERO
+  mismatches. No race-induced nondeterminism.
+- NW=1 (and NW=4) byte-identical to the PARENT serial efec4748 full forward
+  (parent hash also 0xfed93d680c1dcb55). The serial math is bit-unchanged.
+- Synthetic F32 + Q4_0 memcmp==EQUAL across NW incl ragged (out=1530, 1031).
+
+REALLY PARALLEL (not secretly serial): instrumented gettid in the body during a
+teacher-head dispatch at NW=4 -> 4 DISTINCT TIDs ran the body. Real multi-thread
+dispatch confirmed.
+
+SPEEDUP (reproduced, host 4 cores, -O1 -ffp-contract=off):
+- teacher head 28.3M-MAC matmul: NW1 45.07ms -> NW2 2.02x / NW4 2.67x / NW8 2.66x
+  (claim NW4 ~2.22x reproduced and exceeded; honest sublinear plateau at NW8).
+- FULL teacher forward (real GGUF): NW1 ~215-245ms -> NW4 ~157-177ms (~1.4x);
+  NW2 ~= NW1 (wash). The 2.22x headline is correctly scoped to the isolated head
+  matmul in the commit msg, NOT the whole forward — honest labeling.
+- teacher ffn (884736 MACs): NW2 LOSES (0.88x) but NW4 WINS (1.48x) at in=576.
+
+GATE (both directions correct):
+- default threshold 524288. Student M-tier (16384), L-tier (131072), R3 48x48
+  (2304) all route SERIAL (pk_parallel_last_was_parallel()==0). Teacher ffn
+  (884736) + head (28.3M) route PARALLEL. PASS.
+- Crossover honesty: at the synthetic in=256 sweep, NW=4 first wins at 2^20
+  (1048576) — ABOVE the shipped 524288 gate. BUT at the REAL teacher contraction
+  in=576, NW=4 first wins at ~589824 (out=1024), just above 524288. The teacher
+  matmuls (in=576) genuinely win at the production NW=4. The gate is defensible
+  for the in=576 regime the teacher actually uses; the header's "2^19 is the first
+  pow2 where NW=4 reliably wins" is true for in=576, a layout artifact for in=256.
+  Not a crown issue (byte-identity holds regardless of gate decision).
+
+F32 FALSIFIER HAS TEETH: injected a reverse-order (reassociated) contraction into
+the F32 body -> hash 0x6b2d33c13989a949 != serial 0xf3c9ecd398dc1382, memcmp
+DIFFER. The cert's byte-identity is non-vacuous on the F32 path (not just Q8).
+Verified by-construction: f32_mm_body (forward.c:174) + qz_q4_body (quant.c:118) +
+qz_q8_body partition by OUTPUT row only; inner acc+= left-fold is the unmodified
+serial order; contraction never split.
+
+CROWN UNTOUCHED: git show 0481b5ed | grep rw[]/gl_merge/r_backward/dtr_train/dmn_
+-> NONE.
+
+NO REGRESSION: run_mc0 PASS, run_qmatmul PASS (oracle max abs 2.46e-05),
+run_kv 18/18 PASS, run_ss6 7/7 PASS. run_mc1.sh PASS end-to-end (real GGUF).
+
+IDLE: pool wake-count delta 0 across a 300ms gap, process CPU 0.0000s -> no
+busy-spin regression (reproduced twice).
+
+BARE-METAL + 4 BUILDS + PARITY: pk_parallel.c/quant.c/forward.c stay hosted-tier.
+Bare-metal x86 + aarch64 do NOT compile the LLM tier (student_stub.o weak
+fallbacks); kernel.elf (x86) + kernel.elf (aarch64) link clean with ZERO
+pk_parallel/pthread symbols (nm). Hosted linux_x86_64 p-kernel DOES export
+pk_parallel_rows_gated/min_macs. All 4 builds green. check_parity OK.
+
+NOTE (cosmetic, not a bug): pk_parallel.h header comment claims an "inline
+fallback below" runs body() serially when PK_PARALLEL_HAVE_POOL is undefined, but
+there is no such inline fallback in the header. Harmless because bare-metal never
+references these symbols (LLM tier not compiled). Stale doc, not a defect.
+
+LEDGER: row CLOSED. The one mind stays one — byte-identical across every worker
+count including odd/over-cap/looped, on the REAL teacher forward. No real bug found.

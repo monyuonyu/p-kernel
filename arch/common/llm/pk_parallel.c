@@ -49,6 +49,7 @@ static struct pk_pool g_pool;
 static pthread_once_t  g_once   = PTHREAD_ONCE_INIT;
 static int             g_inited = 0;       /* set iff pool came up cleanly  */
 static int             g_force_nw = 0;     /* cert override; <=0 = auto      */
+static int             g_last_par = 0;     /* gate decision of last gated call */
 
 /* ---- the deterministic partition (pure function of (out, NW)) ---------- */
 /* Slice s in [0,nw) owns rows [s*q + min(s,r), ...). A ragged remainder
@@ -202,4 +203,39 @@ void pk_parallel_rows(size_t out, pk_row_body body, void *ctx)
     while (g_pool.done < g_pool.nhelpers)
         pthread_cond_wait(&g_pool.done_cv, &g_pool.mtx);
     pthread_mutex_unlock(&g_pool.mtx);
+}
+
+/* ---- the out*in size gate (MC-1) -------------------------------------- */
+size_t pk_parallel_min_macs(void)
+{
+    const char *e = getenv("PKERNEL_MATMUL_MIN_MACS");
+    if (e && *e) {
+        /* a non-negative override; "0" = always (above the row floor). */
+        long long v = atoll(e);
+        if (v >= 0) return (size_t)v;
+    }
+    return (size_t)PK_PARALLEL_MIN_MACS;
+}
+
+int pk_parallel_last_was_parallel(void)
+{
+    return g_last_par;
+}
+
+void pk_parallel_rows_gated(size_t out, size_t in_per_row,
+                            pk_row_body body, void *ctx)
+{
+    /* THE GATE: parallelize only when the total work out*in clears the MACs
+     * threshold. Below it (the d=128 student expert, R3 48x48, small q/k/v
+     * projections) run the serial inline body — byte-identical, zero overhead,
+     * and faster than paying dispatch/join. (plan §2.4, §5; the crossover is
+     * measured in tests/llm/run_mc1.sh.) */
+    size_t macs = out * in_per_row;
+    if (macs < pk_parallel_min_macs()) {
+        g_last_par = 0;
+        body(ctx, 0, out);             /* serial inline — identical bits */
+        return;
+    }
+    g_last_par = 1;
+    pk_parallel_rows(out, body, ctx);  /* partition by OUTPUT row only */
 }

@@ -96,31 +96,39 @@ int qz_matmul_q8_0(const uint8_t *w_data, size_t in, size_t out,
     const size_t row_bytes = nblk * (2 + QK8_0);/* 2-byte d + 32 int8      */
 
     /* Partition the OUTPUT rows [0,out) across the math-only worker pool;
-     * each worker runs qz_q8_body over its disjoint range. NW==1 / small
-     * out / no pool => inline serial call => identical bits. Never splits
-     * the contraction (plan §1.3). */
+     * each worker runs qz_q8_body over its disjoint range. The out*in size
+     * gate keeps small matmuls serial; NW==1 / small out / no pool => inline
+     * serial call => identical bits. Never splits the contraction (plan §1.3,
+     * §2.4). */
     struct qz_q8_ctx ctx = { w_data, x, y, nblk, row_bytes };
-    pk_parallel_rows(out, qz_q8_body, &ctx);
+    pk_parallel_rows_gated(out, in, qz_q8_body, &ctx);
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* Q4_0                                                               */
 /* ------------------------------------------------------------------ */
-int qz_matmul_q4_0(const uint8_t *w_data, size_t in, size_t out,
-                   const float *x, float *y)
+/* Per-dispatch context for the row-partitioned Q4_0 matmul. The body runs the
+ * UNMODIFIED serial inner loop for output rows i in [i0,i1) — byte-for-byte
+ * the serial result (plan §1.2, MC-1). */
+struct qz_q4_ctx {
+    const uint8_t *w_data;
+    const float   *x;
+    float         *y;
+    size_t         nblk;
+    size_t         row_bytes;
+};
+
+static void qz_q4_body(void *vctx, size_t i0, size_t i1)
 {
-    if (in % QK4_0 != 0) return -1;
+    const struct qz_q4_ctx *c = (const struct qz_q4_ctx *)vctx;
 
-    const size_t nblk      = in / QK4_0;          /* blocks per row        */
-    const size_t row_bytes = nblk * (2 + QK4_0/2);/* 2-byte d + 16 packed  */
-
-    for (size_t i = 0; i < out; i++) {
-        const uint8_t *row = w_data + i * row_bytes;
+    for (size_t i = i0; i < i1; i++) {
+        const uint8_t *row = c->w_data + i * c->row_bytes;
         float acc = 0.0f;
         size_t base = 0;
 
-        for (size_t b = 0; b < nblk; b++) {
+        for (size_t b = 0; b < c->nblk; b++) {
             const uint8_t *blk = row + b * (2 + QK4_0/2);
             const float d = qz_fp16_to_fp32(rd_u16le(blk));
             const uint8_t *qs = blk + 2;
@@ -130,13 +138,27 @@ int qz_matmul_q4_0(const uint8_t *w_data, size_t in, size_t out,
             for (int j = 0; j < QK4_0/2; j++) {
                 const int x0 = (qs[j] & 0x0F) - 8;     /* element j         */
                 const int x1 = (qs[j] >>   4) - 8;     /* element j + 16    */
-                acc += (d * (float)x0) * x[base + (size_t)j];
-                acc += (d * (float)x1) * x[base + (size_t)j + QK4_0/2];
+                acc += (d * (float)x0) * c->x[base + (size_t)j];
+                acc += (d * (float)x1) * c->x[base + (size_t)j + QK4_0/2];
             }
 
             base += QK4_0;
         }
-        y[i] = acc;
+        c->y[i] = acc;
     }
+}
+
+int qz_matmul_q4_0(const uint8_t *w_data, size_t in, size_t out,
+                   const float *x, float *y)
+{
+    if (in % QK4_0 != 0) return -1;
+
+    const size_t nblk      = in / QK4_0;          /* blocks per row        */
+    const size_t row_bytes = nblk * (2 + QK4_0/2);/* 2-byte d + 16 packed  */
+
+    /* Same output-row partitioning + size gate as Q8_0 (plan §1.3, §2.4):
+     * inner contraction NOT split -> byte-identical across worker counts. */
+    struct qz_q4_ctx ctx = { w_data, x, y, nblk, row_bytes };
+    pk_parallel_rows_gated(out, in, qz_q4_body, &ctx);
     return 0;
 }

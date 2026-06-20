@@ -27,6 +27,7 @@
  */
 #include "forward.h"
 #include "quant.h"
+#include "pk_parallel.h"
 #include <stdlib.h>     /* malloc / free — host/Android tier (conversation §2) */
 
 /* ============================== libc-free math ============================ */
@@ -152,10 +153,34 @@ static void layer_name(char *buf, int layer, const char *suffix)
 }
 
 /* ============================== generic matmul =========================== */
+/* Per-dispatch context for the row-partitioned F32 dense matmul. The body runs
+ * the UNMODIFIED serial inner loop for output rows i in [i0,i1) — same left-
+ * fold order, byte-for-byte the serial result (plan §1.2, MC-1). */
+struct f32_mm_ctx {
+    const float *wf;        /* [out][in] row-major weights */
+    const float *x;         /* [in] input vector           */
+    float       *y;         /* [out] result                */
+    size_t       in;        /* contraction length          */
+};
+
+static void f32_mm_body(void *vctx, size_t i0, size_t i1)
+{
+    const struct f32_mm_ctx *c = (const struct f32_mm_ctx *)vctx;
+    const size_t in = c->in;
+    for (size_t i = i0; i < i1; i++) {
+        float acc = 0.0f;
+        const float *row = c->wf + i * in;
+        for (size_t j = 0; j < in; j++) acc += row[j] * c->x[j];
+        c->y[i] = acc;
+    }
+}
+
 /* y[i] = sum_j W[i][j] * x[j], W = tensor[in=ne0, out=ne1]. Dispatches on the
  * tensor's quant type. Q8_0 reuses M1b; F32 is a plain dense matmul (added in
  * M1c per the brief — norm weights are F32, and a portable Llama may store any
- * matrix as F32). Returns 0 / negative. */
+ * matrix as F32). Both heavy paths partition by OUTPUT row behind the out*in
+ * size gate (MC-1) — byte-identical to the serial loop, contraction never
+ * split (plan §1.3, §2.4). Returns 0 / negative. */
 static int matmul_tensor(const gguf_tensor *w, const float *x, float *y)
 {
     const size_t in  = (size_t)w->dims[0];
@@ -164,13 +189,8 @@ static int matmul_tensor(const gguf_tensor *w, const float *x, float *y)
         return qz_matmul_q8_0(w->data, in, out, x, y);
     }
     if (w->type == GGML_TYPE_F32) {
-        const float *wf = (const float *)w->data;
-        for (size_t i = 0; i < out; i++) {
-            float acc = 0.0f;
-            const float *row = wf + i * in;
-            for (size_t j = 0; j < in; j++) acc += row[j] * x[j];
-            y[i] = acc;
-        }
+        struct f32_mm_ctx ctx = { (const float *)w->data, x, y, in };
+        pk_parallel_rows_gated(out, in, f32_mm_body, &ctx);
         return 0;
     }
     return LM_E_TYPE;
