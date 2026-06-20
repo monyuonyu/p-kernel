@@ -14,10 +14,18 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 (their docs' "not started"/"実装前" Status lines are STALE → fix them, see bottom).
 
 ## 🟡 IN FLIGHT (background lanes)
-- **KV cache** (faster chat) — in separate audit; on PASS → 0.9.3 build (with Note10 fix + ⑤).
-- **survival-§7/G38 design-harden** — automated cert-first design workflow → an implementation-ready plan doc (read-only on code).
+- **SS-6** cross-node expert firing (the F4 capstone, student.c — in-process byte-equiv cert) · **federation R0** design-harden (the 2-cluster live slice = the critique's flagged priority, read-only).
 
-## ✅ DONE THIS SESSION (on trunk, NOT yet in an APK — next APK = 0.9.3)
+## ✅ DONE THIS SESSION (on trunk `9e50e4a8`, NOT yet in an APK — next APK = 0.9.3)
+- **KV cache** (`4c58a231`): O(1)/byte incremental gen, byte-identical to recompute cross-arch, 4.66→50x. Audit PASS.
+- **§7 G38.0** (`9f7a9bc4`): the `moe_select_step` testable seam (trap-A2 closed). Audit PASS. **G38.1+ gacc learning ON HOLD for mk_pino.**
+- **SS-5** (`9e50e4a8`): deterministic expert placement (HRW, NOCENTRAL, cross-ABI byte-identical, minimal-disruption re-home). Audit PASS (10k-delta stress).
+- **T-fix-a** (`5270bbae`): NOCENTRAL teacher-capability gossip (bit 1) + `region_teacher()` selector; `teacher_self()` gated on a real GGUF load. Audit PASS (rx-relay 5th-site bug self-caught+fixed).
+- **Design plans** (cert-first, each caught a real live-code bug): `survival-g38-impl-plan.md` (§7 gacc) · `thread-t-impl-plan.md` (teaching).
+- **self-access R0** (`d730175e`): READ-ONLY body introspection verb `body` + Q3 self/lin lineage append (1/invocation, tamper-evident). Separate audit PASS / ledger CLOSE.
+- **N-2 slice 1** (`1f656c3c`): the emergent-supernode deterministic selector + host cert (see Thread N below). Separate audit PASS-WITH-NITS / CLOSE (auditor falsified the cert by sabotage → it correctly went RED).
+- **N-2b SWIM capability-bit gossip** (wave-n2b-capability-gossip): makes slice-1's `super_capable[]` table FLEET-REAL — each node self-declares capability (`PKERNEL_SUPERNODE`) and it propagates over SWIM, converging every node on the same supernode with NO vote. Reuses the reserved `_pad` byte of `SWIM_GOSSIP_EVT` (wire byte-identical, **`SWIM_VERSION` NOT bumped** → old nodes emit 0 = non-capable = relay-fallback, never crash). Self-authoritative + relayed verbatim; applied under the SAME `(incarnation,state)` LWW gate (no regress on a stale rumor). Host cert `swim_cap_gossip_self_test()` (verb `nodes cap`): converge + staleness + falsifiable (sabotage-rebuild → RED), PASS on aarch64+x86_64 linux; `nodes test`/`region test` regress clean. Honest bound: capability env-fixed at init (no runtime flip yet); true multi-process live mesh left as a deferred `[live]` row.
+- **interoception slice-1** (`9e5529a2`): the unified stress **S_n bus** (`arch/common/interocept.c`, integer EWMA over REAL sources: reflex-threat/SWIM-RTT/in-context-surprise/ring3-fault/degrade) → **DMN idle-threshold modulation** (stress shrinks the sleep gap, deadband-16 + hysteresis, only pulls down) + **galaxy me-star real mood/hue** (`me.s_n`/`me.s_axis`). Separate audit PASS. Apoptosis (slice-2) still queued.
 - **self-access R0** (`d730175e`): READ-ONLY body introspection verb `body` + Q3 self/lin lineage append (1/invocation, tamper-evident). Separate audit PASS / ledger CLOSE.
 - **N-2 slice 1** (`1f656c3c`): the emergent-supernode deterministic selector + host cert (see Thread N below). Separate audit PASS-WITH-NITS / CLOSE (auditor falsified the cert by sabotage → it correctly went RED).
 - **N-2b SWIM capability-bit gossip** (wave-n2b-capability-gossip): makes slice-1's `super_capable[]` table FLEET-REAL — each node self-declares capability (`PKERNEL_SUPERNODE`) and it propagates over SWIM, converging every node on the same supernode with NO vote. Reuses the reserved `_pad` byte of `SWIM_GOSSIP_EVT` (wire byte-identical, **`SWIM_VERSION` NOT bumped** → old nodes emit 0 = non-capable = relay-fallback, never crash). Self-authoritative + relayed verbatim; applied under the SAME `(incarnation,state)` LWW gate (no regress on a stale rumor). Host cert `swim_cap_gossip_self_test()` (verb `nodes cap`): converge + staleness + falsifiable (sabotage-rebuild → RED), PASS on aarch64+x86_64 linux; `nodes test`/`region test` regress clean. Honest bound: capability env-fixed at init (no runtime flip yet); true multi-process live mesh left as a deferred `[live]` row.
@@ -56,6 +64,17 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 
 ### Thread P — product / hardware
 - Play Store public release (UMP/ark Phase D) · aarch64 real hardware (RPi3) + netboot · doc physical-halve + artifact rename (the critique's shrink move; "年輪" growth accepted, so this is light).
+
+### Thread X — EXCAVATED (was designed/decided in memory+md but NOT tracked here; folded in 2026-06-20)
+- **WebOS — human computing environment** (`web-os.md`, `project_webos_human_environment`): on TOP of yurikago, a HUMAN-facing Web OS served from the node (responsive: desktop on PC, mobile shell on phone) — the human's window onto the SAME p-fs/shell/mind substrate self-access gives the AI. DISTINCT from imaginary-UI (AI-conjured GUIs). Design-doc-first, multi-wave. **[big, untracked]**
+- **LM scale wall — a real conversational model** (`project_next_phase_vision` bucket 2; surveys done: `base-model-survey.md`, `conversation.md`, `moe-distillation-survey.md`): scale the byte student toward a genuinely capable conversational mind (beyond watch-class M). SS-7 (bigger baby) is one lever; the broader strategy is bigger. **[strategic]**
+- **device-capacity — 端末性能に応じたサイズ** (`device-capacity.md` DRAFT + `device-capacity-verdict.md` = DEFER): tier/neuron-count by device capability. `capacity(N)`/tiers partly wired (degrade.c); device-tier-aware sizing DEFERRED.
+- **GPU** (`gpu-compute.md`: Vulkan matmul backend SHIPPED, integration pre-impl · `gpu-3-wiring.md`: design+critique done, **DEFER**): resource-aware GPU acceleration. Partly done.
+- **ark app UX queue** (`feedback_ump_ux_principles`): pop picture-rich 3-4 page intro (the big one) · page-chrome i18n for the other ~30 langs · key-derived unique node id · on-device salty-cert harness · MainActivity auto-path log-drain.
+- **r3-model-widening** (`r3-model-widening.md`, design only) — likely == Thread R "regions R3 width".
+- principle (not a task): **「いいねのない銀河」** (`project_recognition_layers`) — UX rule: feedback from the SYSTEM yes, human-vs-human comparison no.
+
+> **PRIORITY NOTE (2026-06-14 critique steer):** "more features/LM < foundation + **federation** + honest finitude." The foundation crack (KILL-CHURN #PF) is CURED (wave-56); the live remaining steer is **federation** (254→10k) — hence the federation-R0 design-harden in flight. Keep the dream-tier names + co-located honest labels; keep `[live]`/`[in-proc]` mechanical tags.
 
 ## DOC-STATUS FIXES (stale "not started/実装前" lines to correct)
 galaxy.md, ark-profile.md, signing.md, persistence.md, living-mind.md, inference-engine.md,
