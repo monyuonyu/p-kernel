@@ -606,6 +606,49 @@ int student_shell_cmd(const char *args, emit_fn emit)
     float lr = 3e-3f;
     int loss_only = 0;
 
+    /* ---- SS-3 (special-structure-mind.md §3.2/§8.4): same-tier merge cohort.
+     * `student merge` / `baby merge` drives the REAL student-only weight merge
+     * (st_merge_cohort) in-process: it builds a SAME-TIER peer, trains it on the
+     * shared teacher fixture in a different order, then averages it into the
+     * resident baby and prints the accepted-peer count + held-out loss before/
+     * after. This is the student's OWN merge — it never calls gl_merge / touches
+     * R3's rw[] ([baby-merge-isolation]). HONEST: averaging converges minds on a
+     * SHARED objective; divergent-fact recovery is Path-W^2, out of scope. */
+    if (p[0]=='m' && p[1]=='e' && p[2]=='r' && p[3]=='g' && p[4]=='e') {
+        int sl = 24, rr = 40;
+        int cn = (int)sizeof(TEACHER_FIXTURE) - 1;
+        int tot = cn / sl, tw = tot * 3 / 4; if (tw < 2) tw = 2;
+        int hw = tot - tw; if (hw < 1) hw = 1; int te = tw * sl;
+
+        st_model peer;
+        if (st_init_tier(&peer, 0x5151u, g_student.tier) != ST_OK) {
+            emit("[baby] merge: peer init OOM\r\n"); return -1;
+        }
+        /* train the peer on the SAME fixture but rotated order (compatible
+         * objective, different SGD path) — reuse the resident sleep loop. */
+        sleep_rounds(&peer, sl, tw, rr, 2e-2f);
+
+        float pre = heldout_loss(&g_student, sl, te, hw);
+        size_t cap = st_blob_size(&peer);
+        unsigned char *blob = (unsigned char *)malloc(cap);
+        if (!blob) { st_free(&peer); emit("[baby] merge: blob OOM\r\n"); return -1; }
+        long blen = st_save(&peer, blob, cap);
+        const void *peers[1] = { blob };
+        size_t lens[1] = { (size_t)blen };
+        int acc = st_merge_cohort(&g_student, peers, lens, 1);
+        float post = heldout_loss(&g_student, sl, te, hw);
+        free(blob); st_free(&peer);
+
+        snprintf(line, sizeof line,
+                 "[baby] SS-3 cohort merge: tier=%d accepted_peers=%d  "
+                 "held-out loss %.4f -> %.4f nats\r\n",
+                 g_student.tier, acc, (double)pre, (double)post);
+        emit(line);
+        emit("[baby] (averaging converges a SHARED objective; divergent-fact "
+             "recovery is Path-W^2, out of scope — wave-41)\r\n");
+        return acc >= 0 ? 0 : -1;
+    }
+
     if (p[0] == 'l' && p[1] == 'o' && p[2] == 's' && p[3] == 's') {
         loss_only = 1;
     } else if (*p) {

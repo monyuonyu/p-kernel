@@ -159,6 +159,98 @@ INT gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n)
 }
 
 /* ------------------------------------------------------------------ */
+/* SS-3 — chunked p-fs transport for the (multi-MB) STUDENT blob.      */
+/*                                                                     */
+/* The student blob is far larger than one PFS_BLOCK_MAX block, so it   */
+/* is SPLIT into ≤PFS_BLOCK_MAX-byte chunk objects + a tiny header      */
+/* object.  Refs live in "st/<node>/<i>" (<=PFS_NAME_MAX).  Static      */
+/* scratch (one block + one header) — never the task stack             */
+/* (feedback_hosted_relay_stack_overflow).  Shell-task only.           */
+/* ------------------------------------------------------------------ */
+
+#define GL_ST_CHUNK  PFS_BLOCK_MAX        /* bytes per chunk object          */
+#define GL_ST_MAGIC  0x53544831u          /* "STH1" little-endian header tag */
+
+/* header object payload: total byte length + chunk count + magic. */
+typedef struct __attribute__((packed)) {
+    UW magic;        /* GL_ST_MAGIC                         */
+    UW total_len;    /* full student-blob byte length       */
+    UW nchunk;       /* number of chunk objects             */
+} GL_ST_HDR;
+
+static UB gl_st_chunk[GL_ST_CHUNK];       /* one chunk's transfer scratch    */
+static GL_ST_HDR gl_st_hdr;               /* the header transfer scratch     */
+
+/* build the chunk/header ref "st/<node>/<i>" or "st/<node>/h" (<=16 chars).
+ * Returns the ref length. `i` < 0 selects the header suffix 'h'. */
+static UW gl_student_ref(char *out, UB node, INT i)
+{
+    UW k = 0;
+    out[k++] = 's'; out[k++] = 't'; out[k++] = '/';
+    if (node >= 10) out[k++] = (char)('0' + (node / 10) % 10);
+    out[k++] = (char)('0' + node % 10);
+    out[k++] = '/';
+    if (i < 0) { out[k++] = 'h'; return k; }
+    /* up-to-5-digit chunk index, ascending-digit emit (no leading zeros). */
+    UW v = (UW)i; char tmp[6]; INT t = 0;
+    if (v == 0) tmp[t++] = '0';
+    while (v > 0 && t < 6) { tmp[t++] = (char)('0' + v % 10); v /= 10; }
+    while (t > 0) out[k++] = tmp[--t];
+    return k;
+}
+
+INT gl_student_publish(UB node, const void *blob, UW len)
+{
+    if (!blob || len == 0) return -1;
+    UW nchunk = (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK;
+    if (nchunk > GL_ST_MAXCHUNK) return -1;        /* refuse, NEVER truncate  */
+
+    const UB *src = (const UB *)blob;
+    for (UW c = 0; c < nchunk; c++) {
+        UW off = c * GL_ST_CHUNK;
+        UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
+        for (UW i = 0; i < clen; i++) gl_st_chunk[i] = src[off + i];
+        char ref[20]; UW rl = gl_student_ref(ref, node, (INT)c);
+        if (pfs_dag_save((const UB *)ref, rl, gl_st_chunk, clen) != PFS_OK)
+            return -1;
+    }
+    /* header LAST: a reader that sees the header is guaranteed the chunks
+     * were published (best-effort ordering for the eventual-consistency mesh). */
+    gl_st_hdr.magic = GL_ST_MAGIC;
+    gl_st_hdr.total_len = len;
+    gl_st_hdr.nchunk = nchunk;
+    char href[20]; UW hrl = gl_student_ref(href, node, -1);
+    if (pfs_dag_save((const UB *)href, hrl, &gl_st_hdr, sizeof gl_st_hdr) != PFS_OK)
+        return -1;
+    return (INT)nchunk;
+}
+
+INT gl_student_fetch(UB node, void *out, UW cap)
+{
+    if (!out) return -1;
+    char href[20]; UW hrl = gl_student_ref(href, node, -1);
+    INT hr = pfs_dag_read((const UB *)href, hrl, &gl_st_hdr, sizeof gl_st_hdr);
+    if (hr != (INT)sizeof gl_st_hdr) return -1;
+    if (gl_st_hdr.magic != GL_ST_MAGIC) return -1;
+    UW len = gl_st_hdr.total_len, nchunk = gl_st_hdr.nchunk;
+    if (len == 0 || nchunk == 0 || nchunk > GL_ST_MAXCHUNK) return -1;
+    if (len > cap) return -1;                       /* refuse, NEVER truncate  */
+    UW expect = (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK;
+    if (nchunk != expect) return -1;                /* header/length mismatch  */
+
+    UB *dst = (UB *)out;
+    for (UW c = 0; c < nchunk; c++) {
+        UW off = c * GL_ST_CHUNK;
+        UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
+        char ref[20]; UW rl = gl_student_ref(ref, node, (INT)c);
+        INT r = pfs_dag_read((const UB *)ref, rl, gl_st_chunk, GL_ST_CHUNK);
+        if (r != (INT)clen) return -1;              /* chunk missing / wrong   */
+        for (UW i = 0; i < clen; i++) dst[off + i] = gl_st_chunk[i];
+    }
+    return (INT)len;
+}
+
+/* ------------------------------------------------------------------ */
 /* dataset — deterministic synthetic sensor readings.                  */
 /*                                                                     */
 /* Same task family as dtr_train.c (latent temperature -> 3 classes,   */

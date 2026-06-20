@@ -1,13 +1,15 @@
 # special-structure-mind — the unified, fleet-sized, sparse, cross-node mind
 
-**Status: ROADMAP — PARTIALLY SHIPPED (SS-1 + SS-2 live; SS-3..7 still design). 2026-06-19.
+**Status: ROADMAP — PARTIALLY SHIPPED (SS-1 + SS-2 + SS-3 live; SS-4..7 still design). 2026-06-19.
 Grounds every claim in code on `wave-i18n-galaxy`.**
 What actually shipped: **SS-1** (adaptive-K firing — heavy tokens fire a WIDER expert set;
-the router + runtime `topk_n` + `st_last_fire_width` observability in `arch/common/llm/student.c`)
-and **SS-2** (the S/M/L tier scaffolding — runtime dims + the `ST_TIERS` table, M-tier
-byte-identical to the legacy baby). SS-3 (merge cohorts), SS-4 (function-preserving expert
-growth), SS-5 (deterministic placement), SS-6 (cross-node firing; needs the KV cache), SS-7
-(bigger baby) remain genuine design. This is the multi-wave plan to turn mk_pino's four-feature
+the router + runtime `topk_n` + `st_last_fire_width` observability in `arch/common/llm/student.c`),
+**SS-2** (the S/M/L tier scaffolding — runtime dims + the `ST_TIERS` table, M-tier
+byte-identical to the legacy baby), and **SS-3** (same-tier merge cohorts — the student's OWN
+isolated weight average `st_merge_cohort` + chunked p-fs transport `gl_student_publish`/`_fetch`;
+cohort = tier, cross-tier REFUSED; never calls `gl_merge` / touches R3 `rw[]`; cert `run_ss3.sh`).
+SS-4 (function-preserving expert growth), SS-5 (deterministic placement), SS-6 (cross-node
+firing; needs the KV cache), SS-7 (bigger baby) remain genuine design. This is the multi-wave plan to turn mk_pino's four-feature
 vision (脳サイズがノード数で伸縮 / 真の疎 MoE / 重い仕事ほど広い領域が発火 / 分散合意 /
 複数ノードをまたぐ一回の forward) from today's hariboté into a real unified mind.
 
@@ -294,10 +296,36 @@ Cheapest/highest-value first. Honest about what needs a bigger model first.
    tier struct; bound all scratch to `ST_*_MAX` (kill the VLA risk); add a tier byte to
    `st_save`/`st_load` header. Cert: `[no-vla]` (build + stack-bound check), `[tier-load]`
    (S/M/L round-trip), M-tier numerically identical to today.
-4. **SS-3 — same-tier merge-cohorts (§3.2).** Variable-length p-fs publish/fetch for the
-   student blob (today `gl_blob` is fixed R3-class), cohort = same tier. Cert: two M-tier
-   nodes converge by student-merge; a mixed S/M pair does NOT cross-merge (islands by
-   construction, honest).
+4. **SS-3 — same-tier merge-cohorts (§3.2). SHIPPED 2026-06-19 (wave-ss3-merge-cohorts).**
+   The student's OWN, isolated weight average `st_merge_cohort` (`arch/common/llm/student.c`):
+   canonical reduction (self first, then peers ascending; plain sum then one divide — no new
+   transcendental, no libc math, `-O1 -ffp-contract=off`). **2-way is byte-identical** —
+   `merge(A,{B}) == merge(B,{A})` (the cert + contract case). For N≥3 cohorts the result is
+   deterministic per the SAME accepted-set but NOT byte-identical across a different *aggregator*
+   (FP add is non-associative; audit measured ~0.4M/1.9M weights differ) — **convergence, not
+   bit-identity, is the goal** (each node merges with itself as `into`; standard FedAvg). Cohort
+   = TIER: the SAME fail-closed `st_blob_tier_ok` guard
+   `st_load` uses gates every peer, so a cross-tier blob is REFUSED (islands by construction);
+   it NEVER calls `gl_merge`/`gl_merge_w` and NEVER touches R3 `rw[]` ([baby-merge-isolation]
+   re-confirmed). Variable-length p-fs transport `gl_student_publish`/`gl_student_fetch`
+   (`arch/common/gossip_learn.c`): the multi-MB student blob is CHUNKED across ≤`PFS_BLOCK_MAX`
+   (4096-byte) objects + a header object (`gl_blob` is fixed R3-class and too small) — a blob
+   needing > `GL_ST_MAXCHUNK` chunks is REFUSED, never truncated.
+   - **Cert (`tests/llm/run_ss3.sh`, in-process, no network):** `[ss3-cohort-converge]` (two
+     M-tier minds, shared objective, different orderings → merged held-out loss ≤ the worse
+     parent AND merge(A,{B}) bytes == merge(B,{A}) bytes); `[ss3-cohort-island]` (an S blob
+     into an M merge is REFUSED, M weights byte-unchanged); `[ss3-merge-falsifiable]` (a
+     1e-3-perturbed peer breaks the symmetry — the cert can FAIL); `[baby-merge-isolation]` +
+     `[no-vla]` (`-Werror=vla`) re-confirmed. Measured: merged loss 2.65 ≤ worse 3.56 (6/6 PASS).
+   - **HONEST (Path-W, memory `moment_2026_06_12_wave41_one_mind`):** averaging is the MECHANISM
+     and converges minds toward a SHARED/compatible objective; it is LOSSY for two minds that
+     learned DIFFERENT facts (one survives, one decays toward chance). This wave proves the
+     mechanism, NOT divergent-fact preservation — union-replay / Fisher recovery is Path-W² and
+     OUT OF SCOPE here.
+   - **HONEST (blob size):** even the S tier is ~1.9 MB ≈ 480 chunks; M ~22 MB ≈ 5577 chunks;
+     L ~247 MB ≈ 60330 chunks (> `GL_ST_MAXCHUNK`, so L-over-relay is a documented bound). The
+     LIVE chunked publish/fetch over the relay is a DEFERRED `[live]` row; the converge claim is
+     in-process and needs no network. Adam moments are RESET (not averaged) post-merge (FedAvg).
 5. **SS-4 — function-preserving expert growth (§3.1).** `cap_experts_of(N)` now SIZES the
    router. Cert: `[grow-preserves]` (ε-unchanged output at growth) + `[grow-then-learn]`
    (distill lowers loss after growth). **Needs SS-2/3 first; benefit is small until the

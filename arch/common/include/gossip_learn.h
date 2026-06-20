@@ -110,6 +110,44 @@ INT  gl_pfs_publish(const char *ref, UW reflen, const float *w, UW n);
 INT  gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n);
 
 /* ------------------------------------------------------------------ */
+/* SS-3 — VARIABLE-LENGTH (chunked) p-fs transport for the STUDENT blob */
+/* (special-structure-mind.md §3.2/§8.4). gl_blob above is a FIXED      */
+/* R3-class single block; a student blob is st_blob_size(m) which VARIES */
+/* by tier and is FAR larger than PFS_BLOCK_MAX (even the S tier is      */
+/* ~1.9 MB ≈ 480 blocks). So the student blob is SPLIT into ≤PFS_BLOCK_  */
+/* MAX-byte chunks, each saved as its OWN versioned p-fs object, plus a  */
+/* tiny header object recording the total length + chunk count. NO       */
+/* silent truncation: a blob that needs more than GL_ST_MAXCHUNK chunks  */
+/* is REFUSED (returns <0). This transport is THIN; the merge LOGIC      */
+/* (st_merge_cohort) is the heart.                                       */
+/*                                                                       */
+/* The chunk ref namespace is "st/<node>/<i>" (<=PFS_NAME_MAX=16 chars). */
+/* ------------------------------------------------------------------ */
+
+/* upper bound on chunks per student blob. PFS_BLOCK_MAX=4096; the M-tier
+ * blob (~22 MB) needs ~5577 chunks, the L-tier (~247 MB) ~60330 — both
+ * honest, large numbers. GL_ST_MAXCHUNK caps the publish loop; a blob that
+ * would exceed it is refused, never truncated. Sized to admit the M tier
+ * comfortably (the watch-class default); the L tier over the relay is a
+ * documented [live] follow-up, not silently broken. */
+#define GL_ST_MAXCHUNK  8192u
+
+/* Publish `len` bytes of the resident student blob under this node's chunk
+ * namespace (node id `node`). Splits into ceil(len/PFS_BLOCK_MAX) chunk
+ * objects + a header object "st/<node>/h". Returns the number of chunks
+ * written (>=0), or <0 on pfs error / too many chunks (NO truncation).
+ * Shell-task context only. */
+INT  gl_student_publish(UB node, const void *blob, UW len);
+
+/* Fetch peer `node`'s most-recent published student blob into out[cap].
+ * Reads the header object, then each chunk object in ASCENDING order. On
+ * success writes the full blob into out[] and returns its byte length;
+ * returns <0 if the header / any chunk is not local yet (a P1 WANT is
+ * issued so a retry may succeed), if cap is too small (NO truncation), or
+ * on a malformed header. Shell-task context only. */
+INT  gl_student_fetch(UB node, void *out, UW cap);
+
+/* ------------------------------------------------------------------ */
 /* in-process self-test ([g22-shard-solo] / [g22-gossip-learn] /       */
 /* [g22-no-central]) — greppable, wired to CI                          */
 /* ------------------------------------------------------------------ */

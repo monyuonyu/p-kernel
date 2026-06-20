@@ -254,6 +254,57 @@ long st_save(const st_model *m, void *buf, size_t cap);
  * Returns ST_OK on success, negative on reject. */
 int  st_load(st_model *m, const void *buf, size_t len);
 
+/* ---- SS-3 same-tier merge cohorts (special-structure-mind.md §3.2, §8.4) ----
+ *
+ * The student is NEVER folded into R3's fleet crown (gl_merge of rw[]); it has
+ * its OWN, isolated, student-only weight merge so heterogeneous tiers can never
+ * threaten the R3 collective ([baby-merge-isolation]). The merge cohort is the
+ * TIER: S averages with S, M with M, L with L — a cross-tier blob is REFUSED by
+ * construction (an honest island; the only cross-tier bridge is distillation,
+ * out of scope here).
+ *
+ * st_blob_tier_ok: return 1 iff `buf` is a well-formed student blob whose
+ * tier/dims/n_params/vocab EXACTLY match the resident model `m` (the SAME fail-
+ * closed predicate st_load uses, factored out so the merge can REFUSE a peer
+ * blob WITHOUT mutating m). 0 (refused) on any mismatch/short buffer. Pure
+ * read; does not touch m. */
+int  st_blob_tier_ok(const st_model *m, const void *buf, size_t len);
+
+/* st_merge_cohort: average the WEIGHTS (w[]) of `into` with `count` SAME-TIER
+ * peer student blobs, folding the plain (uniform) mean back into into->w[]. The
+ * resident model `into` is itself a cohort member: the mean is over {into} U the
+ * accepted peers, so a single-peer merge is the 2-way average (into + peer)/2.
+ *
+ * HONESTY (Path-W, memory moment_2026_06_12_wave41_one_mind): naive weight-
+ * averaging is the MECHANISM, and it CONVERGES two minds toward a SHARED /
+ * compatible objective. It is LOSSY for two minds that learned DIFFERENT facts
+ * (one fact survives, one decays toward chance) — union-replay / Fisher recovery
+ * of divergent facts is Path-W² and OUT OF SCOPE here. This merges weights, not
+ * memories.
+ *
+ * Determinism / one-math (wave-49): the reduction is a fixed CANONICAL order
+ * (into first, then peers in ASCENDING index), a plain sum then a single divide
+ * by the accepted count — no reassociated sums, no new transcendental, no libc
+ * math. So merge(A,B) is byte-identical to merge(B,A) up to the accepted-set
+ * being the same set, and the result is identical across arches under
+ * -O1 -ffp-contract=off.
+ *
+ * Tier guard (islands by construction): each peer blob is checked with
+ * st_blob_tier_ok BEFORE it is summed; a peer of a DIFFERENT tier/shape is
+ * SILENTLY SKIPPED (not coerced) — never mixed in. If NO peer is accepted the
+ * model is left BYTE-UNCHANGED (the [ss3-cohort-island] guarantee). The Adam
+ * moments mu[]/vu[] are RESET to 0 and adam_t to 0 after a successful merge
+ * (averaging foreign optimizer state is meaningless; the merged model resumes
+ * Adam fresh — the standard FedAvg choice, honestly noted).
+ *
+ * peer_blobs[i] / peer_lens[i] describe peer i's serialized st_save() blob.
+ * It MUST NOT call gl_merge/gl_merge_w and MUST NOT touch R3's rw[]
+ * (the [baby-merge-isolation] tripwire). Returns the number of peers ACCEPTED
+ * (0..count), or negative ST_E_ARG on bad args. */
+int  st_merge_cohort(st_model *into,
+                     const void *const *peer_blobs, const size_t *peer_lens,
+                     int count);
+
 /* ---- firing-width observability (SS-1) ----
  * Read-only: the number of experts the LAST st_forward fired on its FINAL
  * (most recent) token, final layer — the "answer token" firing width. This is

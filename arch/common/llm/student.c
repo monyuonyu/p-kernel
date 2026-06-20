@@ -1501,35 +1501,51 @@ long st_save(const st_model *m, void *buf, size_t cap)
  * same build — st_load reuses its arena). Verifies magic/version/dims against
  * THIS build and refuses any mismatch (returns negative). On success the
  * weights, Adam moments, and timestep are overwritten and ST_OK is returned. */
-int st_load(st_model *m, const void *buf, size_t len)
+/* SS-3: the SINGLE fail-closed predicate for "is `buf` a student blob that
+ * EXACTLY matches the resident model `m`'s tier+shape?".  Both st_load (which
+ * then copies the payload) and st_merge_cohort (which then averages it) gate on
+ * this — one source of truth for the tier/dim guard.  Pure read; never mutates
+ * m.  Returns 1 (accept) / 0 (refuse).  A blob shorter than the full payload is
+ * refused too (the SS-2 truncation check, folded in here). */
+int st_blob_tier_ok(const st_model *m, const void *buf, size_t len)
 {
-    if (!m || !m->w || !buf) return ST_E_ARG;
-    if (len < sizeof(ST_BLOB_HDR)) return ST_E_ARG;
+    if (!m || !buf) return 0;
+    if (len < sizeof(ST_BLOB_HDR)) return 0;
 
     ST_BLOB_HDR h;
     const unsigned char *p = (const unsigned char *)buf;
     for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
 
     /* fail-closed: a blob whose TIER or any dim differs from the resident model
-     * is REFUSED (the caller keeps its fresh-init weights).  Never load a
-     * mismatched-shape blob — that would mis-read the flat float payload.  The
-     * tier check is the SS-2 addition; the per-dim checks (now against the
-     * RUNTIME m->* dims) catch any same-tier shape drift across builds too. */
-    if (h.magic    != ST_BLOB_MAGIC)        return ST_E_ARG;
-    if (h.version  != ST_BLOB_VER)          return ST_E_ARG;
-    if (h.ns_ver   != (uint32_t)NS_STUDENT_VER) return ST_E_ARG;
-    if (h.tier     != (uint32_t)m->tier)    return ST_E_ARG;   /* SS-2 tier guard */
-    if (h.n_params != (uint32_t)m->n_params)    return ST_E_ARG;
-    if (h.vocab    != (uint32_t)ST_VOCAB)   return ST_E_ARG;
-    if (h.d_model  != (uint32_t)m->d)       return ST_E_ARG;
-    if (h.n_layer  != (uint32_t)m->nlayer)  return ST_E_ARG;
-    if (h.n_expert != (uint32_t)m->nexpert) return ST_E_ARG;
-    if (h.dff      != (uint32_t)m->dff)     return ST_E_ARG;
+     * is REFUSED.  Never accept a mismatched-shape blob — that would mis-read
+     * the flat float payload.  The tier check is the SS-2 addition; the per-dim
+     * checks (against the RUNTIME m->* dims) catch any same-tier shape drift. */
+    if (h.magic    != ST_BLOB_MAGIC)            return 0;
+    if (h.version  != ST_BLOB_VER)              return 0;
+    if (h.ns_ver   != (uint32_t)NS_STUDENT_VER) return 0;
+    if (h.tier     != (uint32_t)m->tier)        return 0;   /* SS-2 tier guard */
+    if (h.n_params != (uint32_t)m->n_params)    return 0;
+    if (h.vocab    != (uint32_t)ST_VOCAB)       return 0;
+    if (h.d_model  != (uint32_t)m->d)           return 0;
+    if (h.n_layer  != (uint32_t)m->nlayer)      return 0;
+    if (h.n_expert != (uint32_t)m->nexpert)     return 0;
+    if (h.dff      != (uint32_t)m->dff)         return 0;
+    if (len < st_blob_size(m))                  return 0;   /* truncated payload */
+    return 1;
+}
+
+int st_load(st_model *m, const void *buf, size_t len)
+{
+    if (!m || !m->w || !buf) return ST_E_ARG;
+    /* the SAME fail-closed tier/shape guard the merge reuses (SS-3). */
+    if (!st_blob_tier_ok(m, buf, len)) return ST_E_ARG;
+
+    const unsigned char *p = (const unsigned char *)buf;
+    ST_BLOB_HDR h;
+    for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
 
     size_t np = (size_t)m->n_params;
     size_t fbytes = np * sizeof(float);
-    size_t need = st_blob_size(m);
-    if (len < need) return ST_E_ARG;   /* truncated payload — refuse */
 
     size_t off = sizeof h;
     for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->w )[i] = p[off + i];
@@ -1542,6 +1558,72 @@ int st_load(st_model *m, const void *buf, size_t len)
     for (size_t i = 0; i < sizeof t; i++) ((unsigned char *)&t)[i] = p[off + i];
     m->adam_t = (int)t;
     return ST_OK;
+}
+
+/* read one float from a (possibly unaligned) student-blob byte stream at the
+ * w[] payload region: w starts immediately after the header. idx is a float
+ * index into w[]. Byte copy -> alignment-safe on every arch. */
+static float st_blob_w_at(const void *buf, size_t idx)
+{
+    const unsigned char *p = (const unsigned char *)buf + sizeof(ST_BLOB_HDR);
+    p += idx * sizeof(float);
+    float f;
+    for (size_t i = 0; i < sizeof f; i++) ((unsigned char *)&f)[i] = p[i];
+    return f;
+}
+
+/* ------------------------------------------------------------------ */
+/* SS-3 — same-tier merge cohort (special-structure-mind.md §3.2/§8.4) */
+/*                                                                     */
+/* The student's OWN, isolated weight merge.  It does NOT call gl_merge */
+/* / gl_merge_w and does NOT touch R3's rw[] (the [baby-merge-isolation]*/
+/* tripwire); it averages ONLY same-tier student w[] bodies.  Peer-     */
+/* symmetric + order-independent by a CANONICAL reduction (into first,  */
+/* then peers ascending), plain sum then one divide — no reassociated   */
+/* sums, no new transcendental, no libc math (wave-49 one-math).        */
+/* ------------------------------------------------------------------ */
+int st_merge_cohort(st_model *into,
+                    const void *const *peer_blobs, const size_t *peer_lens,
+                    int count)
+{
+    if (!into || !into->w) return ST_E_ARG;
+    if (count < 0) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens)) return ST_E_ARG;
+
+    /* PASS 1 — tier guard: accept only peers whose tier+shape EXACTLY match the
+     * resident model (st_blob_tier_ok, the same fail-closed predicate st_load
+     * uses).  A cross-tier / wrong-shape / short blob is SKIPPED, never coerced
+     * (islands by construction).  We record acceptance so PASS 2 reduces over a
+     * fixed canonical set. */
+    int accepted = 0;
+    for (int k = 0; k < count; k++) {
+        if (st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) accepted++;
+    }
+    if (accepted == 0) return 0;   /* no cohort peer -> model BYTE-UNCHANGED */
+
+    /* PASS 2 — per-parameter canonical reduction.  For each weight i:
+     *   sum = into->w[i]  +  Σ_{accepted peers k, ascending} peer_k.w[i]
+     *   into->w[i] = sum / (accepted + 1)
+     * The summation order is FIXED (self, then peers by ascending index), so
+     * merge(A,{B}) and merge(B,{A}) fold the SAME multiset in the SAME order
+     * -> byte-identical, and the result is identical across arches under
+     * -ffp-contract=off. */
+    float denom = (float)(accepted + 1);
+    int np = into->n_params;
+    for (int i = 0; i < np; i++) {
+        float s = into->w[i];
+        for (int k = 0; k < count; k++) {
+            if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
+            s += st_blob_w_at(peer_blobs[k], (size_t)i);
+        }
+        into->w[i] = s / denom;
+    }
+
+    /* Adam moments are optimizer state, not model: averaging foreign moments is
+     * meaningless, so the merged model resumes Adam FRESH (standard FedAvg).   */
+    for (int i = 0; i < np; i++) { into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
+    into->adam_t = 0;
+    return accepted;
 }
 
 /* ================================================================== */
