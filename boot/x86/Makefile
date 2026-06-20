@@ -148,6 +148,7 @@ COMMON_C_SRCS = \
     pfs_block.c \
     arkfs.c \
     lookup.c \
+    placement.c \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \

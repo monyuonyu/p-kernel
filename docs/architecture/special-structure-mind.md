@@ -330,9 +330,32 @@ Cheapest/highest-value first. Honest about what needs a bigger model first.
    router. Cert: `[grow-preserves]` (ε-unchanged output at growth) + `[grow-then-learn]`
    (distill lowers loss after growth). **Needs SS-2/3 first; benefit is small until the
    baby is larger** (verdict point 5 — watch-class M already runs everywhere).
-6. **SS-5 — deterministic expert placement map (§6).** Rendezvous-hash (expert,members)→node,
-   computed locally. Cert: `[place-deterministic]` (all nodes agree from same membership),
-   `[place-rehome]` (dead node's experts re-home deterministically). NOCENTRAL preserved.
+6. **SS-5 — deterministic expert placement map (§6). SHIPPED 2026-06-20 (wave-ss5-placement).**
+   `st_expert_owner(expert_id)` places expert e on the node that WINS a rendezvous hash (HRW)
+   of (expert-id, alive-member-set), computed LOCALLY from the SWIM `dnode_table[]` view —
+   no broadcast, no vote, no leader, no new gossip. New module `arch/common/placement.c` /
+   `arch/common/include/placement.h` (kernel tier, COMMON_C_SRCS — builds on all four boots).
+   It is a THIN shim over the EXISTING HRW primitive `lookup_responsible()` (`arch/common/
+   lookup.c`): the per-expert key is a stable 32-byte vector derived ONLY from the id
+   (`st_expert_key`), so `weight(n,k)=sha256(key||node)` is byte-identical across aarch64 /
+   x86_64 / i686 (the lookup.h cross-ABI contract — NO float, integer + sha256 only). PURE
+   cores `st_expert_owner_in`/`st_expert_owners_in` take an explicit member set (testable, no
+   globals); LIVE wrappers (`st_expert_owner`, `st_expert_is_local`, `st_expert_owners`) read
+   the DNODE_ALIVE set; a top-`ST_PLACE_RMAX` replica list is provided for SS-6 fallback.
+   - **Cert (`tests/llm/run_ss5.sh`, in-process, no network; shell verb `place`):**
+     `[place-deterministic]` (one synthetic alive-member set → each expert's owner is identical
+     no matter which node computes it; the fn reads NO self-id; cross-arch identity BY
+     CONSTRUCTION), `[place-rehome]` (kill the owner of expert e → it re-homes to the next HRW
+     winner AND every OTHER expert's owner is UNCHANGED — minimal disruption; FALSIFIABLE: a
+     modulo-N control reshuffled 8/8 experts vs HRW's 4 on the same set-shrink), `[place-balance]`
+     (16/32 experts spread across 5/5 nodes — reported, not over-claimed). `[nocentral]` +
+     `[no-float]` + `[no-vla]` (`-Werror=vla`) structural greps clean. 8/8 PASS.
+   - **HONEST (scope):** this is the placement MAP + cert ONLY. Remote-expert EXECUTION
+     (firing an expert on its owner node over the mesh) is **SS-6, DEFERRED**. On a single node
+     the alive set is `{self}`, so every expert maps to the one node — the map is SS-6's
+     FOUNDATION, not cross-node firing. A true multi-node LIVE placement-convergence run over
+     the relay is a DEFERRED `[live]` row; the in-proc cert drives the REAL function with
+     synthetic member sets.
 7. **SS-6 — remote-expert firing with local fallback (§5).** Only on wide/hard tokens, only
    FULL-degrade + region ≥2. Cert: `[remote-expert-equiv]` (remote sum == single-node sum),
    `[remote-expert-fallback]` (peer timeout → local recompute, no stall), honest

@@ -21,6 +21,7 @@
 #include "swim.h"
 #include "region.h"
 #include "lookup.h"
+#include "placement.h"
 #include "kdds.h"
 #include "moe.h"
 #include "spec.h"   /* R3b breathing params */
@@ -163,6 +164,7 @@ static void cmd_help(void)
     print("  reflex [on|off|table|stat] - §8 reflex layer: inference -> local defence\r\n");
     print("  protect <text>|ls|on|off|test - §2/G28 protected unit: ground threat in under-replication; actuator evacuates it\r\n");
     print("  hrw    - lookup L0 HRW responsible(k,r) self-test (deterministic, cross-ABI)\r\n");
+    print("  place  - SS-5 deterministic expert placement map self-test (NOCENTRAL)\r\n");
     print("  rx     - RX/TX frame counters\r\n");
     print("  ver    - build identity\r\n");
     print("  exit   - terminate the UMP process\r\n");
@@ -801,6 +803,8 @@ EXPORT INT usermain(void)
         } else if (starts_with(line, n, "hrw")) {
             lookup_self_test(print);
             lookup_l1_self_test(print);
+        } else if (starts_with(line, n, "place")) {
+            st_placement_self_test(print);
         } else if (starts_with(line, n, "rgnpub")) {
             cmd_rgnpub();
         } else if (starts_with(line, n, "world") || starts_with(line, n, "map")) {

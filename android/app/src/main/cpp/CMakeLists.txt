@@ -183,6 +183,7 @@ set(COMMON_SRC
     ${ARCH_CO}/pfs_block.c
     ${ARCH_CO}/arkfs.c
     ${ARCH_CO}/lookup.c
+    ${ARCH_CO}/placement.c
     ${ARCH_CO}/pfs_repl.c
     ${ARCH_CO}/pfs_dag.c
     ${ARCH_CO}/protect.c
