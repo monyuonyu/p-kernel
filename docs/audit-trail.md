@@ -6,6 +6,88 @@ reproduced the evidence for a shipped wave, in git. It exists because the
 2026-06-20 harsh review found that "implementer != auditor" left NO independent
 trace in the repository's own history. A row here is that trace.
 
+## SS-6-live — commit 019ae96d (the [live] cross-node forward)
+- Auditor: independent adversarial subagent (this run), 2026-06-20. Did NOT write the code.
+- Verdict: **PASS (ledger row CLOSED).** This is a GENUINE live multi-process
+  cross-node forward, byte-identical to single-node, and the byte-identity is
+  REAL — proven by breaking the responder (below), NOT gamed.
+- BASE NIT: the audit task said HEAD~1 MUST == 14783beb, but the ACTUAL direct
+  parent of 019ae96d is 57ae7623 ("SS-6-live ... skeleton"), itself a child of
+  14783beb. Chain: 14783beb -> 57ae7623 (skeleton transport) -> 019ae96d (the
+  cert). 14783beb IS an ancestor (`git merge-base --is-ancestor` = YES); the
+  skeleton commit was simply separate from the cert commit. Benign — NOT a
+  base-mismatch in substance. The full 14783beb..019ae96d diff touches NO math
+  TU (student.c is absent from the diff: the SS-6 hook at student.c:655-663 was
+  already in 14783beb); the live wave ADDS only ss6_live.{c,h}, the ss6live verb
+  in student_shell.c, the two usermains, the two hosted Makefiles, scripts, docs.
+- [LIVE] REPRODUCED (3 runs, stable), fresh build at 019ae96d, aarch64 host:
+  `bash samples/11_distributed/run_ss6_live.sh` -> exit 0, PASS.
+  - 4 real p-kernel PROCESSES (node1 requester + node2,3,4 responders) + ./relay.
+  - single-node oracle hash = LIVE cross-node hash = `00d6136e6d4676a3` (IDENTICAL).
+  - remote_fired=266, fallback=0, wire_sent=266. Stable across all 3 runs.
+  - RELAY FRAME EVIDENCE (the proof it crossed the wire, NOT local): /tmp/ss6l_relay.log
+    frame-size histogram shows EXACTLY **266 frames of 1118 B (REQ) and 266 of
+    1114 B (REP)** — the [D]=256-float REQ/REP vectors. 266 out + 266 back == the
+    counters. Real UDP-over-relay traffic, not fabrication.
+- **BYTE-IDENTITY IS REAL, NOT GAMED — I broke the responder (the decisive test):**
+  I patched `st_expert_forward_ref` (student.c:780) to add `out[0] += 1.0f`, which
+  corrupts ONLY the responder's [D] reply (the single-node ORACLE inlines its own
+  SwiGLU at student.c:667-694 and never calls st_expert_forward_ref, so the oracle
+  is UNAFFECTED). Rebuilt, re-ran the live cert:
+  - oracle hash stayed `00d6136e6d4676a3` (UNCHANGED — confirms oracle path is independent)
+  - **LIVE hash DIVERGED to `7c40a555fda2e89e`**, remote_fired=298, fallback=0;
+    the script reported "DIVERGENCE" exactly as designed.
+  => the wire output is GENUINELY summed into moe[] (student.c:702-705); if the path
+  secretly recomputed locally, the live hash would have stayed identical. It did NOT.
+  The cert is NOT all-local-dressed-as-live. (Sabotage reverted; clean rebuild restored
+  `00d6136e6d4676a3`.)
+- FALLBACK ARM REPRODUCED: `bash samples/11_distributed/run_ss6_live_fallback.sh`
+  -> exit 0, PASS. A peer killed but still ALIVE in placement -> experts time out
+  -> recomputed LOCALLY -> STILL byte-identical (`00d6136e6d4676a3`), no stall.
+  Observed fallback=3 / remote_fired=197 (commit/docs say fallback=4 — benign
+  run-to-run variance in WHICH experts the killed node owned; the load-bearing
+  claim — local recompute, byte-identical, no stall — holds EXACTLY).
+- CANONICAL ORDER + CROWN: the remote [D] writes into eo_all[j] (student.c:657, =eo)
+  and the canonical ascending-slot sum (student.c:696-705) reduces eo_all[j] for
+  local AND remote alike -> same order as single-node. rw[]/gl_merge/kv_step/backward
+  UNTOUCHED (student.c not in the diff at all). `run_kv` 18/18 byte-identical (all
+  [kv-equivalence] cases MATCH); `run_ss6` 7/7 (incl. EQ_HASH L MATCH — L byte-identity
+  still covered in-proc).
+- st_forward-ONLY HONEST (NOT live chat): the hook fires only inside st_forward;
+  kv_step is untouched. ss6_live.h:24-27 AND the F4 doc row AND BACKLOG all state
+  in plain text: "live cross-node forward" != "live chat is distributed"; R3's
+  `ask` is still LOCAL (m_ask -> r_forward). NO overclaim.
+- NOCENTRAL / GATE / no-VLA: owner = st_expert_owner (placement.c:113, HRW
+  rendezvous-hash via the shared lookup primitive — no vote/leader/broadcast).
+  Gate (ss6_live.c:248-257) fail-closed: sl_enabled AND j>=kmin AND
+  degrade==FULL AND region_size()>=2 AND !st_expert_is_local. Off by default ->
+  single-node standalone re-verified byte-unchanged (`00d6136e6d4676a3`,
+  remote_experts=off). No VLA in ss6_live.c (all ST_D_MAX/SL_PENDING fixed); run_ss2
+  [no-vla] still PASS. Wire scratch (sl_serve fin_aln/eo_aln, the requester rq) is
+  file-static, off the stack — sound.
+- TWO DEBUG FIXES — SOUND, not papered-over: (1) the env read moved to the init/net
+  task (`env_uint("PKERNEL_REMOTE_EXPERTS")` in cmd_net, usermain) via
+  ss6_live_set_enabled() instead of getenv() on the shell task — reads env where
+  the ABI is safe, the documented shell-task getenv SIGILL hazard. (2) the responder
+  model build + st_forward run on a dedicated 256KB task (`create_task(...262144)`),
+  off the deep boot/init stack — the documented feedback_hosted_relay_stack_overflow
+  class. Both are correct structural moves, not band-aids.
+- BUILDS: all FOUR boots build at 019ae96d. boot/linux (aarch64 hosted) +
+  boot/linux_x86_64 (x86_64 hosted) link ss6_live.o; boot/aarch64 + boot/x86
+  (bare-metal) build CLEAN with ss6_live.o ABSENT (hosted-only in COMMON_C_SRCS,
+  confirmed by `find` finding no ss6_live.o under the bare-metal dirs). ss6_live.c
+  compiles with only the pre-existing project-wide NULL-redefine warning — NO new
+  warnings. REGRESSIONS GREEN: run_ss1 6/6, run_ss2 8/8, run_ss3 6/6, run_ss5 8/8,
+  run_ss6 7/7, run_kv 18/18, placement self-test PASS.
+- HONEST GAPS (disclosed, no overclaim): single-host 4-process floor (no SSH
+  2-machine); cert model is M-tier (L overflows the small shell-task stack — L
+  byte-identity covered in-proc by run_ss6, honestly stated); kv_step/live-chat
+  wiring is a named follow-up. The fallback=4-vs-3 doc nit is the only count
+  discrepancy and is benign.
+- LEDGER: the SS-6 [live] claim is TRUE, falsifiable, and independently broken-then-
+  restored. **Row CLOSED.** No OPEN coverage gap introduced (the SSH 2-machine run
+  and kv_step wiring are pre-disclosed future rows, not gaps in THIS claim).
+
 ## SS-6 cross-node expert firing — commit 4356e95f (parent 9e50e4a8)
 - Auditor: independent subagent (this run), 2026-06-20
 - Verdict: PASS-WITH-NITS (ledger row CLOSED; one hardening recommendation logged)
