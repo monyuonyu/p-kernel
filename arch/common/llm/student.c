@@ -446,6 +446,27 @@ static int   st_fw_last  = 0;   /* width of the final token's final layer       
 static int   st_fw_milli = 0;   /* mean width across all (l,t), x1000 (libc-free) */
 static int   st_fw_experts[ST_KMAX]; /* final token's final-layer chosen expert ids */
 
+/* ---- SS-6 cross-node expert firing (special-structure-mind.md §5) ----------
+ * The remote-expert transport + gating predicate are CALLER-installed (the
+ * kernel wires DRPC; the cert wires a stub). When EITHER is NULL the MoE loop
+ * is byte-identical to the pre-SS-6 single-node forward.  Observability counts
+ * are reset at the top of each st_forward. */
+static st_remote_expert_fn st_remote_fn   = NULL;
+static st_remote_gate_fn   st_remote_gate = NULL;
+static void               *st_remote_ctx  = NULL;
+static int                 st_remote_fired_cnt    = 0;  /* expert outputs from a peer */
+static int                 st_remote_fallback_cnt = 0;  /* remote refused -> local    */
+
+void st_set_remote_expert(st_remote_expert_fn fn, st_remote_gate_fn gate,
+                          void *ctx)
+{
+    st_remote_fn   = fn;
+    st_remote_gate = gate;
+    st_remote_ctx  = ctx;
+}
+int st_last_remote_fired(void)    { return st_remote_fired_cnt; }
+int st_last_remote_fallback(void) { return st_remote_fallback_cnt; }
+
 /* `ne` = the resident model's expert count (m->nexpert) — the RUNTIME widening
  * ceiling (K_min..ne).  Scratch is bound to EMAX (fixed L-tier) — no VLA.  The
  * frozen-route slot stride is ne (the cache's E-slot stride; see cache_get). */
@@ -518,6 +539,7 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
     if (!tw_buf) return ST_E_OOM;
     c->topk_w = tw_buf;
     st_frozen_pos = 0;   /* frozen routing replays in (l,t) visit order */
+    st_remote_fired_cnt = 0; st_remote_fallback_cnt = 0;  /* SS-6 per-forward */
 
     const float *W  = m->w;
     /* embed: resid[layer 0] */
@@ -606,30 +628,80 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
             int    nk = router_pick(gt, te, tw, E);
             c->topk_n[(size_t)l * n + t] = nk;   /* runtime firing width      */
 
+            /* ── SS-6 (special-structure-mind.md §5): materialize EACH chosen
+             * expert's [D] down-projection output into eo_all[j], LOCALLY or on
+             * a PEER (SS-5 placement), then sum them into moe[] in a FIXED
+             * canonical reduction order (ascending slot j == the single-node
+             * order — CRITIQUE GATE #3). A remote expert returns the SAME [D]
+             * vector the local SwiGLU would, so the sum is BYTE-IDENTICAL to a
+             * single-node forward. When no hook is installed the inner branch is
+             * always local => byte-unchanged from the pre-SS-6 forward.
+             *
+             * eo_all is a FILE-STATIC fixed [KMAX][DMAX] scratch (NOT a stack
+             * array: KMAX*DMAX floats = 8 KB would risk the kernel's small
+             * stack — the feedback_hosted_relay_stack_overflow class). st_forward
+             * is single-threaded / non-reentrant (shares tw_buf / st_frozen_pos),
+             * so a file-static scratch is safe and [no-vla] by construction. */
+            static float eo_all[KMAX][DMAX];   /* fixed L-tier K, d_model */
+            for (int j = 0; j < nk; j++) {
+                int e = te[j];
+                float *eo = eo_all[j];
+
+                /* SS-6 gating + remote attempt: ONLY the EXTRA experts (slot
+                 * j >= K_min) are ever eligible (local K_min ALWAYS local); the
+                 * caller's predicate adds placement + degrade + region>=2. On a
+                 * successful remote call we take the peer's [D] output as-is. */
+                int did_remote = 0;
+                if (st_remote_fn && st_remote_gate &&
+                    st_remote_gate(l, j, K, e, st_remote_ctx)) {
+                    if (st_remote_fn(l, e, fin, D, DFF, eo, st_remote_ctx) == 0) {
+                        did_remote = 1;
+                        st_remote_fired_cnt++;
+                    } else {
+                        /* timeout / absent peer -> recompute LOCALLY below
+                         * (lose the WIDTH, not correctness; honest degraded). */
+                        st_remote_fallback_cnt++;
+                    }
+                }
+
+                if (!did_remote) {
+                    /* LOCAL expert: compute SwiGLU, caching e_g/e_u/e_h for the
+                     * backward (remote experts never run during training, so a
+                     * remote slot leaves its cache untouched — backward is never
+                     * taken on a forward that fired remotely). */
+                    const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
+                    const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
+                    const float *w2 = W + m->o_w2 + ((size_t)l * E + e) * D * DFF;
+                    float *eg = c->e_g + (((size_t)l * n + t) * E + j) * DFF;
+                    float *eu = c->e_u + (((size_t)l * n + t) * E + j) * DFF;
+                    float *eh = c->e_h + (((size_t)l * n + t) * E + j) * DFF;
+                    for (int h = 0; h < DFF; h++) {
+                        const float *w1h = w1 + (size_t)h * D;
+                        const float *w3h = w3 + (size_t)h * D;
+                        float g = 0.0f, u = 0.0f;
+                        for (int i = 0; i < D; i++) { g += w1h[i] * fin[i]; u += w3h[i] * fin[i]; }
+                        eg[h] = g; eu[h] = u; eh[h] = st_silu(g) * u;
+                    }
+                    /* down: eo[D] = w2 . eh (UNWEIGHTED — the weight wj is
+                     * applied in the canonical sum below, exactly as a single-
+                     * node forward applies it). */
+                    for (int i = 0; i < D; i++) {
+                        const float *w2r = w2 + (size_t)i * DFF;
+                        float acc = 0.0f;
+                        for (int h = 0; h < DFF; h++) acc += w2r[h] * eh[h];
+                        eo[i] = acc;
+                    }
+                }
+            }
+            /* ── canonical reduction: sum the per-expert [D] outputs weighted by
+             * the router softmax, in ASCENDING slot order j (identical to the
+             * single-node forward's accumulation order -> byte-for-byte equal,
+             * -O1 -ffp-contract=off, both arches). NO reassociation. */
             float moe[DMAX];   /* [no-vla] bound to the L-tier d_model */
             for (int i = 0; i < D; i++) moe[i] = 0.0f;
             for (int j = 0; j < nk; j++) {
-                int e = te[j]; float wj = tw[j];
-                const float *w1 = W + m->o_w1 + ((size_t)l * E + e) * DFF * D;
-                const float *w3 = W + m->o_w3 + ((size_t)l * E + e) * DFF * D;
-                const float *w2 = W + m->o_w2 + ((size_t)l * E + e) * D * DFF;
-                float *eg = c->e_g + (((size_t)l * n + t) * E + j) * DFF;
-                float *eu = c->e_u + (((size_t)l * n + t) * E + j) * DFF;
-                float *eh = c->e_h + (((size_t)l * n + t) * E + j) * DFF;
-                for (int h = 0; h < DFF; h++) {
-                    const float *w1h = w1 + (size_t)h * D;
-                    const float *w3h = w3 + (size_t)h * D;
-                    float g = 0.0f, u = 0.0f;
-                    for (int i = 0; i < D; i++) { g += w1h[i] * fin[i]; u += w3h[i] * fin[i]; }
-                    eg[h] = g; eu[h] = u; eh[h] = st_silu(g) * u;
-                }
-                /* down: out[D] = w2 . eh, weighted by wj */
-                for (int i = 0; i < D; i++) {
-                    const float *w2r = w2 + (size_t)i * DFF;
-                    float acc = 0.0f;
-                    for (int h = 0; h < DFF; h++) acc += w2r[h] * eh[h];
-                    moe[i] += wj * acc;
-                }
+                float wj = tw[j]; const float *eo = eo_all[j];
+                for (int i = 0; i < D; i++) moe[i] += wj * eo[i];
             }
             for (int i = 0; i < D; i++) x[i] += moe[i];  /* residual in place */
         }
@@ -670,6 +742,42 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
             for (int t = 0; t < n; t++) sumw += c->topk_n[(size_t)l * n + t];
         long cells = (long)L * n;
         st_fw_milli = cells ? (int)((sumw * 1000) / cells) : 0;
+    }
+    return ST_OK;
+}
+
+/* ---- SS-6: the EXACT per-expert SwiGLU a peer must run (special-structure-
+ * mind.md §5).  out[d] = w2_e . (silu(w1_e . fin) * (w3_e . fin)), UNWEIGHTED.
+ * This is the SAME code the local MoE branch runs (one math); the kernel's
+ * DRPC remote-expert handler and the cert's in-process stub both call THIS so
+ * a remote expert's [D] output is bit-identical to the local computation, and
+ * the canonical sum in st_forward is byte-identical to a single-node forward.
+ * No cache writes (a remote slot is never read by the backward). */
+int st_expert_forward_ref(const st_model *m, int layer, int expert_id,
+                          const float *fin, float *out)
+{
+    ST_DIMS(m);
+    if (!m || !fin || !out) return ST_E_ARG;
+    if (layer < 0 || layer >= L) return ST_E_ARG;
+    if (expert_id < 0 || expert_id >= E) return ST_E_ARG;
+    if (DFF > DFFMAX) return ST_E_ARG;
+    const float *W  = m->w;
+    const float *w1 = W + m->o_w1 + ((size_t)layer * E + expert_id) * DFF * D;
+    const float *w3 = W + m->o_w3 + ((size_t)layer * E + expert_id) * DFF * D;
+    const float *w2 = W + m->o_w2 + ((size_t)layer * E + expert_id) * D * DFF;
+    float eh[DFFMAX];   /* [no-vla] bound to the L-tier dff */
+    for (int h = 0; h < DFF; h++) {
+        const float *w1h = w1 + (size_t)h * D;
+        const float *w3h = w3 + (size_t)h * D;
+        float g = 0.0f, u = 0.0f;
+        for (int i = 0; i < D; i++) { g += w1h[i] * fin[i]; u += w3h[i] * fin[i]; }
+        eh[h] = st_silu(g) * u;
+    }
+    for (int i = 0; i < D; i++) {
+        const float *w2r = w2 + (size_t)i * DFF;
+        float acc = 0.0f;
+        for (int h = 0; h < DFF; h++) acc += w2r[h] * eh[h];
+        out[i] = acc;
     }
     return ST_OK;
 }
@@ -1132,6 +1240,12 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
     ST_DIMS(m);
     st_cache *c = (st_cache *)m->cache;
     if (!c || c->n != n) return 0.0f;
+    /* SS-6 contract (audit nit, 2026-06-20): a remote expert fire leaves this
+     * node's e_g/e_u/e_h cache STALE for the remote slots, so a backward pass
+     * over them would silently corrupt gradients. Training MUST run with the
+     * remote hook clear (st_forward fires 0 experts remotely). Fail CLOSED if
+     * that contract is ever violated rather than train on poisoned caches. */
+    if (st_last_remote_fired() > 0) return 0.0f;
     const float *W = m->w;
     float *G = m->g;
     int np = n - 1;

@@ -8,8 +8,10 @@ the router + runtime `topk_n` + `st_last_fire_width` observability in `arch/comm
 byte-identical to the legacy baby), and **SS-3** (same-tier merge cohorts — the student's OWN
 isolated weight average `st_merge_cohort` + chunked p-fs transport `gl_student_publish`/`_fetch`;
 cohort = tier, cross-tier REFUSED; never calls `gl_merge` / touches R3 `rw[]`; cert `run_ss3.sh`).
-SS-4 (function-preserving expert growth), SS-5 (deterministic placement), SS-6 (cross-node
-firing; needs the KV cache), SS-7 (bigger baby) remain genuine design. This is the multi-wave plan to turn mk_pino's four-feature
+SS-5 (deterministic placement) + SS-6 (cross-node expert firing with local fallback — the F4
+capstone) have since SHIPPED (in-process certs; the true multi-process forward over the relay
+is a deferred `[live]` row). SS-4 (function-preserving expert growth), SS-7 (bigger baby) remain
+genuine design. This is the multi-wave plan to turn mk_pino's four-feature
 vision (脳サイズがノード数で伸縮 / 真の疎 MoE / 重い仕事ほど広い領域が発火 / 分散合意 /
 複数ノードをまたぐ一回の forward) from today's hariboté into a real unified mind.
 
@@ -58,7 +60,7 @@ already what the chat speaks from.
 | F2a real sparse MoE | LIVE but ONLY in the byte student: router scores E=4, top-K=2 experts' SwiGLU computed (`student.c:484-518`). Chat speaks from this (`student_chat_generate` → `st_generate_stream`, `student_shell.c:439`). R3 conversational mind is DENSE. `moe.c` routes over network NODES, not neurons. | **PARTIAL** |
 | F2b heavy task → wider region | `ST_TOPK=2` is a fixed const; same 2 experts every token. | **ABSENT** |
 | F3 distributed consensus | SWIM membership (live, `swim.c`), min-id region coordinator (deterministic fn of SWIM RTT, `region.c:45-71`, NOT voted), FedAvg weight-merge (live: `gl_merge` `gossip_learn.c:69`, `mind_merge_task` `r3_incontext.c:3163`, no aggregator). Raft deliberately unwired ("NOCENTRAL"). | **PARTIAL by design** |
-| F4 cross-node single forward | Real for the dtr 3-class SENSOR classifier only (`dkva.c` splits attention across nodes, coordinator sums partials; `moe.c` remote-expert RPC `dtk_infer`, `moe.c:470`). The conversational mind's `ask` answer is LOCAL (`m_ask` → `r_forward`, `r3_incontext.c:191`); its only cross-node part is teach-gossip + OFFLINE FedAvg of `rw[]`. | **PARTIAL** |
+| F4 cross-node single forward | **SS-6 SHIPPED (wave-ss6-cross-node):** the byte STUDENT now fans out its WIDE experts across nodes — when the SS-1 router widens K on a hard token, the extra experts SS-5 places on a peer are computed remotely and summed into `moe[]` in a canonical order, BYTE-IDENTICAL to the single-node forward (`student.c` `st_set_remote_expert` hook + `st_expert_forward_ref`; cert `run_ss6.sh` 7/7). Local fallback on timeout (lose width, not correctness). Was real for the dtr 3-class SENSOR classifier only (`dkva.c`, `moe.c:470` `dtk_infer`). R3's `ask` answer is still LOCAL (`m_ask` → `r_forward`). HONEST: in-proc cert (stub peer); true multi-process forward over the relay is a DEFERRED `[live]` row; the hook is on `st_forward`, KV `kv_step` wiring is a follow-up. | **STUDENT: SHIPPED (in-proc cert)** |
 
 The crown result we must NOT break: "one mind" (wave-41/42/44) is FedAvg of `rw[]` and
 **depends on byte-identical weight shape** across the fleet (`gl_merge` is a flat
@@ -356,11 +358,38 @@ Cheapest/highest-value first. Honest about what needs a bigger model first.
      FOUNDATION, not cross-node firing. A true multi-node LIVE placement-convergence run over
      the relay is a DEFERRED `[live]` row; the in-proc cert drives the REAL function with
      synthetic member sets.
-7. **SS-6 — remote-expert firing with local fallback (§5).** Only on wide/hard tokens, only
-   FULL-degrade + region ≥2. Cert: `[remote-expert-equiv]` (remote sum == single-node sum),
-   `[remote-expert-fallback]` (peer timeout → local recompute, no stall), honest
-   `degraded(k/n)`. **Needs SS-1 (adaptive K) + SS-5 (placement); this is the F4 capstone
-   for the conversational mind.**
+7. **SS-6 — remote-expert firing with local fallback (§5). SHIPPED 2026-06-20 (wave-ss6-cross-node).**
+   The F4 capstone — "複数ノードをまたぐ一回の forward" for the byte student. When the SS-1
+   adaptive router WIDENS K beyond K_min on a hard token, the EXTRA experts (chosen-slot j ≥ K_min)
+   that SS-5 placement puts on a PEER are computed REMOTELY (the peer runs that expert's SwiGLU on
+   the `[D]` f_in vector — ~D floats on the wire, tiny vs DKVA's KV tensors) and their `[D]` outputs
+   are summed into `moe[]` in a FIXED canonical reduction order (ascending chosen-slot j == the
+   single-node accumulation order — CRITIQUE GATE #3) ⇒ a remote forward equals the single-node
+   forward **BYTE-FOR-BYTE** (`-O1 -ffp-contract=off`, both arches). Both branches call the SAME
+   `st_expert_forward_ref` (one math); the MoE loop materializes each chosen expert's `[D]` output
+   into a file-static `eo_all[KMAX][DMAX]` scratch (no-VLA, off the small kernel stack) then folds.
+   The local K_min experts ALWAYS run locally; a remote timeout / absent peer RECOMPUTES that expert
+   LOCALLY (lose the WIDTH, not correctness — honest degraded). Transport is the caller-installed
+   `st_set_remote_expert(fn, gate, ctx)` hook (the kernel wires DRPC; the cert wires a stub) — NO new
+   transport invented, mirroring `dtk_infer` / `dkva.c`. Gating: j ≥ K_min AND `!st_expert_is_local`
+   (SS-5) AND FULL-degrade with ≥ 2 region members.
+   - **Cert (`tests/llm/run_ss6.sh`, in-process, no network):** `[remote-expert-equiv]` (a forward
+     that fires the wide experts on a STUB peer is byte-identical to the pure single-node forward —
+     same logit FNV hash — M tier 506 experts remote, L tier 940; some experts MUST have gone
+     remote, counted); `[remote-expert-fallback]` (the peer ALWAYS times out → st_forward recomputes
+     locally and the result is STILL byte-identical, no stall, honest degraded count); `[remote-
+     falsifiable]` (a 1e-6 remote perturbation FAILS the equiv — the cert has teeth);
+     `[canonical-order]` + `[no-vla]` greps clean. 7/7 PASS. The S tier is proven INERT (E=2 == K_min,
+     no room to widen, so no wide expert to fan out — byte-identity trivially the single-node path).
+   - **Crown (re-confirmed):** NEVER touches R3 `rw[]` / `gl_merge`; KV byte-identity intact
+     (`kv_step` UNTOUCHED — `run_kv.sh` still byte-identical); single-node path byte-UNCHANGED when
+     the hook is clear; LP64 / no-VLA.
+   - **HONEST (scope / `[live]` deferral):** the in-process cert drives the REAL canonical-sum +
+     fallback code path with a STUB peer; a true multi-process cross-node forward over the relay /
+     mesh is a DEFERRED `[live]` row. The hook is wired into `st_forward` (the canonical forward);
+     wiring it into the KV incremental `kv_step` generation path (the chat-speed loop) is a documented
+     follow-up — `run_kv.sh`'s byte-identity is UNCHANGED by SS-6. Needs SS-1 (adaptive K) +
+     SS-5 (placement), both shipped.
 8. **SS-7 — bigger baby (D/layers up a tier) THEN re-run S/L tiers.** Sequenced LAST per the
    verdict: tiers are inert until a device actually can't run the max baby. This is where
    F1 ("strong device, bigger brain") stops being decorative in practice.

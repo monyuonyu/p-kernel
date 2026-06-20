@@ -356,4 +356,74 @@ int      st_kv_get_enabled(void);
 void     st_gen_logit_hash_reset(void); /* reset the per-step logit FNV-1a       */
 uint64_t st_gen_logit_hash(void);       /* FNV-1a over every step's sampled row   */
 
+/* ---- SS-6: cross-node expert firing with local fallback ----
+ * special-structure-mind.md §5 + §8 item 7. The F4 capstone for the
+ * conversational mind: "複数ノードをまたぐ一回の forward".
+ *
+ * The student is MoE. When the SS-1 adaptive router WIDENS K beyond K_min on
+ * a HARD token, the EXTRA experts (slots j >= K_min) that SS-5 placement says
+ * live on a PEER node may be computed REMOTELY — the peer runs that expert's
+ * SwiGLU on the [D] input vector (tiny on the wire, ~D floats) and returns its
+ * [D] output, which is summed into moe[] EXACTLY as the single-node forward
+ * would (CRITIQUE GATE #3: a FIXED canonical reduction order; remote == single-
+ * node BIT-FOR-BIT). The local K_min experts ALWAYS run locally.
+ *
+ * SURVIVAL CONTRACT (mirror of dtk_infer / dkva): a remote expert fires ONLY
+ * when (a) the router widened (hard token) AND (b) a peer hosts that expert
+ * (SS-5) AND (c) FULL-degrade with >= 2 region members. Each remote call has a
+ * hard timeout; on timeout / absent peer the expert is RECOMPUTED LOCALLY
+ * (never stall a token — lose the WIDTH, not correctness). The forward then
+ * reports an honest `degraded(k/n)` width.
+ *
+ * The transport is provided by the CALLER via a callback (the kernel wires it
+ * to a DRPC remote-expert call; the in-process cert wires it to a second
+ * st_model / a stub). student.c owns the GATING, the canonical SUM, and the
+ * fallback; it does NOT invent a new transport. */
+
+/* Compute ONE expert's [D] SwiGLU output for a peer. Inputs: the layer index,
+ * the global expert id (== chosen expert id in [0,nexpert)), the f_in[D]
+ * rmsnorm'd input vector, and the tier dims d/dff. On SUCCESS, fill out[d] with
+ * the expert's down-projection output (the SAME math student.c computes
+ * locally) and return 0. On timeout / absent / refused, return < 0 (student.c
+ * then recomputes that expert LOCALLY). `ctx` is the caller's opaque handle. */
+typedef int (*st_remote_expert_fn)(int layer, int expert_id,
+                                   const float *fin, int d, int dff,
+                                   float *out, void *ctx);
+
+/* Decide whether chosen-expert slot j (the j-th fired expert this token, with
+ * expert id `expert_id`) is ELIGIBLE to fire remotely. The kernel's predicate
+ * is: j >= K_min AND !st_expert_is_local(expert_id) AND degrade==FULL AND
+ * region members >= 2. The cert supplies an explicit predicate so it can drive
+ * BOTH the equiv path (remote succeeds) and the fallback path (remote refuses).
+ * Return non-zero to attempt the remote call, 0 to keep it local. */
+typedef int (*st_remote_gate_fn)(int layer, int j, int kmin, int expert_id,
+                                  void *ctx);
+
+/* Install the remote-expert transport + gating predicate (NULL clears, the
+ * single-node default). When EITHER is NULL, st_forward is byte-IDENTICAL to
+ * the pre-SS-6 single-node forward (every expert local). Set ONLY around the
+ * generation path; training/backward MUST run with the hook clear (the remote
+ * path does not cache e_g/e_u/e_h for the backward). */
+void st_set_remote_expert(st_remote_expert_fn fn, st_remote_gate_fn gate,
+                          void *ctx);
+
+/* SS-6 observability (read-only, set by the LAST st_forward):
+ *  - st_last_remote_fired(): how many expert outputs this forward took from a
+ *    REMOTE peer (0 on the single-node path).
+ *  - st_last_remote_fallback(): how many remote attempts TIMED OUT / were
+ *    refused and were recomputed locally (the honest degraded count).
+ * Both are deterministic in (weights, bytes, gate). */
+int st_last_remote_fired(void);
+int st_last_remote_fallback(void);
+
+/* The EXACT per-expert SwiGLU a peer must run for a remote expert (special-
+ * structure-mind.md §5): out[d] = w2_e . (silu(w1_e.fin) * (w3_e.fin)),
+ * UNWEIGHTED (the router weight is applied by st_forward's canonical sum). The
+ * kernel's DRPC remote-expert handler and any in-process stub call THIS so the
+ * remote [D] output is bit-identical to the local MoE branch — that bit-
+ * identity is what makes a remote forward == a single-node forward. Returns
+ * ST_OK or ST_E_ARG on bad args. No model mutation, no cache writes. */
+int st_expert_forward_ref(const st_model *m, int layer, int expert_id,
+                          const float *fin, float *out);
+
 #endif /* PKERNEL_LLM_STUDENT_H */
