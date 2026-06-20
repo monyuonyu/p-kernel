@@ -6,6 +6,7 @@
  *  Build (wave-49 rule, one math everywhere): -O1 -ffp-contract=off.
  */
 #include "quant.h"
+#include "pk_parallel.h"
 
 /* ------------------------------------------------------------------ */
 /* fp16 -> fp32 (IEEE-754 binary16). Pure integer/bit work, libc-free. */
@@ -51,6 +52,41 @@ static uint16_t rd_u16le(const uint8_t *p)
 /* ------------------------------------------------------------------ */
 /* Q8_0                                                               */
 /* ------------------------------------------------------------------ */
+/* Per-dispatch context for the row-partitioned Q8_0 matmul. The body runs
+ * the UNMODIFIED serial inner loop for output rows i in [i0,i1) — same order,
+ * same left-fold accumulation, byte-for-byte the serial result (plan §1.2). */
+struct qz_q8_ctx {
+    const uint8_t *w_data;
+    const float   *x;
+    float         *y;
+    size_t         nblk;
+    size_t         row_bytes;
+};
+
+static void qz_q8_body(void *vctx, size_t i0, size_t i1)
+{
+    const struct qz_q8_ctx *c = (const struct qz_q8_ctx *)vctx;
+
+    for (size_t i = i0; i < i1; i++) {
+        const uint8_t *row = c->w_data + i * c->row_bytes;
+        float acc = 0.0f;
+        size_t base = 0;                        /* column index into x     */
+
+        for (size_t b = 0; b < c->nblk; b++) {
+            const uint8_t *blk = row + b * (2 + QK8_0);
+            const float d = qz_fp16_to_fp32(rd_u16le(blk));
+            const int8_t *q = (const int8_t *)(blk + 2);
+
+            /* dequant block on the fly: w = d*q[k]; multiply-accumulate */
+            for (int k = 0; k < QK8_0; k++)
+                acc += (d * (float)q[k]) * c->x[base + (size_t)k];
+
+            base += QK8_0;
+        }
+        c->y[i] = acc;
+    }
+}
+
 int qz_matmul_q8_0(const uint8_t *w_data, size_t in, size_t out,
                    const float *x, float *y)
 {
@@ -59,24 +95,12 @@ int qz_matmul_q8_0(const uint8_t *w_data, size_t in, size_t out,
     const size_t nblk      = in / QK8_0;        /* blocks per row          */
     const size_t row_bytes = nblk * (2 + QK8_0);/* 2-byte d + 32 int8      */
 
-    for (size_t i = 0; i < out; i++) {
-        const uint8_t *row = w_data + i * row_bytes;
-        float acc = 0.0f;
-        size_t base = 0;                        /* column index into x     */
-
-        for (size_t b = 0; b < nblk; b++) {
-            const uint8_t *blk = row + b * (2 + QK8_0);
-            const float d = qz_fp16_to_fp32(rd_u16le(blk));
-            const int8_t *q = (const int8_t *)(blk + 2);
-
-            /* dequant block on the fly: w = d*q[k]; multiply-accumulate */
-            for (int k = 0; k < QK8_0; k++)
-                acc += (d * (float)q[k]) * x[base + (size_t)k];
-
-            base += QK8_0;
-        }
-        y[i] = acc;
-    }
+    /* Partition the OUTPUT rows [0,out) across the math-only worker pool;
+     * each worker runs qz_q8_body over its disjoint range. NW==1 / small
+     * out / no pool => inline serial call => identical bits. Never splits
+     * the contraction (plan §1.3). */
+    struct qz_q8_ctx ctx = { w_data, x, y, nblk, row_bytes };
+    pk_parallel_rows(out, qz_q8_body, &ctx);
     return 0;
 }
 

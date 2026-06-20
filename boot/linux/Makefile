@@ -81,7 +81,7 @@ ASFLAGS = -D_in_asm_source_ -D_APP_AARCH64_ -D_APP_LINUX_ \
           -I$(ROOT)/arch/common/include/lp64 \
           -I$(INC_TK) -I$(INC_TOP)
 
-LDFLAGS = -no-pie -lrt
+LDFLAGS = -no-pie -lrt -lpthread
 
 # ---- libtcc self-compile support (hosted-only, auto-detected) --------
 # selfc lets the RUNNING kernel compile C source in-memory (libtcc,
@@ -246,8 +246,8 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # (no malloc/libm there) so it stays OUT of COMMON_C_SRCS. student_shell.c
 # calls the durable seam (pfs_dur_write/read, ARCH_SHARED_C_SRCS) by extern.
 LLM_DIR     = $(ARCH_COMMON)/llm
-LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c \
-              student.c student_shell.c
+LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
+              llm_shell.c student.c student_shell.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # The engine is pure host-libc code and includes ONLY <stdint.h>/<stddef.h>/
 # <stdlib.h>/<stdio.h>/<string.h>/<time.h> + its own sibling headers. It must

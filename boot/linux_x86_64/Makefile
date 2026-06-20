@@ -81,7 +81,7 @@ ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
           -I$(ROOT)/arch/common/include/lp64 \
           -I$(INC_TK) -I$(INC_TOP)
 
-LDFLAGS = -no-pie -static -lrt
+LDFLAGS = -no-pie -static -lrt -lpthread
 
 # ---- libtcc self-compile support (hosted-only, auto-detected) --------
 # Same probe as boot/linux. On an aarch64 host the only libtcc.a is the
@@ -222,8 +222,8 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # Same host-libc tier + LLM_CFLAGS as the engine; NOT on bare metal (stays out
 # of COMMON_C_SRCS). Mirror of boot/linux/Makefile (kept verbatim).
 LLM_DIR     = $(ARCH_COMMON)/llm
-LLM_C_SRCS  = gguf.c quant.c tokenizer.c forward.c sample.c llm_shell.c \
-              student.c student_shell.c
+LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
+              llm_shell.c student.c student_shell.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # Own flag set (mirror of boot/linux): the engine includes ONLY system libc +
 # its sibling headers, and must NOT see the kernel include/ dirs (include/

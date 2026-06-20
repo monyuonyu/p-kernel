@@ -50,8 +50,9 @@ echo "[build] compiling M1c forward host harness ..."
     "$HERE/forward_test.c" \
     "$ROOT/arch/common/llm/forward.c" \
     "$ROOT/arch/common/llm/quant.c" \
+    "$ROOT/arch/common/llm/pk_parallel.c" \
     "$ROOT/arch/common/llm/gguf.c" \
-    -lm -o "$DUT" || { echo "[build] FAILED"; exit 1; }
+    -lpthread -lm -o "$DUT" || { echo "[build] FAILED"; exit 1; }
 
 GGUF_PATH="${1:-${GGUF:-}}"
 if [ -z "$GGUF_PATH" ]; then

@@ -30,8 +30,9 @@ echo "[build] compiling M1b qmatmul host harness ..."
 "$CC" -std=c11 -O1 -Wall -Wextra -ffp-contract=off \
     "$HERE/qmatmul_test.c" \
     "$ROOT/arch/common/llm/quant.c" \
+    "$ROOT/arch/common/llm/pk_parallel.c" \
     "$ROOT/arch/common/llm/gguf.c" \
-    -o "$BIN" || { echo "[build] FAILED"; exit 1; }
+    -lpthread -o "$BIN" || { echo "[build] FAILED"; exit 1; }
 
 GGUF_PATH="${1:-${GGUF:-}}"
 if [ -z "$GGUF_PATH" ]; then

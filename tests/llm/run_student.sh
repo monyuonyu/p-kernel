@@ -51,8 +51,9 @@ if [ -n "${GGUF_PATH:-}" ] && [ -f "$GGUF_PATH" ] && [ ! -f "$FIXTURE" ]; then
         "$HERE/student_harvest.c" \
         "$ROOT/arch/common/llm/forward.c" \
         "$ROOT/arch/common/llm/quant.c" \
+        "$ROOT/arch/common/llm/pk_parallel.c" \
         "$ROOT/arch/common/llm/gguf.c" \
-        -lm -o "$HARV" \
+        -lpthread -lm -o "$HARV" \
       && { echo "[harvest] running teacher (slow, ~250ms/token) ..."
            "$HARV" "$GGUF_PATH" "${HARVEST_TOKENS:-256}" "$FIXTURE" \
              && echo "[harvest] wrote $FIXTURE ($(wc -c < "$FIXTURE") bytes)" \

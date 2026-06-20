@@ -110,8 +110,9 @@ if [ "$GOT" = "$EXPECT" ]; then
     # If the M1c forward harness builds, actually push the ids through it.
     if "$CC" -std=c11 -O1 -Wall -Wextra -ffp-contract=off \
         "$HERE/forward_test.c" "$ROOT/arch/common/llm/forward.c" \
-        "$ROOT/arch/common/llm/quant.c" "$ROOT/arch/common/llm/gguf.c" \
-        -lm -o "$FWD" 2>/dev/null; then
+        "$ROOT/arch/common/llm/quant.c" "$ROOT/arch/common/llm/pk_parallel.c" \
+        "$ROOT/arch/common/llm/gguf.c" \
+        -lpthread -lm -o "$FWD" 2>/dev/null; then
         NIN=$(echo $GOT | wc -w)
         GEN="$("$FWD" "$GGUF_PATH" "$NIN" 4 $GOT 2>/dev/null | sed -n 's/^GEN: //p')"
         echo "  [tok-e2e] text -> ids -> M1c forward GEN: $GEN"

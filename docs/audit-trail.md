@@ -6,78 +6,6 @@ reproduced the evidence for a shipped wave, in git. It exists because the
 2026-06-20 harsh review found that "implementer != auditor" left NO independent
 trace in the repository's own history. A row here is that trace.
 
-## idle-yield (dispatcher idle busy-spin → sigsuspend) — commit 6eaa1407
-- Auditor: independent adversarial subagent (this run), 2026-06-20. Did NOT write
-  the code. Base verified: HEAD==6eaa1407, HEAD~1==7df9ba96 (the claimed parent).
-- Verdict: **PASS (ledger row CLOSED).** The dispatcher idle busy-spin is really
-  gone, the fix is confined to arch/linux/, and I could NOT wedge the scheduler.
-
-MISSED-WAKEUP / HANG (the #1 risk) — FALSIFICATION FAILED (good):
-- I could NOT construct a wedge. Adversarial test: 15 rounds of `tcbchurn 30 3` +
-  `moe` interleaved with sub-tick (50ms) idle gaps to hammer the race window, then
-  a 6s FULL idle, then a final `dtr eval` + echo probe. The kernel woke and answered
-  EVERY time (dtr-eval response present, FINAL_MARKER echoed). No hang, no fault,
-  "sched alive" on every churn round.
-- TOCTOU analysis (preempt.c aarch64:142 / x86_64:105): the re-check
-  `if (knl_schedtsk == 0)` runs AFTER `sigprocmask(SIG_BLOCK, SIGALRM)` and BEFORE
-  `sigsuspend()`. knl_schedtsk can be set only from the SIGALRM handler, which is
-  blocked across the re-check → sigsuspend window. If the tick fires in that window
-  it stays PENDING and sigsuspend returns at once. The re-check is genuinely inside
-  the blocked window — TOCTOU-free. Confirmed correct.
-- Bounded latency = 1 tick CONFIRMED. .Lidle does IRQ_FLAG_CLEAR (arch_irq_disabled_flag=0)
-  before the wait, so while idle every SIGALRM runs knl_timer_handler_startup DIRECTLY
-  (handler's `if (arch_irq_disabled_flag) defer` branch is not taken) — no new ticks
-  are deferred while sleeping, and a tk_dly_tsk timeout is serviced by the very next
-  tick (≤10ms @100Hz). Empirically: idle-entry rate is EXACTLY one wake per tick (see
-  below) — if any wakeup were ever missed the rate would not be a clean 100/s.
-  No non-signal off-tick wakeup path exists (idle ⇒ nothing runnable; only the timer
-  handler sets schedtsk).
-
-[idle-cpu] HEADLINE REPRODUCED (instrumented idle-entry counter, 5s window):
-- aarch64 (native):  BEFORE 5976/s  →  AFTER 100/s   (≈60×; matches commit's ~6000→~101)
-- x86_64 (qemu):     BEFORE 655800/s →  AFTER 100/s  (qemu sched_yield spins tighter;
-  AFTER is exactly one wake per 100Hz tick = sleeping, not spinning).
-- Process CPU (aarch64, FIFO-held idle): 5.7% → 0.5%. The busy-spin is GONE on both arches.
-  The fix is NOT fake.
-
-SIGNAL-MASK CORRECTNESS — CONFIRMED:
-- sigsuspend wakes on SIGALRM (the 100/s steady wake rate proves it). /proc SigBlk
-  sampled while idle == 0 on BOTH before & after (no permanent mask leak; prev is
-  restored by sigprocmask(SIG_SETMASK,&prev)). SigCgt=0x24c0 = handlers for
-  SIGBUS/SIGFPE/SIGSEGV/SIGALRM all installed and deliverable.
-- Fault deliverable from idle: `dtr crash` from the idle build → SIGSEGV(11) caught,
-  task isolated/killed, recover_fn ran, worker respawned, kernel kept running.
-- SIGINT/SIGQUIT are process-IGNORED (SigIgn=0x06) — the kernel takes Ctrl-C as raw
-  terminal INPUT, not a kill. This is PRE-EXISTING and IDENTICAL before & after (I
-  verified the 7df9ba96 build behaves the same). The patch does NOT block term/fault
-  signals; behavior is unchanged, exactly as the commit claims.
-
-IRQ BRACKETING — INTACT: the only change inside the IRQ_FLAG_CLEAR / IRQ_DISABLE
-  bracket is `bl/call sched_yield` → `knl_idle_wait`. FLAG_CLEAR (no drain) keeps
-  arch_irq_disabled_flag=0 during the wait so the tick runs directly; IRQ_DISABLE
-  restores the dispatcher's IRQ-off invariant before re-reading schedtsk. Nothing
-  clobbers knl_schedtsk/knl_ctxtsk/knl_dispatch_disabled.
-
-FOUNDATION (all run on the AFTER build):
-- poc_preempt: PASS (both tasks progressed; preemption intact).
-- tcbchurn 200 4: PASS (800 create/kill, "no UAF crash, sched alive"). KILL-CHURN clean.
-- run_kv.sh: 18 PASS / 0 FAIL ([result] PASS; byte-identical S/M/L tiers + 5.14× speedup).
-- moe test: ALL PASS; dmn test: PASS (forgetting + consolidation); dtr eval: clean.
-- Cadence unstretched: dtr train 50 epochs = 140ms (after) vs 150ms (before) — within
-  noise. The idle change does not touch the runnable-task path, so compute cadence is
-  unaffected.
-
-SCOPE / BARE-METAL: patch touches ONLY arch/linux/{aarch64,x86_64}/{cpu_support.S,
-  preempt.c} + new tests/idle_cpu.sh. `git show 6eaa1407 -- arch/x86 arch/aarch64`
-  is EMPTY — bare-metal hlt/wfi idle untouched. Both arches get the fix identically
-  in spirit (same C helper, same bracketing).
-
-BUILDS: all 4 green — linux (aarch64), linux_x86_64, bare x86 (kloader.bin), bare
-  aarch64 (kernel.elf).
-
-LEDGER: row CLOSED. No missed-wakeup path found; worst-case latency provably bounded
-  to one tick. No real bug found.
-
 ## SS-6-live — commit 019ae96d (the [live] cross-node forward)
 - Auditor: independent adversarial subagent (this run), 2026-06-20. Did NOT write the code.
 - Verdict: **PASS (ledger row CLOSED).** This is a GENUINE live multi-process
@@ -276,3 +204,91 @@ GAPS DISCLOSED / NO OVERCLAIM: single-host (no SSH 2-machine); in-proc uses
 LEDGER: the [fed-2cluster][in-proc] + [live] + [coord-crash][in-proc] claim is TRUE
   and falsifiable. Row CLOSED. One coverage gap (resp-scope not dynamically
   falsified) ledgered OPEN for R0.1.
+
+## MC-0 deterministic parallel matmul — commit 1a8f2e79
+
+Independent adversarial audit (auditor != implementer). Base verified:
+HEAD=1a8f2e79 (MC-0), HEAD~1=03481a52 (parent) — matches the mandate.
+
+VERDICT: **PASS — ledger CLOSE.** No race, no byte mismatch, no busy-spin, no
+regression found. The "one mind, one math" byte-identity crown holds under
+hostile testing.
+
+[par-matmul-equiv] BYTE-IDENTITY — held for EVERY worker count I tried:
+  - Official cert run_mc0.sh PASS: memcmp==0 + FNV hash equal for NW {1,2,4,8}
+    on out {1536, 49152} and the ragged shapes out=1530, out=1031 (neither /4
+    nor /8). Reproduced 3x identically.
+  - HAMMER (own harness, full qz_matmul_q8_0): NW in {1,2,3,5,7,8,16} INCLUDING
+    odd / non-dividing / over-cap, shapes {65,128,1536,1530,1031,2048},
+    2000 iterations each = 84,000 dispatches -> TOTAL MISMATCHES = 0.
+  - RACE-STRESS (timing-skewed body to force gen-N/gen-N+1 overlap): 300,000
+    dispatches, NW {1..8,16}, shapes {64,65,100,127,257,1000,1536,2048,4096}
+    -> 0 fails. 4 concurrent processes hammering -> all byte-identical.
+  ZERO mismatches at any NW, any partition, any iteration.
+
+REALLY PARALLEL (not secretly serial): PROVEN. A per-thread TID probe shows
+  4 DISTINCT worker threads each ran a slice for NW=4 on out=2000. sysconf(
+  _SC_NPROCESSORS_ONLN)=8 here (nproc cmd shows 4 due to cgroup, but the pool
+  sees 8) -> nhelpers=7, so the cert's NW=8 is a real 8-way dispatch, NOT
+  clamped. Cert shapes (>=1031) all exceed PK_PARALLEL_MIN_ROWS=64, so they
+  genuinely go parallel; byte-identity is NOT vacuous. Coverage probe: every
+  output index written exactly once for NW 1..16 (no uncovered, no double-write).
+
+FALSIFIER HAS TEETH (reproduced its FAIL): the reassociating (strided
+  partial-sum) variant DIFFERS from serial in ~93-95% of rows for EVERY
+  NW in {2..8} (e.g. NW=2: 1456/1536 rows differ). Independently reimplemented
+  and confirmed memcmp != 0 -> the equiv cert can SEE a rounding-order bug.
+  Could NOT make the falsifier match serial. Byte-identity is a real, killable
+  property.
+
+RACE VERDICT: **No race found. Could NOT induce a hang or non-deterministic
+  garbage.**
+  - tsan: UNAVAILABLE in this PRoot/proot-loader env ("ThreadSanitizer: memory
+    layout is incompatible" — environmental, harness builds fine; reported
+    honestly, not a code defect).
+  - Stress: 84k + 300k + concurrent dispatches, 0 mismatches. Pure rapid-
+    dispatch loop made steady progress (~2900 dispatches/s under PRoot) and
+    NEVER stalled — apparent "timeouts" at 900k/5M were throughput, not
+    deadlock (verified: 90k completes in <60s, 300k in 65s, fast2 prints
+    monotonic progress 0..44000). No missed wakeup, no hang.
+  - By-inspection (pk_parallel.c): the join-counter fix is SOUND. The helper
+    holds g_pool.mtx CONTINUOUSLY from `++g_pool.done` (line 98) through the
+    re-entry to `while(g_pool.gen==seen)` (line 75) — it does not unlock
+    between increment and wait. Therefore the dispatcher cannot reset done=0 /
+    bump gen until that helper is already blocked in pthread_cond_wait with
+    seen==current gen; on the next dispatch gen!=seen and the helper runs
+    exactly once. EVERY helper (even slot>=nw, which does no work, line 91)
+    still does `++done` (line 98), so the join counter == nhelpers is
+    unambiguous regardless of nw. Disjoint output ranges (pk_slice) => no
+    shared accumulator, no false-sharing of any y[i]. pthread_once guards lazy
+    init. g_force_nw is a cert-only hook touched between (never during)
+    serialized dispatches; single caller forward.c:164 on the uniprocessor
+    kernel -> no re-entrant or concurrent pool use.
+
+[mc0-idle] NO BUSY-SPIN: reproduced 3x — wake-delta=0 and 0.0000s process CPU
+  across the 300ms idle gap; wakes advance only on real dispatch. Helpers block
+  in pthread_cond_wait. wave-idle-yield contract respected.
+
+SCHEDULER UNTOUCHED: pk_parallel.{c,h} reference knl_ctxtsk/knl_schedtsk only
+  in a comment; never call the dispatcher. Math-only pool, T-Kernel stays
+  single-threaded.
+
+BARE-METAL = INLINE, ZERO PTHREADS: nm on boot/x86/kloader.bin and
+  boot/aarch64/kernel.elf shows NO pthread / pk_parallel / qz_matmul symbols
+  (student_stub path, serial). Hosted boot/linux/p-kernel DOES carry
+  pk_parallel_rows + pthread_cond_wait. ALL 4 BUILDS GREEN (linux, linux_x86_64,
+  x86 bare, aarch64 bare).
+
+NO REGRESSION: NW=1 qz_matmul_q8_0 is BYTE-IDENTICAL to the parent (03481a52)
+  serial loop (verified vs a verbatim copy of the old code, out {1536,1530,1031,
+  49152}). run_qmatmul PASS (q8_0 max abs err 0.000e+00 vs independent ref;
+  python oracle PASS). run_ss6 PASS (all S/M/L logit-hash MATCH). ss6_live.c is
+  NOT in commit 1a8f2e79 -> any check_parity drift there is PRE-EXISTING, not
+  introduced by MC-0.
+
+REAL BUGS FOUND: none.
+
+LEDGER: the [par-matmul-equiv] + [par-matmul-falsifier] + [mc0-idle] claim is
+  TRUE and falsifiable. The byte-identity crown is intact across all NW. Row
+  CLOSED. (tsan-under-PRoot remains the one tool I could not run; covered by
+  high-iteration stress + structural proof.)
