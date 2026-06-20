@@ -292,3 +292,75 @@ LEDGER: the [par-matmul-equiv] + [par-matmul-falsifier] + [mc0-idle] claim is
   TRUE and falsifiable. The byte-identity crown is intact across all NW. Row
   CLOSED. (tsan-under-PRoot remains the one tool I could not run; covered by
   high-iteration stress + structural proof.)
+
+## idle-yield (dispatcher idle busy-spin → sigsuspend) — commit 6eaa1407
+- Auditor: independent adversarial subagent (this run), 2026-06-20. Did NOT write
+  the code. Base verified: HEAD==6eaa1407, HEAD~1==7df9ba96 (the claimed parent).
+- Verdict: **PASS (ledger row CLOSED).** The dispatcher idle busy-spin is really
+  gone, the fix is confined to arch/linux/, and I could NOT wedge the scheduler.
+
+MISSED-WAKEUP / HANG (the #1 risk) — FALSIFICATION FAILED (good):
+- I could NOT construct a wedge. Adversarial test: 15 rounds of `tcbchurn 30 3` +
+  `moe` interleaved with sub-tick (50ms) idle gaps to hammer the race window, then
+  a 6s FULL idle, then a final `dtr eval` + echo probe. The kernel woke and answered
+  EVERY time (dtr-eval response present, FINAL_MARKER echoed). No hang, no fault,
+  "sched alive" on every churn round.
+- TOCTOU analysis (preempt.c aarch64:142 / x86_64:105): the re-check
+  `if (knl_schedtsk == 0)` runs AFTER `sigprocmask(SIG_BLOCK, SIGALRM)` and BEFORE
+  `sigsuspend()`. knl_schedtsk can be set only from the SIGALRM handler, which is
+  blocked across the re-check → sigsuspend window. If the tick fires in that window
+  it stays PENDING and sigsuspend returns at once. The re-check is genuinely inside
+  the blocked window — TOCTOU-free. Confirmed correct.
+- Bounded latency = 1 tick CONFIRMED. .Lidle does IRQ_FLAG_CLEAR (arch_irq_disabled_flag=0)
+  before the wait, so while idle every SIGALRM runs knl_timer_handler_startup DIRECTLY
+  (handler's `if (arch_irq_disabled_flag) defer` branch is not taken) — no new ticks
+  are deferred while sleeping, and a tk_dly_tsk timeout is serviced by the very next
+  tick (≤10ms @100Hz). Empirically: idle-entry rate is EXACTLY one wake per tick (see
+  below) — if any wakeup were ever missed the rate would not be a clean 100/s.
+  No non-signal off-tick wakeup path exists (idle ⇒ nothing runnable; only the timer
+  handler sets schedtsk).
+
+[idle-cpu] HEADLINE REPRODUCED (instrumented idle-entry counter, 5s window):
+- aarch64 (native):  BEFORE 5976/s  →  AFTER 100/s   (≈60×; matches commit's ~6000→~101)
+- x86_64 (qemu):     BEFORE 655800/s →  AFTER 100/s  (qemu sched_yield spins tighter;
+  AFTER is exactly one wake per 100Hz tick = sleeping, not spinning).
+- Process CPU (aarch64, FIFO-held idle): 5.7% → 0.5%. The busy-spin is GONE on both arches.
+  The fix is NOT fake.
+
+SIGNAL-MASK CORRECTNESS — CONFIRMED:
+- sigsuspend wakes on SIGALRM (the 100/s steady wake rate proves it). /proc SigBlk
+  sampled while idle == 0 on BOTH before & after (no permanent mask leak; prev is
+  restored by sigprocmask(SIG_SETMASK,&prev)). SigCgt=0x24c0 = handlers for
+  SIGBUS/SIGFPE/SIGSEGV/SIGALRM all installed and deliverable.
+- Fault deliverable from idle: `dtr crash` from the idle build → SIGSEGV(11) caught,
+  task isolated/killed, recover_fn ran, worker respawned, kernel kept running.
+- SIGINT/SIGQUIT are process-IGNORED (SigIgn=0x06) — the kernel takes Ctrl-C as raw
+  terminal INPUT, not a kill. This is PRE-EXISTING and IDENTICAL before & after (I
+  verified the 7df9ba96 build behaves the same). The patch does NOT block term/fault
+  signals; behavior is unchanged, exactly as the commit claims.
+
+IRQ BRACKETING — INTACT: the only change inside the IRQ_FLAG_CLEAR / IRQ_DISABLE
+  bracket is `bl/call sched_yield` → `knl_idle_wait`. FLAG_CLEAR (no drain) keeps
+  arch_irq_disabled_flag=0 during the wait so the tick runs directly; IRQ_DISABLE
+  restores the dispatcher's IRQ-off invariant before re-reading schedtsk. Nothing
+  clobbers knl_schedtsk/knl_ctxtsk/knl_dispatch_disabled.
+
+FOUNDATION (all run on the AFTER build):
+- poc_preempt: PASS (both tasks progressed; preemption intact).
+- tcbchurn 200 4: PASS (800 create/kill, "no UAF crash, sched alive"). KILL-CHURN clean.
+- run_kv.sh: 18 PASS / 0 FAIL ([result] PASS; byte-identical S/M/L tiers + 5.14× speedup).
+- moe test: ALL PASS; dmn test: PASS (forgetting + consolidation); dtr eval: clean.
+- Cadence unstretched: dtr train 50 epochs = 140ms (after) vs 150ms (before) — within
+  noise. The idle change does not touch the runnable-task path, so compute cadence is
+  unaffected.
+
+SCOPE / BARE-METAL: patch touches ONLY arch/linux/{aarch64,x86_64}/{cpu_support.S,
+  preempt.c} + new tests/idle_cpu.sh. `git show 6eaa1407 -- arch/x86 arch/aarch64`
+  is EMPTY — bare-metal hlt/wfi idle untouched. Both arches get the fix identically
+  in spirit (same C helper, same bracketing).
+
+BUILDS: all 4 green — linux (aarch64), linux_x86_64, bare x86 (kloader.bin), bare
+  aarch64 (kernel.elf).
+
+LEDGER: row CLOSED. No missed-wakeup path found; worst-case latency provably bounded
+  to one tick. No real bug found.
