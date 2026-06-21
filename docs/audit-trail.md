@@ -862,3 +862,31 @@ to, and coord-crash-live re-verified. The K bump is necessary + safe.
 LEDGER: row CLOSED. mk_pino's "measure the device + auto-fit": the SAME binary now adapts its
 woken-core count to the device via GICD_TYPER (RPi3=4, phone=8) — no recompile. The full
 measure-specs->size-the-mind (device-capacity) stays the deferred bigger thread.
+
+## T-fix-b / T-1 (the lesson BRIDGE) — commit (cherry-picked to trunk) (impl 0f8997f5)
+- Auditor: independent focused auditor, 2026-06-21. Did NOT write the code. Verdict: **MERGEABLE.**
+- THE CERT [cradle-teach] is REAL (generalization, NOT rote): a teacher TEXT lesson, pulled by
+  the student over the KDDS CRADLE_TEACH beacon + p-fs DAG body, trained → a NEVER-trained
+  held-out PROBE occurrence's loss drops 5.5220→1.8358 (3.69 nats), starting near chance
+  (ln256=5.5452). The auditor reconstructed the geometry: train_end=960, probe window [960,992)
+  is entirely in the never-trained tail; the held sentence appears NOWHERE in [0,960) → genuine
+  generalization, weight-resident.
+- 3 FALSIFIERS RED + sabotage-proven non-vacuous: ARM A teaching-OFF (drop 0.61<<3.69), ARM B
+  scrambled (drop −0.32, loss ROSE), ARM C never-taught probe (6.58 vs 1.84). Sabotage tests:
+  neutering cradle_lesson_ingest → cert FAILED ("ring not live"); disabling Arm B's scramble →
+  cert FAILED ("scrambled lesson still taught"). Both teeth bite.
+- BYTE-IDENTITY crown: run_kv 18/18 (byte+logit-hash identical, S/M/L); run_ss3 6/6; student.c
+  MATH untouched (not in the diff). With NO lesson cradle_window_src returns NULL → window()
+  reads TEACHER_FIXTURE via the IDENTICAL modular math → byte-identical training to base.
+- ONE-MIND/NOCENTRAL: no gl_merge/st_merge_cohort in cradle (grep [cradle-nocentral]); student
+  trains via its OWN st_backward/st_adam_step; teacher selection = local region_teacher() (T-fix-a,
+  no vote); vocab_fp refuse-on-mismatch.
+- PARITY: cradle_net.c in all 3 COMMON lists + cradle.c in all 3 LLM lists; check_parity OK; both
+  hosted ports build clean; bare-metal builds (student_shell absent there → seam never referenced).
+- HONEST [in-proc]: the cert feeds the ring directly; the KDDS+p-fs carrier is real in-kernel code
+  but the multi-process live teacher-convergence over ./relay = DEFERRED [live] row; the GGUF
+  teacher harvest = DEFERRED (CT-2); LESSON_FMT_SOFT reserved. Informational only: a cosmetic
+  comment imprecision (cradle.c:342), no correctness impact.
+LEDGER: row CLOSED. A teacher's TEXT lesson becomes WEIGHT-RESIDENT in the student (generalizes
+to a never-trained probe), over the real KDDS+p-fs carrier, byte-deterministically, NOCENTRAL —
+the teaching THREAD's transport now exists. Live multi-process teacher-convergence deferred.
