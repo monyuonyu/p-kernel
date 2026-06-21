@@ -129,6 +129,13 @@ typedef struct {
 void dkva_init(void);
 void dkva_task(INT stacd, void *exinf);
 
+/* ★[fed-2cluster][live] R0.1 responder-side falsifier hook (default OFF).
+ * dkva_init より前に dkva_set_resp_global(1) を呼ぶと resp/<n> を REGION→GLOBAL に
+ * 退化させ、responder/coordB ノードの dense partial が region 境界を越える。
+ * 新 responder-side locality gate (run_4node_regions.sh) はこの退化で RED になる。
+ * 未設定なら 1 ビットも変わらない (byte-identical default)。 */
+void dkva_set_resp_global(INT on);
+
 /*
  * KV キャッシュに新しいエントリを追加する。
  * dtr.c が推論するたびに呼ぶ。

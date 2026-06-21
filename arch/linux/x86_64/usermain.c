@@ -91,6 +91,7 @@ IMPORT void degrade_stat(void);
 IMPORT INT  capacity_self_test(void);   /* capacity(N) cert (regions.md §3.2) */
 IMPORT void dkva_init(void);
 IMPORT void dkva_task(INT stacd, void *exinf);
+IMPORT void dkva_set_resp_global(INT on);   /* [fed-2cluster][live] R0.1 responder-side falsifier */
 IMPORT void dkva_cmd(const UB *args, UW len);
 IMPORT void ss6live_cmd(const char *args, void (*emit)(const char *));      /* SS-6 LIVE cert */
 IMPORT void ss6live_responder_init(INT stacd, void *exinf);                  /* SS-6 LIVE responder task body */
@@ -628,7 +629,12 @@ EXPORT INT usermain(void)
     mind_net_open();
     /* DTR — distributed Transformer (the AI brain layer). */
     dtr_init();
-    /* DKVA — distributed KV attention topics (FULL-mode responder). */
+    /* DKVA — distributed KV attention topics (FULL-mode responder).
+     * [fed-2cluster][live] R0.1 falsifier hook: PKERNEL_DKVA_RESP_GLOBAL=1
+     * degenerates resp/<n> REGION→GLOBAL so the responder-side locality gate
+     * goes RED. Must be set BEFORE dkva_init (it picks the scope at pre-open).
+     * Default 0 → byte-identical. */
+    dkva_set_resp_global((INT)env_uint("PKERNEL_DKVA_RESP_GLOBAL", 0));
     dkva_init();
     /* Degrade controller — derives SOLO/REDUCED/FULL from the live node
      * count SWIM observes. Starts at SOLO until a peer appears. */

@@ -118,6 +118,17 @@ static W h_resp_sub[DNODE_MAX];
 static W h_rsum_pub[DNODE_MAX];
 static W h_rsum_sub[DNODE_MAX];
 
+/* ★[fed-2cluster][live] R0.1 responder-side falsifier hook (default OFF).
+ * resp/<n> は本番では REGION スコープ (per-node partial が自 region 内に留まる)。
+ * これを GLOBAL に退化させると responder/coordB ノードが dense partial を region
+ * 境界を越えて全ノードへ撒く = O(#region) 性が responder 側で壊れる。R0 の [live]
+ * gate は requester (node1) の locality しか測らないのでこの退化を捕まえられない
+ * (audit-trail "COVERAGE GAP")。dkva_set_resp_global(1) を dkva_init より前に呼ぶと
+ * resp を GLOBAL で開き、responder 側 locality gate (run_4node_regions.sh の新 arm)
+ * が RED になることを示す。未設定なら 1 ビットも変わらない (byte-identical)。 */
+static INT dkva_resp_scope_global = 0;
+void dkva_set_resp_global(INT on) { dkva_resp_scope_global = on ? 1 : 0; }
+
 /* "<pfx><node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁。
  * resp/rsum が共用するので DNODE_MAX(=64, node 0..63) 対応で 2 桁化) */
 static void node_topic_name(char *out, const char *pfx, UB node)
@@ -857,11 +868,16 @@ void dkva_init(void)
                                               KDDS_SCOPE_GLOBAL);
         h_q_sub[n]    = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
                                               KDDS_SCOPE_GLOBAL);
+        /* resp は REGION (本番)。R0.1 falsifier: dkva_resp_scope_global で
+         * GLOBAL に退化させると responder 側 far_msgs が跳ね、新 responder-side
+         * locality gate が RED になる (default OFF → byte-identical)。 */
+        INT resp_scope = dkva_resp_scope_global ? KDDS_SCOPE_GLOBAL
+                                                : KDDS_SCOPE_REGION;
         node_topic_name(tn, DKVA_TOPIC_RESP_PFX, n);   /* resp は REGION */
         h_resp_pub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                              KDDS_SCOPE_REGION);
+                                              resp_scope);
         h_resp_sub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
-                                              KDDS_SCOPE_REGION);
+                                              resp_scope);
         node_topic_name(tn, DKVA_TOPIC_RSUM_PFX, n);   /* rsum は GLOBAL */
         h_rsum_pub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
                                               KDDS_SCOPE_GLOBAL);
@@ -884,7 +900,10 @@ void dkva_init(void)
 
     dk_puts("[dkva] initialized (hierarchical, per-origin Q)  cache=");
     dk_putdec(DKVA_CACHE_SIZE);
-    dk_puts("  Q=global resp=region rsum=global (poll, zero-sem)\r\n");
+    if (dkva_resp_scope_global)
+        dk_puts("  Q=global resp=GLOBAL(falsifier!) rsum=global (poll, zero-sem)\r\n");
+    else
+        dk_puts("  Q=global resp=region rsum=global (poll, zero-sem)\r\n");
 }
 
 /* ------------------------------------------------------------------ */
