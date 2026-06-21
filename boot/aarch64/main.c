@@ -78,6 +78,15 @@ extern unsigned long smp_exec_count(int cpu);           /* per-CPU counter */
 extern void         *smp_running_tcb(int cpu);          /* per-CPU ctxtsk */
 extern unsigned long smp_get_counter(void);             /* shared total   */
 #endif
+#ifdef SMP_PREEMPT_TEST
+/* ②.1a cross-CPU preemption via GIC SGI IPI (arch/aarch64/smp.c).
+ * docs/architecture/smp-1-ipi-preempt-plan.md §1/§4. */
+extern int           smp_preempt_test_run(void);   /* 0 = B preempted (PASS) */
+extern unsigned long smp_preempted_at(int cpu);    /* iter B observed resched */
+extern unsigned long smp_highprio_ran(int cpu);    /* 1 = high-prio ran on B  */
+extern unsigned long smp_sgi_taken(int cpu);       /* # SGIs B took           */
+extern void         *smp_highprio_taskptr(void);   /* &g_highprio_task        */
+#endif
 
 /* PL011 base differs between QEMU virt and BCM2837 — keep this print
  * helper minimal so it works before sio_init() runs. */
@@ -300,7 +309,7 @@ void main(void)
     }
 #endif
 
-#ifdef SMP_SELFTEST
+#if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST)
     /* ②.0 full-SMP slice: bring up ONE secondary into the per-CPU T-Kernel
      * dispatcher under one Big Kernel Lock; have BOTH CPUs run a DISTINCT
      * task that increments a SHARED counter K times under the BKL. Prove:
@@ -355,6 +364,45 @@ void main(void)
         }
         /* Fall through to the normal T-Kernel boot — proves the primary
          * scheduler still runs AFTER the SMP slice. */
+    }
+#endif
+
+#ifdef SMP_PREEMPT_TEST
+    /* ②.1a cross-CPU preemption via GIC SGI IPI: CPU B runs a LOW-prio spin
+     * task; CPU A readies a HIGH-prio task for B and smp_send_reschedule(B);
+     * B takes the SGI and switches to the high-prio task within a watchdog
+     * bound. Prove [smp-cross-preempt]: SMP-PREEMPT: PASS with the evidence
+     * that B preempted. FALSIFIER -DSMP_NO_IPI: no send → B never preempts →
+     * SMP-PREEMPT: FAIL. docs/architecture/smp-1-ipi-preempt-plan.md §1/§4. */
+    {
+        print("[SMP] ②.1a cross-CPU preempt cert (GIC SGI IPI)...\r\n");
+        int rc = smp_preempt_test_run();
+
+        unsigned long pa     = smp_preempted_at(1);
+        unsigned long hr     = smp_highprio_ran(1);
+        unsigned long sgis   = smp_sgi_taken(1);
+        void *b_ctx          = smp_running_tcb(1);
+        void *hp             = smp_highprio_taskptr();
+
+        print("[SMP] cpu1 preempted_at="); print_long((long)pa);
+        print(" ran_high-prio=");          print_long((long)hr);
+        print(" sgi_taken=");              print_long((long)sgis); print("\r\n");
+        print("[SMP] cpu1 ctxtsk=");       print_long((long)(unsigned long)b_ctx);
+        print(" highprio_taskptr=");       print_long((long)(unsigned long)hp);
+        print("\r\n");
+
+        /* [smp-cross-preempt] PASS: ALL of — rc==0, B observed the resched
+         * (preempted_at != 0), the high-prio task ran on B (highprio_ran),
+         * an SGI was actually taken, and B's per-CPU current task is the
+         * high-prio one — within the driver watchdog. */
+        if (rc == 0 && pa != 0 && hr == 1 && sgis >= 1 && b_ctx == hp) {
+            print("SMP-PREEMPT: PASS\r\n");
+        } else {
+            print("SMP-PREEMPT: FAIL rc="); print_long((long)rc);
+            print(" (B did not switch to the high-prio task after the SGI)\r\n");
+        }
+        /* Fall through to the normal T-Kernel boot — the missed/served
+         * preempt must NOT crash the primary (NO_IPI must still boot). */
     }
 #endif
 

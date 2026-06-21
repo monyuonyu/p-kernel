@@ -141,27 +141,179 @@ static void smp_dbg(const char *s)
         *dr = (unsigned int)(unsigned char)*s;
 }
 
-/* ─── The per-CPU SMP block (this file's OWN; §DECOUPLING). The field
- * OFFSETS are mirrored in cpu_support.S via the SMPCPU_* macros below —
- * KEEP IN SYNC (a _Static_assert guards it). ────────────────────────── */
+/* Number of CPUs in this slice (boot CPU + ONE secondary). Defined HERE,
+ * before the ②.1a GIC block that sizes its per-CPU arrays by it (and reused
+ * by the per-CPU SMP block below). */
 #define SMP_MAX_CPUS   2          /* ②.0 = boot CPU + ONE secondary */
 
+/* ─── GICv2 SGI/IPI registers (②.1a) — header-light local #defines, mirror
+ * of tkdev_conf.h:23-39. QEMU-virt GICv2 ONLY (RPi3 uses the BCM2837
+ * mailbox, not GICD_SGIR — guarded below). ──────────────────────────── */
+#ifdef BOARD_RPI3
+/* RPi3 has NO GICD_SGIR; the cross-CPU IPI is the BCM2837 per-core mailbox
+ * (deferred [live] follow-up, §4.4/§6 of the plan). Defining these here for
+ * a BOARD_RPI3 build would be WRONG — so we do NOT, and smp_send_reschedule
+ * compiles to a hard no-op + a clear marker. */
+#else
+#  define SMP_GICD_BASE   0x08000000UL    /* QEMU virt GICv2 distributor   */
+#  define SMP_GICC_BASE   0x08010000UL    /* QEMU virt GICv2 CPU interface  */
+#  define SMP_GICD_CTLR   0x000
+#  define SMP_GICD_SGIR   0xF00
+#  define SMP_GICC_CTLR   0x000
+#  define SMP_GICC_PMR    0x004
+#endif
+
+#define SMP_RESCHED_SGI   0U              /* SGI INTID 0 = "reschedule" */
+
+/* The interrupt-handler table the production IRQ vector dispatches through
+ * (cpu_support.S:264-269: knl_intvec[INTID] blr). FP == void(*)() (typedef.h).
+ * We register knl_intvec[0] directly (header-light) for the self-test window;
+ * knl_cpu_initialize zeroes this table only LATER, inside knl_t_kernel_main,
+ * which the self-test runs BEFORE (so our slot survives the cert). */
+extern void (*knl_intvec[])(void);
+/* gicc_base_ptr (cpu_support.S:357) — the IRQ vector reads GICC_IAR/EOIR
+ * through it. gic_init normally sets it (tkdev_init.c:96) DURING T-Kernel
+ * boot — i.e. AFTER our self-test — so we must set it ourselves before any
+ * SGI can be taken, else the vector reads IAR from address 0. */
+extern unsigned long gicc_base_ptr;
+
+/* ════════════════════════════════════════════════════════════════════
+ *  THE GIC SGI / IPI PATH (②.1a) — the core new work.
+ *
+ *  SEND:    smp_send_reschedule(cpu) writes GICD_SGIR to deliver SGI 0 to
+ *           ONE target CPU. dsb ish before (so the readied high-prio task
+ *           is globally visible before the interrupt) + after (push the
+ *           MMIO write). No-op under -DSMP_NO_IPI (the load-bearing
+ *           falsifier) so B never preempts.
+ *  RECEIVE: smp_gic_cpuif_init() enables THIS CPU's banked CPU interface
+ *           (GICC_PMR/GICC_CTLR); smp_resched_sgi_handler (knl_intvec[0])
+ *           runs on the target, sets g_resched_pending[me]; the existing
+ *           _vec_el1_irq EOIRs. (Distributor enable + DAIF unmask: §2.5,
+ *           done by the driver / the low-prio task.)
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* Per-CPU "a reschedule was requested on me" flag (BSS, VA==PA). One writer
+ * (the SGI handler on that CPU), one reader (the dispatcher on that CPU) →
+ * a dmb suffices, no BKL (§5.4). */
+volatile unsigned int g_resched_pending[SMP_MAX_CPUS];
+/* Per-CPU count of SGIs taken (observability; proves an SGI was delivered). */
+volatile unsigned int g_sgi_taken[SMP_MAX_CPUS];
+
+/* Send the reschedule SGI to ONE target CPU (cpu = MPIDR Aff0 / CPU-interface
+ * index). GICv2 GICD_SGIR: TargetListFilter=0 (use list) | (1<<cpu)<<16 |
+ * sgi_id. */
+void smp_send_reschedule(int cpu)
+{
+#if defined(SMP_NO_IPI) || defined(BOARD_RPI3)
+    /* FALSIFIER (-DSMP_NO_IPI): the send is a no-op → B never gets the SGI →
+     * no preempt → the watchdog reports SMP-PREEMPT: FAIL, proving the IPI is
+     * load-bearing. (BOARD_RPI3 also no-ops: GICD_SGIR is QEMU-virt only.) */
+    (void)cpu;
+#else
+    unsigned int val = ((1u << (unsigned)cpu) << 16) | (SMP_RESCHED_SGI & 0xF);
+    /* The target's handler/dispatcher will read the shared ready list; the
+     * readied high-prio task must be visible to it BEFORE the interrupt. */
+    __asm__ volatile("dsb ish" ::: "memory");
+    *(volatile unsigned int *)(SMP_GICD_BASE + SMP_GICD_SGIR) = val;
+    __asm__ volatile("dsb ish" ::: "memory");   /* push the MMIO write out */
+#endif
+}
+
+/* Per-CPU GIC CPU-interface enable. Writes ONLY this CPU's banked
+ * GICC_PMR/GICC_CTLR (mirrors tkdev_init.c:105-106 for the local core) — it
+ * does NOT touch the shared distributor (the boot CPU owns GICD_CTLR). On a
+ * secondary this is the only way it can receive ANY interrupt. */
+void smp_gic_cpuif_init(void)
+{
+#if !defined(BOARD_RPI3)
+    *(volatile unsigned int *)(SMP_GICC_BASE + SMP_GICC_PMR)  = 0xFFu; /* allow all */
+    *(volatile unsigned int *)(SMP_GICC_BASE + SMP_GICC_CTLR) = 1u;    /* enable    */
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+#endif
+}
+
+/* SGI handler — runs on the TARGET CPU in IRQ context via knl_intvec[0]
+ * (cpu_support.S:264-269 blr). ABI-minimal leaf void(void): the existing
+ * vector save_caller_regs'd, stashed the IAR, and EOIRs after we return. We
+ * ONLY set a per-CPU flag (no shared-state mutation, no nested call needing
+ * the stashed IAR, no sp games below the vector's reserved slot) — the
+ * safest possible shape past the recurring aarch64 IRQ-path C-ABI trap. The
+ * actual re-dispatch happens on the dispatcher's next checkpoint (§2.4). */
+void smp_resched_sgi_handler(void)
+{
+    unsigned long me = smp_mpidr_aff0();
+    if (me < SMP_MAX_CPUS) {
+        g_sgi_taken[me]++;
+        g_resched_pending[me] = 1u;
+    }
+    __asm__ volatile("dmb ish" ::: "memory");
+}
+
+/* Distributor + boot-CPU-interface enable + SGI handler registration, run
+ * once by the driver BEFORE releasing the secondary (§2.5 steps 1-3). The
+ * self-test runs before knl_t_kernel_main, so NONE of gic_init's state
+ * exists yet — we stand it up ourselves, idempotently with the later
+ * gic_init (which re-sets GICD_CTLR=1 / gicc_base_ptr harmlessly at boot). */
+void smp_gic_selftest_setup(void)
+{
+#if !defined(BOARD_RPI3)
+    /* (1) Distributor enable (shared block; idempotent with gic_init:99). */
+    *(volatile unsigned int *)(SMP_GICD_BASE + SMP_GICD_CTLR) = 1u;
+    /* (2) Register the SGI handler in knl_intvec[0] (header-light direct
+     *     write; knl_define_inthdr does the same, cpu_insn.h:53-57). */
+    knl_intvec[SMP_RESCHED_SGI] = smp_resched_sgi_handler;
+    /* (2b) gicc_base_ptr — the IRQ vector reads IAR/EOIR through it; gic_init
+     *      sets it only at T-Kernel boot (later). Set it now or the vector
+     *      reads GICC_IAR from address 0 when an SGI fires. */
+    gicc_base_ptr = SMP_GICC_BASE;
+    /* SGI ids 0-15 are always-enabled at the GICv2 distributor (the
+     * GICD_ISENABLER0 SGI bits are fixed-enabled) — no GICD_ISENABLER write
+     * needed for id 0, unlike the timer PPI. */
+    /* (3) Enable the boot CPU's OWN CPU interface. */
+    smp_gic_cpuif_init();
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+#endif
+}
+
+/* Unmask / re-mask IRQ (and FIQ) in DAIF on the calling CPU (§2.5 step 5) —
+ * scoped to the cert window so the receiving CPU can actually TAKE the SGI.
+ * Gated; never leaks into production (the whole TU is SMP_SELFTEST). */
+static inline void smp_irq_unmask(void)
+{
+    __asm__ volatile("msr daifclr, #0x3; isb" ::: "memory"); /* clear I+F */
+}
+static inline void smp_irq_mask(void)
+{
+    __asm__ volatile("msr daifset, #0x3; isb" ::: "memory"); /* set   I+F */
+}
+
+/* ─── The per-CPU SMP block (this file's OWN; §DECOUPLING). The field
+ * OFFSETS are mirrored in cpu_support.S via the SMPCPU_* macros below —
+ * KEEP IN SYNC (a _Static_assert guards it). SMP_MAX_CPUS is #defined
+ * above (moved up for the ②.1a GIC arrays). ─────────────────────────── */
 struct smp_cpu {
     void          *ctxtsk;        /* off 0:  this CPU's running task (TCB*)  */
     void          *schedtsk;      /* off 8:  this CPU's next task    (TCB*)  */
     unsigned long  exec_count;    /* off 16: per-CPU dispatch/exec counter   */
     unsigned long  cpu_id;        /* off 24: MPIDR Aff0                       */
     volatile unsigned long live;  /* off 32: set 1 when CPU enters dispatcher*/
+    /* ②.1a cross-CPU preempt observability (appended — KEEPS off 0/8/16
+     * fixed so the asm SMPCPU_CTXTSK/SCHEDTSK mirror is unperturbed; only
+     * SMPCPU_SIZE grows, mirrored in cpu_support.S). */
+    volatile unsigned long preempted_at; /* off 40: iter at which the SGI was
+                                          *         observed (0 = never)       */
+    volatile unsigned long highprio_ran; /* off 48: 1 = the high-prio task ran */
 };
 
 #define SMPCPU_CTXTSK     0
 #define SMPCPU_SCHEDTSK   8
 #define SMPCPU_EXEC       16
-#define SMPCPU_SIZE       40
+#define SMPCPU_SIZE       56          /* was 40; +2*8 for the ②.1a fields    */
 
 _Static_assert(offsetof(struct smp_cpu, ctxtsk)   == SMPCPU_CTXTSK,   "smp_cpu.ctxtsk");
 _Static_assert(offsetof(struct smp_cpu, schedtsk) == SMPCPU_SCHEDTSK, "smp_cpu.schedtsk");
 _Static_assert(offsetof(struct smp_cpu, exec_count)==SMPCPU_EXEC,     "smp_cpu.exec");
+_Static_assert(sizeof(struct smp_cpu)             == SMPCPU_SIZE,     "smp_cpu.size");
 
 /* The per-CPU array (BSS, VA==PA). Slot 0 = boot CPU; slot 1 = the one
  * secondary ②.0 brings up. cpu_support.S indexes this by MPIDR Aff0. */
@@ -449,6 +601,108 @@ static void smp_run_task(struct smp_task *t)
     t->done = 1;
 }
 
+/* ════════════════════════════════════════════════════════════════════
+ *  ②.1a — the CROSS-CPU PREEMPT cert workload (gated SMP_PREEMPT_TEST).
+ *
+ *  CPU B (the secondary) runs a LOW-prio spin task that, each iteration,
+ *  checks g_resched_pending[B]. CPU A readies a HIGH-prio task targeted at
+ *  B and smp_send_reschedule(B). B takes the SGI (handler sets the flag),
+ *  observes it at its next checkpoint, RE-SELECTS under the BKL, finds the
+ *  high-prio task A pushed, and runs it. The cert proves: the SGI is
+ *  delivered → the handler runs on B → B re-selects to the high-prio task
+ *  within a watchdog bound. The -DSMP_NO_IPI falsifier (no send) → B never
+ *  preempts → SMP-PREEMPT: FAIL, proving the IPI is load-bearing.
+ *
+ *  This preemption is "cooperative-at-a-checkpoint": B's low-prio task
+ *  checks the resched flag at loop boundaries. A TRUE asynchronous
+ *  register-context preempt inside the SGI handler is the production
+ *  context-switch work, DEFERRED to ②.2 (§2.4/§6). ②.1a proves the IPI
+ *  MECHANISM, not the production scheduler conversion.
+ * ════════════════════════════════════════════════════════════════════ */
+#ifdef SMP_PREEMPT_TEST
+
+/* Set by the driver before releasing the secondary → the secondary runs the
+ * preempt loop instead of the ②.0 pull loop. */
+static volatile int g_preempt_mode = 0;
+
+/* The high-prio task A readies for B. A short task with a distinct id; its
+ * "run" records that the high-prio task executed on B (sets highprio_ran on
+ * B's per-CPU block). For the cert to PASS this must run on B AFTER the SGI. */
+static struct smp_task g_highprio_task;   /* id 999 */
+
+/* B's low-prio spin task pointer (so its ctxtsk is observable). */
+static struct smp_task g_lowprio_task;    /* id 1 */
+
+/* B sets this when it is provably spinning on the low-prio task (so A only
+ * sends the SGI once B is actually in the interruptible loop). */
+static volatile int g_b_spinning = 0;
+
+/* The LOW-prio spin loop running on B with IRQs unmasked. Bounded (capped
+ * iterations) so a missed preempt can NEVER wedge — the watchdog discipline.
+ * Each iteration checks g_resched_pending[B]; on the flag, it records
+ * preempted_at, re-selects under the BKL (smp_ready_pull now returns the
+ * high-prio task A pushed), runs it, and returns. */
+static void smp_secondary_preempt_loop(unsigned long me)
+{
+    /* Enable THIS CPU's GIC CPU interface so it can receive the SGI, then
+     * unmask IRQ/FIQ for the cert window (§2.3, §2.5 step 5). */
+    smp_gic_cpuif_init();
+    smp_irq_unmask();
+
+    g_smpcpu[me].ctxtsk = &g_lowprio_task;   /* B's current = low-prio */
+    g_lowprio_task.claimed = 1;
+    __asm__ volatile("dmb st" ::: "memory");
+    g_b_spinning = 1;                        /* tell A we're interruptible */
+    __asm__ volatile("dmb st; sev" ::: "memory");
+
+    /* Bounded spin. The cap is large enough that, in a PASS run, the SGI
+     * arrives well before it; in a NO_IPI run, it elapses and B never
+     * preempts (preempted_at stays 0) → the driver watchdog FAILs. */
+    const unsigned long CAP = 400000000UL;
+    unsigned long k = 0;
+    for (;;) {
+        __asm__ volatile("dmb ld" ::: "memory");
+        if (g_resched_pending[me]) {
+            g_resched_pending[me] = 0;           /* consume */
+            g_smpcpu[me].preempted_at = k ? k : 1; /* observed at iter k (>0) */
+            __asm__ volatile("dmb ish" ::: "memory");
+
+            /* RE-SELECT under the BKL exactly as ②.0 does — the only new
+             * thing is the SGI-set trigger that made us re-enter the pull. */
+            bkl_acquire();
+            struct smp_task *t = smp_ready_pull();   /* → the high-prio task */
+            if (t) {
+                g_smpcpu[me].schedtsk = t;
+                g_smpcpu[me].ctxtsk   = t;           /* B switched to it */
+                g_smpcpu[me].exec_count++;
+            }
+            bkl_release();
+
+            if (t) {
+                /* Prove the asm per-CPU current-task load returns the
+                 * high-prio task (the per-CPU switch happened in asm too). */
+                if (smp_cur_tcb_load() == (void *)t && t->id == 999UL) {
+                    g_smpcpu[me].highprio_ran = 1;   /* the high-prio ran on B */
+                    t->done = 1;
+                }
+            }
+            __asm__ volatile("dmb st; sev" ::: "memory");
+            break;                                   /* preempt observed */
+        }
+        if (++k >= CAP)
+            break;                                   /* watchdog cap (NO_IPI) */
+        __asm__ volatile("yield" ::: "memory");
+    }
+
+    smp_irq_mask();                                  /* scope the IRQ-enable */
+    g_smpcpu[me].live = 1;
+    __asm__ volatile("dmb st; sev" ::: "memory");
+    for (;;)
+        __asm__ volatile("wfe");                     /* park; driver reaps */
+}
+
+#endif /* SMP_PREEMPT_TEST */
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -456,6 +710,17 @@ void smp_dispatch_run(void)
     if (me >= SMP_MAX_CPUS) {
         for (;;) __asm__ volatile("wfe");     /* never index OOB */
     }
+
+#ifdef SMP_PREEMPT_TEST
+    /* ②.1a: if the driver armed the preempt cert, the secondary runs the
+     * interruptible low-prio loop instead of the ②.0 pull loop. */
+    if (g_preempt_mode) {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        smp_dbg("[SMP] cpu1 entered dispatcher (preempt cert)\r\n");
+        smp_secondary_preempt_loop(me);       /* never returns */
+    }
+#endif
 
     g_smpcpu[me].live = 1;
     __asm__ volatile("dmb st; sev" ::: "memory");
@@ -570,5 +835,102 @@ int smp_selftest_run(unsigned long K)
     }
     return 0;
 }
+
+#ifdef SMP_PREEMPT_TEST
+/* ── ②.1a observability helpers (read per-CPU evidence for the cert) ──── */
+unsigned long smp_preempted_at(int cpu)
+{
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
+    __asm__ volatile("dmb ld" ::: "memory");
+    return g_smpcpu[cpu].preempted_at;
+}
+unsigned long smp_highprio_ran(int cpu)
+{
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
+    __asm__ volatile("dmb ld" ::: "memory");
+    return g_smpcpu[cpu].highprio_ran;
+}
+unsigned long smp_sgi_taken(int cpu)
+{
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
+    __asm__ volatile("dmb ld" ::: "memory");
+    return g_sgi_taken[cpu];
+}
+/* The &g_highprio_task pointer (so the driver can assert B's ctxtsk == it). */
+void *smp_highprio_taskptr(void) { return (void *)&g_highprio_task; }
+
+/* ── ②.1a CROSS-CPU PREEMPT driver (boot CPU A) ───────────────────────
+ *  Returns 0 = PASS (B provably preempted to the high-prio task after the
+ *  SGI), <0 = FAIL (a watchdog stage timed out / no preempt). main.c reads
+ *  the per-CPU evidence and prints SMP-PREEMPT: PASS/FAIL. */
+int smp_preempt_test_run(void)
+{
+    /* Reset per-CPU evidence + tasks. */
+    for (int i = 0; i < SMP_MAX_CPUS; i++) {
+        g_smpcpu[i].preempted_at = 0;
+        g_smpcpu[i].highprio_ran = 0;
+        g_resched_pending[i]     = 0;
+        g_sgi_taken[i]           = 0;
+    }
+    g_lowprio_task.id = 1;     g_lowprio_task.budget = 0;
+    g_lowprio_task.claimed = 0; g_lowprio_task.done = 0;
+    g_highprio_task.id = 999;  g_highprio_task.budget = 0;
+    g_highprio_task.claimed = 0; g_highprio_task.done = 0;
+    g_ready_n = 0; g_ready_hd = 0;
+    g_b_spinning = 0;
+    g_preempt_mode = 1;        /* arm the secondary's preempt loop */
+    __asm__ volatile("dsb ish" ::: "memory");
+
+    /* §2.5 steps 1-3: distributor enable + SGI handler in knl_intvec[0] +
+     * boot-CPU interface + gicc_base_ptr — BEFORE the secondary can fire. */
+    smp_gic_selftest_setup();
+
+    /* Release the secondary (it enables ITS CPU interface, unmasks IRQ, and
+     * begins spinning on the low-prio task, checking g_resched_pending[1]). */
+    long on = smp_bringup_secondary();
+    if (on != PSCI_SUCCESS && on != PSCI_ALREADY_ON)
+        return (int)on;                          /* CPU_ON failed */
+
+    /* Wait until B is provably spinning (interruptible) before sending. */
+    {
+        const unsigned long MAX = 200000000UL;
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_b_spinning) break;
+            if (++tries >= MAX) return -10;      /* B never started spinning */
+            __asm__ volatile("wfe");
+        }
+    }
+    smp_dbg("[SMP] cpu1 spinning on low-prio task (resched_pending=0)\r\n");
+
+    /* A readies the HIGH-prio task for B (under the BKL), then sends the
+     * reschedule SGI to CPU 1. (NO_IPI → the send is a no-op.) */
+    bkl_acquire();
+    smp_ready_push(&g_highprio_task);
+    bkl_release();
+    __asm__ volatile("dsb ish" ::: "memory");
+    smp_send_reschedule(1);
+    smp_dbg("[SMP] cpu0 readied high-prio task, sent reschedule SGI to cpu1\r\n");
+
+    /* Bounded-wait for the preemption evidence: B observed the resched
+     * (preempted_at != 0), the high-prio task ran (highprio_ran == 1), and
+     * B's per-CPU current task is the high-prio one. Watchdog → FAIL. */
+    {
+        const unsigned long MAX = 300000000UL;
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_smpcpu[1].preempted_at != 0 &&
+                g_smpcpu[1].highprio_ran == 1 &&
+                g_smpcpu[1].ctxtsk == (void *)&g_highprio_task)
+                return 0;                        /* PASS */
+            if (++tries >= MAX)
+                return -20;                      /* no preempt (NO_IPI / miss) */
+            __asm__ volatile("wfe");
+        }
+    }
+}
+#endif /* SMP_PREEMPT_TEST */
 
 #endif /* SMP_SELFTEST */

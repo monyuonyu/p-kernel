@@ -32,6 +32,7 @@
 /* GICv2 register offsets */
 #define GICD_CTLR       0x000
 #define GICD_ISENABLER  0x100
+#define GICD_SGIR       0xF00   /* GICv2 Software-Generated Interrupt Register (②.1 IPI) */
 #define GICC_CTLR       0x000
 #define GICC_PMR        0x004
 #define GICC_IAR        0x00C
