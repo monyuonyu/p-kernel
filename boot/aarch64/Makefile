@@ -475,21 +475,26 @@ run-slice-break:
 mc2-slice-test:
 	../../tests/aarch64/run_mc2_slice.sh
 
-# ---- ②.0/②.N8 full-SMP: 8 CPUs run the dispatcher under one Big Kernel Lock
-# docs/architecture/full-smp-plan.md §7 ②.0; ②.N8 scales it to 8 PHYSICAL
-# cores (the real phone target = the GICv2 ceiling). Build the kernel WITH the
-# SMP self-test and boot under -smp 8 (uses ALL 8 CPUs: boot + cores 1..7).
-# Prints:
-#   SMP-RUN:    PASS  (all 8 CPUs ran DISTINCT tasks; per-CPU exec counters)
-#   SMP-MUTEX:  PASS  (shared counter under the BKL == exact N*K, N=8)
-#   SMP-BOOT:   PASS  (all 8 CPUs reached the dispatcher; T-Kernel still boots)
+# ---- ②.0/②.N8 full-SMP + [smp-autodetect]: N CPUs run the dispatcher under
+# one Big Kernel Lock, where N is DETECTED at boot via GICD_TYPER.
+# docs/architecture/full-smp-plan.md §7 ②.0; docs/architecture/
+# device-autodetect-plan.md (slice 1). The SAME -DSMP_SELFTEST binary now
+# AUTODETECTS the core count (GICD_TYPER bits[7:5]) and wakes EXACTLY that many,
+# so booting it under -smp 2/4/8 wakes 1/3/7 secondaries — no recompile. SMP_MAX
+# _CPUS=8 stays the array CEILING (the GICv2 8-CPU max). Build WITH the SMP
+# self-test and boot under -smp 8 (default; uses ALL 8 CPUs: boot + cores 1..7).
+# Prints (under -smp N):
+#   [SMP] detected N cpus via GICD_TYPER
+#   SMP-RUN:    PASS  (all N CPUs ran DISTINCT tasks; per-CPU exec counters)
+#   SMP-MUTEX:  PASS  (shared counter under the BKL == exact N*K)
+#   SMP-BOOT:   PASS  (all N CPUs reached the dispatcher; T-Kernel still boots)
 # The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
 run-smp0:
 	$(MAKE) clean
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP8_FLAGS)
 
-# FALSIFIER (load-bearing): the shared-counter increment BYPASSES the BKL.
+# FALSIFIER A (load-bearing): the shared-counter increment BYPASSES the BKL.
 # Under -smp 8 with truly-concurrent tasks the RMW races -> lost updates ->
 # SMP-MUTEX: FAIL with a total < N*K. Proves the lock is load-bearing.
 run-smp0-nolock:
@@ -497,9 +502,21 @@ run-smp0-nolock:
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_MUTEX_NOLOCK" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP8_FLAGS)
 
-# Automated cert: build + boot under -smp 8, grep SMP-RUN/MUTEX/BOOT PASS,
-# then build the NOLOCK falsifier and assert SMP-MUTEX: FAIL. This is the
-# [smp-2-tasks-run] + [smp-mutual-exclusion] + [smp-boot-survives] harness.
+# FALSIFIER B (load-bearing): IGNORE GICD_TYPER, HARDCODE the count to 8. Boot
+# under -smp 2 (QEMU_SMP_FLAGS): the bringup tries PSCI CPU_ON for cores 2..7
+# that DON'T EXIST -> the cert FAILs (SMP-RUN/MUTEX/BOOT: FAIL, total != 2*K).
+# Proves the GICD_TYPER autodetect is load-bearing (without it the same -smp 2
+# boot can't adapt). Run under -smp 2 deliberately (the small device).
+run-smp0-force:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_FORCE_NCPU=8" $(TARGET)
+	qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2 -m 256M \
+	    -kernel $(TARGET) -serial stdio -display none -no-reboot
+
+# Automated cert: build ONCE, boot the SAME binary under -smp 2/4/8 and assert
+# each detects+wakes the right count (counter == N*K), then the NOLOCK and
+# FORCE_NCPU=8 falsifiers. This is the [smp-autodetect] + [smp-2-tasks-run] +
+# [smp-mutual-exclusion] + [smp-boot-survives] harness.
 smp0-test:
 	../../tests/aarch64/run_smp0.sh
 
@@ -588,5 +605,5 @@ clean:
 .PHONY: all run run-debug clean run-smp run-smp-fault mc2-test \
         run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test \
         run-slice run-slice-break mc2-slice-test \
-        run-smp0 run-smp0-nolock smp0-test \
+        run-smp0 run-smp0-nolock run-smp0-force smp0-test \
         run-smp1 run-smp1-noipi smp1-test
