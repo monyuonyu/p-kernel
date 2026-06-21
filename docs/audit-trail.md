@@ -799,3 +799,43 @@ LEDGER: row CLOSED. The SMP machinery scales to 8 physical cores (the real phone
 GICv2 ceiling) with exact mutual exclusion (1600000) and a real variable-loss falsifier;
 the shipped uniprocessor kernel stays byte-identical. Runtime core-count autodetect
 (GICD_TYPER) is the designed follow-up that makes the woken-count adapt per device.
+
+## federation R0.1 (responder-side locality gate + coord-crash-live verify) — commit fc04e36c (impl 4cc68cfc)
+- Auditor: independent focused auditor (single agent), 2026-06-21. Did NOT write the
+  code. Closes the two audit-flagged OPEN items of the shipped federation R0.
+  Verdict: **MERGEABLE.**
+- ITEM 1 (the genuinely-new work) — RESPONDER-side locality gate, REAL with teeth
+  (3/3 stable): the R0 [live] gate measured only node1-the-REQUESTER, so a resp/<n>
+  REGION→GLOBAL degeneration on the responder/coordB nodes was statically-correct but
+  NOT dynamically falsified. R0.1 reads node3(coordB)+node4(non-coord responder)
+  locality. HEALTHY (resp=REGION): node4 far=6/near=103. FALSIFIER
+  (PKERNEL_DKVA_RESP_GLOBAL=1 on the responders): node4 far 6→206 (+200) → the new gate
+  goes RED. Mechanism (kdds.c:271-283): a REGION topic delivers only to region members
+  (all near); GLOBAL fans out → non-members count far. THE GAP R0.1 CLOSES, proven
+  dynamically: the REQUESTER's far-delta is resp-INVARIANT (zoned node1 far=8 ==
+  respglobal node1 far=8) — the requester genuinely cannot see this; only the
+  responders can.
+- ITEM 2 ([coord-crash][live]): re-verified PASS (run_coord_crash.sh — kill the
+  coordinator → min-id re-delegation "node 0 DEAD heir=1", no election, DKVA
+  reconverges via the survivor, no SPOF), and CONFIRMED already-shipped-at-base (both
+  source commits 0fcad504+3215687d are git-ancestors of base 82d0295a; not in the R0.1
+  diff). So R0.1's net-new code is item 1 only.
+- BYTE-IDENTICAL production path: dkva_resp_scope_global defaults 0 (dkva.c:129) →
+  resp opens KDDS_SCOPE_REGION, the O(#region) property (rsum=GLOBAL, resp=REGION)
+  intact; the falsifier knob is env-only (PKERNEL_DKVA_RESP_GLOBAL).
+- THE K 6→10 LOOSENING (scrutinized hardest, HONEST + SAFE): the requester gate's
+  bound (a) was raised 6→10 because keeping region-B responders alive+polled across the
+  window adds ~2 background GLOBAL crossings (zoned far now consistently 8; K=6 would
+  false-FAIL). SAFE: a real per-node O(#region)→O(N) degeneration drives far into the
+  ~200s (20x above K=10 — no-man's-land); the LOAD-BEARING falsifiers stay green + bite
+  (b1 flat far-delta==0; b2 near-collapse is magnitude-independent). The loosening
+  relaxes only bound (a), not the teeth.
+- NOCENTRAL/one-mind/no-regression: in-proc dkva test PASS on aarch64 AND x86_64
+  (bit-identical); rep selection is pure min-id recompute (region.c:68), no vote/
+  election on the dkva/region path (raft.c off-path); only new symbol
+  dkva_set_resp_global; mind-math + aarch64 SMP untouched; 4 builds clean; check_parity OK.
+- HONEST FLOOR (expected): [live] ran 4-node/2-zone as 8 OS processes on ONE host
+  through ./relay; SSH 2-machine deferred. The 10k-dream gap (256 node_id wall) stays open.
+LEDGER: row CLOSED. Both R0 OPEN items are genuinely closed — a dynamically-falsifiable
+responder-side gate that catches the degeneration requester-only measurement was blind
+to, and coord-crash-live re-verified. The K bump is necessary + safe.
