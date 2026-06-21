@@ -38,9 +38,18 @@
 #pragma once
 #include "kernel.h"
 
-/* Dedicated UDP port for supernode forward REQ/DELIVER. Distinct from DRPC
- * (7374), KDDS (7376), SS6L (7378). */
-#define SNF_PORT        7380
+/* Dedicated UDP port for supernode forward REQ/DELIVER. MUST be distinct from
+ * EVERY other udp_bind() port — netstack's udp_input dispatches a datagram to
+ * the FIRST socket whose port matches and returns, so a port shared with an
+ * earlier-bound handler silently steals all our traffic (that handler never
+ * sees a second binder on the same port). The N-2c live bug was exactly this:
+ * SNF_PORT was 7380 == PMESH_PORT (bound at boot by pmesh_init, long before
+ * snf_install), so pmesh_rx ate every SNF_FWD/SNF_DELIVER and snf_rx never
+ * fired on the supernode/destination. 7377 is the free slot between
+ * KDDS (7376) and SS6L (7378); also distinct from DRPC (7374), SWIM (7375),
+ * REPLICA (7379), PMESH (7380), SFS (7381), PFSR/RAFT (7382), SPAWN (7383),
+ * KLOAD (7386/7387). */
+#define SNF_PORT        7377
 
 #define SNF_FWD_MAGIC    0x57464E53UL   /* "SNFW" LE — forward-to-supernode    */
 #define SNF_DLV_MAGIC    0x4C444E53UL   /* "SNDL" LE — deliver-to-destination  */
