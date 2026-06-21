@@ -768,3 +768,34 @@ LEDGER: row CLOSED. The production T-Kernel scheduler runs 2 real tasks on 2 phy
 cores under one Big Kernel Lock, with the shipped uniprocessor kernel BYTE-IDENTICAL
 and the mind untouched. p-kernel is genuinely SMP at the scheduler level — the heart of
 mk_pino's "最終目標". (②.2b true-async + ②.2c one-mind-crown remain.)
+
+## SMP-N8 (4 -> 8 physical cores) — commit 5922fa91 (impl 0f105f44)
+- Auditor: independent focused auditor (single agent, proportionate to the sandbox
+  expansion), 2026-06-21. Did NOT write the code. Verdict: **MERGEABLE.**
+- 8 CORES REAL: -smp 8 wakes 7 secondaries (cpu1..7 enter, scrambled order = real
+  concurrency); 8 per-CPU exec_count>0 keyed off MPIDR (smp.c:123/899); the barrier
+  waits for exactly 8 arrivals (smp.c:701) — unreachable unless 8 distinct cores run;
+  shared counter == 1600000 (=8*200000) EXACTLY; NOLOCK falsifier loses VARIABLY
+  (382089/361389/351423 across runs = true race). Per-CPU stacks cpu1..7 distinct,
+  16-aligned, non-overlapping (0x4000 stride), 14.4MB below the heap base — no collision.
+- DEFAULT build BYTE-IDENTICAL: .text + full objcopy binary + full kernel.elf ALL
+  cmp-identical to base (sha b48d7da7…); smp.o is 0/0/0 in the default build. The
+  struct LAYOUT is unchanged (SMPCPU_SIZE 72, stack_top@56, dispatch_disabled@64) —
+  only g_smpcpu[] COUNT grew 4->8.
+- THE cpu4..7-STACKS-IN-BSS DECISION (validated): _kernel_end is baked into shipped
+  .text via cpu_init.c:32 (knl_lowmem_top); extending linker.ld would move it + break
+  byte-identity — the impl correctly put the stacks in static SMP_SELFTEST-gated BSS
+  instead (linker.ld change is comment-only), preserving identity.
+- THE -smp 8 HARDCODE (honest): smp_bringup_secondary now releases cores 1..7, so the
+  SMP build REQUIRES -smp 8 (fails under -smp 4 — boot CPU starves at the 8-arrival
+  barrier); the run_smp2 harness was bumped 4->8 (the honest fix; smp2 still uses only
+  CPUs 0,1, cores 2..7 idle). GICv2 ceiling = 8 (SGI target-list is 8 bits; >8 = GICv3).
+  THE PROPER FOLLOW-UP that makes the woken-count ADAPT to the device (RPi3=4, phone=8,
+  same binary) is the GICD_TYPER runtime-autodetect designed in
+  docs/architecture/device-autodetect-plan.md (now on trunk) — NOT a blocker.
+- NO REGRESSION: smp1-test (preempt + NO_IPI falsifier), smp2-test (@-smp 8), mc2-test
+  all PASS. Production scheduler/mind/x86/linux untouched. check_parity OK.
+LEDGER: row CLOSED. The SMP machinery scales to 8 physical cores (the real phone target /
+GICv2 ceiling) with exact mutual exclusion (1600000) and a real variable-loss falsifier;
+the shipped uniprocessor kernel stays byte-identical. Runtime core-count autodetect
+(GICD_TYPER) is the designed follow-up that makes the woken-count adapt per device.
