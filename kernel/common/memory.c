@@ -40,6 +40,19 @@
 #include "memory.h"
 /** [END Common Definitions] */
 
+/*
+ * ②.2a — BKL guard for the 4 BARE-DI allocator sites below (they bypass the
+ * BEGIN/END_CRITICAL_SECTION macros; §1.1/§2.2).  The aarch64 <cpu_status.h>
+ * defines BKL_ACQUIRE/BKL_RELEASE (BKL under -DSMP_SELFTEST, empty otherwise);
+ * for every other arch (whose headers predate ②.2 + don't reach task.h here)
+ * this fallback keeps them empty → BYTE-IDENTICAL.  Only the aarch64
+ * SMP_SELFTEST build ever makes these non-empty.
+ */
+#ifndef BKL_ACQUIRE
+#define BKL_ACQUIRE()  /* no-op: disint() IS the lock on a uniprocessor */
+#define BKL_RELEASE()
+#endif
+
 
 #ifdef USE_FUNC_SEARCHFREEAREA
 /**
@@ -273,6 +286,9 @@ EXPORT void* knl_Imalloc( size_t size )
 	}
 
 	DI(imask);  /* Exclusive control by interrupt disable */
+	BKL_ACQUIRE();  /* ②.2a: under SMP the bare DI masks only THIS CPU; the
+	                 * BKL makes the FreeQue mutation single-CPU (§1.1/§2.2).
+	                 * No-op (byte-identical) under no-SMP. */
 
 	/* Search FreeQue */
 	q = knl_searchFreeArea(knl_imacb, size);
@@ -300,6 +316,7 @@ EXPORT void* knl_Imalloc( size_t size )
 	setAreaFlag(aq, AREA_USE);
 
 err_ret:
+	BKL_RELEASE();  /* ②.2a: release the BKL (no-op under no-SMP) */
 	EI(imask);
 
 	return (void *)q;
@@ -362,6 +379,8 @@ EXPORT void  knl_Ifree( void *ptr )
 	UINT	imask;
 
 	DI(imask);  /* Exclusive control by interrupt disable */
+	BKL_ACQUIRE();  /* ②.2a: BKL — single-CPU FreeQue mutation under SMP
+	                 * (§1.1/§2.2).  No-op (byte-identical) under no-SMP. */
 
 	aq = (QUEUE*)ptr - 1;
 	clrAreaFlag(aq, AREA_USE);
@@ -381,6 +400,7 @@ EXPORT void  knl_Ifree( void *ptr )
 
 	knl_appendFreeArea(knl_imacb, aq);
 
+	BKL_RELEASE();  /* ②.2a: release the BKL (no-op under no-SMP) */
 	EI(imask);
 }
 #endif /* USE_FUNC_IFREE */

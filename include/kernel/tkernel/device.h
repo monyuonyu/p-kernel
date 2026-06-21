@@ -89,7 +89,7 @@ ER knl_call_abortfn( DevCB *devcb, ID tskid, T_DEVREQ *devreq, INT nreq )
 	abortfn = (ABTFN)devcb->ddev.abortfn;
 
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode++;
+	CUR_CTXTSK->sysmode++;
 	ENABLE_INTERRUPT;
 #if TA_GP
 	ercd = knl_CallDeviceDriver(tskid, devreq, nreq, devcb->ddev.exinf,
@@ -98,7 +98,7 @@ ER knl_call_abortfn( DevCB *devcb, ID tskid, T_DEVREQ *devreq, INT nreq )
 	ercd = (*abortfn)(tskid, devreq, nreq, devcb->ddev.exinf);
 #endif
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode--;
+	CUR_CTXTSK->sysmode--;
 	ENABLE_INTERRUPT;
 
 	return ercd;

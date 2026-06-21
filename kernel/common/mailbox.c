@@ -342,10 +342,10 @@ SYSCALL ER tk_rcv_mbx_impl( ID mbxid, T_MSG **ppk_msg, TMO tmout )
 		headmsg(mbxcb) = nextmsg(*ppk_msg);
 	} else {
 		/* Ready for receive wait */
-		knl_ctxtsk->wspec = ( (mbxcb->mbxatr & TA_TPRI) != 0 )?
+		CUR_CTXTSK->wspec = ( (mbxcb->mbxatr & TA_TPRI) != 0 )?
 					&knl_wspec_mbx_tpri: &knl_wspec_mbx_tfifo;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.mbx.ppk_msg = ppk_msg;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.mbx.ppk_msg = ppk_msg;
 		knl_gcb_make_wait((GCB*)mbxcb, tmout);
 	}
 

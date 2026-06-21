@@ -103,7 +103,8 @@ ARCH_C_SRCS = \
     vfs_stub.c \
     sign_entropy.c \
     mc2_smp.c \
-    smp.c
+    smp.c \
+    smp_prod.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -231,6 +232,19 @@ STUDENT_STUB_OBJ = student_stub.o
 # ---- All objects -------------------------------------------------------
 ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS) $(STUDENT_STUB_OBJ)
 
+# ②.2a [smp-2tasks-prod]: smp_prod.c is ALWAYS compiled+cleaned (so the build
+# is consistent across flag changes), but its object is EXCLUDED from the LINK
+# unless the cert is built (-DSMP_2TASKS_PROD).  Excluding it keeps the DEFAULT
+# kernel ELF BYTE-IDENTICAL — smp_prod.o is empty otherwise, but its mere
+# presence perturbs the ELF section-header metadata.  (smp_prod.c references
+# the production scheduler + tk_cre_tsk; it has zero effect when its symbols
+# are unreferenced, but we exclude it to make even the full ELF identical.)
+ifeq (,$(findstring SMP_2TASKS_PROD,$(EXTRA_CFLAGS)))
+LINK_OBJS = $(filter-out smp_prod.o,$(ALL_OBJS))
+else
+LINK_OBJS = $(ALL_OBJS)
+endif
+
 TARGET = kernel.elf
 
 # ---- BOARD selection --------------------------------------------------
@@ -251,7 +265,7 @@ BOARD_CFLAGS_RPI3 = -DBOARD_RPI3
 all: $(TARGET)
 
 $(TARGET): $(ALL_OBJS) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(ALL_OBJS) $(LIBGCC)
+	$(LD) $(LDFLAGS) -o $@ $(LINK_OBJS) $(LIBGCC)
 	@echo "[OK] $(TARGET) built"
 	@$(CROSS)size $@
 
@@ -271,7 +285,7 @@ _rpi3_image: TARGET := kernel.rpi3.elf
 _rpi3_image: kernel8.img
 
 kernel.rpi3.elf: $(ALL_OBJS) linker.rpi3.ld
-	$(LD) -nostdlib -static -T linker.rpi3.ld -o $@ $(ALL_OBJS) $(LIBGCC)
+	$(LD) -nostdlib -static -T linker.rpi3.ld -o $@ $(LINK_OBJS) $(LIBGCC)
 	@echo "[OK] $@ built"
 	@$(CROSS)size $@
 
@@ -501,6 +515,23 @@ run-smp1-noipi:
 # [smp-cross-preempt] harness.
 smp1-test:
 	../../tests/aarch64/run_smp1.sh
+
+# ---- ②.2a [smp-2tasks-prod]: 2 REAL T-Kernel TCBs on 2 CPUs (BKL) -------
+# docs/architecture/smp-2-production-scheduler-plan.md §6 ②.2a. The PRODUCTION
+# scheduler runs TWO REAL tk_cre_tsk/tk_sta_tsk tasks (in knl_tcb_table + the
+# shared knl_ready_queue) on TWO DISTINCT CPUs under one Big Kernel Lock — NOT
+# the ②.0 struct smp_task stand-ins. Boot under -smp 4; prints:
+#   SMP-2TASKS-PROD: PASS  (cpu0.ctxtsk=A, cpu1.ctxtsk=B, distinct real TCBs)
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+run-smp2:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_2TASKS_PROD" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4 + grep SMP-2TASKS-PROD: PASS +
+# the per-CPU distinct-real-TCB evidence + T-Kernel still boots.
+smp2-test:
+	../../tests/aarch64/run_smp2.sh
 
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.

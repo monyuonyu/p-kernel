@@ -262,7 +262,7 @@ EXPORT ER knl_svc_ientry P2GP( void *pk_para, FN fncd )
 						ssycb->svchdr, ssycb);
 	} else {
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 
 		/* Call extended SVC handler */
@@ -270,7 +270,7 @@ EXPORT ER knl_svc_ientry P2GP( void *pk_para, FN fncd )
 						ssycb->svchdr, ssycb);
 
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 	}
 

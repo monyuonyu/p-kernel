@@ -353,10 +353,10 @@ SYSCALL ER tk_get_mpf_impl( ID mpfid, void **p_blf, TMO tmout )
 wait_mpf:
 	/* Ready for wait */
 	BEGIN_CRITICAL_SECTION;
-	knl_ctxtsk->wspec = ( (mpfcb->mpfatr & TA_TPRI) != 0 )?
+	CUR_CTXTSK->wspec = ( (mpfcb->mpfatr & TA_TPRI) != 0 )?
 				&knl_wspec_mpf_tpri: &knl_wspec_mpf_tfifo;
-	knl_ctxtsk->wercd = &ercd;
-	knl_ctxtsk->winfo.mpf.p_blf = p_blf;
+	CUR_CTXTSK->wercd = &ercd;
+	CUR_CTXTSK->winfo.mpf.p_blf = p_blf;
 	knl_gcb_make_wait((GCB*)mpfcb, tmout);
 
 	knl_UnlockOBJ(&mpfcb->lock);

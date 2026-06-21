@@ -309,7 +309,7 @@ void main(void)
     }
 #endif
 
-#if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST)
+#if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST) && !defined(SMP_2TASKS_PROD)
     /* ②.0/②.1b full-SMP slice: bring up THREE secondaries (cores 1,2,3) into
      * the per-CPU T-Kernel dispatcher under one Big Kernel Lock; have ALL
      * FOUR CPUs run a DISTINCT task that increments a SHARED counter K times

@@ -221,6 +221,54 @@ EXPORT INT usermain(void)
     print(" Phase 2c: AI + distributed kernel\r\n");
     print("====================================\r\n");
 
+#ifdef SMP_2TASKS_PROD
+    /* ②.2a [smp-2tasks-prod]: prove the PRODUCTION scheduler runs TWO REAL
+     * T-Kernel TCBs on TWO DISTINCT CPUs under the BKL.  Runs here, inside the
+     * initial task, with the kernel fully up (real TCBs + ready queue exist).
+     * Prints a verdict the harness greps. */
+    {
+        extern int  smp_prod_test_run(void);
+        extern void *smp_prod_a_tcb(void);
+        extern void *smp_prod_b_tcb(void);
+        extern unsigned long smp_prod_b_ran(void);
+        extern unsigned long smp_prod_b_loops(void);
+        extern int  smp_prod_b_tskid(void);
+
+        /* minimal 16-hex-digit printer for the TCB pointers (evidence) */
+        char hx[19]; hx[0]='0'; hx[1]='x'; hx[18]='\0';
+        #define PRINT_PTR(p) do { unsigned long _v=(unsigned long)(p); \
+            for (int _i=0;_i<16;_i++){int _n=(int)((_v>>((15-_i)*4))&0xF); \
+            hx[2+_i]=(char)(_n<10?'0'+_n:'a'+_n-10);} print(hx); } while(0)
+
+        print("[SMP] ②.2a [smp-2tasks-prod]: 2 REAL TCBs on 2 CPUs under the BKL...\r\n");
+        int rc = smp_prod_test_run();
+
+        void *a = smp_prod_a_tcb();
+        void *b = smp_prod_b_tcb();
+        print("[SMP] cpu0 ctxtsk(A)="); PRINT_PTR(a);
+        print(" cpu1 ctxtsk(B)=");      PRINT_PTR(b);
+        print("\r\n");
+        print("[SMP] B real tskid=");
+        { int t=smp_prod_b_tskid(); char d[4]; int o=0; if(t<0){d[o++]='-';t=-t;}
+          char tmp[4]; int ti=0; if(t==0)tmp[ti++]='0'; while(t){tmp[ti++]=(char)('0'+t%10);t/=10;}
+          while(ti)d[o++]=tmp[--ti]; d[o]='\0'; print(d); }
+        print(" B ran=");  print(smp_prod_b_ran()?"1":"0");
+        print(" B loops>0=");  print(smp_prod_b_loops()?"1":"0");
+        print("\r\n");
+
+        if (rc == 0 && a && b && a != b && smp_prod_b_ran()) {
+            print("SMP-2TASKS-PROD: PASS\r\n");
+        } else {
+            print("SMP-2TASKS-PROD: FAIL rc=");
+            { int t=rc; char d[8]; int o=0; if(t<0){d[o++]='-';t=-t;}
+              char tmp[8]; int ti=0; if(t==0)tmp[ti++]='0'; while(t){tmp[ti++]=(char)('0'+t%10);t/=10;}
+              while(ti)d[o++]=tmp[--ti]; d[o]='\0'; print(d); }
+            print(" (need 2 distinct real TCBs on 2 CPUs)\r\n");
+        }
+        #undef PRINT_PTR
+    }
+#endif /* SMP_2TASKS_PROD */
+
     /* AI primitives — tensor / ai_job / pipeline / MLP seed */
     ai_kernel_init();
 

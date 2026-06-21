@@ -118,7 +118,7 @@
  */
 #if CHK_SELF
 #define CHECK_NONSELF(tskid) {					\
-	if (!in_indp() && (tskid) == knl_ctxtsk->tskid) {		\
+	if (!in_indp() && (tskid) == CUR_CTXTSK->tskid) {		\
 		return E_OBJ;					\
 	}							\
 }

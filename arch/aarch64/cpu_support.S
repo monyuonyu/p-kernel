@@ -40,6 +40,41 @@ knl_taskmode:
     .text
 
 /* -----------------------------------------------------------------------
+ *  ②.2a — per-CPU scheduler-pointer ADDRESS macros.
+ *
+ *  The production dispatcher below references "this CPU's current task" and
+ *  "this CPU's next task".  On a uniprocessor those are the single globals
+ *  knl_ctxtsk / knl_schedtsk / knl_dispatch_disabled.  Under SMP each CPU has
+ *  its own slot in g_smpcpu[] (arch/aarch64/smp.c; struct smp_cpu off 0 / 8 /
+ *  56, mirrored by the SMPCPU_* macros below).  These assembler macros load
+ *  the ADDRESS of the appropriate per-CPU field into \reg, computing
+ *  &g_smpcpu[mpidr_aff0()] via a scratch register.
+ *
+ *  WITH SMP OFF (the default build) every macro expands to the ORIGINAL
+ *  `ldr \reg, =knl_*` — so the dispatcher below is BYTE-IDENTICAL to the
+ *  shipped uniprocessor kernel.  (SMPCPU_* are #defined in the SMP_SELFTEST
+ *  block at the bottom of this file; the macros are only USED there too.) */
+/* struct smp_cpu field offsets + size — KEEP IN SYNC with arch/aarch64/smp.c
+ * (guarded there by _Static_assert) and arch/aarch64/include/smp_percpu.h.
+ * Defined here (before the dispatcher uses them) AND mirrored in the
+ * SMP_SELFTEST block at the bottom for smp_cur_tcb_load. */
+#define SMPCPU_CTXTSK      0
+#define SMPCPU_SCHEDTSK    8
+#define SMPCPU_STACK_TOP  56       /* ②.1b: per-CPU secondary dispatcher SP  */
+#define SMPCPU_DISPDIS    64       /* ②.2a: per-CPU dispatch-disable flag    */
+#define SMPCPU_SIZE       72       /* ②.1b/②.2a merge: 56 +8 stack +4 disp+pad */
+
+    .macro LD_PERCPU_BASE reg, scratch
+    mrs  \scratch, mpidr_el1
+    and  \scratch, \scratch, #0xFF        /* MPIDR Aff0 = this CPU id      */
+    ldr  \reg, =g_smpcpu
+    /* + id * 72 (SMPCPU_SIZE).  72 is not a power of two, so id*72 =
+     * id*64 + id*8 = (id<<6) + (id<<3) — two shift-adds, no mul/extra reg. */
+    add  \reg, \reg, \scratch, lsl #6      /* + id*64 */
+    add  \reg, \reg, \scratch, lsl #3      /* + id*8  => id*72 */
+    .endm
+
+/* -----------------------------------------------------------------------
  *  knl_dispatch_to_schedtsk / knl_force_dispatch
  *    Discard current context and switch to schedtsk.
  * --------------------------------------------------------------------- */
@@ -48,8 +83,13 @@ knl_taskmode:
 knl_dispatch_to_schedtsk:
 knl_force_dispatch:
     msr daifset, #0x3           /* disable IRQ+FIQ */
+#ifdef SMP_SELFTEST
+    LD_PERCPU_BASE x0, x2       /* x0 = &g_smpcpu[me] (ctxtsk @ off 0) */
+    str xzr, [x0, #SMPCPU_CTXTSK] /* this CPU's ctxtsk = NULL */
+#else
     ldr x0, =knl_ctxtsk
     str xzr, [x0]               /* ctxtsk = NULL */
+#endif
     b   .Ldispatch_loop
 
 /* -----------------------------------------------------------------------
@@ -75,6 +115,15 @@ knl_dispatch:
     str x0,       [sp, #96]
 
     /* Save SP to ctxtsk->tskctxb.ssp (SP cannot be stored directly) */
+#ifdef SMP_SELFTEST
+    LD_PERCPU_BASE x2, x3       /* x2 = &g_smpcpu[me] */
+    ldr x0, [x2, #SMPCPU_CTXTSK] /* x0 = this CPU's ctxtsk */
+    cbz x0, .Lno_save
+    mov x1, sp
+    str x1, [x0, #TCB_SSP]
+.Lno_save:
+    str xzr, [x2, #SMPCPU_CTXTSK] /* this CPU's ctxtsk = NULL */
+#else
     ldr x0, =knl_ctxtsk
     ldr x0, [x0]
     cbz x0, .Lno_save
@@ -83,11 +132,23 @@ knl_dispatch:
 .Lno_save:
     ldr x0, =knl_ctxtsk
     str xzr, [x0]
+#endif
 
 /* -----------------------------------------------------------------------
  *  Dispatcher loop — pick schedtsk and switch to it
  * --------------------------------------------------------------------- */
 .Ldispatch_loop:
+#ifdef SMP_SELFTEST
+    LD_PERCPU_BASE x2, x3       /* x2 = &g_smpcpu[me] */
+    ldr x0, [x2, #SMPCPU_SCHEDTSK] /* x0 = this CPU's schedtsk */
+    cbz x0, .Lidle
+    str x0, [x2, #SMPCPU_CTXTSK]   /* this CPU's ctxtsk = schedtsk */
+
+    ldr x1, [x0, #TCB_SSP]
+    mov sp, x1
+
+    str xzr, [x2, #SMPCPU_DISPDIS] /* this CPU's dispatch_disabled = 0 */
+#else
     ldr x0, =knl_schedtsk
     ldr x0, [x0]
     cbz x0, .Lidle
@@ -100,6 +161,7 @@ knl_dispatch:
 
     ldr x1, =knl_dispatch_disabled
     str xzr, [x1]
+#endif
 
     /* Restore context */
     ldp x19, x20, [sp,  #0]
@@ -132,8 +194,13 @@ knl_dispatch:
 knl_task_entry_trampoline:
     msr daifclr, #0x3           /* enable IRQ+FIQ in new task */
 
+#ifdef SMP_SELFTEST
+    LD_PERCPU_BASE x16, x17     /* x16 = &g_smpcpu[me] */
+    ldr x16, [x16, #SMPCPU_CTXTSK] /* x16 = this CPU's ctxtsk (the new task) */
+#else
     ldr x16, =knl_ctxtsk
     ldr x16, [x16]
+#endif
     ldr x17, [x16, #TCB_task]
 
     mov x0, x19                 /* 1st arg: stacd */
@@ -383,15 +450,12 @@ gicc_base_ptr:
     .text
     .align 4
 
-/* struct smp_cpu offsets — KEEP IN SYNC with arch/aarch64/smp.c.
- * SMPCPU_SIZE was 40 in ②.0; ②.1a appended preempted_at/highprio_ran
- * (off 40/48) → 56; ②.1b appended stack_top (off 56) → 64. CTXTSK/SCHEDTSK
- * (off 0/8) are unchanged — the only asm consumers are smp_cur_tcb_load
- * (reads CTXTSK indexed by SIZE) and the start.S landing pad (reads
- * stack_top at off 56 via the context_id). */
-#define SMPCPU_SIZE       64
-#define SMPCPU_CTXTSK      0
-#define SMPCPU_SCHEDTSK    8
+/* struct smp_cpu offsets (SMPCPU_CTXTSK/SCHEDTSK/STACK_TOP/DISPDIS/SIZE) are
+ * #defined near the TOP of this file (before the per-CPU dispatcher), KEPT IN
+ * SYNC with arch/aarch64/smp.c + smp_percpu.h.  ②.1b/②.2a merge: stack_top@56,
+ * dispatch_disabled@64, SMPCPU_SIZE 72.  smp_cur_tcb_load below uses madd so
+ * the non-power-of-two SIZE is fine; the start.S landing pad reads stack_top
+ * at SMPCPU_STACK_TOP via the context_id. */
 
 /* unsigned long smp_this_cpu(void) — defined in smp.c (MPIDR Aff0). We
  * re-derive it inline here to avoid a call in the leaf load helper. */
@@ -420,4 +484,21 @@ smp_dispatch_loop:
     bl   smp_dispatch_run          /* C orchestrator (arch/aarch64/smp.c) */
 1:  wfe
     b    1b
+
+#ifdef SMP_2TASKS_PROD
+/* void smp_prod_enter_dispatch(void)   [②.2a — [smp-2tasks-prod]]
+ *   Enter the PRODUCTION per-CPU dispatcher loop (.Ldispatch_loop above) on
+ *   THIS CPU.  The loop reads g_smpcpu[me].schedtsk (a REAL T-Kernel TCB the
+ *   driver pre-set), stores it into g_smpcpu[me].ctxtsk, loads the TCB's
+ *   saved SP (tskctxb.ssp), restores its 112-byte frame, and `ret`s into the
+ *   real task — a genuine register-context switch into a real TCB on the
+ *   secondary CPU.  Never returns to the caller (it switches stacks).  IRQ+FIQ
+ *   are masked on entry exactly as knl_dispatch does.  This is how the
+ *   secondary runs a REAL task pulled from the shared knl_ready_queue, not a
+ *   struct smp_task stand-in. */
+    .global smp_prod_enter_dispatch
+smp_prod_enter_dispatch:
+    msr  daifset, #0x3             /* mask IRQ+FIQ (as knl_dispatch) */
+    b    .Ldispatch_loop           /* never returns — switches into the TCB */
+#endif /* SMP_2TASKS_PROD */
 #endif /* SMP_SELFTEST */

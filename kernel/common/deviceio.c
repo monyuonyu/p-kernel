@@ -399,7 +399,7 @@ SYSCALL ID tk_opn_dev_impl( CONST UB *devnm, UINT omode )
 	if ( openfn != NULL ) {
 		/* Device driver call */
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 #if TA_GP
 		ercd = CallDeviceDriver(DEVID(devcb, unitno), omode, exinf, 0,
@@ -408,7 +408,7 @@ SYSCALL ID tk_opn_dev_impl( CONST UB *devnm, UINT omode )
 		ercd = (*openfn)(DEVID(devcb, unitno), omode, exinf);
 #endif
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 
 		if ( ercd < E_OK ) {
@@ -480,7 +480,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 		/* Device driver call */
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 #if TA_GP
 		CallDeviceDriver(reqcb->tskid, opncb->waireqlst,
@@ -490,7 +490,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 								exinf);
 #endif
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 
 		opncb->abort_cnt++;
@@ -506,7 +506,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 			/* Device driver call */
 			DISABLE_INTERRUPT;
-			knl_ctxtsk->sysmode++;
+			CUR_CTXTSK->sysmode++;
 			ENABLE_INTERRUPT;
 #if TA_GP
 			CallDeviceDriver(reqcb->tskid, &reqcb->req, 1, exinf,
@@ -515,7 +515,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 			(*abortfn)(reqcb->tskid, &reqcb->req, 1, exinf);
 #endif
 			DISABLE_INTERRUPT;
-			knl_ctxtsk->sysmode--;
+			CUR_CTXTSK->sysmode--;
 			ENABLE_INTERRUPT;
 
 			opncb->abort_cnt++;
@@ -540,7 +540,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 		/* Device driver call */
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 #if TA_GP
 		CallDeviceDriver(&reqcb->req, 1, TMO_FEVR, exinf, (FP)waitfn, gp);
@@ -548,7 +548,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 		(*waitfn)(&reqcb->req, 1, TMO_FEVR, exinf);
 #endif
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 
 		LockDM();
@@ -619,7 +619,7 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 	if ( closefn != NULL ) {
 		/* Device driver call */
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 #if TA_GP
 		ercd = CallDeviceDriver(devid, option, exinf, 0, (FP)closefn, gp);
@@ -627,7 +627,7 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 		ercd = (*closefn)(devid, option, exinf);
 #endif
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 	}
 
@@ -801,7 +801,7 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 
 	/* Device driver call */
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode++;
+	CUR_CTXTSK->sysmode++;
 	ENABLE_INTERRUPT;
 #if TA_GP
 	ercd = CallDeviceDriver(&reqcb->req, tmout, exinf, 0, (FP)execfn, gp);
@@ -809,7 +809,7 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 	ercd = (*execfn)(&reqcb->req, tmout, exinf);
 #endif
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode--;
+	CUR_CTXTSK->sysmode--;
 	ENABLE_INTERRUPT;
 
 	LockDM();
@@ -1116,7 +1116,7 @@ SYSCALL ID tk_wai_dev_impl( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 
 	/* Device driver call */
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode++;
+	CUR_CTXTSK->sysmode++;
 	ENABLE_INTERRUPT;
 #if TA_GP
 	reqno = CallDeviceDriver(devreq, nreq, tmout, exinf, (FP)waitfn, gp);
@@ -1124,7 +1124,7 @@ SYSCALL ID tk_wai_dev_impl( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 	reqno = (*waitfn)(devreq, nreq, tmout, exinf);
 #endif
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode--;
+	CUR_CTXTSK->sysmode--;
 	ENABLE_INTERRUPT;
 
 	if ( reqno <  E_OK ) {
@@ -1222,7 +1222,7 @@ LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 		/* Device driver call */
 		eventfn = (EVTFN)devcb->ddev.eventfn;
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode++;
+		CUR_CTXTSK->sysmode++;
 		ENABLE_INTERRUPT;
 #if TA_GP
 		ercd = CallDeviceDriver(evttyp, NULL, devcb->ddev.exinf, 0,
@@ -1231,7 +1231,7 @@ LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 		ercd = (*eventfn)(evttyp, NULL, devcb->ddev.exinf);
 #endif
 		DISABLE_INTERRUPT;
-		knl_ctxtsk->sysmode--;
+		CUR_CTXTSK->sysmode--;
 		ENABLE_INTERRUPT;
 	}
 

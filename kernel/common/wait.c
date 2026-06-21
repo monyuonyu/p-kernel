@@ -191,16 +191,16 @@ EXPORT void knl_wait_release_tmout( TCB *tcb )
  */
 EXPORT void knl_make_wait( TMO tmout, ATR atr )
 {
-	switch ( knl_ctxtsk->state ) {
+	switch ( CUR_CTXTSK->state ) {
 	  case TS_READY:
-		knl_make_non_ready(knl_ctxtsk);
-		knl_ctxtsk->state = TS_WAIT;
+		knl_make_non_ready(CUR_CTXTSK);
+		CUR_CTXTSK->state = TS_WAIT;
 		break;
 	  case TS_SUSPEND:
-		knl_ctxtsk->state = TS_WAITSUS;
+		CUR_CTXTSK->state = TS_WAITSUS;
 		break;
 	}
-	knl_timer_insert(&knl_ctxtsk->wtmeb, tmout, (CBACK)knl_wait_release_tmout, knl_ctxtsk);
+	knl_timer_insert(&CUR_CTXTSK->wtmeb, tmout, (CBACK)knl_wait_release_tmout, CUR_CTXTSK);
 }
 #endif /* USE_FUNC_MAKE_WAIT */
 
@@ -219,16 +219,16 @@ EXPORT void knl_make_wait( TMO tmout, ATR atr )
  */
 EXPORT void knl_make_wait_reltim( RELTIM tmout, ATR atr )
 {
-	switch ( knl_ctxtsk->state ) {
+	switch ( CUR_CTXTSK->state ) {
 	  case TS_READY:
-		knl_make_non_ready(knl_ctxtsk);
-		knl_ctxtsk->state = TS_WAIT;
+		knl_make_non_ready(CUR_CTXTSK);
+		CUR_CTXTSK->state = TS_WAIT;
 		break;
 	  case TS_SUSPEND:
-		knl_ctxtsk->state = TS_WAITSUS;
+		CUR_CTXTSK->state = TS_WAITSUS;
 		break;
 	}
-	knl_timer_insert_reltim(&knl_ctxtsk->wtmeb, tmout, (CBACK)knl_wait_release_tmout, knl_ctxtsk);
+	knl_timer_insert_reltim(&CUR_CTXTSK->wtmeb, tmout, (CBACK)knl_wait_release_tmout, CUR_CTXTSK);
 }
 #endif /* USE_FUNC_MAKE_WAIT_RELTIM */
 
@@ -289,7 +289,7 @@ EXPORT ID knl_wait_tskid( QUEUE *wait_queue )
  * @param tmout タイムアウト時間（TMO_POLでポーリング）
  * 
  * アクティブタスクを待ち状態に変更し、タイマー待ちキューと
- * オブジェクト待ちキューに接続します。また、'knl_ctxtsk'の'wid'を設定します。
+ * オブジェクト待ちキューに接続します。また、'CUR_CTXTSK'の'wid'を設定します。
  * 
  * 処理内容：
  * - エラーコードのE_TMOUTでの初期化
@@ -303,14 +303,14 @@ EXPORT ID knl_wait_tskid( QUEUE *wait_queue )
  */
 EXPORT void knl_gcb_make_wait( GCB *gcb, TMO tmout )
 {
-	*knl_ctxtsk->wercd = E_TMOUT;
+	*CUR_CTXTSK->wercd = E_TMOUT;
 	if ( tmout != TMO_POL ) {
-		knl_ctxtsk->wid = gcb->objid;
+		CUR_CTXTSK->wid = gcb->objid;
 		knl_make_wait(tmout, gcb->objatr);
 		if ( (gcb->objatr & TA_TPRI) != 0 ) {
-			knl_queue_insert_tpri(knl_ctxtsk, &gcb->wait_queue);
+			knl_queue_insert_tpri(CUR_CTXTSK, &gcb->wait_queue);
 		} else {
-			QueInsert(&knl_ctxtsk->tskque, &gcb->wait_queue);
+			QueInsert(&CUR_CTXTSK->tskque, &gcb->wait_queue);
 		}
 	}
 }

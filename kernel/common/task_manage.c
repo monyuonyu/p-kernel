@@ -239,7 +239,7 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 	state = (TSTAT)tcb->state;
 	if ( state != TS_DORMANT ) {
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
-	} else if ( tcb == knl_ctxtsk || tcb == knl_schedtsk ) {
+	} else if ( tcb == CUR_CTXTSK || tcb == CUR_SCHEDTSK ) {
 		/* KILL-CHURN-CRASH guard (gap-ledger) — DEFENCE-IN-DEPTH.
 		 *
 		 * NOTE: the recycled-daemon garbage-PC #PF is now CURED at the
@@ -254,7 +254,7 @@ SYSCALL ER tk_del_tsk_impl( ID tskid )
 		 * on / is scheduled INTO next: dproc_kill_by_name() runs
 		 * tk_ter_tsk + user_proc_teardown + tk_del_tsk, which are NOT one
 		 * critical section, so a churn dispatch could in principle leave
-		 * a DORMANT victim as knl_ctxtsk/knl_schedtsk when tk_del_tsk
+		 * a DORMANT victim as CUR_CTXTSK/CUR_SCHEDTSK when tk_del_tsk
 		 * runs; freeing it then would feed the dispatcher a stale ssp.
 		 * Refusing with E_OBJ is safe — a task that is genuinely on the
 		 * CPU cannot legitimately be TS_DORMANT, and the next heal sweep
@@ -379,8 +379,8 @@ SYSCALL void tk_ext_tsk_impl( void )
 #endif
 
 	DISABLE_INTERRUPT;
-	knl_ter_tsk(knl_ctxtsk);
-	knl_make_dormant(knl_ctxtsk);
+	knl_ter_tsk(CUR_CTXTSK);
+	knl_make_dormant(CUR_CTXTSK);
 
 	knl_force_dispatch();
 	/* No return */
@@ -416,8 +416,8 @@ SYSCALL void tk_exd_tsk_impl( void )
 #endif
 
 	DISABLE_INTERRUPT;
-	knl_ter_tsk(knl_ctxtsk);
-	knl_del_tsk(knl_ctxtsk);
+	knl_ter_tsk(CUR_CTXTSK);
+	knl_del_tsk(CUR_CTXTSK);
 
 	knl_force_dispatch();
 	/* No return */
@@ -527,7 +527,7 @@ SYSCALL ER tk_rot_rdq_impl( PRI tskpri )
 		if ( in_indp() ) {
 			knl_rotate_ready_queue_run();
 		} else {
-			knl_rotate_ready_queue(knl_ctxtsk->priority);
+			knl_rotate_ready_queue(CUR_CTXTSK->priority);
 		}
 	} else {
 		knl_rotate_ready_queue(int_priority(tskpri));
@@ -546,7 +546,7 @@ SYSCALL ER tk_rot_rdq_impl( PRI tskpri )
  */
 SYSCALL ID tk_get_tid_impl( void )
 {
-	return ( knl_ctxtsk == NULL )? 0: knl_ctxtsk->tskid;
+	return ( CUR_CTXTSK == NULL )? 0: CUR_CTXTSK->tskid;
 }
 #endif /* USE_FUNC_TK_GET_TID */
 
@@ -571,7 +571,7 @@ SYSCALL ER tk_ref_tsk_impl( ID tskid, T_RTSK *pk_rtsk )
 	if ( state == TS_NONEXIST ) {
 		ercd = E_NOEXS;
 	} else {
-		if ( ( state == TS_READY ) && ( tcb == knl_ctxtsk ) ) {
+		if ( ( state == TS_READY ) && ( tcb == CUR_CTXTSK ) ) {
 			pk_rtsk->tskstat = TTS_RUN;
 		} else {
 			pk_rtsk->tskstat = (UINT)state << 1;
@@ -707,7 +707,7 @@ SYSCALL ER td_ref_tsk_impl( ID tskid, TD_RTSK *pk_rtsk )
 	if ( state == TS_NONEXIST ) {
 		ercd = E_NOEXS;
 	} else {
-		if ( ( state == TS_READY ) && ( tcb == knl_ctxtsk ) ) {
+		if ( ( state == TS_READY ) && ( tcb == CUR_CTXTSK ) ) {
 			pk_rtsk->tskstat = TTS_RUN;
 		} else {
 			pk_rtsk->tskstat = (UINT)state << 1;

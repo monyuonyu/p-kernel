@@ -430,7 +430,7 @@ SYSCALL ER tk_snd_mbf_impl( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 		*tcb->winfo.rmbf.p_msgsz = msgsz;
 		knl_wait_release_ok(tcb);
 
-	} else if ( (in_indp() || knl_gcb_top_of_wait_queue((GCB*)mbfcb, knl_ctxtsk) == knl_ctxtsk)
+	} else if ( (in_indp() || knl_gcb_top_of_wait_queue((GCB*)mbfcb, CUR_CTXTSK) == CUR_CTXTSK)
 		  &&(knl_mbf_free(mbfcb, msgsz)) ) {
 		/* Store the message to message buffer */
 		knl_msg_to_mbf(mbfcb, msg, msgsz);
@@ -439,11 +439,11 @@ SYSCALL ER tk_snd_mbf_impl( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 		ercd = E_TMOUT;
 		if ( tmout != TMO_POL ) {
 			/* Ready for send wait */
-			knl_ctxtsk->wspec = ( (mbfcb->mbfatr & TA_TPRI) != 0 )?
+			CUR_CTXTSK->wspec = ( (mbfcb->mbfatr & TA_TPRI) != 0 )?
 					&knl_wspec_smbf_tpri: &knl_wspec_smbf_tfifo;
-			knl_ctxtsk->wercd = &ercd;
-			knl_ctxtsk->winfo.smbf.msg = msg;
-			knl_ctxtsk->winfo.smbf.msgsz = msgsz;
+			CUR_CTXTSK->wercd = &ercd;
+			CUR_CTXTSK->winfo.smbf.msg = msg;
+			CUR_CTXTSK->winfo.smbf.msgsz = msgsz;
 			knl_gcb_make_wait((GCB*)mbfcb, tmout);
 		}
 	}
@@ -563,13 +563,13 @@ SYSCALL INT tk_rcv_mbf_impl( ID mbfid, void *msg, TMO tmout )
 		ercd = E_TMOUT;
 		if ( tmout != TMO_POL ) {
 			/* Ready for receive wait */
-			knl_ctxtsk->wspec = &knl_wspec_rmbf;
-			knl_ctxtsk->wid = mbfid;
-			knl_ctxtsk->wercd = &ercd;
-			knl_ctxtsk->winfo.rmbf.msg = msg;
-			knl_ctxtsk->winfo.rmbf.p_msgsz = &rcvsz;
+			CUR_CTXTSK->wspec = &knl_wspec_rmbf;
+			CUR_CTXTSK->wid = mbfid;
+			CUR_CTXTSK->wercd = &ercd;
+			CUR_CTXTSK->winfo.rmbf.msg = msg;
+			CUR_CTXTSK->winfo.rmbf.p_msgsz = &rcvsz;
 			knl_make_wait(tmout, mbfcb->mbfatr);
-			QueInsert(&knl_ctxtsk->tskque, &mbfcb->recv_queue);
+			QueInsert(&CUR_CTXTSK->tskque, &mbfcb->recv_queue);
 		}
 	}
 

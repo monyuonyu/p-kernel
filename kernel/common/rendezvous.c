@@ -253,7 +253,7 @@ SYSCALL INT tk_cal_por_impl( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO t
 		}
 
 		/* Send message */
-		rdvno = knl_gen_rdvno(knl_ctxtsk);
+		rdvno = knl_gen_rdvno(CUR_CTXTSK);
 		if ( cmsgsz > 0 ) {
 			memcpy(tcb->winfo.acp.msg, msg, (UINT)cmsgsz);
 		}
@@ -263,27 +263,27 @@ SYSCALL INT tk_cal_por_impl( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO t
 
 		/* Ready for rendezvous end wait */
 		ercd = E_TMOUT;
-		knl_ctxtsk->wspec = &knl_wspec_rdv;
-		knl_ctxtsk->wid = 0;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.rdv.rdvno = rdvno;
-		knl_ctxtsk->winfo.rdv.msg = msg;
-		knl_ctxtsk->winfo.rdv.maxrmsz = porcb->maxrmsz;
-		knl_ctxtsk->winfo.rdv.p_rmsgsz = &rmsgsz;
+		CUR_CTXTSK->wspec = &knl_wspec_rdv;
+		CUR_CTXTSK->wid = 0;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.rdv.rdvno = rdvno;
+		CUR_CTXTSK->winfo.rdv.msg = msg;
+		CUR_CTXTSK->winfo.rdv.maxrmsz = porcb->maxrmsz;
+		CUR_CTXTSK->winfo.rdv.p_rmsgsz = &rmsgsz;
 		knl_make_wait(TMO_FEVR, porcb->poratr);
-		QueInit(&knl_ctxtsk->tskque);
+		QueInit(&CUR_CTXTSK->tskque);
 
 		goto error_exit;
 	}
 
 	/* Ready for rendezvous call wait */
-	knl_ctxtsk->wspec = ( (porcb->poratr & TA_TPRI) != 0 )?
+	CUR_CTXTSK->wspec = ( (porcb->poratr & TA_TPRI) != 0 )?
 					&knl_wspec_cal_tpri: &knl_wspec_cal_tfifo;
-	knl_ctxtsk->wercd = &ercd;
-	knl_ctxtsk->winfo.cal.calptn = calptn;
-	knl_ctxtsk->winfo.cal.msg = msg;
-	knl_ctxtsk->winfo.cal.cmsgsz = cmsgsz;
-	knl_ctxtsk->winfo.cal.p_rmsgsz = &rmsgsz;
+	CUR_CTXTSK->wercd = &ercd;
+	CUR_CTXTSK->winfo.cal.calptn = calptn;
+	CUR_CTXTSK->winfo.cal.msg = msg;
+	CUR_CTXTSK->winfo.cal.cmsgsz = cmsgsz;
+	CUR_CTXTSK->winfo.cal.p_rmsgsz = &rmsgsz;
 	knl_gcb_make_wait((GCB*)porcb, tmout);
 
     error_exit:
@@ -370,15 +370,15 @@ SYSCALL INT tk_acp_por_impl( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO
 	ercd = E_TMOUT;
 	if ( tmout != TMO_POL ) {
 		/* Ready for rendezvous accept wait */
-		knl_ctxtsk->wspec = &knl_wspec_acp;
-		knl_ctxtsk->wid = porid;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.acp.acpptn = acpptn;
-		knl_ctxtsk->winfo.acp.msg = msg;
-		knl_ctxtsk->winfo.acp.p_rdvno = p_rdvno;
-		knl_ctxtsk->winfo.acp.p_cmsgsz = &cmsgsz;
+		CUR_CTXTSK->wspec = &knl_wspec_acp;
+		CUR_CTXTSK->wid = porid;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.acp.acpptn = acpptn;
+		CUR_CTXTSK->winfo.acp.msg = msg;
+		CUR_CTXTSK->winfo.acp.p_rdvno = p_rdvno;
+		CUR_CTXTSK->winfo.acp.p_cmsgsz = &cmsgsz;
 		knl_make_wait(tmout, porcb->poratr);
-		QueInsert(&knl_ctxtsk->tskque, &porcb->accept_queue);
+		QueInsert(&CUR_CTXTSK->tskque, &porcb->accept_queue);
 	}
 
     error_exit:

@@ -500,14 +500,14 @@ SYSCALL ER tk_loc_mtx_impl( ID mtxid, TMO tmout )
 		ercd = E_NOEXS;
 		goto error_exit;
 	}
-	if ( mtxcb->mtxtsk == knl_ctxtsk ) {
+	if ( mtxcb->mtxtsk == CUR_CTXTSK ) {
 		ercd = E_ILUSE;  /* Multiplexed lock */
 		goto error_exit;
 	}
 
 	mtxatr = mtxcb->mtxatr & TA_CEILING;
 	if ( mtxatr == TA_CEILING ) {
-		if ( knl_ctxtsk->bpriority < mtxcb->ceilpri ) {
+		if ( CUR_CTXTSK->bpriority < mtxcb->ceilpri ) {
 			/* Violation of highest priority limit */
 			ercd = E_ILUSE;
 			goto error_exit;
@@ -517,15 +517,15 @@ SYSCALL ER tk_loc_mtx_impl( ID mtxid, TMO tmout )
 	mtxtsk = mtxcb->mtxtsk;
 	if ( mtxtsk == NULL ) {
 		/* Get lock */
-		mtxcb->mtxtsk = knl_ctxtsk;
-		mtxcb->mtxlist = knl_ctxtsk->mtxlist;
-		knl_ctxtsk->mtxlist = mtxcb;
+		mtxcb->mtxtsk = CUR_CTXTSK;
+		mtxcb->mtxlist = CUR_CTXTSK->mtxlist;
+		CUR_CTXTSK->mtxlist = mtxcb;
 
 		if ( mtxatr == TA_CEILING ) {
-			if ( knl_ctxtsk->priority > mtxcb->ceilpri ) {
+			if ( CUR_CTXTSK->priority > mtxcb->ceilpri ) {
 				/* Raise its own task to the highest
 				   priority limit */
-				knl_change_task_priority(knl_ctxtsk, mtxcb->ceilpri);
+				knl_change_task_priority(CUR_CTXTSK, mtxcb->ceilpri);
 			}
 		}
 	} else {
@@ -535,25 +535,25 @@ SYSCALL ER tk_loc_mtx_impl( ID mtxid, TMO tmout )
 		}
 
 		if ( mtxatr == TA_INHERIT ) {
-			if ( mtxtsk->priority > knl_ctxtsk->priority ) {
+			if ( mtxtsk->priority > CUR_CTXTSK->priority ) {
 				/* Raise the priority of task during
 				   locking to the same priority as its
 				   own task */
-				knl_change_task_priority(mtxtsk, knl_ctxtsk->priority);
+				knl_change_task_priority(mtxtsk, CUR_CTXTSK->priority);
 			}
 		}
 
 		/* Ready for wait */
-		knl_ctxtsk->wspec = ( mtxatr == TA_TFIFO   )? &knl_wspec_mtx_tfifo:
+		CUR_CTXTSK->wspec = ( mtxatr == TA_TFIFO   )? &knl_wspec_mtx_tfifo:
 				( mtxatr == TA_INHERIT )? &knl_wspec_mtx_inherit:
 							  &knl_wspec_mtx_tpri;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->wid = mtxcb->mtxid;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->wid = mtxcb->mtxid;
 		knl_make_wait(tmout, mtxcb->mtxatr);
 		if ( mtxatr == TA_TFIFO ) {
-			QueInsert(&knl_ctxtsk->tskque, &mtxcb->wait_queue);
+			QueInsert(&CUR_CTXTSK->tskque, &mtxcb->wait_queue);
 		} else {
-			knl_queue_insert_tpri(knl_ctxtsk, &mtxcb->wait_queue);
+			knl_queue_insert_tpri(CUR_CTXTSK, &mtxcb->wait_queue);
 		}
 	}
 
@@ -600,14 +600,14 @@ SYSCALL ER tk_unl_mtx_impl( ID mtxid )
 		ercd = E_NOEXS;
 		goto error_exit;
 	}
-	if ( mtxcb->mtxtsk != knl_ctxtsk ) {
+	if ( mtxcb->mtxtsk != CUR_CTXTSK ) {
 		ercd = E_ILUSE;  /* This is not locked by its own task */
 		goto error_exit;
 	}
 
 	/* Delete the mutex from the list,
 	   and adjust its own task priority if necessary. */
-	knl_release_mutex(knl_ctxtsk, mtxcb);
+	knl_release_mutex(CUR_CTXTSK, mtxcb);
 
 	if ( mtx_waited(mtxcb) ) {
 		tcb = (TCB*)mtxcb->wait_queue.next;

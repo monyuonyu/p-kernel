@@ -329,17 +329,17 @@ SYSCALL ER tk_wai_sem_impl( ID semid, INT cnt, TMO tmout )
 #endif
 
 	if ( ((semcb->sematr & TA_CNT) != 0
-	      || knl_gcb_top_of_wait_queue((GCB*)semcb, knl_ctxtsk) == knl_ctxtsk)
+	      || knl_gcb_top_of_wait_queue((GCB*)semcb, CUR_CTXTSK) == CUR_CTXTSK)
 	  && semcb->semcnt >= cnt ) {
 		/* Get semaphore count */
 		semcb->semcnt -= cnt;
 
 	} else {
 		/* Ready for wait */
-		knl_ctxtsk->wspec = ( (semcb->sematr & TA_TPRI) != 0 )?
+		CUR_CTXTSK->wspec = ( (semcb->sematr & TA_TPRI) != 0 )?
 					&knl_wspec_sem_tpri: &knl_wspec_sem_tfifo;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.sem.cnt = cnt;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.sem.cnt = cnt;
 		knl_gcb_make_wait((GCB*)semcb, tmout);
 	}
 

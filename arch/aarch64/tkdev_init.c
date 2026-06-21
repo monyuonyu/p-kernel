@@ -179,7 +179,7 @@ EXPORT void knl_tkdev_exit(void)
 #ifdef USE_FUNC_TK_DIS_DSP
 SYSCALL ER tk_dis_dsp(void)
 {
-    knl_dispatch_disabled = DDS_DISABLE;
+    CUR_DISPATCH_DISABLED = DDS_DISABLE;
     return E_OK;
 }
 #endif
@@ -187,8 +187,8 @@ SYSCALL ER tk_dis_dsp(void)
 #ifdef USE_FUNC_TK_ENA_DSP
 SYSCALL ER tk_ena_dsp(void)
 {
-    knl_dispatch_disabled = DDS_ENABLE;
-    if (knl_ctxtsk != knl_schedtsk) {
+    CUR_DISPATCH_DISABLED = DDS_ENABLE;
+    if (CUR_CTXTSK != CUR_SCHEDTSK) {
         knl_dispatch();
     }
     return E_OK;

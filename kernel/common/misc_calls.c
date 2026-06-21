@@ -73,8 +73,8 @@ SYSCALL ER tk_ref_sys_impl( T_RSYS *pk_rsys )
 			pk_rsys->sysstat |= TSS_DDSP;
 		}
 	}
-	pk_rsys->runtskid = ( knl_ctxtsk != NULL )? knl_ctxtsk->tskid: 0;
-	pk_rsys->schedtskid = ( knl_schedtsk != NULL )? knl_schedtsk->tskid: 0;
+	pk_rsys->runtskid = ( CUR_CTXTSK != NULL )? CUR_CTXTSK->tskid: 0;
+	pk_rsys->schedtskid = ( CUR_SCHEDTSK != NULL )? CUR_SCHEDTSK->tskid: 0;
 
 	return E_OK;
 }
@@ -313,8 +313,8 @@ SYSCALL ER td_ref_sys_impl( TD_RSYS *pk_rsys )
 			pk_rsys->sysstat |= TSS_DDSP;
 		}
 	}
-	pk_rsys->runtskid = ( knl_ctxtsk != NULL )? knl_ctxtsk->tskid: 0;
-	pk_rsys->schedtskid = ( knl_schedtsk != NULL )? knl_schedtsk->tskid: 0;
+	pk_rsys->runtskid = ( CUR_CTXTSK != NULL )? CUR_CTXTSK->tskid: 0;
+	pk_rsys->schedtskid = ( CUR_SCHEDTSK != NULL )? CUR_SCHEDTSK->tskid: 0;
 
 	return E_OK;
 }

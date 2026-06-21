@@ -584,17 +584,17 @@ SYSCALL ER tk_get_mpl_impl( ID mplid, SZ blksz, void **p_blk, TMO tmout )
 	}
 #endif
 
-	if ( knl_gcb_top_of_wait_queue((GCB*)mplcb, knl_ctxtsk) == knl_ctxtsk
+	if ( knl_gcb_top_of_wait_queue((GCB*)mplcb, CUR_CTXTSK) == CUR_CTXTSK
 	  && (blk = knl_get_blk(mplcb, blksz)) != NULL ) {
 		/* Get memory block */
 		*p_blk = blk;
 	} else {
 		/* Ready for wait */
-		knl_ctxtsk->wspec = ( (mplcb->mplatr & TA_TPRI) != 0 )?
+		CUR_CTXTSK->wspec = ( (mplcb->mplatr & TA_TPRI) != 0 )?
 					&knl_wspec_mpl_tpri: &knl_wspec_mpl_tfifo;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.mpl.blksz = blksz;
-		knl_ctxtsk->winfo.mpl.p_blk = p_blk;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.mpl.blksz = blksz;
+		CUR_CTXTSK->winfo.mpl.p_blk = p_blk;
 		knl_gcb_make_wait((GCB*)mplcb, tmout);
 	}
 

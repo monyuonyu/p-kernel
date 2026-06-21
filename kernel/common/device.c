@@ -491,7 +491,7 @@ SYSCALL INT tk_evt_dev_impl( ID devid, INT evttyp, void *evtinf )
 
 	/* Device driver call */
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode++;
+	CUR_CTXTSK->sysmode++;
 	ENABLE_INTERRUPT;
 #if TA_GP
 	ercd = CallDeviceDriver(evttyp, evtinf, exinf, 0, (FP)eventfn, gp);
@@ -499,7 +499,7 @@ SYSCALL INT tk_evt_dev_impl( ID devid, INT evttyp, void *evtinf )
 	ercd = (*eventfn)(evttyp, evtinf, exinf);
 #endif
 	DISABLE_INTERRUPT;
-	knl_ctxtsk->sysmode--;
+	CUR_CTXTSK->sysmode--;
 	ENABLE_INTERRUPT;
 
 	return ercd;

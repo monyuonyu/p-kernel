@@ -181,6 +181,34 @@ IMPORT TCB	*knl_ctxtsk;
 IMPORT TCB	*knl_schedtsk;
 
 /*
+ * ②.2a — the per-CPU scheduler-state accessors CUR_CTXTSK / CUR_SCHEDTSK /
+ * CUR_DISPATCH_DISABLED.  The aarch64 <cpu_status.h> defines them (per-CPU
+ * under -DSMP_SELFTEST, plain-global otherwise) and sets the sentinel
+ * _HAVE_CUR_SCHED_ACCESSORS_.  For every OTHER arch (x86/linux/rl78), whose
+ * <cpu_status.h> predates ②.2, we provide the PLAIN-GLOBAL fallback here so
+ * the shared kernel/common/ TUs compile unchanged — textually parenthesised
+ * identifiers, which gcc compiles BYTE-IDENTICALLY to the bare globals.  See
+ * docs/architecture/smp-2-production-scheduler-plan.md §2.2.
+ */
+#ifndef _HAVE_CUR_SCHED_ACCESSORS_
+#define CUR_CTXTSK            (knl_ctxtsk)
+#define CUR_SCHEDTSK          (knl_schedtsk)
+#define CUR_DISPATCH_DISABLED (knl_dispatch_disabled)
+#endif
+
+/*
+ * ②.2a — BKL_ACQUIRE/BKL_RELEASE for the BARE-DI sites that bypass the
+ * BEGIN/END_CRITICAL_SECTION macros (the 4 raw DI(imask)/EI(imask) allocator
+ * sites in memory.c, §1.1/§2.2).  The aarch64 <cpu_status.h> defines these
+ * (BKL under SMP, empty otherwise); the fallback here keeps every OTHER arch
+ * compiling unchanged (empty → byte-identical).
+ */
+#ifndef BKL_ACQUIRE
+#define BKL_ACQUIRE()  /* no-op: disint() IS the lock on a uniprocessor */
+#define BKL_RELEASE()
+#endif
+
+/*
  * Task control information
  */
 IMPORT TCB	knl_tcb_table[];	/* Task control block */
@@ -190,7 +218,7 @@ IMPORT QUEUE	knl_free_tcb;	/* FreeQue */
  * Get TCB from task ID.
  */
 #define get_tcb(id)		( &knl_tcb_table[INDEX_TSK(id)] )
-#define get_tcb_self(id)	( ( (id) == TSK_SELF )? knl_ctxtsk: get_tcb(id) )
+#define get_tcb_self(id)	( ( (id) == TSK_SELF )? CUR_CTXTSK: get_tcb(id) )
 
 /*
  * Prepare task execution.
@@ -242,8 +270,8 @@ static inline void knl_reschedule( void )
 	TCB	*toptsk;
 
 	toptsk = knl_ready_queue_top(&knl_ready_queue);
-	if ( knl_schedtsk != toptsk ) {
-		knl_schedtsk = toptsk;
+	if ( CUR_SCHEDTSK != toptsk ) {
+		CUR_SCHEDTSK = toptsk;
 		knl_dispatch_request();
 	}
 }

@@ -53,21 +53,21 @@ EXPORT void knl_LockOBJ( OBJLOCK *loc )
 
   retry:
 	BEGIN_CRITICAL_SECTION;
-	klocked = knl_ctxtsk->klocked;
+	klocked = CUR_CTXTSK->klocked;
 	if ( !klocked ) {
 		if ( loc->wtskq.next == NULL ) {
 			/* Lock */
 			QueInit(&loc->wtskq);
 
-			knl_ctxtsk->klocked = klocked = TRUE;
-			knl_ready_queue.klocktsk = knl_ctxtsk;
+			CUR_CTXTSK->klocked = klocked = TRUE;
+			knl_ready_queue.klocktsk = CUR_CTXTSK;
 		} else {
 			/* Ready for lock */
-			knl_ready_queue_delete(&knl_ready_queue, knl_ctxtsk);
-			knl_ctxtsk->klockwait = TRUE;
-			QueInsert(&knl_ctxtsk->tskque, &loc->wtskq);
+			knl_ready_queue_delete(&knl_ready_queue, CUR_CTXTSK);
+			CUR_CTXTSK->klockwait = TRUE;
+			QueInsert(&CUR_CTXTSK->tskque, &loc->wtskq);
 
-			knl_schedtsk = knl_ready_queue_top(&knl_ready_queue);
+			CUR_SCHEDTSK = knl_ready_queue_top(&knl_ready_queue);
 			knl_dispatch_request();
 		}
 	}
@@ -96,7 +96,7 @@ EXPORT void knl_UnlockOBJ( OBJLOCK *loc )
 	TCB	*tcb;
 
 	BEGIN_CRITICAL_SECTION;
-	knl_ctxtsk->klocked = FALSE;
+	CUR_CTXTSK->klocked = FALSE;
 	knl_ready_queue.klocktsk = NULL;
 
 	tcb = (TCB*)QueRemoveNext(&loc->wtskq);
@@ -110,8 +110,8 @@ EXPORT void knl_UnlockOBJ( OBJLOCK *loc )
 		knl_ready_queue_insert_top(&knl_ready_queue, tcb);
 	}
 
-	knl_schedtsk = knl_ready_queue_top(&knl_ready_queue);
-	if ( knl_ctxtsk != knl_schedtsk ) {
+	CUR_SCHEDTSK = knl_ready_queue_top(&knl_ready_queue);
+	if ( CUR_CTXTSK != CUR_SCHEDTSK ) {
 		knl_dispatch_request();
 	}
 	END_CRITICAL_SECTION;

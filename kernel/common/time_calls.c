@@ -141,11 +141,11 @@ SYSCALL ER tk_dly_tsk_impl( RELTIM dlytim )
 
 	if ( dlytim > 0 ) {
 		BEGIN_CRITICAL_SECTION;
-		knl_ctxtsk->wspec = &knl_wspec_dly;
-		knl_ctxtsk->wid = 0;
-		knl_ctxtsk->wercd = &ercd;
+		CUR_CTXTSK->wspec = &knl_wspec_dly;
+		CUR_CTXTSK->wid = 0;
+		CUR_CTXTSK->wercd = &ercd;
 		knl_make_wait_reltim(dlytim, TA_NULL);
-		QueInit(&knl_ctxtsk->tskque);
+		QueInit(&CUR_CTXTSK->tskque);
 		END_CRITICAL_SECTION;
 	}
 

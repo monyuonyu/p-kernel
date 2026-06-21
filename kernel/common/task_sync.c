@@ -66,7 +66,7 @@ SYSCALL ER tk_sus_tsk_impl( ID tskid )
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
 		goto error_exit;
 	}
-	if ( tcb == knl_ctxtsk && knl_dispatch_disabled >= DDS_DISABLE ) {
+	if ( tcb == CUR_CTXTSK && CUR_DISPATCH_DISABLED >= DDS_DISABLE ) {
 		ercd = E_CTX;
 		goto error_exit;
 	}
@@ -215,16 +215,16 @@ SYSCALL ER tk_slp_tsk_impl( TMO tmout )
 
 	BEGIN_CRITICAL_SECTION;
 
-	if ( knl_ctxtsk->wupcnt > 0 ) {
-		knl_ctxtsk->wupcnt--;
+	if ( CUR_CTXTSK->wupcnt > 0 ) {
+		CUR_CTXTSK->wupcnt--;
 	} else {
 		ercd = E_TMOUT;
 		if ( tmout != TMO_POL ) {
-			knl_ctxtsk->wspec = &knl_wspec_slp;
-			knl_ctxtsk->wid = 0;
-			knl_ctxtsk->wercd = &ercd;
+			CUR_CTXTSK->wspec = &knl_wspec_slp;
+			CUR_CTXTSK->wid = 0;
+			CUR_CTXTSK->wercd = &ercd;
 			knl_make_wait(tmout, TA_NULL);
-			QueInit(&knl_ctxtsk->tskque);
+			QueInit(&CUR_CTXTSK->tskque);
 		}
 	}
 

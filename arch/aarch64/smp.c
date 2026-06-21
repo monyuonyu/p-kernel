@@ -323,21 +323,29 @@ struct smp_cpu {
      * secondaries — a single shared stack would corrupt). The boot CPU stores
      * &_stack_top_cpuN here before CPU_ON; start.S's secondary landing pad
      * loads SP from THIS field via the context_id (x19 = &g_smpcpu[cpu]).
-     * Appended AFTER the ②.1a fields so off 0/8/16 stay fixed — only
-     * SMPCPU_SIZE grows (mirrored in cpu_support.S + start.S). */
+     * Appended AFTER the ②.1a fields so off 0/8/16 stay fixed. */
     unsigned long stack_top;             /* off 56: this CPU's dispatcher SP   */
+    /* ②.2a: per-CPU dispatch-disable flag (the production knl_dispatch_disabled
+     * goes per-CPU; §2.2).  Appended AFTER ②.1b's stack_top.  This layout MUST
+     * match struct smp_cpu in arch/aarch64/include/smp_percpu.h (the typed view
+     * the kernel-common CUR_* macros index) — both index the SAME g_smpcpu[]
+     * storage; a desync would read the wrong offset.  ②.1b/②.2a MERGE: both
+     * appended a field; stack_top@56, dispatch_disabled@64, SMPCPU_SIZE 64->72. */
+    int                    dispatch_disabled; /* off 64                        */
 };
 
 #define SMPCPU_CTXTSK     0
 #define SMPCPU_SCHEDTSK   8
 #define SMPCPU_EXEC       16
 #define SMPCPU_STACK_TOP  56          /* ②.1b: per-CPU secondary stack top    */
-#define SMPCPU_SIZE       64          /* was 56; +8 for the ②.1b stack field  */
+#define SMPCPU_DISPDIS    64          /* ②.2a: per-CPU dispatch-disable flag  */
+#define SMPCPU_SIZE       72          /* 56 base + 8 stack_top + 4 dispdis +pad */
 
 _Static_assert(offsetof(struct smp_cpu, ctxtsk)   == SMPCPU_CTXTSK,   "smp_cpu.ctxtsk");
 _Static_assert(offsetof(struct smp_cpu, schedtsk) == SMPCPU_SCHEDTSK, "smp_cpu.schedtsk");
 _Static_assert(offsetof(struct smp_cpu, exec_count)==SMPCPU_EXEC,     "smp_cpu.exec");
 _Static_assert(offsetof(struct smp_cpu, stack_top)== SMPCPU_STACK_TOP,"smp_cpu.stack_top");
+_Static_assert(offsetof(struct smp_cpu, dispatch_disabled)==SMPCPU_DISPDIS, "smp_cpu.dispdis");
 _Static_assert(sizeof(struct smp_cpu)             == SMPCPU_SIZE,     "smp_cpu.size");
 
 /* The per-CPU array (BSS, VA==PA). Slot 0 = boot CPU; slot 1 = the one
@@ -767,6 +775,16 @@ static void smp_secondary_preempt_loop(unsigned long me)
 
 #endif /* SMP_PREEMPT_TEST */
 
+#ifdef SMP_2TASKS_PROD
+/* ②.2a [smp-2tasks-prod]: the secondary, instead of the ②.0 stand-in pull
+ * loop, waits for the driver (smp_prod.c, on CPU 0) to publish its schedtsk =
+ * a REAL TCB, then enters the PRODUCTION dispatcher loop (.Ldispatch_loop via
+ * smp_prod_enter_dispatch, cpu_support.S) — a genuine register-context switch
+ * into the real task.  Symbols from smp_prod.c. */
+extern volatile int g_prod_secondary_go;
+extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
+#endif
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -774,6 +792,29 @@ void smp_dispatch_run(void)
     if (me >= SMP_MAX_CPUS) {
         for (;;) __asm__ volatile("wfe");     /* never index OOB */
     }
+
+#ifdef SMP_2TASKS_PROD
+    /* ②.2a: run a REAL TCB via the production dispatcher on this secondary. */
+    {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        smp_dbg("[SMP] cpu1 entered PRODUCTION dispatcher (2tasks-prod)\r\n");
+        /* Wait until the driver has set g_smpcpu[me].schedtsk to the real B. */
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_prod_secondary_go && g_smpcpu[me].schedtsk != 0)
+                break;
+            if (++tries >= 200000000UL) {
+                for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
+            }
+            __asm__ volatile("yield" ::: "memory");
+        }
+        smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs B */
+        /* never returns (switches into B's stack) */
+        for (;;) __asm__ volatile("wfe");
+    }
+#endif
 
 #ifdef SMP_PREEMPT_TEST
     /* ②.1a: if the driver armed the preempt cert, the secondary runs the

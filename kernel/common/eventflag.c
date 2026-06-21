@@ -387,12 +387,12 @@ SYSCALL ER tk_wai_flg_impl( ID flgid, UINT waiptn, UINT wfmode, UINT *p_flgptn, 
 		}
 	} else {
 		/* Ready for wait */
-		knl_ctxtsk->wspec = ( (flgcb->flgatr & TA_TPRI) != 0 )?
+		CUR_CTXTSK->wspec = ( (flgcb->flgatr & TA_TPRI) != 0 )?
 					&knl_wspec_flg_tpri: &knl_wspec_flg_tfifo;
-		knl_ctxtsk->wercd = &ercd;
-		knl_ctxtsk->winfo.flg.waiptn = waiptn;
-		knl_ctxtsk->winfo.flg.wfmode = wfmode;
-		knl_ctxtsk->winfo.flg.p_flgptn = p_flgptn;
+		CUR_CTXTSK->wercd = &ercd;
+		CUR_CTXTSK->winfo.flg.waiptn = waiptn;
+		CUR_CTXTSK->winfo.flg.wfmode = wfmode;
+		CUR_CTXTSK->winfo.flg.p_flgptn = p_flgptn;
 		knl_gcb_make_wait((GCB*)flgcb, tmout);
 	}
 

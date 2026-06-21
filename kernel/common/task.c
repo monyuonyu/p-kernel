@@ -99,9 +99,9 @@ EXPORT ER knl_task_initialize( void )
 	}
 
 	/* タスク実行制御情報の初期化 */
-	knl_ctxtsk = knl_schedtsk = NULL;
+	CUR_CTXTSK = CUR_SCHEDTSK = NULL;
 	knl_ready_queue_initialize(&knl_ready_queue);
-	knl_dispatch_disabled = DDS_ENABLE;
+	CUR_DISPATCH_DISABLED = DDS_ENABLE;
 
 	/* 全TCBを未使用キューに登録 */
 	QueInit(&knl_free_tcb);
@@ -227,7 +227,7 @@ EXPORT void knl_make_ready( TCB *tcb )
 {
 	tcb->state = TS_READY;
 	if ( knl_ready_queue_insert(&knl_ready_queue, tcb) ) {
-		knl_schedtsk = tcb;
+		CUR_SCHEDTSK = tcb;
 		knl_dispatch_request();
 	}
 }
@@ -253,8 +253,8 @@ EXPORT void knl_make_ready( TCB *tcb )
 EXPORT void knl_make_non_ready( TCB *tcb )
 {
 	knl_ready_queue_delete(&knl_ready_queue, tcb);
-	if ( knl_schedtsk == tcb ) {
-		knl_schedtsk = knl_ready_queue_top(&knl_ready_queue);
+	if ( CUR_SCHEDTSK == tcb ) {
+		CUR_SCHEDTSK = knl_ready_queue_top(&knl_ready_queue);
 		knl_dispatch_request();
 	}
 }
@@ -346,7 +346,7 @@ EXPORT void knl_rotate_ready_queue( INT priority )
  */
 EXPORT void knl_rotate_ready_queue_run( void )
 {
-	if ( knl_schedtsk != NULL ) {  /* 実行予定タスクが存在する場合 */
+	if ( CUR_SCHEDTSK != NULL ) {  /* 実行予定タスクが存在する場合 */
 		knl_ready_queue_rotate(&knl_ready_queue,
 				knl_ready_queue_top_priority(&knl_ready_queue));  /* 最高優先度キューのローテーション */
 		knl_reschedule();  /* 再スケジューリング */

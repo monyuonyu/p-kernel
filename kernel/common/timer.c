@@ -184,12 +184,12 @@ EXPORT void knl_timer_handler( void )
 	knl_current_time = ll_add(knl_current_time, uitoll(CFN_TIMER_PERIOD));
 
 #if USE_DBGSPT && defined(USE_FUNC_TD_INF_TSK)
-	if ( knl_ctxtsk != NULL ) {
+	if ( CUR_CTXTSK != NULL ) {
 		/* Task at execution */
-		if ( knl_ctxtsk->sysmode > 0 ) {
-			knl_ctxtsk->stime += CFN_TIMER_PERIOD;
+		if ( CUR_CTXTSK->sysmode > 0 ) {
+			CUR_CTXTSK->stime += CFN_TIMER_PERIOD;
 		} else {
-			knl_ctxtsk->utime += CFN_TIMER_PERIOD;
+			CUR_CTXTSK->utime += CFN_TIMER_PERIOD;
 		}
 	}
 #endif
@@ -216,11 +216,11 @@ EXPORT void knl_timer_handler( void )
 	}
 
 	/* Round-robin time-slice management */
-	if ( knl_ctxtsk != NULL && knl_ctxtsk->sched_policy == SCHED_RR ) {
-		if ( knl_ctxtsk->remaining_slice > 0 )
-			knl_ctxtsk->remaining_slice--;
-		if ( knl_ctxtsk->remaining_slice == 0 ) {
-			knl_ctxtsk->remaining_slice = knl_ctxtsk->time_slice;
+	if ( CUR_CTXTSK != NULL && CUR_CTXTSK->sched_policy == SCHED_RR ) {
+		if ( CUR_CTXTSK->remaining_slice > 0 )
+			CUR_CTXTSK->remaining_slice--;
+		if ( CUR_CTXTSK->remaining_slice == 0 ) {
+			CUR_CTXTSK->remaining_slice = CUR_CTXTSK->time_slice;
 			knl_rotate_ready_queue_run();
 		}
 	}
