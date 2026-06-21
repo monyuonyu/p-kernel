@@ -62,6 +62,16 @@
  *  EOIR-ordering + frame-nesting on weakly-ordered silicon are only fully
  *  [live] on RPi3.  A QEMU green proves the async switch is correctly plumbed
  *  and load-bearing, NOT the barrier discipline on weak silicon.
+ *
+ *  SCOPE: this is ②.2b-i (the async register-context preempt) ONLY.  ②.2b-ii
+ *  (the secondary's own CNTP PPI 30 tick + the cross-CPU wake gap so a
+ *  secondary task can tk_dly_tsk/tk_slp_tsk and WAKE — the [smp-secondary-
+ *  sleep] cert) is HONESTLY DEFERRED: it is a second, independent mechanism
+ *  (per-CPU banked timer enable + making knl_make_ready IPI-aware) with its
+ *  own fault surface, and the conservative call is to land the verified
+ *  ②.2b-i (the named CORE / "single most C-ABI-fault-prone wave") clean rather
+ *  than rush a second fault-prone path on top of it.  See the report + the
+ *  smp-2b plan §4 for the ②.2b-ii design that is ready to implement next.
  * ───────────────────────────────────────────────────────────────────────── */
 
 #ifdef SMP_ASYNC_PREEMPT
