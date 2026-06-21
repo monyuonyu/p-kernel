@@ -694,3 +694,29 @@ GICD_SGIR, another takes the SGI through the production IRQ vector (unforgeable
 sgi_taken proof) and preempts to a higher-prio task — provably the SOLE trigger (the
 -DSMP_NO_IPI falsifier never switches). Shipped kernel byte-identical, mind untouched.
 True async switch + production scheduler conversion = ②.2.
+
+## ②.1b SMP self-test polish (N=4 + harness-snapshot fix) — commit 6b24aa97 (impl 90d753aa)
+- Auditor: independent focused auditor (single agent, proportionate to the small
+  sandbox-only scope), 2026-06-21. Did NOT write the code. Verdict: **MERGEABLE
+  (ledger row CLOSED).** No findings above informational.
+- N=4 is REAL: -smp 4 wakes 3 secondaries (cpu1/2/3 enter the dispatcher, order
+  varies = real concurrency); all 4 per-CPU exec_count>0; shared counter == 800000
+  EXACTLY (=4*200000); the NOLOCK falsifier loses a VARIABLE ~70% (212705/249442
+  across runs = genuine 4-core race, not a fixed fake), SMP-MUTEX FAIL, still boots.
+  Per-CPU secondary stacks are distinct/non-overlapping (cpu1/2/3 each 0x4000,
+  _Static_assert guards the offset/size).
+- PRODUCTION SCHEDULER UNTOUCHED: task.c diff EMPTY; cpu_support.S lines 1-381
+  (incl. .Ldispatch_loop, _vec_el1_irq, all knl_ctxtsk loads) sha256 IDENTICAL
+  base<->impl; start.S lines 1-281 IDENTICAL; both changes strictly inside
+  #ifdef SMP_SELFTEST (the SMPCPU_SIZE 56->64 mirror + the per-CPU stack load).
+- DEFAULT build BYTE-IDENTICAL to base (.text + full ELF sha256 match); plain boot
+  zero SMP output.
+- The HARNESS-SNAPSHOT FIX (the ②.0-audit follow-up) works: all 4 harnesses now
+  cp kernel.elf to a unique mktemp snapshot and boot -kernel <snapshot> (not the
+  live build-dir elf), so a concurrent rebuild can no longer corrupt an in-flight
+  run; set -eu + real greps retained. No regression (smp1/mc2 all PASS). Honest
+  N=2 preempt note in-code (cpus 2,3 would only spin to the watchdog cap — no added
+  proof; robust N=4 preempt deferred to ②.2).
+LEDGER: row CLOSED. The SMP sandbox now scales to 4 cores (counter exact, falsifier
+bites) and the cert harnesses are concurrency-safe; the production scheduler stays
+byte-for-byte untouched.
