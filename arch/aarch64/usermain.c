@@ -269,6 +269,83 @@ EXPORT INT usermain(void)
     }
 #endif /* SMP_2TASKS_PROD */
 
+#ifdef SMP_ONE_MIND
+    /* ②.2c [smp-one-mind] CROWN: prove a REAL mind forward (r_forward) is
+     * BYTE-IDENTICAL whether run uniprocessor (H_uni, on CPU 0) or as a real
+     * task on a SECONDARY CPU under SMP (H_smp, on CPU 1, via the ②.2a smp_prod
+     * pattern).  H_uni == H_smp ⇒ the SMP scheduler did not perturb a single bit
+     * of the mind's math — "the mind stays one across the SMP scheduler."  Runs
+     * here, inside the initial task, kernel fully up (real TCBs + ready queue).
+     * FALSIFIER -DSMP_ONEMIND_RACE: a 2nd CPU scribbles the shared rc/rw[] while
+     * CPU 1's forward is mid-flight → H_smp != H_uni → FAIL hashes-differ.
+     *
+     * HONEST SCOPE: the crown is NARROW + TRUE — a SINGLE forward survives SMP
+     * scheduling bit-for-bit.  CONCURRENT minds (two forwards / forward+train)
+     * race the SHARED static rc/rw[] and need a mind-lock — DEFERRED (that is
+     * exactly what the falsifier exploits).  ②.2b-ii (secondary timer/WAIT) is
+     * NOT needed: the forward is run-to-completion + parks on wfe. */
+    {
+        extern int  smp_onemind_test_run(void);
+        extern unsigned long smp_onemind_h_uni(void);
+        extern unsigned long smp_onemind_h_smp(void);
+        extern unsigned long smp_onemind_m_ran(void);
+        extern void *smp_onemind_m_tcb(void);
+        extern int  smp_onemind_m_tskid(void);
+        extern unsigned long smp_onemind_filler(int cpu);
+
+        /* 16-hex-digit printer for the 64-bit FNV hashes */
+        char hx[19]; hx[0]='0'; hx[1]='x'; hx[18]='\0';
+        #define PRINT_HASH(p) do { unsigned long _v=(unsigned long)(p); \
+            for (int _i=0;_i<16;_i++){int _n=(int)((_v>>((15-_i)*4))&0xF); \
+            hx[2+_i]=(char)(_n<10?'0'+_n:'a'+_n-10);} print(hx); } while(0)
+
+        print("[SMP] ②.2c [smp-one-mind] CROWN: r_forward byte-identical uniproc vs SMP-secondary...\r\n");
+        int rc = smp_onemind_test_run();
+
+        unsigned long h_uni = smp_onemind_h_uni();
+        unsigned long h_smp = smp_onemind_h_smp();
+
+        print("[SMP] M real tskid=");
+        { int t=smp_onemind_m_tskid(); char d[6]; int o=0; if(t<0){d[o++]='-';t=-t;}
+          char tmp[6]; int ti=0; if(t==0)tmp[ti++]='0'; while(t){tmp[ti++]=(char)('0'+t%10);t/=10;}
+          while(ti)d[o++]=tmp[--ti]; d[o]='\0'; print(d); }
+        print(" M ran="); print(smp_onemind_m_ran()?"1":"0");
+        print(" M tcb=ok="); print(smp_onemind_m_tcb()?"1":"0");
+        print("\r\n");
+        /* concurrency proof: the non-mind secondaries advanced their fillers */
+        print("[SMP] concurrency: cpu2_filler>0=");
+        print(smp_onemind_filler(2)?"1":"0");
+        print(" cpu3_filler>0=");
+        print(smp_onemind_filler(3)?"1":"0");
+        print("\r\n");
+        print("[SMP] H_uni="); PRINT_HASH(h_uni);
+        print(" (uniprocessor, CPU 0)\r\n");
+        print("[SMP] H_smp="); PRINT_HASH(h_smp);
+        print(" (SMP secondary, CPU 1)\r\n");
+
+        if (rc == 0 && h_uni == h_smp && smp_onemind_m_ran()) {
+            print("SMP-ONE-MIND: PASS H_uni="); PRINT_HASH(h_uni);
+            print(" H_smp="); PRINT_HASH(h_smp);
+            print(" (the mind is byte-identical under SMP; single-forward scope, concurrent minds DEFERRED)\r\n");
+        } else if (rc == -99 || (h_uni != h_smp && smp_onemind_m_ran())) {
+            /* The split-mind result: hashes DIFFER.  In the -DSMP_ONEMIND_RACE
+             * falsifier this is the EXPECTED RED (the shared-rc race is load-
+             * bearing).  In a guard'd (non-race) build this would be a REAL
+             * split-mind BUG — do NOT paper it. */
+            print("SMP-ONE-MIND: FAIL hashes-differ H_uni="); PRINT_HASH(h_uni);
+            print(" H_smp="); PRINT_HASH(h_smp);
+            print("\r\n");
+        } else {
+            print("SMP-ONE-MIND: FAIL rc=");
+            { int t=rc; char d[8]; int o=0; if(t<0){d[o++]='-';t=-t;}
+              char tmp[8]; int ti=0; if(t==0)tmp[ti++]='0'; while(t){tmp[ti++]=(char)('0'+t%10);t/=10;}
+              while(ti)d[o++]=tmp[--ti]; d[o]='\0'; print(d); }
+            print(" (M did not run on CPU 1 / plumbing failure)\r\n");
+        }
+        #undef PRINT_HASH
+    }
+#endif /* SMP_ONE_MIND */
+
 #ifdef SMP_ASYNC_PREEMPT
     /* ②.2b-i [smp-async-preempt]: prove a REAL task on the SECONDARY is
      * preempted ASYNCHRONOUSLY MID-LOOP (no flag-check) by an SGI whose

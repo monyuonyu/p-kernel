@@ -608,6 +608,93 @@ void r3_weights_set(const float *in)
 }
 UW r3_merge_epoch(void) { return merge_epoch; }
 
+#ifdef SMP_ONE_MIND
+/* ②.2c [smp-one-mind] crown cert — the ONE in-TU code addition.
+ *
+ * Run ONE fixed-seed, fixed-input r_forward and return the FNV-1a hash of its
+ * OUTPUT (rc.probs[R_VALV] then the 4 CE-loss bytes). PURE: re-inits the
+ * weights from a fixed seed each call, so the hash is independent of any prior
+ * training/merge state and is byte-identical on any CPU (the LCG is integer
+ * math; r_forward is fixed-order float math built -O1 -ffp-contract=off — "one
+ * mind, one math"). The SMP cert TU (arch/aarch64/smp_onemind.c) calls this
+ * from BOTH the uniprocessor leg (CPU 0) and the SMP leg (a real task on a
+ * secondary CPU) and asserts the two hashes are BYTE-IDENTICAL.
+ *
+ * GATED behind -DSMP_ONE_MIND (prior art for #ifdef gating inside this TU: the
+ * _TK_HOSTED_LIBC_ blocks). With the flag OFF this function does not exist, so
+ * the DEFAULT object (and the x86/linux/rl78 builds) are byte-unchanged.
+ *
+ * The FNV-1a constants mirror ss6live_logit_hash (student_shell.c, the
+ * canonical idiom) — re-inlined here because student_shell.c is HOSTED-ONLY and
+ * is not built on bare metal.
+ *
+ * THE MIND MATH (r_forward / r_init_weights / rw[] / rc) IS UNTOUCHED: this is
+ * only a fixed-input CALLER + an FNV hash of the existing forward's output.
+ *
+ * SCOPE (the §3 narrowing, load-bearing): the shared module-static rc/rw[] mean
+ * this is safe for ONE forward at a time. CONCURRENT forwards (or
+ * forward-while-train) race rc/rw[] and need a mind-lock — DEFERRED. This entry
+ * point does NOT serialize; the cert driver runs the mind on EXACTLY ONE CPU at
+ * a time (and the -DSMP_ONEMIND_RACE falsifier deliberately violates that to go
+ * RED). */
+unsigned long r3_onemind_forward_hash(void)
+{
+    /* Fixed in-range input (NOT gen_episode, which samples the RNG — we want a
+     * FIXED input). key[t] < R_KEYV=16 (distinct dict keys); val[t] < R_VALEMB=65;
+     * the query position (R_QPOS) carries one of the keys and value R_UNK; the
+     * label < R_VALV=64. The exact tokens are arbitrary as long as in-range. */
+    static const UB K[R_SEQ] = { 3, 7, 1, 11, 5, 14, 9, 2, /*query=*/7 };
+    static const UB V[R_SEQ] = { 41, 19, 60, 7, 33, 52, 26, 11, /*query=*/R_UNK };
+    static const UB LBL      = 19;   /* the value bound to key 7 (index 1)      */
+
+    r_init_weights(0xA5A5u);                 /* deterministic rw[], any CPU      */
+    float loss = r_forward(K, V, LBL);       /* fills rc.probs (in-TU rc access) */
+
+    /* FNV-1a over rc.probs[R_VALV] (the softmax logits) then the loss bytes.
+     * Hashing both: rc.probs is the distribution, loss=-ln p[label] a second
+     * independent scalar derived from it — maximizes the surface a perturbation
+     * must survive to forge a collision. */
+    unsigned long h = 1469598103934665603UL;            /* FNV-1a offset basis  */
+    const unsigned char *p = (const unsigned char *)&rc.probs[0];
+    for (unsigned i = 0; i < (unsigned)R_VALV * sizeof(float); i++) {
+        h ^= p[i]; h *= 1099511628253UL;                /* FNV-1a prime         */
+    }
+    const unsigned char *lp = (const unsigned char *)&loss;
+    for (unsigned i = 0; i < sizeof(float); i++) {
+        h ^= lp[i]; h *= 1099511628253UL;
+    }
+    return h;
+}
+
+#ifdef SMP_ONEMIND_RACE
+/* ②.2c FALSIFIER (-DSMP_ONEMIND_RACE): a deliberately racy scribble into the
+ * SHARED module-static rc scratch + rw[] weights — the exact §1.2/§3 race the
+ * narrowing names. The cert driver runs THIS on a DIFFERENT secondary CPU while
+ * CPU 1's r_forward is mid-flight; with no serialization the two CPUs race the
+ * single shared rc/rw[] struct → CPU 1's activations are corrupted →
+ * H_smp != H_uni → SMP-ONE-MIND: FAIL. Proves the cert observes the REAL mind
+ * output AND that the single-forward-at-a-time discipline is LOAD-BEARING (it is
+ * NOT vacuously passing because r_forward "happens to be single-threaded").
+ *
+ * `iters` bounds the scribble (the driver caps it). The garbage stream is a
+ * simple LCG so each write is a distinct corrupting value across rc.probs and
+ * (most damagingly) the live rw[] read by the in-flight forward. */
+void r3_onemind_race_scribble(unsigned long iters)
+{
+    UW g = 0xDEADBEEFu;
+    for (unsigned long n = 0; n < iters; n++) {
+        g = g * 1664525UL + 1013904223UL;
+        float noise = ((float)((g >> 16) & 0x7FFF) / 32768.0f - 0.5f);
+        /* scribble the shared forward scratch (rc.probs) ... */
+        rc.probs[(g >> 4) % (unsigned)R_VALV] = noise;
+        /* ... and the shared weights the in-flight forward is reading. */
+        rw[g % (unsigned)R_NP] = noise;
+        __asm__ volatile("" ::: "memory");
+    }
+}
+#endif /* SMP_ONEMIND_RACE */
+#endif /* SMP_ONE_MIND */
+
 /* galaxy v1 (galaxy.md §6 — "The concurrency slice Part VII named, now
  * due"). VII.4 said the r3_round_busy quiesce is "a flag, not a lock:
  * sufficient ONLY because... verbs cannot be preempted by the round. If

@@ -1092,6 +1092,22 @@ extern volatile int g_dl_secondary_go;
 extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
 #endif
 
+#ifdef SMP_ONE_MIND
+/* ②.2c [smp-one-mind]: CPU 1 waits for the driver (smp_onemind.c, on CPU 0) to
+ * publish its schedtsk = the REAL mind task M (whose body computes the forward
+ * hash), then enters the PRODUCTION dispatcher (smp_prod_enter_dispatch →
+ * .Ldispatch_loop) — switching into M on CPU 1.  The OTHER secondaries run a
+ * per-CPU busy/filler (or, under -DSMP_ONEMIND_RACE, the shared-rc scribble that
+ * races M's in-flight forward).  Symbols from smp_onemind.c. */
+extern volatile int g_onemind_secondary_go;          /* release CPU 1 into M    */
+extern volatile unsigned long g_onemind_filler[SMP_MAX_CPUS]; /* per-CPU concurrency proof */
+extern volatile int g_onemind_racer_go;              /* release the racer CPU   */
+extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns    */
+#ifdef SMP_ONEMIND_RACE
+extern void r3_onemind_race_scribble(unsigned long iters);
+#endif
+#endif
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -1165,6 +1181,62 @@ void smp_dispatch_run(void)
         smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs B */
         /* never returns (switches into B's stack) */
         for (;;) __asm__ volatile("wfe");
+    }
+#endif
+
+#ifdef SMP_ONE_MIND
+    /* ②.2c [smp-one-mind]: CPU 1 runs the REAL mind task M (its body computes
+     * r3_onemind_forward_hash) via the production dispatcher; the OTHER
+     * secondaries run a per-CPU busy/filler so the scheduler is provably driving
+     * MULTIPLE cores while CPU 1 computes the mind (the §2.2 step-4 genuine
+     * concurrency). Under -DSMP_ONEMIND_RACE the racer CPU instead scribbles the
+     * SHARED rc/rw[] that M's in-flight forward reads → corruption → FAIL. */
+    {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        if (me == 1) {
+            /* The MIND CPU: wait for the driver to publish M, then switch in. */
+            smp_dbg("[SMP] cpu1 entered PRODUCTION dispatcher (one-mind)\r\n");
+            unsigned long tries = 0;
+            for (;;) {
+                __asm__ volatile("dmb ld" ::: "memory");
+                if (g_onemind_secondary_go && g_smpcpu[me].schedtsk != 0)
+                    break;
+                if (++tries >= 200000000UL) {
+                    for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
+                }
+                __asm__ volatile("yield" ::: "memory");
+            }
+            smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs M */
+            for (;;) __asm__ volatile("wfe");
+        } else {
+            /* The OTHER secondaries: genuine concurrency while M computes.  CPU 2
+             * is the racer slot (only the falsifier arms g_onemind_racer_go). */
+#ifdef SMP_ONEMIND_RACE
+            if (me == 2) {
+                unsigned long tries = 0;
+                for (;;) {
+                    __asm__ volatile("dmb ld" ::: "memory");
+                    if (g_onemind_racer_go) break;
+                    if (++tries >= 200000000UL) break;
+                    __asm__ volatile("yield" ::: "memory");
+                }
+                /* Scribble the SHARED rc/rw[] for a good long while so it overlaps
+                 * CPU 1's forward (the driver releases the racer BEFORE M, then
+                 * starts M; the forward is short, so a large iter count keeps the
+                 * race live across M's whole forward). */
+                r3_onemind_race_scribble(50000000UL);
+            }
+#endif
+            /* All non-mind secondaries: a bounded busy counter (concurrency proof
+             * the driver reads). Bounded so the run terminates. */
+            for (unsigned long k = 0; k < 50000000UL; k++) {
+                g_onemind_filler[me] = k;
+                __asm__ volatile("" ::: "memory");
+            }
+            __asm__ volatile("dmb st" ::: "memory");
+            for (;;) __asm__ volatile("wfe");
+        }
     }
 #endif
 

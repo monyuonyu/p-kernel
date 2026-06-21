@@ -106,7 +106,8 @@ ARCH_C_SRCS = \
     smp.c \
     smp_prod.c \
     smp_async.c \
-    smp_deadlock.c
+    smp_deadlock.c \
+    smp_onemind.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -254,6 +255,12 @@ endif
 # kernel ELF stays byte-identical).
 ifeq (,$(findstring SMP_DEADLOCK_TEST,$(EXTRA_CFLAGS)))
 SMP_CERT_EXCLUDE += smp_deadlock.o
+endif
+# ②.2c [smp-one-mind]: smp_onemind.c — same exclude discipline (empty .o
+# otherwise; excluded from the LINK unless -DSMP_ONE_MIND so the DEFAULT kernel
+# ELF stays byte-identical).
+ifeq (,$(findstring SMP_ONE_MIND,$(EXTRA_CFLAGS)))
+SMP_CERT_EXCLUDE += smp_onemind.o
 endif
 LINK_OBJS = $(filter-out $(SMP_CERT_EXCLUDE),$(ALL_OBJS))
 
@@ -629,6 +636,37 @@ run-smp3-deadlock-noguard:
 # -DSMP_NO_BKL_GUARD falsifier (assert it DEADLOCKS, no PASS).
 smp3-test:
 	../../tests/aarch64/run_smp3.sh
+
+# ---- ②.2c [smp-one-mind] CROWN: the mind is byte-identical under SMP -------
+# docs/architecture/smp-2c-one-mind-plan.md. The PAYOFF of the ② full-SMP arc.
+# Runs a REAL bare-metal mind forward (r_forward, arch/common/r3_incontext.c) on
+# a SECONDARY CPU via the production dispatcher (reusing the ②.2a smp_prod
+# pattern) and asserts its output hash is BYTE-IDENTICAL to the same forward run
+# uniprocessor. H_uni == H_smp ⇒ the SMP scheduler did not perturb the mind's
+# math. Boots under -smp 4 (CPU 1 = the mind; CPUs 2,3 = concurrency filler).
+# Prints:  SMP-ONE-MIND: PASS  (H_uni == H_smp, both hashes printed).
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+run-smp4:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_ONE_MIND" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): a SECOND CPU scribbles the SHARED static rc/rw[] of
+# the mind forward WITHOUT serialization while CPU 1's forward is mid-flight →
+# the activations are corrupted → H_smp != H_uni → SMP-ONE-MIND: FAIL
+# hashes-differ. Proves the cert observes the REAL mind output AND that the
+# single-forward-at-a-time discipline is load-bearing (not vacuously passing).
+run-smp4-race:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_ONE_MIND -DSMP_ONEMIND_RACE" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4 + assert SMP-ONE-MIND: PASS with
+# H_uni == H_smp + the hash STABLE across runs; then build the -DSMP_ONEMIND_RACE
+# falsifier and assert SMP-ONE-MIND: FAIL hashes-differ; then assert the DEFAULT
+# build .text is byte-identical to base.
+smp4-test:
+	../../tests/aarch64/run_smp4.sh
 
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
