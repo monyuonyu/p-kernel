@@ -720,3 +720,51 @@ True async switch + production scheduler conversion = ②.2.
 LEDGER: row CLOSED. The SMP sandbox now scales to 4 cores (counter exact, falsifier
 bites) and the cert harnesses are concurrency-safe; the production scheduler stays
 byte-for-byte untouched.
+
+## ②.2a production scheduler -> SMP (~211 sites) — commit 9e476954 (impl a20985b8)
+- Auditor: independent adversarial WORKFLOW (5 dimensions + per-finding verify),
+  2026-06-21. Did NOT write the code. THE LARGEST, most invasive change in the repo:
+  the production T-Kernel scheduler converted to SMP.
+- Verdict: **the ②.2a impl is SOUND (byte-identity + conversion-correctness +
+  2-real-tasks all PASS); the workflow gated overall=BLOCKED ONLY on a ②.1b MERGE
+  COLLISION, which the COMMANDER resolved + empirically validated (this commit).**
+  confirmed_material_findings=[].
+- [byte-identical-N1-crown] PASS — the crown held at the STRONGEST level: the default
+  build's .text (sha256 b48d7da7…), full objcopy binary, AND full ELF are ALL byte-
+  identical to a FRESHLY-rebuilt base; per-object cmp on the 3 dangerous files
+  (cpu_support.o b090206e, task.o 1f8aa03b, memory.o 4d16591b) byte-identical. The
+  macros expand to parenthesized plain globals when SMP off; cross-arch fallbacks keep
+  linux/x86 unchanged (linux boots identically). No site silently changed the N=1
+  scheduler.
+- [conversion-correctness] PASS — a per-file 1:1 CONSERVATION CHECK proves NO
+  ctxtsk<->schedtsk mis-swap anywhere (each file's old knl_ctxtsk count == new
+  CUR_CTXTSK, old knl_schedtsk == new CUR_SCHEDTSK); no missed sites in the aarch64
+  build set; the 4 dangerous sites (asm dispatcher LD_PERCPU_BASE, END_CRITICAL_SECTION,
+  timer, in_indp) + the 4 bare-DI allocator sites (memory.c) BKL-wrapped across the
+  full DI/EI window; BKL recursive-safe + balanced. The deferred-scope incompleteness
+  (a general multi-CPU syscalling workload) is ②.2b/②.3, ledgered, not a blocker.
+- [2-real-tasks-on-2-cpus] PASS — A=&knl_tcb_table[0], B=&knl_tcb_table[1] (distinct
+  real TCBs), B tskid=2 (real tk_cre_tsk); a GENUINE register-context switch
+  (smp_prod_enter_dispatch -> .Ldispatch_loop -> TCB_SSP 112-byte frame restore ->
+  ret into B); B records its TCB via CUR_CTXTSK indexed by CPU 1's MPIDR (unforgeable,
+  not a flag CPU 0 set); claimed under the BKL (knl_make_non_ready) so the two CPUs
+  can't race the same task; live shell after. Stable 4 runs.
+- THE MERGE (commander integration, the audit's flagged BLOCKER): ②.2a (base 80925b61)
+  and ②.1b (on trunk) BOTH appended a struct smp_cpu field at offset 56 and bumped
+  SMPCPU_SIZE 56->64 — a naive cherry-pick would silently corrupt one field. Resolved:
+  struct = base(0..55) + stack_top@56 (②.1b) + dispatch_disabled@64 (②.2a), sizeof 72,
+  SMP_MAX_CPUS=4; synced across smp.c + smp_percpu.h (the typed view kernel/common
+  indexes — a desync would read the wrong CPU's slot) + cpu_support.S; fixed
+  LD_PERCPU_BASE from `lsl #6` (x64) to `(id<<6)+(id<<3)` (x72, non-power-of-2).
+  EMPIRICALLY VALIDATED on the merged tree: default .text byte-identical (b48d7da7…) +
+  smp2 [smp-2tasks-prod] PASS (exercises the new stride + dispatch_disabled) + smp0
+  N=4 counter==800000 PASS (exercises stack_top) + smp1 preempt PASS + mc2-slice PASS.
+- HONEST BOUND: ②.2a proves the MECHANISM. The production kernel runs only on CPU 0 in
+  this slice; the secondary timer/WAIT path is unwired (task B parks on wfe; a blocking
+  syscall faults — the impl hit + fixed a real SYNC fault); cross-CPU preempt is still
+  cooperative (the ②.1a SGI sets a flag). True async preempt = ②.2b; the [smp-one-mind]
+  crown cert = ②.2c. QEMU masks barriers (RPi3-[live] only).
+LEDGER: row CLOSED. The production T-Kernel scheduler runs 2 real tasks on 2 physical
+cores under one Big Kernel Lock, with the shipped uniprocessor kernel BYTE-IDENTICAL
+and the mind untouched. p-kernel is genuinely SMP at the scheduler level — the heart of
+mk_pino's "最終目標". (②.2b true-async + ②.2c one-mind-crown remain.)
