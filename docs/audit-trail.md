@@ -639,3 +639,58 @@ LEDGER: row CLOSED. Two physical aarch64 cores run the T-Kernel dispatcher under
 Big Kernel Lock, provably concurrent (distinct MPIDRs, falsifier loses ~half the
 updates), with the shipped uniprocessor kernel byte-identical and the mind untouched.
 The first real step of full SMP is on trunk.
+
+## ②.1a cross-CPU preemption via GIC SGI IPIs — commit c2bba938 (impl 30cca55b)
+- Auditor: independent adversarial WORKFLOW (5 parallel dimensions, isolated
+  worktrees, + per-finding adversarial-verify), 2026-06-21. Did NOT write the code.
+  p-kernel's FIRST inter-processor interrupt — the GIC/IRQ-vector path is the repo's
+  recurring aarch64 C-ABI trap.
+- Verdict: **MERGEABLE (ledger row CLOSED).** All 5 gates PASS; blockers=[];
+  confirmed_material_findings=[]. One NIT only (a stale BOARD_RPI3 comment).
+- [preempt-is-real-AND-sgi-load-bearing] The cross-CPU preempt is REAL and the SGI
+  is genuinely LOAD-BEARING, not cosmetic. SMP-PREEMPT: PASS reproduced 5x
+  (sgi_taken=1, ran_high-prio=1, ctxtsk==highprio_taskptr); preempted_at JITTERS ~20x
+  (51384/82349/349106/930346/46071 = real async, not a deterministic fake). THE KEY
+  PROOF: B's ONLY switch path (smp_ready_pull) is gated solely on g_resched_pending
+  (smp.c:665), which is set ONLY by the SGI handler (smp.c:247, grep-confirmed sole
+  writer) — there is NO independent ready-list poll, so the SGI is the SOLE trigger;
+  the -DSMP_NO_IPI falsifier (B never switches, sgi_taken=0, FAIL rc=-20, no crash)
+  confirms it. g_sgi_taken is incremented ONLY in smp_resched_sgi_handler (smp.c:246),
+  reached ONLY via knl_intvec[0] <- the production _vec_el1_irq blr (cpu_support.S:
+  264-269) -> sgi_taken=1 is UNFORGEABLE proof a real SGI traversed the production
+  IRQ vector.
+- [gic-irq-correctness] The GIC SGI path is correctly plumbed; the aarch64 IRQ-vector
+  C-ABI trap is genuinely avoided. SEND: smp_send_reschedule (smp.c:213-218) writes
+  GICD_SGIR = ((1<<cpu)<<16)|INTID with dsb ish before/after. EOIR: the production
+  _vec_el1_irq writes the FULL IAR value (including the source-CPU field — required for
+  SGIs) to GICC_EOIR -> no active-priority corruption (shell/timer/raft alive AFTER
+  the cert). INIT-ORDERING (§2.5 linchpin): smp_gic_selftest_setup stands up GICD_CTLR
+  + knl_intvec[0] + gicc_base_ptr=GICC_BASE (the vector reads IAR/EOIR through it;
+  gic_init normally sets it only at T-Kernel boot, AFTER the cert) + the boot CPU
+  interface BEFORE the secondary fires; SGI ids 0-15 are always-distributor-enabled so
+  no GICD_ISENABLER write is needed; the later gic_init is idempotent. ABI: the handler
+  disassembles to a pure leaf (no stack, no nested call, clobbers only caller-saved
+  x0-x2) -> cannot corrupt the vector's saved context. Zero SYNC/SERR/FIQ markers in
+  any run.
+- [shipped-kernel-byte-identical] The DEFAULT build is byte-identical to base aaa2e093
+  across the WHOLE kernel.elf (sha256 df327396... both; .text b48d7da7...; smp.o is a
+  0/0/0 empty object md5-equal to base; cpu_support.o byte-identical). The cpu_support.S
+  diff is ONLY the gated SMPCPU_SIZE 40->56 (inside #ifdef SMP_SELFTEST); the production
+  _vec_el1_irq dispatch is byte-unchanged. tkdev_conf.h adds only #define GICD_SGIR
+  0xF00 (unused in the default build). task.c untouched.
+- [one-mind-and-no-regression] Mind path UNTOUCHED (no mind TU in the diff). ②.0 still
+  green (smp0-test SMP-RUN/MUTEX/BOOT PASS + NOLOCK falsifier RED); MC-2 still green
+  (mc2-test PASS, mc2-equiv 3 identical FNV 0xd4c96f98... + Tooth A bites). check_parity OK.
+- [honest-scope] Honest: this is COOPERATIVE-at-a-checkpoint preemption (the SGI handler
+  only SETS g_resched_pending; B re-selects at loop boundaries under the BKL) — NOT a
+  true async register-context stack switch. That + the production knl_ctxtsk conversion
+  (~166 sites) is ②.2, correctly deferred. RPi3 uses the BCM2837 mailbox (GICD_SGIR is
+  QEMU-virt-GICv2-only; guarded for BOARD_RPI3); the RPi3 mailbox port is deferred. The
+  QEMU PASS proves the PLUMBING is load-bearing, NOT the barrier discipline on weak
+  hardware (RPi3-[live] only). NIT (non-blocking): a stale BOARD_RPI3 comment promises a
+  no-op marker the code doesn't emit.
+LEDGER: row CLOSED. p-kernel's first inter-processor interrupt: one aarch64 core writes
+GICD_SGIR, another takes the SGI through the production IRQ vector (unforgeable
+sgi_taken proof) and preempts to a higher-prio task — provably the SOLE trigger (the
+-DSMP_NO_IPI falsifier never switches). Shipped kernel byte-identical, mind untouched.
+True async switch + production scheduler conversion = ②.2.
