@@ -54,3 +54,32 @@ mc2-1-ncore-equiv-plan}.md. ② reuses MC-2's bringup + per-CPU data + work-queu
 lock + barrier discipline; it still must add per-CPU run-queues, task migration,
 cross-CPU knl_ctxtsk locking, IPIs. See [[project_ring3_core_relocation]],
 [[feedback_audit_is_the_engine]].
+
+## ② full SMP — SHIPPED through ②.2b-i (2026-06-20/21, a long autonomous marathon)
+mk_pino's END GOAL ("最終目標まで進もう / ガンガン"). The production T-Kernel scheduler
+is now genuinely SMP, each slice cert-first + separate-impl≠audit, the SHIPPED
+uniprocessor kernel kept BYTE-IDENTICAL throughout (the crown — proven by .text/full-ELF
+cmp every wave; the macro trick CUR_CTXTSK = per-CPU under SMP_SELFTEST, plain-global
+otherwise). All merged + audited:
+- ②.0 Big Kernel Lock (2 CPUs run the dispatcher under one lock); ②.1a first IPI (GIC
+  SGI cross-CPU preempt, unforgeable sgi_taken); ②.1b N=4; **②.2a = the PRODUCTION
+  scheduler SMP'd** (~211 knl_ctxtsk/schedtsk sites → CUR_* macros, 2 real tasks on 2
+  cores via the real .Ldispatch_loop register-context switch; the ②.1b↔②.2a struct
+  collision at offset 56 was the session's hardest merge — reconciled stack_top@56 +
+  dispatch_disabled@64, SMPCPU_SIZE 72, LD_PERCPU_BASE lsl#6→(id<<6)+(id<<3)).
+- SMP-N8 (8 physical cores = GICv2 ceiling; counter==8*K) + **SMP-AUTODETECT** (GICD_TYPER:
+  the SAME binary adapts -smp 2/4/8 → wakes exactly that many; mk_pino's "measure the
+  device + auto-fit". RPi3 is BCM2837 not a GIC → build-constant 4; DTB deferred).
+- **②.2b-i true async register-context preempt FROM IRQ context** (the repo's hardest
+  C-ABI piece: hook between EOIR and restore_caller_regs in _vec_el1_irq, capture
+  ELR/SPSR, two-frame nesting + .Lirq_resume_tramp; a mid-loop no-poll task is suspended
+  + resumes). The 5-dim audit GATED IT (deadlock-avoidance UNCERTAIN): the BKL-held guard
+  was correct-by-reasoning but UNCERTIFIED — deleting it didn't fail the cert (dead code
+  w.r.t. the suite); the design-mandated [smp-no-deadlock] nested-IRQ falsifier was missing.
+  → NOT merged until certified (immune system working; [[feedback_audit_is_the_engine]]).
+REMAINING: ②.2b-ii (secondary CNTP timer/WAIT), ②.2c ([smp-one-mind] crown: real R3 forward
+byte-identical uniproc vs SMP), ②.3 (finer locks), hosted-port SMP (the teacher LLM's real
+multicore — bare-metal has no big matmul; [[project_multicore_arc]] §0 elephant), RPi3 [live]
+(the only place barrier/SMPEN teeth bite). Plans: full-smp-plan, smp-2-production-scheduler-plan,
+smp-2b-async-preempt-plan, device-autodetect-plan.md.
+See [[feedback_the_debug_env_is_real]] (the SSH ThinkPad found a real [live] bug on first use).
