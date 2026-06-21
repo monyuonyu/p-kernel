@@ -104,10 +104,27 @@ volatile void *g_async_hi_tcb = 0;
 /* the secondary go-flag (smp.c's smp_dispatch_run waits on it). */
 volatile int  g_async_secondary_go = 0;
 
-/* The loop cap.  Large enough that, in a PASS run, the SGI arrives well before
- * L finishes; small enough that the watchdog bound is comfortable.  L bumps
- * g_async_counter exactly ASYNC_LOOP_CAP times across the preempt boundary. */
-#define ASYNC_LOOP_CAP   2000000000UL
+/* The loop cap.  Large enough that the SGI reliably arrives MID-loop (well
+ * before L finishes) — the observed preempt point was ~100k with a 100k
+ * advance threshold, so a few-million cap leaves comfortable headroom — yet
+ * small enough that, after RESUMING, L counts to the cap within the watchdog
+ * bound.  L bumps g_async_counter exactly ASYNC_LOOP_CAP times across the
+ * preempt boundary (the resume continues the SAME loop variable). */
+#define ASYNC_LOOP_CAP   10000000UL    /* 10M: mid-loop preempt + fast finish */
+
+/* Blind UART writer (QEMU virt PL011 @ 0x09000000) — either CPU can announce
+ * progress (the secondary has no other console).  Blind (no FR busy-wait). */
+#ifdef BOARD_RPI3
+#  define ASYNC_UART_DR  0x3F201000UL
+#else
+#  define ASYNC_UART_DR  0x09000000UL
+#endif
+static void async_dbg(const char *s)
+{
+    volatile unsigned int *dr = (volatile unsigned int *)ASYNC_UART_DR;
+    for (; *s; s++)
+        *dr = (unsigned int)(unsigned char)*s;
+}
 
 /* ── L: the LOW-prio tight loop.  A REAL T-Kernel task.  Runs on CPU 1.
  *
@@ -125,11 +142,14 @@ EXPORT void smp_async_lowprio_task(INT stacd, void *exinf)
     g_async_lo_tcb = (void *)CUR_CTXTSK;     /* L's own TCB (per-CPU ctxtsk) */
     __asm__ volatile("dmb ish" ::: "memory");
 
+    async_dbg("[SMP] L: low-prio loop task RUNNING on cpu1\r\n");
+
     /* Enable THIS CPU's GIC CPU interface + unmask IRQ/FIQ for the cert window
      * so the SGI can be taken asynchronously mid-loop. */
     extern void smp_gic_cpuif_init(void);
     smp_gic_cpuif_init();
     __asm__ volatile("msr daifclr, #0x3; isb" ::: "memory");  /* unmask I+F */
+    async_dbg("[SMP] L: IRQ unmasked, entering tight no-poll loop\r\n");
 
     /* THE TIGHT NO-POLL LOOP.  volatile g_async_counter is reloaded/stored
      * each iteration; there is NO flag read.  The async preempt suspends this
