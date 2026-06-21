@@ -916,3 +916,25 @@ the teaching THREAD's transport now exists. Live multi-process teacher-convergen
 LEDGER: row CLOSED. The deterministically-elected supernode now FORWARDS region traffic
 byte-identically (A→S→B, not via the central relay), fail-closed to the relay when no/dead super —
 the first real step of the decentralized P2P overlay. Live multi-process forward = SSH-host TODO.
+
+## N-2c [live] — RUN ON THE REAL SSH HOST (ThinkPad), 2026-06-21 — OPEN (real bug surfaced)
+- Commander cashed the deferred [live] row on the real x86_64 host (sandbox can't run it —
+  PRoot kills backgrounded children). tar-over-ssh'd the latest source → built
+  boot/linux_x86_64/p-kernel (3.9MB) + relay → ran samples/11_distributed/run_supernode_fwd.sh
+  (real OS processes: A=node1, S=node2 supernode, B=node3, relay).
+- RESULT: the [in-proc] cert (merged, valid) does NOT match the [live] behavior. The election +
+  routing DECISION works (A sets via_super_cnt=1 = it chose to route through the supernode) and
+  the degrade falsifiers behave, BUT the actual FORWARD does NOT deliver: S.forwarded=0,
+  node3 delivered=0, payload empty. The A→S SNF_FWD datagram (udp_send to the overlay IP
+  10.1.0.x on SNF_PORT 7380) does not arrive at S over the real ./relay transport.
+- DIAGNOSIS (likely): in the relay-overlay mesh, udp_send to a 10.1.0.x overlay address must be
+  carried by the relay (REL_DATA by node-id); the SNF_PORT 7380 forwarding traffic appears NOT
+  to be routed through the relay (or an addressing mismatch), so the forward silently drops. The
+  in-proc cert STUBBED the socket hop (fed bytes directly), so it could not catch this — exactly
+  what the real-host [live] run is for. This is the SS-6→SS-6-live pattern: the [in-proc] is
+  honest about its stub; the [live] reveals the real-transport gap.
+- STATUS: N-2c [in-proc] stays MERGEABLE/valid (the route decision + counters + byte-identity of
+  the forward LOGIC are correct). N-2c [live] is OPEN — a real follow-up: make snf forwarding
+  actually traverse the ./relay (like ss6_live.c's remote-expert path does), then re-run on the
+  ThinkPad. THE DEBUG ENV PAID OFF on first use: it found a real distributed-transport bug the
+  sandbox structurally cannot.
