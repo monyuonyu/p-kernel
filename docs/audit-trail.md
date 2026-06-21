@@ -890,3 +890,29 @@ measure-specs->size-the-mind (device-capacity) stays the deferred bigger thread.
 LEDGER: row CLOSED. A teacher's TEXT lesson becomes WEIGHT-RESIDENT in the student (generalizes
 to a never-trained probe), over the real KDDS+p-fs carrier, byte-deterministically, NOCENTRAL —
 the teaching THREAD's transport now exists. Live multi-process teacher-convergence deferred.
+
+## N-2c (supernode packet forwarding) — commit 9c3a1c52 (impl 0e4c8aca)
+- Auditor: independent focused auditor, 2026-06-21. Did NOT write the code. Verdict: **MERGEABLE,
+  no findings at any severity.**
+- THE FORWARD IS REAL + byte-identical: A→B routed THROUGH the elected supernode S (region fwd:
+  S.forwarded_count=1, payload_len=20, B BYTE-IDENTICAL to A, origin A preserved, via_super=1);
+  20 PASS cross-arch (linux + linux_x86_64). Route decision snf_route_target (supernode.c:86) is a
+  pure integer fn of (supernode,self,dst), fail-closed (self/dst/0xFF/oob → DIRECT).
+- FALSIFIERS degrade correctly: (a) no supernode 0xFF → DIRECT, S forwards 0, bytes delivered;
+  (b) unreachable/DEAD S → fail-closed DIRECT (runtime check dnode_table[sn].state==DNODE_DEAD,
+  supernode.c:131), no packet lost. PRODUCTION-PATH SABOTAGE goes RED: injecting payload[0]^=0x01
+  into the SHIPPED snf_forward re-wrap → 19/20 (the byte-identical sub-arm FAILs) = teeth on the
+  real path, not a toy.
+- NOCENTRAL/one-mind: S = the min-id region_supernode() (zero vote/elect/quorum in supernode.c);
+  forwarded payload byte-identical; no VLA (fixed SNF_PKT=524B, file-static). DEFAULT byte-unchanged
+  (my_supernode=none, port unbound, counters 0). check_parity OK (supernode.c hosted-only,
+  allowlisted like ss6_live.c; the auditor sabotage-tested the parity guard → DRIFT when removed).
+- No regression: region 8/8, region-teacher 6/6, swim certs clean; both hosted ports build; mind/
+  region.c/swim.c/dkva.c/SMP untouched.
+- HONEST [in-proc]: the cert drives the real snf_rx/snf_forward/deliver + counters (only the UDP
+  socket hop stubbed); the true 3-process [live] run_supernode_fwd.sh is WRITTEN + DEFERRED (the
+  PRoot sandbox kills backgrounded children — the ss6_live/4node_regions wall). >>> COMMANDER TODO:
+  cash this [live] row on the real SSH host (ThinkPad). NAT (N-3)/seed (N-4)/ACK-retry deferred.
+LEDGER: row CLOSED. The deterministically-elected supernode now FORWARDS region traffic
+byte-identically (A→S→B, not via the central relay), fail-closed to the relay when no/dead super —
+the first real step of the decentralized P2P overlay. Live multi-process forward = SSH-host TODO.
