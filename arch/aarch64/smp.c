@@ -156,11 +156,22 @@ static void smp_dbg_cpu_entered(unsigned long cpu, const char *suffix)
 
 /* Number of CPUs in this slice. Defined HERE, before the ②.1a GIC block
  * that sizes its per-CPU arrays by it (and reused by the per-CPU SMP block
- * below). ②.1b generalizes the run/mutex certs from 2 → 4 CPUs (boot CPU +
- * THREE secondaries, woken via PSCI CPU_ON cores 1,2,3) to prove the BKL +
- * per-CPU dispatch + SGI scale past 2. The shipped uniprocessor kernel is
- * untouched (all of this is SMP_SELFTEST-gated). */
-#define SMP_MAX_CPUS   4          /* ②.1b = boot CPU + THREE secondaries */
+ * below). ②.1b generalized the run/mutex certs from 2 → 4 CPUs; ②.N8 now
+ * scales them to 8 PHYSICAL cores (boot CPU + SEVEN secondaries, woken via
+ * PSCI CPU_ON cores 1..7) — the real phone target — to prove the BKL +
+ * per-CPU dispatch + SGI scale to the GICv2 ceiling. The shipped
+ * uniprocessor kernel is untouched (all of this is SMP_SELFTEST-gated).
+ *
+ * MUST stay identical to SMP_MAX_CPUS in arch/aarch64/include/smp_percpu.h
+ * (both define struct smp_cpu + the array size). The struct LAYOUT is
+ * UNCHANGED (SMPCPU_SIZE stays 72; only the array COUNT grows 4 -> 8) so
+ * cpu_support.S/start.S offsets are untouched.
+ *
+ * GICv2 CEILING: 8 is the maximum GICv2 supports — the GICD_SGIR target
+ * list is 8 bits (1 per CPU), so SGI delivery (smp_send_reschedule) can
+ * address at most CPUs 0..7. Going beyond 8 would need GICv3 (a separate
+ * lift). */
+#define SMP_MAX_CPUS   8          /* ②.N8 = boot CPU + SEVEN secondaries (GICv2 ceiling) */
 
 /* ─── GICv2 SGI/IPI registers (②.1a) — header-light local #defines, mirror
  * of tkdev_conf.h:23-39. QEMU-virt GICv2 ONLY (RPi3 uses the BCM2837
@@ -524,6 +535,24 @@ extern unsigned char _stack_top_cpu1[];         /* linker.ld (reused) */
 extern unsigned char _stack_top_cpu2[];         /* linker.ld (②.1b)   */
 extern unsigned char _stack_top_cpu3[];         /* linker.ld (②.1b)   */
 
+/* ②.N8: cores 4..7 each need their OWN 16KB dispatcher stack. These are NOT
+ * carved in linker.ld (cpu1/2/3 are) ON PURPOSE: the linker's cpu1/2/3
+ * reservation sits BELOW _kernel_end, and _kernel_end's address is embedded
+ * in the SHIPPED kernel's .text (cpu_init.c uses it as the heap base) — so
+ * growing the linker reservation would move _kernel_end and break the
+ * DEFAULT-build .text byte-identity. Instead we use static, 16-byte-aligned
+ * BSS arrays HERE, which is fully SMP_SELFTEST-gated: in the default build
+ * this whole file emits ZERO bytes (smp.o text/data/bss == 0), so _bss_end /
+ * _kernel_end / .text are unchanged; only -DSMP_SELFTEST allocates them. The
+ * stack TOP is &arr[sizeof(arr)] (16-aligned; AArch64 SP must be 16-aligned),
+ * mirroring the linker's _stack_top_cpuN (the END of each region). The
+ * synthetic task/counter state lives in OTHER static BSS, NOT on these. */
+#define SMP_SEC_STACK_BYTES  0x4000               /* 16KB per secondary, == cpu1/2/3 */
+static unsigned char smp_stack_cpu4[SMP_SEC_STACK_BYTES] __attribute__((aligned(16)));
+static unsigned char smp_stack_cpu5[SMP_SEC_STACK_BYTES] __attribute__((aligned(16)));
+static unsigned char smp_stack_cpu6[SMP_SEC_STACK_BYTES] __attribute__((aligned(16)));
+static unsigned char smp_stack_cpu7[SMP_SEC_STACK_BYTES] __attribute__((aligned(16)));
+
 /* DEPRECATED single shared secondary stack (②.0). KEPT only so any stale
  * reference still links; the N=4 path stores each secondary's stack in its
  * OWN g_smpcpu[cpu].stack_top (start.S loads SP from there). NOT used by the
@@ -534,16 +563,23 @@ unsigned long g_smp_sec_stack_top = 0;
 static unsigned long smp_sec_stack_for(unsigned long cpu)
 {
     switch (cpu) {
-    case 1: return (unsigned long)_stack_top_cpu1;
+    case 1: return (unsigned long)_stack_top_cpu1;          /* linker.ld (below _kernel_end) */
     case 2: return (unsigned long)_stack_top_cpu2;
     case 3: return (unsigned long)_stack_top_cpu3;
+    /* ②.N8: TOP of each static BSS stack (SP grows DOWN from here; the array
+     * is 16-aligned and SMP_SEC_STACK_BYTES is a multiple of 16, so the top
+     * is 16-aligned as AArch64 SP requires). */
+    case 4: return (unsigned long)(smp_stack_cpu4 + SMP_SEC_STACK_BYTES);
+    case 5: return (unsigned long)(smp_stack_cpu5 + SMP_SEC_STACK_BYTES);
+    case 6: return (unsigned long)(smp_stack_cpu6 + SMP_SEC_STACK_BYTES);
+    case 7: return (unsigned long)(smp_stack_cpu7 + SMP_SEC_STACK_BYTES);
     default: return 0;
     }
 }
 
 /* Release ONE secondary (cpu id = MPIDR Aff0) into the per-CPU dispatcher.
  * Each secondary gets its OWN stack (g_smpcpu[cpu].stack_top) — start.S loads
- * SP from the context_id block, so three secondaries never share a stack. */
+ * SP from the context_id block, so the seven secondaries never share a stack. */
 long smp_bringup_cpu(unsigned long cpu)
 {
     if (cpu == 0 || cpu >= SMP_MAX_CPUS)
@@ -557,8 +593,10 @@ long smp_bringup_cpu(unsigned long cpu)
                            (unsigned long)&g_smpcpu[cpu]);
 }
 
-/* Release ALL ②.1b secondaries (cores 1 .. SMP_MAX_CPUS-1) into the per-CPU
- * dispatcher. Returns the first non-SUCCESS PSCI result (or SUCCESS). */
+/* Release ALL secondaries (cores 1 .. SMP_MAX_CPUS-1; ②.N8 = cores 1..7)
+ * into the per-CPU dispatcher. Returns the first non-SUCCESS PSCI result
+ * (or SUCCESS). The loop is parameterized on SMP_MAX_CPUS — no per-core
+ * unrolling — so 4->8 needed no change here, only the stack map + count. */
 long smp_bringup_secondary(void)
 {
     smp_set_smpen();                            /* primary's SMPEN */
@@ -635,12 +673,17 @@ unsigned long smp_get_counter(void)
  *  → [smp-2-tasks-run].
  * ════════════════════════════════════════════════════════════════════ */
 
-/* (struct smp_task is defined above, near the ready list.) ②.1b: ONE task
- * per CPU (N=SMP_MAX_CPUS=4) so every CPU pulls a DISTINCT task from the ONE
- * shared ready list and the mutex total is exactly N*K. */
+/* (struct smp_task is defined above, near the ready list.) ②.1b/②.N8: ONE
+ * task per CPU (N=SMP_MAX_CPUS, now 8) so every CPU pulls a DISTINCT task
+ * from the ONE shared ready list and the mutex total is exactly N*K.
+ * SMP_NTASKS==8 == SMP_MAX_READY, so the ready list holds all 8 tasks. */
 #define SMP_NTASKS   SMP_MAX_CPUS
 static struct smp_task g_tasks[SMP_NTASKS];
 static unsigned long   g_task_budget = 0;   /* K, set by the driver */
+/* ②.N8: with one task per CPU the shared ready list must hold all N. At
+ * N=8 this is EXACTLY at the SMP_MAX_READY=8 capacity — guard it so a future
+ * N>8 (would need GICv3 anyway) can't silently drop tasks in smp_ready_push. */
+_Static_assert(SMP_NTASKS <= SMP_MAX_READY, "ready list too small for N tasks");
 
 /* Concurrency barrier: each CPU bumps this when it is about to start its
  * increment loop; both spin until it reaches SMP_MAX_CPUS so the loops run
@@ -830,16 +873,16 @@ void smp_dispatch_run(void)
     g_smpcpu[me].live = 1;
     __asm__ volatile("dmb st; sev" ::: "memory");
     /* Emit the per-CPU entry marker UNDER the BKL so the blind UART writes
-     * from the THREE secondaries do NOT interleave into a garbled line (the
-     * harness greps for an intact "cpuN entered dispatcher"). The lock is
+     * from the SEVEN secondaries (②.N8) do NOT interleave into a garbled line
+     * (the harness greps for an intact "cpuN entered dispatcher"). The lock is
      * held only for the short marker; it does not serialize the workload. */
     bkl_acquire();
     smp_dbg_cpu_entered(me, " entered dispatcher\r\n");
     bkl_release();
 
-    /* ②.1b: each secondary pulls EXACTLY ONE task (the boot CPU also pulls
+    /* ②.1b/②.N8: each secondary pulls EXACTLY ONE task (the boot CPU also pulls
      * exactly one inline, smp_selftest_run). With ONE task per CPU
-     * (SMP_NTASKS == SMP_MAX_CPUS) every CPU gets a DISTINCT task, every CPU
+     * (SMP_NTASKS == SMP_MAX_CPUS == 8) every CPU gets a DISTINCT task, every CPU
      * arrives at the concurrency barrier (smp_barrier_wait waits for exactly
      * SMP_MAX_CPUS arrivals), and the mutex total is exactly N*K. A single
      * secondary draining MULTIPLE tasks would (a) starve another secondary of
@@ -873,11 +916,11 @@ void smp_dispatch_run(void)
 }
 
 /* ── Driver entry (called by the boot self-test in main.c) ──────────────
- *  ②.1b N=4: seeds SMP_NTASKS (== SMP_MAX_CPUS == 4) tasks + the ONE shared
- *  ready list, releases ALL THREE secondaries (cores 1,2,3) into their own
- *  per-CPU dispatchers, runs the BOOT CPU's share inline (so it also runs a
- *  task), then JOINs on every task. Each of the 4 CPUs pulls EXACTLY ONE
- *  distinct task; the mutex total is exactly N*K under the BKL.
+ *  ②.N8 (was ②.1b N=4): seeds SMP_NTASKS (== SMP_MAX_CPUS == 8) tasks + the
+ *  ONE shared ready list, releases ALL SEVEN secondaries (cores 1..7) into
+ *  their own per-CPU dispatchers, runs the BOOT CPU's share inline (so it
+ *  also runs a task), then JOINs on every task. Each of the 8 CPUs pulls
+ *  EXACTLY ONE distinct task; the mutex total is exactly N*K under the BKL.
  *
  *  NOTE: a secondary does NOT return from smp_dispatch_run (it idles after
  *  its one task). So the driver runs the boot CPU's dispatcher inline: it
@@ -909,7 +952,7 @@ int smp_selftest_run(unsigned long K)
     bkl_release();          /* depth 1 -> 0, raw unlock */
     __asm__ volatile("dsb ish" ::: "memory");
 
-    /* Release ALL THREE secondaries (cores 1,2,3) into their per-CPU
+    /* Release ALL SEVEN secondaries (cores 1..7) into their per-CPU
      * dispatchers (each pulls one task and runs it concurrently with us). */
     long on = smp_bringup_secondary();
     if (on != PSCI_SUCCESS && on != PSCI_ALREADY_ON)

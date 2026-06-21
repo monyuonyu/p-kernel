@@ -69,6 +69,18 @@ SECTIONS {
     . += 0x4000;
     _stack_top_cpu3 = .;
 
+    /* ②.N8 (the real phone target = 8 physical cores): secondary CPUs 4,5,6,7
+     * each need their OWN 16KB dispatcher stack too. We DELIBERATELY do NOT
+     * carve them here: extending the linker reservation would move _kernel_end
+     * (it is ALIGN(4096) right after these), and _kernel_end's address is
+     * embedded in the SHIPPED kernel's .text (cpu_init.c reads it as the heap
+     * base) — so growing it would break the DEFAULT-build byte-identity
+     * constraint. Instead the cpu4..7 stacks are static, 16-aligned BSS arrays
+     * in arch/aarch64/smp.c, fully SMP_SELFTEST-gated: in the default build
+     * smp.c emits ZERO bytes, so _bss_end / _kernel_end / .text are unchanged;
+     * only the -DSMP_SELFTEST build allocates them. 8 CPUs is the GICv2 ceiling
+     * (the GICD_SGIR target-list is 8 bits, 1 per CPU); past 8 needs GICv3. */
+
     . = ALIGN(4096);
     _kernel_end = .;
 

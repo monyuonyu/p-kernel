@@ -1,22 +1,24 @@
 #!/bin/sh
 # tests/aarch64/run_smp0.sh
 #
-# ②.0 full-SMP cert harness (docs/architecture/full-smp-plan.md §7 ②.0).
+# ②.0/②.N8 full-SMP cert harness (docs/architecture/full-smp-plan.md §7 ②.0).
 #
-# Builds the aarch64 bare-metal kernel WITH the ②.0/②.1b SMP self-test
-# (-DSMP_SELFTEST), boots it under QEMU virt with -smp 4 (②.1b uses ALL 4
-# CPUs: the boot CPU + THREE secondaries released into the per-CPU T-Kernel
-# dispatcher under one Big Kernel Lock), captures the UART, and asserts:
+# Builds the aarch64 bare-metal kernel WITH the ②.0/②.1b/②.N8 SMP self-test
+# (-DSMP_SELFTEST), boots it under QEMU virt with -smp 8 (②.N8 uses ALL 8
+# CPUs: the boot CPU + SEVEN secondaries released into the per-CPU T-Kernel
+# dispatcher under one Big Kernel Lock — the real phone target, the GICv2
+# 8-CPU ceiling), captures the UART, and asserts:
 #
-#   [smp-2-tasks-run]      SMP-RUN: PASS    — ALL FOUR CPUs advanced their OWN
-#                          per-CPU task (cpu0..3 exec_count>0, four distinct
+#   [smp-2-tasks-run]      SMP-RUN: PASS    — ALL EIGHT CPUs advanced their OWN
+#                          per-CPU task (cpu0..7 exec_count>0, eight distinct
 #                          per-CPU current tasks).
 #   [smp-mutual-exclusion] SMP-MUTEX: PASS  — a shared counter incremented
-#                          by tasks on ALL FOUR CPUs under the BKL reaches the
-#                          EXACT expected total N*K (N=4; no lost updates).
+#                          by tasks on ALL EIGHT CPUs under the BKL reaches the
+#                          EXACT expected total N*K (N=8 => 1600000; no lost
+#                          updates).
 #   [smp-boot-survives]    SMP-BOOT: PASS + the T-Kernel still boots
 #                          ([BOOT] Starting T-Kernel.../Initial task started)
-#                          AFTER both CPUs ran the dispatcher (no deadlock).
+#                          AFTER all 8 CPUs ran the dispatcher (no deadlock).
 #
 # Then the LOAD-BEARING falsifier: rebuild with -DSMP_MUTEX_NOLOCK so the
 # shared-counter increment BYPASSES the BKL. Under -smp with truly
@@ -43,7 +45,7 @@ TIMEOUT_S="${SMP0_TIMEOUT:-60}"
 # falsifier build) cannot corrupt an in-flight QEMU read. The ②.0 audit had to
 # exonerate exactly such a self-inflicted flake by timestamp; snapshotting
 # removes the race at the source.
-QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
+QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 8 -m 256M \
                 -serial stdio -display none -no-reboot"
 
 fail() { echo "[smp0] FAIL: $*" >&2; exit 1; }
@@ -68,7 +70,7 @@ run_qemu() {
 }
 
 # ── 1. The cert build: SMP-RUN / SMP-MUTEX / SMP-BOOT all PASS ──────────
-echo "=== ②.0 [smp-2-tasks-run]+[smp-mutual-exclusion]+[smp-boot-survives] under -smp 4 ==="
+echo "=== ②.N8 [smp-2-tasks-run]+[smp-mutual-exclusion]+[smp-boot-survives] under -smp 8 ==="
 cd "$BOOT"
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS=-DSMP_SELFTEST >/dev/null 2>&1 \
@@ -84,8 +86,12 @@ echo "------------------------------------------"
 
 grep -q "cpu1 entered dispatcher" "$PASS_LOG" \
     || fail "secondary CPU never entered the per-CPU dispatcher"
+# ②.N8: also assert the HIGHEST secondary (cpu7) woke — proves all SEVEN
+# secondaries (cores 1..7) reached the dispatcher, not just cpu1.
+grep -q "cpu7 entered dispatcher" "$PASS_LOG" \
+    || fail "highest secondary cpu7 never entered the dispatcher (not all 7 woke)"
 grep -q "SMP-RUN: PASS" "$PASS_LOG" \
-    || fail "no 'SMP-RUN: PASS' (2 CPUs did not run distinct tasks)"
+    || fail "no 'SMP-RUN: PASS' (8 CPUs did not run distinct tasks)"
 grep -q "SMP-MUTEX: PASS" "$PASS_LOG" \
     || fail "no 'SMP-MUTEX: PASS' (BKL did not serialize the shared counter)"
 grep -q "SMP-BOOT: PASS" "$PASS_LOG" \

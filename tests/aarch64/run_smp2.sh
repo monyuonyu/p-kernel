@@ -6,7 +6,15 @@
 #
 # Builds the aarch64 bare-metal kernel WITH the ②.2a production-scheduler
 # self-test (-DSMP_SELFTEST -DSMP_2TASKS_PROD), boots it under QEMU virt with
-# -smp 4, captures the UART, and asserts:
+# -smp 8, captures the UART, and asserts:
+#
+# (②.N8 NOTE: this cert only uses 2 of the 8 CPUs — CPU 0 runs A, CPU 1 runs B.
+#  It now boots under -smp 8 because smp_bringup_secondary() releases cores
+#  1..SMP_MAX_CPUS-1 (= 1..7 after ②.N8) and a PSCI CPU_ON of a non-existent
+#  core under -smp 4 would error the bringup. The extra secondaries (cores
+#  2..7) enter the prod dispatcher block, find no schedtsk published for them,
+#  and idle in wfe — harmless; the 2-real-TCBs-on-2-distinct-CPUs proof is
+#  unchanged.)
 #
 #   [smp-2tasks-prod]  SMP-2TASKS-PROD: PASS — the PRODUCTION T-Kernel
 #       scheduler runs TWO REAL tk_cre_tsk/tk_sta_tsk tasks (TCBs in
@@ -37,7 +45,7 @@ BOOT="$HERE/../../boot/aarch64"
 QEMU="qemu-system-aarch64"
 TIMEOUT_S="${SMP2_TIMEOUT:-60}"
 
-QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M -kernel kernel.elf \
+QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 8 -m 256M -kernel kernel.elf \
                 -serial stdio -display none -no-reboot"
 
 fail() { echo "[smp2] FAIL: $*" >&2; exit 1; }
@@ -56,7 +64,7 @@ run_qemu() {
     fi
 }
 
-echo "=== ②.2a [smp-2tasks-prod]: 2 REAL T-Kernel TCBs on 2 CPUs (BKL) under -smp 4 ==="
+echo "=== ②.2a [smp-2tasks-prod]: 2 REAL T-Kernel TCBs on 2 CPUs (BKL) under -smp 8 ==="
 cd "$BOOT"
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_2TASKS_PROD" >/dev/null 2>&1 \

@@ -385,6 +385,17 @@ QEMU_SMP_FLAGS = -M virt -cpu cortex-a53 -smp 4 -m 256M \
                  -display none \
                  -no-reboot
 
+# ②.N8: the ②.0 full-SMP cert now scales to 8 PHYSICAL cores (the real phone
+# target). -smp 8 instantiates the parked secondaries cores 1..7 that the SMP
+# bringup wakes via PSCI CPU_ON. 8 is the GICv2 ceiling (the GICD_SGIR target
+# list is 8 bits, 1 per CPU); past 8 would need GICv3. The mc2/equiv/smp1/smp2
+# targets keep -smp 4 (their N is 2 or 4 — they run fine under -smp 4).
+QEMU_SMP8_FLAGS = -M virt -cpu cortex-a53 -smp 8 -m 256M \
+                 -kernel $(TARGET) \
+                 -serial stdio \
+                 -display none \
+                 -no-reboot
+
 # Interactive: build the kernel WITH the MC-2 boot self-test and boot it
 # under -smp 4 (streams serial to stdio so a human can watch the verdict).
 run-smp:
@@ -464,27 +475,29 @@ run-slice-break:
 mc2-slice-test:
 	../../tests/aarch64/run_mc2_slice.sh
 
-# ---- ②.0 full-SMP: 2 CPUs run the dispatcher under one Big Kernel Lock --
-# docs/architecture/full-smp-plan.md §7 ②.0. Build the kernel WITH the
-# SMP self-test and boot under -smp 4 (uses 2 CPUs). Prints:
-#   SMP-RUN:    PASS  (both CPUs ran DISTINCT tasks; per-CPU exec counters)
-#   SMP-MUTEX:  PASS  (shared counter under the BKL == exact N*K)
-#   SMP-BOOT:   PASS  (both CPUs reached the dispatcher; T-Kernel still boots)
+# ---- ②.0/②.N8 full-SMP: 8 CPUs run the dispatcher under one Big Kernel Lock
+# docs/architecture/full-smp-plan.md §7 ②.0; ②.N8 scales it to 8 PHYSICAL
+# cores (the real phone target = the GICv2 ceiling). Build the kernel WITH the
+# SMP self-test and boot under -smp 8 (uses ALL 8 CPUs: boot + cores 1..7).
+# Prints:
+#   SMP-RUN:    PASS  (all 8 CPUs ran DISTINCT tasks; per-CPU exec counters)
+#   SMP-MUTEX:  PASS  (shared counter under the BKL == exact N*K, N=8)
+#   SMP-BOOT:   PASS  (all 8 CPUs reached the dispatcher; T-Kernel still boots)
 # The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
 run-smp0:
 	$(MAKE) clean
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST" $(TARGET)
-	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+	qemu-system-aarch64 $(QEMU_SMP8_FLAGS)
 
 # FALSIFIER (load-bearing): the shared-counter increment BYPASSES the BKL.
-# Under -smp with truly-concurrent tasks the RMW races -> lost updates ->
+# Under -smp 8 with truly-concurrent tasks the RMW races -> lost updates ->
 # SMP-MUTEX: FAIL with a total < N*K. Proves the lock is load-bearing.
 run-smp0-nolock:
 	$(MAKE) clean
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_MUTEX_NOLOCK" $(TARGET)
-	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+	qemu-system-aarch64 $(QEMU_SMP8_FLAGS)
 
-# Automated cert: build + boot under -smp 4, grep SMP-RUN/MUTEX/BOOT PASS,
+# Automated cert: build + boot under -smp 8, grep SMP-RUN/MUTEX/BOOT PASS,
 # then build the NOLOCK falsifier and assert SMP-MUTEX: FAIL. This is the
 # [smp-2-tasks-run] + [smp-mutual-exclusion] + [smp-boot-survives] harness.
 smp0-test:
@@ -520,15 +533,17 @@ smp1-test:
 # docs/architecture/smp-2-production-scheduler-plan.md §6 ②.2a. The PRODUCTION
 # scheduler runs TWO REAL tk_cre_tsk/tk_sta_tsk tasks (in knl_tcb_table + the
 # shared knl_ready_queue) on TWO DISTINCT CPUs under one Big Kernel Lock — NOT
-# the ②.0 struct smp_task stand-ins. Boot under -smp 4; prints:
+# the ②.0 struct smp_task stand-ins. Boots under -smp 8 (②.N8: the shared
+# smp_bringup_secondary releases cores 1..7; this cert uses only CPUs 0,1 —
+# cores 2..7 idle in the prod dispatcher). Prints:
 #   SMP-2TASKS-PROD: PASS  (cpu0.ctxtsk=A, cpu1.ctxtsk=B, distinct real TCBs)
 # The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
 run-smp2:
 	$(MAKE) clean
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_2TASKS_PROD" $(TARGET)
-	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+	qemu-system-aarch64 $(QEMU_SMP8_FLAGS)
 
-# Automated cert: build + boot under -smp 4 + grep SMP-2TASKS-PROD: PASS +
+# Automated cert: build + boot under -smp 8 + grep SMP-2TASKS-PROD: PASS +
 # the per-CPU distinct-real-TCB evidence + T-Kernel still boots.
 smp2-test:
 	../../tests/aarch64/run_smp2.sh

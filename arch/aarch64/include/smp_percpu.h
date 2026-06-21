@@ -67,7 +67,13 @@ struct smp_cpu {
     INT            dispatch_disabled;    /* off 64: per-CPU dispatch-disable   */
 };
 
-#define SMP_MAX_CPUS 4
+/* ②.N8: 8 physical cores (the real phone target). MUST stay identical to
+ * SMP_MAX_CPUS in arch/aarch64/smp.c — both define struct smp_cpu + the
+ * g_smpcpu[] array size; a desync corrupts the per-CPU stride/array. The
+ * struct LAYOUT is UNCHANGED (only the array COUNT grows 4 -> 8). 8 is the
+ * GICv2 ceiling (the GICD_SGIR target-list is 8 bits, 1 per CPU); past 8
+ * needs GICv3 (a separate lift). */
+#define SMP_MAX_CPUS 8
 
 extern struct smp_cpu g_smpcpu[SMP_MAX_CPUS];
 extern unsigned long  smp_this_cpu(void);
