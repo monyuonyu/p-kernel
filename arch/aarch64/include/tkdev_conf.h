@@ -31,6 +31,8 @@
 
 /* GICv2 register offsets */
 #define GICD_CTLR       0x000
+#define GICD_TYPER      0x004   /* GIC Distributor Type Register (RO); bits[7:5]
+                                 * = CPUNumber = (#CPU interfaces)-1 (GICv2). */
 #define GICD_ISENABLER  0x100
 #define GICD_SGIR       0xF00   /* GICv2 Software-Generated Interrupt Register (②.1 IPI) */
 #define GICC_CTLR       0x000

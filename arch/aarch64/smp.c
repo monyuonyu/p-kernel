@@ -185,12 +185,80 @@ static void smp_dbg_cpu_entered(unsigned long cpu, const char *suffix)
 #  define SMP_GICD_BASE   0x08000000UL    /* QEMU virt GICv2 distributor   */
 #  define SMP_GICC_BASE   0x08010000UL    /* QEMU virt GICv2 CPU interface  */
 #  define SMP_GICD_CTLR   0x000
+#  define SMP_GICD_TYPER  0x004           /* GIC Distributor Type Register  */
 #  define SMP_GICD_SGIR   0xF00
 #  define SMP_GICC_CTLR   0x000
 #  define SMP_GICC_PMR    0x004
 #endif
 
 #define SMP_RESCHED_SGI   0U              /* SGI INTID 0 = "reschedule" */
+
+/* ════════════════════════════════════════════════════════════════════
+ *  RUNTIME CPU-COUNT AUTODETECT (slice 1 — device-autodetect-plan.md)
+ *
+ *  「デバイスのスペックを測って自動で合わしたい」 — measure the device, not
+ *  hardcode it. SMP_MAX_CPUS (8) stays the COMPILE-TIME ARRAY CEILING (it
+ *  sizes g_smpcpu[], the per-CPU flag arrays, the stacks). The RUNTIME active
+ *  count g_smp_ncpu is decided ONCE at boot from GICD_TYPER, and EVERY loop
+ *  over live cores (bringup / join / barrier / cert) reads g_smp_ncpu instead
+ *  of the hardcoded ceiling. So the SAME binary wakes 1 secondary under
+ *  -smp 2, 3 under -smp 4, 7 under -smp 8 — no recompile.
+ *
+ *  THE DECODE. GICD_TYPER bits[7:5] = CPUNumber = (#CPU interfaces)-1 for
+ *  GICv2, so detected = ((TYPER>>5)&0x7)+1, range 1..8. On QEMU virt the GIC
+ *  instantiates exactly as many CPU interfaces as -smp N requests (N<=8), so
+ *  this returns N — the mechanism that makes the binary adapt. One
+ *  non-destructive MMIO load, zero firmware dependency.
+ *
+ *  HONEST LIMITATION (RPi3). GICD_TYPER is GICv2/QEMU-virt-CLEAN. RPi3's
+ *  interrupt block is the BCM2837 ARM Local Interrupt Controller — NOT a GIC
+ *  (tkdev_init.c documents this: "There is no distributor or CPU interface").
+ *  Under BOARD_RPI3 there is no GICD_TYPER to read, so smp_detect_ncpu()
+ *  returns a documented build-constant (4 = the BCM2837's fixed core count).
+ *  The DTB /cpus node is the canonical source there and is DEFERRED (it needs
+ *  x0 saved at _start + an FDT parser; device-autodetect-plan.md §1.3).
+ *
+ *  FALSIFIER (-DSMP_FORCE_NCPU=N): ignore GICD_TYPER, hardcode N. Then a run
+ *  on a SMALLER -smp count tries to wake cores that do not exist → it HANGS /
+ *  FAILs (smp_wait_secondary_live / the join watchdog time out waiting for the
+ *  absent cores) → proves the detection is load-bearing.
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* The RUNTIME active CPU count, decided once at boot (default 1 until detect
+ * runs). NOT the ceiling: it is always <= SMP_MAX_CPUS. */
+static unsigned int g_smp_ncpu = 1;
+
+/* Read GICD_TYPER bits[7:5] → (CPUNumber+1) = number of CPU interfaces, then
+ * clamp to [1, SMP_MAX_CPUS] (the array ceiling). On BOARD_RPI3 (no GIC) and
+ * under -DSMP_FORCE_NCPU the GICD_TYPER read is bypassed. */
+unsigned int smp_detect_ncpu(void)
+{
+#if defined(SMP_FORCE_NCPU)
+    /* FALSIFIER: ignore the hardware, force the count. A run under a SMALLER
+     * -smp will then wait for cores that don't exist and the watchdog FAILs. */
+    unsigned int n = (unsigned int)(SMP_FORCE_NCPU);
+#elif defined(BOARD_RPI3)
+    /* No GICD_TYPER on the BCM2837 local controller; the core count is the
+     * fixed BCM2837 4 (DTB /cpus is the canonical source, DEFERRED). */
+    unsigned int n = 4u;
+#else
+    unsigned int typer = *(volatile unsigned int *)(SMP_GICD_BASE + SMP_GICD_TYPER);
+    unsigned int n = ((typer >> 5) & 0x7u) + 1u;   /* CPUNumber+1, range 1..8 */
+#endif
+    if (n < 1u) n = 1u;
+    if (n > SMP_MAX_CPUS) n = SMP_MAX_CPUS;         /* clamp to the array ceiling */
+    return n;
+}
+
+/* Decide the runtime active count ONCE, before bringup. Idempotent. */
+static void smp_set_ncpu(void)
+{
+    g_smp_ncpu = smp_detect_ncpu();
+}
+
+/* The runtime active CPU count getter (the cert reads N from here, so the
+ * driver and the kernel can never disagree on how many cores were woken). */
+unsigned int smp_ncpu(void) { return g_smp_ncpu; }
 
 /* The interrupt-handler table the production IRQ vector dispatches through
  * (cpu_support.S:264-269: knl_intvec[INTID] blr). FP == void(*)() (typedef.h).
@@ -599,11 +667,16 @@ long smp_bringup_cpu(unsigned long cpu)
  * unrolling — so 4->8 needed no change here, only the stack map + count. */
 long smp_bringup_secondary(void)
 {
+    /* AUTODETECT: decide how many cores this device actually has BEFORE the
+     * bringup loop, so we wake EXACTLY that many (1..g_smp_ncpu-1 secondaries)
+     * — not the hardcoded ceiling. Same binary adapts to -smp 2/4/8. */
+    smp_set_ncpu();
+
     smp_set_smpen();                            /* primary's SMPEN */
     g_smpcpu[0].cpu_id = 0;
 
     long firstbad = PSCI_SUCCESS;
-    for (unsigned long c = 1; c < SMP_MAX_CPUS; c++) {
+    for (unsigned long c = 1; c < g_smp_ncpu; c++) {
         long on = smp_bringup_cpu(c);
         if (on != PSCI_SUCCESS && on != PSCI_ALREADY_ON && firstbad == PSCI_SUCCESS)
             firstbad = on;
@@ -622,7 +695,9 @@ int smp_wait_secondary_live(void)
     for (;;) {
         __asm__ volatile("dmb ld" ::: "memory");
         int allup = 1;
-        for (unsigned long c = 1; c < SMP_MAX_CPUS; c++)
+        /* Wait only for the cores we actually woke (1..g_smp_ncpu-1), NOT the
+         * ceiling — else a -smp 2 run would hang waiting for absent cores. */
+        for (unsigned long c = 1; c < g_smp_ncpu; c++)
             if (g_smpcpu[c].live != 1) { allup = 0; break; }
         if (allup)
             return 0;
@@ -686,8 +761,11 @@ static unsigned long   g_task_budget = 0;   /* K, set by the driver */
 _Static_assert(SMP_NTASKS <= SMP_MAX_READY, "ready list too small for N tasks");
 
 /* Concurrency barrier: each CPU bumps this when it is about to start its
- * increment loop; both spin until it reaches SMP_MAX_CPUS so the loops run
- * TRULY CONCURRENTLY (so the NOLOCK falsifier reliably loses updates). */
+ * increment loop; both spin until it reaches g_smp_ncpu (the RUNTIME active
+ * count, NOT the ceiling) so the loops run TRULY CONCURRENTLY (so the NOLOCK
+ * falsifier reliably loses updates). With autodetect, exactly g_smp_ncpu CPUs
+ * each run one task and arrive here; waiting for SMP_MAX_CPUS would wedge a
+ * sub-ceiling -smp run. */
 static volatile unsigned long g_barrier = 0;
 
 static void smp_barrier_wait(void)
@@ -695,10 +773,10 @@ static void smp_barrier_wait(void)
     bkl_acquire();
     g_barrier++;
     bkl_release();
-    /* Spin (NOT under the lock) until every CPU has arrived. Bounded so a
+    /* Spin (NOT under the lock) until every WOKEN CPU has arrived. Bounded so a
      * missing CPU can't wedge forever. */
     unsigned long tries = 0;
-    while (g_barrier < SMP_MAX_CPUS) {
+    while (g_barrier < g_smp_ncpu) {
         __asm__ volatile("dmb ld" ::: "memory");
         if (++tries >= 200000000UL) break;
         __asm__ volatile("yield" ::: "memory");
@@ -929,8 +1007,16 @@ void smp_dispatch_run(void)
  *  verdict. */
 int smp_selftest_run(unsigned long K)
 {
+    /* AUTODETECT first: decide the runtime active count from GICD_TYPER so we
+     * seed/push/join EXACTLY g_smp_ncpu tasks (one per woken CPU). With the
+     * hardcoded ceiling we would seed 8 tasks but only g_smp_ncpu CPUs pull
+     * them → the join would wait forever for the unpulled tasks. (Idempotent
+     * with the smp_set_ncpu() inside smp_bringup_secondary() below.) */
+    smp_set_ncpu();
+    const unsigned int ncpu = g_smp_ncpu;
+
     g_task_budget = K;
-    for (int i = 0; i < SMP_NTASKS; i++) {
+    for (unsigned int i = 0; i < ncpu; i++) {
         g_tasks[i].id      = (unsigned long)(100 + i);  /* distinct ids */
         g_tasks[i].budget  = K;
         g_tasks[i].claimed = 0;
@@ -946,14 +1032,15 @@ int smp_selftest_run(unsigned long K)
      * this would hang HERE — making the recursive claim non-paper. */
     bkl_acquire();
     bkl_acquire();          /* nested — depth 2, no raw re-acquire */
-    for (int i = 0; i < SMP_NTASKS; i++)
+    for (unsigned int i = 0; i < ncpu; i++)   /* one task per WOKEN CPU */
         smp_ready_push(&g_tasks[i]);
     bkl_release();          /* depth 2 -> 1, raw lock still held */
     bkl_release();          /* depth 1 -> 0, raw unlock */
     __asm__ volatile("dsb ish" ::: "memory");
 
-    /* Release ALL SEVEN secondaries (cores 1..7) into their per-CPU
-     * dispatchers (each pulls one task and runs it concurrently with us). */
+    /* Release the secondaries we actually have (cores 1..g_smp_ncpu-1) into
+     * their per-CPU dispatchers (each pulls one task and runs it concurrently
+     * with us). smp_bringup_secondary() re-runs detect (idempotent). */
     long on = smp_bringup_secondary();
     if (on != PSCI_SUCCESS && on != PSCI_ALREADY_ON)
         return (int)on;                       /* CPU_ON failed */
@@ -979,14 +1066,15 @@ int smp_selftest_run(unsigned long K)
         }
     }
 
-    /* JOIN: bounded wait until ALL SMP_NTASKS tasks report done (every CPU
-     * finished its task). Watchdog so a wedged CPU is a FAIL, not a hang. */
+    /* JOIN: bounded wait until ALL g_smp_ncpu tasks report done (every WOKEN
+     * CPU finished its task). Only ncpu tasks were seeded/pushed, so we join
+     * exactly those. Watchdog so a wedged CPU is a FAIL, not a hang. */
     const unsigned long MAX = 200000000UL;
     unsigned long tries = 0;
     for (;;) {
         __asm__ volatile("dmb ld" ::: "memory");
         int alldone = 1;
-        for (int i = 0; i < SMP_NTASKS; i++)
+        for (unsigned int i = 0; i < ncpu; i++)
             if (!g_tasks[i].done) { alldone = 0; break; }
         if (alldone) break;
         if (++tries >= MAX) return -100;      /* join timeout (FAIL) */

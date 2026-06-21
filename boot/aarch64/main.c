@@ -77,6 +77,7 @@ extern int           smp_wait_secondary_live(void);     /* 0 = up        */
 extern unsigned long smp_exec_count(int cpu);           /* per-CPU counter */
 extern void         *smp_running_tcb(int cpu);          /* per-CPU ctxtsk */
 extern unsigned long smp_get_counter(void);             /* shared total   */
+extern unsigned int  smp_ncpu(void);                    /* runtime active count */
 #endif
 #ifdef SMP_PREEMPT_TEST
 /* ②.1a cross-CPU preemption via GIC SGI IPI (arch/aarch64/smp.c).
@@ -323,47 +324,57 @@ void main(void)
      * the driver and the kernel can never disagree. docs/architecture/
      * full-smp-plan.md §7 ②.0; ②.1b N=4; ②.N8 N=8 generalization. */
     {
-        /* N tracks smp.c's SMP_MAX_CPUS (mirrored header-light so main.c needs
-         * no SMP internals). A _Static_assert there guards the real value; if
-         * this mirror ever drifts, the distinct-task / N*K checks below FAIL
-         * loudly rather than passing on the wrong N. */
-        #define SMP_CERT_N 8
+        /* SMP_CERT_MAX is the ARRAY CEILING (== smp.c's SMP_MAX_CPUS). The
+         * cert count N is now the RUNTIME-DETECTED active core count, read from
+         * smp_ncpu() AFTER smp_selftest_run() ran the GICD_TYPER autodetect —
+         * so the SAME binary asserts the right total under -smp 2/4/8 with no
+         * recompile. The stack arrays stay ceiling-sized (no VLA in this
+         * freestanding TU); the loops run 0..N-1 over the cores actually
+         * woken. */
+        #define SMP_CERT_MAX 8
         const unsigned long K = 200000UL;       /* per-task increments */
-        const unsigned long N = (unsigned long)SMP_CERT_N;  /* CPUs (②.N8: N=8) */
-        print("[SMP] releasing SEVEN secondaries (cores 1..7) into the dispatcher (BKL)...\r\n");
+        print("[SMP] autodetecting core count (GICD_TYPER) + releasing secondaries (BKL)...\r\n");
         int rc = smp_selftest_run(K);
 
-        /* [smp-boot-survives]: did ALL secondaries reach the dispatcher? */
+        /* The runtime active count detected by smp_selftest_run() (1..8). The
+         * whole point of the cert: the SAME binary wakes EXACTLY this many. */
+        unsigned long N = (unsigned long)smp_ncpu();
+        if (N < 1) N = 1;
+        if (N > SMP_CERT_MAX) N = SMP_CERT_MAX;
+        print("[SMP] detected "); print_long((long)N);
+        print(" cpus via GICD_TYPER (g_smp_ncpu)\r\n");
+
+        /* [smp-boot-survives]: did ALL woken secondaries reach the dispatcher? */
         int sec_live = (smp_wait_secondary_live() == 0);
-        unsigned long e[SMP_CERT_N];
-        void *t[SMP_CERT_N];
-        for (int c = 0; c < SMP_CERT_N; c++) {
+        unsigned long e[SMP_CERT_MAX];
+        void *t[SMP_CERT_MAX];
+        for (int c = 0; c < (int)N; c++) {
             e[c] = smp_exec_count(c);
             t[c] = smp_running_tcb(c);
         }
         unsigned long total = smp_get_counter();
         unsigned long expect = N * K;
 
-        for (int c = 0; c < SMP_CERT_N; c++) {
+        for (int c = 0; c < (int)N; c++) {
             print("[SMP] cpu"); print_long((long)c);
             print(" exec_count="); print_long((long)e[c]); print("\r\n");
         }
         print("[SMP] shared counter=");  print_long((long)total);
         print(" expected=");             print_long((long)expect); print("\r\n");
 
-        /* [smp-2-tasks-run] (now N=8): EVERY CPU advanced its OWN task, and
-         * all eight per-CPU current tasks are DISTINCT (different TCB ptrs). */
+        /* [smp-2-tasks-run]: EVERY woken CPU advanced its OWN task, and all N
+         * per-CPU current tasks are DISTINCT (different TCB ptrs). */
         int all_ran = 1, all_distinct = 1;
-        for (int c = 0; c < SMP_CERT_N; c++)
+        for (int c = 0; c < (int)N; c++)
             if (!(e[c] > 0 && t[c] != 0)) all_ran = 0;
-        for (int a = 0; a < SMP_CERT_N && all_distinct; a++)
-            for (int b = a + 1; b < SMP_CERT_N; b++)
+        for (int a = 0; a < (int)N && all_distinct; a++)
+            for (int b = a + 1; b < (int)N; b++)
                 if (t[a] == t[b]) { all_distinct = 0; break; }
         if (rc == 0 && all_ran && all_distinct) {
             print("SMP-RUN: PASS\r\n");
         } else {
             print("SMP-RUN: FAIL rc="); print_long((long)rc);
-            print(" (need cpu0..7 exec>0 and 8 distinct tasks)\r\n");
+            print(" (need cpu0..N-1 exec>0 and N distinct tasks)\r\n");
         }
 
         /* [smp-mutual-exclusion]: no lost updates under the BKL. */
@@ -383,7 +394,7 @@ void main(void)
         }
         /* Fall through to the normal T-Kernel boot — proves the primary
          * scheduler still runs AFTER the SMP slice. */
-        #undef SMP_CERT_N
+        #undef SMP_CERT_MAX
     }
 #endif
 
