@@ -553,9 +553,10 @@ smp_dispatch_loop:
 1:  wfe
     b    1b
 
-#if defined(SMP_2TASKS_PROD) || defined(SMP_ASYNC_PREEMPT)
+#if defined(SMP_2TASKS_PROD) || defined(SMP_ASYNC_PREEMPT) || defined(SMP_DEADLOCK_TEST)
 /* void smp_prod_enter_dispatch(void)   [②.2a — [smp-2tasks-prod];
- *                                       ②.2b-i — [smp-async-preempt]]
+ *                                       ②.2b-i — [smp-async-preempt];
+ *                                       ②.2b   — [smp-no-deadlock]]
  *   Enter the PRODUCTION per-CPU dispatcher loop (.Ldispatch_loop above) on
  *   THIS CPU.  The loop reads g_smpcpu[me].schedtsk (a REAL T-Kernel TCB the
  *   driver pre-set), stores it into g_smpcpu[me].ctxtsk, loads the TCB's
@@ -569,5 +570,5 @@ smp_dispatch_loop:
 smp_prod_enter_dispatch:
     msr  daifset, #0x3             /* mask IRQ+FIQ (as knl_dispatch) */
     b    .Ldispatch_loop           /* never returns — switches into the TCB */
-#endif /* SMP_2TASKS_PROD || SMP_ASYNC_PREEMPT */
+#endif /* SMP_2TASKS_PROD || SMP_ASYNC_PREEMPT || SMP_DEADLOCK_TEST */
 #endif /* SMP_SELFTEST */

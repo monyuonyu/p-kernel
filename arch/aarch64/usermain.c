@@ -325,6 +325,73 @@ EXPORT INT usermain(void)
     }
 #endif /* SMP_ASYNC_PREEMPT */
 
+#ifdef SMP_DEADLOCK_TEST
+    /* ②.2b [smp-no-deadlock]: prove the §5.4 BKL-held reschedule guard is
+     * LOAD-BEARING.  A REAL task L on the SECONDARY ACQUIRES the BKL (enters a
+     * kernel critical section) and spins a tight loop INSIDE it; an SGI for a
+     * higher-prio task H lands mid-critical-section.  WITH the guard: the switch
+     * is DEFERRED, L's critical section completes ATOMICALLY (observed_crit ==
+     * cap), L releases the BKL, the DEFERRED reschedule (pending flag KEPT) fires
+     * → H runs + acquires the BKL cleanly → no deadlock.  FALSIFIER
+     * -DSMP_NO_BKL_GUARD removes the guard → the switch fires WHILE L holds the
+     * BKL → H's bkl_acquire spins forever → DEADLOCK → watchdog → FAIL. */
+    {
+        extern int  smp_dl_test_run(void);
+        extern unsigned long smp_dl_observed_crit(void);
+        extern unsigned long smp_dl_obs_released(void);
+        extern unsigned long smp_dl_crit_cap(void);
+        extern unsigned long smp_dl_post(void);
+        extern unsigned long smp_dl_highprio_ran(void);
+        extern unsigned long smp_dl_hi_got_bkl(void);
+        extern unsigned long smp_dl_resumed(void);
+        extern unsigned long smp_sgi_taken(int cpu);
+
+        #define PRINT_ULONG(v) do { unsigned long _u=(unsigned long)(v); \
+            char _t[21]; int _i=0; if(_u==0)_t[_i++]='0'; \
+            while(_u){_t[_i++]=(char)('0'+_u%10);_u/=10;} \
+            char _o[22]; int _j=0; while(_i)_o[_j++]=_t[--_i]; _o[_j]='\0'; \
+            print(_o); } while(0)
+        #define PRINT_SLONG(v) do { long _s=(long)(v); if(_s<0){print("-");_s=-_s;} \
+            PRINT_ULONG((unsigned long)_s); } while(0)
+
+        print("[SMP] ②.2b [smp-no-deadlock]: BKL-held mid-crit preempt is DEFERRED...\r\n");
+        int rc = smp_dl_test_run();
+
+        unsigned long oc   = smp_dl_observed_crit();
+        unsigned long orl  = smp_dl_obs_released();
+        unsigned long cap  = smp_dl_crit_cap();
+        unsigned long post = smp_dl_post();
+        unsigned long hr   = smp_dl_highprio_ran();
+        unsigned long gb   = smp_dl_hi_got_bkl();
+        unsigned long rsm  = smp_dl_resumed();
+        unsigned long sgis = smp_sgi_taken(1);
+
+        print("[SMP] cpu1 highprio_ran="); PRINT_ULONG(hr);
+        print(" hi_got_bkl=");             PRINT_ULONG(gb);
+        print(" sgi_taken=");              PRINT_ULONG(sgis); print("\r\n");
+        print("[SMP] observed_crit(at H)="); PRINT_ULONG(oc);
+        print(" crit_cap=");                 PRINT_ULONG(cap);
+        print(" obs_released=");             PRINT_ULONG(orl);
+        print(" post=");                     PRINT_ULONG(post);
+        print(" resumed=");                  PRINT_ULONG(rsm); print("\r\n");
+
+        /* PASS: the deferred reschedule fired (hr=1), the critical section was
+         * ATOMIC (obs_released=1 → L finished + RELEASED the BKL before H ran),
+         * the BKL was NOT stranded (hi_got_bkl=1), L RESUMED (resumed=1,
+         * post==cap), and an SGI was delivered (sgi>=1). */
+        if (rc == 0 && hr == 1 && orl == 1 && gb == 1 && rsm == 1 &&
+            post == cap && sgis >= 1) {
+            print("SMP-NO-DEADLOCK: PASS\r\n");
+        } else {
+            print("SMP-NO-DEADLOCK: FAIL rc="); PRINT_SLONG(rc);
+            print(" (deadlock / deferred reschedule lost / crit not atomic; "
+                  "need hr=1, obs_released=1, hi_got_bkl=1, resumed=1, post=cap, sgi>=1)\r\n");
+        }
+        #undef PRINT_ULONG
+        #undef PRINT_SLONG
+    }
+#endif /* SMP_DEADLOCK_TEST */
+
     /* AI primitives — tensor / ai_job / pipeline / MLP seed */
     ai_kernel_init();
 

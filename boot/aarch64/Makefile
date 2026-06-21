@@ -105,7 +105,8 @@ ARCH_C_SRCS = \
     mc2_smp.c \
     smp.c \
     smp_prod.c \
-    smp_async.c
+    smp_async.c \
+    smp_deadlock.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -247,6 +248,12 @@ SMP_CERT_EXCLUDE += smp_prod.o
 endif
 ifeq (,$(findstring SMP_ASYNC_PREEMPT,$(EXTRA_CFLAGS)))
 SMP_CERT_EXCLUDE += smp_async.o
+endif
+# ②.2b [smp-no-deadlock]: smp_deadlock.c — same exclude discipline (empty .o
+# otherwise; excluded from the LINK unless -DSMP_DEADLOCK_TEST so the DEFAULT
+# kernel ELF stays byte-identical).
+ifeq (,$(findstring SMP_DEADLOCK_TEST,$(EXTRA_CFLAGS)))
+SMP_CERT_EXCLUDE += smp_deadlock.o
 endif
 LINK_OBJS = $(filter-out $(SMP_CERT_EXCLUDE),$(ALL_OBJS))
 
@@ -593,9 +600,33 @@ run-smp3-noasync:
 	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_ASYNC_PREEMPT -DSMP_NO_ASYNC" $(TARGET)
 	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
 
+# ②.2b [smp-no-deadlock]: a REAL task L on the SECONDARY ACQUIRES the BKL
+# (enters a kernel critical section) and spins; an SGI for a higher-prio task H
+# lands WHILE L holds the BKL. The §5.4 guard (smp_irq_need_resched:
+# g_bkl_owner==me -> return 0) DEFERS the async switch -> L's critical section
+# completes ATOMICALLY, L releases the BKL, the DEFERRED reschedule fires AFTER
+# release -> H runs + acquires the BKL CLEANLY -> no deadlock. Prints:
+#   SMP-NO-DEADLOCK: PASS
+run-smp3-deadlock:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_DEADLOCK_TEST" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): -DSMP_NO_BKL_GUARD removes the §5.4 g_bkl_owner==me
+# clause -> the async switch fires WHILE L holds the BKL -> H wedges forever
+# waiting for the BKL L stranded (it was switched away mid-critical-section) ->
+# PERMANENT DEADLOCK (no PASS; the timeout is the watchdog). Proves the guard is
+# load-bearing.
+run-smp3-deadlock-noguard:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_DEADLOCK_TEST -DSMP_NO_BKL_GUARD" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
 # Automated cert: build + boot under -smp 4, grep SMP-ASYNC-PREEMPT: PASS +
 # mid-loop evidence, then build the NO_ASYNC falsifier and assert it FAILs
-# with sgi_taken=1/highprio_ran=0. This is the [smp-async-preempt] harness.
+# with sgi_taken=1/highprio_ran=0 ([smp-async-preempt]); then build the
+# [smp-no-deadlock] guard'd cert (assert SMP-NO-DEADLOCK: PASS) + the
+# -DSMP_NO_BKL_GUARD falsifier (assert it DEADLOCKS, no PASS).
 smp3-test:
 	../../tests/aarch64/run_smp3.sh
 
@@ -642,4 +673,4 @@ clean:
         run-smp0 run-smp0-nolock run-smp0-force smp0-test \
         run-smp1 run-smp1-noipi smp1-test \
         run-smp2 smp2-test \
-        run-smp3 run-smp3-noasync smp3-test
+        run-smp3 run-smp3-noasync run-smp3-deadlock run-smp3-deadlock-noguard smp3-test

@@ -480,7 +480,43 @@ static void raw_unlock(unsigned int *l)
     __asm__ volatile("sev" ::: "memory");
 }
 
-/* Acquire the BKL (recursive). Returns nothing; pairs with bkl_release. */
+/* ── TOCTOU fix (②.2b deadlock audit) ────────────────────────────────────
+ *  Save+mask / restore IRQ+FIQ on THIS CPU, header-light (this TU avoids
+ *  cpu_insn.h).  Used to close the two TOCTOU windows in bkl_acquire/release
+ *  where the raw lock is held but g_bkl_owner != me (the inconsistent state
+ *  the §5.4 guard would mis-read).  Mirrors the production disint()/enaint()
+ *  discipline (cpu_insn.h:18-35): BEGIN_CRITICAL_SECTION masks IRQ *first*,
+ *  then takes the lock — so the SGI handler can never observe the kernel
+ *  mid-publish.  We replicate that ordering ONLY across the publish/clear
+ *  windows, NOT the whole critical section (the deadlock cert deliberately
+ *  holds the BKL with IRQs UNMASKED so the §5.4 guard is exercised). */
+static inline unsigned long smp_bkl_di(void)
+{
+    unsigned long daif;
+    __asm__ volatile("mrs %0, daif\n\t"
+                     "msr daifset, #0x3"   /* mask I+F */
+                     : "=r"(daif) :: "memory");
+    return daif;
+}
+static inline void smp_bkl_ei(unsigned long daif)
+{
+    /* DAIF bit 7 = I (masked when 1); only re-unmask if the caller had it on. */
+    if (!(daif & (1UL << 7)))
+        __asm__ volatile("msr daifclr, #0x3" ::: "memory");
+}
+
+/* Acquire the BKL (recursive). Returns nothing; pairs with bkl_release.
+ *
+ *  TOCTOU WINDOW 1 (closed below): the raw spinlock is taken by raw_lock()
+ *  BEFORE g_bkl_owner is published.  In that gap THIS CPU physically holds the
+ *  raw lock but g_bkl_owner still reads the OLD value (-1 or a stale owner).
+ *  An SGI landing here would run smp_irq_need_resched(), see g_bkl_owner != me,
+ *  decide the §5.4 guard does NOT apply, and async-switch AWAY while we hold the
+ *  raw lock → the switched-to context can never acquire the BKL → DEADLOCK.
+ *  FIX: mask IRQ on this CPU from BEFORE raw_lock() until AFTER g_bkl_owner is
+ *  published (the dsb makes it globally visible), then restore the caller's
+ *  prior IRQ state.  The async-switch decision can now only be taken when
+ *  g_bkl_owner is already consistent with raw-lock ownership. */
 void bkl_acquire(void)
 {
     long me = (long)smp_mpidr_aff0();
@@ -491,19 +527,35 @@ void bkl_acquire(void)
         return;
     }
 
-    raw_lock(&g_bkl_lock);          /* spin/wfe until we own the raw lock */
-    g_bkl_owner = me;               /* publish ownership UNDER the lock    */
+    unsigned long di = smp_bkl_di();   /* mask IRQ across the publish window */
+    raw_lock(&g_bkl_lock);             /* spin/wfe until we own the raw lock */
+    g_bkl_owner = me;                  /* publish ownership UNDER the lock    */
     g_bkl_depth = 1;
-    __asm__ volatile("dsb ish" ::: "memory");
+    __asm__ volatile("dsb ish" ::: "memory");  /* publish before IRQ can fire */
+    smp_bkl_ei(di);                    /* restore caller's IRQ state          */
 }
 
+/* Release the BKL.
+ *
+ *  TOCTOU WINDOW 2 (closed below): on the outermost release we clear
+ *  g_bkl_owner = -1 BEFORE raw_unlock() drops the raw spinlock.  In that gap
+ *  g_bkl_owner reads -1 (not me) but THIS CPU still physically holds the raw
+ *  lock.  An SGI landing here would see g_bkl_owner != me, skip the §5.4 guard,
+ *  and async-switch away while we still hold the raw lock → DEADLOCK, identical
+ *  to window 1.  FIX: mask IRQ from BEFORE g_bkl_owner is cleared until AFTER
+ *  raw_unlock() has actually released the raw lock, then restore. */
 void bkl_release(void)
 {
     /* Only the owner releases; depth gates the raw unlock. */
-    if (--g_bkl_depth == 0) {
+    if (g_bkl_depth == 1) {
+        unsigned long di = smp_bkl_di();   /* mask IRQ across the clear window */
         __asm__ volatile("dsb ish" ::: "memory");
         g_bkl_owner = -1;
-        raw_unlock(&g_bkl_lock);
+        raw_unlock(&g_bkl_lock);           /* raw lock actually freed here     */
+        g_bkl_depth = 0;
+        smp_bkl_ei(di);                    /* restore caller's IRQ state       */
+    } else {
+        g_bkl_depth--;
     }
 }
 
@@ -567,9 +619,19 @@ int smp_irq_need_resched(void)
     if (!g_resched_pending[me])
         return 0;
 
-    /* (5) §5.4 deadlock guard: never switch away from a BKL holder. */
+#if !defined(SMP_NO_BKL_GUARD)
+    /* (5) §5.4 deadlock guard: never switch away from a BKL holder.
+     *
+     * FALSIFIER (-DSMP_NO_BKL_GUARD): REMOVE this clause.  The [smp-no-deadlock]
+     * cert (smp_deadlock.c) then sends an SGI while a task holds the BKL; with
+     * the guard gone the async switch FIRES mid-critical-section → the switched-
+     * to task's bkl_acquire() spins FOREVER on the still-held raw lock → DEADLOCK
+     * → the driver watchdog catches it → "SMP-NO-DEADLOCK: FAIL".  WITH the guard
+     * (default) → the switch is DEFERRED → no deadlock → PASS.  This is the
+     * §5.4-mandated certified falsifier that makes the guard LOAD-BEARING. */
     if (g_bkl_owner == (long)me)
         return 0;                         /* mid-critical-section → defer */
+#endif
 
     /* (4) not task-independent (timer-startup / IRQ nesting marker). */
     if (knl_taskindp > 0)
@@ -1021,6 +1083,15 @@ extern volatile int g_async_secondary_go;
 extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
 #endif
 
+#ifdef SMP_DEADLOCK_TEST
+/* ②.2b [smp-no-deadlock]: the secondary waits for the driver (smp_deadlock.c,
+ * on CPU 0) to publish its schedtsk = the REAL BKL-holding loop task L, then
+ * enters the PRODUCTION dispatcher (smp_prod_enter_dispatch → .Ldispatch_loop)
+ * — switching into L on CPU 1.  Symbols from smp_deadlock.c. */
+extern volatile int g_dl_secondary_go;
+extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
+#endif
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -1040,6 +1111,29 @@ void smp_dispatch_run(void)
         for (;;) {
             __asm__ volatile("dmb ld" ::: "memory");
             if (g_async_secondary_go && g_smpcpu[me].schedtsk != 0)
+                break;
+            if (++tries >= 200000000UL) {
+                for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
+            }
+            __asm__ volatile("yield" ::: "memory");
+        }
+        smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs L */
+        for (;;) __asm__ volatile("wfe");
+    }
+#endif
+
+#ifdef SMP_DEADLOCK_TEST
+    /* ②.2b [smp-no-deadlock]: run the REAL BKL-holding loop task L via the
+     * production dispatcher on this secondary, then let the §5.4 guard DEFER the
+     * async switch while L holds the BKL. */
+    {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        smp_dbg("[SMP] cpu1 entered PRODUCTION dispatcher (no-deadlock)\r\n");
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_dl_secondary_go && g_smpcpu[me].schedtsk != 0)
                 break;
             if (++tries >= 200000000UL) {
                 for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
