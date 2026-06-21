@@ -788,7 +788,13 @@ void smp_dispatch_run(void)
 
     g_smpcpu[me].live = 1;
     __asm__ volatile("dmb st; sev" ::: "memory");
+    /* Emit the per-CPU entry marker UNDER the BKL so the blind UART writes
+     * from the THREE secondaries do NOT interleave into a garbled line (the
+     * harness greps for an intact "cpuN entered dispatcher"). The lock is
+     * held only for the short marker; it does not serialize the workload. */
+    bkl_acquire();
     smp_dbg_cpu_entered(me, " entered dispatcher\r\n");
+    bkl_release();
 
     /* ②.1b: each secondary pulls EXACTLY ONE task (the boot CPU also pulls
      * exactly one inline, smp_selftest_run). With ONE task per CPU
