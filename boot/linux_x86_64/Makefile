@@ -202,6 +202,7 @@ COMMON_C_SRCS = \
     genome.c \
     ed25519.c \
     sign.c \
+    cradle_net.c \
     modver.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
@@ -223,7 +224,7 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # of COMMON_C_SRCS). Mirror of boot/linux/Makefile (kept verbatim).
 LLM_DIR     = $(ARCH_COMMON)/llm
 LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
-              llm_shell.c student.c student_shell.c
+              llm_shell.c student.c student_shell.c cradle.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # Own flag set (mirror of boot/linux): the engine includes ONLY system libc +
 # its sibling headers, and must NOT see the kernel include/ dirs (include/

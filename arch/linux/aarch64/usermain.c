@@ -67,6 +67,10 @@ IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
 IMPORT void mind_merge_task(INT stacd, void *exinf);  /* LM-10 Path W merge */
+IMPORT void cradle_net_open(void);                    /* T-fix-b reserve topic */
+IMPORT void cradle_net_task(INT stacd, void *exinf);  /* T-fix-b lesson bridge */
+IMPORT INT  cradle_teach_emit(const UB *body, UW len);/* T-fix-b teacher emit */
+IMPORT int  cradle_teach_self_test(void (*emit)(const char *)); /* [cradle-teach] */
 IMPORT void lm_test(void);                            /* living-mind DMN */
 /* arch/common/llm/llm_shell.c — the real SmolLM2 inference engine bridge.
  * Loads the GGUF (env PKERNEL_LLM_GGUF, default /tmp/smollm2-135m.gguf),
@@ -402,6 +406,14 @@ static void cmd_net(void)
     create_task((FP)mind_net_task, 7, 16384);
     print("[net] mind shared-teach (LM-7) task started\r\n");
 
+    /* Thread T (T-fix-b) — the lesson BRIDGE. Polls the region-scoped
+     * "cradle/teach" topic; a TEXT lesson a teacher-capable node (SWIM bit 1,
+     * T-fix-a) emits is pulled here and fed into the resident baby's lesson
+     * ring -> the DMN sleep distills it WEIGHT-RESIDENT. Symmetric on every
+     * node; NO-OP-safe (no baby / no teacher -> falls back to the fixture). */
+    create_task((FP)cradle_net_task, 7, 8192);
+    print("[net] cradle lesson-bridge (T-fix-b) task started\r\n");
+
     /* LM-10 (living-mind.md Part XI) — Path W: the one mind. The fleet-DMN
      * slow-band weight-merge pulse ("collective sleep"): each node publishes
      * its rw[] (84 KB, 22 chunks) and gl_merge()s the region into ONE shared
@@ -630,6 +642,9 @@ EXPORT INT usermain(void)
     /* LM-7 — reserve the cluster-wide "mind/teach" topic slot NOW, before
      * dkva_init()'s per-node pre-opens saturate the bounded topic table. */
     mind_net_open();
+    /* Thread T (T-fix-b) — reserve the "cradle/teach" lesson-bridge topic in
+     * the SAME singleton budget, before dkva floods the topic table. */
+    cradle_net_open();
     /* DTR — distributed Transformer (the AI brain layer). */
     dtr_init();
     /* DKVA — distributed KV attention topics (FULL-mode responder).
@@ -999,6 +1014,33 @@ EXPORT INT usermain(void)
             for (INT i = 0; i < al; i++) argbuf[i] = (char)a[i];
             argbuf[al] = '\0';
             student_shell_cmd(argbuf, print);
+        } else if (starts_with(line, n, "cradle")) {
+            /* Thread T (T-fix-b) — the lesson BRIDGE.
+             *   cradle test         run the [cradle-teach] cert (A teaches a
+             *                        lesson, B pulls + trains, B knows a held-out
+             *                        probe it was NEVER directly trained on; 3
+             *                        falsification arms each go RED).
+             *   cradle emit <text>  (teacher node only) emit ONE TEXT lesson over
+             *                        the mesh; region students pull + distill it.
+             *   cradle              alias for `cradle test`.                     */
+            const UB *a = line + 6; INT al = n - 6;
+            while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t') {
+                const UB *b = a + 4; INT bl = al - 4;
+                while (bl > 0 && (*b == ' ' || *b == '\t')) { b++; bl--; }
+                if (bl <= 0) { print("[cradle] usage: cradle emit <lesson text>\r\n"); }
+                else {
+                    INT rc = cradle_teach_emit(b, (UW)bl);
+                    if (rc) print("[cradle] lesson emitted over the mesh "
+                                  "(region students will pull + distill it)\r\n");
+                    else    print("[cradle] not emitted — this node is not the "
+                                  "elected region teacher (or solo). Set "
+                                  "PKERNEL_TEACHER=1 + a teacher GGUF (T-fix-a).\r\n");
+                }
+            } else {
+                /* default / `cradle test`: the in-process [cradle-teach] cert. */
+                (void)cradle_teach_self_test(print);
+            }
         } else if (starts_with(line, n, "mind")) {
             /* living-mind LM-6 (docs/architecture/living-mind.md Part VII):
              * the mouth — the OWNER teaches the live mind at this prompt;

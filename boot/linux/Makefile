@@ -219,6 +219,7 @@ COMMON_C_SRCS = \
     genome.c \
     ed25519.c \
     sign.c \
+    cradle_net.c \
     modver.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
@@ -247,7 +248,7 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # calls the durable seam (pfs_dur_write/read, ARCH_SHARED_C_SRCS) by extern.
 LLM_DIR     = $(ARCH_COMMON)/llm
 LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
-              llm_shell.c student.c student_shell.c
+              llm_shell.c student.c student_shell.c cradle.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # The engine is pure host-libc code and includes ONLY <stdint.h>/<stddef.h>/
 # <stdlib.h>/<stdio.h>/<string.h>/<time.h> + its own sibling headers. It must

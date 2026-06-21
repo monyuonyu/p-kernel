@@ -398,6 +398,76 @@ typedef struct {
                                  /* merge n_floats==R_NP guard, line ~2823). */
 } __attribute__((packed)) MT_TEACH_PKT;   /* 45 + 8 = 53 B (<= KDDS_DATA_MAX)*/
 
+/* ================================================================== */
+/* Thread T — the lesson BRIDGE (T-fix-b / T-1, thread-t-impl-plan.md  */
+/* §2.1). A TEACHER-capable node (SWIM capability bit 1, T-fix-a) emits */
+/* a TEXT lesson; a STUDENT node pulls it and trains its byte-native    */
+/* baby on it (the g_lesson_ring corpus seam -> the real distill path   */
+/* distill_proof.c proves weight-resident). This is the TEXT-LEVEL      */
+/* design (byte-CE) with the lesson-pack TRANSPORT grafted in: a KDDS   */
+/* beacon announces a lesson, the BODY rides the p-fs DAG (pfs_dag_save/ */
+/* pfs_dag_read), exactly the carrier gossip_learn.c already proves.    */
+/*                                                                      */
+/* HONEST BOUND (thread-t-impl-plan.md §4): byte-CE fits the teacher's  */
+/* emitted TEXT distribution, NOT its soft-target / logit mass. We do   */
+/* NOT claim soft-target distillation; LESSON_FMT_SOFT is RESERVED on   */
+/* the wire (a future wave behind a paired [ct-soft-vs-byte] cert), not */
+/* built here. The live in-kernel GGUF teacher harvest is DEFERRED      */
+/* (CT-2); the cert seeds the teacher corpus (the BRIDGE + the student  */
+/* ingestion is the deliverable).                                       */
+/* ================================================================== */
+#define CRADLE_TEACH_TOPIC  "cradle/teach"
+#define CRADLE_MAGIC        0x4C444143UL   /* "CADL" LE — free magic         */
+#define LESSON_FMT_BYTE     0   /* byte-CE: train on the raw lesson bytes     */
+#define LESSON_FMT_SOFT     1   /* RESERVED: soft-target/logit-KL (DEFERRED)  */
+#define CT_LESSON_MAX       4096 /* lesson body cap (one p-fs block; §2.1)    */
+#define CRADLE_REF_LEN      16   /* p-fs DAG object-name width (== PFS_NAME_MAX */
+                                 /* in pfs_dag.h; redeclared here so dtr.h need */
+                                 /* not pull the heavier pfs_dag.h. A          */
+                                 /* _Static_assert in cradle_net.c pins them    */
+                                 /* equal so a future PFS_NAME_MAX change can't  */
+                                 /* silently truncate the ref.)                 */
+
+/* Beacon — announced on the region-scoped LATEST_ONLY singleton topic
+ * "cradle/teach". The BODY (≤CT_LESSON_MAX raw bytes) lives in the p-fs
+ * DAG under the content ref carried in body_ref; the student pfs_dag_reads
+ * it after seeing a newer seq. LENGTH-PREFIXED BINARY body (NOT a C-string):
+ * a live lesson is tok_decode output incl. NUL/control bytes (§2.1, risk 10);
+ * the ring/window are uint8_t-clean. */
+typedef struct {
+    UW magic;                    /* CRADLE_MAGIC                            */
+    U1 teacher_node;             /* origin id (== region_teacher() healthy) */
+    U1 fmt;                      /* LESSON_FMT_BYTE now; _SOFT reserved     */
+    U1 _pad0, _pad1;
+    UW seq;                      /* per-teacher monotonic lesson high-water  */
+    UW body_len;                 /* lesson byte length (<= CT_LESSON_MAX)    */
+    U1 body_ref[CRADLE_REF_LEN]; /* p-fs DAG object name of the lesson body  */
+    U1 vocab_fp[MT_VOCAB_FP_LEN];/* byte-keying fingerprint (refuse-on-      */
+                                 /* mismatch; mirrors MT_WIRE_VER_VOCAB).    */
+                                 /* For the byte student this is a CONSTANT  */
+                                 /* (ST_VOCAB=256 raw bytes), but kept on the */
+                                 /* wire so a future soft/foreign-keying      */
+                                 /* teacher can be refused without a wire bump.*/
+} __attribute__((packed)) CRADLE_TEACH_PKT;  /* 4+4+4+4+16+8 = 40 B (<= KDDS_DATA_MAX) */
+
+/* Reserve the "cradle/teach" topic slot at boot — call from the hosted
+ * usermain right after mind_net_open() (same singleton-topic budget,
+ * kdds.h:37). Idempotent; no-op-safe on solo nodes. */
+void cradle_net_open(void);
+
+/* The teacher emits ONE lesson (text) over the bridge: pfs_dag_save the body,
+ * beacon a newer seq on cradle/teach. Region-scoped, gated on
+ * region_teacher()==drpc_my_node (only the elected teacher emits). NO-OP-safe
+ * on a non-teacher / solo node. Returns 1 if it published, 0 no-op. */
+INT cradle_teach_emit(const UB *body, UW len);
+
+/* The student subscriber task: polls cradle/teach, pulls a newer lesson body
+ * via pfs_dag_read, and feeds it into the resident baby's lesson ring
+ * (cradle_lesson_ingest). Created in BOTH hosted usermains beside
+ * mind_net_task. NO-OP-safe (no baby / persistence off -> falls back to the
+ * fixture, never blocks). */
+void cradle_net_task(INT stacd, void *exinf);
+
 /* Reserve the "mind/teach" topic slot at boot — call from the hosted
  * usermain right AFTER kdds_init() and BEFORE dkva_init(), so the cluster-
  * wide singleton gets a slot before dkva's per-node pre-opens saturate the

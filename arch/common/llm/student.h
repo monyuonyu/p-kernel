@@ -334,6 +334,42 @@ float st_expf(float x);
 float st_logf(float x);
 float st_rsqrtf(float x);
 
+/* ---------------------------------------------------------------------------
+ * Thread T — the lesson BRIDGE corpus seam (T-fix-b / T-1; cradle.c).
+ *
+ * A TEACHER node delivers a TEXT lesson over the mesh; the STUDENT pulls it and
+ * trains its baby on it (the g_lesson_ring corpus source -> the real distill
+ * path). cradle.c owns the ring + the ingest + the in-process [cradle-teach]
+ * cert; student_shell.c's window() reads cradle_window_src() FIRST (the live
+ * lesson) and its static TEACHER_FIXTURE second — a node with NO lesson trains
+ * byte-identically to today. The shared geometry constants live HERE so cradle.c
+ * and student_shell.c compute the SAME train/held split the cert relies on. */
+#define CRADLE_RING_BYTES  6144   /* lesson ring cap (>= 4096 body + headroom)  */
+#define CRADLE_SEQLEN      32     /* == ST_DMN_SEQLEN (the production tick win)  */
+
+/* The corpus-source switch: returns the live lesson ring (and its length in
+ * *len_out) when populated past the live threshold, else NULL (the caller reads
+ * its TEACHER_FIXTURE). Gated by cradle_set_enabled (Arm A). Pure read. */
+const uint8_t *cradle_window_src(int *len_out);
+
+/* Install a fetched lesson body into the ring (length-prefixed binary; refuses
+ * empty/too-big/too-small without truncating). Returns bytes installed or -1.
+ * Called by the transport (cradle_net.c) after a p-fs pull. */
+int  cradle_lesson_ingest(const uint8_t *body, int len);
+
+/* observability / test hooks (pure). */
+int  cradle_lesson_len(void);
+void cradle_set_enabled(int on);    /* 0 = teaching OFF (Arm A): fixture only  */
+int  cradle_get_enabled(void);
+void cradle_lesson_clear(void);
+
+/* The [cradle-teach] cert (thread-t-impl-plan.md §1): an in-process 2-node demo
+ * where A teaches a lesson, B pulls + trains, and B then KNOWS a held-out probe
+ * it was NEVER directly trained on (generalization, weight-resident). Three
+ * falsification arms (teaching-off / scrambled / never-taught) each go RED.
+ * `emit` is a line-printer (may be NULL). Returns 0 on PASS, else fail count. */
+int  cradle_teach_self_test(void (*emit)(const char *));
+
 /* ---- KV cache (wave-kv-cache): incremental generation ----
  * st_generate caches per-layer per-position K/V across generation steps so a
  * NEW token computes only its OWN position's q/k/v and attends over the CACHED

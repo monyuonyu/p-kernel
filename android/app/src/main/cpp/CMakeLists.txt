@@ -174,6 +174,7 @@ set(COMMON_SRC
     ${ARCH_CO}/ark_profile.c
     ${ARCH_CO}/ga.c
     ${ARCH_CO}/gossip_learn.c
+    ${ARCH_CO}/cradle_net.c
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c
     ${ARCH_CO}/dproc.c
@@ -444,7 +445,8 @@ set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c)
 #     <stdlib.h>/<string.h>/<stdio.h> + its sibling header.
 set(LLM_STUDENT_SRC
     ${ARCH_CO}/llm/student.c
-    ${ARCH_CO}/llm/student_shell.c)
+    ${ARCH_CO}/llm/student_shell.c
+    ${ARCH_CO}/llm/cradle.c)
 set_source_files_properties(${LLM_STUDENT_SRC} PROPERTIES
     COMPILE_OPTIONS "-ffp-contract=off"
     INCLUDE_DIRECTORIES "${ARCH_CO}/llm")

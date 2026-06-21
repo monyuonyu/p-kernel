@@ -121,6 +121,14 @@ extern int  pfs_dur_read (const char *fname, void *buf, unsigned maxlen);
  * "r3_weights.bin" under $PKERNEL_PFS_DIR). */
 #define STUDENT_DUR_FILE "ns1_student.bin"
 
+/* T-fix-b lesson-bridge transport hook. The STRONG def lives in cradle_net.c
+ * (kernel tier: KDDS beacon + p-fs body); it polls cradle/teach, pulls a newer
+ * lesson body, and cradle_lesson_ingest()s it into the ring. Declared WEAK here
+ * so this host-libc TU links even on a target without cradle_net.c (the weak
+ * no-op = "no transport this build", the strict no-op contract preserved). On a
+ * hosted kernel the strong cradle_net.c def overrides it. */
+__attribute__((weak)) void cradle_poll_and_pull(void) { /* no transport: no-op */ }
+
 /* ---------------------------------------------------------------------------
  * The teacher fixture (step ⑤ — make the baby's babble richer).
  *
@@ -244,11 +252,34 @@ static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs) 
 
 #define STUDENT_SEED 0x0BABEu          /* same seed distill_proof uses         */
 
-/* corpus windowing (identical math to distill_proof.c) */
+/* corpus windowing (identical math to distill_proof.c).
+ *
+ * T-fix-b: the corpus SOURCE is the lesson RING when a teacher has delivered a
+ * lesson (cradle_window_src, cradle.c), else the static TEACHER_FIXTURE. The
+ * ONLY change to the math path is the byte source — a node with NO lesson reads
+ * the fixture and trains BYTE-IDENTICALLY to today (the zero-regress seam,
+ * thread-t-impl-plan.md §2.2). The held-out split (cradle_corpus_len /
+ * trainw / train_end) recomputes from the live source length below, exactly as
+ * the [cradle-teach] cert relies on. */
+static const uint8_t *cradle_corpus(int *n_out)
+{
+    int rlen = 0;
+    const uint8_t *ring = cradle_window_src(&rlen);   /* live lesson, or NULL */
+    if (ring && rlen > 0) { if (n_out) *n_out = rlen; return ring; }
+    if (n_out) *n_out = (int)sizeof(TEACHER_FIXTURE) - 1;
+    return (const uint8_t *)TEACHER_FIXTURE;
+}
+
+/* the live corpus byte length the held-out split must be computed from. */
+static int cradle_corpus_len(void)
+{
+    int n; (void)cradle_corpus(&n); return n;
+}
+
 static void window(uint8_t *dst, int off, int len)
 {
-    int n = (int)sizeof(TEACHER_FIXTURE) - 1;
-    for (int i = 0; i < len; i++) dst[i] = (uint8_t)TEACHER_FIXTURE[(off + i) % n];
+    int n; const uint8_t *corpus = cradle_corpus(&n);
+    for (int i = 0; i < len; i++) dst[i] = corpus[(off + i) % n];
 }
 
 /* mean held-out loss over `count` windows starting at byte `train_end` */
@@ -313,7 +344,7 @@ static int student_persist(emit_fn emit)
      * tick right after `student` does not immediately rewrite the just-saved
      * blob; the next DMN write waits for a real improvement past this point. */
     {
-        int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+        int corpus_n = cradle_corpus_len();
         int total    = corpus_n / ST_DMN_SEQLEN;
         int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
         int heldw    = total - trainw; if (heldw < 1) heldw = 1;
@@ -500,7 +531,16 @@ int student_dmn_consolidate(void)
         if (student_ensure(0) != 0) return 0;     /* arena now; quiet on the tick */
     }
 
-    int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+    /* T-fix-b: pull a teacher's mesh-delivered lesson into the ring (if any)
+     * BEFORE windowing, so the sleep consolidates the LESSON when one arrived
+     * (else the fixture). NO-OP-safe: no relay / no beacon -> ring stays empty
+     * -> window() reads the fixture (the no-op contract). Gated inside the
+     * transport by g_cradle_enabled + region_teacher(). */
+    cradle_poll_and_pull();
+
+    /* the held-out split tracks the LIVE corpus source (lesson ring or
+     * fixture) — exactly what the [cradle-teach] cert computes train_end from. */
+    int corpus_n = cradle_corpus_len();
     int total    = corpus_n / ST_DMN_SEQLEN;
     int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
     int heldw    = total - trainw; if (heldw < 1) heldw = 1;
@@ -549,7 +589,7 @@ int student_dmn_consolidate(void)
 float student_dmn_heldout_loss(void)
 {
     if (!g_have_student) return st_logf(256.0f);
-    int corpus_n  = (int)sizeof(TEACHER_FIXTURE) - 1;
+    int corpus_n  = cradle_corpus_len();
     int total     = corpus_n / ST_DMN_SEQLEN;
     int trainw    = total * 3 / 4; if (trainw < 2) trainw = 2;
     int heldw     = total - trainw; if (heldw < 1) heldw = 1;
@@ -837,7 +877,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
      * SHARED objective; divergent-fact recovery is Path-W^2, out of scope. */
     if (p[0]=='m' && p[1]=='e' && p[2]=='r' && p[3]=='g' && p[4]=='e') {
         int sl = 24, rr = 40;
-        int cn = (int)sizeof(TEACHER_FIXTURE) - 1;
+        int cn = cradle_corpus_len();
         int tot = cn / sl, tw = tot * 3 / 4; if (tw < 2) tw = 2;
         int hw = tot - tw; if (hw < 1) hw = 1; int te = tw * sl;
 
@@ -893,7 +933,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
     if (seqlen > ST_MAXSEQ) seqlen = ST_MAXSEQ;
     if (rounds > 64) rounds = 64;           /* keep the shell responsive */
 
-    int corpus_n = (int)sizeof(TEACHER_FIXTURE) - 1;
+    int corpus_n = cradle_corpus_len();
     int total    = corpus_n / seqlen;
     int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
     int heldw    = total - trainw; if (heldw < 1) heldw = 1;
