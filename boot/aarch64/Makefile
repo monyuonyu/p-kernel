@@ -104,7 +104,8 @@ ARCH_C_SRCS = \
     sign_entropy.c \
     mc2_smp.c \
     smp.c \
-    smp_prod.c
+    smp_prod.c \
+    smp_async.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -232,18 +233,22 @@ STUDENT_STUB_OBJ = student_stub.o
 # ---- All objects -------------------------------------------------------
 ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS) $(RELAY_OBJS) $(STUDENT_STUB_OBJ)
 
-# ②.2a [smp-2tasks-prod]: smp_prod.c is ALWAYS compiled+cleaned (so the build
-# is consistent across flag changes), but its object is EXCLUDED from the LINK
-# unless the cert is built (-DSMP_2TASKS_PROD).  Excluding it keeps the DEFAULT
-# kernel ELF BYTE-IDENTICAL — smp_prod.o is empty otherwise, but its mere
-# presence perturbs the ELF section-header metadata.  (smp_prod.c references
-# the production scheduler + tk_cre_tsk; it has zero effect when its symbols
-# are unreferenced, but we exclude it to make even the full ELF identical.)
+# ②.2a [smp-2tasks-prod] / ②.2b-i [smp-async-preempt]: smp_prod.c + smp_async.c
+# are ALWAYS compiled+cleaned (so the build is consistent across flag changes),
+# but their objects are EXCLUDED from the LINK unless the matching cert is built
+# (-DSMP_2TASKS_PROD / -DSMP_ASYNC_PREEMPT).  Excluding them keeps the DEFAULT
+# kernel ELF BYTE-IDENTICAL — each .o is empty otherwise, but its mere presence
+# perturbs the ELF section-header metadata.  (Both reference the production
+# scheduler + tk_cre_tsk; zero effect when their symbols are unreferenced, but
+# we exclude them to make even the full ELF identical.)
+SMP_CERT_EXCLUDE =
 ifeq (,$(findstring SMP_2TASKS_PROD,$(EXTRA_CFLAGS)))
-LINK_OBJS = $(filter-out smp_prod.o,$(ALL_OBJS))
-else
-LINK_OBJS = $(ALL_OBJS)
+SMP_CERT_EXCLUDE += smp_prod.o
 endif
+ifeq (,$(findstring SMP_ASYNC_PREEMPT,$(EXTRA_CFLAGS)))
+SMP_CERT_EXCLUDE += smp_async.o
+endif
+LINK_OBJS = $(filter-out $(SMP_CERT_EXCLUDE),$(ALL_OBJS))
 
 TARGET = kernel.elf
 

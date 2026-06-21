@@ -347,8 +347,76 @@ _vec_el1_irq:
     str w1, [x0, #0x10]         /* GICC_EOIR */
 #endif
 
+#ifdef SMP_SELFTEST
+    /* ═══════════════════════════════════════════════════════════════════
+     *  ②.2b-i — TRUE ASYNCHRONOUS register-context preempt (Option A).
+     *
+     *  The SGI/timer has now been EOIR'd (trap #1: deactivate on the OLD
+     *  context's behalf BEFORE we abandon this stack).  SP points at the top
+     *  of the interrupted task's 160-byte save_caller_regs frame (the 16-byte
+     *  IAR slot was just popped).  If a reschedule is pending on THIS CPU and
+     *  it is SAFE to switch (CUR_CTXTSK != CUR_SCHEDTSK, dispatch not disabled,
+     *  not task-independent, NOT holding the BKL mid-syscall — §5.4), we
+     *  perform a REAL register-context switch FROM interrupt context, reusing
+     *  the proven knl_dispatch save/restore, instead of returning to the
+     *  interrupted task.
+     *
+     *  This whole block is SMP_SELFTEST-gated: with no flag the vector falls
+     *  straight through to the original `restore_caller_regs; eret` below, so
+     *  the production IRQ path is BYTE-IDENTICAL to the shipped kernel.
+     *
+     *  smp_irq_need_resched() is a C leaf (ABI-clean): it clobbers x0..x18,
+     *  but those live in the 160-byte frame on this stack and are restored
+     *  either by `restore_caller_regs` (no-switch) or by .Lirq_resume_tramp
+     *  (switch path), so the clobber is harmless. */
+    bl   smp_irq_need_resched   /* -> 1 = switch this CPU, 0 = normal return */
+    cbz  x0, .Lirq_return        /* no switch needed → original epilogue     */
+
+    /* SWITCH PATH (A-ii two-frame nesting).  A mid-loop preempt has NO
+     * call-boundary x30 to return to — its true resume PC is ELR_EL1 and its
+     * processor state is SPSR_EL1.  Capture both onto the interrupted task's
+     * stack (BELOW the 160-byte caller frame), then hand knl_dispatch a
+     * synthetic x30 = &.Lirq_resume_tramp so that, when this task is later
+     * re-dispatched, .Ldispatch_loop `ret`s into the trampoline which unwinds
+     * ELR/SPSR + the 160-byte frame and `eret`s to the exact interrupted PC. */
+    mrs  x0, elr_el1
+    mrs  x1, spsr_el1
+    stp  x0, x1, [sp, #-16]!     /* push ELR_EL1/SPSR_EL1 (16-aligned)        */
+    ldr  x30, =.Lirq_resume_tramp /* knl_dispatch saves THIS as the resume PC */
+    b    knl_dispatch            /* SAVE interrupted ctx; RESTORE schedtsk     */
+    /* knl_dispatch never returns here; it switches stacks into schedtsk. */
+
+.Lirq_return:
+#endif /* SMP_SELFTEST */
+
     restore_caller_regs
     eret
+
+#ifdef SMP_SELFTEST
+/* -----------------------------------------------------------------------
+ *  .Lirq_resume_tramp — the resume path for an ASYNC-preempted task (②.2b-i).
+ *
+ *  Reached when an async-preempted task is later re-dispatched: knl_dispatch's
+ *  .Ldispatch_loop has restored the task's 112-byte callee-saved frame and
+ *  `ret`'d into here (with IRQ/FIQ UNMASKED by .Ldispatch_loop's daifclr).
+ *  SP points at the [ELR_EL1|SPSR_EL1] pair we pushed at preempt time, sitting
+ *  ON TOP OF the original 160-byte save_caller_regs frame.  We:
+ *    1. re-mask IRQ/FIQ (eret will restore the real DAIF from SPSR anyway, but
+ *       we must not take a nested IRQ between here and eret),
+ *    2. pop + restore ELR_EL1/SPSR_EL1,
+ *    3. restore_caller_regs (unwind the 160-byte frame → x0..x18,x30),
+ *    4. eret to the exact interrupted PC.
+ * --------------------------------------------------------------------- */
+    .global _irq_resume_tramp
+.Lirq_resume_tramp:
+_irq_resume_tramp:
+    msr  daifset, #0x3          /* mask I+F until the eret restores SPSR.DAIF */
+    ldp  x0, x1, [sp], #16      /* pop ELR_EL1/SPSR_EL1                        */
+    msr  elr_el1, x0
+    msr  spsr_el1, x1
+    restore_caller_regs         /* unwind the 160-byte caller frame           */
+    eret                        /* return to the exact interrupted PC         */
+#endif /* SMP_SELFTEST */
 
 _vec_el1_sync:
     /* Dump ESR_EL1 + ELR_EL1 + FAR_EL1 to PL011 for diagnosis.
@@ -485,8 +553,9 @@ smp_dispatch_loop:
 1:  wfe
     b    1b
 
-#ifdef SMP_2TASKS_PROD
-/* void smp_prod_enter_dispatch(void)   [②.2a — [smp-2tasks-prod]]
+#if defined(SMP_2TASKS_PROD) || defined(SMP_ASYNC_PREEMPT)
+/* void smp_prod_enter_dispatch(void)   [②.2a — [smp-2tasks-prod];
+ *                                       ②.2b-i — [smp-async-preempt]]
  *   Enter the PRODUCTION per-CPU dispatcher loop (.Ldispatch_loop above) on
  *   THIS CPU.  The loop reads g_smpcpu[me].schedtsk (a REAL T-Kernel TCB the
  *   driver pre-set), stores it into g_smpcpu[me].ctxtsk, loads the TCB's
@@ -500,5 +569,5 @@ smp_dispatch_loop:
 smp_prod_enter_dispatch:
     msr  daifset, #0x3             /* mask IRQ+FIQ (as knl_dispatch) */
     b    .Ldispatch_loop           /* never returns — switches into the TCB */
-#endif /* SMP_2TASKS_PROD */
+#endif /* SMP_2TASKS_PROD || SMP_ASYNC_PREEMPT */
 #endif /* SMP_SELFTEST */

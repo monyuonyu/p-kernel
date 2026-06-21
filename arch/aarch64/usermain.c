@@ -269,6 +269,62 @@ EXPORT INT usermain(void)
     }
 #endif /* SMP_2TASKS_PROD */
 
+#ifdef SMP_ASYNC_PREEMPT
+    /* ②.2b-i [smp-async-preempt]: prove a REAL task on the SECONDARY is
+     * preempted ASYNCHRONOUSLY MID-LOOP (no flag-check) by an SGI whose
+     * IRQ-return path performs a REAL register-context switch, and RESUMES
+     * correctly (its loop counter continues).  Runs here inside the initial
+     * task with the kernel fully up (real TCBs + ready queue exist).  Prints a
+     * verdict the harness greps.  FALSIFIER -DSMP_NO_ASYNC: no IRQ-return
+     * switch → L never preempted → FAIL (with sgi_taken>=1). */
+    {
+        extern int  smp_async_test_run(void);
+        extern unsigned long smp_async_counter(void);
+        extern unsigned long smp_async_observed(void);
+        extern unsigned long smp_async_final(void);
+        extern unsigned long smp_async_highprio_ran(void);
+        extern unsigned long smp_async_loop_cap(void);
+        extern unsigned long smp_sgi_taken(int cpu);
+
+        /* minimal unsigned-long decimal printer (evidence) */
+        #define PRINT_ULONG(v) do { unsigned long _u=(unsigned long)(v); \
+            char _t[21]; int _i=0; if(_u==0)_t[_i++]='0'; \
+            while(_u){_t[_i++]=(char)('0'+_u%10);_u/=10;} \
+            char _o[22]; int _j=0; while(_i)_o[_j++]=_t[--_i]; _o[_j]='\0'; \
+            print(_o); } while(0)
+        #define PRINT_SLONG(v) do { long _s=(long)(v); if(_s<0){print("-");_s=-_s;} \
+            PRINT_ULONG((unsigned long)_s); } while(0)
+
+        print("[SMP] ②.2b-i [smp-async-preempt]: async MID-LOOP preempt + resume...\r\n");
+        int rc = smp_async_test_run();
+
+        unsigned long obs   = smp_async_observed();
+        unsigned long fin   = smp_async_final();
+        unsigned long cap   = smp_async_loop_cap();
+        unsigned long hr    = smp_async_highprio_ran();
+        unsigned long sgis  = smp_sgi_taken(1);
+
+        print("[SMP] cpu1 highprio_ran="); PRINT_ULONG(hr);
+        print(" sgi_taken=");              PRINT_ULONG(sgis); print("\r\n");
+        print("[SMP] observed_counter(at preempt)="); PRINT_ULONG(obs);
+        print(" final_counter=");                     PRINT_ULONG(fin);
+        print(" cap=");                               PRINT_ULONG(cap); print("\r\n");
+
+        /* PASS: H ran on CPU 1, the preempt landed MID-loop (0 < observed <
+         * cap), L RESUMED + finished (final == cap), the counter CONTINUED
+         * (final > observed), and an SGI was actually taken (sgi_taken>=1). */
+        if (rc == 0 && hr == 1 && obs > 0 && obs < cap &&
+            fin == cap && fin > obs && sgis >= 1) {
+            print("SMP-ASYNC-PREEMPT: PASS\r\n");
+        } else {
+            print("SMP-ASYNC-PREEMPT: FAIL rc="); PRINT_SLONG(rc);
+            print(" (no mid-loop preempt / no resume; need hr=1, 0<obs<cap, fin=cap, sgi>=1)\r\n");
+        }
+        #undef PRINT_ULONG
+        #undef PRINT_SLONG
+    }
+#endif /* SMP_ASYNC_PREEMPT */
+
     /* AI primitives — tensor / ai_job / pipeline / MLP seed */
     ai_kernel_init();
 

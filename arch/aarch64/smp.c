@@ -344,6 +344,11 @@ void smp_resched_sgi_handler(void)
     __asm__ volatile("dmb ish" ::: "memory");
 }
 
+/* ②.2b-i: the IRQ-return-path async-preempt DECISION (smp_irq_need_resched)
+ * is defined LOWER in this file — after struct smp_cpu / g_smpcpu[] and the
+ * BKL globals (g_bkl_owner) it reads — see "②.2b-i — the IRQ-return-path
+ * async-preempt DECISION" below the BKL block. */
+
 /* Distributor + boot-CPU-interface enable + SGI handler registration, run
  * once by the driver BEFORE releasing the secondary (§2.5 steps 1-3). The
  * self-test runs before knl_t_kernel_main, so NONE of gic_init's state
@@ -500,6 +505,107 @@ void bkl_release(void)
         g_bkl_owner = -1;
         raw_unlock(&g_bkl_lock);
     }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ *  ②.2b-i — the IRQ-return-path async-preempt DECISION (Option A).
+ *
+ *  Called from _vec_el1_irq (cpu_support.S, SMP_SELFTEST) AFTER the SGI/timer
+ *  is EOIR'd and BEFORE restore_caller_regs.  Returns 1 iff THIS CPU should
+ *  perform a real register-context switch from interrupt context, mirroring
+ *  the 4-clause END_CRITICAL_SECTION dispatch test (cpu_status.h) PLUS the
+ *  §5.4 BKL-held guard:
+ *
+ *    (1) a reschedule is pending on me           (g_resched_pending[me])
+ *    (2) my current task != my next task         (ctxtsk != schedtsk)
+ *    (3) dispatch is not disabled on me           (!dispatch_disabled)
+ *    (4) the interrupted ctx is NOT task-independent (!knl_taskindp)
+ *    (5) §5.4 DEADLOCK GUARD: the interrupted ctx does NOT hold the BKL —
+ *        i.e. it was not mid-critical-section.  Switching away from a task
+ *        that holds the BKL would (a) strand the lock (the new task can never
+ *        acquire it) and (b) is exactly the "preempt while BKL-held mid-
+ *        syscall" self-deadlock the plan flags as the #1 hazard.  g_bkl_owner
+ *        is published UNDER the raw lock and read here with a dmb; if it
+ *        equals me, the interrupted context is inside the kernel → DEFER.
+ *
+ *  The pending flag is CONSUMED here (set to 0) only when we decide to switch,
+ *  so a deferred reschedule (clause 5 false) stays pending and is retried on
+ *  the next IRQ once the BKL is released (the task's own END_CRITICAL_SECTION
+ *  will also dispatch it cooperatively — belt and braces).
+ *
+ *  knl_taskindp is a single GLOBAL W (signed int) at this base (§3.4) — NOT
+ *  per-CPU.  For the ②.2b cert the secondary's async-preempt loop is plain
+ *  task context (knl_taskindp == 0), so reading the global is correct here;
+ *  per-CPU-izing it is ledgered as a ②.3 sharpening. */
+extern int knl_taskindp;                 /* W == signed int (cpu_init.c) */
+
+int smp_irq_need_resched(void)
+{
+#if defined(SMP_NO_ASYNC)
+    /* FALSIFIER (-DSMP_NO_ASYNC): revert to the ②.1a flag-set-only behaviour —
+     * the IRQ-return path performs NO context switch.  The SGI is still TAKEN
+     * (smp_resched_sgi_handler bumped g_sgi_taken + set pending), but with no
+     * switch and no flag-check in the tight loop the low-prio task is NEVER
+     * preempted → the cert FAILs (g_async_highprio_ran stays 0), proving the
+     * async switch is load-bearing.  We DO consume the pending flag so the
+     * sgi_taken>=1 evidence cleanly distinguishes "SGI delivered, no switch"
+     * from "no SGI". */
+    unsigned long me0 = smp_mpidr_aff0();
+    if (me0 < SMP_MAX_CPUS) {
+        g_resched_pending[me0] = 0u;
+        __asm__ volatile("dmb ish" ::: "memory");
+    }
+    return 0;
+#else
+    unsigned long me = smp_mpidr_aff0();
+    if (me >= SMP_MAX_CPUS)
+        return 0;
+
+    __asm__ volatile("dmb ld" ::: "memory");
+
+    /* (1) pending? */
+    if (!g_resched_pending[me])
+        return 0;
+
+    /* (5) §5.4 deadlock guard: never switch away from a BKL holder. */
+    if (g_bkl_owner == (long)me)
+        return 0;                         /* mid-critical-section → defer */
+
+    /* (4) not task-independent (timer-startup / IRQ nesting marker). */
+    if (knl_taskindp > 0)
+        return 0;
+
+    /* (3) dispatch not disabled on this CPU. */
+    if (g_smpcpu[me].dispatch_disabled)
+        return 0;
+
+    /* (2) a different task is selected to run. */
+    void *ctx   = g_smpcpu[me].ctxtsk;
+    void *sched = g_smpcpu[me].schedtsk;
+    if (sched == 0 || ctx == sched)
+        return 0;
+
+    /* All clauses hold → consume the pending flag and switch. */
+    g_resched_pending[me] = 0u;
+    __asm__ volatile("dmb ish" ::: "memory");
+    return 1;
+#endif /* SMP_NO_ASYNC */
+}
+
+/* Public wrapper so the cert TUs (smp_async.c) can set the primary's SMPEN
+ * without re-declaring the static helper. */
+void smp_set_smpen_pub(void) { smp_set_smpen(); }
+
+/* Per-CPU "# of SGIs taken" — observability shared by the ②.1a [smp-cross-
+ * preempt], ②.2b-i [smp-async-preempt], and any future SMP cert (reads the
+ * always-SMP g_sgi_taken[] the SGI handler bumps).  Available whenever
+ * SMP_SELFTEST is on, not just SMP_PREEMPT_TEST, so the async cert can prove
+ * "the SGI was delivered" independently. */
+unsigned long smp_sgi_taken(int cpu)
+{
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
+    __asm__ volatile("dmb ld" ::: "memory");
+    return g_sgi_taken[cpu];
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -906,6 +1012,15 @@ extern volatile int g_prod_secondary_go;
 extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
 #endif
 
+#ifdef SMP_ASYNC_PREEMPT
+/* ②.2b-i [smp-async-preempt]: the secondary waits for the driver (smp_async.c,
+ * on CPU 0) to publish its schedtsk = the REAL low-prio loop task L, then
+ * enters the PRODUCTION dispatcher (smp_prod_enter_dispatch → .Ldispatch_loop)
+ * — switching into L on CPU 1.  Symbols from smp_async.c. */
+extern volatile int g_async_secondary_go;
+extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns */
+#endif
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -913,6 +1028,28 @@ void smp_dispatch_run(void)
     if (me >= SMP_MAX_CPUS) {
         for (;;) __asm__ volatile("wfe");     /* never index OOB */
     }
+
+#ifdef SMP_ASYNC_PREEMPT
+    /* ②.2b-i: run the REAL low-prio loop task L via the production dispatcher on
+     * this secondary, then let the async IRQ-return hook preempt it mid-loop. */
+    {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        smp_dbg("[SMP] cpu1 entered PRODUCTION dispatcher (async-preempt)\r\n");
+        unsigned long tries = 0;
+        for (;;) {
+            __asm__ volatile("dmb ld" ::: "memory");
+            if (g_async_secondary_go && g_smpcpu[me].schedtsk != 0)
+                break;
+            if (++tries >= 200000000UL) {
+                for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
+            }
+            __asm__ volatile("yield" ::: "memory");
+        }
+        smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs L */
+        for (;;) __asm__ volatile("wfe");
+    }
+#endif
 
 #ifdef SMP_2TASKS_PROD
     /* ②.2a: run a REAL TCB via the production dispatcher on this secondary. */
@@ -1096,12 +1233,6 @@ unsigned long smp_highprio_ran(int cpu)
     if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
     __asm__ volatile("dmb ld" ::: "memory");
     return g_smpcpu[cpu].highprio_ran;
-}
-unsigned long smp_sgi_taken(int cpu)
-{
-    if (cpu < 0 || cpu >= SMP_MAX_CPUS) return 0UL;
-    __asm__ volatile("dmb ld" ::: "memory");
-    return g_sgi_taken[cpu];
 }
 /* The &g_highprio_task pointer (so the driver can assert B's ctxtsk == it). */
 void *smp_highprio_taskptr(void) { return (void *)&g_highprio_task; }
