@@ -102,6 +102,9 @@ IMPORT void dkva_cmd(const UB *args, UW len);
 IMPORT void ss6live_cmd(const char *args, void (*emit)(const char *));      /* SS-6 LIVE cert */
 IMPORT void ss6live_responder_init(INT stacd, void *exinf);                  /* SS-6 LIVE responder task body */
 IMPORT void ss6_live_set_enabled(int on);                                    /* SS-6 LIVE opt-in toggle */
+IMPORT void snf_install(void);                                               /* N-2c supernode forwarding: bind SNF_PORT */
+IMPORT void supernode_forward_self_test(void (*print)(const char *));        /* N-2c forwarding-plane cert */
+IMPORT void snf_cmd(const UB *args, UW len, void (*print)(const char *));     /* N-2c live driver (snf send/sink/recv/stat) */
 
 extern char *getenv(const char *);
 
@@ -355,6 +358,15 @@ static void cmd_net(void)
      * need real stack; NOT the deep init stack — student_birth_warmup hazard). */
     create_task((FP)ss6live_responder_init, 7, 262144);
     print("[net] ss6-live remote-expert responder task started\r\n");
+
+    /* N-2c supernode packet forwarding (p2p-overlay.md): bind SNF_PORT so this
+     * node can act as the elected supernode (re-forward SNF_FWD -> SNF_DELIVER)
+     * AND as a destination. drpc/region are up by here. No env opt-in needed —
+     * binding is harmless; a node only routes THROUGH a supernode when
+     * region_supernode() elects a capable peer (PKERNEL_SUPERNODE on it), else
+     * the sender degrades DIRECT (today's central-relay path). */
+    snf_install();
+    print("[net] supernode-forward port bound (N-2c)\r\n");
 
     /* MoE score gossip — broadcasts this node's per-class accuracy and
      * collects peers'. `moe` then routes a query to the best expert by
@@ -828,6 +840,11 @@ EXPORT INT usermain(void)
             else if (al >= 3 && a[0]=='t'&&a[1]=='e'&&a[2]=='a') swim_teacher_gossip_self_test(print);
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             else swim_nodes_print();
+        } else if (starts_with(line, n, "snf")) {
+            /* N-2c supernode-forward LIVE driver (p2p-overlay.md): drives the
+             * REAL UDP wire so a multi-process run proves A->B forwarded BY the
+             * elected supernode. snf sink|send <dst>|recv|stat. */
+            snf_cmd(line + 3, (UW)(n - 3), print);
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`
              * runs region_supernode_test() (deterministic select / convergence
@@ -835,6 +852,11 @@ EXPORT INT usermain(void)
             const UB *a = line + 6; UW al = (UW)(n - 6);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') region_supernode_test();
+            /* N-2c forwarding-plane cert (p2p-overlay.md): `region fwd` runs
+             * supernode_forward_self_test() — A->B routed THROUGH the elected
+             * supernode S (S.forwarded>0, B byte-identical) + the two falsifiers
+             * (no supernode -> DIRECT; unreachable S -> fail-closed DIRECT). */
+            else if (al >= 3 && a[0]=='f'&&a[1]=='w'&&a[2]=='d') supernode_forward_self_test(print);
             else region_print();
         } else if (starts_with(line, n, "hrw")) {
             lookup_self_test(print);

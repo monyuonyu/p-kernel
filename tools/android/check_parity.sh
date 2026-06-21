@@ -54,7 +54,14 @@ MK2="$ROOT/boot/linux_x86_64/Makefile"
 # unverified in this sandbox (no Android SDK). TODO: move to lock-step (add to the
 # CMake COMMON_SRC) when the kv_step-live wiring lands AND the NDK compile is
 # confirmed — at which point a meshed phone can actually cross-node-fire.
-ALLOW_MK_ONLY="ss6_live.c"   # basenames the Makefile may have that CMake omits
+# supernode.c (N-2c supernode packet forwarding): host-only FOR NOW, same
+# rationale as ss6_live.c. The forwarding plane rides udp_send/udp_bind (which
+# exist on Android) but the [live] proof is a host multi-process run, and the
+# NDK/Bionic compile is unverified here (no Android SDK). The selector/gossip it
+# builds on (region.c/swim.c) ARE in the APK; only this forwarding TU is held
+# back. TODO: lock-step into the CMake COMMON_SRC when N-2c-on-Android is wired
+# (JNI to PKERNEL_SUPERNODE + a meshed-phone forward) AND the NDK compile passes.
+ALLOW_MK_ONLY="ss6_live.c supernode.c"   # basenames the Makefile may have that CMake omits
 ALLOW_CM_ONLY=""      # basenames CMake may have that the Makefile omits
 
 # --- extractor ------------------------------------------------------------

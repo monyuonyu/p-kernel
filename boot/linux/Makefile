@@ -213,6 +213,7 @@ COMMON_C_SRCS = \
     lookup.c \
     placement.c \
     ss6_live.c \
+    supernode.c \
     pfs_repl.c \
     pfs_dag.c \
     protect.c \
