@@ -582,3 +582,60 @@ LEDGER: row CLOSED. The partition that keeps the mind one across cores is now
 drift-guarded DIRECTLY (not only via the matmul), with a golden reference proven
 independent. The ③ multicore arc (MC-0 → MC-1 → MC-2.0 → MC-2.1 → MC-2.1b) is
 complete and audited; the ② full-SMP bringup foundation is laid.
+
+## ②.0 full-SMP slice (2-CPU Big Kernel Lock) — commit 78c5d222 (impl 97ab61ed)
+- Auditor: independent adversarial WORKFLOW (5 parallel dimensions, each in its own
+  isolated worktree, + per-finding adversarial-verify), 2026-06-21. Did NOT write
+  the code. The FIRST real step of ② full SMP — the repo's HIGHEST-RISK change.
+  (NOTE: a first audit run died entirely on a session-limit with ZERO tool uses —
+  its "MERGEABLE" was a phantom; this is the re-run that actually executed: 205 tool
+  uses, ~407k tokens, 45 reproduced boots.)
+- Verdict: **MERGEABLE (ledger row CLOSED).** All 5 gates PASS; blockers=[];
+  confirmed_material_findings=[]. The only finding is minor harness fragility (below).
+- [smp-is-real-NOT-vacuous] The deadliest failure (certs PASS but only ONE core ran)
+  is REFUTED: MPIDR instrumentation shows task0 on core 0x80000000 (Aff0 0) and task1
+  on 0x80000001 (Aff0 1) — two DISTINCT physical cores. The -DSMP_MUTEX_NOLOCK
+  falsifier loses updates NON-deterministically (203170/208919/212138/232530/213859
+  across runs = a real race, not a fixed delta — and if only one core ran, removing
+  the lock could not lose updates). Control: -smp 1 makes ALL certs FAIL (a sentinel),
+  proving 2 real cores are needed. Locked counter = exactly 400000 across 5 runs.
+- [bkl-correctness] The BKL raw spinlock (smp.c:193-212) is byte-identical to the
+  already-audited mc2_lock (ldaxr-acquire + stxr-retry + stlr-release + sevl/wfe);
+  the recursive owner+depth layer is correct; EVERY multi-writer mutation (ready
+  push/pull+claim, per-CPU sched state, the shared + barrier counters) is under the
+  BKL; the only outside-lock writes are single-writer-per-location with dmb. The
+  unbounded-skip deadlock is genuinely fixed (smp_ready_pull:281-295 bounded, atomic
+  claim, NULL when drained); drained CPUs wfe WITHOUT holding the BKL. 45/45 clean
+  snapshot-based runs reached a verdict with ZERO hangs. KEY: an intermittent
+  SMP-MUTEX FAIL the auditor first saw was proven (by exact timestamp correlation) to
+  be SELF-INFLICTED — the auditor's own parallel NOLOCK `make` overwrote the running
+  kernel.elf — NOT a BKL bug.
+- [shipped-kernel-byte-identical] The crown constraint HOLDS: the DEFAULT build (no
+  SMP flag) is byte-identical to base 457e959d across every loadable section AND the
+  full loadable binary image (421496 B, cmp-identical, PHDRS identical); the ONLY
+  delta is +24 B of non-loadable .symtab (one entry from the always-compiled-but-fully
+  -gated smp.o). task.c is UNCHANGED (empty diff). cpu_support.S/start.S edits are
+  append-only EOF hunks that do NOT touch .Ldispatch_loop / _secondary_worker. MC-2
+  bringup intact (mc2-test ALL PASS, mc2-equiv byte-identity PASS).
+- [one-mind-untouched] The diff touches exactly 6 files (arch/aarch64/{cpu_support.S,
+  smp.c,start.S}, boot/aarch64/{Makefile,main.c}, tests/aarch64/run_smp0.sh) — NONE a
+  mind TU. The self-test workload is a bare shared-counter loop (no fn-ptr, no mind
+  state); the secondary's reachable call graph is closed and contains ZERO calls into
+  the mind/merge path. ②.0 is pure kernel scheduling.
+- [honest-scope-and-decoupling] Scope honestly represented: ②.0 runs its OWN per-CPU
+  dispatcher over self-test tasks (NOT the production knl_ctxtsk — that conversion is
+  the next lift); nothing overclaims "the T-Kernel is now SMP". The decoupling is
+  clean — smp.c's own copies of psci_cpu_on/mc2_set_smpen/mpidr_aff0 are byte-identical
+  to mc2_smp.c's originals (documented maintenance debt: merge g_cpu[]/g_smpcpu[] later).
+- MINOR FINDING (follow-up, non-blocking): run_smp0.sh rebuilds kernel.elf in the same
+  dir it boots from, so a CONCURRENT build silently corrupts the run (the source of the
+  auditor's self-inflicted flake). Fix = snapshot the elf before boot (a ②.1/harness
+  follow-up). Not a code defect.
+- HONEST BOUND: ②.0 proves the SMP MECHANISM (BKL + per-CPU dispatch + true 2-CPU
+  concurrency + mutual exclusion). It does NOT convert the production scheduler, and
+  the barrier/race teeth are only fully [live] on RPi3 (QEMU TCG masks weak-ordering).
+  IPIs/cross-CPU preempt = ②.1; the [smp-one-mind] crown cert = ②.2; finer locks = ②.3.
+LEDGER: row CLOSED. Two physical aarch64 cores run the T-Kernel dispatcher under one
+Big Kernel Lock, provably concurrent (distinct MPIDRs, falsifier loses ~half the
+updates), with the shipped uniprocessor kernel byte-identical and the mind untouched.
+The first real step of full SMP is on trunk.
