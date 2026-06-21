@@ -938,3 +938,24 @@ the first real step of the decentralized P2P overlay. Live multi-process forward
   actually traverse the ./relay (like ss6_live.c's remote-expert path does), then re-run on the
   ThinkPad. THE DEBUG ENV PAID OFF on first use: it found a real distributed-transport bug the
   sandbox structurally cannot.
+
+## N-2c [live] — re-verified on the SSH host AFTER the port fix, 2026-06-21 — STILL OPEN (honest)
+- The SNF/PMESH port collision (SNF_PORT 7380 == PMESH_PORT 7380; netstack udp_input delivers to
+  the FIRST matching socket + returns, and pmesh binds 7380 at boot → SNF traffic was eaten by
+  pmesh_rx) was a REAL bug, fixed (SNF_PORT → 7377, a verified-free slot) and MERGED (commit
+  4ae1c130 area). In-proc cert 20/20 + no-regression confirmed.
+- BUT the real-host [live] re-run STILL FAILS: S now binds 7377, but snf_rx never fires (S
+  forwarded=0, B delivered=0); the relay log shows NO REL_DATA dst=S for the SNF_FWD. So the port
+  was ONE bug, not the whole story. Remaining [live] issues (honest, do-NOT-fudge-green):
+  1. A's udp_send(snf_node_ip(S)=10.1.0.2, 7377) does not reach S over the ./relay even at the
+     unique port — likely a MEMBERSHIP-ROUTING/TIMING issue (the 3-node startup flaps
+     FULL→REDUCED→FULL; the harness probes ~11s in, possibly before A has a stable relay route /
+     drpc-seeded ARP to S). ss6_live works [live] because its cert runs after stable convergence.
+  2. A HARNESS verdict mismatch: run_supernode_fwd.sh asserts my_supernode=2 (the PKERNEL_NODE_ID),
+     but the code correctly reports my_supernode=1 (the internal 0-indexed node-id = S). The
+     election is RIGHT; the harness's expected value is off-by-mapping.
+- STATUS: N-2c [in-proc] valid + merged (route logic, counters, byte-identity, the port fix). N-2c
+  [live] is OPEN — a dedicated [live] BRING-UP follow-up: fix the harness verdict mapping + wait for
+  stable convergence before the probe + confirm A's overlay udp_send reaches S over the relay (the
+  membership-routing path). The DEBUG ENV's value is proven: it found the [live] failure AND a real
+  port-collision bug the in-proc cert (socket stubbed) structurally could not. NOT fudged green.
