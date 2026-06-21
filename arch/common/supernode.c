@@ -99,12 +99,12 @@ static void snf_build(SNF_PKT *p, UW magic, UB origin, UB final_dst,
 {
     UB *pb = (UB *)p;
     for (INT z = 0; z < (INT)sizeof *p; z++) pb[z] = 0;
+    if (len > SNF_PAYLOAD_MAX) len = SNF_PAYLOAD_MAX;   /* clamp BEFORE storing */
     p->magic      = magic;
     p->origin     = origin;
     p->final_dst  = final_dst;
     p->relayed_by = relayed_by;
     p->len        = len;
-    if (len > SNF_PAYLOAD_MAX) len = SNF_PAYLOAD_MAX;
     for (UH i = 0; i < len; i++) p->payload[i] = payload[i];
 }
 
@@ -118,6 +118,19 @@ INT snf_send(UB dst, const UB *payload, UH len)
 
     UB me = drpc_my_node;
     UB sn = region_supernode();              /* the elected min-id supernode  */
+
+    /* Runtime fail-closed: an ELECTED supernode that SWIM has already marked
+     * DEAD must NOT be used — degrade to DIRECT so the packet is not lost into
+     * a dead peer. (region_supernode() selects on capability+membership; a node
+     * can be a capable member in one view yet observed-dead here in the brief
+     * gossip-convergence window. This check honestly covers the SWIM-detected
+     * death — the falsifier-(b) case where S is killed and marked dead. A
+     * silently-unreachable-but-still-ALIVE S, within the SWIM death-detection
+     * window, is a brief loss window — the same honest bound ss6_live.c
+     * documents; a full ACK/retry is a deferred hardening.) */
+    if (sn != 0xFF && sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD)
+        sn = 0xFF;                           /* dead supernode -> direct        */
+
     UB tgt = snf_route_target(dst, me, sn);
     if (tgt == 0xFF) return 0;               /* invalid destination           */
 
@@ -142,6 +155,12 @@ INT snf_send(UB dst, const UB *payload, UH len)
 /* ------------------------------------------------------------------ */
 /* supernode side: re-forward an SNF_FWD to its final destination      */
 /* ------------------------------------------------------------------ */
+/* The last SNF_DELIVER this node emitted as a supernode (observability + the
+ * cert reads it to feed the REAL forwarded bytes into the destination path).
+ * File-static -> off the task stack. */
+static SNF_PKT snf_last_out;
+static INT     snf_last_out_valid = 0;
+
 static void snf_forward(UW src_ip, const SNF_PKT *in)
 {
     (void)src_ip;
@@ -150,13 +169,13 @@ static void snf_forward(UW src_ip, const SNF_PKT *in)
 
     /* Re-wrap as SNF_DELIVER, stamping ourselves as the relay. The payload is
      * copied VERBATIM (byte-identical forward — one mind). */
-    static SNF_PKT out;
     UH len = in->len;
     if (len > SNF_PAYLOAD_MAX) len = SNF_PAYLOAD_MAX;
-    snf_build(&out, SNF_DLV_MAGIC, in->origin, dst, drpc_my_node,
+    snf_build(&snf_last_out, SNF_DLV_MAGIC, in->origin, dst, drpc_my_node,
               in->payload, len);
+    snf_last_out_valid = 1;
     udp_send(snf_node_ip(dst), SNF_PORT, SNF_PORT,
-             (const UB *)&out, (UH)sizeof out);
+             (const UB *)&snf_last_out, (UH)sizeof snf_last_out);
     snf_fwd_cnt++;
 }
 
@@ -227,6 +246,18 @@ static UB  cert_recv_buf[SNF_PAYLOAD_MAX];
 static UH  cert_recv_len;
 static INT cert_recv_via_super;
 static UB  cert_recv_origin;
+
+/* A REAL snf_sink_fn for the production-code-path arm: snf_rx() calls THIS when
+ * a SNF_DELIVER for us arrives, so we record what the SHIPPED delivery code
+ * actually handed up (byte-identical check + via_super flag). */
+static void cert_real_sink(UB src, const UB *payload, UH len, INT via_super)
+{
+    cert_recv_origin    = src;
+    cert_recv_via_super = via_super;
+    if (len > SNF_PAYLOAD_MAX) len = SNF_PAYLOAD_MAX;
+    for (UH i = 0; i < len; i++) cert_recv_buf[i] = payload[i];
+    cert_recv_len = len;
+}
 
 /* In-proc model of S re-forwarding + B receiving, given an SNF_FWD packet.
  * Returns 1 if a forward happened (S re-forwarded), 0 if not. Mirrors
@@ -364,8 +395,60 @@ void supernode_forward_self_test(void (*pr)(const char *))
     snf_check(pr, snf_route_target((UB)DNODE_MAX, A, S) == 0xFF,
               "edge: dest out of range -> invalid");
 
+    /* ---- REAL PRODUCTION CODE PATH (not the model): drive the actual snf_rx /
+     * snf_forward / destination-deliver functions in-process. This proves the
+     * SHIPPED wire-handling code forwards + delivers byte-identical, not just
+     * the cert's local model. We temporarily impersonate the supernode S and
+     * the destination B by setting drpc_my_node, feed crafted real packets into
+     * snf_rx(), and check the production counter + the production sink.
+     * The udp_send() inside snf_forward no-ops safely (no socket bound here);
+     * we assert the re-wrap + counter + delivery, which run for real. ------- */
+    {
+        extern UB drpc_my_node;
+        UB saved_me = drpc_my_node;
+        snf_sink_fn saved_sink = snf_sink;
+        unsigned fwd0 = snf_forwarded();
+        unsigned dlv0 = snf_delivered();
+        snf_last_out_valid = 0;
+
+        /* (i) Impersonate supernode S; feed a REAL SNF_FWD (origin A, dst B).
+         * The production snf_rx -> snf_forward must increment snf_forwarded()
+         * AND emit a SNF_DELIVER into snf_last_out (the actual forwarded bytes). */
+        drpc_my_node = S;
+        static SNF_PKT real_fwd;
+        snf_build(&real_fwd, SNF_FWD_MAGIC, A, B, 0xFF, MSG, MLEN);
+        snf_rx(0, SNF_PORT, (const UB *)&real_fwd, (UH)sizeof real_fwd);
+        snf_check(pr, snf_forwarded() == fwd0 + 1 && snf_last_out_valid,
+                  "REAL snf_rx/snf_forward: production forwarded_count incremented");
+
+        /* (ii) Impersonate destination B; feed the EXACT SNF_DELIVER the
+         * production snf_forward just emitted (snf_last_out) into the production
+         * snf_rx delivery path. The sink must get byte-identical bytes from the
+         * ORIGINAL A + via_super=1 — closing the loop through the REAL forward,
+         * so a corruption anywhere in snf_forward's re-wrap is caught here. */
+        drpc_my_node = B;
+        snf_set_sink(cert_real_sink);        /* records what snf_rx delivers up */
+        cert_recv_len = 0xFFFF; cert_recv_via_super = -1; cert_recv_origin = 0;
+        snf_rx(0, SNF_PORT, (const UB *)&snf_last_out, (UH)sizeof snf_last_out);
+        snf_check(pr, snf_delivered() == dlv0 + 1,
+                  "REAL snf_rx deliver: production delivered_count incremented");
+        snf_check(pr, cert_recv_via_super == 1,
+                  "REAL deliver: production sink saw via_super=1 (forwarded)");
+        snf_check(pr, cert_recv_origin == A,
+                  "REAL deliver: production sink saw ORIGINAL sender A (preserved)");
+        BOOL id_r = (cert_recv_len == MLEN);
+        for (UH i = 0; id_r && i < MLEN; i++)
+            if (cert_recv_buf[i] != MSG[i]) id_r = FALSE;
+        snf_check(pr, id_r,
+                  "REAL fwd+deliver: end-to-end through snf_forward BYTE-IDENTICAL");
+
+        /* restore — never leave the impersonation or sink installed. */
+        drpc_my_node = saved_me;
+        snf_set_sink(saved_sink);
+    }
+
     pr("[supernode-forward] ");
-    sn_putdec((UW)(15 - snf_fail));
+    sn_putdec((UW)(20 - snf_fail));
     pr(" PASS, ");
     sn_putdec((UW)snf_fail);
     pr(" FAIL\r\n");

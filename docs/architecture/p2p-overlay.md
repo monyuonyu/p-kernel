@@ -94,9 +94,41 @@ propagates across the mesh via SWIM, so every node converges on the same superno
   true multi-process LIVE mesh converging the bit over UDP is left as a deferred `[live]` row (the
   in-process cert drives the identical real `gossip_apply` code path).
 
+### N-2 slice 2c — supernode packet FORWARDING (DONE, wave-n2c-supernode-forward)
+The elected supernode now actually FORWARDS region traffic — the first datagram routed
+THROUGH a supernode instead of unconditionally via the central `./relay`.
+- **Module (`arch/common/supernode.c`/`.h`, hosted-only, check_parity allowlisted like
+  `ss6_live.c`):** when a node sends a payload to region peer B and `region_supernode()`
+  elects a capable peer S (S≠0xFF, S≠self, S≠B, S not SWIM-DEAD), the sender wraps it as
+  an `SNF_FWD` to S on a dedicated UDP port (`SNF_PORT`=7380), S re-forwards it as an
+  `SNF_DELIVER` to B over the SAME `net_relay` transport (the supernode is just another
+  node — NO new wire protocol; `udp_send`/`udp_bind`, mirroring `ss6_live.c`), and B
+  receives the payload BYTE-IDENTICAL. The route decision is a PURE integer function
+  `snf_route_target(dst,me,sn)` (testable, arch-uniform).
+- **Fail-closed / honest degrade:** no supernode (`0xFF`), S==self/dst, OR an elected S
+  that SWIM has marked DEAD → DIRECT `SNF_DELIVER` to B (== today's central-relay
+  behavior). So a default single node (no capable supernode) is byte-unchanged.
+  HONEST bound: a silently-unreachable-but-still-ALIVE S within the SWIM death-detect
+  window is a brief loss window (no per-packet ACK/retry — a deferred hardening, the same
+  bound `ss6_live.c` documents).
+- **NOCENTRAL/deterministic** (S = the existing min-id `region_supernode()` selector, no
+  vote); the forwarded payload is **byte-identical** (one mind); no VLA (fixed
+  `SNF_PAYLOAD_MAX`, all file-static off the task stack); `region.c`/`swim.c`/mind-math
+  UNTOUCHED.
+- **Host cert `supernode_forward_self_test()` (shell `region fwd`): 20/20 PASS on BOTH
+  linux + linux_x86_64 (cross-arch identical), sabotage-tested RED.** `[supernode-forward]`
+  A→B THROUGH elected S (`S.forwarded_count`>0, B byte-identical, origin A preserved) +
+  falsifier (a) no supernode → DIRECT (S forwards 0, B still gets it) + falsifier (b)
+  unreachable S → fail-closed DIRECT (no packet lost) + a **REAL-production-code-path**
+  sub-arm that drives the SHIPPED `snf_rx`/`snf_forward`/deliver functions + counters
+  in-process (end-to-end byte-identity through the real `snf_forward`, corruption caught).
+- **DEFERRED [live] row:** the true 3-OS-process supernode-forward over `./relay`
+  (`samples/11_distributed/run_supernode_fwd.sh`, ready) — not cashed in the implementer's
+  PRoot sandbox (foreground `sleep` + backgrounded `relay &`/`p-kernel &` children are
+  killed there, the same wall the existing `run_ss6_live.sh`/`run_4node_regions.sh` `[live]`
+  rows hit); cash on a real host (the SS-6 → SS-6-live pattern).
+
 **DEFERRED to later N-2/N-3/N-4 slices (NOT in this slice — honest scope):**
-- **Supernode packet forwarding (N-2c)** — the relay `REL_DATA`/`REL_BROADCAST` forwarder
-  relocation into the elected supernode (no datagrams are forwarded yet).
 - **NAT hole-punch (N-3)** — supernode-assisted STUN / rendezvous / promote-to-P2P-direct.
 - **Bootstrap/seed (N-4)** — `PKERNEL_SEED` list; relay as one optional well-known seed.
 - NAT hole-punching: supernode-assisted STUN (it already holds the peer's reflexive tuple);

@@ -29,6 +29,18 @@
 # Usage:  ./run_supernode_fwd.sh
 # Watch:  /tmp/snf_*.log
 # Exit 0 = all three arms behaved; exit 1 = a real divergence (reported honestly).
+#
+# STATUS (honest): this is the [supernode-forward][live] arm. The forwarding
+# PLANE + its byte-identity + the two falsifiers are ALREADY proven IN-PROCESS,
+# byte-identical cross-arch, by `region fwd` (supernode_forward_self_test, 20/20)
+# — INCLUDING a "REAL production code path" sub-arm that drives the SHIPPED
+# snf_rx/snf_forward/deliver functions + counters in-process (sabotage-tested
+# RED). THIS multi-process run cashes the true 3-OS-process [live] proof and is
+# meant for a REAL host. It was NOT runnable in the implementer's PRoot sandbox
+# (foreground `sleep` + backgrounded long-lived `relay &`/`p-kernel &` children
+# are killed there — the same wall the existing run_ss6_live.sh / run_4node_
+# regions.sh [live] rows hit), so the multi-process PASS is a DEFERRED [live]
+# row to be cashed on a real host, exactly the SS-6 -> SS-6-live pattern.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,64 +74,59 @@ PASS_ALL=1
 run_arm() {
   local mode="$1" extra="${2:-}"
   local TAG="$mode${extra:+_$extra}"
-  local SUPER2="" SUPER1="" SUPER3=""
+  local SUPER2=""
   [ "$mode" = "super" ] && SUPER2="PKERNEL_SUPERNODE=1"
+  # killS waits longer before the send so SWIM marks the killed S DEAD on node1
+  # (ALIVE->SUSPECT 2 misses + SUSPECT->DEAD 3 rounds @1s probe -> ~10s) so the
+  # send genuinely exercises the runtime fail-closed (dead supernode -> DIRECT).
+  local PRESEND=11
+  [ "$extra" = "killS" ] && PRESEND=24
 
   echo "[snf-live] === arm $TAG : relay :$PKERNEL_RELAY_PORT ==="
   local APIDS=()
   "$ROOT/relay/relay" -p "$PKERNEL_RELAY_PORT" -v >/tmp/snf_relay_$TAG.log 2>&1 & APIDS+=($!)
   sleep 1
 
-  # node 2 (S) and node 3 (B) come up as responders/destination.
+  # node 2 (S) comes up as the (capable) supernode/responder.
   env $SUPER2 PKERNEL_NODE_ID=2 PKERNEL_AUTONET=1 "$BOOT/p-kernel" </dev/null \
       >/tmp/snf_node2_$TAG.log 2>&1 & local N2=$!; APIDS+=($N2)
   # node 3 = destination: install the cert sink so it records the probe bytes.
   {
     sleep 9
-    echo "snf sink"          # arm the destination sink
-    sleep 22                 # stay alive to receive + answer `snf recv`
-    echo "snf recv"          # print what node 3 received (byte-identity verdict)
+    echo "snf sink"                       # arm the destination sink
+    sleep $((PRESEND + 8))                 # stay alive past node1's send + recv
+    echo "snf recv"                        # byte-identity verdict
     sleep 1
     echo "exit"
   } | env PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 "$BOOT/p-kernel" \
       >/tmp/snf_node3_$TAG.log 2>&1 & APIDS+=($!)
   sleep 4
 
-  # node 1 = sender A. Wait for SWIM to discover both peers + gossip capability,
-  # then send the probe to node 3.
-  {
-    sleep 9                  # SWIM discovers nodes 2,3 + capability gossip
-    echo "region"            # show the region membership
-    echo "snf stat"          # show node1's elected supernode (region_supernode)
-    sleep 1
-    if [ "$extra" = "killS" ]; then
-      # signal the harness to kill S right now (handled below via a marker).
-      echo "snf stat"
-    fi
-    sleep 1
-    echo "snf send 3"        # A -> B (routes through S if elected)
-    sleep 3
-    echo "snf stat"          # node1 via_super/direct counters after the send
-    sleep 1
-    echo "exit"
-  } > /tmp/snf_node1_in_$TAG &
-  local FEED=$!
-
-  # For the killS arm, kill node 2 (S) ~13s in — AFTER capability has gossiped
-  # (so node1 still ELECTS S) but BEFORE the send, so the forward to S finds it
-  # unreachable and node1 must fail closed to DIRECT.
+  # For the killS arm, kill node 2 (S) ~10s in — AFTER capability has gossiped
+  # (so node1 once ELECTED S) but well before the send, so SWIM converges S=DEAD
+  # on node1 and the send fails closed to DIRECT.
   if [ "$extra" = "killS" ]; then
-    ( sleep 13; kill -9 "$N2" 2>/dev/null; echo "[snf-live] killed S (node2) before the send" ) &
+    ( sleep 10; kill -9 "$N2" 2>/dev/null; echo "[snf-live] killed S (node2)" ) &
     APIDS+=($!)
   fi
 
-  cat /tmp/snf_node1_in_$TAG | env PKERNEL_NODE_ID=1 PKERNEL_AUTONET=1 \
+  # node 1 = sender A. Piped DIRECTLY into the process (no intermediate file).
+  {
+    sleep 9                               # SWIM discovers nodes 2,3 + cap gossip
+    echo "region"                         # region membership
+    echo "snf stat"                       # node1's elected supernode (pre-send)
+    sleep $((PRESEND - 9))                # (killS: let SWIM mark S dead)
+    echo "snf stat"                       # supernode view at send time
+    echo "snf send 3"                     # A -> B (through S if elected+alive)
+    sleep 3
+    echo "snf stat"                       # via_super/direct counters after send
+    sleep 1
+    echo "exit"
+  } | env PKERNEL_NODE_ID=1 PKERNEL_AUTONET=1 \
       "$BOOT/p-kernel" >/tmp/snf_node1_$TAG.log 2>&1
-  wait $FEED 2>/dev/null
 
-  sleep 2   # let node 3 print its `snf recv`
+  sleep 3   # let node 3 print its `snf recv`
   kill "${APIDS[@]}" 2>/dev/null; wait 2>/dev/null
-  PIDS+=()
 }
 
 # ---------------------------------------------------------------------------
