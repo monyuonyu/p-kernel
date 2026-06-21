@@ -839,3 +839,26 @@ the shipped uniprocessor kernel stays byte-identical. Runtime core-count autodet
 LEDGER: row CLOSED. Both R0 OPEN items are genuinely closed — a dynamically-falsifiable
 responder-side gate that catches the degeneration requester-only measurement was blind
 to, and coord-crash-live re-verified. The K bump is necessary + safe.
+
+## SMP-AUTODETECT (GICD_TYPER runtime core-count) — commit d31f7457 (impl 25a7eae5)
+- Auditor: independent focused auditor, 2026-06-21. Did NOT write the code. Verdict: **MERGEABLE.**
+- THE HEADLINE (reproduced): ONE -DSMP_SELFTEST binary booted under -smp 1/2/4/8 detects
+  1/2/4/8 cpus via GICD_TYPER and wakes exactly that many — shared counter
+  200000/400000/800000/1600000, RUN/MUTEX/BOOT PASS each, T-Kernel boots. No recompile.
+- GICD_TYPER decode correct + overflow-safe: ((typer>>5)&0x7)+1 clamped to SMP_MAX_CPUS=8
+  (smp.c:234-251); FORCE_NCPU=16 disassembles to mov w0,#8 → a >8 value cannot overflow
+  the ceiling-sized arrays. g_smp_ncpu drives bringup/barrier/join/cert; array sizing stays 8.
+- FORCE_NCPU=8 @-smp 2 falsifier FAILs (SMP-RUN/MUTEX/BOOT FAIL, watchdog, no hang) — proves
+  GICD_TYPER detection is load-bearing.
+- DEFAULT BYTE-IDENTICAL: confirmed against the CURRENT trunk baseline (e3b14ee3 default .text
+  == d31f7457 default .text == 755a20fae2d9b741; the earlier b48d7da7 baseline shifted when
+  fed R0.1's dkva.c — compiled into the bare-metal kernel — legitimately changed it). All
+  autodetect code is #ifdef SMP_SELFTEST; smp.o byte-identical in the default build.
+- RPi3 honesty: BOARD_RPI3 → smp_detect_ncpu() = mov w0,#4 (BCM2837 is the ARM Local
+  Interrupt Controller, NOT a GIC — no GICD_TYPER); the DTB /cpus path + GICv3 (>8) DEFERRED.
+- No regression: smp1/smp2/mc2 + check_parity PASS. LOW (auditor process note, not a defect):
+  the aarch64 harnesses snapshot kernel.elf AFTER make, so running several in PARALLEL against
+  one build tree races (a sibling build clobbers between make + snapshot) — run them serially.
+LEDGER: row CLOSED. mk_pino's "measure the device + auto-fit": the SAME binary now adapts its
+woken-core count to the device via GICD_TYPER (RPi3=4, phone=8) — no recompile. The full
+measure-specs->size-the-mind (device-capacity) stays the deferred bigger thread.
