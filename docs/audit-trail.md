@@ -959,3 +959,45 @@ the first real step of the decentralized P2P overlay. Live multi-process forward
   stable convergence before the probe + confirm A's overlay udp_send reaches S over the relay (the
   membership-routing path). The DEBUG ENV's value is proven: it found the [live] failure AND a real
   port-collision bug the in-proc cert (socket stubbed) structurally could not. NOT fudged green.
+
+## ②.2b-i true async preempt + the certified BKL-held deadlock guard — commit a76f3606 (impl 50a2ed3a)
+- Auditors: TWO independent rounds (impl≠auditor≠commander). (1) The original 5-dim adversarial
+  WORKFLOW on ②.2b-i (f44aac86): 4 dims PASS (async-preempt-is-REAL, irq-vector-C-ABI, byte-
+  identical, honest-scope) but GATED the 5th (deadlock-avoidance) UNCERTAIN — the BKL-held guard
+  `if(g_bkl_owner==me) return 0` (smp_irq_need_resched) was correct-by-reasoning but UNCERTIFIED
+  (deleting it failed no cert; the design-mandated [smp-no-deadlock] falsifier was missing).
+  (2) A focused auditor on the CLOSURE (50a2ed3a): the guard is now CERTIFIED. Verdict: **MERGEABLE.**
+- THE HARD WIN (mk_pino's directive "諦めてやらないのはNG" — do NOT defer it): rather than
+  code-review-certify + defer the runtime falsifier to RPi3 (the easy out), a REAL [smp-no-deadlock]
+  cert was constructed (it took the implementer ~3.6h; commander prematurely mis-flagged it "dead"
+  at a 21-min idle — it was a legitimately long run, finished clean).
+- [smp-async-preempt] (the ②.2b-i core): a tight no-poll loop task on a secondary is preempted
+  MID-LOOP by a real register-context switch from IRQ context (hook between EOIR and
+  restore_caller_regs in _vec_el1_irq; capture ELR/SPSR; two-frame nest + .Lirq_resume_tramp) and
+  RESUMES (observed_counter ∈(0,cap), final==cap). Falsifier -DSMP_NO_ASYNC: sgi_taken=1 but no
+  switch → FAIL. (4-dim audit PASS.)
+- [smp-no-deadlock] (the certified guard, NON-VACUOUS, reproduced 3/3 each way): a REAL task L
+  (tk_cre_tsk, run through the PRODUCTION dispatcher) acquires the BKL via a LEGITIMATE bounded
+  critical section; the driver fires the reschedule SGI DETERMINISTICALLY while L holds the BKL
+  (sgi_taken handshake; observed_crit(at H) STRICTLY in (0,cap) proves the SGI landed mid-section).
+  WITH the guard → the switch DEFERS, L finishes + releases, the deferred reschedule (pending flag
+  retained) fires, H runs + acquires the BKL cleanly, L resumes → SMP-NO-DEADLOCK: PASS (reaches
+  the shell ~14s, vs the 45s budget = 3.2x headroom). WITHOUT (-DSMP_NO_BKL_GUARD, removes only the
+  one clause) → the switch fires mid-crit, H wedges forever waiting for the BKL L stranded →
+  PERMANENT deadlock (no PASS, never reaches the shell, L provably acquired the BKL) → caught as a
+  fail-closed timeout-FAIL (robust: the guard'd run finishes well within the timeout; the harness
+  requires POSITIVE evidence so a boot failure fails RED, never a false PASS).
+- THE 2 TOCTOU WINDOWS the original audit flagged are FIXED: bkl_acquire published g_bkl_owner
+  AFTER raw_lock (gap: raw-held, owner!=me); bkl_release cleared it BEFORE raw_unlock. An SGI in
+  either gap mis-reads g_bkl_owner → skips the guard → switches holding the raw lock → deadlock.
+  Fix: IRQ-mask each tiny publish/clear window (smp_bkl_di/ei = a faithful clone of production
+  disint/enaint), so the guard only ever observes g_bkl_owner consistent with raw ownership. ONLY
+  the windows are masked, NOT the critical-section body (the cert holds the BKL IRQ-unmasked on
+  purpose). The helpers have no loops/locks → cannot wedge.
+- DEFAULT BYTE-IDENTICAL (.text 755a20fae2d9b741, smp_deadlock.o/smp_async.o excluded from the
+  default link) + NO REGRESSION (async PASS + NO_ASYNC FAIL; smp0/smp1/smp2/mc2 PASS; check_parity
+  OK). HONEST: ②.2b-ii (secondary CNTP timer/WAIT) deferred; QEMU faithfully models the control-flow
+  self-deadlock so the falsifier bites on QEMU (NOT a barrier-discipline claim — that stays RPi3).
+LEDGER: row CLOSED. The repo's hardest C-ABI slice — a true async register-context preempt from
+interrupt context — ships WITH its safety guard CERTIFIED by a real, load-bearing deadlock falsifier
+(not deferred). honest > green, and 諦めない. ②.2b-ii / ②.2c (the [smp-one-mind] crown) / ②.3 remain.
