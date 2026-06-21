@@ -100,7 +100,9 @@ THROUGH a supernode instead of unconditionally via the central `./relay`.
 - **Module (`arch/common/supernode.c`/`.h`, hosted-only, check_parity allowlisted like
   `ss6_live.c`):** when a node sends a payload to region peer B and `region_supernode()`
   elects a capable peer S (S≠0xFF, S≠self, S≠B, S not SWIM-DEAD), the sender wraps it as
-  an `SNF_FWD` to S on a dedicated UDP port (`SNF_PORT`=7380), S re-forwards it as an
+  an `SNF_FWD` to S on a dedicated UDP port (`SNF_PORT`=7377 — distinct from every other
+  `udp_bind` port; it was 7380==`PMESH_PORT`, which silently stole all SNF traffic on the
+  live forward path until N-2c-live-fix), S re-forwards it as an
   `SNF_DELIVER` to B over the SAME `net_relay` transport (the supernode is just another
   node — NO new wire protocol; `udp_send`/`udp_bind`, mirroring `ss6_live.c`), and B
   receives the payload BYTE-IDENTICAL. The route decision is a PURE integer function

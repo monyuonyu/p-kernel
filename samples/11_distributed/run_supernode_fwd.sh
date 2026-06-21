@@ -138,7 +138,7 @@ echo "===== MAIN (supernode S=2 forwards A->B) ====="
 echo "--- node 1 (A) region + send ---"
 grep -iE 'supernode-fwd|\[region\]' /tmp/snf_node1_super.log | grep -iE 'supernode-fwd|coordinator'
 echo "--- node 2 (S) forwarder counters ---"
-grep -iE 'bound port 7380' /tmp/snf_node2_super.log | head -1
+grep -iE 'supernode-fwd. bound port' /tmp/snf_node2_super.log | head -1   # SNF_PORT (7377; was 7380==PMESH, the live bug)
 S_FWD_MAIN=$(printf '%s' "$(grep -oE 'forwarded=[0-9]+' /tmp/snf_node2_super.log | tail -1)")
 echo "--- node 3 (B) received ---"
 grep -iE 'supernode-fwd. recv' /tmp/snf_node3_super.log | tail -1
