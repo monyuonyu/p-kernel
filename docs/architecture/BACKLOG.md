@@ -82,9 +82,9 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 
 > **PRIORITY NOTE (2026-06-14 critique steer):** "more features/LM < foundation + **federation** + honest finitude." The foundation crack (KILL-CHURN #PF) is CURED (wave-56); the live remaining steer is **federation** (254→10k) — hence the federation-R0 design-harden in flight. Keep the dream-tier names + co-located honest labels; keep `[live]`/`[in-proc]` mechanical tags.
 
-## DOC-STATUS FIXES (stale "not started/実装前" lines to correct)
-galaxy.md, ark-profile.md, signing.md, persistence.md, living-mind.md, inference-engine.md,
-living-body-inspector.md — mark what actually shipped. (housekeeping wave)
+## DOC-STATUS FIXES — ✅ DONE (2026-06-19): all 7 docs (galaxy.md, ark-profile.md,
+signing.md, persistence.md, living-mind.md, inference-engine.md, living-body-inspector.md)
+already carry corrected "SHIPPED … doc-status fix" Status lines. Verified 2026-06-21.
 
 ## RULES (constitution)
 Commander orchestrates only; implementer ≠ auditor ≠ commander; background + yield (never sit
