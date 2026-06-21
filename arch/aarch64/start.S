@@ -263,4 +263,90 @@ _secondary_el1_setup:
 1:  wfe
     b   1b
 
+/* -----------------------------------------------------------------------
+ *  ②.0 full-SMP slice — secondary DISPATCHER bringup.
+ *
+ *  Gated by SMP_SELFTEST: with no flag, NONE of this is assembled and the
+ *  bringup above (_secondary_worker / _secondary_el1_setup) is unchanged.
+ *
+ *  _secondary_dispatch_entry is a NEW landing pad (ADDED — it does NOT
+ *  touch _secondary_worker). PSCI CPU_ON releases the secondary here with
+ *      x0 = context_id = &g_smpcpu[1]
+ *  (arch/aarch64/smp.c:smp_bringup_secondary). It drops EL2->EL1 exactly
+ *  like _secondary_worker, runs the SAME _secondary_el1_setup body up to
+ *  the stack load, then — instead of the tile worker — sets its OWN
+ *  dispatcher stack (g_smp_sec_stack_top, smp.c) and branches into the
+ *  per-CPU dispatcher smp_dispatch_loop (cpu_support.S). §5 of the plan:
+ *  "secondaries run the DISPATCHER, not a tile loop."
+ * --------------------------------------------------------------------- */
+#ifdef SMP_SELFTEST
+    .global _secondary_dispatch_entry
+_secondary_dispatch_entry:
+    /* Preserve context_id across the EL drop (as _secondary_worker). */
+    mov x19, x0
+
+    mrs x0, CurrentEL
+    lsr x0, x0, #2
+    cmp x0, #2
+    b.eq _sec_disp_from_el2
+    cmp x0, #3
+    b.eq _sec_disp_from_el3
+    b   _secondary_disp_el1_setup
+
+_sec_disp_from_el3:
+    mov x0, #0x531
+    msr scr_el3, x0
+    mov x0, #0x3C5
+    msr spsr_el3, x0
+    adr x0, _secondary_disp_el1_setup
+    msr elr_el3, x0
+    isb
+    eret
+
+_sec_disp_from_el2:
+    mov x0, #(1 << 31)
+    msr hcr_el2, x0
+    mov x0, #0x0800
+    orr x0, x0, #(1 << 11)
+    msr sctlr_el1, x0
+    mov x0, #0x3C5
+    msr spsr_el2, x0
+    adr x0, _secondary_disp_el1_setup
+    msr elr_el2, x0
+    isb
+    eret
+
+_secondary_disp_el1_setup:
+    /* SAME EL1 bits the primary/worker set (vbar, caches, FP, SMPEN). */
+    ldr x0, =el1_vectors
+    msr vbar_el1, x0
+    isb
+
+    mrs x0, sctlr_el1
+    orr x0, x0, #(1 << 2)      /* C */
+    orr x0, x0, #(1 << 12)     /* I */
+    msr sctlr_el1, x0
+    isb
+
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)     /* FPEN */
+    msr cpacr_el1, x0
+    isb
+
+    mrs x0, S3_1_C15_C2_1
+    orr x0, x0, #(1 << 6)      /* CPUECTLR.SMPEN */
+    msr S3_1_C15_C2_1, x0
+    isb
+
+    /* Load THIS CPU's own dispatcher stack (g_smp_sec_stack_top, smp.c).
+     * Distinct region from the primary — the two cores never share a
+     * stack (linker.ld _stack_top_cpu1, reused). */
+    ldr x0, =g_smp_sec_stack_top
+    ldr x0, [x0]
+    mov sp, x0
+
+    /* Enter the per-CPU dispatcher. Never returns. */
+    b   smp_dispatch_loop
+#endif /* SMP_SELFTEST */
+
     .size _start, . - _start

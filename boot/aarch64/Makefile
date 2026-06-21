@@ -102,7 +102,8 @@ ARCH_C_SRCS = \
     arch_reboot.c \
     vfs_stub.c \
     sign_entropy.c \
-    mc2_smp.c
+    mc2_smp.c \
+    smp.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -449,6 +450,32 @@ run-slice-break:
 mc2-slice-test:
 	../../tests/aarch64/run_mc2_slice.sh
 
+# ---- ②.0 full-SMP: 2 CPUs run the dispatcher under one Big Kernel Lock --
+# docs/architecture/full-smp-plan.md §7 ②.0. Build the kernel WITH the
+# SMP self-test and boot under -smp 4 (uses 2 CPUs). Prints:
+#   SMP-RUN:    PASS  (both CPUs ran DISTINCT tasks; per-CPU exec counters)
+#   SMP-MUTEX:  PASS  (shared counter under the BKL == exact N*K)
+#   SMP-BOOT:   PASS  (both CPUs reached the dispatcher; T-Kernel still boots)
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+run-smp0:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): the shared-counter increment BYPASSES the BKL.
+# Under -smp with truly-concurrent tasks the RMW races -> lost updates ->
+# SMP-MUTEX: FAIL with a total < N*K. Proves the lock is load-bearing.
+run-smp0-nolock:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_MUTEX_NOLOCK" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4, grep SMP-RUN/MUTEX/BOOT PASS,
+# then build the NOLOCK falsifier and assert SMP-MUTEX: FAIL. This is the
+# [smp-2-tasks-run] + [smp-mutual-exclusion] + [smp-boot-survives] harness.
+smp0-test:
+	../../tests/aarch64/run_smp0.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -488,4 +515,5 @@ clean:
 
 .PHONY: all run run-debug clean run-smp run-smp-fault mc2-test \
         run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test \
-        run-slice run-slice-break mc2-slice-test
+        run-slice run-slice-break mc2-slice-test \
+        run-smp0 run-smp0-nolock smp0-test

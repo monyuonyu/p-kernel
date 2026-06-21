@@ -356,3 +356,63 @@ _vec_el0_serr:
     .align 3
 gicc_base_ptr:
     .quad 0
+
+/* =======================================================================
+ *  ②.0 full-SMP slice — the PER-CPU dispatcher entry/load.
+ *
+ *  Gated by SMP_SELFTEST: with no flag, NONE of this is assembled and the
+ *  production dispatcher above (.Ldispatch_loop / knl_dispatch) is
+ *  BYTE-IDENTICAL to the shipped uniprocessor kernel.
+ *
+ *  This is the asm side of the ② change the plan §3/§5 calls for: each CPU
+ *  dispatches its OWN per-CPU current task. Where the production dispatcher
+ *  (cpu_support.S:90-96) loads the single GLOBAL knl_schedtsk/knl_ctxtsk,
+ *  the SMP path loads g_smpcpu[mpidr_aff0()].{schedtsk,ctxtsk} — the
+ *  per-CPU scheduler state (arch/aarch64/smp.c). The offsets SMPCPU_* are
+ *  mirrored from smp.c (guarded there by _Static_assert).
+ *
+ *  smp_dispatch_loop is the landing pad start.S branches a secondary into
+ *  after EL1 setup; it just calls the C orchestrator smp_dispatch_run()
+ *  (arch/aarch64/smp.c), which runs the per-CPU pull-and-run loop under the
+ *  BKL. The orchestration is in C for safety (the full task-stack context
+ *  switch is DEFERRED — ②.0's cooperative pull, §4.3); this asm provides
+ *  the per-CPU current-task LOAD so the per-CPU mechanism is exercised in
+ *  asm exactly where the production dispatcher would be generalized.
+ * ===================================================================== */
+#ifdef SMP_SELFTEST
+    .text
+    .align 4
+
+/* struct smp_cpu offsets — KEEP IN SYNC with arch/aarch64/smp.c. */
+#define SMPCPU_SIZE       40
+#define SMPCPU_CTXTSK      0
+#define SMPCPU_SCHEDTSK    8
+
+/* unsigned long smp_this_cpu(void) — defined in smp.c (MPIDR Aff0). We
+ * re-derive it inline here to avoid a call in the leaf load helper. */
+
+/* TCB* smp_cur_tcb_load(void)
+ *   Return THIS CPU's per-CPU current task (g_smpcpu[me].ctxtsk).
+ *   This is the per-CPU generalization of the production dispatcher's
+ *   `ldr =knl_ctxtsk; ldr [x0]` (cpu_support.S:84-85,95-96). Proves the
+ *   per-CPU current-task read happens in asm, indexed by MPIDR. */
+    .global smp_cur_tcb_load
+smp_cur_tcb_load:
+    mrs  x1, mpidr_el1
+    and  x1, x1, #0xFF              /* x1 = MPIDR Aff0 = this CPU id */
+    ldr  x0, =g_smpcpu
+    mov  x2, #SMPCPU_SIZE
+    madd x0, x1, x2, x0             /* x0 = &g_smpcpu[me] */
+    ldr  x0, [x0, #SMPCPU_CTXTSK]   /* x0 = g_smpcpu[me].ctxtsk */
+    ret
+
+/* void smp_dispatch_loop(void)
+ *   The per-CPU dispatcher landing pad (start.S branches the secondary
+ *   here after EL1 setup; the primary calls it too). Runs the C
+ *   per-CPU pull-and-run loop. Never returns (parks if it ever does). */
+    .global smp_dispatch_loop
+smp_dispatch_loop:
+    bl   smp_dispatch_run          /* C orchestrator (arch/aarch64/smp.c) */
+1:  wfe
+    b    1b
+#endif /* SMP_SELFTEST */

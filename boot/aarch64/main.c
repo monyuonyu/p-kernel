@@ -68,6 +68,16 @@ struct mc2_slice_result {
 };
 extern void mc2_slice_unitcheck(struct mc2_slice_result *r);
 #endif
+#ifdef SMP_SELFTEST
+/* ②.0 full-SMP slice: 2 CPUs run the T-Kernel dispatcher under one Big
+ * Kernel Lock (arch/aarch64/smp.c). docs/architecture/full-smp-plan.md §7.
+ * Header-light externs (this TU runs before T-Kernel is up). */
+extern int           smp_selftest_run(unsigned long K); /* 0 = joined OK */
+extern int           smp_wait_secondary_live(void);     /* 0 = up        */
+extern unsigned long smp_exec_count(int cpu);           /* per-CPU counter */
+extern void         *smp_running_tcb(int cpu);          /* per-CPU ctxtsk */
+extern unsigned long smp_get_counter(void);             /* shared total   */
+#endif
 
 /* PL011 base differs between QEMU virt and BCM2837 — keep this print
  * helper minimal so it works before sio_init() runs. */
@@ -86,7 +96,7 @@ static void print(const char *s)
     }
 }
 
-#if defined(MC2_SMP_SELFTEST) || defined(MC2_EQUIV_SELFTEST) || defined(MC2_SLICE_SELFTEST)
+#if defined(MC2_SMP_SELFTEST) || defined(MC2_EQUIV_SELFTEST) || defined(MC2_SLICE_SELFTEST) || defined(SMP_SELFTEST)
 /* Minimal signed-long printer for FAIL diagnostics (no libc tm_printf here —
  * this runs before T-Kernel). Prints decimal. */
 static void print_long(long v)
@@ -287,6 +297,64 @@ void main(void)
             }
         }
         /* Fall through to the normal T-Kernel boot. */
+    }
+#endif
+
+#ifdef SMP_SELFTEST
+    /* ②.0 full-SMP slice: bring up ONE secondary into the per-CPU T-Kernel
+     * dispatcher under one Big Kernel Lock; have BOTH CPUs run a DISTINCT
+     * task that increments a SHARED counter K times under the BKL. Prove:
+     *   [smp-2-tasks-run]    both CPUs advanced their OWN per-CPU task
+     *   [smp-mutual-exclusion] shared total == exact N*K (BKL holds)
+     *   [smp-boot-survives]  both CPUs reached the dispatcher; T-Kernel
+     *                        still boots afterwards (no deadlock/hang).
+     * docs/architecture/full-smp-plan.md §7 ②.0. */
+    {
+        const unsigned long K = 200000UL;       /* per-task increments */
+        const unsigned long N = 2UL;            /* CPUs */
+        print("[SMP] releasing one secondary into the dispatcher (BKL)...\r\n");
+        int rc = smp_selftest_run(K);
+
+        /* [smp-boot-survives]: did both CPUs reach the dispatcher? */
+        int sec_live = (smp_wait_secondary_live() == 0);
+        unsigned long e0 = smp_exec_count(0);
+        unsigned long e1 = smp_exec_count(1);
+        void *t0 = smp_running_tcb(0);
+        void *t1 = smp_running_tcb(1);
+        unsigned long total = smp_get_counter();
+        unsigned long expect = N * K;
+
+        print("[SMP] cpu0 exec_count="); print_long((long)e0);
+        print(" cpu1 exec_count=");      print_long((long)e1); print("\r\n");
+        print("[SMP] shared counter=");  print_long((long)total);
+        print(" expected=");             print_long((long)expect); print("\r\n");
+
+        /* [smp-2-tasks-run]: both CPUs advanced their OWN task, and the
+         * per-CPU current tasks are DISTINCT (different TCB pointers). */
+        if (rc == 0 && e0 > 0 && e1 > 0 && t0 != 0 && t1 != 0 && t0 != t1) {
+            print("SMP-RUN: PASS\r\n");
+        } else {
+            print("SMP-RUN: FAIL rc="); print_long((long)rc);
+            print(" (need cpu0&cpu1 exec>0 and distinct tasks)\r\n");
+        }
+
+        /* [smp-mutual-exclusion]: no lost updates under the BKL. */
+        if (rc == 0 && total == expect) {
+            print("SMP-MUTEX: PASS\r\n");
+        } else {
+            print("SMP-MUTEX: FAIL total="); print_long((long)total);
+            print(" expected=");             print_long((long)expect);
+            print("\r\n");
+        }
+
+        /* [smp-boot-survives]: both CPUs in the dispatcher, no hang. */
+        if (sec_live && rc != -100) {
+            print("SMP-BOOT: PASS\r\n");
+        } else {
+            print("SMP-BOOT: FAIL (secondary not live or join timeout)\r\n");
+        }
+        /* Fall through to the normal T-Kernel boot — proves the primary
+         * scheduler still runs AFTER the SMP slice. */
     }
 #endif
 
