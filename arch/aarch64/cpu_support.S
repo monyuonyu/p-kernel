@@ -385,9 +385,11 @@ gicc_base_ptr:
 
 /* struct smp_cpu offsets — KEEP IN SYNC with arch/aarch64/smp.c.
  * SMPCPU_SIZE was 40 in ②.0; ②.1a appended preempted_at/highprio_ran
- * (off 40/48) so it is 56 now. CTXTSK/SCHEDTSK (off 0/8) are unchanged —
- * the only asm consumer (smp_cur_tcb_load) reads CTXTSK indexed by SIZE. */
-#define SMPCPU_SIZE       56
+ * (off 40/48) → 56; ②.1b appended stack_top (off 56) → 64. CTXTSK/SCHEDTSK
+ * (off 0/8) are unchanged — the only asm consumers are smp_cur_tcb_load
+ * (reads CTXTSK indexed by SIZE) and the start.S landing pad (reads
+ * stack_top at off 56 via the context_id). */
+#define SMPCPU_SIZE       64
 #define SMPCPU_CTXTSK      0
 #define SMPCPU_SCHEDTSK    8
 

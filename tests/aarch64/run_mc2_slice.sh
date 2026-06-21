@@ -37,20 +37,25 @@ QEMU="qemu-system-aarch64"
 TIMEOUT_S="${MC2_TIMEOUT:-30}"
 
 # No -smp: the unit-check is a pure integer function on the primary core.
-QEMU_FLAGS="-M virt -cpu cortex-a53 -m 256M -kernel kernel.elf \
+# NOTE (②.1b harness-snapshot fix): boot QEMU from a UNIQUE snapshot of
+# kernel.elf (run_qemu $2), not the live build-dir image, so the falsifier
+# rebuild (or a parallel auditor's `make`) cannot corrupt an in-flight read.
+QEMU_FLAGS="-M virt -cpu cortex-a53 -m 256M \
             -serial stdio -display none -no-reboot"
 
 fail() { echo "[mc2-slice] FAIL: $*" >&2; exit 1; }
 
 run_qemu() {
-    # $1 = log file. The kernel boots into the T-Kernel idle loop and never
-    # exits on its own, so the wall-clock timeout is the expected terminator.
-    log="$1"
+    # $1 = log file, $2 = kernel image (a unique snapshot). The kernel boots
+    # into the T-Kernel idle loop and never exits on its own, so the
+    # wall-clock timeout is the expected terminator.
+    log="$1"; img="$2"
     cd "$BOOT"
     if command -v timeout >/dev/null 2>&1; then
-        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_FLAGS >"$log" 2>&1 || true
+        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_FLAGS -kernel "$img" \
+            >"$log" 2>&1 || true
     else
-        $QEMU $QEMU_FLAGS >"$log" 2>&1 &
+        $QEMU $QEMU_FLAGS -kernel "$img" >"$log" 2>&1 &
         qpid=$!
         sleep "$TIMEOUT_S"
         kill "$qpid" 2>/dev/null || true
@@ -64,9 +69,11 @@ cd "$BOOT"
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DMC2_SLICE_SELFTEST" >/dev/null 2>&1 \
     || fail "build (MC2_SLICE_SELFTEST) failed"
+SLICE_IMG="$(mktemp /tmp/mc2slice_main.XXXXXX.elf)"
+cp kernel.elf "$SLICE_IMG"       # snapshot so a later rebuild can't corrupt it
 
 SLICE_LOG="$(mktemp)"
-run_qemu "$SLICE_LOG"
+run_qemu "$SLICE_LOG" "$SLICE_IMG"
 echo "----- captured UART (slice check) -----"
 cat "$SLICE_LOG"
 echo "---------------------------------------"
@@ -85,9 +92,11 @@ echo "=== [mc2-slice] : FALSIFIER (-DMC2_SLICE_BREAK) MUST FAIL ==="
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DMC2_SLICE_SELFTEST -DMC2_SLICE_BREAK" >/dev/null 2>&1 \
     || fail "build (MC2_SLICE_BREAK) failed"
+BREAK_IMG="$(mktemp /tmp/mc2slice_break.XXXXXX.elf)"
+cp kernel.elf "$BREAK_IMG"       # snapshot so a later rebuild can't corrupt it
 
 BREAK_LOG="$(mktemp)"
-run_qemu "$BREAK_LOG"
+run_qemu "$BREAK_LOG" "$BREAK_IMG"
 echo "----- captured UART (falsifier) -----"
 cat "$BREAK_LOG"
 echo "-------------------------------------"
@@ -99,5 +108,5 @@ grep -q "MC2-SLICE: PASS" "$BREAK_LOG" \
 echo "[mc2-slice] falsifier: correctly FAILED (the check has teeth)"
 echo
 
-rm -f "$SLICE_LOG" "$BREAK_LOG"
+rm -f "$SLICE_LOG" "$BREAK_LOG" "$SLICE_IMG" "$BREAK_IMG"
 echo "=== [mc2-slice] : PASS (partition invariants hold; falsifier bites) ==="

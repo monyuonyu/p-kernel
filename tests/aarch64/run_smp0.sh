@@ -3,17 +3,17 @@
 #
 # ②.0 full-SMP cert harness (docs/architecture/full-smp-plan.md §7 ②.0).
 #
-# Builds the aarch64 bare-metal kernel WITH the ②.0 SMP self-test
-# (-DSMP_SELFTEST), boots it under QEMU virt with -smp 4 (uses 2 CPUs:
-# the boot CPU + ONE secondary released into the per-CPU T-Kernel
+# Builds the aarch64 bare-metal kernel WITH the ②.0/②.1b SMP self-test
+# (-DSMP_SELFTEST), boots it under QEMU virt with -smp 4 (②.1b uses ALL 4
+# CPUs: the boot CPU + THREE secondaries released into the per-CPU T-Kernel
 # dispatcher under one Big Kernel Lock), captures the UART, and asserts:
 #
-#   [smp-2-tasks-run]      SMP-RUN: PASS    — both CPUs advanced their OWN
-#                          per-CPU task (cpu0 & cpu1 exec_count>0, distinct
+#   [smp-2-tasks-run]      SMP-RUN: PASS    — ALL FOUR CPUs advanced their OWN
+#                          per-CPU task (cpu0..3 exec_count>0, four distinct
 #                          per-CPU current tasks).
 #   [smp-mutual-exclusion] SMP-MUTEX: PASS  — a shared counter incremented
-#                          by tasks on BOTH CPUs under the BKL reaches the
-#                          EXACT expected total (no lost updates).
+#                          by tasks on ALL FOUR CPUs under the BKL reaches the
+#                          EXACT expected total N*K (N=4; no lost updates).
 #   [smp-boot-survives]    SMP-BOOT: PASS + the T-Kernel still boots
 #                          ([BOOT] Starting T-Kernel.../Initial task started)
 #                          AFTER both CPUs ran the dispatcher (no deadlock).
@@ -37,21 +37,29 @@ BOOT="$HERE/../../boot/aarch64"
 QEMU="qemu-system-aarch64"
 TIMEOUT_S="${SMP0_TIMEOUT:-60}"
 
-QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M -kernel kernel.elf \
+# NOTE (②.1b harness-snapshot fix): the -kernel image is passed PER RUN as a
+# unique snapshot path (run_qemu $2), NOT the live build-dir kernel.elf — so a
+# CONCURRENT rebuild (e.g. a parallel auditor's `make`, or this harness's own
+# falsifier build) cannot corrupt an in-flight QEMU read. The ②.0 audit had to
+# exonerate exactly such a self-inflicted flake by timestamp; snapshotting
+# removes the race at the source.
+QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
                 -serial stdio -display none -no-reboot"
 
 fail() { echo "[smp0] FAIL: $*" >&2; exit 1; }
 
 run_qemu() {
-    # $1 = log file. The kernel boots into the T-Kernel shell and never
-    # exits on its own, so the wall-clock timeout is the expected
-    # terminator; we only care about the UART captured before it.
-    log="$1"
+    # $1 = log file, $2 = kernel image (a unique snapshot). The kernel boots
+    # into the T-Kernel shell and never exits on its own, so the wall-clock
+    # timeout is the expected terminator; we only care about the UART
+    # captured before it.
+    log="$1"; img="$2"
     cd "$BOOT"
     if command -v timeout >/dev/null 2>&1; then
-        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_SMP_FLAGS >"$log" 2>&1 || true
+        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_SMP_FLAGS -kernel "$img" \
+            >"$log" 2>&1 || true
     else
-        $QEMU $QEMU_SMP_FLAGS >"$log" 2>&1 &
+        $QEMU $QEMU_SMP_FLAGS -kernel "$img" >"$log" 2>&1 &
         qpid=$!
         sleep "$TIMEOUT_S"
         kill "$qpid" 2>/dev/null || true
@@ -65,9 +73,11 @@ cd "$BOOT"
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS=-DSMP_SELFTEST >/dev/null 2>&1 \
     || fail "build (SMP_SELFTEST) failed"
+PASS_IMG="$(mktemp /tmp/smp0_pass.XXXXXX.elf)"
+cp kernel.elf "$PASS_IMG"        # snapshot so a later rebuild can't corrupt it
 
 PASS_LOG="$(mktemp)"
-run_qemu "$PASS_LOG"
+run_qemu "$PASS_LOG" "$PASS_IMG"
 echo "----- captured UART (SMP cert build) -----"
 cat "$PASS_LOG"
 echo "------------------------------------------"
@@ -92,9 +102,11 @@ echo "=== ②.0 falsifier: -DSMP_MUTEX_NOLOCK MUST produce SMP-MUTEX: FAIL ==="
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_MUTEX_NOLOCK" >/dev/null 2>&1 \
     || fail "build (SMP_MUTEX_NOLOCK) failed"
+NOLOCK_IMG="$(mktemp /tmp/smp0_nolock.XXXXXX.elf)"
+cp kernel.elf "$NOLOCK_IMG"      # snapshot so a later rebuild can't corrupt it
 
 NOLOCK_LOG="$(mktemp)"
-run_qemu "$NOLOCK_LOG"
+run_qemu "$NOLOCK_LOG" "$NOLOCK_IMG"
 echo "----- captured UART (NOLOCK falsifier) -----"
 cat "$NOLOCK_LOG"
 echo "--------------------------------------------"
@@ -108,5 +120,5 @@ grep -q "Starting T-Kernel" "$NOLOCK_LOG" \
 echo "[smp0] falsifier: PASS (BKL bypass -> lost updates -> SMP-MUTEX: FAIL, as required)"
 echo
 
-rm -f "$PASS_LOG" "$NOLOCK_LOG"
+rm -f "$PASS_LOG" "$NOLOCK_LOG" "$PASS_IMG" "$NOLOCK_IMG"
 echo "=== ②.0 full-SMP : ALL PASS ==="

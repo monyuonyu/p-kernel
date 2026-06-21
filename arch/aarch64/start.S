@@ -338,11 +338,15 @@ _secondary_disp_el1_setup:
     msr S3_1_C15_C2_1, x0
     isb
 
-    /* Load THIS CPU's own dispatcher stack (g_smp_sec_stack_top, smp.c).
-     * Distinct region from the primary — the two cores never share a
-     * stack (linker.ld _stack_top_cpu1, reused). */
-    ldr x0, =g_smp_sec_stack_top
-    ldr x0, [x0]
+    /* Load THIS CPU's OWN dispatcher stack from its per-CPU block. x19 still
+     * holds the context_id PSCI handed us = &g_smpcpu[cpu] (preserved across
+     * the EL drop above). g_smpcpu[cpu].stack_top (off SMPCPU_STACK_TOP) was
+     * set by the boot CPU before CPU_ON to &_stack_top_cpuN. ②.1b: with N=4
+     * waking THREE secondaries, a single shared global stack would corrupt —
+     * each core MUST load its OWN region. (②.0 used the global
+     * g_smp_sec_stack_top; that single-stack path is retired.) */
+    .equ SMPCPU_STACK_TOP, 56
+    ldr x0, [x19, #SMPCPU_STACK_TOP]
     mov sp, x0
 
     /* Enter the per-CPU dispatcher. Never returns. */

@@ -310,41 +310,52 @@ void main(void)
 #endif
 
 #if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST)
-    /* ②.0 full-SMP slice: bring up ONE secondary into the per-CPU T-Kernel
-     * dispatcher under one Big Kernel Lock; have BOTH CPUs run a DISTINCT
-     * task that increments a SHARED counter K times under the BKL. Prove:
-     *   [smp-2-tasks-run]    both CPUs advanced their OWN per-CPU task
-     *   [smp-mutual-exclusion] shared total == exact N*K (BKL holds)
-     *   [smp-boot-survives]  both CPUs reached the dispatcher; T-Kernel
+    /* ②.0/②.1b full-SMP slice: bring up THREE secondaries (cores 1,2,3) into
+     * the per-CPU T-Kernel dispatcher under one Big Kernel Lock; have ALL
+     * FOUR CPUs run a DISTINCT task that increments a SHARED counter K times
+     * under the BKL. Prove (now at N=4):
+     *   [smp-2-tasks-run]    every CPU advanced its OWN per-CPU task (distinct)
+     *   [smp-mutual-exclusion] shared total == exact N*K (BKL holds, N=4)
+     *   [smp-boot-survives]  all CPUs reached the dispatcher; T-Kernel
      *                        still boots afterwards (no deadlock/hang).
-     * docs/architecture/full-smp-plan.md §7 ②.0. */
+     * docs/architecture/full-smp-plan.md §7 ②.0; ②.1b N=4 generalization. */
     {
         const unsigned long K = 200000UL;       /* per-task increments */
-        const unsigned long N = 2UL;            /* CPUs */
-        print("[SMP] releasing one secondary into the dispatcher (BKL)...\r\n");
+        const unsigned long N = 4UL;            /* CPUs (②.1b: N=4) */
+        print("[SMP] releasing THREE secondaries (cores 1,2,3) into the dispatcher (BKL)...\r\n");
         int rc = smp_selftest_run(K);
 
-        /* [smp-boot-survives]: did both CPUs reach the dispatcher? */
+        /* [smp-boot-survives]: did ALL secondaries reach the dispatcher? */
         int sec_live = (smp_wait_secondary_live() == 0);
-        unsigned long e0 = smp_exec_count(0);
-        unsigned long e1 = smp_exec_count(1);
-        void *t0 = smp_running_tcb(0);
-        void *t1 = smp_running_tcb(1);
+        unsigned long e[4];
+        void *t[4];
+        for (int c = 0; c < 4; c++) {
+            e[c] = smp_exec_count(c);
+            t[c] = smp_running_tcb(c);
+        }
         unsigned long total = smp_get_counter();
         unsigned long expect = N * K;
 
-        print("[SMP] cpu0 exec_count="); print_long((long)e0);
-        print(" cpu1 exec_count=");      print_long((long)e1); print("\r\n");
+        for (int c = 0; c < 4; c++) {
+            print("[SMP] cpu"); print_long((long)c);
+            print(" exec_count="); print_long((long)e[c]); print("\r\n");
+        }
         print("[SMP] shared counter=");  print_long((long)total);
         print(" expected=");             print_long((long)expect); print("\r\n");
 
-        /* [smp-2-tasks-run]: both CPUs advanced their OWN task, and the
-         * per-CPU current tasks are DISTINCT (different TCB pointers). */
-        if (rc == 0 && e0 > 0 && e1 > 0 && t0 != 0 && t1 != 0 && t0 != t1) {
+        /* [smp-2-tasks-run] (now N=4): EVERY CPU advanced its OWN task, and
+         * all four per-CPU current tasks are DISTINCT (different TCB pointers). */
+        int all_ran = 1, all_distinct = 1;
+        for (int c = 0; c < 4; c++)
+            if (!(e[c] > 0 && t[c] != 0)) all_ran = 0;
+        for (int a = 0; a < 4 && all_distinct; a++)
+            for (int b = a + 1; b < 4; b++)
+                if (t[a] == t[b]) { all_distinct = 0; break; }
+        if (rc == 0 && all_ran && all_distinct) {
             print("SMP-RUN: PASS\r\n");
         } else {
             print("SMP-RUN: FAIL rc="); print_long((long)rc);
-            print(" (need cpu0&cpu1 exec>0 and distinct tasks)\r\n");
+            print(" (need cpu0..3 exec>0 and 4 distinct tasks)\r\n");
         }
 
         /* [smp-mutual-exclusion]: no lost updates under the BKL. */

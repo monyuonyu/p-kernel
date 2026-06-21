@@ -37,21 +37,26 @@ BOOT="$HERE/../../boot/aarch64"
 QEMU="qemu-system-aarch64"
 TIMEOUT_S="${MC2_TIMEOUT:-60}"
 
-QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M -kernel kernel.elf \
+# NOTE (②.1b harness-snapshot fix): this harness does THREE build+boot cycles
+# (equiv, Tooth A, Tooth B). Boot QEMU from a UNIQUE snapshot of kernel.elf
+# (run_qemu $2), not the live build-dir image, so each later `make` (or a
+# parallel auditor's) cannot corrupt an in-flight QEMU read.
+QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
                 -serial stdio -display none -no-reboot"
 
 fail() { echo "[mc2-smp-equiv] FAIL: $*" >&2; exit 1; }
 
 run_qemu() {
-    # $1 = log file. Boots with a hard wall-clock timeout; the kernel never
-    # exits on its own (it boots into the T-Kernel idle loop), so the
-    # timeout is the expected terminator.
-    log="$1"
+    # $1 = log file, $2 = kernel image (a unique snapshot). Boots with a hard
+    # wall-clock timeout; the kernel never exits on its own (it boots into the
+    # T-Kernel idle loop), so the timeout is the expected terminator.
+    log="$1"; img="$2"
     cd "$BOOT"
     if command -v timeout >/dev/null 2>&1; then
-        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_SMP_FLAGS >"$log" 2>&1 || true
+        timeout -k 3 "$TIMEOUT_S" $QEMU $QEMU_SMP_FLAGS -kernel "$img" \
+            >"$log" 2>&1 || true
     else
-        $QEMU $QEMU_SMP_FLAGS >"$log" 2>&1 &
+        $QEMU $QEMU_SMP_FLAGS -kernel "$img" >"$log" 2>&1 &
         qpid=$!
         sleep "$TIMEOUT_S"
         kill "$qpid" 2>/dev/null || true
@@ -79,9 +84,11 @@ cd "$BOOT"
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST" >/dev/null 2>&1 \
     || fail "build (MC2_EQUIV_SELFTEST) failed"
+EQUIV_IMG="$(mktemp /tmp/mc2equiv_main.XXXXXX.elf)"
+cp kernel.elf "$EQUIV_IMG"       # snapshot so a later rebuild can't corrupt it
 
 EQUIV_LOG="$(mktemp)"
-run_qemu "$EQUIV_LOG"
+run_qemu "$EQUIV_LOG" "$EQUIV_IMG"
 echo "----- captured UART (equiv) -----"
 cat "$EQUIV_LOG"
 echo "---------------------------------"
@@ -101,9 +108,11 @@ echo "=== [mc2-smp-equiv] : TOOTH A (partition/arithmetic falsifier) MUST FAIL =
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_RACY_PARTITION" \
     >/dev/null 2>&1 || fail "build (MC2_EQUIV_RACY_PARTITION) failed"
+TOOTHA_IMG="$(mktemp /tmp/mc2equiv_toothA.XXXXXX.elf)"
+cp kernel.elf "$TOOTHA_IMG"      # snapshot so a later rebuild can't corrupt it
 
 TOOTHA_LOG="$(mktemp)"
-run_qemu "$TOOTHA_LOG"
+run_qemu "$TOOTHA_LOG" "$TOOTHA_IMG"
 echo "----- captured UART (Tooth A) -----"
 cat "$TOOTHA_LOG"
 echo "-----------------------------------"
@@ -120,9 +129,11 @@ echo "=== [mc2-smp-equiv] : TOOTH B (barrier/SMPEN falsifier) — honest QEMU re
 make clean >/dev/null 2>&1
 make EXTRA_CFLAGS="-DMC2_EQUIV_SELFTEST -DMC2_EQUIV_SMPEN_OFF -DMC2_EQUIV_NO_BARRIER" \
     >/dev/null 2>&1 || fail "build (Tooth B) failed"
+TOOTHB_IMG="$(mktemp /tmp/mc2equiv_toothB.XXXXXX.elf)"
+cp kernel.elf "$TOOTHB_IMG"      # snapshot so a later rebuild can't corrupt it
 
 TOOTHB_LOG="$(mktemp)"
-run_qemu "$TOOTHB_LOG"
+run_qemu "$TOOTHB_LOG" "$TOOTHB_IMG"
 echo "----- captured UART (Tooth B) -----"
 cat "$TOOTHB_LOG"
 echo "-----------------------------------"
@@ -140,5 +151,6 @@ else
 fi
 echo
 
-rm -f "$EQUIV_LOG" "$TOOTHA_LOG" "$TOOTHB_LOG"
+rm -f "$EQUIV_LOG" "$TOOTHA_LOG" "$TOOTHB_LOG" \
+      "$EQUIV_IMG" "$TOOTHA_IMG" "$TOOTHB_IMG"
 echo "=== [mc2-smp-equiv] : PASS (byte-identity + Tooth A bites; Tooth B recorded honestly) ==="
