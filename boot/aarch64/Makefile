@@ -570,6 +570,35 @@ run-smp2:
 smp2-test:
 	../../tests/aarch64/run_smp2.sh
 
+# ---- ②.2b-i [smp-async-preempt]: TRUE async register-context preempt -----
+# docs/architecture/smp-2b-async-preempt-plan.md §3. A REAL task on the
+# SECONDARY spins a TIGHT loop with NO flag-check; a higher-prio task is
+# readied + an SGI sent; the IRQ-return path (_vec_el1_irq →
+# smp_irq_need_resched → knl_dispatch) performs a REAL register-context switch
+# FROM interrupt context, preempting it MID-LOOP; the low-prio task is proven
+# suspended mid-loop + RESUMED (its counter continues to the cap). Prints:
+#   SMP-ASYNC-PREEMPT: PASS  (mid-loop preempt + resume; ELR/SPSR round-trip)
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+run-smp3:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_ASYNC_PREEMPT" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): the IRQ-return hook reverts to ②.1a flag-set-only
+# (smp_irq_need_resched always returns 0) -> the SGI is TAKEN but performs NO
+# switch -> the tight no-poll loop is NEVER preempted -> SMP-ASYNC-PREEMPT:
+# FAIL (with sgi_taken>=1, highprio_ran=0). Proves the switch is load-bearing.
+run-smp3-noasync:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_ASYNC_PREEMPT -DSMP_NO_ASYNC" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4, grep SMP-ASYNC-PREEMPT: PASS +
+# mid-loop evidence, then build the NO_ASYNC falsifier and assert it FAILs
+# with sgi_taken=1/highprio_ran=0. This is the [smp-async-preempt] harness.
+smp3-test:
+	../../tests/aarch64/run_smp3.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -611,4 +640,6 @@ clean:
         run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test \
         run-slice run-slice-break mc2-slice-test \
         run-smp0 run-smp0-nolock run-smp0-force smp0-test \
-        run-smp1 run-smp1-noipi smp1-test
+        run-smp1 run-smp1-noipi smp1-test \
+        run-smp2 smp2-test \
+        run-smp3 run-smp3-noasync smp3-test
