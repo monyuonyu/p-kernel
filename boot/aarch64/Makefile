@@ -476,6 +476,32 @@ run-smp0-nolock:
 smp0-test:
 	../../tests/aarch64/run_smp0.sh
 
+# ②.1a cross-CPU preemption via GIC SGI IPI. Boot under -smp 4 with the
+# preempt self-test: CPU B (secondary) spins on a LOW-prio task; CPU A
+# readies a HIGH-prio task for B + smp_send_reschedule(B) (a GIC SGI); B
+# takes the SGI and switches to the high-prio task within a watchdog. Prints:
+#   SMP-PREEMPT: PASS  (B preempted to the high-prio task after the SGI)
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+# docs/architecture/smp-1-ipi-preempt-plan.md §1/§4.
+run-smp1:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_PREEMPT_TEST" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): smp_send_reschedule() is a no-op -> NO SGI is
+# delivered -> B never preempts -> the watchdog reports SMP-PREEMPT: FAIL.
+# Proves the IPI is load-bearing (preemption happens ONLY because of the SGI).
+run-smp1-noipi:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_PREEMPT_TEST -DSMP_NO_IPI" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4, grep SMP-PREEMPT: PASS, then
+# build the NO_IPI falsifier and assert SMP-PREEMPT: FAIL. This is the
+# [smp-cross-preempt] harness.
+smp1-test:
+	../../tests/aarch64/run_smp1.sh
+
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.
 QEMU_RPI3_FLAGS = -M raspi3b -m 1G -kernel kernel8.img -serial stdio \
@@ -516,4 +542,5 @@ clean:
 .PHONY: all run run-debug clean run-smp run-smp-fault mc2-test \
         run-equiv run-equiv-toothA run-equiv-toothB mc2-equiv-test \
         run-slice run-slice-break mc2-slice-test \
-        run-smp0 run-smp0-nolock smp0-test
+        run-smp0 run-smp0-nolock smp0-test \
+        run-smp1 run-smp1-noipi smp1-test
