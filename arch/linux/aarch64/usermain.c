@@ -62,6 +62,9 @@ IMPORT void dtr_recover_weights(void);               /* guard recover  */
 IMPORT void r3_cmd(const UB *args, UW len);           /* R3 in-context  */
 IMPORT void r3_handoff_test(void);                    /* LM-4 fast->slow */
 IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
+#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT void r3_migrate_forward_test(void);            /* [migrate-forward] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -957,6 +960,22 @@ EXPORT INT usermain(void)
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') sign_self_test();
             else print("usage: sign test\r\n");
+        } else if (starts_with(line, n, "compat") && (n == 6 || line[6] == ' ')) {
+            /* compat-migration-chain-plan.md §5: `compat test` runs the
+             * migration-chain acceptance suite. First slice = [migrate-forward]
+             * (an R3 mind-state blob written under vN is read functionally
+             * intact under v{N+1} via the migration chain). Gated behind
+             * -DR3WP_MIGRATE_CERT so the default kernel + crown are byte-
+             * identical; an ungated build prints how to enable it. */
+            const UB *a = line + 6; UW al = (UW)(n - 6);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') {
+#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+                r3_migrate_forward_test();
+#else
+                print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
+#endif
+            } else print("usage: compat test\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and

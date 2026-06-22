@@ -313,6 +313,15 @@ void r3_cmd(const UB *args, UW len);
 void r3_test(void);
 void r3_handoff_test(void);
 
+/* compat-migration-chain-plan.md §5.1 — [migrate-forward]: an R3 mind-state
+ * blob written in the vN format is read functionally-intact under v{N+1} via
+ * the migration chain. Compiled ONLY under -DR3WP_MIGRATE_CERT (hosted), so
+ * the default kernel object and the [smp-one-mind] crown stay byte-identical.
+ * `compat test` drives it. */
+#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+void r3_migrate_forward_test(void);
+#endif
+
 /* LM-5 (living-mind.md Part VI) -- the 随時 stream: facts taught
  * in-context at different times are consolidated into R3's own rw[]
  * across multiple bounded sleep rounds. r3_fact_learn / r3_facts_pending

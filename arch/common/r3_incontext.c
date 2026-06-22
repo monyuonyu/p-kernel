@@ -807,12 +807,33 @@ extern int pfs_dur_active(void);
 
 #define R3_WP_FILE   "mind.rw"          /* the durable weights blob name   */
 #define R3_WP_MAGIC  0x33574d50u        /* "PMW3" little-endian (mind v3)  */
-#define R3_WP_VER    1u                 /* on-disk format version          */
+/* On-disk format version. THE MIGRATION CHAIN (compat-migration-chain-plan.md
+ * §3): the CURRENT version a fresh save writes. v1 was the original layout
+ * (112-byte header, payload immediately after). v2 (this slice) adds ONE
+ * trailing header field (merge_epoch) BEFORE the payload — a genuine format
+ * delta, not a no-op. The load path migrates a v1 blob forward to v2 via
+ * r3_wp_steps[] (read-old -> upgrade), so a mind taught under v1 is still
+ * read intact under v2. R3_WP_VER_MIN is the oldest version this build can
+ * still migrate (§C.3 deep-version-gap bound). */
+#define R3_WP_VER     2u                /* on-disk format version (CURRENT) */
+#define R3_WP_VER_V1  1u                /* the original layout (legacy)     */
+#define R3_WP_VER_MIN 1u                /* oldest version we can migrate    */
 
-/* On-disk header. Fixed-width fields only (the payload follows, R_NP
- * floats). Vocab content-ids pin the blob to the EXACT embedded word
- * list; a vocab edit changes them, so old weights are refused. payload_id
- * is sha256(rw bytes) — the no-op-write key AND a torn-write tripwire. */
+/* On-disk header (CURRENT = v2). Fixed-width fields only (the payload
+ * follows, R_NP floats). Vocab content-ids pin the blob to the EXACT
+ * embedded word list; a vocab edit changes them, so old weights are
+ * refused. payload_id is sha256(rw bytes) — the no-op-write key AND a
+ * torn-write tripwire.
+ *
+ * v2 DELTA (the migration step's reason to exist): merge_epoch records the
+ * consolidation epoch the weights came from (mirrors the live `merge_epoch`
+ * counter, line ~599). A v1 blob predates this field; migrating it forward
+ * defaults merge_epoch to 0 (the documented default, §3.1). Because the new
+ * field sits BETWEEN the old header and the payload, reading a v1 blob at the
+ * v2 WIDTH (i.e. skipping the migration step) shifts the float payload by
+ * 4 bytes -> the weights are garbled -> the taught fact is LOST. That wrong-
+ * width misread is what makes the [migrate-forward] falsifier load-bearing
+ * (the LM_SELF dual-width-walker precedent, lm_self.h:67-69). */
 typedef struct {
     U4 magic;                           /* R3_WP_MAGIC                     */
     U4 version;                         /* R3_WP_VER                       */
@@ -821,7 +842,29 @@ typedef struct {
     U1 vocab_key_id[PFS_ID_LEN];        /* r3_vocab_key_id_blob            */
     U1 vocab_val_id[PFS_ID_LEN];        /* r3_vocab_val_id_blob            */
     U1 payload_id[PFS_ID_LEN];          /* sha256(rw[] bytes)              */
+    U4 merge_epoch;                     /* v2: consolidation epoch (v1->0) */
+    U4 reserved2;                       /* 0 (re-align the floats to 8)    */
 } R3_WP_HDR;
+
+/* The legacy v1 header — byte-for-byte the layout v1 nodes wrote, kept so the
+ * migration step can read an old blob at its TRUE width. 112 bytes; the
+ * payload followed immediately. (This is the dual-width discipline of
+ * lm_self.h: read each version at its own width, then upgrade.) */
+typedef struct {
+    U4 magic;
+    U4 version;
+    U4 r_np;
+    U4 reserved;
+    U1 vocab_key_id[PFS_ID_LEN];
+    U1 vocab_val_id[PFS_ID_LEN];
+    U1 payload_id[PFS_ID_LEN];
+} R3_WP_HDR_V1;
+
+_Static_assert(sizeof(R3_WP_HDR_V1) == 112, "R3_WP v1 header is 112 bytes");
+_Static_assert(sizeof(R3_WP_HDR) == 120,
+               "R3_WP v2 header is 120 bytes (v1 + merge_epoch + reserved2)");
+_Static_assert(sizeof(R3_WP_HDR) > sizeof(R3_WP_HDR_V1),
+               "v2 must be a real format delta (wider than v1)");
 
 /* last payload_id we wrote — content-id no-op compare avoids re-writing
  * ~84 KB when consolidation produced an identical weight image (flash
@@ -854,7 +897,9 @@ INT r3_weights_persist(void)
     pfs_id_compute(wbuf, (UW)sizeof wbuf, pid);
     if (r3_wp_have_last && r3_id_eq(pid, r3_wp_last_id)) return 0;  /* no-op */
 
-    /* header + payload in one buffer -> one atomic temp+rename write. */
+    /* header + payload in one buffer -> one atomic temp+rename write.
+     * Always writes the CURRENT (v2) layout; old v1 blobs are upgraded on
+     * the READ side by the migration chain, never re-written here. */
     static U1 blob[sizeof(R3_WP_HDR) + sizeof(float) * R_NP];
     R3_WP_HDR *h = (R3_WP_HDR *)blob;
     h->magic = R3_WP_MAGIC; h->version = R3_WP_VER;
@@ -862,6 +907,8 @@ INT r3_weights_persist(void)
     r3_vocab_key_id_blob(h->vocab_key_id);
     r3_vocab_val_id_blob(h->vocab_val_id);
     for (INT i = 0; i < PFS_ID_LEN; i++) h->payload_id[i] = pid[i];
+    h->merge_epoch = (U4)merge_epoch;   /* v2 field: the live epoch        */
+    h->reserved2 = 0;
     for (UW i = 0; i < sizeof wbuf; i++) blob[sizeof(R3_WP_HDR) + i] = ((const U1 *)wbuf)[i];
 
     if (pfs_dur_write(R3_WP_FILE, blob, (unsigned)sizeof blob) != 0)
@@ -875,7 +922,134 @@ INT r3_weights_persist(void)
 #endif
 }
 
-/* Boot-time restore. If a valid weights blob exists AND its header matches
+#ifdef _TK_HOSTED_LIBC_
+/* =================================================================== *
+ *  THE MIGRATION CHAIN for R3_WP (compat-migration-chain-plan.md §3).  *
+ *                                                                     *
+ *  A per-axis registry of pairwise (vN -> v{N+1}) functions that      *
+ *  upgrade a caller-owned blob buffer IN PLACE. The load path reads   *
+ *  the blob's version, applies the chain up to CURRENT, then loads.   *
+ *  This generalizes the shipped LM_SELF dual-width walker             *
+ *  (lm_self.h:67-69) into a named, chained table. UNKNOWN/future      *
+ *  version -> refuse-and-print, NEVER silent corruption (§3.1 step 4).*
+ *                                                                     *
+ *  HOSTED/LOADER-ONLY (LENS A, §A): all migration code lives behind   *
+ *  _TK_HOSTED_LIBC_, transforming bytes BEFORE they reach rw[].       *
+ *  r_forward never parses a version or runs a migration — the mind    *
+ *  math is UNTOUCHED, and the default bare-metal object (which never  *
+ *  defines _TK_HOSTED_LIBC_) is byte-identical (the crown is safe).   *
+ * =================================================================== */
+
+/* one migration step. to_ver MUST be from_ver+1 (pairwise, §3.2). The
+ * step upgrades the blob in *buf (current byte length *len) from from_ver's
+ * layout to to_ver's layout in place; *len is updated to the new length.
+ * Returns 1 on success, 0 to refuse (the chain aborts -> refuse-and-print). */
+typedef struct {
+    U4  from_ver;
+    U4  to_ver;
+    INT (*migrate)(U1 *buf, UW *len, UW cap);
+} R3_WP_MIGRATE_STEP;
+
+/* v1 -> v2: insert the merge_epoch (+reserved2) field BETWEEN the v1 header
+ * and the payload, defaulting merge_epoch to 0 (a v1 blob predates the
+ * field, §3.1). The payload (R_NP floats) is shifted forward by the 8-byte
+ * header growth. Data is PRESERVED (every weight float survives); only the
+ * format widens. This is the genuine format delta the [migrate-forward]
+ * cert and its falsifier turn on. */
+static INT r3_wp_migrate_v1_v2(U1 *buf, UW *len, UW cap)
+{
+    const UW payload_sz = sizeof(float) * R_NP;
+    const UW v1_total   = sizeof(R3_WP_HDR_V1) + payload_sz;
+    const UW v2_total   = sizeof(R3_WP_HDR)    + payload_sz;
+    if (*len != v1_total) return 0;               /* not a v1-width blob     */
+    if (v2_total > cap)   return 0;               /* scratch too small       */
+
+    /* read the v1 header at its TRUE width (dual-width discipline). */
+    R3_WP_HDR_V1 old;
+    for (UW i = 0; i < sizeof old; i++) ((U1 *)&old)[i] = buf[i];
+
+    /* shift the payload forward by the header growth (back-to-front so the
+     * in-place move never clobbers not-yet-copied bytes), then write the
+     * v2 header in front with the new fields defaulted. */
+    const UW grow = sizeof(R3_WP_HDR) - sizeof(R3_WP_HDR_V1);
+    for (UW i = payload_sz; i-- > 0; )
+        buf[sizeof(R3_WP_HDR) + i] = buf[sizeof(R3_WP_HDR_V1) + i];
+    (void)grow;
+
+    R3_WP_HDR *h = (R3_WP_HDR *)buf;
+    h->magic = old.magic; h->version = R3_WP_VER;  /* now a v2 blob         */
+    h->r_np = old.r_np; h->reserved = old.reserved;
+    for (INT i = 0; i < PFS_ID_LEN; i++) {
+        h->vocab_key_id[i] = old.vocab_key_id[i];
+        h->vocab_val_id[i] = old.vocab_val_id[i];
+        h->payload_id[i]   = old.payload_id[i];
+    }
+    h->merge_epoch = 0;                            /* the documented default */
+    h->reserved2   = 0;
+    *len = v2_total;
+    return 1;
+}
+
+static const R3_WP_MIGRATE_STEP r3_wp_steps[] = {
+    { R3_WP_VER_V1, R3_WP_VER, r3_wp_migrate_v1_v2 },
+};
+#define R3_WP_NSTEPS (sizeof(r3_wp_steps) / sizeof(r3_wp_steps[0]))
+
+/* Run the migration chain: upgrade *buf from its header version up to
+ * CURRENT, applying each registered vN->v{N+1} step in sequence (§3.1
+ * step 3). Returns 1 if the blob is at CURRENT afterward, 0 to refuse.
+ * A blob already at CURRENT returns 1 with ZERO steps applied (the common
+ * fast path is unchanged). DR3WP_SKIP_MIGRATE (the falsifier) compiles the
+ * chain out -> a v1 blob is then read at the v2 width -> the fact is lost. */
+static INT r3_wp_migrate_chain(U1 *buf, UW *len, UW cap)
+{
+#ifdef R3WP_SKIP_MIGRATE
+    (void)buf; (void)len; (void)cap; (void)r3_wp_steps;
+    return 1;   /* FALSIFIER: skip the chain; the v1 blob is misread below */
+#else
+    R3_WP_HDR *h = (R3_WP_HDR *)buf;          /* magic+version at offset 0 */
+    U4 v = h->version;
+    if (v == R3_WP_VER) return 1;                 /* already current: no-op  */
+    if (v > R3_WP_VER) {
+        r_puts("[mind] persisted weights are from a FUTURE version "
+               "-> refusing (re-learn)\r\n");
+        return 0;                                 /* never silent corruption */
+    }
+    if (v < R3_WP_VER_MIN) {
+        r_puts("[mind] persisted weights too old to migrate "
+               "-> refusing (re-learn)\r\n");
+        return 0;                                 /* deep-version-gap bound  */
+    }
+    /* apply the pairwise chain v -> v+1 -> ... -> CURRENT */
+    UW guard = 0;
+    while (v < R3_WP_VER) {
+        INT found = 0;
+        for (UW s = 0; s < R3_WP_NSTEPS; s++) {
+            if (r3_wp_steps[s].from_ver == v) {
+                if (!r3_wp_steps[s].migrate(buf, len, cap)) {
+                    r_puts("[mind] migration step failed -> refusing "
+                           "(re-learn)\r\n");
+                    return 0;
+                }
+                v = r3_wp_steps[s].to_ver;
+                found = 1;
+                break;
+            }
+        }
+        if (!found || ++guard > R3_WP_NSTEPS + 1) {
+            r_puts("[mind] no migration path to current version "
+                   "-> refusing (re-learn)\r\n");
+            return 0;                             /* missing-step: refuse    */
+        }
+    }
+    r_puts("[mind] migrated persisted weights forward to current format\r\n");
+    return (((R3_WP_HDR *)buf)->version == R3_WP_VER);
+#endif
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
+/* Boot-time restore. If a valid weights blob exists AND (after migrating it
+ * forward through the chain if it is an older version) its header matches
  * the current build (version + R_NP + both vocab content-ids) AND the
  * payload hashes to its recorded id, load it via r3_weights_set, mark the
  * substrate ready (skips the lazy pretrain — a faster-boot side effect),
@@ -887,13 +1061,30 @@ INT r3_weights_restore_or_pretrain(void)
 #ifdef _TK_HOSTED_LIBC_
     if (!pfs_dur_active()) return 0;             /* memory-only: stay lazy  */
 
+    /* read into a v2-sized buffer. A current (v2) blob fills it exactly; an
+     * older (v1) blob is shorter and is migrated forward in place. The chain
+     * needs headroom = the v2 width, which the v2-sized buffer provides. */
     static U1 blob[sizeof(R3_WP_HDR) + sizeof(float) * R_NP];
     int n = pfs_dur_read(R3_WP_FILE, blob, (unsigned)sizeof blob);
     if (n < 0) return 0;                          /* absent: first boot      */
-    if (n != (int)sizeof blob) {
+
+    /* The blob's on-disk length depends on its version. Accept either the
+     * CURRENT (v2) width or the legacy v1 width; anything else is truncated.
+     * (The version inside the header decides which migration runs.) */
+    const UW v1_total = sizeof(R3_WP_HDR_V1) + sizeof(float) * R_NP;
+    const UW v2_total = sizeof(R3_WP_HDR)    + sizeof(float) * R_NP;
+    if ((UW)n != v1_total && (UW)n != v2_total) {
         r_puts("[mind] persisted weights truncated -> reinitializing (lazy)\r\n");
         return 0;
     }
+
+    /* read-old -> upgrade: migrate the blob forward to CURRENT before any
+     * field is interpreted at the current width (the migration-chain
+     * invariant, §3.1). On refuse (unknown/future/too-old/skip), bail to
+     * the lazy re-learn — never a silent corrupt load. */
+    UW blen = (UW)n;
+    if (!r3_wp_migrate_chain(blob, &blen, (UW)sizeof blob))
+        return 0;
 
     R3_WP_HDR *h = (R3_WP_HDR *)blob;
     U1 vk[PFS_ID_LEN], vv[PFS_ID_LEN];
@@ -1259,6 +1450,124 @@ void r3_handoff_test(void)
     for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];
     r_puts("[handoff] DONE — a fact learned only in-context now lives in the weights.\r\n");
 }
+
+/* ================================================================== *
+ *  [migrate-forward] CERT (compat-migration-chain-plan.md §5.1 +      *
+ *  "THE FIRST IMPL SLICE"): a mind-state blob (R3 weights carrying a  *
+ *  TAUGHT FACT) written in the vN (=v1) format is read FUNCTIONALLY   *
+ *  INTACT under v{N+1} (=v2) via the migration chain (§3).            *
+ *                                                                     *
+ *  Cure (PASS): teach a fact INTO the weights (the handoff recipe,    *
+ *  so the fact answers under a MASKED prompt — it lives in rw[], not  *
+ *  in a visible support prompt). Serialize rw[] as a v1 R3_WP blob.   *
+ *  Run it through r3_wp_migrate_chain (v1->v2) + load the payload at  *
+ *  the v2 width. Assert the masked-held-out accuracy is still HIGH:   *
+ *  the mind is functionally intact post-migration.                   *
+ *                                                                     *
+ *  Falsifier (-DR3WP_SKIP_MIGRATE -> RED): the chain is compiled to a *
+ *  no-op, so the v1 blob is NOT widened; reading its payload at the   *
+ *  v2 offset (sizeof(R3_WP_HDR)) is a wrong-width misread -> the       *
+ *  weights are garbled -> the fact is LOST -> the accuracy collapses  *
+ *  to chance -> FAIL. (The LM_SELF dual-width walker, lm_self.h:67-69,*
+ *  proves a wrong width genuinely corrupts the read; this is the same *
+ *  mechanism applied to the R3 weight blob.)                          *
+ *                                                                     *
+ *  GATED: compiles ONLY under -DR3WP_MIGRATE_CERT (and is HOSTED-only *
+ *  via _TK_HOSTED_LIBC_, since the migration chain it drives is) so   *
+ *  the default kernel object — and the crown — are byte-unchanged.    *
+ * ================================================================== */
+#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+void r3_migrate_forward_test(void)
+{
+    static float rw_snapshot[R_NP];
+    /* the v1-format blob: v1 header + payload (no merge_epoch field). */
+    static U1 v1blob[sizeof(R3_WP_HDR_V1) + sizeof(float) * R_NP];
+    /* the migration scratch: v2-sized so the chain has headroom to widen. */
+    static U1 mblob[sizeof(R3_WP_HDR) + sizeof(float) * R_NP];
+
+    m_quiesce();
+    r_puts("[migrate-forward] ==== R3_WP state survives a v1->v2 format bump ====\r\n");
+    r_puts("[migrate-forward] taught fact lives in rw[] (masked prompt); blob written v1, read v2.\r\n");
+
+    /* ---- 1. Teach a fact INTO the weights (the handoff recipe) -------- */
+    h_make_dstar();
+    r_init_weights(0xA5A5u);
+    float lr = 0.05f;
+    for (INT ep = 0; ep < R_EPOCHS; ep++) {
+        if (ep == R_EPOCHS*2/3)  lr = 0.02f;
+        if (ep == R_EPOCHS*9/10) lr = 0.008f;
+        r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
+    }
+    for (INT i = 0; i < R_NP; i++) rw_snapshot[i] = rw[i];   /* in-context-competent, D*-naive */
+    h_consolidate(H_SEED_TRAIN, H_ROUNDS, H_PER_ROUND, 0.02f, DSTAR, H_SUPPORT);
+
+    /* the fact is now in the weights: measure the pre-serialize masked acc. */
+    float acc_taught = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[migrate-forward] taught (pre-serialize) masked acc "); r_putf1(acc_taught);
+    r_puts("%  (chance "); r_putf1(H_CHANCE); r_puts("%)\r\n");
+
+    /* ---- 2. Serialize rw[] as a v1 R3_WP blob (the old node's write) -- */
+    static float wbuf[R_NP];
+    r3_weights_get(wbuf);
+    U1 pid[PFS_ID_LEN];
+    pfs_id_compute(wbuf, (UW)sizeof wbuf, pid);
+    R3_WP_HDR_V1 *hv1 = (R3_WP_HDR_V1 *)v1blob;
+    hv1->magic = R3_WP_MAGIC; hv1->version = R3_WP_VER_V1;
+    hv1->r_np = (U4)R_NP; hv1->reserved = 0;
+    r3_vocab_key_id_blob(hv1->vocab_key_id);
+    r3_vocab_val_id_blob(hv1->vocab_val_id);
+    for (INT i = 0; i < PFS_ID_LEN; i++) hv1->payload_id[i] = pid[i];
+    for (UW i = 0; i < sizeof wbuf; i++)
+        v1blob[sizeof(R3_WP_HDR_V1) + i] = ((const U1 *)wbuf)[i];
+
+    /* wipe rw[] so the ONLY way the fact comes back is a correct load. */
+    r_init_weights(0xA5A5u);
+    float acc_wiped = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[migrate-forward] after wipe, masked acc "); r_putf1(acc_wiped);
+    r_puts("%  (the fact is gone until a correct load)\r\n");
+
+    /* ---- 3. Read the v1 blob under v2: migrate-forward, then load ----- */
+    for (UW i = 0; i < sizeof v1blob; i++) mblob[i] = v1blob[i];   /* fresh copy */
+    UW blen = (UW)sizeof v1blob;     /* the v1 on-disk length */
+    INT migrated = r3_wp_migrate_chain(mblob, &blen, (UW)sizeof mblob);
+    R3_WP_HDR *h = (R3_WP_HDR *)mblob;
+    r_puts("[migrate-forward] chain ran="); r_putdec((UW)migrated);
+    r_puts(" header.version="); r_putdec((UW)h->version);
+    r_puts(" merge_epoch="); r_putdec((UW)h->merge_epoch);
+    r_puts(" len="); r_putdec(blen); r_puts("\r\n");
+
+    /* The v2 READER always reads the payload at the v2 offset. With the
+     * chain (PASS) the payload was shifted there; with -DR3WP_SKIP_MIGRATE
+     * (falsifier) it was NOT -> this reads the wrong bytes -> garbled. */
+    const float *payload = (const float *)(mblob + sizeof(R3_WP_HDR));
+    /* informational: the production integrity guard (a v2 reader would also
+     * recompute this and refuse a wrong-width read — the safety net). */
+    U1 chk[PFS_ID_LEN];
+    pfs_id_compute(payload, (UW)(sizeof(float) * R_NP), chk);
+    r_puts("[migrate-forward] payload integrity (vs recorded id): ");
+    r_puts(r3_id_eq(chk, h->payload_id) ? "MATCH\r\n" : "MISMATCH (wrong-width read)\r\n");
+
+    r3_weights_set(payload);
+
+    /* ---- 4. Assert the taught fact STILL answers under v2 ------------- */
+    float acc_migrated = h_eval_mode(H_SEED_HELD, H_EVAL_N, H_MASKED);
+    r_puts("[migrate-forward] post-migrate masked acc "); r_putf1(acc_migrated);
+    r_puts("%  (taught was "); r_putf1(acc_taught); r_puts("%)\r\n");
+
+    /* PASS gates: (a) the load reproduced the taught accuracy (within a
+     * tolerance — the migration is lossless, so it must match closely),
+     * (b) the migrated accuracy is well above chance (the fact answers),
+     * (c) the wiped baseline was at/near chance (the test is non-vacuous:
+     * the accuracy did NOT survive the wipe on its own). */
+    INT pass = (acc_migrated >= acc_taught - 2.0f)
+            && (acc_migrated >= 50.0f)
+            && (acc_wiped <= 33.0f);
+    r_puts(pass ? "[migrate-forward] PASS\r\n" : "[migrate-forward] FAIL\r\n");
+
+    for (INT i = 0; i < R_NP; i++) rw[i] = rw_snapshot[i];
+    r_puts("[migrate-forward] DONE — a mind taught under v1 is read intact under v2.\r\n");
+}
+#endif /* R3WP_MIGRATE_CERT && _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ *
  *  LM-5 — 随時: the living consolidation loop (living-mind.md Part VI).
