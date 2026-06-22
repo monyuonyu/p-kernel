@@ -227,6 +227,7 @@ COMMON_C_SRCS = \
     genome.c \
     ed25519.c \
     sign.c \
+    compat_ota.c \
     cradle_net.c \
     modver.c
 

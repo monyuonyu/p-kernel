@@ -65,6 +65,9 @@ IMPORT void r3_stream_test(void);                     /* LM-5 stream     */
 #if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT void r3_migrate_forward_test(void);            /* [migrate-forward] */
 #endif
+#if defined(OTA_GATE_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT void compat_ota_gate_test(void);               /* [signed-ota-gate] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -962,20 +965,33 @@ EXPORT INT usermain(void)
             else print("usage: sign test\r\n");
         } else if (starts_with(line, n, "compat") && (n == 6 || line[6] == ' ')) {
             /* compat-migration-chain-plan.md §5: `compat test` runs the
-             * migration-chain acceptance suite. First slice = [migrate-forward]
-             * (an R3 mind-state blob written under vN is read functionally
-             * intact under v{N+1} via the migration chain). Gated behind
-             * -DR3WP_MIGRATE_CERT so the default kernel + crown are byte-
+             * migration-chain acceptance suite ([migrate-forward]); `compat
+             * test ota` runs the [signed-ota-gate] suite (§5.2: a legal signed
+             * successor ACCEPTED; tampered/wrong-key/downgrade REFUSED). Each is
+             * gated behind its own cert flag (-DR3WP_MIGRATE_CERT /
+             * -DOTA_GATE_CERT), so the default kernel + crown are byte-
              * identical; an ungated build prints how to enable it. */
             const UB *a = line + 6; UW al = (UW)(n - 6);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') {
-#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
-                r3_migrate_forward_test();
+                const UB *sub = a + 4; UW sl = al - 4;
+                while (sl && (*sub==' '||*sub=='\t')) { sub++; sl--; }
+                if (sl >= 3 && sub[0]=='o'&&sub[1]=='t'&&sub[2]=='a') {
+                    /* [signed-ota-gate] */
+#if defined(OTA_GATE_CERT) && defined(_TK_HOSTED_LIBC_)
+                    compat_ota_gate_test();
 #else
-                print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
+                    print("compat test ota: rebuild with EXTRA_CFLAGS=-DOTA_GATE_CERT\r\n");
 #endif
-            } else print("usage: compat test\r\n");
+                } else {
+                    /* [migrate-forward] (default `compat test`) */
+#if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+                    r3_migrate_forward_test();
+#else
+                    print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
+#endif
+                }
+            } else print("usage: compat test [ota]\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and
