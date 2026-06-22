@@ -107,7 +107,8 @@ ARCH_C_SRCS = \
     smp_prod.c \
     smp_async.c \
     smp_deadlock.c \
-    smp_onemind.c
+    smp_onemind.c \
+    smp_secwait.c
 
 ARCH_S_SRCS = cpu_support.S
 
@@ -261,6 +262,12 @@ endif
 # ELF stays byte-identical).
 ifeq (,$(findstring SMP_ONE_MIND,$(EXTRA_CFLAGS)))
 SMP_CERT_EXCLUDE += smp_onemind.o
+endif
+# ②.2b-ii [smp-secondary-wait]: smp_secwait.c — same exclude discipline (empty
+# .o otherwise; excluded from the LINK unless -DSMP_SECONDARY_WAIT so the
+# DEFAULT kernel ELF stays byte-identical).
+ifeq (,$(findstring SMP_SECONDARY_WAIT,$(EXTRA_CFLAGS)))
+SMP_CERT_EXCLUDE += smp_secwait.o
 endif
 LINK_OBJS = $(filter-out $(SMP_CERT_EXCLUDE),$(ALL_OBJS))
 
@@ -667,6 +674,44 @@ run-smp4-race:
 # build .text is byte-identical to base.
 smp4-test:
 	../../tests/aarch64/run_smp4.sh
+
+# ---- ②.2b-ii [smp-secondary-wait]: secondary CNTP timer + cross-CPU WAIT wake -
+# docs/architecture/smp-2b-ii-secondary-timer-plan.md. A REAL task on the
+# SECONDARY (CPU 1) can BLOCK and WAKE: (i) tk_dly_tsk woken by CPU 1's OWN timer
+# tick (the secondary programs its own CNTP PPI 30); (ii) tk_wai_sem(TMO_FEVR)
+# woken ONLY by CPU 0's tk_sig_sem via the cross-CPU wake (knl_make_ready →
+# knl_smp_wake → SGI → the ②.2b-i async hook).  Boots under -smp 4 (cert uses
+# CPUs 0,1).  Prints:  SMP-SECONDARY-WAIT: PASS.
+# The DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL to before.
+run-smp5:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_SECONDARY_WAIT" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): -DSMP_NO_SEC_TIMER leaves the secondary's CNTP
+# unprogrammed → CPU 1 never takes its OWN tick → half (i)'s tk_dly_tsk task
+# hangs (CPU 0's timer is held out of the window, §1.3) → SMP-SECONDARY-WAIT:
+# FAIL.  Proves the secondary timer is load-bearing.
+run-smp5-no-sectimer:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_SECONDARY_WAIT -DSMP_NO_SEC_TIMER" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# FALSIFIER (load-bearing): -DSMP_NO_XWAKE suppresses the cross-CPU IPI in
+# knl_smp_wake → CPU 0 marks Bsem READY but CPU 1 is never told to re-dispatch →
+# half (ii)'s sem-waiter never wakes → SMP-SECONDARY-WAIT: FAIL.  Proves the
+# cross-CPU IPI is load-bearing.
+run-smp5-no-xwake:
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS="-DSMP_SELFTEST -DSMP_SECONDARY_WAIT -DSMP_NO_XWAKE" $(TARGET)
+	qemu-system-aarch64 $(QEMU_SMP_FLAGS)
+
+# Automated cert: build + boot under -smp 4 + assert SMP-SECONDARY-WAIT: PASS
+# (both halves) 10x stable; then build each falsifier (-DSMP_NO_SEC_TIMER,
+# -DSMP_NO_XWAKE) and assert each FAILs; then assert the DEFAULT build .text is
+# byte-identical to base.
+smp5-test:
+	../../tests/aarch64/run_smp5.sh
 
 # Boot the RPi 3 image under QEMU's raspi3b emulation. Matches the
 # firmware contract: load kernel8.img at 0x80000, run at EL2.

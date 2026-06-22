@@ -469,6 +469,68 @@ EXPORT INT usermain(void)
     }
 #endif /* SMP_DEADLOCK_TEST */
 
+#ifdef SMP_SECONDARY_WAIT
+    /* ②.2b-ii [smp-secondary-wait]: prove a REAL task on the SECONDARY can BLOCK
+     * and WAKE: (i) tk_dly_tsk woken by CPU 1's OWN timer tick (the secondary
+     * programs its own CNTP PPI 30); (ii) tk_wai_sem(TMO_FEVR) woken ONLY by
+     * CPU 0's tk_sig_sem via the cross-CPU wake (knl_make_ready → knl_smp_wake →
+     * SGI → the ②.2b-i async hook).  Runs here inside the initial task with the
+     * kernel fully up (real TCBs + ready queue exist).  Prints a verdict the
+     * harness greps.  FALSIFIERS: -DSMP_NO_SEC_TIMER (half i hangs),
+     * -DSMP_NO_XWAKE (half ii never wakes). */
+    {
+        extern int  smp_secwait_test_run(void);
+        extern unsigned long smp_secwait_slept(void);
+        extern unsigned long smp_secwait_woke_i(void);
+        extern long          smp_secwait_dly_delta(void);
+        extern unsigned long smp_secwait_sem_blocked(void);
+        extern unsigned long smp_secwait_sem_woke(void);
+        extern unsigned long smp_secwait_dly_ms(void);
+        extern unsigned long smp_sgi_taken(int cpu);
+
+        #define PRINT_ULONG(v) do { unsigned long _u=(unsigned long)(v); \
+            char _t[21]; int _i=0; if(_u==0)_t[_i++]='0'; \
+            while(_u){_t[_i++]=(char)('0'+_u%10);_u/=10;} \
+            char _o[22]; int _j=0; while(_i)_o[_j++]=_t[--_i]; _o[_j]='\0'; \
+            print(_o); } while(0)
+        #define PRINT_SLONG(v) do { long _s=(long)(v); if(_s<0){print("-");_s=-_s;} \
+            PRINT_ULONG((unsigned long)_s); } while(0)
+
+        print("[SMP] ②.2b-ii [smp-secondary-wait]: secondary CNTP tick + cross-CPU WAIT wake...\r\n");
+        int rc = smp_secwait_test_run();
+
+        unsigned long slept = smp_secwait_slept();
+        unsigned long woke_i = smp_secwait_woke_i();
+        long          delta  = smp_secwait_dly_delta();
+        unsigned long dlyms  = smp_secwait_dly_ms();
+        unsigned long semblk = smp_secwait_sem_blocked();
+        unsigned long semwk  = smp_secwait_sem_woke();
+        unsigned long sgis   = smp_sgi_taken(1);
+
+        print("[SMP] half(i)  slept="); PRINT_ULONG(slept);
+        print(" woke="); PRINT_ULONG(woke_i);
+        print(" current_time_delta="); PRINT_SLONG(delta);
+        print(" need>="); PRINT_ULONG(dlyms); print("\r\n");
+        print("[SMP] half(ii) sem_blocked="); PRINT_ULONG(semblk);
+        print(" sem_woke="); PRINT_ULONG(semwk);
+        print(" sgi_taken(1)="); PRINT_ULONG(sgis); print("\r\n");
+
+        /* PASS: half (i) — Bdly slept + woke by CPU 1's OWN tick (current_time
+         * advanced >= the requested delay, with CPU 0's timer held out); half
+         * (ii) — Bsem blocked + woke by CPU 0's cross-CPU signal (an SGI was
+         * delivered to CPU 1). */
+        if (rc == 0 && slept == 1 && woke_i == 1 && delta >= (long)dlyms &&
+            semblk == 1 && semwk == 1 && sgis >= 1) {
+            print("SMP-SECONDARY-WAIT: PASS\r\n");
+        } else {
+            print("SMP-SECONDARY-WAIT: FAIL rc="); PRINT_SLONG(rc);
+            print(" (need slept=1, woke=1, delta>=dly, sem_blocked=1, sem_woke=1, sgi>=1)\r\n");
+        }
+        #undef PRINT_ULONG
+        #undef PRINT_SLONG
+    }
+#endif /* SMP_SECONDARY_WAIT */
+
     /* AI primitives — tensor / ai_job / pipeline / MLP seed */
     ai_kernel_init();
 

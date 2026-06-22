@@ -310,7 +310,7 @@ void main(void)
     }
 #endif
 
-#if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST) && !defined(SMP_2TASKS_PROD) && !defined(SMP_ASYNC_PREEMPT) && !defined(SMP_DEADLOCK_TEST) && !defined(SMP_ONE_MIND)
+#if defined(SMP_SELFTEST) && !defined(SMP_PREEMPT_TEST) && !defined(SMP_2TASKS_PROD) && !defined(SMP_ASYNC_PREEMPT) && !defined(SMP_DEADLOCK_TEST) && !defined(SMP_ONE_MIND) && !defined(SMP_SECONDARY_WAIT)
     /* ②.0/②.1b/②.N8 full-SMP slice: bring up SEVEN secondaries (cores 1..7)
      * into the per-CPU T-Kernel dispatcher under one Big Kernel Lock; have ALL
      * EIGHT CPUs run a DISTINCT task that increments a SHARED counter K times
