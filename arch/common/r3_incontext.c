@@ -971,10 +971,8 @@ static INT r3_wp_migrate_v1_v2(U1 *buf, UW *len, UW cap)
     /* shift the payload forward by the header growth (back-to-front so the
      * in-place move never clobbers not-yet-copied bytes), then write the
      * v2 header in front with the new fields defaulted. */
-    const UW grow = sizeof(R3_WP_HDR) - sizeof(R3_WP_HDR_V1);
     for (UW i = payload_sz; i-- > 0; )
         buf[sizeof(R3_WP_HDR) + i] = buf[sizeof(R3_WP_HDR_V1) + i];
-    (void)grow;
 
     R3_WP_HDR *h = (R3_WP_HDR *)buf;
     h->magic = old.magic; h->version = R3_WP_VER;  /* now a v2 blob         */

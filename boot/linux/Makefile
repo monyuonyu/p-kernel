@@ -69,10 +69,17 @@ INCDIRS = \
 #   diverged from gcc on a knife-edge recipe and the on-device mind
 #   learned 5% instead of 95% (the wave-49 "salty bug"). The `dtr fpdet`
 #   golden-logit cert guards this; keep this flag on EVERY build config.
+# EXTRA_CFLAGS lets a caller inject build-time defines without editing this
+# file (mirrors boot/aarch64/Makefile), e.g.
+#   make EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT   (the [migrate-forward] cert)
+#   make EXTRA_CFLAGS="-DR3WP_MIGRATE_CERT -DR3WP_SKIP_MIGRATE" (its falsifier)
+# Empty by default, so the default build is unchanged.
+EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
           -fno-stack-protector -fno-common -std=gnu11 \
           -ffp-contract=off \
           -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+          $(EXTRA_CFLAGS) \
           $(INCDIRS)
 
 ASFLAGS = -D_in_asm_source_ -D_APP_AARCH64_ -D_APP_LINUX_ \
