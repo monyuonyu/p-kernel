@@ -142,6 +142,18 @@ EXPORT void smp_secwait_dly_task(INT stacd, void *exinf)
     __asm__ volatile("dmb st; sev" ::: "memory");
     secw_dbg("[SMP] Bdly: WOKE from tk_dly_tsk (cpu1's own tick fired)\r\n");
 
+    /* §LENS-B(d) — knl_taskindp is a single GLOBAL W (NOT per-CPU), and the asm
+     * timer-startup shim brackets it with knl_taskindp++/-- OUTSIDE the BKL.  If
+     * CPU 1 kept ticking during half (ii) (where CPU 0 also ticks), the two
+     * startup shims could overlap → a lost-update race on the global.  We make
+     * the two CPUs' task-independent brackets PROVABLY NON-OVERLAPPING by
+     * disabling CPU 1's OWN CNTP here (half (i) is done; half (ii) is the
+     * cross-CPU SIGNAL path and needs NO CPU-1 tick).  This is option (b) of the
+     * design §7.5 / LENS-B(d): the global knl_taskindp per-CPU-ization is
+     * ledgered as a ②.3 sharpening; this cert closes the window by construction.
+     * CNTP_CTL_EL0 is per-CPU-banked, so this masks ONLY CPU 1's timer. */
+    __asm__ volatile("msr cntp_ctl_el0, %0; isb" :: "r"((unsigned long)0));
+
     for (;;)
         __asm__ volatile("wfe");                 /* park; driver reaps */
 }
