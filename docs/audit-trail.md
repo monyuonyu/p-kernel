@@ -1209,3 +1209,42 @@ device-sizing fragments the fleet into ≤3 student cohorts and the cross-cohort
 remains UNVERIFIED (this slice = tier-pick + cohort isolation + R3-crown share, NOT solved distillation);
 bare-metal real-RAM (FDT parse) deferred (ships M via a build constant + cores-only fallback);
 Android totalMem wiring deferred.
+
+## compat [signed-ota-gate] — merge commit 63032e06 (impl 09e3062a+63032e06, base 60b56611)
+The OTA trust gate (compat-migration-chain-plan.md §4): a node accepts an update artifact IFF it is
+correctly signed AND a legal version successor — no downgrade, no body-swap, no impersonation. The second
+compat slice (after [migrate-forward]); together they let the ark ship updates without being hijacked.
+Independent clean-room auditor verdict: **MERGEABLE-WITH-NITS** (a SECURITY gate, audited maximally
+adversarially — 9 forge attempts, none succeeded).
+- THE GATE: a 4-gate AND in `compat_ota_accept` (`compat_ota.c`) — the SHIPPED `sign_manifest_verify` 3
+  gates (recomputed artifact_id + Ed25519 against an ADOPTED key + allowlist) PLUS gate 4 (artifact_ver >
+  running_ver). The version lives INSIDE the signed body `{artifact_id||artifact_ver}` (sign.c:140-143),
+  so a downgrade or relabel breaks gate 1-3. sign.c/ed25519.c REUSED VERBATIM (not in the diff).
+- CHECK 1 CROWN byte-identity + verbatim reuse: PASS. `grep -c compat_ota` bare-metal Makefiles = 0,0
+  (hosted-only); clean `.text` = `755a20fa…` (reproduced on a 2nd clean build; re-derived on the merged
+  trunk by the commander); compat_ota.o absent from the bare-metal link; sign.c/ed25519.c UNTOUCHED.
+- CHECK 2 cert PASS, every refuse at the RIGHT gate (3×): ACCEPT good v2-over-v1; REJECT tampered body
+  (gate1-3), non-adopted key (gate1-3), downgrade v1-over-v1 + v0<v1 (gate4), relabel v1→v99 no-resign
+  (gate1-3). CHECK 3 FALSIFIER load-bearing: `-DOTA_SKIP_VERIFY` → all 5 malicious artifacts ACCEPT → FAIL.
+- CHECK 4 ADVERSARIAL FORGE (the core security question): PASS — could NOT forge an accept. A standalone
+  harness (real compat_ota.o/sign.o/ed25519.o), 9 forge attempts + 2 legit controls: the version compare
+  is `U4 > U4` (unsigned, NO arithmetic → no integer wrap reachable); artifact_ver is cryptographically in
+  the signed body (relabel→UINT_MAX, body-swap→v2, and impersonation-with-evil-key ALL die at gate1-3);
+  both legit controls (genuine v2; legitimately-signed UINT_MAX) correctly ACCEPT (gate not over-tight).
+- CHECK 5 no regression: shipped `sign test` (roundtrip/selflayer/unit/keyrotation/live/genome) ALL PASS —
+  the 3-gate verify unweakened; cert symbol absent from the default hosted binary. CHECK 6 human-identity
+  boundary HELD: the gate reads ONLY artifact/key fields — NO author/handle/identity/profile check crept
+  in (the ark never verifies humans; signing is code/weights PROVENANCE only).
+- NITS (non-blocking): (1) `boot/linux_x86_64/Makefile` has NO `EXTRA_CFLAGS` support so it can drive NO
+  cert (the cert+falsifier can't run there) — but this is PRE-EXISTING (base 60b56611 = 0; it hits
+  R3WP_MIGRATE_CERT identically), the production gate IS in the default x86_64 binary + is ABI-independent,
+  and the cert is fully exercisable on aarch64. Follow-up: thread EXTRA_CFLAGS into the x86_64 Makefile for
+  cross-ABI cert parity. (2) `legal_successor` collapses to the `>` check — a documented decision (every
+  migration step is +1 ⇒ any strictly-greater version is chain-reachable; the named predicate is the hook
+  for a future per-axis step cap), matches design §4.3.
+LEDGER: row CLOSED. The ark refuses a tampered / downgraded / impersonated update — provably unforgeable
+(version cryptographically in the signed body; unsigned compare with no wrap), reusing the shipped signing
+verbatim, with the human-identity boundary intact. HONEST: this is the ACCEPT gate only — artifact
+DELIVERY/transport (mesh small-update / KLOAD deep-update) is NOT wired, key REVOCATION (CRL/fleet
+broadcast) is deferred (A/B rollback is the only recovery). Remaining compat: Self-lineage hash-chain leg,
+arkfs deep-version-gap, [no-fleet-split], + the x86_64-Makefile cert-parity follow-up.
