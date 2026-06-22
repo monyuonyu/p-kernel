@@ -1167,3 +1167,45 @@ load-bearing. HONEST: ONE flat-blob axis only — the Self-lineage hash-chain le
 (its log clean-rejects on version → reject-not-migrate), [signed-ota-gate], and [no-fleet-split] are the
 named LATER slices (compat-migration-chain-plan.md). Harmless note: the R3_WP_VER_MIN too-old branch is
 currently unreachable (dead-safe code).
+
+## device-capacity mind-sizing (DEVFIT-1) — merge commit 66201a25 (impl a6aa7c2c) + comment-nit fix 17b78c3e
+mk_pino's explicit "measure the device + auto-fit the mind": each node MEASURES its RAM+cores at boot and
+AUTO-FITS its student tier (S/M/L) — the SMP-AUTODETECT cores-half's mind-sizing sibling. The S/M/L tier
+machinery already existed; this supplies the missing `tier = tier_of(ram,cores)` boot-time caller.
+Independent clean-room auditor verdict: **MERGEABLE-WITH-NITS** (one comment-accuracy nit, no functional
+defect; FALSIFIED, every decisive gate held).
+- CHECK 1 CROWN byte-identity (decisive): PASS. `student.c` diff EMPTY (untouched); from `git clean -fdx`,
+  bare-metal default `.text` == `755a20fa…` (re-derived on the merged trunk by the commander). ALL tier-pick
+  symbols (`st_init_device`/`dev_capacity*`/`tier_of`/`st_arena_bytes_for_tier`/`st_fleet_expert_target`)
+  == 0 in `kernel.elf` — student.c/student_shell.c/dev_capacity.c are HOSTED-ONLY (student_stub.o on bare
+  metal), so the crown is structurally safe.
+- CHECK 2 M/L UNMOVED + S PINNED-AND-ASSERTED: PASS. SS-6 --machine: S=`0a5bf44c131b5439`,
+  M=`63e8de333e995913` (unmoved), L=`67f2434f50e791b6` (unmoved). S is now production-selectable so its
+  forward-hash is PINNED + ASSERTED (`student_devfit_test.c:292` `CHECK(hS==PIN_S)`); the tier_forward_hash
+  recipe is byte-identical to SS-6 → the S pin is independently reproduced by the pre-existing SS-6 harness.
+- CHECK 3 [device-fit] 14/14 (3× stable): PASS. RAM is the bottleneck (512MB/8core→S not L); thresholds are
+  COMPUTED from each tier's arena cost (n_params*4, ×20 headroom), not magic; cores-only fallback on a
+  low-trust bare-metal RAM constant; alloc-fail L→M→S step-down.
+- CHECK 4 FALSIFIER load-bearing (3×): PASS. `-DDEVFIT_IGNORE_MEASURE` (hardcode L, no step-down) under
+  `ulimit -v 256MB` on the 512MB profile → OOM → RED; production (measure+step-down) → tier=S, no OOM. The
+  auditor confirmed it OOMs even at a 128MB cap where M (29MB) WOULD fit — proving the step-down is the
+  disabled mechanism, non-vacuous.
+- CHECK 5 SS-4 reconciliation (open-risk #7): PASS. `st_fleet_expert_target(N,tier)` =
+  `min(cap_experts_of(N), ST_E_<tier>)` — exhaustively probed over caps {-5…1,000,000}: S clamps at 2,
+  M at 4, L at 8, NEVER 16, never < K_min, never > the tier ceiling. HONEST: there is NO production
+  `st_grow_experts(cap_experts_of(N))` caller yet — the clamp is a seam-closer (not over-claimed).
+- CHECK 6 no regression: SS-1/2/3/5/6, SS-4 [expert-growth-preserves]+[grow-cohort] PASS; hosted linux
+  links clean; KV byte-identical base==HEAD by construction (compiles only the untouched student.c).
+- THE NIT (fixed at merge, 17b78c3e): a code comment said "no-fixture → selects M, default fleet
+  byte-identical" — INACCURATE on a capable host (the CI host's 10.9GB/8core correctly boots L; that IS the
+  intended measure+auto-fit behavior). The comment over-stated byte-identity; tightened to "modest host→M,
+  capable→L, tiny→S; the invariant is each tier's pinned hash + the untouched R3 crown." Comment-only,
+  hosted files → bare-metal `.text` unaffected (re-verified 755a20fa).
+LEDGER: row CLOSED. The mind now sizes itself to its host — a 512MB device runs S, an 8GB device L — the
+SAME binary, fail-closed (a lying RAM steps down rather than OOMs), reconciled with SS-4's fleet-growth via
+a hard `min` to the device ceiling. Crown structurally safe (hosted-only); S pinned before becoming
+selectable. HONEST: boot-time only (no runtime re-tiering — thermal/pressure → S_n + SS-4 shrink deferred);
+device-sizing fragments the fleet into ≤3 student cohorts and the cross-cohort distillation LEARNING bridge
+remains UNVERIFIED (this slice = tier-pick + cohort isolation + R3-crown share, NOT solved distillation);
+bare-metal real-RAM (FDT parse) deferred (ships M via a build constant + cores-only fallback);
+Android totalMem wiring deferred.
