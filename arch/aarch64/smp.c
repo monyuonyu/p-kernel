@@ -186,10 +186,18 @@ static void smp_dbg_cpu_entered(unsigned long cpu, const char *suffix)
 #  define SMP_GICC_BASE   0x08010000UL    /* QEMU virt GICv2 CPU interface  */
 #  define SMP_GICD_CTLR   0x000
 #  define SMP_GICD_TYPER  0x004           /* GIC Distributor Type Register  */
+#  define SMP_GICD_ISENABLER 0x100        /* GICD_ISENABLERn (PPI/SPI enable) */
 #  define SMP_GICD_SGIR   0xF00
 #  define SMP_GICC_CTLR   0x000
 #  define SMP_GICC_PMR    0x004
 #endif
+
+/* ②.2b-ii — the EL1 physical-timer PPI (the per-CPU generic-timer interrupt).
+ * INTID 30, identical to tkdev_conf.h:INTNO_TIMER_GIC / the boot CPU's timer.
+ * The handler at knl_intvec[30] (timer_irq_handler) is GLOBAL — once the
+ * secondary's PPI 30 is enabled + its CNTP armed, it runs UNCHANGED on the
+ * secondary.  PPI bits in GICD_ISENABLER0 are PER-CPU-BANKED on GICv2 (§5.3). */
+#define SMP_TIMER_PPI     30U
 
 #define SMP_RESCHED_SGI   0U              /* SGI INTID 0 = "reschedule" */
 
@@ -559,6 +567,53 @@ void bkl_release(void)
     }
 }
 
+/* ②.2b-ii SMP-idle BKL handoff (called from .Lsmp_idle, cpu_support.S).
+ *
+ *  A task that BLOCKS reaches END_CRITICAL_SECTION, which calls knl_dispatch
+ *  (switching this CPU away) BEFORE BKL_RELEASE — so the blocking leaves THIS
+ *  CPU owning the BKL at the depth it entered the syscall with (1 for a plain
+ *  task syscall).  If the CPU then idles still holding it, another CPU's
+ *  bkl_acquire spins forever.  smp_idle_bkl_drop FULLY releases the BKL iff this
+ *  CPU owns it (recording the prior depth so it can be restored); on wake,
+ *  smp_idle_bkl_reacquire re-takes it to that SAME depth, so the task we resume
+ *  finds the BKL held exactly as its own pending BKL_RELEASE expects.  IRQ is
+ *  masked by the caller across drop (we are about to wfe with IRQ unmasked, but
+ *  the drop itself must complete first); the per-CPU saved depth is safe because
+ *  only THIS CPU executes its own .Lsmp_idle. */
+static unsigned int g_idle_saved_depth[SMP_MAX_CPUS];
+
+void smp_idle_bkl_drop(void)
+{
+    long me = (long)smp_mpidr_aff0();
+    if (me < 0 || me >= SMP_MAX_CPUS)
+        return;
+    if (g_bkl_owner != me) {
+        g_idle_saved_depth[me] = 0;     /* we don't hold it — nothing to drop */
+        return;
+    }
+    g_idle_saved_depth[me] = g_bkl_depth;   /* remember the entry depth */
+    g_bkl_depth = 1;                        /* collapse to 1 so one release frees */
+    bkl_release();                          /* fully drop: owner=-1, raw_unlock   */
+}
+
+void smp_idle_bkl_reacquire(void)
+{
+    long me = (long)smp_mpidr_aff0();
+    if (me < 0 || me >= SMP_MAX_CPUS)
+        return;
+    /* Consume any reschedule pending on us: the SGI that woke us from idle has
+     * done its job (the publisher set our schedtsk); .Ldispatch_loop will pick
+     * it up.  Clearing here avoids a stale pending flag firing a spurious async
+     * switch once we are running the resumed task. */
+    g_resched_pending[me] = 0u;
+    unsigned int d = g_idle_saved_depth[me];
+    if (d == 0)
+        return;                             /* we never held it — nothing to do */
+    bkl_acquire();                          /* re-own at depth 1 (raw_lock)       */
+    g_bkl_depth = d;                        /* restore the entry depth            */
+    g_idle_saved_depth[me] = 0;
+}
+
 /* ════════════════════════════════════════════════════════════════════
  *  ②.2b-i — the IRQ-return-path async-preempt DECISION (Option A).
  *
@@ -647,6 +702,18 @@ int smp_irq_need_resched(void)
     if (sched == 0 || ctx == sched)
         return 0;
 
+    /* (2b) ②.2b-ii: if THIS CPU is IDLE (ctxtsk == NULL — it parked in
+     * .Lsmp_idle after its task blocked), do NOT async-switch from interrupt
+     * context.  The idle loop owns the BKL handoff (smp_idle_bkl_drop /
+     * _reacquire); an async knl_dispatch here would bypass the reacquire and
+     * the resumed task would BKL_RELEASE a lock this CPU does not own.  Instead
+     * return 0: the SGI merely wakes the wfe, and .Lsmp_idle re-acquires the BKL
+     * and re-checks .Ldispatch_loop, which picks up the published schedtsk.  The
+     * pending flag is KEPT so a later RUNNING-context preempt still fires (it is
+     * harmlessly cleared when the idle loop dispatches, having no effect). */
+    if (ctx == 0)
+        return 0;
+
     /* All clauses hold → consume the pending flag and switch. */
     g_resched_pending[me] = 0u;
     __asm__ volatile("dmb ish" ::: "memory");
@@ -669,6 +736,150 @@ unsigned long smp_sgi_taken(int cpu)
     __asm__ volatile("dmb ld" ::: "memory");
     return g_sgi_taken[cpu];
 }
+
+/* ════════════════════════════════════════════════════════════════════
+ *  ②.2b-ii — Half B: the cross-CPU WAIT-wake (knl_smp_wake)
+ *
+ *  THE GAP (design §4.2 Gap #2): when CPU 0 readies a task that belongs on
+ *  CPU 1 (e.g. tk_sig_sem on CPU 0 waking a CPU-1 semaphore-waiter),
+ *  knl_make_ready (kernel/common/task.c) sets only the CALLING CPU's
+ *  CUR_SCHEDTSK — nothing tells CPU 1 to re-dispatch the now-READY task, so it
+ *  sits in the shared ready queue while CPU 1 is parked.
+ *
+ *  THE FIX: knl_make_ready's tail calls knl_smp_wake_hook(tcb) → here.  We
+ *  publish g_smpcpu[target].schedtsk = tcb and ring the reschedule SGI on the
+ *  target; the SGI's IRQ-return path hits the already-certified ②.2b-i
+ *  async-switch hook (smp_irq_need_resched), which re-dispatches tcb on the
+ *  target.  We run with the BKL ALREADY HELD (every wake site is inside
+ *  BEGIN/END_CRITICAL_SECTION, §4.5) → the schedtsk publish + SGI are
+ *  BKL-serialised against the target's own scheduler mutations.
+ *
+ *  CRITICAL: knl_smp_wake is reached from knl_make_ready on EVERY SMP_SELFTEST
+ *  build (the macro expands to a real call whenever SMP_SELFTEST is on), and
+ *  CPU 0's normal T-Kernel boot calls knl_make_ready constantly (timer ticks,
+ *  semaphores).  It MUST be an inert no-op unless the [smp-secondary-wait] cert
+ *  has explicitly ARMED it (g_xwake_armed) for a specific target task — so the
+ *  other certs (smp0..3 / onemind / mc2) and the production boot that follows
+ *  are UNPERTURBED.  Directed single-target wake only (the general affinity /
+ *  migration policy is ②.3 deferred, §7.3).
+ * ════════════════════════════════════════════════════════════════════ */
+/* Armed by the secwait driver: while non-zero, a wake of g_xwake_tcb is
+ * directed to CPU g_xwake_target.  Zero = inert (every other build/path). */
+volatile unsigned long  g_xwake_armed  = 0;
+volatile void          *g_xwake_tcb    = 0;
+volatile int            g_xwake_target = 1;   /* the only secondary in the cert */
+
+/* TCB is treated OPAQUELY here (smp.c is header-light; struct smp_cpu uses
+ * void* for the task pointers).  The prototype must match the macro's
+ * `extern void knl_smp_wake(TCB *tcb)` in cpu_status.h, so we forward-declare
+ * the same tag/typedef T-Kernel uses (kernel/tkernel/typedef etc.). */
+#ifndef __tcb__
+#define __tcb__
+typedef struct task_control_block TCB;
+#endif
+
+void knl_smp_wake(TCB *tcb)
+{
+    /* Inert unless the cert armed a directed wake for THIS exact task.  This is
+     * what keeps every other SMP_SELFTEST build byte-for-byte behaviourally
+     * unchanged (the call is present but does nothing). */
+    if (!g_xwake_armed)
+        return;
+    if ((void *)tcb != (void *)g_xwake_tcb)
+        return;
+
+    int target = g_xwake_target;
+    if (target <= 0 || target >= SMP_MAX_CPUS)
+        return;
+
+    /* Why an EXPLICIT publish?  The cert's secondary task is LOWER priority than
+     * every other ready task (cpu0_tsk), so knl_make_ready's own
+     * `CUR_SCHEDTSK = tcb` branch is NEVER taken (tcb does not outrank the
+     * shared-queue top).  Pointing the target CPU at the woken task therefore
+     * requires this directed publish.  Caller holds the BKL → serialised vs the
+     * target's scheduler reads. */
+    unsigned long me = smp_mpidr_aff0();
+    if ((unsigned long)target == me) {
+        /* SELF-WAKE (half i): the woken task belongs to the CPU we are ALREADY
+         * running on (the secondary's OWN timer tick readied its OWN dly task).
+         * Publish schedtsk; NO IPI needed — the secondary's next dispatch
+         * checkpoint (.Lsmp_idle → .Ldispatch_loop re-read after this IRQ
+         * returns) picks it up.  -DSMP_NO_XWAKE does NOT affect this self path,
+         * so half (i) still PASSes under that falsifier (its scope is the
+         * cross-CPU path only). */
+        g_smpcpu[target].schedtsk = tcb;
+        __asm__ volatile("dsb ish" ::: "memory");
+        return;
+    }
+
+    /* CROSS-CPU WAKE (half ii): target != me. */
+#if defined(SMP_NO_XWAKE)
+    /* FALSIFIER (-DSMP_NO_XWAKE): suppress the ENTIRE cross-CPU wake — NEITHER
+     * publish the target's schedtsk NOR ring its doorbell.  CPU 0 still marks tcb
+     * READY in the shared queue, but the target CPU is never pointed at it and
+     * never told → the sem-waiter never wakes → half (ii) hangs → watchdog →
+     * SMP-SECONDARY-WAIT: FAIL.  (Suppressing ONLY the SGI is insufficient: the
+     * target's idle wfe also wakes on the incidental `sev` from the caller's
+     * bkl_release and would then SEE a published schedtsk — so the publish MUST
+     * be suppressed too for the falsifier to truly bite.)  Proves the directed
+     * cross-CPU wake — publish + IPI — is LOAD-BEARING. */
+    (void)tcb;
+#else
+    g_smpcpu[target].schedtsk = tcb;
+    __asm__ volatile("dsb ish" ::: "memory");
+    smp_send_reschedule(target);
+#endif
+}
+
+#ifdef SMP_SECONDARY_WAIT
+/* ②.2b-ii — Half A: program THIS (secondary) CPU's OWN EL1 physical timer.
+ *
+ *  Replicates the per-CPU subset of tkdev_init.c's gic_init()+timer_init() for
+ *  the local core, header-light (this TU avoids tkdev_init.c's headers):
+ *    (1) enable the secondary's CPU interface (GICC_PMR/CTLR) — reuse
+ *        smp_gic_cpuif_init();
+ *    (2) enable PPI 30 in the secondary's BANKED GICD_ISENABLER0 (per-CPU on
+ *        GICv2 — writing it on CPU 1 enables CPU 1's PPI 30 ONLY, §5.3);
+ *    (3) program CNTP_TVAL_EL0 = CNTFRQ_EL0/TIMER_HZ + CNTP_CTL_EL0 = 1 (the 4
+ *        per-CPU-banked-register instructions of timer_init).
+ *  tkdev_init.c / timer.c are NOT edited; the global knl_intvec[30] handler
+ *  (timer_irq_handler) runs unchanged on the secondary.  TIMER_HZ = 100 (=
+ *  tkdev_conf.h); the cadence is computed from the LOCAL CNTFRQ_EL0 so it is
+ *  correct on both QEMU virt (62.5 MHz) and RPi3 (19.2 MHz). */
+#define SMP_TIMER_HZ   100UL   /* == tkdev_conf.h TIMER_HZ (10 ms period) */
+
+void smp_secondary_timer_init(void)
+{
+#if !defined(BOARD_RPI3)
+    /* (1) this CPU's GIC CPU interface (idempotent with the SGI path's call). */
+    smp_gic_cpuif_init();
+
+#if !defined(SMP_NO_SEC_TIMER)
+    /* (2) enable PPI 30 in THIS CPU's banked GICD_ISENABLER0 (word 0, bit 30).
+     *     On GICv2 the PPI/SGI bits of ISENABLER0 are per-CPU-banked, so this
+     *     enables ONLY the calling core's timer PPI (mirrors gic_enable_irq). */
+    *(volatile unsigned int *)(SMP_GICD_BASE + SMP_GICD_ISENABLER)
+        = (1U << (SMP_TIMER_PPI & 31U));
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+
+    /* (3) program this CPU's banked CNTP (enable + first interval). */
+    unsigned long freq;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+    unsigned long interval = freq / SMP_TIMER_HZ;
+    __asm__ volatile("msr cntp_tval_el0, %0" :: "r"(interval));
+    __asm__ volatile("msr cntp_ctl_el0, %0" :: "r"((unsigned long)1)); /* enable, unmasked */
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+#else
+    /* FALSIFIER (-DSMP_NO_SEC_TIMER): the secondary's CNTP is NOT programmed and
+     * its PPI 30 is NOT enabled → CPU 1 never takes its own tick → the cert's
+     * tk_dly_tsk task on CPU 1 hangs (the driver holds CPU 0's timer service
+     * out of the window, §1.3, so NO other CPU can wake it) → watchdog →
+     * SMP-SECONDARY-WAIT: FAIL.  Proves the secondary timer is load-bearing. */
+    (void)0;
+#endif /* !SMP_NO_SEC_TIMER */
+#endif /* !BOARD_RPI3 */
+}
+#endif /* SMP_SECONDARY_WAIT */
 
 /* ════════════════════════════════════════════════════════════════════
  *  THE ONE SHARED GLOBAL READY LIST (g_ready[]) — §3.3
@@ -1109,6 +1320,19 @@ extern volatile unsigned long g_om_forward_inflight; /* M's forward read window 
 #endif
 #endif
 
+#ifdef SMP_SECONDARY_WAIT
+/* ②.2b-ii [smp-secondary-wait]: CPU 1 waits for the driver (smp_secwait.c, on
+ * CPU 0) to publish its schedtsk = the REAL waiter task, programs its OWN EL1
+ * timer (smp_secondary_timer_init), then enters the PRODUCTION dispatcher
+ * (smp_prod_enter_dispatch → .Ldispatch_loop) — switching into the waiter on
+ * CPU 1.  The waiter blocks (tk_dly_tsk / tk_wai_sem) and is later WOKEN either
+ * by CPU 1's OWN tick (half i) or by CPU 0's cross-CPU wake (half ii, via
+ * knl_smp_wake → SGI → the ②.2b-i async hook).  Symbols from smp_secwait.c. */
+extern volatile int g_secwait_secondary_go;
+extern void smp_secondary_timer_init(void);  /* program this CPU's CNTP (above) */
+extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns    */
+#endif
+
 /* The per-CPU dispatcher loop body (entered from smp_dispatch_loop). */
 void smp_dispatch_run(void)
 {
@@ -1258,6 +1482,42 @@ void smp_dispatch_run(void)
                 __asm__ volatile("" ::: "memory");
             }
             __asm__ volatile("dmb st" ::: "memory");
+            for (;;) __asm__ volatile("wfe");
+        }
+    }
+#endif
+
+#ifdef SMP_SECONDARY_WAIT
+    /* ②.2b-ii [smp-secondary-wait]: CPU 1 programs its OWN EL1 timer, waits for
+     * the driver (smp_secwait.c, on CPU 0) to publish its schedtsk = the REAL
+     * waiter task, then enters the PRODUCTION dispatcher — switching into the
+     * waiter on CPU 1.  The waiter blocks (tk_dly_tsk / tk_wai_sem) and is later
+     * woken by CPU 1's OWN tick (half i) or CPU 0's cross-CPU wake (half ii). */
+    {
+        g_smpcpu[me].live = 1;
+        __asm__ volatile("dmb st; sev" ::: "memory");
+        if (me == 1) {
+            /* Program CPU 1's own banked CNTP + enable its PPI 30 BEFORE the
+             * production dispatcher runs the waiter (so a tk_dly_tsk taken on
+             * CPU 1 can be woken by CPU 1's own tick).  The PRODUCTION dispatcher
+             * (.Ldispatch_loop, restoring the waiter's frame) unmasks IRQ as part
+             * of restoring the task's SPSR. */
+            smp_secondary_timer_init();
+            smp_dbg("[SMP] cpu1 entered PRODUCTION dispatcher (secondary-wait)\r\n");
+            unsigned long tries = 0;
+            for (;;) {
+                __asm__ volatile("dmb ld" ::: "memory");
+                if (g_secwait_secondary_go && g_smpcpu[me].schedtsk != 0)
+                    break;
+                if (++tries >= 200000000UL) {
+                    for (;;) __asm__ volatile("wfe");   /* driver watchdog FAILs */
+                }
+                __asm__ volatile("yield" ::: "memory");
+            }
+            smp_prod_enter_dispatch();             /* → .Ldispatch_loop; runs waiter */
+            for (;;) __asm__ volatile("wfe");
+        } else {
+            /* Other secondaries idle (the cert uses only CPUs 0,1). */
             for (;;) __asm__ volatile("wfe");
         }
     }
