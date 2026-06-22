@@ -1001,3 +1001,51 @@ the first real step of the decentralized P2P overlay. Live multi-process forward
 LEDGER: row CLOSED. The repo's hardest C-ABI slice — a true async register-context preempt from
 interrupt context — ships WITH its safety guard CERTIFIED by a real, load-bearing deadlock falsifier
 (not deferred). honest > green, and 諦めない. ②.2b-ii / ②.2c (the [smp-one-mind] crown) / ②.3 remain.
+
+## ②.2c [smp-one-mind] CROWN — the mind is byte-identical under SMP — commit eaa98f75 (crown impl 50abf7a3 + falsifier fix eaa98f75)
+The PAYOFF of the ② full-SMP arc: a REAL bare-metal mind forward (`r_forward`, a 4-head Transformer,
+R_NP=21568, pure -ffp-contract=off math over the shared static rw[]/rc) produces a BYTE-IDENTICAL
+output hash whether run uniprocessor (H_uni, CPU 0) or scheduled as a real `tk_cre_tsk` task on an SMP
+secondary (H_smp, CPU 1, via the ②.2a smp_prod pattern through the production .Ldispatch_loop, CPUs
+2/3 busy fillers = genuine concurrency). H_uni == H_smp ⇒ the SMP scheduler did not perturb one bit of
+the mind's math: "the mind stays one across the SMP scheduler."
+- Roles (impl≠auditor≠commander, per the constitution): the IMPLEMENTER built the crown (50abf7a3)
+  then died on a 529 mid-report; an INDEPENDENT clean-room AUDITOR (own worktree) gave the verdict; the
+  COMMANDER persisted the verified falsifier-fix diff (the implementer of that fix ALSO died on a 529
+  pre-commit — known Opus pattern, work was uncommitted in the worktree) and ran the final verification.
+- AUDIT VERDICT: **MERGEABLE-WITH-NITS.** The crown's POSITIVE claim is rock-solid; the ONE nit was the
+  negative control, and it was FIXED BEFORE MERGE (諦めない / honest>green) — not waved through.
+- CHECK 1 — CROWN byte-identity: PASS. Default `.text` sha = `755a20fae2d9b741…` (smp_onemind.o excluded
+  from the default link); `r3_incontext.o` = `3edc0d0777fa587d…` byte-identical base-2f395561 vs impl
+  (the SMP_ONE_MIND gating does NOT perturb the default object). Re-confirmed on trunk post-merge.
+- CHECK 2 — [smp-one-mind] PASS + STABILITY: PASS. H_uni == H_smp == `0x2856a99b23880b4c`, zero variance.
+  Stability ≈ 50+ clean samples with ZERO spurious failure (auditor 24/24 + commander 20/20 raw + 9/9 in
+  3 full harness runs). The implementer's "one early failure" was build contention (a stale/parallel
+  half-link), reproduced only under a dirty tree, never under `make clean; make -j1`.
+- CHECK 3 — FALSIFIER bites + NOW DETERMINISTIC: PASS. `-DSMP_ONEMIND_RACE` (a 2nd CPU scribbles the
+  shared static rc/rw[] mid-forward) → `SMP-ONE-MIND: FAIL hashes-differ`, H_smp a DIFFERENT garbage value
+  each run (e.g. 0xe2bd9c59, 0x00d2fe5c, 0xbfe9d1af…), ALWAYS ≠ H_uni — proof the cert observes the REAL
+  mind output. THE NIT (audit-found): the original racer was a fixed one-shot 50M-iter burst with no sync
+  to M's forward window → ~13%/boot it landed entirely before the re-seed or after the reads → spurious
+  PASS → `make smp4-test` self-aborted with a ~34% FALSE "cert vacuous" BLOCK (never a false GREEN, always
+  safe-side). FIX (confined to falsifier-only code: `#ifdef SMP_ONEMIND_RACE` + smp_onemind.o, default
+  byte-identity preserved by construction): bracket EXACTLY r_forward's read window with a
+  `g_om_forward_inflight` flag; the racer scribbles in small 100k chunks gated on the flag, continuously
+  until it observes the forward complete (1→0), with a bounded 200M cap so it can NEVER hang. Result
+  (commander-verified): **20/20 FAIL hashes-differ, 0 spurious PASS, 0 hang.**
+- CHECK 4 — NON-VACUITY: PASS. M is a real `tk_cre_tsk` TCB (pri 8) claimed for CPU 1 under the BKL and
+  run via the production dispatcher; per-CPU index is genuine hardware MPIDR_EL1 Aff0; `M ran=1` is written
+  only by M's body, reachable only after the secondary's register-context switch (triple TCB-location
+  guards confirm g_smpcpu[1].ctxtsk == mtcb). Not faked on CPU 0. Concurrency real (cpu2/3 fillers advance).
+- CHECK 5 — NO REGRESSION + honest scope: PASS. The `-DSMP_SELFTEST` binary is byte-identical base vs impl
+  (so smp0/1/2/3 + mc2 provably cannot change); honest narrowing is stated in source, the verdict print,
+  the design doc, and the commit: the crown is SINGLE-forward byte-identity; CONCURRENT forwards race the
+  shared static rc/rw[] and need a mind-lock — DEFERRED (exactly what the falsifier exploits). No
+  concurrent-mind-safety overclaim.
+LEDGER: row CLOSED. The ② full-SMP arc reaches its payoff: a REAL mind, run as a task on a true
+async-preemptive SMP scheduler, is byte-for-byte the same mind as uniprocessor (0x2856a99b23880b4c). The
+shipped uniprocessor kernel is untouched (755a20fa). The audit's one nit (a flaky negative control) was
+fixed to deterministic-RED before merge, not deferred. HONEST scope: single-forward; concurrent minds
+need a mind-lock (DEFERRED); QEMU green ≠ hardware green (RPi3 barrier/SMPEN teeth stay future). Remaining
+②: ②.2b-ii (secondary CNTP timer/WAIT — design hardened, plan at smp-2b-ii-secondary-timer-plan.md),
+②.3 (finer locks), hosted-port SMP, RPi3 [live].
