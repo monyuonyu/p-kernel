@@ -174,6 +174,20 @@ typedef struct {
     int o_out_norm;     /* [D]                                              */
     int o_out;          /* [VOCAB][D]  (untied output head)                 */
 
+    /* ---- SS-4 function-preserving expert growth (ss4-function-preserving-
+     * growth-plan.md §1.3) ----
+     * Per-expert liveness mask, nexpert-sized, separate heap block (NOT in the
+     * weight arena — it is not a trainable scalar). 1 = a real, selectable
+     * expert; 0 = a DEAD (grown-but-not-resurrected) expert whose effective
+     * router logit is forced to -inf in router_pick so it is PROVABLY never in
+     * the chosen top-K set, for EVERY input. The DEAD expert's router row + W2
+     * are also zeroed (defense-in-depth), but the alive mask is THE load-bearing
+     * exactness mechanism (a 0 logit alone can still be admitted by the
+     * margin-widening router). When `alive` is NULL (the default for every
+     * pre-SS-4 / never-grown model) router selection is BYTE-IDENTICAL to the
+     * pre-SS-4 path (the all-alive case) — the [grow-noop-identity] gate. */
+    int8_t *alive;      /* [nexpert] liveness mask, or NULL == all-alive     */
+
     /* forward activation cache (sized for MAXSEQ; reused per backward). */
     void *cache;        /* opaque st_cache *                                */
     void *mem;          /* the single malloc'd arena base (st_free frees)   */
@@ -320,6 +334,40 @@ int  st_last_fire_width_mean_milli(void);
  * out[max] (the "answer token"); returns the count written (== firing width,
  * <= max). Lets a cert assert the SAME bytes select the IDENTICAL experts. */
 int  st_last_fire_experts(int *out, int max);
+
+/* ---- SS-4 function-preserving expert growth (ss4-function-preserving-growth-
+ * plan.md §1) ----
+ *
+ * Grow the resident student's expert count m->nexpert from its current value up
+ * to `e_new` (e_new in [m->nexpert, ST_E_MAX]) by ADDING DEAD experts. This is
+ * the EXACTLY function-preserving growth event (§1.3, summary verdict): the
+ * output of st_forward is BYTE-IDENTICAL for EVERY input after the grow, ε = 0.
+ *
+ * Mechanism (each new expert e' in [E_old, e_new), every layer):
+ *   - router row  := 0      (gate logit gt[e'] = Σ 0·fin = exact 0 for all in)
+ *   - W2 (down)   := 0      (eo[e'] = Σ 0·eh = exact 0, regardless of W1/W3)
+ *   - alive[e']   := 0      (router_pick forces its effective logit to -inf, so
+ *                            it is PROVABLY never in the chosen top-K set ⇒ nk
+ *                            and every other tw[j] are bit-unchanged) — THIS is
+ *                            the exactness mechanism; the two zeroings are
+ *                            redundant defense-in-depth.
+ *   - W1/W3       := clone of the busiest incumbent (a latent warm-start for a
+ *                    later, SEPARATE, deliberately-ε resurrection step; it
+ *                    contributes NOTHING while W2=0 + alive=0).
+ *
+ * The growth is a RUNTIME heap event: it reshards the malloc'd weight/Adam arena
+ * to the new strides (incumbent blocks copied verbatim; new slots DEAD-init),
+ * sets m->nexpert/n_params, and reallocates the nexpert-sized alive[] mask. It
+ * does NOT touch the static R3 rw[] crown (a different network / TU; §5) and
+ * NEVER introduces a runtime-sized stack array (all scratch stays bound to
+ * ST_*_MAX; §3.2). Incumbent Adam moments are RETAINED at their new strides; the
+ * new slots' moments start at 0 (FedAvg-style, §1.1 step 4).
+ *
+ * e_new == m->nexpert is a legal no-op (the [grow-noop-identity] gate). Returns
+ * ST_OK, or ST_E_ARG (e_new < nexpert or > ST_E_MAX), or ST_E_OOM. A grown model
+ * forms a DISTINCT (tier, nexpert) merge-cohort by construction — st_blob_tier_ok
+ * already refuses a blob whose n_expert differs ([grow-cohort], §3.2/§4). */
+int  st_grow_experts(st_model *m, int e_new);
 
 /* TEST HOOK (SS-1): run the REAL adaptive router-margin selection on a
  * caller-supplied gate-logit vector of length ST_NEXPERT. Writes the chosen

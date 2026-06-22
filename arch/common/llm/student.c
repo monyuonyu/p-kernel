@@ -313,7 +313,199 @@ void st_free(st_model *m)
     if (!m) return;
     if (m->cache) { free(m->cache); m->cache = NULL; }
     if (m->mem)   { free(m->mem);   m->mem = NULL; }
+    if (m->alive) { free(m->alive); m->alive = NULL; }  /* SS-4 liveness mask */
     m->w = m->g = m->mu = m->vu = NULL;
+}
+
+/* ================================================================== */
+/* SS-4 — function-preserving expert growth (add DEAD experts)         */
+/*   ss4-function-preserving-growth-plan.md §1                          */
+/* ================================================================== */
+
+/* Recompute the o_* offsets for an expert count `E` (the SAME assignment
+ * st_init_tier does; D/DFF/L taken from the model).  Writes the offsets into the
+ * out struct WITHOUT touching m, and returns n_params.  Used to lay out both the
+ * old (E_old) and the new (E_new) arenas so growth copies block-by-block. */
+typedef struct {
+    int o_embed, o_attn_norm, o_wq, o_wk, o_wv, o_wo, o_ffn_norm;
+    int o_router, o_w1, o_w3, o_w2, o_out_norm, o_out, n_params;
+} st_layout;
+
+static int st_layout_for(const st_model *m, int E, st_layout *L_out)
+{
+    const int D = m->d, DFF = m->dff, L = m->nlayer;
+    int o = 0;
+    L_out->o_embed     = o; o += V * D;
+    L_out->o_attn_norm = o; o += L * D;
+    L_out->o_wq        = o; o += L * D * D;
+    L_out->o_wk        = o; o += L * D * D;
+    L_out->o_wv        = o; o += L * D * D;
+    L_out->o_wo        = o; o += L * D * D;
+    L_out->o_ffn_norm  = o; o += L * D;
+    L_out->o_router    = o; o += L * E * D;
+    L_out->o_w1        = o; o += L * E * DFF * D;
+    L_out->o_w3        = o; o += L * E * DFF * D;
+    L_out->o_w2        = o; o += L * E * D * DFF;
+    L_out->o_out_norm  = o; o += D;
+    L_out->o_out       = o; o += V * D;
+    L_out->n_params    = o;
+    return o;
+}
+
+/* Copy one of the four per-layer expert families from src (E_old strides) into
+ * dst (E_new strides): for each layer, copy the first E_old expert slices
+ * verbatim, leaving slices [E_old, E_new) as the caller's pre-zeroed dst (DEAD).
+ * `per_e` = floats per (layer,expert) block (D for router, DFF*D for w1/w3,
+ * D*DFF for w2). */
+static void st_copy_expert_family(float *dst, const float *src,
+                                  int L, int E_old, int E_new, int per_e)
+{
+    for (int l = 0; l < L; l++) {
+        const float *s = src + (size_t)l * E_old * per_e;
+        float       *d = dst + (size_t)l * E_new * per_e;
+        for (int k = 0; k < E_old * per_e; k++) d[k] = s[k];  /* first E_old kept */
+        /* slices [E_old,E_new) stay 0 (dst pre-zeroed) — the DEAD W2 / router    */
+    }
+}
+
+int st_grow_experts(st_model *m, int e_new)
+{
+    if (!m || !m->w) return ST_E_ARG;
+    const int E_old = m->nexpert;
+    /* grow within [E_old, ST_E_MAX]: never below the resident count, never past
+     * the fixed L-tier scratch ceiling (the [no-vla] gate / open-risk #7). */
+    if (e_new < E_old || e_new > ST_E_MAX) return ST_E_ARG;
+    if (e_new == E_old) {
+        /* [grow-noop-identity] no-op: ensure an all-ones alive[] exists so the
+         * mask path is exercised, but the FORWARD stays byte-identical (every
+         * incumbent alive == the all-alive default). */
+        if (!m->alive) {
+            int8_t *a = (int8_t *)malloc((size_t)E_old);
+            if (!a) return ST_E_OOM;
+            for (int e = 0; e < E_old; e++) a[e] = 1;
+            m->alive = a;
+        }
+        return ST_OK;
+    }
+
+    const int D = m->d, DFF = m->dff, L = m->nlayer;
+
+    /* old + new layouts (offsets recomputed exactly as st_init_tier). */
+    st_layout lo, ln;
+    st_layout_for(m, E_old, &lo);
+    int np_new = st_layout_for(m, e_new, &ln);
+
+    /* new arena: w | g | mu | vu, each np_new floats (same shape as st_init). */
+    size_t bytes = (size_t)np_new * 4 * sizeof(float);
+    float *base = (float *)malloc(bytes);
+    if (!base) return ST_E_OOM;
+    for (size_t i = 0; i < (size_t)np_new * 4; i++) base[i] = 0.0f;  /* DEAD slots stay 0 */
+
+    int8_t *alive = (int8_t *)malloc((size_t)e_new);
+    if (!alive) { free(base); return ST_E_OOM; }
+
+    float *w_new  = base;
+    float *g_new  = base + np_new;
+    float *mu_new = base + (size_t)np_new * 2;
+    float *vu_new = base + (size_t)np_new * 3;
+
+    const float *w_old  = m->w;
+    const float *g_old  = m->g;
+    const float *mu_old = m->mu;
+    const float *vu_old = m->vu;
+
+    /* --- E-INDEPENDENT families: bitwise copy (embed, attn_norm, Wq/Wk/Wv/Wo,
+     * ffn_norm, out_norm, out).  Their offsets are IDENTICAL in lo and ln up to
+     * o_router (they precede the expert families), so a single contiguous copy of
+     * [0, o_router) reproduces them verbatim. */
+    for (int i = 0; i < lo.o_router; i++) {
+        w_new[i]  = w_old[i];
+        g_new[i]  = g_old[i];
+        mu_new[i] = mu_old[i];
+        vu_new[i] = vu_old[i];
+    }
+    /* out_norm + out follow the expert families at DIFFERENT offsets in lo vs ln;
+     * copy them by name. */
+    for (int i = 0; i < D; i++) {
+        w_new[ln.o_out_norm + i]  = w_old[lo.o_out_norm + i];
+        g_new[ln.o_out_norm + i]  = g_old[lo.o_out_norm + i];
+        mu_new[ln.o_out_norm + i] = mu_old[lo.o_out_norm + i];
+        vu_new[ln.o_out_norm + i] = vu_old[lo.o_out_norm + i];
+    }
+    for (int i = 0; i < V * D; i++) {
+        w_new[ln.o_out + i]  = w_old[lo.o_out + i];
+        g_new[ln.o_out + i]  = g_old[lo.o_out + i];
+        mu_new[ln.o_out + i] = mu_old[lo.o_out + i];
+        vu_new[ln.o_out + i] = vu_old[lo.o_out + i];
+    }
+
+    /* --- EXPERT families: copy the E_old incumbent slices into the E_new strides
+     * (new slices [E_old,e_new) stay 0 = DEAD W2 + DEAD router row).  Done for w,
+     * g, mu, vu so incumbents' Adam moments survive at the new strides (§1.1.4);
+     * the new slots' moments start at 0. */
+    st_copy_expert_family(w_new  + ln.o_router, w_old  + lo.o_router, L, E_old, e_new, D);
+    st_copy_expert_family(g_new  + ln.o_router, g_old  + lo.o_router, L, E_old, e_new, D);
+    st_copy_expert_family(mu_new + ln.o_router, mu_old + lo.o_router, L, E_old, e_new, D);
+    st_copy_expert_family(vu_new + ln.o_router, vu_old + lo.o_router, L, E_old, e_new, D);
+
+    st_copy_expert_family(w_new  + ln.o_w1, w_old  + lo.o_w1, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(g_new  + ln.o_w1, g_old  + lo.o_w1, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(mu_new + ln.o_w1, mu_old + lo.o_w1, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(vu_new + ln.o_w1, vu_old + lo.o_w1, L, E_old, e_new, DFF * D);
+
+    st_copy_expert_family(w_new  + ln.o_w3, w_old  + lo.o_w3, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(g_new  + ln.o_w3, g_old  + lo.o_w3, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(mu_new + ln.o_w3, mu_old + lo.o_w3, L, E_old, e_new, DFF * D);
+    st_copy_expert_family(vu_new + ln.o_w3, vu_old + lo.o_w3, L, E_old, e_new, DFF * D);
+
+    st_copy_expert_family(w_new  + ln.o_w2, w_old  + lo.o_w2, L, E_old, e_new, D * DFF);
+    st_copy_expert_family(g_new  + ln.o_w2, g_old  + lo.o_w2, L, E_old, e_new, D * DFF);
+    st_copy_expert_family(mu_new + ln.o_w2, mu_old + lo.o_w2, L, E_old, e_new, D * DFF);
+    st_copy_expert_family(vu_new + ln.o_w2, vu_old + lo.o_w2, L, E_old, e_new, D * DFF);
+
+    /* --- DEAD-expert warm start (§1.2): clone the busiest INCUMBENT's W1/W3 into
+     * each new slot (latent — contributes nothing while W2=0 + alive=0; a warm
+     * start for the SEPARATE, deliberately-ε resurrection step).  Router row and
+     * W2 of the new slots STAY 0 (defense-in-depth); the alive mask is what makes
+     * preservation exact.  "Busiest" here = incumbent 0 (a deterministic choice;
+     * any incumbent is a valid latent seed — the DMN picks the real source at
+     * resurrection).  This does NOT affect the forward (W2=0, alive=0). */
+    for (int l = 0; l < L; l++) {
+        const int src = 0;  /* deterministic incumbent seed */
+        const float *w1_src = w_new + ln.o_w1 + ((size_t)l * e_new + src) * DFF * D;
+        const float *w3_src = w_new + ln.o_w3 + ((size_t)l * e_new + src) * DFF * D;
+        for (int e = E_old; e < e_new; e++) {
+            float *w1_d = w_new + ln.o_w1 + ((size_t)l * e_new + e) * DFF * D;
+            float *w3_d = w_new + ln.o_w3 + ((size_t)l * e_new + e) * DFF * D;
+            for (int k = 0; k < DFF * D; k++) { w1_d[k] = w1_src[k]; w3_d[k] = w3_src[k]; }
+        }
+    }
+
+    /* alive[]: incumbents alive, new experts DEAD (the exact never-admit flag). */
+    for (int e = 0; e < E_old; e++) alive[e] = 1;
+    for (int e = E_old; e < e_new; e++) alive[e] = 0;
+
+    /* commit: swap the arena + bump the count.  Free the old arena + any old
+     * alive[].  The forward cache is sized by E, so drop it — st_forward
+     * re-allocates it lazily at the new E (cache_get note, :319). */
+    free(m->mem);
+    if (m->alive) free(m->alive);
+    if (m->cache) { free(m->cache); m->cache = NULL; }
+    m->mem     = base;
+    m->w       = w_new;
+    m->g       = g_new;
+    m->mu      = mu_new;
+    m->vu      = vu_new;
+    m->alive   = alive;
+    m->nexpert = e_new;
+    m->n_params = np_new;
+    /* re-stamp the o_* offsets to the new (E_new) layout. */
+    m->o_embed=ln.o_embed; m->o_attn_norm=ln.o_attn_norm;
+    m->o_wq=ln.o_wq; m->o_wk=ln.o_wk; m->o_wv=ln.o_wv; m->o_wo=ln.o_wo;
+    m->o_ffn_norm=ln.o_ffn_norm; m->o_router=ln.o_router;
+    m->o_w1=ln.o_w1; m->o_w3=ln.o_w3; m->o_w2=ln.o_w2;
+    m->o_out_norm=ln.o_out_norm; m->o_out=ln.o_out;
+    return ST_OK;
 }
 
 /* ensure cache is allocated for sequence length n. */
@@ -467,21 +659,47 @@ void st_set_remote_expert(st_remote_expert_fn fn, st_remote_gate_fn gate,
 int st_last_remote_fired(void)    { return st_remote_fired_cnt; }
 int st_last_remote_fallback(void) { return st_remote_fallback_cnt; }
 
+/* ---- SS-4 (ss4-function-preserving-growth-plan.md §1.3): the per-expert
+ * liveness mask router_pick reads.  st_forward points this at the resident
+ * model's m->alive (nexpert-sized) for the MoE loop, then clears it.  When it is
+ * NULL — every pre-SS-4 / never-grown model — selection is BYTE-IDENTICAL to the
+ * pre-SS-4 router_pick (the all-alive case): the skip branch below is never
+ * taken, n_alive == ne, and the sort + widening + softmax execute the same float
+ * ops in the same order.  A DEAD expert (alive[e]==0) has an EFFECTIVE LOGIT of
+ * -inf: it is never `best` in the selection sort (sorts strictly AFTER every
+ * alive expert), and the widening ceiling is capped at the alive count, so it is
+ * PROVABLY never in order[0..nk) for ANY input ⇒ nk and every chosen tw[j] are
+ * bit-unchanged by adding it.  This is the EXACT never-admit guarantee. */
+static const int8_t *st_router_alive = NULL;   /* [ne] or NULL == all-alive */
+
 /* `ne` = the resident model's expert count (m->nexpert) — the RUNTIME widening
  * ceiling (K_min..ne).  Scratch is bound to EMAX (fixed L-tier) — no VLA.  The
  * frozen-route slot stride is ne (the cache's E-slot stride; see cache_get). */
 static int router_pick(const float *gate, int *topk_e, float *topk_w, int ne)
 {
+    const int8_t *alive = st_router_alive;     /* NULL == all-alive (pre-SS-4) */
+
     /* full descending order of the ne experts by gate logit (E tiny: selection
-     * sort).  order[0] = top1.  Scratch bound to EMAX (compile-time) — no VLA. */
+     * sort).  order[0] = top1.  Scratch bound to EMAX (compile-time) — no VLA.
+     * DEAD experts (alive[e]==0) are treated as effective logit -inf: they are
+     * never chosen as `best`, so they sort strictly after every alive expert. */
     int order[EMAX];
     int used[EMAX];
-    for (int e = 0; e < ne; e++) used[e] = 0;
+    int n_alive = 0;
+    for (int e = 0; e < ne; e++) { used[e] = 0; if (!alive || alive[e]) n_alive++; }
     for (int r = 0; r < ne; r++) {
         int best = -1; float bv = -1e30f;
         for (int e = 0; e < ne; e++) {
             if (used[e]) continue;
+            if (alive && !alive[e]) continue;      /* DEAD: effective -inf      */
             if (best < 0 || gate[e] > bv) { bv = gate[e]; best = e; }
+        }
+        if (best < 0) {                            /* only DEAD experts remain  */
+            /* park the remaining DEAD experts at the tail of order[] in ascending
+             * id (deterministic; they are never selected so the order is inert). */
+            for (int e = 0; e < ne; e++)
+                if (!used[e]) { order[r] = e; used[e] = 1; break; }
+            continue;
         }
         order[r] = best; used[best] = 1;
     }
@@ -495,10 +713,13 @@ static int router_pick(const float *gate, int *topk_e, float *topk_w, int ne)
         st_frozen_pos++;
     } else {
         /* margin widening: start at K_min, admit the next expert while the gap
-         * from top1 to it is below THETA and we are under the model's E. */
+         * from top1 to it is below THETA and we are under the ALIVE-expert count
+         * (a DEAD expert at order[nk] has effective logit -inf — never admitted;
+         * capping at n_alive is the exact analogue and keeps the all-alive path,
+         * where n_alive == ne, byte-identical). */
         nk = K;
         float top1 = gate[order[0]];
-        while (nk < ne && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
+        while (nk < n_alive && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
         for (int j = 0; j < nk; j++) topk_e[j] = order[j];
     }
 
@@ -540,6 +761,10 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
     c->topk_w = tw_buf;
     st_frozen_pos = 0;   /* frozen routing replays in (l,t) visit order */
     st_remote_fired_cnt = 0; st_remote_fallback_cnt = 0;  /* SS-6 per-forward */
+    /* SS-4: point router_pick at this model's liveness mask (NULL == all-alive,
+     * byte-identical to pre-SS-4).  st_forward is single-threaded / non-reentrant
+     * (shares tw_buf / st_frozen_pos), so a file-static pointer is safe. */
+    st_router_alive = m->alive;
 
     const float *W  = m->w;
     /* embed: resid[layer 0] */
@@ -743,6 +968,7 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
         long cells = (long)L * n;
         st_fw_milli = cells ? (int)((sumw * 1000) / cells) : 0;
     }
+    st_router_alive = NULL;   /* SS-4: clear; never leak the mask past forward */
     return ST_OK;
 }
 
