@@ -129,11 +129,8 @@ static void co_putdec(UW v){ char b[12]; INT i=11; b[11]=0;
     if(!v){ co_puts("0"); return; } while(v&&i>0){ b[--i]=(char)('0'+(v%10)); v/=10; } co_puts(&b[i]); }
 
 /* A deterministic "author" keypair so the cert is reproducible across ABIs
- * (mirrors sign.c gate derive_kp — determinism is a TEST property only). */
-IMPORT void ed25519_keypair_from_seed(const unsigned char seed[32],
-                                      unsigned char pk[32], unsigned char sk[64]);
-IMPORT int  ed25519_sign(unsigned char sig[64], const unsigned char *m,
-                         unsigned long long mlen, const unsigned char sk[64]);
+ * (mirrors sign.c gate derive_kp — determinism is a TEST property only).
+ * ed25519_keypair_from_seed / ed25519_sign come from ed25519.h (via sign.h). */
 static void co_kp(U1 seed_byte, U1 pk[32], U1 sk[64])
 {
     U1 seed[32]; INT i;
@@ -163,7 +160,7 @@ static void co_make_manifest(const U1 artifact_id[PFS_ID_LEN], U4 ver,
     body[33] = (U1)((ver >> 8)  & 0xFF);
     body[34] = (U1)((ver >> 16) & 0xFF);
     body[35] = (U1)((ver >> 24) & 0xFF);
-    ed25519_sign(out->sig, body, (unsigned long long)sizeof body, author_sk);
+    ed25519_sign(out->sig, body, (UW)sizeof body, author_sk);
 }
 
 void compat_ota_gate_test(void)
