@@ -32,12 +32,31 @@ extern void bkl_acquire(void);
 extern void bkl_release(void);
 #define BKL_ACQUIRE()  bkl_acquire()
 #define BKL_RELEASE()  bkl_release()
+/* ②.2b-ii — the cross-CPU WAIT-wake hook appended to knl_make_ready
+ * (kernel/common/task.c).  When a CPU readies a task that belongs on ANOTHER
+ * CPU (e.g. CPU 0's tk_sig_sem waking a CPU-1 semaphore-waiter), knl_make_ready
+ * sets only the CALLING CPU's CUR_SCHEDTSK — the target CPU is never told to
+ * re-dispatch.  This hook publishes g_smpcpu[target].schedtsk + rings the
+ * reschedule SGI on the target (smp_send_reschedule), whose IRQ-return path
+ * hits the already-certified ②.2b-i async-switch hook (protected by the ②.2b
+ * §5.4 BKL-held guard).  knl_smp_wake() is the SMP_SELFTEST-gated body in
+ * arch/aarch64/smp.c; it runs with the BKL ALREADY HELD (every wake site is
+ * inside BEGIN/END_CRITICAL_SECTION, design §4.5). */
+extern void knl_smp_wake(TCB *tcb);
+#define knl_smp_wake_hook(tcb)  knl_smp_wake(tcb)
 #else
 #define CUR_CTXTSK            (knl_ctxtsk)
 #define CUR_SCHEDTSK          (knl_schedtsk)
 #define CUR_DISPATCH_DISABLED (knl_dispatch_disabled)
 #define BKL_ACQUIRE()  /* no-op: disint() IS the lock on a uniprocessor */
 #define BKL_RELEASE()
+/* ②.2b-ii — SMP OFF (the DEFAULT build): the cross-CPU wake hook is a
+ * PREPROCESSOR macro that expands to LITERALLY NOTHING (zero tokens), NOT an
+ * empty inline that receives `tcb` (which can perturb the instruction schedule
+ * around the elided call).  Zero tokens => identical AST => BYTE-IDENTICAL
+ * .text, the same proven mechanism as CUR_x and BKL_ACQUIRE above.  See the
+ * design LENS-A / section 6 (the crown mandate). */
+#define knl_smp_wake_hook(tcb)  /* empty: no cross-CPU wake on a uniprocessor */
 #endif
 #define _HAVE_CUR_SCHED_ACCESSORS_   /* tells task.h the accessors exist */
 

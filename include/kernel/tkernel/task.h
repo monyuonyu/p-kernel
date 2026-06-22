@@ -209,6 +209,21 @@ IMPORT TCB	*knl_schedtsk;
 #endif
 
 /*
+ * ②.2b-ii — the cross-CPU WAIT-wake hook appended to knl_make_ready
+ * (kernel/common/task.c, shared by every arch).  The aarch64 <cpu_status.h>
+ * defines it (a real call to knl_smp_wake under -DSMP_SELFTEST; an EMPTY macro
+ * otherwise).  For every OTHER arch (x86/linux/rl78), whose <cpu_status.h>
+ * predates ②.2 and never sets SMP_SELFTEST, the fallback here makes the hook a
+ * PREPROCESSOR macro that expands to LITERALLY NOTHING — so the shared
+ * kernel/common/task.c compiles unchanged and BYTE-IDENTICALLY.  Without this
+ * fallback those arches fail to compile (undefined knl_smp_wake_hook).  See
+ * docs/architecture/smp-2b-ii-secondary-timer-plan.md §LENS-A item 2 / §6.
+ */
+#ifndef knl_smp_wake_hook
+#define knl_smp_wake_hook(tcb)  /* empty: no cross-CPU wake off-SMP */
+#endif
+
+/*
  * Task control information
  */
 IMPORT TCB	knl_tcb_table[];	/* Task control block */

@@ -230,6 +230,7 @@ EXPORT void knl_make_ready( TCB *tcb )
 		CUR_SCHEDTSK = tcb;
 		knl_dispatch_request();
 	}
+	knl_smp_wake_hook(tcb);	/* ②.2b-ii: cross-CPU WAIT-wake; EMPTY macro off-SMP (byte-identical) */
 }
 #endif /* USE_FUNC_MAKE_READY */
 
