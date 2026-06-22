@@ -40,6 +40,7 @@
  *    - Single node. No weight diffusion / merge across the fleet (NS-2+).
  */
 #include "student.h"
+#include "dev_capacity.h" /* st_init_device — measure the device, fit the mind */
 #include "gguf.h"        /* gguf_open / gguf_close — teacher GGUF probe */
 #include "forward.h"     /* lm_load / lm_free      — teacher GGUF probe */
 #include <stdlib.h>     /* malloc / free / getenv                 */
@@ -414,8 +415,15 @@ static int student_restore(emit_fn emit)
 static int student_ensure(emit_fn emit)
 {
     if (g_have_student) return 0;
-    if (st_init(&g_student, STUDENT_SEED) != ST_OK) {
-        if (emit) emit("[baby] st_init OOM\r\n");
+    /* DEVICE-CAPACITY mind-sizing: measure the device (RAM, cores) and auto-fit
+     * the student tier (S/M/L), with an alloc-fail L->M->S step-down so a lying
+     * RAM number degrades to a FITTING mind instead of OOM-crashing. With no
+     * fixture + normal host RAM this selects M, byte-identical to st_init (the
+     * default fleet is unchanged). st_init_device is a HOSTED-ONLY config/alloc
+     * event; it adds no math to st_forward (the per-tier forward hash is
+     * unmoved). */
+    if (st_init_device(&g_student, STUDENT_SEED) != ST_OK) {
+        if (emit) emit("[baby] st_init_device OOM (even S tier did not fit)\r\n");
         return -1;
     }
     g_have_student = 1;
