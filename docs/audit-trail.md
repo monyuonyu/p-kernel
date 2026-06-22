@@ -1049,3 +1049,38 @@ fixed to deterministic-RED before merge, not deferred. HONEST scope: single-forw
 need a mind-lock (DEFERRED); QEMU green ≠ hardware green (RPi3 barrier/SMPEN teeth stay future). Remaining
 ②: ②.2b-ii (secondary CNTP timer/WAIT — design hardened, plan at smp-2b-ii-secondary-timer-plan.md),
 ②.3 (finer locks), hosted-port SMP, RPi3 [live].
+
+## SS-4 function-preserving expert growth — commit 7e358bac (impl 9dfc568b, cert 7e358bac)
+The student MoE can GROW its expert count (m->nexpert) as the fleet's cap_experts_of(N) rises — WITHOUT
+changing one bit of what it computes. The Evolution-layer "brain scales with nodes" capability, made
+EXACT. Independent clean-room auditor verdict: **MERGEABLE** (decisive checks passed under adversarial
+falsification beyond the cert's own input).
+- THE MECHANISM (and the design's corrected textbook mistake): this router is top-K-then-softmax-over-
+  the-chosen-set with MARGIN WIDENING (router_pick, student.c:478-512), NOT a global softmax — so the
+  standard "clone an expert + halve its router column" recipe is WRONG here (a clone is admitted by margin
+  widening + steals softmax mass). Correct function-preserving growth = add a DEAD expert: router row=0,
+  W2=0, AND an alive[] mask giving it an EFFECTIVE LOGIT OF −∞ (the widening ceiling is n_alive not ne;
+  dead experts tail-park in order[]) so it is PROVABLY never in the chosen top-K for ANY input. The −∞
+  mask — NOT the zeroed row — is the load-bearing exactness mechanism.
+- CHECK [expert-growth-preserves] EXACT ε=0: logits FNV `85ed22a0482f0b81` byte-identical pre/post grow
+  (E=4→8 DEAD), nk/firing-width unchanged for every token; auditor reproduced + extended — **40 diverse
+  inputs + 4000 random (125,828 tokens): 0 drift, a DEAD expert NEVER chosen (max_width==n_alive==4)**.
+- FALSIFIER bites: -DSS4_GROW_NAIVE (random-init LIVE experts) → hash moves `b0c5ad0ec067ae24` → RED. The
+  design's central claim independently re-confirmed: router-row=0+W2=0 but alive=1 (NO −∞ mask) → hash
+  MOVES `e61bf9c52255b507` (a 0 logit IS admitted by margin widening) → only the mask makes it exact.
+- HEAP RESHARD INTEGRITY (auditor, beyond the impl): incumbent W1/W2/W3/router AND Adam moments mu/vu are
+  BIT-IDENTICAL at the new strides (0 diffs); grown model still trains (loss 2.42→2.19). No silent
+  incumbent corruption hiding behind the single-input hash.
+- SS-6 STOP gate: the shipped-student hashes M=`63e8de333e995913` / L=`67f2434f50e791b6` UNMOVED (the only
+  shared-function edit — the widening cap nk<ne→nk<n_alive — is byte-identical when alive==NULL). CROWN
+  untouched: student.c is NOT in either bare-metal link (grep -c = 0; student_stub.o linked); the st_model
+  field addition is inert on bare metal. 755a20fa / 0x2856a99b unaffected.
+- NO REGRESSION: SS-1/2/3/5, KV --machine byte-identity 18/0, [grow-cohort] (E=8 blob refused by E=4 via
+  st_blob_tier_ok's n_expert AND n_params gate). Honest scope: EXACT for the ADD-DEAD step ONLY;
+  resurrection (DEAD→specialized) is deliberately ε (separate looser [grow-then-learn], NOT claimed exact)
+  + shrink are DEFERRED; no production caller yet (mechanism wave, as designed).
+LEDGER: row CLOSED. The mind can grow its capacity as the fleet grows, byte-exactly — the "brain scales
+with nodes" worldview is now a falsifiable, audited cert, not a slogan. The audit went BEYOND the
+implementer (4000 random inputs + deep weight/Adam comparison) and confirmed exactness holds off-cert.
+Honest deferrals: resurrection/shrink/x86_64-runtime-reverify. Routine hygiene: the teacher-dependent
+student selftest (orthogonal to the change surface) confirmed post-merge.
