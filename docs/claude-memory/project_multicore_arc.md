@@ -94,13 +94,21 @@ otherwise). All merged + audited:
   falsifier-fix implementers died on a 529 PRE-report/PRE-commit (Opus pattern) → commander
   persisted the verified diffs + ran final verification; the deep adversarial pass was a separate
   clean-room auditor.
-- **②.2b-ii DESIGN hardened (97b89cdd, plan smp-2b-ii-secondary-timer-plan.md):** secondary CNTP
-  timer + cross-CPU WAIT wake. HEADLINE byte-identity risk it surfaced: ②.2b-ii is the FIRST ②
-  slice that must edit a DEFAULT-LINKED function (knl_make_ready, ~18 wake sites) → preservable
-  ONLY via a zero-token preprocessor macro (knl_smp_wake_hook), NOT an empty inline taking tcb;
-  the impl MUST re-prove 755a20fa after the edit or STOP. Open: knl_taskindp still global.
-REMAINING ②: ②.2b-ii (IMPL, off the hardened design), ②.3 (finer locks), hosted-port SMP (the
-teacher LLM's real multicore — bare-metal has no big matmul; §0 elephant), RPi3 [live] (the only
-place barrier/SMPEN teeth bite). Plans: full-smp-plan, smp-2-production-scheduler-plan,
-smp-2b-async-preempt-plan, smp-2c-one-mind-plan, smp-2b-ii-secondary-timer-plan, device-autodetect-plan.md.
+- **②.2b-ii SHIPPED + audit MERGEABLE-WITH-NITS (merge 201e6315, impl 76f7c7b9, 2026-06-22):** an
+  SMP secondary is now a FIRST-CLASS scheduler — a CPU-1 task takes its OWN CNTP tick (tk_dly_tsk) AND
+  blocks on a semaphore woken CROSS-CPU by CPU 0 (SGI → reschedule onto the certified ②.2b-i async
+  hook). The FIRST ② slice to edit DEFAULT-LINKED shared core (knl_make_ready); the crown HELD via the
+  zero-token-macro discipline — `.text` 755a20fa + `cpu_support.o` f3bad9a2 + `task.o` f9ee9f21 ALL
+  cmp-clean base vs HEAD (auditor 5× + commander on merged trunk). cert [smp-secondary-wait] 10/10 both
+  halves; BOTH falsifiers load-bearing — and the implementer CAUGHT + fixed a VACUOUS NO_XWAKE before
+  the audit (the idle wfe woke on the incidental sev from bkl_release; fix = suppress both publish+SGI).
+  LESSON: a falsifier that "fails" can be failing for the wrong reason — make the negative control
+  DISCRIMINATING (NO_XWAKE leaves half-i alive, kills only half-ii). NIT (non-block): -smp 8 flake is
+  pre-existing + environmental (QEMU 8-CPU PSCI bringup timing, reproduces on base); knl_taskindp
+  per-CPU-ization → ②.3.
+REMAINING ②: ②.3 (finer locks + knl_taskindp per-CPU + general affinity/task-migration), hosted-port
+SMP (the teacher LLM's real multicore — bare-metal has no big matmul; §0 elephant), RPi3 [live] (the
+only place barrier/SMPEN + BCM2837 per-core-timer teeth bite). Plans: full-smp-plan,
+smp-2-production-scheduler-plan, smp-2b-async-preempt-plan, smp-2c-one-mind-plan,
+smp-2b-ii-secondary-timer-plan, device-autodetect-plan.md.
 See [[feedback_the_debug_env_is_real]] (the SSH ThinkPad found a real [live] bug on first use).

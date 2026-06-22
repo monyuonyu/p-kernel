@@ -1083,4 +1083,49 @@ LEDGER: row CLOSED. The mind can grow its capacity as the fleet grows, byte-exac
 with nodes" worldview is now a falsifiable, audited cert, not a slogan. The audit went BEYOND the
 implementer (4000 random inputs + deep weight/Adam comparison) and confirmed exactness holds off-cert.
 Honest deferrals: resurrection/shrink/x86_64-runtime-reverify. Routine hygiene: the teacher-dependent
-student selftest (orthogonal to the change surface) confirmed post-merge.
+student selftest (orthogonal to the change surface) confirmed post-merge PASS.
+
+## ②.2b-ii secondary CNTP timer + cross-CPU WAIT wake — merge commit 201e6315 (impl 76f7c7b9, base 6316155c)
+The next ② slice: an SMP secondary becomes a FIRST-CLASS scheduler, not just a compute engine — a task
+running on a secondary can take its OWN timer tick (tk_dly_tsk) AND block on a semaphore woken by ANOTHER
+CPU (cross-CPU wake → SGI → reschedule). This is the FIRST ② slice to EDIT shared-core code linked into
+the default shipped kernel (kernel/common/task.c +1 via a macro hook, include/kernel/tkernel/task.h +15,
+arch/aarch64/cpu_support.S +58), so the byte-identity crown was at maximum risk. Independent clean-room
+auditor verdict: **MERGEABLE-WITH-NITS** (the only non-green is pre-existing + environmental).
+- CHECK 1 CROWN byte-identity (decisive): PASS. Default `.text` = `755a20fae2d9b741…` base==HEAD; the two
+  touched objects cmp-CLEAN base vs HEAD — `cpu_support.o`=`f3bad9a2…`, `task.o`=`f9ee9f21…` did NOT move
+  one bit. Re-derived 5× by the auditor + a 6th time on the MERGED trunk (201e6315) by the commander.
+- CHECK 2 the hook vanishes: PASS. `knl_smp_wake_hook(tcb)` expands to ZERO TOKENS when SMP_SELFTEST is
+  off (an empty preprocessor macro, NOT an empty inline taking tcb); the shared task.h carries the empty
+  `#ifndef` fallback so x86/linux/rl78 still build (linux + x86_64 ports built clean; `nm task.o` = zero
+  `knl_smp_wake` refs). The one shared-core edit is provably inert in the shipped kernel.
+- CHECK 3 the 3 new dispatcher mechanisms (`.Ldispatch_loop` live-guard, `.Lsmp_idle` BKL-handoff,
+  `smp_irq_need_resched` clause-2b) are all `#ifdef SMP_SELFTEST`-gated; the production `knl_dispatch` arm
+  is unchanged (Check 1's byte-identity proves the gating is effective).
+- CHECK 4 cert + non-vacuity: PASS 10/10. Half (i): a CPU-1 task woken by CPU 1's OWN tick
+  (current_time_delta=60≥50, CPU 0's timer masked out via disint()). Half (ii): a CPU-1 task on
+  tk_wai_sem(TMO_FEVR) woken ONLY by CPU 0's cross-CPU signal (sgi_taken proof).
+- CHECK 5 both falsifiers load-bearing (the credibility headline): PASS. `-DSMP_NO_SEC_TIMER` 5/5 RED
+  (half i woke=0, delta=0 — CPU 0 demonstrably cannot wake it). `-DSMP_NO_XWAKE` 5/5 RED with the
+  DISCRIMINATING signature — half (i) intact (woke=1) while half (ii) specifically dead (sem_woke=0).
+  NOTE: the implementer's own verification CAUGHT that NO_XWAKE was originally VACUOUS (the idle wfe woke
+  on the incidental sev from the caller's bkl_release + saw the still-published schedtsk) and fixed it by
+  suppressing BOTH the publish and the SGI; the auditor independently confirmed the fix genuinely bites.
+- CHECK 6 deadlock/race: PASS (reasoned + empirical). The `.Lsmp_idle` BKL-handoff (a blocking task
+  leaves its CPU owning the BKL; idle drops it before wfe + re-acquires to the per-CPU-saved depth on
+  wake) cannot deadlock a cross-CPU waker; clause-2b (idle ctxtsk==NULL does not async-switch) is ordered
+  after the §5.4 BKL guard. smp3 [smp-no-deadlock] PASS with clause-2b present; both deadlock falsifiers RED.
+- CHECK 7 no regression: smp0/1/2/3(async+deadlock)/4(onemind crown 0x2856a99b)/mc2 all PASS.
+- NIT (does NOT block; pre-existing + ledgered): a `-smp 8` boot flake (GICD_TYPER intermittently fails to
+  detect 8 cpus) reproduces on the BASE commit too — it is QEMU-10.1.0 8-CPU PSCI bringup timing
+  instability, orthogonal to this slice (which touches neither detection nor bringup); -smp 2/4 are rock
+  solid. `knl_taskindp` global concurrent-tick window resolved this slice via design option (b) — the cert
+  disables CPU 1's CNTP after half (i) so the two CPUs' task-indep brackets provably never overlap;
+  per-CPU-izing the global is ledgered to ②.3.
+LEDGER: row CLOSED. A secondary CPU now runs the full WAIT machinery — its own timer ticks + cross-CPU
+semaphore wakes — so it is a genuine peer scheduler, not just a compute slave. The crown survived the
+first edit to default-linked shared core (zero-token macro discipline; cpu_support.o + task.o cmp-clean).
+Both falsifiers bite (the implementer caught + fixed a vacuous one before the audit). HONEST: directed
+single-target wake only (general affinity/migration = ②.3); QEMU green ≠ hardware green (RPi3 BCM2837
+per-core timer/mailbox is a [live] follow-up); the -smp 8 environmental flake is pre-existing. Remaining
+②: ②.3 (finer locks + knl_taskindp per-CPU + affinity/migration), hosted-port SMP, RPi3 [live].
