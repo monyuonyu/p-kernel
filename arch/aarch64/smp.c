@@ -567,6 +567,53 @@ void bkl_release(void)
     }
 }
 
+/* ②.2b-ii SMP-idle BKL handoff (called from .Lsmp_idle, cpu_support.S).
+ *
+ *  A task that BLOCKS reaches END_CRITICAL_SECTION, which calls knl_dispatch
+ *  (switching this CPU away) BEFORE BKL_RELEASE — so the blocking leaves THIS
+ *  CPU owning the BKL at the depth it entered the syscall with (1 for a plain
+ *  task syscall).  If the CPU then idles still holding it, another CPU's
+ *  bkl_acquire spins forever.  smp_idle_bkl_drop FULLY releases the BKL iff this
+ *  CPU owns it (recording the prior depth so it can be restored); on wake,
+ *  smp_idle_bkl_reacquire re-takes it to that SAME depth, so the task we resume
+ *  finds the BKL held exactly as its own pending BKL_RELEASE expects.  IRQ is
+ *  masked by the caller across drop (we are about to wfe with IRQ unmasked, but
+ *  the drop itself must complete first); the per-CPU saved depth is safe because
+ *  only THIS CPU executes its own .Lsmp_idle. */
+static unsigned int g_idle_saved_depth[SMP_MAX_CPUS];
+
+void smp_idle_bkl_drop(void)
+{
+    long me = (long)smp_mpidr_aff0();
+    if (me < 0 || me >= SMP_MAX_CPUS)
+        return;
+    if (g_bkl_owner != me) {
+        g_idle_saved_depth[me] = 0;     /* we don't hold it — nothing to drop */
+        return;
+    }
+    g_idle_saved_depth[me] = g_bkl_depth;   /* remember the entry depth */
+    g_bkl_depth = 1;                        /* collapse to 1 so one release frees */
+    bkl_release();                          /* fully drop: owner=-1, raw_unlock   */
+}
+
+void smp_idle_bkl_reacquire(void)
+{
+    long me = (long)smp_mpidr_aff0();
+    if (me < 0 || me >= SMP_MAX_CPUS)
+        return;
+    /* Consume any reschedule pending on us: the SGI that woke us from idle has
+     * done its job (the publisher set our schedtsk); .Ldispatch_loop will pick
+     * it up.  Clearing here avoids a stale pending flag firing a spurious async
+     * switch once we are running the resumed task. */
+    g_resched_pending[me] = 0u;
+    unsigned int d = g_idle_saved_depth[me];
+    if (d == 0)
+        return;                             /* we never held it — nothing to do */
+    bkl_acquire();                          /* re-own at depth 1 (raw_lock)       */
+    g_bkl_depth = d;                        /* restore the entry depth            */
+    g_idle_saved_depth[me] = 0;
+}
+
 /* ════════════════════════════════════════════════════════════════════
  *  ②.2b-i — the IRQ-return-path async-preempt DECISION (Option A).
  *
@@ -655,6 +702,18 @@ int smp_irq_need_resched(void)
     if (sched == 0 || ctx == sched)
         return 0;
 
+    /* (2b) ②.2b-ii: if THIS CPU is IDLE (ctxtsk == NULL — it parked in
+     * .Lsmp_idle after its task blocked), do NOT async-switch from interrupt
+     * context.  The idle loop owns the BKL handoff (smp_idle_bkl_drop /
+     * _reacquire); an async knl_dispatch here would bypass the reacquire and
+     * the resumed task would BKL_RELEASE a lock this CPU does not own.  Instead
+     * return 0: the SGI merely wakes the wfe, and .Lsmp_idle re-acquires the BKL
+     * and re-checks .Ldispatch_loop, which picks up the published schedtsk.  The
+     * pending flag is KEPT so a later RUNNING-context preempt still fires (it is
+     * harmlessly cleared when the idle loop dispatches, having no effect). */
+    if (ctx == 0)
+        return 0;
+
     /* All clauses hold → consume the pending flag and switch. */
     g_resched_pending[me] = 0u;
     __asm__ volatile("dmb ish" ::: "memory");
@@ -733,23 +792,32 @@ void knl_smp_wake(TCB *tcb)
     if (target <= 0 || target >= SMP_MAX_CPUS)
         return;
 
-    /* Publish the woken task as the target CPU's next task, then ring the
-     * reschedule doorbell.  Caller holds the BKL → this write is serialised
-     * against the target's scheduler reads (it reads g_smpcpu[target].schedtsk
-     * only from its own IRQ-return hook / dispatcher, both BKL-or-dmb fenced).
-     *
-     * NOTE: knl_make_ready already set g_smpcpu[0].schedtsk = tcb IFF tcb
-     * outranked CPU 0's current top.  The cert's secondary task is LOWER prio
-     * than CPU 0's driver task (§LENS-C / §8.4), so that branch is NOT taken
-     * and CPU 0 does not steal tcb — we only need to point CPU 1 at it. */
+    /* Publish the woken task as the TARGET CPU's next task.  Because the cert's
+     * secondary task is LOWER priority than every other ready task (cpu0_tsk),
+     * knl_make_ready's own `CUR_SCHEDTSK = tcb` branch is NEVER taken (tcb does
+     * not outrank the shared-queue top) — so an EXPLICIT publish here is what
+     * actually points the target CPU at the woken task.  Caller holds the BKL →
+     * this write is serialised against the target's scheduler reads. */
     g_smpcpu[target].schedtsk = tcb;
     __asm__ volatile("dsb ish" ::: "memory");
+
+    unsigned long me = smp_mpidr_aff0();
+    if ((unsigned long)target == me) {
+        /* SELF-WAKE (half i): the woken task belongs to the CPU we are ALREADY
+         * running on (the secondary's OWN timer tick readied its OWN dly task).
+         * No IPI needed — the publish above is enough; the secondary's next
+         * dispatch checkpoint (END_CRITICAL_SECTION on a task, or the .Lidle →
+         * .Ldispatch_loop re-read after this IRQ returns) picks up schedtsk.   */
+        return;
+    }
 
 #if defined(SMP_NO_XWAKE)
     /* FALSIFIER (-DSMP_NO_XWAKE): suppress the cross-CPU IPI.  CPU 0 still marks
      * tcb READY + publishes it as CPU 1's schedtsk, but CPU 1 is never told to
      * re-dispatch → the sem-waiter never wakes → the cert half (ii) hangs →
-     * watchdog → SMP-SECONDARY-WAIT: FAIL.  Proves the IPI is load-bearing. */
+     * watchdog → SMP-SECONDARY-WAIT: FAIL.  Proves the IPI is load-bearing.
+     * (Half (i) is the SELF-WAKE above and returns BEFORE this, so NO_XWAKE
+     * breaks ONLY the cross-CPU path — exactly the intended falsifier scope.) */
     (void)0;
 #else
     smp_send_reschedule(target);

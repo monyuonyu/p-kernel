@@ -141,7 +141,35 @@ knl_dispatch:
 #ifdef SMP_SELFTEST
     LD_PERCPU_BASE x2, x3       /* x2 = &g_smpcpu[me] */
     ldr x0, [x2, #SMPCPU_SCHEDTSK] /* x0 = this CPU's schedtsk */
-    cbz x0, .Lidle
+    cbz x0, .Lsmp_idle
+
+    /* ②.2b-ii §LENS-C guard: NEVER switch into a TCB that is already ANOTHER
+     * CPU's LIVE ctxtsk.  The shipped ② slice shares ONE knl_ready_queue (per-CPU
+     * run-queues are ②.3 deferred), so when a secondary's task BLOCKS,
+     * knl_make_non_ready's re-selection (knl_ready_queue_top) can hand this CPU a
+     * task that is RUNNING on another core — switching into its stale, live SP
+     * would wild-jump.  Scan all CPUs: if g_smpcpu[c].ctxtsk == schedtsk for any
+     * c != me, this task is live elsewhere → IDLE instead (it stays READY; the
+     * owning CPU keeps it; when it later truly frees we re-select).  SMP_SELFTEST
+     * -gated, so the production dispatcher is byte-identical. */
+    mrs x5, mpidr_el1
+    and x5, x5, #0xFF                 /* x5 = me */
+    ldr x3, =g_smpcpu                 /* x3 = &g_smpcpu[0] */
+    mov x4, #0                        /* x4 = c = 0 */
+.Lscan_live:
+    cmp x4, #8                        /* SMP_MAX_CPUS */
+    b.ge .Lnot_live
+    cmp x4, x5
+    b.eq .Lscan_next                  /* skip me */
+    ldr x6, [x3, #SMPCPU_CTXTSK]      /* g_smpcpu[c].ctxtsk */
+    cmp x6, x0
+    b.eq .Lsmp_idle                   /* schedtsk is live on CPU c → idle */
+.Lscan_next:
+    add x3, x3, #SMPCPU_SIZE          /* &g_smpcpu[++c] */
+    add x4, x4, #1
+    b   .Lscan_live
+.Lnot_live:
+
     str x0, [x2, #SMPCPU_CTXTSK]   /* this CPU's ctxtsk = schedtsk */
 
     ldr x1, [x0, #TCB_SSP]
@@ -184,6 +212,27 @@ knl_dispatch:
     wfe
     msr daifset, #0x3
     b .Ldispatch_loop
+
+#ifdef SMP_SELFTEST
+/* ②.2b-ii SMP idle: a secondary with no runnable task of its OWN must NOT hold
+ * the BKL while idling.  A blocking syscall reaches END_CRITICAL_SECTION, which
+ * calls knl_dispatch (switching the CPU away) BEFORE BKL_RELEASE — so a task
+ * that blocks leaves THIS CPU holding the BKL at depth 1.  If the CPU then
+ * idles still holding it, another CPU's bkl_acquire spins FOREVER (the half-(ii)
+ * cross-CPU wake deadlock).  So: DROP the BKL (smp_idle_bkl_drop, fully releases
+ * iff we own it) before wfe, and RE-ACQUIRE it (smp_idle_bkl_reacquire, to depth
+ * 1) before re-checking the dispatch loop — so the task we resume finds the BKL
+ * held at the depth its own END_CRITICAL_SECTION's BKL_RELEASE expects.  x19/x20
+ * are callee-saved across the C calls; we use the dispatcher stack (SP is the
+ * per-CPU dispatcher stack here, valid). */
+.Lsmp_idle:
+    bl   smp_idle_bkl_drop         /* release the BKL iff this CPU owns it */
+    msr  daifclr, #0x3             /* unmask IRQ so the wake (tick/SGI) lands */
+    wfe
+    msr  daifset, #0x3
+    bl   smp_idle_bkl_reacquire    /* re-take the BKL (depth 1) before dispatch */
+    b    .Ldispatch_loop
+#endif
 
 /* -----------------------------------------------------------------------
  *  knl_task_entry_trampoline

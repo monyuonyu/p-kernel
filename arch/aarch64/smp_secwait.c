@@ -212,6 +212,18 @@ EXPORT int smp_secwait_test_run(void)
      * + gicc_base_ptr — BEFORE the secondary can take an SGI. */
     smp_gic_selftest_setup();
 
+    /* §LENS-C shared-ready-queue note: the shipped ② slice has ONE shared
+     * knl_ready_queue (per-CPU run-queues are ②.3 deferred).  CPU 0's initial
+     * task (this driver) is the TOP of that queue.  When the secondary's task
+     * BLOCKS (tk_dly_tsk / tk_wai_sem), knl_make_non_ready re-selects
+     * knl_ready_queue_top for CPU 1 — which would return CPU 0's RUNNING initial
+     * task and make CPU 1 try to switch into a context LIVE on CPU 0 (stale SP →
+     * wild jump).  The fix is the SMP_SELFTEST-only guard in .Ldispatch_loop
+     * (cpu_support.S): a secondary NEVER switches into a TCB that is already
+     * another CPU's live ctxtsk — it idles instead.  No de-queue of CPU 0's
+     * running task (which would corrupt CPU 0's own scheduling). */
+    int rc = 0;
+
     /* ───────────────────────── HALF (i): self-timer wake ──────────────── */
     /* (2) Create + start Bdly (low prio so it does NOT preempt the boot CPU's
      * initial task), claim it for CPU 1, release CPU 1 (which programs its OWN
@@ -219,19 +231,32 @@ EXPORT int smp_secwait_test_run(void)
     T_CTSK ctd = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
                    .task = (FP)smp_secwait_dly_task, .itskpri = 8, .stksz = 8192 };
     ID did = tk_cre_tsk(&ctd);
-    if (did < E_OK) return -1;
-    if (tk_sta_tsk(did, 0) < E_OK) return -2;
+    if (did < E_OK)               { rc = -1; goto done; }
+    if (tk_sta_tsk(did, 0) < E_OK){ rc = -2; goto done; }
     TCB *dtcb = get_tcb(did);
     g_sec_bdly_tcb = dtcb;
     secw_claim_for_secondary(dtcb);
+
+    /* Arm the directed wake for Bdly → CPU 1.  Bdly is LOWER priority than
+     * CPU 0's running initial task, so the shared knl_ready_queue's top is
+     * always cpu0_tsk; when CPU 1's OWN timer tick readies Bdly, knl_make_ready
+     * will NOT make Bdly CPU 1's schedtsk by priority (it doesn't outrank
+     * cpu0_tsk).  The armed knl_smp_wake EXPLICITLY publishes
+     * g_smpcpu[1].schedtsk = Bdly (SELF-wake: target==me==1, no IPI) so CPU 1
+     * re-dispatches Bdly after the tick.  This is the same directed mechanism
+     * half (ii) uses cross-CPU. */
+    g_xwake_tcb    = dtcb;
+    g_xwake_target = 1;
+    __asm__ volatile("dsb ish" ::: "memory");
+    g_xwake_armed  = 1;
+    __asm__ volatile("dsb ish" ::: "memory");
 
     secw_release_secondary(dtcb);
 
     smp_set_smpen_pub();
     g_smpcpu[0].cpu_id = 0;
     long on = smp_bringup_cpu(1);
-    if (on != 0 && on != -4 /*ALREADY_ON*/)
-        return -3;                             /* CPU_ON failed */
+    if (on != 0 && on != -4 /*ALREADY_ON*/) { rc = -3; goto done; }
 
     /* (3) Wait until Bdly has recorded it is ABOUT to sleep (g_sec_slept). */
     {
@@ -241,8 +266,7 @@ EXPORT int smp_secwait_test_run(void)
             __asm__ volatile("dmb ld" ::: "memory");
             if (g_sec_slept)
                 break;
-            if (++tries >= MAX)
-                return -4;                     /* Bdly never ran on CPU 1 */
+            if (++tries >= MAX) { rc = -4; goto done; }  /* Bdly never ran */
             __asm__ volatile("yield" ::: "memory");
         }
     }
@@ -266,104 +290,107 @@ EXPORT int smp_secwait_test_run(void)
             __asm__ volatile("yield" ::: "memory");
         }
         enaint(imask);                         /* restore CPU 0's timer */
-        if (timed_out)
-            return -5;                         /* Bdly never woke (no sec timer?) */
+        if (timed_out) { rc = -5; goto done; } /* Bdly never woke (no sec timer?) */
     }
 
     /* (5) Half (i) verdict gates. */
-    if (g_sec_slept != 1)                       return -6;
-    if (g_sec_woke_i != 1)                       return -7;
-    if (g_sec_dly_ercd != 0 /*E_OK*/)            return -8;   /* dly returned an error */
+    if (g_sec_slept  != 1)            { rc = -6; goto done; }
+    if (g_sec_woke_i != 1)            { rc = -7; goto done; }
+    if (g_sec_dly_ercd != 0 /*E_OK*/) { rc = -8; goto done; } /* dly error */
     {
         /* knl_current_time advanced by at least the requested delay — driven
          * SOLELY by CPU 1's ticks (CPU 0's timer was masked out of the window). */
         long delta = g_sec_woke_time - g_sec_slept_time;
-        if (delta < (long)SEC_DLY_MS)            return -9;   /* tick witness failed */
+        if (delta < (long)SEC_DLY_MS) { rc = -9; goto done; } /* tick witness */
     }
 
     /* ───────────────────────── HALF (ii): cross-CPU wake ──────────────── */
     /* (6) Create a semaphore (count 0) + Bsem (low prio).  ARM the cross-CPU
      * wake for Bsem → CPU 1, then run Bsem on CPU 1 (re-using the dispatcher:
      * Bdly has parked on wfe, so CPU 1 is free to switch to Bsem). */
-    T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
-    ID sid = tk_cre_sem(&cs);
-    if (sid < E_OK) return -10;
-    g_sec_sem_id = (int)sid;
-
-    T_CTSK cts = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
-                   .task = (FP)smp_secwait_sem_task, .itskpri = 8, .stksz = 8192 };
-    ID sid_t = tk_cre_tsk(&cts);
-    if (sid_t < E_OK) return -11;
-    if (tk_sta_tsk(sid_t, 0) < E_OK) return -12;
-    TCB *stcb = get_tcb(sid_t);
-    g_sec_bsem_tcb = stcb;
-    secw_claim_for_secondary(stcb);
-
-    /* Arm the directed cross-CPU wake: a knl_make_ready(stcb) on ANY CPU now
-     * publishes g_smpcpu[1].schedtsk = stcb + IPIs CPU 1. */
-    g_xwake_tcb    = stcb;
-    g_xwake_target = 1;
-    __asm__ volatile("dsb ish" ::: "memory");
-    g_xwake_armed  = 1;
-    __asm__ volatile("dsb ish" ::: "memory");
-
-    /* Hand Bsem to CPU 1 + re-release it (Bdly has parked, so schedtsk=Bsem). */
-    bkl_acquire();
-    g_smpcpu[1].schedtsk = stcb;
-    bkl_release();
-    __asm__ volatile("dsb ish" ::: "memory");
-    smp_send_reschedule(1);                    /* nudge CPU 1 to pick up Bsem */
-
-    /* (7) Wait until Bsem has BLOCKED on the semaphore. */
     {
-        const unsigned long MAX = 200000000UL;
-        unsigned long tries = 0;
-        for (;;) {
-            __asm__ volatile("dmb ld" ::: "memory");
-            if (g_sem_blocked)
-                break;
-            if (++tries >= MAX)
-                return -13;                    /* Bsem never blocked on CPU 1 */
-            __asm__ volatile("yield" ::: "memory");
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 0, .maxsem = 1 };
+        ID sid = tk_cre_sem(&cs);
+        if (sid < E_OK) { rc = -10; goto done; }
+        g_sec_sem_id = (int)sid;
+
+        T_CTSK cts = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                       .task = (FP)smp_secwait_sem_task, .itskpri = 8, .stksz = 8192 };
+        ID sid_t = tk_cre_tsk(&cts);
+        if (sid_t < E_OK)               { rc = -11; goto done; }
+        if (tk_sta_tsk(sid_t, 0) < E_OK){ rc = -12; goto done; }
+        TCB *stcb = get_tcb(sid_t);
+        g_sec_bsem_tcb = stcb;
+        secw_claim_for_secondary(stcb);
+
+        /* Arm the directed cross-CPU wake: a knl_make_ready(stcb) on ANY CPU now
+         * publishes g_smpcpu[1].schedtsk = stcb + IPIs CPU 1. */
+        g_xwake_tcb    = stcb;
+        g_xwake_target = 1;
+        __asm__ volatile("dsb ish" ::: "memory");
+        g_xwake_armed  = 1;
+        __asm__ volatile("dsb ish" ::: "memory");
+
+        /* Hand Bsem to CPU 1 + re-release it (Bdly has parked, so schedtsk=Bsem). */
+        bkl_acquire();
+        g_smpcpu[1].schedtsk = stcb;
+        bkl_release();
+        __asm__ volatile("dsb ish" ::: "memory");
+        smp_send_reschedule(1);                /* nudge CPU 1 to pick up Bsem */
+
+        /* (7) Wait until Bsem has BLOCKED on the semaphore. */
+        {
+            const unsigned long MAX = 200000000UL;
+            unsigned long tries = 0;
+            for (;;) {
+                __asm__ volatile("dmb ld" ::: "memory");
+                if (g_sem_blocked)
+                    break;
+                if (++tries >= MAX) { rc = -13; goto done; } /* never blocked */
+                __asm__ volatile("yield" ::: "memory");
+            }
         }
-    }
-    /* Make sure it is genuinely waiting (give it a moment to enter TS_WAIT). */
-    {
-        unsigned long spin = 0;
-        for (; spin < 2000000UL; spin++)
-            __asm__ volatile("yield" ::: "memory");
-    }
+        /* Give it a moment to fully enter TS_WAIT before signalling. */
+        {
+            unsigned long spin = 0;
+            for (; spin < 2000000UL; spin++)
+                __asm__ volatile("yield" ::: "memory");
+        }
 
-    /* (8) THE CROSS-CPU WAKE: CPU 0 signals the semaphore.  tk_sig_sem →
-     * knl_wait_release_ok → knl_make_ready → knl_smp_wake(Bsem) →
-     * g_smpcpu[1].schedtsk=Bsem + smp_send_reschedule(1) (unless -DSMP_NO_XWAKE).
-     * Bsem re-dispatches on CPU 1 via the ②.2b-i async hook. */
-    secw_dbg("[SMP] cpu0: tk_sig_sem (cross-CPU wake of Bsem on cpu1)...\r\n");
-    ER ser = tk_sig_sem(sid, 1);
-    if (ser != E_OK)
-        return -14;                            /* signal itself failed */
+        /* (8) THE CROSS-CPU WAKE: CPU 0 signals the semaphore.  tk_sig_sem →
+         * knl_wait_release_ok → knl_make_ready → knl_smp_wake(Bsem) →
+         * g_smpcpu[1].schedtsk=Bsem + smp_send_reschedule(1) (unless NO_XWAKE).
+         * Bsem re-dispatches on CPU 1 via the ②.2b-i async hook. */
+        secw_dbg("[SMP] cpu0: tk_sig_sem (cross-CPU wake of Bsem on cpu1)...\r\n");
+        ER ser = tk_sig_sem(sid, 1);
+        if (ser != E_OK) { rc = -14; goto done; }  /* signal itself failed */
 
-    /* (9) Bounded-wait for Bsem to wake (the cross-CPU path). */
-    {
-        const unsigned long MAX = 600000000UL;
-        unsigned long tries = 0;
-        for (;;) {
-            __asm__ volatile("dmb ld" ::: "memory");
-            if (g_sem_woke)
-                break;
-            if (++tries >= MAX)
-                return -15;                    /* never woke (no IPI? NO_XWAKE) */
-            __asm__ volatile("yield" ::: "memory");
+        /* (9) Bounded-wait for Bsem to wake (the cross-CPU path). */
+        {
+            const unsigned long MAX = 600000000UL;
+            unsigned long tries = 0;
+            for (;;) {
+                __asm__ volatile("dmb ld" ::: "memory");
+                if (g_sem_woke)
+                    break;
+                if (++tries >= MAX) { rc = -15; goto done; } /* never woke */
+                __asm__ volatile("yield" ::: "memory");
+            }
         }
     }
 
     /* (10) Half (ii) verdict gates. */
-    if (g_sem_blocked != 1)                      return -16;
-    if (g_sem_woke    != 1)                       return -17;
-    if (g_sem_wai_ercd != 0 /*E_OK*/)             return -18;  /* wai returned an error */
-    if (smp_sgi_taken(1) < 1)                     return -19;  /* no SGI delivered */
+    if (g_sem_blocked  != 1)            { rc = -16; goto done; }
+    if (g_sem_woke     != 1)            { rc = -17; goto done; }
+    if (g_sem_wai_ercd != 0 /*E_OK*/)   { rc = -18; goto done; } /* wai error */
+    if (smp_sgi_taken(1) < 1)           { rc = -19; goto done; } /* no SGI */
 
-    return 0;                                   /* PASS — both halves */
+done:
+    /* Disarm the cross-CPU wake so no later knl_make_ready (the normal boot that
+     * follows) fires a stray directed IPI. */
+    g_xwake_armed = 0;
+    __asm__ volatile("dsb ish" ::: "memory");
+    return rc;                                  /* 0 = PASS (both halves) */
 }
 
 /* ── observability accessors (usermain.c reads these for the verdict print) ── */
