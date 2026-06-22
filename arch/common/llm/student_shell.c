@@ -417,11 +417,14 @@ static int student_ensure(emit_fn emit)
     if (g_have_student) return 0;
     /* DEVICE-CAPACITY mind-sizing: measure the device (RAM, cores) and auto-fit
      * the student tier (S/M/L), with an alloc-fail L->M->S step-down so a lying
-     * RAM number degrades to a FITTING mind instead of OOM-crashing. With no
-     * fixture + normal host RAM this selects M, byte-identical to st_init (the
-     * default fleet is unchanged). st_init_device is a HOSTED-ONLY config/alloc
-     * event; it adds no math to st_forward (the per-tier forward hash is
-     * unmoved). */
+     * RAM number degrades to a FITTING mind instead of OOM-crashing. The tier is
+     * the device's: a modest host (<6 cores or <6.14GB) selects M (== st_init);
+     * a capable host scales UP to L; a tiny one down to S. This is the intended
+     * "measure + auto-fit" behavior, NOT a byte-identical default everywhere —
+     * the per-NODE student tier varies with the device. What IS invariant: each
+     * tier's forward hash is pinned+unmoved (S/M/L), and st_init_device is a
+     * HOSTED-ONLY config/alloc event that adds no math to st_forward and never
+     * touches the R3 crown. */
     if (st_init_device(&g_student, STUDENT_SEED) != ST_OK) {
         if (emit) emit("[baby] st_init_device OOM (even S tier did not fit)\r\n");
         return -1;

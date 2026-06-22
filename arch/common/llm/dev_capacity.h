@@ -105,8 +105,11 @@ void dev_capacity_probe(struct dev_capacity *out);
  *
  * Determinism: this is a config/alloc event only — it selects WHICH deterministic
  * (seed,tier) model to build; it adds no math. For a fixed resulting tier the
- * model bytes are identical to st_init_tier(m, seed, tier). The default profile
- * (no fixture, host with normal RAM) selects M, byte-identical to st_init.
+ * model bytes are identical to st_init_tier(m, seed, tier). The chosen tier is
+ * the DEVICE's: a modest host (<6 cores or <6.14GB) selects M (== st_init); a
+ * capable host scales up to L; a tiny one steps down to S. So the per-node tier
+ * varies — it is NOT a byte-identical default everywhere; what is invariant is
+ * each tier's pinned forward hash (S/M/L) and the untouched R3 crown.
  *
  * Returns ST_OK on success (m is initialised at the FITTING tier), or ST_E_OOM
  * if even the smallest tier (S) cannot allocate. m->tier reports the chosen tier.
