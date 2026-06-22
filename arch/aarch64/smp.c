@@ -1105,6 +1105,7 @@ extern volatile int g_onemind_racer_go;              /* release the racer CPU   
 extern void smp_prod_enter_dispatch(void);   /* cpu_support.S; never returns    */
 #ifdef SMP_ONEMIND_RACE
 extern void r3_onemind_race_scribble(unsigned long iters);
+extern volatile unsigned long g_om_forward_inflight; /* M's forward read window */
 #endif
 #endif
 
@@ -1221,11 +1222,33 @@ void smp_dispatch_run(void)
                     if (++tries >= 200000000UL) break;
                     __asm__ volatile("yield" ::: "memory");
                 }
-                /* Scribble the SHARED rc/rw[] for a good long while so it overlaps
-                 * CPU 1's forward (the driver releases the racer BEFORE M, then
-                 * starts M; the forward is short, so a large iter count keeps the
-                 * race live across M's whole forward). */
-                r3_onemind_race_scribble(50000000UL);
+                /* DETERMINISTIC race (audit fix): a fixed one-shot burst could
+                 * land ENTIRELY before M re-seeds rw[] (corruption overwritten) or
+                 * ENTIRELY after the forward's reads (clean read) → spurious PASS
+                 * ~13%/boot.  Instead: scribble the SHARED rc/rw[] in SMALL CHUNKS,
+                 * GATED on M's "forward in flight" flag (g_om_forward_inflight,
+                 * which r3_onemind_forward_hash sets=1 right before r_forward and
+                 * =0 right after).  We start scribbling as soon as released and
+                 * keep scribbling until we have OBSERVED the forward complete
+                 * (flag seen 1 then back to 0) — so the corruption is live DURING
+                 * the reads on EVERY boot.  A BOUNDED total-iteration cap is the
+                 * fallback so the racer can NEVER hang the boot if the flag is
+                 * missed; it then falls through to the busy filler / wfe. */
+                const unsigned long RACE_CHUNK = 100000UL;   /* re-check flag often */
+                const unsigned long RACE_CAP   = 200000000UL;/* hard fallback bound */
+                unsigned long done = 0;
+                int seen_inflight = 0;
+                for (;;) {
+                    __asm__ volatile("dmb ld" ::: "memory");
+                    unsigned long inflight = g_om_forward_inflight;
+                    if (inflight) seen_inflight = 1;
+                    /* Exit once the forward we corrupted has finished (1→0)... */
+                    if (seen_inflight && !inflight) break;
+                    /* ...or if the bounded fallback cap is hit (never hang). */
+                    if (done >= RACE_CAP) break;
+                    r3_onemind_race_scribble(RACE_CHUNK);    /* small chunk, re-check */
+                    done += RACE_CHUNK;
+                }
             }
 #endif
             /* All non-mind secondaries: a bounded busy counter (concurrency proof

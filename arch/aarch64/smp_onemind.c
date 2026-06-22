@@ -85,6 +85,19 @@ volatile int           g_om_m_tskid = 0; /* M's tskid (a real T-Kernel id)      
 /* released by the driver to enter the prod dispatcher (smp.c reads these). */
 volatile int           g_onemind_secondary_go = 0;
 volatile int           g_onemind_racer_go     = 0;
+/* FALSIFIER-ONLY (-DSMP_ONEMIND_RACE): "M's forward is mid-flight" flag. Set
+ * to 1 by r3_onemind_forward_hash() immediately BEFORE r_forward (after the
+ * deterministic re-seed) and back to 0 immediately AFTER, so it brackets EXACTLY
+ * the read window the racer must corrupt. The racer (smp.c, CPU 2) scribbles the
+ * shared rc/rw[] in small chunks GATED on this flag — continuously active across
+ * the whole forward, every boot — instead of a fixed one-shot burst that QEMU's
+ * nondeterministic secondary bring-up could land entirely before/after the read
+ * window (the spurious-PASS the audit caught). Cross-CPU volatile is how this
+ * cert already coordinates (g_onemind_secondary_go / g_onemind_racer_go); MMU is
+ * OFF (VA==PA). In the non-race build this symbol is never read (the racer code
+ * and the set/clear are both #ifdef SMP_ONEMIND_RACE), so the guard'd PASS build
+ * is unaffected. */
+volatile unsigned long g_om_forward_inflight = 0;
 /* per-CPU busy filler counters (the §2.2 step-4 concurrency proof; smp.c
  * increments g_onemind_filler[me] on the non-mind secondaries). */
 volatile unsigned long g_onemind_filler[SMP_MAX_CPUS] = { 0 };

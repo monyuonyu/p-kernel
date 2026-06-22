@@ -648,7 +648,24 @@ unsigned long r3_onemind_forward_hash(void)
     static const UB LBL      = 19;   /* the value bound to key 7 (index 1)      */
 
     r_init_weights(0xA5A5u);                 /* deterministic rw[], any CPU      */
+#ifdef SMP_ONEMIND_RACE
+    /* FALSIFIER-ONLY: publish "forward in flight" for EXACTLY the read window
+     * (after the re-seed, around r_forward's reads of rc/rw[]). The racer CPU
+     * (smp.c) scribbles the shared rc/rw[] WHILE this flag is high, so the
+     * corruption deterministically overlaps the forward's reads every boot →
+     * H_smp diverges from H_uni. Defined in smp_onemind.c next to the other
+     * g_om_* cert symbols. Set/clear are entirely #ifdef SMP_ONEMIND_RACE, so the
+     * guard'd PASS build (no RACE) is byte-unchanged. dmb st orders the flag
+     * publish ahead of the reads the racer must perturb. */
+    extern volatile unsigned long g_om_forward_inflight;
+    g_om_forward_inflight = 1;
+    __asm__ volatile("dmb st" ::: "memory");
     float loss = r_forward(K, V, LBL);       /* fills rc.probs (in-TU rc access) */
+    __asm__ volatile("dmb st" ::: "memory");
+    g_om_forward_inflight = 0;
+#else
+    float loss = r_forward(K, V, LBL);       /* fills rc.probs (in-TU rc access) */
+#endif
 
     /* FNV-1a over rc.probs[R_VALV] (the softmax logits) then the loss bytes.
      * Hashing both: rc.probs is the distribution, loss=-ln p[label] a second
