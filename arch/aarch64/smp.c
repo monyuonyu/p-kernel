@@ -792,34 +792,41 @@ void knl_smp_wake(TCB *tcb)
     if (target <= 0 || target >= SMP_MAX_CPUS)
         return;
 
-    /* Publish the woken task as the TARGET CPU's next task.  Because the cert's
-     * secondary task is LOWER priority than every other ready task (cpu0_tsk),
-     * knl_make_ready's own `CUR_SCHEDTSK = tcb` branch is NEVER taken (tcb does
-     * not outrank the shared-queue top) — so an EXPLICIT publish here is what
-     * actually points the target CPU at the woken task.  Caller holds the BKL →
-     * this write is serialised against the target's scheduler reads. */
-    g_smpcpu[target].schedtsk = tcb;
-    __asm__ volatile("dsb ish" ::: "memory");
-
+    /* Why an EXPLICIT publish?  The cert's secondary task is LOWER priority than
+     * every other ready task (cpu0_tsk), so knl_make_ready's own
+     * `CUR_SCHEDTSK = tcb` branch is NEVER taken (tcb does not outrank the
+     * shared-queue top).  Pointing the target CPU at the woken task therefore
+     * requires this directed publish.  Caller holds the BKL → serialised vs the
+     * target's scheduler reads. */
     unsigned long me = smp_mpidr_aff0();
     if ((unsigned long)target == me) {
         /* SELF-WAKE (half i): the woken task belongs to the CPU we are ALREADY
          * running on (the secondary's OWN timer tick readied its OWN dly task).
-         * No IPI needed — the publish above is enough; the secondary's next
-         * dispatch checkpoint (END_CRITICAL_SECTION on a task, or the .Lidle →
-         * .Ldispatch_loop re-read after this IRQ returns) picks up schedtsk.   */
+         * Publish schedtsk; NO IPI needed — the secondary's next dispatch
+         * checkpoint (.Lsmp_idle → .Ldispatch_loop re-read after this IRQ
+         * returns) picks it up.  -DSMP_NO_XWAKE does NOT affect this self path,
+         * so half (i) still PASSes under that falsifier (its scope is the
+         * cross-CPU path only). */
+        g_smpcpu[target].schedtsk = tcb;
+        __asm__ volatile("dsb ish" ::: "memory");
         return;
     }
 
+    /* CROSS-CPU WAKE (half ii): target != me. */
 #if defined(SMP_NO_XWAKE)
-    /* FALSIFIER (-DSMP_NO_XWAKE): suppress the cross-CPU IPI.  CPU 0 still marks
-     * tcb READY + publishes it as CPU 1's schedtsk, but CPU 1 is never told to
-     * re-dispatch → the sem-waiter never wakes → the cert half (ii) hangs →
-     * watchdog → SMP-SECONDARY-WAIT: FAIL.  Proves the IPI is load-bearing.
-     * (Half (i) is the SELF-WAKE above and returns BEFORE this, so NO_XWAKE
-     * breaks ONLY the cross-CPU path — exactly the intended falsifier scope.) */
-    (void)0;
+    /* FALSIFIER (-DSMP_NO_XWAKE): suppress the ENTIRE cross-CPU wake — NEITHER
+     * publish the target's schedtsk NOR ring its doorbell.  CPU 0 still marks tcb
+     * READY in the shared queue, but the target CPU is never pointed at it and
+     * never told → the sem-waiter never wakes → half (ii) hangs → watchdog →
+     * SMP-SECONDARY-WAIT: FAIL.  (Suppressing ONLY the SGI is insufficient: the
+     * target's idle wfe also wakes on the incidental `sev` from the caller's
+     * bkl_release and would then SEE a published schedtsk — so the publish MUST
+     * be suppressed too for the falsifier to truly bite.)  Proves the directed
+     * cross-CPU wake — publish + IPI — is LOAD-BEARING. */
+    (void)tcb;
 #else
+    g_smpcpu[target].schedtsk = tcb;
+    __asm__ volatile("dsb ish" ::: "memory");
     smp_send_reschedule(target);
 #endif
 }
