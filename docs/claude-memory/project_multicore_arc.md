@@ -55,7 +55,7 @@ lock + barrier discipline; it still must add per-CPU run-queues, task migration,
 cross-CPU knl_ctxtsk locking, IPIs. See [[project_ring3_core_relocation]],
 [[feedback_audit_is_the_engine]].
 
-## ② full SMP — SHIPPED through ②.2b-i (2026-06-20/21, a long autonomous marathon)
+## ② full SMP — SHIPPED through ②.2c, THE ARC'S PAYOFF (2026-06-20/22, a long autonomous marathon)
 mk_pino's END GOAL ("最終目標まで進もう / ガンガン"). The production T-Kernel scheduler
 is now genuinely SMP, each slice cert-first + separate-impl≠audit, the SHIPPED
 uniprocessor kernel kept BYTE-IDENTICAL throughout (the crown — proven by .text/full-ELF
@@ -77,9 +77,30 @@ otherwise). All merged + audited:
   was correct-by-reasoning but UNCERTIFIED — deleting it didn't fail the cert (dead code
   w.r.t. the suite); the design-mandated [smp-no-deadlock] nested-IRQ falsifier was missing.
   → NOT merged until certified (immune system working; [[feedback_audit_is_the_engine]]).
-REMAINING: ②.2b-ii (secondary CNTP timer/WAIT), ②.2c ([smp-one-mind] crown: real R3 forward
-byte-identical uniproc vs SMP), ②.3 (finer locks), hosted-port SMP (the teacher LLM's real
-multicore — bare-metal has no big matmul; [[project_multicore_arc]] §0 elephant), RPi3 [live]
-(the only place barrier/SMPEN teeth bite). Plans: full-smp-plan, smp-2-production-scheduler-plan,
-smp-2b-async-preempt-plan, device-autodetect-plan.md.
+- **②.2c = THE CROWN / arc payoff (eaa98f75, trunk 51eac85d, 2026-06-22):** a REAL bare-metal
+  mind forward (r_forward, 4-head Transformer, R_NP=21568, the SHARED static rw[]/rc) is
+  BYTE-IDENTICAL — H_uni==H_smp==`0x2856a99b23880b4c` — whether run uniprocessor or scheduled as
+  a real tk_cre_tsk task on an SMP secondary via the production .Ldispatch_loop (CPUs 2/3 = real
+  concurrency). "The mind stays one across the SMP scheduler." Default kernel untouched (755a20fa;
+  smp_onemind.o link-excluded, r3_incontext.o 3edc0d07). Cert carrier = the ②.2a smp_prod 2-tasks
+  pattern; ②.2b-ii NOT needed (run-to-completion compute parks on wfe). HONEST: single-forward
+  byte-identity; CONCURRENT forwards race the shared static rc/rw[] → mind-lock DEFERRED (= what
+  the falsifier exploits). LESSON (the audit's catch): the FALSIFIER itself can be flaky — a fixed
+  one-shot scribble burst with no sync to the forward window gave ~13%/boot spurious PASS → ~34%
+  false BLOCK on the harness (never a false green). Per 諦めない it was FIXED to deterministic-RED
+  before merge (a g_om_forward_inflight flag brackets exactly r_forward's read window; the racer
+  scribbles in small chunks gated on it; commander-verified 20/20 FAIL, 0 spurious, 0 hang). A
+  negative control must be as deterministic as the positive one. BOTH the crown-impl AND the
+  falsifier-fix implementers died on a 529 PRE-report/PRE-commit (Opus pattern) → commander
+  persisted the verified diffs + ran final verification; the deep adversarial pass was a separate
+  clean-room auditor.
+- **②.2b-ii DESIGN hardened (97b89cdd, plan smp-2b-ii-secondary-timer-plan.md):** secondary CNTP
+  timer + cross-CPU WAIT wake. HEADLINE byte-identity risk it surfaced: ②.2b-ii is the FIRST ②
+  slice that must edit a DEFAULT-LINKED function (knl_make_ready, ~18 wake sites) → preservable
+  ONLY via a zero-token preprocessor macro (knl_smp_wake_hook), NOT an empty inline taking tcb;
+  the impl MUST re-prove 755a20fa after the edit or STOP. Open: knl_taskindp still global.
+REMAINING ②: ②.2b-ii (IMPL, off the hardened design), ②.3 (finer locks), hosted-port SMP (the
+teacher LLM's real multicore — bare-metal has no big matmul; §0 elephant), RPi3 [live] (the only
+place barrier/SMPEN teeth bite). Plans: full-smp-plan, smp-2-production-scheduler-plan,
+smp-2b-async-preempt-plan, smp-2c-one-mind-plan, smp-2b-ii-secondary-timer-plan, device-autodetect-plan.md.
 See [[feedback_the_debug_env_is_real]] (the SSH ThinkPad found a real [live] bug on first use).
