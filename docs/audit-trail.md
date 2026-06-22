@@ -1129,3 +1129,41 @@ Both falsifiers bite (the implementer caught + fixed a vacuous one before the au
 single-target wake only (general affinity/migration = ②.3); QEMU green ≠ hardware green (RPi3 BCM2837
 per-core timer/mailbox is a [live] follow-up); the -smp 8 environmental flake is pre-existing. Remaining
 ②: ②.3 (finer locks + knl_taskindp per-CPU + affinity/migration), hosted-port SMP, RPi3 [live].
+
+## compat [migrate-forward] R3_WP — the first migration-chain slice — commit ac9ed78e (impl 6a656d33+6219771b, base da5e3f8d→cherry-picked to ad252ac7)
+The first REAL slice of the compat/evolution migration chain (the ark surviving its OWN version changes):
+a v1 R3-weight blob (`R3_WP`) carrying a TAUGHT FACT is migrated forward to the v2 format and the fact
+STILL ANSWERS — losslessly. "Deathless" requires upgrade-without-loss; this proves it for one state axis.
+Independent clean-room auditor verdict: **MERGEABLE** (tried to falsify, could not).
+- THE MECHANISM: a `R3_WP_MIGRATE_STEP` registry `r3_wp_steps[]` of pairwise `vN→v{N+1}` functions
+  (`r3_incontext.c`); the one shipped step `r3_wp_migrate_v1_v2` adds a trailing header field `merge_epoch`
+  (header 112→120B, both `_Static_assert`-pinned) + shifts the float payload forward back-to-front (no
+  clobber). `r3_wp_migrate_chain`: blob already at CURRENT → ZERO steps (fast path unchanged);
+  future/too-old/missing-step → refuse + print, NEVER silent corruption; the production load path
+  re-validates magic/r_np/vocab AND the payload sha256 AFTER migration (a bad migration is caught + refused).
+  Generalizes the already-LIVE LM_SELF_ENTRY dual-width walker. Mind-FORMAT changes still migrate by
+  re-education (Path E), per the decision; this is the FLAT-BLOB axis.
+- CHECK 1 CROWN byte-identity (decisive): PASS. R3_WP is HOSTED-ONLY — all of it behind `#ifdef
+  _TK_HOSTED_LIBC_`, which the bare-metal Makefiles never define (grep -c = 0,0). Auditor, from a
+  `git clean -fdx` state (the stale-build trap is real — leftover -DSMP_SELFTEST objects once gave a wrong
+  sha): default `.text` = `755a20fa…` base==HEAD (cmp byte-identical) AND `r3_incontext.o` = `3edc0d07…`
+  base==HEAD (cmp byte-identical) — the +325 lines emit ZERO bare-metal `.text`. Crown re-derived on the
+  cherry-picked trunk (ac9ed78e) by the commander: `755a20fa…`. one-mind cert PASS `0x2856a99b` 3× stable.
+- CHECK 3 [migrate-forward] PASS + NON-VACUITY (3/3): taught 88.3% (chance 1.6%) → wipe to a fixed seed
+  0.0% (the fact does NOT survive on its own) → chain runs (header.version 1→2, merge_epoch=0) → payload
+  integrity MATCH → post-migrate 88.3% (lossless). The auditor READ the cert: the v1-width blob is wiped
+  then ONLY the migration chain runs before the v2-offset reader — the migration is provably the SOLE cause
+  of recovery, not a passive path.
+- CHECK 4 FALSIFIER load-bearing (3/3): `-DR3WP_SKIP_MIGRATE` → the v1 blob is read at the v2 width →
+  merge_epoch=garbage (4 float bytes misread) → payload integrity MISMATCH → fact LOST (0.0%) → FAIL.
+- CHECK 6 no regression: `[persist-identity]` PASS; `[persist-mind]`/`[persist-mind-stale]` FAIL
+  IDENTICALLY on base da5e3f8d AND HEAD (DMN consolidation doesn't fire within `mind wait 120` under
+  PRoot) — pre-existing environmental, NOT a regression (auditor ran both). r3 test 94.7%, handoff PASS,
+  cert symbol absent from the default hosted binary.
+LEDGER: row CLOSED. The ark can now carry a taught mind forward across a weight-blob format version,
+losslessly + with a sha256-validated refuse-on-bad-migration safety net — the first concrete tread of
+"survive your own upgrade." Crown untouched (hosted-only, byte-identical base/HEAD). Both certs
+load-bearing. HONEST: ONE flat-blob axis only — the Self-lineage hash-chain leg, arkfs deep-version-gap
+(its log clean-rejects on version → reject-not-migrate), [signed-ota-gate], and [no-fleet-split] are the
+named LATER slices (compat-migration-chain-plan.md). Harmless note: the R3_WP_VER_MIN too-old branch is
+currently unreachable (dead-safe code).
