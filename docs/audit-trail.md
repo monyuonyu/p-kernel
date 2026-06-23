@@ -1313,3 +1313,26 @@ LEDGER: row CLOSED. x86_64 hosted now compiles AND runs build-time certs end-to-
 LEDGER: row CLOSED. A packet routes A→B THROUGH the elected supernode over the real ./relay transport,
 byte-identical, exactly-once, fail-closed — N-2c is real on hardware. NAT hole-punch (N-3) + seed
 bootstrap (N-4) remain the Thread-N queue.
+
+## compat [no-fleet-split] — SWIM cross-version membership cert — merge 2026-06-23 (impl d78eaeb8, base 0c200555)
+- Design-harden first (in-proc-feasibility + 4-leg falsifiable spec), then impl, then independent audit. Verdict: **MERGEABLE**.
+- THE CERT IS REAL + falsifiable: `swim_nofleetsplit_self_test` drives the REAL `swim_rx()` (swim.c:1401/1430/1447; the
+  version gate lives at swim.c:418 INSIDE swim_rx, ABOVE gossip_apply — a gossip_apply-only cert would be blind to it).
+  4 legs: [split-membership-crosses] (vN+1 additive `capability` packet, version==SWIM_VERSION → P ALIVE);
+  [split-additive-crosses] (the capability byte propagates → region_is_super_capable(P)); [split-partition-on-bump]
+  (THE falsifier: version==SWIM_VERSION+1 → hard-dropped → P NOT ALIVE → fleet partitions); [split-degrade-not-drop]
+  (version==SWIM_VERSION, capability==0 OLD emitter still marks P ALIVE — the "生存情報は必ず通す" lifeline).
+- SABOTAGE (auditor, independent): delete the `pkt->version != SWIM_VERSION` clause at swim.c:418 → ONLY leg 2 goes RED
+  ("breaking-version peer wrongly ALIVE"), other 3 stay green; revert (git diff empty) → all 4 green. Load-bearing,
+  uniquely keyed to the single `version` byte (leg 2 differs from leg 1 by exactly that byte; P reset to UNKNOWN
+  immediately before the bumped delivery → not vacuous). Twice-runnable + side-effect-free (save/restore mirrors cap-gossip).
+- No-regression: [cap-gossip]/[teacher-gossip]/[region-super 8/8]/[region-teacher 6/6] PASS. Flag -DNOFLEETSPLIT_CERT,
+  verb `compat test wire` on BOTH usermains (x86_64 4 legs PASS under qemu — cross-ABI). CROWN: cert gated
+  (NOFLEETSPLIT_CERT && _TK_HOSTED_LIBC_); bare-metal aarch64 .text 755a20fa byte-identical (auditor + commander re-derived).
+- HONEST: does NOT retire compatibility.md §7 (replica.c:282 still hard-drops on version — reject→degrade is a separate
+  slice; THIS proves the SWIM membership lifeline degrades correctly + the partition falsifier shows WHY §7 is
+  release-blocking); does NOT prove a 2-OS-process teach→answer ([live] deferred, needs a pinned-vN binary); downgrade-auth
+  out of scope. NITS (non-blocking): x86_64 usermain lacked the `self` verb (PRE-EXISTING — LMSELF was aarch64-only;
+  being closed in the stacked arkfs slice); teacher-capable bit not save/restored (matches cap-gossip convention).
+LEDGER: row CLOSED. The SWIM membership/gossip layer keeps a vN and a v{N+1} additive-change node in ONE fleet and
+partitions on a breaking bump — "no fleet split" is now a falsifiable in-proc property.
