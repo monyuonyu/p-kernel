@@ -1248,3 +1248,38 @@ verbatim, with the human-identity boundary intact. HONEST: this is the ACCEPT ga
 DELIVERY/transport (mesh small-update / KLOAD deep-update) is NOT wired, key REVOCATION (CRL/fleet
 broadcast) is deferred (A/B rollback is the only recovery). Remaining compat: Self-lineage hash-chain leg,
 arkfs deep-version-gap, [no-fleet-split], + the x86_64-Makefile cert-parity follow-up.
+
+## compat [selflineage-migrate] — Self-lineage v1->v2 migration-chain leg — merge 2026-06-23 (impl 6b85d22e, base ac59eb43)
+- Auditor: independent focused auditor, 2026-06-23. Did NOT write the code. Verdict: **MERGEABLE** (6/6 adversarial checks).
+- THE LEG IS REAL: formalizes the EXISTING dual-width v1(116B)->v2(148B) LM_SELF_ENTRY walker as an explicit
+  lm_self_steps[] migration chain (mirrors the shipped r3_wp_steps[]). The HARD part — hash-chain preservation —
+  solved by plan §3.3 option 1: COHERENT whole-chain migration genesis->head, re-linking each migrated entry's
+  prev_entry to its migrated predecessor's NEW v2 content-id. cert [selflineage-migrate] re-walks the FULL migrated
+  chain via the PRODUCTION self_walk (not a private walker) → verifies=yes len=4/4; narrative preserved (seq/self_id/
+  age_ms/eng_digest/model_ver == v1, human_ref all-zero); head readback ok.
+- FALSIFIER -DLMSELF_SKIP_MIGRATE skips ONLY the re-link → re-walk verifies=no len=1/4 (head's prev_entry points at
+  the old v1 id, never stored as v2 → self_walk rejects). migrate/narrative/readback all stay yes in falsifier mode →
+  the re-link is the SOLE load-bearing gate. Non-vacuous.
+- Multi-step composition refuses future/below-floor/missing-step (never silent misread). No-regression: [self-continuity]/
+  [self-tamperevident]/[self-ownerless] PASS; pure append at EOF, production dual-width walker byte-untouched.
+- CROWN: hosted-only (#ifdef _TK_HOSTED_LIBC_); bare-metal aarch64 lm_self.o has ZERO migration symbols; .text
+  755a20fae2d9b7415045193ea8287623dbeb906963609a63dce8a19c8a130513 byte-identical (auditor + commander re-derived on merged trunk).
+LEDGER: row CLOSED. The Self-lineage hash chain survives a format bump — migrated coherently, verified end-to-end by
+the unmodified production walker, falsifiably. Second compat migration-chain leg after R3_WP.
+
+## x86_64 cross-ABI cert parity — EXTRA_CFLAGS knob + compat verb — merge 2026-06-23 (impl 343466b4, base 35abbfcc)
+- Auditor: independent focused auditor, 2026-06-23. Did NOT write the code. Verdict: **MERGEABLE** (no defect at any severity).
+- THE GAP WAS REAL: trunk boot/linux_x86_64/Makefile had 0 EXTRA_CFLAGS + x86_64 usermain.c had 0 compat verb, so the
+  x86_64 hosted build could NOT compile OR run ANY build-time cert (cross-ABI cert parity was not real). FIX: (1) Makefile
+  EXTRA_CFLAGS ?= threaded CFLAGS->KERNEL_CFLAGS (reaches r3_incontext.o/compat_ota.o/usermain.o; LLM_CFLAGS excluded —
+  matches aarch64 exactly, no parity hole); (2) the gated `compat test`/`compat test ota` verb mirrored faithfully from
+  arch/linux/aarch64/usermain.c.
+- VERIFIED END-TO-END on x86_64 (NATIVE ThinkPad by commander AND qemu-x86_64 by implementer, agreeing): [migrate-forward]
+  PASS (post-migrate masked acc 88.3%); falsifier -DR3WP_SKIP_MIGRATE → payload MISMATCH (wrong-width read), acc 0.0% →
+  FAIL (non-vacuous); bonus -DOTA_GATE_CERT → [signed-ota-gate] PASS. Default build INERT: nm proves usermain.o has no
+  reference to r3_migrate_forward_test without the define (#if gate load-bearing); the verb only prints a rebuild hint.
+- CROWN: hosted-x86_64-only (Makefile + arch/linux/x86_64/usermain.c); bare-metal .text 755a20fa byte-identical.
+- HONEST: the gated-cert surface of the two usermains is now identical (both expose R3WP_MIGRATE_CERT + OTA_GATE_CERT);
+  no cert the aarch64 usermain drives is missing from x86_64. (Discharges the long-standing "x86_64 can't drive ANY cert"
+  follow-up flagged by the R3_WP and device-capacity rows.)
+LEDGER: row CLOSED. x86_64 hosted now compiles AND runs build-time certs end-to-end — cross-ABI cert parity is REAL.
