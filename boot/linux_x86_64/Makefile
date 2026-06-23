@@ -70,10 +70,19 @@ INCDIRS = \
 #   one math". Without it clang's FMA contraction diverged from gcc and
 #   the on-device mind learned 5% instead of 95% (wave-49 salty bug).
 #   The `dtr fpdet` golden-logit cert guards this. Keep on every config.
+# EXTRA_CFLAGS lets a caller inject build-time defines without editing this
+# file (mirrors boot/linux/Makefile and boot/aarch64/Makefile), e.g.
+#   make EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT   (the [migrate-forward] cert)
+#   make EXTRA_CFLAGS="-DR3WP_MIGRATE_CERT -DR3WP_SKIP_MIGRATE" (its falsifier)
+# Empty by default, so the default build is unchanged. This is what makes
+# cross-ABI cert parity real: a cert define reaches the same TUs here as it
+# does on the aarch64-hosted sibling (CFLAGS + the inheriting KERNEL_CFLAGS).
+EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
           -fno-stack-protector -fno-common -std=gnu11 \
           -ffp-contract=off \
           -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+          $(EXTRA_CFLAGS) \
           $(INCDIRS)
 
 ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
