@@ -71,6 +71,9 @@ IMPORT void compat_ota_gate_test(void);               /* [signed-ota-gate] */
 #if defined(LMSELF_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT void lm_self_migrate_forward_test(void);       /* [selflineage-migrate] */
 #endif
+#if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT INT  swim_nofleetsplit_self_test(void (*)(const char *)); /* [no-fleet-split] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -996,6 +999,19 @@ EXPORT INT usermain(void)
 #else
                     print("compat test self: rebuild with EXTRA_CFLAGS=-DLMSELF_MIGRATE_CERT\r\n");
 #endif
+                } else if (sl >= 4 && sub[0]=='w'&&sub[1]=='i'&&sub[2]=='r'&&sub[3]=='e') {
+                    /* [no-fleet-split] — the SWIM membership/gossip leg
+                     * (compat-migration-chain-plan.md §5.3/§6): same-version
+                     * peers stay ONE fleet across an additive change, a
+                     * breaking version bump partitions, and an old (cap=0)
+                     * emitter degrades rather than being dropped. Gated behind
+                     * -DNOFLEETSPLIT_CERT so the default kernel + crown stay
+                     * byte-identical. */
+#if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
+                    swim_nofleetsplit_self_test(print);
+#else
+                    print("compat test wire: rebuild with EXTRA_CFLAGS=-DNOFLEETSPLIT_CERT\r\n");
+#endif
                 } else {
                     /* [migrate-forward] (default `compat test`) */
 #if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
@@ -1004,7 +1020,7 @@ EXPORT INT usermain(void)
                     print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
 #endif
                 }
-            } else print("usage: compat test [ota|self]\r\n");
+            } else print("usage: compat test [ota|self|wire]\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and

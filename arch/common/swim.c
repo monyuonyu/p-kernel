@@ -1311,3 +1311,165 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
         say("[teacher-gossip] PASS (converge + selector + determinism + staleness + falsifiable + rx-relay)\r\n");
     return fails;
 }
+
+/* ------------------------------------------------------------------ */
+/* compat [no-fleet-split] self-test                                   */
+/* (compat-migration-chain-plan.md §5.3/§6; compatibility.md §7)        */
+/*                                                                     */
+/* THE STRATEGY: "no frozen core; NO FLEET SPLIT". Whether two          */
+/* different-version nodes stay ONE fleet is decided at swim_rx():418   */
+/*   if (pkt->magic != SWIM_MAGIC || pkt->version != SWIM_VERSION)      */
+/*       return;                                                        */
+/* plus what gossip_apply() does with the ADDITIVE SWIM_GOSSIP_EVT      */
+/* `capability` byte (swim.h:81 — the `_pad`->capability rule added     */
+/* WITHOUT bumping SWIM_VERSION: the canonical "vN+1 additive field a   */
+/* vN reads as zero").                                                  */
+/*                                                                     */
+/* This cert drives the REAL swim_rx() (NOT just gossip_apply — the     */
+/* version drop happens INSIDE swim_rx at :418, ABOVE gossip_apply, so  */
+/* a cert that only calls gossip_apply is BLIND to it). FOUR legs:      */
+/*  [split-membership-crosses] (CURE) a version==SWIM_VERSION packet    */
+/*      with capability!=0 marks peer P ALIVE (membership crosses an    */
+/*      additive-change gap).                                           */
+/*  [split-partition-on-bump] (FALSIFIER, load-bearing) the SAME packet */
+/*      with version=SWIM_VERSION+1 does NOT mark P ALIVE — the ONLY    */
+/*      difference is the single version byte, so deleting the          */
+/*      `pkt->version != SWIM_VERSION` clause at swim.c:418 is the      */
+/*      UNIQUE thing that flips this PASS->FAIL. P is reset to non-ALIVE */
+/*      IMMEDIATELY before, so a stale ALIVE cannot make it vacuous.    */
+/*  [split-additive-crosses] the capability!=0 from a valid self-       */
+/*      authoritative rumor actually propagated — region_is_super_      */
+/*      capable(P)==TRUE (the additive field is read, not dropped).     */
+/*  [split-degrade-not-drop] a version==SWIM_VERSION, capability==0     */
+/*      packet (an OLD emitter) STILL marks P ALIVE — an old node is    */
+/*      NOT dropped for sending zero (the "生存情報だけは必ず通す"     */
+/*      lifeline; capability=0 degrades, never partitions).             */
+/*                                                                     */
+/* HONEST SCOPE: this in-proc gate proves the SWIM membership/gossip    */
+/* mechanism crosses a version gap for an ADDITIVE change and           */
+/* partitions on a breaking BUMP. It does NOT retire compatibility.md   */
+/* §7 (replica.c:282 etc. still hard-drop on version — reject->degrade  */
+/* is a separate slice); it does NOT prove a real 2-OS-process          */
+/* teach->answer (a DEFERRED [live] row needing a pinned-vN binary +    */
+/* real host); downgrade-attack authentication is out of scope.         */
+/* Emits "[no-fleet-split] ..." lines; returns 0 on PASS else fails.    */
+/* ------------------------------------------------------------------ */
+#if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
+INT swim_nofleetsplit_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    /* --- save global/file state we perturb, restore at the end --- */
+    UB  saved_my     = drpc_my_node;
+    UB  saved_inc    = my_incarnation;
+    INT saved_gq_cnt = gq_cnt;
+
+    const UB SELF = 0;          /* the receiving node we simulate */
+    const UB P    = 4;          /* the differently-versioned peer */
+    UB  saved_Pst  = dnode_table[P].state;
+    UB  saved_Pinc = dnode_incarn[P];
+    UW  saved_Pip  = dnode_table[P].ip;
+    UB  saved_capP = region_is_super_capable(P) ? 1 : 0;
+
+    drpc_my_node            = SELF;
+    gq_cnt                  = 0;
+    my_incarnation          = 0;
+    dnode_table[SELF].state = DNODE_ALIVE; dnode_incarn[SELF] = 0;
+    region_set_super_capable(P, FALSE);
+
+    /* The one packet (built once); legs flip only the fields named. P emits
+     * its OWN ALIVE rumor about itself with capability bit0=1 (self-
+     * authoritative), piggybacked so the additive field actually crosses. */
+    SWIM_PKT base = { 0 };
+    base.magic            = SWIM_MAGIC;
+    base.version          = SWIM_VERSION;
+    base.type             = SWIM_ACK;     /* seq=0 beacon-style, no probe reply */
+    base.seq              = 0;
+    base.src_node         = P;
+    base.probe_target     = P;
+    base.gossip_cnt       = 1;
+    base.gossip[0].node_id     = P;
+    base.gossip[0].state       = DNODE_ALIVE;
+    base.gossip[0].incarnation = 1;
+    base.gossip[0].capability  = 1;       /* bit0 = supernode-capable */
+
+    /* [split-membership-crosses] (CURE): same-version packet -> P ALIVE. */
+    dnode_table[P].state = DNODE_UNKNOWN; dnode_incarn[P] = 0;
+    {
+        SWIM_PKT p = base;
+        swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
+        if (dnode_table[P].state != DNODE_ALIVE) {
+            say("[no-fleet-split] FAIL split-membership-crosses: same-version peer not ALIVE\r\n");
+            fails++;
+        } else {
+            say("[no-fleet-split] split-membership-crosses ok\r\n");
+        }
+    }
+
+    /* [split-additive-crosses]: the capability byte actually propagated. */
+    {
+        if (region_is_super_capable(P) != TRUE) {
+            say("[no-fleet-split] FAIL split-additive-crosses: capability byte dropped\r\n");
+            fails++;
+        } else {
+            say("[no-fleet-split] split-additive-crosses ok\r\n");
+        }
+    }
+
+    /* [split-partition-on-bump] (FALSIFIER, load-bearing): reset P to
+     * non-ALIVE, then deliver the SAME packet differing ONLY in version byte
+     * (SWIM_VERSION+1) -> swim_rx():418 must DROP it; P must NOT be ALIVE.
+     * The reset immediately-before is mandatory: without it a stale ALIVE
+     * from the prior leg makes this assert vacuously pass. */
+    dnode_table[P].state = DNODE_UNKNOWN; dnode_incarn[P] = 0;
+    region_set_super_capable(P, FALSE);
+    {
+        SWIM_PKT p = base;
+        p.version = (UB)(SWIM_VERSION + 1);   /* THE ONLY DIFFERENCE from leg 1 */
+        swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
+        if (dnode_table[P].state == DNODE_ALIVE) {
+            say("[no-fleet-split] FAIL split-partition-on-bump: breaking-version peer wrongly ALIVE\r\n");
+            fails++;
+        } else {
+            say("[no-fleet-split] split-partition-on-bump ok\r\n");
+        }
+    }
+
+    /* [split-degrade-not-drop]: an OLD emitter (same version, capability==0)
+     * is STILL marked ALIVE — zero degrades, never partitions. */
+    dnode_table[P].state = DNODE_UNKNOWN; dnode_incarn[P] = 0;
+    region_set_super_capable(P, FALSE);
+    {
+        SWIM_PKT p = base;
+        p.gossip[0].incarnation = 2;          /* fresh so the rumor is accepted */
+        p.gossip[0].capability  = 0;          /* OLD node sends zero */
+        swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
+        if (dnode_table[P].state != DNODE_ALIVE) {
+            say("[no-fleet-split] FAIL split-degrade-not-drop: old (cap=0) peer dropped from fleet\r\n");
+            fails++;
+        } else {
+            say("[no-fleet-split] split-degrade-not-drop ok\r\n");
+        }
+    }
+
+    /* --- restore --- */
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq_cnt;
+    dnode_table[SELF].state = DNODE_UNKNOWN; dnode_incarn[SELF] = 0;
+    dnode_table[P].state    = saved_Pst;
+    dnode_incarn[P]         = saved_Pinc;
+    dnode_table[P].ip       = saved_Pip;
+    region_set_super_capable(P, saved_capP ? TRUE : FALSE);
+
+    if (fails == 0)
+        say("[no-fleet-split] PASS\r\n");
+    else {
+        say("[no-fleet-split] FAIL ");
+        sw_putdec((UW)fails);
+        say("\r\n");
+    }
+    return fails;
+}
+#endif /* NOFLEETSPLIT_CERT && _TK_HOSTED_LIBC_ */

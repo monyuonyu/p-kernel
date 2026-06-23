@@ -169,3 +169,22 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *));
  *      between the two capability axes).
  * Emits "[teacher-gossip] ..." lines; returns 0 on PASS else the fail count. */
 INT swim_teacher_gossip_self_test(void (*emit)(const char *));
+
+/* compat [no-fleet-split] cert (compat-migration-chain-plan.md §5.3/§6): drives
+ * the REAL swim_rx() (NOT just gossip_apply — the version drop is at swim.c:418,
+ * ABOVE gossip_apply) and asserts the "no frozen core; NO FLEET SPLIT" contract:
+ *  [split-membership-crosses]  a version==SWIM_VERSION, capability!=0 packet
+ *      marks peer P ALIVE (membership crosses an ADDITIVE-change gap).
+ *  [split-partition-on-bump]   (FALSIFIER) the SAME packet with
+ *      version=SWIM_VERSION+1 does NOT mark P ALIVE — the lone difference is the
+ *      version byte, so deleting `pkt->version != SWIM_VERSION` at swim.c:418 is
+ *      the UNIQUE thing that flips this PASS->FAIL.
+ *  [split-additive-crosses]    the capability byte actually propagated
+ *      (region_is_super_capable(P)==TRUE).
+ *  [split-degrade-not-drop]    a same-version, capability==0 (OLD emitter)
+ *      packet STILL marks P ALIVE — zero degrades, never partitions.
+ * HONEST SCOPE: proves the SWIM membership/gossip layer; does NOT retire
+ * compatibility.md §7 (replica.c hard-drop), nor prove a 2-OS-process
+ * teach->answer ([live] is deferred), nor downgrade-attack auth.
+ * Emits "[no-fleet-split] ..." lines; returns 0 on PASS else the fail count. */
+INT swim_nofleetsplit_self_test(void (*emit)(const char *));
