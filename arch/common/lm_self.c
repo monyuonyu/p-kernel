@@ -804,3 +804,309 @@ void lm_self_test(void)
     if (fails == 0) lp("[self-test] ALL PASS\r\n");
     else { lp("[self-test] FAILURES="); lpd((UW)fails); lp("\r\n"); }
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* ================================================================== *
+ *  THE MIGRATION CHAIN for the Self-lineage (LM_SELF_ENTRY)          *
+ *  (compat-migration-chain-plan.md §3, §3.3 Self-lineage leg).       *
+ *                                                                    *
+ *  Formalizes the shipped dual-width walker's v1->v2 behaviour       *
+ *  (lm_self.h:67-69) into a named, chained registry mirroring        *
+ *  r3_wp_steps[] (r3_incontext.c). A per-axis ordered table of       *
+ *  pairwise (vN -> v{N+1}) functions that upgrade ONE entry's        *
+ *  layout in place; the chain composes them for a multi-step         *
+ *  catch-up exactly as r3_wp_migrate_chain does.                     *
+ *                                                                    *
+ *  THE HARD PART — preserving the hash chain (§3.3, §9.3-1):         *
+ *  each entry's content-id is pfs_id_compute over its EXACT bytes,   *
+ *  and prev_entry references the PRIOR entry's content-id. v1->v2    *
+ *  flips version 1->2 and appends the 32-byte human_ref tail, which  *
+ *  CHANGES the bytes -> CHANGES the content-id. So a per-entry       *
+ *  migration alone breaks every prev-link (prev still points at the  *
+ *  OLD v1 id). The chain is preserved by migrating the WHOLE chain   *
+ *  COHERENTLY genesis->head: each migrated entry's prev_entry is     *
+ *  RE-LINKED to its migrated predecessor's NEW v2 content-id, so the *
+ *  re-walked v2 chain verifies end-to-end under the production       *
+ *  walker (self_walk). This is option 1 of the plan's §3.3.          *
+ *                                                                    *
+ *  HOSTED/LOADER-ONLY (LENS A, §A): all migration + cert code lives  *
+ *  behind _TK_HOSTED_LIBC_; bare-metal compiles NONE of it, so the   *
+ *  crown is structurally untouched (the migration runs over bytes in *
+ *  the persistence/loader path, never in r_forward / the mind math). *
+ * ================================================================== */
+
+/* The legacy v1 entry — byte-for-byte what v1 nodes wrote: the v2 layout
+ * MINUS the trailing human_ref[PFS_ID_LEN]. 116 bytes; the dual-width
+ * discipline of the walker (read each version at its own width, then
+ * upgrade). Field order/types mirror LM_SELF_ENTRY exactly up to the tail. */
+typedef struct {
+    U4  magic;
+    U4  version;
+    U1  self_id;
+    U1  _pad0;
+    U2  _pad1;
+    U4  seq;
+    U4  age_ms;
+    U1  prev_entry[PFS_ID_LEN];
+    U1  eng_digest[PFS_ID_LEN];
+    U1  model_ver [PFS_ID_LEN];
+} __attribute__((packed)) LM_SELF_ENTRY_V1;
+
+_Static_assert(sizeof(LM_SELF_ENTRY_V1) == LM_SELF_ENTRY_V1_SIZE,
+               "LM_SELF_ENTRY_V1 must be 116 bytes (v2 minus the human_ref tail)");
+_Static_assert(sizeof(LM_SELF_ENTRY) > sizeof(LM_SELF_ENTRY_V1),
+               "v2 must be a real format delta (wider than v1)");
+
+/* one migration step. to_ver MUST be from_ver+1 (pairwise, §3.2). Upgrade
+ * ONE entry's layout from from_ver to to_ver in place: read the entry at
+ * its true width from `in`, write the widened entry into `out` (cap bytes),
+ * set *out_len. Returns 1 ok / 0 refuse (the chain aborts -> refuse). NOTE
+ * prev-link RE-LINKING is the chain driver's job (lm_self_migrate_chain),
+ * not the per-entry step's: a step cannot know its predecessor's new id. */
+typedef struct {
+    U4  from_ver;
+    U4  to_ver;
+    INT (*migrate)(const U1 *in, UW in_len, U1 *out, UW *out_len, UW cap);
+} LM_SELF_MIGRATE_STEP;
+
+/* v1 -> v2: widen one entry, defaulting the new human_ref tail to all-zero
+ * (a v1 entry predates the field; all-zero = "no human chapter",
+ * ark-profile.md §4.2). Every v1 field is PRESERVED bit-for-bit; only the
+ * format widens + version is bumped. prev_entry is copied AS-IS here; the
+ * chain driver re-links it to the migrated predecessor's new id afterward. */
+static INT lm_self_migrate_v1_v2(const U1 *in, UW in_len,
+                                 U1 *out, UW *out_len, UW cap)
+{
+    if (in_len != sizeof(LM_SELF_ENTRY_V1)) return 0;   /* not a v1-width entry */
+    if (sizeof(LM_SELF_ENTRY) > cap)        return 0;   /* scratch too small    */
+
+    LM_SELF_ENTRY_V1 old;
+    self_memcpy(&old, in, sizeof old);
+
+    LM_SELF_ENTRY ne;
+    self_memset(&ne, 0, sizeof ne);
+    ne.magic   = old.magic;
+    ne.version = LM_SELF_VER;                /* now a v2 entry              */
+    ne.self_id = old.self_id;
+    ne._pad0   = old._pad0;
+    ne._pad1   = old._pad1;
+    ne.seq     = old.seq;
+    ne.age_ms  = old.age_ms;
+    self_memcpy(ne.prev_entry, old.prev_entry, PFS_ID_LEN);
+    self_memcpy(ne.eng_digest, old.eng_digest, PFS_ID_LEN);
+    self_memcpy(ne.model_ver,  old.model_ver,  PFS_ID_LEN);
+    /* ne.human_ref stays all-zero (the documented v1 default, §3.1) */
+
+    self_memcpy(out, &ne, sizeof ne);
+    *out_len = sizeof ne;
+    return 1;
+}
+
+static const LM_SELF_MIGRATE_STEP lm_self_steps[] = {
+    { 1u, (U4)LM_SELF_VER, lm_self_migrate_v1_v2 },
+};
+#define LM_SELF_NSTEPS (sizeof(lm_self_steps) / sizeof(lm_self_steps[0]))
+
+/* migrate ONE entry's layout from its header version up to CURRENT, applying
+ * each registered vN->v{N+1} step in sequence (§3.1 step 3). Reads in/in_len,
+ * writes the upgraded entry into out (cap bytes), sets *out_len. A v at
+ * CURRENT is copied through unchanged (the fast path). Future/missing-step ->
+ * refuse (0), NEVER a silent misread. Does NOT touch prev_entry linkage; the
+ * chain driver re-links across the whole chain after each entry is widened. */
+static INT lm_self_migrate_entry(const U1 *in, UW in_len,
+                                 U1 *out, UW *out_len, UW cap)
+{
+    /* magic+version live at the same offset in v1 and v2 (the dual-width
+     * invariant) — read the version from the header front. */
+    U4 v;
+    self_memcpy(&v, in + 4, sizeof v);          /* version is field #2 (offset 4) */
+
+    if (v == (U4)LM_SELF_VER) {                 /* already current: copy through */
+        if (in_len > cap) return 0;
+        self_memcpy(out, in, in_len);
+        *out_len = in_len;
+        return 1;
+    }
+    if (v > (U4)LM_SELF_VER) return 0;          /* future entry: refuse          */
+    if (v < 1u)              return 0;          /* below MIN_MIGRATABLE: refuse   */
+
+    /* compose the pairwise chain v -> v+1 -> ... -> CURRENT, ping-ponging
+     * between two scratch buffers so each step reads the prior step's output. */
+    static U1 a[sizeof(LM_SELF_ENTRY)];
+    static U1 b[sizeof(LM_SELF_ENTRY)];
+    if (in_len > sizeof a) return 0;
+    self_memcpy(a, in, in_len);
+    UW   alen = in_len;
+    U1  *src = a, *dst = b;
+    UW   guard = 0;
+
+    while (v < (U4)LM_SELF_VER) {
+        INT found = 0;
+        for (UW s = 0; s < LM_SELF_NSTEPS; s++) {
+            if (lm_self_steps[s].from_ver == v) {
+                UW olen = 0;
+                if (!lm_self_steps[s].migrate(src, alen, dst, &olen, sizeof b))
+                    return 0;
+                v = lm_self_steps[s].to_ver;
+                { U1 *t = src; src = dst; dst = t; }   /* output becomes next input */
+                alen = olen;
+                found = 1;
+                break;
+            }
+        }
+        if (!found || ++guard > LM_SELF_NSTEPS + 1) return 0;   /* missing-step */
+    }
+    if (alen > cap) return 0;
+    self_memcpy(out, src, alen);
+    *out_len = alen;
+    return 1;
+}
+
+/* ================================================================== *
+ *  [selflineage-migrate] CERT (compat-migration-chain-plan.md §5.1   *
+ *  Self-lineage leg, §9.3-1): a >=3-entry v1 hash-chained narrative   *
+ *  lineage is migrated forward v1->v2 and STILL verifies end-to-end   *
+ *  under the production walker, with no narrative loss.              *
+ *                                                                    *
+ *  Cure (PASS): build a v1 chain of LM_MIG_N (>=3) hash-chained       *
+ *  entries (each prev_entry = the prior v1 entry's content-id — a     *
+ *  real lineage). Migrate the WHOLE chain coherently v1->v2,          *
+ *  re-linking each migrated entry's prev_entry to its migrated        *
+ *  predecessor's NEW v2 content-id, and storing the v2 entries in an  *
+ *  in-process block store. Assert: (a) self_walk over the v2 head     *
+ *  verifies the chain end-to-end (ok=1, length==N, reaches genesis);  *
+ *  (b) the narrative content is preserved (every migrated entry's     *
+ *  seq/self_id/age_ms/eng_digest/model_ver equals the v1 original,    *
+ *  and human_ref defaults all-zero); (c) the head reads back through  *
+ *  the production walker at the v2 width.                             *
+ *                                                                    *
+ *  Falsifier (-DLMSELF_SKIP_MIGRATE -> RED): skip the coherent        *
+ *  re-link — leave each v2 entry's prev_entry pointing at the OLD v1  *
+ *  predecessor id. The store holds only the v2 entries, so walking    *
+ *  the v2 head hits a prev_entry whose id is ABSENT (the v1 id was    *
+ *  never stored) -> the walk fails to reach genesis -> ok=0 / short   *
+ *  chain -> FAIL. The falsifier genuinely bites: it is a real broken  *
+ *  chain, not a no-op (the dual-width walker, lm_self.h:67-69, proves *
+ *  a wrong link/width genuinely corrupts the read).                  *
+ *                                                                    *
+ *  GATED: compiles ONLY under -DLMSELF_MIGRATE_CERT (and is hosted-   *
+ *  only via _TK_HOSTED_LIBC_), so the default kernel object — and the *
+ *  crown — are byte-unchanged.                                       *
+ * ================================================================== */
+#ifdef LMSELF_MIGRATE_CERT
+
+#define LM_MIG_N  4          /* >= 3 hash-chained entries (the lineage)     */
+
+void lm_self_migrate_forward_test(void)
+{
+    lp("[selflineage-migrate] ==== Self-lineage survives a v1->v2 format bump ====\r\n");
+    lp("[selflineage-migrate] >=3 hash-chained entries; written v1, migrated v2, re-walked.\r\n");
+
+    const U1 ME = 7;                 /* the origin self_id for this lineage */
+    self_compute_model_ver();        /* stamp a real model_ver into entries */
+
+    /* ---- 1. Build a v1 chain of LM_MIG_N entries (a real lineage) ------ */
+    static LM_SELF_ENTRY_V1 v1[LM_MIG_N];
+    static U1              v1_ids[LM_MIG_N][PFS_ID_LEN];
+    {
+        U1 prev[PFS_ID_LEN]; self_memset(prev, 0, PFS_ID_LEN);   /* genesis */
+        for (INT k = 0; k < LM_MIG_N; k++) {
+            self_memset(&v1[k], 0, sizeof v1[k]);
+            v1[k].magic   = LM_SELF_MAGIC;
+            v1[k].version = 1u;
+            v1[k].self_id = ME;
+            v1[k].seq     = (U4)(k + 1);
+            v1[k].age_ms  = (U4)((k + 1) * 1000UL);
+            if (k > 0) self_memcpy(v1[k].prev_entry, prev, PFS_ID_LEN);
+            self_eng_digest((U4)(k + 1), v1[k].eng_digest);
+            self_memcpy(v1[k].model_ver, self_model_ver, PFS_ID_LEN);
+            pfs_id_compute(&v1[k], (UW)sizeof v1[k], v1_ids[k]);   /* v1 content-id */
+            self_memcpy(prev, v1_ids[k], PFS_ID_LEN);
+        }
+    }
+    lp("[selflineage-migrate] built v1 chain len="); lpd((UW)LM_MIG_N);
+    lp(" entry_width="); lpd((UW)sizeof(LM_SELF_ENTRY_V1));
+    lp(" head_seq="); lpd((UW)v1[LM_MIG_N - 1].seq); lp("\r\n");
+
+    /* ---- 2. Migrate the WHOLE chain coherently v1->v2, re-linking ------ */
+    /* genesis->head: migrate each entry's layout, then (PASS path) re-link
+     * its prev_entry to the migrated predecessor's NEW v2 content-id, store
+     * it, and carry its new id forward as the next prev. */
+    static SELF_STORE mstore;
+    store_clear(&mstore);
+    static LM_SELF_ENTRY v2[LM_MIG_N];
+    static U1            v2_ids[LM_MIG_N][PFS_ID_LEN];
+    U1 prev_v2[PFS_ID_LEN]; self_memset(prev_v2, 0, PFS_ID_LEN);
+    INT mig_ok = 1;
+    for (INT k = 0; k < LM_MIG_N; k++) {
+        U1  out[sizeof(LM_SELF_ENTRY)]; UW olen = 0;
+        if (!lm_self_migrate_entry((const U1 *)&v1[k], (UW)sizeof v1[k],
+                                   out, &olen, (UW)sizeof out)
+            || olen != (UW)sizeof(LM_SELF_ENTRY)) { mig_ok = 0; break; }
+        self_memcpy(&v2[k], out, sizeof v2[k]);
+#ifndef LMSELF_SKIP_MIGRATE
+        /* PASS: re-link to the migrated predecessor's NEW v2 id (genesis
+         * keeps its all-zero prev). This is what keeps the chain valid
+         * under v2 content-ids. */
+        if (k == 0) self_memset(v2[k].prev_entry, 0, PFS_ID_LEN);
+        else        self_memcpy(v2[k].prev_entry, prev_v2, PFS_ID_LEN);
+#else
+        /* FALSIFIER: skip the re-link — leave prev_entry pointing at the OLD
+         * v1 predecessor id (copied through by the per-entry step). The v1
+         * id is never stored as a v2 entry, so the walk breaks. */
+        (void)prev_v2;
+#endif
+        store_put(&mstore, &v2[k], (UW)sizeof v2[k], v2_ids[k]);
+        self_memcpy(prev_v2, v2_ids[k], PFS_ID_LEN);
+    }
+    lp("[selflineage-migrate] migrate ok="); lpb("", mig_ok);
+    lp(" v2_width="); lpd((UW)sizeof(LM_SELF_ENTRY)); lp("\r\n");
+
+    /* ---- 3. (a) re-walk the v2 head: chain must verify end-to-end ------ */
+    INT walk_ok = 0; UW walk_len = 0;
+    if (mig_ok) {
+        static U1 wids[LM_SELF_WALK_MAX][PFS_ID_LEN];
+        walk_len = self_walk(store_get, &mstore, v2_ids[LM_MIG_N - 1],
+                             &walk_ok, wids);
+    }
+    lp("[selflineage-migrate] re-walk v2 head: "); lpb("verifies=", walk_ok);
+    lp(" len="); lpd(walk_len); lp("/"); lpd((UW)LM_MIG_N); lp("\r\n");
+
+    /* ---- 3. (b) narrative content preserved (no loss) ----------------- */
+    INT preserved = mig_ok;
+    for (INT k = 0; preserved && k < LM_MIG_N; k++) {
+        if (v2[k].version != LM_SELF_VER) preserved = 0;
+        if (v2[k].self_id != v1[k].self_id) preserved = 0;
+        if (v2[k].seq     != v1[k].seq)     preserved = 0;
+        if (v2[k].age_ms  != v1[k].age_ms)  preserved = 0;
+        if (!self_id_eq(v2[k].eng_digest, v1[k].eng_digest)) preserved = 0;
+        if (!self_id_eq(v2[k].model_ver,  v1[k].model_ver))  preserved = 0;
+        if (!self_id_zero(v2[k].human_ref)) preserved = 0;   /* default tail */
+    }
+    lp("[selflineage-migrate] narrative "); lpb("preserved=", preserved); lp("\r\n");
+
+    /* ---- 3. (c) head reads back through the production walker at v2 ---- */
+    INT head_ok = 0;
+    if (mig_ok) {
+        LM_SELF_ENTRY h;
+        INT g = store_get(&mstore, v2_ids[LM_MIG_N - 1], &h, (UW)sizeof h);
+        head_ok = (g == (INT)sizeof h)
+               && h.magic == LM_SELF_MAGIC
+               && h.version == LM_SELF_VER
+               && h.seq == (U4)LM_MIG_N;
+    }
+    lp("[selflineage-migrate] head readback: "); lpb("ok=", head_ok); lp("\r\n");
+
+    /* PASS gates: migration succeeded AND the v2 chain verifies the FULL
+     * length AND reaches genesis AND narrative preserved AND head reads
+     * back. The falsifier breaks the walk (ok=0 / short), failing the gate. */
+    INT pass = mig_ok
+            && walk_ok
+            && walk_len == (UW)LM_MIG_N
+            && preserved
+            && head_ok;
+    lp(pass ? "[selflineage-migrate] PASS\r\n" : "[selflineage-migrate] FAIL\r\n");
+    lp("[selflineage-migrate] DONE — a v1 narrative lineage is read intact, and STILL chains, under v2.\r\n");
+}
+#endif /* LMSELF_MIGRATE_CERT */
+#endif /* _TK_HOSTED_LIBC_ */
