@@ -86,6 +86,13 @@ IMPORT void cradle_net_open(void);                    /* T-fix-b reserve topic *
 IMPORT void cradle_net_task(INT stacd, void *exinf);  /* T-fix-b lesson bridge */
 IMPORT INT  cradle_teach_emit(const UB *body, UW len);/* T-fix-b teacher emit */
 IMPORT int  cradle_teach_self_test(void (*emit)(const char *)); /* [cradle-teach] */
+IMPORT void cradle_live_probe(void (*emit)(const char *));      /* [cradle-live] probe */
+IMPORT void cradle_set_enabled(int on);                         /* [cradle-live] arm A */
+/* [cradle-live] Arm B scramble body length: must be >= CRADLE's live threshold
+ * (4*CRADLE_SEQLEN=128) so the ring goes live, and matches the cure-lesson size
+ * the harness emits via `cradle emit` (CT_CERT_BUDGET=1280) so the scrambled
+ * control is the SAME #bytes / #updates — only the SEQUENCE differs. */
+#define CL_SCRAMBLE_LEN  1280
 IMPORT void lm_test(void);                            /* living-mind DMN */
 /* arch/common/llm/llm_shell.c — the real SmolLM2 inference engine bridge.
  * Loads the GGUF (env PKERNEL_LLM_GGUF, default /tmp/smollm2-135m.gguf),
@@ -1117,16 +1124,53 @@ EXPORT INT usermain(void)
             student_shell_cmd(argbuf, print);
         } else if (starts_with(line, n, "cradle")) {
             /* Thread T (T-fix-b) — the lesson BRIDGE.
-             *   cradle test         run the [cradle-teach] cert (A teaches a
+             *   cradle test          run the [cradle-teach] cert (A teaches a
              *                        lesson, B pulls + trains, B knows a held-out
              *                        probe it was NEVER directly trained on; 3
              *                        falsification arms each go RED).
-             *   cradle emit <text>  (teacher node only) emit ONE TEXT lesson over
+             *   cradle emit <text>   (teacher node only) emit ONE TEXT lesson over
              *                        the mesh; region students pull + distill it.
-             *   cradle              alias for `cradle test`.                     */
+             *   cradle probe         [cradle-live] self-report: print the LIVE
+             *                        ring_len + held probe_loss + chance (the
+             *                        multi-process harness greps this on S).
+             *   cradle off           teaching OFF (Arm A): cradle_set_enabled(0),
+             *                        the ring is ignored -> fixture only.
+             *   cradle emit-scramble (teacher only) emit a RANDOM-BYTE body of the
+             *                        cure-lesson length (Arm B): same #bytes, no
+             *                        sequence -> a student must NOT learn the fact.
+             *   cradle               alias for `cradle test`.                     */
             const UB *a = line + 6; INT al = n - 6;
             while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
-            if (al >= 4 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t') {
+            if (al >= 5 && a[0]=='p'&&a[1]=='r'&&a[2]=='o'&&a[3]=='b'&&a[4]=='e') {
+                /* [cradle-live] self-report off the LIVE corpus at train_end. */
+                cradle_live_probe(print);
+            } else if (al >= 3 && a[0]=='o'&&a[1]=='f'&&a[2]=='f') {
+                /* Arm A: teaching OFF — the ring is ignored, window() reads the
+                 * fixture. PROVES the cure signal rode the mesh, not local state. */
+                cradle_set_enabled(0);
+                print("[cradle-live] teaching OFF (Arm A): ring ignored, fixture "
+                      "only — a probe now stays at chance\r\n");
+            } else if (al >= 12 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t'
+                       && a[4]=='-'&&a[5]=='s'&&a[6]=='c'&&a[7]=='r'&&a[8]=='a'
+                       && a[9]=='m'&&a[10]=='b'&&a[11]=='l'
+                       && (al < 13 || a[12]=='e')) {
+                /* Arm B: emit a RANDOM-BYTE body the same length as the cure
+                 * lesson, via the EXACT LCG cradle.c/distill_proof.c use (NOT a
+                 * shuffle). A student pulls+consolidates it but must NOT learn
+                 * the fact: the fact lives in the SEQUENCE, not byte stats. */
+                static UB cl_scram[CL_SCRAMBLE_LEN];
+                unsigned rng = 0x5EED1234u;   /* 32-bit LCG, wraps mod 2^32 */
+                for (INT i = 0; i < CL_SCRAMBLE_LEN; i++) {
+                    rng = rng * 1664525u + 1013904223u;
+                    cl_scram[i] = (UB)((rng >> 16) & 0xff);
+                }
+                INT rc = cradle_teach_emit(cl_scram, (UW)CL_SCRAMBLE_LEN);
+                if (rc) print("[cradle-live] scrambled lesson emitted (Arm B): "
+                              "random bytes, same length — a student must NOT "
+                              "learn the fact\r\n");
+                else    print("[cradle] not emitted — this node is not the "
+                              "elected region teacher (or solo).\r\n");
+            } else if (al >= 4 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t') {
                 const UB *b = a + 4; INT bl = al - 4;
                 while (bl > 0 && (*b == ' ' || *b == '\t')) { b++; bl--; }
                 if (bl <= 0) { print("[cradle] usage: cradle emit <lesson text>\r\n"); }
