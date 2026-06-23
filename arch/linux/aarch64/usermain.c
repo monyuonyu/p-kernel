@@ -68,6 +68,9 @@ IMPORT void r3_migrate_forward_test(void);            /* [migrate-forward] */
 #if defined(OTA_GATE_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT void compat_ota_gate_test(void);               /* [signed-ota-gate] */
 #endif
+#if defined(LMSELF_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT void lm_self_migrate_forward_test(void);       /* [selflineage-migrate] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -983,6 +986,16 @@ EXPORT INT usermain(void)
 #else
                     print("compat test ota: rebuild with EXTRA_CFLAGS=-DOTA_GATE_CERT\r\n");
 #endif
+                } else if (sl >= 4 && sub[0]=='s'&&sub[1]=='e'&&sub[2]=='l'&&sub[3]=='f') {
+                    /* [selflineage-migrate] — the Self-lineage v1->v2
+                     * migration-chain leg (compat-migration-chain-plan.md
+                     * §3.3 / §5.1). Gated behind -DLMSELF_MIGRATE_CERT so the
+                     * default kernel + crown stay byte-identical. */
+#if defined(LMSELF_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
+                    lm_self_migrate_forward_test();
+#else
+                    print("compat test self: rebuild with EXTRA_CFLAGS=-DLMSELF_MIGRATE_CERT\r\n");
+#endif
                 } else {
                     /* [migrate-forward] (default `compat test`) */
 #if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
@@ -991,7 +1004,7 @@ EXPORT INT usermain(void)
                     print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
 #endif
                 }
-            } else print("usage: compat test [ota]\r\n");
+            } else print("usage: compat test [ota|self]\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and
