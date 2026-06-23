@@ -1366,3 +1366,44 @@ LEDGER: row CLOSED. ***The compat migration-chain thread is COMPLETE***: flat bl
 [selflineage-migrate] Self-lineage) truly migrate; the SWIM wire ([no-fleet-split]) keeps mixed-version nodes in one fleet;
 the signed-OTA gate ([signed-ota-gate]) refuses tampered/downgraded updates; the crash-safe log (arkfs) cleanly
 reject+reformats — every path is honest, falsifiable, never silently corrupts, and the bare-metal crown 755a20fa never moved.
+
+## teacher SELF-ELECTION fix (a [live]-exposed production bug) — merge 69a69387 (impl c81628a0, base 6b68f142)
+- Found by GOING [live]: the commander ran the new cradle-live [live] harness on the real ThinkPad and the CURE arm
+  FAILED at the first hurdle — "T never emitted (not elected teacher)". Root-caused on the host: `region_teacher()`/
+  `region_supernode()` consult only the `teacher_capable[]`/`super_capable[]` TABLE; a node's OWN entry was set ONLY by
+  the gossip-APPLY path for RECEIVED gossip (swim.c ~285/308). The self-beacon ORIGINATION sites (swim.c ~298 self-
+  refutation, ~638 periodic) only ENQUEUED the capability for broadcast (`gossip_add`->`gq[]`) and NEVER self-applied it.
+  So a teacher made its PEERS elect it, but `region_teacher()==self` was never true on the teacher ITSELF -> the
+  `cradle_teach_emit` gate never fired live -> live teacher-convergence was structurally broken. THE IN-PROC [cradle-teach]
+  CERT MASKED IT by calling region_set_teacher_capable(SELF) directly. (N-2c/supernode never hit this: the SENDER elects
+  the supernode; a node never needed to self-recognize. cradle is the FIRST mechanism that requires self-recognition.)
+  This is exactly the 2026-06-20 harsh-review prediction made real: the in-proc "safe half" hid a real bug the [live] half
+  exposes.
+- FIX: `SELF_APPLY_OWN_CAPABILITY()` (region_set_{super,teacher}_capable(self, {cap,teacher}_self())) after BOTH self-
+  origination gossip_adds — the only two (swim_init does no gossip_add). region_teacher() still picks the LOWEST-id capable
+  member, so single-teacher-per-region holds (no split-brain). Regression cert `nodes selfelect`: PASS (self-elects after
+  self-beacon); falsifier -DSELFELECT_SKIP nulls the self-apply -> region_teacher()!=self -> FAIL (reproduces the exact bug,
+  load-bearing). Hooked via a hosted-only `selfelect_force_teacher` flag (cert's GGUF stand-in, save/restored, production
+  teacher_self() honesty intact).
+- CROWN: ALL new code #ifdef _TK_HOSTED_LIBC_; bare-metal swim.o has ZERO selfelect/self_apply symbols (the macro is
+  do{}while(0) bare-metal); bare-metal aarch64 .text 755a20fa byte-identical + x86 base==HEAD (auditor + commander).
+  No-regress: [swim-incarn]/[cap-gossip]/[teacher-gossip]/[region-super 8/0]/[region-teacher 6/0]/[no-fleet-split]/
+  [cradle-teach] all PASS. Independent audit: MERGEABLE (6/6 axes).
+LEDGER: row CLOSED. A teacher-capable node now SELF-RECOGNIZES its role, so the cradle teacher-gate fires on the real
+teacher. The bug a future regression would reintroduce is pinned by `nodes selfelect` + its falsifier.
+
+## cradle-live [cradle-teach] [live] — the mind learns across the wire — OPEN (harness shipped; real-host CURE deferred)
+- The DEFERRED [live] row of T-fix-b (multi-process teacher-convergence over ./relay) — its harness
+  `samples/11_distributed/run_cradle_live.sh` (3 procs: teacher T + student S + witness W + relay) + the hosted observability
+  verbs (`cradle probe`/`off`/`emit-scramble`) + the cert-scoped PKERNEL_TEACHER_CERT teacher path SHIPPED on 69a69387
+  (in-sandbox: builds clean, `bash -n` sound, `cradle probe` works, crown 755a20fa byte-identical, the in-proc [cradle-teach]
+  cert still PASS). The harness has 4 arms: CURE (T emits a deterministic held-probe lesson -> S pulls it over the relay ->
+  consolidates -> the never-trained probe loss drops below chance) + teaching-OFF + scrambled-bytes + teacher-death.
+- STATUS: OPEN. The first real-host run (2026-06-23) FAILED-and-DIAGNOSED the teacher self-election bug (now fixed above).
+  The re-run WITH the fix is DEFERRED because the ThinkPad is unreachable (mk_pino traveling, mobile connection). NOT fudged
+  green: the [live] CURE-arm PASS (the actual "mind learns across the wire" proof) has NOT yet been observed. There is NO
+  test/sample GGUF in-tree or on the host, so T is made teacher-capable by the visibly cert-scoped PKERNEL_TEACHER_CERT
+  (the GGUF-gated election itself is T-fix-a's already-certified domain; this row tests the lesson BRIDGE). Honest bound:
+  single-host floor (loopback ./relay; SSH 2-machine deferred), M-tier student.
+- NEXT (commander, when the host returns): re-run run_cradle_live.sh on the ThinkPad with the self-election fix; expect the
+  CURE arm to pass (T self-elects -> emits -> S learns) + the 3 falsifier arms to bite; then CLOSE this row.
