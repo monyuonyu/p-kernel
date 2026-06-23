@@ -54,6 +54,13 @@ typedef struct {
     UB    payload[SNF_PAYLOAD_MAX];
 } __attribute__((packed)) SNF_PKT;
 
+/* Wire size is PINNED: `seq` repurposed the reserved `_pad2` slot (N-2c [live]
+ * ACK/retry), keeping the on-wire layout byte-identical. magic4 + origin1 +
+ * final_dst1 + relayed_by1 + _pad1 + len2 + seq2 + payload[512] = 524. A future
+ * field add must NOT silently grow the wire (would split a mixed fleet + break
+ * the in-proc cert's packet crafting). Audit-verified 524 B base==branch. */
+_Static_assert(sizeof(SNF_PKT) == 524, "SNF_PKT on-wire size must stay 524 B");
+
 /* ------------------------------------------------------------------ */
 /* ACK/retry hardening (N-2c [live]) — mirrors ss6_live.c's proven     */
 /* retransmit. The relay overlay is a BROADCAST medium; a node's FIRST */

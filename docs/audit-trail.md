@@ -1283,3 +1283,33 @@ the unmodified production walker, falsifiably. Second compat migration-chain leg
   no cert the aarch64 usermain drives is missing from x86_64. (Discharges the long-standing "x86_64 can't drive ANY cert"
   follow-up flagged by the R3_WP and device-capacity rows.)
 LEDGER: row CLOSED. x86_64 hosted now compiles AND runs build-time certs end-to-end — cross-ABI cert parity is REAL.
+
+## N-2c [live] — CLOSED on the real ThinkPad host — merge 2026-06-23 (impl 1b0eeba4, base 35abbfcc)
+- THE ONE genuinely-open [live] row (carried OPEN since 2026-06-21) is now CLOSED with a real-host PASS.
+- COMMANDER real-host run (ThinkPad x86_64, native — sandbox cannot, PRoot kills the children): 3 OS
+  processes (A + supernode S + B) + ./relay. VERDICT PASS: MAIN `delivered: via_super=1
+  payload=BYTE-IDENTICAL` (`via_super_cnt=1 acks=1 retx=0`); falsifier-a (no supernode) → DIRECT
+  via_super=0; falsifier-b (elected S killed) → fail-closed DIRECT, no loss.
+- ROOT CAUSE (found on the real host, NOT the 2-day-old audit's "harness timing" guess — PRESEND
+  11s→30s did NOT fix it): the relay overlay is a BROADCAST medium (net_relay_send only emits
+  REL_BROADCAST); udp_send drops on the FIRST-time ARP miss (netstack.c:101); snf_send was a SINGLE
+  fire-and-forget so A's first SNF_FWD to S was silently lost. ss6_live survives the identical race
+  via SL_RETRIES 3×200ms; snf_send's own comment admitted "ACK/retry is a deferred hardening."
+- FIX (Lane C, mirrors ss6_live): A retransmits SNF_FWD 3×200ms keyed by a new SNF_PKT.seq
+  (repurposes _pad2, wire 524 B UNCHANGED, now pinned by _Static_assert at integration), blocking on
+  a per-send semaphore until the END-TO-END SNF_ACK (B→S→A over warm ARP); timeout → DIRECT (no loss);
+  B dedups (origin,seq) for EXACTLY-ONCE. A delivery-time self-report (REAL byte compare vs SNF_PROBE)
+  makes the verdict survive the node's [moe] console spam (the old harness's interactive `snf recv`
+  was starved). Harness: id-mapping fix (my_supernode=1 internal, snf send 2) + a real convergence wait.
+- Auditor (independent, 2026-06-23): MERGEABLE-WITH-NITS, 8/8 adversarial axes PASS — crown 755a20fa
+  EXACT (supernode.c hosted-only, absent from bare-metal link), wire 524 B (compile-time proof, seq at
+  off 10), exactly-once (storm-bounded ≤3≤8-ring), fail-closed (tk_del_sem on every path, DIRECT on all
+  timeout/dead-S), self-report HONEST (no delivery→no line→harness FAILs), in-proc cert 20/20 ×2 +
+  sabotage-RED (non-vacuous), default byte-unchanged (benign delta: nonzero seq stamp + harmless DIRECT
+  ACK no-op). NIT (now fixed at integration): added _Static_assert pinning sizeof(SNF_PKT)==524.
+- HONEST: the [live] forward reaches the snf transport path; it ran 3-process on ONE host (single-host
+  floor — same as the federation/ss6 [live] rows). DEBUG ENV value re-proven: it found the real
+  transport gap (broadcast/ARP/no-retry) that the in-proc cert (socket stubbed) structurally could not.
+LEDGER: row CLOSED. A packet routes A→B THROUGH the elected supernode over the real ./relay transport,
+byte-identical, exactly-once, fail-closed — N-2c is real on hardware. NAT hole-punch (N-3) + seed
+bootstrap (N-4) remain the Thread-N queue.
