@@ -642,6 +642,23 @@ static void snf_cert_sink(UB src, const UB *payload, UH len, INT via_super)
     for (UH i = 0; i < len; i++) snf_last_buf[i] = payload[i];
     snf_last_len = len;
     snf_recv_cnt++;
+
+    /* DELIVERY-TIME SELF-REPORT (N-2c [live] verdict-capture fix).
+     * On a real hosted node B's console is FLOODED with [moe] background spam,
+     * so a post-hoc interactive `snf recv` is starved and never processed —
+     * the bytes ARE delivered but the harness can't extract the verdict. Print
+     * the verdict line HERE, at delivery time, from a REAL byte compare against
+     * the known probe (NOT hardcoded): a corrupted delivery prints MISMATCH, no
+     * delivery prints no line (harness still FAILs). via_super = the relayed_by
+     * flag the snf_rx delivery path passed in (1 = forwarded by a supernode,
+     * 0 = DIRECT) — so MAIN (1) and both DIRECT falsifiers (0) are all
+     * distinguishable from THIS line, not from the starved command. */
+    BOOL ok = (len == SNF_PROBE_LEN);
+    for (UH i = 0; ok && i < SNF_PROBE_LEN; i++)
+        if (payload[i] != SNF_PROBE[i]) ok = FALSE;
+    sn_puts("[supernode-fwd] delivered: origin="); sn_putdec((UW)src);
+    sn_puts("  via_super="); sn_putdec(via_super ? 1u : 0u);
+    sn_puts(ok ? "  payload=BYTE-IDENTICAL\r\n" : "  payload=MISMATCH\r\n");
 }
 
 /* `snf sink`            install the cert sink (run on the DESTINATION node).

@@ -172,8 +172,8 @@ grep -iE 'supernode-fwd|\[region\]' /tmp/snf_node1_super.log | grep -iE 'superno
 echo "--- node 2 (S) forwarder counters ---"
 grep -iE 'supernode-fwd. bound port' /tmp/snf_node2_super.log | head -1   # SNF_PORT (7377; was 7380==PMESH, the live bug)
 S_FWD_MAIN=$(printf '%s' "$(grep -oE 'forwarded=[0-9]+' /tmp/snf_node2_super.log | tail -1)")
-echo "--- node 3 (B) received ---"
-grep -iE 'supernode-fwd. recv' /tmp/snf_node3_super.log | tail -1
+echo "--- node 3 (B) received (DELIVERY-TIME self-report; survives [moe] spam) ---"
+grep -iE 'supernode-fwd. delivered:' /tmp/snf_node3_super.log | tail -1
 
 # READINESS (greppable for the commander): the LAST pre-send region size + the
 # LAST elected supernode A saw. If size<3 or elected=none here, the [live] run
@@ -191,8 +191,13 @@ echo "[snf-live] READINESS (MAIN): last pre-send $RDY_SIZE_MAIN  (want size=3 = 
 ELECT_MAIN=$(grep -oE 'my_supernode=[0-9]+' /tmp/snf_node1_super.log | tail -1)
 VIA_MAIN=$(grep -oE 'via_super_cnt=[0-9]+' /tmp/snf_node1_super.log | tail -1)
 DIR_MAIN=$(grep -oE 'direct_cnt=[0-9]+'    /tmp/snf_node1_super.log | tail -1)
-B_VIA_MAIN=$(grep -oE 'via_super=[0-9]+' /tmp/snf_node3_super.log | tail -1)
-B_PAY_MAIN=$(grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' /tmp/snf_node3_super.log | tail -1)
+# B's verdict comes from the DELIVERY-TIME self-report line (printed inside the
+# sink at delivery, from a REAL byte compare) — NOT the post-hoc `snf recv`,
+# which is starved by [moe] console spam on a real hosted node. No delivery ->
+# no line -> empty capture -> the assertion below still FAILs (honest).
+B_DLV_MAIN=$(grep -iE 'supernode-fwd. delivered:' /tmp/snf_node3_super.log | tail -1)
+B_VIA_MAIN=$(printf '%s' "$B_DLV_MAIN" | grep -oE 'via_super=[0-9]+' | tail -1)
+B_PAY_MAIN=$(printf '%s' "$B_DLV_MAIN" | grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' | tail -1)
 # ACK/retry hardening (N-2c [live]): A's end-to-end ACK count (B confirmed
 # receipt, relayed B->S->A) + retransmits issued to beat the cold-ARP miss.
 ACK_MAIN=$(grep -oE 'acks=[0-9]+' /tmp/snf_node1_super.log | tail -1)
@@ -209,8 +214,9 @@ ELECT_A=$(grep -oE 'my_supernode=(none\(0xFF\)|[0-9]+)' /tmp/snf_node1_flat.log 
 VIA_A=$(grep -oE 'via_super_cnt=[0-9]+' /tmp/snf_node1_flat.log | tail -1)
 DIR_A=$(grep -oE 'direct_cnt=[0-9]+'    /tmp/snf_node1_flat.log | tail -1)
 S_FWD_A=$(grep -oE 'forwarded=[0-9]+' /tmp/snf_node2_flat.log | tail -1)
-B_VIA_A=$(grep -oE 'via_super=[0-9]+' /tmp/snf_node3_flat.log | tail -1)
-B_PAY_A=$(grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' /tmp/snf_node3_flat.log | tail -1)
+B_DLV_A=$(grep -iE 'supernode-fwd. delivered:' /tmp/snf_node3_flat.log | tail -1)
+B_VIA_A=$(printf '%s' "$B_DLV_A" | grep -oE 'via_super=[0-9]+' | tail -1)
+B_PAY_A=$(printf '%s' "$B_DLV_A" | grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' | tail -1)
 echo "elected: $ELECT_A   node1 $VIA_A $DIR_A   node2 $S_FWD_A   node3 $B_VIA_A $B_PAY_A"
 echo
 
@@ -222,8 +228,10 @@ echo "===== FALSIFIER (b): elected S killed -> fail-closed DIRECT, no loss =====
 ELECT_B=$(grep -oE 'my_supernode=(none\(0xFF\)|[0-9]+)' /tmp/snf_node1_super_killS.log | tail -1)
 VIA_B=$(grep -oE 'via_super_cnt=[0-9]+' /tmp/snf_node1_super_killS.log | tail -1)
 DIR_B=$(grep -oE 'direct_cnt=[0-9]+'    /tmp/snf_node1_super_killS.log | tail -1)
-B_PAY_B=$(grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' /tmp/snf_node3_super_killS.log | tail -1)
-echo "elected: $ELECT_B   node1 $VIA_B $DIR_B   node3 $B_PAY_B"
+B_DLV_B=$(grep -iE 'supernode-fwd. delivered:' /tmp/snf_node3_super_killS.log | tail -1)
+B_VIA_B=$(printf '%s' "$B_DLV_B" | grep -oE 'via_super=[0-9]+' | tail -1)
+B_PAY_B=$(printf '%s' "$B_DLV_B" | grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' | tail -1)
+echo "elected: $ELECT_B   node1 $VIA_B $DIR_B   node3 $B_VIA_B $B_PAY_B"
 echo
 
 # ===========================================================================
@@ -254,6 +262,7 @@ case "$VIA_MAIN" in via_super_cnt=0|"") fail "MAIN: node1 did not send via super
 
 # FALSIFIER b: S elected but killed -> node1 falls back DIRECT; B still gets it.
 [ "$B_PAY_B" = "payload=BYTE-IDENTICAL" ] || fail "(b): packet LOST or corrupted after S died ($B_PAY_B)"
+[ "$B_VIA_B" = "via_super=0" ] || fail "(b): node3 saw it forwarded, not fail-closed DIRECT ($B_VIA_B)"
 case "$DIR_B" in direct_cnt=0|"") fail "(b): node1 did not fall back to DIRECT after S died ($DIR_B)";; esac
 
 if [ "$PASS_ALL" = "1" ]; then
