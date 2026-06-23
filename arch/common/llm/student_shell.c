@@ -89,6 +89,29 @@ int teacher_gguf_loaded(void)   /* STRONG override of swim.c's weak default */
     const char *opt = getenv("PKERNEL_TEACHER");
     if (!opt || opt[0] != '1') return 0;
 
+    /* (1b) CERT-SCOPED teacher-capable override (the [cradle-live] harness).
+     * There is NO test/sample GGUF in-tree and none on the commander's host,
+     * so the multi-process lesson-BRIDGE row cannot point PKERNEL_TEACHER_GGUF
+     * at a real model. But this row's claim is NARROW: a teacher's relay-
+     * delivered DETERMINISTIC lesson (ct_build_lesson bytes, NOT a GGUF
+     * sampler output) becomes weight-resident in a separate-process student and
+     * survives teacher death. The GGUF-gated teacher ELECTION itself is already
+     * certified by T-fix-a (swim_teacher_gossip_self_test / `nodes teacher`),
+     * which sets region_set_teacher_capable() directly and never re-proves the
+     * local GGUF probe. So we mirror that: when BOTH PKERNEL_TEACHER=1 AND the
+     * explicit cert env PKERNEL_TEACHER_CERT=1 are set, force the capability bit
+     * ON for THIS node WITHOUT a GGUF. The override is VISIBLY cert-scoped:
+     *   - it requires its OWN dedicated env (PKERNEL_TEACHER_CERT), never just
+     *     PKERNEL_TEACHER — so the production "env alone is not sufficient"
+     *     honesty (a plain PKERNEL_TEACHER=1 with no GGUF still returns 0) is
+     *     UNCHANGED for every node that does not opt into the cert path;
+     *   - it lives only in this hosted-only TU (bare metal uses the weak
+     *     swim.c no-op), so it cannot affect a shipped device.
+     * This stands in for the T-fix-a-certified GGUF election; it does NOT re-
+     * prove that election (that is T-fix-a's domain). */
+    const char *tc = getenv("PKERNEL_TEACHER_CERT");
+    if (tc && tc[0] == '1') { g_teacher_probe_ok = 1; return 1; }
+
     /* (2) a real teacher GGUF must be present AND loadable. */
     const char *path = getenv("PKERNEL_TEACHER_GGUF");
     if (!path || !path[0]) path = getenv("PKERNEL_LLM_GGUF");
@@ -606,6 +629,51 @@ float student_dmn_heldout_loss(void)
     int heldw     = total - trainw; if (heldw < 1) heldw = 1;
     int train_end = trainw * ST_DMN_SEQLEN;
     return heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
+}
+
+/* ---------------------------------------------------------------------------
+ * [cradle-live] self-report (the multi-process teacher-convergence harness,
+ * T-fix-b / [cradle-teach] DEFERRED [live] row). Prints ONE uniquely-greppable
+ * observability line off the LIVE corpus source at the PRODUCTION held boundary:
+ *
+ *   [cradle-live] ring_len=<n> probe_loss=<L> chance=<C>
+ *
+ * ring_len   = cradle_lesson_len() — the bytes a teacher's relay-delivered
+ *              lesson installed into THIS student's ring (0 = nothing arrived /
+ *              teaching OFF -> the held probe reads the fixture).
+ * probe_loss = held-out loss of the resident baby at the production train_end
+ *              boundary over the LIVE corpus (the lesson ring if live, else the
+ *              fixture) — i.e. the loss on never-trained held windows. The
+ *              harness watches this fall below chance after the lesson is pulled
+ *              + consolidated, and stay at chance under the OFF / scrambled arms.
+ * chance     = ln(256) ~= 5.545 nats (a byte-uniform baby).
+ *
+ * NO NEW MATH: reuses the shipped cradle_window_src()/cradle_corpus_len() split
+ * (train_end) and heldout_loss()/st_eval_loss exactly as the production DMN tick
+ * and the in-proc [cradle-teach] cert do. A baby-less node reports the chance
+ * floor (so a probe before `student`/restore shows "nothing learned", not a
+ * misleading 0). Pure read; no training, no save. Hosted-only TU. */
+void cradle_live_probe(emit_fn emit)
+{
+    if (!emit) return;
+    char line[160];
+    int  rlen  = cradle_lesson_len();
+    float chance = st_logf(256.0f);
+    float probe;
+    if (!g_have_student) {
+        probe = chance;       /* no baby -> nothing learned (chance floor)      */
+    } else {
+        int corpus_n  = cradle_corpus_len();
+        int total     = corpus_n / ST_DMN_SEQLEN;
+        int trainw    = total * 3 / 4; if (trainw < 2) trainw = 2;
+        int heldw     = total - trainw; if (heldw < 1) heldw = 1;
+        int train_end = trainw * ST_DMN_SEQLEN;
+        probe = heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
+    }
+    snprintf(line, sizeof line,
+             "[cradle-live] ring_len=%d probe_loss=%.4f chance=%.4f\r\n",
+             rlen, (double)probe, (double)chance);
+    emit(line);
 }
 
 /* Lifetime count of FULL ~22.8MB durable writes the DMN sleep tick has actually

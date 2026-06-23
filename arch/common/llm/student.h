@@ -418,6 +418,14 @@ void cradle_lesson_clear(void);
  * `emit` is a line-printer (may be NULL). Returns 0 on PASS, else fail count. */
 int  cradle_teach_self_test(void (*emit)(const char *));
 
+/* [cradle-live] self-report (the multi-process teacher-convergence harness, the
+ * T-fix-b DEFERRED [live] row): prints ONE uniquely-greppable observability line
+ *   [cradle-live] ring_len=<n> probe_loss=<L> chance=<C>
+ * computed off the LIVE corpus source at the PRODUCTION held boundary (reuses
+ * cradle_window_src / cradle_corpus_len / heldout_loss — NO new math). Pure read
+ * (no training, no save). Hosted-only (lives in student_shell.c). emit prints. */
+void cradle_live_probe(void (*emit)(const char *));
+
 /* ---- KV cache (wave-kv-cache): incremental generation ----
  * st_generate caches per-layer per-position K/V across generation steps so a
  * NEW token computes only its OWN position's q/k/v and attends over the CACHED
