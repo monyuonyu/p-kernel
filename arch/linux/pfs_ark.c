@@ -124,6 +124,66 @@ int pfs_ark_active(void)
     return ark_state == 1;
 }
 
+/* [arkfs-version-gap] — the production mount-or-REFORMAT policy
+ * (compat-migration-chain-plan.md §3.3/§9.2). THE decision: arkfs is a
+ * crash-safe APPEND-ONLY LOG, so v1 does NOT in-place migrate a foreign
+ * record stream (in-place transcoding of a foreign record stream would
+ * multiply the crash-window surface — forbidden). Instead, on a present
+ * image whose superblock is a VALID ARK superblock of a NON-native format
+ * version, we REJECT-and-REFORMAT: we do NOT replay the old log; we lay
+ * down a fresh native image so the node still boots with working durable
+ * storage. (Identity survives via the Self-lineage [selflineage-migrate] +
+ * Path-E re-education; arkfs holds durable backing BYTES only, so those
+ * bytes ARE lost across the gap — but the loss is HONEST and announced via
+ * emit, never silent.) A truly CORRUPT image (no sound superblock at all)
+ * keeps today's reject-and-disable (ark_mount returns negative).
+ *
+ * On success: bd is MOUNTED (ark_mount==ARK_OK), and *reformatted (if non-
+ * NULL) is 1 iff a version gap triggered a reformat, else 0. Returns ARK_OK
+ * or the negative error. The cert (compat_arkfs_gap.c) calls THIS exact
+ * function on a RAM bdev so the version gate it proves is the shipped one.
+ *
+ * CROWN/byte-identity: this is a hosted-only TU (arch/linux/, never in the
+ * bare-metal link). It uses only the public arkfs API + the hosted-only
+ * ark_super_version_peek/ark_fmt_version, so arkfs.c's bare-metal .text and
+ * the [smp-one-mind] crown are untouched. */
+INT pfs_ark_mount_or_reformat(ARK_BDEV *bd, int *reformatted,
+                              void (*emit)(const char *))
+{
+    if (reformatted) *reformatted = 0;
+#if defined(ARKFS_GAP_SKIP_VERCHECK) && defined(_TK_HOSTED_LIBC_)
+    /* [arkfs-version-gap] FALSIFIER ONLY: skip the version-gap detection
+     * entirely and mount whatever superblock is on disk. Paired with the
+     * super_valid() bypass in arkfs.c, this accepts a foreign-version image
+     * and replays its foreign log (the cert asserts the resulting state is
+     * NOT a clean valid arkfs -> FAIL). Never set in a shipping build. */
+    return ark_mount(bd);
+#else
+    U4 disk_ver = ark_super_version_peek(bd);
+    if (disk_ver != 0 && disk_ver != ark_fmt_version()) {
+        /* VALID superblock of a FOREIGN format version -> version gap. */
+        if (emit) {
+            char msg[256];
+            snprintf(msg, sizeof msg,
+                     "[pfs] durable(ark): image format v%u != native v%u "
+                     "— reject+reformat (durable bytes reset; identity "
+                     "survives via Self-lineage + re-education)\r\n",
+                     (unsigned)disk_ver, (unsigned)ark_fmt_version());
+            emit(msg);
+        }
+        INT r = ark_format(bd);             /* fresh native image (NO replay) */
+        if (r == ARK_OK) r = ark_mount(bd);
+        if (r != ARK_OK && emit)
+            emit("[pfs] durable(ark): reformat after version gap failed\r\n");
+        if (r == ARK_OK && reformatted) *reformatted = 1;
+        return r;
+    }
+    /* native (or true-corrupt) image -> mount as before; a non-ARK / rotted
+     * superblock returns negative and the caller reject-and-disables. */
+    return ark_mount(bd);
+#endif /* ARKFS_GAP_SKIP_VERCHECK */
+}
+
 /* Mount (or first-time format) the ARK image named by $PKERNEL_ARK_IMG and
  * arm the backend. Called from pfs_block.c::pfs_durable_restore at boot when
  * the ARK backend is selected. Blocks are served LAZILY through pfs_get's
@@ -175,14 +235,16 @@ int pfs_ark_restore(void (*emit)(const char *))
 
     INT r;
     if (existed) {
-        r = ark_mount(&ark_bd);
+        /* [arkfs-version-gap]: detect a format-version gap and reject+
+         * reformat (the production policy lives in pfs_ark_mount_or_reformat
+         * so the cert can drive the SAME code on a RAM bdev). */
+        int reformatted = 0;
+        r = pfs_ark_mount_or_reformat(&ark_bd, &reformatted, emit);
         if (r != ARK_OK) {
-            if (emit)
-                emit("[pfs] durable(ark): image present but superblock "
-                     "invalid — NOT mounted\r\n");
             close(ark_fd); ark_fd = -1; ark_state = 0;
             return 0;
         }
+        if (reformatted) existed = 0;   /* report as freshly formatted below */
     } else {
         r = ark_format(&ark_bd);
         if (r == ARK_OK) r = ark_mount(&ark_bd);

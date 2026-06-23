@@ -74,6 +74,9 @@ IMPORT void lm_self_migrate_forward_test(void);       /* [selflineage-migrate] *
 #if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT INT  swim_nofleetsplit_self_test(void (*)(const char *)); /* [no-fleet-split] */
 #endif
+#if defined(ARKFS_GAP_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT void compat_arkfs_gap_test(void);              /* [arkfs-version-gap] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -1012,6 +1015,18 @@ EXPORT INT usermain(void)
 #else
                     print("compat test wire: rebuild with EXTRA_CFLAGS=-DNOFLEETSPLIT_CERT\r\n");
 #endif
+                } else if (sl >= 5 && sub[0]=='a'&&sub[1]=='r'&&sub[2]=='k'&&sub[3]=='f'&&sub[4]=='s') {
+                    /* [arkfs-version-gap] — the arkfs format-version leg
+                     * (compat-migration-chain-plan.md §3.3/§9.2): a foreign-
+                     * version image is REJECTED and REFORMATTED (append-only
+                     * log: never replay a foreign record stream), never
+                     * silently mis-mounted. Gated behind -DARKFS_GAP_CERT so
+                     * the default kernel + crown stay byte-identical. */
+#if defined(ARKFS_GAP_CERT) && defined(_TK_HOSTED_LIBC_)
+                    compat_arkfs_gap_test();
+#else
+                    print("compat test arkfs: rebuild with EXTRA_CFLAGS=-DARKFS_GAP_CERT\r\n");
+#endif
                 } else {
                     /* [migrate-forward] (default `compat test`) */
 #if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
@@ -1020,7 +1035,7 @@ EXPORT INT usermain(void)
                     print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
 #endif
                 }
-            } else print("usage: compat test [ota|self|wire]\r\n");
+            } else print("usage: compat test [ota|self|wire|arkfs]\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and
