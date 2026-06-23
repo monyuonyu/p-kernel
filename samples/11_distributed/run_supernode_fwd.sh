@@ -193,7 +193,11 @@ VIA_MAIN=$(grep -oE 'via_super_cnt=[0-9]+' /tmp/snf_node1_super.log | tail -1)
 DIR_MAIN=$(grep -oE 'direct_cnt=[0-9]+'    /tmp/snf_node1_super.log | tail -1)
 B_VIA_MAIN=$(grep -oE 'via_super=[0-9]+' /tmp/snf_node3_super.log | tail -1)
 B_PAY_MAIN=$(grep -oE 'payload=(BYTE-IDENTICAL|MISMATCH)' /tmp/snf_node3_super.log | tail -1)
-echo "elected: $ELECT_MAIN   node1 $VIA_MAIN $DIR_MAIN   node3 $B_VIA_MAIN $B_PAY_MAIN"
+# ACK/retry hardening (N-2c [live]): A's end-to-end ACK count (B confirmed
+# receipt, relayed B->S->A) + retransmits issued to beat the cold-ARP miss.
+ACK_MAIN=$(grep -oE 'acks=[0-9]+' /tmp/snf_node1_super.log | tail -1)
+RETX_MAIN=$(grep -oE 'retx=[0-9]+' /tmp/snf_node1_super.log | tail -1)
+echo "elected: $ELECT_MAIN   node1 $VIA_MAIN $DIR_MAIN $ACK_MAIN $RETX_MAIN   node3 $B_VIA_MAIN $B_PAY_MAIN"
 echo
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,12 @@ unsigned snf_forwarded(void);
 unsigned snf_via_super(void);
 unsigned snf_direct(void);
 unsigned snf_delivered(void);
+/* ACK/retry hardening (N-2c [live]) observability:
+ *   snf_acks() : end-to-end SNF_ACKs this node RECEIVED as a sender (forward
+ *                confirmed by the destination — B got the bytes)
+ *   snf_retx() : SNF_FWD RETRANSMITS this node issued (cold-ARP recovery)      */
+unsigned snf_acks(void);
+unsigned snf_retx(void);
 
 /* Host cert (shell `super test` / `region fwd`): drives the REAL route-decision
  * (snf_route_target), wrap/unwrap, and forwarded counter against synthetic
