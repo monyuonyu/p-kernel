@@ -1336,3 +1336,33 @@ bootstrap (N-4) remain the Thread-N queue.
   being closed in the stacked arkfs slice); teacher-capable bit not save/restored (matches cap-gossip convention).
 LEDGER: row CLOSED. The SWIM membership/gossip layer keeps a vN and a v{N+1} additive-change node in ONE fleet and
 partitions on a breaking bump — "no fleet split" is now a falsifiable in-proc property.
+
+## compat [arkfs-version-gap] — crash-safe log reject+reformat — merge 2026-06-23 (impl 5bade35f, base d78eaeb8) — COMPAT THREAD COMPLETE
+- Design-harden (resolved migrate-vs-reject) → impl → independent audit. Verdict: **MERGEABLE** (7/7 adversarial axes).
+- THE DECISION (resolved, grounded in arkfs.c): arkfs is a CRASH-SAFE APPEND-ONLY LOG; v1 ships clean REJECT+REFORMAT on a
+  format-version mismatch, NOT in-place log migration (transcoding a foreign record stream would multiply the crash-window;
+  the codebase already comments the bumps "clean reject, not a mis-mount"). The mind SURVIVES via the Self-lineage (truly
+  migrated by [selflineage-migrate]) + Path-E re-education — arkfs holds durable p-fs backing bytes, NOT identity (the
+  load-bearing coupling). Closes today's gap: version-mismatch used to reject-and-DISABLE durable storage for the run;
+  now reject→REFORMAT→boot clean.
+- POLICY in the hosted caller pfs_ark.c (`pfs_ark_mount_or_reformat`): valid-but-foreign super → no replay → ark_format
+  (epoch bump so stale records can't replay) → re-mount → ONE honest emit ("durable bytes reset; identity survives via
+  Self-lineage + re-education"); true corruption / native image → unchanged reject-and-disable / plain mount. No path
+  reformats a native or recoverable image (peek checks both super copies) — auditor found no data-loss bug.
+- CERT [arkfs-version-gap] (new hosted-only TU compat_arkfs_gap.c, RAM bdev): cure PASS for BOTH +1 (future) and -1
+  (fossil) version sub-cases; NEGATIVE-SPACE load-bearing (writes a distinguishing payload, asserts !ark_block_has + 
+  ARK_E_NOTFOUND after reformat — the foreign payload is provably GONE). Falsifier -DARKFS_GAP_SKIP_VERCHECK → foreign super
+  validates as native → foreign log REPLAYED → "old payload survived!" → RED (sabotage is exactly the version-gate bypass).
+- CROWN: arkfs.c IS bare-metal, so ALL changes hosted-gated — super_valid falsifier behind ARKFS_GAP_SKIP_VERCHECK &&
+  _TK_HOSTED_LIBC_ with #else preserving the bare-metal line VERBATIM; ark_super_version_peek under _TK_HOSTED_LIBC_;
+  compat_arkfs_gap.c in NEITHER bare-metal Makefile. bare-metal aarch64 .text 755a20fa EXACT + x86 base==HEAD byte-identical
+  (auditor + commander, twice). No-regression: native arkfs CRUD/dedup/crash-consistency suite (sample 25) PASS; inherited
+  [no-fleet-split] PASS. Also folded in the x86_64 `compat test self` parity (was aarch64-only — [selflineage-migrate] now
+  runs on x86_64 too under qemu).
+- HONEST: NOT in-place migration; on-disk arkfs bytes ARE lost across a version gap (only SILENT loss prevented — the honest
+  deathless bound); survival DEPENDS on the Self-lineage being intact; single-node in-proc; the gap is SIMULATED by patching
+  the superblock version int + crc (the gap is exactly the compared int at arkfs.c:561), not a 2-binary harness.
+LEDGER: row CLOSED. ***The compat migration-chain thread is COMPLETE***: flat blobs ([migrate-forward] R3_WP +
+[selflineage-migrate] Self-lineage) truly migrate; the SWIM wire ([no-fleet-split]) keeps mixed-version nodes in one fleet;
+the signed-OTA gate ([signed-ota-gate]) refuses tampered/downgraded updates; the crash-safe log (arkfs) cleanly
+reject+reformats — every path is honest, falsifiable, never silently corrupts, and the bare-metal crown 755a20fa never moved.
