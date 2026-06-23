@@ -170,6 +170,18 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *));
  * Emits "[teacher-gossip] ..." lines; returns 0 on PASS else the fail count. */
 INT swim_teacher_gossip_self_test(void (*emit)(const char *));
 
+/* wave-selfelect SELF-RECOGNITION cert: proves a teacher-capable node
+ * SELF-ELECTS — after its self-beacon origination applies its OWN capability to
+ * the LOCAL table, region_teacher()==drpc_my_node (the cradle teacher-gate
+ * fires on the real teacher). Falsifier: -DSELFELECT_SKIP nulls the self-apply
+ * → region_teacher()!=self → FAIL (the exact latent production bug). Hosted-only
+ * (the simulated teacher-GGUF hook lives under _TK_HOSTED_LIBC_; bare-metal is
+ * never a teacher so the cert is moot there). Emits "[selfelect] ..." lines;
+ * returns 0 on PASS else the fail count. */
+#if defined(_TK_HOSTED_LIBC_)
+INT swim_selfelect_self_test(void (*emit)(const char *));
+#endif
+
 /* compat [no-fleet-split] cert (compat-migration-chain-plan.md §5.3/§6): drives
  * the REAL swim_rx() (NOT just gossip_apply — the version drop is at swim.c:418,
  * ABOVE gossip_apply) and asserts the "no frozen core; NO FLEET SPLIT" contract:

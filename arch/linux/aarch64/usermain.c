@@ -861,6 +861,9 @@ EXPORT INT usermain(void)
             if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
             else if (al >= 3 && a[0]=='t'&&a[1]=='e'&&a[2]=='a') swim_teacher_gossip_self_test(print);
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
+            /* wave-selfelect cert: `nodes selfelect` proves a teacher node
+             * SELF-RECOGNIZES (region_teacher()==self). "sel" distinct. */
+            else if (al >= 3 && a[0]=='s'&&a[1]=='e'&&a[2]=='l') swim_selfelect_self_test(print);
             else swim_nodes_print();
         } else if (starts_with(line, n, "snf")) {
             /* N-2c supernode-forward LIVE driver (p2p-overlay.md): drives the

@@ -136,8 +136,20 @@ static UB cap_self(void)
  * goes high only on a node explicitly given a loadable teacher GGUF. */
 __attribute__((weak)) int teacher_gguf_loaded(void) { return 0; }
 
+#if defined(_TK_HOSTED_LIBC_)
+/* wave-selfelect cert hook (hosted-only, off by default): the in-proc
+ * self-elect regression cert sets this to simulate "this node holds a teacher
+ * GGUF" without an actual model file — the SAME save/restore scaffold the other
+ * swim self-tests use. On bare-metal this whole block is absent (the crown sees
+ * the prior teacher_self() verbatim). */
+static int selfelect_force_teacher = 0;
+#endif
+
 static UB teacher_self(void)
 {
+#if defined(_TK_HOSTED_LIBC_)
+    if (selfelect_force_teacher) return (drpc_my_node != 0xFF) ? 1 : 0;
+#endif
     return (drpc_my_node != 0xFF && teacher_gguf_loaded()) ? 1 : 0;
 }
 
@@ -149,6 +161,45 @@ static UB cap_self_byte(void)
 {
     return (UB)((cap_self() << 0) | (teacher_self() << 1));
 }
+
+/* wave-selfelect: SELF-RECOGNITION of own capability.
+ *
+ * region_teacher()/region_supernode() consult the teacher_capable[]/
+ * super_capable[] TABLES, but those entries are set ONLY in the gossip-APPLY
+ * path for RECEIVED gossip about a PEER. The self-beacon origination sites
+ * (join/periodic/self-refute) only ENQUEUE the self capability byte for
+ * broadcast (gossip_add appends to gq[]) — they never apply the bits to this
+ * node's OWN local table. CONSEQUENCE: a teacher-capable node T broadcasts its
+ * teacher bit so PEERS set teacher_capable[T] and elect T, but T ITSELF never
+ * sets teacher_capable[T], so T's own region_teacher() never returns T → the
+ * cradle teacher-gate (region_teacher()==self) never fires on the real teacher.
+ *
+ * Fix: at every self-origination site, ALSO apply the node's own verifiable
+ * capability bits to its LOCAL region table, so the node self-recognizes the
+ * role peers already compute for it. region_teacher()/region_supernode() still
+ * pick the LOWEST-id capable MEMBER, so single-teacher/single-supernode per
+ * region is preserved (a node emits only if it is the lowest-id capable one).
+ *
+ * CROWN SAFETY: swim.c links into BARE-METAL (boot/aarch64, boot/x86), whose
+ * .text crown must stay byte-identical. On bare-metal cap_self()==0 and
+ * teacher_self()==0 (no GGUF, no env) so the apply is a runtime NO-OP — but it
+ * would still emit instructions and move .text. Therefore the body exists ONLY
+ * under _TK_HOSTED_LIBC_; on bare-metal the macro expands to nothing → ZERO new
+ * instructions, crown unchanged. SELFELECT_SKIP nulls the body (regression-cert
+ * falsifier: with the self-apply gone, region_teacher()!=self). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(SELFELECT_SKIP)
+#define SELF_APPLY_OWN_CAPABILITY()                                          \
+    do {                                                                    \
+        if (drpc_my_node != 0xFF) {                                         \
+            region_set_super_capable(drpc_my_node,                          \
+                                     cap_self() ? TRUE : FALSE);            \
+            region_set_teacher_capable(drpc_my_node,                        \
+                                       teacher_self() ? TRUE : FALSE);      \
+        }                                                                   \
+    } while (0)
+#else
+#define SELF_APPLY_OWN_CAPABILITY() do { } while (0)
+#endif
 
 /* Capability BYTE for RELAYING a PEER's already-converged capability (never
  * originates it): pack both axes from the local region tables, which were set
@@ -245,6 +296,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 /* re-assert MY OWN capability bits, both axes (self-authoritative
                  * source: supernode + teacher). */
                 gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
+                SELF_APPLY_OWN_CAPABILITY();
             }
             continue;
         }
@@ -584,6 +636,7 @@ void swim_task(INT stacd, void *exinf)
          * bits (bit0=supernode via region_is_super_capable, bit1=teacher via
          * teacher_self()'s GGUF probe). Self-authoritative on both axes. */
         gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
+        SELF_APPLY_OWN_CAPABILITY();
 
         {
             SWIM_PKT beacon = { 0 };
@@ -1311,6 +1364,127 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
         say("[teacher-gossip] PASS (converge + selector + determinism + staleness + falsifiable + rx-relay)\r\n");
     return fails;
 }
+
+/* ------------------------------------------------------------------ */
+/* wave-selfelect SELF-RECOGNITION self-test                           */
+/*                                                                     */
+/* THE BUG (latent, masked by the in-proc T-fix-b cert): region_teacher()*/
+/* reads the teacher_capable[] TABLE, but a node's OWN table entry is    */
+/* set ONLY in the gossip-APPLY path for RECEIVED peer gossip. The       */
+/* self-beacon origination sites only ENQUEUE the self capability byte   */
+/* for broadcast — they never apply it to the node's own table. So a     */
+/* teacher node T makes its PEERS elect T (they apply T's received       */
+/* gossip) but T's OWN region_teacher() never returns T → the cradle     */
+/* teacher-gate (region_teacher()==self) never fires on the real teacher.*/
+/*                                                                       */
+/* THE CERT exercises the REAL self-origination path: it forces this     */
+/* node teacher-capable (selfelect_force_teacher, the cert analogue of   */
+/* a loaded teacher GGUF), runs SELF_APPLY_OWN_CAPABILITY() — the exact  */
+/* statement the production self-beacon sites now run right after        */
+/* gossip_add(self,...) — and asserts the node SELF-ELECTS:              */
+/*   [selfelect] region_teacher() == drpc_my_node.                       */
+/* FALSIFIER (load-bearing): building with -DSELFELECT_SKIP nulls        */
+/* SELF_APPLY_OWN_CAPABILITY() to do{}while(0) → the self-apply is gone, */
+/* the local teacher_capable[self] stays FALSE, and region_teacher() !=  */
+/* self → the cert FAILS, reproducing the exact production bug.          */
+/* Emits "[selfelect] ..." lines; 0 on PASS else fails. Hosted-only.     */
+/* ------------------------------------------------------------------ */
+#if defined(_TK_HOSTED_LIBC_)
+INT swim_selfelect_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    /* save every global/file state we perturb (mirror the teacher cert) */
+    UB  saved_my       = drpc_my_node;
+    UB  saved_inc      = my_incarnation;
+    INT saved_gq_cnt   = gq_cnt;
+    int saved_force    = selfelect_force_teacher;
+
+    const UB SELF = 2;   /* the node that must self-recognize as teacher */
+
+    UB saved_st        = dnode_table[SELF].state;
+    UB saved_inc_self  = dnode_incarn[SELF];
+    UB saved_tch       = region_is_teacher_capable(SELF) ? 1 : 0;
+    UB saved_sup       = region_is_super_capable(SELF)   ? 1 : 0;
+    UB saved_rttv      = rtt_valid[SELF];
+
+    drpc_my_node            = SELF;
+    gq_cnt                  = 0;
+    my_incarnation          = 0;
+    dnode_table[SELF].state = DNODE_ALIVE;  dnode_incarn[SELF] = 0;
+    /* SELF must be a region MEMBER for region_teacher() to consider it:
+     * recompute counts a member by RTT<=tau; a node's own RTT is 0 in the
+     * live fleet, but inject one explicitly so the cert is self-contained. */
+    rtt_observe(SELF, 0);
+    /* start from the BUG baseline: SELF's own teacher bit is NOT set (this is
+     * exactly the state at boot before any self-apply). */
+    region_set_teacher_capable(SELF, FALSE);
+    region_set_super_capable(SELF, FALSE);
+
+    /* PRE: with teacher_self() forced true but NO self-apply yet, the node does
+     * NOT yet self-elect (the bug's starting condition — proves the apply is
+     * what changes the result, not the forced flag alone). */
+    selfelect_force_teacher = 1;
+    {
+        UB pre = region_teacher();
+        if (pre == SELF) {
+            say("[selfelect] FAIL pre: self-elected BEFORE self-apply (table pre-seeded?)\r\n");
+            fails++;
+        }
+    }
+
+    /* THE PRODUCTION STATEMENT: originate self-beacon (enqueue) then self-apply
+     * — the exact pair the live self-beacon sites now run. */
+    gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
+    SELF_APPLY_OWN_CAPABILITY();
+
+    /* POST: the node now SELF-ELECTS — region_teacher() == self. With the fix
+     * present this PASSES; with -DSELFELECT_SKIP the self-apply is a no-op and
+     * region_teacher() != self → this FAILS (the load-bearing falsifier). */
+    {
+        UB post = region_teacher();
+        if (post != SELF) {
+            say("[selfelect] FAIL: region_teacher() != self after self-beacon "
+                "(node does not self-recognize as the elected teacher)\r\n");
+            fails++;
+        }
+        /* and the local table bit is the mechanism: it must now read TRUE. */
+        if (region_is_teacher_capable(SELF) != TRUE) {
+            say("[selfelect] FAIL: own teacher_capable[self] not set by self-apply\r\n");
+            fails++;
+        }
+    }
+
+    /* CONTRAST: a non-teacher self (force off) self-applies teacher=FALSE → it
+     * must NOT self-elect (single-teacher invariant: only a teacher-capable
+     * node crowns itself). */
+    selfelect_force_teacher = 0;
+    SELF_APPLY_OWN_CAPABILITY();
+    {
+        UB tn = region_teacher();
+        if (tn == SELF) {
+            say("[selfelect] FAIL contrast: non-teacher self-elected as teacher\r\n");
+            fails++;
+        }
+    }
+
+    /* --- restore --- */
+    selfelect_force_teacher = saved_force;
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq_cnt;
+    dnode_table[SELF].state = saved_st;
+    dnode_incarn[SELF]      = saved_inc_self;
+    rtt_valid[SELF]         = saved_rttv;
+    region_set_teacher_capable(SELF, saved_tch ? TRUE : FALSE);
+    region_set_super_capable(SELF, saved_sup ? TRUE : FALSE);
+
+    if (fails == 0)
+        say("[selfelect] PASS (node self-recognizes its own teacher role: region_teacher()==self)\r\n");
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ */
 /* compat [no-fleet-split] self-test                                   */
