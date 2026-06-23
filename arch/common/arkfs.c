@@ -558,7 +558,17 @@ static INT super_valid(void)
     ark_super *sb = (ark_super *)g_secbuf;
     if (!ark_memeq(sb->magic, ARK_SB_MAGIC, 8)) return 0;
     if (ark_crc32(sb, (U4)((U1 *)&sb->crc - (U1 *)sb)) != sb->crc) return 0;
+#if defined(ARKFS_GAP_SKIP_VERCHECK) && defined(_TK_HOSTED_LIBC_)
+    /* [arkfs-version-gap] FALSIFIER ONLY — the version gate is the load-bearing
+     * line. Bypassing it makes a FOREIGN-version superblock validate as native,
+     * so ark_mount accepts the image and feeds its foreign log to the v-new
+     * replay loop (-> inconsistent / wrong live state; the cert asserts FAIL).
+     * This define is NEVER set in any bare-metal build, so the crown .text is
+     * byte-identical (verified by the [smp-one-mind] sha). */
+    if (sb->sector_size != ARK_SECTOR) return 0;
+#else
     if (sb->version != ARK_FMT_VERSION || sb->sector_size != ARK_SECTOR) return 0;
+#endif
     return 1;
 }
 
@@ -1667,3 +1677,57 @@ INT ark_self_test(void (*emit)(const char *))
     else            emit("[ark] FAIL\r\n");
     return fails;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* HOSTED-ONLY: on-disk format-version peek (no mount, no replay).     */
+/*                                                                     */
+/* This whole block is compiled ONLY in the hosted (boot/linux*)       */
+/* builds (_TK_HOSTED_LIBC_); the bare-metal targets (boot/aarch64,    */
+/* boot/x86) do NOT define it, so their arkfs.c .text — and the        */
+/* [smp-one-mind] crown 755a20fa… — stay byte-IDENTICAL. The bare-     */
+/* metal callers keep today's reject-and-disable on a version gap; the */
+/* hosted reject-and-REFORMAT policy lives entirely in the caller      */
+/* (arch/linux/pfs_ark.c), which uses THIS read-only peek to tell a    */
+/* foreign-but-VALID superblock (reformat) from true garbage.          */
+/*                                                                     */
+/* It reuses ONLY the existing static device-I/O + crc helpers; it     */
+/* mutates none of the mounted state (g_head/g_seq/g_live/…) and never */
+/* replays the foreign log. Pass a bdev that is NOT the live mount (the */
+/* caller's own ARK_BDEV); it sets g_bd transiently for dev_read and   */
+/* restores it on the way out so a concurrent live mount is unharmed.  */
+/*                                                                     */
+/* Returns: the on-disk format version (>0) if EITHER superblock copy  */
+/* (sector 0 or the last sector) carries valid magic + matching crc    */
+/* (a STRUCTURALLY-sound ARK superblock, of WHATEVER version); 0 if     */
+/* neither copy is a sound ARK superblock (true corruption / not ARK). */
+/* So: ret == ARK_FMT_VERSION  -> native, mount it;                    */
+/*     ret  > 0 && != VERSION   -> a VALID foreign-version image (gap); */
+/*     ret == 0                 -> not a sound ARK image at all.        */
+static INT super_peek_at(U4 sec, U4 *ver_out)
+{
+    if (dev_read(sec, 1, g_secbuf) < 0) return 0;
+    ark_super *sb = (ark_super *)g_secbuf;
+    if (!ark_memeq(sb->magic, ARK_SB_MAGIC, 8)) return 0;       /* not ARK */
+    if (ark_crc32(sb, (U4)((U1 *)&sb->crc - (U1 *)sb)) != sb->crc) return 0; /* corrupt */
+    if (sb->sector_size != ARK_SECTOR) return 0;                /* wrong geometry */
+    if (ver_out) *ver_out = sb->version;
+    return 1;
+}
+
+U4 ark_super_version_peek(ARK_BDEV *bd)
+{
+    if (!bd || bd->sector_size != ARK_SECTOR || bd->total_sectors < 4) return 0;
+    ARK_BDEV *saved = g_bd;
+    g_bd = bd;
+    U4 ver = 0;
+    INT ok = super_peek_at(0, &ver);
+    if (!ok) ok = super_peek_at(bd->total_sectors - 1u, &ver);  /* replica */
+    g_bd = saved;                                               /* restore live mount */
+    return ok ? ver : 0u;
+}
+
+/* The native format version, so the hosted caller can compare without
+ * importing the private ARK_FMT_VERSION macro. */
+U4 ark_fmt_version(void) { return ARK_FMT_VERSION; }
+#endif /* _TK_HOSTED_LIBC_ */

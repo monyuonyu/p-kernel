@@ -302,4 +302,19 @@ INT  ark_mtree_list(const char *path, ARK_DIRENT *out, INT max);
  * emit. Returns 0 on PASS, non-zero (= failure count) on FAIL. */
 INT  ark_self_test(void (*emit)(const char *));
 
+#ifdef _TK_HOSTED_LIBC_
+/* HOSTED-ONLY (boot/linux*): read-only format-version peek. Returns the
+ * on-disk format version of `bd` (>0) if EITHER superblock copy is a sound
+ * ARK superblock (valid magic + crc + geometry), of WHATEVER version; 0 if
+ * neither copy is a sound ARK superblock. Does NOT mount or replay the log,
+ * and leaves any live mount untouched. The hosted caller uses this to tell a
+ * foreign-but-VALID image (reject-and-REFORMAT across a version gap) from
+ * true corruption — the bare-metal arkfs.c .text is unchanged because this
+ * block compiles out without _TK_HOSTED_LIBC_. See arch/linux/pfs_ark.c and
+ * compat-migration-chain-plan.md §3.3/§9.2. */
+U4   ark_super_version_peek(ARK_BDEV *bd);
+/* The native (this-build) ARK format version. */
+U4   ark_fmt_version(void);
+#endif /* _TK_HOSTED_LIBC_ */
+
 #endif /* PKERNEL_ARKFS_H */

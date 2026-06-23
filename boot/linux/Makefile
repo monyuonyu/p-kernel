@@ -73,6 +73,12 @@ INCDIRS = \
 # file (mirrors boot/aarch64/Makefile), e.g.
 #   make EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT   (the [migrate-forward] cert)
 #   make EXTRA_CFLAGS="-DR3WP_MIGRATE_CERT -DR3WP_SKIP_MIGRATE" (its falsifier)
+#   make EXTRA_CFLAGS=-DARKFS_GAP_CERT      (the [arkfs-version-gap] cert:
+#                                            `compat test arkfs` — reject+reformat
+#                                            a foreign-version arkfs image)
+#   make EXTRA_CFLAGS="-DARKFS_GAP_CERT -DARKFS_GAP_SKIP_VERCHECK" (its falsifier:
+#                                            bypass the version gate -> the
+#                                            foreign log is replayed -> FAIL)
 # Empty by default, so the default build is unchanged.
 EXTRA_CFLAGS ?=
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
@@ -228,6 +234,7 @@ COMMON_C_SRCS = \
     ed25519.c \
     sign.c \
     compat_ota.c \
+    compat_arkfs_gap.c \
     cradle_net.c \
     modver.c
 

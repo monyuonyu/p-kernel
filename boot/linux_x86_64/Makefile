@@ -74,6 +74,10 @@ INCDIRS = \
 # file (mirrors boot/linux/Makefile and boot/aarch64/Makefile), e.g.
 #   make EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT   (the [migrate-forward] cert)
 #   make EXTRA_CFLAGS="-DR3WP_MIGRATE_CERT -DR3WP_SKIP_MIGRATE" (its falsifier)
+#   make EXTRA_CFLAGS=-DARKFS_GAP_CERT      (the [arkfs-version-gap] cert:
+#                                            `compat test arkfs` — reject+reformat
+#                                            a foreign-version arkfs image)
+#   make EXTRA_CFLAGS="-DARKFS_GAP_CERT -DARKFS_GAP_SKIP_VERCHECK" (its falsifier)
 # Empty by default, so the default build is unchanged. This is what makes
 # cross-ABI cert parity real: a cert define reaches the same TUs here as it
 # does on the aarch64-hosted sibling (CFLAGS + the inheriting KERNEL_CFLAGS).
@@ -213,6 +217,7 @@ COMMON_C_SRCS = \
     ed25519.c \
     sign.c \
     compat_ota.c \
+    compat_arkfs_gap.c \
     cradle_net.c \
     modver.c
 
