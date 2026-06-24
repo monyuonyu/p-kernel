@@ -1451,3 +1451,26 @@ bootstraps + degrades safely. Cross-host join = the deferred [live] row.
   numeric-validate the field. OPEN (small Android-boundary doc/UX row).
 LEDGER: row CLOSED. A node handed a bad relay/seed hostname now degrades gracefully instead of crashing — "degrade not crash"
 holds at the bootstrap boundary.
+
+## N-3 NAT hole-punching (in-proc gate) — merge c125379f (impl adf9e6f9, base 4d3ccc75) — THREAD-N IN-PROC COMPLETE
+- Design-harden (rendezvous = the already-elected supernode; cone-vs-symmetric is a pure function) -> impl -> independent
+  audit. Verdict: MERGEABLE. The last open Thread-N item.
+- REAL + falsifiable: pure np_classify (cone if a peer's two observed mappings share a port; symmetric if they differ;
+  UNKNOWN on a NULL mapping), np_decide (PUNCH iff BOTH cone — full truth table audited, every non-(cone,cone) cell -> RELAY,
+  fail-closed), np_broker_swap (hands each peer the OTHER's ep + the shared verdict). NP_REQ/NP_INFO/NP_PRB ride SNF_PORT via
+  an EXTENDED snf_rx magic switch (NOT a second udp_bind -> avoids the documented port-steal trap); on punch-timeout OR
+  symmetric OR no-broker -> the N-2c snf_send relay path (connectivity NEVER lost — auditor enumerated all 5 returns, no drop).
+- Cert [nat-punch] 17 PASS / 0 FAIL (CURE: two cone peers -> broker swaps eps + verdict PUNCH, real production-path arm via
+  np_rx/np_brokered() counter; FALSIFIER-A: symmetric -> RELAY; FALSIFIER-B: punch-timeout -> relay, byte-identical delivery,
+  no loss; fail-closed edges). Sabotage -DNP_SABOTAGE_CLASSIFY -> 14 PASS / 3 FAIL, flipping EXACTLY the 3 classifier asserts
+  (symmetric classify/decide/verdict) -> load-bearing. NO-REGRESSION: N-2c region fwd still 20 PASS; NP_PKT has its OWN
+  _Static_assert(44) so the 524-B SNF_PKT contract is untouched; 4-target build clean.
+- CROWN: supernode.c hosted-only (absent from bare-metal Makefiles); bare-metal aarch64 .text 755a20fa byte-identical
+  (auditor + commander). 4-file diff (supernode.c/.h + both usermains, parity-wired region punch verb).
+- HONEST: cone-NAT ONLY (symmetric stays relayed — a real bound, NOT a bug); proves the rendezvous PROTOCOL + classification +
+  punch/relay DECISION, NOT real NAT traversal (a two-distinct-NAT topology = a DEFERRED [live] row, harder than N-2c's
+  single-host one); NOCENTRAL (reuses the N-2 election as broker, no new authority).
+LEDGER: row CLOSED (in-proc gate). ***Thread N's in-proc surface is COMPLETE***: N-0 node-id, N-1 LAN-direct, N-2/N-2b
+supernode select + capability gossip, N-2c forward ([in-proc]+[live] on real hardware), N-3 NAT punch (in-proc), N-4 seed
+bootstrap. The remaining Thread-N work is all real-host/real-NAT [live] rows (N-2c re-confirm done; cradle-live, N-3 two-NAT,
+N-4 cross-host deferred to the ThinkPad).
