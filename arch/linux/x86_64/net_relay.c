@@ -26,8 +26,28 @@
  *  relay; periodic probing of higher-priority relays pulls everyone
  *  back to the list head when it recovers.
  *
+ *  Seed bootstrap (N-4, thread-N decentralization): a relay is just ONE
+ *  optional seed, not a mandatory central dependency. PKERNEL_SEED takes
+ *  the SAME "host[:port],..." list shape as PKERNEL_RELAY and is parsed
+ *  by the SAME parse_relay_list() into relay_list[] — at the wire a relay
+ *  is simply a seed that answers REL_REGISTER, so the two are identical
+ *  once configured. The only behavior change is SCOPED to seed-mode: when
+ *  PKERNEL_SEED is set but its list is empty/unusable, the node BOOTS
+ *  SOLO (relay_count=0, net_relay_send is a no-op via the idx>=relay_count
+ *  guard) instead of hard-failing. The plain PKERNEL_RELAY / legacy
+ *  PKERNEL_RELAY_HOST paths are UNCHANGED, INCLUDING the hard return -1
+ *  when neither relay env is set — solo-degrade never applies to them.
+ *  The pure selection core seed_select_next() (deterministic lowest-index-
+ *  not-yet-failed, wrapping, -1 when exhausted) is what the seed-bootstrap
+ *  cert drives in-proc with no sockets. SWIM broadcast discovery is
+ *  unchanged (no unicast seed-discovery is added here).
+ *
  *  Env vars:
  *    PKERNEL_NODE_ID      our node_id (1..255), default 1
+ *    PKERNEL_SEED         "host[:port],host[:port][,...]" (max 4) — seed/
+ *                         peer list; a relay is just a seed that answers
+ *                         REL_REGISTER. If set, takes precedence over
+ *                         PKERNEL_RELAY; an empty/unusable list boots SOLO.
  *    PKERNEL_RELAY        "host[:port],host[:port][,...]" (max 4)
  *    PKERNEL_RELAY_HOST   legacy single relay host (used when
  *                         PKERNEL_RELAY is not set)
@@ -571,11 +591,36 @@ static int parse_relay_list(const char *spec)
     return count;
 }
 
+/* N-4 seed bootstrap — PURE selection core. Given the index we last tried
+ * (cur), a liveness vector alive[] (1 = answers REGISTER, 0 = dead/exhausted)
+ * over `count` endpoints, return the next endpoint index to try:
+ * deterministic lowest-index-not-yet-failed, scanning forward and wrapping;
+ * -1 when every endpoint is exhausted. Integer-only, allocation-free, and
+ * bounded by `count` (at most `count` probes — never an infinite loop). The
+ * sabotage hook below makes the advance a no-op so the cert can prove the
+ * advance is load-bearing (Falsifier B). */
+int seed_select_next(int cur, const unsigned char *alive, int count)
+{
+#ifdef SEED_NO_ADVANCE
+    return cur;
+#endif
+    if (count <= 0 || !alive) return -1;
+    /* Scan the next `count` indices starting just after cur, wrapping; the
+     * loop bound guarantees termination even when all are dead. */
+    for (int step = 1; step <= count; step++) {
+        int idx = ((cur < 0 ? -1 : cur) + step) % count;
+        if (idx < 0) idx += count;
+        if (alive[idx]) return idx;
+    }
+    return -1;
+}
+
 /* --- public API --------------------------------------------------------- */
 
 int net_relay_init(void)
 {
     const char *env_id   = getenv("PKERNEL_NODE_ID");
+    const char *env_seed = getenv("PKERNEL_SEED");
     const char *env_list = getenv("PKERNEL_RELAY");
     const char *env_host = getenv("PKERNEL_RELAY_HOST");
     const char *env_port = getenv("PKERNEL_RELAY_PORT");
@@ -620,7 +665,21 @@ int net_relay_init(void)
         relay_strict = (env_strict && *env_strict && env_strict[0] != '0');
     }
 
-    if (env_list && *env_list) {
+    if (env_seed && *env_seed) {
+        /* N-4 seed-mode: a relay is just a seed that answers REL_REGISTER, so
+         * the seed list is parsed into the SAME relay_list[] with the SAME
+         * shape. Solo-degrade is SCOPED here: an empty/unusable seed list boots
+         * the node SOLO (relay_count=0 -> net_relay_send is a no-op via the
+         * idx>=relay_count guard) and returns success, rather than hard-failing
+         * the way the plain PKERNEL_RELAY path does. */
+        relay_count = parse_relay_list(env_seed);
+        if (relay_count <= 0) {
+            dprintf(2, "[net_relay] no usable seed — running solo\n");
+            relay_count = 0;
+            cur_relay   = 0;
+            return my_node_id;
+        }
+    } else if (env_list && *env_list) {
         relay_count = parse_relay_list(env_list);
         if (relay_count <= 0) {
             dprintf(2, "[net_relay] PKERNEL_RELAY has no usable entries\n");
@@ -777,3 +836,109 @@ int net_relay_recv(void *out, int maxlen)
 }
 
 int net_relay_node_id(void) { return my_node_id; }
+
+#ifdef SEED_BOOTSTRAP_CERT
+/* [seed-bootstrap] — N-4 seed-bootstrap cert. In-proc, NO sockets, NO host
+ * (mirror supernode_forward_self_test / swim_cap_gossip_self_test). Drives the
+ * PURE seed_select_next() through a tiny harness: seed_alive[i] = 1 means
+ * "seed i answers REL_REGISTER", and register_sent_to[i] counts the
+ * cert-shimmed REGISTERs (NO UDP). A "join" walks seed_select_next() from a
+ * cold start (cur=-1) following the deterministic rule, sends a shimmed
+ * REGISTER to each candidate, and stops at the first LIVE seed; if the
+ * selector exhausts (-1) the node is solo and joined stays 0.
+ *
+ * HONEST SCOPE: this certifies the PURE selection + degrade contract only. The
+ * real "A boots with PKERNEL_SEED=B, unicasts B over real sockets, joins" is a
+ * DEFERRED [live] row (samples/11_distributed/run_seed_bootstrap.sh) needing a
+ * real host; it is NOT covered here. Back-compat of the plain PKERNEL_RELAY
+ * path is load-bearing and is asserted by the unchanged hard-fail leg in
+ * net_relay_init (verified by the auditor, not simulable in-proc). */
+
+static unsigned char seed_alive[MAX_RELAYS];        /* 1 = answers REGISTER  */
+static int           register_sent_to[MAX_RELAYS];  /* cert-shim, NO UDP     */
+static int           sb_fail;
+
+static void sb_putdec(void (*pr)(const char *), int v)
+{
+    char b[12]; int i = 0, neg = 0;
+    if (v < 0) { neg = 1; v = -v; }
+    if (v == 0) b[i++] = '0';
+    while (v > 0) { b[i++] = (char)('0' + v % 10); v /= 10; }
+    char o[14]; int j = 0;
+    if (neg) o[j++] = '-';
+    while (i > 0) o[j++] = b[--i];
+    o[j] = '\0';
+    pr(o);
+}
+
+static void sb_check(void (*pr)(const char *), int ok, const char *desc)
+{
+    pr(ok ? "[seed-bootstrap]   PASS " : "[seed-bootstrap]   FAIL ");
+    pr(desc); pr("\r\n");
+    if (!ok) sb_fail = 1;
+}
+
+/* Cold-start join over the pure selector. Returns the index joined on, or -1
+ * (solo). steps_out = number of selector advances taken (loop-bound proof).
+ * joined_out = 1 if a live seed answered. */
+static int sb_join(int count, int *joined_out, int *steps_out)
+{
+    int cur = -1, steps = 0, joined = 0, chosen = -1;
+    for (;;) {
+        if (steps > count) break;            /* HARD bound — never hang */
+        int nxt = seed_select_next(cur, seed_alive, count);
+        if (nxt < 0) break;                  /* exhausted -> solo */
+        steps++;
+        register_sent_to[nxt]++;             /* shimmed REGISTER (no UDP) */
+        if (seed_alive[nxt]) { joined = 1; chosen = nxt; break; }
+        cur = nxt;                           /* dead -> advance */
+    }
+    if (joined_out) *joined_out = joined;
+    if (steps_out)  *steps_out  = steps;
+    return chosen;
+}
+
+void seed_bootstrap_self_test(void (*pr)(const char *))
+{
+    sb_fail = 0;
+    pr("[seed-bootstrap] N-4 seed-bootstrap cert (pure selection + degrade)\r\n");
+
+    /* ---- CURE: 3 seeds, only the LAST is live (alive={0,0,1}) -> join
+     * happens on idx 2, NOT the dead head idx 0. -------------------------- */
+    {
+        for (int i = 0; i < MAX_RELAYS; i++) { seed_alive[i] = 0; register_sent_to[i] = 0; }
+        seed_alive[2] = 1;
+        int joined = 0, steps = 0;
+        int chosen = sb_join(3, &joined, &steps);
+        sb_check(pr, joined == 1, "CURE: a live seed answered (joined)");
+        sb_check(pr, chosen == 2, "CURE: chosen_idx==2 (joined via the LIVE seed)");
+        sb_check(pr, register_sent_to[2] > 0, "CURE: register_sent_to[2] > 0");
+        sb_check(pr, chosen != 0, "CURE: did NOT settle on the dead head idx 0");
+        sb_check(pr, steps <= 3, "CURE: bounded (steps <= count, no hang)");
+        pr("[seed-bootstrap]   info chosen="); sb_putdec(pr, chosen);
+        pr(" steps="); sb_putdec(pr, steps); pr("\r\n");
+    }
+
+    /* ---- FALSIFIER A (degrade, load-bearing): single seed, dead
+     * (alive={0}) -> selector exhausts (-1), node is solo, NO HANG, does
+     * NOT falsely report joined. ----------------------------------------- */
+    {
+        for (int i = 0; i < MAX_RELAYS; i++) { seed_alive[i] = 0; register_sent_to[i] = 0; }
+        int joined = 1, steps = 99;
+        int chosen = sb_join(1, &joined, &steps);
+        int exhausted = (seed_select_next(0, seed_alive, 1) == -1);
+        sb_check(pr, exhausted, "FAL-A: seed_select_next exhausts -> -1");
+        sb_check(pr, joined == 0, "FAL-A: joined==0 (node is solo)");
+        sb_check(pr, chosen == -1, "FAL-A: no seed chosen (solo)");
+        sb_check(pr, steps <= 1, "FAL-A: bounded (steps <= count, NO HANG)");
+        pr("[seed-bootstrap]   info solo chosen="); sb_putdec(pr, chosen);
+        pr(" steps="); sb_putdec(pr, steps); pr("\r\n");
+    }
+
+    /* ---- FINAL RESULT. Under -DSEED_NO_ADVANCE the CURE leg lands on the
+     * dead head idx 0 (never advances) -> joined==0 -> CURE asserts FAIL ->
+     * RESULT: FAIL, proving the advance is load-bearing. ------------------ */
+    if (sb_fail) pr("[seed-bootstrap] RESULT: FAIL\r\n");
+    else         pr("[seed-bootstrap] RESULT: 9/9 PASS\r\n");
+}
+#endif /* SEED_BOOTSTRAP_CERT */

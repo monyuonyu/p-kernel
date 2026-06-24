@@ -127,6 +127,9 @@ IMPORT void ss6_live_set_enabled(int on);                                    /* 
 IMPORT void snf_install(void);                                               /* N-2c supernode forwarding: bind SNF_PORT */
 IMPORT void supernode_forward_self_test(void (*print)(const char *));        /* N-2c forwarding-plane cert */
 IMPORT void snf_cmd(const UB *args, UW len, void (*print)(const char *));     /* N-2c live driver (snf send/sink/recv/stat) */
+#ifdef SEED_BOOTSTRAP_CERT
+IMPORT void seed_bootstrap_self_test(void (*print)(const char *));            /* N-4 seed-bootstrap cert (pure selection + degrade) */
+#endif
 
 extern char *getenv(const char *);
 
@@ -870,6 +873,18 @@ EXPORT INT usermain(void)
              * REAL UDP wire so a multi-process run proves A->B forwarded BY the
              * elected supernode. snf sink|send <dst>|recv|stat. */
             snf_cmd(line + 3, (UW)(n - 3), print);
+        } else if (starts_with(line, n, "seed")) {
+            /* N-4 seed-bootstrap cert (thread-N decentralization): `seed test`
+             * drives the PURE seed_select_next() in-proc (no sockets) — CURE
+             * (join the LIVE seed, not the dead head) + Falsifier-A (single
+             * dead seed -> solo, no hang). Gated behind -DSEED_BOOTSTRAP_CERT
+             * so the default kernel + crown stay byte-identical; an ungated
+             * build prints how to enable it (mirrors `compat test ota`). */
+#ifdef SEED_BOOTSTRAP_CERT
+            seed_bootstrap_self_test(print);
+#else
+            print("seed test: rebuild with EXTRA_CFLAGS=-DSEED_BOOTSTRAP_CERT\r\n");
+#endif
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`
              * runs region_supernode_test() (deterministic select / convergence
