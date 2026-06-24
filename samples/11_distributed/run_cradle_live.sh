@@ -57,6 +57,77 @@
 # multi-process PASS is a DEFERRED [live] row to be cashed by the COMMANDER on a
 # real host (the ThinkPad). The BRIDGE + the student ingestion + the 3 arms are
 # ALREADY proven IN-PROCESS (run_cradle_teach.sh PASS, audit-trail.md:876).
+#
+# ===========================================================================
+# THE SEQUENCING FIX (wave-cradle-harness) — PULL WHILE IDLE, *THEN* TRAIN
+# ===========================================================================
+# The teacher self-election production bug is FIXED + merged (T emits lessons
+# live; the commander confirmed "T lessons emitted: 8" + p-fs `saved 'ct/1/8'`).
+# But the CURE arm still FAILED on the real host, and the commander root-caused
+# WHY (relay frame histogram: S sent only 78 frames vs T's 2405 / W's 2815 —
+# S barely networked). S's log ended at
+#       [baby] distilling 8 round(s) ... from teacher fixture
+# i.e. the OLD harness sent `student` to S RIGHT AFTER BOOT, which runs a HEAVY
+# SYNCHRONOUS fixture-distill (sleep_rounds). p-kernel's T-Kernel scheduler is
+# COOPERATIVE on a single core, so that training MONOPOLISED the CPU and STARVED
+# S's mesh tasks (cradle_net_task @500ms, SWIM, kdds). S therefore NEVER ran
+# cradle_poll_and_pull to fetch the lesson into its ring (ring_len stayed 0) and
+# never returned to the shell for the later probe — so every assert read blank.
+#
+# This is a HARNESS SEQUENCING bug, NOT a production bug. The cure is to let the
+# lesson be PULLED WHILE S IS IDLE (network tasks own the CPU), BEFORE any
+# training. THE KEY FACTS that make a harness-only fix sufficient (verified in
+# the source, no C change needed):
+#
+#   (1) cradle_net_task is spawned at BOOT on both linux arches (usermain.c
+#       create_task(cradle_net_task,...)) and calls cradle_poll_and_pull every
+#       CRADLE_POLL_MS=500ms — the pull is SHELL-INDEPENDENT. So if S is left
+#       IDLE (no `student`, no `baby`) after convergence, the lesson is pulled
+#       into the ring AUTOMATICALLY. We do NOT need a shell command to pull.
+#   (2) On a node with PKERNEL_PFS_DIR (S has it), student_boot_restore BIRTHS a
+#       fresh baby at BOOT via student_birth_warmup, which does NOT train (just
+#       persists). So the resident baby already exists and reads ~chance — we do
+#       NOT need the `student` verb at all; its ONLY effect was the CPU-hogging
+#       fixture-distill that caused the bug. We DROP it.
+#   (3) `cradle probe` (cradle_live_probe) is a PURE READ: it prints the
+#       greppable `[cradle-live] ring_len=<n> probe_loss=<L> chance=<C>` off the
+#       LIVE corpus (cradle_window_src: the ring when live, else the fixture). It
+#       does NOT train and does NOT block — safe to poll repeatedly while idle.
+#   (4) `baby <N>` runs N SYNCHRONOUS sleep rounds over the LIVE corpus
+#       (cradle_window_src / cradle_corpus_len) — i.e. over the LESSON RING once
+#       ring_len>=CRADLE_MIN_LIVE(=128B). So once the lesson is in the ring,
+#       `baby N` is exactly the production consolidation OVER THE WIRE-DELIVERED
+#       lesson. We size N>=CT_CERT_ROUNDS(=12) to match the in-proc cert recipe
+#       (rounds=12 lr=3e-3 seqlen=32 budget=1280) so the held probe drops the
+#       certified amount.
+#
+# THE NEW PER-ARM SEQUENCE (run_arm below) is therefore:
+#   cure    : boot 3 -> wait `-> FULL alive=3` on S -> PRE probe (~chance)
+#             -> PULL-WHILE-IDLE: poll `cradle probe` until ring_len>0 (net task
+#                pulls; we do NOT train yet) -> CONSOLIDATE `baby 16` (trains the
+#                LESSON ring) -> POST probe (held probe dropped below chance).
+#   off     : S is PFS-LESS (no baby, no autonomous DMN) + `cradle off`; ring
+#             stays 0, no training, probe reads the chance FLOOR. CLEAN falsifier
+#             with NO autonomous-DMN fixture contamination (see the PERSISTENCE
+#             note in run_arm). The gate flag itself is separately certified in
+#             `cradle test` Arm A; this [live] arm proves "no teaching -> nothing
+#             learned" end-to-end.
+#   scramble: boot 3 -> wait FULL -> PULL-WHILE-IDLE until ring_len>0 (scramble
+#             body must actually arrive, else the arm is vacuous) -> `baby 16`
+#             (trains JUNK) -> probe STAYS ~chance (it is the SEQUENCE, not bytes).
+#   death   : cure sequence -> kill T -> wait SWIM-dead on S -> POST probe STILL
+#             below chance (the baby answers from its now-resident/persisted
+#             weights; the mind survives the teacher).
+#
+# DISCIPLINE (the commander's hard-won rules, applied throughout): never assume
+# a fixed sleep is enough — POLL for a greppable marker (`-> FULL alive=3`,
+# `ring_len=<n>`, the probe-loss line) from S's REDIRECTED LOG, with a generous
+# cap, and sequence commands with waits for S to be IDLE between heavy steps. If
+# a step can't be confirmed, the asserts below print a clear `[cradle-live]
+# OPEN: <what>` with the relay/S-log evidence — honest > green.
+#
+# >>> THE COMMANDER RUNS THIS ON THE THINKPAD (real host). It is NOT runnable in
+#     the PRoot sandbox (backgrounded children + foreground sleep are killed). <<<
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,15 +147,47 @@ export PKERNEL_RELAY_HOST=127.0.0.1
 export PKERNEL_RELAY_PORT=7414
 unset PKERNEL_RTT_ZONE_SIZE PKERNEL_RTT_ZONE_PENALTY   # one region on localhost
 
-# A unique persistence dir per run so S's baby is fresh (no yesterday's weights).
-PFS_S="$(mktemp -d)"
+# Per-RUN scratch root; each arm gets its OWN fresh persistence dir UNDER it (so
+# the cure arm's trained+persisted weights do NOT leak into the OFF/scramble
+# falsifiers — those MUST start from a fresh, untrained newborn or they are
+# vacuous). run_arm allocates "$PFS_ROOT/<arm>" and the FIFO lives there too.
+PFS_ROOT="$(mktemp -d)"
 
 PIDS=()
-cleanup() { kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; rm -rf "$PFS_S"; }
+cleanup() { kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; rm -rf "$PFS_ROOT"; }
 trap cleanup EXIT
 
 PASS_ALL=1
 fail() { echo "[cradle-live] FAIL: $1"; PASS_ALL=0; }
+
+# --- log-poll helpers (the commander's "poll a greppable marker" discipline) ---
+# Wait until $2 (an ERE) appears in logfile $1, up to $3 seconds (poll @1s).
+# Returns 0 the moment it matches, 1 on timeout. NEVER a blind fixed sleep.
+wait_for_marker() {
+  local logf="$1" pat="$2" cap="$3" i=0
+  while [ "$i" -lt "$cap" ]; do
+    [ -f "$logf" ] && grep -qE "$pat" "$logf" 2>/dev/null && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+# Max ring_len seen so far in a logfile (0 if none) — the live-pull confirmation.
+log_max_ring() {
+  grep -oE 'ring_len=[0-9]+' "$1" 2>/dev/null | grep -oE '[0-9]+' \
+    | sort -n | tail -1
+}
+# Wait until ring_len>0 has appeared in $1, up to $2 seconds. The student's
+# cradle_net_task pulls the beacon+body on its own 500ms cadence while S idles;
+# we just watch the probe line it prints. Returns 0 on a real pull, 1 on timeout.
+wait_for_ring() {
+  local logf="$1" cap="$2" i=0 r
+  while [ "$i" -lt "$cap" ]; do
+    r=$(log_max_ring "$logf"); r="${r:-0}"
+    [ "$r" -gt 0 ] 2>/dev/null && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
 
 # The DETERMINISTIC cure lesson T emits. NOT a GGUF sampler output — a fixed byte
 # body so the run is reproducible. It must be >= the live threshold (4*32=128 B)
@@ -100,19 +203,32 @@ CURE_LESSON="${CURE_LESSON:0:1280}"
 
 # ===========================================================================
 # helper: launch T (teacher) + W (quorum) + S (student) over one ./relay, then
-#         drive a SCRIPTED session on S. $1 = arm:
-#   cure      : T emits the cure lesson; S pulls + sleeps + probes (expect DROP).
-#   off       : S starts `cradle off`; T emits; S probes (expect STAY at chance).
-#   scramble  : T emits-scramble (random bytes same length); S probes (STAY).
-#   death     : cure, THEN kill T, wait SWIM-dead, S re-probes (STILL below chance
-#               from persisted weights — the mind survives the teacher).
+#         drive a CLOSED-LOOP session on S via a FIFO — so the harness can
+#         WAIT for greppable markers in S's redirected log BETWEEN commands
+#         (the only way to keep S IDLE for the network pull, then train).
+# $1 = arm:
+#   cure      : T emits the cure lesson; S idles, PULLS it, THEN trains -> DROP.
+#   off       : S `cradle off` first; T emits; ring stays 0, S never trains -> STAY.
+#   scramble  : T emits-scramble (random bytes, same length); S pulls + trains
+#               JUNK -> STAY at chance (it is the SEQUENCE, not byte statistics).
+#   death     : cure, THEN kill T, wait SWIM-dead, S re-probes -> STILL below
+#               chance from the now-resident/persisted weights (mind survives T).
 # All of S's verdicts are read from its REDIRECTED logfile (a real node's console
 # is flooded with [moe] spam — NEVER an interactive shell's stdout; the N-2c
 # lesson). T's teacher-election is read from T's "lesson emitted" line.
+#
+# WHY A FIFO (not a here-pipe): the OLD harness fed S a fixed command script
+# down a pipe with blind sleeps between lines. But S's shell is UNRESPONSIVE
+# while it trains (cooperative scheduler), and the lesson-pull only happens while
+# S is IDLE — a fixed script cannot observe "S is now idle / the ring is now
+# live" and react. A FIFO lets the OUTER shell write the NEXT command to S only
+# AFTER it has polled S's log for the marker that the PREVIOUS step finished.
 # ===========================================================================
 run_arm() {
   local arm="$1"
   local TAG="$arm"
+  local LOG_S="/tmp/cradle_live_nodeS_$TAG.log"
+  local LOG_T="/tmp/cradle_live_nodeT_$TAG.log"
   echo "[cradle-live] === arm $TAG : relay :$PKERNEL_RELAY_PORT ==="
 
   local APIDS=()
@@ -126,7 +242,9 @@ run_arm() {
 
   # ---- T (node 2): the CERT-SCOPED teacher. PKERNEL_TEACHER=1 + the cert env
   # makes teacher_gguf_loaded() true WITHOUT a GGUF (see header). T runs a
-  # scripted session that, after convergence, emits the lesson for THIS arm. ----
+  # scripted session that, after convergence, emits the lesson for THIS arm.
+  # T's emit is a CHEAP publish (no training), so the fixed retry-pipe is fine
+  # here — only S needs the closed-loop FIFO. ----
   local T_EMIT
   case "$arm" in
     scramble) T_EMIT="cradle emit-scramble" ;;
@@ -139,69 +257,169 @@ run_arm() {
     # (cradle_teach_emit gate), so we retry it across the settle window; the
     # FIRST success is T's own "I am the elected teacher" self-report. We retry
     # several times so a not-yet-converged early emit (no-op) is followed by a
-    # real one once the region view stabilises.
+    # real one once the region view stabilises. T then STAYS ALIVE the whole arm
+    # (long tail sleep) so its p-fs body remains servable while S pulls — the
+    # death arm kills it explicitly once S has consolidated.
     local _i=0
-    while [ "$_i" -lt 8 ]; do
+    while [ "$_i" -lt 12 ]; do
       echo "nodes"                           # membership (greppable convergence)
       echo "$T_EMIT"                          # emits ONLY if elected teacher
       echo "[cradle-live] T-EMIT-ATTEMPT i=${_i}"
       sleep 3; _i=$((_i + 1))
     done
-    sleep 30                                  # stay alive while S pulls + sleeps
+    sleep 120                                 # stay alive while S idles+pulls+trains
     echo "exit"
   } | env PKERNEL_TEACHER=1 PKERNEL_TEACHER_CERT=1 PKERNEL_NODE_ID=2 \
       PKERNEL_AUTONET=1 "$BOOT/p-kernel" \
-      >/tmp/cradle_live_nodeT_$TAG.log 2>&1 & local TPID=$!; APIDS+=($TPID)
+      >"$LOG_T" 2>&1 & local TPID=$!; APIDS+=($TPID)
 
-  # ---- S (node 3): the STUDENT. PKERNEL_PFS_DIR set so student_dmn_consolidate
-  # runs (persistence active = the DMN sleep tick trains + the kill-T arm reads
-  # PERSISTED weights). `student` births the resident baby; the DMN heartbeat
-  # then pulls the lesson (cradle_poll_and_pull) + consolidates it. ----
-  {
-    sleep 6
-    echo "student"                            # birth the resident baby
-    sleep 2
-    [ "$arm" = "off" ] && echo "cradle off"   # Arm A: teaching OFF before any pull
-    sleep 4
-    echo "cradle probe"                        # BEFORE: assert ~chance (>= 5.0)
-    echo "[cradle-live] S-PRE-PROBE"
-    # WAIT for the body to actually arrive over the wire: poll until ring_len>0
-    # (the p-fs WANT may need several 500ms retries; never assume the 1st beacon
-    # landed). For the OFF arm the ring stays 0 by design.
-    local _w=0
-    while [ "$_w" -lt 14 ]; do
-      echo "cradle probe"                      # greppable ring_len=<n>
-      echo "[cradle-live] S-RING-POLL w=${_w}"
-      # drive DMN sleeps to consolidate whatever is in the ring (baby <rounds>
-      # runs real sleep rounds over the live corpus; the DMN tick also pulls).
-      echo "baby 4"
-      sleep 4; _w=$((_w + 1))
-    done
-    echo "cradle probe"                        # AFTER: the verdict probe
-    echo "[cradle-live] S-POST-PROBE"
-    sleep 2
-    echo "exit"
-  } | env PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$PFS_S" \
-      "$BOOT/p-kernel" >/tmp/cradle_live_nodeS_$TAG.log 2>&1 & local SPID=$!; APIDS+=($SPID)
+  # ---- S (node 3): the STUDENT, driven CLOSED-LOOP through a FIFO. ----
+  # PKERNEL_PFS_DIR set so (a) student_boot_restore BIRTHS a fresh baby at boot
+  # (no `student` verb needed — see header fact (2)) and (b) the kill-T arm reads
+  # PERSISTED weights. We hold the FIFO open on fd 9 so S's shell never sees EOF
+  # until we deliberately send `exit`.
+  # FRESH per-arm persistence dir: the cure arm's trained weights must NOT leak
+  # into the scramble/death falsifiers (a restored trained baby would make them
+  # vacuous). Each arm starts from an untrained newborn.
+  local PFS_S="$PFS_ROOT/$TAG"
+  rm -rf "$PFS_S"; mkdir -p "$PFS_S"
+  # the FIFO lives OUTSIDE PFS_S so S's p-fs scan never trips over a non-regular
+  # file in its persistence dir.
+  local SFIFO="$PFS_ROOT/s_in_$TAG.fifo"
+  rm -f "$SFIFO"; mkfifo "$SFIFO"
 
-  # ---- death arm: kill T AFTER the cure has been pulled + consolidated, wait for
-  # SWIM to mark T dead on S, then S re-probes (handled by the long S session
-  # above — the POST probe lands after this kill + SWIM-dead window). ----
-  if [ "$arm" = "death" ]; then
-    ( sleep 40; kill -9 "$TPID" 2>/dev/null
-      echo "[cradle-live] killed T (node2) — SWIM must mark it dead; S answers from persisted weights" ) &
-    APIDS+=($!)
+  # PERSISTENCE / AUTONOMOUS-DMN DISCIPLINE (a real subtlety — read this):
+  # On a PKERNEL_PFS_DIR node, student_boot_restore BIRTHS a baby at boot AND the
+  # DMN heartbeat (student_dmn_consolidate, dmn.c) AUTONOMOUSLY trains it ~every
+  # ST_DMN_INTERVAL(=10) idle pulses (~10s) — ST_DMN_ROUNDS(=2) rounds over the
+  # LIVE corpus (the lesson ring if live, else the FIXTURE). That autonomous
+  # fixture-training is harmless for cure/scramble/death (their VERDICT probe is
+  # taken AFTER the lesson is in the ring, so it measures the LESSON's held
+  # windows, which fixture-training cannot teach), but it would CONTAMINATE the
+  # OFF falsifier: with teaching OFF the ring stays empty, the probe reads the
+  # FIXTURE, and the DMN would slowly drop that fixture held-loss below chance —
+  # a FALSE "learned" reading that has nothing to do with the mesh.
+  #
+  # So the OFF arm runs S PFS-LESS (no PKERNEL_PFS_DIR): student_boot_restore is
+  # a TRUE no-op (no baby, no arena) and student_dmn_consolidate returns 0 every
+  # tick (pfs_dur_active()==false) — ZERO autonomous training. With no baby and
+  # the ring empty, cradle_live_probe reports the chance FLOOR (g_have_student==0
+  # -> probe=ln256). That is a CLEAN, contamination-free falsifier: "a node that
+  # is NOT taught over the mesh stays at chance." The g_cradle_enabled gate ITSELF
+  # (cradle off -> cradle_window_src==NULL) is separately + directly certified
+  # in-process by `cradle test` Arm A (cradle.c), so this [live] arm need not
+  # re-prove the gate flag — it proves the end-to-end "no teaching -> no learning."
+  local PFS_ENV="PKERNEL_PFS_DIR=$PFS_S"
+  [ "$arm" = "off" ] && PFS_ENV=""           # OFF: PFS-less -> no baby, no DMN
+  env PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 $PFS_ENV \
+      "$BOOT/p-kernel" <"$SFIFO" >"$LOG_S" 2>&1 & local SPID=$!; APIDS+=($SPID)
+  # Open the FIFO read+write on fd 9: this NEVER blocks (an O_RDWR open on a FIFO
+  # has no wait-for-peer), so the harness can't hang if S is slow to open its
+  # read end, and the write end stays open until we close it -> S's shell never
+  # sees a premature EOF.
+  exec 9<>"$SFIFO"
+  s_say() { printf '%s\n' "$1" >&9; }        # send one command to S's shell
+
+  # ---- short post-boot settle: let S's init finish + the shell become reachable
+  # before the PRE probe. We take the PRE probe EARLY (before the convergence
+  # wait) so it is the MOST PRISTINE chance reading — the freshly-born baby has
+  # seen the fewest autonomous DMN fixture-ticks (see the PERSISTENCE note above).
+  sleep 5
+
+  # ---- OFF arm: disable teaching NOW, before any pull, so the ring gate stays
+  # closed (cradle_set_enabled(0) -> cradle_window_src returns the FIXTURE). The
+  # OFF node is PFS-less so there is no baby/DMN anyway; this asserts the flag. --
+  if [ "$arm" = "off" ]; then
+    s_say "cradle off"
+    sleep 2
   fi
 
-  # let S finish its session (births + pull + sleeps + post-probe)
-  sleep 80
+  # ---- (5) PRE probe: BEFORE any pull/train, the held probe must read ~chance
+  # (a freshly-born / no baby reads the chance floor). Cheap pure read.
+  # NOTE: S's shell has NO `echo` builtin; an UNKNOWN command line is echoed back
+  # as "[echo] <line>" (usermain.c default branch), which IS a reliable greppable
+  # sentinel. The probe line is printed by `cradle probe` BEFORE this sentinel, so
+  # the sentinel marks "the PRE probe has been emitted above this point".
+  s_say "cradle probe"
+  s_say "MARK-S-PRE-PROBE"
+  wait_for_marker "$LOG_S" 'MARK-S-PRE-PROBE' 15
+
+  # ---- (1) CONVERGENCE: wait for S to reach STABLE FULL (degrade FULL alive=3).
+  # The marker is emitted AUTOMATICALLY by SWIM/degrade as nodes join (degrade.c
+  # "*** level change: ... -> FULL  alive=3"); S need not run any command. The
+  # localhost bring-up flaps FULL->REDUCED->FULL, so we wait for the marker and
+  # then settle a few extra seconds so the LAST view is the stable one. ----
+  if ! wait_for_marker "$LOG_S" '-> FULL[[:space:]]+alive=3' 90; then
+    echo "[cradle-live] OPEN ($TAG): S never converged to FULL alive=3 in 90s"
+    echo "             (S frame-starved or relay down — see $LOG_S / relay log)"
+  fi
+  sleep 6                                     # let the flap settle to stable FULL
+
+  # ---- (4) PULL-WHILE-IDLE: S is NOT training, so cradle_net_task (500ms) owns
+  # the CPU and pulls the beacon + p-fs body. We poll `cradle probe` to surface a
+  # greppable ring_len, and WAIT (generous cap) until ring_len>0. The OFF arm
+  # skips the wait (ring must stay 0 by design). ----
+  if [ "$arm" != "off" ]; then
+    local _w=0 _r=0
+    while [ "$_w" -lt 12 ]; do               # ~60s: drive a probe, then idle 5s
+      s_say "cradle probe"
+      s_say "MARK-S-RING-POLL-${_w}"
+      sleep 5; _w=$((_w + 1))
+      _r=$(log_max_ring "$LOG_S"); [ "${_r:-0}" -gt 0 ] 2>/dev/null && break
+    done
+    if ! wait_for_ring "$LOG_S" 5; then
+      echo "[cradle-live] OPEN ($TAG): the lesson body never arrived on S"
+      echo "             (ring_len stayed 0 over the wire — check the relay frame"
+      echo "              histogram + S's p-fs WANT retries in $LOG_S; do NOT fudge)"
+    fi
+  fi
+
+  # ---- (6) CONSOLIDATE: only NOW (ring live) do we train — `baby 16` runs 16
+  # synchronous sleep rounds OVER THE LIVE LESSON RING (>= the in-proc cert's 12
+  # rounds @ the same lr/seqlen). The OFF arm SKIPS training entirely: with the
+  # ring gated off, training would fit the FIXTURE (not stay at chance), so the
+  # OFF falsifier must leave the untrained newborn at chance. ----
+  if [ "$arm" != "off" ]; then
+    s_say "baby 16"
+    # `baby` prints "[baby] held-out loss (after)" when its rounds complete — the
+    # idle marker that S has finished training and is responsive again.
+    wait_for_marker "$LOG_S" '\[baby\] held-out loss \(after\)' 90 \
+      || echo "[cradle-live] OPEN ($TAG): baby consolidation did not finish in 90s"
+    sleep 2
+  fi
+
+  # ---- death arm: the cure is now PULLED + CONSOLIDATED into S. Kill T, then
+  # wait for SWIM to mark T dead on S (ALIVE->SUSPECT->DEAD ~10s) BEFORE the POST
+  # probe, so S genuinely answers from its OWN resident/persisted weights with no
+  # teacher present. ----
+  if [ "$arm" = "death" ]; then
+    kill -9 "$TPID" 2>/dev/null
+    echo "[cradle-live] killed T (node2) — SWIM must mark it dead; S answers from persisted weights"
+    sleep 14                                  # SWIM converges S's view to T=DEAD
+  fi
+
+  # ---- (7) POST probe: the verdict read. cure/death -> dropped below chance;
+  # off/scramble -> stayed at chance. ----
+  s_say "cradle probe"
+  s_say "MARK-S-POST-PROBE"
+  wait_for_marker "$LOG_S" 'MARK-S-POST-PROBE' 15
+  sleep 1
+
+  s_say "exit"
+  exec 9>&-                                   # close the write end -> S sees EOF
+  sleep 2
   kill "${APIDS[@]}" 2>/dev/null; wait 2>/dev/null
+  rm -f "$SFIFO"
 }
 
 # greppers over S's redirected log -------------------------------------------
-s_pre_probe()  { grep -A2 'S-PRE-PROBE'  "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
+# The probe line is printed by `cradle probe` immediately BEFORE the MARK-…
+# sentinel we send next, so we grep the probe line that appears just ABOVE the
+# sentinel (-B window). PRE = the last probe line before MARK-S-PRE-PROBE;
+# POST = the last probe line before MARK-S-POST-PROBE.
+s_pre_probe()  { grep -B12 'MARK-S-PRE-PROBE'  "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1; }
-s_post_probe() { grep -B1 'S-POST-PROBE' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
+s_post_probe() { grep -B12 'MARK-S-POST-PROBE' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1; }
 s_max_ring()   { grep -oE 'ring_len=[0-9]+' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '[0-9]+' | sort -n | tail -1; }
