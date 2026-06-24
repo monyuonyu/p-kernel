@@ -114,3 +114,108 @@ void supernode_forward_self_test(void (*print)(const char *));
  * elected supernode S (S.forwarded>0, B byte-identical) — the [live] arm.
  * See samples/11_distributed/run_supernode_fwd.sh. */
 void snf_cmd(const UB *args, UW len, void (*print)(const char *));
+
+/* ================================================================== */
+/* N-3 NAT hole-punching (in-proc gate) — supernode-brokered          */
+/* rendezvous, CONE-NAT ONLY.                                          */
+/* ------------------------------------------------------------------ */
+/* The last open Thread-N item. N-2c moved a datagram THROUGH the      */
+/* elected supernode (forwarding plane). N-3 uses that SAME elected    */
+/* supernode (region_supernode(), READ-ONLY) as a RENDEZVOUS BROKER so */
+/* two region peers behind NATs can attempt a DIRECT path to each      */
+/* other (hole punch) instead of relaying every datagram forever.      */
+/*                                                                     */
+/* The classic Skype/STUN dance, decentralized onto our elected broker:*/
+/*   1. each peer observes its OWN external mapping (ip:port) as seen   */
+/*      by two vantage points (here: two NP_PRB echoes) and CLASSIFIES  */
+/*      its NAT: same external port from both vantage points => CONE    */
+/*      (mapping is destination-INDEPENDENT, so a 3rd party can predict  */
+/*      the hole); DIFFERENT ports => SYMMETRIC (mapping is per-dest,    */
+/*      unpredictable — cannot be punched, must relay);                 */
+/*   2. both peers send an NP_REQ to the broker S (= region_supernode); */
+/*   3. S pairs the two pending NP_REQs, computes a VERDICT             */
+/*      (PUNCH iff BOTH peers are cone), and hands each peer the OTHER's */
+/*      observed endpoint + the verdict in an NP_INFO (warm reverse     */
+/*      path, mirroring snf's ACK relay);                              */
+/*   4. on PUNCH each peer fires an NP_PRB straight at the other's      */
+/*      predicted hole (3x retransmit to cover cold-ARP, exactly as     */
+/*      snf_send retransmits SNF_FWD); on RELAY — or on a PUNCH that     */
+/*      times out — each peer FALLS BACK to snf_send() (the N-2c relay   */
+/*      path), so connectivity is NEVER lost.                          */
+/*                                                                     */
+/* HONEST SCOPE: CONE-NAT ONLY. A symmetric peer STAYS relayed — a real */
+/* bound, NOT a bug (a destination-dependent mapping is unpredictable    */
+/* by construction). The in-proc cert proves the rendezvous PROTOCOL +  */
+/* the classification + the punch/relay DECISION; it does NOT prove real */
+/* NAT traversal (loopback has no NAT — that needs a two-distinct-NAT    */
+/* topology = a deferred [live] row, harder than N-2c's single host).   */
+/* NOCENTRAL: reuses the N-2 election as broker — no new authority.     */
+/*                                                                     */
+/* PORT-STEAL TRAP (supernode.h:41-52): N-3 does NOT bind a second      */
+/* handler. It REUSES SNF_PORT and EXTENDS the snf_rx magic switch to    */
+/* dispatch the NP_* magics — so the existing single udp_bind(SNF_PORT) */
+/* still owns the slot and no datagram is silently stolen.             */
+
+/* An observed external endpoint (ip:port as seen by a vantage point) +
+ * the peer's classified NAT type. nat_class: 0=unknown,1=cone,2=symmetric. */
+typedef struct { UW ip; UH port; UB nat_class; UB _pad; } NP_EP;
+
+/* N-3 verdicts (the broker's punch/relay decision). */
+#define NP_VERDICT_RELAY  0     /* fail-closed: unknown/symmetric -> relay  */
+#define NP_VERDICT_PUNCH  1     /* both peers cone -> attempt a direct hole */
+
+/* NAT classes (NP_EP.nat_class). */
+#define NP_NAT_UNKNOWN    0
+#define NP_NAT_CONE       1
+#define NP_NAT_SYMMETRIC  2
+
+/* N-3 rendezvous magics (distinct from SNF_*; dispatched in the SAME
+ * snf_rx switch on the SAME SNF_PORT — no second bind). */
+#define NP_REQ_MAGIC   0x5251504eUL   /* "NPRQ" LE — peer->broker rendezvous */
+#define NP_INFO_MAGIC  0x494e504eUL   /* "NPNI" LE — broker->peer the verdict */
+#define NP_PRB_MAGIC   0x42525050UL   /* "PPRB" LE — peer->peer hole probe    */
+
+/* N-3 rendezvous packet. Its OWN struct + OWN _Static_assert — it does NOT
+ * touch the 524-B SNF_PKT contract. Carries both vantage-point mappings
+ * (a_ep/a_ep2 for peer A, b_ep/b_ep2 for peer B) so the broker can classify
+ * and each peer learns the OTHER's predicted hole. */
+typedef struct {
+    UW    magic;     /* NP_REQ_MAGIC / NP_INFO_MAGIC / NP_PRB_MAGIC          */
+    UB    a;         /* peer A node id (the requester, for NP_REQ)           */
+    UB    b;         /* peer B node id (the desired rendezvous partner)      */
+    UB    verdict;   /* NP_VERDICT_* — broker fills this in the NP_INFO      */
+    UB    _pad;
+    UH    seq;       /* per-rendezvous id: NP_INFO match + dedup             */
+    UH    _pad2;
+    NP_EP a_ep, a_ep2;   /* peer A's two observed mappings (vantage 1 & 2)   */
+    NP_EP b_ep, b_ep2;   /* peer B's two observed mappings (vantage 1 & 2)   */
+} __attribute__((packed)) NP_PKT;
+
+/* On-wire size PINNED (its OWN assert; SEPARATE from SNF_PKT's 524-B one).
+ * magic4 + a1 + b1 + verdict1 + _pad1 + seq2 + _pad2(2) + 4*NP_EP(8 each=32)
+ * = 12 + 32 = 44 B. A field add must not silently grow the wire. */
+_Static_assert(sizeof(NP_PKT) == 44, "NP_PKT on-wire size must stay 44 B");
+
+/* N-3 public entry (mirrors snf_send's signature shape). Initiate a
+ * supernode-brokered rendezvous toward region peer `peer`: send NP_REQ to
+ * region_supernode(), retransmit until NP_INFO; on verdict==PUNCH fire NP_PRB
+ * (3x retransmit) at the peer's predicted hole; on PUNCH-timeout OR
+ * verdict==RELAY fall back to snf_send(peer,...) (connectivity preserved).
+ * Returns 1 if a rendezvous outcome was reached (punch attempted or relayed),
+ * 0 on a hard error (bad args / port not bound). */
+INT np_request_punch(UB peer);
+
+/* N-3 observability (read-only, per boot):
+ *   np_punches()  : NP rendezvous this node resolved to PUNCH (as a peer)
+ *   np_relays()   : NP rendezvous this node fell back to RELAY (as a peer)
+ *   np_brokered() : NP_REQ pairs this node BROKERED (as the supernode S)     */
+unsigned np_punches(void);
+unsigned np_relays(void);
+unsigned np_brokered(void);
+
+/* Host cert (shell `region punch`, gated -DNAT_PUNCH_CERT): drives the PURE
+ * cores (np_classify / np_decide / np_broker_swap) AND a real-production-path
+ * arm (crafted NP_REQ/NP_INFO into the shipped np_rx/snf_rx + production
+ * counters), NO sockets/NAT. Proves the rendezvous PROTOCOL + classification +
+ * punch/relay decision. Prints greppable [nat-punch] PASS/FAIL lines. */
+void nat_punch_self_test(void (*print)(const char *));

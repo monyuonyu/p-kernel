@@ -126,6 +126,7 @@ IMPORT void ss6live_responder_init(INT stacd, void *exinf);                  /* 
 IMPORT void ss6_live_set_enabled(int on);                                    /* SS-6 LIVE opt-in toggle */
 IMPORT void snf_install(void);                                               /* N-2c supernode forwarding: bind SNF_PORT */
 IMPORT void supernode_forward_self_test(void (*print)(const char *));        /* N-2c forwarding-plane cert */
+IMPORT void nat_punch_self_test(void (*print)(const char *));                /* N-3 NAT hole-punch cert    */
 IMPORT void snf_cmd(const UB *args, UW len, void (*print)(const char *));     /* N-2c live driver (snf send/sink/recv/stat) */
 #ifdef SEED_BOOTSTRAP_CERT
 IMPORT void seed_bootstrap_self_test(void (*print)(const char *));            /* N-4 seed-bootstrap cert (pure selection + degrade) */
@@ -897,6 +898,19 @@ EXPORT INT usermain(void)
              * supernode S (S.forwarded>0, B byte-identical) + the two falsifiers
              * (no supernode -> DIRECT; unreachable S -> fail-closed DIRECT). */
             else if (al >= 3 && a[0]=='f'&&a[1]=='w'&&a[2]=='d') supernode_forward_self_test(print);
+            /* N-3 NAT hole-punch cert (p2p-overlay.md): `region punch` runs
+             * nat_punch_self_test() — CURE (cone+cone -> PUNCH, broker swaps
+             * eps) + Falsifier-A (symmetric -> RELAY) + Falsifier-B (punch
+             * timeout -> relay, no loss) + edges. Gated -DNAT_PUNCH_CERT so the
+             * default kernel + crown stay byte-identical; an ungated build
+             * prints how to enable it (mirrors `seed test`). */
+            else if (al >= 5 && a[0]=='p'&&a[1]=='u'&&a[2]=='n'&&a[3]=='c'&&a[4]=='h') {
+#ifdef NAT_PUNCH_CERT
+                nat_punch_self_test(print);
+#else
+                print("region punch: rebuild with EXTRA_CFLAGS=-DNAT_PUNCH_CERT\r\n");
+#endif
+            }
             else region_print();
         } else if (starts_with(line, n, "hrw")) {
             lookup_self_test(print);
