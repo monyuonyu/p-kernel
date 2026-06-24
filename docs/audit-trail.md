@@ -1407,3 +1407,34 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
   single-host floor (loopback ./relay; SSH 2-machine deferred), M-tier student.
 - NEXT (commander, when the host returns): re-run run_cradle_live.sh on the ThinkPad with the self-election fix; expect the
   CURE arm to pass (T self-elects -> emits -> S learns) + the 3 falsifier arms to bite; then CLOSE this row.
+
+## N-4 seed bootstrap (PKERNEL_SEED) — merge 5041325a (impl 61dd9528 + 4d780961, base 95ec9da2)
+- Design-harden (the existing ha_tick failover IS the try-next model; PKERNEL_RELAY is already a list) → impl → independent
+  audit. Verdict: **MERGEABLE-WITH-NITS**. The last core Thread-N decentralization slice: a PKERNEL_SEED list demotes the
+  relay to ONE optional seed (NOCENTRAL — no mandatory seed), not a hardcoded central dependency.
+- REAL + falsifiable: pure `seed_select_next(cur, alive[], count)` (lowest-index-not-failed, wraps, -1 exhausted, bounded by
+  count → no hang for ANY alive vector — auditor's exhaustive harness: count 0/1/MAX, all-dead/all-live/alternating). The
+  PKERNEL_SEED branch in net_relay_init + the net_dispatch gate (`|| PKERNEL_SEED`) make it ENGAGE at runtime; seed-mode with
+  no usable seed BOOTS SOLO (logs "no usable seed — running solo", exit 0, no hang) instead of the relay path's hard return-1.
+- Cert [seed-bootstrap] 9/9 PASS (CURE: alive={0,0,1} → joins via the LIVE seed idx 2, NOT the dead head idx 0; Falsifier-A:
+  all-dead → solo, bounded step-counter, no hang). Falsifier-B -DSEED_NO_ADVANCE → RESULT: FAIL (the nulled advance makes
+  sb_join break immediately → chosen=-1 → load-bearing). BACK-COMPAT byte-identical (PKERNEL_RELAY-only path + hard return-1
+  unchanged at source AND runtime; neither-env → loopback == base). Both net_relay.c/net_dispatch.c copies byte-identical
+  except line 2. CROWN: hosted-only (absent from bare-metal Makefiles); bare-metal aarch64 .text 755a20fa byte-identical
+  (auditor + commander). 6-file diff.
+- HONEST: proves pure selection + solo-degrade + runtime-engage on a SINGLE node; NOT N-3 NAT; the TRUE cross-host seed
+  convergence (A boots PKERNEL_SEED=B, unicasts B, joins over real sockets) is a DEFERRED [live] row (host-dependent);
+  SWIM broadcast discovery untouched.
+- NIT (pre-existing, NOT introduced — filed as a follow-up row below): an UNRESOLVABLE hostname
+  (PKERNEL_SEED/RELAY=garbage:notaport) SIGSEGVs (exit 139) in the shared, unchanged resolve_relay/parse_relay_list; base
+  95ec9da2 crashes identically. The seed wave merely routes a new env into the same code — does NOT block this merge.
+LEDGER: row CLOSED (in-proc gate). The relay is now one optional seed, not a central requirement — a PKERNEL_SEED node
+bootstraps + degrades safely. Cross-host join = the deferred [live] row.
+
+## OPEN follow-up — resolve_relay crashes on an unresolvable hostname (should degrade, not SIGSEGV)
+- Surfaced by the N-4 audit: `PKERNEL_RELAY=garbage:notaport` / `PKERNEL_SEED=garbage:notaport` (a non-numeric, unresolvable
+  host) → SIGSEGV (exit 139) at the `net` command. Reproduces on base 95ec9da2 (pre-existing, shared code). Root cause: an
+  unresolvable-hostname path in resolve_relay/parse_relay_list (arch/linux/*/net_relay.c) that doesn't fail-closed. Against
+  the "degrade not crash" philosophy (a node handed a bad relay/seed should fall through to solo/loopback, never crash).
+- STATUS: OPEN. A small hosted-only hardening (resolve_relay returns failure → the entry is skipped/marked dead → seed-mode
+  degrades to solo, relay-mode keeps its existing contract). Sandbox-verifiable (single node). NEXT autonomous lane.
