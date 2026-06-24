@@ -1431,10 +1431,23 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
 LEDGER: row CLOSED (in-proc gate). The relay is now one optional seed, not a central requirement — a PKERNEL_SEED node
 bootstraps + degrades safely. Cross-host join = the deferred [live] row.
 
-## OPEN follow-up — resolve_relay crashes on an unresolvable hostname (should degrade, not SIGSEGV)
-- Surfaced by the N-4 audit: `PKERNEL_RELAY=garbage:notaport` / `PKERNEL_SEED=garbage:notaport` (a non-numeric, unresolvable
-  host) → SIGSEGV (exit 139) at the `net` command. Reproduces on base 95ec9da2 (pre-existing, shared code). Root cause: an
-  unresolvable-hostname path in resolve_relay/parse_relay_list (arch/linux/*/net_relay.c) that doesn't fail-closed. Against
-  the "degrade not crash" philosophy (a node handed a bad relay/seed should fall through to solo/loopback, never crash).
-- STATUS: OPEN. A small hosted-only hardening (resolve_relay returns failure → the entry is skipped/marked dead → seed-mode
-  degrades to solo, relay-mode keeps its existing contract). Sandbox-verifiable (single node). NEXT autonomous lane.
+## resolve_relay degrade-not-crash — CLOSED — merge d20a87c5 (impl c4b67845, base e8fe9557)
+- Surfaced by the N-4 audit, FIXED + independently audited. `PKERNEL_RELAY/SEED=garbage:notaport` SIGSEGV'd (exit 139).
+- DIAGNOSIS (sound, auditor-confirmed): the fault is INSIDE glibc `getaddrinfo()` called from a T-Kernel task (small stack /
+  fixed mmap arena) on an NSS name — numeric IPs early-return via `inet_pton` and never reach it (so `127.0.0.1:1` was always
+  fine). The single variable flipping the crash is whether getaddrinfo runs on a DNS name.
+- FIX: `resolve_relay` no longer calls getaddrinfo — a non-dotted-quad host logs `unresolvable host '<h>' (numeric IP required
+  in this build) — skipping` + returns -1; `parse_relay_list` drops the entry and `continue`s; an all-unresolvable list
+  degrades (seed→solo, relay→loopback). **Numeric-IP-only is the chosen crash-safe contract** (DNS relay names unsupported in
+  the hosted build; verified ALL in-tree real configs use IPs — only doc illustrations use a hostname).
+- PROOF: cert `samples/11_distributed/run_resolve_crash.sh` 8/8 PASS; all hostile inputs (garbage / foo.bar.baz / a,b,c / ::: /
+  mixed numeric+junk) → exit 0, no hang, mixed uses the numeric entry. Falsifier -DRESOLVE_NO_GUARD restores the getaddrinfo
+  call → exit 139 on native aarch64 (load-bearing; qemu-x86_64 doesn't fault → the crash is environment-specific, honestly
+  noted). Back-compat: valid numeric relay registers as base; N-4 [seed-bootstrap] 9/9. Crown 755a20fa byte-identical
+  (hosted-only). Independent audit: MERGEABLE-WITH-NITS.
+- NIT→follow-up (non-blocking, STRICTLY SAFER than base which SIGSEGV'd): 3 Android user-facing surfaces still advertise
+  hostnames as acceptable — `android/app/.../pkernel_jni.c:120`, `PKernel.java:48`, the Kotlin relay-host EditText
+  (`LogActivity.kt:60/98`). A phone user typing a DNS relay name now silently falls to loopback. Update those doc strings /
+  numeric-validate the field. OPEN (small Android-boundary doc/UX row).
+LEDGER: row CLOSED. A node handed a bad relay/seed hostname now degrades gracefully instead of crashing — "degrade not crash"
+holds at the bootstrap boundary.
