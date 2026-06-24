@@ -530,7 +530,25 @@ static int relay_index_of(const struct sockaddr_in *from)
     return -1;
 }
 
-/* Resolve host (DNS name or dotted-quad) + port into *out. 0 on success. */
+/* Resolve host (dotted-quad) + port into *out. 0 on success, -1 on skip.
+ *
+ * DEGRADE-NOT-CRASH (resolve-crash fix): relay/seed endpoints in the hosted
+ * p-kernel are NUMERIC IPs (the overlay uses 10.1.0.x; real relays are given
+ * by IP — see samples/11_distributed/*.sh, all PKERNEL_RELAY*=127.0.0.1 /
+ * numeric). A NON-numeric host is treated as UNRESOLVABLE: we log it and
+ * return -1 so the caller drops the entry and falls through to solo/loopback,
+ * NEVER crash.
+ *
+ * Why not getaddrinfo(): this TU is built under the T-Kernel runtime and runs
+ * inside a T-Kernel task (small stack, fixed mmap arena). glibc getaddrinfo()
+ * SIGSEGVs in that environment when handed a name that needs NSS resolution
+ * (the fault is INSIDE getaddrinfo, before its error return is ever seen — the
+ * immune-system audit's repro: PKERNEL_RELAY=garbage:notaport -> exit 139).
+ * The standalone getaddrinfo works, so this is specific to the kernel-task
+ * context; calling it here is a latent crash. Numeric-IP-only is the chosen
+ * crash-safe contract; DNS relay names are unsupported in this build. The
+ * getaddrinfo path is retained ONLY behind RESOLVE_NO_GUARD so the cert's
+ * falsifier can re-expose the crash and prove this guard is load-bearing. */
 static int resolve_relay(const char *host, int port, struct sockaddr_in *out)
 {
     memset(out, 0, sizeof(*out));
@@ -539,6 +557,13 @@ static int resolve_relay(const char *host, int port, struct sockaddr_in *out)
 
     if (inet_pton(AF_INET, host, &out->sin_addr) == 1) return 0;
 
+#ifndef RESOLVE_NO_GUARD
+    /* Non-numeric host: unresolvable in this build — skip, do not crash. */
+    dprintf(2, "[net_relay] unresolvable host '%s' (numeric IP required in "
+               "this build) — skipping\n", host);
+    return -1;
+#else
+    /* FALSIFIER ONLY (RESOLVE_NO_GUARD): the crash-prone path. */
     struct addrinfo hints = {0};
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -553,6 +578,7 @@ static int resolve_relay(const char *host, int port, struct sockaddr_in *out)
     out->sin_addr = sin->sin_addr;
     freeaddrinfo(res);
     return 0;
+#endif
 }
 
 /* Parse PKERNEL_RELAY="host[:port],host[:port][,...]" (max MAX_RELAYS)
@@ -585,7 +611,11 @@ static int parse_relay_list(const char *spec)
             if (port <= 0 || port > 65535) port = DEFAULT_PORT;
         }
         if (!*tok) continue;
-        if (resolve_relay(tok, port, &relay_list[count]) < 0) return -1;
+        /* DEGRADE-NOT-CRASH: skip an unresolvable entry rather than failing
+         * the whole list. A list that is ALL-unresolvable yields count==0,
+         * which the caller turns into a solo/loopback degrade (never a crash).
+         * A mixed list keeps its resolvable (numeric) endpoints. */
+        if (resolve_relay(tok, port, &relay_list[count]) < 0) continue;
         count++;
     }
     return count;
