@@ -311,7 +311,11 @@ run_arm() {
   # re-prove the gate flag — it proves the end-to-end "no teaching -> no learning."
   local PFS_ENV="PKERNEL_PFS_DIR=$PFS_S"
   [ "$arm" = "off" ] && PFS_ENV=""           # OFF: PFS-less -> no baby, no DMN
-  env PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 $PFS_ENV \
+  # PKERNEL_CRADLE_DIAG=1 turns on the hosted-only [cradle-diag] pull-path tracer
+  # in cradle_net.c's STRONG cradle_poll_and_pull (wave-cradle-diag). It emits a
+  # uniquely-greppable line on each beacon-seen / state change so the commander
+  # sees EXACTLY where the beacon->poll->dag_read->ingest chain breaks on S.
+  env PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 PKERNEL_CRADLE_DIAG=1 $PFS_ENV \
       "$BOOT/p-kernel" <"$SFIFO" >"$LOG_S" 2>&1 & local SPID=$!; APIDS+=($SPID)
   # Open the FIFO read+write on fd 9: this NEVER blocks (an O_RDWR open on a FIFO
   # has no wait-for-peer), so the harness can't hang if S is slow to open its
@@ -349,8 +353,14 @@ run_arm() {
   # "*** level change: ... -> FULL  alive=3"); S need not run any command. The
   # localhost bring-up flaps FULL->REDUCED->FULL, so we wait for the marker and
   # then settle a few extra seconds so the LAST view is the stable one. ----
-  if ! wait_for_marker "$LOG_S" '-> FULL[[:space:]]+alive=3' 90; then
-    echo "[cradle-live] OPEN ($TAG): S never converged to FULL alive=3 in 90s"
+  # MATCH the REAL degrade.c emit: "[degrade] *** level change: REDUCED -> FULL  alive=3"
+  # (lname[FULL]="FULL", then the literal "  alive=" — FULL then TWO spaces then
+  # alive=3). The marker is "FULL<ws>alive=3" so it fires on the stable-FULL line
+  # WITHOUT depending on the "-> " transition prefix wording. Verified: this ERE
+  # matches the real line and does NOT false-match "FULL -> REDUCED  alive=2" nor
+  # "[degrade] initialized  level=FULL".
+  if ! wait_for_marker "$LOG_S" 'FULL[[:space:]]+alive=3' 180; then
+    echo "[cradle-live] OPEN ($TAG): S never converged to FULL alive=3 in 180s"
     echo "             (S frame-starved or relay down — see $LOG_S / relay log)"
   fi
   sleep 6                                     # let the flap settle to stable FULL
@@ -361,7 +371,7 @@ run_arm() {
   # skips the wait (ring must stay 0 by design). ----
   if [ "$arm" != "off" ]; then
     local _w=0 _r=0
-    while [ "$_w" -lt 12 ]; do               # ~60s: drive a probe, then idle 5s
+    while [ "$_w" -lt 36 ]; do               # ~180s: drive a probe, then idle 5s
       s_say "cradle probe"
       s_say "MARK-S-RING-POLL-${_w}"
       sleep 5; _w=$((_w + 1))
@@ -383,8 +393,8 @@ run_arm() {
     s_say "baby 16"
     # `baby` prints "[baby] held-out loss (after)" when its rounds complete — the
     # idle marker that S has finished training and is responsive again.
-    wait_for_marker "$LOG_S" '\[baby\] held-out loss \(after\)' 90 \
-      || echo "[cradle-live] OPEN ($TAG): baby consolidation did not finish in 90s"
+    wait_for_marker "$LOG_S" '\[baby\] held-out loss \(after\)' 180 \
+      || echo "[cradle-live] OPEN ($TAG): baby consolidation did not finish in 180s"
     sleep 2
   fi
 
@@ -424,6 +434,17 @@ s_post_probe() { grep -B12 'MARK-S-POST-PROBE' "/tmp/cradle_live_nodeS_$1.log" 2
 s_max_ring()   { grep -oE 'ring_len=[0-9]+' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '[0-9]+' | sort -n | tail -1; }
 t_emitted()    { grep -c 'lesson emitted over the mesh' "/tmp/cradle_live_nodeT_$1.log" 2>/dev/null; }
+# The [cradle-diag] pull-path tracer (wave-cradle-diag): surface the UNIQUE diag
+# lines S printed so the commander reads the break point directly. The LAST diag
+# line of an arm is the deepest the chain reached before stopping:
+#   poll: beacon=teacher=.. seq=..   -> a beacon WAS received this cycle
+#   poll: (no diag line at all)      -> NO beacon ever arrived (KDDS sub empty)
+#   beacon seq=.. hw=.. vocab_fp=..  -> seq/fp gate evaluated
+#   reject: seq<=hw / vocab_fp MISMATCH / fmt!=BYTE / body_len.. -> gate rejected
+#   dag_read ref=.. rc=.. len=..     -> the p-fs body fetch (rc!=len = not local)
+#   ingest len=.. -> ring_len=..     -> SUCCESS (or SKIPPED: ingest<=0)
+s_diag_tail() { grep -E '\[cradle-diag\]' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null | tail -8; }
+s_diag_last() { grep -E '\[cradle-diag\]' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null | tail -1; }
 loss_of()      { printf '%s' "$1" | grep -oE 'probe_loss=[0-9.]+' | grep -oE '[0-9.]+'; }
 # numeric compare without bc: awk.
 flt_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 < b+0)}'; }
@@ -443,6 +464,10 @@ RING_C=$(s_max_ring cure); EMIT_C=$(t_emitted cure)
 echo "T lessons emitted: $EMIT_C   S max ring_len: $RING_C"
 echo "S pre : $PRE_C"
 echo "S post: $POST_C"
+echo "----- [cradle-diag] pull-path trace on S (deepest reached = the break point) -----"
+s_diag_tail cure
+echo "diag-last: $(s_diag_last cure)"
+echo "-------------------------------------------------------------------------------"
 PRE_CL=$(loss_of "$PRE_C"); POST_CL=$(loss_of "$POST_C")
 [ "${EMIT_C:-0}" -ge 1 ] 2>/dev/null || fail "CURE: T never emitted (not elected teacher — check PKERNEL_TEACHER_CERT)"
 [ "${RING_C:-0}" -gt 0 ] 2>/dev/null || fail "CURE: the lesson body never arrived on S (ring_len stayed 0 over the wire)"
@@ -507,5 +532,10 @@ else
   echo "[cradle-live] OPEN: see /tmp/cradle_live_*.log — do NOT fudge green."
   echo "          (if T never emitted: confirm PKERNEL_TEACHER_CERT=1 reached node 2;"
   echo "           if ring_len stayed 0: the p-fs body did not arrive — widen the S-RING-POLL window.)"
+  echo "          [cradle-diag] CURE deepest pull-path step (the break point):"
+  echo "            $(s_diag_last cure)"
+  echo "          (NO diag line at all => NO beacon ever reached S's KDDS sub on cradle/teach;"
+  echo "           'reject: vocab_fp MISMATCH' => fp gate; 'dag_read rc!=body_len' => p-fs body not"
+  echo "           local yet; 'ingest .. SKIPPED' => the ring refused it. Full trace above.)"
   exit 1
 fi

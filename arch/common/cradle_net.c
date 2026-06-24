@@ -49,6 +49,53 @@
  * student (bare metal), the weak student_stub keeps the link green and this TU
  * is simply not driven (no baby -> no DMN student tick -> no pull). */
 IMPORT int cradle_lesson_ingest(const UB *body, int len);
+/* read-only ring length, for the [cradle-diag] ingest report (same tier). */
+IMPORT int cradle_lesson_len(void);
+
+/* ------------------------------------------------------------------ */
+/* [cradle-diag] — HOSTED-ONLY pull-path tracer (wave-cradle-diag)     */
+/* ------------------------------------------------------------------ */
+/* This TU is built ONLY into the hosted kernels (boot/linux,
+ * boot/linux_x86_64) + Android; bare metal links the weak no-op in
+ * student_stub.c and never sees this code. So getenv / console emit are safe
+ * here and the bare-metal .text crown is byte-identical by construction.
+ *
+ * Enable: export PKERNEL_CRADLE_DIAG=1 before launching the student node.
+ * Lines are uniquely greppable with the prefix "[cradle-diag] ". They are
+ * EMITTED ONLY on a beacon-seen OR a state change (NOT on every empty 500ms
+ * poll), so an idle student stays quiet. The harness greps them to pinpoint
+ * the EXACT break in the beacon -> poll -> dag_read -> ingest chain. */
+IMPORT void sio_send_frame(const UB *buf, INT size);
+extern char *getenv(const char *);
+
+static INT cd_diag = -1;            /* -1 = unread, 0 = off, 1 = on            */
+static INT cd_diag_on(void)
+{
+    if (cd_diag < 0) {
+        const char *v = getenv("PKERNEL_CRADLE_DIAG");
+        cd_diag = (v && v[0] == '1') ? 1 : 0;
+    }
+    return cd_diag;
+}
+
+static void cd_puts(const char *s)
+{
+    INT n = 0; while (s[n]) n++;
+    sio_send_frame((const UB *)s, n);
+}
+
+/* append an unsigned decimal to out at *k (out is generously sized by callers). */
+static void cd_putdec(char *out, INT *k, UW v)
+{
+    char tmp[12]; INT t = 0;
+    if (v == 0) { out[(*k)++] = '0'; return; }
+    while (v > 0 && t < 12) { tmp[t++] = (char)('0' + v % 10); v /= 10; }
+    while (t > 0) out[(*k)++] = tmp[--t];
+}
+static void cd_putstr(char *out, INT *k, const char *s)
+{
+    while (*s) out[(*k)++] = *s++;
+}
 
 /* the fixed byte-student fingerprint: "BYTE" ++ "256." ++ zero pad. Any teacher
  * stamping a different fp (e.g. a soft/foreign-keying one) is REFUSED. */
@@ -170,36 +217,117 @@ void cradle_poll_and_pull(void)
         for (INT i = 0; i < DNODE_MAX; i++) ct_seen_hw[i] = 0;
         ct_hw_init = 1;
     }
+    INT diag = cd_diag_on();
     if (drpc_my_node == 0xFF) return;       /* solo: no mesh to pull from      */
     if (!ct_topic_open) cradle_net_open();
-    if (ct_sub_h < 0) return;
+    if (ct_sub_h < 0) {
+        if (diag) cd_puts("[cradle-diag] poll: sub_h<0 (topic not open)\r\n");
+        return;
+    }
 
     /* LATEST_ONLY poll (timeout=0): get the newest beacon, if any. */
     W r = kdds_sub(ct_sub_h, &ct_rx_pkt, (W)sizeof ct_rx_pkt, 0);
-    if (r < (W)sizeof ct_rx_pkt) return;    /* nothing new                     */
-    if (ct_rx_pkt.magic != CRADLE_MAGIC) return;
+    if (r < (W)sizeof ct_rx_pkt) return;    /* nothing new (quiet: no print)   */
+    if (ct_rx_pkt.magic != CRADLE_MAGIC) {
+        if (diag) cd_puts("[cradle-diag] poll: beacon=BAD-MAGIC\r\n");
+        return;
+    }
 
+    /* a beacon arrived this cycle — narrate it (rate-limited: only on beacon). */
     UB org = ct_rx_pkt.teacher_node;
-    if (org == drpc_my_node) return;        /* own echo: don't self-teach      */
-    if (org >= DNODE_MAX) return;
-    if (ct_rx_pkt.seq <= ct_seen_hw[org]) return;   /* already ingested        */
-    if (ct_rx_pkt.fmt != LESSON_FMT_BYTE) return;   /* soft reserved (DEFERRED) */
-    if (!ct_fp_ok(ct_rx_pkt.vocab_fp)) return;      /* foreign keying: refuse  */
+    if (diag) {
+        char line[160]; INT k = 0;
+        cd_putstr(line, &k, "[cradle-diag] poll: beacon=teacher=");
+        cd_putdec(line, &k, (UW)org);
+        cd_putstr(line, &k, " seq=");
+        cd_putdec(line, &k, ct_rx_pkt.seq);
+        cd_putstr(line, &k, "\r\n");
+        line[k] = 0; cd_puts(line);
+    }
+
+    if (org == drpc_my_node) {              /* own echo: don't self-teach      */
+        if (diag) cd_puts("[cradle-diag] reject: own-echo\r\n");
+        return;
+    }
+    if (org >= DNODE_MAX) {
+        if (diag) cd_puts("[cradle-diag] reject: org>=DNODE_MAX\r\n");
+        return;
+    }
+
+    /* seq vs high-water + vocab_fp match (the gate the task calls out). */
+    if (diag) {
+        char line[160]; INT k = 0;
+        cd_putstr(line, &k, "[cradle-diag] beacon seq=");
+        cd_putdec(line, &k, ct_rx_pkt.seq);
+        cd_putstr(line, &k, " hw=");
+        cd_putdec(line, &k, ct_seen_hw[org]);
+        cd_putstr(line, &k, " vocab_fp=");
+        cd_putstr(line, &k, ct_fp_ok(ct_rx_pkt.vocab_fp) ? "ok" : "MISMATCH");
+        cd_putstr(line, &k, "\r\n");
+        line[k] = 0; cd_puts(line);
+    }
+
+    if (ct_rx_pkt.seq <= ct_seen_hw[org]) { /* already ingested                */
+        if (diag) cd_puts("[cradle-diag] reject: seq<=hw (already ingested)\r\n");
+        return;
+    }
+    if (ct_rx_pkt.fmt != LESSON_FMT_BYTE) { /* soft reserved (DEFERRED)        */
+        if (diag) cd_puts("[cradle-diag] reject: fmt!=BYTE\r\n");
+        return;
+    }
+    if (!ct_fp_ok(ct_rx_pkt.vocab_fp)) {    /* foreign keying: refuse          */
+        if (diag) cd_puts("[cradle-diag] reject: vocab_fp MISMATCH\r\n");
+        return;
+    }
 
     UW blen = ct_rx_pkt.body_len;
-    if (blen == 0 || blen > CT_LESSON_MAX) return;
+    if (blen == 0 || blen > CT_LESSON_MAX) {
+        if (diag) {
+            char line[160]; INT k = 0;
+            cd_putstr(line, &k, "[cradle-diag] reject: body_len=");
+            cd_putdec(line, &k, blen);
+            cd_putstr(line, &k, " out-of-range\r\n");
+            line[k] = 0; cd_puts(line);
+        }
+        return;
+    }
 
     /* pull the body by its content ref. */
     U1 ref[PFS_NAME_MAX];
     for (UW i = 0; i < PFS_NAME_MAX; i++) ref[i] = ct_rx_pkt.body_ref[i];
     UW rl = 0; while (rl < PFS_NAME_MAX && ref[rl]) rl++;
     INT got = pfs_dag_read(ref, rl, ct_body_buf, CT_LESSON_MAX);
-    if (got != (INT)blen) return;           /* body not (yet) local: retry later */
+    if (diag) {
+        char line[160]; INT k = 0;
+        cd_putstr(line, &k, "[cradle-diag] dag_read ref=");
+        for (UW i = 0; i < rl && k < 140; i++) line[k++] = (char)ref[i];
+        cd_putstr(line, &k, " rc=");
+        cd_putdec(line, &k, (UW)got);
+        cd_putstr(line, &k, " len=");
+        cd_putdec(line, &k, blen);
+        cd_putstr(line, &k, "\r\n");
+        line[k] = 0; cd_puts(line);
+    }
+    if (got != (INT)blen) {                 /* body not (yet) local: retry later */
+        if (diag) cd_puts("[cradle-diag] reject: dag_read rc!=body_len (body not local yet)\r\n");
+        return;
+    }
 
     /* feed the lesson into the student's ring (refuses too-small without
      * truncating; the ring then drives the next sleep's windows). */
-    if (cradle_lesson_ingest(ct_body_buf, (int)blen) > 0)
+    INT ing = cradle_lesson_ingest(ct_body_buf, (int)blen);
+    if (ing > 0)
         ct_seen_hw[org] = ct_rx_pkt.seq;    /* advance only on a real ingest    */
+    if (diag) {
+        char line[160]; INT k = 0;
+        cd_putstr(line, &k, "[cradle-diag] ingest len=");
+        cd_putdec(line, &k, blen);
+        cd_putstr(line, &k, " -> ring_len=");
+        cd_putdec(line, &k, (UW)cradle_lesson_len());
+        if (ing <= 0) cd_putstr(line, &k, " (SKIPPED: ingest<=0)");
+        cd_putstr(line, &k, "\r\n");
+        line[k] = 0; cd_puts(line);
+    }
 }
 
 /* ------------------------------------------------------------------ */
