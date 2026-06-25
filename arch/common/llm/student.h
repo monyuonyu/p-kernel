@@ -405,6 +405,18 @@ const uint8_t *cradle_window_src(int *len_out);
  * Called by the transport (cradle_net.c) after a p-fs pull. */
 int  cradle_lesson_ingest(const uint8_t *body, int len);
 
+/* The CANONICAL live lesson (T-fix-c): unify live == cert. cradle_canon_budget()
+ * returns the cert's CT_CERT_BUDGET (== the composed length). cradle_compose_canon
+ * composes into out[cap] (cap >= cradle_canon_budget()) the SAME trainable, train/
+ * held-structured lesson the [cradle-teach] cert proves (via the static
+ * ct_build_lesson) — byte-identical to the in-proc cert's lesson, so the live wire
+ * teaches the EXACT lesson the cert certifies. Returns the composed length
+ * (== CT_CERT_BUDGET) or -1 (NULL out / cap too small); *probe_off (if non-NULL)
+ * gets the held-probe offset (== the production train_end). The live teacher verb
+ * emits cradle_compose_canon() bytes instead of a short hand-typed string. */
+int  cradle_canon_budget(void);
+int  cradle_compose_canon(uint8_t *out, int cap, int *probe_off);
+
 /* observability / test hooks (pure). */
 int  cradle_lesson_len(void);
 void cradle_set_enabled(int on);    /* 0 = teaching OFF (Arm A): fixture only  */

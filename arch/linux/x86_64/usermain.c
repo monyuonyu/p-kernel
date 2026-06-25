@@ -88,11 +88,17 @@ IMPORT INT  cradle_teach_emit(const UB *body, UW len);/* T-fix-b teacher emit */
 IMPORT int  cradle_teach_self_test(void (*emit)(const char *)); /* [cradle-teach] */
 IMPORT void cradle_live_probe(void (*emit)(const char *));      /* [cradle-live] probe */
 IMPORT void cradle_set_enabled(int on);                         /* [cradle-live] arm A */
+IMPORT int  cradle_compose_canon(UB *out, int cap, int *probe_off); /* T-fix-c canon */
+IMPORT int  cradle_canon_budget(void);                          /* T-fix-c canon budget */
 /* [cradle-live] Arm B scramble body length: must be >= CRADLE's live threshold
  * (4*CRADLE_SEQLEN=128) so the ring goes live, and matches the cure-lesson size
- * the harness emits via `cradle emit` (CT_CERT_BUDGET=1280) so the scrambled
+ * the harness emits via `cradle emit-canon` (CT_CERT_BUDGET=1280) so the scrambled
  * control is the SAME #bytes / #updates — only the SEQUENCE differs. */
 #define CL_SCRAMBLE_LEN  1280
+/* T-fix-c: the canonical CURE lesson emit buffer. file-static (.bss), NEVER a
+ * stack local (the hosted-relay stack-overflow lesson). CT_LESSON_MAX (4096,
+ * dtr.h) bounds the wire body; the canonical lesson is CT_CERT_BUDGET=1280. */
+#define CL_CANON_MAX  4096
 IMPORT void lm_test(void);                            /* living-mind DMN */
 /* arch/common/llm/llm_shell.c — the real SmolLM2 inference engine bridge.
  * Loads the GGUF (env PKERNEL_LLM_GGUF, default /tmp/smollm2-135m.gguf),
@@ -1156,8 +1162,14 @@ EXPORT INT usermain(void)
              *                        lesson, B pulls + trains, B knows a held-out
              *                        probe it was NEVER directly trained on; 3
              *                        falsification arms each go RED).
+             *   cradle emit-canon    (teacher only, CURE) emit the CANONICAL
+             *                        lesson — the SAME trainable bytes the in-proc
+             *                        cert proves (budget=1280); students pull +
+             *                        distill it and the held probe drops.
              *   cradle emit <text>   (teacher node only) emit ONE TEXT lesson over
              *                        the mesh; region students pull + distill it.
+             *                        NOTE: a <128-byte body is REFUSED by ingest
+             *                        (CRADLE_MIN_LIVE) — use emit-canon to teach.
              *   cradle probe         [cradle-live] self-report: print the LIVE
              *                        ring_len + held probe_loss + chance (the
              *                        multi-process harness greps this on S).
@@ -1178,6 +1190,31 @@ EXPORT INT usermain(void)
                 cradle_set_enabled(0);
                 print("[cradle-live] teaching OFF (Arm A): ring ignored, fixture "
                       "only — a probe now stays at chance\r\n");
+            } else if (al >= 10 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t'
+                       && a[4]=='-'&&a[5]=='c'&&a[6]=='a'&&a[7]=='n'&&a[8]=='o'
+                       && a[9]=='n') {
+                /* T-fix-c CURE arm: emit the CANONICAL lesson — the SAME
+                 * trainable, train/held-structured bytes the in-proc
+                 * [cradle-teach] cert proves (cradle_compose_canon ->
+                 * ct_build_lesson, CT_CERT_BUDGET=1280). This is well past the
+                 * live threshold (CRADLE_MIN_LIVE=128) so ingest accepts it and
+                 * the ring goes live; the held probe lands at the production
+                 * train_end (generalization, not rote). Replaces the old short
+                 * hand-typed `cradle emit <text>` string that fell below the
+                 * threshold and was refused (ring_len stayed 0). */
+                static UB cl_canon[CL_CANON_MAX];
+                INT poff = 0;
+                INT llen = cradle_compose_canon(cl_canon, CL_CANON_MAX, &poff);
+                if (llen <= 0) {
+                    print("[cradle] canonical compose FAILED (buffer too small)\r\n");
+                } else {
+                    INT rc = cradle_teach_emit(cl_canon, (UW)llen);
+                    if (rc) print("[cradle-live] canonical lesson emitted (CURE): "
+                                  "the SAME trainable bytes the in-proc cert proves "
+                                  "(budget=1280, probe at train_end)\r\n");
+                    else    print("[cradle] not emitted — this node is not the "
+                                  "elected region teacher (or solo).\r\n");
+                }
             } else if (al >= 12 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t'
                        && a[4]=='-'&&a[5]=='s'&&a[6]=='c'&&a[7]=='r'&&a[8]=='a'
                        && a[9]=='m'&&a[10]=='b'&&a[11]=='l'

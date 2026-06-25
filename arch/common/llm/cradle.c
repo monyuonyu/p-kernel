@@ -489,3 +489,42 @@ int cradle_teach_self_test(cradle_emit_fn emit)
     }
     return fails;
 }
+
+/* ===========================================================================
+ * THE CANONICAL LIVE LESSON (T-fix-c) — unify live == cert: the SAME bytes.
+ *
+ * The live [cradle-live] teacher must emit the SAME trainable, train/held-
+ * structured lesson the in-proc [cradle-teach] cert proves — composed via
+ * ct_build_lesson, NOT a hand-typed string. The previous live CURE arm sent a
+ * ~115-byte hand-typed string that fell BELOW CRADLE_MIN_LIVE (128) and was
+ * REFUSED by cradle_lesson_ingest (ring_len stayed 0 -> the student never
+ * learned). The canonical lesson is CT_CERT_BUDGET (1280) bytes — well past the
+ * live threshold — and is byte-identical to what cradle_teach_self_test builds,
+ * so the in-proc cert and the live wire teach the EXACT same lesson (one lesson
+ * format, one math). The held probe lands at the production train_end boundary
+ * (probe_off == train_end, the FIRST never-trained window), so the live probe's
+ * post-training drop proves GENERALIZATION, not rote copy.
+ * ========================================================================= */
+
+/* The canonical lesson budget (== the cert's CT_CERT_BUDGET). The live teacher
+ * passes a buffer of at least this size; the composed lesson is exactly this
+ * many bytes. Exposed so the caller can size its file-static emit buffer / cap
+ * to the SAME budget the cert uses (no magic number on the wire side). */
+int cradle_canon_budget(void) { return CT_CERT_BUDGET; }
+
+/* Compose the canonical, trainable, train/held-structured lesson into out[cap]
+ * (cap MUST be >= cradle_canon_budget()). Returns the composed byte length
+ * (== CT_CERT_BUDGET) on success, or -1 if out is NULL / cap too small. On
+ * success *probe_off (if non-NULL) gets the held-probe byte offset (== the
+ * production train_end, the first never-trained window). The bytes are IDENTICAL
+ * to what cradle_teach_self_test's ct_build_lesson composes — that identity is
+ * the whole point (in-proc cert == live wire). */
+int cradle_compose_canon(uint8_t *out, int cap, int *probe_off)
+{
+    if (!out || cap < CT_CERT_BUDGET) return -1;
+    int poff, train_end, trainw, heldw;
+    int llen = ct_build_lesson(out, CT_CERT_BUDGET, CRADLE_SEQLEN,
+                               &poff, &train_end, &trainw, &heldw);
+    if (probe_off) *probe_off = poff;
+    return llen;
+}

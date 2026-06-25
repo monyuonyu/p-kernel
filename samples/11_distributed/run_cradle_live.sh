@@ -189,17 +189,22 @@ wait_for_ring() {
   return 1
 }
 
-# The DETERMINISTIC cure lesson T emits. NOT a GGUF sampler output — a fixed byte
-# body so the run is reproducible. It must be >= the live threshold (4*32=128 B)
-# AND ~CL_SCRAMBLE_LEN (1280) so the cure-vs-scramble arms compare equal bytes.
-# A coined fact ("zorblax is a blue fox") repeated, the SAME family the in-proc
-# cert (ct_build_lesson, CT_TRAIN_SENT/CT_HELD_SENT) teaches, so the held probe
-# at the production train_end boundary is the never-trained continuation. We
-# build it by repeating the sentence pair to ~1280 bytes.
-CURE_SENT="the zorblax is a blue fox. the zorblax runs and the blue fox hides in the den. rivers flow to the sea and the wind moves over the hills. "
-CURE_LESSON=""
-while [ "${#CURE_LESSON}" -lt 1280 ]; do CURE_LESSON="$CURE_LESSON$CURE_SENT"; done
-CURE_LESSON="${CURE_LESSON:0:1280}"
+# The DETERMINISTIC cure lesson T emits (T-fix-c: unify live == cert).
+#
+# THE OLD BUG: the harness used to build a ~1280-byte CURE_LESSON string and pass
+# it as `cradle emit $CURE_LESSON`. But a p-kernel shell input LINE is bounded
+# (the kernel's line buffer), so the 1280-byte argument was TRUNCATED to ~115
+# bytes on the wire — BELOW CRADLE_MIN_LIVE (4*32=128). cradle_lesson_ingest then
+# REFUSED it (ring_len stayed 0) and S never learned ([cradle-diag]:
+# `ingest len=115 -> ring_len=0 (SKIPPED: ingest<=0)`).
+#
+# THE FIX: the teacher now emits `cradle emit-canon` — a SHORT command that
+# composes the FULL canonical lesson INSIDE the kernel (cradle_compose_canon ->
+# ct_build_lesson, CT_CERT_BUDGET=1280 bytes), the SAME trainable, train/held-
+# structured bytes the in-proc [cradle-teach] cert proves. No shell-line-length
+# limit, no truncation: ingest sees the full 1280 bytes and the ring goes live.
+# The held probe lands at the production train_end boundary (the never-trained
+# continuation) so the post-train drop proves GENERALIZATION, not rote copy.
 
 # ===========================================================================
 # helper: launch T (teacher) + W (quorum) + S (student) over one ./relay, then
@@ -248,7 +253,7 @@ run_arm() {
   local T_EMIT
   case "$arm" in
     scramble) T_EMIT="cradle emit-scramble" ;;
-    off|cure|death) T_EMIT="cradle emit $CURE_LESSON" ;;
+    off|cure|death) T_EMIT="cradle emit-canon" ;;   # T-fix-c: full lesson composed in-kernel
   esac
   {
     sleep 14                                 # SWIM discover + capability gossip
@@ -433,7 +438,10 @@ s_post_probe() { grep -B12 'MARK-S-POST-PROBE' "/tmp/cradle_live_nodeS_$1.log" 2
                   | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1; }
 s_max_ring()   { grep -oE 'ring_len=[0-9]+' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '[0-9]+' | sort -n | tail -1; }
-t_emitted()    { grep -c 'lesson emitted over the mesh' "/tmp/cradle_live_nodeT_$1.log" 2>/dev/null; }
+# match BOTH the plain `cradle emit` ("lesson emitted over the mesh") and the
+# T-fix-c canonical CURE verb ("canonical lesson emitted (CURE)") — the common
+# greppable phrase is "lesson emitted".
+t_emitted()    { grep -c 'lesson emitted' "/tmp/cradle_live_nodeT_$1.log" 2>/dev/null; }
 # The [cradle-diag] pull-path tracer (wave-cradle-diag): surface the UNIQUE diag
 # lines S printed so the commander reads the break point directly. The LAST diag
 # line of an arm is the deepest the chain reached before stopping:
