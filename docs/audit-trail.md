@@ -1399,14 +1399,61 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
   (in-sandbox: builds clean, `bash -n` sound, `cradle probe` works, crown 755a20fa byte-identical, the in-proc [cradle-teach]
   cert still PASS). The harness has 4 arms: CURE (T emits a deterministic held-probe lesson -> S pulls it over the relay ->
   consolidates -> the never-trained probe loss drops below chance) + teaching-OFF + scrambled-bytes + teacher-death.
-- STATUS: OPEN. The first real-host run (2026-06-23) FAILED-and-DIAGNOSED the teacher self-election bug (now fixed above).
-  The re-run WITH the fix is DEFERRED because the ThinkPad is unreachable (mk_pino traveling, mobile connection). NOT fudged
-  green: the [live] CURE-arm PASS (the actual "mind learns across the wire" proof) has NOT yet been observed. There is NO
-  test/sample GGUF in-tree or on the host, so T is made teacher-capable by the visibly cert-scoped PKERNEL_TEACHER_CERT
-  (the GGUF-gated election itself is T-fix-a's already-certified domain; this row tests the lesson BRIDGE). Honest bound:
-  single-host floor (loopback ./relay; SSH 2-machine deferred), M-tier student.
-- NEXT (commander, when the host returns): re-run run_cradle_live.sh on the ThinkPad with the self-election fix; expect the
-  CURE arm to pass (T self-elects -> emits -> S learns) + the 3 falsifier arms to bite; then CLOSE this row.
+- STATUS (2026-06-25): the self-election re-run drove the chain further and EXPOSED TWO MORE real, in-proc-masked bugs —
+  both now FIXED + independently audited MERGEABLE + integrated (crown 755a20fa re-derived byte-identical on the integrated
+  trunk). See the two detail rows immediately below (T-fix-c lesson-format; DMN-stack). The single-node + in-proc layers of
+  the flagship ("a teacher composes a trainable lesson, it crosses the wire, and a fresh student's autonomous DMN sleep
+  consolidates it and learns") are now CERTIFIED. The remaining OPEN piece is L3: the full MULTI-NODE end-to-end live-green
+  on REAL hardware. The local PRoot sandbox is a poor oracle for it (the harness header says "NOT runnable in the PRoot
+  sandbox": background node children get reaped + timing flakiness), so the genuine multi-node confirmation belongs on the
+  ThinkPad (now reachable). NOT fudged green: the multi-node CURE-arm PASS has not yet been observed end-to-end.
+- NEXT (commander): take the integrated L1+L2 to the ThinkPad (x86_64, non-PRoot) and run run_cradle_live.sh there for the
+  genuine "mind learns across the wire" green; then CLOSE this row.
+
+## cradle-live L1 — T-fix-c lesson-format — the teacher emits a TRAINABLE lesson — merge a8fce20f (base d3a204fb) — CLOSED
+- Found by GOING [live] (the harsh-review prediction, a 3rd time): the self-election re-run got T emitting + S receiving the
+  beacon + the p-fs body replicating to S, but S's lesson ring stayed 0. ROOT CAUSE (empirical, local reproduction beat two
+  confident-but-wrong static-analysis hypotheses about region-scope/RTT): the live lesson body was ~115 bytes < CRADLE_MIN_LIVE
+  (4*CRADLE_SEQLEN=128), so `cradle_lesson_ingest` REFUSED it ("too small to train"). The harness built a 1280-byte string but
+  passed it as a `cradle emit <text>` shell argument, which the kernel shell line-buffer TRUNCATED to ~115 B. The in-proc cert
+  never saw this — it composes its own 1280-byte lesson and trains on the 8 MB host stack.
+- FIX (unify live == cert, one lesson format / one math): a new teacher verb `cradle emit-canon` composes the lesson IN-KERNEL
+  via `cradle_compose_canon()` (a thin wrapper over the cert's static `ct_build_lesson`, CT_CERT_BUDGET=1280) — BYTE-IDENTICAL
+  to the certified in-proc lesson — bypassing the line buffer. The harness CURE+DEATH arms now teach via `cradle emit-canon`.
+- REAL + falsifiable (independent audit MERGEABLE): (1) ingest unit — 114 B/127 B REFUSED (rc=-1, ring 0), 1279 B ACCEPTED
+  (ring 1279). (2) in-proc cert `run_cradle_teach.sh` (certified -O1 -ffp-contract=off, the IDENTICAL canonical bytes) PASS:
+  MAIN held-probe drop 3.6862; Arm A (teaching-OFF) 0.61 RED; Arm B (scrambled) −0.32 i.e. probe ROSE — genuinely stays at
+  chance, falsifier honest; Arm C (never-taught) 6.58 vs 1.84 RED; [cradle-nocentral] PASS. (3) over-the-wire: T emits the
+  canonical 12×, S's beacon advertises body len=1279 (the old bug showed 115). Generalization INTACT: trainer windows [0,960)
+  are byte-DISJOINT from the probed held region [960,1280); composer/trainer/probe all derive train_end=960 from
+  cradle_corpus_len() via the SAME total*3/4 split.
+- CROWN: cradle.c/student.h/usermain.c/harness all hosted-only (absent from bare-metal Makefiles; bare-metal links the WEAK
+  student_stub.o); new symbols absent from any bare-metal build; .text 755a20fa byte-identical (auditor + commander). Arch
+  parity: the emit-canon verb block byte-identical across aarch64/x86_64.
+LEDGER: row CLOSED. A teacher now emits a trainable lesson the wire carries intact.
+
+## cradle-live L2 — DMN-stack — the mind's SLEEP can actually run in-kernel — merge ba450a02 (base a8fce20f) — CLOSED
+- Found by GOING [live] (same effort, one layer deeper): with L1 the lesson reached S, but a fresh student node still never
+  learned. ROOT CAUSE: the student's training math (st_forward/st_backward, per-layer float[DMAX=256]/float[DFFMAX=512]
+  scratch) OVERFLOWS an 8 KB task stack. The autonomous DMN sleep task (`dmn_task`, prio 13) — and `galaxy_task` (chat) and the
+  init/shell task that runs `baby`/`dmn distill`/`cradle test` — were all created with only 8192 bytes, while the SS-6 responder
+  was already deliberately given 256 KB for this EXACT reason (usermain.c "need real stack; NOT the deep init stack"). LATENT
+  because every prior living-mind cert exercised the training MATH from a host binary (8 MB main stack), never the in-kernel
+  8 KB task path. So the living-mind's core sleep-consolidation could not actually run on a real node — it crashed the moment
+  it trained.
+- FIX: raise the three hosted tasks that can reach st_forward to 262144 (256 KB) — `dmn_task` + `galaxy_task` (arch/linux/*/
+  usermain.c) and the init/shell task (a HOSTED-ONLY INITTASK_STKSZ override in arch/linux/*/inittask_def.c, NOT the shared
+  header). cradle_net_task / mind_net_task / mind_merge_task left unchanged (audited: they never call st_forward).
+- REAL + falsifiable (independent audit MERGEABLE): DISEASE — on the parent (8 KB) `baby 2` and the autonomous idle path both
+  EXIT 139 (SIGSEGV, garbage-addr stack-overflow signature). CURE — on the fix (256 KB) `baby 2` held-out loss 5.5409→2.9286
+  (47% of chance), `dmn distill 2` "the baby LEARNED while it slept" exit 0. FLAGSHIP GATE — the auditor exercised the REAL
+  prio-13 dmn_task: left a cured node idle >5s → `[dmn] -> IDLE` → `[dmn] sleep: distilled` on its own 256 KB stack, exit 0, 2
+  consolidations / 30s, no fault; the parent crashes (139) on the identical scenario. So the AUTONOMOUS production sleep path
+  (not just a manual verb) is genuinely fixed.
+- CROWN: 4 hosted arch/linux files only; shared include/kernel/tkernel/inittask_def.h untouched (still 8 KB); bare-metal
+  compiles its OWN arch/{aarch64,x86}/inittask_def.c + the weak no-op student_stub.o, so its 8 KB tasks never run st_forward;
+  crown .text 755a20fa RE-DERIVED byte-identical (auditor + commander, on the integrated trunk). Arch parity byte-identical.
+LEDGER: row CLOSED. The living-mind's DMN sleep-consolidation can now actually run on a real in-kernel node.
 
 ## N-4 seed bootstrap (PKERNEL_SEED) — merge 5041325a (impl 61dd9528 + 4d780961, base 95ec9da2)
 - Design-harden (the existing ha_tick failover IS the try-next model; PKERNEL_RELAY is already a list) → impl → independent
