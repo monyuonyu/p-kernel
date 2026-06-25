@@ -748,7 +748,12 @@ EXPORT INT usermain(void)
      * before student_boot_restore() runs. */
     galaxy_init();
     if (galaxy_on) {
-        if (create_task((FP)galaxy_task, 8, 8192) < E_OK)
+        /* BIG stack (256KB), same st_forward hazard as the DMN task below:
+         * galaxy_task is a SINGLE task that handles a {"t":"chat"} message
+         * SYNCHRONOUSLY -> student_chat_generate() -> st_generate_stream() ->
+         * st_forward over the resident baby (float[DMAX]/float[DFFMAX] per
+         * layer). Chatting with a real baby on the old 8KB stack overflows it. */
+        if (create_task((FP)galaxy_task, 8, 262144) < E_OK)
             print("[ERR] galaxy task\r\n");
         else
             print("[OK]  galaxy observation window task\r\n");
@@ -786,7 +791,15 @@ EXPORT INT usermain(void)
      * task starts — dmn_idle_work() calls ga_step() on the idle heartbeat. */
     ga_init();
     dmn_init();
-    if (create_task((FP)dmn_task, 13, 8192) < E_OK)
+    /* BIG stack (256KB), matching the SS-6-live responder precedent above:
+     * the DMN idle tick runs student_dmn_consolidate() -> sleep_rounds() ->
+     * st_forward/st_backward over the ~30MB resident baby, whose per-layer
+     * float[DMAX=256]/float[DFFMAX=512] scratch overflows the old 8KB task
+     * stack the moment a node actually trains a wire-delivered lesson (the
+     * student_birth_warmup hazard). 8192 was latent only because prior certs
+     * drove the training math from host test binaries (8MB main stack), never
+     * this autonomous in-kernel dmn_task. */
+    if (create_task((FP)dmn_task, 13, 262144) < E_OK)
         print("[ERR] DMN task\r\n");
     else
         print("[OK]  DMN task\r\n");
