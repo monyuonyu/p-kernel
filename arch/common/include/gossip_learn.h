@@ -44,6 +44,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pfs_block.h"   /* PFS_ID_LEN / PFS_BLOCK_MAX for the SS-3 manifest */
 
 /* ------------------------------------------------------------------ */
 /* generic gossiped model blob (header + n little-endian float32)      */
@@ -132,6 +133,51 @@ INT  gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n);
  * documented [live] follow-up, not silently broken. */
 #define GL_ST_MAXCHUNK  8192u
 
+/* ------------------------------------------------------------------ */
+/* SS-3 [live] — content-addressed MANIFEST transport                  */
+/* (docs/architecture/student-blob-transport.md §1-2).                 */
+/*                                                                     */
+/* The chunk-by-NAME transport above explodes the 16-slot named-ref    */
+/* table (PFS_REF_MAX) at the 17th chunk. This redesign content-       */
+/* addresses every 4 KB chunk via pfs_repl_put (NO name) and stitches  */
+/* them with a 2-level index + a tiny descriptor reachable from ONE     */
+/* named ref "st/<node>". The new bodies are HOSTED-ONLY (the relay-    */
+/* capable linux boots); bare metal keeps the OLD bodies byte-for-byte  */
+/* (crown §4). These defs/structs add NO code or data to any .text.     */
+/* ------------------------------------------------------------------ */
+
+#define GL_ST_IDX_MAGIC   0x58494C47u   /* "GLIX" LE — index block tag    */
+#define GL_ST_DESC_MAGIC  0x44534C47u   /* "GLSD" LE — descriptor tag     */
+#define GL_ST_DESC_VER    1u
+
+/* 16-byte index header (4 little-endian UW), then count*32-byte ids. */
+#define GL_ST_IDX_HDR      (4u * (UW)sizeof(UW))                 /* 16   */
+/* ids that fit one index block: (PFS_BLOCK_MAX - 16-byte header)/32. */
+#define GL_ST_IDS_PER_IDX  ((UW)((PFS_BLOCK_MAX - GL_ST_IDX_HDR) / PFS_ID_LEN)) /* 127 */
+
+/* one index block — a LEAF (level 0: holds chunk content-ids) or the
+ * ROOT (level 1: holds leaf content-ids). On the wire only the 16-byte
+ * header + count*32 id bytes are stored; the [GL_ST_IDS_PER_IDX] array is
+ * the FIXED scratch ceiling (no VLA). */
+typedef struct __attribute__((packed)) {
+    UW magic;                          /* GL_ST_IDX_MAGIC                */
+    UW level;                          /* 0 = leaf (chunks), 1 = root     */
+    UW count;                          /* valid ids in id[]               */
+    UW _pad;
+    U1 id[GL_ST_IDS_PER_IDX][PFS_ID_LEN];
+} __attribute__((packed)) GL_ST_INDEX;  /* <= 16 + 127*32 = 4080 bytes    */
+
+/* descriptor — the single small block reached via the named ref. */
+typedef struct __attribute__((packed)) {
+    UW magic;                          /* GL_ST_DESC_MAGIC                */
+    UW version;                        /* GL_ST_DESC_VER                  */
+    UW tier;                           /* informational (blob self-describes) */
+    UW total_len;                      /* full student-blob byte length   */
+    UW nchunk;                         /* number of 4 KB chunks           */
+    UW depth;                          /* index levels to walk (1 or 2)   */
+    U1 root_id[PFS_ID_LEN];            /* root index block content-id     */
+} __attribute__((packed)) GL_ST_DESC;   /* 24 + 32 = 56 bytes             */
+
 /* Publish `len` bytes of the resident student blob under this node's chunk
  * namespace (node id `node`). Splits into ceil(len/PFS_BLOCK_MAX) chunk
  * objects + a header object "st/<node>/h". Returns the number of chunks
@@ -146,6 +192,13 @@ INT  gl_student_publish(UB node, const void *blob, UW len);
  * issued so a retry may succeed), if cap is too small (NO truncation), or
  * on a malformed header. Shell-task context only. */
 INT  gl_student_fetch(UB node, void *out, UW cap);
+
+/* [ss3-blob-roundtrip-falsify] support — HOSTED test builds only. Arms a
+ * one-shot fault: the NEXT gl_student_publish OMITS storing chunk index `idx`
+ * (it is still referenced by the index), so gl_student_fetch MUST fail closed.
+ * `idx < 0` disarms. Defined only under _TK_HOSTED_LIBC_; nothing on bare
+ * metal references it (no new bare-metal symbol). */
+void gl_student_test_drop_chunk(INT idx);
 
 /* ------------------------------------------------------------------ */
 /* in-process self-test ([g22-shard-solo] / [g22-gossip-learn] /       */

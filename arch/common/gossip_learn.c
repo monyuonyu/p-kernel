@@ -169,6 +169,14 @@ INT gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n)
 /* ------------------------------------------------------------------ */
 
 #define GL_ST_CHUNK  PFS_BLOCK_MAX        /* bytes per chunk object          */
+
+#ifndef _TK_HOSTED_LIBC_
+/* ================================================================== */
+/* BARE-METAL legacy transport — crown §4: byte-for-byte trunk.        */
+/* The relay-capable ([live]) transport lives in the _TK_HOSTED_LIBC_  */
+/* branch below; bare metal never runs it, so the preprocessor output  */
+/* here (hence kernel .text / the 755a20fa crown) is UNCHANGED.        */
+/* ================================================================== */
 #define GL_ST_MAGIC  0x53544831u          /* "STH1" little-endian header tag */
 
 /* header object payload: total byte length + chunk count + magic. */
@@ -249,6 +257,234 @@ INT gl_student_fetch(UB node, void *out, UW cap)
     }
     return (INT)len;
 }
+
+#else  /* _TK_HOSTED_LIBC_ — content-addressed MANIFEST transport ([live]) */
+/* ================================================================== */
+/* SS-3 [live] transport (student-blob-transport.md §1-2). Every 4 KB   */
+/* chunk -> pfs_repl_put -> content-id (NO name). A 2-level index       */
+/* (leaf blocks of <=127 chunk-ids; one root of <=127 leaf-ids) +       */
+/* a tiny descriptor reachable from ONE named ref "st/<node>" collapses */
+/* the 483-name explosion to a single name. The fetcher walks the index */
+/* and pulls every chunk by EXPLICIT WINDOWED pfs_repl_want (paced to    */
+/* the 8-slot pending table), FAILING CLOSED (never truncating) if any   */
+/* chunk never arrives. All scratch is static + HOSTED-only, so bare     */
+/* metal gains NO symbol.                                                */
+/* ================================================================== */
+#include "pfs_repl.h"
+
+/* windowed-want fetch policy (§2.1). W <= PFSR_PENDING_MAX. */
+#define GL_ST_WANT_WINDOW    6u            /* outstanding wants per pass      */
+#define GL_ST_FETCH_POLL_MS  60            /* yield between passes            */
+#define GL_ST_FETCH_STALL    4             /* give up after this many no-progress passes */
+#define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
+
+/* layout pins (LP64 / wire): the index header is exactly 4 packed UW. */
+_Static_assert(sizeof(UW) == 4, "UW must be 32-bit on the wire");
+_Static_assert(GL_ST_IDS_PER_IDX == 127, "127 ids fit one 4096-byte index block");
+_Static_assert(sizeof(GL_ST_INDEX) == GL_ST_IDX_HDR + GL_ST_IDS_PER_IDX * PFS_ID_LEN,
+               "packed index block = 16-byte header + ids, no padding");
+_Static_assert(sizeof(GL_ST_INDEX) <= PFS_BLOCK_MAX, "index block fits one p-fs block");
+_Static_assert(sizeof(GL_ST_DESC) <= PFS_BLOCK_MAX, "descriptor fits one p-fs block");
+
+/* static transfer scratch (never the task stack — the stack-overflow lesson).
+ * Shell/cert-task only; no concurrent use. HOSTED-only, so bare metal is
+ * unaffected. */
+static UB         gl_st_chunk[GL_ST_CHUNK];                  /* one chunk in flight   */
+static GL_ST_INDEX gl_st_idx;                                /* one index block       */
+static U1         gl_st_leafids[GL_ST_IDS_PER_IDX][PFS_ID_LEN]; /* up to 127 leaf ids */
+static U1         gl_st_idlist[GL_ST_MAXCHUNK][PFS_ID_LEN];  /* fetch: all chunk ids  */
+static GL_ST_DESC gl_st_desc;                                /* descriptor scratch    */
+static INT        gl_st_drop = -1;          /* falsifier: chunk idx to OMIT (-1=off) */
+
+void gl_student_test_drop_chunk(INT idx) { gl_st_drop = idx; }
+
+/* the single named ref "st/<node>" (<= 6 chars <= PFS_NAME_MAX). */
+static UW gl_st_name(char *out, UB node)
+{
+    UW k = 0;
+    out[k++] = 's'; out[k++] = 't'; out[k++] = '/';
+    if (node >= 100) out[k++] = (char)('0' + (node / 100) % 10);
+    if (node >= 10)  out[k++] = (char)('0' + (node / 10) % 10);
+    out[k++] = (char)('0' + node % 10);
+    return k;
+}
+
+static void gl_st_idcpy(U1 dst[PFS_ID_LEN], const U1 src[PFS_ID_LEN])
+{
+    for (UW b = 0; b < PFS_ID_LEN; b++) dst[b] = src[b];
+}
+
+INT gl_student_publish(UB node, const void *blob, UW len)
+{
+    if (!blob || len == 0) return -1;
+    UW nchunk = (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK;
+    if (nchunk == 0 || nchunk > GL_ST_MAXCHUNK) return -1;   /* refuse, NEVER truncate */
+
+    /* index geometry: leaves of <=127 chunk-ids; one root of <=127 leaf-ids.
+     * depth 1 = single index block holds all chunk-ids (nchunk<=127);
+     * depth 2 = root -> leaves -> chunks (covers S and M). A blob whose
+     * leaves would exceed 127 (depth>2, i.e. the L tier) is REFUSED — but
+     * nchunk>127*127 also trips the GL_ST_MAXCHUNK gate above first, so L is
+     * already refused; this is the explicit, never-silent depth bound. */
+    UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
+    if (nleaf > GL_ST_IDS_PER_IDX) return -1;                /* would need depth>2 */
+    UW depth = (nchunk <= GL_ST_IDS_PER_IDX) ? 1u : 2u;
+
+    const UB *src = (const UB *)blob;
+    INT drop = gl_st_drop; gl_st_drop = -1;                  /* one-shot, auto-disarm */
+
+    /* build each leaf: store its chunks, collect their content-ids. */
+    for (UW lf = 0; lf < nleaf; lf++) {
+        UW base = lf * GL_ST_IDS_PER_IDX;
+        UW cnt  = nchunk - base;
+        if (cnt > GL_ST_IDS_PER_IDX) cnt = GL_ST_IDS_PER_IDX;
+
+        gl_st_idx.magic = GL_ST_IDX_MAGIC;
+        gl_st_idx.level = 0;
+        gl_st_idx.count = cnt;
+        gl_st_idx._pad  = 0;
+        for (UW j = 0; j < cnt; j++) {
+            UW c    = base + j;
+            UW off  = c * GL_ST_CHUNK;
+            UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
+            for (UW i = 0; i < clen; i++) gl_st_chunk[i] = src[off + i];
+            U1 cid[PFS_ID_LEN];
+            if ((INT)c == drop) {
+                /* falsifier: index the chunk's id but DO NOT store the block,
+                 * so a fetch MUST fail closed (content-id known, bytes absent). */
+                pfs_id_compute(gl_st_chunk, clen, cid);
+            } else if (pfs_repl_put(gl_st_chunk, clen, cid) != PFS_OK) {
+                return -1;
+            }
+            gl_st_idcpy(gl_st_idx.id[j], cid);
+        }
+        U1 lid[PFS_ID_LEN];
+        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + cnt * PFS_ID_LEN, lid) != PFS_OK)
+            return -1;
+        gl_st_idcpy(gl_st_leafids[lf], lid);
+    }
+
+    /* root content-id: depth 1 -> the single leaf IS the root; depth 2 ->
+     * build a level-1 index over the leaf-ids. */
+    U1 root_id[PFS_ID_LEN];
+    if (depth == 1) {
+        gl_st_idcpy(root_id, gl_st_leafids[0]);
+    } else {
+        gl_st_idx.magic = GL_ST_IDX_MAGIC;
+        gl_st_idx.level = 1;
+        gl_st_idx.count = nleaf;
+        gl_st_idx._pad  = 0;
+        for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_idx.id[lf], gl_st_leafids[lf]);
+        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + nleaf * PFS_ID_LEN, root_id) != PFS_OK)
+            return -1;
+    }
+
+    /* descriptor under ONE named ref "st/<node>". */
+    gl_st_desc.magic     = GL_ST_DESC_MAGIC;
+    gl_st_desc.version   = GL_ST_DESC_VER;
+    gl_st_desc.tier      = 0;            /* informational; the blob self-describes */
+    gl_st_desc.total_len = len;
+    gl_st_desc.nchunk    = nchunk;
+    gl_st_desc.depth     = depth;
+    gl_st_idcpy(gl_st_desc.root_id, root_id);
+
+    char nm[8]; UW nl = gl_st_name(nm, node);
+    if (pfs_dag_save((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc) != PFS_OK)
+        return -1;
+    return (INT)nchunk;
+}
+
+/* pull one index block by content-id into gl_st_idx, with windowed want
+ * retry; validate magic/level/count + exact length. Returns 0 / -1. */
+static INT gl_st_pull_index(const U1 id[PFS_ID_LEN], UW level, UW count)
+{
+    INT prev = -2, stall = 0;
+    for (UW pass = 0; pass < GL_ST_FETCH_MAXPASS; pass++) {
+        INT r = pfs_get(id, &gl_st_idx, (UW)sizeof gl_st_idx);
+        if (r >= 0) {
+            if (gl_st_idx.magic == GL_ST_IDX_MAGIC &&
+                gl_st_idx.level == level &&
+                gl_st_idx.count == count &&
+                (UW)r == GL_ST_IDX_HDR + count * PFS_ID_LEN)
+                return 0;
+            return -1;                              /* present but malformed */
+        }
+        pfs_repl_want(id);
+        if (r <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
+        prev = r;
+        tk_dly_tsk(GL_ST_FETCH_POLL_MS);
+    }
+    return -1;
+}
+
+INT gl_student_fetch(UB node, void *out, UW cap)
+{
+    if (!out) return -1;
+
+    /* 1 named ref -> descriptor. */
+    char nm[8]; UW nl = gl_st_name(nm, node);
+    INT dr = pfs_dag_read((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc);
+    if (dr != (INT)sizeof gl_st_desc) return -1;
+    if (gl_st_desc.magic != GL_ST_DESC_MAGIC) return -1;
+    if (gl_st_desc.version != GL_ST_DESC_VER) return -1;
+    UW len = gl_st_desc.total_len, nchunk = gl_st_desc.nchunk, depth = gl_st_desc.depth;
+    if (len == 0 || len > cap) return -1;                   /* refuse, NEVER truncate */
+    if (nchunk == 0 || nchunk > GL_ST_MAXCHUNK) return -1;
+    if (depth != 1 && depth != 2) return -1;
+    if (nchunk != (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK) return -1;
+    UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
+    if (nleaf > GL_ST_IDS_PER_IDX) return -1;
+    if ((depth == 1) != (nchunk <= GL_ST_IDS_PER_IDX)) return -1;  /* depth/size agree */
+
+    /* 2. walk the index into the ordered chunk-id list. */
+    if (depth == 1) {
+        if (gl_st_pull_index(gl_st_desc.root_id, 0u, nchunk) < 0) return -1;
+        for (UW c = 0; c < nchunk; c++) gl_st_idcpy(gl_st_idlist[c], gl_st_idx.id[c]);
+    } else {
+        if (gl_st_pull_index(gl_st_desc.root_id, 1u, nleaf) < 0) return -1;
+        for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_leafids[lf], gl_st_idx.id[lf]);
+        for (UW lf = 0; lf < nleaf; lf++) {
+            UW base = lf * GL_ST_IDS_PER_IDX;
+            UW cnt  = nchunk - base;
+            if (cnt > GL_ST_IDS_PER_IDX) cnt = GL_ST_IDS_PER_IDX;
+            if (gl_st_pull_index(gl_st_leafids[lf], 0u, cnt) < 0) return -1;
+            for (UW j = 0; j < cnt; j++) gl_st_idcpy(gl_st_idlist[base + j], gl_st_idx.id[j]);
+        }
+    }
+
+    /* 3. windowed WANT of every chunk; presence is checked with a zero-copy
+     * pfs_get (returns the stored length without touching `out`), so `out`
+     * stays UNCONSUMED until every chunk is confirmed present (fail closed). */
+    UW present = 0; INT prev = -1, stall = 0;
+    for (UW pass = 0; pass < GL_ST_FETCH_MAXPASS; pass++) {
+        present = 0; UW window = 0;
+        for (UW c = 0; c < nchunk; c++) {
+            UW off  = c * GL_ST_CHUNK;
+            UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
+            if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { present++; continue; }
+            if (window < GL_ST_WANT_WINDOW) { pfs_repl_want(gl_st_idlist[c]); window++; }
+        }
+        if (present == nchunk) break;
+        if ((INT)present <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
+        prev = (INT)present;
+        tk_dly_tsk(GL_ST_FETCH_POLL_MS);
+    }
+    if (present != nchunk) return -1;                        /* fail closed */
+
+    /* 4. all present -> reassemble into the caller buffer + verify length. */
+    UW got = 0;
+    for (UW c = 0; c < nchunk; c++) {
+        UW off  = c * GL_ST_CHUNK;
+        UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
+        INT r = pfs_get(gl_st_idlist[c], (UB *)out + off, clen);
+        if (r != (INT)clen) return -1;                       /* race / regression */
+        got += clen;
+    }
+    if (got != len) return -1;                               /* recovered length check */
+    return (INT)len;
+}
+
+#endif /* _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ */
 /* dataset — deterministic synthetic sensor readings.                  */
