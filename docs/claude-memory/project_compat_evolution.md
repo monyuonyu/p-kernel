@@ -58,10 +58,28 @@ change" + "can't be hijacked" + "auto-update" all hold at once. **mk_pino's view
 collective(Path E) continuity. Perfection unneeded — if the next version can read this one,
 anything can change later.
 
-Still a DRAFT/design — interop cert tags proposed ([compat-mesh], [compat-degrade],
-[compat-persist-read-old], [compat-skip-unknown]); not yet implemented. Open: schema
-agreement bet on gossip/eventual-consistency (no gatekeeper) vs raft-for-schema-only
-(unproven convergence); version/capability-poison defended only via signed content-ids.
+**STATUS UPDATE 2026-06-23 — the migration-chain thread is IMPLEMENTED + audited (no longer a draft).**
+Plan `docs/architecture/compat-migration-chain-plan.md` (design-hardened) executed as 5 cert-backed
+slices, each impl→independent-audit→merge, bare-metal crown 755a20fa byte-identical every merge:
+- `[migrate-forward]` (R3_WP weight blob) + `[selflineage-migrate]` (Self-lineage hash chain, coherent
+  whole-chain re-link) — the FLAT/STATE blobs TRULY migrate v1→v2 (per-axis `*_steps[]` chain).
+- `[signed-ota-gate]` — 4-gate AND (Ed25519 sign_manifest_verify + version-in-signed-body) refuses
+  tampered/downgraded/relabeled/non-adopted-key updates.
+- `[no-fleet-split]` — in-proc `swim_nofleetsplit_self_test` drives REAL swim_rx: a vN + v{N+1}
+  ADDITIVE-change node (capability byte, no SWIM_VERSION bump) stay ONE fleet; a BREAKING bump
+  partitions (the falsifier). Proves the "unbroken chain" claim mechanically.
+- `[arkfs-version-gap]` — the CRASH-SAFE LOG decision: arkfs ships clean **REJECT+REFORMAT** on a
+  version gap, NOT in-place log migration (transcoding a foreign record stream multiplies the
+  crash-window). The node SURVIVES because identity lives in the (truly-migrated) Self-lineage +
+  knowledge re-flows by Path-E — **arkfs holds durable backing bytes, not identity** (load-bearing
+  coupling: if mind-identity ever moves INTO arkfs without a migration path, reject+reformat becomes
+  lossy for identity). This is mk_pino's "from-baby IS the migration mechanism" made concrete for the log.
+All certs falsifiable (sabotage flips them RED), hosted-gated so the bare-metal crown never moves.
+HONEST deferrals: OTA delivery/transport + key revocation (CRL) not wired (A/B rollback = recovery);
+compatibility.md §7 reject→degrade for replica.c/etc. is a SEPARATE slice (NOT retired); the [live]
+2-process teach→answer-across-the-gap rows are deferred. Earlier-proposed tags ([compat-mesh] etc.)
+superseded by the implemented `[migrate-forward]`/`[selflineage-migrate]`/`[signed-ota-gate]`/
+`[no-fleet-split]`/`[arkfs-version-gap]` family.
 
 Related: [[project_living_mind_vision]] (Evolution layer = arch mutable while alive),
 [[project_pkernel_philosophy]] (death-native, 歴史地層), [[feedback_ark_no_identity_verification]]

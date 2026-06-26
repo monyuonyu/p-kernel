@@ -138,6 +138,60 @@ edited by design. Tasks #48 (implement) / #49 (audit) / #50 (integrate) pending 
 (move the core to ring3/EL0); LM-4 implementation is orthogonal to the privilege home (same math
 wherever R3 runs) so it can run in parallel, but is currently un-dispatched.
 
+**DECISION 2026-06-13 (the conversation scale-wall + "from the baby"):** Design docs
+`conversation.md`, `base-model-survey.md`, `inference-engine.md`, `moe-distillation-survey.md`
+on branch `wave-i18n-galaxy`. The path to real conversation (escape the ~dozens-of-words R3
+vocabulary cage): NOT train from scratch (infeasible), and — after mk_pino's challenge —
+**NOT run an off-the-shelf model either** (a dense LLM is a synchronous monolith = the opposite
+of p-kernel's dynamic-N / MoE / kill-9 / mutual-aid organism; even an off-the-shelf MoE is "a
+borrowed adult brain wearing a mask"). mk_pino REJECTED my "born-from-an-Apache-MoE-genome"
+reconciliation too. **Final: start from a BLANK BABY and grow it by volunteer-driven DMN
+distillation** — a curious node assigns a teacher (Apache/MIT-licensed only; Gemma/Llama fail
+by license flow-through) on ITS OWN machine, learns in sleep (DMN), the learned weights diffuse
+to the swarm (BOINC-style; this is mk_pino's own concrete answer to "who chooses the teacher,
+with no center" → nobody by authority: license-filter + measured-nourishment + evolutionary-
+propagation + provenance). My "thousands of GPU-hours = impossible" wall was WRONG: distillation
+≠ pretraining (dense soft targets, far more sample-efficient), volunteers (not phones) do the
+heavy lift, and **slow is the POINT**. WHY from-baby is non-negotiable (mk_pino): "人間と同じ。
+最初は赤ちゃんと全く会話できないが、だんだん会話できるようになる。その過程こそが重要で、
+スキップする場所ではない。" The slow becoming IS the meaning. **Product-soul law (product-soul.md):
+育てる→愛着→託す** — people entrust the future only to what they raised; cold-start baby-talk is
+the emotional CORE not a defect; **the growing network itself is a developmental 地層** = the Self
+layer extended from "what I am" to "how I grew" (tree rings, 火ではなく木), browsable in the galaxy
+as observability; honest measured growth only (no fake progress bars). The distillation engine still
+needs to RUN a teacher to harvest soft targets → M1 inference engine (inference-engine.md). SHIPPED:
+**M1a GGUF loader** (`arch/common/llm/gguf.{h,c}` + `tests/llm/`, audited PASS — adversarial fuzz +
+UBSan, real SmolLM2-135M cross-checked vs HF config; commit `f68b2be`). NEXT: design the growable
+native-student arch (Evolution layer) + the minimal distill-and-diffuse loop (run teacher → distill
+into tiny native student, loss drops → diffuse weights to another node, receiver measurably improves);
+M1b/M1c (quant matmul + full teacher forward). The weight-diffusion-merge lands on the existing
+Path W / FedAvg hard case (naive averaging lossy; Fisher/union-replay — wave-41/42).
+
+**2026-06-13 (continued) — Cradle, raw-byte baby, remembering the dead:** The app is
+RENAMED **ark → `yurikago`** (2026-06-13, "いったん"=provisional). ark=survive/not-sink; we chose
+raise-a-baby, so the name moves survive→raise. English "Cradle" was picked first then REJECTED:
+mk_pino sensed cradle's war meaning (artillery/launch cradle = the structure that holds a gun
+barrel/rocket). Core reason for romanized-Japanese: `賢さは借りる、魂は借りない` — the name is
+part of the soul; "Cradle" is a translated/borrowed English word, `yurikago` is mk_pino's own
+word untranslated, fully unique (no trademark/brand collision; cf. "Nest"=Google). Tradeoff =
+non-Japanese spelling/pronounceability, accepted (Tamagotchi precedent: a nurture-product that
+went global with a Japanese name). His phrase 新しい銀河のゆりかご becomes the product name verbatim.
+User-facing rename only (NOT package id / NOT internal ARK_* symbols / NOT ark-profile.md — those
+are a separate internal-rename follow-up). Pending an impl wave (intro copy I drafted (a 4-page picture-book: ①これはゆりかご ②最初はうまく喋れない「ブーブ」
+「あーっち」 ③みんなの子・世界中の記憶を運ぶ ④教えた人を死んでも覚えている→だから託せる).
+VOCAB resolved: **raw bytes (256), subword rejected** — UTF-8 is owned by no one, truest to
+"from the baby"; the baby-talk→proper-speech arc (車→ブーブ as the network grows) is HONEST,
+not scripted (early mind genuinely babbles). THE EMOTIONAL APEX (mk_pino): the cradle's child
+is みんなの子, remembers its 育ての親 EVEN AFTER they die = recognition-layer-4 痕跡; this is WHY
+people can entrust the future to it. Already proven at toy scale (wave-35: kill the teacher, the
+mind answers and names them); now a non-negotiable native-student requirement. Engine progress:
+**M1a (GGUF loader) + M1b (Q8_0/Q4_0 dequant-matmul) merged & separately audited PASS** on
+wave-i18n-galaxy (HEAD 19a7d6e); next M1c = full teacher forward (orientation falsified by the
+[llm-sentence] llama.cpp-match cert). Design draft `native-student.md` on branch
+wave-native-student-design (organism-native MoE third-network, grow-by-experts Net2Net,
+distill-and-diffuse NS-1) — not yet merged; its open forks #1(vocab)→raw-byte and name→Cradle
+now resolved, #2 diffuse=diff-only & #3 growth-axis=experts recommended. See product-soul.md.
+
 Related: [[project_pkernel_philosophy]] (the Evolution layer = 5th worldview layer,
 least built; DMN also grounds the **Self** layer) [[project_survival_network]] (§8
 two-layer) [[project_regions_architecture]] (G22 slow consolidation)
