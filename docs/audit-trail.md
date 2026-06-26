@@ -1414,6 +1414,32 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
   loaded it and it went SSH-unreachable mid-run; mk_pino to clean stray procs) — this is now a re-confirm, not a gate; the local
   formal VERDICT is green and the fix correctness was already CLOSED.
 
+## SS-3 [live] transport — BLOCKED — the deferred row's "transport ships" premise is FALSE (no code change; finding recorded) — 2026-06-26
+- Scoping the SS-3 [live] row (peer↔peer cohort-merge convergence over ./relay) to dispatch it as the next [live] win uncovered —
+  and the commander empirically VERIFIED — that the transport it claims to defer to has NEVER been functional:
+  - `gl_student_publish`/`gl_student_fetch` (arch/common/gossip_learn.c:202/228) save ONE NAMED p-fs ref per 4096-B chunk
+    (`st/<node>/<c>` via pfs_dag_save), but the named-ref table is `PFS_REF_MAX=16` (arch/common/include/pfs_dag.h:62). The
+    smallest student tier (S: n_params≈164,416) is a 1,973,036-B blob = ceil/4096 = 482 chunks + 1 header = 483 DISTINCT names.
+    `pfs_dag_save` does `if (!cur) cur = ref_alloc(); if (!cur) return PFS_E_FULL;` → the 17th distinct name fails, so
+    `gl_student_publish` returns -1 at chunk ~16. M tier = ~5,578 chunks. There is NO tier/env knob that fits (S is the floor;
+    PFS_BLOCK_MAX=4096 is a hard per-block cap → a 1-chunk student is impossible).
+  - Both functions have ZERO callers (declared-only in gossip_learn.h:140/148; the `baby merge` verb is purely in-process and
+    never touches the relay). They are exercised by NO cert. `GL_ST_MAXCHUNK=8192` (gossip_learn.h:133) advertises 512× the
+    actual 16-slot ref capacity — a contradiction never reconciled because the row was deferred before anyone called the code.
+  - Even with a bigger ref table, the `pfs/ref` gossip plane carries `PFSD_REF_PER_PKT=3` names per `PFSD_BEACON_MS=800` beacon
+    (~128s to advertise S-tier names, ~25min for M) and the P1 content-announce is a single clobberable LATEST_ONLY slot that
+    loses discovery under concurrent multi-block puts (same CLASS as the cradle L3 race, far more severe: one 1,280-B body there
+    vs hundreds-to-thousands of 4 KB blocks here). The whole p-fs name/replication plane is sized for ~16 small named objects.
+- CROWN UNAFFECTED (no code changed): SS-3's merge math (`st_merge_cohort` student.c:1925, `st_blob_tier_ok` :1850) is shipped,
+  certified in-proc (tests/llm/run_ss3.sh), student-only (never gl_merge/rw[]) — that half is real. Only the DISTRIBUTED
+  transport is dead. This is the harsh-review's "shipped the safe (in-proc) half, the load-bearing distributed half is dead code"
+  finding made concrete and falsifiable.
+LEDGER: row OPEN — a REAL gap, honestly logged (not silently left as a green "deferred"). SS-3 [live] requires a C transport
+REDESIGN first: one named manifest ref + content-addressed chunks via pfs_repl_put/pfs_repl_want (bypassing the nameplane), a
+chunked/indirect manifest (482 ids ×32B ≈ 15 KB > one block), an in-proc publish→fetch→st_merge_cohort round-trip cert BEFORE any
+[live] harness; gossip_learn.c is BARE-METAL-linked (boot/x86 + boot/aarch64) so the redesign is crown-sensitive (keep bare metal
+building, do not perturb the G22 gl_pfs_publish/gl_merge mesh, re-derive .text 755a20fa). Design-doc-first per project norm.
+
 ## cradle-live autoprobe-cert — the formal multi-node VERDICT goes green host-independent — commit 6d491756 (base 2e495a8c) — CLOSED
 - With L1+L2+L3 the mind PROVABLY learns over the wire, but the harness's overall VERDICT still printed OPEN: the cure/scramble/
   death arms forced an explicit `baby 16` (16 sync sleep rounds over a ~247MB student) that does not finish inside the 180s cap
