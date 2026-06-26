@@ -152,6 +152,29 @@ This deliberately avoids bumping `PFSR_PENDING_MAX` (which would change the
 bare-metal `.text` and the static `pending[]` size) and avoids touching the
 LATEST_ONLY topic QoS.
 
+### 2.4 The 64-slot P0 store — receiving nodes need the ARK durable backend (found + audit-confirmed during steps 1-2 impl)
+
+The original draft of this doc (§0/§5/§6) addressed only the `PFS_REF_MAX=16`
+name explosion and transient heap — it MISSED a second hard wall: the in-memory
+P0 content store is `PFS_MAX_BLOCKS=64` (`pfs_block.h:29`). `pfs_put` returns
+`PFS_E_FULL` once all 64 slots are live with no safe eviction. An S-tier blob is
+**482 content blocks** — it cannot reside in a memory-only store; a naive
+receiver drops blocks at #65. This was found while implementing the in-proc cert
+(steps 1-2) and independently audit-confirmed (real, not a cert artifact).
+
+Resolution (already in the shipped cert, no crown change): mount the
+**eviction-capable ARK durable backend** — RAM stays a 64-slot cache, every
+block is also written to the ARK log, and `pfs_get` falls through to ARK on a
+cache miss with a re-hash verify (all in the UNTOUCHED `pfs_block.c`). The
+fetcher therefore probes presence with `pfs_get(id, 0, 0)` (returns the stored
+length, ARK-aware) and **NOT** `pfs_has` (which only sees the 64-slot RAM
+cache). Content-addressing keeps recovery bit-exact across memory/ARK.
+
+**Load-bearing consequence for step-3 `[live]`:** every node that RECEIVES a
+multi-MB blob (not just the cert) must have the ARK backend mounted, or it will
+silently drop chunks past #65 and `gl_student_fetch` will (correctly) fail
+closed. The step-3 harness must mount ARK on all peers and assert it.
+
 ## 3. In-proc cert FIRST — `[ss3-blob-roundtrip]` (the gate)
 
 This must PASS before any `[live]` harness is attempted.
@@ -296,7 +319,20 @@ should be a documented follow-up; ship **S-only** for the first `[live]` green.
    both arches (§4.3).
 3. **`[live]` harness** — 3 hosted procs over `./relay`, S-tier, publish on A,
    fetch+`st_merge_cohort` on B and C, assert cohort convergence/symmetry and
-   fail-closed on a dropped chunk.
+   fail-closed on a dropped chunk. **Mount the ARK durable backend on every
+   receiver (§2.4) or chunks drop past #65.** Watch the want-storm/convergence-
+   time risk (§6): use ss6-style retransmit + a progress-reset retry budget.
+
+## Status (2026-06-26)
+
+- **Steps 1+2 SHIPPED + independently audited MERGEABLE** (merge `e655539d`,
+  impl `43b2ad3f`, audit-trail "SS-3 student-blob transport (steps 1+2)").
+  Content-addressed transport rewritten hosted-gated; in-proc
+  `[ss3-blob-roundtrip]` cert 12/12 (482-chunk depth-2 S blob round-trips
+  `memcmp==0` → real `st_merge_cohort`; falsifier proven load-bearing). Crown
+  `755a20fa` (aarch64) / `4064d8a9` (x86) byte-identical, re-derived on trunk.
+- **Step 3 (`[live]` harness) REMAINS** — host-heavy multi-process; a
+  prioritization call (vs federation F1). Carries the §2.4 ARK requirement.
 
 ## Critical files
 - `arch/common/gossip_learn.c` (gl_student_publish/_fetch:202/228 — the rewrite, hosted-gated)

@@ -1439,10 +1439,36 @@ REDESIGN first: one named manifest ref + content-addressed chunks via pfs_repl_p
 chunked/indirect manifest (482 ids ×32B ≈ 15 KB > one block), an in-proc publish→fetch→st_merge_cohort round-trip cert BEFORE any
 [live] harness; gossip_learn.c is BARE-METAL-linked (boot/x86 + boot/aarch64) so the redesign is crown-sensitive (keep bare metal
 building, do not perturb the G22 gl_pfs_publish/gl_merge mesh, re-derive .text 755a20fa). Design-doc-first per project norm —
-✅ DONE: `docs/architecture/student-blob-transport.md` (content-addressed chunks + 2-level index + 1 named descriptor ref;
-windowed `pfs_repl_want` so `pfs_repl.c` is UNCHANGED → fix is hosted-gated in gossip_learn.c, crown 755a20fa preserved;
-in-proc `[ss3-blob-roundtrip]` cert gates the transport before any [live] harness). IMPL deferred to mk_pino's prioritization
-(transport redesign vs federation F1).
+✅ DONE: `docs/architecture/student-blob-transport.md`. STEPS 1+2 NOW SHIPPED + AUDITED (next row); only step-3 [live] remains.
+
+## SS-3 student-blob transport (steps 1+2) — content-addressed transport + in-proc cert — merge e655539d (impl 43b2ad3f, base 6606ae1a) — CLOSED
+- The fix for the BLOCKED transport above. Per the hardened design doc: `gl_student_publish`/`gl_student_fetch` rewritten to
+  store each 4 KB weight chunk as a content-addressed block (`pfs_repl_put`, NO name), index them in a 2-level tree (leaf blocks
+  ≤127 ids, one root), publish a small descriptor under ONE named ref `st/<node>` — collapsing 483 names → 1; the fetcher reads
+  the 1 ref → descriptor → index and pulls chunks by EXPLICIT WINDOWED `pfs_repl_want` (fail-closed, never truncate). Step 3 (the
+  [live] 3-proc relay harness) intentionally NOT built — deferred (prioritization vs federation F1).
+- REAL + falsifiable (INDEPENDENT audit MERGEABLE, separate auditor re-derived everything): in-proc `tests/llm/run_ss3_blob.sh`
+  12/12 PASS — a 482-chunk depth-2 S-tier blob round-trips `memcmp==0` into a SEPARATE buffer filled only by the index-walking
+  fetch (not aliased), then feeds a real `st_merge_cohort` (merge-of-transported == merge-of-direct BYTES, merged loss ≤ worse
+  parent, peer-symmetric). FALSIFIER PROVEN LOAD-BEARING: the auditor DISARMED the dropped-chunk (drop→no-drop) and the cert went
+  10/2 FAIL exit 1 — so the RED is genuinely caused by the missing chunk, fail-closed leaves `out` at the 0xAB sentinel.
+- CROWN (DECISIVE, independently re-derived by the auditor AND by the commander on integrated trunk): aarch64 .text
+  `755a20fa…0513` and x86 .text `4064d8a9…0413` BYTE-IDENTICAL base==head. Mechanism (not luck): ALL new code + ALL new static
+  scratch under `#ifdef _TK_HOSTED_LIBC_`; the bare-metal `#else` `gl_student_*` bodies are byte-for-byte trunk; `nm` shows ZERO
+  new bare-metal symbols (gl_st_idx/gl_st_desc/gl_st_leafids/gl_student_test_drop_chunk present only in hosted boots).
+  pfs_repl.c/pfs_dag.c/pfs_block.c/student.c UNTOUCHED; G22 gl_merge/gl_pfs_publish/_fetch byte-unchanged. The cert link's
+  `--gc-sections` is the TEST link only — NO kernel boot uses it (proven by the exact crown match). All 4 boots build; the hosted
+  kernel carries the new transport.
+- FINDING (audit-confirmed, recorded in the design doc §2.4, NOT a blocker): the in-memory P0 store is `PFS_MAX_BLOCKS=64`
+  (pfs_block.h:29) but an S blob is 482 blocks → a memory-only receiver drops blocks at #65 (`pfs_put`→PFS_E_FULL). The cert
+  legitimately mounts the eviction-capable ARK durable backend (RAM=64-slot cache + ARK log fall-through, all in the UNTOUCHED
+  pfs_block.c); the fetcher probes presence with `pfs_get(id,0,0)` (ARK-aware), NOT `pfs_has` (RAM-only). LOAD-BEARING for
+  step-3: every [live] receiver of a multi-MB blob must mount ARK or it silently drops chunks.
+- HONEST BOUND: the windowed-want retry/yield path is only TRIVIALLY exercised in SOLO (all blocks resident at pass 0); real
+  packet-loss / multi-node convergence + the want-storm risk are the deferred step-3 [live] row. M-tier (5577 chunks, depth-2) is
+  structurally supported but not run (cert is S-only).
+LEDGER: row CLOSED (steps 1+2 — the transport is real and certified, crown untouched). The dead-code transport is now a working,
+falsifiable, content-addressed blob mover. Remaining: the step-3 [live] harness (with the §2.4 ARK requirement).
 
 ## cradle-live autoprobe-cert — the formal multi-node VERDICT goes green host-independent — commit 6d491756 (base 2e495a8c) — CLOSED
 - With L1+L2+L3 the mind PROVABLY learns over the wire, but the harness's overall VERDICT still printed OPEN: the cure/scramble/
