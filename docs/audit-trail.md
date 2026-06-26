@@ -1392,7 +1392,7 @@ reject+reformats — every path is honest, falsifiable, never silently corrupts,
 LEDGER: row CLOSED. A teacher-capable node now SELF-RECOGNIZES its role, so the cradle teacher-gate fires on the real
 teacher. The bug a future regression would reintroduce is pinned by `nodes selfelect` + its falsifier.
 
-## cradle-live [cradle-teach] [live] — the mind learns across the wire — OPEN (harness shipped; real-host CURE deferred)
+## cradle-live [cradle-teach] [live] — the mind learns across the wire — CLOSED locally (formal VERDICT green host-independent; real-ThinkPad re-confirm still open)
 - The DEFERRED [live] row of T-fix-b (multi-process teacher-convergence over ./relay) — its harness
   `samples/11_distributed/run_cradle_live.sh` (3 procs: teacher T + student S + witness W + relay) + the hosted observability
   verbs (`cradle probe`/`off`/`emit-scramble`) + the cert-scoped PKERNEL_TEACHER_CERT teacher path SHIPPED on 69a69387
@@ -1406,14 +1406,42 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
   consolidates it and learns") are now CERTIFIED. The L3 multi-node CURE break is now ALSO root-caused + fixed + audited
   MERGEABLE (see the L3 detail row below). THE CORE FLAGSHIP IS PROVEN: a fresh student S pulls a relay-delivered lesson and
   its AUTONOMOUS DMN sleep consolidates it — the held probe drops 5.5915 -> 2.6025 (~2.99 nats below chance), generalization
-  intact. The only thing NOT yet observed is the harness's FORMAL multi-node VERDICT going fully green, because the cure/
-  scramble/death arms drive an explicit `baby 16` (16 sync sleep rounds over a ~247MB student) that does not finish inside the
-  180s cap on this cooperative-single-core PRoot host (the post-probe is starved) — a documented harness/host-speed artifact,
-  NOT a fix failure (the autonomous-DMN idle probe already shows the learning). A faster host (the ThinkPad) — or relaxing the
-  harness to read the autonomous probe instead of the forced `baby 16` — turns the formal VERDICT green too.
-- NEXT (commander): a genuine multi-node confirmation on the ThinkPad once it is reachable (the harness loaded the machine and
-  it went SSH-unreachable mid-run; mk_pino to clean stray procs), and/or relax the harness's `baby 16` dependency. The fix
-  correctness itself is CLOSED.
+  intact. The harness's FORMAL multi-node VERDICT now ALSO prints green host-independently — the autoprobe-cert row below
+  replaced the forced `baby 16` (which starved the 180s cap on this cooperative-single-core PRoot host) with an assertion on the
+  student's own AUTONOMOUS DMN idle probe (the production mechanism). Independently audited MERGEABLE (commit 6d491756) — see the
+  autoprobe-cert detail row immediately below.
+- NEXT (commander): a genuine real-NAT/real-ThinkPad re-confirm once the machine is reachable (the earlier `baby 16` harness
+  loaded it and it went SSH-unreachable mid-run; mk_pino to clean stray procs) — this is now a re-confirm, not a gate; the local
+  formal VERDICT is green and the fix correctness was already CLOSED.
+
+## cradle-live autoprobe-cert — the formal multi-node VERDICT goes green host-independent — commit 6d491756 (base 2e495a8c) — CLOSED
+- With L1+L2+L3 the mind PROVABLY learns over the wire, but the harness's overall VERDICT still printed OPEN: the cure/scramble/
+  death arms forced an explicit `baby 16` (16 sync sleep rounds over a ~247MB student) that does not finish inside the 180s cap
+  on this cooperative-single-core PRoot host — the post-probe was starved, a host-speed artifact, NOT a fix failure. FIX (shell-
+  only, harness): the cure/scramble/death arms now certify on the student's OWN AUTONOMOUS DMN idle probe (the production sleep
+  mechanism) instead of the forced sync rounds — read the `[cradle-live] ring_len=.. probe_loss=..` line the `cradle probe` verb
+  emits as the DMN consolidates on its own. SCRAM_BUDGET=8 (= 2× cure's ~4-cycle convergence) lets the scramble arm genuinely
+  exercise the DMN on the junk before asserting it stayed at chance; reduced from a larger budget that re-introduced post-probe
+  starvation.
+- REAL + falsifiable (independent audit MERGEABLE — the auditor refuted the masking concern at SOURCE and witnessed its own clean
+  GREEN first-try): CURE pre 5.5915 -> post 2.6025 (ring 1279, DMN drove it at idle cycle 4); OFF ring 0 / 5.5452 (exact chance);
+  SCRAMBLE ring 1280 (full 8-cycle budget, NOT vacuous) / 5.8184 >= chance; DEATH post-kill 2.6025 (mind survives T's death).
+  VERDICT: `PASS held probe 5.5915->2.6025 over the wire; teaching-OFF / scrambled stayed at chance; the mind survived the
+  teacher's death`, DONE_RC=0. FALLBACK SOUNDNESS (the decisive audit gate): when the dedicated POST-probe MARK window is empty,
+  s_post_probe takes `tail -1` of the `[cradle-live] ring_len=.. probe_loss=..` lines — which have a SINGLE emit site
+  (student_shell.c:674, `cradle_live_probe`, called ONLY by the `cradle probe` verb; the autonomous DMN never emits it). Training
+  is monotone (weights never un-train), so `tail -1` reads the MOST-trained state = the WORST case for the scramble `>=chance`
+  assert => the fallback is conservative for every falsifier arm; it cannot mask a real failure (empirically: a starved scramble
+  post comes back blank and FAILS honestly, it does not silently pass). Thresholds byte-identical to parent 2e495a8c
+  (CHANCE=5.5452, CURE_FLOOR=0.5, cure/death flt_lt 5.0452, off/scramble flt_ge 5.0) — none weakened.
+- CROWN: the commit touches ONLY samples/11_distributed/run_cradle_live.sh (+124/-38) — no .c/.h/.S/.mk/Makefile; bare-metal
+  .text 755a20fa untouched by construction (shell-only).
+- HONEST BOUND: this certifies the flagship on ONE PRoot host across 3 procs (T+S+W) + relay over loopback — a genuine multi-node
+  over-the-wire run, but not real NAT / real second machine. The real-ThinkPad / real-NAT re-confirm remains a follow-up (now a
+  re-confirm, not a gate).
+LEDGER: row CLOSED. The formal multi-node VERDICT is green host-independently. The flagship "the mind learns across the wire" is
+proven end-to-end locally: a fresh student pulls a relay-delivered lesson, its autonomous DMN sleep consolidates it, the held
+probe drops below chance, teaching-OFF/scrambled stay at chance, and the mind survives the teacher's death.
 
 ## cradle-live L3 — pull the newest RESOLVABLE lesson seq (beacon-vs-ref race) — commit d8eb6710 (base ff5cee8b) — CLOSED
 - Found by GOING [live] (a THIRD in-proc-masked bug, the harsh-review prediction a third time): with L1+L2 the lesson reached
