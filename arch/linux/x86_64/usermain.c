@@ -145,6 +145,15 @@ extern char *getenv(const char *);
 IMPORT void net_relay_stats(unsigned long *ok, unsigned long *badmac,
                             unsigned long *replay);
 
+/* connect-anywhere SLICE 1: the UNCONDITIONAL relay keepalive (net_relay.c).
+ * A dedicated hosted task beats this regardless of peer discovery or cluster
+ * admission so the NAT/AP return mapping stays open. Depends only on the
+ * sock_fd + cur_relay set in net_relay_init. */
+IMPORT void net_relay_heartbeat(void);
+#ifdef HEARTBEAT_CERT
+IMPORT void net_relay_heartbeat_self_test(void (*print)(const char *));   /* SLICE 1 cert */
+#endif
+
 static void print(const char *s)
 {
     sio_send_frame((const UB *)s, (INT)__builtin_strlen(s));
@@ -268,6 +277,22 @@ static ID create_task(FP fn, INT pri, INT stksz)
     return id;
 }
 
+/* connect-anywhere SLICE 1: a tiny dedicated task that beats the relay
+ * keepalive on its OWN cadence, decoupled from net_task's recv-poll loop and
+ * from cluster admission. net_relay_heartbeat() self-gates to one keepalive
+ * per KEEPALIVE_SEC (15 s in net_relay.c), so we poll on a tighter 5 s cadence
+ * — well under both KEEPALIVE_SEC and the ~30 s NAT/AP mapping lifetime — so
+ * scheduler jitter can never stretch a real gap past the window. A solo node
+ * with no relay configured is a clean no-op (the udp_send_to guard). */
+EXPORT void net_heartbeat_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    for (;;) {
+        net_relay_heartbeat();
+        tk_dly_tsk(5000);
+    }
+}
+
 static INT net_up = 0;
 
 /* env を符号なし10進としてパース。未設定/空なら dflt。 */
@@ -338,6 +363,11 @@ static void cmd_net(void)
 
     netstack_start();
     create_task((FP)net_task, 3, 4096);
+
+    /* connect-anywhere SLICE 1: start the unconditional relay heartbeat task.
+     * It fires regardless of peer discovery or cluster admission so the NAT/AP
+     * return mapping stays open and an inbound admission grant can arrive. */
+    create_task((FP)net_heartbeat_task, 5, 4096);
 
     /* Bring up SWIM so the two nodes actively discover each other via
      * periodic gossip — without it the only traffic would be the
@@ -903,6 +933,18 @@ EXPORT INT usermain(void)
             seed_bootstrap_self_test(print);
 #else
             print("seed test: rebuild with EXTRA_CFLAGS=-DSEED_BOOTSTRAP_CERT\r\n");
+#endif
+        } else if (starts_with(line, n, "heartbeat")) {
+            /* connect-anywhere SLICE 1 cert: `heartbeat test` drives the
+             * SHIPPED net_relay_heartbeat() in-proc (mock clock, NO sockets) —
+             * an isolated, un-admitted node STILL beats below the NAT mapping
+             * lifetime. Gated behind -DHEARTBEAT_CERT so the default kernel +
+             * crown stay byte-identical; the -DHEARTBEAT_FALSIFIER build gates
+             * the beat on admission and makes this RESULT: FAIL (teeth). */
+#ifdef HEARTBEAT_CERT
+            net_relay_heartbeat_self_test(print);
+#else
+            print("heartbeat test: rebuild with EXTRA_CFLAGS=-DHEARTBEAT_CERT\r\n");
 #endif
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`

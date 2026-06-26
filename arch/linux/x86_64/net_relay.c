@@ -97,7 +97,14 @@ extern int pkernel_default_node_id(void);
 #define MAX_PAYLOAD        1380
 #define MAX_PKT            (HEAD_LEN + AUTH_LEN + MAX_PAYLOAD)
 #define DEFAULT_PORT       7400
-#define KEEPALIVE_SEC      25            /* < IDLE_TIMEOUT/2 in relay */
+/* connect-anywhere SLICE 1: this MUST stay safely below the ~30 s UDP
+ * mapping lifetime that home NAT/AP firewalls give an outbound flow
+ * (NAT_TIMEOUT_FLOOR). At 15 s a node can lose ONE keepalive entirely and
+ * still refresh the return mapping (2*15 = 30) before it ages out, so an
+ * inbound admission grant can always find its way back. 25 s left no margin
+ * for a single drop. Also < IDLE_TIMEOUT/2 in the relay (eviction guard). */
+#define KEEPALIVE_SEC      15
+#define NAT_TIMEOUT_FLOOR  30            /* conservative NAT/AP UDP map life (s) */
 /* G7/G23: the relay wire allows node ids 1..255, but the kernel cluster
  * (drpc) only tracks 1..DNODE_MAX. This MUST mirror DNODE_MAX in
  * arch/common/include/drpc.h (T-Kernel headers are not includable in this
@@ -128,6 +135,20 @@ static int      relay_count = 0;
 static int      cur_relay   = 0;            /* index into relay_list */
 static u64 next_nonce = 0;
 static time_t   last_send_ts = 0;
+
+/* connect-anywhere SLICE 1 — heartbeat cert seam. In a normal build HB_NOW()
+ * is exactly time(NULL) and the divert is compiled out, so production .text is
+ * byte-for-byte unchanged. Under -DHEARTBEAT_CERT the self-test drives a mock
+ * monotonic clock and counts packets WITHOUT touching a socket. */
+#ifdef HEARTBEAT_CERT
+static long hb_mock_now    = 0;   /* mock monotonic seconds                  */
+static int  hb_use_mock    = 0;   /* 1 = divert sendto + use the mock clock  */
+static int  hb_sendto_count= 0;   /* keepalives the seam "emitted"           */
+static int  hb_peer_count  = 0;   /* cert-controlled; 0 = isolated/un-admitted */
+#define HB_NOW()  (hb_use_mock ? hb_mock_now : (long)time(NULL))
+#else
+#define HB_NOW()  ((long)time(NULL))
+#endif
 
 /* G4 inbound-auth state. */
 static int relay_strict        = 0;   /* PKERNEL_RELAY_STRICT: drop v1 in */
@@ -323,6 +344,14 @@ static int build_packet(unsigned char *buf,
 static void udp_send_to(int idx, const unsigned char *buf, int len)
 {
     if (sock_fd < 0 || idx < 0 || idx >= relay_count) return;
+#ifdef HEARTBEAT_CERT
+    if (hb_use_mock) {
+        /* cert seam: count the emit, stamp the mock clock, no real socket. */
+        hb_sendto_count++;
+        if (idx == cur_relay) last_send_ts = (time_t)hb_mock_now;
+        return;
+    }
+#endif
     ssize_t r = sendto(sock_fd, buf, (size_t)len,
                        MSG_DONTWAIT | MSG_NOSIGNAL,
                        (struct sockaddr *)&relay_list[idx],
@@ -867,6 +896,38 @@ int net_relay_recv(void *out, int maxlen)
 
 int net_relay_node_id(void) { return my_node_id; }
 
+/* connect-anywhere SLICE 1 — the UNCONDITIONAL relay keepalive.
+ *
+ * This is exactly ha_tick()'s first duty (the legacy keepalive clause),
+ * lifted into its own exported entry so a dedicated hosted task can beat it
+ * on a fixed cadence that is INDEPENDENT of:
+ *   - peer discovery (SWIM) — we beat even with zero known peers, and
+ *   - cluster admission   — we beat even while drpc_my_node == 0xFF, i.e.
+ *     before (or without ever) being granted a cluster id.
+ * That breaks the observed two-machine deadlock: a node registered, sent a
+ * handful of packets, then originated NO cluster traffic while waiting for an
+ * admission grant; with nothing leaving, the NAT/AP return mapping aged out
+ * and the grant could never arrive. A steady < NAT_TIMEOUT_FLOOR keepalive
+ * keeps that return path open regardless.
+ *
+ * Depends ONLY on sock_fd + cur_relay (both set in net_relay_init), never on
+ * peers or admission state. The udp_send_to() guard (idx >= relay_count)
+ * keeps a solo node (relay_count == 0, no relay configured) a clean no-op —
+ * a solo node with no relay beats nothing. */
+void net_relay_heartbeat(void)
+{
+#if defined(HEARTBEAT_CERT) && defined(HEARTBEAT_FALSIFIER)
+    /* FALSIFIER build: the BROKEN design that gates the beat on cluster
+     * admission / peer presence. An isolated, un-admitted node (hb_peer_count
+     * == 0 — the exact deadlock this slice cures) then emits ZERO keepalives,
+     * and the self-test's "emitted >= floor(T/KEEPALIVE_SEC)" assertion FAILS.
+     * Proof the cert has teeth. */
+    if (hb_peer_count == 0) return;
+#endif
+    if (HB_NOW() - (long)last_send_ts >= KEEPALIVE_SEC)
+        send_keepalive_to(cur_relay);
+}
+
 #ifdef SEED_BOOTSTRAP_CERT
 /* [seed-bootstrap] — N-4 seed-bootstrap cert. In-proc, NO sockets, NO host
  * (mirror supernode_forward_self_test / swim_cap_gossip_self_test). Drives the
@@ -972,3 +1033,107 @@ void seed_bootstrap_self_test(void (*pr)(const char *))
     else         pr("[seed-bootstrap] RESULT: 9/9 PASS\r\n");
 }
 #endif /* SEED_BOOTSTRAP_CERT */
+
+#ifdef HEARTBEAT_CERT
+/* [heartbeat] connect-anywhere SLICE 1 cert — the UNCONDITIONAL relay
+ * keepalive. In-proc, NO sockets, NO host (mirror seed_bootstrap_self_test):
+ * it drives the SHIPPED net_relay_heartbeat() across T simulated seconds with
+ * a mock monotonic clock, ZERO inbound and ZERO net_relay_send() calls — i.e.
+ * an ISOLATED, UN-ADMITTED node (no peers, drpc would read 0xFF). The
+ * udp_send_to() seam (hb_use_mock) counts emitted keepalives without a socket.
+ *
+ * ASSERTS: at least floor(T/KEEPALIVE_SEC) keepalives emitted AND the max
+ * inter-keepalive gap stays < NAT_TIMEOUT_FLOOR (so the NAT return mapping
+ * never ages out). The FALSIFIER build (-DHEARTBEAT_FALSIFIER) gates the beat
+ * on admission (hb_peer_count>0) -> emits ZERO -> RESULT: FAIL (teeth). */
+static int hb_fail;
+
+static void hb_check(void (*pr)(const char *), int ok, const char *desc)
+{
+    pr(ok ? "[heartbeat]   PASS " : "[heartbeat]   FAIL ");
+    pr(desc); pr("\r\n");
+    if (!ok) hb_fail = 1;
+}
+
+static void hb_putdec(void (*pr)(const char *), int v)
+{
+    char b[12]; int i = 0, neg = 0;
+    if (v < 0) { neg = 1; v = -v; }
+    if (v == 0) b[i++] = '0';
+    while (v > 0) { b[i++] = (char)('0' + v % 10); v /= 10; }
+    char o[14]; int j = 0;
+    if (neg) o[j++] = '-';
+    while (i > 0) o[j++] = b[--i];
+    o[j] = '\0';
+    pr(o);
+}
+
+void net_relay_heartbeat_self_test(void (*pr)(const char *))
+{
+    hb_fail = 0;
+    pr("[heartbeat] connect-anywhere SLICE 1 cert (unconditional relay keepalive)\r\n");
+
+    /* Save the production statics we borrow, so a real run after the cert is
+     * unaffected (the seed cert touches cert-only statics; we touch real ones). */
+    int     sv_relay_count = relay_count, sv_cur = cur_relay, sv_sock = sock_fd;
+    int     sv_node = my_node_id, sv_wire = wire_version;
+    time_t  sv_last = last_send_ts;
+
+    /* Arrange an ISOLATED, UN-ADMITTED node: exactly ONE relay configured,
+     * NO peers, never admitted (hb_peer_count==0 == drpc_my_node 0xFF). */
+    relay_count  = 1;
+    cur_relay    = 0;
+    sock_fd      = 999;            /* >=0 so the udp_send_to guard passes      */
+    my_node_id   = 7;
+    wire_version = RELAY_VER_V1;   /* keyless build_packet path; no socket I/O */
+    hb_use_mock     = 1;
+    hb_sendto_count = 0;
+    hb_peer_count   = 0;           /* isolated: no peers, NOT admitted         */
+    hb_mock_now     = 1000;        /* arbitrary monotonic base                 */
+    last_send_ts    = (time_t)hb_mock_now;   /* just registered               */
+
+    const long T = 120;           /* 120 s of total isolation                 */
+    int  emitted = 0;
+    long max_gap = 0, last_emit_at = hb_mock_now;
+    for (long t = 1; t <= T; t++) {
+        hb_mock_now = 1000 + t;
+        int pre = hb_sendto_count;
+        net_relay_heartbeat();            /* the SHIPPED entry point          */
+        if (hb_sendto_count > pre) {
+            long gap = hb_mock_now - last_emit_at;
+            if (gap > max_gap) max_gap = gap;
+            last_emit_at = hb_mock_now;
+            emitted += (hb_sendto_count - pre);
+        }
+    }
+    /* also count the silent tail (last emit -> end) as a gap */
+    {
+        long tail = hb_mock_now - last_emit_at;
+        if (tail > max_gap) max_gap = tail;
+    }
+
+    int expect_min = (int)(T / KEEPALIVE_SEC);
+
+    pr("[heartbeat]   info emitted="); hb_putdec(pr, emitted);
+    pr(" expect_min=");                hb_putdec(pr, expect_min);
+    pr(" max_gap=");                   hb_putdec(pr, (int)max_gap);
+    pr(" KEEPALIVE_SEC=");             hb_putdec(pr, (int)KEEPALIVE_SEC);
+    pr(" NAT_FLOOR=");                 hb_putdec(pr, (int)NAT_TIMEOUT_FLOOR);
+    pr("\r\n");
+
+    hb_check(pr, emitted >= expect_min,
+             "isolated un-admitted node STILL beats (emitted >= floor(T/KEEPALIVE_SEC))");
+    hb_check(pr, max_gap < NAT_TIMEOUT_FLOOR,
+             "max inter-keepalive gap < NAT_TIMEOUT_FLOOR (mapping stays open)");
+    hb_check(pr, emitted > 0,
+             "at least one keepalive WITHOUT any peer or admission");
+
+    /* restore */
+    relay_count = sv_relay_count; cur_relay = sv_cur; sock_fd = sv_sock;
+    my_node_id  = sv_node; wire_version = sv_wire; last_send_ts = sv_last;
+    hb_use_mock = 0;
+
+    if (hb_fail) pr("[heartbeat] RESULT: FAIL\r\n");
+    else         pr("[heartbeat] RESULT: 3/3 PASS\r\n");
+}
+#endif /* HEARTBEAT_CERT */
