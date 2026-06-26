@@ -1492,12 +1492,24 @@ falsifiable, content-addressed blob mover. Remaining: the step-3 [live] harness 
   (CHANCE=5.5452, CURE_FLOOR=0.5, cure/death flt_lt 5.0452, off/scramble flt_ge 5.0) — none weakened.
 - CROWN: the commit touches ONLY samples/11_distributed/run_cradle_live.sh (+124/-38) — no .c/.h/.S/.mk/Makefile; bare-metal
   .text 755a20fa untouched by construction (shell-only).
-- HONEST BOUND: this certifies the flagship on ONE PRoot host across 3 procs (T+S+W) + relay over loopback — a genuine multi-node
-  over-the-wire run, but not real NAT / real second machine. The real-ThinkPad / real-NAT re-confirm remains a follow-up (now a
-  re-confirm, not a gate).
-LEDGER: row CLOSED. The formal multi-node VERDICT is green host-independently. The flagship "the mind learns across the wire" is
-proven end-to-end locally: a fresh student pulls a relay-delivered lesson, its autonomous DMN sleep consolidates it, the held
-probe drops below chance, teaching-OFF/scrambled stay at chance, and the mind survives the teacher's death.
+- CROSS-ARCH REAL-HARDWARE RE-CONFIRM 2026-06-26 (on mk_pino's ThinkPad X1, x86_64, gcc 13.3 -O1 -ffp-contract=off): the SAME
+  autoprobe harness PASS on a genuinely different ISA + real machine (not the aarch64 PRoot sandbox): CURE 5.5331->2.6848 (ring
+  1279), OFF ring0/5.5452, SCRAMBLE ring1280/5.7788 (>=chance), DEATH 1.8537 post-kill; VERDICT PASS "teaching-OFF / scrambled
+  stayed at chance; the mind survived the teacher's death". So the flagship is NOT aarch64/sandbox-specific — it reproduces on
+  x86_64 real hardware. (Numbers differ slightly from aarch64 as expected: hosted float student math, per-ISA FP rounding even at
+  -ffp-contract=off; the crown byte-identity invariant is on the BARE-METAL .text only, not the hosted student.)
+- HONEST BOUND (updated): proven on a SINGLE machine, 3 procs + relay over loopback, on BOTH arches independently. A literal
+  TWO-PHYSICAL-MACHINE simultaneous mesh was attempted (aarch64 phone-class sandbox student <-> x86_64 ThinkPad teacher+relay over
+  the real LAN) and is BLOCKED BY THE SANDBOX'S ENVIRONMENT, not by p-kernel: the relay+teacher elected + emitted 16 canonical
+  lessons on x86_64 and the aarch64 student booted + was born + targeted the relay, but the Termux/PRoot-on-Android device cannot
+  send UDP to a LAN host (verified: TCP/SSH device->ThinkPad WORKS, UDP device->internet 8.8.8.8:53 WORKS, but UDP
+  device->ThinkPad:7420/7421 receives NOTHING — Android LAN-UDP egress block). A UDP-over-TCP tunnel won't fix it cleanly (TCP
+  doesn't preserve datagram boundaries -> corrupts the relay wire). A true two-machine run needs two UDP-LAN-capable hosts (e.g.
+  two PCs) or a public/internet-reachable relay; recorded as a follow-up, NOT a gate.
+LEDGER: row CLOSED. The formal multi-node VERDICT is green host-independently AND cross-arch on real hardware (aarch64 sandbox +
+x86_64 ThinkPad). The flagship "the mind learns across the wire" is proven end-to-end: a fresh student pulls a relay-delivered
+lesson, its autonomous DMN sleep consolidates it, the held probe drops below chance, teaching-OFF/scrambled stay at chance, and
+the mind survives the teacher's death. Remaining (follow-up, not a gate): a literal two-UDP-capable-machine / real-NAT mesh.
 
 ## cradle-live L3 — pull the newest RESOLVABLE lesson seq (beacon-vs-ref race) — commit d8eb6710 (base ff5cee8b) — CLOSED
 - Found by GOING [live] (a THIRD in-proc-masked bug, the harsh-review prediction a third time): with L1+L2 the lesson reached
