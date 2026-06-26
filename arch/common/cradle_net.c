@@ -51,6 +51,13 @@
 IMPORT int cradle_lesson_ingest(const UB *body, int len);
 /* read-only ring length, for the [cradle-diag] ingest report (same tier). */
 IMPORT int cradle_lesson_len(void);
+/* the Arm-A "pulling rides the mesh" gate (cradle.c g_cradle_enabled). When a
+ * node is `cradle off`, it must NOT pull lessons off the wire into its ring —
+ * the OFF falsifier ("no teaching -> nothing learned, AND the ring stays empty").
+ * cradle_poll_and_pull previously only LOOKED enabled because the ref-lag bug
+ * blocked every pull; with the resolvable-seq fallback the pull now succeeds, so
+ * the gate the flag was always meant to drive must be honoured here. */
+IMPORT int cradle_get_enabled(void);
 
 /* ------------------------------------------------------------------ */
 /* [cradle-diag] — HOSTED-ONLY pull-path tracer (wave-cradle-diag)     */
@@ -219,6 +226,10 @@ void cradle_poll_and_pull(void)
     }
     INT diag = cd_diag_on();
     if (drpc_my_node == 0xFF) return;       /* solo: no mesh to pull from      */
+    if (!cradle_get_enabled()) {            /* `cradle off`: do not ride the mesh */
+        if (diag) cd_puts("[cradle-diag] poll: cradle off (gate closed, no pull)\r\n");
+        return;
+    }
     if (!ct_topic_open) cradle_net_open();
     if (ct_sub_h < 0) {
         if (diag) cd_puts("[cradle-diag] poll: sub_h<0 (topic not open)\r\n");
@@ -308,16 +319,46 @@ void cradle_poll_and_pull(void)
         cd_putstr(line, &k, "\r\n");
         line[k] = 0; cd_puts(line);
     }
-    if (got != (INT)blen) {                 /* body not (yet) local: retry later */
-        if (diag) cd_puts("[cradle-diag] reject: dag_read rc!=body_len (body not local yet)\r\n");
-        return;
+    UW pulled_seq = ct_rx_pkt.seq;          /* the seq actually resolved+ingested */
+    if (got != (INT)blen) {
+        /* The LATEST_ONLY beacon can OUTRUN the lossy/lagging region "pfs/ref"
+         * gossip that binds ct/<t>/<seq> -> manifest: the NEWEST ref name is not
+         * local yet (ref_find -> NOTFOUND) even though earlier seqs' refs — and
+         * the identical content BLOCKS — already are. Fall back to the NEWEST
+         * seq whose ref DOES resolve to the full body, scanning DOWN to the seen
+         * high-water (bounded by seq-hw). Each ct/<t>/<seq> body is a valid,
+         * deterministic lesson (identical here; hw-tracked so no dupes), so
+         * pulling the newest resolvable one is correct. */
+        INT fb = 0;
+        for (UW s = ct_rx_pkt.seq; s > ct_seen_hw[org]; s--) {
+            U1 fref[PFS_NAME_MAX];
+            UW frl = ct_body_ref(fref, ct_rx_pkt.teacher_node, s);
+            INT fgot = pfs_dag_read(fref, frl, ct_body_buf, CT_LESSON_MAX);
+            if (fgot == (INT)blen) {
+                got = fgot; pulled_seq = s; fb = 1;
+                if (diag) {
+                    char line[160]; INT k = 0;
+                    cd_putstr(line, &k, "[cradle-diag] fallback: pulled resolvable seq=");
+                    cd_putdec(line, &k, s);
+                    cd_putstr(line, &k, " (beacon seq=");
+                    cd_putdec(line, &k, ct_rx_pkt.seq);
+                    cd_putstr(line, &k, ")\r\n");
+                    line[k] = 0; cd_puts(line);
+                }
+                break;
+            }
+        }
+        if (!fb) {                          /* no resolvable seq yet: retry later */
+            if (diag) cd_puts("[cradle-diag] reject: dag_read rc!=body_len (body not local yet)\r\n");
+            return;
+        }
     }
 
     /* feed the lesson into the student's ring (refuses too-small without
      * truncating; the ring then drives the next sleep's windows). */
     INT ing = cradle_lesson_ingest(ct_body_buf, (int)blen);
     if (ing > 0)
-        ct_seen_hw[org] = ct_rx_pkt.seq;    /* advance only on a real ingest    */
+        ct_seen_hw[org] = pulled_seq;       /* advance to the seq actually ingested */
     if (diag) {
         char line[160]; INT k = 0;
         cd_putstr(line, &k, "[cradle-diag] ingest len=");
