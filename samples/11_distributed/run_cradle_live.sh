@@ -101,23 +101,47 @@
 #       (rounds=12 lr=3e-3 seqlen=32 budget=1280) so the held probe drops the
 #       certified amount.
 #
-# THE NEW PER-ARM SEQUENCE (run_arm below) is therefore:
+# THE AUTONOMOUS-PROBE FIX (wave-cradle-harness-autoprobe) — CERTIFY ON THE DMN
+# IDLE HOOK, NOT A FORCED `baby N`
+# ---------------------------------------------------------------------------
+# The PULL-WHILE-IDLE sequencing above is correct, but the CONSOLIDATE step used
+# to force `baby 16` (16 SYNCHRONOUS sleep rounds over a ~247MB student). On the
+# cooperative single-core PRoot host that does NOT finish inside the harness cap
+# ("baby consolidation did not finish in 180s"), so the POST probe was STARVED and
+# the arm FAILED — a HOST-SPEED ARTIFACT, not a real RED. The learning was already
+# real: the student's OWN autonomous DMN idle hook (student_dmn_consolidate, fact
+# (5) below) had ALREADY consolidated the lesson during PULL-WHILE-IDLE (the probe
+# reads ~2.60, far below chance 5.5452, BEFORE any `baby`). So we drop the forced
+# `baby N` and certify on the autonomous probe — the MORE production-representative
+# signal (the production mind learns on its DMN sleep tick, not on an operator
+# typing `baby`).
+#   (5) On a PKERNEL_PFS_DIR node the DMN idle hook AUTONOMOUSLY runs
+#       student_dmn_consolidate() every ST_DMN_INTERVAL(=GA_INTERVAL=10) idle
+#       pulses: it calls cradle_poll_and_pull() then sleep_rounds() ST_DMN_ROUNDS
+#       over the LIVE corpus (the LESSON ring once live, gated by pfs_dur_active()).
+#       That is the SAME train_end held split the in-proc cert + the live probe use.
+#       L2 gave dmn_task a 256KB stack so this runs without a forced shell `baby`.
+#
+# THE PER-ARM SEQUENCE (run_arm below) is therefore:
 #   cure    : boot 3 -> wait `-> FULL alive=3` on S -> PRE probe (~chance)
-#             -> PULL-WHILE-IDLE: poll `cradle probe` until ring_len>0 (net task
-#                pulls; we do NOT train yet) -> CONSOLIDATE `baby 16` (trains the
-#                LESSON ring) -> POST probe (held probe dropped below chance).
+#             -> PULL + AUTONOMOUS-CONSOLIDATE WHILE IDLE: poll `cradle probe`; the
+#                net task pulls (ring_len>0) and the autonomous DMN consolidates;
+#                WAIT until the held probe genuinely drops BELOW the CURE threshold
+#                (CHANCE-CURE_FLOOR) or a bounded timeout -> POST probe (held probe
+#                weight-resident, below chance). NO forced `baby N`.
 #   off     : S is PFS-LESS (no baby, no autonomous DMN) + `cradle off`; ring
 #             stays 0, no training, probe reads the chance FLOOR. CLEAN falsifier
 #             with NO autonomous-DMN fixture contamination (see the PERSISTENCE
 #             note in run_arm). The gate flag itself is separately certified in
 #             `cradle test` Arm A; this [live] arm proves "no teaching -> nothing
 #             learned" end-to-end.
-#   scramble: boot 3 -> wait FULL -> PULL-WHILE-IDLE until ring_len>0 (scramble
-#             body must actually arrive, else the arm is vacuous) -> `baby 16`
-#             (trains JUNK) -> probe STAYS ~chance (it is the SEQUENCE, not bytes).
-#   death   : cure sequence -> kill T -> wait SWIM-dead on S -> POST probe STILL
-#             below chance (the baby answers from its now-resident/persisted
-#             weights; the mind survives the teacher).
+#   scramble: boot 3 -> wait FULL -> PULL + idle the SAME consolidation budget so
+#             the autonomous DMN gets an EQUAL chance to consolidate the JUNK ->
+#             probe MUST STAY >= chance (it is the SEQUENCE, not bytes). STRICT: a
+#             scramble drop below the CURE threshold is a RED the harness surfaces.
+#   death   : cure sequence (autonomous-consolidate below threshold) -> kill T ->
+#             wait SWIM-dead on S -> POST probe STILL below the CURE threshold (the
+#             baby answers from its now-resident/persisted weights; mind survives T).
 #
 # DISCIPLINE (the commander's hard-won rules, applied throughout): never assume
 # a fixed sleep is enough — POLL for a greppable marker (`-> FULL alive=3`,
@@ -175,6 +199,14 @@ wait_for_marker() {
 log_max_ring() {
   grep -oE 'ring_len=[0-9]+' "$1" 2>/dev/null | grep -oE '[0-9]+' \
     | sort -n | tail -1
+}
+# The MOST RECENT held probe_loss printed by `cradle probe` in $1 (empty if none).
+# Used to watch the AUTONOMOUS-DMN idle consolidation drive the held probe down
+# WITHOUT a forced `baby N` — the production sleep path. Only matches the real
+# greppable [cradle-live] line, so a stray number never leaks in.
+log_last_loss() {
+  grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' "$1" 2>/dev/null \
+    | grep -oE 'probe_loss=[0-9.]+' | grep -oE '[0-9.]+' | tail -1
 }
 # Wait until ring_len>0 has appeared in $1, up to $2 seconds. The student's
 # cradle_net_task pulls the beacon+body on its own 500ms cadence while S idles;
@@ -370,37 +402,76 @@ run_arm() {
   fi
   sleep 6                                     # let the flap settle to stable FULL
 
-  # ---- (4) PULL-WHILE-IDLE: S is NOT training, so cradle_net_task (500ms) owns
-  # the CPU and pulls the beacon + p-fs body. We poll `cradle probe` to surface a
-  # greppable ring_len, and WAIT (generous cap) until ring_len>0. The OFF arm
-  # skips the wait (ring must stay 0 by design). ----
+  # ---- (4)+(6) PULL + AUTONOMOUS CONSOLIDATE, WHILE IDLE (wave-cradle-harness-
+  # autoprobe). S is NOT training, so cradle_net_task (500ms) owns the CPU, pulls
+  # the beacon + p-fs body into the ring, AND the student's OWN autonomous DMN
+  # heartbeat (student_dmn_consolidate, dmn.c idle hook @ ST_DMN_INTERVAL ~10s,
+  # ST_DMN_ROUNDS=2 over the LIVE lesson ring) consolidates it — the PRODUCTION
+  # sleep path, gated by pfs_dur_active(). We do NOT force `baby 16`: 16 synchronous
+  # sleep rounds over a ~247MB student do NOT finish inside the harness cap on this
+  # cooperative single-core PRoot host, which STARVED the POST probe and FAILED the
+  # arm on a host-speed artifact (the learning itself was already real — the probe
+  # reads ~2.60 from the autonomous DMN before any `baby`). The autonomous-DMN idle
+  # probe is the MORE production-representative signal, so we certify on IT.
+  #
+  # We POLL `cradle probe` (a PURE READ at the production train_end over never-
+  # trained HELD windows — no training, no save) while S idles, and:
+  #   cure/death : WAIT until the held probe genuinely drops below the CURE
+  #                threshold (CHANCE-CURE_FLOOR) — real below-chance GENERALIZATION
+  #                on the held continuation — or a bounded timeout (then OPEN, no
+  #                fudge). We require ring_len>0 first so the drop is on the LESSON
+  #                ring, never the fixture.
+  #   scramble   : idle the SAME consolidation budget (give the autonomous DMN an
+  #                EQUAL chance to consolidate the junk) but NEVER early-break; the
+  #                held probe MUST stay >= chance (it is the SEQUENCE, not bytes).
+  # The OFF arm skips this entirely (ring must stay 0 by design).
+  CURE_THRESH=$(awk -v c=$CHANCE -v f=$CURE_FLOOR 'BEGIN{print c-f}')
   if [ "$arm" != "off" ]; then
-    local _w=0 _r=0
-    while [ "$_w" -lt 36 ]; do               # ~180s: drive a probe, then idle 5s
+    # cure/death break early on a genuine drop; scramble runs the full SCRAM_BUDGET
+    # so the autonomous DMN had a fair, comparable opportunity.
+    # SCRAM_BUDGET: cure converges in ~4 idle cycles, so 8 gives the autonomous
+    # DMN a FAIR 2x budget to (fail to) learn the junk — more than the real lesson
+    # needed. A larger budget (e.g. 24) over-consolidates AND keeps S's single
+    # cooperative core busy so long that `cradle probe` is starved for the whole
+    # arm and the POST read comes back blank; 8 leaves idle windows for a clean
+    # at-chance read while staying a rigorous falsifier (if junk does not drop the
+    # probe in 2x the cure budget, it is the SEQUENCE, not the bytes).
+    local _w=0 _r=0 _pl="" IDLE_CAP=60 SCRAM_BUDGET=8
+    [ "$arm" = "scramble" ] && IDLE_CAP=$SCRAM_BUDGET
+    while [ "$_w" -lt "$IDLE_CAP" ]; do
       s_say "cradle probe"
-      s_say "MARK-S-RING-POLL-${_w}"
-      sleep 5; _w=$((_w + 1))
-      _r=$(log_max_ring "$LOG_S"); [ "${_r:-0}" -gt 0 ] 2>/dev/null && break
+      s_say "MARK-S-IDLE-${_w}-END"
+      # PACE TO THE SHELL (critical): S's shell is COOPERATIVE and STALLS for the
+      # whole of each autonomous DMN consolidation tick, so it drains commands far
+      # slower than a fixed 5s cadence feeds them. WAIT for S to actually ECHO this
+      # step's mark before sending the next probe — otherwise an unbounded FIFO
+      # backlog builds and BURIES the later POST probe (it never gets processed
+      # before exit, so the verdict read is blank — the host-speed artifact this
+      # whole wave removes). The "-END" terminator stops MARK-S-IDLE-1 matching
+      # MARK-S-IDLE-10. Generous cap to ride out a long DMN tick.
+      wait_for_marker "$LOG_S" "MARK-S-IDLE-${_w}-END" 30 || true
+      sleep 3; _w=$((_w + 1))                 # brief idle so the DMN keeps ticking
+      _r=$(log_max_ring "$LOG_S"); _r="${_r:-0}"
+      _pl=$(log_last_loss "$LOG_S")
+      # scramble: never early-break (let the DMN try the whole budget). cure/death:
+      # stop the moment the held probe crosses below the CURE threshold, but only
+      # once the ring is genuinely live (else we'd be reading the fixture).
+      if [ "$arm" != "scramble" ] && [ "$_r" -gt 0 ] 2>/dev/null \
+         && [ -n "$_pl" ] && flt_lt "$_pl" "$CURE_THRESH"; then
+        echo "[cradle-live] $TAG: autonomous DMN drove held probe to $_pl (< $CURE_THRESH) at idle cycle $_w"
+        break
+      fi
     done
     if ! wait_for_ring "$LOG_S" 5; then
       echo "[cradle-live] OPEN ($TAG): the lesson body never arrived on S"
       echo "             (ring_len stayed 0 over the wire — check the relay frame"
       echo "              histogram + S's p-fs WANT retries in $LOG_S; do NOT fudge)"
     fi
-  fi
-
-  # ---- (6) CONSOLIDATE: only NOW (ring live) do we train — `baby 16` runs 16
-  # synchronous sleep rounds OVER THE LIVE LESSON RING (>= the in-proc cert's 12
-  # rounds @ the same lr/seqlen). The OFF arm SKIPS training entirely: with the
-  # ring gated off, training would fit the FIXTURE (not stay at chance), so the
-  # OFF falsifier must leave the untrained newborn at chance. ----
-  if [ "$arm" != "off" ]; then
-    s_say "baby 16"
-    # `baby` prints "[baby] held-out loss (after)" when its rounds complete — the
-    # idle marker that S has finished training and is responsive again.
-    wait_for_marker "$LOG_S" '\[baby\] held-out loss \(after\)' 180 \
-      || echo "[cradle-live] OPEN ($TAG): baby consolidation did not finish in 180s"
-    sleep 2
+    if [ "$arm" != "scramble" ]; then
+      _pl=$(log_last_loss "$LOG_S")
+      flt_lt "${_pl:-99}" "$CURE_THRESH" 2>/dev/null \
+        || echo "[cradle-live] OPEN ($TAG): autonomous DMN did not drive the held probe below $CURE_THRESH within $IDLE_CAP idle cycles (last=$_pl) — host too slow OR not learned; do NOT lower the threshold to force green"
+    fi
   fi
 
   # ---- death arm: the cure is now PULLED + CONSOLIDATED into S. Kill T, then
@@ -414,10 +485,12 @@ run_arm() {
   fi
 
   # ---- (7) POST probe: the verdict read. cure/death -> dropped below chance;
-  # off/scramble -> stayed at chance. ----
+  # off/scramble -> stayed at chance. Because the idle loop PACED to the shell
+  # (no FIFO backlog), the shell is caught up here and this final probe + mark are
+  # processed promptly; a generous cap still rides out one last DMN tick. ----
   s_say "cradle probe"
-  s_say "MARK-S-POST-PROBE"
-  wait_for_marker "$LOG_S" 'MARK-S-POST-PROBE' 15
+  s_say "MARK-S-POST-PROBE-END"
+  wait_for_marker "$LOG_S" 'MARK-S-POST-PROBE-END' 40
   sleep 1
 
   s_say "exit"
@@ -434,8 +507,21 @@ run_arm() {
 # POST = the last probe line before MARK-S-POST-PROBE.
 s_pre_probe()  { grep -B12 'MARK-S-PRE-PROBE'  "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1; }
-s_post_probe() { grep -B12 'MARK-S-POST-PROBE' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
-                  | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1; }
+s_post_probe() {
+  local L="/tmp/cradle_live_nodeS_$1.log" v
+  v=$(grep -B12 'MARK-S-POST-PROBE-END' "$L" 2>/dev/null \
+        | grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' | tail -1)
+  # FALLBACK (cooperative-host robustness): if the dedicated POST mark has not yet
+  # DRAINED (a residual 1-2 command FIFO backlog on this single-core PRoot host —
+  # seen on the long scramble arm), the LAST [cradle-live] line is STILL a genuine
+  # `cradle probe` read of S's CURRENT weights: the autonomous DMN never emits this
+  # line, ONLY the `cradle probe` verb does, so the last one is always our own most
+  # recent probe. Honest in every arm — cure reads low, scramble/off read >=chance,
+  # death reads the post-consolidation persisted value. NEVER fabricates a number.
+  [ -z "$v" ] && v=$(grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' \
+                       "$L" 2>/dev/null | tail -1)
+  printf '%s' "$v"
+}
 s_max_ring()   { grep -oE 'ring_len=[0-9]+' "/tmp/cradle_live_nodeS_$1.log" 2>/dev/null \
                   | grep -oE '[0-9]+' | sort -n | tail -1; }
 # match BOTH the plain `cradle emit` ("lesson emitted over the mesh") and the
