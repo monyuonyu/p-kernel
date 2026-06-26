@@ -1438,7 +1438,11 @@ LEDGER: row OPEN — a REAL gap, honestly logged (not silently left as a green "
 REDESIGN first: one named manifest ref + content-addressed chunks via pfs_repl_put/pfs_repl_want (bypassing the nameplane), a
 chunked/indirect manifest (482 ids ×32B ≈ 15 KB > one block), an in-proc publish→fetch→st_merge_cohort round-trip cert BEFORE any
 [live] harness; gossip_learn.c is BARE-METAL-linked (boot/x86 + boot/aarch64) so the redesign is crown-sensitive (keep bare metal
-building, do not perturb the G22 gl_pfs_publish/gl_merge mesh, re-derive .text 755a20fa). Design-doc-first per project norm.
+building, do not perturb the G22 gl_pfs_publish/gl_merge mesh, re-derive .text 755a20fa). Design-doc-first per project norm —
+✅ DONE: `docs/architecture/student-blob-transport.md` (content-addressed chunks + 2-level index + 1 named descriptor ref;
+windowed `pfs_repl_want` so `pfs_repl.c` is UNCHANGED → fix is hosted-gated in gossip_learn.c, crown 755a20fa preserved;
+in-proc `[ss3-blob-roundtrip]` cert gates the transport before any [live] harness). IMPL deferred to mk_pino's prioritization
+(transport redesign vs federation F1).
 
 ## cradle-live autoprobe-cert — the formal multi-node VERDICT goes green host-independent — commit 6d491756 (base 2e495a8c) — CLOSED
 - With L1+L2+L3 the mind PROVABLY learns over the wire, but the harness's overall VERDICT still printed OPEN: the cure/scramble/
