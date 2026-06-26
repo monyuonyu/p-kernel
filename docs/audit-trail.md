@@ -1403,12 +1403,44 @@ teacher. The bug a future regression would reintroduce is pinned by `nodes selfe
   both now FIXED + independently audited MERGEABLE + integrated (crown 755a20fa re-derived byte-identical on the integrated
   trunk). See the two detail rows immediately below (T-fix-c lesson-format; DMN-stack). The single-node + in-proc layers of
   the flagship ("a teacher composes a trainable lesson, it crosses the wire, and a fresh student's autonomous DMN sleep
-  consolidates it and learns") are now CERTIFIED. The remaining OPEN piece is L3: the full MULTI-NODE end-to-end live-green
-  on REAL hardware. The local PRoot sandbox is a poor oracle for it (the harness header says "NOT runnable in the PRoot
-  sandbox": background node children get reaped + timing flakiness), so the genuine multi-node confirmation belongs on the
-  ThinkPad (now reachable). NOT fudged green: the multi-node CURE-arm PASS has not yet been observed end-to-end.
-- NEXT (commander): take the integrated L1+L2 to the ThinkPad (x86_64, non-PRoot) and run run_cradle_live.sh there for the
-  genuine "mind learns across the wire" green; then CLOSE this row.
+  consolidates it and learns") are now CERTIFIED. The L3 multi-node CURE break is now ALSO root-caused + fixed + audited
+  MERGEABLE (see the L3 detail row below). THE CORE FLAGSHIP IS PROVEN: a fresh student S pulls a relay-delivered lesson and
+  its AUTONOMOUS DMN sleep consolidates it — the held probe drops 5.5915 -> 2.6025 (~2.99 nats below chance), generalization
+  intact. The only thing NOT yet observed is the harness's FORMAL multi-node VERDICT going fully green, because the cure/
+  scramble/death arms drive an explicit `baby 16` (16 sync sleep rounds over a ~247MB student) that does not finish inside the
+  180s cap on this cooperative-single-core PRoot host (the post-probe is starved) — a documented harness/host-speed artifact,
+  NOT a fix failure (the autonomous-DMN idle probe already shows the learning). A faster host (the ThinkPad) — or relaxing the
+  harness to read the autonomous probe instead of the forced `baby 16` — turns the formal VERDICT green too.
+- NEXT (commander): a genuine multi-node confirmation on the ThinkPad once it is reachable (the harness loaded the machine and
+  it went SSH-unreachable mid-run; mk_pino to clean stray procs), and/or relax the harness's `baby 16` dependency. The fix
+  correctness itself is CLOSED.
+
+## cradle-live L3 — pull the newest RESOLVABLE lesson seq (beacon-vs-ref race) — commit d8eb6710 (base ff5cee8b) — CLOSED
+- Found by GOING [live] (a THIRD in-proc-masked bug, the harsh-review prediction a third time): with L1+L2 the lesson reached
+  S and the DMN no longer crashed, but a fresh S still never ingested it. ROOT CAUSE (empirical, reproduces locally AND on the
+  ThinkPad): the teacher re-emits ~12×, each `pfs_dag_save("ct/<t>/<seq>")` + a CRADLE_TEACH beacon that is KDDS_QOS_LATEST_ONLY
+  (newest seq). The name->manifest ref BINDING propagates via the LOSSY+LAGGING region "pfs/ref" gossip, so the beacon outruns
+  ref adoption — S adopts ct/1/1,2,3,5,6,7,8,9 while the beacon already points at ct/1/11, and `pfs_dag_read("ct/1/11")` returns
+  NOTFOUND at `ref_find` (S lacks that binding) even though S HAS the (identical, deterministic) content+manifest blocks and the
+  earlier resolvable refs. cradle only ever tried the single newest ref.
+- FIX (crown-safe, cradle_net.c hosted-only — the ref-gossip reliability lives in pfs_dag.c/pfs_repl.c which are bare-metal/
+  crown, deliberately NOT touched): in `cradle_poll_and_pull`, when the beacon's newest ref fails to resolve, scan seq DOWNWARD
+  from the beacon seq to hw+1, rebuild `ct/<t>/<seq>` via the existing `ct_body_ref`, and ingest the NEWEST RESOLVABLE seq;
+  advance `ct_seen_hw[org]` to the seq actually ingested (monotonic, dup-free). The fix also added `if (!cradle_get_enabled())
+  return;` at the top of the pull — an HONEST falsifier restoration: Arm A (teaching OFF) previously passed only VACUOUSLY (the
+  broken pull suppressed all ingests); with the working pull the OFF gate must be honored or `cradle off` would fill the ring.
+- REAL + falsifiable (independent audit MERGEABLE): CURE — `fallback: pulled resolvable seq=6 (beacon seq=11)` -> `ingest len=
+  1279 -> ring_len=1279`, held probe 5.5915 -> 2.6025 (~2.99 nats below chance), generalization intact (trainer [0,train_end)
+  disjoint from probe [train_end,...)). OFF — legitimately RED: ring_len=0, probe 5.5452 (exact chance). SCRAMBLE — ring fills
+  to 1280 (not vacuous) but idle probe 5.8184 >= chance (sequence, not bytes). DEATH — S ingests via fallback (seq=10) + still
+  answers below chance after T dies. Fallback logic audited: bounded [hw+1, seq], picks highest resolvable, unsigned + entry
+  guard => no underflow/infinite-loop, no re-ingest. CROWN: cradle_net.c absent from bare-metal Makefiles; .text 755a20fa
+  RE-DERIVED byte-identical (auditor + commander, on the integrated trunk).
+- HONEST BOUND: the harness's overall VERDICT prints OPEN because the cure/scramble/death arms' explicit `baby 16` times out the
+  180s cap in PRoot (cooperative-scheduler starvation) so the FORMAL post-probe is starved — NOT a fix failure; the autonomous-
+  DMN idle probe proves the learning. Formal multi-node green awaits a faster host or a harness that reads the autonomous probe.
+LEDGER: row CLOSED (the fix). The mind learns a fact across the wire: a fresh student pulls a relay-delivered lesson despite a
+lossy ref-gossip race and its autonomous sleep consolidates it. Remaining: the formal multi-node VERDICT on a faster host.
 
 ## cradle-live L1 — T-fix-c lesson-format — the teacher emits a TRAINABLE lesson — merge a8fce20f (base d3a204fb) — CLOSED
 - Found by GOING [live] (the harsh-review prediction, a 3rd time): the self-election re-run got T emitting + S receiving the
