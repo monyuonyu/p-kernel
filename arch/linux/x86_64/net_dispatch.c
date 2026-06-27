@@ -36,6 +36,15 @@ extern int net_lan_send(const void *frame, int len);
 extern int net_lan_recv(void *buf, int maxlen);
 extern int net_lan_node_id(void);
 
+/* connect-anywhere SLICE 3: PLAIN-TCP relay fallback (net_relay_tcp.c),
+ * selected by PKERNEL_RELAY_TCP=1 for networks that block UDP entirely.
+ * Joins the SAME relay mesh — the relay serves TCP and UDP clients on one
+ * shared node table, so a TCP node and a UDP node exchange packets through it. */
+extern int net_relay_tcp_init(void);
+extern int net_relay_tcp_send(const void *frame, int len);
+extern int net_relay_tcp_recv(void *buf, int maxlen);
+extern int net_relay_tcp_node_id(void);
+
 static int (*g_send)(const void *, int) = NULL;
 static int (*g_recv)(void *, int)       = NULL;
 static int (*g_node_id)(void)           = NULL;
@@ -68,6 +77,25 @@ int arch_linux_net_init(void)
      * itself reads PKERNEL_SEED first and, in seed-mode, boots SOLO
      * (relay_count=0) rather than hard-failing when no seed answers — so a
      * seed-only node still returns a usable node id here. */
+    /* connect-anywhere SLICE 3: when PKERNEL_RELAY_TCP=1 AND a relay endpoint
+     * is configured, join over a TCP stream instead of UDP (same mesh, same
+     * v2 wire + a 2-byte length prefix). Checked before the UDP relay so the
+     * opt-in wins; when unset, behaviour is exactly the UDP path below. */
+    const char *tcp = getenv("PKERNEL_RELAY_TCP");
+    if (tcp && *tcp && tcp[0] != '0' &&
+        ((list && *list) || (host && *host) || (seed && *seed))) {
+        int n = net_relay_tcp_init();
+        if (n > 0) {
+            g_send    = net_relay_tcp_send;
+            g_recv    = net_relay_tcp_recv;
+            g_node_id = net_relay_tcp_node_id;
+            g_node    = n;
+            dprintf(2, "[net] transport = relay-tcp (node %d)\n", n);
+            return n;
+        }
+        dprintf(2, "[net] relay-tcp init failed; falling back\n");
+    }
+
     if ((list && *list) || (host && *host) || (seed && *seed)) {
         int n = net_relay_init();
         if (n > 0) {

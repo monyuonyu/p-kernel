@@ -22,11 +22,14 @@
 #include <getopt.h>
 #include <stdint.h>
 #include <poll.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 #include "sha256.h"
+#include "tcp_frame.h"   /* connect-anywhere SLICE 3: [u16 len][pkt] framing */
 
 #define RELAY_DEFAULT_PORT 7400
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" (little-endian) */
@@ -53,6 +56,12 @@ typedef struct {
     time_t  last_seen;
     int     active;
     int     leased;    /* 1 if this id was handed out via auto-lease (src=0) */
+    /* connect-anywhere SLICE 3 — transport tag. A node reaches the relay over
+     * either UDP (forward via sendto to addr, the legacy path) or a TCP stream
+     * (forward by writing [u16 len][pkt] to tcp_fd). via_tcp defaults to 0
+     * (UDP) so every existing UDP code path is byte-for-byte unchanged. */
+    int     via_tcp;   /* 1 = reach this peer over tcp_fd; 0 = UDP via addr   */
+    int     tcp_fd;    /* the accepted TCP connection fd when via_tcp         */
 } NodeEntry;
 
 typedef struct {
@@ -101,6 +110,22 @@ typedef struct {
     unsigned char buf[MAX_PKT];
 } DelayedPkt;
 static DelayedPkt dq[DELAY_Q_MAX];
+
+/* --- connect-anywhere SLICE 3: TCP client connections -------------------- */
+/*
+ *  The relay serves TCP and UDP clients on the SAME node table, so a node
+ *  that can only egress TCP (UDP fully blocked) still joins the SAME mesh and
+ *  exchanges packets with UDP peers. Each accepted TCP stream gets a
+ *  reassembler (tcp_frame.h) that re-splits length-prefixed packets across
+ *  short reads — the exact thing a naive socat UDP<->TCP tunnel cannot do.
+ */
+#define MAX_TCP_CONN 64
+typedef struct {
+    int      fd;        /* -1 = free slot                                    */
+    TcpReasm reasm;     /* per-connection length-prefix reassembly buffer    */
+} TcpConn;
+static TcpConn tcp_conns[MAX_TCP_CONN];
+static int     tcp_listen_fd = -1;
 
 static uint64_t now_ms(void)
 {
@@ -334,7 +359,11 @@ static int replay_check_and_update(unsigned src, uint64_t nonce)
 
 /* --- table maintenance -------------------------------------------------- */
 
-static void update(int src, const struct sockaddr_in *from)
+/* SLICE 3: `origin_fd` records the transport this node is reachable over —
+ * -1 for a UDP client (the legacy path; via_tcp stays 0), or the accepted TCP
+ * connection fd for a TCP client. UDP callers pass -1, so their behaviour is
+ * byte-for-byte unchanged. */
+static void update(int src, const struct sockaddr_in *from, int origin_fd)
 {
     if (src < 1 || src >= NODE_MAX) {
         /* G7: don't drop an out-of-range src silently — say why. */
@@ -347,11 +376,14 @@ static void update(int src, const struct sockaddr_in *from)
     table[src].addr      = *from;
     table[src].last_seen = time(NULL);
     table[src].active    = 1;
+    table[src].via_tcp   = (origin_fd >= 0);
+    table[src].tcp_fd    = origin_fd;
     if (!was_active) {
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &from->sin_addr, ip, sizeof(ip));
-        fprintf(stderr, "[relay] node %d registered: %s:%u\n",
-                src, ip, ntohs(from->sin_port));
+        fprintf(stderr, "[relay] node %d registered: %s:%u%s\n",
+                src, ip, ntohs(from->sin_port),
+                (origin_fd >= 0) ? " (tcp)" : "");
     }
 }
 
@@ -410,7 +442,7 @@ static int lease_pick(const struct sockaddr_in *from)
  * version so v1 (--insecure) clients get a v1 grant and v2 clients a
  * signed v2 grant. */
 static void send_lease_grant(int sock, const struct sockaddr_in *to,
-                             unsigned version, int leased_id)
+                             unsigned version, int leased_id, int origin_fd)
 {
     unsigned char out[RELAY_HEADER_LEN + RELAY_AUTH_LEN];
     out[0] = (uint8_t)(RELAY_MAGIC        & 0xff);
@@ -435,6 +467,15 @@ static void send_lease_grant(int sock, const struct sockaddr_in *to,
         compute_mac(&gp, out + RELAY_HEADER_LEN + 8);
         len = RELAY_HEADER_LEN + RELAY_AUTH_LEN;
     }
+    /* SLICE 3: a TCP requester gets the grant length-framed over its stream;
+     * a UDP requester gets the unchanged sendto path. */
+    if (origin_fd >= 0) {
+        if (tcp_write_framed(origin_fd, out, len) < 0 && verbose) {
+            fprintf(stderr, "[relay] tcp lease grant to %u (fd=%d): %s\n",
+                    (unsigned)leased_id, origin_fd, strerror(errno));
+        }
+        return;
+    }
     if (sendto(sock, out, (size_t)len, 0,
                (struct sockaddr *)to, sizeof(*to)) < 0 && verbose) {
         fprintf(stderr, "[relay] lease grant to %u: %s\n",
@@ -443,7 +484,7 @@ static void send_lease_grant(int sock, const struct sockaddr_in *to,
 }
 
 static void handle_lease(int sock, const struct sockaddr_in *from,
-                         unsigned version)
+                         unsigned version, int origin_fd)
 {
     int id = lease_pick(from);
     char ip[INET_ADDRSTRLEN];
@@ -451,7 +492,7 @@ static void handle_lease(int sock, const struct sockaddr_in *from,
     if (id == 0) {
         fprintf(stderr, "[relay] lease denied: id pool 1..%d exhausted (req %s:%u)\n",
                 NODE_MAX - 1, ip, ntohs(from->sin_port));
-        send_lease_grant(sock, from, version, 0);
+        send_lease_grant(sock, from, version, 0, origin_fd);
         return;
     }
     int reissue = table[id].active && table[id].leased && addr_eq(&table[id].addr, from);
@@ -459,10 +500,57 @@ static void handle_lease(int sock, const struct sockaddr_in *from,
     table[id].last_seen = time(NULL);
     table[id].active    = 1;
     table[id].leased    = 1;
-    fprintf(stderr, "[relay] node %d %s to %s:%u\n",
+    table[id].via_tcp   = (origin_fd >= 0);   /* SLICE 3 transport tag */
+    table[id].tcp_fd    = origin_fd;
+    fprintf(stderr, "[relay] node %d %s to %s:%u%s\n",
             id, reissue ? "lease re-issued" : "leased (auto)",
-            ip, ntohs(from->sin_port));
-    send_lease_grant(sock, from, version, id);
+            ip, ntohs(from->sin_port), (origin_fd >= 0) ? " (tcp)" : "");
+    send_lease_grant(sock, from, version, id, origin_fd);
+}
+
+/* --- connect-anywhere SLICE 3: TCP stream helpers ------------------------ */
+
+/* Write a length-framed packet ([u16 big-endian len][pkt]) to a TCP client
+ * fd, flushing partial writes with a bounded POLLOUT wait. Returns 0 on
+ * success, -1 on a hard error / disconnect (caller drops the connection). */
+static int tcp_write_framed(int fd, const unsigned char *pkt, int len)
+{
+    if (len < 0 || len > MAX_PKT) return -1;
+    unsigned char out[TCP_FRAME_LENPFX + MAX_PKT];
+    int total = tcp_frame_encode(out, pkt, len);
+    if (total < 0) return -1;
+    int off = 0;
+    while (off < total) {
+        ssize_t w = send(fd, out + off, (size_t)(total - off), MSG_NOSIGNAL);
+        if (w > 0) { off += (int)w; continue; }
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd p = { .fd = fd, .events = POLLOUT, .revents = 0 };
+            if (poll(&p, 1, 1000) <= 0) return -1;
+            continue;
+        }
+        if (w < 0 && errno == EINTR) continue;
+        return -1;   /* EPIPE / ECONNRESET / etc. */
+    }
+    return 0;
+}
+
+/* A TCP connection went away: close it, free its conn slot, and tear down any
+ * node-table route that pointed at it (so forwarding stops dead-reckoning to a
+ * closed fd). */
+static void tcp_conn_close(int slot)
+{
+    int fd = tcp_conns[slot].fd;
+    if (fd < 0) return;
+    for (int n = 1; n < NODE_MAX; n++) {
+        if (table[n].active && table[n].via_tcp && table[n].tcp_fd == fd) {
+            table[n].active = 0;
+            fprintf(stderr, "[relay] node %d route dropped (tcp close fd=%d)\n",
+                    n, fd);
+        }
+    }
+    close(fd);
+    fprintf(stderr, "[relay] tcp close fd=%d\n", fd);
+    tcp_conns[slot].fd = -1;
 }
 
 /* --- forwarding --------------------------------------------------------- */
@@ -485,6 +573,20 @@ static void deliver_now(int sock, int dst_node,
     }
     if (now - table[dst_node].last_seen > idle_timeout) {
         table[dst_node].active = 0;
+        return;
+    }
+    /* SLICE 3: fan out over the destination's transport. A TCP peer gets the
+     * SAME v2 packet bytes, just length-framed for the stream; a UDP peer is
+     * the unchanged sendto path. This is what lets a TCP node and a UDP node
+     * exchange packets through one shared node table. */
+    if (table[dst_node].via_tcp) {
+        if (tcp_write_framed(table[dst_node].tcp_fd, buf, len) < 0) {
+            if (verbose) fprintf(stderr,
+                "[relay] tcp write node %d fd=%d failed: %s\n",
+                dst_node, table[dst_node].tcp_fd, strerror(errno));
+            /* mark the route dead; the poll loop will reap the fd on POLLHUP */
+            table[dst_node].active = 0;
+        }
         return;
     }
     ssize_t sent = sendto(sock, buf, (size_t)len, 0,
@@ -585,6 +687,145 @@ static void load_key_or_die(void)
     }
     have_key = 1;
     fprintf(stderr, "[relay] key loaded (%d bytes)\n", KEY_LEN);
+}
+
+/* --- shared packet handler ---------------------------------------------- */
+/*
+ *  SLICE 3: the SINGLE packet-handling/forward path, fed by BOTH the UDP
+ *  recvfrom path (origin_fd == -1) and each accepted TCP stream (origin_fd ==
+ *  the connection fd). Everything below — parse, version gate, MAC verify,
+ *  replay window, eviction, and the type switch — is the EXACT code that used
+ *  to live inline in main()'s UDP loop, lifted verbatim and parameterized by
+ *  transport. Because UDP callers pass origin_fd == -1, every UDP branch is
+ *  byte-for-byte the original behaviour (the 6 existing test_relay scenarios
+ *  exercise this unchanged). A TCP client and a UDP client therefore share one
+ *  {node_id -> peer} table and fan out to each other.
+ *
+ *  `buf`/`n` hold ONE v2 packet (for TCP it has already been de-framed). The
+ *  probe-stamp keepalive echo remains UDP-only (origin_fd < 0); a TCP
+ *  keepalive is echoed length-framed over its stream.
+ */
+static void process_packet(int sock, int origin_fd,
+                           const struct sockaddr_in *from, socklen_t flen,
+                           unsigned char *buf, ssize_t n, uint64_t rx_us)
+{
+    ParsedPkt pkt;
+    if (parse_packet(buf, (int)n, &pkt) < 0) {
+        if (verbose) fprintf(stderr, "[relay] drop: bad header (%zd B)\n", n);
+        return;
+    }
+
+    /* Version gating. v1 only accepted in --insecure mode. */
+    if (pkt.version == RELAY_VERSION_V1 && !insecure) {
+        if (verbose) fprintf(stderr, "[relay] drop: v1 packet in secure mode\n");
+        return;
+    }
+    if (pkt.version == RELAY_VERSION_V2 && !have_key) {
+        if (verbose) fprintf(stderr, "[relay] drop: v2 packet but no key loaded\n");
+        return;
+    }
+
+    /* v2: verify MAC, then check replay window. Order matters —
+     * an unauthenticated nonce must NOT affect replay state. */
+    if (pkt.version == RELAY_VERSION_V2) {
+        if (!verify_mac(&pkt)) {
+            if (verbose) fprintf(stderr, "[relay] drop: bad HMAC src=%u type=%u\n",
+                                 pkt.src, pkt.type);
+            return;
+        }
+        /* An auto-REGISTER (src=0) has no per-node replay state yet —
+         * it's authenticated by HMAC above and deduped by source
+         * address in handle_lease(), so it bypasses the src-keyed
+         * replay window (which would otherwise drop src=0 outright). */
+        if (!(pkt.type == REL_REGISTER && pkt.src == 0)) {
+            if (!replay_check_and_update(pkt.src, pkt.nonce)) {
+                if (verbose) fprintf(stderr, "[relay] drop: replay src=%u nonce=%llu\n",
+                                     pkt.src, (unsigned long long)pkt.nonce);
+                return;
+            }
+        }
+    }
+
+    time_t now = time(NULL);
+    evict_stale(now);
+
+    if (verbose) {
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &from->sin_addr, ip, sizeof(ip));
+        fprintf(stderr, "[relay] rx%s v%u type=%u src=%u dst=%u from %s:%u (%zd B)\n",
+                (origin_fd >= 0) ? "-tcp" : "",
+                pkt.version, pkt.type, pkt.src, pkt.dst,
+                ip, ntohs(from->sin_port), n);
+    }
+
+    switch (pkt.type) {
+    case REL_REGISTER:
+        if (pkt.src == 0) {
+            /* Auto-lease request: hand out a dynamic node id. */
+            handle_lease(sock, from, pkt.version, origin_fd);
+        } else {
+            update((int)pkt.src, from, origin_fd);
+        }
+        break;
+
+    case REL_KEEPALIVE: {
+        update((int)pkt.src, from, origin_fd);
+        /* Relay-HA liveness pong: reflect the (already verified)
+         * keepalive back to its sender so clients can distinguish
+         * "relay alive" from "relay dead" and run deterministic
+         * failover/failback (docs/architecture/relay-ha.md). The
+         * wire format is untouched — this echoes the same packet.
+         *
+         * §4 measurement opt-in: when probe_stamp is ON *and* the payload
+         * carries the "PRB1" magic, append relay rx/tx microsecond stamps
+         * so a client can measure relay residence under load. Off by
+         * default and skipped for non-probe keepalives, so the relay-HA
+         * pong stays byte-for-byte identical. (UDP-only; a TCP keepalive is
+         * echoed length-framed below.) */
+        if (origin_fd >= 0) {
+            if (tcp_write_framed(origin_fd, buf, (int)n) < 0 && verbose) {
+                fprintf(stderr, "[relay] tcp keepalive echo to src=%u fd=%d: %s\n",
+                        pkt.src, origin_fd, strerror(errno));
+            }
+            break;
+        }
+        size_t echo_len = (size_t)n;
+        int is_probe = probe_stamp
+            && pkt.payload_len >= 4
+            && pkt.payload[0] == PROBE_MAGIC_0
+            && pkt.payload[1] == PROBE_MAGIC_1
+            && pkt.payload[2] == PROBE_MAGIC_2
+            && pkt.payload[3] == PROBE_MAGIC_3;
+        if (is_probe && echo_len + PROBE_STAMP_LEN <= (size_t)MAX_PKT) {
+            store_u64_le(buf + echo_len,     rx_us);
+            store_u64_le(buf + echo_len + 8, now_us());
+            echo_len += PROBE_STAMP_LEN;
+        }
+        if (sendto(sock, buf, echo_len, 0,
+                   (struct sockaddr *)from, flen) < 0 && verbose) {
+            fprintf(stderr, "[relay] keepalive echo to src=%u: %s\n",
+                    pkt.src, strerror(errno));
+        }
+        break;
+    }
+
+    case REL_DATA:
+        update((int)pkt.src, from, origin_fd);
+        forward(sock, (int)pkt.dst, buf, (int)n, now);
+        break;
+
+    case REL_BROADCAST:
+        update((int)pkt.src, from, origin_fd);
+        for (int n_id = 1; n_id < NODE_MAX; n_id++) {
+            if (n_id == (int)pkt.src) continue;
+            if (!table[n_id].active)   continue;
+            forward(sock, n_id, buf, (int)n, now);
+        }
+        break;
+
+    default:
+        if (verbose) fprintf(stderr, "[relay] drop: unknown type %u\n", pkt.type);
+    }
 }
 
 int main(int argc, char **argv)
