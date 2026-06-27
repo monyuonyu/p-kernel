@@ -4,13 +4,14 @@
 #   cp .env.example .env        # then put your 64-hex PKERNEL_RELAY_KEY in it
 #   docker compose up -d --build
 #
-# Then on the ROUTER forward  外部 7400/udp -> <server-lan-ip>:7400  (UDP!),
-# and on the host  sudo ufw allow 7400/udp.
+# Then on the ROUTER forward  外部 7400 -> <server-lan-ip>:7400 for BOTH
+# udp (primary) and tcp (Slice 3 fallback). Host: sudo ufw allow 7400.
 #
 # Nodes join with:  PKERNEL_RELAY=relay.helloidea.org:7400  PKERNEL_RELAY_KEY=<same hex>
+# (set PKERNEL_RELAY_TCP=1 on a node to use the TCP fallback path.)
 #
-# The relay is stateless (no volumes) and custom-UDP — it is NOT proxied by
-# Caddy (Caddy is HTTP only). It needs its own forwarded UDP port.
+# The relay is stateless (no volumes) and a custom protocol — it is NOT proxied
+# by Caddy (Caddy is HTTP only). It needs its own forwarded port (udp+tcp).
 
 services:
   relay:
@@ -22,6 +23,7 @@ services:
       - .env                 # PKERNEL_RELAY_KEY=<64 hex>
     ports:
       - "7400:7400/udp"
+      - "7400:7400/tcp"   # connect-anywhere Slice 3 — TCP fallback for UDP-blocked nets
     networks:
       - relay-net
 

@@ -10,7 +10,7 @@
 FROM alpine:3.20 AS build
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /src
-COPY relay.c sha256.c sha256.h ./
+COPY relay.c sha256.c sha256.h tcp_frame.h ./
 RUN cc -Wall -Wextra -O2 -std=gnu11 -fno-stack-protector -o relay relay.c sha256.c
 
 # ---- runtime stage ----
@@ -19,7 +19,10 @@ RUN adduser -D -H -s /sbin/nologin relay
 COPY --from=build /src/relay /usr/local/bin/relay
 USER relay
 EXPOSE 7400/udp
-# PKERNEL_RELAY_KEY (64 hex) must be supplied via the environment, or the
-# relay refuses to start. Override the port with -p if you forward a different one.
+EXPOSE 7400/tcp
+# PKERNEL_RELAY_KEY (64 hex) must be supplied via the environment, or the relay
+# refuses to start. The relay listens on BOTH UDP and TCP on the same port
+# (TCP = connect-anywhere Slice 3 fallback for UDP-blocked networks). Override
+# the port with -p if you forward a different one.
 ENTRYPOINT ["/usr/local/bin/relay"]
 CMD ["-p", "7400", "-v"]
