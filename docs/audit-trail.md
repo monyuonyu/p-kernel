@@ -1701,3 +1701,35 @@ N-4 cross-host deferred to the ThinkPad).
 - HONEST BOUND on Slice 4 (named, NOT a gap in the CLOSED claim): v1 covers ONLY the relay-transport axis; direct-P2P
   rungs 1/2 (LAN broadcast, N-3 cone-NAT punch) and the TLS/443 flavour of rung 4 remain later slices. The live
   netns+iptables UDP-blocked join was NOT executed here (PRoot lacks unshare -rn) — it is a deferred [live] row.
+- N-2d (measured-capability SUPERNODE AUTO-PROMOTION, 23811db7; Skype-style dynamic supernodes — a hosted
+  evaluator measures self-fitness and AUTO-PROMOTES the supernode bit, replacing the explicit-opt-in-only model):
+  design->implement->audit ALL SEPARATE agents. CROWN-SAFE BY CONSTRUCTION (the load-bearing claim): the new
+  evaluator lives in a NEW hosted TU arch/linux/<arch>/supernode_autopromote.c, called from net_heartbeat_task
+  (5s), and its ONLY shared-state write is the EXISTING setter region_set_super_capable(self,...) -> existing
+  cap_self() gossip -> existing NOCENTRAL min-id election -> existing N-2c forwarding, ALL unchanged. Auditor
+  re-derived BOTH crowns from a fresh worktree (aarch64 755a20fa..., x86 4064d8a9... -- MATCH, byte-identical),
+  confirmed the 11-file diff is hosted + host-binary relay.c only (ZERO arch/common/* edits: region.c/swim.c/
+  supernode.c/drpc.c/interocept.c/degrade.c untouched; teacher bit untouched). Fitness = relay_contacted AND
+  (refl_is_public OR refl_classify==CONE) AND !=SYMMETRIC AND !metered AND stress<200 AND degrade<max; dwell
+  60s promote / 30s demote (asymmetric anti-flap); SYMMETRIC = hard block independent of dwell; PKERNEL_SUPERNODE=1
+  force > measured. Measurement needs a NEW reflexive signal: a STUN-like REFL1 echo added to relay/relay.c (the
+  relay appends the observed src ip:port to a keepalive echo, magic-gated "REF1", reusing the PRB1 probe-stamp
+  append path -> non-REFL echoes BYTE-IDENTICAL, relay make test 8/8). net_relay.c (twins) captures reflexive_ip/
+  port per relay vantage point and exposes net_relay_reflexive_classify (CONE iff same external port across >=2
+  vantage points, reimplementing supernode.c:768 cert-pinned) / _public (refl IP == net_my_ip); <2 vantage points
+  -> UNKNOWN -> fail-closed no-promote. REFL1 SECURITY (audited, no hole): the trailer is OUTSIDE the HMAC but
+  net_relay_recv strips it BEFORE compute_mac (capture strictly POST-auth); trailer is a FIXED 6-byte const (no
+  attacker length field), bounds-checked, index-safe; worst case = a spoofed reflexive addr -> a wrong promotion
+  bounded fail-closed by min-id select (blast radius 1) + snf_send DEAD->DIRECT + 30s demote. IN-PROC cert
+  `autopromote test` 6/6 PASS both arches (A hold-then-promote@60s / B symmetric-never / C1 good-blip-no-promote /
+  C2 bad-blip-no-demote / D env-force). FALSIFIER -DSAP_NO_SYMBLOCK (#ifndef-removes the !=SYMMETRIC clause; case B
+  feeds public=1+SYMMETRIC so the block is the SOLE gate) prints RESULT: FAIL; auditor ALSO ran an independent
+  sabotage (SAP_PROMOTE_K_S 60->1 -> cert flipped to FAIL -> reverted). NO regression: relay 8/8, slice-3
+  run_relay_tcp_live PASS, slice-4 run_relay_autofallback_live SKIP-clean, non-REFL recv path byte-identical.
+  Row CLOSED.
+- HONEST BOUND on N-2d (named, NOT a gap in the CLOSED claim): (a) still min-id among the auto-capable, NOT
+  best-RTT/bandwidth (bandwidth unmeasured); (b) teacher bit unchanged (GGUF-gated, out of scope); (c) bare-metal
+  unchanged (no env, no hosted net -> no auto-promote, by construction); (d) the live netns+iptables/socat join was
+  NOT executed here (PRoot lacks unshare -rn) -- deferred [live] row; (e) PRODUCTION needs the public relay
+  REDEPLOYED with the REFL1 echo for real reflexive measurement (operational follow-up, like the Slice-3 TCP
+  redeploy).

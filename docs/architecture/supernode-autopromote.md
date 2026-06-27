@@ -1,8 +1,13 @@
 # Measured-Capability Supernode Auto-Promotion (N-2d)
 
-Status: DESIGN / SPEC (not implemented). Author: design pass for mk_pino's
-2026-06-27 request — "Skype-style dynamic supernodes." Implementer builds to this;
-a SEPARATE auditor enforces the gate in §E. Scope: the **supernode** capability
+Status: SHIPPED + AUDITED + integrated to master (23811db7), 2026-06-27.
+design->implement->audit by SEPARATE agents; auditor PASS (both crowns
+byte-identical, in-proc cert 6/6 both arches with a demonstrated toothful
+falsifier, REFL1 trailer parse audited with no hole + strictly post-auth capture,
+no relay/slice-3/slice-4 regression). OPERATIONAL FOLLOW-UP: redeploy the public
+relay (relay.helloidea.org) with the REFL1 echo so production nodes can actually
+measure reachability. Author: design pass for mk_pino's 2026-06-27 request —
+"Skype-style dynamic supernodes." Scope: the **supernode** capability
 bit only (the teacher bit is explicitly out — §C.6).
 
 THE GOAL (mk_pino): today a node only becomes supernode-CAPABLE by an explicit
