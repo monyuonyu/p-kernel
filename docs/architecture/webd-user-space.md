@@ -419,3 +419,23 @@ NOT yet done: the teach/ask/chat write-verb ABI (galaxy.c still drives the
 `mind_cmd` mouth directly), and the separate user-space `webd` process — galaxy
 still serves HTTP from inside the hosted substrate task. Those are the next
 Slice-A/Slice-B steps.
+
+### Known behavioral divergences from the pre-refactor snapshot
+The snapshot rewrite is field-identical for all real inputs (independently
+audited: `/galaxy.json`, `/ws` state and `/modules.json` byte-identical to the
+pre-refactor build after masking the genuinely-dynamic fields). Two narrow,
+benign divergences are recorded for honesty (neither is a regression):
+1. **Star-handle embedded NUL (cosmetic).** `ui_snapshot()` stores the star
+   handle as a NUL-terminated `char star[ARK_HANDLE_MAX+1]`, whereas the old
+   path emitted a length-counted slice. A handle containing an embedded NUL
+   would truncate at the NUL on the new path. Real ark handles are clean text
+   (no embedded NUL), so all tests show byte-identity. Strict parity for
+   arbitrary-byte handles would need a `star_len` field on `UI_SNAPSHOT`.
+2. **Node-id fallback (a consistency *improvement*).** `gx_my_id()` →
+   `ui_node_id()` now resolves the `drpc_my_node==0xFF` fallback via
+   `pkernel_default_node_id()`, which consults the per-install seed file in
+   addition to `PKERNEL_NODE_ID`. In the narrow pre-`cmd_net` Android window
+   this returns the seed id the client already expects (MainActivity/Galaxy
+   Activity), which the old `getenv`-or-`1` path got wrong. Every other path
+   returns the identical id. Net effect: the galaxy `me.id` / listen port
+   (`7800+id-1`) is now *more* consistent with the rest of the node, never less.
