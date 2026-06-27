@@ -5,9 +5,16 @@ UDP<->TCP relay-transport fallback) SHIPPED + AUDITED + integrated to master
 (4f1eb07e, 42ac0c54, 0b94f6a0), 2026-06-27. Slice 2 (public relay) DEPLOYED on
 relay.helloidea.org:7400 with EXTERNAL reachability proven (mobile -> home router
 7400/udp + 7400/tcp -> relay). With Slice 4, a node on a UDP-blocked network
-auto-falls-back to TCP with NO manual PKERNEL_RELAY_TCP. Remaining for true
-"anywhere": TLS-443 sub-slice (Caddy SNI demux) for egress-443-only/DPI nets — see
-§5. Original design below; trunk tip was ~29a85d77.
+auto-falls-back to TCP with NO manual PKERNEL_RELAY_TCP. DECISION 2026-06-27
+(mk_pino): Slice 5 (TLS-443 via Caddy SNI demux) is DEFERRED as YAGNI — the ark's
+real population is personal phones / home machines / mobile data, all already
+covered by Slices 1-4; egress-443-only+DPI is a managed-corporate-IT environment
+where an ownerless experimental AI node won't run, and even there plain TLS-443
+loses to a destination-allowlisting TLS-terminating proxy (§5), so it's a
+half-measure that also risks the production Caddy (Immich/Nextcloud on 443).
+Connect-anywhere is considered DONE for the realistic threat model. Reopen only if
+a hostile-national-network survival mission is explicitly added (and then it needs
+obfuscated transport, not plain TLS). Original design below; trunk tip was ~29a85d77.
 Author: planning pass for mk_pino's CORE requirement (2026-06-26):
 "どんな環境でも繋がるように" — a home no one owns means every device must be
 able to join, not "works on some networks." This doc closes the gaps a real
