@@ -73,7 +73,7 @@ static void ui_event_refill(void)
     for (int t = 0; t < 17; t++) {
         g_ui_bucket[t] = 4;
         if (g_ui_suppress[t]) {
-            ui_event_append_raw(EV_SUMMARY, (U1)ui_node_id(), UI_EVENT_NODE_NONE,
+            ui_event_append_raw(EV_SUMMARY, (U1)ui_node_id(), GALAXY_NODE_NONE,
                                 (U2)t, g_ui_suppress[t]);
             g_ui_suppress[t] = 0;
         }

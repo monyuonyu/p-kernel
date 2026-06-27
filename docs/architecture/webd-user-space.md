@@ -1,6 +1,11 @@
 # webd-user-space — move the web server out of the substrate
 
-Status: **DESIGNED / not implemented**. This is the privilege-boundary plan for
+Status: **Slice A partial (landed)**. The `arch/common/ui_api.c` capability
+boundary is live in the hosted builds: the event/console/module seam is routed
+through it AND the `/galaxy.json` + `/ws` "state" snapshot is now assembled from
+the value-typed `UI_SNAPSHOT` (`ui_snapshot()`), so galaxy.c reads no
+world/dmn/mind table directly. STILL PENDING: the teach/ask/chat write-verb ABI
+and the separate `webd` process itself. This is the privilege-boundary plan for
 the next UI wave: `galaxy` stays the honest observation surface, the future
 Desktop/WebOS and Imaginary UI ride on the same server family, but the web
 server itself must not live inside the ring0/substrate task.
@@ -402,6 +407,15 @@ process/task itself, not just close a browser tab.
 
 ## 7. Current Honest State
 
-Not implemented. The shipped galaxy still serves HTTP from `arch/common/galaxy.c`.
-The next implementation wave should start with Slice A, because it gives us a
-small API seam without breaking the phone UI.
+Slice A partial. The `ui_api.c` capability layer is landed and live in the
+hosted builds (`boot/linux`, `boot/linux_x86_64`, the Android CMake). The seam
+covers the event ring, console, module list AND the read-only world snapshot:
+`arch/common/galaxy.c` now assembles `/galaxy.json` and the `/ws` "state"
+payload from `ui_snapshot()`'s value-typed `UI_SNAPSHOT` rather than touching
+`world_peer_*` / `dnode_table` / `swim_rtt_ms` directly. The bare-metal targets
+do NOT compile `ui_api.c` (the crown `.text` is unchanged).
+
+NOT yet done: the teach/ask/chat write-verb ABI (galaxy.c still drives the
+`mind_cmd` mouth directly), and the separate user-space `webd` process — galaxy
+still serves HTTP from inside the hosted substrate task. Those are the next
+Slice-A/Slice-B steps.

@@ -43,14 +43,9 @@
 
 #include "galaxy_page.h" /* GENERATED: galaxy_page[] + galaxy_page_len     */
 
-/* §4.1: the ring's 3-store append needs a uniprocessor exclusion window
- * against producers running on other tasks. Use the portable DI/EI
- * critical-section primitive (kernel/common/fastlock.c uses the same):
- * on hosted builds disint() defers the SIGALRM preempt tick (the Linux-
- * port model of IRQ-off / dispatch-disable); on bare metal it masks the
- * real IRQ. Same source serves the future netstack-tcp-server slice. */
-#define GX_LOCK()    UINT _gx_imask; DI(_gx_imask)
-#define GX_UNLOCK()  EI(_gx_imask)
+/* the event ring's critical-section (the §4.1 DI/EI exclusion window) now
+ * lives with the ring itself in ui_api.c (UI_LOCK/UNLOCK); galaxy.c is a
+ * pure reader through the ui_event_* API and holds no lock of its own. */
 
 extern char *getenv(const char *);
 extern int   atoi(const char *);
@@ -134,6 +129,13 @@ static GX_CLIENT g_cli[GALAXY_MAX_CLIENTS];
  * SINGLE task, so one file-static scratch serves every route's head read. */
 static ARK_PROFILE gx_prof;
 
+/* the snapshot the /galaxy.json + /ws "state" payloads assemble from. The
+ * web layer no longer reads world/dmn/mind tables directly: ui_snapshot()
+ * (ui_api.c) returns this value-typed view and galaxy.c formats it. ~1.9 KB
+ * — file-static, NEVER a task-stack local (the hosted-relay stack lesson);
+ * the server is a SINGLE task so one scratch serves both builders. */
+static UI_SNAPSHOT gx_snap;
+
 /* queue bytes to a client's out-buffer; returns 0 ok, -1 overflow (drop) */
 static INT gx_q(INT slot, const char *s, INT n)
 {
@@ -199,98 +201,79 @@ static void gx_json_str(INT slot, const char *s, INT n)
     }
 }
 
+/* emit the star handle (already truncated to ARK_HANDLE_MAX + NUL-terminated
+ * by ui_snapshot) as a JSON-escaped string body. Empty -> nothing. */
+static void gx_emit_star(INT slot, const char *star)
+{
+    INT n = 0; while (star[n]) n++;
+    if (n > 0) gx_json_str(slot, star, n);
+}
+
 static void gx_build_galaxy_json(INT slot)
 {
-    UB me = gx_my_id();
-    INT pr = world_peer_pressure(me); if (pr < 0) pr = 0;
-    INT th = world_peer_threat(me);   if (th < 0) th = 0;
+    /* the web layer reads NO world/dmn/mind table directly: the substrate
+     * hands back a value-typed snapshot (ui_api.c) and we only format it. */
+    ui_snapshot(&gx_snap);
 
-    INT mydv = world_peer_device(me);   /* my own beaconed device, -1 if not yet */
-
-    gx_qs(slot, "{\"me\":{\"id\":");           gx_qdec(slot, me);
+    gx_qs(slot, "{\"me\":{\"id\":");           gx_qdec(slot, (UW)gx_snap.me_id);
     /* ark-profile §7.4: your star gains its name — the head profile's
      * handle iff the person chose to be named (handle_len>0); a consent-
      * only profile keeps the node label (empty star). */
     gx_qs(slot, ",\"star\":\"");
-    if (ark_profile_head(&gx_prof) && gx_prof.handle_len > 0)
-        gx_json_str(slot, gx_prof.handle,
-                    gx_prof.handle_len > ARK_HANDLE_MAX ? ARK_HANDLE_MAX : gx_prof.handle_len);
+    gx_emit_star(slot, gx_snap.star);
     gx_qs(slot, "\"");
-    gx_qs(slot, ",\"device\":");               gx_qdec(slot, mydv < 0 ? 0u : (UW)mydv);
-    gx_qs(slot, ",\"region\":");               gx_qdec(slot, (UW)region_id());
-    gx_qs(slot, ",\"dmn\":");                  gx_qdec(slot, (UW)dmn_state_get());
-    gx_qs(slot, ",\"pending\":");              gx_qdec(slot, (UW)r3_facts_pending());
-    gx_qs(slot, ",\"rounds\":");               gx_qdec(slot, dmn_r3_rounds());
-    gx_qs(slot, ",\"pressure\":");             gx_qdec(slot, (UW)pr);
-    gx_qs(slot, ",\"threat\":");               gx_qdec(slot, (UW)th);
+    gx_qs(slot, ",\"device\":");               gx_qdec(slot, (UW)gx_snap.device);
+    gx_qs(slot, ",\"region\":");               gx_qdec(slot, (UW)gx_snap.region);
+    gx_qs(slot, ",\"dmn\":");                  gx_qdec(slot, (UW)gx_snap.dmn);
+    gx_qs(slot, ",\"pending\":");              gx_qdec(slot, (UW)gx_snap.pending);
+    gx_qs(slot, ",\"rounds\":");               gx_qdec(slot, (UW)gx_snap.rounds);
+    gx_qs(slot, ",\"pressure\":");             gx_qdec(slot, (UW)gx_snap.pressure);
+    gx_qs(slot, ",\"threat\":");               gx_qdec(slot, (UW)gx_snap.threat);
     /* interoception.md §3.3: the REAL unified stress S_n (0..255) + dominant
      * axis. The browser drives the me-star hue/agitation from THIS, unifying
      * its old client-side pressure+threat estimate into one kernel-computed
      * mood. HONEST-GLOW: O(1) live read; on a frozen snapshot S_n flats -> calm. */
-    gx_qs(slot, ",\"s_n\":");                  gx_qdec(slot, (UW)intero_scalar());
-    gx_qs(slot, ",\"s_axis\":");               gx_qdec(slot, (UW)intero_dominant_axis());
+    gx_qs(slot, ",\"s_n\":");                  gx_qdec(slot, (UW)gx_snap.s_n);
+    gx_qs(slot, ",\"s_axis\":");               gx_qdec(slot, (UW)gx_snap.s_axis);
 
     /* living-body inspector (living-body-inspector.md): the organism's REAL
      * vitals, all O(1) scalar reads — the browser differences successive
      * snaps for rates (idle_runs/min, infer/s). NO new buffer, NO rw[] L2
      * copy on the task stack; HONEST-GLOW: every byte is a live read. */
-    gx_qs(slot, ",\"training\":");             gx_qdec(slot, (UW)r3_round_busy_get());
-    gx_qs(slot, ",\"facts_learned\":");        gx_qdec(slot, (UW)r3_retained_count());
-    gx_qs(slot, ",\"epoch\":");                gx_qdec(slot, r3_merge_epoch());
-    gx_qs(slot, ",\"idle_runs\":");            gx_qdec(slot, dmn_stats.idle_runs);
-    gx_qs(slot, ",\"engram_fill\":");          gx_qdec(slot, (UW)lm_ring_fill());
-    gx_qs(slot, ",\"engram_cap\":");           gx_qdec(slot, (UW)lm_ring_cap());
-    gx_qs(slot, ",\"infer_count\":");          gx_qdec(slot, kernel_infer_count);
-    {
-        /* the reflex brain's last decision — class + max-softmax confidence
-         * (0..100). Scalars only; NULL-skips the routing/reflex fields. */
-        UB lc = 0, lcf = 0;
-        moe_infer_last(&lc, (UB *)0, (UB *)0, &lcf);
-        gx_qs(slot, ",\"last_class\":");        gx_qdec(slot, (UW)lc);
-        gx_qs(slot, ",\"last_conf\":");         gx_qdec(slot, (UW)lcf);
-    }
-    {
-        /* lineage = the self DAG sequence number (hash-chained lineage that
-         * survives death). Mirror gx_build_self_json's HEAD read — a lazy
-         * O(1) pfs_dag_read, no second self table. 0 when no self entry yet. */
-        LM_SELF_ENTRY se;
-        INT sr = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
-                              &se, (UW)sizeof(se));
-        UW lin = ((sr == (INT)sizeof(se) || sr == LM_SELF_ENTRY_V1_SIZE) && se.magic)
-                 ? (UW)se.seq : 0u;
-        gx_qs(slot, ",\"lineage\":");           gx_qdec(slot, lin);
-    }
+    gx_qs(slot, ",\"training\":");             gx_qdec(slot, (UW)gx_snap.training);
+    gx_qs(slot, ",\"facts_learned\":");        gx_qdec(slot, (UW)gx_snap.facts_learned);
+    gx_qs(slot, ",\"epoch\":");                gx_qdec(slot, (UW)gx_snap.epoch);
+    gx_qs(slot, ",\"idle_runs\":");            gx_qdec(slot, (UW)gx_snap.idle_runs);
+    gx_qs(slot, ",\"engram_fill\":");          gx_qdec(slot, (UW)gx_snap.engram_fill);
+    gx_qs(slot, ",\"engram_cap\":");           gx_qdec(slot, (UW)gx_snap.engram_cap);
+    gx_qs(slot, ",\"infer_count\":");          gx_qdec(slot, (UW)gx_snap.infer_count);
+    /* the reflex brain's last decision — class + max-softmax confidence. */
+    gx_qs(slot, ",\"last_class\":");           gx_qdec(slot, (UW)gx_snap.last_class);
+    gx_qs(slot, ",\"last_conf\":");            gx_qdec(slot, (UW)gx_snap.last_conf);
+    /* lineage = the self DAG sequence number (hash-chained, survives death);
+     * 0 when no self entry yet. */
+    gx_qs(slot, ",\"lineage\":");              gx_qdec(slot, (UW)gx_snap.lineage);
     gx_qs(slot, "},\"peers\":[");
 
-    INT first = 1;
-    for (INT n = 0; n < DNODE_MAX; n++) {
-        if ((UB)n == me) continue;
-        UB st = dnode_table[n].state;
-        if (st == DNODE_UNKNOWN && !world_peer_known((UB)n)) continue;
-        if (!first) gx_qs(slot, ",");
-        first = 0;
-        INT ppr = world_peer_pressure((UB)n);
-        INT pth = world_peer_threat((UB)n);
-        INT par = world_peer_atrisk((UB)n);
-        INT prg = world_peer_region_fresh((UB)n);
-        INT pag = world_peer_age_ms((UB)n);
-        INT pdv = world_peer_device((UB)n);
-        gx_qs(slot, "{\"id\":");        gx_qdec(slot, (UW)n);
-        gx_qs(slot, ",\"state\":");     gx_qdec(slot, (UW)st);
-        gx_qs(slot, ",\"region\":");    gx_qdec(slot, prg < 0 ? 255u : (UW)prg);
-        gx_qs(slot, ",\"fresh\":");     gx_qdec(slot, pag < 0 ? 0u : (UW)pag);
-        gx_qs(slot, ",\"pressure\":");  gx_qdec(slot, ppr < 0 ? 0u : (UW)ppr);
-        gx_qs(slot, ",\"threat\":");    gx_qdec(slot, pth < 0 ? 0u : (UW)pth);
-        gx_qs(slot, ",\"atrisk\":");    gx_qdec(slot, par < 0 ? 0u : (UW)par);
-        gx_qs(slot, ",\"device\":");    gx_qdec(slot, pdv < 0 ? 0u : (UW)pdv);
+    for (U4 i = 0; i < gx_snap.peer_count; i++) {
+        UI_PEER *p = &gx_snap.peers[i];
+        if (i) gx_qs(slot, ",");
+        gx_qs(slot, "{\"id\":");        gx_qdec(slot, (UW)p->id);
+        gx_qs(slot, ",\"state\":");     gx_qdec(slot, (UW)p->state);
+        gx_qs(slot, ",\"region\":");    gx_qdec(slot, (UW)p->region);
+        gx_qs(slot, ",\"fresh\":");     gx_qdec(slot, (UW)p->fresh_ms);
+        gx_qs(slot, ",\"pressure\":");  gx_qdec(slot, (UW)p->pressure);
+        gx_qs(slot, ",\"threat\":");    gx_qdec(slot, (UW)p->threat);
+        gx_qs(slot, ",\"atrisk\":");    gx_qdec(slot, (UW)p->atrisk);
+        gx_qs(slot, ",\"device\":");    gx_qdec(slot, (UW)p->device);
         /* rtt: the page's spatial-distance signal (interoception.md §3.3 —
          * S_n replaces this as the layout input once slice 1 ships; until
          * then the SWIM RTT EWMA is the honest proximity proxy). 0 = no
          * measurement yet; the page treats 0 as "far, unknown". */
-        gx_qs(slot, ",\"rtt\":");       gx_qdec(slot, swim_rtt_ms((UB)n));
+        gx_qs(slot, ",\"rtt\":");       gx_qdec(slot, (UW)p->rtt_ms);
         gx_qs(slot, "}");
     }
-    gx_qs(slot, "],\"dropped\":");  gx_qdec(slot, galaxy_dropped());
+    gx_qs(slot, "],\"dropped\":");  gx_qdec(slot, (UW)gx_snap.dropped);
     gx_qs(slot, "}");
 }
 
@@ -565,54 +548,45 @@ static INT gx_ws_send_ctrl(INT slot, UB opcode, const char *payload, INT n)
  * event. */
 static void gx_ws_build_state(void)
 {
-    UB me = gx_my_id();
-    INT pr = world_peer_pressure(me); if (pr < 0) pr = 0;
-    INT th = world_peer_threat(me);   if (th < 0) th = 0;
-    INT mydv = world_peer_device(me);
+    /* same value-typed snapshot as /galaxy.json (no direct table reads); the
+     * WS "state" payload is a SUBSET of the fields the page routes like an
+     * event. */
+    ui_snapshot(&gx_snap);
 
     ws_reset();
-    ws_s("{\"type\":\"state\",\"me\":{\"id\":"); ws_dec(me);
+    ws_s("{\"type\":\"state\",\"me\":{\"id\":"); ws_dec((UW)gx_snap.me_id);
     ws_s(",\"star\":\"");
-    if (ark_profile_head(&gx_prof) && gx_prof.handle_len > 0) {
-        INT hn = gx_prof.handle_len > ARK_HANDLE_MAX ? ARK_HANDLE_MAX : gx_prof.handle_len;
-        for (INT i = 0; i < hn; i++) {              /* inline escape (bounded)*/
-            char w[2] = { gx_prof.handle[i], 0 };
-            unsigned char c = (unsigned char)w[0];
-            if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
-            else if (c < 0x20) ws_putc(' ');
-            else ws_putc((char)c);
-        }
+    for (INT i = 0; gx_snap.star[i]; i++) {         /* inline escape (bounded)*/
+        unsigned char c = (unsigned char)gx_snap.star[i];
+        if (c == '"' || c == '\\') { ws_putc('\\'); ws_putc((char)c); }
+        else if (c < 0x20) ws_putc(' ');
+        else ws_putc((char)c);
     }
-    ws_s("\",\"device\":");  ws_dec(mydv < 0 ? 0u : (UW)mydv);
-    ws_s(",\"region\":");    ws_dec((UW)region_id());
-    ws_s(",\"dmn\":");       ws_dec((UW)dmn_state_get());
-    ws_s(",\"pending\":");   ws_dec((UW)r3_facts_pending());
-    ws_s(",\"rounds\":");    ws_dec(dmn_r3_rounds());
-    ws_s(",\"pressure\":");  ws_dec((UW)pr);
-    ws_s(",\"threat\":");    ws_dec((UW)th);
-    ws_s(",\"s_n\":");       ws_dec((UW)intero_scalar());     /* interoception §3.3 */
-    ws_s(",\"s_axis\":");    ws_dec((UW)intero_dominant_axis());
+    ws_s("\",\"device\":");  ws_dec((UW)gx_snap.device);
+    ws_s(",\"region\":");    ws_dec((UW)gx_snap.region);
+    ws_s(",\"dmn\":");       ws_dec((UW)gx_snap.dmn);
+    ws_s(",\"pending\":");   ws_dec((UW)gx_snap.pending);
+    ws_s(",\"rounds\":");    ws_dec((UW)gx_snap.rounds);
+    ws_s(",\"pressure\":");  ws_dec((UW)gx_snap.pressure);
+    ws_s(",\"threat\":");    ws_dec((UW)gx_snap.threat);
+    ws_s(",\"s_n\":");       ws_dec((UW)gx_snap.s_n);          /* interoception §3.3 */
+    ws_s(",\"s_axis\":");    ws_dec((UW)gx_snap.s_axis);
     ws_s("},\"peers\":[");
     INT first = 1;
-    for (INT n = 0; n < DNODE_MAX; n++) {
-        if ((UB)n == me) continue;
-        UB st = dnode_table[n].state;
-        if (st == DNODE_UNKNOWN && !world_peer_known((UB)n)) continue;
+    for (U4 i = 0; i < gx_snap.peer_count; i++) {
+        UI_PEER *p = &gx_snap.peers[i];
         if (gx_ws_stagen > WS_STAGE_MAX - 160) break;  /* stay bounded       */
         if (!first) ws_s(",");
         first = 0;
-        INT ppr = world_peer_pressure((UB)n);
-        INT pth = world_peer_threat((UB)n);
-        INT prg = world_peer_region_fresh((UB)n);
-        ws_s("{\"id\":");        ws_dec((UW)n);
-        ws_s(",\"state\":");     ws_dec((UW)st);
-        ws_s(",\"region\":");    ws_dec(prg < 0 ? 255u : (UW)prg);
-        ws_s(",\"pressure\":");  ws_dec(ppr < 0 ? 0u : (UW)ppr);
-        ws_s(",\"threat\":");    ws_dec(pth < 0 ? 0u : (UW)pth);
-        ws_s(",\"rtt\":");       ws_dec(swim_rtt_ms((UB)n));
+        ws_s("{\"id\":");        ws_dec((UW)p->id);
+        ws_s(",\"state\":");     ws_dec((UW)p->state);
+        ws_s(",\"region\":");    ws_dec((UW)p->region);
+        ws_s(",\"pressure\":");  ws_dec((UW)p->pressure);
+        ws_s(",\"threat\":");    ws_dec((UW)p->threat);
+        ws_s(",\"rtt\":");       ws_dec((UW)p->rtt_ms);
         ws_s("}");
     }
-    ws_s("],\"dropped\":"); ws_dec(galaxy_dropped());
+    ws_s("],\"dropped\":"); ws_dec((UW)gx_snap.dropped);
     ws_s("}");
 }
 

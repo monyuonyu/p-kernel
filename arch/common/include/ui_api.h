@@ -8,6 +8,7 @@
 #pragma once
 #include "kernel.h"
 #include "ark_profile.h"  /* ARK_HANDLE_MAX */
+#include "galaxy.h"        /* single source of EV_* / GALAXY_NODE_NONE (§dedup) */
 
 #define UI_PEER_MAX         64
 #define UI_MODULE_MAX       64
@@ -72,25 +73,10 @@ typedef struct {
 
 _Static_assert(sizeof(UI_EVENT) == 12, "UI_EVENT must be 12 bytes");
 
-#define UI_EVENT_NODE_NONE 0xFF
-
-#define EV_SWIM         1
-#define EV_DMN_WAKE     2
-#define EV_DMN_IDLE     3
-#define EV_CONSOLIDATE  4
-#define EV_TEACH        5
-#define EV_ASK          6
-#define EV_DRPC_IN      7
-#define EV_DRPC_OUT     8
-#define EV_MOE          9
-#define EV_DKVA         10
-#define EV_KDDS         11
-#define EV_PMESH_TX     12
-#define EV_PMESH_RX     13
-#define EV_SUMMARY      14
-#define EV_REMOTE_TEACH 15
-#define EV_MERGE        16
-#define EV_MERGE_WEIGHTED  0x8000u
+/* EV_* event types, EV_MERGE_WEIGHTED, and the node-none sentinel are
+ * single-sourced in galaxy.h (included above) — the substrate emit side
+ * (dmn/swim/moe/drpc) and this read side share ONE vocabulary. Use
+ * GALAXY_NODE_NONE for the none sentinel. */
 
 int ui_node_id(void);
 void ui_event_emit(U1 type, U1 src, U1 dst, U2 a, U2 b);

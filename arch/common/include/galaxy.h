@@ -21,20 +21,13 @@
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
-/* Event ring (§4) — fixed-width only (the world.h LP64 rule)          */
+/* Event vocabulary (§4) — the EV_* contract shared by the emit side    */
+/* (dmn/swim/moe/drpc via galaxy_emit) and the read side (ui_api.c +     */
+/* galaxy.c). The 12-byte event STRUCT and the ring itself now live in   */
+/* the bounded UI layer (ui_api.h: UI_EVENT / UI_EVENT_RING); galaxy.h   */
+/* keeps only the wire-stable type/sentinel constants both sides need.   */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
-    U4 ms;          /* uptime ms (wraps ~49 days; the page handles wrap) */
-    U1 type;        /* EV_* below                                        */
-    U1 src, dst;    /* node ids; 0xFF = none                             */
-    U1 _pad;
-    U2 a, b;        /* type-specific detail (class, topic hash16, len...) */
-} GALAXY_EV;        /* 12 bytes */
-
-_Static_assert(sizeof(GALAXY_EV) == 12, "GALAXY_EV must be 12 bytes (LP64-safe)");
-
-#define GALAXY_RING         256   /* 3 KB static; power of two            */
 #define GALAXY_NODE_NONE    0xFF
 
 /* Event types (§4.2). Precious = never sampled; chatty = token-bucket.  */
