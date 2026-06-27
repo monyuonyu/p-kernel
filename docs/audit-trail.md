@@ -1758,3 +1758,21 @@ N-4 cross-host deferred to the ThinkPad).
   (autoxport/autopromote/heartbeat/relay) wired as a required gate, and ASan/UBSan hosted builds to catch the
   recurring stack-overflow class. Principle: "strict" = never-let-green-break, NOT more-red-lines (avoid
   normalization-of-deviance).
+- CI-FAILOVER-WINDOWS (b9f84332, 2026-06-27): the 4 live-3-node jobs (protect-loop/collective-learn/shared-mind/
+  one-mind) failed not on a code bug but a TIGHT POST-KILL window — after kill-9 of the owner, the survivor only
+  serves the unit AFTER SWIM declares the peer DEAD (~15-17s: SUSPECT_ROUNDS 2 + DEAD_ROUNDS 3 = 5 missed probes
+  at ~1.9s/dead-probe round-robined over 2 peers), but the tests asserted within 10-20s. design->impl->audit
+  separate agents; widened post-kill windows 10/20s->60s (27/41/42) and 240->300s (32) + outer CI timeouts, with
+  the ASSERTIONS BYTE-IDENTICAL (only patience changed; the "node dies but the network serves/remembers" property
+  stays genuinely gated and BLOCKING). Crown trivially safe (only samples/*.sh + ci.yml; zero .c/.h/.S). Auditor
+  PASS on all 6 gates; real verification = the self-hosted pkernel-thinkpad CI run (the aarch64 PRoot sandbox
+  cannot reliably reproduce live 3-node replication). Self-hosted runner itself greened 7 of 11 heavy jobs
+  (ring3 + plural-protect/twolayer/parallel-infer/composite/ARK/survival-loop) that were contention/timeout-flaky
+  on GitHub's shared runners.
+- FOLLOW-UP (pre-existing, NOT a regression; flagged by the failover-window audit): samples/41_shared_mind/run.sh's
+  post-kill predicate `wait_for [teach-consolidated] (PASS|FAIL)` is STALE-SATISFIABLE — a pre-kill
+  [teach-consolidated] line already exists in node2's log so the wait returns immediately and the window-widening
+  is a no-op there; the assertion's `grep 'ask "sun"' | tail -1` can also read a pre-kill ask line => a latent
+  FALSE-PASS (survival not actually verified against POST-kill output). Fix = match a fresh post-kill-specific
+  marker (rotate/clear the log or a post-kill token), copying 42_one_mind's correct unique-post-kill-keyword
+  pattern. Does not block; tracked for a future session.
