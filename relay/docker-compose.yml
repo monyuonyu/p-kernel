@@ -1,0 +1,30 @@
+# p-kernel public relay — drop-in for a /opt/services-style home server.
+#
+# Deploy:
+#   cp .env.example .env        # then put your 64-hex PKERNEL_RELAY_KEY in it
+#   docker compose up -d --build
+#
+# Then on the ROUTER forward  外部 7400/udp -> <server-lan-ip>:7400  (UDP!),
+# and on the host  sudo ufw allow 7400/udp.
+#
+# Nodes join with:  PKERNEL_RELAY=relay.helloidea.org:7400  PKERNEL_RELAY_KEY=<same hex>
+#
+# The relay is stateless (no volumes) and custom-UDP — it is NOT proxied by
+# Caddy (Caddy is HTTP only). It needs its own forwarded UDP port.
+
+services:
+  relay:
+    build: .
+    container_name: pkernel_relay
+    restart: unless-stopped
+    stop_grace_period: 10s
+    env_file:
+      - .env                 # PKERNEL_RELAY_KEY=<64 hex>
+    ports:
+      - "7400:7400/udp"
+    networks:
+      - relay-net
+
+networks:
+  relay-net:
+    driver: bridge
