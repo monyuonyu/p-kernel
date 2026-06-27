@@ -663,7 +663,7 @@ jobs:
           make -C relay
       - name: Run 27_protect/run.sh and assert RESULT PASS
         run: |
-          timeout 400 samples/27_protect/run.sh | tee /tmp/p27_ci.log
+          timeout 480 samples/27_protect/run.sh | tee /tmp/p27_ci.log
           grep -q 'RESULT: PASS' /tmp/p27_ci.log
       - name: Upload node logs on failure
         if: failure()
@@ -708,7 +708,7 @@ jobs:
     name: "集合学習 (実機3ノード: 分割シャード、gossip > 単独、ノード kill + 再参加)"
     runs-on: [self-hosted, pkernel-thinkpad]
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 20
+    timeout-minutes: 25
     # enforces the LIVE §8/§9 path (G22): 3 nodes each train on a DISJOINT
     # leave-one-class-out shard (no node sees the whole task), gossip-average
     # their full 635-param weight bodies over the relay with NO central
@@ -729,7 +729,7 @@ jobs:
           make -C relay
       - name: Run 32_collective_learn/run.sh and assert RESULT PASS
         run: |
-          timeout 900 samples/32_collective_learn/run.sh | tee /tmp/p32_ci.log
+          timeout 1080 samples/32_collective_learn/run.sh | tee /tmp/p32_ci.log
           grep -q 'RESULT: PASS' /tmp/p32_ci.log
       - name: Upload node logs on failure
         if: failure()
@@ -765,7 +765,7 @@ jobs:
           make -C relay
       - name: Run 41_shared_mind/run.sh and assert the four tags + RESULT PASS
         run: |
-          timeout 600 samples/41_shared_mind/run.sh | tee /tmp/p41_ci.log
+          timeout 720 samples/41_shared_mind/run.sh | tee /tmp/p41_ci.log
           grep -q '\[shared-arrival\] PASS'      /tmp/p41_ci.log
           grep -q '\[shared-consolidated\] PASS' /tmp/p41_ci.log
           grep -q '\[shared-grounded\] PASS'     /tmp/p41_ci.log
@@ -809,7 +809,7 @@ jobs:
           make -C relay
       - name: Run 42_one_mind/run.sh and assert the tags + RESULT PASS
         run: |
-          timeout 900 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log
+          timeout 1020 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log
           # the disease/cure headline (in-process, deterministic, on node A):
           grep -q '\[onemind-divergent\] PASS'  /tmp/p42_nodeA.log
           grep -q '\[onemind-cured\] PASS'      /tmp/p42_nodeA.log

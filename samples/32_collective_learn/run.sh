@@ -215,8 +215,16 @@ echo "==========================================================="
 # report each survivor's final honestly.
 log "*** kill -9 node3 (pid ${NODE_PID[3]}) mid-learning ***"
 kill -9 "${NODE_PID[3]}" 2>/dev/null; NODE_PID[3]=0
-wait_for "$L1" 'RESULT rounds=' 240 || bad "node1 never finished after the kill"
-wait_for "$L2" 'RESULT rounds=' 240 || bad "node2 never finished after the kill"
+# Post-kill FAILOVER window: the 2-node survivors must finish their remaining
+# gossip-learning rounds AFTER node3 dies. Their per-round gossip pulls toward
+# node3 stall until SWIM declares it DEAD (swim.h: SUSPECT_ROUNDS=2 +
+# DEAD_ROUNDS=3 = 5 missed probes, ~1s round + 400/500ms probe timeouts,
+# round-robin over 2 peers -> ~15-20s of stall once), on top of the normal
+# learning time. On the shared self-hosted runner the old 240s window
+# occasionally lost the race; give it death_latency + jitter headroom. The
+# assertion (both survivors must FINISH) is UNCHANGED.
+wait_for "$L1" 'RESULT rounds=' 300 || bad "node1 never finished after the kill"
+wait_for "$L2" 'RESULT rounds=' 300 || bad "node2 never finished after the kill"
 ok "survivors node1,node2 kept gossiping and FINISHED after the kill — the swarm survived the death"
 F1=$(last_full "$L1"); F2=$(last_full "$L2")
 log "survivor finals (x10): node1=$F1 node2=$F2  (solo: $S1 $S2)"

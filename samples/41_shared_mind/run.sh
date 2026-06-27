@@ -350,7 +350,13 @@ kill -9 "${NODE_PID[1]}" 2>/dev/null; NODE_PID[1]=0
 sleep 3
 # B still answers v from its OWN weights — the fact survived its teacher's death.
 send 2 "mind ask $KWORD"
-wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 20 || true
+# Post-kill FAILOVER window: B answers from its own rw[], but its mouth only
+# stops blocking on the now-dead teacher A once SWIM declares A DEAD. SWIM
+# death-detection latency (swim.h: SUSPECT_ROUNDS=2 + DEAD_ROUNDS=3 = 5 missed
+# probes, ~1s round + 400/500ms probe timeouts, round-robin over 2 peers) is
+# ~15-20s, so the old 20s window (sleep 3 + 20) flaked. Widen to death_latency
+# + a generous margin (the assertion below is UNCHANGED).
+wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 60 || true
 LIVE_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 echo "    after A's death: $LIVE_LINE"
 POST_SHARE=$(echo "$LIVE_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)

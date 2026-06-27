@@ -197,7 +197,18 @@ log "*** kill -9 node1 (pid ${NODE_PID[1]}) — the owner of the protected unit 
 kill -9 "${NODE_PID[1]}" 2>/dev/null; NODE_PID[1]=0; sleep 1
 
 send 2 "pfs get $SECRET"
-if wait_for "$L2" "\[pfs\] get: $SECRET" 10; then
+# Post-kill FAILOVER window. node2 already holds the replica, but its console
+# can only serve `pfs get` once it stops blocking on the now-dead owner — i.e.
+# after SWIM declares node1 DEAD. SWIM death-detection latency (swim.h):
+#   SUSPECT after SWIM_SUSPECT_ROUNDS=2 + DEAD after SWIM_DEAD_ROUNDS=3 = 5
+#   consecutive missed probes of the dead target; with a ~1s round period
+#   (SWIM_PROBE_INTERVAL_MS=1000) plus the 400ms direct + 500ms indirect probe
+#   timeouts per missed round, and round-robin probing 2 peers, that is
+#   ~15-20s before node1 is DEAD. The old 10s window was below that floor and
+#   flaked. Give it death_latency + a ~3x margin (and jitter headroom for the
+#   shared self-hosted runner). The assertion is UNCHANGED: node2 must actually
+#   serve the secret back from its own durable store.
+if wait_for "$L2" "\[pfs\] get: $SECRET" 60; then
     ok "the protected unit SURVIVED on node2 and was served back from its durable store"
 else
     bad "the unit was NOT served back from node2 after node1 died — see $L2"

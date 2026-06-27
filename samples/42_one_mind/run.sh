@@ -214,7 +214,14 @@ sleep 3
 # B must STILL answer BOTH facts from its MERGED rw[].
 SURV=1
 send 2 "mind ask $K1WORD"
-wait_for "$L2" "ask \"$K1WORD\"" 20 || true
+# Post-kill FAILOVER window: B answers k1 from its MERGED rw[], but B's mouth
+# only stops blocking on the now-dead node A once SWIM declares A DEAD. SWIM
+# death-detection latency (swim.h: SUSPECT_ROUNDS=2 + DEAD_ROUNDS=3 = 5 missed
+# probes, ~1s round + 400/500ms probe timeouts, round-robin over 2 peers) is
+# ~15-20s, so the old 20s window (sleep 3 + 20) flaked. Widen to death_latency
+# + a generous margin. Once the mouth unblocks here, the k2 ask below serves
+# promptly (sleep 4 is then sufficient). The assertions are UNCHANGED.
+wait_for "$L2" "ask \"$K1WORD\"" 60 || true
 B_K1=$(grep -a "ask \"$K1WORD\"" "$L2" | tail -1)
 echo "    B asks k1 after A's death: $B_K1"
 S1=$(echo "$B_K1" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)
