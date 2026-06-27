@@ -1649,3 +1649,32 @@ LEDGER: row CLOSED (in-proc gate). ***Thread N's in-proc surface is COMPLETE***:
 supernode select + capability gossip, N-2c forward ([in-proc]+[live] on real hardware), N-3 NAT punch (in-proc), N-4 seed
 bootstrap. The remaining Thread-N work is all real-host/real-NAT [live] rows (N-2c re-confirm done; cradle-live, N-3 two-NAT,
 N-4 cross-host deferred to the ThinkPad).
+
+## connect-anywhere SLICE 1 + SLICE 3 — commits 4f1eb07e (heartbeat) & 42ac0c54 (TCP fallback)
+- Two waves, each: design (connect-anywhere.md) -> isolated-worktree implementer -> SEPARATE adversarial auditor.
+  Commander integrated ONLY on PASS. 2026-06-27. Both implementers + both auditors were distinct subagents.
+- SLICE 1 (unconditional relay heartbeat, 4f1eb07e): auditor independently re-derived BOTH crowns (aarch64
+  755a20fa / x86 4064d8a9 — MATCH), confirmed 5-file hosted-only diff (net_relay.c + usermain.c twins +
+  tests/run_heartbeat.sh). In-proc cert 3/3 PASS with a load-bearing FALSIFIER (heartbeat gated on admission ->
+  emits 0 keepalives -> cert FAILs). Unconditionality verified by code-read: net_relay_heartbeat() depends only on
+  sock_fd/cur_relay, NOT peers/drpc_my_node (the swim.c:603 admission gate was the "silent after 4 pkts" deadlock).
+  KEEPALIVE_SEC 25->15 < NAT_TIMEOUT_FLOOR 30. Row CLOSED.
+- SLICE 3 (plain-TCP relay fallback, 42ac0c54; recovered from WIP bb849747 after the FIRST implementer API-errored
+  mid-integration — build was broken, TCP listener defined-but-unwired; a continuation implementer finished it):
+  auditor independently re-derived BOTH crowns (MATCH), confirmed 9-file hosted/standalone diff (relay/relay.c +
+  tcp_frame.h + test_relay.c, net_relay_tcp.c twins, net_dispatch.c twins, two hosted Makefiles — NO arch/common,
+  NO bare-metal TU). `make test` 8/8: the 6 original UDP scenarios STILL green (UDP recvfrom path lifted VERBATIM
+  into process_packet, byte-identical logic + rx_us stamp preserved), + [deframer] PASS with a TOOTHFUL falsifier
+  (p1[0..1]=0x0005 so a prefix-less naive concat mis-splits -> recovered=0 -> FAILs on the missing boundary
+  specifically, not an unrelated reason), + [tcp_roundtrip] PASS (real fork/exec ./relay; a real loopback TCP
+  client + UDP client exchange A<->B BOTH directions through one shared node table). TCP framing [u16 BE len][v2
+  pkt]: per-connection reassembly is static (not a task-stack local), bounded (flen>outcap -> drop conn;
+  1416+2048 < 4096 cannot overflow), reaps on POLLHUP/POLLERR/orderly-close. HONEST BOUND (accurately disclosed,
+  no overclaim): the kernel-side net_relay_tcp.c twins are COMPILE-verified only (opt-in PKERNEL_RELAY_TCP=1) —
+  NOT exercised by a booted ./p-kernel against a live relay; no cert touches the kernel TCP symbols. Row CLOSED.
+- SLICE 2 (public relay) is DEPLOYED (pkernel_relay container on mk_pino's helloidea.org home server, 7400/udp)
+  with EXTERNAL reachability PROVEN over mobile (3/3 probes mobile 49.x -> home router 7400/udp fwd -> relay rx).
+- HONEST FOLLOW-UPS (named, NOT gaps in these CLOSED claims): (a) live booted-kernel<->relay TCP join [live];
+  (b) redeploy the public relay container with the TCP-capable relay.c + forward 7400/tcp; (c) kernel-twin
+  net_relay_tcp_recv could check the reasm-push truncation return like its relay.c sibling (safe today by the size
+  invariant); (d) 443/TLS-via-Caddy-SNI sub-slice (deferred — do NOT repoint the router's 443 off Caddy).

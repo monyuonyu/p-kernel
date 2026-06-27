@@ -1,6 +1,9 @@
 # Connect From Anywhere — hardening Thread N connectivity
 
-Status: design (read-only planning). Trunk tip ~29a85d77.
+Status: Slice 1 (heartbeat) + Slice 3 (plain-TCP fallback) SHIPPED + AUDITED +
+integrated to master (4f1eb07e, 42ac0c54), 2026-06-27. Slice 2 (public relay)
+DEPLOYED on relay.helloidea.org:7400 with EXTERNAL reachability proven (mobile ->
+home router 7400/udp -> relay). Original design below; trunk tip was ~29a85d77.
 Author: planning pass for mk_pino's CORE requirement (2026-06-26):
 "どんな環境でも繋がるように" — a home no one owns means every device must be
 able to join, not "works on some networks." This doc closes the gaps a real
