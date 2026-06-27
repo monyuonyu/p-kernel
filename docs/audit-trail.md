@@ -1758,3 +1758,27 @@ N-4 cross-host deferred to the ThinkPad).
   (autoxport/autopromote/heartbeat/relay) wired as a required gate, and ASan/UBSan hosted builds to catch the
   recurring stack-overflow class. Principle: "strict" = never-let-green-break, NOT more-red-lines (avoid
   normalization-of-deviance).
+- CI-LIVE3NODE-WINDOWS (v1 b9f84332 + v2 bf9cdac4, 2026-06-27): the 4 live-3-node jobs (protect-loop/
+  collective-learn/shared-mind/one-mind) flaked on the self-hosted runner not from a code bug but from TIGHT
+  multi-stage timing windows. SWIM death-detection ≈ 15-17s (SUSPECT_ROUNDS 2 + DEAD_ROUNDS 3 = 5 missed probes
+  ~1.9s/round). v1 widened only the POST-KILL serve windows (10/20s->60s, 240->300s); CI then PROVED v1 INCOMPLETE
+  — 27_protect failed at `node1 did not report the unit SAFE` BEFORE the kill, i.e. the unit never replicated to R
+  replicas inside the tight 20s PRE-KILL window, so the survivor had nothing to serve (`[pfs] get: NOT FOUND`) and
+  no post-kill window could help. v2 widened ALL the upstream convergence/replication/pre-kill windows too:
+  cluster-FULL 30->60s, region size=3 20->60s, *** SAFE replicate 20->60s, the racing one-shot `protect stat`
+  grep -> a 60s retry loop (predicate UNCHANGED), shared/one-mind `mind_net_task up` 30->60s, shared-arrival
+  40->60s, teach-consolidated 20->60s, collective Phase-A 200->300s + solo_ceiling 30->60s; outer ci.yml timeouts
+  + job timeout-minutes raised to contain them. ASSERTIONS BYTE-IDENTICAL across both passes (only patience widened
+  / one-shot->retry; the "node dies but the network serves/remembers" property stays BLOCKING-gated). CROWN trivially
+  safe (only samples/*.sh + ci.yml; zero .c/.h/.S — bare-metal .text byte-identical). The aarch64 PRoot sandbox
+  cannot reproduce the x86_64 live-3node path, so the self-hosted pkernel-thinkpad CI run is the real verification
+  (in flight). HONEST BOUND: no already-generous (>=60s) window failed in CI, so no real convergence bug is
+  implicated — this was genuinely tight caps; IF v2's generous windows still flake, that is the signal it is
+  fundamental multi-node fragility (then -> advisory with the deterministic-cert half kept blocking).
+  CONTEXT: the self-hosted runner (isolated Docker, --network host, KVM) already greened 7 of 11 heavy jobs
+  (ring3 + plural-protect/twolayer/parallel-infer/composite/ARK/survival-loop) that were pure contention/timeout
+  flakes on GitHub's shared runners.
+- FOLLOW-UP (pre-existing, NOT a regression; from the v1 audit): samples/41_shared_mind/run.sh's post-kill
+  `wait_for [teach-consolidated] (PASS|FAIL)` is STALE-SATISFIABLE (a pre-kill line already matches -> wait returns
+  immediately; the `grep 'ask "sun"' | tail -1` can read pre-kill data => latent FALSE-PASS). Fix = match a fresh
+  post-kill-specific marker like 42_one_mind does. Does not block; tracked.
