@@ -37,7 +37,15 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
+/* NOT <netinet/tcp.h>: on glibc it includes <stdint.h>, which (with -Iinclude)
+ * resolves to the T-Kernel stdint shadow and conflicts with the glibc int64_t
+ * already pulled by <stdlib.h>. We need only two universal constants from it. */
+#ifndef IPPROTO_TCP
+#define IPPROTO_TCP  6
+#endif
+#ifndef TCP_NODELAY
+#define TCP_NODELAY  1
+#endif
 #include <arpa/inet.h>
 
 #include "sha256.h"      /* same canonical relay/ HMAC-SHA256 as net_relay.c */
@@ -51,6 +59,22 @@ typedef unsigned long long u64;
 extern int *__errno_location(void) __attribute__((__const__));
 #define errno (*__errno_location())
 extern char *strerror(int);
+
+/* The T-Kernel build shadows <errno.h>, so the few errno constants this TU
+ * needs are defined locally (asm-generic values, identical on aarch64 and
+ * x86_64) — the same pattern as galaxy_posix.c (EAGAIN) / selfc_proc.c (EINTR). */
+#ifndef EINTR
+#define EINTR        4
+#endif
+#ifndef EAGAIN
+#define EAGAIN       11
+#endif
+#ifndef EWOULDBLOCK
+#define EWOULDBLOCK  EAGAIN
+#endif
+#ifndef EINPROGRESS
+#define EINPROGRESS  115
+#endif
 
 /* N-0: stable, distinct per-install default id (arch/linux/node_id.c). */
 extern int pkernel_default_node_id(void);

@@ -121,11 +121,20 @@ static DelayedPkt dq[DELAY_Q_MAX];
  */
 #define MAX_TCP_CONN 64
 typedef struct {
-    int      fd;        /* -1 = free slot                                    */
-    TcpReasm reasm;     /* per-connection length-prefix reassembly buffer    */
+    int                fd;     /* -1 = free slot                             */
+    struct sockaddr_in peer;   /* accept() peer addr (for logging/update)    */
+    TcpReasm           reasm;  /* per-connection length-prefix reassembly    */
 } TcpConn;
 static TcpConn tcp_conns[MAX_TCP_CONN];
 static int     tcp_listen_fd = -1;
+
+/* Forward decls: send_lease_grant()/deliver_now() write framed packets to a
+ * TCP client before tcp_write_framed() is defined below; process_packet() is
+ * the shared handler the main loop fans both transports into. */
+static int  tcp_write_framed(int fd, const unsigned char *pkt, int len);
+static void process_packet(int sock, int origin_fd,
+                           const struct sockaddr_in *from, socklen_t flen,
+                           unsigned char *buf, ssize_t n, uint64_t rx_us);
 
 static uint64_t now_ms(void)
 {
@@ -934,13 +943,46 @@ int main(int argc, char **argv)
     fprintf(stderr, "[relay] listening on 0.0.0.0:%d (verbose=%d, insecure=%d)\n",
             port, verbose, insecure);
 
+    /* connect-anywhere SLICE 3: also accept TCP clients on the SAME port, so a
+     * node that can only egress TCP joins the SAME mesh (one shared node table).
+     * UDP stays primary and byte-for-byte unchanged; TCP is purely additive. A
+     * failure to stand up the listener is non-fatal — the relay keeps serving
+     * UDP. */
+    for (int s = 0; s < MAX_TCP_CONN; s++) tcp_conns[s].fd = -1;
+    tcp_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_listen_fd >= 0) {
+        int one = 1;
+        setsockopt(tcp_listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        struct sockaddr_in taddr = {0};
+        taddr.sin_family      = AF_INET;
+        taddr.sin_addr.s_addr = INADDR_ANY;
+        taddr.sin_port        = htons((uint16_t)port);
+        if (bind(tcp_listen_fd, (struct sockaddr *)&taddr, sizeof(taddr)) < 0 ||
+            listen(tcp_listen_fd, 16) < 0) {
+            fprintf(stderr, "[relay] TCP listen on :%d failed (%s) — UDP only\n",
+                    port, strerror(errno));
+            close(tcp_listen_fd);
+            tcp_listen_fd = -1;
+        } else {
+            fcntl(tcp_listen_fd, F_SETFL,
+                  fcntl(tcp_listen_fd, F_GETFL, 0) | O_NONBLOCK);
+            fprintf(stderr, "[relay] also listening (tcp) on 0.0.0.0:%d\n", port);
+        }
+    } else {
+        fprintf(stderr, "[relay] TCP socket() failed (%s) — UDP only\n",
+                strerror(errno));
+    }
+
     unsigned char buf[MAX_PKT];
-    struct pollfd pfd = { .fd = sock, .events = POLLIN, .revents = 0 };
+    /* De-framed TCP packet scratch — STATIC, never a task-stack local
+     * (feedback_hosted_relay_stack_overflow). */
+    static unsigned char tcp_pkt[MAX_PKT];
     while (!stop) {
         /* Sleep until either a packet arrives or the next delayed packet is
          * due. With the delay knob off the queue is always empty, next_due is
          * UINT64_MAX, timeout is -1 (infinite), and poll() degrades to a plain
-         * blocking recvfrom — identical to the pre-knob loop. */
+         * blocking wait on the sockets — identical to the pre-knob loop on the
+         * UDP fd (TCP fds are simply absent when no client has connected). */
         uint64_t nd = next_due_ms();
         int timeout;
         if (nd == UINT64_MAX) {
@@ -949,7 +991,29 @@ int main(int argc, char **argv)
             uint64_t t = now_ms();
             timeout = (nd <= t) ? 0 : (int)(nd - t);
         }
-        int pr = poll(&pfd, 1, timeout);
+
+        /* Build the pollfd set fresh each iteration: [0]=UDP, [1]=TCP listen
+         * (if up), then one entry per live TCP connection. slot_of[i] maps a
+         * pollfd back to its tcp_conns[] slot (-1 for UDP / listen). */
+        struct pollfd pfds[2 + MAX_TCP_CONN];
+        int slot_of[2 + MAX_TCP_CONN];
+        int nfds = 0;
+        int udp_i = nfds;
+        pfds[nfds].fd = sock; pfds[nfds].events = POLLIN; pfds[nfds].revents = 0;
+        slot_of[nfds] = -1; nfds++;
+        int listen_i = -1;
+        if (tcp_listen_fd >= 0) {
+            listen_i = nfds;
+            pfds[nfds].fd = tcp_listen_fd; pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0; slot_of[nfds] = -1; nfds++;
+        }
+        for (int s = 0; s < MAX_TCP_CONN; s++) {
+            if (tcp_conns[s].fd < 0) continue;
+            pfds[nfds].fd = tcp_conns[s].fd; pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0; slot_of[nfds] = s; nfds++;
+        }
+
+        int pr = poll(pfds, (nfds_t)nfds, timeout);
         if (pr < 0) {
             if (errno == EINTR) continue;
             perror("poll");
@@ -957,126 +1021,90 @@ int main(int argc, char **argv)
         }
         flush_due(sock);                 /* deliver any far-layer packets now due */
         if (pr == 0) continue;           /* timeout only — nothing to receive */
-        if (!(pfd.revents & POLLIN)) continue;
 
-        struct sockaddr_in from;
-        socklen_t flen = sizeof(from);
-        ssize_t n = recvfrom(sock, buf, sizeof(buf), 0,
-                             (struct sockaddr *)&from, &flen);
-        uint64_t rx_us = probe_stamp ? now_us() : 0;  /* stamp at the earliest */
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            perror("recvfrom");
-            continue;
-        }
-
-        ParsedPkt pkt;
-        if (parse_packet(buf, (int)n, &pkt) < 0) {
-            if (verbose) fprintf(stderr, "[relay] drop: bad header (%zd B)\n", n);
-            continue;
-        }
-
-        /* Version gating. v1 only accepted in --insecure mode. */
-        if (pkt.version == RELAY_VERSION_V1 && !insecure) {
-            if (verbose) fprintf(stderr, "[relay] drop: v1 packet in secure mode\n");
-            continue;
-        }
-        if (pkt.version == RELAY_VERSION_V2 && !have_key) {
-            if (verbose) fprintf(stderr, "[relay] drop: v2 packet but no key loaded\n");
-            continue;
-        }
-
-        /* v2: verify MAC, then check replay window. Order matters —
-         * an unauthenticated nonce must NOT affect replay state. */
-        if (pkt.version == RELAY_VERSION_V2) {
-            if (!verify_mac(&pkt)) {
-                if (verbose) fprintf(stderr, "[relay] drop: bad HMAC src=%u type=%u\n",
-                                     pkt.src, pkt.type);
-                continue;
+        /* --- UDP: the legacy recvfrom path, byte-for-byte unchanged -------- */
+        if (pfds[udp_i].revents & POLLIN) {
+            struct sockaddr_in from;
+            socklen_t flen = sizeof(from);
+            ssize_t n = recvfrom(sock, buf, sizeof(buf), 0,
+                                 (struct sockaddr *)&from, &flen);
+            uint64_t rx_us = probe_stamp ? now_us() : 0;  /* stamp at earliest */
+            if (n < 0) {
+                if (errno != EINTR) perror("recvfrom");
+            } else {
+                process_packet(sock, -1, &from, flen, buf, n, rx_us);
             }
-            /* An auto-REGISTER (src=0) has no per-node replay state yet —
-             * it's authenticated by HMAC above and deduped by source
-             * address in handle_lease(), so it bypasses the src-keyed
-             * replay window (which would otherwise drop src=0 outright). */
-            if (!(pkt.type == REL_REGISTER && pkt.src == 0)) {
-                if (!replay_check_and_update(pkt.src, pkt.nonce)) {
-                    if (verbose) fprintf(stderr, "[relay] drop: replay src=%u nonce=%llu\n",
-                                         pkt.src, (unsigned long long)pkt.nonce);
+        }
+
+        /* --- TCP: accept new connections ----------------------------------- */
+        if (listen_i >= 0 && (pfds[listen_i].revents & (POLLIN | POLLERR))) {
+            for (;;) {
+                struct sockaddr_in caddr;
+                socklen_t clen = sizeof(caddr);
+                int cfd = accept(tcp_listen_fd, (struct sockaddr *)&caddr, &clen);
+                if (cfd < 0) break;       /* EAGAIN / no more pending           */
+                int slot = -1;
+                for (int s = 0; s < MAX_TCP_CONN; s++)
+                    if (tcp_conns[s].fd < 0) { slot = s; break; }
+                if (slot < 0) {
+                    fprintf(stderr, "[relay] tcp accept: %d conns full, dropping\n",
+                            MAX_TCP_CONN);
+                    close(cfd);
                     continue;
                 }
+                fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL, 0) | O_NONBLOCK);
+                int one = 1;
+                setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                tcp_conns[slot].fd   = cfd;
+                tcp_conns[slot].peer = caddr;
+                tcp_reasm_init(&tcp_conns[slot].reasm);
+                char ip[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &caddr.sin_addr, ip, sizeof(ip));
+                fprintf(stderr, "[relay] tcp accept fd=%d from %s:%u (slot %d)\n",
+                        cfd, ip, ntohs(caddr.sin_port), slot);
             }
         }
 
-        time_t now = time(NULL);
-        evict_stale(now);
+        /* --- TCP: drain each readable connection, de-frame, dispatch ------- */
+        for (int i = 0; i < nfds; i++) {
+            int slot = slot_of[i];
+            if (slot < 0) continue;                  /* UDP / listen entry      */
+            if (tcp_conns[slot].fd < 0) continue;    /* freed earlier this pass */
+            short re = pfds[i].revents;
+            if (!(re & (POLLIN | POLLHUP | POLLERR))) continue;
 
-        if (verbose) {
-            char ip[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
-            fprintf(stderr, "[relay] rx v%u type=%u src=%u dst=%u from %s:%u (%zd B)\n",
-                    pkt.version, pkt.type, pkt.src, pkt.dst,
-                    ip, ntohs(from.sin_port), n);
-        }
-
-        switch (pkt.type) {
-        case REL_REGISTER:
-            if (pkt.src == 0) {
-                /* Auto-lease request: hand out a dynamic node id. */
-                handle_lease(sock, &from, pkt.version);
-            } else {
-                update((int)pkt.src, &from);
+            int dead = 0;
+            for (;;) {                               /* drain the socket        */
+                unsigned char rd[2048];
+                ssize_t r = recv(tcp_conns[slot].fd, rd, sizeof(rd), 0);
+                if (r == 0) { dead = 1; break; }     /* orderly close           */
+                if (r < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    dead = 1; break;
+                }
+                if (tcp_reasm_push(&tcp_conns[slot].reasm, rd, (int)r) < (int)r) {
+                    fprintf(stderr, "[relay] tcp slot %d reasm overflow — drop\n",
+                            slot);
+                    dead = 1; break;
+                }
+                for (;;) {                           /* pop every full frame    */
+                    int plen = tcp_reasm_next(&tcp_conns[slot].reasm,
+                                              tcp_pkt, sizeof(tcp_pkt));
+                    if (plen == 0) break;            /* need more bytes         */
+                    if (plen < 0) {                  /* framed len > MAX_PKT    */
+                        fprintf(stderr, "[relay] tcp slot %d bad frame len — drop\n",
+                                slot);
+                        dead = 1; break;
+                    }
+                    process_packet(sock, tcp_conns[slot].fd, &tcp_conns[slot].peer,
+                                   sizeof(tcp_conns[slot].peer), tcp_pkt,
+                                   (ssize_t)plen, 0);
+                }
+                if (dead) break;
             }
-            break;
-
-        case REL_KEEPALIVE: {
-            update((int)pkt.src, &from);
-            /* Relay-HA liveness pong: reflect the (already verified)
-             * keepalive back to its sender so clients can distinguish
-             * "relay alive" from "relay dead" and run deterministic
-             * failover/failback (docs/architecture/relay-ha.md). The
-             * wire format is untouched — this echoes the same packet.
-             *
-             * §4 measurement opt-in: when probe_stamp is ON *and* the payload
-             * carries the "PRB1" magic, append relay rx/tx microsecond stamps
-             * so a client can measure relay residence under load. Off by
-             * default and skipped for non-probe keepalives, so the relay-HA
-             * pong stays byte-for-byte identical. */
-            size_t echo_len = (size_t)n;
-            int is_probe = probe_stamp
-                && pkt.payload_len >= 4
-                && pkt.payload[0] == PROBE_MAGIC_0
-                && pkt.payload[1] == PROBE_MAGIC_1
-                && pkt.payload[2] == PROBE_MAGIC_2
-                && pkt.payload[3] == PROBE_MAGIC_3;
-            if (is_probe && echo_len + PROBE_STAMP_LEN <= sizeof(buf)) {
-                store_u64_le(buf + echo_len,     rx_us);
-                store_u64_le(buf + echo_len + 8, now_us());
-                echo_len += PROBE_STAMP_LEN;
-            }
-            if (sendto(sock, buf, echo_len, 0,
-                       (struct sockaddr *)&from, flen) < 0 && verbose) {
-                fprintf(stderr, "[relay] keepalive echo to src=%u: %s\n",
-                        pkt.src, strerror(errno));
-            }
-            break;
-        }
-
-        case REL_DATA:
-            update((int)pkt.src, &from);
-            forward(sock, (int)pkt.dst, buf, (int)n, now);
-            break;
-
-        case REL_BROADCAST:
-            update((int)pkt.src, &from);
-            for (int n_id = 1; n_id < NODE_MAX; n_id++) {
-                if (n_id == (int)pkt.src) continue;
-                if (!table[n_id].active)   continue;
-                forward(sock, n_id, buf, (int)n, now);
-            }
-            break;
-
-        default:
-            if (verbose) fprintf(stderr, "[relay] drop: unknown type %u\n", pkt.type);
+            if (dead || (re & (POLLHUP | POLLERR)))
+                tcp_conn_close(slot);
         }
     }
 

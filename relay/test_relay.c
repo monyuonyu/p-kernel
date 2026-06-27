@@ -34,6 +34,7 @@
 #include <fcntl.h>
 
 #include "sha256.h"
+#include "tcp_frame.h"   /* SLICE 3: the shared [u16 len][pkt] de-framer */
 
 #define MAGIC       0x52454C59U
 #define VER_V1      1
@@ -408,6 +409,200 @@ cleanup:
     return rv;
 }
 
+/* --- SLICE 3 scenario 7: de-framer unit cert ---------------------------- */
+/*
+ *  The load-bearing claim of tcp_frame.h: a length-prefixed TCP byte stream
+ *  re-splits into the EXACT original packets no matter how TCP chops the
+ *  stream, because the 2-byte length prefix carries the boundary a raw byte
+ *  stream lacks. This cert proves it AND its falsifier: a naive concat with
+ *  NO length prefix mis-reads the boundary and the recovery fails.
+ */
+
+/* Feed `stream` (length slen) through a TcpReasm in `chunk`-byte bites
+ * (chunk<=0 = all at once) and return 1 iff it recovers EXACTLY the two
+ * expected payloads, byte-identical. */
+static int deframe_recovers(const unsigned char *stream, int slen, int chunk,
+                            const unsigned char *e1, int l1,
+                            const unsigned char *e2, int l2)
+{
+    TcpReasm r;
+    tcp_reasm_init(&r);
+    unsigned char got[2][2048];
+    int gotlen[2] = { -1, -1 };
+    int ngot = 0;
+    int off  = 0;
+    while (off < slen) {
+        int take = (chunk <= 0) ? (slen - off) : chunk;
+        if (take > slen - off) take = slen - off;
+        int pushed = tcp_reasm_push(&r, stream + off, take);
+        off += pushed;
+        if (pushed < take) break;                  /* reasm buffer full        */
+        for (;;) {
+            unsigned char out[2048];
+            int plen = tcp_reasm_next(&r, out, (int)sizeof(out));
+            if (plen == 0) break;                  /* need more bytes          */
+            if (plen < 0)  return 0;               /* frame > out cap          */
+            if (ngot < 2) { memcpy(got[ngot], out, (size_t)plen); gotlen[ngot] = plen; }
+            ngot++;
+        }
+    }
+    if (ngot != 2) return 0;
+    if (gotlen[0] != l1 || memcmp(got[0], e1, (size_t)l1) != 0) return 0;
+    if (gotlen[1] != l2 || memcmp(got[1], e2, (size_t)l2) != 0) return 0;
+    return 1;
+}
+
+static int test_deframer(void)
+{
+    /* Two distinct payloads with DIFFERENT lengths. p1's first two bytes are
+     * forced to 0x00 0x05 so a NAIVE concat (no length prefix) mis-reads the
+     * frame length as 5 and mis-splits — giving the falsifier real teeth. */
+    unsigned char p1[19], p2[37];
+    for (int i = 0; i < (int)sizeof(p1); i++) p1[i] = (unsigned char)(0x41 + (i % 26));
+    for (int i = 0; i < (int)sizeof(p2); i++) p2[i] = (unsigned char)(0x80 ^ (i * 7));
+    p1[0] = 0x00; p1[1] = 0x05;
+
+    /* Correctly framed stream: [len p1][p1][len p2][p2]. */
+    unsigned char framed[2 * TCP_FRAME_LENPFX + sizeof(p1) + sizeof(p2)];
+    int o = 0;
+    o += tcp_frame_encode(framed + o, p1, (int)sizeof(p1));
+    o += tcp_frame_encode(framed + o, p2, (int)sizeof(p2));
+
+    int ok_1 = deframe_recovers(framed, o, 1, p1, sizeof(p1), p2, sizeof(p2));
+    int ok_3 = deframe_recovers(framed, o, 3, p1, sizeof(p1), p2, sizeof(p2));
+    int ok_7 = deframe_recovers(framed, o, 7, p1, sizeof(p1), p2, sizeof(p2));
+    int ok_all = deframe_recovers(framed, o, 0, p1, sizeof(p1), p2, sizeof(p2));
+
+    /* FALSIFIER: a naive concat with NO length prefix must FAIL to recover —
+     * proving the length prefix is load-bearing, not decoration. */
+    unsigned char naive[sizeof(p1) + sizeof(p2)];
+    memcpy(naive, p1, sizeof(p1));
+    memcpy(naive + sizeof(p1), p2, sizeof(p2));
+    int falsifier_recovers =
+        deframe_recovers(naive, (int)sizeof(naive), 1, p1, sizeof(p1), p2, sizeof(p2));
+
+    if (!(ok_1 && ok_3 && ok_7 && ok_all) || falsifier_recovers) {
+        fprintf(stderr, "[deframer] FAIL — 1=%d 3=%d 7=%d all=%d falsifier_recovers=%d\n",
+                ok_1, ok_3, ok_7, ok_all, falsifier_recovers);
+        return 1;
+    }
+    fprintf(stderr, "[deframer] PASS — length-framed stream re-splits to the exact "
+                    "2 payloads under 1/3/7/all-byte chunking\n");
+    fprintf(stderr, "[deframer] FALSIFIER FAILS as required — naive concat (no length "
+                    "prefix) does NOT recover the payloads (recovered=%d, want 0)\n",
+                    falsifier_recovers);
+    return 0;
+}
+
+/* --- SLICE 3 scenario 8: relay TCP↔UDP round-trip ----------------------- */
+
+/* Write one length-framed packet to a TCP stream (blocking, drains partials). */
+static int tcp_send_framed_test(int fd, const unsigned char *pkt, int len)
+{
+    unsigned char out[TCP_FRAME_LENPFX + 2048];
+    int total = tcp_frame_encode(out, pkt, len);
+    if (total < 0) return -1;
+    int off = 0;
+    while (off < total) {
+        ssize_t w = send(fd, out + off, (size_t)(total - off), MSG_NOSIGNAL);
+        if (w < 0) { if (errno == EINTR) continue; return -1; }
+        off += (int)w;
+    }
+    return 0;
+}
+
+/* Receive ONE length-framed packet with timeout, reassembling across reads. */
+static int tcp_recv_framed_test(int fd, TcpReasm *r,
+                                unsigned char *out, int outcap, int ms)
+{
+    struct timeval tv = { .tv_sec = ms / 1000, .tv_usec = (ms % 1000) * 1000 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    for (;;) {
+        int plen = tcp_reasm_next(r, out, outcap);
+        if (plen > 0) return plen;
+        if (plen < 0) return -2;
+        unsigned char tmp[2048];
+        ssize_t k = recv(fd, tmp, sizeof(tmp), 0);
+        if (k == 0) return -3;
+        if (k < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;
+            return -2;
+        }
+        tcp_reasm_push(r, tmp, (int)k);
+    }
+}
+
+static int test_tcp_roundtrip(void)
+{
+    const int port = 27420;
+    pid_t pid = fork();
+    if (pid < 0) { perror("fork tcp"); return 1; }
+    if (pid == 0) {
+        setenv("PKERNEL_RELAY_KEY", TEST_KEY_HEX, 1);
+        char p[16]; snprintf(p, sizeof(p), "%d", port);
+        execl("./relay", "./relay", "-p", p, "-v", (char *)NULL);
+        _exit(127);
+    }
+    usleep(500 * 1000);   /* let relay bind UDP + TCP */
+
+    int rv  = 1;
+    int udp = open_client_socket();
+    int tcp = socket(AF_INET, SOCK_STREAM, 0);
+    unsigned char buf[1500];
+    TcpReasm rr;
+    tcp_reasm_init(&rr);
+
+    struct sockaddr_in to = {0};
+    to.sin_family      = AF_INET;
+    to.sin_addr.s_addr = htonl(0x7F000001);
+    to.sin_port        = htons(port);
+
+    if (udp < 0 || tcp < 0) goto done;
+    if (connect(tcp, (struct sockaddr *)&to, sizeof(to)) < 0) {
+        perror("[tcp_roundtrip] connect"); goto done;
+    }
+
+    /* Register: UDP node 2 via sendto, TCP node 3 via the length-framed stream. */
+    int n = pkt_make_v2(buf, REL_REG, 2, 0, 1, NULL, 0);
+    sendto(udp, buf, (size_t)n, 0, (struct sockaddr *)&to, sizeof(to));
+    n = pkt_make_v2(buf, REL_REG, 3, 0, 1, NULL, 0);
+    if (tcp_send_framed_test(tcp, buf, n) < 0) goto done;
+    usleep(200 * 1000);
+
+    /* TCP(3) -> UDP(2): the UDP peer must receive the de-framed payload. */
+    const char *msg_tu = "tcp->udp via relay";
+    n = pkt_make_v2(buf, REL_DATA, 3, 2, 2, msg_tu, (int)strlen(msg_tu));
+    if (tcp_send_framed_test(tcp, buf, n) < 0) goto done;
+    int got = recv_with_timeout(udp, buf, sizeof(buf), 1500);
+    if (got < HEAD + AUTH + (int)strlen(msg_tu) ||
+        memcmp(buf + HEAD + AUTH, msg_tu, strlen(msg_tu)) != 0) {
+        fprintf(stderr, "[tcp_roundtrip] UDP node missed TCP->UDP payload (got=%d)\n", got);
+        goto done;
+    }
+
+    /* UDP(2) -> TCP(3): the TCP peer must receive it length-framed. */
+    const char *msg_ut = "udp->tcp via relay";
+    n = pkt_make_v2(buf, REL_DATA, 2, 3, 2, msg_ut, (int)strlen(msg_ut));
+    sendto(udp, buf, (size_t)n, 0, (struct sockaddr *)&to, sizeof(to));
+    unsigned char rxp[2048];
+    int plen = tcp_recv_framed_test(tcp, &rr, rxp, sizeof(rxp), 1500);
+    if (plen < HEAD + AUTH + (int)strlen(msg_ut) ||
+        memcmp(rxp + HEAD + AUTH, msg_ut, strlen(msg_ut)) != 0) {
+        fprintf(stderr, "[tcp_roundtrip] TCP node missed UDP->TCP payload (plen=%d)\n", plen);
+        goto done;
+    }
+
+    fprintf(stderr, "[tcp_roundtrip] PASS — TCP node and UDP node exchanged A↔B "
+                    "through the relay (one TCP, one UDP, same node table)\n");
+    rv = 0;
+done:
+    if (tcp >= 0) close(tcp);
+    if (udp >= 0) close(udp);
+    kill(pid, SIGTERM); waitpid(pid, NULL, 0);
+    return rv;
+}
+
 /* --- main --------------------------------------------------------------- */
 
 int main(int argc, char **argv)
@@ -451,8 +646,14 @@ int main(int argc, char **argv)
     fails += test_missing_key();
     fails += test_insecure_v1();
 
+    /* SLICE 3 — scenario 7 (pure de-framer unit cert, no relay) and
+     * scenario 8 (TCP↔UDP round-trip, spawns its own relay). */
+    fails += test_deframer();
+    fails += test_tcp_roundtrip();
+
     fprintf(stderr, "\n[relay-test] %s (%d failure%s)\n",
-            fails == 0 ? "PASS — all 6 scenarios green" : "FAIL",
+            fails == 0 ? "PASS — all 8 scenarios green (6 UDP + de-framer + TCP↔UDP)"
+                       : "FAIL",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;
 }
