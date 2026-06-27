@@ -5,6 +5,42 @@ in dependency order, each item as a background **implement → independent audit
 integrate** wave (the development-method constitution). Disjoint-file items run in parallel;
 same-file items serialize. Update this file as items land.
 
+## ▶▶ 次の一手 — 2026-06-27 整頓 (the live "what's actually left" map; full detail below)
+This file is ~95% ✅DONE annotations — read THIS block for the forward path, the threads below for detail.
+
+**① in flight (this session, background impl→audit waves):** webd Slice-A finish (Codex's ui_api
+boundary made real) · live-3node grep-race v3 · then **enable branch protection once all-green**
+(CI flips informational→blocking — the final CI-hardening step) · the lone galaxy-cert red
+(UMP x86_64) investigate-or-quarantine.
+
+**② ★STRATEGIC UNLOCK — the self-hosted ThinkPad runner retired *"deferred pending faster host"*.**
+The whole `[live]` backlog that was blocked on host speed is now RUNNABLE on CI. Natural next batch:
+cradle-live real-ThinkPad re-confirm · **N-1 `[lan-direct]` cert + same-WiFi 2-machine `[live]`** ·
+**SS-3 `[live]` step-3** (3-proc relay blob round-trip) · **federation R0.1 independent audit → F1**
+(the 254→10k 256-wall raise).
+
+**③ ★mk_pino's declared END GOALS (big, multi-wave, autonomous-OK):** **② full SMP ②.3** (finer
+locks + knl_taskindp per-CPU + task migration) → hosted-port SMP → RPi3 · **SS-7 bigger baby /
+LM-scale** (toward a genuinely conversational mind).
+
+**④ ⛔ BLOCKED ON mk_pino's PHILOSOPHY CALL — do NOT implement autonomously (3 threads stuck here):**
+- **interoception slice-2 apoptosis** → **B-3: voluntary-only, or may the collective "euthanize" a
+  sick node?** (+4 his-call questions). A majority that can kill an individual = the seed of
+  ownership, against "a home no one owns". Design default = voluntary-only.
+- **self-access R1** (the mind autonomously touches its own `body`) → **Q1** how free is autonomous
+  read-only / **Q2** driver-consent once-vs-each.
+- **survival §7 gacc + §8** distributed-gating learning → his §7 philosophy review (commander reads
+  the coupled pressure+gacc oscillation gate line-by-line before crediting).
+- STATUS 2026-06-27: mk_pino chose 棚卸しだけ — surfaced here, decision deferred to a later sit-down.
+
+**⑤ product / needs special env:** **Android-parity CMake lock-step (needs NDK)** — net_relay_tcp.c /
+supernode_autopromote.c / compat_ota.c etc. are host-only, NOT yet on phones · **APK 0.9.3** (this
+session's trunk features unpackaged) · Play Store Phase D · RPi3 hardware + netboot.
+
+**🧹 housekeeping:** merged local `wave-*`/`slice-*` branches pruned 2026-06-27 (commits are in master).
+
+---
+
 ## ✅ DONE (shipped, on trunk, on the phones at 0.9.2)
 Chat-as-student (⑥), living-body inspector (organs→real vitals, 3D rings, amoeba, immersion),
 4-panel intro, legible biometrics, baby-births-on-phone, **SS-1** (adaptive-K = heavy→wider
