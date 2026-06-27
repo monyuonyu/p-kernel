@@ -162,6 +162,7 @@ set(COMMON_SRC
     ${ARCH_CO}/dtr_train.c
     ${ARCH_CO}/r3_incontext.c
     ${ARCH_CO}/r3_vocab.c
+    ${ARCH_CO}/ui_api.c
     ${ARCH_CO}/galaxy.c
     ${ARCH_CO}/gx_sha1.c
     ${ARCH_CO}/spec.c

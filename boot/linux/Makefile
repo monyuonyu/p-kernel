@@ -205,6 +205,7 @@ COMMON_C_SRCS = \
     dtr_train.c \
     r3_incontext.c \
     r3_vocab.c \
+    ui_api.c \
     galaxy.c \
     gx_sha1.c \
     spec.c \

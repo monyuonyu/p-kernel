@@ -20,6 +20,7 @@
  */
 
 #include "galaxy.h"
+#include "ui_api.h"      /* bounded substrate UI API for webd split      */
 #include "drpc.h"        /* dnode_table[], drpc_my_node, DNODE_*           */
 #include "world.h"       /* world_peer_* accessors — the galaxy's organs   */
 #include "region.h"      /* region_id() — my constellation                 */
@@ -84,14 +85,16 @@ volatile UB galaxy_on = 0;          /* set by galaxy_init / cleared if off */
 static  int galaxy_port = 0;
 
 /* ------------------------------------------------------------------ */
-/* the event ring (§4.1) — single static ring + one head                */
+/* event ring ownership moved to ui_api.c. galaxy.c keeps only the legacy
+ * hook name and browser-facing formatting. */
 /* ------------------------------------------------------------------ */
 
-static GALAXY_EV g_ring[GALAXY_RING];
-static volatile UW g_head = 0;       /* total ever written (monotone)      */
-static volatile UW g_dropped = 0;    /* lapped-consumer overflow (shown)   */
-
-UW galaxy_dropped(void) { return g_dropped; }
+UW galaxy_dropped(void)
+{
+    U4 d = 0;
+    ui_event_dropped(&d);
+    return (UW)d;
+}
 
 /* uptime ms (SYSTIM.lo) — same source as world.c now_ms(). */
 static UW gx_now_ms(void)
@@ -100,43 +103,10 @@ static UW gx_now_ms(void)
     return (UW)t.lo;
 }
 
-/* §4.2 token bucket for the chatty types (EV_KDDS/PMESH_*). v1 does not
- * yet emit these (S7-S9 are v2), but the gate is in place so adding the
- * v2 hooks needs no ring change. */
-static UB g_bucket[16];              /* per-type budget, refilled 1/s      */
-static UH g_suppress[16];            /* per-type suppressed counter        */
-
-static INT gx_chatty(UB type)
-{
-    return (type == EV_KDDS || type == EV_PMESH_TX || type == EV_PMESH_RX);
-}
-
-/* §4: the ONE hook. O(1); first instruction is the off-branch. Producers
- * run on many tasks, so the 3-store append is wrapped in dis/ena_dsp —
- * a uniprocessor T-Kernel's cheapest correct exclusion (no semaphore on
- * the hot path). */
 void galaxy_emit(UB type, UB src, UB dst, UH a, UH b)
 {
-    if (!galaxy_on) return;          /* dead-cheap when off                */
-
-    if (gx_chatty(type)) {           /* §4.2 sampling                      */
-        if (type < 16) {
-            if (g_bucket[type] == 0) { g_suppress[type]++; return; }
-            g_bucket[type]--;
-        }
-    }
-
-    GX_LOCK();
-    GALAXY_EV *e = &g_ring[g_head & (GALAXY_RING - 1)];
-    e->ms   = gx_now_ms();
-    e->type = type;
-    e->src  = src;
-    e->dst  = dst;
-    e->_pad = 0;
-    e->a    = a;
-    e->b    = b;
-    g_head++;
-    GX_UNLOCK();
+    if (!galaxy_on) return;
+    ui_event_emit(type, src, dst, a, b);
 }
 
 /* ------------------------------------------------------------------ */
@@ -151,7 +121,7 @@ typedef struct {
     INT  in_use;
     INT  is_sse;          /* held-open SSE event stream                   */
     INT  is_ws;           /* §3.7 held-open WebSocket (chat + events)     */
-    UW   sse_cursor;      /* next ring index this SSE/WS client will send */
+    U4   sse_cursor;      /* next UI event ring index this client sends   */
     UW   last_ping;       /* ms of last keepalive (SSE comment / WS ping) */
     INT  ob_len;          /* pending bytes in ob[]                        */
     char ob[GX_OUTBUF];
@@ -209,13 +179,7 @@ static INT gx_flush(INT slot)
 
 static UB gx_my_id(void)
 {
-    if (drpc_my_node != 0xFF) return drpc_my_node;
-    /* single-node, pre-cmd_net: fall back to PKERNEL_NODE_ID like the
-     * transport does, so the window has a stable identity. */
-    const char *e = getenv("PKERNEL_NODE_ID");
-    INT v = e ? atoi(e) : 1;
-    if (v < 1 || v >= DNODE_MAX) v = 1;
-    return (UB)v;
+    return (UB)ui_node_id();
 }
 
 /* emit a JSON-escaped string body (no surrounding quotes). Bounds: the
@@ -326,7 +290,7 @@ static void gx_build_galaxy_json(INT slot)
         gx_qs(slot, ",\"rtt\":");       gx_qdec(slot, swim_rtt_ms((UB)n));
         gx_qs(slot, "}");
     }
-    gx_qs(slot, "],\"dropped\":");  gx_qdec(slot, g_dropped);
+    gx_qs(slot, "],\"dropped\":");  gx_qdec(slot, galaxy_dropped());
     gx_qs(slot, "}");
 }
 
@@ -459,7 +423,7 @@ static const char *gx_type_name(UB t)
     }
 }
 
-static void gx_sse_event(INT slot, const GALAXY_EV *e)
+static void gx_sse_event(INT slot, const UI_EVENT *e)
 {
     gx_qs(slot, "data:{\"type\":\"");  gx_qs(slot, gx_type_name(e->type));
     gx_qs(slot, "\",\"ms\":");         gx_qdec(slot, e->ms);
@@ -648,12 +612,12 @@ static void gx_ws_build_state(void)
         ws_s(",\"rtt\":");       ws_dec(swim_rtt_ms((UB)n));
         ws_s("}");
     }
-    ws_s("],\"dropped\":"); ws_dec(g_dropped);
+    ws_s("],\"dropped\":"); ws_dec(galaxy_dropped());
     ws_s("}");
 }
 
 /* build a single ring event into the stage (the SSE body shape, verbatim).*/
-static void gx_ws_build_event(const GALAXY_EV *e)
+static void gx_ws_build_event(const UI_EVENT *e)
 {
     ws_reset();
     ws_s("{\"type\":\""); ws_s(gx_type_name(e->type));
@@ -680,7 +644,7 @@ static void gx_ws_build_event(const GALAXY_EV *e)
 
 /* one ring event -> one text line into the out-buffer. Same field set as
  * gx_sse_event, but human-readable. NONE node ids are omitted. */
-static void gx_log_line(INT slot, const GALAXY_EV *e)
+static void gx_log_line(INT slot, const UI_EVENT *e)
 {
     gx_qdec(slot, e->ms);              gx_qs(slot, "ms ");
     gx_qs(slot, gx_type_name(e->type));
@@ -694,36 +658,52 @@ static void gx_log_line(INT slot, const GALAXY_EV *e)
 /* stream the whole ring (oldest-surviving .. newest) as text/plain. The
  * body can exceed GX_OUTBUF (256 events), so flush as it fills — the same
  * best-effort streaming /galaxy.html and /manifesto use. A snapshot of
- * g_head is taken once so a concurrent producer can't make us walk past
+ * the UI event head is taken once so a concurrent producer can't make us walk past
  * the end; events that arrive mid-stream simply show up on the next copy. */
 static void gx_serve_log(INT slot)
 {
-    UW head = g_head;                       /* monotone snapshot          */
-    UW count = head;
-    if (count > GALAXY_RING) count = GALAXY_RING;
-    UW start = head - count;                /* oldest still in the ring   */
+    U4 tail = 0, head = 0, dropped = 0, cap = 0;
+    ui_event_bounds(&tail, &head, &dropped, &cap);
+    U4 cursor = tail;
+    U4 count = head - tail;
 
     gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8"
                 "\r\nConnection: close\r\n\r\n");
-    /* a tiny header line so the copied text is self-describing. */
     gx_qs(slot, "# p-kernel galaxy log (events only) node=");
     gx_qdec(slot, (UW)gx_my_id());
-    gx_qs(slot, " events=");      gx_qdec(slot, count);
-    gx_qs(slot, " dropped=");     gx_qdec(slot, g_dropped);
+    gx_qs(slot, " events=");      gx_qdec(slot, (UW)count);
+    gx_qs(slot, " dropped=");     gx_qdec(slot, (UW)dropped);
     gx_qs(slot, "\n");
     gx_flush(slot);
 
-    for (UW i = start; i < head; i++) {
-        GALAXY_EV ev;
-        GX_LOCK();                           /* one-event copy under lock  */
-        ev = g_ring[i & (GALAXY_RING - 1)];
-        GX_UNLOCK();
+    while (cursor < head) {
+        UI_EVENT ev;
+        unsigned got = 0, lost = 0;
+        if (ui_event_read(&cursor, &ev, 1, &got, &lost) < 0 || got == 0) break;
         gx_log_line(slot, &ev);
-        if (g_cli[slot].ob_len > GX_OUTBUF - 128) {  /* keep flush room    */
+        if (g_cli[slot].ob_len > GX_OUTBUF - 128) {
             if (gx_flush(slot) < 0) return;
         }
     }
     gx_flush(slot);
+}
+
+static U4 gx_event_now_cursor(void)
+{
+    U4 head = 0;
+    ui_event_bounds(0, &head, 0, 0);
+    return head;
+}
+
+static INT gx_next_event(U4 *cursor, UI_EVENT *ev, U4 *retry)
+{
+    unsigned got = 0, lost = 0;
+    U4 before = *cursor;
+    U4 next = before;
+    if (ui_event_read(&next, ev, 1, &got, &lost) < 0) return -1;
+    if (retry) *retry = lost ? before + (U4)lost : before;
+    *cursor = next;
+    return got ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1206,9 +1186,8 @@ static INT gx_route(INT slot, GX_REQ *q)
      * gates, boot banners, every printed line — curl-able. Hosted ports
      * only (bare metal has no console ring; route absent there = 404). */
     if (!q->is_post && gx_streq(path, "/console.txt")) {
-        extern int console_ring_read(char *out, int max);
         static char cr_snap[32768 + 1];     /* file-static: stack lesson  */
-        INT n = console_ring_read(cr_snap, (INT)sizeof cr_snap - 1);
+        INT n = ui_console_read(cr_snap, (unsigned)sizeof cr_snap - 1);
         cr_snap[n] = 0;
         gx_qs(slot, "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
                     "charset=utf-8\r\nConnection: close\r\n\r\n");
@@ -1238,25 +1217,25 @@ static INT gx_route(INT slot, GX_REQ *q)
      * NO input, emits a BOUNDED static table — no path/user data anywhere.
      * Loopback-bound like every other endpoint (galaxy_posix binds lo). */
     if (!q->is_post && gx_streq(path, "/modules.json")) {
+        static UI_MODULE mods[UI_MODULE_MAX];
+        static char build[UI_BUILD_ID_MAX];
+        unsigned mcount = 0;
+        ui_modules_read(mods, UI_MODULE_MAX, &mcount, build, sizeof build);
         gx_resp_head(slot, "200 OK", "application/json");
         gx_qs(slot, "{\"node\":");   gx_qdec(slot, (UW)gx_my_id());
         gx_qs(slot, ",\"build\":\"");
         {
-            const char *b = modver_build_id();
-            INT bn = 0; while (b[bn]) bn++;
-            gx_json_str(slot, b, bn);    /* JSON-escaped; static literal      */
+            INT bn = 0; while (build[bn]) bn++;
+            gx_json_str(slot, build, bn);
         }
         gx_qs(slot, "\",\"modules\":[");
-        INT mn = modver_count();
-        for (INT mi = 0; mi < mn; mi++) {
+        for (unsigned mi = 0; mi < mcount; mi++) {
             if (mi) gx_qs(slot, ",");
             gx_qs(slot, "{\"name\":\"");
-            const char *nm = modver_name(mi);
-            INT nn = 0; while (nm[nn]) nn++;
-            gx_json_str(slot, nm, nn);   /* JSON-escaped; static literal      */
+            INT nn = 0; while (mods[mi].name[nn]) nn++;
+            gx_json_str(slot, mods[mi].name, nn);
             gx_qs(slot, "\",\"version\":");
-            INT v = modver_version(mi);
-            gx_qdec(slot, v < 0 ? 0u : (UW)v);
+            gx_qdec(slot, (UW)mods[mi].version);
             gx_qs(slot, "}");
         }
         gx_qs(slot, "]}");
@@ -1420,7 +1399,7 @@ static INT gx_route(INT slot, GX_REQ *q)
             return 0;
         }
         g_cli[slot].is_ws      = 1;
-        g_cli[slot].sse_cursor = g_head;     /* start at "now"             */
+        g_cli[slot].sse_cursor = gx_event_now_cursor(); /* start at "now"    */
         g_cli[slot].last_ping  = gx_now_ms();
         gx_ws_build_state();                 /* one snapshot on open       */
         gx_ws_send_stage(slot);
@@ -1431,7 +1410,7 @@ static INT gx_route(INT slot, GX_REQ *q)
                     "Cache-Control: no-cache\r\nConnection: close\r\n\r\n");
         gx_qs(slot, ": galaxy stream open\n\n");
         g_cli[slot].is_sse     = 1;
-        g_cli[slot].sse_cursor = g_head;     /* start at "now"             */
+        g_cli[slot].sse_cursor = gx_event_now_cursor(); /* start at "now"    */
         g_cli[slot].last_ping  = gx_now_ms();
         return 1;
     }
@@ -1561,8 +1540,6 @@ void galaxy_init(void)
         UB id = gx_my_id();
         galaxy_port = 7800 + (INT)id - 1;          /* §D1 per-node offset   */
     }
-    for (INT i = 0; i < 16; i++) { g_bucket[i] = 4; g_suppress[i] = 0; }
-
     /* §3.7 honesty: certify the WebSocket handshake math at boot (two
      * SHA-1 vectors + the exact RFC 6455 §1.3 accept example). A miscompiled
      * hash would silently break /ws; this prints the verdict so it can never
@@ -1592,8 +1569,6 @@ void galaxy_task(INT stacd, void *exinf)
     }
     for (INT i = 0; i < GALAXY_MAX_CLIENTS; i++) { g_cli[i].in_use = 0; g_reqn[i] = 0; }
 
-    UW last_refill = gx_now_ms();
-
     for (;;) {
         /* accept up to one new connection per tick. */
         INT s = galaxy_io_accept();
@@ -1602,19 +1577,7 @@ void galaxy_task(INT stacd, void *exinf)
             g_cli[s].ob_len = 0; g_reqn[s] = 0;
         }
 
-        /* §4.2 token-bucket refill (1/s) + EV_SUMMARY emission. */
         UW now = gx_now_ms();
-        if (now - last_refill >= 1000) {
-            last_refill = now;
-            for (INT t = 0; t < 16; t++) {
-                g_bucket[t] = 4;
-                if (g_suppress[t]) {
-                    galaxy_emit(EV_SUMMARY, gx_my_id(), GALAXY_NODE_NONE,
-                                (UH)t, g_suppress[t]);
-                    g_suppress[t] = 0;
-                }
-            }
-        }
 
         for (INT i = 0; i < GALAXY_MAX_CLIENTS; i++) {
             if (!g_cli[i].in_use) continue;
@@ -1724,18 +1687,19 @@ void galaxy_task(INT stacd, void *exinf)
                 }
                 if (closed) continue;
 
-                /* drain the event ring into this client as WS text frames
+                /* drain the UI event ring into this client as WS text frames
                  * (the SAME ring the SSE path drains; NO second ring). */
                 GX_CLIENT *c = &g_cli[i];
-                if (g_head - c->sse_cursor > GALAXY_RING) {
-                    g_dropped += (g_head - c->sse_cursor) - GALAXY_RING;
-                    c->sse_cursor = g_head - GALAXY_RING;
-                }
-                while (c->sse_cursor < g_head) {
-                    GALAXY_EV ev = g_ring[c->sse_cursor & (GALAXY_RING - 1)];
+                for (;;) {
+                    UI_EVENT ev;
+                    U4 retry = c->sse_cursor;
+                    INT er = gx_next_event(&c->sse_cursor, &ev, &retry);
+                    if (er <= 0) break;
                     gx_ws_build_event(&ev);
-                    if (gx_ws_send_stage(i) < 0) break;    /* outbuf full: later */
-                    c->sse_cursor++;
+                    if (gx_ws_send_stage(i) < 0) {
+                        c->sse_cursor = retry;
+                        break;                            /* outbuf full: later */
+                    }
                     if (c->ob_len > GX_OUTBUF - 256) break;
                 }
                 /* keepalive PING every 15s so dead clients fail on write. */
@@ -1747,18 +1711,13 @@ void galaxy_task(INT stacd, void *exinf)
                 continue;
             }
 
-            /* SSE: drain the ring behind g_head into this client. */
+            /* SSE: drain the UI event ring into this client. */
             GX_CLIENT *c = &g_cli[i];
-            /* lapped consumer: if we fell more than a ring behind, skip
-             * ahead and count the loss (§4.1 — overflow shown). */
-            if (g_head - c->sse_cursor > GALAXY_RING) {
-                g_dropped += (g_head - c->sse_cursor) - GALAXY_RING;
-                c->sse_cursor = g_head - GALAXY_RING;
-            }
-            while (c->sse_cursor < g_head) {
-                GALAXY_EV ev = g_ring[c->sse_cursor & (GALAXY_RING - 1)];
+            for (;;) {
+                UI_EVENT ev;
+                INT er = gx_next_event(&c->sse_cursor, &ev, 0);
+                if (er <= 0) break;
                 gx_sse_event(i, &ev);
-                c->sse_cursor++;
                 if (c->ob_len > GX_OUTBUF - 256) break;  /* flush room      */
             }
             /* keepalive comment every 15s so dead clients fail on write. */
