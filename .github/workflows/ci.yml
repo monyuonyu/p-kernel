@@ -929,3 +929,148 @@ jobs:
         with:
           name: composite-loop-logs
           path: /tmp/ci22_*.log
+
+  # =========================================================================
+  # STRICT GATES (ci-strict-gates wave) — three high-signal checks the audit
+  # found were NOT enforced anywhere: the crown .text byte-identity invariant,
+  # the connect-anywhere + supernode in-proc certs, and a sanitizer build.
+  # =========================================================================
+
+  crown-text-identity:
+    # crown 不変条件 (BLOCKING). The bare-metal kernels' .text section must stay
+    # BYTE-IDENTICAL to the pinned "crown" sha256 — the machine-code-level
+    # "one mind, one math" invariant. ANY change to a TU that links into
+    # boot/x86 or boot/aarch64 (arch/common, kernel/common, the bare-metal arch
+    # backends) flips the hash and FAILS this gate. The ベアメタル job builds
+    # these two ELFs but never hashes .text; this gate adds the missing teeth.
+    # Recipe (objcopy -O binary -j .text + sha256sum) matches the one in
+    # tests/aarch64/run_smp2.sh, verified to reproduce both crowns locally.
+    #   aarch64   .text crown: 755a20fae2d9b7415045193ea8287623dbeb906963609a63dce8a19c8a130513
+    #   x86 (i686).text crown: 4064d8a95e68950eee263a1bd6f131518f655f002bf2eccc1e824b4d87ee0413
+    name: "crown 不変条件 (.text バイト同一性 — 王冠ハッシュ)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-i686-linux-gnu gcc-aarch64-linux-gnu make
+      - name: Build boot/aarch64 + assert .text crown (byte-identity)
+        run: |
+          set -e
+          EXP=755a20fae2d9b7415045193ea8287623dbeb906963609a63dce8a19c8a130513
+          make -C boot/aarch64
+          aarch64-linux-gnu-objcopy -O binary -j .text boot/aarch64/kernel.elf /tmp/a.bin
+          GOT=$(sha256sum /tmp/a.bin | cut -d' ' -f1)
+          echo "aarch64 .text sha256: got=$GOT"
+          echo "aarch64 .text sha256: exp=$EXP"
+          if [ "$GOT" != "$EXP" ]; then
+            echo "CROWN MISMATCH (aarch64): the bare-metal .text changed — crown broken."
+            exit 1
+          fi
+          echo "aarch64 crown OK"
+      - name: Build boot/x86 + assert .text crown (byte-identity)
+        run: |
+          set -e
+          EXP=4064d8a95e68950eee263a1bd6f131518f655f002bf2eccc1e824b4d87ee0413
+          make -C boot/x86 kernel.elf
+          i686-linux-gnu-objcopy -O binary -j .text boot/x86/kernel.elf /tmp/x.bin
+          GOT=$(sha256sum /tmp/x.bin | cut -d' ' -f1)
+          echo "x86 .text sha256: got=$GOT"
+          echo "x86 .text sha256: exp=$EXP"
+          if [ "$GOT" != "$EXP" ]; then
+            echo "CROWN MISMATCH (x86): the bare-metal .text changed — crown broken."
+            exit 1
+          fi
+          echo "x86 crown OK"
+
+  connect-anywhere-certs:
+    # 接続フォールバック cert (BLOCKING). Wires the three in-process certs that
+    # were shipped but never run in CI: the unconditional relay keepalive
+    # (heartbeat), the automatic UDP<->TCP transport fallback (autoxport), and
+    # the measured-fitness supernode auto-promotion (autopromote). Each harness
+    # builds a CURE and a FALSIFIER and asserts cure-PASS + falsifier-FAIL, so a
+    # toothless implementation is caught (the falsifier is exercised). The
+    # harnesses drive BOTH host arches: the x86_64-hosted leg runs NATIVELY on
+    # this x86_64 runner; the aarch64-hosted leg cross-builds (gcc-aarch64-
+    # linux-gnu + libc6-dev-arm64-cross) and executes transparently under
+    # qemu-user-static via binfmt, with QEMU_LD_PREFIX pointing the emulator at
+    # the aarch64 glibc (same emulation the ump-aarch64-cross job already uses).
+    name: "接続フォールバック cert (heartbeat / UDP↔TCP / スーパーノード自動昇格)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
+      # cross-built aarch64 ./p-kernel finds its glibc loader/libs under binfmt.
+      QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchains + qemu-user (aarch64 leg under emulation)
+        run: |
+          sudo apt-get update
+          # gcc/make: native x86_64 leg. gcc-aarch64-linux-gnu + libc6-dev-arm64-
+          # cross: cross-build the aarch64-hosted leg (real aarch64 glibc
+          # headers, like ump-aarch64-cross). qemu-user-static + binfmt-support:
+          # register the aarch64 binfmt handler so the harness's direct
+          # `./p-kernel` invocation of the aarch64 ELF runs under qemu.
+          sudo apt-get install -y --no-install-recommends \
+            gcc make gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            qemu-user-static binfmt-support
+      - name: heartbeat cert (unconditional relay keepalive — connect-anywhere SLICE 1)
+        run: bash tests/run_heartbeat.sh
+      - name: autofallback cert (automatic UDP<->TCP relay transport — SLICE 4)
+        run: bash tests/run_autofallback.sh
+      - name: autopromote cert (measured-fitness supernode auto-promotion — N-2d)
+        run: bash tests/run_autopromote.sh
+
+  sanitizer-build:
+    # サニタイザ build (ASan/UBSan, 助言). ADVISORY until clean; promote to
+    # blocking once green — catches the recurring stack-overflow class (the
+    # net_relay.c buf[MAX_PKT] stack-locals bug that crashed the hosted relay;
+    # see feedback_hosted_relay_stack_overflow). Builds boot/linux_x86_64
+    # NATIVELY on the x86_64 runner with -fsanitize=address,undefined and runs a
+    # boot+selftest+exit smoke under the sanitizer runtime. No Makefile edit is
+    # needed: the existing EXTRA_CFLAGS hook injects the instrument flags into
+    # CFLAGS (and the inheriting KERNEL_CFLAGS), and LDFLAGS is OVERRIDDEN on the
+    # make command line to link the sanitizer runtime and drop -static (ASan
+    # does not support fully-static links). The arch/common/llm engine TUs use a
+    # separate LLM_CFLAGS and stay uninstrumented (acceptable for an advisory
+    # smoke); the net/relay/kernel/arch TUs where the stack-overflow class lives
+    # ARE instrumented. Bare-metal builds are untouched -> the crown stays
+    # byte-identical.
+    name: "サニタイザ build (ASan/UBSan, 助言)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build boot/linux_x86_64 with ASan+UBSan (native x86_64)
+        # NO_LIBTCC=1: the LDFLAGS override below drops -ltcc, so the selfc
+        # libtcc path must be compiled out too (else undefined tcc_* at link if
+        # the runner happens to carry libtcc). selfc is a stub here — fine for a
+        # boot smoke. EXTRA_CFLAGS instruments every TU except the LLM engine
+        # (separate LLM_CFLAGS); LDFLAGS links the sanitizer runtime + drops
+        # -static (ASan cannot link fully-static).
+        run: |
+          make -C boot/linux_x86_64 NO_LIBTCC=1 \
+            EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            LDFLAGS="-no-pie -lrt -lpthread -fsanitize=address,undefined"
+      - name: Smoke (boot + pfs/hrw selftest + exit) under the sanitizer
+        run: |
+          cd boot/linux_x86_64
+          # detect_leaks=0: the kernel intentionally never frees (LSan noise).
+          # We care about the stack-overflow / UB class, surfaced as a report.
+          export ASAN_OPTIONS=detect_leaks=0:halt_on_error=1
+          export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+          printf 'pfs\nhrw\nexit\n' | timeout 180 ./p-kernel 2>&1 | tee asan_smoke.log || true
+          if grep -aiE 'AddressSanitizer|runtime error:|SUMMARY: (Address|Undefined)Sanitizer' asan_smoke.log; then
+            echo "SANITIZER REPORT surfaced above (advisory — does not block)."
+            exit 1
+          fi
+          echo "sanitizer smoke clean"
