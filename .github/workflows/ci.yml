@@ -49,7 +49,7 @@ jobs:
     #        added to one host build but not the other ships a different mind).
     # Pure-shell, no toolchain — fast and cheap, guards the highest-value drift
     # class. Nonzero exit fails the build.
-    name: Source-list parity (Android CMake + both host Makefiles)
+    name: "ソースリスト整合性 (Android CMake と両ホスト Makefile)"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -58,7 +58,7 @@ jobs:
         run: tools/android/check_parity.sh
 
   ump-x86_64:
-    name: UMP x86_64 (build + self-tests)
+    name: "UMP x86_64 (ビルド + 自己テスト)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -436,7 +436,7 @@ jobs:
           grep -aF '[selfc-lineage] PASS' selfc.log
 
   ump-aarch64-cross:
-    name: UMP aarch64 (cross-build on x86_64)
+    name: "UMP aarch64 (x86_64 上でクロスビルド)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -512,7 +512,7 @@ jobs:
           grep -aF '[fpdet] PASS' fpdet.log
 
   bare-metal:
-    name: Bare-metal (i686 + aarch64, build-only)
+    name: "ベアメタル (i686 + aarch64, ビルドのみ)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -545,7 +545,7 @@ jobs:
     #     on a user-space weights copy; kernel_infer_count delta == 0 across
     #     every ring-3 run; the -poison clause proves the user COPY is what
     #     computes; the crash triple re-proven against the fat ELF.
-    name: ring3 survival + mind gate (boot QEMU x86)
+    name: "ring3 生存 + マインドゲート (QEMU x86 起動)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -604,7 +604,7 @@ jobs:
           grep -aF '[fpu-ctx] PASS' ring3.log
 
   relay-tests:
-    name: Relay round-trip suite (6 scenarios)
+    name: "リレー往復スイート (6 シナリオ)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -617,7 +617,7 @@ jobs:
         run: make -C relay test
 
   survival-loop:
-    name: Survival loop (kill nodes mid-inference)
+    name: "生存ループ (推論中にノードを kill)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -640,7 +640,7 @@ jobs:
           path: /tmp/sl13_*.log
 
   protect-loop-live:
-    name: "Protect loop (live 3-node: threat closes by replication, unit survives kill)"
+    name: "保護ループ (実機3ノード: 脅威を複製で封じ、kill されても unit は生存)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # enforces the LIVE path of G28/G32, not just the in-process self-test:
@@ -670,7 +670,7 @@ jobs:
           path: /tmp/p27_*.log
 
   plural-protect-live:
-    name: "Plural protect (live 3-node: MANY points defended IN PARALLEL, owner killed)"
+    name: "複数点保護 (実機3ノード: 多数の点を並列防御、所有者を kill)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # enforces the LIVE §2 ∧ §5 path (G35): FOUR protected points declared at
@@ -701,7 +701,7 @@ jobs:
           path: /tmp/p28_*.log
 
   collective-learn-live:
-    name: "Collective learning (live 3-node: disjoint shards, gossip > solo, node killed + rejoins)"
+    name: "集合学習 (実機3ノード: 分割シャード、gossip > 単独、ノード kill + 再参加)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # enforces the LIVE §8/§9 path (G22): 3 nodes each train on a DISJOINT
@@ -734,7 +734,7 @@ jobs:
           path: /tmp/p32_*.log
 
   shared-mind-live:
-    name: "Shared mind (live 3-node: fact taught on A answered from B; region-scoped; teacher killed)"
+    name: "共有された心 (実機3ノード: A で教えた事実を B が答える; region 限定; 教師を kill)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # LM-7 (living-mind.md Part VIII): a fact taught on node A becomes
@@ -776,7 +776,7 @@ jobs:
           path: /tmp/p41_*.log
 
   one-mind-live:
-    name: "One mind / Path W (live 3-node: divergent weights merge over the 84 KB chunk wire; survive kill)"
+    name: "ひとつの心 / Path W (実機3ノード: 分岐した重みを 84KB チャンク経由でマージ; kill 耐性)"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # LM-10 (living-mind.md Part XI): the WEIGHT-states converge. Where Path E
@@ -823,7 +823,7 @@ jobs:
           path: /tmp/p42_*.log
 
   twolayer-couple-live:
-    name: "Two-layer couple (live 3-node: collective learning improves GUARDING, node killed mid-flight)"
+    name: "二層カップリング (実機3ノード: 集合学習が防御を改善、実行中にノードを kill)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # enforces the LIVE §8/§9 path (G38, wave 17): the learned transformer's
@@ -856,7 +856,7 @@ jobs:
           path: /tmp/p34_*.log
 
   parallel-infer-live:
-    name: "Parallel infer (live: N region-crossing inferences concurrent, not 200ms-serialized, survive kill)"
+    name: "並列推論 (実機: N 個の region 跨ぎ推論を同時実行、200ms 直列化せず、kill 耐性)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # enforces G13 (wave 17): DKVA coordinator aggregation is per-origin and
@@ -885,7 +885,7 @@ jobs:
           path: /tmp/p35_*.log
 
   ark-crash-fuzzer:
-    name: "ARK crash fuzzer (reorder/torn/bitflip: 0 corrupt-served, 0 wedge)"
+    name: "ARK クラッシュファザー (並べ替え/破断/ビット反転: 破損提供 0、wedge 0)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # ARK's crash-safety, enforced. A format-agnostic fuzzer drives ARK via the
@@ -904,7 +904,7 @@ jobs:
         run: timeout 400 bash samples/30_ark_crash/run.sh
 
   composite-loop:
-    name: Composite loop (kill ∧ concurrent ∧ memory, bonus)
+    name: "複合ループ (kill ∧ 並行 ∧ メモリ, ボーナス)"
     runs-on: ubuntu-latest
     # heavy: SWIM convergence + p-fs gossip + a revival on one 4-node cluster.
     timeout-minutes: 25
