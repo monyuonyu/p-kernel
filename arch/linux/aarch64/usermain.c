@@ -156,6 +156,14 @@ IMPORT void net_relay_heartbeat(void);
 IMPORT void net_relay_heartbeat_self_test(void (*print)(const char *));   /* SLICE 1 cert */
 #endif
 
+/* connect-anywhere SLICE 4: the periodic relay-transport re-eval + hysteresis
+ * (net_dispatch.c). Folded into the heartbeat task; a no-op unless the auto
+ * selector is currently on relay-tcp. */
+IMPORT void net_xport_reeval(void);
+#ifdef AUTOXPORT_CERT
+IMPORT void net_xport_select_self_test(void (*print)(const char *));   /* SLICE 4 cert */
+#endif
+
 static void print(const char *s)
 {
     sio_send_frame((const UB *)s, (INT)__builtin_strlen(s));
@@ -290,6 +298,11 @@ EXPORT void net_heartbeat_task(INT stacd, void *exinf)
     (void)stacd; (void)exinf;
     for (;;) {
         net_relay_heartbeat();
+        /* connect-anywhere SLICE 4: re-evaluate the relay transport. A no-op
+         * unless the auto selector is currently on relay-tcp; it self-gates to
+         * RE_EVAL_PERIOD_S internally, so beating it at the 5 s heartbeat
+         * cadence is cheap. */
+        net_xport_reeval();
         tk_dly_tsk(5000);
     }
 }
@@ -946,6 +959,20 @@ EXPORT INT usermain(void)
             net_relay_heartbeat_self_test(print);
 #else
             print("heartbeat test: rebuild with EXTRA_CFLAGS=-DHEARTBEAT_CERT\r\n");
+#endif
+        } else if (starts_with(line, n, "autoxport")) {
+            /* connect-anywhere SLICE 4 cert: `autoxport test` drives the
+             * SHIPPED relay-transport selector in-proc (mock clock + mock
+             * network, NO sockets) — UDP-open adopts UDP without a TCP connect,
+             * UDP-blocked auto-adopts TCP inside the bounded window, and a short
+             * UDP blip does NOT flap the transport. Gated behind -DAUTOXPORT_CERT
+             * so the default kernel + crown stay byte-identical; the
+             * -DAUTOXPORT_NOFALLBACK build makes the UDP-blocked case
+             * RESULT: FAIL (teeth). */
+#ifdef AUTOXPORT_CERT
+            net_xport_select_self_test(print);
+#else
+            print("autoxport test: rebuild with EXTRA_CFLAGS=-DAUTOXPORT_CERT\r\n");
 #endif
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`

@@ -105,6 +105,15 @@ static struct sockaddr_in relay_addr;
 static u64    next_nonce   = 0;
 static time_t last_send_ts = 0;
 
+/* connect-anywhere SLICE 4 — relay-transport auto-fallback hooks.
+ * relay_contacted == 1 once the FIRST complete, authenticated framed packet is
+ * popped from the stream (the relay echoing our keepalive length-framed) — a
+ * bare connect() that never speaks the v2 wire does NOT count. connect_tmo_ms
+ * is the bounded connect wait; the selector lowers it to RACE_CONNECT_TMO_MS
+ * during the UDP/TCP race so a dead relay can't stretch the adopt window. */
+static int relay_contacted = 0;
+static int connect_tmo_ms  = CONNECT_TMO_MS;
+
 /* Per-connection reassembler for the single relay stream. STATIC — never on
  * a task stack (see feedback_hosted_relay_stack_overflow). */
 static TcpReasm rx_reasm;
@@ -373,6 +382,8 @@ int net_relay_tcp_init(void)
     const char *env_id  = getenv("PKERNEL_NODE_ID");
     const char *env_key = getenv("PKERNEL_RELAY_KEY");
 
+    relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
+
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
     if (my_node_id < 1 || my_node_id > 255) {
         dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d out of range (1..255) "
@@ -410,7 +421,7 @@ int net_relay_tcp_init(void)
     int cr = connect(tcp_fd, (struct sockaddr *)&relay_addr, sizeof(relay_addr));
     if (cr < 0 && errno == EINPROGRESS) {
         struct pollfd p = { .fd = tcp_fd, .events = POLLOUT, .revents = 0 };
-        int pr = poll(&p, 1, CONNECT_TMO_MS);
+        int pr = poll(&p, 1, connect_tmo_ms);
         if (pr <= 0) {
             dprintf(2, "[net_relay_tcp] connect timed out\n");
             close(tcp_fd); tcp_fd = -1; return -1;
@@ -515,6 +526,14 @@ int net_relay_tcp_recv(void *out, int maxlen)
             rx_have_nonce = 1;
         }
 
+        /* SLICE 4: the FIRST complete, authenticated framed packet popped off
+         * the stream (the relay echoing our keepalive length-framed) IS "TCP
+         * contact". Set it HERE — before the control-frame filter below — so a
+         * keepalive echo (a control frame, which continues past the next line)
+         * still counts: a quiet mesh that only echoes keepalives must still be
+         * able to adopt TCP. A bare connect() never reaches this point. */
+        relay_contacted = 1;
+
         /* Control frames (keepalive echoes, stray REGISTERs) never carry data
          * and must not consume a data nonce slot. */
         if (type != REL_DATA && type != REL_BROADCAST) continue;
@@ -529,3 +548,26 @@ int net_relay_tcp_recv(void *out, int maxlen)
 }
 
 int net_relay_tcp_node_id(void) { return my_node_id; }
+
+/* connect-anywhere SLICE 4 — hosted auto-fallback selector hooks (TCP rung).
+ *
+ * net_relay_tcp_contacted()      : 1 once the stream has delivered its first
+ *                                  authenticated framed packet (relay_contacted).
+ * net_relay_tcp_probe()          : FORCE one keepalive frame NOW so the relay
+ *                                  echoes it length-framed and the next
+ *                                  net_relay_tcp_recv() pops it -> contact.
+ * net_relay_tcp_reregister()     : re-send a REGISTER so the relay's
+ *                                  {node->peer} entry + via_tcp settle on TCP.
+ * net_relay_tcp_close()          : tear down the stream (the LOSER on a UDP
+ *                                  adopt) and clear contact; no-op if closed.
+ * net_relay_tcp_set_connect_tmo(): lower the bounded connect wait for the race
+ *                                  (RACE_CONNECT_TMO_MS); ignored if ms<=0. */
+int  net_relay_tcp_contacted(void) { return relay_contacted; }
+void net_relay_tcp_probe(void)      { if (tcp_fd >= 0) send_keepalive(); }
+void net_relay_tcp_reregister(void) { if (tcp_fd >= 0) send_register(); }
+void net_relay_tcp_close(void)
+{
+    if (tcp_fd >= 0) { close(tcp_fd); tcp_fd = -1; }
+    relay_contacted = 0;
+}
+void net_relay_tcp_set_connect_tmo(int ms) { if (ms > 0) connect_tmo_ms = ms; }

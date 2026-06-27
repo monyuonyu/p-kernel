@@ -136,6 +136,13 @@ static int      cur_relay   = 0;            /* index into relay_list */
 static u64 next_nonce = 0;
 static time_t   last_send_ts = 0;
 
+/* connect-anywhere SLICE 4 — relay-transport auto-fallback "contact" flag.
+ * relay_contacted == 1 once the relay has ECHOED a frame back to us (i.e. the
+ * relay answered our keepalive), set inside ha_mark_rx() (the post-HMAC inbound
+ * path). "Contact" == "the relay answered", never merely "socket open". Read by
+ * the hosted xport selector in net_dispatch.c via net_relay_contacted(). */
+static int relay_contacted = 0;
+
 /* connect-anywhere SLICE 1 — heartbeat cert seam. In a normal build HB_NOW()
  * is exactly time(NULL) and the divert is compiled out, so production .text is
  * byte-for-byte unchanged. Under -DHEARTBEAT_CERT the self-test drives a mock
@@ -532,6 +539,10 @@ static void ha_tick(void)
  * switch back to it — deterministic failback. */
 static void ha_mark_rx(int idx)
 {
+    /* SLICE 4: any authenticated inbound frame from a configured relay (this
+     * is the only caller, after the v2-HMAC gate) proves the relay answered
+     * us — that IS "relay contact" for the auto-fallback selector. */
+    relay_contacted = 1;
     if (idx == cur_relay) {
         ha_last_rx_ms    = now_ms();
         ha_probe_sent_ms = 0;
@@ -684,6 +695,8 @@ int net_relay_init(void)
     const char *env_host = getenv("PKERNEL_RELAY_HOST");
     const char *env_port = getenv("PKERNEL_RELAY_PORT");
     const char *env_key  = getenv("PKERNEL_RELAY_KEY");
+
+    relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
     /* N-0: distinct, stable per-install id when PKERNEL_NODE_ID is unset. */
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
@@ -895,6 +908,27 @@ int net_relay_recv(void *out, int maxlen)
 }
 
 int net_relay_node_id(void) { return my_node_id; }
+
+/* connect-anywhere SLICE 4 — hosted auto-fallback selector hooks.
+ *
+ * net_relay_contacted() : 1 once the relay has answered us (relay_contacted,
+ *                         set in ha_mark_rx). The selector polls this.
+ * net_relay_probe()     : FORCE one keepalive to the current relay NOW (not
+ *                         gated on the KEEPALIVE_SEC timer) so the relay echoes
+ *                         it back verbatim and the next net_relay_recv() drains
+ *                         the echo -> ha_mark_rx -> relay_contacted=1.
+ * net_relay_reregister(): re-send a REGISTER so the relay's {node->peer} entry
+ *                         (and via_tcp flag) settles on UDP when UDP is adopted.
+ * net_relay_close()     : tear down the UDP socket (the LOSER on a TCP adopt)
+ *                         and clear contact. A no-op when already closed. */
+int  net_relay_contacted(void) { return relay_contacted; }
+void net_relay_probe(void)      { if (sock_fd >= 0) send_keepalive_to(cur_relay); }
+void net_relay_reregister(void) { if (sock_fd >= 0) send_register_to(cur_relay); }
+void net_relay_close(void)
+{
+    if (sock_fd >= 0) { close(sock_fd); sock_fd = -1; }
+    relay_contacted = 0;
+}
 
 /* connect-anywhere SLICE 1 — the UNCONDITIONAL relay keepalive.
  *
