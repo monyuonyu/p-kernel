@@ -1678,3 +1678,26 @@ N-4 cross-host deferred to the ThinkPad).
   (b) redeploy the public relay container with the TCP-capable relay.c + forward 7400/tcp; (c) kernel-twin
   net_relay_tcp_recv could check the reasm-push truncation return like its relay.c sibling (safe today by the size
   invariant); (d) 443/TLS-via-Caddy-SNI sub-slice (deferred — do NOT repoint the router's 443 off Caddy).
+- SLICE 4 (automatic UDP<->TCP relay-transport fallback, 0b94f6a0; the FIRST concrete impl of the §4 runtime
+  ladder, narrowed to the relay-transport axis: rung 3 relay-UDP <-> rung 4 relay-TCP to the SAME endpoint, NO
+  manual PKERNEL_RELAY_TCP): design->implement->audit all SEPARATE agents. Auditor independently re-derived BOTH
+  crowns from a fresh worktree (aarch64 755a20fa..., x86 4064d8a9... — MATCH, byte-identical: every TU is hosted),
+  confirmed the 10-file diff is hosted-only (net_dispatch/net_relay/net_relay_tcp/usermain twins + 2 harnesses,
+  ZERO arch/common, ZERO relay/relay.c source). "relay contact" predicate = the relay ECHOED our keepalive
+  (relay-HA pong, relay.c:813 UDP / :792 TCP framed): UDP sets relay_contacted in ha_mark_rx (post-HMAC inbound),
+  TCP sets it on the first complete framed inbound pop (a bare connect() is deliberately NOT contact). Happy-eyeballs
+  windows UDP_HEADSTART_MS=300 / RACE_CONNECT_TMO_MS=700 / ADOPT_DEADLINE_MS=2500 (concurrent, NOT serialized);
+  re-eval 30s with UDP_RECOVER_K_S=20 hysteresis (no flap). IN-PROC cert `autoxport test` 8/8 PASS on BOTH arches
+  (CASE A UDP-open -> adopted=udp, tcp_init=0 no wasted connect; CASE B UDP-blocked+TCP-open -> auto-adopts TCP,
+  adopt_ms<=2500; +3 hysteresis asserts). FALSIFIER -DAUTOXPORT_NOFALLBACK (#ifndef-excludes the whole TCP race ->
+  UDP-only) prints RESULT: FAIL; auditor ALSO ran a LIVE SABOTAGE (no-op'd xp_tcp_init in the cure build -> CASE B
+  flipped to FAIL -> reverted) proving the cert is not a tautology. Mock seam fully #ifdef AUTOXPORT_CERT-gated
+  (crown match is the proof it's inert in production). NO regression: relay make test 8/8, slice-3 run_relay_tcp_live
+  4/4 (the new selector now sits under the default UDP path and still meshes over UDP, 0 TCP regs). Adversarial:
+  relay-down boot does NOT wedge — selector bounds at ~2.55s then "no relay contact -> provisional relay-udp, no
+  mesh" and boot continues. LIVE harness run_relay_autofallback_live.sh SKIPs cleanly here (unshare -rn EINVAL in
+  PRoot); its PASS path asserts registered.*(tcp)>=2 + alive=2 + adopted relay-tcp + udp_regs==0, with TEETH 1
+  (block both -> no join) + TEETH 2 (AUTOFALLBACK=0 -> no join). Row CLOSED.
+- HONEST BOUND on Slice 4 (named, NOT a gap in the CLOSED claim): v1 covers ONLY the relay-transport axis; direct-P2P
+  rungs 1/2 (LAN broadcast, N-3 cone-NAT punch) and the TLS/443 flavour of rung 4 remain later slices. The live
+  netns+iptables UDP-blocked join was NOT executed here (PRoot lacks unshare -rn) — it is a deferred [live] row.
