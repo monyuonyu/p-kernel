@@ -229,7 +229,11 @@ B_K1=$(grep -a "ask \"$K1WORD\"" "$L2" | tail -1)
 echo "    B asks k1 after A's death: $B_K1"
 S1=$(echo "$B_K1" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)
 send 2 "mind ask $K2"
-sleep 4
+# bounded retry (was a one-shot `sleep 4`): the k2 mouth serves promptly once the
+# k1 ask above unblocked it (SWIM already declared A DEAD), but poll for the fresh
+# k2 ask line instead of a fixed sleep. k2 is asked ONLY here (post-kill), so the
+# line is fresh by construction; 30s is ample now the mouth is unblocked.
+wait_for "$L2" "ask .*k=$K2 " 30 || true
 B_K2=$(grep -a "ask .*k=$K2 " "$L2" | tail -1)
 echo "    B asks k2 after A's death: ${B_K2:-<see log>}"
 S2=$(echo "$B_K2" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)

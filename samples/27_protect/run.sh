@@ -254,8 +254,20 @@ C2=/tmp/p27_ct_node2.log
 
 send 1 "protect $SECRET2"
 log "waiting (actuator disabled — nothing should evacuate the unit) ..."
-sleep 8
-send 1 "protect stat"; sleep 1
+# CONTROL asserts a NEGATIVE: with the protecting POWER off the unit must REMAIN
+# at-risk (replicas=0). The old probe was a one-shot `sleep 8; protect stat;
+# sleep 1` then grep. That raced two ways: (a) on a busy runner the `protect stat`
+# console print can lag past the 1s sleep, so the grep below sees nothing and
+# false-FAILs; (b) for a NEGATIVE we must grant replication the SAME 60s window
+# the TREATMENT got above (wait_for '\*\*\* SAFE' 60), so that IF the unit were
+# ever going to be evacuated it would have been, before we conclude "stayed
+# at-risk". So drive the full ~60s window, re-issuing `protect stat` each second
+# (keeps the stat line fresh AND gives any stray replication its full chance to
+# show), THEN assert on the accumulated log. The assertions below are UNCHANGED:
+# SAFE must never appear, and AT-RISK + replicas=0 must be present.
+for _ in $(seq 1 60); do
+    send 1 "protect stat"; sleep 1
+done
 echo "----- node1 protect stat (actuator OFF) -----"
 grep -E '\[protect\] (actuator|DECLARE|protected units|  id=|grounded-threat)' "$C1" | tail -8 | sed 's/^/    /'
 echo "---------------------------------------------"

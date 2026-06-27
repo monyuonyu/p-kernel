@@ -355,14 +355,30 @@ log "*** kill -9 node A (pid ${NODE_PID[1]}) — the teacher dies ***"
 kill -9 "${NODE_PID[1]}" 2>/dev/null; NODE_PID[1]=0
 sleep 3
 # B still answers v from its OWN weights — the fact survived its teacher's death.
+# STALE-MARKER trap: KWORD ("sun") was ALSO asked pre-kill (tag 2 above), so the
+# log already holds a pre-kill `ask "sun"` line AND a pre-kill [teach-consolidated]
+# verdict. The old probe `wait_for '\[teach-consolidated\] (PASS|FAIL)'` was
+# stale-satisfiable — it matched the PRE-KILL verdict instantly, and `tail -1`
+# could then grab the PRE-KILL ask line, false-PASSing without B ever answering
+# AFTER A's death. Mirror 42_one_mind's fresh-marker discipline (it asks each key
+# ONLY post-kill, so the line is fresh by construction): here KWORD is reused, so
+# snapshot the ask-line COUNT before the post-kill ask and wait for a STRICTLY NEW
+# line, guaranteeing LIVE_LINE was produced post-kill.
+ASK_BEFORE=$(grep -ac "ask \"$KWORD\"" "$L2")
 send 2 "mind ask $KWORD"
 # Post-kill FAILOVER window: B answers from its own rw[], but its mouth only
 # stops blocking on the now-dead teacher A once SWIM declares A DEAD. SWIM
 # death-detection latency (swim.h: SUSPECT_ROUNDS=2 + DEAD_ROUNDS=3 = 5 missed
 # probes, ~1s round + 400/500ms probe timeouts, round-robin over 2 peers) is
-# ~15-20s, so the old 20s window (sleep 3 + 20) flaked. Widen to death_latency
-# + a generous margin (the assertion below is UNCHANGED).
-wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 60 || true
+# ~15-20s, so the old 20s window (sleep 3 + 20) flaked. Poll up to 60s
+# (death_latency + a generous margin) for a FRESH post-kill ask line (count
+# strictly increases). The assertion below is UNCHANGED.
+fresh=0
+for _ in $(seq 1 240); do
+    [ "$(grep -ac "ask \"$KWORD\"" "$L2")" -gt "${ASK_BEFORE:-0}" ] && { fresh=1; break; }
+    sleep 0.25
+done
+[ "$fresh" -eq 1 ] || bad "[shared-live] — B printed no FRESH ask line after A's death"
 LIVE_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 echo "    after A's death: $LIVE_LINE"
 POST_SHARE=$(echo "$LIVE_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1)
