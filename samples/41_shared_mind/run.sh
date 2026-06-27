@@ -125,9 +125,10 @@ start_node 2 "$WORK/fB" "$WORK/dB" "$L2"
 start_node 3 "$WORK/fC" "$WORK/dC" "$L3"
 exec 3<>"$WORK/fA" 4<>"$WORK/fB" 5<>"$WORK/fC"
 
-# wait for the mind_net task to be polling on B (and C)
-wait_for "$L2" 'mind_net_task up' 30 || bad "B's mind_net_task never started"
-wait_for "$L3" 'mind_net_task up' 30 || true
+# wait for the mind_net task to be polling on B (and C). Widen 30s -> 60s: on a
+# busy runner the per-node boot + task spin-up can lag past 30s.
+wait_for "$L2" 'mind_net_task up' 60 || bad "B's mind_net_task never started"
+wait_for "$L3" 'mind_net_task up' 60 || true
 
 # wait until A sees B in its REGION (RTT measured <= REGION_TAU_MS). Region
 # formation needs a SWIM probe round; poll the `region` verb until size>=2.
@@ -186,7 +187,9 @@ send 1 "mind teach $KWORD $VWORD"     # LM-8: REAL WORDS (= token ids 2,3)
 # itself is unchanged — A still publishes the SAME mind/teach packet).
 wait_for "$L1" 'published mind/teach' 75 || bad "A never published mind/teach"
 # B's arrival print comes from the REAL poll of the REAL topic (no injection).
-if wait_for "$L2" '\[shared-arrival\] PASS' 40; then
+# Widen 40s -> 60s: the engram crosses the region-scoped K-DDS topic over several
+# gossip poll rounds; give it the same ~60s convergence budget. UNCHANGED gate.
+if wait_for "$L2" '\[shared-arrival\] PASS' 60; then
     ok "[shared-arrival] PASS — B's queue gained A's fact via the mind/teach topic"
 else
     bad "[shared-arrival] — B never received A's fact over the topic"
@@ -217,7 +220,10 @@ wait_for "$L2" 'wait: drained' 30 || true
 # now ask B on a MASKED prompt: it must answer v* from its OWN weights.
 send 2 "mind ask $KWORD"             # LM-8: ask in WORDS
 ANSWER_T=$(date +%s)
-wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 20 || true
+# Widen 20s -> 60s: this is the PRE-KILL [shared-consolidated] verdict the gate
+# at line ~235 reads; a one-shot-ish short wait raced the verdict print. UNCHANGED
+# success predicate (PASS + share >= SHARE_GATE).
+wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 60 || true
 ASK_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 SHARE=$(echo "$ASK_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]')
 echo "    $ASK_LINE"

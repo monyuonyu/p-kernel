@@ -645,7 +645,7 @@ jobs:
     name: "保護ループ (実機3ノード: 脅威を複製で封じ、kill されても unit は生存)"
     runs-on: [self-hosted, pkernel-thinkpad]
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 15
+    timeout-minutes: 20
     # enforces the LIVE path of G28/G32, not just the in-process self-test:
     # a declared protected unit's grounded threat must fall to 0 BECAUSE the
     # swarm replicated it to R durable neighbours over the relay, and the unit
@@ -663,7 +663,7 @@ jobs:
           make -C relay
       - name: Run 27_protect/run.sh and assert RESULT PASS
         run: |
-          timeout 480 samples/27_protect/run.sh | tee /tmp/p27_ci.log
+          timeout 720 samples/27_protect/run.sh | tee /tmp/p27_ci.log
           grep -q 'RESULT: PASS' /tmp/p27_ci.log
       - name: Upload node logs on failure
         if: failure()
@@ -729,7 +729,7 @@ jobs:
           make -C relay
       - name: Run 32_collective_learn/run.sh and assert RESULT PASS
         run: |
-          timeout 1080 samples/32_collective_learn/run.sh | tee /tmp/p32_ci.log
+          timeout 1320 samples/32_collective_learn/run.sh | tee /tmp/p32_ci.log
           grep -q 'RESULT: PASS' /tmp/p32_ci.log
       - name: Upload node logs on failure
         if: failure()
@@ -765,7 +765,7 @@ jobs:
           make -C relay
       - name: Run 41_shared_mind/run.sh and assert the four tags + RESULT PASS
         run: |
-          timeout 720 samples/41_shared_mind/run.sh | tee /tmp/p41_ci.log
+          timeout 960 samples/41_shared_mind/run.sh | tee /tmp/p41_ci.log
           grep -q '\[shared-arrival\] PASS'      /tmp/p41_ci.log
           grep -q '\[shared-consolidated\] PASS' /tmp/p41_ci.log
           grep -q '\[shared-grounded\] PASS'     /tmp/p41_ci.log
@@ -809,7 +809,7 @@ jobs:
           make -C relay
       - name: Run 42_one_mind/run.sh and assert the tags + RESULT PASS
         run: |
-          timeout 1020 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log
+          timeout 1140 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log
           # the disease/cure headline (in-process, deterministic, on node A):
           grep -q '\[onemind-divergent\] PASS'  /tmp/p42_nodeA.log
           grep -q '\[onemind-cured\] PASS'      /tmp/p42_nodeA.log

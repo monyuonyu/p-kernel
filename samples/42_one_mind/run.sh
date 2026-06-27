@@ -107,7 +107,10 @@ start_node 2 "$WORK/fB" "$WORK/dB" "$L2"
 start_node 3 "$WORK/fC" "$WORK/dC" "$L3"
 exec 3<>"$WORK/fA" 4<>"$WORK/fB" 5<>"$WORK/fC"
 
-wait_for "$L2" 'mind_net_task up' 30 || bad "B's mind_net_task never started"
+# Widen 30s -> 60s: per-node boot + mind_net task spin-up can lag past 30s on a
+# busy self-hosted runner (the region-formation and teach waits below are already
+# generous at 150s/90s).
+wait_for "$L2" 'mind_net_task up' 60 || bad "B's mind_net_task never started"
 
 # ---------------------------------------------------------------------------
 # THE HEADLINE — the in-process disease/cure measurement (run ON node A).

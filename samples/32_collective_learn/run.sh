@@ -146,8 +146,10 @@ RELAY_PID=$!; disown "$RELAY_PID"; sleep 1
 for i in 1 2 3; do start_node "$i"; done
 exec 3<>"$FIFO.1" 4<>"$FIFO.2" 5<>"$FIFO.3"
 
-t=0; while [ $t -lt 30 ]; do grep -aq -- '-> FULL' "$L1" && break; sleep 1; t=$((t+1)); done
-[ $t -ge 30 ] && { bad "cluster never reached FULL"; echo "RESULT: FAIL"; exit 1; }
+# cluster-FULL wait: 3-node SWIM convergence over the relay can take well past
+# 30s on a busy self-hosted runner; give it 60s (~3x realistic convergence).
+t=0; while [ $t -lt 60 ]; do grep -aq -- '-> FULL' "$L1" && break; sleep 1; t=$((t+1)); done
+[ $t -ge 60 ] && { bad "cluster never reached FULL"; echo "RESULT: FAIL"; exit 1; }
 log "cluster FULL after ~${t}s"; sleep 2
 
 # --- 1) each node measures its SOLO shard-only ceiling on the full task -----
@@ -155,7 +157,9 @@ log "measuring each node's solo shard-only ceiling (the anti-copy baseline) ..."
 send 1 "dtr gossip solo 160"
 send 2 "dtr gossip solo 160"
 send 3 "dtr gossip solo 160"
-for L in "$L1" "$L2" "$L3"; do wait_for "$L" 'solo_ceiling=' 30 || bad "no solo_ceiling on $L"; done
+# solo-ceiling measure rides the just-converged cluster; widen 30s -> 60s so a
+# slow-but-eventual node does not falsely fail this pre-learning baseline.
+for L in "$L1" "$L2" "$L3"; do wait_for "$L" 'solo_ceiling=' 60 || bad "no solo_ceiling on $L"; done
 S1=$(solo_ceil "$L1"); S2=$(solo_ceil "$L2"); S3=$(solo_ceil "$L3")
 log "solo ceilings (x10): node1=$S1 node2=$S2 node3=$S3"
 grep -aE 'solo_ceiling=' "$L1" "$L2" "$L3" | sed 's#.*/##; s/^/    /'
@@ -173,7 +177,7 @@ send 3 "dtr gossip run $ROUNDS $LOCAL"
 # collective LIFT each node achieves, not a single final sample).
 log "waiting until EVERY node is simultaneously ABOVE its solo ceiling (collective>individual) ..."
 A1=0; A2=0; A3=0; reached=0; i=0
-while [ "$i" -lt 800 ]; do      # up to 200s
+while [ "$i" -lt 1200 ]; do     # up to 300s (was 200s — match the post-kill/rejoin learning windows)
     A1=$(last_full "$L1"); A2=$(last_full "$L2"); A3=$(last_full "$L3")
     if [ "${A1:-0}" -gt "$S1" ] && [ "${A2:-0}" -gt "$S2" ] && [ "${A3:-0}" -gt "$S3" ]; then
         reached=1; break
@@ -251,7 +255,8 @@ log "restarting node3 (fresh p-fs) — it must catch up to the swarm by gossip .
 rm -rf "$WORK/dir3"
 start_node 3
 exec 5<>"$FIFO.3"
-t=0; while [ $t -lt 30 ]; do grep -aq -- '-> FULL' "$L3" && break; sleep 1; t=$((t+1)); done
+# rejoin cluster-FULL wait: same 60s convergence budget as the initial join.
+t=0; while [ $t -lt 60 ]; do grep -aq -- '-> FULL' "$L3" && break; sleep 1; t=$((t+1)); done
 sleep 2
 send 3 "dtr gossip solo 160"
 wait_for "$L3" 'solo_ceiling=' 60 || true

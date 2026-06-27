@@ -112,12 +112,15 @@ cluster_up() {
         NODE_PID[$i]=$!; disown "${NODE_PID[$i]}"
         log "node$i up pid=${NODE_PID[$i]} log=/tmp/p27_${tag}_node$i.log"
     done
+    # cluster-FULL wait: SWIM needs several ~1s rounds for 3 nodes to mutually
+    # ALIVE-converge; on a shared self-hosted runner that can take well past the
+    # old 30s. Give it 60s (~3x the realistic convergence latency).
     local t=0
-    while [ $t -lt 30 ]; do
+    while [ $t -lt 60 ]; do
         grep -aq -- "-> FULL" "/tmp/p27_${tag}_node1.log" && break
         sleep 1; t=$((t + 1))
     done
-    if [ $t -ge 30 ]; then bad "($tag) cluster never reached FULL"; return; fi
+    if [ $t -ge 60 ]; then bad "($tag) cluster never reached FULL"; return; fi
     log "cluster FULL after ~${t}s"; sleep 2
 
     # FULL (degrade) only counts ALIVE peers; region_size() additionally needs
@@ -126,13 +129,18 @@ cluster_up() {
     # target_r deterministically caps to 2. (The kernel also self-heals via an
     # upward re-cap of target_r when the region grows, but waiting here keeps
     # the demo's numbers crisp and the first SAFE transition lands at 2/2.)
+    # region convergence needs the RTT to each peer measured (<= tau), which lags
+    # the ALIVE -> FULL signal by several more SWIM rounds. Wait up to 60s
+    # (120 * 0.5s) for node1's region to reach size=3 (was 20s — too tight on a
+    # busy runner; the kernel self-heals via an upward re-cap, but waiting keeps
+    # the first SAFE transition crisp).
     local r=0
-    while [ $r -lt 40 ]; do
+    while [ $r -lt 120 ]; do
         printf '%s\n' "region" > "$FIFO.1"
         grep -aqE 'size=3' "/tmp/p27_${tag}_node1.log" && break
         sleep 0.5; r=$((r + 1))
     done
-    if [ $r -ge 40 ]; then
+    if [ $r -ge 120 ]; then
         log "WARN: node1 region never reached size=3; relying on kernel re-cap"
     else
         log "node1 region converged to size=3 (target_r will cap to 2)"
@@ -174,7 +182,14 @@ L2=/tmp/p27_tr_node2.log
 
 send 1 "protect $SECRET"
 log "waiting for the actuator to evacuate the unit to R neighbours ..."
-if wait_for "$L1" '\*\*\* SAFE' 20; then
+# PRE-KILL replication-to-R wait. The actuator must announce -> WANT -> transfer
+# the unit to R durable neighbours; that rides several SWIM/announce rounds and
+# the peers' durable-store confirmations. The old 20s sometimes expired before
+# replication reached R on a busy runner, so the post-kill window was moot (the
+# REAL CI failure: "node1 did not report the unit SAFE" BEFORE the kill). Widen
+# to 60s (~3x the realistic replication latency). The assertion is UNCHANGED:
+# the unit must actually reach R replicas (the grounded threat must close to 0).
+if wait_for "$L1" '\*\*\* SAFE' 60; then
     ok "node1's grounded threat fell to 0 BECAUSE the unit reached R replicas"
 else
     bad "unit never reached R replicas (threat did not close) — see $L1"
@@ -189,8 +204,17 @@ NCONF=$(grep -aoE 'replica confirmed: node[0-9]+' "$L1" | sort -u | wc -l)
 [ "${NCONF:-0}" -ge 2 ] \
     && ok "the drop is caused by replication: $NCONF distinct neighbours confirmed holding the unit" \
     || bad "did not observe >=2 distinct neighbours confirm the replica (got $NCONF)"
-send 1 "protect stat"; sleep 1
-grep -qE 'threat=0  SAFE' "$L1" && ok "node1 reports the unit SAFE (threat=0)" \
+# `protect stat` is a one-shot console print; the SAFE transition is eventual,
+# so a single grep races a slow-but-converging node. Re-issue `protect stat` and
+# poll up to 60s for the threat=0/SAFE line (retry instead of a one-shot grep).
+# The success predicate is UNCHANGED: node1 must report 'threat=0  SAFE'.
+STAT_OK=0
+for _ in $(seq 1 30); do
+    send 1 "protect stat"; sleep 1
+    if grep -qE 'threat=0  SAFE' "$L1"; then STAT_OK=1; break; fi
+    sleep 1
+done
+[ "$STAT_OK" -eq 1 ] && ok "node1 reports the unit SAFE (threat=0)" \
     || bad "node1 did not report the unit SAFE"
 
 log "*** kill -9 node1 (pid ${NODE_PID[1]}) — the owner of the protected unit dies ***"
