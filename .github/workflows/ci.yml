@@ -937,54 +937,72 @@ jobs:
   # =========================================================================
 
   crown-text-identity:
-    # crown 不変条件 (BLOCKING). The bare-metal kernels' .text section must stay
-    # BYTE-IDENTICAL to the pinned "crown" sha256 — the machine-code-level
-    # "one mind, one math" invariant. ANY change to a TU that links into
-    # boot/x86 or boot/aarch64 (arch/common, kernel/common, the bare-metal arch
-    # backends) flips the hash and FAILS this gate. The ベアメタル job builds
-    # these two ELFs but never hashes .text; this gate adds the missing teeth.
-    # Recipe (objcopy -O binary -j .text + sha256sum) matches the one in
-    # tests/aarch64/run_smp2.sh, verified to reproduce both crowns locally.
-    #   aarch64   .text crown: 755a20fae2d9b7415045193ea8287623dbeb906963609a63dce8a19c8a130513
-    #   x86 (i686).text crown: 4064d8a95e68950eee263a1bd6f131518f655f002bf2eccc1e824b4d87ee0413
-    name: "crown 不変条件 (.text バイト同一性 — 王冠ハッシュ)"
+    # crown 不変条件 (BLOCKING). The bare-metal kernels' .text must stay
+    # BYTE-IDENTICAL across a commit unless bare-metal is INTENTIONALLY changed —
+    # the machine-code-level "one mind, one math" invariant. ANY change to a TU
+    # that links into boot/x86 or boot/aarch64 (arch/common, kernel/common, the
+    # bare-metal arch backends) flips .text and FAILS this gate.
+    #
+    # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (aarch64 755a20fa…, x86
+    # 4064d8a9…) is produced by the sandbox gcc 15.2.0; the ubuntu-latest CI
+    # runner ships a different gcc (13/14) and emits different — but equally
+    # valid — machine code, so an absolute-hash assert is RED on every commit in
+    # CI for a toolchain reason, not a real drift. So this gate enforces the REAL
+    # invariant in a toolchain-independent way: build .text at HEAD AND at HEAD^
+    # with the SAME runner toolchain and require them byte-identical. Hosted-only
+    # / docs commits → identical → green; a commit that actually moves bare-metal
+    # .text → differ → red (correct: an intentional bare-metal change must be
+    # reviewed and re-baseline the dev crown in docs/audit-trail.md). The absolute
+    # dev crown stays the per-wave audit anchor (same sandbox toolchain).
+    # HONEST BOUND: compares HEAD vs its immediate parent, so a multi-commit push
+    # only diff-checks its TOP commit against the one before it.
+    name: "crown 不変条件 (.text バイト同一性 — 対親ドリフト)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2          # need HEAD^ for the relative compare
       - name: Install cross toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-i686-linux-gnu gcc-aarch64-linux-gnu make
-      - name: Build boot/aarch64 + assert .text crown (byte-identity)
+      - name: Assert bare-metal .text is byte-identical to the parent commit
         run: |
           set -e
-          EXP=755a20fae2d9b7415045193ea8287623dbeb906963609a63dce8a19c8a130513
-          make -C boot/aarch64
-          aarch64-linux-gnu-objcopy -O binary -j .text boot/aarch64/kernel.elf /tmp/a.bin
-          GOT=$(sha256sum /tmp/a.bin | cut -d' ' -f1)
-          echo "aarch64 .text sha256: got=$GOT"
-          echo "aarch64 .text sha256: exp=$EXP"
-          if [ "$GOT" != "$EXP" ]; then
-            echo "CROWN MISMATCH (aarch64): the bare-metal .text changed — crown broken."
+          if ! git rev-parse -q --verify HEAD^ >/dev/null; then
+            echo "no parent commit (root/shallow) — skipping relative crown check"; exit 0
+          fi
+          HEAD_SHA=$(git rev-parse HEAD); PARENT_SHA=$(git rev-parse HEAD^)
+          echo "HEAD=$HEAD_SHA  parent=$PARENT_SHA"
+          build_text() {   # $1 = output tag
+            make -C boot/aarch64 clean   >/dev/null 2>&1 || true
+            make -C boot/x86     clean   >/dev/null 2>&1 || true
+            make -C boot/aarch64         >/dev/null
+            aarch64-linux-gnu-objcopy -O binary -j .text boot/aarch64/kernel.elf "/tmp/a_$1.bin"
+            make -C boot/x86 kernel.elf  >/dev/null
+            i686-linux-gnu-objcopy    -O binary -j .text boot/x86/kernel.elf     "/tmp/x_$1.bin"
+          }
+          build_text head
+          git checkout -q -f "$PARENT_SHA"
+          build_text parent
+          git checkout -q -f "$HEAD_SHA"
+          AH=$(sha256sum /tmp/a_head.bin   | cut -d' ' -f1)
+          AP=$(sha256sum /tmp/a_parent.bin | cut -d' ' -f1)
+          XH=$(sha256sum /tmp/x_head.bin   | cut -d' ' -f1)
+          XP=$(sha256sum /tmp/x_parent.bin | cut -d' ' -f1)
+          echo "aarch64 .text: head=$AH parent=$AP"
+          echo "x86     .text: head=$XH parent=$XP"
+          fail=0
+          [ "$AH" = "$AP" ] || { echo "CROWN DRIFT (aarch64): this commit changed bare-metal .text vs its parent."; fail=1; }
+          [ "$XH" = "$XP" ] || { echo "CROWN DRIFT (x86): this commit changed bare-metal .text vs its parent."; fail=1; }
+          if [ "$fail" = 1 ]; then
+            echo "If the bare-metal change is INTENTIONAL: document it + re-baseline the dev crown. Else it is accidental .text drift."
             exit 1
           fi
-          echo "aarch64 crown OK"
-      - name: Build boot/x86 + assert .text crown (byte-identity)
-        run: |
-          set -e
-          EXP=4064d8a95e68950eee263a1bd6f131518f655f002bf2eccc1e824b4d87ee0413
-          make -C boot/x86 kernel.elf
-          i686-linux-gnu-objcopy -O binary -j .text boot/x86/kernel.elf /tmp/x.bin
-          GOT=$(sha256sum /tmp/x.bin | cut -d' ' -f1)
-          echo "x86 .text sha256: got=$GOT"
-          echo "x86 .text sha256: exp=$EXP"
-          if [ "$GOT" != "$EXP" ]; then
-            echo "CROWN MISMATCH (x86): the bare-metal .text changed — crown broken."
-            exit 1
-          fi
-          echo "x86 crown OK"
+          echo "crown OK — bare-metal .text byte-identical to parent (toolchain-independent)."
 
   connect-anywhere-certs:
     # 接続フォールバック cert (BLOCKING). Wires the three in-process certs that
