@@ -133,6 +133,7 @@ ARCH_C_SRCS = \
     net_relay_tcp.c \
     net_lan.c \
     net_dispatch.c \
+    supernode_autopromote.c \
     galaxy_posix.c \
     arch_reboot.c \
     vfs_stub.c \

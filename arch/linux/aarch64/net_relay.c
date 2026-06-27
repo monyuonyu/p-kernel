@@ -143,6 +143,35 @@ static time_t   last_send_ts = 0;
  * the hosted xport selector in net_dispatch.c via net_relay_contacted(). */
 static int relay_contacted = 0;
 
+/* N-2d reflexive-address echo (supernode-autopromote.md §C.1.a). A REFL1
+ * keepalive carries the 4-byte magic "REF1" in its payload; a REFL1-aware relay
+ * appends the observed source ip(4)+port(2) to the echo (advisory, OUTSIDE the
+ * HMAC — exactly like the PRB1 probe stamps). We record the relay-observed
+ * external mapping per configured relay vantage point and expose:
+ *   net_relay_reflexive_count()    — # vantage points that have reported
+ *   net_relay_reflexive_public()   — reflexive IP == our local bind IP (net_my_ip)
+ *   net_relay_reflexive_classify() — CONE iff the external PORT is identical from
+ *                                    >=2 vantage points (re-implements
+ *                                    supernode.c:768 m1.port==m2.port), SYMMETRIC
+ *                                    iff they differ, UNKNOWN (fail-closed) with
+ *                                    fewer than 2 echoes.
+ * Reflexive IP is stored in IP4 little-endian form (the raw network-order
+ * s_addr bytes read LE) so it compares directly to net_my_ip (netstack.h IP4).
+ * Reflexive port is the raw network-order sin_port (equality-compared only). */
+#define REFL_MAGIC_0  'R'
+#define REFL_MAGIC_1  'E'
+#define REFL_MAGIC_2  'F'
+#define REFL_MAGIC_3  '1'
+#define REFL_STAMP_LEN  6                /* ip(4) + port(2), appended by the relay */
+extern unsigned int net_my_ip;          /* netstack.c (UW == unsigned int), IP4 form */
+static unsigned reflexive_ip[MAX_RELAYS];
+static unsigned reflexive_port[MAX_RELAYS];
+static unsigned char reflexive_valid[MAX_RELAYS];
+
+#define SAP_NAT_UNKNOWN    0
+#define SAP_NAT_CONE       1
+#define SAP_NAT_SYMMETRIC  2
+
 /* connect-anywhere SLICE 1 — heartbeat cert seam. In a normal build HB_NOW()
  * is exactly time(NULL) and the divert is compiled out, so production .text is
  * byte-for-byte unchanged. Under -DHEARTBEAT_CERT the self-test drives a mock
@@ -382,6 +411,26 @@ static void send_keepalive_to(int idx)
     static unsigned char buf[MAX_PKT];
     int n = build_packet(buf, REL_KEEPALIVE, (unsigned)my_node_id, 0, NULL, 0);
     udp_send_to(idx, buf, n);
+}
+
+/* N-2d: a REFL1 keepalive carrying the "REF1" magic; a REFL1-aware relay
+ * appends the observed source ip:port to the echo (§C.1.a). The HMAC covers
+ * only the 4-byte magic; the appended trailer is advisory (outside the MAC). */
+static void send_refl_probe_to(int idx)
+{
+    static unsigned char buf[MAX_PKT];
+    static const unsigned char magic[4] =
+        { REFL_MAGIC_0, REFL_MAGIC_1, REFL_MAGIC_2, REFL_MAGIC_3 };
+    int n = build_packet(buf, REL_KEEPALIVE, (unsigned)my_node_id, 0, magic, 4);
+    udp_send_to(idx, buf, n);
+}
+
+/* Probe EVERY configured relay vantage point so CONE/SYMMETRIC has >=2 echoes
+ * to compare. Called from the supernode-autopromote evaluator each 5 s tick. */
+void net_relay_reflexive_probe(void)
+{
+    if (sock_fd < 0) return;
+    for (int i = 0; i < relay_count; i++) send_refl_probe_to(i);
 }
 
 /* Low-stack loggers for the failover hot path.
@@ -848,6 +897,26 @@ int net_relay_recv(void *out, int maxlen)
         int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
         if (n < hdr) continue;
 
+        /* N-2d REFL1 reflexive echo (§C.1.a): a keepalive whose payload begins
+         * with "REF1" and carries a 6-byte ip:port trailer the relay appended.
+         * The trailer is advisory (OUTSIDE the originator's HMAC, exactly like
+         * the PRB1 probe stamps), so strip it before the MAC check and capture
+         * it after liveness is established below. */
+        int      refl_trailer = 0;
+        unsigned refl_ip = 0, refl_port = 0;
+        {
+            int plen0 = (int)n - hdr;
+            if (type == REL_KEEPALIVE && plen0 >= 4 + REFL_STAMP_LEN &&
+                buf[hdr + 0] == REFL_MAGIC_0 && buf[hdr + 1] == REFL_MAGIC_1 &&
+                buf[hdr + 2] == REFL_MAGIC_2 && buf[hdr + 3] == REFL_MAGIC_3) {
+                const u8 *t = buf + (int)n - REFL_STAMP_LEN;
+                refl_ip   = (unsigned)t[0] | ((unsigned)t[1] << 8)
+                          | ((unsigned)t[2] << 16) | ((unsigned)t[3] << 24);
+                refl_port = (unsigned)t[4] | ((unsigned)t[5] << 8);
+                refl_trailer = REFL_STAMP_LEN;
+            }
+        }
+
         /* For v2 frames the nonce is carried right after the head; remember
          * it so the replay window can be consulted once the MAC is verified
          * and control packets are filtered out. v1 frames carry no nonce. */
@@ -865,7 +934,7 @@ int net_relay_recv(void *out, int maxlen)
         if (wire_version == RELAY_VER_V2) {
             if (ver == RELAY_VER_V2) {
                 u64 nonce = load_u64_le(buf + HEAD_LEN);
-                int plen  = (int)n - hdr;
+                int plen  = (int)n - hdr - refl_trailer;   /* REFL trailer is outside the MAC */
                 u8 want[HMAC_TRUNC_LEN];
                 compute_mac(RELAY_VER_V2, buf[5], buf[6], buf[7], nonce,
                             buf + hdr, plen, want);
@@ -883,6 +952,14 @@ int net_relay_recv(void *out, int maxlen)
         }
 
         ha_mark_rx(ridx);   /* liveness + deterministic failback */
+
+        /* N-2d: record the relay-observed external mapping for this vantage
+         * point (post-auth, so a spoofed echo can't poison the classifier). */
+        if (refl_trailer && ridx >= 0 && ridx < MAX_RELAYS) {
+            reflexive_ip[ridx]    = refl_ip;
+            reflexive_port[ridx]  = refl_port;
+            reflexive_valid[ridx] = 1;
+        }
 
         /* KEEPALIVE echoes (and stray REGISTERs) are control-plane only.
          * They are filtered out BEFORE the replay window so control traffic
@@ -922,6 +999,39 @@ int net_relay_node_id(void) { return my_node_id; }
  * net_relay_close()     : tear down the UDP socket (the LOSER on a TCP adopt)
  *                         and clear contact. A no-op when already closed. */
 int  net_relay_contacted(void) { return relay_contacted; }
+
+/* N-2d reflexive-mapping queries (supernode-autopromote.md §C.1.a). */
+int net_relay_reflexive_count(void)
+{
+    int c = 0;
+    for (int i = 0; i < MAX_RELAYS; i++) if (reflexive_valid[i]) c++;
+    return c;
+}
+
+int net_relay_reflexive_public(void)
+{
+    for (int i = 0; i < MAX_RELAYS; i++)
+        if (reflexive_valid[i] && reflexive_ip[i] == net_my_ip) return 1;
+    return 0;
+}
+
+/* CONE iff the external PORT is identical from >=2 vantage points (the
+ * endpoint-INDEPENDENT mapping a third party can predict — re-implements
+ * supernode.c:768's m1.port==m2.port rule); SYMMETRIC iff they differ;
+ * UNKNOWN (fail-closed) with fewer than 2 echoes. */
+int net_relay_reflexive_classify(void)
+{
+    int first = -1, n = 0, differ = 0;
+    for (int i = 0; i < MAX_RELAYS; i++) {
+        if (!reflexive_valid[i]) continue;
+        n++;
+        if (first < 0) first = (int)reflexive_port[i];
+        else if ((int)reflexive_port[i] != first) differ = 1;
+    }
+    if (n < 2) return SAP_NAT_UNKNOWN;
+    return differ ? SAP_NAT_SYMMETRIC : SAP_NAT_CONE;
+}
+
 void net_relay_probe(void)      { if (sock_fd >= 0) send_keepalive_to(cur_relay); }
 void net_relay_reregister(void) { if (sock_fd >= 0) send_register_to(cur_relay); }
 void net_relay_close(void)

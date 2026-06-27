@@ -173,6 +173,23 @@ static int probe_stamp = 0;             /* PKERNEL_RELAY_PROBE_STAMP */
 #define PROBE_MAGIC_3 '1'
 #define PROBE_STAMP_LEN 16              /* rx_us(8) + tx_us(8) */
 
+/*
+ *  N-2d reflexive-address echo (docs/architecture/supernode-autopromote.md
+ *  §C.1.a). A REFL1 keepalive whose payload begins with the 4-byte magic
+ *  "REF1" gets the OBSERVED source ip(4)+port(2) APPENDED to the echo (raw
+ *  network-order bytes), using the SAME append mechanism as the probe stamps.
+ *  Like the probe stamps the trailer is advisory (outside the HMAC), and it is
+ *  appended ONLY when the magic is present — so a non-REFL keepalive (e.g. the
+ *  relay-HA liveness pong, empty payload) is echoed byte-for-byte unchanged.
+ *  This lets a client measure its own NAT reflexive mapping (public detection +
+ *  CONE/SYMMETRIC classification across vantage points) with no STUN server.
+ */
+#define REFL_MAGIC_0 'R'
+#define REFL_MAGIC_1 'E'
+#define REFL_MAGIC_2 'F'
+#define REFL_MAGIC_3 '1'
+#define REFL_STAMP_LEN 6                /* ip(4, net order) + port(2, net order) */
+
 /* Effective forward delay (ms) for a destination node. 0 => immediate. */
 static int delay_for(int dst)
 {
@@ -809,6 +826,19 @@ static void process_packet(int sock, int origin_fd,
             store_u64_le(buf + echo_len,     rx_us);
             store_u64_le(buf + echo_len + 8, now_us());
             echo_len += PROBE_STAMP_LEN;
+        }
+        /* N-2d REFL1: a keepalive carrying the "REF1" magic gets the observed
+         * source ip:port appended (raw network-order bytes, advisory/outside the
+         * HMAC). Magic-gated so a non-REFL keepalive echo stays byte-identical. */
+        int is_refl = pkt.payload_len >= 4
+            && pkt.payload[0] == REFL_MAGIC_0
+            && pkt.payload[1] == REFL_MAGIC_1
+            && pkt.payload[2] == REFL_MAGIC_2
+            && pkt.payload[3] == REFL_MAGIC_3;
+        if (is_refl && echo_len + REFL_STAMP_LEN <= (size_t)MAX_PKT) {
+            memcpy(buf + echo_len,     &from->sin_addr.s_addr, 4);
+            memcpy(buf + echo_len + 4, &from->sin_port,        2);
+            echo_len += REFL_STAMP_LEN;
         }
         if (sendto(sock, buf, echo_len, 0,
                    (struct sockaddr *)from, flen) < 0 && verbose) {

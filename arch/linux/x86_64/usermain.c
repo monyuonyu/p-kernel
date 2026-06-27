@@ -162,6 +162,15 @@ IMPORT void net_xport_reeval(void);
 IMPORT void net_xport_select_self_test(void (*print)(const char *));   /* SLICE 4 cert */
 #endif
 
+/* N-2d measured-capability supernode auto-promotion (supernode-autopromote.md).
+ * The evaluator runs at the 5 s heartbeat cadence and AUTO-SETS the self's
+ * supernode capability bit from measured fitness (reachable / public-or-cone /
+ * stable). Hosted-only; the election + gossip + forwarding are unchanged. */
+IMPORT void sap_evaluate(void);
+#ifdef SAP_CERT
+IMPORT void sap_self_test(void (*print)(const char *));   /* N-2d in-proc cert */
+#endif
+
 static void print(const char *s)
 {
     sio_send_frame((const UB *)s, (INT)__builtin_strlen(s));
@@ -302,6 +311,11 @@ EXPORT void net_heartbeat_task(INT stacd, void *exinf)
          * RE_EVAL_PERIOD_S internally, so beating it at the 5 s heartbeat
          * cadence is cheap. */
         net_xport_reeval();
+        /* N-2d: measured-capability supernode auto-promotion. Sets the self's
+         * super_capable bit from measured fitness (60 s/30 s dwell, so beating
+         * it at 5 s is the intended cadence). A solo / relay-less / forced node
+         * is a clean no-op. */
+        sap_evaluate();
         tk_dly_tsk(5000);
     }
 }
@@ -972,6 +986,22 @@ EXPORT INT usermain(void)
             net_xport_select_self_test(print);
 #else
             print("autoxport test: rebuild with EXTRA_CFLAGS=-DAUTOXPORT_CERT\r\n");
+#endif
+        } else if (starts_with(line, n, "autopromote")) {
+            /* N-2d measured-capability supernode auto-promotion cert
+             * (supernode-autopromote.md §E.1): `autopromote test` drives the
+             * SHIPPED pure core sap_step() + live wrapper sap_evaluate() in-proc
+             * (mock clock + mock signals, NO sockets) — CONE/public+stable
+             * promotes after the 60 s window, SYMMETRIC NEVER promotes (hard
+             * block), the 60 s/30 s hysteresis holds, and PKERNEL_SUPERNODE=1
+             * forces capable (force>measured). Gated behind -DSAP_CERT so the
+             * default kernel + crown stay byte-identical; the
+             * -DSAP_NO_SYMBLOCK build drops the symmetric clause -> case B
+             * promotes wrongly -> RESULT: FAIL (teeth). */
+#ifdef SAP_CERT
+            sap_self_test(print);
+#else
+            print("autopromote test: rebuild with EXTRA_CFLAGS=-DSAP_CERT\r\n");
 #endif
         } else if (starts_with(line, n, "region")) {
             /* N-2 supernode-selection cert (p2p-overlay.md): `region test`
