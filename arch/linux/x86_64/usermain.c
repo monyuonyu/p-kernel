@@ -1093,11 +1093,18 @@ EXPORT INT usermain(void)
              * -> STRESSED, only the axis varies) + [state-gossip] (a peer's
              * gossiped state read back via world_peer_state). Built with
              * EXTRA_CFLAGS=-DSURVIVAL_L0_MONOTONE the FSM is forced monotone and
-             * the [state-axis] THREAT assertion goes RED (the falsifier). */
+             * the [state-axis] THREAT assertion goes RED (the falsifier).
+             * `survival l1` runs the L1 cert — [support-route] (STATE-aware
+             * routing sheds work OFF a STRESSED node toward ACTIVE peers, sign on
+             * the LOAD axis) + [hysteresis] (two-time-constant damping breaks the
+             * coupled-forcing flap). Falsifiers: -DSURVIVAL_L1_SIGN_FLIP (route
+             * onto threat -> stressed GAINS work -> RED) and -DSURVIVAL_L1_NO_DAMP
+             * (collapse the time-constants -> flap returns -> RED). */
             const UB *a = line + 8; UW al = (UW)(n - 8);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 2 && a[0]=='l' && a[1]=='0') world_survival_l0_test();
-            else print("usage: survival l0\r\n");
+            else if (al >= 2 && a[0]=='l' && a[1]=='1') world_survival_l1_test();
+            else print("usage: survival l0|l1\r\n");
         } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
             /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
              * GA self-improvement cert (mutation+selection improves a

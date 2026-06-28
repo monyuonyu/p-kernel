@@ -224,4 +224,17 @@ INT world_peer_state(UB node);
  * -DSURVIVAL_L0_MONOTONE the FSM is forced monotone and [state-axis] goes RED. */
 INT world_survival_l0_test(void);
 
+/* survival-loop L1 §8 hysteresis cert (tests/host/run_survival_l1.sh):
+ * [hysteresis] measures ACTIVE<->STRESSED flips of the production wstate_advance
+ * under a coupled S_n forcing for the NAIVE (one symmetric dwell = L0) vs DAMPED
+ * (two-time-constant) arms, and asserts the [moe-osc] acceptance shape
+ * (flips_damped <= K AND 2*flips_damped <= flips_naive). 0 = PASS.
+ * -DSURVIVAL_L1_NO_DAMP collapses the two time-constants and turns it RED. */
+INT world_l1_flap_test(void);
+
+/* survival-loop L1 driver (shell `survival l1`): runs the STATE-aware
+ * support-routing cert (moe_support_route_test) + the §8 hysteresis cert, then
+ * prints the [survival-l1] verdict. Returns 0 = PASS. */
+INT world_survival_l1_test(void);
+
 #endif /* _TK_HOSTED_LIBC_ */

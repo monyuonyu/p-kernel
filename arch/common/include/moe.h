@@ -225,3 +225,14 @@ void moe_stat(void);
  * shell `moe test` から呼ぶカーネル内 self-test。0=全 PASS。
  * 純ローカル計算なので net/kdds 不要・ベアメタルでも走る。 */
 INT  moe_self_test(void);
+
+/* survival-loop L1 (docs/architecture/survival-loop.md §6-L1 / §10): STATE-aware
+ * support routing cert. Drives the PRODUCTION moe_select_step over M=3 candidates
+ * equal in acc/RTT/region but differing in STATE; asserts work sheds OFF the
+ * STRESSED node toward ACTIVE peers (sign) and does not pile onto it (no-pile-on
+ * vs a blind control). 0 = PASS. -DSURVIVAL_L1_SIGN_FLIP routes the penalty onto
+ * the threat/rally term (the G20 inversion) and turns it RED. Hosted-only — the
+ * fold and this cert are absent from the bare-metal crown. */
+#ifdef _TK_HOSTED_LIBC_
+INT  moe_support_route_test(void);
+#endif

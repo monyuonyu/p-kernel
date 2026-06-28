@@ -400,6 +400,26 @@ jobs:
           timeout 300 tests/host/run_survival_l0.sh | tee survival_l0.log
           grep -aF '[survival-l0] ALL PASS' survival_l0.log
 
+      # survival-loop L1 STATE-aware support routing + §8 hysteresis
+      # (docs/architecture/survival-loop.md §5 / §6-L1 / §8 / §10): a candidate's
+      # gossiped STATE-unhealth folds into MoE routing as a virtual LOAD on the
+      # eff_pressure axis, so work sheds OFF a STRESSED node toward ACTIVE peers
+      # (the §5 sign = the structural G20 guard), and a two-time-constant
+      # hysteresis damps the ACTIVE<->STRESSED flap. [support-route] (LOAD-BEARING:
+      # the STRESSED node is avoided and not piled-on — sign, not magnitude),
+      # [hysteresis] (MEASURED disease flips_naive > K=12, cured to <= K and <=
+      # half of naive). The -DSURVIVAL_L1_SIGN_FLIP (penalty onto the threat/rally
+      # term — the G20 inversion) and -DSURVIVAL_L1_NO_DAMP (collapse the time-
+      # constants) falsifiers must each go RED. The cert ALSO runs the crown gate
+      # (bare .text byte-identical + hosted symbols absent); on this runner the
+      # bare cross-toolchains are absent so the crown gate SKIPs (the dedicated
+      # crown-text-identity job enforces the relative invariant). Host-portable
+      # like L0: x86_64-hosted runs natively, aarch64-hosted SKIPs here.
+      - name: survival-loop L1 support-routing + hysteresis cert (survival-loop.md §6-L1)
+        run: |
+          timeout 300 tests/host/run_survival_l1.sh | tee survival_l1.log
+          grep -aF '[survival-l1] ALL PASS' survival_l1.log
+
       # SLICE 0 — the durable layer stops lying (persistence.md; gap-ledger
       # DUR-SWALLOW 🔴 + DUR-REFTAB 🟠). [pfs-durswallow]: a failed durable
       # write makes pfs_put return NON-OK and pins the sole in-memory copy

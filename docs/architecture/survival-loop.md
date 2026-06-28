@@ -332,8 +332,11 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 - **cert** `[support-sign]`: 支援が **ACTIVE ノードへ寄る**（正しい符号）。**falsifier** `[support-sign-NOT]`: STRESSED に
   *した* ノードが routed work を **増やさない**（増えたら G20 符号倒錯の再来）。`[support-osc]`: STATE+routing を
   振っても **N 分発振しない**（`[moe-osc]` 形、deadband 無し版より厳密に切替少）。
-- **crown**: `moe.c` は bare-metal。`select_expert` は整数 utility（forward math でない）が、TU が触られるので
-  **moe 系 cert の re-baseline ＋ crown 不変確認を commander 裁定**。
+- **crown**: ~~`moe.c` は bare-metal。`select_expert` は整数 utility（forward math でない）が、TU が触られるので
+  **moe 系 cert の re-baseline ＋ crown 不変確認を commander 裁定**。~~
+  → **この re-baseline 案は §10 が上書きする（§9 が §6-L0 の re-baseline 案を上書きしたのと同じ）。L1 は
+  CROWN-PRESERVING で実装した：fold もヒステリシスも全て `_TK_HOSTED_LIBC_` ゲートなので bare-metal `moe.c`/
+  `world.c` の `.text` は byte-identical（crown 755a20fa / 4064d8a9 不変、再baseline 不要）。**
 
 ### L2 — HIBERNATING 状態（**最大の新規・GAP-⑥**）
 - **やること**: 資源軸（`INTERO_AX_DEGRADE`、将来 battery/thermal）持続高で HIBERNATING へ。`mind_merge_task` /
@@ -480,3 +483,44 @@ Workflow finalize は L0 を「beacon 13バイト化＋crown 再baseline」で�
 
 これにより L0 は **crown を一切動かさない pure-additive hosted スライス**になり、Workflow が出した
 GO-L0 判定はそのまま有効、ただし実装経路は §9 が §6-L0 の crown 段を上書きする。
+
+---
+
+## 10. 司令官判断 2026-06-28 — L1 は CROWN-PRESERVING で実装する（§6-L1 の crown 段を上書き）＋ 実装記録
+
+§6-L1 は「moe 系 cert の re-baseline ＋ crown 不変確認」を残していたが、§9 と同じ crown 保全規律を L1 にも適用する。
+L1 は **crown を一切動かさない hosted-only スライス**として SHIPPED した（cert: `tests/host/run_survival_l1.sh` / verb
+`survival l1` / CI: ump-x86_64 に L0 の直後）。
+
+1. **support-routing の fold は eff_pressure（LOAD/avoid 軸）へ載せる ＝ 構造的 G20 ガード。**
+   `moe.c` に hosted file-static `eff_state_penalty(WSTATE)`（ACTIVE→0 / STRESSED→+P_s / HIBERNATING・DYING は L0 で
+   emit されないので relief 主張なし=0 / 未知 peer(-1)→ACTIVE）。`select_expert` の候補充填シーム（`is_self` 既知の
+   一点）で `cand[].eff_pressure += eff_state_penalty(is_self ? world_self_state() : world_peer_state(n))` を
+   **1 行**足す。これは `expert_utility` が **引く** LOAD 軸なので、STRESSED 自分は自分の仕事を手放し、近傍は
+   STRESSED ノードを避ける（仕事が **健全な働き手へ寄る**）。**脅威/rally 項（`expert_utility` の +threat）には
+   絶対に載せない** ―― 載せると G20 符号倒錯（病んだ働き手に仕事を盛る）。falsifier `-DSURVIVAL_L1_SIGN_FLIP` は
+   まさに penalty を threat 項へ流して `[support-route]` を RED にする（cert で実証）。
+   sign + no-pile-on だけが load-bearing；P_s（実装値 70）は **discover**・cert が straddle する（決め打ち定数にしない）。
+   EDGE: シームは `me >= DNODE_MAX` の reflex local-only early-return の **後** にあるので、node id 未確定の STRESSED
+   自分は forced-local を自壊させない（コード配置で自動的に成立）。
+
+2. **§8 ヒステリシスは MEASUREMENT-GATED（wave-45 規律「fix が disease だった」）。**
+   結合 S_n forcing（ACTIVE/仕事保持中は stress↑、STRESSED/手放し中は↓）で **production `world_self_state_step`
+   の遷移核 `wstate_advance` を同一 build で naive（対称 1-dwell ＝ L0）と damped（二時定数）両アームに掛けて
+   flips を実測**。**実測 flips_naive = 33 > K=12** ⇒ disease は real ⇒ **damping を SHIP**（flips_naive ≤ K なら
+   dead code になるので入れない、という分岐は取らなかった）。cure = `WSTATE_MIN_DWELL` を **ENTER_DWELL(fast)
+   / RELAX_DWELL(slow=×8) に分割 ＋ relax refractory(self_cooldown=20)**、`threat_acute || s<=S_EXIT` の lump を
+   分割して **急性 DANGER は INSTANT relax（rally）/ scalar relax は slow**。**実測 flips_damped = 8 ≤ K=12 かつ
+   2×8=16 ≤ 33**（`[moe-osc]` と同じ受理形）。falsifier `-DSURVIVAL_L1_NO_DAMP` は二時定数を 1 本へ畳んで
+   flips_damped==flips_naive にし `[hysteresis]` を RED（実証）。
+
+3. **全部 `_TK_HOSTED_LIBC_` ゲート ⇒ crown byte-identical。** fold シーム（`#else` なし）／`eff_state_penalty`／
+   `moe_state_fold`／`moe_support_route_test`／`wstate_advance`／`world_l1_flap_test`／`self_cooldown` は
+   すべて hosted のみ。bare-metal `moe.c`/`world.c` の `.text` は触れず、**crown 755a20fa / 4064d8a9 は byte 一致を
+   再導出で確認**（cert 内蔵の crown gate A）。`nm` で bare-metal に L0/L1 hosted シンボルが **不在**（gate B）。
+   gate C（bare `moe test` 不変）は gate A（byte 同一）が含意。ungated 参照は bare-metal で **link 不能**（world.h の
+   hosted-only 宣言が構造ガード）＝ gate 漏れを hash 前に捕まえる。これは R3_WP / arkfs / ss6_live と同じ規律。
+
+4. **正直な限界（L2 へ繰り越し）**: 本 cert は **単一プロセス合成**であり、**実フリートの flap は証明しない**
+   （RTT/ gossip 遅延/ 実 battery 由来の本物の S_n 軌跡は host test seam の代理）。実フリート VERDICT は L2 へ defer。
+   P_s / ENTER・RELAX dwell / refractory は実機 `S_n` 曲線 ＋ mk_pino sign-off で **discover** する（§7 headline・決め打ち禁止）。

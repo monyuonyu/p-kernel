@@ -375,15 +375,72 @@ void world_set_beacon_hold(UW ms)
 /* PROVISIONAL placeholders — discover from measured S_n curves
  * (interoception §2.4 / survival-loop §7 headline) — NOT final. The cert injects
  * hi/lo straddling these so the band values are not load-bearing; only the
- * axis-divergence is. */
+ * axis-divergence (L0) and the flap-reduction (L1) are. */
 #define WSTATE_S_ENTER    160   /* ACTIVE->STRESSED needs s >= this (non-threat) */
 #define WSTATE_S_EXIT     100   /* STRESSED->ACTIVE allowed when s <= this       */
-#define WSTATE_MIN_DWELL    3   /* consecutive qualifying ticks per transition   */
+#define WSTATE_MIN_DWELL    3   /* base dwell (L0 used this symmetrically)        */
 
-static UB self_state = WSTATE_ACTIVE;   /* the committed STATE (WSTATE_*)        */
-static UB self_dwell = 0;               /* qualifying ticks held toward a switch */
+/* survival-loop L1 §8 — two-time-constant hysteresis (docs/architecture/
+ * survival-loop.md §5.2 / §6-L1 / §10). The L0 FSM used ONE symmetric dwell; a
+ * coupled S_n forcing (stress UP while ACTIVE/holding work, DOWN while STRESSED/
+ * shedding) still flapped ACTIVE<->STRESSED > K times — MEASURED, not assumed,
+ * see world_l1_flap_test. The cure splits the dwell so STRESSED is FAST to enter
+ * and SLOW to leave, plus a relax refractory after entering — breaking the
+ * symmetric ping-pong — while acute DANGER (the THREAT axis) still relaxes
+ * INSTANTLY (rally, §1.1). The magnitudes are DISCOVERED (the cert straddles
+ * them); only the flap-reduction is load-bearing. Hosted-only -> world.c
+ * bare-metal .text byte-identical. */
+#ifdef SURVIVAL_L1_NO_DAMP
+/* falsifier: collapse the two time-constants back to one (= the symmetric naive
+ * FSM) so the flap returns and [hysteresis] goes RED. */
+#define WSTATE_ENTER_DWELL   WSTATE_MIN_DWELL
+#define WSTATE_RELAX_DWELL   WSTATE_MIN_DWELL
+#define WSTATE_RELAX_REFRAC  0u
+#else
+#define WSTATE_ENTER_DWELL   WSTATE_MIN_DWELL        /* fast to STRESS            */
+#define WSTATE_RELAX_DWELL   (WSTATE_MIN_DWELL * 8)  /* slow to RELAX (discovered) */
+#define WSTATE_RELAX_REFRAC  20u                     /* relax refractory (discovered) */
+#endif
+
+static UB self_state    = WSTATE_ACTIVE;  /* the committed STATE (WSTATE_*)       */
+static UB self_dwell    = 0;              /* qualifying ticks held toward a switch */
+static UW self_cooldown = 0;              /* relax refractory ticks after STRESS   */
 
 UB world_self_state(void) { return self_state; }
+
+/* The committed-state transition for ONE tick. Pure: operates on the passed
+ * state/dwell/cooldown via pointers, with the scalar s, threat_acute, and the two
+ * dwell time-constants + relax refractory as inputs. The production step AND
+ * world_l1_flap_test's naive & damped arms ALL call this (no re-implementation —
+ * the shape mirrors moe's shared deadband_pick). */
+static void wstate_advance(UB *st, UB *dwell, UW *cooldown,
+                           UB s, UB threat_acute,
+                           UB enter_dwell, UB relax_dwell, UW relax_refrac)
+{
+    if (*cooldown) (*cooldown)--;            /* relax refractory ticks down       */
+
+    if (*st == WSTATE_ACTIVE) {
+        /* ACTIVE -> STRESSED: a non-threat axis with sustained high s, held
+         * enter_dwell ticks (FAST). Entering arms the relax refractory. */
+        if (!threat_acute && s >= WSTATE_S_ENTER) {
+            if (++(*dwell) >= enter_dwell) {
+                *st = WSTATE_STRESSED; *dwell = 0; *cooldown = relax_refrac;
+            }
+        } else *dwell = 0;
+    } else if (*st == WSTATE_STRESSED) {
+        if (threat_acute) {
+            /* acute DANGER (THREAT axis) relaxes INSTANTLY — rally, overriding the
+             * slow dwell + refractory (§1.1 "death-imminent -> activate"). */
+            *st = WSTATE_ACTIVE; *dwell = 0; *cooldown = 0;
+        } else if (s <= WSTATE_S_EXIT && *cooldown == 0) {
+            /* scalar relax: SLOW — only after the refractory, held relax_dwell. */
+            if (++(*dwell) >= relax_dwell) { *st = WSTATE_ACTIVE; *dwell = 0; }
+        } else *dwell = 0;
+    } else {
+        /* HIBERNATING/DYING reserved for L2/L3 — not entered in L0/L1. */
+        *dwell = 0;
+    }
+}
 
 UB world_self_state_step(void)
 {
@@ -399,21 +456,8 @@ UB world_self_state_step(void)
     UB threat_acute = (UB)(ax == INTERO_AX_THREAT);
 #endif
 
-    if (self_state == WSTATE_ACTIVE) {
-        /* enter STRESSED only on a non-threat axis with sustained high s */
-        if (!threat_acute && s >= WSTATE_S_ENTER) {
-            if (++self_dwell >= WSTATE_MIN_DWELL) { self_state = WSTATE_STRESSED; self_dwell = 0; }
-        } else self_dwell = 0;
-    } else if (self_state == WSTATE_STRESSED) {
-        /* leave to ACTIVE on acute THREAT (rally) or when s falls into the
-         * deadband (s <= S_EXIT < S_ENTER) — held MIN_DWELL ticks. */
-        if (threat_acute || s <= WSTATE_S_EXIT) {
-            if (++self_dwell >= WSTATE_MIN_DWELL) { self_state = WSTATE_ACTIVE; self_dwell = 0; }
-        } else self_dwell = 0;
-    } else {
-        /* HIBERNATING/DYING reserved for L2/L3 — not entered in L0. */
-        self_dwell = 0;
-    }
+    wstate_advance(&self_state, &self_dwell, &self_cooldown, s, threat_acute,
+                   WSTATE_ENTER_DWELL, WSTATE_RELAX_DWELL, WSTATE_RELAX_REFRAC);
 
     if (self_state != old)
         galaxy_emit(EV_STATE, drpc_my_node, GALAXY_NODE_NONE,
@@ -435,7 +479,11 @@ INT world_survival_l0_test(void)
 {
     INT fail = 0;
     const UB hi = 220;                       /* >> S_ENTER (160): straddles band */
-    const INT steps = WSTATE_MIN_DWELL + 2;
+    const INT steps = WSTATE_ENTER_DWELL + 2;
+    /* L1 two-time-constant damping makes STRESSED->ACTIVE relax SLOW (refractory +
+     * relax dwell). Give each calm-reset that many ticks (+margin) so a prior
+     * STRESSED sub-test fully relaxes to ACTIVE before the next axis is injected. */
+    const INT calm_steps = (INT)WSTATE_RELAX_REFRAC + WSTATE_RELAX_DWELL + 2;
 
     wo_puts("[survival-l0] STATE bus: axis-dependence + gossip (hosted cert)\r\n");
 
@@ -454,7 +502,7 @@ INT world_survival_l0_test(void)
     INT axis_fail = 0;
     for (INT i = 0; i < (INT)(sizeof(cases)/sizeof(cases[0])); i++) {
         intero_test_force_axis(INTERO_AX_LATENCY, 0);          /* calm -> ACTIVE */
-        for (INT t = 0; t < steps; t++) world_self_state_step();
+        for (INT t = 0; t < calm_steps; t++) world_self_state_step();
         if (world_self_state() != WSTATE_ACTIVE) {
             wo_puts("[state-axis]   calm-reset did not reach ACTIVE FAIL\r\n");
             axis_fail = 1;
@@ -510,6 +558,98 @@ INT world_survival_l0_test(void)
             "[state-axis] THREAT must FAIL above\r\n");
 #endif
     wo_puts(fail ? "[survival-l0] FAIL\r\n" : "[survival-l0] PASS\r\n");
+    return fail;
+}
+
+/* ── survival-loop L1 §8: [hysteresis] / [hysteresis-NOT] ─────────────────────
+ * docs/architecture/survival-loop.md §5.2 / §6-L1 / §10. Measure the disease
+ * FIRST (wave-45 discipline: "the fix WAS the disease" — never credit a fix
+ * without the same-harness unfixed control). Drive the SHARED wstate_advance
+ * (the production transition) under a coupled S_n forcing: stress accrues while
+ * ACTIVE (the node holds work) and falls while STRESSED (it sheds). Count
+ * ACTIVE<->STRESSED flips over the run, for the NAIVE arm (one symmetric dwell =
+ * the L0 FSM) and the DAMPED arm (the two-time-constant production params). Both
+ * run in ONE build on LOCAL state (the [moe-osc] shape). */
+static UW wstate_flap(UB enter_dwell, UB relax_dwell, UW relax_refrac)
+{
+    UB st = WSTATE_ACTIVE, dwell = 0; UW cooldown = 0;
+    UB s = WSTATE_S_EXIT;                 /* start calm at the exit threshold     */
+    const INT UP = 40, DOWN = 40, T = 200;
+    UW flips = 0; UB prev = st;
+    for (INT t = 0; t < T; t++) {
+        wstate_advance(&st, &dwell, &cooldown, s, 0 /*non-threat axis*/,
+                       enter_dwell, relax_dwell, relax_refrac);
+        if (t > 1 && st != prev) flips++;          /* 2 ticks warmup             */
+        prev = st;
+        /* coupling: ACTIVE accrues stress (holds work); STRESSED sheds it. */
+        if (st == WSTATE_ACTIVE) s = (UB)((UW)s + (UW)UP > 255u ? 255u : (UW)s + (UW)UP);
+        else                     s = (UB)((UW)s < (UW)DOWN  ? 0u   : (UW)s - (UW)DOWN);
+    }
+    return flips;
+}
+
+INT world_l1_flap_test(void)
+{
+    INT fail = 0;
+    const UW K = 12;                     /* reuse the moe flap bound (moe.c:929)  */
+    UW flips_naive  = wstate_flap(WSTATE_MIN_DWELL, WSTATE_MIN_DWELL, 0u);
+    UW flips_damped = wstate_flap(WSTATE_ENTER_DWELL, WSTATE_RELAX_DWELL,
+                                  WSTATE_RELAX_REFRAC);
+
+    wo_puts("[hysteresis] coupled S_n forcing, 200 ticks: naive flips=");
+    wo_putdec(flips_naive);
+    wo_puts(" damped flips="); wo_putdec(flips_damped);
+    wo_puts(" (K="); wo_putdec(K); wo_puts(")\r\n");
+
+    /* the disease must be real (naive flaps > K) — else any cure is vacuous. */
+    if (!(flips_naive > K)) {
+        wo_puts("[hysteresis] FAIL naive case did not flap > K"
+                " (disease not reproduced)\r\n");
+        fail = 1;
+    }
+    /* the cure: the EXACT [moe-osc] acceptance shape — under K AND at most half
+     * of naive. -DSURVIVAL_L1_NO_DAMP collapses damped==naive so this RED-fires. */
+    if (!(flips_damped <= K && flips_damped * 2 <= flips_naive)) {
+        wo_puts("[hysteresis] FAIL two-time-constant damping did not break the"
+                " flap\r\n");
+        fail = 1;
+    }
+    if (!fail) {
+        wo_puts("[hysteresis] PASS (flaps "); wo_putdec(flips_damped);
+        wo_puts("<="); wo_putdec(K); wo_puts(" and <= half of naive ");
+        wo_putdec(flips_naive); wo_puts(")\r\n");
+    } else {
+        wo_puts("[hysteresis] FAIL\r\n");
+    }
+#ifdef SURVIVAL_L1_NO_DAMP
+    wo_puts("[hysteresis-NOT] ARMED: two time-constants collapsed to one"
+            " (damped==naive) — the flap must return above (RED)\r\n");
+#endif
+    return fail;
+}
+
+/* ── survival-loop L1 driver: shell `survival l1` ─────────────────────────────
+ * Runs the STATE-aware support-routing cert (moe.c) + the §8 hysteresis cert,
+ * then the overall verdict. Pure in-process (no net): the support-route cert
+ * drives the production moe_select_step, the hysteresis cert drives the
+ * production wstate_advance. */
+INT world_survival_l1_test(void)
+{
+    INT fail = 0;
+
+    /* clean FSM/bus state — these certs are pure & deterministic. */
+    self_state = WSTATE_ACTIVE; self_dwell = 0; self_cooldown = 0;
+    intero_test_force(0, 0);
+
+    wo_puts("[survival-l1] STATE-aware support routing + §8 hysteresis (hosted cert)\r\n");
+    if (moe_support_route_test()) fail = 1;   /* [support-route] / [support-route-NOT] */
+    if (world_l1_flap_test())     fail = 1;   /* [hysteresis]   / [hysteresis-NOT]     */
+
+    /* restore calm. */
+    intero_test_force(0, 0);
+    self_state = WSTATE_ACTIVE; self_dwell = 0; self_cooldown = 0;
+
+    wo_puts(fail ? "[survival-l1] FAIL\r\n" : "[survival-l1] PASS\r\n");
     return fail;
 }
 

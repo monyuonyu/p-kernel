@@ -241,6 +241,57 @@ static INT eff_threat(UB n)
     return (thr < 0) ? MOE_THREAT_UNKNOWN : thr;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* ── survival-loop L1 — STATE-aware support routing ───────────────────────────
+ * docs/architecture/survival-loop.md §5 / §6-L1 / §10. Fold a candidate's
+ * gossiped STATE-unhealth into routing as a VIRTUAL LOAD on the eff_pressure axis.
+ * eff_state_penalty maps WSTATE_* -> an integer load penalty: a STRESSED node
+ * earns +P_s which expert_utility SUBTRACTS (the eff_pressure term) — so the herd
+ * sheds work OFF the sick node toward ACTIVE peers, and a STRESSED *self*
+ * candidate sheds its OWN work. The penalty rides eff_pressure ONLY (the
+ * LOAD/avoid axis); it must NEVER touch the threat/rally term — doing so is the
+ * literal G20 sign inversion (piling work ONTO the threatened node, §5.1).
+ * HIBERNATING/DYING are reserved (L2/L3) and NOT emitted by L0, so they claim NO
+ * relief here. An unknown peer (world_peer_state == -1) is treated as ACTIVE.
+ *
+ * P_s is PROVISIONAL (discover from measured S_n curves, §7 headline). The cert
+ * straddles it — only the SIGN and the no-pile-on are load-bearing, never the
+ * magnitude. P_s/2 > MOE_SWITCH_MARGIN(12) so a STRESSED candidate loses the
+ * deadband to an ACTIVE peer (=> P_s > 24).
+ *
+ * Hosted-only: bare-metal omits the whole fold (the select_expert seam has no
+ * #else), so the crown .text stays byte-identical. */
+#ifndef MOE_STATE_PENALTY
+#define MOE_STATE_PENALTY  70
+#endif
+static INT eff_state_penalty(INT st)
+{
+    switch (st) {
+    case WSTATE_STRESSED:    return MOE_STATE_PENALTY;  /* +load = shed off it    */
+    case WSTATE_ACTIVE:      return 0;                  /* healthy worker         */
+    case WSTATE_HIBERNATING: return 0;                  /* reserved L2: no relief */
+    case WSTATE_DYING:       return 0;                  /* reserved L3: no relief */
+    default:                 return 0;                  /* unknown(-1) => ACTIVE  */
+    }
+}
+
+/* The ONE STATE fold — shared by select_expert (production) AND
+ * moe_support_route_test (cert) so the cert exercises the real fold, not a
+ * re-implementation. Normally rides eff_pressure (LOAD/avoid). Under
+ * -DSURVIVAL_L1_SIGN_FLIP it is routed onto the threat/rally term instead — the
+ * literal G20 inversion — so a STRESSED node GAINS work and [support-route] goes
+ * RED. Because BOTH the production seam and the cert call this, the falsifier has
+ * teeth on the cert path. */
+static void moe_state_fold(MOE_CAND *c, INT st)
+{
+#ifdef SURVIVAL_L1_SIGN_FLIP
+    c->threat       += eff_state_penalty(st);   /* falsifier: rally axis (WRONG) */
+#else
+    c->eff_pressure += eff_state_penalty(st);   /* L1: load axis (correct, G20)  */
+#endif
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 /* utility EWMA を 1 サンプル進める (α=1/MOE_UTIL_EWMA_DIV; swim.c の
  * RTT EWMA と同形)。整数除算で歩幅が 0 に潰れて収束しなくなるのを防ぐ
  * ため、差が残っている限り最低 1 は動かす。 */
@@ -389,6 +440,16 @@ static UB select_expert(UB gate_class)
         cand[ncand].threat       = is_self ? (INT)reflex_threat_level()
                                            : eff_threat(n);
         cand[ncand].same_region  = is_self ? 1 : (region_is_member(n) ? 1 : 0);
+#ifdef _TK_HOSTED_LIBC_
+        /* survival-loop L1 (§5/§6-L1/§10): fold STATE-unhealth into the LOAD axis
+         * as virtual pressure. Self reads its own FSM (world_self_state); a peer
+         * reads its gossiped state (world_peer_state). Reached only AFTER the
+         * `me >= DNODE_MAX` early return above, so a STRESSED self with no node id
+         * can NOT self-sabotage the forced-local fallback. Bare-metal omits this
+         * (no #else) -> crown .text byte-identical. */
+        moe_state_fold(&cand[ncand], is_self ? (INT)world_self_state()
+                                             : world_peer_state(n));
+#endif
         ncand++;
     }
 
@@ -1521,6 +1582,99 @@ static INT st_test_onebrain_accuracy(void)
         mo_puts("[onebrain-accuracy] FAIL\r\n");
     return fails;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* ── survival-loop L1 cert: [support-route] / [support-route-NOT] ──────────────
+ * docs/architecture/survival-loop.md §6-L1 / §10. Drive the PRODUCTION
+ * moe_select_step over M=3 candidates that are EQUAL in acc / RTT / region —
+ * their ONLY difference is STATE — and count picks per candidate over T
+ * decisions, mirroring select_expert's recent_pick decay + MOE_PICK_LOAD
+ * accumulation. The STATE fold uses the SAME moe_state_fold the production seam
+ * uses (no re-implementation), so -DSURVIVAL_L1_SIGN_FLIP flips this path too.
+ *
+ * The SIGN and the no-pile-on are load-bearing, NOT the magnitude (the cert
+ * straddles P_s). states[] gives each candidate's WSTATE; fold_state selects the
+ * CURE arm (apply the fold) vs the BLIND control (no fold). */
+static void moe_l1_herd(const INT *states, int fold_state, UW picks[3], UB gc)
+{
+    const INT M = 3;
+    const UB  acc = 70;          /* all candidates equally capable             */
+    const INT T = 60;
+    /* reset the production reflex state these 3 node ids + gc use. */
+    for (INT n = 0; n < M; n++) {
+        recent_pick[n] = 0;
+        util_ewma[n][gc] = 0;
+        ewma_valid[n][gc] = 0;
+        picks[n] = 0;
+    }
+    UB inc = 0xFF;               /* local incumbent — isolates the global one  */
+    for (INT t = 0; t < T; t++) {
+        MOE_CAND cand[3];
+        /* mirror select_expert: decay recent_pick at the top of each decision. */
+        for (INT n = 0; n < M; n++)
+            recent_pick[n] = recent_pick[n] * MOE_PICK_DECAY_NUM / MOE_PICK_DECAY_DEN;
+        for (INT n = 0; n < M; n++) {
+            cand[n].node_id      = (UB)n;
+            cand[n].acc          = acc;
+            cand[n].rtt          = 0;
+            cand[n].eff_pressure = (INT)recent_pick[n];   /* base load 0 + self  */
+            cand[n].threat       = 0;
+            cand[n].same_region  = 0;
+            cand[n].util_out     = 0;
+            cand[n].ewma_out     = 0;
+            if (fold_state) moe_state_fold(&cand[n], states[n]);
+        }
+        UB pick_i = moe_select_step(cand, (UB)M, gc, &inc);
+        UB pick_n = (pick_i < M) ? cand[pick_i].node_id : 0xFF;
+        if (pick_n < M) picks[pick_n]++;
+    }
+}
+
+INT moe_support_route_test(void)
+{
+    INT fail = 0;
+    const UB gc = 0;
+    /* node0 STRESSED, node1/node2 ACTIVE — equal in every other dimension. */
+    const INT states[3] = { WSTATE_STRESSED, WSTATE_ACTIVE, WSTATE_ACTIVE };
+    UW cure[3], blind[3];
+
+    mo_puts("[survival-l1] STATE-aware support routing (production moe_select_step)\r\n");
+
+    moe_l1_herd(states, 1, cure,  gc);   /* CURE : fold STATE into routing      */
+    moe_l1_herd(states, 0, blind, gc);   /* BLIND: control, no STATE fold       */
+    moe_init();                          /* tidy the reflex state the herds used */
+
+    UW picks_stressed_cure  = cure[0];
+    UW picks_active_cure    = cure[1] + cure[2];
+    UW picks_stressed_blind = blind[0];
+
+    mo_puts("[support-route] node0=STRESSED node1,2=ACTIVE, 60 decisions\r\n");
+    mo_puts("[support-route]   cure: stressed="); mo_putdec(picks_stressed_cure);
+    mo_puts(" active(1+2)="); mo_putdec(picks_active_cure);
+    mo_puts("  blind: stressed="); mo_putdec(picks_stressed_blind);
+    mo_puts("\r\n");
+
+    int sign_ok     = (picks_stressed_cure < picks_active_cure);
+    int nopileon_ok = (picks_stressed_cure <= picks_stressed_blind);
+    if (sign_ok && nopileon_ok) {
+        mo_puts("[support-route] PASS (work sheds OFF the STRESSED node toward"
+                " ACTIVE peers; no pile-on)\r\n");
+    } else {
+        if (!sign_ok)
+            mo_puts("[support-route] FAIL stressed node not avoided (wrong sign)\r\n");
+        if (!nopileon_ok)
+            mo_puts("[support-route] FAIL stressed node GAINED work vs blind"
+                    " (G20 inversion)\r\n");
+        mo_puts("[support-route] FAIL\r\n");
+        fail = 1;
+    }
+#ifdef SURVIVAL_L1_SIGN_FLIP
+    mo_puts("[support-route-NOT] ARMED: penalty routed onto the threat/rally term"
+            " — the STRESSED node must GAIN work above (RED)\r\n");
+#endif
+    return fail;
+}
+#endif /* _TK_HOSTED_LIBC_ */
 
 /* 公開エントリ: §7/§8/§2 性質テスト + 本丸 ONE BRAIN テストを順に走らせ、
  * 合計 fail 数を返す。shell `moe test` から呼ばれ、CI は各 PASS 行を grep。 */
