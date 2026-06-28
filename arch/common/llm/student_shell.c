@@ -274,6 +274,50 @@ static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs) 
 #define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
 #define ST_DMN_LR      3e-3f
 
+/* ---------------------------------------------------------------------------
+ * COOPERATIVE-YIELD cursor (docs/architecture/cooperative-yield-plan.md).
+ *
+ * The DMN consolidation batch (ST_DMN_ROUNDS * train_windows complete
+ * forward/backward/adam triples) used to run ENTIRELY inside one
+ * student_dmn_consolidate() call. On the single-threaded cooperative Linux
+ * port that call never re-enters the kernel, so it is NON-PREEMPTIBLE and
+ * starves the node's shell/SWIM/net/mind-ask/pfs-serve while it "dreams"
+ * (the 27/41/42/32 live-3node failures: kill a peer, ask a dreaming survivor
+ * to think).
+ *
+ * Fix = BOUNDED WHOLE-PASS SCHEDULING: run at most ST_DMN_PASS_BUDGET COMPLETE
+ * triples per call, checkpoint a flat cursor, and RETURN — dmn_task's existing
+ * `tk_dly_tsk(DMN_PULSE_MS)` loop is the yield, so every other task runs each
+ * pulse. The next call resumes the remaining passes. This is BYTE-IDENTICAL to
+ * the all-at-once run (the determinism crown): the update list U = [(r,w)] is a
+ * FIXED, ORDERED sequence; slicing changes only WHERE we pause BETWEEN list
+ * elements, never the order, the operands, or any per-pass reduction. No FP
+ * reassociation, no mid-pass yield. Adam state lives inside st_model and
+ * persists across calls; the corpus is snapshotted at batch start (no mid-batch
+ * cradle re-pull). A writer that replaces g_student aborts the partial batch
+ * (student_consol_abort) first — a partial state is a valid under-trained
+ * state, and the next tick starts a fresh batch.
+ *
+ * K (ST_DMN_PASS_BUDGET): per the plan, target ~<=50ms of compute per call
+ * against the 1000ms DMN_PULSE_MS cadence. The M-tier baby's
+ * forward+backward+adam triple measures a few ms on a host core (see the
+ * [yield] cert's printed single-triple timing), so K=8 lands comfortably under
+ * the budget while draining the batch in a bounded number of pulses.
+ * ------------------------------------------------------------------------- */
+#ifndef ST_DMN_PASS_BUDGET
+#define ST_DMN_PASS_BUDGET 8   /* K: complete triples per consolidate() call */
+#endif
+
+static int   g_consol_active    = 0;  /* 1 = a sliced batch is draining        */
+static int   g_consol_idx       = 0;  /* next flat index into U (0..total)     */
+static int   g_consol_total      = 0; /* ST_DMN_ROUNDS*trainw, snapshot        */
+static int   g_consol_seqlen    = 0;  /* batch plan snapshot (see batch start) */
+static int   g_consol_trainw    = 0;
+static int   g_consol_rounds    = 0;
+static float g_consol_lr        = 0.0f;
+static int   g_consol_train_end = 0;  /* held-out boundary snapshot            */
+static int   g_consol_heldw     = 0;  /* held-out window count snapshot        */
+
 #define STUDENT_SEED 0x0BABEu          /* same seed distill_proof uses         */
 
 /* corpus windowing (identical math to distill_proof.c).
@@ -338,6 +382,53 @@ static void sleep_rounds(st_model *m, int seqlen, int train_windows,
     }
     free(logits);
 }
+
+/* Resumable form of sleep_rounds for the cooperative-yield DMN path: run the
+ * passes at flat indices [start, min(start+budget, total)) and return the new
+ * cursor. The flat index i maps to round r = i / train_windows, window
+ * w = i % train_windows — EXACTLY the nesting order of sleep_rounds' for(r)for(w)
+ * above (round only counts the pass; the pass content depends solely on w and
+ * lr), so the update list is byte-identical whether run all-at-once or in
+ * K-sized chunks across many pulses. Each pass is the SAME
+ * zero_grad/forward/backward/adam triple; no cross-call buffer state beyond the
+ * model (logits is malloc/free'd per call as before). An OOM returns `start`
+ * unchanged (no progress this tick; the next tick retries). budget<=0 means "run
+ * to the end" (used by the human callers via sleep_rounds, and by the
+ * -DYIELD_DISABLE falsifier). */
+static int sleep_rounds_resume(st_model *m, int seqlen, int train_windows,
+                               int rounds, float lr, int start, int budget)
+{
+    int total = rounds * train_windows;
+    if (start < 0) start = 0;
+    if (start >= total) return total;
+    int end = (budget > 0) ? (start + budget) : total;
+    if (end > total) end = total;
+
+    uint8_t buf[ST_MAXSEQ];
+    float *logits = (float *)malloc((size_t)seqlen * ST_VOCAB * sizeof(float));
+    if (!logits) return start;             /* OOM: no progress, retry next tick */
+    for (int i = start; i < end; i++) {
+        int w = i % train_windows;
+        window(buf, w * seqlen, seqlen);
+        st_zero_grad(m);
+        st_forward(m, buf, seqlen, logits);
+        st_backward(m, buf, seqlen);
+        st_adam_step(m, lr);
+    }
+    free(logits);
+    return end;
+}
+
+/* Observability + the writer-safety seam for the sliced DMN batch (above).
+ * student_consol_busy() reports whether a sliced consolidation is mid-flight;
+ * student_consol_abort() drops a partial batch (resets the cursor so the next
+ * DMN tick starts clean). EVERY path that replaces or mutates g_student calls
+ * abort first — aborting is safe because every applied st_adam_step left the
+ * model in a valid (merely under-trained) state and we only ever pause at a
+ * triple boundary, so no pass is half-applied. Not referenced by bare-metal /
+ * arch-common code (the call site dmn.c is unchanged), so no stub is needed. */
+int student_consol_busy(void)  { return g_consol_active; }
+void student_consol_abort(void) { g_consol_active = 0; g_consol_idx = 0; }
 
 /* ---------------------------------------------------------------------------
  * Durable save / load of the resident baby.
@@ -448,6 +539,12 @@ static int student_ensure(emit_fn emit)
      * tier's forward hash is pinned+unmoved (S/M/L), and st_init_device is a
      * HOSTED-ONLY config/alloc event that adds no math to st_forward and never
      * touches the R3 crown. */
+    /* Birth/restore REPLACES g_student. Abort any in-flight sliced consolidation
+     * first so a partial batch's cursor cannot resume onto fresh weights
+     * (cooperative-yield-plan.md §2.2). In practice student_ensure only runs the
+     * init below when !g_have_student (so no batch can be active yet), but the
+     * abort makes the writer-safety invariant hold for EVERY g_student writer. */
+    student_consol_abort();
     if (st_init_device(&g_student, STUDENT_SEED) != ST_OK) {
         if (emit) emit("[baby] st_init_device OOM (even S tier did not fit)\r\n");
         return -1;
@@ -565,22 +662,61 @@ int student_dmn_consolidate(void)
         if (student_ensure(0) != 0) return 0;     /* arena now; quiet on the tick */
     }
 
-    /* T-fix-b: pull a teacher's mesh-delivered lesson into the ring (if any)
-     * BEFORE windowing, so the sleep consolidates the LESSON when one arrived
-     * (else the fixture). NO-OP-safe: no relay / no beacon -> ring stays empty
-     * -> window() reads the fixture (the no-op contract). Gated inside the
-     * transport by g_cradle_enabled + region_teacher(). */
-    cradle_poll_and_pull();
+    /* COOPERATIVE-YIELD batch state machine (cooperative-yield-plan.md §2.2):
+     * start a batch on the first call (snapshot the plan + pull the lesson),
+     * then run <=K complete passes per call and RETURN while it drains. The
+     * dmn_task tk_dly_tsk loop is the yield between calls, so the node serves
+     * its shell/net/mind-ask every pulse instead of dreaming non-preemptibly. */
+    if (!g_consol_active) {
+        /* T-fix-b: pull a teacher's mesh-delivered lesson into the ring (if
+         * any) BEFORE windowing, so the sleep consolidates the LESSON when one
+         * arrived (else the fixture). Pulled ONCE, at batch start, so the corpus
+         * is frozen for the whole sliced batch (byte-identity, plan §3.3): a
+         * lesson arriving mid-batch waits one batch. NO-OP-safe: no relay / no
+         * beacon -> ring stays empty -> window() reads the fixture (the no-op
+         * contract). Gated inside the transport by g_cradle_enabled +
+         * region_teacher(). */
+        cradle_poll_and_pull();
 
-    /* the held-out split tracks the LIVE corpus source (lesson ring or
-     * fixture) — exactly what the [cradle-teach] cert computes train_end from. */
-    int corpus_n = cradle_corpus_len();
-    int total    = corpus_n / ST_DMN_SEQLEN;
-    int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
-    int heldw    = total - trainw; if (heldw < 1) heldw = 1;
-    int train_end = trainw * ST_DMN_SEQLEN;
+        /* the held-out split tracks the LIVE corpus source (lesson ring or
+         * fixture) — exactly what the [cradle-teach] cert computes train_end
+         * from. Snapshotted into the cursor for the whole batch. */
+        int corpus_n = cradle_corpus_len();
+        int total    = corpus_n / ST_DMN_SEQLEN;
+        int trainw   = total * 3 / 4; if (trainw < 2) trainw = 2;
+        int heldw    = total - trainw; if (heldw < 1) heldw = 1;
 
-    sleep_rounds(&g_student, ST_DMN_SEQLEN, trainw, ST_DMN_ROUNDS, ST_DMN_LR);
+        g_consol_seqlen    = ST_DMN_SEQLEN;
+        g_consol_trainw    = trainw;
+        g_consol_rounds    = ST_DMN_ROUNDS;
+        g_consol_lr        = ST_DMN_LR;
+        g_consol_train_end = trainw * ST_DMN_SEQLEN;
+        g_consol_heldw     = heldw;
+        g_consol_total     = ST_DMN_ROUNDS * trainw;
+        g_consol_idx       = 0;
+        g_consol_active    = 1;
+    }
+
+#ifdef YIELD_DISABLE
+    /* FALSIFIER: run the WHOLE batch in this call (today's stalling behaviour).
+     * The [yield] cert's per-call bound then goes RED, and a live node stays
+     * non-responsive while it dreams — proof the slicing has teeth. */
+    int budget = g_consol_total - g_consol_idx;
+#else
+    int budget = ST_DMN_PASS_BUDGET;
+#endif
+    g_consol_idx = sleep_rounds_resume(&g_student, g_consol_seqlen,
+                                       g_consol_trainw, g_consol_rounds,
+                                       g_consol_lr, g_consol_idx, budget);
+
+    if (g_consol_idx < g_consol_total)
+        return 0;   /* batch still draining: yield (no persist, no sleep-line) */
+
+    /* batch COMPLETE — fall through to persist ONCE and return 1, so dmn.c
+     * emits exactly one sleep-line + one EV_CONSOLIDATE per consolidation. */
+    int heldw     = g_consol_heldw;
+    int train_end = g_consol_train_end;
+    g_consol_active = 0;
 
     /* SKIP-WRITE-WHEN-NOT-WORTH-IT (wave-student-throttle): persist the
      * post-sleep state ONLY when the baby actually improved meaningfully since
@@ -975,6 +1111,10 @@ int student_shell_cmd(const char *args, emit_fn emit)
         long blen = st_save(&peer, blob, cap);
         const void *peers[1] = { blob };
         size_t lens[1] = { (size_t)blen };
+        /* st_merge_cohort MUTATES g_student in place — drop any in-flight sliced
+         * DMN batch so its cursor cannot resume onto post-merge weights
+         * (cooperative-yield-plan.md §2.2 writer guard). */
+        student_consol_abort();
         int acc = st_merge_cohort(&g_student, peers, lens, 1);
         float post = heldout_loss(&g_student, sl, te, hw);
         free(blob); st_free(&peer);
@@ -1042,6 +1182,10 @@ int student_shell_cmd(const char *args, emit_fn emit)
              "[baby] distilling %d round(s) lr=%.4f from teacher fixture ...\r\n",
              rounds, (double)lr);
     emit(line);
+    /* An explicit human retrain MUTATES g_student — drop any in-flight sliced
+     * DMN batch so its cursor cannot resume onto these human-trained weights
+     * (cooperative-yield-plan.md §2.2 writer guard). */
+    student_consol_abort();
     sleep_rounds(&g_student, seqlen, trainw, rounds, lr);
 
     float post = heldout_loss(&g_student, seqlen, train_end, heldw);

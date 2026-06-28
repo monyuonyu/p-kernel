@@ -1080,6 +1080,11 @@ jobs:
         run: bash tests/run_autofallback.sh
       - name: autopromote cert (measured-fitness supernode auto-promotion — N-2d)
         run: bash tests/run_autopromote.sh
+      - name: cooperative-yield cert (DMN sleep must not starve the node; slicing byte-identical)
+        # docs/architecture/cooperative-yield-plan.md. Builds the cure + the
+        # -DYIELD_DISABLE falsifier and asserts cure-PASS + falsifier-RED, so a
+        # toothless (non-slicing) implementation is caught. Native gcc + -lm only.
+        run: bash tests/llm/run_yield.sh
 
   sanitizer-build:
     # サニタイザ build (ASan/UBSan, 助言). ADVISORY until clean; promote to
