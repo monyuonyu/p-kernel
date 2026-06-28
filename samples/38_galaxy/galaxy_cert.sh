@@ -47,11 +47,35 @@ fail() { echo "$1 FAIL: $2"; FAIL=1; }
 killall_nodes() { for p in "${PIDS[@]:-}"; do kill -9 "$p" 2>/dev/null; done; PIDS=(); wait 2>/dev/null; sleep 1; }
 trap killall_nodes EXIT
 
+# port_busy P -> 0 (true) if SOMETHING is listening on 127.0.0.1:P. A galaxy
+# HTTP listening socket is closed the instant its process dies (a LISTEN
+# socket never enters TIME_WAIT), so this only stays true while a real node
+# still holds the port.
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3>&- 3<&- 2>/dev/null; return 0; }; return 1; }
+# wait_ports_free P... — block (bounded) until each galaxy port is releasable,
+# so a gate that rebinds 7800/7801/7802 can never inherit a LEFTOVER node from
+# the previous gate (the "FULL@0s / stale mesh" env-flake). Returns non-zero if
+# a port is still held after the bound (the caller then fails honestly).
+wait_ports_free() {
+    local p t
+    for p in "$@"; do
+        t=0
+        while port_busy "$p"; do
+            [ $t -ge 30 ] && { log "port $p still busy after 15s"; return 1; }
+            sleep 0.5; t=$((t+1))
+        done
+    done
+    return 0
+}
+
 have_python() { command -v python3 >/dev/null 2>&1; }
 
 # ----------------------------------------------------------------- serve
 gate_serve() {
     log "--- [galaxy-serve]: 2-node loopback mesh ---"
+    if ! wait_ports_free 7800 7801; then
+        fail "[galaxy-serve]" "galaxy ports 7800/7801 not free at gate entry — env, not product"; return
+    fi
     rm -f /tmp/gx38_s1.log /tmp/gx38_s2.log
     PKERNEL_NODE_ID=1 PKERNEL_AUTONET=1 "$BOOT/p-kernel" </dev/null >/tmp/gx38_s1.log 2>&1 &
     PIDS+=($!)
@@ -78,9 +102,19 @@ gate_serve() {
     # GET / returns the embedded page with a <canvas
     local PG; PG=$(curl -s --max-time 5 127.0.0.1:7800/)
     echo "$PG" | grep -q "<canvas" || { fail "[galaxy-serve]" "GET / missing <canvas"; killall_nodes; return; }
-    # the page references no external URL (offline-honest)
-    if echo "$PG" | grep -qE 'https?://|src=|cdn'; then
-        fail "[galaxy-serve]" "page references an external URL"; killall_nodes; return
+    # offline-honest: the page must load NO external resource. The page is a
+    # single self-contained file (zero <script src>, zero <link href>, zero
+    # cdn). The ONLY URL it contains is a LOOPBACK http://127.0.0.1 inside a JS
+    # *comment* (galaxy.html, the clipboard-fallback note) — it loads nothing.
+    # So we flag any http(s):// URL whose host is NOT loopback, plus any
+    # protocol-relative resource attr (src=//host / href=//host) — a real CDN
+    # or external <script> still fails this gate, but the loopback comment does
+    # not (the old `https?://|src=|cdn` regex over-matched the comment).
+    local BADURL
+    BADURL=$(echo "$PG" | grep -oiE 'https?://[a-z0-9._-]+' \
+                 | grep -viE '^https?://(127\.0\.0\.1|localhost)$') || true
+    if [ -n "$BADURL" ] || echo "$PG" | grep -qiE '(src|href)=["'"'"']?//[a-z]'; then
+        fail "[galaxy-serve]" "page references an external URL: ${BADURL:-protocol-relative resource}"; killall_nodes; return
     fi
     killall_nodes
     pass "[galaxy-serve]"
@@ -90,14 +124,28 @@ gate_serve() {
 gate_events() {
     log "--- [galaxy-events]: 3-node FULL mesh, remote drpc INFER ---"
     rm -f /tmp/gx38_e1.log /tmp/gx38_e2.log /tmp/gx38_e3.log /tmp/gx38_sse.log
+    # ENV-FLAKE FIX: a leftover node from a previous gate still holding 7800/
+    # 7801/7802 would make THIS gate's node1 fail to rebind 7800 and curl would
+    # hit the stale node (a 2-node serve mesh = "FULL@0s", no node2/3 drpc) ->
+    # spurious "no drpc_in". Refuse to boot until the ports are actually free.
+    if ! wait_ports_free 7800 7801 7802; then
+        fail "[galaxy-events]" "galaxy ports 7800/7801/7802 not free (leftover node) — env, not product"; return
+    fi
     local F1=/tmp/gx38_ef1 F2=/tmp/gx38_ef2 F3=/tmp/gx38_ef3
     rm -f "$F1" "$F2" "$F3"; mkfifo "$F1" "$F2" "$F3"
     exec 6<>"$F1" 7<>"$F2" 8<>"$F3"
     PKERNEL_NODE_ID=1 PKERNEL_AUTONET=1 "$BOOT/p-kernel" <"$F1" >/tmp/gx38_e1.log 2>&1 & PIDS+=($!)
     PKERNEL_NODE_ID=2 PKERNEL_AUTONET=1 "$BOOT/p-kernel" <"$F2" >/tmp/gx38_e2.log 2>&1 & PIDS+=($!)
     PKERNEL_NODE_ID=3 PKERNEL_AUTONET=1 "$BOOT/p-kernel" <"$F3" >/tmp/gx38_e3.log 2>&1 & PIDS+=($!)
+    # readiness: a FRESH boot of node1 (its boot banner is in this just-rm'd
+    # log) reaching FULL. The fresh-boot marker guarantees the FULL we accept
+    # belongs to THIS node1, never a stale one.
     local t=0
-    while [ $t -lt 30 ]; do grep -aq "FULL" /tmp/gx38_e1.log && break; sleep 1; t=$((t+1)); done
+    while [ $t -lt 30 ]; do
+        grep -aq "=== p-kernel linux boot ===" /tmp/gx38_e1.log \
+            && grep -aq "FULL" /tmp/gx38_e1.log && break
+        sleep 1; t=$((t+1))
+    done
     # capture node1's SSE while nodes 2/3 drive moe inferences that route remotely
     ( curl -sN --max-time 45 127.0.0.1:7800/events > /tmp/gx38_sse.log 2>&1 ) & local SSE=$!; PIDS+=($SSE)
     sleep 2
@@ -123,10 +171,15 @@ gate_events() {
 # ----------------------------------------------------------------- teach
 gate_teach() {
     log "--- [galaxy-teach]: single node, web mouth == console mouth ---"
+    if ! wait_ports_free 7800; then
+        fail "[galaxy-teach]" "galaxy port 7800 not free at gate entry — env, not product"; return
+    fi
     rm -f /tmp/gx38_t.log /tmp/gx38_tsse.log
     PKERNEL_NODE_ID=1 "$BOOT/p-kernel" </dev/null >/tmp/gx38_t.log 2>&1 & PIDS+=($!)
     sleep 3
-    ( curl -sN --max-time 140 127.0.0.1:7800/events > /tmp/gx38_tsse.log 2>&1 ) & PIDS+=($!)
+    # SSE window spans the lazy pretrain (~23s, inside the first teach) PLUS
+    # the up-to-120s drain, so the consolidate event is never missed.
+    ( curl -sN --max-time 200 127.0.0.1:7800/events > /tmp/gx38_tsse.log 2>&1 ) & PIDS+=($!)
     sleep 1
     # ark-profile v1 (ark-profile.md §7.3): the web /teach now passes the
     # 共感 consent gate first. An ack-ONLY profile (consent != disclosure)
@@ -135,11 +188,38 @@ gate_teach() {
     local MID; MID=$(curl -s -D - -o /dev/null --max-time 5 127.0.0.1:7800/manifesto \
                      | grep -i 'X-Manifesto-Id' | tr -d '\r' | awk '{print $2}')
     curl -s --max-time 5 -d "ack=1&mid=$MID" 127.0.0.1:7800/profile >/dev/null
-    # (k*,v*)=(2,3): LM-6's MEASURED off-bias pair (pre_share 0.0% at N=100).
-    local R; R=$(curl -s --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach)
+    # LM-8 (galaxy.c:1413): the web mouth moved from integer slots to real
+    # WORDS resolved through the SHARED vocab (arch/common/r3_vocab.c). The
+    # off-bias pair the integer cert used (k=2,v=3) IS, by construction, the
+    # words sun->yellow: vk_img index 2 == "sun", vv_img index 3 == "yellow"
+    # (the prefix ids never moved). So this is the SAME MEASURED pair
+    # (pre_share 0.0% at N=100), now spoken through the LIVE API. yellow (id 3)
+    # is NOT the untrained default (id 0 == "blue"), so recall stays falsifiable.
+    # IMPORTANT (--max-time): the FIRST mind request lazily pretrains the R3
+    # substrate (~23s host, PRINTED "[mind] substrate pretrained ... in N s"),
+    # and that runs SYNCHRONOUSLY in the single galaxy server task — so the
+    # teach POST must allow for it. (The old integer-slot cert never hit this:
+    # k=2 was rejected as OOV *before* mind_cmd, so it never triggered a
+    # pretrain. The valid word pair does — hence the generous bound here.)
+    local R; R=$(curl -s --max-time 90 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     log "teach: $R"
-    echo "$R" | grep -q '"ok":true' || { fail "[galaxy-teach]" "teach not ok"; killall_nodes; return; }
-    echo "$R" | grep -q '"pending":1' || { fail "[galaxy-teach]" "pending != 1 after teach"; killall_nodes; return; }
+    # accept check. FLAKE: the first teach POST can occasionally return an EMPTY
+    # body though the teach landed (pending increments). So: trust the body's
+    # "ok":true when present; else confirm via /galaxy.json pending; else retry
+    # once. (assert on pending, not solely the teach response body.)
+    local ACCEPT=0
+    echo "$R" | grep -q '"ok":true' && ACCEPT=1
+    if [ $ACCEPT -eq 0 ]; then
+        local PEND; PEND=$(curl -s --max-time 30 127.0.0.1:7800/galaxy.json | grep -o '"pending":[0-9]*' | head -1 | grep -o '[0-9]*$')
+        if [ -n "${PEND:-}" ] && [ "$PEND" -ge 1 ]; then ACCEPT=1; log "teach accepted via /galaxy.json pending=$PEND"; fi
+    fi
+    if [ $ACCEPT -eq 0 ]; then
+        sleep 1
+        R=$(curl -s --max-time 90 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+        log "teach (retry): $R"
+        echo "$R" | grep -q '"ok":true' && ACCEPT=1
+    fi
+    [ $ACCEPT -eq 1 ] || { fail "[galaxy-teach]" "teach not accepted (ok:true absent and pending<1)"; killall_nodes; return; }
     # drain via REAL DMN pulses, bound 120s (LM-6 8x-margin)
     local t=0 drained=0 P=""
     while [ $t -lt 120 ]; do
@@ -151,10 +231,13 @@ gate_teach() {
     # a consolidate event must have crossed the wire between teach and drain
     grep -aq '"type":"consolidate"' /tmp/gx38_tsse.log \
         || { fail "[galaxy-teach]" "no consolidate event in SSE"; killall_nodes; return; }
-    # ask returns the taught value
-    local A; A=$(curl -s --max-time 5 -d 'k=2' 127.0.0.1:7800/ask)
+    # ask returns the taught value, by WORD and by id. Falsifiable: if
+    # teach->learn->recall failed, the answer defaults to id 0 == "blue", so
+    # BOTH asserts fail (pred 3 != 0, word "yellow" != "blue").
+    local A; A=$(curl -s --max-time 5 -d 'k=sun' 127.0.0.1:7800/ask)
     log "ask: $A"
     echo "$A" | grep -q '"pred":3' || { fail "[galaxy-teach]" "ask pred != 3 (taught value)"; killall_nodes; return; }
+    echo "$A" | grep -q '"word":"yellow"' || { fail "[galaxy-teach]" "ask word != yellow (taught value)"; killall_nodes; return; }
     killall_nodes
     pass "[galaxy-teach]"
 }

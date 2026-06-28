@@ -60,7 +60,9 @@ jobs:
   ump-x86_64:
     name: "UMP x86_64 (ビルド + 自己テスト)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 -> 20: the four LLM core host certs (tests/llm/, wired below) add
+    # ~2.5min, run_student.sh being the slowest (~90s).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -409,6 +411,31 @@ jobs:
           grep -aF '[persist-identity] PASS'   persist_cert.log
           grep -aF '[persist-mind] PASS'       persist_cert.log
           grep -aF '[persist-mind-stale] PASS' persist_cert.log
+
+      # LLM core host certs (tests/llm/). Each is deterministic and self-
+      # contained — the SYNTHETIC core runs with NO gguf model file and NO
+      # network. They build their own harness with cc (the x86_64 runner's
+      # gcc, installed above) and assert their own PASS. These existed but no
+      # CI job ran them; each is wired here as a REAL gate (its PASS asserted).
+      #   run.sh           — GGUF loader synthetic round-trip (arch/common/llm/
+      #                      gguf.c): header / metadata KVs / tensor table exact.
+      #   run_qmatmul.sh   — quantized matmul vs a from-scratch oracle (Q8_0 /
+      #                      Q4_0 fp16 decode), max rel err under tol 1e-3.
+      #   run_tokenizer.sh — tokenizer sanity (known ids) + roundtrip + a
+      #                      text->ids->forward GEN end-to-end.
+      #   run_student.sh   — NS-1 student DMN distill: held-out loss measurably
+      #                      drops AND a random-byte-teacher control proves the
+      #                      gain is grounded (~90s; the slowest of the four).
+      - name: LLM core host certs (gguf / qmatmul / tokenizer / student)
+        run: |
+          tests/llm/run.sh           | tee llm_gguf.log
+          grep -aF 'RESULT: PASS' llm_gguf.log
+          tests/llm/run_qmatmul.sh   | tee llm_qmatmul.log
+          grep -aF '[result] PASS' llm_qmatmul.log
+          tests/llm/run_tokenizer.sh | tee llm_tok.log
+          grep -aF '[result] PASS' llm_tok.log
+          tests/llm/run_student.sh   | tee llm_student.log
+          grep -aF '[result] PASS' llm_student.log
 
       - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
         run: |
