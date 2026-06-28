@@ -17,7 +17,8 @@
 #                     SURVIVES a restart on the same PKERNEL_PFS_DIR; an
 #                     edit appends seq+1 and `pfs log self/prof` length 2.
 #   [ark-provenance]  a taught fact's provenance resolves to the profile:
-#                     web teach -> ARK_PROV src=1 + profile_head==profile id;
+#                     web teach (vocab WORDS, LM-8) -> ARK_PROV src=1 +
+#                     profile_head==profile id;
 #                     a SHELL teach -> newest record src=0. One write site,
 #                     both mouths (§5).
 #
@@ -70,7 +71,7 @@ gate_consent() {
 
     # (1) teach BEFORE any profile -> 403 + "manifesto"
     local R code
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach)
+    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "403" ] || { fail "[ark-consent]" "teach before profile not 403 ($code)"; killall_nodes; rm -rf "$D"; return; }
     echo "$R" | grep -q 'manifesto' || { fail "[ark-consent]" "403 body missing 'manifesto'"; killall_nodes; rm -rf "$D"; return; }
@@ -88,7 +89,7 @@ gate_consent() {
     echo "$R" | grep -q '"ok":true' || { fail "[ark-consent]" "ack-only profile not ok ($code)"; killall_nodes; rm -rf "$D"; return; }
 
     # (4) the same teach now -> 200 (consent != disclosure: ack-only unlocks)
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach)
+    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "200" ] || { fail "[ark-consent]" "teach after ack-only not 200 ($code)"; killall_nodes; rm -rf "$D"; return; }
     echo "$R" | grep -q '"ok":true' || { fail "[ark-consent]" "teach after ack not ok"; killall_nodes; rm -rf "$D"; return; }
@@ -103,7 +104,7 @@ gate_consent() {
     R=$(curl -s -w '\n%{http_code}' --max-time 5 -d "ack=1&mid=$WRONG" 127.0.0.1:7800/profile)
     code=$(echo "$R" | tail -1)
     [ "$code" = "409" ] || { fail "[ark-consent]" "wrong mid not 409 ($code)"; killall_nodes; rm -rf "$D2"; return; }
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach)
+    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "403" ] || { fail "[ark-consent]" "teach still gated expected 403 after wrong mid ($code)"; killall_nodes; rm -rf "$D2"; return; }
     killall_nodes; rm -rf "$D2"
@@ -202,8 +203,10 @@ gate_provenance() {
     local R; R=$(curl -s --max-time 5 -d "ack=1&mid=$MID&handle=cert_h" 127.0.0.1:7800/profile)
     local PID; PID=$(echo "$R" | grep -o '"id":"[0-9a-f]\{64\}"' | head -1 | grep -o '[0-9a-f]\{64\}')
 
-    # a WEB teach -> ARK_PROV src=1 (k=2 v=3), profile_head == PID
-    curl -s --max-time 5 -d 'k=2&v=3' 127.0.0.1:7800/teach >/dev/null
+    # a WEB teach -> ARK_PROV src=1 (k=sun v=yellow -> ids 2/3), profile_head == PID
+    # (LM-8 §IX.10: the web mouth carries WORDS resolved via the SHARED vocab —
+    #  sun=key-id 2, yellow=val-id 3; a bare int would be OOV-refused (403).)
+    curl -s --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach >/dev/null
     sleep 1
     printf 'pfs cat self/prov\n' >&5; sleep 2
     python3 - "$PID" <<'PY' || { fail "[ark-provenance]" "web teach prov record wrong"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
