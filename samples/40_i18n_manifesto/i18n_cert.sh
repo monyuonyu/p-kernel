@@ -90,7 +90,7 @@ log "Accept-Language fr-FR -> fr (auto-default)"
 
 # (5) the consent TABLE: teach 403 before, ack with the SPANISH mid unlocks
 #     teach, and the stored manifesto_id IS the Spanish id (honest).
-C1=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d 'k=2&v=3' 127.0.0.1:$PORT/teach)
+C1=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:$PORT/teach)
 [ "$C1" = "403" ] || { fail "teach before consent not 403 ($C1)"; killall_nodes; rm -rf "$D"; exit 1; }
 H=$(mktemp)
 curl -s -D "$H" -o /dev/null --max-time 5 "127.0.0.1:$PORT/manifesto?lang=es" >/dev/null
@@ -98,7 +98,7 @@ ESID=$(hdr_val 'X-Manifesto-Id' "$H"); rm -f "$H"
 PR=$(curl -s -w '\n%{http_code}' --max-time 5 -d "ack=1&mid=$ESID" 127.0.0.1:$PORT/profile)
 PCODE=$(echo "$PR" | tail -1)
 echo "$PR" | grep -q '"ok":true' || { fail "ack with Spanish mid not ok ($PCODE)"; killall_nodes; rm -rf "$D"; exit 1; }
-C2=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d 'k=2&v=3' 127.0.0.1:$PORT/teach)
+C2=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:$PORT/teach)
 [ "$C2" = "200" ] || { fail "teach after Spanish ack not 200 ($C2)"; killall_nodes; rm -rf "$D"; exit 1; }
 PJ=$(curl -s --max-time 5 127.0.0.1:$PORT/profile.json)
 echo "$PJ" | grep -q "\"manifesto_id\":\"$ESID\"" || { fail "stored manifesto_id != Spanish id (consent not per-language)"; killall_nodes; rm -rf "$D"; exit 1; }

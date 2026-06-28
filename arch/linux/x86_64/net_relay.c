@@ -843,12 +843,17 @@ int net_relay_init(void)
      * few seconds of one peer's burst across a compute gap.
      *
      * Hosted-only (arch/linux/, NOT in the bare-metal crown build): a pure
-     * kernel-socket sizing knob, no wire/protocol change. Best-effort — if the
-     * platform caps rmem we keep whatever the kernel granted; never fatal. */
+     * kernel-socket sizing knob, no wire/protocol change. SO_RCVBUFFORCE bypasses
+     * net.core.rmem_max (needs CAP_NET_ADMIN); plain SO_RCVBUF is silently capped
+     * to rmem_max on a host that sets it low. Fall back to plain SO_RCVBUF if FORCE
+     * fails with EPERM (unprivileged run), so it degrades instead of erroring;
+     * never fatal. */
     {
         int rcv = 8 * 1024 * 1024, snd = 1 * 1024 * 1024;
-        (void)setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
-        (void)setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
+        if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUFFORCE, &rcv, sizeof(rcv)) != 0)
+            (void)setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+        if (setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUFFORCE, &snd, sizeof(snd)) != 0)
+            (void)setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
         int got = 0; socklen_t gl = sizeof(got);
         if (getsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &got, &gl) == 0)
             dprintf(2, "[net_relay] SO_RCVBUF = %d bytes (burst-tolerant)\n", got);

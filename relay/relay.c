@@ -986,13 +986,25 @@ int main(int argc, char **argv)
      * point. Match it with a large sndbuf for the forward side.
      *
      * Hosted userspace daemon — NOT bare-metal, so the .text crown is irrelevant
-     * (no crown rebuild). Best-effort: if the platform caps rmem we keep whatever
-     * the kernel granted; never fatal. The getsockopt readback is logged so the
-     * cert can confirm the burst-tolerant buffer is actually in effect. */
+     * (no crown rebuild). plain SO_RCVBUF is SILENTLY CAPPED to net.core.rmem_max
+     * on a host that sets it low (e.g. the ThinkPad runner's default 212992) —
+     * too small to hold the 84KB fold burst, so B never folds. SO_RCVBUFFORCE
+     * bypasses that cap, but ONLY when the process holds CAP_NET_ADMIN.
+     * MEASURED 2026-06-28: the CI runner's Docker container drops CAP_NET_ADMIN
+     * (CapAdd=[], not privileged), so FORCE returns EPERM there and we fall
+     * through to plain SO_RCVBUF — which suffices ONLY because the host's
+     * net.core.rmem_max is raised to 32MB (/etc/sysctl.d/99-pkernel-relay.conf,
+     * seen by the container via --network host). The FORCE attempt still wins on
+     * hosts that DO grant the cap. So both pieces are load-bearing: the FORCE
+     * code here AND the host sysctl. Fall back if FORCE EPERMs so an unprivileged
+     * run degrades instead of erroring; never fatal. The getsockopt readback is
+     * logged so the cert can confirm the full 16MB is actually in effect. */
     {
         int rcv = 16 * 1024 * 1024, snd = 16 * 1024 * 1024;
-        (void)setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
-        (void)setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
+        if (setsockopt(sock, SOL_SOCKET, SO_RCVBUFFORCE, &rcv, sizeof(rcv)) != 0)
+            (void)setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+        if (setsockopt(sock, SOL_SOCKET, SO_SNDBUFFORCE, &snd, sizeof(snd)) != 0)
+            (void)setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
         int got = 0; socklen_t gl = sizeof(got);
         if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &got, &gl) == 0)
             fprintf(stderr, "[relay] SO_RCVBUF = %d bytes (burst-tolerant)\n", got);
