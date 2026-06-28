@@ -28,26 +28,54 @@
 #                  FAILS (RED). Proves the cert has teeth — the axis-divergence
 #                  is what is being certified, not the provisional band values.
 #
-# Both arms run on BOTH host arches (aarch64-hosted native + x86_64-hosted via
-# qemu-x86_64 when present). Exit 0 = [state-axis]/[state-gossip] PASS and the
-# monotone falsifier correctly goes RED.
+# HOST-PORTABLE: each arch runs only when THIS host can build AND run it. An
+# arch whose build toolchain is genuinely absent, or whose foreign binary has
+# no matching qemu-user, prints `SKIP (toolchain/runtime absent)` and is NOT
+# counted as a failure. But an arch whose toolchain IS present and whose build
+# or run then breaks STILL fails — a missing tool is a skip, real breakage is
+# never silently skipped. At least one arch must build+run+certify on any host
+# with a usable toolchain; if EVERY arch skips, the cert exits NON-zero
+# (`[survival-l0] NO ARCH COULD RUN`) rather than report a hollow ALL PASS.
+#
+#   boot/linux        = aarch64-hosted: native `cc` on an aarch64 host, else
+#                       aarch64-linux-gnu-gcc; runs via qemu-aarch64 off-host.
+#   boot/linux_x86_64 = x86_64-hosted:  native `gcc` on an x86_64 host, else
+#                       x86_64-linux-gnu-gcc; runs via qemu-x86_64 off-host.
+#
+# Exit 0 = at least one arch ran and every arch that ran has [state-axis]/
+# [state-gossip] PASS with the monotone falsifier correctly RED.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 FAIL=0
+RAN=0
+
+host_arch() {  # normalise uname -m (arm64 -> aarch64)
+    case "$(uname -m)" in arm64) echo aarch64 ;; *) uname -m ;; esac
+}
 
 run_bin() {  # $1 = binary path -> drive `survival l0` and echo the cert block
-    local bin="$1"
+    local bin="$1" host; host="$(host_arch)"
     # The cert is PURE in-process (no `net`, no relay): disable the galaxy so the
     # run binds NO listening socket (default hosted boot serves 7800+(id-1)).
     # Keeps this cert collision-free with concurrent fleet runs (e.g. 42_one_mind
     # on 7442 / 7800-7802) and is correct hygiene — a cert opens no ports.
     export PKERNEL_GALAXY=0
+    # SYMMETRIC qemu wrapping: a foreign-arch binary runs under the matching
+    # qemu-user; a native binary runs directly. one_arch() has already SKIPped
+    # any arch whose qemu-user is absent, so the native fallbacks below are only
+    # ever reached for a native binary.
     case "$bin" in
         */linux_x86_64/*)
-            if command -v qemu-x86_64 >/dev/null 2>&1 && [ "$(uname -m)" != "x86_64" ]; then
+            if [ "$host" != "x86_64" ] && command -v qemu-x86_64 >/dev/null 2>&1; then
                 printf 'survival l0\nexit\n' | qemu-x86_64 "$bin" 2>/dev/null
+            else
+                printf 'survival l0\nexit\n' | "$bin" 2>/dev/null
+            fi ;;
+        */linux/*)
+            if [ "$host" != "aarch64" ] && command -v qemu-aarch64 >/dev/null 2>&1; then
+                printf 'survival l0\nexit\n' | qemu-aarch64 "$bin" 2>/dev/null
             else
                 printf 'survival l0\nexit\n' | "$bin" 2>/dev/null
             fi ;;
@@ -55,9 +83,29 @@ run_bin() {  # $1 = binary path -> drive `survival l0` and echo the cert block
     esac
 }
 
-one_arch() {  # $1 = boot dir, $2 = human label
-    local boot="$ROOT/$1" label="$2"
+one_arch() {  # $1 = boot dir, $2 = human label, $3 = target arch (aarch64|x86_64)
+    local boot="$ROOT/$1" label="$2" tgt="$3" host; host="$(host_arch)"
     [ -d "$boot" ] || { echo "[$label] SKIP (no $1)"; return; }
+
+    # ---- HOST-PORTABILITY GATE: can THIS host build + run this arch? -------
+    # Mirror the boot/<dir>/Makefile toolchain auto-detection: native compiler
+    # on a same-arch host, the <tgt>-linux-gnu- cross compiler + qemu-<tgt>
+    # otherwise. SKIP (NOT a failure) only when a needed tool is truly absent.
+    local cc run=""
+    if [ "$host" = "$tgt" ]; then
+        case "$tgt" in aarch64) cc=cc ;; *) cc=gcc ;; esac   # mirror the Makefiles
+    else
+        cc="${tgt}-linux-gnu-gcc"
+        run="qemu-${tgt}"
+    fi
+    if ! command -v "$cc" >/dev/null 2>&1; then
+        echo "[$label] SKIP (toolchain/runtime absent)"; return
+    fi
+    if [ -n "$run" ] && ! command -v "$run" >/dev/null 2>&1; then
+        echo "[$label] SKIP (toolchain/runtime absent)"; return
+    fi
+    # Committed to actually building+running this arch -> it counts.
+    RAN=1
 
     # ---- CURE: default build -> [state-axis]/[state-gossip] PASS -----------
     make -C "$boot" clean >/dev/null 2>&1
@@ -89,8 +137,11 @@ one_arch() {  # $1 = boot dir, $2 = human label
     make -C "$boot" clean >/dev/null 2>&1
 }
 
-one_arch "boot/linux"        "aarch64-hosted"
-one_arch "boot/linux_x86_64" "x86_64-hosted"
+one_arch "boot/linux"        "aarch64-hosted" "aarch64"
+one_arch "boot/linux_x86_64" "x86_64-hosted"  "x86_64"
 
+if [ "$RAN" -eq 0 ]; then
+    echo "[survival-l0] NO ARCH COULD RUN (no host toolchain/runtime for any arch)"; exit 2
+fi
 if [ "$FAIL" -eq 0 ]; then echo "[survival-l0] ALL PASS"; exit 0
 else echo "[survival-l0] FAILURES ABOVE"; exit 1; fi

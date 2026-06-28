@@ -384,6 +384,22 @@ jobs:
           timeout 300 samples/40_i18n_manifesto/i18n_cert.sh | tee i18n_cert.log
           grep -aF '[i18n-manifesto] PASS' i18n_cert.log
 
+      # survival-loop L0 STATE bus (docs/architecture/survival-loop.md §6): the
+      # per-node 2-bit ACTIVE/STRESSED axis riding the WORLD_BEACON spare bits,
+      # gossiped peer-to-peer. [state-axis] (LOAD-BEARING: at one fixed scalar
+      # THREAT@hi rallies to ACTIVE while SURPRISE/FAULT/DEGRADE/LATENCY@hi go
+      # STRESSED — axis-dependent, not monotone), [state-gossip] (a committed
+      # state stamped into the firing byte's spare bits round-trips through
+      # world_observe/world_peer_state). The -DSURVIVAL_L0_MONOTONE falsifier
+      # must go RED. The cert is host-portable: on this x86_64 runner the
+      # x86_64-hosted arm builds+runs natively and the aarch64-hosted arm SKIPs
+      # (its cross toolchain/qemu-aarch64 are not installed in this job); at
+      # least one arch runs, so an all-skip hollow-green is impossible.
+      - name: survival-loop L0 STATE bus cert (survival-loop.md §6)
+        run: |
+          timeout 300 tests/host/run_survival_l0.sh | tee survival_l0.log
+          grep -aF '[survival-l0] ALL PASS' survival_l0.log
+
       # SLICE 0 — the durable layer stops lying (persistence.md; gap-ledger
       # DUR-SWALLOW 🔴 + DUR-REFTAB 🟠). [pfs-durswallow]: a failed durable
       # write makes pfs_put return NON-OK and pins the sole in-memory copy
