@@ -68,6 +68,14 @@ static UB   inited;
 /* cert-only deterministic injection (see intero_test_force) */
 static UB   force_on;
 static UB   force_val;
+#ifdef _TK_HOSTED_LIBC_
+/* survival-loop L0 (B): which axis the forced injection pins as dominant. The
+ * legacy intero_test_force resets this to INTERO_AX_THREAT, so the existing
+ * THREAT-pin shortcut is preserved; only the new intero_test_force_axis moves
+ * it. Hosted-only — bare-metal keeps the constant THREAT pin below, so the
+ * bare-metal .text (the crown) is byte-identical. */
+static UB   force_axis = INTERO_AX_THREAT;
+#endif
 
 /* swim.c's exact integer EWMA: 3/4 old + 1/4 sample, +2 rounds. */
 static UW io_ewma_step(UW old, UW sample)
@@ -175,7 +183,11 @@ void intero_sample(void)
 
     if (force_on) {                  /* cert-only deterministic S_n */
         scalar_ewma = force_val;
+#ifdef _TK_HOSTED_LIBC_
+        dom_axis    = force_axis;     /* survival-loop L0 (B): axis-selectable */
+#else
         dom_axis    = INTERO_AX_THREAT;
+#endif
         return;
     }
 
@@ -238,13 +250,33 @@ void intero_init(void)
     dom_axis    = INTERO_AXIS_MAX;
     fault_base  = intero_fault_count_hook();
     inited      = 1;
+#ifdef _TK_HOSTED_LIBC_
+    force_axis  = INTERO_AX_THREAT;  /* survival-loop L0 (B): back to THREAT pin */
+#endif
 }
 
 void intero_test_force(UB on, UB value)
 {
     force_on  = on ? 1 : 0;
     force_val = value;
+#ifdef _TK_HOSTED_LIBC_
+    force_axis = INTERO_AX_THREAT;   /* legacy entry = the THREAT-pin shortcut */
+#endif
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* survival-loop L0 (B) / GAP-⑨: pin the forced S_n AND its dominant axis, so the
+ * [state-axis] cert can drive surprise/fault/degrade/latency as dominant (the
+ * legacy intero_test_force only ever pins THREAT). Release with
+ * intero_test_force(0,0) / intero_init, which restore the THREAT-pin shortcut.
+ * Hosted/cert only — never linked into a bare-metal kernel. */
+void intero_test_force_axis(UB axis, UB scalar)
+{
+    force_on   = 1;
+    force_val  = scalar;
+    force_axis = (axis < INTERO_AXIS_MAX) ? axis : INTERO_AX_THREAT;
+}
+#endif
 
 /* ── production self-test (interoception.md §3.5) ──────────────────────────
  * Drives the SAME production write path (intero_note) per axis with the live

@@ -23,6 +23,10 @@
 #include "reflex.h"   /* CONSERVE: reflex_threat_level() を脅威軸ビーコンへ (G20) */
 #include "protect.h"  /* G28: protect_threat_level() — under-replication で接地 */
 #include "kernel.h"
+#ifdef _TK_HOSTED_LIBC_
+#include "interocept.h"  /* survival-loop L0: the S_n bus drives the STATE FSM   */
+#include "galaxy.h"      /* survival-loop L0: EV_STATE observation hook          */
+#endif
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -228,6 +232,11 @@ static void publish_beacon(void)
     b.region_id   = region_id();                 /* 自 region (局所ビュー)  */
     b.pressure    = compute_pressure();
     b.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
+#ifdef _TK_HOSTED_LIBC_
+    /* survival-loop L0: carry my STATE in the firing byte's spare bits 3-4 so
+     * peers read it via world_peer_state — NO wire change. */
+    b.firing     |= (UB)(world_self_state() << WORLD_STATE_SHIFT);
+#endif
     b.region_size = region_size();
     b.threat      = compute_threat();            /* 脅威軸 (§2 rally) — G20 */
     b.atrisk      = compute_atrisk();
@@ -350,6 +359,163 @@ void world_set_beacon_hold(UW ms)
 }
 
 /* ------------------------------------------------------------------ */
+/* survival-loop L0 — per-node STATE FSM (hosted only)                 */
+/*                                                                     */
+/* docs/architecture/survival-loop.md §1.1 / §6-L0 / §9. Axis-dependent */
+/* (NOT monotone) 2-time-constant hysteresis over the S_n bus:         */
+/*   - INTERO_AX_THREAT @hi  -> target ACTIVE  (the rally/activate arm; */
+/*     "death-imminent -> activate" reflex G33; never STRESSED).        */
+/*   - non-threat axes @hi   -> target STRESSED (shed own activity).    */
+/* Hysteresis: a transition must hold WSTATE_MIN_DWELL consecutive      */
+/* ticks; the enter/exit scalars form a deadband (S_EXIT < S_ENTER).    */
+/* Hosted-only — bare-metal keeps state bits = 0 = ACTIVE, no FSM.      */
+/* ------------------------------------------------------------------ */
+#ifdef _TK_HOSTED_LIBC_
+
+/* PROVISIONAL placeholders — discover from measured S_n curves
+ * (interoception §2.4 / survival-loop §7 headline) — NOT final. The cert injects
+ * hi/lo straddling these so the band values are not load-bearing; only the
+ * axis-divergence is. */
+#define WSTATE_S_ENTER    160   /* ACTIVE->STRESSED needs s >= this (non-threat) */
+#define WSTATE_S_EXIT     100   /* STRESSED->ACTIVE allowed when s <= this       */
+#define WSTATE_MIN_DWELL    3   /* consecutive qualifying ticks per transition   */
+
+static UB self_state = WSTATE_ACTIVE;   /* the committed STATE (WSTATE_*)        */
+static UB self_dwell = 0;               /* qualifying ticks held toward a switch */
+
+UB world_self_state(void) { return self_state; }
+
+UB world_self_state_step(void)
+{
+    UB old = self_state;
+    UB s   = intero_scalar();           /* re-samples live S_n (refreshes axis)  */
+    UB ax  = intero_dominant_axis();
+    (void)ax;
+#ifdef SURVIVAL_L0_MONOTONE
+    /* falsifier: ignore the axis -> high s always pushes toward STRESSED, so the
+     * THREAT axis is no longer special and [state-axis] THREAT goes RED. */
+    UB threat_acute = 0;
+#else
+    UB threat_acute = (UB)(ax == INTERO_AX_THREAT);
+#endif
+
+    if (self_state == WSTATE_ACTIVE) {
+        /* enter STRESSED only on a non-threat axis with sustained high s */
+        if (!threat_acute && s >= WSTATE_S_ENTER) {
+            if (++self_dwell >= WSTATE_MIN_DWELL) { self_state = WSTATE_STRESSED; self_dwell = 0; }
+        } else self_dwell = 0;
+    } else if (self_state == WSTATE_STRESSED) {
+        /* leave to ACTIVE on acute THREAT (rally) or when s falls into the
+         * deadband (s <= S_EXIT < S_ENTER) — held MIN_DWELL ticks. */
+        if (threat_acute || s <= WSTATE_S_EXIT) {
+            if (++self_dwell >= WSTATE_MIN_DWELL) { self_state = WSTATE_ACTIVE; self_dwell = 0; }
+        } else self_dwell = 0;
+    } else {
+        /* HIBERNATING/DYING reserved for L2/L3 — not entered in L0. */
+        self_dwell = 0;
+    }
+
+    if (self_state != old)
+        galaxy_emit(EV_STATE, drpc_my_node, GALAXY_NODE_NONE,
+                    (UH)old, (UH)self_state);
+    return self_state;
+}
+
+/* Read peer `node`'s gossiped STATE from the local world-table (mirrors
+ * world_peer_pressure): bits WORLD_STATE_MASK of the beacon firing byte. A
+ * 12-byte old beacon leaves those bits 0 -> WSTATE_ACTIVE (back-compat). */
+INT world_peer_state(UB node)
+{
+    if (node >= DNODE_MAX || !table[node].valid) return -1;
+    return (INT)((table[node].beacon.firing & WORLD_STATE_MASK) >> WORLD_STATE_SHIFT);
+}
+
+/* ── hosted cert: [state-axis] (load-bearing) + [state-gossip] ─────────────── */
+INT world_survival_l0_test(void)
+{
+    INT fail = 0;
+    const UB hi = 220;                       /* >> S_ENTER (160): straddles band */
+    const INT steps = WSTATE_MIN_DWELL + 2;
+
+    wo_puts("[survival-l0] STATE bus: axis-dependence + gossip (hosted cert)\r\n");
+
+    /* [state-axis]: at ONE identical high scalar, force each axis dominant in
+     * turn. THREAT@hi must stay ACTIVE (rally arm); every other axis@hi must
+     * reach STRESSED. Only the AXIS varies -> divergent destination proves the
+     * response is axis-dependent (NOT monotone). Each sub-test calm-resets to
+     * ACTIVE first (a non-threat axis at s=0, inside the deadband). */
+    struct { UB ax; UB want; const char *nm; } cases[] = {
+        { INTERO_AX_THREAT,   WSTATE_ACTIVE,   "THREAT"   },
+        { INTERO_AX_SURPRISE, WSTATE_STRESSED, "SURPRISE" },
+        { INTERO_AX_FAULT,    WSTATE_STRESSED, "FAULT"    },
+        { INTERO_AX_DEGRADE,  WSTATE_STRESSED, "DEGRADE"  },
+        { INTERO_AX_LATENCY,  WSTATE_STRESSED, "LATENCY"  },
+    };
+    INT axis_fail = 0;
+    for (INT i = 0; i < (INT)(sizeof(cases)/sizeof(cases[0])); i++) {
+        intero_test_force_axis(INTERO_AX_LATENCY, 0);          /* calm -> ACTIVE */
+        for (INT t = 0; t < steps; t++) world_self_state_step();
+        if (world_self_state() != WSTATE_ACTIVE) {
+            wo_puts("[state-axis]   calm-reset did not reach ACTIVE FAIL\r\n");
+            axis_fail = 1;
+        }
+        intero_test_force_axis(cases[i].ax, hi);               /* this axis @hi   */
+        for (INT t = 0; t < steps; t++) world_self_state_step();
+        UB got = world_self_state();
+        wo_puts("[state-axis]   "); wo_puts(cases[i].nm);
+        wo_puts("@hi -> "); wo_putdec(got);
+        if (got == cases[i].want) {
+            wo_puts(cases[i].want == WSTATE_ACTIVE
+                    ? " ACTIVE (rally, not stressed) ok\r\n" : " STRESSED ok\r\n");
+        } else {
+            wo_puts(" want "); wo_putdec(cases[i].want); wo_puts(" FAIL\r\n");
+            axis_fail = 1;
+        }
+    }
+    intero_test_force(0, 0);          /* release the pin (resets force_axis too) */
+    if (axis_fail) { wo_puts("[state-axis] FAIL\r\n"); fail = 1; }
+    else            wo_puts("[state-axis] PASS\r\n");
+
+    /* [state-gossip]: stamp a committed state into the firing byte's spare bits,
+     * observe it as a peer beacon, read it back via world_peer_state; and a
+     * beacon with bits 3-4 = 0 reads as WSTATE_ACTIVE (old-node default). */
+    INT gos_fail = 0;
+    UB peer = (UB)(DNODE_MAX - 1);
+    if (peer == drpc_my_node) peer = (UB)(DNODE_MAX - 2);
+    {
+        WORLD_BEACON b;
+        b.node_id = peer; b.device_type = 0; b.region_id = 0xFF;
+        b.pressure = 0; b.region_size = 0; b.threat = 0; b.atrisk = 0;
+        b.firing = (UB)(WSTATE_STRESSED << WORLD_STATE_SHIFT);   /* stamp STRESSED */
+        b.seq = 1000;
+        world_observe(&b);
+        INT ps = world_peer_state(peer);
+        wo_puts("[state-gossip] stamped STRESSED, peer reads "); wo_putdec((UW)ps);
+        if (ps == WSTATE_STRESSED) wo_puts(" ok\r\n");
+        else { wo_puts(" FAIL\r\n"); gos_fail = 1; }
+
+        b.firing = WORLD_FIRE_BIT(0);    /* fire bit set, state bits 0 = old node */
+        b.seq = 1001;
+        world_observe(&b);
+        ps = world_peer_state(peer);
+        wo_puts("[state-gossip] bits3-4=0 reads "); wo_putdec((UW)ps);
+        if (ps == WSTATE_ACTIVE) wo_puts(" = ACTIVE (back-compat) ok\r\n");
+        else { wo_puts(" want ACTIVE FAIL\r\n"); gos_fail = 1; }
+    }
+    if (gos_fail) { wo_puts("[state-gossip] FAIL\r\n"); fail = 1; }
+    else           wo_puts("[state-gossip] PASS\r\n");
+
+#ifdef SURVIVAL_L0_MONOTONE
+    wo_puts("[state-monotone-NOT] ARMED: FSM forced monotone (axis ignored) — "
+            "[state-axis] THREAT must FAIL above\r\n");
+#endif
+    wo_puts(fail ? "[survival-l0] FAIL\r\n" : "[survival-l0] PASS\r\n");
+    return fail;
+}
+
+#endif /* _TK_HOSTED_LIBC_ */
+
+/* ------------------------------------------------------------------ */
 /* world-task: 発信 + 取り込み (全ノードで対称に走る)                  */
 /* ------------------------------------------------------------------ */
 
@@ -412,6 +578,12 @@ void world_task(INT stacd, void *exinf)
             self.region_id   = region_id();
             self.pressure    = compute_pressure();
             self.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
+#ifdef _TK_HOSTED_LIBC_
+            /* survival-loop L0: the ONE production call site that advances the
+             * STATE FSM (once per world_task tick) and stamps the committed
+             * state into the self-observation. */
+            self.firing     |= (UB)(world_self_state_step() << WORLD_STATE_SHIFT);
+#endif
             self.region_size = region_size();
             self.threat      = compute_threat();
             self.atrisk      = compute_atrisk();

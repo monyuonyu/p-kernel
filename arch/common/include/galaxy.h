@@ -63,6 +63,11 @@
  * with Fisher-weighting" vs a plain pulse. Peer count uses the low 15
  * bits (<=DNODE_MAX, fits). */
 #define EV_MERGE_WEIGHTED  0x8000u   /* bit 15 of b = a Fisher-weighted fold */
+#define EV_STATE        17   /* survival-loop L0 (survival-loop.md §6-L0): my    */
+                             /* node STATE changed. src = me, dst = NONE;        */
+                             /* a = old WSTATE_*, b = new WSTATE_*. ONE site:     */
+                             /* world_self_state_step on a committed transition.  */
+                             /* Hosted-only (galaxy.c is hosted-only).            */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

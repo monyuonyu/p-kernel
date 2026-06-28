@@ -77,6 +77,25 @@ _Static_assert(sizeof(U1) == 1 && sizeof(U2) == 2 && sizeof(U4) == 4,
 #define WORLD_REBUILD_BIT   0x80
 #define WORLD_BEACON_FIRE_MASK  (WORLD_FIRE_MASK | WORLD_REBUILD_BIT)
 
+/* survival-loop L0 (docs/architecture/survival-loop.md §9, 司令官判断 2026-06-28):
+ * the per-node 2-bit STATE rides in the firing byte's SPARE bits 3-4. The fire
+ * classes use bits 0-2 (WORLD_FIRE_MASK) and selfc-ring3 uses bit 7
+ * (WORLD_REBUILD_BIT), so bits 3-6 (0x78) are free. Packing the state here keeps
+ * WORLD_BEACON at 12 bytes — NO wire change, NO version byte, NO dual-size
+ * scheme — and an old node reads bits 3-4 = 0 = WSTATE_ACTIVE by default
+ * (automatic back-compat). Same established method as WORLD_REBUILD_BIT(bit7)
+ * and the N-2b SWIM capability gossip (_pad -> spare bit). 0x18 is disjoint from
+ * WORLD_BEACON_FIRE_MASK (0x87), so every existing firing reader is unaffected. */
+#define WORLD_STATE_SHIFT   3
+#define WORLD_STATE_MASK    0x18   /* bits 3-4 = 2-bit state                    */
+
+/* The node STATE enum carried in WORLD_STATE_MASK. Only ACTIVE/STRESSED are
+ * emitted in L0; HIBERNATING/DYING are reserved for L2/L3 (NOT emitted yet). */
+#define WSTATE_ACTIVE       0      /* default — LLM running, can be supported   */
+#define WSTATE_STRESSED     1      /* shedding its own activity (non-threat S_n) */
+#define WSTATE_HIBERNATING  2      /* reserved (L2): resource conservation       */
+#define WSTATE_DYING        3      /* reserved (L3): apoptosis                    */
+
 /* topic prefix: "world/beacon/" + 1 桁ノード ID                        */
 #define WORLD_BEACON_TOPIC_PFX "world/beacon/"
 
@@ -173,3 +192,36 @@ INT  world_peer_age_ms(UB node);
 /* テスト専用 (G12 デモ): 起動後 ms ミリ秒だけ self-beacon を抑止し、gossip を
  * 意図的に未収束のまま保つ。0 = 無効 (既定; 本番挙動は不変)。 */
 void world_set_beacon_hold(UW ms);
+
+/* ------------------------------------------------------------------ */
+/* survival-loop L0 — per-node STATE FSM + gossip accessor (hosted)    */
+/*                                                                     */
+/* docs/architecture/survival-loop.md §1.1 / §6-L0 / §9. The survival  */
+/* loop runs on the FLEET (boot/linux + Android), never on the QEMU    */
+/* bare-metal targets — so the FSM and its accessor are hosted-only    */
+/* (`_TK_HOSTED_LIBC_`). Bare-metal keeps state bits = 0 = ACTIVE with */
+/* ZERO new code (the crown stays byte-identical).                     */
+/* ------------------------------------------------------------------ */
+#ifdef _TK_HOSTED_LIBC_
+
+/* Advance the self STATE FSM one tick from the live S_n bus (axis-dependent,
+ * 2-time-constant hysteresis) and return the committed state (WSTATE_*). The
+ * ONE production call site is world_task's periodic self-update. */
+UB  world_self_state_step(void);
+
+/* The current committed self STATE (WSTATE_*), without advancing the FSM. */
+UB  world_self_state(void);
+
+/* Read peer `node`'s gossiped STATE from this node's local world-table (mirrors
+ * world_peer_pressure): the 2 bits WORLD_STATE_MASK of the beacon firing byte.
+ * Returns WSTATE_* (0..3) for a known peer (a 12-byte old beacon with those bits
+ * 0 reads as WSTATE_ACTIVE), or -1 if `node` is unknown. */
+INT world_peer_state(UB node);
+
+/* Hosted cert (tests/host/run_survival_l0.sh): [state-axis] (axis-dependence is
+ * load-bearing — THREAT@hi -> ACTIVE, other axes@hi -> STRESSED) + [state-gossip]
+ * (stamp -> observe -> world_peer_state). Returns 0 = PASS. Built with
+ * -DSURVIVAL_L0_MONOTONE the FSM is forced monotone and [state-axis] goes RED. */
+INT world_survival_l0_test(void);
+
+#endif /* _TK_HOSTED_LIBC_ */

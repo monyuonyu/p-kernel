@@ -1086,6 +1086,18 @@ EXPORT INT usermain(void)
                 print(" degrade=");            print_dec_s((W)c.degrade);
                 print(")\r\n");
             }
+        } else if (starts_with(line, n, "survival") && (n == 8 || line[8] == ' ')) {
+            /* survival-loop L0 (docs/architecture/survival-loop.md §6-L0/§9):
+             * `survival l0` runs the STATE-bus cert — [state-axis] (axis-
+             * dependence is LOAD-BEARING: THREAT@hi -> ACTIVE, the other axes@hi
+             * -> STRESSED, only the axis varies) + [state-gossip] (a peer's
+             * gossiped state read back via world_peer_state). Built with
+             * EXTRA_CFLAGS=-DSURVIVAL_L0_MONOTONE the FSM is forced monotone and
+             * the [state-axis] THREAT assertion goes RED (the falsifier). */
+            const UB *a = line + 8; UW al = (UW)(n - 8);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 2 && a[0]=='l' && a[1]=='0') world_survival_l0_test();
+            else print("usage: survival l0\r\n");
         } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
             /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
              * GA self-improvement cert (mutation+selection improves a

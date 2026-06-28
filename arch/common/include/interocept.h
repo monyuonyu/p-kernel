@@ -75,6 +75,16 @@ void              intero_init(void);
  * certs. Pass force=1 to pin, force=0 to release. */
 void              intero_test_force(UB on, UB value);
 
+/* Cert-only (survival-loop L0 (B) / GAP-⑨): like intero_test_force but ALSO pins
+ * the DOMINANT AXIS, so the [state-axis] cert can inject surprise/fault/degrade
+ * as dominant (legacy intero_test_force always pins INTERO_AX_THREAT). Hosted /
+ * cert only — never on the live path. Release via intero_test_force(0,0) or
+ * intero_init, both of which reset the forced axis back to the THREAT-pin
+ * shortcut so the legacy behaviour is byte-for-byte preserved. */
+#ifdef _TK_HOSTED_LIBC_
+void              intero_test_force_axis(UB axis, UB scalar);
+#endif
+
 /* Production self-test (interoception.md §3.5 [intero-sources]/[intero-wired]):
  * drives EACH axis in isolation and asserts only that axis moves; confirms the
  * scalar EWMA damps; prints "[intero-self] PASS/FAIL". Calls the SAME production
