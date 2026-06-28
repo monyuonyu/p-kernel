@@ -970,6 +970,34 @@ int main(int argc, char **argv)
         perror("bind"); return 1;
     }
 
+    /* Widen the daemon's UDP buffers (Path W deafness fix, sample 42).
+     *
+     * This ONE socket multiplexes EVERY node's traffic — the relay recvfrom()s a
+     * datagram, looks up the dst, and sendto()s it onward. When a node publishes
+     * its 84 KB rw[] (the LM-10 weight merge: 22 content blocks, each an
+     * 8-datagram chunk stream) it bursts hundreds of datagrams at the relay
+     * faster than the single-threaded forward loop drains them. With the
+     * OS-default ~200 KB rcvbuf that burst overflows HERE, at the daemon, and the
+     * kernel tail-drops it BEFORE it is ever forwarded — so the receiving node
+     * gets zero of the peer's chunks (the all-or-nothing 22-chunk reassembly
+     * never completes -> the fold never fires) and loses the peer's SWIM acks
+     * (region eviction). Widening only the nodes' client sockets cannot help when
+     * the loss is upstream at this multiplexer; this is the primary overflow
+     * point. Match it with a large sndbuf for the forward side.
+     *
+     * Hosted userspace daemon — NOT bare-metal, so the .text crown is irrelevant
+     * (no crown rebuild). Best-effort: if the platform caps rmem we keep whatever
+     * the kernel granted; never fatal. The getsockopt readback is logged so the
+     * cert can confirm the burst-tolerant buffer is actually in effect. */
+    {
+        int rcv = 16 * 1024 * 1024, snd = 16 * 1024 * 1024;
+        (void)setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+        (void)setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
+        int got = 0; socklen_t gl = sizeof(got);
+        if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &got, &gl) == 0)
+            fprintf(stderr, "[relay] SO_RCVBUF = %d bytes (burst-tolerant)\n", got);
+    }
+
     fprintf(stderr, "[relay] listening on 0.0.0.0:%d (verbose=%d, insecure=%d)\n",
             port, verbose, insecure);
 
