@@ -826,6 +826,34 @@ int net_relay_init(void)
     int flags = fcntl(sock_fd, F_GETFL, 0);
     fcntl(sock_fd, F_SETFL, flags | O_NONBLOCK);
 
+    /* Widen the kernel socket buffers (Path W deafness fix, sample 42).
+     *
+     * The relay multiplexes EVERY peer's traffic onto this one UDP socket and
+     * "unicast" pmesh sends are really REL_BROADCAST + receiver-side filter, so
+     * a single peer publishing its 84 KB rw[] (the LM-10 weight merge: 22
+     * content blocks, each an 8-datagram chunk-stream) floods this socket with
+     * hundreds of datagrams in a burst. A compute-heavy node (consolidating /
+     * folding the mind) runs stretches of NON-yielding work between net-task
+     * polls; with the OS-default ~200 KB rcvbuf those bursts overflow and the
+     * kernel tail-drops the surplus. The casualties are indiscriminate: the
+     * peer's PFSR block chunks (so the all-or-nothing 22-chunk reassembly never
+     * completes -> the fold never fires) AND its SWIM acks (so the busy node
+     * marks the peer SUSPECT and evicts it from its region -> the region-scoped
+     * fold skips it entirely). Both failures vanish once the buffer can hold a
+     * few seconds of one peer's burst across a compute gap.
+     *
+     * Hosted-only (arch/linux/, NOT in the bare-metal crown build): a pure
+     * kernel-socket sizing knob, no wire/protocol change. Best-effort — if the
+     * platform caps rmem we keep whatever the kernel granted; never fatal. */
+    {
+        int rcv = 8 * 1024 * 1024, snd = 1 * 1024 * 1024;
+        (void)setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+        (void)setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
+        int got = 0; socklen_t gl = sizeof(got);
+        if (getsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &got, &gl) == 0)
+            dprintf(2, "[net_relay] SO_RCVBUF = %d bytes (burst-tolerant)\n", got);
+    }
+
     /* Bind an ephemeral port — needed so the relay learns our peer addr
      * from REGISTER's source UDP tuple. */
     struct sockaddr_in any = {0};
