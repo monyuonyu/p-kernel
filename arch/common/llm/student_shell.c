@@ -298,11 +298,20 @@ static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs) 
  * (student_consol_abort) first — a partial state is a valid under-trained
  * state, and the next tick starts a fresh batch.
  *
- * K (ST_DMN_PASS_BUDGET): per the plan, target ~<=50ms of compute per call
- * against the 1000ms DMN_PULSE_MS cadence. The M-tier baby's
- * forward+backward+adam triple measures a few ms on a host core (see the
- * [yield] cert's printed single-triple timing), so K=8 lands comfortably under
- * the budget while draining the batch in a bounded number of pulses.
+ * K (ST_DMN_PASS_BUDGET): the load-bearing guarantee is per-call compute
+ * BOUNDED to K complete triples REGARDLESS of corpus size — that is what kills
+ * the unbounded stall (a large cradle lesson used to inflate train_windows into
+ * a multi-second monolithic call). MEASURED, honestly: one M-tier triple is
+ * ~97ms on the dev host (slower under the emulated CI sandbox — the [yield]
+ * cert prints the live single-triple timing), so a K=8 call is ~775ms on that
+ * host (~77% of the 1000ms DMN_PULSE_MS heartbeat). That is NOT "comfortably
+ * under 50ms" — it is one heartbeat's worth of work, but it is ~24x cheaper
+ * than the old monolith (the whole ~192-triple batch, ~18.6s, ran in ONE
+ * non-yielding call), and the node now SERVES every other task on the next
+ * pulse instead of dreaming for seconds. K is a compile-time constant
+ * (-DST_DMN_PASS_BUDGET=…) so a slow device can dial it down; the [yield] cert
+ * also asserts a wall-time ceiling so an oversized K (one call doing most of
+ * the batch = effectively unsliced) is caught, not just the pass-count bound.
  * ------------------------------------------------------------------------- */
 #ifndef ST_DMN_PASS_BUDGET
 #define ST_DMN_PASS_BUDGET 8   /* K: complete triples per consolidate() call */

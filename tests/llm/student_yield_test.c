@@ -188,9 +188,13 @@ int main(void)
     if (student_ensure(0) != 0) { printf("[yield] student_ensure OOM\n"); return 2; }
 
     int calls = 0, cumulative_prev = 0, max_call = 0, cumulative = 0, rc;
+    double max_call_ms = 0.0;             /* WALL time of the slowest single call  */
     do {
         int before = g_consol_idx;        /* snapshot resets to 0 on call 1 */
+        double c0 = now_ms();
         rc = student_dmn_consolidate();
+        double c1 = now_ms();
+        if (c1 - c0 > max_call_ms) max_call_ms = c1 - c0;
         int after = g_consol_idx;         /* left at `total` after completion */
         int delta = after - before;
         if (delta > max_call) max_call = delta;
@@ -208,11 +212,30 @@ int main(void)
     printf("[yield] consolidate: calls=%d max_passes/call=%d cumulative=%d (want %d)  "
            "final_loss=%.6f ref_loss=%.6f\n",
            calls, max_call, cumulative, total, (double)got_loss, (double)ref_loss);
-    printf("[yield] single-triple ~%.3f ms -> K=%d call ~%.2f ms (budget ~50ms vs 1000ms pulse)\n",
-           per_triple_ms, K, per_triple_ms * K);
+
+    /* WALL-TIME responsiveness (HARDWARE-RELATIVE, flake-proof). The count bound
+     * (max_call <= K) alone cannot catch an OVERSIZED K: if K >= total the
+     * "slicing" is a no-op (one call does the whole batch) yet max_call <= K
+     * trivially holds — the exact non-yielding stall we are killing. So also
+     * assert the slowest single call is well under the cost of the WHOLE batch:
+     * a real K-slice is ~K triples, the monolith is ~total triples, so the
+     * natural separator is "one call < half the all-at-once cost" — true for any
+     * genuine slice on ANY hardware, RED for an unsliced/oversized-K call. We do
+     * NOT use a fixed ms ceiling: a triple is ~97ms on the dev host but ~244ms
+     * under the emulated sandbox, so an absolute bound would flake. The absolute
+     * ms + % of a 1000ms pulse are PRINTED for the human (honest starvation
+     * signal), but the ASSERT is the hardware-independent ratio. */
+    double monolith_ms = per_triple_ms * total;       /* cost of the whole batch at once */
+    double wall_ceiling = 0.5 * monolith_ms;          /* one call must be < half of it     */
+    printf("[yield] single-triple ~%.3f ms  K=%d  slowest consolidate() call = %.1f ms "
+           "(~%.0f%% of a 1000ms pulse; monolith would be ~%.0f ms; ceiling %.0f ms)\n",
+           per_triple_ms, K, max_call_ms, 100.0 * max_call_ms / 1000.0,
+           monolith_ms, wall_ceiling);
 
     CHECK(max_call <= K,
           "[yield-responsive] every consolidate() call advances <= K passes (node yields)");
+    CHECK(max_call_ms < wall_ceiling,
+          "[yield-responsive] slowest call wall-time < half the all-at-once cost (oversized-K starvation guard)");
     CHECK(cumulative == total,
           "[yield-responsive] cumulative passes == rounds*train_windows (not skipped)");
     CHECK(rc == 1,
