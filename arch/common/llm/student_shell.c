@@ -428,7 +428,11 @@ static int sleep_rounds_resume(st_model *m, int seqlen, int train_windows,
  * triple boundary, so no pass is half-applied. Not referenced by bare-metal /
  * arch-common code (the call site dmn.c is unchanged), so no stub is needed. */
 int student_consol_busy(void)  { return g_consol_active; }
-void student_consol_abort(void) { g_consol_active = 0; g_consol_idx = 0; }
+void student_consol_abort(void)
+{
+    cradle_lesson_freeze(0);   /* release the corpus: deferred lessons ingest next poll */
+    g_consol_active = 0; g_consol_idx = 0;
+}
 
 /* ---------------------------------------------------------------------------
  * Durable save / load of the resident baby.
@@ -670,12 +674,13 @@ int student_dmn_consolidate(void)
     if (!g_consol_active) {
         /* T-fix-b: pull a teacher's mesh-delivered lesson into the ring (if
          * any) BEFORE windowing, so the sleep consolidates the LESSON when one
-         * arrived (else the fixture). Pulled ONCE, at batch start, so the corpus
-         * is frozen for the whole sliced batch (byte-identity, plan §3.3): a
-         * lesson arriving mid-batch waits one batch. NO-OP-safe: no relay / no
-         * beacon -> ring stays empty -> window() reads the fixture (the no-op
-         * contract). Gated inside the transport by g_cradle_enabled +
-         * region_teacher(). */
+         * arrived (else the fixture). This start-of-batch pull stages the LATEST
+         * lesson; the cradle_lesson_freeze(1) below then holds the ring stable
+         * for the whole sliced batch (so a lesson arriving mid-batch via
+         * cradle_net_task is DEFERRED one batch, not mixed into this one —
+         * byte-identity, plan §3.3). NO-OP-safe: no relay / no beacon -> ring
+         * stays empty -> window() reads the fixture (the no-op contract). Gated
+         * inside the transport by g_cradle_enabled + region_teacher(). */
         cradle_poll_and_pull();
 
         /* the held-out split tracks the LIVE corpus source (lesson ring or
@@ -695,6 +700,13 @@ int student_dmn_consolidate(void)
         g_consol_total     = ST_DMN_ROUNDS * trainw;
         g_consol_idx       = 0;
         g_consol_active    = 1;
+        /* FREEZE the corpus for the batch: the start-of-batch pull above already
+         * staged the latest lesson; from here cradle_net_task's mid-batch ingests
+         * are deferred so window() reads byte-stable bytes every pass (plan §3.3,
+         * the writer-atomicity the old non-yielding sleep got for free). This is
+         * straight-line with the pull above — no yield between — so it is atomic
+         * w.r.t. the cooperative cradle_net_task. */
+        cradle_lesson_freeze(1);
     }
 
 #ifdef YIELD_DISABLE
@@ -716,6 +728,7 @@ int student_dmn_consolidate(void)
      * emits exactly one sleep-line + one EV_CONSOLIDATE per consolidation. */
     int heldw     = g_consol_heldw;
     int train_end = g_consol_train_end;
+    cradle_lesson_freeze(0);   /* UNFREEZE: a lesson deferred mid-batch ingests next poll */
     g_consol_active = 0;
 
     /* SKIP-WRITE-WHEN-NOT-WORTH-IT (wave-student-throttle): persist the

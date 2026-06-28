@@ -65,10 +65,14 @@ int pfs_dur_active(void) { return 1; }
 int pfs_dur_write(const char *f, const void *d, unsigned n) { (void)f;(void)d;(void)n; return 0; }
 int pfs_dur_read (const char *f, void *b, unsigned m) { (void)f;(void)b;(void)m; return -1; }
 
-/* cradle transport: no live lesson -> window() reads TEACHER_FIXTURE (the no-op
- * contract; the byte-identity argument relies on the corpus being stable). */
-const uint8_t *cradle_window_src(int *len_out) { if (len_out) *len_out = 0; return NULL; }
-int            cradle_lesson_len(void)         { return 0; }
+/* cradle transport: the REAL cradle.c is linked (it provides cradle_window_src /
+ * cradle_lesson_ingest / cradle_lesson_freeze / cradle_lesson_len / cradle_set_
+ * enabled / cradle_lesson_clear), so Cert C exercises the genuine freeze gate
+ * rather than a NULL stub. cradle_poll_and_pull stays the weak no-op defined in
+ * student_shell.c (cradle_net.c is NOT linked), so the start-of-batch pull is
+ * inert and the ring holds exactly what the cert installs. With no lesson
+ * installed (Cert A/B) the ring is empty -> cradle_window_src returns NULL ->
+ * window() reads TEACHER_FIXTURE, unchanged. */
 
 /* device sizing: deterministic M-tier init from the same seed the production
  * student_ensure uses (STUDENT_SEED), so g_student matches a reference clone. */
@@ -220,6 +224,80 @@ int main(void)
           "[yield-responsive] final held-out loss == all-at-once reference loss");
 
     free(b_g); free(b_b); st_free(&refB);
+
+    /* ===================================================================
+     * Cert C — [yield-corpus-frozen]: a lesson arriving MID-BATCH (the
+     * cradle_net_task ingest path, which can now interleave because the DMN
+     * yields) must be DEFERRED, not mixed into the running batch — so
+     * byte-identity to the all-at-once run holds even on a LIVE corpus. This
+     * closes the cradle_window_src=NULL hole: it drives the REAL cradle ring.
+     * =================================================================== */
+    static uint8_t L1[700], L2[512];
+    for (int i = 0; i < (int)sizeof L1; i++) L1[i] = (uint8_t)(31 * i + 7);
+    for (int i = 0; i < (int)sizeof L2; i++) L2[i] = (uint8_t)(101 * i + 200);
+
+    cradle_set_enabled(1);
+    cradle_lesson_freeze(0);
+    cradle_lesson_clear();
+    int ig1 = cradle_lesson_ingest(L1, (int)sizeof L1);   /* ring := L1 (live corpus) */
+    CHECK(ig1 == (int)sizeof L1,
+          "[yield-corpus-frozen] live lesson L1 ingested (ring populated)");
+    int wl = 0; const uint8_t *ws = cradle_window_src(&wl);
+    CHECK(ws && wl == (int)sizeof L1,
+          "[yield-corpus-frozen] window source is the live ring (not the fixture)");
+
+    int cnC  = cradle_corpus_len();                 /* == sizeof L1 */
+    int twC  = (cnC / ST_DMN_SEQLEN) * 3 / 4; if (twC < 2) twC = 2;
+    int totC = ST_DMN_ROUNDS * twC;
+
+    /* all-at-once reference trained on the FROZEN L1 corpus. */
+    st_model refC; if (st_init(&refC, STUDENT_SEED) != ST_OK) { printf("[yield] refC OOM\n"); return 2; }
+    sleep_rounds(&refC, ST_DMN_SEQLEN, twC, ST_DMN_ROUNDS, ST_DMN_LR);
+
+    /* a FRESH resident baby for the sliced run (reset the singleton). */
+    st_free(&g_student); g_have_student = 0; g_loaded_from_disk = 0;
+    g_consol_active = 0; g_consol_idx = 0; cradle_lesson_freeze(0);
+    if (student_ensure(0) != 0) { printf("[yield] ensure C OOM\n"); return 2; }
+
+    int rcC, callsC = 0, deferred_rc = -999, corpus_held = 1, busy_seen = 0;
+    do {
+        rcC = student_dmn_consolidate();
+        if (g_consol_active) {                  /* mid-batch (busy): a lesson arrives now */
+            busy_seen = 1;
+            deferred_rc = cradle_lesson_ingest(L2, (int)sizeof L2);  /* must DEFER */
+            int wl2 = 0; const uint8_t *ws2 = cradle_window_src(&wl2);
+            if (!(ws2 && wl2 == (int)sizeof L1 && memcmp(ws2, L1, sizeof L1) == 0))
+                corpus_held = 0;                 /* ring must still be L1 */
+        }
+        callsC++;
+        if (callsC > totC + 8) { printf("[yield] Cert C loop runaway\n"); break; }
+    } while (rcC == 0);
+
+    long lc_g, lc_r;
+    unsigned char *bC_g = dump(&g_student, &lc_g);
+    unsigned char *bC_r = dump(&refC,      &lc_r);
+
+    printf("[yield] Cert C: live L1=%dB twC=%d totC=%d callsC=%d busy_seen=%d deferred_rc=%d\n",
+           (int)sizeof L1, twC, totC, callsC, busy_seen, deferred_rc);
+
+    CHECK(busy_seen,
+          "[yield-corpus-frozen] batch actually sliced (busy observed mid-batch)");
+    CHECK(deferred_rc == 0,
+          "[yield-corpus-frozen] mid-batch ingest DEFERRED (return 0, not installed)");
+    CHECK(corpus_held,
+          "[yield-corpus-frozen] ring stayed L1 for the whole batch (corpus frozen)");
+    CHECK(bC_g && bC_r && lc_g == lc_r && lc_g > 0 &&
+          memcmp(bC_g, bC_r, (size_t)lc_g) == 0,
+          "[yield-corpus-frozen] sliced-on-live-corpus blob == all-at-once-on-L1 (byte-identical)");
+
+    /* the deferred lesson is NOT dropped: the batch unfroze, so the next poll
+     * ingests L2 (re-pollable — the transport never advanced its high-water). */
+    int ig2 = cradle_lesson_ingest(L2, (int)sizeof L2);
+    CHECK(ig2 == (int)sizeof L2 && cradle_lesson_len() == (int)sizeof L2,
+          "[yield-corpus-frozen] deferred lesson ingests after batch completes (not dropped)");
+
+    free(bC_g); free(bC_r); st_free(&refC);
+    cradle_lesson_clear(); cradle_lesson_freeze(0);
 
     printf("\n[yield] %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

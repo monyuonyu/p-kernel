@@ -405,6 +405,13 @@ const uint8_t *cradle_window_src(int *len_out);
  * Called by the transport (cradle_net.c) after a p-fs pull. */
 int  cradle_lesson_ingest(const uint8_t *body, int len);
 
+/* Freeze the lesson ring for the duration of a sliced DMN consolidation batch
+ * (cooperative-yield-plan.md §3.3): while frozen, cradle_lesson_ingest DEFERS
+ * (returns 0, ring unchanged) so the corpus window() trains on is byte-stable
+ * for the whole batch. The student drives this around its batch; default is
+ * unfrozen, so any caller that never touches it is unaffected. */
+void cradle_lesson_freeze(int on);
+
 /* The CANONICAL live lesson (T-fix-c): unify live == cert. cradle_canon_budget()
  * returns the cert's CT_CERT_BUDGET (== the composed length). cradle_compose_canon
  * composes into out[cap] (cap >= cradle_canon_budget()) the SAME trainable, train/

@@ -41,12 +41,27 @@
  * teacher has delivered a lesson (thread-t-impl-plan.md §2.2). A node with NO
  * lesson trains BYTE-IDENTICALLY to today (cradle_window_src returns the
  * fixture). file-static .bss, never the task stack (the hosted-relay stack-
- * overflow lesson). Single-writer (the student's DMN sleep tick / the cert),
- * so no concurrent-use guard is needed.
+ * overflow lesson).
+ *
+ * CONCURRENCY (cooperative-yield-plan.md §3.3): the ring is written by
+ * cradle_lesson_ingest, called from TWO cooperative tasks — the DMN sleep tick
+ * AND cradle_net_task (every 500ms). They used to never overlap a training
+ * batch because the old sleep ran the WHOLE batch in one non-yielding call.
+ * Now that the DMN consolidation YIELDS between slices, cradle_net_task can run
+ * mid-batch — so an ingest could rewrite the corpus that window() is reading
+ * pass-by-pass, breaking byte-identity to the all-at-once run. Guard: while a
+ * sliced consolidation owns the corpus (g_lesson_frozen, set by the student via
+ * cradle_lesson_freeze), an ingest is DEFERRED (returns 0, ring unchanged). The
+ * lesson is NOT dropped: the transport advances its per-origin high-water only
+ * when ingest returns >0, so a deferred lesson is re-pulled on the next poll
+ * after the batch completes and unfreezes (LATEST_ONLY beacon + re-pollable ref
+ * gossip). So the corpus is genuinely FROZEN for the batch — one batch of
+ * latency before a brand-new lesson begins consolidating.
  * ------------------------------------------------------------------------- */
 static uint8_t g_lesson_ring[CRADLE_RING_BYTES];
 static int     g_lesson_len = 0;        /* live lesson byte length, 0 = none  */
 static int     g_cradle_enabled = 1;    /* Arm A gate: pulling rides the mesh */
+static int     g_lesson_frozen  = 0;    /* 1 = a sliced consol batch owns the ring */
 
 /* The ring is "live" (drives training) only when it holds at least a few full
  * windows, so a tiny/garbage lesson cannot starve the fixture. Mirrors the
@@ -80,12 +95,27 @@ const uint8_t *cradle_window_src(int *len_out)
  * same bytes is harmless (the high-water in the transport dedups by seq). */
 int cradle_lesson_ingest(const uint8_t *body, int len)
 {
+    /* COOPERATIVE-YIELD freeze: a sliced consolidation batch owns the corpus —
+     * DEFER (return 0, ring UNCHANGED) so the bytes window() trains on stay
+     * frozen for the whole batch (byte-identity to all-at-once). Re-pollable:
+     * the transport only advances its high-water on ingest>0, so a deferred
+     * lesson is re-pulled on the next poll after the batch unfreezes; nothing
+     * is dropped. Distinct from the -1 "hard refuse" (empty/too-big/too-small). */
+    if (g_lesson_frozen) return 0;
     if (!body || len <= 0 || len > CRADLE_RING_BYTES) return -1;
     if (len < CRADLE_MIN_LIVE) return -1;   /* too small to train -> keep fixture */
     memcpy(g_lesson_ring, body, (size_t)len);
     g_lesson_len = len;
     return len;
 }
+
+/* Freeze / unfreeze the lesson ring for the duration of a sliced DMN
+ * consolidation batch (cooperative-yield-plan.md §3.3). The student calls
+ * cradle_lesson_freeze(1) at batch start (AFTER the start-of-batch pull) and
+ * cradle_lesson_freeze(0) at completion or abort. While frozen,
+ * cradle_lesson_ingest defers (above). No-op-safe everywhere it is not called
+ * (default unfrozen), so the standalone cradle certs are unaffected. */
+void cradle_lesson_freeze(int on)   { g_lesson_frozen = on ? 1 : 0; }
 
 /* observability / test hooks (pure). */
 int  cradle_lesson_len(void)        { return g_lesson_len; }

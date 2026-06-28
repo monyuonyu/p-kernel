@@ -29,7 +29,9 @@ CC="${CC:-cc}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-SRC="$HERE/student_yield_test.c $ROOT/arch/common/llm/student.c"
+# Links the REAL cradle.c (lesson ring + ingest + the freeze gate) so Cert C
+# exercises the genuine mid-batch-deferral path, plus student.c (the math).
+SRC="$HERE/student_yield_test.c $ROOT/arch/common/llm/student.c $ROOT/arch/common/llm/cradle.c"
 CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off"
 
 echo "[build] compiling cooperative-yield cert (fix ON) ..."
