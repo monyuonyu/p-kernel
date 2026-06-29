@@ -30,6 +30,11 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+# de-flake helper (crown-neutral): curl000 retries ONLY a literal transient
+# (HTTP 000 / curl exit 7,28,52,56 = no-response), bounded + FAIL-CLOSED; a real
+# code (403/409/200/…) returns immediately and is NEVER retried. wait_http is a
+# boot-readiness gate. See samples/lib/http_retry.sh.
+. "$HERE/../lib/http_retry.sh"
 
 case "$(uname -m)" in
     aarch64|arm64) BOOT="$ROOT/boot/linux" ;;
@@ -54,7 +59,7 @@ sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 fetch_manifesto() {
     local port="$1" hdr body
     hdr=$(mktemp); body=$(mktemp)
-    curl -s -D "$hdr" -o "$body" --max-time 5 "127.0.0.1:$port/manifesto" >/dev/null
+    curl000 -s -D "$hdr" -o "$body" --max-time 8 "127.0.0.1:$port/manifesto" >/dev/null
     local id
     id=$(grep -i 'X-Manifesto-Id' "$hdr" | tr -d '\r' | awk '{print $2}')
     rm -f "$hdr"
@@ -68,10 +73,11 @@ gate_consent() {
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" </dev/null \
         >/tmp/ark39_consent.log 2>&1 & PIDS+=($!)
     sleep 3
+    wait_http 7800 || { fail "[ark-consent]" "node never became ready (HTTP 000)"; killall_nodes; rm -rf "$D"; return; }
 
     # (1) teach BEFORE any profile -> 403 + "manifesto"
     local R code
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+    R=$(curl000 -s -w '\n%{http_code}' --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "403" ] || { fail "[ark-consent]" "teach before profile not 403 ($code)"; killall_nodes; rm -rf "$D"; return; }
     echo "$R" | grep -q 'manifesto' || { fail "[ark-consent]" "403 body missing 'manifesto'"; killall_nodes; rm -rf "$D"; return; }
@@ -84,12 +90,12 @@ gate_consent() {
     log "manifesto id $MID == sha256(served bytes)"
 
     # (3) ack-ONLY profile (NO disclosure fields) -> {ok}
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d "ack=1&mid=$MID" 127.0.0.1:7800/profile)
+    R=$(curl000 -s -w '\n%{http_code}' --max-time 8 -d "ack=1&mid=$MID" 127.0.0.1:7800/profile)
     code=$(echo "$R" | tail -1)
     echo "$R" | grep -q '"ok":true' || { fail "[ark-consent]" "ack-only profile not ok ($code)"; killall_nodes; rm -rf "$D"; return; }
 
     # (4) the same teach now -> 200 (consent != disclosure: ack-only unlocks)
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+    R=$(curl000 -s -w '\n%{http_code}' --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "200" ] || { fail "[ark-consent]" "teach after ack-only not 200 ($code)"; killall_nodes; rm -rf "$D"; return; }
     echo "$R" | grep -q '"ok":true' || { fail "[ark-consent]" "teach after ack not ok"; killall_nodes; rm -rf "$D"; return; }
@@ -100,11 +106,12 @@ gate_consent() {
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D2" "$BOOT/p-kernel" </dev/null \
         >/tmp/ark39_consent2.log 2>&1 & PIDS+=($!)
     sleep 3
+    wait_http 7800 || { fail "[ark-consent]" "node2 never became ready (HTTP 000)"; killall_nodes; rm -rf "$D2"; return; }
     local WRONG="0000000000000000000000000000000000000000000000000000000000000000"
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d "ack=1&mid=$WRONG" 127.0.0.1:7800/profile)
+    R=$(curl000 -s -w '\n%{http_code}' --max-time 8 -d "ack=1&mid=$WRONG" 127.0.0.1:7800/profile)
     code=$(echo "$R" | tail -1)
     [ "$code" = "409" ] || { fail "[ark-consent]" "wrong mid not 409 ($code)"; killall_nodes; rm -rf "$D2"; return; }
-    R=$(curl -s -w '\n%{http_code}' --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+    R=$(curl000 -s -w '\n%{http_code}' --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     code=$(echo "$R" | tail -1)
     [ "$code" = "403" ] || { fail "[ark-consent]" "teach still gated expected 403 after wrong mid ($code)"; killall_nodes; rm -rf "$D2"; return; }
     killall_nodes; rm -rf "$D2"
@@ -120,16 +127,17 @@ gate_profile() {
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" <"$F" \
         >/tmp/ark39_prof.log 2>&1 & local NODE=$!; PIDS+=($NODE)
     sleep 3
+    wait_http 7800 || { fail "[ark-profile]" "node never became ready (HTTP 000)"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
 
     read -r MID MBYTES < <(fetch_manifesto 7800); rm -f "$MBYTES"
     # full profile: handle=cert_h + a 未来への言葉
-    local R; R=$(curl -s --max-time 5 -d "ack=1&mid=$MID&handle=cert_h&msg=hello+future" 127.0.0.1:7800/profile)
+    local R; R=$(curl000 -s --max-time 8 -d "ack=1&mid=$MID&handle=cert_h&msg=hello+future" 127.0.0.1:7800/profile)
     log "profile: $R"
     echo "$R" | grep -q '"ok":true' || { fail "[ark-profile]" "full profile not ok"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
     local PID; PID=$(echo "$R" | grep -o '"id":"[0-9a-f]*"' | head -1 | grep -o '[0-9a-f]\{64\}')
 
     # (a) profile.json: seq + handle reflected
-    local PJ; PJ=$(curl -s --max-time 5 127.0.0.1:7800/profile.json)
+    local PJ; PJ=$(curl000 -s --max-time 8 127.0.0.1:7800/profile.json)
     echo "$PJ" | grep -q '"seq":1' || { fail "[ark-profile]" "profile.json seq != 1"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
     echo "$PJ" | grep -q "\"id\":\"$PID\"" || { fail "[ark-profile]" "profile.json id mismatch"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
 
@@ -152,11 +160,11 @@ print("profile bytes hash-verify OK:", h)
 PY
 
     # (c) self.json head human_ref == the profile id (linked into self/lin)
-    local SJ; SJ=$(curl -s --max-time 5 127.0.0.1:7800/self.json)
+    local SJ; SJ=$(curl000 -s --max-time 8 127.0.0.1:7800/self.json)
     echo "$SJ" | grep -q "\"human_ref\":\"$PID\"" || { fail "[ark-profile]" "self/lin head human_ref != profile id"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
 
     # (e) edit-by-append: a second profile -> seq 2, `pfs log self/prof` len 2
-    R=$(curl -s --max-time 5 -d "ack=1&mid=$MID&handle=cert_h2" 127.0.0.1:7800/profile)
+    R=$(curl000 -s --max-time 8 -d "ack=1&mid=$MID&handle=cert_h2" 127.0.0.1:7800/profile)
     echo "$R" | grep -q '"seq":2' || { fail "[ark-profile]" "edit did not bump seq to 2"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
     printf 'pfs log self/prof\n' >&5; sleep 2
     # the log walks newest-first; count seq= lines under the last log header
@@ -174,13 +182,14 @@ PY
 
     # (d) restart: same PKERNEL_PFS_DIR -> identical seq/handle/id
     local BEFORE_SEQ BEFORE_ID
-    BEFORE_ID=$(curl -s --max-time 5 127.0.0.1:7800/profile.json | grep -o '"id":"[0-9a-f]\{64\}"' | head -1)
-    BEFORE_SEQ=$(curl -s --max-time 5 127.0.0.1:7800/profile.json | grep -o '"seq":[0-9]*' | head -1)
+    BEFORE_ID=$(curl000 -s --max-time 8 127.0.0.1:7800/profile.json | grep -o '"id":"[0-9a-f]\{64\}"' | head -1)
+    BEFORE_SEQ=$(curl000 -s --max-time 8 127.0.0.1:7800/profile.json | grep -o '"seq":[0-9]*' | head -1)
     exec 5>&-; kill -9 "$NODE" 2>/dev/null; wait 2>/dev/null; sleep 1
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" </dev/null \
         >/tmp/ark39_prof_restart.log 2>&1 & PIDS+=($!)
     sleep 3
-    local AFTER; AFTER=$(curl -s --max-time 5 127.0.0.1:7800/profile.json)
+    wait_http 7800 || { fail "[ark-profile]" "restart node never became ready (HTTP 000)"; killall_nodes; rm -rf "$D" "$F"; return; }
+    local AFTER; AFTER=$(curl000 -s --max-time 8 127.0.0.1:7800/profile.json)
     echo "$AFTER" | grep -q "$BEFORE_ID" || { fail "[ark-profile]" "restart lost profile id ($BEFORE_ID)"; killall_nodes; rm -rf "$D" "$F"; return; }
     echo "$AFTER" | grep -q "$BEFORE_SEQ" || { fail "[ark-profile]" "restart lost profile seq"; killall_nodes; rm -rf "$D" "$F"; return; }
     echo "$AFTER" | grep -q '"handle_len":7' || { fail "[ark-profile]" "restart lost handle (cert_h2)"; killall_nodes; rm -rf "$D" "$F"; return; }
@@ -198,15 +207,21 @@ gate_provenance() {
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" <"$F" \
         >/tmp/ark39_prov.log 2>&1 & PIDS+=($!)
     sleep 3
+    wait_http 7800 || { fail "[ark-provenance]" "node never became ready (HTTP 000)"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
 
     read -r MID MBYTES < <(fetch_manifesto 7800); rm -f "$MBYTES"
-    local R; R=$(curl -s --max-time 5 -d "ack=1&mid=$MID&handle=cert_h" 127.0.0.1:7800/profile)
+    local R; R=$(curl000 -s --max-time 8 -d "ack=1&mid=$MID&handle=cert_h" 127.0.0.1:7800/profile)
     local PID; PID=$(echo "$R" | grep -o '"id":"[0-9a-f]\{64\}"' | head -1 | grep -o '[0-9a-f]\{64\}')
 
     # a WEB teach -> ARK_PROV src=1 (k=sun v=yellow -> ids 2/3), profile_head == PID
     # (LM-8 §IX.10: the web mouth carries WORDS resolved via the SHARED vocab —
     #  sun=key-id 2, yellow=val-id 3; a bare int would be OOV-refused (403).)
-    curl -s --max-time 5 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach >/dev/null
+    # FAIL FAST + NAMED: capture the web-teach code (was discarded via >/dev/null,
+    # so a real 403/000 here used to masquerade two steps later as a confusing
+    # "[ark-provenance] wrong"). curl000 returns a real 403 immediately (NOT
+    # retried) so it fails here; a transient 000 is retried then fail-closed.
+    local WT; WT=$(curl000 -s -o /dev/null -w '%{http_code}' --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+    [ "$WT" = "200" ] || { fail "[ark-provenance]" "web teach not 200 ($WT)"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }
     sleep 1
     printf 'pfs cat self/prov\n' >&5; sleep 2
     python3 - "$PID" <<'PY' || { fail "[ark-provenance]" "web teach prov record wrong"; exec 5>&-; killall_nodes; rm -rf "$D" "$F"; return; }

@@ -214,15 +214,35 @@ echo "--- [shared-consolidated]: B's OWN DMN distills the fact -> B answers v --
 # B's idle DMN consolidates the pending fact; `mind wait` yields the idle window
 # (and the prio-13 round runs precisely while the waiter sleeps).
 send 2 "mind wait 90"
-wait_for "$L2" 'distilled in-context facts -> rw\[\]' 90 \
+# De-flake: widen the consolidation-absence window 90 -> 180s. On the 3-cpu
+# self-hosted ThinkPad B's console can be starved (two heavy 3-node jobs co-run),
+# so the ONE consolidation line can lag past 90s. There is NO wrong-value variant
+# of this line (it either printed or it didn't), so widening the absence window
+# keeps full teeth — it STILL fails if B never consolidates.
+wait_for "$L2" 'distilled in-context facts -> rw\[\]' 180 \
     || bad "B's DMN never printed the consolidation line"
 wait_for "$L2" 'wait: drained' 30 || true
 # now ask B on a MASKED prompt: it must answer v* from its OWN weights.
-send 2 "mind ask $KWORD"             # LM-8: ask in WORDS
+# De-flake (fail-closed): B can be briefly deaf to the shell while its DMN
+# consolidates, so the single ask line may be absent. Snapshot the ask-line
+# COUNT and BOUNDED-re-ask, breaking the INSTANT a STRICTLY-NEW `mind ask` line
+# appears — so the word-match / share-gate verdict below is evaluated on that
+# exact FRESH line and fails fast on a wrong word / share<gate. ONLY the
+# ABSENT-line deaf case is retried (bounded ~60s, fail-closed). Mirrors the
+# post-kill fresh-marker discipline below.
+ASK_PRE=$(grep -ac "ask \"$KWORD\"" "$L2")
 ANSWER_T=$(date +%s)
-# Widen 20s -> 60s: this is the PRE-KILL [shared-consolidated] verdict the gate
-# at line ~235 reads; a one-shot-ish short wait raced the verdict print. UNCHANGED
-# success predicate (PASS + share >= SHARE_GATE).
+ask_fresh=0
+for _ in $(seq 1 30); do             # ~60s bound (death-free; the mouth is live)
+    send 2 "mind ask $KWORD"         # LM-8: ask in WORDS
+    for _ in $(seq 1 8); do          # ~2s for the FRESH ask line to print
+        if [ "$(grep -ac "ask \"$KWORD\"" "$L2")" -gt "${ASK_PRE:-0}" ]; then ask_fresh=1; break; fi
+        sleep 0.25
+    done
+    [ "$ask_fresh" -eq 1 ] && break
+done
+[ "$ask_fresh" -eq 1 ] || bad "[shared-consolidated] — B printed no FRESH ask line (deaf; bounded re-ask exhausted)"
+# the verdict print may trail the ask line by a beat — let it land before grep.
 wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 60 || true
 ASK_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 SHARE=$(echo "$ASK_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]')

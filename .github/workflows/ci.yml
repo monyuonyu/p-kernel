@@ -610,6 +610,18 @@ jobs:
     #     computes; the crash triple re-proven against the fat ELF.
     name: "ring3 生存 + マインドゲート (QEMU x86 起動)"
     runs-on: [self-hosted, pkernel-thinkpad]
+    # ---- SERIALIZED SELF-HOSTED CHAIN (de-flake) — chain HEAD --------------
+    # The self-hosted pkernel-thinkpad runner has 3 CPUs and 2 runner workers.
+    # When two heavy 3-node live jobs co-run they each spawn 3 ./p-kernel + a
+    # relay; 6+ kernels + 2 relays on 3 CPUs starves their consoles (one_mind's
+    # FOLD never prints inside its window; shared_mind's consolidation/answer
+    # line is absent). FIX: chain ALL self-hosted jobs to run STRICTLY SERIALLY
+    # (each `needs:` the previous one) so at most ONE heavy job uses the runner
+    # at a time. We DELIBERATELY do NOT use `concurrency:` (it CANCELS) — every
+    # job in the chain still runs regardless of a predecessor's pass/fail via
+    # `if: ${{ always() && <fork-guard> }}` (no cascade-skip, no cancellation;
+    # the fork-guard half preserves the existing "skip on forks" security
+    # property). ring3-survival is the chain HEAD (no `needs:`).
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
     steps:
@@ -683,7 +695,10 @@ jobs:
   survival-loop:
     name: "生存ループ (推論中にノードを kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after ring3-survival; still
+    # runs regardless of its result (always() && fork-guard). See chain HEAD.
+    needs: [ring3-survival]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -707,7 +722,9 @@ jobs:
   protect-loop-live:
     name: "保護ループ (実機3ノード: 脅威を複製で封じ、kill されても unit は生存)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after survival-loop. See HEAD.
+    needs: [survival-loop]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 20
     # enforces the LIVE path of G28/G32, not just the in-process self-test:
     # a declared protected unit's grounded threat must fall to 0 BECAUSE the
@@ -738,7 +755,9 @@ jobs:
   plural-protect-live:
     name: "複数点保護 (実機3ノード: 多数の点を並列防御、所有者を kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after protect-loop-live. See HEAD.
+    needs: [protect-loop-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 15
     # enforces the LIVE §2 ∧ §5 path (G35): FOUR protected points declared at
     # once across TWO owners all reach R durable replicas concurrently — in ~the
@@ -770,7 +789,9 @@ jobs:
   collective-learn-live:
     name: "集合学習 (実機3ノード: 分割シャード、gossip > 単独、ノード kill + 再参加)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after plural-protect-live. See HEAD.
+    needs: [plural-protect-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 25
     # enforces the LIVE §8/§9 path (G22): 3 nodes each train on a DISJOINT
     # leave-one-class-out shard (no node sees the whole task), gossip-average
@@ -804,7 +825,11 @@ jobs:
   shared-mind-live:
     name: "共有された心 (実機3ノード: A で教えた事実を B が答える; region 限定; 教師を kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after collective-learn-live.
+    # shared_mind + one_mind are the worst co-run flakers — the chain guarantees
+    # neither shares the runner with another heavy job. See HEAD.
+    needs: [collective-learn-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 20
     # LM-7 (living-mind.md Part VIII): a fact taught on node A becomes
     # answerable from node B — from B's OWN weights, with B's OWN DMN doing the
@@ -847,7 +872,10 @@ jobs:
   one-mind-live:
     name: "ひとつの心 / Path W (実機3ノード: 分岐した重みを 84KB チャンク経由でマージ; kill 耐性)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after shared-mind-live, so the
+    # two worst co-run flakers (shared_mind, one_mind) never share the runner. See HEAD.
+    needs: [shared-mind-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 25
     # LM-10 (living-mind.md Part XI): the WEIGHT-states converge. Where Path E
     # spreads the tiny engram (sample 41), Path W merges the rw[] themselves:
@@ -895,7 +923,9 @@ jobs:
   twolayer-couple-live:
     name: "二層カップリング (実機3ノード: 集合学習が防御を改善、実行中にノードを kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after one-mind-live. See HEAD.
+    needs: [one-mind-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 20
     # enforces the LIVE §8/§9 path (G38, wave 17): the learned transformer's
     # REAL max-softmax confidence gates the reflex (was a dead 0xFF = G34); 3
@@ -929,7 +959,9 @@ jobs:
   parallel-infer-live:
     name: "並列推論 (実機: N 個の region 跨ぎ推論を同時実行、200ms 直列化せず、kill 耐性)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after twolayer-couple-live. See HEAD.
+    needs: [twolayer-couple-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 20
     # enforces G13 (wave 17): DKVA coordinator aggregation is per-origin and
     # event-driven (no single synchronous 200ms window); N simultaneous
@@ -959,7 +991,9 @@ jobs:
   ark-crash-fuzzer:
     name: "ARK クラッシュファザー (並べ替え/破断/ビット反転: 破損提供 0、wedge 0)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): runs after parallel-infer-live. See HEAD.
+    needs: [parallel-infer-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 15
     # ARK's crash-safety, enforced. A format-agnostic fuzzer drives ARK via the
     # sample-25 CLI and perturbs the on-disk image at the sector level
@@ -979,7 +1013,10 @@ jobs:
   composite-loop:
     name: "複合ループ (kill ∧ 並行 ∧ メモリ, ボーナス)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # serialized self-hosted chain (de-flake): chain TAIL, runs after ark-crash-fuzzer.
+    # always() keeps it running even though it's a continue-on-error bonus. See HEAD.
+    needs: [ark-crash-fuzzer]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     # heavy: SWIM convergence + p-fs gossip + a revival on one 4-node cluster.
     timeout-minutes: 25
     # bonus job: surface the G19 closed loop without blocking unrelated PRs

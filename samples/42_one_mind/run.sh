@@ -184,7 +184,12 @@ send 1 "mind merge"; sleep 2; send 2 "mind merge"
 # survive property: B must hold A's mind in its merged rw[] when A dies. A
 # folding B is the symmetric corroboration (best-effort: A is killed anyway,
 # and the 84 KB pull may not complete both ways inside the CI window).
-for r in $(seq 1 40); do
+# De-flake: widen the FOLD wait window 40 -> 90 rounds (~630s). On the 3-cpu
+# self-hosted ThinkPad the 84 KB (22-chunk) cross-node pull is the honest ~1900x
+# Path E cost and can lag past the old ~280s window under CPU contention; the
+# never-folds FAILURE path below (and the region/matrix gates) are UNCHANGED, so
+# a genuine never-fold regression STILL fails.
+for r in $(seq 1 90); do
     sleep 7
     send 1 "mind merge"; send 2 "mind merge"
     if grep -aq '\[onemind\] FOLD' "$L2"; then break; fi
