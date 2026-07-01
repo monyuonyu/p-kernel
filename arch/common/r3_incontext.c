@@ -767,32 +767,64 @@ static UB m_ready = 0;
  * reaches one, so the whole node goes network-DEAF for that window: SWIM
  * misses probes -> the node is rumored SUSPECT/DEAD -> the region churns ->
  * the merge/consolidation the [onemind-survive]/[shared-*] jobs need never
- * lands. The periodic tk_dly_tsk(1) below lets SWIM/mind/pfs/console breathe.
+ * lands. The periodic breathe point below (see the "WHY NOT A BARE ..." note)
+ * lets SWIM/mind/pfs/console run so the node stays reachable during pretrain. */
+#ifndef S_PRETRAIN_YIELD_EVERY
+#define S_PRETRAIN_YIELD_EVERY 2
+#endif
+/* WHY NOT A BARE tk_dly_tsk(1)/tk_rot_rdq (measured — see this fix's commit
+ * message for the table):  s_pretrain runs in the usermain SHELL task, whose
+ * priority is INITTASK_ITSKPRI(=1) — ABOVE every network task (net=3, drpc=5,
+ * swim=6, pfs/replica/dmn/...).  So a same-priority tk_rot_rdq(TPRI_RUN)
+ * dispatch point cannot let SWIM/net run at all (a lower-priority task never
+ * preempts a runnable higher-priority one) — it does NOT de-deafen.  The only
+ * primitive that DID de-deafen at pri 1 was a BLOCKING tk_dly_tsk(1), because
+ * blocking surrenders the CPU to lower-priority tasks — but it drains the ENTIRE
+ * lower-priority backlog on every call, which is what inflated first-teach
+ * wall-clock ~2.4x (measured base every-4: 57.2s vs 35.6s un-yielded here).
  *
- * DETERMINISM: the yield touches no math state (r_rng/rw[] are untouched);
- * the ONLY writers of rw[] during a pretrain (the DMN idle round + the
- * fleet-DMN fold) are both gated by m_ready==0 (still 0 here) and by the
- * m_gate the m_boot callers hold, so the FINAL rw[] is bit-identical whether
+ * THE FIX: for the duration of the pure-math loop, TEMPORARILY drop our OWN
+ * priority just below the network tasks (S_PRETRAIN_PRI), then a CHEAP
+ * tk_rot_rdq() every few epochs opens a dispatch point at which SWIM/net/pfs
+ * PREEMPT when — and only when — they are actually ready, returning us to
+ * RUNNABLE immediately (no forced tick, no backlog drain).  Restore priority
+ * before returning.  Result (measured): 0 self-suspicion at ~baseline latency.
+ * The deaf window is bounded by the CADENCE (epochs between rot points), so the
+ * cadence — not the primitive — is the reachability knob; rot being ~free lets
+ * us keep it fine (every-2) without the tk_dly_tsk latency tax.
+ *
+ * DETERMINISM: neither the yield nor the priority change touches math state
+ * (r_rng/rw[] untouched); the ONLY writers of rw[] during a pretrain (the DMN
+ * idle round + the fleet-DMN fold) are gated by m_ready==0 (still 0 here) and by
+ * the m_gate the m_boot callers hold, so the FINAL rw[] is bit-identical whether
  * or not we yield.  RE-ENTRANCY: the yield opens a scheduling point, so guard
- * against a second concurrent s_pretrain (e.g. a console verb vs a mind_net
- * teach arrival); serialize (do NOT idempotently skip — the certs call
- * s_pretrain to REBUILD the substrate even when m_ready is already set).
- *
- * CADENCE: yield every S_PRETRAIN_YIELD_EVERY(=4) epochs. Once a thinking node
- * starts breathing, the first-teach wall-clock rises (measured ~22s->~51s here)
- * because the work base DEFERRED — the newborn baby's DMN consolidation, pfs
- * sync, SWIM — now interleaves INTO the pretrain window instead of after it
- * (useful work, not waste; the "pretrained in Xs" line simply now includes it).
- * That rise is dominated by the interleaved work, NOT the tk_dly_tsk count
- * (every-4 measured within ~5s of every-1), so a coarser cadence costs almost
- * nothing while it bounds the DEAF chunk to ~4 epochs (~0.5s on the CI runner's
- * ~11s/80-epoch pretrain) — comfortably under SWIM's ~2s SUSPECT threshold, so
- * the node stays reachable. Callers that gate on first-teach completion must
- * tolerate this longer-but-alive window (the sample waits are widened to match).
+ * against a second concurrent s_pretrain (a console verb vs a mind_net teach
+ * arrival); serialize (do NOT idempotently skip — the certs call s_pretrain to
+ * REBUILD the substrate even when m_ready is already set).
  *
  * CROWN: this entire block is _TK_HOSTED_LIBC_-gated; bare metal compiles the
  * original loop verbatim, so boot/aarch64 + boot/x86 .text stay byte-identical. */
-#define S_PRETRAIN_YIELD_EVERY 4
+#ifndef S_PRETRAIN_PRI
+#define S_PRETRAIN_PRI 7   /* just below SWIM(6); above replica/moe(8)/dmn(13) */
+#endif
+/* the yield PRIMITIVE + priority envelope (sweepable for measurement).
+ * S_PRETRAIN_YIELD_DLY selects the OLD blocking-at-top-priority behaviour (the
+ * base config, for the same-day control); the default is the priority-drop +
+ * cheap-rot fix. */
+#ifdef S_PRETRAIN_YIELD_DLY
+#  define S_PRETRAIN_ENTER(pri_save) ((void)(pri_save))
+#  define S_PRETRAIN_YIELD()         tk_dly_tsk(1)
+#  define S_PRETRAIN_LEAVE(pri_save) ((void)(pri_save))
+#else
+#  define S_PRETRAIN_ENTER(pri_save) do {                                  \
+        T_RTSK _r; if (tk_ref_tsk(TSK_SELF, &_r) >= E_OK) {                 \
+            (pri_save) = _r.tskbpri; tk_chg_pri(TSK_SELF, S_PRETRAIN_PRI);  \
+        } } while (0)
+#  define S_PRETRAIN_YIELD()         tk_rot_rdq(TPRI_RUN)
+#  define S_PRETRAIN_LEAVE(pri_save) do {                                   \
+        if ((pri_save) > 0) tk_chg_pri(TSK_SELF, (pri_save));               \
+    } while (0)
+#endif
 static volatile UB m_pretrain_busy = 0;
 #endif
 
@@ -802,8 +834,10 @@ static volatile UB m_pretrain_busy = 0;
 static void s_pretrain(void)
 {
 #ifdef _TK_HOSTED_LIBC_
+    PRI s_saved_pri = 0;               /* 0 => nothing to restore (LEAVE no-ops) */
     while (m_pretrain_busy) tk_dly_tsk(20);
     m_pretrain_busy = 1;
+    S_PRETRAIN_ENTER(s_saved_pri);     /* drop below the network tasks (default) */
 #endif
     r_init_weights(0xA5A5u);
     float lr = 0.05f;
@@ -813,11 +847,12 @@ static void s_pretrain(void)
         r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
 #ifdef _TK_HOSTED_LIBC_
         if ((ep % S_PRETRAIN_YIELD_EVERY) == 0)
-            tk_dly_tsk(1);   /* breathe: a safe point so SWIM/mind/pfs/console run */
+            S_PRETRAIN_YIELD();   /* breathe: a safe point so SWIM/mind/pfs/console run */
 #endif
     }
     m_ready = 1;
 #ifdef _TK_HOSTED_LIBC_
+    S_PRETRAIN_LEAVE(s_saved_pri);     /* restore top priority */
     m_pretrain_busy = 0;
 #endif
 }
