@@ -5,9 +5,10 @@
 > chain, and the `compat test [ota|self|wire|arkfs]` verb (`usermain.c:1164`) are all live.
 > **HONEST GAP:** the §5 "RELEASE-GATING" certs are NOT in default CI — each is compiled
 > behind an `EXTRA_CFLAGS` build flag (`-DOTA_GATE_CERT` / `-DLMSELF_MIGRATE_CERT` /
-> `-DNOFLEETSPLIT_CERT` / `-DARKFS_GAP_CERT` / `-DR3WP_MIGRATE_CERT`) and `.github/workflows/ci.yml`
-> runs none of them, so nothing gates a release on migration today. Wiring them is the P12
-> follow-up. It turns the strategy DECIDED by mk_pino on 2026-06-14 into a concrete,
+> `-DNOFLEETSPLIT_CERT` / `-DARKFS_GAP_CERT` / `-DR3WP_MIGRATE_CERT`). P12 wired the
+> forward-migration cert `[migrate-forward]` into CI (job `shipped-llm-certs`); the other
+> four flags remain un-wired, so only forward migration is release-gated today. It turns
+> the strategy DECIDED by mk_pino on 2026-06-14 into a concrete,
 > certifiable MECHANISM. Honest > green: every bound the mechanism does NOT cover is flagged
 > loudly in §C and §9, not hand-waved.
 >
