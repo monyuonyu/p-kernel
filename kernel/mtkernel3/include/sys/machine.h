@@ -49,6 +49,14 @@
 
 #endif
 
+/* p-kernel 追加ターゲット: Linux x86-64 ユーザモード */
+#ifdef _LINUX_X86_64_
+#include "sysdepend/linux_x86_64/machine.h"
+
+#define Csym(sym) sym
+
+#endif
+
 /* ===== C compiler dependencies definitions ============================= */
 
 #ifdef __GNUC__
