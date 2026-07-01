@@ -185,11 +185,17 @@ send 1 "mind teach $KWORD $VWORD"     # LM-8: REAL WORDS (= token ids 2,3)
 # competence threshold) before it can publish. The publish wait 15->75s
 # tracks that pretrain latency (the honest cost of the wider mind; the tag
 # itself is unchanged — A still publishes the SAME mind/teach packet).
-wait_for "$L1" 'published mind/teach' 75 || bad "A never published mind/teach"
+# Widen 75 -> 200: the cooperative-yield fix (s_pretrain yields every few epochs
+# so the node stays SWIM-reachable during its first-teach pretrain) lets the
+# now-interleaved DMN/pfs work land inside the pretrain window, ~doubling first-
+# teach wall-clock (an ALIVE node, not a deaf one). Gate UNCHANGED — A that never
+# pretrains STILL fails to publish, just after a window sized for the loaded runner.
+wait_for "$L1" 'published mind/teach' 200 || bad "A never published mind/teach"
 # B's arrival print comes from the REAL poll of the REAL topic (no injection).
-# Widen 40s -> 60s: the engram crosses the region-scoped K-DDS topic over several
-# gossip poll rounds; give it the same ~60s convergence budget. UNCHANGED gate.
-if wait_for "$L2" '\[shared-arrival\] PASS' 60; then
+# Widen 40 -> 60 -> 150: the engram crosses the region-scoped K-DDS topic over
+# several gossip poll rounds AND B's OWN first-teach pretrain (the yield-fix
+# longer-but-alive window) must finish before r3_fact_learn prints. UNCHANGED gate.
+if wait_for "$L2" '\[shared-arrival\] PASS' 150; then
     ok "[shared-arrival] PASS — B's queue gained A's fact via the mind/teach topic"
 else
     bad "[shared-arrival] — B never received A's fact over the topic"
