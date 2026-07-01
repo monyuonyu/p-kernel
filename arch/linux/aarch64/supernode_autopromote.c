@@ -2,7 +2,7 @@
  *  arch/linux/aarch64/supernode_autopromote.c
  *
  *  Measured-capability supernode auto-promotion (N-2d).
- *  Design: docs/architecture/supernode-autopromote.md.
+ *  Design: docs/architecture/30-module/supernode-autopromote.md.
  *
  *  A node AUTO-PROMOTES its own supernode capability bit when it MEASURES
  *  that it is actually a good supernode (relay-reachable / public-or-cone /

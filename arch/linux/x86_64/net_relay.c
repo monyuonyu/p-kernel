@@ -115,7 +115,7 @@ extern int pkernel_default_node_id(void);
 
 /* Relay-HA failover/failback time constants (ms). All nodes share these,
  * so the "first live relay on the list" rule resolves identically
- * everywhere. See docs/architecture/relay-ha.md. */
+ * everywhere. See docs/architecture/30-module/relay-ha.md. */
 #define MAX_RELAYS         4
 #define HA_RX_IDLE_MS      5000   /* no rx for this long -> probe current */
 #define HA_PROBE_TMO_MS    3000   /* probe unanswered -> advance to next  */

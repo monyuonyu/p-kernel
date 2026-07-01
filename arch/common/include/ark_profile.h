@@ -1,6 +1,6 @@
 /*
  *  ark_profile.h — ark-profile v1: 人類の記憶 (the human chapter of the
- *  autobiography). Spec: docs/architecture/ark-profile.md.
+ *  autobiography). Spec: docs/architecture/30-module/ark-profile.md.
  *
  *  A person opens their node's galaxy page, is shown the manifesto (the
  *  served bytes, content-id-bound), and — if and only if they explicitly

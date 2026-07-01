@@ -23,7 +23,7 @@
  *  a reader never sees a half-written block; a crash mid-write leaves at
  *  most a stale ".tmp" the next write overwrites. (Honest limit: we trust
  *  the filesystem's fsync — on a lying disk cache nothing here can help;
- *  documented in docs/architecture/p-fs.md.)
+ *  documented in docs/architecture/20-architecture/p-fs.md.)
  *
  *  This is a HOSTED-only backend (arch/linux/, shared by the aarch64 and
  *  x86_64 Linux ports). Bare-metal targets never compile this file; their

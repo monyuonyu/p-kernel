@@ -2,7 +2,7 @@
  *  genome.h — §3 self-regeneration: the swarm grows a new full cell.
  *
  *  Spec: docs/architecture/00-concept/survival-network.md §3 (装甲板＝細胞) and
- *  docs/architecture/genome.md.
+ *  docs/architecture/30-module/genome.md.
  *
  *  Every organ this needs already exists; genome.c only ORCHESTRATES:
  *    weights  = p-fs versioned object "dtr/weights"  (dtr save / load)

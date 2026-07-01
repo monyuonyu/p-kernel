@@ -248,7 +248,7 @@ float dtr_logf(float x);
 /* ---- shared Transformer kernels (R3: same math, sensor + in-context) ---
  * Exposed so r3_incontext.c composes the SAME numerically-meaningful
  * kernels the live sensor brain uses — the anti-fork rule in
- * docs/architecture/r3-nontrivial-thought.md. Width is a parameter:
+ * docs/architecture/20-architecture/r3-nontrivial-thought.md. Width is a parameter:
  * the sensor path passes DTR_EMBED_DIM, the recall harness its own
  * d_model. (dt_linear/dt_softmax were already dim-parameterized.) */
 #define DTR_LN_MAXW 64   /* LM-9 (living-mind Part X.3): a CAPACITY CAP for the

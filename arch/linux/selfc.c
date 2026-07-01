@@ -630,7 +630,7 @@ static const char selfc_gate_v2_src[] =
 static void selfc_test(void)
 {
     tm_printf((const UB *)"[selfc-test] ==== selfc-ring3 v1: the immune boundary "
-              "(docs/architecture/selfc-ring3.md §5) ====\n");
+              "(docs/architecture/50-evolution/selfc-ring3.md §5) ====\n");
 
     /* a sentinel: kdds round-trip proving the KERNEL is alive after a reap. */
 

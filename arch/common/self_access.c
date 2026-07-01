@@ -1,6 +1,6 @@
 /*
  *  self_access.c — self-access R0: READ-ONLY introspection of the node's
- *  own "body".  See self_access.h + docs/architecture/self-access.md.
+ *  own "body".  See self_access.h + docs/architecture/30-module/self-access.md.
  *
  *  THE CLAIM (R0): the resident mind (or an operator) can READ what the node
  *  already knows about ITSELF — its tasks/processes, its p-fs/ark named

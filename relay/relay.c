@@ -438,7 +438,7 @@ static void evict_stale(time_t now)
  *  Scope (this wave): single relay. Lease release is by the same idle
  *  eviction as static nodes — when a leased slot goes idle it is freed
  *  and its id becomes reusable. Multi-relay lease arbitration is design
- *  only; see docs/architecture/dynamic-id.md.
+ *  only; see docs/architecture/30-module/dynamic-id.md.
  */
 
 static int addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
