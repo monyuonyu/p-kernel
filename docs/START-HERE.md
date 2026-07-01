@@ -153,6 +153,7 @@ that.
 
 - **Run and explore more:** [quickstart.md](quickstart.md)
 - **The full technical map (5 layers, every organ):** [architecture/README.md](architecture/README.md)
+- **The complete index of every architecture doc (one row each):** [architecture/INDEX.md](architecture/INDEX.md)
 - **What's still unfinished (the honest list):** [architecture/gap-ledger.md](architecture/gap-ledger.md)
 - **The deeper "why" (the philosophy):** [architecture/survival-network.md](architecture/survival-network.md)
 
