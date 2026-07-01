@@ -1,5 +1,7 @@
 # R3 — 網を太らせる（model widening / weight distribution）
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この「635 param の玩具を太らせる」問いは living-mind で **回答済**：R3 in-context 基盤は `R_NP`=21,568・`R_DM`=48 まで広がり、LM-9 で comfortable-N が 4→16 になった（[[living-mind.md]] の SHIPPED 表、Closed wave-39）。本文は widening 論拠の 年輪。
+
 > p-kernel は「全体で1つの脳」である。だが今、その脳は **635 パラメータの玩具**で、
 > 1台で一瞬で回る。R0–R2 で **配管**（遅延クラスタ region・locality-MoE・capacity(N)）は
 > 通った。R3 はその配管に**本物の水量**を流す ―― モデルを1台に収まらない大きさへ太らせ、

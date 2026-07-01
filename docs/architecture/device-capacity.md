@@ -1,5 +1,7 @@
 # device-capacity — 器に合った担当量: 端末の性能で各ノードの「ニューロン数」を連続変調する
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この叩き台の「端末を測って自動で合わせる」方向のうち **mind-sizing 半分は SHIPPED**（DEVFIT-1: `arch/common/llm/dev_capacity.c` + cert `tests/llm/run_devfit.sh`）、cores 半分（SMP-AUTODETECT）も着地済。本文の tier/連続変調（ニューロン数の連続調整）は引き続き設計提案。正本は [[gap-ledger.md]]。
+
 > Status: **design DRAFT**（実装前・commander + mk_pino が叩くための叩き台）。
 > 確信を装わない。提案し、未解決は §「open problems」で正直に旗立てる。確定設計ではなく、
 > 最小の決定的実験で**賭けを検証してから**広げる。

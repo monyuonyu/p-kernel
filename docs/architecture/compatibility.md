@@ -74,6 +74,8 @@ v1 が「高い版を見たら hard-drop する」コードで凍ると、未来
 
 ---
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** 下記 §1 の **file:line はコード移動により古い**（symbol 名で追うこと）。**§7 の「未来を許容する（tolerate-future）」封筒は未実装** —— 現状 swim は version bump を hard-drop する。**★DECISION 2026-06-14 ブロックは逐語・不変。** 群れの互換で実際に動いている部分は compat OTA（`compat_ota.c` / `compat test`）で、release-gating cert は既定 CI 未接続（[[compat-migration-chain-plan.md]] 参照）。
+
 ## 1. 現状の地層（ground truth — コードで確認済み）
 
 ### 1.1 version seam は**至る所にある**（先例は十分）

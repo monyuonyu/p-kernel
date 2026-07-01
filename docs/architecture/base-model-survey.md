@@ -1,5 +1,7 @@
 # base-model-survey — どの OSS base を借りるか（分岐 A2 の調査波）
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この調査（分岐 A2＝既存小型モデルを借りる）の結論は取られなかった：p-kernel は **自前の ownerless student**（living-mind, ~21.5K param, R3 基盤）を育てる道を選んだ。本文は A2 分岐を検討した 年輪。教育方針は memory `project_teacher_student_architecture`。
+
 > Status: **research / recommendation**（実装前）。位置づけ: conversation.md §7 が
 > 求めた「次の調査波」。分岐 A2（既存小型モデルを採用して艦隊分散）を本線に取る前提で、
 > **借りる身体（base model）を1つ選ぶ**。これは設計判断であり、実装ではない

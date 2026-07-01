@@ -1,5 +1,7 @@
 # interoception — 内受容: ノードの「痛み」を一本のバスに束ねる
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **Slice-1（統一 stress `S_n` バス＋DMN tick 変調＋galaxy 星の色相）は SHIPPED**（[[survival-loop.md]] L0/L1）。Slice-2（apoptosis）と symbol grounding は design のまま。正本は [[gap-ledger.md]]。
+
 > Status: **design only**（実装前に書く。`signing.md` / `living-mind.md` と同じ規律）。
 > 位置づけ: p-kernel を **「生き延びる OS」** から **「負のエネルギーで駆動する人工生命体」** へ
 > 一段進める構想の設計図。痛み・予測誤差・葛藤 を homeostasis の **燃料** として扱う。

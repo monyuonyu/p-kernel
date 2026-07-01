@@ -1,5 +1,7 @@
 # survival-loop — 生存ループ: 内受容・分散ゲート・世界地図・冬眠・死をひとつの環に
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **L0+L1 は SHIPPED／CI**（統一 stress バス＋STATE-aware support routing＋§8 ヒステリシス, crown-preserving, `2a068400` 系）。L2–L4（apoptosis／冬眠／環の完成）は引き続き DESIGN。正本は [[gap-ledger.md]]。
+
 > Status: **DESIGN ONLY**（実装前に書く。`interoception.md` / `signing.md` / `living-mind.md` と同じ規律）。
 > 位置づけ: **4本の別々だったスレッドを一本の環に統合する**上位設計 —
 > ① interoception slice-2（apoptosis）／② survival-network §7（分散ゲート＝相互扶助）／

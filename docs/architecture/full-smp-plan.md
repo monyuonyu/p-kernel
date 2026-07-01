@@ -1,5 +1,7 @@
 # ② full SMP — making the T-Kernel scheduler symmetric-multiprocessing without splitting the mind: implementation plan (cert-first, multi-wave)
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **②.0–②.2 は SHIPPED**（`arch/aarch64/smp.c`＋`smp_async.c`/`smp_secwait.c`/`smp_onemind.c`/`mc2_smp.c`、cert `tests/aarch64/run_smp0..5.sh`）。本文の残る生きたロードマップは **②.3** のみ。旧 SMP 個別プランは `archive/` へ移設済。
+
 **Status: DESIGN PLAN** by an automated design-harden on trunk `432cf337`. Read-only on code; no implementation in this wave. This plan makes ② **READY and de-risked** — it does **not** start it. ②'s implementation is a 本丸-level decision **awaiting mk_pino's go-ahead** + per-wave **separate impl→audit cycles** (implementer ≠ auditor ≠ commander).
 
 mk_pino's stated END GOAL: *"最終的に2番にしたい"* — turn the T-Kernel **UNIPROCESSOR** scheduler into a real **symmetric-multiprocessing** kernel where N cores each run schedulable T-Kernel tasks, WITHOUT breaking the byte-identity crown ("one mind, one math", wave-49) or the determinism the distributed mind depends on. This is the **highest-risk change in the repo** (it took Linux ~10 years). The disciplined claim of this plan: p-kernel can do a *small-wave, cert-first* version far faster **because the mind's heavy-math determinism is already solved** by MC-2's output-partition + the canonical reduction orders — so the determinism threat reduces to a **kernel-state race** problem, not a mind-math problem. That distinction is the entire plan; it leads §1.

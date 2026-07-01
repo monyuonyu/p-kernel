@@ -1,5 +1,7 @@
 # interocept slice-2 — apoptosis: 本質ハンドオフ via Path W²
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **注意：本文の apoptosis 中核テーゼは [[survival-loop.md]] §3 で見直された（先に survival-loop を読むこと）。** Path W² の本質ハンドオフは design のまま。上位設計は survival-loop、状態の正本は [[gap-ledger.md]]。
+
 > Status: **DESIGN ONLY** (実装前に書く。`signing.md` / `living-mind.md` / `interoception.md` と同じ規律)。
 > 位置づけ: `interoception.md` §4「apoptosis: 代謝としての死」の **ハードン版**。
 > 死を「事故」ではなく「代謝」にする ― **きれいに死に、本質を隣へ渡し、空間を空ける。**
