@@ -102,6 +102,11 @@ jobs:
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
+          # federation R0 in-proc cert (dkva_fed2_self_test, driven by `dkva test`
+          # above; shipped-but-unguarded until the 2026-07-01 doc-hygiene P12 pass).
+          # Assert the 2-cluster hierarchy PASSes and never FAILs (inner spacing varies).
+          grep -aE '\[fed-2cluster\] +PASS' selftest.log
+          ! grep -aqE '\[fed-2cluster\] +FAIL' selftest.log
           # §7/§8 thought-core property tests (philosophy-gap-audit G3)
           grep -aF '[moe-nocentral] PASS' selftest.log
           grep -aF '[moe-twolayer] PASS' selftest.log
@@ -1226,3 +1231,80 @@ jobs:
             exit 1
           fi
           echo "sanitizer smoke clean"
+
+  # =========================================================================
+  # SHIPPED-BUT-UNGUARDED CERTS (2026-07-01 doc-hygiene P12) — three shipped
+  # certs the audit found guard NOTHING in CI. Each script self-asserts
+  # (set -eu / exit 1 on FAIL), so a red script fails the step.
+  # =========================================================================
+
+  shipped-llm-certs:
+    # Host gcc certs that shipped code but were never wired: SS-4 function-
+    # preserving expert growth (run_ss4.sh), device-capacity mind-sizing /
+    # DEVFIT-1 (run_devfit.sh), and the compat migration-chain [migrate-forward]
+    # verb (built behind -DR3WP_MIGRATE_CERT, driven by `compat test`).
+    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: SS-4 function-preserving expert growth ([expert-growth-preserves])
+        run: bash tests/llm/run_ss4.sh
+      - name: DEVFIT-1 device-capacity mind-sizing ([device-fit] + falsifier)
+        run: bash tests/llm/run_devfit.sh
+      - name: compat migration-chain [migrate-forward] (native x86_64)
+        run: |
+          make -C boot/linux_x86_64 EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT
+          cd boot/linux_x86_64
+          printf 'compat test\nexit\n' | timeout 120 ./p-kernel | tee compat.log
+          grep -aF '[migrate-forward] PASS' compat.log
+          ! grep -aqF '[migrate-forward] FAIL' compat.log
+
+  smp-autodetect:
+    # ②.0/②.N8 full-SMP + [smp-autodetect] cert (run_smp0.sh): builds the
+    # aarch64 bare-metal kernel with -DSMP_SELFTEST ONCE and boots it under
+    # qemu-system-aarch64 at -smp {2,4,8}, plus two load-bearing falsifiers.
+    # Shipped since the SMP waves but never in CI.
+    name: "full-SMP + core autodetect (aarch64 QEMU, run_smp0.sh)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain + qemu-system-aarch64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu make qemu-system-arm
+      - name: run_smp0.sh (smp-autodetect / 2-tasks-run / mutual-exclusion / boot-survives)
+        run: sh tests/aarch64/run_smp0.sh
+
+  federation-r0-live:
+    # federation R0 [live]: the 8-process 2-region DKVA hierarchy over ./relay
+    # (run_4node_regions.sh). Heavy multi-process harness -> appended to the
+    # serialized self-hosted chain TAIL (after composite-loop) to honor the
+    # single-heavy-job-at-a-time discipline. Bonus (continue-on-error) while it
+    # earns trust on the hosted runner, like the other live rows.
+    name: "federation R0 [live] (4-node/2-zone hierarchy over relay)"
+    runs-on: [self-hosted, pkernel-thinkpad]
+    needs: [composite-loop]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: run_4node_regions.sh ([fed-2cluster][live] requester + responder gates)
+        run: timeout 1200 samples/11_distributed/run_4node_regions.sh
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: federation-r0-live-logs
+          path: /tmp/pk4_*.log
