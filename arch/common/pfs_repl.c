@@ -153,17 +153,6 @@ static struct {
     U1 buf[PFS_BLOCK_MAX];
 } rx_state;
 
-#ifdef _TK_HOSTED_LIBC_
-/* CHUNK-STALL FIX (hosted): timestamp of the last accepted packet, so an
- * in-progress MULTI-packet assembly can be PROTECTED from an interloping
- * block's FILE_START (idx0) and abandoned only when genuinely STALLED. */
-static UW rx_last_ms = 0;
-#ifndef PFSR_RX_STALL_MS
-#define PFSR_RX_STALL_MS 300   /* > one 8-packet loopback burst, < a fold round */
-#endif
-static UW rx_now_ms(void) { SYSTIM t; tk_get_otm(&t); return (UW)t.lo; }
-#endif
-
 /* static per-packet / per-block send scratch (same trap) */
 static PFSR_BLK_PKT tx_pkt;
 static U1           tx_block[PFS_BLOCK_MAX];
@@ -373,39 +362,6 @@ static void pending_add(const U1 id[PFS_ID_LEN])
 
 static void pending_tick(UW elapsed_ms)
 {
-#ifdef _TK_HOSTED_LIBC_
-    /* CHUNK-STALL FIX: the WANT topic is a shared LATEST_ONLY slot carrying a
-     * GLOBAL want_seq, so publishing several due WANTs in ONE tick overwrites
-     * all but the last — the holder then only ever serves that one id and the
-     * other wanted chunks STARVE (Path W fetch plateaus with several chunks
-     * never requested). Cure: age every entry as before, but publish at most
-     * ONE due WANT per tick, ROUND-ROBIN across the table, so each lands ALONE
-     * in the retained slot on a distinct 50ms poll and the holder serves every
-     * distinct id in turn. Per-entry retry cadence (PFSR_WANT_RETRY_MS) and the
-     * give-up budget are preserved; only the intra-tick clobber is removed. */
-    static UW rr = 0;
-    for (INT i = 0; i < PFSR_PENDING_MAX; i++) {
-        if (!pending[i].active) continue;
-        if (pfs_has(pending[i].id)) { pending[i].active = 0; continue; }
-        pending[i].age_ms += elapsed_ms;
-    }
-    for (INT k = 0; k < PFSR_PENDING_MAX; k++) {
-        INT i = (INT)((rr + (UW)k) % (UW)PFSR_PENDING_MAX);
-        if (!pending[i].active) continue;
-        if (pending[i].age_ms < PFSR_WANT_RETRY_MS) continue;
-        pending[i].age_ms = 0;
-        if (pending[i].tries >= PFSR_WANT_TRIES) {
-            pr_puts("[pfs] gave up on block id=");
-            pr_put_id(pending[i].id); pr_puts("\r\n");
-            pending[i].active = 0;
-            continue;                    /* freed a slot; keep scanning */
-        }
-        pending[i].tries++;
-        publish_want(pending[i].id);
-        rr = (UW)(i + 1);
-        return;                          /* ONE WANT this tick — no clobber */
-    }
-#else
     for (INT i = 0; i < PFSR_PENDING_MAX; i++) {
         if (!pending[i].active) continue;
         if (pfs_has(pending[i].id)) {          /* arrived — done */
@@ -424,7 +380,6 @@ static void pending_tick(UW elapsed_ms)
         pending[i].tries++;
         publish_want(pending[i].id);
     }
-#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -464,20 +419,6 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
          * Already holding the block? Then this is a duplicate stream
          * from a second responder — ignore it entirely. */
         if (pfs_has(pkt->id)) return;
-#ifdef _TK_HOSTED_LIBC_
-        /* CHUNK-STALL FIX: the single-slot assembler otherwise RESETS on every
-         * new idx0 — so a 1-packet interloper (self/prov, a manifest, another
-         * chunk stream) arriving mid-assembly ABANDONS the in-progress
-         * multi-packet block, which then never completes and the Path W fold
-         * plateaus. Protect a DIFFERENT, in-progress, RECENTLY-advanced block:
-         * ignore the interloper (its holder re-serves it on the WANT retry).
-         * Abandon only a STALLED assembly (no accepted packet for
-         * PFSR_RX_STALL_MS) so a lost-packet stream cannot wedge the slot. */
-        if (rx_state.active && rx_state.next_chunk > 0 &&
-            !pr_id_eq(rx_state.id, pkt->id) &&
-            (UW)(rx_now_ms() - rx_last_ms) < (UW)PFSR_RX_STALL_MS)
-            return;
-#endif
         pr_memset(&rx_state, 0, (UW)sizeof(rx_state));
         pr_memcpy(rx_state.id, pkt->id, PFS_ID_LEN);
         rx_state.total      = pkt->total_len;
@@ -497,9 +438,6 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
                   pkt->chunk_len);
     rx_state.received += pkt->chunk_len;
     rx_state.next_chunk++;
-#ifdef _TK_HOSTED_LIBC_
-    rx_last_ms = rx_now_ms();   /* CHUNK-STALL FIX: mark forward progress */
-#endif
 
     if (rx_state.received < rx_state.total) return;   /* more to come */
 
