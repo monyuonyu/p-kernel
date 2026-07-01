@@ -11,7 +11,7 @@
 > 4. Keep it short. If this file ever rivals the learning code again, it has become the disease it tracks.
 >
 > Reconciled across `archive/philosophy-gap-audit-{,-2..-8}.md` + `archive/review-2026-06-three-brains.md` (both archived 2026-07-01).
-> Verified on master `79518a33`. Severity: 🔴 contradicts the core · 🟡 weakens it.
+> Verified on master `fce5b56d`. Severity: 🔴 contradicts the core · 🟡 weakens it.
 
 ---
 
@@ -45,9 +45,18 @@ Rules:
 
 ## OPEN (this is the whole list)
 
-| id | one-line | sev | evidence it is still open (file:line on master) | "closed" means |
+| id | one-line | sev | evidence it is still open (file:line on master) | V-rung |
 |---|---|---|---|---|
 | _(none)_ | — | — | — | — |
+
+> **V-rung note.** This ledger tracks gaps where shipped code *contradicts or
+> weakens the core* (all such rows are Closed). A **different** class of gap — a
+> design doc that has **no corresponding cert** (a broken design↔verify rung) —
+> is tracked by [`V-MODEL.md`](V-MODEL.md)'s correspondence table, marked `○ OPEN`
+> (currently 7: memory-thought, self-access, gpu-compute, gpu-3-wiring, webd-user-space,
+> living-body-inspector, n1-lan-direct-plan). Those are *design-ahead-of-cert*, not
+> regressions; they do not belong in this table (per Rule #1) but the V-MODEL rung
+> IS their canonical open list. When one gets a cert, its rung closes there.
 
 **Open rows: 0.** As of the 2026-07-01 doc-hygiene pass the OPEN table is empty —
 every row is CI-enforced and swept to Closed below. The three rows that were
