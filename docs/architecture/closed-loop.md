@@ -6,7 +6,7 @@ are joined into **one closed control loop**. This doc records the wiring, the
 measured negative-feedback convergence, the deliberation→learning loop, and —
 honestly — what is still feedforward.
 
-Source of truth for the audit: `philosophy-gap-audit-2.md` (G17, G18). Those
+Source of truth for the audit: `archive/philosophy-gap-audit-2.md` (G17, G18). Those
 lines are owned by the auditor; this doc only describes the implementation.
 
 ## 1. The chain that was, the ring that is

@@ -22,3 +22,20 @@ All shipped: `arch/aarch64/smp.c` (~90KB), `smp_async.c`, `smp_secwait.c`,
 - multicore-matmul-plan.md — ③ deterministic parallel matmul stepping-stone → shipped (mc2_smp.c).
 - cooperative-yield-plan.md — DMN consolidation must not starve the node → shipped (run_yield.sh); content still valid, referenced by CI-fix work.
 - thread-t-impl-plan.md — Thread T teacher→student teaching over the mesh → shipped (gossip_learn.c / cradle teach path).
+
+## philosophy-gap-audit 1..8 (archived 2026-07-01, P2)
+
+The 8-file, ~2,503-line point-in-time self-audit pile. Every gap G1–G37 it
+raised is Closed (and CI-enforced) per `../gap-ledger.md`, whose Closed table is
+now the canonical record. Archiving this pile structurally closes the
+AUDIT-SPRAWL gap-ledger row. Preserved verbatim; already carried a
+「歴史記録・凍結 / superseded by gap-ledger.md」 banner. `audit-9` was never made.
+
+- philosophy-gap-audit.md — audit-1, the original gap sweep → all rows closed, see gap-ledger.md Closed.
+- philosophy-gap-audit-2.md — audit-2 continuation → closed.
+- philosophy-gap-audit-3.md — audit-3 continuation → closed.
+- philosophy-gap-audit-4.md — audit-4 continuation → closed.
+- philosophy-gap-audit-5.md — audit-5 continuation → closed.
+- philosophy-gap-audit-6.md — audit-6 continuation → closed.
+- philosophy-gap-audit-7.md — audit-7 continuation → closed.
+- philosophy-gap-audit-8.md — audit-8, the final sweep → closed. Canonical live gaps: ../gap-ledger.md.

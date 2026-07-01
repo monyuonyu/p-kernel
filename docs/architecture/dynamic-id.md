@@ -5,7 +5,7 @@
 トポロジ**への設計道筋を残す。wire protocol v2（HMAC-SHA256 + nonce
 window）は不変。後方互換最優先。
 
-関連: [[philosophy-gap-audit.md]] G6 / [[relay-ha.md]]（relay 冗長化）/
+関連: [[archive/philosophy-gap-audit.md]] G6 / [[relay-ha.md]]（relay 冗長化）/
 [[decentralized-lookup.md]]（HRW + gossip、churn 前提の責任集合）/
 [[regions.md]] / [[survival-network.md]]。
 

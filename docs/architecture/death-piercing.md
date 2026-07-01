@@ -95,7 +95,7 @@ G8 のストレッチ (coordinator 死亡時に region 内の次点が in-flight
 
 ## degraded の正直さは gossip 鮮度に依存する — 不確実性を明示する (wave 12, G12)
 
-G2/G8 の修正には**致命的な副作用**があった (philosophy-gap-audit-2.md G12 🔴)。
+G2/G8 の修正には**致命的な副作用**があった (archive/philosophy-gap-audit-2.md G12 🔴)。
 他 region の期待集合 `rc_expect[]` を **world-gossip の region_id** から組むため、
 **degraded(k/n) の数字自体が gossip の鮮度に依存して嘘をつく**:
 

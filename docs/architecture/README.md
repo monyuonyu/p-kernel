@@ -17,7 +17,7 @@
 ／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
 
 > **乖離（gap）の正本は [[gap-ledger.md]] 一枚。** いま master で開いている gap は
-> そこにだけ載る（行が減ることが進捗）。`philosophy-gap-audit-{,-2..-8}.md` は時点ごとの
+> そこにだけ載る（行が減ることが進捗）。`archive/philosophy-gap-audit-{,-2..-8}.md` は時点ごとの
 > 自己監査の**歴史記録**として凍結保存する（本文そのまま）。`audit-9` は作らない
 > ——監査文書を一本増やすこと自体がレビュー #5 の指摘対象である。
 

@@ -146,7 +146,7 @@ node2: [reflex] heard alarm from node0 class=2 (critical) -> attenuated CONSERVE
 ## 7b. G38 — 二層結合（wave 17）: 思考が守りを変える
 
 > 関連: [[survival-network.md]] §8（近傍が今を守り **全体が未来を強くする**）・§9（考える器官）、
-> [[philosophy-gap-audit-7.md]] §12、`arch/common/gossip_learn.c` の `[g38-*]`、
+> [[archive/philosophy-gap-audit-7.md]] §12、`arch/common/gossip_learn.c` の `[g38-*]`、
 > デモ: `samples/34_twolayer/run.sh`。
 
 audit-7 §4.3 の核心的指摘: G22（協調学習）が landing しても、**学習されるモデル本体が
