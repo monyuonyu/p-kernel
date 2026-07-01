@@ -1,11 +1,13 @@
 # Device-capacity mind-sizing — measure the device, auto-fit the mind (HARDENED DESIGN)
 
+> **ARCHIVED 2026-07-01 (doc-hygiene wave 2).** 正準は [[../device-capacity.md]]（§0.5 に DEVFIT-1 の SHIPPED 要約＝機構/ファイル/CI を畳んだ）。本文は DEVFIT-1 の設計記録＝年輪。
+
 > **Status: SHIPPED (DEVFIT-1) — reconciled 2026-07-01.** The "DESIGN ONLY (no kernel
 > code touched)" line below is STALE: the mind-sizing half shipped as
 > `arch/common/llm/dev_capacity.c` (+ `student.c`), certified by `tests/llm/run_devfit.sh`
-> with a load-bearing falsifier (`-DDEVFIT_IGNORE_MEASURE`). The cores half
-> (SMP-AUTODETECT) had already shipped. Read the rest as the design record. **HONEST GAP:**
-> `run_devfit.sh` is not yet wired into default CI (P12 follow-up).
+> with a load-bearing falsifier (`-DDEVFIT_IGNORE_MEASURE`), **now wired into default CI**
+> (`.github/workflows/ci.yml:1258`). The cores half (SMP-AUTODETECT) had already shipped.
+> Read the rest as the design record.
 
 **Status (historical): DESIGN ONLY. Base commit `e83ebf3e`. Branch
 `device_capacity_design`.** Honest > green. Every claim below is grounded in `file:line`.

@@ -1,6 +1,32 @@
 # device-capacity — 器に合った担当量: 端末の性能で各ノードの「ニューロン数」を連続変調する
 
-> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この叩き台の「端末を測って自動で合わせる」方向のうち **mind-sizing 半分は SHIPPED**（DEVFIT-1: `arch/common/llm/dev_capacity.c` + cert `tests/llm/run_devfit.sh`）、cores 半分（SMP-AUTODETECT）も着地済。本文の tier/連続変調（ニューロン数の連続調整）は引き続き設計提案。正本は [[gap-ledger.md]]。
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この叩き台の「端末を測って自動で合わせる」方向のうち **mind-sizing 半分は SHIPPED**（DEVFIT-1: `arch/common/llm/dev_capacity.c` + cert `tests/llm/run_devfit.sh`）、cores 半分（SMP-AUTODETECT）も着地済。本文の tier/連続変調（ニューロン数の連続調整）は引き続き設計提案。正本は [[gap-ledger.md]]。**本書がこのクラスタの正準（umbrella）**であり、旧 `device-capacity-verdict.md`（監査 verdict）と `device-capacity-mind-sizing-plan.md`（DEVFIT-1 設計）は下の §0.5 に要約を畳んだ上で `archive/` へ移した。
+
+---
+
+## 0.5 SHIPPED 要約 — DEVFIT-1（旧 verdict + mind-sizing-plan を畳む）
+
+doc-hygiene wave 2 で、本クラスタの生きた結論を一箇所に集約する。**「端末を測って心の
+サイズを自動で合わせる」は DEVFIT-1 として SHIPPED**（旧 verdict の DEFER 見出しはこの着地で
+更新された；旧 sizing-plan の「no kernel code」は STALE）。
+
+- **機構**: 連続 `device_score`（本書 §2–§3 の提案）ではなく、**離散 tier {S/M/L}** を採った。
+  Cradle student `st_model` が唯一サイズ可変な substrate（heap arena・runtime dims）で、
+  device 計測 → `tier_of(ram, cores)` → `st_init_tier`。R3 の心 `rw[R_NP=21568]` は
+  **fleet-wide 固定**（`gl_merge` の形状ガードを壊さない＝one mind を守る）。
+- **ファイル**: `arch/common/llm/dev_capacity.c`（probe + `tier_of()` + `st_arena_bytes_for_tier`）、
+  `arch/common/llm/student.c`（`ST_TIERS`・`st_init_tier`・per-tier no-VLA scratch）。
+- **CI**: `tests/llm/run_devfit.sh`（`tests/llm/student_devfit_test.c`）が **ci.yml に配線済**
+  （`.github/workflows/ci.yml:1258`）。cert `[device-fit]`＋falsifier `-DDEVFIT_IGNORE_MEASURE`
+  （L 決め打ちで小 RAM profile が OOM → 計測が load-bearing）＋`[device-fit-monotone]`。
+- **正しく残った設計（旧 verdict の核・逐語不要）**: ① R3 は fixed・student だけが可変、
+  ② 離散 tier（連続 width は VLA/merge-island リスク）、③ capacity メーターは
+  living-body inspector の honest observability（「担当キャパシティ≠賢さ」）。
+- **正直な残り（引き続き設計）**: 連続 `device_score`（本書 §2–§3）、動的 re-tiering／熱縮退
+  （§4.3–§4.4）、tier 広告（DEVCAP-2）、ヘテロ実モデル無停止再シャード（§7 #3）、
+  跨 OEM 熱/RAM 信号（§7 #1）。正本は [[gap-ledger.md]]。
+
+---
 
 > Status: **design DRAFT**（実装前・commander + mk_pino が叩くための叩き台）。
 > 確信を装わない。提案し、未解決は §「open problems」で正直に旗立てる。確定設計ではなく、

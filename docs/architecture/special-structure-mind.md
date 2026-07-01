@@ -81,9 +81,10 @@ second conversational brain.** Justification:
   what the chat generates from; has a malloc'd runtime arena `st_model` with runtime
   `n_params`/`o_*` offsets, `student.h:62-79`). R3 is the opposite: dense, with a
   hard `_Static_assert` shape that is *load-bearing* for the merge.
-- The device-capacity verdict (`device-capacity-verdict.md`) already concluded the
-  student is "the ONLY place variability may live" and R3 `rw[]` "STAYS FIXED
-  fleet-wide." Making the student the growth substrate is forced by that constraint.
+- The device-capacity verdict (folded into `device-capacity.md §0.5`; archived at
+  `archive/device-capacity-verdict.md`) already concluded the student is "the ONLY
+  place variability may live" and R3 `rw[]` "STAYS FIXED fleet-wide." Making the
+  student the growth substrate is forced by that constraint.
 - Two conversational brains is the "three brains" anti-pattern the project already
   fought (`moe.c` ONE-BRAIN). We will not re-introduce a dual conversational mind.
 

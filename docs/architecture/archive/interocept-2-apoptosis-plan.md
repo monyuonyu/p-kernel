@@ -1,6 +1,8 @@
 # interocept slice-2 — apoptosis: 本質ハンドオフ via Path W²
 
-> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **注意：本文の apoptosis 中核テーゼは [[survival-loop.md]] §3 で見直された（先に survival-loop を読むこと）。** Path W² の本質ハンドオフは design のまま。上位設計は survival-loop、状態の正本は [[gap-ledger.md]]。
+> **ARCHIVED 2026-07-01 (doc-hygiene wave 2).** apoptosis / 死のハンドオフの正準は [[../survival-loop.md]] §3（連続レプリ essence モデル）＋§4（民主的 retirement）。本文の「ACK が来るまで死なせない」ハンドシェイク中核テーゼは survival-loop §3 で**反転**した（突然死では ACK を当てにできない）。本文は Path W² 本質ハンドオフの詳細設計＝年輪 として保存。
+
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** **注意：本文の apoptosis 中核テーゼは [[../survival-loop.md]] §3 で見直された（先に survival-loop を読むこと）。** Path W² の本質ハンドオフは design のまま。上位設計は survival-loop、状態の正本は [[../gap-ledger.md]]。
 
 > Status: **DESIGN ONLY** (実装前に書く。`signing.md` / `living-mind.md` / `interoception.md` と同じ規律)。
 > 位置づけ: `interoception.md` §4「apoptosis: 代謝としての死」の **ハードン版**。

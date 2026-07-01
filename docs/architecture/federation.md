@@ -203,8 +203,9 @@ arch/common/include/pmesh.h:58-67
 ### 2.3 思想との整合（中央なし）
 
 - coordinator は `region.c` 既存ロジック（**region 内最小 ID、決定的**）で
-  選ぶ。死ねば次の最小 ID が継ぐ。**恒久的中央ではない**——これは
-  `dynamic-id.md §3C` / `decentralized-lookup.md` の coordinator 論法と同一。
+  選ぶ。死ねば次の最小 ID が継ぐ。**恒久的中央ではない**——この
+  **min-id 補題は [[decentralized-lookup.md]] §2.2 が正準**（本書は葉間 coordinator へ
+  適用するだけで再導出しない）。
 - 上位メッシュも**フラットな coordinator 群の gossip**であり、ルート単一点を
   持たない。多層化（region of regions of regions）も同じ再帰で可能。
 - survival-network §4「region＝局所葉、近傍は密・遠方は疎」を**構造として実体化**。
