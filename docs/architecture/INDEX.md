@@ -53,7 +53,6 @@
 | [[genome.md]] | 空の装甲板にフル細胞を発芽させる自己再生（survival §3, wave-9） | working |
 | [[interoception.md]] | ノードの「痛み」を一本の `S_n` バスに束ねる（Slice-1 SHIPPED, Slice-2 設計） | working |
 | [[survival-g38-impl-plan.md]] | survival §7 / G38 分散ゲーティング配線の実装計画（cert-first） | designing |
-| [[interocept-2-apoptosis-plan.md]] | apoptosis＝Path W² 本質ハンドオフ（中核テーゼは survival-loop §3 で見直し） | designing |
 
 ## net / distributed — ネット・分散（中央なしで「1つの脳」を跨ノードに）
 

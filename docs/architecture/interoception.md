@@ -184,57 +184,21 @@ DMN は今 `dmn_idle_threshold` と `dmn_log_interval`（共に runtime 可変 `
 
 ---
 
-## 4. Slice 2（完全に設計、実装は後）— **apoptosis: 代謝としての死**
+## 4. Slice 2 — apoptosis: 代謝としての死（→ [[survival-loop.md]] §3 が正準）
 
-死を「事故」ではなく「代謝」にする。**きれいに死に、本質を隣へ渡し、空間を空ける。**
-新しい crypto も新しい merge も作らない ―― Path W² と signing と Self 層の既存機構を組む。
-
-### 4.1 シーケンス（本質を渡してから死ぬ）
-
-1. **死の宣言**: 最初は operator 起点（`mind`/shell の verb）。lifespan policy（寿命・高 `S_n` 持続・
-   ARK 空間枯渇での自発死）は後続。**まず人間が引く**。
-2. **本質の publish (ESSENCE)**: そのノードの学習を Fisher 重み要約として出す ―― **既存の Path W² を使う**：
-   `r3_fisher_diag`（`r3_incontext.c:3259`）で対角 Fisher を作り、`gl_merge_w`（`gossip_learn.c:100`、
-   per-parameter 重み付き merge）で隣が折り込める形にする。加えて **self/lin リネージの末尾**
-   （`lm_self` の hash-chain、`ark_profile.c` の `self/lin` v2 entry）を同梱。
-3. **到達ハンドシェイク（死ぬ前に）**: 隣が「本質を受け取り、folding した」と返すまで **死なない**。
-   union-replay 規律（living-mind Path W²: k1 を A, k2 を B で教えて merge した後、両ノードが両方
-   答えられるまで union-replay で回復、§3323 系）で本当に両方の事実が生き残ることを隣で確認 →
-   その ACK を待ってから初めて exit。
-4. **死の記録**: Self 層（`lm_self`, 改竄 evident な hash-chain。wave-22）に「このノードが死に、
-   本質を node X が継いだ」を一エントリ追加。死は **歴史地層** に残る（消えない）。
-5. **空間の解放**: ARK 上の当該ノード分を解放。`dproc` teardown（gap-ledger の `dproc_kill_by_name`
-   teardown debt; ring3 の `user_proc_unwind` 流の後始末）と整合させる。
-
-### 4.2 正直に名指しすべき難問
-
-- **いつ死を許すか**: operator 起点 v1 は明快。自発死は `S_n` 高持続だけでは危険（§4.3 の min-fleet）。
-  寿命ポリシは「群れが本質を確実に継げる」ことが前提条件。
-- **本質を超えて何が失われるか**: Fisher 対角は二次近似。曲率の主軸しか残らない ―― 微細な
-  in-context 記憶や engram ring の生データは **失われる**。cert にこの損失を明記（honest tradeoff、
-  wave-23 の sloss と同じ正直さ）。
-- **「本質が届いた」証明**: §4.1-3 のハンドシェイク。隣の union-replay 回復が **Path W² の回復バー
-  以上**（両事実 ≥ chance+margin）を満たした ACK のみを「届いた」と認める。届く前に死なせない。
-- **偽の死 / essence poisoning 攻撃**: 悪意ノードが毒入り本質を撒いて隣の重みを汚す。
-  **答え = wave-43 signed manifests**（`signing.md`）。ESSENCE は署名付き manifest として配り、
-  隣は署名検証（`ed25519.c`）が通った本質 **だけ** を folding する。selfc が LOCAL-ONLY なのと同じ
-  trust モデル ―― 署名なしの本質は malware mesh。
-
-### 4.3 min-fleet ガード（2ノードでの apoptosis は自殺）
-
-群れが小さいとき自分が死ねば本質の継ぎ手が居ない。**継ぎ手が確保できなければ死を拒否する。**
-SWIM の生存メンバ数（`swim.c`）で healthy peer 数を数え、閾未満なら apoptosis を **fail-closed** に拒む。
-
-### 4.4 認定ゲート（反証可能）
-
-- **`[apop-essence]`** — ハンドシェイク後に kill されたノードの事実が、隣で **Path W² の回復バー以上**
-  生き残る（killed-after-handshake → 隣で両事実 ≥ chance+margin）。
-- **`[apop-ledger]`** — リネージ（Self 層 hash-chain）に死が記録され、継承先 node が同定できる。
-- **`[apop-refuse]`** — 署名不正の essence は folding されず **拒否**される（改竄 manifest → reject、
-  隣の重みは不変）。
-- **`[apop-minfleet]`** — 群れを孤立させる死は **拒否**される（healthy peer < 閾 → exit せず）。
-- **`[apop-before-death]`** — ACK 到達 **前** に死なせると事実が失われることを示し（負の対照）、
-  ハンドシェイクが load-bearing であることを cert 化。
+> **移管（doc-hygiene wave 2, 2026-07-01）。** 本節の apoptosis 中核テーゼ
+> （「隣が ACK を返すまで死なせない」ハンドシェイクを load-bearing とする版）は
+> **[[survival-loop.md]] §3 で見直された**：突然死が常態なら死の瞬間の ACK は当てに
+> できないので、load-bearing は**健康な生のあいだの連続レプリ**へ移り、ACK/flush は
+> graceful 時の delta-zero 最適化へ降格する。**apoptosis / 死のハンドオフの正準は
+> survival-loop §3**（連続レプリ essence モデル）＋ §4（民主的 retirement）。Path W²
+> による本質ハンドオフの詳細設計（Fisher 要約・essence 署名・min-fleet ガード・
+> 認定ゲート）は archive の interocept-2-apoptosis-plan.md に 年輪 として残る。
+>
+> 本ドキュメント（interoception）で**生きているのは Slice-1**（統一 stress `S_n`
+> バス＋DMN tick 変調＋galaxy 可視化、SHIPPED）である。`S_n` が「高持続」を示すことが
+> survival-loop の DYING/retirement 判定の入力になる ―― その意味で本書は上位の
+> 生存ループの**内受容センサ**を提供する側であって、死の手続きそのものは持たない。
 
 ---
 
@@ -242,7 +206,8 @@ SWIM の生存メンバ数（`swim.c`）で healthy peer 数を数え、閾未�
 
 `feedback_validator_and_learner_traps` の規律: **受け入れテストは監査が作る**、commander はゲート式を
 一行ずつ読む。本番コードの自己テスト（sim/oracle ではなく `intero_scalar`/`gl_merge_w`/`r3_fisher_diag`
-の本番シンボルそのもの）を呼ぶこと ―― §3.5/§4.4 のゲートは全て本番経路を叩く。
+の本番シンボルそのもの）を呼ぶこと ―― §3.5（Slice-1）のゲートは全て本番経路を叩く（apoptosis の
+認定ゲートは [[survival-loop.md]] §3/§4 と archive の interocept-2-apoptosis-plan.md に移管）。
 
 ---
 

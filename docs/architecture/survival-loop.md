@@ -9,7 +9,7 @@
 > これらは別機能ではなく、**一つの「生存ループ」の四つの面**である。
 >
 > 最終更新: 2026-06-28 ／ mk_pino の 2026-06-28 ディレクション（§0）を受けた design-revise。
-> **[interocept-2-apoptosis-plan.md](interocept-2-apoptosis-plan.md) を一部 supersede する**
+> **[interocept-2-apoptosis-plan.md](archive/interocept-2-apoptosis-plan.md)（archived）を一部 supersede する**
 > （apoptosis を「死の handoff が load-bearing」から「**健康な生のあいだの連続レプリケーションが
 > load-bearing**、graceful death は flush 最適化」へ反転。詳細は §3 / §6-L3）。
 > 関連: [interoception.md](interoception.md)（`S_n` バス, slice-1 SHIPPED）,
@@ -71,7 +71,7 @@
 
 | スレッド | この環での役 | 主な既存接地 |
 |---|---|---|
-| ① interoception slice-2（apoptosis） | **DYING** 状態 ＝ 環の終端 flush | `interocept-2-apoptosis-plan.md`, `lm_self.c`, Path W/E |
+| ① interoception slice-2（apoptosis） | **DYING** 状態 ＝ 環の終端 flush | `archive/interocept-2-apoptosis-plan.md`, `lm_self.c`, Path W/E |
 | ② survival-network §7（分散ゲート/相互扶助） | **support-routing**（STATE で重み付け） | `moe.c` `select_expert`, `world.c` gating accessor |
 | ③ world-map（状況認識） | STATE を運ぶ **gossip 基盤** | `arch/common/world.c`（SHIPPED） |
 | ④ node-sleep（冬眠） | **HIBERNATING** 状態 ＝ 最初の生存手 | **未実装（§2 で GAP として明示）** |
@@ -192,7 +192,7 @@ DYING 分岐は、可能なら最終 delta を **best-effort** で潰す：
 
 > **block しない**のが旧 doc との決定的差分。ACK を待たない（待てる graceful 時は待っても良いが、待ちは
 > **任意**で timeout 必須）。突然死はこの箱を丸ごと飛ばす ―― それでも §3.1 の floor が直近 delta 以外を救う。
-> 旧 doc の重い ACK-before-death ordering（`interocept-2-apoptosis-plan.md §2.3`）は **graceful 経路の
+> 旧 doc の重い ACK-before-death ordering（`archive/interocept-2-apoptosis-plan.md §2.3`）は **graceful 経路の
 > オプション**として残し、core から外す。署名つき essence（`sign_manifest_verify`）は flush でも維持（poisoning 対策）。
 
 ---
