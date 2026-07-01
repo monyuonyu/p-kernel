@@ -36,7 +36,13 @@ void* knl_memset( void *s, int c, SZ n )
 		return s;
 	}
 
-	while ((long)cp % 4) {
+	/* p-kernel 変更（LP64 対応）: 元のコードはワード長を 4 バイト
+	 * 固定と仮定していたが、unsigned long は LP64 ホストでは 8 バイト。
+	 * 「8 バイト書いて n を 4 減らす」ことになり、要求サイズの約 2 倍を
+	 * 塗り潰して呼び出し元のスタックを破壊していた。整列・埋め値・
+	 * 減算をすべて sizeof(unsigned long) 基準に統一する。
+	 * （32bit MCU では従来と同一の動作） */
+	while ((long)cp % (long)sizeof(unsigned long)) {
 		--n;
 		*cp++ = cval;
 	}
@@ -46,10 +52,15 @@ void* knl_memset( void *s, int c, SZ n )
 		(unsigned long)cval << 8 |
 		(unsigned long)cval << 16 |
 		(unsigned long)cval << 24;
+	if ( sizeof(unsigned long) > 4 ) {
+		/* 64bit long: 上位 32bit にも埋め値を複製
+		 * （<<16<<16 の 2 段シフトは 32bit long での UB 回避） */
+		lval |= lval << 16 << 16;
+	}
 
-	while (n >= 4) {
+	while (n >= (SZ)sizeof(unsigned long)) {
 		*lp++ = lval;
-		n -= 4;
+		n -= (SZ)sizeof(unsigned long);
 	}
 
 	cp = (unsigned char *)lp;

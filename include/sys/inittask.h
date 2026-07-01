@@ -21,11 +21,23 @@
 
 /*
  * Initial task parameter
+ *
+ * p-kernel 変更: ターゲット側（sysdef.h 等）で上書きできるよう
+ * #ifndef ガードを追加。Linux ユーザモードポートは usermain が
+ * 大きなスタックを必要とするため INITTASK_STKSZ を差し替える。
  */
+#ifndef INITTASK_EXINF
 #define INITTASK_EXINF		(0x0)
+#endif
+#ifndef INITTASK_ITSKPRI
 #define INITTASK_ITSKPRI	(1)
+#endif
+#ifndef INITTASK_STKSZ
 #define INITTASK_STKSZ		(1*1024)
+#endif
+#ifndef INITTASK_DSNAME
 #define INITTASK_DSNAME		"inittsk"
+#endif
 
 #if USE_IMALLOC
 
