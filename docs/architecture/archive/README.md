@@ -39,3 +39,14 @@ AUDIT-SPRAWL gap-ledger row. Preserved verbatim; already carried a
 - philosophy-gap-audit-6.md — audit-6 continuation → closed.
 - philosophy-gap-audit-7.md — audit-7 continuation → closed.
 - philosophy-gap-audit-8.md — audit-8, the final sweep → closed. Canonical live gaps: ../gap-ledger.md.
+
+## Spent plans & superseded reviews (archived 2026-07-01, P4)
+
+- signing.md — provenance signatures for CODE and WEIGHTS, never humans → SHIPPED wave-38 (`arch/common/ed25519.c` + `sign.c`, 4 green CI gates). Its §0 permanent owner directive (never sign humans) was lifted into `../../product-soul.md` before archiving.
+- federation-r0-plan.md — minimal live 2-cluster slice → SHIPPED (self-test + `[live]` 2-process harness); its finding DNODE_MAX=64 (drpc.h:35) is carried into the live `federation.md §1.0`.
+- compatibility-r0-plan.md — interop cert + forward-compatible framing → superseded by the shipped compat layer (`compat_ota.c`, `compat` verb); live doc is `compatibility.md`.
+- ss4-function-preserving-growth-plan.md — function-preserving expert growth → SHIPPED (`arch/common/llm/student.c`, cert `tests/llm/run_ss4.sh` / `student_growth_test.c`).
+- device-autodetect-plan.md — runtime SMP core-count autodetect + device-capability adaptation → SHIPPED (`dev_capacity.c`, DEVFIT cert `tests/llm/run_devfit.sh`).
+- arkfs-audit.md — skeptical FS design audit (wave 15) → findings folded into p-fs / survival-fs; historical.
+- review-2026-06-three-brains.md — `moe_infer` three-brains critique → fixed wave-18 (moe.c routes/returns/guards from ONE learned forward); the review now misdescribes current code.
+- repo-hygiene.md — 2026-06-06 HEAD cleanup → one-time spent task.

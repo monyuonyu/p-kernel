@@ -13,7 +13,7 @@
 > 関連: [interoception.md](interoception.md)（`S_n` バス, slice-1 SHIPPED）,
 > [survival-network.md](survival-network.md)（§2 全網の力を一点へ・§6 応援受援・§7 分散ゲート・§8 二時定数）,
 > [regions.md](regions.md)（R3 ゲート基盤）, [living-mind.md](living-mind.md)（Path W²/E・DMN・Self 層）,
-> [signing.md](signing.md)（Ed25519 manifest）, [galaxy.md](galaxy.md), [gap-ledger.md](gap-ledger.md)。
+> [signing.md](archive/signing.md)（Ed25519 manifest）, [galaxy.md](galaxy.md), [gap-ledger.md](gap-ledger.md)。
 
 > **honest framing（全 doc 共通の規律を継承）**: 本書の「ストレス」「眠り」「死」「病」は **scalar/weight 上の比喩**。
 > sentience の主張ではない。`S_n` は計測量の EWMA、冬遅は task スケジュール変調、apoptosis はリソース回収＋重み継承

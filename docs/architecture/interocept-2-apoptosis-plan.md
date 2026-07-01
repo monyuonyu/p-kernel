@@ -8,7 +8,7 @@
 >
 > 最終更新: 2026-06-22 ／ base commit `6316155c`
 > 関連: [interoception.md](interoception.md)（slice-1=`S_n`バス, SHIPPED）, [living-mind.md](living-mind.md)（Path W² / DMN / Self層）,
-> [signing.md](signing.md)（Ed25519 manifest）, [regions.md](regions.md), [galaxy.md](galaxy.md), [gap-ledger.md](gap-ledger.md)。
+> [signing.md](archive/signing.md)（Ed25519 manifest）, [regions.md](regions.md), [galaxy.md](galaxy.md), [gap-ledger.md](gap-ledger.md)。
 
 ---
 

@@ -7,7 +7,7 @@
 >
 > 最終更新: 2026-06-12 ／ 関連: [survival-network.md](survival-network.md)（§7 相互扶助ゲート・§8 二時定数）,
 > [living-mind.md](living-mind.md)（DMN sleep consolidation・Path W² Fisher merge・Self 層）,
-> [regions.md](regions.md)（SWIM RTT EWMA・capacity(N)）, [galaxy.md](galaxy.md), [signing.md](signing.md),
+> [regions.md](regions.md)（SWIM RTT EWMA・capacity(N)）, [galaxy.md](galaxy.md), [signing.md](archive/signing.md),
 > [device-capacity.md](device-capacity.md)（`S_n` が端末の担当予算を生きたまま縮める ― §4.3 の動的縮退の消費者）。
 
 このドキュメントは設計のみ。実装は別波で、各スライスの末尾に **反証可能な認定ゲート** を置く。
