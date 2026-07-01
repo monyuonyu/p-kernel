@@ -757,19 +757,69 @@ void mind_last_answer(UB *k, UB *v, UW *share)
  * mouth pretrains lazily on first use, printed (VII.3). */
 static UB m_ready = 0;
 
+#ifdef _TK_HOSTED_LIBC_
+/* HOSTED-ONLY cooperative-yield guard (cooperative-yield-plan.md §7.7, the
+ * R3 sibling of the student-baby slice). s_pretrain runs R_EPOCHS(=80) x
+ * R_TRAIN_N(=512) pure-FP forward/backward passes with NO tk_* call, so on
+ * the cooperative Linux port it holds the single core for ~5-11s (CI:
+ * "substrate pretrained ... in 10.4s"). preempt.c only switches context at
+ * the next END_CRITICAL_SECTION safe point and a pure-math loop never
+ * reaches one, so the whole node goes network-DEAF for that window: SWIM
+ * misses probes -> the node is rumored SUSPECT/DEAD -> the region churns ->
+ * the merge/consolidation the [onemind-survive]/[shared-*] jobs need never
+ * lands. The periodic tk_dly_tsk(1) below lets SWIM/mind/pfs/console breathe.
+ *
+ * DETERMINISM: the yield touches no math state (r_rng/rw[] are untouched);
+ * the ONLY writers of rw[] during a pretrain (the DMN idle round + the
+ * fleet-DMN fold) are both gated by m_ready==0 (still 0 here) and by the
+ * m_gate the m_boot callers hold, so the FINAL rw[] is bit-identical whether
+ * or not we yield.  RE-ENTRANCY: the yield opens a scheduling point, so guard
+ * against a second concurrent s_pretrain (e.g. a console verb vs a mind_net
+ * teach arrival); serialize (do NOT idempotently skip — the certs call
+ * s_pretrain to REBUILD the substrate even when m_ready is already set).
+ *
+ * CADENCE: yield every S_PRETRAIN_YIELD_EVERY(=4) epochs. Once a thinking node
+ * starts breathing, the first-teach wall-clock rises (measured ~22s->~51s here)
+ * because the work base DEFERRED — the newborn baby's DMN consolidation, pfs
+ * sync, SWIM — now interleaves INTO the pretrain window instead of after it
+ * (useful work, not waste; the "pretrained in Xs" line simply now includes it).
+ * That rise is dominated by the interleaved work, NOT the tk_dly_tsk count
+ * (every-4 measured within ~5s of every-1), so a coarser cadence costs almost
+ * nothing while it bounds the DEAF chunk to ~4 epochs (~0.5s on the CI runner's
+ * ~11s/80-epoch pretrain) — comfortably under SWIM's ~2s SUSPECT threshold, so
+ * the node stays reachable. Callers that gate on first-teach completion must
+ * tolerate this longer-but-alive window (the sample waits are widened to match).
+ *
+ * CROWN: this entire block is _TK_HOSTED_LIBC_-gated; bare metal compiles the
+ * original loop verbatim, so boot/aarch64 + boot/x86 .text stay byte-identical. */
+#define S_PRETRAIN_YIELD_EVERY 4
+static volatile UB m_pretrain_busy = 0;
+#endif
+
 /* THE one pretrain recipe (seed 0xA5A5 + the 60-epoch schedule),
  * hoisted verbatim from r3_stream_test (which now calls it too) so the
  * live path and the cert measure the SAME deterministic substrate. */
 static void s_pretrain(void)
 {
+#ifdef _TK_HOSTED_LIBC_
+    while (m_pretrain_busy) tk_dly_tsk(20);
+    m_pretrain_busy = 1;
+#endif
     r_init_weights(0xA5A5u);
     float lr = 0.05f;
     for (INT ep = 0; ep < R_EPOCHS; ep++) {
         if (ep == R_EPOCHS*2/3)  lr = 0.02f;
         if (ep == R_EPOCHS*9/10) lr = 0.008f;
         r_train_epoch(R_SEED_TRAIN, R_TRAIN_N, lr);
+#ifdef _TK_HOSTED_LIBC_
+        if ((ep % S_PRETRAIN_YIELD_EVERY) == 0)
+            tk_dly_tsk(1);   /* breathe: a safe point so SWIM/mind/pfs/console run */
+#endif
     }
     m_ready = 1;
+#ifdef _TK_HOSTED_LIBC_
+    m_pretrain_busy = 0;
+#endif
 }
 
 /* =================================================================== *

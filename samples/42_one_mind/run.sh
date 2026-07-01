@@ -162,8 +162,15 @@ done
 # substrate ~23s, so the consolidation waits are generous).
 send 1 "mind teach $K1WORD $V1WORD"        # A: k1 -> v1  (sun -> yellow)
 send 2 "mind teach $K2 $V2"                # B: k2 -> v2  (bare token ids)
-wait_for "$L1" 'teach .*substrate ready' 90 || bad "A teach never completed"
-wait_for "$L2" 'teach .*substrate ready' 90 || bad "B teach never completed"
+# Widen 90 -> 200: the cooperative-yield fix (r3_incontext.c s_pretrain) keeps
+# the node SWIM-reachable DURING its first-teach pretrain by yielding every few
+# epochs; the honest cost is that the now-interleaved DMN/pfs work lands INSIDE
+# the pretrain window, so first-teach wall-clock ~doubles (still an ALIVE node,
+# not a deaf one). The gate is UNCHANGED (same 'substrate ready' pattern) — a
+# node that never pretrains STILL fails, just after a window that fits the
+# longer-but-breathing pretrain on a loaded self-hosted runner.
+wait_for "$L1" 'teach .*substrate ready' 200 || bad "A teach never completed"
+wait_for "$L2" 'teach .*substrate ready' 200 || bad "B teach never completed"
 # consolidate each node's OWN fact into its OWN rw[] (the DMN idle window).
 send 1 "mind wait 90"; send 2 "mind wait 90"
 wait_for "$L1" 'wait: drained' 100 || log "note: A wait did not print drained (may already be retained)"
