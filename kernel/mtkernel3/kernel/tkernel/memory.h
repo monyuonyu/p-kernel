@@ -41,8 +41,12 @@ typedef struct {
 
 /*
  * Compensation for aligning "&areaque" position to 2 bytes border
+ *
+ * p-kernel 変更（LP64 対応）: ポインタ演算のキャストを UW（32bit）から
+ * unsigned long へ変更。LP64 ホストでは UW キャストがポインタ上位
+ * 32bit を切り捨てるため。32bit MCU では従来と同一。
  */
-#define AlignIMACB(imacb)	( (IMACB*)((UW)(imacb) & ~0x00000001UL) )
+#define AlignIMACB(imacb)	( (IMACB*)((unsigned long)(imacb) & ~0x00000001UL) )
 
 /*
  * Minimum unit of subdivision
@@ -79,12 +83,14 @@ Inline W roundSize( W sz )
 #define AREA_USE	0x00000001UL	/* In-use */
 #define AREA_MASK	0x00000001UL
 
-#define setAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((UW)(q)->prev |  (UW)(f)) )
-#define clrAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((UW)(q)->prev & ~(UW)(f)) )
-#define chkAreaFlag(q, f)   ( ((UW)(q)->prev & (UW)(f)) != 0 )
+/* p-kernel 変更（LP64 対応）: ポインタを経由するビット操作は
+ * unsigned long で行う（UW では上位 32bit が失われる） */
+#define setAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((unsigned long)(q)->prev |  (unsigned long)(f)) )
+#define clrAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((unsigned long)(q)->prev & ~(unsigned long)(f)) )
+#define chkAreaFlag(q, f)   ( ((unsigned long)(q)->prev & (unsigned long)(f)) != 0 )
 
-#define Mask(x)		( (QUEUE*)((UW)(x) & ~AREA_MASK) )
-#define Assign(x, y)	( (x) = (QUEUE*)(((UW)(x) & AREA_MASK) | (UW)(y)) )
+#define Mask(x)		( (QUEUE*)((unsigned long)(x) & ~AREA_MASK) )
+#define Assign(x, y)	( (x) = (QUEUE*)(((unsigned long)(x) & AREA_MASK) | (unsigned long)(y)) )
 /*
  * Area size
  */

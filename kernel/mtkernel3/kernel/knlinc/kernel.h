@@ -19,6 +19,16 @@
 #ifndef _KERNEL_
 #define _KERNEL_
 
+/* p-kernel 変更: <config.h> を最初に読む。
+ * 元の並びでは <tk/typedef.h>（25行目）が処理される時点で
+ * USE_STDINC_STDINT が未定義（=0 扱い）となり、W/UW が
+ * signed/unsigned long にフォールバックする。32bit MCU では
+ * long == int で顕在化しないが、LP64 ホストでは <tk/tkernel.h>
+ * 経由（config が先に入る）の TU と型幅が食い違い、TCB 等の
+ * レイアウト不一致を起こす。config を先頭で読めば全 TU で
+ * 一貫して int32_t ベースになる。 */
+#include <config.h>
+
 #include <sys/machine.h>
 #include <sys/queue.h>
 
