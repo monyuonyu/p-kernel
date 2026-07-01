@@ -1,7 +1,7 @@
 /*
  *  placement.h — SS-5: deterministic expert placement map (NOCENTRAL).
  *
- *  Spec: docs/architecture/special-structure-mind.md §6 (consensus_stance)
+ *  Spec: docs/architecture/30-module/special-structure-mind.md §6 (consensus_stance)
  *  + §8 item 6.
  *
  *  The genuinely new question SS-5 answers is "which node holds which

@@ -2,8 +2,8 @@
  *  world.h
  *  Decentralized whole-network situational-awareness map (regions / Collective)
  *
- *  設計: docs/architecture/survival-network.md (第II部 §6 応援・受援 / §7 分散ゲーティング)
- *        docs/architecture/regions.md
+ *  設計: docs/architecture/00-concept/survival-network.md (第II部 §6 応援・受援 / §7 分散ゲーティング)
+ *        docs/architecture/20-architecture/regions.md
  *
  *  「観測の分散版ゲーティング」。各ノードが自分の状態を周期的に self-beacon として
  *  publish し、受信したビーコンから *自分自身の* 全網ビュー (world-table) を組み立てる。
@@ -68,7 +68,7 @@ _Static_assert(sizeof(U1) == 1 && sizeof(U2) == 2 && sizeof(U4) == 4,
 #define WORLD_FIRE_BIT(c)   ((U1)(1u << (c)))
 #define WORLD_FIRE_MASK     0x07   /* 下位 3 bit = MOE_NUM_CLASSES 個     */
 
-/* selfc-ring3 galaxy hook (docs/architecture/selfc-ring3.md §8): a node
+/* selfc-ring3 galaxy hook (docs/architecture/50-evolution/selfc-ring3.md §8): a node
  * that germinated / rolled back a self-built unit sets this bit in the
  * beacon's `firing` byte for ONE beacon period — every peer's world-table
  * (and therefore the galaxy observation window) sees a star visibly
@@ -77,7 +77,7 @@ _Static_assert(sizeof(U1) == 1 && sizeof(U2) == 2 && sizeof(U4) == 4,
 #define WORLD_REBUILD_BIT   0x80
 #define WORLD_BEACON_FIRE_MASK  (WORLD_FIRE_MASK | WORLD_REBUILD_BIT)
 
-/* survival-loop L0 (docs/architecture/survival-loop.md §9, 司令官判断 2026-06-28):
+/* survival-loop L0 (docs/architecture/20-architecture/survival-loop.md §9, 司令官判断 2026-06-28):
  * the per-node 2-bit STATE rides in the firing byte's SPARE bits 3-4. The fire
  * classes use bits 0-2 (WORLD_FIRE_MASK) and selfc-ring3 uses bit 7
  * (WORLD_REBUILD_BIT), so bits 3-6 (0x78) are free. Packing the state here keeps
@@ -196,7 +196,7 @@ void world_set_beacon_hold(UW ms);
 /* ------------------------------------------------------------------ */
 /* survival-loop L0 — per-node STATE FSM + gossip accessor (hosted)    */
 /*                                                                     */
-/* docs/architecture/survival-loop.md §1.1 / §6-L0 / §9. The survival  */
+/* docs/architecture/20-architecture/survival-loop.md §1.1 / §6-L0 / §9. The survival  */
 /* loop runs on the FLEET (boot/linux + Android), never on the QEMU    */
 /* bare-metal targets — so the FSM and its accessor are hosted-only    */
 /* (`_TK_HOSTED_LIBC_`). Bare-metal keeps state bits = 0 = ACTIVE with */

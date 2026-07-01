@@ -2,7 +2,7 @@
  *  protect.c — the protected-object registry + grounded threat + actuator.
  *
  *  Thought/design/NO-CENTRAL invariant: protect.h and
- *  docs/architecture/survival-network.md §2 / philosophy-gap-audit-4 G28.
+ *  docs/architecture/00-concept/survival-network.md §2 / philosophy-gap-audit-4 G28.
  *
  *  This is the file that CLOSES the open loop wave 13 left:
  *    declare a unit  ->  threat = f(under-replication)  ->  actuator

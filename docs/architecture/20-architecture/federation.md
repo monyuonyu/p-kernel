@@ -27,10 +27,10 @@ Status: **R0 (2-cluster DKVA 階層) は LIVE + certified（`[fed-2cluster]`）;
 F1–F3 は設計のみ** / 監査 第3版 G23 🔴 への応答 / 最終更新: 2026-06-20
 
 関連: [regions.md](regions.md)（葉クラスタ＝局所 region の設計）、
-[survival-network.md](survival-network.md)（§4 「region＝局所葉」の思想的根拠）、
-[dynamic-id.md](dynamic-id.md)（第11波 G6 relay lease。ID 空間は 8-bit のまま）、
+[survival-network.md](../00-concept/survival-network.md)（§4 「region＝局所葉」の思想的根拠）、
+[dynamic-id.md](../30-module/dynamic-id.md)（第11波 G6 relay lease。ID 空間は 8-bit のまま）、
 [decentralized-lookup.md](decentralized-lookup.md)（HRW + gossip）、
-[philosophy-gap-audit-3.md](archive/philosophy-gap-audit-3.md) G23 / G7 / G13 / G14 / G6。
+[philosophy-gap-audit-3.md](../archive/philosophy-gap-audit-3.md) G23 / G7 / G13 / G14 / G6。
 
 > **正直さの前置き**: 本書に登場する計算量（O(N²)→O(N log N) 等）、
 > しきい値、段階目標は**設計目標**であり、実証されていない。本書は1行も

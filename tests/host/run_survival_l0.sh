@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # run_survival_l0.sh — host cert for the survival-loop L0 STATE bus
-#   (docs/architecture/survival-loop.md §6-L0 / §9, GO-L0 CROWN-PRESERVING).
+#   (docs/architecture/20-architecture/survival-loop.md §6-L0 / §9, GO-L0 CROWN-PRESERVING).
 #
 # L0 is the back-bone slice: a per-node 2-bit STATE (ACTIVE / STRESSED, with
 # HIBERNATING / DYING reserved) that rides in the SPARE bits 3-4 of the

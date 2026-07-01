@@ -1,7 +1,7 @@
 /*
  * arch/linux/node_id.c — stable, distinct per-install default node id.
  *
- *  THE PROBLEM (N-0, BACKLOG / docs/architecture/p2p-overlay.md):
+ *  THE PROBLEM (N-0, BACKLOG / docs/architecture/20-architecture/p2p-overlay.md):
  *  two fresh nodes that both default to node_id = 1 filter each other
  *  out of SWIM as a self-echo (src == my_id is ignored), so they never
  *  mesh. The fix: give every install a DISTINCT, STABLE id in the

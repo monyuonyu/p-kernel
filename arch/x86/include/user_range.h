@@ -8,7 +8,7 @@
  *  task can hand the kernel a pointer into KERNEL memory and the kernel will
  *  read/write it (confused deputy).  Today this is masked only by the flat
  *  identity map (VA==PA); it is a real isolation hole, the more so now that
- *  the AI core math runs in ring3/EL0 (docs/architecture/ring3-core.md) and
+ *  the AI core math runs in ring3/EL0 (docs/architecture/50-evolution/ring3-core.md) and
  *  user pointers genuinely cross the privilege boundary.
  *
  *  The ONLY ring-3-accessible virtual ranges are the two PD spans that

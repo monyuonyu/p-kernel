@@ -784,7 +784,7 @@ EXPORT INT usermain(void)
      * comes back on reboot. No-op (memory-only) when the env is unset. */
     pfs_durable_restore(print);
     pfs_dag_restore();
-    /* persistence SLICE 2 (docs/architecture/persistence.md): the LEARNED
+    /* persistence SLICE 2 (docs/architecture/30-module/persistence.md): the LEARNED
      * mind survives the reboot. If a durable weights blob exists AND its
      * header matches THIS build (version + R_NP + vocab content-id), load
      * rw[] now (so `ask sky`->blue answers WITHOUT a re-learn, and the lazy
@@ -794,7 +794,7 @@ EXPORT INT usermain(void)
      * dir resolution). */
     r3_weights_restore_or_pretrain();
 
-    /* galaxy v1 (docs/architecture/galaxy.md) — the per-node observation
+    /* galaxy v1 (docs/architecture/30-module/galaxy.md) — the per-node observation
      * window: a loopback HTTP/1.0 server (port 7800+(id-1)) serving THIS
      * node's gossip-bounded view + an SSE event stream of real organism
      * events. Default ON for hosted builds; PKERNEL_GALAXY=0 opts out.
@@ -1048,7 +1048,7 @@ EXPORT INT usermain(void)
             /* R3b: expert specialization — join smarter / leave graceful */
             breathe_cmd(line + 7, (UW)(n - 7));
         } else if (starts_with(line, n, "dmn")) {
-            /* living-mind first slice (docs/architecture/living-mind.md II):
+            /* living-mind first slice (docs/architecture/30-module/living-mind.md II):
              * `dmn test` runs the DMN sleep-consolidation acceptance suite
              * (replay engrams -> distill via gl_merge; no catastrophic
              * forgetting; decentralized; survives kill+rejoin).
@@ -1069,7 +1069,7 @@ EXPORT INT usermain(void)
             }
             else print("usage: dmn test | dmn distill [N]\r\n");
         } else if (starts_with(line, n, "intero") && (n == 6 || line[6] == ' ')) {
-            /* interoception slice 1 (docs/architecture/interoception.md §3.5):
+            /* interoception slice 1 (docs/architecture/30-module/interoception.md §3.5):
              * `intero`        -> the live S_n scalar + per-axis breakdown;
              * `intero test`   -> [intero-self] (source isolation + EWMA damp)
              *                    AND [intero-tick] (DMN modulation: S_n shrinks
@@ -1091,7 +1091,7 @@ EXPORT INT usermain(void)
                 print(")\r\n");
             }
         } else if (starts_with(line, n, "survival") && (n == 8 || line[8] == ' ')) {
-            /* survival-loop L0 (docs/architecture/survival-loop.md §6-L0/§9):
+            /* survival-loop L0 (docs/architecture/20-architecture/survival-loop.md §6-L0/§9):
              * `survival l0` runs the STATE-bus cert — [state-axis] (axis-
              * dependence is LOAD-BEARING: THREAT@hi -> ACTIVE, the other axes@hi
              * -> STRESSED, only the axis varies) + [state-gossip] (a peer's
@@ -1134,7 +1134,7 @@ EXPORT INT usermain(void)
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') ga_test();
             else ga_stat();
         } else if (starts_with(line, n, "body") && (n == 4 || line[4] == ' ')) {
-            /* self-access R0 (docs/architecture/self-access.md; BACKLOG 🅰):
+            /* self-access R0 (docs/architecture/30-module/self-access.md; BACKLOG 🅰):
              * "自分の体を触る" — READ-ONLY introspection of this node's own
              * body. Prints its tasks/processes, p-fs/ark objects (names +
              * versions, NOT contents), devices/sensors, and self-stats
@@ -1145,7 +1145,7 @@ EXPORT INT usermain(void)
              * is R1+ (Q1/Q2-gated, deferred). */
             (void)self_access_body();
         } else if (starts_with(line, n, "self") && (n == 4 || line[4] == ' ')) {
-            /* living-mind Self layer (docs/architecture/living-mind.md III):
+            /* living-mind Self layer (docs/architecture/30-module/living-mind.md III):
              * `self test` runs the distributed-autobiographical-self suite
              * (hash-chained "self/lin" lineage that survives death, is
              * tamper-evident, and reconstructs from a peer excluding the
@@ -1239,7 +1239,7 @@ EXPORT INT usermain(void)
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') drpc_oob_self_test(print);
             else print("usage: drpc test\r\n");
         } else if (starts_with(line, n, "handoff") && (n == 7 || line[7] == ' ')) {
-            /* living-mind LM-4 (docs/architecture/living-mind.md Part V):
+            /* living-mind LM-4 (docs/architecture/30-module/living-mind.md Part V):
              * `handoff test` runs the fast->slow handoff acceptance suite
              * (a fact learned ONLY in-context by R3's FAST layer is
              * self-distilled into R3's OWN weights rw[] via r_backward, so
@@ -1404,7 +1404,7 @@ EXPORT INT usermain(void)
                 (void)cradle_teach_self_test(print);
             }
         } else if (starts_with(line, n, "mind")) {
-            /* living-mind LM-6 (docs/architecture/living-mind.md Part VII):
+            /* living-mind LM-6 (docs/architecture/30-module/living-mind.md Part VII):
              * the mouth — the OWNER teaches the live mind at this prompt;
              * the DMN task's own idle pulses consolidate (no harness).
              * mind teach <k> <v> | mind ask <k> | mind wait [s] | mind */

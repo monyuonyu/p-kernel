@@ -2,8 +2,8 @@
  *  reflex.h
  *  §8 反射層 — 思考→行動の配線 (推論結果 → 局所即時防御アクション)
  *
- *  設計: docs/architecture/reflex-action.md
- *        docs/architecture/survival-network.md
+ *  設計: docs/architecture/20-architecture/reflex-action.md
+ *        docs/architecture/00-concept/survival-network.md
  *          §2 守る単位と守る力の分離 / §8 反射=速い時定数・局所閉ループ
  *
  *  第三レビューの配線②: 「推論結果が class ラベルを吐いて、どこにも行かない。

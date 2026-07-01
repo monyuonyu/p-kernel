@@ -62,7 +62,7 @@ static int  g_node = 1;
  *  PKERNEL_RELAY_TCP; the manual override is preserved (it short-circuits this
  *  selector in arch_linux_net_init above).
  *
- *  Mechanism per docs/architecture/connect-anywhere.md §4S.a. Hosted-only;
+ *  Mechanism per docs/architecture/20-architecture/connect-anywhere.md §4S.a. Hosted-only;
  *  the bare-metal crown is unaffected by construction.
  * ====================================================================== */
 

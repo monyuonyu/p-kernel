@@ -2,7 +2,7 @@
  *  world.c
  *  Decentralized whole-network situational-awareness map.
  *
- *  設計: docs/architecture/survival-network.md / docs/architecture/regions.md
+ *  設計: docs/architecture/00-concept/survival-network.md / docs/architecture/20-architecture/regions.md
  *  詳細とNO-CENTRAL不変条件は world.h を参照。
  *
  *  ── NO-CENTRAL INVARIANT (再掲・実装の責任範囲) ─────────────────────
@@ -361,7 +361,7 @@ void world_set_beacon_hold(UW ms)
 /* ------------------------------------------------------------------ */
 /* survival-loop L0 — per-node STATE FSM (hosted only)                 */
 /*                                                                     */
-/* docs/architecture/survival-loop.md §1.1 / §6-L0 / §9. Axis-dependent */
+/* docs/architecture/20-architecture/survival-loop.md §1.1 / §6-L0 / §9. Axis-dependent */
 /* (NOT monotone) 2-time-constant hysteresis over the S_n bus:         */
 /*   - INTERO_AX_THREAT @hi  -> target ACTIVE  (the rally/activate arm; */
 /*     "death-imminent -> activate" reflex G33; never STRESSED).        */
@@ -562,7 +562,7 @@ INT world_survival_l0_test(void)
 }
 
 /* ── survival-loop L1 §8: [hysteresis] / [hysteresis-NOT] ─────────────────────
- * docs/architecture/survival-loop.md §5.2 / §6-L1 / §10. Measure the disease
+ * docs/architecture/20-architecture/survival-loop.md §5.2 / §6-L1 / §10. Measure the disease
  * FIRST (wave-45 discipline: "the fix WAS the disease" — never credit a fix
  * without the same-harness unfixed control). Drive the SHARED wstate_advance
  * (the production transition) under a coupled S_n forcing: stress accrues while

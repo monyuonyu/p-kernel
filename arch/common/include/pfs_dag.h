@@ -1,7 +1,7 @@
 /*
  *  pfs_dag.h — p-fs P2: object manifests + append-only version DAG + refs.
  *
- *  Spec: docs/architecture/p-fs.md §2.3 (履歴保存), §3.1 (namespace /
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.3 (履歴保存), §3.1 (namespace /
  *  version / object layers), §5 (P2 row).
  *
  *  P2 puts NAMES and HISTORY on top of the P0 block store and the P1
@@ -158,7 +158,7 @@ INT  pfs_dag_read(const UB *name, UW nlen, void *buf, UW maxlen);
  * (unknown ref / seq not reachable / manifest|content not local yet — a P1
  * WANT is issued so a retry may succeed) or PFS_E_INVAL. Uses its OWN
  * scratch (no shared man_scratch), so it is safe to call from a non-shell
- * (supervisor) task. selfc-ring3 rollback (docs/architecture/selfc-ring3.md
+ * (supervisor) task. selfc-ring3 rollback (docs/architecture/50-evolution/selfc-ring3.md
  * §1.3) uses this to run the content at seq-1. */
 INT  pfs_dag_read_at(const UB *name, UW nlen, UW seq, void *buf, UW maxlen);
 
@@ -173,7 +173,7 @@ void pfs_dag_cmd(const UB *args, UW len);
  * Returns 0 on PASS, non-zero on FAIL or when durable is not active. */
 INT  pfs_dag_self_test(void (*emit)(const char *));
 
-/* self-access R0 (docs/architecture/self-access.md): READ-ONLY iterate the
+/* self-access R0 (docs/architecture/30-module/self-access.md): READ-ONLY iterate the
  * local named-object table. For each used ref the callback receives the
  * object NAME (NUL-terminated, <=PFS_NAME_MAX chars), its head version `seq`,
  * and the head manifest's `origin` node — names + metadata only, NEVER block

@@ -2,7 +2,7 @@
  *  smp.c (aarch64) — ②.0 full-SMP slice: 2 CPUs run the T-Kernel
  *  dispatcher under ONE Big Kernel Lock (BKL).
  *
- *  The SMALLEST real slice of ② (docs/architecture/full-smp-plan.md §7,
+ *  The SMALLEST real slice of ② (docs/architecture/20-architecture/full-smp-plan.md §7,
  *  ②.0): take the UNIPROCESSOR T-Kernel scheduler and make it genuinely
  *  symmetric-multiprocessing — N CPUs each run their OWN current task —
  *  while preserving the uniprocessor invariants almost verbatim: only ONE

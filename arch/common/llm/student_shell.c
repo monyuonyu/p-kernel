@@ -1,7 +1,7 @@
 /*
  *  student_shell.c — the RESIDENT Cradle baby: an in-kernel, PERSISTED student.
  *
- *  Step ③ of "p-kernel's living chat" (docs/architecture/native-student.md
+ *  Step ③ of "p-kernel's living chat" (docs/architecture/20-architecture/native-student.md
  *  §B.6/§B.7, living-mind.md). The distill MECHANISM is already proven on the
  *  host (tests/llm/distill_proof.c: held-out loss 5.53 -> 1.79 nats vs a
  *  scrambled control at 0). This file brings the baby INTO the running kernel

@@ -2,7 +2,7 @@
  *  12_ring3/02_core_crash/core_crash.c — ring3-core Wave B (first slice)
  *
  *  The "crash" half of the kernel-survives-core-crash proof
- *  (docs/architecture/ring3-core.md II.1b).
+ *  (docs/architecture/50-evolution/ring3-core.md II.1b).
  *
  *  Does ONE successful SYS_INFER, then deliberately faults in ring-3
  *  with a null dereference.  Page 0 is mapped U/S=0 (kernel-only) in

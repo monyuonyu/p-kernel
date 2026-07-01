@@ -1,7 +1,7 @@
 /*
  *  placement.c — SS-5: deterministic expert placement map (NOCENTRAL).
  *
- *  docs/architecture/special-structure-mind.md §6 + §8 item 6.
+ *  docs/architecture/30-module/special-structure-mind.md §6 + §8 item 6.
  *
  *  "Which node holds which expert?" answered by a LOCAL function of LOCAL
  *  membership — never a vote, registrar, leader, or new gossip. Place

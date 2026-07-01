@@ -1,7 +1,7 @@
 /*
  *  protect.h — the protected-object registry (survival §2, G28).
  *
- *  設計: docs/architecture/survival-network.md §2
+ *  設計: docs/architecture/00-concept/survival-network.md §2
  *        「守る単位 (protected UNIT) と守る力 (protecting POWER) の分離」
  *        「全網の力を一点へ注ぐ (concentrate the network's force on the unit)」
  *        docs/architecture/philosophy-gap-audit-4.md G28

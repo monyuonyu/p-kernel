@@ -3,7 +3,7 @@
  *  §8 反射層 — 思考→行動の配線。
  *
  *  詳細・思想・NO-CENTRAL 不変条件は reflex.h /
- *  docs/architecture/reflex-action.md を参照。
+ *  docs/architecture/20-architecture/reflex-action.md を参照。
  *
  *  ── 責任範囲 (この 1 ファイルが本体) ────────────────────────────────
  *    推論完了 (reflex_on_inference) → アクション表 → 実在する局所操作:

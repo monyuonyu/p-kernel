@@ -2,7 +2,7 @@
  *  lm_self.c -- living-mind Self layer (first slice): a distributed
  *  autobiographical self.
  *
- *  See lm_self.h + docs/architecture/living-mind.md Part III.
+ *  See lm_self.h + docs/architecture/30-module/living-mind.md Part III.
  *
  *  THE CLAIM (III.1): a per-node, hash-chained NARRATIVE LINEAGE (versions
  *  of the p-fs object "self/lin") that (1) survives the node's DEATH

@@ -6,7 +6,7 @@
 #   PKERNEL_RELAY="127.0.0.1:7400,127.0.0.1:7401"
 # All nodes hold the SAME ordered list and follow one deterministic rule:
 # "use the first relay on the list that is alive" (see
-# docs/architecture/relay-ha.md). This script asserts the full story:
+# docs/architecture/30-module/relay-ha.md). This script asserts the full story:
 #
 #   phase 1  mesh forms on relay#1 (7400); kdemo heartbeats flow A<->B<->C
 #   phase 2  relay#1 is SIGKILLed -> within 15 s every node fails over to

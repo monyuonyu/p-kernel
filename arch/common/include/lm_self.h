@@ -2,7 +2,7 @@
  *  lm_self.h — living-mind Self layer (first slice): a distributed
  *  autobiographical self.
  *
- *  Spec: docs/architecture/living-mind.md Part III. A per-node, hash-chained
+ *  Spec: docs/architecture/30-module/living-mind.md Part III. A per-node, hash-chained
  *  NARRATIVE LINEAGE (LM_SELF_ENTRY versions of the p-fs object "self/lin")
  *  that (1) survives the node's DEATH (reconstructs from the persisted store,
  *  not RAM), (2) is TAMPER-EVIDENT (any alteration of a committed entry is
@@ -111,7 +111,7 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
  * only; P1 replicates the appended blocks like any other self entry. */
 INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig);
 
-/* self-access R0 (docs/architecture/self-access.md): record ONE
+/* self-access R0 (docs/architecture/30-module/self-access.md): record ONE
  * self-introspection ("body-touch") event onto the live "self/lin" chain.
  * Q3=YES: each explicit READ-ONLY self-examination becomes part of the
  * mind's honest autobiography. Encodes LM_SELF_EV_INTROSPECT as the event

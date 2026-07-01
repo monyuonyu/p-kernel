@@ -1,6 +1,6 @@
 /*
  *  arch/linux/include/selfc_proc.h — the germ-process crash boundary for
- *  self-built units (docs/architecture/selfc-ring3.md §2.1, CDN-S1(a)).
+ *  self-built units (docs/architecture/50-evolution/selfc-ring3.md §2.1, CDN-S1(a)).
  *
  *  selfc compiles a unit OF the node, in the node's own address space
  *  (selfc.c, reused byte-for-byte up to entry resolution). This module

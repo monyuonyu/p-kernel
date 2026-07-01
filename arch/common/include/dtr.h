@@ -505,7 +505,7 @@ void r3_weights_set(const float *in);       /* R_NP floats into rw[]         */
 UW   r3_merge_epoch(void);                  /* the version high-water        */
 void r3_onemind_test(void);                 /* the disease/cure cert (XI.4)  */
 void r3_onemind_nocentral_test(void);       /* order-independence at n=R_NP  */
-/* persistence SLICE 2 (docs/architecture/persistence.md): the learned mind
+/* persistence SLICE 2 (docs/architecture/30-module/persistence.md): the learned mind
  * survives a reboot. r3_weights_persist() durably saves rw[] (header-guarded
  * by version+R_NP+vocab content-id, content-id no-op compare) — called by
  * the DMN after a consolidation tick. r3_weights_restore_or_pretrain() loads
@@ -518,7 +518,7 @@ INT  r3_weights_restore_or_pretrain(void);  /* 1=restored 0=lazy-pretrain     */
  * beside mind_net_task (Path W's production cadence). */
 void mind_merge_task(INT stacd, void *exinf);
 
-/* galaxy v1 (docs/architecture/galaxy.md §6): a snapshot of the LAST
+/* galaxy v1 (docs/architecture/30-module/galaxy.md §6): a snapshot of the LAST
  * `mind ask <k>` result, written at the single site in m_ask where the
  * masked majority vote computes pred/share. The galaxy POST /ask bridge
  * calls mind_cmd("ask k") (the production mouth) then reads this — the

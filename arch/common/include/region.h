@@ -2,7 +2,7 @@
  *  region.h
  *  Regions — 遅延クラスタによる脳の領域分割 (R0)
  *
- *  設計: docs/architecture/regions.md
+ *  設計: docs/architecture/20-architecture/regions.md
  *
  *  Region とは「相互 RTT が閾値 REGION_TAU_MS 以内のノード集合」。
  *  物理的・ネットワーク的に近いノードが1つの region を成し、region 内は

@@ -1,6 +1,6 @@
 /*
  *  arch/linux/selfc_proc.c — the germ-process crash boundary for self-built
- *  units (docs/architecture/selfc-ring3.md §2.1 CDN-S1(a), §1.2, §1.4).
+ *  units (docs/architecture/50-evolution/selfc-ring3.md §2.1 CDN-S1(a), §1.2, §1.4).
  *
  *  The immune system: a self-compiled unit runs in a fork()ed child, where
  *  a crash is REAPED (waitpid) instead of killing ./p-kernel. The previous

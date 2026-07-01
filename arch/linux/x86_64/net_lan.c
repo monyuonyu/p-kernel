@@ -10,7 +10,7 @@
  *  and net_relay (public relay) are left UNCHANGED.
  *
  *  How it meshes (the Skype-like LAN rendezvous, see
- *  docs/architecture/p2p-overlay.md, slice N-1):
+ *  docs/architecture/20-architecture/p2p-overlay.md, slice N-1):
  *    - One UDP socket, AF_INET/SOCK_DGRAM, SO_REUSEADDR + SO_BROADCAST,
  *      bound to 0.0.0.0:PKERNEL_LAN_PORT (default 7351).
  *    - net_lan_send() broadcasts each outbound Ethernet frame to

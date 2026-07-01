@@ -2,7 +2,7 @@
  *  lookup.h — decentralized lookup L0/L1: stateless rendezvous hashing
  *  (HRW) + a local resolution cache and read-k candidate lists.
  *
- *  Spec: docs/architecture/decentralized-lookup.md §2, §3.2, §6 (L0+L1).
+ *  Spec: docs/architecture/20-architecture/decentralized-lookup.md §2, §3.2, §6 (L0+L1).
  *
  *  L0 is the pure "responsible(k, r)" calculation: given a 32-byte key
  *  and a member view, rank the members by HRW weight and return the

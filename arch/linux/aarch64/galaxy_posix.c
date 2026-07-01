@@ -1,6 +1,6 @@
 /*
  *  galaxy_posix.c — POSIX transport for the galaxy observation window
- *  (docs/architecture/galaxy.md §3.2). The host-TCP listen socket that
+ *  (docs/architecture/30-module/galaxy.md §3.2). The host-TCP listen socket that
  *  v1 needs and the in-kernel netstack cannot serve (§1).
  *
  *  Identical source compiled per-arch (arch/linux/x86_64 + arch/linux/

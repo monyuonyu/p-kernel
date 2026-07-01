@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # 4-node, 2-region hierarchical distributed KV attention over the ./relay.
 #
-# Demonstrates the regions architecture (docs/architecture/regions.md): nodes
+# Demonstrates the regions architecture (docs/architecture/20-architecture/regions.md): nodes
 # are split into two latency clusters by a simulated RTT penalty, and DKVA
 # aggregates attention hierarchically — dense inside each region, sparse
 # across regions — to reconstruct the exact global attention at O(region^2)

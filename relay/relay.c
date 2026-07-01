@@ -174,7 +174,7 @@ static int probe_stamp = 0;             /* PKERNEL_RELAY_PROBE_STAMP */
 #define PROBE_STAMP_LEN 16              /* rx_us(8) + tx_us(8) */
 
 /*
- *  N-2d reflexive-address echo (docs/architecture/supernode-autopromote.md
+ *  N-2d reflexive-address echo (docs/architecture/30-module/supernode-autopromote.md
  *  §C.1.a). A REFL1 keepalive whose payload begins with the 4-byte magic
  *  "REF1" gets the OBSERVED source ip(4)+port(2) APPENDED to the echo (raw
  *  network-order bytes), using the SAME append mechanism as the probe stamps.
@@ -799,7 +799,7 @@ static void process_packet(int sock, int origin_fd,
         /* Relay-HA liveness pong: reflect the (already verified)
          * keepalive back to its sender so clients can distinguish
          * "relay alive" from "relay dead" and run deterministic
-         * failover/failback (docs/architecture/relay-ha.md). The
+         * failover/failback (docs/architecture/30-module/relay-ha.md). The
          * wire format is untouched — this echoes the same packet.
          *
          * §4 measurement opt-in: when probe_stamp is ON *and* the payload

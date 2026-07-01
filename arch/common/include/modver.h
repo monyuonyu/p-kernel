@@ -4,7 +4,7 @@
  *  mk_pino's directive: "each module carries a version, as fine-grained as
  *  possible", visible on the engineer page. This is the OBSERVABILITY side
  *  of the compatibility / evolution architecture
- *  (docs/architecture/compatibility.md): per-module versions are the
+ *  (docs/architecture/10-requirements/compatibility.md): per-module versions are the
  *  migration chain made visible — you can SEE, at runtime, exactly which
  *  contract version each subsystem on this node speaks.
  *

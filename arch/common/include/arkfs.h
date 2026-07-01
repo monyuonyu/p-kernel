@@ -1,7 +1,7 @@
 /*
  *  arkfs.h — ARK: the filesystem that survives the flood.
  *
- *  Spec: docs/architecture/survival-fs.md
+ *  Spec: docs/architecture/30-module/survival-fs.md
  *
  *  ARK is p-kernel's answer to "FAT32 has no place in a network that must
  *  not perish" (survival-network.md G24: the library is volatile memory).

@@ -1,7 +1,7 @@
 /*
  *  lm_consolidate.c -- living-mind first slice: DMN sleep-consolidation.
  *
- *  See lm_consolidate.h + docs/architecture/living-mind.md Part II.
+ *  See lm_consolidate.h + docs/architecture/30-module/living-mind.md Part II.
  *
  *  THE CLAIM (II.1): a rest-time ("sleep") consolidation that REPLAYS
  *  stored engrams and DISTILLS them into the dtr weights via the G22

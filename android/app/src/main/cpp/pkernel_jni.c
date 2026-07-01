@@ -60,7 +60,7 @@ static void *kernel_thread_main(void *arg)
 }
 
 /*
- *  nativeSetDataDir — persistence SLICE 1 (docs/architecture/persistence.md):
+ *  nativeSetDataDir — persistence SLICE 1 (docs/architecture/30-module/persistence.md):
  *  point the durable p-fs store at the app's private files dir so the Self
  *  layer (profile + hash-chain lineage) AND the learned-mind weights (rw[],
  *  SLICE 2) survive a process death / reboot. Must be invoked BEFORE

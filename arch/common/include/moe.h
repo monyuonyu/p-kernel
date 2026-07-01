@@ -226,7 +226,7 @@ void moe_stat(void);
  * 純ローカル計算なので net/kdds 不要・ベアメタルでも走る。 */
 INT  moe_self_test(void);
 
-/* survival-loop L1 (docs/architecture/survival-loop.md §6-L1 / §10): STATE-aware
+/* survival-loop L1 (docs/architecture/20-architecture/survival-loop.md §6-L1 / §10): STATE-aware
  * support routing cert. Drives the PRODUCTION moe_select_step over M=3 candidates
  * equal in acc/RTT/region but differing in STATE; asserts work sheds OFF the
  * STRESSED node toward ACTIVE peers (sign) and does not pile onto it (no-pile-on

@@ -850,7 +850,7 @@ void dkva_init(void)
         h_rsum_pub[n] = -1; h_rsum_sub[n] = -1;
     }
 
-    /* 階層集約 (regions R2, Y — docs/architecture/regions.md):
+    /* 階層集約 (regions R2, Y — docs/architecture/20-architecture/regions.md):
      *   Q     : GLOBAL  — 全 region のノードが partial を計算する (per-origin, G1)
      *   resp  : REGION  — per-node partial は自 region 内に留まる (密)
      *   rsum  : GLOBAL  — coordinator の region 要約だけ region 間を渡る (疎)

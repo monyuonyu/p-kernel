@@ -1,6 +1,6 @@
 /*
  *  student_blob_test.c — in-process cert for the SS-3 student-blob transport
- *  (docs/architecture/student-blob-transport.md §3, STEP 1, the gate).
+ *  (docs/architecture/30-module/student-blob-transport.md §3, STEP 1, the gate).
  *
  *  Proves the content-addressed manifest transport (gl_student_publish /
  *  gl_student_fetch, the _TK_HOSTED_LIBC_ bodies) round-trips a REAL S-tier

@@ -2,7 +2,7 @@
  *  12_ring3/01_core_moe/core_moe.c — ring3-core Wave B (first slice)
  *
  *  The "mind" half of the kernel-survives-core-crash proof
- *  (docs/architecture/ring3-core.md II.1a).
+ *  (docs/architecture/50-evolution/ring3-core.md II.1a).
  *
  *  Runs as a ring-3 user task, issues SYS_INFER(0x210) with the FIXED
  *  test vector V0, prints the returned class, and exits with the class

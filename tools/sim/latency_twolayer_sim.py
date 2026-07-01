@@ -3,7 +3,7 @@
 """
 latency_twolayer_sim.py — §10 ステップB: 二層構造を光速遅延の下で検証する
 
-docs/architecture/survival-network.md の §4(MoE スパース性 = 光速/エネルギー
+docs/architecture/00-concept/survival-network.md の §4(MoE スパース性 = 光速/エネルギー
 制約への答え)と §8(反射層/熟慮層の二層構造)を、最小モデルで「数」にする。
 俯瞰監査 G31「§4 の核(latency/light-speed)が未計測」への回答の *モデル側*。
 

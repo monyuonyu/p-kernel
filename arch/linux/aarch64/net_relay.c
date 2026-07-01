@@ -15,7 +15,7 @@
  *  useful for both production (key required) and bring-up against an
  *  --insecure relay.
  *
- *  Relay HA (multi-relay failover, see docs/architecture/relay-ha.md):
+ *  Relay HA (multi-relay failover, see docs/architecture/30-module/relay-ha.md):
  *  PKERNEL_RELAY takes an ordered, comma-separated list of up to 4
  *  relay endpoints sharing one PSK. Every node holds the SAME list in
  *  the SAME order and follows one deterministic rule: "use the first

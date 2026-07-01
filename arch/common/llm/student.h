@@ -1,7 +1,7 @@
 /*
  *  student.h — the Cradle baby: a from-scratch, organism-native MoE student.
  *
- *  NS-1 (docs/architecture/native-student.md §A.2/§B.6, the FIRST HEARTBEAT):
+ *  NS-1 (docs/architecture/20-architecture/native-student.md §A.2/§B.6, the FIRST HEARTBEAT):
  *  a THIRD network — NOT R3's rw[] (key->value single-token classifier), NOT
  *  the dtr sensor body (4ch->3class) — but a white-paper baby that LEARNS to
  *  predict the next RAW BYTE from a teacher (SmolLM2-135M, run via forward.c).

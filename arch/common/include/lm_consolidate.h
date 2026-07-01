@@ -1,7 +1,7 @@
 /*
  *  lm_consolidate.h — living-mind first slice: DMN sleep-consolidation.
  *
- *  Spec: docs/architecture/living-mind.md Part II. A rest-time ("sleep")
+ *  Spec: docs/architecture/30-module/living-mind.md Part II. A rest-time ("sleep")
  *  consolidation that REPLAYS stored engrams and DISTILLS them into the
  *  dtr weights via the G22 gossip merge, so the mind learns a STREAM of
  *  tasks WITHOUT catastrophic forgetting, decentralized, surviving node

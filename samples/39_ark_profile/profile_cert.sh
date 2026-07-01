@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # profile_cert.sh — the falsifiable data-plane gate for ark-profile v1
-# (docs/architecture/ark-profile.md §8). 人類の記憶 — the human chapter of
+# (docs/architecture/30-module/ark-profile.md §8). 人類の記憶 — the human chapter of
 # the autobiography. curl-driven, non-flaky (end-state within a bound, never
 # a timing window). Three tags:
 #

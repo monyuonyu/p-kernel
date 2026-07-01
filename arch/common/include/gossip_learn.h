@@ -135,7 +135,7 @@ INT  gl_pfs_fetch(const char *ref, UW reflen, float *w, UW n);
 
 /* ------------------------------------------------------------------ */
 /* SS-3 [live] — content-addressed MANIFEST transport                  */
-/* (docs/architecture/student-blob-transport.md §1-2).                 */
+/* (docs/architecture/30-module/student-blob-transport.md §1-2).                 */
 /*                                                                     */
 /* The chunk-by-NAME transport above explodes the 16-slot named-ref    */
 /* table (PFS_REF_MAX) at the 17th chunk. This redesign content-       */

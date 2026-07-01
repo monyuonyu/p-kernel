@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # galaxy_cert.sh — the falsifiable data-plane gate for the galaxy
-# observation window v1 (docs/architecture/galaxy.md §8). curl-driven,
+# observation window v1 (docs/architecture/30-module/galaxy.md §8). curl-driven,
 # non-flaky (end-state within a bound, never timing). Three tags:
 #
 #   [galaxy-serve]   2-node loopback mesh; after SWIM converges,

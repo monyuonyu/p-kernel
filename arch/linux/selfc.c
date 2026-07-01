@@ -17,7 +17,7 @@
  *                          block gossip, and is then compiled and run
  *                          inside THIS node's kernel.
  *
- *  Honest limits (see docs/architecture/self-compile.md):
+ *  Honest limits (see docs/architecture/50-evolution/self-compile.md):
  *    - hosted (arch/linux) builds only; bare metal has no libtcc yet
  *    - compiled code runs with full kernel privilege — no verifier,
  *      no sandbox, no signatures yet

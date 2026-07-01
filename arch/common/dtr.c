@@ -705,7 +705,7 @@ static float g_flatw[DTR_WEIGHT_FLOATS];
 /* LayerNorm forward that caches x-hat and 1/std for the backward.
  * Width n is a parameter so the sensor brain (n==DM) and the R3 in-context
  * harness (n==its own d_model) call the SAME kernel — never a fork
- * (docs/architecture/r3-nontrivial-thought.md, anti-fork rule). */
+ * (docs/architecture/20-architecture/r3-nontrivial-thought.md, anti-fork rule). */
 void dtr_ln_fwd_cache(const float *x, const float *g, const float *b,
                       float *xh, float *istd_out, float *y, INT n)
 {

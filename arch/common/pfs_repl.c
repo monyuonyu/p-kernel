@@ -1,7 +1,7 @@
 /*
  *  pfs_repl.c — p-fs P1: region-scoped gossip replication of blocks.
  *
- *  Spec: docs/architecture/p-fs.md §2.2 / §3.2 / §5 (P1 row).
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.2 / §3.2 / §5 (P1 row).
  *  Design notes + wire formats: pfs_repl.h.
  *
  *  What is generalized from sfs.c (the spec's "closest existing asset"):

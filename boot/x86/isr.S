@@ -132,7 +132,7 @@ isr19:
 # far jump してから C を呼ぶ。さらに CPU がプッシュした saved CS と
 # RIP を引数で渡す — exception_handler はこれで「ring0 のカーネル
 # バグ (halt)」と「ring3 テナントのフォールト (reap して生存)」を
-# 見分ける (docs/architecture/ring3-core.md I.3)。
+# 見分ける (docs/architecture/50-evolution/ring3-core.md I.3)。
 #
 # isr_common_stub エントリ時のスタック (64 ビットモード, 8 バイト/要素):
 #   [rsp+ 0] exception_num (各 isrN スタブが pushq)

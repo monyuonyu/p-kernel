@@ -78,7 +78,7 @@
 #define KDDS_QOS_RELIABLE     1
 #define KDDS_QOS_LATEST_ONLY  2
 
-/* 配信スコープ (regions, R0 — docs/architecture/regions.md)
+/* 配信スコープ (regions, R0 — docs/architecture/20-architecture/regions.md)
  *   GLOBAL: 従来どおり全ノードへ送る (フラット broadcast)
  *   REGION: 自 region のメンバ (RTT≤τ) にだけ送る — region 内に閉じた密通信。
  * スコープは送信時にローカルで強制され、ワイヤ (KDDS_PKT) には載らない。 */

@@ -1,7 +1,7 @@
 /*
  *  genome.h — §3 self-regeneration: the swarm grows a new full cell.
  *
- *  Spec: docs/architecture/survival-network.md §3 (装甲板＝細胞) and
+ *  Spec: docs/architecture/00-concept/survival-network.md §3 (装甲板＝細胞) and
  *  docs/architecture/genome.md.
  *
  *  Every organ this needs already exists; genome.c only ORCHESTRATES:
@@ -21,7 +21,7 @@
  *  through in-kernel libtcc compilation (selfc), engrams by pulling the
  *  replica — and becomes a full cell.
  *
- *  HONEST LIMITS (see docs/architecture/genome.md §5):
+ *  HONEST LIMITS (see docs/architecture/30-module/genome.md §5):
  *    - the kernel IMAGE itself is not distributed (no bare-metal
  *      self-reflashing); code distribution means selfc C-source tasks
  *    - role is carried and displayed but nothing schedules by it yet

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # run_ss3_blob.sh — host cert for the SS-3 student-blob TRANSPORT (STEP 1 gate)
-#                   docs/architecture/student-blob-transport.md §3.
+#                   docs/architecture/30-module/student-blob-transport.md §3.
 #
 # Proves the content-addressed manifest transport (gl_student_publish /
 # gl_student_fetch, the _TK_HOSTED_LIBC_ bodies in arch/common/gossip_learn.c)

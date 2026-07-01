@@ -10,7 +10,7 @@
  *  Attention solves it for real by reading the prompt; the certificate
  *  measures the learned margin over max(frozen, handif), not vs chance.
  *
- *  Anti-fork rule (docs/architecture/r3-nontrivial-thought.md): the
+ *  Anti-fork rule (docs/architecture/20-architecture/r3-nontrivial-thought.md): the
  *  numerically-meaningful kernels (dt_linear / dt_softmax / LayerNorm
  *  fwd+bwd, dtr_logf) are the SAME ones the live sensor brain (dtr.c)
  *  uses — exposed via dtr.h. Only the embedding (token lookup vs scalar
@@ -858,7 +858,7 @@ static void s_pretrain(void)
 }
 
 /* =================================================================== *
- *  persistence SLICE 2 (docs/architecture/persistence.md) —            *
+ *  persistence SLICE 2 (docs/architecture/30-module/persistence.md) —            *
  *  the learned mind (rw[]) survives a reboot.                          *
  *                                                                       *
  *  rw[] = R_NP consolidated weights (~84 KB). With NO save path it      *
