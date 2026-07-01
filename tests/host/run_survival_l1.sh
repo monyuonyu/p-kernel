@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # run_survival_l1.sh — host cert for survival-loop L1: STATE-aware support
 #   routing + §8 two-time-constant hysteresis
-#   (docs/architecture/survival-loop.md §5 / §6-L1 / §8 / §9 / §10).
+#   (docs/architecture/20-architecture/survival-loop.md §5 / §6-L1 / §8 / §9 / §10).
 #
 # L1 builds on L0's per-node STATE (ACTIVE / STRESSED, riding the WORLD_BEACON
 # firing spare bits, gossiped via world_peer_state). It folds a candidate's

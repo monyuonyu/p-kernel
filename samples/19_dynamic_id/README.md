@@ -6,7 +6,7 @@ dynamic node id** to a client that does not have a human-assigned
 v2 wire protocol.
 
 Design rationale and the road to fully self-organising topology:
-[`docs/architecture/dynamic-id.md`](../../docs/architecture/dynamic-id.md).
+[`docs/architecture/dynamic-id.md`](../../docs/architecture/30-module/dynamic-id.md).
 
 ## What this tests
 

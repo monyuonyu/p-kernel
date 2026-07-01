@@ -1,8 +1,8 @@
 # Locality benchmark — putting a number on §4
 
 最終更新: 2026-06-07 ／ wave-12 F隊 ／ 俯瞰監査 v3 **G25**（監査の死角）への回答
-関連: [survival-network.md §4/§5/§8](../architecture/survival-network.md),
-[regions.md](../architecture/regions.md),
+関連: [survival-network.md §4/§5/§8](../architecture/00-concept/survival-network.md),
+[regions.md](../architecture/20-architecture/regions.md),
 ハーネス: [`samples/24_locality/measure_locality.sh`](../../samples/24_locality/)
 
 ## 0. なぜこの計測が要るのか

@@ -447,7 +447,7 @@ static UB probe_waiting_node = 0xFF;   /* node currently being probed    */
  * the transitive-discovery path in gossip_apply() can clear it on adoption. */
 
 /* ------------------------------------------------------------------ */
-/* RTT estimation (R0, regions design — docs/architecture/regions.md)  */
+/* RTT estimation (R0, regions design — docs/architecture/20-architecture/regions.md)  */
 /*                                                                     */
 /* 直接プローブ (SWIM_PING→SWIM_ACK) の往復時間を測り、ノードごとに      */
 /* EWMA (alpha=1/4) で平滑化する。間接プローブはヘルパー経由で対象との    */

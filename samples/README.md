@@ -13,7 +13,7 @@ p-kernel の **ring-3 ユーザー空間プログラム**のサンプルコー�
 
 ### 分散・生存デモ（shell 駆動クラスタ — `bash samples/<dir>/run.sh`）
 
-思想（[survival-network.md](../docs/architecture/survival-network.md)）を**走行系で**実証する一群。
+思想（[survival-network.md](../docs/architecture/00-concept/survival-network.md)）を**走行系で**実証する一群。
 ★＝GitHub Actions CI で毎回 kill テスト強制。
 
 | dir | 何を示すか | 思想 |

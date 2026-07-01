@@ -70,7 +70,7 @@ extern void mc2_slice_unitcheck(struct mc2_slice_result *r);
 #endif
 #ifdef SMP_SELFTEST
 /* ②.0 full-SMP slice: 2 CPUs run the T-Kernel dispatcher under one Big
- * Kernel Lock (arch/aarch64/smp.c). docs/architecture/full-smp-plan.md §7.
+ * Kernel Lock (arch/aarch64/smp.c). docs/architecture/20-architecture/full-smp-plan.md §7.
  * Header-light externs (this TU runs before T-Kernel is up). */
 extern int           smp_selftest_run(unsigned long K); /* 0 = joined OK */
 extern int           smp_wait_secondary_live(void);     /* 0 = up        */

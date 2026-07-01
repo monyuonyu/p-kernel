@@ -1,6 +1,6 @@
 /*
  *  ushim.c — ring3-core Wave C: the user-side shim for core_mind.elf
- *  (docs/architecture/ring3-core.md III.1.3 — the EXHAUSTIVE table)
+ *  (docs/architecture/50-evolution/ring3-core.md III.1.3 — the EXHAUSTIVE table)
  *
  *  arch/common/moe.c and arch/common/dtr.c are dual-compiled WHOLE-FILE
  *  into the user ELF (--gc-sections cuts the link to what _start

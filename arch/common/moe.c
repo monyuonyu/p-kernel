@@ -243,7 +243,7 @@ static INT eff_threat(UB n)
 
 #ifdef _TK_HOSTED_LIBC_
 /* ── survival-loop L1 — STATE-aware support routing ───────────────────────────
- * docs/architecture/survival-loop.md §5 / §6-L1 / §10. Fold a candidate's
+ * docs/architecture/20-architecture/survival-loop.md §5 / §6-L1 / §10. Fold a candidate's
  * gossiped STATE-unhealth into routing as a VIRTUAL LOAD on the eff_pressure axis.
  * eff_state_penalty maps WSTATE_* -> an integer load penalty: a STRESSED node
  * earns +P_s which expert_utility SUBTRACTS (the eff_pressure term) — so the herd
@@ -1585,7 +1585,7 @@ static INT st_test_onebrain_accuracy(void)
 
 #ifdef _TK_HOSTED_LIBC_
 /* ── survival-loop L1 cert: [support-route] / [support-route-NOT] ──────────────
- * docs/architecture/survival-loop.md §6-L1 / §10. Drive the PRODUCTION
+ * docs/architecture/20-architecture/survival-loop.md §6-L1 / §10. Drive the PRODUCTION
  * moe_select_step over M=3 candidates that are EQUAL in acc / RTT / region —
  * their ONLY difference is STATE — and count picks per candidate over T
  * decisions, mirroring select_expert's recent_pick decay + MOE_PICK_LOAD

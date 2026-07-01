@@ -14,7 +14,7 @@
 >
 > Position: this is the **mechanism doc** under
 > [compatibility.md](compatibility.md) (the strategy + the network-seam reject→degrade
-> work) and [signing.md](archive/signing.md) (the shipped Ed25519 layer this OTA gate REUSES).
+> work) and [signing.md](../archive/signing.md) (the shipped Ed25519 layer this OTA gate REUSES).
 > compatibility.md answers "how do mixed-version nodes stay one fleet on the WIRE";
 > this doc answers "how does a node's STATE survive its OWN version changing, and how
 > does it accept a signed update without being forked or downgraded."

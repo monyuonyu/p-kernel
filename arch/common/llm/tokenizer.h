@@ -1,7 +1,7 @@
 /*
  *  tokenizer.h — SmolLM2-135M BPE tokenizer (GPT-2-family byte-level BPE).
  *
- *  Milestone M1d (docs/architecture/inference-engine.md §4):
+ *  Milestone M1d (docs/architecture/20-architecture/inference-engine.md §4):
  *  the BPE tokenizer the M1c forward (forward.c) needs to consume RAW TEXT.
  *  M1c's lm_generate() takes PRE-TOKENIZED ids; this turns text<->ids so the
  *  engine ("the teacher") can be driven by a string.

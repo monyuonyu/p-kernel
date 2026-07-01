@@ -319,7 +319,7 @@
 #define SYS_AI_SUBMIT   0x211
 #define SYS_AI_WAIT     0x212
 
-/* ring3-core Wave C (docs/architecture/ring3-core.md III.2 / CDN-6,7):
+/* ring3-core Wave C (docs/architecture/50-evolution/ring3-core.md III.2 / CDN-6,7):
  *   SYS_DTR_WEIGHTS_GET — copy the LIVE learned dtr weights into a user
  *     buffer.  arg0 = user float* (capacity arg1 floats); requires
  *     arg1 >= DTR_WEIGHT_FLOATS (635 floats = 2,540 B); returns

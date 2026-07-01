@@ -3,7 +3,7 @@
  *  own "body" (BACKLOG 🅰; mk_pino's "自分の体を触る" / the MCP-analogue
  *  embodiment, SAFE first slice).
  *
- *  Spec: docs/architecture/self-access.md.
+ *  Spec: docs/architecture/30-module/self-access.md.
  *
  *  R0 SCOPE — STRICTLY READ-ONLY. This module lets the resident mind (or an
  *  operator at the shell) INTROSPECT what the node already knows about

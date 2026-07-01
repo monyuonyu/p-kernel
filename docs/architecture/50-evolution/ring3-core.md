@@ -18,7 +18,7 @@
 > arm は el0 ですかね。やっぱりこの部分は常に変化していく領域なので不安定になると思うので
 > ユーザー空間においた方がいいですよね。"*
 
-This document is two parts, like [living-mind.md](living-mind.md):
+This document is two parts, like [living-mind.md](../30-module/living-mind.md):
 
 - **Part I — the north star.** Where the privilege line is cut, the syscall ABI
   the ring-3 core uses to reach back into the kernel, and the genuine forks that

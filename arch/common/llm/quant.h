@@ -1,7 +1,7 @@
 /*
  *  quant.h — dequantize-while-you-matmul for GGUF block-quantized weights.
  *
- *  Milestone M1b (docs/architecture/inference-engine.md §3, §5):
+ *  Milestone M1b (docs/architecture/20-architecture/inference-engine.md §3, §5):
  *  given one GGUF quantized weight matrix W and a float input vector x,
  *  compute y = W·x by dequantizing each 32-value block ON THE FLY (the weight
  *  stays quantized in memory; it is widened to float only inside the multiply).

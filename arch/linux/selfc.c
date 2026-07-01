@@ -17,7 +17,7 @@
  *                          block gossip, and is then compiled and run
  *                          inside THIS node's kernel.
  *
- *  Honest limits (see docs/architecture/self-compile.md):
+ *  Honest limits (see docs/architecture/50-evolution/self-compile.md):
  *    - hosted (arch/linux) builds only; bare metal has no libtcc yet
  *    - compiled code runs with full kernel privilege — no verifier,
  *      no sandbox, no signatures yet
@@ -630,7 +630,7 @@ static const char selfc_gate_v2_src[] =
 static void selfc_test(void)
 {
     tm_printf((const UB *)"[selfc-test] ==== selfc-ring3 v1: the immune boundary "
-              "(docs/architecture/selfc-ring3.md §5) ====\n");
+              "(docs/architecture/50-evolution/selfc-ring3.md §5) ====\n");
 
     /* a sentinel: kdds round-trip proving the KERNEL is alive after a reap. */
 

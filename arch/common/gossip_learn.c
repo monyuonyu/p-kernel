@@ -1037,7 +1037,7 @@ static INT g38_guard_feeds(void)
      * consumed (it oversampled the shard), and the guard-prioritized learner
      * produced a working guard model well above unlearned. The quantitative
      * plain-vs-weighted critical-detect delta is PRINTED and reported honestly
-     * (it can be marginal — see docs/architecture/reflex-action.md). */
+     * (it can be marginal — see docs/architecture/20-architecture/reflex-action.md). */
     if (!(wn0 > wn0_uni)) {
         gp("[g38-guard-feeds-learning] FAIL guard priority did not reach the learner (no oversample)\r\n"); fails++;
     }

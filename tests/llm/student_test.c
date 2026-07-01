@@ -1,6 +1,6 @@
 /*
  *  student_test.c — host cert for the Cradle baby (arch/common/llm/student.c),
- *  NS-1 "first heartbeat" (docs/architecture/native-student.md §B.6/§B.7).
+ *  NS-1 "first heartbeat" (docs/architecture/20-architecture/native-student.md §B.6/§B.7).
  *
  *  Four falsifiable certs (honest-growth discipline — NO fake progress):
  *

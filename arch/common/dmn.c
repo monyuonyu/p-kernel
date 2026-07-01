@@ -203,7 +203,7 @@ static void dmn_idle_work(void)
     if (dmn_stats.idle_runs % GA_INTERVAL == 1)
         ga_step();
 
-    /* living-mind (docs/architecture/living-mind.md II.7): rest-time
+    /* living-mind (docs/architecture/30-module/living-mind.md II.7): rest-time
      * "sleep" consolidation — replay durable engrams and distill them
      * into the dtr slow weights. ALONGSIDE ga_step (not replacing the
      * organ). No-op until engrams are pending (e.g. captured by a prior
@@ -227,7 +227,7 @@ static void dmn_idle_work(void)
             dmn_r3_round_count++;            /* the ONLY ++ site (VII.5) */
             galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 1, 0);  /* S3: the taught fact sinks into rw[] (galaxy.md) */
             dmn_puts("[dmn] sleep: distilled in-context facts -> rw[]\r\n");
-            /* persistence SLICE 2 (docs/architecture/persistence.md): the
+            /* persistence SLICE 2 (docs/architecture/30-module/persistence.md): the
              * sleep-then-save policy. Only once the batch has fully drained
              * (no more pending facts) is rw[] in its settled post-sleep
              * state — persist it THEN (not every round) so a reboot answers

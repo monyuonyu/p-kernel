@@ -1,8 +1,8 @@
 # Latency benchmark — putting a number on §8 (the light-speed wall)
 
 最終更新: 2026-06-07 ／ wave-15 B隊 ／ 俯瞰監査 **G31**(§4 の核 latency/light-speed が未計測)への回答
-関連: [survival-network.md §4/§8/§10-B](../architecture/survival-network.md),
-[reflex-deliberation.md](../architecture/reflex-deliberation.md)(時定数の分離),
+関連: [survival-network.md §4/§8/§10-B](../architecture/00-concept/survival-network.md),
+[reflex-deliberation.md](../architecture/20-architecture/reflex-deliberation.md)(時定数の分離),
 [locality.md](locality.md)(§4 の前半 traffic/energy; その (D) latency 未測がここの出発点)
 ハーネス: [`samples/29_latency/run.sh`](../../samples/29_latency/),
 sim: [`tools/sim/latency_twolayer_sim.py`](../../tools/sim/latency_twolayer_sim.py)
@@ -56,7 +56,7 @@ sim: [`tools/sim/latency_twolayer_sim.py`](../../tools/sim/latency_twolayer_sim.
 | Mars 最大 (4.01×10⁸ km) | 1338 s(22.3 min) |
 
 時定数はカーネル値: 反射 `tau_r=200ms`、熟慮 `tau_d=2000ms`(比 10×、
-[reflex-deliberation.md](../architecture/reflex-deliberation.md) D2 の実測比 fast=4/slow=40 と整合)、
+[reflex-deliberation.md](../architecture/20-architecture/reflex-deliberation.md) D2 の実測比 fast=4/slow=40 と整合)、
 gossip 5s、`REGION_TAU_MS=50`。
 
 ## 2. 計測(REAL relay 上の実測)
@@ -144,9 +144,9 @@ t63 は far に比例して伸び、Mars で分単位になる ―― だから�
 1. **実 RTT**: 地理的に離れたノード間の relay 往復を実測し、region(近傍)往復と
    cross-region(遠方)往復のレイテンシ差を実数で出す(300ms 代理を実値で置換)。
 2. **実 τ**: SWIM の実測 RTT から `REGION_TAU_MS` を経験的に決め、反射層の
-   実際の時間予算を測る([regions.md §3.1](../architecture/regions.md))。
+   実際の時間予算を測る([regions.md §3.1](../architecture/20-architecture/regions.md))。
 3. **反射の実締切**: デブリ相当の時間制約イベントで、反射が実際に締切内に閉じるか。
-4. **層またぎの発振**: [reflex-deliberation.md §7](../architecture/reflex-deliberation.md)
+4. **層またぎの発振**: [reflex-deliberation.md §7](../architecture/20-architecture/reflex-deliberation.md)
    の未解決(2 時定数の比、反射と熟慮の和解)を実遅延の下で観測。
 
 ## 6. 触ったファイル / 触っていないもの

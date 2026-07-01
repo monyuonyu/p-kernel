@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # selfc-ring3 v1 — the immune boundary for self-built units.
-# docs/architecture/selfc-ring3.md §5.1 [selfc-isolated]: DISEASE -> CURE.
+# docs/architecture/50-evolution/selfc-ring3.md §5.1 [selfc-isolated]: DISEASE -> CURE.
 #
 # DISEASE (this script, SELFC_ISOLATE=0): a self-compiled unit that null-derefs
 #   runs as a LEGACY in-kernel task (not guard-registered, §0.1). The fault

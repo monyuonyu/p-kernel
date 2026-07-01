@@ -1,7 +1,7 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # i18n_cert.sh — the falsifiable gate for the i18n manifesto wave
-# (docs/architecture/ark-profile.md §7.5). The manifesto speaks many
+# (docs/architecture/30-module/ark-profile.md §7.5). The manifesto speaks many
 # languages; consent binds to the EXACT words the person READ. curl-driven,
 # non-flaky (end-state, not a timing window). One tag:
 #

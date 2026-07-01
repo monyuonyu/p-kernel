@@ -2,7 +2,7 @@
 # ===========================================================================
 # 44_persist / persist_cert.sh  —  the ark REMEMBERS across a reboot.
 #
-# persistence SLICE 1 + SLICE 2 (docs/architecture/persistence.md). SLICE 0
+# persistence SLICE 1 + SLICE 2 (docs/architecture/30-module/persistence.md). SLICE 0
 # made the durable layer honest; these two slices make the mind survive a
 # process death on the SAME PKERNEL_PFS_DIR. Every assertion drives a REAL
 # production path (pfs_durable_restore / r3_weights_persist /

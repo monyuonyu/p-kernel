@@ -1,10 +1,10 @@
 # 宇宙生存ネットワーク — 分散MoEによる「人類全体の脳」
 
 > p-kernel の位置づけを **保存する図書館** から **考える器官** へ拡張する構想。
-> regions.md（[locality-MoE / region 分割](regions.md)）の「なぜそう作るか」にあたる上位思想であり、
+> regions.md（[locality-MoE / region 分割](../20-architecture/regions.md)）の「なぜそう作るか」にあたる上位思想であり、
 > 5レイヤー世界観（メモリ `project_pkernel_philosophy`）の **Collective 層の宇宙生存版**。
 
-最終更新: 2026-06-06 ／ 関連: [regions.md](regions.md), `phase_b_relay.md`, `android.md`
+最終更新: 2026-06-06 ／ 関連: [regions.md](../20-architecture/regions.md), `phase_b_relay.md`, `android.md`
 
 このドキュメントは2部構成：
 

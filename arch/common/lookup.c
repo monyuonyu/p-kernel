@@ -1,7 +1,7 @@
 /*
  *  lookup.c — decentralized lookup L0: stateless rendezvous hashing (HRW).
  *
- *  Spec: docs/architecture/decentralized-lookup.md §2.1, §3.1, §6 (L0).
+ *  Spec: docs/architecture/20-architecture/decentralized-lookup.md §2.1, §3.1, §6 (L0).
  *
  *  responsible(k, r) = ALIVE nodes sorted by weight(n, k) descending,
  *  top r. weight(n, k) = sha256(key || node_id). No ring to maintain,

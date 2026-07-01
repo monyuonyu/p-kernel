@@ -2,7 +2,7 @@
 # ===========================================================================
 # 43_dur_honest / dur_cert.sh  —  SLICE 0: the durable layer stops lying.
 #
-# Two bugs from the persistence design (docs/architecture/persistence.md
+# Two bugs from the persistence design (docs/architecture/30-module/persistence.md
 # SLICE 0; gap-ledger rows DUR-SWALLOW 🔴 / DUR-REFTAB 🟠):
 #
 #   DUR-SWALLOW — pfs_put discarded the durable-write rc and returned PFS_OK

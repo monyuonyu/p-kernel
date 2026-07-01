@@ -15,7 +15,7 @@
  *  useful for both production (key required) and bring-up against an
  *  --insecure relay.
  *
- *  Relay HA (multi-relay failover, see docs/architecture/relay-ha.md):
+ *  Relay HA (multi-relay failover, see docs/architecture/30-module/relay-ha.md):
  *  PKERNEL_RELAY takes an ordered, comma-separated list of up to 4
  *  relay endpoints sharing one PSK. Every node holds the SAME list in
  *  the SAME order and follows one deterministic rule: "use the first
@@ -115,7 +115,7 @@ extern int pkernel_default_node_id(void);
 
 /* Relay-HA failover/failback time constants (ms). All nodes share these,
  * so the "first live relay on the list" rule resolves identically
- * everywhere. See docs/architecture/relay-ha.md. */
+ * everywhere. See docs/architecture/30-module/relay-ha.md. */
 #define MAX_RELAYS         4
 #define HA_RX_IDLE_MS      5000   /* no rx for this long -> probe current */
 #define HA_PROBE_TMO_MS    3000   /* probe unanswered -> advance to next  */

@@ -3,7 +3,7 @@
 # run.sh — the soul test for ARK (arch/common/arkfs.c).
 #
 # Proves the three properties that make ARK fit p-kernel's "library that does
-# not perish" (docs/architecture/survival-fs.md):
+# not perish" (docs/architecture/30-module/survival-fs.md):
 #
 #   (a) CRUD + versioning   create/read/update; the OLD version survives in
 #                           the append-only log (readv recovers it).

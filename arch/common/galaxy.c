@@ -1,5 +1,5 @@
 /*
- *  galaxy.c — 銀河の観測窓 v1 kernel side (docs/architecture/galaxy.md)
+ *  galaxy.c — 銀河の観測窓 v1 kernel side (docs/architecture/30-module/galaxy.md)
  *
  *  The event ring (§4), the JSON builders (§3.4, hand-rolled — NO second
  *  JSON library), the minimal HTTP/1.0 server + SSE writer (§3.6), and

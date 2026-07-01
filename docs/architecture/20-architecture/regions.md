@@ -17,7 +17,7 @@ Status: **R0✅ R1✅ R2✅（配管完了）/ R3 width 拡張も着地（LM-9 P
 > R3b 専門分化「呼吸」（[[r3b-breathing-params.md]]、道B）、G22 中央集約なしの分散協調学習（`samples/32`）が着地。
 
 関連: [[project_pkernel_philosophy]]（5レイヤー世界観の Collective 層）、
-[survival-network.md](survival-network.md)（**この設計の「なぜ」= 宇宙生存ネットワーク構想。R3 = §7 分散ゲーティング**）、
+[survival-network.md](../00-concept/survival-network.md)（**この設計の「なぜ」= 宇宙生存ネットワーク構想。R3 = §7 分散ゲーティング**）、
 `phase_b_relay.md`（relay 基盤）、`android.md`（UMP フリート = この設計の強制力）。
 
 ---
@@ -139,7 +139,7 @@ degrade の3段は**この連続関数の粗いバンド**として残す（SOLO
 > **DEVICE 軸の継ぎ足し**: 上式は**ノード数 N**で容量を駆動し、全ノードを等価
 > （1 ノード = 1 expert）とみなす。だが実艦隊は強端末〜廉価機の異種混在。
 > **端末性能（cores/RAM/GPU/CPU マイクロベンチ）で各ノードの取り分を連続変調**する
-> 設計は [device-capacity.md](device-capacity.md) ―― `capacity_score()` を**フォークせず**
+> 設計は [device-capacity.md](../30-module/device-capacity.md) ―― `capacity_score()` を**フォークせず**
 > `device` 係数を一本乗せ、強い端末が太い expert/層/KV を担い、熱い/電池僅少では `S_n`
 > 経由で生きたまま縮む。本書 §6（provisioning）/ §3.3（utility に太さを足す）と接続。
 

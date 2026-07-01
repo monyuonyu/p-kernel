@@ -122,7 +122,7 @@ void swim_nodes_print(void);
 
 /* ノードへの平滑化 RTT (ms)。直接プローブの往復から EWMA で推定。
  * 未実測のノードは 0xFFFFFFFF を返す。
- * (R0, regions design — docs/architecture/regions.md。region 形成と
+ * (R0, regions design — docs/architecture/20-architecture/regions.md。region 形成と
  *  locality-aware MoE ゲーティングが消費する。) */
 UW swim_rtt_ms(UB node);
 

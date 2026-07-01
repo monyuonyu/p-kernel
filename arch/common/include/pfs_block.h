@@ -1,7 +1,7 @@
 /*
  *  pfs_block.h — p-fs P0: content-addressed block store.
  *
- *  Spec: docs/architecture/p-fs.md §2.1 (内容アドレス), §4 (mapping), §5 (P0).
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.1 (内容アドレス), §4 (mapping), §5 (P0).
  *
  *  A *block* is an arbitrary byte string of length <= PFS_BLOCK_MAX. Its
  *  *block-id* is sha256(block bytes) — a fixed 32-byte value. The same

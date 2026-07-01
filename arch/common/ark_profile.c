@@ -1,6 +1,6 @@
 /*
  *  ark_profile.c — ark-profile v1: 人類の記憶 (the human chapter).
- *  See ark_profile.h + docs/architecture/ark-profile.md.
+ *  See ark_profile.h + docs/architecture/30-module/ark-profile.md.
  *
  *  This TU owns the ARK_PROFILE / ARK_PROV objects and their save/read
  *  via pfs_dag ("self/prof" / "self/prov"), the consent record bound to

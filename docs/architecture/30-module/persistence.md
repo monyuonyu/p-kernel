@@ -10,7 +10,7 @@
 > `PKERNEL_PFS_DIR`（`nativeSetDataDir`）をアプリ専用領域に向けて配線済み（build.gradle.kts の
 > 0.4.7 / 0.9.0 コメント参照）。残課題は本文の SLICE 3+（eviction/アポトーシス接続など）。
 >
-> 最終更新: 2026-06-13 ／ 関連: [gap-ledger](gap-ledger.md)（DUR-SWALLOW 🔴 /
+> 最終更新: 2026-06-13 ／ 関連: [gap-ledger](../gap-ledger.md)（DUR-SWALLOW 🔴 /
 > DUR-REFTAB 🟠 はこの設計の SLICE 0）, [living-mind.md](living-mind.md),
 > [galaxy.md](galaxy.md), [ark-profile.md](ark-profile.md), product-soul.md。
 

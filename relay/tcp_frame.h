@@ -1,7 +1,7 @@
 /*
  *  relay/tcp_frame.h — connect-anywhere SLICE 3: TCP length-framing.
  *
- *  THE LOAD-BEARING DETAIL (docs/architecture/connect-anywhere.md §3):
+ *  THE LOAD-BEARING DETAIL (docs/architecture/20-architecture/connect-anywhere.md §3):
  *  TCP is a byte stream with no datagram boundaries, so a naive socat
  *  UDP<->TCP tunnel concatenates frames and the receiver cannot re-split
  *  them. The fix is an explicit length prefix per packet on the stream:

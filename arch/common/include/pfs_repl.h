@@ -1,7 +1,7 @@
 /*
  *  pfs_repl.h — p-fs P1: region-scoped gossip replication of blocks.
  *
- *  Spec: docs/architecture/p-fs.md §2.2 (gossip 複製), §5 (P1 row).
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.2 (gossip 複製), §5 (P1 row).
  *
  *  P1 generalizes sfs.c from "/shared files, all-to-all" to "any
  *  content-addressed block, region-scoped":

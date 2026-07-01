@@ -3,12 +3,12 @@
 > 脳は1枚の判断器ではない。**手が熱い鍋に触れたとき、脳は何も決めていない。**
 > 脊髄が勝手に手を引っ込め、痛みの報告が大脳に届くのはその後だ。
 > 即応は近くで・速く閉じ、深い判断は遠くで・遅く回る。
-> このドキュメントは [survival-network.md](survival-network.md) **§8（光速の壁と二層構造）**を、
+> このドキュメントは [survival-network.md](../00-concept/survival-network.md) **§8（光速の壁と二層構造）**を、
 > p-kernel の実モジュール（`region.c` / `swim.c` / `kdds` / `moe.c` / `degrade.c` / `dkva.c`）の上に
 > 接地し、**なぜ層を分けるのか／時定数を分けないと発振するのか**を設計判断として書き下ろす。
 
 Status: **時定数分離まで実装・実測（§6 の D0/D1/D2 DONE）／ D3 熟慮の中身は未** / 最終更新: 2026-06-07
-関連: [survival-network.md](survival-network.md)（§8 = この設計の出自、§7 = 分散ゲーティング）、
+関連: [survival-network.md](../00-concept/survival-network.md)（§8 = この設計の出自、§7 = 分散ゲーティング）、
 [regions.md](regions.md)（region = 反射層の空間的基盤）、`phase_b_relay.md`、`android.md`
 
 ---

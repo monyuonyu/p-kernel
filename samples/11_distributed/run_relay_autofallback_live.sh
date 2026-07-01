@@ -13,7 +13,7 @@
 # relay (UDP+TCP on one port), and `iptables ... -p udp --dport $PORT -j DROP`
 # (UDP blackholed to the relay; TCP intact).
 #
-# Sub-certs (all load-bearing), per docs/architecture/connect-anywhere.md 4S.c(2):
+# Sub-certs (all load-bearing), per docs/architecture/20-architecture/connect-anywhere.md 4S.c(2):
 #   A. AUTO-FALLBACK : both nodes REGISTER over TCP, reach SWIM alive=2, and each
 #                      log `auto: ... adopted relay-tcp`; NO node meshed over UDP
 #                      (the block held -> zero non-tcp registrations).

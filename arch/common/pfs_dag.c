@@ -1,7 +1,7 @@
 /*
  *  pfs_dag.c — p-fs P2: object manifests + append-only version DAG + refs.
  *
- *  Spec: docs/architecture/p-fs.md §2.3 / §3.1 / §5 (P2 row).
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.3 / §3.1 / §5 (P2 row).
  *  Design notes + wire formats + the honest fork caveat: pfs_dag.h.
  *
  *  Layering (no new transport — the whole point of P2):

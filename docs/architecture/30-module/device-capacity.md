@@ -38,9 +38,9 @@ doc-hygiene wave 2 で、本クラスタの生きた結論を一箇所に集約�
 > **端末能力（device capability）という第二の入力**を継ぎ足す。yurikago が **どの端末でも**
 > 走り、各々が**担えるだけ**を担う ―― その配管の設計。
 >
-> 最終更新: 2026-06-14 ／ 関連: [regions.md](regions.md)（§3.2 `capacity(N)`）,
+> 最終更新: 2026-06-14 ／ 関連: [regions.md](../20-architecture/regions.md)（§3.2 `capacity(N)`）,
 > [interoception.md](interoception.md)（`S_n` ストレスバス・電池/熱/メモリ圧）,
-> [native-student.md](native-student.md)（per-node サイズがスケールする赤子 MoE）,
+> [native-student.md](../20-architecture/native-student.md)（per-node サイズがスケールする赤子 MoE）,
 > [gpu-compute.md](gpu-compute.md)（GPU = 能力入力の最大の段差。§5 が本書と双子）,
 > `degrade.c`/`degrade.h`（`capacity_*()` の実体）, `LogActivity.kt`（engineer ページの readout）。
 

@@ -2,7 +2,7 @@
  *  region.c
  *  Regions — 遅延クラスタによる脳の領域分割 (R0)
  *
- *  設計: docs/architecture/regions.md
+ *  設計: docs/architecture/20-architecture/regions.md
  *  詳細は region.h を参照。
  */
 

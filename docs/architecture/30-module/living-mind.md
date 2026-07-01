@@ -10,7 +10,7 @@
 > file + wave + CI tag + measured result). Genuinely-future items (the Evolution layer) are
 > marked FUTURE. The canonical live-gap list is `gap-ledger.md`.
 
-This document is two parts, like [survival-network.md](survival-network.md):
+This document is two parts, like [survival-network.md](../00-concept/survival-network.md):
 
 - **Part I — the north star.** The design, grounded in existing p-kernel pieces,
   honest about what is hard. No new subsystem is invented where one already exists.

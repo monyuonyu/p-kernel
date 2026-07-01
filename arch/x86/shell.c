@@ -1358,7 +1358,7 @@ static void cmd_guard(const char *arg)
 
 /* ------------------------------------------------------------------ */
 /* ring3 — ring3-core Wave B acceptance gate                           */
-/* (docs/architecture/ring3-core.md II.3 — falsifiable, fake-resistant)*/
+/* (docs/architecture/50-evolution/ring3-core.md II.3 — falsifiable, fake-resistant)*/
 /*                                                                     */
 /* What this slice proves (honest bound, II.4): the moe class-         */
 /* inference computation is exercised FROM a ring-3 task (behind       */

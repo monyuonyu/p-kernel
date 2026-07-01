@@ -1,7 +1,7 @@
 # Relay RTT + energy benchmark — measuring §4's core on the REAL path
 
 最終更新: 2026-06-08 ／ wave-17 §4-measure 隊 ／ 俯瞰監査 **G31/G25**（§4 の核が実路で未計測）への回答
-関連: [survival-network.md §4/§5/§8](../architecture/survival-network.md),
+関連: [survival-network.md §4/§5/§8](../architecture/00-concept/survival-network.md),
 [locality.md](locality.md)（§4 前半 traffic/energy を kdds カウンタで実測。その (D) latency 未測がここの出発点）,
 [latency.md](latency.md)（MODELLED な far-delay 注入で二層分離を実測。relay 自身の RTT・負荷下 RTT は未測）
 ハーネス: [`samples/36_relay_measure/run.sh`](../../samples/36_relay_measure/),

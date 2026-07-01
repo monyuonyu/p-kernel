@@ -1,7 +1,7 @@
 /*
  *  gguf.h — minimal libc-light GGUF (llama.cpp weight format) reader.
  *
- *  Milestone M1a (docs/architecture/inference-engine.md §8.1):
+ *  Milestone M1a (docs/architecture/20-architecture/inference-engine.md §8.1):
  *  read a GGUF file's header + ALL metadata KV pairs + the tensor table,
  *  and expose them so a caller can print the model config and enumerate the
  *  weight tensors. No dequant, no matmul, no forward — those are M1b/M1c.

@@ -146,7 +146,7 @@ void idt_enable_ist(void) {
 extern void print(const char *str);
 
 /* ----------------------------------------------------------------- */
-/* ring3-core Wave B — 生存メカニズム (docs/architecture/ring3-core.md I.3) */
+/* ring3-core Wave B — 生存メカニズム (docs/architecture/50-evolution/ring3-core.md I.3) */
 /*                                                                     */
 /* saved CS の RPL で「カーネルのバグ (ring0)」と「ring3 テナントの    */
 /* フォールト」を見分ける。ring0 → 従来どおり print + halt (正直な停止)。*/

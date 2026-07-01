@@ -14,7 +14,7 @@
  *  privileges, same address space, same rings. That is the design —
  *  this is the minimal organ of self-evolution — but there is NO
  *  verification / sandbox / signature layer yet. See
- *  docs/architecture/self-compile.md.
+ *  docs/architecture/50-evolution/self-compile.md.
  */
 #pragma once
 #include "kernel.h"

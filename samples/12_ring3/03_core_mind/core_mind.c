@@ -1,6 +1,6 @@
 /*
  *  12_ring3/03_core_mind/core_mind.c — ring3-core Wave C
- *  (docs/architecture/ring3-core.md III.1.4)
+ *  (docs/architecture/50-evolution/ring3-core.md III.1.4)
  *
  *  THE MIND'S MATH IN RING 3.  This ELF links the REAL arch/common/moe.c
  *  + arch/common/dtr.c (whole-file dual-compile, --gc-sections); the

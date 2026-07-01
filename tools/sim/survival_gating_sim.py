@@ -3,7 +3,7 @@
 """
 survival_gating_sim.py — §10 ステップA: 分散ゲーティング／応援・受援のミニ検証
 
-docs/architecture/survival-network.md の構想を、最小スケールで「目で確認」する
+docs/architecture/00-concept/survival-network.md の構想を、最小スケールで「目で確認」する
 ためのホスト・シミュレーション。カーネル本体(moe.c)に手を入れる前に、
 
     「中央コントローラなしに、局所勾配だけで負荷が逼迫点から余力点へ流れ、

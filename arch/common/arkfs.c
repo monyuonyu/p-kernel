@@ -3,7 +3,7 @@
  *            local filesystem. The vessel that carries the library's
  *            memory through the power-loss flood.
  *
- *  Spec & rationale: docs/architecture/survival-fs.md
+ *  Spec & rationale: docs/architecture/30-module/survival-fs.md
  *  Header contract:  arch/common/include/arkfs.h
  *
  *  On-disk shape (all sector-aligned; ARK_SECTOR = 512):

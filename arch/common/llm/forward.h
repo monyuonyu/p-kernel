@@ -1,7 +1,7 @@
 /*
  *  forward.h — SmolLM2-135M (plain Llama) forward pass + greedy generation.
  *
- *  Milestone M1c (docs/architecture/inference-engine.md §1, §5):
+ *  Milestone M1c (docs/architecture/20-architecture/inference-engine.md §1, §5):
  *  given a GGUF model already opened by M1a (gguf.c) and the M1b
  *  dequantize-while-you-matmul kernels (quant.c), run a full Llama forward and
  *  produce next-token logits, then greedy-argmax to generate tokens. This is

@@ -1,5 +1,5 @@
 /*
- *  galaxy.h — 銀河の観測窓 v1 (docs/architecture/galaxy.md)
+ *  galaxy.h — 銀河の観測窓 v1 (docs/architecture/30-module/galaxy.md)
  *
  *  Per-node observation window. Each hosted node serves its OWN view of
  *  the galaxy (its gossip-bounded world) over a loopback HTTP/1.0 server.

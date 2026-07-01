@@ -8,7 +8,7 @@ ARK（`arch/common/arkfs.c`）は、p-kernel の **滅びない図書館** に�
   電源喪失（torn write）は**ログ末尾しか壊せない**。
 - **版を刻む**：上書きしても旧版はログに残り、`ark_read_version` で読める。
 
-設計の全体は [`docs/architecture/survival-fs.md`](../../docs/architecture/survival-fs.md)。
+設計の全体は [`docs/architecture/survival-fs.md`](../../docs/architecture/30-module/survival-fs.md)。
 
 ## 実行
 

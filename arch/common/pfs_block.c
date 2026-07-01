@@ -1,7 +1,7 @@
 /*
  *  pfs_block.c — p-fs P0: content-addressed block store (LOCAL only).
  *
- *  Spec: docs/architecture/p-fs.md §2.1, §4, §5 (P0 row).
+ *  Spec: docs/architecture/20-architecture/p-fs.md §2.1, §4, §5 (P0 row).
  *
  *  block-id = sha256(block bytes), held as a fixed 32-byte array. Storing
  *  the same content twice yields the same id and does NOT duplicate the
