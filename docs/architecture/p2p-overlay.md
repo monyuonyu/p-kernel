@@ -10,7 +10,8 @@ Every node is a peer, not a client of a server. Reachable peers (same LAN, or bo
 exchange Ethernet frames over direct UDP, NO intermediary. NAT'd peers are forwarded by an
 **emergent supernode** — any capable node, chosen deterministically-from-SWIM-membership (same
 pure function as region coordinator / teacher selection; no election, no registrar, Raft stays
-unwired; the role survives death by recomputation). Degrades gracefully LAN-direct → P2P-direct
+unwired; the role survives death by recomputation — **min-id-survives-death lemma is canonical in
+[[decentralized-lookup.md]] §2.2; this doc applies it, does not re-derive it**). Degrades gracefully LAN-direct → P2P-direct
 → supernode-relayed, exactly like Skype's original. Wire stays HMAC-SHA256 v2; membership stays
 SWIM gossip.
 
