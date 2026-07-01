@@ -200,3 +200,13 @@ INT swim_selfelect_self_test(void (*emit)(const char *));
  * teach->answer ([live] is deferred), nor downgrade-attack auth.
  * Emits "[no-fleet-split] ..." lines; returns 0 on PASS else the fail count. */
 INT swim_nofleetsplit_self_test(void (*emit)(const char *));
+
+/* [swim-selfsuspect] SELF-SUSPICION de-storm cert (tests/host/run_swim_selfsuspect.sh):
+ *  [selfsuspect-refute]   N rapid self-SUSPECT rumors -> my_incarnation advances by
+ *      exactly N (ALIVE re-asserted each time) — liveness/refutation preserved.
+ *  [selfsuspect-throttle] CURE build -> the replica_scatter_all() 断末魔 fires EXACTLY
+ *      once for the burst (de-storm). FALSIFIER -DSWIM_NO_SCATTER_THROTTLE -> N fires
+ *      -> RED, proving the throttle has teeth.
+ * HOSTED-ONLY (SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_); the bare-metal crown stays
+ * byte-identical. Emits "[selfsuspect-*]"/"[swim-selfsuspect]"; returns 0 on PASS. */
+INT swim_selfsuspect_self_test(void (*emit)(const char *));

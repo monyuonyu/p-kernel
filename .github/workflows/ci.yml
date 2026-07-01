@@ -420,6 +420,24 @@ jobs:
           timeout 300 tests/host/run_survival_l1.sh | tee survival_l1.log
           grep -aF '[survival-l1] ALL PASS' survival_l1.log
 
+      # SWIM SELF-SUSPICION de-storm (arch/common/swim.c gossip_apply; replica.c:387).
+      # Under self-hosted CI CPU load a node falls behind on SWIM PING/ACK, is FALSELY
+      # rumored SUSPECT, and reacts to EVERY such rumor with a FULL UNPACED memory
+      # scatter (replica_scatter_all) — the scatter work makes it fall further behind
+      # -> more suspicion -> more scatter: a self-feeding STORM that goes deaf and FAILs
+      # one_mind/shared_mind. The fix THROTTLES the scatter to <=1 per interval while
+      # the REFUTE still fires every time (liveness preserved). It is HOSTED-GATED
+      # (_TK_HOSTED_LIBC_) so the bare-metal .text crown stays byte-identical (the
+      # crown-text-identity job enforces that). [selfsuspect-refute] (N rapid self-
+      # SUSPECT rumors advance my_incarnation by exactly N) + [selfsuspect-throttle]
+      # (CURE: exactly ONE scatter for the burst). The -DSWIM_NO_SCATTER_THROTTLE
+      # falsifier reverts to the unthrottled storm (N scatters) and must go RED. Host-
+      # portable like L0/L1: x86_64-hosted runs natively, aarch64-hosted SKIPs here.
+      - name: SWIM self-suspicion de-storm cert (swim.c gossip_apply)
+        run: |
+          timeout 300 tests/host/run_swim_selfsuspect.sh | tee swim_selfsuspect.log
+          grep -aF '[swim-selfsuspect] ALL PASS' swim_selfsuspect.log
+
       # SLICE 0 — the durable layer stops lying (persistence.md; gap-ledger
       # DUR-SWALLOW 🔴 + DUR-REFTAB 🟠). [pfs-durswallow]: a failed durable
       # write makes pfs_put return NON-OK and pins the sole in-memory copy

@@ -74,6 +74,9 @@ IMPORT void lm_self_migrate_forward_test(void);       /* [selflineage-migrate] *
 #if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT INT  swim_nofleetsplit_self_test(void (*)(const char *)); /* [no-fleet-split] */
 #endif
+#if defined(SWIM_SELFSUSPECT_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT INT  swim_selfsuspect_self_test(void (*)(const char *)); /* [swim-selfsuspect] */
+#endif
 #if defined(ARKFS_GAP_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT void compat_arkfs_gap_test(void);              /* [arkfs-version-gap] */
 #endif
@@ -1106,6 +1109,20 @@ EXPORT INT usermain(void)
             if (al >= 2 && a[0]=='l' && a[1]=='0') world_survival_l0_test();
             else if (al >= 2 && a[0]=='l' && a[1]=='1') world_survival_l1_test();
             else print("usage: survival l0|l1\r\n");
+        } else if (starts_with(line, n, "swimtest") && (n == 8 || line[8] == ' ')) {
+            /* [swim-selfsuspect] de-storm cert (tests/host/run_swim_selfsuspect.sh):
+             * N rapid self-SUSPECT rumors -> [selfsuspect-refute] (my_incarnation
+             * advances N times: liveness preserved) + [selfsuspect-throttle] (the
+             * replica_scatter_all() 断末魔 fires EXACTLY once for the burst).
+             * Rebuilt with EXTRA_CFLAGS=-DSWIM_NO_SCATTER_THROTTLE the throttle is
+             * gone -> N scatters -> [selfsuspect-throttle] goes RED (the falsifier).
+             * Gated behind -DSWIM_SELFSUSPECT_CERT so the default kernel + crown
+             * stay byte-identical; an ungated build prints how to enable it. */
+#if defined(SWIM_SELFSUSPECT_CERT) && defined(_TK_HOSTED_LIBC_)
+            swim_selfsuspect_self_test(print);
+#else
+            print("swimtest: rebuild with EXTRA_CFLAGS=-DSWIM_SELFSUSPECT_CERT\r\n");
+#endif
         } else if (starts_with(line, n, "ga") && (n == 2 || line[2] == ' ')) {
             /* Phase 14 (Evolution layer): `ga` -> stats; `ga test` runs the
              * GA self-improvement cert (mutation+selection improves a

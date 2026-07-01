@@ -265,6 +265,58 @@ static INT gossip_supersedes(UB inc_in, UB st_in, UB inc_cur, UB st_cur)
     return state_rank(st_in) > state_rank(st_cur);
 }
 
+#if defined(_TK_HOSTED_LIBC_)
+/* ------------------------------------------------------------------ */
+/* DE-STORM throttle for the SELF-SUSPICION 断末魔 scatter (HOSTED-ONLY) */
+/*                                                                     */
+/* Under self-hosted CI CPU load a node routinely falls behind on SWIM  */
+/* PING/ACK and gets FALSELY rumored SUSPECT. The self-suspect branch    */
+/* below reacts to EVERY such rumor with replica_scatter_all() — a FULL, */
+/* UNPACED memory snapshot to all DNODE_MAX peers. The scatter work makes */
+/* the node fall FURTHER behind → more false suspicion → more scatter: a  */
+/* self-feeding STORM (CI artifacts show 7-8 DEATH-THROES per node,       */
+/* tracking SELF-SUSPICION 1:1). The deaf node then never folds a peer's  */
+/* weight chunks (one_mind) nor consolidates/re-asks (shared_mind).       */
+/*                                                                     */
+/* Fix: THROTTLE the scatter to at most once per SELF_SCATTER_MIN_MS. The */
+/* REFUTE (incarnation bump + ALIVE re-assert, below) STILL fires EVERY    */
+/* time, so liveness/refutation is untouched. A genuinely dying node STILL */
+/* scatters its memories — just once per interval instead of 8x in a burst.*/
+/*                                                                     */
+/* CROWN SAFETY: this whole block + the call-site guard live under          */
+/* _TK_HOSTED_LIBC_; on bare-metal the scatter stays the unchanged           */
+/* `replica_scatter_all();` — ZERO new .text emitted, crown byte-identical.  */
+/* Falsifier -DSWIM_NO_SCATTER_THROTTLE reverts to the unthrottled storm so  */
+/* the cert can prove the throttle has teeth. */
+/* ------------------------------------------------------------------ */
+#ifndef SELF_SCATTER_MIN_MS
+#define SELF_SCATTER_MIN_MS 2000
+#endif
+static UW  self_scatter_last_ms = 0;
+static INT self_scatter_primed  = 0;   /* have we ever scattered yet? */
+static UW  self_scatter_fires   = 0;   /* cert reads this: # of ACTUAL scatters */
+
+static INT self_scatter_due(void)
+{
+#if defined(SWIM_NO_SCATTER_THROTTLE)
+    /* FALSIFIER: the pre-fix behaviour — every self-SUSPECT rumor scatters.
+     * The cert then observes N fires for an N-rumor burst → RED. */
+    self_scatter_fires++;
+    return 1;
+#else
+    SYSTIM now; tk_get_otm(&now);
+    UW now_ms = now.lo;   /* monotonic ms (same clock swim uses for RTT) */
+    if (self_scatter_primed &&
+        (UW)(now_ms - self_scatter_last_ms) < (UW)SELF_SCATTER_MIN_MS)
+        return 0;                         /* within the interval: suppress */
+    self_scatter_primed  = 1;
+    self_scatter_last_ms = now_ms;
+    self_scatter_fires++;
+    return 1;
+#endif
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 static void gossip_apply(const SWIM_PKT *pkt)
 {
     for (UB i = 0; i < pkt->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
@@ -287,7 +339,12 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 sw_puts("[swim] *** SELF-SUSPICION *** I'm rumored ");
                 sw_puts(st == DNODE_SUSPECT ? "SUSPECT" : "DEAD");
                 sw_puts(" — refuting with fresh incarnation\r\n");
+#if defined(_TK_HOSTED_LIBC_)
+                if (self_scatter_due())   /* de-storm throttle (hosted-only) */
+                    replica_scatter_all();
+#else
                 replica_scatter_all();
+#endif
                 /* refute: bump strictly above the rumor's incarnation so the
                  * ALIVE re-assertion supersedes the stale DEAD/SUSPECT
                  * everywhere it has spread (UB ++ wraps sanely at 256). */
@@ -1647,3 +1704,122 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
     return fails;
 }
 #endif /* NOFLEETSPLIT_CERT && _TK_HOSTED_LIBC_ */
+
+/* ------------------------------------------------------------------ */
+/* [swim-selfsuspect] SELF-SUSPICION DE-STORM self-test (HOSTED-ONLY)   */
+/*                                                                     */
+/* Drives the REAL gossip-ingest (gossip_apply) with N rapid self-      */
+/* SUSPECT rumors about drpc_my_node inside ONE throttle interval and   */
+/* asserts:                                                            */
+/*   [selfsuspect-refute]   the refute fired N times — my_incarnation   */
+/*        advanced by exactly N (ALIVE re-asserted each rumor).         */
+/*        Liveness/refutation is PRESERVED by the throttle.             */
+/*   [selfsuspect-throttle] with the CURE build the actual scatter fired */
+/*        EXACTLY once for the whole burst (self_scatter_fires == 1).    */
+/*                                                                     */
+/* TEETH: rebuilt with -DSWIM_NO_SCATTER_THROTTLE the throttle is gone,  */
+/* self_scatter_fires == N, and [selfsuspect-throttle] goes RED. The     */
+/* run_swim_selfsuspect.sh cert FAILS if the falsifier does NOT go red.  */
+/*                                                                     */
+/* HOSTED-ONLY: gated by SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_ so    */
+/* the default kernel + bare-metal crown stay byte-identical.           */
+/* Emits "[selfsuspect-*] ..." + a final "[swim-selfsuspect] PASS/FAIL". */
+/* Returns 0 on PASS else the fail count. */
+/* ------------------------------------------------------------------ */
+#if defined(SWIM_SELFSUSPECT_CERT) && defined(_TK_HOSTED_LIBC_)
+INT swim_selfsuspect_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+
+    const UB  SELF = 0;
+    const INT N    = 8;   /* burst size (>= 8 rapid self-SUSPECT rumors) */
+
+    /* --- save the global/file state we perturb, restore at the end --- */
+    UB  saved_my   = drpc_my_node;
+    UB  saved_inc  = my_incarnation;
+    INT saved_gq   = gq_cnt;
+    UB  saved_st   = dnode_table[SELF].state;
+    UB  saved_sinc = dnode_incarn[SELF];
+    UW  saved_last = self_scatter_last_ms;
+    INT saved_prim = self_scatter_primed;
+    UW  saved_fire = self_scatter_fires;
+
+    drpc_my_node            = SELF;
+    my_incarnation          = 0;
+    gq_cnt                  = 0;
+    dnode_table[SELF].state = DNODE_ALIVE;
+    dnode_incarn[SELF]      = 0;
+
+    /* clean-slate the throttle bookkeeping so the burst is measured fresh */
+    self_scatter_last_ms = 0;
+    self_scatter_primed  = 0;
+    self_scatter_fires   = 0;
+
+    UB inc_before = my_incarnation;
+
+    /* Deliver N rapid self-SUSPECT rumors. A tight loop runs FAR under
+     * SELF_SCATTER_MIN_MS, so all N land within one throttle interval. The
+     * self-suspect branch refutes on EVERY rumor regardless of incarnation,
+     * so my_incarnation advances by exactly 1 per rumor (== N total). */
+    for (INT i = 0; i < N; i++) {
+        SWIM_PKT p = { 0 };
+        p.magic            = SWIM_MAGIC;
+        p.version          = SWIM_VERSION;
+        p.type             = SWIM_ACK;   /* seq=0 beacon-style */
+        p.seq              = 0;
+        p.src_node         = SELF;
+        p.probe_target     = SELF;
+        p.gossip_cnt       = 1;
+        p.gossip[0].node_id     = SELF;
+        p.gossip[0].state       = DNODE_SUSPECT;
+        p.gossip[0].incarnation = 0;      /* stale-or-equal: still refuted */
+        p.gossip[0].capability  = 0;
+        gossip_apply(&p);
+    }
+
+    UB inc_after = my_incarnation;
+    UB advanced  = (UB)(inc_after - inc_before);
+
+    /* [selfsuspect-refute]: the refute fired N times (liveness preserved). */
+    if (advanced == (UB)N) {
+        say("[selfsuspect-refute] PASS incarnation advanced ");
+        sw_putdec((UW)advanced); say(" (== N refutes, liveness preserved)\r\n");
+    } else {
+        say("[selfsuspect-refute] FAIL incarnation advanced ");
+        sw_putdec((UW)advanced); say(" expected "); sw_putdec((UW)N);
+        say("\r\n");
+        fails++;
+    }
+
+    /* [selfsuspect-throttle]: CURE -> exactly 1 scatter for the burst;
+     * FALSIFIER (-DSWIM_NO_SCATTER_THROTTLE) -> N scatters -> RED. */
+    say("[selfsuspect-throttle] burst=");   sw_putdec((UW)N);
+    say(" scatters=");                      sw_putdec(self_scatter_fires);
+    if (self_scatter_fires == 1) {
+        say(" PASS (exactly 1 scatter for the whole burst)\r\n");
+    } else {
+        say(" FAIL (expected exactly 1 — storm not throttled)\r\n");
+        fails++;
+    }
+
+    /* --- restore --- */
+    drpc_my_node            = saved_my;
+    my_incarnation          = saved_inc;
+    gq_cnt                  = saved_gq;
+    dnode_table[SELF].state = saved_st;
+    dnode_incarn[SELF]      = saved_sinc;
+    self_scatter_last_ms    = saved_last;
+    self_scatter_primed     = saved_prim;
+    self_scatter_fires      = saved_fire;
+
+    if (fails == 0) {
+        say("[swim-selfsuspect] PASS\r\n");
+    } else {
+        say("[swim-selfsuspect] FAIL ");
+        sw_putdec((UW)fails);
+        say("\r\n");
+    }
+    return fails;
+}
+#endif /* SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_ */
