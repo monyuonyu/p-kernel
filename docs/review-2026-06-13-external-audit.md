@@ -1,5 +1,7 @@
 # External Peer Review — 2026-06-13（コード全体の通信簿）
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この通信簿の **9 の actionable 行のうち 8 はコードで closed**（waves 50/52/53/54/55；`architecture/gap-ledger.md` の Closed 参照）、残り（relay SPOF 系 = federation）は BACKLOG.md の federation 行で追跡中。本文は当時の精読としてそのまま保存。
+
 > このプロジェクトの作法（実装者≠監査者・falsify して台帳に書く）で回した外部レビュー。
 > 指揮役が「脳」（AI 数理）を直接読み、4 つの独立監査エージェントを別々に走らせて
 > 暗号/relay・永続化FS・カーネル/ring3 隔離・分散層を精読した結果を一枚に畳む。

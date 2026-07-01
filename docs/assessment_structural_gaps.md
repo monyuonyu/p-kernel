@@ -1,5 +1,7 @@
 # 構造的ギャップ分析 — 宣伝を実態にするために抜けているもの
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** 第一弾以降に実装が進み、当時の指摘の多くは closed: **gap②（台数の壁）** DNODE_MAX 32→**64**（G23）、**gap①（自己改変の隔離）** selfc germ = fork()＋capability 境界 SHIPPED（wave-31）＋ SIGN-2 fleet-signed（wave-43）、**gap④（カーネルを殺さない）** ring3-survival は今や CI ジョブ（wave-25）。**なお OPEN: gap③ relay SPOF**（federation R0 は着地、254→10k の F1 は未了）。正本は `architecture/gap-ledger.md`（OPEN 0）＋ BACKLOG.md の federation 行。
+
 > これは「ダメ出し」の第二弾です。第一弾（PR #3）が **体裁・誠実さ**（README の誇張 / LICENSE / CI / リポジトリ衛生）を扱ったのに対し、本書は **「宣伝を本当に実現するには構造的に何が足りないか」** を扱います。
 >
 > すべてコードを実際に読み、x86 ベアメタルを QEMU で起動し、UMP(x86_64) をビルド・起動して確認した事実ベースです。

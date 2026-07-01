@@ -1,5 +1,7 @@
 # Building UMP as an Android app — Phase A
 
+> **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** 本文は Phase A（初期の on-ramp）。現状は NDK **r26d**（本文の r25c は古い）、フォアグラウンド常駐は `PKernelService.kt`、公開ビルドは **ark 0.4.5** 系（`docs/claude-memory` の 0.4.x moment 群）。Android の living-mind/galaxy 同梱は `tools/android/check_parity.sh` で host Makefile とロックステップ。
+
 This is the on-ramp for distributing p-kernel via Google Play. The kernel
 itself already runs end-to-end as a Linux process on aarch64; this
 document covers the wrapping that turns `./p-kernel` into `libpkernel.so`
