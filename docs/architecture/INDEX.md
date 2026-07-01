@@ -82,9 +82,7 @@
 
 | doc | 一行の役割 | tier |
 |---|---|---|
-| [[device-capacity.md]] | 端末の性能で担当量を変調（DEVFIT-1 mind-sizing SHIPPED, tier/連続変調は設計） | designing |
-| [[device-capacity-verdict.md]] | device-capacity/native-student の監査 verdict（DEFER tier/sizing, capacity メーター） | designing |
-| [[device-capacity-mind-sizing-plan.md]] | 端末を測って心のサイズを自動 fit（DEVFIT-1 SHIPPED） | working |
+| [[device-capacity.md]] | 端末の性能で担当量を変調（cluster 正準；DEVFIT-1 mind-sizing SHIPPED §0.5, tier/連続変調は設計） | designing |
 | [[gpu-compute.md]] | 端末 GPU で心の数理を回す（Vulkan matmul backend SHIP 済, 心への統合は設計） | designing |
 | [[gpu-3-wiring.md]] | Vulkan matmul を心に配線（監査 verdict: DEFER implementation） | designing |
 

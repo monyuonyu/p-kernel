@@ -50,3 +50,12 @@ AUDIT-SPRAWL gap-ledger row. Preserved verbatim; already carried a
 - arkfs-audit.md — skeptical FS design audit (wave 15) → findings folded into p-fs / survival-fs; historical.
 - review-2026-06-three-brains.md — `moe_infer` three-brains critique → fixed wave-18 (moe.c routes/returns/guards from ONE learned forward); the review now misdescribes current code.
 - repo-hygiene.md — 2026-06-06 HEAD cleanup → one-time spent task.
+
+## Live-cluster consolidation (archived 2026-07-01, doc-hygiene wave 2)
+
+Live duplicate clusters were consolidated to ONE canonical doc each; the losers
+below were archived after their still-live conclusions were folded into the
+canonical. Preserved verbatim (年輪).
+
+- device-capacity-verdict.md — device-capacity/native-student audit verdict (DEFER tier/sizing; capacity meter as observability) → superseded-by `../device-capacity.md §0.5`. Its live core (R3 fixed / student-only variability / discrete tiers / honest capacity meter) is folded there; DEVFIT-1 shipped (`dev_capacity.c`, `tests/llm/run_devfit.sh`, ci.yml-wired).
+- device-capacity-mind-sizing-plan.md — DEVFIT-1 "measure the device, auto-fit the mind" HARDENED design → SHIPPED (`arch/common/llm/dev_capacity.c` `tier_of()` + `student.c` `ST_TIERS`/`st_init_tier`, cert `tests/llm/run_devfit.sh` wired at `ci.yml:1258`); SHIPPED summary folded into `../device-capacity.md §0.5`.

@@ -1,5 +1,7 @@
 # Device-capacity / native-student — design + verdict
 
+> **ARCHIVED 2026-07-01 (doc-hygiene wave 2).** 正準は [[../device-capacity.md]]（§0.5 SHIPPED 要約に本 verdict の生きた核＝R3 固定・student だけ可変・離散 tier・capacity メーターを畳んだ）。本文は 年輪 として保存。DEVFIT-1 は SHIPPED（`dev_capacity.c`, `tests/llm/run_devfit.sh`, ci.yml 配線済）。
+
 > **現在地（2026-07-01・doc-hygiene 追記／本文は 年輪 として保存）:** この verdict（tier/sizing は DEFER、capacity メーターは living-body inspector に正直な observability として折り込む）は現在も有効。その後 interop gate と DEVFIT-1 の mind-sizing（`dev_capacity.c`）が着地した。living-body inspector は SHIPPED。
 
 **Status: design + adversarial critique done 2026-06-18. Decision: DEFER tier/sizing;
