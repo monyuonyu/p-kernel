@@ -324,7 +324,7 @@ task. Therefore this slice builds the named mutex:
 
 Data-plane only, curl-driven, NON-flaky by the LM-6 playbook (end-state within a bound,
 never timing): three tags printed by a host-side cert script
-`samples/14_galaxy/galaxy_cert.sh` (the `kill_one.sh` pattern — multi-process hosted certs
+`samples/38_galaxy/galaxy_cert.sh` (the `kill_one.sh` pattern — multi-process hosted certs
 already live in `samples/13_survival_loop/`, wired at `ci.yml:359-360`).
 
 - **`[galaxy-serve]`** — boot a 2-node loopback mesh (`PKERNEL_NODE_ID=1/2`, the net_unix
@@ -347,7 +347,7 @@ already live in `samples/13_survival_loop/`, wired at `ci.yml:359-360`).
   mouth. (Use the implementer-measured off-bias (k*,v*) from LM-6, not literal 2/3.)
 
 CI wiring: one new step in the `ump-x86_64` job (after "Kernel self-tests",
-`ci.yml:54-57`): `timeout 300 samples/14_galaxy/galaxy_cert.sh` + `grep -aF '[galaxy-*] PASS'`
+`ci.yml:54-57`): `timeout 300 samples/38_galaxy/galaxy_cert.sh` + `grep -aF '[galaxy-*] PASS'`
 lines, same shape as the kill_one step (`ci.yml:359-360`). curl + python3 are already on
 ubuntu-latest. The kernel binary needs stdin held open while curl drives it:
 `tail -f /dev/null | ./p-kernel &` inside the script (the shell task idles; the galaxy task

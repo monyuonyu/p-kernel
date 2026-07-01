@@ -473,9 +473,9 @@ that a bogus `?lang=` falls back to en (still 200).
 ## 8. The falsifiable acceptance gate
 
 Three tags, curl-driven, end-state-within-a-bound (the LM-6/galaxy playbook — never a
-timing window). Cert script `samples/38_ark_profile/profile_cert.sh` (38 = next free
-sample slot; NOTE for the galaxy implementer: `galaxy.md` §8 names `samples/14_galaxy/`,
-which **collides with the existing `samples/14_genome/`** — renumber when implementing).
+timing window). Cert script `samples/39_ark_profile/profile_cert.sh` (the galaxy cert
+shipped as `samples/38_galaxy/galaxy_cert.sh`; the old "14_galaxy" numbering was renumbered
+to avoid the `samples/14_genome/` collision).
 Same multi-process-hosted shape as `kill_one.sh` (wired at `ci.yml:359-360`); single node,
 `PKERNEL_PFS_DIR=$(mktemp -d)`, `tail -f /dev/null | ./p-kernel &`, curl + python3 (both
 on ubuntu-latest already, per galaxy.md §8).
@@ -507,7 +507,7 @@ on ubuntu-latest already, per galaxy.md §8).
   site, both mouths (§5).
 
 CI wiring: one new job step in the hosted lane, `timeout 300
-samples/38_ark_profile/profile_cert.sh` + `grep -aF '[ark-consent] PASS'` /
+samples/39_ark_profile/profile_cert.sh` + `grep -aF '[ark-consent] PASS'` /
 `'[ark-profile] PASS'` / `'[ark-provenance] PASS'` — the exact shape of the survival-loop
 step (`ci.yml:359-360`). All existing greps stay green (no-regress): the `self test`
 suite must pass with the v2 entry width (its asserts updated as part of P5), and the LM
