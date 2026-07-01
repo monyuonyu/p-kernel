@@ -12,9 +12,10 @@
 > 文法なし・生成なし）である。規約の定義は [[living-mind.md]] 冒頭。検証ティア
 > （`[live]`/`[in-proc]`）は別軸で [[gap-ledger.md]] が定義する。
 
-最終更新: **2026-06-07（第16波後）**。**下の §1–§5 は波1–2（2026-06-06）時点の詳細地図で、
-そのまま歴史記録として残す。それ以降に着地したものは直下の §0 現状サマリが最新の正本である。**
-／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
+最終更新: **2026-07-01（doc-hygiene）。実装は wave-56 まで進んだ。** **下の §0–§5 は歴史地図
+（波1–16 時点の詳細）で、そのまま 年輪 として残す。** **いま master で何が SHIPPED / OPEN かの
+正本は [[gap-ledger.md]] 一枚である**（OPEN 行 0＝全 G/LM 行 closed）。この README は「どの器官が
+どう噛み合うか」の地図であって、現状の真偽表ではない。／ 関連: [[project_pkernel_philosophy]]（5レイヤー世界観）
 
 > **乖離（gap）の正本は [[gap-ledger.md]] 一枚。** いま master で開いている gap は
 > そこにだけ載る（行が減ることが進捗）。`archive/philosophy-gap-audit-{,-2..-8}.md` は時点ごとの
@@ -23,10 +24,15 @@
 
 ---
 
-## 0. 現状サマリ（2026-06-07・波3–16＋ARK 本物化）
+## 0. 現状サマリ（波3–16 の地層。実装は wave-56 まで前進）
+
+> **現在地（2026-07-01）:** 下表は波3–16 の着地記録として残す。以後 wave-17〜56 で living-mind
+>（LM-1..11: DMN 睡眠固定化→自伝的 Self→随時学習→口→共有心→言語→容量→one mind→Fisher merge）、
+> Evolution 層の ring3 移設、Android galaxy、署名、federation R0、SMP ②.0–②.2 などが着地した。
+> **各波の正本は [[gap-ledger.md]]（OPEN 0）と [[living-mind.md]] の SHIPPED 表。** BACKLOG.md が波の年表。
 
 波1–2 で「配管」が通った後、思想（[[survival-network.md]]）を**走行系で・CI で**実証する波を重ねた。
-**指揮官は各成果を自分で kill テストして検証してから統合**（自己申告は信じない規律）。すべて master・CI 全10ジョブ緑。
+**指揮官は各成果を自分で kill テストして検証してから統合**（自己申告は信じない規律）。すべて master・CI 緑。
 
 | 思想 | 着地したもの | 実証 |
 |---|---|---|
@@ -39,7 +45,9 @@
 | §4 光速/エネルギー | 局所性ベンチ（traffic/energy 実測）＋遅延二層の実測 | `24_locality` `29_latency` |
 | 規律 | **GitHub Actions 10ジョブ**＝4ビルド＋self-test＋relay 6/6＋走行系 kill テスト（survival/protect/plural/collective）＋ARK fuzzer | `.github/workflows/ci.yml` |
 
-★＝CI で毎回 kill テスト強制。**残る本丸**: **G38 §8 二層の配線**（学んだ confidence が reflex の死んだ gate を置換＝学びが守りを賢くする）、G23 federation（32超）、G13（coordinator 200ms の再直列化解消）。詳細は audit-7 §次の本丸。
+★＝CI で毎回 kill テスト強制。**当時の「残る本丸」G38・G23・G13 はすべて closed**（G38 二層配線=学んだ
+confidence が reflex gate を置換 wave-18／G23 federation DNODE_MAX 32→64 wave-19／G13 arrival-driven
+集約 wave-20）。以後の本丸は living-mind と Evolution 層へ移った。正本は [[gap-ledger.md]]（OPEN 0）。
 
 ---
 
@@ -157,7 +165,7 @@ Evolution 層への入口）に集中している。
                   └─────────▶ world.c 世界図 (観測) ◀── moe world_note_firing
                   │
                   ▼
-            DNODE_MAX 32 (台数の天井を上げる土台)
+            DNODE_MAX 64 (台数の天井を上げる土台; G23 で 32→64)
                   │
                   ▼
             r3-model-widening.md (網を太らせる ⇒ 分散が初めて必然になる)
@@ -174,8 +182,12 @@ Evolution 層への入口）に集中している。
 
 ## 4. 状態表（正直に）
 
-`git log` で接地した SHIPPED 列。**進行中** = いま別ワークツリーで実装中（着地前・shipped とは
-書かない）、DESIGNED = 設計済み未着手、OPEN = 設計上の未解決問題。
+> **年輪注記（2026-07-01）:** この表は波16 時点のスナップショット。以後の波で「進行中／DESIGNED／
+> OPEN」の多く（§8 二層 tick、p-fs DAG、R3 model widening = living-mind、region 間信頼 = 署名など）は
+> SHIPPED になった。**現状の正本は [[gap-ledger.md]]（OPEN 0）。** 下表は当時の正直な地層として残す。
+
+`git log` で接地した SHIPPED 列。**進行中** = 当時 別ワークツリーで実装中、DESIGNED = 設計済み未着手、
+OPEN = 設計上の未解決問題（いずれも波16 時点）。
 
 | 能力 | 状態 | 根拠（commit / doc） |
 |---|---|---|
@@ -187,7 +199,7 @@ Evolution 層への入口）に集中している。
 | §7 分散ゲーティング（局所勾配の相互扶助ルーティング） | **SHIPPED** | `30f6343`。utility = acc − rtt − pressure ＋ 同 region ボーナス。§8 由来の `recent_pick[]` ヒステリシス（殺到→発振の抑制）も同コミット。負 utility の表示修正は `5041ac1` |
 | DKVA region-scope + rsum 2段集約 | **SHIPPED** | `7ca1f17`, `c1b8ede`（R2） |
 | `capacity(N)` 連続容量関数（breadth×depth×KV） | **SHIPPED** | `11cc2c2`（R2） |
-| DNODE_MAX 8 → 32（台数の天井上げ） | **SHIPPED ＋ 実走検証済** | `473387f`。リテラル 8 でノード 9+ が迷子になる罠は `4df9e07`（N-node ハーネス同梱）、ARP テーブル枯渇は `cad09db` で修正。**実走 N=32 で 6/6 PASS（world map 32/32 到達含む）** |
+| DNODE_MAX 8 → 32 →（G23）64（台数の天井上げ） | **SHIPPED ＋ 実走検証済** | `473387f`。リテラル 8 でノード 9+ が迷子になる罠は `4df9e07`（N-node ハーネス同梱）、ARP テーブル枯渇は `cad09db` で修正。**実走 N=32 で 6/6 PASS**。その後 G23（wave-19）で **32→64** へ（`drpc.h:35`；配列は DNODE_MAX から自動導出） |
 | 全網 situational-awareness map（world.c） | **SHIPPED** | `95ac916`（`arch/common/world.c`）。ベアメタル x86 + aarch64 にも `world`/`map` コマンドを公開 `fccf30b` |
 | p-fs P0（sha256・content-addressed store・重複排除） | **SHIPPED** | `7e8c98c` `2459005` `5b8a6a8` `b2e63fb`。cross-ABI で block-id が一致、self-test PASS。stddef/ptrdiff_t 衝突は lib/libc 一貫の include 順で解決 |
 | p-fs P1（region-scoped 複製、ANNOUNCE/WANT＋チャンク転送） | **SHIPPED** | `0abc9c3`。save==publish の第一歩。3ノードデモは `50808a7` |
