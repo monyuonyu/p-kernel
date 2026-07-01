@@ -165,8 +165,50 @@
 
 /*---------------------------------------------------------------------- */
 /*
+ *	ターゲット別オーバライド（p-kernel 追加）
+ *
+ *	Linux x86-64 ユーザモードポートでは、p-kernel の分散レイヤーが
+ *	要求するオブジェクト数（micro T-Kernel 2.0 ポートの
+ *	arch/linux/include/utk_config_depend.h と同値）に引き上げる。
+ */
+#ifdef _LINUX_X86_64_
+
+#undef  CNF_MAX_TSKID
+#define CNF_MAX_TSKID		128	/* タスク */
+#undef  CNF_MAX_SEMID
+#define CNF_MAX_SEMID		256	/* セマフォ（kdds が handle ごとに使用） */
+#undef  CNF_MAX_MPLID
+#define CNF_MAX_MPLID		2	/* 可変長メモリプール */
+#undef  CNF_MAX_CYCID
+#define CNF_MAX_CYCID		8	/* 周期ハンドラ */
+
+/* デバッガサポートは未使用（td_* API の呼び出し元なし） */
+#undef  USE_DBGSPT
+#define USE_DBGSPT		(0)
+
+/* 物理タイマは未使用（tick は SIGALRM が供給） */
+#undef  USE_PTMR
+#define USE_PTMR		(0)
+
+/* 例外デバッグメッセージはホスト側 fault.c が担当 */
+#undef  USE_EXCEPTION_DBG_MSG
+#define USE_EXCEPTION_DBG_MSG	(0)
+
+#endif /* _LINUX_X86_64_ */
+
+/*---------------------------------------------------------------------- */
+/*
  *	Use function Definition
  */
 #include "config_func.h"
+
+/* Linux x86-64 ターゲット: config_func.h の既定値の上書き（p-kernel 追加） */
+#ifdef _LINUX_X86_64_
+
+/* カーネルのデバイス管理は使用しない（arch/ 層が POSIX で代替） */
+#undef  USE_DEVICE
+#define USE_DEVICE		(0)
+
+#endif /* _LINUX_X86_64_ */
 
 #endif /* __TK_CONFIG__ */
