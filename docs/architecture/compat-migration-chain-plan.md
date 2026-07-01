@@ -1,9 +1,15 @@
 # compat-migration-chain — the per-version migration chain + signed-OTA gate (HARDENED design)
 
-> Status: **design — HARDENED, implementation-ready.** DESIGN ONLY; this doc changes
-> NO kernel code. It turns the strategy DECIDED by mk_pino on 2026-06-14 into a
-> concrete, certifiable MECHANISM. Honest > green: every bound that the mechanism
-> does NOT cover is flagged loudly in §C and §9, not hand-waved.
+> Status: **SHIPPED** — reconciled 2026-07-01. The "DESIGN ONLY; changes NO kernel
+> code" line below is FALSE: `arch/common/compat_ota.c`, the `lm_self_steps[]` migration
+> chain, and the `compat test [ota|self|wire|arkfs]` verb (`usermain.c:1164`) are all live.
+> **HONEST GAP:** the §5 "RELEASE-GATING" certs are NOT in default CI — each is compiled
+> behind an `EXTRA_CFLAGS` build flag (`-DOTA_GATE_CERT` / `-DLMSELF_MIGRATE_CERT` /
+> `-DNOFLEETSPLIT_CERT` / `-DARKFS_GAP_CERT` / `-DR3WP_MIGRATE_CERT`) and `.github/workflows/ci.yml`
+> runs none of them, so nothing gates a release on migration today. Wiring them is the P12
+> follow-up. It turns the strategy DECIDED by mk_pino on 2026-06-14 into a concrete,
+> certifiable MECHANISM. Honest > green: every bound the mechanism does NOT cover is flagged
+> loudly in §C and §9, not hand-waved.
 >
 > Position: this is the **mechanism doc** under
 > [compatibility.md](compatibility.md) (the strategy + the network-seam reject→degrade

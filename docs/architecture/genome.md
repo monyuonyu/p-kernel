@@ -116,10 +116,16 @@ inside its kernel. Five asserted legs; any miss is a non-zero exit.
 - **Roles are carried, not enforced.** No scheduler, gating network or
   degrade level consults `genome role` yet. Regions R3 / survival §7 is
   where that should land.
-- **No signature, no verification.** Anyone in the region can publish
-  `genome/manifest`, and sprouting compiles whatever `genome.c` arrived
-  — the same stated-not-solved trust model as selfc. Content addressing
-  protects against *corruption*, not *malice*.
+- **~~No signature, no verification.~~ Signature verification SHIPPED (reconciled
+  2026-07-01).** `genome.c:307` gates on `genome_verify_required()`: when required, the
+  weights manifest is REFUSED unless `sign_manifest_verify(&wm, wid)` (`sign.c`) passes —
+  the artifact_id is recomputed from the received bytes and Ed25519-verified against an
+  **adopted** key (`genome.c:314-321`, "weights REFUSED — no valid signature by an adopted
+  key"). Forged weights ARE refused; the trust anchor is the local `selfc adopt key`
+  allowlist (see the archived `archive/signing.md`). HONEST GAP: this path is not yet a
+  dedicated CI gate (no `[sign-genome]` grep in `ci.yml`); the enforcement is in code but
+  unguarded by a release cert. Content addressing still protects against *corruption*; the
+  signature now also protects against *malice* when verification is required.
 - **One manifest name.** Last-writer-wins ref gossip means concurrent
   publishers fork the ref exactly like any p-fs name (the losing version
   stays reachable in the DAG). Per-role or per-region manifests are a

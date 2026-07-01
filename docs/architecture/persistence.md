@@ -24,7 +24,7 @@
 | 人格 | 何 | 現状 | サイズ |
 |---|---|---|---|
 | **アイデンティティ** | Self層: プロフィール（名前/ハンドル/未来への言葉）+ hash-chain 系譜 | **永続化経路あり・起動時復元あり**（`pfs_durable_restore`→`pfs_dag_restore`, `lm_self.c:613-614`, `usermain.c:609`）。Android で消えるのは `PKERNEL_PFS_DIR` 未設定だけ | ~1.3 KB |
-| **学んだ心** | `rw[]` = 固定化された重み（21,568 float） | **保存経路ゼロ**（`r3_incontext.c` の `rw_snapshot` はテスト退避のみ）。sky→blue が消える本体 | **~84 KB** |
+| **学んだ心** | `rw[]` = 固定化された重み（21,568 float） | **永続化経路あり（SLICE 2 SHIPPED）**：DMN sleep が `r3_weights_persist()`（`dmn.c:238`）で `rw[]→durable` を書き、`student_boot_restore`／`st_load` で起動時に復元する。sky→blue は再起動を生き延びる（この §0 の旧「保存経路ゼロ」は STALE） | **~84 KB** |
 | **教えた事実** | `r3_fq[R3_FQ_MAX=4]` engram キュー（再固定化の working set） | メモリのみ | ~数百 B |
 
 **重要な含意**: アイデンティティは「配線一本（env）」で生き残る。学んだ心は

@@ -1,7 +1,15 @@
 # R3 — non-trivial thought (closing the "the thinking is a toy" gap)
 
-> Status: **design + acceptance test** (written before implementation, like wave-18).
-> Owner: this wave. Gap-ledger row: **R3🔴**.
+> Status: **SHIPPED + CI-gated (Closed wave-19)** — reconciled 2026-07-01. The
+> "design + acceptance test / written before implementation" framing below is STALE.
+> What shipped: the SAME dtr kernels learn an in-context associative-recall task whose
+> label is resampled every episode — learned **100%** held-out vs handif 35.2% vs frozen
+> 24.7% (margin +64.8), gradcheck 21516/21516 params agree. CI
+> `[r3-incontext-gradcheck/frozen/handif/learned]` (`ci.yml:169-172`). Gap-ledger row
+> **R3** is Closed. Reconciliation note: this is a *capacity* certificate for the substrate,
+> NOT a live-sensor swap; the substrate's comfortable simultaneous-binding count was ~8 at
+> `R_DM`=32 and was later widened to 16 at `R_DM`=48 (living-mind LM-9). Still single-token
+> associative recall, bounded vocab — NOT grammar/generation. Doc `living-mind.md`.
 
 ## The gap, stated exactly
 

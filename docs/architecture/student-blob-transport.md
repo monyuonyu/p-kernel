@@ -1,6 +1,14 @@
 # Student-Blob Transport Redesign — making SS-3 `[live]` achievable
 
-Status: DESIGN (no code). Target: replace the dead, structurally-broken
+> Status: **SHIPPED** — reconciled 2026-07-01. The redesign below is live: the
+> content-addressed manifest transport replaced the dead chunk-by-name path. The
+> present `gl_student_publish` (`arch/common/gossip_learn.c:317`) chunks the blob by
+> CONTENT-ID (`gl_st_idcpy` over `PFS_ID_LEN`), refuses rather than truncates
+> (`nchunk > GL_ST_MAXCHUNK` → `-1`), and lands in `st_merge_cohort`; audit-trail
+> marks this CLOSED. The "no code" framing below is STALE — read it as the design
+> record. Crown baseline preserved (bare-metal `.text`, `755a20fa`).
+
+Target (as designed, now shipped): replace the dead, structurally-broken
 `gl_student_publish` / `gl_student_fetch` chunk-by-name transport with a
 content-addressed manifest transport so a multi-MB student blob can move
 peer↔peer over `./relay` and end in a real `st_merge_cohort`.

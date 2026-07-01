@@ -173,10 +173,13 @@ commit は **その瞬間の全 live エントリ**を内包する。これに�
 ### 2.4 ディレクトリ表現（試作）と設計上の本来形
 - **試作**: フラットなパス文字列の表。`ark_readdir(path)` は接頭辞照合で直下の
   子だけを返す。中央の inode 割当表を持たない（principle 5: マージ親和）。
-- **本来形（設計に留め）**: 各ディレクトリ自身を content-addressed object
-  （子の {name→object-id} マニフェスト）にする **Merkle ディレクトリ木**。
-  これにより部分木を内容アドレスで共有・マージでき、`p-fs` の object 層
-  （`p-fs.md §3.1`）と完全に同型になる。試作はここを**意図的に単純化**した。
+- **本来形（SHIPPED, 2026-07-01 注記）**: 各ディレクトリ自身を content-addressed object
+  （子の {name→object-id} マニフェスト）にする **Merkle ディレクトリ木** は実装済み
+  （`arch/common/arkfs.c`, format v3, wave 17）。`ARK_MAX_FILES=32` の壁と全エントリ再直列化を
+  取り除き、commit は root id のみで O(1)。`samples/37_ark_merkle`（`run.sh`）が file-backed
+  device に対し cross-process で (a) SCALE>32（40 ファイル）、(b) TAMPER-EVIDENT（root hash が
+  entry 変化と iff）、(c) SELF-VERIFY（破損サブツリーは `ARK_E_CORRUPT` で拒否）を証明する。
+  これで `p-fs` の object 層（`p-fs.md §3.1`）と同型になった。
 
 ---
 
@@ -344,9 +347,12 @@ INT ark_block_has(const U1 id[32]);
 ### なお設計に留めたまま（理由つき）
 - **VFS への実ディスパッチ配線**：x86 boot を壊さないため `vfs.c` は不変。枠は
   `vfs.h` に既存。fd 流アダプタも設計のみ（whole-file で要件は満たす）。
-- **Merkle ディレクトリ木**：依然フラットなパス表。本来形は §2.4。
-- **block 単位の上限**：`ARK_MAX_FILES=32`, `ARK_MAX_BLK=16`（64KiB/file）はまだ固定上限。
-  規模が要求してから可変表へ（鶏と卵への正直な答え＝`regions.md §5` と同型）。
+- ~~**Merkle ディレクトリ木**：依然フラットなパス表。~~ **SHIPPED**（`arkfs.c` format v3,
+  wave 17；cert `samples/37_ark_merkle`）。SCALE>32 / TAMPER-EVIDENT / SELF-VERIFY を
+  cross-process で証明済。詳細は §2.4。
+- **block 単位の上限**：`ARK_MAX_BLK=16`（64KiB/file）はまだ固定上限。`ARK_MAX_FILES=32` の
+  namespace 上限は Merkle 木で解消済（40 ファイル実証）。残りは規模が要求してから可変表へ
+  （鶏と卵への正直な答え＝`regions.md §5` と同型）。
 
 ### 非目標（embrace）
 POSIX 完全互換・強整合・即時可視は目指さない（`p-fs.md §7` と同じ）。

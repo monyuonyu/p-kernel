@@ -1,8 +1,9 @@
-# Living-body inspector — wire the star's organs to REAL vitals (design)
+# Living-body inspector — the star's organs ARE wired to REAL vitals
 
-**Status: SHIPPED (organs wired to REAL vitals; on the phones) — 2026-06-19 doc-status fix.
-HONEST-GLOW is the law and is enforced in code.**
-What actually shipped: `arch/common/galaxy.c` (lines ~262-291) emits the organism's REAL,
+**Status: SHIPPED (organs wired to REAL vitals; on the phones). HONEST-GLOW is the law
+and is enforced in code.**
+The inspector emits the organism's REAL, O(1)-read vitals: `arch/common/galaxy.c`
+(lines ~262-291) writes the organism's REAL,
 O(1)-read vitals in the snapshot JSON — `training`, `facts_learned`, `epoch`, `idle_runs`,
 `engram_fill/cap`, `infer_count`, `last_class`, `last_conf`, `lineage`. The browser side
 (`arch/common/web/galaxy.html`: `ME_ORGANS[]` + `organGlow()`) maps each ring/organ to its

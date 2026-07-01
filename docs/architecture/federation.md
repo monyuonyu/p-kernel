@@ -41,18 +41,19 @@ F1–F3 は設計のみ** / 監査 第3版 G23 🔴 への応答 / 最終更新:
 
 ## 1. 現状の壁の棚卸し（file:line で裏取り）
 
-第3版 G23 の指摘を実コードで再確認した。`DNODE_MAX = 32` が縛っている
-箇所を、**4種類の壁**に分けて列挙する。
+第3版 G23 の指摘を実コードで再確認した。以下は**壁の分類**（配列幅・ID 幅等）で、
+下の file:line は当時の棚卸し。**現状 `DNODE_MAX = 64`**（G23 で 32→64 へ引き上げ済み、
+`drpc.h:35`）で、下記の各配列は `DNODE_MAX` から自動で導出されるため一斉に追随している。
 
 ### 1.0 定義そのもの
 
 ```
-arch/common/include/drpc.h:35   #define DNODE_MAX 32   /* max nodes (node 0-31) */
+arch/common/include/drpc.h:35   #define DNODE_MAX 64   /* max nodes (G23: 32→64) */
 arch/common/include/drpc.h:23   bits 31..24 = node_id (0-255; capped at DNODE_MAX)
 ```
 
-`DNODE_MAX` は 8→32 へ regions のために引き上げられた経緯がある
-(`drpc.h:39` のコメント `Raised 8 -> 32`)。だが **8-bit の `node_id`
+`DNODE_MAX` は 8→32→64 へ regions のために引き上げられた経緯がある
+（G23 closed wave-19；旧コメント `Raised 8 -> 32` は 64 まで進んだ）。だが **8-bit の `node_id`
 フィールド**（`UB src_node/dst_node`、`obj_id` の上位 8bit）が**論理上の
 ハード天井 256** を作る（`drpc.h:36-38`）。`GOBJ_MAKE/NODE/LOCAL`
 (`drpc.h:78-81`) が node を 8bit・local を 24bit に固定。**この 8-bit が

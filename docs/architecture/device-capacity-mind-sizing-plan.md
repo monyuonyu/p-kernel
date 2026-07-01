@@ -1,7 +1,13 @@
 # Device-capacity mind-sizing — measure the device, auto-fit the mind (HARDENED DESIGN)
 
-**Status: DESIGN ONLY (no kernel code touched). Base commit `e83ebf3e` (verified
-`git rev-parse --short HEAD == e83ebf3e` in this worktree). Branch
+> **Status: SHIPPED (DEVFIT-1) — reconciled 2026-07-01.** The "DESIGN ONLY (no kernel
+> code touched)" line below is STALE: the mind-sizing half shipped as
+> `arch/common/llm/dev_capacity.c` (+ `student.c`), certified by `tests/llm/run_devfit.sh`
+> with a load-bearing falsifier (`-DDEVFIT_IGNORE_MEASURE`). The cores half
+> (SMP-AUTODETECT) had already shipped. Read the rest as the design record. **HONEST GAP:**
+> `run_devfit.sh` is not yet wired into default CI (P12 follow-up).
+
+**Status (historical): DESIGN ONLY. Base commit `e83ebf3e`. Branch
 `device_capacity_design`.** Honest > green. Every claim below is grounded in `file:line`.
 
 > mk_pino's explicit direction (verbatim): **「デバイスのスペックを測って自動で合わせたい」**

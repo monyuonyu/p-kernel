@@ -1,7 +1,14 @@
 # conversational-teaching — a live teacher node educates the child over the network
 
-**Status: ROADMAP (design, pre-impl). 2026-06-19. Grounds every claim in code on
-`wave-i18n-galaxy`.** This is the concrete mechanism for mk_pino's education 考え方
+> **Status: SHIPPED (cradle live L1/L2/L3, wave 2026-06-26) — reconciled 2026-07-01.**
+> The live-teacher wire is real: `arch/common/cradle_net.c` publishes a **40-byte**
+> `CRADLE_TEACH_PKT` (`dtr.h:446-460`) on the region-scoped `cradle/teach` topic, a child
+> pulls the p-fs lesson body and trains during DMN sleep; cert `tests/llm/run_cradle_teach.sh`
+> (`[cradle-teach]` + structural `[cradle-nocentral]`). The "ROADMAP / pre-impl" framing
+> and the "192-B beacon" wire below are STALE — the real packet is 40 B and its fields are
+> reconciled in §6.1. Read the rest as the design record.
+
+**Status (historical): ROADMAP (design, pre-impl). 2026-06-19.** This is the concrete mechanism for mk_pino's education 考え方
 (`project_education_via_conversation`, conversation.md §A4/§3.6/§3.7): *you cannot copy
 weights into the special distributed dynamic-MoE student — you educate it by a high-spec
 TEACHER node conversing with the CHILD a lot, and the dialogue is distilled into the child
@@ -195,18 +202,23 @@ content-id + license, recorded in the Self-lineage (special-structure-mind.md §
 ## 6. protocol — wire format, topics, cadence
 
 ### 6.1 The beacon (KDDS topic `cradle/teach`, region-scoped, LATEST_ONLY)
+
+SHIPPED layout — the real `CRADLE_TEACH_PKT` (`arch/common/include/dtr.h:446-460`) is
+**40 bytes**, not the 192-B sketch this doc originally proposed:
 ```
-CRADLE_TEACH_PKT  (<= KDDS_DATA_MAX = 192 B)
-  UW  magic            "CTCH" LE
-  UW  latest_seq       teacher's highest published lesson seq
-  U1  teacher_node     drpc_my_node of the teacher
-  U1  tier             ST_TIER_S/_M/_L the teacher targets (child checks compat)
-  U1  wire_ver         CRADLE_WIRE_VER (mismatch = drop+print, like MT_WIRE_VER)
-  U1  fmt              LESSON_FMT_BYTES (v1) | LESSON_FMT_SOFT (future)
-  U1  vocab_fp[8]      byte-256 is universal, but keep the field for §3.3 soft fmt
-  U1  gguf_id[8]       content-id prefix of the teacher's GGUF (来歴 + license anchor)
-  U1  lic_ok           1 iff the teacher self-attests permissive license (auditable)
+CRADLE_TEACH_PKT  (packed, 40 B = 4+1+1+2+4+4+16+8, <= KDDS_DATA_MAX)
+  UW  magic                    CRADLE_MAGIC
+  U1  teacher_node             origin id (== region_teacher() when healthy)
+  U1  fmt                      LESSON_FMT_BYTE now; _SOFT reserved
+  U1  _pad0, _pad1             alignment
+  UW  seq                      per-teacher monotonic lesson high-water
+  UW  body_len                 lesson byte length (<= CT_LESSON_MAX)
+  U1  body_ref[CRADLE_REF_LEN=16]  p-fs DAG object name of the lesson body
+  U1  vocab_fp[MT_VOCAB_FP_LEN=8]  byte-keying fingerprint (refuse-on-mismatch)
 ```
+The body is a length-prefixed BINARY blob fetched from p-fs by `body_ref` (NOT inlined in
+the beacon), so the beacon stays tiny and latest-only. The originally-sketched
+`tier`/`wire_ver`/`gguf_id`/`lic_ok` fields were dropped in the shipped design.
 Reserved at boot via `kdds_open_poll_scoped(..., KDDS_SCOPE_REGION)` in the same place
 `mind_net_open` reserves `mind/teach` (r3_incontext.c:2156), using the
 `KDDS_SINGLETON_TOPICS` headroom — it must be reserved BEFORE dkva pre-opens saturate the
