@@ -1,7 +1,8 @@
 # special-structure-mind — the unified, fleet-sized, sparse, cross-node mind
 
-**Status: ROADMAP — PARTIALLY SHIPPED (SS-1 + SS-2 + SS-3 live; SS-4..7 still design). 2026-06-19.
-Grounds every claim in code on `wave-i18n-galaxy`.**
+**Status: ROADMAP — PARTIALLY SHIPPED (SS-1..SS-6 live; SS-7 still design). Reconciled 2026-07-01.**
+SS-4 (function-preserving expert growth) also shipped (`student.c`, cert `tests/llm/run_ss4.sh`);
+SS-5/SS-6 shipped with `[live]` (see §5/§6). SS-7 (bigger baby) remains genuine design.
 What actually shipped: **SS-1** (adaptive-K firing — heavy tokens fire a WIDER expert set;
 the router + runtime `topk_n` + `st_last_fire_width` observability in `arch/common/llm/student.c`),
 **SS-2** (the S/M/L tier scaffolding — runtime dims + the `ST_TIERS` table, M-tier
@@ -9,8 +10,9 @@ byte-identical to the legacy baby), and **SS-3** (same-tier merge cohorts — th
 isolated weight average `st_merge_cohort` + chunked p-fs transport `gl_student_publish`/`_fetch`;
 cohort = tier, cross-tier REFUSED; never calls `gl_merge` / touches R3 `rw[]`; cert `run_ss3.sh`).
 SS-5 (deterministic placement) + SS-6 (cross-node expert firing with local fallback — the F4
-capstone) have since SHIPPED (in-process certs; the true multi-process forward over the relay
-is a deferred `[live]` row). SS-4 (function-preserving expert growth), SS-7 (bigger baby) remain
+capstone) have since SHIPPED, and SS-6's multi-process forward over the relay is now a REAL
+`[live]` row (`samples/11_distributed/run_ss6_live.sh`, 4 processes, byte-identical). SS-4
+(function-preserving expert growth) shipped too (`run_ss4.sh`). SS-7 (bigger baby) remains
 genuine design. This is the multi-wave plan to turn mk_pino's four-feature
 vision (脳サイズがノード数で伸縮 / 真の疎 MoE / 重い仕事ほど広い領域が発火 / 分散合意 /
 複数ノードをまたぐ一回の forward) from today's hariboté into a real unified mind.
@@ -102,57 +104,9 @@ So: **compose at the subsystem level, unify at the conversational level.** One m
 
 ## 3. dynamic_size — how the brain grows with N at runtime
 
-**Pick the SIMPLEST viable path: discrete tiers (S/M/L) + experts that physically
-live on more nodes. NOT arbitrary runtime dims.**
-
-### 3.1 What "more nodes → bigger brain" concretely means
-The first growth axis is **expert COUNT and expert PLACEMENT**, per `native-student.md
-§A.4` ("expert を足す"), because expert⇔node is the most natural map to the fleet's
-dynamic-N and because function-preserving expert duplication (Net2Net / MoE upcycling)
-has a clean weight-translation. Concretely:
-- `experts_active(N) = clamp(N, E_min, E_max)` reusing the EXISTING `cap_experts_of`
-  curve (`degrade.c:148`, today clamped to `CAP_E_MAX=16`). Today that number sizes
-  nothing; this wave makes it size the router's expert table.
-- New experts are **function-preserving copies** of existing experts + a router
-  expansion (`native-student.md §A.4`), so a fixed prompt's output is ε-unchanged at
-  the instant of growth (`[grow-preserves]` cert). Subsequent DMN distill differentiates
-  the twin experts.
-- A shrink folds an evicted expert's mass into its replica before the node leaves
-  (the L→S thermal-demotion data-loss hole called out in the verdict).
-- `d_model` and `n_layers` are LATER axes (§A.4 "第二/第三成長軸"); we do NOT vary them
-  first — they touch attention/embedding/layout and break weight translation.
-
-### 3.2 The VLA / stack-overflow trap — the SIMPLEST fix
-`student.c` has ~11 stack-local arrays sized by the compile-time dims (`tmp[D]`
-`:465`, `moe[D]` `:494`, `g_logit[V]` `:753`, `g_oin[D]` `:764`, `g_fin[D]` `:811`,
-`g_gate[E]` `:813`, `gw_chosen[K]`, `g_eo[D]`, `g_eh[DFF]`, `g_ain[D]`, `chosen[E]`
-`:368`). If the dims became runtime variables these turn into **VLAs** = the hosted-relay
-stack-overflow class (`feedback_hosted_relay_stack_overflow`).
-
-**The fix is two-pronged and both are cheap:**
-1. **Discrete tiers, not arbitrary sizes.** Define `ST_TIER_S / _M / _L` as fixed
-   `{E,topK,D,DFF,nLayer}` triples. The dims become a small `const` struct selected at
-   `st_init` time. Each scratch array is bounded by `ST_*_MAX` (the L-tier value), so
-   they stay FIXED-size on the stack — never VLA. Same `-O1 -ffp-contract=off` recipe.
-2. **The big cache already lives in the malloc'd arena** (`cache_get`,
-   `student.c:250`), so growth there is free. Only the small per-token scratch needs
-   the `_MAX` bound. (If even the L-tier `g_logit[V=256]` is uncomfortable on a 4KB
-   kernel stack, move those into the arena too — the verdict's "no-VLA" gate.)
-
-**Mergeability constraint (the cost of tiers):** `gl_merge` assumes identical dims.
-So the fleet is partitioned into **same-tier merge-cohorts**: S nodes average with S
-nodes, L with L. There is NO single fleet-wide student average across tiers — a weak
-node cannot receive a strong node's expert learning by merge, by construction. The
-ONLY cross-tier bridge is distillation (the teacher path), which is honest but must be
-proven before the heterogeneity headline is claimed (verdict gate). The shared
-fleet-wide "one mind" stays the R3 `rw[]` core (unchanged), so heterogeneous students
-never threaten the crown result.
-
-**Why not arbitrary `n_params`:** arbitrary sizes (a) re-open VLAs, (b) make every pair
-of nodes a merge-island, (c) buy nothing the watch-class M baby needs today. Tiers are
-the 80/20.
-
----
+> **SHIPPED (SS-3, wave-ss3-merge-cohorts) — collapsed 2026-07-01.** Same-tier merge-cohorts
+> grow capacity with N (cohort=tier, cross-tier REFUSED; never calls `gl_merge`/touches R3 `rw[]`).
+> Cert `tests/llm/run_ss3.sh` (`[ss3-cohort-converge]`). Full design: §8 item 4 + `git show 79518a33:docs/architecture/special-structure-mind.md`.
 
 ## 4. adaptive_moe — heavy task fires a wider neuron region
 
@@ -184,75 +138,17 @@ visible win (see sequencing). It needs only the byte student, no network.
 
 ## 5. cross_node_firing — one forward across nodes
 
-**Honest stance: per-TOKEN cross-node generation over the relay is NOT feasible for the
-student** — generation is already ~1s/byte with NO KV cache (`student_shell.c` /
-`st_forward` recomputes the whole window each step), the relay adds 100s of ms RTT, and
-DKVA itself gates remote fan-out behind FULL-degrade + ≥3 region members + a 600ms
-timeout with LOCAL fallback (`dkva.c:65`, `degrade.c:78`). Naively adding a relay hop
-inside the per-token loop multiplies an already-slow path by the fan-out.
-
-**What IS feasible — fan out the EXPERTS, not the attention, and only the heavy ones:**
-
-- The student is MoE. **Remote-expert execution** generalizes the existing
-  `moe.c` pattern (`dtk_infer` remote RPC + local fallback, `moe.c:470`) from the sensor
-  classifier to the student's FFN: when the adaptive router (§4) widens K on a HARD
-  token, the *extra* experts beyond the local K_min can be computed on peer nodes that
-  host them, in parallel, and their weighted outputs summed into `moe[]`
-  (`student.c:516`). The expert output is a single `[D]` vector — tiny on the wire
-  (D=128 floats ≈ 512 B) vs the DKVA KV tensors. The sum is associative (same
-  `Σ wⱼ·eoⱼ` structure DKVA already proves order-independent, `dkva_self_test`), so it
-  matches a single-node forward exactly.
-- **Latency rule (mandatory):** the local K_min experts always run locally; remote
-  experts are fired **only** when (a) the router widened (hard token) AND (b) a peer in
-  the region hosts that expert AND (c) we are FULL-degrade with ≥2 region members.
-  Each remote expert call has a hard timeout with **local fallback** (recompute that
-  expert locally) — the same survival contract as DKVA/`dtk_infer`. So a slow/absent
-  peer never stalls a token; it only loses the *width*, degrading gracefully to a
-  narrower local forward (honest `degraded(k/n)` print, like `dkva.c:617`).
-- **NOT attention-KV split for the student** (unlike DKVA): the student's attention is
-  single-head over a ≤64 window and recomputed per step; splitting it across the relay
-  buys nothing and costs an RTT inside the inner loop. KV-split stays the sensor path's
-  trick where the cache is the expensive part.
-
-So: **the student's cross-node forward = remote MoE experts on hard, wide tokens, with
-strict local fallback.** This is the one place "複数ノードで一回の forward" becomes
-literal for the conversational mind, and it composes with §4 (only hard tokens widen,
-only wide tokens fan out) so the common case stays fast and local.
-
----
+> **SHIPPED (SS-6, wave-ss6-cross-node) + `[live]` (wave-ss6-live) — collapsed 2026-07-01.** The byte
+> STUDENT fans WIDE experts across nodes and sums them in canonical order BYTE-IDENTICAL to the
+> single-node forward (`student.c` `st_set_remote_expert`/`st_expert_forward_ref`; `arch/common/ss6_live.c`).
+> Certs `tests/llm/run_ss6.sh` (7/7) + `samples/11_distributed/run_ss6_live.sh` (4 processes over `./relay`,
+> hash==single-node oracle) + `run_ss6_live_fallback.sh`. Honest scope: `st_forward` only; live chat/KV NOT wired.
 
 ## 6. consensus_stance — reconcile with NOCENTRAL
 
-**Honest stance: the current decentralized coordination (SWIM + region + FedAvg) is
-SUFFICIENT for the vision's "distributed consensus" for the WEIGHTS, but the new
-expert-placement layer needs a small amount of NEW agreement — and it can stay
-NOCENTRAL.**
-
-- **Weights:** already solved without a leader. `gl_merge` is peer-symmetric, order-
-  independent, no aggregator index (`gl_check_no_central`, `gossip_learn.c:389`); every
-  node folds locally. Raft stays unwired; a Raft leader = the forbidden central
-  coordinator. Nothing to add.
-- **The genuinely new question: "which node holds which expert?"** Remote-expert firing
-  (§5) and expert placement on growth (§3) require nodes to AGREE on a placement map
-  (expert e → node n). The NOCENTRAL-faithful answer is **NOT to vote and NOT to elect a
-  registrar**, but to use the SAME deterministic-from-membership trick `region.c` and
-  HRW lookup (`lookup.h`, `LOOKUP_MAX_MEMBERS`) already use: place expert e on the node
-  that wins a **rendezvous hash** of (expert-id, alive-member-set). Every node computes
-  the identical map locally from its local SWIM view — no broadcast, no quorum, no
-  leader, and it re-derives automatically when membership changes (a dead node's
-  experts re-home deterministically, replica-style). This is the same min-id /
-  deterministic-coordinator philosophy already shipped (`region_coordinator`,
-  `region.c:83`), extended from "who summarizes" to "who hosts expert e."
-- **Eventual consistency, not strong consensus:** during membership churn two nodes may
-  briefly disagree on the map. That is fine — a misrouted remote-expert call simply
-  times out and falls back local (§5). We do NOT need strong consensus; we need a
-  deterministic map + a safe fallback. This honors NOCENTRAL: no node is privileged, no
-  vote, the truth is a local function of local membership.
-
-So the vision's "distributed consensus" is satisfied by **deterministic-from-membership
-placement + peer-symmetric merge + safe fallback**, never by a Raft/quorum leader.
-
----
+> **SHIPPED (SS-5 deterministic placement, wave-ss5-placement) — collapsed 2026-07-01.** Every node derives
+> the same expert→owner placement map from the DNODE_ALIVE set (no central assigner); a top-`ST_PLACE_RMAX`
+> replica list feeds SS-6 fallback. Full NOCENTRAL argument: §8 item 6 + git history.
 
 ## 7. dual_mind_resolution — what happens to R3
 

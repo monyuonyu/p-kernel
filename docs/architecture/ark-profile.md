@@ -541,90 +541,14 @@ flagged — never inflate (the standing rule).
 
 ---
 
-## 10. Anti-fork reuse surface
+## 10–11. Anti-fork surface + commander decisions — RESOLVED (SHIPPED wave-33)
 
-### Reused as-is
-
-| Existing symbol | Where | Used for |
-|---|---|---|
-| `pfs_id_compute` / `pfs_get` / `pfs_has` | pfs_block.h:44,76,79 | THE content address; gate (2) hash-verify |
-| `pfs_dag_save` / `pfs_dag_read` / `pfs_dag_restore` | pfs_dag.h:142,150,133 | profile + provenance versions; named heads; durability |
-| `pfs_durable_restore` | pfs_block.h:105 | death-piercing restart (gate d) |
-| P1 announce/want (put-hook) | pfs_block.h:55, pfs_repl.c | T1 replication — ZERO new wire |
-| LM-2 append mechanism (`self_fill`+save) & walker | lm_self.c:154-167,189-209 | the human chapter link (v2 field, §4.2) |
-| `drpc_my_node` | drpc.h | the node stamp |
-| `mind_cmd` (LM-6, design) | living-mind.md:1769 | the ONE teach path the prov hook rides |
-| galaxy server task / routes / HTTP subset / embed pipeline | galaxy.md §3, §10 D3 | `/manifesto`, `/profile`, gate — extend, don't fork |
-| `pfs log` / `pfs cat` shell verbs | pfs_dag.h:152-155 | cert evidence without debug endpoints |
-
-### New names (FLAGGED — the complete list)
-
-- `ARK_PROFILE`, `ARK_PROV` structs + `"self/prof"`, `"self/prov"` refs (new header
-  `arch/common/include/ark_profile.h`); the save/read helpers file-static in galaxy.c or
-  one small `ark_profile.c` (implementer's call; publics minimal).
-- `LM_SELF_VER 2` + `human_ref` field + dual-width walker (`lm_self.c/h` — P5).
-- `PFS_REF_MAX 8 → 16` (pfs_dag.c/h — §4.4, audited bump).
-- The embedded-README header (build-generated, D3 pipeline).
-- v3 FLAG: `pfs_put_local()` (no-announce put) for the T3 local tier — does not exist.
-
-### Do-NOT-fork list (auditor greps these)
-
-1. **No second lineage chain** — the human chapter is a FIELD on `LM_SELF_ENTRY` plus
-   pfs_dag's existing version manifests; grep: no new `prev_*[PFS_ID_LEN]` walker outside
-   `lm_self.c`.
-2. **No second consent store** — consent lives ONLY in `ARK_PROFILE.consent_ack` +
-   `manifesto_id`; no flag file, no env var, no separate ack object. The ark IS the store.
-3. **No user DB** — no array of users, no login, no session, no cookie; the gate reads
-   the p-fs head, period.
-4. **No second hash / no new crypto** — `pfs_id_compute` only (the lm_self.c:23-29 rule).
-5. **No second teach path** — galaxy `/teach` still drives `mind_cmd`; the prov hook
-   lives inside `mind_cmd`'s teach verb; `galaxy.c`/`ark_profile.c` contain NO
-   `r3_fact_learn` token (extends the LM-6 audit grep, living-mind.md:1869).
-6. **No new gossip protocol / wire packets** — T1 replicates on P1 as ordinary blocks.
-7. **No second HTTP server / page** — routes added to galaxy.c; panels added to the one
-   galaxy.html.
-
-### What does NOT exist yet (dependency truth, stated loudly)
-
-The galaxy server is **design-only** (`galaxy.md:3`). `mind_cmd`/LM-6 is **design-only**
-(no such symbol in the tree — §2.5). This slice is therefore **two implementation waves
-downstream**: LM-6 implement → galaxy v1 implement → ark-profile v1. Designing it now is
-deliberate: galaxy v1's implementer should know `/teach` will grow a consent gate (cheap
-to leave a seam: one boolean check at the top of the POST /teach route) and that the
-first-run page flow has a reserved panel.
-
----
-
-## 11. COMMANDER DECISION NEEDED (recommended defaults)
-
-- **P1 — consent-gate strictness.** Recommend **block web `/teach` until manifesto ack**
-  (it IS mk_pino's stated wish: the purpose told, genuinely consented), with `/ask` open
-  and the SHELL verb ungated (operator trust, §7.3). Alternative: nag-only (teach allowed,
-  banner shown) — rejected as decorative consent; alternative-strict: gate the shell too —
-  rejected: it breaks every CI stdin cert and gates the owner's own console.
-- **P2 — replication scope.** Recommend: profile + consent + provenance (T1) replicate on
-  the existing P1 region gossip; full conversation text (T3, future) LOCAL-ONLY until the
-  archive-tier design pass (T4). The un-deletability warning in the manifesto is written
-  for the DESIGN intent (spread), not just today's region scope — both stated (§6).
-- **P3 — editable-by-append.** Recommend YES: edits append `seq+1` versions; the past
-  stays reachable via `pfs log self/prof`; the UI states it before saving (§4.3). No
-  overwrite mode exists at all.
-- **P4 — manifesto text source.** Recommend the **whole top-level `README.md`, verbatim,
-  embedded at build** (D3 pipeline), id-bound; the 原文 block leads the rendering, and the
-  ark-profile permanence warnings are appended by the page below it, clearly separated
-  (README itself untouched — the repo-structure rule). Alternative: only the
-  目標（原文のまま） block — rejected: the README's honest §1-§4 status tables are
-  exactly the "tell the purpose honestly" material; consent should see them.
-- **P5 — `LM_SELF_VER 1→2`** (`human_ref` field, 116→148 B, dual-width walker, updated
-  asserts + `self test` numbers). Recommend YES — it is the only way to link the human
-  chapter into the ONE chain without a parallel chain or a walker-breaking foreign entry
-  (§4.2). Alternative: side object only (`"self/prof"` with `lineage_head` back-pointer,
-  lineage untouched) — viable fallback if the commander wants zero churn on a shipped
-  CI-gated struct, at the cost that the autobiography itself never mentions its human.
-- **P6 — `PFS_REF_MAX 8→16`** (§4.4). Recommend YES, as its own audited commit.
-
----
-
+> Trimmed 2026-07-01: ARK-1 shipped (gap-ledger **ARK-1 Closed wave-33**). The anti-fork
+> reuse surface and the P1–P6 commander decisions this section enumerated are all
+> resolved in code — see `arch/common/lm_self.c` (`ARK_PROFILE`, `LM_SELF_VER 2`,
+> `human_ref`, dual-width fail-closed walker), `mind_cmd` (single `ARK_PROV` write site),
+> and cert `samples/39_ark_profile/profile_cert.sh` (`[ark-consent/profile/provenance]`).
+> The full pre-impl text is preserved in git history at `git show 79518a33:docs/architecture/ark-profile.md`.
 ## 12. Sequencing
 
 - **v0 (prerequisites, other slices):** LM-6 implement (the `mind` verbs) → galaxy v1

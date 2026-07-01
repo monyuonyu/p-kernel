@@ -411,42 +411,13 @@ the V.6/VI.8 discipline.
 
 ---
 
-## 10. COMMANDER DECISION NEEDED
+## 10. Commander decisions D1–D6 — RESOLVED (SHIPPED wave-30)
 
-- **D1 — Port & enablement.** Recommend: default **ON** for hosted builds, port
-  `7800 + (node_id - 1)` (7800 free of our existing 7400/29000+ conventions; per-node
-  offset lets a one-host mesh serve all its windows), env `PKERNEL_GALAXY_PORT` override,
-  `PKERNEL_GALAXY=0` disables. Tradeoff: default-ON is the UMP product experience and is
-  loopback-bound (low risk); default-OFF is more conservative but guarantees nobody ever
-  sees the galaxy. Alternative: ON only when a TTY/Android, OFF under CI unless asked.
-- **D2 — SSE vs polling.** Recommend **SSE** (one held socket, true push, trivial in our
-  HTTP/1.0 subset; EventSource auto-reconnects). Tradeoff: polling /galaxy.json every 1 s
-  would delete ~80 lines of held-socket bookkeeping but makes ripples arrive up to 1 s late
-  and re-serializes the full snapshot constantly — worse honesty (events would be inferred
-  from diffs) and worse cost.
-- **D3 — Page embedding.** Recommend: commit `arch/common/web/galaxy.html` as the single
-  source of truth + a Makefile rule generating `galaxy_page.h` (a `static const unsigned
-  char[]`) via `python3` at build time (CI already has python3; no incbin/objcopy precedent
-  exists in the tree, and p-fs has no build-time image — files are runtime objects via
-  `pfs_dag_save`, so serving from p-fs would need a provisioning step that can fail and an
-  ownerless update story; embedding cannot fail). Tradeoff: committed-generated-header
-  (no python3 at build) vs generated-at-build (no drift); recommend generated-at-build with
-  a CI staleness check unnecessary by construction. p-fs distribution of the page is a
-  worthy FUTURE idea (the network updating its own face, evolution-layer flavored) — defer.
-- **D4 — Android.** Recommend **YES, v1-trivial**: libpkernel already boots in the Phase-C
-  app; the same loopback server binds inside the sandbox; add one WebView activity at
-  `http://127.0.0.1:7800/`. This converts the UMP app from a status line to THE galaxy —
-  the Play-Store ワクワク. Cost: one activity + INTERNET permission already present for the
-  relay. Risk: NDK pipeline re-entry (the 11-trap doc applies); keep it a separate
-  sub-slice after the host cert is green.
-- **D5 — v1 hosted-only.** Confirm deferring bare-metal to the named `netstack-tcp-server`
-  slice (LISTEN/accept + `TCP_MAX_CONN` 2→6 in netstack.c). Recommend YES — the fleet
-  (relay nodes, Android) is hosted; bare-metal owners are developers with serial consoles.
-- **D6 — /self.json scope.** Recommend separate lazy endpoint (not inside /galaxy.json):
-  the lineage walk reads p-fs; keep the 1 Hz snapshot cheap. Click-to-load matches the
-  "autobiography panel" interaction anyway.
-
----
+> Trimmed 2026-07-01: GALAXY-1 shipped (gap-ledger **GALAXY-1 Closed wave-30**). The D1–D6
+> decisions this section enumerated are resolved in code — `arch/common/galaxy.c` (loopback
+> `127.0.0.1:7800+id`, 6 endpoints, SSE ring, `m_gate` maxsem-1 serialization) + cert
+> `samples/38_galaxy/galaxy_cert.sh` (`[galaxy-serve/events/teach]`). D4 (the Android galaxy)
+> shipped wave-36. Full pre-impl text: `git show 79518a33:docs/architecture/galaxy.md`.
 
 ## 11. Sequencing
 
