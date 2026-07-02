@@ -60,6 +60,14 @@
 
 #endif
 
+/* p-kernel 追加ターゲット: Linux AArch64 ユーザモード */
+#ifdef _LINUX_AARCH64_
+#include "sysdepend/linux_aarch64/machine.h"
+
+#define Csym(sym) sym
+
+#endif
+
 /* ===== Cコンパイラ依存の定義 =========================================== */
 
 #ifdef __GNUC__

@@ -174,7 +174,7 @@
  *	要求するオブジェクト数（micro T-Kernel 2.0 ポートの
  *	arch/linux/include/utk_config_depend.h と同値）に引き上げる。
  */
-#ifdef _LINUX_X86_64_
+#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_)
 
 #undef  CNF_MAX_TSKID
 #define CNF_MAX_TSKID		128	/* タスク */
@@ -197,7 +197,7 @@
 #undef  USE_EXCEPTION_DBG_MSG
 #define USE_EXCEPTION_DBG_MSG	(0)
 
-#endif /* _LINUX_X86_64_ */
+#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ */
 
 /*---------------------------------------------------------------------- */
 /*
@@ -206,12 +206,12 @@
 #include "config_func.h"
 
 /* Linux x86-64 ターゲット: config_func.h の既定値の上書き（p-kernel 追加） */
-#ifdef _LINUX_X86_64_
+#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_)
 
 /* カーネルのデバイス管理は使用しない（arch/ 層が POSIX で代替） */
 #undef  USE_DEVICE
 #define USE_DEVICE		(0)
 
-#endif /* _LINUX_X86_64_ */
+#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ */
 
 #endif /* __TK_CONFIG__ */
