@@ -216,6 +216,21 @@ EXPORT void knl_timer_handler( void )
 		}
 	}
 
+	/* p-kernel 拡張: ラウンドロビンのタイムスライス管理
+	 *	実行中タスクが SCHED_RR の場合、tick ごとに残りスライスを
+	 *	減算し、使い切ったら実行可能キューの同一優先度内で回転
+	 *	させる。実際のタスク切替は END_CRITICAL_SECTION の
+	 *	ディスパッチ判定で起きる。 */
+	if ( knl_ctxtsk != NULL && knl_ctxtsk->sched_policy == SCHED_RR ) {
+		if ( knl_ctxtsk->remaining_slice > 0 ) {
+			knl_ctxtsk->remaining_slice--;
+		}
+		if ( knl_ctxtsk->remaining_slice == 0 ) {
+			knl_ctxtsk->remaining_slice = knl_ctxtsk->time_slice;
+			knl_rotate_ready_queue_run();
+		}
+	}
+
 	END_CRITICAL_SECTION;
 
 	knl_end_of_hw_timer_interrupt();		/* タイマ割込みの終了処理 */

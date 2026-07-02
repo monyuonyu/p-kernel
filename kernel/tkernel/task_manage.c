@@ -113,6 +113,14 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 	tcb->isysmode = 1;
 	tcb->sysmode  = 1;
 
+	/* p-kernel 拡張: スケジューリングポリシーの初期値
+	 *	既定は SCHED_FIFO（純粋な優先度プリエンプティブ）。
+	 *	SCHED_RR への変更は利用側（arch/x86 の syscall 層等）が
+	 *	TCB フィールドを直接設定する。 */
+	tcb->sched_policy    = SCHED_FIFO;
+	tcb->time_slice      = DEFAULT_TIME_SLICE;
+	tcb->remaining_slice = DEFAULT_TIME_SLICE;
+
 	/* 休止状態へ遷移 */
 	knl_make_dormant(tcb);
 
