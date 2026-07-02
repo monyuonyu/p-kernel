@@ -11,18 +11,18 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	libtm_printf.c
+/**
+ * @file	libtm_printf.c
+ * @brief	T-Monitor 互換の printf() / sprintf() 呼び出し
  *
- *	printf() / sprintf() T-Monitor compatible calls.
- *
- *	- Unsupported specifiers: floating point, long long and others.
- *		Conversion:	 a, A, e, E, f, F, g, G, n
- *		Size qualifier:  hh, ll, j, z, t, L
- *	- No limitation of output string length.
- *	- Minimize stack usage.
- *		Depending on available stack size, define TM_OUTBUF_SZ by
- *		appropriate value.
+ * 機能を限定した書式付き出力を実装します。
+ *	- 浮動小数点、long long などの指定子は未サポート。
+ *		変換指定:	 a, A, e, E, f, F, g, G, n
+ *		サイズ修飾子:  hh, ll, j, z, t, L
+ *	- 出力文字列長に制限はありません。
+ *	- スタック使用量を最小化しています。
+ *		利用可能なスタックサイズに応じて、TM_OUTBUF_SZ を
+ *		適切な値に定義してください。
  */
 
 #include <tk/tkernel.h>
@@ -34,32 +34,45 @@
 #if USE_TM_PRINTF
 #include <stdarg.h>
 
-/* Output function */
+/* 出力関数の定義 */
 typedef	struct {
-	H	len;		/* Total output length */
-	H	cnt;		/* Buffer counts */
-	UB	*bufp;		/* Buffer pointer for tm_sprintf */
+	H	len;		/* 合計出力長 */
+	H	cnt;		/* バッファ内の文字数 */
+	UB	*bufp;		/* tm_sprintf 用のバッファポインタ */
 } OutPar;
 typedef	void	(*OutFn)( UB *str, INT len, OutPar *par );
 
-/*
- *	Output integer value
+/**
+ * @brief	整数値の文字列変換
+ *
+ * val を指定の基数で文字列に変換し、バッファ終端 ep の手前へ
+ * 後ろ詰めで書き込みます。
+ * @param ep	バッファの終端ポインタ（この位置の手前に書き込む）
+ * @param val	変換する値
+ * @param base	基数（下位 6 ビット）と大文字指定フラグ（0x40）
+ * @return 変換後の文字列の先頭ポインタ
  */
 LOCAL	UB	*outint( UB *ep, UW val, UB base )
 {
 LOCAL const UB  digits[32] = "0123456789abcdef0123456789ABCDEF";
 	UB	caps;
 
-	caps = (base & 0x40) >> 2;		/* 'a' or 'A' */
+	caps = (base & 0x40) >> 2;		/* 'a' または 'A' */
 	for (base &= 0x3F; val >= base; val /= base) {
 		*--ep = digits[(val % base) + caps];
 	}
 	*--ep = digits[val + caps];
-	return ep;				/* buffer top pointer */
+	return ep;				/* バッファの先頭ポインタ */
 }
 
-/*
- *	Output with format (limited version)
+/**
+ * @brief	書式付き出力の共通処理（機能限定版）
+ *
+ * 書式文字列 fmt を解釈し、出力関数 ostr を通じて出力します。
+ * @param ostr	出力関数（コンソール出力またはバッファ出力）
+ * @param par	出力先パラメータ
+ * @param fmt	書式文字列
+ * @param ap	可変長引数リスト
  */
 LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 {
@@ -69,7 +82,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 	UB		*fms, *cbs, *cbe, cbuf[MAX_DIGITS];
 	UB		c, base, flg, sign, qual;
 
-/* flg */
+/* flg のビット定義 */
 #define	F_LEFT		0x01
 #define	F_PLUS		0x02
 #define	F_SPACE		0x04
@@ -78,18 +91,18 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 
 	for (fms = NULL; (c = *fmt++) != '\0'; ) {
 
-		if (c != '%') {	/* Fixed string */
+		if (c != '%') {	/* 固定文字列 */
 			if (fms == NULL) fms = (UB*)fmt - 1;
 			continue;
 		}
 
-		/* Output fix string */
+		/* 固定文字列の出力 */
 		if (fms != NULL) {
 			(*ostr)(fms, fmt - fms - 1, par);
 			fms = NULL;
 		}
 
-		/* Get flags */
+		/* フラグの取得 */
 		for (flg = 0; ; ) {
 			switch (c = *fmt++) {
 			case '-': flg |= F_LEFT;	continue;
@@ -101,7 +114,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 			break;
 		}
 
-		/* Get field width */
+		/* フィールド幅の取得 */
 		if (c == '*') {
 			wid = va_arg(ap, INT);
 			if (wid < 0) {
@@ -114,7 +127,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 				wid = wid * 10 + c - '0';
 		}
 
-		/* Get precision */
+		/* 精度の取得 */
 		prec = -1;
 		if (c == '.') {
 			c = *fmt++;
@@ -126,20 +139,20 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 				for (prec = 0;c >= '0' && c <= '9';c = *fmt++)
 					prec = prec * 10 + c - '0';
 			}
-			flg &= ~F_ZERO;		/* No ZERO padding */
+			flg &= ~F_ZERO;		/* ゼロ埋めなし */
 		}
 
-		/* Get qualifier */
+		/* サイズ修飾子の取得 */
 		qual = 0;
 		if (c == 'h' || c == 'l') {
 			qual = c;
 			c = *fmt++;
 		}
 
-		/* Format items */
+		/* 変換指定ごとの処理 */
 		base = 10;
 		sign = 0;
-		cbe = &cbuf[MAX_DIGITS];	/* buffer end pointer */
+		cbe = &cbuf[MAX_DIGITS];	/* バッファの終端ポインタ */
 
 		switch (c) {
 		case 'i':
@@ -170,7 +183,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 				} else {
 					break;
 				}
-				wid--;		/* for sign */
+				wid--;		/* 符号の分 */
 			case 'u':
 				break;
 			case 'X':
@@ -185,7 +198,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 				}
 				break;
 			}
-			/* Note: None outputs when v == 0 && prec == 0 */
+			/* 注: v == 0 かつ prec == 0 のときは何も出力しない */
 			cbs = (v == 0 && prec == 0) ?
 						cbe : outint(cbe, v, base);
 			break;
@@ -214,26 +227,26 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 			fmt--;
 			continue;
 		default:
-			/* Output as fixed string */
+			/* 固定文字列として出力 */
 			fms = (UB*)fmt - 1;
 			continue;
 		}
 
-		n = cbe - cbs;				/* item length */
+		n = cbe - cbs;				/* 項目の長さ */
 		if ((prec -= n) > 0) n += prec;
-		wid -= n;				/* pad length */
+		wid -= n;				/* パディングの長さ */
 
-		/* Output preceding spaces */
+		/* 前詰めの空白の出力 */
 		if ((flg & (F_LEFT | F_ZERO)) == 0 ) {
 			while (--wid >= 0) (*ostr)((UB*)" ", 1, par);
 		}
 
-		/* Output sign */
+		/* 符号の出力 */
 		if (sign != 0) {
 			(*ostr)(&sign, 1, par);
 		}
 
-		/* Output prefix "0x", "0X" or "0" */
+		/* プレフィックス "0x"・"0X"・"0" の出力 */
 		if ((base & 0x80) != 0) {
 			(*ostr)((UB*)"0", 1, par);
 			if ((base & 0x10) != 0) {
@@ -241,7 +254,7 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 			}
 		}
 
-		/* Output preceding zeros for precision or padding */
+		/* 精度またはゼロ埋めのための先行ゼロの出力 */
 		if ((n = prec) <= 0) {
 			if ((flg & (F_LEFT | F_ZERO)) == F_ZERO ) {
 				n = wid;
@@ -250,35 +263,41 @@ LOCAL	void	tm_vsprintf( OutFn ostr, OutPar *par, const UB *fmt, va_list ap )
 		}
 		while (--n >= 0) (*ostr)((UB*)"0", 1, par);
 
-		/* Output item string */
+		/* 項目文字列の出力 */
 		(*ostr)(cbs, cbe - cbs, par);
 
-		/* Output tailing spaces */
+		/* 後続の空白の出力 */
 		while (--wid >= 0) (*ostr)((UB*)" ", 1, par);
 	}
 
-	/* Output last fix string */
+	/* 最後の固定文字列の出力 */
 	if (fms != NULL) {
 		(*ostr)(fms, fmt - fms - 1, par);
 	}
 #if	TM_OUTBUF_SZ > 0
-	/* Flush output */
+	/* 出力のフラッシュ */
 	(*ostr)(NULL, 0, par);
 #endif
 }
 
-/*
- *	Output to console
+/**
+ * @brief	コンソールへの出力関数
+ *
+ * TM_OUTBUF_SZ == 0 のときは 1 文字ずつ直接出力し、
+ * それ以外はバッファ経由で出力します（str == NULL でフラッシュ）。
+ * @param str	出力する文字列（NULL でフラッシュ指示）
+ * @param len	出力する長さ
+ * @param par	出力先パラメータ
  */
 LOCAL	void	out_cons( UB *str, INT len,  OutPar *par )
 {
 #if	TM_OUTBUF_SZ == 0
-	/* Direct output to console */
+	/* コンソールへ直接出力 */
 	par->len += len;
 	while (--len >= 0) tm_putchar(*str++);
 #else
-	/* Buffered output to console */
-	if (str == NULL) {	/* Flush */
+	/* バッファ経由でコンソールへ出力 */
+	if (str == NULL) {	/* フラッシュ */
 		if (par->cnt > 0) {
 			par->bufp[par->cnt] = '\0';
 			tm_putstring(par->bufp);
@@ -298,6 +317,11 @@ LOCAL	void	out_cons( UB *str, INT len,  OutPar *par )
 #endif
 }
 
+/**
+ * @brief	コンソールへの書式付き出力（T-Monitor 互換）
+ * @param format	書式文字列
+ * @return 出力した文字数
+ */
 EXPORT INT	tm_printf( const UB *format, ... )
 {
 	va_list	ap;
@@ -322,8 +346,11 @@ EXPORT INT	tm_printf( const UB *format, ... )
 #endif
 }
 
-/*
- *	Output to buffer
+/**
+ * @brief	バッファへの出力関数
+ * @param str	出力する文字列
+ * @param len	出力する長さ
+ * @param par	出力先パラメータ（bufp の指す位置へ書き込む）
  */
 LOCAL	void	out_buf( UB *str, INT len, OutPar *par )
 {
@@ -331,6 +358,12 @@ LOCAL	void	out_buf( UB *str, INT len, OutPar *par )
 	while (--len >= 0) *(par->bufp)++ = *str++;
 }
 
+/**
+ * @brief	文字列バッファへの書式付き出力（T-Monitor 互換）
+ * @param str		出力先バッファ（終端に '\0' を付加）
+ * @param format	書式文字列
+ * @return 出力した文字数（終端の '\0' を除く）
+ */
 EXPORT INT	tm_sprintf( UB *str, const UB *format, ... )
 {
 	OutPar	par;
@@ -346,6 +379,9 @@ EXPORT INT	tm_sprintf( UB *str, const UB *format, ... )
 }
 
 #else
+/*
+ * USE_TM_PRINTF が無効の場合のスタブ（常に -1 を返す）
+ */
 EXPORT INT	tm_printf( const UB *format, ... )
 {
 	return (-1);
