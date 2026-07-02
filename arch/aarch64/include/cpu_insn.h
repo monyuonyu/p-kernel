@@ -50,8 +50,11 @@ static inline UINT knl_getBASEPRI(void)
 
 IMPORT FP knl_intvec[N_INTVEC];
 
-static inline void knl_define_inthdr(INT vecno, FP inthdr)
+/* p-kernel 変更: μT-Kernel 3.0 と同じ 3 引数シグネチャに統一
+ * （intatr は未使用。2.0/3.0 両ビルドから同じ呼び出しにするため） */
+static inline void knl_define_inthdr(INT vecno, ATR intatr, FP inthdr)
 {
+    (void)intatr;
     if ((UINT)vecno < N_INTVEC) {
         knl_intvec[vecno] = inthdr;
     }

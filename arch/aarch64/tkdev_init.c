@@ -157,7 +157,7 @@ EXPORT ER knl_tkdev_initialize(void)
      * On RPi 3:     BCM2837 ARM Local Interrupt Controller.
      * Both reach the same handler at INTID 30 (EL1 phys timer PPI). */
     gic_init();
-    knl_define_inthdr(INTNO_TIMER_GIC, (FP)timer_irq_handler);
+    knl_define_inthdr(INTNO_TIMER_GIC, 0, (FP)timer_irq_handler);
     gic_enable_irq(INTNO_TIMER_GIC);
     timer_init();
     return E_OK;

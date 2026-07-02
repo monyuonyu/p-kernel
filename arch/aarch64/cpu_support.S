@@ -188,7 +188,9 @@ knl_dispatch:
     mov sp, x1
 
     ldr x1, =knl_dispatch_disabled
-    str xzr, [x1]
+    str wzr, [x1]                     /* knl_dispatch_disabled は INT(32bit)。
+                                       * str xzr だと隣接シンボルまで 0 埋め
+                                       * する潜在バグだったため wzr に修正 */
 #endif
 
     /* Restore context */
