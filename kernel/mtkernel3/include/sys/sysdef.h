@@ -11,17 +11,18 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	sysdef.h
+/**
+ * @file	sysdef.h
+ * @brief	システム依存部定義の取り込み
  *
- *	System dependencies definition.
- *	Included also from assembler program.
+ * ターゲットごとの sysdepend/<ターゲット>/sysdef.h をインクルードします。
+ * アセンブラプログラムからもインクルードされます。
  */
 
 #ifndef __SYS_SYSDEF_H__
 #define __SYS_SYSDEF_H__
 
-/* System dependencies */
+/* システム依存部ヘッダのパス生成と取り込み */
 #define SYSDEF_PATH_(a)		#a
 #define SYSDEF_PATH(a)		SYSDEF_PATH_(a)
 #define SYSDEF_SYSDEP()		SYSDEF_PATH(sysdepend/TARGET_DIR/sysdef.h)

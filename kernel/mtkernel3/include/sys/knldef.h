@@ -11,9 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	knldef.h
- *	micro T-Kernel system definition form Configuration
+/**
+ * @file	knldef.h
+ * @brief	コンフィグレーションから導出するカーネル内部定義
+ *
+ * config.h の CNF_ 系マクロを検査し、カーネル内部で使用する
+ * オブジェクト数・ID 範囲・優先度・タイマ周期などの定義に展開します。
  */
 
 #ifndef _SYS_KNLDEF_H_
@@ -22,7 +25,7 @@
 #include <sys/sysdef.h>
 
 /*---------------------------------------------------------------------- */
-/* Check configuration data
+/* コンフィグレーション値の妥当性検査
  */
 #if ( CNF_TIMER_PERIOD < MIN_TIMER_PERIOD || CNF_TIMER_PERIOD > MAX_TIMER_PERIOD )
 # error "CNF_TIMER_PERIOD is out of range."
@@ -45,32 +48,32 @@
 #endif
 
 /*---------------------------------------------------------------------- */
-/* System memory area definition
+/* システムメモリ領域の定義
  */
 #define	SYSTEMAREA_TOP	CNF_SYSTEMAREA_TOP
 #define SYSTEMAREA_END	CNF_SYSTEMAREA_END
 
 
 /*---------------------------------------------------------------------- */
-/* Task priority configuration
+/* タスク優先度の定義
  */
-#define MIN_TSKPRI	(1)			/* Minimum priority number = highest priority */
-#define MAX_TSKPRI	(CNF_MAX_TSKPRI)	/* Maximum priority number = lowest priority */
-#define NUM_TSKPRI	(CNF_MAX_TSKPRI)	/* Number of priority levels */
+#define MIN_TSKPRI	(1)			/* 最小優先度番号＝最高優先度 */
+#define MAX_TSKPRI	(CNF_MAX_TSKPRI)	/* 最大優先度番号＝最低優先度 */
+#define NUM_TSKPRI	(CNF_MAX_TSKPRI)	/* 優先度レベル数 */
 #define CHK_PRI(pri)	((MIN_TSKPRI) <= (pri) && (pri) <= (MAX_TSKPRI))
 
 
 /*---------------------------------------------------------------------- */
-/* System Timer period
+/* システムタイマの周期
  */
 #define	TIMER_PERIOD	CNF_TIMER_PERIOD
 
 
 /*---------------------------------------------------------------------- */
-/* Kernel object configuration
+/* カーネルオブジェクトの定義
  */
 
-/* Task configuration */
+/* タスク */
 #define MIN_TSKID	(1)
 #define MAX_TSKID	(CNF_MAX_TSKID)
 #define NUM_TSKID	(MAX_TSKID)
@@ -78,7 +81,7 @@
 #define INDEX_TSK(id)	((id)-(MIN_TSKID))
 #define ID_TSK(index)	((index)+(MIN_TSKID))
 
-/* Semaphore configuration */
+/* セマフォ */
 #if USE_SEMAPHORE
 #define MAX_SEMID	(CNF_MAX_SEMID)
 #define MIN_SEMID	(1)
@@ -90,7 +93,7 @@
 #define MAX_SEMID	(0)
 #endif
 
-/* Event flag configuration */
+/* イベントフラグ */
 #if USE_EVENTFLAG
 #define MIN_FLGID	(1)
 #define MAX_FLGID	(CNF_MAX_FLGID)
@@ -102,7 +105,7 @@
 #define MAX_FLGID	(0)
 #endif
 
-/* Mailbox configuration */
+/* メールボックス */
 #if USE_MAILBOX
 #define MIN_MBXID	(1)
 #define MAX_MBXID	(CNF_MAX_MBXID)
@@ -114,7 +117,7 @@
 #define MAX_MBXID	(0)
 #endif
 
-/* Mutex configuration */
+/* ミューテックス */
 #if USE_MUTEX
 #define MIN_MTXID	(1)
 #define MAX_MTXID	(CNF_MAX_MTXID)
@@ -126,7 +129,7 @@
 #define NUM_MTXID	(0)
 #endif
 
-/* Message buffer configuration */
+/* メッセージバッファ */
 #if USE_MESSAGEBUFFER
 #define MIN_MBFID	(1)
 #define MAX_MBFID	(CNF_MAX_MBFID)
@@ -138,7 +141,7 @@
 #define MAX_MBFID	(0)
 #endif
 
-/* Memory pool configuration */
+/* 可変長メモリプール */
 #if USE_MEMORYPOOL
 #define MIN_MPLID	(1)
 #define MAX_MPLID	(CNF_MAX_MPLID)
@@ -150,7 +153,7 @@
 #define MAX_MPLID	(0)
 #endif
 
-/* Fixed size memory pool configuration */
+/* 固定長メモリプール */
 #if USE_FIX_MEMORYPOOL
 #define MIN_MPFID	(1)
 #define MAX_MPFID	(CNF_MAX_MPFID)
@@ -162,7 +165,7 @@
 #define MAX_MPFID	(0)
 #endif
 
-/* Cyclic handler configuration */
+/* 周期ハンドラ */
 #if USE_CYCLICHANDLER
 #define MIN_CYCID	(1)
 #define MAX_CYCID	(CNF_MAX_CYCID)
@@ -175,7 +178,7 @@
 #endif
 
 
-/* Alarm handler configuration */
+/* アラームハンドラ */
 #if USE_ALARMHANDLER
 #define MIN_ALMID	(1)
 #define MAX_ALMID	(CNF_MAX_ALMID)
@@ -187,7 +190,7 @@
 #define MAX_ALMID	(0)
 #endif
 
-/* Rendezvous configuration */
+/* ランデブ */
 #if USE_LEGACY_API && USE_RENDEZVOUS
 #define MIN_PORID	(1)
 #define MAX_PORID	(CNF_MAX_PORID)
@@ -200,7 +203,7 @@
 #endif /* USE_LEGACY_API && USE_RENDEZVOUS */
 
 /*---------------------------------------------------------------------- */
-/* Device configuration
+/* デバイス管理の定義
  */
 #if USE_DEVICE
 #define MAX_REGDEV	(CNF_MAX_REGDEV)
@@ -214,13 +217,13 @@
 
 
 /*---------------------------------------------------------------------- */
-/* Stack size definition
+/* スタックサイズの定義
  */
 #define EXC_STACK_SIZE	CNF_EXC_STACK_SIZE
 #define	TMP_STACK_SIZE	CNF_TMP_STACK_SIZE
 
 /*---------------------------------------------------------------------- */
-/* Version Number
+/* バージョン番号
  */
 #define VER_MAKER	CNF_VER_MAKER
 #define VER_PRID	CNF_VER_PRID

@@ -11,15 +11,18 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	machine.h
- *	Machine type definition 
+/**
+ * @file	machine.h
+ * @brief	マシン種別定義
+ *
+ * ターゲットマシンごとの machine.h を取り込み、シンボル修飾マクロ
+ * Csym() と、Cコンパイラ依存のマクロ（Inline / Asm 等）を定義します。
  */
 
 #ifndef __SYS_MACHINE_H__
 #define __SYS_MACHINE_H__
 
-/* ===== System dependencies definitions ================================ */
+/* ===== システム依存部の定義 ============================================ */
 
 #ifdef _IOTE_M367_
 #include "sysdepend/iote_m367/machine.h"
@@ -57,7 +60,7 @@
 
 #endif
 
-/* ===== C compiler dependencies definitions ============================= */
+/* ===== Cコンパイラ依存の定義 =========================================== */
 
 #ifdef __GNUC__
 

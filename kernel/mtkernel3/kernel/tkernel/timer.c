@@ -11,9 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	timer.c
- *	Timer Control
+/**
+ * @file	timer.c
+ * @brief	システムタイマ制御
+ *
+ * ソフトウェアクロック（システム稼働時間）の管理、タイマイベントキューへの
+ * イベント登録、およびシステムタイマ割込みハンドラを提供します。
  */
 
 #include "kernel.h"
@@ -21,41 +24,47 @@
 #include "../sysdepend/sys_timer.h"
 
 /*
- * Current time (Software clock)
- *	'current_time' shows the total operation time since
- *	operating system Starts. 'real_time_ofs' shows difference
- *	between the current time and the operating system clock
- *	(current_time). Do not change 'current_time' when setting
- *	time by 'set_tim()'. Set 'real_time_ofs' with the time  	 
- *   	difference between 'current_time' and setup time.
- *	Therefore 'current_time' does not affect with time change
- *	and it increases simply.
+ * 現在時刻（ソフトウェアクロック）
+ *	'knl_current_time' は OS 起動からの総稼働時間を示す。
+ *	'knl_real_time_ofs' は現在時刻と OS クロック（knl_current_time）
+ *	との差を示す。'tk_set_tim()' 等で時刻を設定するときは
+ *	'knl_current_time' を変更せず、'knl_current_time' と設定時刻との
+ *	差を 'knl_real_time_ofs' に設定する。
+ *	したがって 'knl_current_time' は時刻変更の影響を受けず、
+ *	単調に増加する。
  */
-Noinit(EXPORT LSYSTIM	knl_current_time);	/* System operation time */
-Noinit(EXPORT LSYSTIM	knl_real_time_ofs);	/* Actual time - System operation time */
+Noinit(EXPORT LSYSTIM	knl_current_time);	/* システム稼働時間 */
+Noinit(EXPORT LSYSTIM	knl_real_time_ofs);	/* 実時刻 - システム稼働時間 */
 
-/* 
- * Timer event queue
+/*
+ * タイマイベントキュー
  */
 Noinit(EXPORT QUEUE	knl_timer_queue);
 
-/*
- * Start system timer
+/**
+ * @brief システムタイマを開始します。
+ *
+ * ソフトウェアクロックとタイマイベントキューを初期化し、
+ * ハードウェアタイマ割込みを開始します。
+ *
+ * @return 常に E_OK
  */
 EXPORT ER knl_timer_startup( void )
 {
 	knl_current_time = knl_real_time_ofs = uitoll(0);
 	QueInit(&knl_timer_queue);
 
-	/* Start timer interrupt */
+	/* タイマ割込みの開始 */
 	knl_start_hw_timer();
 
 	return E_OK;
 }
 
 #if USE_SHUTDOWN
-/*
- * Stop system timer
+/**
+ * @brief システムタイマを停止します。
+ *
+ * ハードウェアタイマの動作を終了させます。
  */
 EXPORT void knl_timer_shutdown( void )
 {
@@ -64,8 +73,14 @@ EXPORT void knl_timer_shutdown( void )
 #endif /* USE_SHUTDOWN */
 
 
-/*
- * Insert timer event to timer event queue
+/**
+ * @brief タイマイベントをタイマイベントキューに挿入します。
+ *
+ * イベント発生時刻の昇順となる位置に挿入します。ABSTIM の周回
+ * （ラップアラウンド）を考慮し、現在時刻を基準としたオフセットで
+ * 大小を比較します。
+ *
+ * @param event 挿入するタイマイベントブロック（time 設定済み）
  */
 LOCAL void knl_enqueue_tmeb( TMEB *event )
 {
@@ -80,19 +95,22 @@ LOCAL void knl_enqueue_tmeb( TMEB *event )
 	QueInsert(&event->queue, q);
 }
 
-/*
- * Set timeout event
- *	Register the timer event 'event' onto the timer queue to
- *	start after the timeout 'tmout'. At timeout, start with the
- *	argument 'arg' on the callback function 'callback'.
- *	When 'tmout' is TMO_FEVR, do not register onto the timer
- *	queue, but initialize queue area in case 'timer_delete' 
- *	is called later.
+/**
+ * @brief タイムアウトイベントを設定します。
  *
- *	"include/tk/typedef.h"
- *	typedef	W		TMO;
- *	typedef UW		RELTIM;
- *	#define TMO_FEVR	(-1)
+ * タイムアウト時間 'tmout' の経過後に起動されるよう、タイマイベント
+ * 'event' をタイマキューに登録します。タイムアウト時にはコールバック
+ * 関数 'callback' が引数 'arg' で呼び出されます。
+ * 'tmout' が TMO_FEVR の場合はタイマキューに登録せず、後で
+ * knl_timer_delete() が呼ばれた場合に備えてキュー領域のみ初期化します。
+ *
+ * @param event    タイマイベントブロック
+ * @param tmout    タイムアウト時間（ms）。TMO_FEVR(-1) で登録なし
+ * @param callback タイムアウト時に呼び出されるコールバック関数
+ * @param arg      コールバック関数に渡す引数
+ *
+ * @note "include/tk/typedef.h" にて
+ *       typedef W TMO; / typedef UW RELTIM; / #define TMO_FEVR (-1)
  */
 EXPORT void knl_timer_insert( TMEB *event, TMO tmout, CBACK callback, void *arg )
 {
@@ -102,29 +120,46 @@ EXPORT void knl_timer_insert( TMEB *event, TMO tmout, CBACK callback, void *arg 
 	if ( tmout == TMO_FEVR ) {
 		QueInit(&event->queue);
 	} else {
-		/* To guarantee longer wait time specified by 'tmout',
-		   add TIMER_PERIOD on wait time */
+		/* 'tmout' で指定された待ち時間以上の待ちを保証するため、
+		   待ち時間に TIMER_PERIOD を加算する */
 		event->time = lltoul(knl_current_time) + tmout + TIMER_PERIOD;
 		knl_enqueue_tmeb(event);
 	}
 }
 
+/**
+ * @brief タイムアウトイベントを設定します（相対時間 RELTIM 指定版）。
+ *
+ * knl_timer_insert() と同様ですが、タイムアウト時間を符号なしの
+ * 相対時間 RELTIM で指定します（永久待ちの指定はできません）。
+ *
+ * @param event    タイマイベントブロック
+ * @param tmout    タイムアウト時間（相対時間、ms）
+ * @param callback タイムアウト時に呼び出されるコールバック関数
+ * @param arg      コールバック関数に渡す引数
+ */
 EXPORT void knl_timer_insert_reltim( TMEB *event, RELTIM tmout, CBACK callback, void *arg )
 {
 	event->callback = callback;
 	event->arg = arg;
 
-	/* To guarantee longer wait time specified by 'tmout',
-	   add TIMER_PERIOD on wait time */
+	/* 'tmout' で指定された待ち時間以上の待ちを保証するため、
+	   待ち時間に TIMER_PERIOD を加算する */
 	event->time = lltoul(knl_current_time) + tmout + TIMER_PERIOD;
 	knl_enqueue_tmeb(event);
 }
 
-/*
- * Set time specified event
- *	Register the timer event 'evt' onto the timer queue to start at the 
- *	(absolute) time 'time'.
- *	'time' is not an actual time. It is system operation time.
+/**
+ * @brief 時刻指定イベントを設定します。
+ *
+ * （絶対）時刻 'time' に起動されるよう、タイマイベント 'evt' を
+ * タイマキューに登録します。'time' は実時刻ではなく
+ * システム稼働時間です。
+ *
+ * @param evt   タイマイベントブロック
+ * @param time  起動時刻（システム稼働時間ベースの絶対時刻）
+ * @param cback 時刻到達時に呼び出されるコールバック関数
+ * @param arg   コールバック関数に渡す引数
  */
 EXPORT void knl_timer_insert_abs( TMEB *evt, ABSTIM time, CBACK cback, void *arg )
 {
@@ -136,11 +171,13 @@ EXPORT void knl_timer_insert_abs( TMEB *evt, ABSTIM time, CBACK cback, void *arg
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * System timer interrupt handler
- *	This interrupt handler starts every TIMER_PERIOD millisecond 
- *	interval by hardware timer. Update the software clock and start the 
- *	timer event upon arriving at start time.
+/**
+ * @brief システムタイマ割込みハンドラ
+ *
+ * ハードウェアタイマにより TIMER_PERIOD ミリ秒間隔で起動されます。
+ * ソフトウェアクロックを更新し、発生時刻に達したタイマイベントの
+ * コールバックを順に実行します。デバッガサポート機能が有効な場合は、
+ * 実行中タスクの実行時間（システムモード／ユーザモード）も集計します。
  */
 
 EXPORT void knl_timer_handler( void )
@@ -148,7 +185,7 @@ EXPORT void knl_timer_handler( void )
 	TMEB	*event;
 	ABSTIM	cur;
 
-	knl_clear_hw_timer_interrupt();		/* Clear timer interrupt */
+	knl_clear_hw_timer_interrupt();		/* タイマ割込みのクリア */
 
 	BEGIN_CRITICAL_SECTION;
 	knl_current_time = ll_add(knl_current_time, uitoll(TIMER_PERIOD));
@@ -156,7 +193,7 @@ EXPORT void knl_timer_handler( void )
 
 #if USE_DBGSPT && defined(USE_FUNC_TD_INF_TSK)
 	if ( knl_ctxtsk != NULL ) {
-		/* Task at execution */
+		/* 実行中タスク */
 		if ( knl_ctxtsk->sysmode > 0 ) {
 			knl_ctxtsk->stime += TIMER_PERIOD;
 		} else {
@@ -165,7 +202,7 @@ EXPORT void knl_timer_handler( void )
 	}
 #endif
 
-	/* Execute event that passed occurring time. */
+	/* 発生時刻を過ぎたイベントの実行 */
 	while ( !isQueEmpty(&knl_timer_queue) ) {
 		event = (TMEB*)knl_timer_queue.next;
 
@@ -181,5 +218,5 @@ EXPORT void knl_timer_handler( void )
 
 	END_CRITICAL_SECTION;
 
-	knl_end_of_hw_timer_interrupt();		/* Clear timer interrupt */
+	knl_end_of_hw_timer_interrupt();		/* タイマ割込みの終了処理 */
 }

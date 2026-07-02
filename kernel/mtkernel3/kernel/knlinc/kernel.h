@@ -11,9 +11,15 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	kernel.h
- *	micro T-Kernel Common Definition
+/**
+ * @file	kernel.h
+ * @brief	micro T-Kernel 共通定義
+ *
+ * カーネル内部で共通に使用する定義を集約したヘッダです。
+ * タスク制御ブロック（TCB）の定義、ディスパッチ禁止状態の定数、
+ * カーネルグローバル変数（knl_ctxtsk / knl_schedtsk 等）、および
+ * 各カーネルオブジェクト初期化関数やシステム依存部ルーチンの
+ * プロトタイプ宣言を提供します。
  */
 
 #ifndef _KERNEL_
@@ -49,106 +55,110 @@ typedef struct task_control_block	TCB;
 #include "../sysdepend/cpu_status.h"
 #include "../sysdepend/sysdepend.h"
 
-#define SYSCALL		EXPORT		/* Definition of system call */
+#define SYSCALL		EXPORT		/* システムコール関数の定義用 */
 
-/* User defined handler ( Sub-system calls, time-event handler ) */
+/* ユーザ定義ハンドラの呼び出し（サブシステムコール、タイムイベントハンドラ） */
 # define CallUserHandlerP1(   p1,         hdr, cb)	(*(hdr))(p1)
 # define CallUserHandlerP2(   p1, p2,     hdr, cb)	(*(hdr))(p1, p2)
 # define CallUserHandlerP3(   p1, p2, p3, hdr, cb)	(*(hdr))(p1, p2, p3)
 
-/*
- * Task control block (TCB)
+/**
+ * @brief タスク制御ブロック（TCB）
+ *
+ * タスクごとにカーネルが保持する管理情報です。生成時の属性、
+ * 現在の優先度・状態、待ち情報、スタック情報などを格納します。
  */
 struct task_control_block {
-	QUEUE	tskque;		/* Task queue */
-	ID	tskid;		/* Task ID */
-	void	*exinf;		/* Extended information */
-	ATR	tskatr;		/* Task attribute */
-	FP	task;		/* Task startup address */
-	CTXB	tskctxb;	/* Task context block */
-	W	sstksz;		/* stack size */
+	QUEUE	tskque;		/* タスクキュー */
+	ID	tskid;		/* タスクID */
+	void	*exinf;		/* 拡張情報 */
+	ATR	tskatr;		/* タスク属性 */
+	FP	task;		/* タスク起動アドレス */
+	CTXB	tskctxb;	/* タスクコンテキストブロック */
+	W	sstksz;		/* スタックサイズ */
 
-	B	isysmode;	/* Task operation mode initial value */
-	H	sysmode;	/* Task operation mode, quasi task part call level */
+	B	isysmode;	/* タスク動作モードの初期値 */
+	H	sysmode;	/* タスク動作モード・準タスク部呼び出しレベル */
 
-	UB	ipriority;	/* Priority at task startup */
-	UB	bpriority;	/* Base priority */
-	UB	priority;	/* Current priority */
+	UB	ipriority;	/* タスク起動時の優先度 */
+	UB	bpriority;	/* ベース優先度 */
+	UB	priority;	/* 現在の優先度 */
 
-	UB /*TSTAT*/	state;	/* Task state (Int. expression) */
+	UB /*TSTAT*/	state;	/* タスク状態（内部表現） */
 
-	BOOL	klockwait:1;	/* TRUE at wait kernel lock */
-	BOOL	klocked:1;	/* TRUE at hold kernel lock */
+	BOOL	klockwait:1;	/* カーネルロック待ち中は TRUE */
+	BOOL	klocked:1;	/* カーネルロック保持中は TRUE */
 
-	CONST WSPEC *wspec;	/* Wait specification */
-	ID	wid;		/* Wait object ID */
-	INT	wupcnt;		/* Number of wakeup requests queuing */
-	INT	suscnt;		/* Number of SUSPEND request nests */
-	ER	*wercd;		/* Wait error code set area */
-	WINFO	winfo;		/* Wait information */
-	TMEB	wtmeb;		/* Wait timer event block */
+	CONST WSPEC *wspec;	/* 待ち仕様 */
+	ID	wid;		/* 待ち対象オブジェクトID */
+	INT	wupcnt;		/* キューイングされた起床要求数 */
+	INT	suscnt;		/* SUSPEND 要求のネスト数 */
+	ER	*wercd;		/* 待ちエラーコード設定領域 */
+	WINFO	winfo;		/* 待ち情報 */
+	TMEB	wtmeb;		/* 待ちタイマイベントブロック */
 
-	void	*isstack;	/* stack pointer initial value */
+	void	*isstack;	/* スタックポインタ初期値 */
 
 #if USE_LEGACY_API && USE_RENDEZVOUS
-	RNO	wrdvno;		/* For creating rendezvous number */
+	RNO	wrdvno;		/* ランデブ番号生成用 */
 #endif
 #if USE_MUTEX == 1
-	MTXCB	*mtxlist;	/* List of hold mutexes */
+	MTXCB	*mtxlist;	/* 保持しているミューテックスのリスト */
 #endif
 
 #if USE_DBGSPT && defined(USE_FUNC_TD_INF_TSK)
-	UW	stime;		/* System execution time (ms) */
-	UW	utime;		/* User execution time (ms) */
+	UW	stime;		/* システムレベル実行時間（ms） */
+	UW	utime;		/* ユーザレベル実行時間（ms） */
 #endif
 
 #if USE_OBJECT_NAME
-	UB	name[OBJECT_NAME_LENGTH];	/* name */
+	UB	name[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 };
 
 
 /*
- * Task dispatch disable state
- *	0 = DDS_ENABLE		 : ENABLE
- *	1 = DDS_DISABLE_IMPLICIT : DISABLE with implicit process
- *	2 = DDS_DISABLE		 : DISABLE with tk_dis_dsp()
+ * タスクディスパッチ禁止状態
+ *	0 = DDS_ENABLE		 : ディスパッチ許可
+ *	1 = DDS_DISABLE_IMPLICIT : 暗黙の処理による禁止
+ *	2 = DDS_DISABLE		 : tk_dis_dsp() による禁止
  *	|	|
- *	|	use in *.c
- *	use in *.S
- *	  --> Do NOT change these literals, because using in assembler code
+ *	|	*.c で使用
+ *	*.S で使用
+ *	  --> アセンブラコードから参照されるため、これらのリテラル値を
+ *	      変更してはならない
  *
- *	'dispatch_disabled' records dispatch disable status set by tk_dis_dsp()
- *	for some CPU, that accepts delayed interrupt.
- *	In this case, you can NOT refer the dispatch disabled status
- *	only by 'dispatch_disabled'.
- *	Use 'in_ddsp()' to refer the task dispatch status.
- *	'in_ddsp()' is a macro definition in CPU-dependent definition files.
+ *	'knl_dispatch_disabled' は tk_dis_dsp() で設定されたディスパッチ
+ *	禁止状態を記録します。遅延割込みを受け付ける CPU では、
+ *	'knl_dispatch_disabled' だけではディスパッチ禁止状態を正しく
+ *	参照できません。タスクディスパッチ状態の参照には 'in_ddsp()' を
+ *	使用してください。'in_ddsp()' は CPU 依存部の定義ファイルで
+ *	マクロとして定義されています。
  */
 #define DDS_ENABLE		(0)
-#define DDS_DISABLE_IMPLICIT	(1)	/* set with implicit process */
-#define DDS_DISABLE		(2)	/* set by tk_dis_dsp() */
+#define DDS_DISABLE_IMPLICIT	(1)	/* 暗黙の処理により設定 */
+#define DDS_DISABLE		(2)	/* tk_dis_dsp() により設定 */
 IMPORT INT	knl_dispatch_disabled;
 
 /*
- * Task in execution
- *	ctxtsk is a variable that indicates TCB task in execution
- *	(= the task that CPU holds context). During system call processing,
- *	when checking information about the task that requested system call,
- *	use 'ctxtsk'. Only task dispatcher changes 'ctxtsk'.
+ * 実行中のタスク
+ *	'knl_ctxtsk' は実行中のタスク（= CPU がコンテキストを保持している
+ *	タスク）の TCB を指す変数です。システムコール処理中に、その
+ *	システムコールを発行したタスクの情報を調べる場合は 'ctxtsk' を
+ *	使用します。'ctxtsk' を変更するのはタスクディスパッチャのみです。
  */
 IMPORT TCB	*knl_ctxtsk;
 
 /*
- * Task which should be executed
- *	'schedtsk' is a variable that indicates the task TCB to be executed.
- *	If a dispatch is delayed by the delayed dispatch or dispatch disable, 
- *	it does not match with 'ctxtsk.' 
+ * 実行すべきタスク
+ *	'knl_schedtsk' は実行すべきタスクの TCB を指す変数です。
+ *	遅延ディスパッチやディスパッチ禁止によってディスパッチが
+ *	保留されている間は 'ctxtsk' と一致しません。
  */
 IMPORT TCB	*knl_schedtsk;
 
 /*
- * Kernel-object initialization (each object)
+ * カーネルオブジェクトの初期化（オブジェクトごと）
  */
 IMPORT ER knl_task_initialize( void );
 IMPORT ER knl_semaphore_initialize( void );
@@ -164,30 +174,30 @@ IMPORT ER knl_alarmhandler_initialize( void );
 IMPORT ER knl_subsystem_initialize( void );
 
 /*
- * Kernel-object initialization (each object) (tkinit.c)
+ * カーネルオブジェクトの一括初期化 (tkinit.c)
  */
 IMPORT ER knl_init_object(void);
 
 /*
- * Initialization of Device management (device.c)
+ * デバイス管理の初期化 (device.c)
  */
 IMPORT ER knl_initialize_devmgr( void );
 
 /*
- * System timer control (timer.c)
+ * システムタイマ制御 (timer.c)
  */
 IMPORT ER   knl_timer_startup( void );
 IMPORT void knl_timer_shutdown( void );
 IMPORT void knl_timer_handler( void );
 
 /*
- * Mutex control (mutex.c)
+ * ミューテックス制御 (mutex.c)
  */
 IMPORT void knl_signal_all_mutex( TCB *tcb );
 IMPORT INT knl_chg_pri_mutex( TCB *tcb, INT priority );
 
 /*
- * Internal memory allocation (Imalloc) (memory.c)
+ * カーネル内部メモリ割り当て（Imalloc）(memory.c)
  */
 IMPORT ER knl_init_Imalloc( void );
 IMPORT void* knl_Imalloc( SZ size );
@@ -196,38 +206,38 @@ IMPORT void* knl_Irealloc( void *ptr, SZ size );
 IMPORT void  knl_Ifree( void *ptr );
 
 /*
- * Initial task creation parameter (inittask.c)
+ * 初期タスクの生成パラメータ (inittask.c)
  */
 IMPORT const T_CTSK knl_init_ctsk;
 
 /*
- * User main program (usermain.c)
+ * ユーザメインプログラム (usermain.c)
  */
 IMPORT INT usermain( void );
 
 /*
- * power-saving function (power.c)
+ * 省電力機能 (power.c)
  */
 IMPORT UINT	knl_lowpow_discnt;
 
 
 /* ----------------------------------------------------------------------- */
 /*
- * Target system-dependent routine (/sysdepend)
+ * ターゲットシステム依存ルーチン (/sysdepend)
  */
 
-/* Low-level memory management information (reset_hdl.c) */
+/* 低レベルメモリ管理情報 (reset_hdl.c) */
 IMPORT	void	*knl_lowmem_top, *knl_lowmem_limit;
 
 /*
- * Startup / Re-start / Shutdown Hardware (hw_setting.c)
+ * ハードウェアの起動・再起動・終了 (hw_setting.c)
  */
 IMPORT void knl_startup_hw(void);
 IMPORT void knl_shutdown_hw( void );
 IMPORT ER knl_restart_hw( W mode );
 
 /*
- * CPU control (cpu_cntl.c)
+ * CPU 制御 (cpu_cntl.c)
  */
 #if TK_SUPPORT_REGOPS
 IMPORT void knl_set_reg( TCB *tcb, CONST T_REGS *regs, CONST T_EIT *eit, CONST T_CREGS *cregs );
@@ -240,27 +250,27 @@ IMPORT ER knl_set_cpr( TCB *tcb, INT copno, CONST T_COPREGS *copregs);
 #endif
 
 /*
- *	Task dispatcher (cpu_cntl.c)
+ *	タスクディスパッチャ (cpu_cntl.c)
  */
 IMPORT void knl_force_dispatch( void );
 IMPORT void knl_dispatch( void );
 
 /*
- * Interrupt control (interrupt.c)
+ * 割込み制御 (interrupt.c)
  */
 IMPORT ER knl_init_interrupt( void );
 IMPORT ER knl_define_inthdr( INT intno, ATR intatr, FP inthdr );
 IMPORT void knl_return_inthdr(void);
 
 /*
- * Device Driver Startup / Finalization (devinit.c)
+ * デバイスドライバの起動・終了 (devinit.c)
  */
 IMPORT ER knl_init_device( void );
 IMPORT ER knl_start_device( void );
 IMPORT ER knl_finish_device( void );
 
 /*
- * micro T-Kernel Startup / Finalization (sysinit.c)
+ * micro T-Kernel の起動・終了 (sysinit.c)
  */
 #ifndef ADD_PREFIX_KNL_TO_GLOBAL_NAME
 IMPORT INT main(void);
@@ -271,14 +281,14 @@ IMPORT INT knl_main(void);
 IMPORT void knl_tkernel_exit( void );
 
 /*
- * System Call entry
+ * システムコールエントリ
  */
 IMPORT void knl_call_entry( void );
 
 /*
- *	Power-Saving Function (power_save.c)
+ *	省電力機能 (power_save.c)
  */
-IMPORT void low_pow( void );		/* Switch to power-saving mode */
-IMPORT void off_pow( void );		/* Move to suspend mode */
+IMPORT void low_pow( void );		/* 省電力モードへの移行 */
+IMPORT void off_pow( void );		/* サスペンドモードへの移行 */
 
 #endif /* _KERNEL_ */

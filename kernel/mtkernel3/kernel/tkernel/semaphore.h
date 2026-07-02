@@ -11,31 +11,34 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	semaphore.h
- *	Semaphore
+/**
+ * @file	semaphore.h
+ * @brief	セマフォ機能のカーネル内部定義
+ *
+ * セマフォ制御ブロック（SEMCB）の定義と、制御ブロック取得マクロを
+ * 提供します。
  */
 
 #ifndef _SEMAPHORE_H_
 #define _SEMAPHORE_H_
 
 /*
- * Semaphore control block
+ * セマフォ制御ブロック
  */
 typedef struct semaphore_control_block {
-	QUEUE	wait_queue;	/* Semaphore wait queue */
-	ID	semid;		/* Semaphore ID */
-	void	*exinf;		/* Extended information */
-	ATR	sematr;		/* Semaphore attribute */
-	INT	semcnt;		/* Semaphore current count value */
-	INT	maxsem;		/* Semaphore maximum count value */
+	QUEUE	wait_queue;	/* セマフォ待ちキュー */
+	ID	semid;		/* セマフォID */
+	void	*exinf;		/* 拡張情報 */
+	ATR	sematr;		/* セマフォ属性 */
+	INT	semcnt;		/* 現在の資源数 */
+	INT	maxsem;		/* 最大資源数 */
 #if USE_OBJECT_NAME
-	UB	name[OBJECT_NAME_LENGTH];	/* name */
+	UB	name[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } SEMCB;
 
-IMPORT SEMCB knl_semcb_table[];	/* Semaphore control block */
-IMPORT QUEUE knl_free_semcb;	/* FreeQue */
+IMPORT SEMCB knl_semcb_table[];	/* セマフォ制御ブロックテーブル */
+IMPORT QUEUE knl_free_semcb;	/* 未使用制御ブロックのキュー（FreeQue） */
 
 #define get_semcb(id)	( &knl_semcb_table[INDEX_SEM(id)] )
 

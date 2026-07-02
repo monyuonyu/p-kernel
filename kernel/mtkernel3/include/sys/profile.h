@@ -11,10 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	profile.h
+/**
+ * @file	profile.h
+ * @brief	サービスプロファイル定義
  *
- *	Service Profile
+ * 本カーネルがサポートする機能・仕様の有無を示す
+ * TK_ 系プロファイルマクロを定義します。
  */
 
 #ifndef __SYS_PROFILE_H__
@@ -24,89 +26,89 @@
 #include <sys/knldef.h>
 
 /*
- **** System-depeneded profile
+ **** システム依存部のプロファイル
  */
 
-/* System dependencies */
+/* システム依存部ヘッダのパス生成と取り込み */
 #define PROF_PATH_(a)		#a
 #define PROF_PATH(a)		PROF_PATH_(a)
 #define PROF_SYSDEP()		PROF_PATH(sysdepend/TARGET_DIR/profile.h)
 #include PROF_SYSDEP()
 
 
-/* 
- **** Common profile
+/*
+ **** 共通プロファイル
  */
 
 /*
- * OS type and version
+ * OS 種別とバージョン
  */
-#define TK_SPECVER_MAGIC		6					/* micro T-Kernel magic number */
-#define TK_SPECVER_MAJOR		3					/* major version number */
-#define TK_SPECVER_MINOR		0					/* minor version number */
+#define TK_SPECVER_MAGIC		6					/* micro T-Kernel のマジックナンバー */
+#define TK_SPECVER_MAJOR		3					/* メジャーバージョン番号 */
+#define TK_SPECVER_MINOR		0					/* マイナーバージョン番号 */
 #define TK_SPECVER			((TK_SPECVER_MAJOR << 8) | TK_SPECVER_MINOR)
 
 /*
- * Maximum task priority (>= 16)
+ * タスクの最大優先度（16 以上）
  */
-#define TK_MAX_TSKPRI			(MAX_TSKPRI)		/* Maximum task priority */
-#define TK_WAKEUP_MAXCNT		(+2147483647L)		/* Maximum queuing number of the task wakeup requests. */
-#define TK_SEMAPHORE_MAXCNT		(+2147483647L)		/* Maximum semaphore count */
+#define TK_MAX_TSKPRI			(MAX_TSKPRI)		/* タスクの最大優先度 */
+#define TK_WAKEUP_MAXCNT		(+2147483647L)		/* 起床要求のキューイング最大数 */
+#define TK_SEMAPHORE_MAXCNT		(+2147483647L)		/* セマフォの最大資源数 */
 /*
- * Maximum queuing count of the forced wait of tasks.
+ * 強制待ち要求のネスト（キューイング）最大数
  */
 #define TK_SUSPEND_MAXCNT		(+2147483647L)
 
 /*
- * Device Driver
+ * デバイスドライバ
  */
-#define TK_SUPPORT_TASKEVENT		FALSE				/* Support of task event */
-#define TK_SUPPORT_DISWAI		FALSE				/* Support of disabling wait (API: tk_dis_wai) */
+#define TK_SUPPORT_TASKEVENT		FALSE				/* タスクイベントのサポート */
+#define TK_SUPPORT_DISWAI		FALSE				/* 待ち禁止（API: tk_dis_wai）のサポート */
 
 /*
- * Memory management
+ * メモリ管理
  */
-#define TK_SUPPORT_USERBUF		TRUE				/* Support of user-specified buffer (TA_USERBUF) */
-#define TK_SUPPORT_AUTOBUF		TRUE				/* Support of automatic buffer allocation (No TA_USERBUF specification) */
-#define TK_SUPPORT_MEMLIB		(USE_IMALLOC)			/* Support of memory allocation library */
+#define TK_SUPPORT_USERBUF		TRUE				/* ユーザ指定バッファ（TA_USERBUF）のサポート */
+#define TK_SUPPORT_AUTOBUF		TRUE				/* バッファ自動割り当て（TA_USERBUF 指定なし）のサポート */
+#define TK_SUPPORT_MEMLIB		(USE_IMALLOC)			/* メモリ割り当てライブラリのサポート */
 
 /*
- * Task exception
+ * タスク例外
  */
-#define TK_SUPPORT_TASKEXCEPTION	FALSE				/* Support of task exception */
+#define TK_SUPPORT_TASKEXCEPTION	FALSE				/* タスク例外のサポート */
 
 /*
- * Subsystem
+ * サブシステム
  */
-#define TK_SUPPORT_SUBSYSTEM		FALSE				/* Support of subsystem */
-#define TK_SUPPORT_SSYEVENT		FALSE				/* Support of subsystem event processing */
+#define TK_SUPPORT_SUBSYSTEM		FALSE				/* サブシステムのサポート */
+#define TK_SUPPORT_SSYEVENT		FALSE				/* サブシステムのイベント処理のサポート */
 
 /*
- * System configuration information
+ * システム構成情報
  */
-#define TK_SUPPORT_SYSCONF		FALSE				/* Support of getting system configuration information */
+#define TK_SUPPORT_SYSCONF		FALSE				/* システム構成情報の取得のサポート */
 
 /*
- * Data types and size
+ * データ型とサイズ
  */
-#define TK_HAS_DOUBLEWORD		TRUE				/* Support of 64-bit data types (D, UD, VD) */
-#define TK_SUPPORT_USEC			FALSE				/* Support of microsecond */
-#define TK_SUPPORT_LARGEDEV		FALSE				/* Support of Large Mass-storage Device (64-bit) */
-#define TK_SUPPORT_SERCD		FALSE				/* Support of sub error code */
+#define TK_HAS_DOUBLEWORD		TRUE				/* 64 ビットデータ型（D, UD, VD）のサポート */
+#define TK_SUPPORT_USEC			FALSE				/* マイクロ秒単位時間のサポート */
+#define TK_SUPPORT_LARGEDEV		FALSE				/* 大容量デバイス（64 ビット）のサポート */
+#define TK_SUPPORT_SERCD		FALSE				/* サブエラーコードのサポート */
 
 /*
- * other function
+ * その他の機能
  */
-#define TK_TRAP_SVC			FALSE				/* Use CPU Trap instruction for system call entry */
-#define TK_HAS_SYSSTACK			FALSE				/* Task has a separate system stack. */
-#define	TK_SUPPORT_UTC			TRUE				/* Support of UTC(Unix style) */
-#define TK_SUPPORT_TRONTIME		TRUE				/* Support of TRON time */
+#define TK_TRAP_SVC			FALSE				/* システムコール入口に CPU のトラップ命令を使用 */
+#define TK_HAS_SYSSTACK			FALSE				/* タスクがシステムスタックを別に持つ */
+#define	TK_SUPPORT_UTC			TRUE				/* UTC（UNIX 形式時刻）のサポート */
+#define TK_SUPPORT_TRONTIME		TRUE				/* TRON 形式時刻のサポート */
 
 /*
- * Debug support
+ * デバッグ支援
  */
-#define TK_SUPPORT_DSNAME		(USE_OBJECT_NAME)	/* Support of DS object names */
-#define TK_SUPPORT_DBGSPT		(USE_DBGSPT)		/* Support of T-Kernel/DS */
+#define TK_SUPPORT_DSNAME		(USE_OBJECT_NAME)	/* DS オブジェクト名のサポート */
+#define TK_SUPPORT_DBGSPT		(USE_DBGSPT)		/* T-Kernel/DS のサポート */
 
 
 #endif /* __SYS_PROFILE_H__ */
