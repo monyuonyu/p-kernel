@@ -199,19 +199,78 @@
 
 #endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ */
 
+/*
+ *	x86 PC ベアメタルターゲット（p-kernel 追加）
+ *
+ *	オブジェクト数は micro T-Kernel 2.0 ポート
+ *	（arch/x86/include/utk_config_depend.h）と同値。
+ */
+#ifdef _X86_PC_
+
+#undef  CNF_MAX_TSKID
+#define CNF_MAX_TSKID		128	/* タスク */
+#undef  CNF_MAX_SEMID
+#define CNF_MAX_SEMID		256	/* セマフォ（dproc/kdds/dtr/swim 等で大量消費） */
+#undef  CNF_MAX_CYCID
+#define CNF_MAX_CYCID		8	/* 周期ハンドラ */
+
+/* サブシステム互換層（拡張 SVC — ring3 syscall 橋渡しに使用） */
+#define USE_SUBSYSTEM		(1)
+#define CNF_MAX_SSYID		(4)
+
+/* ランデブ（レガシー API）— arch/x86/syscall.c が tk_*_por を公開 */
+#undef  USE_LEGACY_API
+#define USE_LEGACY_API		(1)
+#undef  CNF_MAX_PORID
+#define CNF_MAX_PORID		(4)
+
+/* デバッガサポート・物理タイマ・例外デバッグメッセージは未使用 */
+#undef  USE_DBGSPT
+#define USE_DBGSPT		(0)
+#undef  USE_PTMR
+#define USE_PTMR		(0)
+#undef  USE_EXCEPTION_DBG_MSG
+#define USE_EXCEPTION_DBG_MSG	(0)
+
+#endif /* _X86_PC_ */
+
 /*---------------------------------------------------------------------- */
 /*
  *	使用機能の定義
  */
 #include "config_func.h"
 
-/* Linux x86-64 ターゲット: config_func.h の既定値の上書き（p-kernel 追加） */
-#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_)
+/* p-kernel 追加ターゲット: config_func.h の既定値の上書き */
+#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_) || defined(_X86_PC_)
 
-/* カーネルのデバイス管理は使用しない（arch/ 層が POSIX で代替） */
+/* カーネルのデバイス管理は使用しない（arch/ 層が独自ドライバで代替） */
 #undef  USE_DEVICE
 #define USE_DEVICE		(0)
 
-#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ */
+#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ || _X86_PC_ */
+
+
+/*---------------------------------------------------------------------- */
+/*
+ *	micro T-Kernel 2.0 互換エイリアス（p-kernel 追加）
+ *
+ *	アプリ層（arch/）には 2.0 の設定名 CFN_* を参照するコードが
+ *	残っているため、3.0 の CNF_* に読み替える。
+ */
+#ifndef CFN_MAX_TSKID
+#define CFN_MAX_TSKID		CNF_MAX_TSKID
+#define CFN_MAX_SEMID		CNF_MAX_SEMID
+#define CFN_MAX_FLGID		CNF_MAX_FLGID
+#define CFN_MAX_MBXID		CNF_MAX_MBXID
+#define CFN_MAX_MTXID		CNF_MAX_MTXID
+#define CFN_MAX_MBFID		CNF_MAX_MBFID
+#define CFN_MAX_MPLID		CNF_MAX_MPLID
+#define CFN_MAX_MPFID		CNF_MAX_MPFID
+#define CFN_MAX_PORID		CNF_MAX_PORID
+#define CFN_TIMER_PERIOD	CNF_TIMER_PERIOD
+#define CFN_VER_MAJOR		CNF_VER_PRVER
+#define CFN_VER_MINOR		CNF_VER_PRNO1
+#define NUM_PRI			CNF_MAX_TSKPRI	/* 優先度レベル数（2.0 の別名） */
+#endif
 
 #endif /* __TK_CONFIG__ */

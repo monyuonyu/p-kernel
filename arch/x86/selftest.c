@@ -29,7 +29,7 @@
 #include "degrade.h"
 #include "mem_store.h"
 
-IMPORT void tm_putstring(UB *str);
+#include <tmonitor.h>	/* tm_putstring（2.0/3.0 で戻り値型が異なるためヘッダに委ねる） */
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */

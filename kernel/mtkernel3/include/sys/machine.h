@@ -68,6 +68,14 @@
 
 #endif
 
+/* p-kernel 追加ターゲット: x86 PC ベアメタル（QEMU） */
+#ifdef _X86_PC_
+#include "sysdepend/x86_pc/machine.h"
+
+#define Csym(sym) sym
+
+#endif
+
 /* ===== Cコンパイラ依存の定義 =========================================== */
 
 #ifdef __GNUC__

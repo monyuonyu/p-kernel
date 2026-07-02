@@ -114,7 +114,22 @@ struct task_control_block {
 #if USE_OBJECT_NAME
 	UB	name[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
+
+	/* p-kernel 拡張: 同一優先度内ラウンドロビン（SCHED_RR）
+	 *	micro T-Kernel 2.0 ポートから移植。フィールドは TCB 末尾に
+	 *	追加しているため、アセンブラが参照する先頭側のオフセット
+	 *	（task / tskctxb）には影響しない。 */
+	UB	sched_policy;		/* SCHED_FIFO または SCHED_RR */
+	UH	time_slice;		/* タイムスライス [tick] */
+	UH	remaining_slice;	/* 現スライスの残り [tick] */
 };
+
+/*
+ * スケジューリングポリシー（p-kernel 拡張）
+ */
+#define SCHED_FIFO		0	/* 優先度プリエンプティブのみ（既定） */
+#define SCHED_RR		1	/* 同一優先度内ラウンドロビン */
+#define DEFAULT_TIME_SLICE	10	/* 10 tick × 10ms = スライス 100ms */
 
 
 /*

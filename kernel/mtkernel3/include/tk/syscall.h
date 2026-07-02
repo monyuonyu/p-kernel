@@ -466,7 +466,12 @@ typedef struct t_dssy {
 	PRI	ssypri;		/* サブシステム優先度 */
 	FP	svchdr;		/* 拡張SVCハンドラアドレス */
 	FP	breakfn;	/* ブレーク関数アドレス */
+	/* p-kernel 変更: micro T-Kernel 2.0 互換のフィールドを復元
+	 *	（arch/x86 の fs/net/blk サブシステムが使用） */
+	FP	startupfn;	/* スタートアップ関数アドレス（未使用） */
+	FP	cleanupfn;	/* クリーンアップ関数アドレス（タスク終了時） */
 	FP	eventfn;	/* イベント関数アドレス */
+	SZ	resblksz;	/* リソース管理ブロックサイズ（未使用） */
 } T_DSSY;
 
 /*

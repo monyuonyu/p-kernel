@@ -156,7 +156,14 @@ LOCAL void init_task_main(void)
 
 	} else {
 		SYSTEM_MESSAGE("!ERROR! Init Task start\n");	/* 起動失敗メッセージ */
+		shutdown_system(fin);	/* 起動失敗時のみ停止。戻らない */
 	}
 
-	shutdown_system(fin);	/* ここには戻らない */
+	/* p-kernel 変更: usermain() の復帰はシステム停止を意味しない。
+	 * p-kernel の usermain はシェル・ネットワーク等のタスク群を
+	 * 起動して戻る設計（micro T-Kernel 2.0 と同じ意味論）のため、
+	 * 初期タスクだけを静かに終了し、システムは動き続ける。
+	 * 明示的な停止は tk_exd_tsk 後も knl_tkernel_exit() で可能。 */
+	SYSTEM_MESSAGE("[T-Kernel] usermain() returned - initial task exits\n");
+	tk_ext_tsk();		/* ここには戻らない */
 }
