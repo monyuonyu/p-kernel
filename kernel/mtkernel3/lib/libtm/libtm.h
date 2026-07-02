@@ -11,16 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *    libtm.h
- *    T-Monitor compatible calls library
+/**
+ * @file	libtm.h
+ * @brief	T-Monitor 互換ライブラリの内部定義
+ *
+ * 制御文字コードと、通信ポートのシステム依存部が提供する
+ * 初期化・送受信関数を宣言します。
  */
 
 #include <config_tm.h>
 
-#define	CHR_CR		(0x0D)		/* Carriage Return */
-#define	CHR_ETX		(0x03)		/* End of TeXt */
-#define	CHR_LF		(0x0A)		/* Line Feed */
+#define	CHR_CR		(0x0D)		/* 復帰（Carriage Return） */
+#define	CHR_ETX		(0x03)		/* テキスト終了（End of TeXt、Ctrl-C） */
+#define	CHR_LF		(0x0A)		/* 改行（Line Feed） */
 
 IMPORT void tm_com_init(void);
 

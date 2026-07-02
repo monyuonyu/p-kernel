@@ -1,4 +1,4 @@
-﻿/*
+/*
  *----------------------------------------------------------------------
  *    Device Driver for μT-Kernel 3.00.05
  *
@@ -12,21 +12,23 @@
  */
 
 
-/*
- *	config_device.h
- *	Device configuration definition
+/**
+ * @file	config_device.h
+ * @brief	デバイスコンフィグレーション定義
+ *
+ * サンプルデバイスドライバの各デバイスの使用有無を定義します。
  */
 
 #ifndef	__DEV_CONFIG_H__
 #define	__DEV_CONFIG_H__
 
 /* ------------------------------------------------------------------------ */
-/* Device usage settings
- *	1: Use   0: Do not use
+/* デバイス使用設定
+ *	1: 使用する   0: 使用しない
  */
 
-#define DEVCNF_USE_SER		1		// Serial communication device 
-#define DEVCNF_USE_ADC		1		// A/D conversion device
-#define DEVCNF_USE_IIC		1		// I2C communication device
+#define DEVCNF_USE_SER		1		// シリアル通信デバイス
+#define DEVCNF_USE_ADC		1		// A/D 変換デバイス
+#define DEVCNF_USE_IIC		1		// I2C 通信デバイス
 
 #endif	/* __DEV_CONFIG_H__ */
