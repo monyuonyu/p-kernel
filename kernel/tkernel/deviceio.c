@@ -11,9 +11,14 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	deviceio.c
- *	Device Management Function: Input/Output
+/**
+ * @file	deviceio.c
+ * @brief	デバイス管理機能（入出力）
+ *
+ * デバイスのオープン・クローズ（tk_opn_dev, tk_cls_dev）、
+ * 入出力要求の開始と完了待ち（tk_rea_dev, tk_wri_dev, tk_wai_dev や
+ * 同期版の tk_srea_dev, tk_swri_dev）、サスペンド処理（tk_sus_dev）、
+ * およびデバイス入出力関連の初期化・終了処理を提供します。
  */
 
 #include "kernel.h"
@@ -22,25 +27,31 @@
 
 #if USE_DEVICE
 
-Noinit(EXPORT OpnCB	knl_OpnCBtbl[MAX_OPNDEV]);	/* Open management information table */
-Noinit(EXPORT QUEUE	knl_FreeOpnCB);	/* Unused queue */
+Noinit(EXPORT OpnCB	knl_OpnCBtbl[MAX_OPNDEV]);	/* オープン管理情報テーブル */
+Noinit(EXPORT QUEUE	knl_FreeOpnCB);	/* 未使用キュー */
 
-Noinit(EXPORT ReqCB	knl_ReqCBtbl[MAX_REQDEV]);	/* Request management information table */
-Noinit(EXPORT QUEUE	knl_FreeReqCB);	/* Unused queue */
+Noinit(EXPORT ReqCB	knl_ReqCBtbl[MAX_REQDEV]);	/* 要求管理情報テーブル */
+Noinit(EXPORT QUEUE	knl_FreeReqCB);	/* 未使用キュー */
 
 Noinit(EXPORT ResCB knl_resource_control_block);
 
 
-/*
- * Get resource management information
+/**
+ * @brief	リソース管理情報の取得
+ *
+ * リソース管理情報を返します。スタートアップ関数が未実行で
+ * オープンデバイス管理キューが未初期化の場合は、この時点で
+ * 初期化します。
+ *
+ * @return	リソース管理情報へのポインタ（常に非 NULL）
  */
 EXPORT ResCB* knl_GetResCB( void )
 {
 	LockDM();
 
-	/* If the startup function is not called, initialize at this point */
+	/* スタートアップ関数が呼ばれていなければ、この時点で初期化する */
 	if ( knl_resource_control_block.openq.next == NULL ) {
-		/* Initialization of open device management queue */
+		/* オープンデバイス管理キューの初期化 */
 		QueInit(&(knl_resource_control_block.openq));
 	}
 
@@ -49,8 +60,19 @@ EXPORT ResCB* knl_GetResCB( void )
 	return &knl_resource_control_block;
 }
 
-/*
- * Verify validity of device descriptor
+/**
+ * @brief	デバイスディスクリプタの正当性検査
+ *
+ * デバイスディスクリプタ dd の範囲とオープン状態を検査し、
+ * 対応するオープン管理情報を返します。mode が非 0 の場合は
+ * オープンモードとのアクセス権も検査します。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	mode	要求するアクセスモード（0 なら検査しない）
+ * @param	p_opncb	オープン管理情報の返却先
+ * @retval	E_OK	正常終了
+ * @retval	E_ID	dd が範囲外、または未オープン
+ * @retval	E_OACV	オープンモードがアクセス要求を許可していない
  */
 EXPORT ER knl_check_devdesc( ID dd, UINT mode, OpnCB **p_opncb )
 {
@@ -74,8 +96,14 @@ EXPORT ER knl_check_devdesc( ID dd, UINT mode, OpnCB **p_opncb )
 	return E_OK;
 }
 
-/*
- * Free open management block
+/**
+ * @brief	オープン管理ブロックの解放
+ *
+ * オープン管理ブロックをオープンキューとリソースキューから外します。
+ * free が TRUE の場合は未使用キューへ戻します。
+ *
+ * @param	opncb	解放するオープン管理ブロック
+ * @param	free	TRUE なら未使用キューへ返却する
  */
 EXPORT void knl_delOpnCB( OpnCB *opncb, BOOL free )
 {
@@ -88,8 +116,12 @@ EXPORT void knl_delOpnCB( OpnCB *opncb, BOOL free )
 	opncb->resid = 0;
 }
 
-/*
- * Free request management block
+/**
+ * @brief	要求管理ブロックの解放
+ *
+ * 要求管理ブロックを要求キューから外し、未使用キューへ戻します。
+ *
+ * @param	reqcb	解放する要求管理ブロック
  */
 EXPORT void knl_delReqCB( ReqCB *reqcb )
 {
@@ -101,8 +133,16 @@ EXPORT void knl_delReqCB( ReqCB *reqcb )
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * TRUE if specified device is open.
+/**
+ * @brief	デバイスのオープン状態検査
+ *
+ * 指定デバイスの指定サブユニットがオープンされていれば TRUE を
+ * 返します。
+ *
+ * @param	devcb	デバイス登録情報
+ * @param	unitno	サブユニット番号
+ * @retval	TRUE	オープンされている
+ * @retval	FALSE	オープンされていない
  */
 EXPORT BOOL knl_chkopen( DevCB *devcb, INT unitno )
 {
@@ -124,20 +164,31 @@ LOCAL CONST T_CSEM knl_pk_csem_DM = {
 	1,
 };
 
-/*
- * Get open management block
+/**
+ * @brief	オープン管理ブロックの獲得
+ *
+ * 未使用キューからオープン管理ブロックを1つ取り出して初期化し、
+ * デバイスのオープンキューとリソース管理情報のオープンキューへ
+ * 登録します。
+ *
+ * @param	devcb	オープンするデバイスの登録情報
+ * @param	unitno	サブユニット番号
+ * @param	omode	オープンモード
+ * @param	rescb	リソース管理情報
+ * @return	獲得したオープン管理ブロック。空きがない場合は NULL。
+ * @note	resid は 0（オープン処理未完了）のまま返します。
  */
 LOCAL OpnCB* newOpnCB( DevCB *devcb, INT unitno, UINT omode, ResCB *rescb )
 {
 	OpnCB	*opncb;
 
-	/* Get space in open management block */
+	/* オープン管理ブロックの空きを獲得 */
 	opncb = (OpnCB*)QueRemoveNext(&knl_FreeOpnCB);
 	if ( opncb == NULL ) {
-		return NULL; /* No space */
+		return NULL; /* 空きなし */
 	}
 
-	/* Register as open device */
+	/* オープンデバイスとして登録 */
 	QueInsert(&opncb->q, &devcb->openq);
 	QueInsert(&opncb->resq, &rescb->openq);
 
@@ -149,13 +200,23 @@ LOCAL OpnCB* newOpnCB( DevCB *devcb, INT unitno, UINT omode, ResCB *rescb )
 	opncb->nwaireq = 0;
 	opncb->abort_tskid = 0;
 
-	opncb->resid  = 0; /* Indicate that open processing is not completed */
+	opncb->resid  = 0; /* オープン処理が未完了であることを示す */
 
 	return opncb;
 }
 
-/*
- * Check open mode
+/**
+ * @brief	オープンモードの検査
+ *
+ * 現在のオープン状態と要求されたオープンモード omode を照合し、
+ * 排他指定（TD_EXCL/TD_REXCL/TD_WEXCL）と競合しないか検査します。
+ *
+ * @param	devcb	デバイス登録情報
+ * @param	unitno	サブユニット番号
+ * @param	omode	要求されたオープンモード
+ * @retval	E_OK	オープン可能
+ * @retval	E_PAR	omode に読み書き（TD_UPDATE）の指定がない
+ * @retval	E_BUSY	排他条件により現在オープンできない
  */
 LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 {
@@ -167,7 +228,7 @@ LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 		return E_PAR;
 	}
 
-	/* Check current open state */
+	/* 現在のオープン状態を検査 */
 	read = write = rexcl = wexcl = 0;
 	for ( q = devcb->openq.next; q != &devcb->openq; q = q->next ) {
 		opncb = (OpnCB*)q;
@@ -188,7 +249,7 @@ LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 		}
 	}
 
-	/* Is it able to open? */
+	/* オープン可能か？ */
 	if ( (omode & (TD_EXCL|TD_REXCL)) != 0 && read  > 0 ) {
 		return E_BUSY;
 	}
@@ -205,8 +266,25 @@ LOCAL ER chkopenmode( DevCB *devcb, INT unitno, UINT omode )
 	return E_OK;
 }
 
-/*
- * Device open
+/**
+ * @brief	デバイスのオープン
+ *
+ * 論理デバイス名 devnm のデバイスをオープンモード omode で
+ * オープンし、デバイスディスクリプタを返します。必要に応じて
+ * ドライバのオープン関数（openfn）を呼び出します。
+ *
+ * @param	devnm	論理デバイス名
+ * @param	omode	オープンモード
+ * @return	正の値ならデバイスディスクリプタ。負の値ならエラーコード。
+ * @retval	E_CTX	リソース管理情報が取得できない
+ * @retval	E_NOEXS	デバイスが未登録、またはサブユニット番号が範囲外
+ * @retval	E_PAR	omode が不正
+ * @retval	E_BUSY	排他条件により現在オープンできない
+ * @retval	E_LIMIT	同時オープン数（MAX_OPNDEV）の上限超過
+ * @retval	E_SYS	アボート完了確認用セマフォの生成に失敗
+ * @note	同一サブユニットが既にオープン済みで、ドライバ属性に
+ *		TDA_OPENREQ が指定されていない場合、openfn は
+ *		呼び出しません。
  */
 SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 {
@@ -222,7 +300,7 @@ SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 
 	unitno = knl_phydevnm(pdevnm, devnm);
 
-	/* Get resource management information */
+	/* リソース管理情報の取得 */
 	rescb = knl_GetResCB();
 	if ( rescb == NULL ) {
 		ercd = E_CTX;
@@ -231,14 +309,14 @@ SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 
 	LockDM();
 
-	/* Search device to open */
+	/* オープンするデバイスを検索 */
 	devcb = knl_searchDevCB(pdevnm);
 	if ( devcb == NULL || unitno > devcb->ddev.nsub ) {
 		ercd = E_NOEXS;
 		goto err_ret2;
 	}
 
-	/* Check open mode */
+	/* オープンモードの検査 */
 	ercd = chkopenmode(devcb, unitno, omode);
 	if ( ercd < E_OK ) {
 		goto err_ret2;
@@ -247,12 +325,12 @@ SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 	openfn = (OPNFN)devcb->ddev.openfn;
 	exinf = devcb->ddev.exinf;
 
-	/* Is device driver call required? */
+	/* デバイスドライバ呼び出しが必要か？ */
 	if ( knl_chkopen(devcb, unitno) && (devcb->ddev.drvatr & TDA_OPENREQ) == 0 ) {
 		openfn = NULL;
 	}
 
-	/* Get open management block */
+	/* オープン管理ブロックの獲得 */
 	opncb = newOpnCB(devcb, unitno, omode, rescb);
 	if ( opncb == NULL ) {
 		ercd = E_LIMIT;
@@ -269,7 +347,7 @@ SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 	UnlockDM();
 
 	if ( openfn != NULL ) {
-		/* Device driver call */
+		/* デバイスドライバ呼び出し */
 		DISABLE_INTERRUPT;
 		knl_ctxtsk->sysmode++;
 		ENABLE_INTERRUPT;
@@ -284,7 +362,7 @@ SYSCALL ID tk_opn_dev( CONST UB *devnm, UINT omode )
 	}
 
 	LockDM();
-	opncb->resid = 1; /* Indicate that open processing is completed */
+	opncb->resid = 1; /* オープン処理が完了したことを示す */
 	UnlockDM();
 
 	return DD(opncb);
@@ -300,8 +378,15 @@ err_ret1:
 	return ercd;
 }
 
-/*
- * Abort all requests
+/**
+ * @brief	全要求のアボート
+ *
+ * 指定したオープン管理ブロックに対する処理中・待ち中の全要求を
+ * ドライバのアボート関数（abortfn）でアボートし、その完了を
+ * 待った後、残った要求をドライバの完了待ち関数（waitfn）で
+ * 完了させて登録解除します。
+ *
+ * @param	opncb	対象のオープン管理ブロック
  */
 LOCAL void abort_allrequest( OpnCB *opncb )
 {
@@ -312,7 +397,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 	ReqCB	*reqcb;
 	QUEUE	*q;
 
-	/* If 'execfn' and 'waitfn' are called, execute abort request. */
+	/* 'execfn' や 'waitfn' の呼び出し中であれば、アボート要求を実行する */
 	LockDM();
 
 	devcb = opncb->devcb;
@@ -324,10 +409,10 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 	opncb->abort_cnt = 0;
 
 	if ( opncb->nwaireq > 0 ) {
-		/* Multiple requests wait */
+		/* 複数要求の完了待ち中 */
 		reqcb = DEVREQ_REQCB(opncb->waireqlst);
 
-		/* Device driver call */
+		/* デバイスドライバ呼び出し */
 		DISABLE_INTERRUPT;
 		knl_ctxtsk->sysmode++;
 		ENABLE_INTERRUPT;
@@ -338,7 +423,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 		opncb->abort_cnt++;
 	} else {
-		/* Start request or single request wait */
+		/* 要求の開始処理中、または単一要求の完了待ち中 */
 		for ( q = opncb->requestq.next; q != &opncb->requestq; q = q->next ) {
 			reqcb = (ReqCB*)q;
 			if ( reqcb->tskid == 0 ) {
@@ -347,7 +432,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 			reqcb->req.abort = TRUE;
 
-			/* Device driver call */
+			/* デバイスドライバ呼び出し */
 			DISABLE_INTERRUPT;
 			knl_ctxtsk->sysmode++;
 			ENABLE_INTERRUPT;
@@ -363,12 +448,12 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 	UnlockDM();
 
 	if ( opncb->abort_cnt > 0 ) {
-		/* Wait for completion of abort request processing */
+		/* アボート要求処理の完了を待つ */
 		tk_wai_sem(opncb->abort_semid, 1, TMO_FEVR);
 	}
 	opncb->abort_tskid = 0;
 
-	/* Abort remaining requests and wait for completion */
+	/* 残っている要求をアボートし、完了を待つ */
 	LockDM();
 	while ( !isQueEmpty(&opncb->requestq) ) {
 		reqcb = (ReqCB*)opncb->requestq.next;
@@ -376,7 +461,7 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 		UnlockDM();
 
-		/* Device driver call */
+		/* デバイスドライバ呼び出し */
 		DISABLE_INTERRUPT;
 		knl_ctxtsk->sysmode++;
 		ENABLE_INTERRUPT;
@@ -387,14 +472,25 @@ LOCAL void abort_allrequest( OpnCB *opncb )
 
 		LockDM();
 
-		/* Unregister completed request */
+		/* 完了した要求の登録解除 */
 		knl_delReqCB(reqcb);
 	}
 	UnlockDM();
 }
 
-/*
- * Device close processing
+/**
+ * @brief	デバイスクローズ処理
+ *
+ * 処理中の全要求をアボートした後、アボート完了確認用セマフォの削除、
+ * オープン管理ブロックの解放を行い、必要に応じてドライバの
+ * クローズ関数（closefn）を呼び出します。
+ *
+ * @param	opncb	クローズするオープン管理ブロック
+ * @param	option	クローズオプション（TD_EJECT など）
+ * @return	ドライバのクローズ関数の返値。呼び出し不要の場合は E_OK。
+ * @note	同一サブユニットが他でオープン中の場合、TD_EJECT は
+ *		無効化され、ドライバ属性に TDA_OPENREQ がなければ
+ *		closefn は呼び出しません。
  */
 EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 {
@@ -405,7 +501,7 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 	INT	unitno;
 	ER	ercd = E_OK;
 
-	/* Abort all requests during processing */
+	/* 処理中の全要求をアボート */
 	abort_allrequest(opncb);
 
 	LockDM();
@@ -416,13 +512,13 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 	exinf = devcb->ddev.exinf;
 	devid = DEVID(devcb, unitno);
 
-	/* Delete semaphore for completion check of abortion */
+	/* アボート完了確認用セマフォの削除 */
 	tk_del_sem(opncb->abort_semid);
 
-	/* Free open management block */
+	/* オープン管理ブロックの解放 */
 	knl_delOpnCB(opncb, FALSE);
 
-	/* Is device driver call required? */
+	/* デバイスドライバ呼び出しが必要か？ */
 	if ( knl_chkopen(devcb, unitno) ) {
 		option &= ~TD_EJECT;
 		if ( (devcb->ddev.drvatr & TDA_OPENREQ) == 0 ) {
@@ -433,7 +529,7 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 	UnlockDM();
 
 	if ( closefn != NULL ) {
-		/* Device driver call */
+		/* デバイスドライバ呼び出し */
 		DISABLE_INTERRUPT;
 		knl_ctxtsk->sysmode++;
 		ENABLE_INTERRUPT;
@@ -444,15 +540,23 @@ EXPORT ER knl_close_device( OpnCB *opncb, UINT option )
 	}
 
 	LockDM();
-	/* Return open management block to FreeQue */
+	/* オープン管理ブロックを未使用キューへ返却 */
 	QueInsert(&opncb->q, &knl_FreeOpnCB);
 	UnlockDM();
 
 	return ercd;
 }
 
-/*
- * Device close
+/**
+ * @brief	デバイスのクローズ
+ *
+ * デバイスディスクリプタ dd で指定したデバイスをクローズします。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	option	クローズオプション（TD_EJECT など）
+ * @retval	E_OK	正常終了
+ * @retval	E_ID	dd が不正
+ * @return	その他、ドライバのクローズ関数の返値
  */
 SYSCALL ER tk_cls_dev( ID dd, UINT option )
 {
@@ -467,11 +571,11 @@ SYSCALL ER tk_cls_dev( ID dd, UINT option )
 		goto err_ret;
 	}
 
-	opncb->resid = 0; /* Indicate that it is during close processing */
+	opncb->resid = 0; /* クローズ処理中であることを示す */
 
 	UnlockDM();
 
-	/* Device close processing */
+	/* デバイスクローズ処理 */
 	ercd = knl_close_device(opncb, option);
 
 err_ret:
@@ -480,20 +584,26 @@ err_ret:
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Get request management block
+/**
+ * @brief	要求管理ブロックの獲得
+ *
+ * 未使用キューから要求管理ブロックを1つ取り出し、指定した
+ * オープン管理ブロックの要求キューへ登録します。
+ *
+ * @param	opncb	要求元のオープン管理ブロック
+ * @return	獲得した要求管理ブロック。空きがない場合は NULL。
  */
 LOCAL ReqCB* newReqCB( OpnCB *opncb )
 {
 	ReqCB	*reqcb;
 
-	/* Get space in request management block */
+	/* 要求管理ブロックの空きを獲得 */
 	reqcb = (ReqCB*)QueRemoveNext(&knl_FreeReqCB);
 	if ( reqcb == NULL ) {
-		return NULL; /* No space */
+		return NULL; /* 空きなし */
 	}
 
-	/* Register as requested open device */
+	/* 要求先のオープンデバイスとして登録 */
 	QueInsert(&reqcb->q, &opncb->requestq);
 
 	reqcb->opncb = opncb;
@@ -501,8 +611,26 @@ LOCAL ReqCB* newReqCB( OpnCB *opncb )
 	return reqcb;
 }
 
-/*
- * Request for starting input/output to device
+/**
+ * @brief	デバイスへの入出力開始要求
+ *
+ * 要求パケットを作成してドライバの処理開始関数（execfn）を
+ * 呼び出し、入出力を開始します。tk_rea_dev / tk_wri_dev の
+ * 共通処理です。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	start	開始位置（負値は属性データの指定）
+ * @param	buf	入出力バッファ
+ * @param	size	入出力サイズ
+ * @param	tmout	要求受け付けのタイムアウト時間
+ * @param	cmd	要求コマンド（TDC_READ または TDC_WRITE）
+ * @return	正の値なら要求ID。負の値ならエラーコード。
+ * @retval	E_ID	dd が不正
+ * @retval	E_OACV	オープンモードがアクセス要求を許可していない
+ * @retval	E_LIMIT	同時要求数（MAX_REQDEV）の上限超過
+ * @return	その他、ドライバの処理開始関数の返値
+ * @note	start が -0x7fffffff～-0x00010000 の範囲の場合は
+ *		オープンモードの検査を行いません。
  */
 EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 {
@@ -517,7 +645,7 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 	LockDM();
 
 	if ( start <= -0x00010000 && start >= -0x7fffffff ) {
-		m = 0; /* Ignore open mode */
+		m = 0; /* オープンモードを無視 */
 	} else {
 		m = ( cmd == TDC_READ )? TD_READ: TD_WRITE;
 	}
@@ -530,14 +658,14 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 	execfn = (EXCFN)devcb->ddev.execfn;
 	exinf = devcb->ddev.exinf;
 
-	/* Get request management block */
+	/* 要求管理ブロックの獲得 */
 	reqcb = newReqCB(opncb);
 	if ( reqcb == NULL ) {
 		ercd = E_LIMIT;
 		goto err_ret1;
 	}
 
-	/* Set request packet */
+	/* 要求パケットの設定 */
 	reqcb->req.next   = NULL;
 	reqcb->req.exinf  = NULL;
 	reqcb->req.devid  = DEVID(devcb, opncb->unitno);
@@ -549,12 +677,12 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 	reqcb->req.asize  = 0;
 	reqcb->req.error  = 0;
 
-	/* Indicate that it is during processing */
+	/* 処理中であることを示す */
 	reqcb->tskid = tk_get_tid();
 
 	UnlockDM();
 
-	/* Device driver call */
+	/* デバイスドライバ呼び出し */
 	DISABLE_INTERRUPT;
 	knl_ctxtsk->sysmode++;
 	ENABLE_INTERRUPT;
@@ -565,11 +693,11 @@ EXPORT ID knl_request( ID dd, W start, void *buf, W size, TMO tmout, INT cmd )
 
 	LockDM();
 
-	/* Indicate that it is not during processing */
+	/* 処理中でないことを示す */
 	reqcb->tskid = 0;
 
-	/* If there is an abort completion wait task,
-	   notify abort completion */
+	/* アボート完了待ちタスクがあれば、
+	   アボート完了を通知する */
 	if ( opncb->abort_tskid > 0 && --opncb->abort_cnt == 0 ) {
 		tk_sig_sem(opncb->abort_semid, 1);
 	}
@@ -589,8 +717,18 @@ err_ret1:
 	return ercd;
 }
 
-/*
- * Start reading from device
+/**
+ * @brief	デバイスからの読み込み開始
+ *
+ * デバイスへ読み込み要求を発行し、要求IDを返します。読み込みの
+ * 完了は tk_wai_dev で待ちます。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	start	読み込み開始位置（負値は属性データの指定）
+ * @param	buf	読み込みバッファ
+ * @param	size	読み込みサイズ
+ * @param	tmout	要求受け付けのタイムアウト時間
+ * @return	正の値なら要求ID。負の値ならエラーコード。
  */
 SYSCALL ID tk_rea_dev( ID dd, W start, void *buf, SZ size, TMO tmout )
 {
@@ -601,8 +739,18 @@ SYSCALL ID tk_rea_dev( ID dd, W start, void *buf, SZ size, TMO tmout )
 	return ercd;
 }
 
-/*
- * Synchronous reading from device
+/**
+ * @brief	デバイスからの同期読み込み
+ *
+ * tk_rea_dev で読み込みを開始し、tk_wai_dev で完了を待ちます。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	start	読み込み開始位置（負値は属性データの指定）
+ * @param	buf	読み込みバッファ
+ * @param	size	読み込みサイズ
+ * @param	asize	実際に読み込んだサイズの返却先
+ * @retval	E_OK	正常終了
+ * @return	負の値なら要求発行・完了待ち・入出力のエラーコード
  */
 SYSCALL ER tk_srea_dev( ID dd, W start, void *buf, SZ size, SZ *asize )
 {
@@ -624,8 +772,18 @@ err_ret:
 	return ercd;
 }
 
-/*
- * Start writing to device
+/**
+ * @brief	デバイスへの書き込み開始
+ *
+ * デバイスへ書き込み要求を発行し、要求IDを返します。書き込みの
+ * 完了は tk_wai_dev で待ちます。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	start	書き込み開始位置（負値は属性データの指定）
+ * @param	buf	書き込みデータのバッファ
+ * @param	size	書き込みサイズ
+ * @param	tmout	要求受け付けのタイムアウト時間
+ * @return	正の値なら要求ID。負の値ならエラーコード。
  */
 SYSCALL ID tk_wri_dev( ID dd, W start, CONST void *buf, SZ size, TMO tmout )
 {
@@ -636,8 +794,18 @@ SYSCALL ID tk_wri_dev( ID dd, W start, CONST void *buf, SZ size, TMO tmout )
 	return ercd;
 }
 
-/*
- * Synchronous writing to device
+/**
+ * @brief	デバイスへの同期書き込み
+ *
+ * tk_wri_dev で書き込みを開始し、tk_wai_dev で完了を待ちます。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	start	書き込み開始位置（負値は属性データの指定）
+ * @param	buf	書き込みデータのバッファ
+ * @param	size	書き込みサイズ
+ * @param	asize	実際に書き込んだサイズの返却先
+ * @retval	E_OK	正常終了
+ * @return	負の値なら要求発行・完了待ち・入出力のエラーコード
  */
 SYSCALL ER tk_swri_dev( ID dd, W start, CONST void *buf, SZ size, SZ *asize )
 {
@@ -659,8 +827,15 @@ err_ret:
 	return ercd;
 }
 
-/*
- * Verify validity of request ID
+/**
+ * @brief	要求IDの正当性検査
+ *
+ * 要求ID reqid の範囲を検査し、その要求が指定したオープン管理
+ * ブロックに属することを確認して要求管理ブロックを返します。
+ *
+ * @param	reqid	要求ID
+ * @param	opncb	要求が属するべきオープン管理ブロック
+ * @return	要求管理ブロック。不正な場合は NULL。
  */
 LOCAL ReqCB* knl_check_reqid( ID reqid, OpnCB *opncb )
 {
@@ -677,8 +852,24 @@ LOCAL ReqCB* knl_check_reqid( ID reqid, OpnCB *opncb )
 	return reqcb;
 }
 
-/*
- * Request completion wait
+/**
+ * @brief	要求完了待ち
+ *
+ * デバイスディスクリプタ dd に対する入出力要求の完了を待ちます。
+ * reqid に要求IDを指定するとその要求の完了を、0 を指定すると
+ * いずれかの要求の完了を待ちます。完了待ちはドライバの
+ * 完了待ち関数（waitfn）で行います。
+ *
+ * @param	dd	デバイスディスクリプタ
+ * @param	reqid	要求ID（0 ならいずれかの要求の完了を待つ）
+ * @param	asize	実際に入出力したサイズの返却先
+ * @param	ioer	入出力エラーコードの返却先
+ * @param	tmout	タイムアウト時間
+ * @return	正の値なら完了した要求のID。負の値ならエラーコード。
+ * @retval	E_ID	dd または reqid が不正
+ * @retval	E_OBJ	既に他タスクが完了待ち中、または要求が処理中
+ * @retval	E_NOEXS	reqid が 0 で、完了を待つ要求が存在しない
+ * @retval	E_SYS	ドライバが不正な要求番号を返した
  */
 SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 {
@@ -706,7 +897,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 	exinf = devcb->ddev.exinf;
 
 	if ( reqid == 0 ) {
-		/* When waiting for completion of any of requests for 'dd' */
+		/* 'dd' に対するいずれかの要求の完了を待つ場合 */
 		if ( opncb->nwaireq > 0 || opncb->waitone > 0 ) {
 			ercd = E_OBJ;
 			goto err_ret2;
@@ -716,7 +907,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 			goto err_ret2;
 		}
 
-		/* Create wait request list */
+		/* 完了待ち要求リストの作成 */
 		reqcb = (ReqCB*)opncb->requestq.next;
 		for ( nreq = 1;; nreq++ ) {
 			reqcb->tskid = tskid;
@@ -733,7 +924,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 		opncb->waireqlst = devreq;
 		opncb->nwaireq = nreq;
 	} else {
-		/* Wait for completion of abort request processing */
+		/* 指定した要求の完了を待つ場合 */
 		reqcb = knl_check_reqid(reqid, opncb);
 		if ( reqcb == NULL ) {
 			ercd = E_ID;
@@ -744,7 +935,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 			goto err_ret2;
 		}
 
-		/* Create waiting request list */
+		/* 完了待ち要求リストの作成 */
 		reqcb->tskid = tskid;
 		devreq = &reqcb->req;
 		devreq->next = NULL;
@@ -755,7 +946,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 
 	UnlockDM();
 
-	/* Device driver call */
+	/* デバイスドライバ呼び出し */
 	DISABLE_INTERRUPT;
 	knl_ctxtsk->sysmode++;
 	ENABLE_INTERRUPT;
@@ -773,20 +964,20 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 
 	LockDM();
 
-	/* Free wait processing */
+	/* 完了待ち状態の解除処理 */
 	if ( reqid == 0 ) {
 		opncb->nwaireq = 0;
 	} else {
 		opncb->waitone--;
 	}
 
-	/* If there is an abort completion wait task,
-	   notify abort completion */
+	/* アボート完了待ちタスクがあれば、
+	   アボート完了を通知する */
 	if ( opncb->abort_tskid > 0 && --opncb->abort_cnt == 0 ) {
 		tk_sig_sem(opncb->abort_semid, 1);
 	}
 
-	/* Get processing result */
+	/* 処理結果の取得 */
 	while ( devreq != NULL ) {
 		reqcb = DEVREQ_REQCB(devreq);
 		if ( reqno-- == 0 ) {
@@ -802,7 +993,7 @@ SYSCALL ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout )
 		goto err_ret2;
 	}
 
-	/* Unregister completed request */
+	/* 完了した要求の登録解除 */
 	knl_delReqCB(REQCB(reqid));
 
 	UnlockDM();
@@ -816,11 +1007,21 @@ err_ret2:
 
 /* ------------------------------------------------------------------------ */
 
-/* Suspend disable request count */
+/* サスペンド禁止要求カウント */
 EXPORT INT	knl_DisSusCnt = 0;
 
-/*
- * Send driver request event to each device
+/**
+ * @brief	全デバイスへのドライバ要求イベント送信
+ *
+ * 登録されている全デバイスのうち、disk の指定（ディスクデバイスか
+ * 否か）に一致するデバイスのイベント処理関数（eventfn）を順に
+ * 呼び出します。
+ *
+ * @param	evttyp	イベントタイプ（TDV_SUSPEND / TDV_RESUME）
+ * @param	disk	TRUE ならディスクデバイスのみ、FALSE なら
+ *			ディスク以外のデバイスのみを対象とする
+ * @return	最後に呼び出したイベント処理関数の返値
+ *		（対象がない場合は E_OK）
  */
 LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 {
@@ -839,7 +1040,7 @@ LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 			continue;
 		}
 
-		/* Device driver call */
+		/* デバイスドライバ呼び出し */
 		eventfn = (EVTFN)devcb->ddev.eventfn;
 		DISABLE_INTERRUPT;
 		knl_ctxtsk->sysmode++;
@@ -853,51 +1054,70 @@ LOCAL ER sendevt_alldevice( INT evttyp, BOOL disk )
 	return ercd;
 }
 
-/*
- * Suspend
+/**
+ * @brief	サスペンドの実行
+ *
+ * ディスク以外のデバイス、ディスクデバイスの順に TDV_SUSPEND
+ * イベントを送信し、復帰後は逆順に TDV_RESUME イベントを
+ * 送信します。サスペンド状態への遷移コードは実装位置のみ
+ * 用意されています。
+ *
+ * @return	最後に送信したイベントの返値
  */
 LOCAL ER do_suspend( void )
 {
 	ER	ercd;
 
-	/* Stop accepting device registration/unregistration */
+	/* デバイスの登録・登録解除の受け付けを停止 */
 	LockREG();
 
-	/* Suspend processing of device except for disks */
+	/* ディスク以外のデバイスのサスペンド処理 */
 	ercd = sendevt_alldevice(TDV_SUSPEND, FALSE);
 
-	/* Suspend processing of disk device */
+	/* ディスクデバイスのサスペンド処理 */
 	ercd = sendevt_alldevice(TDV_SUSPEND, TRUE);
 
-	/* Stop accepting new requests */
+	/* 新規要求の受け付けを停止 */
 	LockDM();
 
 	/*
-	 * Insert code to transit to suspend state here
+	 * サスペンド状態へ遷移するコードをここに挿入する
 	 */
 
 	/*
-	 * Insert code executed on returning from suspend state
+	 * サスペンド状態からの復帰時に実行するコードをここに挿入する
 	 */
 
 
-	/* Resume accepting requests */
+	/* 要求の受け付けを再開 */
 	UnlockDM();
 
-	/* Resume processing of disk device */
+	/* ディスクデバイスのレジューム処理 */
 	ercd = sendevt_alldevice(TDV_RESUME, TRUE);
 
-	/* Resume processing of device except for disks */
+	/* ディスク以外のデバイスのレジューム処理 */
 	ercd = sendevt_alldevice(TDV_RESUME, FALSE);
 
-	/* Resume accepting device registration/unregistration */
+	/* デバイスの登録・登録解除の受け付けを再開 */
 	UnlockREG();
 
 	return ercd;
 }
 
-/*
- * Suspend processing
+/**
+ * @brief	サスペンド処理
+ *
+ * mode の指定に従い、サスペンドの実行（TD_SUSPEND）、サスペンドの
+ * 禁止（TD_DISSUS）・許可（TD_ENASUS）、禁止要求カウントの取得
+ * （TD_CHECK）を行います。
+ *
+ * @param	mode	動作モード（TD_FORCE 指定で強制サスペンド）
+ * @return	正常終了時はサスペンド禁止要求カウント。
+ *		負の値ならエラーコード。
+ * @retval	E_CTX	リソース管理情報が取得できない
+ * @retval	E_BUSY	サスペンド禁止中（TD_FORCE 指定なし）
+ * @retval	E_QOVR	禁止要求カウントの上限（MAX_DISSUS）超過
+ * @retval	E_PAR	mode が不正
  */
 SYSCALL INT tk_sus_dev( UINT mode )
 {
@@ -905,7 +1125,7 @@ SYSCALL INT tk_sus_dev( UINT mode )
 	BOOL	suspend = FALSE;
 	ER	ercd;
 
-	/* Get resource management information */
+	/* リソース管理情報の取得 */
 	rescb = knl_GetResCB();
 	if ( rescb == NULL ) {
 		ercd = E_CTX;
@@ -915,7 +1135,7 @@ SYSCALL INT tk_sus_dev( UINT mode )
 	LockDM();
 
 	switch ( mode & 0xf ) {
-	  case TD_SUSPEND:	/* Suspend */
+	  case TD_SUSPEND:	/* サスペンド */
 		if ( knl_DisSusCnt > 0 && (mode & TD_FORCE) == 0 ) {
 			ercd = E_BUSY;
 			goto err_ret2;
@@ -923,7 +1143,7 @@ SYSCALL INT tk_sus_dev( UINT mode )
 		suspend = TRUE;
 		break;
 
-	  case TD_DISSUS:	/* Disable suspend */
+	  case TD_DISSUS:	/* サスペンド禁止 */
 		if ( knl_DisSusCnt >= MAX_DISSUS ) {
 			ercd = E_QOVR;
 			goto err_ret2;
@@ -931,14 +1151,14 @@ SYSCALL INT tk_sus_dev( UINT mode )
 		knl_DisSusCnt++;
 		rescb->dissus++;
 		break;
-	  case TD_ENASUS:	/* Enable suspend */
+	  case TD_ENASUS:	/* サスペンド許可 */
 		if ( rescb->dissus > 0 ) {
 			rescb->dissus--;
 			knl_DisSusCnt--;
 		}
 		break;
 
-	  case TD_CHECK:	/* Get suspend disable request count */
+	  case TD_CHECK:	/* サスペンド禁止要求カウントの取得 */
 		break;
 
 	  default:
@@ -949,7 +1169,7 @@ SYSCALL INT tk_sus_dev( UINT mode )
 	UnlockDM();
 
 	if ( suspend ) {
-		/* Suspend */
+		/* サスペンド */
 		ercd = do_suspend();
 		if ( ercd < E_OK ) {
 			goto err_ret1;
@@ -966,14 +1186,17 @@ err_ret1:
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Device management startup function
+/**
+ * @brief	デバイス管理スタートアップ処理
+ *
+ * リソース管理情報のオープンデバイス管理キューと
+ * サスペンド禁止要求カウントを初期化します。
  */
 EXPORT void knl_devmgr_startup( void )
 {
 	LockDM();
 
-	/* Initialization of open device management queue */
+	/* オープンデバイス管理キューの初期化 */
 	QueInit(&(knl_resource_control_block.openq));
 	knl_resource_control_block.dissus = 0;
 	
@@ -982,34 +1205,38 @@ EXPORT void knl_devmgr_startup( void )
 	return;
 }
 
-/*
- * Device management cleanup function
+/**
+ * @brief	デバイス管理クリーンアップ処理
+ *
+ * サスペンド禁止要求を解除し、オープン中の全デバイスを
+ * クローズします。デバイス管理機能が一度も使用されていない
+ * 場合は何もしません。
  */
 EXPORT void knl_devmgr_cleanup( void )
 {
 	OpnCB	*opncb;
 
-	/* Do nothing if it is not used even once */
+	/* 一度も使用されていない場合は何もしない */
 	if ( knl_resource_control_block.openq.next == NULL ) {
 		return;
 	}
 
 	LockDM();
 
-	/* Free suspend disable request */
+	/* サスペンド禁止要求の解除 */
 	knl_DisSusCnt -= knl_resource_control_block.dissus;
 	knl_resource_control_block.dissus = 0;
 
-	/* Close all open devices */
+	/* オープン中の全デバイスをクローズ */
 	while ( !isQueEmpty(&(knl_resource_control_block.openq)) ) {
 		opncb = RESQ_OPNCB(knl_resource_control_block.openq.next);
 
-		/* Indicate that it is during close processing */
+		/* クローズ処理中であることを示す */
 		opncb->resid = 0;
 
 		UnlockDM();
 
-		/* Device close processing */
+		/* デバイスクローズ処理 */
 		knl_close_device(opncb, 0);
 
 		LockDM();
@@ -1019,8 +1246,13 @@ EXPORT void knl_devmgr_cleanup( void )
 	return;
 }
 
-/*
- * Initialization sequence of device input/output-related
+/**
+ * @brief	デバイス入出力関連の初期化
+ *
+ * オープン管理情報テーブルと要求管理情報テーブルの全エントリを
+ * 未使用キューへつなぎます。
+ *
+ * @retval	E_OK	常に正常終了
  */
 EXPORT ER knl_initDevIO( void )
 {
@@ -1041,8 +1273,12 @@ EXPORT ER knl_initDevIO( void )
 	return E_OK;
 }
 
-/*
- * Finalization sequence of device input/output-related
+/**
+ * @brief	デバイス入出力関連の終了処理
+ *
+ * 現状は何も行いません。
+ *
+ * @retval	E_OK	常に正常終了
  */
 EXPORT ER knl_finishDevIO( void )
 {

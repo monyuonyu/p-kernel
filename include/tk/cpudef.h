@@ -11,10 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	cpudef.h
+/**
+ * @file	cpudef.h
+ * @brief	CPU 依存定義
  *
- *	CPU dependent definition
+ * ターゲットごとの CPU 依存定義（sysdepend 配下の cpudef.h）を
+ * 取り込みます。
  */
 
 #ifndef __TK_CPUDEF_H__

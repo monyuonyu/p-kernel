@@ -11,9 +11,14 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	rendezvous.c
- *	Rendezvous
+/**
+ * @file	rendezvous.c
+ * @brief	ランデブ機能の実装
+ *
+ * タスク間の同期的なメッセージ交換を行うランデブポートの
+ * 生成・削除・呼出・受付・回送・返答・状態参照 API（tk_cre_por 等）と、
+ * デバッガサポート機能（td_lst_por 等）を提供します。
+ * レガシー API（USE_LEGACY_API）構成でのみ組み込まれます。
  */
 
 
@@ -25,23 +30,29 @@
 #if USE_LEGACY_API && USE_RENDEZVOUS
 
 
-Noinit(EXPORT PORCB knl_porcb_table[NUM_PORID]);	/* Rendezvous port control block */
-Noinit(EXPORT QUEUE knl_free_porcb);	/* FreeQue */
+Noinit(EXPORT PORCB knl_porcb_table[NUM_PORID]);	/* ランデブポート管理ブロックテーブル */
+Noinit(EXPORT QUEUE knl_free_porcb);	/* 未使用管理ブロックのキュー（FreeQue） */
 
 
-/* 
- * Initialization of port control block 
+/**
+ * @brief ランデブポート管理ブロックの初期化
+ *
+ * すべての管理ブロックを未使用状態にして FreeQue に登録します。
+ * カーネル起動時に一度だけ呼び出されます。
+ *
+ * @retval E_OK	正常終了
+ * @retval E_SYS	ランデブポート数（NUM_PORID）が 1 未満
  */
 EXPORT ER knl_rendezvous_initialize( void )
 {
 	PORCB	*porcb, *end;
 
-	/* Get system information */
+	/* システム情報の確認 */
 	if ( NUM_PORID < 1 ) {
 		return E_SYS;
 	}
 
-	/* Register all control blocks onto FreeQue */
+	/* 全管理ブロックを FreeQue に登録 */
 	QueInit(&knl_free_porcb);
 	end = knl_porcb_table + NUM_PORID;
 	for ( porcb = knl_porcb_table; porcb < end; porcb++ ) {
@@ -53,8 +64,13 @@ EXPORT ER knl_rendezvous_initialize( void )
 }
 
 
-/*
- * Processing if the priority of send wait task changes
+/**
+ * @brief ランデブ呼出待ちタスクの優先度変更時の処理
+ *
+ * 呼出待ちキューをタスクの新しい優先度に従って並べ替えます。
+ *
+ * @param tcb	優先度が変更されたタスクの TCB
+ * @param oldpri	変更前の優先度（未使用）
  */
 LOCAL void cal_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -65,7 +81,7 @@ LOCAL void cal_chg_pri( TCB *tcb, INT oldpri )
 }
 
 /*
- * Definition of rendezvous wait specification
+ * ランデブ待ちの待ち仕様定義
  */
 EXPORT CONST WSPEC knl_wspec_cal_tfifo = { TTW_CAL, NULL, NULL };
 EXPORT CONST WSPEC knl_wspec_cal_tpri  = { TTW_CAL, cal_chg_pri, NULL };
@@ -73,8 +89,20 @@ EXPORT CONST WSPEC knl_wspec_cal_tpri  = { TTW_CAL, cal_chg_pri, NULL };
 EXPORT CONST WSPEC knl_wspec_rdv       = { TTW_RDV, NULL, NULL };
 
 
-/*
- * Create rendezvous port
+/**
+ * @brief ランデブポートの生成
+ *
+ * FreeQue から管理ブロックを取得して初期化し、ランデブポートを
+ * 生成します。
+ *
+ * @param pk_cpor	ランデブポート生成情報へのポインタ
+ *
+ * @return 生成したランデブポートの ID（正値）、またはエラーコード
+ * @retval E_RSATR	不正な属性（poratr）
+ * @retval E_PAR	パラメータ不正（maxcmsz < 0 または maxrmsz < 0）
+ * @retval E_LIMIT	ランデブポート数が上限（NUM_PORID）を超過
+ *
+ * @note タスク独立部からは呼び出せません。
  */
 SYSCALL ID tk_cre_por( CONST T_CPOR *pk_cpor )
 {
@@ -96,14 +124,14 @@ SYSCALL ID tk_cre_por( CONST T_CPOR *pk_cpor )
 	CHECK_INTSK();
 
 	BEGIN_CRITICAL_SECTION;
-	/* Get control block from FreeQue */
+	/* FreeQue から管理ブロックを取得 */
 	porcb = (PORCB*)QueRemoveNext(&knl_free_porcb);
 	if ( porcb == NULL ) {
 		ercd = E_LIMIT;
 	} else {
 		porid = ID_POR(porcb - knl_porcb_table);
 
-		/* Initialize control block */
+		/* 管理ブロックの初期化 */
 		QueInit(&porcb->call_queue);
 		porcb->porid = porid;
 		porcb->exinf = pk_cpor->exinf;
@@ -125,8 +153,20 @@ SYSCALL ID tk_cre_por( CONST T_CPOR *pk_cpor )
 }
 
 #ifdef USE_FUNC_TK_DEL_POR
-/*
- * Delete rendezvous port
+/**
+ * @brief ランデブポートの削除
+ *
+ * 呼出・受付の各待ちキューにつながれたタスクを E_DLT で待ち解除し、
+ * 管理ブロックを FreeQue へ返却します。ランデブ成立後の終了待ち
+ * （TTW_RDV）のタスクはポートにつながれていないため解除されません。
+ *
+ * @param porid	削除するランデブポートの ID
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
+ *
+ * @note タスク独立部からは呼び出せません。
  */
 SYSCALL ER tk_del_por( ID porid )
 {
@@ -142,11 +182,11 @@ SYSCALL ER tk_del_por( ID porid )
 	if ( porcb->porid == 0 ) {
 		ercd = E_NOEXS;
 	} else {
-		/* Release wait state of task (E_DLT) */
+		/* 待ちタスクの待ち解除（E_DLT） */
 		knl_wait_delete(&porcb->call_queue);
 		knl_wait_delete(&porcb->accept_queue);
 
-		/* Return to FreeQue */
+		/* FreeQue へ返却 */
 		QueInsert(&porcb->call_queue, &knl_free_porcb);
 		porcb->porid = 0;
 	}
@@ -156,8 +196,33 @@ SYSCALL ER tk_del_por( ID porid )
 }
 #endif /* USE_FUNC_TK_DEL_POR */
 
-/*
- * Call rendezvous
+/**
+ * @brief ランデブの呼出
+ *
+ * 受付待ちキューから calptn とビットパターンが一致する受付タスクを
+ * 探します。見つかった場合は呼出メッセージを渡して受付タスクを待ち解除
+ * し、自タスクはランデブ終了待ち（TTW_RDV、無期限待ち）になります。
+ * 見つからない場合は tmout に従いランデブ呼出待ち（TTW_CAL）に
+ * なります。
+ *
+ * @param porid	呼び出すランデブポートの ID
+ * @param calptn	呼出条件のビットパターン（0 以外）
+ * @param msg	呼出メッセージ領域（返答メッセージの受け取りにも使用）
+ * @param cmsgsz	呼出メッセージのサイズ（バイト数、0 以上）
+ * @param tmout	呼出待ちのタイムアウト時間（TMO_POL / TMO_FEVR 指定可）
+ *
+ * @return 返答メッセージのサイズ（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
+ * @retval E_PAR	パラメータ不正（calptn == 0、cmsgsz < 0、
+ *			cmsgsz > maxcmsz）
+ * @retval E_TMOUT	呼出待ちのタイムアウト
+ * @retval E_RLWAI	待ち状態の強制解除
+ * @retval E_DLT	呼出待ちの間に対象ポートが削除された
+ *
+ * @note ランデブ成立後の終了待ちにはタイムアウトはなく、tk_rpl_rdv 等に
+ *	よる返答まで待ち続けます。タスク独立部およびディスパッチ禁止中は
+ *	呼び出せません。
  */
 SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout )
 {
@@ -188,7 +253,7 @@ SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout 
 	}
 #endif
 
-	/* Search accept wait task */
+	/* 受付待ちタスクの探索 */
 	queue = porcb->accept_queue.next;
 	while ( queue != &porcb->accept_queue ) {
 		tcb = (TCB*)queue;
@@ -197,7 +262,7 @@ SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout 
 			continue;
 		}
 
-		/* Send message */
+		/* メッセージの送信 */
 		rdvno = knl_gen_rdvno(knl_ctxtsk);
 		if ( cmsgsz > 0 ) {
 			knl_memcpy(tcb->winfo.acp.msg, msg, (UINT)cmsgsz);
@@ -206,7 +271,7 @@ SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout 
 		*tcb->winfo.acp.p_cmsgsz = cmsgsz;
 		knl_wait_release_ok(tcb);
 
-		/* Ready for rendezvous end wait */
+		/* ランデブ終了待ち状態への移行準備 */
 		ercd = E_TMOUT;
 		knl_ctxtsk->wspec = &knl_wspec_rdv;
 		knl_ctxtsk->wid = 0;
@@ -221,7 +286,7 @@ SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout 
 		goto error_exit;
 	}
 
-	/* Ready for rendezvous call wait */
+	/* ランデブ呼出待ち状態への移行準備 */
 	knl_ctxtsk->wspec = ( (porcb->poratr & TA_TPRI) != 0 )?
 					&knl_wspec_cal_tpri: &knl_wspec_cal_tfifo;
 	knl_ctxtsk->wercd = &ercd;
@@ -240,8 +305,30 @@ SYSCALL INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout 
 
 LOCAL CONST WSPEC knl_wspec_acp       = { TTW_ACP, NULL, NULL };
 
-/*
- * Accept rendezvous
+/**
+ * @brief ランデブの受付
+ *
+ * 呼出待ちキューから acpptn とビットパターンが一致する呼出タスクを
+ * 探します。見つかった場合は呼出メッセージを受け取り、呼出タスクを
+ * ランデブ終了待ち（TTW_RDV、無期限待ち）に移行させます。
+ * 見つからない場合は tmout に従いランデブ受付待ち（TTW_ACP）に
+ * なります。
+ *
+ * @param porid	受け付けるランデブポートの ID
+ * @param acpptn	受付条件のビットパターン（0 以外）
+ * @param p_rdvno	成立したランデブのランデブ番号の格納先アドレス
+ * @param msg	呼出メッセージの格納先アドレス
+ * @param tmout	受付待ちのタイムアウト時間（TMO_POL / TMO_FEVR 指定可）
+ *
+ * @return 呼出メッセージのサイズ（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
+ * @retval E_PAR	パラメータ不正（acpptn == 0）
+ * @retval E_TMOUT	タイムアウト（TMO_POL 指定時はポーリング失敗）
+ * @retval E_RLWAI	待ち状態の強制解除
+ * @retval E_DLT	受付待ちの間に対象ポートが削除された
+ *
+ * @note タスク独立部およびディスパッチ禁止中は呼び出せません。
  */
 SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmout )
 {
@@ -258,14 +345,14 @@ SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmou
 	CHECK_DISPATCH();
 
 	porcb = get_porcb(porid);
-    
+
 	BEGIN_CRITICAL_SECTION;
 	if ( porcb->porid == 0 ) {
 		ercd = E_NOEXS;
 		goto error_exit;
 	}
 
-	/* Search call wait task */
+	/* 呼出待ちタスクの探索 */
 	queue = porcb->call_queue.next;
 	while ( queue != &porcb->call_queue ) {
 		tcb = (TCB*)queue;
@@ -274,7 +361,7 @@ SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmou
 			continue;
 		}
 
-		/* Receive message */
+		/* メッセージの受信 */
 		*p_rdvno = rdvno = knl_gen_rdvno(tcb);
 		cmsgsz = tcb->winfo.cal.cmsgsz;
 		if ( cmsgsz > 0 ) {
@@ -283,7 +370,7 @@ SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmou
 
 		knl_wait_cancel(tcb);
 
-		/* Make the other task at rendezvous end wait state */
+		/* 相手タスクをランデブ終了待ち状態に移行 */
 		tcb->wspec = &knl_wspec_rdv;
 		tcb->wid = 0;
 		tcb->winfo.rdv.rdvno = rdvno;
@@ -299,7 +386,7 @@ SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmou
 
 	ercd = E_TMOUT;
 	if ( tmout != TMO_POL ) {
-		/* Ready for rendezvous accept wait */
+		/* ランデブ受付待ち状態への移行準備 */
 		knl_ctxtsk->wspec = &knl_wspec_acp;
 		knl_ctxtsk->wid = porid;
 		knl_ctxtsk->wercd = &ercd;
@@ -318,8 +405,31 @@ SYSCALL INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmou
 }
 
 #ifdef USE_FUNC_TK_FWD_POR
-/*
- * Forward Rendezvous to Other Port
+/**
+ * @brief ランデブの他ポートへの回送
+ *
+ * 成立済みのランデブ（rdvno）を別のランデブポート porid へ回送します。
+ * 回送先に受付待ちタスクがあればメッセージを渡してランデブを成立させ、
+ * 呼出タスクは新しいランデブ番号での終了待ちに更新します。受付待ち
+ * タスクがなければ、呼出タスクを回送先ポートの呼出待ち状態に戻します。
+ *
+ * @param porid	回送先ランデブポートの ID
+ * @param calptn	回送後の呼出条件のビットパターン（0 以外）
+ * @param rdvno	回送するランデブのランデブ番号
+ * @param msg	回送する呼出メッセージの先頭アドレス
+ * @param cmsgsz	回送する呼出メッセージのサイズ（バイト数、0 以上）
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	回送先ランデブポートが未生成
+ * @retval E_PAR	パラメータ不正（calptn == 0、cmsgsz < 0、
+ *			cmsgsz が回送先の maxcmsz や呼出タスクの
+ *			maxrmsz を超過）
+ * @retval E_OBJ	rdvno に対応するランデブ終了待ちタスクが存在
+ *			しない、または回送先の maxrmsz が呼出タスクの
+ *			maxrmsz を超えている
+ *
+ * @note タスク独立部からは呼び出せません。
  */
 SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cmsgsz )
 {
@@ -366,7 +476,7 @@ SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cm
 	}
 #endif
 
-	/* Search accept wait task */
+	/* 受付待ちタスクの探索 */
 	queue = porcb->accept_queue.next;
 	while ( queue != &porcb->accept_queue ) {
 		tcb = (TCB*)queue;
@@ -375,7 +485,7 @@ SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cm
 			continue;
 		}
 
-		/* Send message */
+		/* メッセージの送信 */
 		new_rdvno = knl_gen_rdvno(caltcb);
 		if ( cmsgsz > 0 ) {
 			knl_memcpy(tcb->winfo.acp.msg, msg, (UINT)cmsgsz);
@@ -384,7 +494,7 @@ SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cm
 		*tcb->winfo.acp.p_cmsgsz = cmsgsz;
 		knl_wait_release_ok(tcb);
 
-		/* Change rendezvous end wait of the other task */
+		/* 相手タスクのランデブ終了待ち情報を更新 */
 		caltcb->winfo.rdv.rdvno = new_rdvno;
 		caltcb->winfo.rdv.msg = caltcb->winfo.cal.msg;
 		caltcb->winfo.rdv.maxrmsz = porcb->maxrmsz;
@@ -393,7 +503,7 @@ SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cm
 		goto error_exit;
 	}
 
-	/* Change the other task to rendezvous call wait */
+	/* 相手タスクをランデブ呼出待ち状態に移行 */
 	caltcb->wspec = ( (porcb->poratr & TA_TPRI) != 0 )?
 				&knl_wspec_cal_tpri: &knl_wspec_cal_tfifo;
 	caltcb->wid = porid;
@@ -420,8 +530,22 @@ SYSCALL ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cm
 }
 #endif /* USE_FUNC_TK_FWD_POR */
 
-/*
- * Reply rendezvous
+/**
+ * @brief ランデブへの返答
+ *
+ * ランデブ終了待ち中の呼出タスクへ返答メッセージを渡し、
+ * 待ち状態を解除してランデブを終了させます。
+ *
+ * @param rdvno	返答するランデブのランデブ番号
+ * @param msg	返答メッセージの先頭アドレス
+ * @param rmsgsz	返答メッセージのサイズ（バイト数、0 以上）
+ *
+ * @retval E_OK	正常終了
+ * @retval E_PAR	パラメータ不正（rmsgsz < 0 または
+ *			rmsgsz > 呼出タスクの maxrmsz）
+ * @retval E_OBJ	rdvno に対応するランデブ終了待ちタスクが存在しない
+ *
+ * @note タスク独立部からは呼び出せません。
  */
 SYSCALL ER tk_rpl_rdv( RNO rdvno, CONST void *msg, INT rmsgsz )
 {
@@ -448,7 +572,7 @@ SYSCALL ER tk_rpl_rdv( RNO rdvno, CONST void *msg, INT rmsgsz )
 	}
 #endif
 
-	/* Send message */
+	/* 返答メッセージの送信と待ち解除 */
 	if ( rmsgsz > 0 ) {
 		knl_memcpy(caltcb->winfo.rdv.msg, msg, (UINT)rmsgsz);
 	}
@@ -462,8 +586,18 @@ SYSCALL ER tk_rpl_rdv( RNO rdvno, CONST void *msg, INT rmsgsz )
 }
 
 #ifdef USE_FUNC_TK_REF_POR
-/*
- * Refer rendezvous port
+/**
+ * @brief ランデブポートの状態参照
+ *
+ * 拡張情報、呼出・受付待ちタスクの ID、呼出・返答メッセージの
+ * 最大サイズを pk_rpor へ返します。
+ *
+ * @param porid	参照するランデブポートの ID
+ * @param pk_rpor	状態情報の格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
  */
 SYSCALL ER tk_ref_por( ID porid, T_RPOR *pk_rpor )
 {
@@ -492,13 +626,24 @@ SYSCALL ER tk_ref_por( ID porid, T_RPOR *pk_rpor )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Debugger support function
+ *	デバッガサポート機能
  */
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief 管理ブロックからのオブジェクト名取得
+ *
+ * TA_DSNAME 属性付きで生成されたランデブポートの名前への
+ * ポインタを返します。
+ *
+ * @param id	対象ランデブポートの ID
+ * @param name	名前へのポインタの格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
+ * @retval E_OBJ	TA_DSNAME 属性が指定されていない
  */
 EXPORT ER knl_rendezvous_getname(ID id, UB **name)
 {
@@ -527,8 +672,15 @@ EXPORT ER knl_rendezvous_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_POR
-/*
- * Refer rendezvous port usage state
+/**
+ * @brief ランデブポート ID の一覧取得
+ *
+ * 生成済みランデブポートの ID を list へ最大 nent 個格納します。
+ *
+ * @param list	ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 生成済みランデブポートの総数（nent を超える場合もその総数）
  */
 SYSCALL INT td_lst_por( ID list[], INT nent )
 {
@@ -553,8 +705,17 @@ SYSCALL INT td_lst_por( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_POR */
 
 #ifdef USE_FUNC_TD_REF_POR
-/*
- * Refer rendezvous port
+/**
+ * @brief ランデブポートの状態参照（デバッガサポート）
+ *
+ * tk_ref_por と同等の状態情報を TD_RPOR 形式で返します。
+ *
+ * @param porid	参照するランデブポートの ID
+ * @param pk_rpor	状態情報の格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
  */
 SYSCALL ER td_ref_por( ID porid, TD_RPOR *pk_rpor )
 {
@@ -582,8 +743,19 @@ SYSCALL ER td_ref_por( ID porid, TD_RPOR *pk_rpor )
 #endif /* USE_FUNC_TD_REF_POR */
 
 #ifdef USE_FUNC_TD_CAL_QUE
-/*
- * Refer rendezvous call wait queue
+/**
+ * @brief ランデブ呼出待ちキューの参照
+ *
+ * 呼出待ちキューにつながれたタスクの ID を待ち順に list へ最大
+ * nent 個格納します。
+ *
+ * @param porid	参照するランデブポートの ID
+ * @param list	タスク ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 呼出待ちタスクの総数（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
  */
 SYSCALL INT td_cal_que( ID porid, ID list[], INT nent )
 {
@@ -614,8 +786,19 @@ SYSCALL INT td_cal_que( ID porid, ID list[], INT nent )
 #endif /* USE_FUNC_TD_CAL_QUE */
 
 #ifdef USE_FUNC_TD_ACP_QUE
-/*
- * Refer rendezvous accept wait queue
+/**
+ * @brief ランデブ受付待ちキューの参照
+ *
+ * 受付待ちキューにつながれたタスクの ID を待ち順に list へ最大
+ * nent 個格納します。
+ *
+ * @param porid	参照するランデブポートの ID
+ * @param list	タスク ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 受付待ちタスクの総数（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象ランデブポートが未生成
  */
 SYSCALL INT td_acp_que( ID porid, ID list[], INT nent )
 {

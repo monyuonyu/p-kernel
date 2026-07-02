@@ -11,9 +11,14 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	mempfix.c
- *	Fixed Size Memory Pool
+/**
+ * @file	mempfix.c
+ * @brief	固定長メモリプール
+ *
+ * 固定長メモリプールの生成・削除・ブロックの獲得と返却・状態参照
+ * （tk_cre_mpf / tk_del_mpf / tk_get_mpf / tk_rel_mpf / tk_ref_mpf）、
+ * およびデバッガサポート機能（td_lst_mpf / td_ref_mpf / td_mpf_que）を
+ * 実装します。
  */
 
 #include "kernel.h"
@@ -24,23 +29,29 @@
 
 #if USE_FIX_MEMORYPOOL
 
-Noinit(EXPORT MPFCB	knl_mpfcb_table[NUM_MPFID]);	/* Fixed size memory pool control block */
-Noinit(EXPORT QUEUE	knl_free_mpfcb);	/* FreeQue */
+Noinit(EXPORT MPFCB	knl_mpfcb_table[NUM_MPFID]);	/* 固定長メモリプール管理ブロックテーブル */
+Noinit(EXPORT QUEUE	knl_free_mpfcb);	/* 未使用管理ブロックのキュー（FreeQue） */
 
 
-/*
- * Initialization of fixed size memory pool control block
+/**
+ * @brief 固定長メモリプール管理ブロックの初期化
+ *
+ * すべての管理ブロックを未使用状態にして FreeQue に登録します。
+ * カーネルの初期化時に呼び出されます。
+ *
+ * @retval E_OK	正常終了
+ * @retval E_SYS	構成エラー（NUM_MPFID が 1 未満）
  */
 EXPORT ER knl_fix_memorypool_initialize( void )
 {
 	MPFCB	*mpfcb, *end;
 
-	/* Get system information */
+	/* 構成の確認 */
 	if ( NUM_MPFID < 1 ) {
 		return E_SYS;
 	}
 
-	/* Register all control blocks onto FreeQue */
+	/* 全管理ブロックを FreeQue に登録 */
 	QueInit(&knl_free_mpfcb);
 	end = knl_mpfcb_table + NUM_MPFID;
 	for ( mpfcb = knl_mpfcb_table; mpfcb < end; mpfcb++ ) {
@@ -53,8 +64,20 @@ EXPORT ER knl_fix_memorypool_initialize( void )
 }
 
 
-/*
- * Create fixed size memory pool
+/**
+ * @brief 固定長メモリプールの生成
+ *
+ * 生成情報 pk_cmpf に従って固定長メモリプールを生成します。
+ * ブロックサイズは sizeof(FREEL) の倍数に切り上げられます。
+ * TA_USERBUF 属性を指定した場合は pk_cmpf->bufptr のユーザバッファを
+ * プール領域として使用し、指定しない場合はカーネルが領域を確保します。
+ *
+ * @param pk_cmpf	メモリプール生成情報パケット
+ * @return 正の値: 生成したメモリプール ID、負の値: エラーコード
+ * @retval E_PAR	パラメータ不正（TA_USERBUF 指定時にブロックサイズが
+ *			sizeof(FREEL) の倍数でない等）
+ * @retval E_NOMEM	プール領域のメモリ確保失敗
+ * @retval E_LIMIT	管理ブロックが不足（プール数の上限超過）
  */
 SYSCALL ID tk_cre_mpf( CONST T_CMPF *pk_cmpf )
 {
@@ -77,7 +100,7 @@ SYSCALL ID tk_cre_mpf( CONST T_CMPF *pk_cmpf )
 	CHECK_PAR(pk_cmpf->mpfcnt > 0);
 	CHECK_PAR(pk_cmpf->blfsz > 0);
 #if !USE_IMALLOC
-	/* TA_USERBUF must be specified if configured in no Imalloc */
+	/* Imalloc なしの構成では TA_USERBUF の指定が必須 */
 	CHECK_PAR((pk_cmpf->mpfatr & TA_USERBUF) != 0);
 #endif
 	CHECK_DISPATCH();
@@ -87,29 +110,29 @@ SYSCALL ID tk_cre_mpf( CONST T_CMPF *pk_cmpf )
 
 #if USE_IMALLOC
 	if ( (pk_cmpf->mpfatr & TA_USERBUF) != 0 ) {
-		/* Size of user buffer must be multiples of sizeof(FREEL) */
+		/* ユーザバッファ使用時、ブロックサイズは sizeof(FREEL) の倍数であること */
 		if ( blfsz != pk_cmpf->blfsz ) {
 			return E_PAR;
 		}
-		/* Use user buffer */
+		/* ユーザバッファを使用 */
 		mempool = pk_cmpf->bufptr;
 	} else {
-		/* Allocate memory for memory pool */
+		/* メモリプール領域を確保 */
 		mempool = knl_Imalloc((UW)mpfsz);
 		if ( mempool == NULL ) {
 			return E_NOMEM;
 		}
 	}
 #else
-	/* Size of user buffer must be larger than sizeof(FREEL) */
+	/* ユーザバッファのブロックサイズは sizeof(FREEL) の倍数であること */
 	if ( blfsz != pk_cmpf->blfsz ) {
 		return E_PAR;
 	}
-	/* Use user buffer */
+	/* ユーザバッファを使用 */
 	mempool = pk_cmpf->bufptr;
 #endif
 
-	/* Get control block from FreeQue */
+	/* FreeQue から管理ブロックを取得 */
 	DISABLE_INTERRUPT;
 	mpfcb = (MPFCB*)QueRemoveNext(&knl_free_mpfcb);
 	ENABLE_INTERRUPT;
@@ -126,7 +149,7 @@ SYSCALL ID tk_cre_mpf( CONST T_CMPF *pk_cmpf )
 	knl_LockOBJ(&mpfcb->lock);
 	mpfid = ID_MPF(mpfcb - knl_mpfcb_table);
 
-	/* Initialize control block */
+	/* 管理ブロックの初期化 */
 	QueInit(&mpfcb->wait_queue);
 	mpfcb->exinf    = pk_cmpf->exinf;
 	mpfcb->mpfatr   = pk_cmpf->mpfatr;
@@ -141,15 +164,23 @@ SYSCALL ID tk_cre_mpf( CONST T_CMPF *pk_cmpf )
 	}
 #endif
 
-	mpfcb->mpfid    = mpfid;  /* Set ID after completion */
+	mpfcb->mpfid    = mpfid;  /* 初期化完了後に ID を設定 */
 	knl_UnlockOBJ(&mpfcb->lock);
 
 	return mpfid;
 }
 
 #ifdef USE_FUNC_TK_DEL_MPF
-/*
- * Delete fixed size memory pool 
+/**
+ * @brief 固定長メモリプールの削除
+ *
+ * 指定したメモリプールを削除します。ブロック獲得待ちのタスクは
+ * E_DLT で待ち解除されます。カーネルが確保したプール領域
+ * （TA_USERBUF なし）は解放されます。
+ *
+ * @param mpfid	メモリプール ID
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
  */
 SYSCALL ER tk_del_mpf( ID mpfid )
 {
@@ -171,10 +202,10 @@ SYSCALL ER tk_del_mpf( ID mpfid )
 		mempool = mpfcb->mempool;
 		memattr = mpfcb->mpfatr;
 
-		/* Release wait state of task (E_DLT) */
+		/* 待ちタスクの待ち解除（E_DLT） */
 		knl_wait_delete(&mpfcb->wait_queue);
 
-		/* Return to FreeQue */
+		/* 管理ブロックを FreeQue へ返却 */
 		QueInsert(&mpfcb->wait_queue, &knl_free_mpfcb);
 		mpfcb->mpfid = 0;
 		ENABLE_INTERRUPT;
@@ -191,8 +222,14 @@ SYSCALL ER tk_del_mpf( ID mpfid )
 }
 #endif /* USE_FUNC_TK_DEL_MPF */
 
-/*
- * Processing if the priority of wait task changes
+/**
+ * @brief 待ちタスクの優先度変更時の処理
+ *
+ * ブロック獲得待ちタスクの優先度が変更されたとき、待ちキュー内の
+ * 位置を新しい優先度に従って並べ替えます。
+ *
+ * @param tcb	優先度が変更されたタスクの TCB
+ * @param oldpri	変更前の優先度（未使用）
  */
 LOCAL void knl_mpf_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -203,13 +240,26 @@ LOCAL void knl_mpf_chg_pri( TCB *tcb, INT oldpri )
 }
 
 /*
- * Definition of fixed size memory pool wait specification
+ * 固定長メモリプール待ち仕様の定義
  */
 LOCAL CONST WSPEC knl_wspec_mpf_tfifo = { TTW_MPF, NULL, NULL };
 LOCAL CONST WSPEC knl_wspec_mpf_tpri  = { TTW_MPF, knl_mpf_chg_pri, NULL };
 
-/*
- * Get fixed size memory block 
+/**
+ * @brief 固定長メモリブロックの獲得
+ *
+ * メモリプールからブロックを 1 つ獲得します。空きブロックがない場合、
+ * タスクは待ち状態となり、他タスクのブロック返却により待ち解除
+ * されます。
+ *
+ * @param mpfid	メモリプール ID
+ * @param p_blf	獲得したブロックの先頭アドレスの格納先
+ * @param tmout	タイムアウト時間（TMO_POL / TMO_FEVR 指定可）
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
+ * @retval E_TMOUT	タイムアウト（TMO_POL 指定時のポーリング失敗を含む）
+ * @retval E_RLWAI	待ち状態の強制解除
+ * @retval E_DLT	待ちの間にメモリプールが削除された
  */
 SYSCALL ER tk_get_mpf( ID mpfid, void **p_blf, TMO tmout )
 {
@@ -229,11 +279,11 @@ SYSCALL ER tk_get_mpf( ID mpfid, void **p_blf, TMO tmout )
 		goto error_exit;
 	}
 
-	/* If there is no space, ready for wait */
+	/* 空きブロックがなければ待ち状態へ */
 	if ( mpfcb->frbcnt <= 0 ) {
 		goto wait_mpf;
 	} else {
-		/* Get memory block */
+		/* メモリブロックの取得 */
 		if ( mpfcb->freelist != NULL ) {
 			free = mpfcb->freelist;
 			mpfcb->freelist = free->next;
@@ -251,7 +301,7 @@ SYSCALL ER tk_get_mpf( ID mpfid, void **p_blf, TMO tmout )
 	return ercd;
 
 wait_mpf:
-	/* Ready for wait */
+	/* 待ち状態への移行 */
 	BEGIN_CRITICAL_SECTION;
 	knl_ctxtsk->wspec = ( (mpfcb->mpfatr & TA_TPRI) != 0 )?
 				&knl_wspec_mpf_tpri: &knl_wspec_mpf_tfifo;
@@ -265,8 +315,18 @@ wait_mpf:
 	return ercd;
 }
 
-/*
- * Return fixed size memory block 
+/**
+ * @brief 固定長メモリブロックの返却
+ *
+ * 獲得したブロックをメモリプールへ返却します。ブロック獲得待ちの
+ * タスクがあれば、返却したブロックを先頭の待ちタスクへ渡して
+ * 待ち解除します。
+ *
+ * @param mpfid	メモリプール ID
+ * @param blf	返却するメモリブロックの先頭アドレス
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
+ * @retval E_PAR	blf がプール範囲外、またはブロック境界に一致しない
  */
 SYSCALL ER tk_rel_mpf( ID mpfid, void *blf )
 {
@@ -294,15 +354,15 @@ SYSCALL ER tk_rel_mpf( ID mpfid, void *blf )
 
 	DISABLE_INTERRUPT;
 	if ( !isQueEmpty(&mpfcb->wait_queue) ) {
-		/* Send memory block to waiting task,
-		   and then release the task */
+		/* 待ちタスクへメモリブロックを渡し、
+		   そのタスクを待ち解除する */
 		tcb = (TCB*)mpfcb->wait_queue.next;
 		*tcb->winfo.mpf.p_blf = blf;
 		knl_wait_release_ok(tcb);
 		ENABLE_INTERRUPT;
 	} else {
 		ENABLE_INTERRUPT;
-		/* Free memory block */
+		/* メモリブロックをフリーリストへ返却 */
 		free = (FREEL*)blf;
 		free->next = mpfcb->freelist;
 		mpfcb->freelist = free;
@@ -316,8 +376,15 @@ error_exit:
 }
 
 #ifdef USE_FUNC_TK_REF_MPF
-/*
- * Check fixed size pool state
+/**
+ * @brief 固定長メモリプールの状態参照
+ *
+ * 待ちタスクの有無、拡張情報、空きブロック数を取得します。
+ *
+ * @param mpfid	メモリプール ID
+ * @param pk_rmpf	状態情報の格納先
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
  */
 SYSCALL ER tk_ref_mpf( ID mpfid, T_RMPF *pk_rmpf )
 {
@@ -347,13 +414,22 @@ SYSCALL ER tk_ref_mpf( ID mpfid, T_RMPF *pk_rmpf )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Debugger support function
+ *	デバッガサポート機能
  */
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief 管理ブロックからのオブジェクト名取得
+ *
+ * TA_DSNAME 属性付きで生成されたメモリプールの名称への
+ * ポインタを返します。
+ *
+ * @param id	メモリプール ID
+ * @param name	オブジェクト名へのポインタの格納先
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
+ * @retval E_OBJ	TA_DSNAME 属性が指定されていない
  */
 EXPORT ER knl_fix_memorypool_getname(ID id, UB **name)
 {
@@ -382,8 +458,14 @@ EXPORT ER knl_fix_memorypool_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_MPF
-/*
- * Refer fixed size memory pool usage state
+/**
+ * @brief 固定長メモリプール ID の一覧取得
+ *
+ * 使用中のメモリプールの ID を list に格納します。
+ *
+ * @param list	ID を格納する配列
+ * @param nent	list に格納できる最大数
+ * @return 使用中のメモリプール数（nent を超える場合も総数を返す）
  */
 SYSCALL INT td_lst_mpf( ID list[], INT nent )
 {
@@ -408,8 +490,14 @@ SYSCALL INT td_lst_mpf( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_MPF */
 
 #ifdef USE_FUNC_TD_REF_MPF
-/*
- * Refer fixed size memory pool state 
+/**
+ * @brief 固定長メモリプールの状態参照（デバッガサポート）
+ *
+ * @param mpfid	メモリプール ID
+ * @param pk_rmpf	状態情報の格納先
+ * @retval E_OK	正常終了
+ * @retval E_NOEXS	対象メモリプールが存在しない
+ * @retval E_CTX	オブジェクトがロックされている（コンテキストエラー）
  */
 SYSCALL ER td_ref_mpf( ID mpfid, TD_RMPF *pk_rmpf )
 {
@@ -437,8 +525,16 @@ SYSCALL ER td_ref_mpf( ID mpfid, TD_RMPF *pk_rmpf )
 #endif /* USE_FUNC_TD_REF_MPF */
 
 #ifdef USE_FUNC_TD_MPF_QUE
-/*
- * Refer fixed size memory wait queue 
+/**
+ * @brief 固定長メモリプール待ちキューの参照
+ *
+ * ブロック獲得待ちタスクの ID を待ちキューの並び順に list へ
+ * 格納します。
+ *
+ * @param mpfid	メモリプール ID
+ * @param list	タスク ID を格納する配列
+ * @param nent	list に格納できる最大数
+ * @return 待ちタスク数（nent を超える場合も総数）、または E_NOEXS
  */
 SYSCALL INT td_mpf_que( ID mpfid, ID list[], INT nent )
 {

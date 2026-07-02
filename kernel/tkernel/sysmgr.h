@@ -11,9 +11,13 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	sysmgr.h
- *	micro T-Kernel/SM(System Maneger) Definition
+/**
+ * @file	sysmgr.h
+ * @brief	micro T-Kernel/SM（システム管理機能）の定義
+ *
+ * デバイス管理機能で用いるデバイス登録情報・オープン管理情報・
+ * 要求管理情報などの構造体、排他制御用ロックマクロ、および
+ * デバイス管理内部関数の宣言を提供します。
  */
 
 #ifndef _SYSMGR_
@@ -27,35 +31,34 @@
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Device management function
+ *	デバイス管理機能
  */
 
 /*
- * Lock for device management exclusive control
+ * デバイス管理排他制御用ロック
  */
 IMPORT FastMLock	knl_DevMgrLock;
 #define LockDM()	MLock(&knl_DevMgrLock, 0)
 #define UnlockDM()	MUnlock(&knl_DevMgrLock, 0)
 
 /*
- * Lock for device registration exclusive control
+ * デバイス登録排他制御用ロック
  */
 #define LockREG()	MLock(&knl_DevMgrLock, 1)
 #define UnlockREG()	MUnlock(&knl_DevMgrLock, 1)
 
 /*
- * Device registration information
+ * デバイス登録情報
  */
 typedef struct DeviceControlBlock {
 	QUEUE	q;
-	UB	devnm[L_DEVNM+1];	/* Device name */
-	T_DDEV	ddev;			/* Registration information */
-	QUEUE	openq;			/* Open device management queue */
+	UB	devnm[L_DEVNM+1];	/* デバイス名 */
+	T_DDEV	ddev;			/* 登録情報 */
+	QUEUE	openq;			/* オープンデバイス管理キュー */
 } DevCB;
 
-IMPORT	DevCB		knl_DevCBtbl[];	/* Device registration information
-					   table */
-IMPORT	QUEUE		knl_UsedDevCB;	/* In-use queue */
+IMPORT	DevCB		knl_DevCBtbl[];	/* デバイス登録情報テーブル */
+IMPORT	QUEUE		knl_UsedDevCB;	/* 使用中キュー */
 
 #define DID(devcb)		( ((devcb) - knl_DevCBtbl + 1) << 8 )
 #define DEVID(devcb, unitno)	( DID(devcb) + (unitno) )
@@ -63,50 +66,47 @@ IMPORT	QUEUE		knl_UsedDevCB;	/* In-use queue */
 #define UNITNO(devid)		( (devid) & 0xff )
 
 /*
- * Open management information
+ * オープン管理情報
  */
 typedef struct OpenControlBlock {
 	QUEUE		q;
-	QUEUE		resq;		/* For connection from resource
-					   management */
-	ID		resid;		/* Section resource ID */
-	DevCB		*devcb;		/* Target device */
-	INT		unitno;		/* Subunit number
-					   (0: Physical device) */
-	UINT		omode;		/* Open mode */
-	QUEUE		requestq;	/* Request management queue */
-	UH		waitone;	/* Number of individual request
-					   waits */
-	T_DEVREQ	*waireqlst;	/* List of multiple request waits */
-	INT		nwaireq;	/* Number of multiple request waits */
-	ID		abort_tskid;	/* Abort completion wait task */
-	INT		abort_cnt;	/* Number of abort completion wait
-					   requests */
-	ID		abort_semid; /* Semaphore for abort completion wait */
+	QUEUE		resq;		/* リソース管理からの接続用 */
+	ID		resid;		/* セクションリソースID */
+	DevCB		*devcb;		/* 対象デバイス */
+	INT		unitno;		/* サブユニット番号
+					   （0: 物理デバイス） */
+	UINT		omode;		/* オープンモード */
+	QUEUE		requestq;	/* 要求管理キュー */
+	UH		waitone;	/* 個別要求待ちの数 */
+	T_DEVREQ	*waireqlst;	/* 複数要求待ちのリスト */
+	INT		nwaireq;	/* 複数要求待ちの数 */
+	ID		abort_tskid;	/* アボート完了待ちタスク */
+	INT		abort_cnt;	/* アボート完了待ち要求の数 */
+	ID		abort_semid; /* アボート完了待ち用セマフォ */
 } OpnCB;
 
 #define RESQ_OPNCB(rq)		( (OpnCB*)((B*)(rq) - offsetof(OpnCB, resq)) )
 
 /*
- * Request management information
+ * 要求管理情報
  */
 typedef struct RequestControlBlock {
 	QUEUE		q;
-	OpnCB		*opncb;		/* Open device */
-	ID		tskid;		/* Processing task */
-	T_DEVREQ	req;		/* Request packet */
+	OpnCB		*opncb;		/* オープンデバイス */
+	ID		tskid;		/* 処理中タスク */
+	T_DEVREQ	req;		/* 要求パケット */
 } ReqCB;
 
 /*
- * Resource management information
+ * リソース管理情報
  */
 typedef struct ResourceControlBlock {
-	QUEUE		openq;		/* Open device management queue */
-	INT		dissus;		/* Suspend disable request count */
+	QUEUE		openq;		/* オープンデバイス管理キュー */
+	INT		dissus;		/* サスペンド禁止要求カウント */
 } ResCB;
 
 /*
- * Request function types
+ * 要求処理関数の型
  */
 
 typedef ER  (*OPNFN)( ID devid, UINT omode, void *exinf );
