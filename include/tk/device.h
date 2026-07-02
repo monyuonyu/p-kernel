@@ -1,4 +1,4 @@
-﻿/*
+/*
  *----------------------------------------------------------------------
  *    micro T-Kernel 3.00.03
  *
@@ -11,17 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	device.h
+/**
+ * @file	device.h
+ * @brief	デバイスドライバ定義
  *
- *	Device driver definition
+ * サンプルデバイスドライバを使用する構成（USE_SDEV_DRV）のとき、
+ * ドライバ側のデバイス定義ヘッダを取り込みます。
  */
 
 #ifndef __TK_DEVICE_H__
 #define __TK_DEVICE_H__
 
 
-#if USE_SDEV_DRV	/* Use the sample driver */
+#if USE_SDEV_DRV	/* サンプルドライバを使用 */
 #include "../../device/include/device.h"
 #endif /* USE_SDEV_DRV */
 
