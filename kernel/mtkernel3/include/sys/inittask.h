@@ -11,16 +11,19 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	inittask.h
- *	Initial task definition
+/**
+ * @file	inittask.h
+ * @brief	初期タスクの定義
+ *
+ * 初期タスクの生成パラメータ（拡張情報・優先度・スタックサイズ・
+ * オブジェクト名・タスク属性・スタック領域）を定義します。
  */
 
 #ifndef _INITTASK_DEF_
 #define _INITTASK_DEF_
 
 /*
- * Initial task parameter
+ * 初期タスクパラメータ
  *
  * p-kernel 変更: ターゲット側（sysdef.h 等）で上書きできるよう
  * #ifndef ガードを追加。Linux ユーザモードポートは usermain が

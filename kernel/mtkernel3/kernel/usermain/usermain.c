@@ -11,22 +11,36 @@
  *----------------------------------------------------------------------
  */
 
+/**
+ * @file	usermain.c
+ * @brief	ユーザアプリケーションのエントリルーチン
+ *
+ * 初期タスクから呼び出される usermain() の弱シンボル版デフォルト
+ * 実装を提供します。アプリケーション側で usermain() を定義すると
+ * そちらが優先されます。
+ */
+
 #include <tk/tkernel.h>
 #include <tm/tmonitor.h>
 
-/*
- * Entry routine for the user application.
- * At this point, Initialize and start the user application.
+/**
+ * @brief	ユーザアプリケーションのエントリルーチン
  *
- * Entry routine is called from the initial task for Kernel,
- * so system call for stopping the task should not be issued 
- * from the contexts of entry routine.
- * We recommend that:
- * (1)'usermain()' only generates the user initial task.
- * (2)initialize and start the user application by the user
- * initial task.
+ * ここでユーザアプリケーションの初期化と起動を行います。
+ *
+ * このエントリルーチンはカーネルの初期タスクのコンテキストで呼び
+ * 出されるため、ここからタスクを停止するシステムコールを発行しては
+ * いけません。次の構成を推奨します。
+ * (1) usermain() ではユーザ初期タスクの生成のみを行う。
+ * (2) ユーザアプリケーションの初期化と起動はユーザ初期タスクで行う。
+ *
+ * @return usermain() の復帰値はシステム停止方法（shutdown_system() の
+ *	fin）として扱われます。このデフォルト実装は 0（電源オフ）を
+ *	返します。
+ *
+ * @note 弱シンボル（WEAK_FUNC）のため、アプリケーション側の定義で
+ *	置き換え可能です。
  */
-
 WEAK_FUNC EXPORT INT	usermain( void )
 {
 	return 0;

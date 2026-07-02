@@ -11,16 +11,33 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	string.c
- *	T-Kernel standard library 
+/**
+ * @file	string.c
+ * @brief	T-Kernel 標準ライブラリ（メモリ・文字列操作）
+ *
+ * カーネル内部で使用するメモリ操作関数（knl_memset / knl_memcpy）と
+ * 文字列操作関数（knl_strlen / knl_strcpy / knl_strncpy / knl_strcmp /
+ * knl_strcat）を提供します。標準 C ライブラリに依存しないための
+ * 独自実装です。
  */
 
 #include <tk/tkernel.h>
 #include "kernel.h"
 
-/*** binary operation ***/
-/* memset : fill memory area */
+/*** メモリ操作 ***/
+/**
+ * @brief	メモリ領域の埋め立て
+ *
+ * s から n バイトの領域を値 c（下位 1 バイト）で埋めます。
+ * 8 バイト以上の場合はワード境界まで整列後、ワード単位で書き込んで
+ * 高速化します。
+ *
+ * @param s	埋め立て対象領域の先頭アドレス
+ * @param c	埋める値（下位 1 バイトのみ使用）
+ * @param n	埋めるバイト数
+ *
+ * @return s をそのまま返します。
+ */
 void* knl_memset( void *s, int c, SZ n )
 {
 	register unsigned char *cp, cval;
@@ -28,7 +45,7 @@ void* knl_memset( void *s, int c, SZ n )
 
 	cp = (unsigned char *)s;
 	cval = (unsigned char)c;
-	
+
 	if (n < 8) {
 		while (n-- > 0) {
 			*cp++ = cval;
@@ -72,7 +89,20 @@ void* knl_memset( void *s, int c, SZ n )
 	return s;
 }
 
-/* memcpy : copy memory */
+/**
+ * @brief	メモリ領域のコピー
+ *
+ * src から dst へ n バイトをコピーします。
+ *
+ * @param dst	コピー先の先頭アドレス
+ * @param src	コピー元の先頭アドレス
+ * @param n	コピーするバイト数
+ *
+ * @return dst をそのまま返します。
+ *
+ * @note バイト単位の前方コピーのため、領域が重なる場合の動作は
+ *	保証されません。
+ */
 void* knl_memcpy( void *dst, const void *src, SZ n )
 {
 	register unsigned char *cdst, *csrc;
@@ -86,7 +116,13 @@ void* knl_memcpy( void *dst, const void *src, SZ n )
 	return dst;
 }
 
-/* strlen : get text string length */
+/**
+ * @brief	文字列長の取得
+ *
+ * @param s	対象文字列（'\0' 終端）
+ *
+ * @return 終端の '\0' を含まない文字列長。
+ */
 SZ knl_strlen( const char *s )
 {
 	register char *cp;
@@ -98,7 +134,16 @@ SZ knl_strlen( const char *s )
 	return (SZ)(cp - s);
 }
 
-/* strcpy : copy text string */
+/**
+ * @brief	文字列のコピー
+ *
+ * src の文字列を終端の '\0' を含めて dst へコピーします。
+ *
+ * @param dst	コピー先バッファ
+ * @param src	コピー元文字列（'\0' 終端）
+ *
+ * @return dst をそのまま返します。
+ */
 char* knl_strcpy( char *dst, const char *src )
 {
 	register char *cp;
@@ -111,6 +156,20 @@ char* knl_strcpy( char *dst, const char *src )
 	return dst;
 }
 
+/**
+ * @brief	最大長を指定した文字列のコピー
+ *
+ * src の文字列を最大 n 文字まで dst へコピーします。src が n 文字より
+ * 短い場合、残りは '\0' で埋めます。
+ *
+ * @param dst	コピー先バッファ
+ * @param src	コピー元文字列（'\0' 終端）
+ * @param n	コピーする最大文字数
+ *
+ * @return dst をそのまま返します。
+ *
+ * @note src の長さが n 以上の場合、dst は '\0' 終端されません。
+ */
 char* knl_strncpy( char *dst, const char *src, SZ n )
 {
 	register char *cp;
@@ -130,7 +189,17 @@ char* knl_strncpy( char *dst, const char *src, SZ n )
 	return dst;
 }
 
-/* strcmp : perform text string comparison */
+/**
+ * @brief	文字列の比較
+ *
+ * s1 と s2 を先頭から 1 文字ずつ比較します。
+ *
+ * @param s1	比較する文字列 1
+ * @param s2	比較する文字列 2
+ *
+ * @return 両者が等しければ 0。最初に異なった位置の文字を unsigned char
+ *	として比較し、s1 の方が大きければ正、小さければ負の値。
+ */
 int knl_strcmp( const char *s1, const char *s2 )
 {
 	register int result;
@@ -145,7 +214,16 @@ int knl_strcmp( const char *s1, const char *s2 )
 	return (unsigned char)*s1 - (unsigned char)*s2;
 }
 
-/* strcat : perform text string concatenation */
+/**
+ * @brief	文字列の連結
+ *
+ * dst の文字列の末尾に src の文字列を連結し、'\0' で終端します。
+ *
+ * @param dst	連結先文字列（'\0' 終端。連結後の長さ分の領域が必要）
+ * @param src	連結する文字列（'\0' 終端）
+ *
+ * @return dst をそのまま返します。
+ */
 char* knl_strcat( char *dst, const char *src )
 {
 	register char *cp;
