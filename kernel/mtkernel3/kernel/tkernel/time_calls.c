@@ -632,8 +632,16 @@ SYSCALL INT td_lst_cyc( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_CYC */
 
 #ifdef USE_FUNC_TD_REF_CYC
-/*
- * Refer cyclic handler state
+/**
+ * @brief	周期ハンドラ状態の参照（デバッガサポート機能）
+ *
+ * 拡張情報、次回起動までの残り時間、動作状態を pk_rcyc に返します。
+ *
+ * @param	cycid	対象の周期ハンドラのID
+ * @param	pk_rcyc	周期ハンドラ状態の格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_ID	cycid の値が不正
  */
 SYSCALL ER td_ref_cyc( ID cycid, TD_RCYC* pk_rcyc )
 {
@@ -646,7 +654,7 @@ SYSCALL ER td_ref_cyc( ID cycid, TD_RCYC* pk_rcyc )
 	cyccb = get_cyccb(cycid);
 
 	BEGIN_DISABLE_INTERRUPT;
-	if ( cyccb->cychdr == NULL ) { /* Unregistered handler */
+	if ( cyccb->cychdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		tm = cyccb->cyctmeb.time;
@@ -678,32 +686,38 @@ SYSCALL ER td_ref_cyc( ID cycid, TD_RCYC* pk_rcyc )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Alarm handler
+ *	アラームハンドラ
  */
 
 #if USE_ALARMHANDLER
 
-Noinit(EXPORT ALMCB knl_almcb_table[NUM_ALMID]);	/* Alarm handler control block */
-Noinit(EXPORT QUEUE	knl_free_almcb);	/* FreeQue */
+Noinit(EXPORT ALMCB knl_almcb_table[NUM_ALMID]);	/* アラームハンドラ管理ブロックテーブル */
+Noinit(EXPORT QUEUE	knl_free_almcb);	/* 未使用管理ブロックのキュー（FreeQue） */
 
 
-/*
- * Initialization of alarm handler control block 
+/**
+ * @brief	アラームハンドラ管理ブロックの初期化
+ *
+ * すべてのアラームハンドラ管理ブロックを未登録状態にして FreeQue
+ * に登録します。カーネル初期化時に呼び出されます。
+ *
+ * @retval	E_OK	正常終了
+ * @retval	E_SYS	アラームハンドラの最大数（NUM_ALMID）が1未満
  */
 EXPORT ER knl_alarmhandler_initialize( void )
 {
 	ALMCB	*almcb, *end;
 
-	/* Get system information */
+	/* システム情報の取得 */
 	if ( NUM_ALMID < 1 ) {
 		return E_SYS;
 	}
 
-	/* Register all control blocks onto FreeQue */
+	/* すべての管理ブロックを FreeQue に登録 */
 	QueInit(&knl_free_almcb);
 	end = knl_almcb_table + NUM_ALMID;
 	for ( almcb = knl_almcb_table; almcb < end; almcb++ ) {
-		almcb->almhdr = NULL; /* Unregistered handler */
+		almcb->almhdr = NULL; /* 未登録ハンドラ */
 		QueInsert((QUEUE*)almcb, &knl_free_almcb);
 	}
 
@@ -711,22 +725,38 @@ EXPORT ER knl_alarmhandler_initialize( void )
 }
 
 
-/*
- * Alarm handler start routine
+/**
+ * @brief	アラームハンドラの起動ルーチン
+ *
+ * タイマ割込みからコールバックとして呼び出され、アラームハンドラを
+ * 停止状態にしたうえでユーザのハンドラを実行します。ハンドラ実行中
+ * は TIMER_INTLEVEL までの割込みネストを許可します。
+ *
+ * @param	almcb	起動するアラームハンドラの管理ブロック
  */
 EXPORT void knl_call_almhdr( ALMCB *almcb )
 {
 	almcb->almstat &= ~TALM_STA;
 
-	/* Execute alarm handler/ Enable interrupt nesting */
+	/* アラームハンドラの実行（割込みネストを許可） */
 	ENABLE_INTERRUPT_UPTO(TIMER_INTLEVEL);
 	CallUserHandlerP1(almcb->exinf, almcb->almhdr, almcb);
 	DISABLE_INTERRUPT;
 }
 
 
-/*
- * Create alarm handler
+/**
+ * @brief	アラームハンドラの生成
+ *
+ * FreeQue から管理ブロックを獲得してアラームハンドラを生成します。
+ * 生成直後は停止状態（TALM_STP）であり、tk_sta_alm で起動時刻を
+ * 設定します。
+ *
+ * @param	pk_calm	アラームハンドラ生成情報
+ * @return	生成したアラームハンドラのID、またはエラーコード
+ * @retval	E_LIMIT	アラームハンドラ数が上限（NUM_ALMID）を超過
+ * @retval	E_RSATR	不正な属性を指定
+ * @retval	E_PAR	almhdr が NULL
  */
 SYSCALL ID tk_cre_alm( CONST T_CALM *pk_calm )
 {
@@ -745,14 +775,14 @@ SYSCALL ID tk_cre_alm( CONST T_CALM *pk_calm )
 	CHECK_PAR(pk_calm->almhdr != NULL);
 
 	BEGIN_CRITICAL_SECTION;
-	/* Get control block from free queue */
+	/* FreeQue から管理ブロックを獲得 */
 	almcb = (ALMCB*)QueRemoveNext(&knl_free_almcb);
 	if ( almcb == NULL ) {
 		ercd = E_LIMIT;
 		goto error_exit;
 	}
 
-	/* Initialize control block */
+	/* 管理ブロックの初期化 */
 	almcb->exinf   = pk_calm->exinf;
 	almcb->almatr  = pk_calm->almatr;
 	almcb->almhdr  = pk_calm->almhdr;
@@ -772,8 +802,16 @@ SYSCALL ID tk_cre_alm( CONST T_CALM *pk_calm )
 }
 
 #ifdef USE_FUNC_TK_DEL_ALM
-/*
- * Delete alarm handler
+/**
+ * @brief	アラームハンドラの削除
+ *
+ * 動作中であればタイマイベントキューから削除したうえで、
+ * 管理ブロックを FreeQue に返却します。
+ *
+ * @param	almid	削除するアラームハンドラのID
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_ID	almid の値が不正
  */
 SYSCALL ER tk_del_alm( ID almid )
 {
@@ -785,17 +823,17 @@ SYSCALL ER tk_del_alm( ID almid )
 	almcb = get_almcb(almid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( almcb->almhdr == NULL ) { /* Unregistered handler */
+	if ( almcb->almhdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		if ( (almcb->almstat & TALM_STA) != 0 ) {
-			/* Delete from timer event queue */
+			/* タイマイベントキューから削除 */
 			knl_timer_delete(&almcb->almtmeb);
 		}
 
-		/* Return to FreeQue */
+		/* FreeQue へ返却 */
 		QueInsert((QUEUE*)almcb, &knl_free_almcb);
-		almcb->almhdr = NULL; /* Unregistered handler */
+		almcb->almhdr = NULL; /* 未登録ハンドラ */
 	}
 	END_CRITICAL_SECTION;
 
@@ -803,22 +841,38 @@ SYSCALL ER tk_del_alm( ID almid )
 }
 #endif /* USE_FUNC_TK_DEL_ALM */
 
-/*
- * Alarm handler immediate call
+/**
+ * @brief	アラームハンドラの即時起動
+ *
+ * tk_sta_alm で起動時刻 0 が指定された場合に、アラームハンドラを
+ * タスク独立部として直ちに実行します（割込み禁止のまま実行）。
+ *
+ * @param	almcb	起動するアラームハンドラの管理ブロック
  */
 LOCAL void knl_immediate_call_almhdr( ALMCB *almcb )
 {
 	almcb->almstat &= ~TALM_STA;
 
-	/* Execute alarm handler in task-independent part
-	   (Keep interrupt disabled) */
+	/* アラームハンドラをタスク独立部として実行
+	   （割込み禁止のまま） */
 	ENTER_TASK_INDEPENDENT;
 	CallUserHandlerP1(almcb->exinf, almcb->almhdr, almcb);
 	LEAVE_TASK_INDEPENDENT;
 }
 
-/*
- * Start alarm handler
+/**
+ * @brief	アラームハンドラの動作開始
+ *
+ * 現在時刻から almtim 経過後にアラームハンドラが起動されるよう
+ * 設定します。既に起動時刻が設定されている場合はいったん解除して
+ * 再設定します。almtim が 0 の場合はハンドラを直ちに実行します。
+ *
+ * @param	almid	対象のアラームハンドラのID
+ * @param	almtim	起動までの相対時間（ms）
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_ID	almid の値が不正
+ * @retval	E_PAR	almtim の値が不正
  */
 SYSCALL ER tk_sta_alm( ID almid, RELTIM almtim )
 {
@@ -831,22 +885,22 @@ SYSCALL ER tk_sta_alm( ID almid, RELTIM almtim )
 	almcb = get_almcb(almid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( almcb->almhdr == NULL ) { /* Unregistered handler */
+	if ( almcb->almhdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 		goto error_exit;
 	}
 
 	if ( (almcb->almstat & TALM_STA) != 0 ) {
-		/* Cancel current settings */
+		/* 現在の設定を解除 */
 		knl_timer_delete(&almcb->almtmeb);
 	}
 
 	if ( almtim > 0 ) {
-		/* Register onto timer event queue */
+		/* タイマイベントキューへ登録 */
 		knl_alm_timer_insert(almcb, almtim);
 		almcb->almstat |= TALM_STA;
 	} else {
-		/* Immediate execution */
+		/* 即時実行 */
 		knl_immediate_call_almhdr(almcb);
 	}
 
@@ -857,8 +911,16 @@ SYSCALL ER tk_sta_alm( ID almid, RELTIM almtim )
 }
 
 #ifdef USE_FUNC_TK_STP_ALM
-/*
- * Stop alarm handler
+/**
+ * @brief	アラームハンドラの動作停止
+ *
+ * 起動時刻の設定を解除し、アラームハンドラを停止状態にします。
+ * 既に停止状態の場合は何もしません。
+ *
+ * @param	almid	対象のアラームハンドラのID
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_ID	almid の値が不正
  */
 SYSCALL ER tk_stp_alm( ID almid )
 {
@@ -870,11 +932,11 @@ SYSCALL ER tk_stp_alm( ID almid )
 	almcb = get_almcb(almid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( almcb->almhdr == NULL ) { /* Unregistered handler */
+	if ( almcb->almhdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		if ( (almcb->almstat & TALM_STA) != 0 ) {
-			/* Stop alarm handler address */
+			/* アラームハンドラの停止 */
 			knl_timer_delete(&almcb->almtmeb);
 			almcb->almstat &= ~TALM_STA;
 		}

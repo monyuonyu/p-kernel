@@ -11,10 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	dbgspt.h
+/**
+ * @file	dbgspt.h
+ * @brief	micro T-Kernel デバッガサポート（mT-Kernel/DS）
  *
- *	micro T-Kernel Debugger Support
+ * デバッガサポート機能（td_* API）の状態参照用データ型と
+ * API 宣言を定義します。
  */
 
 #ifndef __TK_DBGSPT_H__
@@ -26,14 +28,14 @@
 extern "C" {
 #endif
 
-/* System dependencies */
+/* システム依存部 */
 #define DBGSPT_PATH_(a)		#a
 #define DBGSPT_PATH(a)		DBGSPT_PATH_(a)
 #define DBGSPT_SYSDEP()		DBGSPT_PATH(sysdepend/TARGET_DIR/dbgspt.h)
 #include DBGSPT_SYSDEP()
 
 /*
- * Object name information		td_ref_dsname, td_set_dsname
+ * オブジェクト名情報の種別		td_ref_dsname, td_set_dsname
  */
 #define TN_TSK 0x01
 #define TN_SEM 0x02
@@ -48,181 +50,181 @@ extern "C" {
 #define TN_ALM 0x0b
 
 /*
- * Semaphore state information		td_ref_sem
+ * セマフォ状態情報		td_ref_sem
  */
 typedef	struct td_rsem {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	INT	semcnt;		/* Current semaphore value */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクの ID */
+	INT	semcnt;		/* 現在のセマフォカウント値 */
 } TD_RSEM;
 
 /*
- * Event flag state information		td_ref_flg
+ * イベントフラグ状態情報		td_ref_flg
  */
 typedef	struct td_rflg {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	UINT	flgptn;		/* Current event flag pattern */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクの ID */
+	UINT	flgptn;		/* 現在のイベントフラグパターン */
 } TD_RFLG;
 
 /*
- * Mail box state information		td_ref_mbx
+ * メールボックス状態情報		td_ref_mbx
  */
 typedef	struct td_rmbx {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	T_MSG	*pk_msg;	/* Next received message */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクの ID */
+	T_MSG	*pk_msg;	/* 次に受信されるメッセージ */
 } TD_RMBX;
 
 /*
- * Mutex state information		td_ref_mtx
+ * ミューテックス状態情報		td_ref_mtx
  */
 typedef struct td_rmtx {
-	void	*exinf;		/* Extended information */
-	ID	htsk;		/* Locking task ID */
-	ID	wtsk;		/* Lock wait task ID */
+	void	*exinf;		/* 拡張情報 */
+	ID	htsk;		/* ロックしているタスクの ID */
+	ID	wtsk;		/* ロック待ちタスクの ID */
 } TD_RMTX;
 
 /*
- * Message buffer state information 	td_ref_mbf
+ * メッセージバッファ状態情報 	td_ref_mbf
  */
 typedef struct td_rmbf {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Receive wait task ID */
-	ID	stsk;		/* Send wait task ID */
-	INT	msgsz;		/* Next received message size (byte) */
-	W	frbufsz;	/* Free buffer size (byte) */
-	INT	maxmsz;		/* Maximum length of message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 受信待ちタスクの ID */
+	ID	stsk;		/* 送信待ちタスクの ID */
+	INT	msgsz;		/* 次に受信されるメッセージのサイズ（バイト） */
+	W	frbufsz;	/* 空きバッファのサイズ（バイト） */
+	INT	maxmsz;		/* メッセージの最大長（バイト） */
 } TD_RMBF;
 
 /*
- * Rendezvous port state information	td_ref_por
+ * ランデブポート状態情報	td_ref_por
  */
 typedef struct td_rpor {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Call wait task ID */
-	ID	atsk;		/* Receive wait task ID */
-	INT	maxcmsz;	/* Maximum length of call message (byte) */
-	INT	maxrmsz;	/* Maximum length of replay message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 呼出待ちタスクの ID */
+	ID	atsk;		/* 受付待ちタスクの ID */
+	INT	maxcmsz;	/* 呼出メッセージの最大長（バイト） */
+	INT	maxrmsz;	/* 応答メッセージの最大長（バイト） */
 } TD_RPOR;
 
 /*
- * Fixed size memory pool state information	td_ref_mpf
+ * 固定長メモリプール状態情報	td_ref_mpf
  */
 typedef struct td_rmpf {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	W	frbcnt;		/* Number of free blocks */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクの ID */
+	W	frbcnt;		/* 空きブロック数 */
 } TD_RMPF;
 
 /*
- * Variable size memory pool state information	td_ref_mpl
+ * 可変長メモリプール状態情報	td_ref_mpl
  */
 typedef struct td_rmpl {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	W	frsz;		/* Total size of free area (byte) */
-	W	maxsz;		/* Size of maximum continuous
-				   free area (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクの ID */
+	W	frsz;		/* 空き領域の合計サイズ（バイト） */
+	W	maxsz;		/* 最大の連続空き領域のサイズ
+				   （バイト） */
 } TD_RMPL;
 
 /*
- * Cycle handler state information	td_ref_cyc
+ * 周期ハンドラ状態情報	td_ref_cyc
  */
 typedef struct td_rcyc {
-	void	*exinf;		/* Extended information */
-	RELTIM	lfttim;		/* Remaining time until next handler startup */
-	UINT	cycstat;	/* Cycle handler status */
+	void	*exinf;		/* 拡張情報 */
+	RELTIM	lfttim;		/* 次のハンドラ起動までの残り時間 */
+	UINT	cycstat;	/* 周期ハンドラの動作状態 */
 } TD_RCYC;
 
 /*
- * Alarm handler state information	td_ref_alm
+ * アラームハンドラ状態情報	td_ref_alm
  */
 typedef struct td_ralm {
-	void	*exinf;		/* Extended information */
-	RELTIM	lfttim;		/* Remaining time until handler startup */
-	UINT	almstat;	/* Alarm handler status */
+	void	*exinf;		/* 拡張情報 */
+	RELTIM	lfttim;		/* ハンドラ起動までの残り時間 */
+	UINT	almstat;	/* アラームハンドラの動作状態 */
 } TD_RALM;
 
 /*
- * Subsystem state information		td_ref_ssy
+ * サブシステム状態情報		td_ref_ssy
  */
 typedef struct td_rssy {
-	PRI	ssypri;		/* Subsystem priority */
-	W	resblksz;	/* Resource management block size (byte) */
+	PRI	ssypri;		/* サブシステム優先度 */
+	W	resblksz;	/* リソース管理ブロックのサイズ（バイト） */
 } TD_RSSY;
 
 /*
- * Task state information		td_ref_tsk
+ * タスク状態情報		td_ref_tsk
  */
 typedef	struct td_rtsk {
-	void	*exinf;		/* Extended information */
-	PRI	tskpri;		/* Current priority */
-	PRI	tskbpri;	/* Base priority */
-	UINT	tskstat;	/* Task state */
-	UW	tskwait;	/* Wait factor */
-	ID	wid;		/* Wait object ID */
-	INT	wupcnt;		/* Number of wakeup requests queuing */
-	INT	suscnt;		/* Number of SUSPEND request nests */
-	FP	task;		/* Task startup address */
-	W	stksz;		/* stack size (byte) */
-	void	*istack;		/* stack pointer initial value */
+	void	*exinf;		/* 拡張情報 */
+	PRI	tskpri;		/* 現在の優先度 */
+	PRI	tskbpri;	/* ベース優先度 */
+	UINT	tskstat;	/* タスク状態 */
+	UW	tskwait;	/* 待ち要因 */
+	ID	wid;		/* 待ち対象オブジェクトの ID */
+	INT	wupcnt;		/* 起床要求のキューイング数 */
+	INT	suscnt;		/* 強制待ち（SUSPEND）要求のネスト数 */
+	FP	task;		/* タスクの起動アドレス */
+	W	stksz;		/* スタックサイズ（バイト） */
+	void	*istack;		/* スタックポインタの初期値 */
 } TD_RTSK;
 
 /*
- * Task statistics information		td_inf_tsk
+ * タスク統計情報		td_inf_tsk
  */
 typedef struct td_itsk {
-	RELTIM	stime;		/* Cumulative system execution time
-				   (milliseconds) */
-	RELTIM	utime;		/* Cumulative user execution time
-				   (milliseconds) */
+	RELTIM	stime;		/* 累積システム実行時間
+				   （ミリ秒） */
+	RELTIM	utime;		/* 累積ユーザ実行時間
+				   （ミリ秒） */
 } TD_ITSK;
 
 /*
- * System state information		td_ref_sys
+ * システム状態情報		td_ref_sys
  */
 typedef struct td_rsys {
-	UINT	sysstat;	/* System state */
-	ID	runtskid;	/* ID of task in execution state */
-	ID	schedtskid;	/* ID of task that should be in
-				   execution state */
+	UINT	sysstat;	/* システム状態 */
+	ID	runtskid;	/* 実行状態のタスクの ID */
+	ID	schedtskid;	/* 本来実行状態であるべき
+				   タスクの ID */
 } TD_RSYS;
 
 /*
- * System call/extended SVC trace definition 	td_hok_svc
+ * システムコール／拡張 SVC トレース定義 	td_hok_svc
  */
 typedef struct td_hsvc {
-	FP	enter;		/* Hook routine before calling */
-	FP	leave;		/* Hook routine after calling */
+	FP	enter;		/* 呼出前のフックルーチン */
+	FP	leave;		/* 呼出後のフックルーチン */
 } TD_HSVC;
 
 /*
- * Task dispatch trace definition		td_hok_dsp
+ * タスクディスパッチトレース定義		td_hok_dsp
  */
 typedef struct td_hdsp {
-	FP	exec;		/* Hook routine when starting execution */
-	FP	stop;		/* Hook routine when stopping execution */
+	FP	exec;		/* 実行開始時のフックルーチン */
+	FP	stop;		/* 実行停止時のフックルーチン */
 } TD_HDSP;
 
 /*
- * Exception/Interrupt trace definition			td_hok_int
+ * 例外／割込みトレース定義			td_hok_int
  */
 typedef struct td_hint {
-	FP	enter;		/* Hook routine before calling handler */
-	FP	leave;		/* Hook routine after calling handler */
+	FP	enter;		/* ハンドラ呼出前のフックルーチン */
+	FP	leave;		/* ハンドラ呼出後のフックルーチン */
 } TD_HINT;
 
 /* ------------------------------------------------------------------------ */
 
 /*
- * Definition for interface library automatic generation (mktdsvc)
+ * インタフェースライブラリ自動生成用の定義（mktdsvc）
  */
 /*** DEFINE_TDSVC ***/
 
 /* [BEGIN SYSCALLS] */
 
-/* Refer each object usage state */
+/* 各オブジェクトの使用状況の参照 */
 IMPORT INT td_lst_tsk( ID list[], INT nent );
 IMPORT INT td_lst_sem( ID list[], INT nent );
 IMPORT INT td_lst_flg( ID list[], INT nent );
@@ -236,7 +238,7 @@ IMPORT INT td_lst_cyc( ID list[], INT nent );
 IMPORT INT td_lst_alm( ID list[], INT nent );
 IMPORT INT td_lst_ssy( ID list[], INT nent );
 
-/* Refer each object state */
+/* 各オブジェクトの状態参照 */
 IMPORT ER td_ref_sem( ID semid, TD_RSEM *rsem );
 IMPORT ER td_ref_flg( ID flgid, TD_RFLG *rflg );
 IMPORT ER td_ref_mbx( ID mbxid, TD_RMBX *rmbx );
@@ -249,7 +251,7 @@ IMPORT ER td_ref_cyc( ID cycid, TD_RCYC *rcyc );
 IMPORT ER td_ref_alm( ID almid, TD_RALM *ralm );
 IMPORT ER td_ref_ssy( ID ssid, TD_RSSY *rssy );
 
-/* Refer task state */
+/* タスクの状態参照 */
 IMPORT ER td_ref_tsk( ID tskid, TD_RTSK *rtsk );
 IMPORT ER td_inf_tsk( ID tskid, TD_ITSK *itsk, BOOL clr );
 
@@ -258,15 +260,15 @@ IMPORT ER td_get_reg( ID tskid, T_REGS *regs, T_EIT *eit, T_CREGS *cregs );
 IMPORT ER td_set_reg( ID tskid, CONST T_REGS *regs, CONST T_EIT *eit, CONST T_CREGS *cregs );
 #endif  /* TK_SUPPORT_REGOPS */
 
-/* Refer system state */
+/* システムの状態参照 */
 IMPORT ER td_ref_sys( TD_RSYS *rsys );
 IMPORT ER td_get_tim( SYSTIM *tim, UW *ofs );
 IMPORT ER td_get_otm( SYSTIM *tim, UW *ofs );
 
-/* Refer ready queue */
+/* 実行可能キュー（ready queue）の参照 */
 IMPORT INT td_rdy_que( PRI pri, ID list[], INT nent );
 
-/* Refer wait queue */
+/* 待ちキューの参照 */
 IMPORT INT td_sem_que( ID semid, ID list[], INT nent );
 IMPORT INT td_flg_que( ID flgid, ID list[], INT nent );
 IMPORT INT td_mbx_que( ID mbxid, ID list[], INT nent );
@@ -278,12 +280,12 @@ IMPORT INT td_acp_que( ID porid, ID list[], INT nent );
 IMPORT INT td_mpf_que( ID mpfid, ID list[], INT nent );
 IMPORT INT td_mpl_que( ID mplid, ID list[], INT nent );
 
-/* Execution trace */
+/* 実行トレース */
 IMPORT ER td_hok_svc( CONST TD_HSVC *hsvc );
 IMPORT ER td_hok_dsp( CONST TD_HDSP *hdsp );
 IMPORT ER td_hok_int( CONST TD_HINT *hint );
 
-/* Object name */
+/* オブジェクト名 */
 IMPORT ER td_ref_dsname( UINT type, ID id, UB *dsname );
 IMPORT ER td_set_dsname( UINT type, ID id, CONST UB *dsname );
 

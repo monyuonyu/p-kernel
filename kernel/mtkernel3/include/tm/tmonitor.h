@@ -11,10 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	tmonitor.h
+/**
+ * @file	tmonitor.h
+ * @brief	T-Monitor 互換呼び出し
  *
- *	T-Monitor compatible calls
+ * コンソール入出力を行う T-Monitor 互換のサービス関数
+ * （文字・行・書式付き出力）を宣言します。
  */
 
 #ifndef __TM_TMONITOR_H__
@@ -27,7 +29,7 @@
 IMPORT void libtm_init(void);
 
 /*
- * Monitor service function
+ * モニタサービス関数
  */
 IMPORT INT  tm_getchar( INT wait );
 IMPORT INT  tm_putchar( INT c );
