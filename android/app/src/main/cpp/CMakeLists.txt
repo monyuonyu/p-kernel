@@ -1,7 +1,7 @@
 # android/app/src/main/cpp/CMakeLists.txt
 #
 # Builds libpkernel.so by reusing the arch/linux/aarch64 + arch/common
-# + kernel/common sources via relative paths. Drop into an Android
+# + kernel/mtkernel3 (uT-Kernel 3.0) sources via relative paths. Drop into an Android
 # Studio project that's configured for CMake; the rest of the gradle
 # files (build.gradle, AndroidManifest.xml) live alongside.
 #
@@ -20,8 +20,10 @@ set(PK_ROOT  ${CMAKE_SOURCE_DIR}/../../../../..)
 set(ARCH_LX  ${PK_ROOT}/arch/linux)
 set(ARCH_AA  ${PK_ROOT}/arch/aarch64)
 set(ARCH_CO  ${PK_ROOT}/arch/common)
-set(KCOMMON  ${PK_ROOT}/kernel/common)
-set(INC_TK   ${PK_ROOT}/include/kernel/tkernel)
+set(MTK3     ${PK_ROOT}/kernel/mtkernel3)
+set(MTK3_KNL ${MTK3}/kernel/tkernel)
+set(MTK3_SD  ${MTK3}/kernel/sysdepend/linux_aarch64)
+set(MTK3_TM  ${MTK3}/lib/libtm)
 set(INC_TOP  ${PK_ROOT}/include)
 set(INC_LIB  ${PK_ROOT}/include/lib)
 set(LIBSTR   ${PK_ROOT}/lib/libc/string)
@@ -32,12 +34,9 @@ set(RELAY    ${PK_ROOT}/relay)
 # utk_config_depend.h (CFN_REALMEMEND = ~0UL, required for PIE/ASLR-safe
 # Imalloc init) wins over the bare-metal one (0x50000000UL).
 #
-# include/lib/libc is appended via -idirafter on the KCOMMON/LIBSTR
-# source properties below, so it's a *fallback* for headers like
-# ctype.h / math.h / setjmp.h that T-Kernel kernel sources reference
-# but T-Kernel itself doesn't provide. Doing this with `-I` AT THE
-# FRONT would shadow T-Kernel's errno.h (E_OK, etc.) with the POSIX
-# stub and break every kernel/common file that returns ER codes.
+# μT-Kernel 3.0 コアは Bionic のヘッダ（stdint/stddef）をそのまま使う
+# （boot/linux/Makefile と同じ方針。2.0 時代のプレースホルダ libc
+#  -idirafter は廃止）。
 include_directories(
     ${ARCH_LX}/aarch64/include
     ${ARCH_LX}/include
@@ -45,14 +44,15 @@ include_directories(
     ${ARCH_CO}/include/lp64
     ${ARCH_CO}/include
     ${RELAY}
-    ${INC_TK}
-    ${INC_TOP}
+    ${MTK3}/kernel/knlinc
+    ${MTK3}/kernel/tkernel
+    ${MTK3}/include
+    ${MTK3}/include/tm
+    ${MTK3}/include/compat
+    ${MTK3}/config
 )
 
-# Path that needs to be a *late* fallback, not an early shadow.
-set(KCOMMON_EXTRA_INC ${INC_LIB}/libc)
-
-add_compile_definitions(_APP_AARCH64_ _APP_LINUX_ _TK_HOSTED_LIBC_)
+add_compile_definitions(_APP_AARCH64_ _APP_LINUX_ _TK_HOSTED_LIBC_ _LINUX_AARCH64_)
 # Android 15+ 16KB page size: NDK r26 links 4KB-aligned LOAD segments by
 # default; newer devices (and Play policy) require 16KB ELF alignment.
 add_link_options(-Wl,-z,max-page-size=16384)
@@ -72,16 +72,12 @@ add_compile_options(-Wall -Wextra -O1 -ffp-contract=off -fPIC -fvisibility=hidde
 
 # boot/linux/main.c is renamed via -Dmain=pkernel_main below so the
 # JNI's own main symbol is unaffected.
-set(BOOT     ${PK_ROOT}/boot/linux/main.c)
+set(BOOT     ${PK_ROOT}/boot/linux/main_mtk3.c)
 set_source_files_properties(${BOOT} PROPERTIES
     COMPILE_DEFINITIONS "main=pkernel_main")
 
 # Per-arch (arch/linux/aarch64)
 set(ARCH_SRC
-    ${ARCH_LX}/aarch64/cpu_init.c
-    ${ARCH_LX}/aarch64/tkdev_init.c
-    ${ARCH_LX}/aarch64/inittask_def.c
-    ${ARCH_LX}/aarch64/inittask_main.c
     ${ARCH_LX}/aarch64/usermain.c
     ${ARCH_LX}/aarch64/sio.c
     ${ARCH_LX}/aarch64/pci.c
@@ -96,7 +92,6 @@ set(ARCH_SRC
     ${ARCH_LX}/aarch64/preempt.c
     ${ARCH_LX}/aarch64/fault.c
     ${ARCH_LX}/aarch64/time.c
-    ${ARCH_LX}/aarch64/cpu_support.S
 )
 
 # arch/linux (cross-arch hosted) shared sources — same list as
@@ -195,57 +190,52 @@ set(COMMON_SRC
     ${ARCH_CO}/modver.c
 )
 
-# kernel/common — same explicit list as boot/linux/Makefile's KERNEL_SRCS.
-set(KCOMMON_SRC
-    ${KCOMMON}/task.c
-    ${KCOMMON}/task_manage.c
-    ${KCOMMON}/task_sync.c
-    ${KCOMMON}/timer.c
-    ${KCOMMON}/time_calls.c
-    ${KCOMMON}/wait.c
-    ${KCOMMON}/semaphore.c
-    ${KCOMMON}/eventflag.c
-    ${KCOMMON}/mailbox.c
-    ${KCOMMON}/messagebuf.c
-    ${KCOMMON}/mutex.c
-    ${KCOMMON}/mempfix.c
-    ${KCOMMON}/mempool.c
-    ${KCOMMON}/memory.c
-    ${KCOMMON}/misc_calls.c
-    ${KCOMMON}/tkstart.c
-    ${KCOMMON}/bitop.c
-    ${KCOMMON}/fastlock.c
-    ${KCOMMON}/fastmlock.c
-    ${KCOMMON}/klock.c
-    ${KCOMMON}/objname.c
-    ${KCOMMON}/rendezvous.c
-    ${KCOMMON}/subsystem.c
-    ${KCOMMON}/tm_putchar.c
-    ${KCOMMON}/tm_putstring.c
-    ${KCOMMON}/tm_printf.c
-    ${KCOMMON}/tm_monitor.c
-    ${KCOMMON}/tm_exit.c
-    ${KCOMMON}/tm_getchar.c
-    ${KCOMMON}/tm_getline.c
-    ${KCOMMON}/tm_command.c
+# μT-Kernel 3.0 コア — boot/linux/Makefile の MTK3_KNL_SRCS と同一リスト。
+# ADD_PREFIX_KNL_TO_GLOBAL_NAME: sysinit の main() を knl_main() に改名し、
+# boot/linux/main_mtk3.c（-Dmain=pkernel_main）と共存させる。
+set(MTK3_KNL_SRC
+    ${MTK3_KNL}/task.c
+    ${MTK3_KNL}/task_manage.c
+    ${MTK3_KNL}/task_sync.c
+    ${MTK3_KNL}/timer.c
+    ${MTK3_KNL}/time_calls.c
+    ${MTK3_KNL}/wait.c
+    ${MTK3_KNL}/semaphore.c
+    ${MTK3_KNL}/eventflag.c
+    ${MTK3_KNL}/mailbox.c
+    ${MTK3_KNL}/messagebuf.c
+    ${MTK3_KNL}/mutex.c
+    ${MTK3_KNL}/mempfix.c
+    ${MTK3_KNL}/mempool.c
+    ${MTK3_KNL}/memory.c
+    ${MTK3_KNL}/misc_calls.c
+    ${MTK3_KNL}/objname.c
+    ${MTK3_KNL}/rendezvous.c
+    ${MTK3_KNL}/klock.c
+    ${MTK3_KNL}/cpuctl.c
+    ${MTK3_KNL}/int.c
+    ${MTK3_KNL}/power.c
+    ${MTK3_KNL}/device.c
+    ${MTK3_KNL}/deviceio.c
+    ${MTK3_KNL}/tkinit.c
+    ${MTK3}/kernel/sysinit/sysinit.c
+    ${MTK3}/kernel/inittask/inittask.c
+    ${MTK3}/kernel/tstdlib/string.c
+    ${MTK3}/kernel/tstdlib/bitop.c
+    ${MTK3_TM}/libtm.c
+    ${MTK3_TM}/libtm_printf.c
+    ${MTK3_TM}/sysdepend/linux_aarch64/tm_com.c
+    ${MTK3_SD}/cpu_cntl.c
+    ${MTK3_SD}/interrupt.c
+    ${MTK3_SD}/hw_setting.c
+    ${MTK3_SD}/devinit.c
+    ${MTK3_SD}/power_save.c
+    ${MTK3_SD}/dispatch.S
 )
-set_source_files_properties(${KCOMMON_SRC} PROPERTIES
-    COMPILE_OPTIONS "-idirafter;${KCOMMON_EXTRA_INC}")
+set_source_files_properties(${MTK3_KNL_SRC} PROPERTIES
+    COMPILE_DEFINITIONS "ADD_PREFIX_KNL_TO_GLOBAL_NAME")
 
-# lib/libc string helpers — same explicit list as boot/linux/Makefile.
-set(LIBSTR_SRC
-    ${LIBSTR}/memset.c
-    ${LIBSTR}/memcpy.c
-    ${LIBSTR}/memmove.c
-    ${LIBSTR}/memcmp.c
-    ${LIBSTR}/strlen.c
-    ${LIBSTR}/strcpy.c
-    ${LIBSTR}/strncpy.c
-    ${LIBSTR}/strcmp.c
-    ${LIBSTR}/strncmp.c
-)
-set_source_files_properties(${LIBSTR_SRC} PROPERTIES
-    COMPILE_OPTIONS "-idirafter;${KCOMMON_EXTRA_INC}")
+# lib/libc/string は 2.0 廃止と同時に削除（hosted は Bionic/glibc を使用）
 
 # --- generated web assets (galaxy v1 + i18n manifesto, galaxy.md D3/D4) ---
 #
@@ -454,7 +444,7 @@ set_source_files_properties(${LLM_STUDENT_SRC} PROPERTIES
 
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
-    ${KCOMMON_SRC} ${LIBSTR_SRC} ${GPU_SRC} ${JNI_SRC}
+    ${MTK3_KNL_SRC} ${GPU_SRC} ${JNI_SRC}
     ${LLM_STUDENT_SRC} ${LLM_STUB_SRC})
 
 # galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and

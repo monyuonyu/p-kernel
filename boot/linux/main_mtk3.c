@@ -28,6 +28,9 @@ IMPORT void sio_send_frame(const UB *buf, INT size);
 /* μT-Kernel 3.0 起動（sysinit.c, ADD_PREFIX_KNL_TO_GLOBAL_NAME 有効時） */
 IMPORT INT knl_main(void);
 
+/* .so ビルド（-Dmain=pkernel_main）では JNI ブリッジ／dlopen 側から
+ * 呼べるよう明示的に可視化する（-fvisibility=hidden の例外） */
+__attribute__((visibility("default")))
 int main(int argc, char **argv)
 {
 	(void)argc; (void)argv;
