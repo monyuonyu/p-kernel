@@ -11,9 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	wait.h
- *	Definition of Common Routine for Synchronization
+/**
+ * @file	wait.h
+ * @brief	同期用共通ルーチンの定義
+ *
+ * タスクの待ち解除・待ち状態遷移のルーチン群と、同期・通信オブジェクト
+ * 共通の汎用制御ブロック（GCB）およびそれに対する操作を定義します。
  */
 
 #ifndef _WAIT_
@@ -24,27 +27,29 @@
 #include "task.h"
 
 /*
- * Release wait state of the task.
- *	Remove the task from the timer queue and the wait queue, then
- *	update the task state. 'wait_release_ok' sends E_OK to the
- *	wait released task.
- *	'wait_release_ok_recd' is normal wait release as well as
- *	'wait_release_ok', but it sends 'ercd' to the wait released task.
- *	It needs to be ercd >= 0. 
- *	'wait_release_ng' sends 'ercd' to the wait released task. Use for
- *	releasing the forced wait task. It needs to be ercd < 0.
- *	'wait_release_tmout' don't remove from the timer queue. Use for
- *	time out processing.
+ * タスクの待ち状態の解除
+ *	タスクをタイマキューと待ちキューから外し、タスク状態を更新する。
+ *	'knl_wait_release_ok' は待ち解除したタスクへ E_OK を渡す。
+ *	'knl_wait_release_ok_ercd' は 'knl_wait_release_ok' と同じ正常な
+ *	待ち解除だが、待ち解除したタスクへ 'ercd' を渡す。
+ *	ercd >= 0 であることが必要。
+ *	'knl_wait_release_ng' は待ち解除したタスクへ 'ercd' を渡す。
+ *	強制的な待ち解除に使用する。ercd < 0 であることが必要。
+ *	'knl_wait_release_tmout' はタイマキューからの削除を行わない。
+ *	タイムアウト処理に使用する。
  */
 IMPORT void knl_wait_release_ok( TCB *tcb );
 IMPORT void knl_wait_release_ok_ercd( TCB *tcb, ER ercd );
 IMPORT void knl_wait_release_ng( TCB *tcb, ER ercd );
 IMPORT void knl_wait_release_tmout( TCB *tcb );
 
-/*
- * Cancel task wait state.
- *	Remove the task from the timer queue and the wait queue.
- *	Do not update the task state.
+/**
+ * @brief タスクの待ち状態を取り消します。
+ *
+ * タスクをタイマキューと待ちキューから外します。
+ * タスク状態の更新は行いません。
+ *
+ * @param tcb 対象タスクの TCB
  */
 Inline void knl_wait_cancel( TCB *tcb )
 {
@@ -53,27 +58,30 @@ Inline void knl_wait_cancel( TCB *tcb )
 }
 
 /*
- * Change the active task to wait state and connect to the
- * timer event queue.
+ * 実行中タスクを待ち状態に遷移させ、タイマイベントキューに接続する。
  */
 IMPORT void knl_make_wait( TMO tmout, ATR atr );
 IMPORT void knl_make_wait_reltim( RELTIM tmout, ATR atr );
 
 /*
- * Release wait state of all tasks connected to the wait queue,
- * and set it as E_DLT error.
- * Use when synchronization between tasks or communication
- * object is deleted.
+ * 待ちキューに接続された全タスクの待ちを解除し、E_DLT エラーを設定する。
+ * 同期・通信オブジェクトの削除時に使用する。
  */
 IMPORT void knl_wait_delete( QUEUE *wait_queue );
 
 /*
- * Get ID of the head task in the wait queue.
+ * 待ちキュー先頭タスクの ID を取得する。
  */
 IMPORT ID knl_wait_tskid( QUEUE *wait_queue );
 
-/*
- * Connect the task to the prioritized wait queue.
+/**
+ * @brief タスクを優先度順の待ちキューに接続します。
+ *
+ * キューを先頭から走査し、tcb の優先度より低い（値の大きい）
+ * 最初のタスクの直前に挿入します。同一優先度では FIFO 順になります。
+ *
+ * @param tcb   接続するタスクの TCB
+ * @param queue 接続先の待ちキュー
  */
 Inline void knl_queue_insert_tpri( TCB *tcb, QUEUE *queue )
 {
@@ -96,49 +104,51 @@ Inline void knl_queue_insert_tpri( TCB *tcb, QUEUE *queue )
 }
 
 /*
- * Common part of control block
- *	For synchronization between tasks and communication object,
- *	the head part of control block is common. The followings are
- *	common routines.
- *	Define common part as GCB (generic control block) type.
- *	Cannot use these routines if an object has multiple wait queues
- *	and when it operates a wait queue after the first one.
- *	Cannot use these routines if TA_TPRI, TA_NODISWAI object attribute
- *	bits are used for other purposes since these bits are checked.
+ * 制御ブロックの共通部
+ *	タスク同期・通信オブジェクトでは、制御ブロックの先頭部分が
+ *	共通になっている。以下はその共通部を操作する共通ルーチンである。
+ *	共通部を GCB（generic control block）型として定義する。
+ *	オブジェクトが複数の待ちキューを持ち、2 番目以降の待ちキューを
+ *	操作する場合は、これらのルーチンは使用できない。
+ *	オブジェクト属性の TA_TPRI・TA_NODISWAI ビットを他の用途に
+ *	使用している場合も、これらのビットを参照するため使用できない。
  */
 typedef struct generic_control_block {
-	QUEUE	wait_queue;	/* Wait queue */
-	ID	objid;		/* Object ID */
-	void	*exinf;		/* Extended information */
-	ATR	objatr;		/* Object attribute */
-	/* It is OK to have another field after this point, */
-	/* but it is not used for generic operation routines. */
+	QUEUE	wait_queue;	/* 待ちキュー */
+	ID	objid;		/* オブジェクト ID */
+	void	*exinf;		/* 拡張情報 */
+	ATR	objatr;		/* オブジェクト属性 */
+	/* これ以降に別のフィールドを持ってもよいが、 */
+	/* 汎用操作ルーチンでは使用しない。 */
 } GCB ;
 
 /*
- * Change the active task to wait state and connect to the timer event 
- * queue and the object wait queue. Also, set 'wid' in 'ctxtsk'. 
+ * 実行中タスクを待ち状態に遷移させ、タイマイベントキューと
+ * オブジェクトの待ちキューに接続する。あわせて knl_ctxtsk の
+ * 'wid' を設定する。
  */
 IMPORT void knl_gcb_make_wait( GCB *gcb, TMO tmout );
 
 /*
- * When the task priority changes, adjust the task position in the
- * wait queue.
- * Do nothing if TA_TPRI is not specified in the object attribute.
+ * タスク優先度変更時に、待ちキュー内でのタスク位置を調整する。
+ * オブジェクト属性に TA_TPRI が指定されていない場合は何もしない。
  */
 IMPORT void knl_gcb_change_priority( GCB *gcb, TCB *tcb );
 
 /*
- * Search the first task of wait queue include "tcb" with target.
- * (Not insert "tcb" into wait queue.)
- *
+ * "tcb" を含めたと仮定した場合の待ちキュー先頭タスクを求める。
+ * （"tcb" を待ちキューへ挿入することはない。）
  */
 IMPORT TCB* knl_gcb_top_of_wait_queue( GCB *gcb, TCB *tcb );
 
-/*
- * Update the task state to release wait. When it becomes ready state,
- * connect to the ready queue.
- * Call when the task is in the wait state (including double wait).
+/**
+ * @brief 待ち解除に伴いタスク状態を更新します。
+ *
+ * 実行可能状態になる場合は実行可能キュー（ready queue）に接続します。
+ * 二重待ち（強制待ち＋待ち）の場合は強制待ち状態（TS_SUSPEND）に
+ * します。タスクが待ち状態（二重待ちを含む）のときに呼び出してください。
+ *
+ * @param tcb 対象タスクの TCB
  */
 Inline void knl_make_non_wait( TCB *tcb )
 {
@@ -149,8 +159,12 @@ Inline void knl_make_non_wait( TCB *tcb )
 	}
 }
 
-/*
- * Release wait state of the task.
+/**
+ * @brief タスクの待ち状態を解除します。
+ *
+ * タスクをタイマキューと待ちキューから外し、タスク状態を更新します。
+ *
+ * @param tcb 待ち解除するタスクの TCB
  */
 Inline void knl_wait_release( TCB *tcb )
 {

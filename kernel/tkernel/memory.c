@@ -11,30 +11,37 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	memory.c
- *	In-kernel dynamic memory management
+/**
+ * @file	memory.c
+ * @brief	カーネル内動的メモリ管理
+ *
+ * カーネル内部で使用する動的メモリ（Imalloc）の実装です。
+ * 確保済み領域を連結する AreaQue と、空き領域をサイズ順に連結する
+ * FreeQue の 2 種類のキューで空間を管理します。
  */
 
 #include "kernel.h"
 #include "memory.h"
 
-/*
- * FreeQue search
- *	Search the free area whose size is equal to 'blksz',
- *	or larger than
- *      'blksz' but closest.
- *	If it does not exist, return '&imacb->freeque'.
+/**
+ * @brief FreeQue の探索
+ *
+ * サイズが blksz と等しい、または blksz より大きく最も近い
+ * 空き領域を探索します。
+ * 見つからない場合は &imacb->freeque を返します。
+ *
+ * @param imacb メモリ確保管理情報
+ * @param blksz 要求ブロックサイズ（バイト数）
+ * @return 該当する空き領域のキューエントリ。無ければ &imacb->freeque
  */
 EXPORT QUEUE* knl_searchFreeArea( IMACB *imacb, W blksz )
 {
 	QUEUE	*q = &imacb->freeque;
 
-	/* For area whose memory pool size is less than 1/4,
-	   search from smaller size.
-	   Otherwise, search from larger size. */
+	/* 要求サイズがメモリプールサイズの 1/4 未満なら小さい方から、
+	   それ以外は大きい方から探索する */
 	if ( blksz > imacb->memsz / 4 ) {
-		/* Search from larger size. */
+		/* 大きいサイズ側から探索 */
 		W fsz = 0;
 		while ( (q = q->prev) != &imacb->freeque ) {
 			fsz = FreeSize(q);
@@ -44,7 +51,7 @@ EXPORT QUEUE* knl_searchFreeArea( IMACB *imacb, W blksz )
 		}
 		return ( fsz >= blksz )? q->next: q;
 	} else {
-		/* Search from smaller size. */
+		/* 小さいサイズ側から探索 */
 		while ( (q = q->next) != &imacb->freeque ) {
 			if ( FreeSize(q) >= blksz ) {
 				break;
@@ -55,41 +62,43 @@ EXPORT QUEUE* knl_searchFreeArea( IMACB *imacb, W blksz )
 }
 
 
-/*
- * Registration of free area on FreeQue
- *	FreeQue is composed of 2 types: Queue that links the
- *	different size of areas by size and queue that links the
- *	same size of areas.
+/**
+ * @brief 空き領域の FreeQue への登録
+ *
+ * FreeQue は、サイズの異なる領域をサイズ順に連結するキューと、
+ * 同一サイズの領域どうしを連結するキューの 2 種類で構成されます。
  *
  *	freeque
  *	|
  *	|   +-----------------------+	    +-----------------------+
  *	|   | AreaQue		    |	    | AreaQue		    |
  *	|   +-----------------------+	    +-----------------------+
- *	*---> FreeQue Size order    |	    | EmptyQue		    |
- *	|   | FreeQue Same size   --------->| FreeQue Same size   ----->
+ *	*---> FreeQue サイズ順      |	    | EmptyQue		    |
+ *	|   | FreeQue 同一サイズ  --------->| FreeQue 同一サイズ  ----->
  *	|   |			    |	    |			    |
  *	|   |			    |	    |			    |
  *	|   +-----------------------+	    +-----------------------+
  *	|   | AreaQue		    |	    | AreaQue		    |
  *	v   +-----------------------+	    +-----------------------+
+ *
+ * @param imacb メモリ確保管理情報
+ * @param aq 登録する領域の AreaQue エントリ
  */
 EXPORT void knl_appendFreeArea( IMACB *imacb, QUEUE *aq )
 {
 	QUEUE	*fq;
 	W	size = AreaSize(aq);
 
-	/* Registration position search */
-	/*  Search the free area whose size is equal to 'blksz',
-	 *  or larger than 'blksz' but closest.
-	 *  If it does not exist, return '&imacb->freeque'.
+	/* 登録位置の探索 */
+	/*  サイズが等しい、またはより大きく最も近い空き領域を探す。
+	 *  見つからない場合は &imacb->freeque が返る。
 	 */
 	fq = knl_searchFreeArea(imacb, size);
 
-	/* Register */
+	/* 登録 */
 	clrAreaFlag(aq, AREA_USE);
 	if ( fq != &imacb->freeque && FreeSize(fq) == size ) {
-		/* FreeQue Same size */
+		/* FreeQue 同一サイズのキューへ連結 */
 		(aq + 2)->next = (fq + 1)->next;
 		(fq + 1)->next = aq + 2;
 		(aq + 2)->prev = fq + 1;
@@ -98,25 +107,27 @@ EXPORT void knl_appendFreeArea( IMACB *imacb, QUEUE *aq )
 		}
 		(aq + 1)->next = NULL;
 	} else {
-		/* FreeQue Size order */
+		/* FreeQue サイズ順のキューへ連結 */
 		QueInsert(aq + 1, fq);
 		(aq + 2)->next = NULL;
 		(aq + 2)->prev = (QUEUE*)(unsigned long)size;	/* p-kernel: LP64 の警告回避（サイズ値の格納） */
 	}
 }
 
-/*
- * Delete from FreeQue
+/**
+ * @brief FreeQue からの削除
+ *
+ * @param fq 削除する空き領域の FreeQue エントリ
  */
 EXPORT void knl_removeFreeQue( QUEUE *fq )
 {
-	if ( fq->next == NULL ) {	/* FreeQue Same size */
+	if ( fq->next == NULL ) {	/* FreeQue 同一サイズのキュー */
 		(fq + 1)->prev->next = (fq + 1)->next;
 		if ( (fq + 1)->next != NULL ) {
 			(fq + 1)->next->prev = (fq + 1)->prev;
 		}
-	} else {			/* FreeQue Size order */
-		if ( (fq + 1)->next != NULL ) {		/* having FreeQue Same size */
+	} else {			/* FreeQue サイズ順のキュー */
+		if ( (fq + 1)->next != NULL ) {		/* 同一サイズのキューを持つ場合 */
 			QueInsert((fq + 1)->next - 1, fq);
 			(fq + 1)->next->prev = (fq + 1)->prev;
 		}
@@ -124,9 +135,13 @@ EXPORT void knl_removeFreeQue( QUEUE *fq )
 	}
 }
 
-/*
- * Register area
- *	Insert 'ent' just after 'que.'
+/**
+ * @brief 領域の登録
+ *
+ * ent を que の直後に挿入します。
+ *
+ * @param que 挿入位置となる AreaQue エントリ
+ * @param ent 挿入する AreaQue エントリ
  */
 EXPORT void knl_insertAreaQue( QUEUE *que, QUEUE *ent )
 {
@@ -136,8 +151,10 @@ EXPORT void knl_insertAreaQue( QUEUE *que, QUEUE *ent )
 	que->next = ent;
 }
 
-/*
- * Delete area
+/**
+ * @brief 領域の削除
+ *
+ * @param aq 削除する AreaQue エントリ
  */
 EXPORT void knl_removeAreaQue( QUEUE *aq )
 {
@@ -154,16 +171,25 @@ Noinit(EXPORT IMACB *knl_imacb);
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Memory allocate
+/**
+ * @brief メモリの確保
+ *
+ * FreeQue から size バイト以上の空き領域を探して確保します。
+ * 残りが最小フラグメントサイズ以上あれば領域を分割し、
+ * 残余を FreeQue へ再登録します。
+ *
+ * @param size 要求サイズ（バイト数）
+ * @return 確保したメモリの先頭アドレス。size が 0 以下、
+ *         またはメモリ不足の場合は NULL
+ * @note 割込み禁止により排他制御を行います。
  */
 EXPORT void* knl_Imalloc( SZ size )
 {
 	QUEUE	*q, *aq, *aq2;
 	UINT	imask;
 
-	/* If it is smaller than the minimum fragment size,
-	   allocate the minimum size to it. */
+	/* 最小フラグメントサイズより小さい場合は、
+	   最小サイズに切り上げて確保する */
 	if( size <= 0 ) {
 		return (void *)NULL;
 	} else 	if ( size < MIN_FRAGMENT ) {
@@ -172,29 +198,29 @@ EXPORT void* knl_Imalloc( SZ size )
 		size = ROUND(size);
 	}
 
-	DI(imask);  /* Exclusive control by interrupt disable */
+	DI(imask);  /* 割込み禁止による排他制御 */
 
-	/* Search FreeQue */
+	/* FreeQue の探索 */
 	q = knl_searchFreeArea(knl_imacb, size);
 	if ( q == &(knl_imacb->freeque) ) {
-		q = NULL; /* Insufficient memory */
+		q = NULL; /* メモリ不足 */
 		goto err_ret;
 	}
 
-	/* There is free area: Split from FreeQue once */
+	/* 空き領域あり: いったん FreeQue から切り離す */
 	knl_removeFreeQue(q);
 
 	aq = q - 1;
 
-	/* If there are fragments smaller than the minimum fragment size,
-	   allocate them also */
+	/* 残余が最小フラグメントサイズに満たない場合は、
+	   その分も含めて確保する */
 	if ( FreeSize(q) - size >= MIN_FRAGMENT + sizeof(QUEUE) ) {
 
-		/* Divide area into 2 */
+		/* 領域を 2 つに分割 */
 		aq2 = (QUEUE*)((VB*)(aq + 1) + size);
 		knl_insertAreaQue(aq, aq2);
 
-		/* Register remaining area to FreeQue */
+		/* 残りの領域を FreeQue へ登録 */
 		knl_appendFreeArea(knl_imacb, aq2);
 	}
 	setAreaFlag(aq, AREA_USE);
@@ -205,8 +231,14 @@ err_ret:
 	return (void *)q;
 }
 
-/*
- * Memory allocate  and clear
+/**
+ * @brief メモリの確保とゼロクリア
+ *
+ * nmemb * size バイトのメモリを確保し、全体を 0 で初期化します。
+ *
+ * @param nmemb 要素数
+ * @param size 1 要素のサイズ（バイト数）
+ * @return 確保したメモリの先頭アドレス。確保できない場合は NULL
  */
 EXPORT void* knl_Icalloc( SZ nmemb, SZ size )
 {
@@ -224,8 +256,16 @@ EXPORT void* knl_Icalloc( SZ nmemb, SZ size )
 }
 
 
-/*
- * Memory allocation size change
+/**
+ * @brief メモリ確保サイズの変更
+ *
+ * 新しいサイズの領域を確保して旧領域の内容をコピーし、
+ * 旧領域を解放します。size が 0 の場合は解放のみ行います。
+ *
+ * @param ptr 変更対象のメモリ。NULL の場合は新規確保と同じ
+ * @param size 変更後のサイズ（バイト数）
+ * @return 新しいメモリの先頭アドレス。確保できない場合は NULL
+ *         （このとき旧領域は解放されません）
  */
 EXPORT void* knl_Irealloc( void *ptr, SZ size )
 {
@@ -255,27 +295,33 @@ EXPORT void* knl_Irealloc( void *ptr, SZ size )
 }
 
 
-/*
- * Free memory
+/**
+ * @brief メモリの解放
+ *
+ * 領域を解放し、前後に空き領域があれば併合して
+ * FreeQue へ登録します。
+ *
+ * @param ptr 解放するメモリの先頭アドレス
+ * @note 割込み禁止により排他制御を行います。
  */
 EXPORT void  knl_Ifree( void *ptr )
 {
 	QUEUE	*aq;
 	UINT	imask;
 
-	DI(imask);  /* Exclusive control by interrupt disable */
+	DI(imask);  /* 割込み禁止による排他制御 */
 
 	aq = (QUEUE*)ptr - 1;
 	clrAreaFlag(aq, AREA_USE);
 
 	if ( !chkAreaFlag(aq->next, AREA_USE) ) {
-		/* Merge with free area in after location */
+		/* 直後の空き領域と併合 */
 		knl_removeFreeQue(aq->next + 1);
 		knl_removeAreaQue(aq->next);
 	}
 
 	if ( !chkAreaFlag(aq->prev, AREA_USE) ) {
-		/* Merge with free area in front location */
+		/* 直前の空き領域と併合 */
 		aq = aq->prev;
 		knl_removeFreeQue(aq + 1);
 		knl_removeAreaQue(aq->next);
@@ -289,8 +335,8 @@ EXPORT void  knl_Ifree( void *ptr )
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * IMACB Initialization 
+/**
+ * @brief IMACB の初期化
  */
 LOCAL void initIMACB( void )
 {
@@ -298,8 +344,14 @@ LOCAL void initIMACB( void )
 	QueInit(&(knl_imacb->freeque));
 }
 
-/*
- * Imalloc initial setting 
+/**
+ * @brief Imalloc の初期設定
+ *
+ * カーネル用メモリ空間（knl_lowmem_top ～ knl_lowmem_limit）に
+ * IMACB を配置し、残りの全空間を 1 つの空き領域として
+ * AreaQue / FreeQue に登録します。
+ *
+ * @return 常に E_OK
  */
 EXPORT ER knl_init_Imalloc( void )
 {
@@ -310,21 +362,21 @@ EXPORT ER knl_init_Imalloc( void )
 	 * UW キャストがポインタ上位 32bit を切り捨てるため。
 	 * 32bit MCU ターゲットでは unsigned long == 32bit で従来と同じ。 */
 
-	/* Align top with 4 byte unit alignment for IMACB */
+	/* IMACB 用に先頭を 4 バイト境界へ整列 */
 	knl_lowmem_top = (void *)(((unsigned long)knl_lowmem_top + 3) & ~0x00000003UL);
 	knl_imacb = (IMACB*)knl_lowmem_top;
 	knl_lowmem_top = (void *)((unsigned long)knl_lowmem_top + sizeof(IMACB));
 
-	/* Align top with 8 byte unit alignment */
+	/* 先頭を 8 バイト境界へ整列 */
 	knl_lowmem_top = (void *)(((unsigned long)knl_lowmem_top + 7) & ~0x00000007UL);
 	top = (QUEUE*)knl_lowmem_top;
 	knl_imacb->memsz = (W)((unsigned long)knl_lowmem_limit - (unsigned long)knl_lowmem_top - sizeof(QUEUE)*2);
 
-	knl_lowmem_top = knl_lowmem_limit;  /* Update memory free space */
+	knl_lowmem_top = knl_lowmem_limit;  /* 空きメモリ領域の更新 */
 
 	initIMACB();
 
-	/* Register on AreaQue */
+	/* AreaQue へ登録 */
 	end = (QUEUE*)((VB*)top + knl_imacb->memsz) + 1;
 	knl_insertAreaQue(&knl_imacb->areaque, end);
 	knl_insertAreaQue(&knl_imacb->areaque, top);

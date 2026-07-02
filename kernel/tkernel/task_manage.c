@@ -11,9 +11,15 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	task_manage.c
- *	Task Management Function
+/**
+ * @file	task_manage.c
+ * @brief	タスク管理機能
+ *
+ * タスクの生成・削除・起動・終了、優先度変更、実行可能キューの
+ * 回転、タスク状態参照、待ち解除など、タスク管理系システムコール
+ * （tk_cre_tsk、tk_del_tsk、tk_sta_tsk、tk_ext_tsk、tk_exd_tsk、
+ * tk_ter_tsk、tk_chg_pri、tk_rot_rdq、tk_get_tid、tk_ref_tsk、
+ * tk_rel_wai）とデバッグ支援機能を実装します。
  */
 
 #include "kernel.h"
@@ -23,13 +29,24 @@
 
 #include "../sysdepend/cpu_task.h"
 
-/*
- * Create task
+/**
+ * @brief タスクの生成
+ *
+ * 未使用キューから TCB を獲得してタスクを生成し、休止状態にします。
+ * TA_USERBUF 指定時はユーザ指定バッファをシステムスタックとして
+ * 使用し、未指定時はシステムメモリからスタック領域を確保します。
+ *
+ * @param pk_ctsk タスク生成情報
+ * @return 生成したタスクの ID（正の値）、またはエラーコード
+ * @retval E_RSATR	不正なタスク属性
+ * @retval E_PAR	スタックサイズ等のパラメータ不正
+ * @retval E_NOMEM	スタック領域の確保失敗
+ * @retval E_LIMIT	タスク数が上限（NUM_TSKID）を超過
  */
 SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 {
 #if CHK_RSATR
-	const ATR VALID_TSKATR = {	/* Valid value of task attribute */
+	const ATR VALID_TSKATR = {	/* 有効なタスク属性値 */
 		 TA_HLNG
 		|TA_RNG3
 		|TA_USERBUF
@@ -46,22 +63,22 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 
 	CHECK_RSATR(pk_ctsk->tskatr, VALID_TSKATR);
 #if !USE_IMALLOC
-	/* TA_USERBUF must be specified if configured in no Imalloc */
+	/* Imalloc なしの構成では TA_USERBUF の指定が必須 */
 	CHECK_PAR((pk_ctsk->tskatr & TA_USERBUF) != 0);
 #endif
 	CHECK_PAR(pk_ctsk->stksz >= 0);
 	CHECK_PRI(pk_ctsk->itskpri);
 
 	if ( (pk_ctsk->tskatr & TA_USERBUF) != 0 ) {
-		/* Use user buffer */
+		/* ユーザ指定バッファを使用 */
 		sstksz = pk_ctsk->stksz;
 		CHECK_PAR(sstksz >= MIN_SYS_STACK_SIZE);
 		stack = pk_ctsk->bufptr;
 	} else {
 #if USE_IMALLOC
-		/* Allocate system stack area */
+		/* システムスタック領域の確保 */
 		sstksz = pk_ctsk->stksz + DEFAULT_SYS_STKSZ;
-		sstksz  = (sstksz  + 7) / 8 * 8;	/* Align to a multiple of 8 */
+		sstksz  = (sstksz  + 7) / 8 * 8;	/* 8 の倍数に切り上げ */
 		stack = knl_Imalloc((UW)sstksz);
 		if ( stack == NULL ) {
 			return E_NOMEM;
@@ -70,14 +87,14 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 	}
 
 	BEGIN_CRITICAL_SECTION;
-	/* Get control block from FreeQue */
+	/* 未使用キューから制御ブロックを獲得 */
 	tcb = (TCB*)QueRemoveNext(&knl_free_tcb);
 	if ( tcb == NULL ) {
 		ercd = E_LIMIT;
 		goto error_exit;
 	}
 
-	/* Initialize control block */
+	/* 制御ブロックの初期化 */
 	tcb->exinf     = pk_ctsk->exinf;
 	tcb->tskatr    = pk_ctsk->tskatr;
 	tcb->task      = pk_ctsk->task;
@@ -89,14 +106,14 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 	}
 #endif
 
-	/* Set stack pointer */
+	/* スタックポインタの設定 */
 	tcb->isstack = (VB*)stack + sstksz;
 
-	/* Set initial value of task operation mode */
+	/* タスク動作モードの初期値設定 */
 	tcb->isysmode = 1;
 	tcb->sysmode  = 1;
 
-	/* make it to DORMANT state */
+	/* 休止状態へ遷移 */
 	knl_make_dormant(tcb);
 
 	ercd = tcb->tskid;
@@ -113,29 +130,43 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
 	return ercd;
 }
 
-/*
- * Task deletion
- *	Call from critical section
+/**
+ * @brief タスク削除の内部処理
+ *
+ * システムスタック領域を解放（ユーザバッファ未使用時のみ）し、
+ * TCB を未使用キューへ返却して未登録状態にします。
+ *
+ * @param tcb 対象タスクの TCB
+ * @note クリティカルセクション内から呼び出すこと。
  */
 LOCAL void knl_del_tsk( TCB *tcb )
 {
 #if USE_IMALLOC
 	if ( (tcb->tskatr & TA_USERBUF) == 0 ) {
-		/* User buffer is not used */
-		/* Free system stack */
+		/* ユーザバッファ未使用の場合 */
+		/* システムスタックの解放 */
 		void *stack = (VB*)tcb->isstack - tcb->sstksz;
 		knl_Ifree(stack);
 	}
 #endif
 
-	/* Return control block to FreeQue */
+	/* 制御ブロックを未使用キューへ返却 */
 	QueInsert(&tcb->tskque, &knl_free_tcb);
 	tcb->state = TS_NONEXIST;
 }
 
 #ifdef USE_FUNC_TK_DEL_TSK
-/*
- * Delete task 
+/**
+ * @brief タスクの削除
+ *
+ * 休止状態のタスクを削除し、TCB を未使用キューへ返却します。
+ * 自タスクは指定できません。
+ *
+ * @param tskid 対象タスクの ID
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID（自タスク指定を含む）
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_OBJ	タスクが休止状態でない
  */
 SYSCALL ER tk_del_tsk( ID tskid )
 {
@@ -163,8 +194,18 @@ SYSCALL ER tk_del_tsk( ID tskid )
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Start task
+/**
+ * @brief タスクの起動
+ *
+ * 休止状態のタスクにタスク起動コード 'stacd' を渡して起動し、
+ * 実行可能状態にします。自タスクは指定できません。
+ *
+ * @param tskid 対象タスクの ID
+ * @param stacd タスク起動コード
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID（自タスク指定を含む）
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_OBJ	タスクが休止状態でない
  */
 SYSCALL ER tk_sta_tsk( ID tskid, INT stacd )
 {
@@ -190,9 +231,15 @@ SYSCALL ER tk_sta_tsk( ID tskid, INT stacd )
 	return ercd;
 }
 
-/*
- * Task finalization
- *	Call from critical section
+/**
+ * @brief タスク終了の内部処理
+ *
+ * タスクを実行可能キューまたは待ち状態から外し、待ち解除フックが
+ * あれば実行します。保有しているミューテックスをすべて解放し、
+ * タスクコンテキストの後始末を行います。
+ *
+ * @param tcb 対象タスクの TCB
+ * @note クリティカルセクション内から呼び出すこと。
  */
 LOCAL void knl_ter_tsk( TCB *tcb )
 {
@@ -210,7 +257,7 @@ LOCAL void knl_ter_tsk( TCB *tcb )
 	}
 
 #if USE_MUTEX == 1
-	/* signal mutex */
+	/* 保有ミューテックスの解放 */
 	knl_signal_all_mutex(tcb);
 #endif
 
@@ -218,18 +265,25 @@ LOCAL void knl_ter_tsk( TCB *tcb )
 }
 
 #ifdef USE_FUNC_TK_EXT_TSK
-/*
- * End its own task
+/**
+ * @brief 自タスクの終了
+ *
+ * 自タスクを終了して休止状態にし、強制ディスパッチを行います。
+ * 本関数からは復帰しません。タスク独立部からの呼び出しは
+ * コンテキストエラーです（CHK_CTX2 有効時は無限ループで停止）。
+ *
+ * @note ディスパッチ禁止中の呼び出しは CHK_CTX1 有効時に警告
+ *       メッセージを出力しますが、処理は続行されます。
  */
 SYSCALL void tk_ext_tsk( void )
 {
 #ifdef DORMANT_STACK_SIZE
-	/* To avoid destroying stack used in 'knl_make_dormant', 
-	   allocate the dummy area on the stack. */
+	/* 'knl_make_dormant' 内で使用するスタックの破壊を避けるため、
+	   スタック上にダミー領域を確保する。 */
 	volatile VB _dummy[DORMANT_STACK_SIZE];
 #endif
 
-	/* Check context error */
+	/* コンテキストエラーの確認 */
 #if CHK_CTX2
 	if ( in_indp() ) {
 		SYSTEM_MESSAGE("tk_ext_tsk was called in the task independent\n");
@@ -248,22 +302,29 @@ SYSCALL void tk_ext_tsk( void )
 	knl_make_dormant(knl_ctxtsk);
 
 	knl_force_dispatch();
-	/* No return */
+	/* ここへは戻らない */
 
 #ifdef DORMANT_STACK_SIZE
-	/* Avoid WARNING (This code does not execute) */
+	/* 警告の回避（このコードは実行されない） */
 	_dummy[0] = _dummy[0];
 #endif
 }
 #endif /* USE_FUNC_TK_EXT_TSK */
 
 #ifdef USE_FUNC_TK_EXD_TSK
-/*
- * End and delete its own task
+/**
+ * @brief 自タスクの終了と削除
+ *
+ * 自タスクを終了・削除して TCB を未使用キューへ返却し、
+ * 強制ディスパッチを行います。本関数からは復帰しません。
+ * タスク独立部からの呼び出しはコンテキストエラーです。
+ *
+ * @note ディスパッチ禁止中の呼び出しは CHK_CTX1 有効時に警告
+ *       メッセージを出力しますが、処理は続行されます。
  */
 SYSCALL void tk_exd_tsk( void )
 {
-	/* Check context error */
+	/* コンテキストエラーの確認 */
 #if CHK_CTX2
 	if ( in_indp() ) {
 		SYSTEM_MESSAGE("tk_exd_tsk was called in the task independent\n");
@@ -281,13 +342,23 @@ SYSCALL void tk_exd_tsk( void )
 	knl_del_tsk(knl_ctxtsk);
 
 	knl_force_dispatch();
-	/* No return */
+	/* ここへは戻らない */
 }
 #endif /* USE_FUNC_TK_EXD_TSK */
 
 #ifdef USE_FUNC_TK_TER_TSK
-/*
- * Termination of other task
+/**
+ * @brief 他タスクの強制終了
+ *
+ * 指定タスクを強制終了して休止状態にします。自タスクは指定
+ * できません。
+ *
+ * @param tskid 対象タスクの ID
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID（自タスク指定を含む）
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_OBJ	タスクが休止状態、またはカーネルロック中で
+ *			終了できない状態
  */
 SYSCALL ER tk_ter_tsk( ID tskid )
 {
@@ -305,10 +376,10 @@ SYSCALL ER tk_ter_tsk( ID tskid )
 	if ( !knl_task_alive(state) ) {
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
 	} else if ( tcb->klocked ) {
-		/* Normally, it does not become this state.
-		 * When the state is page-in wait in the virtual memory
-		 * system and when trying to terminate any task,
-		 * it becomes this state.
+		/* 通常はこの状態にはならない。
+		 * 仮想記憶システムでページイン待ちの状態にある
+		 * タスクを終了させようとした場合に、この状態と
+		 * なることがある。
 		 */
 		ercd = E_OBJ;
 	} else {
@@ -324,8 +395,21 @@ SYSCALL ER tk_ter_tsk( ID tskid )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_TK_CHG_PRI
-/*
- * Change task priority
+/**
+ * @brief タスク優先度の変更
+ *
+ * 指定タスクのベース優先度を 'tskpri' に変更します。TPRI_INI
+ * 指定時はタスク起動時の初期優先度に戻します。ミューテックス使用時
+ * は上限優先度の制約を検査し、優先度継承を考慮した現在優先度を
+ * 適用します。
+ *
+ * @param tskid  対象タスクの ID（TSK_SELF で自タスク）
+ * @param tskpri 新しい優先度（TPRI_INI で初期優先度）
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_PAR	不正な優先度
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_ILUSE	ミューテックスの上限優先度違反
  */
 SYSCALL ER tk_chg_pri( ID tskid, PRI tskpri )
 {
@@ -344,7 +428,7 @@ SYSCALL ER tk_chg_pri( ID tskid, PRI tskpri )
 		goto error_exit;
 	}
 
-	/* Conversion priority to internal expression */
+	/* 優先度を内部表現へ変換 */
 	if ( tskpri == TPRI_INI ) {
 		priority = tcb->ipriority;
 	} else {
@@ -352,7 +436,7 @@ SYSCALL ER tk_chg_pri( ID tskid, PRI tskpri )
 	}
 
 #if USE_MUTEX == 1
-	/* Mutex priority change limit */
+	/* ミューテックスによる優先度変更の制限 */
 	ercd = knl_chg_pri_mutex(tcb, priority);
 	if ( ercd < E_OK ) {
 		goto error_exit;
@@ -364,7 +448,7 @@ SYSCALL ER tk_chg_pri( ID tskid, PRI tskpri )
 	tcb->bpriority = priority;
 #endif
 
-	/* Change priority */
+	/* 優先度の変更 */
 	knl_change_task_priority(tcb, priority);
 
 	ercd = E_OK;
@@ -376,8 +460,16 @@ SYSCALL ER tk_chg_pri( ID tskid, PRI tskpri )
 #endif /* USE_FUNC_TK_CHG_PRI */
 
 #ifdef USE_FUNC_TK_ROT_RDQ
-/*
- * Rotate ready queue
+/**
+ * @brief 実行可能キューの回転
+ *
+ * 優先度 'tskpri' の実行可能キューを回転します。TPRI_RUN 指定時は
+ * 実行状態タスクの優先度（タスク独立部からの呼び出し時は最高
+ * 優先度）のキューを回転します。
+ *
+ * @param tskpri 回転対象の優先度（TPRI_RUN で実行状態タスクの優先度）
+ * @retval E_OK	 正常終了
+ * @retval E_PAR 不正な優先度
  */
 SYSCALL ER tk_rot_rdq( PRI tskpri )
 {
@@ -402,8 +494,13 @@ SYSCALL ER tk_rot_rdq( PRI tskpri )
 /* ------------------------------------------------------------------------ */
 
 #ifdef USE_FUNC_TK_GET_TID
-/*
- * Refer task ID at execution
+/**
+ * @brief 実行状態タスクの ID 取得
+ *
+ * 実行中タスクの ID を返します。実行中タスクが存在しない場合は
+ * 0 を返します。
+ *
+ * @return 実行中タスクの ID、または 0
  */
 SYSCALL ID tk_get_tid( void )
 {
@@ -412,8 +509,17 @@ SYSCALL ID tk_get_tid( void )
 #endif /* USE_FUNC_TK_GET_TID */
 
 #ifdef USE_FUNC_TK_REF_TSK
-/*
- * Refer task state
+/**
+ * @brief タスク状態の参照
+ *
+ * 指定タスクの状態（タスク状態、待ち要因、優先度、起床要求数、
+ * 強制待ち要求数など）を 'pk_rtsk' に格納します。
+ *
+ * @param tskid   対象タスクの ID（TSK_SELF で自タスク）
+ * @param pk_rtsk タスク状態を格納するパケットへのポインタ
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_NOEXS	タスクが存在しない
  */
 SYSCALL ER tk_ref_tsk( ID tskid, T_RTSK *pk_rtsk )
 {
@@ -457,8 +563,18 @@ SYSCALL ER tk_ref_tsk( ID tskid, T_RTSK *pk_rtsk )
 
 
 #ifdef USE_FUNC_TK_REL_WAI
-/*
- * Release wait
+/**
+ * @brief 他タスクの待ち状態の強制解除
+ *
+ * 待ち状態にあるタスクの待ちを強制的に解除します。待ち解除された
+ * タスク側には E_RLWAI が返されます。強制待ち状態（SUSPEND）は
+ * 解除しません。
+ *
+ * @param tskid 対象タスクの ID
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_OBJ	タスクが待ち状態でない
  */
 SYSCALL ER tk_rel_wai( ID tskid )
 {
@@ -485,13 +601,23 @@ SYSCALL ER tk_rel_wai( ID tskid )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Debug support function
+ *	デバッグ支援機能
  */
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief 制御ブロックからのオブジェクト名取得
+ *
+ * 指定タスクの TCB に登録されたオブジェクト名へのポインタを
+ * '*name' に格納します。
+ *
+ * @param id   対象タスクの ID（TSK_SELF で自タスク）
+ * @param name オブジェクト名へのポインタを格納する変数のアドレス
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_NOEXS	タスクが存在しない
+ * @retval E_OBJ	TA_DSNAME 属性が指定されていない
  */
 EXPORT ER knl_task_getname(ID id, UB **name)
 {
@@ -520,8 +646,15 @@ EXPORT ER knl_task_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_TSK
-/*
- * Refer task usage state
+/**
+ * @brief タスク ID 一覧の参照
+ *
+ * 登録済み（未登録状態以外）のタスクの ID を最大 'nent' 個まで
+ * 'list' に格納します。
+ *
+ * @param list タスク ID を格納する配列
+ * @param nent 'list' に格納可能なエントリ数
+ * @return 登録済みタスク数（nent を超える場合あり）
  */
 SYSCALL INT td_lst_tsk( ID list[], INT nent )
 {
@@ -546,8 +679,18 @@ SYSCALL INT td_lst_tsk( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_TSK */
 
 #ifdef USE_FUNC_TD_REF_TSK
-/*
- * Refer task state
+/**
+ * @brief タスク状態の参照（デバッグ支援）
+ *
+ * 指定タスクの状態を 'pk_rtsk' に格納します。tk_ref_tsk の情報に
+ * 加え、タスク起動アドレス・スタックサイズ・スタック初期値も
+ * 取得します。
+ *
+ * @param tskid   対象タスクの ID（TSK_SELF で自タスク）
+ * @param pk_rtsk タスク状態を格納するパケットへのポインタ
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_NOEXS	タスクが存在しない
  */
 SYSCALL ER td_ref_tsk( ID tskid, TD_RTSK *pk_rtsk )
 {
@@ -592,8 +735,19 @@ SYSCALL ER td_ref_tsk( ID tskid, TD_RTSK *pk_rtsk )
 #endif /* USE_FUNC_TD_REF_TSK */
 
 #ifdef USE_FUNC_TD_INF_TSK
-/*
- * Get task statistic information
+/**
+ * @brief タスク統計情報の取得
+ *
+ * 指定タスクの累積動作時間（システムレベル・ユーザレベル）を
+ * 'pk_itsk' に格納します。'clr' が TRUE の場合は取得後に統計情報を
+ * クリアします。
+ *
+ * @param tskid   対象タスクの ID（TSK_SELF で自タスク）
+ * @param pk_itsk 統計情報を格納するパケットへのポインタ
+ * @param clr     取得後に統計情報をクリアするかどうか
+ * @retval E_OK		正常終了
+ * @retval E_ID		不正なタスク ID
+ * @retval E_NOEXS	タスクが存在しない
  */
 SYSCALL ER td_inf_tsk( ID tskid, TD_ITSK *pk_itsk, BOOL clr )
 {

@@ -11,9 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	memory.h
- *	In-kernel dynamic memory management
+/**
+ * @file	memory.h
+ * @brief	カーネル内動的メモリ管理の定義
+ *
+ * メモリ確保管理情報 IMACB と、AreaQue / FreeQue を操作する
+ * マクロおよび関数プロトタイプを定義します。
  */
 
 #ifndef _MEMORY_H_
@@ -22,25 +25,25 @@
 #include "limits.h"
 
 /*
- * Memory allocation management information
+ * メモリ確保管理情報
  *
- *  Order of members must not be changed because members are used
- *  with casting from MPLCB.
+ *  MPLCB からのキャストで参照されるため、
+ *  メンバの並び順を変更してはならない。
  */
 typedef struct {
 	W		memsz;
 
-	/* AreaQue for connecting each area where reserved pages are
-	   divided Sort in ascending order of addresses in a page.
-	   Do not sort between pages. */
+	/* AreaQue: 確保ページを分割した各領域を連結するキュー。
+	   ページ内はアドレスの昇順に整列する。
+	   ページ間では整列しない。 */
 	QUEUE		areaque;
-	/* FreeQue for connecting unused area in reserved pages
-	   Sort from small to large free spaces. */
+	/* FreeQue: 確保ページ内の未使用領域を連結するキュー。
+	   空きサイズの小さい順に整列する。 */
 	QUEUE		freeque;
 } IMACB;
 
 /*
- * Compensation for aligning "&areaque" position to 2 bytes border
+ * "&areaque" の位置を 2 バイト境界に整列させるための補正
  *
  * p-kernel 変更（LP64 対応）: ポインタ演算のキャストを UW（32bit）から
  * unsigned long へ変更。LP64 ホストでは UW キャストがポインタ上位
@@ -49,24 +52,30 @@ typedef struct {
 #define AlignIMACB(imacb)	( (IMACB*)((unsigned long)(imacb) & ~0x00000001UL) )
 
 /*
- * Minimum unit of subdivision
- *	The lower 1 bit of address is always 0
- *	because memory is allocated by ROUNDSZ.
- *	AreaQue uses the lower 1 bit for flag.
+ * 分割の最小単位
+ *	メモリは ROUNDSZ 単位で確保されるため、
+ *	アドレスの下位 1 ビットは常に 0 となる。
+ *	AreaQue はこの下位 1 ビットをフラグとして使用する。
  */
-#define ROUNDSZ		( sizeof(QUEUE) )	/* 8 bytes */
+#define ROUNDSZ		( sizeof(QUEUE) )	/* 8 バイト */
 #define ROUND(sz)	( ((UW)(sz) + (UW)(ROUNDSZ-1)) & ~(UW)(ROUNDSZ-1) )
 
-/* Minimum fragment size */
+/* 最小フラグメントサイズ */
 #define MIN_FRAGMENT	( sizeof(QUEUE) * 2 )
 
 /*
- * Maximum allocatable size (to check for parameter)
+ * 確保可能な最大サイズ（パラメータチェック用）
  */
 #define	MAX_ALLOCATE	( INT_MAX & ~(ROUNDSZ-1) )
 
-/*
- * Adjusting the size which can be allocated 
+/**
+ * @brief 確保可能なサイズへの調整
+ *
+ * サイズを最小フラグメントサイズ以上に切り上げ、
+ * ROUNDSZ 単位に丸めます。
+ *
+ * @param sz 要求サイズ（バイト数）
+ * @return 調整後のサイズ
  */
 Inline W roundSize( W sz )
 {
@@ -78,9 +87,9 @@ Inline W roundSize( W sz )
 
 
 /*
- * Flag that uses the lower bits of AreaQue's 'prev'.
+ * AreaQue の 'prev' の下位ビットを使用するフラグ
  */
-#define AREA_USE	0x00000001UL	/* In-use */
+#define AREA_USE	0x00000001UL	/* 使用中 */
 #define AREA_MASK	0x00000001UL
 
 /* p-kernel 変更（LP64 対応）: ポインタを経由するビット操作は
@@ -92,7 +101,7 @@ Inline W roundSize( W sz )
 #define Mask(x)		( (QUEUE*)((unsigned long)(x) & ~AREA_MASK) )
 #define Assign(x, y)	( (x) = (QUEUE*)(((unsigned long)(x) & AREA_MASK) | (unsigned long)(y)) )
 /*
- * Area size
+ * 領域サイズ
  */
 #define AreaSize(aq)	( (VB*)(aq)->next - (VB*)((aq) + 1) )
 #define FreeSize(fq)	( (W)((fq) + 1)->prev )

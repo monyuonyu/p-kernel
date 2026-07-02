@@ -11,23 +11,37 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	power.c
- *	power-saving function
+/**
+ * @file	power.c
+ * @brief	省電力機能
+ *
+ * 省電力モードの設定 API（tk_set_pow）と、
+ * 省電力モード切り替え禁止回数の管理変数を提供します。
  */
 
 #include "kernel.h"
 #include "check.h"
 
 /*
- * Number of times for disabling power-saving mode switch
- *	If it is 0, the mode switch is enabled.
+ * 省電力モード切り替えの禁止回数
+ *	0 のとき切り替えは許可状態
  */
 EXPORT UINT	knl_lowpow_discnt = 0;
 
 #if TK_SUPPORT_LOWPOWER
-/*
- * Set Power-saving mode
+/**
+ * @brief 省電力モードの設定
+ *
+ * pwmode に応じて、サスペンド状態への移行（TPW_DOSUSPEND）、
+ * 省電力モード切り替えの禁止（TPW_DISLOWPOW）・許可（TPW_ENALOWPOW）を
+ * 行います。禁止はネスト可能で、回数は knl_lowpow_discnt で管理します。
+ *
+ * @param pwmode	省電力モード（TPW_DOSUSPEND / TPW_DISLOWPOW / TPW_ENALOWPOW）
+ * @retval E_OK	正常終了
+ * @retval E_PAR	pwmode が不正
+ * @retval E_QOVR	禁止回数が上限（LOWPOW_LIMIT）を超過
+ * @retval E_OBJ	禁止されていない状態で TPW_ENALOWPOW を指定した
+ * @retval E_CTX	タスク独立部からの呼び出し
  */
 SYSCALL ER tk_set_pow( UINT pwmode )
 {

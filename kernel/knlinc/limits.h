@@ -11,10 +11,13 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	limits.h
+/**
+ * @file	limits.h
+ * @brief	C 言語の整数型サイズ定義
  *
- *	C language: integer size 
+ * 標準ヘッダ <limits.h> 相当の整数型の限界値マクロを定義します。
+ * INT_MIN / INT_MAX / UINT_MAX は INT_BITWIDTH（int のビット幅）に
+ * 応じて 16bit または 32bit の値に切り替わります。
  */
 
 #ifndef _LIMITS_

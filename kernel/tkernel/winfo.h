@@ -11,97 +11,102 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	winfo.h
- *	Definition of Wait Information for Synchronization/Communication Object
+/**
+ * @file	winfo.h
+ * @brief	同期・通信オブジェクト用待ち情報の定義
+ *
+ * 各同期・通信オブジェクト（セマフォ、イベントフラグ、メールボックス、
+ * メッセージバッファ、ランデブ、メモリプール）の待ち情報構造体と、
+ * タスク制御ブロックに置かれる待ち情報共用体（WINFO）、
+ * 待ち仕様構造体（WSPEC）を定義します。
  */
 
 #ifndef _WINFO_
 #define _WINFO_
 
 /*
- * Semaphore wait (TTW_SEM)
+ * セマフォ待ち (TTW_SEM)
  */
 typedef struct {
-	INT	cnt;		/* Request resource number */
+	INT	cnt;		/* 要求資源数 */
 } WINFO_SEM;
 
 /*
- * Event flag wait (TTW_FLG)
+ * イベントフラグ待ち (TTW_FLG)
  */
 typedef struct {
-	UINT	waiptn;		/* Wait bit pattern */
-	UINT	wfmode;		/* Wait mode */
-	UINT	*p_flgptn;	/* Address that has a bit pattern
-				   at wait released */
+	UINT	waiptn;		/* 待ちビットパターン */
+	UINT	wfmode;		/* 待ちモード */
+	UINT	*p_flgptn;	/* 待ち解除時のビットパターンを
+				   格納するアドレス */
 } WINFO_FLG;
 
 /*
- * Mailbox wait (TTW_MBX)
+ * メールボックス待ち (TTW_MBX)
  */
 typedef struct {
-	T_MSG	**ppk_msg;	/* Address that has the head of a
-				   message packet */
+	T_MSG	**ppk_msg;	/* メッセージパケットの先頭を
+				   格納するアドレス */
 } WINFO_MBX;
 
 /*
- * Message buffer receive/send wait (TTW_RMBF, TTW_SMBF)
+ * メッセージバッファ受信／送信待ち (TTW_RMBF, TTW_SMBF)
  */
 typedef struct {
-	void	*msg;		/* Address that has a received message */
-	INT	*p_msgsz;	/* Address that has a received message size */
+	void	*msg;		/* 受信メッセージを格納するアドレス */
+	INT	*p_msgsz;	/* 受信メッセージサイズを格納するアドレス */
 } WINFO_RMBF;
 
 typedef struct {
-	CONST void *msg;	/* Send message head address */
-	INT	msgsz;		/* Send message size */
+	CONST void *msg;	/* 送信メッセージの先頭アドレス */
+	INT	msgsz;		/* 送信メッセージサイズ */
 } WINFO_SMBF;
 
 /*
- * Rendezvous call/accept/end wait (TTW_CAL, TTW_ACP, TTW_RDV)
+ * ランデブ呼出し／受付け／終了待ち (TTW_CAL, TTW_ACP, TTW_RDV)
  */
 typedef struct {
-	UINT	calptn;		/* Bit pattern that indicates caller
-				   select condition */
-	void	*msg;		/* Address that has a message */
-	INT	cmsgsz;		/* Call message size */
-	INT	*p_rmsgsz;	/* Address that has a reply message size */
+	UINT	calptn;		/* 呼出し側の選択条件を示す
+				   ビットパターン */
+	void	*msg;		/* メッセージを格納するアドレス */
+	INT	cmsgsz;		/* 呼出しメッセージサイズ */
+	INT	*p_rmsgsz;	/* 応答メッセージサイズを格納するアドレス */
 } WINFO_CAL;
 
 typedef struct {
-	UINT	acpptn;		/* Bit pattern that indicates receiver
-				   select condition */
-	void	*msg;		/* Address that has a call message */
-	RNO	*p_rdvno;	/* Address that has the rendezvous number */
-	INT	*p_cmsgsz;	/* Address that has the call message size */
+	UINT	acpptn;		/* 受付け側の選択条件を示す
+				   ビットパターン */
+	void	*msg;		/* 呼出しメッセージを格納するアドレス */
+	RNO	*p_rdvno;	/* ランデブ番号を格納するアドレス */
+	INT	*p_cmsgsz;	/* 呼出しメッセージサイズを格納するアドレス */
 } WINFO_ACP;
 
 typedef struct {
-	RNO	rdvno;		/* Rendezvous number */
-	void	*msg;		/* Address that has a message */
-	INT	maxrmsz;	/* Maximum length of reply message */
-	INT	*p_rmsgsz;	/* Address that has a reply message size */
+	RNO	rdvno;		/* ランデブ番号 */
+	void	*msg;		/* メッセージを格納するアドレス */
+	INT	maxrmsz;	/* 応答メッセージの最大長 */
+	INT	*p_rmsgsz;	/* 応答メッセージサイズを格納するアドレス */
 } WINFO_RDV;
 
 /*
- * Variable size memory pool wait (TTW_MPL)
+ * 可変長メモリプール待ち (TTW_MPL)
  */
 typedef struct {
-	W	blksz;		/* Memory block size */
-	void	**p_blk;		/* Address that has the head of a
-				   memory block */
+	W	blksz;		/* メモリブロックサイズ */
+	void	**p_blk;		/* メモリブロックの先頭を
+				   格納するアドレス */
 } WINFO_MPL;
 
 /*
- * Fixed size memory pool wait (TTW_MPF)
+ * 固定長メモリプール待ち (TTW_MPF)
  */
 typedef struct {
-	void	**p_blf;		/* Address that has the head of a
-				   memory block */
+	void	**p_blf;		/* メモリブロックの先頭を
+				   格納するアドレス */
 } WINFO_MPF;
 
 /*
- * Definition of wait information in task control block
+ * タスク制御ブロック内の待ち情報の定義
  */
 typedef union {
 #if USE_SEMAPHORE
@@ -131,14 +136,14 @@ typedef union {
 } WINFO;
 
 /*
- * Definition of wait specification structure
+ * 待ち仕様構造体の定義
  */
 typedef struct {
-	UW	tskwait;			/* Wait factor */
-	void	(*chg_pri_hook)(TCB *, INT);	/* Process at task priority
-						   change */
-	void	(*rel_wai_hook)(TCB *);		/* Process at task wait
-						   release */
+	UW	tskwait;			/* 待ち要因 */
+	void	(*chg_pri_hook)(TCB *, INT);	/* タスク優先度変更時の
+						   処理 */
+	void	(*rel_wai_hook)(TCB *);		/* タスク待ち解除時の
+						   処理 */
 } WSPEC;
 
 #endif /* _WINFO_ */

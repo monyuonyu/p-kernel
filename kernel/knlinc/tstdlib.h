@@ -11,11 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	tstdlib.h
+/**
+ * @file	tstdlib.h
+ * @brief	T-Kernel 標準ライブラリ
  *
- *	T-Kernel standard library
- *
+ * カーネル内部で使用するビット操作関数（bitop.c）と、
+ * メモリ・文字列操作関数（string.c）のプロトタイプ宣言を提供します。
  */
 
 #ifndef	_TSTDLIB_
@@ -24,12 +25,14 @@
 #include <tk/tkernel.h>
 
 
+/* ビット操作（bitop.c） */
 IMPORT void	knl_bitclr( void *base, W offset );
 IMPORT void	knl_bitset( void *base, W offset );
 
 IMPORT W	knl_bitsearch1( void *base, W offset, W width );
 
 
+/* メモリ・文字列操作（string.c） */
 IMPORT void	*knl_memset( void *s, int c, SZ n );
 IMPORT void	*knl_memcpy( void *dst, const void *src, SZ n );
 

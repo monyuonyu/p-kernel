@@ -11,814 +11,809 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	syscall.h
+/**
+ *	@file	syscall.h
+ *	@brief	μT-Kernel システムコール定義
  *
- *	micro T-Kernel System Calls
+ *	tk_* システムコールのプロトタイプ宣言と、各オブジェクトの生成情報・
+ *	状態情報などのパケット構造体、および関連する定数を定義します。
  */
 
 #ifndef __TK_SYSCALL_H__
 #define __TK_SYSCALL_H__
 
-/* Task creation */
-#define TSK_SELF	0		/* Its own task specify */
-#define TPRI_INI	0		/* Specify priority at task startup */
-#define TPRI_RUN	0		/* Specify highest priority during running */
+/* タスク生成 */
+#define TSK_SELF	0		/* 自タスクの指定 */
+#define TPRI_INI	0		/* タスク起動時の優先度を指定 */
+#define TPRI_RUN	0		/* 実行中の最高優先度を指定 */
 
-#define TA_ASM		0x00000000UL	/* Program by assembler */
-#define TA_HLNG		0x00000001UL	/* Program by high level programming language */
-#define TA_USERBUF	0x00000020UL	/* Specify user buffer */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+#define TA_ASM		0x00000000UL	/* アセンブリ言語で記述 */
+#define TA_HLNG		0x00000001UL	/* 高級言語で記述 */
+#define TA_USERBUF	0x00000020UL	/* ユーザバッファの指定 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-#define TA_RNG0		0x00000000UL	/* Execute by protection level 0 */
-#define TA_RNG1		0x00000100UL	/* Execute by protection level 1 */
-#define TA_RNG2		0x00000200UL	/* Execute by protection level 2 */
-#define TA_RNG3		0x00000300UL	/* Execute by protection level 3 */
+#define TA_RNG0		0x00000000UL	/* 保護レベル0で実行 */
+#define TA_RNG1		0x00000100UL	/* 保護レベル1で実行 */
+#define TA_RNG2		0x00000200UL	/* 保護レベル2で実行 */
+#define TA_RNG3		0x00000300UL	/* 保護レベル3で実行 */
 
-#define TA_COP0		0x00001000U	/* Use coprocessor (ID=0) */
-#define TA_COP1		0x00002000U	/* Use coprocessor (ID=1) */
-#define TA_COP2		0x00004000U	/* Use coprocessor (ID=2) */
-#define TA_COP3		0x00008000U	/* Use coprocessor (ID=3) */
+#define TA_COP0		0x00001000U	/* コプロセッサ(ID=0)を使用 */
+#define TA_COP1		0x00002000U	/* コプロセッサ(ID=1)を使用 */
+#define TA_COP2		0x00004000U	/* コプロセッサ(ID=2)を使用 */
+#define TA_COP3		0x00008000U	/* コプロセッサ(ID=3)を使用 */
 
-/* Task state tskstat */
-#define TTS_RUN		0x00000001U	/* RUN */
-#define TTS_RDY		0x00000002U	/* READY */
-#define TTS_WAI		0x00000004U	/* WAIT */
-#define TTS_SUS		0x00000008U	/* SUSPEND */
-#define TTS_WAS		0x0000000cU	/* WAIT-SUSPEND */
-#define TTS_DMT		0x00000010U	/* DORMANT */
-#define TTS_NODISWAI	0x00000080U	/* Wait disable rejection state */
+/* タスク状態 tskstat */
+#define TTS_RUN		0x00000001U	/* 実行状態（RUN） */
+#define TTS_RDY		0x00000002U	/* 実行可能状態（READY） */
+#define TTS_WAI		0x00000004U	/* 待ち状態（WAIT） */
+#define TTS_SUS		0x00000008U	/* 強制待ち状態（SUSPEND） */
+#define TTS_WAS		0x0000000cU	/* 二重待ち状態（WAIT-SUSPEND） */
+#define TTS_DMT		0x00000010U	/* 休止状態（DORMANT） */
+#define TTS_NODISWAI	0x00000080U	/* 待ち禁止拒否状態 */
 
-/* Wait factor tskwait */
-#define TTW_SLP		0x00000001UL	/* Wait caused by wakeup wait */
-#define TTW_DLY		0x00000002UL	/* Wait caused by task delay */
-#define TTW_SEM		0x00000004UL	/* Semaphore wait */
-#define TTW_FLG		0x00000008UL	/* Event flag wait */
-#define TTW_MBX		0x00000040UL	/* Mail box wait */
-#define TTW_MTX		0x00000080UL	/* Mutex wait */
-#define TTW_SMBF	0x00000100UL	/* Message buffer send wait */
-#define TTW_RMBF	0x00000200UL	/* Message buffer receive wait */
-#define TTW_CAL		0x00000400UL	/* Rendezvous call wait */
-#define TTW_ACP		0x00000800UL	/* Rendezvous accept wait */
-#define TTW_RDV		0x00001000UL	/* Rendezvous end wait */
-#define TTW_MPF		0x00002000UL	/* Fixed size memory pool wait */
-#define TTW_MPL		0x00004000UL	/* Variable size memory pool wait */
+/* 待ち要因 tskwait */
+#define TTW_SLP		0x00000001UL	/* 起床待ちによる待ち */
+#define TTW_DLY		0x00000002UL	/* タスク遅延による待ち */
+#define TTW_SEM		0x00000004UL	/* セマフォ待ち */
+#define TTW_FLG		0x00000008UL	/* イベントフラグ待ち */
+#define TTW_MBX		0x00000040UL	/* メールボックス待ち */
+#define TTW_MTX		0x00000080UL	/* ミューテックス待ち */
+#define TTW_SMBF	0x00000100UL	/* メッセージバッファ送信待ち */
+#define TTW_RMBF	0x00000200UL	/* メッセージバッファ受信待ち */
+#define TTW_CAL		0x00000400UL	/* ランデブ呼出待ち */
+#define TTW_ACP		0x00000800UL	/* ランデブ受付待ち */
+#define TTW_RDV		0x00001000UL	/* ランデブ終了待ち */
+#define TTW_MPF		0x00002000UL	/* 固定長メモリプール待ち */
+#define TTW_MPL		0x00004000UL	/* 可変長メモリプール待ち */
 
-/* Semaphore generation */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_FIRST	0x00000000UL	/* Give priority to task at head of wait queue */
-#define TA_CNT		0x00000002UL	/* Give priority to task whose request counts is less */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* セマフォ生成 */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_FIRST	0x00000000UL	/* 待ち行列先頭のタスクを優先 */
+#define TA_CNT		0x00000002UL	/* 要求数の少ないタスクを優先 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Mutex */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_INHERIT	0x00000002UL	/* Priority inherited protocol */
-#define TA_CEILING	0x00000003UL	/* Upper limit priority protocol */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* ミューテックス */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_INHERIT	0x00000002UL	/* 優先度継承プロトコル */
+#define TA_CEILING	0x00000003UL	/* 上限優先度プロトコル */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Event flag */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_WSGL		0x00000000UL	/* Disable multiple tasks wait */
-#define TA_WMUL		0x00000008UL	/* Enable multiple tasks wait */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* イベントフラグ */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_WSGL		0x00000000UL	/* 複数タスクの待ちを禁止 */
+#define TA_WMUL		0x00000008UL	/* 複数タスクの待ちを許可 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Event flag wait mode */
-#define TWF_ANDW	0x00000000U	/* AND wait */
-#define TWF_ORW		0x00000001U	/* OR wait */
-#define TWF_CLR		0x00000010U	/* All clear specify */
-#define TWF_BITCLR	0x00000020U	/* Only condition bit clear specify */
+/* イベントフラグ待ちモード */
+#define TWF_ANDW	0x00000000U	/* AND待ち */
+#define TWF_ORW		0x00000001U	/* OR待ち */
+#define TWF_CLR		0x00000010U	/* 全ビットクリアの指定 */
+#define TWF_BITCLR	0x00000020U	/* 条件ビットのみクリアの指定 */
 
-/* Mail box */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_MFIFO	0x00000000UL	/* Manage messages by FIFO */
-#define TA_MPRI		0x00000002UL	/* Manage messages by priority order */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* メールボックス */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_MFIFO	0x00000000UL	/* メッセージをFIFOで管理 */
+#define TA_MPRI		0x00000002UL	/* メッセージを優先度順で管理 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Message buffer */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_USERBUF	0x00000020UL	/* Specify user buffer */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* メッセージバッファ */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_USERBUF	0x00000020UL	/* ユーザバッファの指定 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Rendezvous */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* ランデブ */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-/* Handler */
-#define TA_ASM		0x00000000UL	/* Program by assembler */
-#define TA_HLNG		0x00000001UL	/* Program by high level programming language */
+/* ハンドラ */
+#define TA_ASM		0x00000000UL	/* アセンブリ言語で記述 */
+#define TA_HLNG		0x00000001UL	/* 高級言語で記述 */
 
-/* Variable size memory pool */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_USERBUF	0x00000020UL	/* Specify user buffer */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
-#define TA_RNG0		0x00000000UL	/* Protection level 0 */
-#define TA_RNG1		0x00000100UL	/* Protection level 1 */
-#define TA_RNG2		0x00000200UL	/* Protection level 2 */
-#define TA_RNG3		0x00000300UL	/* Protection level 3 */
+/* 可変長メモリプール */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_USERBUF	0x00000020UL	/* ユーザバッファの指定 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
+#define TA_RNG0		0x00000000UL	/* 保護レベル0 */
+#define TA_RNG1		0x00000100UL	/* 保護レベル1 */
+#define TA_RNG2		0x00000200UL	/* 保護レベル2 */
+#define TA_RNG3		0x00000300UL	/* 保護レベル3 */
 
-/* Fixed size memory pool */
-#define TA_TFIFO	0x00000000UL	/* Manage wait task by FIFO */
-#define TA_TPRI		0x00000001UL	/* Manage wait task by priority order */
-#define TA_USERBUF	0x00000020UL	/* Specify user buffer */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
-#define TA_RNG0		0x00000000UL	/* Protection level 0 */
-#define TA_RNG1		0x00000100UL	/* Protection level 1 */
-#define TA_RNG2		0x00000200UL	/* Protection level 2 */
-#define TA_RNG3		0x00000300UL	/* Protection level 3 */
+/* 固定長メモリプール */
+#define TA_TFIFO	0x00000000UL	/* 待ちタスクをFIFOで管理 */
+#define TA_TPRI		0x00000001UL	/* 待ちタスクを優先度順で管理 */
+#define TA_USERBUF	0x00000020UL	/* ユーザバッファの指定 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
+#define TA_RNG0		0x00000000UL	/* 保護レベル0 */
+#define TA_RNG1		0x00000100UL	/* 保護レベル1 */
+#define TA_RNG2		0x00000200UL	/* 保護レベル2 */
+#define TA_RNG3		0x00000300UL	/* 保護レベル3 */
 
-/* Cycle handler */
-#define TA_ASM		0x00000000UL	/* Program by assembler */
-#define TA_HLNG		0x00000001UL	/* Program by high level programming language */
-#define TA_STA		0x00000002UL	/* Cycle handler startup */
-#define TA_PHS		0x00000004UL	/* Save cycle handler phase */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* 周期ハンドラ */
+#define TA_ASM		0x00000000UL	/* アセンブリ言語で記述 */
+#define TA_HLNG		0x00000001UL	/* 高級言語で記述 */
+#define TA_STA		0x00000002UL	/* 周期ハンドラを動作状態で生成 */
+#define TA_PHS		0x00000004UL	/* 周期ハンドラの位相を保存 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-#define TCYC_STP	0x00U		/* Cycle handler is not operating */
-#define TCYC_STA	0x01U		/* Cycle handler is operating */
+#define TCYC_STP	0x00U		/* 周期ハンドラが動作していない */
+#define TCYC_STA	0x01U		/* 周期ハンドラが動作している */
 
-/* Alarm handler address */
-#define TA_ASM		0x00000000UL	/* Program by assembler */
-#define TA_HLNG		0x00000001UL	/* Program by high level programming language */
-#define TA_DSNAME	0x00000040UL	/* Use object name */
+/* アラームハンドラ */
+#define TA_ASM		0x00000000UL	/* アセンブリ言語で記述 */
+#define TA_HLNG		0x00000001UL	/* 高級言語で記述 */
+#define TA_DSNAME	0x00000040UL	/* オブジェクト名を使用 */
 
-#define TALM_STP	0x00U		/* Alarm handler is not operating */
-#define TALM_STA	0x01U		/* Alarm handler is operating */
+#define TALM_STP	0x00U		/* アラームハンドラが動作していない */
+#define TALM_STA	0x01U		/* アラームハンドラが動作している */
 
-/* System state */
-#define TSS_TSK		0x00U	/* During execution of task part(context) */
-#define TSS_DDSP	0x01U	/* During dispatch disable */
-#define TSS_DINT	0x02U	/* During Interrupt disable */
-#define TSS_INDP	0x04U	/* During execution of task independent part */
-#define TSS_QTSK	0x08U	/* During execution of semi-task part */
+/* システム状態 */
+#define TSS_TSK		0x00U	/* タスク部（コンテキスト）の実行中 */
+#define TSS_DDSP	0x01U	/* ディスパッチ禁止中 */
+#define TSS_DINT	0x02U	/* 割込み禁止中 */
+#define TSS_INDP	0x04U	/* タスク独立部の実行中 */
+#define TSS_QTSK	0x08U	/* 準タスク部の実行中 */
 
-/* Power-saving mode */
-#define TPW_DOSUSPEND	1	/* Transit to suspend state */
-#define TPW_DISLOWPOW	2	/* Power-saving mode switch disable */
-#define TPW_ENALOWPOW	3	/* Power-saving mode switch enable */
+/* 省電力モード */
+#define TPW_DOSUSPEND	1	/* サスペンド状態への移行 */
+#define TPW_DISLOWPOW	2	/* 省電力モード切替の禁止 */
+#define TPW_ENALOWPOW	3	/* 省電力モード切替の許可 */
 
 /*
- * Task creation information 		tk_cre_tsk
+ * タスク生成情報 		tk_cre_tsk
  */
 typedef struct t_ctsk {
-	void	*exinf;		/* Extended information */
-	ATR	tskatr;		/* Task attribute */
-	FP	task;		/* Task startup address */
-	PRI	itskpri;	/* Priority at task startup */
-	SZ	stksz;		/* User stack size (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ATR	tskatr;		/* タスク属性 */
+	FP	task;		/* タスク起動アドレス */
+	PRI	itskpri;	/* タスク起動時優先度 */
+	SZ	stksz;		/* ユーザスタックサイズ（バイト数） */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
-	void	*bufptr;	/* User buffer */
+	void	*bufptr;	/* ユーザバッファ */
 } T_CTSK;
 
 /*
- * Task state information 		tk_ref_tsk
+ * タスク状態情報 		tk_ref_tsk
  */
 typedef	struct t_rtsk {
-	void	*exinf;		/* Extended information */
-	PRI	tskpri;		/* Current priority */
-	PRI	tskbpri;	/* Base priority */
-	UINT	tskstat;	/* Task state */
-	UW	tskwait;	/* Wait factor */
-	ID	wid;		/* Wait object ID */
-	INT	wupcnt;		/* Number of wakeup requests queuing */
-	INT	suscnt;		/* Number of SUSPEND request nests */
+	void	*exinf;		/* 拡張情報 */
+	PRI	tskpri;		/* 現在の優先度 */
+	PRI	tskbpri;	/* ベース優先度 */
+	UINT	tskstat;	/* タスク状態 */
+	UW	tskwait;	/* 待ち要因 */
+	ID	wid;		/* 待ち対象のオブジェクトID */
+	INT	wupcnt;		/* 起床要求キューイング数 */
+	INT	suscnt;		/* 強制待ち（SUSPEND）要求のネスト数 */
 } T_RTSK;
 
 /*
- * Semaphore creation information		tk_cre_sem
+ * セマフォ生成情報		tk_cre_sem
  */
 typedef	struct t_csem {
-	void	*exinf;		/* Extended information */
-	ATR	sematr;		/* Semaphore attribute */
-	INT	isemcnt;	/* Semaphore initial count value */
-	INT	maxsem;		/* Semaphore maximum count value */
+	void	*exinf;		/* 拡張情報 */
+	ATR	sematr;		/* セマフォ属性 */
+	INT	isemcnt;	/* セマフォの初期カウント値 */
+	INT	maxsem;		/* セマフォの最大カウント値 */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CSEM;
 
 /*
- * Semaphore state information		tk_ref_sem
+ * セマフォ状態情報		tk_ref_sem
  */
 typedef	struct t_rsem {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	INT	semcnt;		/* Current semaphore value */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクのID */
+	INT	semcnt;		/* 現在のセマフォカウント値 */
 } T_RSEM;
 
 /*
- * Mutex creation information		tk_cre_mtx
+ * ミューテックス生成情報		tk_cre_mtx
  */
 typedef struct t_cmtx {
-	void	*exinf;		/* Extended information */
-	ATR	mtxatr;		/* Mutex attribute */
-	PRI	ceilpri;	/* Upper limit priority of mutex */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mtxatr;		/* ミューテックス属性 */
+	PRI	ceilpri;	/* ミューテックスの上限優先度 */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CMTX;
 
 /*
- * Mutex state information		tk_ref_mtx
+ * ミューテックス状態情報		tk_ref_mtx
  */
 typedef struct t_rmtx {
-	void	*exinf;		/* Extended information */
-	ID	htsk;		/* Locking task ID */
-	ID	wtsk;		/* Lock wait task ID */
+	void	*exinf;		/* 拡張情報 */
+	ID	htsk;		/* ロックしているタスクのID */
+	ID	wtsk;		/* ロック待ちタスクのID */
 } T_RMTX;
 
 /*
- * Event flag creation information	tk_cre_flg
+ * イベントフラグ生成情報	tk_cre_flg
  */
 typedef	struct t_cflg {
-	void	*exinf;		/* Extended information */
-	ATR	flgatr;		/* Event flag attribute */
-	UINT	iflgptn;	/* Event flag initial value */
+	void	*exinf;		/* 拡張情報 */
+	ATR	flgatr;		/* イベントフラグ属性 */
+	UINT	iflgptn;	/* イベントフラグの初期値 */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CFLG;
 
 /*
- * Event flag state information		tk_ref_flg
+ * イベントフラグ状態情報		tk_ref_flg
  */
 typedef	struct t_rflg {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	UINT	flgptn;		/* Current event flag pattern */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクのID */
+	UINT	flgptn;		/* 現在のイベントフラグパターン */
 } T_RFLG;
 
 /*
- * Mail box creation information	tk_cre_mbx
+ * メールボックス生成情報	tk_cre_mbx
  */
 typedef	struct t_cmbx {
-	void	*exinf;		/* Extended information */
-	ATR	mbxatr;		/* Mail box attribute */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mbxatr;		/* メールボックス属性 */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CMBX;
 
 /*
- * Mail box message header
+ * メールボックスのメッセージヘッダ
  */
 typedef struct t_msg {
-	void	*msgque[1];	/* Area for message queue */
+	void	*msgque[1];	/* メッセージキュー用領域 */
 } T_MSG;
 
 typedef struct t_msg_pri {
-	T_MSG	msgque;		/* Area for message queue */
-	PRI	msgpri;		/* Message priority */
+	T_MSG	msgque;		/* メッセージキュー用領域 */
+	PRI	msgpri;		/* メッセージ優先度 */
 } T_MSG_PRI;
 
 /*
- * Mail box state information		tk_ref_mbx
+ * メールボックス状態情報		tk_ref_mbx
  */
 typedef	struct t_rmbx {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	T_MSG	*pk_msg;	/* Next received message */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクのID */
+	T_MSG	*pk_msg;	/* 次に受信されるメッセージ */
 } T_RMBX;
 
 /*
- * Message buffer creation information	tk_cre_mbf
+ * メッセージバッファ生成情報	tk_cre_mbf
  */
 typedef	struct t_cmbf {
-	void	*exinf;		/* Extended information */
-	ATR	mbfatr;		/* Message buffer attribute */
-	SZ	bufsz;		/* Message buffer size (byte) */
-	INT	maxmsz;		/* Maximum length of message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mbfatr;		/* メッセージバッファ属性 */
+	SZ	bufsz;		/* メッセージバッファのサイズ（バイト数） */
+	INT	maxmsz;		/* メッセージの最大長（バイト数） */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
-	void	*bufptr;		/* User buffer */
+	void	*bufptr;		/* ユーザバッファ */
 } T_CMBF;
 
 /*
- * Message buffer state information 	tk_ref_mbf
+ * メッセージバッファ状態情報 	tk_ref_mbf
  */
 typedef struct t_rmbf {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Receive wait task ID */
-	ID	stsk;		/* Send wait task ID */
-	INT	msgsz;		/* Next received message size (byte) */
-	SZ	frbufsz;	/* Free buffer size (byte) */
-	INT	maxmsz;		/* Maximum length of message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 受信待ちタスクのID */
+	ID	stsk;		/* 送信待ちタスクのID */
+	INT	msgsz;		/* 次に受信されるメッセージのサイズ（バイト数） */
+	SZ	frbufsz;	/* 空きバッファのサイズ（バイト数） */
+	INT	maxmsz;		/* メッセージの最大長（バイト数） */
 } T_RMBF;
 
 /*
- * Rendezvous port creation information	tk_cre_por
+ * ランデブポート生成情報	tk_cre_por
  */
 typedef	struct t_cpor {
-	void	*exinf;		/* Extended information */
-	ATR	poratr;		/* Port attribute */
-	INT	maxcmsz;	/* Maximum length of call message (byte) */
-	INT	maxrmsz;	/* Maximum length of replay message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ATR	poratr;		/* ランデブポート属性 */
+	INT	maxcmsz;	/* 呼出メッセージの最大長（バイト数） */
+	INT	maxrmsz;	/* 返答メッセージの最大長（バイト数） */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CPOR;
 
 /*
- * Rendezvous port state information	tk_ref_por
+ * ランデブポート状態情報	tk_ref_por
  */
 typedef struct t_rpor {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Call wait task ID */
-	ID	atsk;		/* Receive wait task ID */
-	INT	maxcmsz;	/* Maximum length of call message (byte) */
-	INT	maxrmsz;	/* Maximum length of replay message (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 呼出待ちタスクのID */
+	ID	atsk;		/* 受付待ちタスクのID */
+	INT	maxcmsz;	/* 呼出メッセージの最大長（バイト数） */
+	INT	maxrmsz;	/* 返答メッセージの最大長（バイト数） */
 } T_RPOR;
 
 /*
- * Interrupt handler definition information	tk_def_int
+ * 割込みハンドラ定義情報	tk_def_int
  */
 typedef struct t_dint {
-	ATR	intatr;		/* Interrupt handler attribute */
-	FP	inthdr;		/* Interrupt handler address */
+	ATR	intatr;		/* 割込みハンドラ属性 */
+	FP	inthdr;		/* 割込みハンドラアドレス */
 } T_DINT;
 
 /*
- * Variable size memory pool creation information	tk_cre_mpl
+ * 可変長メモリプール生成情報	tk_cre_mpl
  */
 typedef	struct t_cmpl {
-	void	*exinf;		/* Extended information */
-	ATR	mplatr;		/* Memory pool attribute */
-	SZ	mplsz;		/* Size of whole memory pool (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mplatr;		/* メモリプール属性 */
+	SZ	mplsz;		/* メモリプール全体のサイズ（バイト数） */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
-	void	*bufptr;		/* User buffer */
+	void	*bufptr;		/* ユーザバッファ */
 } T_CMPL;
 
 /*
- * Variable size memory pool state information	tk_ref_mpl
+ * 可変長メモリプール状態情報	tk_ref_mpl
  */
 typedef struct t_rmpl {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	SZ	frsz;		/* Total size of free area (byte) */
-	SZ	maxsz;		/* Size of maximum continuous free area
-				   (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクのID */
+	SZ	frsz;		/* 空き領域の合計サイズ（バイト数） */
+	SZ	maxsz;		/* 最大の連続空き領域のサイズ（バイト数） */
 } T_RMPL;
 
 /*
- * Fixed size memory pool state information	tk_cre_mpf
+ * 固定長メモリプール生成情報	tk_cre_mpf
  */
 typedef	struct t_cmpf {
-	void	*exinf;		/* Extended information */
-	ATR	mpfatr;		/* Memory pool attribute */
-	SZ	mpfcnt;		/* Number of blocks in whole memory pool */
-	SZ	blfsz;		/* Fixed size memory block size (byte) */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mpfatr;		/* メモリプール属性 */
+	SZ	mpfcnt;		/* メモリプール全体のブロック数 */
+	SZ	blfsz;		/* 固定長メモリブロックのサイズ（バイト数） */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
-	void	*bufptr;		/* User buffer */
+	void	*bufptr;		/* ユーザバッファ */
 } T_CMPF;
 
 /*
- * Fixed size memory pool state information	tk_ref_mpf
+ * 固定長メモリプール状態情報	tk_ref_mpf
  */
 typedef struct t_rmpf {
-	void	*exinf;		/* Extended information */
-	ID	wtsk;		/* Wait task ID */
-	SZ	frbcnt;		/* Number of free area blocks */
+	void	*exinf;		/* 拡張情報 */
+	ID	wtsk;		/* 待ちタスクのID */
+	SZ	frbcnt;		/* 空きブロック数 */
 } T_RMPF;
 
 /*
- * Cycle handler creation information 	tk_cre_cyc
+ * 周期ハンドラ生成情報 	tk_cre_cyc
  */
 typedef struct t_ccyc {
-	void	*exinf;		/* Extended information */
-	ATR	cycatr;		/* Cycle handler attribute */
-	FP	cychdr;		/* Cycle handler address */
-	RELTIM	cyctim;		/* Cycle interval */
-	RELTIM	cycphs;		/* Cycle phase */
+	void	*exinf;		/* 拡張情報 */
+	ATR	cycatr;		/* 周期ハンドラ属性 */
+	FP	cychdr;		/* 周期ハンドラアドレス */
+	RELTIM	cyctim;		/* 起動周期の時間間隔 */
+	RELTIM	cycphs;		/* 起動位相 */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CCYC;
 
 /*
- * Cycle handler state information	tk_ref_cyc
+ * 周期ハンドラ状態情報	tk_ref_cyc
  */
 typedef struct t_rcyc {
-	void	*exinf;		/* Extended information */
-	RELTIM	lfttim;		/* Remaining time until next handler startup */
-	UINT	cycstat;	/* Cycle handler status */
+	void	*exinf;		/* 拡張情報 */
+	RELTIM	lfttim;		/* 次のハンドラ起動までの残り時間 */
+	UINT	cycstat;	/* 周期ハンドラの動作状態 */
 } T_RCYC;
 
 /*
- * Alarm handler creation information		tk_cre_alm
+ * アラームハンドラ生成情報		tk_cre_alm
  */
 typedef struct t_calm {
-	void	*exinf;		/* Extended information */
-	ATR	almatr;		/* Alarm handler attribute */
-	FP	almhdr;		/* Alarm handler address */
+	void	*exinf;		/* 拡張情報 */
+	ATR	almatr;		/* アラームハンドラ属性 */
+	FP	almhdr;		/* アラームハンドラアドレス */
 #if USE_OBJECT_NAME
-	UB	dsname[OBJECT_NAME_LENGTH];	/* Object name */
+	UB	dsname[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } T_CALM;
 
 /*
- * Alarm handler state information	tk_ref_alm
+ * アラームハンドラ状態情報	tk_ref_alm
  */
 typedef struct t_ralm {
-	void	*exinf;		/* Extended information */
-	RELTIM	lfttim;		/* Remaining time until handler startup */
-	UINT	almstat;	/* Alarm handler state */
+	void	*exinf;		/* 拡張情報 */
+	RELTIM	lfttim;		/* ハンドラ起動までの残り時間 */
+	UINT	almstat;	/* アラームハンドラの動作状態 */
 } T_RALM;
 
 /*
- * Version information		tk_ref_ver
+ * バージョン情報		tk_ref_ver
  */
 typedef struct t_rver {
-	UH	maker;		/* OS manufacturer */
-	UH	prid;		/* OS identification number */
-	UH	spver;		/* Specification version */
-	UH	prver;		/* OS product version */
-	UH	prno[4];	/* Product number, Product management
-				   information */
+	UH	maker;		/* OSの製造元 */
+	UH	prid;		/* OSの識別番号 */
+	UH	spver;		/* 仕様書バージョン */
+	UH	prver;		/* OSの製品バージョン */
+	UH	prno[4];	/* 製品番号・製品管理情報 */
 } T_RVER;
 
 /*
- * System state information		tk_ref_sys
+ * システム状態情報		tk_ref_sys
  */
 typedef struct t_rsys {
-	UINT	sysstat;	/* System state */
-	ID	runtskid;	/* ID of task in execution state */
-	ID	schedtskid;	/* ID of the task that should be the
-				   execution state */
+	UINT	sysstat;	/* システム状態 */
+	ID	runtskid;	/* 実行状態にあるタスクのID */
+	ID	schedtskid;	/* 本来実行状態とすべきタスクのID */
 } T_RSYS;
 
 /*
- * Subsystem definition information 		tk_def_ssy
+ * サブシステム定義情報 		tk_def_ssy
  */
 typedef struct t_dssy {
-	ATR	ssyatr;		/* Subsystem attribute */
-	PRI	ssypri;		/* Subsystem priority */
-	FP	svchdr;		/* Extended SVC handler address */
-	FP	breakfn;	/* Break function address */
-	FP	eventfn;	/* Event function address */
+	ATR	ssyatr;		/* サブシステム属性 */
+	PRI	ssypri;		/* サブシステム優先度 */
+	FP	svchdr;		/* 拡張SVCハンドラアドレス */
+	FP	breakfn;	/* ブレーク関数アドレス */
+	FP	eventfn;	/* イベント関数アドレス */
 } T_DSSY;
 
 /*
- * Subsystem state information		tk_ref_ssy
+ * サブシステム状態情報		tk_ref_ssy
  */
 typedef struct t_rssy {
-	PRI	ssypri;		/* Subsystem priority */
+	PRI	ssypri;		/* サブシステム優先度 */
 } T_RSSY;
 
 /* ------------------------------------------------------------------------ */
 
 /*
- * Device manager
+ * デバイス管理
  */
 
-#define L_DEVNM		8	/* Device name length */
+#define L_DEVNM		8	/* デバイス名の長さ */
 
 /*
- * Device attribute (ATR)
+ * デバイス属性（ATR）
  *
  *	IIII IIII IIII IIII PRxx xxxx KKKK KKKK
  *
- *	The first 16-bit is the device-dependent attribute and
- *	defined by each device.
- *	The last 16-bit is the standard attribute and defined
- *	like as followings.
+ *	上位16ビットはデバイス依存属性であり、各デバイスごとに定義します。
+ *	下位16ビットは標準属性であり、以下のように定義します。
  */
-#define TD_PROTECT	0x8000U		/* P: Write protected */
-#define TD_REMOVABLE	0x4000U		/* R: Media remove enabled */
+#define TD_PROTECT	0x8000U		/* P: 書込み禁止 */
+#define TD_REMOVABLE	0x4000U		/* R: メディアの取り外しが可能 */
 
-#define TD_DEVKIND	0x00ffU		/* K: Device/media type */
-#define TD_DEVTYPE	0x00f0U		/*    Device type */
+#define TD_DEVKIND	0x00ffU		/* K: デバイス/メディアの種別 */
+#define TD_DEVTYPE	0x00f0U		/*    デバイスタイプ */
 
-/* Device type */
-#define TDK_UNDEF	0x0000U		/* Undefined/Unknown */
-#define TDK_DISK	0x0010U		/* Disk device */
+/* デバイスタイプ */
+#define TDK_UNDEF	0x0000U		/* 未定義・不明 */
+#define TDK_DISK	0x0010U		/* ディスクデバイス */
 
-/* Disk type */
-#define TDK_DISK_UNDEF	0x0010U		/* Other disks */
-#define TDK_DISK_RAM	0x0011U		/* RAM disk (Use main memory) */
-#define TDK_DISK_ROM	0x0012U		/* ROM disk (Use main memory) */
-#define TDK_DISK_FLA	0x0013U		/* Flash ROM, other silicon disks */
-#define TDK_DISK_FD	0x0014U		/* Floppy disk */
-#define TDK_DISK_HD	0x0015U		/* Hard disk */
+/* ディスクタイプ */
+#define TDK_DISK_UNDEF	0x0010U		/* その他のディスク */
+#define TDK_DISK_RAM	0x0011U		/* RAMディスク（主メモリを使用） */
+#define TDK_DISK_ROM	0x0012U		/* ROMディスク（主メモリを使用） */
+#define TDK_DISK_FLA	0x0013U		/* フラッシュROMその他のシリコンディスク */
+#define TDK_DISK_FD	0x0014U		/* フロッピーディスク */
+#define TDK_DISK_HD	0x0015U		/* ハードディスク */
 #define TDK_DISK_CDROM	0x0016U		/* CD-ROM */
 
 /*
- * Device open mode
+ * デバイスオープンモード
  */
-#define TD_READ		0x0001U		/* Read only */
-#define TD_WRITE	0x0002U		/* Write only */
-#define TD_UPDATE	0x0003U		/* Read and write */
-#define TD_EXCL		0x0100U		/* Exclusive */
-#define TD_WEXCL	0x0200U		/* Exclusive write */
-#define TD_REXCL	0x0400U		/* Exclusive read */
+#define TD_READ		0x0001U		/* 読込み専用 */
+#define TD_WRITE	0x0002U		/* 書込み専用 */
+#define TD_UPDATE	0x0003U		/* 読み書き両用 */
+#define TD_EXCL		0x0100U		/* 排他 */
+#define TD_WEXCL	0x0200U		/* 排他書込み */
+#define TD_REXCL	0x0400U		/* 排他読込み */
 
 /*
- * Device close option
+ * デバイスクローズオプション
  */
-#define TD_EJECT	0x0001U		/* Media eject */
+#define TD_EJECT	0x0001U		/* メディアの排出 */
 
 /*
- * Suspend mode
+ * サスペンドモード
  */
-#define TD_SUSPEND	0x0001U		/* Suspend */
-#define TD_DISSUS	0x0002U		/* Disable suspend */
-#define TD_ENASUS	0x0003U		/* Enable suspend */
-#define TD_CHECK	0x0004U		/* Get suspend disable request count */
-#define TD_FORCE	0x8000U		/* Specify forced suspend */
+#define TD_SUSPEND	0x0001U		/* サスペンド */
+#define TD_DISSUS	0x0002U		/* サスペンド禁止 */
+#define TD_ENASUS	0x0003U		/* サスペンド許可 */
+#define TD_CHECK	0x0004U		/* サスペンド禁止要求数の取得 */
+#define TD_FORCE	0x8000U		/* 強制サスペンドの指定 */
 
 /*
- * Device information
+ * デバイス情報
  */
 typedef struct t_rdev {
-	ATR	devatr;		/* Device attribute */
-	W	blksz;		/* Specific data block size (-1: Unknown) */
-	INT	nsub;		/* Number of subunits */
-	INT	subno;		/* 0: Physical device,
-				   1 - nsub: Subunit number +1 */
+	ATR	devatr;		/* デバイス属性 */
+	W	blksz;		/* 固有データのブロックサイズ（-1: 不明） */
+	INT	nsub;		/* サブユニット数 */
+	INT	subno;		/* 0: 物理デバイス、1〜nsub: サブユニット番号+1 */
 } T_RDEV;
 
 /*
- * Registration device information
+ * 登録デバイス情報
  */
 typedef struct t_ldev {
-	ATR	devatr;		/* Device attribute */
-	W	blksz;		/* Specific data block size (-1: Unknown) */
-	INT	nsub;		/* Number of subunits */
-	UB	devnm[L_DEVNM];	/* Physical device name */
+	ATR	devatr;		/* デバイス属性 */
+	W	blksz;		/* 固有データのブロックサイズ（-1: 不明） */
+	INT	nsub;		/* サブユニット数 */
+	UB	devnm[L_DEVNM];	/* 物理デバイス名 */
 } T_LDEV;
 
 /*
- * Common attribute data number
- *	RW: Readable (tk_rea_dev)/writable (tk_wri_dev)
- *	R-: Readable (tk_rea_dev) only
+ * 共通属性データ番号
+ *	RW: 読込み（tk_rea_dev）・書込み（tk_wri_dev）可能
+ *	R-: 読込み（tk_rea_dev）のみ可能
  */
-#define TDN_EVENT	(-1)	/* RW:Message buffer ID
-				      for event notification */
-#define TDN_DISKINFO	(-2)	/* R-:Disk information */
-#define TDN_DISPSPEC	(-3)	/* R-:Display device specification */
-#define TDN_PCMCIAINFO	(-4)	/* R-:PC card information */
+#define TDN_EVENT	(-1)	/* RW: イベント通知用メッセージバッファID */
+#define TDN_DISKINFO	(-2)	/* R-: ディスク情報 */
+#define TDN_DISPSPEC	(-3)	/* R-: 表示デバイス仕様 */
+#define TDN_PCMCIAINFO	(-4)	/* R-: PCカード情報 */
 
 /*
- * Device event type
+ * デバイスイベントタイプ
  */
 typedef	enum tdevttyp {
-	TDE_unknown	= 0,		/* Undefined */
-	TDE_MOUNT	= 0x01,		/* Media insert */
-	TDE_EJECT	= 0x02,		/* Media eject */
-	TDE_ILLMOUNT	= 0x03,		/* Media incorrect insert */
-	TDE_ILLEJECT	= 0x04,		/* Media incorrect eject */
-	TDE_REMOUNT	= 0x05,		/* Media re-insert */
-	TDE_CARDBATLOW	= 0x06,		/* Card battery low */
-	TDE_CARDBATFAIL	= 0x07,		/* Card battery abnormal */
-	TDE_REQEJECT	= 0x08,		/* Media eject request */
-	TDE_PDBUT	= 0x11,		/* PD button state change */
-	TDE_PDMOVE	= 0x12,		/* PD position move */
-	TDE_PDSTATE	= 0x13,		/* PD state change */
-	TDE_PDEXT	= 0x14,		/* PD extended event */
-	TDE_KEYDOWN	= 0x21,		/* Key down */
-	TDE_KEYUP	= 0x22,		/* Key up */
-	TDE_KEYMETA	= 0x23,		/* Meta key state change */
-	TDE_POWEROFF	= 0x31,		/* Power switch off */
-	TDE_POWERLOW	= 0x32,		/* Power low */
-	TDE_POWERFAIL	= 0x33,		/* Power abnormal */
-	TDE_POWERSUS	= 0x34,		/* Automatic suspend */
-	TDE_POWERUPTM	= 0x35,		/* Clock update */
-	TDE_CKPWON	= 0x41		/* Automatic power on notification */
+	TDE_unknown	= 0,		/* 未定義 */
+	TDE_MOUNT	= 0x01,		/* メディアの挿入 */
+	TDE_EJECT	= 0x02,		/* メディアの排出 */
+	TDE_ILLMOUNT	= 0x03,		/* メディアの不正挿入 */
+	TDE_ILLEJECT	= 0x04,		/* メディアの不正排出 */
+	TDE_REMOUNT	= 0x05,		/* メディアの再挿入 */
+	TDE_CARDBATLOW	= 0x06,		/* カード電池の残量低下 */
+	TDE_CARDBATFAIL	= 0x07,		/* カード電池の異常 */
+	TDE_REQEJECT	= 0x08,		/* メディアの排出要求 */
+	TDE_PDBUT	= 0x11,		/* PDボタン状態の変化 */
+	TDE_PDMOVE	= 0x12,		/* PD位置の移動 */
+	TDE_PDSTATE	= 0x13,		/* PD状態の変化 */
+	TDE_PDEXT	= 0x14,		/* PD拡張イベント */
+	TDE_KEYDOWN	= 0x21,		/* キーの押下 */
+	TDE_KEYUP	= 0x22,		/* キーの解放 */
+	TDE_KEYMETA	= 0x23,		/* メタキー状態の変化 */
+	TDE_POWEROFF	= 0x31,		/* 電源スイッチオフ */
+	TDE_POWERLOW	= 0x32,		/* 電源の残量低下 */
+	TDE_POWERFAIL	= 0x33,		/* 電源の異常 */
+	TDE_POWERSUS	= 0x34,		/* 自動サスペンド */
+	TDE_POWERUPTM	= 0x35,		/* 時計の更新 */
+	TDE_CKPWON	= 0x41		/* 自動電源オンの通知 */
 } TDEvtTyp;
 
 /*
- * Device event message format
+ * デバイスイベントメッセージ形式
  */
 typedef struct t_devevt {
-	TDEvtTyp	evttyp;		/* Event type */
-	/* Information by each event type is added below */
+	TDEvtTyp	evttyp;		/* イベントタイプ */
+	/* 以下にイベントタイプごとの情報が付加される */
 } T_DEVEVT;
 
 /*
- * Device event message format with device ID
+ * デバイスID付きデバイスイベントメッセージ形式
  */
 typedef struct t_devevt_id {
-	TDEvtTyp	evttyp;		/* Event type */
-	ID		devid;		/* Device ID */
-	/* Information by each event type is added below */
+	TDEvtTyp	evttyp;		/* イベントタイプ */
+	ID		devid;		/* デバイスID */
+	/* 以下にイベントタイプごとの情報が付加される */
 } T_DEVEVT_ID;
 
 /* ------------------------------------------------------------------------ */
 
 /*
- * Device registration information
+ * デバイス登録情報
  */
 typedef struct t_ddev {
-	void	*exinf;		/* Extended information */
-	ATR	drvatr;		/* Driver attribute */
-	ATR	devatr;		/* Device attribute */
-	INT	nsub;		/* Number of subunits */
-	W	blksz;		/* Specific data block size (-1: Unknown) */
-	FP	openfn;		/* Open function */
-	FP	closefn;	/* Close function */
-	FP	execfn;		/* Execute function */
-	FP	waitfn;		/* Completion wait function */
-	FP	abortfn;	/* Abort function */
-	FP	eventfn;	/* Event function */
+	void	*exinf;		/* 拡張情報 */
+	ATR	drvatr;		/* ドライバ属性 */
+	ATR	devatr;		/* デバイス属性 */
+	INT	nsub;		/* サブユニット数 */
+	W	blksz;		/* 固有データのブロックサイズ（-1: 不明） */
+	FP	openfn;		/* オープン関数 */
+	FP	closefn;	/* クローズ関数 */
+	FP	execfn;		/* 処理開始関数 */
+	FP	waitfn;		/* 完了待ち関数 */
+	FP	abortfn;	/* 中止処理関数 */
+	FP	eventfn;	/* イベント関数 */
 } T_DDEV;
 
 /*
- * Open function:
+ * オープン関数:
  *	ER  openfn( ID devid, UINT omode, void *exinf )
- * Close function:
+ * クローズ関数:
  *	ER  closefn( ID devid, UINT option, void *exinf )
- * Execute function:
+ * 処理開始関数:
  *	ER  execfn( T_DEVREQ *devreq, TMO tmout, void *exinf )
- * Completion wait function:
+ * 完了待ち関数:
  *	INT waitfn( T_DEVREQ *devreq, INT nreq, TMO tmout, void *exinf )
- * Abort function:
- *	ER  abortfn( ID tskid, T_DEVREQ *devreq, INT nreq, void *exinf) 
- * Event function:
+ * 中止処理関数:
+ *	ER  abortfn( ID tskid, T_DEVREQ *devreq, INT nreq, void *exinf )
+ * イベント関数:
  *	INT eventfn( INT evttyp, void *evtinf, void *exinf )
  */
 
 /*
- * Driver attribute
+ * ドライバ属性
  */
-#define TDA_OPENREQ	0x0001U	/* Every time open/close */
+#define TDA_OPENREQ	0x0001U	/* オープン/クローズのたびに毎回通知 */
 
 /*
- * Device initial setting information
+ * デバイス初期設定情報
  */
 typedef struct t_idev {
-	ID	evtmbfid;	/* Message buffer ID for event notification */
+	ID	evtmbfid;	/* イベント通知用メッセージバッファID */
 } T_IDEV;
 
 /*
- * Device request packet
- *	 I: Input parameter
- *	 O: Output parameter
+ * デバイス要求パケット
+ *	 I: 入力パラメータ
+ *	 O: 出力パラメータ
  */
 typedef struct t_devreq {
-	struct t_devreq	*next;	/* I:Link to request packet (NULL:End) */
-	void	*exinf;		/* X:Extended information */
-	ID	devid;		/* I:Target device ID */
-	INT	cmd:4;		/* I:Request command */
-	BOOL	abort:1;	/* I:When executing abort request, TRUE */
-	W	start;		/* I:Start data number */
-	W	size;		/* I:Request size */
-	void	*buf;		/* I:Input/output buffer address */
-	W	asize;		/* O:Result size */
-	ER	error;		/* O:Result error */
+	struct t_devreq	*next;	/* I: 要求パケットへのリンク（NULL: 終端） */
+	void	*exinf;		/* X: 拡張情報 */
+	ID	devid;		/* I: 対象デバイスID */
+	INT	cmd:4;		/* I: 要求コマンド */
+	BOOL	abort:1;	/* I: 中止要求の実行中はTRUE */
+	W	start;		/* I: 開始データ番号 */
+	W	size;		/* I: 要求サイズ */
+	void	*buf;		/* I: 入出力バッファアドレス */
+	W	asize;		/* O: 結果サイズ */
+	ER	error;		/* O: 結果エラー */
 } T_DEVREQ;
 
 /*
- * Request command
+ * 要求コマンド
  */
-#define TDC_READ	1	/* Read request */
-#define TDC_WRITE	2	/* Write request */
+#define TDC_READ	1	/* 読込み要求 */
+#define TDC_WRITE	2	/* 書込み要求 */
 
 /*
- * Driver request event
+ * ドライバ要求イベント
  */
-#define TDV_SUSPEND	(-1)	/* Suspend */
-#define TDV_RESUME	(-2)	/* Resume */
-#define TDV_CARDEVT	1	/* PC card event (Refer card manager) */
-#define TDV_USBEVT	2	/* USB event     (Refer USB manager) */
+#define TDV_SUSPEND	(-1)	/* サスペンド */
+#define TDV_RESUME	(-2)	/* リジューム */
+#define TDV_CARDEVT	1	/* PCカードイベント（カードマネージャ参照） */
+#define TDV_USBEVT	2	/* USBイベント（USBマネージャ参照） */
 
 /*
- * System call prototype declaration
+ * システムコールのプロトタイプ宣言
  */
-IMPORT ID tk_cre_tsk( CONST T_CTSK *pk_ctsk );
-IMPORT ER tk_del_tsk( ID tskid );
-IMPORT ER tk_sta_tsk( ID tskid, INT stacd );
-IMPORT void tk_ext_tsk( void );
-IMPORT void tk_exd_tsk( void );
-IMPORT ER tk_ter_tsk( ID tskid );
-IMPORT ER tk_dis_dsp( void );
-IMPORT ER tk_ena_dsp( void );
-IMPORT ER tk_chg_pri( ID tskid, PRI tskpri );
-IMPORT ER tk_rot_rdq( PRI tskpri );
-IMPORT ER tk_rel_wai( ID tskid );
-IMPORT ID tk_get_tid( void );
-IMPORT ER tk_ref_tsk( ID tskid, T_RTSK *pk_rtsk );
-IMPORT ER tk_sus_tsk( ID tskid );
-IMPORT ER tk_rsm_tsk( ID tskid );
-IMPORT ER tk_frsm_tsk( ID tskid );
-IMPORT ER tk_slp_tsk( TMO tmout );
-IMPORT ER tk_wup_tsk( ID tskid );
-IMPORT INT tk_can_wup( ID tskid );
-IMPORT ER tk_dly_tsk( RELTIM dlytim );
+IMPORT ID tk_cre_tsk( CONST T_CTSK *pk_ctsk );  /* タスクの生成 */
+IMPORT ER tk_del_tsk( ID tskid );  /* タスクの削除 */
+IMPORT ER tk_sta_tsk( ID tskid, INT stacd );  /* タスクの起動 */
+IMPORT void tk_ext_tsk( void );  /* 自タスクの終了 */
+IMPORT void tk_exd_tsk( void );  /* 自タスクの終了と削除 */
+IMPORT ER tk_ter_tsk( ID tskid );  /* 他タスクの強制終了 */
+IMPORT ER tk_dis_dsp( void );  /* ディスパッチの禁止 */
+IMPORT ER tk_ena_dsp( void );  /* ディスパッチの許可 */
+IMPORT ER tk_chg_pri( ID tskid, PRI tskpri );  /* タスク優先度の変更 */
+IMPORT ER tk_rot_rdq( PRI tskpri );  /* タスク優先順位の回転 */
+IMPORT ER tk_rel_wai( ID tskid );  /* 他タスクの待ち状態解除 */
+IMPORT ID tk_get_tid( void );  /* 実行状態タスクのID取得 */
+IMPORT ER tk_ref_tsk( ID tskid, T_RTSK *pk_rtsk );  /* タスク状態の参照 */
+IMPORT ER tk_sus_tsk( ID tskid );  /* タスクの強制待ち */
+IMPORT ER tk_rsm_tsk( ID tskid );  /* 強制待ち状態からの再開 */
+IMPORT ER tk_frsm_tsk( ID tskid );  /* 強制待ち状態からの強制再開 */
+IMPORT ER tk_slp_tsk( TMO tmout );  /* 自タスクの起床待ち */
+IMPORT ER tk_wup_tsk( ID tskid );  /* 他タスクの起床 */
+IMPORT INT tk_can_wup( ID tskid );  /* タスクの起床要求の無効化 */
+IMPORT ER tk_dly_tsk( RELTIM dlytim );  /* 自タスクの遅延 */
 
 #if TK_SUPPORT_REGOPS
-IMPORT ER tk_get_reg( ID tskid, T_REGS *pk_regs, T_EIT *pk_eit, T_CREGS *pk_cregs );
-IMPORT ER tk_set_reg( ID tskid, CONST T_REGS *pk_regs, CONST T_EIT *pk_eit, CONST T_CREGS *pk_cregs );
+IMPORT ER tk_get_reg( ID tskid, T_REGS *pk_regs, T_EIT *pk_eit, T_CREGS *pk_cregs );  /* タスクレジスタの取得 */
+IMPORT ER tk_set_reg( ID tskid, CONST T_REGS *pk_regs, CONST T_EIT *pk_eit, CONST T_CREGS *pk_cregs );  /* タスクレジスタの設定 */
 #endif /* TK_SUPPORT_REGOPS */
 
 #if NUM_COPROCESSOR > 0
-IMPORT ER tk_get_cpr( ID tskid, INT copno, T_COPREGS *pk_copregs);
-IMPORT ER tk_set_cpr(ID tskid, INT copno, CONST T_COPREGS *pk_copregs);
+IMPORT ER tk_get_cpr( ID tskid, INT copno, T_COPREGS *pk_copregs);  /* コプロセッサレジスタの取得 */
+IMPORT ER tk_set_cpr(ID tskid, INT copno, CONST T_COPREGS *pk_copregs);  /* コプロセッサレジスタの設定 */
 #endif
 
-IMPORT ID tk_cre_sem( CONST T_CSEM *pk_csem );
-IMPORT ER tk_del_sem( ID semid );
-IMPORT ER tk_sig_sem( ID semid, INT cnt );
-IMPORT ER tk_wai_sem( ID semid, INT cnt, TMO tmout );
-IMPORT ER tk_ref_sem( ID semid, T_RSEM *pk_rsem );
+IMPORT ID tk_cre_sem( CONST T_CSEM *pk_csem );  /* セマフォの生成 */
+IMPORT ER tk_del_sem( ID semid );  /* セマフォの削除 */
+IMPORT ER tk_sig_sem( ID semid, INT cnt );  /* セマフォ資源の返却 */
+IMPORT ER tk_wai_sem( ID semid, INT cnt, TMO tmout );  /* セマフォ資源の獲得 */
+IMPORT ER tk_ref_sem( ID semid, T_RSEM *pk_rsem );  /* セマフォ状態の参照 */
 
-IMPORT ID tk_cre_mtx( CONST T_CMTX *pk_cmtx );
-IMPORT ER tk_del_mtx( ID mtxid );
-IMPORT ER tk_loc_mtx( ID mtxid, TMO tmout );
-IMPORT ER tk_unl_mtx( ID mtxid );
-IMPORT ER tk_ref_mtx( ID mtxid, T_RMTX *pk_rmtx );
+IMPORT ID tk_cre_mtx( CONST T_CMTX *pk_cmtx );  /* ミューテックスの生成 */
+IMPORT ER tk_del_mtx( ID mtxid );  /* ミューテックスの削除 */
+IMPORT ER tk_loc_mtx( ID mtxid, TMO tmout );  /* ミューテックスのロック */
+IMPORT ER tk_unl_mtx( ID mtxid );  /* ミューテックスのアンロック */
+IMPORT ER tk_ref_mtx( ID mtxid, T_RMTX *pk_rmtx );  /* ミューテックス状態の参照 */
 
-IMPORT ID tk_cre_flg( CONST T_CFLG *pk_cflg );
-IMPORT ER tk_del_flg( ID flgid );
-IMPORT ER tk_set_flg( ID flgid, UINT setptn );
-IMPORT ER tk_clr_flg( ID flgid, UINT clrptn );
-IMPORT ER tk_wai_flg( ID flgid, UINT waiptn, UINT wfmode, UINT *p_flgptn, TMO tmout );
-IMPORT ER tk_ref_flg( ID flgid, T_RFLG *pk_rflg );
+IMPORT ID tk_cre_flg( CONST T_CFLG *pk_cflg );  /* イベントフラグの生成 */
+IMPORT ER tk_del_flg( ID flgid );  /* イベントフラグの削除 */
+IMPORT ER tk_set_flg( ID flgid, UINT setptn );  /* イベントフラグのセット */
+IMPORT ER tk_clr_flg( ID flgid, UINT clrptn );  /* イベントフラグのクリア */
+IMPORT ER tk_wai_flg( ID flgid, UINT waiptn, UINT wfmode, UINT *p_flgptn, TMO tmout );  /* イベントフラグ待ち */
+IMPORT ER tk_ref_flg( ID flgid, T_RFLG *pk_rflg );  /* イベントフラグ状態の参照 */
 
-IMPORT ID tk_cre_mbx( CONST T_CMBX* pk_cmbx );
-IMPORT ER tk_del_mbx( ID mbxid );
-IMPORT ER tk_snd_mbx( ID mbxid, T_MSG *pk_msg );
-IMPORT ER tk_rcv_mbx( ID mbxid, T_MSG **ppk_msg, TMO tmout );
-IMPORT ER tk_ref_mbx( ID mbxid, T_RMBX *pk_rmbx );
-IMPORT ID tk_cre_mbf( CONST T_CMBF *pk_cmbf );
-IMPORT ER tk_del_mbf( ID mbfid );
-IMPORT ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout );
-IMPORT INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout );
-IMPORT ER tk_ref_mbf( ID mbfid, T_RMBF *pk_rmbf );
+IMPORT ID tk_cre_mbx( CONST T_CMBX* pk_cmbx );  /* メールボックスの生成 */
+IMPORT ER tk_del_mbx( ID mbxid );  /* メールボックスの削除 */
+IMPORT ER tk_snd_mbx( ID mbxid, T_MSG *pk_msg );  /* メールボックスへの送信 */
+IMPORT ER tk_rcv_mbx( ID mbxid, T_MSG **ppk_msg, TMO tmout );  /* メールボックスからの受信 */
+IMPORT ER tk_ref_mbx( ID mbxid, T_RMBX *pk_rmbx );  /* メールボックス状態の参照 */
+IMPORT ID tk_cre_mbf( CONST T_CMBF *pk_cmbf );  /* メッセージバッファの生成 */
+IMPORT ER tk_del_mbf( ID mbfid );  /* メッセージバッファの削除 */
+IMPORT ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout );  /* メッセージバッファへの送信 */
+IMPORT INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout );  /* メッセージバッファからの受信 */
+IMPORT ER tk_ref_mbf( ID mbfid, T_RMBF *pk_rmbf );  /* メッセージバッファ状態の参照 */
 
-IMPORT ID tk_cre_por( CONST T_CPOR *pk_cpor );
-IMPORT ER tk_del_por( ID porid );
-IMPORT INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout );
-IMPORT INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmout );
-IMPORT ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cmsgsz );
-IMPORT ER tk_rpl_rdv( RNO rdvno, CONST void *msg, INT rmsgsz );
-IMPORT ER tk_ref_por( ID porid, T_RPOR *pk_rpor );
+IMPORT ID tk_cre_por( CONST T_CPOR *pk_cpor );  /* ランデブポートの生成 */
+IMPORT ER tk_del_por( ID porid );  /* ランデブポートの削除 */
+IMPORT INT tk_cal_por( ID porid, UINT calptn, void *msg, INT cmsgsz, TMO tmout );  /* ランデブの呼出 */
+IMPORT INT tk_acp_por( ID porid, UINT acpptn, RNO *p_rdvno, void *msg, TMO tmout );  /* ランデブの受付 */
+IMPORT ER tk_fwd_por( ID porid, UINT calptn, RNO rdvno, CONST void *msg, INT cmsgsz );  /* ランデブの回送 */
+IMPORT ER tk_rpl_rdv( RNO rdvno, CONST void *msg, INT rmsgsz );  /* ランデブへの返答 */
+IMPORT ER tk_ref_por( ID porid, T_RPOR *pk_rpor );  /* ランデブポート状態の参照 */
 
-IMPORT ER tk_def_int( UINT intno, CONST T_DINT *pk_dint );
-IMPORT void tk_ret_int( void );
+IMPORT ER tk_def_int( UINT intno, CONST T_DINT *pk_dint );  /* 割込みハンドラの定義 */
+IMPORT void tk_ret_int( void );  /* 割込みハンドラからの復帰 */
 
-IMPORT ID tk_cre_mpl( CONST T_CMPL *pk_cmpl );
-IMPORT ER tk_del_mpl( ID mplid );
-IMPORT ER tk_get_mpl( ID mplid, SZ blksz, void **p_blk, TMO tmout );
-IMPORT ER tk_rel_mpl( ID mplid, void *blk );
-IMPORT ER tk_ref_mpl( ID mplid, T_RMPL *pk_rmpl );
+IMPORT ID tk_cre_mpl( CONST T_CMPL *pk_cmpl );  /* 可変長メモリプールの生成 */
+IMPORT ER tk_del_mpl( ID mplid );  /* 可変長メモリプールの削除 */
+IMPORT ER tk_get_mpl( ID mplid, SZ blksz, void **p_blk, TMO tmout );  /* 可変長メモリブロックの獲得 */
+IMPORT ER tk_rel_mpl( ID mplid, void *blk );  /* 可変長メモリブロックの返却 */
+IMPORT ER tk_ref_mpl( ID mplid, T_RMPL *pk_rmpl );  /* 可変長メモリプール状態の参照 */
 
-IMPORT ID tk_cre_mpf( CONST T_CMPF *pk_cmpf );
-IMPORT ER tk_del_mpf( ID mpfid );
-IMPORT ER tk_get_mpf( ID mpfid, void **p_blf, TMO tmout );
-IMPORT ER tk_rel_mpf( ID mpfid, void *blf );
-IMPORT ER tk_ref_mpf( ID mpfid, T_RMPF *pk_rmpf );
+IMPORT ID tk_cre_mpf( CONST T_CMPF *pk_cmpf );  /* 固定長メモリプールの生成 */
+IMPORT ER tk_del_mpf( ID mpfid );  /* 固定長メモリプールの削除 */
+IMPORT ER tk_get_mpf( ID mpfid, void **p_blf, TMO tmout );  /* 固定長メモリブロックの獲得 */
+IMPORT ER tk_rel_mpf( ID mpfid, void *blf );  /* 固定長メモリブロックの返却 */
+IMPORT ER tk_ref_mpf( ID mpfid, T_RMPF *pk_rmpf );  /* 固定長メモリプール状態の参照 */
 
-IMPORT ER tk_set_utc( CONST SYSTIM *pk_tim );
-IMPORT ER tk_get_utc( SYSTIM *pk_tim );
-IMPORT ER tk_set_tim( CONST SYSTIM *pk_tim );
-IMPORT ER tk_get_tim( SYSTIM *pk_tim );
-IMPORT ER tk_get_otm( SYSTIM *pk_tim );
+IMPORT ER tk_set_utc( CONST SYSTIM *pk_tim );  /* システム時刻（UTC）の設定 */
+IMPORT ER tk_get_utc( SYSTIM *pk_tim );  /* システム時刻（UTC）の取得 */
+IMPORT ER tk_set_tim( CONST SYSTIM *pk_tim );  /* システム時刻の設定 */
+IMPORT ER tk_get_tim( SYSTIM *pk_tim );  /* システム時刻の取得 */
+IMPORT ER tk_get_otm( SYSTIM *pk_tim );  /* システム稼働時間の取得 */
 
-IMPORT ID tk_cre_cyc( CONST T_CCYC *pk_ccyc );
-IMPORT ER tk_del_cyc( ID cycid );
-IMPORT ER tk_sta_cyc( ID cycid );
-IMPORT ER tk_stp_cyc( ID cycid );
-IMPORT ER tk_ref_cyc( ID cycid, T_RCYC *pk_rcyc );
+IMPORT ID tk_cre_cyc( CONST T_CCYC *pk_ccyc );  /* 周期ハンドラの生成 */
+IMPORT ER tk_del_cyc( ID cycid );  /* 周期ハンドラの削除 */
+IMPORT ER tk_sta_cyc( ID cycid );  /* 周期ハンドラの動作開始 */
+IMPORT ER tk_stp_cyc( ID cycid );  /* 周期ハンドラの動作停止 */
+IMPORT ER tk_ref_cyc( ID cycid, T_RCYC *pk_rcyc );  /* 周期ハンドラ状態の参照 */
 
-IMPORT ID tk_cre_alm( CONST T_CALM *pk_calm );
-IMPORT ER tk_del_alm( ID almid );
-IMPORT ER tk_sta_alm( ID almid, RELTIM almtim );
-IMPORT ER tk_stp_alm( ID almid );
-IMPORT ER tk_ref_alm( ID almid, T_RALM *pk_ralm );
+IMPORT ID tk_cre_alm( CONST T_CALM *pk_calm );  /* アラームハンドラの生成 */
+IMPORT ER tk_del_alm( ID almid );  /* アラームハンドラの削除 */
+IMPORT ER tk_sta_alm( ID almid, RELTIM almtim );  /* アラームハンドラの動作開始 */
+IMPORT ER tk_stp_alm( ID almid );  /* アラームハンドラの動作停止 */
+IMPORT ER tk_ref_alm( ID almid, T_RALM *pk_ralm );  /* アラームハンドラ状態の参照 */
 
-IMPORT ER tk_ref_sys( T_RSYS *pk_rsys );
-IMPORT ER tk_set_pow( UINT powmode);
-IMPORT ER tk_ref_ver( T_RVER *pk_rver );
+IMPORT ER tk_ref_sys( T_RSYS *pk_rsys );  /* システム状態の参照 */
+IMPORT ER tk_set_pow( UINT powmode);  /* 省電力モードの設定 */
+IMPORT ER tk_ref_ver( T_RVER *pk_rver );  /* バージョン情報の参照 */
 
-IMPORT ER tk_def_ssy( ID ssid, CONST T_DSSY *pk_dssy );
-IMPORT ER tk_ref_ssy( ID ssid, T_RSSY *pk_rssy );
+IMPORT ER tk_def_ssy( ID ssid, CONST T_DSSY *pk_dssy );  /* サブシステムの定義 */
+IMPORT ER tk_ref_ssy( ID ssid, T_RSSY *pk_rssy );  /* サブシステム状態の参照 */
 
-IMPORT ID tk_opn_dev( CONST UB *devnm, UINT omode );
-IMPORT ER tk_cls_dev( ID dd, UINT option );
-IMPORT ID tk_rea_dev( ID dd, W start, void *buf, SZ size, TMO tmout );
-IMPORT ER tk_srea_dev( ID dd, W start, void *buf, SZ size, SZ *asize );
-IMPORT ID tk_wri_dev( ID dd, W start, CONST void *buf, SZ size, TMO tmout );
-IMPORT ER tk_swri_dev( ID dd, W start, CONST void *buf, SZ size, SZ *asize );
-IMPORT ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout );
-IMPORT INT tk_sus_dev( UINT mode );
-IMPORT ID tk_get_dev( ID devid, UB *devnm );
-IMPORT ID tk_ref_dev( CONST UB *devnm, T_RDEV *pk_rdev );
-IMPORT ID tk_oref_dev( ID dd, T_RDEV *pk_rdev );
-IMPORT INT tk_lst_dev( T_LDEV *pk_ldev, INT start, INT ndev );
-IMPORT INT tk_evt_dev( ID devid, INT evttyp, void *evtinf );
-IMPORT ID tk_def_dev( CONST UB *devnm, CONST T_DDEV *pk_ddev, T_IDEV *pk_idev );
-IMPORT ER tk_ref_idv( T_IDEV *pk_idev );
+IMPORT ID tk_opn_dev( CONST UB *devnm, UINT omode );  /* デバイスのオープン */
+IMPORT ER tk_cls_dev( ID dd, UINT option );  /* デバイスのクローズ */
+IMPORT ID tk_rea_dev( ID dd, W start, void *buf, SZ size, TMO tmout );  /* デバイスの読込み開始（非同期） */
+IMPORT ER tk_srea_dev( ID dd, W start, void *buf, SZ size, SZ *asize );  /* デバイスの同期読込み */
+IMPORT ID tk_wri_dev( ID dd, W start, CONST void *buf, SZ size, TMO tmout );  /* デバイスの書込み開始（非同期） */
+IMPORT ER tk_swri_dev( ID dd, W start, CONST void *buf, SZ size, SZ *asize );  /* デバイスの同期書込み */
+IMPORT ID tk_wai_dev( ID dd, ID reqid, SZ *asize, ER *ioer, TMO tmout );  /* デバイス要求の完了待ち */
+IMPORT INT tk_sus_dev( UINT mode );  /* サスペンド状態の制御 */
+IMPORT ID tk_get_dev( ID devid, UB *devnm );  /* デバイス名の取得 */
+IMPORT ID tk_ref_dev( CONST UB *devnm, T_RDEV *pk_rdev );  /* デバイス情報の参照（デバイス名指定） */
+IMPORT ID tk_oref_dev( ID dd, T_RDEV *pk_rdev );  /* デバイス情報の参照（デバイスディスクリプタ指定） */
+IMPORT INT tk_lst_dev( T_LDEV *pk_ldev, INT start, INT ndev );  /* 登録デバイスの一覧取得 */
+IMPORT INT tk_evt_dev( ID devid, INT evttyp, void *evtinf );  /* デバイスへのイベント送信 */
+IMPORT ID tk_def_dev( CONST UB *devnm, CONST T_DDEV *pk_ddev, T_IDEV *pk_idev );  /* デバイスの登録 */
+IMPORT ER tk_ref_idv( T_IDEV *pk_idev );  /* デバイス初期設定情報の参照 */
 
 #endif /* __TK_SYSCALL_H__ */
