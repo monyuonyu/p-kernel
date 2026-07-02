@@ -11,54 +11,61 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	mailbox.h
- *	Mailbox
+/**
+ * @file	mailbox.h
+ * @brief	メールボックス機能のカーネル内部定義
+ *
+ * メールボックス管理ブロック（MBXCB）の定義と、メッセージキュー
+ * 操作用のマクロ・インライン関数を提供します。
  */
 
 #ifndef _MAILBOX_H_
 #define _MAILBOX_H_
 /*
- * Mailbox control block
+ * メールボックス管理ブロック
  *
- *	'mq_head' is the first message queue pointer that
- *	points a message.
- *	It is NULL if the message queue is empty.
- *	'mq_tail' is a pointer that points end of message
- *	queue that is not empty.
- *	The message queue value is not guaranteed if the
- *	message queue is empty.
- *	It is used only if the message queue is FIFO (TA_MFIFO).
+ *	'mq_head' はメッセージキューの先頭メッセージを指す
+ *	ポインタです。メッセージキューが空のときは NULL になります。
+ *	'mq_tail' は空でないメッセージキューの末尾を指す
+ *	ポインタです。メッセージキューが空のときの値は保証されません。
+ *	'mq_tail' はメッセージキューが FIFO（TA_MFIFO）の場合にのみ
+ *	使用します。
  */
 typedef struct mailbox_control_block {
-	QUEUE	wait_queue;	/* Mailbox wait queue */
-	ID	mbxid;		/* Mailbox ID */
-	void	*exinf;		/* Extended information */
-	ATR	mbxatr;		/* Mailbox attribute */
-	T_MSG	mq_head;	/* Head of message queue */
-	T_MSG	*mq_tail;	/* End of message queue */
+	QUEUE	wait_queue;	/* メールボックス待ちキュー */
+	ID	mbxid;		/* メールボックス ID */
+	void	*exinf;		/* 拡張情報 */
+	ATR	mbxatr;		/* メールボックス属性 */
+	T_MSG	mq_head;	/* メッセージキューの先頭 */
+	T_MSG	*mq_tail;	/* メッセージキューの末尾 */
 #if USE_OBJECT_NAME
-	UB	name[OBJECT_NAME_LENGTH];	/* name */
+	UB	name[OBJECT_NAME_LENGTH];	/* オブジェクト名 */
 #endif
 } MBXCB;
 
-IMPORT MBXCB knl_mbxcb_table[];	/* Mailbox control block */
-IMPORT QUEUE knl_free_mbxcb;	/* FreeQue */
+IMPORT MBXCB knl_mbxcb_table[];	/* メールボックス管理ブロックテーブル */
+IMPORT QUEUE knl_free_mbxcb;	/* 未使用管理ブロックのキュー（FreeQue） */
 
 #define get_mbxcb(id)	( &knl_mbxcb_table[INDEX_MBX(id)] )
 
 /*
- * Head message
+ * 先頭メッセージの取得
  */
 #define headmsg(mbxcb)	( (mbxcb)->mq_head.msgque[0] )
 
 /*
- * Next message
+ * 次のメッセージの取得
  */
 #define nextmsg(msg)	( ((T_MSG*)(msg))->msgque[0] )
 
-/*
- * Insert a message queue following priority
+/**
+ * @brief メッセージ優先度順のキュー挿入
+ *
+ * メッセージ pk_msg を、head を先頭とするメッセージキューへ
+ * 優先度順（同一優先度では末尾）に挿入します。
+ *
+ * @param pk_msg	挿入するメッセージ（優先度付き）
+ * @param head	メッセージキューの先頭
  */
 Inline void knl_queue_insert_mpri( T_MSG_PRI *pk_msg, T_MSG *head )
 {
