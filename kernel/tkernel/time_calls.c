@@ -948,8 +948,17 @@ SYSCALL ER tk_stp_alm( ID almid )
 #endif /* USE_FUNC_TK_STP_ALM */
 
 #ifdef USE_FUNC_TK_REF_ALM
-/*
- * Refer alarm handler state
+/**
+ * @brief	アラームハンドラ状態の参照
+ *
+ * 拡張情報、起動までの残り時間、動作状態を pk_ralm に返します。
+ * 停止状態の場合、残り時間は 0 になります。
+ *
+ * @param	almid	対象のアラームハンドラのID
+ * @param	pk_ralm	アラームハンドラ状態の格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_ID	almid の値が不正
  */
 SYSCALL ER tk_ref_alm( ID almid, T_RALM *pk_ralm )
 {
@@ -962,7 +971,7 @@ SYSCALL ER tk_ref_alm( ID almid, T_RALM *pk_ralm )
 	almcb = get_almcb(almid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( almcb->almhdr == NULL ) { /* Unregistered handler */
+	if ( almcb->almhdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		cur = lltoul(knl_current_time);
@@ -991,8 +1000,18 @@ SYSCALL ER tk_ref_alm( ID almid, T_RALM *pk_ralm )
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief	アラームハンドラのオブジェクト名の取得
+ *
+ * TA_DSNAME 属性付きで生成されたアラームハンドラの名前への
+ * ポインタを返します。
+ *
+ * @param	id	対象のアラームハンドラのID
+ * @param	name	名前へのポインタの格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_OBJ	TA_DSNAME 属性が指定されていない
+ * @retval	E_ID	id の値が不正
  */
 EXPORT ER knl_alarmhandler_getname(ID id, UB **name)
 {
@@ -1021,8 +1040,15 @@ EXPORT ER knl_alarmhandler_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_ALM
-/*
- * Refer alarm handler usage state
+/**
+ * @brief	アラームハンドラIDリストの参照（デバッガサポート機能）
+ *
+ * 使用中のアラームハンドラのIDを list に列挙します。nent を超える
+ * 分は格納されませんが、総数は戻り値で返します。
+ *
+ * @param	list	IDリストの格納先配列
+ * @param	nent	list に格納可能な最大数
+ * @return	使用中のアラームハンドラの総数
  */
 SYSCALL INT td_lst_alm( ID list[], INT nent )
 {
@@ -1032,7 +1058,7 @@ SYSCALL INT td_lst_alm( ID list[], INT nent )
 	BEGIN_DISABLE_INTERRUPT;
 	end = knl_almcb_table + NUM_ALMID;
 	for ( almcb = knl_almcb_table; almcb < end; almcb++ ) {
-		/* Unregistered handler */
+		/* 未登録ハンドラは読み飛ばす */
 		if ( almcb->almhdr == NULL ) {
 			continue;
 		}
@@ -1048,8 +1074,17 @@ SYSCALL INT td_lst_alm( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_ALM */
 
 #ifdef USE_FUNC_TD_REF_ALM
-/*
- * Refer alarm handler state
+/**
+ * @brief	アラームハンドラ状態の参照（デバッガサポート機能）
+ *
+ * 拡張情報、起動までの残り時間、動作状態を pk_ralm に返します。
+ * 停止状態の場合、残り時間は 0 になります。
+ *
+ * @param	almid	対象のアラームハンドラのID
+ * @param	pk_ralm	アラームハンドラ状態の格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象のアラームハンドラが存在しない
+ * @retval	E_ID	almid の値が不正
  */
 SYSCALL ER td_ref_alm( ID almid, TD_RALM *pk_ralm )
 {
@@ -1062,7 +1097,7 @@ SYSCALL ER td_ref_alm( ID almid, TD_RALM *pk_ralm )
 	almcb = get_almcb(almid);
 
 	BEGIN_DISABLE_INTERRUPT;
-	if ( almcb->almhdr == NULL ) { /* Unregistered handler */
+	if ( almcb->almhdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		cur = lltoul(knl_current_time);

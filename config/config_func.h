@@ -11,9 +11,12 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	config_func.h
- *	User Configuration Definition for function
+/**
+ * @file	config_func.h
+ * @brief	使用機能のユーザコンフィグレーション定義
+ *
+ * カーネルに組み込む機能単位（セマフォ、ミューテックスなど）と、
+ * 個々の API（USE_FUNC_XXX）の使用有無を定義します。
  */
 
 #ifndef _CONFIG_FUNC_H_
@@ -34,7 +37,7 @@
 #define USE_FAST_LOCK		(1)
 #define USE_MULTI_LOCK		(1)
 
-/* Task management */
+/* タスク管理 */
 #define USE_FUNC_TK_DEL_TSK
 #define USE_FUNC_TK_EXT_TSK
 #define USE_FUNC_TK_EXD_TSK
@@ -59,35 +62,35 @@
 #define USE_FUNC_TD_GET_REG
 #define USE_FUNC_TD_SET_REG
 
-/* Semaphore management API */
+/* セマフォ管理 API */
 #define USE_FUNC_TK_DEL_SEM
 #define USE_FUNC_TK_REF_SEM
 #define USE_FUNC_TD_LST_SEM
 #define USE_FUNC_TD_REF_SEM
 #define USE_FUNC_TD_SEM_QUE
 
-/* Mutex management API */
+/* ミューテックス管理 API */
 #define USE_FUNC_TK_DEL_MTX
 #define USE_FUNC_TK_REF_MTX
 #define USE_FUNC_TD_LST_MTX
 #define USE_FUNC_TD_REF_MTX
 #define USE_FUNC_TD_MTX_QUE
 
-/* Event flag management API */
+/* イベントフラグ管理 API */
 #define USE_FUNC_TK_DEL_FLG
 #define USE_FUNC_TK_REF_FLG
 #define USE_FUNC_TD_LST_FLG
 #define USE_FUNC_TD_REF_FLG
 #define USE_FUNC_TD_FLG_QUE
 
-/* Mailbox management API */
+/* メールボックス管理 API */
 #define USE_FUNC_TK_DEL_MBX
 #define USE_FUNC_TK_REF_MBX
 #define USE_FUNC_TD_LST_MBX
 #define USE_FUNC_TD_REF_MBX
 #define USE_FUNC_TD_MBX_QUE
 
-/* Messagebuffer management API */
+/* メッセージバッファ管理 API */
 #define USE_FUNC_TK_DEL_MBF
 #define USE_FUNC_TK_REF_MBF
 #define USE_FUNC_TD_LST_MBF
@@ -95,7 +98,7 @@
 #define USE_FUNC_TD_SMBF_QUE
 #define USE_FUNC_TD_RMBF_QUE
 
-/* Rendezvous management API (Legacy API) */
+/* ランデブ管理 API（レガシー API） */
 #define USE_FUNC_TK_DEL_POR
 #define USE_FUNC_TK_FWD_POR
 #define USE_FUNC_TK_REF_POR
@@ -104,21 +107,21 @@
 #define USE_FUNC_TD_CAL_QUE
 #define USE_FUNC_TD_ACP_QUE
 
-/* Memory pool management API */
+/* 可変長メモリプール管理 API */
 #define USE_FUNC_TK_DEL_MPL
 #define USE_FUNC_TK_REF_MPL
 #define USE_FUNC_TD_LST_MPL
 #define USE_FUNC_TD_REF_MPL
 #define USE_FUNC_TD_MPL_QUE
 
-/* Fix-Memory Pool management API */
+/* 固定長メモリプール管理 API */
 #define USE_FUNC_TK_DEL_MPF
 #define USE_FUNC_TK_REF_MPF
 #define USE_FUNC_TD_LST_MPF
 #define USE_FUNC_TD_REF_MPF
 #define USE_FUNC_TD_MPF_QUE
 
-/* Time management API */
+/* 時間管理 API */
 #define USE_FUNC_TK_SET_UTC
 #define USE_FUNC_TK_GET_UTC
 #define USE_FUNC_TK_SET_TIM
@@ -127,7 +130,7 @@
 #define USE_FUNC_TD_GET_TIM
 #define USE_FUNC_TD_GET_OTM
 
-/* Cyclic handler management API */
+/* 周期ハンドラ管理 API */
 #define USE_FUNC_TK_DEL_CYC
 #define USE_FUNC_TK_STA_CYC
 #define USE_FUNC_TK_STP_CYC
@@ -135,14 +138,14 @@
 #define USE_FUNC_TD_LST_CYC
 #define USE_FUNC_TD_REF_CYC
 
-/* Alarm handler management API */
+/* アラームハンドラ管理 API */
 #define USE_FUNC_TK_DEL_ALM
 #define USE_FUNC_TK_STP_ALM
 #define USE_FUNC_TK_REF_ALM
 #define USE_FUNC_TD_LST_ALM
 #define USE_FUNC_TD_REF_ALM
 
-/* System status management API */
+/* システム状態管理 API */
 #define USE_FUNC_TK_ROT_RDQ
 #define USE_FUNC_TK_GET_TID
 #define USE_FUNC_TK_DIS_DSP
