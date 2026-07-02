@@ -11,9 +11,13 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	time_calls.c
- *	Time Management Function
+/**
+ * @file	time_calls.c
+ * @brief	時間管理機能
+ *
+ * システム時刻の設定・参照（tk_set_utc / tk_get_utc / tk_set_tim /
+ * tk_get_tim / tk_get_otm）、周期ハンドラ、アラームハンドラの
+ * 各システムコールとデバッガサポート機能を実装します。
  */
 
 #include "kernel.h"
@@ -25,13 +29,20 @@
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Time Management
+ *	時刻管理
  */
 #if USE_TIMEMANAGEMENT
 
 #ifdef USE_FUNC_TK_SET_UTC
-/*
- * Set system clock
+/**
+ * @brief	システム時刻の設定（UTC）
+ *
+ * 指定された UTC 時刻（1970年1月1日0時0分0秒からのミリ秒）と
+ * システム稼働時間との差分を実時刻オフセットとして記録します。
+ *
+ * @param	pk_tim	設定する時刻（UTC、ms 単位）
+ * @retval	E_OK	正常終了
+ * @retval	E_PAR	pk_tim->hi が負（時刻値が不正）
  */
 SYSCALL ER tk_set_utc( CONST SYSTIM *pk_tim )
 {
@@ -46,8 +57,14 @@ SYSCALL ER tk_set_utc( CONST SYSTIM *pk_tim )
 #endif /* USE_FUNC_TK_SET_UTC */
 
 #ifdef USE_FUNC_TK_GET_UTC
-/*
- * Refer system clock
+/**
+ * @brief	システム時刻の参照（UTC）
+ *
+ * システム稼働時間に実時刻オフセットを加えた現在時刻（UTC）を
+ * 返します。
+ *
+ * @param	pk_tim	時刻の格納先（UTC、ms 単位）
+ * @retval	E_OK	正常終了
  */
 SYSCALL ER tk_get_utc( SYSTIM *pk_tim )
 {
@@ -60,8 +77,15 @@ SYSCALL ER tk_get_utc( SYSTIM *pk_tim )
 #endif /* USE_FUNC_TK_GET_UTC */
 
 #ifdef USE_FUNC_TK_SET_TIM
-/*
- * Set system clock (TRON Time)
+/**
+ * @brief	システム時刻の設定（TRON 時間）
+ *
+ * TRON 時間（1985年1月1日0時0分0秒 GMT 基準）で指定された時刻を
+ * UTC に換算し、実時刻オフセットとして記録します。
+ *
+ * @param	pk_tim	設定する時刻（TRON 時間、ms 単位）
+ * @retval	E_OK	正常終了
+ * @retval	E_PAR	pk_tim->hi が負（時刻値が不正）
  */
 SYSCALL ER tk_set_tim( CONST SYSTIM *pk_tim )
 {
@@ -79,8 +103,14 @@ SYSCALL ER tk_set_tim( CONST SYSTIM *pk_tim )
 #endif /* USE_FUNC_TK_SET_TIM */
 
 #ifdef USE_FUNC_TK_GET_TIM
-/*
- * Refer system clock (TRON Time)
+/**
+ * @brief	システム時刻の参照（TRON 時間）
+ *
+ * 現在時刻を TRON 時間（1985年1月1日0時0分0秒 GMT 基準）に
+ * 換算して返します。
+ *
+ * @param	pk_tim	時刻の格納先（TRON 時間、ms 単位）
+ * @retval	E_OK	正常終了
  */
 SYSCALL ER tk_get_tim( SYSTIM *pk_tim )
 {
@@ -97,8 +127,14 @@ SYSCALL ER tk_get_tim( SYSTIM *pk_tim )
 #endif /* USE_FUNC_TK_GET_TIM */
 
 #ifdef USE_FUNC_TK_GET_OTM
-/*
- * Refer system operating time
+/**
+ * @brief	システム稼働時間の参照
+ *
+ * システム起動からの経過時間（実時刻オフセットを含まない値）を
+ * 返します。
+ *
+ * @param	pk_tim	稼働時間の格納先（ms 単位）
+ * @retval	E_OK	正常終了
  */
 SYSCALL ER tk_get_otm( SYSTIM *pk_tim )
 {
@@ -112,8 +148,15 @@ SYSCALL ER tk_get_otm( SYSTIM *pk_tim )
 
 #if USE_DBGSPT
 #ifdef USE_FUNC_TD_GET_TIM
-/*
- * Refer system clock
+/**
+ * @brief	システム時刻の参照（デバッガサポート機能）
+ *
+ * 現在時刻（UTC）に加えて、ハードウェアタイマから取得した
+ * ミリ秒未満の端数（ns 単位）も返します。
+ *
+ * @param	tim	時刻の格納先（UTC、ms 単位）
+ * @param	ofs	ミリ秒未満の端数の格納先（ns 単位）
+ * @retval	E_OK	正常終了
  */
 SYSCALL ER td_get_tim( SYSTIM *tim, UW *ofs )
 {
@@ -127,8 +170,15 @@ SYSCALL ER td_get_tim( SYSTIM *tim, UW *ofs )
 #endif /* USE_FUNC_TD_GET_TIM */
 
 #ifdef USE_FUNC_TD_GET_OTM
-/*
- * Refer system operating time
+/**
+ * @brief	システム稼働時間の参照（デバッガサポート機能）
+ *
+ * システム稼働時間に加えて、ハードウェアタイマから取得した
+ * ミリ秒未満の端数（ns 単位）も返します。
+ *
+ * @param	tim	稼働時間の格納先（ms 単位）
+ * @param	ofs	ミリ秒未満の端数の格納先（ns 単位）
+ * @retval	E_OK	正常終了
  */
 SYSCALL ER td_get_otm( SYSTIM *tim, UW *ofs )
 {
@@ -146,32 +196,38 @@ SYSCALL ER td_get_otm( SYSTIM *tim, UW *ofs )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Cyclic handler
+ *	周期ハンドラ
  */
 
 #if USE_CYCLICHANDLER
 
-Noinit(EXPORT CYCCB knl_cyccb_table[NUM_CYCID]);	/* Cyclic handler control block */
-Noinit(EXPORT QUEUE	knl_free_cyccb);	/* FreeQue */
+Noinit(EXPORT CYCCB knl_cyccb_table[NUM_CYCID]);	/* 周期ハンドラ管理ブロックテーブル */
+Noinit(EXPORT QUEUE	knl_free_cyccb);	/* 未使用管理ブロックのキュー（FreeQue） */
 
 
-/*
- * Initialization of cyclic handler control block
+/**
+ * @brief	周期ハンドラ管理ブロックの初期化
+ *
+ * すべての周期ハンドラ管理ブロックを未登録状態にして FreeQue に
+ * 登録します。カーネル初期化時に呼び出されます。
+ *
+ * @retval	E_OK	正常終了
+ * @retval	E_SYS	周期ハンドラの最大数（NUM_CYCID）が1未満
  */
 EXPORT ER knl_cyclichandler_initialize( void )
 {
 	CYCCB	*cyccb, *end;
 
-	/* Get system information */
+	/* システム情報の取得 */
 	if ( NUM_CYCID < 1 ) {
 		return E_SYS;
 	}
 
-	/* Register all control blocks onto FreeQue */
+	/* すべての管理ブロックを FreeQue に登録 */
 	QueInit(&knl_free_cyccb);
 	end = knl_cyccb_table + NUM_CYCID;
 	for ( cyccb = knl_cyccb_table; cyccb < end; cyccb++ ) {
-		cyccb->cychdr = NULL; /* Unregistered handler */
+		cyccb->cychdr = NULL; /* 未登録ハンドラ */
 		QueInsert((QUEUE*)cyccb, &knl_free_cyccb);
 	}
 
@@ -179,37 +235,60 @@ EXPORT ER knl_cyclichandler_initialize( void )
 }
 
 
-/*
- * Cyclic handler routine
+/**
+ * @brief	周期ハンドラの起動ルーチン
+ *
+ * タイマ割込みからコールバックとして呼び出され、次回起動時刻を
+ * タイマイベントキューへ登録したうえでユーザの周期ハンドラを実行
+ * します。ハンドラ実行中は TIMER_INTLEVEL までの割込みネストを
+ * 許可します。
+ *
+ * @param	cyccb	起動する周期ハンドラの管理ブロック
  */
 EXPORT void knl_call_cychdr( CYCCB *cyccb )
 {
-	/* Set next startup time */
+	/* 次回起動時刻の設定 */
 	knl_cyc_timer_insert(cyccb, knl_cyc_next_time(cyccb));
 
-	/* Execute cyclic handler / Enable interrupt nest */
+	/* 周期ハンドラの実行（割込みネストを許可） */
 	ENABLE_INTERRUPT_UPTO(TIMER_INTLEVEL);
 	CallUserHandlerP1(cyccb->exinf, cyccb->cychdr, cyccb);
 	DISABLE_INTERRUPT;
 }
 
-/*
- * Immediate call of cyclic handler 
+/**
+ * @brief	周期ハンドラの即時起動
+ *
+ * tk_cre_cyc で起動位相 0 かつ TA_STA 指定の場合に、次回起動時刻を
+ * 登録したうえで周期ハンドラをタスク独立部として直ちに実行します
+ * （割込み禁止のまま実行）。
+ *
+ * @param	cyccb	起動する周期ハンドラの管理ブロック
  */
 LOCAL void knl_immediate_call_cychdr( CYCCB *cyccb )
 {
-	/* Set next startup time */
+	/* 次回起動時刻の設定 */
 	knl_cyc_timer_insert(cyccb, knl_cyc_next_time(cyccb));
 
-	/* Execute cyclic handler in task-independent part
-	   (Keep interrupt disabled) */
+	/* 周期ハンドラをタスク独立部として実行
+	   （割込み禁止のまま） */
 	ENTER_TASK_INDEPENDENT;
 	CallUserHandlerP1(cyccb->exinf, cyccb->cychdr, cyccb);
 	LEAVE_TASK_INDEPENDENT;
 }
 
-/*
- * Create cyclic handler 
+/**
+ * @brief	周期ハンドラの生成
+ *
+ * FreeQue から管理ブロックを獲得して周期ハンドラを生成します。
+ * TA_STA 属性が指定されていれば動作状態で生成し、起動位相
+ * （cycphs）が 0 の場合はハンドラを直ちに実行します。
+ *
+ * @param	pk_ccyc	周期ハンドラ生成情報
+ * @return	生成した周期ハンドラのID、またはエラーコード
+ * @retval	E_LIMIT	周期ハンドラ数が上限（NUM_CYCID）を超過
+ * @retval	E_RSATR	不正な属性を指定
+ * @retval	E_PAR	cychdr が NULL、または cyctim の値が不正
  */
 SYSCALL ID tk_cre_cyc( CONST T_CCYC *pk_ccyc )
 {
@@ -233,14 +312,14 @@ SYSCALL ID tk_cre_cyc( CONST T_CCYC *pk_ccyc )
 	CHECK_RELTIM(pk_ccyc->cyctim);
 
 	BEGIN_CRITICAL_SECTION;
-	/* Get control block from FreeQue */
+	/* FreeQue から管理ブロックを獲得 */
 	cyccb = (CYCCB*)QueRemoveNext(&knl_free_cyccb);
 	if ( cyccb == NULL ) {
 		ercd = E_LIMIT;
 		goto error_exit;
 	}
 
-	/* Initialize control block */
+	/* 管理ブロックの初期化 */
 	cyccb->exinf   = pk_ccyc->exinf;
 	cyccb->cycatr  = pk_ccyc->cycatr;
 	cyccb->cychdr  = pk_ccyc->cychdr;
@@ -251,26 +330,26 @@ SYSCALL ID tk_cre_cyc( CONST T_CCYC *pk_ccyc )
 	}
 #endif
 
-	/* First startup time
-	 *	To guarantee the start of handler after the specified time,
-	 *	add TIMER_PERIOD. 
+	/* 初回起動時刻
+	 *	指定時間経過後のハンドラ起動を保証するため、
+	 *	TIMER_PERIOD を加算する。
 	 */
 	tm = lltoul(knl_current_time) + pk_ccyc->cycphs + TIMER_PERIOD;
 
 	if ( (pk_ccyc->cycatr & TA_STA) != 0 ) {
-		/* Start cyclic handler */
+		/* 周期ハンドラの動作開始 */
 		cyccb->cycstat = TCYC_STA;
 
 		if ( pk_ccyc->cycphs == 0 ) {
-			/* Immediate execution */
+			/* 即時実行 */
 			cyccb->cyctmeb.time = tm;
 			knl_immediate_call_cychdr(cyccb);
 		} else {
-			/* Register onto timer event queue */
+			/* タイマイベントキューへ登録 */
 			knl_cyc_timer_insert(cyccb, tm);
 		}
 	} else {
-		/* Initialize only counter */
+		/* 起動時刻の初期化のみ行う */
 		cyccb->cycstat = TCYC_STP;
 		cyccb->cyctmeb.time = tm;
 	}
@@ -284,8 +363,16 @@ SYSCALL ID tk_cre_cyc( CONST T_CCYC *pk_ccyc )
 }
 
 #ifdef USE_FUNC_TK_DEL_CYC
-/*
- * Delete cyclic handler 
+/**
+ * @brief	周期ハンドラの削除
+ *
+ * 動作中であればタイマイベントキューから削除したうえで、
+ * 管理ブロックを FreeQue に返却します。
+ *
+ * @param	cycid	削除する周期ハンドラのID
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_ID	cycid の値が不正
  */
 SYSCALL ER tk_del_cyc( ID cycid )
 {
@@ -297,17 +384,17 @@ SYSCALL ER tk_del_cyc( ID cycid )
 	cyccb = get_cyccb(cycid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( cyccb->cychdr == NULL ) { /* Unregistered handler */
+	if ( cyccb->cychdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		if ( (cyccb->cycstat & TCYC_STA) != 0 ) {
-			/* Delete timer event queue */
+			/* タイマイベントキューから削除 */
 			knl_timer_delete(&cyccb->cyctmeb);
 		}
 
-		/* Return to FreeQue */
+		/* FreeQue へ返却 */
 		QueInsert((QUEUE*)cyccb, &knl_free_cyccb);
-		cyccb->cychdr = NULL; /* Unregistered handler */
+		cyccb->cychdr = NULL; /* 未登録ハンドラ */
 	}
 	END_CRITICAL_SECTION;
 
@@ -316,8 +403,17 @@ SYSCALL ER tk_del_cyc( ID cycid )
 #endif /* USE_FUNC_TK_DEL_CYC */
 
 #ifdef USE_FUNC_TK_STA_CYC
-/*
- * Start cyclic handler 
+/**
+ * @brief	周期ハンドラの動作開始
+ *
+ * 周期ハンドラを動作状態にします。TA_PHS 属性の場合は生成時からの
+ * 起動位相を保存したまま動作を再開し、それ以外の場合は現在時刻を
+ * 基準に起動周期を再設定します。
+ *
+ * @param	cycid	対象の周期ハンドラのID
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_ID	cycid の値が不正
  */
 SYSCALL ER tk_sta_cyc( ID cycid )
 {
@@ -330,7 +426,7 @@ SYSCALL ER tk_sta_cyc( ID cycid )
 	cyccb = get_cyccb(cycid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( cyccb->cychdr == NULL ) { /* Unregistered handler */
+	if ( cyccb->cychdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 		goto error_exit;
 	}
@@ -338,9 +434,9 @@ SYSCALL ER tk_sta_cyc( ID cycid )
 	cur = lltoul(knl_current_time);
 
 	if ( (cyccb->cycatr & TA_PHS) != 0 ) {
-		/* Continue cyclic phase */
+		/* 起動位相を保存して継続 */
 		if ( (cyccb->cycstat & TCYC_STA) == 0 ) {
-			/* Start cyclic handler */
+			/* 周期ハンドラの動作開始 */
 			tm = cyccb->cyctmeb.time;
 			if ( knl_abstim_reached(cur, tm) ) {
 				tm = knl_cyc_next_time(cyccb);
@@ -348,19 +444,19 @@ SYSCALL ER tk_sta_cyc( ID cycid )
 			knl_cyc_timer_insert(cyccb, tm);
 		}
 	} else {
-		/* Reset cyclic interval */
+		/* 起動周期を再設定 */
 		if ( (cyccb->cycstat & TCYC_STA) != 0 ) {
-			/* Stop once */
+			/* いったん停止する */
 			knl_timer_delete(&cyccb->cyctmeb);
 		}
 
-		/* FIRST ACTIVATION TIME
-		 *	Adjust the first activation time with TIMER_PERIOD.
-		 *	TIMER_PERIOD is Timer interrupt interval (millisecond).
+		/* 初回起動時刻
+		 *	初回起動時刻を TIMER_PERIOD で調整する。
+		 *	TIMER_PERIOD はタイマ割込み間隔（ミリ秒）。
 		 */
 		tm = cur + cyccb->cyctim + TIMER_PERIOD;
 
-		/* Start cyclic handler */
+		/* 周期ハンドラの動作開始 */
 		knl_cyc_timer_insert(cyccb, tm);
 	}
 	cyccb->cycstat |= TCYC_STA;
@@ -373,8 +469,16 @@ SYSCALL ER tk_sta_cyc( ID cycid )
 #endif /* USE_FUNC_TK_STA_CYC */
 
 #ifdef USE_FUNC_TK_STP_CYC
-/*
- * Stop cyclic handler 
+/**
+ * @brief	周期ハンドラの動作停止
+ *
+ * 動作中であればタイマイベントキューから削除し、
+ * 周期ハンドラを停止状態にします。
+ *
+ * @param	cycid	対象の周期ハンドラのID
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_ID	cycid の値が不正
  */
 SYSCALL ER tk_stp_cyc( ID cycid )
 {
@@ -386,11 +490,11 @@ SYSCALL ER tk_stp_cyc( ID cycid )
 	cyccb = get_cyccb(cycid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( cyccb->cychdr == NULL ) { /* Unregistered handler */
+	if ( cyccb->cychdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		if ( (cyccb->cycstat & TCYC_STA) != 0 ) {
-			/* Stop cyclic handler */
+			/* 周期ハンドラの停止 */
 			knl_timer_delete(&cyccb->cyctmeb);
 		}
 		cyccb->cycstat &= ~TCYC_STA;
@@ -402,8 +506,16 @@ SYSCALL ER tk_stp_cyc( ID cycid )
 #endif /* USE_FUNC_TK_STP_CYC */
 
 #ifdef USE_FUNC_TK_REF_CYC
-/*
- * Refer cyclic handler state
+/**
+ * @brief	周期ハンドラ状態の参照
+ *
+ * 拡張情報、次回起動までの残り時間、動作状態を pk_rcyc に返します。
+ *
+ * @param	cycid	対象の周期ハンドラのID
+ * @param	pk_rcyc	周期ハンドラ状態の格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_ID	cycid の値が不正
  */
 SYSCALL ER tk_ref_cyc( ID cycid, T_RCYC* pk_rcyc )
 {
@@ -416,7 +528,7 @@ SYSCALL ER tk_ref_cyc( ID cycid, T_RCYC* pk_rcyc )
 	cyccb = get_cyccb(cycid);
 
 	BEGIN_CRITICAL_SECTION;
-	if ( cyccb->cychdr == NULL ) { /* Unregistered handler */
+	if ( cyccb->cychdr == NULL ) { /* 未登録ハンドラ */
 		ercd = E_NOEXS;
 	} else {
 		tm = cyccb->cyctmeb.time;
@@ -446,8 +558,18 @@ SYSCALL ER tk_ref_cyc( ID cycid, T_RCYC* pk_rcyc )
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief	周期ハンドラのオブジェクト名の取得
+ *
+ * TA_DSNAME 属性付きで生成された周期ハンドラの名前へのポインタを
+ * 返します。
+ *
+ * @param	id	対象の周期ハンドラのID
+ * @param	name	名前へのポインタの格納先
+ * @retval	E_OK	正常終了
+ * @retval	E_NOEXS	対象の周期ハンドラが存在しない
+ * @retval	E_OBJ	TA_DSNAME 属性が指定されていない
+ * @retval	E_ID	id の値が不正
  */
 EXPORT ER knl_cyclichandler_getname(ID id, UB **name)
 {
@@ -476,8 +598,15 @@ EXPORT ER knl_cyclichandler_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_CYC
-/*
- * Refer cyclic handler usage state
+/**
+ * @brief	周期ハンドラIDリストの参照（デバッガサポート機能）
+ *
+ * 使用中の周期ハンドラのIDを list に列挙します。nent を超える分は
+ * 格納されませんが、総数は戻り値で返します。
+ *
+ * @param	list	IDリストの格納先配列
+ * @param	nent	list に格納可能な最大数
+ * @return	使用中の周期ハンドラの総数
  */
 SYSCALL INT td_lst_cyc( ID list[], INT nent )
 {
@@ -487,7 +616,7 @@ SYSCALL INT td_lst_cyc( ID list[], INT nent )
 	BEGIN_DISABLE_INTERRUPT;
 	end = knl_cyccb_table + NUM_CYCID;
 	for ( cyccb = knl_cyccb_table; cyccb < end; cyccb++ ) {
-		/* Unregistered handler */
+		/* 未登録ハンドラは読み飛ばす */
 		if ( cyccb->cychdr == NULL ) {
 			continue;
 		}

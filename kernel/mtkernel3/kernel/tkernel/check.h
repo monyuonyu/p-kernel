@@ -11,16 +11,21 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	check.h
- *	Macro for Error Check 
+/**
+ * @file	check.h
+ * @brief	エラーチェック用マクロ
+ *
+ * システムコールの入口で用いるパラメータ・コンテキスト検査
+ * マクロ群です。検査に失敗するとエラーコードを return します。
+ * 各マクロは CHK_ID / CHK_PAR などのコンフィグレーション定数が
+ * 無効な場合、空定義となりチェックは行われません。
  */
 
 #ifndef _CHECK_
 #define _CHECK_
 
 /*
- * Check object ID range (E_ID)
+ * オブジェクト ID の範囲チェック (E_ID)
  */
 #if CHK_ID
 #define CHECK_TSKID(tskid) {					\
@@ -104,7 +109,7 @@
 #endif /* CHK_ID */
 
 /*
- * Check whether its own task is specified (E_OBJ)
+ * 自タスクが指定されていないかのチェック (E_OBJ)
  */
 #if CHK_SELF
 #define CHECK_NONSELF(tskid) {					\
@@ -117,7 +122,7 @@
 #endif /* CHK_SELF */
 
 /*
- * Check task priority value (E_PAR)
+ * タスク優先度値のチェック (E_PAR)
  */
 #if CHK_PAR
 #define CHECK_PRI(pri) {					\
@@ -142,7 +147,7 @@
 #endif /* CHK_PAR */
 
 /*
- * Check timeout specification value (E_PAR)
+ * タイムアウト指定値のチェック (E_PAR)
  */
 #if CHK_PAR
 #define CHECK_TMOUT(tmout) {					\
@@ -161,7 +166,7 @@
 #endif /* CHK_PAR */
 
 /*
- * Check other parameter errors (E_PAR)
+ * その他のパラメータエラーのチェック (E_PAR)
  */
 #if CHK_PAR
 #define CHECK_PAR(exp) {					\
@@ -174,7 +179,7 @@
 #endif /* CHK_PAR */
 
 /*
- * Check reservation attribute error (E_RSATR)
+ * 予約属性エラーのチェック (E_RSATR)
  */
 #if CHK_RSATR
 #define CHECK_RSATR(atr, maxatr) {				\
@@ -187,7 +192,7 @@
 #endif /* CHK_RSATR */
 
 /*
- * Check unsupported function (E_NOSPT)
+ * 未サポート機能のチェック (E_NOSPT)
  */
 #if CHK_NOSPT
 #define CHECK_NOSPT(exp) {					\
@@ -200,7 +205,7 @@
 #endif /* CHK_NOSPT */
 
 /*
- * Check whether task-independent part is running (E_CTX)
+ * タスク独立部実行中でないかのチェック (E_CTX)
  */
 #if CHK_CTX
 #define CHECK_INTSK() {						\
@@ -213,7 +218,7 @@
 #endif /* CHK_CTX */
 
 /*
- * Check whether dispatch is in disabled state (E_CTX)
+ * ディスパッチ禁止状態でないかのチェック (E_CTX)
  */
 #if CHK_CTX
 #define CHECK_DISPATCH() {					\
@@ -232,7 +237,7 @@
 #endif /* CHK_CTX */
 
 /*
- * Check other context errors (E_CTX)
+ * その他のコンテキストエラーのチェック (E_CTX)
  */
 #if CHK_CTX
 #define CHECK_CTX(exp) {					\

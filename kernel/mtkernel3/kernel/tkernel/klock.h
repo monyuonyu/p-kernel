@@ -10,19 +10,29 @@
  *
  *----------------------------------------------------------------------
  */
-/*
- *	klock.h		Kernel Lock
- *	Locked task is the highest run priority.
- *	Unable to nest lock.
+/**
+ * @file	klock.h
+ * @brief	カーネルロック（オブジェクトロック）の定義
+ *
+ * カーネル内部オブジェクトの排他制御に用いるロック機構の定義です。
+ * ロックを獲得したタスクは最高実行優先度として扱われます。
+ * ロックのネスト（多重獲得）はできません。
  */
 
 #ifndef _KLOCK_
 #define _KLOCK_
 
 typedef struct objlock {
-	QUEUE		wtskq;		/* Wait task queue */
+	QUEUE		wtskq;		/* ロック待ちタスクキュー */
 } OBJLOCK;
 
+/**
+ * @brief オブジェクトロックの初期化
+ *
+ * ロックを空き（非ロック）状態に初期化します。
+ *
+ * @param loc 対象のオブジェクトロック
+ */
 Inline void knl_InitOBJLOCK( OBJLOCK *loc )
 {
 	loc->wtskq.next = NULL;
@@ -30,6 +40,13 @@ Inline void knl_InitOBJLOCK( OBJLOCK *loc )
 IMPORT void knl_LockOBJ( OBJLOCK* );
 IMPORT void knl_UnlockOBJ( OBJLOCK* );
 
+/**
+ * @brief オブジェクトロックのロック状態判定
+ *
+ * @param loc 対象のオブジェクトロック
+ * @retval TRUE  ロックされている
+ * @retval FALSE ロックされていない
+ */
 Inline BOOL knl_isLockedOBJ( OBJLOCK *loc )
 {
 	return ( loc->wtskq.next != NULL )? TRUE: FALSE;

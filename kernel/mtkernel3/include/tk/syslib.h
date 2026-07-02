@@ -11,10 +11,13 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	syslib.h
+/**
+ * @file	syslib.h
+ * @brief	micro T-Kernel システムライブラリ
  *
- *	micro T-Kernel System Library
+ * 割込みコントローラ制御、微小時間待ち、高速ロック（FastLock）、
+ * マルチロック（FastMLock）、メモリ割り当て、物理タイマなど、
+ * システムライブラリの API を宣言します。
  */
 
 
@@ -26,7 +29,7 @@
 
 /* ------------------------------------------------------------------------ */
 /*
- * System dependencies  (CPU Interrupt control , I/O port access)
+ * システム依存部（CPU 割込み制御、I/O ポートアクセス）
  */
 #define SYSLIB_PATH_(a)		#a
 #define SYSLIB_PATH(a)		SYSLIB_PATH_(a)
@@ -36,25 +39,25 @@
 
 /*----------------------------------------------------------------------*/
 /*
- * Interrupt controller Control
+ * 割込みコントローラ制御
  *
  */
 #if TK_SUPPORT_INTCTRL
 #if TK_HAS_ENAINTLEVEL
-IMPORT void EnableInt( UINT intno, INT level );	/* Enable the interrupt specified by 'intno.' */
+IMPORT void EnableInt( UINT intno, INT level );	/* intno で指定した割込みの許可 */
 #else
-IMPORT void EnableInt( UINT intno );		/* Enable the interrupt specified by 'intno.' */
+IMPORT void EnableInt( UINT intno );		/* intno で指定した割込みの許可 */
 #endif /* TK_HAS_ENAINTLEVEL */
 
-IMPORT void DisableInt( UINT intno );	/* Disable the interrupt specified by 'intno.' */
-IMPORT void ClearInt(UINT intno);	/* Clear the state that the specified interrupt has been asserted. */
-IMPORT void EndOfInt(UINT intno);	/* Issue EOI to Interrupt Controller. */
-IMPORT BOOL CheckInt( UINT intno );	/* Check active state for the associated interrupt */
+IMPORT void DisableInt( UINT intno );	/* intno で指定した割込みの禁止 */
+IMPORT void ClearInt(UINT intno);	/* 指定割込みの発生状態のクリア */
+IMPORT void EndOfInt(UINT intno);	/* 割込みコントローラへの EOI 発行 */
+IMPORT BOOL CheckInt( UINT intno );	/* 指定割込みの発生状態の確認 */
 
 #endif /* TK_SUPPORT_INTCTRL */
 
 #if TK_SUPPORT_INTMODE
-IMPORT void SetIntMode(UINT intno, UINT mode);	/* Set interrupt mode */
+IMPORT void SetIntMode(UINT intno, UINT mode);	/* 割込みモードの設定 */
 #endif /* TK_SUPPORT_INTMODE */
 
 #if TK_SUPPORT_CPUINTLEVEL
@@ -63,23 +66,23 @@ IMPORT INT GetCpuIntLevel( void );
 #endif /* TK_SUPPORT_CPUINTLEVEL */
 
 #if TK_SUPPORT_CTRLINTLEVEL
-IMPORT void SetCtrlIntLevel(INT level);	/* Set interrupt mask level in interrupt controller */
-IMPORT INT  GetCtrlIntLevel(void);	/* Get interrupt mask level in interrupt controller */
+IMPORT void SetCtrlIntLevel(INT level);	/* 割込みコントローラの割込みマスクレベルの設定 */
+IMPORT INT  GetCtrlIntLevel(void);	/* 割込みコントローラの割込みマスクレベルの取得 */
 #endif /* TK_SUPPORT_CTRLINTLEVEL */
 
 
 /* ------------------------------------------------------------------------ */
 /*
- * Micro Wait
+ * 微小時間待ち
  */
 
-IMPORT void WaitUsec( UW usec );	/* micro second wait */
-IMPORT void WaitNsec( UW nsec );	/* nano second wait */
+IMPORT void WaitUsec( UW usec );	/* マイクロ秒単位の待ち */
+IMPORT void WaitNsec( UW nsec );	/* ナノ秒単位の待ち */
 
 
 /* ------------------------------------------------------------------------ */
 /*
- * Fast Lock
+ * 高速ロック
  */
 typedef struct {
 	INT		cnt;
@@ -95,10 +98,11 @@ IMPORT void Unlock( FastLock *lock );
 
 /* ------------------------------------------------------------------------ */
 /*
- * Multi Lock
- *	Can use the maximum of 16 or 32 independent locks with a single FastMLock.
- *	Divided by the lock number (no). Can specify 0-15 or 0-31 for 'no.'
- *	(Slightly less efficient than FastLock)
+ * マルチロック
+ *	1 つの FastMLock で最大 16 個または 32 個の独立したロックを使用できる。
+ *	各ロックはロック番号（no）で区別し、no には 0〜15 または 0〜31 を
+ *	指定できる。
+ *	（FastLock よりやや効率が劣る）
  */
 typedef struct {
 	UINT		flg;
@@ -116,7 +120,7 @@ IMPORT ER MUnlock( FastMLock *lock, INT no );
 
 /* ------------------------------------------------------------------------ */
 /*
- * Memory allocation
+ * メモリ割り当て
  */
 #if TK_SUPPORT_MEMLIB
 
@@ -134,7 +138,7 @@ IMPORT void Kfree( void *ptr );
 
 /* ------------------------------------------------------------------------ */
 /*
- * Physical timer
+ * 物理タイマ
  */
 #if TK_SUPPORT_PTIMER
 
@@ -142,15 +146,15 @@ IMPORT void Kfree( void *ptr );
 #define TA_CYC_PTMR	1
 
 typedef struct {
-	void	*exinf;		/* Extended Information */
-	ATR	ptmratr;	/* Physical Timer Attribute */
-	FP	ptmrhdr;	/* Physical Timer Handler Address */
+	void	*exinf;		/* 拡張情報 */
+	ATR	ptmratr;	/* 物理タイマ属性 */
+	FP	ptmrhdr;	/* 物理タイマハンドラのアドレス */
 } T_DPTMR;
 
 typedef struct {
-	UW	ptmrclk;	/* Physical Timer Clock Frequency */
-	UW	maxcount;	/* Maximum Count */
-	BOOL	defhdr;		/* Handler Support */
+	UW	ptmrclk;	/* 物理タイマのクロック周波数 */
+	UW	maxcount;	/* 最大カウント値 */
+	BOOL	defhdr;		/* ハンドラサポートの有無 */
 } T_RPTMR;
 
 IMPORT ER StartPhysicalTimer( UINT ptmrno, UW limit, UINT mode);
@@ -164,8 +168,8 @@ IMPORT ER GetPhysicalTimerConfig(UINT ptmrno, T_RPTMR *pk_rptmr);
 
 /* ------------------------------------------------------------------------ */
 /*
- * 4-character object name
- *	(Example)
+ * 4 文字のオブジェクト名
+ *	（使用例）
  *	T_CTSK	ctsk;
  *	SetOBJNAME(ctsk.exinf, "TEST");
  */

@@ -11,9 +11,13 @@
  *----------------------------------------------------------------------
  */
 
-/*
- *	messagebuf.c
- *	Message Buffer
+/**
+ * @file	messagebuf.c
+ * @brief	メッセージバッファ機能の実装
+ *
+ * 可変長メッセージをリングバッファ経由で送受信するメッセージバッファの
+ * 生成・削除・送信・受信・状態参照 API（tk_cre_mbf 等）と、
+ * デバッガサポート機能（td_lst_mbf 等）を提供します。
  */
 
 #include "kernel.h"
@@ -24,23 +28,29 @@
 #if USE_MESSAGEBUFFER == 1
 
 
-Noinit(EXPORT MBFCB knl_mbfcb_table[NUM_MBFID]);	/* Message buffer control block */
-Noinit(EXPORT QUEUE knl_free_mbfcb);	/* FreeQue */
+Noinit(EXPORT MBFCB knl_mbfcb_table[NUM_MBFID]);	/* メッセージバッファ管理ブロックテーブル */
+Noinit(EXPORT QUEUE knl_free_mbfcb);	/* 未使用管理ブロックのキュー（FreeQue） */
 
 
-/*
- * Initialization of message buffer control block 
+/**
+ * @brief メッセージバッファ管理ブロックの初期化
+ *
+ * すべての管理ブロックを未使用状態にして FreeQue に登録します。
+ * カーネル起動時に一度だけ呼び出されます。
+ *
+ * @retval E_OK	正常終了
+ * @retval E_SYS	メッセージバッファ数（NUM_MBFID）が 1 未満
  */
 EXPORT ER knl_messagebuffer_initialize( void )
 {
 	MBFCB	*mbfcb, *end;
 
-	/* Get system information */
+	/* システム情報の確認 */
 	if ( NUM_MBFID < 1 ) {
 		return E_SYS;
 	}
 
-	/* Register all control blocks onto FreeQue */
+	/* 全管理ブロックを FreeQue に登録 */
 	QueInit(&knl_free_mbfcb);
 	end = knl_mbfcb_table + NUM_MBFID;
 	for ( mbfcb = knl_mbfcb_table; mbfcb < end; mbfcb++ ) {
@@ -53,8 +63,18 @@ EXPORT ER knl_messagebuffer_initialize( void )
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Store the message to message buffer.
+/**
+ * @brief メッセージバッファへのメッセージ格納
+ *
+ * メッセージサイズを記録したヘッダに続けてメッセージ本体をリングバッファへ
+ * 書き込み、tail と空き容量（frbufsz）を更新します。バッファ末尾に達した
+ * 場合は先頭へ折り返します。
+ *
+ * @param mbfcb	対象メッセージバッファの管理ブロック
+ * @param msg	格納するメッセージの先頭アドレス
+ * @param msgsz	メッセージサイズ（バイト数）
+ *
+ * @note 空き容量の事前確認（knl_mbf_free）は呼び出し側の責任です。
  */
 LOCAL void knl_msg_to_mbf( MBFCB *mbfcb, CONST void *msg, INT msgsz )
 {
@@ -87,9 +107,14 @@ LOCAL void knl_msg_to_mbf( MBFCB *mbfcb, CONST void *msg, INT msgsz )
 
 /* ------------------------------------------------------------------------ */
 
-/*
- * Accept message and release wait task,
- * as long as there are free message area.
+/**
+ * @brief 送信待ちタスクのメッセージ受け入れと待ち解除
+ *
+ * 送信待ちキューの先頭タスクから順に、そのメッセージが格納できるだけの
+ * 空きがある限りメッセージをバッファへ格納し、タスクの待ち状態を解除
+ * します。空きが不足した時点で処理を打ち切ります。
+ *
+ * @param mbfcb	対象メッセージバッファの管理ブロック
  */
 LOCAL void knl_mbf_wakeup( MBFCB *mbfcb )
 {
@@ -103,15 +128,30 @@ LOCAL void knl_mbf_wakeup( MBFCB *mbfcb )
 			break;
 		}
 
-		/* Store a message from waiting task and release it */
+		/* 待ちタスクのメッセージを格納し、待ち解除 */
 		knl_msg_to_mbf(mbfcb, top->winfo.smbf.msg, msgsz);
 		knl_wait_release_ok(top);
 	}
 }
 
 
-/*
- * Create message buffer
+/**
+ * @brief メッセージバッファの生成
+ *
+ * FreeQue から管理ブロックを取得して初期化し、メッセージバッファを
+ * 生成します。バッファ領域は TA_USERBUF 指定時はユーザ提供の領域を、
+ * それ以外はカーネルメモリ（knl_Imalloc）から確保します。
+ * bufsz が 0 の場合はバッファなし（送受信タスク間の直接転送のみ）と
+ * なります。
+ *
+ * @param pk_cmbf	メッセージバッファ生成情報へのポインタ
+ *
+ * @return 生成したメッセージバッファの ID（正値）、またはエラーコード
+ * @retval E_RSATR	不正な属性（mbfatr）
+ * @retval E_PAR	パラメータ不正（bufsz < 0、maxmsz <= 0、
+ *			ユーザバッファサイズが sizeof(HEADER) の倍数でない等）
+ * @retval E_NOMEM	バッファ領域のメモリ確保失敗
+ * @retval E_LIMIT	メッセージバッファ数が上限（NUM_MBFID）を超過
  */
 SYSCALL ID tk_cre_mbf( CONST T_CMBF *pk_cmbf )
 {
@@ -134,7 +174,7 @@ SYSCALL ID tk_cre_mbf( CONST T_CMBF *pk_cmbf )
 	CHECK_PAR(pk_cmbf->bufsz >= 0);
 	CHECK_PAR(pk_cmbf->maxmsz > 0);
 #if !USE_IMALLOC
-	/* TA_USERBUF must be specified if configured in no Imalloc */
+	/* Imalloc なし構成では TA_USERBUF の指定が必須 */
 	CHECK_PAR((pk_cmbf->mbfatr & TA_USERBUF) != 0);
 #endif
 	bufsz = (W)ROUNDSZ(pk_cmbf->bufsz);
@@ -142,25 +182,25 @@ SYSCALL ID tk_cre_mbf( CONST T_CMBF *pk_cmbf )
 	if ( bufsz > 0 ) {
 #if USE_IMALLOC
 		if ( (pk_cmbf->mbfatr & TA_USERBUF) != 0 ) {
-			/* Size of user buffer must be multiples of sizeof(HEADER) */
+			/* ユーザバッファのサイズは sizeof(HEADER) の倍数であること */
 			if ( bufsz != pk_cmbf->bufsz ) {
 				return E_PAR;
 			}
-			/* Use user buffer */
+			/* ユーザ提供バッファを使用 */
 			msgbuf = (VB*) pk_cmbf->bufptr;
 		} else {
-			/* Allocate by kernel */
+			/* カーネルによるメモリ確保 */
 			msgbuf = knl_Imalloc((UW)bufsz);
 			if ( msgbuf == NULL ) {
 				return E_NOMEM;
 			}
 		}
 #else
-		/* Size of user buffer must be multiples of sizeof(HEADER) */
+		/* ユーザバッファのサイズは sizeof(HEADER) の倍数であること */
 		if ( bufsz != pk_cmbf->bufsz ) {
 			return E_PAR;
 		}
-		/* Use user buffer */
+		/* ユーザ提供バッファを使用 */
 		msgbuf = (VB*) pk_cmbf->bufptr;
 #endif
 	} else {
@@ -168,14 +208,14 @@ SYSCALL ID tk_cre_mbf( CONST T_CMBF *pk_cmbf )
 	}
 
 	BEGIN_CRITICAL_SECTION;
-	/* Get control block from FreeQue */
+	/* FreeQue から管理ブロックを取得 */
 	mbfcb = (MBFCB*)QueRemoveNext(&knl_free_mbfcb);
 	if ( mbfcb == NULL ) {
 		ercd = E_LIMIT;
 	} else {
 		mbfid = ID_MBF(mbfcb - knl_mbfcb_table);
 
-		/* Initialize control block */
+		/* 管理ブロックの初期化 */
 		QueInit(&mbfcb->send_queue);
 		mbfcb->mbfid = mbfid;
 		mbfcb->exinf = pk_cmbf->exinf;
@@ -205,8 +245,18 @@ SYSCALL ID tk_cre_mbf( CONST T_CMBF *pk_cmbf )
 }
 
 #ifdef USE_FUNC_TK_DEL_MBF
-/*
- * Delete message buffer
+/**
+ * @brief メッセージバッファの削除
+ *
+ * 送信・受信の各待ちキューにつながれたタスクを E_DLT で待ち解除し、
+ * 管理ブロックを FreeQue へ返却します。カーネルが確保したバッファ領域は
+ * 解放します（TA_USERBUF 指定時はユーザ領域のため解放しません）。
+ *
+ * @param mbfid	削除するメッセージバッファの ID
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
  */
 SYSCALL ER tk_del_mbf( ID mbfid )
 {
@@ -224,11 +274,11 @@ SYSCALL ER tk_del_mbf( ID mbfid )
 	} else {
 		msgbuf = mbfcb->buffer;
 
-		/* Release wait state of task (E_DLT) */
+		/* 待ちタスクの待ち解除（E_DLT） */
 		knl_wait_delete(&mbfcb->recv_queue);
 		knl_wait_delete(&mbfcb->send_queue);
 
-		/* Return to FreeQue */
+		/* FreeQue へ返却 */
 		QueInsert(&mbfcb->send_queue, &knl_free_mbfcb);
 		mbfcb->mbfid = 0;
 	}
@@ -244,8 +294,15 @@ SYSCALL ER tk_del_mbf( ID mbfid )
 }
 #endif /* USE_FUNC_TK_DEL_MBF */
 
-/*
- * Processing if the priority of wait task changes
+/**
+ * @brief 送信待ちタスクの優先度変更時の処理
+ *
+ * 待ちキューを新しい優先度に従って並べ替えたうえで、キュー先頭の
+ * タスクのメッセージが格納可能になっていれば送信を実行して待ち解除
+ * します。
+ *
+ * @param tcb	優先度が変更されたタスクの TCB
+ * @param oldpri	変更前の優先度（負値の場合は並べ替えを行わない）
  */
 LOCAL void knl_mbf_chg_pri( TCB *tcb, INT oldpri )
 {
@@ -253,17 +310,22 @@ LOCAL void knl_mbf_chg_pri( TCB *tcb, INT oldpri )
 
 	mbfcb = get_mbfcb(tcb->wid);
 	if ( oldpri >= 0 ) {
-		/* Reorder wait queue */
+		/* 待ちキューの並べ替え */
 		knl_gcb_change_priority((GCB*)mbfcb, tcb);
 	}
 
-	/* If the new head task in a send wait queue is able to sent, 
-	   send its message */
+	/* 送信待ちキューの新たな先頭タスクが送信可能なら
+	   そのメッセージを送信 */
 	knl_mbf_wakeup(mbfcb);
 }
 
-/*
- * Processing if the wait task is released
+/**
+ * @brief 送信待ちタスクの待ち解除時の処理
+ *
+ * 待ち解除により空いたキュー位置を踏まえ、後続の送信待ちタスクの
+ * メッセージ格納を試みます。
+ *
+ * @param tcb	待ち解除されたタスクの TCB
  */
 LOCAL void knl_mbf_rel_wai( TCB *tcb )
 {
@@ -271,13 +333,34 @@ LOCAL void knl_mbf_rel_wai( TCB *tcb )
 }
 
 /*
- * Definition of message buffer wait specification
+ * メッセージバッファ送信待ちの待ち仕様定義
  */
 LOCAL CONST WSPEC knl_wspec_smbf_tfifo = { TTW_SMBF, NULL,	knl_mbf_rel_wai };
 LOCAL CONST WSPEC knl_wspec_smbf_tpri  = { TTW_SMBF, knl_mbf_chg_pri,	knl_mbf_rel_wai };
 
-/*
- * Send to message buffer
+/**
+ * @brief メッセージバッファへの送信
+ *
+ * 受信待ちタスクがあればそのタスクへ直接メッセージを渡して待ち解除
+ * します。受信待ちタスクがなく、自タスクより先の送信待ちタスクが存在
+ * せずバッファに空きがあれば、メッセージをバッファへ格納します。
+ * どちらもできない場合、タスクは tmout に従い送信待ち状態になります。
+ *
+ * @param mbfid	送信先メッセージバッファの ID
+ * @param msg	送信するメッセージの先頭アドレス
+ * @param msgsz	メッセージサイズ（バイト数、1 以上）
+ * @param tmout	タイムアウト時間（TMO_POL / TMO_FEVR 指定可）
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
+ * @retval E_PAR	パラメータ不正（msgsz <= 0 または msgsz > maxmsz）
+ * @retval E_TMOUT	タイムアウト（TMO_POL 指定時はポーリング失敗）
+ * @retval E_RLWAI	待ち状態の強制解除
+ * @retval E_DLT	待ちの間に対象メッセージバッファが削除された
+ *
+ * @note タスク独立部からは tmout = TMO_POL の場合のみ呼び出せます
+ *	（ディスパッチ禁止中も同様）。
  */
 SYSCALL ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 {
@@ -305,7 +388,7 @@ SYSCALL ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 #endif
 
 	if ( !isQueEmpty(&mbfcb->recv_queue) ) {
-		/* Send directly to the receive wait task */
+		/* 受信待ちタスクへ直接送信 */
 		tcb = (TCB*)mbfcb->recv_queue.next;
 		knl_memcpy(tcb->winfo.rmbf.msg, msg, (SZ)msgsz);
 		*tcb->winfo.rmbf.p_msgsz = msgsz;
@@ -313,13 +396,13 @@ SYSCALL ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 
 	} else if ( (in_indp() || knl_gcb_top_of_wait_queue((GCB*)mbfcb, knl_ctxtsk) == knl_ctxtsk)
 		  &&(knl_mbf_free(mbfcb, msgsz)) ) {
-		/* Store the message to message buffer */
+		/* メッセージバッファへ格納 */
 		knl_msg_to_mbf(mbfcb, msg, msgsz);
 
 	} else {
 		ercd = E_TMOUT;
 		if ( tmout != TMO_POL ) {
-			/* Ready for send wait */
+			/* 送信待ち状態への移行準備 */
 			knl_ctxtsk->wspec = ( (mbfcb->mbfatr & TA_TPRI) != 0 )?
 					&knl_wspec_smbf_tpri: &knl_wspec_smbf_tfifo;
 			knl_ctxtsk->wercd = &ercd;
@@ -338,9 +421,20 @@ SYSCALL ER tk_snd_mbf( ID mbfid, CONST void *msg, INT msgsz, TMO tmout )
 
 LOCAL CONST WSPEC knl_wspec_rmbf       = { TTW_RMBF, NULL,	NULL	    };
 
-/*
- * Get a message from message buffer.
- * Return the message size.
+/**
+ * @brief メッセージバッファからのメッセージ取り出し
+ *
+ * リングバッファ先頭（head）のヘッダからメッセージサイズを読み取り、
+ * メッセージ本体を msg へコピーします。head と空き容量（frbufsz）を
+ * 更新し、バッファ末尾に達した場合は先頭へ折り返します。
+ *
+ * @param mbfcb	対象メッセージバッファの管理ブロック
+ * @param msg	取り出したメッセージの格納先アドレス
+ *
+ * @return 取り出したメッセージのサイズ（バイト数）
+ *
+ * @note バッファが空でないことの事前確認（knl_mbf_empty）は呼び出し側の
+ *	責任です。
  */
 LOCAL INT knl_mbf_to_msg( MBFCB *mbfcb, void *msg )
 {
@@ -374,8 +468,27 @@ LOCAL INT knl_mbf_to_msg( MBFCB *mbfcb, void *msg )
 	return actsz;
 }
 
-/*
- * Receive from message buffer
+/**
+ * @brief メッセージバッファからの受信
+ *
+ * バッファにメッセージがあれば先頭のメッセージを取り出します。
+ * バッファが空でも送信待ちタスクがあれば、そのタスクから直接メッセージを
+ * 受け取ります。いずれの場合も、受信により生じた空きへ送信待ちタスクの
+ * メッセージ格納を試みます。メッセージがない場合、タスクは tmout に
+ * 従い受信待ち状態になります。
+ *
+ * @param mbfid	受信元メッセージバッファの ID
+ * @param msg	受信メッセージの格納先アドレス
+ * @param tmout	タイムアウト時間（TMO_POL / TMO_FEVR 指定可）
+ *
+ * @return 受信したメッセージのサイズ（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
+ * @retval E_TMOUT	タイムアウト（TMO_POL 指定時はポーリング失敗）
+ * @retval E_RLWAI	待ち状態の強制解除
+ * @retval E_DLT	待ちの間に対象メッセージバッファが削除された
+ *
+ * @note タスク独立部およびディスパッチ禁止中は呼び出せません。
  */
 SYSCALL INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout )
 {
@@ -397,14 +510,14 @@ SYSCALL INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout )
 	}
 
 	if ( !knl_mbf_empty(mbfcb) ) {
-		/* Read from message buffer */
+		/* メッセージバッファから読み出し */
 		rcvsz = knl_mbf_to_msg(mbfcb, msg);
 
-		/* Accept message from sending task(s) */
+		/* 送信待ちタスクのメッセージを受け入れ */
 		knl_mbf_wakeup(mbfcb);
 
 	} else if ( !isQueEmpty(&mbfcb->send_queue) ) {
-		/* Receive directly from send wait task */
+		/* 送信待ちタスクから直接受信 */
 		tcb = (TCB*)mbfcb->send_queue.next;
 		rcvsz = tcb->winfo.smbf.msgsz;
 		knl_memcpy(msg, tcb->winfo.smbf.msg, (SZ)rcvsz);
@@ -413,7 +526,7 @@ SYSCALL INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout )
 	} else {
 		ercd = E_TMOUT;
 		if ( tmout != TMO_POL ) {
-			/* Ready for receive wait */
+			/* 受信待ち状態への移行準備 */
 			knl_ctxtsk->wspec = &knl_wspec_rmbf;
 			knl_ctxtsk->wid = mbfid;
 			knl_ctxtsk->wercd = &ercd;
@@ -431,8 +544,20 @@ SYSCALL INT tk_rcv_mbf( ID mbfid, void *msg, TMO tmout )
 }
 
 #ifdef USE_FUNC_TK_REF_MBF
-/*
- * Refer message buffer state
+/**
+ * @brief メッセージバッファの状態参照
+ *
+ * 拡張情報、受信・送信待ちタスクの ID、次に受信されるメッセージの
+ * サイズ、空きバッファサイズ、最大メッセージサイズを pk_rmbf へ
+ * 返します。バッファが空で送信待ちタスクもない場合、msgsz は 0 に
+ * なります。
+ *
+ * @param mbfid	参照するメッセージバッファの ID
+ * @param pk_rmbf	状態情報の格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
  */
 SYSCALL ER tk_ref_mbf( ID mbfid, T_RMBF *pk_rmbf )
 {
@@ -472,13 +597,24 @@ SYSCALL ER tk_ref_mbf( ID mbfid, T_RMBF *pk_rmbf )
 
 /* ------------------------------------------------------------------------ */
 /*
- *	Debugger support function
+ *	デバッガサポート機能
  */
 #if USE_DBGSPT
 
 #if USE_OBJECT_NAME
-/*
- * Get object name from control block
+/**
+ * @brief 管理ブロックからのオブジェクト名取得
+ *
+ * TA_DSNAME 属性付きで生成されたメッセージバッファの名前への
+ * ポインタを返します。
+ *
+ * @param id	対象メッセージバッファの ID
+ * @param name	名前へのポインタの格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
+ * @retval E_OBJ	TA_DSNAME 属性が指定されていない
  */
 EXPORT ER knl_messagebuffer_getname(ID id, UB **name)
 {
@@ -507,8 +643,15 @@ EXPORT ER knl_messagebuffer_getname(ID id, UB **name)
 #endif /* USE_OBJECT_NAME */
 
 #ifdef USE_FUNC_TD_LST_MBF
-/*
- * Refer message buffer usage state
+/**
+ * @brief メッセージバッファ ID の一覧取得
+ *
+ * 生成済みメッセージバッファの ID を list へ最大 nent 個格納します。
+ *
+ * @param list	ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 生成済みメッセージバッファの総数（nent を超える場合もその総数）
  */
 SYSCALL INT td_lst_mbf( ID list[], INT nent )
 {
@@ -533,8 +676,17 @@ SYSCALL INT td_lst_mbf( ID list[], INT nent )
 #endif /* USE_FUNC_TD_LST_MBF */
 
 #ifdef USE_FUNC_TD_REF_MBF
-/*
- * Refer message buffer state
+/**
+ * @brief メッセージバッファの状態参照（デバッガサポート）
+ *
+ * tk_ref_mbf と同等の状態情報を TD_RMBF 形式で返します。
+ *
+ * @param mbfid	参照するメッセージバッファの ID
+ * @param pk_rmbf	状態情報の格納先アドレス
+ *
+ * @retval E_OK	正常終了
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
  */
 SYSCALL ER td_ref_mbf( ID mbfid, TD_RMBF *pk_rmbf )
 {
@@ -573,8 +725,19 @@ SYSCALL ER td_ref_mbf( ID mbfid, TD_RMBF *pk_rmbf )
 #endif /* USE_FUNC_TD_REF_MBF */
 
 #ifdef USE_FUNC_TD_SMBF_QUE
-/*
- * Refer message buffer send wait queue
+/**
+ * @brief メッセージバッファ送信待ちキューの参照
+ *
+ * 送信待ちキューにつながれたタスクの ID を待ち順に list へ最大
+ * nent 個格納します。
+ *
+ * @param mbfid	参照するメッセージバッファの ID
+ * @param list	タスク ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 送信待ちタスクの総数（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
  */
 SYSCALL INT td_smbf_que( ID mbfid, ID list[], INT nent )
 {
@@ -605,8 +768,19 @@ SYSCALL INT td_smbf_que( ID mbfid, ID list[], INT nent )
 #endif /* USE_FUNC_TD_SMBF_QUE */
 
 #ifdef USE_FUNC_TD_RMBF_QUE
-/*
- * Refer message buffer receive wait queue
+/**
+ * @brief メッセージバッファ受信待ちキューの参照
+ *
+ * 受信待ちキューにつながれたタスクの ID を待ち順に list へ最大
+ * nent 個格納します。
+ *
+ * @param mbfid	参照するメッセージバッファの ID
+ * @param list	タスク ID リストの格納先配列
+ * @param nent	list に格納可能な最大エントリ数
+ *
+ * @return 受信待ちタスクの総数（正値または 0）、またはエラーコード
+ * @retval E_ID	不正な ID
+ * @retval E_NOEXS	対象メッセージバッファが未生成
  */
 SYSCALL INT td_rmbf_que( ID mbfid, ID list[], INT nent )
 {
