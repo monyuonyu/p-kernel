@@ -76,6 +76,14 @@
 
 #endif
 
+/* p-kernel 追加ターゲット: AArch64 ベアメタル（QEMU virt / RPi3） */
+#ifdef _AARCH64_VIRT_
+#include "sysdepend/aarch64_virt/machine.h"
+
+#define Csym(sym) sym
+
+#endif
+
 /* ===== Cコンパイラ依存の定義 =========================================== */
 
 #ifdef __GNUC__
