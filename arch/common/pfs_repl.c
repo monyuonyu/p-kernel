@@ -153,6 +153,17 @@ static struct {
     U1 buf[PFS_BLOCK_MAX];
 } rx_state;
 
+#ifdef _TK_HOSTED_LIBC_
+/* CHUNK-STALL FIX (hosted): timestamp of the last accepted packet, so an
+ * in-progress MULTI-packet assembly can be PROTECTED from an interloping
+ * block's FILE_START (idx0) and abandoned only when genuinely STALLED. */
+static UW rx_last_ms = 0;
+#ifndef PFSR_RX_STALL_MS
+#define PFSR_RX_STALL_MS 300   /* > one 8-packet loopback burst, < a fold round */
+#endif
+static UW rx_now_ms(void) { SYSTIM t; tk_get_otm(&t); return (UW)t.lo; }
+#endif
+
 /* static per-packet / per-block send scratch (same trap) */
 static PFSR_BLK_PKT tx_pkt;
 static U1           tx_block[PFS_BLOCK_MAX];
@@ -419,6 +430,20 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
          * Already holding the block? Then this is a duplicate stream
          * from a second responder — ignore it entirely. */
         if (pfs_has(pkt->id)) return;
+#ifdef _TK_HOSTED_LIBC_
+        /* CHUNK-STALL FIX: the single-slot assembler otherwise RESETS on every
+         * new idx0 — so a 1-packet interloper (self/prov, a manifest, another
+         * chunk stream) arriving mid-assembly ABANDONS the in-progress
+         * multi-packet block, which then never completes and the Path W fold
+         * plateaus. Protect a DIFFERENT, in-progress, RECENTLY-advanced block:
+         * ignore the interloper (its holder re-serves it on the WANT retry).
+         * Abandon only a STALLED assembly (no accepted packet for
+         * PFSR_RX_STALL_MS) so a lost-packet stream cannot wedge the slot. */
+        if (rx_state.active && rx_state.next_chunk > 0 &&
+            !pr_id_eq(rx_state.id, pkt->id) &&
+            (UW)(rx_now_ms() - rx_last_ms) < (UW)PFSR_RX_STALL_MS)
+            return;
+#endif
         pr_memset(&rx_state, 0, (UW)sizeof(rx_state));
         pr_memcpy(rx_state.id, pkt->id, PFS_ID_LEN);
         rx_state.total      = pkt->total_len;
@@ -438,6 +463,9 @@ void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
                   pkt->chunk_len);
     rx_state.received += pkt->chunk_len;
     rx_state.next_chunk++;
+#ifdef _TK_HOSTED_LIBC_
+    rx_last_ms = rx_now_ms();   /* CHUNK-STALL FIX: mark forward progress */
+#endif
 
     if (rx_state.received < rx_state.total) return;   /* more to come */
 
