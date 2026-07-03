@@ -11,8 +11,6 @@
 | `aarch64/` | ARMv8-A (QEMU virt / RPi3) | ✅ 動作 — PCIe ECAM + RTL8139・SWIM/K-DDS メッシュ |
 | `linux/`   | Linux ユーザープロセス (x86_64 / aarch64 ホスト) | ✅ 動作 — p-kernel を Linux プロセスとして実行（`x86_64/`・`aarch64/` サブディレクトリ） |
 | `common/`  | アーキテクチャ非依存コード | 分散・AI レイヤーの共有実装（[`common/README.md`](common/README.md)） |
-| `h8300/`   | ルネサス H8/300   | 実装済み |
-| `rl78/`    | ルネサス RL78      | 実装済み |
 
 ## x86 アーキテクチャ（主力）
 

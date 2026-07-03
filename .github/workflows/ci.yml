@@ -1278,8 +1278,10 @@ jobs:
     # Earning trust: first CI outing (2026-07-01) failed with
     # "qemu-system-aarch64: failed to find romfile" because --no-install-recommends
     # dropped ipxe-qemu (a qemu-system-arm Recommends that ships the virtio NIC
-    # romfiles). Fixed by installing ipxe-qemu explicitly; kept continue-on-error
-    # for one green run, then this guard can be removed.
+    # romfiles). Root cause was -M virt auto-creating a virtio-net-pci the test
+    # never uses; run_smp0.sh now passes -nic none, so the romfile (and the
+    # ipxe-qemu package) are no longer needed. Kept continue-on-error for one
+    # green run, then this guard can be removed.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -1287,6 +1289,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu make qemu-system-arm ipxe-qemu
+            gcc-aarch64-linux-gnu make qemu-system-arm
       - name: run_smp0.sh (smp-autodetect / 2-tasks-run / mutual-exclusion / boot-survives)
+        env:
+          SMP0_TIMEOUT: 180
         run: sh tests/aarch64/run_smp0.sh

@@ -239,7 +239,7 @@ static void cmd_help(void)
 static void cmd_ver(void)
 {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    sout("micro T-Kernel 2.0  /  p-kernel x86/QEMU port\r\n");
+    sout("microT-Kernel 3.00  /  p-kernel x86/QEMU port\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 
@@ -3097,7 +3097,7 @@ void shell_task(INT stacd, void *exinf)
     vga_set_color(VGA_GREEN, VGA_BLACK);
     sout("\r\n");
     sout("  +-----------------------------------------+\r\n");
-    sout("  |  p-kernel  /  micro T-Kernel 2.0 x86   |\r\n");
+    sout("  |  p-kernel  /  microT-Kernel 3.00 x86   |\r\n");
     sout("  |  Interactive Shell                      |\r\n");
     sout("  +-----------------------------------------+\r\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
