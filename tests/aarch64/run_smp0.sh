@@ -60,8 +60,11 @@ TIMEOUT_S="${SMP0_TIMEOUT:-60}"
 # falsifier build) cannot corrupt an in-flight QEMU read. The ②.0 audit had to
 # exonerate exactly such a self-inflicted flake by timestamp; snapshotting
 # removes the race at the source.
+# -nic none: -M virt otherwise auto-creates a virtio-net-pci that needs the
+# efi-virtio.rom romfile (missing on minimal CI images → the advisory job's
+# failure class). This test never touches the network, so suppress the NIC.
 QEMU_BASE_FLAGS="-M virt -cpu cortex-a53 -m 256M \
-                 -serial stdio -display none -no-reboot"
+                 -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[smp0] FAIL: $*" >&2; exit 1; }
 

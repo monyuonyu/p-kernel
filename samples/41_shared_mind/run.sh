@@ -237,6 +237,10 @@ wait_for "$L2" 'wait: drained' 30 || true
 # ABSENT-line deaf case is retried (bounded ~60s, fail-closed). Mirrors the
 # post-kill fresh-marker discipline below.
 ASK_PRE=$(grep -ac "ask \"$KWORD\"" "$L2")
+# Snapshot the PRE count of the verdict line too: the [teach-consolidated]
+# gate below must fire on a STRICTLY-FRESH verdict, not one already in the log
+# from an earlier consolidation (stale-satisfiable otherwise).
+TC_PRE=$(grep -ac '\[teach-consolidated\]' "$L2")
 ANSWER_T=$(date +%s)
 ask_fresh=0
 for _ in $(seq 1 30); do             # ~60s bound (death-free; the mouth is live)
@@ -248,8 +252,10 @@ for _ in $(seq 1 30); do             # ~60s bound (death-free; the mouth is live
     [ "$ask_fresh" -eq 1 ] && break
 done
 [ "$ask_fresh" -eq 1 ] || bad "[shared-consolidated] — B printed no FRESH ask line (deaf; bounded re-ask exhausted)"
-# the verdict print may trail the ask line by a beat — let it land before grep.
-wait_for "$L2" '\[teach-consolidated\] (PASS|FAIL)' 60 || true
+# the verdict print may trail the ask line by a beat — let a STRICTLY-FRESH
+# verdict (count > pre-snapshot) land before grep, so we never gate on a stale
+# [teach-consolidated] line already present from an earlier consolidation.
+for _ in $(seq 1 240); do [ "$(grep -ac '\[teach-consolidated\]' "$L2")" -gt "${TC_PRE:-0}" ] && break; sleep 0.25; done
 ASK_LINE=$(grep -a "ask \"$KWORD\"" "$L2" | tail -1)
 SHARE=$(echo "$ASK_LINE" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]')
 echo "    $ASK_LINE"
@@ -264,7 +270,8 @@ grep -a 'fact seq=.*RETAINED' "$L2" | tail -1 | sed 's/^/    /'
 SHARE_INT=$(echo "${SHARE:-0}" | cut -d. -f1)
 DELTA=$((ANSWER_T - TEACH_T))
 echo "    teach@A=$TEACH_T  answer@B=$ANSWER_T  delta=${DELTA}s"
-if grep -aq '\[teach-consolidated\] PASS' "$L2" && [ "${SHARE_INT:-0}" -ge "$SHARE_GATE" ]; then
+TC_LAST=$(grep -a '\[teach-consolidated\]' "$L2" | tail -1)
+if echo "$TC_LAST" | grep -aq 'PASS' && [ "${SHARE_INT:-0}" -ge "$SHARE_GATE" ]; then
     ok "[shared-consolidated] PASS — B answers v=$VSTAR from its OWN rw[] (share=${SHARE}% >= $SHARE_GATE, N=40 masked)"
     ok "teach@A -> answer@B flight time = ${DELTA}s (bounded, printed)"
 else
