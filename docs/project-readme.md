@@ -28,8 +28,7 @@ arch/        per-arch HAL. arch/x86 (bare metal), arch/aarch64 (bare metal,
              incl. a virtio-blk driver), arch/linux/{aarch64,x86_64}
              (userspace UMP), arch/common (AI + distributed layer, shared)
 boot/        build + run per target: x86, aarch64, linux, linux_x86_64
-             (plus partial h8300, rl78)
-kernel/      micro T-Kernel 2.0 core (kernel/common)
+kernel/      μT-Kernel 3.0 core (kernel/mtkernel3)
 lib/         support libraries
 relay/       the NAT-traversal relay server (v2 wire) + tests
 samples/     numbered demos / kill-tests (01_… through 33_ark_aarch64)
