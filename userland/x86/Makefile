@@ -323,9 +323,15 @@ all: $(SAMPLES)
 # -------------------------------------------------------------------
 ROOT      = ../..
 CORE_INC  = -I$(ROOT)/arch/x86/include -I$(ROOT)/arch/common/include \
-            -I$(ROOT)/relay -I$(ROOT)/include/kernel/tkernel \
+            -I$(ROOT)/relay \
+            -I$(ROOT)/kernel/mtkernel3/kernel/knlinc \
+            -I$(ROOT)/kernel/mtkernel3/kernel/tkernel \
+            -I$(ROOT)/kernel/mtkernel3/include \
+            -I$(ROOT)/kernel/mtkernel3/include/tm \
+            -I$(ROOT)/kernel/mtkernel3/include/compat \
+            -I$(ROOT)/kernel/mtkernel3/config \
             -I$(ROOT)/include -I$(ROOT)/include/lib/libc
-CORE_CFLAGS = $(CFLAGS) -D_APP_X86_ $(CORE_INC) \
+CORE_CFLAGS = $(CFLAGS) -D_APP_X86_ -D_X86_PC_ $(CORE_INC) \
               -ffunction-sections -fdata-sections
 CORE_DIR  = 12_ring3/03_core_mind
 
