@@ -30,8 +30,10 @@ ARCH_COMMON    = $(COMMON)
 MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
 include $(COMMON)/web/manifesto_langs.mk
 MANIFESTO_SET  = $(MANIFESTO_LANGS_LEAN)
-KERNEL  = $(ROOT)/kernel/common
-INC_TK  = $(ROOT)/include/kernel/tkernel
+MTK3        = $(ROOT)/kernel/mtkernel3
+MTK3_KNL    = $(MTK3)/kernel/tkernel
+MTK3_SYSDEP = $(MTK3)/kernel/sysdepend/aarch64_virt
+MTK3_LIBTM  = $(MTK3)/lib/libtm
 INC_LIB = $(ROOT)/include/lib
 INC_TOP = $(ROOT)/include
 
@@ -42,11 +44,17 @@ INC_TOP = $(ROOT)/include
 # str_align_depend.h, cpu_conf.h, stdarg.h) shared with the x86_64 sibling;
 # arch/common/include holds the cross-arch driver / distributed-layer API.
 INCDIRS = \
+    -I$(MTK3_SYSDEP) \
     -I$(ARCH)/include \
     -I$(COMMON)/include/lp64 \
     -I$(COMMON)/include \
     -I$(ROOT)/relay \
-    -I$(INC_TK) \
+    -I$(MTK3)/kernel/knlinc \
+    -I$(MTK3)/kernel/tkernel \
+    -I$(MTK3)/include \
+    -I$(MTK3)/include/tm \
+    -I$(MTK3)/include/compat \
+    -I$(MTK3)/config \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
     -I.
@@ -55,15 +63,15 @@ INCDIRS = \
 # EXTRA_CFLAGS lets a caller inject build-time defines without editing this
 # file, e.g.  make EXTRA_CFLAGS=-DARK_BAREMETAL_SMOKE  (used by
 # samples/33_ark_aarch64/run.sh to compile the bare-metal ARK smoke driver
-# into boot/main.c + arch/aarch64/ark_bdev.c).
+# into boot/main_mtk3.c + arch/aarch64/ark_bdev.c).
 EXTRA_CFLAGS ?=
 # -ffp-contract=off: never fuse a*b+c into an FMA so the mind's float
 #   math (dtr.c) rounds identically to every other target — "one mind,
 #   one math" (guards the wave-49 salty-bug class; see `dtr fpdet`).
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fno-common -O1 -std=gnu11 -mstrict-align \
-          -ffp-contract=off \
-          -D_APP_AARCH64_ \
+          -ffp-contract=off -MMD -MP \
+          -D_APP_AARCH64_ -D_AARCH64_VIRT_ \
           $(EXTRA_CFLAGS) \
           $(INCDIRS)
 # -mstrict-align: with MMU disabled at EL1, Cortex-A53 treats RAM as
@@ -73,26 +81,23 @@ CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
 # an alignment fault on the first ARP send. Switch to a proper MMU
 # identity map (RAM as Normal cacheable) when we need the performance.
 
-ASFLAGS = -D_in_asm_source_ \
+ASFLAGS = -D_in_asm_source_ -D_AARCH64_VIRT_ \
+          -I$(MTK3_SYSDEP) \
           -I$(ARCH)/include \
           -I$(COMMON)/include/lp64 \
-          -I$(INC_TK) \
+          -I$(MTK3)/include -I$(MTK3)/config \
           -I$(INC_TOP)
 
 LIBGCC  = $(shell $(CC) -print-libgcc-file-name)
 LDFLAGS = -nostdlib -static -T linker.ld
 
 # ---- boot/aarch64 sources --------------------------------------------
-BOOT_C_SRCS = main.c
+BOOT_C_SRCS = main_mtk3.c
 BOOT_S_SRCS = $(ARCH)/start.S
-BOOT_OBJS   = main.o start.o
+BOOT_OBJS   = main_mtk3.o start.o
 
 # ---- arch/aarch64 sources --------------------------------------------
 ARCH_C_SRCS = \
-    cpu_init.c \
-    tkdev_init.c \
-    inittask_def.c \
-    inittask_main.c \
     usermain.c \
     sio.c \
     pci.c \
@@ -175,40 +180,22 @@ COMMON_C_SRCS = \
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
 # ---- kernel/common sources -------------------------------------------
-KERNEL_SRCS = \
-    task.c \
-    task_manage.c \
-    task_sync.c \
-    timer.c \
-    time_calls.c \
-    wait.c \
-    semaphore.c \
-    eventflag.c \
-    mailbox.c \
-    messagebuf.c \
-    mutex.c \
-    mempfix.c \
-    mempool.c \
-    memory.c \
-    misc_calls.c \
-    tkstart.c \
-    bitop.c \
-    fastlock.c \
-    fastmlock.c \
-    klock.c \
-    objname.c \
-    rendezvous.c \
-    subsystem.c \
-    tm_putchar.c \
-    tm_putstring.c \
-    tm_printf.c \
-    tm_monitor.c \
-    tm_exit.c \
-    tm_getchar.c \
-    tm_getline.c \
-    tm_command.c
+MTK3_KNL_SRCS = \
+    task.c task_manage.c task_sync.c timer.c time_calls.c wait.c \
+    semaphore.c eventflag.c mailbox.c messagebuf.c mutex.c \
+    mempfix.c mempool.c memory.c misc_calls.c objname.c rendezvous.c \
+    klock.c cpuctl.c int.c power.c device.c deviceio.c tkinit.c \
+    subsystem.c
 
-KERNEL_OBJS = $(KERNEL_SRCS:.c=.o)
+MTK3_KNL_OBJS = $(MTK3_KNL_SRCS:.c=.o)
+
+MTK3_MISC_OBJS = sysinit.o inittask.o tstdlib_string.o tstdlib_bitop.o \
+                 libtm.o libtm_printf.o tm_com.o
+
+MTK3_SYSDEP_SRCS = cpu_cntl.c interrupt.c hw_setting.c devinit.c power_save.c
+MTK3_SYSDEP_OBJS = $(MTK3_SYSDEP_SRCS:.c=.o)
+
+KERNEL_OBJS = $(MTK3_KNL_OBJS) $(MTK3_MISC_OBJS) $(MTK3_SYSDEP_OBJS)
 
 # ---- libc string stubs -----------------------------------------------
 LIBSTR_DIR  = $(ROOT)/lib/libc/string
@@ -224,7 +211,7 @@ RELAY_DIR    = $(ROOT)/relay
 RELAY_OBJS   = sha256.o
 RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
                -fno-common -O1 -std=gnu11 -mstrict-align \
-               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(MTK3)/include/compat
 
 # student_stub.o — WEAK no-op fallbacks for the resident-baby ABI
 # (student_dmn_consolidate / student_dmn_heldout_loss / student_chat_generate).
@@ -323,7 +310,7 @@ kernel8.img: kernel.rpi3.elf
 	@echo "[OK] $@ — $(shell stat -c %s $@) bytes ready for SD card"
 
 # boot/aarch64 C sources
-main.o: main.c
+main_mtk3.o: main_mtk3.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # arch/aarch64 ASM entry
@@ -355,9 +342,35 @@ $(MANIFESTO_PAGE): $(MANIFESTO_TXT) $(COMMON)/web/manifesto.en.txt $(MANIFESTO_G
 
 ark_profile.o: $(MANIFESTO_PAGE)
 
-# kernel/common C sources
-%.o: $(KERNEL)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+# μT-Kernel 3.0 コア（sysinit の main() は knl_main() に改名）
+MTK3_CFLAGS = $(CFLAGS) -DADD_PREFIX_KNL_TO_GLOBAL_NAME
+
+$(MTK3_KNL_OBJS): %.o: $(MTK3_KNL)/%.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+sysinit.o: $(MTK3)/kernel/sysinit/sysinit.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+inittask.o: $(MTK3)/kernel/inittask/inittask.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tstdlib_string.o: $(MTK3)/kernel/tstdlib/string.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tstdlib_bitop.o: $(MTK3)/kernel/tstdlib/bitop.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+libtm.o: $(MTK3_LIBTM)/libtm.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+libtm_printf.o: $(MTK3_LIBTM)/libtm_printf.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tm_com.o: $(MTK3_LIBTM)/sysdepend/aarch64_virt/tm_com.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+$(MTK3_SYSDEP_SRCS:.c=.o): %.o: $(MTK3_SYSDEP)/%.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
 
 # libc string sources
 $(LIBSTR_SRCS:.c=.o): %.o: $(LIBSTR_DIR)/%.c
@@ -757,3 +770,5 @@ clean:
         run-smp1 run-smp1-noipi smp1-test \
         run-smp2 smp2-test \
         run-smp3 run-smp3-noasync run-smp3-deadlock run-smp3-deadlock-noguard smp3-test
+
+-include $(wildcard *.d)

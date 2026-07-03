@@ -48,9 +48,13 @@ INCS="-I$ROOT/boot/linux \
       -I$AC/include/lp64 \
       -I$AC/include \
       -I$ROOT/relay \
-      -I$ROOT/include/kernel/tkernel \
-      -I$ROOT/include"
-KDEFS="-D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_"
+      -I$ROOT/kernel/mtkernel3/kernel/knlinc \
+      -I$ROOT/kernel/mtkernel3/kernel/tkernel \
+      -I$ROOT/kernel/mtkernel3/include \
+      -I$ROOT/kernel/mtkernel3/include/tm \
+      -I$ROOT/kernel/mtkernel3/include/compat \
+      -I$ROOT/kernel/mtkernel3/config"
+KDEFS="-D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ -D_LINUX_AARCH64_"
 KFLAGS="-Wall -Wextra -g -O1 -no-pie -fno-pie -fno-stack-protector -fno-common \
         -std=gnu11 -ffp-contract=off -ffunction-sections -fdata-sections \
         -Werror=vla $KDEFS $INCS"

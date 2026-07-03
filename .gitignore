@@ -33,3 +33,6 @@ boot/linux/manifesto_page.h
 boot/linux_x86_64/manifesto_page.h
 boot/aarch64/manifesto_page.h
 boot/x86/manifesto_page.h
+
+# gcc -MMD が生成するヘッダ依存ファイル
+*.d

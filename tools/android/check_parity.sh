@@ -12,7 +12,7 @@
 #
 # Sections compared (by basename, the only thing that matters for "is this
 # TU in the build"): arch/common (COMMON), arch/linux shared (ARCH_SHARED),
-# arch/linux/aarch64 per-arch (ARCH), kernel/common (KERNEL), libc string.
+# arch/linux/aarch64 per-arch (ARCH), kernel/mtkernel3 (KERNEL).
 #
 # If a file is LEGITIMATELY host-only or android-only, add its basename to
 # the matching ALLOW_* list below WITH A COMMENT explaining why. An empty
@@ -177,15 +177,16 @@ compare ARCH_SHARED "$TMP/mk_shared" "$TMP/cm_shared" "$ALLOW_MK_ONLY" "$ALLOW_C
 cm_list ARCH_SRC              > "$TMP/cm_arch"
 compare ARCH "$TMP/mk_arch" "$TMP/cm_arch" "$ALLOW_MK_ONLY" "$ALLOW_CM_ONLY"
 
-# KERNEL (kernel/common)
-mk_list KERNEL_SRCS           > "$TMP/mk_kern"
-cm_list KCOMMON_SRC           > "$TMP/cm_kern"
+# KERNEL (kernel/mtkernel3 — μT-Kernel 3.0 コア + 起動/libtm/sysdepend)
+# Makefile 側はコア(MTK3_KNL_SRCS)・sysdepend(MTK3_SYSDEP_SRCS)・
+# 固定名オブジェクト(MTK3_MISC_OBJS 相当)の 3 群に分かれるため合算する。
+{ mk_list MTK3_KNL_SRCS; mk_list MTK3_SYSDEP_SRCS; \
+  printf 'sysinit.c\ninittask.c\nstring.c\nbitop.c\nlibtm.c\nlibtm_printf.c\ntm_com.c\ndispatch.S\n'; } \
+  | sort -u > "$TMP/mk_kern"
+cm_list MTK3_KNL_SRC          > "$TMP/cm_kern"
 compare KERNEL "$TMP/mk_kern" "$TMP/cm_kern" "$ALLOW_MK_ONLY" "$ALLOW_CM_ONLY"
 
-# LIBSTR (lib/libc/string)
-mk_inline LIBSTR_SRCS         > "$TMP/mk_libstr"
-cm_list LIBSTR_SRC            > "$TMP/cm_libstr"
-compare LIBSTR "$TMP/mk_libstr" "$TMP/cm_libstr" "$ALLOW_MK_ONLY" "$ALLOW_CM_ONLY"
+# LIBSTR は 2.0 廃止と同時に削除（hosted は Bionic/glibc の string を使用）
 
 # RELAY (relay/sha256.c) — single file, just confirm both have it.
 mk_inline RELAY_C_SRCS        > "$TMP/mk_relay"
@@ -208,13 +209,9 @@ mk_inline ARCH_SHARED_C_SRCS "$MK"  > "$TMP/h_shared_a"
 mk_inline ARCH_SHARED_C_SRCS "$MK2" > "$TMP/h_shared_b"
 compare_hosts ARCH_SHARED-HOST "$TMP/h_shared_a" "$TMP/h_shared_b"
 
-mk_list KERNEL_SRCS         "$MK"  > "$TMP/h_kern_a"
-mk_list KERNEL_SRCS         "$MK2" > "$TMP/h_kern_b"
+mk_list MTK3_KNL_SRCS       "$MK"  > "$TMP/h_kern_a"
+mk_list MTK3_KNL_SRCS       "$MK2" > "$TMP/h_kern_b"
 compare_hosts KERNEL-HOST "$TMP/h_kern_a" "$TMP/h_kern_b"
-
-mk_inline LIBSTR_SRCS       "$MK"  > "$TMP/h_libstr_a"
-mk_inline LIBSTR_SRCS       "$MK2" > "$TMP/h_libstr_b"
-compare_hosts LIBSTR-HOST "$TMP/h_libstr_a" "$TMP/h_libstr_b"
 
 mk_inline RELAY_C_SRCS      "$MK"  > "$TMP/h_relay_a"
 mk_inline RELAY_C_SRCS      "$MK2" > "$TMP/h_relay_b"

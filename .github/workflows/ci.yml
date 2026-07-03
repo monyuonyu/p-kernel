@@ -1074,7 +1074,7 @@ jobs:
     # crown 不変条件 (BLOCKING). The bare-metal kernels' .text must stay
     # BYTE-IDENTICAL across a commit unless bare-metal is INTENTIONALLY changed —
     # the machine-code-level "one mind, one math" invariant. ANY change to a TU
-    # that links into boot/x86 or boot/aarch64 (arch/common, kernel/common, the
+    # that links into boot/x86 or boot/aarch64 (arch/common, kernel/mtkernel3, the
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are

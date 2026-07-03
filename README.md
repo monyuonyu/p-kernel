@@ -2,7 +2,7 @@
 
 > AIが死なないための OS（An OS where AI never dies）— を目指している、研究プロトタイプ。
 
-micro T-Kernel 2.0 を土台に、中央を持たない分散カーネル網を作る実験。
+μT-Kernel 3.0（IEEE 2050-2018 準拠）を土台に、中央を持たない分散カーネル網を作る実験。
 **何が動いていて、何が設計段階で、何がまだ夢なのか**を、このファイルで正直に分ける。
 このREADMEは実態に準拠する。誇張があれば、それはバグとして直す。
 未解決の課題は [gap-ledger](docs/architecture/gap-ledger.md)（唯一の open リスト、行は減るだけ）に常時公開している。
@@ -38,7 +38,7 @@ map with its own honest status table is
 
 | 能力 | 中身 | 試し方 |
 |---|---|---|
-| **micro T-Kernel 2.0 移植 ×4 ターゲット** | ベアメタル x86（QEMU）・ベアメタル AArch64（QEMU virt / RPi3 netboot 手順あり）・aarch64-linux ユーザモード・x86_64-linux ユーザモード。全てシェルまで起動 | `boot/{x86,aarch64,linux,linux_x86_64}/` で `make` |
+| **μT-Kernel 3.0 移植 ×4 ターゲット** | ベアメタル x86（QEMU）・ベアメタル AArch64（QEMU virt / RPi3 netboot 手順あり）・aarch64-linux ユーザモード・x86_64-linux ユーザモード。全てシェルまで起動 | `boot/{x86,aarch64,linux,linux_x86_64}/` で `make` |
 | **relay v2（NAT越え中継）** | HMAC-SHA256 認証・64パケット sliding-nonce リプレイ防御・鍵なし起動拒否・`--insecure` 明示警告。**テスト6シナリオ green** | `relay/` → `make test` |
 | **relay 経由の分散推論** | 2〜3ノードが1つの Transformer forward をテンソル並列＋分散KVアテンション（DKVA FULL）で分担 | `samples/11_distributed/run_3node_full.sh` |
 | **regions R0–R2** | SWIM RTT EWMA → 遅延クラスタの region 形成・K-DDS の REGION/GLOBAL スコープ（O(N²)殺し）・locality-aware MoE・DKVA region 限定＋2段集約・連続容量関数 `capacity(N)` | `run_4node_regions.sh`、シェルの `region` / `rgnpub` |

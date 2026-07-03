@@ -1,15 +1,15 @@
-# p-kernel Linux userspace Makefile — x86_64 sibling.
-# Mirrors boot/linux/ but builds the arch/linux/x86_64 backend.
-# Cross-compiles when the build host isn't already x86_64.
+# p-kernel Linux userspace Makefile — x86_64 / μT-Kernel 3.0 コア版
 #
-# Usage:
-#   make            — build ./p-kernel
-#   make run        — build and run (qemu-x86_64 if not native)
-#   make clean
+# boot/linux_x86_64/Makefile（micro T-Kernel 2.0 コア）の 3.0 移行版。
+# カーネルコアを kernel/common から kernel/mtkernel3 に差し替える。
+# アプリ層（arch/common・arch/linux ほか）のソース構成は 2.0 版と同一。
+#
+# 使い方:
+#   make -f Makefile.mtk3          — ./p-kernel をビルド
+#   make -f Makefile.mtk3 run      — ビルドして実行
+#   make -f Makefile.mtk3 clean
 
 # ---- Toolchain --------------------------------------------------------
-# Auto-detect host arch; cross-build via x86_64-linux-gnu-gcc when not
-# already on x86_64, and run via qemu-x86_64.
 ifeq ($(shell uname -m),x86_64)
 CROSS ?=
 RUN   ?=
@@ -24,36 +24,32 @@ CC = $(CROSS)gcc
 ROOT       = ../..
 ARCH_LINUX  = $(ROOT)/arch/linux
 ARCH_X86_64 = $(ROOT)/arch/linux/x86_64
-KERNEL      = $(ROOT)/kernel/common
 ARCH_COMMON = $(ROOT)/arch/common
 GALAXY_HTML = $(ARCH_COMMON)/web/galaxy.html
 GALAXY_GEN  = $(ROOT)/tools/galaxy/gen_page.py
 GALAXY_PAGE = galaxy_page.h
 MANIFESTO_TXT  = $(ARCH_COMMON)/web/manifesto.txt
 MANIFESTO_PAGE = manifesto_page.h
-# i18n wave: hosted embeds ALL ~32 manifesto languages.
 MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
 include $(ARCH_COMMON)/web/manifesto_langs.mk
 MANIFESTO_SET  = $(MANIFESTO_LANGS_FULL)
-INC_TK      = $(ROOT)/include/kernel/tkernel
 INC_TOP     = $(ROOT)/include
 INC_LIB     = $(ROOT)/include/lib
 
+# μT-Kernel 3.0 コア
+MTK3        = $(ROOT)/kernel/mtkernel3
+MTK3_KNL    = $(MTK3)/kernel/tkernel
+MTK3_SYSDEP = $(MTK3)/kernel/sysdepend/linux_x86_64
+MTK3_LIBTM  = $(MTK3)/lib/libtm
+
 # ---- Include directories ----------------------------------------------
-# arch/linux/x86_64/include comes FIRST so its shadows (cpu_status.h,
-# cpu_insn.h, syslib_depend.h, tkdev_timer.h, cpu_task.h, machine_depend.h,
-# sysdef_depend.h, utk_config_depend.h) take precedence. arch/linux/include
-# holds the cross-arch hosted-port APIs (arch_ctx.h, arch_preempt.h,
-# arch_time.h). arch/common/include/lp64 holds LP64-uniform headers
-# shared with the aarch64 sibling (offset.h, sysinfo_depend.h,
-# profile_depend.h, str_align_depend.h, cpu_conf.h, stdarg.h).
-#
-# This Makefile no longer borrows -I arch/aarch64/include; everything the
-# x86_64-linux build needs is either x86_64-specific (in arch/linux/x86_64/
-# include) or LP64-shared (in arch/common/include/lp64).
-#
-# include/lib/libc deliberately stays OUT so Linux POSIX headers
-# resolve to system libc.
+# arch 系ヘッダを先に、μT-Kernel 3.0 のヘッダ群をその後に置く。
+#   -I$(MTK3)/kernel/knlinc : "kernel.h"（カーネル内部共通定義）
+#   -I$(MTK3)/kernel/tkernel: "task.h" 等の内部ヘッダ（guard.c 等が使用）
+#   -I$(MTK3)/include       : <tk/*.h> <sys/*.h> <tm/*.h>
+#   -I$(MTK3)/include/tm    : <tmonitor.h>（アプリの 2.0 互換 include）
+#   -I$(MTK3)/config        : <config.h>
+# INC_TOP は 2.0 と同じく最後（arch 層の共有ヘッダ用）。
 INCDIRS = \
     -I. \
     -I$(ARCH_X86_64)/include \
@@ -61,49 +57,35 @@ INCDIRS = \
     -I$(ROOT)/arch/common/include/lp64 \
     -I$(ROOT)/arch/common/include \
     -I$(ROOT)/relay \
-    -I$(INC_TK) \
-    -I$(INC_TOP)
+    -I$(MTK3)/kernel/knlinc \
+    -I$(MTK3)/kernel/tkernel \
+    -I$(MTK3)/include \
+    -I$(MTK3)/include/tm \
+    -I$(MTK3)/include/compat \
+    -I$(MTK3)/config
 
 # ---- Compiler flags ---------------------------------------------------
-# -ffp-contract=off: never fuse a*b+c into an FMA, so the mind's float
-#   math (dtr.c) rounds identically to every other target — "one mind,
-#   one math". Without it clang's FMA contraction diverged from gcc and
-#   the on-device mind learned 5% instead of 95% (wave-49 salty bug).
-#   The `dtr fpdet` golden-logit cert guards this. Keep on every config.
-# EXTRA_CFLAGS lets a caller inject build-time defines without editing this
-# file (mirrors boot/linux/Makefile and boot/aarch64/Makefile), e.g.
-#   make EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT   (the [migrate-forward] cert)
-#   make EXTRA_CFLAGS="-DR3WP_MIGRATE_CERT -DR3WP_SKIP_MIGRATE" (its falsifier)
-#   make EXTRA_CFLAGS=-DARKFS_GAP_CERT      (the [arkfs-version-gap] cert:
-#                                            `compat test arkfs` — reject+reformat
-#                                            a foreign-version arkfs image)
-#   make EXTRA_CFLAGS="-DARKFS_GAP_CERT -DARKFS_GAP_SKIP_VERCHECK" (its falsifier)
-# Empty by default, so the default build is unchanged. This is what makes
-# cross-ABI cert parity real: a cert define reaches the same TUs here as it
-# does on the aarch64-hosted sibling (CFLAGS + the inheriting KERNEL_CFLAGS).
+# -ffp-contract=off: 2.0 版と同じ「one mind, one math」規律。
+# -D_LINUX_X86_64_ : μT-Kernel 3.0 のターゲット選択マクロ。
 EXTRA_CFLAGS ?=
+# -MMD -MP: ヘッダ依存を .d に自動生成（config/ヘッダ変更時の
+# stale オブジェクト混在を防ぐ。TU 間で構造体レイアウトが食い違う
+# 事故は 2.0→3.0 移行デバッグで実際に踏んだ）
 CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
           -fno-stack-protector -fno-common -std=gnu11 \
-          -ffp-contract=off \
+          -ffp-contract=off -MMD -MP \
           -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ \
+          -D_LINUX_X86_64_ \
           $(EXTRA_CFLAGS) \
           $(INCDIRS)
 
-ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ \
-          -I$(ARCH_X86_64)/include \
-          -I$(ROOT)/arch/common/include/lp64 \
-          -I$(INC_TK) -I$(INC_TOP)
+ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ -D_LINUX_X86_64_ \
+          -I$(MTK3_SYSDEP) \
+          -I$(MTK3)/include -I$(MTK3)/config
 
 LDFLAGS = -no-pie -static -lrt -lpthread
 
 # ---- libtcc self-compile support (hosted-only, auto-detected) --------
-# Same probe as boot/linux. On an aarch64 host the only libtcc.a is the
-# aarch64 one, so this -static x86_64 link probe fails and selfc stays
-# a stub here — that is the detection working as intended, not a bug.
-# Force-disable with `make NO_LIBTCC=1`.
-# (-include libtcc.h instead of a "#include" line: '#' inside $(shell)
-#  is a make-comment minefield. This still proves both the header and
-#  the library exist and link for the target ABI.)
 ifeq ($(NO_LIBTCC),)
 HAVE_LIBTCC := $(shell echo 'int main(void){tcc_new();return 0;}' | \
                  $(CC) $(LDFLAGS) -include libtcc.h -x c - -ltcc -o /dev/null 2>/dev/null && echo yes)
@@ -114,15 +96,13 @@ LDFLAGS += -ltcc
 endif
 
 # ---- boot/linux_x86_64 sources ---------------------------------------
-BOOT_C_SRCS = main.c
-BOOT_OBJS   = main.o
+BOOT_C_SRCS = main_mtk3.c
+BOOT_OBJS   = main_mtk3.o
 
 # ---- arch/linux/x86_64 sources ---------------------------------------
+# 2.0 版から除外: cpu_init.c tkdev_init.c inittask_def.c inittask_main.c
+# cpu_support.S（μT-Kernel 3.0 の sysinit/inittask/sysdepend が代替）
 ARCH_C_SRCS = \
-    cpu_init.c \
-    tkdev_init.c \
-    inittask_def.c \
-    inittask_main.c \
     usermain.c \
     sio.c \
     pci.c \
@@ -140,24 +120,14 @@ ARCH_C_SRCS = \
     fault.c \
     time.c
 
-ARCH_S_SRCS = cpu_support.S
-
-# Relay-side sha256 implementation, pulled in so net_relay.c can compute
-# HMAC-SHA256 for Phase B v2. Single canonical source in relay/.
 RELAY_DIR    = $(ROOT)/relay
 RELAY_C_SRCS = sha256.c
 RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 
-# arch/linux/ (cross-arch hosted) sources — shared with boot/linux
-# pfs_durable.c: G24 P0 durable backend (block + ref persistence to
-# $PKERNEL_PFS_DIR). Hosted-only; bare-metal targets keep the memory store.
-# pfs_ark.c: wave-13 white-pearl — ARK (arch/common/arkfs.c) as p-fs's
-# durable backend, selected by PKERNEL_PFS_BACKEND=ark. Hosted-only.
 ARCH_SHARED_C_SRCS = selfc.c selfc_proc.c pfs_durable.c pfs_ark.c sign_entropy.c console_ring.c node_id.c
 ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
 
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o) $(RELAY_OBJS) \
-            $(ARCH_SHARED_OBJS)
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(RELAY_OBJS) $(ARCH_SHARED_OBJS)
 
 # ---- arch/common sources (portable AI + distributed layer) -----------
 COMMON_C_SRCS = \
@@ -226,36 +196,18 @@ COMMON_C_SRCS = \
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
-# ---- arch/common/llm sources (self-built SmolLM2 inference engine) ----
-# Mirror of boot/linux/Makefile (kept verbatim so the two host minds are
-# identical). HOST/Android tier: these TUs use the REAL system libc
-# (malloc/calloc/mmap/<stdint.h>/<stdio.h>), so they compile with $(CFLAGS)
-# (system headers), NOT $(KERNEL_CFLAGS) (T-Kernel placeholder libc). They are
-# a SEPARATE group from COMMON_C_SRCS (different libc tier; no place on bare
-# metal). check_parity.sh compares the NAMED lists only — this new variable is
-# not one of them, so it creates no Android-CMake drift; the host-vs-host check
-# likewise only diffs the named lists, but we keep this list identical to
-# boot/linux anyway.
-#
-# Step ③ (wave-student-in-kernel): student.c (NS-1 Cradle baby) + its bridge
-# student_shell.c build IN the hosted kernel — the RESIDENT, PERSISTED student.
-# Same host-libc tier + LLM_CFLAGS as the engine; NOT on bare metal (stays out
-# of COMMON_C_SRCS). Mirror of boot/linux/Makefile (kept verbatim).
+# ---- arch/common/llm sources（自己ビルド SmolLM2 推論エンジン） -------
 LLM_DIR     = $(ARCH_COMMON)/llm
 LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
               llm_shell.c student.c dev_capacity.c student_shell.c cradle.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
-# Own flag set (mirror of boot/linux): the engine includes ONLY system libc +
-# its sibling headers, and must NOT see the kernel include/ dirs (include/
-# stdint.h typedefs int64_t as `long long`, conflicting with glibc's `long`
-# once <stdlib.h> pulls bits/stdint-intn.h — the LP64 typedef trap). Drop all
-# kernel -I, keep -O1 -ffp-contract=off (one math). Matches run_forward.sh.
 LLM_CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
               -fno-stack-protector -fno-common -std=gnu11 \
-              -ffp-contract=off -I$(LLM_DIR)
+              -ffp-contract=off -MMD -MP -I$(LLM_DIR)
 
-# ---- kernel/common sources -------------------------------------------
-KERNEL_SRCS = \
+# ---- μT-Kernel 3.0 core sources ---------------------------------------
+# コア本体（kernel/tkernel）
+MTK3_KNL_SRCS = \
     task.c \
     task_manage.c \
     task_sync.c \
@@ -271,36 +223,47 @@ KERNEL_SRCS = \
     mempool.c \
     memory.c \
     misc_calls.c \
-    tkstart.c \
-    bitop.c \
-    fastlock.c \
-    fastmlock.c \
-    klock.c \
     objname.c \
     rendezvous.c \
-    subsystem.c \
-    tm_putchar.c \
-    tm_putstring.c \
-    tm_printf.c \
-    tm_monitor.c \
-    tm_exit.c \
-    tm_getchar.c \
-    tm_getline.c \
-    tm_command.c
+    klock.c \
+    cpuctl.c \
+    int.c \
+    power.c \
+    device.c \
+    deviceio.c \
+    tkinit.c
 
-KERNEL_OBJS = $(KERNEL_SRCS:.c=.o)
+MTK3_KNL_OBJS = $(MTK3_KNL_SRCS:.c=.o)
+
+# 起動・初期タスク・標準ライブラリ・T-Monitor 互換ライブラリ
+MTK3_MISC_OBJS = sysinit.o inittask.o tstdlib_string.o tstdlib_bitop.o \
+                 libtm.o libtm_printf.o tm_com.o
+
+# ターゲット依存部（Linux x86-64 ポート）
+MTK3_SYSDEP_SRCS = cpu_cntl.c interrupt.c hw_setting.c devinit.c power_save.c
+MTK3_SYSDEP_OBJS = $(MTK3_SYSDEP_SRCS:.c=.o) dispatch.o
+
+MTK3_OBJS = $(MTK3_KNL_OBJS) $(MTK3_MISC_OBJS) $(MTK3_SYSDEP_OBJS)
 
 # ---- libc string sources ---------------------------------------------
-LIBSTR_DIR  = $(ROOT)/lib/libc/string
-LIBSTR_SRCS = memset.c memcpy.c memmove.c memcmp.c \
-              strlen.c strcpy.c strncpy.c strcmp.c strncmp.c
-LIBSTR_OBJS = $(LIBSTR_SRCS:.c=.o)
+# 2.0 版はベアメタル互換のため lib/libc/string を自前リンクしていたが、
+# hosted の mtk3 ビルドでは glibc（-static）が memset 等を提供するため
+# 不要。プレースホルダヘッダ（include/lib/libc）が 2.0 の stdtype.h に
+# 依存している問題も同時に回避できる。
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(KERNEL_OBJS) $(LIBSTR_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(MTK3_OBJS)
 
 TARGET = p-kernel
 
-KERNEL_CFLAGS = $(CFLAGS) -I$(INC_LIB)/libc
+# アプリ層カーネル隣接 TU（2.0 版の KERNEL_CFLAGS 相当）
+# 2.0 版はベアメタル互換のため include/lib/libc（プレースホルダ libc
+# ヘッダ）を与えていたが、これは 2.0 の stdtype.h に依存する。hosted の
+# mtk3 ビルドではシステム libc ヘッダをそのまま使う（arch/linux 層と同じ）。
+KERNEL_CFLAGS = $(CFLAGS)
+
+# μT-Kernel 3.0 コア用: sysinit の main() を knl_main() に改名して
+# boot/linux_x86_64/main_mtk3.c の main() と共存させる
+MTK3_CFLAGS = $(CFLAGS) -DADD_PREFIX_KNL_TO_GLOBAL_NAME
 
 # ---- Build rules -----------------------------------------------------
 all: $(TARGET)
@@ -309,66 +272,76 @@ $(TARGET): $(ALL_OBJS)
 	$(CC) -o $@ $(ALL_OBJS) $(LDFLAGS)
 	@echo "[OK] $(TARGET) built ($$(stat -c %s $(TARGET)) bytes)"
 
-main.o: main.c
+main_mtk3.o: main_mtk3.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(ARCH_C_SRCS:.c=.o): %.o: $(ARCH_X86_64)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# arch/linux/ cross-arch hosted C sources (selfc)
 $(ARCH_SHARED_OBJS): %.o: $(ARCH_LINUX)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-cpu_support.o: $(ARCH_X86_64)/cpu_support.S
-	$(CC) $(ASFLAGS) -c -o $@ $<
-
-# relay/sha256.c — same CFLAGS as arch/linux C sources
 $(RELAY_OBJS): %.o: $(RELAY_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(KERNEL_OBJS): %.o: $(KERNEL)/%.c
-	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+# ---- μT-Kernel 3.0 core build rules ----
+$(MTK3_KNL_OBJS): %.o: $(MTK3_KNL)/%.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
 
+sysinit.o: $(MTK3)/kernel/sysinit/sysinit.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+inittask.o: $(MTK3)/kernel/inittask/inittask.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tstdlib_string.o: $(MTK3)/kernel/tstdlib/string.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tstdlib_bitop.o: $(MTK3)/kernel/tstdlib/bitop.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+libtm.o: $(MTK3_LIBTM)/libtm.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+libtm_printf.o: $(MTK3_LIBTM)/libtm_printf.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+tm_com.o: $(MTK3_LIBTM)/sysdepend/linux_x86_64/tm_com.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+$(MTK3_SYSDEP_SRCS:.c=.o): %.o: $(MTK3_SYSDEP)/%.c
+	$(CC) $(MTK3_CFLAGS) -c -o $@ $<
+
+dispatch.o: $(MTK3_SYSDEP)/dispatch.S
+	$(CC) $(ASFLAGS) -c -o $@ $<
+
+# ---- アプリ層（2.0 版と同一構成） ----
 $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
-# ss6_live.c (SS-6 LIVE remote-expert transport, wave-ss6-live) is a KERNEL-tier
-# TU (udp/region/degrade/drpc + T-Kernel syscalls) that ALSO needs the LLM
-# student.h POD struct (st_model) + st_expert_forward_ref/st_set_remote_expert.
-# Add -I$(LLM_DIR) for JUST this object so "student.h" resolves; it stays on
-# the KERNEL_CFLAGS tier (kernel <stdint.h>) — the struct is LP64-safe (int/
-# float/void* only), so no typedef-trap. Hosted-only (NOT on bare metal).
 ss6_live.o: KERNEL_CFLAGS += -I$(LLM_DIR)
 
-# arch/common/llm — self-built SmolLM2 engine; HOST libc tier with its OWN
-# flag set ($(LLM_CFLAGS)): no kernel -I dirs (system <stdint.h> wins, see the
-# LP64 typedef trap above), same -O1 -ffp-contract=off discipline.
 $(LLM_OBJS): %.o: $(LLM_DIR)/%.c
 	$(CC) $(LLM_CFLAGS) -c -o $@ $<
 
-# galaxy v1 (galaxy.md D3): build-time HTML -> C array so the embedded
-# page can never drift from source. galaxy.o (the only TU that #includes
-# galaxy_page.h) depends on it.
 $(GALAXY_PAGE): $(GALAXY_HTML) $(GALAXY_GEN)
 	python3 $(GALAXY_GEN) $(GALAXY_HTML) $@
 
 galaxy.o: $(GALAXY_PAGE)
 
-# ark-profile v1 + i18n (ark-profile.md §7.1/§7.5): the manifesto TABLE
-# (N per-language byte arrays + manifesto_table[]). Hosted embeds the FULL
-# set. ark_profile.o and galaxy.o are the only TUs that #include it.
 $(MANIFESTO_PAGE): $(MANIFESTO_SRCS) $(MANIFESTO_GEN)
 	python3 $(MANIFESTO_GEN) $@ $(MANIFESTO_SET)
 
 ark_profile.o galaxy.o: $(MANIFESTO_PAGE)
 
-$(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
-	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+# 自動生成されたヘッダ依存（-MMD）の取り込み
+-include $(wildcard *.d)
 
 run: $(TARGET)
 	$(RUN) ./$(TARGET)
 
 clean:
-	rm -f $(ALL_OBJS) $(TARGET) $(GALAXY_PAGE) $(MANIFESTO_PAGE)
+	rm -f *.o *.d $(TARGET) $(GALAXY_PAGE) $(MANIFESTO_PAGE)
 
 .PHONY: all run clean

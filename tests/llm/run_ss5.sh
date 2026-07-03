@@ -42,7 +42,7 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 CC="${CC:-cc}"
-CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla"
+CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla -D_APP_AARCH64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ -D_LINUX_AARCH64_"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -54,8 +54,12 @@ INC="-I$ROOT/arch/linux/aarch64/include \
      -I$ROOT/arch/common/include/lp64 \
      -I$ROOT/arch/common/include \
      -I$ROOT/relay \
-     -I$ROOT/include/kernel/tkernel \
-     -I$ROOT/include"
+     -I$ROOT/kernel/mtkernel3/kernel/knlinc \
+     -I$ROOT/kernel/mtkernel3/kernel/tkernel \
+     -I$ROOT/kernel/mtkernel3/include \
+     -I$ROOT/kernel/mtkernel3/include/tm \
+     -I$ROOT/kernel/mtkernel3/include/compat \
+     -I$ROOT/kernel/mtkernel3/config"
 
 SRC_PLACE="$ROOT/arch/common/placement.c"
 SRC_LOOKUP="$ROOT/arch/common/lookup.c"

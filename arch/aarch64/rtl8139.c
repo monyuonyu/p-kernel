@@ -324,7 +324,7 @@ ER rtl8139_init(ID sem)
     wrw(R_IMR, (UH)(ISR_ROK | ISR_TOK));
 
     /* Hook into _vec_el1_irq via knl_intvec[], then unmask in GICD. */
-    knl_define_inthdr((INT)rtl_intid, (FP)rtl_irq_handler);
+    knl_define_inthdr((INT)rtl_intid, 0, (FP)rtl_irq_handler);
     gic_enable_irq(rtl_intid);
 
     /* Multicast: accept all */

@@ -2,7 +2,13 @@
 # boot/x86 + kernel/common + arch/x86 を統合してQEMU起動イメージを生成
 
 # ツールチェイン (上書き可: make CROSS=<prefix>-)
-CROSS  ?= i686-linux-gnu-
+# i686 クロスがあればそれを使い、無ければネイティブ gcc -m32
+# （CI は gcc-i686-linux-gnu を導入、ローカルは multilib で可）
+ifneq ($(shell command -v i686-linux-gnu-gcc 2>/dev/null),)
+CROSS ?= i686-linux-gnu-
+else
+CROSS ?=
+endif
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
 LD      = $(CROSS)ld
@@ -19,8 +25,10 @@ ARCH_COMMON    = $(COMMON)
 MANIFESTO_GEN  = $(ROOT)/tools/galaxy/gen_manifestos.py
 include $(COMMON)/web/manifesto_langs.mk
 MANIFESTO_SET  = $(MANIFESTO_LANGS_LEAN)
-KERNEL  = $(ROOT)/kernel/common
-INC_TK  = $(ROOT)/include/kernel/tkernel
+MTK3        = $(ROOT)/kernel/mtkernel3
+MTK3_KNL    = $(MTK3)/kernel/tkernel
+MTK3_SYSDEP = $(MTK3)/kernel/sysdepend/x86_pc
+MTK3_LIBTM  = $(MTK3)/lib/libtm
 INC_LIB = $(ROOT)/include/lib
 INC_TOP = $(ROOT)/include
 
@@ -31,7 +39,12 @@ INCDIRS = \
     -I$(ARCH)/include \
     -I$(COMMON)/include \
     -I$(ROOT)/relay \
-    -I$(INC_TK) \
+    -I$(MTK3)/kernel/knlinc \
+    -I$(MTK3)/kernel/tkernel \
+    -I$(MTK3)/include \
+    -I$(MTK3)/include/tm \
+    -I$(MTK3)/include/compat \
+    -I$(MTK3)/config \
     -I$(INC_TOP) \
     -I$(INC_LIB)/libc \
     -I.
@@ -46,8 +59,8 @@ EXTRA_CFLAGS ?=
 #   one math" (guards the wave-49 salty-bug class; see `dtr fpdet`).
 CFLAGS  = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
           -fcf-protection=none -O1 -m32 -std=gnu11 \
-          -ffp-contract=off \
-          -D_APP_X86_ \
+          -ffp-contract=off -MMD -MP \
+          -D_APP_X86_ -D_X86_PC_ \
           $(INCDIRS) $(EXTRA_CFLAGS)
 
 LIBGCC  = $(shell $(CC) -m32 -print-libgcc-file-name)
@@ -56,19 +69,15 @@ LDFLAGS = -nostdlib -static -T linker.ld -m elf_i386
 # -------------------------------------------------------------------
 # boot/x86 ソース
 # -------------------------------------------------------------------
-BOOT_SRCS_C = main.c idt.c memory.c pic.c timer.c
+BOOT_SRCS_C = main_mtk3.c idt.c memory.c pic.c timer.c
 BOOT_SRCS_S = start.S isr.S
 # 名前衝突する memory.o / timer.o は boot_ プレフィックス付きオブジェクトで区別
-BOOT_OBJS   = main.o idt.o boot_memory.o pic.o boot_timer.o start.o isr.o
+BOOT_OBJS   = main_mtk3.o idt.o boot_memory.o pic.o boot_timer.o start.o isr.o
 
 # -------------------------------------------------------------------
 # arch/x86 ソース (x86 固有: CPU/PIC/PIT/MMU/PIO/ドライバ実装)
 # -------------------------------------------------------------------
 ARCH_C_SRCS = \
-    cpu_init.c \
-    tkdev_init.c \
-    inittask_def.c \
-    inittask_main.c \
     usermain.c \
     selftest.c \
     kserve.c \
@@ -95,9 +104,7 @@ ARCH_C_SRCS = \
     paging.c \
     sign_entropy.c
 
-ARCH_S_SRCS = cpu_support.S
-
-ARCH_OBJS = $(ARCH_C_SRCS:.c=.o) $(ARCH_S_SRCS:.S=.o)
+ARCH_OBJS = $(ARCH_C_SRCS:.c=.o)
 
 # -------------------------------------------------------------------
 # arch/common ソース (分散層・kloader: 全 arch 共通)
@@ -159,9 +166,9 @@ COMMON_C_SRCS = \
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
 # -------------------------------------------------------------------
-# kernel/common ソース (T-Kernel コア)
+# kernel/mtkernel3 ソース (μT-Kernel 3.0 コア)
 # -------------------------------------------------------------------
-KERNEL_SRCS = \
+MTK3_KNL_SRCS = \
     task.c \
     task_manage.c \
     task_sync.c \
@@ -177,24 +184,28 @@ KERNEL_SRCS = \
     mempool.c \
     memory.c \
     misc_calls.c \
-    tkstart.c \
-    bitop.c \
-    fastlock.c \
-    fastmlock.c \
-    klock.c \
     objname.c \
     rendezvous.c \
-    subsystem.c \
-    tm_putchar.c \
-    tm_putstring.c \
-    tm_printf.c \
-    tm_monitor.c \
-    tm_exit.c \
-    tm_getchar.c \
-    tm_getline.c \
-    tm_command.c
+    klock.c \
+    cpuctl.c \
+    int.c \
+    power.c \
+    device.c \
+    deviceio.c \
+    tkinit.c \
+    subsystem.c
 
-KERNEL_OBJS = $(KERNEL_SRCS:.c=.o)
+MTK3_KNL_OBJS = $(MTK3_KNL_SRCS:.c=.o)
+
+# 起動・初期タスク・標準ライブラリ・T-Monitor 互換ライブラリ
+MTK3_MISC_OBJS = sysinit.o inittask.o tstdlib_string.o tstdlib_bitop.o \
+                 libtm.o libtm_printf.o tm_com.o
+
+# ターゲット依存部（x86 PC ベアメタルポート）
+MTK3_SYSDEP_SRCS = cpu_cntl.c interrupt.c hw_setting.c devinit.c power_save.c
+MTK3_SYSDEP_OBJS = $(MTK3_SYSDEP_SRCS:.c=.o) dispatch.o
+
+KERNEL_OBJS = $(MTK3_KNL_OBJS) $(MTK3_MISC_OBJS) $(MTK3_SYSDEP_OBJS)
 
 # -------------------------------------------------------------------
 # lib/libc/string ソース (memset, strncpy など)
@@ -213,7 +224,7 @@ RELAY_DIR    = $(ROOT)/relay
 RELAY_OBJS   = sha256.o
 RELAY_CFLAGS = -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic \
                -fcf-protection=none -O1 -m32 -std=gnu11 \
-               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(INC_TK)
+               -I$(RELAY_DIR) -I$(INC_LIB)/libc -I$(MTK3)/include/compat
 
 # student_stub.o — WEAK no-op fallbacks for the resident-baby ABI
 # (student_dmn_consolidate / student_dmn_heldout_loss / student_chat_generate).
@@ -265,7 +276,7 @@ $(TARGET): $(ALL_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
 
 # boot/x86 C ソース (カレントディレクトリ) - 名前衝突回避のため個別ルール
-main.o:        main.c;        $(CC) $(CFLAGS) -c $< -o $@
+main_mtk3.o:   main_mtk3.c;   $(CC) $(CFLAGS) -c $< -o $@
 idt.o:         idt.c;         $(CC) $(CFLAGS) -c $< -o $@
 boot_memory.o: memory.c;      $(CC) $(CFLAGS) -c $< -o $@
 pic.o:         pic.c;         $(CC) $(CFLAGS) -c $< -o $@
@@ -298,9 +309,38 @@ $(COMMON_OBJS): %.o: $(COMMON)/%.c
 $(STUDENT_STUB_OBJ): %.o: $(COMMON)/llm/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# kernel/common C ソース
-$(KERNEL_OBJS): %.o: $(KERNEL)/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+# μT-Kernel 3.0 コア（sysinit の main() は knl_main() に改名）
+MTK3_CFLAGS = $(CFLAGS) -DADD_PREFIX_KNL_TO_GLOBAL_NAME
+
+$(MTK3_KNL_OBJS): %.o: $(MTK3_KNL)/%.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+sysinit.o: $(MTK3)/kernel/sysinit/sysinit.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+inittask.o: $(MTK3)/kernel/inittask/inittask.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+tstdlib_string.o: $(MTK3)/kernel/tstdlib/string.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+tstdlib_bitop.o: $(MTK3)/kernel/tstdlib/bitop.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+libtm.o: $(MTK3_LIBTM)/libtm.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+libtm_printf.o: $(MTK3_LIBTM)/libtm_printf.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+tm_com.o: $(MTK3_LIBTM)/sysdepend/x86_pc/tm_com.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+$(MTK3_SYSDEP_SRCS:.c=.o): %.o: $(MTK3_SYSDEP)/%.c
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
+
+dispatch.o: $(MTK3_SYSDEP)/dispatch.S
+	$(CC) $(MTK3_CFLAGS) -c $< -o $@
 
 # lib/libc/string C ソース
 $(LIBSTR_OBJS): %.o: $(LIBSTR_DIR)/%.c
@@ -526,3 +566,4 @@ clean-disk:
         run-kloader-node0 run-kloader-node1 run-kloader-node2 \
         ark-smoke-build run-ark-smoke \
         debug-build gdb gdb-bare
+-include $(wildcard *.d)
