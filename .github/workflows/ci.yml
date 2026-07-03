@@ -1078,8 +1078,11 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (aarch64 755a20fa…, x86
-    # 4064d8a9…) is produced by the sandbox gcc 15.2.0; the ubuntu-latest CI
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (μT-Kernel 3.0 core since the
+    # 2026-07-03 migration: aarch64 5e42f853…, x86 a52c8701…; the pre-migration
+    # micro T-Kernel 2.0 crown was aarch64 755a20fa…, x86 4064d8a9… — see the
+    # CROWN RE-BLESS entry in docs/audit-trail.md) is produced by the sandbox
+    # gcc 15.2.0; the ubuntu-latest CI
     # runner ships a different gcc (13/14) and emits different — but equally
     # valid — machine code, so an absolute-hash assert is RED on every commit in
     # CI for a toolchain reason, not a real drift. So this gate enforces the REAL

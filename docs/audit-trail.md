@@ -1782,3 +1782,29 @@ N-4 cross-host deferred to the ThinkPad).
   `wait_for [teach-consolidated] (PASS|FAIL)` is STALE-SATISFIABLE (a pre-kill line already matches -> wait returns
   immediately; the `grep 'ask "sun"' | tail -1` can read pre-kill data => latent FALSE-PASS). Fix = match a fresh
   post-kill-specific marker like 42_one_mind does. Does not block; tracked.
+- CROWN RE-BLESS — μT-Kernel 3.0 core migration (2026-07-03, PR #9 + #10, migration merge commit
+  bbc0d216, FF-landed on master). The kernel core was INTENTIONALLY swapped micro T-Kernel 2.0 →
+  μT-Kernel 3.0 (IEEE 2050-2018 / T-License 2.2), so the bare-metal `.text` LEGITIMATELY changes.
+  This is the reviewed, documented re-baseline the `crown-text-identity` gate's own procedure calls
+  for; the gate is NOT weakened. NEW dev crown `.text` sha256 (sandbox gcc 15.2.0, the per-wave audit
+  anchor — REPRODUCED byte-identical by FOUR independent builds: Phase-A build-verify, Phase-C
+  integration, Phase-D independent audit, and the commander's own clean build on master before push):
+    aarch64  5e42f8532be1852d57f86506738946a21bce69048b9b1d4b988e282305e7fda0   (was 755a20fa…c8a130513)
+    x86      a52c8701047ef639858b76ea3f55a8c216acfe12805d2fd268de2f6e4663660a   (was 4064d8a9…7ee0413)
+  (NOTE: x86 must be built after `make -C boot/x86 clean` — a stale 2.0-core incremental build yields a
+  DIFFERENT .text; the crown-identity CI job cleans, and so must any manual re-bless check.) The 3 build
+  fixes carried in the merge (IMPORT knl_startup_hw ×2 hosted mains; #include "task.h" in the vendored
+  timer.c; ring3 userland CORE_INC → mtkernel3 include set + -D_X86_PC_) are prototype/include/Makefile
+  only → ZERO codegen change, so these crown values equal a properly-prototyped build. VERIFICATION:
+  merge textually clean (arch/common/ — the whole distributed brain — untouched; pfs_repl.c byte-identical
+  to pre-merge master with pathw reverted / Hunk A held); all 4 targets build canonically on gcc 15 (no
+  -Wno-error); all boot to shell; x86 self-test 13/13; the 3.0 scheduler/time syscalls the brain relies on
+  (tk_chg_pri / tk_rot_rdq(TPRI_RUN) / tk_dly_tsk / SCHED_RR tick / DI-EI safe-point shadow / SYSTIM
+  {W hi;UW lo} 32-bit) are standard-correct with file:line evidence; the full ThinkPad live suite is GREEN
+  on the 3.0 core (PR #10 run 28686440485: 19 success / 2 failure = crown drift [this, intentional] +
+  smp-autodetect [advisory, pre-existing ubuntu qemu env]). Deletions (329) = old 2.0 core + unused
+  rl78/h8300 MCU reference ports; grep of the deletion set for moe|dtr|dmn|swim|pfs|galaxy|ark|… = empty.
+  FOLLOW-UPS (non-blocking, tracked): x86 interactive-shell banner still prints "micro T-Kernel 2.0"
+  (boot banner correct); rl78/h8300 residue + dead poc_*.c prune; smp-autodetect -nic none fix;
+  41_shared_mind residual pre-kill stale-wait; one_mind Path-W full transport fix (Hunk A held, low
+  urgency — it PASSED on the ThinkPad).
