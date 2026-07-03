@@ -20,6 +20,7 @@
  */
 
 #include "kernel.h"
+#include "task.h"		/* p-kernel 拡張: knl_rotate_ready_queue_run() の宣言 */
 #include "timer.h"
 #include "../sysdepend/sys_timer.h"
 

@@ -25,6 +25,9 @@
 IMPORT void sio_init(void);
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
+/* システムメモリ領域の設定（hw_setting.c, ADD_PREFIX_KNL_TO_GLOBAL_NAME 有効時） */
+IMPORT void knl_startup_hw(void);
+
 /* μT-Kernel 3.0 起動（sysinit.c, ADD_PREFIX_KNL_TO_GLOBAL_NAME 有効時） */
 IMPORT INT knl_main(void);
 
