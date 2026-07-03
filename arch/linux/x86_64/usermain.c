@@ -276,7 +276,7 @@ static void cmd_ver(void)
 {
     print("p-kernel UMP — User-Mode p-kernel\r\n");
     print("  host arch    : x86_64-linux\r\n");
-    print("  T-Kernel core: micro T-Kernel 2.0 + p-kernel layers\r\n");
+    print("  T-Kernel core: microT-Kernel 3.00 + p-kernel layers\r\n");
     print("  context-switch: raw asm (cooperative)\r\n");
     print("  IRQ source   : SIGALRM @ 100 Hz\r\n");
 }
