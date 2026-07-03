@@ -60,6 +60,7 @@
 | [[genome.md]] | 空の装甲板にフル細胞を発芽させる自己再生（survival §3, wave-9） | L3 | `14_genome` | working |
 | [[interoception.md]] | ノードの「痛み」を一本の `S_n` バスに束ねる（Slice-1 SHIPPED, Slice-2 設計） | L3 | `[survival-l0]` STATE bus（Slice-2 open） | working |
 | [[survival-g38-impl-plan.md]] | survival §7 / G38 分散ゲーティング配線の実装計画（cert-first） | L3 | `[g38-*]` (realized) | designing |
+| [[survival-recip.md]] | survival §7 受援側 recip 互恵ゲート（gacc の対；フリーライダー抑止・弱者包摂 C2） | L3 | `[recip-*]` (planned) | designing（哲学判断待ち） |
 
 ## net / distributed — ネット・分散（中央なしで「1つの脳」を跨ノードに）
 
