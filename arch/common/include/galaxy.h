@@ -74,6 +74,14 @@
                              /* sleep. a = key, b = (v_old<<8)|v_new. LOCAL revise */
                              /* (Site 1): src = me, dst = NONE. REMOTE revise      */
                              /* (Site 2): src = origin (the reviser), dst = me.    */
+#define EV_FORGET       19   /* LM-13 (living-mind-lm13-forgetting.md): a fact    */
+                             /* was EVICTED from the bounded R3 queue by the       */
+                             /* min-EARNED-salience selector (the LM-5 FIFO's      */
+                             /* successor) — chosen forgetting, its weight trace   */
+                             /* may now decay. src = me, dst = NONE; a = evicted    */
+                             /* fact seq, b = its salience (1 = default/unearned,   */
+                             /* >1 = earned but still the least-salient). ONE site: */
+                             /* the r3_fact_learn eviction branch.                  */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

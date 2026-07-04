@@ -1671,10 +1671,13 @@ void r3_migrate_forward_test(void)
  *  rw[] (mirrored, NOT called: dtr_train_batch/gl_merge/LM_ENGRAM are
  *  the dtr sensor body, the wrong network — the V.0 correction).
  *
- *  Queue: bounded (R3_FQ_MAX), FIFO eviction of the oldest RETAINED
- *  fact with PRINTED forgetting (DECISION 4); a PENDING fact is never
- *  evicted. salience is reserved at 1 (no earned accrual source for
- *  conversational facts yet — VI.3).
+ *  Queue: bounded (R3_FQ_MAX), min-EARNED-salience eviction of a RETAINED
+ *  fact (LM-13; the LM-5 FIFO's successor) with PRINTED forgetting
+ *  (DECISION 4); a PENDING fact is never evicted. salience defaults to 1
+ *  and is ACCRUED by `mind ask` (r3_fact_touch) — so with nothing asked
+ *  the min-salience selector degenerates BYTE-IDENTICALLY to the oldest-
+ *  first FIFO (min seq). "LM-1 cured un-chosen forgetting; LM-13 makes
+ *  chosen forgetting wise" (living-mind-lm13-forgetting.md).
  * ------------------------------------------------------------------ */
 
 #define R3_NFACTS          4                    /* F fact-sets (DECISION 2)   */
@@ -1682,6 +1685,8 @@ void r3_migrate_forward_test(void)
  * the widened vocab, so F=4 facts x 2 keys = 8 working keys (unchanged). */
 #define R3_FKEYS           (R_CERTKEYS / R3_NFACTS) /* keys per fact = 2      */
 #define R3_FQ_MAX          4    /* fact-queue budget (printed; B_RING honesty) */
+#define R3_SAL_CAP         8    /* LM-13: earned-salience clamp; `mind ask`
+                                 * accrues +1/ask up to this (r3_fact_touch)  */
 #define R3_IDLE_STEPS      256  /* SGD steps per bounded round (4x H_PER_ROUND)*/
 #define R3_SLEEPS_PER_FACT 10   /* rounds to flip PENDING->RETAINED; total per
                                  * fact = 2560 = the H_ROUNDS*H_PER_ROUND
@@ -1710,7 +1715,8 @@ typedef struct {
     UB n;               /* bindings in this fact (<= R_NPAIR)          */
     UB state;           /* R3F_PENDING -> R3F_RETAINED                 */
     UB rounds_done;     /* idle rounds spent on this fact              */
-    UB salience;        /* reserved, default 1 (VI.3)                  */
+    UB salience;        /* LM-13: earned importance, default 1, clamp  *
+                         * R3_SAL_CAP; `mind ask` accrues (r3_fact_touch)*/
     UW seq;             /* arrival order (the autobiographical when)   */
 } R3_FACT;
 _Static_assert(sizeof(R3_FACT) == 24, "R3_FACT fixed size");
@@ -1727,6 +1733,10 @@ static UW r3_s_rng  = S_SEED_TRAIN;       /* dedicated arrangement stream for
 static UW s_steps_last_round = 0;
 static UW s_evictions        = 0;
 static UB s_occ_max          = 0;
+/* LM-13 [forget-onesite]: every r3_fact_touch accrual; proves salience
+ * accrues ONLY at the one site (evals run m_masked_vote/s_eval_fact many
+ * times and must add nothing). */
+static UW s_touches          = 0;
 
 /* The cert's F=4 disjoint fact-sets: K_f = {2f, 2f+1}; the union oracle
  * SDICT is a fixed 8-binding table using all four classes, so the union
@@ -1830,24 +1840,39 @@ INT r3_fact_learn(const UB *keys, const UB *vals, INT n)
 {
     if (n < 1 || n > R_NPAIR) return -1;   /* LM-8: <= R3_FACT capacity */
 
-    /* budget: FIFO eviction of the OLDEST RETAINED fact (DECISION 4).
-     * A PENDING fact is never evicted; an all-pending full queue
-     * refuses the arrival LOUDLY rather than dropping it silently. */
+    /* budget: LM-13 min-EARNED-salience eviction of a RETAINED fact,
+     * tie-break OLDEST (min seq). salience defaults to 1 everywhere, so with
+     * nothing asked (zero earned salience) this picks the min-seq retained
+     * fact — BYTE-IDENTICAL to the LM-5 oldest-first FIFO (the no-regress
+     * hinge). `mind ask` (r3_fact_touch) raises a fact's salience, so a fact
+     * the owner keeps asking about survives while a less-salient one leaves.
+     * A PENDING fact is never evicted; an all-pending full queue refuses the
+     * arrival LOUDLY rather than dropping it silently. */
     if (r3_fq_n >= R3_FQ_MAX) {
-        INT vi = -1; UW vseq = 0xFFFFFFFFUL;
-        for (INT i = 0; i < (INT)r3_fq_n; i++)
-            if (r3_fq[i].state == R3F_RETAINED && r3_fq[i].seq < vseq) {
-                vi = i; vseq = r3_fq[i].seq;
+        INT vi = -1; UB vsal = 0xFF; UW vseq = 0xFFFFFFFFUL;
+        for (INT i = 0; i < (INT)r3_fq_n; i++) {
+            if (r3_fq[i].state != R3F_RETAINED) continue;
+            if (r3_fq[i].salience < vsal ||
+                (r3_fq[i].salience == vsal && r3_fq[i].seq < vseq)) {
+                vi = i; vsal = r3_fq[i].salience; vseq = r3_fq[i].seq;
             }
+        }
         if (vi < 0) {
             r_puts("[r3-fq] queue full of PENDING facts; arrival refused\r\n");
             return -1;
         }
         r_puts("[r3-fq] EVICT fact seq=");
         r_putdec(r3_fq[vi].seq);
-        r_puts(" (FIFO, budget R3_FQ_MAX=");
+        r_puts(" sal="); r_putdec((UW)r3_fq[vi].salience);
+        r_puts((r3_fq[vi].salience > 1) ? " (earned" : " (default");
+        r_puts(", min-salience tie->oldest, budget R3_FQ_MAX=");
         r_putdec(R3_FQ_MAX);
         r_puts("): no longer rehearsed; its weight trace may decay — honest forgetting\r\n");
+        /* galaxy.md: chosen forgetting is a REAL event — the evicted star's
+         * fact-particle sinks (a = seq, b = its salience). No-op inline on
+         * bare-metal (galaxy.h), exactly like EV_TEACH/EV_ASK/EV_REVISE. */
+        galaxy_emit(EV_FORGET, drpc_my_node, GALAXY_NODE_NONE,
+                    (UH)r3_fq[vi].seq, (UH)r3_fq[vi].salience);
         s_evictions++;
         for (INT i = vi; i < (INT)r3_fq_n - 1; i++) r3_fq[i] = r3_fq[i+1];
         r3_fq_n--;
@@ -1981,6 +2006,7 @@ static void s_fq_reset(void)
 {
     r3_fq_n = 0; r3_fq_seq = 0; r3_s_rng = S_SEED_TRAIN;
     s_steps_last_round = 0; s_evictions = 0; s_occ_max = 0;
+    s_touches = 0;                        /* LM-13: fresh accrual count */
 }
 
 /* arrive cert fact f through the LIVE API; scrambled!=0 shifts every
@@ -2620,6 +2646,24 @@ static INT m_find_key(INT k, INT *bind)
     return -1;
 }
 
+/* LM-13 (living-mind-lm13-forgetting.md) — the ONE earned-salience accrual.
+ * Asking a queued fact raises its salience by 1, clamped to R3_SAL_CAP, so it
+ * resists the min-salience eviction in r3_fact_learn. Returns the NEW
+ * salience, or -1 if k is not bound in the queue. s_touches counts EVERY
+ * accrual (including clamped ones) for [forget-onesite]. LOCAL only: salience
+ * is never read/written on the wire — mind_net_task must NOT call this
+ * (the LM-11 F-LOCAL discipline). The SOLE production caller is the m_ask
+ * queue-hit branch; the cert calls it directly. This is a PURE read of the
+ * frozen weights' point of view — it touches neither rw[] nor the RNG. */
+INT r3_fact_touch(INT k)
+{
+    INT bind, fi = m_find_key(k, &bind);
+    if (fi < 0) return -1;
+    if (r3_fq[fi].salience < R3_SAL_CAP) r3_fq[fi].salience++;
+    s_touches++;
+    return (INT)r3_fq[fi].salience;
+}
+
 /* ================================================================== *
  *  LM-7 (living-mind.md Part VIII) — the shared mind                    *
  *                                                                       *
@@ -2803,6 +2847,9 @@ INT r3_fact_revise(UB k, UB v_new)
     f->state       = R3F_PENDING;
     f->rounds_done = 0;
     f->seq         = ++r3_fq_seq;          /* the new "when" (autobiography) */
+    /* LM-13: f->salience is DELIBERATELY untouched — a corrected fact keeps
+     * the earned importance it accrued while it was believed. (The `seq`
+     * refresh above still moves it to the tail for the FIFO tie-break.) */
 
     /* Site 3 (the stale re-drive trap): if THIS node is still re-driving an
      * OLD local teach for k (mt_pub_last), a late region joiner would be
@@ -2964,6 +3011,8 @@ static void m_status(void)
         r_puts(" state="); r_puts(r3_fq[i].state <= 1 ? sname[r3_fq[i].state] : "?");
         r_puts(" rounds="); r_putdec(r3_fq[i].rounds_done);
         r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT);
+        r_puts(" sal="); r_putdec((UW)r3_fq[i].salience);   /* LM-13 earned */
+        r_puts("/"); r_putdec(R3_SAL_CAP);
         r_puts("\r\n");
     }
     r_puts("[mind] NOTE: cert verbs (r3/handoff test|stream) reset rw[] + this queue — they erase live teaching (VII.0 #5)\r\n");
@@ -3145,6 +3194,15 @@ static void m_ask(const UB *p, const UB *end)
         r_puts("[mind]   key not in the live queue — answer is the substrate prior only\r\n");
         return;
     }
+    /* LM-13 (living-mind-lm13-forgetting.md): asking a queued fact ACCRUES
+     * earned salience — THE one production accrual site (the web /ask bridge
+     * routes through mind_cmd("ask"), so this covers both mouths). A fact the
+     * owner keeps asking about resists min-salience eviction. LOCAL only —
+     * salience never crosses the wire. */
+    INT sal_now = r3_fact_touch(k);
+    r_puts("[mind]   salience="); r_putdec((UW)sal_now);
+    r_puts("/"); r_putdec(R3_SAL_CAP);
+    r_puts("  (earned by asking; resists min-salience eviction)\r\n");
     r_puts("[mind]   fact seq="); r_putdec(r3_fq[fi].seq);
     r_puts(" state=");
     r_puts(r3_fq[fi].state == R3F_RETAINED ? "RETAINED" : "PENDING");
@@ -3231,6 +3289,7 @@ void r3_onemind_test(void);
 void r3_onemind_nocentral_test(void);
 void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
 void r3_revise_test(void);            /* LM-12 belief-revision cert       */
+void r3_forget_test(void);            /* LM-13 graceful-forgetting cert   */
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -3255,7 +3314,8 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "nocentral")) r3_onemind_nocentral_test();
     else if (m_kw(&p, end, "wmerge")) r3_wmerge_test();        /* LM-11 cert */
     else if (m_kw(&p, end, "revise")) r3_revise_test();        /* LM-12 cert */
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "forget")) r3_forget_test();        /* LM-13 cert */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -4724,6 +4784,257 @@ void r3_revise_test(void)
 
     r_puts("[revise] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
     r_puts("[revise] ==== done ====\r\n");
+}
+
+/* ================================================================== *
+ *  LM-13 (living-mind-lm13-forgetting.md) — graceful forgetting.       *
+ *  `mind forget`. The bounded R3 fact-queue's eviction becomes         *
+ *  min-EARNED-salience (was oldest-first FIFO); `mind ask`             *
+ *  (r3_fact_touch) accrues salience. When nothing has been asked the   *
+ *  selector degenerates BYTE-IDENTICALLY to FIFO — so the zero-ask run  *
+ *  evicts the OLDEST fact (f1) and 12 asks flip the victim to f2.       *
+ *  THE LOAD-BEARING, HEADLINE CLAIM IS THE SELECTION (which fact the    *
+ *  eviction picks — the evicted-seq assertions); it holds in EVERY f5   *
+ *  construction and is what the falsifiers bite, INDEPENDENT of any     *
+ *  accuracy number. The accuracy leg (acc_f1 < 70) is only a WORST-CASE *
+ *  demonstration using a single-adversarial-class f5 (all 8 keys -> the *
+ *  class-1 bias sink); a class-spread f5 evicts the SAME fact but shows *
+ *  ZERO decay (audit 2026-07-04) — see the doc's §4 disclosure.         *
+ *  "LM-1 cured un-chosen forgetting; LM-13 makes chosen forgetting      *
+ *  wise." Held-out masked eval (s_eval_fact / m_masked_vote); dmn.c     *
+ *  byte-identical; no wire change.                                      *
+ * ================================================================== */
+
+/* f5 = ONE wide fact binding the ENTIRE upper vocab (keys 8..15 = R_KEYV/2
+ * NEW keys); its single arrival on the full queue forces exactly ONE eviction
+ * (the load-bearing SELECTION). forget_pick_readable happens to bind all 8 keys
+ * to the SAME output class (class 1 = the substrate's adversarial bias sink), so
+ * its post-eviction consolidation over-reinforces that class and decays the
+ * evicted (no-longer-rehearsed) fact — the WORST-CASE, single-adversarial-class
+ * accuracy driver, NOT the generic harm: a class-spread f5 (8 distinct classes)
+ * evicts the SAME fact but shows ZERO decay (audit 2026-07-04). ONE eviction =>
+ * in the cure run f3/f4 are NEVER touched, so [forget-noregress] holds with the
+ * asks on f1 ALONE (the design's "ONLY delta = N x r3_fact_touch(k_f1)"). */
+#define FGT_K5_LO     8      /* f5's first key (== R_CERTKEYS)                    */
+#define FGT_K5_N      8      /* f5's binding count (keys 8..15; == R_NPAIR)       */
+#define FGT_TOUCH_N   12     /* asks on f1 in the CURE run; > R3_SAL_CAP(=8) so
+                              * the clamp is exercised (sal caps at 8, count=12) */
+#define FGT_VOTE_N    80     /* masked majority-vote sample for f5 (>= M_ASK_N)  */
+/* [forget-unearned] WORST-CASE accuracy bound: RE-BASELINED from measurement
+ * (IX.5). This gate is NOT the load-bearing claim (the SELECTION is); it is a
+ * worst-case demo. With the shipped single-adversarial-class f5 (all -> class 1)
+ * the evicted-f1 masked acc after f5's drain MEASURES 64.0% (deterministic; see
+ * living-mind-lm13-forgetting.md §4). A class-spread f5 shows ZERO decay (acc_f1
+ * ~100%) — so 64% is the WORST case, not the generic harm. 75 is the design
+ * bound; 70 is the tighter, honest floor (6-pt margin over the measurement,
+ * still < the design bound). The cure keeps f1 at 100.0% — a measured +36-pt gap
+ * against the worst-case interferer, gated below too. */
+#define FGT_FLOOR     70.0f
+#define FGT_GAP       20.0f  /* cure_f1 - disease_f1 must clear this (measured 36)*/
+#define FGT_RETAIN    75.0f  /* the RETAIN bar (a fact that survives answers >=75)*/
+
+/* is fact-seq still present in the live queue? (eviction detection) */
+static INT fgt_seq_present(UW seq)
+{
+    for (INT i = 0; i < (INT)r3_fq_n; i++)
+        if (r3_fq[i].seq == seq) return 1;
+    return 0;
+}
+/* which of the pre-arrival baseline seqs is now GONE (the evicted one). */
+static UW fgt_missing_seq(const UW seqs[R3_NFACTS])
+{
+    for (INT i = 0; i < R3_NFACTS; i++)
+        if (!fgt_seq_present(seqs[i])) return seqs[i];
+    return 0xFFFFFFFFUL;
+}
+/* pick a READABLE, OFF-BIAS value for an ARBITRARY key (the rev_pick_vnew
+ * derivation generalized): frozen teacher reads it back (agree 100) and it is
+ * off the raw masked bias, so f5 is a genuine new fact. Call AFTER s_pretrain().
+ * -1 = none found. */
+static INT forget_pick_readable(INT k)
+{
+    float sh[R_VALV];
+    (void)m_masked_vote(k, 60, sh);
+    for (INT v = 1; v < (INT)R_VALV; v++) {
+        if (sh[v] > 10.0f) continue;
+        if (rev_teacher_read(k, v) != (UB)v) continue;
+        return v;
+    }
+    return -1;
+}
+/* rebuild the IDENTICAL 4-fact baseline: f1..f4 = the stream cert's proven
+ * readable off-bias working-key facts (keys 0..7), all drained to RETAINED.
+ * s_fq_reset resets r3_fq_seq -> seqs are 1..4 every run (deterministic). */
+static void fgt_build(void)
+{
+    s_fq_reset();
+    for (INT f = 0; f < R3_NFACTS; f++) s_arrive(f, 0);   /* keys 0..7, no evict */
+    while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+}
+/* ONE forget run. Rebuild the baseline from w_base, apply `touches` asks on f1
+ * (key 0), arrive the wide f5 (forces one eviction), drain. Everything
+ * IDENTICAL across runs — the ONLY delta is `touches`. Reports the evicted seq,
+ * f1's salience, and the held-out masked acc of f1..f4 (via s_eval_fact) + f5
+ * (m_masked_vote on its first binding). */
+static void fgt_run(const float *w_base, const UB k5[FGT_K5_N],
+                    const UB v5[FGT_K5_N], INT touches,
+                    UW *evicted_seq, UB *sal_f1, float acc[R3_NFACTS],
+                    float *acc_f5sh)
+{
+    r3_weights_set(w_base);
+    fgt_build();                                     /* f1..f4 retained, seq 1..4 */
+    UW seqs[R3_NFACTS];
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        INT b; INT fi = m_find_key(f * R3_FKEYS, &b);
+        seqs[f] = (fi >= 0) ? r3_fq[fi].seq : 0;
+    }
+    s_touches = 0;                                   /* [forget-onesite] baseline */
+    INT b0; INT fi1 = m_find_key(0, &b0);
+    for (INT t = 0; t < touches; t++) (void)r3_fact_touch(0);   /* accrue on f1    */
+    *sal_f1 = (fi1 >= 0) ? r3_fq[fi1].salience : 0;  /* read BEFORE the arrival    */
+    (void)r3_fact_learn(k5, v5, FGT_K5_N);           /* the ONE wide f5 -> evict   */
+    *evicted_seq = fgt_missing_seq(seqs);
+    while (r3_facts_pending()) (void)r3_consolidate_idle_round();       /* drain f5  */
+    for (INT f = 0; f < R3_NFACTS; f++)
+        acc[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+    float sh[R_VALV];
+    (void)m_masked_vote((INT)k5[0], FGT_VOTE_N, sh);
+    *acc_f5sh = sh[v5[0]];
+}
+
+void r3_forget_test(void)
+{
+    static float w_base[R_NP];
+    float chance = 100.0f / (float)R_VALV;
+
+    m_quiesce();
+    r_puts("[forget] ==== LM-13 graceful forgetting: eviction picks MIN-EARNED-SALIENCE, not just oldest ====\r\n");
+    r_puts("[forget] chance="); r_putf1(chance);
+    r_puts("% budget R3_FQ_MAX="); r_putdec(R3_FQ_MAX);
+    r_puts("  salience cap R3_SAL_CAP="); r_putdec(R3_SAL_CAP);
+    r_puts("  disease floor="); r_putf1(FGT_FLOOR);
+    r_puts("% retain bar="); r_putf1(FGT_RETAIN); r_puts("%\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    /* f5 = ONE wide fact binding the upper vocab (keys 8..15), each a fresh
+     * readable off-bias value. Its single arrival forces ONE eviction and its
+     * 8-binding drain is the measured disease driver. */
+    UB k5[FGT_K5_N], v5[FGT_K5_N]; INT derive_ok = 1;
+    r_puts("[forget] f1..f4 = the stream cert's proven working-key facts (keys 0..7);");
+    r_puts(" f5 = ONE fact, keys 8..15:");
+    for (INT i = 0; i < FGT_K5_N; i++) {
+        INT vv = forget_pick_readable(FGT_K5_LO + i);
+        if (vv < 0) { derive_ok = 0; vv = 1; }
+        k5[i] = (UB)(FGT_K5_LO + i); v5[i] = (UB)vv;
+        r_puts(" "); r_putdec((UW)k5[i]); r_puts("->"); r_putdec((UW)v5[i]);
+    }
+    r_puts("  (readable off-bias; the 5th arrival that forces one eviction)\r\n");
+    if (!derive_ok) {
+        r_puts("[forget] FATAL: no readable off-bias value for some key in 8..15 — cannot run honestly\r\n");
+        r_puts("[forget-baseline] FAIL\r\n[forget-unearned] FAIL\r\n");
+        r_puts("[forget-cured] FAIL\r\n[forget-noregress] FAIL\r\n[forget-onesite] FAIL\r\n");
+        return;
+    }
+
+    /* ============ [forget-baseline]: the 4-fact retained queue ========= */
+    r3_weights_set(w_base);
+    fgt_build();
+    float acc_b[R3_NFACTS]; INT base_ok = 1;
+    r_puts("[forget] baseline masked acc:");
+    for (INT f = 0; f < R3_NFACTS; f++) {
+        acc_b[f] = s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+        r_puts(" f"); r_putdec((UW)(f+1)); r_puts("="); r_putf1(acc_b[f]); r_puts("%");
+        if (acc_b[f] < FGT_RETAIN) base_ok = 0;
+    }
+    INT occ4 = (r3_fq_n == R3_FQ_MAX) && (s_occ_max == R3_FQ_MAX);
+    r_puts("  occupancy "); r_putdec(r3_fq_n); r_puts("/"); r_putdec(R3_FQ_MAX);
+    r_puts(" (max "); r_putdec(s_occ_max); r_puts(")\r\n");
+    /* the two eviction candidates' seqs (deterministic: f1=1, f2=2). */
+    INT bb; INT if1 = m_find_key(0, &bb); UW seq_f1 = (if1>=0)?r3_fq[if1].seq:0;
+            INT if2 = m_find_key(2, &bb); UW seq_f2 = (if2>=0)?r3_fq[if2].seq:0;
+    r_puts("[forget] eviction candidates: f1 seq="); r_putdec(seq_f1);
+    r_puts(" (oldest)  f2 seq="); r_putdec(seq_f2); r_puts("\r\n");
+    r_puts((base_ok && occ4) ? "[forget-baseline] PASS\r\n" : "[forget-baseline] FAIL\r\n");
+
+    /* ==== [forget-unearned] LOAD-BEARING SELECTION FALSIFIER =========== *
+     * ZERO asks. All salience==1 -> the min-salience selector is a min-seq *
+     * FIFO byte-for-byte -> f5's arrival evicts the OLDEST (f1). The       *
+     * LOAD-BEARING assertion is the evicted seq (== f1). The acc_f1 < 70   *
+     * leg is only a WORST-CASE demo: the shipped single-adversarial-class  *
+     * f5 (all -> class 1) over-reinforces the bias sink so the unrehearsed *
+     * f1 decays; a class-spread f5 evicts the same f1 but shows ZERO decay.*/
+    UW ev_un; UB sal_un; float acc_un[R3_NFACTS], f5sh_un;
+    fgt_run(w_base, k5, v5, 0, &ev_un, &sal_un, acc_un, &f5sh_un);
+    INT un_evicted_f1 = (ev_un == seq_f1);
+    r_puts("[forget] UNEARNED (0 asks): evicted seq="); r_putdec(ev_un);
+    r_puts(un_evicted_f1 ? " (==f1, the oldest — FIFO byte-for-byte) [LOAD-BEARING: selection]"
+                         : " (NOT f1 — selector wrong!)");
+    r_puts("\r\n[forget]   post-drain acc [WORST-CASE, single-adversarial-class f5]: f1=");
+    r_putf1(acc_un[0]);
+    r_puts("% (evicted, gate <"); r_putf1(FGT_FLOOR); r_puts(")");
+    r_puts("  f5="); r_putf1(f5sh_un);
+    r_puts("% (gate >="); r_putf1(FGT_RETAIN); r_puts(")\r\n");
+    r_puts("[forget]   caveat: that decay is the WORST case (f5 = all 8 keys -> class 1, the adversarial bias sink);\r\n");
+    r_puts("[forget]   a class-spread f5 (8 distinct classes) evicts the SAME f1 but shows ~ZERO decay (acc_f1 ~100%) — audit 2026-07-04\r\n");
+    INT unearned_ok = un_evicted_f1 && (acc_un[0] < FGT_FLOOR)
+                    && (f5sh_un >= FGT_RETAIN);
+    r_puts(unearned_ok ? "[forget-unearned] PASS\r\n" : "[forget-unearned] FAIL\r\n");
+
+    /* ============= [forget-cured]: IDENTICAL run + N asks on f1 ========= *
+     * The ONLY delta vs the falsifier is FGT_TOUCH_N r3_fact_touch(f1)     *
+     * before f5 arrives. f1's salience rises to R3_SAL_CAP; the min-        *
+     * salience selector now evicts f2 (least-salient, oldest of the        *
+     * salience-1 facts) — f1 SURVIVES (the load-bearing selection flips).   *
+     * The acc_f1 >= 75 / +gap legs show asking ALSO defends f1 against the  *
+     * WORST-CASE single-adversarial-class interferer — not the generic     *
+     * motivation, which is the selection itself.                           */
+    UW ev_cu; UB sal_cu; float acc_cu[R3_NFACTS], f5sh_cu;
+    fgt_run(w_base, k5, v5, FGT_TOUCH_N, &ev_cu, &sal_cu, acc_cu, &f5sh_cu);
+    INT cu_evicted_f2 = (ev_cu == seq_f2);
+    UW touches_seen = s_touches;                 /* captured post-run (evals ran) */
+    r_puts("[forget] CURED ("); r_putdec((UW)FGT_TOUCH_N);
+    r_puts(" asks on f1): f1 salience="); r_putdec((UW)sal_cu);
+    r_puts("/"); r_putdec(R3_SAL_CAP);
+    r_puts(" (clamped: "); r_putdec((UW)FGT_TOUCH_N);
+    r_puts(" asks -> capped at "); r_putdec(R3_SAL_CAP); r_puts(")\r\n");
+    r_puts("[forget]   evicted seq="); r_putdec(ev_cu);
+    r_puts(cu_evicted_f2 ? " (==f2, min-salience NOT the oldest — f1 protected) [LOAD-BEARING: selection]"
+                         : " (NOT f2 — protection failed!)");
+    r_puts("\r\n[forget]   post-drain acc [worst-case defense]: f1="); r_putf1(acc_cu[0]);
+    r_puts("% (SURVIVED, gate >="); r_putf1(FGT_RETAIN); r_puts(")");
+    r_puts("  f5="); r_putf1(f5sh_cu);
+    r_puts("% (gate >="); r_putf1(FGT_RETAIN); r_puts(")");
+    r_puts("  f2="); r_putf1(acc_cu[1]); r_puts("% (now the evicted one)\r\n");
+    r_puts("[forget]   cure gain on f1 vs the worst-case interferer: +"); r_putf1(acc_cu[0] - acc_un[0]);
+    r_puts(" pts (same code, only the asks differ; gate >=");
+    r_putf1(FGT_GAP); r_puts(")\r\n");
+    INT cured_ok = cu_evicted_f2 && (sal_cu == R3_SAL_CAP)
+                 && (acc_cu[0] >= FGT_RETAIN) && (f5sh_cu >= FGT_RETAIN)
+                 && ((acc_cu[0] - acc_un[0]) >= FGT_GAP);
+    r_puts(cured_ok ? "[forget-cured] PASS\r\n" : "[forget-cured] FAIL\r\n");
+
+    /* ---------- [forget-noregress]: f3, f4 held in the cure run --------- */
+    INT nore_ok = (acc_cu[2] >= FGT_RETAIN) && (acc_cu[3] >= FGT_RETAIN);
+    r_puts("[forget] noregress (cure run): f3="); r_putf1(acc_cu[2]);
+    r_puts("% f4="); r_putf1(acc_cu[3]);
+    r_puts("%  (both retained, gate >="); r_putf1(FGT_RETAIN); r_puts(")\r\n");
+    r_puts(nore_ok ? "[forget-noregress] PASS\r\n" : "[forget-noregress] FAIL\r\n");
+
+    /* -------- [forget-onesite]: accrual ONLY at r3_fact_touch ---------- *
+     * The cure run ran FGT_TOUCH_N touches AND many evals (s_eval_fact x4  *
+     * @200 + m_masked_vote @80). If accrual leaked into a read path,       *
+     * s_touches would exceed FGT_TOUCH_N.                                  */
+    INT onesite_ok = (touches_seen == (UW)FGT_TOUCH_N);
+    r_puts("[forget] onesite: s_touches="); r_putdec(touches_seen);
+    r_puts(" (gate =="); r_putdec((UW)FGT_TOUCH_N);
+    r_puts("; evals ran m_masked_vote/s_eval_fact many times and accrued nothing)\r\n");
+    r_puts(onesite_ok ? "[forget-onesite] PASS\r\n" : "[forget-onesite] FAIL\r\n");
+
+    r_puts("[forget] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
+    r_puts("[forget] ==== done ====\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */
