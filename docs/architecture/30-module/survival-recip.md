@@ -1,11 +1,21 @@
 # survival-recip — reciprocal 応援・受援 (§7 serve-side mutual aid)
 
-> **STATUS: DESIGN ONLY — NOT IMPLEMENTED. Gated on a philosophy decision (see §0).**
-> Design by the fable5 design pass, 2026-07-03. Complements `survival-network.md` §6/§7/§8
-> and the routing-merit `gacc` plan in `survival-g38-impl-plan.md`. `gacc` = 応 (who I *ask*);
-> `recip` = 受援 (who I *answer*) — together they close 応援・受援 into a self-sustaining loop.
+> **STATUS: DECLINED 2026-07-04 — NOT IMPLEMENTED, by conscious choice.** Asked the §0
+> question, mk_pino chose **pure altruism over self-defense**: the aid economy does NOT defend
+> itself against free-riders — it trusts that "弱くても構わない, the herd compensates, and
+> abundance makes free-riding irrelevant." No refusal is ever introduced into the serve path.
+> This document is preserved as **the road not taken (歴史地層)** — the record that the
+> aid economy's self-defense was designed, considered, and consciously declined is itself part
+> of the honest history. Design by the fable5 design pass, 2026-07-03. Complements
+> `survival-network.md` §6/§7/§8 and the routing-merit `gacc` plan in `survival-g38-impl-plan.md`.
+> `gacc` = 応 (who I *ask*); `recip` = 受援 (who I *answer*) — the answer-side was left as a gift,
+> unconditional. (If this is ever revisited, the design below is complete and buildable as-is.)
 
-## 0. The one question for mk_pino (仕組み vs 思想) — build gate
+## 0. The question that was asked, and the answer (仕組み vs 思想) — DECLINED
+
+**DECISION (mk_pino, 2026-07-04): pure altruism. Do NOT build recip.** The serve path stays
+unconditional; a free-rider is never penalized; abundance and the herd are trusted to make
+free-riding a non-problem. The reasoning below is preserved as the considered-and-declined case.
 
 The survival network's §2/§6 core reads as **pure altruism**: "弱くても構わない — the herd
 compensates." `recip` introduces a **mild refusal**: a node keeps aiding a peer only while the
