@@ -1738,6 +1738,62 @@ static UB s_occ_max          = 0;
  * times and must add nothing). */
 static UW s_touches          = 0;
 
+/* ------------------------------------------------------------------ *
+ *  LM-14 (living-mind-lm14-curiosity.md) — the want-table: the keys the *
+ *  mind was ASKED about but does NOT hold and does NOT know (the DUAL   *
+ *  of LM-13's earned salience). Bounded (R3_WQ_MAX); a wanted key that  *
+ *  is finally TAUGHT converts its accrued want into ARRIVAL salience    *
+ *  (r3_want_take, inside r3_fact_learn) — the answer to a question the  *
+ *  mind kept asking arrives precious and resists eviction.              *
+ *  INVARIANT: a key is NEVER in both r3_fq and r3_wq (r3_want_note      *
+ *  refuses bound keys; r3_want_take clears an entry the moment its key  *
+ *  arrives). LOCAL only — want never crosses the wire (F-LOCAL); the    *
+ *  cert drives r3_want_note directly. s_wonders counts EVERY wonder     *
+ *  (incl. clamped) for the [curio-*] purity gates.                      *
+ * ------------------------------------------------------------------ */
+#define R3_WQ_MAX     4              /* want-table budget (dual of R3_FQ_MAX)     */
+#define R3_WANT_CAP   R3_SAL_CAP     /* want clamp == the salience cap (8)        */
+#define M_KNOWN_SHARE 75.0f          /* the [teach-consolidated] bar: >= this masked
+                                      * modal share ⇒ the weights ALREADY know it,
+                                      * so the mind is NOT curious (LM-13 §4 showed
+                                      * evicted facts keep ~100% masked acc, so
+                                      * "unbound" alone would mislabel them)      */
+typedef struct {
+    UB key;      /* the wanted (asked-but-unknown) key                   */
+    UB want;     /* accrued want, default 0, clamp R3_WANT_CAP           */
+    UB used;     /* slot occupied?                                       */
+    UB _pad;     /* keep the struct a clean 8 bytes                      */
+    UW seq;      /* first-wondered order (the autobiographical when)     */
+} R3_WANT;
+_Static_assert(sizeof(R3_WANT) == 8, "R3_WANT fixed size");
+
+static R3_WANT r3_wq[R3_WQ_MAX];     /* the bounded want-table                    */
+static UW r3_wq_seq  = 0;            /* want arrival counter                      */
+static UW s_wonders  = 0;            /* [curio-*]: every wonder accrual           */
+
+/* LM-14: when a fact ARRIVES (r3_fact_learn), any accrued want for one of its
+ * keys CONVERTS into arrival salience. Returns the MAX want over the arriving
+ * keys (0 if none were wanted) and CLEARS those want entries (the want is
+ * answered; the INVARIANT — a key is never in both queues — is restored). The
+ * SOLE caller is r3_fact_learn, so EVERY arrival site converts uniformly:
+ * local teach, remote mind_net_task (the pre-built LM-15 payoff hook), and the
+ * cert arrivals. Cheap O(R3_WQ_MAX*n), no RNG, no rw[]. */
+static UB r3_want_take(const UB *keys, INT n)
+{
+    UB w = 0;
+    for (INT i = 0; i < R3_WQ_MAX; i++) {
+        if (!r3_wq[i].used) continue;
+        for (INT j = 0; j < n; j++) {
+            if (r3_wq[i].key == keys[j]) {
+                if (r3_wq[i].want > w) w = r3_wq[i].want;
+                r3_wq[i].used = 0; r3_wq[i].want = 0;   /* answered — restore invariant */
+                break;
+            }
+        }
+    }
+    return w;
+}
+
 /* The cert's F=4 disjoint fact-sets: K_f = {2f, 2f+1}; the union oracle
  * SDICT is a fixed 8-binding table using all four classes, so the union
  * of all facts = exactly the LM-4-proven capacity (VI.2).
@@ -1885,6 +1941,24 @@ INT r3_fact_learn(const UB *keys, const UB *vals, INT n)
     R3_FACT *f = &r3_fq[r3_fq_n];
     f->n = (UB)n; f->state = R3F_PENDING; f->rounds_done = 0;
     f->salience = 1; f->seq = ++r3_fq_seq;
+    /* LM-14 (living-mind-lm14-curiosity.md): if the mind had been ASKING about
+     * any of this fact's keys — an accrued WANT it could not answer — the answer
+     * now arrives PRECIOUS: the want converts into arrival salience so the
+     * long-wanted fact resists the LM-13 min-salience eviction. Covers ALL
+     * arrival sites (local teach / remote mind_net_task = the LM-15 payoff hook /
+     * cert arrivals). Revise supersedes IN PLACE and never reaches here, and a
+     * bound key is never in the want-table, so revise is untouched (INVARIANT). */
+    UB want = r3_want_take(keys, n);
+    if (want > 0) {
+        UB sal = (UB)(1 + want);
+        if (sal > R3_SAL_CAP) sal = R3_SAL_CAP;
+        f->salience = sal;
+        r_puts("[r3-fq] a long-WANTED key arrived (want ");
+        r_putdec((UW)want);
+        r_puts(") -> arrival salience "); r_putdec((UW)sal);
+        r_puts("/"); r_putdec(R3_SAL_CAP);
+        r_puts(" (curiosity answered — this fact resists eviction)\r\n");
+    }
     UW save = r_rng; r_rng = r3_s_rng;
     for (INT i = 0; i < n; i++) {
         INT votes[R_VALV];
@@ -2007,6 +2081,11 @@ static void s_fq_reset(void)
     r3_fq_n = 0; r3_fq_seq = 0; r3_s_rng = S_SEED_TRAIN;
     s_steps_last_round = 0; s_evictions = 0; s_occ_max = 0;
     s_touches = 0;                        /* LM-13: fresh accrual count */
+    /* LM-14: the want-table dies with the queue (VII.0 #5 amnesia bomb) —
+     * every cert arrival path passes through here, so a cert never inherits a
+     * stale want. */
+    for (INT i = 0; i < R3_WQ_MAX; i++) { r3_wq[i].used = 0; r3_wq[i].want = 0; }
+    r3_wq_seq = 0; s_wonders = 0;
 }
 
 /* arrive cert fact f through the LIVE API; scrambled!=0 shifts every
@@ -2664,6 +2743,57 @@ INT r3_fact_touch(INT k)
     return (INT)r3_fq[fi].salience;
 }
 
+/* LM-14 (living-mind-lm14-curiosity.md) — the ONE want accrual, the DUAL of
+ * r3_fact_touch. The mind was ASKED about key k. If k is genuinely UNKNOWN —
+ * unbound in the queue (m_find_key<0) AND its masked modal share <
+ * M_KNOWN_SHARE (the [teach-consolidated] bar; LM-13 §4 showed EVICTED facts
+ * keep ~100% masked acc, so "unbound" ALONE would mislabel a well-known evicted
+ * fact as curious) — then remember the want (bounded want-table, min-want
+ * tie-oldest eviction) and SPEAK it (EV_WONDER). Returns:
+ *    NEW want (>0)  it wondered (accrued);
+ *    0              unbound but the WEIGHTS already know it (not curious);
+ *   -1              k is BOUND in the queue (already held — nothing to want).
+ * s_wonders counts EVERY wonder (incl. clamped ones) for the [curio-*] purity
+ * gates. LOCAL only: mind_net_task must NOT call this (F-LOCAL). The SOLE
+ * production caller is the m_ask MISS branch; the cert calls it directly. Pure
+ * bookkeeping — touches neither rw[] nor the RNG (the caller supplies the
+ * already-computed masked share). */
+INT r3_want_note(INT k, float share_modal)
+{
+    INT bind, fi = m_find_key(k, &bind);
+    if (fi >= 0)                     return -1;   /* bound: held, not curious */
+    if (share_modal >= M_KNOWN_SHARE) return 0;   /* the weights already know it */
+
+    /* already wanted? find its slot to bump. */
+    INT slot = -1;
+    for (INT i = 0; i < R3_WQ_MAX; i++)
+        if (r3_wq[i].used && r3_wq[i].key == (UB)k) { slot = i; break; }
+    if (slot < 0) {
+        /* a NEW want: take a free slot, else evict MIN-want (tie-break OLDEST,
+         * the dual of the LM-13 min-salience-tie-oldest eviction). */
+        for (INT i = 0; i < R3_WQ_MAX; i++)
+            if (!r3_wq[i].used) { slot = i; break; }
+        if (slot < 0) {
+            UB vw = 0xFF; UW vseq = 0xFFFFFFFFUL;
+            for (INT i = 0; i < R3_WQ_MAX; i++)
+                if (r3_wq[i].want < vw ||
+                    (r3_wq[i].want == vw && r3_wq[i].seq < vseq)) {
+                    slot = i; vw = r3_wq[i].want; vseq = r3_wq[i].seq;
+                }
+        }
+        r3_wq[slot].key  = (UB)k; r3_wq[slot].want = 0;
+        r3_wq[slot].used = 1;     r3_wq[slot].seq  = ++r3_wq_seq;
+    }
+    if (r3_wq[slot].want < R3_WANT_CAP) r3_wq[slot].want++;
+    s_wonders++;
+    /* galaxy.md: an unanswered question is a REAL event — a want-ray leaves my
+     * star (a = key, b = accrued want). No-op inline on bare-metal (galaxy.h),
+     * exactly like EV_TEACH/EV_ASK/EV_FORGET. */
+    galaxy_emit(EV_WONDER, drpc_my_node, GALAXY_NODE_NONE,
+                (UH)k, (UH)r3_wq[slot].want);
+    return (INT)r3_wq[slot].want;
+}
+
 /* ================================================================== *
  *  LM-7 (living-mind.md Part VIII) — the shared mind                    *
  *                                                                       *
@@ -3018,6 +3148,33 @@ static void m_status(void)
     r_puts("[mind] NOTE: cert verbs (r3/handoff test|stream) reset rw[] + this queue — they erase live teaching (VII.0 #5)\r\n");
 }
 
+/* `mind wonder` — list the want-table: the keys the mind was ASKED about but
+ * does NOT hold and does NOT know (asked-but-unknown), the DUAL of what it has
+ * learned. Each entry: the key word, accrued want/R3_WANT_CAP, and its
+ * first-wondered seq. LM-14 (living-mind-lm14-curiosity.md). */
+static void m_wonder(void)
+{
+    INT n = 0;
+    for (INT i = 0; i < R3_WQ_MAX; i++) if (r3_wq[i].used) n++;
+    r_puts("[wonder] curious about "); r_putdec((UW)n);
+    r_puts("/"); r_putdec(R3_WQ_MAX);
+    r_puts(" key(s) (asked but unknown); lifetime wonders ");
+    r_putdec(s_wonders); r_puts("\r\n");
+    if (n == 0) {
+        r_puts("[wonder] curious about nothing — every asked key is held or already known\r\n");
+        return;
+    }
+    for (INT i = 0; i < R3_WQ_MAX; i++) {
+        if (!r3_wq[i].used) continue;
+        const char *w = r3_vocab_key_word((INT)r3_wq[i].key);
+        r_puts("[wonder]   \""); r_puts(w ? w : "?");
+        r_puts("\" want="); r_putdec((UW)r3_wq[i].want);
+        r_puts("/"); r_putdec(R3_WANT_CAP);
+        r_puts(" seq="); r_putdec(r3_wq[i].seq);
+        r_puts("\r\n");
+    }
+}
+
 /* `mind teach <k> <v>` — VII.2, in the spec's order: quiesce,
  * bootstrap, pre-sleep novelty read, re-teach refusal, enqueue via THE
  * live API, teacher_agree, tag. The verb does NOT consolidate anything:
@@ -3192,6 +3349,19 @@ static void m_ask(const UB *p, const UB *end)
     INT bind, fi = m_find_key(k, &bind);
     if (fi < 0) {
         r_puts("[mind]   key not in the live queue — answer is the substrate prior only\r\n");
+        /* LM-14 (living-mind-lm14-curiosity.md): the mind was ASKED about a key
+         * it does not HOLD. If it is ALSO genuinely unknown (share[pred] <
+         * M_KNOWN_SHARE), remember the WANT — curiosity (the dual of LM-13's
+         * salience). THE one production accrual site; r3_want_note emits
+         * EV_WONDER and returns the accrued want. When this key is finally
+         * taught the want converts into arrival salience (r3_want_take). */
+        INT want = r3_want_note(k, share[pred]);
+        if (want > 0) {
+            r_puts("[mind]   wondering about \""); r_puts(r3_vocab_key_word(k));
+            r_puts("\" — asked but unknown (want "); r_putdec((UW)want);
+            r_puts("/"); r_putdec(R3_WANT_CAP);
+            r_puts("); if taught, the answer will arrive precious\r\n");
+        }
         return;
     }
     /* LM-13 (living-mind-lm13-forgetting.md): asking a queued fact ACCRUES
@@ -3290,6 +3460,7 @@ void r3_onemind_nocentral_test(void);
 void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
 void r3_revise_test(void);            /* LM-12 belief-revision cert       */
 void r3_forget_test(void);            /* LM-13 graceful-forgetting cert   */
+void r3_curiosity_test(void);         /* LM-14 curiosity cert             */
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -3315,7 +3486,9 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "wmerge")) r3_wmerge_test();        /* LM-11 cert */
     else if (m_kw(&p, end, "revise")) r3_revise_test();        /* LM-12 cert */
     else if (m_kw(&p, end, "forget")) r3_forget_test();        /* LM-13 cert */
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "curious")) r3_curiosity_test();    /* LM-14 cert */
+    else if (m_kw(&p, end, "wonder")) m_wonder();              /* LM-14 verb */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -5035,6 +5208,332 @@ void r3_forget_test(void)
 
     r_puts("[forget] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
     r_puts("[forget] ==== done ====\r\n");
+}
+
+/* ================================================================== *
+ *  LM-14 (living-mind-lm14-curiosity.md) — curiosity.                  *
+ *  `mind curious`. The mind REMEMBERS keys it was ASKED about but did   *
+ *  NOT know (a bounded want-table = the DUAL of LM-13's earned          *
+ *  salience), speaks them (`mind wonder`, EV_WONDER), and when a wanted *
+ *  key is finally TAUGHT the accrued want CONVERTS into arrival         *
+ *  salience — the answer to a question the mind kept asking arrives     *
+ *  precious and resists eviction.                                       *
+ *                                                                       *
+ *  GENERIC BY CONSTRUCTION (the LM-13 lesson applied): the load-bearing *
+ *  claim is pure SELECTION (which fact the eviction picks — the         *
+ *  evicted-seq sequence), proven WITHOUT any accuracy measurement. The  *
+ *  disease is the LIVE MOUTH'S shape: 5 singleton facts on the upper    *
+ *  vocab, each with a readable off-bias value (forget_pick_readable) —  *
+ *  NO adversarial single-class construction. Two runs are byte-for-byte *
+ *  identical (same arrivals, same drains); the ONLY delta is 12         *
+ *  pre-teach WONDERS of k_u. dmn.c byte-identical; no wire change.      *
+ * ================================================================== */
+#define CURIO_SING_N    5            /* f5..f9 singletons (distinct upper keys)    */
+#define CURIO_WONDER_N  12           /* wonders on k_u; > R3_WANT_CAP(=8) -> clamp */
+
+/* find the FIRST key in [lo,hi) that is genuinely UNKNOWN on the CURRENT weights
+ * (unbound AND masked modal share < M_KNOWN_SHARE) and not in skip[0..ns). The
+ * substrate has strong per-key biases (LM-13 note a: e.g. key 8's masked prior
+ * is 97.5% here — the frozen mind is CONFIDENT, so it is NOT curious about it),
+ * so the cert SELECTS an uncertain key rather than assuming one; [curio-prior]
+ * then re-checks the precondition with teeth. Returns the key, or -1. */
+static INT curio_pick_unknown(INT lo, INT hi, const INT *skip, INT ns) {
+    for (INT k = lo; k < hi; k++) {
+        INT dup = 0; for (INT i = 0; i < ns; i++) if (skip[i] == k) { dup = 1; break; }
+        if (dup) continue;
+        INT b; if (m_find_key(k, &b) >= 0) continue;      /* must be unbound */
+        float sh[R_VALV]; UB pr = m_masked_vote(k, M_ASK_N, sh);
+        if (sh[pr] < M_KNOWN_SHARE) return k;
+    }
+    return -1;
+}
+
+static UW curio_want_of(INT k) {
+    for (INT i = 0; i < R3_WQ_MAX; i++)
+        if (r3_wq[i].used && r3_wq[i].key == (UB)k) return r3_wq[i].want;
+    return 0;
+}
+static INT curio_used(INT k) {
+    for (INT i = 0; i < R3_WQ_MAX; i++)
+        if (r3_wq[i].used && r3_wq[i].key == (UB)k) return 1;
+    return 0;
+}
+static INT curio_table_n(void) {
+    INT n = 0; for (INT i = 0; i < R3_WQ_MAX; i++) if (r3_wq[i].used) n++; return n;
+}
+/* which pre-arrival seq is now GONE (exactly one is evicted per arrival). */
+static UW curio_missing(const UW *snap, INT ns) {
+    for (INT i = 0; i < ns; i++) {
+        INT present = 0;
+        for (INT j = 0; j < (INT)r3_fq_n; j++)
+            if (r3_fq[j].seq == snap[i]) { present = 1; break; }
+        if (!present) return snap[i];
+    }
+    return 0xFFFFFFFFUL;
+}
+/* pick 8 DISTINCT readable off-bias classes for keys 8..15 = the class-SPREAD f5
+ * of LM-13 §4 (evicts the same fact but causes ~ZERO decay, so the evicted
+ * fact's weights still hold ~100% — the [curio-weightknown] precondition).
+ * Returns 1 on success. */
+static INT curio_spread_f5(UB k5[8], UB v5[8]) {
+    UB used[R_VALV]; for (INT c = 0; c < R_VALV; c++) used[c] = 0;
+    for (INT i = 0; i < 8; i++) {
+        INT k = R_CERTKEYS + i; k5[i] = (UB)k;
+        float sh[R_VALV]; (void)m_masked_vote(k, 60, sh);
+        INT got = -1;
+        for (INT v = 1; v < (INT)R_VALV; v++) {
+            if (used[v]) continue;
+            if (sh[v] > 10.0f) continue;
+            if (rev_teacher_read(k, v) != (UB)v) continue;
+            got = v; break;
+        }
+        if (got < 0) return 0;
+        used[got] = 1; v5[i] = (UB)got;
+    }
+    return 1;
+}
+
+/* ONE curiosity run. Rebuild the baseline from w_base (f1..f4 keys 0..7 RETAINED
+ * seq 1..4), apply `wonders` wonders of k_u, then teach f5..f9 singletons on
+ * keys 8..12 (each forces one eviction). Everything IDENTICAL across runs — the
+ * ONLY delta is `wonders`. Reports the evicted-seq sequence, f5's arrival
+ * salience, and (via non-NULL out params) the pre/post want-table checkpoints. */
+static void curio_run(const float *w_base, INT k_u, const INT *sk, const UB *sv,
+                      INT wonders, UW evicted[CURIO_SING_N], UB *sal_f5,
+                      float *prior_share, INT *table_before,
+                      UW *want_ku, UW *wonders_seen, INT *table_after)
+{
+    r3_weights_set(w_base);
+    fgt_build();                         /* f1..f4 RETAINED seq 1..4; r3_wq cleared */
+
+    float share[R_VALV];
+    UB pred = m_masked_vote(k_u, M_ASK_N, share);
+    if (prior_share)  *prior_share  = share[pred];
+    if (table_before) *table_before = curio_table_n();
+
+    for (INT t = 0; t < wonders; t++) {
+        UB pr = m_masked_vote(k_u, M_ASK_N, share);
+        (void)r3_want_note(k_u, share[pr]);
+    }
+    if (want_ku)      *want_ku      = curio_want_of(k_u);
+    if (wonders_seen) *wonders_seen = s_wonders;
+    if (table_after)  *table_after  = curio_table_n();
+
+    for (INT i = 0; i < CURIO_SING_N; i++) {
+        UW snap[R3_FQ_MAX]; INT ns = 0;
+        for (INT j = 0; j < (INT)r3_fq_n; j++) snap[ns++] = r3_fq[j].seq;
+        UB kk = (UB)sk[i], vv = sv[i];
+        (void)r3_fact_learn(&kk, &vv, 1);
+        if (i == 0) {                    /* f5 == k_u; capture its arrival salience */
+            INT b; INT fi = m_find_key(k_u, &b);
+            if (sal_f5) *sal_f5 = (fi >= 0) ? r3_fq[fi].salience : 0;
+        }
+        evicted[i] = curio_missing(snap, ns);
+        while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+    }
+}
+
+void r3_curiosity_test(void)
+{
+    static float w_base[R_NP];
+
+    m_quiesce();
+    r_puts("[curio] ==== LM-14 curiosity: the mind remembers keys it was ASKED but did NOT know ====\r\n");
+    r_puts("[curio] want-table R3_WQ_MAX="); r_putdec(R3_WQ_MAX);
+    r_puts("  want cap R3_WANT_CAP="); r_putdec(R3_WANT_CAP);
+    r_puts("  known-share bar="); r_putf1(M_KNOWN_SHARE);
+    r_puts("%  wonders k_u="); r_putdec(CURIO_WONDER_N);
+    r_puts(" (> cap -> clamp)\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    /* pick k_u = an UPPER-vocab key genuinely UNKNOWN AFTER f1..f4 are learned
+     * (that is where the wonders happen — post-fgt_build state). The substrate
+     * has strong per-key biases (LM-13 note a), so we SELECT an uncertain key
+     * rather than assume one; [curio-prior] re-checks with teeth. */
+    r3_weights_set(w_base); fgt_build();
+    INT k_u = curio_pick_unknown(R_CERTKEYS, R_KEYV, NULL, 0);
+
+    /* the singleton key list: f5 = k_u, f6..f9 = 4 other distinct upper-vocab
+     * keys (their prior is irrelevant — they are TAUGHT; only the seq order
+     * drives the eviction SELECTION). */
+    INT sk[CURIO_SING_N]; INT nk = 0;
+    if (k_u >= 0) {
+        sk[nk++] = k_u;
+        for (INT k = R_CERTKEYS; k < R_KEYV && nk < CURIO_SING_N; k++)
+            if (k != k_u) sk[nk++] = k;
+    }
+
+    /* f5..f9 singleton values: readable off-bias per key on w_base (the LIVE
+     * mouth's shape, forget_pick_readable) — NO adversarial single-class. */
+    UB sv[CURIO_SING_N]; INT derive_ok = (k_u >= 0) && (nk == CURIO_SING_N);
+    r3_weights_set(w_base);
+    r_puts("[curio] f1..f4 = the stream cert's working-key facts (keys 0..7);");
+    r_puts(" f5..f9 = singletons on keys");
+    for (INT i = 0; derive_ok && i < CURIO_SING_N; i++) {
+        INT vv = forget_pick_readable(sk[i]);
+        if (vv < 0) { derive_ok = 0; vv = 1; }
+        sv[i] = (UB)vv;
+        r_puts(" "); r_putdec((UW)sk[i]); r_puts("->"); r_putdec((UW)sv[i]);
+    }
+    r_puts("  (f5==k_u; readable off-bias; each forces one eviction)\r\n");
+    if (!derive_ok) {
+        r_puts("[curio] FATAL: could not select 5 distinct upper keys incl. an unknown k_u — cannot run honestly\r\n");
+        r_puts("[curio-prior] FAIL\r\n[curio-accrue] FAIL\r\n[curio-unwondered] FAIL\r\n");
+        r_puts("[curio-wondered] FAIL\r\n[curio-weightknown] FAIL\r\n[curio-clean] FAIL\r\n[curio-bounded] FAIL\r\n");
+        return;
+    }
+
+    /* ===== the WONDERED run (captures prior, accrue, evicted, sal_f5) ===== */
+    UW ev_wo[CURIO_SING_N]; UB sal_wo = 0; float prior_sh = 0;
+    INT tbl_before = -1, tbl_after = -1; UW want_ku = 0, wonders_seen = 0;
+    curio_run(w_base, k_u, sk, sv, CURIO_WONDER_N, ev_wo, &sal_wo,
+              &prior_sh, &tbl_before, &want_ku, &wonders_seen, &tbl_after);
+    INT wo_ku_cleared = !curio_used(k_u);   /* capture BEFORE the next run overwrites r3_wq */
+
+    /* ===== the UNWONDERED run (the disease control) ===== */
+    UW ev_un[CURIO_SING_N]; UB sal_un = 0;
+    curio_run(w_base, k_u, sk, sv, 0, ev_un, &sal_un, NULL, NULL, NULL, NULL, NULL);
+
+    /* ---------- [curio-prior]: k_u is genuinely unknown --------------- */
+    INT prior_ok = (prior_sh < M_KNOWN_SHARE) && (tbl_before == 0);
+    r_puts("[curio] k_u (key "); r_putdec((UW)k_u);
+    r_puts(" \""); r_puts(r3_vocab_key_word(k_u));
+    r_puts("\") masked prior share="); r_putf1(prior_sh);
+    r_puts("%  (gate <"); r_putf1(M_KNOWN_SHARE);
+    r_puts("); want-table "); r_putdec((UW)tbl_before);
+    r_puts("/"); r_putdec(R3_WQ_MAX); r_puts(" (empty)\r\n");
+    r_puts(prior_ok ? "[curio-prior] PASS\r\n" : "[curio-prior] FAIL\r\n");
+
+    /* ---------- [curio-accrue]: 12 wonders -> want==cap, s_wonders==12 - */
+    INT accrue_ok = (want_ku == R3_WANT_CAP) && (wonders_seen == (UW)CURIO_WONDER_N)
+                 && (tbl_after == 1);
+    r_puts("[curio] after "); r_putdec(CURIO_WONDER_N);
+    r_puts(" wonders: want(k_u)="); r_putdec(want_ku);
+    r_puts("/"); r_putdec(R3_WANT_CAP);
+    r_puts(" (clamped)  s_wonders="); r_putdec(wonders_seen);
+    r_puts("  want-table "); r_putdec((UW)tbl_after); r_puts("/"); r_putdec(R3_WQ_MAX);
+    r_puts("\r\n");
+    r_puts(accrue_ok ? "[curio-accrue] PASS\r\n" : "[curio-accrue] FAIL\r\n");
+
+    /* ---------- [curio-unwondered]: DISEASE control (LOAD-BEARING) ----- *
+     * 0 wonders -> f5 gets default salience 1 -> the LM-13 selector is a   *
+     * min-seq FIFO -> the evicted-seq sequence is [1,2,3,4,5]: f5 (seq 5)  *
+     * DIES when f9 arrives. The evicted-seq array is the load-bearing      *
+     * assertion (RED if the conversion fires spuriously).                 */
+    static const UW EXP_UN[CURIO_SING_N] = {1,2,3,4,5};
+    INT un_ok = 1;
+    r_puts("[curio] UNWONDERED (0 wonders): evicted-seq [");
+    for (INT i = 0; i < CURIO_SING_N; i++) {
+        r_putdec(ev_un[i]); if (i+1 < CURIO_SING_N) r_puts(",");
+        if (ev_un[i] != EXP_UN[i]) un_ok = 0;
+    }
+    r_puts("] (expect [1,2,3,4,5] — f5 dies) [LOAD-BEARING: selection]\r\n");
+    r_puts(un_ok ? "[curio-unwondered] PASS\r\n" : "[curio-unwondered] FAIL\r\n");
+
+    /* ---------- [curio-wondered]: CURE (LOAD-BEARING) ------------------ *
+     * The ONLY delta = 12 wonders of k_u. When f5 (== k_u) arrives its     *
+     * accrued want CONVERTS to arrival salience R3_SAL_CAP; the LM-13      *
+     * selector now evicts f6 (seq 6) instead and f5 SURVIVES -> evicted-   *
+     * seq [1,2,3,4,6]. Same code, only the wonders differ.                 */
+    static const UW EXP_WO[CURIO_SING_N] = {1,2,3,4,6};
+    INT wo_ok = (sal_wo == R3_SAL_CAP) && wo_ku_cleared;
+    r_puts("[curio] WONDERED (12 wonders on k_u): f5 arrival salience=");
+    r_putdec((UW)sal_wo); r_puts("/"); r_putdec(R3_SAL_CAP);
+    r_puts(" (want converted)  want entry cleared="); r_putdec((UW)wo_ku_cleared);
+    r_puts("  evicted-seq [");
+    for (INT i = 0; i < CURIO_SING_N; i++) {
+        r_putdec(ev_wo[i]); if (i+1 < CURIO_SING_N) r_puts(",");
+        if (ev_wo[i] != EXP_WO[i]) wo_ok = 0;
+    }
+    r_puts("] (expect [1,2,3,4,6] — f6 dies, f5 SURVIVES) [LOAD-BEARING: selection]\r\n");
+    r_puts(wo_ok ? "[curio-wondered] PASS\r\n" : "[curio-wondered] FAIL\r\n");
+
+    /* ---------- [curio-weightknown]: the share qualifier guard --------- *
+     * Rebuild LM-13's class-SPREAD eviction (8 distinct classes -> ~ZERO   *
+     * decay, LM-13 §4): f1 is EVICTED but its weights still hold ~100%.    *
+     * Wonder-probe f1's key: it is UNBOUND yet the masked share >= bar, so *
+     * r3_want_note returns 0 (unbound-but-weight-known) — NOT curious.     *
+     * RED if the share qualifier is dropped ("unbound" alone would wonder).*/
+    UB sk5[8], sv5[8]; INT spread_ok = curio_spread_f5(sk5, sv5);
+    INT wk_probe = 1; float wk_share = 0; INT wk_unbound = 0;
+    if (spread_ok) {
+        r3_weights_set(w_base);
+        fgt_build();
+        (void)r3_fact_learn(sk5, sv5, 8);            /* class-spread f5 -> evict f1 */
+        while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+        INT b; wk_unbound = (m_find_key(0, &b) < 0); /* f1's key 0 now evicted */
+        float sh[R_VALV]; UB pr = m_masked_vote(0, M_ASK_N, sh);
+        wk_share = sh[pr];
+        wk_probe = r3_want_note(0, wk_share);        /* MUST return 0 (weight-known) */
+    }
+    INT wk_ok = spread_ok && wk_unbound && (wk_share >= M_KNOWN_SHARE) && (wk_probe == 0);
+    r_puts("[curio] weight-known guard: class-spread f5 evicts f1; key0 unbound=");
+    r_putdec((UW)wk_unbound); r_puts(" masked share="); r_putf1(wk_share);
+    r_puts("% (>= bar -> weights know it)  r3_want_note="); r_putdec((UW)wk_probe);
+    r_puts(" (0 = not curious)\r\n");
+    r_puts(wk_ok ? "[curio-weightknown] PASS\r\n" : "[curio-weightknown] FAIL\r\n");
+
+    /* ---------- [curio-clean]: eval/hit purity ------------------------ *
+     * s_eval_fact x4 + m_masked_vote x80 + 5x r3_fact_touch on a RETAINED  *
+     * key accrue ZERO wonders (accrual lives ONLY in r3_want_note).        */
+    r3_weights_set(w_base); fgt_build();
+    UW w_before = s_wonders;
+    for (INT f = 0; f < R3_NFACTS; f++) (void)s_eval_fact(S_SEED_HELD, S_EVAL_N, f);
+    { float sh[R_VALV]; (void)m_masked_vote(0, 80, sh); }
+    for (INT t = 0; t < 5; t++) (void)r3_fact_touch(0);   /* RETAINED key 0 */
+    UW clean_delta = s_wonders - w_before;
+    INT clean_ok = (clean_delta == 0);
+    r_puts("[curio] purity: s_eval_fact x4 + m_masked_vote x80 + 5x r3_fact_touch -> s_wonders delta=");
+    r_putdec(clean_delta); r_puts(" (gate ==0)\r\n");
+    r_puts(clean_ok ? "[curio-clean] PASS\r\n" : "[curio-clean] FAIL\r\n");
+
+    /* ---------- [curio-bounded]: table overflow, min-want tie-oldest --- *
+     * Fill the 4-slot table with wants A=3,B=1,C=2,D=1 (5 distinct UNKNOWN  *
+     * keys, dynamically chosen), then wonder a 5th key E -> evict MIN-want  *
+     * tie-OLDEST = B (want 1, oldest of the two want-1 entries). The want=3 *
+     * entry (A) SURVIVES.                                                   */
+    r3_weights_set(w_base); s_fq_reset();          /* empty queue + want-table */
+    INT kb[5]; INT nb = 0;
+    for (INT i = 0; i < 5; i++) {
+        INT kk = curio_pick_unknown(0, R_KEYV, kb, nb);
+        if (kk < 0) break;
+        kb[nb++] = kk;
+    }
+    INT bnd_ok = 0; UW a_before = 0;
+    INT b_evicted = 0, a_survives = 0, e_present = 0, bnd_full = 0;
+    if (nb == 5) {
+        float sh[R_VALV]; UB pr;
+        for (INT t=0;t<3;t++){ pr=m_masked_vote(kb[0],M_ASK_N,sh); (void)r3_want_note(kb[0],sh[pr]); } /* A want 3 */
+        pr=m_masked_vote(kb[1],M_ASK_N,sh); (void)r3_want_note(kb[1],sh[pr]);                          /* B want 1 */
+        for (INT t=0;t<2;t++){ pr=m_masked_vote(kb[2],M_ASK_N,sh); (void)r3_want_note(kb[2],sh[pr]); } /* C want 2 */
+        pr=m_masked_vote(kb[3],M_ASK_N,sh); (void)r3_want_note(kb[3],sh[pr]);                          /* D want 1 */
+        bnd_full = (curio_table_n() == R3_WQ_MAX);
+        a_before = curio_want_of(kb[0]);
+        pr=m_masked_vote(kb[4],M_ASK_N,sh); (void)r3_want_note(kb[4],sh[pr]);                          /* E -> evict */
+        b_evicted  = !curio_used(kb[1]);
+        a_survives = curio_used(kb[0]) && (curio_want_of(kb[0]) == 3);
+        e_present  = curio_used(kb[4]);
+        bnd_ok = bnd_full && b_evicted && a_survives && e_present
+              && (curio_table_n() == R3_WQ_MAX) && (a_before == 3);
+    }
+    r_puts("[curio] bounded: keys A="); r_putdec((UW)(nb>0?kb[0]:0));
+    r_puts("(want3) B="); r_putdec((UW)(nb>1?kb[1]:0));
+    r_puts("(want1) C="); r_putdec((UW)(nb>2?kb[2]:0));
+    r_puts("(want2) D="); r_putdec((UW)(nb>3?kb[3]:0));
+    r_puts("(want1) E="); r_putdec((UW)(nb>4?kb[4]:0)); r_puts("\r\n");
+    r_puts("[curio]   table full then wonder E -> B(min-want,oldest) evicted=");
+    r_putdec((UW)b_evicted);
+    r_puts("  A(want3) survives="); r_putdec((UW)a_survives);
+    r_puts("  E present="); r_putdec((UW)e_present);
+    r_puts("  table "); r_putdec((UW)curio_table_n()); r_puts("/"); r_putdec(R3_WQ_MAX);
+    r_puts("\r\n");
+    r_puts(bnd_ok ? "[curio-bounded] PASS\r\n" : "[curio-bounded] FAIL\r\n");
+
+    r_puts("[curio] NOTE: cert verbs reset rw[] + the live queue + the want-table (VII.0 #5)\r\n");
+    r_puts("[curio] ==== done ====\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */

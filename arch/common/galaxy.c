@@ -402,6 +402,7 @@ static const char *gx_type_name(UB t)
     case EV_SUMMARY:     return "summary";
     case EV_REMOTE_TEACH:return "remote_teach";
     case EV_MERGE:       return "merge";
+    case EV_WONDER:      return "wonder";   /* LM-14 curiosity (galaxy.md)  */
     default:             return "ev";
     }
 }

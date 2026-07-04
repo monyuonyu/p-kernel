@@ -82,6 +82,14 @@
                              /* fact seq, b = its salience (1 = default/unearned,   */
                              /* >1 = earned but still the least-salient). ONE site: */
                              /* the r3_fact_learn eviction branch.                  */
+#define EV_WONDER       20   /* LM-14 (living-mind-lm14-curiosity.md): the mind    */
+                             /* was ASKED about a key it does NOT hold and does     */
+                             /* NOT know (unbound AND masked share < M_KNOWN_SHARE) */
+                             /* — an accrued WANT, the DUAL of EV_FORGET's chosen   */
+                             /* forgetting. src = me, dst = NONE; a = wanted key,   */
+                             /* b = accrued want (1..R3_WANT_CAP). ONE site: the    */
+                             /* r3_want_note accrual (m_ask MISS branch). LOCAL —   */
+                             /* want never crosses the wire.                        */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

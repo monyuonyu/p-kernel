@@ -103,7 +103,7 @@ jobs:
           # [forget-*] gates below); both placed AFTER `mind ask sun` so they are
           # self-contained and cannot perturb the [teach-*] gates (every cert verb
           # resets rw[]+queue).
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind ask leaf\nmind wonder\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -397,6 +397,48 @@ jobs:
           grep -aF '[forget-onesite] PASS' selftest.log
           # no [forget-*] gate may FAIL (fail-closed against a silently-reordered leg).
           ! grep -aE '\[forget-[a-z-]+\] FAIL' selftest.log
+          # LM-14 (living-mind-lm14-curiosity.md): `mind curious` runs the
+          # curiosity cert (the [curio-*] gates). The mind REMEMBERS keys it was
+          # ASKED but did NOT know (a bounded want-table = the DUAL of LM-13's
+          # salience); when a wanted key is finally taught the accrued want
+          # CONVERTS into arrival salience so the long-wanted fact resists
+          # eviction. GENERIC BY CONSTRUCTION (the LM-13 lesson): the load-bearing
+          # claim is pure SELECTION (evicted-seq), NO accuracy pathology. Two runs
+          # are byte-identical except 12 pre-teach WONDERS of k_u.
+          # [curio-prior] k_u masked prior < 75 (genuinely unknown, table empty);
+          # [curio-accrue] 12 wonders -> want==cap(8), s_wonders==12, table 1/4;
+          # [curio-unwondered] DISEASE control (LOAD-BEARING): 0 wonders ->
+          # evicted-seq [1,2,3,4,5], f5 DIES (RED if the conversion fires
+          # spuriously); [curio-wondered] CURE (LOAD-BEARING): the ONLY delta = 12
+          # wonders -> f5 arrival salience==8, evicted-seq [1,2,3,4,6], f5 SURVIVES
+          # (RED if the conversion is broken); [curio-weightknown] share-qualifier
+          # guard: a class-spread eviction leaves the evicted key's weights ~100%,
+          # so wonder-probing it returns 0 = not curious (RED if the share
+          # qualifier is dropped); [curio-clean] eval/hit purity: s_wonders delta
+          # ==0 (RED if accrual leaks into a read path); [curio-bounded] table
+          # overflow evicts min-want tie-oldest, a want=3 entry survives.
+          grep -aF '[curio-prior] PASS' selftest.log
+          grep -aF '[curio-accrue] PASS' selftest.log
+          grep -aF '[curio-unwondered] PASS' selftest.log
+          grep -aF '[curio-wondered] PASS' selftest.log
+          grep -aF '[curio-weightknown] PASS' selftest.log
+          grep -aF '[curio-clean] PASS' selftest.log
+          grep -aF '[curio-bounded] PASS' selftest.log
+          # no [curio-*] gate may FAIL (fail-closed against a silently-reordered leg).
+          ! grep -aE '\[curio-[a-z-]+\] FAIL' selftest.log
+          # LM-14 LIVE-WIRING leg: the in-proc cert calls r3_want_note directly;
+          # this covers the PRODUCTION m_ask MISS call-site the cert bypasses.
+          # `mind ask leaf` on the RAW substrate (placed BEFORE `mind teach sun
+          # yellow` so no consolidation has yet spilled confidence onto leaf —
+          # leaf's raw masked prior is 45% < 75, genuinely unknown) must WONDER,
+          # and `mind wonder` must then LIST it. (Placed before the teach so the
+          # share-qualifier does not correctly SUPPRESS the wonder: once sun->
+          # yellow is consolidated the substrate generalizes and leaf reads
+          # "yellow" at 100%, at which point NOT wondering about leaf is the right
+          # behavior — the qualifier working.) The reset certs later amnesia-bomb
+          # the want-table, so the live want is captured in the log first.
+          grep -aF 'wondering about "leaf"' selftest.log
+          grep -aE '\[wonder\] +"leaf" want=' selftest.log
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
