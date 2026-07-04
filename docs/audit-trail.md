@@ -1920,3 +1920,30 @@ N-4 cross-host deferred to the ThinkPad).
   CMake parity risk); dmn.c byte-identical. NOT merged by the implementer — a SEPARATE audit + the commander's
   own clean-build reproduction of these crowns precede any merge (the audit-trail :1875 rule). LM-15 extends
   the living-mind arc: learn → sleep → revise → forget → wonder (LM-14) → ASK (LM-15).
+  AUDIT (2026-07-04, SEPARATE agent, verdict MERGE-WITH-CORRECTIONS → integrated by commander):
+    · CROWNS REPRODUCED independently by the auditor (clean gcc 15.2.0 build) AND by the commander:
+      aarch64 3e20edbd… / x86 b6a748da…, byte-identical; parent be41bbf6…/248633de… also reproduced. Crown OK.
+    · IN-BINARY GATES HAVE REAL TEETH: the auditor sabotaged each `[pull-*]` gate's own failure mode
+      independently (leak a want-LEVEL byte → `[pull-snapshot-honest]` RED; bump want_seq every tick →
+      `[pull-seq-gen]` RED; answer an unbound/evicted key → `[pull-answer-src]` RED; defeat dedup →
+      `[pull-answered-once]` RED), all reverted. F-LOCAL holds (no magnitude byte on the wire); budget honest
+      (KDDS_SINGLETON_TOPICS still 16, 8 eager / 15 worst-case, next-singleton-must-bump obligation recorded);
+      genericity holds (dynamic key, relative salience); all-4-build zero new warnings.
+    · LIVE CERT CONFOUND (empirically established, wave-45 same-harness negative control): `samples/47`'s cure
+      leg does NOT isolate the pull's causal contribution. Because B is taught K LOCALLY, B's ordinary LM-7
+      Path E teach-gossip carries the SAME (origin,seq) packet as the pull answer; A's `r3_want_take`
+      conversion lands precious on WHICHEVER arrives. Stubbing BOTH `mt_wire_send(&mq_ans_pkt)` calls to no-ops
+      (pull answer never reaches the wire) STILL passes all 9 `[pull-*]` gates — Path E alone delivers K. The
+      pull-specific evidence is B's `answering want key` print (proves `mq_poll_wants` RAN + emitted), NOT that
+      A CONSUMED the pull answer. So the live cert earns "the ask/answer mechanism runs over the real region +
+      arrival is precious", NOT "the pull rescued a fact Path E dropped".
+    · CORRECTIONS APPLIED by the commander (crown-neutral — docs/shell/CI comments only, no compiled code):
+      struck the "PROVES the pull" / "A learns FROM the pull" overclaims in `living-mind-lm15-pullteach.md`
+      §4.2 (added a HONESTY CAVEAT), `samples/47_pull_teach/run.sh` (header CONFOUND block + banner), and the
+      `pull-teach-live` ci.yml comment; fixed the 0-based/1-based node-id error in the doc; hardened run.sh to
+      always rebuild (the stale-binary trap the auditor hit — a manual run silently tested a pre-LM-15 binary).
+    · FOLLOW-UP OBLIGATION (named, deferred): a live cert that TRULY isolates the pull must remove Path E's
+      delivery of K to A — e.g. A outside / not-yet-in the region during B's K-teach window, then joins →
+      wonders K → only the engram-driven pull can re-deliver. Teaching K then L on B is necessary-but-NOT-
+      sufficient (B's first Path E publish of K still reaches an in-region A). Until then, the pull LOGIC rests
+      on the toothy in-binary gates + the on-wire answer emission, and the live cert proves WIRING + preciousness.

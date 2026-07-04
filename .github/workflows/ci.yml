@@ -1166,10 +1166,16 @@ jobs:
     # conversion fires, so the pulled answer arrives PRECIOUS (salience 1+want). K
     # is DISCOVERED dynamically (the first candidate word A wonders about — no
     # hard-coded key, GENERICITY). Disease (nobody holds K -> zero arrival, want
-    # persists) and cure (teach B only -> B answers via PULL -> A learns from node
-    # 2) coexist in ONE run; a third node C outside the region never hears it. The
-    # in-process `mind pull` cert is the within-node unit proof; this is the
-    # cross-node, over-the-relay integration proof.
+    # persists) and cure (teach B only -> B EMITS a pull answer on the wire; A's
+    # wondered arrival lands precious) coexist in ONE run; a third node C outside
+    # the region never hears it. CONFOUND (audit 2026-07-04): this live cert does
+    # NOT isolate the pull from B's ordinary Path E teach-gossip of the same fact
+    # (stubbing the pull answer to a no-op still passes every gate) — it proves the
+    # mechanism RUNS + the arrival is precious, NOT that the pull DELIVERED K. The
+    # in-process `mind pull` cert (toothy, sabotage-tested) is the within-node unit
+    # proof of the pull LOGIC; this is the cross-node, over-the-relay proof of the
+    # WIRING. A truly-isolating cert (drop Path E's K-delivery to A) is a named
+    # follow-up (audit-trail.md).
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -1188,9 +1194,11 @@ jobs:
           grep -q '\[pull-want-live\] PASS'      /tmp/p47_ci.log
           grep -q '\[pull-unknown-silent\] PASS' /tmp/p47_ci.log
           grep -q '\[pull-region-quiet\] PASS'   /tmp/p47_ci.log
-          # the CURE leg: B answers via the PULL path (the print is emitted ONLY
-          # by mq_poll_wants, NOT by normal teach-gossip) and A learns K over the
-          # wire from B -> arriving PRECIOUS (salience == 1 + want). NOTE: the
+          # the CURE leg: B EMITS a pull answer (the print is emitted ONLY by
+          # mq_poll_wants, NOT by teach-gossip -> proves the pull RAN + emitted; it
+          # does NOT isolate that A CONSUMED it vs Path E -- see the CONFOUND note
+          # above) and A's wondered arrival lands PRECIOUS (salience == 1 + want).
+          # NOTE: the
           # kernel prints 0-based INTERNAL ids (PKERNEL_NODE_ID - 1): A(asker)=node
           # 0, B(holder)=node 1, C=node 2 — the same mapping the RTT-zone math uses.
           grep -q 'answering want key .* from node 0' /tmp/p47_nodeB.log

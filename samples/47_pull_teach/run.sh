@@ -26,13 +26,24 @@
 #   [pull-unknown-silent] nobody holds K -> B stays silent, A gets ZERO arrival,
 #                         A's want persists (the mechanism does not hallucinate)
 #   [pull-region-quiet]   C's want never reaches B (region bounds the question)
-#   [pull-answered]       teach B only -> B answers via PULL -> A learns K over
-#                         the wire (from B = internal node 1) -> salience == 1+want
+#   [pull-answered]       teach B only -> B EMITS a pull answer on the wire, A's
+#                         wondered arrival lands precious (salience == 1+want)
 #   [pull-want-cleared]   A no longer wonders K; A's next mind/want is empty
 #   [pull-grounded]       A answers V and names the teacher (B = internal node 1)
 #   [pull-consolidated]   A's OWN DMN grounds it: re-ask share >= 75
 #   [pull-region]         C: still wondering, never received K (region control)
 #   [pull-storm-bounded]  exactly ONE r3_fact_learn for K on A; B's answers cap
+#
+# *** CONFOUND (audit 2026-07-04) — READ THIS. This cert does NOT isolate the
+# pull's causal contribution. B is taught K LOCALLY, so B's ordinary Path E
+# teach-gossip carries the SAME (origin,seq) packet as the pull answer; A's
+# want->salience conversion fires precious on WHICHEVER arrives. A same-harness
+# control that stubs the pull answer to a no-op STILL passes every gate (Path E
+# alone delivers K). The pull-specific evidence is B's 'answering want key' print
+# (proves mq_poll_wants RAN + emitted), NOT that A CONSUMED the pull answer. So
+# this earns "the ask/answer mechanism runs over the real region + arrival is
+# precious", NOT "the pull rescued a fact Path E dropped". True isolation (drop
+# Path E's K-delivery to A) is a named follow-up. See the doc's HONESTY CAVEAT. ***
 #
 # Exit 0 = RESULT: PASS. Logs: /tmp/p47_*.log
 #
@@ -51,8 +62,10 @@ case "$(uname -m)" in
 esac
 [ -n "${PKERNEL_BOOT_DIR:-}" ] && BOOT="$ROOT/$PKERNEL_BOOT_DIR"
 WRAP="${PKERNEL_WRAP:-}"
-[ -x "$BOOT/p-kernel" ]    || make -C "$BOOT"       >/dev/null || exit 1
-[ -x "$ROOT/relay/relay" ] || make -C "$ROOT/relay" >/dev/null || exit 1
+# Always (re)build — an EXISTING stale binary must NOT be silently tested (the
+# LM-15 audit 2026-07-04 stale-binary trap). make is idempotent: a no-op if fresh.
+make -C "$BOOT"       >/dev/null || exit 1
+make -C "$ROOT/relay" >/dev/null || exit 1
 
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export PKERNEL_RELAY_HOST=127.0.0.1
@@ -244,8 +257,9 @@ echo "--- [pull-answered]: teach B \"$KWORD\"->\"$VWORD\"; B answers via PULL; A
 send 2 "mind teach $KWORD $VWORD"
 # B's first teach lazily pretrains the widened substrate before it can publish.
 wait_for "$L2" 'published mind/teach' 200 || bad "B never published its teach"
-# 1) B answers A's want via the PULL path — the print is emitted ONLY by
-#    mq_poll_wants (NOT by normal teach-gossip), so it PROVES the pull mechanism.
+# 1) B emits a pull answer — the print is emitted ONLY by mq_poll_wants (NOT by
+#    teach-gossip), so it proves the pull mechanism RAN and EMITTED. (It does NOT
+#    prove A consumed the pull answer vs B's Path E gossip — see the CONFOUND note.)
 if wait_for "$L2" "answering want key $KID .* from node $AINT" 60; then
     ok "  (1) B answered via PULL: 'answering want key $KID ... from node $AINT'"
     grep -a "answering want key $KID" "$L2" | tail -1 | sed 's/^/      /'
@@ -379,10 +393,12 @@ if [ "$FAIL" -ne 0 ]; then
     exit 1
 fi
 echo "==========================================================="
-echo " RESULT: PASS — THE MIND REACHED OUT AND WAS ANSWERED."
+echo " RESULT: PASS — THE MIND REACHED OUT AND AN ANSWER CAME."
 echo " A wondered about \"$KWORD\", PUBLISHED that want on mind/want (the KEY, never"
-echo " the level), a region peer that HELD it re-taught the answer on mind/teach,"
-echo " and A learned it over the wire — arriving PRECIOUS (salience 1+want) through"
-echo " A's OWN r3_fact_learn + DMN. Nobody outside the region heard the question."
+echo " the level), a region peer that HELD it EMITTED an answer on mind/teach, and"
+echo " A's wondered arrival landed PRECIOUS (salience 1+want) through A's OWN"
+echo " r3_fact_learn + DMN. Nobody outside the region heard the question."
+echo " (NOTE: this run does not ISOLATE the pull from ordinary Path E teach-gossip"
+echo "  of the same fact — see the HONESTY CAVEAT in living-mind-lm15-pullteach.md.)"
 echo "==========================================================="
 exit 0

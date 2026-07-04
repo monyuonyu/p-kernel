@@ -139,18 +139,42 @@ salience (the LM-13 GENERICITY trap). Four gates:
   not `>`).
 
 ### 4.2 Live — `samples/47_pull_teach/run.sh` (3 nodes over the REAL relay/region)
-Topology = sample 41's: A(1),B(2) in region 0; C(3) in zone 1, OUTSIDE. The
-script NEVER types `mind teach <K>` on A or C. K is DISCOVERED (the first
-candidate word A prints `wondering about` for). Disease and cure in ONE run:
+Topology = sample 41's: A(internal id 0), B(1) in region 0; C(2) in zone 1,
+OUTSIDE. The script NEVER types `mind teach <K>` on A or C. K is DISCOVERED (the
+first candidate word A prints `wondering about` for). Disease and cure in ONE run:
 `[pull-want-live]` (B hears A's want on the REAL topic), `[pull-unknown-silent]`
 (no holder → zero arrival on A, want persists — the mechanism does not
 hallucinate), `[pull-region-quiet]` (C's want never reaches B);
-`[pull-answered]` (teach B only → **B prints `answering want key <K> from node
-1`, emitted ONLY by `mq_poll_wants`, NOT by normal teach-gossip → PROVES the pull
-path** → A learns from node 2 → arrival salience `== 1 + want`),
-`[pull-want-cleared]`, `[pull-grounded]` (A names node 2), `[pull-consolidated]`
-(A's OWN DMN, share ≥ 75), `[pull-region]` (C: still wondering, never received),
-`[pull-storm-bounded]` (A learns K exactly once; B's answers capped).
+`[pull-answered]` (teach B only → B prints `answering want key <K> from node 0`,
+emitted ONLY by `mq_poll_wants` — this proves the pull mechanism **ran and emitted
+an answer on the real wire**; A then receives `remote teach arrived … rc=0` and the
+arrival is PRECIOUS, salience `== 1 + want`), `[pull-want-cleared]`,
+`[pull-grounded]` (A names node 1), `[pull-consolidated]` (A's OWN DMN, share ≥ 75),
+`[pull-region]` (C: still wondering, never received), `[pull-storm-bounded]`
+(A learns K exactly once; B's answers capped).
+
+> **HONESTY CAVEAT (audit 2026-07-04, established empirically).** This live cert is
+> **CONFOUNDED** — it does NOT isolate the pull's causal contribution. Because B is
+> taught K *locally*, B's ordinary LM-7 Path E teach-gossip (`m_publish_teach` +
+> `m_republish_last`) carries the **same** `(origin, fact_seq)` packet as the pull
+> answer, and A's `r3_want_take` conversion lands PRECIOUS on *whichever* copy
+> arrives first — the salience assertion is arrival-path-agnostic. A same-harness
+> negative control (both `mt_wire_send(&mq_ans_pkt)` calls stubbed to no-ops, so the
+> pull answer never reaches the wire) **still passes all `[pull-*]` gates**: Path E
+> alone delivers K to A. The only pull-specific evidence here is B's `answering want
+> key` print, which proves `mq_poll_wants` *ran and emitted*, NOT that A *consumed*
+> the pull answer. So this cert earns: *"the ask/answer mechanism runs over the real
+> region, region scoping holds both ways, and a wondered arrival lands precious."* It
+> does **NOT** earn *"the pull rescued a fact Path E dropped."* The pull logic itself
+> is independently certified by the in-binary `[pull-*]` gates (§4.1 — each
+> sabotage-tested RED) and by the answer being demonstrably emitted on the wire.
+>
+> **FOLLOW-UP OBLIGATION.** A truly-isolating live cert must remove Path E's delivery
+> of K to A — e.g. A is outside / not-yet-in the region during B's K-teach window,
+> then joins → wonders K → only the engram-driven pull can re-deliver it. This is
+> non-trivial (teaching K then L on B is *necessary but not sufficient*: B's first
+> Path E publish of K still reaches an in-region A before L displaces it) and is
+> deferred to a named follow-up (tracked in [../../audit-trail.md](../../audit-trail.md)).
 
 ## 5. Crown / CI impact
 
