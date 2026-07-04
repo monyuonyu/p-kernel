@@ -6,21 +6,46 @@
 # A belief that is ALREADY weight-resident on both nodes is REVISED, and the
 # new belief DISPLACES the old across the region — not blended, not masked.
 #
+# Node roles (chosen so the LM-12 Site-3 stale-mouth guard is LOAD-BEARING,
+# not decorative — see [rev-stale-mouth] below):
+#   A  teaches sun->yellow LOCALLY (Site 1). This ARMS A's mouth to "yellow"
+#      (m_publish_teach sets mt_pub_last=yellow, mt_pub_have=1); A re-drives it
+#      every poll so late region members still receive it.
+#   B  learns sun->yellow REMOTELY (Site 2, mind_net_task -> r3_fact_learn).
+#      Site 2 NEVER arms the mouth, so B never re-drives "yellow".
+#   B  then REVISES sun->green LOCALLY (Site 1). B's mouth arms to "green".
+#   A  takes B's revision as a REMOTE revision (Site 2). This is the guard-
+#      critical state: A's mouth is still armed to the SUPERSEDED "yellow"
+#      while its queue is being revised to "green". The Site-3 guard
+#      (r3_incontext.c, r3_fact_revise: "if (mt_pub_have && key==k &&
+#      val!=v_new) mt_pub_have=0;") MUST clear A's stale mouth here, because
+#      Site 2 will NOT re-arm it — nothing else stops A re-driving "yellow".
+#
 #   1. teach sun->yellow on A ; B learns it (Path E) and answers "yellow".
-#   2. `mind teach sun green` on A = LM-12 belief revision (Site 1): A
+#   2. `mind teach sun green` on B = LM-12 belief revision (Site 1): B
 #      SUPERSEDES its own binding in place and re-publishes the NEW value.
-#   3. B's mind_net_task takes the different-value packet as a REMOTE REVISION
-#      (Site 2, last-arrival-wins), supersedes in place, and B's OWN DMN
-#      re-grounds B's rw[] on "green".  B now answers "green" (>= 75% masked).
-#   4. kill -9 A ; B STILL answers "green" — the revised belief outlived its
-#      reviser (the Collective kept the correction).
-#   5. [rev-stale-mouth]: after >= 3 poll cycles post-revision, neither node
-#      reverts to "yellow" — the Site 3 stale-re-drive guard cleared A's
-#      retained OLD teach so a late poll cannot re-infect the region.
+#   3. A's mind_net_task takes the different-value packet as a REMOTE REVISION
+#      (Site 2, last-arrival-wins), supersedes in place, fires the Site-3
+#      stale-mouth guard, and A's OWN DMN re-grounds A's rw[] on "green".
+#      A now answers "green" (>= 75% masked).
+#   4. [rev-stale-mouth] (THE TEETH): a FRESH late-joiner witness node Z
+#      joins the region AFTER the revision has settled. Because K-DDS
+#      "mind/teach" is single-slot LATEST_ONLY with per-origin (origin,seq)
+#      dedup, an EXISTING member that already saw A's "yellow" seq would
+#      DEDUP a stale re-drive — so re-infection is observable ONLY by a fresh
+#      joiner with empty dedup state. Z must converge on "green" and must
+#      NEVER bind "yellow" over >= 3 poll cycles. If the Site-3 guard is
+#      removed, A keeps re-driving the superseded "yellow" and Z IS re-
+#      infected (its dedup is empty) — this gate then FAILS. A is proven
+#      region-reachable to Z (A's region size includes Z), so Z's cleanliness
+#      is the guard's doing, not an unreachable path.
+#   5. kill -9 B (the reviser) ; A (and Z) STILL answer "green" — the revised
+#      belief outlived its reviser (the Collective kept the correction).
 #
 # Two tags:
 #   [rev-live]         teach->answer, revise->answer-new, kill-reviser->still-new
-#   [rev-stale-mouth]  no reversion to the old belief after the revision settles
+#   [rev-stale-mouth]  a FRESH late joiner converges on the new belief and is
+#                      NOT re-infected with the old one (the Site-3 guard bites)
 #
 # Exit 0 = RESULT: PASS. Logs: /tmp/p46_*.log
 # ===========================================================================
@@ -57,12 +82,13 @@ log()  { echo "[$(TS)] $*"; }
 ok()   { log "ok  : $*"; }
 bad()  { log "FAIL: $*"; FAIL=1; }
 
-L1=/tmp/p46_nodeA.log    # A = teacher + reviser (region 0)
-L2=/tmp/p46_nodeB.log    # B = learner  (region 0)
+L1=/tmp/p46_nodeA.log    # A = teacher of VOLD; takes the remote revision (guard-critical); region 0
+L2=/tmp/p46_nodeB.log    # B = learner then REVISER (the reviser we kill); region 0
+L3=/tmp/p46_nodeZ.log    # Z = FRESH LATE JOINER witness (joins after the revision settles)
 
 cleanup() {
-    exec 3>&- 4>&- 2>/dev/null || true
-    for i in 1 2; do
+    exec 3>&- 4>&- 5>&- 2>/dev/null || true
+    for i in 1 2 3; do
         [ "${NODE_PID[$i]:-0}" != 0 ] && kill -9 "${NODE_PID[$i]}" 2>/dev/null
         NODE_PID[$i]=0
     done
@@ -80,7 +106,7 @@ start_node() {  # <i> <fifo> <dir> <log>
     NODE_PID[$i]=$!; disown "${NODE_PID[$i]}"
     log "node$i up pid=${NODE_PID[$i]} dir=$dir log=$lg"
 }
-send() {  # <node 1|2> <line...>
+send() {  # <node 1|2|3> <line...> — node 1->fd 3 (A), 2->fd 4 (B), 3->fd 5 (Z)
     local node="$1"; shift
     local fd=$((node + 2))
     log "node$node <- '$*'"
@@ -115,11 +141,14 @@ ask_fresh() {  # <node> <log> <bound-secs>
 share_of() { echo "$1" | grep -aoE 'share=[0-9]+\.[0-9]' | grep -aoE '[0-9]+\.[0-9]' | cut -d. -f1; }
 
 echo "==========================================================="
-echo " LM-12 — belief revision over the mesh: teach@A -> revise@A -> B corrects"
+echo " LM-12 — belief revision over the mesh: teach@A -> revise@B -> A corrects -> fresh joiner Z stays clean"
 echo "==========================================================="
 "$ROOT/relay/relay" -p "$PKERNEL_RELAY_PORT" > "$WORK/relay.log" 2>&1 &
 RELAY_PID=$!; disown "$RELAY_PID"; sleep 1
 
+# A and B start now; Z (node 3) joins LATE (after the revision settles), so the
+# teeth witness has EMPTY per-origin dedup state at the moment A's stale re-drive
+# would strike. Its fifo is created here so exec can open the fd once it starts.
 start_node 1 "$WORK/fA" "$WORK/dA" "$L1"
 start_node 2 "$WORK/fB" "$WORK/dB" "$L2"
 exec 3<>"$WORK/fA" 4<>"$WORK/fB"
@@ -138,15 +167,16 @@ done
                  || bad "A,B never formed a region"
 
 # ---------------------------------------------------------------------------
-# Phase 1: establish the shared belief sun->yellow on BOTH nodes.
+# Phase 1: establish the shared belief sun->yellow. A teaches it LOCALLY (Site 1,
+# arming A's mouth to "yellow"); B learns it REMOTELY (Site 2, mouth NOT armed).
 # ---------------------------------------------------------------------------
 echo
-echo "--- Phase 1: teach sun->$VOLD on A; B learns it (Path E) ---"
+echo "--- Phase 1: teach sun->$VOLD on A (Site 1, arms A's mouth); B learns it (Site 2) ---"
 send 1 "mind teach $KWORD $VOLD"
 wait_for "$L1" 'published mind/teach' 200 || bad "A never published the teach"
-wait_for "$L2" '\[shared-arrival\] PASS' 150 || bad "B never received A's teach"
+wait_for "$L2" '\[shared-arrival\] PASS' 200 || bad "B never received A's teach"
 send 2 "mind wait 90"
-wait_for "$L2" 'distilled in-context facts -> rw\[\]' 180 \
+wait_for "$L2" 'distilled in-context facts -> rw\[\]' 200 \
     || bad "B's DMN never consolidated the first belief"
 wait_for "$L2" 'wait: drained' 30 || true
 if ask_fresh 2 "$L2" 60 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VOLD\""; then
@@ -163,83 +193,130 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 2: REVISE sun->green on A (Site 1); B corrects itself (Site 2 + DMN).
+# Phase 2: REVISE sun->green on B (Site 1). A takes it as a REMOTE revision
+# (Site 2) while A's mouth is STILL armed to "yellow" — the guard-critical state.
 # ---------------------------------------------------------------------------
 echo
-echo "--- Phase 2: revise sun->$VNEW on A; B takes the REMOTE REVISION ---"
+echo "--- Phase 2: revise sun->$VNEW on B (Site 1); A takes the REMOTE REVISION (Site 2, mouth-armed-to-$VOLD) ---"
 REVISE_T=$(date +%s)
-send 1 "mind teach $KWORD $VNEW"       # already-bound key => LM-12 revision
-wait_for "$L1" 'REVISE key .* "'"$VOLD"'"->"'"$VNEW"'"' 60 \
-    || bad "A did not enter the belief-revision branch (Site 1)"
-wait_for "$L1" '\[revise-arrival\] PASS' 60 || bad "A's [revise-arrival] did not PASS"
-# B applies the remote revision (Site 2, last-arrival-wins), printed loudly.
-if wait_for "$L2" '\[shared-revise\] PASS' 150; then
-    ok "B applied the REMOTE REVISION (Site 2): last-arrival-wins"
-    grep -a 'remote REVISE key' "$L2" | tail -1 | sed 's/^/    /'
+send 2 "mind teach $KWORD $VNEW"       # B already-bound key => LM-12 revision (Site 1)
+wait_for "$L2" 'REVISE key .* "'"$VOLD"'"->"'"$VNEW"'"' 60 \
+    || bad "B did not enter the belief-revision branch (Site 1)"
+wait_for "$L2" '\[revise-arrival\] PASS' 60 || bad "B's [revise-arrival] did not PASS"
+# A applies the remote revision (Site 2, last-arrival-wins); this is where the
+# Site-3 stale-mouth guard fires (A's mouth was armed to the now-superseded VOLD).
+if wait_for "$L1" '\[shared-revise\] PASS' 200; then
+    ok "A applied the REMOTE REVISION (Site 2): last-arrival-wins — Site-3 guard fired here"
+    grep -a 'remote REVISE key' "$L1" | tail -1 | sed 's/^/    /'
 else
-    bad "B never took the remote revision ([shared-revise] absent)"
+    bad "A never took the remote revision ([shared-revise] absent)"
 fi
-# B's OWN DMN re-grounds rw[] on the new belief.
-send 2 "mind wait 90"
-wait_for "$L2" 'wait: drained' 120 || true
-if ask_fresh 2 "$L2" 90 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\""; then
+# A's OWN DMN re-grounds rw[] on the new belief.
+send 1 "mind wait 90"
+wait_for "$L1" 'wait: drained' 120 || true
+if ask_fresh 1 "$L1" 90 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\""; then
     S=$(share_of "$FRESH_ANS")
     if [ "${S:-0}" -ge "$SHARE_GATE" ]; then
-        ok "B now answers \"$KWORD\" -> \"$VNEW\" (share=${S}%) — the belief was REVISED, not blended"
+        ok "A now answers \"$KWORD\" -> \"$VNEW\" (share=${S}%) — the belief was REVISED, not blended"
     else
-        bad "B's revised-belief share ${S:-?}% < $SHARE_GATE"
+        bad "A's revised-belief share ${S:-?}% < $SHARE_GATE"
     fi
-    echo "    revise@A=$REVISE_T  answer@B=$(date +%s)  delta=$(( $(date +%s) - REVISE_T ))s"
+    echo "    revise@B=$REVISE_T  answer@A=$(date +%s)  delta=$(( $(date +%s) - REVISE_T ))s"
     echo "    $FRESH_ANS"
 else
-    bad "B did not answer \"$VNEW\" for \"$KWORD\" after the revision"
+    bad "A did not answer \"$VNEW\" for \"$KWORD\" after the revision"
     echo "    ${FRESH_ANS:-<none>}"
 fi
 
 # ---------------------------------------------------------------------------
-# [rev-stale-mouth]: >= 3 poll cycles later, NO reversion to the old belief.
+# [rev-stale-mouth] (THE TEETH): a FRESH late joiner Z must converge on the NEW
+# belief and must NEVER bind the OLD one. With the Site-3 guard, A cleared its
+# stale mouth in Phase 2 and is now SILENT on mind/teach — only B re-drives
+# "green". Without the guard, A keeps re-driving the superseded "yellow", and Z
+# (empty per-origin dedup) IS re-infected: this gate FAILS.
 # ---------------------------------------------------------------------------
 echo
-echo "--- [rev-stale-mouth]: settle >= 3 poll cycles; neither node reverts to \"$VOLD\" ---"
-# A re-drives its retained teach every MT_POLL_MS (500ms). The Site 3 guard
-# cleared the STALE "$VOLD" packet, so A now re-drives only "$VNEW". Poke A a
-# few times and confirm B does not re-arrive/revert to the old value.
-B_REV_BEFORE=$(grep -ac 'remote REVISE key' "$L2")
-for _ in 1 2 3 4 5; do send 1 "mind"; sleep 2; done   # >= 3 poll cycles of re-drive
+echo "--- [rev-stale-mouth]: FRESH late joiner Z must converge on \"$VNEW\" and never bind \"$VOLD\" ---"
 STALE_OK=1
-# B must NOT have printed a fresh remote arrival/revision back to "$VOLD".
-if grep -aqE "remote (teach arrived|REVISE key).*\"$VNEW\"->\"$VOLD\"" "$L2"; then
-    bad "B reverted to the OLD belief on a stale re-drive (Site 3 guard leaked)"; STALE_OK=0
-fi
-# and a fresh ask on B still yields "$VNEW".
-if ask_fresh 2 "$L2" 40 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\""; then
-    ok "B still answers \"$VNEW\" after the region settled (no stale re-infection)"
+start_node 3 "$WORK/fZ" "$WORK/dZ" "$L3"
+exec 5<>"$WORK/fZ"
+wait_for "$L3" 'mind_net_task up' 90 || bad "Z's mind_net_task never started"
+
+# Prove the delivery path A->Z is OPEN: A must see Z in its region (size=3). If
+# A's mouth were still armed to "yellow" (guard removed), A WOULD deliver it to Z.
+log "waiting for A to see Z in its region (size=3) — proves A->Z path is reachable ..."
+t=0; r3=0
+while [ $t -lt 150 ]; do
+    printf 'region\n' >&3; sleep 2
+    if grep -aq 'size=3' "$L1"; then r3=1; break; fi
+    t=$((t+2))
+done
+[ "$r3" -eq 1 ] && ok "A's region includes Z (size=3) — the A->Z delivery path is open" \
+                || { bad "A never saw Z in its region (size!=3) — teeth precondition unmet"; STALE_OK=0; }
+
+# Z converges on the NEW belief via the region (B re-drives "green").
+if wait_for "$L3" 'remote (teach arrived: "'"$KWORD"'"->"'"$VNEW"'"|REVISE key.*->"'"$VNEW"'")' 200; then
+    ok "Z received the NEW belief \"$VNEW\" from the region"
+    grep -aE 'remote (teach arrived|REVISE key)' "$L3" | tail -1 | sed 's/^/    /'
 else
-    bad "B did not still answer \"$VNEW\" after settling"; STALE_OK=0
+    bad "Z never received the new belief \"$VNEW\""; STALE_OK=0
+fi
+
+# Settle >= 3 poll cycles (MT_POLL_MS=500ms). A re-drives its retained mouth every
+# poll; with the guard it is CLEARED (silent), so Z sees only "green". Keep poking
+# A's region so it stays scheduled and (guard removed) keeps re-driving to Z.
+log "settling >= 3 poll cycles (both re-drive every 500ms); watching Z for stale \"$VOLD\" ..."
+for _ in 1 2 3 4 5 6 7 8; do printf 'region\n' >&3; sleep 2; done   # ~16s >> 3 poll cycles
+
+# THE TEETH: a fresh joiner must NEVER bind "$VOLD". Any remote line landing on
+# VOLD (arrival "...->\"yellow\"" OR revise "...->\"yellow\"") is a re-infection.
+if grep -aqE 'remote (teach arrived: "'"$KWORD"'"|REVISE key).*->"'"$VOLD"'"' "$L3"; then
+    bad "Z was RE-INFECTED with the OLD belief \"$VOLD\" (Site-3 stale-mouth guard leaked)"
+    grep -aE 'remote (teach arrived: "'"$KWORD"'"|REVISE key).*->"'"$VOLD"'"' "$L3" | tail -1 | sed 's/^/    (stale) /'
+    STALE_OK=0
+else
+    ok "Z never bound \"$VOLD\" over >= 3 poll cycles — no stale re-infection"
+fi
+
+# Converge: Z's OWN DMN grounds "green"; a masked ask on Z yields "$VNEW".
+send 3 "mind wait 90"
+wait_for "$L3" 'distilled in-context facts -> rw\[\]' 200 || true
+wait_for "$L3" 'wait: drained' 30 || true
+if ask_fresh 3 "$L3" 90 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\""; then
+    S=$(share_of "$FRESH_ANS")
+    ok "Z answers \"$KWORD\" -> \"$VNEW\" (share=${S:-?}%) — the fresh joiner converged on the revised belief"
+    echo "    $FRESH_ANS"
+else
+    bad "Z did not converge on \"$VNEW\""; STALE_OK=0
     echo "    ${FRESH_ANS:-<none>}"
 fi
 [ "$STALE_OK" -eq 1 ] && ok "[rev-stale-mouth] PASS" || bad "[rev-stale-mouth] — see above"
 
 # ---------------------------------------------------------------------------
-# kill -9 A: the revised belief must outlive its reviser.
+# kill -9 B (the reviser): the revised belief must outlive its reviser.
 # ---------------------------------------------------------------------------
 echo
-echo "--- kill -9 A (the reviser dies); B must STILL answer \"$VNEW\" ---"
-log "*** kill -9 node A (pid ${NODE_PID[1]}) ***"
-kill -9 "${NODE_PID[1]}" 2>/dev/null; NODE_PID[1]=0
+echo "--- kill -9 B (the reviser dies); A must STILL answer \"$VNEW\" ---"
+log "*** kill -9 node B (pid ${NODE_PID[2]}) ***"
+kill -9 "${NODE_PID[2]}" 2>/dev/null; NODE_PID[2]=0
 sleep 3
 LIVE_OK=0
-if ask_fresh 2 "$L2" 90; then
+if ask_fresh 1 "$L1" 90; then
     S=$(share_of "$FRESH_ANS")
     if echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\"" && [ "${S:-0}" -ge "$SHARE_GATE" ]; then
-        ok "B STILL answers \"$VNEW\" (share=${S}%) after A's death — the correction survived"
+        ok "A STILL answers \"$VNEW\" (share=${S}%) after B's death — the correction survived its reviser"
         LIVE_OK=1
     else
-        bad "B failed to answer \"$VNEW\" after A's death (line: $FRESH_ANS)"
+        bad "A failed to answer \"$VNEW\" after B's death (line: $FRESH_ANS)"
     fi
-    echo "    after A's death: $FRESH_ANS"
+    echo "    after B's death: $FRESH_ANS"
 else
-    bad "B printed no fresh ask line after A's death"
+    bad "A printed no fresh ask line after B's death"
+fi
+# and the fresh joiner Z, too, still answers the revised belief.
+if ask_fresh 3 "$L3" 60 && echo "$FRESH_ANS" | grep -aq "\"$KWORD\" -> \"$VNEW\""; then
+    ok "Z also STILL answers \"$VNEW\" after B's death — the Collective (A+Z) kept the correction"
+    echo "    after B's death (Z): $FRESH_ANS"
 fi
 
 [ "$LIVE_OK" -eq 1 ] && [ "$STALE_OK" -eq 1 ] && ok "[rev-live] PASS — teach->revise->correct->survive-death" \
@@ -255,9 +332,11 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 echo "==========================================================="
 echo " RESULT: PASS — BELIEF REVISION IS REAL ACROSS THE MESH."
-echo " A belief taught on A (sun->$VOLD) was answered on B; a later revise on A"
-echo " (sun->$VNEW) DISPLACED it on B through B's OWN DMN sleep (Site 2 remote"
-echo " revision, last-arrival-wins); the region did not revert to the old value"
-echo " on stale re-drives; and killing the reviser did not un-correct B."
+echo " A belief taught on A (sun->$VOLD) was learned on B; a revise on B"
+echo " (sun->$VNEW) DISPLACED it on A through A's OWN DMN sleep (Site 2 remote"
+echo " revision, last-arrival-wins). The Site-3 stale-mouth guard cleared A's"
+echo " superseded mouth, so a FRESH late joiner Z converged on the new belief"
+echo " and was NEVER re-infected with the old one; killing the reviser B did"
+echo " not un-correct the region."
 echo "==========================================================="
 exit 0
