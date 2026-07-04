@@ -98,7 +98,10 @@ jobs:
           # — the in-context competence threshold), and r3/handoff/stream/lang/
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nexit\n' | ./p-kernel" | tee selftest.log
+          # `mind revise` runs the LM-12 belief-revision cert (the [rev-*] gates
+          # below); placed AFTER `mind ask sun` so it is self-contained and cannot
+          # perturb the [teach-*] gates (it resets rw[]+queue like every cert verb).
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -347,6 +350,30 @@ jobs:
           # dmn task itself ran the round — never printed by cert-driven
           # direct calls).
           grep -aF '[dmn] sleep: distilled in-context facts -> rw[]' selftest.log
+          # living-mind LM-12 (living-mind-lm12-belief-revision.md, `mind revise`):
+          # a weight-resident belief k->vo is RE-taught k->vn and DISPLACED via the
+          # SAME DMN sleep path (new share >= 75, old <= 10), not blended/masked.
+          # [rev-baseline] the first belief consolidated (share[vo] >= 75); [rev-blend]
+          # DISEASE D1 (naive dual-enqueue via raw r3_fact_learn: the new belief is
+          # BLOCKED — share[vn] < 75 — because the old engram stays in the replay
+          # union); [rev-not-masked] DISEASE D2 / LOAD-BEARING FALSIFIER (supersede the
+          # engram but run ZERO rounds -> a masked ask STILL reads vo from the weights;
+          # RED-flips if `ask` read the queue or if revise wrote weights directly);
+          # [rev-cured] revise + PRODUCTION idle rounds -> modal=vn, share[vn]>=75,
+          # share[vo]<=10, teacher_agree=100, rounds==budget; [rev-noregress] every
+          # other retained fact's masked acc >= 75; [rev-rebound] after curing, a fresh
+          # unrelated fact does NOT resurrect vo (an overwritten belief does not resurge);
+          # [rev-persist] queue annihilated -> the belief answers vn from rw[] alone
+          # (weight-resident; hosted+PKERNEL_PFS_DIR also does the disk round-trip).
+          grep -aF '[rev-baseline] PASS' selftest.log
+          grep -aF '[rev-blend] PASS' selftest.log
+          grep -aF '[rev-not-masked] PASS' selftest.log
+          grep -aF '[rev-cured] PASS' selftest.log
+          grep -aF '[rev-noregress] PASS' selftest.log
+          grep -aF '[rev-rebound] PASS' selftest.log
+          grep -aF '[rev-persist] PASS' selftest.log
+          # no [rev-*] gate may FAIL (fail-closed against a silently-reordered leg).
+          ! grep -aE '\[rev-[a-z-]+\] FAIL' selftest.log
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
@@ -892,12 +919,58 @@ jobs:
           name: shared-mind-live-logs
           path: /tmp/p41_*.log
 
+  belief-revision-live:
+    name: "信念の改訂 (実機2ノード: A で教えた事実を A が改訂; B が自分の DMN で訂正; 改訂者を kill)"
+    runs-on: [self-hosted, pkernel-thinkpad]
+    # serialized self-hosted chain (de-flake): runs after shared-mind-live so it
+    # never shares the runner with another heavy mind job. See HEAD.
+    needs: [shared-mind-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    timeout-minutes: 20
+    # LM-12 (living-mind-lm12-belief-revision.md): a belief that is ALREADY
+    # weight-resident on both nodes is REVISED, and the new belief DISPLACES the
+    # old across the region — not blended, not masked. teach sun->yellow on A ->
+    # B learns it (Path E) and answers yellow; `mind teach sun green` on A is a
+    # belief revision (Site 1: supersede-in-place + re-publish); B's mind_net_task
+    # takes the different-value packet as a REMOTE REVISION (Site 2, last-arrival-
+    # wins) and B's OWN DMN re-grounds B's rw[] on green; kill -9 A -> B still
+    # answers green (the correction outlived its reviser). [rev-stale-mouth] proves
+    # the Site 3 guard cleared A's retained OLD teach so a late poll cannot revert
+    # the region. The in-process `mind revise` cert is the within-node unit proof;
+    # this is the cross-node, over-the-relay integration proof.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make curl
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 46_belief_revision/run.sh and assert the tags + RESULT PASS
+        run: |
+          timeout 960 samples/46_belief_revision/run.sh | tee /tmp/p46_ci.log
+          # A entered the belief-revision branch (Site 1) and B took the remote
+          # revision (Site 2) — the cross-node correction the slice exists for:
+          grep -q 'REVISE key .* "yellow"->"green"' /tmp/p46_nodeA.log
+          grep -q '\[shared-revise\] PASS' /tmp/p46_nodeB.log
+          grep -q '\[rev-stale-mouth\] PASS' /tmp/p46_ci.log
+          grep -q '\[rev-live\] PASS'        /tmp/p46_ci.log
+          grep -q 'RESULT: PASS' /tmp/p46_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: belief-revision-live-logs
+          path: /tmp/p46_*.log
+
   one-mind-live:
     name: "ひとつの心 / Path W (実機3ノード: 分岐した重みを 84KB チャンク経由でマージ; kill 耐性)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    # serialized self-hosted chain (de-flake): runs after shared-mind-live, so the
+    # serialized self-hosted chain (de-flake): runs after belief-revision-live, so the
     # two worst co-run flakers (shared_mind, one_mind) never share the runner. See HEAD.
-    needs: [shared-mind-live]
+    needs: [belief-revision-live]
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 25
     # LM-10 (living-mind.md Part XI): the WEIGHT-states converge. Where Path E
