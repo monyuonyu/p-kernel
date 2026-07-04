@@ -1881,3 +1881,21 @@ N-4 cross-host deferred to the ThinkPad).
   class-spread f5 decays the evicted fact by 0.0 (living-mind-lm13-forgetting.md §4 + the runtime log now
   disclose this). Current master dev crown = aarch64 f51eb00e… / x86 a0bed501… This commit is crown-neutral
   (docs only) so master's tip stays crown-green; the intentional .text drift is at the merge `972ba15e`.
+- CROWN RE-BLESS — LM-14 curiosity (2026-07-04, feat/lm14-curiosity merged to master). r3_want_note + the
+  want→salience conversion in `arch/common/r3_incontext.c` (bare-metal TU) move `.text` → NEW dev crown
+  (sandbox gcc 15.2.0; parent f51eb00e…/a0bed501… reproduced byte-identical first; new values reproduced by
+  the commander AND the independent auditor):
+    aarch64  be41bbf6b9f018b761ca1e1278878936d2693cf58ca845e520d46c3b6912ed78   (was f51eb00e…)
+    x86      248633de008d0ff036597ab9f8a96f141334732f94f085e29dddddf20aaab019   (was a0bed501…)
+  VERIFICATION: 7/7 [curio-*] gates PASS (commander + auditor); 3 falsifiers BITE (rig conversion →
+  [curio-unwondered] FAIL; drop the share<75 qualifier → [curio-weightknown] FAIL; leak accrual into a read
+  path → [curio-clean] FAIL). GENERICITY confirmed by the auditor (the LM-13 lesson applied): the load-bearing
+  gates assert on evicted-`seq` ONLY (the selector never reads values), and re-laying-out the f5..f9 value
+  classes THREE ways (all-1 / all-63 / heterogeneous) left the evicted-seq [1,2,3,4,5]→[1,2,3,4,6] INVARIANT —
+  no same-class artifact, unlike LM-13. no-regress 95/95; dmn.c byte-identical; no wire change; merge clean.
+  AUDIT-CAUGHT DEFECT (fixed at merge, NOT a mechanism bug): the CI leaf live-wiring leg (`mind ask leaf` →
+  expect leaf to wonder) was positioned AFTER `mind wmerge`, which deterministically pollutes leaf's residual
+  masked prior to 100% → leaf would not wonder → the blocking x86_64 selftest grep would fail. Fix: reordered
+  the leaf probe BEFORE `mind wmerge` in the ci.yml selftest pipe; verified on native aarch64 (leaf reads 60.0%
+  &lt; 75 there and wonders). The 7 [curio-*] gates + the mechanism were untouched. LM-14 landing completes the
+  living-mind arc's learn → sleep → revise (LM-12) → forget (LM-13) → wonder (LM-14) sequence.

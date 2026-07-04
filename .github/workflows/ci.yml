@@ -103,7 +103,7 @@ jobs:
           # [forget-*] gates below); both placed AFTER `mind ask sun` so they are
           # self-contained and cannot perturb the [teach-*] gates (every cert verb
           # resets rw[]+queue).
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind ask leaf\nmind wonder\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind ask leaf\nmind wonder\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -1262,9 +1262,10 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 f51eb00e…,
-    # x86 a0bed501… after the LM-13 honesty re-frame 2026-07-04 — cosmetic
-    # log-string drift only, no math change; was 09fc5a9a…/55b425c9… at LM-13
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 be41bbf6…,
+    # x86 248633de… after LM-14 curiosity 2026-07-04; was f51eb00e…/a0bed501…
+    # after the LM-13 honesty re-frame — cosmetic log-string drift only, no math
+    # change; was 09fc5a9a…/55b425c9… at LM-13
     # graceful-forgetting; was 243f917b…/8e670a3c…
     # after LM-12 belief-revision; was 5e42f853…/a52c8701…
     # at the 2026-07-03 μT-Kernel 3.0 migration; micro T-Kernel 2.0 was 755a20fa…/
