@@ -99,9 +99,11 @@ jobs:
           # teach each bootstrap it; `mind onemind` pretrains+consolidates several
           # times (the disease/cure measurement); plus `mind wait` ~15s nominal.
           # `mind revise` runs the LM-12 belief-revision cert (the [rev-*] gates
-          # below); placed AFTER `mind ask sun` so it is self-contained and cannot
-          # perturb the [teach-*] gates (it resets rw[]+queue like every cert verb).
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nexit\n' | ./p-kernel" | tee selftest.log
+          # below); `mind forget` runs the LM-13 graceful-forgetting cert (the
+          # [forget-*] gates below); both placed AFTER `mind ask sun` so they are
+          # self-contained and cannot perturb the [teach-*] gates (every cert verb
+          # resets rw[]+queue).
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -374,6 +376,27 @@ jobs:
           grep -aF '[rev-persist] PASS' selftest.log
           # no [rev-*] gate may FAIL (fail-closed against a silently-reordered leg).
           ! grep -aE '\[rev-[a-z-]+\] FAIL' selftest.log
+          # living-mind LM-13 (living-mind-lm13-forgetting.md, `mind forget`): the
+          # bounded R3 fact-queue's FIFO eviction becomes min-EARNED-salience; `mind
+          # ask` accrues salience (r3_fact_touch, clamped to R3_SAL_CAP=8). With ZERO
+          # asks the selector degenerates BYTE-IDENTICALLY to FIFO. f1..f4 fill the
+          # queue (keys 0..7); ONE wide f5 (keys 8..15) forces one eviction.
+          # [forget-baseline] 4/4 retained, each masked acc >= 75; [forget-unearned]
+          # DISEASE + LOAD-BEARING FALSIFIER (0 asks -> f5 evicts the OLDEST f1 = FIFO
+          # byte-for-byte, its trace decays to 64.0% < 70; RED-flips if the selector is
+          # rigged to protect by index/key/recency); [forget-cured] the ONLY delta = 12x
+          # r3_fact_touch(f1) (> cap 8) -> the selector evicts f2 instead and f1 SURVIVES
+          # at 100% (a measured +36-pt gap, same code, only the asks differ);
+          # [forget-noregress] f3,f4 held >= 75 (one eviction -> never touched);
+          # [forget-onesite] s_touches == 12 (evals ran m_masked_vote/s_eval_fact many
+          # times and accrued nothing — RED-flips if accrual leaks into a read path).
+          grep -aF '[forget-baseline] PASS' selftest.log
+          grep -aF '[forget-unearned] PASS' selftest.log
+          grep -aF '[forget-cured] PASS' selftest.log
+          grep -aF '[forget-noregress] PASS' selftest.log
+          grep -aF '[forget-onesite] PASS' selftest.log
+          # no [forget-*] gate may FAIL (fail-closed against a silently-reordered leg).
+          ! grep -aE '\[forget-[a-z-]+\] FAIL' selftest.log
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
@@ -1187,8 +1210,9 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 243f917b…,
-    # x86 8e670a3c… after LM-12 belief-revision 2026-07-04; was 5e42f853…/a52c8701…
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 09fc5a9a…,
+    # x86 55b425c9… after LM-13 graceful-forgetting 2026-07-04; was 243f917b…/8e670a3c…
+    # after LM-12 belief-revision; was 5e42f853…/a52c8701…
     # at the 2026-07-03 μT-Kernel 3.0 migration; micro T-Kernel 2.0 was 755a20fa…/
     # 4064d8a9… — see the CROWN RE-BLESS entries in docs/audit-trail.md) is produced
     # by the sandbox gcc 15.2.0; the ubuntu-latest CI

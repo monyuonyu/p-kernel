@@ -1829,3 +1829,27 @@ N-4 cross-host deferred to the ThinkPad).
   Site-1-re-arm reason, not the guard. The Site-3 guard is CORRECT defensive code (a test-teeth gap, not
   a mechanism bug). Fix in flight: make the LEARNER (B) the reviser so A must clear its stale mouth via
   the guard (guard-removed → re-infection → `[rev-stale-mouth]` FAIL).
+- CROWN RE-BLESS — LM-13 graceful forgetting (2026-07-04, feat/lm13-forgetting). The living-mind slice
+  turns the R3 fact-queue's FIFO eviction into min-EARNED-salience eviction (+ `r3_fact_touch`, one accrual
+  site) in `arch/common/r3_incontext.c` and adds `EV_FORGET=19` to `arch/common/include/galaxy.h` — both
+  bare-metal TUs, so the `.text` LEGITIMATELY moves (the same intentional-drift case as every LM slice).
+  NEW dev crown `.text` sha256 (sandbox gcc 15.2.0; parent 243f917…/8e670a3… reproduced byte-identical
+  FIRST for environment trust, then the new values reproduced by the implementer's clean build):
+    aarch64  09fc5a9a36e0a7c68387134dcc8387b464857ece43619527665e5086b81fad73   (was 243f917b…edbacbd3)
+    x86      55b425c9af86d93bb12724bbce10489a3a7e38c1e7ffe3e4f64adc39d5e26169   (was 8e670a3c…0bb151e5)
+  VERIFICATION: 5/5 in-proc `[forget-*]` gates PASS (implementer clean build; independent audit pending).
+  The LOAD-BEARING falsifier structure: cure and disease run the SAME arrivals/budgets/eval, the ONLY delta
+  being 12 asks on f1 — so a rigged selector (protect-by-index/key/recency) reddens `[forget-unearned]`
+  (evicted seq != f1) and accrual leaking into a read path reddens `[forget-onesite]` (s_touches != 12).
+  Zero asks degenerates BYTE-IDENTICALLY to FIFO (evicted seq==1==oldest); 12 asks (clamped to R3_SAL_CAP=8)
+  flip the victim to f2 and f1 survives 100.0% vs the evicted f1's 64.0% (a measured +36-pt gap, floor
+  re-baselined to <70 from the measurement per IX.5 — NOT invented). HONEST design correction (the LM-12
+  `[rev-blend]` pattern): a single SINGLETON new fact does NOT decay the evicted fact in its 10-round drain
+  (measured: stays 100%); the honest disease driver is a WIDE f5 (8 bindings, keys 8..15) whose concentrated
+  consolidation decays the unrehearsed evicted fact — and because it is ONE eviction, `[forget-noregress]`
+  (f3,f4 held 100%) holds with the asks on f1 alone. No regression to the shared
+  `[stream/rev/lang/onemind/wmerge/teach/handoff]` gates (full selftest 95/95 PASS, 0 FAIL on the aarch64
+  hosted build); `dmn.c` byte-identical (empty diff); no wire change (`MT_TEACH_PKT` untouched); no new TU;
+  `sizeof(R3_FACT)==24` `_Static_assert` still holds (the `salience` byte was reserved at 1 since LM-5).
+  Doc: `docs/architecture/30-module/living-mind-lm13-forgetting.md`. NOT merged by the implementer — a
+  SEPARATE audit + the commander's own clean-build reproduction of these crowns precede any merge.

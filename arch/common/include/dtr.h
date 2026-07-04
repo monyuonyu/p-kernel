@@ -342,6 +342,17 @@ void r3_stream_test(void);
 INT  r3_fact_revise(UB k, UB v_new);
 void r3_revise_test(void);
 
+/* LM-13 (living-mind-lm13-forgetting.md) -- graceful forgetting. The R3
+ * fact-queue's eviction becomes min-EARNED-salience (was FIFO); asking a
+ * queued fact ACCRUES salience so a fact the owner keeps asking about resists
+ * eviction. r3_fact_touch(k) is the ONE accrual site (the m_ask queue-hit
+ * branch); it clamps to R3_SAL_CAP and returns the NEW salience, or -1 if k is
+ * not bound. Salience is LOCAL (never crosses the wire). Degenerates
+ * BYTE-IDENTICAL to FIFO when nothing has been asked. r3_forget_test is the
+ * CI cert (`mind forget`). */
+INT  r3_fact_touch(INT k);
+void r3_forget_test(void);
+
 /* living-body inspector (living-body-inspector.md): O(1) read-only vitals
  * for the R3 organ. r3_round_busy_get() = an SGD round is in flight (the
  * "training" flicker); r3_retained_count() = facts the slow weight memory
