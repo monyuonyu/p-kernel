@@ -68,6 +68,12 @@
                              /* a = old WSTATE_*, b = new WSTATE_*. ONE site:     */
                              /* world_self_state_step on a committed transition.  */
                              /* Hosted-only (galaxy.c is hosted-only).            */
+#define EV_REVISE       18   /* LM-12 (living-mind-lm12-belief-revision.md): a    */
+                             /* weight-resident belief was REVISED in place — the */
+                             /* old value DISPLACED, the new one now owed a DMN    */
+                             /* sleep. a = key, b = (v_old<<8)|v_new. LOCAL revise */
+                             /* (Site 1): src = me, dst = NONE. REMOTE revise      */
+                             /* (Site 2): src = origin (the reviser), dst = me.    */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

@@ -2750,6 +2750,73 @@ static void m_republish_last(void)
     (void)kdds_pub(mt_pub_h, &mt_pub_last, (W)sizeof mt_pub_last);
 }
 
+/* ================================================================== *
+ *  LM-12 (living-mind-lm12-belief-revision.md) — belief revision       *
+ *                                                                       *
+ *  A key already bound in the queue is RE-taught a DIFFERENT value.     *
+ *  Where r3_fact_learn ADDS a fact, r3_fact_revise SUPERSEDES the       *
+ *  existing binding IN PLACE (no queue growth): the OLD engram LEAVES   *
+ *  the replay union, so the D1 blend contradiction (both values         *
+ *  rehearsed at once) is structurally impossible. The SAME untouched    *
+ *  DMN sleep path (dmn_idle_work -> r3_consolidate_idle_round ->         *
+ *  s_round) then re-grounds rw[] on the NEW belief, DISPLACING the old   *
+ *  (not masking it). ZERO new math; dmn.c is byte-identical; the        *
+ *  MT_TEACH_PKT wire is unchanged.                                      *
+ *                                                                       *
+ *  Returns  0 = superseded (a DMN sleep now owes the consolidation),    *
+ *          -1 = key not bound (caller falls back to plain teach),       *
+ *          -2 = same value already bound (no-op; caller drops).         *
+ *  dmn_trigger() fires on success (a revision IS a stimulus). The       *
+ *  caller reads back r3_fq[fi].yhat[bind] for teacher_agree, exactly    *
+ *  as m_teach reads it after r3_fact_learn.                             *
+ * ================================================================== */
+INT r3_fact_revise(UB k, UB v_new)
+{
+    INT bind, fi = m_find_key((INT)k, &bind);
+    if (fi < 0) return -1;                 /* not bound: caller does teach   */
+    R3_FACT *f = &r3_fq[fi];
+    if (f->yhat[bind] == v_new) return -2; /* already this belief: no-op     */
+
+    /* (2) re-read through the FROZEN fast layer — the SAME
+     * majority-of-R3_TEACH_READS SUPPORT read r3_fact_learn performs at
+     * arrival, now with (k, v_new). The oracle only grades; a misread
+     * value is memorized as read and the eval shows it. */
+    UB sk = k, sv = v_new;
+    UW save = r_rng; r_rng = r3_s_rng;
+    INT votes[R_VALV];
+    for (INT c = 0; c < R_VALV; c++) votes[c] = 0;
+    for (INT t = 0; t < R3_TEACH_READS; t++) {
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 1, &sk, &sv, 1, (INT)k, s_kpool_for((INT)k));
+        votes[h_predict(kk, vv)]++;
+    }
+    UB best = 0;
+    for (INT c = 1; c < R_VALV; c++) if (votes[c] > votes[best]) best = (UB)c;
+    r3_s_rng = r_rng; r_rng = save;
+
+    /* (3) supersede IN PLACE: the old reading is overwritten by the new
+     * one; the fact re-enters PENDING with a fresh arrival time (seq) so
+     * the DMN owes it a full R3_SLEEPS_PER_FACT-round consolidation. No
+     * queue slot is consumed -> the old engram is GONE from the replay
+     * union (the D1 contradiction cannot form). */
+    f->yhat[bind]  = best;
+    f->state       = R3F_PENDING;
+    f->rounds_done = 0;
+    f->seq         = ++r3_fq_seq;          /* the new "when" (autobiography) */
+
+    /* Site 3 (the stale re-drive trap): if THIS node is still re-driving an
+     * OLD local teach for k (mt_pub_last), a late region joiner would be
+     * RE-INFECTED with the superseded value on every poll. Clear the
+     * retained packet. The LOCAL mouth (Site 1) re-publishes the NEW value
+     * right after this returns (m_publish_teach re-arms mt_pub_last); the
+     * REMOTE mouth (Site 2) relies on this clear to stop the stale re-drive. */
+    if (mt_pub_have && (UB)mt_pub_last.key == k && (UB)mt_pub_last.val != v_new)
+        mt_pub_have = 0;
+
+    dmn_trigger();                         /* a revision IS a stimulus       */
+    return 0;
+}
+
 /* ---- remote-provenance side-table (VIII.4) ----------------------- *
  *  Records, per remotely-arrived fact_seq, the teacher's node + the    *
  *  content-id of the teacher's ARK_PROV (carried in the packet). It is *
@@ -2930,11 +2997,55 @@ static void m_teach(const UB *p, const UB *end)
     (void)m_masked_vote(k, M_PRE_N, share);
     float pre_share = share[v];
 
-    INT bind;                                      /* (4) re-teach: refused
-                                                    * (COMMANDER DECISION 1) */
-    if (m_find_key(k, &bind) >= 0) {
-        r_puts("[mind] key "); r_putdec((UW)k);
-        r_puts(" already taught — re-teach is belief revision (future slice); refused\r\n");
+    INT bind, fi = m_find_key(k, &bind);           /* (4) re-teach = LM-12
+                                                    * belief revision (Site 1) */
+    if (fi >= 0) {
+        UB v_old = r3_fq[fi].yhat[bind];
+        if (v_old == (UB)v) {
+            r_puts("[mind] key "); r_putdec((UW)k);
+            r_puts(" already believes \""); r_puts(r3_vocab_val_word(v));
+            r_puts("\" — no revision needed (same value)\r\n");
+            return;
+        }
+        /* the belief-inversion pair, BEFORE the sleep: the masked weights
+         * currently lean to v_old (high share) and NOT to v (low share).
+         * share[] was filled by the M_PRE_N novelty read above. */
+        r_puts("[mind] REVISE key "); r_putdec((UW)k);
+        r_puts(" \""); r_puts(r3_vocab_key_word(k)); r_puts("\": \"");
+        r_puts(r3_vocab_val_word(v_old)); r_puts("\"->\"");
+        r_puts(r3_vocab_val_word(v)); r_puts("\"  pre_share[old]=");
+        r_putf1(share[v_old]); r_puts("% pre_share[new]=");
+        r_putf1(share[v]); r_puts("%  (old high, new low — the belief to invert)\r\n");
+
+        m_round_snap = dmn_r3_rounds();            /* like teach (VII.5)     */
+        INT rrc = r3_fact_revise((UB)k, (UB)v);    /* supersede in place     */
+        if (rrc != 0) {
+            r_puts("[mind] r3_fact_revise refused (key vanished under the gate);"
+                   " no revision\r\n");
+            r_puts("[revise-arrival] FAIL\r\n");
+            return;
+        }
+        /* teacher_agree = the frozen re-read matched the new value (read
+         * back from the superseded engram, exactly as teach reads it). */
+        INT ragree = (r3_fq[fi].yhat[bind] == (UB)v) ? 100 : 0;
+
+        /* the SAME tail as teach: the NEW seq gets a fresh prov record (the
+         * OLD prov stays in the hash chain — 歴史地層), the region is told the
+         * new belief, the galaxy flashes an EV_REVISE. */
+        ark_prov_record(r3_fq[fi].seq, (U1)k, (U1)v, prov_src);
+        m_publish_teach(r3_fq[fi].seq, (U1)k, (U1)v, prov_src);
+        galaxy_emit(EV_REVISE, drpc_my_node, GALAXY_NODE_NONE,
+                    (UH)k, (UH)(((UH)v_old << 8) | (UH)v));
+
+        r_puts("[mind]   revised: substrate ready, revise rc=0, pending=");
+        r_putdec((UW)r3_facts_pending());
+        r_puts(", queue "); r_putdec(r3_fq_n); r_puts("/"); r_putdec(R3_FQ_MAX);
+        r_puts(" (no growth — the old engram left the replay union)\r\n");
+        r_puts("[mind]   teacher_agree "); r_putdec((UW)ragree);
+        r_puts("  (frozen majority-of-"); r_putdec(R3_TEACH_READS);
+        r_puts(" SUPPORT read == revised value; gate ==100)\r\n");
+        r_puts((ragree == 100) ? "[revise-arrival] PASS\r\n"
+                               : "[revise-arrival] FAIL\r\n");
         return;
     }
 
@@ -3119,6 +3230,7 @@ static void m_merge(void);
 void r3_onemind_test(void);
 void r3_onemind_nocentral_test(void);
 void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
+void r3_revise_test(void);            /* LM-12 belief-revision cert       */
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -3142,7 +3254,8 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "onemind")) r3_onemind_test();      /* LM-10 cert */
     else if (m_kw(&p, end, "nocentral")) r3_onemind_nocentral_test();
     else if (m_kw(&p, end, "wmerge")) r3_wmerge_test();        /* LM-11 cert */
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "revise")) r3_revise_test();        /* LM-12 cert */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -3271,15 +3384,36 @@ void mind_net_task(INT stacd, void *exinf)
                             r_putdec((UW)org);
                             r_puts(" — duplicate (already bound to same v), dropped\r\n");
                         } else {
-                            r_puts("[mind] remote teach key ");
-                            r_putdec((UW)k); r_puts(" from node ");
-                            r_putdec((UW)org);
-                            r_puts(" refused — already bound here"
-                                   " (belief revision is a future slice)\r\n");
-                            /* the deflected ray is still observable (VIII.5):
-                             * emit with dst=NONE so the conflict is not silent. */
-                            galaxy_emit(EV_REMOTE_TEACH, org, GALAXY_NODE_NONE,
-                                        (UH)k, (UH)v);
+                            /* (4') LM-12 Site 2: a DIFFERENT value from a region
+                             * peer is a belief REVISION, not a refusal. Last-
+                             * arrival-wins — supersede in place + re-attribute
+                             * the teacher, printed LOUDLY; B's OWN DMN then
+                             * consolidates the new belief (same production path). */
+                            UB v_old = cur;
+                            INT rrc = r3_fact_revise((UB)k, (UB)v);
+                            if (rrc == 0) {
+                                UW local_seq = r3_fq[fi].seq;
+                                /* re-point B's provenance at the NEW teacher. */
+                                mt_rprov_put(local_seq, org, mt_rx_pkt.prov_head);
+                                r_puts("[mind] remote REVISE key ");
+                                r_putdec((UW)k); r_puts(" \"");
+                                r_puts(r3_vocab_key_word(k)); r_puts("\": \"");
+                                r_puts(r3_vocab_val_word(v_old)); r_puts("\"->\"");
+                                r_puts(r3_vocab_val_word(v));
+                                r_puts("\" from node "); r_putdec((UW)org);
+                                r_puts(" seq="); r_putdec(mt_rx_pkt.fact_seq);
+                                r_puts(" (last-arrival-wins; local seq ");
+                                r_putdec(local_seq); r_puts(", pending ");
+                                r_putdec((UW)r3_facts_pending()); r_puts(")\r\n");
+                                galaxy_emit(EV_REVISE, org, drpc_my_node,
+                                            (UH)k, (UH)(((UH)v_old << 8) | (UH)v));
+                                r_puts("[shared-revise] PASS\r\n");
+                            } else {
+                                r_puts("[mind] remote teach key ");
+                                r_putdec((UW)k); r_puts(" from node ");
+                                r_putdec((UW)org);
+                                r_puts(" — revise refused (key vanished); dropped\r\n");
+                            }
                         }
                     } else {
                         /* (5) arrival ONLY via the production mouth (G33). */
@@ -4330,6 +4464,266 @@ void r3_wmerge_test(void)
 
     r_puts("[wmerge] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
     r_puts("[wmerge] ==== done ====\r\n");
+}
+
+/* ================================================================== *
+ *  LM-12 (living-mind-lm12-belief-revision.md) — the belief-revision   *
+ *  certificate. `mind revise`. Measures, does NOT assume: a weight-     *
+ *  resident belief k->vo is RE-taught k->vn, and the DISPLACEMENT is    *
+ *  proven (new share >= 75, old share <= 10) via the SAME DMN sleep     *
+ *  path — with the naive dual-enqueue BLEND as the D1 disease and a     *
+ *  supersede-with-ZERO-rounds probe as the D2 load-bearing falsifier.   *
+ *  Eval is the held-out masked vote (S_SEED_HELD, chance=100/R_VALV).   *
+ * ================================================================== */
+
+#define REV_K        2       /* "sun" — the LM-6/LM-10 proven readable key      */
+#define REV_VOLD     3       /* the first belief (OM_V1: readable + off-bias)   */
+#define REV_VOTE_N   80      /* masked majority-vote sample (>= M_ASK_N)        */
+#define REV_BUDGET   R3_SLEEPS_PER_FACT   /* rounds a fact owes the DMN (=10)   */
+
+/* the OTHER retained facts present during the revision — [rev-noregress]
+ * proves the union-replay does not clobber them. Distinct keys from REV_K,
+ * each a readable off-bias binding (key 4->1 = OM_K2/OM_V2; key 6->5 =
+ * SDICT[6], readable per the LM-8 re-derivation). The queue therefore holds
+ * REV_K + 2 others = 3 facts; R3_FQ_MAX=4 leaves >=1 slot free so the D1
+ * control never triggers FIFO eviction. */
+#define REV_NOTHER   2
+static const UB rev_ok[REV_NOTHER] = { 4, 6 };
+static const UB rev_ov[REV_NOTHER] = { 1, 5 };
+/* the fresh, unrelated fact taught in [rev-rebound] (key 0->2 = SDICT[0]). */
+#define REV_RBK      0
+#define REV_RBV      2
+
+/* the FROZEN majority-of-R3_TEACH_READS read of (k, v) — the same read
+ * r3_fact_learn / r3_fact_revise perform at arrival, but on a DEDICATED
+ * probe RNG so it never perturbs the deterministic arrival stream r3_s_rng.
+ * agree==100 iff this returns v (the value is READABLE by the frozen mind). */
+static UB rev_teacher_read(INT k, INT v)
+{
+    UW save = r_rng;
+    r_rng = 0x0B1055EDUL ^ ((UW)k * 2654435761UL) ^ ((UW)v * 40503UL);
+    INT votes[R_VALV];
+    for (INT c = 0; c < R_VALV; c++) votes[c] = 0;
+    UB sk = (UB)k, sv = (UB)v;
+    for (INT t = 0; t < R3_TEACH_READS; t++) {
+        UB kk[R_SEQ], vv[R_SEQ];
+        s_build(kk, vv, 1, &sk, &sv, 1, k, s_kpool_for(k));
+        votes[h_predict(kk, vv)]++;
+    }
+    UB best = 0;
+    for (INT c = 1; c < R_VALV; c++) if (votes[c] > votes[best]) best = (UB)c;
+    r_rng = save;
+    return best;
+}
+
+/* choose a NEW value for REV_K that is (a) != REV_VOLD, (b) READABLE by the
+ * frozen mind (agree==100), (c) OFF the raw substrate's masked bias (so the
+ * revision is a genuine new belief, not one already leaning). This is the
+ * stream cert's hand-derivation of readable off-bias values, done
+ * programmatically. Must be called AFTER s_pretrain(). -1 = none found. */
+static INT rev_pick_vnew(void)
+{
+    float sh[R_VALV];
+    (void)m_masked_vote(REV_K, 60, sh);          /* the raw substrate prior */
+    for (INT v = 1; v < (INT)R_VALV; v++) {
+        if (v == REV_VOLD) continue;
+        if (sh[v] > 10.0f) continue;             /* off the raw masked bias */
+        if (rev_teacher_read(REV_K, v) != (UB)v) continue;  /* readable (agree 100) */
+        return v;
+    }
+    return -1;
+}
+
+/* drain ALL pending facts through the PRODUCTION idle symbol the DMN calls
+ * (r3_consolidate_idle_round). Returns the rounds run. */
+static INT rev_drain(void)
+{
+    INT n = 0;
+    while (r3_facts_pending() && n < 512) { (void)r3_consolidate_idle_round(); n++; }
+    return n;
+}
+
+void r3_revise_test(void)
+{
+    static float w_base[R_NP], w_baseline[R_NP], w_cured[R_NP];
+    OM_QSNAP q_baseline, q_cured;
+    float sh[R_VALV];
+    float chance = 100.0f / (float)R_VALV;
+    UB k = REV_K, vo = REV_VOLD;
+
+    m_quiesce();
+    r_puts("[revise] ==== LM-12 belief revision: a weight-resident belief is REPLACED, not blended ====\r\n");
+    r_puts("[revise] chance="); r_putf1(chance);
+    r_puts("% (=100/R_VALV, R_VALV="); r_putdec((UW)R_VALV);
+    r_puts(")  budget="); r_putdec((UW)REV_BUDGET); r_puts(" rounds/fact\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    INT vn_i = rev_pick_vnew();
+    if (vn_i < 0) {
+        r_puts("[revise] FATAL: no readable off-bias NEW value for key ");
+        r_putdec((UW)k); r_puts(" — cannot run the cert honestly\r\n");
+        r_puts("[rev-baseline] FAIL\r\n[rev-blend] FAIL\r\n[rev-not-masked] FAIL\r\n");
+        r_puts("[rev-cured] FAIL\r\n[rev-noregress] FAIL\r\n[rev-rebound] FAIL\r\n[rev-persist] FAIL\r\n");
+        return;
+    }
+    UB vn = (UB)vn_i;
+    r_puts("[revise] belief pair on key "); r_putdec((UW)k);
+    r_puts(" \""); r_puts(r3_vocab_key_word(k)); r_puts("\": OLD=");
+    r_putdec((UW)vo); r_puts(" \""); r_puts(r3_vocab_val_word(vo));
+    r_puts("\"  NEW="); r_putdec((UW)vn); r_puts(" \"");
+    r_puts(r3_vocab_val_word(vn)); r_puts("\"  (both readable off-bias; frozen re-read agree=100)\r\n");
+
+    /* ============ build the BASELINE mind: k->vo + others, all RETAINED === */
+    r3_weights_set(w_base); s_fq_reset();
+    { UB kk = k, vv = vo; (void)r3_fact_learn(&kk, &vv, 1); }
+    for (INT i = 0; i < REV_NOTHER; i++) {
+        UB kk = rev_ok[i], vv = rev_ov[i]; (void)r3_fact_learn(&kk, &vv, 1);
+    }
+    INT base_rounds = rev_drain();
+    r3_weights_get(w_baseline); om_q_save(&q_baseline);
+    r_puts("[revise] baseline built ("); r_putdec((UW)(REV_NOTHER + 1));
+    r_puts(" facts, "); r_putdec((UW)base_rounds);
+    r_puts(" production idle rounds, queue "); r_putdec(r3_fq_n);
+    r_puts("/"); r_putdec(R3_FQ_MAX); r_puts(")\r\n");
+
+    /* ---------------- [rev-baseline]: k answers vo >= 75 ---------------- */
+    UB modal_b = m_masked_vote(k, REV_VOTE_N, sh);
+    r_puts("[revise] baseline ask key "); r_putdec((UW)k);
+    r_puts(": modal="); r_putdec((UW)modal_b);
+    r_puts(" share[vo]="); r_putf1(sh[vo]);
+    r_puts("% share[vn]="); r_putf1(sh[vn]); r_puts("%\r\n");
+    r_puts((modal_b == vo && sh[vo] >= 75.0f)
+           ? "[rev-baseline] PASS\r\n" : "[rev-baseline] FAIL\r\n");
+
+    /* record the OTHER facts' baseline masked acc (for [rev-noregress]). */
+    float other_base[REV_NOTHER];
+    for (INT i = 0; i < REV_NOTHER; i++) {
+        (void)m_masked_vote(rev_ok[i], REV_VOTE_N, sh);
+        other_base[i] = sh[rev_ov[i]];
+    }
+
+    /* ======== [rev-blend] DISEASE D1: naive dual-enqueue (raw learn) ===== *
+     * The TRUE A/B against the cure: SAME baseline mind (old already          *
+     * RETAINED), SAME budget, SAME eval — the ONLY variable is add-vs-        *
+     * supersede. Here we NAIVELY r3_fact_learn(k, vn) (an ADD, not a          *
+     * revise), so BOTH k->vo (retained) and k->vn (pending) live in the       *
+     * replay union. MEASURED shape: the retained OLD engram dominates and     *
+     * the NEW belief FAILS to install (it does not reach the 75 cure bar).    *
+     * This is a BLOCK, not a 50/50 blend — the honest measured disease; the   *
+     * load-bearing claim is share[vn] < 75 (naive cannot revise).             */
+    r3_weights_set(w_baseline); om_q_load(&q_baseline);
+    { UB kk = k, vv = vn; (void)r3_fact_learn(&kk, &vv, 1); }  /* naive ADD (no evict: n=3<4) */
+    INT blend_rounds = rev_drain();
+    UB modal_bl = m_masked_vote(k, REV_VOTE_N, sh);
+    float bl_o = sh[vo], bl_n = sh[vn];
+    r_puts("[revise] D1 naive-add (raw r3_fact_learn, "); r_putdec((UW)blend_rounds);
+    r_puts(" rounds): modal="); r_putdec((UW)modal_bl);
+    r_puts(" share[vo]="); r_putf1(bl_o);
+    r_puts("% share[vn]="); r_putf1(bl_n);
+    r_puts("%  (old engram still in the replay union -> new belief BLOCKED)\r\n");
+    INT blend_ok = (bl_n < 75.0f);               /* naive cannot install vn   */
+    r_puts(blend_ok ? "[rev-blend] PASS\r\n" : "[rev-blend] FAIL\r\n");
+
+    /* === [rev-not-masked] DISEASE D2 / LOAD-BEARING FALSIFIER ============= *
+     * supersede the engram (r3_fact_revise) but run ZERO consolidation       *
+     * rounds. The WEIGHTS are untouched -> a masked ask MUST still read vo.   *
+     * RED-flips if `ask` reads the queue (would see vn) OR if r3_fact_revise  *
+     * wrote weights directly (would answer vn).                              */
+    r3_weights_set(w_baseline); om_q_load(&q_baseline);
+    INT rc_nm = r3_fact_revise(k, vn);           /* supersede: yhat=vn, PENDING */
+    UB modal_nm = m_masked_vote(k, REV_VOTE_N, sh);  /* NO rounds run */
+    r_puts("[revise] D2 supersede+ZERO-rounds (rc="); r_putdec((UW)(UH)rc_nm);
+    r_puts("): modal="); r_putdec((UW)modal_nm);
+    r_puts(" share[vo]="); r_putf1(sh[vo]);
+    r_puts("% share[vn]="); r_putf1(sh[vn]);
+    r_puts("%  (weights untouched -> still vo; queue yhat now vn)\r\n");
+    INT nm_ok = (rc_nm == 0 && modal_nm == vo && sh[vo] >= 75.0f);
+    r_puts(nm_ok ? "[rev-not-masked] PASS\r\n" : "[rev-not-masked] FAIL\r\n");
+
+    /* ===== [rev-cured]: r3_fact_revise + PRODUCTION idle rounds ========== */
+    r3_weights_set(w_baseline); om_q_load(&q_baseline);
+    INT rc_c = r3_fact_revise(k, vn);
+    INT bind, fi = m_find_key(k, &bind);
+    INT agree = (rc_c == 0 && fi >= 0 && r3_fq[fi].yhat[bind] == vn) ? 100 : 0;
+    INT cure_rounds = rev_drain();               /* THE production DMN symbol */
+    fi = m_find_key(k, &bind);
+    UB rounds_done = (fi >= 0) ? r3_fq[fi].rounds_done : 0;
+    UB modal_c = m_masked_vote(k, REV_VOTE_N, sh);
+    float cur_n = sh[vn], cur_o = sh[vo];
+    r_puts("[revise] CURE (revise + "); r_putdec((UW)cure_rounds);
+    r_puts(" production rounds, fact rounds_done="); r_putdec((UW)rounds_done);
+    r_puts("/"); r_putdec((UW)REV_BUDGET);
+    r_puts("): modal="); r_putdec((UW)modal_c);
+    r_puts(" share[vn]="); r_putf1(cur_n);
+    r_puts("% share[vo]="); r_putf1(cur_o);
+    r_puts("% teacher_agree="); r_putdec((UW)agree); r_puts("\r\n");
+    INT cure_ok = (rc_c == 0 && agree == 100 && modal_c == vn
+                   && cur_n >= 75.0f && cur_o <= 10.0f
+                   && rounds_done == (UB)REV_BUDGET);
+    r_puts(cure_ok ? "[rev-cured] PASS\r\n" : "[rev-cured] FAIL\r\n");
+    r3_weights_get(w_cured); om_q_save(&q_cured);
+
+    /* ---------------- [rev-noregress]: the OTHER facts held --------------- */
+    INT nore_ok = 1;
+    for (INT i = 0; i < REV_NOTHER; i++) {
+        (void)m_masked_vote(rev_ok[i], REV_VOTE_N, sh);
+        float a = sh[rev_ov[i]];
+        r_puts("[revise] other fact key "); r_putdec((UW)rev_ok[i]);
+        r_puts("->"); r_putdec((UW)rev_ov[i]);
+        r_puts(": base="); r_putf1(other_base[i]);
+        r_puts("% post-revise="); r_putf1(a); r_puts("%\r\n");
+        if (a < 75.0f) nore_ok = 0;
+    }
+    r_puts(nore_ok ? "[rev-noregress] PASS\r\n" : "[rev-noregress] FAIL\r\n");
+
+    /* === [rev-rebound]: teach a fresh unrelated fact; k must STAY vn ===== *
+     * an OVERWRITTEN belief does not resurge; a merely-MASKED one would.     */
+    r3_weights_set(w_cured); om_q_load(&q_cured);
+    INT rb_learn = -1;
+    { UB kk = REV_RBK, vv = REV_RBV; rb_learn = r3_fact_learn(&kk, &vv, 1); }
+    INT rb_rounds = (rb_learn == 0) ? rev_drain() : 0;
+    UB modal_rb = m_masked_vote(k, REV_VOTE_N, sh);
+    r_puts("[revise] rebound (taught fresh key "); r_putdec((UW)REV_RBK);
+    r_puts("->"); r_putdec((UW)REV_RBV); r_puts(", ");
+    r_putdec((UW)rb_rounds); r_puts(" rounds), re-ask key ");
+    r_putdec((UW)k); r_puts(": modal="); r_putdec((UW)modal_rb);
+    r_puts(" share[vn]="); r_putf1(sh[vn]);
+    r_puts("% share[vo]="); r_putf1(sh[vo]); r_puts("%\r\n");
+    INT rb_ok = (rb_learn == 0 && modal_rb == vn && sh[vn] >= 75.0f);
+    r_puts(rb_ok ? "[rev-rebound] PASS\r\n" : "[rev-rebound] FAIL\r\n");
+
+    /* === [rev-persist]: the revised belief is WEIGHT-resident =========== *
+     * annihilate the queue; a masked ask must STILL answer vn from rw[].     *
+     * When a durable store is active (hosted + PKERNEL_PFS_DIR) ALSO do the  *
+     * real r3_weights_persist -> clobber rw -> restore round-trip.           */
+    r3_weights_set(w_cured); om_q_load(&q_cured);
+    INT persisted = r3_weights_persist();        /* hosted+dir: writes; else no-op */
+    s_fq_reset();                                /* the queue is GONE */
+    UB modal_qf = m_masked_vote(k, REV_VOTE_N, sh);
+    float qf_n = sh[vn];
+    INT qfree_ok = (modal_qf == vn && qf_n >= 75.0f);
+    r_puts("[revise] persist: queue annihilated, ask key "); r_putdec((UW)k);
+    r_puts(": modal="); r_putdec((UW)modal_qf);
+    r_puts(" share[vn]="); r_putf1(qf_n); r_puts("%  (weight-resident)\r\n");
+    INT disk_ok = 1;
+    if (persisted == 1) {
+        r3_weights_set(w_base);                  /* clobber rw to the pretrained base */
+        INT r = r3_weights_restore_or_pretrain();/* read back from the durable store */
+        UB modal_dk = m_masked_vote(k, REV_VOTE_N, sh);
+        disk_ok = (r == 1 && modal_dk == vn && sh[vn] >= 75.0f);
+        r_puts("[revise]   DISK round-trip: restore rc="); r_putdec((UW)(UH)r);
+        r_puts(" modal="); r_putdec((UW)modal_dk);
+        r_puts(" share[vn]="); r_putf1(sh[vn]); r_puts("%\r\n");
+    } else {
+        r_puts("[revise]   (IN-MEMORY mode: no PKERNEL_PFS_DIR; queue-annihilation is the residence proof)\r\n");
+    }
+    r_puts((qfree_ok && disk_ok) ? "[rev-persist] PASS\r\n" : "[rev-persist] FAIL\r\n");
+
+    r_puts("[revise] NOTE: cert verbs reset rw[] + the live queue (VII.0 #5 amnesia bomb)\r\n");
+    r_puts("[revise] ==== done ====\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */

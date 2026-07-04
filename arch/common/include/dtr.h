@@ -333,6 +333,15 @@ INT  r3_facts_pending(void);
 INT  r3_consolidate_idle_round(void);
 void r3_stream_test(void);
 
+/* LM-12 (living-mind-lm12-belief-revision.md) -- belief revision. A key
+ * already bound in the queue is RE-taught a DIFFERENT value: r3_fact_revise
+ * SUPERSEDES the binding IN PLACE (no queue growth) so the OLD engram leaves
+ * the replay union, then the SAME DMN sleep path DISPLACES the old belief.
+ * Returns 0 (superseded), -1 (key not bound -> caller does plain teach),
+ * -2 (same value -> no-op). r3_revise_test is the CI cert (`mind revise`). */
+INT  r3_fact_revise(UB k, UB v_new);
+void r3_revise_test(void);
+
 /* living-body inspector (living-body-inspector.md): O(1) read-only vitals
  * for the R3 organ. r3_round_busy_get() = an SGD round is in flight (the
  * "training" flicker); r3_retained_count() = facts the slow weight memory
