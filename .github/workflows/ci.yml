@@ -956,7 +956,7 @@ jobs:
           path: /tmp/p41_*.log
 
   belief-revision-live:
-    name: "信念の改訂 (実機2ノード: A で教えた事実を A が改訂; B が自分の DMN で訂正; 改訂者を kill)"
+    name: "信念の改訂 (実機3ノード: A教→B改訂→A が Site-2 で受け訂正; fresh late-joiner Z は汚染されず; 改訂者 B を kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
     # serialized self-hosted chain (de-flake): runs after shared-mind-live so it
     # never shares the runner with another heavy mind job. See HEAD.
@@ -990,7 +990,7 @@ jobs:
           # A entered the belief-revision branch (Site 1) and B took the remote
           # revision (Site 2) — the cross-node correction the slice exists for:
           grep -q 'REVISE key .* "yellow"->"green"' /tmp/p46_nodeA.log
-          grep -q '\[shared-revise\] PASS' /tmp/p46_nodeB.log
+          grep -q '\[shared-revise\] PASS' /tmp/p46_nodeA.log
           grep -q '\[rev-stale-mouth\] PASS' /tmp/p46_ci.log
           grep -q '\[rev-live\] PASS'        /tmp/p46_ci.log
           grep -q 'RESULT: PASS' /tmp/p46_ci.log
