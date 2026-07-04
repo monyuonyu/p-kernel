@@ -1808,3 +1808,24 @@ N-4 cross-host deferred to the ThinkPad).
   (boot banner correct); rl78/h8300 residue + dead poc_*.c prune; smp-autodetect -nic none fix;
   41_shared_mind residual pre-kill stale-wait; one_mind Path-W full transport fix (Hunk A held, low
   urgency — it PASSED on the ThinkPad).
+- CROWN RE-BLESS — LM-12 belief revision (2026-07-04, feat/lm12-belief-revision merged to master). The
+  living-mind slice `r3_fact_revise` compiles into `arch/common/r3_incontext.c` (a bare-metal TU), so
+  the `.text` LEGITIMATELY moves — the same intentional-drift case as every LM slice. NEW dev crown
+  `.text` sha256 (sandbox gcc 15.2.0; parent 5e42f853…/a52c8701… reproduced byte-identical FIRST for
+  environment trust; new values reproduced by implementer, adversarial auditor, AND the commander's
+  own clean build on merged master):
+    aarch64  243f917bcbc660f7a38753c93c9998cc299b576130c60472d34bdb0aedbacbd3   (was 5e42f853…7fda0)
+    x86      8e670a3c894dfacbde5e56a2cf26242ecb514c22b83b4070f1b3e6ae0bb151e5   (was a52c8701…63660a)
+  VERIFICATION: 7/7 in-proc `[rev-*]` gates PASS (independently by implementer + commander + auditor);
+  the two LOAD-BEARING falsifiers BITE (adversarial auditor patched the code: writing weights directly
+  → `[rev-not-masked]` FAIL; shrinking the cure budget → `[rev-cured]` FAIL); D1 is an honest measured
+  disease (BLOCK not the predicted 50/50 blend — the old engram dominates the replay union until
+  superseded — gated on the load-bearing `share[vn]<75`, no bar lowered); no regression to the shared
+  `[stream/lang/onemind/teach/wmerge/handoff]` gates; `dmn.c` byte-identical; no wire change; merge onto
+  master clean (ci.yml sections non-overlapping with the follow-ups). FOLLOW-UP (audit finding, ledger):
+  `[rev-stale-mouth]` in sample 46 does NOT yet exercise the Site-3 guard it claims to certify — node A
+  revises via Site 1 (shell), whose `m_publish_teach` re-arms `mt_pub_last` and masks the guard; node B
+  takes via Site 2 (no re-arm). The property (region doesn't revert post-revision) holds, but for the
+  Site-1-re-arm reason, not the guard. The Site-3 guard is CORRECT defensive code (a test-teeth gap, not
+  a mechanism bug). Fix in flight: make the LEARNER (B) the reviser so A must clear its stale mouth via
+  the guard (guard-removed → re-infection → `[rev-stale-mouth]` FAIL).
