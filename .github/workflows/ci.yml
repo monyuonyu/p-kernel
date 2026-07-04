@@ -695,31 +695,67 @@ jobs:
       - name: Boot QEMU, run `ring3 iso` + `ring3 test` + `ring3 mind` + `dproc test` + `fpu test`, grep all five gates
         run: |
           cd boot/x86
-          # Send the verbs after the shell is up; keep stdin open while
-          # they run (III.6: one boot).  `ring3 iso` is the ISO-USERPTR
-          # confused-deputy gate (a kernel-range pointer syscall is rejected
-          # with the fault error and the kernel memory is NOT written; a
-          # valid user pointer still succeeds).  Debt wave adds the kill-path
-          # teardown gate ([dproc-teardown]) and the x87 context-save
-          # gate ([fpu-ctx]) — both FAIL on the pre-wave kernel.
-          ( sleep 25; printf 'ring3 iso\n'; sleep 8; printf 'ring3 test\n'; sleep 90; \
-            printf 'ring3 mind\n'; sleep 90; \
-            printf 'dproc test\n'; sleep 40; printf 'fpu test\n'; sleep 90 ) | \
-            timeout 380 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
-              -serial stdio -display none -cpu qemu64 \
-              -netdev user,id=n0 -device rtl8139,netdev=n0 \
-              -drive file=disk.img,format=raw,if=ide,index=0 \
-              > ring3.log 2>&1 &
+          # ---- MARKER-GATED serial feed (de-flake) ----------------------
+          # The old feed used FIXED sleeps (`sleep 25` before `ring3 iso`,
+          # etc.).  On the contended self-hosted runner the shell is not
+          # always up by t=25s, so `ring3 iso` got typed into a not-ready
+          # console and `[iso-userptr]` never printed -> spurious failure.
+          # Fix: hold QEMU's serial stdin open on a FIFO and send each verb
+          # only AFTER its predecessor's gate tag appears in ring3.log, with
+          # generous per-step ceilings.  The five gate tags, the gate
+          # semantics and the five PASS assertions are UNCHANGED — only the
+          # feed TIMING changed.  (III.6: still ONE boot, five verbs.)
+          # `ring3 iso` is the ISO-USERPTR confused-deputy gate (a kernel-
+          # range pointer syscall is rejected and kernel memory is NOT
+          # written; a valid user pointer still succeeds).  The debt wave
+          # adds the kill-path teardown gate ([dproc-teardown]) and the x87
+          # context-save gate ([fpu-ctx]) — both FAIL on the pre-wave kernel.
+          rm -f ring3.fifo
+          mkfifo ring3.fifo
+          # -serial stdio: serial-in reads from the FIFO, serial-out (sout,
+          # which mirrors VGA -> COM1) is captured to ring3.log.  Outer
+          # `timeout` is the backstop for ring3's known post-gate idle wedge.
+          timeout 800 qemu-system-x86_64 -m 256 -kernel bootloader.bin \
+            -serial stdio -display none -cpu qemu64 \
+            -netdev user,id=n0 -device rtl8139,netdev=n0 \
+            -drive file=disk.img,format=raw,if=ide,index=0 \
+            < ring3.fifo > ring3.log 2>&1 &
           QPID=$!
-          # Poll for ALL FIVE gate tags, then stop QEMU early.
-          for i in $(seq 1 370); do
-            grep -aqF '[iso-userptr]' ring3.log && \
-              grep -aqF '[ring3-survival]' ring3.log && \
-              grep -aqF '[ring3-mind]' ring3.log && \
-              grep -aqF '[dproc-teardown]' ring3.log && \
-              grep -aqF '[fpu-ctx]' ring3.log && break
-            sleep 1
-          done
+          # Hold the FIFO write end open for the whole session so QEMU's
+          # serial-in never sees EOF between verbs.
+          exec 3> ring3.fifo
+          # Block until $1 shows up in the captured serial log, or give up
+          # after $2 seconds and print a visible TIMEOUT line.
+          wait_for() {
+            tag="$1"; max="${2:-120}"
+            for i in $(seq 1 "$max"); do
+              grep -aqF "$tag" ring3.log && return 0
+              sleep 1
+            done
+            echo "TIMEOUT waiting for gate tag: $tag"
+            return 1
+          }
+          # Drive the five verbs, each gated on the previous verb's tag.
+          # errexit off here so a missing gate still falls through to the
+          # cat + the five PASS assertions below (those remain the real gate).
+          set +e
+          # 1) shell ready: the `p-kernel> ` prompt prints right before the
+          #    serial read loop, after /etc/init.rc runs (arch/x86/shell.c
+          #    shell_task) — the same marker the test_all.exp harness uses.
+          wait_for 'p-kernel>'        120 && printf 'ring3 iso\n'  >&3
+          # 2) ISO-USERPTR gate done -> Wave B survival verb.
+          wait_for '[iso-userptr]'     60 && printf 'ring3 test\n' >&3
+          # 3) ring3-survival gate done -> Wave C mind verb.
+          wait_for '[ring3-survival]' 150 && printf 'ring3 mind\n' >&3
+          # 4) ring3-mind gate done -> kill-path teardown verb.
+          wait_for '[ring3-mind]'     150 && printf 'dproc test\n' >&3
+          # 5) dproc-teardown gate done -> x87 fpu verb.
+          wait_for '[dproc-teardown]' 120 && printf 'fpu test\n'   >&3
+          # final gate (ring3 wedges the idle loop AFTER this prints; the
+          # bounded wait + the kill below keep us from hanging on that wedge).
+          wait_for '[fpu-ctx]'        150
+          set -e
+          exec 3>&-
           kill $QPID 2>/dev/null || true
           wait $QPID 2>/dev/null || true
           cat ring3.log
