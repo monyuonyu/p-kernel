@@ -1853,3 +1853,24 @@ N-4 cross-host deferred to the ThinkPad).
   `sizeof(R3_FACT)==24` `_Static_assert` still holds (the `salience` byte was reserved at 1 since LM-5).
   Doc: `docs/architecture/30-module/living-mind-lm13-forgetting.md`. NOT merged by the implementer — a
   SEPARATE audit + the commander's own clean-build reproduction of these crowns precede any merge.
+- CROWN RE-BLESS (follow-up) — LM-13 HONESTY re-frame (2026-07-04, feat/lm13-forgetting). An adversarial
+  audit found the accuracy narrative OVER-STATED the generic harm: the shipped f5 binds all 8 keys to the
+  SAME output class (class 1, the substrate's adversarial bias sink), so the acc_f1 64.0% decay is a
+  CONCENTRATION ARTIFACT, not the generic cost. Re-measured: all-8→class-1 (shipped) 64.0% / +36; all-8→one
+  benign class (5) ~80.5% / +19.5; 8→8 DISTINCT classes (realistic multi-class fact) 100.0% ZERO decay / +0.0.
+  The SELECTION claim (asking f1 → the selector evicts f2, not f1) is ROBUST across ALL constructions and is
+  what the falsifiers bite — independent of any accuracy number. FRAMING-ONLY fix: the doc now headlines the
+  SELECTION and discloses the auditor's table + the class-spread zero-decay caveat (§4); the cert's print
+  strings + comments relabel the accuracy gates as "WORST-CASE single-adversarial-class interferer" (the
+  `[forget-*]` tag strings + ALL gate LOGIC/thresholds UNCHANGED — CI greps them) and PRINT a class-spread
+  zero-decay caveat so the runtime log carries the disclosure. The mechanism (`r3_fact_touch`, the eviction
+  selector) is untouched; the 5/5 `[forget-*]` gates STILL PASS (framing-only). Because print-string LENGTHS
+  changed and the caveat added `r_puts` calls, the bare-metal `.text` LEGITIMATELY moved AGAIN (cosmetic
+  log-string drift; the executed math is unchanged — empirically: same-length string-content edits are
+  crown-neutral, only string LENGTH / new calls move `.text`). NEW dev crown `.text` sha256 (sandbox gcc
+  15.2.0; parent 09fc5a9a…/55b425c9… reproduced byte-identical FIRST for environment trust, then the new
+  values reproduced by the implementer's clean build):
+    aarch64  f51eb00efdde557a64ef8ee6de9ac1d4bde61b9d3ce712bd9febd58127f7cba5   (was 09fc5a9a…b81fad73)
+    x86      a0bed501df50ff21ba7b3a29305e83af1b048af1622f59f86764d9ea8d741237   (was 55b425c9…d5e26169)
+  NOT merged by the implementer — a SEPARATE audit + the commander's own clean-build reproduction of these
+  crowns precede any merge.

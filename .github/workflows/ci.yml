@@ -1210,8 +1210,10 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 09fc5a9a…,
-    # x86 55b425c9… after LM-13 graceful-forgetting 2026-07-04; was 243f917b…/8e670a3c…
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 f51eb00e…,
+    # x86 a0bed501… after the LM-13 honesty re-frame 2026-07-04 — cosmetic
+    # log-string drift only, no math change; was 09fc5a9a…/55b425c9… at LM-13
+    # graceful-forgetting; was 243f917b…/8e670a3c…
     # after LM-12 belief-revision; was 5e42f853…/a52c8701…
     # at the 2026-07-03 μT-Kernel 3.0 migration; micro T-Kernel 2.0 was 755a20fa…/
     # 4064d8a9… — see the CROWN RE-BLESS entries in docs/audit-trail.md) is produced

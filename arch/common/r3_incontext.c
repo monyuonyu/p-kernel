@@ -4791,18 +4791,28 @@ void r3_revise_test(void)
  *  `mind forget`. The bounded R3 fact-queue's eviction becomes         *
  *  min-EARNED-salience (was oldest-first FIFO); `mind ask`             *
  *  (r3_fact_touch) accrues salience. When nothing has been asked the   *
- *  selector degenerates BYTE-IDENTICALLY to FIFO — so the DISEASE run   *
- *  (zero asks) evicts the OLDEST fact exactly as before (the load-      *
- *  bearing falsifier: cure & falsifier run the SAME arrivals/budgets/   *
- *  eval; the ONLY delta is the asks). "LM-1 cured un-chosen forgetting; *
- *  LM-13 makes chosen forgetting wise." Held-out masked eval           *
- *  (s_eval_fact / m_masked_vote); dmn.c byte-identical; no wire change. *
+ *  selector degenerates BYTE-IDENTICALLY to FIFO — so the zero-ask run  *
+ *  evicts the OLDEST fact (f1) and 12 asks flip the victim to f2.       *
+ *  THE LOAD-BEARING, HEADLINE CLAIM IS THE SELECTION (which fact the    *
+ *  eviction picks — the evicted-seq assertions); it holds in EVERY f5   *
+ *  construction and is what the falsifiers bite, INDEPENDENT of any     *
+ *  accuracy number. The accuracy leg (acc_f1 < 70) is only a WORST-CASE *
+ *  demonstration using a single-adversarial-class f5 (all 8 keys -> the *
+ *  class-1 bias sink); a class-spread f5 evicts the SAME fact but shows *
+ *  ZERO decay (audit 2026-07-04) — see the doc's §4 disclosure.         *
+ *  "LM-1 cured un-chosen forgetting; LM-13 makes chosen forgetting      *
+ *  wise." Held-out masked eval (s_eval_fact / m_masked_vote); dmn.c     *
+ *  byte-identical; no wire change.                                      *
  * ================================================================== */
 
 /* f5 = ONE wide fact binding the ENTIRE upper vocab (keys 8..15 = R_KEYV/2
- * NEW keys); its single arrival on the full queue forces exactly ONE eviction,
- * and its 8-binding consolidation is heavy enough to decay the evicted (no-
- * longer-rehearsed) fact — the honest measured disease driver. ONE eviction =>
+ * NEW keys); its single arrival on the full queue forces exactly ONE eviction
+ * (the load-bearing SELECTION). forget_pick_readable happens to bind all 8 keys
+ * to the SAME output class (class 1 = the substrate's adversarial bias sink), so
+ * its post-eviction consolidation over-reinforces that class and decays the
+ * evicted (no-longer-rehearsed) fact — the WORST-CASE, single-adversarial-class
+ * accuracy driver, NOT the generic harm: a class-spread f5 (8 distinct classes)
+ * evicts the SAME fact but shows ZERO decay (audit 2026-07-04). ONE eviction =>
  * in the cure run f3/f4 are NEVER touched, so [forget-noregress] holds with the
  * asks on f1 ALONE (the design's "ONLY delta = N x r3_fact_touch(k_f1)"). */
 #define FGT_K5_LO     8      /* f5's first key (== R_CERTKEYS)                    */
@@ -4810,11 +4820,15 @@ void r3_revise_test(void)
 #define FGT_TOUCH_N   12     /* asks on f1 in the CURE run; > R3_SAL_CAP(=8) so
                               * the clamp is exercised (sal caps at 8, count=12) */
 #define FGT_VOTE_N    80     /* masked majority-vote sample for f5 (>= M_ASK_N)  */
-/* [forget-unearned] disease bound: RE-BASELINED from measurement (IX.5). The
- * evicted-f1 masked acc after f5's drain MEASURES 64.0% (deterministic; see
- * living-mind-lm13-forgetting.md). 75 is the design bound; 70 is the tighter,
- * honest floor (6-pt margin over the measurement, still < the design bound).
- * The cure keeps f1 at 100.0% — a measured +36-pt gap, gated below too. */
+/* [forget-unearned] WORST-CASE accuracy bound: RE-BASELINED from measurement
+ * (IX.5). This gate is NOT the load-bearing claim (the SELECTION is); it is a
+ * worst-case demo. With the shipped single-adversarial-class f5 (all -> class 1)
+ * the evicted-f1 masked acc after f5's drain MEASURES 64.0% (deterministic; see
+ * living-mind-lm13-forgetting.md §4). A class-spread f5 shows ZERO decay (acc_f1
+ * ~100%) — so 64% is the WORST case, not the generic harm. 75 is the design
+ * bound; 70 is the tighter, honest floor (6-pt margin over the measurement,
+ * still < the design bound). The cure keeps f1 at 100.0% — a measured +36-pt gap
+ * against the worst-case interferer, gated below too. */
 #define FGT_FLOOR     70.0f
 #define FGT_GAP       20.0f  /* cure_f1 - disease_f1 must clear this (measured 36)*/
 #define FGT_RETAIN    75.0f  /* the RETAIN bar (a fact that survives answers >=75)*/
@@ -4945,21 +4959,26 @@ void r3_forget_test(void)
     r_puts(" (oldest)  f2 seq="); r_putdec(seq_f2); r_puts("\r\n");
     r_puts((base_ok && occ4) ? "[forget-baseline] PASS\r\n" : "[forget-baseline] FAIL\r\n");
 
-    /* ==== [forget-unearned] DISEASE + LOAD-BEARING FALSIFIER =========== *
+    /* ==== [forget-unearned] LOAD-BEARING SELECTION FALSIFIER =========== *
      * ZERO asks. All salience==1 -> the min-salience selector is a min-seq *
-     * FIFO byte-for-byte -> f5's arrival evicts the OLDEST (f1). With f1    *
-     * out of the replay union, the same post-eviction drain that defends   *
-     * a queued fact lets f1's weight trace decay.                          */
+     * FIFO byte-for-byte -> f5's arrival evicts the OLDEST (f1). The       *
+     * LOAD-BEARING assertion is the evicted seq (== f1). The acc_f1 < 70   *
+     * leg is only a WORST-CASE demo: the shipped single-adversarial-class  *
+     * f5 (all -> class 1) over-reinforces the bias sink so the unrehearsed *
+     * f1 decays; a class-spread f5 evicts the same f1 but shows ZERO decay.*/
     UW ev_un; UB sal_un; float acc_un[R3_NFACTS], f5sh_un;
     fgt_run(w_base, k5, v5, 0, &ev_un, &sal_un, acc_un, &f5sh_un);
     INT un_evicted_f1 = (ev_un == seq_f1);
     r_puts("[forget] UNEARNED (0 asks): evicted seq="); r_putdec(ev_un);
-    r_puts(un_evicted_f1 ? " (==f1, the oldest — FIFO byte-for-byte)"
+    r_puts(un_evicted_f1 ? " (==f1, the oldest — FIFO byte-for-byte) [LOAD-BEARING: selection]"
                          : " (NOT f1 — selector wrong!)");
-    r_puts("\r\n[forget]   post-drain acc: f1="); r_putf1(acc_un[0]);
+    r_puts("\r\n[forget]   post-drain acc [WORST-CASE, single-adversarial-class f5]: f1=");
+    r_putf1(acc_un[0]);
     r_puts("% (evicted, gate <"); r_putf1(FGT_FLOOR); r_puts(")");
     r_puts("  f5="); r_putf1(f5sh_un);
     r_puts("% (gate >="); r_putf1(FGT_RETAIN); r_puts(")\r\n");
+    r_puts("[forget]   caveat: that decay is the WORST case (f5 = all 8 keys -> class 1, the adversarial bias sink);\r\n");
+    r_puts("[forget]   a class-spread f5 (8 distinct classes) evicts the SAME f1 but shows ~ZERO decay (acc_f1 ~100%) — audit 2026-07-04\r\n");
     INT unearned_ok = un_evicted_f1 && (acc_un[0] < FGT_FLOOR)
                     && (f5sh_un >= FGT_RETAIN);
     r_puts(unearned_ok ? "[forget-unearned] PASS\r\n" : "[forget-unearned] FAIL\r\n");
@@ -4968,7 +4987,10 @@ void r3_forget_test(void)
      * The ONLY delta vs the falsifier is FGT_TOUCH_N r3_fact_touch(f1)     *
      * before f5 arrives. f1's salience rises to R3_SAL_CAP; the min-        *
      * salience selector now evicts f2 (least-salient, oldest of the        *
-     * salience-1 facts) — f1 SURVIVES and, still in the union, is defended. */
+     * salience-1 facts) — f1 SURVIVES (the load-bearing selection flips).   *
+     * The acc_f1 >= 75 / +gap legs show asking ALSO defends f1 against the  *
+     * WORST-CASE single-adversarial-class interferer — not the generic     *
+     * motivation, which is the selection itself.                           */
     UW ev_cu; UB sal_cu; float acc_cu[R3_NFACTS], f5sh_cu;
     fgt_run(w_base, k5, v5, FGT_TOUCH_N, &ev_cu, &sal_cu, acc_cu, &f5sh_cu);
     INT cu_evicted_f2 = (ev_cu == seq_f2);
@@ -4979,15 +5001,15 @@ void r3_forget_test(void)
     r_puts(" (clamped: "); r_putdec((UW)FGT_TOUCH_N);
     r_puts(" asks -> capped at "); r_putdec(R3_SAL_CAP); r_puts(")\r\n");
     r_puts("[forget]   evicted seq="); r_putdec(ev_cu);
-    r_puts(cu_evicted_f2 ? " (==f2, min-salience NOT the oldest — f1 protected)"
+    r_puts(cu_evicted_f2 ? " (==f2, min-salience NOT the oldest — f1 protected) [LOAD-BEARING: selection]"
                          : " (NOT f2 — protection failed!)");
-    r_puts("\r\n[forget]   post-drain acc: f1="); r_putf1(acc_cu[0]);
+    r_puts("\r\n[forget]   post-drain acc [worst-case defense]: f1="); r_putf1(acc_cu[0]);
     r_puts("% (SURVIVED, gate >="); r_putf1(FGT_RETAIN); r_puts(")");
     r_puts("  f5="); r_putf1(f5sh_cu);
     r_puts("% (gate >="); r_putf1(FGT_RETAIN); r_puts(")");
     r_puts("  f2="); r_putf1(acc_cu[1]); r_puts("% (now the evicted one)\r\n");
-    r_puts("[forget]   cure gain on f1: +"); r_putf1(acc_cu[0] - acc_un[0]);
-    r_puts(" pts over the unearned run (same code, only the asks differ; gate >=");
+    r_puts("[forget]   cure gain on f1 vs the worst-case interferer: +"); r_putf1(acc_cu[0] - acc_un[0]);
+    r_puts(" pts (same code, only the asks differ; gate >=");
     r_putf1(FGT_GAP); r_puts(")\r\n");
     INT cured_ok = cu_evicted_f2 && (sal_cu == R3_SAL_CAP)
                  && (acc_cu[0] >= FGT_RETAIN) && (f5sh_cu >= FGT_RETAIN)
