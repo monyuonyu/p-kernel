@@ -427,6 +427,44 @@ typedef struct {
                                  /* merge n_floats==R_NP guard, line ~2823). */
 } __attribute__((packed)) MT_TEACH_PKT;   /* 45 + 8 = 53 B (<= KDDS_DATA_MAX)*/
 
+/* LM-15 (living-mind-lm15-pullteach.md) -- region pull-teach: the mind ASKS
+ * the region for keys it wonders about. A third region-scoped singleton topic
+ * "mind/want" carries want KEYS (never want LEVELS -- the F-LOCAL AMENDMENT:
+ * the want KEY crosses the wire, the accrued want LEVEL never does; salience
+ * and want magnitudes stay LOCAL forever, exactly the LM-11 discipline). A peer
+ * that HOLDS a wanted key AS AN ENGRAM (m_find_key, zero forward passes) answers
+ * by RE-PUBLISHING a normal MT_TEACH_PKT on the EXISTING "mind/teach" topic,
+ * forwarding the ORIGINAL (origin, fact_seq, prov) so the asker names the TRUE
+ * teacher. The asker's receive side is UNCHANGED: the answer lands through the
+ * same r3_fact_learn mouth the LM-7 path uses, and the LM-14 want->salience
+ * conversion fires automatically -- so the pulled answer arrives PRECIOUS. No
+ * new field on MT_TEACH_PKT: the answer is wire-indistinguishable from a teach
+ * (VIII.9 one receive path); preciousness comes from the asker's OWN local want
+ * state, not from the wire. */
+#define MIND_WANT_TOPIC  "mind/want"
+#define MQ_MAGIC         0x544E574DUL   /* "MWNT" LE -- free magic (MIND=0x444E494D,
+                                         * CADL=0x4C444143, MWGW=0x5747574D taken)  */
+typedef struct {
+    UW magic;                     /* MQ_MAGIC                                 */
+    UW want_seq;                  /* the asker's snapshot generation: bumps   */
+                                  /* ONLY when the key-SET changes; re-drives */
+                                  /* keep it -> responder answer-once dedup   */
+                                  /* (compared with != so an asker reboot     */
+                                  /* re-serves, like mt_last_seq)             */
+    U1 origin_node;               /* the wondering node (loop-guard + reply)  */
+    U1 n;                         /* wanted keys in keys[] (0 = the empty     */
+                                  /* transition publish; 0..R3_WQ_MAX)        */
+    U1 wire_ver;                  /* MT_WIRE_VER_VOCAB -- same partition law   */
+    U1 _pad;
+    U1 keys[4];                   /* the wanted key token ids; == R3_WQ_MAX,   */
+                                  /* pinned by a _Static_assert in            */
+                                  /* r3_incontext.c. NO want levels ride here  */
+                                  /* (F-LOCAL: the magnitude never crosses)    */
+    U1 vocab_fp[MT_VOCAB_FP_LEN]; /* wave-47 word-list guard, same as teach:  */
+                                  /* answering a foreign word-list's want      */
+                                  /* would teach mis-bound ids -> refuse loud  */
+} __attribute__((packed)) MQ_WANT_PKT;   /* 4+4+1+1+1+1+4+8 = 24 B (<= KDDS_DATA_MAX) */
+
 /* ================================================================== */
 /* Thread T — the lesson BRIDGE (T-fix-b / T-1, thread-t-impl-plan.md  */
 /* §2.1). A TEACHER-capable node (SWIM capability bit 1, T-fix-a) emits */

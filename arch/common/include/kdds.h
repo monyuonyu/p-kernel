@@ -36,11 +36,17 @@
 #define KDDS_PORT        7376
 #define KDDS_SINGLETON_TOPICS 16 /* cluster-wide SINGLE topics (NOT per-node):
                                  * pfs ann/want/sync/ref + "mind/teach" (LM-7,
-                                 * the shared mind) + headroom. dkva pre-opens
-                                 * fill the per-node budget (3×DNODE_MAX) exactly,
-                                 * leaving no slot for a cluster-singleton, so
-                                 * these get their OWN fixed headroom — they do
-                                 * NOT scale with DNODE_MAX. */
+                                 * the shared mind) + "mind/w" (LM-10 Path W merge
+                                 * announce) + "mind/want" (LM-15 pull-teach, the
+                                 * QUESTION channel) + "cradle/teach" + headroom.
+                                 * dkva pre-opens fill the per-node budget
+                                 * (3×DNODE_MAX) exactly, leaving no slot for a
+                                 * cluster-singleton, so these get their OWN fixed
+                                 * headroom — they do NOT scale with DNODE_MAX.
+                                 * LM-15 ledger (living-mind-lm15-pullteach.md §3):
+                                 * eager-at-boot singletons 7 -> 8 of 16; named
+                                 * worst-case co-active set 15 of 16 (one spare).
+                                 * The NEXT cluster-singleton must bump 16 -> 20. */
 #define KDDS_TOPIC_MAX   (6 * DNODE_MAX + KDDS_SINGLETON_TOPICS)
                                 /* 6×, not 5× (wave-48 fix, found by mk_pino's
                                  * phone boot log): with the FULL net stack up
@@ -48,8 +54,8 @@
                                  * the EAGER per-node opens alone are 5 families
                                  * (dkva q/resp/rsum + moe/score + world/beacon)
                                  * = 5*DNODE_MAX, and singletons (mind/teach,
-                                 * mind/w, dtr l0/result/input/head1, pfs
-                                 * ann/want/sync/ref, ...) plus the LAZY
+                                 * mind/w, mind/want, dtr l0/result/input/head1,
+                                 * pfs ann/want/sync/ref, ...) plus the LAZY
                                  * per-source families (reflex/edf) landed on a
                                  * table that was already full -> 65x "topic
                                  * table full" at boot on DNODE_MAX=64; the

@@ -56,10 +56,16 @@ if nobody had ever asked**. LM-14 claims:
    picks — the evicted-`seq` sequence), proven **independently of any accuracy
    number**: two runs share the same arrivals/drains and differ **only** in 12
    wonders; the falsifiers bite on the evicted-`seq` assertion alone. And
-4. want is **LOCAL** (never on the wire — the LM-11 F-LOCAL discipline;
-   `mind_net_task` must NOT call `r3_want_note`), and accrues at **one site**
-   (`r3_want_note`), so the evals — which read the mind thousands of times —
-   accrue **nothing** (`s_wonders` unchanged).
+4. the accrued want LEVEL is **LOCAL** (never on the wire — the LM-11 F-LOCAL
+   discipline; `mind_net_task` must NOT call `r3_want_note`, and the conversion
+   at `r3_fact_learn` reads the **local** `r3_wq[i].want`, never anything from a
+   packet), and accrues at **one site** (`r3_want_note`), so the evals — which
+   read the mind thousands of times — accrue **nothing** (`s_wonders` unchanged).
+   **AMENDED by LM-15** (living-mind-lm15-pullteach.md): the want **KEY** does
+   now cross the wire — LM-15 publishes the want-table KEYS on the region topic
+   `mind/want` so a holder re-teaches the answer. The KEY crosses; the accrued
+   want **LEVEL/magnitude** stays local forever. This document's "never on the
+   wire" refers to the LEVEL; the key-publish is LM-15's, not LM-14's.
 
 **INVARIANT:** a key is **never** in both `r3_fq` (facts) and `r3_wq` (wants) —
 `r3_want_note` refuses a bound key (returns −1), and `r3_want_take` clears an

@@ -103,7 +103,7 @@ jobs:
           # [forget-*] gates below); both placed AFTER `mind ask sun` so they are
           # self-contained and cannot perturb the [teach-*] gates (every cert verb
           # resets rw[]+queue).
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind ask leaf\nmind wonder\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind ask leaf\nmind wonder\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nmind pull\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -439,6 +439,28 @@ jobs:
           # the want-table, so the live want is captured in the log first.
           grep -aF 'wondering about "leaf"' selftest.log
           grep -aE '\[wonder\] +"leaf" want=' selftest.log
+          # LM-15 (living-mind-lm15-pullteach.md): `mind pull` runs the in-binary
+          # pull-teach cert (the four [pull-*] gates). The mind PUBLISHES its
+          # unanswered wonders on "mind/want"; a holder re-teaches the answer on
+          # the EXISTING "mind/teach" topic, so it lands through r3_fact_learn and
+          # the LM-14 want->salience conversion fires (the pulled answer arrives
+          # PRECIOUS). GENERIC BY CONSTRUCTION (the LM-13 lesson): keys are picked
+          # dynamically (curio_pick_unknown), no absolute key/value/salience const.
+          # [pull-snapshot-honest] the snapshot is exactly the want KEYS, no bound
+          # key, and byte-IDENTICAL when only the want LEVELS change (F-LOCAL: the
+          # magnitude never rides the wire — RED if a level leaks); [pull-seq-gen]
+          # want_seq bumps ONLY on a key-SET change, empty is one publish then
+          # suppressed; [pull-answer-src] engram-bound -> answers forwarding the
+          # ORIGINAL (origin,seq,prov), unbound -> refuses, weight-known-but-EVICTED
+          # -> refuses (pins the engram-only scope cut RED-ably); [pull-answered-once]
+          # one answer per (origin,want_seq,key), a want_seq change re-answers, a
+          # LOWER want_seq (reboot) re-answers (!= not >).
+          grep -aF '[pull-snapshot-honest] PASS' selftest.log
+          grep -aF '[pull-seq-gen] PASS' selftest.log
+          grep -aF '[pull-answer-src] PASS' selftest.log
+          grep -aF '[pull-answered-once] PASS' selftest.log
+          # no [pull-*] gate may FAIL (fail-closed against a silently-reordered leg).
+          ! grep -aE '\[pull-[a-z-]+\] FAIL' selftest.log
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
@@ -1127,11 +1149,72 @@ jobs:
           name: one-mind-live-logs
           path: /tmp/p42_*.log
 
+  pull-teach-live:
+    name: "引き寄せる心 (実機3ノード: A が欲する鍵を region に問い、保持者 B が答える; region 限定; 引いた答えは precious)"
+    runs-on: [self-hosted, pkernel-thinkpad]
+    # serialized self-hosted chain (de-flake): runs after one-mind-live so this
+    # mind-heavy 3-node job never shares the runner with shared_mind / one_mind.
+    needs: [one-mind-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    timeout-minutes: 20
+    # LM-15 (living-mind-lm15-pullteach.md): the mind REACHES OUT for what it
+    # lacks. Node A wonders about a key K it was ASKED but does NOT know,
+    # PUBLISHES that want on the region topic "mind/want" (the KEY crosses the
+    # wire; the accrued want LEVEL never does — F-LOCAL), and a region peer B that
+    # HOLDS K re-teaches the answer on the EXISTING "mind/teach" topic. The answer
+    # lands through A's UNCHANGED r3_fact_learn mouth and the LM-14 want->salience
+    # conversion fires, so the pulled answer arrives PRECIOUS (salience 1+want). K
+    # is DISCOVERED dynamically (the first candidate word A wonders about — no
+    # hard-coded key, GENERICITY). Disease (nobody holds K -> zero arrival, want
+    # persists) and cure (teach B only -> B answers via PULL -> A learns from node
+    # 2) coexist in ONE run; a third node C outside the region never hears it. The
+    # in-process `mind pull` cert is the within-node unit proof; this is the
+    # cross-node, over-the-relay integration proof.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make curl
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: Run 47_pull_teach/run.sh and assert the tags + RESULT PASS
+        run: |
+          timeout 960 samples/47_pull_teach/run.sh | tee /tmp/p47_ci.log
+          # the DISEASE leg: A asks, the region hears, nothing changes (the
+          # mechanism does not hallucinate an answer with no holder):
+          grep -q '\[pull-want-live\] PASS'      /tmp/p47_ci.log
+          grep -q '\[pull-unknown-silent\] PASS' /tmp/p47_ci.log
+          grep -q '\[pull-region-quiet\] PASS'   /tmp/p47_ci.log
+          # the CURE leg: B answers via the PULL path (the print is emitted ONLY
+          # by mq_poll_wants, NOT by normal teach-gossip) and A learns K over the
+          # wire from B -> arriving PRECIOUS (salience == 1 + want). NOTE: the
+          # kernel prints 0-based INTERNAL ids (PKERNEL_NODE_ID - 1): A(asker)=node
+          # 0, B(holder)=node 1, C=node 2 — the same mapping the RTT-zone math uses.
+          grep -q 'answering want key .* from node 0' /tmp/p47_nodeB.log
+          grep -q 'remote teach arrived.*from node 1.*r3_fact_learn rc=0' /tmp/p47_nodeA.log
+          grep -q 'long-WANTED key arrived' /tmp/p47_nodeA.log
+          grep -q '\[pull-answered\] PASS'      /tmp/p47_ci.log
+          grep -q '\[pull-grounded\] PASS'      /tmp/p47_ci.log
+          grep -q '\[pull-consolidated\] PASS'  /tmp/p47_ci.log
+          grep -q '\[pull-region\] PASS'        /tmp/p47_ci.log
+          grep -q '\[pull-storm-bounded\] PASS' /tmp/p47_ci.log
+          grep -q 'RESULT: PASS' /tmp/p47_ci.log
+          ! grep -qE '\[pull-[a-z-]+\] FAIL' /tmp/p47_ci.log
+      - name: Upload node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pull-teach-live-logs
+          path: /tmp/p47_*.log
+
   twolayer-couple-live:
     name: "二層カップリング (実機3ノード: 集合学習が防御を改善、実行中にノードを kill)"
     runs-on: [self-hosted, pkernel-thinkpad]
-    # serialized self-hosted chain (de-flake): runs after one-mind-live. See HEAD.
-    needs: [one-mind-live]
+    # serialized self-hosted chain (de-flake): runs after pull-teach-live. See HEAD.
+    needs: [pull-teach-live]
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 20
     # enforces the LIVE §8/§9 path (G38, wave 17): the learned transformer's
@@ -1262,8 +1345,9 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 be41bbf6…,
-    # x86 248633de… after LM-14 curiosity 2026-07-04; was f51eb00e…/a0bed501…
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 3e20edbd…,
+    # x86 b6a748da… after LM-15 pull-teach 2026-07-04; was be41bbf6…/248633de…
+    # after LM-14 curiosity; was f51eb00e…/a0bed501…
     # after the LM-13 honesty re-frame — cosmetic log-string drift only, no math
     # change; was 09fc5a9a…/55b425c9… at LM-13
     # graceful-forgetting; was 243f917b…/8e670a3c…

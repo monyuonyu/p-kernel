@@ -41,6 +41,11 @@
 /* LM-7 (VIII.9): the wire engram must fit ONE K-DDS payload — no chunking,
  * no new transport (the Path E "one packet" property, VIII.0 #1-2). */
 _Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX, "mind/teach fits one K-DDS payload");
+/* LM-15 (living-mind-lm15-pullteach.md): the want-question packet must also fit
+ * ONE K-DDS payload (keys-only; the F-LOCAL want LEVEL never rides it). The
+ * `R3_WQ_MAX <= sizeof MQ_WANT_PKT.keys` pin lives beside the mq machinery
+ * below, where R3_WQ_MAX is in scope. */
+_Static_assert(sizeof(MQ_WANT_PKT) <= KDDS_DATA_MAX, "mind/want fits one K-DDS payload");
 
 /* ---- output helpers (sio frame channel, like dtr_train.c) --------- */
 static void r_puts(const char *s) { tm_putstring((UB *)s); }
@@ -1747,9 +1752,13 @@ static UW s_touches          = 0;
  *  mind kept asking arrives precious and resists eviction.              *
  *  INVARIANT: a key is NEVER in both r3_fq and r3_wq (r3_want_note      *
  *  refuses bound keys; r3_want_take clears an entry the moment its key  *
- *  arrives). LOCAL only — want never crosses the wire (F-LOCAL); the    *
- *  cert drives r3_want_note directly. s_wonders counts EVERY wonder     *
- *  (incl. clamped) for the [curio-*] purity gates.                      *
+ *  arrives). F-LOCAL, amended by LM-15: the accrued want LEVEL is LOCAL *
+ *  forever (it never rides the wire — the conversion at r3_fact_learn   *
+ *  reads r3_wq[i].want, the LOCAL magnitude, never anything from a      *
+ *  packet); the want KEY, however, DOES cross the wire — LM-15 publishes *
+ *  the want-table KEYS on "mind/want" so a holder re-teaches the answer  *
+ *  (mq_publish_wants). The cert drives r3_want_note directly. s_wonders  *
+ *  counts EVERY wonder (incl. clamped) for the [curio-*] purity gates.   *
  * ------------------------------------------------------------------ */
 #define R3_WQ_MAX     4              /* want-table budget (dual of R3_FQ_MAX)     */
 #define R3_WANT_CAP   R3_SAL_CAP     /* want clamp == the salience cap (8)        */
@@ -2754,8 +2763,11 @@ INT r3_fact_touch(INT k)
  *    0              unbound but the WEIGHTS already know it (not curious);
  *   -1              k is BOUND in the queue (already held — nothing to want).
  * s_wonders counts EVERY wonder (incl. clamped ones) for the [curio-*] purity
- * gates. LOCAL only: mind_net_task must NOT call this (F-LOCAL). The SOLE
- * production caller is the m_ask MISS branch; the cert calls it directly. Pure
+ * gates. F-LOCAL (amended by LM-15): the ACCRUAL is LOCAL — mind_net_task must
+ * NOT call this (no remote node ever bumps my want LEVEL), and the level never
+ * crosses the wire. LM-15 does publish the resulting want KEYS on "mind/want"
+ * (mq_publish_wants), but that is a SEPARATE read of r3_wq, not a call here.
+ * The SOLE production caller is the m_ask MISS branch; the cert calls it directly. Pure
  * bookkeeping — touches neither rw[] nor the RNG (the caller supplies the
  * already-computed masked share). */
 INT r3_want_note(INT k, float share_modal)
@@ -2823,6 +2835,11 @@ static W mt_sub_h = -1;
  * with the rest of the Path W transport below; forward-declared here so
  * mind_net_open can call it before dkva floods the topic table). */
 static void mw_ann_open(void);
+/* LM-15 pull-teach: reserve the "mind/want" question topic at boot too (defined
+ * with the rest of the pull machinery below; forward-declared here so
+ * mind_net_open reserves the slot BEFORE dkva saturates the bounded table —
+ * the singleton budget proves 16 still holds, living-mind-lm15-pullteach.md §3). */
+static void mq_want_open(void);
 
 void mind_net_open(void)
 {
@@ -2835,6 +2852,9 @@ void mind_net_open(void)
     /* LM-10 Path W: reserve the "mind/w" merge-announce topic now too, before
      * dkva's per-node pre-opens saturate the bounded topic table. */
     mw_ann_open();
+    /* LM-15: reserve the "mind/want" question topic in the SAME boot window
+     * (beside mind/w), before dkva floods the table (§3 reservation discipline). */
+    mq_want_open();
 }
 
 /* one publish handle, opened lazily (region scope); -1 until first use. */
@@ -2884,6 +2904,18 @@ static INT mt_vocab_fp_ok(const U1 fp[MT_VOCAB_FP_LEN])
     return 1;
 }
 
+/* LM-15: THE one wire-writer for the region "mind/teach" topic. The local-teach
+ * mouth (m_publish_teach), the re-drive (m_republish_last), AND the pull answer
+ * (mq_poll_wants) all write the region through here — one wire-write site, one
+ * receive path, zero forked queues (VIII.9 kept: two mouths — local teach, pull
+ * answer — but ONE writer). Returns the kdds_pub rc, or -1 if the shared publish
+ * handle could not be opened. */
+static W mt_wire_send(const MT_TEACH_PKT *p)
+{
+    if (m_pub_handle() < 0) return -1;
+    return kdds_pub(mt_pub_h, p, (W)sizeof *p);
+}
+
 static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
 {
     /* solo node (no mesh): nothing to gossip to — stay silent and free. */
@@ -2904,7 +2936,7 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
      * on a DIFFERENT word list refuses the engram instead of mis-binding. */
     mt_vocab_fp_fill(mt_pub_pkt.vocab_fp);
 
-    (void)kdds_pub(mt_pub_h, &mt_pub_pkt, (W)sizeof mt_pub_pkt);
+    (void)mt_wire_send(&mt_pub_pkt);               /* LM-15: the one wire-writer */
     mt_pub_last = mt_pub_pkt; mt_pub_have = 1;     /* retain for re-drive    */
     r_puts("[mind] published mind/teach k="); r_putdec((UW)k);
     r_puts(" v="); r_putdec((UW)v);
@@ -2920,8 +2952,7 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
 static void m_republish_last(void)
 {
     if (!mt_pub_have || drpc_my_node == 0xFF) return;
-    if (m_pub_handle() < 0) return;
-    (void)kdds_pub(mt_pub_h, &mt_pub_last, (W)sizeof mt_pub_last);
+    (void)mt_wire_send(&mt_pub_last);              /* LM-15: the one wire-writer */
 }
 
 /* ================================================================== *
@@ -3038,6 +3069,51 @@ static MT_REMOTE_PROV *mt_rprov_find(UW local_seq)
     for (INT i = 0; i < R3_FQ_MAX; i++)
         if (mt_rprov[i].used && mt_rprov[i].seq == local_seq)
             return &mt_rprov[i];
+    return 0;
+}
+
+/* ---- LM-15 local-teach provenance side-table (§1.5) -------------- *
+ *  ark_prov_head_id() returns the CURRENT chain head — correct AT teach *
+ *  time, STALE later (a newer teach moves it). To answer a PULL for a   *
+ *  fact THIS node taught with EXACT attribution, record                 *
+ *  (fact_seq -> prov_head-at-write) at the two local prov-write sites   *
+ *  (m_teach's teach + revise tails). DELIBERATELY SEPARATE from         *
+ *  mt_rprov (the remote side-table) so m_ask's "taught by node …" print *
+ *  keeps its exact current semantics — it must NOT start naming ME as a *
+ *  remote teacher of a LOCAL fact. Bounded to the queue budget; same    *
+ *  eviction shape as mt_rprov_put (drop a seq no longer in r3_fq).      */
+typedef struct {
+    UW seq;                       /* the fact's local R3_FACT.seq         */
+    U1 used;
+    U1 prov_head[PFS_ID_LEN];     /* content-id of MY ARK_PROV at write   */
+} MQ_LOCAL_PROV;
+static MQ_LOCAL_PROV mq_lprov[R3_FQ_MAX];
+
+static void mq_lprov_put(UW local_seq, const U1 prov_head[PFS_ID_LEN])
+{
+    INT slot = -1;
+    for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (!mq_lprov[i].used) { slot = i; break; }
+    if (slot < 0) {                    /* reuse a slot whose seq is gone   */
+        for (INT i = 0; i < R3_FQ_MAX; i++) {
+            UB present = 0;
+            for (INT j = 0; j < (INT)r3_fq_n; j++)
+                if (r3_fq[j].seq == mq_lprov[i].seq) { present = 1; break; }
+            if (!present) { slot = i; break; }
+        }
+    }
+    if (slot < 0) slot = 0;            /* last resort: overwrite slot 0     */
+    mq_lprov[slot].used = 1;
+    mq_lprov[slot].seq  = local_seq;
+    for (INT i = 0; i < PFS_ID_LEN; i++)
+        mq_lprov[slot].prov_head[i] = prov_head[i];
+}
+
+static const U1 *mq_lprov_find(UW local_seq)
+{
+    for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (mq_lprov[i].used && mq_lprov[i].seq == local_seq)
+            return mq_lprov[i].prov_head;
     return 0;
 }
 
@@ -3239,6 +3315,9 @@ static void m_teach(const UB *p, const UB *end)
          * OLD prov stays in the hash chain — 歴史地層), the region is told the
          * new belief, the galaxy flashes an EV_REVISE. */
         ark_prov_record(r3_fq[fi].seq, (U1)k, (U1)v, prov_src);
+        /* LM-15 §1.5: capture the prov head NOW (it is stale after the next
+         * teach) so a future PULL of this locally-revised fact attributes it. */
+        { U1 ph[PFS_ID_LEN]; ark_prov_head_id(ph); mq_lprov_put(r3_fq[fi].seq, ph); }
         m_publish_teach(r3_fq[fi].seq, (U1)k, (U1)v, prov_src);
         galaxy_emit(EV_REVISE, drpc_my_node, GALAXY_NODE_NONE,
                     (UH)k, (UH)(((UH)v_old << 8) | (UH)v));
@@ -3277,6 +3356,9 @@ static void m_teach(const UB *p, const UB *end)
      * stay byte-identical. Covers both mouths: src is set by the caller
      * (shell default; the galaxy POST /teach bridge sets WEB). */
     ark_prov_record(r3_fq[r3_fq_n-1].seq, (U1)k, (U1)v, prov_src);
+    /* LM-15 §1.5: capture the prov head NOW (it is stale after the next teach)
+     * so a future PULL of this locally-taught fact names the true teacher. */
+    { U1 ph[PFS_ID_LEN]; ark_prov_head_id(ph); mq_lprov_put(r3_fq[r3_fq_n-1].seq, ph); }
 
     /* LM-7 (VIII.3 / VIII.9): the ONE "mind/teach" publish. AFTER the local
      * enqueue + the provenance write, gossip this singleton engram to the
@@ -3461,6 +3543,7 @@ void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
 void r3_revise_test(void);            /* LM-12 belief-revision cert       */
 void r3_forget_test(void);            /* LM-13 graceful-forgetting cert   */
 void r3_curiosity_test(void);         /* LM-14 curiosity cert             */
+void r3_pull_test(void);              /* LM-15 pull-teach cert            */
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -3488,7 +3571,377 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "forget")) r3_forget_test();        /* LM-13 cert */
     else if (m_kw(&p, end, "curious")) r3_curiosity_test();    /* LM-14 cert */
     else if (m_kw(&p, end, "wonder")) m_wonder();              /* LM-14 verb */
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder]  (bare = status)\r\n");
+    else if (m_kw(&p, end, "pull")) r3_pull_test();            /* LM-15 cert */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder | pull]  (bare = status)\r\n");
+    m_gate_release();
+}
+
+/* ================================================================== *
+ *  LM-15 (living-mind-lm15-pullteach.md) — region pull-teach           *
+ *                                                                       *
+ *  The mind ASKS the region for keys it wonders about. mq_publish_wants *
+ *  (ONE publish site, once per mind_net_task tick) snapshots the want-  *
+ *  table KEYS (never LEVELS — F-LOCAL for magnitudes) onto the third    *
+ *  region-singleton topic "mind/want". mq_poll_wants (ONE poll site)    *
+ *  answers a want it can serve by RE-PUBLISHING a normal MT_TEACH_PKT    *
+ *  through mt_wire_send on the EXISTING "mind/teach" topic — engram-only *
+ *  (m_find_key, zero forward passes), forwarding the ORIGINAL prov so    *
+ *  the asker names the true teacher. The asker's receive side is         *
+ *  UNCHANGED: the answer lands via r3_fact_learn, r3_want_take fires,    *
+ *  the pulled answer is PRECIOUS. Everything rides the existing tick     *
+ *  (no new task, no IRQ); ALL buffers are file-static (the hosted-relay  *
+ *  stack-overflow lesson). Scope cut (§7): a peer whose engram was       *
+ *  EVICTED but whose weights still know the key stays SILENT — pinned    *
+ *  RED-ably by [pull-answer-src].                                        *
+ * ================================================================== */
+
+/* pin the want-table size against the wire snapshot (dtr.h can't see R3_WQ_MAX,
+ * so this lives here, where it is in scope): a future want-table growth cannot
+ * silently truncate the mind/want snapshot. */
+_Static_assert(R3_WQ_MAX <= (INT)sizeof(((MQ_WANT_PKT *)0)->keys),
+               "want-table must fit MQ_WANT_PKT.keys (bump keys[] if R3_WQ_MAX grows)");
+
+/* the "mind/want" topic: reserved at boot (mq_want_open, from mind_net_open,
+ * before dkva floods the table); one poll + one publish handle, region scope —
+ * byte-for-byte the mw_ann discipline. */
+static W mq_topic_open = 0;
+static W mq_want_sub   = -1;         /* poll handle (region scope)  */
+static W mq_want_pub   = -1;         /* publish handle (region scope) */
+
+static W mq_want_sub_h(void)
+{
+    if (mq_want_sub < 0)
+        mq_want_sub = kdds_open_poll_scoped(MIND_WANT_TOPIC, KDDS_QOS_LATEST_ONLY,
+                                            KDDS_SCOPE_REGION);
+    return mq_want_sub;
+}
+static W mq_want_pub_h(void)
+{
+    if (mq_want_pub < 0)
+        mq_want_pub = kdds_open_poll_scoped(MIND_WANT_TOPIC, KDDS_QOS_LATEST_ONLY,
+                                            KDDS_SCOPE_REGION);
+    return mq_want_pub;
+}
+/* reserve the topic slot at boot (called from mind_net_open, beside mw_ann_open).
+ * Tolerates a failed open (handle -1) — degrades to LM-14 behavior (wonder in
+ * silence), never wedges (mirror mt_sub_h at :3531). */
+static void mq_want_open(void)
+{
+    if (mq_topic_open) return;
+    if (mq_want_sub_h() >= 0) mq_topic_open = 1;
+}
+
+/* ---- publish side: ONE site, cadence replaces a "region formed?" gate ---- */
+static MQ_WANT_PKT mq_want_pkt;      /* publish scratch (file-static)         */
+static UB mq_last_keys[R3_WQ_MAX];   /* last published key SET (sorted)        */
+static UB mq_last_n    = 0;          /* size of the last published set         */
+static UW mq_want_seq  = 0;          /* snapshot generation (bump on set-change)*/
+
+/* snapshot the want-table KEYS (SORTED, so set-equality is order-independent)
+ * — keys ONLY, NEVER the want LEVELS (F-LOCAL for magnitudes). Returns count.
+ * Caller holds m_gate for the r3_wq read (the production caller does). */
+static INT mq_snapshot_wants(UB out[R3_WQ_MAX])
+{
+    INT n = 0;
+    for (INT i = 0; i < R3_WQ_MAX; i++)
+        if (r3_wq[i].used) out[n++] = r3_wq[i].key;
+    for (INT i = 1; i < n; i++) {              /* insertion sort (n <= 4)      */
+        UB v = out[i]; INT j = i - 1;
+        while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = v;
+    }
+    return n;
+}
+static INT mq_keyset_same(const UB *a, INT na, const UB *b, INT nb)
+{
+    if (na != nb) return 0;
+    for (INT i = 0; i < na; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+/* build the want packet into mq_want_pkt for (seq, keys, n). NO wire I/O — the
+ * in-binary cert calls this to inspect the packed image ([pull-snapshot-honest]).
+ * origin_node stamps THIS node (0xFF on a solo node — harmless for the cert). */
+static void mq_build_want(UW seq, const UB *keys, INT n)
+{
+    mq_want_pkt.magic       = MQ_MAGIC;
+    mq_want_pkt.want_seq    = seq;
+    mq_want_pkt.origin_node = drpc_my_node;
+    mq_want_pkt.n           = (UB)n;
+    mq_want_pkt.wire_ver    = MT_WIRE_VER_VOCAB;
+    mq_want_pkt._pad        = 0;
+    for (INT i = 0; i < (INT)sizeof mq_want_pkt.keys; i++)
+        mq_want_pkt.keys[i] = (i < n) ? keys[i] : 0;
+    mt_vocab_fp_fill(mq_want_pkt.vocab_fp);
+}
+/* the want_seq generation + publish decision. Returns:
+ *   2 = publish AND announce (a key-SET change, or the one empty-transition),
+ *   1 = publish silently (re-drive of an unchanged non-empty set — the cure for
+ *       first-delivery loss, mirror of m_republish_last),
+ *   0 = suppress (silent steady state: a mind that wonders nothing sends nothing).
+ * want_seq bumps ONLY on a set change (so a responder can answer-once). PURE
+ * bookkeeping on mq_last_keys/mq_last_n/mq_want_seq — the cert drives it. */
+static INT mq_seq_update(const UB *keys, INT n)
+{
+    INT changed = !mq_keyset_same(keys, n, mq_last_keys, (INT)mq_last_n);
+    if (n == 0) {
+        if (mq_last_n == 0) return 0;          /* already silent               */
+        mq_want_seq++; mq_last_n = 0;          /* overwrite the stale non-empty */
+        return 2;                              /* the ONE empty-transition pub  */
+    }
+    if (changed) mq_want_seq++;
+    for (INT i = 0; i < n; i++) mq_last_keys[i] = keys[i];
+    mq_last_n = (UB)n;
+    return changed ? 2 : 1;
+}
+static void mq_pub_reset(void)                 /* the cert's clean slate        */
+{
+    mq_last_n = 0; mq_want_seq = 0;
+    for (INT i = 0; i < R3_WQ_MAX; i++) mq_last_keys[i] = 0;
+}
+
+/* ONE publish site — called once per mind_net_task tick after m_republish_last.
+ * Publishes the want snapshot EVERY tick while non-empty (the re-drive IS the
+ * retransmit cure — region membership forms only after a SWIM round; the same
+ * reason m_republish_last exists). Announces (prints) only on a set change or
+ * the empty transition. */
+static void mq_publish_wants(void)
+{
+    if (drpc_my_node == 0xFF) return;          /* solo: nothing to ask         */
+    UB keys[R3_WQ_MAX]; INT n;
+    m_gate_acquire();
+    n = mq_snapshot_wants(keys);
+    m_gate_release();
+
+    INT act = mq_seq_update(keys, n);
+    if (act == 0) return;                      /* silent steady state          */
+
+    mq_build_want(mq_want_seq, keys, n);
+    if (mq_want_pub_h() >= 0)
+        (void)kdds_pub(mq_want_pub, &mq_want_pkt, (W)sizeof mq_want_pkt);
+
+    if (act == 2) {
+        if (n == 0) {
+            r_puts("[mind] mind/want empty snapshot (seq ");
+            r_putdec(mq_want_seq);
+            r_puts(") — every wonder answered/evicted; going silent\r\n");
+        } else {
+            r_puts("[mind] published mind/want seq="); r_putdec(mq_want_seq);
+            r_puts(" n="); r_putdec((UW)n); r_puts(" keys");
+            for (INT i = 0; i < n; i++) { r_puts(" "); r_putdec((UW)keys[i]); }
+            r_puts(" -> region "); r_putdec((UW)region_id());
+            r_puts(" (fanout "); r_putdec(kdds_pub_fanout()); r_puts(")\r\n");
+        }
+    }
+}
+
+/* ---- answer side: ONE poll site, engram-only, forwarded provenance ---- */
+static MQ_WANT_PKT  mq_rx_want;      /* poll scratch (file-static)            */
+static MT_TEACH_PKT mq_ans_pkt;      /* answer scratch — SEPARATE from        */
+                                     /* mt_pub_pkt/mt_pub_last (clobbering the */
+                                     /* latter would break the LM-12 Site-3    */
+                                     /* stale-re-drive clear at :2990)         */
+#define MQ_ANS_REDRIVE_MAX 20        /* ~10s @ MT_POLL_MS: re-drive cap for a  */
+                                     /* dead asker's stale LATEST_ONLY want    */
+/* per-origin "already printed a want version/vocab drop" flag (own copy, not
+ * shared with the mind/teach path — a mind/want drop must not suppress a
+ * mind/teach drop print, or vice versa). */
+static UB mq_ver_drop_seen[DNODE_MAX];
+
+/* per-asker answer-once memory + stagger + re-drive budget. */
+typedef struct {
+    UB used;
+    UW want_seq;                     /* generation the answered-set belongs to */
+    UB answered[R3_WQ_MAX];          /* keys first-answered for want_seq        */
+    UB n_answered;
+    UB stagger;                      /* ticks to wait before the FIRST answer   */
+    UB redrive_key;                  /* the key being re-driven (0xFF = none)   */
+    UH redrive_ticks;                /* re-drive countdown (< MQ_ANS_REDRIVE_MAX)*/
+} MQ_ASK_STATE;
+static MQ_ASK_STATE mq_ask_state[DNODE_MAX];
+
+/* reset the per-asker state on a NEW want_seq (compared with != so an asker
+ * REBOOT — counter reset to a lower value — still re-arms, like mt_last_seq). */
+static void mq_gen_reset(U1 o, UW want_seq)
+{
+    if (o >= DNODE_MAX) return;
+    MQ_ASK_STATE *s = &mq_ask_state[o];
+    if (!s->used || s->want_seq != want_seq) {
+        s->used = 1; s->want_seq = want_seq; s->n_answered = 0;
+        s->stagger = (UB)(drpc_my_node & 3);   /* cross-responder thinning (§5) */
+        s->redrive_key = 0xFF; s->redrive_ticks = 0;
+    }
+}
+/* answer-once: 1 if (o, want_seq, k) has NOT been answered (and MARKS it); 0 if
+ * already answered. The cert drives this directly ([pull-answered-once]). */
+static INT mq_mark_answer(U1 o, UW want_seq, UB k)
+{
+    if (o >= DNODE_MAX) return 0;
+    mq_gen_reset(o, want_seq);
+    MQ_ASK_STATE *s = &mq_ask_state[o];
+    for (INT i = 0; i < (INT)s->n_answered; i++)
+        if (s->answered[i] == k) return 0;     /* already answered this gen     */
+    if (s->n_answered < R3_WQ_MAX) s->answered[s->n_answered++] = k;
+    return 1;
+}
+/* peek without marking (poll loop dedup pre-check; also lets a not-held key be
+ * retried next gen). */
+static INT mq_already_answered(U1 o, UB k)
+{
+    if (o >= DNODE_MAX) return 0;
+    MQ_ASK_STATE *s = &mq_ask_state[o];
+    for (INT i = 0; i < (INT)s->n_answered; i++) if (s->answered[i] == k) return 1;
+    return 0;
+}
+
+/* THE responder decision (§1.3.2/§1.3.3) — PURE: builds the answer packet into
+ * mq_ans_pkt forwarding the ORIGINAL attribution, NO wire I/O, NO print, NO
+ * state change. Returns 1 iff I HOLD k AS AN ENGRAM (m_find_key >= 0 — the
+ * engram-only scope cut: a weight-known-but-EVICTED key is not in r3_fq -> 0 ->
+ * refuse). *forgotten_out=1 iff the self-forgotten-fact substitution fired.
+ * Caller holds m_gate. The cert drives this directly ([pull-answer-src]). */
+static INT mq_answer_build(U1 asker, UB k, INT *forgotten_out)
+{
+    if (forgotten_out) *forgotten_out = 0;
+    INT bind, fi = m_find_key((INT)k, &bind);
+    if (fi < 0) return 0;                       /* not held AS AN ENGRAM -> refuse */
+    UB v = r3_fq[fi].yhat[bind];
+    UW local_seq = r3_fq[fi].seq;
+
+    static const U1 zero_prov[PFS_ID_LEN] = { 0 };
+    U1 fwd_origin; const U1 *fwd_prov; const U1 *lp;
+    MT_REMOTE_PROV *rp = mt_rprov_find(local_seq);
+    if (rp) {                                   /* learned remotely: name T     */
+        fwd_origin = rp->origin_node; fwd_prov = rp->prov_head;
+    } else if ((lp = mq_lprov_find(local_seq)) != 0) {   /* taught locally      */
+        fwd_origin = drpc_my_node;    fwd_prov = lp;
+    } else {                                    /* no prov: anonymous, honest    */
+        fwd_origin = drpc_my_node;    fwd_prov = zero_prov;
+    }
+
+    /* self-forgotten corner (§1.3.3): if the forwarded origin == the asker, the
+     * asker's own-origin loop guard (:3589) would EAT the answer (it forgot its
+     * OWN fact). Substitute self as origin + anonymous prov so the asker re-
+     * learns its own forgotten fact (the prov chain COULD prove it was theirs,
+     * but the loop guard forces the substitution — risk 5, flagged). */
+    if (fwd_origin == asker) {
+        fwd_origin = drpc_my_node; fwd_prov = zero_prov;
+        if (forgotten_out) *forgotten_out = 1;
+    }
+
+    mq_ans_pkt.magic       = MT_MAGIC;
+    mq_ans_pkt.fact_seq    = local_seq;         /* my local seq: idempotent re-drive */
+    mq_ans_pkt.origin_node = fwd_origin;
+    mq_ans_pkt.key         = k;
+    mq_ans_pkt.val         = v;
+    mq_ans_pkt.src         = ARK_PROV_SRC_SHELL;
+    mq_ans_pkt.wire_ver    = MT_WIRE_VER_VOCAB;
+    for (INT i = 0; i < PFS_ID_LEN; i++) mq_ans_pkt.prov_head[i] = fwd_prov[i];
+    mt_vocab_fp_fill(mq_ans_pkt.vocab_fp);
+    return 1;
+}
+
+/* ONE poll site — called once per mind_net_task tick. Reads the latest want
+ * packet, gates it in the mind/teach order, and answers ONE new key I hold this
+ * tick (after the stagger), or re-drives the last answer while still wanted +
+ * budget. Serialized behind m_gate for the r3_fq / prov reads. */
+static void mq_poll_wants(void)
+{
+    if (mq_want_sub_h() < 0) return;
+    W r = kdds_sub(mq_want_sub, &mq_rx_want, (W)sizeof mq_rx_want, 0);
+    if (r < (W)sizeof mq_rx_want || mq_rx_want.magic != MQ_MAGIC) return;
+
+    /* gates, in the mind/teach order (magic already checked). */
+    if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
+        U1 vorg = mq_rx_want.origin_node;
+        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
+            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
+            r_puts("[mind] mind/want wire_ver mismatch from node ");
+            r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
+        }
+        return;
+    }
+    if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
+        U1 forg = mq_rx_want.origin_node;
+        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
+            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
+            r_puts("[mind] mind/want vocab mismatch from node ");
+            r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
+                   " answering would gossip mis-bound ids)\r\n");
+        }
+        return;
+    }
+    U1 o = mq_rx_want.origin_node;
+    if (o == drpc_my_node) return;             /* own want echo — ignore        */
+    if (o >= DNODE_MAX)    return;
+    UW S = mq_rx_want.want_seq;
+    INT n = (INT)mq_rx_want.n; if (n > R3_WQ_MAX) n = R3_WQ_MAX;
+
+    m_gate_acquire();
+
+    /* print the receipt ONCE per new want_seq ([pull-want-live]); a re-drive of
+     * the same generation is silent (avoids the LATEST_ONLY re-arrival flood). */
+    INT gen_changed = (!mq_ask_state[o].used || mq_ask_state[o].want_seq != S);
+    mq_gen_reset(o, S);
+    MQ_ASK_STATE *s = &mq_ask_state[o];
+
+    if (gen_changed) {
+        r_puts("[mind] mind/want from node "); r_putdec((UW)o);
+        r_puts(" seq="); r_putdec(S); r_puts(" n="); r_putdec((UW)n);
+        r_puts(" keys");
+        for (INT i = 0; i < n; i++) { r_puts(" "); r_putdec((UW)mq_rx_want.keys[i]); }
+        r_puts("\r\n");
+    }
+
+    INT did_answer = 0;
+    if (s->stagger > 0) {
+        s->stagger--;                          /* cross-responder stagger (§5)  */
+    } else {
+        for (INT i = 0; i < n && !did_answer; i++) {
+            UB k = mq_rx_want.keys[i];
+            if (mq_already_answered(o, k)) continue;   /* dedup peek             */
+            INT forgotten = 0;
+            if (!mq_answer_build(o, k, &forgotten)) continue;  /* refuse: not held */
+            (void)mq_mark_answer(o, S, k);     /* now MARK (answer-once)         */
+            (void)mt_wire_send(&mq_ans_pkt);   /* the ONE wire-writer            */
+            s->redrive_key = k; s->redrive_ticks = 0;
+            r_puts("[mind] answering want key "); r_putdec((UW)k);
+            r_puts(" (\""); r_puts(r3_vocab_key_word((INT)k));
+            r_puts("\") from node "); r_putdec((UW)o);
+            r_puts(" -> re-teach on mind/teach as origin ");
+            r_putdec((UW)mq_ans_pkt.origin_node);
+            r_puts(" seq="); r_putdec(mq_ans_pkt.fact_seq);
+            if (forgotten) r_puts(" [re-teaching node its OWN forgotten fact]");
+            r_puts("\r\n");
+            did_answer = 1;
+        }
+        /* disease-leg print ([pull-unknown-silent]): I hold NONE of the wanted
+         * keys — say so once per generation, then stay silent. */
+        if (!did_answer && gen_changed) {
+            INT hold_any = 0;
+            for (INT i = 0; i < n; i++) {
+                INT b, f = m_find_key((INT)mq_rx_want.keys[i], &b);
+                if (f >= 0) { hold_any = 1; break; }
+            }
+            if (!hold_any && n > 0)
+                r_puts("[mind] mind/want: none of the wanted keys held — silent\r\n");
+        }
+    }
+
+    /* re-drive the last answer (silent) while still wanted + budget remains. */
+    if (!did_answer && s->redrive_key != 0xFF && s->redrive_ticks < MQ_ANS_REDRIVE_MAX) {
+        INT listed = 0;
+        for (INT i = 0; i < n; i++) if (mq_rx_want.keys[i] == s->redrive_key) { listed = 1; break; }
+        if (listed) {
+            INT fg = 0;
+            if (mq_answer_build(o, s->redrive_key, &fg)) {
+                (void)mt_wire_send(&mq_ans_pkt);
+                s->redrive_ticks++;
+            } else {
+                s->redrive_key = 0xFF;         /* no longer hold it — stop      */
+            }
+        }
+    }
+
     m_gate_release();
 }
 
@@ -3557,7 +4010,9 @@ void mind_net_task(INT stacd, void *exinf)
                     r_puts(" — packet DROPPED (version-partitioned region, IX.7)\r\n");
                     r_puts("[lang-wire-verdrop] PASS\r\n");
                 }
+                mq_poll_wants();            /* LM-15: answer region wants       */
                 m_republish_last();
+                mq_publish_wants();         /* LM-15: publish my own wonders    */
                 tk_dly_tsk(MT_POLL_MS);
                 continue;
             }
@@ -3576,7 +4031,9 @@ void mind_net_task(INT stacd, void *exinf)
                            " mis-bind), reinitializing nothing, staying clean\r\n");
                     r_puts("[lang-vocab-refuse] PASS\r\n");
                 }
+                mq_poll_wants();            /* LM-15: answer region wants       */
                 m_republish_last();
+                mq_publish_wants();         /* LM-15: publish my own wonders    */
                 tk_dly_tsk(MT_POLL_MS);
                 continue;
             }
@@ -3687,7 +4144,9 @@ void mind_net_task(INT stacd, void *exinf)
         /* re-drive my own last local teach so a peer whose region RTT only
          * became measurable after my first publish still receives it
          * (best-effort, idempotent at the receiver — VIII.3). */
+        mq_poll_wants();       /* LM-15: answer region wants I can serve       */
         m_republish_last();
+        mq_publish_wants();    /* LM-15: publish my own unanswered wonders     */
         tk_dly_tsk(MT_POLL_MS);
     }
 }
@@ -5534,6 +5993,206 @@ void r3_curiosity_test(void)
 
     r_puts("[curio] NOTE: cert verbs reset rw[] + the live queue + the want-table (VII.0 #5)\r\n");
     r_puts("[curio] ==== done ====\r\n");
+}
+
+/* ================================================================== *
+ *  LM-15 in-binary cert — `mind pull` -> r3_pull_test()                *
+ *                                                                       *
+ *  Runs the LOCAL halves the live 3-node sample cannot gate             *
+ *  deterministically, in the LM-14 harness style (dynamic key selection *
+ *  via curio_pick_unknown — never a hard-coded key/value/salience, the  *
+ *  LM-13 GENERICITY discipline). Four gates:                            *
+ *   [pull-snapshot-honest] the publish snapshot is exactly the want     *
+ *      KEYS, no bound key, and byte-IDENTICAL when only the want LEVELS  *
+ *      change (F-LOCAL: the magnitude never rides the wire);            *
+ *   [pull-seq-gen] want_seq bumps ONLY on a key-SET change; clear-to-    *
+ *      empty is ONE empty publish then suppressed;                      *
+ *   [pull-answer-src] engram-bound -> answers forwarding the ORIGINAL    *
+ *      (origin, seq, prov); unbound -> refuses; weight-known-but-EVICTED *
+ *      -> refuses (pins the engram-only scope cut RED-ably);            *
+ *   [pull-answered-once] one answer per (origin, want_seq, key); a       *
+ *      want_seq change re-answers; a LOWER want_seq (reboot) re-answers  *
+ *      (!= not >).                                                      *
+ *  All pure bookkeeping (no RNG, no rw[]) -> deterministic + cheap.     *
+ * ================================================================== */
+void r3_pull_test(void)
+{
+    static float w_base[R_NP];
+
+    m_quiesce();
+    r_puts("[pull] ==== LM-15 pull-teach: the mind ASKS the region for what it lacks ====\r\n");
+    r_puts("[pull] mind/want pkt="); r_putdec((UW)sizeof(MQ_WANT_PKT));
+    r_puts("B (KDDS_DATA_MAX="); r_putdec((UW)KDDS_DATA_MAX);
+    r_puts(")  want-table R3_WQ_MAX="); r_putdec(R3_WQ_MAX);
+    r_puts("  re-drive cap MQ_ANS_REDRIVE_MAX="); r_putdec(MQ_ANS_REDRIVE_MAX);
+    r_puts("  known-share bar="); r_putf1(M_KNOWN_SHARE); r_puts("%\r\n");
+
+    s_make_facts();
+    s_pretrain();
+    r3_weights_get(w_base);
+
+    /* a distinctive non-zero provenance head to prove it is FORWARDED exactly. */
+    U1 tp_loc[PFS_ID_LEN], tp_rem[PFS_ID_LEN];
+    for (INT i = 0; i < PFS_ID_LEN; i++) { tp_loc[i] = (U1)(0xA0 + i); tp_rem[i] = (U1)(0x50 + i); }
+
+    /* ---------- [pull-snapshot-honest] -------------------------------- *
+     * 2 wants (dynamically chosen unknown keys) + f1..f4 bound; the       *
+     * snapshot is EXACTLY the want keys, carries no bound key, and is      *
+     * byte-identical when only the LEVELS change (F-LOCAL anti-leak).      */
+    r3_weights_set(w_base); fgt_build();                  /* f1..f4 keys 0..7 bound */
+    INT ku1 = curio_pick_unknown(R_CERTKEYS, R_KEYV, NULL, 0);
+    INT skip1[1] = { ku1 };
+    INT ku2 = curio_pick_unknown(R_CERTKEYS, R_KEYV, skip1, 1);
+    INT snap_ok = 0;
+    UB img1[sizeof(MQ_WANT_PKT)], img2[sizeof(MQ_WANT_PKT)];
+    INT n1 = 0; INT no_bound = 0, both_unbound = 0, level_hidden = 0;
+    if (ku1 >= 0 && ku2 >= 0) {
+        float sh[R_VALV]; UB pr;
+        for (INT t = 0; t < 3; t++) { pr = m_masked_vote(ku1, M_ASK_N, sh); (void)r3_want_note(ku1, sh[pr]); } /* want(ku1)=3 */
+        pr = m_masked_vote(ku2, M_ASK_N, sh); (void)r3_want_note(ku2, sh[pr]);                                  /* want(ku2)=1 */
+        INT bound_probe = r3_want_note(0, 0.0f);          /* a BOUND key MUST refuse (-1) */
+        UB keys[R3_WQ_MAX]; n1 = mq_snapshot_wants(keys);
+        /* exactly {ku1,ku2}, both unbound, no bound key present. */
+        INT has1 = 0, has2 = 0, has_bound = 0;
+        for (INT i = 0; i < n1; i++) {
+            if (keys[i] == (UB)ku1) has1 = 1;
+            if (keys[i] == (UB)ku2) has2 = 1;
+            INT b; if (m_find_key((INT)keys[i], &b) >= 0) has_bound = 1;  /* a bound key leaked */
+        }
+        both_unbound = has1 && has2;
+        no_bound = (bound_probe == -1) && !has_bound;
+        mq_build_want(7u, keys, n1);                      /* fixed seq -> only levels vary */
+        for (INT i = 0; i < (INT)sizeof(MQ_WANT_PKT); i++) img1[i] = ((UB *)&mq_want_pkt)[i];
+        /* bump the LEVELS (same key SET) and rebuild with the SAME seq. */
+        for (INT t = 0; t < 4; t++) { pr = m_masked_vote(ku1, M_ASK_N, sh); (void)r3_want_note(ku1, sh[pr]); }
+        for (INT t = 0; t < 3; t++) { pr = m_masked_vote(ku2, M_ASK_N, sh); (void)r3_want_note(ku2, sh[pr]); }
+        UB keys2[R3_WQ_MAX]; INT n2 = mq_snapshot_wants(keys2);
+        mq_build_want(7u, keys2, n2);
+        for (INT i = 0; i < (INT)sizeof(MQ_WANT_PKT); i++) img2[i] = ((UB *)&mq_want_pkt)[i];
+        level_hidden = (n2 == n1);
+        for (INT i = 0; i < (INT)sizeof(MQ_WANT_PKT); i++) if (img1[i] != img2[i]) level_hidden = 0;
+        snap_ok = (n1 == 2) && both_unbound && no_bound && level_hidden;
+    }
+    r_puts("[pull] snapshot: n="); r_putdec((UW)n1);
+    r_puts(" keys {"); r_putdec((UW)ku1); r_puts(","); r_putdec((UW)ku2);
+    r_puts("} both-unbound="); r_putdec((UW)both_unbound);
+    r_puts(" no-bound-key="); r_putdec((UW)no_bound);
+    r_puts(" level-hidden(bytes-identical across level change)="); r_putdec((UW)level_hidden);
+    r_puts("\r\n");
+    r_puts(snap_ok ? "[pull-snapshot-honest] PASS\r\n" : "[pull-snapshot-honest] FAIL\r\n");
+
+    /* ---------- [pull-seq-gen] ---------------------------------------- *
+     * want_seq bumps ONLY on a key-SET change; empty transition is one    *
+     * publish then suppressed.                                            */
+    r3_weights_set(w_base); fgt_build(); mq_pub_reset();
+    INT sk3[3]; INT ns3 = 0;
+    for (INT i = 0; i < 3; i++) { INT kk = curio_pick_unknown(R_CERTKEYS, R_KEYV, sk3, ns3); if (kk < 0) break; sk3[ns3++] = kk; }
+    INT seq_ok = 0; UW s1v = 0, s2v = 0, s3v = 0, s4v = 0, s5v = 0;
+    INT a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0;
+    if (ns3 == 3) {
+        float sh[R_VALV]; UB pr;
+        pr = m_masked_vote(sk3[0], M_ASK_N, sh); (void)r3_want_note(sk3[0], sh[pr]);
+        pr = m_masked_vote(sk3[1], M_ASK_N, sh); (void)r3_want_note(sk3[1], sh[pr]);
+        UB kk[R3_WQ_MAX]; INT nn = mq_snapshot_wants(kk);
+        a1 = mq_seq_update(kk, nn);  s1v = mq_want_seq;      /* {a,b}: change -> 2, seq 1 */
+        a2 = mq_seq_update(kk, nn);  s2v = mq_want_seq;      /* same set  -> 1, seq 1     */
+        pr = m_masked_vote(sk3[2], M_ASK_N, sh); (void)r3_want_note(sk3[2], sh[pr]);
+        nn = mq_snapshot_wants(kk);
+        a3 = mq_seq_update(kk, nn);  s3v = mq_want_seq;      /* add c    -> 2, seq 2      */
+        UB none[R3_WQ_MAX] = { 0 };
+        a4 = mq_seq_update(none, 0); s4v = mq_want_seq;      /* clear    -> 2, seq 3      */
+        a5 = mq_seq_update(none, 0); s5v = mq_want_seq;      /* empty    -> 0, seq 3      */
+        seq_ok = (a1 == 2 && s1v == 1) && (a2 == 1 && s2v == 1)
+              && (a3 == 2 && s3v == 2) && (a4 == 2 && s4v == 3)
+              && (a5 == 0 && s5v == 3);
+    }
+    r_puts("[pull] seq-gen: {a,b}->act="); r_putdec((UW)a1); r_puts(",seq="); r_putdec(s1v);
+    r_puts("  same->act="); r_putdec((UW)a2); r_puts(",seq="); r_putdec(s2v);
+    r_puts("  +c->act="); r_putdec((UW)a3); r_puts(",seq="); r_putdec(s3v);
+    r_puts("  empty->act="); r_putdec((UW)a4); r_puts(",seq="); r_putdec(s4v);
+    r_puts("  empty2->act="); r_putdec((UW)a5); r_puts(",seq="); r_putdec(s5v); r_puts("\r\n");
+    r_puts(seq_ok ? "[pull-seq-gen] PASS\r\n" : "[pull-seq-gen] FAIL\r\n");
+
+    /* ---------- [pull-answer-src] ------------------------------------- *
+     * engram-bound -> answers forwarding (origin, seq, prov); unbound ->  *
+     * refuses; weight-known-but-EVICTED -> refuses (scope cut).           */
+    for (INT i = 0; i < R3_FQ_MAX; i++) { mt_rprov[i].used = 0; mq_lprov[i].used = 0; }
+    r3_weights_set(w_base); s_fq_reset();                 /* empty queue + want-table */
+    INT asker = 5, teacherT = 7;
+    /* (a) a LOCALLY-taught fact: origin=self, prov from mq_lprov. */
+    INT kloc = curio_pick_unknown(R_CERTKEYS, R_KEYV, NULL, 0);
+    INT vloc = (kloc >= 0) ? forget_pick_readable(kloc) : -1;
+    INT loc_ok = 0; UW loc_seq = 0; UB loc_yhat = 0;
+    if (kloc >= 0 && vloc >= 0) {
+        UB kk = (UB)kloc, vv = (UB)vloc; (void)r3_fact_learn(&kk, &vv, 1);
+        INT b; INT fi = m_find_key(kloc, &b); loc_seq = r3_fq[fi].seq; loc_yhat = r3_fq[fi].yhat[b];
+        mq_lprov_put(loc_seq, tp_loc);
+        INT fg = 0; INT built = mq_answer_build((U1)asker, (UB)kloc, &fg);
+        INT prov_ok = 1; for (INT i = 0; i < PFS_ID_LEN; i++) if (mq_ans_pkt.prov_head[i] != tp_loc[i]) prov_ok = 0;
+        loc_ok = built && (fg == 0) && (mq_ans_pkt.origin_node == drpc_my_node)
+              && (mq_ans_pkt.fact_seq == loc_seq) && (mq_ans_pkt.key == (UB)kloc)
+              && (mq_ans_pkt.val == loc_yhat) && prov_ok;
+    }
+    /* (b) a REMOTELY-learned fact: origin=T forwarded; and the self-forgotten
+     * corner (asker==T) substitutes self + anonymous prov. */
+    INT krem = curio_pick_unknown(R_CERTKEYS, R_KEYV, &kloc, 1);
+    INT vrem = (krem >= 0) ? forget_pick_readable(krem) : -1;
+    INT rem_ok = 0, forgot_ok = 0;
+    if (krem >= 0 && vrem >= 0) {
+        UB kk = (UB)krem, vv = (UB)vrem; (void)r3_fact_learn(&kk, &vv, 1);
+        INT b; INT fi = m_find_key(krem, &b); UW rem_seq = r3_fq[fi].seq;
+        mt_rprov_put(rem_seq, (U1)teacherT, tp_rem);
+        INT fg = 0; INT built = mq_answer_build((U1)asker, (UB)krem, &fg);
+        INT prov_ok = 1; for (INT i = 0; i < PFS_ID_LEN; i++) if (mq_ans_pkt.prov_head[i] != tp_rem[i]) prov_ok = 0;
+        rem_ok = built && (fg == 0) && (mq_ans_pkt.origin_node == (UB)teacherT) && prov_ok;
+        /* self-forgotten corner: asker IS the original teacher T. */
+        INT fg2 = 0; INT built2 = mq_answer_build((U1)teacherT, (UB)krem, &fg2);
+        forgot_ok = built2 && (fg2 == 1) && (mq_ans_pkt.origin_node == drpc_my_node);
+    }
+    /* (c) an UNBOUND key: refuse. */
+    INT skipab[2] = { kloc, krem };
+    INT kunb = curio_pick_unknown(R_CERTKEYS, R_KEYV, skipab, 2);
+    INT unbound_ok = 0;
+    if (kunb >= 0) { INT fg = 0; unbound_ok = (mq_answer_build((U1)asker, (UB)kunb, &fg) == 0); }
+    /* (d) a WEIGHT-KNOWN-but-EVICTED key: refuse (the engram-only scope cut). */
+    UB sk5[8], sv5[8]; INT spread_ok = curio_spread_f5(sk5, sv5);
+    INT wk_ok = 0; float wk_share = 0; INT wk_evicted = 0, wk_refused = 0;
+    if (spread_ok) {
+        r3_weights_set(w_base); fgt_build();
+        (void)r3_fact_learn(sk5, sv5, 8);                  /* class-spread f5 -> evict f1 */
+        while (r3_facts_pending()) (void)r3_consolidate_idle_round();
+        INT b; wk_evicted = (m_find_key(0, &b) < 0);        /* key 0 evicted from the queue */
+        float sh[R_VALV]; UB pr = m_masked_vote(0, M_ASK_N, sh); wk_share = sh[pr];
+        INT fg = 0; wk_refused = (mq_answer_build((U1)asker, 0, &fg) == 0);  /* MUST refuse */
+        wk_ok = wk_evicted && (wk_share >= M_KNOWN_SHARE) && wk_refused;
+    }
+    INT src_ok = loc_ok && rem_ok && forgot_ok && unbound_ok && wk_ok;
+    r_puts("[pull] answer-src: local(fwd self+prov)="); r_putdec((UW)loc_ok);
+    r_puts(" remote(fwd origin "); r_putdec((UW)teacherT); r_puts(")="); r_putdec((UW)rem_ok);
+    r_puts(" self-forgotten(subst)="); r_putdec((UW)forgot_ok);
+    r_puts(" unbound-refuse="); r_putdec((UW)unbound_ok);
+    r_puts(" weight-known-evicted(share="); r_putf1(wk_share);
+    r_puts("%)-refuse="); r_putdec((UW)wk_refused); r_puts("\r\n");
+    r_puts(src_ok ? "[pull-answer-src] PASS\r\n" : "[pull-answer-src] FAIL\r\n");
+
+    /* ---------- [pull-answered-once] --------------------------------- *
+     * one answer per (origin, want_seq, key); a want_seq change re-        *
+     * answers; a LOWER want_seq (asker reboot) re-answers (!= not >).      */
+    U1 aorg = 3; mq_ask_state[aorg].used = 0;
+    INT kdd = curio_pick_unknown(R_CERTKEYS, R_KEYV, NULL, 0);
+    INT r1 = mq_mark_answer(aorg, 100, (UB)kdd);   /* first        -> 1 */
+    INT r2 = mq_mark_answer(aorg, 100, (UB)kdd);   /* same gen     -> 0 */
+    INT r3 = mq_mark_answer(aorg, 101, (UB)kdd);   /* seq bumped   -> 1 */
+    INT r4 = mq_mark_answer(aorg,  50, (UB)kdd);   /* reboot lower -> 1 (!=) */
+    INT once_ok = (r1 == 1) && (r2 == 0) && (r3 == 1) && (r4 == 1);
+    r_puts("[pull] answered-once: first="); r_putdec((UW)r1);
+    r_puts(" dup(same seq)="); r_putdec((UW)r2);
+    r_puts(" seq-bumped="); r_putdec((UW)r3);
+    r_puts(" reboot-lower(!=)="); r_putdec((UW)r4); r_puts("\r\n");
+    r_puts(once_ok ? "[pull-answered-once] PASS\r\n" : "[pull-answered-once] FAIL\r\n");
+
+    r_puts("[pull] NOTE: cert verbs reset rw[] + the live queue + the want-table (VII.0 #5)\r\n");
+    r_puts("[pull] ==== done ====\r\n");
 }
 
 /* ---- shell verb: `r3` / `r3 test` -------------------------------- */

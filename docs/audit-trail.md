@@ -1899,3 +1899,24 @@ N-4 cross-host deferred to the ThinkPad).
   the leaf probe BEFORE `mind wmerge` in the ci.yml selftest pipe; verified on native aarch64 (leaf reads 60.0%
   &lt; 75 there and wonders). The 7 [curio-*] gates + the mechanism were untouched. LM-14 landing completes the
   living-mind arc's learn → sleep → revise (LM-12) → forget (LM-13) → wonder (LM-14) sequence.
+- CROWN RE-BLESS — LM-15 region pull-teach (2026-07-04, feat/lm15-pull-teach). LM-15 lets the mind ASK the
+  region for keys it wonders about: a new region-scoped singleton topic `mind/want` (`MQ_WANT_PKT`, 24 B,
+  keys-only — the F-LOCAL amendment: the want KEY crosses the wire, the accrued want LEVEL never does), a
+  publish site (`mq_publish_wants`) + a poll/answer site (`mq_poll_wants`, engram-only, forwarding the
+  original provenance) + a factored single wire-writer (`mt_wire_send`) + a 4-slot local-prov side-table
+  (`mq_lprov`), all in `arch/common/r3_incontext.c` (bare-metal TU) with `MQ_WANT_PKT` + comment amendments in
+  `arch/common/include/dtr.h` and a singleton-enumeration comment in `arch/common/include/kdds.h`. The
+  bare-metal `.text` LEGITIMATELY moves → NEW dev crown (sandbox gcc 15.2.0; parent be41bbf6…/248633de…
+  reproduced byte-identical FIRST for environment trust, then the new values reproduced by a second clean
+  build):
+    aarch64  3e20edbd6a6696de6b3cf3b9e7767d849f9520ad2fcf0863fffd75dc3db34b83   (was be41bbf6…)
+    x86      b6a748daacdc0c2b16a8c80e5885fdf3f343964c0e0846ea5beb9082e9d11e10   (was 248633de…)
+  WHY: LM-15 pull-teach adds the mind/want publish+answer machinery to a bare-metal TU. VERIFICATION (by the
+  implementer): 4/4 `[pull-*]` in-binary gates PASS on native aarch64 hosted (`mind pull`); all FOUR targets
+  build clean (boot/x86 + boot/aarch64 bare, boot/linux + boot/linux_x86_64 hosted; the only warnings are
+  pre-existing — wmerge misleading-indentation, bare-metal unused-fn). `[pull-answer-src]` pins the
+  engram-only scope cut RED-ably (a weight-known-but-EVICTED key refuses); `[pull-snapshot-honest]` proves the
+  packet is byte-identical across a want-LEVEL change (F-LOCAL anti-leak). No new task, no new TU (no Android
+  CMake parity risk); dmn.c byte-identical. NOT merged by the implementer — a SEPARATE audit + the commander's
+  own clean-build reproduction of these crowns precede any merge (the audit-trail :1875 rule). LM-15 extends
+  the living-mind arc: learn → sleep → revise → forget → wonder (LM-14) → ASK (LM-15).
