@@ -1874,3 +1874,10 @@ N-4 cross-host deferred to the ThinkPad).
     x86      a0bed501df50ff21ba7b3a29305e83af1b048af1622f59f86764d9ea8d741237   (was 55b425c9…d5e26169)
   NOT merged by the implementer — a SEPARATE audit + the commander's own clean-build reproduction of these
   crowns precede any merge.
+- LM-13 LANDED on master 2026-07-04 via merge `972ba15e` (commander clean-build reproduced f51eb00e/a0bed501
+  byte-identical on merged master). Audit VERDICT was GO-WITH-CARE: the selection mechanism (asking→evict a
+  DIFFERENT fact) is the robust load-bearing core (3 falsifiers bite); the accuracy disease (64%) was honestly
+  RE-FRAMED as a WORST-CASE single-adversarial-class interferer after the auditor showed a realistic
+  class-spread f5 decays the evicted fact by 0.0 (living-mind-lm13-forgetting.md §4 + the runtime log now
+  disclose this). Current master dev crown = aarch64 f51eb00e… / x86 a0bed501… This commit is crown-neutral
+  (docs only) so master's tip stays crown-green; the intentional .text drift is at the merge `972ba15e`.
