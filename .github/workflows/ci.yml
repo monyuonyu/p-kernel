@@ -1507,6 +1507,50 @@ jobs:
           name: composite-loop-logs
           path: /tmp/ci22_*.log
 
+  depth-deliberation-live:
+    # DEPTH — the ThinkPad self-hosted home for the HEAVY deliberation legs
+    # (depth_iq_path_design.md §6.3, §8). The fast [depth-*] micro-fixture arms
+    # (search x verify teeth, compound hard-gate, not-breadth) run in normal CI
+    # (the ubuntu depth-deliberation job); this job is where the legs IMPRACTICAL
+    # under the emulated sandbox belong:
+    #   - [depth-teacher-approach] / [depth-verifier-exceeds]: need a REAL teacher
+    #     model + LONG training (student approaches-not-exceeds the teacher; the
+    #     V-exact compounding lifts PAST it — the §4.3 crack). NOT YET IMPLEMENTED
+    #     as a training leg — this is the wired home so it runs HERE when it lands,
+    #     never in the qemu sandbox (heavy training = 30-60+ min under emulation).
+    #   - general-domain [depth-deliberation-gain]: the strict gate stays a
+    #     pre-registered NULL at tier=S/M (§6.2); it turns on only after the tier
+    #     walk (L/XL) + context growth + a stronger teacher land.
+    # Today this job re-validates the fast cert on the ThinkPad toolchain (proving
+    # it is green on the self-hosted runner too) + prints the cross-arch machine
+    # hashes. Chained at the self-hosted TAIL (after composite-loop) as a
+    # continue-on-error bonus so it can never destabilize the serialized chain.
+    name: "DEPTH deliberation [live] — heavy teacher-approach legs (ThinkPad home)"
+    runs-on: [self-hosted, pkernel-thinkpad]
+    # serialized self-hosted chain (de-flake): chain TAIL, runs after composite-loop.
+    needs: [composite-loop]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: "[depth-*] fast cert re-validated on the ThinkPad runner"
+        run: |
+          bash tests/llm/run_depth.sh | tee llm_depth_live.log
+          grep -aqF '[result] PASS' llm_depth_live.log
+          grep -aqF 'ANTI-THEATER: STUB-SEARCH (K=1) -> gain VANISHES' llm_depth_live.log
+          grep -aqF 'ANTI-THEATER: STUB-VERIFY (rand)-> gain VANISHES' llm_depth_live.log
+          ! grep -aqE '^  FAIL  ' llm_depth_live.log
+          # the DEFERRED heavy legs are named here so the wiring point is explicit:
+          grep -aqF '[depth-teacher-approach] DEFERRED to the ThinkPad runner' llm_depth_live.log
+          echo "NOTE: [depth-teacher-approach]/[depth-verifier-exceeds] training legs are the"
+          echo "      documented heavy work for THIS runner (not yet implemented as a leg);"
+          echo "      the fast search x verify teeth + compound hard-gate are green above."
+
   # =========================================================================
   # STRICT GATES (ci-strict-gates wave) — three high-signal checks the audit
   # found were NOT enforced anywhere: the crown .text byte-identity invariant,
@@ -1835,6 +1879,118 @@ jobs:
         run: |
           make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64
           make -C boot/linux         clean >/dev/null && make -C boot/linux
+
+  depth-deliberation:
+    # ===== DEPTH / test-time DELIBERATION cert (ADDITIVE block — feat/depth-dlb).
+    # depth_iq_path_design.md §3/§6: depth from COMPUTE (thinking longer + checking
+    # itself), the ONE lever that buys depth WITHOUT touching weights and the one
+    # verified ABSENT from the tree ("D3 熟慮の中身は未"). DLB = SEARCH x VERIFY:
+    # sample K reasoning paths, VERIFY each (v1 lives in V-exact domains where the
+    # verifier is free + perfect, AUC=1), select the best; then COMPOUND — distill
+    # ONLY V-exact-verified winning traces into weights (the AlphaZero crack, §3.4)
+    # behind a HARD honesty gate (unverified traces amortize noise into confident
+    # wrongness — the learner trap).
+    #
+    # arch/common/llm/dlb.c is HOSTED-tier (bare metal links student_stub.o; it
+    # calls ONLY the public student.h API), so the crown .text is UNTOUCHED — the
+    # crown-text-identity job proves the bare .text is byte-identical to the parent.
+    #
+    # The [depth-*] gates run IN-PROCESS on a MINIMAL deterministic V-exact
+    # micro-fixture (mod-10 arithmetic composition) that runs NATIVELY (host cc, NO
+    # qemu) in ~15s — so the two anti-theater TEETH run in normal CI WITHOUT the
+    # full training run: STUB-SEARCH (K=1) and STUB-VERIFY (random) each make the
+    # deliberation gain VANISH -> RED, proving BOTH factors of search x verify are
+    # load-bearing (§6.2). The falsifier-for-the-falsifier (-DDLB_SABOTAGE_NOVERIFY
+    # stubs dlb.c's verify-selection -> the whole [depth-deliberation] gate goes RED)
+    # is the SEPARATE depth-sabotage-red job below.
+    #
+    # HONEST / pre-registered (§3.5, §6.2): at the tier=S byte-baby the general-
+    # domain / model-internal-reasoning gain is EXPECTED ~0 (below the step
+    # threshold) and is PRINTED as a NULL, not tuned. The DLB gain proven here is
+    # the V-EXACT search+verify win (rejection sampling vs the free perfect
+    # verifier). The HEAVY general-domain [depth-deliberation-gain] full-training +
+    # [depth-teacher-approach]/[depth-verifier-exceeds] legs (a real teacher model +
+    # long training, IMPRACTICAL under the emulated sandbox) run on the ThinkPad
+    # self-hosted runner — the depth-deliberation-live job below.
+    name: "DEPTH test-time deliberation ([depth-*] DLB; hosted-only, crown-neutral)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (+ aarch64 cross + qemu-user for the one-math diff)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make gcc-aarch64-linux-gnu qemu-user-static
+      - name: "[depth-*] cert (metric-nonvacuous / deliberation / compound-verified-only / not-breadth)"
+        run: bash tests/llm/run_depth.sh | tee llm_depth.log
+      - name: Load-bearing gates PASS + the two anti-theater teeth are RED-when-stubbed
+        run: |
+          grep -aqF '[result] PASS' llm_depth.log
+          grep -aqF '  PASS  [depth-metric-nonvacuous]' llm_depth.log
+          grep -aqF '  PASS  [depth-deliberation] Arm CURE' llm_depth.log
+          grep -aqF '  PASS  [depth-deliberation] STUB-SEARCH (K=1) RED' llm_depth.log
+          grep -aqF '  PASS  [depth-deliberation] STUB-VERIFY (random) RED' llm_depth.log
+          grep -aqF '  PASS  [depth-deliberation-gain] STRICT' llm_depth.log
+          grep -aqF '  PASS  [depth-compound-verified-only] Arm D: UNVERIFIED distill DEGRADES' llm_depth.log
+          grep -aqF '  PASS  [depth-not-breadth] DLB (search+verify) buys the multi-hop' llm_depth.log
+          # the two teeth, stated as anti-theater lines:
+          grep -aqF 'ANTI-THEATER: STUB-SEARCH (K=1) -> gain VANISHES' llm_depth.log
+          grep -aqF 'ANTI-THEATER: STUB-VERIFY (rand)-> gain VANISHES' llm_depth.log
+          grep -aqF 'ANTI-THEATER: distill UNVERIFIED (wrong) traces -> depth DEGRADES vs verified -> RED' llm_depth.log
+          # fail CLOSED on any [depth-*] FAIL (a silently-broken arm).
+          ! grep -aqE '^  FAIL  ' llm_depth.log
+      - name: Cross-arch one-math determinism (x86_64 --machine == aarch64 --machine)
+        run: |
+          set -e
+          CF="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla -I arch/common/llm"
+          SRC="tests/llm/depth_test.c arch/common/llm/dlb.c arch/common/llm/student.c"
+          cc $CF $SRC -lm -o /tmp/depth_x86
+          aarch64-linux-gnu-gcc $CF $SRC -lm -static -o /tmp/depth_a64
+          /tmp/depth_x86 --machine  | grep -aF '[machine]' > /tmp/depth_x86.mh
+          qemu-aarch64-static /tmp/depth_a64 --machine | grep -aF '[machine]' > /tmp/depth_a64.mh
+          echo "x86_64:"; cat /tmp/depth_x86.mh
+          echo "aarch64:"; cat /tmp/depth_a64.mh
+          diff /tmp/depth_x86.mh /tmp/depth_a64.mh \
+            || { echo 'CROSS-ARCH DRIFT: DLB byte hashes differ (one-math broken)'; exit 1; }
+          echo "one-math OK — DLB is byte-identical across x86_64 and aarch64."
+      - name: Both hosted targets link dlb.o clean (bare-metal .text freeze is the crown-text-identity job)
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64
+          make -C boot/linux         clean >/dev/null && make -C boot/linux
+
+  depth-sabotage-red:
+    # DEPTH ANTI-THEATER (BLOCKING; depth_iq_path_design.md §6.2). The falsifier
+    # for the falsifier: build a SECOND binary with -DDLB_SABOTAGE_NOVERIFY (a
+    # compile-time ONLY switch — the production dlb.c contains NO runtime switch)
+    # in which dlb_answer's search x verify SELECTION is stubbed so a searched
+    # candidate can NEVER beat the draft (dlb always returns the single-shot
+    # draft). The SAME depth cert MUST then go RED: [depth-deliberation] Arm CURE
+    # collapses to the floor and its PASS line MUST be ABSENT. If the cert still
+    # PASSED with the mechanism stubbed, the [depth-*] gain would be theater — this
+    # job proves dlb.c's verify-selection is load-bearing (the conscience-stub-red /
+    # frontier-sabotage-red pattern).
+    name: "depth anti-theater (-DDLB_SABOTAGE_NOVERIFY must go RED)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: Build sabotaged cert + assert [depth-deliberation] goes RED
+        run: |
+          set -e
+          CF="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla -DDLB_SABOTAGE_NOVERIFY -I arch/common/llm"
+          cc $CF tests/llm/depth_test.c arch/common/llm/dlb.c arch/common/llm/student.c -lm -o /tmp/depth_sab
+          /tmp/depth_sab | tee depth_sab.log || true
+          grep -aqF '  FAIL  [depth-deliberation] Arm CURE' depth_sab.log \
+            || { echo 'sabotage did NOT collapse the deliberation gain — the verify-selection is not load-bearing, cert is theater'; exit 1; }
+          ! grep -aqF '  PASS  [depth-deliberation] Arm CURE' depth_sab.log \
+            || { echo 'sabotage still PASSED [depth-deliberation] Arm CURE!'; exit 1; }
+          grep -aqF '[result] FAIL' depth_sab.log
+          echo "ANTI-THEATER OK — dlb.c's search x verify selection is load-bearing; the depth gain cannot silently rot."
 
   generation-survives:
     # Evolution layer: generational migration succession

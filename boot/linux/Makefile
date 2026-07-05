@@ -202,7 +202,7 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # ---- arch/common/llm sources（自己ビルド SmolLM2 推論エンジン） -------
 LLM_DIR     = $(ARCH_COMMON)/llm
 LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
-              llm_shell.c student.c dev_capacity.c student_shell.c cradle.c \
+              llm_shell.c student.c dev_capacity.c student_shell.c cradle.c dlb.c \
               frontier.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
 # DMOE-A bank: hosted-tier but REUSES placement.h (HRW), so it needs the FULL
