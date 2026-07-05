@@ -12,10 +12,10 @@
 # REFUSAL, never deterministic-but-wrong.
 #
 # All arms IN-PROCESS (the REAL bank + REAL joint routing over an in-process
-# fleet whose transport models the SS6L v2 wire). The multi-process [live] relay
-# rows run on the ThinkPad self-hosted runner (PRoot has no netns; see the ci.yml
-# block + feedback_proot_sandbox_net_limits). Determinism holds cross-arch under
-# -O1 -ffp-contract=off (one math) — the ci.yml block runs x86_64 AND aarch64.
+# fleet whose transport models the SS6L v2 wire). NOT-YET-WIRED follow-up (honest):
+# the multi-process [live] relay rows + the cross-arch (x86_64/aarch64) determinism
+# diff are NOT wired yet — no self-hosted DMOE [live] job exists (PRoot has no netns;
+# feedback_proot_sandbox_net_limits). Also DEFERRED: SS6L v2 bank-serve + rehome-repair.
 #
 #   ./run_dmoe.sh
 # Exit 0 = all load-bearing [dmoe-*] gates green + structural greps clean.
@@ -130,7 +130,8 @@ echo ""
 if [ "$CERT_RC" -eq 0 ] && [ "$NR_RC" -eq 0 ] && [ "$VLA_RC" -eq 0 ] && [ "$ZK_RC" -eq 0 ] && [ "$PU_RC" -eq 0 ]; then
     echo "[result] PASS"
     echo "[note] HONEST: in-process fleet models the SS6L v2 wire; the multi-process"
-    echo "       relay [live] rows run on the ThinkPad runner. The MECHANISM gates"
+    echo "       relay [live] rows are a NOT-YET-WIRED follow-up (no self-hosted DMOE"
+    echo "       [live] job exists yet). The MECHANISM gates"
     echo "       (bit-ref/skew/kill/nonresident, each RED-when-stubbed) are green."
     echo "       [dmoe-capacity-grows] measures ROUTED utility through the REAL gate"
     echo "       (never hosted bytes): the routed path is load-bearing (no theater),"

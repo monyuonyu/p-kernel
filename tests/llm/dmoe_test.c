@@ -5,9 +5,10 @@
  *  This drives the REAL bank (dmoe_bank.c) + the REAL joint routing + degrade
  *  ladder in student.c, over an IN-PROCESS fleet of node-banks whose remote
  *  transport models the SS6L v2 wire (resident-or-refuse, ver-pinned). It is the
- *  determinism + disease/cure half of §7; the multi-process [live] relay rows
- *  run on the ThinkPad self-hosted runner (PRoot has no netns — see the ci.yml
- *  block + feedback_proot_sandbox_net_limits).
+ *  determinism + disease/cure half of §7. NOT-YET-WIRED follow-up (honest): the
+ *  multi-process [live] relay rows + cross-arch determinism diff are NOT wired yet
+ *  (no self-hosted DMOE [live] job exists; PRoot has no netns —
+ *  feedback_proot_sandbox_net_limits). Also DEFERRED: SS6L v2 bank-serve + rehome-repair.
  *
  *  Gates (all greppable, all falsifiable):
  *    [dmoe-bank-empty-identity] bank-inactive forward == pre-DMOE, byte-identical

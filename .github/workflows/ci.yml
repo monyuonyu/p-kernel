@@ -1849,10 +1849,13 @@ jobs:
     # The [dmoe-*] gates run IN-PROCESS (the REAL bank + REAL joint routing +
     # degrade over a fleet whose transport models the SS6L v2 wire), each with an
     # explicit RED-when-stubbed falsifier ([dmoe-bit-ref]'s anti-theater arm stubs
-    # the transport and asserts the forward DIVERGES from the oracle). The multi-
-    # process SS6L v2 relay [live] rows + the aarch64 cross-arch determinism diff
-    # (identical [dmoe-*] machine hashes on x86_64 AND aarch64) run on the ThinkPad
-    # self-hosted runner (PRoot has no netns — feedback_proot_sandbox_net_limits).
+    # the transport and asserts the forward DIVERGES from the oracle). NOT-YET-WIRED
+    # DMOE-A FOLLOW-UP (honest, per the audit): the multi-process SS6L v2 relay [live]
+    # rows + the aarch64 cross-arch determinism diff (identical [dmoe-*] machine hashes
+    # x86_64 AND aarch64) are NOT wired here yet — there is no self-hosted DMOE [live]
+    # job; the shipped cert is the in-process mechanism + determinism half only. Also
+    # DEFERRED in DMOE-A: SS6L v2 bank-SERVE (ss6_live.c serves the floor only) and
+    # §7.5 [dmoe-rehome-repair] + §2.2 repair blob-pull.
     # HONEST: [dmoe-capacity-grows] measures ROUTED utility through the REAL gate
     # (never hosted bytes); the routed GAIN is a pre-registered NULL at toy scale
     # under a drifted core (§10.1/§10.5), reported not tuned — a theater arm
