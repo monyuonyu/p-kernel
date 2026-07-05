@@ -1985,3 +1985,25 @@ N-4 cross-host deferred to the ThinkPad).
   reply-scan WIRING is proven by the CI static caller-diff leg. AUDITOR: scrutinize the anti-theater stub RED
   proof hardest (it is the falsifier-for-the-falsifier), the tighten-only monotone guard in `law_amend`/
   `law_walk_verify`, and that NO path (evolution/merge/revise/forget) can drop a FLOOR-marked rule.
+
+- CROWN RE-BLESS — unbounded-N U-0 first slice (2026-07-05, feat/unbounded-n-fix, squashed to master ff8e3fbd
+  + this re-bless as the crown-neutral tip). Splits DREGION_MAX (per-node region sizing, an INDEPENDENT literal
+  =64) from DNODE_MAX (the wire/fleet ceiling): the K-DDS topic/handle budget + the dkva coordinator aggregation
+  are now sized by R, and the O(N^2) dkva cagg ORIGIN axis is converted from dense cagg[DNODE_MAX] to a real
+  NODEMAP of capacity R (nodemap.h now USED in a bare-metal TU). dkva.c moves bare-metal .text → re-bless
+  (sandbox gcc 15.2.0; parent 7f3fbda4…/260da329… reproduced byte-identical FIRST):
+    aarch64  6db9cdfa11903298f5be2e3784e6315f0954c5a9be4007054211ba11f7507fe1   (was 7f3fbda4…)
+    x86      1adb894e007a6a47ec816e438ed48e91d4ecbd53b1ebc4aa2332d47e99aedcc6   (was 260da329…)
+  HONEST SCOPE (U-0): "unbounded" is scaffolded + the topic-budget decoupling is real — NOT fully achieved. The
+  255-node 8-bit wire ceiling is NOT removed (U-2); the cagg MEMBER axis + dnode_table/swim/world/moe/pmesh
+  remain fleet-sized (deferred). Behaviourally identical at N≤R=64 (g13/fed-2cluster/coord-crash certs identical;
+  boot serial gains " preopen_topics=192" + a "(R)" label — NOT literally byte-identical).
+  AUDIT TRAIL (the audit is the engine): the FIRST impl (35124106) was BLOCKED — its [unbounded-*] cert was
+  THEATER (it measured a MOCK struct: a moved_cap[4096] mutation still PASSED; the "disease" was printf(2*N*N)
+  allocating nothing; DREGION_MAX was a pure `#define DREGION_MAX DNODE_MAX` alias → widening the wire dragged
+  the topic budget 400→1552→6160, re-triggering wave-48). Re-implemented per the audit's 6 corrections; the
+  re-audit CONFIRMED teeth: a moved [4096] cap in the REAL DKVA_CAGG_SLOT now compile-REDs via _Static_assert,
+  the coupling probe proves R-cost byte-constant while the wire grows (re-aliasing DREGION_MAX=DNODE_MAX flips it
+  RED, reproducing the old theater numbers), and the disease is a REAL compile-failure control binary. The
+  theater commit is squashed OUT of master; this ledger keeps its record (honest history). Commander reproduced
+  both crowns byte-identical before the re-bless.

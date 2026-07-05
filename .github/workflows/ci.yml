@@ -1565,10 +1565,13 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 7f3fbda4…,
-    # x86 260da329… after the 良心 conscience floor 2026-07-05 — new conscience.c
-    # + interocept axis + galaxy EV_REFUSE + the four gate chokepoints in
-    # r3_incontext.c move bare-metal .text; was aarch64 3e20edbd…/x86 b6a748da…
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 6db9cdfa…,
+    # x86 1adb894e… after unbounded-N U-0 2026-07-05 — DREGION_MAX split from
+    # DNODE_MAX + the dkva cagg ORIGIN axis -> nodemap (dkva.c) move bare-metal
+    # .text; was aarch64 7f3fbda4…/x86 260da329… after the 良心 conscience floor
+    # 2026-07-05 (conscience.c + interocept axis + galaxy EV_REFUSE + 4 gate
+    # chokepoints in r3_incontext.c);
+    # was aarch64 3e20edbd…/x86 b6a748da…
     # after LM-15 pull-teach 2026-07-04; was be41bbf6…/248633de…
     # after LM-14 curiosity; was f51eb00e…/a0bed501…
     # after the LM-13 honesty re-frame — cosmetic log-string drift only, no math
@@ -1897,8 +1900,10 @@ jobs:
     # cagg MEMBER axis, dnode_table, swim/world/moe/pmesh tables stay fleet-sized
     # (deferred U-0 remainder / U-3); the 255-node 8-bit wire ceiling is NOT
     # removed (that is wire-v2 = U-2, deferred). At R==DNODE_MAX(=64) a ≤64-node
-    # fleet is ONE region, behaviour-identical to the pre-wave build (boot serial
-    # byte-identical; every peer admits, the nodemap never evicts).
+    # fleet is ONE region, BEHAVIOURALLY identical to the pre-wave build (all
+    # g13/fed-2cluster/coord-crash certs identical; every peer admits, the nodemap
+    # never evicts) — but the boot serial is NOT literally byte-identical: the
+    # dkva_init line gains " preopen_topics=192" and a [g13-parallel] label gains "(R)".
     #
     # This wave MOVES bare-metal .text (the dkva.c cagg ORIGIN-slot conversion)
     # → the crown-text-identity job flags a re-bless; the COMMANDER re-baselines
