@@ -33,9 +33,15 @@ default):
   `src:"frontier"`, zero frontier bytes). The floor gates MY mouth, whoever is
   breathing through it.
 - **I2 — TEACH lesson**: `cradle_lesson_ingest` gained a `conscience_check` at
-  `CONS_SITE_LEARN` — the ONE ring-write site, the chokepoint for EVERY teacher
-  (SmolLM2 fixture, volunteer, mesh pull). Refuse ⇒ the ring stays
-  byte-identical and the transport high-water does not advance.
+  `CONS_SITE_LEARN` — the ONE ring-write site, so on the builds that link the floor
+  (`CRADLE_HAS_CONSCIENCE`, the two hosted kernels) it is the chokepoint for every
+  teacher reaching it there (SmolLM2 fixture, volunteer, mesh pull). Refuse ⇒ the
+  ring stays byte-identical and the transport high-water does not advance.
+  **HONEST LIMIT (§10):** Android does NOT link `conscience.c`, so its
+  `cradle_lesson_ingest` (reached by the `cradle_net` mesh pull) is NOT yet
+  G-LEARN-gated — a named gap, not a regression (master had no G-LEARN anywhere;
+  the frontier TEACH path is stubbed dead on Android). Gating the Android `.so` is a
+  follow-up (it grows the `.so` with `conscience.c`).
 
 ## Files
 

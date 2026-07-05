@@ -41,7 +41,11 @@
  * student says forever), so cradle_lesson_ingest scans the lesson bytes through
  * the immutable floor BEFORE the ring accepts them. Guarded by
  * CRADLE_HAS_CONSCIENCE — set ONLY by the KERNEL builds that link conscience.c
- * (boot/linux + boot/linux_x86_64 LLM_CFLAGS, android LLM props). It is NOT set
+ * (boot/linux + boot/linux_x86_64 LLM_CFLAGS). It is NOT set on ANDROID (the .so
+ * does NOT link conscience.c), so Android's cradle_lesson_ingest — reached by the
+ * cradle_net mesh-lesson pull — is NOT yet G-LEARN-gated: a NAMED LIMIT (§10 of
+ * frontier-mouth.md), NOT a regression (master had no G-LEARN anywhere, and the
+ * frontier TEACH path is stubbed dead on Android). It is also NOT set
  * by the STANDALONE cradle cert (tests/llm/cradle_teach_proof.c, compiled with
  * NO conscience.c), so that build stays byte-for-byte unchanged; and bare metal
  * does not build cradle.c at all. (A dedicated macro, not _TK_HOSTED_LIBC_: the
@@ -127,9 +131,12 @@ int cradle_lesson_ingest(const uint8_t *body, int len)
     if (len < CRADLE_MIN_LIVE) return -1;   /* too small to train -> keep fixture */
 
 #ifdef CRADLE_HAS_CONSCIENCE
-    /* ── 良心 G-LEARN (design frontier_mouth §3 I2): the ONE ring-write site is
-     * the ingestion chokepoint for EVERY teacher (SmolLM2 fixture, volunteer
-     * open-license, mesh pull). Scan the lesson bytes through the SAME lexical
+    /* ── 良心 G-LEARN (design frontier_mouth §3 I2): on builds that link the floor
+     * (CRADLE_HAS_CONSCIENCE = the two hosted kernels), the ONE ring-write site is
+     * the ingestion chokepoint for every teacher reaching it here (SmolLM2 fixture,
+     * volunteer open-license, mesh pull). NB Android does NOT define the macro, so
+     * its mesh-pull ingest is UNGATED — the §10 named limit noted at the top of this
+     * file; honest, not a regression. Scan the lesson bytes through the SAME lexical
      * floor everything else passes (one floor, one law). Refuse ⇒ the ring stays
      * BYTE-IDENTICAL (cradle_window_src unchanged) and the transport's high-water
      * does NOT advance (it only advances on a >0 return), so a refused lesson is
