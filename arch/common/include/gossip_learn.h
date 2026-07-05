@@ -235,5 +235,16 @@ void gl_g23_test(void);
 /*   dtr gossip solo  [steps]   — measure THIS node's solo shard ceil  */
 /*   dtr gossip run   [rounds] [steps] — live no-central gossip learn   */
 /*   dtr gossip status          — shard + round info                   */
+/*   dtr gossip scaling          — society-of-minds [scaling-*] cert (hosted) */
 /* args points just past "gossip". */
 void gl_cmd(const UB *args, UW len);
+
+#ifdef _TK_HOSTED_LIBC_
+/* ENS-A lineage scoping (scaling-law.md §4.2), HOSTED-only so the bare-metal
+ * .text crown does not move. Default k=0 => the live gossip weight-merge is
+ * byte-for-byte its pre-ensemble self. Set k=K>0 to make gl_merge_peers fold
+ * ONLY same-lineage peers (lineage = node_id % K); across lineages, facts are
+ * shared (teach), not weights. */
+void gl_ens_set_lineage_k(UW k);
+UW   gl_ens_get_lineage_k(void);
+#endif
