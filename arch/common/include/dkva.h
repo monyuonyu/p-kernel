@@ -22,6 +22,8 @@
 
 #pragma once
 #include "kernel.h"
+#include "drpc.h"      /* DNODE_MAX / DREGION_MAX                          */
+#include "nodemap.h"   /* NODEMAP — the region-local id→slot primitive (§4)*/
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -122,12 +124,58 @@ typedef struct {
     float attn_sum   [DKVA_SEQ][DKVA_NH];            /* 正規化用 */
 } __attribute__((packed)) DKVA_RESP_PKT;
 
+/* ------------------------------------------------------------------ *
+ * Coordinator aggregation state (G13) — the REAL per-node kernel      *
+ * struct the [unbounded-flat] cert measures (unbounded_n_design.md    *
+ * §8; audit correction 2: measure the kernel struct, not a mock).     *
+ *                                                                     *
+ * One slot per concurrently-aggregating ORIGIN. The ORIGIN axis is    *
+ * bounded by R: dkva.c keeps a `NODEMAP` of capacity DREGION_MAX that *
+ * maps an origin node id → an origin slot, REPLACING the old dense    *
+ * cagg[DNODE_MAX] (O(N) → O(R); the nodemap primitive is USED here,   *
+ * not dead). The MEMBER (second) axis stays node-id indexed           *
+ * [DNODE_MAX] this slice so cagg_step keeps using the SAME quorum_core *
+ * predicate the [g13-arrival] cert drives (shared production path);   *
+ * the O(R·N)→O(R²) member-slot shrink is U-3 (honest, deferred).      *
+ *                                                                     *
+ * Adding ANY fixed array to DKVA_CAGG_SLOT bloats the real kernel     *
+ * .bss by DREGION_MAX× AND trips the cert's per-node byte budget      *
+ * → RED (the anti-theater tooth: a moved/added cap in THIS struct is  *
+ * caught by the same harness that certifies the cure).                *
+ * ------------------------------------------------------------------ */
+typedef struct {
+    DKVA_RESP_PKT pkt;             /* running region summary (→ rsum)   */
+    UB   phase;                    /* 0 idle / 1 collecting / 2 final   */
+    INT  dl;                       /* straggler-cap countdown (iters)   */
+    INT  rttl;                     /* rsum re-publish TTL after finalize */
+    UW   entries;                  /* folded KV-entry count             */
+    UB   exp[DNODE_MAX];           /* expected own-region members (id)  */
+    UB   got[DNODE_MAX];           /* members already folded (id)       */
+} DKVA_CAGG_SLOT;
+
+typedef struct {
+    NODEMAP        origins;              /* origin node id → slot, cap R  */
+    DKVA_CAGG_SLOT slot[DREGION_MAX];    /* per-origin-slot (R-bounded)   */
+    UB             rr;                   /* round-robin over origin slots */
+} DKVA_CAGG;
+
 /* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
 /* ------------------------------------------------------------------ */
 
 void dkva_init(void);
 void dkva_task(INT stacd, void *exinf);
+
+/* unbounded-N (§3): topics pre-opened by dkva_init, bounded by the region
+ * capacity DREGION_MAX (≤3×R) — FLAT in fleet N. The [unbounded-topics]
+ * witness that the topic table no longer grows with the fleet. Consumed at
+ * boot (dkva_init) and by dkva_unbounded_self_test(). */
+UW dkva_topics_preopened(void);
+
+/* [unbounded-dkva] region-local sizing self-test (audit correction 6): proves
+ * the boot pre-open is region-local (3×R) and the coordinator ORIGIN axis is
+ * bounded at R on the REAL g_cagg. Runs on `dkva test`. Returns fail count. */
+INT dkva_unbounded_self_test(void);
 
 /* ★[fed-2cluster][live] R0.1 responder-side falsifier hook (default OFF).
  * dkva_init より前に dkva_set_resp_global(1) を呼ぶと resp/<n> を REGION→GLOBAL に

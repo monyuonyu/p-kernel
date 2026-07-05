@@ -1883,6 +1883,75 @@ jobs:
           make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64
           make -C boot/linux         clean >/dev/null && make -C boot/linux
 
+  unbounded-n:
+    # ===== UNBOUNDED-N cert (ADDITIVE block — feat/unbounded-n-fix).
+    # unbounded_n_design.md: "N is unbounded IFF per-node cost is independent of
+    # N." DNODE_MAX=64 historically served DOUBLE duty — the 8-bit wire ceiling
+    # AND the sizing of every per-node table (the global-view assumption). This
+    # slice (U-0, first slice) SPLITS the two roles with DREGION_MAX (R) as an
+    # INDEPENDENT sizing literal (drpc.h — NOT `#define DREGION_MAX DNODE_MAX`).
+    # What ACTUALLY decouples from fleet N here: the K-DDS topic/handle budget
+    # (kdds.h, 6*R/10*R), the dkva boot pre-open (≤3*R), and the dkva coordinator
+    # ORIGIN axis (dkva.c — a NODEMAP of capacity R replaces cagg[DNODE_MAX],
+    # O(N)→O(R); the nodemap primitive is now USED, not dead). HONEST SCOPE: the
+    # cagg MEMBER axis, dnode_table, swim/world/moe/pmesh tables stay fleet-sized
+    # (deferred U-0 remainder / U-3); the 255-node 8-bit wire ceiling is NOT
+    # removed (that is wire-v2 = U-2, deferred). At R==DNODE_MAX(=64) a ≤64-node
+    # fleet is ONE region, behaviour-identical to the pre-wave build (boot serial
+    # byte-identical; every peer admits, the nodemap never evicts).
+    #
+    # This wave MOVES bare-metal .text (the dkva.c cagg ORIGIN-slot conversion)
+    # → the crown-text-identity job flags a re-bless; the COMMANDER re-baselines
+    # docs/audit-trail.md + the ci.yml crown constants (NOT this job).
+    #
+    # The gate is THREE mechanical arms against the REAL shipped kernel headers
+    # (tests/unbounded/Makefile — no printf-math theater; audit corrections 1-3):
+    #   [unbounded-flat]     measures the REAL kernel structs (sizeof DKVA_CAGG /
+    #                        DKVA_CAGG_SLOT / NODEMAP / kdds_topics via dkva.h) +
+    #                        a runtime R-bound driven through the REAL nodemap. A
+    #                        byte-budget _Static_assert makes a [4096] added to
+    #                        the MEASURED kernel struct fail the build → RED.
+    #   [unbounded-coupling] recompiles the REAL headers at DNODE_MAX ∈ {64,256,
+    #                        1024} and PROVES every R-sized quantity is byte-for-
+    #                        byte CONSTANT while dnode_table (fleet-sized) GROWS.
+    #   [unbounded-disease]  builds the wave-45 CONTROL — the pre-fix global-view
+    #                        sizing with the wire bumped — which MUST FAIL to
+    #                        compile (kdds.h wave-48 gate + pmesh beacon MTU). A
+    #                        clean build is a HARD failure.
+    # Needs no qemu/training/relay, so it runs in normal CI. The REAL multi-
+    # process [live] relay row is WIRED (run_unbounded_live.sh) for the self-
+    # hosted ThinkPad (PRoot has no netns; feedback_proot_sandbox_net_limits).
+    name: "unbounded-N ([unbounded-flat/coupling/disease]; U-0 origin+topic decouple; hosted-only)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: "[unbounded-*] real-header gates (flat / coupling / disease)"
+        run: bash tests/unbounded/run_unbounded.sh | tee unbounded.log
+      - name: Load-bearing gates GREEN (flat measured on real structs, coupling constant, disease refused to build)
+        run: |
+          grep -aqF '[unbounded-flat]  PASS' unbounded.log
+          grep -aqF '[unbounded-coupling]  PASS' unbounded.log
+          grep -aqF '[unbounded-disease]  PASS' unbounded.log
+          grep -aqF 'ALL GATES GREEN' unbounded.log
+          # coupling: the R-sized cost is CONSTANT while the fleet table grows
+          grep -aqF 'per-node R-cost is CONSTANT while fleet N (wire) grows' unbounded.log
+          grep -aqE 'fleet    dnode_table_bytes = .* -> .* -> .* \(GREW: wire widened\)' unbounded.log
+          # disease genuinely failed to build (not a printf)
+          grep -aqF 'disease REFUSED to build (correct)' unbounded.log
+          ! grep -aqE 'unbounded-(flat|coupling|disease)\]  FAIL' unbounded.log
+          ! grep -aqF 'the disease BUILT' unbounded.log
+      - name: "[unbounded-live] multi-process relay row is WIRED (runs on the ThinkPad, SKIP here)"
+        run: bash tests/unbounded/run_unbounded_live.sh
+      - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64
+          make -C boot/linux         clean >/dev/null && make -C boot/linux
+
   depth-deliberation:
     # ===== DEPTH / test-time DELIBERATION cert (ADDITIVE block — feat/depth-dlb).
     # depth_iq_path_design.md §3/§6: depth from COMPUTE (thinking longer + checking

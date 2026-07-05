@@ -32,6 +32,11 @@
 /* ------------------------------------------------------------------ */
 
 #define DRPC_PORT       7374        /* UDP port for all DRPC traffic     */
+/* DNODE_MAX is overridable at compile time (-DDNODE_MAX=…) so the
+ * [unbounded-*] coupling probe (tests/unbounded) can WIDEN the wire ceiling
+ * to 256/1024 and prove the region-local (R-sized) cost stays constant while
+ * this fleet-sized table grows. The shipping default is unchanged: 64. */
+#ifndef DNODE_MAX
 #define DNODE_MAX       64          /* max nodes in cluster (node 0-63)
                                      * Bounded by the 8-bit node_id field
                                      * (UB src_node/dst_node on the wire and
@@ -58,6 +63,50 @@
                                      * field bounds reads (e.g. pmesh
                                      * entry_cnt); a full fleet should run a
                                      * single DNODE_MAX.                       */
+#endif  /* DNODE_MAX */
+
+/* ------------------------------------------------------------------ *
+ * DREGION_MAX (R) — region capacity, an INDEPENDENT sizing literal.   *
+ *                                                                     *
+ * unbounded_n_design.md §2: "N is unbounded iff per-node cost is      *
+ * independent of N." DNODE_MAX historically served DOUBLE duty — the  *
+ * 8-bit wire id ceiling AND the sizing of the per-node tables (the    *
+ * global-view assumption). This wave (U-0, first slice) SPLITS them:  *
+ *                                                                     *
+ *   DNODE_MAX   = the wire/id ceiling. The 255-node 8-bit cap is      *
+ *                 STILL HERE — widening it is wire-v2 (U-2), DEFERRED. *
+ *   DREGION_MAX = R, the region-local per-node SIZING constant, its   *
+ *                 OWN literal — deliberately NOT                      *
+ *                 `#define DREGION_MAX DNODE_MAX` (that alias is the   *
+ *                 exact fake the audit rejected: it re-couples the two *
+ *                 roles, so bumping DNODE_MAX regrows every R table).  *
+ *                                                                     *
+ * WHAT THIS SLICE ACTUALLY DECOUPLES FROM FLEET N — each proven by    *
+ * the [unbounded-coupling] probe (tests/unbounded), which compiles    *
+ * the REAL headers at DNODE_MAX ∈ {64,256,1024} and diffs the sizes:  *
+ *   - the K-DDS topic/handle budget         (kdds.h: 6*R / 10*R),     *
+ *   - the dkva boot topic pre-open          (dkva.c: ≤ 3*R),          *
+ *   - the dkva coordinator-aggregation ORIGIN axis (dkva.c: a nodemap *
+ *     of capacity R replaces cagg[DNODE_MAX] — O(N) → O(R)).          *
+ * Widen DNODE_MAX 64→256→1024 and every one of those is byte-for-byte *
+ * CONSTANT, while dnode_table[DNODE_MAX] (and the cagg MEMBER axis)   *
+ * grow — the probe prints both columns side by side and RED-flags any *
+ * R-column that moves.                                               *
+ *                                                                     *
+ * STILL FLEET-SIZED — stated honestly, NOT claimed bounded here:      *
+ * dnode_table (drpc.c), the SWIM per-node arrays, the cagg MEMBER     *
+ * (second) axis (node-id indexed, quorum_core reuse), and the         *
+ * world/moe/pmesh tables. Converting those to the nodemap primitive   *
+ * is the remainder of U-0 and the O(R·N)→O(R²) member-axis shrink is  *
+ * U-3. This commit ships the ORIGIN-axis + topic-budget decouple, the *
+ * primitive, and the falsifier — not the whole fleet-table migration. *
+ *                                                                     *
+ * R is set to 64 (== today's DNODE_MAX) so a ≤64-node fleet is exactly *
+ * ONE region and is BEHAVIOR-IDENTICAL to the pre-wave build (every    *
+ * peer admits; the nodemap never evicts). The design's smaller default *
+ * (R=32, "one or two regions") is a wire-v2 tuning — a pure constant   *
+ * change once N>R ships.                                               */
+#define DREGION_MAX     64
 
 /* ------------------------------------------------------------------ */
 /* Packet header                                                        */

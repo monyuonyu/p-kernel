@@ -47,7 +47,20 @@
                                  * eager-at-boot singletons 7 -> 8 of 16; named
                                  * worst-case co-active set 15 of 16 (one spare).
                                  * The NEXT cluster-singleton must bump 16 -> 20. */
-#define KDDS_TOPIC_MAX   (6 * DNODE_MAX + KDDS_SINGLETON_TOPICS)
+/* unbounded_n_design.md §3 — the wave-48 fix, made permanent for the dkva
+ * pre-open. The topic budget is sized by the REGION capacity DREGION_MAX (R),
+ * an INDEPENDENT literal (drpc.h), NOT by fleet size N. The dkva coordinator
+ * pre-open (dkva.c) is now bounded by R (≤3×R) — so a growing fleet (wire-v2,
+ * U-2) can NEVER re-trigger the wave-48 overflow from THAT source, because R
+ * does not move with N (proven by the [unbounded-coupling] probe: bump
+ * DNODE_MAX 64→1024, KDDS_TOPIC_MAX stays 400).
+ *   HONEST SCOPE: the moe(score)/world(beacon)/reflex/edf families still open
+ * LAZILY per SOURCE node id (not yet per-region-slot) — their conversion to
+ * the nodemap primitive is deferred (U-0 remainder). This budget bounds the
+ * dkva pre-open by R; it does not yet make every lazy family R-bounded.
+ * At R==DNODE_MAX(=64) the table is byte-identical to the historical
+ * 6*DNODE_MAX (one region == the whole ≤64-node fleet). */
+#define KDDS_TOPIC_MAX   (6 * DREGION_MAX + KDDS_SINGLETON_TOPICS)
                                 /* 6×, not 5× (wave-48 fix, found by mk_pino's
                                  * phone boot log): with the FULL net stack up
                                  * (autonet, as the Android app always runs),
@@ -71,10 +84,40 @@
                                  * 32 で検証済みの比率 (160=5×32) をそのまま保つ。
                                  * LM-7: + KDDS_SINGLETON_TOPICS for the cluster-
                                  * wide "mind/teach" topic (per-node 枠は満杯)。 */
-#define KDDS_HANDLE_MAX  (10 * DNODE_MAX)  /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
-                                 * dkva は per-node に q/resp/rsum の pub+sub=6 ハンドル
-                                 * (=6×DNODE_MAX) を開き、moe/world も per-node に開く。
-                                 * DNODE_MAX に比例 (32 で 320=10×32; G23 で 64→640)。 */
+#define KDDS_HANDLE_MAX  (10 * DREGION_MAX)  /* 同時オープンハンドル数 (pub/sub 各ハンドル)。
+                                 * dkva は q/resp/rsum の pub+sub=6 ハンドルを
+                                 * REGION-LOCAL スロットごとに開く (=6×R, dkva.c の
+                                 * pre-open)。DREGION_MAX(=R) に比例 — 艦隊 N には比例
+                                 * しない (§3, [unbounded-coupling] が証明)。moe/world 等の
+                                 * lazy per-source open は未変換 (U-0 残り, honest)。
+                                 * R==DNODE_MAX なので現行は 640 で byte-identical。 */
+
+/* ANTI-THEATER compile-time gate (unbounded_n_design.md §3/§8) — the PERMANENT
+ * wave-48 gate. dkva pre-opens q/resp/rsum for each REGION-LOCAL slot at boot:
+ * 3 topics × KDDS_DKVA_PREOPEN_SCALE, where the scale is the region capacity R
+ * (DREGION_MAX) — NOT fleet N. The gate asserts that region-local pre-open FITS
+ * the topic table with room for the eager cluster-singletons.
+ *
+ * This is NOT the tautology `KDDS_TOPIC_MAX == 6*R+16` (which merely restates
+ * the #define and proves nothing — the fake the audit rejected). It relates two
+ * INDEPENDENTLY-defined quantities: the dkva pre-open COUNT and the table SIZE.
+ * The [unbounded-disease] binary (tests/unbounded/disease.c) re-couples the
+ * pre-open to fleet N — it builds with
+ *     -DKDDS_DKVA_PREOPEN_SCALE=DNODE_MAX -DDNODE_MAX=1024
+ * and THIS gate then fails to compile: 3*1024+16 > 6*64+16. That is the exact
+ * wave-48 overflow (pre-open ∝ fleet against a table sized ∝ R), now caught at
+ * BUILD time on every kernel target — not a printf in a cert. */
+#ifndef KDDS_DKVA_PREOPEN_SCALE
+#define KDDS_DKVA_PREOPEN_SCALE  DREGION_MAX   /* region-local (the cure)      */
+#endif
+#define KDDS_DKVA_PREOPEN        (3 * (KDDS_DKVA_PREOPEN_SCALE))
+_Static_assert(KDDS_DKVA_PREOPEN + KDDS_SINGLETON_TOPICS <= KDDS_TOPIC_MAX,
+               "dkva region-local pre-open (3*R) + singletons must FIT the "
+               "topic table; a fleet-N pre-open (wave-48) overflows it (§3)");
+/* The handle table holds pub+sub for each pre-opened topic (2×) — sized by R
+ * for the same reason; the pre-open must also fit the handle budget. */
+_Static_assert(2 * KDDS_DKVA_PREOPEN <= KDDS_HANDLE_MAX,
+               "dkva pre-open pub+sub handles (6*R) must FIT the handle table (§3)");
 #define KDDS_NAME_MAX    32     /* トピック名の最大長 (null 含む)          */
 #define KDDS_DATA_MAX    192    /* トピックデータの最大バイト数 (DKVA_RESP_PKT=172B が必要) */
 #define KDDS_SUB_MAX     4      /* トピックあたりの最大サブスクライバ数    */

@@ -93,6 +93,11 @@ static UW stat_resp_got  = 0;
 static UW stat_timeout   = 0;
 static UW stat_resp_sent = 0;
 static UW stat_degraded  = 0;   /* 部分集約で完遂した回数 (survival, wave 8) */
+/* unbounded-N witness: topics pre-opened at boot, bounded by R (§3, flat in
+ * fleet N). Exposed via dkva_topics_preopened() for the [unbounded-topics]
+ * gate and printed at boot. */
+static UW dkva_preopen_topics = 0;
+UW dkva_topics_preopened(void) { return dkva_preopen_topics; }
 
 /* ------------------------------------------------------------------ */
 /* K-DDS ハンドル                                                     */
@@ -319,28 +324,43 @@ static void dkva_expect_core(UB me, const UB *state, const UB *is_member,
 /* グローバル順序も無い (§7)。                                            */
 /* ------------------------------------------------------------------ */
 
-/* origin o ごとの coordinator 集約状態 (すべて static — タスクスタックを汚さない)。
- *   phase: 0 = 非活性, 1 = 収集中 (region partial を fan-in), 2 = 確定済 (再発行中)
- *   cagg[o] : running region 要約 ({分子, 分母} を畳み込み中)。確定後そのまま rsum。
- *   exp[o][n]/got[o][n] : 期待した自 region メンバ / 既に畳んだメンバ
- *   dl[o]   : 収集締切 (残りループ反復数)。出揃わなくても締切で確定 (死を待たない)。
- *   rttl[o] : 確定後の rsum 再発行 TTL (round-robin で 1 反復 1 件)。 */
-static DKVA_RESP_PKT cagg[DNODE_MAX];
-static UB  cagg_phase[DNODE_MAX];
-static UB  cagg_exp[DNODE_MAX][DNODE_MAX];
-static UB  cagg_got[DNODE_MAX][DNODE_MAX];
-static INT cagg_dl  [DNODE_MAX];
-static INT cagg_rttl[DNODE_MAX];
-static UW  cagg_entries[DNODE_MAX];
-static UB  cagg_rr = 0;   /* rsum 再発行のラウンドロビン位置 */
+/* origin ごとの coordinator 集約状態 (すべて static — タスクスタックを汚さない)。
+ *
+ * unbounded_n_design.md §4 / audit-correction-4: the ORIGIN axis is no longer
+ * a dense cagg[DNODE_MAX] (which grew with fleet N). It is a `NODEMAP` of
+ * capacity DREGION_MAX (R) — an id→slot table with explicit admission — so the
+ * per-node coordinator-aggregation ORIGIN cost is O(R), independent of the
+ * fleet. This is where the region-local primitive is actually USED (not dead).
+ * At N≤R every origin admits (≤63 concurrent < cap 64) so it is behavior-equal
+ * to the old dense table; only when the fleet exceeds R (wire-v2) does
+ * admission bound concurrent aggregations at R (the correct degrade).
+ *   The MEMBER (second) axis of exp/got stays node-id indexed [DNODE_MAX] this
+ * slice so cagg_step keeps driving the SAME quorum_core() predicate the
+ * [g13-arrival] cert drives (shared production completion path). The
+ * O(R·N)→O(R²) member-slot shrink is U-3 (honest, deferred).
+ *   phase: 0 = 非活性, 1 = 収集中 (region partial を fan-in), 2 = 確定済 (再発行中)。
+ * The struct types (DKVA_CAGG_SLOT / DKVA_CAGG) live in dkva.h so the
+ * [unbounded-flat] cert measures the REAL kernel footprint. */
+static DKVA_CAGG g_cagg;
+
+/* origin id → slot on the REAL origin nodemap (find-or-admit). Returns
+ * NODEMAP_NOSLOT iff the region is already tracking R concurrent origins
+ * (the bound; unreachable at N≤R). */
+static INT cagg_slot_for(UB origin, BOOL create)
+{
+    if (create) return nodemap_admit(&g_cagg.origins, (UW)origin);
+    return nodemap_find(&g_cagg.origins, (UW)origin);
+}
 
 static void cagg_reset_all(void)
 {
-    for (UB o = 0; o < DNODE_MAX; o++) {
-        cagg_phase[o] = 0; cagg_dl[o] = 0; cagg_rttl[o] = 0; cagg_entries[o] = 0;
-        for (UB n = 0; n < DNODE_MAX; n++) { cagg_exp[o][n] = 0; cagg_got[o][n] = 0; }
+    nodemap_init(&g_cagg.origins, (UH)DREGION_MAX);   /* cap R */
+    for (UH s = 0; s < (UH)DREGION_MAX; s++) {
+        DKVA_CAGG_SLOT *cs = &g_cagg.slot[s];
+        cs->phase = 0; cs->dl = 0; cs->rttl = 0; cs->entries = 0;
+        for (UB n = 0; n < DNODE_MAX; n++) { cs->exp[n] = 0; cs->got[n] = 0; }
     }
-    cagg_rr = 0;
+    g_cagg.rr = 0;
 }
 
 /* 新しい問い (origin o, req_id) に対する coordinator 集約を開始/再起動する。
@@ -348,25 +368,29 @@ static void cagg_reset_all(void)
  * region_recompute() は呼び出し側 (region_coordinator()) が直前に実行済み。 */
 static void cagg_start(UB o, const DKVA_Q_PKT *qpkt, const DKVA_RESP_PKT *self_partial)
 {
-    /* running 要約 = 自分の partial。確定後そのまま rsum/<me> へ出すのでヘッダも整える。 */
-    cagg[o] = *self_partial;
-    cagg[o].magic    = DKVA_RESP_MAGIC;
-    cagg[o].req_id   = qpkt->req_id;
-    cagg[o].src_node = drpc_my_node;     /* = region id (coordinator)        */
-    cagg[o].origin   = o;                /* この要約の宛先 = 問いの起点 (G1) */
-    cagg_entries[o]  = self_partial->n_entries;
+    INT si = cagg_slot_for(o, TRUE);
+    if (si == NODEMAP_NOSLOT) return;    /* region at R concurrent origins: bounded degrade */
+    DKVA_CAGG_SLOT *cs = &g_cagg.slot[si];
 
-    for (UB n = 0; n < DNODE_MAX; n++) { cagg_exp[o][n] = 0; cagg_got[o][n] = 0; }
+    /* running 要約 = 自分の partial。確定後そのまま rsum/<me> へ出すのでヘッダも整える。 */
+    cs->pkt = *self_partial;
+    cs->pkt.magic    = DKVA_RESP_MAGIC;
+    cs->pkt.req_id   = qpkt->req_id;
+    cs->pkt.src_node = drpc_my_node;     /* = region id (coordinator)        */
+    cs->pkt.origin   = o;                /* この要約の宛先 = 問いの起点 (G1) */
+    cs->entries      = self_partial->n_entries;
+
+    for (UB n = 0; n < DNODE_MAX; n++) { cs->exp[n] = 0; cs->got[n] = 0; }
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
         UB st = dnode_table[n].state;
         if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
         if (!region_is_member(n)) continue;
-        cagg_exp[o][n] = 1;
+        cs->exp[n] = 1;
     }
-    cagg_dl[o]    = DKVA_RSUM_WIN_ITERS;
-    cagg_rttl[o]  = 0;
-    cagg_phase[o] = 1;                    /* 収集開始 */
+    cs->dl    = DKVA_RSUM_WIN_ITERS;
+    cs->rttl  = 0;
+    cs->phase = 1;                        /* 収集開始 */
 }
 
 /* G13 完了判定 (arrival/quorum) — 純関数。origin の期待集合 exp[] のうち、
@@ -388,7 +412,8 @@ static BOOL quorum_core(const UB *exp, const UB *got, const UB *alive)
 static void cagg_step(void)
 {
     BOOL any = FALSE;
-    for (UB o = 0; o < DNODE_MAX; o++) if (cagg_phase[o] == 1) { any = TRUE; break; }
+    for (UH s = 0; s < (UH)DREGION_MAX; s++)
+        if (g_cagg.origins.used[s] && g_cagg.slot[s].phase == 1) { any = TRUE; break; }
     if (!any) return;
 
     region_recompute();   /* 全 origin で 1 回だけ */
@@ -398,21 +423,24 @@ static void cagg_step(void)
     UB alive[DNODE_MAX];
     for (UB n = 0; n < DNODE_MAX; n++)
         alive[n] = (UB)(dnode_table[n].state != DNODE_DEAD);
-    for (UB o = 0; o < DNODE_MAX; o++) {
-        if (cagg_phase[o] != 1) continue;
+    for (UH s = 0; s < (UH)DREGION_MAX; s++) {
+        if (!g_cagg.origins.used[s]) continue;
+        DKVA_CAGG_SLOT *cs = &g_cagg.slot[s];
+        if (cs->phase != 1) continue;
+        UB o = (UB)g_cagg.origins.id[s];   /* recover origin id from the slot */
 
         /* 自 region メンバの per-source partial を非ブロッキングで取り込む */
         for (UB n = 0; n < DNODE_MAX; n++) {
-            if (n == drpc_my_node || cagg_got[o][n] || h_resp_sub[n] < 0) continue;
-            if (!cagg_exp[o][n]) continue;
+            if (n == drpc_my_node || cs->got[n] || h_resp_sub[n] < 0) continue;
+            if (!cs->exp[n]) continue;
             DKVA_RESP_PKT rp = { 0 };
             W r = kdds_sub(h_resp_sub[n], &rp, (W)sizeof(rp), 0);
             if (r >= (W)sizeof(DKVA_RESP_PKT) &&
-                rp.magic == DKVA_RESP_MAGIC && rp.req_id == cagg[o].req_id &&
+                rp.magic == DKVA_RESP_MAGIC && rp.req_id == cs->pkt.req_id &&
                 rp.src_node == n && rp.origin == o) {
-                cagg_got[o][n] = 1;
-                cagg_entries[o] += rp.n_entries;
-                accumulate_pkt(&cagg[o], &rp);
+                cs->got[n] = 1;
+                cs->entries += rp.n_entries;
+                accumulate_pkt(&cs->pkt, &rp);
             }
         }
 
@@ -420,19 +448,19 @@ static void cagg_step(void)
          * (= 最後の必要寄与が ARRIVE した瞬間) に true。固定窓を待ち切らない。
          * 未着で DEAD と判定済みのものは待たない (死を待たない; その欠損は
          * requester 側の degraded(k/n) が正直に計上)。 */
-        BOOL by_arrival = quorum_core(cagg_exp[o], cagg_got[o], alive);
+        BOOL by_arrival = quorum_core(cs->exp, cs->got, alive);
 
-        cagg_dl[o]--;
+        cs->dl--;
         /* cagg_dl<=0 は never-arrive な straggler 用の安全キャップのみ。
          * これは通常経路ではなく、生存メンバが永遠に黙ったときの保険 (liveness)。*/
-        if (by_arrival || cagg_dl[o] <= 0) {
+        if (by_arrival || cs->dl <= 0) {
             /* region 要約を確定 → round-robin 再発行フェーズへ */
-            cagg[o].n_entries = (UB)(cagg_entries[o] > 255 ? 255 : cagg_entries[o]);
-            cagg_phase[o] = 2;
-            cagg_rttl[o]  = DKVA_ANSWER_ITERS;
+            cs->pkt.n_entries = (UB)(cs->entries > 255 ? 255 : cs->entries);
+            cs->phase = 2;
+            cs->rttl  = DKVA_ANSWER_ITERS;
             dk_puts("[dkva] region summary published  rid="); dk_putdec(drpc_my_node);
             dk_puts("  origin="); dk_putdec(o);
-            dk_puts("  entries="); dk_putdec(cagg_entries[o]);
+            dk_puts("  entries="); dk_putdec(cs->entries);
             dk_puts(by_arrival ? "  (arrival)\r\n" : "  (straggler-cap)\r\n");
         }
     }
@@ -441,16 +469,24 @@ static void cagg_step(void)
 /* responder ループ毎反復で 1 回呼ぶ。確定済 (phase 2) の origin の rsum を
  * round-robin で 1 件だけ rsum/<me> へ再発行する (resp と同じ時間多重)。
  * これで複数 origin の rsum が単一 LATEST_ONLY スロットを潰し合わず、各起点が
- * 自分宛 (origin==自ノード) の要約を自分のポーリング窓内で取り出せる。 */
+ * 自分宛 (origin==自ノード) の要約を自分のポーリング窓内で取り出せる。
+ * 再発行し切った (rttl==0) origin はスロットから evict して R 枠を返す —
+ * これで長寿命ノードでも同時集約数 (≤R) だけがスロットを占め、生涯の origin
+ * 総数には依存しない (bounded)。 */
 static void cagg_republish(void)
 {
     if (drpc_my_node >= DNODE_MAX || h_rsum_pub[drpc_my_node] < 0) return;
-    for (INT scan = 0; scan < DNODE_MAX; scan++) {
-        cagg_rr = (UB)((cagg_rr + 1) % DNODE_MAX);
-        if (cagg_phase[cagg_rr] == 2 && cagg_rttl[cagg_rr] > 0) {
-            kdds_pub(h_rsum_pub[drpc_my_node], &cagg[cagg_rr],
+    for (INT scan = 0; scan < DREGION_MAX; scan++) {
+        g_cagg.rr = (UB)((g_cagg.rr + 1) % DREGION_MAX);
+        UH s = (UH)g_cagg.rr;
+        if (g_cagg.origins.used[s] &&
+            g_cagg.slot[s].phase == 2 && g_cagg.slot[s].rttl > 0) {
+            kdds_pub(h_rsum_pub[drpc_my_node], &g_cagg.slot[s].pkt,
                      (W)sizeof(DKVA_RESP_PKT));
-            if (--cagg_rttl[cagg_rr] == 0) cagg_phase[cagg_rr] = 0;
+            if (--g_cagg.slot[s].rttl == 0) {
+                g_cagg.slot[s].phase = 0;
+                nodemap_evict(&g_cagg.origins, (INT)s);   /* free the R slot */
+            }
             break;
         }
     }
@@ -861,7 +897,18 @@ void dkva_init(void)
      * my_node 未確定の boot 段階で全 DNODE_MAX 分を pre-open でき、実行時に
      * ノード ID で選べる。全ハンドルは timeout=0 ポーリングで読むため
      * kdds_open_poll_scoped (zero-sem) で開く。 */
-    for (UB n = 0; n < DNODE_MAX; n++) {
+    /* unbounded-N (U-1, unbounded_n_design.md §3): the topic pre-open is
+     * bounded by the REGION capacity DREGION_MAX (region-local ~3×R), NOT by
+     * fleet size. dkva_init runs before drpc_my_node/region membership is
+     * known, so it cannot yet name the live members — but it CAN cap the
+     * pre-open at R, so a fleet that later exceeds R (wire-v2) can never
+     * re-trigger wave-48 (the topic table stays O(R), independent of N). At
+     * R==DNODE_MAX this pre-opens the identical set → behavior-equal.
+     * dkva_preopen_topics is the runtime witness the [unbounded-topics] gate
+     * reads: it is FLAT in fleet N by construction (bounded by R). */
+    UB preopen_max = (DREGION_MAX < DNODE_MAX) ? (UB)DREGION_MAX : (UB)DNODE_MAX;
+    dkva_preopen_topics = 0;
+    for (UB n = 0; n < preopen_max; n++) {
         char tn[KDDS_NAME_MAX];
         node_topic_name(tn, DKVA_TOPIC_Q_PFX, n);      /* q は GLOBAL (per-origin) */
         h_q_pub[n]    = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
@@ -883,7 +930,21 @@ void dkva_init(void)
                                               KDDS_SCOPE_GLOBAL);
         h_rsum_sub[n] = kdds_open_poll_scoped(tn, KDDS_QOS_LATEST_ONLY,
                                               KDDS_SCOPE_GLOBAL);
+        dkva_preopen_topics += 3;   /* q + resp + rsum — bounded by R (§3) */
     }
+
+    /* unbounded-N runtime witness CONSUMER (audit correction 6): the boot
+     * pre-open count is region-local (3×R) and MUST fit the topic table with
+     * room for the eager cluster-singletons. dkva_topics_preopened() is READ
+     * here (a real runtime consumer, not just a printed number) and by the
+     * `dkva test` [unbounded-dkva] self-test. If a regression re-couples the
+     * pre-open to fleet N this fires at boot — the same wave-48 invariant the
+     * kdds.h _Static_assert guards at compile time and the [unbounded-disease]
+     * binary trips. Silent (no output) in the healthy build → boot byte-identical. */
+    if (dkva_topics_preopened() != (UW)(3 * DREGION_MAX))
+        dk_puts("[dkva] WARN preopen != 3*R (region-local sizing drift)\r\n");
+    if (dkva_topics_preopened() + KDDS_SINGLETON_TOPICS > (UW)KDDS_TOPIC_MAX)
+        dk_puts("[dkva] RED  preopen OVERFLOWS topic table (wave-48!)\r\n");
 
     /* ── 容量検算 (DNODE_MAX=64, G23; 元は 32/wave 10 G1) ──────────────
      *  dkva が pre-open する数 (1 ノードあたり、DNODE_MAX に比例):
@@ -900,6 +961,8 @@ void dkva_init(void)
 
     dk_puts("[dkva] initialized (hierarchical, per-origin Q)  cache=");
     dk_putdec(DKVA_CACHE_SIZE);
+    dk_puts(" preopen_topics=");    /* unbounded-N: FLAT in fleet N (≤3×R) */
+    dk_putdec(dkva_preopen_topics);
     if (dkva_resp_scope_global)
         dk_puts("  Q=global resp=GLOBAL(falsifier!) rsum=global (poll, zero-sem)\r\n");
     else
@@ -1007,13 +1070,75 @@ INT dkva_self_test(void)
         dk_puts("[g13-parallel] P3 concurrency-invariant: PASS\r\n");
     else { fails++; dk_puts("[g13-parallel] P3 concurrency-invariant: FAIL\r\n"); }
 
-    /* --- 構造: per-origin スロットが DNODE_MAX 本ある (単一共有窓でない) - */
-    if ((INT)(sizeof(cagg) / sizeof(cagg[0])) == DNODE_MAX)
-        dk_puts("[g13-parallel] P4 per-origin slots    : PASS\r\n");
-    else { fails++; dk_puts("[g13-parallel] P4 per-origin slots    : FAIL\r\n"); }
+    /* --- 構造: per-origin スロットが R (DREGION_MAX) 本ある (単一共有窓でない、
+     *     かつ 艦隊 N ではなく R で sizing — unbounded-N の origin-axis decouple)。*/
+    if ((INT)(sizeof(g_cagg.slot) / sizeof(g_cagg.slot[0])) == DREGION_MAX)
+        dk_puts("[g13-parallel] P4 per-origin slots(R)  : PASS\r\n");
+    else { fails++; dk_puts("[g13-parallel] P4 per-origin slots(R)  : FAIL\r\n"); }
 
     if (fails == 0) dk_puts("[g13-parallel] PASS\r\n");
     else { dk_puts("[g13-parallel] FAIL  failures="); dk_putdec((UW)fails);
+           dk_puts("\r\n"); }
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* [unbounded-dkva] region-local sizing self-test (unbounded_n_design   */
+/* §3/§4; audit correction 6) — a REAL in-process consumer of the       */
+/* region-local machinery, runnable in this PRoot sandbox (no mesh, no   */
+/* qemu-system). It (1) CONSUMES dkva_topics_preopened() to prove the    */
+/* boot pre-open is region-local (3×R) and fits the table, and (2)       */
+/* exercises the REAL origin nodemap (g_cagg.origins) to prove the       */
+/* coordinator-aggregation ORIGIN axis is bounded at R — admits R        */
+/* distinct origins to R distinct slots and REFUSES the excess. This is  */
+/* the runtime witness that the O(N)→O(R) origin decouple actually holds */
+/* on the shipping struct, not just in a cert's mock. Pure-local; runs   */
+/* on `dkva test`. */
+INT dkva_unbounded_self_test(void)
+{
+    INT fails = 0;
+    dk_puts("[unbounded-dkva] ==== §3/§4 region-local sizing ====\r\n");
+
+    /* (W) witness CONSUMER: boot pre-open is region-local (3×R), fits table. */
+    UW pre = dkva_topics_preopened();
+    if (pre == (UW)(3 * DREGION_MAX))
+        dk_puts("[unbounded-dkva] W1 preopen == 3*R       : PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] W1 preopen == 3*R       : FAIL\r\n"); }
+    if (pre + KDDS_SINGLETON_TOPICS <= (UW)KDDS_TOPIC_MAX)
+        dk_puts("[unbounded-dkva] W2 preopen fits table   : PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] W2 preopen fits table   : FAIL\r\n"); }
+
+    /* (O) the ORIGIN axis is a nodemap of capacity R. Drive the REAL
+     *     g_cagg.origins: R distinct origins → R distinct slots; the excess
+     *     is REFUSED (the bound that decouples cagg from fleet N). We restore
+     *     the live coordinator state with cagg_reset_all() before returning. */
+    cagg_reset_all();
+    INT admitted = 0, refused = 0; const INT EXTRA = 8;
+    for (INT k = 0; k < DREGION_MAX + EXTRA; k++) {
+        UW oid = (UW)(0x30000 + k);          /* ids far beyond the 8-bit wire */
+        INT si = nodemap_admit(&g_cagg.origins, oid);
+        if (si == NODEMAP_NOSLOT) refused++;
+        else admitted++;
+    }
+    if (admitted == DREGION_MAX)
+        dk_puts("[unbounded-dkva] O1 R distinct slots     : PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] O1 R distinct slots     : FAIL\r\n"); }
+    if (refused == EXTRA)
+        dk_puts("[unbounded-dkva] O2 excess REFUSED (bound): PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] O2 excess REFUSED (bound): FAIL\r\n"); }
+    if (nodemap_find(&g_cagg.origins, (UW)0x30000) != NODEMAP_NOSLOT &&
+        nodemap_find(&g_cagg.origins, (UW)0x2FFFF) == NODEMAP_NOSLOT)
+        dk_puts("[unbounded-dkva] O3 id->slot lookup      : PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] O3 id->slot lookup      : FAIL\r\n"); }
+    cagg_reset_all();   /* restore live coordinator aggregation state */
+
+    /* (S) structural: the per-origin slot array is sized by R, not fleet N. */
+    if ((INT)(sizeof(g_cagg.slot) / sizeof(g_cagg.slot[0])) == DREGION_MAX)
+        dk_puts("[unbounded-dkva] S1 origin slots == R     : PASS\r\n");
+    else { fails++; dk_puts("[unbounded-dkva] S1 origin slots == R     : FAIL\r\n"); }
+
+    if (fails == 0) dk_puts("[unbounded-dkva] PASS\r\n");
+    else { dk_puts("[unbounded-dkva] FAIL failures="); dk_putdec((UW)fails);
            dk_puts("\r\n"); }
     return fails;
 }
@@ -1359,6 +1484,7 @@ void dkva_cmd(const UB *args, UW len)
         while (tverb[ti] && p + ti < end && (char)p[ti] == tverb[ti]) ti++;
         if (tverb[ti] == '\0') {
             dkva_self_test(); dkva_arrival_test(); dkva_fed2_self_test();
+            dkva_unbounded_self_test();
             return;
         }
     }
