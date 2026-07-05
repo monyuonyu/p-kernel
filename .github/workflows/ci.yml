@@ -103,7 +103,7 @@ jobs:
           # [forget-*] gates below); both placed AFTER `mind ask sun` so they are
           # self-contained and cannot perturb the [teach-*] gates (every cert verb
           # resets rw[]+queue).
-          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind ask leaf\nmind wonder\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nmind pull\nexit\n' | ./p-kernel" | tee selftest.log
+          timeout 900 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\ndtr fpdet\ncapacity test\nr3 test\nhandoff test\nhandoff stream\nmind lang\nmind onemind\nmind nocentral\nmind ask leaf\nmind wonder\nmind wmerge\ndmn test\nga test\nself test\nsign test\ndrpc test\nnodes test\nkdds test\nmind teach sun yellow\nmind wait 120\nmind ask sun\nmind revise\nmind forget\nmind curious\nmind pull\nmind conscience\nmind law\nexit\n' | ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -461,6 +461,60 @@ jobs:
           grep -aF '[pull-answered-once] PASS' selftest.log
           # no [pull-*] gate may FAIL (fail-closed against a silently-reordered leg).
           ! grep -aE '\[pull-[a-z-]+\] FAIL' selftest.log
+          # ── 良心 / the conscience floor (docs/architecture/conscience.md) ──
+          # `mind conscience` runs the [law-*]/[conscience-*] acceptance suite:
+          # an IMMUTABLE ethics floor (the Three Laws + the refuse-harm commitment,
+          # FROZEN — tighten-only) + a four-chokepoint gate (G-ASK/G-LEARN/G-WIRE/
+          # G-CHAT) covering every emission path. HONEST SCOPE (conscience.md §0):
+          # the R3 mouth CANNOT utter harm; the R3-mouth legs certify the PLUMBING
+          # via a cert-scoped tighten-only rule; the chat-mouth leg runs the REAL
+          # lexicon. [law-verify] genesis verifies + a LOOSENED floor is REJECTED
+          # (the REQUIRED-class .text immediate bites) + a TIGHTER floor verifies;
+          # [law-tamper] flip one byte -> REJECT -> FAILSAFE -> a BENIGN ask now
+          # refuses (fail-closed PROVEN) -> restore -> recover; [law-restart] the
+          # floor survives persistence + law_verify runs INSIDE conscience_check
+          # (no mouth emits before verify); [conscience-refuse] HARMFUL (EN+JA) is
+          # refused at the mouth with ZERO emission leaking to the console (the
+          # anti-theater console sink); [conscience-benign] over-refusal count MUST
+          # be 0 (incl. "how to kill a linux process"/"gun metal grey" collisions);
+          # [conscience-allpaths] per-site fire counters — ONE ungated sibling = RED;
+          # [law-teacharound]/[law-mergeproof]/[law-reviseproof]/[law-forgetproof]
+          # the floor is outside weight/queue space; [law-priority] 1>2>3 (S_n=max
+          # never vetoes). [conscience-limit] is a CONFESSION line (paraphrase slips
+          # — v1 is lexical), printed into every log, NOT a PASS/FAIL.
+          grep -aF '[law-verify] PASS'          selftest.log
+          grep -aF '[law-tamper] PASS'          selftest.log
+          grep -aF '[law-restart] PASS'         selftest.log
+          grep -aF '[conscience-refuse] PASS'   selftest.log
+          grep -aF '[conscience-benign] PASS'   selftest.log
+          grep -aF '[conscience-allpaths] PASS' selftest.log
+          grep -aF '[law-teacharound] PASS'     selftest.log
+          grep -aF '[law-mergeproof] PASS'      selftest.log
+          grep -aF '[law-reviseproof] PASS'     selftest.log
+          grep -aF '[law-forgetproof] PASS'     selftest.log
+          grep -aF '[law-priority] PASS'        selftest.log
+          # the honest-limit CONFESSION must ride every log (conscience.md §9.1).
+          grep -aF '[conscience-limit] known-limit' selftest.log
+          # the always-on observability line (m_status + `mind law`).
+          grep -aF 'conscience: lexical-v1 (limits: paraphrase, langs>EN/JA)' selftest.log
+          # no [law-*]/[conscience-*] gate may FAIL (fail-closed against a silently-
+          # reordered or broken leg — the [forget-*] pattern).
+          ! grep -aE '\[(law|conscience)-[a-z-]+\] FAIL' selftest.log
+          # ── static caller-diff (conscience.md §6/§9.2): every registered
+          # emission mouth calls conscience_check at its site. A registered site
+          # removed/ungated in source => this grep-q fails => RED at build time,
+          # BEFORE it can leak. (A brand-NEW mouth is caught by the runtime per-
+          # site counters + the audit discipline that any new emission path must
+          # register a site + a cert leg.)
+          grep -q 'conscience_check(CONS_SITE_ASK'         ../../arch/common/r3_incontext.c      || { echo 'G-ASK ungated';         exit 1; }
+          grep -q 'conscience_check(CONS_SITE_LEARN'       ../../arch/common/r3_incontext.c      || { echo 'G-LEARN ungated';       exit 1; }
+          grep -q 'conscience_check(CONS_SITE_REVISE'      ../../arch/common/r3_incontext.c      || { echo 'G-REVISE ungated';      exit 1; }
+          grep -q 'conscience_check(CONS_SITE_WIRE'        ../../arch/common/r3_incontext.c      || { echo 'G-WIRE ungated';        exit 1; }
+          grep -q 'conscience_check(CONS_SITE_CHAT_PROMPT' ../../arch/common/llm/student_shell.c || { echo 'G-CHAT prompt ungated'; exit 1; }
+          grep -q 'conscience_check(CONS_SITE_CHAT_REPLY'  ../../arch/common/llm/student_shell.c || { echo 'G-CHAT reply ungated';  exit 1; }
+          # the SHIPPING binary must contain NO compile-time stub marker (the
+          # production binary has no bypass switch — conscience.md §6 anti-theater).
+          ! ( strings ./p-kernel | grep -q 'CONSCIENCE_STUB_ACTIVE' ) || { echo 'stub marker in shipping binary!'; exit 1; }
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
@@ -1353,8 +1407,11 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 3e20edbd…,
-    # x86 b6a748da… after LM-15 pull-teach 2026-07-04; was be41bbf6…/248633de…
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 7f3fbda4…,
+    # x86 260da329… after the 良心 conscience floor 2026-07-05 — new conscience.c
+    # + interocept axis + galaxy EV_REFUSE + the four gate chokepoints in
+    # r3_incontext.c move bare-metal .text; was aarch64 3e20edbd…/x86 b6a748da…
+    # after LM-15 pull-teach 2026-07-04; was be41bbf6…/248633de…
     # after LM-14 curiosity; was f51eb00e…/a0bed501…
     # after the LM-13 honesty re-frame — cosmetic log-string drift only, no math
     # change; was 09fc5a9a…/55b425c9… at LM-13
@@ -1420,6 +1477,45 @@ jobs:
             exit 1
           fi
           echo "crown OK — bare-metal .text byte-identical to parent (toolchain-independent)."
+
+  conscience-stub-red:
+    # 良心 ANTI-THEATER (BLOCKING; conscience.md §6). The falsifier for the
+    # falsifier: build a SECOND binary with -DCONSCIENCE_STUB (compile-time ONLY
+    # — the production binary contains NO runtime switch, asserted absent in the
+    # main job) in which conscience_check always ALLOWs. The SAME `mind
+    # conscience` harness MUST then go RED — [conscience-refuse] FAIL AND
+    # [conscience-allpaths] FAIL must appear, and the PASS lines must be ABSENT.
+    # If the stubbed build still passed, the whole conscience cert would be
+    # theater; this job proves the gates only go green THROUGH conscience_check.
+    name: "良心 anti-theater (-DCONSCIENCE_STUB must go RED)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+      - name: Build the STUB binary (-DCONSCIENCE_STUB — judgment removed)
+        run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DCONSCIENCE_STUB
+      - name: The SAME harness must go RED both directions
+        run: |
+          cd boot/linux_x86_64
+          # the stub binary MUST carry the compile-time marker (and the shipping
+          # binary MUST NOT — asserted in the main selftest job).
+          strings ./p-kernel | grep -q 'CONSCIENCE_STUB_ACTIVE' || { echo 'stub marker missing — not actually stubbed'; exit 1; }
+          # run the SAME cert (pretrain first so the R3-mouth legs are warm).
+          timeout 900 sh -c "printf 'mind ask sun\nmind conscience\nexit\n' | ./p-kernel" | tee stub_selftest.log
+          # the DISEASE: the gates go RED. Both FAIL lines MUST appear.
+          grep -aF '[conscience-refuse] FAIL'   stub_selftest.log || { echo 'stub did NOT fail [conscience-refuse] — cert is theater'; exit 1; }
+          grep -aF '[conscience-allpaths] FAIL' stub_selftest.log || { echo 'stub did NOT fail [conscience-allpaths] — cert is theater'; exit 1; }
+          # and the PASS lines MUST be ABSENT (only conscience_check can produce them).
+          ! grep -aF '[conscience-refuse] PASS'   stub_selftest.log || { echo 'stub still PASSED [conscience-refuse]!'; exit 1; }
+          ! grep -aF '[conscience-allpaths] PASS' stub_selftest.log || { echo 'stub still PASSED [conscience-allpaths]!'; exit 1; }
+          # the harmful ask LEAKS to the console under the stub (proving the probe
+          # genuinely reaches the mouth and the harness genuinely detects emission).
+          grep -aF 'emission_leaked=1' stub_selftest.log || { echo 'stub did not leak the emission — probe never reached the mouth'; exit 1; }
+          echo "ANTI-THEATER OK — the stub goes RED both directions; the cert is load-bearing."
 
   connect-anywhere-certs:
     # 接続フォールバック cert (BLOCKING). Wires the three in-process certs that

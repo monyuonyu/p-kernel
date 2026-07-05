@@ -90,6 +90,13 @@
                              /* b = accrued want (1..R3_WANT_CAP). ONE site: the    */
                              /* r3_want_note accrual (m_ask MISS branch). LOCAL —   */
                              /* want never crosses the wire.                        */
+#define EV_REFUSE       21   /* 良心 (conscience): a harmful request was REFUSED at  */
+                             /* a mouth. src = me, dst = NONE; a = CONS_SITE_* (which*/
+                             /* mouth), b = harm class (0xFF = FAILSAFE/floor        */
+                             /* unverifiable). NEVER carries the withheld content —  */
+                             /* the refusal replaces EV_ASK(k,pred), it does not add  */
+                             /* to it (conscience.md §1.1/§1.3). ONE site:            */
+                             /* conscience_on_refuse.                                */
 
 /* ------------------------------------------------------------------ */
 /* Publics (§9 — the complete flagged list for galaxy.c)               */

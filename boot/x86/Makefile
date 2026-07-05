@@ -127,6 +127,7 @@ COMMON_C_SRCS = \
     replica.c \
     degrade.c \
     interocept.c \
+    conscience.c \
     dmn.c \
     lm_consolidate.c \
     lm_self.c \

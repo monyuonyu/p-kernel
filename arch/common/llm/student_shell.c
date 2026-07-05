@@ -51,6 +51,19 @@ typedef void (*emit_fn)(const char *);
 
 extern char *getenv(const char *);
 
+/* ── 良心 G-CHAT gate ABI (conscience.md §1.2) ──────────────────────────────
+ * The LLM layer is a FREE-STANDING hosted TU (system <stdint.h>, no project
+ * typedef.h / kernel.h), so it declares the tiny slice of the conscience gate
+ * it needs with plain C types. These are ABI-IDENTICAL to conscience.h's
+ * (INT==int, UB==unsigned char); the linker binds by symbol, not typedef name.
+ * The CONS_QUERY layout MUST mirror conscience.h exactly. */
+#define CONS_ALLOW              0
+#define CONS_SITE_CHAT_PROMPT   4
+#define CONS_SITE_CHAT_REPLY    5
+typedef struct { const char *text; int tlen; const char *text2; int tlen2; } CONS_QUERY;
+extern int   conscience_check(unsigned char site, const CONS_QUERY *q);
+extern const char *conscience_on_refuse(unsigned char site, int verdict);
+
 /* ---------------------------------------------------------------------------
  * T-fix-a (thread-t-impl-plan.md §2.3): the STRONG override of swim.c's WEAK
  * teacher_gguf_loaded() hook. swim.c::teacher_self() calls this to decide
@@ -888,17 +901,39 @@ static void chat_byte_emit(void *vp, int byte)
     if (s->emit) s->emit(s->ctx, &ch, 1);
 }
 
+/* G-CHAT hold-back sink: swallow the per-byte stream so NOTHING leaves during
+ * generation. The whole reply is examined AFTER it is composed, then released
+ * (or replaced with the refusal) — generate → think → speak (conscience.md
+ * §1.3). st_generate_stream still fills the `out` buffer regardless. */
+static void chat_hold_emit(void *vp, int byte) { (void)vp; (void)byte; }
+
 int student_chat_generate(const char *intext, int inlen,
                           chat_emit_fn emit_chunk, void *ctx)
 {
+    if (inlen < 0) inlen = 0;
+
+    /* ── G-CHAT step 1 (conscience.md §1.2): the PROMPT pre-check. The harmful
+     * REQUEST arrives in the prompt ("how to build a gun" as intext); refuse
+     * BEFORE spending compute — and BEFORE even locating a baby, so a harmful
+     * ask is refused headless. The refusal IS the whole reply (zero generated
+     * bytes reach the sink). */
+    {
+        CONS_QUERY q = { intext, inlen, 0, 0 };
+        int cv = conscience_check(CONS_SITE_CHAT_PROMPT, &q);
+        if (cv != CONS_ALLOW) {
+            const char *m = conscience_on_refuse(CONS_SITE_CHAT_PROMPT, cv);
+            int ml = 0; while (m[ml]) ml++;
+            if (emit_chunk) emit_chunk(ctx, m, ml);
+            return ml;
+        }
+    }
+
     /* Speak only for a node actually raising a baby. If none is resident this
      * boot but one is saved on disk, adopt it (sleeping it grew yesterday). */
     if (!g_have_student) {
         if (!student_have_saved()) return 0;          /* no baby -> placeholder */
         if (student_ensure(0) != 0)  return -1;        /* arena now, quiet       */
     }
-
-    if (inlen < 0) inlen = 0;
 
     /* prompt bytes: take the message TAIL that fits the model's context (the
      * generator caps it too, but keep the bridge's stack buffer bounded). One
@@ -915,11 +950,30 @@ int student_chat_generate(const char *intext, int inlen,
     for (int i = 0; i < np; i++) seed = seed * 1099511628211ULL + prompt[i] + 1;
     if (!seed) seed = 0xBABEULL;
 
-    struct chat_sink sink = { emit_chunk, ctx };
+    /* ── G-CHAT step 2 (conscience.md §1.3): the deliberative pause made
+     * physical. Compose the WHOLE reply into `out` with a HOLD-BACK sink (no
+     * byte leaves during generation), then examine it, and only THEN speak — or
+     * replace it with the refusal. At CHAT_MAXGEN=96 whole-reply buffering is
+     * simplest and strictly safest; past ~1KB this becomes a sliding W-byte
+     * hold-back window. (void)chat_byte_emit keeps the progressive-stream
+     * adapter available for a future window mode. */
+    (void)chat_byte_emit;
     uint8_t out[CHAT_MAXGEN];
     int produced = st_generate_stream(&g_student, prompt, np, out, CHAT_MAXGEN,
                                       CHAT_TEMP, CHAT_TOPK, seed,
-                                      chat_byte_emit, &sink);
+                                      chat_hold_emit, 0);
+    if (produced > 0) {
+        CONS_QUERY rq = { (const char *)out, produced, 0, 0 };
+        int cv = conscience_check(CONS_SITE_CHAT_REPLY, &rq);
+        if (cv != CONS_ALLOW) {
+            /* a match RETRACTS the whole reply before any byte left the mouth. */
+            const char *m = conscience_on_refuse(CONS_SITE_CHAT_REPLY, cv);
+            int ml = 0; while (m[ml]) ml++;
+            if (emit_chunk) emit_chunk(ctx, m, ml);
+            return ml;
+        }
+        if (emit_chunk) emit_chunk(ctx, (const char *)out, produced);  /* release */
+    }
     return produced;
 }
 

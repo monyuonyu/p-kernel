@@ -22,12 +22,13 @@
 
 /* The pain axes. Order is the bus index; intero_note(axis, raw) writes one.
  * Keep INTERO_AXIS_MAX last. */
-#define INTERO_AX_THREAT    0   /* reflex_threat_experience max-class pressure */
-#define INTERO_AX_LATENCY   1   /* worst adjacent SWIM RTT EWMA deviation      */
-#define INTERO_AX_SURPRISE  2   /* in-context CE / prediction error from m_ask */
-#define INTERO_AX_FAULT     3   /* ring3 fault-reap increment over a window    */
-#define INTERO_AX_DEGRADE   4   /* degrade_level() (FULL=0 .. SOLO=max)        */
-#define INTERO_AXIS_MAX     5
+#define INTERO_AX_THREAT     0   /* reflex_threat_experience max-class pressure */
+#define INTERO_AX_LATENCY    1   /* worst adjacent SWIM RTT EWMA deviation      */
+#define INTERO_AX_SURPRISE   2   /* in-context CE / prediction error from m_ask */
+#define INTERO_AX_FAULT      3   /* ring3 fault-reap increment over a window    */
+#define INTERO_AX_DEGRADE    4   /* degrade_level() (FULL=0 .. SOLO=max)        */
+#define INTERO_AX_CONSCIENCE 5   /* 良心: refusal-of-harm increment over a window*/
+#define INTERO_AXIS_MAX      6
 
 /* Component vector (interoception.md §2.1): each 0..255 dimensionless pressure.
  * Read by galaxy/diagnostics; the scalar is what organs steer on. */
@@ -37,6 +38,7 @@ typedef struct {
     UB surprise;
     UB fault;
     UB degrade;
+    UB conscience;      /* 良心: pressure from refusing harmful requests */
 } INTERO_COMPONENTS;
 
 /* ── read side (cheap, O(1)) ─────────────────────────────────────────────── */

@@ -142,6 +142,7 @@ COMMON_C_SRCS = \
     guard.c \
     degrade.c \
     interocept.c \
+    conscience.c \
     vital.c \
     edf.c \
     raft.c \

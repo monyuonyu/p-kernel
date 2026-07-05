@@ -96,6 +96,9 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
 #define LM_UNIT_EV_REAP      2     /* a unit version was reaped (died)       */
 #define LM_UNIT_EV_ROLLBACK  3     /* rolled back from one seq to the prev   */
 #define LM_SELF_EV_INTROSPECT 4    /* self-access R0: the body was READ      */
+#define LM_SELF_EV_REFUSE     5    /* 良心: refused a harmful request (the    */
+                                   /* mind remembers it said no; uv=site,     */
+                                   /* sig=harm class). conscience.md §1.3.    */
 
 /* age_ms layout for a unit event: [31:28]=kind [27:20]=sig [19:0]=uv|to<<10 */
 #define LM_UNIT_EV_ENCODE(kind, uv, sig) \

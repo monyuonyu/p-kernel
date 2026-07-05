@@ -57,12 +57,20 @@ static void io_putdec(UW v)
  * IMPORT that would fail to link where the symbol is absent. */
 __attribute__((weak)) UW intero_fault_count_hook(void) { return 0; }
 
+/* ── conscience axis source (良心, design §1.3) ────────────────────────────
+ * A monotone refusal count provided by conscience.c (the strong override).
+ * WEAK default 0 keeps interocept.c linking on any build that omits the
+ * conscience TU, exactly like the fault hook. A refusal-of-harm raises S_n so
+ * the DMN sleeps shallow and uneasy after being asked for harm. */
+__attribute__((weak)) UW intero_conscience_count_hook(void) { return 0; }
+
 /* ── module state (single task / behind the shells' serialization) ────────── */
 
 static INTERO_COMPONENTS comp;       /* latest per-axis 0..255 pressures        */
 static UW   scalar_ewma;             /* the S_n EWMA state (0..255)             */
 static UB   dom_axis = INTERO_AXIS_MAX;
 static UW   fault_base;              /* ring3_faults_reaped at init (window base) */
+static UW   conscience_base;         /* conscience refusals at init (window base) */
 static UB   inited;
 
 /* cert-only deterministic injection (see intero_test_force) */
@@ -153,17 +161,28 @@ static UB io_norm_degrade(void)
     return io_clamp255((UW)degrade_level() * 96u);
 }
 
+/* conscience: monotone refusal increment since init (windowed at the bus). Each
+ * refusal-of-harm is a sharp deliberative pain; a few saturate — the mind reads
+ * as uneasy after being asked for harm (interoception.md §2 / conscience §1.3). */
+static UB io_norm_conscience(void)
+{
+    UW now = intero_conscience_count_hook();
+    UW inc = (now >= conscience_base) ? (now - conscience_base) : 0u;
+    return io_clamp255(inc * 64u);
+}
+
 /* weighted_max (interoception.md §2.2): the worst axis dominates; the rest add a
  * faint background so a body hurting on many axes reads slightly worse than one.
  * Integer: max + (sum_of_rest >> 3), saturated. */
 static UW io_weighted_max(const INTERO_COMPONENTS *c, UB *which)
 {
     UW vals[INTERO_AXIS_MAX];
-    vals[INTERO_AX_THREAT]   = c->threat;
-    vals[INTERO_AX_LATENCY]  = c->latency;
-    vals[INTERO_AX_SURPRISE] = c->surprise;
-    vals[INTERO_AX_FAULT]    = c->fault;
-    vals[INTERO_AX_DEGRADE]  = c->degrade;
+    vals[INTERO_AX_THREAT]     = c->threat;
+    vals[INTERO_AX_LATENCY]    = c->latency;
+    vals[INTERO_AX_SURPRISE]   = c->surprise;
+    vals[INTERO_AX_FAULT]      = c->fault;
+    vals[INTERO_AX_DEGRADE]    = c->degrade;
+    vals[INTERO_AX_CONSCIENCE] = c->conscience;
 
     UW mx = 0, sum = 0; UB mi = INTERO_AXIS_MAX;
     for (INT i = 0; i < INTERO_AXIS_MAX; i++) {
@@ -191,11 +210,12 @@ void intero_sample(void)
         return;
     }
 
-    comp.threat   = io_norm_threat();
-    comp.latency  = io_norm_latency();
-    comp.surprise = io_norm_surprise();
-    comp.fault    = io_norm_fault();
-    comp.degrade  = io_norm_degrade();
+    comp.threat     = io_norm_threat();
+    comp.latency    = io_norm_latency();
+    comp.surprise   = io_norm_surprise();
+    comp.fault      = io_norm_fault();
+    comp.degrade    = io_norm_degrade();
+    comp.conscience = io_norm_conscience();
 
     UB which = INTERO_AXIS_MAX;
     UW agg = io_weighted_max(&comp, &which);
@@ -214,11 +234,12 @@ void intero_note(UB axis, UW raw)
     (void)raw;   /* the normalizers read the authoritative live source directly */
 
     switch (axis) {
-    case INTERO_AX_THREAT:   comp.threat   = io_norm_threat();   break;
-    case INTERO_AX_LATENCY:  comp.latency  = io_norm_latency();  break;
-    case INTERO_AX_SURPRISE: comp.surprise = io_norm_surprise(); break;
-    case INTERO_AX_FAULT:    comp.fault    = io_norm_fault();    break;
-    case INTERO_AX_DEGRADE:  comp.degrade  = io_norm_degrade();  break;
+    case INTERO_AX_THREAT:     comp.threat     = io_norm_threat();     break;
+    case INTERO_AX_LATENCY:    comp.latency    = io_norm_latency();    break;
+    case INTERO_AX_SURPRISE:   comp.surprise   = io_norm_surprise();   break;
+    case INTERO_AX_FAULT:      comp.fault      = io_norm_fault();      break;
+    case INTERO_AX_DEGRADE:    comp.degrade    = io_norm_degrade();    break;
+    case INTERO_AX_CONSCIENCE: comp.conscience = io_norm_conscience(); break;
     default: return;
     }
     UB which = INTERO_AXIS_MAX;
@@ -246,9 +267,11 @@ UB intero_dominant_axis(void) { return dom_axis; }
 void intero_init(void)
 {
     comp.threat = comp.latency = comp.surprise = comp.fault = comp.degrade = 0;
+    comp.conscience = 0;
     scalar_ewma = 0;
     dom_axis    = INTERO_AXIS_MAX;
     fault_base  = intero_fault_count_hook();
+    conscience_base = intero_conscience_count_hook();
     inited      = 1;
 #ifdef _TK_HOSTED_LIBC_
     force_axis  = INTERO_AX_THREAT;  /* survival-loop L0 (B): back to THREAT pin */
@@ -297,14 +320,16 @@ INT intero_self_test(void)
      * and the aggregate must rise. Repeat per axis. */
     for (INT ax = 0; ax < INTERO_AXIS_MAX; ax++) {
         comp.threat = comp.latency = comp.surprise = comp.fault = comp.degrade = 0;
+        comp.conscience = 0;
         UW *slot;
         /* address the chosen axis */
         switch (ax) {
-        case INTERO_AX_THREAT:   comp.threat = 200; break;
-        case INTERO_AX_LATENCY:  comp.latency = 200; break;
-        case INTERO_AX_SURPRISE: comp.surprise = 200; break;
-        case INTERO_AX_FAULT:    comp.fault = 200; break;
-        default:                 comp.degrade = 200; break;
+        case INTERO_AX_THREAT:     comp.threat = 200; break;
+        case INTERO_AX_LATENCY:    comp.latency = 200; break;
+        case INTERO_AX_SURPRISE:   comp.surprise = 200; break;
+        case INTERO_AX_FAULT:      comp.fault = 200; break;
+        case INTERO_AX_CONSCIENCE: comp.conscience = 200; break;
+        default:                   comp.degrade = 200; break;
         }
         (void)slot;
         UB which = INTERO_AXIS_MAX;

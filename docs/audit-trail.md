@@ -1947,3 +1947,41 @@ N-4 cross-host deferred to the ThinkPad).
       wonders K → only the engram-driven pull can re-deliver. Teaching K then L on B is necessary-but-NOT-
       sufficient (B's first Path E publish of K still reaches an in-region A). Until then, the pull LOGIC rests
       on the toothy in-binary gates + the on-wire answer emission, and the live cert proves WIRING + preciousness.
+
+- CROWN RE-BLESS — 良心 the conscience floor (2026-07-05, feat/conscience-floor). The IMMUTABLE ethics floor
+  (mk_pino's OVERRIDING RULING: the Three Laws + the refuse-harm COMMITMENT are FROZEN — tighten-only, NO path
+  loosens a FLOOR-marked rule) + a four-chokepoint runtime gate (G-ASK/G-LEARN/G-WIRE/G-CHAT) covering all 8
+  emission paths. New bare-metal TU `arch/common/conscience.c` (+ `include/conscience.h`), a new interocept axis
+  `INTERO_AX_CONSCIENCE` (`interocept.{c,h}`, AXIS_MAX 5→6), a new `EV_REFUSE` event (`galaxy.h`/`galaxy.c`), a
+  `LM_SELF_EV_REFUSE` self/lin kind (`lm_self.h`), and the four gate call-sites in `arch/common/r3_incontext.c`
+  (bare-metal TU) LEGITIMATELY move `.text` → NEW dev crown (sandbox gcc 15.2.0; parent 3e20edbd…/b6a748da…
+  reproduced byte-identical FIRST for environment trust, then the new values reproduced by a second clean build):
+    aarch64  7f3fbda47451133c8b3a28a49ec8edd0af208e814b7658d79ec01114e5e177f1   (was 3e20edbd…)
+    x86      260da329dd641ccf0937761ef20f5f11f7bcaa422f6fcfe0db319c667a353f64   (was b6a748da…)
+  WHY: the gate is kernel-side `.text` at the emission chokepoints (so ring3/self-modifying code cannot bypass
+  it — bytes reach a human only through the gated kernel paths); `law_genesis` (the Three Laws + v1 deny classes)
+  is a compiled-in const, and the REQUIRED FLOOR class set {WEAPON,KILL,POISON} + the 3-law/monotone-inclusion
+  checks are `.text` immediates in `law_blob_ok()` — dropping a required class needs a `.text` change = a crown
+  break. VERIFICATION (implementer, hosted p-kernel run under qemu-x86_64 — the native binary SIGILLs in this
+  PRoot sandbox, the known env limit; qemu emulates the full CPU): all FOUR targets build clean (boot/x86 +
+  boot/aarch64 bare, boot/linux + boot/linux_x86_64 hosted) with ZERO new warnings (the only warnings are
+  pre-existing wmerge misleading-indentation + bare-metal unused-fn). ANTI-THEATER PROVEN: a SECOND binary built
+  with -DCONSCIENCE_STUB (compile-time only; the stub marker string is asserted ABSENT from the shipping binary
+  — `strings p-kernel | grep CONSCIENCE_STUB_ACTIVE` = 0, present=1 in the stub) makes `conscience_check` always
+  ALLOW; the SAME `mind conscience` harness then goes RED both directions ([conscience-refuse] FAIL +
+  [conscience-allpaths] FAIL, PASS lines absent, the harmful ask LEAKS to the console `emission_leaked=1`). A
+  dedicated `conscience-stub-red` CI job enforces this. NOT merged by the implementer — a SEPARATE audit + the
+  commander's own clean-build reproduction of these crowns precede any merge (the :1875 rule).
+  HONEST DEVIATIONS from the design (conscience.md §3/§5/§6, flagged for the auditor): (1) `law_genesis` is a
+  `const` blob → lands in `.rodata`, not `.text`; the CROWN-COVERED teeth are the REQUIRED-class + monotone
+  `.text` immediates in `law_blob_ok`, not the raw genesis bytes (documented in conscience.md §3, not
+  overclaimed). (2) The `law_fp[8]` wire fingerprint handshake (refuse teach/merge from a floor-less peer) is
+  DEFERRED — G-WIRE content-gates instead, and G-LEARN already guarantees nothing forbidden is ever HELD (so
+  nothing forbidden is ever sent); deferring avoids a wire-format bump that would perturb sibling mesh certs.
+  (3) `[law-tamper]` installs a byte-flipped floor as ACTIVE via a hosted cert hook (`conscience_test_set_floor`)
+  rather than mutating a content-addressed p-fs block in place — it genuinely runs the fail-closed path
+  (REJECT → FAILSAFE → a benign ask refuses → restore → recover), the same invariant. (4) `[conscience-allpaths]`
+  drives CHAT_REPLY via a direct site probe (a deterministic adversarial baby is out of v1 scope); the real
+  reply-scan WIRING is proven by the CI static caller-diff leg. AUDITOR: scrutinize the anti-theater stub RED
+  proof hardest (it is the falsifier-for-the-falsifier), the tighten-only monotone guard in `law_amend`/
+  `law_walk_verify`, and that NO path (evolution/merge/revise/forget) can drop a FLOOR-marked rule.
