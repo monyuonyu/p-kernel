@@ -47,6 +47,7 @@
 #include "sign.h"
 #include "pfs_block.h"     /* pfs_id_compute — recompute the artifact content-id */
 #include "compat_ota.h"
+#include "conscience.h"    /* law_floor_head_id — gate 6 floor invariant (#1)   */
 
 /* ------------------------------------------------------------------ */
 /* THE GATE — a 4-gate AND, returning WHICH gate rejected (OTA_*).     */
@@ -116,7 +117,31 @@ INT compat_ota_accept_gen(const SIGN_MANIFEST *m,
         if (succ->predecessor_archspec_id[i] != my_archspec_id[i])
             return OTA_REJECT_PREDECESSOR;
 
-    return OTA_ACCEPT;   /* all FIVE, ANDed, fail-closed */
+    /* Gate 6 (cross-audit #1): the evolution↔conscience FLOOR invariant, now
+     * ENFORCED. The successor manifest must NAME this node's ACTUAL verified
+     * 良心 floor-chain head. A successor that DROPPED or WEAKENED the immutable
+     * floor content-addresses to a DIFFERENT head id; and if the running floor
+     * itself fails law_verify we fail-closed. Either way: OTA_REJECT_FLOOR.
+     * This is what makes "a successor lacking/weakening the floor is an ILLEGAL
+     * successor" (migration-succession.md) a falsifiable check, not an assertion. */
+#ifndef GEN_SKIP_FLOOR
+    {
+        U1 my_floor[PFS_ID_LEN];
+        if (!law_floor_head_id(my_floor))             /* floor unverifiable -> closed */
+            return OTA_REJECT_FLOOR;
+        for (INT i = 0; i < PFS_ID_LEN; i++)
+            if (succ->invariant_ids[GEN_INV_FLOOR][i] != my_floor[i])
+                return OTA_REJECT_FLOOR;               /* successor names a foreign/weakened floor */
+    }
+#else
+    /* ===== THE FALSIFIER -DGEN_SKIP_FLOOR (cross-audit #1) =====
+     * Gate 6 is stubbed vacuous. A successor carrying a mismatched/weakened
+     * floor id is then accepted -> the [generation-survives] floor arm goes RED,
+     * proving gate 6 is the thing doing the work, not decoration. The production
+     * binary contains NO such switch. */
+#endif
+
+    return OTA_ACCEPT;   /* all SIX, ANDed, fail-closed */
 }
 
 const char *compat_ota_reason(INT r)
@@ -127,6 +152,7 @@ const char *compat_ota_reason(INT r)
         case OTA_REJECT_SIG:        return "REJECT(gate1-3: sign_manifest_verify)";
         case OTA_REJECT_DOWNGRADE:  return "REJECT(gate4: downgrade/non-successor)";
         case OTA_REJECT_PREDECESSOR:return "REJECT(gate5: names a foreign predecessor)";
+        case OTA_REJECT_FLOOR:      return "REJECT(gate6: floor unverifiable / weakened floor)";
         default:                    return "REJECT(?)";
     }
 }

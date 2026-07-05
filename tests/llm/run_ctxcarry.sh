@@ -10,11 +10,16 @@
 #   [ctx-carry]             A(d)=CE(ans|ablated)-CE(ans|intact) curve, full 256
 #                           window, swept over d — PRINTED (the walk-to-the-wall;
 #                           the magnitude is the measured deliverable, NOT gated).
-#   [ctx-carry-clamp]       LOAD-BEARING FALSIFIER: re-eval the TRAINED model with
-#                           the window clamped to 64 -> A(d>=96) COLLAPSES to ~0.
-#   [ctx-carry-window]      ANTI-THEATER (deterministic): a distant fact byte
-#                           shifts the answer logits with the full window but is
-#                           provably invisible under the 64-clamp (RED-when-stubbed).
+#   [ctx-carry-clamp]       CONTROL (semi-tautological, cross-audit #9): re-eval
+#                           the TRAINED model with the window clamped to 64 ->
+#                           A(d>=96) COLLAPSES to ~0. Isolates window-vs-training,
+#                           but clamping REMOVES the byte so this holds for ANY
+#                           model — the load-bearing half is [ctx-carry-window].
+#   [ctx-carry-window]      ANTI-THEATER (deterministic). LOAD-BEARING half: a
+#                           distant fact byte shifts the answer logits under the
+#                           FULL 256 window (the widened window genuinely reads it;
+#                           stub the window -> signal vanishes -> RED). The 64-clamp
+#                           half is a by-construction control (the byte is removed).
 #   [gen-cohort-island]     a v1 blob offered to a v2 model is REFUSED everywhere,
 #                           model byte-unchanged (NS_STUDENT_VER 1->2 load-bearing).
 #   [ctx-carry-nope]        RoPE-vs-NoPE MEASURED side-by-side — PRINTED, NOT gated.

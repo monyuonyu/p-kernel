@@ -23,10 +23,12 @@
 #
 # Needs no qemu, no training, no relay — exactly what this PRoot sandbox can
 # run (feedback_proot_sandbox_net_limits). The REAL multi-process [live] row is
-# WIRED for the ThinkPad (run_unbounded_live.sh).
+# a NOT-YET-WIRED follow-up (run_unbounded_live.sh is a placeholder that SKIPs;
+# there is no self-hosted [unbounded-live] job yet).
 #
 #   ./run_unbounded.sh
-# Exit 0 = flat PASS + coupling PASS (R-cost constant) + disease REFUSED to build.
+# Exit 0 = flat PASS + coupling PASS (R-cost constant) + dkva-origin O(R) +
+#          disease REFUSED to build.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -35,7 +37,7 @@ make -C "$HERE" -s check
 rc=$?
 
 echo
-echo "[live] multi-process relay row — DEFERRED to the ThinkPad self-hosted"
-echo "       runner (PRoot here has no netns; feedback_proot_sandbox_net_limits)."
-echo "       Wired but NOT run: tests/unbounded/run_unbounded_live.sh"
+echo "[live] multi-process relay row — a NOT-YET-WIRED follow-up (no self-hosted"
+echo "       job exists yet; PRoot here has no netns anyway)."
+echo "       Placeholder that SKIPs: tests/unbounded/run_unbounded_live.sh"
 exit $rc

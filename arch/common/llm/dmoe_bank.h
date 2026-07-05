@@ -56,9 +56,12 @@
 #define DMOE_MODE_THEATER_LOCAL  3   /* SABOTAGE: secretly read the local NaN canary */
 
 /* The remote transport (caller-installed, like SS-6's st_remote_expert_fn). The
- * bank's fire() picks an HRW owner and calls this; production wires it to the
- * SS6L v2 UDP REQ/REP (ss6_live.c), the cert wires it to an in-process fleet.
- * Returns 0 (out[d] filled with the owner's bit-identical [D] output) or <0
+ * bank's fire() picks an HRW owner and calls this; the cert wires it to an
+ * in-process fleet. A production integration WOULD wire it to the SS6L v2 UDP
+ * REQ/REP (ss6_live.c serves the conscience floor only today) — a NOT-YET-WIRED
+ * follow-up (cross-audit #7: no production caller exists yet; the cert proves
+ * the MECHANISM in-process). Returns 0 (out[d] filled with the owner's bit-
+ * identical [D] output) or <0
  * (refuse: not resident there, ver skew, absent, or budget). `force_accept`
  * carries the sabotage flag so the [dmoe-version-skew] arm can prove the pin is
  * load-bearing (force-accept a stale blob -> hash diverges from the oracle). */
@@ -95,7 +98,7 @@ typedef struct {
     float    *router;               /* [nbank][L][D] replicated router rows       */
     dmoe_slot slot[ST_DMOE_FLEET_MAX];
 
-    /* fleet view (the cert supplies these; production wires SWIM + SS6L). */
+    /* fleet view (the cert supplies these; a production SWIM + SS6L wiring is a NOT-YET-WIRED follow-up (#7)). */
     UB        members[LOOKUP_MAX_MEMBERS];  /* the HRW alive member set          */
     int       n_members;
     dmoe_alive_fn  alive;   void *alive_ctx;
@@ -154,7 +157,7 @@ void dmoe_bank_force_ver(dmoe_bank *b, int slot, uint64_t bad_ver);
 int  dmoe_expert_forward_ref(const dmoe_bank *b, int slot, int layer,
                              const float *fin, float *out);
 
-/* Fleet-view setters (the cert supplies these; production wires SWIM + SS6L). */
+/* Fleet-view setters (the cert supplies these; a production SWIM + SS6L wiring is a NOT-YET-WIRED follow-up (#7)). */
 void dmoe_set_members(dmoe_bank *b, const UB *members, int n);
 void dmoe_set_alive(dmoe_bank *b, dmoe_alive_fn fn, void *ctx);
 void dmoe_set_transport(dmoe_bank *b, dmoe_remote_fn fn, void *ctx);

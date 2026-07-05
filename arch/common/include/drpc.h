@@ -105,8 +105,18 @@
  * ONE region and is BEHAVIOR-IDENTICAL to the pre-wave build (every    *
  * peer admits; the nodemap never evicts). The design's smaller default *
  * (R=32, "one or two regions") is a wire-v2 tuning — a pure constant   *
- * change once N>R ships.                                               */
+ * change once N>R ships.                                               *
+ *                                                                     *
+ * OVERRIDABLE at compile time (-DDREGION_MAX=…) EXACTLY like DNODE_MAX *
+ * above, so the [unbounded-*] probes can build the REAL headers with   *
+ * R < N (e.g. R=32, wire=256) and prove the DKVA_CAGG origin axis is    *
+ * sized by R not fleet N — NON-VACUOUSLY (at the shipping R==N==64 the  *
+ * equality slot[R]==slot[N] cannot tell them apart; cross-audit #3).    *
+ * The shipping default is UNCHANGED (64), so bare-metal .text does not   *
+ * move (the #ifndef is a no-op in every normal build; crown-neutral).   */
+#ifndef DREGION_MAX
 #define DREGION_MAX     64
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Packet header                                                        */

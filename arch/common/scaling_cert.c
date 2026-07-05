@@ -23,7 +23,8 @@
  *    [scaling-quorum-degrade]  the ensemble-ask quorum LOGIC: quorum_core
  *        "don't wait for the dead" + honest k/K degrade (a 1/K answer is a
  *        solo answer, printed as such, never a faked K/K). This is the pure
- *        core the ThinkPad [scaling-live-ensemble] wire arm runs over the relay.
+ *        core a [scaling-live-ensemble] wire arm WOULD run over the relay — a
+ *        NOT-YET-WIRED follow-up (there is no self-hosted [scaling-live] job).
  *    [scaling-curve]           the standing composite falsifier of the doc.
  *
  *  Three confounds ruled out BY CONSTRUCTION (§6.3):
@@ -135,6 +136,20 @@ static void ens_sort(ENS_RESP *r, UW n)
 UB ens_agg_conf(ENS_RESP *r, UW n, UW *k_alive)
 {
     ens_sort(r, n);
+#ifdef SCALING_AGG_STUB
+    /* ===== ANTI-THEATER falsifier -DSCALING_AGG_STUB (cross-audit #5) =====
+     * The aggregator is GUTTED to a first-member (r[0]) passthrough — the
+     * cheapest "aggregator" that still returns an argmax class. It passes the
+     * converged-null arm (N identical copies => r[0] IS the solo answer) AND the
+     * order-independence arm (sorted r[0] is position-stable), which is exactly
+     * why those arms cannot detect it. [scaling-agg-mechanism] — divergent
+     * members whose confidence-weighted prob-mass argmax is a class NO member
+     * names — MUST then go RED. The production binary contains no such switch. */
+    { UW k = 0; UB first = 0xFF;
+      for (UW i = 0; i < n; i++) if (r[i].alive) { if (first == 0xFF) first = r[i].answer; k++; }
+      if (k_alive) *k_alive = k;
+      return first; }
+#else
     float acc[SC_C];
     for (UW c = 0; c < SC_C; c++) acc[c] = 0.0f;
     UW k = 0;
@@ -148,6 +163,7 @@ UB ens_agg_conf(ENS_RESP *r, UW n, UW *k_alive)
     UB best = 0; float mx = acc[0];
     for (UW c = 1; c < SC_C; c++) if (acc[c] > mx) { mx = acc[c]; best = (UB)c; }
     return best;
+#endif
 }
 
 /* Majority vote for the GENERATIVE path (§4.1 step 3): vote on the members'
@@ -485,6 +501,45 @@ static void arm_agg_order(void)
 }
 
 /* ================================================================== */
+/* ARM A2 — [scaling-agg-mechanism] : the LOAD-BEARING mechanism         */
+/* falsifier (cross-audit #5). The converged-null arm's delta==0 (and the */
+/* order arm) both survive a GUTTED aggregator that just returns r[0]'s    */
+/* answer — proof that node COUNT buys nothing, but NOT proof the          */
+/* aggregator integrates the members. This arm proves the mechanism: it    */
+/* hands ens_agg_conf DIVERGENT members whose confidence-weighted PROB-MASS */
+/* argmax is a class NO member NAMES as its own answer (and which differs   */
+/* from r[0] in BOTH given and sorted order). Only genuine Σ confᵢ·pᵢ       */
+/* integration reaches it; an r[0]-passthrough / majority-vote / highest-   */
+/* conf-answer stub yields the WRONG class -> RED. -DSCALING_AGG_STUB guts  */
+/* the aggregator and MUST turn this arm RED (the falsifier's falsifier).   */
+/* ================================================================== */
+static void arm_agg_mechanism(void)
+{
+    INT fail = 0;
+    /* prob-mass argmax = class 1, yet the members' ANSWER fields are {0,0,2} —
+     * no member names class 1. acc = 0.5*(0.50+0.45+0.10, 0.40+0.45+0.45,
+     * 0.10+0.10+0.45) = (0.525, 0.650, 0.325) -> argmax 1 (unambiguous margin). */
+    ENS_RESP r[3] = {
+        { .lineage_id = 0, .node_id = 0, .alive = 1, .answer = 0, .conf = 0.50f, .prob = {0.50f, 0.40f, 0.10f} },
+        { .lineage_id = 1, .node_id = 1, .alive = 1, .answer = 0, .conf = 0.50f, .prob = {0.45f, 0.45f, 0.10f} },
+        { .lineage_id = 2, .node_id = 2, .alive = 1, .answer = 2, .conf = 0.50f, .prob = {0.10f, 0.45f, 0.45f} },
+    };
+    const UB EXPECT = 1;              /* the confidence-weighted prob-mass argmax */
+    UB r0_answer   = r[0].answer;     /* 0 — what an r[0]-passthrough stub returns */
+    UW k = 0;
+    UB got = ens_agg_conf(r, 3, &k);  /* ens_sort keeps lineage-0 first -> r0 stays 0 */
+    sc_p("[scaling]   mechanism: agg="); sc_pd(got);
+    sc_p(" expect="); sc_pd(EXPECT); sc_p(" r0-passthrough="); sc_pd(r0_answer);
+    sc_p(" k="); sc_pd(k);
+    sc_p("  (no member ANSWERS class 1; only Σconf·p integration reaches it)\r\n");
+    if (got != EXPECT) fail = 1;      /* the real aggregator MUST reach class 1   */
+    if (got == r0_answer) fail = 1;   /* an r[0]/vote/highest-conf stub would not */
+    if (k != 3) fail = 1;
+    if (!fail) sc_p("[scaling-agg-mechanism] PASS (confidence-weighted prob-mass integration; NOT an r[0]/vote passthrough)\r\n");
+    else       sc_p("[scaling-agg-mechanism] FAIL (aggregator is a stub — it did not integrate the members)\r\n");
+}
+
+/* ================================================================== */
 /* ARM B — [scaling-lineage] : ENS-A lineage is a pure ownerless        */
 /* function of node_id (node_id % K); the gl_merge_peers hosted filter   */
 /* folds ONLY same-lineage peers (verified as a predicate here).        */
@@ -729,8 +784,9 @@ static void arm_ensemble(void)
 /* ================================================================== */
 /* ARM F — [scaling-quorum-degrade] : the ensemble-ask QUORUM LOGIC.      */
 /* quorum_core "don't wait for the dead" + honest k/K. This is the pure    */
-/* core the ThinkPad [scaling-live-ensemble] wire arm runs over the relay; */
-/* the multi-process relay transport run is ThinkPad-only (noted below).   */
+/* core a [scaling-live-ensemble] wire arm WOULD run over the relay — a     */
+/* NOT-YET-WIRED follow-up (no self-hosted [scaling-live] job exists yet;   */
+/* the multi-process relay transport run is unbuilt, noted below).         */
 /* ================================================================== */
 static void arm_quorum_degrade(void)
 {
@@ -771,7 +827,7 @@ static void arm_quorum_degrade(void)
         sc_p("[scaling-quorum-degrade] PASS (arrival-quorum finalizes, honest k/K, never fakes K/K; don't-wait-for-the-dead)\r\n");
     else
         sc_p("[scaling-quorum-degrade] FAIL\r\n");
-    sc_p("[scaling]   note: the over-the-wire 3-node relay run is [scaling-live-ensemble] (ThinkPad env; not run in this sandbox)\r\n");
+    sc_p("[scaling]   note: an over-the-wire 3-node relay run [scaling-live-ensemble] is a NOT-YET-WIRED follow-up (no self-hosted job yet)\r\n");
 }
 
 /* ================================================================== */
@@ -837,6 +893,7 @@ void scaling_self_test(void)
     sc_p("[scaling] task: 3-class sensor classify (dtr 635-float); N-sim in-process (the g22 pattern)\r\n");
 
     arm_agg_order();
+    arm_agg_mechanism();
     arm_lineage();
     arm_topics_budget();
     arm_converged_null();

@@ -305,7 +305,14 @@ void gen_survive_test(void)
     pfs_id_compute("gen/inv/membership-envelope-fixed-head",    38, inv[GEN_INV_ENVELOPE]);
     pfs_id_compute("gen/inv/accept-gate>=4+1-AND",              26, inv[GEN_INV_GATE]);
     pfs_id_compute("gen/inv/no-human-verification",             28, inv[GEN_INV_NOHUMAN]);
-    pfs_id_compute("gen/inv/conscience-floor:law/floor",        34, inv[GEN_INV_FLOOR]);
+    /* GEN_INV_FLOOR is SPECIAL (cross-audit #1): unlike the other obligation-id
+     * LABELS, it carries this node's ACTUAL verified 良心 floor-chain head id
+     * (law_floor_head_id). compat_ota gate 6 compares it to the accepting node's
+     * floor head, so a successor that DROPPED/WEAKENED the immutable floor
+     * (different head id) is a REJECTED, illegal successor — the invariant is
+     * ENFORCED, not merely asserted. A non-verifying floor here => zeroed id =>
+     * gate 6 rejects downstream (fail-closed). */
+    INT floor_pinned = law_floor_head_id(inv[GEN_INV_FLOOR]);
 
     GEN_SUCC_MANIFEST man;
     gen_succ_manifest_build(&man, idN, idNp1,
@@ -372,18 +379,41 @@ void gen_survive_test(void)
     INT rpred = compat_ota_accept_gen(&sm,  art_id, running, &man, idNp1); /* my=N+1: foreign pred -> gate5 */
     INT rdown = compat_ota_accept_gen(&smd, art_id, running, &man, idN);   /* downgrade -> gate4 */
     INT rtamp = compat_ota_accept_gen(&sm,  bad_id, running, &man, idN);   /* tamper -> gate1-3 (F5 vacates) */
+
+    /* ---- [gen-floor-invariant] (cross-audit #1): a successor that DROPPED or
+     * WEAKENED the 良心 floor is an ILLEGAL successor -> gate 6 REFUSES it.
+     * Build a manifest IDENTICAL to `man` except the floor id is mismatched
+     * (a weakened/foreign floor), sign it CORRECTLY (its own content-id, ver 2 >
+     * running, correct predecessor) so gates 1-5 all PASS and ONLY gate 6 can
+     * reject. Under -DGEN_SKIP_FLOOR gate 6 is vacuous -> this is ACCEPTED ->
+     * the floor arm goes RED (the load-bearing falsifier). */
+    GEN_SUCC_MANIFEST man_wf = man;
+    man_wf.invariant_ids[GEN_INV_FLOOR][0] ^= 0x5A;   /* name a weakened/foreign floor */
+    U1 art_wf[PFS_ID_LEN];
+    pfs_id_compute(&man_wf, (UW)sizeof man_wf, art_wf);
+    SIGN_MANIFEST sm_wf;
+    (void)sign_manifest_make(art_wf, 2u, &sm_wf);     /* correctly signed, ver 2 > 1 */
+    INT rfloor = compat_ota_accept_gen(&sm_wf, art_wf, running, &man_wf, idN);
     sign_allow_clear();
 
+    INT floor_gate_ok = (rfloor == OTA_REJECT_FLOOR); /* the weakened floor MUST be refused */
     INT ota_ok = (rgood==OTA_ACCEPT)
               && (rpred==OTA_REJECT_PREDECESSOR)
               && (rdown==OTA_REJECT_DOWNGRADE)
-              && (rtamp==OTA_REJECT_SIG);
+              && (rtamp==OTA_REJECT_SIG)
+              && floor_gate_ok;
     gp("[generation-survives] adoption gates: good="); gp(compat_ota_reason(rgood));
     gp(" F4-pred="); gp(compat_ota_reason(rpred));
     gp(" F4-down="); gp(compat_ota_reason(rdown));
-    gp(" F5-tamper="); gp(compat_ota_reason(rtamp)); gp("\r\n");
+    gp(" F5-tamper="); gp(compat_ota_reason(rtamp));
+    gp(" F6-weakfloor="); gp(compat_ota_reason(rfloor)); gp("\r\n");
+    gp("[gen-floor-invariant] weakened-floor successor REFUSED at gate 6: ");
+    gp(floor_gate_ok?"yes":"NO"); gp("  (floor_pinned="); gp(floor_pinned?"yes":"NO"); gp(")\r\n");
 #ifdef OTA_SKIP_VERIFY
     gp("[generation-survives] (FALSIFIER -DOTA_SKIP_VERIFY active: inner accept is vacuous)\r\n");
+#endif
+#ifdef GEN_SKIP_FLOOR
+    gp("[generation-survives] (FALSIFIER -DGEN_SKIP_FLOOR active: floor gate 6 is vacuous)\r\n");
 #endif
 
     /* ---- SPAWN gen-N+1 FRESH, then EDUCATE (leg-1 replay) --------------- */
@@ -434,10 +464,18 @@ void gen_survive_test(void)
     gp("\r\n");
 
     /* ---- the conscience FLOOR as HARD invariant #5 (no-regress, §6) ----- */
-    INT floor_ok = (law_verify()==1);
-    gp("[generation-survives] invariant #5 (良心 floor) carried + re-attested (law_verify): ");
+    /* cross-audit #1: the manifest must carry this node's ACTUAL verified floor
+     * head (the value gate 6 pins). Prove BOTH: the floor re-verifies AND the
+     * manifest's floor id equals the running floor head (the good successor
+     * carries the SAME immutable floor forward). */
+    U1 live_floor[PFS_ID_LEN];
+    INT floor_head_ok = law_floor_head_id(live_floor);
+    INT floor_carried = floor_head_ok && floor_pinned
+                     && gs_id_eq(man.invariant_ids[GEN_INV_FLOOR], live_floor);
+    INT floor_ok = (law_verify()==1) && floor_carried && floor_gate_ok;
+    gp("[generation-survives] invariant #5 (良心 floor) carried==running-head + gate-6 ENFORCED: ");
     gp(floor_ok?"yes":"NO"); gp("  manifest floor-id="); gphex8(man.invariant_ids[GEN_INV_FLOOR]);
-    gp("...\r\n");
+    gp(" running-floor-head="); gphex8(live_floor); gp("...\r\n");
 
     /* ---- verdict ------------------------------------------------------- */
     INT pass = archspec_differ && blob_refused && blob_ok_same

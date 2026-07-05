@@ -155,7 +155,10 @@ INT gen_dims_guard_accepts(U4 blob_r_np, const U1 blob_key_vocab[PFS_ID_LEN],
  *   F2 -DGEN_SKIP_EDUCATE (skip replay -> facts to chance -> recovery RED)
  *   F3 impostor (forged successor rejected by the pinned-key verify)
  *   F4 illegal successor (wrong predecessor -> gate5; lower ver -> gate4)
- *   F5 -DOTA_SKIP_VERIFY (still RED through the accept step). */
+ *   F5 -DOTA_SKIP_VERIFY (still RED through the accept step)
+ *   F6 [gen-floor-invariant] (cross-audit #1): a successor carrying a
+ *      DROPPED/WEAKENED 良心 floor (mismatched floor head id) -> gate6
+ *      OTA_REJECT_FLOOR; -DGEN_SKIP_FLOOR vacates gate 6 -> the arm goes RED. */
 #if defined(GEN_SURVIVE_CERT) && defined(_TK_HOSTED_LIBC_)
 void gen_survive_test(void);
 #endif

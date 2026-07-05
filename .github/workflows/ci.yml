@@ -503,15 +503,21 @@ jobs:
           # ── static caller-diff (conscience.md §6/§9.2): every registered
           # emission mouth calls conscience_check at its site. A registered site
           # removed/ungated in source => this grep-q fails => RED at build time,
-          # BEFORE it can leak. (A brand-NEW mouth is caught by the runtime per-
-          # site counters + the audit discipline that any new emission path must
-          # register a site + a cert leg.)
+          # BEFORE it can leak. This list must cover ALL FOUR gate TUs (cross-
+          # audit #8): r3_incontext.c AND student_shell.c AND the two free-standing
+          # LM mouths frontier.c (CHAT_REPLY) + cradle.c (LEARN), which declare the
+          # gate ABI locally (FR_/GLEARN_ prefixes) and were previously UNCOVERED.
+          # (A brand-NEW mouth is still caught by the runtime per-site counters +
+          # the audit discipline that any new emission path registers a site+leg.)
           grep -q 'conscience_check(CONS_SITE_ASK'         ../../arch/common/r3_incontext.c      || { echo 'G-ASK ungated';         exit 1; }
           grep -q 'conscience_check(CONS_SITE_LEARN'       ../../arch/common/r3_incontext.c      || { echo 'G-LEARN ungated';       exit 1; }
           grep -q 'conscience_check(CONS_SITE_REVISE'      ../../arch/common/r3_incontext.c      || { echo 'G-REVISE ungated';      exit 1; }
           grep -q 'conscience_check(CONS_SITE_WIRE'        ../../arch/common/r3_incontext.c      || { echo 'G-WIRE ungated';        exit 1; }
+          grep -q 'conscience_check(CONS_SITE_CHAT_REPLY'  ../../arch/common/r3_incontext.c      || { echo 'G-CHAT reply (r3) ungated'; exit 1; }
           grep -q 'conscience_check(CONS_SITE_CHAT_PROMPT' ../../arch/common/llm/student_shell.c || { echo 'G-CHAT prompt ungated'; exit 1; }
           grep -q 'conscience_check(CONS_SITE_CHAT_REPLY'  ../../arch/common/llm/student_shell.c || { echo 'G-CHAT reply ungated';  exit 1; }
+          grep -q 'conscience_check((unsigned char)FR_CONS_SITE_CHAT_REPLY' ../../arch/common/llm/frontier.c || { echo 'frontier G-CHAT reply ungated'; exit 1; }
+          grep -q 'conscience_check((unsigned char)GLEARN_CONS_SITE_LEARN'  ../../arch/common/llm/cradle.c   || { echo 'cradle G-LEARN ungated';       exit 1; }
           # the SHIPPING binary must contain NO compile-time stub marker (the
           # production binary has no bypass switch — conscience.md §6 anti-theater).
           ! ( strings ./p-kernel | grep -q 'CONSCIENCE_STUB_ACTIVE' ) || { echo 'stub marker in shipping binary!'; exit 1; }
@@ -538,14 +544,23 @@ jobs:
       #       HONESTY, so this gate is DELIBERATELY NOT asserted green here
       #       (scaling-law.md §4.4/§6.3: same corpus+arch+teacher => correlated
       #       errors at toy scale; a red here means §4.4's conclusion stands and
-      #       the doc says so). The over-the-wire [scaling-live-ensemble] arm is
-      #       ThinkPad-only; the in-process [scaling-quorum-degrade] certifies its
-      #       quorum_core don't-wait-for-the-dead + honest k/K logic.
+      #       the doc says so). An over-the-wire [scaling-live-ensemble] arm is a
+      #       NOT-YET-WIRED follow-up (no self-hosted [scaling-live] job exists);
+      #       the in-process [scaling-quorum-degrade] certifies its quorum_core
+      #       don't-wait-for-the-dead + honest k/K logic.
+      #   [scaling-agg-mechanism] the LOAD-BEARING mechanism falsifier (cross-
+      #       audit #5): divergent members whose confidence-weighted prob-mass
+      #       argmax is a class NO member NAMES -> only genuine Σconf·p
+      #       integration reaches it; a gutted r[0]/vote aggregator goes RED
+      #       (-DSCALING_AGG_STUB proves it). The converged-null delta==0 arm
+      #       CANNOT detect such a stub — this arm is why scaling now has a
+      #       load-bearing mechanism falsifier, not only an honest null.
       - name: Scaling-law society-of-minds ensemble cert (scaling-law.md §6)
         run: |
           cd boot/linux_x86_64
           timeout 300 sh -c "printf 'dtr gossip scaling\nexit\n' | ./p-kernel" | tee scaling_cert.log
           grep -aF '[scaling-agg-order] PASS'      scaling_cert.log
+          grep -aF '[scaling-agg-mechanism] PASS'  scaling_cert.log
           grep -aF '[scaling-lineage] PASS'        scaling_cert.log
           grep -aF '[scaling-topics-budget] PASS'  scaling_cert.log
           grep -aF '[scaling-converged-null] PASS' scaling_cert.log
@@ -1678,6 +1693,39 @@ jobs:
           grep -aF 'emission_leaked=1' stub_selftest.log || { echo 'stub did not leak the emission — probe never reached the mouth'; exit 1; }
           echo "ANTI-THEATER OK — the stub goes RED both directions; the cert is load-bearing."
 
+  scaling-agg-stub-red:
+    # SCALING ANTI-THEATER (BLOCKING; scaling-law.md §6.3, cross-audit #5). The
+    # falsifier for the falsifier: build a SECOND binary with -DSCALING_AGG_STUB
+    # (compile-time ONLY — the production ens_agg_conf has no runtime switch) in
+    # which the confidence-weighted aggregator is GUTTED to an r[0] passthrough.
+    # The SAME `dtr gossip scaling` harness MUST then show [scaling-agg-mechanism]
+    # FAIL (and its PASS line ABSENT). This proves the aggregation MECHANISM is
+    # load-bearing — the [scaling-converged-null] delta==0 arm CANNOT detect the
+    # stub (N identical copies => r[0] IS the solo answer), so without this arm
+    # scaling had no mechanism falsifier at all.
+    name: "society-of-minds anti-theater (-DSCALING_AGG_STUB must go RED)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+      - name: Build the STUB binary (-DSCALING_AGG_STUB — aggregator gutted to r[0])
+        run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSCALING_AGG_STUB
+      - name: The mechanism arm must go RED; the converged-null arm stays green (it cannot detect the stub)
+        run: |
+          cd boot/linux_x86_64
+          timeout 300 sh -c "printf 'dtr gossip scaling\nexit\n' | ./p-kernel" | tee scaling_stub.log
+          # the DISEASE: the mechanism arm goes RED under the gutted aggregator.
+          grep -aF '[scaling-agg-mechanism] FAIL' scaling_stub.log || { echo 'stub did NOT fail [scaling-agg-mechanism] — the arm is not load-bearing'; exit 1; }
+          ! grep -aF '[scaling-agg-mechanism] PASS' scaling_stub.log || { echo 'stub still PASSED [scaling-agg-mechanism]!'; exit 1; }
+          # the converged-null arm CANNOT tell the stub apart (this is the whole
+          # point of #5): it still PASSes with the aggregator gutted.
+          grep -aF '[scaling-converged-null] PASS' scaling_stub.log || { echo 'expected converged-null to still PASS under the stub (it cannot detect it)'; exit 1; }
+          echo "ANTI-THEATER OK — the mechanism arm goes RED when ens_agg_conf is gutted; scaling has a load-bearing mechanism falsifier."
+
   frontier-sabotage-red:
     # Frontier Mouth ANTI-THEATER (BLOCKING; frontier_mouth_design.md §7.1). The
     # falsifier for the provenance falsifier: build a SECOND binary with
@@ -1923,10 +1971,13 @@ jobs:
     #                        sizing with the wire bumped — which MUST FAIL to
     #                        compile (kdds.h wave-48 gate + pmesh beacon MTU). A
     #                        clean build is a HARD failure.
-    # Needs no qemu/training/relay, so it runs in normal CI. The REAL multi-
-    # process [live] relay row is WIRED (run_unbounded_live.sh) for the self-
-    # hosted ThinkPad (PRoot has no netns; feedback_proot_sandbox_net_limits).
-    name: "unbounded-N ([unbounded-flat/coupling/disease]; U-0 origin+topic decouple; hosted-only)"
+    # Needs no qemu/training/relay, so it runs in normal CI. NOT-YET-WIRED
+    # follow-up (honest): the REAL multi-process [live] relay row (a self-hosted
+    # ThinkPad job spinning up K ./p-kernel nodes over the relay) does NOT exist
+    # yet — run_unbounded_live.sh is a placeholder that SKIPs (exit 0), there is
+    # no self-hosted unbounded [live] job. PRoot has no netns anyway
+    # (feedback_proot_sandbox_net_limits); wiring it is deferred (U-2/U-3, §10).
+    name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1941,6 +1992,9 @@ jobs:
         run: |
           grep -aqF '[unbounded-flat]  PASS' unbounded.log
           grep -aqF '[unbounded-coupling]  PASS' unbounded.log
+          # cross-audit #3: the DKVA_CAGG origin axis is O(R) not O(N), proven
+          # NON-VACUOUSLY at R=32 < N=256 (a slot[DNODE_MAX] regression -> RED).
+          grep -aqF '[unbounded-dkva-origin]  PASS' unbounded.log
           grep -aqF '[unbounded-disease]  PASS' unbounded.log
           grep -aqF 'ALL GATES GREEN' unbounded.log
           # coupling: the R-sized cost is CONSTANT while the fleet table grows
@@ -1948,9 +2002,9 @@ jobs:
           grep -aqE 'fleet    dnode_table_bytes = .* -> .* -> .* \(GREW: wire widened\)' unbounded.log
           # disease genuinely failed to build (not a printf)
           grep -aqF 'disease REFUSED to build (correct)' unbounded.log
-          ! grep -aqE 'unbounded-(flat|coupling|disease)\]  FAIL' unbounded.log
+          ! grep -aqE 'unbounded-(flat|coupling|dkva-origin|disease)\]  (FAIL|RED)' unbounded.log
           ! grep -aqF 'the disease BUILT' unbounded.log
-      - name: "[unbounded-live] multi-process relay row is WIRED (runs on the ThinkPad, SKIP here)"
+      - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
         run: bash tests/unbounded/run_unbounded_live.sh
       - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)
         run: |
@@ -1959,13 +2013,20 @@ jobs:
 
   depth-deliberation:
     # ===== DEPTH / test-time DELIBERATION cert (ADDITIVE block — feat/depth-dlb).
-    # depth_iq_path_design.md §3/§6: depth from COMPUTE (thinking longer + checking
-    # itself), the ONE lever that buys depth WITHOUT touching weights and the one
-    # verified ABSENT from the tree ("D3 熟慮の中身は未"). DLB = SEARCH x VERIFY:
-    # sample K reasoning paths, VERIFY each (v1 lives in V-exact domains where the
-    # verifier is free + perfect, AUC=1), select the best; then COMPOUND — distill
-    # ONLY V-exact-verified winning traces into weights (the AlphaZero crack, §3.4)
-    # behind a HARD honesty gate (unverified traces amortize noise into confident
+    # depth_iq_path_design.md §3/§6: depth from COMPUTE (best-of-K search + an
+    # EXTERNAL verifier), the ONE lever that buys depth WITHOUT touching weights.
+    # HONEST SCOPE at summary altitude (cross-audit #7 — the cert BODY is already
+    # honest; this headline was not): what is PROVEN here is the MECHANISM
+    # (best-of-K search × a FREE, EXTERNAL V-exact verifier that solves the query
+    # so AUC=1 BY CONSTRUCTION — it is NOT the model checking ITSELF) on a cert
+    # FIXTURE (mod-10 arithmetic composition). It is NOT yet wired into the
+    # production mouth: dlb_answer has ZERO production callers (cert-only today),
+    # and the "depth uses the scaling ensemble as a V-fleet" seam is a NAMED
+    # FOLLOW-UP not present in code. DLB = SEARCH x VERIFY: sample K reasoning
+    # paths, VERIFY each (v1 lives in V-exact domains where the verifier is free +
+    # perfect, AUC=1), select the best; then COMPOUND — distill ONLY V-exact-
+    # verified winning traces into weights (the AlphaZero crack, §3.4) behind a
+    # HARD honesty gate (unverified traces amortize noise into confident
     # wrongness — the learner trap).
     #
     # arch/common/llm/dlb.c is HOSTED-tier (bare metal links student_stub.o; it
@@ -2078,8 +2139,9 @@ jobs:
     # engram replay, EXACT for R3), but NEVER its raw weights. Driven by the
     # `compat test gen` verb, built behind -DGEN_SURVIVE_CERT so the default
     # kernel + crown are byte-identical. Two-worktree [live] legs are ThinkPad-
-    # runner-only; this native-gcc job runs the in-proc cert + its two
-    # load-bearing falsifiers (F2 education, F5 accept-gate) going RED.
+    # runner-only; this native-gcc job runs the in-proc cert + its THREE
+    # load-bearing falsifiers (F2 education, F5 accept-gate, F6 -DGEN_SKIP_FLOOR
+    # the evolution↔conscience floor invariant / gate 6, cross-audit #1) going RED.
     name: "世代交代 succession ([generation-survives] + F2/F5 falsifiers)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -2113,6 +2175,19 @@ jobs:
           printf 'compat test gen\nexit\n' | timeout 240 ./p-kernel | tee gen_f5.log
           grep -aF '[generation-survives] FAIL' gen_f5.log      # MUST be RED
           ! grep -aqF '[generation-survives] PASS' gen_f5.log
+      - name: "F6 falsifier -DGEN_SKIP_FLOOR ([gen-floor-invariant]: floor gate 6 vacated → RED)"
+        # cross-audit #1: the evolution↔conscience floor invariant is ENFORCED,
+        # not merely declared. Vacating gate 6 (the successor floor-head match)
+        # lets a weakened-floor successor through → the [gen-floor-invariant] arm
+        # (and thus [generation-survives]) MUST go RED.
+        run: |
+          rm -f boot/linux_x86_64/gen_succession.o boot/linux_x86_64/compat_ota.o boot/linux_x86_64/p-kernel
+          make -C boot/linux_x86_64 EXTRA_CFLAGS="-DGEN_SURVIVE_CERT -DGEN_SKIP_FLOOR"
+          cd boot/linux_x86_64
+          printf 'compat test gen\nexit\n' | timeout 240 ./p-kernel | tee gen_f6.log
+          grep -aF '[gen-floor-invariant] weakened-floor successor REFUSED at gate 6: NO' gen_f6.log  # gate is vacuous
+          grep -aF '[generation-survives] FAIL' gen_f6.log      # MUST be RED
+          ! grep -aqF '[generation-survives] PASS' gen_f6.log
 
   smp-autodetect:
     # ②.0/②.N8 full-SMP + [smp-autodetect] cert (run_smp0.sh): builds the

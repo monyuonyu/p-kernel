@@ -16,19 +16,24 @@
  *
  *  Certs printed here (all self-contained; NO gguf file, NO network):
  *    [ctx-carry]           A(d) curve, full window (the measured deliverable).
- *    [ctx-carry-clamp]     the LOAD-BEARING falsifier: re-eval the TRAINED model
- *                          with the window forcibly clamped to 64 -> A(d>=96)
- *                          COLLAPSES to ~0 (the distant fact is dropped by
- *                          construction). Isolates that the WINDOW, not just more
- *                          training, produced any gain.
- *    [ctx-carry-window]    ANTI-THEATER (deterministic, training-independent):
- *                          perturb ONE distant fact byte -> the answer-position
- *                          logit FNV SHIFTS with the full window (the window
- *                          reads the distant byte, GREEN) but is UNCHANGED under
- *                          the 64-clamp (the byte is provably invisible ->
- *                          RED-when-the-window-is-stubbed). This is the load-
- *                          bearing falsifier going RED when its mechanism is
- *                          stubbed, in-harness.
+ *    [ctx-carry-clamp]     a CONTROL, semi-tautological (cross-audit #9): re-eval
+ *                          the TRAINED model with the window forcibly clamped to
+ *                          64 -> A(d>=96) COLLAPSES to ~0. This ISOLATES window-
+ *                          vs-more-training, but clamping literally REMOVES the
+ *                          distant byte from the input, so the collapse is true
+ *                          of ANY model — it is NOT itself the mechanism proof.
+ *                          The load-bearing half is [ctx-carry-window]'s
+ *                          full_reads (below).
+ *    [ctx-carry-window]    ANTI-THEATER (deterministic, training-independent).
+ *                          The LOAD-BEARING half: perturb ONE distant fact byte
+ *                          and the answer-position logit FNV SHIFTS under the
+ *                          FULL window (ST_MAXSEQ=256) — proof the widened window
+ *                          genuinely READS a byte 96+ back; if the window
+ *                          mechanism were absent/stubbed this signal VANISHES ->
+ *                          RED. The 64-clamp half (byte UNCHANGED) is a by-
+ *                          CONSTRUCTION control (the byte was physically removed),
+ *                          not an independent mechanism proof; a DIFFER there
+ *                          would instead flag a harness leak.
  *    [gen-cohort-island]   a v1 blob offered to a v2 model is REFUSED by
  *                          st_load / st_blob_tier_ok / st_merge_cohort, model
  *                          BYTE-UNCHANGED (NS_STUDENT_VER 1->2 is load-bearing:
@@ -255,15 +260,16 @@ static int cert_window_mechanism(st_model *m)
                               : "SAME (window did NOT read it)");
     printf("   64-CLAMP    : answer logit_hash  A=%016llx  B=%016llx  -> %s\n",
            (unsigned long long)hClampA, (unsigned long long)hClampB,
-           (hClampA == hClampB) ? "SAME (distant byte INVISIBLE)  [RED-when-stubbed]"
-                                : "DIFFER (clamp leaked the byte?!)");
+           (hClampA == hClampB) ? "SAME (distant byte physically REMOVED — by-construction control)"
+                                : "DIFFER (clamp leaked the byte?! — harness bug)");
     int full_reads  = (hFullA != hFullB);
     int clamp_blind = (hClampA == hClampB);
-    printf("   => the load-bearing falsifier goes RED (signal vanishes) exactly when the\n");
-    printf("      window is STUBBED (clamped to 64): stub the widened window and the\n");
-    printf("      distant-fact dependency collapses. Not fakeable by the sampler/loop.\n");
-    CHECK(full_reads,  "[ctx-carry-window] full window: answer logits DEPEND on the distant fact byte");
-    CHECK(clamp_blind, "[ctx-carry-window] clamp-64: answer logits CANNOT depend on it (collapse)");
+    printf("   => LOAD-BEARING (cross-audit #9): full_reads — the ST_MAXSEQ=%d window\n", ST_MAXSEQ);
+    printf("      DEPENDS on a byte 96+ back; if the widened window were absent/stubbed\n");
+    printf("      this signal VANISHES -> RED. The 64-clamp half is a by-construction\n");
+    printf("      control (the byte is removed), not an independent mechanism proof.\n");
+    CHECK(full_reads,  "[ctx-carry-window] full window (LOAD-BEARING): answer logits DEPEND on the distant fact byte");
+    CHECK(clamp_blind, "[ctx-carry-window] clamp-64 (by-construction control): the byte is removed so logits cannot depend on it");
     return (full_reads && clamp_blind) ? 0 : 1;
 }
 
@@ -431,8 +437,8 @@ int main(int argc, char **argv)
         printf("   %-4d  %+9.5f    %+9.5f    %s\n", dsweep[i], Afull[i], Aclamp[i], note);
     }
 
-    /* ---- [ctx-carry-clamp] the window-clamp collapse at large d (the falsifier) */
-    printf("\n[ctx-carry-clamp] LOAD-BEARING FALSIFIER — clamp the TRAINED model to 64:\n");
+    /* ---- [ctx-carry-clamp] the window-clamp collapse at large d (a CONTROL) */
+    printf("\n[ctx-carry-clamp] CONTROL (semi-tautological, cross-audit #9) — clamp the TRAINED model to 64:\n");
     {
         /* pick the largest swept d >= 96 for the collapse assertion. */
         int idx = -1; for (int i = 0; i < nd; i++) if (dsweep[i] >= 96) idx = i;
@@ -440,9 +446,10 @@ int main(int argc, char **argv)
         float ac = Aclamp[idx];
         float aca = ac < 0 ? -ac : ac;
         printf("   at d=%d:  A_full=%+.5f   A_clamp64=%+.5f\n", dsweep[idx], Afull[idx], ac);
-        printf("   the clamp drops the fact by construction, so A_clamp(d>=96) must be ~0.\n");
+        printf("   the clamp drops the fact BY CONSTRUCTION (true of any model), so this ISOLATES\n");
+        printf("   window-vs-training; the load-bearing mechanism proof is [ctx-carry-window] full_reads.\n");
         /* collapse bar: |A_clamp| small in absolute nats (measured-minus-margin). */
-        CHECK(aca < 0.05f, "[ctx-carry-clamp] A_clamp64(d>=96) collapses to ~0 (window is load-bearing)");
+        CHECK(aca < 0.05f, "[ctx-carry-clamp] A_clamp64(d>=96) collapses to ~0 (control: isolates window-vs-training)");
     }
 
     /* ---- window mechanism anti-theater proof (deterministic) ---- */

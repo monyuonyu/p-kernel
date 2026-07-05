@@ -47,6 +47,13 @@ extern const uint8_t *cradle_window_src(int *len_out);
 #define FR_CONS_SITE_CHAT_REPLY  5   /* G-CHAT reply (CONS_SITE_CHAT_REPLY)      */
 #define FR_CONS_ALLOW            0
 typedef struct { const char *text; int tlen; const char *text2; int tlen2; } FR_CONS_QUERY;
+/* [conscience ABI guard] (cross-audit #8): pin the length-field widths so a
+ * silent widen (the LP64 typedef trap) here or in conscience.h::CONS_QUERY
+ * trips a build assert instead of corrupting the gate query at the boundary. */
+_Static_assert(sizeof(((FR_CONS_QUERY*)0)->tlen)  == sizeof(int),
+               "FR_CONS_QUERY.tlen drifted from conscience.h::CONS_QUERY (INT)");
+_Static_assert(sizeof(((FR_CONS_QUERY*)0)->tlen2) == sizeof(int),
+               "FR_CONS_QUERY.tlen2 drifted from conscience.h::CONS_QUERY (INT)");
 extern int         conscience_check(unsigned char site, const FR_CONS_QUERY *q);
 extern const char *conscience_on_refuse(unsigned char site, int verdict);
 

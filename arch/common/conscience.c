@@ -286,6 +286,23 @@ INT law_ensure_verified(void)
     return g_cons.verified == 1;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* content-id of the ACTIVE verified floor (law/floor chain head). Fail-closed:
+ * a non-verifying floor returns 0 with id_out zeroed. The generation-succession
+ * OTA gate (compat_ota_accept_gen gate 6) pins this so a successor that dropped
+ * or weakened the floor — which content-addresses to a DIFFERENT head id — is
+ * REFUSED (migration-succession.md; cross-audit #1). g_active holds the verified
+ * head bytes after law_verify (persisted-chain head, or the compiled-in genesis
+ * when no chain is persisted). */
+INT law_floor_head_id(U1 id_out[PFS_ID_LEN])
+{
+    for (INT i = 0; i < PFS_ID_LEN; i++) id_out[i] = 0;
+    if (!law_ensure_verified()) return 0;          /* fail-closed */
+    pfs_id_compute(&g_active, (UW)sizeof g_active, id_out);
+    return 1;
+}
+#endif
+
 /* force a fresh verify from the store (used after an amendment or a cert
  * tamper/restore). Available on ALL builds (law_amend needs it bare-metal). */
 static void law_reverify(void) { g_cons.verified = -1; g_active_ready = 0; (void)law_verify(); }

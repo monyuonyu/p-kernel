@@ -20,6 +20,9 @@
 #define OTA_REJECT_SIG       (-1) /* gate 1-3: sign_manifest_verify refused    */
 #define OTA_REJECT_DOWNGRADE (-2) /* gate 4: ver <= running / non-successor    */
 #define OTA_REJECT_PREDECESSOR (-3) /* gate 5: names a predecessor != mine     */
+#define OTA_REJECT_FLOOR     (-4) /* gate 6: floor unverifiable, or the         */
+                                  /*         successor names a floor != mine    */
+                                  /*         (dropped/weakened 良心 floor)      */
 
 /* The 4-gate AND (design §4.2). Returns OTA_ACCEPT iff:
  *   (1)(2)(3) sign_manifest_verify(m, actual_id) == 1   — the SHIPPED 3 gates
@@ -48,12 +51,25 @@ INT compat_ota_accept(const SIGN_MANIFEST *m,
 /*                                                                       */
 /*    ACCEPT(generation) iff                                             */
 /*       compat_ota_accept(m, actual_id, running_ver) == OTA_ACCEPT      */
-/*       AND succ->predecessor_archspec_id == my_archspec_id             */
+/*       AND succ->predecessor_archspec_id == my_archspec_id     (gate 5)*/
+/*       AND succ->invariant_ids[GEN_INV_FLOOR] == law_floor_head_id     */
+/*           AND law_floor_head_id verifies                       (gate 6)*/
+/*                                                                       */
+/* GATE 6 (cross-audit #1) — the evolution↔conscience FLOOR invariant,   */
+/* ENFORCED not merely declared: the successor manifest must NAME this    */
+/* node's ACTUAL verified 良心 floor-chain head (law_floor_head_id). A     */
+/* successor that DROPPED or WEAKENED the immutable floor content-        */
+/* addresses to a DIFFERENT head id (or the running floor fails           */
+/* law_verify) → OTA_REJECT_FLOOR. Under -DGEN_SKIP_FLOOR gate 6 is        */
+/* vacuous, so a successor carrying a mismatched/weakened floor is        */
+/* accepted → the [generation-survives] floor arm goes RED (the anti-     */
+/* theater discipline reused verbatim).                                  */
 /*                                                                       */
 /* succ travels INSIDE the signed artifact body (bound by gates 1-2), so */
-/* a body-swap of the predecessor name breaks the signature. Returns     */
-/* OTA_ACCEPT, or the OTA_REJECT_* of the gate that fired (gate 5 =       */
-/* OTA_REJECT_PREDECESSOR). fail-closed. Under -DOTA_SKIP_VERIFY the      */
+/* a body-swap of the predecessor name OR the floor id breaks the         */
+/* signature. Returns OTA_ACCEPT, or the OTA_REJECT_* of the gate that    */
+/* fired (gate 5 = OTA_REJECT_PREDECESSOR; gate 6 = OTA_REJECT_FLOOR).    */
+/* fail-closed. Under -DOTA_SKIP_VERIFY the                              */
 /* inner accept is vacuous -> a tampered generation artifact is accepted  */
 /* -> the [generation-survives] cert goes RED (F5, the shipped anti-      */
 /* theater discipline reused verbatim). Hosted-only by TU placement;      */

@@ -71,6 +71,18 @@ typedef struct {
     INT         tlen2;
 } CONS_QUERY;
 
+/* [conscience ABI guard] (cross-audit #8). The free-standing LM mouths
+ * (frontier.c FR_CONS_QUERY / cradle.c GLEARN_CONS_QUERY / student_shell.c
+ * CONS_QUERY) HAND-MIRROR this struct WITHOUT including this header. Pin the
+ * length-field widths here AND (reciprocally) in each mirror so the documented
+ * LP64 typedef trap — a length field silently widening to `long` (8 B) —
+ * trips a BUILD assert on whichever side drifted, before an ABI mismatch can
+ * corrupt the gate query at the call boundary. */
+_Static_assert(sizeof(((CONS_QUERY*)0)->tlen)  == sizeof(int),
+               "CONS_QUERY.tlen is the mirrored gate ABI (INT=int width); a widen breaks the LM mouth mirrors");
+_Static_assert(sizeof(((CONS_QUERY*)0)->tlen2) == sizeof(int),
+               "CONS_QUERY.tlen2 is the mirrored gate ABI (INT=int width); a widen breaks the LM mouth mirrors");
+
 /* ── the immutable floor block (design §5.1). Fixed-width fields only (the    */
 /* LP64 trap): U1/U2/U4, _Static_assert'd in conscience.c. Identical layout on */
 /* ILP32 and LP64 (every member ≤4-byte aligned) so its content-id matches     */
@@ -141,6 +153,20 @@ INT  law_verify(void);
 /* boot / lazy entry: run law_verify once and cache; re-run on demand. Returns
  * 1 = floor verified, 0 = REJECT. conscience_check consults the cache. */
 INT  law_ensure_verified(void);
+
+#ifdef _TK_HOSTED_LIBC_
+/* The content-id (pfs_id_compute) of the ACTIVE, VERIFIED floor — the head of
+ * the immutable law/floor chain. Runs the fail-closed verifier first; on PASS
+ * returns 1 with id_out = the floor-chain-head id, on a non-verifying floor
+ * returns 0 with id_out zeroed (fail-closed). This is the id a generation-
+ * succession manifest PINS: compat_ota gate 6 REFUSES a successor whose named
+ * floor id != this running node's verified floor head (a dropped/weakened floor
+ * names a different id) — the evolution↔conscience floor invariant, ENFORCED
+ * (migration-succession.md; cross-audit #1). Hosted-only (the succession/OTA
+ * gate is hosted-tier); the declaration is a prototype so bare-metal .text is
+ * unmoved. */
+INT  law_floor_head_id(U1 id_out[PFS_ID_LEN]);
+#endif
 
 /* monotone-tighten amendment (design §3.3 / §5.3): ADD one deny rule (class,
  * pattern) as a new FLOOR-marked entry chaining prev=current head. REFUSES to
