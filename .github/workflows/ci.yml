@@ -515,6 +515,47 @@ jobs:
           # the SHIPPING binary must contain NO compile-time stub marker (the
           # production binary has no bypass switch — conscience.md §6 anti-theater).
           ! ( strings ./p-kernel | grep -q 'CONSCIENCE_STUB_ACTIVE' ) || { echo 'stub marker in shipping binary!'; exit 1; }
+      # ===== scaling-law society-of-minds ensemble cert (ADDITIVE block —
+      # feat/scaling-ensemble). docs/architecture/scaling-law.md §6: is "smarter
+      # per-answer with N" (axis c) DESIGNED+MEASURED, or only asserted? The
+      # in-process arms use the proven g22 N-simulation pattern and run through
+      # the REAL dtr answer path (dtr_forward_probs), never a count of stored
+      # bytes. Confounds ruled out by construction: "just more data" (corpus+step
+      # budget HELD CONSTANT in the ensemble arm), "one node did the work" (the
+      # vote-flip assert), "cosmetic capacity" (returned-answer accuracy only).
+      #   [scaling-converged-null] the DISEASE / anti-theater keystone: N gossip-
+      #       CONVERGED bit-identical nodes ensemble-answer Q_hard and the
+      #       collective EQUALS the solo answer on EVERY item (delta==0 EXACTLY —
+      #       one-math makes it an equality). Node COUNT alone buys ZERO.
+      #   [scaling-breadth-curve] breadth is linear-then-knee: the gossip-merged
+      #       consensus beats EVERY solo node and the KNEE (first N with ΔB<margin)
+      #       is printed as the honest capacity headline.
+      #   [scaling-ensemble] the CURE arm (K distinct-seed lineages), measured on
+      #       Q_hard (low SOLO confidence). PASSES on a VALID measurement — GAIN or
+      #       NULL — regardless of who wins (the [wmerge-vs-mean] discipline).
+      #   [scaling-ensemble-gain] STRICT: green ONLY if diversity buys a real
+      #       bounded gain. The PRE-REGISTERED NULL is ALLOWED and is a PASS of
+      #       HONESTY, so this gate is DELIBERATELY NOT asserted green here
+      #       (scaling-law.md §4.4/§6.3: same corpus+arch+teacher => correlated
+      #       errors at toy scale; a red here means §4.4's conclusion stands and
+      #       the doc says so). The over-the-wire [scaling-live-ensemble] arm is
+      #       ThinkPad-only; the in-process [scaling-quorum-degrade] certifies its
+      #       quorum_core don't-wait-for-the-dead + honest k/K logic.
+      - name: Scaling-law society-of-minds ensemble cert (scaling-law.md §6)
+        run: |
+          cd boot/linux_x86_64
+          timeout 300 sh -c "printf 'dtr gossip scaling\nexit\n' | ./p-kernel" | tee scaling_cert.log
+          grep -aF '[scaling-agg-order] PASS'      scaling_cert.log
+          grep -aF '[scaling-lineage] PASS'        scaling_cert.log
+          grep -aF '[scaling-topics-budget] PASS'  scaling_cert.log
+          grep -aF '[scaling-converged-null] PASS' scaling_cert.log
+          grep -aF '[scaling-breadth-curve] PASS'  scaling_cert.log
+          grep -aF '[scaling-ensemble] PASS'       scaling_cert.log
+          grep -aF '[scaling-quorum-degrade] PASS' scaling_cert.log
+          grep -aF '[scaling-curve] PASS'          scaling_cert.log
+          # fail CLOSED on any [scaling-*] FAIL (a silently-broken arm). We do NOT
+          # assert [scaling-ensemble-gain] PASS: the pre-registered null is honest.
+          ! grep -aE '\[scaling-[a-z-]+\] FAIL' scaling_cert.log
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),

@@ -193,7 +193,8 @@ COMMON_C_SRCS = \
     compat_ota.c \
     compat_arkfs_gap.c \
     cradle_net.c \
-    modver.c
+    modver.c \
+    scaling_cert.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

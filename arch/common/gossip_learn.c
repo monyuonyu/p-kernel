@@ -15,6 +15,7 @@
  */
 
 #include "gossip_learn.h"
+#include "scaling_cert.h" /* hosted: scaling_self_test (self-guards on bare metal) */
 #include "dtr.h"
 #include "reflex.h"      /* G38: 学習→守る (reflex_would_fire) / 守る→学習 (経験) */
 #include "pfs_block.h"
@@ -1285,6 +1286,16 @@ static UW gl_fold_cached_peers(UB me)
     return cnt - 1;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* ENS-A lineage scoping (scaling-law.md §4.2) — HOSTED-only so the bare-metal
+ * .text crown does NOT move (the preprocessor removes this whole block + the
+ * one guarded line inside gl_merge_peers below on bare metal). Default 0 =
+ * DISABLED, so ordinary live gossip is byte-for-byte its pre-ensemble self. */
+UW  gl_ens_lineage_k = 0;
+void gl_ens_set_lineage_k(UW k) { gl_ens_lineage_k = k; }
+UW   gl_ens_get_lineage_k(void) { return gl_ens_lineage_k; }
+#endif
+
 static UW gl_merge_peers(UB me)
 {
     /* transport: pull each peer's freshest model into the cache, then fold
@@ -1299,6 +1310,16 @@ static UW gl_merge_peers(UB me)
      * window, no matter how slowly the failure detector converges. */
     for (UB p = 0; p < DNODE_MAX; p++) {
         if (p == me) continue;
+#ifdef _TK_HOSTED_LIBC_
+        /* ENS-A (scaling-law.md §4.2): when lineage scoping is active, fold
+         * ONLY same-lineage peers (lineage = node_id % k). Across lineages we
+         * share facts/engrams (teach), not weights — divergent lineages stay
+         * divergent, and their disagreement on hard questions is exactly the
+         * variance the ensemble harvests. HOSTED-only guard; bare metal never
+         * sees this line, so its .text crown is unchanged. */
+        if (gl_ens_lineage_k && (p % gl_ens_lineage_k) != (me % gl_ens_lineage_k))
+            continue;
+#endif
         /* Probe EVERY id (not just SWIM-ALIVE ones) so a published-but-not-
          * yet-ALIVE peer is discovered by its content. The retry WAIT, though,
          * is only spent on a peer we have reason to believe is really there
@@ -1556,6 +1577,9 @@ void gl_cmd(const UB *args, UW len)
     if (gl_tok(p, end, "test")) { gl_self_test(); return; }
     if (gl_tok(p, end, "g38"))  { gl_g38_test(); return; }   /* §8 two-layer couple */
     if (gl_tok(p, end, "ceiling")) { gl_g23_test(); return; }  /* G23 node ceiling >32 */
+#ifdef _TK_HOSTED_LIBC_
+    if (gl_tok(p, end, "scaling")) { scaling_self_test(); return; }  /* society-of-minds [scaling-*] cert */
+#endif
     if (gl_tok(p, end, "guard")) {                            /* live guard score   */
         p += 5;
         const UB *q = gl_skip_ws(p, end);
