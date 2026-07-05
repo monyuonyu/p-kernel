@@ -202,11 +202,15 @@ COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 # ---- arch/common/llm sources（自己ビルド SmolLM2 推論エンジン） -------
 LLM_DIR     = $(ARCH_COMMON)/llm
 LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
-              llm_shell.c student.c dev_capacity.c student_shell.c cradle.c
+              llm_shell.c student.c dev_capacity.c student_shell.c cradle.c \
+              frontier.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
+# $(EXTRA_CFLAGS) reaches the LLM tier too so the Frontier Mouth sabotage flag
+# (-DSABOTAGE_FRONTIER_NOLABEL) can stub frontier.c's labeler for the anti-
+# theater job — the SAME channel CFLAGS uses for -DCONSCIENCE_STUB.
 LLM_CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
               -fno-stack-protector -fno-common -std=gnu11 \
-              -ffp-contract=off -MMD -MP -I$(LLM_DIR)
+              -ffp-contract=off -MMD -MP -I$(LLM_DIR) -DCRADLE_HAS_CONSCIENCE $(EXTRA_CFLAGS)
 
 # ---- μT-Kernel 3.0 core sources ---------------------------------------
 # コア本体（kernel/tkernel）

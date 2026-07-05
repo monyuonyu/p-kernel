@@ -64,6 +64,11 @@ typedef struct { const char *text; int tlen; const char *text2; int tlen2; } CON
 extern int   conscience_check(unsigned char site, const CONS_QUERY *q);
 extern const char *conscience_on_refuse(unsigned char site, int verdict);
 
+/* Frontier Mouth cert entry (arch/common/llm/frontier.c). `student frontier`
+ * drives the [frontier-*] falsifiers against a MOCK mouthd (no network/key).
+ * Hosted-only, exactly like this whole TU. */
+extern void frontier_self_test(void (*emit)(const char *));
+
 /* ---------------------------------------------------------------------------
  * T-fix-a (thread-t-impl-plan.md §2.3): the STRONG override of swim.c's WEAK
  * teacher_gguf_loaded() hook. swim.c::teacher_self() calls this to decide
@@ -1151,6 +1156,15 @@ int student_shell_cmd(const char *args, emit_fn emit)
     char line[200];
     const char *p = args ? args : "";
     while (*p == ' ' || *p == '\t') p++;
+
+    /* `student frontier` — the Frontier Mouth cert (CONSULT/TEACH). Runs BEFORE
+     * student_ensure so it needs NO resident baby (the degrade leg builds its
+     * own fixture baby); a MOCK mouthd makes it deterministic + offline. */
+    if (p[0]=='f'&&p[1]=='r'&&p[2]=='o'&&p[3]=='n'&&p[4]=='t'&&
+        p[5]=='i'&&p[6]=='e'&&p[7]=='r') {
+        frontier_self_test(emit);
+        return 0;
+    }
 
     if (student_ensure(emit) != 0) return -1;
 

@@ -394,7 +394,16 @@ set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c
 # overrides them. This is its OWN list (not COMMON_SRC) so tools/android/
 # check_parity.sh stays green: student_shell.c is host-only and lives in the host
 # Makefiles' LLM_C_SRCS, which check_parity does not compare against COMMON.
-set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c)
+set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c
+    # Frontier Mouth: Android-bionic links the STUB, not frontier.c (design
+    # frontier_mouth §1.3/§4 — "Android-bionic nodes without the companion simply
+    # link the stub and are byte-honest baseline nodes forever"). galaxy.c's
+    # CONSULT verb + student_shell.c's `student frontier` reference frontier_*
+    # here (hosted-guarded, and _TK_HOSTED_LIBC_ IS set on Android); the WEAK
+    # no-ops resolve them to a graceful "no mouth" degrade with NO new conscience
+    # dependency on the .so. A phone that later wants the real socket adds
+    # frontier.c to LLM_STUDENT_SRC (like the two hosted Makefiles).
+    ${ARCH_CO}/llm/frontier_stub.c)
 
 # --- the RESIDENT student engine (wave-android-student) --------------------
 # The chat ⑥ + DMN sleep ④ + boot-restore ③ on the phone are POWERED by the
