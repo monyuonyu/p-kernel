@@ -556,6 +556,57 @@ jobs:
           # fail CLOSED on any [scaling-*] FAIL (a silently-broken arm). We do NOT
           # assert [scaling-ensemble-gain] PASS: the pre-registered null is honest.
           ! grep -aE '\[scaling-[a-z-]+\] FAIL' scaling_cert.log
+      # ===== Frontier Mouth cert (ADDITIVE block — feat/frontier-mouth).
+      # docs/architecture/frontier_mouth_design.md: the ownerless mind's OPTIONAL
+      # socket onto stronger brains (CONSULT = a labeled borrowed voice; TEACH =
+      # open-license teacher text digested via cradle). ALL legs run in-process
+      # against a MOCK mouthd (seeded fixtures, no network/key) so strict CI can
+      # gate them; the reply carries a hex SENTINEL the 2M-param student provably
+      # cannot generate, so student babble can never impersonate a consult.
+      #   [frontier-prov]  the sentinel appears ONLY inside src:"frontier" frames;
+      #       the model id + the R3-fact context block round-trip. The falsifier
+      #       is the SEPARATE frontier-sabotage-red job (-DSABOTAGE_FRONTIER_NOLABEL
+      #       stubs the labeler ⇒ the sentinel leaks ⇒ [frontier-prov] RED).
+      #   [frontier-degrade]  no mouthd ⇒ the honest note + ZERO fabricated consult
+      #       frames + the student's OWN voice still streams + bounded ticks (no
+      #       wedge on a dead socket). The ownerless line: unplug the socket and
+      #       the node is a byte-honest baseline node.
+      #   [frontier-conscience]  the immutable floor gates the borrowed voice:
+      #       G-CHAT refuses a HARMFUL consult reply (zero frontier bytes reach the
+      #       sink, no probe/content echo) AND G-LEARN refuses a poisoned TEACH
+      #       lesson AT cradle_lesson_ingest (ring byte-identical).
+      #   [teach-prov]  the provenance header round-trips (model+license recorded);
+      #       a STRIPPED header is REFUSED, not silently ingested (the license line
+      #       is enforced by the teacher_kind enum — there is no FRONTIER_API kind).
+      #   [frontier-nonce]  a reply whose DONE echo mismatches the request nonce is
+      #       rejected — a stub that never reached the mouth cannot fake a citation.
+      - name: Frontier Mouth cert (frontier_mouth_design.md §7)
+        run: |
+          cd boot/linux_x86_64
+          timeout 300 sh -c "printf 'student frontier\nexit\n' | ./p-kernel" | tee frontier_cert.log
+          grep -aF '[frontier-prov] PASS'       frontier_cert.log
+          grep -aF '[frontier-degrade] PASS'    frontier_cert.log
+          grep -aF '[frontier-conscience] PASS' frontier_cert.log
+          grep -aF '[teach-prov] PASS'          frontier_cert.log
+          grep -aF '[frontier-nonce] PASS'      frontier_cert.log
+          # exactly TWO [frontier-conscience] PASS legs (G-CHAT + G-LEARN) and TWO
+          # [teach-prov] PASS legs (round-trip + stripped-refused) must be present.
+          [ "$(grep -acF '[frontier-conscience] PASS' frontier_cert.log)" -ge 2 ]
+          [ "$(grep -acF '[teach-prov] PASS'          frontier_cert.log)" -ge 2 ]
+          # fail CLOSED on any [frontier-*]/[teach-*] FAIL (a silently-broken leg).
+          ! grep -aE '\[(frontier|teach)-[a-z-]+\] FAIL' frontier_cert.log
+          # ── the OWNERLESS static leg (design §1.5/§7.4): CONSULT has NO write
+          # edge into the student's self. frontier_consult (+ its frame emitters)
+          # must never call a cradle ingest — API text is SPOKEN, never eaten. The
+          # ONLY cradle caller in frontier.c is frontier_teach_ingest (the TEACH
+          # path). Extract the frontier_consult body and prove it holds ZERO cradle.
+          awk '/^int frontier_consult\(/{f=1} f{print} f&&/^\}/{exit}' \
+            ../../arch/common/llm/frontier.c > /tmp/consult_body.c
+          ! grep -q 'cradle' /tmp/consult_body.c || { echo 'CONSULT has a write-edge into cradle — NOT ownerless'; exit 1; }
+          # and the G-LEARN gate really lives AT the cradle ring-write site.
+          grep -q 'conscience_check((unsigned char)GLEARN_CONS_SITE_LEARN' ../../arch/common/llm/cradle.c \
+            || { echo 'G-LEARN missing at cradle_lesson_ingest'; exit 1; }
+          echo "frontier-mouth: consult is spoken-not-eaten (no cradle write-edge); the floor gates both mouths."
       # galaxy v1 (docs/architecture/galaxy.md §8): the observation window's
       # data-plane gate — curl-driven, non-flaky (end-state within a bound).
       # [galaxy-serve] (2-node mesh: me + ALIVE peer + embedded page),
@@ -1557,6 +1608,39 @@ jobs:
           # genuinely reaches the mouth and the harness genuinely detects emission).
           grep -aF 'emission_leaked=1' stub_selftest.log || { echo 'stub did not leak the emission — probe never reached the mouth'; exit 1; }
           echo "ANTI-THEATER OK — the stub goes RED both directions; the cert is load-bearing."
+
+  frontier-sabotage-red:
+    # Frontier Mouth ANTI-THEATER (BLOCKING; frontier_mouth_design.md §7.1). The
+    # falsifier for the provenance falsifier: build a SECOND binary with
+    # -DSABOTAGE_FRONTIER_NOLABEL (compile-time ONLY — the shipping binary has NO
+    # runtime switch) in which frontier.c's labeler drops the src:"frontier" key.
+    # The hex sentinel then LEAKS OUTSIDE a labeled frame and the SAME `student
+    # frontier` harness MUST print [frontier-prov] RED (and the PASS line MUST be
+    # ABSENT). If the stubbed build still passed, the whole provenance cert would
+    # be theater — this job proves the label is load-bearing: frontier content
+    # laundered as the mind's own thought is the failure it makes impossible to
+    # ship. (The other legs — degrade/conscience/nonce — stay PASS under the
+    # sabotage: only the labeler is removed, exactly one falsifier at a time.)
+    name: "frontier mouth anti-theater (-DSABOTAGE_FRONTIER_NOLABEL must go RED)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+      - name: Build the SABOTAGE binary (-DSABOTAGE_FRONTIER_NOLABEL — labeler stubbed)
+        run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSABOTAGE_FRONTIER_NOLABEL
+      - name: The provenance cert MUST go RED
+        run: |
+          cd boot/linux_x86_64
+          timeout 300 sh -c "printf 'student frontier\nexit\n' | ./p-kernel" | tee frontier_sab.log
+          # the DISEASE: the sentinel leaks outside a labeled frame.
+          grep -aF '[frontier-prov] RED' frontier_sab.log || { echo 'sabotage did NOT leak the sentinel — the labeler is not load-bearing, cert is theater'; exit 1; }
+          # and the PASS line MUST be ABSENT (only the real labeler can produce it).
+          ! grep -aF '[frontier-prov] PASS' frontier_sab.log || { echo 'sabotage still PASSED [frontier-prov]!'; exit 1; }
+          echo "ANTI-THEATER OK — the src:\"frontier\" label is load-bearing; provenance cannot silently rot."
 
   connect-anywhere-certs:
     # 接続フォールバック cert (BLOCKING). Wires the three in-process certs that

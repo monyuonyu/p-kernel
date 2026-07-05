@@ -36,6 +36,27 @@
 #include "student.h"
 #include <string.h>     /* memcpy / memset                                  */
 
+/* ── 良心 G-LEARN gate ABI (design frontier_mouth §3 I2) ─────────────────────
+ * A cradle lesson trains the mouth ITSELF (a poisoned lesson shapes what the
+ * student says forever), so cradle_lesson_ingest scans the lesson bytes through
+ * the immutable floor BEFORE the ring accepts them. Guarded by
+ * CRADLE_HAS_CONSCIENCE — set ONLY by the KERNEL builds that link conscience.c
+ * (boot/linux + boot/linux_x86_64 LLM_CFLAGS, android LLM props). It is NOT set
+ * by the STANDALONE cradle cert (tests/llm/cradle_teach_proof.c, compiled with
+ * NO conscience.c), so that build stays byte-for-byte unchanged; and bare metal
+ * does not build cradle.c at all. (A dedicated macro, not _TK_HOSTED_LIBC_: the
+ * standalone cert IS a hosted-libc program yet has no conscience — the two are
+ * distinct facts.) The ABI is declared locally — the LM-tier libc-light pattern
+ * (student_shell.c), NO cross-include of conscience.h. Layout mirrors
+ * conscience.h::CONS_QUERY; only the symbol names bind at link. */
+#ifdef CRADLE_HAS_CONSCIENCE
+#define GLEARN_CONS_SITE_LEARN  1   /* == CONS_SITE_LEARN (G-LEARN)             */
+#define GLEARN_CONS_ALLOW       0
+typedef struct { const char *text; int tlen; const char *text2; int tlen2; } GLEARN_CONS_QUERY;
+extern int         conscience_check(unsigned char site, const GLEARN_CONS_QUERY *q);
+extern const char *conscience_on_refuse(unsigned char site, int verdict);
+#endif
+
 /* ---------------------------------------------------------------------------
  * The lesson ring — the corpus SOURCE that replaces the static fixture when a
  * teacher has delivered a lesson (thread-t-impl-plan.md §2.2). A node with NO
@@ -104,6 +125,26 @@ int cradle_lesson_ingest(const uint8_t *body, int len)
     if (g_lesson_frozen) return 0;
     if (!body || len <= 0 || len > CRADLE_RING_BYTES) return -1;
     if (len < CRADLE_MIN_LIVE) return -1;   /* too small to train -> keep fixture */
+
+#ifdef CRADLE_HAS_CONSCIENCE
+    /* ── 良心 G-LEARN (design frontier_mouth §3 I2): the ONE ring-write site is
+     * the ingestion chokepoint for EVERY teacher (SmolLM2 fixture, volunteer
+     * open-license, mesh pull). Scan the lesson bytes through the SAME lexical
+     * floor everything else passes (one floor, one law). Refuse ⇒ the ring stays
+     * BYTE-IDENTICAL (cradle_window_src unchanged) and the transport's high-water
+     * does NOT advance (it only advances on a >0 return), so a refused lesson is
+     * not silently swallowed. This is the -1 hard-refuse, distinct from the 0
+     * freeze-defer above. */
+    {
+        GLEARN_CONS_QUERY q = { (const char *)body, len, 0, 0 };
+        int cv = conscience_check((unsigned char)GLEARN_CONS_SITE_LEARN, &q);
+        if (cv != GLEARN_CONS_ALLOW) {
+            (void)conscience_on_refuse((unsigned char)GLEARN_CONS_SITE_LEARN, cv);
+            return -1;   /* [conscience-refuse] G-LEARN cradle — ring unchanged */
+        }
+    }
+#endif
+
     memcpy(g_lesson_ring, body, (size_t)len);
     g_lesson_len = len;
     return len;

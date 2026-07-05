@@ -59,6 +59,24 @@ extern int student_chat_generate(const char *intext, int inlen,
                                  void (*emit_chunk)(void *ctx, const char *bytes, int n),
                                  void *ctx);
 
+/* ── Frontier Mouth CONSULT (arch/common/llm/frontier.c; hosted-only LLM tier).
+ * The mind's OPTIONAL socket onto a stronger brain. frontier_consult prepends
+ * the R3-fact context block, runs the localhost FM1 round-trip (or degrades),
+ * gates the reply through the SAME floor (G-CHAT), and emits ALWAYS-labeled
+ * `src:"frontier"` frames via the sink. HOSTED-guarded (galaxy.c is hosted-only,
+ * so the bare-metal crown is untouched regardless — the guard is discipline +
+ * couples the extern to the tier that actually links frontier.c). Return:
+ *   >0 consult spoken (labeled) | 0 no mouth/consent ⇒ degrade to own voice |
+ *   <0 conscience refused (refusal already emitted; do NOT degrade). */
+#ifdef _TK_HOSTED_LIBC_
+extern int  frontier_consult(const char *text, int len,
+                             void (*frame)(void *ctx, const char *frame, int n),
+                             void *ctx);
+extern const char *frontier_degrade_note(void);
+extern int  frontier_consent_ok(void);
+extern void frontier_consent_grant(void);
+#endif
+
 /* the 5-function transport ABI (galaxy_posix.c; C ABI, no T-Kernel types) */
 int  galaxy_io_init(int port);
 int  galaxy_io_accept(void);
@@ -1092,6 +1110,23 @@ static void gx_chat_chunk(void *ctx, const char *bytes, INT n)
     gx_flush(slot);                                   /* progressive: push now   */
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* CONSULT frame sink: frontier.c hands us COMPLETE WS-JSON frames (it owns the
+ * framing incl. the load-bearing src:"frontier" label). We stage each frame RAW
+ * (no re-escaping) and flush it progressively — the SAME staged sink the student
+ * uses (gx_ws_send_stage → the /ws pipe). */
+static void gx_consult_frame(void *ctx, const char *frame, INT n)
+{
+    (void)ctx;
+    INT slot = g_chat_slot;
+    if (slot < 0 || n <= 0) return;
+    ws_reset();
+    for (INT i = 0; i < n; i++) ws_putc(frame[i]);
+    if (gx_ws_send_stage(slot) < 0) return;           /* outbuf full: drop frame */
+    gx_flush(slot);
+}
+#endif
+
 /* handle one decoded WS text message (the unmasked payload, len n). For the
  * chat verb this may queue several frames (the streamed reply) then done. */
 static void gx_ws_on_message(INT slot, const char *msg, INT n)
@@ -1126,6 +1161,51 @@ static void gx_ws_on_message(INT slot, const char *msg, INT n)
         gx_ws_send_stage(slot);
         return;
     }
+
+#ifdef _TK_HOSTED_LIBC_
+    if (gx_streq(t, "consult")) {
+        /* the OPTIONAL borrowed voice (design §2.1). A SECOND, explicit, labeled
+         * act — the student already answered via {"t":"chat"}; the human chose
+         * to open the second mouth. Every frontier byte arrives LABELED; the
+         * mind's own voice is never pre-empted by the rented one (§2.3). */
+        char text[256];
+        INT tl = gx_json_field(msg, n, "text", text, (INT)sizeof text);
+        if (tl < 0) tl = 0;
+
+        /* first-use consent (design §1.4): the human's words leave the galaxy to
+         * an external company. An explicit {"consent":"1"} in the verb records
+         * it (the UI surfaces これはあなたの言葉を外部の会社に送ります first). */
+        char cons[4];
+        if (gx_json_field(msg, n, "consent", cons, (INT)sizeof cons) > 0 && cons[0] == '1')
+            frontier_consent_grant();
+
+        g_chat_slot = slot;
+        int spoke = frontier_consult(text, (int)tl, gx_consult_frame, 0);
+        g_chat_slot = -1;
+
+        if (spoke == 0) {
+            /* NO MOUTH / not consented: the honest degrade (design §1.3). ONE
+             * absence print to the console, then the student answers ALONE in its
+             * own voice — never a fake citation, never a wedge. */
+            tm_putstring((UB *)frontier_degrade_note());
+            tm_putstring((UB *)"\r\n");
+            g_chat_slot = slot;
+            int produced = student_chat_generate(text, (int)tl, gx_chat_chunk, 0);
+            g_chat_slot = -1;
+            if (produced <= 0) {
+                ws_reset();
+                ws_s("{\"type\":\"tok\",\"text\":\"…\"}");
+                gx_ws_send_stage(slot);
+            }
+        }
+        /* spoke > 0 (labeled frontier frames already streamed) or < 0 (a
+         * conscience refusal already emitted) — either way just close. */
+        ws_reset();
+        ws_s("{\"type\":\"done\"}");
+        gx_ws_send_stage(slot);
+        return;
+    }
+#endif
     /* unknown verb -> silently ignored (forward-compatible). */
 }
 
