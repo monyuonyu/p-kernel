@@ -93,6 +93,32 @@ INT compat_ota_accept(const SIGN_MANIFEST *m,
 #endif
 }
 
+/* GATE 5 — the generation accept-conjunct (evolution-migration-design §5.1).
+ * ADDITIVE: it CALLS compat_ota_accept (gates 1-4, incl. the -DOTA_SKIP_VERIFY
+ * falsifier verbatim) then ANDs the named-predecessor check. The existing
+ * 3-arg gate is untouched, so [signed-ota-gate] is unaffected. */
+INT compat_ota_accept_gen(const SIGN_MANIFEST *m,
+                          const U1 actual_id[PFS_ID_LEN],
+                          U4 running_ver,
+                          const GEN_SUCC_MANIFEST *succ,
+                          const U1 my_archspec_id[PFS_ID_LEN])
+{
+    /* gates 1-4 (the shipped AND; OTA_SKIP_VERIFY makes this vacuous -> F5). */
+    INT r = compat_ota_accept(m, actual_id, running_ver);
+    if (r != OTA_ACCEPT) return r;
+
+    if (!succ || !my_archspec_id) return OTA_REJECT_BADARG;
+
+    /* Gate 5: the artifact must NAME the arch-spec this node currently runs as
+     * its predecessor. A node whose arch-spec != the named predecessor refuses
+     * (it must first migrate to the predecessor). */
+    for (INT i = 0; i < PFS_ID_LEN; i++)
+        if (succ->predecessor_archspec_id[i] != my_archspec_id[i])
+            return OTA_REJECT_PREDECESSOR;
+
+    return OTA_ACCEPT;   /* all FIVE, ANDed, fail-closed */
+}
+
 const char *compat_ota_reason(INT r)
 {
     switch (r) {
@@ -100,6 +126,7 @@ const char *compat_ota_reason(INT r)
         case OTA_REJECT_BADARG:     return "REJECT(gate0: null arg)";
         case OTA_REJECT_SIG:        return "REJECT(gate1-3: sign_manifest_verify)";
         case OTA_REJECT_DOWNGRADE:  return "REJECT(gate4: downgrade/non-successor)";
+        case OTA_REJECT_PREDECESSOR:return "REJECT(gate5: names a foreign predecessor)";
         default:                    return "REJECT(?)";
     }
 }

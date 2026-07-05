@@ -80,6 +80,9 @@ IMPORT INT  swim_selfsuspect_self_test(void (*)(const char *)); /* [swim-selfsus
 #if defined(ARKFS_GAP_CERT) && defined(_TK_HOSTED_LIBC_)
 IMPORT void compat_arkfs_gap_test(void);              /* [arkfs-version-gap] */
 #endif
+#if defined(GEN_SURVIVE_CERT) && defined(_TK_HOSTED_LIBC_)
+IMPORT void gen_survive_test(void);                   /* [generation-survives] */
+#endif
 IMPORT INT  r3_weights_restore_or_pretrain(void);     /* persistence S2  */
 IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
@@ -1220,6 +1223,17 @@ EXPORT INT usermain(void)
 #else
                     print("compat test arkfs: rebuild with EXTRA_CFLAGS=-DARKFS_GAP_CERT\r\n");
 #endif
+                } else if (sl >= 3 && sub[0]=='g'&&sub[1]=='e'&&sub[2]=='n') {
+                    /* [generation-survives] — the Evolution-layer generational
+                     * migration succession cert (evolution-migration-design.md
+                     * §8): a mind crosses an ARCH gap carrying identity+knowledge
+                     * (never raw weights). Gated behind -DGEN_SURVIVE_CERT so the
+                     * default kernel + crown stay byte-identical. */
+#if defined(GEN_SURVIVE_CERT) && defined(_TK_HOSTED_LIBC_)
+                    gen_survive_test();
+#else
+                    print("compat test gen: rebuild with EXTRA_CFLAGS=-DGEN_SURVIVE_CERT\r\n");
+#endif
                 } else {
                     /* [migrate-forward] (default `compat test`) */
 #if defined(R3WP_MIGRATE_CERT) && defined(_TK_HOSTED_LIBC_)
@@ -1228,7 +1242,7 @@ EXPORT INT usermain(void)
                     print("compat test: rebuild with EXTRA_CFLAGS=-DR3WP_MIGRATE_CERT\r\n");
 #endif
                 }
-            } else print("usage: compat test [ota|self|wire|arkfs]\r\n");
+            } else print("usage: compat test [ota|self|wire|arkfs|gen]\r\n");
         } else if (starts_with(line, n, "drpc") && (n == 4 || line[4] == ' ')) {
             /* SEC-OOB-DRPC (external audit 2026-06-13): `drpc test` drives the
              * real drpc_call/dtk_* entry points with a node id >= DNODE_MAX and

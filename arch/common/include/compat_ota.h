@@ -12,12 +12,14 @@
 #include "kernel.h"
 #include "sign.h"          /* SIGN_MANIFEST, sign_manifest_verify (reused)     */
 #include "pfs_block.h"     /* PFS_ID_LEN — the recomputed artifact content-id  */
+#include "gen_succession.h" /* GEN_SUCC_MANIFEST — gate 5 named-predecessor    */
 
 /* rejection reasons — so the caller/cert can print WHICH gate fired. */
 #define OTA_ACCEPT            1
 #define OTA_REJECT_BADARG     0   /* null arg                                  */
 #define OTA_REJECT_SIG       (-1) /* gate 1-3: sign_manifest_verify refused    */
 #define OTA_REJECT_DOWNGRADE (-2) /* gate 4: ver <= running / non-successor    */
+#define OTA_REJECT_PREDECESSOR (-3) /* gate 5: names a predecessor != mine     */
 
 /* The 4-gate AND (design §4.2). Returns OTA_ACCEPT iff:
  *   (1)(2)(3) sign_manifest_verify(m, actual_id) == 1   — the SHIPPED 3 gates
@@ -33,6 +35,34 @@
 INT compat_ota_accept(const SIGN_MANIFEST *m,
                       const U1 actual_id[PFS_ID_LEN],
                       U4 running_ver);
+
+/* ------------------------------------------------------------------ */
+/* GATE 5 — the GENERATION accept-conjunct (evolution-migration-design  */
+/* §5.1): the 4-gate AND, PLUS a named-predecessor check. A generation   */
+/* artifact must NAME the arch-spec it succeeds; a node whose arch-spec  */
+/* is not the named predecessor REFUSES (it must first reach the         */
+/* predecessor — the chain composes, 各版が前を読める applied to           */
+/* generations; it blocks the "skip three generations and hope" install  */
+/* whose education path was never certified). ADDITIVE: compat_ota_accept */
+/* above is UNCHANGED, so the shipped [signed-ota-gate] cert stays green. */
+/*                                                                       */
+/*    ACCEPT(generation) iff                                             */
+/*       compat_ota_accept(m, actual_id, running_ver) == OTA_ACCEPT      */
+/*       AND succ->predecessor_archspec_id == my_archspec_id             */
+/*                                                                       */
+/* succ travels INSIDE the signed artifact body (bound by gates 1-2), so */
+/* a body-swap of the predecessor name breaks the signature. Returns     */
+/* OTA_ACCEPT, or the OTA_REJECT_* of the gate that fired (gate 5 =       */
+/* OTA_REJECT_PREDECESSOR). fail-closed. Under -DOTA_SKIP_VERIFY the      */
+/* inner accept is vacuous -> a tampered generation artifact is accepted  */
+/* -> the [generation-survives] cert goes RED (F5, the shipped anti-      */
+/* theater discipline reused verbatim). Hosted-only by TU placement;      */
+/* bare-metal .text is unmoved (this TU is not in the bare link).         */
+INT compat_ota_accept_gen(const SIGN_MANIFEST *m,
+                          const U1 actual_id[PFS_ID_LEN],
+                          U4 running_ver,
+                          const GEN_SUCC_MANIFEST *succ,
+                          const U1 my_archspec_id[PFS_ID_LEN]);
 
 /* human-readable name of an OTA_* result (for cert/diagnostic output). */
 const char *compat_ota_reason(INT r);

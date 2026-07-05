@@ -192,6 +192,7 @@ COMMON_C_SRCS = \
     sign.c \
     compat_ota.c \
     compat_arkfs_gap.c \
+    gen_succession.c \
     cradle_net.c \
     modver.c \
     scaling_cert.c
