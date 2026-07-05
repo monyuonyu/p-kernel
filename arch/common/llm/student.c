@@ -19,9 +19,13 @@
  *    o_in         = rmsnorm(h, out_norm)
  *    logits_t     = Out o_in                             (untied head, [VOCAB])
  *
- *  No positional encoding and a single attention head: NS-1 deliberately keeps
- *  the smallest faithful organism so the analytic backward is grad-checkable
- *  end to end. RoPE / multi-head / vocab-merges are later growth levers
+ *  C1 / NS v2 (scale_wall_design.md §8, [ctx-carry]): the attention now carries
+ *  RoPE positional encoding (q,k rotated by position BEFORE the score dot) and
+ *  the context window widened ST_MAXSEQ 64->256. Still a SINGLE attention head
+ *  (head_dim == d_model). RoPE is parameter-free, so the analytic backward stays
+ *  grad-checkable end to end — the rotation is a fixed orthogonal map and its
+ *  gradient transpose is the inverse rotation (applied to g_q/g_k before the
+ *  Wq/Wk backward). Multi-head / vocab-merges remain later growth levers
  *  (native-student.md §A.2/§A.4/§A.5), honestly deferred — see the NS report.
  */
 #include "student.h"
@@ -81,6 +85,74 @@ static float st_silu_grad(float x)
 {
     float sig = 1.0f / (1.0f + st_expf(-x));
     return sig * (1.0f + x * (1.0f - sig));
+}
+
+/* ---- C1 RoPE (scale_wall_design.md §8) -----------------------------------
+ * Rotary positional encoding, SAME recipe as forward.c's rope_head/lm_sincosf
+ * (the anti-fork one-math rule): pair (2j, 2j+1) rotated by theta =
+ * pos * base^(-2j/D). base = 10000 (the student is its own model; 10000 is the
+ * standard choice, and its ln is a compile-time literal so no per-call log).
+ *
+ * sin/cos via Payne-Hanek-lite range reduction (double intermediates) — the
+ * angles get large (pos up to 255, freq up to 1). double math is IEEE-exact and
+ * bit-identical across x86_64/aarch64 under -O1 -ffp-contract=off (forward.c's
+ * lm_sincosf is already cross-arch oracle-certified with this recipe).         */
+#define ST_ROPE_BASE 10000.0f
+static const float ST_LN_ROPE_BASE = 9.210340371976182f;   /* ln(10000)        */
+
+/* sin/cos of `a` into so and co (ported verbatim from forward.c lm_sincosf). */
+static void st_sincosf(float a, float *so, float *co)
+{
+    double q = (double)a * 0.6366197723675814;         /* 2/pi                  */
+    long   n = (long)(q + (q >= 0.0 ? 0.5 : -0.5));
+    double r = (double)a
+             - (double)n * 1.5707963109016418            /* pi/2 hi             */
+             - (double)n * 1.5893254712640187e-08        /* pi/2 mid            */
+             - (double)n * 6.123233995736766e-17;        /* pi/2 lo (~0)        */
+    double r2 = r * r;
+    double s = r * (1.0 + r2 * (-1.6666666664e-01 + r2 * (8.3333315e-03 +
+               r2 * (-1.98412698e-04 + r2 * 2.7557314e-06))));
+    double c = 1.0 + r2 * (-0.5 + r2 * (4.16666666e-02 + r2 * (-1.388731e-03 +
+               r2 * 2.443315e-05)));
+    float fs, fc;
+    switch (((unsigned long)n) & 3u) {
+        case 0:  fs = (float)s;    fc = (float)c;    break;
+        case 1:  fs = (float)c;    fc = (float)(-s); break;
+        case 2:  fs = (float)(-s); fc = (float)(-c); break;
+        default: fs = (float)(-c); fc = (float)s;    break;
+    }
+    *so = fs; *co = fc;
+}
+
+/* RoPE enable toggle (test hook, like st_kv_set_enabled). Default ON: the
+ * forward is EXACTLY the C1 model. The [ctx-carry] cert flips it OFF to train +
+ * eval a NoPE twin for the MEASURED (printed, NOT gated) RoPE-vs-NoPE side-by-
+ * side (§8: decoder-only nets can learn implicit position, so RoPE is not the
+ * cert's bet — the WINDOW is). When OFF, st_rope_apply is a no-op in BOTH the
+ * forward and the backward, so the NoPE model stays self-consistent. */
+static int st_rope_enabled = 1;
+void st_rope_set_enabled(int on) { st_rope_enabled = on ? 1 : 0; }
+int  st_rope_get_enabled(void)   { return st_rope_enabled; }
+
+/* Rotate the D-vector `h` in place by RoPE at position `pos`. ssign=+1.0 is the
+ * FORWARD rotation R(theta); ssign=-1.0 is R(theta)^T = R(-theta), the exact
+ * gradient transpose used in the backward (g_unrot = R^T g_rot). pos==0 is the
+ * identity (theta=0 -> c=1,s=0 exactly) — early-returned, bit-identical. D odd
+ * leaves the last element unrotated (never happens: all tiers have even D). */
+static void st_rope_apply(float *h, int pos, int d, float ssign)
+{
+    if (!st_rope_enabled) return;                      /* NoPE twin (test hook) */
+    if (pos == 0) return;                              /* theta 0 -> identity  */
+    for (int j = 0; j < d / 2; j++) {
+        float exponent = -2.0f * (float)j / (float)d;
+        float freq  = st_expf(exponent * ST_LN_ROPE_BASE);
+        float theta = (float)pos * freq;
+        float s, c; st_sincosf(theta, &s, &c);
+        s *= ssign;
+        float x0 = h[2 * j], x1 = h[2 * j + 1];
+        h[2 * j]     = x0 * c - x1 * s;
+        h[2 * j + 1] = x0 * s + x1 * c;
+    }
 }
 
 /* ================================================================== */
@@ -797,6 +869,11 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
             mv(Wq, ain, qL + (size_t)t * D, D, D);
             mv(Wk, ain, kL + (size_t)t * D, D, D);
             mv(Wv, ain, vL + (size_t)t * D, D, D);
+            /* C1 RoPE: rotate q,k (NOT v) by absolute position t before the
+             * causal score. The cached qL/kL are the ROTATED vectors, so the
+             * attention loop below and the backward read them consistently. */
+            st_rope_apply(qL + (size_t)t * D, t, D, +1.0f);
+            st_rope_apply(kL + (size_t)t * D, t, D, +1.0f);
         }
         float *attn_w = c->attn_w + (size_t)l * n * n;
         float *attn_o = c->attn_o + (size_t)l * n * D;
@@ -1132,6 +1209,11 @@ static int kv_step(st_model *m, st_kvcache *kv, uint8_t b, int pos,
         float *vslot = kv->v + ((size_t)l * ST_MAXSEQ + pos) * DMAX;
         mv(Wk, a_in, kslot, D, D);
         mv(Wv, a_in, vslot, D, D);
+        /* C1 RoPE: rotate q,k by this position (v untouched). The cache stores
+         * the ROTATED k so prior positions' cached k are already rotated —
+         * byte-identical to st_forward's rotate-then-attend order. */
+        st_rope_apply(qcur, pos, D, +1.0f);
+        st_rope_apply(kslot, pos, D, +1.0f);
 
         /* causal attention over s = 0..pos. SAME reduction order as st_forward:
          * dot loops i=0..D-1, softmax scans s=0..pos, value mix s then i.
@@ -1457,6 +1539,42 @@ float st_eval_loss(st_model *m, const uint8_t *bytes, int n, int *n_pred)
     return np ? (float)(loss / np) : 0.0f;
 }
 
+/* C1 [ctx-carry]: mean next-byte CE over ONLY the target span [t0,t1) (predict
+ * bytes[t] from prefix 0..t-1). Also FNV-1a's the FULL logit ROW that predicted
+ * each answer byte (row t-1) into *row_fnv — the window-mechanism proof: with
+ * the wide window the answer logits DEPEND on a distant fact byte (hash shifts
+ * when it changes); clamped to 64 they cannot (the distant byte is dropped ->
+ * identical hash). Pure forward. Bytes are raw; n must be <= ST_MAXSEQ.        */
+float st_span_ce(st_model *m, const uint8_t *bytes, int n, int t0, int t1,
+                 uint64_t *row_fnv)
+{
+    uint64_t h = 1469598103934665603ULL;   /* FNV-1a offset basis              */
+    if (t0 < 1) t0 = 1;
+    if (t1 > n) t1 = n;
+    if (n < 2 || t1 <= t0) { if (row_fnv) *row_fnv = h; return 0.0f; }
+    float *logits = (float *)malloc((size_t)n * V * sizeof(float));
+    if (!logits) { if (row_fnv) *row_fnv = h; return 0.0f; }
+    if (st_forward(m, bytes, n, logits) != ST_OK) {
+        free(logits); if (row_fnv) *row_fnv = h; return 0.0f;
+    }
+    st_cache *c = (st_cache *)m->cache;
+    double loss = 0.0; int np = 0;
+    for (int t = t0; t < t1; t++) {
+        int tgt = bytes[t];                             /* predict bytes[t]     */
+        float p = c->probs[(size_t)(t - 1) * V + tgt];  /* from row t-1         */
+        loss += -(double)st_logf(p);
+        np++;
+        const unsigned char *lp =
+            (const unsigned char *)(logits + (size_t)(t - 1) * V);
+        for (size_t b = 0; b < (size_t)V * sizeof(float); b++) {
+            h ^= lp[b]; h *= 1099511628211ULL;
+        }
+    }
+    free(logits);
+    if (row_fnv) *row_fnv = h;
+    return np ? (float)(loss / np) : 0.0f;
+}
+
 /* ================================================================== */
 /* backward                                                           */
 /* ================================================================== */
@@ -1691,6 +1809,15 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
             const float *ain = a_in + (size_t)t * D;
             float g_ain[DMAX];   /* [no-vla] bound to the L-tier d_model */
             for (int i = 0; i < D; i++) g_ain[i] = 0.0f;
+            /* C1 RoPE backward: g_q/g_k arrived as grad wrt the ROTATED q/k
+             * (attention used the rotated vectors). Wq/Wk produce the UNROTATED
+             * q/k, so transform the gradient by the rotation TRANSPOSE R(t)^T =
+             * R(-t) (ssign=-1) BEFORE mv_bwd. v is unrotated -> g_v untouched.
+             * Rotation is orthogonal so R^T is its exact analytic adjoint (the
+             * grad-check confirms). Done in place: each g_* row feeds only its
+             * own mv_bwd, no aliasing. */
+            st_rope_apply(g_q + (size_t)t * D, t, D, -1.0f);
+            st_rope_apply(g_k + (size_t)t * D, t, D, -1.0f);
             mv_bwd(Wq, ain, g_q + (size_t)t * D, g_ain, gWq, D, D);
             mv_bwd(Wk, ain, g_k + (size_t)t * D, g_ain, gWk, D, D);
             mv_bwd(Wv, ain, g_v + (size_t)t * D, g_ain, gWv, D, D);

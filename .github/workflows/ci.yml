@@ -756,6 +756,28 @@ jobs:
           tests/llm/run_student.sh   | tee llm_student.log
           grep -aF '[result] PASS' llm_student.log
 
+      # SCALE-WALL rung C1 — context carry (scale_wall_design.md §8, [ctx-carry]).
+      # The FIRST buildable rung of "real conversation": RoPE + ST_MAXSEQ 64->256
+      # in the Cradle baby (arch/common/llm/student.c v2) so a fact told >=96
+      # bytes back can be USED in the completion. This block runs the REDUCED
+      # sweep (bounded runtime for strict CI); the FULL A(d) curve is nightly
+      # (CTXCARRY_FULL=1). Gated arms: the deterministic WINDOW-MECHANISM proof
+      # (a distant fact byte shifts the answer logits with the full window but is
+      # provably invisible under a 64-clamp — RED-when-the-window-is-stubbed), the
+      # clamp-collapse falsifier, and the [gen-cohort-island] version island
+      # (a v1 blob is refused by a v2 model, byte-unchanged). The A(d) MAGNITUDE
+      # is PRINTED, not gated (the curve is the deliverable; at toy scale it may
+      # be small — honest walk-to-the-wall, native-student.md §B.6).
+      - name: "SCALE-WALL C1 [ctx-carry] (reduced sweep; full curve is nightly)"
+        run: |
+          tests/llm/run_ctxcarry.sh  | tee llm_ctxcarry.log
+          grep -aF '[result] PASS' llm_ctxcarry.log
+          # assert the load-bearing gated arms are actually GREEN in the log
+          grep -aF 'PASS  [ctx-carry-window] full window' llm_ctxcarry.log
+          grep -aF 'PASS  [ctx-carry-window] clamp-64'    llm_ctxcarry.log
+          grep -aF 'PASS  [ctx-carry-clamp]'              llm_ctxcarry.log
+          grep -aF 'PASS  [gen-cohort-island] st_load REJECTS' llm_ctxcarry.log
+
       - name: selfc-ring3 immune boundary (the germ crash boundary, §5)
         run: |
           cd boot/linux_x86_64

@@ -31,10 +31,21 @@
 #define PKERNEL_LLM_STUDENT_H
 
 /* NS-1 carries its own version (modver registry; compatibility.md): the
- * Cradle baby (organism-native MoE student) contract. v1 = the born-small
- * baby (256-byte vocab, E=4 top-2, d=128, 4 layers) with its own libc-free
- * grad-checked forward+backward. */
-#define NS_STUDENT_VER  1
+ * Cradle baby (organism-native MoE student) contract.
+ *   v1 = the born-small baby (256-byte vocab, E=4 top-2, d=128, 4 layers) with
+ *        its own libc-free grad-checked forward+backward. NO positional
+ *        encoding, ST_MAXSEQ=64 context.
+ *   v2 = SCALE-WALL rung C1 (scale_wall_design.md §8, [ctx-carry]): RoPE
+ *        positional encoding + ST_MAXSEQ 64->256 (context CARRY — a fact told
+ *        >=96 bytes back can be USED in the completion). This is a GENERATIONAL
+ *        SUCCESSION, not an upgrade: RoPE is parameter-free and the window is a
+ *        cache dim, so n_params/dims are UNCHANGED — a v1 blob would silently
+ *        LOAD into a v2 (new-math) model and a v1 peer could merge into a v2
+ *        cohort (cross-generation Path-W corruption, §9). NS_STUDENT_VER is
+ *        therefore LOAD-BEARING: st_load / st_blob_tier_ok REFUSE across
+ *        versions (the [gen-cohort-island] arm). Old babies are not translated
+ *        — a v2 baby is REBORN and re-distilled (compat/evolution law). */
+#define NS_STUDENT_VER  2
 
 #include <stdint.h>
 #include <stddef.h>
@@ -59,7 +70,13 @@
 #define ST_NEXPERT  4     /* == ST_E_M : the default (M) tier expert count      */
 #define ST_TOPK     2     /* K_min — the floor firing width (FIXED all tiers)   */
 #define ST_DFF      256   /* == ST_DFF_M : default (M) per-expert SwiGLU hidden */
-#define ST_MAXSEQ   64    /* training/eval context cap (FIXED all tiers)        */
+/* C1 (NS v2): the context window widens 64->256 so a conversational fact told
+ * dozens of bytes back is INSIDE the window (the [ctx-carry] cert). It is a
+ * cache/scratch dim ONLY (KV plane, attn scratch, forward cache) — it does NOT
+ * change n_params or the o_* weight offsets, so the blob byte-layout is
+ * unchanged (the succession is carried by NS_STUDENT_VER, not by size). Every
+ * stack scratch bound to ST_MAXSEQ (aw[], ctxbuf[]) auto-tracks it; no VLA.   */
+#define ST_MAXSEQ   256   /* training/eval context cap (FIXED all tiers; C1)    */
 
 /* ---- the three tiers (SS-2, §3.2) ----
  * Discrete {D, DFF, L, E} dim-sets selected at st_init from a tier byte. NOT
@@ -217,6 +234,18 @@ int  st_forward(st_model *m, const uint8_t *bytes, int n, float *logits);
  * prefix 0..t). Pure forward, NO cache mutation needed for eval. Returns loss
  * in nats; writes the per-call token count to *n_pred if non-NULL. */
 float st_eval_loss(st_model *m, const uint8_t *bytes, int n, int *n_pred);
+
+/* C1 [ctx-carry] hook: mean next-byte CE (nats) over ONLY the target bytes at
+ * positions [t0, t1) — i.e. predicting bytes[t] from the prefix 0..t-1, for t
+ * in [t0,t1). Pure forward (one st_forward, reads the softmax cache). Lets the
+ * cert score just the ANSWER span so the A(d) metric measures whether a DISTANT
+ * in-context fact is used, not global fluency. t0>=1 (position 0 predicts from
+ * nothing). Returns the mean CE over the span, 0 if the span is empty/invalid.
+ * Also writes an FNV-1a of the answer-position logit ROWS into *row_fnv (if
+ * non-NULL) so the cert can prove the answer logits DO/ DO-NOT depend on a
+ * distant byte (the window mechanism proof — order-stable, libc-free). */
+float st_span_ce(st_model *m, const uint8_t *bytes, int n, int t0, int t1,
+                 uint64_t *row_fnv);
 
 /* ---- generation (step ⑥, the chat mouth) ----
  * Feed `prompt` (n_prompt raw bytes) as context, then autoregressively sample
@@ -376,6 +405,12 @@ int  st_grow_experts(st_model *m, int e_new);
  * a CRAFTED flat vs peaked gate without depending on training luck. This calls
  * the exact production selection (no logic duplicated). */
 int  st_router_pick_width(const float *gate, int *chosen);
+
+/* C1 RoPE toggle (test hook): default ON == the C1 model. The [ctx-carry] cert
+ * flips it OFF to build a NoPE twin for the printed (NOT gated) RoPE-vs-NoPE
+ * side-by-side (§8). Affects both st_forward and the KV path consistently. */
+void st_rope_set_enabled(int on);
+int  st_rope_get_enabled(void);
 
 /* libc-free math, exposed for the test's hand-checks / reuse. */
 float st_expf(float x);

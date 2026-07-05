@@ -131,8 +131,9 @@ static void eq_battery(int tier, const char *tname, int machine)
     const uint8_t p_short[]  = "the ";
     const uint8_t p_word[]   = "the cat ";
     const uint8_t p_empty[]  = "";   /* generation seeds a neutral '\n'        */
-    /* a prompt LONGER than ST_MAXSEQ (64) to force the window-slide path: */
-    static uint8_t p_long[120];
+    /* a prompt LONGER than ST_MAXSEQ to force the window-slide path (C1: the
+     * window widened to 256, so this tracks ST_MAXSEQ instead of a literal 64): */
+    static uint8_t p_long[ST_MAXSEQ + 56];
     for (int i = 0; i < (int)sizeof(p_long); i++)
         p_long[i] = (uint8_t)("abcdefghijklmnop"[i & 15]);
 
