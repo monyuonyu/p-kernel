@@ -1684,6 +1684,51 @@ jobs:
           grep -aF '[migrate-forward] PASS' compat.log
           ! grep -aqF '[migrate-forward] FAIL' compat.log
 
+  generation-survives:
+    # Evolution layer: generational migration succession
+    # (evolution-migration-design.md §8). A living mind crosses an ARCHITECTURE
+    # gap (R_DM 48 vs 96 — structurally incompatible R_NP) carrying its IDENTITY
+    # (the signed self/lin lineage, continued across a LM_UNIT_EV_SUCCESSION
+    # entry that NAMES the successor arch-spec) and its LEARNED KNOWLEDGE (leg-1
+    # engram replay, EXACT for R3), but NEVER its raw weights. Driven by the
+    # `compat test gen` verb, built behind -DGEN_SURVIVE_CERT so the default
+    # kernel + crown are byte-identical. Two-worktree [live] legs are ThinkPad-
+    # runner-only; this native-gcc job runs the in-proc cert + its two
+    # load-bearing falsifiers (F2 education, F5 accept-gate) going RED.
+    name: "世代交代 succession ([generation-survives] + F2/F5 falsifiers)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: "[generation-survives] cure — identity+knowledge cross the arch gap"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 EXTRA_CFLAGS=-DGEN_SURVIVE_CERT
+          cd boot/linux_x86_64
+          printf 'compat test gen\nexit\n' | timeout 240 ./p-kernel | tee gen.log
+          grep -aF '[generation-survives] PASS' gen.log
+          ! grep -aqF '[generation-survives] FAIL' gen.log
+      - name: "F2 falsifier -DGEN_SKIP_EDUCATE (skip replay → facts to chance → RED)"
+        run: |
+          rm -f boot/linux_x86_64/gen_succession.o boot/linux_x86_64/p-kernel
+          make -C boot/linux_x86_64 EXTRA_CFLAGS="-DGEN_SURVIVE_CERT -DGEN_SKIP_EDUCATE"
+          cd boot/linux_x86_64
+          printf 'compat test gen\nexit\n' | timeout 240 ./p-kernel | tee gen_f2.log
+          grep -aF '[generation-survives] FAIL' gen_f2.log      # MUST be RED
+          ! grep -aqF '[generation-survives] PASS' gen_f2.log
+      - name: "F5 falsifier -DOTA_SKIP_VERIFY (accept step vacated → RED)"
+        run: |
+          rm -f boot/linux_x86_64/gen_succession.o boot/linux_x86_64/compat_ota.o boot/linux_x86_64/p-kernel
+          make -C boot/linux_x86_64 EXTRA_CFLAGS="-DGEN_SURVIVE_CERT -DOTA_SKIP_VERIFY"
+          cd boot/linux_x86_64
+          printf 'compat test gen\nexit\n' | timeout 240 ./p-kernel | tee gen_f5.log
+          grep -aF '[generation-survives] FAIL' gen_f5.log      # MUST be RED
+          ! grep -aqF '[generation-survives] PASS' gen_f5.log
+
   smp-autodetect:
     # ②.0/②.N8 full-SMP + [smp-autodetect] cert (run_smp0.sh): builds the
     # aarch64 bare-metal kernel with -DSMP_SELFTEST ONCE and boots it under

@@ -482,6 +482,63 @@ INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN])
 }
 
 /* ================================================================== */
+/* Evolution succession (evolution-migration-design.md §3.2/§7) — the   */
+/* SHARED merge point's evolution addition: ONE small function that      */
+/* appends a succession entry to the live "self/lin" chain, naming the   */
+/* SUCCESSOR arch-spec (model_ver) and the succession bundle manifest    */
+/* (eng_digest) by content-id, event kind LM_UNIT_EV_SUCCESSION. Same    */
+/* prev-link / next-seq / companion-sign machinery as the unit-event     */
+/* append (no second chain, no new hash — anti-fork §6). HOSTED-only     */
+/* (generation migration is hosted-tier in v1); bare-metal .text is      */
+/* unchanged (this function is absent from that link, so the crown is    */
+/* byte-identical by construction).                                      */
+/* ================================================================== */
+#ifdef _TK_HOSTED_LIBC_
+INT lm_self_append_succession(const U1 succ_archspec_id[PFS_ID_LEN],
+                              const U1 bundle_manifest_id[PFS_ID_LEN])
+{
+    /* prev_entry = content-id of the current head (genesis-safe); next_seq =
+     * head.seq + 1. Dual-width head accepted (v1 116 B / v2 148 B), id over
+     * the exact bytes — identical discipline to lm_self_append_unit_event. */
+    LM_SELF_ENTRY head;
+    U1  prev[PFS_ID_LEN];
+    self_memset(prev, 0, PFS_ID_LEN);
+    U4  next_seq = 1;
+    INT rd = pfs_dag_read((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                          &head, (UW)sizeof head);
+    if ((rd == (INT)sizeof head || rd == LM_SELF_ENTRY_V1_SIZE)
+        && head.magic == LM_SELF_MAGIC) {
+        pfs_id_compute(&head, (UW)rd, prev);
+        next_seq = head.seq + 1;
+    }
+
+    LM_SELF_ENTRY e;
+    self_memset(&e, 0, sizeof e);
+    e.magic   = LM_SELF_MAGIC;
+    e.version = LM_SELF_VER;
+    e.self_id = drpc_my_node;
+    e.seq     = next_seq;
+    e.age_ms  = LM_UNIT_EV_ENCODE(LM_UNIT_EV_SUCCESSION, 0, 0);  /* the kind */
+    if (!self_id_zero(prev)) self_memcpy(e.prev_entry, prev, PFS_ID_LEN);
+    /* the succession entry NAMES the successor arch-spec + the bundle manifest
+     * (design §3.2/§7): model_ver carries the successor's arch-spec content-id
+     * (NOT this node's dtr/weights id — this entry is the boundary where the
+     * brain changes), eng_digest carries the succession bundle manifest id. */
+    self_memcpy(e.model_ver,  succ_archspec_id,   PFS_ID_LEN);
+    self_memcpy(e.eng_digest, bundle_manifest_id, PFS_ID_LEN);
+
+    INT r = pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
+                         &e, (UW)sizeof e);
+    if (r == PFS_OK) {
+        U1 eid[PFS_ID_LEN];
+        pfs_id_compute(&e, (UW)sizeof e, eid);
+        (void)lm_self_sign_entry(eid, e.seq);   /* companion-sign, best-effort */
+    }
+    return r;
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
+/* ================================================================== */
 /* signing.md §4.1 — the Self chain becomes tamper-PROOF.               */
 /*                                                                      */
 /* Each committed entry gets a COMPANION signature object (a            */

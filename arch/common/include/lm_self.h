@@ -99,6 +99,14 @@ _Static_assert(sizeof(LM_SELF_ENTRY) <= PFS_BLOCK_MAX,
 #define LM_SELF_EV_REFUSE     5    /* 良心: refused a harmful request (the    */
                                    /* mind remembers it said no; uv=site,     */
                                    /* sig=harm class). conscience.md §1.3.    */
+#define LM_UNIT_EV_SUCCESSION 6    /* Evolution: a generation SUCCEEDS another */
+                                   /* (evolution-migration-design.md §3.2/§7). */
+                                   /* ADDITIVE: the 4-bit kind field + entry   */
+                                   /* format are UNCHANGED (wave-22 certs stay */
+                                   /* green — they count kinds 1..3 only). The */
+                                   /* succession entry NAMES the successor     */
+                                   /* arch-spec in model_ver and the bundle    */
+                                   /* manifest in eng_digest.                  */
 
 /* age_ms layout for a unit event: [31:28]=kind [27:20]=sig [19:0]=uv|to<<10 */
 #define LM_UNIT_EV_ENCODE(kind, uv, sig) \
@@ -158,3 +166,20 @@ void lm_self_test(void);
  * The PRODUCTION append path (lm_self_test builds its own synthetic chain);
  * called by ark_profile_save(). */
 INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN]);
+
+/* Evolution succession (evolution-migration-design.md §3.2/§7): append ONE
+ * succession entry to the live "self/lin" chain — the graceful final act of
+ * gen-N. The entry NAMES the SUCCESSOR arch-spec (model_ver = its content-id)
+ * and the succession bundle manifest (eng_digest = its content-id), with event
+ * kind LM_UNIT_EV_SUCCESSION encoded via the existing age_ms scheme. The chain
+ * literally continues: the successor's FIRST entry links prev_entry = this
+ * entry's content-id, so identity persists THROUGH the architecture gap (a
+ * broken chain is a FAILED migration, not a lossy one). Companion-signed like
+ * every entry (lm_self_sign_entry). Returns PFS_OK or a negative PFS_E_*.
+ *
+ * HOSTED-only (generation migration is hosted-tier in v1, design §10); the
+ * bare-metal .text is unchanged (this function does not exist there). */
+#ifdef _TK_HOSTED_LIBC_
+INT lm_self_append_succession(const U1 succ_archspec_id[PFS_ID_LEN],
+                              const U1 bundle_manifest_id[PFS_ID_LEN]);
+#endif
