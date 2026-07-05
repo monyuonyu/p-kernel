@@ -93,13 +93,29 @@ Inline W roundSize( W sz )
 #define AREA_MASK	0x00000001UL
 
 /* p-kernel 変更（LP64 対応）: ポインタを経由するビット操作は
- * unsigned long で行う（UW では上位 32bit が失われる） */
-#define setAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((unsigned long)(q)->prev |  (unsigned long)(f)) )
-#define clrAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((unsigned long)(q)->prev & ~(unsigned long)(f)) )
-#define chkAreaFlag(q, f)   ( ((unsigned long)(q)->prev & (unsigned long)(f)) != 0 )
+ * unsigned long で行う（UW では上位 32bit が失われる）。
+ *
+ * さらに Windows ネイティブ（LLP64）対応: LLP64 では unsigned long が
+ * 32bit のためポインタ上位 32bit が失われる（LP64 の UW と同じ罠が
+ * 再来する）。ポインタ幅の符号無し整数 KNL_UPTR を経由する。
+ *   - LP64（Linux / bare-metal x86_64・aarch64）: unsigned long == 64bit
+ *     で KNL_UPTR も同一 → 生成コードはバイト一致。
+ *   - LLP64（Windows x86_64）: unsigned long long == 64bit を使う。
+ *   - 32bit MCU: いずれも 32bit で従来どおり。
+ * マスク定数も ~(KNL_UPTR) で 64bit 化する（~AREA_MASK が 32bit だと
+ * 64bit ポインタの上位を落とすため）。 */
+#ifdef _WIN32
+typedef unsigned long long KNL_UPTR;
+#else
+typedef unsigned long KNL_UPTR;
+#endif
 
-#define Mask(x)		( (QUEUE*)((unsigned long)(x) & ~AREA_MASK) )
-#define Assign(x, y)	( (x) = (QUEUE*)(((unsigned long)(x) & AREA_MASK) | (unsigned long)(y)) )
+#define setAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((KNL_UPTR)(q)->prev |  (KNL_UPTR)(f)) )
+#define clrAreaFlag(q, f)   ( (q)->prev = (QUEUE*)((KNL_UPTR)(q)->prev & ~(KNL_UPTR)(f)) )
+#define chkAreaFlag(q, f)   ( ((KNL_UPTR)(q)->prev & (KNL_UPTR)(f)) != 0 )
+
+#define Mask(x)		( (QUEUE*)((KNL_UPTR)(x) & ~(KNL_UPTR)AREA_MASK) )
+#define Assign(x, y)	( (x) = (QUEUE*)(((KNL_UPTR)(x) & (KNL_UPTR)AREA_MASK) | (KNL_UPTR)(y)) )
 /*
  * 領域サイズ
  */

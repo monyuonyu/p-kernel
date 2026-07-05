@@ -68,6 +68,14 @@
 
 #endif
 
+/* p-kernel 追加ターゲット: Windows x86-64 ネイティブ */
+#ifdef _WINDOWS_X86_64_
+#include "sysdepend/windows_x86_64/machine.h"
+
+#define Csym(sym) sym
+
+#endif
+
 /* p-kernel 追加ターゲット: x86 PC ベアメタル（QEMU） */
 #ifdef _X86_PC_
 #include "sysdepend/x86_pc/machine.h"

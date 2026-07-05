@@ -174,7 +174,7 @@
  *	要求するオブジェクト数（micro T-Kernel 2.0 ポートの
  *	arch/linux/include/utk_config_depend.h と同値）に引き上げる。
  */
-#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_)
+#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_) || defined(_WINDOWS_X86_64_)
 
 #undef  CNF_MAX_TSKID
 #define CNF_MAX_TSKID		128	/* タスク */
@@ -197,7 +197,7 @@
 #undef  USE_EXCEPTION_DBG_MSG
 #define USE_EXCEPTION_DBG_MSG	(0)
 
-#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ */
+#endif /* _LINUX_X86_64_ || _LINUX_AARCH64_ || _WINDOWS_X86_64_ */
 
 /*
  *	x86 PC ベアメタルターゲット（p-kernel 追加）
@@ -266,7 +266,7 @@
 #include "config_func.h"
 
 /* p-kernel 追加ターゲット: config_func.h の既定値の上書き */
-#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_) || defined(_X86_PC_) || defined(_AARCH64_VIRT_)
+#if defined(_LINUX_X86_64_) || defined(_LINUX_AARCH64_) || defined(_X86_PC_) || defined(_AARCH64_VIRT_) || defined(_WINDOWS_X86_64_)
 
 /* カーネルのデバイス管理は使用しない（arch/ 層が独自ドライバで代替） */
 #undef  USE_DEVICE

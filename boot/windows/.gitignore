@@ -1,0 +1,6 @@
+# Native Windows build artifacts (cross-built with mingw-w64)
+*.o
+*.d
+*.exe
+x86_64/galaxy_page.h
+x86_64/manifesto_page.h

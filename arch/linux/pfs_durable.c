@@ -44,6 +44,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <direct.h>	/* _mkdir (single-arg on Windows) */
+#include <io.h>		/* _commit (fsync equivalent)     */
+#endif
 
 /* sha256 digest is 32 bytes -> 64 lowercase hex chars per block-id name.
  * Kept as a literal here (kernel.h / pfs_block.h would drag the T-Kernel
@@ -69,7 +73,11 @@ const char *pfs_dur_dir(void)
             if (n >= sizeof dur_dir) n = sizeof dur_dir - 1;
             memcpy(dur_dir, e, n);
             dur_dir[n] = '\0';
+#ifdef _WIN32
+            (void)_mkdir(dur_dir);          /* single-arg on Windows; EEXIST fine */
+#else
             (void)mkdir(dur_dir, 0700);     /* idempotent; EEXIST is fine */
+#endif
             dur_state = 1;
         } else {
             dur_state = 0;
@@ -106,7 +114,12 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
     if (snprintf(tmp, sizeof tmp, "%s/%s.tmp", dir, fname) >= (int)sizeof tmp)
         return -1;
 
+#ifdef _WIN32
+    /* O_BINARY: Windows text mode would translate bytes; the store is binary. */
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
+#else
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+#endif
     if (fd < 0) return -1;
 
     const unsigned char *p = (const unsigned char *)data;
@@ -116,15 +129,23 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
         if (w <= 0) { close(fd); unlink(tmp); return -1; }
         off += (unsigned)w;
     }
+#ifdef _WIN32
+    if (_commit(fd) != 0) { close(fd); unlink(tmp); return -1; }
+#else
     if (fsync(fd) != 0) { close(fd); unlink(tmp); return -1; }
+#endif
     close(fd);
 
     if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
 
+#ifndef _WIN32
     /* fsync the directory so the rename (the durability point) survives a
-     * power loss, not just the file's own data blocks. */
+     * power loss, not just the file's own data blocks. Windows has no
+     * directory-fsync fd; the rename is still atomic (P1 accepts the
+     * weaker crash-durability). */
     int dfd = open(dir, O_RDONLY | O_DIRECTORY);
     if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
+#endif
     return 0;
 }
 

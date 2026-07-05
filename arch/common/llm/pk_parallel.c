@@ -107,7 +107,11 @@ static void pk_pool_init(void)
 {
     memset(&g_pool, 0, sizeof(g_pool));
 
+#ifdef _WIN32
+    int nproc = win_num_cpus();     /* GetSystemInfo (win_prim.c) */
+#else
     int nproc = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
     if (nproc < 1) nproc = 1;
     int nw = nproc;
     if (nw > PK_PARALLEL_MAX_WORKERS) nw = PK_PARALLEL_MAX_WORKERS;

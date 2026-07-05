@@ -118,7 +118,7 @@ LOCAL void knl_appendFreeAreaBound( MPLCB *mplcb, QUEUE *aq )
 		/* FreeQue のサイズ順の位置へ登録 */
 		QueInsert(top, fq);
 		(top + 1)->next = NULL;
-		(top + 1)->prev = (QUEUE*)(unsigned long)size;	/* p-kernel: LP64 の警告回避（サイズ値の格納） */
+		(top + 1)->prev = (QUEUE*)(KNL_UPTR)size;	/* p-kernel: LP64/LLP64 の警告回避（サイズ値の格納） */
 	}
 }
 

@@ -110,7 +110,7 @@ EXPORT void knl_appendFreeArea( IMACB *imacb, QUEUE *aq )
 		/* FreeQue サイズ順のキューへ連結 */
 		QueInsert(aq + 1, fq);
 		(aq + 2)->next = NULL;
-		(aq + 2)->prev = (QUEUE*)(unsigned long)size;	/* p-kernel: LP64 の警告回避（サイズ値の格納） */
+		(aq + 2)->prev = (QUEUE*)(KNL_UPTR)size;	/* p-kernel: LP64/LLP64 の警告回避（サイズ値の格納） */
 	}
 }
 
@@ -358,19 +358,21 @@ EXPORT ER knl_init_Imalloc( void )
 	QUEUE	*top, *end;
 
 	/* p-kernel 変更: ポインタ演算のキャストを UW（32bit）から
-	 * unsigned long へ変更。LP64 ホスト（Linux x86-64 等）では
-	 * UW キャストがポインタ上位 32bit を切り捨てるため。
-	 * 32bit MCU ターゲットでは unsigned long == 32bit で従来と同じ。 */
+	 * ポインタ幅の KNL_UPTR（memory.h）へ変更。LP64 ホスト
+	 * （Linux x86-64・bare-metal 等）では unsigned long と同一（64bit）
+	 * のため既存コードとバイト一致。LLP64（Windows x86_64）では
+	 * unsigned long が 32bit のため 64bit 側を使う。32bit MCU では
+	 * いずれも 32bit で従来と同じ。マスクも ~(KNL_UPTR) で 64bit 化。 */
 
 	/* IMACB 用に先頭を 4 バイト境界へ整列 */
-	knl_lowmem_top = (void *)(((unsigned long)knl_lowmem_top + 3) & ~0x00000003UL);
+	knl_lowmem_top = (void *)(((KNL_UPTR)knl_lowmem_top + 3) & ~(KNL_UPTR)0x3);
 	knl_imacb = (IMACB*)knl_lowmem_top;
-	knl_lowmem_top = (void *)((unsigned long)knl_lowmem_top + sizeof(IMACB));
+	knl_lowmem_top = (void *)((KNL_UPTR)knl_lowmem_top + sizeof(IMACB));
 
 	/* 先頭を 8 バイト境界へ整列 */
-	knl_lowmem_top = (void *)(((unsigned long)knl_lowmem_top + 7) & ~0x00000007UL);
+	knl_lowmem_top = (void *)(((KNL_UPTR)knl_lowmem_top + 7) & ~(KNL_UPTR)0x7);
 	top = (QUEUE*)knl_lowmem_top;
-	knl_imacb->memsz = (W)((unsigned long)knl_lowmem_limit - (unsigned long)knl_lowmem_top - sizeof(QUEUE)*2);
+	knl_imacb->memsz = (W)((KNL_UPTR)knl_lowmem_limit - (KNL_UPTR)knl_lowmem_top - sizeof(QUEUE)*2);
 
 	knl_lowmem_top = knl_lowmem_limit;  /* 空きメモリ領域の更新 */
 

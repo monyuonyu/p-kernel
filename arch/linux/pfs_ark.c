@@ -53,6 +53,26 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#ifdef _WIN32
+/* mingw has no pread/pwrite (no atomic-offset I/O) and fsync is _commit.
+ * Emulate positional I/O with _lseeki64 + _read/_write. The ark file is
+ * accessed from a single task, so seek-then-io is race-free here. */
+#include <io.h>
+static ssize_t win_pread(int fd, void *buf, size_t n, long long off)
+{
+    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    return (ssize_t)_read(fd, buf, (unsigned)n);
+}
+static ssize_t win_pwrite(int fd, const void *buf, size_t n, long long off)
+{
+    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    return (ssize_t)_write(fd, buf, (unsigned)n);
+}
+#define pread(fd, buf, n, off)  win_pread((fd), (buf), (n), (long long)(off))
+#define pwrite(fd, buf, n, off) win_pwrite((fd), (const void *)(buf), (n), (long long)(off))
+#define fsync(fd)               _commit(fd)
+#endif
+
 #include "arkfs.h"
 
 #define ARK_DEFAULT_SECTORS 8192u    /* 4 MiB image when first created */
@@ -205,7 +225,11 @@ int pfs_ark_restore(void (*emit)(const char *))
     struct stat st;
     int existed = (stat(path, &st) == 0 && st.st_size >= (off_t)(4 * ARK_SECTOR));
 
+#ifdef _WIN32
+    ark_fd = open(path, O_RDWR | O_CREAT | O_BINARY, 0600);  /* binary store */
+#else
     ark_fd = open(path, O_RDWR | O_CREAT, 0600);
+#endif
     if (ark_fd < 0) {
         if (emit) emit("[pfs] durable(ark): cannot open image — disabled\r\n");
         ark_state = 0;
