@@ -1790,6 +1790,52 @@ jobs:
           grep -aF '[migrate-forward] PASS' compat.log
           ! grep -aqF '[migrate-forward] FAIL' compat.log
 
+  distributed-moe:
+    # Collective x Brain: DMOE-A — distributed-MoE expert capacity that GROWS
+    # with the fleet (distributed_moe_design.md §7). The BANK shards a bank
+    # expert's FFN blocks onto its HRW owners (arch/common/placement.c, REUSED
+    # READ-ONLY) while REPLICATING its router row, so a node's gate can SCORE and
+    # ROUTE TO an expert it does NOT HOLD; the degrade ladder DROPS an unreachable
+    # expert (never recomputes what this node does not hold — the one SS-6 clause
+    # DMOE inverts); the version pin turns skew into REFUSAL, never deterministic-
+    # but-wrong. ALL of arch/common/llm/* + ss6_live.c is HOSTED-tier (bare metal
+    # links student_stub.o), so the crown .text is UNTOUCHED — the crown-text-
+    # identity job below proves the bare .text is byte-identical to the parent.
+    #
+    # The [dmoe-*] gates run IN-PROCESS (the REAL bank + REAL joint routing +
+    # degrade over a fleet whose transport models the SS6L v2 wire), each with an
+    # explicit RED-when-stubbed falsifier ([dmoe-bit-ref]'s anti-theater arm stubs
+    # the transport and asserts the forward DIVERGES from the oracle). The multi-
+    # process SS6L v2 relay [live] rows + the aarch64 cross-arch determinism diff
+    # (identical [dmoe-*] machine hashes on x86_64 AND aarch64) run on the ThinkPad
+    # self-hosted runner (PRoot has no netns — feedback_proot_sandbox_net_limits).
+    # HONEST: [dmoe-capacity-grows] measures ROUTED utility through the REAL gate
+    # (never hosted bytes); the routed GAIN is a pre-registered NULL at toy scale
+    # under a drifted core (§10.1/§10.5), reported not tuned — a theater arm
+    # (resident-only beats solo) is a HARD RED.
+    name: "distributed-MoE capacity ([dmoe-*] bank; hosted-only, crown-neutral)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: "[dmoe-*] bank cert (capacity-grows / bit-ref / version-skew / kill-degrade / nonresident / solo-floor / genericity)"
+        run: bash tests/llm/run_dmoe.sh | tee llm_dmoe.log
+      - name: Load-bearing gates PASS + the anti-theater RED-when-stubbed proof is present
+        run: |
+          grep -aqF '[result] PASS' llm_dmoe.log
+          grep -aqF 'ANTI-THEATER: stub the remote transport -> RED' llm_dmoe.log
+          grep -aqF '[dmoe-bit-ref] oracle == distributed' llm_dmoe.log
+          grep -aqF '[dmoe-version-skew] force-accept the stale blob -> hash DIVERGES' llm_dmoe.log
+          ! grep -aqE '^  FAIL  ' llm_dmoe.log
+      - name: Both hosted targets link dmoe_bank.o clean (bare-metal .text freeze is the crown-text-identity job)
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64
+          make -C boot/linux         clean >/dev/null && make -C boot/linux
+
   generation-survives:
     # Evolution layer: generational migration succession
     # (evolution-migration-design.md §8). A living mind crosses an ARCHITECTURE

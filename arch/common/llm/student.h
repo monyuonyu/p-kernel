@@ -572,4 +572,60 @@ int st_last_remote_fallback(void);
 int st_expert_forward_ref(const st_model *m, int layer, int expert_id,
                           const float *fin, float *out);
 
+/* ---- DMOE-A: distributed-MoE expert BANK (distributed_moe_design.md) --------
+ * The successor of SS-5 (placement) + SS-6 (remote firing). SS-6 shares WORK
+ * (every node holds every expert; fallback = recompute locally). DMOE inverts
+ * exactly that one clause: an expert you can ROUTE TO but do NOT HOLD, whose
+ * fallback is honest WIDTH degradation, never local recompute. That is what
+ * turns "adding a node adds FLOPs" into "adding a node adds CAPACITY".
+ *
+ * Split of responsibility (the crown-neutral boundary): the BANK is a separate
+ * hosted TU (arch/common/llm/dmoe_bank.c) that owns residency, the version pin,
+ * the remote transport, and dmoe_experts_reachable(). student.c owns ONLY the
+ * joint routing math + the honest degrade ladder — the two pure functions §2.1
+ * calls "which expert fires" and "sum the survivors". When NO bank is installed
+ * (the default, and every existing cert) st_forward is BYTE-IDENTICAL to the
+ * pre-DMOE student: the [dmoe-bank-empty-identity] gate.
+ *
+ * The candidate space the router scores grows to floor+bank; the FIRED width
+ * stays <= ST_KMAX (only the candidate space grows, §3.1). */
+#define ST_DMOE_FLEET_MAX  32                          /* bank slots (global xid) */
+#define ST_DMOE_CAND_MAX   (ST_E_MAX + ST_DMOE_FLEET_MAX)  /* 8 + 32 = 40 cands   */
+
+/* Score the nbank REPLICATED bank router rows against the [D] rmsnorm'd input at
+ * `layer`, writing up to `cap` bank logits into out[]. A bank expert with NO
+ * reachable ver-current owner is scored -inf (<= -1e29f) so router_pick never
+ * selects it (the SS-4 never-admit mechanism, so a LOST expert honestly drops
+ * capacity instead of routing into a black hole). Returns the count written. */
+typedef int (*st_dmoe_score_fn)(int layer, const float *fin, int d,
+                                float *out, int cap, void *ctx);
+
+/* Materialize bank slot `bslot`'s [D] SwiGLU output at `layer` into out[d] —
+ * LOCALLY if this node holds the blocks, else over the mesh from an HRW owner
+ * whose ver matches the requester's pin (§2.3). Returns 0 (out filled) or <0
+ * (no reachable ver-current owner within budget -> student.c DROPS the expert
+ * from this token's softmax sum: honest width loss, deterministic in the
+ * failure set, §4.2). NEVER recomputes locally what it does not hold — that is
+ * the exact clause DMOE inverts from SS-6. */
+typedef int (*st_dmoe_fire_fn)(int layer, int bslot, const float *fin, int d,
+                               float *out, void *ctx);
+
+/* Install/clear the bank. nbank in [0, ST_DMOE_FLEET_MAX]. EITHER fn NULL or
+ * nbank==0 => the bank is INACTIVE and st_forward is byte-identical to the
+ * pre-DMOE forward. Set ONLY around the generation/eval path; training runs
+ * bank-inactive (the remote path caches no e_g/e_u/e_h — the SS-6 backward law
+ * kept verbatim: st_backward fail-closes on any remote/bank fire). */
+void st_dmoe_install(st_dmoe_score_fn score, st_dmoe_fire_fn fire,
+                     int nbank, void *ctx);
+
+/* DMOE observability (read-only, set by the LAST st_forward):
+ *  - st_last_bank_fired()   : bank-expert [D] outputs summed this forward
+ *  - st_last_bank_dropped() : bank experts SELECTED but with no reachable owner
+ *                             within budget, dropped from the softmax sum — the
+ *                             honest degraded count. degraded(k/n): k = dropped,
+ *                             n = fired+dropped.
+ * Both are deterministic in (weights, bytes, fleet view, failure set). */
+int st_last_bank_fired(void);
+int st_last_bank_dropped(void);
+
 #endif /* PKERNEL_LLM_STUDENT_H */

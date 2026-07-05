@@ -33,8 +33,24 @@
  * DRPC 7374 and KDDS 7376; distinct from both). */
 #define SS6L_PORT       7378
 
-#define SS6L_REQ_MAGIC   0x4C365353UL   /* "SS6L" LE — request  */
-#define SS6L_REP_MAGIC   0x52365353UL   /* "SS6R" LE — reply    */
+/* SS6L v2 (DMOE-A, distributed_moe_design.md §6.3): the fire packet grows the
+ * version pin (ver_lo/ver_hi), the core-epoch, and a flags byte; the reply gains
+ * a refuse_reason. The magic BUMPS to a v2 value so a v1 node cleanly IGNORES a
+ * v2 datagram (a mixed-fleet boot never mis-parses). v1 magics kept for the
+ * record. */
+#define SS6L_REQ_MAGIC_V1 0x4C365353UL  /* "SS6L" LE — v1 request (SS-6)         */
+#define SS6L_REP_MAGIC_V1 0x52365353UL  /* "SS6R" LE — v1 reply                  */
+#define SS6L_REQ_MAGIC   0x32365353UL   /* "SS62" LE — v2 request (DMOE)         */
+#define SS6L_REP_MAGIC   0x72365353UL   /* "SS6r" LE — v2 reply                  */
+
+/* fire-packet flags. BANK marks a request for a DMOE bank expert (ver-pinned,
+ * §2.3); absent (0) is a plain SS-6 floor expert (ver fields ignored). */
+#define SS6L_FLAG_BANK   0x01u
+
+/* reply refuse_reason codes (0 == OK). */
+#define SS6L_REFUSE_NONE     0
+#define SS6L_REFUSE_ABSENT   1   /* not resident here                            */
+#define SS6L_REFUSE_VERSKEW  2   /* the requester's pin != our blob's ver (§2.3) */
 
 /* Install the LIVE remote-expert transport into student.c (st_set_remote_expert)
  * and bind SS6L_PORT. `m` is the resident model this node will run remote

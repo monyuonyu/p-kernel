@@ -205,6 +205,11 @@ LLM_C_SRCS  = gguf.c quant.c pk_parallel.c tokenizer.c forward.c sample.c \
               llm_shell.c student.c dev_capacity.c student_shell.c cradle.c \
               frontier.c
 LLM_OBJS    = $(LLM_C_SRCS:.c=.o)
+# DMOE-A bank: hosted-tier but REUSES placement.h (HRW), so it needs the FULL
+# kernel CFLAGS (the target -D defines resolve mtkernel3 sysdef.h) + -I$(LLM_DIR)
+# for student.h — exactly the ss6_live.o recipe. Bare metal does NOT build it
+# (student_stub.o), so the crown .text is structurally unaffected.
+DMOE_OBJS = dmoe_bank.o
 # $(EXTRA_CFLAGS) reaches the LLM tier too so the Frontier Mouth sabotage flag
 # (-DSABOTAGE_FRONTIER_NOLABEL) can stub frontier.c's labeler for the anti-
 # theater job — the SAME channel CFLAGS uses for -DCONSCIENCE_STUB.
@@ -258,7 +263,7 @@ MTK3_OBJS = $(MTK3_KNL_OBJS) $(MTK3_MISC_OBJS) $(MTK3_SYSDEP_OBJS)
 # 不要。プレースホルダヘッダ（include/lib/libc）が 2.0 の stdtype.h に
 # 依存している問題も同時に回避できる。
 
-ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(MTK3_OBJS)
+ALL_OBJS = $(BOOT_OBJS) $(ARCH_OBJS) $(COMMON_OBJS) $(LLM_OBJS) $(DMOE_OBJS) $(MTK3_OBJS)
 
 TARGET = p-kernel
 
@@ -327,6 +332,10 @@ $(COMMON_OBJS): %.o: $(ARCH_COMMON)/%.c
 	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 ss6_live.o: KERNEL_CFLAGS += -I$(LLM_DIR)
+
+# DMOE-A bank: full kernel CFLAGS (target defines) + -I$(LLM_DIR) for student.h.
+dmoe_bank.o: $(LLM_DIR)/dmoe_bank.c
+	$(CC) $(CFLAGS) -I$(LLM_DIR) -c -o $@ $<
 
 $(LLM_OBJS): %.o: $(LLM_DIR)/%.c
 	$(CC) $(LLM_CFLAGS) -c -o $@ $<
@@ -414,6 +423,10 @@ ss6_live.lo: SO_CFLAGS += -I$(LLM_DIR)
 
 $(LLM_OBJS:.o=.lo): %.lo: $(LLM_DIR)/%.c
 	$(CC) $(LLM_CFLAGS) -fPIC -fvisibility=hidden -c -o $@ $<
+
+# DMOE-A bank shared-object variant (Android libpkernel.so parity, wave-36).
+dmoe_bank.lo: $(LLM_DIR)/dmoe_bank.c
+	$(CC) $(CFLAGS) -I$(LLM_DIR) -fPIC -fvisibility=hidden -c -o $@ $<
 
 test_so_load: test_so_load.c $(SO_TARGET)
 	$(CC) -o $@ $< -ldl -lpthread

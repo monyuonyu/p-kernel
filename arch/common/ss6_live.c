@@ -52,7 +52,7 @@ static void sl_putdec(UW v)
  * the first `d` entries are meaningful. ST_D_MAX(256)*4 = 1 KB payload + header,
  * comfortably inside a UDP datagram on the mesh. */
 typedef struct {
-    UW    magic;        /* SS6L_REQ_MAGIC                                  */
+    UW    magic;        /* SS6L_REQ_MAGIC (v2)                             */
     UH    seq;          /* request id (echoed in the reply)                */
     UB    src_node;     /* requester node id                               */
     UB    dst_node;     /* owner node id (SS-5 placement)                  */
@@ -60,16 +60,23 @@ typedef struct {
     UH    expert_id;    /* global expert id                                */
     UH    d;            /* model d (== student d_model)                    */
     UH    dff;          /* per-expert SwiGLU hidden (echoed, not used)     */
+    /* --- SS6L v2 (DMOE-A §6.3): the version pin + core-epoch + flags --- */
+    UW    ver_lo;       /* low 32 bits of the expert version pin (§2.3)    */
+    UW    ver_hi;       /* high 32 bits                                    */
+    UB    core_epoch;   /* the core-epoch the requester expects            */
+    UB    flags;        /* SS6L_FLAG_* (BANK marks a DMOE bank expert)     */
+    UH    _rsvd;        /* reserved (keep 4-byte alignment of fin)         */
     float fin[ST_D_MAX];/* the rmsnorm'd [D] input vector                  */
 } __attribute__((packed)) SS6L_REQ;
 
 typedef struct {
-    UW    magic;        /* SS6L_REP_MAGIC                                  */
+    UW    magic;        /* SS6L_REP_MAGIC (v2)                             */
     UH    seq;          /* echoes the request seq                          */
     UB    src_node;     /* responder (owner) node id                       */
     UB    status;       /* 0 = OK (eo valid), !=0 = refused                */
     UH    d;            /* number of valid eo entries                      */
-    UH    _pad;
+    UB    refuse_reason;/* SS6L_REFUSE_* (0 == OK; VERSKEW on pin mismatch) */
+    UB    _pad;
     float eo[ST_D_MAX]; /* the [D] expert down-projection output           */
 } __attribute__((packed)) SS6L_REP;
 
@@ -114,8 +121,14 @@ static void sl_serve(UW src_ip, const SS6L_REQ *rq)
     rep.seq      = rq->seq;
     rep.src_node = drpc_my_node;
     rep.status   = 1;            /* refused unless we fill eo below          */
+    rep.refuse_reason = SS6L_REFUSE_ABSENT;   /* SS6L v2: honest refuse code   */
     rep.d        = 0;
 
+    /* SS6L v2: a floor expert (flags & SS6L_FLAG_BANK == 0) is served exactly as
+     * SS-6 did (no pin — every node holds an identical whole model). A BANK
+     * expert carries the ver pin; the DMOE bank responder (dmoe_bank.c) enforces
+     * SS6L_REFUSE_VERSKEW on the requester's ver_lo/ver_hi (§2.3). The wire is
+     * v2-ready; the bank-serve install is the production follow-up. */
     if (sl_model && rq->d > 0 && rq->d <= ST_D_MAX && rq->dst_node == drpc_my_node) {
         /* the owner runs the EXACT per-expert SwiGLU (one math) so its [D]
          * output is bit-identical to the requester's local MoE branch. Copy
@@ -127,8 +140,9 @@ static void sl_serve(UW src_ip, const SS6L_REQ *rq)
         if (st_expert_forward_ref(sl_model, (int)rq->layer, (int)rq->expert_id,
                                   fin_aln, eo_aln) == ST_OK) {
             for (int i = 0; i < (int)rq->d; i++) rep.eo[i] = eo_aln[i];
-            rep.status = 0;
-            rep.d      = rq->d;
+            rep.status        = 0;
+            rep.refuse_reason = SS6L_REFUSE_NONE;
+            rep.d             = rq->d;
             sl_served++;
         }
     }

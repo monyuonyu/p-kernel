@@ -731,6 +731,71 @@ void st_set_remote_expert(st_remote_expert_fn fn, st_remote_gate_fn gate,
 int st_last_remote_fired(void)    { return st_remote_fired_cnt; }
 int st_last_remote_fallback(void) { return st_remote_fallback_cnt; }
 
+/* ---- DMOE-A cross-node expert BANK (distributed_moe_design.md §2/§4) --------
+ * The bank score/fire hooks are CALLER-installed (dmoe_bank.c wires the real
+ * transport; the cert wires an in-process fleet). When st_dmoe_score is NULL or
+ * st_dmoe_nbank==0 the joint-routing branch in st_forward is NEVER taken and the
+ * MoE loop is byte-identical to the pre-DMOE forward (the [dmoe-bank-empty-
+ * identity] gate). Counts reset at the top of each st_forward. */
+static st_dmoe_score_fn st_dmoe_score = NULL;
+static st_dmoe_fire_fn  st_dmoe_fire  = NULL;
+static int              st_dmoe_nbank = 0;
+static void            *st_dmoe_ctx   = NULL;
+static int              st_bank_fired_cnt   = 0;  /* bank [D] outputs summed     */
+static int              st_bank_dropped_cnt = 0;  /* selected-but-unreachable    */
+
+void st_dmoe_install(st_dmoe_score_fn score, st_dmoe_fire_fn fire,
+                     int nbank, void *ctx)
+{
+    if (nbank < 0) nbank = 0;
+    if (nbank > ST_DMOE_FLEET_MAX) nbank = ST_DMOE_FLEET_MAX;
+    st_dmoe_score = score;
+    st_dmoe_fire  = fire;
+    st_dmoe_nbank = (score && fire) ? nbank : 0;
+    st_dmoe_ctx   = ctx;
+}
+int st_last_bank_fired(void)   { return st_bank_fired_cnt;   }
+int st_last_bank_dropped(void) { return st_bank_dropped_cnt; }
+
+/* DMOE joint router pick over ecand = E_res + nbank candidates (floor logits
+ * first, then bank logits). MIRRORS router_pick (same selection sort + margin
+ * widening + max-subtracted softmax, one math) but with scratch bound to the
+ * FIXED ST_DMOE_CAND_MAX (candidate space) and the FIRED width capped at KMAX
+ * (only the candidate space grows, §3.1; a bank logit <= -1e29f is an
+ * unreachable/LOST expert, treated as effective -inf: never selected — the
+ * exact SS-4 never-admit mechanism). Writes chosen ids (xe[KMAX]); returns the
+ * width nk (K_min..min(selectable,KMAX)). The SOFTMAX is deliberately NOT
+ * computed here — st_forward recomputes it over the SURVIVING slots after the
+ * degrade ladder (§4.2), so it stays deterministic in the failure set. */
+static int dmoe_router_pick(const float *gate, int *xe, int ecand)
+{
+    int order[ST_DMOE_CAND_MAX];
+    int used[ST_DMOE_CAND_MAX];
+    int n_sel = 0;
+    if (ecand > ST_DMOE_CAND_MAX) ecand = ST_DMOE_CAND_MAX;
+    for (int e = 0; e < ecand; e++) { used[e] = 0; if (gate[e] > -1e29f) n_sel++; }
+    for (int r = 0; r < ecand; r++) {
+        int best = -1; float bv = -1e30f;
+        for (int e = 0; e < ecand; e++) {
+            if (used[e]) continue;
+            if (gate[e] <= -1e29f) continue;          /* LOST: effective -inf     */
+            if (best < 0 || gate[e] > bv) { bv = gate[e]; best = e; }
+        }
+        if (best < 0) {                               /* only LOST cands remain   */
+            for (int e = 0; e < ecand; e++)
+                if (!used[e]) { order[r] = e; used[e] = 1; break; }
+            continue;
+        }
+        order[r] = best; used[best] = 1;
+    }
+    int cap = n_sel < KMAX ? n_sel : KMAX;            /* fired width never > KMAX  */
+    int nk  = K < cap ? K : cap;                      /* start at K_min           */
+    float top1 = gate[order[0]];
+    while (nk < cap && (top1 - gate[order[nk]]) < ST_K_THETA) nk++;
+    for (int j = 0; j < nk; j++) xe[j] = order[j];
+    return nk;
+}
+
 /* ---- SS-4 (ss4-function-preserving-growth-plan.md §1.3): the per-expert
  * liveness mask router_pick reads.  st_forward points this at the resident
  * model's m->alive (nexpert-sized) for the MoE loop, then clears it.  When it is
@@ -833,6 +898,14 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
     c->topk_w = tw_buf;
     st_frozen_pos = 0;   /* frozen routing replays in (l,t) visit order */
     st_remote_fired_cnt = 0; st_remote_fallback_cnt = 0;  /* SS-6 per-forward */
+    st_bank_fired_cnt = 0; st_bank_dropped_cnt = 0;       /* DMOE per-forward */
+    /* DMOE-A joint-routing branch: active iff a bank is installed AND non-empty.
+     * When inactive EVERY line below is byte-identical to the pre-DMOE forward. */
+    const int dmoe_active = (st_dmoe_score && st_dmoe_fire && st_dmoe_nbank > 0);
+    long dmoe_sumw = 0;                 /* Σ fired width over (l,t) for milli    */
+    int  dmoe_last_nk = 0;              /* final-token final-layer fired width   */
+    int  dmoe_last_e[KMAX];             /* final-token final-layer chosen ids    */
+    for (int j = 0; j < KMAX; j++) dmoe_last_e[j] = -1;
     /* SS-4: point router_pick at this model's liveness mask (NULL == all-alive,
      * byte-identical to pre-SS-4).  st_forward is single-threaded / non-reentrant
      * (shares tw_buf / st_frozen_pos), so a file-static pointer is safe. */
@@ -925,6 +998,91 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
                 for (int i = 0; i < D; i++) acc += re[i] * fin[i];
                 gt[e] = acc;
             }
+
+            /* ── DMOE-A joint path (distributed_moe_design.md §2/§4): score the
+             * REPLICATED bank router rows alongside the floor logits, route the
+             * top-K over the UNION, fire each (floor local; bank resident-or-
+             * remote via the installed transport), then DROP any unreachable
+             * bank expert and sum the survivors. When the bank is inactive this
+             * branch is never entered, so the floor path below is byte-identical
+             * to the pre-DMOE forward (the [dmoe-bank-empty-identity] gate). ── */
+            if (dmoe_active) {
+                float xg[ST_DMOE_CAND_MAX];
+                for (int e = 0; e < E; e++) xg[e] = gt[e];   /* floor logits first */
+                int nb = st_dmoe_score(l, fin, D, xg + E,
+                                       ST_DMOE_CAND_MAX - E, st_dmoe_ctx);
+                if (nb < 0) nb = 0;
+                if (E + nb > ST_DMOE_CAND_MAX) nb = ST_DMOE_CAND_MAX - E;
+                int xe[KMAX];
+                int nk = dmoe_router_pick(xg, xe, E + nb);
+
+                static float eo_all[KMAX][DMAX];   /* fixed L-tier K, d_model     */
+                int alive_slot[KMAX];
+                for (int j = 0; j < nk; j++) {
+                    int id = xe[j];
+                    float *eo = eo_all[j];
+                    if (id < E) {
+                        /* floor expert: the EXACT single-node SwiGLU (one math). */
+                        const float *w1 = W + m->o_w1 + ((size_t)l * E + id) * DFF * D;
+                        const float *w3 = W + m->o_w3 + ((size_t)l * E + id) * DFF * D;
+                        const float *w2 = W + m->o_w2 + ((size_t)l * E + id) * D * DFF;
+                        float ehh[DFFMAX];
+                        for (int h = 0; h < DFF; h++) {
+                            const float *w1h = w1 + (size_t)h * D;
+                            const float *w3h = w3 + (size_t)h * D;
+                            float g = 0.0f, u = 0.0f;
+                            for (int i = 0; i < D; i++) { g += w1h[i] * fin[i]; u += w3h[i] * fin[i]; }
+                            ehh[h] = st_silu(g) * u;
+                        }
+                        for (int i = 0; i < D; i++) {
+                            const float *w2r = w2 + (size_t)i * DFF;
+                            float acc2 = 0.0f;
+                            for (int h = 0; h < DFF; h++) acc2 += w2r[h] * ehh[h];
+                            eo[i] = acc2;
+                        }
+                        alive_slot[j] = 1;
+                    } else {
+                        /* bank expert: resident-or-remote; NEVER recompute what
+                         * this node does not hold (the SS-6 clause DMOE inverts). */
+                        int bslot = id - E;
+                        if (st_dmoe_fire(l, bslot, fin, D, eo, st_dmoe_ctx) == 0) {
+                            alive_slot[j] = 1; st_bank_fired_cnt++;
+                        } else {
+                            alive_slot[j] = 0; st_bank_dropped_cnt++;
+                        }
+                    }
+                }
+                /* honest degrade (§4.2 step 3): re-derive the softmax over the
+                 * SURVIVING slots only, then sum in ASCENDING surviving-slot
+                 * order — deterministic in (weights, bytes, failure set F). A
+                 * token with F=∅ (oracle / all-remote-OK) is bit-identical to the
+                 * joint softmax (same max-subtracted code, same order). */
+                float smx = -1e30f;
+                for (int j = 0; j < nk; j++)
+                    if (alive_slot[j] && xg[xe[j]] > smx) smx = xg[xe[j]];
+                float ssum = 0.0f; float wsurv[KMAX];
+                for (int j = 0; j < nk; j++) {
+                    if (!alive_slot[j]) { wsurv[j] = 0.0f; continue; }
+                    wsurv[j] = st_expf(xg[xe[j]] - smx); ssum += wsurv[j];
+                }
+                if (ssum < 1e-20f) ssum = 1e-20f;
+                float moe[DMAX];
+                for (int i = 0; i < D; i++) moe[i] = 0.0f;
+                for (int j = 0; j < nk; j++) {
+                    if (!alive_slot[j]) continue;
+                    float wj = wsurv[j] / ssum; const float *eo = eo_all[j];
+                    for (int i = 0; i < D; i++) moe[i] += wj * eo[i];
+                }
+                for (int i = 0; i < D; i++) x[i] += moe[i];  /* residual in place */
+
+                dmoe_sumw += nk;
+                if (l == L - 1 && t == n - 1) {
+                    dmoe_last_nk = nk;
+                    for (int j = 0; j < KMAX; j++) dmoe_last_e[j] = (j < nk) ? xe[j] : -1;
+                }
+                continue;   /* token done — skip the floor-only path below */
+            }
+
             int   *te = c->topk_e + ((size_t)l * n + t) * E;
             float *tw = c->topk_w + ((size_t)l * n + t) * E;
             int    nk = router_pick(gt, te, tw, E);
@@ -1033,7 +1191,15 @@ int st_forward(st_model *m, const uint8_t *bytes, int n, float *logits)
      * last  = the final token's final-layer width ("answer token" width).
      * milli = mean width across all (layer, token) experts x1000 (libc-free
      * integer; no float division of the count, so it stays deterministic). */
-    {
+    if (dmoe_active) {
+        /* DMOE path writes no per-(l,t) cache (bank ids can exceed the E-slot
+         * stride, and the backward never runs on a bank forward); the width
+         * observability comes from the DMOE accumulators instead. */
+        st_fw_last = dmoe_last_nk;
+        for (int j = 0; j < KMAX; j++) st_fw_experts[j] = dmoe_last_e[j];
+        long cells = (long)L * n;
+        st_fw_milli = cells ? (int)((dmoe_sumw * 1000) / cells) : 0;
+    } else {
         size_t fcell = (size_t)(L - 1) * n + (n - 1);   /* final token, final layer */
         st_fw_last = c->topk_n[fcell];
         const int *fe = c->topk_e + fcell * E;          /* E-slot stride (heap) */
@@ -1588,8 +1754,12 @@ float st_backward(st_model *m, const uint8_t *bytes, int n)
      * node's e_g/e_u/e_h cache STALE for the remote slots, so a backward pass
      * over them would silently corrupt gradients. Training MUST run with the
      * remote hook clear (st_forward fires 0 experts remotely). Fail CLOSED if
-     * that contract is ever violated rather than train on poisoned caches. */
+     * that contract is ever violated rather than train on poisoned caches.
+     * DMOE-A extends this exactly: a bank forward (fired OR dropped a bank
+     * expert) took the joint path, which caches no e_g/e_u/e_h — so training
+     * runs bank-inactive and the backward fail-closes if a bank slot fired. */
     if (st_last_remote_fired() > 0) return 0.0f;
+    if (st_last_bank_fired() > 0 || st_last_bank_dropped() > 0) return 0.0f;
     const float *W = m->w;
     float *G = m->g;
     int np = n - 1;
