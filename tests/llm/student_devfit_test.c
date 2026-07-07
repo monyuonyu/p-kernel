@@ -22,10 +22,11 @@
  *                            (cap_experts=10) clamps the growth target to
  *                            ST_E_S=2, NOT cap_experts (=10) / CAP_E_MAX (=16).
  *                            Closes SS-4 open-risk #7.
- *    [tier-forward-pin]      the per-tier student forward hash is UNMOVED:
- *                            S=0a5bf44c131b5439 (NEWLY PINNED — S is now
- *                            production-selectable), M=63e8de333e995913,
- *                            L=67f2434f50e791b6. SAME recipe as student_ss6_test
+ *    [tier-forward-pin]      the per-tier student forward hash is pinned (RE-
+ *                            PINNED post SCALE-WALL C1 = RoPE + ST_MAXSEQ 64->256,
+ *                            commit 7d497d7c, which moved st_forward every tier):
+ *                            S=6baf2e14f370de17, M=604895ba9c2b1c9d,
+ *                            L=5ba2c68f6ca0ba89. SAME recipe as student_ss6_test
  *                            (CORPUS, warm_train 1 step, FNV-1a logit hash), so
  *                            the pins match the SS-6 single= hashes bit-for-bit.
  *
@@ -282,20 +283,28 @@ int main(int argc, char **argv)
         uint64_t hS = tier_forward_hash(ST_TIER_S);
         uint64_t hM = tier_forward_hash(ST_TIER_M);
         uint64_t hL = tier_forward_hash(ST_TIER_L);
-        const uint64_t PIN_S = 0x0a5bf44c131b5439ULL;  /* NEWLY PINNED (S now selectable) */
-        const uint64_t PIN_M = 0x63e8de333e995913ULL;  /* SS-6 M */
-        const uint64_t PIN_L = 0x67f2434f50e791b6ULL;  /* SS-6 L */
+        /* RE-PINNED after SCALE-WALL C1 (commit 7d497d7c: RoPE positional
+         * encoding + ST_MAXSEQ 64->256, NS v2) intentionally moved st_forward
+         * for EVERY tier. The prior pins (S=0a5bf44c.., M=63e8de33.., L=67f2434f..)
+         * were the PRE-C1 forward; student_ss6_test's single= hashes WERE updated
+         * to the post-C1 values but this cert's copies were missed -> the RED.
+         * By this cert's OWN invariant ("SAME recipe as student_ss6_test, so the
+         * pins match the SS-6 single= hashes bit-for-bit") the correct values ARE
+         * the current GREEN run_ss6.sh single= hashes, restored here. */
+        const uint64_t PIN_S = 0x6baf2e14f370de17ULL;  /* SS-6 S (post-C1) */
+        const uint64_t PIN_M = 0x604895ba9c2b1c9dULL;  /* SS-6 M (post-C1) */
+        const uint64_t PIN_L = 0x5ba2c68f6ca0ba89ULL;  /* SS-6 L (post-C1) */
         char msg[160];
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] S=%016llx == 0a5bf44c131b5439 (NEWLY PINNED — S is production-selectable)",
+            "[tier-forward-pin] S=%016llx == 6baf2e14f370de17 (post-C1; == SS-6 single=)",
             (unsigned long long)hS);
         CHECK(hS == PIN_S, msg);
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] M=%016llx == 63e8de333e995913 (M default UNMOVED)",
+            "[tier-forward-pin] M=%016llx == 604895ba9c2b1c9d (post-C1; == SS-6 single=)",
             (unsigned long long)hM);
         CHECK(hM == PIN_M, msg);
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] L=%016llx == 67f2434f50e791b6 (L UNMOVED)",
+            "[tier-forward-pin] L=%016llx == 5ba2c68f6ca0ba89 (post-C1; == SS-6 single=)",
             (unsigned long long)hL);
         CHECK(hL == PIN_L, msg);
     }
