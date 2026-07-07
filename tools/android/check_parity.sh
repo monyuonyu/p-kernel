@@ -79,7 +79,21 @@ MK2="$ROOT/boot/linux_x86_64/Makefile"
 #   (predates 2026-06-27). OTA on phones matters → these likely BELONG in the APK,
 #   not held back; allowlisted only to stop the false-red. HIGH-PRIORITY TODO:
 #   confirm whether they are a forgotten CMake omission and add them (NDK-verified).
-ALLOW_MK_ONLY="ss6_live.c supernode.c net_relay_tcp.c supernode_autopromote.c compat_arkfs_gap.c compat_ota.c"   # basenames the Makefile may have that CMake omits
+# conscience.c (良心 floor): host-only BY DESIGN. CRADLE_HAS_CONSCIENCE is set
+#   ONLY by the two hosted KERNEL builds (boot/linux + boot/linux_x86_64); the
+#   Android NDK build DELIBERATELY does NOT link conscience.c — a NAMED LIMIT
+#   documented verbatim in arch/common/llm/cradle.c §10 ("Android's cradle_
+#   lesson_ingest ... is NOT yet G-LEARN-gated"). So its absence from the CMake
+#   list is the documented gap, NOT drift. It IS in BOTH host Makefiles, so the
+#   host-vs-host COMMON-HOST parity check still covers it. TODO: G-LEARN-gate the
+#   Android cradle ingest path (define CRADLE_HAS_CONSCIENCE + add conscience.c to
+#   COMMON_SRC) when the NDK compile of conscience.c's kernel deps is confirmed.
+# gen_succession.c (generational succession / compat-evolution organ): host-only
+#   FOR NOW. Lives in BOTH host Makefiles (COMMON_C_SRCS) but not the APK; the
+#   migration/OTA succession plane is a hosted boot/linux feature today (same
+#   family as compat_ota.c/compat_arkfs_gap.c already allowlisted). TODO: lock-
+#   step into the CMake COMMON_SRC when succession-on-Android is wired + NDK-built.
+ALLOW_MK_ONLY="ss6_live.c supernode.c net_relay_tcp.c supernode_autopromote.c compat_arkfs_gap.c compat_ota.c conscience.c gen_succession.c"   # basenames the Makefile may have that CMake omits
 ALLOW_CM_ONLY=""      # basenames CMake may have that the Makefile omits
 
 # --- extractor ------------------------------------------------------------
