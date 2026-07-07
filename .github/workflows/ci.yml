@@ -1919,7 +1919,12 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make
+          # boot/linux (aarch64 hosted) is built in the link-clean step below,
+          # so this job needs the aarch64 cross gcc AND the arm64 glibc headers
+          # (libc6-dev-arm64-cross), else make dies on aarch64-linux-gnu-gcc /
+          # bits/libc-header-start.h. Same pattern as ump-aarch64-cross.
+          sudo apt-get install -y --no-install-recommends \
+            gcc make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       - name: "[dmoe-*] bank cert (capacity-grows / bit-ref / version-skew / kill-degrade / nonresident / solo-floor / genericity)"
         run: bash tests/llm/run_dmoe.sh | tee llm_dmoe.log
       - name: Load-bearing gates PASS + the anti-theater RED-when-stubbed proof is present
@@ -1985,7 +1990,12 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make
+          # the final "both hosted targets still link clean" step builds
+          # boot/linux (aarch64 hosted), so this job needs the aarch64 cross gcc
+          # AND the arm64 glibc headers (libc6-dev-arm64-cross), else make dies
+          # on aarch64-linux-gnu-gcc / bits/libc-header-start.h.
+          sudo apt-get install -y --no-install-recommends \
+            gcc make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       - name: "[unbounded-*] real-header gates (flat / coupling / disease)"
         run: bash tests/unbounded/run_unbounded.sh | tee unbounded.log
       - name: Load-bearing gates GREEN (flat measured on real structs, coupling constant, disease refused to build)
@@ -2001,7 +2011,11 @@ jobs:
           grep -aqF 'per-node R-cost is CONSTANT while fleet N (wire) grows' unbounded.log
           grep -aqE 'fleet    dnode_table_bytes = .* -> .* -> .* \(GREW: wire widened\)' unbounded.log
           # disease genuinely failed to build (not a printf)
-          grep -aqF 'disease REFUSED to build (correct)' unbounded.log
+          # the Makefile emits this exact line ONLY when the SHIPPING wave-48
+          # kdds.h topic-table gate is what refused the disease build (a
+          # test-local assert firing alone does NOT print it) — so this keeps
+          # the teeth: a deleted shipping gate would drop this line and RED here.
+          grep -aqF 'disease REFUSED to build by the SHIPPING gate' unbounded.log
           ! grep -aqE 'unbounded-(flat|coupling|dkva-origin|disease)\]  (FAIL|RED)' unbounded.log
           ! grep -aqF 'the disease BUILT' unbounded.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
@@ -2058,8 +2072,12 @@ jobs:
       - name: Install toolchain (+ aarch64 cross + qemu-user for the one-math diff)
         run: |
           sudo apt-get update
+          # native cc (run_depth.sh) needs libc6-dev (glibc headers); the final
+          # link-clean step builds boot/linux (aarch64 hosted) so the aarch64
+          # cross gcc needs libc6-dev-arm64-cross too, else it falls back to the
+          # host /usr/include and dies on bits/libc-header-start.h.
           sudo apt-get install -y --no-install-recommends \
-            gcc make gcc-aarch64-linux-gnu qemu-user-static
+            gcc make libc6-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
       - name: "[depth-*] cert (metric-nonvacuous / deliberation / compound-verified-only / not-breadth)"
         run: bash tests/llm/run_depth.sh | tee llm_depth.log
       - name: Load-bearing gates PASS + the two anti-theater teeth are RED-when-stubbed
