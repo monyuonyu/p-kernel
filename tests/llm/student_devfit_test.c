@@ -278,7 +278,8 @@ int main(int argc, char **argv)
     }
 
     /* ---- [tier-forward-pin]: per-tier forward hash UNMOVED ----------------- */
-    printf("\n[tier-forward-pin] per-tier student forward hash UNMOVED (the crown family):\n");
+    printf("\n[tier-forward-pin] per-tier student forward hash RE-PINNED post-SCALE-WALL-C1"
+           " (RoPE + ST_MAXSEQ 64->256; == SS-6 single=):\n");
     {
         uint64_t hS = tier_forward_hash(ST_TIER_S);
         uint64_t hM = tier_forward_hash(ST_TIER_M);
