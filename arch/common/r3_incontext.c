@@ -6477,17 +6477,29 @@ void r3_conscience_test(void)
         r_puts(all ? "[conscience-allpaths] PASS\r\n" : "[conscience-allpaths] FAIL\r\n");
     }
 
-    /* ---------- [law-teacharound] : teach a forbidden binding is refused ----- */
+    /* ---------- [law-teacharound] : a forbidden binding is refused AND writes    */
+    /*            NOTHING. ink may already be a BENIGN resident from earlier self- */
+    /*            test legs (cumulative r3_fq state), so an absolute fi<0 check is  */
+    /*            not robust. Instead prove the FORBIDDEN learn (a) is refused      */
+    /*            (rc<0, HARD gate) and (b) neither INSTALLS a new slot nor REBINDS */
+    /*            an existing one — a byte-stable seq fingerprint across the refused*/
+    /*            call. A conscience-floor leak (a refused learn that still writes  */
+    /*            the queue) would move seq / add a slot and RED this leg. -------- */
     {
         conscience_cert_rule_set("ink", LAW_CLASS_CERT);
         UB kk = (UB)(ink >= 0 ? ink : 0), vv = (UB)(blue >= 0 ? blue : 0);
+        INT hb; INT fi0 = m_find_key(ink, &hb);
+        UW  seq0 = (fi0 >= 0) ? r3_fq[fi0].seq : 0;
         INT rc = r3_fact_learn(&kk, &vv, 1);
-        INT held; INT fi = m_find_key(ink, &held);
+        INT ha; INT fi1 = m_find_key(ink, &ha);
+        UW  seq1 = (fi1 >= 0) ? r3_fq[fi1].seq : 0;
         conscience_cert_rule_clear();
+        INT wrote = (fi1 >= 0 && fi0 < 0)          /* installed a NEW slot        */
+                 || (fi0 >= 0 && seq1 != seq0);    /* REBOUND an existing slot    */
         r_puts("[cons-test] teacharound: learn_rc="); r_putdec((UW)(rc < 0 ? 1 : 0));
-        r_puts("(refused) held_in_queue="); r_putdec((UW)(fi >= 0));
-        r_puts(" (the floor is NOT an engram — the mind never HOLDS it)\r\n");
-        r_puts((rc < 0 && fi < 0) ? "[law-teacharound] PASS\r\n" : "[law-teacharound] FAIL\r\n");
+        r_puts("(refused) forbidden_write="); r_putdec((UW)wrote);
+        r_puts(" (the floor is not an engram — a refused learn writes NOTHING)\r\n");
+        r_puts((rc < 0 && !wrote) ? "[law-teacharound] PASS\r\n" : "[law-teacharound] FAIL\r\n");
     }
 
     /* ---------- [law-mergeproof] : weight/queue-known pair still refused at    */
