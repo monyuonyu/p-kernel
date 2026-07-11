@@ -43,6 +43,7 @@
 #include "dev_capacity.h" /* st_init_device — measure the device, fit the mind */
 #include "gguf.h"        /* gguf_open / gguf_close — teacher GGUF probe */
 #include "forward.h"     /* lm_load / lm_free      — teacher GGUF probe */
+#include "dlb.h"         /* dlb_compound_{pending,distill} — LIVE search-distill */
 #include <stdlib.h>     /* malloc / free / getenv                 */
 #include <string.h>     /* memcpy / strlen                        */
 #include <stdio.h>      /* snprintf (output formatting only)      */
@@ -764,6 +765,27 @@ int student_dmn_consolidate(void)
     int train_end = g_consol_train_end;
     cradle_lesson_freeze(0);   /* UNFREEZE: a lesson deferred mid-batch ingests next poll */
     g_consol_active = 0;
+
+    /* fable5 Wave-C — LIVE search-distill (the AlphaZero crack, dlb.h §3.4).
+     * A completed DMN sleep tick distills the accumulated deliberation winners
+     * that DLB found by SEARCH x VERIFY into weight-resident skill: what needed
+     * K samples yesterday needs 1 tomorrow (test-time compute AMORTIZED). This
+     * closes the loop dlb.h:112-117 named — student_dmn_consolidate() was the
+     * seam; here it actually calls dlb_compound_distill.
+     *
+     * THE HARD HONESTY GATE: require_verified=1 distills ONLY V-exact-verified
+     * traces (the [depth-compound-verified-only] cert proves distilling
+     * UNVERIFIED traces DEGRADES held-out depth). STRICT NO-OP when the ring
+     * holds no verified trace (dlb_compound_distill would allocate nothing and
+     * touch no weight either, but the pending() guard keeps it a true no-op on
+     * every ordinary tick — the ring only fills when dlb_answer flips).
+     *
+     * CROWN-NEUTRAL: student_shell.c is HOSTED-ONLY (bare metal links
+     * student_stub.o, so this call never reaches bare-metal .text); dlb.c calls
+     * only the public student.h API. Distills into the resident baby BEFORE the
+     * persist below, so a compounded gain SURVIVES a reboot. */
+    if (dlb_compound_pending(1) > 0)
+        dlb_compound_distill(&g_student, ST_DMN_ROUNDS, ST_DMN_LR, 1);
 
     /* SKIP-WRITE-WHEN-NOT-WORTH-IT (wave-student-throttle): persist the
      * post-sleep state ONLY when the baby actually improved meaningfully since
