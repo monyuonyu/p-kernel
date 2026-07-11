@@ -2234,3 +2234,46 @@ jobs:
         env:
           SMP0_TIMEOUT: 180
         run: sh tests/aarch64/run_smp0.sh
+
+  windows-pe-build:
+    # Windows arch P1 build gate (arch/windows/x86_64, boot/windows/x86_64).
+    # mk_pino's trunking rule: do NOT land a new arch without a CI gate that
+    # proves it still builds — no "middle state" where the port bit-rots
+    # unnoticed. This job cross-compiles the native Windows port with mingw-w64
+    # and asserts the output is a real PE32+ executable.
+    #
+    # ── NON-BLOCKING (continue-on-error: true) ─── ADVISORY FOR NOW ──────────
+    # The GitHub-hosted ubuntu-latest runner used by this job DOES ship the
+    # gcc-mingw-w64-x86-64 apt package (installed below), so on the hosted lane
+    # this gate is real. It is kept advisory because we could NOT exercise it on
+    # the self-hosted pkernel-thinkpad runner (this job pins ubuntu-latest, but
+    # if a future edit ever moves the arch matrix onto self-hosted, mingw may be
+    # absent there) — a runner-CAPABILITY gap must never redden master on a
+    # green tree. The build + PE32+ assertion are DETERMINISTIC and proven
+    # locally (x86_64-w64-mingw32-gcc, p-kernel.exe = "PE32+ executable for MS
+    # Windows ... x86-64").
+    # PROMOTE TO BLOCKING (remove continue-on-error) once a hosted run of THIS
+    # job is confirmed green — at that point the Windows arch is trunked with a
+    # real, non-bypassable build gate. The port is already crown-neutral: the
+    # crown-text-identity job proves the existing arches' .text is byte-identical
+    # (the shared TUs it touches are all #ifdef _WINDOWS_X86_64_-guarded).
+    name: "Windows PE ビルドゲート (mingw-w64, boot/windows/x86_64) [advisory]"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mingw-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 make binutils
+      - name: Build boot/windows/x86_64 (p-kernel.exe)
+        run: make -C boot/windows/x86_64
+      - name: Assert output is a PE32+ Windows executable
+        run: |
+          exe=boot/windows/x86_64/p-kernel.exe
+          test -f "$exe" || { echo "missing $exe"; exit 1; }
+          file "$exe" | tee /dev/stderr | grep -qF 'PE32+ executable' \
+            || { echo 'output is not a PE32+ Windows executable'; exit 1; }
+          echo "windows-pe-build: $exe is a native PE32+ Windows binary."
