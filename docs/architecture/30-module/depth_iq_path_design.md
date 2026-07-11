@@ -94,14 +94,13 @@ best_score, draft_conf}`。ループは **何も durable に変えない**（`st
 「single-shot だ」と*言う*——degrade-honesty）。v1 は budget を直接露出し、live `S_n` 読み出しは
 kernel-tier として deferred。
 
-### 3.3 決定性（one-math）と再検証可能性
+**決定性（one-math）と再検証可能性。** 候補 seed は `H(query || i)`（FNV → splitmix64）。だから
+**熟慮した答えは (weights, query, budget) の純関数**で、どのノードでも byte-identical に再導出・監査できる。
+新しい超越関数は無い（conf は `st_span_ce` を、verify は caller 供給の手続き的 checker を再利用）。
+ビルドは wave-49 の one-math 規約 `-O1 -ffp-contract=off`。VLA なし（scratch は固定
+`DLB_GEN_MAX`/`DLB_TRACE_MAX` に束縛、ring は static）。
 
-候補 seed は `H(query || i)`（FNV → splitmix64）。だから **熟慮した答えは (weights, query, budget) の
-純関数**で、どのノードでも byte-identical に再導出・監査できる。新しい超越関数は無い（conf は `st_span_ce`
-を、verify は caller 供給の手続き的 checker を再利用）。ビルドは wave-49 の one-math 規約
-`-O1 -ffp-contract=off`。VLA なし（scratch は固定 `DLB_GEN_MAX`/`DLB_TRACE_MAX` に束縛、ring は static）。
-
-### 3.4 検証器の階層（V-exact / V-self / V-fleet）
+### 3.3 検証器の階層（V-exact / V-self / V-fleet）
 
 `dlb_verify_fn(query, cand, vctx) -> score`（高いほど良い）は黒箱。v1 は **V-EXACT** ドメインに生きる：
 正しさがコードで確かめられるタスク（算術チェイン・format/hash-chain/capacity 不変条件）。そこでは
@@ -112,6 +111,24 @@ kernel-tier として deferred。
 - **V-self**（モデル自身を批評家に）: `AUC > 0.5` を*印字*してから初めて許可。v1 は defer。
 - **V-fleet**（アンサンブルを検証器に）: == scaling-law の ensemble。**呼ぶだけで複製しない**。本 TU の scope 外。
 
+### 3.4 compounding — ring / distill と HARD GATE（探索を重みへ償却）
+
+答える時、DLB がときどき下書きの逃した **検証済み正答**（`flipped`）を見つける。その
+`(query, 勝った trace, verified)` を bounded ring に積む（`DLB_RING_MAX=64`, `DLB_TRACE_MAX=32`；
+wave-23 salience-replay の hosted 版——**難問を解いたことが salience を得る**）。睡眠時に DMN の
+consolidation が ring を重みへ蒸留する：**昨日 K サンプル要ったものが、明日は1発で出る**
+（test-time compute を weight-resident な深さへ償却）。distill は DMN 睡眠と同じ
+`zero_grad → forward → backward → adam_step` を **固定 canonical 順**（rounds 外・ring 昇順内）で回し、
+byte-identical に決定的。この機構が **fleet が端から端まで所有する唯一の深さ機構**であり、
+それが原理的に教師を超えうる理由は §4.3（AlphaZero の亀裂）。
+
+**THE HARD HONESTY GATE.** learner-trap（validator/learner の罠）: 未検証・self 承認の trace を
+蒸留すると、**批評家のノイズを自信満々の誤りへ償却**する（壊れた目的を最適化する学習器）。よって
+v1 の本番は **V-exact-verified な trace だけ**蒸留する（`require_verified=1`）。ゲートは enqueue 時ではなく
+**distill 時**に効く（`require_verified && !t->verified` を skip）ので、cert は未検証 ring を作って
+「それを蒸留すると held-out 深さが *劣化*する」ことを証明できる（§6.2 Arm D）。この劣化が RED になることが、
+このループを許可する根拠そのものである。
+
 ### 3.5 step threshold（正直な下限）
 
 deliberation が「モデル内部の推論」を増幅するには、モデルが単一 hop を chance より上で踏めている必要がある。
@@ -121,34 +138,25 @@ gate せず *印字*する（§6.2）。閾値を越えた本物の推論利得�
 
 ---
 
-## 4. compounding — 探索を重みへ償却する（AlphaZero の亀裂）
+## 4. AlphaZero の亀裂 — なぜ compounding だけが教師を超えるか
 
-### 4.1 なぜこれが「教師を超える」唯一の道か
+### 4.1 L2 は教師に漸近する
 
-L2（教師から学ぶ）は原理的に**教師に漸近する**（超えられない）。ただ一つの例外が、
-**検証可能ドメインでの自己対戦的 compounding**である。AlphaZero が人間の棋譜を超えたのは、
-勝敗という **無料で完全な検証器** に対して自分の探索結果を蒸留し続けたから。
-DLB の compounding ring はこの亀裂を、算術という V-exact の玩具ドメインに開けたものである
-（§4.3 = fleet が端から端まで所有する唯一の深さ機構）。
+L2（教師から学ぶ）は原理的に**教師に漸近する**（超えられない）。より強い教師は天井を上げるが、
+学生はその天井を越えられない——借りた深さは貸し手の深さで頭打ちになる。
 
-### 4.2 ring と distill（`dlb_compound_*`）
+### 4.2 唯一の例外 — 検証可能ドメインの自己対戦
 
-答える時、DLB がときどき下書きの逃した **検証済み正答**（`flipped`）を見つける。その
-`(query, 勝った trace, verified)` を bounded ring に積む（`DLB_RING_MAX=64`, `DLB_TRACE_MAX=32`；
-wave-23 salience-replay の hosted 版——**難問を解いたことが salience を得る**）。睡眠時に DMN の
-consolidation が ring を重みへ蒸留する：**昨日 K サンプル要ったものが、明日は1発で出る**
-（test-time compute を weight-resident な深さへ償却）。distill は DMN 睡眠と同じ
-`zero_grad → forward → backward → adam_step` を **固定 canonical 順**（rounds 外・ring 昇順内）で回し、
-byte-identical に決定的。
+ただ一つの例外が、**検証可能ドメインでの自己対戦的 compounding**である。AlphaZero が人間の棋譜を
+超えたのは、勝敗という **無料で完全な検証器** に対して自分の探索結果を蒸留し続けたから。教師の棋譜ではなく、
+検証器が真偽を裁く限り、探索は教師を必要とせずに自分を超え続けられる。
 
-### 4.3 THE HARD HONESTY GATE
+### 4.3 THE ALPHAZERO CRACK
 
-learner-trap（validator/learner の罠）: 未検証・self 承認の trace を蒸留すると、
-**批評家のノイズを自信満々の誤りへ償却**する（壊れた目的を最適化する学習器）。よって v1 の本番は
-**V-exact-verified な trace だけ**蒸留する（`require_verified=1`）。ゲートは enqueue 時ではなく
-**distill 時**に効く（`require_verified && !t->verified` を skip）ので、cert は未検証 ring を作って
-「それを蒸留すると held-out 深さが *劣化*する」ことを証明できる（§6.2 Arm D）。この劣化が RED になることが、
-このループを許可する根拠そのものである。
+DLB の compounding ring（実装は §3.4）はこの亀裂を、算術という V-exact の玩具ドメインに開けたもので
+ある——**fleet が端から端まで所有する唯一の深さ機構**。test-time の探索を睡眠で重みへ償却し、
+V-exact ドメインでのみ原理的に教師を超えうる。cert の `[depth-verifier-exceeds]` 脚（§6.3）が、
+この「教師を超える」主張を実教師モデルの上で falsify する。
 
 ---
 
@@ -157,13 +165,13 @@ learner-trap（validator/learner の罠）: 未検証・self 承認の trace を
 DLB は **HOSTED-TIER ONLY**。`boot/linux` + `boot/linux_x86_64` に `student.c` / `dev_capacity.c` と
 一緒にビルドされ、bare-metal では `student_stub.o` が ABI を解決する。`dlb.c` は **公開 `student.h` API
 だけ**を呼ぶ（`st_generate` / `st_span_ce` / `st_forward` / `st_backward` / `st_zero_grad` / `st_adam_step`）——
-`student.c` の内部にも `moe.c` / `dmn.c` / R3 crown にも触れない。だから **bare-metal の `.text` は無傷**で、
+`student.c` の内部にも `moe.c` / `dmn.c` にも R3 crown にも触れない。だから **bare-metal の `.text` は無傷**で、
 v1 に **crown の再 bless は無い**。`run_depth.sh` の構造 grep がこれを機械的に守る：
 
 - **`[crown-neutral]`**: `dlb.c` が bare-metal/crown TU（`moe_*`/`dmn_*`/`r3_*`/`conscience_*`/`rw[]`）を
   *呼ばない*ことを、コメント中の prose ではなく **実際の call 構文**で照合。
 - **`[no-vla]`**: runtime 次元で stack 配列を作らない。
-- **`[hard-gate]`**: `require_verified && !t->verified` の skip が dlb.c に存在する。
+- **`[hard-gate]`**: `require_verified && !t->verified` の skip が dlb.c に存在する（§3.4 gate）。
 
 ---
 
@@ -177,7 +185,7 @@ mod-10 の**算術合成**: k+1 桁 `d[0..k]`、答えは走る fold `e = (((d0+
 （qemu 無し）数秒で回る。**recall-exclusion**: eval seed `[1000,1064)` は train/compound seed base `5000`/`7000`/`8000`
 と **disjoint**（暗記ルックアップでなく推論を測る）。
 
-### 6.1〜6.4 各アーム
+### 6.1 各アーム（一覧）
 
 | cert tag | 何を証明するか | RED になる条件（anti-theater） |
 |---|---|---|
@@ -188,16 +196,27 @@ mod-10 の**算術合成**: k+1 桁 `d[0..k]`、答えは走る fold `e = (((d0+
 | `[depth-compound-verified-only]` | verified trace 蒸留で loss 低下；**Arm D** 未検証蒸留は深さを *劣化*；gate が disease を base に留める | 未検証蒸留で劣化しない＝ゲート不要＝THEATER |
 | `[depth-not-breadth]` | 原子的 single-hop を暗記（breadth）しても 2-hop は ≈chance；DLB(search+verify) が 2-hop を買う | breadth だけで多hop が上がる |
 
-anti-theater の徹底として `dlb.c` には **compile-time only** の `DLB_SABOTAGE_NOVERIFY`（verify 選択を潰し
-CURE を floor へ落として RED を*作れる*）があり、**本番バイナリには runtime スイッチが無い**。
+### 6.2 THE load-bearing falsifier / pre-registered NULL
 
-### 6.2 pre-registered NULL / deferred legs
+load-bearing な falsifier は §6.1 の `[depth-deliberation]`（**二本の歯**：STUB-SEARCH K=1 と
+STUB-VERIFY random が各々 floor へ崩れる）と `[depth-compound-verified-only]`（**Arm D**：未検証蒸留が
+深さを *劣化*させる）である——どちらかの stub が緑のまま／劣化しなければ THEATER。anti-theater の徹底として
+`dlb.c` には **compile-time only** の `DLB_SABOTAGE_NOVERIFY`（verify 選択を潰し CURE を floor へ落として
+RED を*作れる*）があり、**本番バイナリには runtime スイッチが無い**。
 
 一般ドメインの deliberation 利得は tier=S で **pre-registered NULL**——印字され、tune されない。
+
+### 6.3 deferred な重い学習脚（teacher-approach / verifier-exceeds）
+
 strict な一般 gate と、`[depth-teacher-approach]`（学生は固定教師に**漸近するが超えない**／強い教師が天井を上げる）・
 `[depth-verifier-exceeds]`（V-exact compounding が**教師を超える**＝§4.3 の亀裂）の重い学習脚は、
 実教師モデル＋長い学習を要するため **ThinkPad self-hosted runner** へ deferred（`ci.yml`）。qemu 下では非現実的。
 deferred は正しい選択であって gap ではない（§0）。
+
+### 6.4 breadth ≠ depth（`[depth-not-breadth]`）
+
+原子的 single-hop を暗記（breadth）しても 2-hop は ≈chance；DLB(search+verify) が 2-hop を買う。
+breadth（原子的事実の量）だけで多hop が上がれば RED——breadth と depth（多hop 合成）は別軸であることの cert。
 
 ---
 
