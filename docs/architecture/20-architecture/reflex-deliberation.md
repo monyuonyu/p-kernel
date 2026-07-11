@@ -7,9 +7,9 @@
 > p-kernel の実モジュール（`region.c` / `swim.c` / `kdds` / `moe.c` / `degrade.c` / `dkva.c`）の上に
 > 接地し、**なぜ層を分けるのか／時定数を分けないと発振するのか**を設計判断として書き下ろす。
 
-Status: **時定数分離まで実装・実測（§6 の D0/D1/D2 DONE）／ D3 熟慮の中身は未** / 最終更新: 2026-06-07
+Status: **時定数分離まで実装・実測（§6 の D0/D1/D2 DONE）／ D3「熟慮の中身」= DLB として実装・cert 済（V-exact 利得は load-bearing・一般利得は pre-registered NULL；重い学習脚は ThinkPad へ deferred）** / 最終更新: 2026-07-11
 関連: [survival-network.md](../00-concept/survival-network.md)（§8 = この設計の出自、§7 = 分散ゲーティング）、
-[regions.md](regions.md)（region = 反射層の空間的基盤）、`phase_b_relay.md`、`android.md`
+[regions.md](regions.md)（region = 反射層の空間的基盤）、[depth_iq_path_design.md](../30-module/depth_iq_path_design.md)（§6 D3 熟慮の中身＝DLB）、`phase_b_relay.md`、`android.md`
 
 ---
 
@@ -256,7 +256,7 @@ W expert_utility(UB accuracy, UW rtt_ms)
 | **D0**（観測）✅ **DONE** | **単一時定数の発振を数で再現**する。当初は「絵で可視化」と書いていたが、絵ではなく**数値判定**にした: カーネル内 self-test `moe test`（`moe.c` の `moe_self_test` → `[moe-osc]`）が、純ローカル sim（中央なし勾配ルーティング・同時多発）で **3 ノード 30 決定**を回し、ヒステリシス無しの素朴な瞬間 argmax が **28/28 = 毎決定切替**で発振することを再現する。**まず壊れるところを数で見る**。 | 非依存 | regions R3 の第一歩（§II-4） |
 | **D1**（反射に damping）✅ **DONE** | `moe.c` の反射ゲートにヒステリシス／デッドバンド／utility EWMA を入れ、D0 の発振が消えることを確認。同じ sim で現行の処方（utility EWMA + `MOE_SWITCH_MARGIN` デッドバンド + `recent_pick` 減衰）を入れると **28→4 切替**へ収束する（`[moe-osc] PASS (switches: 4<=12, naive=28)`）。テストは本番の `deadband_pick`/`expert_utility`/`ewma_step` をそのまま呼ぶので、ヒステリシスを外すと CI が落ちる。 | regions R1 | §4.3 |
 | **D2**（層の明示分離）✅ **DONE** | 反射ループ（速い tick）と熟慮ループ（遅い tick）を**別の周期**で回す。熟慮が反射のスパイクを観測しない（ローパス）ことを数で確認: `[moe-twolayer]` がステップ応答の 63% 到達 tick 比を **fast=4 / slow=40 = 10×（= 時定数比 R）**、最速振動（2 tick）の peak-to-peak を **fast=14 / slow=0** と測り、`PASS` を判定する。 | regions R0/R2 配管 | §4.2 |
-| **D3**（熟慮の中身） | 大域の遅い裁定（応援・受援の遅い側）と学習ループ（`fedlearn.c`/`ga.c`）を熟慮層に載せる。反射との和解（§7 未解決）に着手。 | regions R3 | §3.2 / §7 |
+| **D3**（熟慮の中身）✅ **実装・cert 済（DLB）** | **熟慮層が実際に計算する中身 = DLB（test-time deliberation, 探索 × 検証）を実装。** 反射の下書き（single-shot draft）を、seed 付き K 候補の**探索**と手続き的**検証**で遅く正し、勝った探索を睡眠で重みへ償却する（compounding, AlphaZero の亀裂）。公開 `student.h` API のみ＝**crown-neutral（bare-metal `.text` 無傷・再 bless 無し）**。cert `[depth-*]`（[`tests/llm/depth_test.c`](../../../tests/llm/depth_test.c) / [`run_depth.sh`](../../../tests/llm/run_depth.sh)）が **二本の歯**（STUB-SEARCH K=1・STUB-VERIFY random を各々 RED）で探索×検証の分解を load-bearing に証明。設計は [depth_iq_path_design.md](../30-module/depth_iq_path_design.md)。実装 [`arch/common/llm/dlb.{c,h}`](../../../arch/common/llm/dlb.c)。**正直な残**: 一般ドメインの深さ利得は tier=S で **pre-registered NULL**（印字・非gate）；`[depth-teacher-approach]`（学生は固定教師に漸近するが超えない）と `[depth-verifier-exceeds]`（V-exact compounding が教師を超える）の重い学習脚は実教師＋長い学習を要し **ThinkPad self-hosted runner へ deferred**（qemu 下で非現実的）。大域の遅い裁定（応援・受援の遅い側, `fedlearn.c`/`ga.c`）と反射との和解（§7 未解決）は引き続き open。 | regions R3 | §3.2 / §7 |
 
 > **最小有用先行の所見**: D0 単独で「単一時定数は壊れる」という核心が目で確認でき、それが二層構造
 > （§8）の存在理由の最初の証拠になる（`survival-network.md §10` 優先度所見と同じ姿勢）。カーネル本体

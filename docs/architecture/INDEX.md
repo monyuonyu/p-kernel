@@ -37,6 +37,7 @@
 | [[living-mind-lm14-curiosity.md]] | 訊かれても知らなかった鍵を覚え（want-table）口に出し、教わると precious に変換（LM-14） | L3 | `[curio-*]` (`mind curious`) | working |
 | [[living-mind-lm15-pullteach.md]] | 心が欠けた鍵を region に ASK し holder が re-teach＝learner 主導の引き寄せ（LM-15） | L3 | `[pull-*]`; `pull-teach-live` | working |
 | [[frontier-mouth.md]] | 誰のものでもない心の任意ソケット＝より強い脳への CONSULT/TEACH（借り物の声・良心ゲート・self へ書かない） | L3 | `[frontier-*]`/`[teach-prov]` | working |
+| [[depth_iq_path_design.md]] | 深さ（IQ）は台数でなく COMPUTE から＝反射の下書きを探索×検証で正し勝ちを睡眠で重みへ償却する熟慮の中身（DLB, reflex-deliberation D3） | L3 | `[depth-*]` (`run_depth.sh`) | working |
 | [[scale-wall-c1.md]] | 「本物の会話」の最初の段＝told された事実を使う文脈保持（RoPE＋窓256, C1 SHIPPED） | L3 | `[ctx-carry]` (`run_ctxcarry.sh`) | working |
 | [[native-student.md]] | 赤子から育つ器に合った脳（Cradle baby, NS-1） | L2 | `shipped-llm-certs` (student) | working |
 | [[r3-nontrivial-thought.md]] | 「思考が玩具」ギャップを閉じた in-context 実学習（R3） | L2 | `[r3-incontext-*]` | working |
