@@ -63,7 +63,14 @@ TIMEOUT_S="${SMP0_TIMEOUT:-60}"
 # -nic none: -M virt otherwise auto-creates a virtio-net-pci that needs the
 # efi-virtio.rom romfile (missing on minimal CI images → the advisory job's
 # failure class). This test never touches the network, so suppress the NIC.
-QEMU_BASE_FLAGS="-M virt -cpu cortex-a53 -m 256M \
+# gic-version=2: pin the GIC to v2. smp_detect_ncpu() reads the core count from
+# GICD_TYPER bits[7:5] = the GICv2 CPUNumber field; QEMU >=10 defaults -M virt to
+# GICv3 for cortex-a53, where that field is NOT the CPU count → the autodetect
+# reads the wrong number and the cert FAILs ("detected N cpus" never prints).
+# The GICv3 core count lives in GICR (a separate lift; see the 8-CPU ceiling note
+# above), so this cert is GICv2 BY CONSTRUCTION — make it explicit instead of
+# trusting a qemu default that changed under us.
+QEMU_BASE_FLAGS="-M virt,gic-version=2 -cpu cortex-a53 -m 256M \
                  -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[smp0] FAIL: $*" >&2; exit 1; }
