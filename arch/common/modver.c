@@ -127,6 +127,23 @@ const char *modver_build_id(void)
 #ifdef MODVER_BUILD
     return MODVER_BUILD;          /* build system supplied a real id          */
 #else
-    return __DATE__ " " __TIME__; /* honest fallback: this TU's compile time   */
+    /* DETERMINISTIC honest fallback (was `__DATE__ " " __TIME__`).
+     *
+     * __TIME__ is a wall-clock HH:MM:SS string that changes every second. It
+     * is emitted into .rodata (SHF_MERGE), and because merge-string placement
+     * depends on the string bytes, a different second shifts a relocation-
+     * resolved operand in the linked .text on ~1/6 of relinks of *identical*
+     * source — breaking the ".text byte-identity" freeze (the crown gate) for
+     * every target that links this TU (the hosted boot/linux* builds). modver
+     * is the ONLY TU in the tree touching __TIME__/__DATE__, so dropping the
+     * second-resolution wall-clock removes the sole source→.text nondeterminism.
+     *
+     * __DATE__ alone is stable across an entire build session (all objects in
+     * one `make` see the same calendar day), and gcc derives __DATE__ from
+     * SOURCE_DATE_EPOCH when that reproducible-builds env var is set — so a
+     * pinned-epoch build is FULLY source-deterministic. Still honest: this is
+     * the binary's real build date, never blank, and MODVER_BUILD (a git id)
+     * overrides it whenever the build system supplies one. */
+    return "unversioned " __DATE__;
 #endif
 }

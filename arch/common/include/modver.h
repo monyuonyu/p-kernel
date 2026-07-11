@@ -18,7 +18,9 @@
  *  No registration runs at boot, no allocation, no global ctor: the table is
  *  a compile-time array. modver_count()/_name()/_version() iterate it;
  *  modver_build_id() returns a build identifier (MODVER_BUILD if the build
- *  system defines one, else a compile-time __DATE__ " " __TIME__ string).
+ *  system defines one, else a DETERMINISTIC "unversioned <__DATE__>" string —
+ *  no __TIME__, so identical source relinks to a byte-identical .text; gcc
+ *  pins __DATE__ from SOURCE_DATE_EPOCH for a fully reproducible build).
  *
  *  Plain C types only (int / const char*) so this header is includable from
  *  BOTH the bare-metal TUs and the host test harness without dragging in the
@@ -47,7 +49,8 @@ int          modver_version(int i);
 
 /* A build/commit identifier for this binary. Honest: if the build system
  * defines MODVER_BUILD it is used verbatim; otherwise it is the TU's
- * compile-time __DATE__ " " __TIME__. Static string — never freed. */
+ * compile date ("unversioned <__DATE__>", deterministic — no __TIME__).
+ * Static string — never freed. */
 const char  *modver_build_id(void);
 
 #ifdef __cplusplus
