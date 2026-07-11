@@ -766,12 +766,22 @@ int student_dmn_consolidate(void)
     cradle_lesson_freeze(0);   /* UNFREEZE: a lesson deferred mid-batch ingests next poll */
     g_consol_active = 0;
 
-    /* fable5 Wave-C — LIVE search-distill (the AlphaZero crack, dlb.h §3.4).
+    /* fable5 Wave-C — search-distill seam (the AlphaZero crack, dlb.h §3.4).
      * A completed DMN sleep tick distills the accumulated deliberation winners
      * that DLB found by SEARCH x VERIFY into weight-resident skill: what needed
-     * K samples yesterday needs 1 tomorrow (test-time compute AMORTIZED). This
-     * closes the loop dlb.h:112-117 named — student_dmn_consolidate() was the
-     * seam; here it actually calls dlb_compound_distill.
+     * K samples yesterday needs 1 tomorrow (test-time compute AMORTIZED). This is
+     * the seam dlb.h:112-117 named — student_dmn_consolidate() calls the distill.
+     *
+     * DORMANT-WIRE — HONEST SCOPE (wave-c-compound audit, 2026-07-11): this
+     * distill is the CONSUMER half only. NO production path yet calls dlb_answer
+     * or dlb_compound_enqueue (grep arch/**.c: the only feeders live in
+     * tests/llm/depth_compound_test.c). So in the RUNNING system the compounding
+     * ring is ALWAYS empty, dlb_compound_pending(1) is 0, and this call is a
+     * PERMANENT NO-OP — the loop closes ONLY in the cert harness. depth_compound
+     * proves the distill FUNCTION lifts one-shot accuracy (seed-averaged); wiring
+     * dlb_answer into m_ask / the mouth so the live baby enqueues its OWN verified
+     * deliberation winners is the NEXT step. Do NOT read this line as "the live
+     * loop closes" — today it does not.
      *
      * THE HARD HONESTY GATE: require_verified=1 distills ONLY V-exact-verified
      * traces (the [depth-compound-verified-only] cert proves distilling
