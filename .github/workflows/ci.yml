@@ -2096,6 +2096,24 @@ jobs:
           grep -aqF 'ANTI-THEATER: distill UNVERIFIED (wrong) traces -> depth DEGRADES vs verified -> RED' llm_depth.log
           # fail CLOSED on any [depth-*] FAIL (a silently-broken arm).
           ! grep -aqE '^  FAIL  ' llm_depth.log
+      - name: "[depth-compound] accuracy-compounding cert (seed-averaged, native, ~3min)"
+        # Sibling of run_depth.sh (SAME shared native build/toolchain, host cc, NO
+        # qemu). run_depth.sh's [depth-compound-verified-only] proves the verified-
+        # winner distill lowers the correct-answer LOSS; THIS cert proves the win
+        # shows up in cold one-shot ACCURACY (the AlphaZero crack, seed-averaged
+        # over >=16 disjoint seeds). BLOCKING, same as run_depth.sh above — it
+        # passes host-native today. The hard STUB tooth (gate-blocked distill EXACTLY
+        # flat on every seed) is the load-bearing proof; the accuracy gain itself is
+        # a robust WIN or an honest pre-registered NULL (either way exit 0).
+        run: bash tests/llm/run_depth_compound.sh | tee llm_depth_compound.log
+      - name: "[depth-compound] load-bearing teeth PASS + fail CLOSED on any FAIL"
+        run: |
+          grep -aqF '[result] PASS' llm_depth_compound.log
+          grep -aqF '  PASS  [live-wire]' llm_depth_compound.log
+          grep -aqF '  PASS  [crown-neutral]' llm_depth_compound.log
+          grep -aqF '  PASS  [dormant-wire]' llm_depth_compound.log
+          # fail CLOSED on any FAIL line (a silently-broken tooth / structural grep).
+          ! grep -aqE '^  FAIL  ' llm_depth_compound.log
       - name: Cross-arch one-math determinism (x86_64 --machine == aarch64 --machine)
         run: |
           set -e
