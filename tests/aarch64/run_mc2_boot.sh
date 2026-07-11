@@ -11,7 +11,10 @@
 #   1. MC2-BOOT: PASS                       (secondary woke + tile correct)
 #   2. [BOOT] Starting T-Kernel...          (the primary still boots the
 #                                            scheduler AFTER the wake)
-#   3. [T-Kernel] Initial task started      (the scheduler actually ticks)
+#   3. p-kernel>  shell prompt              (the scheduler actually ticks; the
+#                                            aarch64 initial task ran to the
+#                                            interactive prompt. NOT the x86-only
+#                                            "Initial task started" phantom.)
 #
 # It also runs the FAULTING-tile variant and asserts the primary SURVIVES
 # (MC2-BOOT: FAIL join-timeout) and STILL boots the T-Kernel — i.e. a bad
@@ -72,8 +75,8 @@ grep -q "MC2-BOOT: PASS" "$NORMAL_LOG" \
     || fail "no 'MC2-BOOT: PASS' in UART (secondary did not wake / tile bad)"
 grep -q "Starting T-Kernel" "$NORMAL_LOG" \
     || fail "kernel did not reach the T-Kernel banner after the wake"
-grep -q "Initial task started" "$NORMAL_LOG" \
-    || fail "T-Kernel scheduler did not tick (init task never ran)"
+grep -q "p-kernel>" "$NORMAL_LOG" \
+    || fail "T-Kernel init task never reached the shell prompt (scheduler did not tick)"
 echo "[mc2-boot-survives] normal: PASS"
 echo
 
@@ -94,8 +97,8 @@ grep -q "MC2-BOOT: FAIL join-timeout" "$FAULT_LOG" \
     || fail "faulting tile did not produce the bounded-join timeout verdict"
 grep -q "Starting T-Kernel" "$FAULT_LOG" \
     || fail "primary WEDGED on a faulting worker (never reached T-Kernel)"
-grep -q "Initial task started" "$FAULT_LOG" \
-    || fail "primary did not keep scheduling after a faulting worker"
+grep -q "p-kernel>" "$FAULT_LOG" \
+    || fail "primary did not keep scheduling after a faulting worker (no shell prompt)"
 echo "[mc2-boot-survives] faulting-join: PASS (primary survived a bad worker)"
 echo
 

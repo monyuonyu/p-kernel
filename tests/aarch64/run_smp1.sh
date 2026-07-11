@@ -15,7 +15,8 @@
 #                        by: cpu1 preempted_at != 0, ran_high-prio=1,
 #                        sgi_taken>=1, and B's ctxtsk == the high-prio task.
 #                        Plus [smp-boot-survives]: T-Kernel still boots
-#                        afterwards ([BOOT] Starting T-Kernel.../Initial task).
+#                        afterwards ([BOOT] Starting T-Kernel... then the
+#                        aarch64 initial task's "p-kernel> " shell prompt).
 #
 # Then the LOAD-BEARING falsifier: rebuild with -DSMP_NO_IPI so
 # smp_send_reschedule() is a no-op. Everything else is identical (the
@@ -88,8 +89,14 @@ grep -aq "SMP-PREEMPT: PASS" "$PASS_LOG" \
     || fail "no 'SMP-PREEMPT: PASS' (B did not preempt to the high-prio task)"
 grep -aq "Starting T-Kernel" "$PASS_LOG" \
     || fail "kernel did not reach the T-Kernel banner after the preempt slice"
-grep -aq "Initial task started" "$PASS_LOG" \
-    || fail "T-Kernel scheduler did not tick after the preempt slice"
+# [smp-boot-survives] real sentinel: the aarch64 INITIAL TASK (arch/aarch64/
+# usermain.c) prints the interactive shell prompt "p-kernel> " once boot init
+# completes, then loops on sio_read_line() (tk_dly_tsk(1)) — so reaching the
+# prompt proves the scheduler dispatched the initial task and the dispatch/timer
+# path is live AFTER the preempt slice. (The old grep "Initial task started" was
+# a PHANTOM: that string is printed ONLY by arch/x86/usermain.c, NEVER aarch64.)
+grep -aq "p-kernel>" "$PASS_LOG" \
+    || fail "T-Kernel initial task did not reach the shell prompt after the preempt slice"
 echo "[smp1] cert build: PASS (SMP-PREEMPT, T-Kernel still boots)"
 echo
 

@@ -15,7 +15,8 @@
 #                                        to the serial loop for nw in {1,2,4})
 #   2. the three FNV-1a hashes (nw=1,2,4) printed by the kernel are IDENTICAL
 #   3. [BOOT] Starting T-Kernel...      (the primary still boots after the run)
-#   4. [T-Kernel] Initial task started  (the scheduler actually ticks)
+#   4. p-kernel>  shell prompt  (the scheduler actually ticks; the aarch64 initial
+#      task ran to the prompt. NOT the x86-only "Initial task started" phantom.)
 #
 # Then it builds + boots TOOTH A (the partition/arithmetic falsifier,
 # -DMC2_EQUIV_RACY_PARTITION) and asserts it FAILS (MC2-EQUIV: FAIL) under
@@ -98,8 +99,8 @@ grep -q "MC2-EQUIV: PASS" "$EQUIV_LOG" \
 assert_hashes_equal "$EQUIV_LOG"
 grep -q "Starting T-Kernel" "$EQUIV_LOG" \
     || fail "kernel did not reach the T-Kernel banner after the equiv run"
-grep -q "Initial task started" "$EQUIV_LOG" \
-    || fail "T-Kernel scheduler did not tick after the equiv run"
+grep -q "p-kernel>" "$EQUIV_LOG" \
+    || fail "T-Kernel init task did not reach the shell prompt after the equiv run"
 echo "[mc2-smp-equiv] byte-identity: PASS"
 echo
 

@@ -20,7 +20,8 @@
 #                               three partition invariants DIRECTLY:
 #                               DISJOINT+TOTAL, ORDER, MATCHES-THE-GOLDEN)
 #   2. [BOOT] Starting T-Kernel...    (the kernel still boots after the check)
-#   3. [T-Kernel] Initial task started (the scheduler ticks — no regression)
+#   3. p-kernel>  shell prompt (the scheduler ticks — no regression; the aarch64
+#      initial task ran to the prompt. NOT the x86-only "Initial task started".)
 #
 # Then it builds + boots the FALSIFIER (-DMC2_SLICE_BREAK), which perturbs
 # pk_slice_bm itself (drops the ragged remainder) and MUST produce
@@ -82,8 +83,8 @@ grep -q "MC2-SLICE: PASS" "$SLICE_LOG" \
     || fail "no 'MC2-SLICE: PASS' in UART (pk_slice_bm violated a partition invariant)"
 grep -q "Starting T-Kernel" "$SLICE_LOG" \
     || fail "kernel did not reach the T-Kernel banner after the slice check"
-grep -q "Initial task started" "$SLICE_LOG" \
-    || fail "T-Kernel scheduler did not tick after the slice check"
+grep -q "p-kernel>" "$SLICE_LOG" \
+    || fail "T-Kernel init task did not reach the shell prompt after the slice check"
 echo "[mc2-slice] partition invariants: PASS"
 echo
 
