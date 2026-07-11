@@ -127,6 +127,7 @@ typedef struct {
     int     len;                    /* total bytes                            */
     int     qn;                     /* split point (answer starts at qn)      */
     int     verified;               /* 1 iff a V-exact checker accepted it     */
+    int     rounds_done;            /* distill passes applied so far (budget)  */
 } dlb_trace;
 
 static dlb_trace g_ring[DLB_RING_MAX];
@@ -146,6 +147,7 @@ int dlb_compound_enqueue(const uint8_t *query, int qn,
     for (int i = 0; i < qn; i++) t->bytes[n++] = query[i];
     for (int i = 0; i < an; i++) t->bytes[n++] = ans[i];
     t->len = n; t->qn = qn; t->verified = verified ? 1 : 0;
+    t->rounds_done = 0;             /* fresh trace: full distill budget available */
     g_ring_n++;
     return 1;
 }
@@ -169,21 +171,44 @@ int dlb_compound_distill(st_model *m, int rounds, float lr, int require_verified
 
     int distinct = 0;
     for (int i = 0; i < g_ring_n; i++)
-        if (!require_verified || g_ring[i].verified) distinct++;
+        if ((!require_verified || g_ring[i].verified) &&
+            g_ring[i].rounds_done < DLB_TRACE_ROUNDS_MAX) distinct++;
 
     /* FIXED canonical order: rounds outer, ring ascending inner — one-math
-     * deterministic, byte-identical to an all-at-once run (the DMN sleep law). */
+     * deterministic, byte-identical to an all-at-once run (the DMN sleep law).
+     * Skipping a budget-exhausted trace REMOVES an element without reordering the
+     * rest, so the [0,MAX) distill sequence stays identical on every node. */
     for (int r = 0; r < rounds; r++) {
         for (int i = 0; i < g_ring_n; i++) {
             dlb_trace *t = &g_ring[i];
             if (require_verified && !t->verified) continue;   /* the HARD GATE */
+            if (t->rounds_done >= DLB_TRACE_ROUNDS_MAX) continue; /* budget spent */
             if (t->len < 2) continue;
             st_zero_grad(m);
             st_forward(m, t->bytes, t->len, logits);
             st_backward(m, t->bytes, t->len);
             st_adam_step(m, lr);
+            t->rounds_done++;              /* consume one pass of the budget */
         }
     }
     free(logits);
     return distinct;
+}
+
+/* Reap spent/unusable traces so a live per-tick feeder cannot re-distill forever
+ * or saturate the ring. Keeps ONLY verified traces with budget left; front-packs
+ * survivors (relative order preserved -> canonical distill order preserved ->
+ * one-math determinism intact). Does NOT reset the whole ring: freshly-enqueued
+ * not-yet-distilled traces (rounds_done < MAX) survive. */
+void dlb_compound_gc(void)
+{
+    int w = 0;
+    for (int i = 0; i < g_ring_n; i++) {
+        dlb_trace *t = &g_ring[i];
+        if (t->rounds_done >= DLB_TRACE_ROUNDS_MAX) continue;  /* budget spent  */
+        if (!t->verified) continue;                            /* never distills */
+        if (w != i) g_ring[w] = *t;
+        w++;
+    }
+    g_ring_n = w;
 }

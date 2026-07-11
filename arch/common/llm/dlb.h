@@ -119,6 +119,15 @@ int dlb_answer(st_model *m, const uint8_t *query, int qn,
 #define DLB_RING_MAX   64    /* bounded trace ring (salience-replay analogue)     */
 #define DLB_TRACE_MAX  32    /* max bytes of one (query+answer) trace             */
 
+/* Per-trace distill BUDGET (Wave-D1). A live DMN feeder (Wave-D2) distills the
+ * ring on EVERY sleep tick; without a budget the same verified trace would be
+ * re-distilled forever (overfit + permanent per-tick cost) and the ring would
+ * saturate. Each trace may receive at most this many total distill passes across
+ * all ticks; once spent it is SKIPPED at distill time and reaped by
+ * dlb_compound_gc(). Set == the cert's single-shot distill amount so the
+ * tick-split live distill accumulates to the SAME total the cert proves. */
+#define DLB_TRACE_ROUNDS_MAX 30
+
 /* Clear the compounding ring (start of a session / cert arm). */
 void dlb_compound_reset(void);
 
@@ -142,5 +151,15 @@ int  dlb_compound_pending(int require_verified);
  * distinct traces distilled, or negative ST_E_* on OOM/bad args. Mutates m->w /
  * Adam state via the public API only. */
 int  dlb_compound_distill(st_model *m, int rounds, float lr, int require_verified);
+
+/* Garbage-collect the ring (Wave-D1): compact-remove every trace whose distill
+ * budget is spent (rounds_done >= DLB_TRACE_ROUNDS_MAX) and any leftover
+ * unverified trace, front-packing the survivors so their canonical distill order
+ * (ascending index) is preserved — one-math determinism intact. Unlike
+ * dlb_compound_reset() this KEEPS freshly-enqueued not-yet-distilled verified
+ * traces (it keys on rounds_done, not the whole ring), so a live feeder can call
+ * it every sleep tick without dropping just-arrived work. Intended caller: the
+ * DMN task only (Wave-D2 wires it after each dlb_compound_distill). */
+void dlb_compound_gc(void);
 
 #endif /* PKERNEL_LLM_DLB_H */
