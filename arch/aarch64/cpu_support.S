@@ -140,6 +140,18 @@ knl_dispatch:
 .Ldispatch_loop:
 #ifdef SMP_SELFTEST
     LD_PERCPU_BASE x2, x3       /* x2 = &g_smpcpu[me] */
+    /* WB SMP-fix: production T-Kernel boot (g_smp_prod!=0) syncs this CPU's
+     * per-CPU schedtsk DOWN from the GLOBAL knl_schedtsk the μT3.0 core writes.
+     * Skipped (branch not taken) during the SMP self-test → the self-test build
+     * is byte-for-byte behaviourally unchanged.  See arch/aarch64/smp.c
+     * (g_smp_prod) for the full regression note. */
+    ldr x4, =g_smp_prod
+    ldr w4, [x4]
+    cbz w4, .Lno_prod_syncdown
+    ldr x5, =knl_schedtsk
+    ldr x5, [x5]
+    str x5, [x2, #SMPCPU_SCHEDTSK]
+.Lno_prod_syncdown:
     ldr x0, [x2, #SMPCPU_SCHEDTSK] /* x0 = this CPU's schedtsk */
     cbz x0, .Lsmp_idle
 
@@ -171,6 +183,17 @@ knl_dispatch:
 .Lnot_live:
 
     str x0, [x2, #SMPCPU_CTXTSK]   /* this CPU's ctxtsk = schedtsk */
+
+    /* WB SMP-fix: mirror the chosen task UP into the GLOBAL knl_ctxtsk so the
+     * μT3.0 core's global-based reads (in_indp / END_CRITICAL_SECTION / mutex
+     * owner) see the task actually running on CPU 0.  g_smp_prod-gated: no-op
+     * during the self-test (byte-for-byte unchanged). */
+    ldr x4, =g_smp_prod
+    ldr w4, [x4]
+    cbz w4, .Lno_prod_mirror
+    ldr x4, =knl_ctxtsk
+    str x0, [x4]
+.Lno_prod_mirror:
 
     ldr x1, [x0, #TCB_SSP]
     mov sp, x1
@@ -475,6 +498,26 @@ _vec_el1_sync:
      * leave the chip in a state where TXFF stays asserted forever and
      * we'd hang inside the diag itself. The 16-byte FIFO catches
      * enough chars to identify the fault; later ones may drop. */
+#ifdef SMP_SELFTEST
+    /* WB SMP-fix (fable5 Wave-B) step 3 — a FATAL fault must yield ONE legible
+     * dump, then HALT, never an infinite re-fault storm.  A wild jump can leave
+     * SP corrupt, so .Lhex64's stp/ldp+ret below can itself re-fault back into
+     * this vector — which, unguarded, spams "SYNC E=..." forever and the true
+     * ESR/ELR/FAR are lost in the noise.  Two teeth: (1) mask D/A/I/F so no
+     * async re-entry; (2) a one-shot guard — the FIRST fault claims it, switches
+     * to a PRIVATE diagnostic stack (so the print completes), dumps, and `b .`;
+     * ANY re-entry sees the guard set and halts IMMEDIATELY (no second print).
+     * SMP_SELFTEST-gated so the crown-frozen default build's vector is
+     * byte-for-byte unchanged. */
+    msr  daifset, #0xf
+    ldr  x0, =_sync_diag_guard
+    ldr  w1, [x0]
+    cbnz w1, .Lsync_halt          /* already dumped once → halt, do not respam */
+    mov  w1, #1
+    str  w1, [x0]
+    ldr  x0, =_sync_diag_stack_top
+    mov  sp, x0                    /* private stack: .Lhex64 stp/ldp/ret is safe */
+#endif
 #ifdef BOARD_RPI3
     movz x0, #0x1000               /* low 16 of 0x3F201000 */
     movk x0, #0x3F20, lsl #16
@@ -503,6 +546,7 @@ _vec_el1_sync:
     bl .Lhex64
     mov w1, #'\r'; str w1, [x0]
     mov w1, #'\n'; str w1, [x0]
+.Lsync_halt:
     b .
 
 /* Hex64 helper: prints x2 as 16 hex digits to UARTDR (x0). */
@@ -542,6 +586,20 @@ _vec_el0_serr:
     .align 3
 gicc_base_ptr:
     .quad 0
+
+#ifdef SMP_SELFTEST
+/* WB SMP-fix step 3 — the fatal-fault diagnostic's one-shot guard + private
+ * stack (see _vec_el1_sync).  SMP_SELFTEST-gated: absent from the crown-frozen
+ * default build. */
+    .bss
+    .align 4
+_sync_diag_guard:
+    .space 8
+_sync_diag_stack:
+    .space 4096
+_sync_diag_stack_top:
+    .data
+#endif
 
 /* =======================================================================
  *  ②.0 full-SMP slice — the PER-CPU dispatcher entry/load.

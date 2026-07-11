@@ -442,6 +442,20 @@ int main(void)
          * 初期タスクはコア側 inittask.c が生成する。 */
         extern void knl_startup_hw(void);
         extern int  knl_main(void);
+#ifdef SMP_SELFTEST
+        /* WB SMP-fix (fable5 Wave-B): ARM the production-boot scheduler bridge.
+         * Until now g_smp_prod==0 so the SMP self-test ran with the asm
+         * dispatcher untouched (per-CPU slots only).  From here CPU 0 enters the
+         * real μT-Kernel 3.0, whose core writes the GLOBAL knl_schedtsk/knl_ctxtsk;
+         * setting g_smp_prod=1 makes cpu_support.S's .Ldispatch_loop sync the
+         * per-CPU slots to/from those globals so the stale self-test residue in
+         * g_smpcpu[0] can no longer wild-jump the first dispatch (the 0x3000000
+         * EL1 instruction abort).  See arch/aarch64/smp.c for the regression note. */
+        {
+            extern volatile int g_smp_prod;
+            g_smp_prod = 1;
+        }
+#endif
         knl_startup_hw();
         knl_main();
     }

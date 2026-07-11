@@ -21,7 +21,8 @@
 #                          expected total N*K (K=200000): -smp 2 => 400000,
 #                          -smp 4 => 800000, -smp 8 => 1600000. No lost updates.
 #   [smp-boot-survives]    SMP-BOOT: PASS + the T-Kernel still boots
-#                          ([BOOT] Starting T-Kernel.../Initial task started)
+#                          ([BOOT] Starting T-Kernel... AND the aarch64 initial
+#                          task reaches the "p-kernel> " shell prompt)
 #                          AFTER all N CPUs ran the dispatcher (no deadlock).
 #
 # 8 is the GICv2 ceiling (the GICD_TYPER CPUNumber field is 3 bits → max 8 CPU
@@ -132,8 +133,16 @@ for N in 2 4 8; do
         || fail "-smp $N: no 'SMP-BOOT: PASS' (a CPU wedged or the join timed out)"
     grep -q "Starting T-Kernel" "$LOG" \
         || fail "-smp $N: kernel did not reach the T-Kernel banner after the SMP slice"
-    grep -q "Initial task started" "$LOG" \
-        || fail "-smp $N: T-Kernel scheduler did not tick after the SMP slice"
+    # [smp-boot-survives], real sentinel: the aarch64 INITIAL TASK (arch/aarch64/
+    # usermain.c) runs the full boot init and prints the interactive shell prompt
+    # "p-kernel> " at its tail (line 548), then loops on sio_read_line() whose body
+    # is tk_dly_tsk(1) — so reaching the prompt proves the scheduler dispatched the
+    # initial task and the timer/dispatch path is live AFTER the SMP slice.  (The
+    # old grep "Initial task started" was a PHANTOM: that string is printed ONLY by
+    # arch/x86/usermain.c and NEVER on aarch64, so it could never pass here — it
+    # masked the real post-selftest EL1 abort at 0x3000000 that this wave fixed.)
+    grep -q "p-kernel>" "$LOG" \
+        || fail "-smp $N: T-Kernel initial task did not reach the shell prompt after the SMP slice"
     echo "[smp0] -smp $N: PASS (detected $N, counter $EXPECT, T-Kernel still boots)"
     rm -f "$LOG"
 done

@@ -447,6 +447,37 @@ struct smp_cpu g_smpcpu[SMP_MAX_CPUS];
 /* Exported for the asm dispatcher to compute &g_smpcpu[me]. */
 unsigned long smp_this_cpu(void) { return smp_mpidr_aff0(); }
 
+/* ────────────────────────────────────────────────────────────────────────
+ *  WB SMP-fix (fable5 Wave-B): the μT-Kernel 2.0→3.0 core migration regression.
+ *
+ *  The shipped 3.0 core scheduler (kernel/mtkernel3/.../task.c, klock.c) writes
+ *  the GLOBAL knl_ctxtsk / knl_schedtsk, and the 3.0 sysdepend cpu_status.h that
+ *  now wins the include-path (kernel/mtkernel3/kernel/sysdepend/aarch64_virt/
+ *  cpu_status.h) drives knl_dispatch()/END_CRITICAL_SECTION off those SAME
+ *  globals.  But under -DSMP_SELFTEST the asm dispatcher (cpu_support.S,
+ *  .Ldispatch_loop) reads/writes the PER-CPU slots g_smpcpu[me].{ctxtsk,schedtsk}.
+ *  On 2.0 the core used the CUR_CTXTSK/CUR_SCHEDTSK per-CPU accessor macros
+ *  (arch/aarch64/include/cpu_status.h) so the two agreed; the migration reverted
+ *  the core to the plain globals and DISCONNECTED them from the asm.
+ *
+ *  Net effect: after the SMP self-test slice, g_smpcpu[0].schedtsk holds a STALE
+ *  self-test TCB.  knl_main() sets the GLOBAL knl_schedtsk = the initial task and
+ *  dispatches, but the asm loads the stale g_smpcpu[0].schedtsk → switches into a
+ *  dead task → garbage LR → EL1 instruction abort at 0x3000000 (the dead task's
+ *  stale saved x30).
+ *
+ *  THE BRIDGE: g_smp_prod is 0 during the self-test (so every self-test build is
+ *  byte-for-byte behaviourally UNCHANGED — the asm sync below is skipped), and is
+ *  set to 1 by boot/aarch64/main_mtk3.c immediately before the T-Kernel handoff.
+ *  Once armed, .Ldispatch_loop (a) syncs the per-CPU schedtsk DOWN from the global
+ *  knl_schedtsk before selecting, and (b) mirrors the chosen task UP into the
+ *  global knl_ctxtsk — so the 3.0 core's global-based scheduler and the per-CPU
+ *  asm dispatcher track one another for CPU 0's production run.  It covers EVERY
+ *  dispatch path (END_CRITICAL_SECTION and the async-IRQ b knl_dispatch) because
+ *  they all funnel through .Ldispatch_loop.  Only CPU 0 runs the production
+ *  T-Kernel after the slice; the parked secondaries never re-enter the loop. */
+volatile int g_smp_prod = 0;
+
 /* The asm per-CPU current-task load (cpu_support.S, SMP_SELFTEST). Returns
  * g_smpcpu[mpidr_aff0()].ctxtsk — the per-CPU generalization of the
  * production dispatcher's knl_ctxtsk read. */
