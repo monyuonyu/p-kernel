@@ -32,6 +32,12 @@
 | doc | 一行の役割 | V | cert | tier |
 |---|---|---|---|---|
 | [[living-mind.md]] | 会話から随時学び、睡眠で固定化する誰のものでもない心（LM-1..11） | L3 | `[dmn-*]`/`[lang-*]`/`[self-*]`/`[wmerge-*]` | working |
+| [[living-mind-lm12-belief-revision.md]] | 固定化済みの信念を同じ DMN 睡眠路で改訂＝旧を displace し Path E で伝播（LM-12） | L3 | `[rev-*]` (`mind revise`) | working |
+| [[living-mind-lm13-forgetting.md]] | 満杯の fact-queue が「最も earned-salient でない」事実を賢く忘れる（LM-13） | L3 | `[forget-*]` (`mind forget`) | working |
+| [[living-mind-lm14-curiosity.md]] | 訊かれても知らなかった鍵を覚え（want-table）口に出し、教わると precious に変換（LM-14） | L3 | `[curio-*]` (`mind curious`) | working |
+| [[living-mind-lm15-pullteach.md]] | 心が欠けた鍵を region に ASK し holder が re-teach＝learner 主導の引き寄せ（LM-15） | L3 | `[pull-*]`; `pull-teach-live` | working |
+| [[frontier-mouth.md]] | 誰のものでもない心の任意ソケット＝より強い脳への CONSULT/TEACH（借り物の声・良心ゲート・self へ書かない） | L3 | `[frontier-*]`/`[teach-prov]` | working |
+| [[scale-wall-c1.md]] | 「本物の会話」の最初の段＝told された事実を使う文脈保持（RoPE＋窓256, C1 SHIPPED） | L3 | `[ctx-carry]` (`run_ctxcarry.sh`) | working |
 | [[native-student.md]] | 赤子から育つ器に合った脳（Cradle baby, NS-1） | L2 | `shipped-llm-certs` (student) | working |
 | [[r3-nontrivial-thought.md]] | 「思考が玩具」ギャップを閉じた in-context 実学習（R3） | L2 | `[r3-incontext-*]` | working |
 | [[r3b-breathing-params.md]] | 呼吸するパラメータ＝expert 専門分化（R3b） | L3 | `18_breathing` | working |
@@ -51,6 +57,7 @@
 |---|---|---|---|---|
 | [[survival-network.md]] | **なぜこう作るか**。宇宙生存ネットワーク構想＝MoE を生存器官に（思想の核・逐語保存） | L0 | — (whole right arm) | vision |
 | [[survival-loop.md]] | 内受容・分散ゲート・世界地図・冬眠・死をひとつの環に（L0+L1 SHIPPED/CI, L2–L4 設計） | L2 | `[survival-l0]`/`[survival-l1]` | working |
+| [[conscience.md]] | 良心＝答える前に歯止めをする不可変フロア（アシモフ三原則, tighten-only, 全 emission 路をゲート） | L3 | `[law-*]`/`[conscience-*]` | working |
 | [[reflex-deliberation.md]] | 反射層（近・速）／熟慮層（遠・遅）の二層と時定数分離＝発振しない脳 | L2 | `[moe-twolayer]`/`[moe-osc]`; `twolayer-couple-live` | working |
 | [[reflex-action.md]] | 推論結果（class）を実在する局所防御へ繋ぐ＝思考に手足（G38 二層結合） | L2 | `[g38-*]`/`[g33-controlled]` | working |
 | [[closed-loop.md]] | 個別に緑な部品を一本の閉制御ループに（負帰還整定, wave-12） | L2 | `composite-loop` (`20_closed_loop`) | working |
@@ -69,6 +76,7 @@
 | [[regions.md]] | 遅延でクラスタ化した region・locality-MoE・台数で増える容量 `capacity(N)`（R0–R2） | L2 | `[capacity-score]`/`[g13-arrival]`/`[g23-ceiling]` | working |
 | [[decentralized-lookup.md]] | **探索の正準**。中央索引なしで所在を引く HRW/rendezvous/min-id 補題（L0/L1 impl, L2/L3 設計） | L2 | `[hrw]`/`[hrw-l1]`（L2/L3 open） | working |
 | [[federation.md]] | 32 の壁から数千ノードへ橋を架ける階層フェデレーション（R0 LIVE+cert, F1–F3 設計） | L2 | `[g23-ceiling]`（F1–F3 open） | working |
+| [[scaling-law.md]] | 「N が増えると賢くなる」法則の正直な分解＝breadth/resilience/throughput は scale, per-thought depth は非scale（ensemble は設計） | L2 | `[scaling-*]` (designed) | designing |
 | [[dynamic-id.md]] | churn 耐性のある node-id（relay lease SHIPPED, 完全 P2P 設計） | L3 | `[swim-incarn]`（full-P2P open） | working |
 | [[p2p-overlay.md]] | Skype 原型的な中央なしメッシュ＋supernode 転送（N-2 slices SHIPPED, NAT 設計） | L2 | `[mesh-discovery]` (live)（NAT open） | working |
 | [[n1-lan-direct-plan.md]] | 同一 WiFi で relay なし自動メッシュ（LAN-direct transport 設計計画） | L3 | — (open rung) | designing |
@@ -112,6 +120,7 @@
 | [[ring3-core.md]] | 自己改変 AI 核を ring3/EL0 へ移設（推論路 SHIPPED, 学習モジュールは設計） | Evo | `ring3-survival` (`[ring3-mind]`/`[fpu-ctx]`…)（training open） | working |
 | [[selfc-ring3.md]] | 自己ビルドした unit を免疫境界の内へ（v1 germ SHIPPED） | Evo | `[selfc-isolated]`/`[selfc-rollback]`/`[selfc-lineage]` | working |
 | [[self-compile.md]] | 自己コンパイル（selfc）first milestone（fork germ＋capability 境界 SHIPPED） | Evo | `[selfc-*]` | working |
+| [[migration-succession.md]] | 心が identity＋knowledge を運びアーキ gap を死なずに越える世代継承（v1 SHIPPED） | Evo | `[generation-survives]`/`[gen-floor-invariant]` | working |
 
 ## compat — 互換（出荷後に進化し続ける群れの分裂を防ぐ）
 
