@@ -102,6 +102,8 @@
 | [[living-body-inspector.md]] | 星の器官を REAL vitals に配線（HONEST-GLOW, on the phones） | L3 | — (via galaxy certs; open rung) | working |
 | [[webd-user-space.md]] | web サーバを substrate の外へ出す（Slice A partial） | L3 | — (open rung) | designing |
 | [[self-access.md]] | ノードが自分の体に触れる（READ-ONLY first slice） | L3 | — (open rung) | designing |
+| [[self-access-design.md]] | 内なる体を感じ器官を生やす自己アクセスの全体設計（MCP の逆・R0→R2・mk_pino への分岐） | L3 | — (open rung) | designing |
+| [[web-os.md]] | 想像の UI＝心が道具を必要な時だけ召喚する会話専用の人の環境（chat-format galaxy） | L2 | — (open rung) | designing |
 
 ## evolution / ring3 — 進化（自己改変の核を ring3/EL0 へ）
 
