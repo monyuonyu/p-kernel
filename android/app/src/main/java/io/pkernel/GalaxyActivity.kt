@@ -255,6 +255,10 @@ class GalaxyActivity : AppCompatActivity() {
             putExtra(PKernelService.EXTRA_RELAY_HOST, prefs.getString(PKernelService.EXTRA_RELAY_HOST, "") ?: "")
             putExtra(PKernelService.EXTRA_RELAY_PORT, prefs.getInt(PKernelService.EXTRA_RELAY_PORT, 7400))
             putExtra(PKernelService.EXTRA_RELAY_KEY,  prefs.getString(PKernelService.EXTRA_RELAY_KEY, "") ?: "")
+            // boot-hang fix: the owner tapped 灯す on the galaxy splash. Mark it
+            // explicit so onStartCommand pierces the battery/WiFi gate rather
+            // than silently skipping the boot and leaving the splash waiting.
+            putExtra(PKernelService.EXTRA_USER_EXPLICIT, true)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)

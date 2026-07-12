@@ -137,14 +137,32 @@ class PKernelService : Service() {
         // The network callback observes connectivity changes for WiFi-only mode.
         registerNetworkCallback()
 
-        if (runAllowed()) {
+        // Explicit-user override (boot-hang fix): when the OWNER taps 灯す
+        // (MainActivity.startKernel / GalaxyActivity.relight) the launching
+        // intent carries EXTRA_USER_EXPLICIT=true. A deliberate tap in front of
+        // the phone PIERCES the battery/WiFi gate once — the star lights even
+        // below the floor, because the person asked for it. Background/auto
+        // starts (BootReceiver, ResumeJobService, sticky restart) never set the
+        // flag, so the battery-safe floor is unchanged for them. This closes the
+        // silent-skip bug where a false gate left bootKernelOnce() uncalled and
+        // "灯す" appeared to do nothing.
+        val userExplicit = intent?.getBooleanExtra(EXTRA_USER_EXPLICIT, false) ?: false
+
+        if (runAllowed() || userExplicit) {
             bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey, bootLanOn)
         } else if (!powerAllowed()) {
             appendLog("[ump] battery-safe mode: battery is low and unplugged — " +
                       "the star will relight when you plug in.\n")
+            // Never a SILENT skip: re-post the foreground notification carrying
+            // the REASON, so the shade explains why the star is waiting instead
+            // of showing a running-looking status for a node that never booted.
+            startForeground(NOTIF_ID, buildNotification(bootNodeId,
+                "バッテリー残量が少ないため待機中 — 充電すると灯ります"))
         } else {
             appendLog("[ump] WiFi-only mode: not on unmetered WiFi — " +
                       "the star will relight when you're back on WiFi.\n")
+            startForeground(NOTIF_ID, buildNotification(bootNodeId,
+                "Wi-Fiに接続すると灯ります（Wi-Fiのみモード）"))
         }
         return START_STICKY
     }
@@ -531,6 +549,12 @@ class PKernelService : Service() {
         const val EXTRA_RELAY_KEY  = "relay_key"
         // N-1b: LAN-direct opt-in (relay-free same-WiFi mesh). OFF by default.
         const val EXTRA_LAN_ON     = "lan_on"
+        /* boot-hang fix: set true ONLY when the owner deliberately taps 灯す
+         * (MainActivity/GalaxyActivity). The owner's explicit tap pierces the
+         * battery/WiFi run-gate once in onStartCommand. Background/auto starts
+         * (BootReceiver, ResumeJobService, sticky restart) MUST leave it false
+         * so the battery-safe floor is never weakened for them. */
+        const val EXTRA_USER_EXPLICIT = "user_explicit"
         // UDP port net_lan binds + broadcasts on; matches net_lan.c's default.
         const val LAN_PORT         = 7351
 

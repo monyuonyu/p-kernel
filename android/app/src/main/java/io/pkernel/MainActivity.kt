@@ -233,6 +233,10 @@ class MainActivity : AppCompatActivity() {
             putExtra(PKernelService.EXTRA_RELAY_HOST, host)
             putExtra(PKernelService.EXTRA_RELAY_PORT, port)
             putExtra(PKernelService.EXTRA_RELAY_KEY,  key)
+            // boot-hang fix: this is the owner tapping 灯す in front of the
+            // phone. Mark it explicit so onStartCommand pierces the battery/
+            // WiFi gate — a deliberate tap must never be silently skipped.
+            putExtra(PKernelService.EXTRA_USER_EXPLICIT, true)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)

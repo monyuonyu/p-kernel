@@ -102,9 +102,24 @@ Java_io_pkernel_PKernel_nativeBoot(JNIEnv *env, jobject self, jint node_id)
      * to type `net` in the in-app terminal. */
     setenv("PKERNEL_AUTONET", "1", 1);
 
+    /* boot-hang fix (isolate the L-tier boot load): pin the student birth to
+     * the 30MB M-tier — the real-device-proven size — instead of letting
+     * dev_capacity probe the phone up to L (~990MB arena + a ~247MB durable
+     * save) on the priority-1 init task, which starves galaxy_task and leaves
+     * the star unresponsive. dev_capacity.c honors PKERNEL_DEVICE_TIER; nothing
+     * else in the JNI sets it, so this is the sole, explicit tier decision.
+     * Must precede the kernel thread (dev_capacity_probe runs during boot). */
+    setenv("PKERNEL_DEVICE_TIER", "M", 1);
+
     /* Capture stdout/stderr / inject stdin via pipes. */
     if (stdout_pipe[0] < 0) pipe(stdout_pipe);
     if (stdin_pipe[0]  < 0) pipe(stdin_pipe);
+
+    /* Future pipe guard: grow the stdout pipe to 1MB so a burst of kernel
+     * output can't block the kernel thread on a full pipe if the UI poller
+     * falls behind. Best-effort — ignore failure (unprivileged F_SETPIPE_SZ is
+     * capped at /proc/sys/fs/pipe-max-size; the default 64KB still works). */
+    if (stdout_pipe[1] >= 0) fcntl(stdout_pipe[1], F_SETPIPE_SZ, 1 << 20);
 
     pthread_create(&kernel_thread, NULL, kernel_thread_main, NULL);
 }
