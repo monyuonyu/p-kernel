@@ -84,8 +84,10 @@ set(ARCH_SRC
     ${ARCH_LX}/aarch64/rtl8139.c
     ${ARCH_LX}/aarch64/net_unix.c
     ${ARCH_LX}/aarch64/net_relay.c
+    ${ARCH_LX}/aarch64/net_relay_tcp.c
     ${ARCH_LX}/aarch64/net_lan.c
     ${ARCH_LX}/aarch64/net_dispatch.c
+    ${ARCH_LX}/aarch64/supernode_autopromote.c
     ${ARCH_LX}/aarch64/galaxy_posix.c
     ${ARCH_LX}/aarch64/arch_reboot.c
     ${ARCH_LX}/aarch64/vfs_stub.c
@@ -148,6 +150,7 @@ set(COMMON_SRC
     ${ARCH_CO}/guard.c
     ${ARCH_CO}/degrade.c
     ${ARCH_CO}/interocept.c
+    ${ARCH_CO}/conscience.c
     ${ARCH_CO}/vital.c
     ${ARCH_CO}/edf.c
     ${ARCH_CO}/raft.c
@@ -182,14 +185,26 @@ set(COMMON_SRC
     ${ARCH_CO}/arkfs.c
     ${ARCH_CO}/lookup.c
     ${ARCH_CO}/placement.c
+    ${ARCH_CO}/ss6_live.c
+    ${ARCH_CO}/supernode.c
     ${ARCH_CO}/pfs_repl.c
     ${ARCH_CO}/pfs_dag.c
     ${ARCH_CO}/protect.c
     ${ARCH_CO}/genome.c
     ${ARCH_CO}/ed25519.c
     ${ARCH_CO}/sign.c
+    ${ARCH_CO}/compat_ota.c
+    ${ARCH_CO}/compat_arkfs_gap.c
+    ${ARCH_CO}/gen_succession.c
     ${ARCH_CO}/modver.c
 )
+
+# ss6_live.c #includes student.h (SS-6 live remote-expert transport binds the
+# student's st_set_remote_expert hook). Host mirrors this with
+# `ss6_live.o KERNEL_CFLAGS += -I$(LLM_DIR)`; do the same here so the sibling
+# header resolves. All other COMMON_SRC compile clean with the global path.
+set_source_files_properties(${ARCH_CO}/ss6_live.c PROPERTIES
+    INCLUDE_DIRECTORIES "${ARCH_CO}/llm")
 
 # μT-Kernel 3.0 コア — boot/linux/Makefile の MTK3_KNL_SRCS と同一リスト。
 # ADD_PREFIX_KNL_TO_GLOBAL_NAME: sysinit の main() を knl_main() に改名し、
@@ -394,7 +409,8 @@ set(JNI_SRC ${CMAKE_CURRENT_SOURCE_DIR}/pkernel_jni.c
 # overrides them. This is its OWN list (not COMMON_SRC) so tools/android/
 # check_parity.sh stays green: student_shell.c is host-only and lives in the host
 # Makefiles' LLM_C_SRCS, which check_parity does not compare against COMMON.
-set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c
+set(LLM_STUB_SRC
+    ${ARCH_CO}/llm/student_stub.c
     # Frontier Mouth: Android-bionic links the STUB, not frontier.c (design
     # frontier_mouth §1.3/§4 — "Android-bionic nodes without the companion simply
     # link the stub and are byte-honest baseline nodes forever"). galaxy.c's
@@ -403,7 +419,8 @@ set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c
     # no-ops resolve them to a graceful "no mouth" degrade with NO new conscience
     # dependency on the .so. A phone that later wants the real socket adds
     # frontier.c to LLM_STUDENT_SRC (like the two hosted Makefiles).
-    ${ARCH_CO}/llm/frontier_stub.c)
+    ${ARCH_CO}/llm/frontier_stub.c
+)
 
 # --- the RESIDENT student engine (wave-android-student) --------------------
 # The chat ⑥ + DMN sleep ④ + boot-restore ③ on the phone are POWERED by the
@@ -416,19 +433,21 @@ set(LLM_STUB_SRC ${ARCH_CO}/llm/student_stub.c
 # live in arch/common/llm/student_shell.c, which calls the math engine in
 # arch/common/llm/student.c.
 #
-# MINIMAL SET = JUST these two TUs. The chat is pure-A (the student generates on
-# its OWN; SmolLM2 is NOT consulted at inference) and the DMN distillation learns
-# from a small COMMITTED teacher-byte FIXTURE inside student_shell.c (TEACHER_
-# FIXTURE[], NOT live SmolLM2). VERIFIED by reading the TUs: student.c includes
-# ONLY student.h + <stdlib.h> and has its OWN st_forward / st_sample_byte / libc-
-# free math (the "sample.c"/"forward.c"/"dtr.c" mentions are COMMENTS — same
-# recipe, no link dep); student_shell.c includes ONLY student.h + libc and calls
-# the durable seam (pfs_dur_*, in ARCH_SHARED_SRC) by extern. So the 138MB SmolLM2
-# teacher engine (gguf.c/forward.c/tokenizer.c/quant.c/sample.c/llm_shell.c) is
-# DELIBERATELY NOT pulled in. (The dev-console `llm` verb's llm_shell_cmd stays
-# UNDEFINED in the .so exactly as before this wave — the chat UI never calls it.)
+# The chat is pure-A (the student generates on its OWN; SmolLM2 is NOT consulted
+# at inference) and the DMN distillation learns from a small COMMITTED teacher-
+# byte FIXTURE inside student_shell.c (TEACHER_FIXTURE[], NOT live SmolLM2).
 #
-# OWN list (not COMMON_SRC) so tools/android/check_parity.sh stays green:
+# 2026-07-12 (wave-android-buildfix): student_shell.c ALSO now VERIFIES a real
+# teacher GGUF before it will call itself a teacher node — it #includes gguf.h/
+# forward.h/dev_capacity.h and calls gguf_open()/lm_load()/st_init_device(). So
+# the SmolLM2 teacher engine (gguf/quant/pk_parallel/tokenizer/forward/sample/
+# llm_shell/dev_capacity/dmoe_bank) is NO LONGER optional — it is linked below in
+# LLM_TEACHER_SRC (host LLM_C_SRCS parity, minus the stubbed frontier.c). Under
+# the NDK's default -Wl,--no-undefined those references — plus usermain.c's
+# unconditional llm_shell_cmd() call — MUST resolve, or the .so fails to link.
+#
+# OWN list (not COMMON_SRC) so tools/android/check_parity.sh compares it against
+# the host LLM_C_SRCS tier (boot/linux Makefile), NOT COMMON_SRC:
 # student.c + student_shell.c are the host LLM_C_SRCS tier (boot/linux Makefile),
 # which check_parity does NOT compare against COMMON_SRC.
 #
@@ -448,15 +467,44 @@ set(LLM_STUDENT_SRC
     ${ARCH_CO}/llm/student.c
     ${ARCH_CO}/llm/student_shell.c
     ${ARCH_CO}/llm/cradle.c
-    ${ARCH_CO}/llm/dlb.c)
+    ${ARCH_CO}/llm/dlb.c
+)
 set_source_files_properties(${LLM_STUDENT_SRC} PROPERTIES
+    COMPILE_OPTIONS "-ffp-contract=off"
+    INCLUDE_DIRECTORIES "${ARCH_CO}/llm")
+
+# --- the SmolLM2 TEACHER engine (host LLM_C_SRCS, minus frontier) ----------
+# student_shell.c evolved (SS-6 / cradle waves) to VERIFY a real teacher GGUF
+# before it will admit to being a teacher node: it #includes gguf.h/forward.h/
+# dev_capacity.h and calls gguf_open()/lm_load()/st_init_device(). usermain.c's
+# dev console also calls llm_shell_cmd() unconditionally (arch/linux/aarch64/
+# usermain.c:1287). Under the NDK's default -Wl,--no-undefined those references
+# MUST resolve, so the Android .so needs the same teacher TUs the two host
+# Makefiles link (boot/linux LLM_C_SRCS + DMOE_OBJS):
+#   gguf/quant/pk_parallel/tokenizer/forward/sample/llm_shell/dev_capacity +
+#   dmoe_bank. frontier.c stays STUBBED (frontier_stub.c weak defs — design
+#   frontier_mouth §1.3/§4). Same flags as the student tier (-ffp-contract=off,
+#   -I llm) which is exactly host LLM_CFLAGS minus -DCRADLE_HAS_CONSCIENCE
+#   (only cradle.c reads that macro; the teacher TUs do not).
+set(LLM_TEACHER_SRC
+    ${ARCH_CO}/llm/gguf.c
+    ${ARCH_CO}/llm/quant.c
+    ${ARCH_CO}/llm/pk_parallel.c
+    ${ARCH_CO}/llm/tokenizer.c
+    ${ARCH_CO}/llm/forward.c
+    ${ARCH_CO}/llm/sample.c
+    ${ARCH_CO}/llm/llm_shell.c
+    ${ARCH_CO}/llm/dev_capacity.c
+    ${ARCH_CO}/llm/dmoe_bank.c
+)
+set_source_files_properties(${LLM_TEACHER_SRC} PROPERTIES
     COMPILE_OPTIONS "-ffp-contract=off"
     INCLUDE_DIRECTORIES "${ARCH_CO}/llm")
 
 add_library(pkernel SHARED
     ${BOOT} ${ARCH_SRC} ${ARCH_SHARED_SRC} ${RELAY_SRC} ${COMMON_SRC}
     ${MTK3_KNL_SRC} ${GPU_SRC} ${JNI_SRC}
-    ${LLM_STUDENT_SRC} ${LLM_STUB_SRC})
+    ${LLM_STUDENT_SRC} ${LLM_TEACHER_SRC} ${LLM_STUB_SRC})
 
 # galaxy_page.h / manifesto_page.h live in the generated dir; galaxy.c and
 # ark_profile.c #include them by bare name. gpu_gen holds the SPIR-V header.

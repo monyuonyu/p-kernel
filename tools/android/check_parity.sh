@@ -43,58 +43,42 @@ MK2="$ROOT/boot/linux_x86_64/Makefile"
 # --- allowlists: basenames that may legitimately appear in only one side ---
 # Keep these EMPTY unless there is a real Bionic/host reason; document each.
 #
-# (none today — the host and Android builds ship the identical TU set. selfc
-#  is in BOTH lists; on Android it compiles as a stub because HAVE_LIBTCC is
-#  never defined for the NDK build, so no fork() under Bionic/SELinux. That
-#  is a compile-time guard inside selfc.c, NOT a source-list difference, so
-#  selfc.c does NOT belong in an allowlist.)
-# ss6_live.c (SS-6-live remote-expert UDP transport): host-only FOR NOW. Its
-# capability (cross-node expert firing) is wired into st_forward, NOT the chat's
-# kv_step, so it is unreachable from the APK today; and its NDK/Bionic compile is
-# unverified in this sandbox (no Android SDK). TODO: move to lock-step (add to the
-# CMake COMMON_SRC) when the kv_step-live wiring lands AND the NDK compile is
-# confirmed — at which point a meshed phone can actually cross-node-fire.
-# supernode.c (N-2c supernode packet forwarding): host-only FOR NOW, same
-# rationale as ss6_live.c. The forwarding plane rides udp_send/udp_bind (which
-# exist on Android) but the [live] proof is a host multi-process run, and the
-# NDK/Bionic compile is unverified here (no Android SDK). The selector/gossip it
-# builds on (region.c/swim.c) ARE in the APK; only this forwarding TU is held
-# back. TODO: lock-step into the CMake COMMON_SRC when N-2c-on-Android is wired
-# (JNI to PKERNEL_SUPERNODE + a meshed-phone forward) AND the NDK compile passes.
+# (none today for COMMON/ARCH/SHARED/KERNEL/RELAY — the host and Android builds
+#  ship the identical TU set. selfc is in BOTH lists; on Android it compiles as a
+#  stub because HAVE_LIBTCC is never defined for the NDK build, so no fork() under
+#  Bionic/SELinux. That is a compile-time guard inside selfc.c, NOT a source-list
+#  difference, so selfc.c does NOT belong in an allowlist.)
 #
-# --- 2026-06-27: declared host-only FOR NOW to make this check GREEN honestly ---
-# These four drifted into the Makefiles but are NOT yet in the APK. They are
-# DECLARED exceptions (a reviewed, documented gap), NOT hidden drift — the whole
-# point of this check is that the red turns into a green-with-a-TODO, not silence.
-# Each MUST be lock-stepped into the CMake source list in a session that HAS the
-# Android SDK/NDK (absent in this sandbox), so the APK build can be verified — only
-# then do the features actually reach phones. Tracked in docs/audit-trail.md.
-# net_relay_tcp.c (connect-anywhere Slice 3, TCP relay fallback): phones on
-#   UDP-blocked nets genuinely need it; standard sockets, likely Bionic-clean, but
-#   NDK compile unverified here. Lock-step when the NDK build is confirmed.
-# supernode_autopromote.c (N-2d measured supernode auto-promotion): a phone is
-#   metered/symmetric-NAT so it self-suppresses anyway, but the TU belongs in the
-#   APK for completeness; NDK compile unverified here. Lock-step when confirmed.
-# compat_arkfs_gap.c / compat_ota.c (compat migration + OTA): pre-existing drift
-#   (predates 2026-06-27). OTA on phones matters → these likely BELONG in the APK,
-#   not held back; allowlisted only to stop the false-red. HIGH-PRIORITY TODO:
-#   confirm whether they are a forgotten CMake omission and add them (NDK-verified).
-# conscience.c (良心 floor): host-only BY DESIGN. CRADLE_HAS_CONSCIENCE is set
-#   ONLY by the two hosted KERNEL builds (boot/linux + boot/linux_x86_64); the
-#   Android NDK build DELIBERATELY does NOT link conscience.c — a NAMED LIMIT
-#   documented verbatim in arch/common/llm/cradle.c §10 ("Android's cradle_
-#   lesson_ingest ... is NOT yet G-LEARN-gated"). So its absence from the CMake
-#   list is the documented gap, NOT drift. It IS in BOTH host Makefiles, so the
-#   host-vs-host COMMON-HOST parity check still covers it. TODO: G-LEARN-gate the
-#   Android cradle ingest path (define CRADLE_HAS_CONSCIENCE + add conscience.c to
-#   COMMON_SRC) when the NDK compile of conscience.c's kernel deps is confirmed.
-# gen_succession.c (generational succession / compat-evolution organ): host-only
-#   FOR NOW. Lives in BOTH host Makefiles (COMMON_C_SRCS) but not the APK; the
-#   migration/OTA succession plane is a hosted boot/linux feature today (same
-#   family as compat_ota.c/compat_arkfs_gap.c already allowlisted). TODO: lock-
-#   step into the CMake COMMON_SRC when succession-on-Android is wired + NDK-built.
-ALLOW_MK_ONLY="ss6_live.c supernode.c net_relay_tcp.c supernode_autopromote.c compat_arkfs_gap.c compat_ota.c conscience.c gen_succession.c"   # basenames the Makefile may have that CMake omits
-ALLOW_CM_ONLY=""      # basenames CMake may have that the Makefile omits
+# --- 2026-07-12 (wave-android-buildfix): the eight files that used to live here
+#     (ss6_live.c supernode.c net_relay_tcp.c supernode_autopromote.c
+#      compat_arkfs_gap.c compat_ota.c conscience.c gen_succession.c) were the
+#     ACCUMULATED COMMON/ARCH drift — declared "host-only FOR NOW" while no
+#     Android SDK was around to verify the NDK compile. They are now MIRRORED into
+#     the CMake source lists and the APK links + builds with them (verified: NDK
+#     26.3, gradlew assembleDebug BUILD SUCCESSFUL, app-debug.apk produced). So the
+#     allowlist is back to EMPTY — the healthy state. conscience.c now links on
+#     Android too (r3_incontext.c references conscience_check unconditionally; the
+#     cradle ingest path's CRADLE_HAS_CONSCIENCE gate stays host-only, a
+#     compile-time flag, NOT a source-list difference).
+ALLOW_MK_ONLY=""     # basenames the Makefile may have that CMake omits
+ALLOW_CM_ONLY=""     # basenames CMake may have that the Makefile omits
+
+# --- LLM tier allowlists (arch/common/llm) --------------------------------
+# The host builds the FULL SmolLM2 teacher+student engine (LLM_C_SRCS +
+# DMOE_OBJS). The Android .so builds the SAME set with ONE documented swap and
+# two Android-only additions:
+#   frontier.c        : host-only. Android links frontier_stub.c instead — weak
+#                       no-op Frontier-Mouth fallbacks (design frontier_mouth
+#                       §1.3/§4: "Android-bionic nodes without the companion
+#                       simply link the stub and are byte-honest baseline nodes
+#                       forever"). So frontier.c is MK-only, frontier_stub.c is
+#                       CM-only.
+#   student_stub.c    : Android-only weak fallbacks for the student ABI. On the
+#                       host the strong student_shell.c wins; on Android both are
+#                       linked and the strong defs still win (weak loses), so it
+#                       is harmless belt-and-suspenders. CM-only.
+ALLOW_LLM_MK_ONLY="frontier.c"                    # host builds full frontier.c; APK stubs it
+ALLOW_LLM_CM_ONLY="student_stub.c frontier_stub.c" # Android-only weak fallbacks
 
 # --- extractor ------------------------------------------------------------
 # Makefile: pull a `NAME = ...` assignment, INCLUDING any backslash
@@ -207,6 +191,23 @@ mk_inline RELAY_C_SRCS        > "$TMP/mk_relay"
 cm_list RELAY_SRC             > "$TMP/cm_relay"
 compare RELAY "$TMP/mk_relay" "$TMP/cm_relay" "$ALLOW_MK_ONLY" "$ALLOW_CM_ONLY"
 
+# LLM (arch/common/llm — the SmolLM2 teacher+student engine).
+# THIS SECTION IS THE BLIND SPOT THE wave-36 REWRITE NEVER ADDED: the LLM (and,
+# via ARCH, the net) source lists were NOT compared, so student_shell.c's
+# teacher-GGUF probe (gguf/forward/dev_capacity), the SS-6 live transport, and
+# usermain's llm_shell_cmd drifted out of the CMake lists and were only caught at
+# NDK --no-undefined link time. Now the guard catches them first.
+#
+#   Host  = LLM_C_SRCS + DMOE_OBJS (dmoe_bank.o — a SEPARATE Makefile var, so it
+#           is appended by hand; mk_list only sees *.c/*.S tokens).
+#   CMake = LLM_STUDENT_SRC + LLM_TEACHER_SRC + LLM_STUB_SRC (the same TUs, split
+#           across three set() lists by compile-flag tier).
+# Allowlist swap: host frontier.c <-> Android frontier_stub.c (+ student_stub.c).
+{ mk_list LLM_C_SRCS; printf 'dmoe_bank.c\n'; } | sort -u > "$TMP/mk_llm"
+{ cm_list LLM_STUDENT_SRC; cm_list LLM_TEACHER_SRC; cm_list LLM_STUB_SRC; } \
+    | sort -u > "$TMP/cm_llm"
+compare LLM "$TMP/mk_llm" "$TMP/cm_llm" "$ALLOW_LLM_MK_ONLY" "$ALLOW_LLM_CM_ONLY"
+
 # --- host-vs-host parity: boot/linux (aarch64) vs boot/linux_x86_64 -------
 # The arch-INDEPENDENT source lists must be byte-identical between the two host
 # builds. COMMON_C_SRCS is the AI/common (arch/common) module list — the mind
@@ -230,6 +231,13 @@ compare_hosts KERNEL-HOST "$TMP/h_kern_a" "$TMP/h_kern_b"
 mk_inline RELAY_C_SRCS      "$MK"  > "$TMP/h_relay_a"
 mk_inline RELAY_C_SRCS      "$MK2" > "$TMP/h_relay_b"
 compare_hosts RELAY-HOST "$TMP/h_relay_a" "$TMP/h_relay_b"
+
+# LLM_C_SRCS is the arch-independent SmolLM2 engine list; it must be byte-
+# identical between the two host builds (same drift class as COMMON-HOST — a TU
+# added to one host's LLM tier but not the other ships a different mind per arch).
+mk_list LLM_C_SRCS          "$MK"  > "$TMP/h_llm_a"
+mk_list LLM_C_SRCS          "$MK2" > "$TMP/h_llm_b"
+compare_hosts LLM-HOST "$TMP/h_llm_a" "$TMP/h_llm_b"
 
 if [ "$DRIFT" -ne 0 ]; then
     echo ""

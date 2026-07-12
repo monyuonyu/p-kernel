@@ -27,7 +27,7 @@
  * shadow (used by the kernel-side sources) sits earlier on the include
  * path and provides neither symbol. Declare the Bionic accessor and the
  * one POSIX errno constant the inlines reference. */
-extern volatile int *__errno(void);
+extern int *__errno(void);
 #define errno  (*__errno())
 #define EINVAL 22
 #endif
