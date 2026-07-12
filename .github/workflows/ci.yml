@@ -2428,3 +2428,55 @@ jobs:
           unzip -l "$apk" | grep -q 'AndroidManifest.xml' \
             || { echo "APK has no AndroidManifest.xml -- not a real APK"; exit 1; }
           echo "android-apk-build: $apk is a real, compiled+linked debug APK ($(stat -c%s "$apk") bytes)."
+
+  llm-engine-certs:
+    # Orphaned host certs of SHIPPED inference/teaching code, surfaced by the CI
+    # coverage audit (2026-07-12): each EXISTED in tests/ but was never wired, so
+    # the engine's expert-placement / cross-node firing / module-registry /
+    # forward / conversational-teaching paths could rot with CI green. Every one
+    # was RUN locally first and is GREEN, `set -e` self-asserting, model-free +
+    # network-free (loopback only), and carries real teeth (a falsifier arm or a
+    # from-scratch numeric oracle) — safe as a blocking gate. run_kv.sh is split
+    # into its own advisory job below (correct but heavy; measuring real-runner
+    # wall-clock before it can gate). None route through student_shell.c, so they
+    # are structurally immune to the dlb.c-class SRC-list drift that hit run_yield.
+    name: "LLM エンジン cert (SS5配置/SS6発火/modver/forward/cradle-teach 出荷コード)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3 curl
+      - name: SS-5 deterministic expert placement (HRW min-disruption falsifier)
+        run: bash tests/llm/run_ss5.sh
+      - name: SS-6 cross-node expert firing (logit-hash equiv + 1e-6 perturbation falsifier)
+        run: bash tests/llm/run_ss6.sh
+      - name: module-version registry end-to-end (/modules.json vs header #defines)
+        run: bash tests/modver/run_modver.sh
+      - name: Llama forward vs from-scratch oracle ([forward-sanity]; model/network-free, skips oracle w/o GGUF)
+        run: bash tests/llm/run_forward.sh
+      - name: cradle teacher→student lesson bridge (G5; 3 falsifier arms must go RED)
+        run: bash tests/llm/run_cradle_teach.sh
+
+  llm-kv-equivalence:
+    # KV-cache byte-equivalence of the generation path (run_kv.sh): 15 cases over
+    # 3 tiers, byte + FNV-hash equality of the cached vs recompute paths, a
+    # >MAXSEQ window-slide case, a [no-vla] structural grep, and a real tokens/sec
+    # floor-gate. GREEN with strong teeth, but HEAVY (the L-tier long-context
+    # recompute is minutes of scalar FP). ADVISORY until its real ubuntu-latest
+    # wall-clock is measured — then set a right-sized timeout and remove
+    # continue-on-error to promote it to a blocking gate.
+    name: "KV-cache 等価性 cert (run_kv.sh) [advisory: 実行時間 計測中]"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
+        run: bash tests/llm/run_kv.sh
