@@ -120,6 +120,100 @@ int dlb_answer(st_model *m, const uint8_t *query, int qn,
 }
 
 /* ================================================================== */
+/* V-EXACT arithmetic gate + read-only oracle (Wave-D2 LIVE feeder).      */
+/* Pure integer, one-math deterministic. SHARED by production            */
+/* (student_chat_generate) and the depth_compound cert — one TU, one      */
+/* implementation (cert-isolation shared-path discipline).               */
+/* ================================================================== */
+static int dlb_is_ws(uint8_t c)
+{
+    return c == ' ' || c == '\t' || c == '\n' ||
+           c == '\r' || c == '\f' || c == '\v';
+}
+
+/* ^\s*(-?\d{1,4})\s*([+\-*])\s*(-?\d{1,4})\s*=\s*$ ; on match write A op B. */
+int dlb_gate_vexact(const uint8_t *q, int qn, long *expect_out)
+{
+    if (!q || qn < 3) return 0;
+    if (qn > DLB_TRACE_MAX - 8) return 0;   /* winning trace must fit the ring */
+    int i = 0;
+    while (i < qn && dlb_is_ws(q[i])) i++;
+
+    /* operand A: optional '-', then 1..4 digits (|A| <= 9999). */
+    long a = 0; int aneg = 0, ad = 0;
+    if (i < qn && q[i] == '-') { aneg = 1; i++; }
+    while (i < qn && q[i] >= '0' && q[i] <= '9' && ad < 4) { a = a*10 + (q[i]-'0'); i++; ad++; }
+    if (ad < 1) return 0;
+    if (i < qn && q[i] >= '0' && q[i] <= '9') return 0;   /* 5+ digits: reject */
+    if (aneg) a = -a;
+    while (i < qn && dlb_is_ws(q[i])) i++;
+
+    /* operator: one of + - * */
+    if (i >= qn) return 0;
+    uint8_t op = q[i];
+    if (op != '+' && op != '-' && op != '*') return 0;
+    i++;
+    while (i < qn && dlb_is_ws(q[i])) i++;
+
+    /* operand B: optional '-', then 1..4 digits (|B| <= 9999). */
+    long b = 0; int bneg = 0, bd = 0;
+    if (i < qn && q[i] == '-') { bneg = 1; i++; }
+    while (i < qn && q[i] >= '0' && q[i] <= '9' && bd < 4) { b = b*10 + (q[i]-'0'); i++; bd++; }
+    if (bd < 1) return 0;
+    if (i < qn && q[i] >= '0' && q[i] <= '9') return 0;
+    if (bneg) b = -b;
+    while (i < qn && dlb_is_ws(q[i])) i++;
+
+    /* MUST end with '=' then only optional trailing whitespace. */
+    if (i >= qn || q[i] != '=') return 0;
+    i++;
+    while (i < qn && dlb_is_ws(q[i])) i++;
+    if (i != qn) return 0;
+
+    long e;
+    if      (op == '+') e = a + b;
+    else if (op == '-') e = a - b;
+    else                e = a * b;
+    if (expect_out) *expect_out = e;
+    return 1;
+}
+
+/* dlb_verify_fn: 1.0f iff cand's leading signed number == *(long*)vctx. Never
+ * writes cand/out — a structurally read-only oracle. */
+float dlb_vexact_verify(const uint8_t *query, int qn,
+                        const uint8_t *cand, int cn, void *vctx)
+{
+    (void)query; (void)qn;
+    const long *ep = (const long *)vctx;
+    if (!ep || !cand) return 0.0f;
+    int i = 0;
+    while (i < cn && dlb_is_ws(cand[i])) i++;
+    int neg = 0;
+    if (i < cn && cand[i] == '-') { neg = 1; i++; }
+    if (i >= cn || cand[i] < '0' || cand[i] > '9') return 0.0f;  /* need a digit */
+    long v = 0; int nd = 0;
+    while (i < cn && cand[i] >= '0' && cand[i] <= '9') {
+        if (nd >= 10) return 0.0f;      /* far outside |9999 op 9999| range */
+        v = v * 10 + (cand[i] - '0'); i++; nd++;
+    }
+    if (neg) v = -v;
+    return (v == *ep) ? 1.0f : 0.0f;
+}
+
+/* Length of cand's leading (ws + sign + digit) run, 0 if no leading number. */
+int dlb_vexact_anslen(const uint8_t *cand, int cn)
+{
+    if (!cand) return 0;
+    int i = 0;
+    while (i < cn && dlb_is_ws(cand[i])) i++;
+    if (i < cn && cand[i] == '-') i++;
+    int nd = 0;
+    while (i < cn && cand[i] >= '0' && cand[i] <= '9' && nd < 10) { i++; nd++; }
+    if (nd < 1) return 0;
+    return i;                           /* [0,i): leading ws + sign + digits */
+}
+
+/* ================================================================== */
 /* the compounding ring (§3.4) — search-distill, hard-gated             */
 /* ================================================================== */
 typedef struct {

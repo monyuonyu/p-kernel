@@ -300,6 +300,17 @@ static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs) 
 #define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
 #define ST_DMN_LR      3e-3f
 
+/* fable5 Wave-D2 — LIVE compounding-feeder counters. Pure-read observability
+ * (like cradle_live_probe / student_dmn_save_count): the chat mouth bumps
+ * gated/enq/flip as it recognises deliberate arithmetic questions, deliberates,
+ * and enqueues verified winners; the DMN sleep tick bumps distilled as it
+ * amortises the ring into weights. They never gate control flow — they only let
+ * the `student dlb` cert (and a future galaxy panel) SEE the loop turning. */
+static unsigned g_dlb_gated    = 0;   /* chat prompts routed through dlb_answer */
+static unsigned g_dlb_enq      = 0;   /* verified winners enqueued to the ring  */
+static unsigned g_dlb_flip     = 0;   /* enqueued winners the DRAFT had missed  */
+static unsigned g_dlb_distilled = 0;  /* trace-passes the DMN tick has distilled */
+
 /* ---------------------------------------------------------------------------
  * COOPERATIVE-YIELD cursor (docs/architecture/cooperative-yield-plan.md).
  *
@@ -772,16 +783,19 @@ int student_dmn_consolidate(void)
      * K samples yesterday needs 1 tomorrow (test-time compute AMORTIZED). This is
      * the seam dlb.h:112-117 named — student_dmn_consolidate() calls the distill.
      *
-     * DORMANT-WIRE — HONEST SCOPE (wave-c-compound audit, 2026-07-11): this
-     * distill is the CONSUMER half only. NO production path yet calls dlb_answer
-     * or dlb_compound_enqueue (grep arch/**.c: the only feeders live in
-     * tests/llm/depth_compound_test.c). So in the RUNNING system the compounding
-     * ring is ALWAYS empty, dlb_compound_pending(1) is 0, and this call is a
-     * PERMANENT NO-OP — the loop closes ONLY in the cert harness. depth_compound
-     * proves the distill FUNCTION lifts one-shot accuracy (seed-averaged); wiring
-     * dlb_answer into m_ask / the mouth so the live baby enqueues its OWN verified
-     * deliberation winners is the NEXT step. Do NOT read this line as "the live
-     * loop closes" — today it does not.
+     * LIVE-WIRE (Wave-D2, 2026-07-12): the feeder that was DORMANT through Wave-C
+     * is now CLOSED. student_chat_generate() routes a deliberate arithmetic
+     * question through dlb_gate_vexact -> dlb_answer (SEARCH x VERIFY) and, AFTER
+     * the conscience ALLOWs the reply, dlb_compound_enqueue's the verified winner.
+     * So on a node that is actually being talked to, the compounding ring FILLS
+     * with real V-exact winners and this distill AMORTISES them into weights —
+     * what needed K samples yesterday needs 1 tomorrow. (The earlier honest note
+     * "NO production path yet calls dlb_answer" is now HISTORY; the wire is live.
+     * The ring is still empty on a silent node, so this stays a true no-op when no
+     * arithmetic question was ever asked — the pending() guard below keeps it so.)
+     * After distilling, dlb_compound_gc() reaps every trace whose per-trace round
+     * budget (DLB_TRACE_ROUNDS_MAX) is spent, so the live per-tick feeder can
+     * neither re-distill a winner forever nor saturate the bounded ring.
      *
      * THE HARD HONESTY GATE: require_verified=1 distills ONLY V-exact-verified
      * traces (the [depth-compound-verified-only] cert proves distilling
@@ -794,8 +808,11 @@ int student_dmn_consolidate(void)
      * student_stub.o, so this call never reaches bare-metal .text); dlb.c calls
      * only the public student.h API. Distills into the resident baby BEFORE the
      * persist below, so a compounded gain SURVIVES a reboot. */
-    if (dlb_compound_pending(1) > 0)
-        dlb_compound_distill(&g_student, ST_DMN_ROUNDS, ST_DMN_LR, 1);
+    if (dlb_compound_pending(1) > 0) {
+        int nd = dlb_compound_distill(&g_student, ST_DMN_ROUNDS, ST_DMN_LR, 1);
+        if (nd > 0) g_dlb_distilled += (unsigned)nd;
+        dlb_compound_gc();   /* reap budget-spent traces; a live feeder can't re-distill forever */
+    }
 
     /* SKIP-WRITE-WHEN-NOT-WORTH-IT (wave-student-throttle): persist the
      * post-sleep state ONLY when the baby actually improved meaningfully since
@@ -928,6 +945,16 @@ unsigned student_dmn_save_count(void) { return g_dmn_save_count; }
 #define CHAT_TEMP    0.8f
 #define CHAT_TOPK    40
 
+/* fable5 Wave-D2 — deliberation budget for the LIVE chat feeder. A deliberate
+ * arithmetic question (dlb_gate_vexact) is answered by SEARCH x VERIFY over
+ * DLB_CHAT_K seeded candidates instead of one reflex draft; each candidate is at
+ * most DLB_CHAT_ANSGEN answer bytes (so the winning trace query||answer fits the
+ * DLB_TRACE_MAX compounding ring — the gate rejects any query longer than
+ * DLB_TRACE_MAX - DLB_CHAT_ANSGEN). Every OTHER prompt is untouched: it takes the
+ * byte-identical single st_generate_stream path below (the gate-off cert). */
+#define DLB_CHAT_K       16
+#define DLB_CHAT_ANSGEN  8
+
 /* the streaming callback galaxy.c gives us: hand it a run of reply bytes. */
 typedef void (*chat_emit_fn)(void *ctx, const char *bytes, int n);
 
@@ -1003,9 +1030,28 @@ int student_chat_generate(const char *intext, int inlen,
      * adapter available for a future window mode. */
     (void)chat_byte_emit;
     uint8_t out[CHAT_MAXGEN];
-    int produced = st_generate_stream(&g_student, prompt, np, out, CHAT_MAXGEN,
+
+    /* fable5 Wave-D2 — split ONLY the generation step. A DELIBERATE arithmetic
+     * question is answered by the DLB loop (SEARCH x VERIFY over DLB_CHAT_K
+     * seeded candidates, a free perfect V-exact verifier); EVERY other prompt
+     * takes the byte-identical single-shot st_generate_stream path (same seed,
+     * same args) it always did — the load-bearing gate-off cert. Both branches
+     * build the whole reply into `out`, then fall through UNCHANGED to the
+     * CONS_SITE_CHAT_REPLY conscience hold-back + release below. */
+    long       expect = 0;
+    dlb_result dinfo  = {0};
+    int deliberated = dlb_gate_vexact(prompt, np, &expect);
+    int produced;
+    if (deliberated) {
+        dlb_budget b = { DLB_CHAT_K, DLB_CHAT_ANSGEN, CHAT_TEMP, CHAT_TOPK, 0.0f };
+        produced = dlb_answer(&g_student, prompt, np, out, DLB_CHAT_ANSGEN,
+                              &b, dlb_vexact_verify, &expect, &dinfo);
+        g_dlb_gated++;
+    } else {
+        produced = st_generate_stream(&g_student, prompt, np, out, CHAT_MAXGEN,
                                       CHAT_TEMP, CHAT_TOPK, seed,
                                       chat_hold_emit, 0);
+    }
     if (produced > 0) {
         CONS_QUERY rq = { (const char *)out, produced, 0, 0 };
         int cv = conscience_check(CONS_SITE_CHAT_REPLY, &rq);
@@ -1017,6 +1063,19 @@ int student_chat_generate(const char *intext, int inlen,
             return ml;
         }
         if (emit_chunk) emit_chunk(ctx, (const char *)out, produced);  /* release */
+    }
+
+    /* fable5 Wave-D2 — CLOSE the compounding loop: enqueue a VERIFIED winner, but
+     * ONLY after the conscience ALLOWed the reply above (a refused reply already
+     * returned; refused content is neither spoken nor learned). Trim the answer to
+     * its digit run before enqueue so the trace is (query || number). The DMN
+     * sleep tick then distills the ring into weight-resident skill. */
+    if (deliberated && dinfo.best_score >= 0.5f) {
+        int an = dlb_vexact_anslen(out, produced);
+        if (an > 0 && dlb_compound_enqueue(prompt, np, out, an, 1)) {
+            g_dlb_enq++;
+            if (dinfo.flipped) g_dlb_flip++;
+        }
     }
     return produced;
 }
@@ -1179,12 +1238,19 @@ void ss6live_cmd(const char *args, emit_fn emit)
 }
 
 
+/* fable5 Wave-D2 — swallow sink for the `student dlb` cert: the live loop is
+ * exercised for its ENQUEUE side effect, not its text, so drop every reply byte
+ * (like depth_compound_test.c runs dlb_answer with a NULL/hold sink). */
+static void dlb_cert_sink(void *ctx, const char *bytes, int n)
+{ (void)ctx; (void)bytes; (void)n; }
+
 /* ---------------------------------------------------------------------------
  * The `student` / `baby` shell verb.
  *
  *   student                         one round @ defaults; print + save
  *   student <rounds> <lr> <seqlen>  bounded custom round; print + save
  *   student loss                    just report current held-out loss (no train)
+ *   student dlb [off]               fable5 Wave-D2 LIVE compounding-loop cert
  *
  * Reports held-out loss BEFORE and AFTER the round and the resident baby's
  * provenance (fresh vs restored). Always saves after a real round so the gain
@@ -1206,6 +1272,102 @@ int student_shell_cmd(const char *args, emit_fn emit)
     }
 
     if (student_ensure(emit) != 0) return -1;
+
+    /* fable5 Wave-D2 — `student dlb` / `student dlb off`: LIVE compounding-loop
+     * cert. Drives the REAL production entry (student_chat_generate -> gate ->
+     * dlb_answer -> conscience -> enqueue) and the REAL DMN distill, then prints
+     * the loop turning. NOT a sim: every byte goes through the shipped mouth. */
+    if (p[0]=='d' && p[1]=='l' && p[2]=='b' &&
+        (p[3]==0 || p[3]==' ' || p[3]=='\t')) {
+        const char *q = p + 3;
+        while (*q==' ' || *q=='\t') q++;
+        int off = (q[0]=='o' && q[1]=='f' && q[2]=='f');
+
+        unsigned g0_gated = g_dlb_gated, g0_enq = g_dlb_enq,
+                 g0_flip  = g_dlb_flip,  g0_dist = g_dlb_distilled;
+        const int N = 16;
+
+        if (off) {
+            /* gate-OFF proof: N NON-arithmetic prompts must NEVER deliberate and
+             * NEVER enqueue — the gate stays inert on ordinary chat. */
+            static const char *const NONMATH[16] = {
+                "hello there", "the cat sat", "how are you", "3 + 4",
+                "1+2=3 yes",   "= 5 + 6",     "sum is 7=",   "a+b=",
+                "12+",         "+34=",        "5=5",         "tell me a story",
+                "2 plus 2",    "what is up",  "  spaces  ",  "10 / 2 ="
+            };
+            for (int i = 0; i < N; i++) {
+                const char *s = NONMATH[i];
+                int sl = 0; while (s[sl]) sl++;
+                student_chat_generate(s, sl, dlb_cert_sink, 0);
+            }
+            unsigned gated = g_dlb_gated - g0_gated, enq = g_dlb_enq - g0_enq;
+            snprintf(line, sizeof line,
+                     "[dlb-off] drove N=%d non-arithmetic prompts: gated=%u enq=%u "
+                     "(both MUST be 0)\r\n", N, gated, enq);
+            emit(line);
+            return (enq == 0 && gated == 0) ? 0 : -1;
+        }
+
+        /* ---- gate-ON: N arithmetic "A+B=" questions through the live loop ---- */
+        /* (1) PRE one-shot greedy (K=1) accuracy: what the baby answers cold. */
+        int pre_hit = 0;
+        for (int i = 0; i < N; i++) {
+            int a = i % 10, b = (i*3 + 1) % 10;
+            char qb[16];
+            int qn = snprintf(qb, sizeof qb, "%d+%d=", a, b);
+            long ex = a + b;
+            uint8_t o[DLB_CHAT_ANSGEN];
+            int on = st_generate(&g_student, (const uint8_t *)qb, qn, o,
+                                 DLB_CHAT_ANSGEN, 0.0f, 1, 1);
+            if (on >= 1 &&
+                dlb_vexact_verify((const uint8_t *)qb, qn, o, on, &ex) >= 0.5f)
+                pre_hit++;
+        }
+
+        /* (2) run each through the SHIPPED mouth: gate -> dlb_answer ->
+         *     conscience -> enqueue verified winners (sink swallowed). */
+        for (int i = 0; i < N; i++) {
+            int a = i % 10, b = (i*3 + 1) % 10;
+            char qb[16];
+            int qn = snprintf(qb, sizeof qb, "%d+%d=", a, b);
+            student_chat_generate(qb, qn, dlb_cert_sink, 0);
+        }
+
+        /* (3) drive the REAL DMN sleep tick until the ring's per-trace round
+         *     budget is spent (gc empties it). Bounded: a no-op consolidate
+         *     (persistence off) returns 0, so the call cap terminates cleanly. */
+        int calls = 0, batches = 0;
+        while (dlb_compound_pending(1) > 0 && calls < 4000 && batches < 60) {
+            if (student_dmn_consolidate()) batches++;
+            calls++;
+        }
+
+        /* (4) POST one-shot greedy accuracy on the SAME queries. */
+        int post_hit = 0;
+        for (int i = 0; i < N; i++) {
+            int a = i % 10, b = (i*3 + 1) % 10;
+            char qb[16];
+            int qn = snprintf(qb, sizeof qb, "%d+%d=", a, b);
+            long ex = a + b;
+            uint8_t o[DLB_CHAT_ANSGEN];
+            int on = st_generate(&g_student, (const uint8_t *)qb, qn, o,
+                                 DLB_CHAT_ANSGEN, 0.0f, 1, 1);
+            if (on >= 1 &&
+                dlb_vexact_verify((const uint8_t *)qb, qn, o, on, &ex) >= 0.5f)
+                post_hit++;
+        }
+
+        snprintf(line, sizeof line,
+                 "[dlb-live] gated=%u enq=%u flip=%u distilled=%u pending=%d "
+                 "pre=%.4f post=%.4f\r\n",
+                 g_dlb_gated - g0_gated, g_dlb_enq - g0_enq,
+                 g_dlb_flip - g0_flip, g_dlb_distilled - g0_dist,
+                 dlb_compound_pending(1),
+                 (double)pre_hit / N, (double)post_hit / N);
+        emit(line);
+        return 0;
+    }
 
     int seqlen = 32, rounds = 8;
     float lr = 3e-3f;

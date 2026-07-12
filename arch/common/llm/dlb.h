@@ -91,6 +91,37 @@ int dlb_answer(st_model *m, const uint8_t *query, int qn,
                dlb_result *info);
 
 /* ---------------------------------------------------------------------------
+ * V-EXACT arithmetic gate + read-only oracle (Wave-D2 LIVE feeder). Three PURE
+ * INTEGER helpers that let a production caller (student_chat_generate) close the
+ * compounding loop end-to-end: recognise a DELIBERATE arithmetic question, VERIFY
+ * a candidate answer against ground truth (§3.3), and TRIM the winning answer to
+ * its digit run before enqueue. Production AND the depth_compound cert call the
+ * SAME functions in the SAME TU (cert-isolation shared-path discipline,
+ * feedback_cert_isolation_shared_path). Integer-only -> one-math deterministic on
+ * every arch (no new transcendental math).
+ * ------------------------------------------------------------------------- */
+
+/* Recognise the arithmetic form  ^\s*(-?\d{1,4})\s*([+\-*])\s*(-?\d{1,4})\s*=\s*$
+ * (MUST end in '='; |A|,|B| <= 9999). Returns 1 and writes *expect_out = A op B
+ * iff `q` (qn bytes) matches AND qn <= DLB_TRACE_MAX-8 (so the winning trace
+ * query||answer, answer <= DLB_CHAT_ANSGEN bytes, fits the compounding ring);
+ * else 0 (and *expect_out is untouched). Integer-only; no allocation, no VLA. */
+int dlb_gate_vexact(const uint8_t *q, int qn, long *expect_out);
+
+/* A dlb_verify_fn (§3.3) for the arithmetic gate: vctx is the `long *expect`
+ * dlb_gate_vexact produced. Parses `cand`'s leading optional-space + optional
+ * sign + digit run into an integer and returns 1.0f iff it equals *expect, else
+ * 0.0f. READ-ONLY ORACLE: it never writes cand/out, so it structurally cannot
+ * inject the answer (mirrors depth_compound_test.c's vexact_verify). */
+float dlb_vexact_verify(const uint8_t *query, int qn,
+                        const uint8_t *cand, int cn, void *vctx);
+
+/* Length (from cand[0]) of the accepted leading signed-digit run — leading
+ * whitespace + optional sign + digits — or 0 if `cand` has no leading number.
+ * Used to TRIM a winning answer to its number before dlb_compound_enqueue. */
+int dlb_vexact_anslen(const uint8_t *cand, int cn);
+
+/* ---------------------------------------------------------------------------
  * The COMPOUNDING loop (§3.4) — deliberation x DMN (search-distill), the ONE
  * depth mechanism the fleet owns end-to-end (the AlphaZero crack, §4.3).
  *
