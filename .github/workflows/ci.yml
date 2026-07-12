@@ -1804,8 +1804,8 @@ jobs:
         run: bash tests/llm/run_yield.sh
 
   sanitizer-build:
-    # サニタイザ build (ASan/UBSan, 助言). ADVISORY until clean; promote to
-    # blocking once green — catches the recurring stack-overflow class (the
+    # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
+    # green in a row; promoted from advisory) — catches the recurring stack-overflow class (the
     # net_relay.c buf[MAX_PKT] stack-locals bug that crashed the hosted relay;
     # see feedback_hosted_relay_stack_overflow). Builds boot/linux_x86_64
     # NATIVELY on the x86_64 runner with -fsanitize=address,undefined and runs a
@@ -1818,10 +1818,9 @@ jobs:
     # smoke); the net/relay/kernel/arch TUs where the stack-overflow class lives
     # ARE instrumented. Bare-metal builds are untouched -> the crown stays
     # byte-identical.
-    name: "サニタイザ build (ASan/UBSan, 助言)"
+    name: "サニタイザ build (ASan/UBSan)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -2291,15 +2290,15 @@ jobs:
     # green tree. The build + PE32+ assertion are DETERMINISTIC and proven
     # locally (x86_64-w64-mingw32-gcc, p-kernel.exe = "PE32+ executable for MS
     # Windows ... x86-64").
-    # PROMOTE TO BLOCKING (remove continue-on-error) once a hosted run of THIS
-    # job is confirmed green — at that point the Windows arch is trunked with a
-    # real, non-bypassable build gate. The port is already crown-neutral: the
+    # PROMOTED TO BLOCKING 2026-07-12 (4 hosted runs green in a row) — the
+    # Windows arch is now trunked with a real, non-bypassable build gate.
+    # (Runtime execution is still uncovered — this gates the cross-COMPILE
+    # only; a wine smoke is the next step.) The port is crown-neutral: the
     # crown-text-identity job proves the existing arches' .text is byte-identical
     # (the shared TUs it touches are all #ifdef _WINDOWS_X86_64_-guarded).
-    name: "Windows PE ビルドゲート (mingw-w64, boot/windows/x86_64) [advisory]"
+    name: "Windows PE ビルドゲート (mingw-w64, boot/windows/x86_64)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install mingw-w64 cross toolchain
@@ -2371,16 +2370,15 @@ jobs:
     # that download cost back down on repeat runs of this workflow.
     #
     # ── NON-BLOCKING (continue-on-error: true) ─── ADVISORY FOR NOW ──────────
-    # Proven to build successfully in the dev sandbox (assembleDebug ->
-    # BUILD SUCCESSFUL, real app-debug.apk produced, ~80s) but NOT yet proven
-    # on an actual hosted ubuntu-latest runner — network flakiness, the
-    # marketplace action's exact behavior, and SDK-license timing can't be
-    # exercised from this sandbox (no outbound network here). A runner-
-    # capability gap must never redden master on a green tree.
-    # PROMOTE TO BLOCKING (remove continue-on-error) once a hosted run of this
-    # exact job is confirmed green a few times in a row — at that point the
-    # APK has a real, non-bypassable compile+link gate the way windows-pe-build
-    # gates the Windows port.
+    # First hosted ubuntu-latest run went GREEN (run 29196506263, 2026-07-12) —
+    # the setup-android/sdkmanager/aapt2 recipe works on a real runner. Kept
+    # advisory a little longer because the remaining unknowns are network
+    # flakiness (fresh-runner ~1GB NDK + Maven pulls) and SDK-license timing,
+    # which need a few runs to trust; a runner-capability gap must never redden
+    # master on a green tree.
+    # PROMOTE TO BLOCKING (remove continue-on-error) once a few more hosted runs
+    # are confirmed green — at that point the APK has a real, non-bypassable
+    # compile+link gate the way windows-pe-build now gates the Windows port.
     name: "Android APK 実ビルド (NDK assembleDebug — 実機出荷物のリンク+コンパイル gate) [advisory]"
     runs-on: ubuntu-latest
     timeout-minutes: 30
