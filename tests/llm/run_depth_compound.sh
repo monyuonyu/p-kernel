@@ -28,11 +28,15 @@
 # Arm-D "does not rise" check was SEED-FRAGILE (it FAILed on seeds 42/4444/9999)
 # and is replaced by the seed-averaged load-bearing separation.
 #
-# DORMANT-WIRE (audit defect 3): student_shell.c distills verified traces on the
-# DMN tick, but NO production path calls dlb_answer / dlb_compound_enqueue yet,
-# so the ring is populated ONLY by this cert; in the running system it is empty
-# and the distill is a permanent no-op. The [dormant-wire] grep below asserts
-# that dormancy plainly. We do NOT claim "the live loop closes".
+# LIVE-FEEDER (Wave-D2, was DORMANT-WIRE in Wave-C): the ring now HAS a
+# production feeder. student_shell.c student_chat_generate (the shipped chat
+# entry) routes deliberate arithmetic through dlb_answer and dlb_compound_enqueue's
+# the verified winners; the DMN tick distills them. The [live-feeder] grep below
+# asserts that production feeder EXISTS. HONEST scope: at a tier-S newborn the
+# feeder is FLOW-STARVED (the baby cannot yet verify-pass arithmetic, so the ring
+# stays empty at cold start); the LIVE end-to-end enqueue+distill+accuracy proof
+# is the sibling run_dlb_live.sh. THIS cert still drives the distill FUNCTION
+# directly (it does not depend on the baby producing a verify-pass answer).
 #
 #   ./run_depth_compound.sh
 # Exit 0 = teeth green + structural greps clean (compound claim reported).
@@ -83,32 +87,23 @@ else
     echo "  FAIL  [crown-neutral] dlb.c reaches a bare-metal / crown TU:"; echo "$BAD"; CN_RC=1
 fi
 
-# ---- structural [dormant-wire]: DISCLOSE that the ring has no production feeder -
-# Audit defect 3: the distill wire above is DORMANT. student_shell.c distills
-# whatever verified traces are in the ring, but NO production TU calls dlb_answer
-# or dlb_compound_enqueue, so in the running system the ring is ALWAYS empty and
-# the distill is a permanent no-op — the loop closes ONLY in this cert. This grep
-# (a) prints the production feeders (expected: NONE today) and (b) gates on the
-# HONESTY DISCLOSURE comment being present in student_shell.c so the scope note
-# cannot silently rot. It does NOT gate on dormancy itself (wiring the mouth to
-# enqueue is the intended NEXT step, not a regression).
+# ---- structural [live-feeder]: the ring now HAS a production feeder -----------
+# Wave-D2 CLOSED the loop the Wave-C cert disclosed as DORMANT: student_chat_
+# generate (the shipped chat entry) routes deliberate arithmetic through
+# dlb_answer and dlb_compound_enqueue's the verified winners. This grep asserts
+# that production feeder EXISTS (regressing it back to DORMANT goes RED). HONEST:
+# at a tier-S newborn the feeder is flow-starved (the baby cannot yet verify-pass
+# arithmetic), so the LIVE enqueue+distill+accuracy end-to-end proof is the
+# sibling run_dlb_live.sh; THIS cert still exercises the distill FUNCTION directly.
 echo ""
-echo "[grep] [dormant-wire] — no production path enqueues yet (ring fed ONLY by the cert)"
+echo "[grep] [live-feeder] — a production path now feeds the ring (Wave-D2, was DORMANT)"
 FEEDERS="$(grep -rnE 'dlb_(answer|compound_enqueue)\(' "$ROOT/arch" --include='*.c' \
     | grep -vE '/llm/dlb\.c:' || true)"
-if [ -z "$FEEDERS" ]; then
-    echo "  INFO  no production caller of dlb_answer/dlb_compound_enqueue — the wire is DORMANT"
-    echo "        (the ring is populated ONLY by depth_compound_test.c; live distill = no-op)"
+if [ -n "$FEEDERS" ]; then
+    echo "  PASS  [live-feeder] production caller(s) of dlb_answer/dlb_compound_enqueue exist:"
+    echo "$FEEDERS" | sed 's/^/      /'; DW_RC=0
 else
-    echo "  INFO  production feeder(s) now exist (the live loop may close):"
-    echo "$FEEDERS" | sed 's/^/      /'
-fi
-DISC="$(grep -nE 'DORMANT|no production path' "$SS" || true)"
-if [ -n "$DISC" ]; then
-    echo "  PASS  [dormant-wire] student_shell.c carries the honest DORMANT-scope disclosure:"
-    echo "$DISC" | sed 's/^/      /'; DW_RC=0
-else
-    echo "  FAIL  [dormant-wire] student_shell.c is missing the DORMANT-wire honesty disclosure"; DW_RC=1
+    echo "  FAIL  [live-feeder] no production feeder — the ring is fed ONLY by the cert (regressed to DORMANT)"; DW_RC=1
 fi
 
 # ---- run the in-process cert (teeth + reported compound claim) ----------------
@@ -128,9 +123,10 @@ if [ "$CERT_RC" -eq 0 ] && [ "$WIRE_RC" -eq 0 ] && [ "$CN_RC" -eq 0 ] && [ "$DW_
     echo "       blocked distill EXACTLY flat on every seed) is the load-bearing proof; the"
     echo "       one-shot ACCURACY gain is reported seed-averaged (robust WIN or pre-registered"
     echo "       NULL). The loss-based [depth-compound-verified-only] already proves the distill"
-    echo "       works. The distill wire is DORMANT (no production feeder yet) — disclosed above."
+    echo "       works. The distill wire now has a LIVE production feeder (Wave-D2) —"
+    echo "       asserted above; the end-to-end enqueue+distill proof is run_dlb_live.sh."
     exit 0
 else
-    echo "[result] FAIL (cert=$CERT_RC livewire=$WIRE_RC crownneutral=$CN_RC dormantwire=$DW_RC)"
+    echo "[result] FAIL (cert=$CERT_RC livewire=$WIRE_RC crownneutral=$CN_RC livefeeder=$DW_RC)"
     exit 1
 fi

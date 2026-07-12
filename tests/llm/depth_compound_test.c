@@ -24,8 +24,8 @@
  *        ABOVE the verified arm, so a per-seed [compound-armd] hard check FAILed.
  *    (2) the WIN was SEED-SENSITIVE — post<pre on 2/8 seeds; a single N=24 draw
  *        gives 1/24-granularity noise that cannot support a definitive WIN.
- *    (3) the LIVE WIRE is DORMANT — see the disclosure block at the bottom of
- *        main() and in run_depth_compound.sh: NO production path enqueues yet.
+ *    (3) [Wave-C] the LIVE WIRE was DORMANT. RESOLVED in Wave-D2: the production
+ *        chat entry now feeds the ring (see the [LIVE-FEEDER] disclosure below).
  *
  *  The cure for (1)+(2): SEED-AVERAGE every accuracy over N_SEEDS disjoint
  *  fixture seeds and judge the SEED-AVERAGED claim, never a single draw:
@@ -53,11 +53,11 @@
  *  That is a true invariant, so it stays a hard per-seed CHECK; it proves any
  *  post-vs-pre motion is the distill, not eval noise.
  *
- *  This cert drives the EXACT distill path the (currently DORMANT) DMN wire calls
+ *  This cert drives the EXACT distill path the (now-LIVE) DMN wire calls
  *  (student_shell.c student_dmn_consolidate -> dlb_compound_distill(g_student,
  *  ROUNDS, LR, require_verified=1)). Proving that function lifts one-shot accuracy
- *  proves the FUNCTION; wiring dlb_answer into the mouth is the next step (see the
- *  DORMANT-WIRE disclosure).
+ *  proves the FUNCTION; the production feeder (dlb_answer in the mouth) is now
+ *  wired (Wave-D2) — see the [LIVE-FEEDER] disclosure and run_dlb_live.sh.
  *
  *  Usage:  ./depth_compound            (exit 0 = teeth green; compound claim reported)
  *          ./depth_compound --machine  (one FNV determinism line, cross-arch)
@@ -393,15 +393,16 @@ int main(int argc, char **argv)
                ag.mean_gain, ag.frac_post_ge_pre, armd_load_bearing);
     }
 
-    /* ---- DORMANT-WIRE disclosure (audit defect 3) ------------------------- */
-    printf("\n    [DORMANT-WIRE] HONEST scope: student_shell.c's DMN sleep tick calls\n"
-           "    dlb_compound_distill(&g_student,...,require_verified=1), but NO production\n"
-           "    path calls dlb_answer / dlb_compound_enqueue yet — the compounding RING is\n"
-           "    populated ONLY by this cert today. In the running system the ring stays empty,\n"
-           "    dlb_compound_pending() is 0, and the distill is a permanent NO-OP. The loop\n"
-           "    closes ONLY in this harness. Wiring dlb_answer into m_ask / the mouth so the\n"
-           "    live baby enqueues its own verified deliberation winners is the NEXT step;\n"
-           "    this cert does NOT claim 'the live loop closes'.\n");
+    /* ---- LIVE-FEEDER disclosure (Wave-D2 — was DORMANT-WIRE in Wave-C) ----- */
+    printf("\n    [LIVE-FEEDER] HONEST scope: the wire is now LIVE. student_shell.c's\n"
+           "    student_chat_generate (the shipped chat entry) routes deliberate arithmetic\n"
+           "    through dlb_answer and dlb_compound_enqueue's the verified winners; the DMN\n"
+           "    sleep tick calls dlb_compound_distill(&g_student,...,require_verified=1) over\n"
+           "    that ring. So 'NO production path calls dlb_answer' is now HISTORY. Remaining\n"
+           "    honest scope: at a tier-S NEWBORN the feeder is FLOW-STARVED — the baby cannot\n"
+           "    yet verify-pass arithmetic, so the ring stays empty at cold start (enq=0). The\n"
+           "    LIVE end-to-end enqueue+distill+accuracy proof is the sibling run_dlb_live.sh;\n"
+           "    THIS cert exercises the distill FUNCTION directly (independent of the baby).\n");
 
     printf("\n[compound-summary] pass=%d fail=%d  seeds=%d\n", g_pass, g_fail, ag.n_seeds);
     printf("    mean_pre=%.4f mean_post=%.4f mean_gain=%+.4f mean_armd_gain=%+.4f\n",

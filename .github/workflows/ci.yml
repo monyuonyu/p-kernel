@@ -2111,9 +2111,30 @@ jobs:
           grep -aqF '[result] PASS' llm_depth_compound.log
           grep -aqF '  PASS  [live-wire]' llm_depth_compound.log
           grep -aqF '  PASS  [crown-neutral]' llm_depth_compound.log
-          grep -aqF '  PASS  [dormant-wire]' llm_depth_compound.log
+          grep -aqF '  PASS  [live-feeder]' llm_depth_compound.log
           # fail CLOSED on any FAIL line (a silently-broken tooth / structural grep).
           ! grep -aqE '^  FAIL  ' llm_depth_compound.log
+      - name: "[dlb-live] LIVE feeder cert — boot the whole hosted ./p-kernel + drive the verbs"
+        # fable5 Wave-D3: run_depth_compound.sh proves the distill FUNCTION; THIS boots
+        # the WHOLE native hosted ./p-kernel (tier S newborn, mktemp pfs, no qemu, no net)
+        # and drives `student dlb` / `student dlb off` over stdin to prove the Wave-D2
+        # feeder is LIVE end-to-end: the shipped chat entry routes arithmetic through
+        # dlb_answer (gated>=1), the gate stays inert on ordinary chat, closure is
+        # closed-or-honest-NULL (tier-S cold start), and a -DDLB_SABOTAGE_NOVERIFY rebuild
+        # can never manufacture a flip. BLOCKING, green-when-healthy. (Wired same as
+        # run_depth_compound.sh — a run step + a grep-assert step.)
+        run: bash tests/llm/run_dlb_live.sh | tee llm_dlb_live.log
+      - name: "[dlb-live] load-bearing arms PASS + fail CLOSED on any FAIL"
+        run: |
+          grep -aqF '[result] PASS' llm_dlb_live.log
+          grep -aqF '  PASS  [live-feeder] the production chat entry feeds the compounding ring:' llm_dlb_live.log
+          grep -aqF 'the shipped mouth routed arithmetic through dlb_answer' llm_dlb_live.log
+          grep -aqF '  PASS  [gate-off]' llm_dlb_live.log
+          grep -aqF '  PASS  [sabotage]' llm_dlb_live.log
+          # closure is enq-or-NULL: require EITHER the closed PASS or the pre-registered honest-NULL.
+          grep -aqE '^  (PASS|NULL)  \[closure\]' llm_dlb_live.log
+          # fail CLOSED on any real failure (feeder missing, gate misfire, sabotage flipping).
+          ! grep -aqE '^  FAIL  ' llm_dlb_live.log
       - name: Cross-arch one-math determinism (x86_64 --machine == aarch64 --machine)
         run: |
           set -e
