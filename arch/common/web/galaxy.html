@@ -110,33 +110,46 @@
   #lang{position:fixed;right:12px;top:10px;z-index:40;font-size:12px}
   #lang select{background:#181825;color:#cdd6f4;border:1px solid #313244;
     border-radius:4px;padding:3px 6px;font-family:inherit}
-  /* ark-profile v1 first-run flow (ark-profile.md §7.4) — self-contained */
+  /* ark-profile v1 first-run flow (ark-profile.md §7.4) — self-contained.
+     The consent card is ONE DOM node that LIVES IN TWO CONTAINERS: the
+     standalone #ark overlay (teach-403 fallback / manifesto-updated
+     re-consent) and the intro's #intromount (first-run onboarding —
+     mountArkInIntro() MOVES the node). Its styles are therefore scoped to
+     .card itself, NEVER to #ark: an #ark-scoped rule silently dies the
+     moment the card is mounted inside the intro. (That was the phone bug:
+     UA-default h1/pre/label/input came back, and the UA's pre{white-space:
+     pre} made the manifesto's longest hard-wrapped line the card's
+     min-content width — the flex item grew past the viewport and the
+     whole consent page bled off both edges, unscrollable.) */
   #ark{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:50;
-    display:none;align-items:center;justify-content:center}
+    display:none;align-items:center;justify-content:center;
+    padding:16px;box-sizing:border-box}
   #ark.open{display:flex}
-  #ark .card{max-width:680px;max-height:88vh;overflow:auto;margin:16px;
+  .card{width:100%;max-width:680px;min-width:0;box-sizing:border-box;
+    max-height:88vh;overflow:auto;margin:0;text-align:left;
     background:#0a0c14;border:1px solid #1e2030;border-radius:8px;padding:22px;
     box-shadow:0 0 40px #000}
-  #ark h1{font-size:16px;color:#f9e2af;margin:0 0 12px}
-  #ark pre{white-space:pre-wrap;word-break:break-word;color:#cdd6f4;
+  .card h1{font-size:16px;color:#f9e2af;margin:0 0 12px;overflow-wrap:anywhere}
+  .card pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;
+    color:#cdd6f4;
     font-size:12px;line-height:1.6;background:#05060a;border:1px solid #181825;
     border-radius:6px;padding:12px;margin:0 0 14px}
-  #ark .warn{color:#fab387;font-size:12px;line-height:1.6;margin:0 0 14px}
-  #ark .warn b{color:#f38ba8}
-  #ark .row{display:flex;gap:10px;margin:10px 0}
-  #ark .row button{flex:1;padding:10px;border-radius:6px;cursor:pointer;
+  .card .warn{color:#fab387;font-size:12px;line-height:1.6;margin:0 0 14px}
+  .card .warn b{color:#f38ba8}
+  .card .row{display:flex;gap:10px;margin:10px 0}
+  .card .row button{flex:1;padding:10px;border-radius:6px;cursor:pointer;
     border:1px solid #313244;background:#181825;color:#cdd6f4;
     font-family:inherit;font-size:13px}
-  #ark .row button.primary{background:#1e2a3a;border-color:#89b4fa;color:#89b4fa}
-  #ark label{display:block;font-size:11px;color:#9399b2;margin:10px 0 3px}
-  #ark input,#ark textarea{width:100%;box-sizing:border-box;background:#05060a;
+  .card .row button.primary{background:#1e2a3a;border-color:#89b4fa;color:#89b4fa}
+  .card label{display:block;font-size:11px;color:#9399b2;margin:10px 0 3px}
+  .card input,.card textarea{width:100%;box-sizing:border-box;background:#05060a;
     color:#cdd6f4;border:1px solid #313244;border-radius:5px;padding:7px;
     font-family:inherit;font-size:12px}
-  #ark textarea{height:70px;resize:vertical}
-  #ark .opt{display:none}
-  #ark .opt.open{display:block}
-  #ark .tiny{font-size:11px;color:#6c7086;margin:6px 0 0}
-  #ark .mid{font-size:10px;color:#45475a;word-break:break-all;margin-top:10px}
+  .card textarea{height:70px;resize:vertical}
+  .card .opt{display:none}
+  .card .opt.open{display:block}
+  .card .tiny{font-size:11px;color:#6c7086;margin:6px 0 0}
+  .card .mid{font-size:10px;color:#45475a;word-break:break-all;margin-top:10px}
   /* log overlay (copy-log button) — selectable textarea, mobile-safe */
   #logov{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:55;
     display:none;align-items:center;justify-content:center}
