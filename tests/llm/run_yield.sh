@@ -31,7 +31,15 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Links the REAL cradle.c (lesson ring + ingest + the freeze gate) so Cert C
 # exercises the genuine mid-batch-deferral path, plus student.c (the math).
-SRC="$HERE/student_yield_test.c $ROOT/arch/common/llm/student.c $ROOT/arch/common/llm/cradle.c"
+# dlb.c: student_shell.c (#included by the test) now routes the chat-generate
+# verb through the DLB search×verify feeder (Wave-D2: dlb_answer /
+# dlb_compound_enqueue / dlb_gate_vexact / dlb_compound_{pending,distill,gc}).
+# Those live in the self-contained arch/common/llm/dlb.c (only dlb.h + stdlib,
+# no kernel surface), so the yield cert must link it or the NDK-clean host link
+# breaks with `undefined reference to dlb_*`. The yield cert never DRIVES the
+# chat verb (it exercises student_dmn_consolidate + st_save byte-identity only),
+# but the symbols must still resolve at link time.
+SRC="$HERE/student_yield_test.c $ROOT/arch/common/llm/student.c $ROOT/arch/common/llm/cradle.c $ROOT/arch/common/llm/dlb.c"
 
 # student_shell.c (#included by the test) now references the 良心 floor
 # (conscience_check / conscience_on_refuse) and the Frontier Mouth self-test
