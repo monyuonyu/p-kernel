@@ -2480,3 +2480,110 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc make
       - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
         run: bash tests/llm/run_kv.sh
+
+  consent-dom-cert:
+    # G3 (fable5 CI-coverage audit): the galaxy/consent onboarding PIXELS had
+    # zero automated cert -- only the fable5 HTTP/JSON data-plane was gated.
+    # Headless-Chromium DOM cert for the consent-card CSS-scoping regression
+    # (commit 90feb043): reproduces the first-run onboarding's #ark ->
+    # #intromount card move at a phone viewport and asserts the card is
+    # actually styled (not fallen back to UA defaults) and fits the screen.
+    # Verified locally: FAILS on `git show 90feb043^` (the pre-fix HTML, all 4
+    # assertions red: cardWidth 1380px>411, paddingTop 0, whiteSpace 'pre',
+    # opt 'block') and PASSES on the current file -- has real teeth.
+    #
+    # ── ADVISORY FOR NOW ── promote to blocking once proven green on several
+    # hosted runs (mirrors windows-pe-build / android-apk-build): this is the
+    # FIRST headless-browser job in this CI, so give it a few runs to shake out
+    # ubuntu-latest-only quirks (font metrics, playwright's apt --with-deps
+    # list, PEP-668 pip behavior) before it can redden master.
+    name: "consent-card DOM cert (headless Chromium, first-run #ark→#intromount move) [advisory]"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Playwright (python) + headless Chromium
+        run: |
+          python3 -m pip install --quiet --break-system-packages playwright
+          python3 -m playwright install --with-deps chromium
+      - name: Consent-card DOM cert (galaxy.html, 411px phone viewport)
+        run: bash tests/web/run_consent_dom.sh
+
+  android-emulator-smoke:
+    # RUNTIME smoke — closes fable5 audit gap G1 (highest-ranked risk).
+    # android-apk-build (above) only proves the APK COMPILES + LINKS; nothing
+    # in CI has ever EXECUTED it. That gap let two runtime-only breakages ship
+    # with CI green in the same week: 4141d325 (PKernelService.onStartCommand
+    # silently skipped bootKernelOnce() under the battery/WiFi run-gate) and
+    # 90feb043 (consent CSS; that WebView-render class is covered by
+    # consent-dom-cert above, not here). This job installs the real debug APK
+    # on an emulator, forces the exact battery-low/unplugged gate 4141d325
+    # broke under, launches MainActivity's default path, then asserts over HTTP
+    # that the kernel booted (GET /console.txt shows the T-Kernel banner —
+    # kernel stdout never reaches logcat, see tests/android/emulator_smoke.sh)
+    # and /galaxy.json is structurally valid.
+    #
+    # ── ARCH/KVM (read before touching) ─────────────────────────────────────
+    # The APK ships arm64-v8a ONLY (build.gradle.kts abiFilters). Hosted
+    # ubuntu-latest supports KVM-accelerated emulation (GH 2024-04 rollout, see
+    # the enable-kvm udev step below), but KVM only accelerates SAME-arch: an
+    # x86_64 guest is fast; an arm64 guest falls back to slow TCG. So we use an
+    # x86_64 emulator with google_apis_playstore (ships Google's arm64
+    # native-bridge translation, libndk_translation) to install+run the
+    # arm64-only APK fast. UNVERIFIED from the dev sandbox: whether that
+    # translation correctly runs this binary's hand-written aarch64
+    # context-switch asm — hence advisory + a first hosted run to learn if the
+    # x86_64 path works or we must fall back to arch: arm64-v8a (correct but
+    # slow). selfc/JIT is NOT compiled on Android (CMakeLists.txt), so the
+    # worst translation hazard (self-modifying code) is already off the table.
+    #
+    # ── ADVISORY UNTIL PROVEN ── promote to blocking once a few hosted runs are
+    # green AND the x86_64/arm64 ABI question is settled empirically.
+    name: "Android エミュレータ実行 smoke (実機起動+galaxy HTTP 検証) [advisory]"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM group perms (required for hardware-accelerated emulation)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Bootstrap Android cmdline-tools + sdkmanager
+        uses: android-actions/setup-android@v3
+      - name: Make sure ANDROID_SDK_ROOT is set for gradlew/AGP
+        run: echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+      - name: Install the PINNED ndk/build-tools/platform/cmake packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;26.3.11579264"
+      - name: gradlew assembleDebug
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --console=plain \
+            -Pandroid.aapt2FromMavenOverride=
+      - name: Runtime smoke on a booted emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_5
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tests/android/emulator_smoke.sh android/app/build/outputs/apk/debug/app-debug.apk
