@@ -2345,26 +2345,22 @@ jobs:
     # explicit and reviewable in this file rather than hidden inside the
     # action.
     #
-    # ── THE AAPT2 FOOTGUN (found while proving this locally) ─────────────────
-    # android/gradle.properties (committed, shared by every build) hardcodes:
-    #   android.aapt2FromMavenOverride=/root/android-sdk/build-tools/34.0.0/aapt2
-    # That path exists only in the maintainer's dev sandbox, and there it is a
-    # qemu-x86_64 WRAPPER SCRIPT (that sandbox's host CPU is aarch64; aapt2 is
-    # an x86_64 binary, so it has to be run under emulation). On a genuine
-    # x86_64 ubuntu-latest runner that path won't exist at all — the build
-    # would fail immediately with "Specified AAPT2 executable does not exist".
-    # We do NOT edit gradle.properties (out of scope for this job, shared with
-    # every other build); instead we neutralize the override on the gradlew
-    # command line with `-Pandroid.aapt2FromMavenOverride=` (empty value).
-    # Command-line -P project properties take precedence over a project's
-    # gradle.properties file, so this makes AGP fall back to ITS OWN
-    # Maven-resolved aapt2 (pinned to the AGP version, a genuine linux-x86_64
-    # ELF) instead of the hardcoded sandbox path. Verified locally: passing
-    # this same empty override correctly made Gradle try the Maven aapt2
-    # instead of the hardcoded path (it then failed for an UNRELATED reason —
-    # the dev sandbox is aarch64 and cannot exec an x86_64 ELF without qemu,
-    # which is exactly why the wrapper script exists there and exactly why it
-    # is unneeded on a real x86_64 runner).
+    # ── THE AAPT2 OVERRIDE (defensive) ───────────────────────────────────────
+    # android/gradle.properties USED to commit an aapt2FromMavenOverride
+    # pointing at /root/android-sdk/build-tools/34.0.0/aapt2 — a qemu-x86_64
+    # WRAPPER SCRIPT that only exists in the maintainer's aarch64 PRoot dev
+    # sandbox (there aapt2 is an x86_64 binary that must run under emulation).
+    # That sandbox-only absolute path was forced onto EVERY build (Windows, CI,
+    # real x86_64 dev) and silently broke them all. It has since been REMOVED
+    # from the committed file and moved to the sandbox's UNTRACKED
+    # ~/.gradle/gradle.properties (GRADLE_USER_HOME, which takes precedence over
+    # the project file) — so a fresh checkout now builds correctly on any real
+    # x86_64 host with AGP's own Maven-resolved aapt2, and no neutralization is
+    # required. We STILL pass `-Pandroid.aapt2FromMavenOverride=` (empty value)
+    # here as belt-and-suspenders: a command-line -P beats any gradle.properties
+    # (project OR GRADLE_USER_HOME), so this job stays green even if a
+    # self-hosted runner carries a stale ~/.gradle override or the committed
+    # hack is ever reintroduced.
     #
     # ── NETWORK / CACHING ─────────────────────────────────────────────────────
     # A fresh runner's Gradle + SDK caches are cold, so this job needs network
