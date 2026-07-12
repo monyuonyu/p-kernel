@@ -2316,3 +2316,121 @@ jobs:
           file "$exe" | tee /dev/stderr | grep -qF 'PE32+ executable' \
             || { echo 'output is not a PE32+ Windows executable'; exit 1; }
           echo "windows-pe-build: $exe is a native PE32+ Windows binary."
+
+  android-apk-build:
+    # REAL Android APK build gate — closes a coverage gap the `parity` job
+    # (top of this file) cannot: check_parity.sh only diffs the CMakeLists.txt
+    # TU list against the host Makefiles, so it catches a source dropped/added
+    # on one side but NOT a compile error (e.g. the recent sio.c errno/volatile
+    # conflict under NDK 26.3), an NDK-version mismatch, or Kotlin/gradle
+    # breakage. The shipped APK silently broke twice with parity green the
+    # whole time. This job runs the actual `gradlew assembleDebug` — the same
+    # command a phone-shipping build uses — so a real compiler/linker/gradle
+    # error fails the job instead of going unnoticed until someone tries to
+    # install the APK.
+    #
+    # ── SDK/NDK SETUP: bootstrap action + explicit pinned sdkmanager installs ─
+    # android/app/build.gradle.kts pins ndkVersion = "26.3.11579264",
+    # compileSdk = 34, and externalNativeBuild.cmake.version = "3.22.1".
+    # ubuntu-latest ships SOME default Android SDK, but its bundled NDK is
+    # whatever GH's image maintainers last set — NOT guaranteed to be
+    # 26.3.11579264 — so relying on the pre-installed default would silently
+    # test a DIFFERENT NDK than what ships to phones. We use
+    # android-actions/setup-android (an established marketplace action) only
+    # to bootstrap a working `sdkmanager` + cmdline-tools reliably — that
+    # bootstrapping has sharp edges (cmdline-tools' required nested folder
+    # layout, first-run license prompts) that aren't worth hand-rolling — then
+    # we drive `sdkmanager` ourselves, explicitly, to install the EXACT pinned
+    # ndk/build-tools/platform/cmake packages. Version pinning stays fully
+    # explicit and reviewable in this file rather than hidden inside the
+    # action.
+    #
+    # ── THE AAPT2 FOOTGUN (found while proving this locally) ─────────────────
+    # android/gradle.properties (committed, shared by every build) hardcodes:
+    #   android.aapt2FromMavenOverride=/root/android-sdk/build-tools/34.0.0/aapt2
+    # That path exists only in the maintainer's dev sandbox, and there it is a
+    # qemu-x86_64 WRAPPER SCRIPT (that sandbox's host CPU is aarch64; aapt2 is
+    # an x86_64 binary, so it has to be run under emulation). On a genuine
+    # x86_64 ubuntu-latest runner that path won't exist at all — the build
+    # would fail immediately with "Specified AAPT2 executable does not exist".
+    # We do NOT edit gradle.properties (out of scope for this job, shared with
+    # every other build); instead we neutralize the override on the gradlew
+    # command line with `-Pandroid.aapt2FromMavenOverride=` (empty value).
+    # Command-line -P project properties take precedence over a project's
+    # gradle.properties file, so this makes AGP fall back to ITS OWN
+    # Maven-resolved aapt2 (pinned to the AGP version, a genuine linux-x86_64
+    # ELF) instead of the hardcoded sandbox path. Verified locally: passing
+    # this same empty override correctly made Gradle try the Maven aapt2
+    # instead of the hardcoded path (it then failed for an UNRELATED reason —
+    # the dev sandbox is aarch64 and cannot exec an x86_64 ELF without qemu,
+    # which is exactly why the wrapper script exists there and exactly why it
+    # is unneeded on a real x86_64 runner).
+    #
+    # ── NETWORK / CACHING ─────────────────────────────────────────────────────
+    # A fresh runner's Gradle + SDK caches are cold, so this job needs network
+    # to resolve AndroidX/Kotlin/AGP/aapt2 deps from google()/mavenCentral() —
+    # deliberately NOT --offline (that's only valid once a machine already has
+    # every artifact cached, which a fresh hosted runner never does).
+    # actions/setup-java's built-in Gradle cache (cache: gradle) cuts most of
+    # that download cost back down on repeat runs of this workflow.
+    #
+    # ── NON-BLOCKING (continue-on-error: true) ─── ADVISORY FOR NOW ──────────
+    # Proven to build successfully in the dev sandbox (assembleDebug ->
+    # BUILD SUCCESSFUL, real app-debug.apk produced, ~80s) but NOT yet proven
+    # on an actual hosted ubuntu-latest runner — network flakiness, the
+    # marketplace action's exact behavior, and SDK-license timing can't be
+    # exercised from this sandbox (no outbound network here). A runner-
+    # capability gap must never redden master on a green tree.
+    # PROMOTE TO BLOCKING (remove continue-on-error) once a hosted run of this
+    # exact job is confirmed green a few times in a row — at that point the
+    # APK has a real, non-bypassable compile+link gate the way windows-pe-build
+    # gates the Windows port.
+    name: "Android APK 実ビルド (NDK assembleDebug — 実機出荷物のリンク+コンパイル gate) [advisory]"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK (matches the JDK this job was proven against locally)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Bootstrap Android cmdline-tools + sdkmanager
+        uses: android-actions/setup-android@v3
+
+      - name: Make sure ANDROID_SDK_ROOT is set for gradlew/AGP
+        run: echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Install the PINNED ndk/build-tools/platform/cmake packages
+        # Matches android/app/build.gradle.kts exactly: ndkVersion, compileSdk,
+        # and the externalNativeBuild.cmake.version. platform-tools is cheap
+        # and standard to have present; not strictly required by assembleDebug.
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;26.3.11579264"
+
+      - name: gradlew assembleDebug (online — fresh runner has no dep cache)
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --console=plain \
+            -Pandroid.aapt2FromMavenOverride=
+
+      - name: Assert app-debug.apk was produced (real compile+link gate)
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$apk" || { echo "missing $apk — assembleDebug did not produce an APK"; exit 1; }
+          file "$apk" | tee /dev/stderr | grep -qiE 'Zip archive|Android package' \
+            || { echo "output does not look like a valid APK/zip"; exit 1; }
+          unzip -l "$apk" | grep -q 'AndroidManifest.xml' \
+            || { echo "APK has no AndroidManifest.xml -- not a real APK"; exit 1; }
+          echo "android-apk-build: $apk is a real, compiled+linked debug APK ($(stat -c%s "$apk") bytes)."
