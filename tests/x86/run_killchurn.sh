@@ -30,16 +30,24 @@
 # At wave-45 it was measured to reproduce NOTHING on master — a blank round.
 # Wiring a blank round into CI is worse than no gate at all, so it stays out.
 #
-# WHY N = 40 (default)
-# --------------------
-# Measured rate of signature A on an UNFIXED tree: 8.0 % per boot (18 hits in
-# 225 audited boots).  On the fixed tree: 0 / 225.
-#   P(40 boots all miss a live 8 % bug) = 0.92^40 ~= 3.6 %.
-# So a green run is ~96 % trustworthy per invocation, and a bug that survives
-# one green run will not survive two.  At ~10 s of wall clock per boot that is
-# ~7 minutes — affordable as a CI job.  Raise it with KILLCHURN_N for a
-# deeper sweep (N=80 -> 0.13 % miss); lower it only for smoke-testing this
-# harness itself.
+# N: THE DEFAULT IS 40, THE GATE USES 150 — AND 40 IS NOT ENOUGH
+# --------------------------------------------------------------
+# Original estimate: signature A at 8.0 %/boot on an UNFIXED tree (18 hits in
+# 225 audited boots), 0/225 on the fixed tree, so P(40 boots all miss) =
+# 0.92^40 ~= 3.6 %.  The 2026-08-12 Stage-2 run (710 boots, both trees,
+# interleaved, one host, one day) measured the rate DIRECTLY:
+#     unfixed 74e23947 : 23/355 (6.48 %)   fixed 468a1c67 : 0/355
+#     Fisher exact p = 1.65e-07; every hit at the same EIP 0x0015382E.
+# Sizing uses the IDLE arm (18/280 = 6.43 %/boot, Wilson 95 % CI [4.10 %,
+# 9.93 %]) because that is the regime a serialized CI runner is in, and it is
+# sized against the LOWER bound 4.10 %/boot:
+#     N=40 misses a live regression 18.7 % of the time — one green in five is
+#     a lie.  N=100 -> 1.5 %.  N=150 -> 0.19 %.
+# Cost is 2.86–2.91 s/boot including the clean build, so N=150 is ~7.8 min.
+# The CI job (.github/workflows/ci.yml, `killchurn-x86`) therefore runs with
+# KILLCHURN_N=150.  The default below is still 40 for interactive/smoke use;
+# if you are deciding whether a tree is hardened, pass 150 or more.  N is a
+# POWER decision, not a runtime knob.
 #
 # THE TWO SIGNATURES (get this wrong and the gate is worthless)
 # ------------------------------------------------------------
@@ -115,20 +123,29 @@
 #   per-boot pristine copy fixed that or 0/120 was luck is NOT established
 #   (0/120 vs 2/80 is Fisher p ~ 0.17).  Either way, sharing the image is
 #   also a re-entrancy and idempotency bug, which is why it is gone.
-#   WHAT IS NOT KNOWN: whether signature A tracks load the way signature B
-#   appears to.  Only an UNFIXED tree can answer that, and that is Stage 2.
+#   ANSWERED BY STAGE 2 (2026-08-12): signature A does NOT track load the way
+#   signature B appears to.  Unfixed tree, idle 6.43 % vs 3-way concurrent
+#   6.67 % (Fisher p = 1.00).  No special load condition is needed to reproduce
+#   it, and an idle CI runner is not a weaker detector for signature A.
 #
 # HONESTY
-#   A green run does NOT prove the tree is hardened; at best it proves that 40
-#   boots did not hit an 8 %-per-boot event, which happens by chance ~3.6 % of
-#   the time — and the load caveat above may make the real number worse.  This
-#   harness is a REGRESSION alarm with an imperfectly measured false-negative
-#   rate, not a proof of correctness.  It has been exercised against a FIXED
-#   tree only (Stage 1), where it correctly exits 0 and correctly counts
-#   signature B without failing; its RED path against an UNFIXED tree is
-#   Stage 2 and has NOT been demonstrated.  Until it has, this script is not
-#   yet a gate — per the wave-45 rule, a gate that has never failed is a
-#   blank round.
+#   The RED path is no longer hypothetical.  Stage 2 (2026-08-12, 710 boots,
+#   interleaved arms, one host, one day) ran this harness against the UNFIXED
+#   tree 74e23947 and the fixed tree 468a1c67: 23/355 vs 0/355 signature A,
+#   5/5 runs exit 1 vs 5/5 runs exit 0, Fisher p = 1.65e-07.  So this script is
+#   now wired as a BLOCKING gate (.github/workflows/ci.yml, `killchurn-x86`).
+#   What that does NOT mean:
+#     - A green run does not prove the tree is hardened.  It proves that N
+#       boots did not hit an event measured at ~6.5 %/boot on an unfixed tree.
+#       At N=150 that miss is ~0.19 %; at the default N=40 it is ~18.7 %.
+#     - The 2026-07-02 vendor-patch loss removed NINE hardening classes.
+#       Signature A pins ONE of them.  A future vendor-tree swap that deletes a
+#       DIFFERENT one is not guaranteed to be caught here.
+#     - Every rate above was measured on ONE host ([self-hosted,
+#       pkernel-thinkpad]) on ONE day.  Another host's per-boot rate, and
+#       therefore its required N, is unmeasured.
+#   This is a REGRESSION ALARM with a measured false-negative rate, not a proof
+#   of correctness.
 #
 set -eu
 

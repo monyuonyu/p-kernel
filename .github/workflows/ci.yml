@@ -1566,6 +1566,157 @@ jobs:
           echo "      documented heavy work for THIS runner (not yet implemented as a leg);"
           echo "      the fast search x verify teeth + compound hard-gate are green above."
 
+  killchurn-x86:
+    # ── KILL-CHURN-CRASH regression gate (BLOCKING) ─────────────────────────
+    # gap-ledger: VENDOR-PATCH-LOSS. On 2026-07-02 the μT-Kernel 3.0 migration
+    # (f50c30a0) silently DELETED the kill/churn hardening and the known bug
+    # KILL-CHURN-CRASH was live again for 41 DAYS with every light in this file
+    # green. The root cause of those 41 days was NOT the deletion — it was that
+    # nothing in CI could tell a hardened tree from an unhardened one. This job
+    # is that missing detector, and it is the only gate here that can.
+    #
+    # WHAT IT RUNS: tests/x86/run_killchurn.sh clean-builds boot/x86 and boots it
+    # under QEMU N times, feeding each boot the SAME five verbs the ring3-survival
+    # job feeds (ring3 iso -> ring3 test -> ring3 mind -> dproc test -> fpu test;
+    # the only known-effective reproducer — the crash lands on a TCB slot REUSE).
+    #   Signature A — supervisor WRITE to a not-present page (Error Code
+    #     0x00000002), from ring 0 (CS=0x08), EIP inside knl_wait_release_tmout.
+    #     THIS is the regression. One hit => the harness exits 1 => this job RED.
+    #   Signature B — KCC-WILDPC (gap-ledger OPEN): a wild PC outside .text. A
+    #     DIFFERENT, unsolved bug whose rate did NOT move across the 339a66a2 fix
+    #     (p = 1.00). Counted and printed, NEVER fatal — it fires at ~2-7%/boot,
+    #     so reddening on it at N=150 would make this job red essentially EVERY
+    #     run and teach the team to ignore red. Its own row is KCC-WILDPC.
+    #
+    # WHY BLOCKING, AND WHY N=150 — measured 2026-08-12 on THIS runner (710
+    # boots, arms interleaved, same harness / same host / same day):
+    #     unfixed 74e23947 : signature A  23/355 (6.48%) — 5/5 runs exited 1
+    #     fixed   468a1c67 : signature A   0/355 (0%)    — 5/5 runs exited 0
+    #     Fisher exact p = 1.65e-07; all 23 hits at the same EIP 0x0015382E.
+    # Signature A does NOT track host load (idle 6.43% vs 3-way concurrent 6.67%,
+    # p = 1.00), so no special load condition is needed and an idle runner is not
+    # a weaker detector.
+    # POWER: this job runs on a serialized runner, so the relevant arm is the
+    # "idle" one — 18/280 = 6.43%/boot, Wilson 95% CI [4.10%, 9.93%]. ("Idle"
+    # means no OTHER CI job, not a quiescent machine: the harness's own 0.2 s
+    # marker-polling drives loadavg to ~4.5 on 4 cores, which is exactly the
+    # steady state this job will be in.) Sized
+    # against the LOWER bound 4.10%/boot (the conservative end, and the one that
+    # decides how many boots you need):
+    #     N= 40 -> misses a live regression 18.70% of the time  (7.01% at 6.43%)
+    #     N=100 ->                           1.51%              (0.13% at 6.43%)
+    #     N=150 ->                           0.19%              (0.005% at 6.43%)
+    # COST: 2.86–2.91 s/boot including the clean build, so N=150 is ~7.8 min.
+    # N is a POWER decision, not a runtime knob — dropping it back to the
+    # harness's default 40 would buy back 6 minutes and hand back a gate that
+    # sleeps through nearly one live regression in five.
+    #
+    # ── WHAT THIS GATE DOES NOT GUARANTEE (read before trusting a green) ──
+    #   * It has been shown to go red on THIS unfixed tree. The 2026-07-02 loss
+    #     removed NINE hardening classes; signature A pins ONE of them. A future
+    #     vendor-tree swap that deletes a DIFFERENT one of the nine is NOT
+    #     guaranteed to be caught here. "killchurn is green" != "the vendor
+    #     patch set is intact".
+    #   * The rate and the N recommendation were measured ONLY on
+    #     [self-hosted, pkernel-thinkpad], on ONE host, on ONE day. Any other
+    #     host's per-boot rate is UNMEASURED, and so is its required N.
+    #   * A green is evidence, not proof: it says 150 boots did not hit an event
+    #     whose measured rate is ~6.5%/boot on an unfixed tree.
+    #   * An INCOMPLETE boot never reached the churn path, so it is not a sample.
+    #     The harness counts them and still exits 0 — so the assert step below
+    #     fails this job when the EFFECTIVE sample drops under 100. A starved
+    #     runner must go red as "could not measure", never green as "found
+    #     nothing".
+    # This is a regression alarm with a measured false-negative rate. It is not
+    # a proof of correctness, and it is not "the kill/churn hole is now closed".
+    name: "kill/churn 回帰ゲート (QEMU x86 を 150 回起動、署名A=0 を要求)"
+    runs-on: [self-hosted, pkernel-thinkpad]
+    # This job CANNOT run on ubuntu-latest as written by policy, not by accident:
+    # it is the pkernel-thinkpad runner where the 710-boot measurement above was
+    # taken, and where the N=150 power claim is therefore valid.
+    #
+    # serialized self-hosted chain (de-flake): the NEW chain tail, runs after
+    # depth-deliberation-live. See the chain HEAD comment on ring3-survival.
+    # always() so a predecessor's failure never silently skips this gate; the
+    # fork-guard half is the same "push or same-repo PR only" rule every
+    # self-hosted job carries (this is a public repo and this is a home machine).
+    needs: [depth-deliberation-live]
+    if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # 25 min ~= 3.2x the measured 7.8 min run, plus apt + checkout, and it is the
+    # ceiling the other heavy jobs in this chain already use (ring3-survival /
+    # collective-learn-live / one-mind-live / composite-loop are all 25). It has
+    # to be a REAL cap: the harness's own per-boot backstop is 120 s, so a run
+    # where every boot wedges would otherwise burn 5 hours of this runner.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain + QEMU + FAT tools
+        # same set as ring3-survival: the i686 cross gcc (whose nm/objdump the
+        # harness reads bootloader.bin's symbols with) + qemu + the FAT tools
+        # that `make -C boot/x86 disk` needs.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-i686-linux-gnu make qemu-system-x86 dosfstools mtools
+      - name: Run the kill/churn harness (150 boots)
+        env:
+          KILLCHURN_N: "150"
+          # keep every boot's serial log so the artifact below can carry them.
+          KILLCHURN_KEEP: "1"
+        run: |
+          set -o pipefail
+          # Scratch under RUNNER_TEMP: KILLCHURN_KEEP=1 disables the harness's
+          # own cleanup, and this is a SELF-HOSTED runner — RUNNER_TEMP is wiped
+          # per job, so the kept logs cannot accumulate on the home machine.
+          export TMPDIR="$RUNNER_TEMP"
+          rc=0
+          tests/x86/run_killchurn.sh 2>&1 | tee "$RUNNER_TEMP/killchurn.log" || rc=$?
+          echo "$rc" > "$RUNNER_TEMP/killchurn.rc"
+          echo "[ci] harness exit code: $rc  (0 = no signature A, 1 = REGRESSION, 2 = could not run)"
+      - name: Assert the verdict line (sigA=0, effective sample >= 100)
+        # Deliberately separate from the run step and deliberately redundant with
+        # the exit code: the machine-readable verdict line is checked on its own,
+        # so a harness that one day starts exiting 0 by accident still cannot
+        # turn this job green.
+        run: |
+          LOG="$RUNNER_TEMP/killchurn.log"
+          rc="$(cat "$RUNNER_TEMP/killchurn.rc")"
+          # 1) the verdict line must EXIST and be well-formed (no line, no gate).
+          grep -aE '^\[killchurn\] sigA=[0-9]+ sigB=[0-9]+ clean=[0-9]+ incomplete=[0-9]+ N=[0-9]+ other=[0-9]+$' "$LOG"
+          V="$(grep -aE '^\[killchurn\] sigA=' "$LOG" | tail -1)"
+          # 2) it must report ZERO signature A.
+          echo "$V" | grep -qE ' sigA=0 ' \
+            || { echo "KILL-CHURN-CRASH (signature A) REPRODUCED — the kill/churn hardening is missing or broken in this tree. gap-ledger: VENDOR-PATCH-LOSS."; echo "$V"; exit 1; }
+          # 3) the exit code must independently agree (2 = the harness could not
+          #    run at all: no QEMU, no symbols, build failed — that is not green).
+          [ "$rc" = "0" ] || { echo "harness exited $rc"; exit 1; }
+          # 4) ANTI-HOLLOW-GREEN: incomplete boots never exercised the churn
+          #    path, so they are not samples. Floor at 100 effective boots:
+          #    miss 0.13% at the measured 6.43%/boot, 1.51% at the 4.10% Wilson
+          #    lower bound — degraded but still a measurement. Below that this
+          #    run has not earned the right to be green.
+          N="$(echo "$V" | sed -n 's/.* N=\([0-9]*\).*/\1/p')"
+          INC="$(echo "$V" | sed -n 's/.*incomplete=\([0-9]*\).*/\1/p')"
+          EFF=$(( N - INC ))
+          echo "[ci] effective sample: $EFF of $N boots ($INC incomplete)"
+          [ "$EFF" -ge 100 ] \
+            || { echo "only $EFF boots reached the churn path — this run MEASURED NOTHING (starved runner?), so it is not a green."; exit 1; }
+          echo "[ci] PASS: $V"
+      - name: Upload killchurn serial logs
+        # always(), not failure(): a timeout/cancel is exactly when the raw logs
+        # are worth the most, and the per-boot logs are ~15 KB x N.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: killchurn-logs
+          path: |
+            ${{ runner.temp }}/killchurn.log
+            ${{ runner.temp }}/killchurn.*/boot*.log
+            ${{ runner.temp }}/killchurn.*/verdicts.txt
+            ${{ runner.temp }}/killchurn.*/build.log
+          if-no-files-found: warn
+          retention-days: 14
+
   # =========================================================================
   # STRICT GATES (ci-strict-gates wave) — three high-signal checks the audit
   # found were NOT enforced anywhere: the crown .text byte-identity invariant,
