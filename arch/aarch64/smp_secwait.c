@@ -57,7 +57,10 @@
 #include "task.h"
 #include "ready_queue.h"
 #include "timer.h"          /* knl_current_time (the §1.3 positive witness) */
-#include "cpu_insn.h"       /* disint()/enaint() — hold CPU 0's timer out (§1.3) */
+/* NO #include "cpu_insn.h": arch/aarch64/include/cpu_insn.h is a μT-Kernel 2.0
+ * leftover that #includes the sysinfo.h f50c30a0 deleted — including it is a
+ * hard compile error.  disint()/enaint() already arrive via kernel.h ->
+ * "../sysdepend/cpu_status.h" (the μT3.0 aarch64_virt header). */
 
 /* The per-CPU SMP block + BKL + bringup + SGI send, from smp.c (header-light
  * TU).  Use the TYPED view (smp_percpu.h, struct smp_cpu with TCB* fields)

@@ -91,7 +91,7 @@ grep -aq "SMP-ASYNC-PREEMPT: PASS" "$PASS_LOG" \
     || fail "no 'SMP-ASYNC-PREEMPT: PASS' (the low-prio task was not preempted mid-loop + resumed)"
 grep -aq "highprio_ran=1" "$PASS_LOG" \
     || fail "the high-prio task did not run on the secondary (no async switch)"
-grep -aq "Initial task started" "$PASS_LOG" \
+grep -aq "p-kernel>" "$PASS_LOG" \
     || fail "T-Kernel did not boot after the async preempt (deadlock / BKL strand?)"
 echo "[smp3] PASS build: the secondary task was preempted MID-LOOP + resumed correctly"
 echo

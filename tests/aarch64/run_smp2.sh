@@ -22,9 +22,12 @@
 #       one Big Kernel Lock.  The per-CPU evidence (cpu0.ctxtsk=A,
 #       cpu1.ctxtsk=B) shows two DISTINCT real TCBs.  NOT the ②.0 struct
 #       smp_task stand-ins.
-#   [smp-no-deadlock]  the kernel BOOTS the full T-Kernel afterwards
-#       ([T-Kernel] Initial task started + the p-kernel banner) — the SMP
-#       scheduler stays live, no dead/livelock.
+#   [smp-no-deadlock]  the kernel BOOTS the full T-Kernel afterwards (the
+#       aarch64 initial task reaches its "p-kernel> " shell prompt,
+#       arch/aarch64/usermain.c:548) — the SMP scheduler stays live, no
+#       dead/livelock.  ("[T-Kernel] Initial task started" is an x86-ONLY
+#       string, arch/x86/usermain.c:108; it is never printed on aarch64, so
+#       grepping for it here was a phantom assertion.)
 #
 # ALSO asserts (the load-bearing [smp-uniproc-semantics] companion to this
 # slice): the DEFAULT build (no -DSMP_SELFTEST) is BYTE-IDENTICAL in .text to
@@ -82,7 +85,7 @@ grep -q "SMP-2TASKS-PROD: PASS" "$PASS_LOG" \
     || fail "no 'SMP-2TASKS-PROD: PASS' (2 distinct real TCBs did not run on 2 CPUs)"
 grep -q "B ran=1" "$PASS_LOG" \
     || fail "task B did not actually execute on the secondary CPU"
-grep -q "Initial task started" "$PASS_LOG" \
+grep -q "p-kernel>" "$PASS_LOG" \
     || fail "T-Kernel scheduler did not boot after the ②.2a slice (deadlock?)"
 echo "[smp2] cert: PASS (2 real distinct TCBs on 2 CPUs under the BKL; T-Kernel still boots)"
 echo

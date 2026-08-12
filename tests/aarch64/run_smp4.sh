@@ -92,7 +92,7 @@ while [ "$i" -le 3 ]; do
         || fail "run $i: no 'SMP-ONE-MIND: PASS' (the mind was perturbed by SMP scheduling, or M did not run on CPU 1)"
     grep -aq "M ran=1" "$PASS_LOG" \
         || fail "run $i: the mind task M did not run on the secondary CPU"
-    grep -aq "Initial task started" "$PASS_LOG" \
+    grep -aq "p-kernel>" "$PASS_LOG" \
         || fail "run $i: T-Kernel did not boot after the crown cert (deadlock / BKL strand?)"
 
     HU="$(extract_hash "$PASS_LOG" H_uni)"

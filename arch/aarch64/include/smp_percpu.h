@@ -8,11 +8,11 @@
  *  current task — so those globals become PER-CPU.
  *
  *  This header provides the STORAGE the per-CPU accessor macros index: the
- *  struct smp_cpu layout + the g_smpcpu[] / smp_this_cpu() externs.  The
- *  macros themselves (CUR_CTXTSK / CUR_SCHEDTSK / CUR_DISPATCH_DISABLED) live
- *  in arch/aarch64/include/cpu_status.h (the arch header kernel.h pulls
- *  everywhere), so they are available wherever a kernel TU expands a critical
- *  section — even TUs that include <cpu_status.h> but not <task.h>.
+ *  struct smp_cpu layout + the g_smpcpu[] / smp_this_cpu() externs — AND, at
+ *  the bottom, the CUR_CTXTSK accessor itself.  (Historically the CUR_* macros
+ *  lived in arch/aarch64/include/cpu_status.h, "the arch header kernel.h pulls
+ *  everywhere".  That stopped being true at the μT-Kernel 3.0 migration: see
+ *  the long note above the #define below.)
  *
  *  ────────────────────────────────────────────────────────────────────────
  *  THE CROWN CONSTRAINT (§0): with SMP OFF (the DEFAULT build, no
@@ -77,6 +77,38 @@ struct smp_cpu {
 
 extern struct smp_cpu g_smpcpu[SMP_MAX_CPUS];
 extern unsigned long  smp_this_cpu(void);
+
+/* ────────────────────────────────────────────────────────────────────────
+ *  CUR_CTXTSK — "the task running on THIS CPU".
+ *
+ *  WHY IT LIVES HERE AND NOT IN arch/aarch64/include/cpu_status.h:
+ *  that header (which still carries a copy of this macro) is DEAD CODE —
+ *  no TU in the aarch64 build reaches it.  kernel.h (mtkernel3 knlinc,
+ *  :55) includes "../sysdepend/cpu_status.h" by RELATIVE path, which always
+ *  resolves to kernel/mtkernel3/kernel/sysdepend/aarch64_virt/cpu_status.h
+ *  (the μT-Kernel 3.0 header, which defines no CUR_* macros); no -I search
+ *  is involved, so arch/aarch64's shadow can never win.  Worse, that shadow
+ *  is now UNBUILDABLE: it pulls cpu_insn.h, which needs the sysinfo.h that
+ *  f50c30a0 deleted along with include/kernel/tkernel/.
+ *
+ *  Putting the define here instead means it arrives with the same
+ *  #include "smp_percpu.h" every SMP self-test TU already has, and it names
+ *  the SAME per-CPU slot the asm dispatcher writes (cpu_support.S,
+ *  .Ldispatch_loop, via SMPCPU_CTXTSK off-0) — ONE source of truth.
+ *
+ *  DO NOT alias this to the global knl_ctxtsk.  The ②.2a/②.2c certs' whole
+ *  claim is that two CPUs see DIFFERENT current tasks; a global collapses
+ *  the `a != b` clause (arch/aarch64/usermain.c:260) into a tautology and
+ *  the cert would pass while proving nothing.
+ *
+ *  Only CUR_CTXTSK is defined: CUR_SCHEDTSK / CUR_DISPATCH_DISABLED have
+ *  ZERO uses in the current build (the μT3.0 core drives dispatch off its
+ *  own globals), so defining them would be dead weight.
+ *
+ *  The whole block is inside #ifdef SMP_SELFTEST, so the DEFAULT build sees
+ *  no new tokens at all and its .text stays byte-identical (§0 crown).
+ * ──────────────────────────────────────────────────────────────────────── */
+#define CUR_CTXTSK (g_smpcpu[smp_this_cpu()].ctxtsk)
 
 #endif /* SMP_SELFTEST */
 
