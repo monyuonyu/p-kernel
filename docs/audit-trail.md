@@ -1782,6 +1782,26 @@ N-4 cross-host deferred to the ThinkPad).
   `wait_for [teach-consolidated] (PASS|FAIL)` is STALE-SATISFIABLE (a pre-kill line already matches -> wait returns
   immediately; the `grep 'ask "sun"' | tail -1` can read pre-kill data => latent FALSE-PASS). Fix = match a fresh
   post-kill-specific marker like 42_one_mind does. Does not block; tracked.
+- CROWN RE-BLESS — KILL-CHURN hardening restored after the μT3.0 migration ate it (2026-08-12,
+  `fix/kill-churn-restore`). The bare-metal `.text` changes DELIBERATELY: the fix lives in
+  `kernel/mtkernel3/kernel/tkernel/{wait,timer,task,task_manage}.c`, which all 5 targets compile,
+  and hosted-gating it behind `_TK_HOSTED_LIBC_` was NOT an option because the bug fires on
+  bare-metal x86. This is the documented re-baseline the `crown-text-identity` gate's own procedure
+  calls for; the gate is NOT weakened, and the drift is buried under a crown-neutral docs tip so
+  master's TIP stays `.text`-identical to its parent. NEW dev crown `.text` sha256 (CI container
+  gcc 13.2.0 — REPRODUCED byte-identical THREE times: the implementer's clean build, the independent
+  auditor's own clean build, and the commander's re-verification after applying the audit
+  corrections; `make -C boot/x86 clean` FIRST every time — a stale incremental build yields a
+  different hash, the trap that bit the 3.0 re-bless):
+    aarch64  c4e255f11941cd90b2c038bd69f21948be0e59dcc59416bfc72f7efe57c3fa5a   (was f23f719f…bcbc887)
+    x86      4f6f0dc5c971ef5e4afeea2f7dd32176e2a76d3915e9ffc1d909702d48623f13   (was 7ab20ceb…31d932aa)
+  WHY (the honest version): a cure that shipped 2026-06-14 with an independent audit and a 400/400
+  matched control was deleted 18 days later by `f50c30a0`, and this project's own ledger said CURED
+  for 41 days while the crash ran at ~8% of boots and CI reported green. Proof the restored guard is
+  load-bearing — independent 3-arm audit, 674 boots: signature A master 18/225 → fixed 0/225
+  (p=5.4e-6) → **sham (the fix minus only the 6-byte guard) 15/224**, statistically indistinguishable
+  from master (p=0.72). See the KILL-CHURN-CRASH row and the OPEN `VENDOR-PATCH-LOSS` row in
+  `docs/architecture/gap-ledger.md`.
 - CROWN RE-BLESS — μT-Kernel 3.0 core migration (2026-07-03, PR #9 + #10, migration merge commit
   bbc0d216, FF-landed on master). The kernel core was INTENTIONALLY swapped micro T-Kernel 2.0 →
   μT-Kernel 3.0 (IEEE 2050-2018 / T-License 2.2), so the bare-metal `.text` LEGITIMATELY changes.

@@ -1901,9 +1901,21 @@ static void dproc_test(void)
 /* the ELF watchdog LIVE (so heal re-execs infer_d concurrently, the   */
 /* real churn).  The fix (tk_del_tsk ctxtsk/schedtsk guard) keeps the  */
 /* freed TCB off the dispatch pointers; the poison net                 */
-/* (knl_dispatch_poison_check) HALTS with [kill-churn] CAUGHT if a      */
-/* freed TCB ever reaches the dispatcher.  PASS == survived all cycles */
-/* with the scheduler still advancing and no CAUGHT/#PF.               */
+/* (knl_dispatch_poison_check, sysdepend/x86_pc/cpu_cntl.c:55) HALTS   */
+/* with "[dispatch] POISON: freed TCB in schedtsk" if a freed TCB ever */
+/* reaches the dispatcher.  PASS == survived all cycles with the       */
+/* scheduler still advancing and no POISON halt / #PF.                 */
+/*                                                                     */
+/* 2026-08-12 correction: this block used to claim the net printed     */
+/* "[kill-churn] CAUGHT".  It does not, and never did — that string    */
+/* belongs to the KCC_DIAG wait-timer diagnostic (wait.c), which is    */
+/* OFF in shipped builds.  Worse, for 41 days BOTH the guard named     */
+/* above AND that diagnostic were absent entirely: f50c30a0 deleted    */
+/* kernel/common/ and the vendor mtkernel3 core carries neither.  This */
+/* comment described a defence that was not in the binary.  Restored   */
+/* 2026-08-12; see gap-ledger KILL-CHURN-CRASH + VENDOR-PATCH-LOSS.    */
+/* NOTE this verb is still NOT wired into CI (grep churn ci.yml == 0), */
+/* which is exactly why the deletion went unnoticed.                   */
 /* ------------------------------------------------------------------ */
 #ifndef CHURN_CYCLES
 #define CHURN_CYCLES 40
