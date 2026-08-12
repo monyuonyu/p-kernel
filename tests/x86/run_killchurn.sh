@@ -100,6 +100,7 @@
 #   KILLCHURN_BOOT_TIMEOUT hard wall-clock cap per boot, s  (default 120)
 #   KILLCHURN_SKIP_BUILD   1 = reuse the existing build     (default 0)
 #   KILLCHURN_KEEP         1 = keep the scratch dir + logs  (default 0)
+#   KILLCHURN_T_EXC_DRAIN  cap on draining an exception dump, s (default 2)
 #   CROSS / QEMU / NM / OBJDUMP  toolchain overrides
 #
 # WHAT THIS HARNESS WAS ACTUALLY MEASURED TO DO (2026-08-12, this runner)
@@ -164,6 +165,14 @@ KEEP="${KILLCHURN_KEEP:-0}"
 # without letting one wedged boot eat the run.
 T_PROMPT="${KILLCHURN_T_PROMPT:-90}"
 T_STEP="${KILLCHURN_T_STEP:-60}"
+
+# Ceiling on draining a ring-0 exception dump before QEMU is killed — see "the
+# dump-truncation race" in run_one().  Also a BACKSTOP, not a budget: what it
+# waits for is ~40 bytes already queued on an emulated serial port, so the
+# normal cost is a single 0.05 s poll.  The ceiling only ever gets spent by a
+# dump that will NEVER become classifiable (e.g. exception 3, which idt.c
+# answers with "Breakpoint exception handled" and no CS/EIP line at all).
+T_EXC_DRAIN="${KILLCHURN_T_EXC_DRAIN:-2}"
 
 QEMU="${QEMU:-qemu-system-x86_64}"
 # Mirror boot/x86/Makefile's cross-toolchain autodetection so the symbols we
@@ -317,6 +326,36 @@ run_one() {
     if [ "$FEED_STAGE" = 3 ] && wait_for '[ring3-mind]'     "$T_STEP" "$_log"; then FEED_STAGE=4; send 'dproc test'; fi
     if [ "$FEED_STAGE" = 4 ] && wait_for '[dproc-teardown]' "$T_STEP" "$_log"; then FEED_STAGE=5; send 'fpu test';   fi
     if [ "$FEED_STAGE" = 5 ] && wait_for '[fpu-ctx]'        "$T_STEP" "$_log"; then FEED_STAGE=6; fi
+
+    # ------------------------------------------- the dump-truncation race ----
+    # wait_for returns 2 the INSTANT it sees '=== KERNEL EXCEPTION ==='.  But
+    # idt.c prints the dump in three pieces and the piece classify() needs is
+    # the LAST one (boot/x86/idt.c, the ring-0 arm of the handler):
+    #     === KERNEL EXCEPTION ===  /  Exception: <name>
+    #     Error Code: 0xNNNNNNNN          (only for 8, 10-14, 17)
+    #     CS=0xNNNNNNNN EIP=0xNNNNNNNN    <-- classification lives or dies here
+    # Killing QEMU on the banner can cut the capture off mid-"Error Code:".
+    # classify() then finds no EIP and files the boot as `other` — and `other`
+    # does not set the exit code, so A TRUNCATED SIGNATURE A IS A GREEN GATE.
+    # Observed once in 780 boots (2026-08-13); made deterministic, and shown
+    # to flip sigA=1/exit 1 into other=1/exit 0, with a stub QEMU that stalls
+    # between the banner and the CS/EIP line.
+    #
+    # So: once a dump has STARTED, wait for it to become classifiable before
+    # killing.  This is paid ONLY by boots that actually faulted (~7-11 %/boot
+    # here, all signature B on a fixed tree) and it ends the moment the line
+    # lands: MEASURED at 6 ms on each real signature-B boot, i.e. satisfied by
+    # the first poll, so N=150 costs ~0.1 s.  The regex demands
+    # all EIGHT hex digits print_hex32() emits: a half-written 'EIP=0x0015'
+    # must not be mistaken for a complete one, or the fix reintroduces the bug
+    # it is here to remove.
+    if grep -aqF '=== KERNEL EXCEPTION ===' "$_log"; then
+        _drain_end=$(( $(date +%s) + T_EXC_DRAIN ))
+        while ! grep -aqE 'EIP=0x[0-9A-Fa-f]{8}' "$_log"; do
+            if [ "$(date +%s)" -ge "$_drain_end" ]; then break; fi
+            sleep 0.05
+        done
+    fi
 
     exec 3>&-
     kill "$QPID" 2>/dev/null || true
