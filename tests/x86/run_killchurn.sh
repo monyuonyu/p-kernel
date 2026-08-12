@@ -467,8 +467,10 @@ if [ "$n_sigA" -gt 0 ]; then
 fi
 
 echo "[killchurn] PASS: signature A not seen in $N boots."
-echo "[killchurn]       (At the audited 8%/boot unfixed rate, an unfixed tree slips through"
-echo "[killchurn]        a clean N=$N run with probability ~$(awk "BEGIN{printf \"%.1f\", 100*(0.92^$N)}")%. Green is evidence, not proof — and"
-echo "[killchurn]        this harness reproduces the companion signature B at 2.5%/boot idle"
-echo "[killchurn]        vs 10.7%/boot under load, so an idle host may be weaker still.)"
+echo "[killchurn]       Stage 2 measured the unfixed rate at 6.43%/boot (18/280 idle-serial,"
+echo "[killchurn]       Wilson 95% CI 4.10-9.93%); at the CI lower bound an unfixed tree slips"
+echo "[killchurn]       through a clean N=$N run with probability ~$(awk "BEGIN{printf \"%.2f\", 100*(0.9590^$N)}")%."
+echo "[killchurn]       Green is evidence, not proof. Signature A does NOT track host load"
+echo "[killchurn]       (idle 6.43% vs 3-parallel 6.67%, Fisher p=1.00), so an idle runner is"
+echo "[killchurn]       not weaker — an EARLIER note claiming otherwise was refuted by measurement."
 exit 0
