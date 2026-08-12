@@ -87,8 +87,19 @@ LOCAL void knl_enqueue_tmeb( TMEB *event )
 {
 	QUEUE	*q;
 	ABSTIM	ofs = lltoul(knl_current_time) - ABSTIM_DIFF_MIN;
+	/* KILL-CHURN-CRASH hardening (DEFENSIVE — a corrupted timer queue is
+	 * not a proven 3.0 state).  If the queue's links are ever cyclic this
+	 * walk never reaches the &knl_timer_queue sentinel and the timer IRQ
+	 * wedges the machine with interrupts disabled — an unrecoverable hang
+	 * that hides its own cause.  Bounding the walk degrades that into a
+	 * mis-ordered insert, which is survivable and debuggable. */
+	int cnt = 0;
 
 	for ( q = knl_timer_queue.next; q != &knl_timer_queue; q = q->next ) {
+		if ( ++cnt > 10000 ) {
+			/* timer queue corrupted - break to avoid infinite loop */
+			break;
+		}
 		if ( (ABSTIM)(event->time - ofs) < (ABSTIM)((((TMEB*)q)->time) - ofs) ) {
 			break;
 		}
@@ -204,6 +215,13 @@ EXPORT void knl_timer_handler( void )
 #endif
 
 	/* 発生時刻を過ぎたイベントの実行 */
+	/* KILL-CHURN-CRASH hardening (DEFENSIVE, same class as the bound in
+	 * knl_enqueue_tmeb): this drain loop runs inside the timer IRQ with
+	 * interrupts disabled.  If a damaged queue ever makes it non-
+	 * terminating the system hangs silently; a bound turns that into a
+	 * deferred event.  1000 is far above any legitimate number of timer
+	 * events expiring in a single tick. */
+	int timer_loop_cnt = 0;
 	while ( !isQueEmpty(&knl_timer_queue) ) {
 		event = (TMEB*)knl_timer_queue.next;
 
@@ -211,7 +229,18 @@ EXPORT void knl_timer_handler( void )
 			break;
 		}
 
+		if ( ++timer_loop_cnt > 1000 ) {
+			/* timer queue corrupted - break to avoid infinite loop */
+			break;
+		}
+
 		QueRemove(&event->queue);
+		/* KILL-CHURN-CRASH hardening (DEFENSIVE): return the dequeued
+		 * node to the self-linked state so a later knl_timer_delete on
+		 * the same TMEB (e.g. from knl_wait_release running inside the
+		 * callback below) is a no-op instead of a write through stale
+		 * neighbour pointers. */
+		QueInit(&event->queue);
 		if ( event->callback != NULL ) {
 			(*event->callback)(event->arg);
 		}

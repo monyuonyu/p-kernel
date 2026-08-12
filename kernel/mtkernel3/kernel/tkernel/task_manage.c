@@ -149,6 +149,20 @@ SYSCALL ID tk_cre_tsk( CONST T_CTSK *pk_ctsk )
  */
 LOCAL void knl_del_tsk( TCB *tcb )
 {
+	/* KILL-CHURN-CRASH hardening — timer hygiene before the TCB is freed
+	 * and recycled.  The wtmeb (TMEB) is embedded in the TCB; while armed
+	 * it is a live node in the GLOBAL timer queue whose callback is
+	 * knl_wait_release_tmout(tcb).  Unlink it here so a freed slot never
+	 * leaves a live pointer into the timer queue.  Safe/idempotent because
+	 * knl_task_initialize self-links every wtmeb once (QueRemove's
+	 * `next != entry` no-op guard then holds for a never-armed node).
+	 *
+	 * HONEST STATUS: hygiene, NOT the cure.  It cannot close the race —
+	 * the timer IRQ can dequeue this event in the same tick the slot is
+	 * recycled.  The cure is the TS_WAIT early-return in
+	 * knl_wait_release_tmout (wait.c). */
+	knl_timer_delete(&tcb->wtmeb);
+
 #if USE_IMALLOC
 	if ( (tcb->tskatr & TA_USERBUF) == 0 ) {
 		/* ユーザバッファ未使用の場合 */
@@ -191,6 +205,36 @@ SYSCALL ER tk_del_tsk( ID tskid )
 	state = (TSTAT)tcb->state;
 	if ( state != TS_DORMANT ) {
 		ercd = ( state == TS_NONEXIST )? E_NOEXS: E_OBJ;
+	} else if ( tcb == knl_ctxtsk || tcb == knl_schedtsk ) {
+		/* KILL-CHURN-CRASH guard — DEFENCE IN DEPTH (a distinct hazard
+		 * from the stale-timer #PF cured in knl_wait_release_tmout).
+		 *
+		 * Do not free the TCB the CPU is standing on / is scheduled INTO
+		 * next.  dproc_kill_by_name() runs tk_ter_tsk +
+		 * user_proc_teardown + tk_del_tsk, which are NOT one critical
+		 * section, so a churn dispatch can in principle leave a DORMANT
+		 * victim as the current/next task when tk_del_tsk runs; freeing
+		 * it then feeds the dispatcher a stale ssp.  Refusing with E_OBJ
+		 * is safe: a task genuinely on the CPU cannot legitimately be
+		 * TS_DORMANT, and the next heal sweep reclaims the TCB once the
+		 * dispatch pointers move off it.
+		 *
+		 * 3.0 port note: the 2.0 original tested `tcb == CUR_CTXTSK ||
+		 * tcb == CUR_SCHEDTSK`.  The μT-Kernel 3.0 core has NO
+		 * CUR_CTXTSK/CUR_SCHEDTSK macros — it reads the raw globals
+		 * knl_ctxtsk / knl_schedtsk directly everywhere (see
+		 * knl_make_dormant callers below, check.h's CHECK_NONSELF, and
+		 * knl_task_initialize).  Rather than reintroduce a 2.0-ism, the
+		 * guard is written in the 3.0 core's own idiom; on this
+		 * uniprocessor core the two spellings denote the same objects.
+		 * (The SMP variant of this question — the ~211 CUR_CTXTSK sites
+		 * and knl_smp_wake_hook — is deliberately OUT OF SCOPE here and
+		 * lives on fix/smp-cur-ctxtsk-sentinel.)
+		 *
+		 * Does NOT affect the ring3 fault-reap path: tk_exd_tsk frees
+		 * via the LOCAL knl_del_tsk directly, bypassing this syscall
+		 * entry check. */
+		ercd = E_OBJ;
 	} else {
 		knl_del_tsk(tcb);
 	}

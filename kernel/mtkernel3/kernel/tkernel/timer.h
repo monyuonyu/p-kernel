@@ -121,6 +121,14 @@ IMPORT void knl_timer_insert_abs( TMEB *evt, ABSTIM time, CBACK cback, void *arg
 Inline void knl_timer_delete( TMEB *event )
 {
 	QueRemove(&event->queue);
+	/* KILL-CHURN-CRASH hardening (DEFENSIVE — see the note in wait.h).
+	 * QueRemove unlinks the node from its neighbours but leaves next/prev
+	 * pointing AT them; the node is not returned to the self-linked
+	 * (empty) state.  A second QueRemove on the same node would then write
+	 * through those stale pointers into whatever now occupies the queue.
+	 * QueInit re-self-links, which makes QueRemove's `next != entry` no-op
+	 * guard hold and every later delete idempotent. */
+	QueInit(&event->queue);
 }
 
 #endif /* _TIMER_ */

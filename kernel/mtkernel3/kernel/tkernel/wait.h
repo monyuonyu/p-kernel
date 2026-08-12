@@ -170,6 +170,14 @@ Inline void knl_wait_release( TCB *tcb )
 {
 	knl_timer_delete(&tcb->wtmeb);
 	QueRemove(&tcb->tskque);
+	/* KILL-CHURN-CRASH hardening (DEFENSIVE — no 3.0 path proven to reach
+	 * a double-remove; restored because the same mine is present).
+	 * QueRemove leaves the removed node pointing at its FORMER neighbours
+	 * rather than self-linked, so a second QueRemove on the same node
+	 * writes through stale pointers into unrelated memory.  QueInit puts
+	 * the node back in the empty/self-linked state that QueRemove's
+	 * `next != entry` no-op guard expects. */
+	QueInit(&tcb->tskque);
 	knl_make_non_wait(tcb);
 }
 

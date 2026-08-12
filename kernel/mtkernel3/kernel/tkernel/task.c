@@ -85,6 +85,20 @@ EXPORT ER knl_task_initialize( void )
 		tcb->wrdvno = tskid;
 #endif
 
+		/* KILL-CHURN-CRASH hardening: self-link every TCB's wait-timer
+		 * event block ONCE, here.  knl_tcb_table is Noinit(...) — i.e.
+		 * `.noinit (NOLOAD)` (sys/machine.h:101 + the linker scripts), NOT
+		 * .bss — so its contents are NOT zero-guaranteed: a cold QEMU boot
+		 * happens to give NULL/NULL, a warm reboot guarantees nothing.  That
+		 * makes this QueInit MORE necessary, not less.  The defensive
+		 * knl_timer_delete
+		 * (= QueRemove) now placed in knl_make_dormant and knl_del_tsk
+		 * relies on a never-armed node being self-referential, because
+		 * QueRemove's no-op guard is `next != entry` — a NULL/NULL node
+		 * fails that guard and faults dereferencing NULL->next.  This
+		 * single QueInit makes every later delete safe and idempotent,
+		 * and is the prerequisite for the timer hygiene in L5/L6. */
+		QueInit(&tcb->wtmeb.queue);
 		QueInsert(&tcb->tskque, &knl_free_tcb);
 	}
 
@@ -118,6 +132,27 @@ EXPORT void knl_make_dormant( TCB *tcb )
 #endif
 
 	tcb->wercd = NULL;
+
+	/* KILL-CHURN-CRASH hardening — timer hygiene at the teardown choke
+	 * point.  While armed (tk_wai_sem / tk_dly_tsk with a timeout ->
+	 * knl_make_wait_reltim) the TCB-embedded wtmeb is a LIVE node in the
+	 * kernel-wide timer queue whose callback is knl_wait_release_tmout(
+	 * tcb).  knl_ter_tsk() only cancels it on its TS_WAIT branch, so a
+	 * task killed from a non-WAIT instant could leave a stale wtmeb
+	 * linked.  knl_make_dormant is reached by EVERY teardown
+	 * (tk_ter_tsk, tk_ext_tsk, and task creation), so unlinking here
+	 * covers foreign kill/heal churn.
+	 *
+	 * knl_timer_delete (QueRemove + QueInit) — NOT a bare QueInit, which
+	 * would ORPHAN a still-linked node and corrupt its neighbours.  Safe
+	 * and idempotent because knl_task_initialize self-links every wtmeb
+	 * once, so a never-armed node satisfies QueRemove's `next != entry`
+	 * no-op guard.
+	 *
+	 * HONEST STATUS: this is timer-QUEUE hygiene, not the cure.  The cure
+	 * for the observed ring0 #PF is the TS_WAIT early-return at the
+	 * callback action site in knl_wait_release_tmout (wait.c). */
+	knl_timer_delete(&tcb->wtmeb);
 
 #if USE_MUTEX == 1
 	tcb->mtxlist	= NULL;
