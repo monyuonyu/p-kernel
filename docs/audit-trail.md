@@ -1782,6 +1782,64 @@ N-4 cross-host deferred to the ThinkPad).
   `wait_for [teach-consolidated] (PASS|FAIL)` is STALE-SATISFIABLE (a pre-kill line already matches -> wait returns
   immediately; the `grep 'ask "sun"' | tail -1` can read pre-kill data => latent FALSE-PASS). Fix = match a fresh
   post-kill-specific marker like 42_one_mind does. Does not block; tracked.
+- STAGE-2 PROOF — `tests/x86/run_killchurn.sh` GOES RED ON AN UNFIXED TREE (2026-08-12,
+  `docs/killchurn-cert-proof`, harness at master `468a1c67`). The wave-45 rule says a gate must be shown to
+  FAIL before it is wired into CI; the previous `dproc churn` verb was never shown to fail, was a blank
+  round on master by wave-45, and its "wire it into CI" follow-up died — 41 days of green. This entry is the
+  falsification the new harness was missing. It does NOT wire anything into CI (that is Stage 3).
+  METHOD: `git archive 74e23947` (= `339a66a2^`, the tree BEFORE the hardening was restored) into a scratch
+  dir, then dropped master's `tests/x86/run_killchurn.sh` into it unmodified (sha256
+  `f85d3491bead7be71979be4db1c315611f329499cd1f43eef59cb23d0915715f`, byte-identical in both arms). The
+  harness's `$0`-derived `ROOT` claim is CONFIRMED tree-agnostic — zero harness edits were needed. `git
+  archive 468a1c67` gave the matched FIXED arm. The two arms differ ONLY in the 6 hardening files
+  (`kernel/mtkernel3/kernel/tkernel/{wait,timer,task,task_manage}.{c,h}`); the `arch/x86/shell.c` delta
+  between them is comment-only and the rest is docs — a clean 2-arm matched control. Both arms were run
+  INSIDE the `pkernel_gh_runner` container (agentName `thinkpad-pkernel`, 4 CPU / 15 GB) because the host
+  has no `qemu-system-x86_64` and no i686 cross-gcc — i.e. **on the exact machine CI runs on**, so the
+  timings below are CI timings. Every arm was gated on "no workflow run in_progress/queued AND no
+  Runner.Worker" so nothing collided with CI.
+  RAW NUMBERS (710 boots, same day, same harness, same host, arms interleaved):
+    condition                          UNFIXED 74e23947        FIXED 468a1c67 (control)
+    idle serial, N=40                  sigA  1/40   rc=1       sigA 0/40   rc=0
+    idle serial, N=240                 sigA 17/240  rc=1       sigA 0/240  rc=0
+    3 concurrent arms, N=25, SKIP_BUILD sigA  5/75   rc=1,1,1   sigA 0/75   rc=0,0,0
+    POOLED                             sigA 23/355 (6.48%)     sigA 0/355
+  Fisher two-sided p = 1.65e-07 pooled; p = 5.75e-06 on the idle-serial subset alone. **5 of 5 harness
+  invocations on the unfixed tree exited 1; 5 of 5 on master exited 0.** The observed fault is the real
+  one, not a classifier artifact: `err=0x00000002 CS=0x00000008 EIP=0x0015382E`, i.e.
+  `knl_wait_release_tmout+0x11` inside the resolved window `[0x0015381d,0x00153866)`, emitted immediately
+  after `[elf] task started (tid=15)` — the TCB slot REUSE, the historic signature, at the historic offset.
+  MEASURED ANSWER TO THE HARNESS AUTHOR'S OPEN QUESTION ("whether signature A tracks load the way
+  signature B appears to"): **it does not.** Signature A is 18/280 (6.43%) idle-serial vs 5/75 (6.67%)
+  under 3-way concurrency — Fisher p = 1.00. The 3-parallel + `KILLCHURN_SKIP_BUILD=1` recipe was NOT
+  needed to redden the unfixed tree; plain idle N=40 reddened on the first try. Signature B in this
+  session is 11/560 idle vs 6/150 loaded (Fisher p = 0.22) — same DIRECTION as the author's 2.5%-vs-10.7%,
+  still NOT significant, so the load effect on B remains unproven, and it is now clear it was never
+  load-bearing for A. Signature B is also confirmed tree-independent here: 10/355 unfixed vs 7/355 fixed,
+  p = 0.63 — consistent with the audited "untouched by the fix" and with leaving it non-fatal.
+  **N=40 IS NOT ENOUGH FOR CI — RECOMMEND `KILLCHURN_N=150`.** The N=40 default was derived from the
+  audited 8.0%/boot. My idle-serial measurement is 18/280 = 6.43%, Wilson 95% CI [4.10%, 9.93%] — the
+  audited 8% sits inside it, but the CI's LOWER end is what a gate must survive, and at p = 4.10% a single
+  N=40 run misses a live regression **18.7%** of the time. Miss probability (1-p)^N at the 95% lower bound
+  / at the point estimate: N=40 18.7%/7.0%, N=80 3.5%/0.5%, N=100 1.5%/0.13%, N=120 0.65%/0.03%,
+  N=150 0.19%/0.004%. Cost is not the constraint: this runner does 2.86-2.91 s per boot INCLUDING the
+  clean build (240 boots + build = 687 s), so N=150 is ~7.8 min — well inside `ring3-survival`'s existing
+  `timeout-minutes: 25`, and the self-hosted jobs are already chained serially so nothing else is displaced.
+  **N=120 is the floor I would accept (0.65% miss); N=150 is what I recommend; N=40 would have been a
+  1-in-5 blank round.** Harness stability over 710 boots: `incomplete=0` and `other=0` in every single run —
+  no stall, no lock contention, no unclassified fault, so a red is a red.
+  WHAT IS STILL NOT KNOWN (do not let Stage 3 paper over these): (1) the 6.43% idle rate is ONE host on ONE
+  day — the GitHub-hosted `ubuntu-latest` runners are a different machine class and this gate has never run
+  there, so the N recommendation is only justified for `[self-hosted, pkernel-thinkpad]`. (2) "idle" is a
+  misnomer: the harness's own 0.2 s marker-polling loops drive host loadavg to ~4.5 on 4 cores, so the
+  "idle" arm is not a quiescent machine — it is the harness's own steady state, which is at least the
+  steady state CI would see. (3) an unrelated CPU-heavy `dotnet`/`dcbench` workload appeared on the host
+  during part of the FIXED N=240 control (loadavg peaked ~15); that makes the green control CONSERVATIVE
+  (more load, still 0/240), not weaker, but it means the two N=240 arms were not perfectly load-matched.
+  (4) signature B's load dependence is still unresolved (p = 0.22 here, p ~ 0.05 for the author) and
+  `KCC-WILDPC` still has no mechanism. (5) this proves the harness reddens on THIS unfixed tree; it does
+  not prove it would redden on a FUTURE vendor-patch loss that deletes a different one of the 9 hardening
+  classes — the gate watches one signature, not the class of regressions the `VENDOR-PATCH-LOSS` row names.
 - CROWN RE-BLESS — KILL-CHURN hardening restored after the μT3.0 migration ate it (2026-08-12,
   `fix/kill-churn-restore`). The bare-metal `.text` changes DELIBERATELY: the fix lives in
   `kernel/mtkernel3/kernel/tkernel/{wait,timer,task,task_manage}.c`, which all 5 targets compile,
