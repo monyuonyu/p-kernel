@@ -1701,6 +1701,26 @@ jobs:
           echo "[ci] effective sample: $EFF of $N boots ($INC incomplete)"
           [ "$EFF" -ge 100 ] \
             || { echo "only $EFF boots reached the churn path — this run MEASURED NOTHING (starved runner?), so it is not a green."; exit 1; }
+
+          # 5) NO UNCLASSIFIED ring-0 EXCEPTIONS.  `other` is a ring-0 fault that
+          #    matched neither known signature.  Two reasons this must be fatal:
+          #      (a) It is the harness's own blind spot.  Before 6661f2e8 a
+          #          TRUNCATED signature A landed in `other`, and because `other`
+          #          does not set the exit code the gate went GREEN with the
+          #          regression live — a false green on a BLOCKING gate, proven
+          #          reproducible with a stub QEMU.  6661f2e8 drains the dump and
+          #          narrows that window but does NOT close it: if the drain ever
+          #          times out on a real signature A, it is `other` again.
+          #      (b) An `other` is by definition a ring-0 fault nobody has
+          #          characterised.  We want to hear about it.
+          #    Cost of being wrong here is low: `other=0` in every measurement so
+          #    far (710 boots in the Stage-2 proof, 150 in the Stage-3 preflight,
+          #    ~250 in the race-fix verification).  If that ever stops being true,
+          #    a red board is the correct outcome, not a reason to loosen this.
+          OTH="$(echo "$V" | sed -n 's/.*other=\([0-9]*\).*/\1/p')"
+          [ -n "$OTH" ] && [ "$OTH" -eq 0 ] \
+            || { echo "$OTH UNCLASSIFIED ring-0 exception(s) — either a new fault class, or a signature A whose dump was truncated (the pre-6661f2e8 false-green path). Inspect the uploaded serial logs; do NOT wave this through."; echo "$V"; exit 1; }
+
           echo "[ci] PASS: $V"
       - name: Upload killchurn serial logs
         # always(), not failure(): a timeout/cancel is exactly when the raw logs
