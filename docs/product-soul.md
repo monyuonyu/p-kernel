@@ -143,7 +143,7 @@ mk_pino:「単純タイマーで定期的に、ではない。外的な刺激が
 
 ## 署名の境界 — 人間を検証しない(永続オーナー指令)
 
-> mk_pino 2026-06-10（`docs/claude-memory/feedback_ark_no_identity_verification.md`）。
+> mk_pino 2026-06-10（恒久オーナー指令）。
 > かつて `signing.md §0` に置かれた恒久指令を、実装済み設計書の archive 化に伴い魂の側へ移設。
 
 **p-kernel の署名は CODE と WEIGHTS の来歴のみを証明する。人間は決して検証しない。**

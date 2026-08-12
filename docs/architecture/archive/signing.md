@@ -28,7 +28,7 @@
 ## 0. THE BOUNDARY — read this first, it is a permanent owner directive
 
 **Signatures in p-kernel attest CODE and WEIGHTS provenance ONLY. They NEVER
-verify a human.** (`docs/claude-memory/feedback_ark_no_identity_verification.md`,
+verify a human.** (恒久オーナー指令,
 mk_pino 2026-06-10, verbatim intent quoted there.)
 
 A p-kernel signature means exactly:
