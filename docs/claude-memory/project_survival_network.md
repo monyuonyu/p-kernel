@@ -155,6 +155,18 @@ degraded)、ループを本当に閉じる(行動→知覚の負帰還、moe_inf
 G24三点(durable p-fs/人類知ペイロード/再起動手順)=思想の最上位、G23 上位フェデレーション、
 G25 死角(エネルギー計測・実機走)。
 
+## §7 gacc + §8 — GREEN-LIT 2026-06-28 (mk_pino: 「これはもうガンガン進めたい」)
+The §7 distributed-gating local-gradient learning (gacc) + §8 two-layer stabilizer is
+no longer on philosophy-hold — mk_pino said full speed ahead. G38.0 (the `moe_select_step`
+seam) already shipped; next = G38.1 the gacc local-gradient learning. CONSTITUTION GATE
+STILL APPLIES (his own prior rule, not a blocker): the highest-risk cert is the **COUPLED
+pressure+gacc-sum oscillation proof** — commander reads the gate formula line-by-line
+before crediting; §8 hysteresis/two-timescale damping is the stabilizer. So: GO, but
+cert-first design-harden with the oscillation falsifier as the load-bearing gate (the
+[[feedback_validator_and_learner_traps]] lesson — after a sign flip the learner may still
+optimize the old objective; see also G20 sign-inversion in this file's audit-3). Plan doc
+= survival-g38-impl-plan.md.
+
 ---
 
 ドキュメント追加は 2026-06-06 に **コミット済み**（feat/regions-r0）:
@@ -162,3 +174,16 @@ G25 死角(エネルギー計測・実機走)。
 `464737e` survival-network.md（構想逐語＋実装マッピング）、
 `c702a73` chore(gitignore)（.claude/ 無視＋壊れた boot/.gitignore パス修正）。
 arch/x86 の孤児バイナリ hello_* は削除。**まだ origin に push していない**。
+
+## recip（§7 受援側）— DECLINED 2026-07-04：純粋利他を選択 ★思想の分岐点
+fable5 が §7 の「受援(answer)側」= `recip`（gacc=応/ask の対）を設計。病巣は本物:
+`drpc.c` の `DRPC_CALL_INFER` が**無条件応答**するので、フリーライダー（remote推論を消費するが
+自分は応答拒否）がタダで満点に到達（F_acc≈M_acc）。機構は node毎ローカル `recip_debt[]`
+（gossipしない=NO-CENTRAL構造保証、hosted-gated=crown中立）で default-open+slack、debt発散で
+拒否、**弱いが応じるノードは C2 falsifiable ゲートで保護**。哲学の内側（局所・匿名=reciprocation
+判定であって identity 非判定＝[[feedback_ark_no_identity_verification]] と整合・弱者包摂）に収めた。
+**だが mk_pino の判断＝純粋利他のまま（作らない）**: 「弱くても構わない、群れが補償する、豊かさが
+free-ride を無意味にする」を貫く。**援助経済は自衛しない。受援側は無条件の贈与のまま。**
+設計は `docs/architecture/30-module/survival-recip.md` に**「選ばれなかった道（歴史地層）」**として
+保存（自衛が設計・検討され意識的に見送られた記録それ自体が宣言）。方舟＝贈与であって取引でない、を
+明文化した分岐点。再訪するなら設計は完成済みで即ビルド可。

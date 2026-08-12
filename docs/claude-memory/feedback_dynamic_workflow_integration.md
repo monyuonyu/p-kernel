@@ -90,3 +90,9 @@ origin 無傷)。原因推測: agent の `git checkout -b` がブランチを共
 **11. 全エージェントが Edit/Write/Monitor 権限denyの環境だった**(2026-06-07)。各隊は bash
 (python3 厳密文字列置換 + heredoc)で編集に fallback し成果は正常。指揮官(本セッション)側の
 Edit/Write は使えるので、統合時のコンフリクト解決・doc追記は通常どおり可。
+
+**12. 【2026-06-27 二度目の指摘】長時間エージェントは必ず `run_in_background: true` で出す。**
+mk_pino:「またフロントエンドでエージェント起動しちゃってるよ」。implement/audit/verify のような
+数分かかる隊をフォアグラウンドで出すと UI がブロックされ、彼が会話できない・進捗が見えない。
+→ **鉄則: 設計の即答以外、実装/監査/検証エージェントは全部 background。** 完了通知で拾って
+verify→audit→integrate→push を続行する。複数を並列に出すときも各々 background。

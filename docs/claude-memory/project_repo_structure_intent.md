@@ -1,6 +1,6 @@
 ---
 name: project-repo-structure-intent
-description: "The top-level README.md is an intentional separate \"front door\" holding mk_pino's original words; the p-kernel/p-kernel nesting is acknowledged debt to de-nest carefully someday."
+description: "The top-level README.md is an intentional separate \"front door\" holding mk_pino's original words (keep verbatim); the old p-kernel/p-kernel nesting debt is now RESOLVED (repo went flat in the μT-Kernel 3.0 migration)."
 metadata: 
   node_type: memory
   type: project
@@ -9,14 +9,16 @@ metadata:
 
 Two repo-layout facts mk_pino confirmed (2026-06-07), which look similar but are opposite in nature — do not conflate them when "cleaning":
 
-**1. The nested `p-kernel/p-kernel/` IS genuine debt (fix someday, carefully).**
-The repo root is `/root/p-kernel/`; the actual source lives one level down in
-`p-kernel/`, so docs sit at `p-kernel/docs/...` and there are even two `docs/`
-trees (outer `docs/repo-hygiene.md` + inner `p-kernel/docs/`). mk_pino agrees
-this is not good. De-nesting (lift `p-kernel/p-kernel/*` up one level) is a real
-future task but a BIG mechanical surgery: every `boot/*/Makefile`, all `run.sh`,
-CI's `p-kernel/...` paths, and include paths move at once — do it in a dedicated
-wave with a full CI-green check, not as a side cleanup.
+**1. The nested `p-kernel/p-kernel/` debt is RESOLVED (verified 2026-07-11).**
+It USED to be real (2026-06-07): source lived one level down, with two `docs/`
+trees (outer `docs/repo-hygiene.md` + inner `p-kernel/docs/`). It has since been
+de-nested — almost certainly during the μT-Kernel 3.0 migration ([[moment_2026_07_03_tkernel3_migration]], 702 files). Now the repo is FLAT:
+`/root/p-kernel/` holds `arch/ boot/ kernel/ lib/ drivers/ include/ docs/ …`
+directly, `boot/*/Makefile` are top-level (no `p-kernel/` prefix), and there is
+one `docs/architecture/` tree (the other `docs/` dirs — `kernel/mtkernel3/docs`,
+`lib/libc/docs` — are legit vendored sub-docs, not the old duplication).
+`docs/repo-hygiene.md` is gone. So this is no longer a pending task; don't plan
+a de-nesting wave.
 
 **2. The top-level `README.md` being separate is INTENTIONAL — do NOT relocate
 or fold it.** mk_pino deliberately keeps it as a "front door / preface" in the

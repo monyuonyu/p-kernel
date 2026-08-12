@@ -192,6 +192,43 @@ wave-native-student-design (organism-native MoE third-network, grow-by-experts N
 distill-and-diffuse NS-1) — not yet merged; its open forks #1(vocab)→raw-byte and name→Cradle
 now resolved, #2 diffuse=diff-only & #3 growth-axis=experts recommended. See product-soul.md.
 
+**SHIPPED through 2026-07-04 — the living-mind arc filled in (all on the μT-Kernel 3.0 core).**
+LM-5 随時 stream, LM-6 the mouth (`mind teach/ask/wait`), LM-7 shared mind, LM-8/9 lang/capacity,
+LM-10/11 one mind (Path E/W/W², Fisher merge). NEW this session:
+- **LM-12 belief revision** — a weight-resident belief is REPLACED, not blended (new 100/old 0);
+  the `[rev-not-masked]` load-bearing falsifier proves overwrite≠mask; survives death + restart + propagates.
+- **LM-13 graceful forgetting** — FIFO eviction → min-earned-salience; asking a fact protects it. HONEST
+  re-frame after the auditor caught the *accuracy* disease was a same-adversarial-class ARTIFACT (class-spread
+  shows zero decay) → the SELECTION (asking→evict a different fact) is the robust load-bearing core.
+- **LM-14 curiosity** — a bounded want-table accrues from the ONE `m_ask` miss site (share-qualified);
+  a wanted key, once taught, converts want→arrival-salience (the answer arrives precious). GENERICITY
+  confirmed (evicted-seq invariant under 3 value-class relayouts — the LM-13 lesson APPLIED, no artifact).
+The arc is now **learn → sleep → self → shared → one-mind → revise(12) → forget(13) → wonder(14)**. Every
+slice: disease-then-cure cert + load-bearing falsifier + separate impl≠audit≠commander + crown re-bless.
+Crown lineage this session: 2.0 755a20fa/4064d8a9 → 3.0-migration 5e42f853/a52c8701 → LM-12 243f917b/8e670a3c
+→ LM-13 f51eb00e/a0bed501 → LM-14 be41bbf6/248633de. Op-pattern: implementer agents repeatedly hit the
+session/context limit mid-cert → the COMMANDER re-runs the cert to verify + the auditor confirms before merge.
+**LM-15 region pull-teach — SHIPPED 2026-07-04 (master e67328b7), with an HONEST scope caveat.** The mind
+now PUBLISHES its wondered keys on a 3rd region singleton topic `mind/want` (keys only, never want LEVELS —
+F-LOCAL amended: the KEY crosses the wire, the magnitude stays local forever); a peer holding the key as an
+ENGRAM (`m_find_key`, zero forward passes) answers by re-publishing on the EXISTING `mind/teach`, so the
+answer flows through the unchanged LM-7 receive path and LM-14's want→salience fires precious. Design fable5;
+impl worktree agent; **SEPARATE auditor**. The audit is WHY this is honest: it CLEARED the crown (reproduced
+byte-identical) and proved the in-binary `[pull-*]` gates have real teeth (sabotaged each → RED), BUT with a
+wave-45 same-harness negative control it established the LIVE cert (samples/47) is **CONFOUNDED** — B is
+taught K locally, so ordinary Path E teach-gossip carries the same (origin,seq) as the pull answer; stubbing
+the pull answer to a no-op STILL passes every gate (Path E alone delivers K). So LM-15's live cert proves
+"the ask/answer mechanism RUNS over the real region + arrival is precious", NOT "the pull rescued a fact
+Path E dropped". Commander applied crown-neutral honesty corrections (doc HONESTY CAVEAT, run.sh CONFOUND
+block, ci.yml, audit-trail) + fixed a 0/1-based node-id error + hardened run.sh against the stale-binary trap.
+The pull LOGIC rests on the toothy in-binary gates; the WIRING + preciousness is what the live cert earns.
+FOLLOW-UP (named, deferred): a TRULY-isolating live cert must drop Path E's K-delivery to A (A outside/not-yet
+-in region during B's K-teach window, then join→wonder→only the engram pull re-delivers; teach-K-then-L is
+necessary-but-not-sufficient). Crown lineage extended: … LM-14 be41bbf6/248633de → LM-15 3e20edbd/b6a748da.
+The arc's verb is now: learn → sleep → self → shared → one-mind → revise → forget → wonder → **ASK (LM-15)**.
+recip (§7 aid-economy self-defense) was DECLINED 2026-07-04 (pure altruism — [[project_survival_network]]).
+Design drafts: scratchpad/lm14_curiosity_design.md, scratchpad/lm15_pullteach_design.md.
+
 Related: [[project_pkernel_philosophy]] (the Evolution layer = 5th worldview layer,
 least built; DMN also grounds the **Self** layer) [[project_survival_network]] (§8
 two-layer) [[project_regions_architecture]] (G22 slow consolidation)

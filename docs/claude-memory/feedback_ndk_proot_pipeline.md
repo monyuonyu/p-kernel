@@ -30,10 +30,20 @@ Recording so the second time costs minutes, not hours.
    mode 744 (only user-executable). The `-111` form requires all
    three execute bits.
 
-4. **Pin AGP's aapt2 to the SDK one.** Add to gradle.properties:
-   `android.aapt2FromMavenOverride=/root/android-sdk/build-tools/34.0.0/aapt2`
-   Without this, AGP extracts a fresh unwrapped aapt2 from its
-   bundled jar on every build, undoing the wrapper.
+4. **Pin AGP's aapt2 to the SDK one — but NOT in the committed file.**
+   The sandbox needs `android.aapt2FromMavenOverride=/root/android-sdk/
+   build-tools/34.0.0/aapt2` (else AGP extracts a fresh unwrapped aapt2
+   from its bundled jar every build, undoing the wrapper). BUT that path
+   is sandbox-only; committing it into `android/gradle.properties` forced
+   the /root path onto Windows/CI/real-x86_64 and SILENTLY BROKE them all
+   (2026-07-12). Put the override in the UNTRACKED
+   `~/.gradle/gradle.properties` (GRADLE_USER_HOME — takes precedence over
+   the project file) so the sandbox builds AND every real host uses AGP's
+   own Maven aapt2. If Android builds here suddenly fail with "Specified
+   AAPT2 executable does not exist", the sandbox's ~/.gradle was wiped —
+   recreate that one line. There is now a CI `android-apk-build` gate
+   (advisory) that runs real `gradlew assembleDebug` on ubuntu-latest, so
+   this class no longer ships silently. See [[feedback-the-debug-env-is-real]].
 
 5. **zlib1g for amd64 isn't on ports.ubuntu.com.** apt's amd64
    multiarch fails on the aarch64 ports mirror (404s). Manually
