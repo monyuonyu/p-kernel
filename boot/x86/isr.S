@@ -312,6 +312,18 @@ irq_common_stub:
 
 # 32ビット互換モードで実行される部分 (CS=0x08)
 irq_call32_stub:
+    # DS/ES/SS をカーネルデータセレクタへ再ロード。
+    # ring3 で走っているタスクを割り込んだ場合、CPU が SS=null をセットし、
+    # DS には USER_DS が残る (exc_call32_stub / syscall_call32_stub と同じ理由)。
+    # SS=null の記述子は B=0 なので、32 ビット互換モードでは push/call/ret が
+    # SP (= ESP & 0xFFFF) を使い、明示オペランドの mov は完全な ESP を使う
+    # ため、スタックが二つに割れる。%eax は irq_num (regparm(1) 第1引数) なので
+    # 使えない。%ecx は irq_common_stub が pushq 済みのスクラッチ。
+    mov  $0x10, %ecx
+    mov  %cx, %ds
+    mov  %cx, %es
+    mov  %cx, %ss
+
     # irq_handler 呼び出し (eax に irq_num, regparm(1))
     call irq_handler
 
