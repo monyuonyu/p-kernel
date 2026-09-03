@@ -1840,6 +1840,31 @@ N-4 cross-host deferred to the ThinkPad).
   `KCC-WILDPC` still has no mechanism. (5) this proves the harness reddens on THIS unfixed tree; it does
   not prove it would redden on a FUTURE vendor-patch loss that deletes a different one of the 9 hardening
   classes — the gate watches one signature, not the class of regressions the `VENDOR-PATCH-LOSS` row names.
+- CROWN RE-BLESS — IRQ stub SS reload, the `KCC-WILDPC` root fix (2026-09-03, `fix/irq-stub-ss-reload`,
+  `b328011c`, fast-forwarded onto master). The bare-metal `.text` changes DELIBERATELY and on ONE target
+  only: the fix is +12 lines of `boot/x86/isr.S` — `irq_call32_stub` now reloads SS, mirroring
+  `exc_call32_stub` and `syscall_call32_stub`, which already did. **aarch64 is byte-identical and is NOT
+  re-blessed** — `isr.S` is x86-only, and the aarch64 crown reproducing UNCHANGED across the two arms is
+  itself a check that the arms differ only where intended. NEW dev crown `.text` sha256 (audit container
+  gcc 13.3.0, `make clean` first, both arms built from the same container in one session; each arm's
+  `isr.S` sha256-matched to its source tree before building):
+    aarch64  c4e255f11941cd90b2c038bd69f21948be0e59dcc59416bfc72f7efe57c3fa5a   (UNCHANGED)
+    x86      d71839d1ba36f8719e44725e1804039d6c767bd833b52a26f8cad1945ae0cde2   (was 4f6f0dc5…48623f13)
+  `.text` 367430 → 367438 B (+8), re-measured with `size -A -x` at land time (0x59b46 → 0x59b4e), not
+  carried over from the build log. Accounted for exactly: `irq_call32_stub` grows **0x0d → 0x18** (+11 —
+  its extent measured to the next symbol `irq_back64_stub`, which is what sits between it and
+  `syscall_call32_stub`), every later symbol shifts by exactly 11 (`irq_back64_stub` 0x100f40→0x100f4b,
+  `syscall_isr` 0x100f4c→0x100f57, `syscall_call32_stub` 0x100f60→0x100f6b), and section alignment
+  padding absorbs 3.
+  HONEST BOUND ON THE REPRODUCTION: the previous crown (below) was made with CI-container gcc 13.2.0 and
+  this one with 13.3.0. The master arm re-built here reproduced 4f6f0dc5… byte-identically, which is what
+  licenses comparing the two — but that makes this a SAME-MAJOR-SERIES rebuild, **not an independent-
+  toolchain reproduction**, and unlike the 2026-08-12 entry below it was reproduced ONCE, by one party.
+  WHY: see the `KCC-WILDPC` row in `docs/architecture/gap-ledger.md` — on an interrupt taken from ring 3
+  the CPU loads SS=null, so the 32-bit compat-mode kernel IRQ path ran on a stack split into a 16-bit and
+  a 32-bit half. Evidence: signature B 3/300 master, 7/300 sham, 0/300 fixed (sham vs fix p=0.0151;
+  **master vs fix alone p=0.2487 — underpowered, stated plainly**); and on `-DKCC_DIAG`, INCOMPLETE boots
+  13/150 master vs 0/150 fixed, p=1.86e-04.
 - CROWN RE-BLESS — KILL-CHURN hardening restored after the μT3.0 migration ate it (2026-08-12,
   `fix/kill-churn-restore`). The bare-metal `.text` changes DELIBERATELY: the fix lives in
   `kernel/mtkernel3/kernel/tkernel/{wait,timer,task,task_manage}.c`, which all 5 targets compile,
