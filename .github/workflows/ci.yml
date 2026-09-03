@@ -57,6 +57,22 @@ jobs:
       - name: check_parity.sh (Android .so + host x86_64<->aarch64 module lists)
         run: tools/android/check_parity.sh
 
+  vendor-patch-inventory:
+    # gap-ledger 行 VENDOR-PATCH-LOSS への第2の梯子段(2026-08-12 のゲートは
+    # 9クラス中1クラスしか見ない)。kernel/mtkernel3/ 上の「ビルドは通るのに
+    # 挙動だけ壊れる」ローカルパッチ13アンカーを固定文字列で数える。
+    # Pure-shell, no toolchain。非BLOCKING(continue-on-error) — ホスト3アーム
+    # (陽性/陰性/不在)でしか検証していないため。GitHub Actions上での陰性コント
+    # ロールは未実証(push できないブランチで壊すテストは走らせられない)。
+    name: "ベンダツリー ローカルパッチ持ち物リスト (非BLOCKING)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: check_local_patches.sh
+        run: sh tests/vendor/check_local_patches.sh .
+
   ump-x86_64:
     name: "UMP x86_64 (ビルド + 自己テスト)"
     runs-on: ubuntu-latest
