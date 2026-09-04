@@ -11,28 +11,39 @@ pull-teach, 良心 conscience floor, migration-succession (generational arch-gap
 scale-wall C1 (context carry), frontier-mouth CONSULT/TEACH, society-of-minds scaling ensemble,
 unbounded-N U-0. All have `docs/architecture/` design docs and INDEX rows; do not re-add them.
 
-**Landed, NOT reflected anywhere (no INDEX row, no V-MODEL rung, no design doc found repo-wide):**
+**Landed, NOT reflected anywhere (no INDEX row, no V-MODEL rung, no design doc found repo-wide) —
+CORRECTION 2026-09-05 same run: initially mis-framed as "unaudited"; that was wrong. Both ARE
+CI-gated with real anti-theater falsifiers and BOTH are green on the latest run (`33812013193`).
+What's actually missing is the design doc / audit-trail narrative, not the verification:**
 - **DMOE-A** (`8f754c3b`, 2026-07-05) — distributed-MoE expert bank; SS-5/SS-6's successor, makes
   fleet capacity actually GROW with N instead of just spreading FLOPs. Code: `arch/common/llm/dmoe_bank.{c,h}`,
-  cert `tests/llm/run_dmoe.sh`. **No design doc exists under `docs/architecture/` for this at all** —
-  checked by filename grep (`dmoe`) across the whole repo, zero doc hits outside code/tests.
+  cert `tests/llm/run_dmoe.sh`, CI job `distributed-MoE capacity ([dmoe-*] bank; hosted-only, crown-neutral)`
+  — **has an explicit anti-theater falsifier** (`ANTI-THEATER: stub the remote transport -> RED`),
+  currently green. **No design doc exists under `docs/architecture/` for this at all** — checked by
+  filename grep (`dmoe`) across the whole repo, zero doc hits outside code/tests/ci.yml comments.
 - **native Windows (mingw-w64 PE) port P1** (`ff163ac1`, 2026-07-05) — boots to console shell,
-  Windows Fibers dispatcher, cooperative (no preempt v1). Same gap: no doc under `docs/architecture/`.
+  Windows Fibers dispatcher, cooperative (no preempt v1). CI job `Windows PE ビルドゲート (mingw-w64,
+  boot/windows/x86_64)` asserts the output is a real PE32+ binary, currently green. Same doc gap:
+  no file under `docs/architecture/`.
 - **DLB — test-time deliberation** (`3ecb0413`, `22a43de1`, `412ab044`) — HAS a design doc
   (`depth_iq_path_design.md`, INDEX row exists, `working` tier) but the production-hardening
   follow-ups (compounding-loop close, per-trace distill budget+gc) landed after the doc/INDEX
   pass and are not mentioned in its one-liner. Low priority — the doc row is not wrong, just thin.
 
-**Separate, arguably bigger finding: `docs/audit-trail.md` itself has an unexplained gap.**
+**Separate finding: `docs/audit-trail.md` itself has an unexplained gap.**
 Its last dated entry before 2026-09-05 was the unbounded-N U-0 re-bless (**2026-07-05**); the next
 dated entry is the IRQ-stub SS-reload work (**2026-08-12**) — five and a half weeks with zero
 audit-trail commits, verified via `git log -- docs/audit-trail.md` (commit `835a09cb` 07-05 →
 `1fdc1e3b` 08-12). DMOE-A, the Windows port, and the DLB hardening commits above all fall inside
-that window. **This routine did not determine whether those features actually went through the
-implement→audit→commander cycle with the record just not written up, or whether the cycle itself
-was skipped for them** — that distinction matters (constitution: audit is the immune system) and
-needs a human or a dedicated audit pass to resolve, not a doc-sync run. Flagged to the baton's
-判断待ち list rather than guessed at here.
+that window. **Narrowed 2026-09-05, same run:** DMOE-A and the Windows port both have real,
+green, anti-theater-falsified CI gates (see above) — so the *verification* almost certainly
+happened; what's missing is specifically the **written record** (design doc + audit-trail prose),
+not evidence that the implement→audit→commander cycle was skipped. That's a real gap (this project's
+own rule is "the audit is the immune system," and an unwritten audit is hard to trust or reuse
+later) but a smaller, more mechanical one than first framed: **it needs someone to write the design
+doc and backfill audit-trail.md from the existing commits/CI logs, not to re-run verification from
+scratch.** Left in 判断待ち because writing retroactive design docs is closer to a design/authoring
+call than a doc-sync fact-check, and this routine did not want to guess at design intent unattended.
 
 ---
 
