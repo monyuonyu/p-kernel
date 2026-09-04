@@ -94,6 +94,7 @@ Each design doc → its cert (CI job / self-test tag / live job). Rung status:
 |---|---|---|---|
 | compatibility.md | old & new nodes don't split (generational succession) | `[migrate-forward]` (compat migration-chain) | ✓ CLOSED |
 | compat-migration-chain-plan.md | per-version migration chain + signed-OTA gate | `[migrate-forward]` + `[sign-*]` | ✓ CLOSED |
+| vendor-patch-inventory.md | enumerate local patches on the vendored `kernel/mtkernel3/` tree so a swap that drops one goes red | `tests/vendor/check_local_patches.sh` (non-blocking CI job) | ◐ PARTIAL — positive control confirmed on CI (2026-09-05); negative control (a broken-anchor branch pushed to GitHub Actions) still unverified there |
 
 ### L2 — 20-architecture/
 
@@ -117,12 +118,23 @@ Each design doc → its cert (CI job / self-test tag / live job). Rung status:
 | moe-distillation-survey.md | borrow vs distill own MoE (study) | — (survey) | N/A survey |
 | native-student.md | a brain sized to the vessel, grown from a baby | `shipped-llm-certs` (student); NS-1 `student_test.c` | ✓ CLOSED |
 | full-smp-plan.md | SMP the kernel without splitting the mind (②.0–②.2) | `smp-autodetect` (`[smp-autodetect]`, run_smp0.sh) | ✓ CLOSED (②.0–②.2; ②.3 roadmap) |
+| scaling-law.md | honest decomposition of "bigger N = smarter": breadth/resilience/throughput scale, per-thought depth does not (ensemble designed) | `[scaling-*]` | ◐ PARTIAL — ensemble mechanism designed, not fully certed |
+| web-os.md | a human-facing Web OS served from the node, chat-format galaxy | — | ○ OPEN |
 
 ### L3 — 30-module/
 
 | doc | design claim | cert | rung |
 |---|---|---|---|
 | living-mind.md | continuously-taught ownerless mind (LM-1..11) | `[dmn-*]` `[handoff-*]` `[stream-*]` `[lang-*]` `[salience-*]` `[self-*]` `[onemind-*]` `[wmerge-*]` | ✓ CLOSED |
+| living-mind-lm12-belief-revision.md | revise a consolidated belief via the same DMN sleep path (displace + Path E propagate) | `[rev-*]` (`mind revise`) | ✓ CLOSED |
+| living-mind-lm13-forgetting.md | full fact-queue forgets the least earned-salient fact | `[forget-*]` (`mind forget`) | ✓ CLOSED |
+| living-mind-lm14-curiosity.md | remembers what it was asked but didn't know (want-table), converts to precious once taught | `[curio-*]` (`mind curious`) | ✓ CLOSED |
+| living-mind-lm15-pullteach.md | the mind ASKs the region for a missing key; holder re-teaches | `[pull-*]`; `pull-teach-live` | ✓ CLOSED |
+| frontier-mouth.md | ownerless mind's optional socket onto stronger brains (CONSULT/TEACH; borrowed voice, conscience-gated, never writes self) | `[frontier-*]`/`[teach-prov]` | ✓ CLOSED |
+| depth_iq_path_design.md | depth (IQ) from COMPUTE not headcount — reflex drafts searched/verified, winners amortized into weights via sleep (DLB) | `[depth-*]` (`run_depth.sh`) | ✓ CLOSED |
+| scale-wall-c1.md | first rung of "real conversation" — context carry for told facts (RoPE + window 256) | `[ctx-carry]` (`run_ctxcarry.sh`) | ✓ CLOSED |
+| conscience.md | 良心 — the immutable ethics floor, four-chokepoint gate on every emission path | `[law-*]`/`[conscience-*]` | ✓ CLOSED |
+| survival-recip.md | §7 recipient-side recip mutual-aid gate (pair of gacc) | `[recip-*]` (not implemented) | DECLINED 2026-07-04 — mk_pino chose pure altruism (no self-defense); design kept as a historical stratum, not a rung to close |
 | ark-profile.md | human-chapter autobiography + i18n | `[ark-consent]` `[ark-profile]` `[ark-provenance]` `[i18n-manifesto]` | ✓ CLOSED |
 | galaxy.md | per-node observation window | `[galaxy-serve]` `[galaxy-events]` `[galaxy-teach]` | ✓ CLOSED |
 | persistence.md | the ark that does not forget (durable layer) | `[persist-identity]` `[persist-mind]` `[persist-mind-stale]` | ✓ CLOSED |
@@ -141,6 +153,7 @@ Each design doc → its cert (CI job / self-test tag / live job). Rung status:
 | device-capacity.md | modulate load by device capability | `[device-fit]` (DEVFIT-1 mind-sizing) + falsifier | ◐ PARTIAL — tier/continuous modulation design-only |
 | dynamic-id.md | churn-tolerant node-id | `[swim-incarn]` (relay lease) | ◐ PARTIAL — full P2P id design-only |
 | self-access.md | a node touches its own body (read-only slice) | — (first slice; no dedicated CI cert) | ○ OPEN |
+| self-access-design.md | full self-access design — inner-body sense + grown organs (MCP inverted, R0→R2, branch pending mk_pino) | — | ○ OPEN |
 | gpu-compute.md | run the mind's math on device GPU (Vulkan) | — (matmul backend shipped; mind-integration uncerted) | ○ OPEN |
 | gpu-3-wiring.md | wire Vulkan matmul into the mind | — (audit verdict: DEFER implementation) | ○ OPEN (deferred) |
 | webd-user-space.md | move the web server out of the substrate | — (Slice A partial; no cert) | ○ OPEN |
@@ -161,6 +174,7 @@ Each design doc → its cert (CI job / self-test tag / live job). Rung status:
 | ring3-core.md | move the self-modifying core to ring3/EL0 | `ring3-survival`: `[iso-userptr]` `[ring3-survival]` `[ring3-mind]` `[dproc-teardown]` `[fpu-ctx]` | ◐ PARTIAL — inference path certed; training modules design |
 | selfc-ring3.md | self-built unit inside the immune boundary | `[selfc-isolated]` `[selfc-rollback]` `[selfc-lineage]` | ✓ CLOSED |
 | self-compile.md | self-compile (selfc) first milestone | `[selfc-isolated]` `[selfc-rollback]` `[selfc-lineage]` | ✓ CLOSED |
+| migration-succession.md | a mind carries identity + knowledge across an arch gap without dying (generational succession, v1) | `[generation-survives]`/`[gen-floor-invariant]` | ✓ CLOSED |
 
 ### L0 — 00-concept/
 
@@ -172,14 +186,28 @@ above is a piece of its verification. This is the top-of-V ⇄ acceptance rung.
 
 ## Rung tally (the finding)
 
-Of the **50** hot docs (excluding the L0 CONOPS which the whole right arm verifies):
+> **2026-09-05 re-tally (unattended routine, mechanical only).** The 2026-07-01 count below was
+> frozen before 13 docs that already exist and are already in [[INDEX.md]] (LM-12..15, conscience,
+> depth_iq_path_design, frontier-mouth, scale-wall-c1, migration-succession, scaling-law,
+> self-access-design, web-os, survival-recip) ever got a row here, plus `vendor-patch-inventory.md`
+> (new 2026-09-03). Rows were transcribed from INDEX.md's own V/cert/tier columns, not re-derived —
+> this pass did not re-run or re-verify any of those certs, it only closed the INDEX↔V-MODEL gap.
+> Counted by script over every `| doc.md | ... | rung |` row in this file.
+
+Of the **63** hot docs (excluding the L0 CONOPS which the whole right arm verifies):
 
 | rung | count | which |
 |---|---|---|
-| **✓ CLOSED** (design↔cert complete) | **30** | most of L1/L2/L3 + verify + 2 evolution |
-| **◐ PARTIAL** (early slice certed, later slices design-only) | **8** | decentralized-lookup, federation, p2p-overlay, special-structure-mind, interoception, device-capacity, dynamic-id, ring3-core |
-| **○ OPEN** (design doc, no cert = broken rung) | **7** | memory-thought, self-access, gpu-compute, gpu-3-wiring, webd-user-space, living-body-inspector, n1-lan-direct-plan |
-| **N/A** (survey / rationale / CONOPS) | **5** | survival-network (concept), r3-model-widening (rationale), base-model-survey, moe-distillation-survey, conversation |
+| **✓ CLOSED** (design↔cert complete) | **39** | most of L1/L2/L3 + verify + evolution |
+| **◐ PARTIAL** (early slice certed, later slices design-only) | **10** | vendor-patch-inventory, decentralized-lookup, federation, p2p-overlay, scaling-law, special-structure-mind, interoception, device-capacity, dynamic-id, ring3-core |
+| **○ OPEN** (design doc, no cert = broken rung) | **9** | memory-thought, web-os, self-access, self-access-design, gpu-compute, gpu-3-wiring, webd-user-space, living-body-inspector, n1-lan-direct-plan |
+| **N/A** (survey / rationale / CONOPS) | **4** | r3-model-widening (rationale), base-model-survey, moe-distillation-survey, conversation — (survival-network counted separately as L0 CONOPS, outside this table) |
+| **DECLINED** (design kept as historical stratum, not a rung to close) | **1** | survival-recip (mk_pino chose pure altruism 2026-07-04) |
+
+**Still not done, flagged not fixed:** DMOE-A and the native Windows PE port shipped 2026-07-05
+with no design doc anywhere in `docs/architecture/` (see [[BACKLOG.md]]'s 2026-09-05 resync block) —
+they cannot get a V-MODEL row until a doc exists to hold one. That is a bigger gap than a missing
+table row and needs a human/design pass, not a doc-sync.
 
 **Reading of the finding:** the *shipped organs* are almost all closed rungs; the
 open/partial rungs cluster in exactly two frontiers — **embodiment/observation**
@@ -188,6 +216,9 @@ transport/scale** (n1-lan-direct, federation F1–F3, lookup L2/L3, p2p NAT). Th
 are the honest broken V-rungs. gap-ledger's OPEN table is 0 because those rows are
 all CI-enforced *shipped* work; the OPEN rungs here are **design-ahead-of-cert**,
 a different and complementary kind of gap — surfaced by the V for the first time.
+**2026-09-05 addendum:** DMOE-A and the Windows PE port are a THIRD kind, worse than either —
+**cert-ahead-of-design** (code + tests shipped, zero design doc), invisible to this table because
+there is no row to add them to. See the tally note above.
 
 ---
 
