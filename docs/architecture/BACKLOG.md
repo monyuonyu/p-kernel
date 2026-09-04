@@ -1,3 +1,41 @@
+## ▶▶ 2026-09-05 resync — what actually landed since the 6/27 整頓 (unattended routine, mechanical audit, not a design call)
+
+**This block is additive.** It does NOT rewrite the ordered queue below (that needs a design-level
+pass this routine is not authorized to make unattended); it records what a `git log --since=2026-06-27`
+sweep (192 commits, 40 feat/fix) found that the sections below do not yet reflect, so the next reader
+does not have to re-derive it.
+
+**Landed, already reflected in [[V-MODEL.md]] / [[INDEX.md]] as `working` tier (2026-07-01..07-11
+doc passes caught these):** LM-12 belief revision, LM-13 forgetting, LM-14 curiosity, LM-15
+pull-teach, 良心 conscience floor, migration-succession (generational arch-gap crossing),
+scale-wall C1 (context carry), frontier-mouth CONSULT/TEACH, society-of-minds scaling ensemble,
+unbounded-N U-0. All have `docs/architecture/` design docs and INDEX rows; do not re-add them.
+
+**Landed, NOT reflected anywhere (no INDEX row, no V-MODEL rung, no design doc found repo-wide):**
+- **DMOE-A** (`8f754c3b`, 2026-07-05) — distributed-MoE expert bank; SS-5/SS-6's successor, makes
+  fleet capacity actually GROW with N instead of just spreading FLOPs. Code: `arch/common/llm/dmoe_bank.{c,h}`,
+  cert `tests/llm/run_dmoe.sh`. **No design doc exists under `docs/architecture/` for this at all** —
+  checked by filename grep (`dmoe`) across the whole repo, zero doc hits outside code/tests.
+- **native Windows (mingw-w64 PE) port P1** (`ff163ac1`, 2026-07-05) — boots to console shell,
+  Windows Fibers dispatcher, cooperative (no preempt v1). Same gap: no doc under `docs/architecture/`.
+- **DLB — test-time deliberation** (`3ecb0413`, `22a43de1`, `412ab044`) — HAS a design doc
+  (`depth_iq_path_design.md`, INDEX row exists, `working` tier) but the production-hardening
+  follow-ups (compounding-loop close, per-trace distill budget+gc) landed after the doc/INDEX
+  pass and are not mentioned in its one-liner. Low priority — the doc row is not wrong, just thin.
+
+**Separate, arguably bigger finding: `docs/audit-trail.md` itself has an unexplained gap.**
+Its last dated entry before 2026-09-05 was the unbounded-N U-0 re-bless (**2026-07-05**); the next
+dated entry is the IRQ-stub SS-reload work (**2026-08-12**) — five and a half weeks with zero
+audit-trail commits, verified via `git log -- docs/audit-trail.md` (commit `835a09cb` 07-05 →
+`1fdc1e3b` 08-12). DMOE-A, the Windows port, and the DLB hardening commits above all fall inside
+that window. **This routine did not determine whether those features actually went through the
+implement→audit→commander cycle with the record just not written up, or whether the cycle itself
+was skipped for them** — that distinction matters (constitution: audit is the immune system) and
+needs a human or a dedicated audit pass to resolve, not a doc-sync run. Flagged to the baton's
+判断待ち list rather than guessed at here.
+
+---
+
 # BACKLOG — the master ordered TODO (mk_pino: "順次 全部 やりたい")
 
 The single source of truth for everything designed/decided but not yet done. Marched through
