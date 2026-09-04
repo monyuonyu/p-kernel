@@ -23,7 +23,7 @@
 > **不変条件（ドリフト防止）:** `docs/architecture/**/*.md` の **すべて**が、この索引に
 > **ちょうど一度**現れること。ドキュメントを足した/`archive/` へ移した/改名/移設したら、
 > 同じコミットでこの表を更新する（archive 済みは索引に載せず [[archive/README.md]] に載る）。
-> 最終更新: **2026-07-01（V-MODEL restructure）**。
+> 最終更新: **2026-09-05（vendor-patch-inventory.md 追加を反映; 不変条件を機械検査で再確認）**。
 
 ---
 
@@ -129,6 +129,7 @@
 |---|---|---|---|---|
 | [[compatibility.md]] | 古いノードと新しいノードが分裂しない世代継承戦略（compat 層 SHIPPED） | L1 | `[migrate-forward]` | working |
 | [[compat-migration-chain-plan.md]] | 版ごと migration chain＋signed-OTA ゲート（SHIPPED） | L1 | `[migrate-forward]` + `[sign-*]` | working |
+| [[vendor-patch-inventory.md]] | ベンダツリー(`kernel/mtkernel3/`)上のローカルパッチ持ち物リスト＋検査（gap-ledger `VENDOR-PATCH-LOSS`; CI 配線済み・非BLOCKING、陰性コントロールはCI上で未検証） | L3 | `tests/vendor/check_local_patches.sh`（非BLOCKING） | working |
 
 ## meta — 索引・台帳・レビュー（root; not a rung）
 
