@@ -23,7 +23,7 @@
 > **不変条件（ドリフト防止）:** `docs/architecture/**/*.md` の **すべて**が、この索引に
 > **ちょうど一度**現れること。ドキュメントを足した/`archive/` へ移した/改名/移設したら、
 > 同じコミットでこの表を更新する（archive 済みは索引に載せず [[archive/README.md]] に載る）。
-> 最終更新: **2026-09-05（vendor-patch-inventory.md 追加を反映; 不変条件を機械検査で再確認）**。
+> 最終更新: **2026-09-05（distributed_moe_design.md / windows-pe-port.md 追加を反映; 不変条件を機械検査で再確認）**。
 
 ---
 
@@ -44,6 +44,7 @@
 | [[r3b-breathing-params.md]] | 呼吸するパラメータ＝expert 専門分化（R3b） | L3 | `18_breathing` | working |
 | [[r3-model-widening.md]] | 網を太らせて分散を必然にする論拠（living-mind で回答済の 年輪） | L2 | — (年輪 rationale) | designing |
 | [[special-structure-mind.md]] | fleet 規模・疎・跨ノードの統一された心（SS-1..6 live, SS-7 設計） | L3 | `[expert-growth-preserves]`（SS-7 open） | working |
+| [[distributed_moe_design.md]] | SS-5/SS-6の後継＝bank expertをHRW owner群へシャード＋router行を複製し、台数で本当に伸びる容量（DMOE-A） | L3 | `[dmoe-*]`（distributed-moe job） | working |
 | [[inference-engine.md]] | 自前 LLM 推論エンジン＝GGUF ローダ＋量子化 matmul（M1） | L2 | `shipped-llm-certs` | working |
 | [[memory-thought.md]] | forward パスが p-fs を読む＝記憶→思考の配線（wave 8） | L2 | — (open rung) | working |
 | [[student-blob-transport.md]] | 可変長 student blob を運ぶ transport 再設計（SS-3 live） | L3 | `run_ss3_blob.sh` | working |
@@ -100,6 +101,7 @@
 |---|---|---|---|---|
 | [[device-capacity.md]] | 端末の性能で担当量を変調（cluster 正準；DEVFIT-1 mind-sizing SHIPPED §0.5, tier/連続変調は設計） | L3 | `[device-fit]`（tier open） | designing |
 | [[gpu-compute.md]] | 端末 GPU で心の数理を回す（Vulkan matmul backend SHIP 済, 心への統合は設計） | L3 | — (open rung) | designing |
+| [[windows-pe-port.md]] | ネイティブ Windows(mingw-w64 PE) への P1 移植＝新種の器（Fiber ディスパッチャ、協調スケジューラ、LLP64 修正）。ビルドは BLOCKING、実行検証は未 | L3 | `windows-pe-build`（ランタイム未検証） | working |
 | [[gpu-3-wiring.md]] | Vulkan matmul を心に配線（監査 verdict: DEFER implementation） | L3 | — (DEFER) | designing |
 
 ## ark / ux — 方舟・UX（人の目に見える星と、自分の体の観測）

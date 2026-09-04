@@ -147,6 +147,8 @@ Each design doc → its cert (CI job / self-test tag / live job). Rung status:
 | fault-recovery.md | task isolation + respawn from p-fs weights | live `survival-loop`; KILL-CHURN cured | ✓ CLOSED (live) |
 | r3b-breathing-params.md | breathing params = expert specialization | `18_breathing` | ✓ CLOSED |
 | special-structure-mind.md | fleet-scale sparse cross-node unified mind | `[expert-growth-preserves]` (SS-4); SS-1..6 live | ◐ PARTIAL — SS-7 design-only |
+| distributed_moe_design.md | DMOE-A — bank experts sharded onto HRW owners + replicated router row, so capacity actually grows with fleet N (SS-5/SS-6 successor) | `[dmoe-*]` (`distributed-moe` CI job), 15/15 in-proc PASS incl. anti-theater falsifiers | ◐ PARTIAL — multi-process `[live]` relay rows + aarch64 cross-arch determinism diff NOT wired; bank-SERVE and rehome-repair deferred (per ci.yml FOLLOW-UP) |
+| windows-pe-port.md | native Windows (mingw-w64 PE) P1 console boot — Fiber dispatcher, cooperative scheduler, LLP64 pointer fix | `windows-pe-build` (cross-compile + PE32+ assertion, BLOCKING since 2026-07-12) | ◐ PARTIAL — build gate only; no runtime/console-boot verification exists (no wine smoke, no self-hosted-Windows job) |
 | student-blob-transport.md | variable-length student blob transport (SS-3) | `run_ss3_blob.sh` (`student_blob_test.c`) | ✓ CLOSED (in-proc) |
 | survival-g38-impl-plan.md | §7/G38 distributed-gating wiring plan | `[g38-*]` (realized) | ✓ CLOSED |
 | interoception.md | node "pain" onto one `S_n` bus | `[survival-l0]` STATE bus (Slice-1) | ◐ PARTIAL — Slice-2 apoptosis design-only |
@@ -193,32 +195,37 @@ above is a piece of its verification. This is the top-of-V ⇄ acceptance rung.
 > (new 2026-09-03). Rows were transcribed from INDEX.md's own V/cert/tier columns, not re-derived —
 > this pass did not re-run or re-verify any of those certs, it only closed the INDEX↔V-MODEL gap.
 > Counted by script over every `| doc.md | ... | rung |` row in this file.
+>
+> **2026-09-05, same day, second pass (unattended routine):** `distributed_moe_design.md` and
+> `windows-pe-port.md` were backfilled (see those docs' own "how this doc was written" notes —
+> commit body + ci.yml comments only, no source re-read, no fresh audit) and given rows above.
+> Both are marked ◐ PARTIAL, not ✓ CLOSED: DMOE-A's cert is real and green but the commit's own
+> ci.yml FOLLOW-UP comment says the multi-process `[live]` relay rows and the cross-arch
+> determinism diff are not wired; the Windows port's cert proves the cross-compile only, with no
+> runtime/console-boot verification anywhere. This closes the "cert-ahead-of-design" gap the
+> 2026-09-05 addendum below flagged a few hours earlier — but it does not create a false CLOSED;
+> the honest state is a design doc that now exists, pointing at a cert that is still short of the
+> mechanism's full claim.
 
-Of the **63** hot docs (excluding the L0 CONOPS which the whole right arm verifies):
+Of the **65** hot docs (excluding the L0 CONOPS which the whole right arm verifies):
 
 | rung | count | which |
 |---|---|---|
 | **✓ CLOSED** (design↔cert complete) | **39** | most of L1/L2/L3 + verify + evolution |
-| **◐ PARTIAL** (early slice certed, later slices design-only) | **10** | vendor-patch-inventory, decentralized-lookup, federation, p2p-overlay, scaling-law, special-structure-mind, interoception, device-capacity, dynamic-id, ring3-core |
+| **◐ PARTIAL** (early slice certed, later slices design-only) | **12** | vendor-patch-inventory, decentralized-lookup, federation, p2p-overlay, scaling-law, special-structure-mind, interoception, device-capacity, dynamic-id, ring3-core, distributed_moe_design, windows-pe-port |
 | **○ OPEN** (design doc, no cert = broken rung) | **9** | memory-thought, web-os, self-access, self-access-design, gpu-compute, gpu-3-wiring, webd-user-space, living-body-inspector, n1-lan-direct-plan |
 | **N/A** (survey / rationale / CONOPS) | **4** | r3-model-widening (rationale), base-model-survey, moe-distillation-survey, conversation — (survival-network counted separately as L0 CONOPS, outside this table) |
 | **DECLINED** (design kept as historical stratum, not a rung to close) | **1** | survival-recip (mk_pino chose pure altruism 2026-07-04) |
 
-**Still not done, flagged not fixed:** DMOE-A and the native Windows PE port shipped 2026-07-05
-with no design doc anywhere in `docs/architecture/` (see [[BACKLOG.md]]'s 2026-09-05 resync block) —
-they cannot get a V-MODEL row until a doc exists to hold one. That is a bigger gap than a missing
-table row and needs a human/design pass, not a doc-sync.
-
 **Reading of the finding:** the *shipped organs* are almost all closed rungs; the
 open/partial rungs cluster in exactly two frontiers — **embodiment/observation**
 (self-access, living-body-inspector, webd, gpu-compute/gpu-3-wiring) and **new
-transport/scale** (n1-lan-direct, federation F1–F3, lookup L2/L3, p2p NAT). These
-are the honest broken V-rungs. gap-ledger's OPEN table is 0 because those rows are
-all CI-enforced *shipped* work; the OPEN rungs here are **design-ahead-of-cert**,
-a different and complementary kind of gap — surfaced by the V for the first time.
-**2026-09-05 addendum:** DMOE-A and the Windows PE port are a THIRD kind, worse than either —
-**cert-ahead-of-design** (code + tests shipped, zero design doc), invisible to this table because
-there is no row to add them to. See the tally note above.
+transport/scale** (n1-lan-direct, federation F1–F3, lookup L2/L3, p2p NAT), plus the
+two freshly-documented PARTIAL rungs above. These are the honest broken V-rungs.
+gap-ledger's OPEN table is 0 because those rows are all CI-enforced *shipped* work;
+the OPEN/PARTIAL rungs here are **design-ahead-of-cert** (or, for DMOE-A/Windows,
+were briefly **cert-ahead-of-design** until this pass gave them a doc) — a
+different and complementary kind of gap — surfaced by the V for the first time.
 
 ---
 
