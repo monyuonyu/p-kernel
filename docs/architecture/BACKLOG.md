@@ -6,8 +6,10 @@
 > [[windows-pe-port.md]] (commits `6d6602ed`/`6bcc5e81`, INDEX/V-MODEL rows added). This run
 > (2026-09-06) backfilled the missing `docs/audit-trail.md` entries for both (appended at file end,
 > commit `10d47403`) — both entries are explicit that they transcribe the commit + `ci.yml` comments,
-> not an independent re-audit. The DLB doc-thinness item below is untouched (still open, still low
-> priority). Full method/caveats for the DMOE-A/Windows-port write-ups are in each doc's own
+> not an independent re-audit. The DLB doc-thinness item below is **also closed now**, same run:
+> [[depth_iq_path_design.md]] §3.4a backfills the Wave-D1/D2 production-wiring and budget/gc
+> commits (`22a43de1`/`412ab044`) that the original doc predates. Full method/caveats for the
+> DMOE-A/Windows-port write-ups are in each doc's own
 > "how this doc was written" note; see also `vendor-patch-inventory.md` for this same run's
 > unrelated layer-B work.
 
