@@ -129,7 +129,41 @@ v1 の本番は **V-exact-verified な trace だけ**蒸留する（`require_ver
 「それを蒸留すると held-out 深さが *劣化*する」ことを証明できる（§6.2 Arm D）。この劣化が RED になることが、
 このループを許可する根拠そのものである。
 
-### 3.5 step threshold（正直な下限）
+### 3.4a 本番配線とbudget/gc — Wave-D1/D2（2026-09-06 backfill、doc/INDEX後追い）
+
+> **この節の書き方の注記**: `docs/architecture/BACKLOG.md`の2026-09-05 resyncが「compounding-loop
+> close と per-trace distill budget+gc がこのdocの一行要約に反映されていない」と指摘した項目。
+> 材料はコミット`22a43de1`/`412ab044`の本文のみで、`dlb.c`/`student_shell.c`のソースは
+> このbackfillのために改めて読んでいない（[[distributed_moe_design.md]]/[[windows-pe-port.md]]と
+> 同じ制約）。
+
+上の§3.4は`3ecb0413`（cert battery付きの本体実装）時点の記述で、**その時点では本番の呼び出し経路が
+無かった**——`student_dmn_consolidate()`は蒸留するが、`dlb_answer`/`dlb_compound_enqueue`を呼ぶ
+本番パスが無く、ringは常に空、蒸留は恒久的なno-opだった（コミット本文いわく "the ring was always
+empty and the distill a permanent no-op"）。
+
+**Wave-D2（`22a43de1`、2026-07-12）が実配線した**: `student_chat_generate()`が生成ステップだけを
+分岐し、算数の質問（`^\s*(-?\d{1,4})\s*([+\-*])\s*(-?\d{1,4})\s*=\s*$`にマッチ）だけ
+`dlb_answer`（探索×検証、K=16）で答え、他の全プロンプトは同一seed/同一引数のbyte-identicalな
+`st_generate_stream`経路のまま。両方とも既存のCONS_SITE_CHAT_REPLYの保留＋解放を経由し、
+**conscienceがALLOWした後にだけ**検証済みの勝者をenqueueする（拒否された内容は話されも
+学習されもしない）。`student dlb [off]`という検証用verbが追加され、`off`は非算数プロンプトが
+決してenqueueされないことを主張する。crown neutralityはコミット本文で
+「dlb.c/student_shell.cはhosted-only、aarch64のbare-metal `.text`はmasterとsha256byte一致」
+と述べられている（このbackfillでは再現していない）。
+
+**Wave-D1（`412ab044`、2026-07-11、D2より前に着地）が無限蒸留を止めた**: D2でライブ配線すると、
+検証済みtraceが睡眠tickのたびに**永遠に**再蒸留され続け（過学習＋恒久的なper-tickコスト）、
+`DLB_RING_MAX=64`が飽和して新規enqueueを拒否する問題があった。`dlb_trace`に`rounds_done`を追加し
+`DLB_TRACE_ROUNDS_MAX=30`（＝certの単発蒸留量と同じ、tick分割されたライブ蒸留が同じ合計に
+収束するように）で予算を切り、`dlb_compound_gc()`が予算超過traceと未検証の残骸を
+前詰めで除去する（リング全体リセットではなく`rounds_done`基準）。コミット本文は
+「masterのcertがdistill間でリングをリセットする挙動とbehaviour-identical」
+（`run_depth.sh 14/14`、決定性ハッシュ3本ともmasterとbyte一致）と主張している。
+
+**この節の限界**: 2コミットの本文のみが材料で、独立検証はしていない。§3.4本文自体は
+書き換えていない（`3ecb0413`時点の説明として正しいまま）——本番配線とbudget/gcは
+別のwaveとして追記する形にした。
 
 deliberation が「モデル内部の推論」を増幅するには、モデルが単一 hop を chance より上で踏めている必要がある。
 本赤子はその閾値の**下**（greedy single-hop ≈ chance）。よって v1 の利得は **V-exact の探索＋検証の勝ち
