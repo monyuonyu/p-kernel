@@ -1,5 +1,16 @@
 ## ▶▶ 2026-09-05 resync — what actually landed since the 6/27 整頓 (unattended routine, mechanical audit, not a design call)
 
+> **UPDATE 2026-09-06 (unattended routine):** the DMOE-A / Windows-PE-port doc gap and the
+> `docs/audit-trail.md` gap named below are both closed. Per mk_pino's 2026-09-05 03:05 instruction
+> ("無人 run に書かせる"), a run that day wrote [[distributed_moe_design.md]] and
+> [[windows-pe-port.md]] (commits `6d6602ed`/`6bcc5e81`, INDEX/V-MODEL rows added). This run
+> (2026-09-06) backfilled the missing `docs/audit-trail.md` entries for both (appended at file end,
+> commit `10d47403`) — both entries are explicit that they transcribe the commit + `ci.yml` comments,
+> not an independent re-audit. The DLB doc-thinness item below is untouched (still open, still low
+> priority). Full method/caveats for the DMOE-A/Windows-port write-ups are in each doc's own
+> "how this doc was written" note; see also `vendor-patch-inventory.md` for this same run's
+> unrelated layer-B work.
+
 **This block is additive.** It does NOT rewrite the ordered queue below (that needs a design-level
 pass this routine is not authorized to make unattended); it records what a `git log --since=2026-06-27`
 sweep (192 commits, 40 feat/fix) found that the sections below do not yet reflect, so the next reader
