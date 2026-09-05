@@ -2110,3 +2110,66 @@ N-4 cross-host deferred to the ThinkPad).
   RED, reproducing the old theater numbers), and the disease is a REAL compile-failure control binary. The
   theater commit is squashed OUT of master; this ledger keeps its record (honest history). Commander reproduced
   both crowns byte-identical before the re-bless.
+
+- DMOE-A distributed-MoE expert bank (SHIPPED 2026-07-05, commit `8f754c3b`; CI job `distributed-moe` green,
+  confirmed on run `33812013193` 2026-09-03). **BACKFILLED 2026-09-05** into [[distributed_moe_design.md]] by
+  the unattended routine per mk_pino's instruction ("無人 run に書かせる", 2026-09-05 03:05); **this ledger
+  entry added 2026-09-06, also backfilled.** Mechanism, per the commit: SS-6 (see
+  [[special-structure-mind.md]] §6) already let a node fire an expert it does not hold, but only by
+  recomputing it LOCALLY on timeout — more FLOPs, never more capacity. DMOE-A inverts that: a bank expert's
+  FFN blocks are SHARDED onto its HRW owners (reusing `placement.c`'s `st_expert_owners_in` read-only,
+  unmodified) and its router row is REPLICATED, so a node can score and route to an expert it neither holds
+  nor recomputes; an FNV version pin over blocks+core-epoch turns any skew into a fail-closed REFUSAL, never
+  a silent wrong answer. `student.c` gains a joint `router_pick` over `[floor | bank]` that still respects
+  `ST_KMAX`; an unreachable bank expert is DROPPED and the survivors re-softmax deterministically
+  (`degraded(k/n)`), never a local recompute fallback. Bank-inactive forward is claimed byte-identical to the
+  pre-DMOE student (regression guarantee, not independently re-verified by the backfill). Crown neutrality
+  per the commit: all of `arch/common/llm/*` + `ss6_live.c` is hosted-tier only; bare-metal `.text` is
+  UNCHANGED from the pre-DMOE crown (`aarch64 7f3fbda4…` / `x86 260da329…` — no re-bless, nothing in the
+  bare-metal link moved) — **not independently reproduced by this backfill pass** (implementer≠auditor rule;
+  that reproduction is a separate, still-open step). Cert battery `[dmoe-*]`: commit claims 15/15 PASS
+  in-process (bank-empty-identity, nonresident+NaN-canary, bit-ref against an oracle with an anti-theater
+  stub-transport arm that must go RED, version-skew refuse+force-accept-diverge, kill-degrade, solo-floor,
+  genericity, capacity-number); `[dmoe-capacity-grows]` is explicitly reported, not tuned, and is a
+  pre-registered NULL at toy scale under a drifted core (the commit cites its own §§10.1/10.5 for the
+  geometry — **this backfill could not reconstruct what those sections contain**, because the only material
+  used was the commit body and the `ci.yml` job comment, deliberately not `dmoe_bank.c`/`student.c` source,
+  per the backfill instruction; guessing mk_pino's intended section numbering was explicitly out of scope).
+  **NOT yet wired in hosted CI** (quoted from the `ci.yml` FOLLOW-UP comment): the multi-process SS6L v2
+  relay `[live]` rows and the aarch64-vs-x86_64 cross-arch determinism diff — both ThinkPad-self-hosted-only,
+  neither exists as a job yet. Also deferred: SS6L v2 bank-SERVE (floor only today) and
+  `[dmoe-rehome-repair]`/repair blob-pull. **This entry is a transcription of the commit + ci.yml, not an
+  independent audit** — see [[vendor-patch-inventory.md]] for the unrelated methodology this same run used
+  elsewhere, and `pkernel-baton.md` for what remains judgment-call (the unresolved §7/§7.5/§10.1/§10.5
+  cross-references).
+
+- Windows (mingw-w64 PE) port P1, console boot (SHIPPED 2026-07-05, commit `ff163ac1`; CI job
+  `windows-pe-build` PROMOTED TO BLOCKING 2026-07-12 after 4 green hosted runs in a row). **BACKFILLED
+  2026-09-05** into [[windows-pe-port.md]] under the same instruction and constraint as the DMOE-A entry
+  above; **this ledger entry added 2026-09-06, also backfilled, same material-only constraint** (commit body
+  + `ci.yml` job comment; `dispatch.c`/`memory.c`/the Winsock shim were not re-read for extra detail).
+  Delivers a new μT-Kernel 3.0 target `_WINDOWS_X86_64_`: the dispatcher is Windows Fibers
+  (`ConvertThreadToFiber` + one `CreateFiber` per task, handle stored in `tcb->tskctxb.ssp`,
+  `SwitchToFiber` on dispatch) — chosen, per the commit, specifically because a fiber owns the full register
+  set including the Win64 non-volatile XMM6-15, so there is no hand-written context-switch asm to get wrong.
+  Task restart uses a deferred-delete graveyard ("a fiber can't rewrite its own resume PC"). v1 is
+  COOPERATIVE (no preempt; tick pumped from `QueryPerformanceCounter` at idle/dispatch-entry safe points),
+  and the boot banner discloses this at runtime rather than hiding it. Net is Winsock2 via an `-idirafter`
+  compat shim reaching only the POSIX net translation units, never the tk-typed brain; `selfc` is disabled
+  (`selfc_stub.c`, same treatment as Bionic/Android); `fault.c` is an honest no-isolation stub. **The real
+  boot-blocker fixed here, per the commit, was LLP64**: Windows `long` is 32-bit, so the allocator's
+  pointer-flag packing (`memory.h`) and `knl_init_Imalloc` alignment (`memory.c`) truncated 64-bit heap
+  pointers, resurrecting the LP64 `knl_Imalloc` trap. Fix: the `KNL_UPTR` pointer-width type — `unsigned
+  long` on LP64 (byte-identical there) and `unsigned long long` on LLP64 — plus 64-bit-safe masks; this is
+  the SAME `KNL_UPTR` mechanism this run's `check_local_patches.sh` work (2026-09-06, see
+  [[vendor-patch-inventory.md]] §7) found only partially anchored (`memory.h` covered, `memory.c`/`mempool.c`
+  were not, until this run added `MEM-UPTR-C`/`MEM-UPTR-MP`). Crown neutrality per the commit: all non-Windows
+  edits are `#ifdef _WIN32`-guarded or `KNL_UPTR`-aliased, Linux x86_64 still links, bare-metal x86 `.text`
+  stays byte-identical (`sha256 260da329…`, the same crown hash the DMOE-A entry above cites as its
+  pre-DMOE baseline) — **not independently reproduced by this backfill pass**, same caveat as the DMOE-A
+  entry. CI gate is honestly scoped in its own words (quoted from `ci.yml`): "Runtime execution is still
+  uncovered — this gates the cross-COMPILE only; a wine smoke is the next step." **Nobody has booted the
+  resulting `.exe`**; the interactive `mind` shell reachability claimed for it is the commit author's local
+  report, not something CI or either backfill doc reproduced. **This entry, like the DMOE-A one above, is a
+  transcription of already-shipped, already-green work — not a new audit finding and not independent
+  verification of the crown-hash or runtime-boot claims it repeats.**
