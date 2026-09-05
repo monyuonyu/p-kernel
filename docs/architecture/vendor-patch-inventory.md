@@ -204,10 +204,16 @@ L3c が単独で `found=1`（他が0の中で）になる再現も含め、2026-
 3. ~~独立した再実行（上記4-4）。~~ **2026-09-05 に実施。§4.5 に追記。**
 4. **（新規）§7 の新アンカー6本について、独立した再実行の借りがある。** この run（指揮者代行）
    が書いて自分で3アーム走らせた。実装者≠監査者の原則から未返済。
-5. **（新規）§7 で「対象外」と判定した4ファイル**（config.h / inittask.h / machine.h /
-   tk/syscall.h の新アーキテクチャ用 #ifdef 追加）**は「うるさく消える」クラスと判断したが、
-   その判断自体は検証していない**（実際にビルドを壊すかを試していない）。次の run が
-   時間があれば、これらを一時的に削って `make` がどう失敗するか確認すると判断の裏取りになる。
+5. ~~§7 で「対象外」と判定した4ファイルの分類は未検証~~ **同じrun内で実際にビルドして解決
+   （§7.6）。config.h・machine.h・tk/syscall.hはうるさく消えるで確定、inittask.hは
+   「静かに消える」に分類変更（アンカーが要る、次項6）。**
+6. **（新規）`include/sys/inittask.h`のINITTASK_STKSZに`check_local_patches.sh`アンカーが
+   無い。** §7.6-bの通り「静かに消える」クラスと確定したのに未対応。候補アンカーは
+   `sysdepend/linux_x86_64/sysdef.h`等の`#define INITTASK_STKSZ`行そのもの
+   （ヘッダの入れ替えで消える想定）。次runの宿題。
+7. **（新規）§7.6の4ファイルとも`boot/linux_x86_64`/`boot/x86`のコンパイル可否のみ確認。**
+   `_X86_PC_`のUSE_SUBSYSTEM等や`_LINUX_AARCH64_`/`_WINDOWS_X86_64_`ターゲットは
+   個別に試していない。ブートしてinitタスクが実際に1KBスタックで落ちることも見ていない。
 
 ---
 
@@ -268,10 +274,10 @@ VENDOR.mdの記述通り）と比較した。
 | `config/config_device.h` | BOMのみ（﻿の除去） | 対象外（実質差分なし） |
 | `config/config_tm.h` | BOMのみ | 対象外 |
 | `include/tk/device.h` | BOMのみ | 対象外 |
-| `config/config.h` | 新アーキ用 `#ifdef _LINUX_X86_64_` 等の追加ブロック（`CNF_MAX_TSKID`等の数値上書き） | **分類を訂正（§7.6-a）: 対象外ではなく「静かに消える」側の疑いが強い**。単なる数値`#define`の上書きで、消えてもコンパイルは通り、既定値に黙って戻るだけ（コンパイルエラーにならない）と判断。ビルド未実施のためアンカー追加は見送り、次runの宿題として残す |
-| `include/sys/inittask.h` | 既定値への `#ifndef` ガード追加 | **分類を訂正: 対象外のまま、ただし理由は「うるさい」からではなく「消えても既定値と同じ値になり無害」だから**（§7.6-b） |
-| `include/sys/machine.h` | 新アーキ用 `#include "sysdepend/..."` 分岐追加 + `#define Csym(sym) sym` | **一部確認: `#include`本体はロードベアリングの可能性が高い**（対応する`sysdepend/linux_x86_64/machine.h`等が62行・16個の`#define`/`typedef`を持ち、他ファイルから参照されていそうな型/エンディアン定義を含む — ビルドはしていないが中身の分量から「うるさい」側を維持）。**ただし同時に追加された`Csym(sym) sym`は現状デッドコード**: `Csym(`の実際の呼び出しは`grep`で13件見つかったが**全てarmv7a/armv7m/rxv2/rx231/rza2m等、無関係な他ベンダMCU向け`.S`ファイル**で、p-kernel自身が使うx86/aarch64/linux/windowsターゲットのコードからは1件も呼ばれていない。この1行だけなら消えても実害無し（§7.6-c） |
-| `include/tk/syscall.h` | `T_DSSY` に `startupfn`/`cleanupfn`/`resblksz` 追加 | **確認済み: 少なくとも`cleanupfn`は「うるさく消える」で確定**。`kernel/tkernel/subsystem.c:105`が`pk_dssy->cleanupfn`を実際に読んでおり、フィールドが無くなればそこがコンパイルエラーになる（grepで直接確認、ビルドはしていない）。`startupfn`/`resblksz`はコメントに「未使用」とあり、grepでも定義以外の参照が無い — 現状デッドフィールド |
+| `config/config.h` | 新アーキ用 `#ifdef _LINUX_X86_64_` 等の追加ブロック（`CNF_MAX_TSKID`等の数値上書き） | **ビルドで確定（§7.6-a）: うるさく消える。** 削って`boot/linux_x86_64`を`make`すると`#error "USE_PTMR cannot be specified."`で即停止（既定値の組み合わせがそもそも無効だった）。対象外のまま |
+| `include/sys/inittask.h` | 既定値への `#ifndef` ガード追加 | **ビルドで確定（§7.6-b）: 静かに消える。分類を「対象外」から変更、アンカーが要る。** ガードを外すと`make`は`rc=0`で通るが、`INITTASK_STKSZ`が`sysdepend/linux_x86_64/sysdef.h`の256KBから`inittask.h`の1KBへ警告だけを出して黙って上書きされる |
+| `include/sys/machine.h` | 新アーキ用 `#include "sysdepend/..."` 分岐追加 + `#define Csym(sym) sym` | **ビルドで確定（§7.6-c）: `#include`本体はうるさく消える。** 削ると`sysdef.h`の`SYSDEF_SYSDEP()`展開が`fatal error`で失敗。`Csym(sym) sym`はp-kernel自身のターゲットから呼ばれないデッドコード（grep確認のみ、未変更） |
+| `include/tk/syscall.h` | `T_DSSY` に `startupfn`/`cleanupfn`/`resblksz` 追加 | **ビルドで確定（§7.6-d）: うるさく消える。** 3フィールドとも`arch/x86/blk_ssy.c`（`kernel/mtkernel3/`の外、grepの捜索範囲外だった）が使用しており、削ると3件ともコンパイルエラー |
 | `kernel/tkernel/memory.c` | LP64ポインタ幅（`UW`→現在は`KNL_UPTR`） | **既存MEM-UPTRクラス。新アンカー `MEM-UPTR-C` 追加** |
 | `kernel/tkernel/memory.h` | 同上 | 既存 `MEM-UPTR` アンカーで既にカバー済み |
 | `kernel/tkernel/mempool.c` | 同上 | **新アンカー `MEM-UPTR-MP` 追加** |
@@ -285,40 +291,85 @@ VENDOR.mdの記述通り）と比較した。
 抜けは正直に書く**: 194という数字は5ディレクトリの機械列挙だが `knlinc/` はその5つに
 入れ忘れており、同種の見落としが他にもある可能性はゼロではない。）
 
-### 7.6 「うるさく消える」判定の裏取り（ビルドはしていない。grepでの部分確認）
+### 7.6 「うるさく消える」判定の裏取り — 実際にビルドした（grepだけの版から訂正）
 
-§7.5表で当初「対象外＝うるさく消える」と一括りにした4ファイルについて、実際にビルドして
-確認する時間は無かったが、**grepで参照有無だけは確認した**。結果は一様ではなかった。
+このセクションは一度grepだけで書いて公開したが、そのすぐ後に同じrun内で実際にビルドして
+確認したところ**2箇所で見立てが外れていた**。恥ずかしい訂正ではなく、この訂正自体が
+「最初の診断はしばしば間違っている。自分の申告も検算する」という憲法の実演なので、
+grep版の記述を消さずに何がどう外れたかを残す。
 
-**(a) `config.h`の数値`#define`群** — `CNF_MAX_TSKID`等はただの整数上書きで、消えても
-その`#undef`/`#define`ペアが無くなるだけ。上書き前の既定値（同じ`config.h`のもっと手前で
-定義されている）に黙って戻るだけで、コンパイルエラーにはならないはず。**つまりこれはL1-L7と
-同じ「ビルドは通るが挙動（この場合はリソース上限）だけ変わる」静かに消えるクラスの疑いが強い**
-——当初の分類は誤っていた可能性がある。ただし実測（実際に消して`make`が通ることの確認）は
-していないので、次runの宿題として残す。
+**手法**: `git worktree add --detach /home/shota/pk-scratch/layerb-buildtest master`で
+使い捨てworktreeを作り、対象ファイルを1つずつ改変しては`git checkout --`で戻し、
+`boot/linux_x86_64`（ホスト gcc、クロスツールチェイン不要）と`boot/x86`
+（ベアメタル、`gcc -m32`）で`make`した。CIとは重ねていない（`gh run list`で確認済み）。
 
-**(b) `inittask.h`の`#ifndef`ガード** — 元々の値をガードで包んだだけで、値そのものは
-変えていない。消えても同じ値に戻るだけで無害と判断（うるさくも静かにも実害が無い変更）。
+**(a) `config.h`の数値`#define`群 — grep版の「静かに消える疑い」は実測でハズレ、
+元の「うるさい」判定が正しかった。** 3ブロック（`_LINUX_X86_64_`等/`_X86_PC_`/
+`_AARCH64_VIRT_`）を丸ごと削って`boot/linux_x86_64`を`make`したところ:
+```
+../../kernel/mtkernel3/include/sys/knldef.h:39:3: error: #error "USE_PTMR cannot be specified."
+```
+`kernel/mtkernel3/include/sys/knldef.h:38`に`#if USE_PTMR && !CPU_HAS_PTMR`という
+ハードガードがあり、上書きが消えて`USE_PTMR`が既定値`(1)`に戻ると、物理タイマの無い
+ホスティング環境向けターゲットでは**即座にコンパイルが止まる**。「既定値に黙って戻るだけ」
+という予想は誤りで、既定値自体が両立不能な組み合わせだった。**うるさく消えるクラスで確定**。
 
-**(c) `machine.h`の`#include`分岐 + `Csym`マクロ** — `#include "sysdepend/.../machine.h"`
-本体は62行・16個の`#define`/`typedef`を持つ実体のあるヘッダで、消せば型/マクロ未定義で
-本当にビルドが落ちる可能性が高い（うるさい側を維持）。しかし同じ行に付いてきた
-`#define Csym(sym) sym`は、`grep -c "Csym("`で見つかる実呼び出し13件が**全て
-armv7a/armv7m/rxv2/rx231/rza2m等、p-kernelが使わない他ベンダMCU向け`.S`ファイル**で、
-x86/aarch64/linux/windows側のコードからは1件も呼ばれていない。**この1行だけなら
-消えても実害が無いデッドコード**。
+**(b) `inittask.h`の`#ifndef`ガード — grep版の「無害」判定もハズレ。第三の分類（静かに
+壊れるが、うるさく消えるクラスより見つけにくい）だった。** ガード4行を外して
+`boot/linux_x86_64`を`make`したところ、**ビルドは`rc=0`で成功**したが:
+```
+../../kernel/mtkernel3/include/sys/inittask.h:34: warning: "INITTASK_STKSZ" redefined
+../../kernel/mtkernel3/include/sys/sysdepend/linux_x86_64/sysdef.h:67: note: this is the location of the previous definition
+```
+`sysdef.h`が先に`INITTASK_STKSZ=256*1024`（コメント: usermainが大きなスタックを要求）を
+定義しているが、ガードが無いと`inittask.h`の`1*1024`が**後勝ちで上書きする**。
+Cのマクロ再定義は値が違っても警告止まり（`-Werror`は付いていない）——
+**ビルドは通り、バイナリサイズも同じ4392936バイトのまま、initタスクのスタックだけ
+256KBから1KBへ黙って縮む。** これはL1-L7とまったく同じ「ビルドは通るが挙動だけ壊れる」
+形をしていて、しかもwarningが他の大量のwarningに埋もれるため`grep -c -F`だけでは
+気づけない（redefinitionの警告文言自体は拾えるが、それが「危険な値の巻き戻り」なのか
+「無害な再定義」なのかはwarning文面だけでは区別できない）。**分類を「対象外」から
+「静かに消えるクラス、要アンカー」に訂正する。**
 
-**(d) `tk/syscall.h`の`T_DSSY`構造体拡張** — `kernel/tkernel/subsystem.c:105`が
-`pk_dssy->cleanupfn`を実際に読んでいることを確認した。フィールドが消えれば
-「構造体にそのメンバが無い」という**確実なコンパイルエラー**になる。うるさい側で確定。
-`startupfn`/`resblksz`はコメント通り未使用で、grepでも定義以外の参照が無い。
+**(c) `machine.h`の`#include`分岐 — grep版の「ロードベアリングの可能性が高い」は実測で
+確定。** `_LINUX_X86_64_`ブロックを削って`make`したところ:
+```
+../../kernel/mtkernel3/include/sys/sysdef.h:29:24: fatal error: sysdepend/TARGET_DIR/sysdef.h: そのようなファイルやディレクトリはありません
+```
+（`SYSDEF_SYSDEP()`マクロ展開の失敗）。**うるさく消えるクラスで確定**。
+`Csym(sym) sym`がp-kernel自身のターゲットから呼ばれないデッドコードだという
+grep版の指摘はそのまま生きている（今回は触っていない）。
 
-**この節全体の限界**: 実際に4ファイルを差し戻して`make`してみたわけではなく、
-grepによる参照有無の確認にとどまる。特に(a)は「静かに消える」側だとすると
-`check_local_patches.sh`にアンカーが要るはずだが、今回は追加していない
-（時間の都合、かつ数値`#define`は良いアンカー文字列を選びにくい——`128`のような
-数字だけでは誤検知しやすい）。**次runへの引き継ぎ**: config.hのCNF_MAX_*系を
-実際に消してビルドが通るかどうかの実測、通るなら適切なアンカーの検討。
+**(d) `tk/syscall.h`の`T_DSSY`構造体拡張 — grep版の「`cleanupfn`だけ使用中」は
+半分ハズレ。使用箇所は`kernel/mtkernel3/`の外にあり、3フィールド全部が使われていた。**
+`startupfn`/`cleanupfn`/`resblksz`の3フィールドを削って`boot/x86`の`kernel.elf`
+（`boot/linux_x86_64`ではなく——後述）を`make`したところ:
+```
+../../arch/x86/blk_ssy.c:80:9: error: 'T_DSSY' {aka 'struct t_dssy'} has no member named 'startupfn'
+../../arch/x86/blk_ssy.c:81:9: error: 'T_DSSY' {aka 'struct t_dssy'} has no member named 'cleanupfn'
+../../arch/x86/blk_ssy.c:83:9: error: 'T_DSSY' {aka 'struct t_dssy'} has no member named 'resblksz'
+```
+grep版は`kernel/mtkernel3/`配下だけを検索しており、**p-kernel自身の`arch/x86/blk_ssy.c`
+（ベンダツリーの外）からの利用を見落としていた**。「未使用」という判定は検索範囲の
+盲点で、`startupfn`/`resblksz`も実際は`NULL`/`0`を代入されている（読まれてはいないが
+書かれてはいる——コンパイルは通らなくなる点では同じ）。**うるさく消えるクラスで確定**、
+ただし根拠は`subsystem.c`ではなく`blk_ssy.c`だった。
+また`boot/x86`の`make`（引数無し）は最初のターゲット`kloader.bin`しかビルドしない
+（`kernel.elf`は`all`にしか無い）ので、`make -C boot/x86 kernel.elf`と明示する必要が
+あった——これも見落としかけた罠として記録する。
+
+**この節全体でも確認できていないこと**: (a)(b)(c)(d)とも`boot/linux_x86_64`か
+`boot/x86`の**コンパイルが通るかどうか**のみを見ており、`_X86_PC_`/`_AARCH64_VIRT_`固有の
+数値（config.hの`USE_SUBSYSTEM`等）や`_LINUX_AARCH64_`/`_WINDOWS_X86_64_`ターゲットは
+個別には試していない。ブートして実際にinitタスクが1KBスタックで落ちることも見ていない
+（警告が出ることまでしか確認していない）。
+
+**次runへの引き継ぎ**: (b)の`INITTASK_STKSZ`は静かに消えるクラスなので
+`check_local_patches.sh`にアンカーが要る。候補: `sysdepend/linux_x86_64/sysdef.h`の
+`#define INITTASK_STKSZ`行そのもの（削除やコメントアウトを検知）。(a)と(c)は
+うるさく消えるクラスなので既存のビルドジョブで足りるはずだが、それ自体は
+「うるさく消える＝CIが拾う」という前提の確認であり、実際にCIのどのジョブが
+`boot/linux_x86_64`のビルドを回しているかは未確認。
 
 ### 7.7 新発見: SCHED_RR ラウンドロビン・タイムスライスは無防備な層Bパッチだった
 
@@ -357,9 +408,11 @@ L1–L7と同じ「ビルドは通るが挙動だけ壊れる」危険クラス�
 1. 既存の限界（§4「証明していないこと」）がそのまま新アンカーにも当てはまる:
    文字列を残したままロジックだけ壊す差し替えは検知できない静的grepである。
 2. **実装者と検証者が同一**（この run の指揮者代行）。独立再実行がまだ借り（§5-4）。
-3. `config.h`等4ファイルを「うるさく消える」と分類したのは**推測であり実際にビルドを
-   壊してみて確認してはいない**（§5-5）。特に`tk/syscall.h`の構造体レイアウト変更は
-   本当にリンクエラーになるか、それとも実行時に静かにずれるだけか、要検証。
+3. ~~`config.h`等4ファイルの分類は推測で未検証~~ **§7.6で実際にビルドして検証済み**
+   （config.h/machine.h/tk-syscall.hはコンパイルエラーで確定、inittask.hは静かに消える
+   側と判明）。ただし`boot/linux_x86_64`/`boot/x86`の2ターゲットでしか試しておらず、
+   `_X86_PC_`のUSE_SUBSYSTEM等や他ターゲットの個別確認、ブートしての実害確認は
+   まだ（§5の6・7）。
 4. `knlinc/`をファイルリストの母集合に入れ忘れていた（§7.5末尾）ため、
    **194という数字・13という数字は「5ディレクトリを機械列挙した範囲での」網羅性**であり、
    p-kernelの全ツリーに対する層Bの完全な保証ではない。

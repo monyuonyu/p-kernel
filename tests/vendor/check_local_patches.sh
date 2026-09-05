@@ -89,6 +89,11 @@ check B-SCHED-TC   timer.c               1 'knl_ctxtsk->sched_policy == SCHED_RR
 #     統一した LP64 修正。上流は 4 バイト固定のまま（実測で確認）。min=4 はコード側4箇所のみを
 #     数え、コメント文言の書き換え（この行を含めると計5）だけでは赤くならないようにしている。
 check B-STR        ../tstdlib/string.c   4 'sizeof(unsigned long)'
+# --- B-INITSTK（層B、2026-09-06 発見・ビルド検証済み）: include/sys/inittask.h の
+#     #ifndef ガードが無いと、sysdepend/*/sysdef.h が定義する INITTASK_STKSZ（256KB等）を
+#     inittask.h の既定値(1KB)が黙って後勝ちで上書きする（コンパイルは警告止まりで通る —
+#     実際にmakeして確認済み。vendor-patch-inventory.md §7.6-b）。上流にはガードが無い。
+check B-INITSTK    ../../include/sys/inittask.h  1 '#ifndef INITTASK_STKSZ'
 
 echo
 echo "pass=$pass lost=$fail"
