@@ -71,8 +71,24 @@ check L5b       task.c        1 'knl_timer_delete(&tcb->wtmeb)'
 check L6        task_manage.c 1 'knl_timer_delete(&tcb->wtmeb)'
 # --- L7: tk_del_tsk の ctxtsk/schedtsk ガード（元 e4e5d9d6）
 check L7        task_manage.c 1 'tcb == knl_ctxtsk || tcb == knl_schedtsk'
-# --- MEM-UPTR（層B）: LLP64 でのポインタ幅マスク。f50c30a0 に焼き込まれ ff163ac1 が拡張。
-check MEM-UPTR  memory.h     10 'KNL_UPTR'
+# --- MEM-UPTR: LLP64 でのポインタ幅マスク。訂正(vendor-patch-inventory.md §3):
+#     f50c30a0 の memory.h に KNL_UPTR は 0 個で、正しくは ff163ac1（層A）が導入した。
+#     memory.c / mempool.c にも同じ保護があるが、従来 memory.h しか見ていなかった
+#     （どちらか片方だけ差し戻されても見逃す穴だった。下の2行で埋める）。
+check MEM-UPTR     memory.h     10 'KNL_UPTR'
+check MEM-UPTR-C   memory.c      1 'KNL_UPTR'
+check MEM-UPTR-MP  mempool.c     1 'KNL_UPTR'
+# --- B-SCHED（層B、2026-09-06 発見）: 同一優先度内ラウンドロビン(SCHED_RR)。
+#     kernel.h のコメントに「micro T-Kernel 2.0 ポートから移植」とあり、2.0→3.0 移行
+#     (f50c30a0) 自身に焼き込まれた真の層Bパッチ。上流 435096c9 には該当アンカーが
+#     いずれも0個であることを実測済み（vendor-patch-inventory.md §7）。
+check B-SCHED-KH   ../knlinc/kernel.h    1 'DEFAULT_TIME_SLICE'
+check B-SCHED-TM   task_manage.c         2 'DEFAULT_TIME_SLICE'
+check B-SCHED-TC   timer.c               1 'knl_ctxtsk->sched_policy == SCHED_RR'
+# --- B-STR（層B、2026-09-06 発見）: tstdlib/string.c の語コピーを sizeof(unsigned long) 基準に
+#     統一した LP64 修正。上流は 4 バイト固定のまま（実測で確認）。min=4 はコード側4箇所のみを
+#     数え、コメント文言の書き換え（この行を含めると計5）だけでは赤くならないようにしている。
+check B-STR        ../tstdlib/string.c   4 'sizeof(unsigned long)'
 
 echo
 echo "pass=$pass lost=$fail"
