@@ -206,10 +206,15 @@ L3c が単独で `found=1`（他が0の中で）になる再現も含め、2026-
 5. ~~§7 で「対象外」と判定した4ファイルの分類は未検証~~ **同じrun内で実際にビルドして解決
    （§7.6）。config.h・machine.h・tk/syscall.hはうるさく消えるで確定、inittask.hは
    「静かに消える」に分類変更（アンカーが要る、次項6）。**
-6. **（新規）`include/sys/inittask.h`のINITTASK_STKSZに`check_local_patches.sh`アンカーが
-   無い。** §7.6-bの通り「静かに消える」クラスと確定したのに未対応。候補アンカーは
-   `sysdepend/linux_x86_64/sysdef.h`等の`#define INITTASK_STKSZ`行そのもの
-   （ヘッダの入れ替えで消える想定）。次runの宿題。
+6. ~~（新規）`include/sys/inittask.h`のINITTASK_STKSZに`check_local_patches.sh`アンカーが
+   無い。§7.6-bの通り「静かに消える」クラスと確定したのに未対応。~~ **対応済み（コミット
+   `ee8487d1`/`9c3859b8`、記載漏れに2026-09-07気付いて追記）。候補として挙げていた
+   「`#define INITTASK_STKSZ`行そのもの」ではなく、`include/sys/inittask.h`側の
+   `#ifndef INITTASK_STKSZ`ガード（`sysdepend/*/sysdef.h`の値を上書きから守っている側）を
+   `B-INITSTK`としてアンカー化した——ガードが消えれば値がどう上書きされようと検知できるため、
+   個別ターゲットのsysdef.hを1つずつ追うより頑健。4アーム検証済み（§7.10: 陽性19→20アンカー
+   でGREEN、`f50c30a0`歴史的アームで単独生存——`f50c30a0`より前から存在するパッチのため
+   正しい挙動）。mingw-w64トールチェインでの再現も確認済み（§7.11）。
 7. ~~§7.6の4ファイルとも`boot/linux_x86_64`/`boot/x86`のコンパイル可否のみ確認。
    `_X86_PC_`のUSE_SUBSYSTEM等や`_LINUX_AARCH64_`/`_WINDOWS_X86_64_`ターゲットは
    個別に試していない。~~ **2026-09-06、`_AARCH64_VIRT_`/`_WINDOWS_X86_64_`/
@@ -537,7 +542,7 @@ worktree（`/home/shota/pk-scratch/x86-configtest`、作業後`git worktree remo
 `git status -sb`で worktree の差分がゼロであることを確認してから削除した。
 これで§5項目7は完全に消化。**`_X86_PC_`の拡張2項目はどちらも「落とせば確実にビルドが
 壊れる」ことが実測で確定し、`f50c30a0`のようなベンダ差し替えでこれらの値が黙って
-デフォルトへ巻き戻った場合は`B-INITSTK`（§3.4節）のような「静かに消える」クラスとは
+デフォルトへ巻き戻った場合は`B-INITSTK`（§7.6-b/§5項目6）のような「静かに消える」クラスとは
 異なり、ビルド自体が失敗するため気づかずには済まない。** 新しいcheck_local_patches.sh
 アンカーは不要（アンカーは「値が変わっても検出できずビルドも通ってしまう」クラスに
 要るものであり、これは既にビルドで検出される）。
