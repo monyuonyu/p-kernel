@@ -213,8 +213,9 @@ L3c が単独で `found=1`（他が0の中で）になる再現も含め、2026-
 7. ~~§7.6の4ファイルとも`boot/linux_x86_64`/`boot/x86`のコンパイル可否のみ確認。
    `_X86_PC_`のUSE_SUBSYSTEM等や`_LINUX_AARCH64_`/`_WINDOWS_X86_64_`ターゲットは
    個別に試していない。~~ **2026-09-06、`_AARCH64_VIRT_`/`_WINDOWS_X86_64_`/
-   `_LINUX_AARCH64_`のベースラインビルドを追加確認（§7.11）。** `_X86_PC_`の
-   USE_SUBSYSTEM等の個別確認は依然として未着手。
+   `_LINUX_AARCH64_`のベースラインビルドを追加確認（§7.11）。2026-09-07、`_X86_PC_`の
+   USE_SUBSYSTEM/USE_LEGACY_APIの個別確認も完了（§7.13）: どちらも落とすとビルドが
+   確実に壊れる（前者はリンクエラー、後者はTCBレイアウト変化による静的アサート失敗）。**
    **ブートしてinitタスクが実際に1KBスタックで落ちることも2026-09-06に単発ブートで
    試した（§7.12）: 落ちなかった。単発1回ずつなので反証にはならない**
    （このワークロードでのinitタスクのスタック使用量が1KBに収まっているだけの可能性が高い）。
@@ -502,3 +503,41 @@ initタスク自身のスタック使用量が、たまたま1KBに収まって�
 feed）を送ってから同じ比較をやり直せば違う結果が出る可能性がある。次runか人間が
 優先度を上げたければ、この`/build/pk-h/`のbaseline/brokenツリーはそのまま残してある
 （コンテナ内、次回も再利用可）。
+
+### 7.13 `_X86_PC_`の`USE_SUBSYSTEM`/`USE_LEGACY_API`個別確認（2026-09-07）
+
+§5項目7の最後の残りだった「`_X86_PC_`のUSE_SUBSYSTEM等の個別確認」に着手。使い捨て
+worktree（`/home/shota/pk-scratch/x86-configtest`、作業後`git worktree remove --force`で
+削除済み）で`boot/x86`の`kernel.elf`をベースライン→各アーム→ベースライン復帰の順で
+`make clean && make kernel.elf`しながら確認した。
+
+1. **`USE_SUBSYSTEM`を`0`に反転**: リンクエラーで**うるさく確定**。
+   `blk_ssy.o`/`fs_ssy.o`/`net_ssy.o`（`arch/x86/{blk,fs,net}_ssy.c`、いずれも
+   `USE_SUBSYSTEM`ガード無しで`tk_def_ssy`を無条件呼び出し）が`undefined reference to
+   'tk_def_ssy'`、`syscall.o`が`knl_ssy_cleanup`/`knl_svc_ientry`の未定義参照で失敗。
+   `tk_def_ssy`等の実体は`kernel/tkernel/subsystem.c`内で`#if USE_SUBSYSTEM`により
+   丸ごとガードされている（`subsystem.h`側は`#ifndef USE_SUBSYSTEM #define
+   USE_SUBSYSTEM 0`という既定値を持つが、呼び出し側の3ファイルはその既定値に
+   従わず常時呼ぶため、`_X86_PC_`でこの値を落とすと確実にビルドが壊れる）。
+2. **`USE_LEGACY_API`を`0`に反転**（`CNF_MAX_PORID`は`4`のまま）: **うるさく確定、
+   ただし経路が想定と違った。** `undefined reference`ではなく、`cpu_cntl.c:39`の
+   `_Static_assert( offsetof(TCB, isstack) == TCB_isstack, ... )`がコンパイル時に失敗。
+   原因を`kernel/knlinc/kernel.h`と`kernel/tkernel/winfo.h`で追跡: `TCB.winfo`は
+   `union WINFO`型で、`USE_LEGACY_API && USE_RENDEZVOUS`のときだけ`WINFO_CAL`/
+   `WINFO_ACP`（ランデブ待ち情報）を含む。`USE_LEGACY_API`を落とすとこの union が
+   縮み、union の直後にある`TCB.wtmeb`/`TCB.isstack`のオフセットがずれる。
+   `kernel/sysdepend/x86_pc/offset.h`はアセンブリ版ディスパッチャ（`dispatch.S`）用に
+   `TCB_isstack`等を**手書きの数値定数**として持っているため、構造体側のレイアウトが
+   変わると静的アサートで検出される——「静かに壊れる」ではなく確実に「うるさく壊れる」
+   ことが確認できた。**つまり`USE_LEGACY_API`は単なるAPI公開/非公開の切替えではなく、
+   `WINFO` unionのサイズひいてはTCBレイアウト全体に波及する設定であり、`offset.h`の
+   再生成なしに値を変えることはできない。**
+
+両アームとも、config.hを元の値（`USE_SUBSYSTEM=1`・`USE_LEGACY_API=1`）に戻した上で
+`git status -sb`で worktree の差分がゼロであることを確認してから削除した。
+これで§5項目7は完全に消化。**`_X86_PC_`の拡張2項目はどちらも「落とせば確実にビルドが
+壊れる」ことが実測で確定し、`f50c30a0`のようなベンダ差し替えでこれらの値が黙って
+デフォルトへ巻き戻った場合は`B-INITSTK`（§3.4節）のような「静かに消える」クラスとは
+異なり、ビルド自体が失敗するため気づかずには済まない。** 新しいcheck_local_patches.sh
+アンカーは不要（アンカーは「値が変わっても検出できずビルドも通ってしまう」クラスに
+要るものであり、これは既にビルドで検出される）。
