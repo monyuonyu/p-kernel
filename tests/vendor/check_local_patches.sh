@@ -94,6 +94,14 @@ check B-STR        ../tstdlib/string.c   4 'sizeof(unsigned long)'
 #     inittask.h の既定値(1KB)が黙って後勝ちで上書きする（コンパイルは警告止まりで通る —
 #     実際にmakeして確認済み。vendor-patch-inventory.md §7.6-b）。上流にはガードが無い。
 check B-INITSTK    ../../include/sys/inittask.h  1 '#ifndef INITTASK_STKSZ'
+# --- B-INITTASK-EXIT（層B、2026-09-10 発見）: 初期タスクの usermain() 復帰後の挙動。
+#     上流は usermain() の復帰値に関わらず shutdown_system(fin) を呼びシステムを停止する。
+#     p-kernel は usermain() が正常復帰した場合は shutdown_system() を呼ばず、
+#     tk_ext_tsk() で初期タスクだけを終える（usermain がシェル等を起動して戻る設計のため、
+#     システムは動き続ける）。start_system() 失敗時のみ従来通り shutdown_system() を呼ぶ。
+#     コンパイルは通ったまま挙動だけ変わる「静かに消える」クラス。上流 435096c9 には
+#     tk_ext_tsk の呼び出しが0個であることを実測済み（vendor-patch-inventory.md §7.16）。
+check B-INITTASK-EXIT  ../inittask/inittask.c  1 'tk_ext_tsk();'
 
 echo
 echo "pass=$pass lost=$fail"

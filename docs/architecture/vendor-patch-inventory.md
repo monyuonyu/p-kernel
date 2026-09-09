@@ -605,3 +605,63 @@ other=0`（100/100 clean）。
 より直接的に消費させる別の攻め方（例えば意図的な深い再帰関数をinitタスク文脈で
 呼ぶテストコードを書く等）が要る可能性が高いが、これは新しいテストコードの追加という
 より大きな一手であり、優先度も踏まえて次run/人間の判断に委ねる。
+
+### 7.16 §7が認めていた母集合の穴を埋めた（2026-09-10）——新規パッチ1件を発見
+
+§7.3の脚注（7.5末尾）が「194という数字は5ディレクトリ（`kernel/tkernel` `kernel/tstdlib`
+`include` `lib` `config`）の機械列挙で、`kernel/knlinc`は入れ忘れており、同種の見落としが
+他にもある可能性はゼロではない」と正直に書いていた。この run はその「ゼロではない」を
+実際に検算した。
+
+**手法**: `git ls-tree -r --name-only f50c30a0 -- kernel/mtkernel3/` で母集合を機械的に
+再列挙（364ファイル、うち`.c`/`.h`は341）し、§7の194ファイルリストとの差分を取った
+（147ファイル)。p-kernelが実際にビルドしない他アーキ向けsysdepend（`armv7a` `armv7m`
+`rxv2` `rx231` `rx65n` `rza2m` `stm32h7` `stm32l4` `tx03_m367` `iote_*` `no_device`
+——RX/STM32/Cortex-A/M等のMCU向け参照ポートで、p-kernelの5ターゲットはどれもここを
+通らない)を除外すると52ファイルが残った。内訳: `kernel/knlinc/`(4)・`kernel/inittask/`(1)・
+`kernel/sysdepend/`直下の共通ヘッダ(5)・`kernel/sysdepend/{x86_pc,aarch64_virt,
+linux_x86_64,linux_aarch64}/`(各10)・`kernel/sysinit/`(1)・`kernel/usermain/`(1)。
+`windows_x86_64`のsysdependは`f50c30a0`時点でまだ存在しない(後日追加、層Aで別途
+git logに載る)ため対象外——`git ls-tree`で実測済み。
+
+§7.2と同じコメント除去+正規化スクリプト(`layerB_diff.py`)をこの52ファイルに適用。
+結果: `NOT-IN-UPSTREAM`40(すべてp-kernel専用アーキのsysdepend新規ファイル、
+§7.4と同じ「うるさく消える」クラスで対象外)・`IDENTICAL-LOGIC`10・**`LOGIC-DIFF`2**。
+
+`LOGIC-DIFF`の2件:
+- `kernel/knlinc/kernel.h` — 既知(§7.7のSCHED_RRフィールド定義そのもの。母集合に
+  入れ忘れていただけで、パッチの存在自体は既に`B-SCHED-KH`アンカーでカバー済み)。
+- **`kernel/inittask/inittask.c` — 未発見だった新規パッチ。**
+
+**`inittask.c`の中身**: 上流は`init_task_main()`内で、`usermain()`の復帰値に関わらず
+必ず`shutdown_system(fin)`を呼ぶ(関数から戻らない設計)。p-kernelは
+`start_system()`失敗時のみ`shutdown_system()`を呼び、`usermain()`が正常復帰した
+場合は`shutdown_system()`を呼ばず、`SYSTEM_MESSAGE`を出したうえで`tk_ext_tsk()`
+(初期タスク自身の終了のみ)で抜ける——コメントいわく「p-kernelのusermainはシェル・
+ネットワーク等のタスク群を起動して戻る設計のため、初期タスクだけを静かに終了し、
+システムは動き続ける」。コンパイルは通ったまま挙動だけ変わる、まさに
+`check_local_patches.sh`が扱う「静かに消える」クラス。もし将来のベンダ差し替えで
+これが上流のまま復元されると、`usermain()`復帰後にシステム全体が
+`shutdown_system()`されてしまう(電源オフ/再起動)——p-kernelの設計前提そのものを
+壊す規模の退行になり得る。`f50c30a0`自身に既に入っている(層B、SCHED_RRと同種)。
+
+**アンカー追加・3アーム検証**: `B-INITTASK-EXIT`(`kernel/inittask/inittask.c`、
+文字列`tk_ext_tsk();`、min=1)を`check_local_patches.sh`に追加(20→21アンカー)。
+検証結果:
+
+| ツリー | 判定 | 全体結果 |
+|---|---|---|
+| `master` | OK found=1 | GREEN (pass=21) |
+| `f50c30a0`(層Bの既存陰性コントロール) | OK found=1 | RED(他の理由、既知) — このパッチはf50c30a0自身に入っているので生存が正しい |
+| pristine-upstream(`435096c9`、`/home/shota/pk-scratch/upstream-neg-root`) | **LOST found=0** | RED |
+| 不在パス自爆 | MISSING-FILE | RED |
+
+pristine-upstreamでのみLOSTになり、他は期待通り——新しいゲートが陰性コントロールで
+赤くなることを示してから「効く」と言う、という規律を満たしている。
+
+**この節が閉じていないこと**: 52ファイルの母集合自体も、5ディレクトリ→9ディレクトリ相当
+への拡張であり、`kernel/mtkernel3/`配下を完全に汲み尽くした保証ではない
+(`git ls-tree`ベースなので個別ファイルの見落としは無いはずだが、「p-kernelが実際に
+ビルドする対象」の判定は人手のディレクトリ名フィルタであり、機械的な検算はしていない)。
+次runがさらに疑うなら、Makefile/ビルドログから実際にコンパイルされるオブジェクトの
+集合を機械的に抽出し、ソースの母集合と付き合わせる方法がより厳密。
