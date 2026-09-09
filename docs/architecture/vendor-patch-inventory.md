@@ -665,3 +665,55 @@ pristine-upstreamでのみLOSTになり、他は期待通り——新しいゲ�
 ビルドする対象」の判定は人手のディレクトリ名フィルタであり、機械的な検算はしていない)。
 次runがさらに疑うなら、Makefile/ビルドログから実際にコンパイルされるオブジェクトの
 集合を機械的に抽出し、ソースの母集合と付き合わせる方法がより厳密。
+
+### 7.17 §7.16の限界を機械的に検算した（2026-09-10、このrunが実行）
+
+§7.16自身が認めていた限界——「p-kernelが実際にビルドする対象」への52ファイルへの
+絞り込みは人手のディレクトリ名判断であり、Makefile/ビルドログとの機械的な突き合わせは
+していない——を実際に検算した。
+
+**手法**: p-kernelがビルドする5ターゲット全部のMakefile(`boot/x86/Makefile`・
+`boot/aarch64/Makefile`・`boot/linux_x86_64/Makefile`・`boot/linux/Makefile`
+[linux_aarch64]・`boot/windows/x86_64/Makefile`)を`Read`で全文読み、
+`kernel/mtkernel3/`配下を参照するビルドルールを機械的に収集した。加えて
+`android/app/src/main/cpp/CMakeLists.txt`という**6つ目のビルド定義**(Android
+libpkernel.so、linux_aarch64ターゲットのNDK版)を発見し、同様に読んだ——これは
+5ターゲットのどのMakefileにも記載が無く、`gap-ledger.md`/`vendor-patch-inventory.md`
+のどこにも言及が無かった。全6ビルド定義とも`MTK3_KNL_SRCS`等の変数がすべて
+**明示的な列挙(ワイルドカード無し)**なので、`make`を実際に実行しなくても
+文字列一致で機械的に照合できる(実行するより厳密——実行結果のパースに人手の解釈が
+入る余地がない)。
+
+**結果**: `layerB-missing-relevant.txt`の52ファイルと6ビルド定義の参照パスを突き合わせ。
+
+- `kernel/sysdepend/{x86_pc,aarch64_virt,linux_x86_64,linux_aarch64}/`配下の
+  `.c`5ファイル×4ターゲット=20件は、全て対応するMakefileの`MTK3_SYSDEP_SRCS`に
+  文字列一致——実際にビルドされることを確認。
+- `windows_x86_64`が52ファイルから除外されている件は、除外理由(`f50c30a0`時点で
+  ディレクトリ自体が存在しない)と、現行masterでは`boot/windows/x86_64/Makefile`が
+  実際に`kernel/sysdepend/windows_x86_64/`をビルドしている事実は**矛盾しない**
+  ——「今ビルドされるか」と「`f50c30a0`に焼き込まれていたか」は別軸で、後者だけが
+  層Bの対象。
+- ヘッダ(`kernel/knlinc/`4件、`kernel/sysdepend/`直下共通5件、
+  `kernel/sysdepend/*/`配下各ターゲット5件×4=20件)は全て6ビルド定義の`INCDIRS`/
+  `include_directories`に該当ディレクトリが載っており、到達可能。
+- **`kernel/usermain/usermain.c`——52ファイルに含まれるが、6ビルド定義のどれからも
+  参照されていない。** 実際にビルドされる`usermain.c`は全部`arch/`層の別ファイル
+  (`arch/x86/usermain.c`・`arch/aarch64/usermain.c`・`arch/linux/x86_64/usermain.c`・
+  `arch/linux/aarch64/usermain.c`——同名だが別ファイル、`kernel/mtkernel3/kernel/
+  usermain/usermain.c`はどのビルドからも呼ばれない)。ただし`layerB-missing-results.txt`
+  でこのファイルの判定は`IDENTICAL-LOGIC`(上流と同一)——ビルドされてもされなくても
+  失うパッチが無いので、パッチロス検出への実害はゼロ。52ファイルの母集合の**過大包含**
+  が1件見つかった、ということ。
+- 逆方向(52ファイルに漏れていた、実際にビルドされる`kernel/mtkernel3/`ファイル)は
+  **見つからなかった**。
+
+**結論**: §7.16の52ファイル絞り込みは、6つ全てのビルド定義と照合した結果、実質的に
+正確だった。誤りは`usermain.c`1件の過大包含のみで、これは`IDENTICAL-LOGIC`判定
+ゆえ実害なし。新規の未発見パッチはこの検算では出なかった——**正直な結果として書く**:
+前run(§7.16)が見つけた`B-INITTASK-EXIT`が、この母集合拡張が生む最後の収穫だった
+可能性が高い。副産物として、Android向けビルド定義(`android/app/src/main/cpp/
+CMakeLists.txt`)がこれまでどの文書にも記載されていなかったことが分かった——
+`kernel/mtkernel3`のソースリストは`boot/linux/Makefile`と完全に同一パターンで
+lock-step(コメントに`tools/android/check_parity.sh`という既存の突き合わせ
+スクリプトへの言及あり、層Bの範囲では新たなリスクにはならない)。
