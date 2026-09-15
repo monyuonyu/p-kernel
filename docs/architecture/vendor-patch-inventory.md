@@ -834,3 +834,51 @@ p≈2.75e-6相当、二項分布で計算可能）。probe中の"survived"印字
 `-broken/`（`git worktree`、detached HEAD `d50f600a`）に保持——リポジトリの
 トラッキング対象ファイルは一切変更していない（`git -C /home/shota/p-kernel status`
 はクリーン）。
+
+### 7.19 B-INITTASK-EXITの実害も実際のブートで再現した（2026-09-16、matched-arm N=3 vs N=3、決定的分離）
+
+§7.16が見つけた層Bパッチ`B-INITTASK-EXIT`（`kernel/mtkernel3/kernel/inittask/
+inittask.c`、`usermain()`が正常復帰したとき上流は`shutdown_system(fin)`を
+無条件で呼ぶが、p-kernelは`tk_ext_tsk()`で初期タスクだけを終えてシステムは
+動き続ける）も、§7.16/§7.17時点では静的diffとアンカーのビルド確認のみで、
+「実際にこの差し替えが起きたらブートはどう壊れるか」は未実証だった。§7.18の
+B-INITSTKと同じ日にこれも解消した。
+
+**実験**: 使い捨てworktree2本（`/home/shota/pk-scratch/inittask-exit-baseline`・
+`-reverted`、いずれも`master` `6248bbdd`——§7.18コミット直後——から分岐）。
+baselineは無変更。revertedは`inittask.c:162-168`の該当ブロックを、上流相当の
+`shutdown_system(fin);`の無条件呼び出しに変更（p-kernel側コメント込みで
+11行→4行に削減、差分はこの1ファイルのみ、`git diff --stat`で確認）。
+`docker cp`で`pkernel_audit_ss`に投入、`tests/x86/run_killchurn.sh`
+（`KILLCHURN_N=3`）でビルド・ブート。
+
+**結果**: baseline 3/3クリーン（全五ゲート完走）。reverted **3/3が`INCOMPLETE`
+（feed stalled at stage 0/6）**——3回とも同一のシリアルログ末尾:
+`[net] Sending ARP request...` → `[OK] Net RX task`（shell/net等のタスク生成が
+usermain()内で完了した直後）→ `<< SYSTEM SHUTDOWN >>` → 90秒のハーネスタイムアウトで
+QEMU強制終了。`shutdown_system()`（`inittask.c:95`）は`knl_finish_device()`後に
+このメッセージを出し、`knl_tkernel_exit()`（`sysinit.c:131`）が`knl_timer_shutdown()`
+でシステムタイマを止めてから`while(1);`で永久停止する——タスクは生成されていても
+一度も走らない（初期タスクがusermain()から戻った時点でまだ他のタスクへの
+ディスパッチが起きていないため）。
+
+**この検証にB-INITSTKほどの反復が要らない理由**: フィード再現性の議論（バースト性の
+KCC-WILDPC/STALE-WAIT-TIMER）とは違い、`fin`は`usermain()`の`return 0;`
+（`arch/x86/usermain.c:322`）由来の**コンパイル時に決まった固定値**で、割込み
+タイミング等の競合に一切依存しない。3/3 vs 3/3の分離は、タイミング次第で
+ときどき起きる現象ではなく、コードパスの分岐そのものの結果——N=3で十分、
+増やしても情報量は増えない。
+
+**この発見の意味**: `B-INITTASK-EXIT`アンカーが守る対象は、「電源オフ/再起動が
+スプリアスに起きる」という抽象的な記述だったが、実際の被害はそれよりも
+はるかに大きい——**シェルもネットワークも一切機能する前に全システムが完全停止する**
+（p-kernelはmicro T-Kernel 2.0時代の意味論、usermain()がシェル等を起動して
+戻る設計に依存しているため、上流のmicro T-Kernel 3.0の意味論に戻すと
+実質的に「起動しない」に等しい）。B-INITSTKの「静かに壊れて、症状が遅れて別の場所に
+出る」というパターンとは対照的に、これは「静かに壊れる（ビルドは通る）」が
+症状は即座かつ全面的——ただし自動テストが単に「ビルドが通るか」だけを見ていれば
+気づかれない、という§2の分類基準そのものには当てはまる。ゲートの位置づけ
+（非BLOCKING、CI配線済み）は変わらない。使い捨て資産は`pkernel_audit_ss`の
+`/build/inittask-exit-baseline/`・`-reverted/`とホスト側worktree（実験後に
+`git worktree remove --force`で削除済み）。リポジトリのトラッキング対象ファイルは
+変更していない。
