@@ -730,3 +730,107 @@ CMakeLists.txt`)がこれまでどの文書にも記載されていなかった�
 `kernel/mtkernel3`のソースリストは`boot/linux/Makefile`と完全に同一パターンで
 lock-step(コメントに`tools/android/check_parity.sh`という既存の突き合わせ
 スクリプトへの言及あり、層Bの範囲では新たなリスクにはならない)。
+
+### 7.18 B-INITSTKの実害を初めて実際に再現した（2026-09-16、matched-arm N=10 vs N=10、決定的分離）
+
+§7.15が残した宿題（「実害を出すには、initタスクのスタックをより直接的に消費させる
+別の攻め方…意図的な深い再帰関数をinitタスク文脈で呼ぶテストコードを書く等が要る」）
+に、このrunが着手した。結論を先に書く：**実害は実在し、決定的に再現できた
+（baseline 10/10クリーン vs broken 10/10クラッシュ、同一EIP）。** ただし、その過程で
+§7.12・§7.14・§7.15自身の記録に2つの訂正が必要と分かった。
+
+**訂正1: 「baseline=256KB」は誤り。実際は8KB。** §7.12/§7.14/§7.15が使っていた
+`/build/pk-h/baseline`・`/build/pk-h/broken`（`boot/x86`＝`_X86_PC_`ターゲット）を
+このrunで直接確認した（`grep INITTASK_STKSZ`）。baselineの実際の値は
+`kernel/mtkernel3/include/sys/sysdepend/x86_pc/sysdef.h:37`の`8*1024`（8KB）——
+`inittask.h`の`#ifndef`ガードが健在で、ターゲット側の上書きが効いている。
+brokenは`kernel/mtkernel3/include/sys/inittask.h`（正しいパスは
+`kernel/mtkernel3/include/sys/inittask.h`、前run記載の`include/sys/inittask.h`は
+リポジトリルート相対では存在しない）の`#ifndef`ガードを外し`1*1024`固定にしたもの。
+256KBは`linux_x86_64`/`windows_x86_64`/`linux_aarch64`（Linux/Windowsユーザモード
+ポート）側の上書き値であり、`boot/x86`が使う`x86_pc`側の値ではない——3つの
+sub-entry全部がこの2つの値を混同していた。定性的な「小さい方が壊れる」という
+比較の骨子自体は変わらないが、数字は8KB vs 1KBが正しい。
+
+**訂正2（これが本題）: H'系列（§7.14/§7.15）が実害ゼロだったのは「弱い観測」ではなく
+「観測対象を外していた」ため。** `ring3`/`dproc`系のshellコマンドは`arch/x86/shell.c`
+のコメント通り**別タスク**（`shell_task`、`SHELL_STACK=8192`、`arch/x86/usermain.c:50,195`
+の`create_task(shell_task, ...)`）の呼び出しスタック上で走る。initタスク自身は
+`init_task_main()`（`kernel/mtkernel3/kernel/inittask/inittask.c:150`）が`usermain()`を
+呼んだ直後、`usermain()`の`return 0`（`arch/x86/usermain.c:322`）を受けて即
+`tk_ext_tsk()`（`inittask.c:168`）でタスクごと終了する——**シェルやring3/dprocの
+feedがどれだけ深くても、それらはinitタスク自身の`INITTASK_STKSZ`スタックには
+構造的に一度も触れない。** H'がN=1→N=40→N=100と回数を積んでも0/240だったのは、
+壊れたツリーが無害だったからではなく、そもそも計測対象のスタックを一度も使う
+経路を通っていなかったから。
+
+**実験（このrun、新規）**: `git worktree add --detach`で使い捨てworktreeを2本
+（`/home/shota/pk-scratch/initstk-t16-baseline`・`-broken`、いずれも`master`
+`d50f600a`から分岐）作り、`arch/x86/selftest.c`に`kernel_selftest()`から呼ばれる
+新関数`run_t16_stack_probe()`を追加した。これは`usermain()`の中で`kernel_selftest()`
+が呼ばれる時点（`usermain.c:110`、タスク生成より前）で実行される——**initタスク
+自身のスタック上で確実に動く**、既存のT1-T15と同じ実行文脈。中身は
+`volatile UB pad[128]`を積む`noinline`再帰関数`pk_t16_recurse(depth)`を、深さの
+リスト`{1,2,3,4,5,6,8,10,15,20,25,30,35,40}`に対して順に呼び、戻るたびに
+`[SELFTEST] T16: depth=N survived r=...`を出す。broken側だけ`inittask.h`の
+`#ifndef`ガードを外して`INITTASK_STKSZ`を1KB固定にした。差分は各treeとも
+`selftest.c`1ファイル(+broken側は`inittask.h`2行削除)のみ（`git diff --stat`で確認）。
+2本とも`docker cp`で`pkernel_audit_ss`コンテナに入れ、`tests/x86/run_killchurn.sh`
+（既存のビルド・ブート・シリアルログ判定ハーネスをそのまま再利用、feedの5動詞は
+今回無関係）でビルド・ブートした。
+
+**1回目（深さ上限64、累積スタック需要ざっと128×65≒8.3KB超）**: baseline・brokenとも
+`depth=64`まで全部"survived"を印字し、probe自体はクラッシュしなかった。しかし
+**両方とも**probe後のサブシステム初期化中（`[kdds] K-DDS ready`の直後）に
+ページフォルトで停止した——baselineは`EIP=0x00157086`(`knl_searchFreeArea`内)、
+brokenは`EIP=0x00157104`(`knl_removeFreeQue`内、いずれも`kernel/mtkernel3/kernel/
+tkernel/memory.c`)。無変更の対照ブート（T16なしの素の`/build/pk-h/baseline`、
+同じ8KB設定）は同条件で1回ブートしてクリーン（5ゲート完走）だった。**つまり深さ64は
+baseline(8KB)自身の予算も超えていた**——このtrialはbaseline/brokenの差を示す
+比較にならないので、値をそのまま残しつつ較正し直した（結果を消さない、というこの
+台帳のルールに従い上の段落もそのまま残した）。
+
+**2回目（深さ上限40、累積スタック需要ざっと128×41+call/local overhead≒6.9KB —
+8KB未満・1KB超と見積もって較正）**: `KILLCHURN_N=10`で両アームを再ブート
+（`KILLCHURN_SKIP_BUILD=1`で再ビルドなし、同一バイナリを10回起動）。
+**baseline: 10/10クリーン（全五ゲート完走、対照ブートと一致）。broken: 10/10が
+同一の`EIP=0x00157104`（`knl_removeFreeQue`）でページフォルト、1回の例外もなく
+完全に決定的。** matched-armで10/10 vs 0/10——Fisherの完全分離（この対比だけで
+p≈2.75e-6相当、二項分布で計算可能）。probe中の"survived"印字自体はbroken側も
+`depth=40`まで全部出力されており(`docker exec`ログで確認済み)、**オーバーフロー
+そのものは即座には何も起こさない**——この基板にはスタックのガードページが無く
+（ページング初期化`paging_init()`はkernel_selftest()より後、`usermain.c:113`）、
+壊れた値がその場で使われるまで症状が出ない。
+
+**機構についての推論（確定ではない）**: `config.h:95`で`USE_IMALLOC=1`——
+`inittask.h`の`#if USE_IMALLOC`分岐により`INITTASK_STACK`は`NULL`で、実際のスタック
+領域は静的配列ではなく`task_manage.c:82`の`stack = knl_Imalloc((UW)sstksz);`で
+**ヒープから動的に確保される**。`knl_Imalloc`の裏側の空き領域管理
+(`knl_searchFreeArea`/`knl_appendFreeArea`/`knl_removeFreeQue`、いずれも
+`memory.c`)は、まさにEIPが2回とも落ちた場所——init タスクのスタックがヒープ
+割り当てである以上、それを溢れさせればアロケータ自身の管理構造（隣接する
+空き領域キューのノード）を直接踏みうる、という説明は自然だが、**具体的にどの
+ポインタがどう書き換えられたかを命令レベルで追ってはいない**（`knl_removeFreeQue`の
+`cmp DWORD PTR [eax],0x0`がフォルトしていることは`objdump`で確認済み——引数の
+ポインタ自体が無効値になっている）。深追いすればアドレス単位の証明ができるはずだが、
+優先度とのバランスから次run/人間の判断に委ねる。
+
+**正直な限界**: (1) このT16は合成的なprobeであり、現在出荷されているブート経路の
+どこも、initタスク自身のコンテキストでこの深さの再帰を実際には行わない——
+「危険が実在し到達可能」の証明であって、「今のブートが危険」の証明ではない。
+(2) 実装者=検証者（このrun自身が設計・実行・解釈の全てを行った）——ただし
+10/10 vs 0/10・同一EIPという決定性は、測定ノイズで説明する余地をほぼ残さない。
+(3) 較正ミス（1回目の深さ64）は両アームを壊すという形で見つかったが、これ自体も
+「ガードページが無く症状が遅れて出る」という発見を補強する副産物として残した。
+
+**この発見の意味**: `B-INITSTK`アンカー（§5項目6、`check_local_patches.sh`の
+既存アンカー）が守っている対象は、これまで「値が黙って巻き戻ることそれ自体が
+問題」という理論的な正当化しかなかった。今回、初めて実害の実物（決定的な
+ページフォルト、10/10）を作れた。**ゲートの位置づけ（非BLOCKING、CI配線済み、
+陰性コントロール済み）は変わらない**——この発見は「効くはずの理由」を実証した
+だけで、BLOCKING化の判断（§6・判断待ち項目1と同型）を変えるものではない。
+使い捨て資産は`pkernel_audit_ss`コンテナの`/build/initstk-t16-baseline/`・
+`/build/initstk-t16-broken/`と、ホスト側`/home/shota/pk-scratch/initstk-t16-baseline/`・
+`-broken/`（`git worktree`、detached HEAD `d50f600a`）に保持——リポジトリの
+トラッキング対象ファイルは一切変更していない（`git -C /home/shota/p-kernel status`
+はクリーン）。
