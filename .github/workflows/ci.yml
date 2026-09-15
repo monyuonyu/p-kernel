@@ -2445,8 +2445,20 @@ jobs:
     # dropped ipxe-qemu (a qemu-system-arm Recommends that ships the virtio NIC
     # romfiles). Root cause was -M virt auto-creating a virtio-net-pci the test
     # never uses; run_smp0.sh now passes -nic none, so the romfile (and the
-    # ipxe-qemu package) are no longer needed. Kept continue-on-error for one
-    # green run, then this guard can be removed.
+    # ipxe-qemu package) are no longer needed.
+    #
+    # CORRECTION 2026-09-16 (unattended routine, verified via `gh run view` on
+    # every run of this job, not summarized from memory): this comment used to
+    # say "kept continue-on-error for one green run, then this guard can be
+    # removed" -- that premise no longer holds. Of the 15 runs of this job from
+    # 2026-07-12 through 2026-09-09, 14 FAILED and only ONE (2026-09-03 12:13
+    # UTC) was green. This is not "nearly stable, one more green away" -- it is
+    # mostly-red with one flake toward green. Removing continue-on-error now
+    # would very likely make master's CI red on nearly every push. Raising
+    # SMP0_TIMEOUT further, reducing the test's workload, or accepting this job
+    # as permanently informational are the live options; see
+    # /home/shota/pkernel-baton.md judgment-queue item 5 for the undecided call
+    # (needs qemu-system-aarch64, not available on the unattended routine's host).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
