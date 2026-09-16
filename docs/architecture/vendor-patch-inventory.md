@@ -939,3 +939,52 @@ B-INITTASK-EXIT（即座かつ全面的に症状が出る）に続く第三の�
 使い捨て資産は`/home/shota/pk-scratch/bstr_harm_probe.c`・
 `bstr_harm_probe`（コンパイル済みバイナリ、ホスト上、リポジトリ外）。
 リポジトリのトラッキング対象ファイルは変更していない。
+
+### 7.21 MEM-UPTR / MEM-UPTR-C / MEM-UPTR-MPの実害も実際に再現した（2026-09-17、決定的・非確率的）
+
+`memory.h`のポインタ幅マクロ群（`setAreaFlag`/`clrAreaFlag`/`chkAreaFlag`/`Mask`/`Assign`、
+imallocのフリーエリアアロケータが`QUEUE.prev`フィールドの下位ビットにフラグを
+埋め込む「ポインタタギング」手法で使う）は`MEM-UPTR`アンカーが`memory.h`側を、
+§7.5/§7.7で追加した`MEM-UPTR-C`/`MEM-UPTR-MP`が`memory.c`/`mempool.c`側の
+同一パターンの使用箇所を守っているが、いずれも静的アンカー確認のみで実害は
+未実証だった。B-STR（§7.20）と同じ理由でブート不要——マクロの中身は純粋な
+ポインタ演算なので、ソースレベルのmatched-arm比較で足りる。
+
+**実験**: `/home/shota/pk-scratch/mem_uptr_harm_probe.c`にFIXED版（現行`memory.h`の
+5マクロを`KNL_UPTR`経由でそのままコピー、このLP64ホストで`sizeof(KNL_UPTR)==8`）と
+BROKEN版（`pk-scratch/upstream-neg-root`の上流`memory.h`から`UW`経由の同じ5マクロを
+そのままコピー）を並べ、`include/typedef.h`で確認した上流の`UW`定義
+（`typedef unsigned int UW;`——全ターゲット共通でホスト幅に依らず固定32bit）を
+そのまま使用。4GiB境界より上のビットを持つ合成ポインタ値（`0x560a12345678`、
+x86_64 Linuxでヒープ/mmap領域が実際にこの高さに来るのは日常的）に対して
+`setAreaFlag`→アンマスク、`Mask`、`Assign`の3系統をそれぞれFIXED/BROKENで実行し比較。
+
+**結果**（`python3`の`subprocess.run`経由でコンパイル・実行、決定的・毎回同一）:
+- **FIXED**: 3系統とも上位32bitを完全保持（`0x560a12345678`のまま）。
+- **BROKEN**: 3系統とも上位32bitが**ゼロに切り捨て**（`0x560a12345678`→
+  `0x12345678`、`0x560a`分が消失）。コンパイル時、BROKEN版の5マクロ展開箇所
+  全てで`-Wpointer-to-int-cast`/`-Wint-to-pointer-cast`警告が出た——これは
+  雑音ではなく、`memory.h`のコメント自身が言う「LP64/LLP64の警告回避」が
+  まさにこの警告のことだと実地で裏取りできたことを意味する（修正前は
+  ビルドログに実際にこの警告が出ていたはずで、それが握りつぶされていた
+  というのがこのクラスの実害の入口）。
+
+**この発見の意味**: imallocのフリーリストはこのポインタタギングで生きた
+QUEUEエントリを連結している。上位32bitが消えたポインタで`prev`/`next`を
+辿ればフリーリストは即座に壊れた領域を指す——書き込み先が全く無関係な
+アドレスになる、二重解放と見分けがつかない破壊、等につながりうる
+（具体的な壊れ方はヒープレイアウト依存のため、これ以上は今回測定していない）。
+B-STRと同じく即座かつ非確率的だが、症状の出方はB-STRより深刻になりうる——
+B-STRは値の破損に留まるが、これはアロケータの連結構造そのものが対象。
+`MEM-UPTR`/`MEM-UPTR-C`/`MEM-UPTR-MP`の3アンカーはいずれも同じマクロ群を
+異なるファイルで守っているだけなので、1つの実験で3つとも実証したと扱ってよい。
+ゲートの位置づけ（非BLOCKING、CI配線済み）は変わらない。使い捨て資産は
+`/home/shota/pk-scratch/mem_uptr_harm_probe.c`・`mem_uptr_harm_probe`
+（コンパイル済みバイナリ、ホスト上、リポジトリ外）。リポジトリのトラッキング
+対象ファイルは変更していない。
+
+**残り**: 層B/MEM-UPTR系9アンカー中、`B-SCHED-KH`/`B-SCHED-TM`/`B-SCHED-TC`
+（SCHED_RRラウンドロビン）の3本だけが未実証のまま残る。ラウンドロビンは
+純粋な関数ではなくスケジューラの実行時状態（tick処理・レディキュー）に
+依存するため、B-STR/MEM-UPTR系のようなソースレベル比較では足りず、
+実ブートでの検証が要る——次の課題として残す。
