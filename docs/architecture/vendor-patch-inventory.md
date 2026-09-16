@@ -1063,7 +1063,9 @@ knl_timer_handler→END_CRITICAL_SECTION→knl_dispatch()をIRQの中で同期�
 直せるかどうか・直す価値があるかの判断は人間に委ねる（命令レベルの原因は
 特定済みなので、次に要るのは追加調査ではなく設計判断）。SCHED_RRアンカー
 自体の実害実証は、この限界が解消されるかSCHED_RR固有の代替検証法が
-見つかるまで足止め。使い捨て資産は`pk-scratch/schedrr-baseline`・
-`-broken`（worktree）、`pkernel_audit_ss`の`/build/schedrr-baseline`・
-`-broken`（ビルド・シリアルログ）。リポジトリのトラッキング対象ファイルは
+見つかるまで足止め。使い捨て資産のうち`pk-scratch/schedrr-baseline`・
+`-broken`（worktree）はgap-ledger本体とこの節への記録を終えた後に
+`git worktree remove --force`で削除済み（次run/人間が探しに行かなくてよい）。
+`pkernel_audit_ss`の`/build/schedrr-baseline`・`-broken`（ビルド・シリアルログ、
+`[D:3->1]`の捕獲を含む）はそのまま残置。リポジトリのトラッキング対象ファイルは
 変更していない。
