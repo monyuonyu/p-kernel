@@ -989,7 +989,7 @@ B-STRは値の破損に留まるが、これはアロケータの連結構造そ
 依存するため、B-STR/MEM-UPTR系のようなソースレベル比較では足りず、
 実ブートでの検証が要る——次の課題として残す。
 
-### 7.22 SCHED_RRの実害実証は未達——代わりに無関係な深刻なハングを発見（2026-09-17）
+### 7.22 SCHED_RRの実害実証は未達——代わりに根本原因まで特定した深刻なハングを発見（2026-09-17）
 
 §7.21末尾の「次の課題」に着手した。結論を先に書く：**SCHED_RRアンカー自体の
 実害実証は今回も達成できなかった。** 理由はSCHED_RRが壊れているからではなく、
@@ -1025,18 +1025,45 @@ SCHED_RRでbusy-loop実行し、両方がCPU時間を得るか確認する設計
 通常ディスパッチの復帰パス（124行目、`ret`直前に`sti`）も
 `knl_task_entry_trampoline`（143行目、コメント「新規タスクは割込み許可で
 開始」の通り即`sti`）も、どちらも明示的に割込みを有効化している——
-この仮説は誤り。**真の機構は未特定**（`knl_timer_handler`のdrainループは
-`knl_ctxtsk`に関係なく全件処理するはずなので、なぜ高優先度タスクへ実際に
-ディスパッチが戻らないのかは命令レベルで追っていない）。
+この仮説は誤り。
+
+**真の機構——同じrun内で特定・確認済み**: `timer.c`の`knl_timer_handler`に
+`knl_ctxtsk`/`knl_schedtsk`の`tskid`を出力する診断printを仕込んだところ、
+ハング中は毎tick`[D:3->1]`（ctxtsk=busyタスク3、schedtsk=init=1）が出続けた——
+**スケジューラの判断（次に走るべきはinit）自体は最初から正しく、揺らいでも
+いない。** 切り替えが実行されない理由は`kernel/mtkernel3/kernel/sysdepend/
+x86_pc/cpu_status.h`の`END_CRITICAL_SECTION`にあった: `knl_dispatch()`を
+呼ぶ条件の1つが`!knl_isTaskIndependent()`（`in_indp()`、「今IRQハンドラの
+中にいない」）。ところがPIT（IRQ0）は`sys_timer.h:60`で`knl_timer_handler_
+startup`（`dispatch.S:154-159`）に配線されており、これは
+`knl_taskindp++; call knl_timer_handler; knl_taskindp--;`——
+**`knl_timer_handler`の実行中はずっと`knl_isTaskIndependent()`が真であり、
+その内部で呼ばれる`END_CRITICAL_SECTION`は条件を満たさず`knl_dispatch()`を
+一度も呼べない。** これは`boot/x86/idt.c:93-95`のコメント「PIT IRQ0ハンドラは
+knl_timer_handler→END_CRITICAL_SECTION→knl_dispatch()をIRQの中で同期的に
+呼ぶ」という設計意図と正面から矛盾する——コードは実際にはそう動いていない。
+結果として、タスク切り替えが起きる唯一の経路は「タスク自身がカーネル呼び出しを
+行い、タスクコンテキスト（`knl_taskindp==0`）で`END_CRITICAL_SECTION`に
+到達すること」だけになる。tickはスケジュール判断を10msごとに正しく更新できるが、
+それを実行に移せるのは誰かが自発的にカーネルへ戻ってきた時だけ——1度も
+戻ってこないタスクがいる限り、優先度に関係なく永遠に切り替わらない。
+同じガードは`knl_rotate_ready_queue_run()`（SCHED_RRのtick処理）にも及ぶため、
+**SCHED_RR自体も「busy-loopで一切カーネルに戻らないタスク」に対しては
+同型の理由で無力**——SCHED_RRの実害実証を試みていて、SCHED_RRより根が深い
+限界に行き着いた形。
 
 **この発見の重み**: SCHED_RRアンカーの実害実証という当初目的からは外れるが、
-**現行master（ベンダパッチの有無に関係ない、素のコード）に対する未修正の
-全系統ハングの疑い**という、この探索よりずっと重大かもしれない発見。
+**現行master（ベンダパッチの有無に関係ない、素のコード）が持つ、根本原因まで
+特定済みの全系統ハング**という、この探索よりずっと重大な発見になった。
 `TA_RNG0`は特殊な設定ではなく既定値（`0x0`）であり、synthetic probeでしか
 無いとはいえ、CPU律速の計算を続けるring0タスク（将来の推論ワークロード等）が
-実際に踏みうる形。gap-ledgerに新規OPEN行として記録し、判断待ちに追加した——
-根本原因の特定は次run／人間の判断に委ねる。SCHED_RRアンカー自体の実害実証は
-このハングが解消されるまで足止め。使い捨て資産は`pk-scratch/schedrr-baseline`・
+実際に踏みうる形。`rtos_task.c`自身のコメントが謳う「SCHED_FIFO: 優先度ベース
+抢占スケジューリング」は、一度もカーネルに戻らないタスクに対しては成立しない
+ことになる。gap-ledgerに新規OPEN行として記録し、判断待ちに追加した——
+直せるかどうか・直す価値があるかの判断は人間に委ねる（命令レベルの原因は
+特定済みなので、次に要るのは追加調査ではなく設計判断）。SCHED_RRアンカー
+自体の実害実証は、この限界が解消されるかSCHED_RR固有の代替検証法が
+見つかるまで足止め。使い捨て資産は`pk-scratch/schedrr-baseline`・
 `-broken`（worktree）、`pkernel_audit_ss`の`/build/schedrr-baseline`・
 `-broken`（ビルド・シリアルログ）。リポジトリのトラッキング対象ファイルは
 変更していない。
