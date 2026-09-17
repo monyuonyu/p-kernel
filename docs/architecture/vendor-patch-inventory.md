@@ -1069,3 +1069,40 @@ knl_timer_handler→END_CRITICAL_SECTION→knl_dispatch()をIRQの中で同期�
 `pkernel_audit_ss`の`/build/schedrr-baseline`・`-broken`（ビルド・シリアルログ、
 `[D:3->1]`の捕獲を含む）はそのまま残置。リポジトリのトラッキング対象ファイルは
 変更していない。
+
+### 7.23 RNG0ハングの「未確認」2点のうち、優先度依存はソース読解のみで決着（2026-09-18）
+
+§7.22で「未確認」と書いた2点——ring3(`TA_RNG3`)タスクでも再現するか、busyタスクの
+優先度がsleeperより低い場合に限るのか——のうち、**優先度依存の方だけを、新規の
+ブートなしで決着させた。** 設計判断（判断待ち項目8）そのものには着手していない。
+
+**方法**: 新しい実験は組まず、`END_CRITICAL_SECTION`（`kernel/mtkernel3/kernel/
+sysdepend/x86_pc/cpu_status.h:28-34`）の4条件を読んだ——`!isDI(_intsts_)`
+（クリティカルセクション開始時点で割込み許可だったか）、`knl_ctxtsk !=
+knl_schedtsk`（切替が実際に必要か）、`!knl_isTaskIndependent()`（IRQハンドラの
+中にいないか）、`!knl_dispatch_disabled`。**4条件のどれもタスクの`itskpri`を
+一度も参照しない。** タスクに関係する唯一の条件は`ctxtsk != schedtsk`という
+ポインタの不一致チェックで、優先度の値そのものは見ていない——スケジューラの
+選択が今動いているタスクと違うかどうかだけを見る。2026-09-17のrunが仕込んだ
+診断printは、90秒のハング全体を通して`schedtsk->tskid=1 != ctxtsk->tskid=3`
+（不一致）が成立し続けていたことを既に示しており、ブロックしていたのはこの
+条件ではなく`!knl_isTaskIndependent()`の方だったことも確認済み。
+
+`timer.c:260`も確認: SCHED_RRの`knl_rotate_ready_queue_run()`（ready queueの
+回転）は`knl_timer_handler`の中で、`timer.c:264`の同一の`END_CRITICAL_SECTION`
+呼び出しより前に呼ばれている——回転が何を計算しようと、それを実行に移す経路は
+同じ、優先度を見ない、IRQネストだけを見るガードを通る。
+
+**結論（分析であり、優先度を振った新規ブート計測ではない）**: このハングは
+busyタスクの優先度がsleeperより低い・同じ・高いのどれであっても再現する
+はずだと、コードから証明できる。「busyタスクの優先度を下げれば回避できる」は
+成立しない——RTOSエンジニアが最初に思いつきそうな回避策が効かないという、
+判断待ち項目8の選択肢(d)（実コード到達可能性）に関係する材料。修正方針の
+決定そのものはこのrunでも行っていない。
+
+ring3(`TA_RNG3`)タスクでの再現確認は今回も未着手のまま——`task_manage.c`の
+`tk_cre_tsk`は`TA_RNG3`を有効な属性として受理するが、このリポジトリの
+ring3サンプル（`core_mind.elf`等）はどれも素の`tk_cre_tsk`ではなく別系統の
+ELF/`dproc`プロセスローダ経由で起動されており、T17プローブをそのまま転用
+できない。確認するには新規のローダ経由テスト基盤の構築が要り、今回のrunの
+予算では手を出さなかった。gap-ledgerの該当行にも同内容を追記済み。
