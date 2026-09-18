@@ -1106,3 +1106,65 @@ ring3サンプル（`core_mind.elf`等）はどれも素の`tk_cre_tsk`ではな
 ELF/`dproc`プロセスローダ経由で起動されており、T17プローブをそのまま転用
 できない。確認するには新規のローダ経由テスト基盤の構築が要り、今回のrunの
 予算では手を出さなかった。gap-ledgerの該当行にも同内容を追記済み。
+
+### 7.24 SCHED_RRの実害を初めて実証した（2026-09-19、matched-arm、決定的・再現2/2）
+
+§7.22で足止めになっていた「SCHED_RR固有の代替検証法」が見つかった。**T17と
+違い、busyタスクが一切カーネルに戻らない設計をやめ、代わりに`tk_ref_tsk
+(TSK_SELF, &rtsk)`（読み取り専用・スケジューリングに副作用を一切持たない
+syscallだが、`BEGIN_CRITICAL_SECTION`/`END_CRITICAL_SECTION`は必ず通る）を
+busyループの中で毎周期呼ばせた。** これにより、RNG0-BUSY-TASK-STALLS-
+DISPATCHが要求する「タスクコンテキストからのカーネル再入」を提供しつつ、
+`tk_rot_rdq`のような能動的な回転は一切行わない——tickが計算した
+`knl_schedtsk`の変更が実行に移されるかどうかだけを、純粋にB-SCHED-TCの
+存在有無で決まるようにした設計。
+
+**プローブ（T18、`arch/x86/selftest.c`に追加、not committed、使い捨て）**:
+同一優先度(pri=20)の2つのring0タスクA・Bを`tk_cre_tsk`で作成し、
+`arch/x86/syscall.c`のPK_CRE_TSK層と同じ手法（`get_tcb(tid)`でTCBを直接
+書き換え）で両方に`sched_policy=SCHED_RR, time_slice=5 tick(50ms)`を設定。
+各タスクは`while(!stop){counter++; tk_ref_tsk(TSK_SELF,&rtsk);}`。
+init(pri=1)が両方をstartした後`tk_dly_tsk(300)`で300ms待ち、`stop=1`を
+立てて`tk_dly_tsk(50)`でさらに待ってからcount_a/count_bをシリアル出力。
+
+**worktree**: `/home/shota/pk-scratch/schedrr-baseline`（無改造master）と
+`/home/shota/pk-scratch/schedrr-broken`（`timer.c`のB-SCHED-TCブロック
+＝`knl_ctxtsk->sched_policy==SCHED_RR`のtick駆動`knl_rotate_ready_queue_run()`
+呼び出しを削除）。`pkernel_audit_ss`の`/build/t18-baseline`・`/build/t18-broken`
+に`docker cp`で投入しビルド（一度`docker cp`直後の所有権が`ubuntu`のままで
+`.d`ファイル書き込みが`Permission denied`になり失敗、`docker exec -u root
+chown -R runner:runner`で解消——既知の罠に新しい具体例を1つ追加）。
+`qemu-system-x86_64 -m 256 -kernel bootloader.bin -serial file:serial.log
+-cpu qemu64 -display none -no-reboot`を`timeout 20`で2回ずつ実行。
+
+**結果（2/2再現、両アームともT1-T15は13/13 PASS、ハングなし）**:
+
+| アーム | run1 | run2 |
+|---|---|---|
+| baseline（B-SCHED-TC あり） | count_a=710281, count_b=784777 | count_a=713471, count_b=703152 |
+| broken（B-SCHED-TC 削除） | count_a=1486693, **count_b=0** | count_a=1547207, **count_b=0** |
+
+baselineでは2タスクのカウントが同程度（比0.90前後、50msごとの交互実行が
+機能している証拠）。brokenでは**Bが2回とも完全に0**——最初にディスパッチ
+されたAがCPUを恒久的に独占し、Bには一度もCPU時間が回らない。これは
+`B-SCHED-KH`/`B-SCHED-TM`/`B-SCHED-TC`（micro T-Kernel 2.0由来のSCHED_RR
+拡張3アンカー）が守っている実際の被害——「同一優先度タスク間の公平性」が
+このパッチ無しで完全に崩壊する——の初めての実ブート実証。
+
+**これで2026-09-06に追加された層B/MEM-UPTR系9アンカー全てが実害実証済みに
+なった**（B-STR/MEM-UPTR/-C/-MP/B-INITSTK/B-INITTASK-EXITは既存、
+B-SCHED-KH/TM/TCは今回）。gap-ledgerの該当行を更新する。
+
+**この実証が証明していないこと**: (1) 本番の実タスク構成（サンプル等）で
+実際に同一優先度・非yieldのCPU律速タスクが2つ以上同時に存在するかは未確認
+——RNG0-BUSY-TASK-STALLS-DISPATCHの§7.23と同じ限界で、synthetic probeが
+示すのは「パッチが無いと壊れる」であって「今のサンプルが壊れている」では
+ない。(2) `time_slice=5tick`という値そのものの妥当性は検証していない
+（この実験の目的はON/OFFの効果検証であり、最適なスライス長の探索ではない）。
+(3) 3以上のタスクでの公平性（今回は2タスクのみ）。
+
+使い捨て資産: `pk-scratch/schedrr-baseline`・`-broken`worktreeはこの節への
+記録後に`git worktree remove --force`で削除予定（前回の教訓により、削除して
+から「削除した」と書く）。`pkernel_audit_ss`の`/build/t18-baseline`・
+`/build/t18-broken`（ビルド・serial.log/serial2.log）は残置。リポジトリの
+トラッキング対象ファイルは変更していない。
