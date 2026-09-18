@@ -1163,8 +1163,66 @@ B-SCHED-KH/TM/TCは今回）。gap-ledgerの該当行を更新する。
 （この実験の目的はON/OFFの効果検証であり、最適なスライス長の探索ではない）。
 (3) 3以上のタスクでの公平性（今回は2タスクのみ）。
 
-使い捨て資産: `pk-scratch/schedrr-baseline`・`-broken`worktreeはこの節への
-記録後に`git worktree remove --force`で削除予定（前回の教訓により、削除して
-から「削除した」と書く）。`pkernel_audit_ss`の`/build/t18-baseline`・
-`/build/t18-broken`（ビルド・serial.log/serial2.log）は残置。リポジトリの
-トラッキング対象ファイルは変更していない。
+使い捨て資産: `pk-scratch/schedrr-baseline`・`-broken`worktreeは記録後に
+`git worktree remove --force`で削除済み（コミット前に実行——前回の教訓
+「削除予定と書いた直後に削除して記述が古くなった」を今回は避けた）。
+`pkernel_audit_ss`の`/build/t18-baseline`・`/build/t18-broken`（ビルド・
+serial.log/serial2.log）は残置。リポジトリのトラッキング対象ファイルは
+変更していない。
+
+### 7.25 RNG0ハングの実コード到達可能性調査を、core_mind.elf 1件から全常駐デーモンに拡大（2026-09-19）
+
+判断待ち項目8の選択肢(d)「実コードがRNG0-BUSY-TASK-STALLS-DISPATCHに実際に
+触れうるか」を、これまで`core_mind.elf`の`moe_infer`1件しか見ていなかった
+範囲から、`arch/x86/usermain.c`が起動する全常駐デーモンに広げた。
+
+**方法**: read-onlyのExploreサブエージェントに、各デーモンの1イテレーション
+内の計算経路が、`tk_*`/`sys_*`呼び出しを一切挟まずに数十〜数百ms以上かかり
+うるかを調査させた。**サブエージェントの申告は鵜呑みにせず**、上位2件
+（最も深刻とされたもの）と「問題なし」判定のうち1件を自分で直接検証した。
+
+**サブエージェントが挙げた3候補**:
+1. `student_dmn_consolidate`（`arch/common/llm/student_shell.c`）——コード
+   自身のコメントに実測値あり: 1回あたり約775ms（`ST_DMN_PASS_BUDGET=8`
+   triple、triple毎約97ms）、コメント自身が「50ms以内に収まっていない」と
+   明記。
+2. `r3_consolidate_idle_round`（`arch/common/r3_incontext.c`）——facts保留中
+   は毎idle pulseで呼ばれ、256ステップ×21,568パラメータのtransformerを
+   一切yieldせず実行、見積もり数十ms、緩和策なし。
+3. `s_pretrain`（同ファイル）——**hosted-Linux版で実測5〜11秒**（コード内
+   コメント「substrate pretrained ... in 10.4s」）。yield機構
+   （`S_PRETRAIN_YIELD`/優先度降格）は`_TK_HOSTED_LIBC_`でゲートされており、
+   コメントが明記: 「bare metal compiles the original loop verbatim」。
+
+**自分で直接検証した結果——3件とも、実際のx86ベアメタルターゲット
+（このバグが起きるターゲットそのもの）では到達不能と判明**:
+- `student_shell.c`は`_X86_PC_`向けに一切ビルドされていない
+  （`boot/x86/Makefile:231-234`——hosted専用、リンクを通すための
+  弱いno-opスタブが用意されている）。
+- `r3_incontext.c`は`boot/x86`にコンパイルされているが、その唯一の入口
+  （`mind_cmd`・`r3_cmd`、および`r3_fact_learn`の唯一の外部呼び出し元
+  `gen_succession.c`）は`arch/linux/{x86_64,aarch64}/usermain.c`からしか
+  呼ばれていない——`arch/x86/`全体を`mind_cmd`/`r3_cmd`/`r3_fact_learn`/
+  `r3_want_note`/`r3_fact_touch`/`r3_fact_revise`でgrepしても0件。
+  `dmn.c:225-227`の`if (r3_facts_pending()) { r3_consolidate_idle_round();
+  ... }`はx86でもコンパイルされ生きているコードだが、facts が pending に
+  なる経路がx86には存在しないため、実質的に到達しないデッドパス
+  ——`s_pretrain`もこの経路からは一度も呼ばれない。
+- 対照として、実際にx86で到達可能な`ga_step`（`arch/common/ga.c`、
+  `GA_POP_SIZE=4`/`GA_INTERVAL=10`を`arch/common/include/ga.h`で直接確認）
+  は申告通り軽微。
+
+**結論**: 2026-09-18の`core_mind.elf`単体チェックより遥かに厳密な根拠で、
+「今のx86ベアメタル出荷コードでは観測可能なRNG0ハングは起きない」という
+既存の結論を補強できた——重い計算（LLM蒸留、r3-in-context mindのpretrain）
+はhosted-Linux/aarch64の到達可能な呼び出しグラフにしか存在せず、x86ベア
+メタルの到達可能な範囲には無い。ただしこれは**今のツリーの配線に関する
+事実**であり、アーキテクチャ上の脆弱性そのもの（判断待ち項目8）は変わらず
+残る——`mind_cmd`をx86シェルに移植する、あるいはx86に新しい重いデーモンを
+追加するだけで、この露出は即座に現実化する。
+
+**この調査が検証していないこと**: 上記2候補+対照1件のみ自分で再検証した。
+「問題なし」バケットの残り（swim/replica/moe/world/edf/raft/pmesh/vital/
+kloader/heal/persist/ai_worker/ai_infer/dkva）はサブエージェントの1周目の
+申告のまま——1件ずつ自分で行数を数え直してはいない。gap-ledgerの該当行にも
+同内容を要約して追記済み。
