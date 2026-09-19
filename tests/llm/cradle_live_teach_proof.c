@@ -21,8 +21,12 @@
  *  not about proving the engine loads (forward_test.c/run_forward.sh already
  *  does that).
  *
- *  Build:
- *    cc -std=c11 -O1 -ffp-contract=off cradle_live_teach_proof.c \
+ *  Build (needs -D_POSIX_C_SOURCE=199309L: llm_shell.c's clock_gettime use is
+ *  gated behind glibc's POSIX feature-test macros, which -std=c11 alone
+ *  disables — confirmed missing on this host's gcc 13.3.0/glibc; without it,
+ *  CLOCK_MONOTONIC is undeclared and the build fails):
+ *    cc -std=c11 -D_POSIX_C_SOURCE=199309L -O1 -ffp-contract=off \
+ *       cradle_live_teach_proof.c \
  *       ../../arch/common/llm/cradle.c ../../arch/common/llm/student.c \
  *       ../../arch/common/llm/llm_shell.c ../../arch/common/llm/gguf.c \
  *       ../../arch/common/llm/quant.c ../../arch/common/llm/pk_parallel.c \

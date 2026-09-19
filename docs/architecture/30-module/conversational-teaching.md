@@ -294,6 +294,18 @@ Idempotent: dedup by `(teacher_node, seq)`.
    (`objcopy --only-section=.text` + `cmp` against a pristine master build) and fixed by
    removing the stub (nothing needed it — every caller of the new function also links its
    strong definition).
+   **Same-day follow-up: a narrower single-process cert, `cradle_live_teach_test()`**
+   (`arch/common/llm/cradle.c` + `tests/llm/cradle_live_teach_proof.c`) — NOT the
+   `[ct-live-teach]` multi-node cert described above, which is still open. It trains one
+   child on a real SmolLM2-generated document and a same-seed twin on the fixture-only
+   filler, then compares held-out loss on the SAME unseen tail of the live document (the
+   twin never saw it) — an update-count-matched, in-process substitute that needs no relay
+   harness. **Audited independently 2026-09-20** (a separate run rebuilt and reran it):
+   same-prompt rerun reproduced the implementer's numbers exactly (bit-identical 410-byte
+   generation, pre/post/drop all matching to 4 decimals); a second, different prompt ("The
+   history of computers begins with") showed the same qualitative pattern (LIVE drop
+   +4.40, FIXTURE drop -2.80) — the effect is not a one-prompt fluke. PASS, merged to local
+   master.
 4. **CT-3 — salience-weighted lesson rehearsal (§3.2) + DMN-budget cert.** Carry/honor the
    `salience` byte; re-certify the wave-23 budget across both tracks (gate-6). Cert
    `[ct-salience]` (high-salience windows rehearsed more within the fixed budget),
