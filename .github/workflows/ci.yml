@@ -2456,9 +2456,9 @@ jobs:
     # mostly-red with one flake toward green. Removing continue-on-error now
     # would very likely make master's CI red on nearly every push. Raising
     # SMP0_TIMEOUT further, reducing the test's workload, or accepting this job
-    # as permanently informational are the live options; see
-    # /home/shota/pkernel-baton.md judgment-queue item 5 for the undecided call
-    # (needs qemu-system-aarch64, not available on the unattended routine's host).
+    # as permanently informational are the live options. Which one is still an
+    # open maintainer decision (it needs qemu-system-aarch64 to measure, which the
+    # unattended routine's host does not have).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
