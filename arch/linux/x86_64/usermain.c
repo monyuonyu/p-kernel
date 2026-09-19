@@ -113,6 +113,12 @@ IMPORT void lm_test(void);                            /* living-mind DMN */
  * NUL-terminates the arg tail and passes a plain line-printer. The bridge
  * parses the sampler flags (temp<=0 => greedy; >0 => sampled). */
 IMPORT int  llm_shell_cmd(const char *args, void (*emit)(const char *));
+/* CT-2 (conversational-teaching.md §7): same engine, but returns ONLY the
+ * generated continuation text (greedy) into a caller buffer instead of
+ * printing a transcript — the seam `cradle emit-live` uses to feed a real
+ * generated lesson into cradle_teach_emit(). Weak no-op on targets without
+ * the teacher engine (student_stub.c) — writes "" and returns 0. */
+IMPORT int  llm_generate_text(const char *prompt, int max_gen, char *out, int out_cap);
 /* arch/common/llm/student_shell.c — the RESIDENT, PERSISTED Cradle baby
  * (NS-1). student_boot_restore() restores-or-inits the in-kernel student at
  * boot (no-op without PKERNEL_PFS_DIR); student_shell_cmd() runs one bounded
@@ -1340,6 +1346,11 @@ EXPORT INT usermain(void)
              *   cradle emit-scramble (teacher only) emit a RANDOM-BYTE body of the
              *                        cure-lesson length (Arm B): same #bytes, no
              *                        sequence -> a student must NOT learn the fact.
+             *   cradle emit-live <prompt>  (teacher only, CT-2) GENERATE a completion
+             *                        for <prompt> with the SmolLM2 engine
+             *                        (PKERNEL_LLM_GGUF) and emit it as a lesson.
+             *                        Needs the engine built on this target (weak
+             *                        no-op stub elsewhere: "nothing generated").
              *   cradle               alias for `cradle test`.                     */
             const UB *a = line + 6; INT al = n - 6;
             while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
@@ -1397,6 +1408,33 @@ EXPORT INT usermain(void)
                               "learn the fact\r\n");
                 else    print("[cradle] not emitted — this node is not the "
                               "elected region teacher (or solo).\r\n");
+            } else if (al >= 9 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t'&&a[4]=='-'
+                       && a[5]=='l'&&a[6]=='i'&&a[7]=='v'&&a[8]=='e') {
+                /* CT-2 (conversational-teaching.md §7, teacher only): ask the
+                 * SmolLM2 engine to GENERATE a completion for the given prompt
+                 * (greedy, via llm_generate_text — arch/common/llm/llm_shell.c),
+                 * then emit it as a lesson exactly like `cradle emit`. Needs
+                 * PKERNEL_LLM_GGUF set to a real GGUF; a short generation still
+                 * gets refused by ingest below CRADLE_MIN_LIVE, same as `emit`.
+                 *   cradle emit-live <prompt...>                             */
+                const UB *b = a + 9; INT bl = al - 9;
+                while (bl > 0 && (*b == ' ' || *b == '\t')) { b++; bl--; }
+                char promptbuf[160];
+                INT pl = bl; if (pl < 0) pl = 0;
+                if (pl > (INT)sizeof(promptbuf) - 1) pl = (INT)sizeof(promptbuf) - 1;
+                for (INT i = 0; i < pl; i++) promptbuf[i] = (char)b[i];
+                promptbuf[pl] = '\0';
+                static char cl_live[CL_CANON_MAX];   /* file-static, not task stack */
+                INT tl = (INT)llm_generate_text(promptbuf, 96, cl_live, (INT)sizeof cl_live);
+                if (tl <= 0) {
+                    print("[cradle] live generation produced nothing "
+                          "(no engine on this target, or set PKERNEL_LLM_GGUF)\r\n");
+                } else {
+                    INT rc = cradle_teach_emit((const UB *)cl_live, (UW)tl);
+                    if (rc) print("[cradle-live] live-generated lesson emitted (CT-2)\r\n");
+                    else    print("[cradle] not emitted — this node is not the "
+                                  "elected region teacher (or solo).\r\n");
+                }
             } else if (al >= 4 && a[0]=='e'&&a[1]=='m'&&a[2]=='i'&&a[3]=='t') {
                 const UB *b = a + 4; INT bl = al - 4;
                 while (bl > 0 && (*b == ' ' || *b == '\t')) { b++; bl--; }

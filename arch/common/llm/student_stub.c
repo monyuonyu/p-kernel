@@ -102,3 +102,15 @@ __attribute__((weak)) int llm_shell_cmd(const char *args,
     (void)args;
     return 0;
 }
+
+/* CT-2 (conversational-teaching.md §7): weak no-op for llm_generate_text
+ * (arch/common/llm/llm_shell.c), same reason and same override rule as
+ * llm_shell_cmd above — `cradle emit-live` degrades to "nothing generated"
+ * on a target without the teacher engine, rather than failing to link. */
+__attribute__((weak)) int llm_generate_text(const char *prompt, int max_gen,
+                                            char *out, int out_cap)
+{
+    (void)prompt; (void)max_gen;
+    if (out && out_cap) out[0] = '\0';
+    return 0;
+}
