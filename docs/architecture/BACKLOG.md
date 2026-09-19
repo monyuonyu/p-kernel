@@ -67,6 +67,38 @@ in dependency order, each item as a background **implement → independent audit
 integrate** wave (the development-method constitution). Disjoint-file items run in parallel;
 same-file items serialize. Update this file as items land.
 
+## ▶▶▶ 2026-09-19 — mk_pino: 「調べて書く」から「作る」へ (the current order; supersedes the 06-27 block below)
+
+**Why.** The last `feat` commit is 2026-07-12. The ~64 commits the unattended routine made
+since 2026-09-03 are all docs / tests / CI — zero kernel-code change — while the gap-ledger OPEN table stayed
+at 3 rows (one merged away, one newly found) and the audit docs grew by ~135k chars. That is
+AUDIT-SPRAWL returning, produced by following the rules (no push, no unilateral design calls leaves
+"investigate and write" as the only safe work). So the order below is BUILD work, and the routine now
+works one item per `feat/<name>` branch, test-first, with implementation and audit in different runs.
+
+**Where the concept stands (five layers).** Body — largely built. Self — built (hash-chained,
+continued by another node). Collective — built at toy scale (`[live]`: a fact taught on A is answered
+by B after A is killed). Evolution — first slice shipped (`migration-succession.md`, 2026-07-05).
+**Brain — the gap.** The R3 mind is 21,568 params with single-token recall; the Cradle-baby student
+(1.9M, M tier) got a clean NULL on C1 context carry (`scale-wall-c1.md`); the in-kernel SmolLM2-135M
+teacher engine works but is not wired to teach (CT-2). Also: the student and the mind's entry points
+exist only on the hosted-Linux / Android builds, not on bare metal. The mechanisms that keep a mind
+alive are proven; what they keep alive is still a toy.
+
+| order | item | design / starting point |
+|---|---|---|
+| D1 | RNG0 regression test (RED on master, GREEN on a matched control arm; behind a flag, crown-neutral; not wired to CI yet) | `gap-ledger.md` RNG0 row |
+| **A1** | **CT-2 — the SmolLM2 teacher generates the child's lessons** (compare against the fixture-only child under the same budget) | `30-module/conversational-teaching.md` §CT-2; `forward.c` `lm_generate` |
+| **A2** | **scale-wall C2 — data reservoir 4 KB → ≥10 MB** (does C1's A(d) move off zero?) | `scale-wall-c1.md` (note: the `scale_wall_design.md` it cites was never committed — write a short design note first) |
+| B3 | self-access R1 (GREEN since 06-28) | `30-module/self-access-design.md` R1 |
+| B1 | the unified survival loop, L0 → L3 (stop before L4, the democratic-retirement stage) | `20-architecture/survival-loop.md` §6, §9, §10 |
+| C1 | federation R0.1 independent audit → F1 (254 → 10k) | `20-architecture/federation.md` |
+| D2 | Android emulator smoke: no HTTP answer on 7800-7862 within 60 s (red for months) | CI job log |
+| D4 | reconcile this file with reality (e.g. `r3-nontrivial-thought` is Closed wave-19 but listed OPEN below) | — |
+
+Needs the maintainer (not the routine): the same-Wi-Fi two-machine `[live]`, RPi3 hardware, APK
+releases / Play Store, crown re-bless for any bare-metal change, and the L4 retirement philosophy.
+
 ## ▶▶ 次の一手 — 2026-06-27 整頓 (the live "what's actually left" map; full detail below)
 This file is ~95% ✅DONE annotations — read THIS block for the forward path, the threads below for detail.
 
