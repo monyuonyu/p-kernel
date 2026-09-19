@@ -458,6 +458,66 @@ static int run_t15_mem_store(void)
     return 1;
 }
 
+#ifdef PK_RNG0_REGR_TEST
+/* ------------------------------------------------------------------ */
+/* T16: RNG0-BUSY-TASK-STALLS-DISPATCH regression probe               */
+/* (gap-ledger OPEN row; NOT built by default — only under            */
+/*  -DPK_RNG0_REGR_TEST. Not counted in the T1-T15 pass total.)        */
+/*                                                                     */
+/* A ring0 task that never makes a kernel call blocks the timer tick's */
+/* own dispatch decision from ever being enacted, starving every other */
+/* task regardless of priority (see gap-ledger.md for the traced root  */
+/* cause). This probe creates one busy ring0 task and has the higher-  */
+/* priority init task wait on tk_dly_tsk(500):                         */
+/*   - positive arm (-DPK_RNG0_REGR_TEST only): the busy task never    */
+/*     yields -> tk_dly_tsk(500) never returns on unfixed master (RED) */
+/*   - control arm (also -DPK_RNG0_REGR_CONTROL): the busy task calls  */
+/*     tk_dly_tsk(10) each iteration -> returns normally (GREEN)       */
+/* A control arm that does not go GREEN means the PROBE is broken, not */
+/* the kernel. This does not fix the bug; see judgment-pending item 8. */
+/* ------------------------------------------------------------------ */
+
+static volatile int st_rng0_stop = 0;
+static volatile UW  st_rng0_count = 0;
+
+static void st_rng0_busy(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    while (!st_rng0_stop) {
+        st_rng0_count++;
+#ifdef PK_RNG0_REGR_CONTROL
+        tk_dly_tsk(10);    /* control arm: voluntarily re-enters the kernel */
+#endif
+    }
+    tk_ext_tsk();
+}
+
+static void run_t16_rng0_regression(void)
+{
+    st_rng0_stop = 0;
+    st_rng0_count = 0;
+
+    T_CTSK ct = { .exinf = NULL, .tskatr = TA_HLNG | TA_RNG0,
+                  .task = st_rng0_busy, .itskpri = 20, .stksz = 2048 };
+    ID busy = tk_cre_tsk(&ct);
+    if (busy < E_OK) {
+        st_puts("[T16] FAIL: cre_tsk er="); st_puti(busy); st_puts("\r\n");
+        return;
+    }
+    tk_sta_tsk(busy, 0);
+
+    st_puts("[T16] tk_dly_tsk(500) with a busy RNG0 task running...\r\n");
+    tk_dly_tsk(500);
+    st_puts("[T16] dly_tsk(500) returned\r\n");
+
+    st_rng0_stop = 1;
+    tk_dly_tsk(50);        /* let the busy task observe stop=1 and exit */
+    tk_del_tsk(busy);
+
+    st_puts("[T16] PASS: dly_tsk unblocked, count="); st_puti((W)st_rng0_count); st_puts("\r\n");
+}
+#endif /* PK_RNG0_REGR_TEST */
+
 /* ================================================================== */
 /* Entry point                                                         */
 /* ================================================================== */
@@ -489,4 +549,8 @@ EXPORT void kernel_selftest(void)
     } else {
         st_puts(" -- KERNEL UNHEALTHY\r\n\r\n");
     }
+
+#ifdef PK_RNG0_REGR_TEST
+    run_t16_rng0_regression();
+#endif
 }
