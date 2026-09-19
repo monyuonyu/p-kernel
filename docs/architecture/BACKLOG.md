@@ -197,7 +197,9 @@ inference-engine M1 (gguf/quant/forward/tokenizer), galaxy, ark-profile — all 
 - **compatibility / 凍結なし進化** (DECIDED 2026-06-14): **migration-chain thread COMPLETE + audited** — R3_WP + Self-lineage migrate, SWIM wire no-fleet-split, signed-OTA refuses bad updates, arkfs reject+reformat; all falsifiable, crown never moved (audit-trail; `compat-migration-chain-plan.md`). **OPEN:** OTA delivery/transport + key revocation (CRL); certs not yet in default CI.
 - **federation** 254→10k: **R0 + R0.1 SHIPPED + audited** (2-cluster DKVA hierarchy, `[live]` 8-proc over relay; `dkva_fed2_self_test` / `run_4node_regions.sh`). **OPEN:** R0.1 independent audit → **F1** (the 254→10k 256-wall raise: composite `(region_id,local_id)` id).
 - **survival-network §7/§8:** G38.0 seam SHIPPED; **G38.1 gacc local-gradient learning GREEN-LIT 2026-06-28** (unified into THE SURVIVAL LOOP; §8 two-timescale hysteresis = the load-bearing oscillation gate). **OPEN.**
-- **r3-nontrivial-thought:** multi-step reasoning. **OPEN** (`r3-nontrivial-thought.md`).
+- **r3-nontrivial-thought:** multi-step reasoning. **SHIPPED + CI-gated (Closed wave-19,
+  reconciled 2026-07-01)** — a *capacity* certificate for the substrate, not a claim that
+  every reasoning task is solved (`20-architecture/r3-nontrivial-thought.md`).
 - **multi-core compute ③ — deterministic parallel matmul (MC-0..MC-2.1b) SHIPPED + audited end-to-end** (`pk_parallel`, bare-metal MC-2 SMP bringup, byte-identical to serial). **REMAINING: MC-2.2** RPi3 hardware `[live]` (barrier/SMPEN Tooth B) → feeds ② full SMP ②.3.
 
 ### Thread R — roadmap remainders
