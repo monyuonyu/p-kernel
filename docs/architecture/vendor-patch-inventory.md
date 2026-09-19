@@ -1276,3 +1276,86 @@ QueInit-after-QueRemove系等）は依然未実証のまま——「実害実証
 `git worktree remove --force`で削除済み（次run/人間が探しに行かなくてよい）。
 `pkernel_audit_ss`の`/build/l4a-*`（ビルド・シリアルログ）はそのまま
 残置。リポジトリのトラッキング対象ファイルは変更していない。
+
+### 7.27 RNG0ハングの失敗する回帰テストを作った（2026-09-20、mk_pinoの判断待ち項目8への回答に基づく）
+
+**2026-09-19昼、mk_pinoから判断待ち項目8に回答**:「直す方向で進める。まず、
+このバグで失敗するテストを作る」。直し方((a)/(b)/(c))の設計はテストが
+できてから決める、という指示。今回はそのテストを作った——**バグはまだ
+直していない**。
+
+**T17/T18と違い、今回は使い捨てにせず実際にコミットした。** `feat/
+rng0-regression-test`ブランチ（`64751878`→`1c20dd2d`、masterへは未マージ、
+push無し）に2コミット:
+
+1. `arch/x86/selftest.c`に**T16プローブ**を追加。`-DPK_RNG0_REGR_TEST`
+   （陽性の腕: busyタスクが一切yieldしない）と追加で`-DPK_RNG0_REGR_
+   CONTROL`（対照の腕: busyタスクが毎周期`tk_dly_tsk(10)`を呼ぶ）の
+   2マクロで腕を選択。**どちらのマクロも既定では未定義**——コードは
+   完全に`#ifdef`の内側にあり、`kernel_selftest()`からの呼び出しも
+   同じ`#ifdef`で囲んである。
+2. `tests/x86/run_rng0_regression.sh`——`ARM=positive`/`ARM=control`を
+   受け取り、対応する`EXTRA_CFLAGS`でクリーンビルド、
+   `timeout 20 qemu-system-x86_64 -kernel bootloader.bin -serial
+   file:... -display none -no-reboot`で起動、シリアルログに
+   `[T16] PASS`が出たかで RED/GREEN を判定・終了コードを返すハーネス。
+   run_killchurn.shと同型だがディスクイメージ不要（selftestはシェル
+   プロンプトより前、起動直後に走る）。
+
+**crownの検証（実測、主張ではなく）**: `pkernel_audit_ss`内、
+`/build/rng0-master`（`master` `4f6134f5`の別worktree）と
+`/build/rng0-regtest`（このブランチ）の両方で`EXTRA_CFLAGS`無しの
+既定ビルドを実施。`objdump -h`でセクションサイズ・オフセットが完全一致、
+さらに`objcopy -O binary --only-section=.text`で抽出した`.text`の生バイト列を
+`cmp`——**完全に同一**。既定ビルドの`.text`は1バイトも変わっていない
+（crown re-blessは不要）。
+
+**結果（両腕ともharness経由で再現、2/2ずつ）**:
+
+| 腕 | 内容 | 結果 |
+|---|---|---|
+| positive（busyが一切yieldしない） | `qemu... timeout 20s`で起動、直接boot 2回 + harness経由1回、計3回 | **3/3、`tk_dly_tsk(500)`が一度も返らず、20秒のtimeoutでkill——`[T16] PASS`行が一度も出ない（RED）** |
+| control（busyが毎周期`tk_dly_tsk(10)`） | 同様に直接2回 + harness経由1回、計3回 | **3/3、`[T16] PASS: dly_tsk unblocked, count=26`が出力——count=26は3回とも完全一致（決定的）、`tk_dly_tsk(500)`が正常に返った（GREEN）** |
+
+**このテストが証明していること**: RNG0-BUSY-TASK-STALLS-DISPATCHが要求する
+「対照の腕はGREENになる」の条件を満たしている——テストの側が壊れているの
+ではなく、陽性の腕だけが本物のバグを踏んでいる。gap-ledgerの根本原因の
+説明（busyタスクが一度もカーネルに戻らない限り、tickの正しいスケジュール
+判断は実行に移されない）と、観測された挙動（一度もカーネルに戻らない設定
+だけがハングする）が一致する。
+
+**このテストが証明していないこと**:
+- バグを直していない。(a)/(b)/(c)のどれを取るかは未決定のまま
+- CIには配線していない。「直るまで赤であることが正しいジョブ」として
+  入れるかどうかは別の判断
+- `count=26`という具体的な数字自体に深い意味はない（500ms÷約19ms/周期の
+  観測値。busyタスクのループ本体のコスト次第で変わる）——決定的に一致した
+  ことが重要で、値そのものではない
+- ring3(`TA_RNG3`)タスクでの再現は依然未検証（§7.23で「ソース読解のみで
+  決着」とした通り、実際にブートで確かめたわけではない）
+
+**次runへ**: このブランチはmasterに**未マージ**。「実装者≠監査者」の原則
+により、この回はテストを作って実測しただけ——**次以降の回が監査者**として
+差分を読み直し、`sh tests/x86/run_rng0_regression.sh`（`ARM=positive`と
+`ARM=control`の両方）を自分で再実行し、陰性コントロール（例えば
+`PK_RNG0_REGR_CONTROL`だけ定義して`PK_RNG0_REGR_TEST`を定義しない、
+ビルドが通らないか無害であることを確認するなど）で壊そうとしてから、
+PASSならlocal masterへマージすること。使い捨てでない資産:
+`/home/shota/pk-scratch/rng0-regtest`（ブランチのworktree）・
+`/home/shota/pk-scratch/rng0-master-baseline`（crown比較用master
+worktree）——両方とも監査が終われば`git worktree remove --force`してよい。
+`pkernel_audit_ss`の`/build/rng0-regtest`・`/build/rng0-master`（ビルド
+成果物・シリアルログ）も同様。
+
+**監査（2026-09-20、指揮者代行、別run）**: 上の「次runへ」の指示どおり監査を実施。
+古い`pk-scratch/rng0-regtest`・`rng0-master-baseline`worktreeは削除し、新規に
+`pk-scratch/rng0-audit`（ブランチ先頭`82cc7a09`）・`pk-scratch/master-audit`
+（`master` `80d2d921`）を作って独立に再現:
+- positive腕: `sh tests/x86/run_rng0_regression.sh`（`ARM=positive`）を自分で
+  実行、`arm=positive verdict=RED`を確認（`tk_dly_tsk(500)`が一度も返らず
+  timeout）
+- control腕: 同様に`ARM=control`、`arm=control verdict=GREEN`を確認
+- 既定ビルド`.text`: `master-audit`と`rng0-audit`の両方で`EXTRA_CFLAGS`無し
+  クリーンビルド（656840バイト）、`objcopy --only-section=.text`＋`cmp`で
+  完全一致を確認
+3項目とも申告どおり。**PASS、local masterへマージ。**
