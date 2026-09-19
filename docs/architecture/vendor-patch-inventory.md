@@ -1226,3 +1226,55 @@ serial.log/serial2.log）は残置。リポジトリのトラッキング対象�
 kloader/heal/persist/ai_worker/ai_infer/dkva）はサブエージェントの1周目の
 申告のまま——1件ずつ自分で行数を数え直してはいない。gap-ledgerの該当行にも
 同内容を要約して追記済み。
+
+### 7.26 L4a（timer.cのタイマキュー巡回ループ境界）の実害を実証した（2026-09-20、matched-arm、決定的）
+
+**孤児実験の回収。** 2026-09-19T03:38:16のrunがこの実験に着手し、
+`pk-scratch/l4a-baseline`・`-broken`worktreeを作成・ビルド・
+`docker exec -d`でQEMUブートまで実行したが、結果を回収する前に
+記録を残さず力尽きていた（`pkernel-routine-log.md`に
+「結果: 実験は実行中（次の追記で回収）」「完了印: (継続中)」のまま
+約21時間残置）。**今回、ビルド成果物・シリアルログがコンテナに
+残っていたのを発見し、申告を鵜呑みにせず自分で検算した上で回収した。**
+
+**背景**: §7.18-7.24で2026-09-06追加の層B/MEM-UPTR系9アンカー全ての実害を
+実証済みだが、`check_local_patches.sh`の他のL2-L7アンカー（6クラス）は
+grepトリップワイヤのみでmatched-arm実害再現が無かった。L4a
+（`timer.c`の`++cnt > 10000`、`knl_enqueue_tmeb`のタイマキュー挿入位置
+探索ループの境界ガード）がその1つ。
+
+**プローブ**（`kernel/mtkernel3/kernel/tkernel/timer.c`に追加、not committed、
+使い捨て）: `pk_test_l4a_corrupt_and_enqueue()`が`knl_timer_queue`を
+2ノードの偽サイクル（`fake1`⇄`fake2`、本物のセンチネルに一度も到達しない）
+に書き換え、3ノード全ての`.time`を同値にして時刻比較による早期breakを
+回避した上で、3つ目のprobeノードを`knl_enqueue_tmeb()`で挿入する。
+callbackは安全なno-op。`arch/x86/selftest.c`のT1-T15完走直後（本物の
+selftestと明確に区別できる位置）から呼ぶ。**baseline・broken間の差分は
+`timer.c`の`++cnt > 10000`ガード1箇所のみ**（`git diff`で確認、
+`selftest.c`は両worktreeでバイト同一）。
+
+**結果（2アーム、1回ずつ——決定的なので複数ブート不要。コードパス自体に
+確率的要素が無い）**:
+
+| アーム | 内容 | 結果 |
+|---|---|---|
+| baseline（`cnt>10000`あり） | `[l4a-test] before...` → `[l4a-test] after...guard held` を出力、その後T1-T15完走の続き（dproc/infer_d/persist/dmn等すべて起動）で健全にidleまで到達、ハーネスの待機timeoutでSIGTERM | **guardが機能し、破損キューでもハングしない** |
+| broken（`cnt>10000`削除） | `[l4a-test] before...`のみ出力、`after`は一度も出ない、ブートログはそこで停止、ハーネスのtimeoutでSIGTERM | **`knl_enqueue_tmeb`が破損した2ノードサイクルの中を永遠に巡回——恒久的ハング** |
+
+`git diff --stat`で意図した2ファイル（`timer.c`の関数追加＋`selftest.c`の
+呼び出し1行）以外に変更が無いことも確認済み。
+
+**この実証が示すこと**: `L4a`アンカーは、タイマキューが何らかの理由で
+循環破損した場合に`knl_enqueue_tmeb`が無限ループに陥ることを防ぐ、
+実際に機能する安全装置——grepトリップワイヤだけでなく、実害を伴う
+アンカーだと確認できた。**これで層B/MEM-UPTR系9アンカーに続き、
+L4aも実害実証済みになった。** 他のL2-L3/L5-L7アンカー（timer.c以外の
+QueInit-after-QueRemove系等）は依然未実証のまま——「実害実証が無い」は
+「実害が無い」ではないことに注意。
+
+**資産**: `pk-scratch/l4a-baseline`・`-broken`worktreeと
+`pkernel_audit_ss`の`/build/l4a-*`ビルド・ログは、この記録の後
+`git worktree remove --force`で削除予定（削除してから記述する、の
+順序を守る——このセクションは削除前に書いているので、次のコミットで
+削除実行と削除済みの事実を追記する）。リポジトリのトラッキング対象
+ファイルは変更していない。
