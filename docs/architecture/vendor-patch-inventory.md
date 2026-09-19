@@ -1272,9 +1272,7 @@ L4aも実害実証済みになった。** 他のL2-L3/L5-L7アンカー（timer.
 QueInit-after-QueRemove系等）は依然未実証のまま——「実害実証が無い」は
 「実害が無い」ではないことに注意。
 
-**資産**: `pk-scratch/l4a-baseline`・`-broken`worktreeと
-`pkernel_audit_ss`の`/build/l4a-*`ビルド・ログは、この記録の後
-`git worktree remove --force`で削除予定（削除してから記述する、の
-順序を守る——このセクションは削除前に書いているので、次のコミットで
-削除実行と削除済みの事実を追記する）。リポジトリのトラッキング対象
-ファイルは変更していない。
+**資産**: `pk-scratch/l4a-baseline`・`-broken`worktreeはこの記録の直後、
+`git worktree remove --force`で削除済み（次run/人間が探しに行かなくてよい）。
+`pkernel_audit_ss`の`/build/l4a-*`（ビルド・シリアルログ）はそのまま
+残置。リポジトリのトラッキング対象ファイルは変更していない。
