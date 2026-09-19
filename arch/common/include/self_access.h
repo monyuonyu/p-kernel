@@ -67,3 +67,37 @@ void self_access_print(void);
  * failed (the report still printed — introspection is never blocked by the
  * record). */
 U4   self_access_body(void);
+
+/* ---------------------------------------------------------------------
+ * R1 — the first T1 (guarded state-changing) affordance: publish on the
+ * node's OWN K-DDS topic (self-access-design.md §3.2/§7 R1; BACKLOG's
+ * "self-access R1 + embodiment", mk_pino GREEN 2026-06-28).
+ *
+ * Confinement: this ALWAYS publishes to a topic name DERIVED from
+ * drpc_my_node (never a caller-supplied topic string), so there is no
+ * capability table to escape — the confinement is structural, not a
+ * runtime check over an open namespace. (No general-purpose "germ
+ * capability table" exists for parent-side/non-germ code as of
+ * 2026-09-20 — confirmed by code search; that gap is why this affordance
+ * is scoped to "own topic only" rather than an arbitrary p-fs write.)
+ *
+ * Refuses (E_OACV) while reflex_is_shielded() — same idiom usermain.c
+ * already uses to refuse new selfc germination under an active shield
+ * (arch/linux/{x86_64,aarch64}/usermain.c). Never touches
+ * ark_consent_ok() — the human-consent boundary is not this affordance's
+ * to cross.
+ *
+ * Returns E_OK on a successful publish, E_OACV while shielded, E_NOEXS if
+ * the topic could not be opened (e.g. drpc_my_node uninitialized), or the
+ * negative kdds_pub() error otherwise. */
+INT  self_access_publish(const void *data, UW len);
+
+/* [self-act-guarded] matched-arm self-test for R1's publish affordance
+ * (self-access-design.md's gate: a T1 write succeeds only when NOT
+ * shielded, and is refused while reflex_is_shielded()). Uses
+ * reflex_test_force_shield() to drive both arms deterministically —
+ * no real threat needs to fire. Prints one greppable PASS/FAIL line per
+ * arm plus a summary. Returns 0 on PASS (both arms behaved), else a
+ * fail count. Safe to call repeatedly; restores the shield to cleared
+ * on exit either way. */
+INT  self_access_r1_self_test(void);

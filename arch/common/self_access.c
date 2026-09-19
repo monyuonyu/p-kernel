@@ -31,6 +31,9 @@
 #include "moe.h"           /* MOE_NUM_CLASSES — the sensor band            */
 #include "netstack.h"      /* net_my_ip — network presence                 */
 #include "kernel.h"        /* SYSTIM / tk_get_otm                          */
+#include "kdds.h"          /* kdds_open_poll / kdds_pub — R1 publish       */
+#include "reflex.h"        /* reflex_is_shielded — R1 shield gate          */
+                           /* E_OACV / E_OK / E_NOEXS come from kernel.h    */
 
 /* ------------------------------------------------------------------ */
 /* output helpers (sio frame channel; arch/common rule: no libc here)  */
@@ -202,4 +205,94 @@ U4 self_access_body(void)
         sp("[body] Q3 lineage: append failed (report above still valid)\r\n");
     }
     return (r == PFS_OK) ? head_seq : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* R1 — T1 (guarded state-changing) affordance: publish on own topic   */
+/* ------------------------------------------------------------------ */
+
+/* "self/pub/<node>" — always OWN node id, never caller-supplied, so
+ * there is no namespace to escape (structural confinement; see the
+ * header comment on self_access_publish). Handles node ids up to two
+ * digits (DNODE_MAX=64 < 100). */
+static void pub_topic_name(char *out, UB node)
+{
+    const char *p = "self/pub/";
+    INT i = 0;
+    while (p[i]) { out[i] = p[i]; i++; }
+    if (node >= 10) out[i++] = (char)('0' + node / 10);
+    out[i++] = (char)('0' + node % 10);
+    out[i] = '\0';
+}
+
+INT self_access_publish(const void *data, UW len)
+{
+    /* SHIELD gate — same refuse-under-shield idiom usermain.c already
+     * applies to new selfc germination / genome sprouting. */
+    if (reflex_is_shielded()) {
+        sp("[self-access] R1 publish REFUSED: reflex shield active\r\n");
+        return E_OACV;
+    }
+    if (drpc_my_node == 0xFF) {
+        sp("[self-access] R1 publish REFUSED: node id uninitialized\r\n");
+        return E_NOEXS;
+    }
+
+    char topic[KDDS_NAME_MAX];
+    pub_topic_name(topic, drpc_my_node);
+
+    W h = kdds_open_poll(topic, KDDS_QOS_BEST_EFFORT);
+    if (h < 0) {
+        sp("[self-access] R1 publish: kdds_open_poll failed\r\n");
+        return E_NOEXS;
+    }
+    W r = kdds_pub(h, data, (W)len);
+    if (r < 0) {
+        sp("[self-access] R1 publish: kdds_pub failed\r\n");
+        return (INT)r;
+    }
+    sp("[self-access] R1 publish: "); spd(len);
+    sp(" bytes -> "); sp(topic); sp("\r\n");
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* [self-act-guarded] — matched-arm self-test for the publish affordance */
+/* ------------------------------------------------------------------ */
+
+INT self_access_r1_self_test(void)
+{
+    INT fails = 0;
+    const char msg[] = "r1-test";
+
+    sp("[self-access-r1-test] ==== [self-act-guarded] matched-arm gate ====\r\n");
+
+    /* ARM 1 (control): shield CLEAR -> publish must succeed (E_OK). */
+    reflex_test_force_shield(0);
+    INT r1 = self_access_publish(msg, (UW)(sizeof(msg) - 1));
+    if (r1 == E_OK) {
+        sp("[self-access-r1-test] ARM unshielded: PASS (E_OK)\r\n");
+    } else {
+        sp("[self-access-r1-test] ARM unshielded: FAIL (expected E_OK, got ");
+        spd((UW)(0 - r1)); sp(" negated)\r\n");
+        fails++;
+    }
+
+    /* ARM 2 (positive): shield ACTIVE -> publish must be refused (E_OACV),
+     * never silently succeed. This is the actual claim R1's gate makes. */
+    reflex_test_force_shield(5000);
+    INT r2 = self_access_publish(msg, (UW)(sizeof(msg) - 1));
+    if (r2 == E_OACV) {
+        sp("[self-access-r1-test] ARM shielded:   PASS (E_OACV)\r\n");
+    } else {
+        sp("[self-access-r1-test] ARM shielded:   FAIL (expected E_OACV, got ");
+        spd((UW)(0 - r2)); sp(" negated)\r\n");
+        fails++;
+    }
+
+    reflex_test_force_shield(0);   /* restore: don't leave the shield up */
+
+    if (fails == 0) sp("[self-access-r1-test] ALL PASS\r\n");
+    else             sp("[self-access-r1-test] FAILURES\r\n");
+    return fails;
 }
