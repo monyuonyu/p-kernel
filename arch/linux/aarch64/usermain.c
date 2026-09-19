@@ -116,8 +116,11 @@ IMPORT int  llm_shell_cmd(const char *args, void (*emit)(const char *));
 /* CT-2 (conversational-teaching.md §7): same engine, but returns ONLY the
  * generated continuation text (greedy) into a caller buffer instead of
  * printing a transcript — the seam `cradle emit-live` uses to feed a real
- * generated lesson into cradle_teach_emit(). Weak no-op on targets without
- * the teacher engine (student_stub.c) — writes "" and returns 0. */
+ * generated lesson into cradle_teach_emit(). Strong def only (llm_shell.c);
+ * NO weak stub — every target that compiles this usermain.c (hosted x86_64/
+ * aarch64, Android) also links llm_shell.c (LLM_TEACHER_SRC), so a weak
+ * no-op would be permanently dead code. Bare metal (arch/x86/usermain.c)
+ * never references this symbol at all. */
 IMPORT int  llm_generate_text(const char *prompt, int max_gen, char *out, int out_cap);
 /* arch/common/llm/student_shell.c — the RESIDENT, PERSISTED Cradle baby
  * (NS-1). student_boot_restore() restores-or-inits the in-kernel student at
@@ -1351,10 +1354,9 @@ EXPORT INT usermain(void)
              *                        cure-lesson length (Arm B): same #bytes, no
              *                        sequence -> a student must NOT learn the fact.
              *   cradle emit-live <prompt>  (teacher only, CT-2) GENERATE a completion
-             *                        for <prompt> with the SmolLM2 engine
-             *                        (PKERNEL_LLM_GGUF) and emit it as a lesson.
-             *                        Needs the engine built on this target (weak
-             *                        no-op stub elsewhere: "nothing generated").
+             *                        for <prompt> with the SmolLM2 engine and emit
+             *                        it as a lesson. Needs PKERNEL_LLM_GGUF set to
+             *                        a real GGUF (else "nothing generated").
              *   cradle               alias for `cradle test`.                     */
             const UB *a = line + 6; INT al = n - 6;
             while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
@@ -1432,7 +1434,7 @@ EXPORT INT usermain(void)
                 INT tl = (INT)llm_generate_text(promptbuf, 96, cl_live, (INT)sizeof cl_live);
                 if (tl <= 0) {
                     print("[cradle] live generation produced nothing "
-                          "(no engine on this target, or set PKERNEL_LLM_GGUF)\r\n");
+                          "(set PKERNEL_LLM_GGUF to a SmolLM2 .gguf)\r\n");
                 } else {
                     INT rc = cradle_teach_emit((const UB *)cl_live, (UW)tl);
                     if (rc) print("[cradle-live] live-generated lesson emitted (CT-2)\r\n");
