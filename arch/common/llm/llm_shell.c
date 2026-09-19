@@ -216,6 +216,101 @@ int llm_shell_run(const char *prompt, int max_gen,
 }
 
 /*
+ *  llm_generate_text — CT-2 (conversational-teaching.md §7): the same
+ *  load/tokenize/generate/detokenize pipeline as llm_shell_run, but returns
+ *  ONLY the generated CONTINUATION text (never the prompt, never the
+ *  diagnostic lines) into a caller-supplied buffer, ready to hand to
+ *  cradle_teach_emit(). Greedy only (deterministic, no sampler knobs) — a
+ *  live-taught lesson should be reproducible for cert purposes.
+ *
+ *    prompt   NUL-terminated UTF-8 prompt (may be empty).
+ *    max_gen  tokens to generate (clamped like llm_shell_run).
+ *    out      caller buffer; NUL-terminated on success.
+ *    out_cap  size of out, including the NUL.
+ *
+ *  Returns the number of bytes written (excluding NUL, >0 on real output),
+ *  0 if generation produced nothing, negative on error (model missing/load/
+ *  OOM/decode-too-small) — mirrors llm_shell_run's error codes so a caller
+ *  reading this file can cross-reference the failure mode.
+ */
+int llm_generate_text(const char *prompt, int max_gen, char *out, int out_cap)
+{
+    if (!out || out_cap <= 0) return -1;
+    out[0] = '\0';
+
+    const char *path = getenv("PKERNEL_LLM_GGUF");
+    if (!path || !path[0]) path = PKERNEL_LLM_DEFAULT_GGUF;
+
+    if (max_gen <= 0)  max_gen = 32;
+    if (max_gen > 256) max_gen = 256;
+
+    gguf_file gf;
+    if (gguf_open(&gf, path) != GGUF_OK) return -1;
+
+    lm_model m;
+    if (lm_load(&m, &gf) != LM_OK) { gguf_close(&gf); return -2; }
+
+    tokenizer tk;
+    if (tok_load(&tk, &gf) != TOK_OK) { lm_free(&m); gguf_close(&gf); return -3; }
+
+    int    plen = (int)strlen(prompt);
+    int    pcap = plen + 16;
+    int32_t *pids = (int32_t *)malloc((size_t)pcap * sizeof(int32_t));
+    int    *in   = (int *)malloc((size_t)pcap * sizeof(int));
+    int    *gen  = (int *)malloc((size_t)max_gen * sizeof(int));
+    if (!pids || !in || !gen) {
+        free(pids); free(in); free(gen);
+        tok_free(&tk); lm_free(&m); gguf_close(&gf);
+        return -4;
+    }
+
+    int n_in = tok_encode(&tk, prompt, (size_t)plen, /*add_bos=*/0, pids, pcap);
+    if (n_in < 0) {
+        free(pids); free(in); free(gen);
+        tok_free(&tk); lm_free(&m); gguf_close(&gf);
+        return -5;
+    }
+    if (n_in == 0) {
+        in[0] = (tk.bos_id >= 0) ? (int)tk.bos_id : 0;
+        n_in = 1;
+    } else {
+        for (int i = 0; i < n_in; i++) in[i] = (int)pids[i];
+    }
+
+    /* greedy: bit-identical to lm_generate() per forward.h's own note. */
+    int n_out = lm_generate_sampled(&m, in, n_in, gen, max_gen,
+                                    0.0f, 0, 0.0f, 1.0f, tk.eos_id, 0);
+    int written = 0;
+    if (n_out < 0) {
+        written = -6;
+    } else if (n_out == 0) {
+        written = 0;
+    } else {
+        int32_t *seq = (int32_t *)malloc((size_t)n_out * sizeof(int32_t));
+        if (!seq) {
+            written = -4;
+        } else {
+            for (int i = 0; i < n_out; i++) seq[i] = (int32_t)gen[i];
+            int nb = tok_decode(&tk, seq, n_out, out, out_cap - 1);
+            if (nb < 0) {
+                out[0] = '\0';
+                written = -7;    /* decode buffer too small */
+            } else {
+                out[nb] = '\0';
+                written = nb;
+            }
+            free(seq);
+        }
+    }
+
+    free(pids); free(in); free(gen);
+    tok_free(&tk);
+    lm_free(&m);
+    gguf_close(&gf);
+    return written;
+}
+
+/*
  *  llm_shell_cmd — the kernel-facing entry: parse a raw arg string into the
  *  sampler knobs, then run. Keeps ALL libc-heavy parsing (strtod/strtol) on
  *  this side of the seam so usermain.c stays trivial (it only NUL-terminates

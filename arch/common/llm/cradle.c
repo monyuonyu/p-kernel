@@ -576,6 +576,114 @@ int cradle_teach_self_test(cradle_emit_fn emit)
 }
 
 /* ===========================================================================
+ * CT-2 (conversational-teaching.md §7) — does a REAL live-generated lesson
+ * teach better than the fixture-only baseline? This is NOT the [cradle-teach]
+ * cert above (which proves the BRIDGE with a crafted fact/probe pair) — it
+ * takes ALREADY-GENERATED text from the SmolLM2 engine (the caller's job:
+ * this TU stays gguf/forward-free per the file header) and asks the honest
+ * question mk_pino posed: does a child taught with it end up different from
+ * one that only ever saw the static fixture, measured as held-out loss on
+ * the SAME live text — NOT a crafted train/held fact pair, so this is a
+ * WEAKER, more honest claim than [cradle-teach]'s ("did training on this
+ * specific document lower loss on unseen continuations of it") — but it is
+ * the comparison actually asked for: live packs vs fixture-only.
+ *
+ * `live`/`live_len`: the generated text (tiled to fill CT_CERT_BUDGET, same
+ * as the fixture-fallback baseline gets, so #train-windows and #updates are
+ * equal — an update-count-matched comparison, not just a "more data" one).
+ * Returns 0 iff the live-taught arm's held-out drop is convincingly larger
+ * than the fixture-only baseline's (same bar shape as ARM A above: baseline
+ * drop < live drop * 0.5). *live_drop_out / *base_drop_out report the raw
+ * numbers regardless of pass/fail, so a caller can print them even on FAIL —
+ * a FAIL here is itself an honest result ("no measurable difference"), not
+ * an error.
+ */
+int cradle_live_teach_test(cradle_emit_fn emit, const uint8_t *live, int live_len,
+                            float *live_drop_out, float *base_drop_out)
+{
+    const int seqlen = CRADLE_SEQLEN;
+    const int rounds = CT_CERT_ROUNDS;
+    const float lr = 3e-3f;
+
+    if (live_drop_out) *live_drop_out = 0.0f;
+    if (base_drop_out) *base_drop_out = 0.0f;
+    if (!live || live_len <= 0) {
+        if (emit) emit("[cradle-live-teach] FAIL: no live text supplied\r\n");
+        return 1;
+    }
+
+    /* tile the live text to CT_CERT_BUDGET, same as the ARM A filler tiling
+     * above — an update-count-matched corpus, not a shorter one. */
+    static uint8_t live_corpus[CRADLE_RING_BYTES];
+    int ln = 0;
+    while (ln + live_len < CT_CERT_BUDGET && ln + live_len < CRADLE_RING_BYTES) {
+        memcpy(live_corpus + ln, live, (size_t)live_len);
+        ln += live_len;
+    }
+    int totw = ln / seqlen;
+    int trainw = totw * 3 / 4; if (trainw < 2) trainw = 2;
+    int heldw  = totw - trainw; if (heldw < 1) heldw = 1;
+    int train_end = trainw * seqlen;
+
+    if (emit) {
+        ct_emitf(emit, "[cradle-live-teach] live text bytes=", (float)live_len);
+        ct_emitf(emit, "[cradle-live-teach] tiled corpus bytes=", (float)ln);
+        ct_emitf(emit, "[cradle-live-teach] train windows=", (float)trainw);
+        ct_emitf(emit, "[cradle-live-teach] held windows=", (float)heldw);
+    }
+
+    /* ARM LIVE — a child trained on the live-generated corpus, evaluated on
+     * its OWN held-out tail (never trained on, same document). */
+    st_model L;
+    st_init(&L, 0x0BABEu);
+    float live_pre  = ct_heldout_loss(&L, live_corpus, ln, seqlen, train_end, heldw);
+    ct_sleep_rounds(&L, live_corpus, ln, seqlen, trainw, rounds, lr, 0);
+    float live_post = ct_heldout_loss(&L, live_corpus, ln, seqlen, train_end, heldw);
+    st_free(&L);
+    float live_drop = live_pre - live_post;
+
+    /* ARM FIXTURE-ONLY — the SAME init seed, trained on generic filler (the
+     * production no-lesson fallback shape) instead of the live corpus, then
+     * evaluated on the SAME held-out tail of the live corpus it never saw —
+     * "今の固定教材だけで育てた赤子", counterfactual to the live arm above. */
+    static uint8_t filler_corpus[CRADLE_RING_BYTES];
+    int fn = 0; int flen = (int)strlen(CT_FILLER);
+    while (fn + flen < ln) { memcpy(filler_corpus + fn, CT_FILLER, (size_t)flen); fn += flen; }
+    int ftotw = fn / seqlen, ftrainw = ftotw; if (ftrainw < 2) ftrainw = 2;
+
+    st_model F;
+    st_init(&F, 0x0BABEu);
+    float base_pre  = ct_heldout_loss(&F, live_corpus, ln, seqlen, train_end, heldw);
+    ct_sleep_rounds(&F, filler_corpus, fn, seqlen, ftrainw, rounds, lr, 0);
+    float base_post = ct_heldout_loss(&F, live_corpus, ln, seqlen, train_end, heldw);
+    st_free(&F);
+    float base_drop = base_pre - base_post;
+
+    if (live_drop_out) *live_drop_out = live_drop;
+    if (base_drop_out) *base_drop_out = base_drop;
+
+    if (emit) {
+        ct_emitf(emit, "[cradle-live-teach] LIVE     held-out pre = ", live_pre);
+        ct_emitf(emit, "[cradle-live-teach] LIVE     held-out post= ", live_post);
+        ct_emitf(emit, "[cradle-live-teach] LIVE     drop         = ", live_drop);
+        ct_emitf(emit, "[cradle-live-teach] FIXTURE  held-out pre = ", base_pre);
+        ct_emitf(emit, "[cradle-live-teach] FIXTURE  held-out post= ", base_post);
+        ct_emitf(emit, "[cradle-live-teach] FIXTURE  drop         = ", base_drop);
+    }
+
+    int ok = (base_drop < live_drop * 0.5f) && (live_drop > 0.05f);
+    if (emit) {
+        if (ok) emit("[cradle-live-teach] PASS: the live-generated lesson lowered "
+                     "held-out loss on its own text well past the fixture-only "
+                     "baseline\r\n");
+        else emit("[cradle-live-teach] NO DIFFERENCE (honest): the live-generated "
+                  "lesson did not clearly beat the fixture-only baseline on this "
+                  "run\r\n");
+    }
+    return ok ? 0 : 1;
+}
+
+/* ===========================================================================
  * THE CANONICAL LIVE LESSON (T-fix-c) — unify live == cert: the SAME bytes.
  *
  * The live [cradle-live] teacher must emit the SAME trainable, train/held-

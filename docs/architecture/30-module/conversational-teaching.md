@@ -274,6 +274,38 @@ Idempotent: dedup by `(teacher_node, seq)`.
    answers/continues it better after sleeping over live packs (held-out on teacher-sourced
    windows). **Prereq: a node that can actually `lm_load` a GGUF (the high-spec premise) +
    the M1d tokenizer-to-bytes detail; honest that phones are children, not teachers.**
+   **2026-09-20: the engine-wiring half is done** (`feat/ct2-live-teacher-emit`, not yet
+   merged — `git log` on that branch for commits). The architecture actually shipped since
+   this section was written is `cradle_teach_emit`/`region_teacher()` election ("Thread T",
+   thread-t-impl-plan.md), not a `cradle_teach_task` by that name; `lm_generate_text()`
+   (llm_shell.c) now wraps the same load/tokenize/generate/detokenize pipeline as the `llm`
+   shell verb but returns ONLY the generated continuation into a buffer, and the new
+   `cradle emit-live <prompt>` verb (both hosted usermain.c files) feeds it straight into
+   `cradle_teach_emit()` — verified end-to-end on a real SmolLM2-135M GGUF in
+   `pkernel_audit_ss` (generation succeeds, reaches the "not the elected region teacher (or
+   solo)" refusal on a solo node; with no GGUF set it fails fast at `gguf_open` instead —
+   the two failure modes are distinguishable). **`[ct-live-teach]` itself is NOT done**: it
+   needs a 2+-node relay harness (teacher emits live packs, child pulls + trains over
+   several DMN ticks, held-out loss compared against a fixture-only child) that is a
+   separate, larger piece of work — left for the next run. See the branch's commits for the
+   crown-safety story: the first attempt added a dead weak-stub to `student_stub.c`, which
+   IS linked into the bare-metal x86/aarch64 crowns even though it's hosted/Android-only in
+   purpose, and grew the default build's `.text` by 64 bytes; caught by measurement
+   (`objcopy --only-section=.text` + `cmp` against a pristine master build) and fixed by
+   removing the stub (nothing needed it — every caller of the new function also links its
+   strong definition).
+   **Same-day follow-up: a narrower single-process cert, `cradle_live_teach_test()`**
+   (`arch/common/llm/cradle.c` + `tests/llm/cradle_live_teach_proof.c`) — NOT the
+   `[ct-live-teach]` multi-node cert described above, which is still open. It trains one
+   child on a real SmolLM2-generated document and a same-seed twin on the fixture-only
+   filler, then compares held-out loss on the SAME unseen tail of the live document (the
+   twin never saw it) — an update-count-matched, in-process substitute that needs no relay
+   harness. **Audited independently 2026-09-20** (a separate run rebuilt and reran it):
+   same-prompt rerun reproduced the implementer's numbers exactly (bit-identical 410-byte
+   generation, pre/post/drop all matching to 4 decimals); a second, different prompt ("The
+   history of computers begins with") showed the same qualitative pattern (LIVE drop
+   +4.40, FIXTURE drop -2.80) — the effect is not a one-prompt fluke. PASS, merged to local
+   master.
 4. **CT-3 — salience-weighted lesson rehearsal (§3.2) + DMN-budget cert.** Carry/honor the
    `salience` byte; re-certify the wave-23 budget across both tracks (gate-6). Cert
    `[ct-salience]` (high-salience windows rehearsed more within the fixed budget),

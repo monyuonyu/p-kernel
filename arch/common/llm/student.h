@@ -472,6 +472,19 @@ void cradle_lesson_clear(void);
  * `emit` is a line-printer (may be NULL). Returns 0 on PASS, else fail count. */
 int  cradle_teach_self_test(void (*emit)(const char *));
 
+/* CT-2 (conversational-teaching.md §7): does REAL live-generated teacher text
+ * (caller-supplied — this TU stays gguf/forward-free) beat the fixture-only
+ * baseline on held-out loss over its OWN tail? Weaker claim than the crafted
+ * fact/probe cert above (no engineered generalization pair), but the actual
+ * comparison mk_pino asked for: live packs vs fixture-only, update-count-
+ * matched. `live`/`live_len` = already-generated text (e.g. llm_generate_text
+ * output); `*live_drop_out`/`*base_drop_out` report the raw held-out-loss
+ * drops even on FAIL (a FAIL here is an honest "no measurable difference",
+ * not an error). Returns 0 iff the live arm's drop clearly beats the
+ * baseline's (< half). `emit` may be NULL. */
+int  cradle_live_teach_test(void (*emit)(const char *), const uint8_t *live,
+                            int live_len, float *live_drop_out, float *base_drop_out);
+
 /* [cradle-live] self-report (the multi-process teacher-convergence harness, the
  * T-fix-b DEFERRED [live] row): prints ONE uniquely-greppable observability line
  *   [cradle-live] ring_len=<n> probe_loss=<L> chance=<C>
