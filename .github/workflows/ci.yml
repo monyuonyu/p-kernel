@@ -2594,6 +2594,14 @@ jobs:
 
       - name: Bootstrap Android cmdline-tools + sdkmanager
         uses: android-actions/setup-android@v3
+        # The action's default is `packages: tools platform-tools`. The legacy
+        # `tools` package is no longer offered by the SDK repository that
+        # cmdline-tools 16.0 reads, so the default made sdkmanager exit 1
+        # ("Failed to find package 'tools'") before any build step ran
+        # (first seen in run 35411960867, 2026-09-19). platform-tools is
+        # installed explicitly by the next steps anyway.
+        with:
+          packages: platform-tools
 
       - name: Make sure ANDROID_SDK_ROOT is set for gradlew/AGP
         run: echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
@@ -2758,6 +2766,10 @@ jobs:
           cache: gradle
       - name: Bootstrap Android cmdline-tools + sdkmanager
         uses: android-actions/setup-android@v3
+        # Same fix as the APK-build job: do not request the removed legacy
+        # `tools` package (the action's default).
+        with:
+          packages: platform-tools
       - name: Make sure ANDROID_SDK_ROOT is set for gradlew/AGP
         run: echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
       - name: Install the PINNED ndk/build-tools/platform/cmake packages
