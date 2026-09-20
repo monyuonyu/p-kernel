@@ -192,6 +192,15 @@ void reflex_guard_exp_restore(const UW in[REFLEX_NUM_CLASSES]);
  * TRUE のあいだ未知コードを取り込まない (攻撃下の遮蔽)。 */
 BOOL reflex_is_shielded(void);
 
+/* TEST-ONLY hook (self-access R1 matched-arm gate, `[self-act-guarded]`):
+ * force/clear the SHIELD deterministically without driving the full threat
+ * pipeline, mirroring the save/restore discipline reflex_guard_exp_save/
+ * restore already use for tests above. hold_ms=0 clears the shield
+ * immediately; hold_ms>0 makes reflex_is_shielded() return TRUE for that
+ * many ms from now. Not a production affordance — no caller outside test
+ * harnesses should use this. */
+void reflex_test_force_shield(UW hold_ms);
+
 /* CONSERVE 照会 — world.c がビーコンの *脅威軸* (WORLD_BEACON.threat) へ
  * 載せる脅威強度。CONSERVE 発火中は learned_conserve (学習値) を、非発火なら
  * 0 を返す。moe ゲートはこれを *加点* (load の逆符号) し、群れが当ノードへ

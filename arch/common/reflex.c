@@ -343,6 +343,13 @@ BOOL reflex_is_shielded(void)
     return TRUE;
 }
 
+/* TEST-ONLY — see reflex.h. Deterministic shield control for the
+ * self-access R1 `[self-act-guarded]` matched-arm gate. */
+void reflex_test_force_shield(UW hold_ms)
+{
+    shield_until = (hold_ms == 0) ? 0 : (now_ms() + hold_ms);
+}
+
 /* G33: pure release formula shared by the live accessor and [g33-controlled]
  * (no duplicate; mirrors protect_threat_for). The level is a function of the
  * OBSERVED DANGER QUANTITY, not a wall clock — see reflex.h. */

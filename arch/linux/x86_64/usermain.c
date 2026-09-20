@@ -1153,8 +1153,18 @@ EXPORT INT usermain(void)
              * appends ONE event to the "self/lin" autobiography so the
              * mind's self-examination joins its honest history. R0 exposes
              * NO write/exec/drive path; the mind invoking this autonomously
-             * is R1+ (Q1/Q2-gated, deferred). */
-            (void)self_access_body();
+             * is R1+ (Q1/Q2-gated, deferred).
+             * `body test` (R1, self-access-design.md §7): runs the
+             * [self-act-guarded] matched-arm gate for the T1 publish
+             * affordance (self_access_publish) instead of printing the
+             * introspection report. */
+            const UB *ba = line + 4; UW bal = (UW)(n - 4);
+            while (bal && (*ba == ' ' || *ba == '\t')) { ba++; bal--; }
+            if (bal >= 4 && ba[0]=='t'&&ba[1]=='e'&&ba[2]=='s'&&ba[3]=='t') {
+                (void)self_access_r1_self_test();
+            } else {
+                (void)self_access_body();
+            }
         } else if (starts_with(line, n, "self") && (n == 4 || line[4] == ' ')) {
             /* living-mind Self layer (docs/architecture/30-module/living-mind.md III):
              * `self test` runs the distributed-autobiographical-self suite

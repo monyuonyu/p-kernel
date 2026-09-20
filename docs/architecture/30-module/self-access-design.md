@@ -333,6 +333,21 @@ reuses the germ capability table + reflex shield + (for writes) adopt semantics.
 > `reflex_is_shielded()`** (the existing shield demonstrably covers the new
 > caller); a T1 call outside the capability set returns `E_OACV`; the human
 > boundary (`ark_consent_ok`) is **not** crossed by any T1 affordance.
+>
+> **Status (2026-09-21, independently audited):** first slice shipped —
+> `self_access_publish` (own-topic K-DDS publish; confinement is structural,
+> the topic is derived from `drpc_my_node`, never caller-supplied). `body
+> test` runs `self_access_r1_self_test()`: ARM unshielded → `E_OK`, ARM
+> shielded → `E_OACV`, both PASS — **but only once `drpc_my_node` is
+> initialized** (run `net` first in the hosted shell; a cold solo node
+> correctly refuses with `E_NOEXS` before the shield check even runs, which
+> is honest behavior, not a bug, but is an undocumented precondition worth
+> knowing before calling `body test` cold). Builds clean on x86 bare-metal,
+> aarch64 bare-metal, and hosted x86_64/aarch64; crown `.text` grows (expected,
+> this module is crown-linked) — **re-bless is a human decision, not yet
+> merged to master.** Remaining R1 scope (p-fs write, `mind teach`) is
+> deferred — no germ-capability table exists for parent-side/non-germ code,
+> which is a real fork in this design's "reuse existing gates" premise.
 
 ### R2 — the device-detect → driver loop (T2), where it is real.
 
