@@ -36,6 +36,12 @@
 #include "gossip_learn.h" /* LM-10 Path W: gl_merge (the no-central averager)  */
 #include "pfs_dag.h"   /* LM-10 Path W: chunked weight transport (T-a, XI.3)   */
 #include "pfs_repl.h"  /* LM-10 Path W: pfs_repl_want (chunk all-or-nothing)   */
+#include "world.h"     /* survival-loop L2 (§6-L2): world_self_state() pause
+                        * gate for mind_net_task/mind_merge_task, hosted-only
+                        * (the header itself guards the declaration with
+                        * _TK_HOSTED_LIBC_ -- see the #ifdef at each call site
+                        * below; bare metal compiles neither the check nor a
+                        * call, so this include changes nothing there). */
 #include "kernel.h"
 #include <tmonitor.h>
 
@@ -3608,6 +3614,9 @@ void r3_curiosity_test(void);         /* LM-14 curiosity cert             */
 void r3_pull_test(void);              /* LM-15 pull-teach cert            */
 void r3_conscience_test(void);        /* 良心: the [law-*]/[conscience-*] cert */
 static void m_law(const UB *p, const UB *end);   /* `mind law [show|verify]` */
+#ifdef _TK_HOSTED_LIBC_
+INT r3_mind_pause_test(void);         /* survival-loop L2 [mind-pause] cert    */
+#endif
 
 /* the ONLY new public symbol (VII.9): `mind teach <k> <v> | ask <k> |
  * wait [secs] | (bare = status)`, dispatched from both hosted
@@ -3638,7 +3647,10 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "pull")) r3_pull_test();            /* LM-15 cert */
     else if (m_kw(&p, end, "conscience")) r3_conscience_test();/* 良心 cert   */
     else if (m_kw(&p, end, "law"))  m_law(p, end);            /* 良心 floor   */
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder | pull | conscience | law]  (bare = status)\r\n");
+#ifdef _TK_HOSTED_LIBC_
+    else if (m_kw(&p, end, "pause")) r3_mind_pause_test();     /* survival-L2 cert */
+#endif
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder | pull | conscience | law | pause]  (bare = status)\r\n");
     m_gate_release();
 }
 
@@ -4041,6 +4053,78 @@ static MT_TEACH_PKT mt_rx_pkt;
 
 #define MT_POLL_MS 500   /* >= the pfs_repl cadence; bounds B's arrival rate */
 
+#ifdef _TK_HOSTED_LIBC_
+/* survival-loop L2 (§6-L2, deferred half): the single predicate both
+ * mind_net_task and mind_merge_task gate their per-tick work on. Kept as a
+ * named function (not inlined at each call site) so [mind-pause] can test
+ * the EXACT check the production tasks use, not a re-implementation of it.
+ * "hibernation != apoptosis" (§0-4): this only ever SKIPS work, never tears
+ * anything down -- both tasks keep polling/sleeping at their normal cadence
+ * and resume the instant world_self_state() leaves HIBERNATING (L2's own
+ * [hibernate-reversible] cert already proves that transition is correct;
+ * this function only asks "what does it read right now"). */
+static INT mind_paused_for_hibernation(void)
+{
+#ifdef MIND_PAUSE_NO_GATE
+    /* falsifier (tests/host/run_mind_pause.sh): the gate never fires ->
+     * [mind-pause]'s HIBERNATING check must go RED, proving the cert is not
+     * toothless. Never built by default. */
+    return 0;
+#else
+    return world_self_state() == WSTATE_HIBERNATING;
+#endif
+}
+
+/* [mind-pause] cert (shell `mind pause`): drives the SAME world-state FSM
+ * L2's own [hibernate-reversible] cert drives (intero_test_force_axis +
+ * world_self_state_step, world_wake()) and checks mind_paused_for_
+ * hibernation() -- the EXACT predicate mind_net_task/mind_merge_task gate
+ * on -- tracks it correctly through ACTIVE -> HIBERNATING -> ACTIVE.
+ * Deliberately does NOT drive the actual task loops through real ticks
+ * (they sleep 500ms-8s per iteration; a real multi-tick drive would need
+ * multi-second wall time and, for mind_merge_task, a >=2-node region) --
+ * same honesty pattern as [hibernate-not-death]'s printed-not-gated
+ * limitation: this proves the gate reads state correctly, not that the
+ * scheduler actually skips a live poll/fold cycle end-to-end. */
+INT r3_mind_pause_test(void)
+{
+    INT fail = 0;
+
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < 50; t++) world_self_state_step();
+    if (mind_paused_for_hibernation() != 0) {
+        r_puts("[mind-pause] ACTIVE baseline: want NOT paused FAIL\r\n");
+        fail = 1;
+    } else {
+        r_puts("[mind-pause] ACTIVE baseline: NOT paused ok\r\n");
+    }
+
+    intero_test_force_axis(INTERO_AX_DEGRADE, 220);
+    for (INT t = 0; t < 50; t++) world_self_state_step();
+    if (world_self_state() != WSTATE_HIBERNATING) {
+        r_puts("[mind-pause] setup did not reach HIBERNATING FAIL\r\n");
+        fail = 1;
+    } else if (mind_paused_for_hibernation() != 1) {
+        r_puts("[mind-pause] HIBERNATING: want paused FAIL\r\n");
+        fail = 1;
+    } else {
+        r_puts("[mind-pause] HIBERNATING: paused ok\r\n");
+    }
+
+    world_wake();
+    if (mind_paused_for_hibernation() != 0) {
+        r_puts("[mind-pause] world_wake(): want NOT paused FAIL\r\n");
+        fail = 1;
+    } else {
+        r_puts("[mind-pause] world_wake(): NOT paused ok\r\n");
+    }
+    intero_test_force(0, 0);
+
+    r_puts(fail ? "[mind-pause] FAIL\r\n" : "[mind-pause] PASS\r\n");
+    return fail;
+}
+#endif
+
 void mind_net_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
@@ -4057,6 +4141,14 @@ void mind_net_task(INT stacd, void *exinf)
     r_puts("[mind] mind_net_task up — polling region topic mind/teach\r\n");
 
     for (;;) {
+#ifdef _TK_HOSTED_LIBC_
+        /* survival-loop L2 (§6-L2, deferred half): while HIBERNATING, skip
+         * this tick's work entirely -- still poll-and-sleep (task stays
+         * ALIVE + wakeable, ready to resume the instant the state reverses),
+         * just don't drain/learn/republish. mind_paused_for_hibernation()
+         * (below) is the single point [mind-pause] tests against. */
+        if (mind_paused_for_hibernation()) { tk_dly_tsk(MT_POLL_MS); continue; }
+#endif
         W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
         if (r >= (W)sizeof mt_rx_pkt && mt_rx_pkt.magic == MT_MAGIC) {
             /* LM-8 (IX.7/IX.8): version gate — a packet whose wire_ver does
@@ -4563,6 +4655,16 @@ void mind_merge_task(INT stacd, void *exinf)
     UW since_pulse = 0;
     for (;;) {
         tk_dly_tsk(MW_ANN_POLL_MS);
+#ifdef _TK_HOSTED_LIBC_
+        /* survival-loop L2 (§6-L2, deferred half): while HIBERNATING, skip
+         * this tick's announce-drain/fold entirely -- see mind_net_task's
+         * matching guard above for the shared rationale + mind_paused_for_
+         * hibernation()'s definition. since_pulse simply FREEZES (this
+         * continue is before its increment below) rather than resetting, so
+         * a long hibernation doesn't erase progress toward the next pulse --
+         * it just doesn't advance while paused. */
+        if (mind_paused_for_hibernation()) continue;
+#endif
         if (drpc_my_node == 0xFF) continue;          /* solo: nothing to do  */
         /* FAST announce drain every tick: a shared LATEST_ONLY "mind/w" slot
          * holds only the last writer, so a node publishing frequently would
