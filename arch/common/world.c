@@ -402,6 +402,15 @@ void world_set_beacon_hold(UW ms)
 #define WSTATE_RELAX_REFRAC  20u                     /* relax refractory (discovered) */
 #endif
 
+/* survival-loop L2 (docs/architecture/20-architecture/survival-loop.md §6-L2) —
+ * PROVISIONAL, same "discover from measured curves, not load-bearing" status as
+ * the L0/L1 constants above: HIBERNATING is a BIGGER commitment than STRESSED
+ * (heavier work gets paused, §6-L2's deferred half — see world_survival_l2_test's
+ * header comment), so it should not be entered as readily. Held at 4x the
+ * STRESSED enter dwell; only the mechanism (DEGRADE-specific, reversible,
+ * rally-overridable) is load-bearing. */
+#define WSTATE_HIB_ENTER_DWELL  (UB)(WSTATE_ENTER_DWELL * 4)
+
 static UB self_state    = WSTATE_ACTIVE;  /* the committed STATE (WSTATE_*)       */
 static UB self_dwell    = 0;              /* qualifying ticks held toward a switch */
 static UW self_cooldown = 0;              /* relax refractory ticks after STRESS   */
@@ -414,14 +423,22 @@ UB world_self_state(void) { return self_state; }
  * world_l1_flap_test's naive & damped arms ALL call this (no re-implementation —
  * the shape mirrors moe's shared deadband_pick). */
 static void wstate_advance(UB *st, UB *dwell, UW *cooldown,
-                           UB s, UB threat_acute,
-                           UB enter_dwell, UB relax_dwell, UW relax_refrac)
+                           UB s, UB threat_acute, UB degrade_acute,
+                           UB enter_dwell, UB relax_dwell, UW relax_refrac,
+                           UB hib_enter_dwell)
 {
     if (*cooldown) (*cooldown)--;            /* relax refractory ticks down       */
 
     if (*st == WSTATE_ACTIVE) {
-        /* ACTIVE -> STRESSED: a non-threat axis with sustained high s, held
-         * enter_dwell ticks (FAST). Entering arms the relax refractory. */
+        /* ACTIVE -> STRESSED: ANY non-threat axis (DEGRADE included) with
+         * sustained high s, held enter_dwell ticks (FAST) — unchanged from L0/L1;
+         * [state-axis]'s existing DEGRADE@hi->STRESSED case still holds at the
+         * SAME dwell. §6-L2's resource-conservation HIBERNATING is reached by
+         * escalating FROM STRESSED below, not by skipping the shed-work step —
+         * "shed load first; if that isn't enough, go dormant" reads better than
+         * jumping straight to the bigger commitment, and it costs this slice
+         * nothing (the STRESSED branch already tests degrade_acute for exactly
+         * this escalation). Entering arms the relax refractory. */
         if (!threat_acute && s >= WSTATE_S_ENTER) {
             if (++(*dwell) >= enter_dwell) {
                 *st = WSTATE_STRESSED; *dwell = 0; *cooldown = relax_refrac;
@@ -432,12 +449,32 @@ static void wstate_advance(UB *st, UB *dwell, UW *cooldown,
             /* acute DANGER (THREAT axis) relaxes INSTANTLY — rally, overriding the
              * slow dwell + refractory (§1.1 "death-imminent -> activate"). */
             *st = WSTATE_ACTIVE; *dwell = 0; *cooldown = 0;
+#ifndef SURVIVAL_L2_NO_ESCALATE
+        } else if (degrade_acute && s >= WSTATE_S_ENTER) {
+            /* DEGRADE persists even while already shedding -> escalate. */
+            if (++(*dwell) >= hib_enter_dwell) {
+                *st = WSTATE_HIBERNATING; *dwell = 0; *cooldown = relax_refrac;
+            }
+#endif
         } else if (s <= WSTATE_S_EXIT && *cooldown == 0) {
             /* scalar relax: SLOW — only after the refractory, held relax_dwell. */
             if (++(*dwell) >= relax_dwell) { *st = WSTATE_ACTIVE; *dwell = 0; }
         } else *dwell = 0;
+    } else if (*st == WSTATE_HIBERNATING) {
+        /* §0-4 "hibernation != apoptosis": reversible, and rally-overridable the
+         * SAME way STRESSED is — an acute THREAT wakes a hibernating node
+         * instantly too (death-imminent outranks resource conservation).
+         * Otherwise: resource recovery (s <= S_EXIT), held relax_dwell, wakes it
+         * — the SAME slow-relax shape STRESSED uses, no third time-constant.
+         * Explicit wake (world_wake(), the design's other stated exit) bypasses
+         * this function entirely — see world_wake() below. */
+        if (threat_acute) {
+            *st = WSTATE_ACTIVE; *dwell = 0; *cooldown = 0;
+        } else if (s <= WSTATE_S_EXIT && *cooldown == 0) {
+            if (++(*dwell) >= relax_dwell) { *st = WSTATE_ACTIVE; *dwell = 0; }
+        } else *dwell = 0;
     } else {
-        /* HIBERNATING/DYING reserved for L2/L3 — not entered in L0/L1. */
+        /* DYING reserved for L3 — not entered before then. */
         *dwell = 0;
     }
 }
@@ -447,22 +484,39 @@ UB world_self_state_step(void)
     UB old = self_state;
     UB s   = intero_scalar();           /* re-samples live S_n (refreshes axis)  */
     UB ax  = intero_dominant_axis();
-    (void)ax;
 #ifdef SURVIVAL_L0_MONOTONE
     /* falsifier: ignore the axis -> high s always pushes toward STRESSED, so the
      * THREAT axis is no longer special and [state-axis] THREAT goes RED. */
     UB threat_acute = 0;
+    UB degrade_acute = 0;
 #else
-    UB threat_acute = (UB)(ax == INTERO_AX_THREAT);
+    UB threat_acute  = (UB)(ax == INTERO_AX_THREAT);
+    UB degrade_acute = (UB)(ax == INTERO_AX_DEGRADE);
 #endif
 
-    wstate_advance(&self_state, &self_dwell, &self_cooldown, s, threat_acute,
-                   WSTATE_ENTER_DWELL, WSTATE_RELAX_DWELL, WSTATE_RELAX_REFRAC);
+    wstate_advance(&self_state, &self_dwell, &self_cooldown, s,
+                   threat_acute, degrade_acute,
+                   WSTATE_ENTER_DWELL, WSTATE_RELAX_DWELL, WSTATE_RELAX_REFRAC,
+                   WSTATE_HIB_ENTER_DWELL);
 
     if (self_state != old)
         galaxy_emit(EV_STATE, drpc_my_node, GALAXY_NODE_NONE,
                     (UH)old, (UH)self_state);
     return self_state;
+}
+
+/* survival-loop L2 §6-L2's other stated exit ("明示 wake" / explicit wake),
+ * alongside resource recovery (wstate_advance's slow relax above). Only
+ * fires from HIBERNATING — a no-op from any other state, so this cannot be
+ * used to skip STRESSED's own slower relax discipline. */
+void world_wake(void)
+{
+    if (self_state == WSTATE_HIBERNATING) {
+        UB old = self_state;
+        self_state = WSTATE_ACTIVE; self_dwell = 0; self_cooldown = 0;
+        galaxy_emit(EV_STATE, drpc_my_node, GALAXY_NODE_NONE,
+                    (UH)old, (UH)self_state);
+    }
 }
 
 /* Read peer `node`'s gossiped STATE from the local world-table (mirrors
@@ -578,7 +632,8 @@ static UW wstate_flap(UB enter_dwell, UB relax_dwell, UW relax_refrac)
     UW flips = 0; UB prev = st;
     for (INT t = 0; t < T; t++) {
         wstate_advance(&st, &dwell, &cooldown, s, 0 /*non-threat axis*/,
-                       enter_dwell, relax_dwell, relax_refrac);
+                       0 /*non-degrade axis*/, enter_dwell, relax_dwell,
+                       relax_refrac, WSTATE_HIB_ENTER_DWELL);
         if (t > 1 && st != prev) flips++;          /* 2 ticks warmup             */
         prev = st;
         /* coupling: ACTIVE accrues stress (holds work); STRESSED sheds it. */
@@ -650,6 +705,135 @@ INT world_survival_l1_test(void)
     self_state = WSTATE_ACTIVE; self_dwell = 0; self_cooldown = 0;
 
     wo_puts(fail ? "[survival-l1] FAIL\r\n" : "[survival-l1] PASS\r\n");
+    return fail;
+}
+
+/* ── survival-loop L2 (partial slice): [hibernate-reversible] +
+ * [hibernate-gossip] ─────────────────────────────────────────────────────
+ * Covers only the STATE-FSM half of §6-L2 (see world_survival_l2_test's
+ * declaration comment in world.h for what is deferred and why). */
+INT world_survival_l2_test(void)
+{
+    INT fail = 0;
+    const UB hi = 220;                                /* straddles S_ENTER(160) */
+    /* DEGRADE must first cross ACTIVE->STRESSED (enter_dwell ticks) before the
+     * STRESSED->HIBERNATING escalation dwell even starts counting. */
+    const INT enter_steps = (INT)WSTATE_ENTER_DWELL + (INT)WSTATE_HIB_ENTER_DWELL + 2;
+    const INT calm_steps  = (INT)WSTATE_RELAX_REFRAC + WSTATE_RELAX_DWELL + 2;
+
+    wo_puts("[survival-l2] HIBERNATING: resource conservation, reversible (hosted cert)\r\n");
+
+    /* [hibernate-reversible] arm 1: sustained DEGRADE -> STRESSED -> escalates
+     * to HIBERNATING (needs to pass through STRESSED first, per the ACTIVE
+     * branch's design — see wstate_advance's comment). Then an acute THREAT
+     * wakes it INSTANTLY (rally overrides hibernation, same as STRESSED). */
+    INT rev_fail = 0;
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < calm_steps; t++) world_self_state_step();
+    intero_test_force_axis(INTERO_AX_DEGRADE, hi);
+    for (INT t = 0; t < enter_steps; t++) world_self_state_step();
+    UB got = world_self_state();
+    wo_puts("[hibernate-reversible] sustained DEGRADE -> "); wo_putdec(got);
+    if (got == WSTATE_HIBERNATING) wo_puts(" HIBERNATING ok\r\n");
+    else { wo_puts(" want HIBERNATING FAIL\r\n"); rev_fail = 1; }
+
+    intero_test_force_axis(INTERO_AX_THREAT, hi);     /* acute rally, ONE tick */
+    world_self_state_step();
+    got = world_self_state();
+    wo_puts("[hibernate-reversible] THREAT rally wakes -> "); wo_putdec(got);
+    if (got == WSTATE_ACTIVE) wo_puts(" ACTIVE (instant) ok\r\n");
+    else { wo_puts(" want ACTIVE FAIL\r\n"); rev_fail = 1; }
+    intero_test_force(0, 0);
+
+    /* arm 2: re-enter HIBERNATING, then wake via RESOURCE RECOVERY (slow relax,
+     * the OTHER §6-L2 exit besides an explicit wake). */
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < calm_steps; t++) world_self_state_step();
+    intero_test_force_axis(INTERO_AX_DEGRADE, hi);
+    for (INT t = 0; t < enter_steps; t++) world_self_state_step();
+    if (world_self_state() != WSTATE_HIBERNATING) {
+        wo_puts("[hibernate-reversible] arm2 setup did not reach HIBERNATING FAIL\r\n");
+        rev_fail = 1;
+    }
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);     /* s drops -> resource recovery */
+    for (INT t = 0; t < calm_steps; t++) world_self_state_step();
+    got = world_self_state();
+    wo_puts("[hibernate-reversible] resource recovery wakes -> "); wo_putdec(got);
+    if (got == WSTATE_ACTIVE) wo_puts(" ACTIVE (slow relax) ok\r\n");
+    else { wo_puts(" want ACTIVE FAIL\r\n"); rev_fail = 1; }
+    intero_test_force(0, 0);
+
+    /* arm 3: re-enter HIBERNATING, wake via the EXPLICIT world_wake() call —
+     * the design's other named exit, independent of s or dwell. */
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < calm_steps; t++) world_self_state_step();
+    intero_test_force_axis(INTERO_AX_DEGRADE, hi);
+    for (INT t = 0; t < enter_steps; t++) world_self_state_step();
+    if (world_self_state() != WSTATE_HIBERNATING) {
+        wo_puts("[hibernate-reversible] arm3 setup did not reach HIBERNATING FAIL\r\n");
+        rev_fail = 1;
+    }
+    world_wake();
+    got = world_self_state();
+    wo_puts("[hibernate-reversible] world_wake() -> "); wo_putdec(got);
+    if (got == WSTATE_ACTIVE) wo_puts(" ACTIVE (explicit) ok\r\n");
+    else { wo_puts(" want ACTIVE FAIL\r\n"); rev_fail = 1; }
+    /* world_wake() is a no-op outside HIBERNATING — must not skip STRESSED's
+     * own slower relax. */
+    world_wake();
+    got = world_self_state();
+    if (got != WSTATE_ACTIVE) {
+        wo_puts("[hibernate-reversible] world_wake() from ACTIVE mutated state FAIL\r\n");
+        rev_fail = 1;
+    }
+    intero_test_force(0, 0);
+    if (rev_fail) { wo_puts("[hibernate-reversible] FAIL\r\n"); fail = 1; }
+    else           wo_puts("[hibernate-reversible] PASS\r\n");
+
+    /* [hibernate-gossip]: HIBERNATING gossips through the SAME 2-bit
+     * WORLD_STATE_MASK L0 already wires — zero new wire code, reuses
+     * world_observe/world_peer_state exactly like [state-gossip] does. */
+    INT gos_fail = 0;
+    UB peer = (UB)(DNODE_MAX - 1);
+    if (peer == drpc_my_node) peer = (UB)(DNODE_MAX - 2);
+    {
+        WORLD_BEACON b;
+        b.node_id = peer; b.device_type = 0; b.region_id = 0xFF;
+        b.pressure = 0; b.region_size = 0; b.threat = 0; b.atrisk = 0;
+        b.firing = (UB)(WSTATE_HIBERNATING << WORLD_STATE_SHIFT);
+        b.seq = 2000;
+        world_observe(&b);
+        INT ps = world_peer_state(peer);
+        wo_puts("[hibernate-gossip] stamped HIBERNATING, peer reads "); wo_putdec((UW)ps);
+        if (ps == WSTATE_HIBERNATING) wo_puts(" ok\r\n");
+        else { wo_puts(" FAIL\r\n"); gos_fail = 1; }
+    }
+    if (gos_fail) { wo_puts("[hibernate-gossip] FAIL\r\n"); fail = 1; }
+    else           wo_puts("[hibernate-gossip] PASS\r\n");
+
+    /* [hibernate-not-death] is NOT a runtime check here, on purpose (a
+     * fabricated PASS on a vacuous condition is worse than an honest gap,
+     * per this project's own rule): self is not indexed into dnode_table
+     * (SWIM tracks PEERS, not self), so there is no "self ALIVE" bit this
+     * single-process hosted test could read back. The property holds by
+     * CONSTRUCTION instead — this slice's only side effect on state change
+     * is galaxy_emit(EV_STATE,...); grep confirms nothing in this diff calls
+     * into swim.c or writes dnode_table. A real "peer still sees me as
+     * ALIVE while HIBERNATING" proof needs a live multi-process SWIM
+     * exchange, deferred the same way L1's own cert defers real-fleet flap
+     * to L2 (§10-4's honest-limitation note applies here too). */
+    wo_puts("[hibernate-not-death] not a runtime check (see comment above) —"
+            " holds by construction (no swim.c/dnode_table touch in this diff);"
+            " a live multi-process proof is deferred, same honesty pattern as"
+            " L1's own single-process limitation\r\n");
+
+#ifdef SURVIVAL_L2_NO_ESCALATE
+    wo_puts("[hibernate-reversible-NOT] ARMED: STRESSED->HIBERNATING escalation"
+            " disabled — [hibernate-reversible]'s sustained-DEGRADE assertion"
+            " must FAIL above (RED)\r\n");
+#endif
+    self_state = WSTATE_ACTIVE; self_dwell = 0; self_cooldown = 0;   /* restore calm */
+    wo_puts(fail ? "[survival-l2] FAIL\r\n" : "[survival-l2] PASS\r\n");
     return fail;
 }
 
