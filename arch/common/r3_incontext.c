@@ -3650,7 +3650,12 @@ void mind_cmd(const UB *args, UW len)
 #ifdef _TK_HOSTED_LIBC_
     else if (m_kw(&p, end, "pause")) r3_mind_pause_test();     /* survival-L2 cert */
 #endif
-    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder | pull | conscience | law | pause]  (bare = status)\r\n");
+    /* "pause" deliberately NOT added to this usage string: it is the ONE
+     * r_puts call in mind_cmd that is NOT inside a _TK_HOSTED_LIBC_ guard
+     * (this fallback path runs on bare metal too), so its bytes are part of
+     * the bare-metal crown -- a real +8B drift from appending "| pause"
+     * here was caught by run_mind_pause.sh's crown gate and reverted. */
+    else r_puts("usage: mind [teach <word> <word> | ask <word> | wait [secs] | lang | merge | onemind | nocentral | wmerge | revise | forget | curious | wonder | pull | conscience | law]  (bare = status)\r\n");
     m_gate_release();
 }
 
