@@ -150,3 +150,38 @@ confirming the smaller step even moves the needle, did not seem like a call
 this routine should make unilaterally. Whether it is worth continuing toward
 the full 10 MB after seeing the 2 MB result is in `pkernel-baton.md`'s
 judgment-pending list.
+
+**2026-09-21 (2 MB result recovered): the run finished — 2,097,212 bytes /
+14,141 examples in 6556.6 s (320 B/s steady-state, matching the 286-312 B/s
+calibration band).** Gated arms (`[ctx-carry-window]`, `[gen-cohort-island]`)
+still PASS — unsurprising, they test the window mechanism and the version
+guard, not the training budget. The printed, non-gated A(d) curve:
+
+| d | A_full(d) | A_clamp64(d) |
+|---|---|---|
+| 16 | -0.28334 | +0.20526 |
+| 32 | -0.46261 | +0.00000 |
+| 48 | +0.65619 | +0.00000 |
+| 96 | -0.03943 | +0.00000 |
+| 128 | +0.31673 | +0.00000 |
+| 192 | +0.64798 | +0.00000 |
+
+**Honest reading: this is NOT a clean win.** The magnitude did move well off
+the C1 clean-null band (`|A(d)| < 0.01`) — most points are now `0.03`-`0.66`
+nats — but the sign and size do not vary monotonically or even consistently
+with `d`: `d=48` and `d=192` are large and positive, `d=16`/`d=32` are
+negative, `d=96` drops back near zero in between them. A genuine learned
+long-range-copy skill would be expected to show *some* legible relationship
+with distance, not this pattern. The more likely explanation, flagged as a
+risk in this doc's own "honest limitation up front" above, is template
+overfitting on ~14K repeats of one synthetic probe family rather than a
+general in-context-carry skill — the model may be keying on
+position/template artifacts that happen to correlate with the fact token at
+each specific offset, not reading the fact robustly. **No new anti-theater
+falsifier was built to distinguish these two explanations; per the plan
+above, that is left as an open mechanism question, not silently called a
+win.** Given this, and the ~10.2 h single-run cost for 10 MB, continuing
+toward 10 MB is not obviously worth it until a falsifier exists that could
+tell "learned to copy" apart from "learned this template's offset
+fingerprints" — left for `pkernel-baton.md`'s judgment-pending list to
+decide, not decided here.
