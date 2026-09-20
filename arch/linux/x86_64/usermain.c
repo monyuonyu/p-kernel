@@ -1114,12 +1114,20 @@ EXPORT INT usermain(void)
              * the LOAD axis) + [hysteresis] (two-time-constant damping breaks the
              * coupled-forcing flap). Falsifiers: -DSURVIVAL_L1_SIGN_FLIP (route
              * onto threat -> stressed GAINS work -> RED) and -DSURVIVAL_L1_NO_DAMP
-             * (collapse the time-constants -> flap returns -> RED). */
+             * (collapse the time-constants -> flap returns -> RED).
+             * `survival l2` runs the L2 cert (§6-L2, STATE-FSM half only —
+             * see world_survival_l2_test's header comment for the deferred
+             * half) — [hibernate-reversible] (sustained DEGRADE escalates
+             * STRESSED->HIBERNATING; THREAT rally / resource recovery /
+             * explicit world_wake() all reverse it) + [hibernate-gossip]
+             * (HIBERNATING gossips over the same 2-bit state mask L0 wired,
+             * zero new wire code). */
             const UB *a = line + 8; UW al = (UW)(n - 8);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 2 && a[0]=='l' && a[1]=='0') world_survival_l0_test();
             else if (al >= 2 && a[0]=='l' && a[1]=='1') world_survival_l1_test();
-            else print("usage: survival l0|l1\r\n");
+            else if (al >= 2 && a[0]=='l' && a[1]=='2') world_survival_l2_test();
+            else print("usage: survival l0|l1|l2\r\n");
         } else if (starts_with(line, n, "swimtest") && (n == 8 || line[8] == ' ')) {
             /* [swim-selfsuspect] de-storm cert (tests/host/run_swim_selfsuspect.sh):
              * N rapid self-SUSPECT rumors -> [selfsuspect-refute] (my_incarnation

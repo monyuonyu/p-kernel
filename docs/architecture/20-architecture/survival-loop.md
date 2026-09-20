@@ -351,6 +351,23 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 - **GAP-②**: host は資源軸を `intero_test_force` で注入。実 battery/thermal は open-Q-2（Android JNI 新ソース）。
 - **crown**: `r3_incontext.c`（mind_merge pause）は bare-metal・live merge 経路。**re-baseline ＋ sign-off 必須**。
 
+> **2026-09-21（実装完了・監査待ち、`feat/survival-l2-hibernate`）: STATE-FSM 半分のみ着手。**
+> `wstate_advance` に HIBERNATING 分岐を追加（STRESSED で DEGRADE が持続 → HIBERNATING、
+> PROVISIONAL 4x dwell）。復帰は THREAT rally（即時）／資源回復（既存 relax と同形）／
+> 明示 `world_wake()` の3経路。gossip は既存 2bit `WORLD_STATE_MASK` を再利用（新規 wire 無し）。
+> L0/L1 の既存 cert（`[state-axis]` の DEGRADE ケース含む）は無改造で GREEN 確認済み。
+> **新規 cert** `[hibernate-reversible]`/`[hibernate-gossip]`（`survival l2` verb、
+> `tests/host/run_survival_l2.sh`）、falsifier `-DSURVIVAL_L2_NO_ESCALATE` で RED 確認済み。
+> **crown: hosted-gate のみ（L0/L1 と同じ規律）、両 bare-metal crown が master と byte-identical
+> であることを実測済み**（x86 579665B / aarch64 456272B、`nm` で新シンボル不在も確認）。
+> **今回のスライスに含まれないもの（先送り、黙って落としていない）**: `mind_merge_task`/
+> `mind_net_task`/DMN consolidation の実際の pause、beacon cadence 低下、routed work の shed
+> ――これらは `r3_incontext.c` の bare-metal live merge 経路に触れ、上の crown 注記どおり
+> re-baseline + sign-off が要る別スライス。`[hibernate-not-death]` も実行時チェックではなく
+> 構造的な保証の記述（SWIM は自分を追跡しないため、単一プロセスの hosted テストでは
+> 「ALIVE のまま」を読み返すビットが無い）。**実装者はこの run 自身。次 run が監査者として
+> 独立に再現し、PASS なら local master へ、それまでは未マージ。**
+
 ### L3 — 連続レプリ watermark ＋ graceful flush（DYING、apoptosis の **反転版**）
 - **やること**: beacon に watermark（GAP-⑧、merge epoch + teach seq）。DYING = best-effort flush（§3.3、**block しない**）。
   Self/lin `LM_UNIT_EV_APOPTOSIS`（GAP-⑦）。署名 essence（`sign_manifest_verify`）。min-fleet guard（§4.3）。

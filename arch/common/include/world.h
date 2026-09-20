@@ -237,4 +237,22 @@ INT world_l1_flap_test(void);
  * prints the [survival-l1] verdict. Returns 0 = PASS. */
 INT world_survival_l1_test(void);
 
+/* survival-loop L2 (survival-loop.md §6-L2) — resource-conservation
+ * HIBERNATING. THIS SLICE covers only the STATE-FSM half: sustained DEGRADE
+ * escalates STRESSED -> HIBERNATING (a bigger commitment than plain
+ * STRESSED, PROVISIONAL 4x dwell); an acute THREAT or resource recovery (or
+ * the explicit world_wake() below) reverses it -- "hibernation != apoptosis"
+ * (§0-4), mechanically. Deferred, NOT in this slice (documented, not
+ * silently dropped): actually pausing mind_merge_task/mind_net_task/DMN
+ * consolidation, beacon-cadence reduction, and routed-work shedding --
+ * those touch r3_incontext.c's live merge path on bare metal and need their
+ * own re-baseline + sign-off per §6-L2's own crown note; this slice's FSM
+ * change is hosted-only like L0/L1 (crown byte-identical). */
+INT world_survival_l2_test(void);
+
+/* Explicit wake (survival-loop.md §6-L2's "明示 wake" exit, alongside
+ * resource recovery): forces HIBERNATING -> ACTIVE immediately. A no-op from
+ * any other state -- cannot be used to skip STRESSED's own slower relax. */
+void world_wake(void);
+
 #endif /* _TK_HOSTED_LIBC_ */
