@@ -102,3 +102,51 @@ it is the atomic prerequisite. The toy ceiling stands until C2–C4 move the cur
 FULL nightly curve (`d ∈ {16,32,48,96,128,192}`, 64 probes) is `CTXCARRY_FULL=1`.
 The gated arms above are asserted in the CI block; the A(d) magnitude is printed
 for the record, never gated.
+
+## C2 plan (`scale_wall_design.md` was never committed — this is the short note
+BACKLOG's A2 row asks for, not a claim that the missing file has been recovered)
+
+**Question:** does A(d) move off the C1 clean-NULL (`|A(d)| < 0.01` nats) if the
+training reservoir grows ~4 KB (CI budget: `rounds=3, n_ex=20`, ≈60 examples,
+avg ≈114 B/example ⇒ ≈6.8 KB) toward ≥10 MB? `scaling-law.md` §1.4/§297 frames
+C2 as *fleet* corpus throughput (`corpus/day ~ linear in N`); this is narrower
+and single-node — it scales the SAME synthetic generator `ctxcarry_test.c`
+already uses (`build_probe`'s `"fact: K is V. <filler d> question: ... answer:
+V"` template, `gen_train_tok`/`gen_eval_tok`), not a newly-sourced corpus. No
+new corpus-provenance/license question — every training byte is procedurally
+generated from an LCG seed, same as C1. The GATED arms
+(`[ctx-carry-window]`/`[ctx-carry-clamp]`/`[gen-cohort-island]`/determinism)
+are training-budget-independent per the cert's own design; only the PRINTED
+A(d) magnitude is expected to change, if anything does.
+
+**Method:** add a `c2` mode to `ctxcarry_test.c` that raises `rounds`/`n_ex`
+until total training bytes reach a target (env-overridable), reusing
+`train_ctx`/`measure_A` unchanged. Calibrate wall-clock per example first
+(this host throttles under load — `benchmark-on-throttling-laptop` memory) and
+size the run to what actually finishes, reporting the reservoir size reached
+honestly if it falls short of 10 MB rather than forcing the target.
+
+**Honest limitation up front:** a 1.9M-param model trained on billions of
+repeats of one template family may overfit the template rather than learn a
+general long-range copy skill; a moved A(d) here would need the SAME
+anti-theater discipline as C1 (a mechanism check, not just a bigger number)
+before it is called a real result. This run does not invent that falsifier —
+if A(d) does move, the mechanism question is left for the next rung/run.
+
+**2026-09-21 (measured, `feat/scale-wall-c2`, `ctxcarry_test.c`'s new `c2` mode):
+≥10 MB is infeasible in a single unattended run on this host, and this itself
+is the first honest result.** Calibrated steady-state throughput on
+`pkernel_audit_ss`: **≈286 B/s** (20,052 B / 130 examples / 70.1 s, converged
+by ~50 examples — see the `c2` mode's per-5%-progress log). At that rate 10 MB
+needs **≈10.2 hours** of single-threaded wall time; C1's own "full nightly"
+budget (rounds=24, n_ex=128, ≈445 KB estimated) already takes minutes-to-tens-
+of-minutes at this throughput, consistent with the doc's own "this is the slow
+part" comment. **A 2 MB run (≈4.5x past the full-nightly estimate, ≈2 hours at
+this rate) was launched detached in `pkernel_audit_ss`
+(`C2_TARGET_BYTES=2097152 ./ctxcarry_c2 c2 > /build/c2-2mb.log`, PID recorded
+in the baton) rather than the full 10 MB** — committing a single unattended
+run to a target that needs multiple future runs' worth of compute, before
+confirming the smaller step even moves the needle, did not seem like a call
+this routine should make unilaterally. Whether it is worth continuing toward
+the full 10 MB after seeing the 2 MB result is in `pkernel-baton.md`'s
+judgment-pending list.

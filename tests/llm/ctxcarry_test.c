@@ -57,12 +57,27 @@
  *  Build: cc -std=c11 -O1 -ffp-contract=off ctxcarry_test.c ../../arch/common/llm/student.c
  *  Run:   ./ctxcarry [ci|full]      (default ci = reduced sweep for strict CI)
  *  Exit 0 = the GATED arms PASS; the A(d) magnitude is reported, not gated.
+ *
+ *  `c2` mode (scale-wall-c1.md's "C2 plan" addendum): scales the SAME
+ *  synthetic generator used above to a target training-byte budget (default
+ *  10 MB, override via C2_TARGET_BYTES) instead of a fixed rounds/n_ex, and
+ *  re-prints the A(d) curve — does the C1 clean-NULL move off zero with more
+ *  data? Not gated, not wired into CI; a one-off measurement.
  * ------------------------------------------------------------------------- */
+#define _POSIX_C_SOURCE 199309L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 #include "../../arch/common/llm/student.h"
+
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
 
 static int g_fail = 0;
 #define CHECK(cond, msg) do { if (cond) { printf("  PASS  %s\n", msg); } \
@@ -198,6 +213,54 @@ static void train_ctx(st_model *m, int rounds, int n_ex, uint32_t seed,
         }
     }
     free(logits);
+}
+
+/* ---- train until `target_bytes` of synthetic examples have been seen (the
+ * C2 scale-up: same generator/template as train_ctx, sized by BYTES trained
+ * rather than a fixed rounds*n_ex, so the reservoir size is measured, not
+ * estimated). Returns actual bytes trained (>= target_bytes); *examples_out
+ * gets the example count. */
+static uint64_t train_ctx_bytes(st_model *m, uint64_t target_bytes, uint32_t seed,
+                                const int *dists, int ndist, uint64_t *examples_out)
+{
+    uint32_t rng = seed;
+    uint64_t bytes = 0, examples = 0;
+    uint64_t next_report = target_bytes / 20;   /* ~20 progress lines, so a
+                                                  * detached/timed-out run still
+                                                  * leaves a throughput trail */
+    if (next_report == 0) next_report = 1024;
+    double t_start = now_ms();
+    float *logits = (float *)malloc((size_t)ST_MAXSEQ * ST_VOCAB * sizeof(float));
+    if (!logits) { if (examples_out) *examples_out = 0; return 0; }
+    while (bytes < target_bytes) {
+        char K[16], V[16];
+        int kl = gen_train_tok(&rng, K);
+        int vl = gen_train_tok(&rng, V);
+        int d  = dists[lcg(&rng) % (uint32_t)ndist];
+        uint8_t seq[ST_MAXSEQ];
+        uint32_t fr = rng ^ 0x9E3779B9u;
+        int n = build_probe(seq, K, kl, V, vl, d, &fr, 0, 0, 0, 0);
+        if (n < 2 || n > ST_MAXSEQ) continue;
+        st_zero_grad(m);
+        st_forward(m, seq, n, logits);
+        st_backward(m, seq, n);
+        st_adam_step(m, 3e-3f);
+        bytes += (uint64_t)n;
+        examples++;
+        if (bytes >= next_report) {
+            double elapsed_s = (now_ms() - t_start) / 1000.0;
+            printf("[scale-wall-c2]   progress: %llu/%llu bytes (%llu examples, %.1f s, %.0f B/s)\n",
+                   (unsigned long long)bytes, (unsigned long long)target_bytes,
+                   (unsigned long long)examples, elapsed_s,
+                   elapsed_s > 0.0 ? (double)bytes / elapsed_s : 0.0);
+            fflush(stdout);
+            next_report += target_bytes / 20;
+            if (next_report == 0) next_report = bytes + 1024;
+        }
+    }
+    free(logits);
+    if (examples_out) *examples_out = examples;
+    return bytes;
 }
 
 /* ---- measure the A(d) curve (full + clamped) over `nprobe` seeded probes ---- */
@@ -362,6 +425,42 @@ int main(int argc, char **argv)
         printf("[ctx-carry-determinism] fixed-probe-stream FNV = 0x%016llx\n",
                (unsigned long long)determinism_probe_fnv());
         return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "c2") == 0) {
+        uint64_t target = 10ull * 1024 * 1024;   /* 10 MB default */
+        const char *env = getenv("C2_TARGET_BYTES");
+        if (env) { uint64_t v = strtoull(env, 0, 10); if (v > 0) target = v; }
+        printf("========================================================================\n");
+        printf("[scale-wall-c2] data-reservoir scale-up: target=%llu bytes (%.2f MB)\n",
+               (unsigned long long)target, (double)target / (1024.0 * 1024.0));
+        printf("========================================================================\n");
+        st_model m;
+        if (st_init(&m, 0xBABEC2u) != ST_OK) { printf("init OOM\n"); return 2; }
+        st_rope_set_enabled(1);
+        int tdists[6] = { 8, 24, 48, 96, 128, 176 };
+        double t0 = now_ms();
+        uint64_t examples = 0;
+        uint64_t bytes = train_ctx_bytes(&m, target, 0x7A1EC2u, tdists, 6, &examples);
+        double t1 = now_ms();
+        printf("[scale-wall-c2] trained %llu bytes over %llu examples in %.1f s (%.4f ms/example)\n",
+               (unsigned long long)bytes, (unsigned long long)examples, (t1 - t0) / 1000.0,
+               examples ? (t1 - t0) / (double)examples : 0.0);
+
+        int dfull[6] = { 16, 32, 48, 96, 128, 192 };
+        printf("\n[ctx-carry] A(d) after C2 scale-up (full window, 64 probes/point)\n");
+        printf("   d     A_full(d)    A_clamp64(d)\n");
+        for (int i = 0; i < 6; i++) {
+            float af = measure_A(&m, dfull[i], 64, 0xE7A1u + (uint32_t)i * 101u, 0);
+            float ac = measure_A(&m, dfull[i], 64, 0xE7A1u + (uint32_t)i * 101u, 64);
+            printf("   %-4d  %+9.5f    %+9.5f\n", dfull[i], af, ac);
+        }
+        printf("\n[scale-wall-c2] same gated arms as C1 (training-budget-independent):\n");
+        cert_window_mechanism(&m);
+        cert_cohort_island();
+        st_free(&m);
+        printf("\n[result] scale-wall-c2 measurement done (%s; not gated -- see scale-wall-c1.md)\n",
+               g_fail ? "gated-arm FAIL" : "gated arms PASS");
+        return g_fail ? 1 : 0;
     }
     int full = (argc > 1 && strcmp(argv[1], "full") == 0);
     printf("========================================================================\n");
