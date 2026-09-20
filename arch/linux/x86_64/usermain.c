@@ -44,6 +44,7 @@
 #endif
 #include "genome.h"
 #include "self_access.h"   /* self-access R0: the `body` introspection verb */
+#include "fed_id.h"  /* federation F1: candidate (region_id,local_id) encoding, `fed test` */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT INT  sio_read_line(UB *buf, INT maxlen);
@@ -1128,6 +1129,25 @@ EXPORT INT usermain(void)
             else if (al >= 2 && a[0]=='l' && a[1]=='1') world_survival_l1_test();
             else if (al >= 2 && a[0]=='l' && a[1]=='2') world_survival_l2_test();
             else print("usage: survival l0|l1|l2\r\n");
+        } else if (starts_with(line, n, "fed") && (n == 3 || line[3] == ' ')) {
+            /* federation F1 (docs/architecture/20-architecture/federation.md
+             * §2.2/§4-F1, fed_id.h): `fed test` runs [fed-id-roundtrip], the
+             * self-test for the CANDIDATE (region_id,local_id) encoding --
+             * pack/unpack round-trips at boundary values, and region_id=0
+             * reproduces today's plain GOBJ local field exactly (R=1
+             * backward compat). NOT wired into any live GOBJ path yet -- see
+             * fed_id.h's header comment for what is deliberately deferred.
+             * Rebuilt with EXTRA_CFLAGS=-DFED_ID_BROKEN_PACK the split point
+             * moves and round-trip breaks (the falsifier). */
+            const UB *fa = line + 3; UW fal = (UW)(n - 3);
+            while (fal && (*fa==' '||*fa=='\t')) { fa++; fal--; }
+            if (fal >= 4 && fa[0]=='t'&&fa[1]=='e'&&fa[2]=='s'&&fa[3]=='t') {
+                print("[fed-id-roundtrip] candidate (region_id,local_id) encoding (federation.md F1)\r\n");
+                if (fed_id_self_test_run() == 0)
+                    print("[fed-id-roundtrip] PASS\r\n");
+                else
+                    print("[fed-id-roundtrip] FAIL\r\n");
+            } else print("usage: fed test\r\n");
         } else if (starts_with(line, n, "swimtest") && (n == 8 || line[8] == ' ')) {
             /* [swim-selfsuspect] de-storm cert (tests/host/run_swim_selfsuspect.sh):
              * N rapid self-SUSPECT rumors -> [selfsuspect-refute] (my_incarnation
