@@ -373,7 +373,11 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 > `_TK_HOSTED_LIBC_` ガードで実装、実装者自身が+8Bのcrown driftを発見・修正、独立監査
 > PASSでlocal masterマージ済み。(2) routed work の shed（このslice、`feat/survival-l2-
 > routed-shed`）: `moe.c`の`eff_state_penalty`にWSTATE_HIBERNATINGケースを追加、
-> `[hibernate-shed]` cert・falsifier `-DSURVIVAL_L2_NO_SHED`。この関数は元々
+> `[hibernate-shed]` cert・falsifier `-DSURVIVAL_L2_SHED_INVERT`（最初に試した
+> 「no relief に戻すだけ」の falsifier は自分でbuild+runして牙が無いと発覚 ――
+> STATE fold無しの blind control自体が24/36に偏るため、単に0点に戻しても
+> sign_ok/nopileon_ok の両方が偶然成立してしまう。符号反転版に差し替え済み）。
+> この関数は元々
 > `_TK_HOSTED_LIBC_`ブロック全体の中にあり（bare-metalは fold 自体が存在しない）、
 > **crown risk は既にゼロだった**（既存の`#ifdef _TK_HOSTED_LIBC_`ブロック内の分岐を
 > 1つ増やしただけ、re-baseline 不要）。実装・自己build/testはこのrun、独立監査は

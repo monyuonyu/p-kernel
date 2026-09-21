@@ -240,8 +240,12 @@ INT  moe_support_route_test(void);
  * [hibernate-shed] cert. Same shape as moe_support_route_test but with
  * node0 HIBERNATING instead of STRESSED -- proves eff_state_penalty's
  * WSTATE_HIBERNATING case sheds work through the PRODUCTION moe_select_step
- * path. 0 = PASS. -DSURVIVAL_L2_NO_SHED makes HIBERNATING claim no relief
- * (reverts to the old "reserved, no relief" behavior) and turns it RED.
- * Hosted-only, same crown-neutral construction as moe_support_route_test. */
+ * path. 0 = PASS. -DSURVIVAL_L2_SHED_INVERT flips the relief sign for
+ * HIBERNATING only (mirrors SURVIVAL_L1_SIGN_FLIP's shape, scoped to this
+ * one case) so a hibernating candidate becomes MORE attractive instead of
+ * less, and turns it RED (plain "-DSURVIVAL_L2_NO_SHED reverts to no
+ * relief" was tried first and found toothless -- see eff_state_penalty's
+ * own comment in moe.c for why). Hosted-only, same crown-neutral
+ * construction as moe_support_route_test. */
 INT  moe_hibernate_route_test(void);
 #endif

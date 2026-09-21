@@ -45,9 +45,11 @@
 #   FALSIFIER [hibernate-reversible-NOT]: -DSURVIVAL_L2_NO_ESCALATE disables the
 #                     STRESSED->HIBERNATING escalation -> sustained DEGRADE never
 #                     reaches HIBERNATING -> [hibernate-reversible] RED.
-#   FALSIFIER [hibernate-shed-NOT]: -DSURVIVAL_L2_NO_SHED makes HIBERNATING claim
-#                     no relief (reverts to "reserved, no relief") ->
-#                     [hibernate-shed] RED.
+#   FALSIFIER [hibernate-shed-NOT]: -DSURVIVAL_L2_SHED_INVERT flips the relief
+#                     sign for HIBERNATING (mirrors SURVIVAL_L1_SIGN_FLIP,
+#                     scoped to this one case) -> [hibernate-shed] RED. (A
+#                     plain "no relief" falsifier was tried first and found
+#                     toothless -- see moe.c's eff_state_penalty comment.)
 # A falsifier that does NOT go RED = toothless = FAIL.
 #
 # CROWN GATE: rebuild both bare crowns and assert the hosted L0/L1/L2 symbols
@@ -149,15 +151,15 @@ one_arch() {  # $1 = boot dir, $2 = human label, $3 = target arch (aarch64|x86_6
     fi
     make -C "$boot" clean >/dev/null 2>&1
 
-    # ---- FALSIFIER: -DSURVIVAL_L2_NO_SHED -> [hibernate-shed] RED -----------
+    # ---- FALSIFIER: -DSURVIVAL_L2_SHED_INVERT -> [hibernate-shed] RED -------
     make -C "$boot" clean >/dev/null 2>&1
-    if ! make -C "$boot" EXTRA_CFLAGS=-DSURVIVAL_L2_NO_SHED >/dev/null 2>&1; then
-        echo "[$label] BUILD FAILED (no-shed falsifier)"; FAIL=1; return
+    if ! make -C "$boot" EXTRA_CFLAGS=-DSURVIVAL_L2_SHED_INVERT >/dev/null 2>&1; then
+        echo "[$label] BUILD FAILED (shed-invert falsifier)"; FAIL=1; return
     fi
     out="$(run_bin "$boot/p-kernel")"
     if echo "$out" | grep -q '^\[hibernate-shed\] FAIL' \
        && echo "$out" | grep -q '^\[survival-l2\] FAIL'; then
-        echo "[$label] FALSIFIER correctly RED ([hibernate-shed-NOT]: HIBERNATING claims no relief -> not avoided)"
+        echo "[$label] FALSIFIER correctly RED ([hibernate-shed-NOT]: relief inverted -> HIBERNATING node gains work)"
     else
         echo "[$label] FALSIFIER DID NOT go RED — [hibernate-shed] cert is toothless!"; FAIL=1
     fi

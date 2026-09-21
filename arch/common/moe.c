@@ -267,6 +267,21 @@ static INT eff_threat(UB n)
  * than inventing a second unmeasured constant). [hibernate-shed] below tests
  * this exactly the way [support-route] tests the STRESSED case.
  *
+ * -DSURVIVAL_L2_NO_SHED (falsifier, FIRST ATTEMPT, KEPT TOOTHLESS ON PURPOSE
+ * as a documented near-miss): reverting HIBERNATING to "no relief" (== the
+ * BLIND control) does NOT turn [hibernate-shed] RED, because moe_l1_herd's
+ * three equal candidates already split 24/36 (not 20/20/20) with NO STATE
+ * fold at all -- some other production asymmetry (recent_pick decay order,
+ * incumbent bias) already favors node1+2 over node0 before any STATE
+ * penalty is applied. Both sign_ok (24<36) and nopileon_ok (24<=24) hold
+ * even with zero shedding, so a falsifier that only removes the penalty is
+ * toothless here (self-caught by actually building and running it, not
+ * assumed). -DSURVIVAL_L2_SHED_INVERT is the falsifier with teeth: it flips
+ * the SIGN for HIBERNATING only (mirrors the existing SURVIVAL_L1_SIGN_FLIP
+ * shape but scoped to this one case), making a hibernating candidate MORE
+ * attractive instead of less -- a real G20-style inversion that must move
+ * picks_hib_cure ABOVE the 24-pick blind baseline.
+ *
  * Hosted-only: bare-metal omits the whole fold (the select_expert seam has no
  * #else), so the crown .text stays byte-identical. */
 #ifndef MOE_STATE_PENALTY
@@ -280,8 +295,8 @@ static INT eff_state_penalty(INT st)
     switch (st) {
     case WSTATE_STRESSED:    return MOE_STATE_PENALTY;      /* +load = shed off it */
     case WSTATE_ACTIVE:      return 0;                      /* healthy worker      */
-#ifdef SURVIVAL_L2_NO_SHED
-    case WSTATE_HIBERNATING: return 0;                      /* falsifier: no shed  */
+#ifdef SURVIVAL_L2_SHED_INVERT
+    case WSTATE_HIBERNATING: return -MOE_HIBERNATE_PENALTY; /* falsifier: relief inverted (pulls work TOWARD it) */
 #else
     case WSTATE_HIBERNATING: return MOE_HIBERNATE_PENALTY;  /* L2: shed off it too */
 #endif
@@ -1731,9 +1746,9 @@ INT moe_hibernate_route_test(void)
         mo_puts("[hibernate-shed] FAIL\r\n");
         fail = 1;
     }
-#ifdef SURVIVAL_L2_NO_SHED
-    mo_puts("[hibernate-shed-NOT] ARMED: HIBERNATING claims no relief — the"
-            " HIBERNATING node must NOT be avoided above (RED)\r\n");
+#ifdef SURVIVAL_L2_SHED_INVERT
+    mo_puts("[hibernate-shed-NOT] ARMED: relief inverted onto the HIBERNATING"
+            " node — it must GAIN work above (RED)\r\n");
 #endif
     return fail;
 }
