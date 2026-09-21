@@ -306,6 +306,26 @@ Idempotent: dedup by `(teacher_node, seq)`.
    history of computers begins with") showed the same qualitative pattern (LIVE drop
    +4.40, FIXTURE drop -2.80) — the effect is not a one-prompt fluke. PASS, merged to local
    master.
+   **2026-09-22: exploratory probe of the still-open `[ct-live-teach]` multi-node harness
+   (throwaway scripts in `pkernel_audit_ss`, not committed — no code changes this entry).**
+   Two findings, one good and one a real blocker. GOOD: a genuine 2-real-process mesh over
+   loopback UDP (`PKERNEL_NODE_ID=1/2`, `net_unix.c`, no netns needed) works fine in this
+   sandbox — SWIM discovery, region formation, and PFS block replication all confirmed live.
+   With `PKERNEL_TEACHER=1`+`PKERNEL_TEACHER_GGUF=<real smollm2-135m.gguf>` on node1 (none on
+   node2), `cradle emit-live <prompt>` genuinely generated a completion, emitted it, and
+   node2's `cradle probe` ring_len went 0→405 (exactly the emitted body length) via real PFS
+   announce/replicate — the whole wire path CT-2 needs is live and working end-to-end.
+   BLOCKER: getting the held probe_loss to actually move needs the student's `student` verb
+   run first (raises a resident baby — `student_dmn_consolidate` is a no-op otherwise, easy
+   to miss since nothing in the cradle/CT-2 text says so), and on THIS throttled host (see
+   `pkernel-heartbeat` memory: 15W→1.25GHz) both the teacher's GGUF generation call and the
+   student's own bounded fixture-distillation rounds block long enough to blow through
+   SWIM's compile-time SUSPECT/DEAD timeouts mid-test — node1 or node2 gets marked DEAD by
+   its peer while still computing, disrupting the very mesh the cert needs. No env-var
+   escape hatch exists for `swim.c`'s timeout constants. Building a reliable
+   `[ct-live-teach]` needs either a build-time timeout bump for this cert specifically, or
+   restructuring the long calls to yield periodically — a real piece of design work, not
+   discovered from reading alone. Left for a run that can spend a full session on just this.
 4. **CT-3 — salience-weighted lesson rehearsal (§3.2) + DMN-budget cert.** Carry/honor the
    `salience` byte; re-certify the wave-23 budget across both tracks (gate-6). Cert
    `[ct-salience]` (high-salience windows rehearsed more within the fixed budget),
