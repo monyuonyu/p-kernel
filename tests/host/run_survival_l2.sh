@@ -3,11 +3,12 @@
 # run_survival_l2.sh — host cert for survival-loop L2: HIBERNATING
 #   (docs/architecture/20-architecture/survival-loop.md §6-L2).
 #
-# THIS SLICE covers only the STATE-FSM half of §6-L2 (see world_survival_l2_test's
-# declaration comment in world.h for what is deliberately deferred and why:
-# actually pausing mind_merge_task/mind_net_task/DMN consolidation, beacon-cadence
-# reduction, and routed-work shedding touch r3_incontext.c's live merge path on
-# bare metal and need their own re-baseline + sign-off).
+# Covers the STATE-FSM half of §6-L2 PLUS two now-shipped sub-items: pausing
+# mind_net_task/mind_merge_task while HIBERNATING (feat/survival-l2-mind-pause,
+# tested separately by run_mind_pause.sh) and beacon-cadence reduction
+# ([beacon-cadence] below, world_beacon_interval_ms()). See world_survival_l2_test's
+# declaration comment in world.h for what is STILL deferred (heavy DMN
+# consolidation pause, routed-work shedding) and why.
 #
 # L2 escalates L0/L1's STRESSED state to HIBERNATING when the DEGRADE axis stays
 # high even after shedding load (a bigger commitment, PROVISIONAL 4x dwell vs
@@ -36,9 +37,18 @@
 #                     construction (no swim.c/dnode_table touch in this diff).
 #                     A live multi-process proof is deferred, same honesty
 #                     pattern as L1's own single-process limitation.
+#   [beacon-cadence]  world_beacon_interval_ms() -- the EXACT function
+#                     world_task's cadence check calls -- widens by
+#                     WORLD_HIBERNATE_BEACON_MULT while HIBERNATING and narrows
+#                     back on wake. Does NOT drive world_task's own loop
+#                     through real ticks (same honesty pattern as
+#                     [hibernate-not-death]/[mind-pause]).
 #   FALSIFIER [hibernate-reversible-NOT]: -DSURVIVAL_L2_NO_ESCALATE disables the
 #                     STRESSED->HIBERNATING escalation -> sustained DEGRADE never
 #                     reaches HIBERNATING -> [hibernate-reversible] RED.
+#   FALSIFIER [beacon-cadence-NOT]: -DWORLD_HIBERNATE_BEACON_NO_SLOW makes
+#                     world_beacon_interval_ms() always return WORLD_BEACON_MS
+#                     -> the HIBERNATING widen check in [beacon-cadence] RED.
 # A falsifier that does NOT go RED = toothless = FAIL.
 #
 # CROWN GATE: rebuild both bare crowns and assert the hosted L0/L1/L2 symbols
@@ -55,7 +65,8 @@
 # rather than a hollow ALL PASS.
 #
 # Exit 0 = at least one arch ran with [hibernate-reversible]/[hibernate-gossip]/
-# [survival-l2] PASS, the falsifier correctly RED, and the crown gate PASS-or-SKIP.
+# [beacon-cadence]/[survival-l2] PASS, both falsifiers correctly RED, and the
+# crown gate PASS-or-SKIP.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -115,13 +126,14 @@ one_arch() {  # $1 = boot dir, $2 = human label, $3 = target arch (aarch64|x86_6
         echo "[$label] BUILD FAILED (cure)"; FAIL=1; return
     fi
     local out; out="$(run_bin "$boot/p-kernel")"
-    echo "$out" | grep -E '^\[(survival-l2|hibernate-reversible|hibernate-gossip|hibernate-not-death)'
+    echo "$out" | grep -E '^\[(survival-l2|hibernate-reversible|hibernate-gossip|hibernate-not-death|beacon-cadence)'
     if echo "$out" | grep -q '^\[hibernate-reversible\] PASS' \
        && echo "$out" | grep -q '^\[hibernate-gossip\] PASS' \
+       && echo "$out" | grep -q '^\[beacon-cadence\] PASS' \
        && echo "$out" | grep -q '^\[survival-l2\] PASS'; then
-        echo "[$label] CURE PASS ([hibernate-reversible] + [hibernate-gossip])"
+        echo "[$label] CURE PASS ([hibernate-reversible] + [hibernate-gossip] + [beacon-cadence])"
     else
-        echo "[$label] CURE FAIL (expected [hibernate-reversible]/[hibernate-gossip]/[survival-l2] PASS)"; FAIL=1
+        echo "[$label] CURE FAIL (expected [hibernate-reversible]/[hibernate-gossip]/[beacon-cadence]/[survival-l2] PASS)"; FAIL=1
     fi
 
     # ---- FALSIFIER: -DSURVIVAL_L2_NO_ESCALATE -> [hibernate-reversible] RED --
@@ -135,6 +147,20 @@ one_arch() {  # $1 = boot dir, $2 = human label, $3 = target arch (aarch64|x86_6
         echo "[$label] FALSIFIER correctly RED ([hibernate-reversible-NOT]: escalation disabled -> HIBERNATING never reached)"
     else
         echo "[$label] FALSIFIER DID NOT go RED — [hibernate-reversible] cert is toothless!"; FAIL=1
+    fi
+    make -C "$boot" clean >/dev/null 2>&1
+
+    # ---- FALSIFIER: -DWORLD_HIBERNATE_BEACON_NO_SLOW -> [beacon-cadence] RED -
+    make -C "$boot" clean >/dev/null 2>&1
+    if ! make -C "$boot" EXTRA_CFLAGS=-DWORLD_HIBERNATE_BEACON_NO_SLOW >/dev/null 2>&1; then
+        echo "[$label] BUILD FAILED (beacon-no-slow falsifier)"; FAIL=1; return
+    fi
+    out="$(run_bin "$boot/p-kernel")"
+    if echo "$out" | grep -q '^\[beacon-cadence\] FAIL' \
+       && echo "$out" | grep -q '^\[survival-l2\] FAIL'; then
+        echo "[$label] FALSIFIER correctly RED ([beacon-cadence-NOT]: cadence never widens -> HIBERNATING check fails)"
+    else
+        echo "[$label] FALSIFIER DID NOT go RED — [beacon-cadence] cert is toothless!"; FAIL=1
     fi
     make -C "$boot" clean >/dev/null 2>&1
 }
@@ -151,7 +177,7 @@ crown_gate() {  # gate B: the hosted L0/L1/L2 symbols must be ABSENT from both b
 
     local leak=0 elf
     for elf in "$ROOT/boot/aarch64/kernel.elf" "$ROOT/boot/x86/kernel.elf"; do
-        if nm "$elf" 2>/dev/null | grep -qE 'world_wake|world_survival_l2_test|eff_state_penalty|moe_support_route_test|moe_state_fold|world_l1_flap_test|world_survival_l1_test|world_survival_l0_test|wstate_advance|wstate_flap|self_cooldown|world_self_state|world_peer_state|intero_test_force_axis'; then
+        if nm "$elf" 2>/dev/null | grep -qE 'world_wake|world_survival_l2_test|world_beacon_interval_ms|eff_state_penalty|moe_support_route_test|moe_state_fold|world_l1_flap_test|world_survival_l1_test|world_survival_l0_test|wstate_advance|wstate_flap|self_cooldown|world_self_state|world_peer_state|intero_test_force_axis'; then
             echo "[crown] gate B FAIL — a hosted L0/L1/L2 symbol leaked into $elf"; leak=1
         fi
     done

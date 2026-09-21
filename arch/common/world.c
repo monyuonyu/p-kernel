@@ -519,6 +519,23 @@ void world_wake(void)
     }
 }
 
+/* survival-loop L2 (§6-L2, deferred sub-item 2/3): beacon-cadence reduction
+ * while HIBERNATING. world_task's cadence check (below) calls this instead
+ * of comparing against the bare WORLD_BEACON_MS constant directly, so
+ * [beacon-cadence] tests the EXACT value production uses. */
+#ifdef WORLD_HIBERNATE_BEACON_NO_SLOW
+/* falsifier (tests/host/run_beacon_cadence.sh): cadence never widens ->
+ * [beacon-cadence]'s HIBERNATING check must go RED. Never built by default. */
+UW world_beacon_interval_ms(void) { return (UW)WORLD_BEACON_MS; }
+#else
+UW world_beacon_interval_ms(void)
+{
+    return (self_state == WSTATE_HIBERNATING)
+           ? (UW)WORLD_BEACON_MS * WORLD_HIBERNATE_BEACON_MULT
+           : (UW)WORLD_BEACON_MS;
+}
+#endif
+
 /* Read peer `node`'s gossiped STATE from the local world-table (mirrors
  * world_peer_pressure): bits WORLD_STATE_MASK of the beacon firing byte. A
  * 12-byte old beacon leaves those bits 0 -> WSTATE_ACTIVE (back-compat). */
@@ -811,6 +828,43 @@ INT world_survival_l2_test(void)
     if (gos_fail) { wo_puts("[hibernate-gossip] FAIL\r\n"); fail = 1; }
     else           wo_puts("[hibernate-gossip] PASS\r\n");
 
+    /* [beacon-cadence] (§6-L2, deferred sub-item 2/3): world_beacon_interval_
+     * ms() -- the EXACT function world_task's cadence check calls -- widens
+     * by WORLD_HIBERNATE_BEACON_MULT while HIBERNATING and narrows back on
+     * wake. Does NOT drive world_task's own loop through real ticks (same
+     * honesty pattern as [mind-pause]) -- this proves the interval function
+     * reads state correctly, not that the task actually publishes less
+     * often end-to-end. */
+    INT cad_fail = 0;
+    UW cad = world_beacon_interval_ms();
+    wo_puts("[beacon-cadence] ACTIVE baseline: "); wo_putdec(cad);
+    if (cad == (UW)WORLD_BEACON_MS) wo_puts(" == WORLD_BEACON_MS ok\r\n");
+    else { wo_puts(" want WORLD_BEACON_MS FAIL\r\n"); cad_fail = 1; }
+
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < calm_steps; t++) world_self_state_step();
+    intero_test_force_axis(INTERO_AX_DEGRADE, hi);
+    for (INT t = 0; t < enter_steps; t++) world_self_state_step();
+    if (world_self_state() != WSTATE_HIBERNATING) {
+        wo_puts("[beacon-cadence] setup did not reach HIBERNATING FAIL\r\n");
+        cad_fail = 1;
+    }
+    cad = world_beacon_interval_ms();
+    wo_puts("[beacon-cadence] HIBERNATING: "); wo_putdec(cad);
+    if (cad == (UW)WORLD_BEACON_MS * WORLD_HIBERNATE_BEACON_MULT)
+        wo_puts(" == WORLD_BEACON_MS*mult ok\r\n");
+    else { wo_puts(" want widened interval FAIL\r\n"); cad_fail = 1; }
+
+    world_wake();
+    cad = world_beacon_interval_ms();
+    wo_puts("[beacon-cadence] world_wake(): "); wo_putdec(cad);
+    if (cad == (UW)WORLD_BEACON_MS) wo_puts(" == WORLD_BEACON_MS ok\r\n");
+    else { wo_puts(" want WORLD_BEACON_MS FAIL\r\n"); cad_fail = 1; }
+    intero_test_force(0, 0);
+
+    if (cad_fail) { wo_puts("[beacon-cadence] FAIL\r\n"); fail = 1; }
+    else           wo_puts("[beacon-cadence] PASS\r\n");
+
     /* [hibernate-not-death] is NOT a runtime check here, on purpose (a
      * fabricated PASS on a vacuous condition is worse than an honest gap,
      * per this project's own rule): self is not indexed into dnode_table
@@ -920,7 +974,16 @@ void world_task(INT stacd, void *exinf)
          * beacon_hold_ms) は発信を抑止し、gossip を意図的に未収束のまま保つ
          * (G12 デモ; 本番は beacon_hold_ms==0 なので素通り)。 */
         since_beacon += WORLD_POLL_MS;
+#ifdef _TK_HOSTED_LIBC_
+        /* survival-loop L2 (§6-L2, deferred sub-item 2/3): while HIBERNATING,
+         * self-beacon publishes less often (world_beacon_interval_ms() above)
+         * -- less gossip chatter while conserving resources. Bare metal never
+         * defines _TK_HOSTED_LIBC_, so it keeps the plain WORLD_BEACON_MS
+         * comparison below, byte-identical to before this slice. */
+        if (since_beacon >= world_beacon_interval_ms()) {
+#else
         if (since_beacon >= WORLD_BEACON_MS) {
+#endif
             since_beacon = 0;
             if (uptime_ms >= beacon_hold_ms)
                 publish_beacon();
