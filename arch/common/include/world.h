@@ -238,16 +238,18 @@ INT world_l1_flap_test(void);
 INT world_survival_l1_test(void);
 
 /* survival-loop L2 (survival-loop.md §6-L2) — resource-conservation
- * HIBERNATING. THIS SLICE covers only the STATE-FSM half: sustained DEGRADE
- * escalates STRESSED -> HIBERNATING (a bigger commitment than plain
- * STRESSED, PROVISIONAL 4x dwell); an acute THREAT or resource recovery (or
- * the explicit world_wake() below) reverses it -- "hibernation != apoptosis"
- * (§0-4), mechanically. Deferred, NOT in this slice (documented, not
- * silently dropped): actually pausing mind_merge_task/mind_net_task/DMN
- * consolidation, beacon-cadence reduction, and routed-work shedding --
- * those touch r3_incontext.c's live merge path on bare metal and need their
- * own re-baseline + sign-off per §6-L2's own crown note; this slice's FSM
- * change is hosted-only like L0/L1 (crown byte-identical). */
+ * HIBERNATING. Covers the STATE-FSM half (sustained DEGRADE escalates
+ * STRESSED -> HIBERNATING, a bigger commitment than plain STRESSED,
+ * PROVISIONAL 4x dwell; an acute THREAT or resource recovery or the explicit
+ * world_wake() below reverses it -- "hibernation != apoptosis", §0-4,
+ * mechanically) PLUS two now-shipped sub-items: pausing mind_net_task/
+ * mind_merge_task while HIBERNATING (feat/survival-l2-mind-pause, merged to
+ * master, arch/common/r3_incontext.c's mind_paused_for_hibernation()) and
+ * routed-work shedding (this slice, moe.c's eff_state_penalty/
+ * moe_hibernate_route_test). Both needed only a _TK_HOSTED_LIBC_ guard, not
+ * the re-baseline this row originally called for -- crown stays
+ * byte-identical. Still deferred, NOT in this slice: beacon-cadence
+ * reduction and heavy DMN consolidation pause. */
 INT world_survival_l2_test(void);
 
 /* Explicit wake (survival-loop.md §6-L2's "明示 wake" exit, alongside

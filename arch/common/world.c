@@ -811,6 +811,12 @@ INT world_survival_l2_test(void)
     if (gos_fail) { wo_puts("[hibernate-gossip] FAIL\r\n"); fail = 1; }
     else           wo_puts("[hibernate-gossip] PASS\r\n");
 
+    /* [hibernate-shed] (§6-L2, deferred sub-item 3/3): moe.c's production
+     * routing now sheds work off a HIBERNATING node the same way it already
+     * sheds off a STRESSED one -- see moe_hibernate_route_test's own header
+     * comment for what this drives. */
+    if (moe_hibernate_route_test()) fail = 1;   /* [hibernate-shed] / [hibernate-shed-NOT] */
+
     /* [hibernate-not-death] is NOT a runtime check here, on purpose (a
      * fabricated PASS on a vacuous condition is worse than an honest gap,
      * per this project's own rule): self is not indexed into dnode_table

@@ -235,4 +235,13 @@ INT  moe_self_test(void);
  * fold and this cert are absent from the bare-metal crown. */
 #ifdef _TK_HOSTED_LIBC_
 INT  moe_support_route_test(void);
+
+/* survival-loop L2 (§6-L2, deferred sub-item 3/3, "routed work を shed"):
+ * [hibernate-shed] cert. Same shape as moe_support_route_test but with
+ * node0 HIBERNATING instead of STRESSED -- proves eff_state_penalty's
+ * WSTATE_HIBERNATING case sheds work through the PRODUCTION moe_select_step
+ * path. 0 = PASS. -DSURVIVAL_L2_NO_SHED makes HIBERNATING claim no relief
+ * (reverts to the old "reserved, no relief" behavior) and turns it RED.
+ * Hosted-only, same crown-neutral construction as moe_support_route_test. */
+INT  moe_hibernate_route_test(void);
 #endif
