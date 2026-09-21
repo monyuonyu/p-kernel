@@ -87,7 +87,7 @@ alive are proven; what they keep alive is still a toy.
 
 | order | item | design / starting point |
 |---|---|---|
-| D1 | RNG0 regression test (RED on master, GREEN on a matched control arm; behind a flag, crown-neutral; not wired to CI yet) | `gap-ledger.md` RNG0 row |
+| D1 | RNG0 regression test — **DONE, merged to local master 2026-09-20** (`feat/rng0-regression-test`, `f8b0abd2`; RED on master, GREEN on a matched control arm; behind a flag, crown-neutral; still not wired to CI, and the underlying hang itself is still unfixed — this row was stale, only the test landed) | `gap-ledger.md` RNG0 row |
 | **A1** | **CT-2 — the SmolLM2 teacher generates the child's lessons** (compare against the fixture-only child under the same budget) | `30-module/conversational-teaching.md` §CT-2; `forward.c` `lm_generate` |
 | **A2** | **scale-wall C2 — data reservoir 4 KB → ≥10 MB** (does C1's A(d) move off zero?) | `scale-wall-c1.md` (note: the `scale_wall_design.md` it cites was never committed — write a short design note first) |
 | B3 | self-access R1 (first T1 affordance `self_access_publish` shipped+audited 2026-09-21, `feat/self-access-r1-publish`; crown grows +1560B x86/+1440B aarch64 bare-metal — re-bless is judgment-pending. **Audit independently re-verified and merged to local master 2026-09-21** — see `docs/audit-trail.md`) | `30-module/self-access-design.md` R1 |
