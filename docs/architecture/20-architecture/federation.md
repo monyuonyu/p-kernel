@@ -357,3 +357,21 @@ arch/common/include/pmesh.h:58-67
 > 既存資産（region.c / dkva rsum / kdds REGION scope / swim RTT / relay
 > lease）は**そのまま再利用**。実装は R3 / Phase D。本書は地図であり、
 > 1 行のコードも変えていない。
+
+---
+
+## 7. F1 進捗 — 2026-09-21: 符号化のみの最初のスライス（`fed_id.h`）
+
+§5.3 に残る2つの未解決（(1) 複合IDの符号化方式、(2) coordinator間rsumの順序保証）
+のうち、(1) だけを**単独の・どのライブパスにも繋がっていない**プリミティブとして
+先出しした。`arch/common/include/fed_id.h`（header-only, static inline）が
+本書§2.2の例（GOBJの24-bit local上位8bitをregion_idに再解釈）を実装し、
+`fed test`シェルverb + `[fed-id-roundtrip]`cert（`tests/host/run_federation_f1.sh`、
+`-DFED_ID_BROKEN_PACK`falsifier付き）で境界値往復とR=1後方互換
+（region_id=0が現行の24-bit local欄と完全一致）を検証する。drpc.c/dkva.c/kdds.cの
+どのGOBJ生成/消費経路にも未接続——(2)の解決前に配線すると設計判断を先取りしてしまう
+ため。crownは構造的に無関係（fed_id.hはarch/linux/{x86_64,aarch64}/usermain.cからしか
+includeされず、bare-metalのリンク対象外）で、コンテナ内ビルドで実測確認済み
+（x86 bare-metal .text 581225B、フルファイルsha256もmaster側ビルドと完全一致）。
+`feat/federation-f1-composite-id`、実装者自身によるビルド・テストのみ、
+独立監査待ち。次のスライス（上位メッシュ配線、(2)の解決）は別ブランチ。
