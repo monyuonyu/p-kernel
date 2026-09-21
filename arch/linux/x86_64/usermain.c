@@ -1079,7 +1079,12 @@ EXPORT INT usermain(void)
                 if (cnt == 0) cnt = 5;
                 dmn_student_distill_test(cnt);
             }
-            else print("usage: dmn test | dmn distill [N]\r\n");
+            else if (al >= 5 && a[0]=='p'&&a[1]=='a'&&a[2]=='u'&&a[3]=='s'&&a[4]=='e') {
+                /* survival-loop L2 (§6-L2): [dmn-pause] cert -- see dmn.h's
+                 * declaration comment. */
+                dmn_pause_test();
+            }
+            else print("usage: dmn test | dmn distill [N] | dmn pause\r\n");
         } else if (starts_with(line, n, "intero") && (n == 6 || line[6] == ' ')) {
             /* interoception slice 1 (docs/architecture/30-module/interoception.md §3.5):
              * `intero`        -> the live S_n scalar + per-axis breakdown;

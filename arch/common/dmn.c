@@ -26,6 +26,13 @@
 #include "galaxy.h"   /* galaxy v1: S2/S3 emit hooks */
 #include "lm_consolidate.h"   /* living-mind: rest-time sleep-consolidation */
 #include "interocept.h"       /* interoception: the S_n stress bus (mind-body) */
+#ifdef _TK_HOSTED_LIBC_
+#include "world.h"    /* survival-loop L2 (§6-L2): world_self_state() pause
+                        * gate for heavy DMN consolidation, hosted-only (see
+                        * the #ifdef at each call site below; bare metal
+                        * compiles neither the check nor a call, so this
+                        * include changes nothing there). */
+#endif
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -195,6 +202,75 @@ IMPORT float student_dmn_heldout_loss(void);
  * actually done (wave-student-throttle flash-wear proof). Read-only. */
 IMPORT unsigned student_dmn_save_count(void);
 
+#ifdef _TK_HOSTED_LIBC_
+/* survival-loop L2 (§6-L2, deferred sub-item, "重い DMN consolidation を
+ * pause"): while HIBERNATING, dmn_idle_work skips the THREE heavier
+ * consolidation tracks below (lm_consolidate_idle_round's engram replay,
+ * r3_consolidate_idle_round's in-context fact distillation, and
+ * student_dmn_consolidate's baby distillation -- the last one alone
+ * measured at 5-11s per call on the hosted-Linux port per gap-ledger's
+ * RNG0-BUSY-TASK-STALLS-DISPATCH entry). ga_step() is deliberately NOT
+ * paused -- GA_POP_SIZE=4 makes it genuinely tiny (same gap-ledger entry's
+ * own control measurement), so it is not "重い" and pausing it would just
+ * be extra scope with nothing to show for it. "hibernation != apoptosis"
+ * (§0-4): the node keeps ticking dmn_stats.idle_runs and the log digest
+ * below runs unchanged; only the heavy compute is skipped. */
+static INT dmn_paused_for_hibernation(void)
+{
+#ifdef DMN_PAUSE_NO_GATE
+    /* falsifier (tests/host/run_dmn_pause.sh): the gate never fires ->
+     * [dmn-pause]'s HIBERNATING check must go RED. Never built by default. */
+    return 0;
+#else
+    return world_self_state() == WSTATE_HIBERNATING;
+#endif
+}
+
+/* [dmn-pause] cert (shell `dmn pause`): drives the SAME world-state FSM
+ * [hibernate-reversible]/[mind-pause] drive and checks
+ * dmn_paused_for_hibernation() -- the EXACT predicate dmn_idle_work gates
+ * on -- tracks ACTIVE -> HIBERNATING -> ACTIVE correctly. Does NOT drive
+ * dmn_idle_work itself through real idle pulses (the 1000ms heartbeat is
+ * a background task) -- same honesty pattern as [mind-pause]. */
+INT dmn_pause_test(void)
+{
+    INT fail = 0;
+
+    intero_test_force_axis(INTERO_AX_LATENCY, 0);
+    for (INT t = 0; t < 50; t++) world_self_state_step();
+    if (dmn_paused_for_hibernation() != 0) {
+        dmn_puts("[dmn-pause] ACTIVE baseline: want NOT paused FAIL\r\n");
+        fail = 1;
+    } else {
+        dmn_puts("[dmn-pause] ACTIVE baseline: NOT paused ok\r\n");
+    }
+
+    intero_test_force_axis(INTERO_AX_DEGRADE, 220);
+    for (INT t = 0; t < 50; t++) world_self_state_step();
+    if (world_self_state() != WSTATE_HIBERNATING) {
+        dmn_puts("[dmn-pause] setup did not reach HIBERNATING FAIL\r\n");
+        fail = 1;
+    } else if (dmn_paused_for_hibernation() != 1) {
+        dmn_puts("[dmn-pause] HIBERNATING: want paused FAIL\r\n");
+        fail = 1;
+    } else {
+        dmn_puts("[dmn-pause] HIBERNATING: paused ok\r\n");
+    }
+
+    world_wake();
+    if (dmn_paused_for_hibernation() != 0) {
+        dmn_puts("[dmn-pause] world_wake(): want NOT paused FAIL\r\n");
+        fail = 1;
+    } else {
+        dmn_puts("[dmn-pause] world_wake(): NOT paused ok\r\n");
+    }
+    intero_test_force(0, 0);
+
+    dmn_puts(fail ? "[dmn-pause] FAIL\r\n" : "[dmn-pause] PASS\r\n");
+    return fail;
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
@@ -208,6 +284,10 @@ static void dmn_idle_work(void)
      * into the dtr slow weights. ALONGSIDE ga_step (not replacing the
      * organ). No-op until engrams are pending (e.g. captured by a prior
      * `dmn test` run or, later, the live conversational fast layer). */
+#ifdef _TK_HOSTED_LIBC_
+    /* survival-loop L2 (§6-L2): skip this heavier track while HIBERNATING. */
+    if (!dmn_paused_for_hibernation())
+#endif
     if (dmn_stats.idle_runs % GA_INTERVAL == 1 && lm_engrams_pending()) {
         if (lm_consolidate_idle_round()) {
             galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 0, 0);  /* S3: an engram sinks (galaxy.md) */
@@ -222,6 +302,10 @@ static void dmn_idle_work(void)
      * ~R3_SLEEPS_PER_FACT idle seconds at the 1000ms pulse). Trains
      * R3's own rw[], a DIFFERENT network from the lm round above —
      * non-interference is structural (disjoint weight buffers). */
+#ifdef _TK_HOSTED_LIBC_
+    /* survival-loop L2 (§6-L2): skip this heavier track while HIBERNATING. */
+    if (!dmn_paused_for_hibernation())
+#endif
     if (r3_facts_pending()) {
         if (r3_consolidate_idle_round()) {
             dmn_r3_round_count++;            /* the ONLY ++ site (VII.5) */
@@ -262,6 +346,11 @@ static void dmn_idle_work(void)
      * runs WHILE r3_facts_pending(), so it self-limits and is unaffected here.
      * The other half of the cure (skip the 22.8MB write when the baby did not
      * meaningfully improve) lives inside student_dmn_consolidate(). */
+#ifdef _TK_HOSTED_LIBC_
+    /* survival-loop L2 (§6-L2): skip this heaviest track (5-11s/call per
+     * gap-ledger) while HIBERNATING. */
+    if (!dmn_paused_for_hibernation())
+#endif
     if (dmn_stats.idle_runs % ST_DMN_INTERVAL == 1 && student_dmn_consolidate()) {
         galaxy_emit(EV_CONSOLIDATE, drpc_my_node, GALAXY_NODE_NONE, 2, 0);  /* S3: the baby's weights settle a little (galaxy.md) */
         dmn_puts("[dmn] sleep: distilled teacher -> resident student (baby)\r\n");

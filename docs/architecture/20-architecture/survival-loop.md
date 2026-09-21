@@ -368,6 +368,35 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 > 「ALIVE のまま」を読み返すビットが無い）。**実装者はこの run 自身。次 run が監査者として
 > 独立に再現し、PASS なら local master へ、それまでは未マージ。**
 
+> **2026-09-21〜22: 上記「先送り」3項目が全部実装済みになった（各々監査待ち、
+> 別ブランチ）。** (1) `mind_merge_task`/`mind_net_task` の pause
+> （`feat/survival-l2-mind-pause`）は監査PASS済みでlocal masterマージ済み。
+> (2) beacon cadence 低下（`feat/survival-l2-beacon-cadence`）・
+> (3) routed work の shed（`feat/survival-l2-routed-shed`、実装中に自分の
+> falsifierが牙無しと判明し差し替えた実例あり）は実装・自己build/test済み・
+> 監査待ち。(4) このslice（`feat/survival-l2-dmn-pause`）で最後の1つ、
+> 「重い DMN consolidation」を片付けた: `dmn.c`の`dmn_idle_work`が呼ぶ3本の
+> 重い経路（`lm_consolidate_idle_round`のengram replay、
+> `r3_consolidate_idle_round`のin-context fact distillation、
+> `student_dmn_consolidate`のbaby distillation——gap-ledgerのRNG0行が
+> 実測した5〜11秒/回）を`dmn_paused_for_hibernation()`でHIBERNATING中は
+> skipする。`ga_step()`（GA_POP_SIZE=4で軽量、gap-ledger自身の対照実測で
+> 確認済み）は意図的にpauseしない——「重い」の範囲外。`[dmn-pause]` cert
+> （`dmn pause` verb）、falsifier `-DDMN_PAUSE_NO_GATE`、
+> `tests/host/run_dmn_pause.sh`（`run_mind_pause.sh`と同じ構造）。
+> `dmn.c`は両bare-metal crownに直接リンクされる（`r3_incontext.c`と同様）
+> ため`_TK_HOSTED_LIBC_`ガードが必須——3箇所の呼び出しサイトすべて
+> `#ifdef _TK_HOSTED_LIBC_ if (!dmn_paused_for_hibernation()) #endif`という
+> 先頭ガード節の形にした（既存の行そのものは1文字も変えず、bare-metalは
+> ガード節自体が存在しない）。これは今回、mind-pauseが陥った「usage文字列
+> だけガード漏れ」の罠を踏まないよう、文字列リテラルを一切追加/変更しない
+> 設計にした（`dmn pause`のusage文字列はhosted専用ファイル
+> `arch/linux/{x86_64,aarch64}/usermain.c`にしかない——このファイル自体が
+> bare-metalビルドに一切含まれないので、ガード不要でcrown無関係）。
+> **実装・自己build/testはこのrun、独立監査は次run。** L2は4つの
+> deferred sub-itemsすべてが実装済みとなり（監査/マージ待ちを除けば）
+> feature-completeになった。
+
 ### L3 — 連続レプリ watermark ＋ graceful flush（DYING、apoptosis の **反転版**）
 - **やること**: beacon に watermark（GAP-⑧、merge epoch + teach seq）。DYING = best-effort flush（§3.3、**block しない**）。
   Self/lin `LM_UNIT_EV_APOPTOSIS`（GAP-⑦）。署名 essence（`sign_manifest_verify`）。min-fleet guard（§4.3）。
