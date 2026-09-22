@@ -5,8 +5,10 @@
  *  SS-2 makes the byte student's four model dims (D=d_model, DFF, L=layers,
  *  E=experts) TIER-SELECTABLE at runtime (S/M/L) instead of compile-time fixed,
  *  WITHOUT changing today's behaviour: the DEFAULT tier is M and M is BYTE-
- *  IDENTICAL to the pre-SS-2 baby.  Every stack scratch array is bound to the
- *  fixed ST_*_MAX (the L tier), never the runtime dim — the [no-vla] gate.
+ *  IDENTICAL to the BASE build run_ss2.sh compiles (see that script's BASE_REF
+ *  note for why "base" means "last confirmed M-tier-identical tip", not
+ *  literally pre-SS-2, as of 2026-09-23).  Every stack scratch array is bound
+ *  to the fixed ST_*_MAX (the L tier), never the runtime dim — the [no-vla] gate.
  *
  *  This ONE source file is compiled into TWO binaries by run_ss2.sh:
  *    - the NEW student.c  (tier-aware: ST_TIER_M is defined)
