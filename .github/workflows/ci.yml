@@ -932,6 +932,18 @@ jobs:
           grep -aF '[selfc-isolated] PASS' selfc.log
           grep -aF '[selfc-rollback] PASS' selfc.log
           grep -aF '[selfc-lineage] PASS' selfc.log
+          # self-access R1 T1 publish affordance (self-access-design.md §7,
+          # `feat/self-access-r1-publish`, merged 2026-09-21). [self-access-
+          # r1-test] matched-arm gate: shield CLEAR -> publish succeeds
+          # (E_OK); shield ACTIVE -> publish REFUSED (E_OACV), never silent.
+          # self_access_publish() needs drpc_my_node initialized (else it
+          # REFUSES with E_NOEXS before the shield check even runs) -- run
+          # `net` first, own isolated invocation like `selfc test` above so
+          # starting networking cannot perturb the main pipeline's timing.
+          # This cert has existed since the R1 merge but was never wired
+          # into CI until now.
+          timeout 30 sh -c "printf 'net\nbody test\nexit\n' | ./p-kernel" | tee self_access.log
+          grep -aF '[self-access-r1-test] ALL PASS' self_access.log
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
