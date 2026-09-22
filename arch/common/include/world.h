@@ -101,6 +101,12 @@ _Static_assert(sizeof(U1) == 1 && sizeof(U2) == 2 && sizeof(U4) == 4,
 
 #define WORLD_BEACON_MS   3000   /* self-beacon 発信間隔 (ms)            */
 #define WORLD_POLL_MS     250    /* 近隣ビーコン取り込みのポーリング間隔 */
+/* survival-loop L2 (§6-L2, deferred sub-item 2/3): while HIBERNATING,
+ * world_beacon_interval_ms() (hosted-only, below) widens the self-beacon
+ * publish interval by this multiplier -- less gossip chatter while
+ * conserving resources. A plain numeric constant, not new code, so it costs
+ * nothing on bare metal even though the macro is visible there too. */
+#define WORLD_HIBERNATE_BEACON_MULT 4
 
 /* この時間 (ms) 受信が途絶えたエントリは stale 表示にする (古さの尊重)  */
 #define WORLD_STALE_MS    9000   /* = 3 ビーコン周期                      */
@@ -238,21 +244,31 @@ INT world_l1_flap_test(void);
 INT world_survival_l1_test(void);
 
 /* survival-loop L2 (survival-loop.md §6-L2) — resource-conservation
- * HIBERNATING. THIS SLICE covers only the STATE-FSM half: sustained DEGRADE
- * escalates STRESSED -> HIBERNATING (a bigger commitment than plain
- * STRESSED, PROVISIONAL 4x dwell); an acute THREAT or resource recovery (or
- * the explicit world_wake() below) reverses it -- "hibernation != apoptosis"
- * (§0-4), mechanically. Deferred, NOT in this slice (documented, not
- * silently dropped): actually pausing mind_merge_task/mind_net_task/DMN
- * consolidation, beacon-cadence reduction, and routed-work shedding --
- * those touch r3_incontext.c's live merge path on bare metal and need their
- * own re-baseline + sign-off per §6-L2's own crown note; this slice's FSM
- * change is hosted-only like L0/L1 (crown byte-identical). */
+ * HIBERNATING. Covers the STATE-FSM half (sustained DEGRADE escalates
+ * STRESSED -> HIBERNATING, a bigger commitment than plain STRESSED,
+ * PROVISIONAL 4x dwell; an acute THREAT or resource recovery or the explicit
+ * world_wake() below reverses it -- "hibernation != apoptosis", §0-4,
+ * mechanically) PLUS two now-shipped sub-items: pausing mind_net_task/
+ * mind_merge_task while HIBERNATING (feat/survival-l2-mind-pause,
+ * arch/common/r3_incontext.c's mind_paused_for_hibernation()) and
+ * beacon-cadence reduction (world_beacon_interval_ms() below). Both were
+ * guarded by _TK_HOSTED_LIBC_ instead of needing the re-baseline this row
+ * originally called for -- crown stays byte-identical. Still deferred, NOT
+ * in this slice (documented, not silently dropped): heavy DMN consolidation
+ * pause, and routed-work shedding. */
 INT world_survival_l2_test(void);
 
 /* Explicit wake (survival-loop.md §6-L2's "明示 wake" exit, alongside
  * resource recovery): forces HIBERNATING -> ACTIVE immediately. A no-op from
  * any other state -- cannot be used to skip STRESSED's own slower relax. */
 void world_wake(void);
+
+/* survival-loop L2 (§6-L2, deferred sub-item 2/3): the self-beacon publish
+ * interval (ms) world_task's cadence check should use right now --
+ * WORLD_BEACON_MS normally, WORLD_BEACON_MS * WORLD_HIBERNATE_BEACON_MULT
+ * while world_self_state() reads HIBERNATING. Kept as a named function (not
+ * inlined at the call site) so [beacon-cadence] tests the EXACT value
+ * world_task uses, not a re-implementation of it. */
+UW world_beacon_interval_ms(void);
 
 #endif /* _TK_HOSTED_LIBC_ */

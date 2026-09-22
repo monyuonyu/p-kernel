@@ -368,6 +368,17 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 > 「ALIVE のまま」を読み返すビットが無い）。**実装者はこの run 自身。次 run が監査者として
 > 独立に再現し、PASS なら local master へ、それまでは未マージ。**
 
+> **2026-09-21〜22: 上記「先送り」3項目のうち2つが出荷済み。** (1) `mind_merge_task`/
+> `mind_net_task` の実際の pause（`feat/survival-l2-mind-pause`）: `_TK_HOSTED_LIBC_`
+> ガードで実装、実装者自身が+8Bのcrown driftを発見・修正、独立監査PASSでlocal master
+> マージ済み（`2cea9e4f`後の別マージ）。(2) beacon cadence 低下（`feat/survival-l2-
+> beacon-cadence`、`world_beacon_interval_ms()`、`[beacon-cadence]` cert・falsifier
+> `-DWORLD_HIBERNATE_BEACON_NO_SLOW`）: 同じく `_TK_HOSTED_LIBC_` ガードで実装 ――
+> **当初この節が要ると書いていた re-baseline は結局不要**（`world_task` の分岐を
+> `#else` 側に元の1行をそのまま残す形にしたため、bare-metal は文字通り無変更）。
+> 実装・自己build/test はこのrun、**独立監査は次run**。まだ deferred: DMN
+> consolidation の実 pause、routed work の shed。
+
 ### L3 — 連続レプリ watermark ＋ graceful flush（DYING、apoptosis の **反転版**）
 - **やること**: beacon に watermark（GAP-⑧、merge epoch + teach seq）。DYING = best-effort flush（§3.3、**block しない**）。
   Self/lin `LM_UNIT_EV_APOPTOSIS`（GAP-⑦）。署名 essence（`sign_manifest_verify`）。min-fleet guard（§4.3）。
