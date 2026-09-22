@@ -217,6 +217,10 @@ jobs:
           # straggler-only safety cap. N concurrent aggregations complete in
           # << N*window; the cap fires only for a never-arriving live member.
           grep -aF '[g13-arrival] PASS' selftest.log
+          # unbounded-N §3/§4 region-local sizing (dkva_unbounded_self_test,
+          # `dkva test`'s 4th sub-call, dkva.c) -- W1/W2/O1-O3/S1 legs were
+          # printed to selftest.log on every run but never asserted here.
+          grep -aF '[unbounded-dkva] PASS' selftest.log
           # R3 (non-trivial thought): in-context associative recall. The SAME
           # dtr kernels (dt_linear/dt_softmax/LayerNorm fwd+bwd) learn a function
           # no hand-written if can win at — the dictionary is resampled every
@@ -932,6 +936,9 @@ jobs:
           grep -aF '[g13-parallel] PASS' selftest.log
           # G13 cross-region inference not gated by a fixed window (arrival-driven)
           grep -aF '[g13-arrival] PASS' selftest.log
+          # unbounded-N §3/§4 region-local sizing (dkva_unbounded_self_test) --
+          # same gap as the x86_64 job above, fixed in both places together.
+          grep -aF '[unbounded-dkva] PASS' selftest.log
           # G23 node ceiling > 32 (gap-ledger): >32-participant gossip merge + fold
           grep -aF '[g23-ceiling] PASS' selftest.log
       - name: aarch64 FP-determinism golden (BLOCKING — "one mind, one math")
