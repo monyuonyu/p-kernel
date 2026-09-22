@@ -800,6 +800,21 @@ jobs:
           timeout 300 tests/host/run_dmn_pause.sh | tee dmn_pause.log
           grep -aF '[dmn-pause] ALL PASS' dmn_pause.log
 
+      # federation F1's composite (region_id, local_id) ID encoding candidate
+      # (docs/architecture/20-architecture/federation.md §2.2/§4-F1/§7,
+      # fed_id.h, merged 2026-09-22). Header-only, static inline, NOT wired
+      # into any live GOBJ path yet (deliberately -- §5.3's rsum-ordering fork
+      # is still open). [fed-id-roundtrip]: region_id=0 backward-compat +
+      # boundary-value pack/unpack round-trips; the -DFED_ID_BROKEN_PACK
+      # falsifier (moves the split point) must go RED. Crown gate SKIPs here
+      # (no bare cross-toolchain on this runner, same as the certs above) --
+      # this was never wired into CI until now despite existing since
+      # 2026-09-21, same gap as L2/mind-pause/dmn-pause above.
+      - name: federation F1 composite-ID encoding cert (federation.md §4-F1)
+        run: |
+          timeout 300 tests/host/run_federation_f1.sh | tee federation_f1.log
+          grep -aF '[federation-f1] ALL PASS' federation_f1.log
+
       # SWIM SELF-SUSPICION de-storm (arch/common/swim.c gossip_apply; replica.c:387).
       # Under self-hosted CI CPU load a node falls behind on SWIM PING/ACK, is FALSELY
       # rumored SUSPECT, and reacts to EVERY such rumor with a FULL UNPACED memory
