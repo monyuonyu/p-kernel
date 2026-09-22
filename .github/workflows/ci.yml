@@ -2175,9 +2175,13 @@ jobs:
     # -- it fails today against its own documented pre-SS-2 baseline
     # (5edbeeda), for reasons not yet understood; NOT wired here, deliberately,
     # rather than either paper over a possibly-real anomaly or block CI on it
-    # unverified. run_ss3.sh/run_ss3_blob.sh were still running verification
-    # when this branch was cut and are left for a follow-up wiring.
-    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1)"
+    # unverified. run_ss3.sh verified clean (exit 0, 2 runs) and is wired
+    # below. run_ss3_blob.sh was ALSO investigated and is a second separate
+    # finding, same as run_ss2.sh: 11/12 checks PASS but
+    # [ss3-blob-merge] "merged held-out loss <= the worse parent
+    # (convergence)" FAILS, reproducibly (2 independent runs) -- NOT wired,
+    # see BACKLOG D5.
+    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-3)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2205,6 +2209,8 @@ jobs:
         run: bash tests/llm/run_diverse_proof.sh
       - name: SS-1 adaptive-top-K margin/determinism/no-regression/merge-isolation
         run: bash tests/llm/run_ss1.sh
+      - name: SS-3 same-tier merge-cohort convergence/isolation/falsifiability
+        run: bash tests/llm/run_ss3.sh
 
   distributed-moe:
     # Collective x Brain: DMOE-A — distributed-MoE expert capacity that GROWS
