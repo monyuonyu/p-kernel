@@ -759,6 +759,47 @@ jobs:
           timeout 300 tests/host/run_survival_l1.sh | tee survival_l1.log
           grep -aF '[survival-l1] ALL PASS' survival_l1.log
 
+      # survival-loop L2 HIBERNATING (docs/architecture/survival-loop.md §6-L2):
+      # sustained DEGRADE escalates STRESSED -> HIBERNATING (reversible: THREAT
+      # rally / resource recovery / explicit world_wake() each wake it), plus
+      # its three deferred sub-items merged to local master 2026-09-23:
+      # beacon-cadence reduction ([beacon-cadence]), routed-work shedding
+      # ([hibernate-shed]), and DMN-consolidation pause (checked below, its own
+      # cert). [hibernate-reversible] + [hibernate-gossip] + [beacon-cadence] +
+      # [hibernate-shed] must all PASS; the -DSURVIVAL_L2_NO_ESCALATE /
+      # -DWORLD_HIBERNATE_BEACON_NO_SLOW / -DSURVIVAL_L2_SHED_INVERT falsifiers
+      # must each go RED (the last one replaces a first, self-caught-toothless
+      # attempt -- see moe.c's eff_state_penalty comment). Crown gate SKIPs
+      # here (no bare cross-toolchain on this runner, like L1 above); this was
+      # NEVER wired into CI until now despite existing since 2026-09-21 --
+      # closing that gap, not a new feature.
+      - name: survival-loop L2 HIBERNATING cert (survival-loop.md §6-L2)
+        run: |
+          timeout 300 tests/host/run_survival_l2.sh | tee survival_l2.log
+          grep -aF '[survival-l2] ALL PASS' survival_l2.log
+
+      # survival-loop L2 sub-item: mind_net_task/mind_merge_task pause while
+      # HIBERNATING (r3_incontext.c's mind_paused_for_hibernation(), merged
+      # 2026-09-22). [mind-pause] ACTIVE/HIBERNATING/wake transitions; the
+      # -DMIND_PAUSE_NO_GATE falsifier must go RED. Crown gate SKIPs without
+      # MIND_PAUSE_BASE_REF (not set here, same as L2's crown gate above).
+      - name: survival-loop mind-pause cert (survival-loop.md §6-L2)
+        run: |
+          timeout 300 tests/host/run_mind_pause.sh | tee mind_pause.log
+          grep -aF '[mind-pause] ALL PASS' mind_pause.log
+
+      # survival-loop L2 sub-item, last of the four deferred: heavy DMN
+      # consolidation pause while HIBERNATING (dmn.c's
+      # dmn_paused_for_hibernation() gates lm_consolidate_idle_round/
+      # r3_consolidate_idle_round/student_dmn_consolidate; ga_step() stays
+      # unpaused, genuinely tiny). [dmn-pause] ACTIVE/HIBERNATING/wake
+      # transitions; the -DDMN_PAUSE_NO_GATE falsifier must go RED. Crown gate
+      # SKIPs without DMN_PAUSE_BASE_REF, same shape as the two certs above.
+      - name: survival-loop dmn-pause cert (survival-loop.md §6-L2)
+        run: |
+          timeout 300 tests/host/run_dmn_pause.sh | tee dmn_pause.log
+          grep -aF '[dmn-pause] ALL PASS' dmn_pause.log
+
       # SWIM SELF-SUSPICION de-storm (arch/common/swim.c gossip_apply; replica.c:387).
       # Under self-hosted CI CPU load a node falls behind on SWIM PING/ACK, is FALSELY
       # rumored SUSPECT, and reacts to EVERY such rumor with a FULL UNPACED memory
