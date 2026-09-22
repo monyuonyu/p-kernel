@@ -248,14 +248,14 @@ INT world_survival_l1_test(void);
  * STRESSED -> HIBERNATING, a bigger commitment than plain STRESSED,
  * PROVISIONAL 4x dwell; an acute THREAT or resource recovery or the explicit
  * world_wake() below reverses it -- "hibernation != apoptosis", §0-4,
- * mechanically) PLUS two now-shipped sub-items: pausing mind_net_task/
- * mind_merge_task while HIBERNATING (feat/survival-l2-mind-pause,
- * arch/common/r3_incontext.c's mind_paused_for_hibernation()) and
- * beacon-cadence reduction (world_beacon_interval_ms() below). Both were
- * guarded by _TK_HOSTED_LIBC_ instead of needing the re-baseline this row
- * originally called for -- crown stays byte-identical. Still deferred, NOT
- * in this slice (documented, not silently dropped): heavy DMN consolidation
- * pause, and routed-work shedding. */
+ * mechanically) PLUS three now-shipped sub-items: pausing mind_net_task/
+ * mind_merge_task while HIBERNATING (feat/survival-l2-mind-pause, merged to
+ * master, arch/common/r3_incontext.c's mind_paused_for_hibernation()),
+ * beacon-cadence reduction (world_beacon_interval_ms() below), and
+ * routed-work shedding (moe.c's eff_state_penalty/moe_hibernate_route_test).
+ * All three needed only a _TK_HOSTED_LIBC_ guard, not the re-baseline this
+ * row originally called for -- crown stays byte-identical. Still deferred,
+ * NOT in this slice: heavy DMN consolidation pause. */
 INT world_survival_l2_test(void);
 
 /* Explicit wake (survival-loop.md §6-L2's "明示 wake" exit, alongside

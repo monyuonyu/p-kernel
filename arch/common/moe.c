@@ -251,27 +251,57 @@ static INT eff_threat(UB n)
  * candidate sheds its OWN work. The penalty rides eff_pressure ONLY (the
  * LOAD/avoid axis); it must NEVER touch the threat/rally term — doing so is the
  * literal G20 sign inversion (piling work ONTO the threatened node, §5.1).
- * HIBERNATING/DYING are reserved (L2/L3) and NOT emitted by L0, so they claim NO
- * relief here. An unknown peer (world_peer_state == -1) is treated as ACTIVE.
+ * DYING is reserved (L3) and NOT emitted yet, so it claims NO relief here.
+ * An unknown peer (world_peer_state == -1) is treated as ACTIVE.
  *
  * P_s is PROVISIONAL (discover from measured S_n curves, §7 headline). The cert
  * straddles it — only the SIGN and the no-pile-on are load-bearing, never the
  * magnitude. P_s/2 > MOE_SWITCH_MARGIN(12) so a STRESSED candidate loses the
  * deadband to an ACTIVE peer (=> P_s > 24).
  *
+ * survival-loop L2 (§6-L2, deferred sub-item 3/3, "routed work を shed"):
+ * HIBERNATING now claims the SAME relief as STRESSED (MOE_HIBERNATE_PENALTY,
+ * provisional == MOE_STATE_PENALTY -- HIBERNATING is a bigger commitment than
+ * plain STRESSED per §6-L2, but there is no measured curve yet to justify a
+ * DIFFERENT magnitude, so this reuses the existing provisional number rather
+ * than inventing a second unmeasured constant). [hibernate-shed] below tests
+ * this exactly the way [support-route] tests the STRESSED case.
+ *
+ * -DSURVIVAL_L2_NO_SHED (falsifier, FIRST ATTEMPT, KEPT TOOTHLESS ON PURPOSE
+ * as a documented near-miss): reverting HIBERNATING to "no relief" (== the
+ * BLIND control) does NOT turn [hibernate-shed] RED, because moe_l1_herd's
+ * three equal candidates already split 24/36 (not 20/20/20) with NO STATE
+ * fold at all -- some other production asymmetry (recent_pick decay order,
+ * incumbent bias) already favors node1+2 over node0 before any STATE
+ * penalty is applied. Both sign_ok (24<36) and nopileon_ok (24<=24) hold
+ * even with zero shedding, so a falsifier that only removes the penalty is
+ * toothless here (self-caught by actually building and running it, not
+ * assumed). -DSURVIVAL_L2_SHED_INVERT is the falsifier with teeth: it flips
+ * the SIGN for HIBERNATING only (mirrors the existing SURVIVAL_L1_SIGN_FLIP
+ * shape but scoped to this one case), making a hibernating candidate MORE
+ * attractive instead of less -- a real G20-style inversion that must move
+ * picks_hib_cure ABOVE the 24-pick blind baseline.
+ *
  * Hosted-only: bare-metal omits the whole fold (the select_expert seam has no
  * #else), so the crown .text stays byte-identical. */
 #ifndef MOE_STATE_PENALTY
 #define MOE_STATE_PENALTY  70
 #endif
+#ifndef MOE_HIBERNATE_PENALTY
+#define MOE_HIBERNATE_PENALTY  MOE_STATE_PENALTY
+#endif
 static INT eff_state_penalty(INT st)
 {
     switch (st) {
-    case WSTATE_STRESSED:    return MOE_STATE_PENALTY;  /* +load = shed off it    */
-    case WSTATE_ACTIVE:      return 0;                  /* healthy worker         */
-    case WSTATE_HIBERNATING: return 0;                  /* reserved L2: no relief */
-    case WSTATE_DYING:       return 0;                  /* reserved L3: no relief */
-    default:                 return 0;                  /* unknown(-1) => ACTIVE  */
+    case WSTATE_STRESSED:    return MOE_STATE_PENALTY;      /* +load = shed off it */
+    case WSTATE_ACTIVE:      return 0;                      /* healthy worker      */
+#ifdef SURVIVAL_L2_SHED_INVERT
+    case WSTATE_HIBERNATING: return -MOE_HIBERNATE_PENALTY; /* falsifier: relief inverted (pulls work TOWARD it) */
+#else
+    case WSTATE_HIBERNATING: return MOE_HIBERNATE_PENALTY;  /* L2: shed off it too */
+#endif
+    case WSTATE_DYING:       return 0;                      /* reserved L3: no relief */
+    default:                 return 0;                      /* unknown(-1) => ACTIVE  */
     }
 }
 
@@ -1671,6 +1701,54 @@ INT moe_support_route_test(void)
 #ifdef SURVIVAL_L1_SIGN_FLIP
     mo_puts("[support-route-NOT] ARMED: penalty routed onto the threat/rally term"
             " — the STRESSED node must GAIN work above (RED)\r\n");
+#endif
+    return fail;
+}
+
+/* survival-loop L2 (§6-L2, deferred sub-item 3/3): [hibernate-shed]. Same
+ * shape as [support-route] above, but node0 is HIBERNATING instead of
+ * STRESSED — proves eff_state_penalty's WSTATE_HIBERNATING case (not just
+ * WSTATE_STRESSED) actually sheds work through the PRODUCTION moe_select_step
+ * path, not a re-implementation of it. */
+INT moe_hibernate_route_test(void)
+{
+    INT fail = 0;
+    const UB gc = 0;
+    /* node0 HIBERNATING, node1/node2 ACTIVE — equal in every other dimension. */
+    const INT states[3] = { WSTATE_HIBERNATING, WSTATE_ACTIVE, WSTATE_ACTIVE };
+    UW cure[3], blind[3];
+
+    moe_l1_herd(states, 1, cure,  gc);   /* CURE : fold STATE into routing      */
+    moe_l1_herd(states, 0, blind, gc);   /* BLIND: control, no STATE fold       */
+    moe_init();                          /* tidy the reflex state the herds used */
+
+    UW picks_hib_cure    = cure[0];
+    UW picks_active_cure = cure[1] + cure[2];
+    UW picks_hib_blind   = blind[0];
+
+    mo_puts("[hibernate-shed] node0=HIBERNATING node1,2=ACTIVE, 60 decisions\r\n");
+    mo_puts("[hibernate-shed]   cure: hibernating="); mo_putdec(picks_hib_cure);
+    mo_puts(" active(1+2)="); mo_putdec(picks_active_cure);
+    mo_puts("  blind: hibernating="); mo_putdec(picks_hib_blind);
+    mo_puts("\r\n");
+
+    int sign_ok     = (picks_hib_cure < picks_active_cure);
+    int nopileon_ok = (picks_hib_cure <= picks_hib_blind);
+    if (sign_ok && nopileon_ok) {
+        mo_puts("[hibernate-shed] PASS (work sheds OFF the HIBERNATING node toward"
+                " ACTIVE peers; no pile-on)\r\n");
+    } else {
+        if (!sign_ok)
+            mo_puts("[hibernate-shed] FAIL hibernating node not avoided (wrong sign)\r\n");
+        if (!nopileon_ok)
+            mo_puts("[hibernate-shed] FAIL hibernating node GAINED work vs blind"
+                    " (G20 inversion)\r\n");
+        mo_puts("[hibernate-shed] FAIL\r\n");
+        fail = 1;
+    }
+#ifdef SURVIVAL_L2_SHED_INVERT
+    mo_puts("[hibernate-shed-NOT] ARMED: relief inverted onto the HIBERNATING"
+            " node — it must GAIN work above (RED)\r\n");
 #endif
     return fail;
 }
