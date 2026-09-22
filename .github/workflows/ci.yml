@@ -73,6 +73,37 @@ jobs:
       - name: check_local_patches.sh
         run: sh tests/vendor/check_local_patches.sh .
 
+  rng0-regression-monitor:
+    # gap-ledger.md 行 RNG0-BUSY-TASK-STALLS-DISPATCH の監視のみ (2026-09-20
+    # `feat/rng0-regression-test`/`f8b0abd2` でmasterへ既にマージ済みの
+    # tests/x86/run_rng0_regression.sh を初めてCIに繋ぐ)。この行のバグ自体は
+    # 直っていない — 直すには gap-ledger 自身が挙げる (a)/(b)/(c)/(d) のどれかを
+    # 人間が選ぶ必要がある(判断待ち)。このジョブはそれを決めない。やることは
+    # 「まだ RED のままか」を毎回の push で機械的に確認するだけ:
+    #   positive アーム(busy ring0 task が一切 yield しない) -> 既知バグにより
+    #     tk_dly_tsk(500) が戻らずタイムアウト -> RED を期待。
+    #   control アーム(同じタスクだが tk_dly_tsk(10) で自発的に再入する) ->
+    #     正常に戻る -> GREEN を期待(=プローブ自体は壊れていないことの確認)。
+    # 非BLOCKING: positive アームが「意図して RED になる」ことを確認するジョブ
+    # なので、そのまま BLOCKING にすると「バグが直っていない」ことそのものが
+    # 毎回 CI を落とす。GREEN に変わったら(NEWS終了コード2)ジョブは失敗表示に
+    # なるので気づける — gap-ledger.md 側の更新は人間 or 次runの仕事。
+    name: "RNG0 busy-task starvation 監視 (非BLOCKING, バグ自体は未修正)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install i686 cross toolchain + qemu-system-x86
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-i686-linux-gnu make qemu-system-x86
+      - name: positive arm — expect RED (known bug, unfixed)
+        run: ARM=positive sh tests/x86/run_rng0_regression.sh
+      - name: control arm — expect GREEN (probe itself is sound)
+        run: ARM=control sh tests/x86/run_rng0_regression.sh
+
   ump-x86_64:
     name: "UMP x86_64 (ビルド + 自己テスト)"
     runs-on: ubuntu-latest
