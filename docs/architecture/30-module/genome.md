@@ -122,10 +122,12 @@ inside its kernel. Five asserted legs; any miss is a non-zero exit.
   the artifact_id is recomputed from the received bytes and Ed25519-verified against an
   **adopted** key (`genome.c:314-321`, "weights REFUSED — no valid signature by an adopted
   key"). Forged weights ARE refused; the trust anchor is the local `selfc adopt key`
-  allowlist (see the archived `archive/signing.md`). HONEST GAP: this path is not yet a
-  dedicated CI gate (no `[sign-genome]` grep in `ci.yml`); the enforcement is in code but
-  unguarded by a release cert. Content addressing still protects against *corruption*; the
-  signature now also protects against *malice* when verification is required.
+  allowlist (see the archived `archive/signing.md`). **CI-gated 2026-09-23** (`feat/sign-
+  live-ci-gates`): `ci.yml` now greps `[sign-genome] PASS` from `sign test`'s existing
+  `genome_sign_live_test()` call (this was previously an honest gap — the enforcement was
+  in code, exercised every CI run via `sign test`, but never asserted). Content addressing
+  still protects against *corruption*; the signature now also protects against *malice*
+  when verification is required.
 - **One manifest name.** Last-writer-wins ref gossip means concurrent
   publishers fork the ref exactly like any p-fs name (the losing version
   stays reachable in the DAG). Per-role or per-region manifests are a
