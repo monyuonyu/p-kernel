@@ -373,5 +373,8 @@ arch/common/include/pmesh.h:58-67
 ため。crownは構造的に無関係（fed_id.hはarch/linux/{x86_64,aarch64}/usermain.cからしか
 includeされず、bare-metalのリンク対象外）で、コンテナ内ビルドで実測確認済み
 （x86 bare-metal .text 581225B、フルファイルsha256もmaster側ビルドと完全一致）。
-`feat/federation-f1-composite-id`、実装者自身によるビルド・テストのみ、
-独立監査待ち。次のスライス（上位メッシュ配線、(2)の解決）は別ブランチ。
+`feat/federation-f1-composite-id`、**独立監査PASSでlocal masterマージ済み
+（2026-09-22, `2cea9e4f`）**——この段落は「独立監査待ち」のまま古くなっていた。
+**2026-09-23: `ci.yml`にも配線**（`run_federation_f1.sh`が存在してから一度も
+CIに繋がれていなかった同種のギャップ、L2系certと同じ穴）。次のスライス
+（上位メッシュ配線、(2)の解決）は別ブランチ、(2)は人間の設計判断待ち。
