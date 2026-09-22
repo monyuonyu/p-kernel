@@ -2164,7 +2164,20 @@ jobs:
     # preserving expert growth (run_ss4.sh), device-capacity mind-sizing /
     # DEVFIT-1 (run_devfit.sh), and the compat migration-chain [migrate-forward]
     # verb (built behind -DR3WP_MIGRATE_CERT, driven by `compat test`).
-    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat)"
+    # 2026-09-23: a repo-wide cross-reference of every tests/**/run_*.sh
+    # against this file found 4 MORE host-only certs in the exact same
+    # "shipped but never wired" shape -- run_mc0.sh (deterministic parallel
+    # matmul), run_mc1.sh (MC-1 gate/speedup/idle, gracefully degrades
+    # without a GGUF), run_diverse_proof.sh (self-contained, no GGUF/network),
+    # run_ss1.sh (adaptive-top-K margin/determinism/no-regression). Each
+    # verified locally before wiring (exit 0). run_ss2.sh was investigated
+    # too but is a SEPARATE, more complex finding (see gap-ledger/BACKLOG D5)
+    # -- it fails today against its own documented pre-SS-2 baseline
+    # (5edbeeda), for reasons not yet understood; NOT wired here, deliberately,
+    # rather than either paper over a possibly-real anomaly or block CI on it
+    # unverified. run_ss3.sh/run_ss3_blob.sh were still running verification
+    # when this branch was cut and are left for a follow-up wiring.
+    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2184,6 +2197,14 @@ jobs:
           printf 'compat test\nexit\n' | timeout 120 ./p-kernel | tee compat.log
           grep -aF '[migrate-forward] PASS' compat.log
           ! grep -aqF '[migrate-forward] FAIL' compat.log
+      - name: MC-0 deterministic parallel matmul ([par-matmul-equiv] + falsifier + [mc0-idle])
+        run: bash tests/llm/run_mc0.sh
+      - name: MC-1 parallel matmul gate/speedup/equivalence ([par-matmul-*])
+        run: bash tests/llm/run_mc1.sh
+      - name: diverse-corpus proof (repetition/held-out-loss regression, self-contained)
+        run: bash tests/llm/run_diverse_proof.sh
+      - name: SS-1 adaptive-top-K margin/determinism/no-regression/merge-isolation
+        run: bash tests/llm/run_ss1.sh
 
   distributed-moe:
     # Collective x Brain: DMOE-A — distributed-MoE expert capacity that GROWS
