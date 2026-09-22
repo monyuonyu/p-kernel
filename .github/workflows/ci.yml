@@ -2171,21 +2171,27 @@ jobs:
     # without a GGUF), run_diverse_proof.sh (self-contained, no GGUF/network),
     # run_ss1.sh (adaptive-top-K margin/determinism/no-regression). Each
     # verified locally before wiring (exit 0). run_ss2.sh was investigated
-    # too but is a SEPARATE, more complex finding (see gap-ledger/BACKLOG D5)
-    # -- it fails today against its own documented pre-SS-2 baseline
-    # (5edbeeda), for reasons not yet understood; NOT wired here, deliberately,
-    # rather than either paper over a possibly-real anomaly or block CI on it
-    # unverified. run_ss3.sh verified clean (exit 0, 2 runs) and is wired
-    # below. run_ss3_blob.sh was ALSO investigated and is a second separate
-    # finding, same as run_ss2.sh: 11/12 checks PASS but
-    # [ss3-blob-merge] "merged held-out loss <= the worse parent
-    # (convergence)" FAILS, reproducibly (2 independent runs) -- NOT wired,
-    # see BACKLOG D5.
-    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-3)"
+    # and initially NOT wired: it failed against its own documented pre-SS-2
+    # baseline (5edbeeda). 2026-09-23: root-caused by bisecting 5edbeeda..HEAD
+    # commit-by-commit -- the M-tier hash/loss stayed byte-identical through
+    # SS-2/kv-cache/SS-3/SS-6/SS-4 and first diverged exactly at 7d497d7c
+    # (SCALE-WALL C1), which intentionally widened ST_MAXSEQ 64->256 and added
+    # RoPE. Not a regression -- run_ss2.sh's BASE_REF was advanced to 7d497d7c
+    # (see that script's header) and it now PASSes; wired below. run_ss3.sh
+    # verified clean (exit 0, 2 runs) and is wired below too. run_ss3_blob.sh
+    # was ALSO investigated and is a SEPARATE, still-open finding: 11/12
+    # checks PASS but [ss3-blob-merge] "merged held-out loss <= the worse
+    # parent (convergence)" FAILS, reproducibly (2 independent runs) -- NOT
+    # wired, see BACKLOG D5.
+    name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-2 / SS-3)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # run_ss2.sh's BASE_REF (7d497d7c) is looked up via `git show`; the
+          # default shallow clone (depth 1) would not contain it.
+          fetch-depth: 0
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -2209,6 +2215,8 @@ jobs:
         run: bash tests/llm/run_diverse_proof.sh
       - name: SS-1 adaptive-top-K margin/determinism/no-regression/merge-isolation
         run: bash tests/llm/run_ss1.sh
+      - name: SS-2 tier-selectable model dims ([m-identical] + [no-loss-regression] + [tier-*] + [no-vla])
+        run: bash tests/llm/run_ss2.sh
       - name: SS-3 same-tier merge-cohort convergence/isolation/falsifiability
         run: bash tests/llm/run_ss3.sh
 
