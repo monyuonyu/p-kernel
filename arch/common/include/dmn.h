@@ -107,3 +107,18 @@ UB   dmn_intero_held_sn(void);              /* the deadband-held S_n           *
  * the deadband suppresses oscillation under a flat S_n. Prints
  * "[intero-tick] PASS/FAIL". Returns 0 = PASS. Calls intero_self_test first. */
 INT  dmn_intero_modulation_test(void);
+
+/* survival-loop L2 (§6-L2, deferred sub-item, "重い DMN consolidation を
+ * pause"): [dmn-pause] cert (shell `dmn pause`). Drives the same world-state
+ * FSM [hibernate-reversible]/[mind-pause] drive and checks
+ * dmn_paused_for_hibernation() -- the EXACT predicate dmn_idle_work's three
+ * heavier consolidation tracks (lm_consolidate_idle_round,
+ * r3_consolidate_idle_round, student_dmn_consolidate) gate on, leaving
+ * ga_step() unpaused (genuinely tiny, not "重い"). 0 = PASS.
+ * -DDMN_PAUSE_NO_GATE makes the predicate always return "not paused" and
+ * turns it RED. Hosted-only, same crown-neutral construction (guarded
+ * `#ifdef _TK_HOSTED_LIBC_`) as survival-l2-mind-pause's r3_incontext.c
+ * changes. */
+#ifdef _TK_HOSTED_LIBC_
+INT  dmn_pause_test(void);
+#endif

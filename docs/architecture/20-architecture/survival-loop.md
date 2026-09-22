@@ -368,7 +368,7 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 > 「ALIVE のまま」を読み返すビットが無い）。**実装者はこの run 自身。次 run が監査者として
 > 独立に再現し、PASS なら local master へ、それまでは未マージ。**
 
-> **2026-09-21〜23: 上記「先送り」3項目のうち2つが出荷済み、1つが実装済み・監査待ち。**
+> **2026-09-21〜23: 上記「先送り」4項目、全部出荷済み・独立監査PASS・local masterマージ済み。**
 > (1) `mind_merge_task`/`mind_net_task` の実際の pause（`feat/survival-l2-mind-pause`）:
 > `_TK_HOSTED_LIBC_` ガードで実装、実装者自身が+8Bのcrown driftを発見・修正、独立監査
 > PASSでlocal masterマージ済み。(2) beacon cadence 低下（`feat/survival-l2-beacon-
@@ -383,8 +383,25 @@ supermajority が意味を持つ最小サイズ（≥3）と、apoptosis の hei
 > 実際にREDになることを再確認済み）。この関数も元々`_TK_HOSTED_LIBC_`ブロック全体の
 > 中にあり（bare-metalは fold 自体が存在しない）、**crown risk は既にゼロだった**
 > （既存の`#ifdef _TK_HOSTED_LIBC_`ブロック内の分岐を1つ増やしただけ、re-baseline
-> 不要）。独立監査PASSでlocal masterマージ済み（2026-09-23）。まだ deferred: DMN
-> consolidation の実 pause（`feat/survival-l2-dmn-pause`、実装済み・監査待ち）。
+> 不要）。独立監査PASSでlocal masterマージ済み（2026-09-23）。(4) DMN consolidation の
+> 実 pause（`feat/survival-l2-dmn-pause`）: `dmn.c`の`dmn_idle_work`が呼ぶ3本の重い経路
+> （`lm_consolidate_idle_round`のengram replay、`r3_consolidate_idle_round`のin-context
+> fact distillation、`student_dmn_consolidate`のbaby distillation——gap-ledgerのRNG0行が
+> 実測した5〜11秒/回）を`dmn_paused_for_hibernation()`でHIBERNATING中はskipする。
+> `ga_step()`（GA_POP_SIZE=4で軽量、gap-ledger自身の対照実測で確認済み）は意図的に
+> pauseしない——「重い」の範囲外。`[dmn-pause]` cert（`dmn pause` verb）、falsifier
+> `-DDMN_PAUSE_NO_GATE`（独立監査でREDを再確認済み）、`tests/host/run_dmn_pause.sh`
+> （`run_mind_pause.sh`と同じ構造）。`dmn.c`は両bare-metal crownに直接リンクされる
+> （`r3_incontext.c`と同様）ため`_TK_HOSTED_LIBC_`ガードが必須——3箇所の呼び出しサイト
+> すべて`#ifdef _TK_HOSTED_LIBC_ if (!dmn_paused_for_hibernation()) #endif`という先頭
+> ガード節の形にした（既存の行そのものは1文字も変えず、bare-metalはガード節自体が
+> 存在しない）。mind-pauseが陥った「usage文字列だけガード漏れ」の罠を踏まないよう、
+> 文字列リテラルを一切追加/変更しない設計（`dmn pause`のusage文字列はhosted専用ファイル
+> `arch/linux/{x86_64,aarch64}/usermain.c`にしかない——bare-metalビルドに一切含まれない
+> ので、ガード不要でcrown無関係）。独立監査PASSでlocal masterマージ済み（2026-09-23）
+> ——bare-metal crown_gateはコンテナ内の切り離しコピーでは`git worktree`が使えず
+> SKIPしたが、独立に手動でx86/aarch64 crownをフルビルドしmerge-baseとsha256完全一致を
+> 確認済み。**L2は4つのdeferred sub-items全部がマージされ、feature-completeになった。**
 
 ### L3 — 連続レプリ watermark ＋ graceful flush（DYING、apoptosis の **反転版**）
 - **やること**: beacon に watermark（GAP-⑧、merge epoch + teach seq）。DYING = best-effort flush（§3.3、**block しない**）。
