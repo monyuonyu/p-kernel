@@ -2613,6 +2613,49 @@ jobs:
           SMP0_TIMEOUT: 180
         run: sh tests/aarch64/run_smp0.sh
 
+  mc2-and-smp1:
+    # 2026-09-23: a repo-wide cross-reference (BACKLOG.md D5) found 8 more
+    # aarch64 tests/**/run_*.sh scripts shipped but never wired: run_mc2_boot.sh
+    # / run_mc2_equiv.sh / run_mc2_slice.sh and run_smp1.sh through run_smp5.sh.
+    # Each was built + booted locally (isolated container, qemu-system-aarch64,
+    # no KVM -- same TCG-only class of environment as this job's runner) before
+    # deciding whether to wire it. mc2_boot/mc2_equiv/mc2_slice and smp1 all
+    # PASSED cleanly (smp1 including its falsifier). smp2/smp3/smp4/smp5 all
+    # FAILED, reproducibly (smp2 checked twice) -- every one of them shows the
+    # secondary CPU entering the dispatcher but the actual task body never
+    # running (ran=0 / tcb=ok=0 / H_smp=0), the same "secondary-CPU task
+    # dispatch doesn't complete under software-only QEMU" shape already on
+    # record for run_smp0.sh (14/15 red on GitHub Actions, see that job's own
+    # comment above) -- NOT wired here, deliberately, per BACKLOG D5 and
+    # pkernel-baton.md's judgment-pending list. continue-on-error mirrors
+    # run_smp0.sh's own precedent: these are QEMU-TCG-only aarch64 SMP certs on
+    # a runner class already shown to be unreliable for this shape of test.
+    name: "MC-2 SMP-partition certs + ②.1a cross-preempt (aarch64 QEMU, run_mc2_*.sh / run_smp1.sh)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross toolchain + qemu-system-aarch64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu make qemu-system-arm
+      - name: run_mc2_slice.sh (MC-2.1b [mc2-slice] partition unit-check + falsifier, no -smp)
+        run: sh tests/aarch64/run_mc2_slice.sh
+      - name: run_mc2_boot.sh (MC-2 boot-survives normal + faulting tile, -smp 4)
+        env:
+          MC2_TIMEOUT: 40
+        run: sh tests/aarch64/run_mc2_boot.sh
+      - name: run_mc2_equiv.sh (MC-2.1a [mc2-smp-equiv] byte-identity + falsifiers, -smp 4)
+        env:
+          MC2_TIMEOUT: 60
+        run: sh tests/aarch64/run_mc2_equiv.sh
+      - name: run_smp1.sh (②.1a [smp-cross-preempt] GIC SGI IPI + falsifier, -smp 4)
+        env:
+          SMP1_TIMEOUT: 45
+        run: sh tests/aarch64/run_smp1.sh
+
   windows-pe-build:
     # Windows arch P1 build gate (arch/windows/x86_64, boot/windows/x86_64).
     # mk_pino's trunking rule: do NOT land a new arch without a CI gate that
