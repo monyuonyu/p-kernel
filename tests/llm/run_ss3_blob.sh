@@ -28,6 +28,16 @@
 #
 #   ./run_ss3_blob.sh
 # Exit 0 = all certs PASS.
+#
+# 2026-09-23: currently FAILS on master — [ss3-blob-merge]'s convergence
+# check ("merged loss <= worse parent") does not hold. Root-caused to RoPE
+# (7d497d7c, SCALE-WALL C1): a transport-free matched-arm probe shows RoPE
+# OFF reproduces the pre-C1 numbers and PASSes, RoPE ON (default) FAILs by a
+# large margin. This is a design fork (does st_merge_cohort need to become
+# basin-aware, or is the convergence guarantee itself no longer the right
+# bar?), not a code bug -- see docs/architecture/BACKLOG.md D5 and
+# pkernel-baton.md's judgment-pending list. Do not wire this into CI red as
+# a "known-failing" gate without a human decision first.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
