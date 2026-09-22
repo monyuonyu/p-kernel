@@ -344,8 +344,11 @@ reuses the germ capability table + reflex shield + (for writes) adopt semantics.
 > is honest behavior, not a bug, but is an undocumented precondition worth
 > knowing before calling `body test` cold). Builds clean on x86 bare-metal,
 > aarch64 bare-metal, and hosted x86_64/aarch64; crown `.text` grows (expected,
-> this module is crown-linked) — **re-bless is a human decision, not yet
-> merged to master.** Remaining R1 scope (p-fs write, `mind teach`) is
+> this module is crown-linked). **Independently audited and merged to local
+> master 2026-09-21** (`3b797b0f`) — this note was stale, it used to say "not
+> yet merged to master". **Re-bless (`docs/audit-trail.md`'s canonical-hash
+> update) and push are still a human decision**, unaffected by the local
+> merge. Remaining R1 scope (p-fs write, `mind teach`) is
 > deferred — no germ-capability table exists for parent-side/non-germ code,
 > which is a real fork in this design's "reuse existing gates" premise.
 
