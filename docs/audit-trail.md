@@ -1863,9 +1863,12 @@ N-4 cross-host deferred to the ThinkPad).
   The `.text` growth is exactly three new functions and nothing else (`nm -S` symbol diff, no existing
   symbol changed size): aarch64 `self_access_publish` 0x164 + `self_access_r1_self_test` 0x140 +
   `reflex_test_force_shield` 0x34 = 728; x86 0x12a + 0x139 + 0x20 = 643, +1 alignment padding.
-  HONEST BOUND: measured ONCE, by the run that wrote this entry. Per the implementer ≠ auditor rule an
-  independent later run must re-measure both hashes before this counts as verified — see
-  `docs/architecture/BACKLOG.md` B3.
+  INDEPENDENTLY RE-MEASURED 2026-09-24T01:37+09:00 by a later run (not the one that wrote this entry),
+  with a freshly written script (not the writer's `crown-rb.sh`), fresh bundle clone, same container gcc
+  13.3.0, `make clean` first: `4f6134f5` and `84acf4a4` (= `3b797b0f^1`) give exactly the old full hashes
+  (c4e255f1…57c3fa5a / d71839d1…5ae0cde2, 356512 / 367438 B); `3b797b0f` and master `88f81ded` give
+  exactly the new full hashes above (357240 / 368082 B). All 8 values match byte-for-byte. Bound: the
+  12-point sweep and the per-section/`nm` breakdown were NOT redone — only the four points named.
 - CROWN RE-BLESS — IRQ stub SS reload, the `KCC-WILDPC` root fix (2026-09-03, `fix/irq-stub-ss-reload`,
   `b328011c`, fast-forwarded onto master). The bare-metal `.text` changes DELIBERATELY and on ONE target
   only: the fix is +12 lines of `boot/x86/isr.S` — `irq_call32_stub` now reloads SS, mirroring
