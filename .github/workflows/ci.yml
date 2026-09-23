@@ -2684,7 +2684,8 @@ jobs:
     # checks above. NOT wired, found in the same probe: run_ss6_live_fallback.sh
     # (OPEN when the killed peer happens to own no wide expert -- placement-
     # dependent) and run_selfc_isolation.sh (neither the disease nor the cure
-    # reproduced -- looks stale). See BACKLOG D5. The other 21 were not tried.
+    # reproduced -- looks stale). See BACKLOG D5 for the one-shot results of
+    # the other 21 (tried once each after this job was written).
     # ubuntu-latest, not the self-hosted chain: localhost only, no real network.
     name: "多プロセス localhost cert (SS-6 live / relay MAC 偽造 / replay 拒否)"
     runs-on: ubuntu-latest
