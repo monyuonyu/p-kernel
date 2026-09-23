@@ -346,9 +346,9 @@ reuses the germ capability table + reflex shield + (for writes) adopt semantics.
 > aarch64 bare-metal, and hosted x86_64/aarch64; crown `.text` grows (expected,
 > this module is crown-linked). **Independently audited and merged to local
 > master 2026-09-21** (`3b797b0f`) — this note was stale, it used to say "not
-> yet merged to master". **Re-bless (`docs/audit-trail.md`'s canonical-hash
-> update) and push are still a human decision**, unaffected by the local
-> merge. Remaining R1 scope (p-fs write, `mind teach`) is
+> yet merged to master". **Re-bless approved by mk_pino and recorded
+> 2026-09-24** (`docs/audit-trail.md` CROWN RE-BLESS entry); push is still a
+> human decision. Remaining R1 scope (p-fs write, `mind teach`) is
 > deferred — no germ-capability table exists for parent-side/non-germ code,
 > which is a real fork in this design's "reuse existing gates" premise.
 

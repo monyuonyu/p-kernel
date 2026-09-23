@@ -1881,7 +1881,12 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 6db9cdfa…,
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 dea715dd…,
+    # x86 1c8e6d16… after self-access R1 2026-09-24, audit-container gcc 13.3.0;
+    # was aarch64 c4e255f1…/x86 d71839d1… after the IRQ-stub SS reload
+    # 2026-09-03; was c4e255f1…/4f6f0dc5… after the KILL-CHURN restore
+    # 2026-08-12 — those two re-blesses were recorded in docs/audit-trail.md but
+    # never copied here; was aarch64 6db9cdfa…,
     # x86 1adb894e… after unbounded-N U-0 2026-07-05 — DREGION_MAX split from
     # DNODE_MAX + the dkva cagg ORIGIN axis -> nodemap (dkva.c) move bare-metal
     # .text; was aarch64 7f3fbda4…/x86 260da329… after the 良心 conscience floor

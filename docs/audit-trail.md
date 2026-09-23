@@ -1840,6 +1840,32 @@ N-4 cross-host deferred to the ThinkPad).
   `KCC-WILDPC` still has no mechanism. (5) this proves the harness reddens on THIS unfixed tree; it does
   not prove it would redden on a FUTURE vendor-patch loss that deletes a different one of the 9 hardening
   classes — the gate watches one signature, not the class of regressions the `VENDOR-PATCH-LOSS` row names.
+- CROWN RE-BLESS — self-access R1, the first T1 affordance `self_access_publish` (2026-09-24, merge
+  `3b797b0f` of `feat/self-access-r1-publish`, landed on local master 2026-09-21; **approved by mk_pino
+  2026-09-23**, p-kernel chat inbox #1). The bare-metal `.text` changes DELIBERATELY on BOTH targets:
+  `arch/common/self_access.c` and `arch/common/reflex.c` link into both bare-metal crowns. NEW dev crown
+  `.text` sha256 (audit container gcc 13.3.0, fresh clone from a git bundle, `make clean` first, same
+  `objcopy -O binary -j .text` as the `crown-text-identity` job):
+    aarch64  dea715ddb151a4989a3031e7e4b2f8314580694afbbb1faf243ac4e976ef7052   (was c4e255f1…57c3fa5a)
+    x86      1c8e6d16aea4f3cb7c1f78d8392ac6a53c6e4cc0d933b5405d650de67ac9605a   (was d71839d1…5ae0cde2)
+  The OLD values are exactly the 2026-09-03 crown below, reproduced at `origin/master` `4f6134f5` — so the
+  toolchain reproduces the last entry byte-identically, which is what licenses the comparison.
+  ONLY R1 MOVES THE CROWN, checked at every first-parent point of `origin/master..master` that touches
+  `arch/`, `boot/` or `kernel/` (12 points: `4f6134f5 f8b0abd2 e94390bb 84acf4a4 3b797b0f 88817c15 2cea9e4f
+  f2f617f6 834840e0 f13c8ccf 31729f5f a41bc1b6`): identical to the old crown up to and including
+  `84acf4a4` (= `3b797b0f^1`), identical to the new crown from `3b797b0f` through `a41bc1b6`. The L2
+  survival-loop, F1 composite-id, CT-2 and RNG0 merges are all crown-neutral. (Bound: points INSIDE the
+  merged feature branches were not built; only what master itself passed through.)
+  WHERE THE BYTES WENT — the "+1560B x86 / +1440B aarch64" in the merge commit is Berkeley `size` text
+  (all read-only alloc sections), NOT `.text`. Per section (`size -A`, `84acf4a4` → `3b797b0f`):
+    aarch64  .text 356512→357240 (+728)  .rodata 99760→100472 (+712)                        = +1440
+    x86      .text 367438→368082 (+644)  .rodata.str1.1 +60  .rodata.str1.4 +600  .eh_frame +256 = +1560
+  The `.text` growth is exactly three new functions and nothing else (`nm -S` symbol diff, no existing
+  symbol changed size): aarch64 `self_access_publish` 0x164 + `self_access_r1_self_test` 0x140 +
+  `reflex_test_force_shield` 0x34 = 728; x86 0x12a + 0x139 + 0x20 = 643, +1 alignment padding.
+  HONEST BOUND: measured ONCE, by the run that wrote this entry. Per the implementer ≠ auditor rule an
+  independent later run must re-measure both hashes before this counts as verified — see
+  `docs/architecture/BACKLOG.md` B3.
 - CROWN RE-BLESS — IRQ stub SS reload, the `KCC-WILDPC` root fix (2026-09-03, `fix/irq-stub-ss-reload`,
   `b328011c`, fast-forwarded onto master). The bare-metal `.text` changes DELIBERATELY and on ONE target
   only: the fix is +12 lines of `boot/x86/isr.S` — `irq_call32_stub` now reloads SS, mirroring
