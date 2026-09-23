@@ -350,6 +350,12 @@ $(MANIFESTO_PAGE): $(MANIFESTO_SRCS) $(MANIFESTO_GEN)
 
 ark_profile.o galaxy.o: $(MANIFESTO_PAGE)
 
+# .so 版（so_node / libpkernel.so）も同じ生成ヘッダを include する。これが
+# 無いと clean な木から `make so_node` だけを叩いたとき galaxy.lo が
+# galaxy_page.h 無しで落ちる（run_Nnode_scale.sh 等、BACKLOG D5-g）。
+galaxy.lo: $(GALAXY_PAGE)
+ark_profile.lo galaxy.lo: $(MANIFESTO_PAGE)
+
 
 
 # ---- libpkernel.so (Android UMP ホスト側スモークテスト) ---------------
