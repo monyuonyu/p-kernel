@@ -17,8 +17,21 @@
 #                        a runtime dim (m->d/dff/nlayer/nexpert) — every scratch
 #                        array is bound to a fixed ST_*_MAX / V / ST_MAXSEQ.
 #
-# The BASE student.c is the pre-SS-2 snapshot: it is taken from git (the SS-1
-# tip, commit 5edbeeda) if available, else from $SS2_BASE_STUDENT.
+# The BASE student.c is the last commit where M-tier's forward pass was
+# CONFIRMED byte-identical to its predecessor: it is taken from git (default
+# 7d497d7c, the SCALE-WALL C1 tip) if available, else from $SS2_BASE_STUDENT.
+# This was 5edbeeda (the pre-SS-2 SS-1 tip) until 2026-09-23. It was advanced
+# because 7d497d7c intentionally widened ST_MAXSEQ 64->256 and added RoPE
+# (special-structure-mind.md's NS v2 / scale_wall_design.md C1) — a deliberate
+# forward-math change, not a regression: the FIX test string is 97 bytes, so
+# under the OLD ST_MAXSEQ=64 cap only 64 bytes were ever forwarded, and after
+# C1 the full 97 are. Bisecting 5edbeeda..HEAD confirmed the hash/loss stayed
+# BYTE-IDENTICAL through every wave up to and including 9dfc568b (SS-4) and
+# first diverged exactly at 7d497d7c (docs/architecture/BACKLOG.md D5,
+# 2026-09-23). Whenever a FUTURE commit intentionally changes M-tier's default
+# forward math again, advance BASE_REF to that commit's SHA (do not just bump
+# it silently — record the reason here and in BACKLOG D5, the same way this
+# entry does).
 #
 #   ./run_ss2.sh
 # Exit 0 = all certs PASS + the hashes match + the no-vla grep is clean.
@@ -37,7 +50,7 @@ SRC_NEW="$ROOT/arch/common/llm/student.c"
 # ---- obtain the BASE (pre-SS-2) student.c + student.h ----
 BASE_DIR="$WORK/base"
 mkdir -p "$BASE_DIR"
-BASE_REF="${SS2_BASE_REF:-5edbeeda}"   # the SS-1 tip (pre-SS-2)
+BASE_REF="${SS2_BASE_REF:-7d497d7c}"   # last confirmed M-tier-identical tip (see note above; was 5edbeeda pre-2026-09-23)
 if [ -n "${SS2_BASE_STUDENT:-}" ] && [ -f "${SS2_BASE_STUDENT}" ]; then
     cp "$SS2_BASE_STUDENT" "$BASE_DIR/student.c"
     cp "$(dirname "$SS2_BASE_STUDENT")/student.h" "$BASE_DIR/student.h"
