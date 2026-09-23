@@ -2669,6 +2669,43 @@ jobs:
           SMP1_TIMEOUT: 45
         run: sh tests/aarch64/run_smp1.sh
 
+  distributed-samples-localhost:
+    # 2026-09-24: none of the 26 samples/11_distributed/run_*.sh scripts (nor
+    # samples/19_dynamic_id/run_dynamic_id.sh) was referenced anywhere in CI.
+    # These three are self-contained on localhost (p-kernel processes + ./relay
+    # or a python injector, fixed UDP ports 7409/7411) and PASSED 3/3 locally
+    # (bridge-networked container, 24s / 9s / 13s each):
+    #   run_ss6_live.sh      -- [ss6-live] 4-process cross-node student forward,
+    #                           live logit hash == single-node hash, wire_sent>0
+    #   run_relay_forgery.sh -- G4: the NODE drops relay frames with bogus MACs
+    #   run_replay_reject.sh -- the NODE drops a replayed frame, no fresh frame
+    #                           misflagged
+    # relay-tests (make -C relay test) checks the relay itself, not the node-side
+    # checks above. NOT wired, found in the same probe: run_ss6_live_fallback.sh
+    # (OPEN when the killed peer happens to own no wide expert -- placement-
+    # dependent) and run_selfc_isolation.sh (neither the disease nor the cure
+    # reproduced -- looks stale). See BACKLOG D5. The other 21 were not tried.
+    # ubuntu-latest, not the self-hosted chain: localhost only, no real network.
+    name: "多プロセス localhost cert (SS-6 live / relay MAC 偽造 / replay 拒否)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: run_ss6_live.sh ([ss6-live] cross-node forward byte-identical)
+        run: timeout 300 bash samples/11_distributed/run_ss6_live.sh
+      - name: run_relay_forgery.sh (G4 node-side MAC drop)
+        run: timeout 300 bash samples/11_distributed/run_relay_forgery.sh
+      - name: run_replay_reject.sh (node-side replay drop)
+        run: timeout 300 bash samples/11_distributed/run_replay_reject.sh
+
   windows-pe-build:
     # Windows arch P1 build gate (arch/windows/x86_64, boot/windows/x86_64).
     # mk_pino's trunking rule: do NOT land a new arch without a CI gate that
