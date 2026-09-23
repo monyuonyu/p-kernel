@@ -40,8 +40,15 @@ PORT1=7400
 PORT2=7401
 
 PIDS=()                       # killed by PID at exit — never pkill
+# Each node is fed by `{ echo kdemo; sleep 180; } | p-kernel &`; $! is the
+# p-kernel, not the feeder. Killing only p-kernel left the feeder's sleep
+# alive and the bare `wait` below blocked on it for up to 180 s AFTER the
+# PASS line (BACKLOG D5-e). The feeders record their sleep's PID instead.
+FEED_PIDS=(/tmp/pkha_feed1.pid /tmp/pkha_feed2.pid /tmp/pkha_feed3.pid)
+rm -f "${FEED_PIDS[@]}"
 cleanup() {
     for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
+    for f in "${FEED_PIDS[@]}"; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; done
     wait 2>/dev/null
 }
 trap cleanup EXIT
@@ -118,7 +125,7 @@ sleep 1
 
 note "starting nodes 1..3 (PKERNEL_RELAY=$PKERNEL_RELAY, kdemo on each)"
 for i in 1 2 3; do
-    { echo "kdemo"; sleep 180; } | \
+    { echo "kdemo"; sleep 180 & echo $! >/tmp/pkha_feed$i.pid; wait; } | \
         PKERNEL_NODE_ID=$i PKERNEL_AUTONET=1 "$BOOT/p-kernel" \
         >/tmp/pkha_node$i.log 2>&1 &
     PIDS+=($!)
