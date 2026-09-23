@@ -66,6 +66,14 @@ knl_dispatch_to_schedtsk:
     IRQ_DISABLE
     movl    $1, knl_dispatch_disabled(%rip)   /* ディスパッチ中 */
     movq    $0, knl_ctxtsk(%rip)              /* ctxtsk = NULL */
+    /* call で入ったので rsp ≡ 8 (mod 16)。knl_dispatch_entry は subq $56
+     * で ≡ 0 に揃えてからループへ入るが、ここはフレームを積まない。
+     * そのまま .Lidle の call knl_idle_wait に落ちると、C 関数の入口で
+     * rsp ≡ 0 となり ABI の整列が 8 バイトずれ、gcc が出す movdqa（sigset_t
+     * のコピー）が SIGSEGV になる。実例: 実行可能タスクが無いときの
+     * tk_exd_tsk（guard の task killer — run_crash_recovery.sh）。
+     * コンテキストは破棄するので、16 バイトへ切り下げてよい。 */
+    andq    $-16, %rsp
     jmp     .Ldispatch_loop
 
 /* -----------------------------------------------------------------------
