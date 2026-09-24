@@ -2706,6 +2706,11 @@ jobs:
         run: timeout 300 bash samples/11_distributed/run_relay_forgery.sh
       - name: run_replay_reject.sh (node-side replay drop)
         run: timeout 300 bash samples/11_distributed/run_replay_reject.sh
+      # guard fault isolation: the guarded worker faults, only it dies, the
+      # brain comes back from p-fs. Was a SIGSEGV of the whole process on
+      # gcc 13 until knl_dispatch_to_schedtsk realigned rsp (BACKLOG D5-f).
+      - name: run_crash_recovery.sh (task dies, node lives, weights restored)
+        run: timeout 300 bash samples/11_distributed/run_crash_recovery.sh
 
   windows-pe-build:
     # Windows arch P1 build gate (arch/windows/x86_64, boot/windows/x86_64).
