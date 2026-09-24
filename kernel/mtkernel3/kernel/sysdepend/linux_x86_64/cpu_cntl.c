@@ -47,8 +47,11 @@ EXPORT UB knl_tmp_stack[KNL_TMP_STACK_SZ] __attribute__((aligned(16)));
  *	番人（tests/host の idle_freed_stack がこれで赤くなる）。
  */
 #include "../../tkernel/memory.h"
-#include <stdio.h>
-#include <stdlib.h>
+
+/* libc のヘッダはカーネルのヘッダと衝突する（MB_LEN_MAX）ので、
+ * 使う2つだけを宣言する。 */
+extern int  dprintf( int fd, const char *fmt, ... );
+extern void abort( void ) __attribute__((noreturn));
 
 EXPORT void knl_idle_sp_check( void *sp )
 {
@@ -67,7 +70,7 @@ EXPORT void knl_idle_sp_check( void *sp )
 			continue;
 		}
 		if ( p >= (VB*)(aq + 1) && p < (VB*)aq->next ) {
-			fprintf(stderr, "[knl] FATAL: idle is running on a freed "
+			dprintf(2, "[knl] FATAL: idle is running on a freed "
 				"Imalloc area (sp=%p area=%p..%p)\n",
 				sp, (void*)(aq + 1), (void*)aq->next);
 			abort();
