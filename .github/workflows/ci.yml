@@ -2669,6 +2669,34 @@ jobs:
           SMP1_TIMEOUT: 45
         run: sh tests/aarch64/run_smp1.sh
 
+  distributed-samples-localhost-2:
+    # 2026-09-24, second batch of the never-wired samples (BACKLOG D5-e):
+    #   run_memory_thought.sh -- 2 nodes + ./relay: node 2 never trains, yet
+    #     classifies >=55% held-out from node 1's engrams gossiped through p-fs
+    #   run_dynamic_id.sh     -- relay auto-REGISTER leases unique ids, never
+    #     colliding with fixed ids, reclaimed after idle (python pseudo-client)
+    # Negative controls (local, pkernel_audit_ss): node 1 skipping
+    # `dtr remember` turns memory_thought RED; a relay whose lease_pick always
+    # hands out id 1 turns dynamic_id RED. Kept separate from
+    # distributed-samples-localhost so the two batches fail independently.
+    name: "多プロセス localhost cert 2 (記憶→思考 / 動的ノード ID)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make python3
+      - name: Build kernel (native x86_64) + relay
+        run: |
+          make -C boot/linux_x86_64
+          make -C relay
+      - name: run_memory_thought.sh (node 2 thinks with node 1's p-fs memory)
+        run: timeout 300 bash samples/11_distributed/run_memory_thought.sh
+      - name: run_dynamic_id.sh (relay leases unique, reclaimable node ids)
+        run: timeout 300 bash samples/19_dynamic_id/run_dynamic_id.sh
+
   distributed-samples-localhost:
     # 2026-09-24: none of the 26 samples/11_distributed/run_*.sh scripts (nor
     # samples/19_dynamic_id/run_dynamic_id.sh) was referenced anywhere in CI.
