@@ -66,7 +66,14 @@ knl_dispatch_to_schedtsk:
     IRQ_DISABLE
     movl    $1, knl_dispatch_disabled(%rip)   /* ディスパッチ中 */
     movq    $0, knl_ctxtsk(%rip)              /* ctxtsk = NULL */
-    /* call で入ったので rsp ≡ 8 (mod 16)。knl_dispatch_entry は subq $56
+    /* 一時スタックへ乗り換える（上流 armv7m / rxv2 と同じ）。tk_exd_tsk
+     * はここへ来る前に自分のシステムスタックを knl_Ifree で解放して
+     * いるので、そのまま .Lidle に落ちると idle が解放済みの領域の上で
+     * 走る（D5-k）。tk_ext_tsk でも、休止したタスクのスタックを idle が
+     * 使い続けることになる。knl_tmp_stack は 16 バイト整列なので次の
+     * andq は冗長だが、整列の意図を明示するため残す。 */
+    leaq    knl_tmp_stack+KNL_TMP_STACK_SZ(%rip), %rsp
+    /* （乗り換えを入れる前の経緯）call で入ったので rsp ≡ 8 (mod 16)。knl_dispatch_entry は subq $56
      * で ≡ 0 に揃えてからループへ入るが、ここはフレームを積まない。
      * そのまま .Lidle の call knl_idle_wait に落ちると、C 関数の入口で
      * rsp ≡ 0 となり ABI の整列が 8 バイトずれ、gcc が出す movdqa（sigset_t
