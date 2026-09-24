@@ -34,4 +34,11 @@
 
 #define TCB_SSP		( TCB_tskctxb + CTXB_ssp )
 
+/* 強制ディスパッチ用の一時スタック（cpu_cntl.c の knl_tmp_stack）。
+ * config.h の CNF_TMP_STACK_SIZE（256）は MCU 向けで、ここでは
+ * knl_idle_wait と libc のシグナルマスク操作が乗るため別に取る。
+ * SIGALRM / fault は sigaltstack で走るが、SA_ONSTACK の無い
+ * シグナルが idle 中に来てもフレームが収まる大きさにしておく。 */
+#define KNL_TMP_STACK_SZ	16384
+
 #endif /* _SYSDEPEND_TARGET_OFFSET_ */

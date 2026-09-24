@@ -153,6 +153,8 @@ knl_dispatch_entry:
      * 戻してから schedtsk を再確認する。knl_idle_wait は SIGALRM を
      * ブロックした状態で schedtsk を再チェックするため、この隙間で
      * 実行可能になったタスクを取りこぼすことはない。 */
+    movq    %rsp, %rdi
+    call    knl_idle_sp_check          /* 解放済み領域の上なら abort（D5-k） */
     IRQ_FLAG_CLEAR
     call    knl_idle_wait
     IRQ_DISABLE
