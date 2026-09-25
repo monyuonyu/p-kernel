@@ -50,7 +50,7 @@
 # Watch:  /tmp/cradle_live_*.log   (S's verdict lines are greppable [cradle-live])
 # Exit 0 = the cure + all three falsification arms behaved.
 # Env: CRADLE_LIVE_ARMS (default "ctrl cure off scramble death"; ctrl first),
-#      CRADLE_IDLE_SECS, CRADLE_CANON_DELTA, CRADLE_LIVE_PORT, CRADLE_LIVE_LOGDIR.
+#      CRADLE_TRIPLES, CRADLE_IDLE_CAP_SECS, CRADLE_CANON_DELTA, CRADLE_LIVE_PORT, CRADLE_LIVE_LOGDIR.
 #
 # D5-j (2026-09-25): cure/scramble/death are now judged AGAINST A CONTROL ARM
 # (ctrl: same boot, same idle time, no lesson) on the canonical lesson's held
@@ -456,14 +456,17 @@ run_arm() {
   #                held probe MUST stay >= chance (it is the SEQUENCE, not bytes).
   # The OFF arm skips this entirely (ring must stay 0 by design).
   #
-  # D5-j (2026-09-25): the idle phase is now a FIXED WALL-CLOCK WINDOW
-  # (IDLE_SECS from convergence) for ctrl/cure/scramble/death alike — no early
-  # break — so the control arm's fixture-only S and the taught arms' S get the
-  # same training time, and the verdicts compare them (see CANON_DELTA below).
+  # D5-j (2026-09-25): the idle phase now runs until S has applied TRIPLES DMN
+  # passes (the `triples=` field of `cradle probe-canon`), for ctrl/cure/
+  # scramble/death alike — no early break on a good probe — so the control
+  # arm's fixture-only S and the taught arms' S get the same TRAINING VOLUME,
+  # whatever the host speed (see CANON_DELTA below). IDLE_CAP_SECS bounds it.
   if [ "$arm" != "off" ]; then
-    local _w=0 _t0
+    local _w=0 _t0 _tr
     _t0=$(date +%s)
-    while [ $(( $(date +%s) - _t0 )) -lt "$IDLE_SECS" ]; do
+    while [ $(( $(date +%s) - _t0 )) -lt "$IDLE_CAP_SECS" ]; do
+      _tr=$(s_triples "$arm")
+      [ "${_tr:-0}" -ge "$TRIPLES" ] 2>/dev/null && break
       s_say "cradle probe"
       s_say "cradle probe-canon"
       s_say "MARK-S-IDLE-${_w}-END"
@@ -474,9 +477,9 @@ run_arm() {
       # backlog builds and BURIES the later POST probe. The "-END" terminator
       # stops MARK-S-IDLE-1 matching MARK-S-IDLE-10.
       wait_for_marker "$LOG_S" "MARK-S-IDLE-${_w}-END" 30 || true
-      sleep 5; _w=$((_w + 1))                 # brief idle so the DMN keeps ticking
+      sleep 2; _w=$((_w + 1))                 # poll well inside one DMN pulse (~14s)
     done
-    echo "[cradle-live] $TAG: idled ${IDLE_SECS}s ($_w probe cycles)"
+    echo "[cradle-live] $TAG: idled $(( $(date +%s) - _t0 ))s ($_w probe cycles, triples=$(s_triples "$arm"), want $TRIPLES)"
     if [ "$arm" != "ctrl" ] && ! wait_for_ring "$LOG_S" 5; then
       echo "[cradle-live] OPEN ($TAG): the lesson body never arrived on S"
       echo "             (ring_len stayed 0 over the wire — check the relay frame"
@@ -552,14 +555,16 @@ s_diag_tail() { grep -E '\[cradle-diag\]' "$LOGD/cradle_live_nodeS_$1.log" 2>/de
 s_diag_last() { grep -E '\[cradle-diag\]' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null | tail -1; }
 loss_of()      { printf '%s' "$1" | grep -oE 'probe_loss=[0-9.]+' | grep -oE '[0-9.]+'; }
 canon_of()     { printf '%s' "$1" | grep -oE 'canon_probe=[0-9.]+' | grep -oE '[0-9.]+'; }
+triples_of()   { printf '%s' "$1" | grep -oE 'triples=[0-9]+' | grep -oE '[0-9]+'; }
+CANON_RE='\[cradle-live\] canon_probe=[0-9.]+ ring_len=[0-9]+ preempts=[0-9]+ triples=[0-9]+'
+# The latest training volume S reported (any probe-canon line so far).
+s_triples()    { triples_of "$(grep -oE "$CANON_RE" "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null | tail -1)"; }
 # The POST canonical probe (`cradle probe-canon`), same -B window + fallback as
 # s_post_probe: the autonomous DMN never prints this line, only the verb does.
 s_post_canon() {
   local L="$LOGD/cradle_live_nodeS_$1.log" v
-  v=$(grep -B12 'MARK-S-POST-PROBE-END' "$L" 2>/dev/null \
-        | grep -oE '\[cradle-live\] canon_probe=[0-9.]+ ring_len=[0-9]+ preempts=[0-9]+' | tail -1)
-  [ -z "$v" ] && v=$(grep -oE '\[cradle-live\] canon_probe=[0-9.]+ ring_len=[0-9]+ preempts=[0-9]+' \
-                       "$L" 2>/dev/null | tail -1)
+  v=$(grep -B12 'MARK-S-POST-PROBE-END' "$L" 2>/dev/null | grep -oE "$CANON_RE" | tail -1)
+  [ -z "$v" ] && v=$(grep -oE "$CANON_RE" "$L" 2>/dev/null | tail -1)
   printf '%s' "$v"
 }
 # numeric compare without bc: awk.
@@ -581,18 +586,29 @@ CURE_FLOOR=0.5         # the cure must drop the held probe >= 0.5 nats below cha
 # learned, and a scramble arm whose body did not arrive read the fixture and
 # failed for the same reason. The verdicts are therefore RELATIVE:
 #   ctrl     : S boots exactly like cure (baby, autonomous DMN), T is up but
-#              emits nothing. After IDLE_SECS its CANONICAL held probe
+#              emits nothing. After TRIPLES DMN passes its CANONICAL held probe
 #              (`cradle probe-canon`: the lesson's held windows, whatever the
 #              ring holds) is CANON_K.
 #   cure     : canon probe <= CANON_K - CANON_DELTA   (the lesson taught more
-#              than the same time of fixture training)
+#              than the same volume of fixture training)
 #   death    : same bound after T is killed           (it stays)
 #   scramble : canon probe >  CANON_K - CANON_DELTA   (random bytes of the
 #              same length do not teach the lesson's continuation)
+#
+# WHY TRIPLES, NOT SECONDS: training is deterministic per K=8 slice, and one
+# slice runs per DMN pulse (~14s here). A wall-clock window therefore let host
+# speed decide the verdict: with a fixed 150s, cure-ctrl was 0.56 run alone and
+# 0.40 with three runs sharing the host (ctrl read 2.9377 in all three, i.e.
+# the same slice count). Every arm now idles until S reports triples>=TRIPLES
+# and is judged at that volume. TRIPLES must stay below the boot fixture batch
+# (192 triples on this corpus): with the pre-empt removed, the lesson cannot
+# enter before that batch ends, so the no-pre-empt build reads exactly ctrl's
+# value and goes RED — that is the negative control.
 # CANON_DELTA is set from measured runs; see the numbers next to it.
-IDLE_SECS="${CRADLE_IDLE_SECS:-150}"
+TRIPLES="${CRADLE_TRIPLES:-160}"
+IDLE_CAP_SECS="${CRADLE_IDLE_CAP_SECS:-600}"   # < the 900s feeder life
 CANON_DELTA="${CRADLE_CANON_DELTA:-0.5}"   # PROVISIONAL until calibrated (see above)
-echo "[cradle-live] arms: $ARMS   IDLE_SECS=$IDLE_SECS   CANON_DELTA=$CANON_DELTA"
+echo "[cradle-live] arms: $ARMS   TRIPLES=$TRIPLES   IDLE_CAP_SECS=$IDLE_CAP_SECS   CANON_DELTA=$CANON_DELTA"
 
 CANON_K=""
 need_ctrl() {
@@ -600,17 +616,25 @@ need_ctrl() {
   fail "$1: no control-arm reading (the ctrl arm must run first and print canon_probe)"
   return 1
 }
+# The POST reading must be at (or one slice past) the target volume; a reading
+# short of it means the cap ran out, and comparing it would be the old bug.
+need_volume() {
+  local t; t=$(triples_of "$2")
+  [ "${t:-0}" -ge "$TRIPLES" ] 2>/dev/null && return 0
+  fail "$1: S applied only ${t:-0} triples within ${IDLE_CAP_SECS}s (want >= $TRIPLES) — not comparable"
+  return 1
+}
 
 # ===========================================================================
-# ARM ctrl: T teaches nothing; S trains the fixture only for IDLE_SECS.
+# ARM ctrl: T teaches nothing; S trains the fixture only for TRIPLES passes.
 # ===========================================================================
 if has_arm ctrl; then
   run_arm ctrl
   echo
-  echo "===== CONTROL (no lesson; fixture-only training for ${IDLE_SECS}s) ====="
+  echo "===== CONTROL (no lesson; fixture-only training for ${TRIPLES} triples) ====="
   POST_KC=$(s_post_canon ctrl); RING_K=$(s_max_ring ctrl)
   echo "S max ring_len: $RING_K   S post: $POST_KC"
-  CANON_K=$(canon_of "$POST_KC")
+  need_volume CTRL "$POST_KC" && CANON_K=$(canon_of "$POST_KC")
   [ "${RING_K:-0}" -eq 0 ] 2>/dev/null || fail "CTRL: a lesson reached S although T emitted none (ring_len=$RING_K)"
   [ -n "$CANON_K" ] || fail "CTRL: missing canon_probe readout"
 fi
@@ -640,7 +664,7 @@ if has_arm cure; then
     flt_lt "$POST_CL" "$(awk -v c=$CHANCE -v f=$CURE_FLOOR 'BEGIN{print c-f}')" \
       || fail "CURE: held probe did not drop >= $CURE_FLOOR nats below chance (post=$POST_CL)"
   else fail "CURE: missing probe readout (pre=$PRE_CL post=$POST_CL)"; fi
-  if need_ctrl CURE; then
+  if need_volume CURE "$POST_CC" && need_ctrl CURE; then
     echo "[cradle-live] CURE vs control: canon $CANON_C vs $CANON_K (diff $(flt_sub "$CANON_K" "${CANON_C:-99}"), need >= $CANON_DELTA)"
     [ -n "$CANON_C" ] && flt_ge "$(flt_sub "$CANON_K" "$CANON_C")" "$CANON_DELTA" \
       || fail "CURE: the lesson's held probe is not >= $CANON_DELTA below the fixture-only control (cure=$CANON_C ctrl=$CANON_K)"
@@ -679,7 +703,7 @@ if has_arm scramble; then
   echo "S post: $POST_SC   (control: ${CANON_K:-?})"
   CANON_S=$(canon_of "$POST_SC")
   [ "${RING_S:-0}" -gt 0 ] 2>/dev/null || fail "(B): the scramble body did not arrive (ring=0) — Arm B would be vacuous"
-  if need_ctrl "(B)"; then
+  if need_volume "(B)" "$POST_SC" && need_ctrl "(B)"; then
     [ -n "$CANON_S" ] && flt_lt "$(flt_sub "$CANON_K" "$CANON_S")" "$CANON_DELTA" \
       || fail "(B): a scrambled-byte lesson taught the lesson's held probe (scramble=$CANON_S ctrl=$CANON_K, want diff < $CANON_DELTA)"
   fi
@@ -698,7 +722,7 @@ if has_arm death; then
   echo "S max ring_len: $RING_D   S post (after T death): $POST_D"
   echo "S post (after T death): $POST_DC   (control: ${CANON_K:-?})"
   CANON_D=$(canon_of "$POST_DC")
-  if need_ctrl "(C)"; then
+  if need_volume "(C)" "$POST_DC" && need_ctrl "(C)"; then
     [ -n "$CANON_D" ] && flt_ge "$(flt_sub "$CANON_K" "$CANON_D")" "$CANON_DELTA" \
       || fail "(C): after T died S is not >= $CANON_DELTA below the control (death=$CANON_D ctrl=$CANON_K) — the mind did not survive the teacher"
   fi

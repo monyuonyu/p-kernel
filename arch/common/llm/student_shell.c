@@ -363,6 +363,7 @@ static int   g_consol_rounds    = 0;
 static float g_consol_lr        = 0.0f;
 static int   g_consol_train_end = 0;  /* held-out boundary snapshot            */
 static int   g_consol_heldw     = 0;  /* held-out window count snapshot        */
+static unsigned long g_consol_triples = 0; /* lifetime DMN passes applied (observability) */
 
 #define STUDENT_SEED 0x0BABEu          /* same seed distill_proof uses         */
 
@@ -770,9 +771,11 @@ int student_dmn_consolidate(void)
 #else
     int budget = ST_DMN_PASS_BUDGET;
 #endif
+    int idx0 = g_consol_idx;
     g_consol_idx = sleep_rounds_resume(&g_student, g_consol_seqlen,
                                        g_consol_trainw, g_consol_rounds,
                                        g_consol_lr, g_consol_idx, budget);
+    if (g_consol_idx > idx0) g_consol_triples += (unsigned long)(g_consol_idx - idx0);
 
     if (g_consol_idx < g_consol_total)
         return 0;   /* batch still draining: yield (no persist, no sleep-line) */
@@ -923,9 +926,12 @@ void cradle_live_probe(emit_fn emit)
  * that lesson is the ring, so a cure node and a fixture-only control node are
  * measured on identical held windows:
  *
- *   [cradle-live] canon_probe=<L> ring_len=<n> preempts=<k>
+ *   [cradle-live] canon_probe=<L> ring_len=<n> preempts=<k> triples=<t>
  *
- * Pure read; no training, no save. A baby-less node reports chance. */
+ * triples = lifetime DMN passes applied (fixture + lesson, aborted batches
+ * included): the harness compares arms at EQUAL training volume, not equal
+ * wall-clock time (D5-j calibration). Pure read; no training, no save. A
+ * baby-less node reports chance. */
 void cradle_live_probe_canon(emit_fn emit)
 {
     if (!emit) return;
@@ -951,8 +957,9 @@ void cradle_live_probe_canon(emit_fn emit)
         if (got) probe = (float)(s / got);
     }
     snprintf(line, sizeof line,
-             "[cradle-live] canon_probe=%.4f ring_len=%d preempts=%u\r\n",
-             (double)probe, cradle_lesson_len(), cradle_lesson_preempt_count());
+             "[cradle-live] canon_probe=%.4f ring_len=%d preempts=%u triples=%lu\r\n",
+             (double)probe, cradle_lesson_len(), cradle_lesson_preempt_count(),
+             g_consol_triples);
     emit(line);
 }
 
