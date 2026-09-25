@@ -40,6 +40,10 @@ trap 'rm -rf "$WORK"' EXIT
 # chat verb (it exercises student_dmn_consolidate + st_save byte-identity only),
 # but the symbols must still resolve at link time.
 SRC="$HERE/student_yield_test.c $ROOT/arch/common/llm/student.c $ROOT/arch/common/llm/cradle.c $ROOT/arch/common/llm/dlb.c"
+# yield_pull_hook.c: a strong cradle_poll_and_pull that re-offers a pending
+# lesson until it ingests (the transport's high-water rule) — Cert D needs the
+# start-of-batch pull to deliver. No-op while nothing is pending (Certs A-C).
+SRC="$SRC $HERE/yield_pull_hook.c"
 
 # student_shell.c (#included by the test) now references the 良心 floor
 # (conscience_check / conscience_on_refuse) and the Frontier Mouth self-test

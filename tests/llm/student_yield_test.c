@@ -319,7 +319,97 @@ int main(void)
     CHECK(ig2 == (int)sizeof L2 && cradle_lesson_len() == (int)sizeof L2,
           "[yield-corpus-frozen] deferred lesson ingests after batch completes (not dropped)");
 
+    CHECK(cradle_lesson_preempt_count() == 0,
+          "[yield-corpus-frozen] a LESSON batch is never pre-empted (preempts=0)");
+
     free(bC_g); free(bC_r); st_free(&refC);
+    cradle_lesson_clear(); cradle_lesson_freeze(0);
+
+    /* ===================================================================
+     * Cert D — [yield-fixture-preempt] (D5-j): a lesson arriving while a
+     * FIXTURE batch holds the freeze must not wait for that batch. Ingest
+     * still defers (ring untouched mid-batch), the next consolidate() call
+     * aborts the fixture batch, and the new batch trains ON the lesson.
+     * Exact expectation: the model == (the first K fixture triples) followed
+     * by (the whole L1 batch, all-at-once). A too-small (refused) lesson must
+     * NOT pre-empt.
+     * =================================================================== */
+    extern const uint8_t *g_yield_pending;
+    extern int g_yield_pending_len, g_yield_last_ingest;
+
+    int cnF = cradle_corpus_len();                  /* ring empty -> fixture */
+    int twF = (cnF / ST_DMN_SEQLEN) * 3 / 4; if (twF < 2) twF = 2;
+    int cnL = (int)sizeof L1;
+    int twL = (cnL / ST_DMN_SEQLEN) * 3 / 4; if (twL < 2) twL = 2;
+    int totL = ST_DMN_ROUNDS * twL;
+
+    st_model refD; if (st_init(&refD, STUDENT_SEED) != ST_OK) { printf("[yield] refD OOM\n"); return 2; }
+    sleep_rounds_resume(&refD, ST_DMN_SEQLEN, twF, ST_DMN_ROUNDS, ST_DMN_LR,
+                        0, ST_DMN_PASS_BUDGET);            /* one fixture slice */
+    cradle_lesson_ingest(L1, (int)sizeof L1);
+    sleep_rounds(&refD, ST_DMN_SEQLEN, twL, ST_DMN_ROUNDS, ST_DMN_LR);
+    cradle_lesson_clear(); cradle_lesson_freeze(0);
+
+    st_free(&g_student); g_have_student = 0; g_loaded_from_disk = 0;
+    g_consol_active = 0; g_consol_idx = 0; cradle_lesson_freeze(0);
+    if (student_ensure(0) != 0) { printf("[yield] ensure D OOM\n"); return 2; }
+
+    unsigned pre0 = cradle_lesson_preempt_count();
+    int rcD = student_dmn_consolidate();               /* fixture batch, 1 slice */
+    int fixture_busy = (rcD == 0 && g_consol_active && cradle_lesson_len() == 0);
+
+    static uint8_t tiny[64];                           /* < CRADLE_MIN_LIVE: refused */
+    g_yield_pending = tiny; g_yield_pending_len = (int)sizeof tiny;
+    cradle_poll_and_pull();                            /* net task: -1, no request */
+    int tiny_rc = g_yield_last_ingest;
+    g_yield_pending = 0;
+    int idx_before = g_consol_idx;
+    student_dmn_consolidate();                         /* must CONTINUE the fixture */
+    int tiny_no_preempt = (cradle_lesson_preempt_count() == pre0 &&
+                           g_consol_idx == idx_before + ST_DMN_PASS_BUDGET);
+
+    /* rebuild: the refused-lesson step above ran a second fixture slice, so
+     * restart the sliced baby to keep the exact one-slice expectation. */
+    st_free(&g_student); g_have_student = 0;
+    g_consol_active = 0; g_consol_idx = 0; cradle_lesson_freeze(0);
+    if (student_ensure(0) != 0) { printf("[yield] ensure D2 OOM\n"); return 2; }
+    student_dmn_consolidate();                         /* fixture batch, 1 slice */
+
+    g_yield_pending = L1; g_yield_pending_len = (int)sizeof L1;
+    cradle_poll_and_pull();                            /* net task mid-batch */
+    int defer_rc = g_yield_last_ingest, ring_mid = cradle_lesson_len();
+
+    int callsD = 0, rc2;
+    do {
+        rc2 = student_dmn_consolidate();
+        callsD++;
+        if (callsD == 1) {
+            printf("[yield] Cert D: after pre-empt ring=%d total=%d (want %d)\n",
+                   cradle_lesson_len(), g_consol_total, totL);
+        }
+        if (callsD > totL + 8) { printf("[yield] Cert D loop runaway\n"); break; }
+    } while (rc2 == 0);
+
+    long ld_g, ld_r;
+    unsigned char *bD_g = dump(&g_student, &ld_g);
+    unsigned char *bD_r = dump(&refD,      &ld_r);
+    printf("[yield] Cert D: twF=%d twL=%d totL=%d callsD=%d defer_rc=%d ring_mid=%d "
+           "tiny_rc=%d preempts=%u\n", twF, twL, totL, callsD, defer_rc, ring_mid,
+           tiny_rc, cradle_lesson_preempt_count() - pre0);
+
+    CHECK(fixture_busy,
+          "[yield-fixture-preempt] a FIXTURE batch was in flight (ring empty, busy)");
+    CHECK(tiny_rc == -1 && tiny_no_preempt,
+          "[yield-fixture-preempt] a refused lesson does NOT pre-empt (batch continued)");
+    CHECK(defer_rc == 0 && ring_mid == 0,
+          "[yield-fixture-preempt] mid-batch ingest still DEFERS (ring untouched)");
+    CHECK(cradle_lesson_preempt_count() - pre0 == 1 && cradle_lesson_len() == (int)sizeof L1,
+          "[yield-fixture-preempt] fixture batch pre-empted once; lesson installed");
+    CHECK(bD_g && bD_r && ld_g == ld_r && ld_g > 0 &&
+          memcmp(bD_g, bD_r, (size_t)ld_g) == 0,
+          "[yield-fixture-preempt] blob == 1 fixture slice + whole L1 batch (byte-identical)");
+
+    free(bD_g); free(bD_r); st_free(&refD);
     cradle_lesson_clear(); cradle_lesson_freeze(0);
 
     printf("\n[yield] %d passed, %d failed\n", g_pass, g_fail);

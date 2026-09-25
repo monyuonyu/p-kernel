@@ -89,11 +89,31 @@ extern const char *conscience_on_refuse(unsigned char site, int verdict);
  * after the batch completes and unfreezes (LATEST_ONLY beacon + re-pollable ref
  * gossip). So the corpus is genuinely FROZEN for the batch — one batch of
  * latency before a brand-new lesson begins consolidating.
+ *
+ * FIXTURE PRE-EMPT (D5-j, 2026-09-25): that one batch of latency is only
+ * acceptable when the frozen batch is itself a LESSON batch. A node's first
+ * batch after boot trains the FIXTURE (ring empty), and a fixture batch is long
+ * (measured on the dev host: 192 triples, ~318s at one K=8 slice per DMN idle
+ * pulse), so a lesson arriving right after boot waited >5 min. Now: if the
+ * frozen batch was started on the FIXTURE and a lesson that WOULD be accepted
+ * arrives, ingest still DEFERS (returns 0, ring unchanged — the net task never
+ * writes the ring mid-batch), but raises g_lesson_preempt. The student takes it
+ * at its next consolidate() call boundary (cradle_lesson_preempt_take), aborts
+ * the fixture batch (student_consol_abort: a partial batch is a valid under-
+ * trained state), and the start-of-batch pull then ingests the lesson and
+ * starts the next batch ON THE LESSON. A lesson batch is frozen exactly as
+ * before (no pre-empt), so byte-identity of every batch that runs to completion
+ * is unchanged. The size / conscience checks now run BEFORE the freeze check,
+ * so a lesson that would be refused never pre-empts (it returns -1, which the
+ * transport treats like 0: no high-water advance).
  * ------------------------------------------------------------------------- */
 static uint8_t g_lesson_ring[CRADLE_RING_BYTES];
 static int     g_lesson_len = 0;        /* live lesson byte length, 0 = none  */
 static int     g_cradle_enabled = 1;    /* Arm A gate: pulling rides the mesh */
 static int     g_lesson_frozen  = 0;    /* 1 = a sliced consol batch owns the ring */
+static int     g_frozen_fixture = 0;    /* 1 = the frozen batch trains the FIXTURE */
+static int     g_lesson_preempt = 0;    /* 1 = a lesson waits on a fixture batch   */
+static unsigned g_preempt_count = 0;    /* lifetime pre-empts taken (observability) */
 
 /* The ring is "live" (drives training) only when it holds at least a few full
  * windows, so a tiny/garbage lesson cannot starve the fixture. Mirrors the
@@ -127,13 +147,6 @@ const uint8_t *cradle_window_src(int *len_out)
  * same bytes is harmless (the high-water in the transport dedups by seq). */
 int cradle_lesson_ingest(const uint8_t *body, int len)
 {
-    /* COOPERATIVE-YIELD freeze: a sliced consolidation batch owns the corpus —
-     * DEFER (return 0, ring UNCHANGED) so the bytes window() trains on stay
-     * frozen for the whole batch (byte-identity to all-at-once). Re-pollable:
-     * the transport only advances its high-water on ingest>0, so a deferred
-     * lesson is re-pulled on the next poll after the batch unfreezes; nothing
-     * is dropped. Distinct from the -1 "hard refuse" (empty/too-big/too-small). */
-    if (g_lesson_frozen) return 0;
     if (!body || len <= 0 || len > CRADLE_RING_BYTES) return -1;
     if (len < CRADLE_MIN_LIVE) return -1;   /* too small to train -> keep fixture */
 
@@ -159,6 +172,19 @@ int cradle_lesson_ingest(const uint8_t *body, int len)
     }
 #endif
 
+    /* COOPERATIVE-YIELD freeze: a sliced consolidation batch owns the corpus —
+     * DEFER (return 0, ring UNCHANGED) so the bytes window() trains on stay
+     * frozen for the whole batch (byte-identity to all-at-once). Re-pollable:
+     * the transport only advances its high-water on ingest>0, so a deferred
+     * lesson is re-pulled on the next poll after the batch unfreezes; nothing
+     * is dropped. Distinct from the -1 "hard refuse" (empty/too-big/too-small).
+     * If the frozen batch is a FIXTURE batch, ask the student to abandon it
+     * (FIXTURE PRE-EMPT above) — the ring itself is still not touched here. */
+    if (g_lesson_frozen) {
+        if (g_frozen_fixture && g_cradle_enabled) g_lesson_preempt = 1;
+        return 0;
+    }
+
     memcpy(g_lesson_ring, body, (size_t)len);
     g_lesson_len = len;
     return len;
@@ -170,7 +196,24 @@ int cradle_lesson_ingest(const uint8_t *body, int len)
  * cradle_lesson_freeze(0) at completion or abort. While frozen,
  * cradle_lesson_ingest defers (above). No-op-safe everywhere it is not called
  * (default unfrozen), so the standalone cradle certs are unaffected. */
-void cradle_lesson_freeze(int on)   { g_lesson_frozen = on ? 1 : 0; }
+void cradle_lesson_freeze(int on)
+{
+    g_lesson_frozen  = on ? 1 : 0;
+    g_frozen_fixture = on ? (cradle_window_src(0) == 0) : 0;
+    g_lesson_preempt = 0;   /* a new batch / an unfreeze starts with no request */
+}
+
+/* The student calls this at each consolidate() call boundary while a batch is
+ * active: returns 1 (and clears the request) iff a lesson arrived while a
+ * FIXTURE batch held the freeze — the student then aborts that batch. */
+int cradle_lesson_preempt_take(void)
+{
+    if (!g_lesson_preempt) return 0;
+    g_lesson_preempt = 0;
+    g_preempt_count++;
+    return 1;
+}
+unsigned cradle_lesson_preempt_count(void) { return g_preempt_count; }
 
 /* observability / test hooks (pure). */
 int  cradle_lesson_len(void)        { return g_lesson_len; }

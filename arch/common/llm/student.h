@@ -447,6 +447,13 @@ int  cradle_lesson_ingest(const uint8_t *body, int len);
  * unfrozen, so any caller that never touches it is unaffected. */
 void cradle_lesson_freeze(int on);
 
+/* FIXTURE PRE-EMPT (D5-j): 1 (and clears) iff a lesson that would be accepted
+ * arrived while a batch that started on the FIXTURE held the freeze. The
+ * student then aborts that batch so the next one starts on the lesson. A
+ * lesson batch never raises it. preempt_count = lifetime takes (observability). */
+int      cradle_lesson_preempt_take(void);
+unsigned cradle_lesson_preempt_count(void);
+
 /* The CANONICAL live lesson (T-fix-c): unify live == cert. cradle_canon_budget()
  * returns the cert's CT_CERT_BUDGET (== the composed length). cradle_compose_canon
  * composes into out[cap] (cap >= cradle_canon_budget()) the SAME trainable, train/
