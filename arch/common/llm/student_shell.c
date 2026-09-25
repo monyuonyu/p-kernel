@@ -716,7 +716,14 @@ int student_dmn_consolidate(void)
      * start a batch on the first call (snapshot the plan + pull the lesson),
      * then run <=K complete passes per call and RETURN while it drains. The
      * dmn_task tk_dly_tsk loop is the yield between calls, so the node serves
-     * its shell/net/mind-ask every pulse instead of dreaming non-preemptibly. */
+     * its shell/net/mind-ask every pulse instead of dreaming non-preemptibly.
+     *
+     * FIXTURE PRE-EMPT (D5-j, cradle.c): a lesson that arrived while a FIXTURE
+     * batch held the freeze asks us to drop that batch. Abort here, at a call
+     * boundary (every applied pass is a whole triple), so the start-of-batch
+     * pull below ingests the lesson and the new batch trains ON it. */
+    if (g_consol_active && cradle_lesson_preempt_take())
+        student_consol_abort();
     if (!g_consol_active) {
         /* T-fix-b: pull a teacher's mesh-delivered lesson into the ring (if
          * any) BEFORE windowing, so the sleep consolidates the LESSON when one
@@ -905,6 +912,47 @@ void cradle_live_probe(emit_fn emit)
     snprintf(line, sizeof line,
              "[cradle-live] ring_len=%d probe_loss=%.4f chance=%.4f\r\n",
              rlen, (double)probe, (double)chance);
+    emit(line);
+}
+
+/* [cradle-live] CANONICAL held probe (D5-j (d)). cradle_live_probe reads the
+ * LIVE corpus, so on a node whose ring is empty it measures the FIXTURE's held
+ * windows — it cannot say how well a lesson-less node already predicts the
+ * LESSON. This one always reads the canonical lesson (cradle_compose_canon, the
+ * bytes `cradle emit-canon` sends) at the SAME split cradle_live_probe uses when
+ * that lesson is the ring, so a cure node and a fixture-only control node are
+ * measured on identical held windows:
+ *
+ *   [cradle-live] canon_probe=<L> ring_len=<n> preempts=<k>
+ *
+ * Pure read; no training, no save. A baby-less node reports chance. */
+void cradle_live_probe_canon(emit_fn emit)
+{
+    if (!emit) return;
+    static uint8_t canon[CRADLE_RING_BYTES];
+    char line[160];
+    float probe = st_logf(256.0f);
+    int n = cradle_compose_canon(canon, (int)sizeof canon, 0);
+    if (n <= 0) { emit("[cradle-live] canon_probe compose FAILED\r\n"); return; }
+    if (g_have_student) {
+        int total     = n / ST_DMN_SEQLEN;
+        int trainw    = total * 3 / 4; if (trainw < 2) trainw = 2;
+        int heldw     = total - trainw; if (heldw < 1) heldw = 1;
+        int train_end = trainw * ST_DMN_SEQLEN;
+        uint8_t buf[ST_MAXSEQ];
+        double s = 0.0; int got = 0;
+        for (int w = 0; w < heldw; w++) {
+            for (int i = 0; i < ST_DMN_SEQLEN; i++)
+                buf[i] = canon[(train_end + w * ST_DMN_SEQLEN + i) % n];
+            int np = 0;
+            float l = st_eval_loss(&g_student, buf, ST_DMN_SEQLEN, &np);
+            if (np) { s += l; got++; }
+        }
+        if (got) probe = (float)(s / got);
+    }
+    snprintf(line, sizeof line,
+             "[cradle-live] canon_probe=%.4f ring_len=%d preempts=%u\r\n",
+             (double)probe, cradle_lesson_len(), cradle_lesson_preempt_count());
     emit(line);
 }
 

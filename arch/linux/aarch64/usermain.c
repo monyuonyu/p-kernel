@@ -94,6 +94,7 @@ IMPORT void cradle_net_task(INT stacd, void *exinf);  /* T-fix-b lesson bridge *
 IMPORT INT  cradle_teach_emit(const UB *body, UW len);/* T-fix-b teacher emit */
 IMPORT int  cradle_teach_self_test(void (*emit)(const char *)); /* [cradle-teach] */
 IMPORT void cradle_live_probe(void (*emit)(const char *));      /* [cradle-live] probe */
+IMPORT void cradle_live_probe_canon(void (*emit)(const char *)); /* canonical held probe */
 IMPORT void cradle_set_enabled(int on);                         /* [cradle-live] arm A */
 IMPORT int  cradle_compose_canon(UB *out, int cap, int *probe_off); /* T-fix-c canon */
 IMPORT int  cradle_canon_budget(void);                          /* T-fix-c canon budget */
@@ -1403,7 +1404,12 @@ EXPORT INT usermain(void)
              *   cradle               alias for `cradle test`.                     */
             const UB *a = line + 6; INT al = n - 6;
             while (al > 0 && (*a == ' ' || *a == '\t')) { a++; al--; }
-            if (al >= 5 && a[0]=='p'&&a[1]=='r'&&a[2]=='o'&&a[3]=='b'&&a[4]=='e') {
+            if (al >= 11 && a[0]=='p'&&a[1]=='r'&&a[2]=='o'&&a[3]=='b'&&a[4]=='e'
+                && a[5]=='-'&&a[6]=='c'&&a[7]=='a'&&a[8]=='n'&&a[9]=='o'&&a[10]=='n') {
+                /* `cradle probe-canon`: held probe over the CANONICAL lesson,
+                 * whatever the ring holds (D5-j control arm). */
+                cradle_live_probe_canon(print);
+            } else if (al >= 5 && a[0]=='p'&&a[1]=='r'&&a[2]=='o'&&a[3]=='b'&&a[4]=='e') {
                 /* [cradle-live] self-report off the LIVE corpus at train_end. */
                 cradle_live_probe(print);
             } else if (al >= 3 && a[0]=='o'&&a[1]=='f'&&a[2]=='f') {
