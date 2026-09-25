@@ -604,10 +604,24 @@ CURE_FLOOR=0.5         # the cure must drop the held probe >= 0.5 nats below cha
 # (192 triples on this corpus): with the pre-empt removed, the lesson cannot
 # enter before that batch ends, so the no-pre-empt build reads exactly ctrl's
 # value and goes RED — that is the negative control.
-# CANON_DELTA is set from measured runs; see the numbers next to it.
+#
+# CANON_DELTA CALIBRATION (2026-09-25, x86_64 hosted, TRIPLES=160, each run
+# ALONE on the host, arms "ctrl cure", tip 7168c28e):
+#   run          ctrl (triples)   cure (triples)   ctrl-cure
+#   k1, k2, k3   2.7727 (160)     1.5813 (164)     1.1914  (all digits equal)
+#   no pre-empt  2.7727 (160)     2.7727 (160)     0.0000  (ring 0; RED)
+# (ctrl also read 2.7727 in both negative-control runs: 5 ctrl, 3 cure.)
+#   corrupt body 2.7727 (160)     5.9254 (160)    -3.1527  (ring 1280; RED)
+# Every per-slice value of both curves repeated to the last digit across
+# runs (the cure lesson entered after the first 8-triple fixture slice every
+# time; its batches are 58 triples, hence 164). The spread is therefore 0,
+# and DELTA=0.6 sits near the middle of the 0.00..1.19 gap. What would move
+# it: a lesson that lands one slice later reads 1.6258 at 156 (diff 1.15);
+# ctrl wanders 2.77..2.99 over 96..160 triples. Recalibrate if TRIPLES, the
+# fixture, the lesson or the model changes.
 TRIPLES="${CRADLE_TRIPLES:-160}"
 IDLE_CAP_SECS="${CRADLE_IDLE_CAP_SECS:-600}"   # < the 900s feeder life
-CANON_DELTA="${CRADLE_CANON_DELTA:-0.5}"   # PROVISIONAL until calibrated (see above)
+CANON_DELTA="${CRADLE_CANON_DELTA:-0.6}"
 echo "[cradle-live] arms: $ARMS   TRIPLES=$TRIPLES   IDLE_CAP_SECS=$IDLE_CAP_SECS   CANON_DELTA=$CANON_DELTA"
 
 CANON_K=""
