@@ -235,6 +235,66 @@ static void accumulate_pkt(DKVA_RESP_PKT *acc, const DKVA_RESP_PKT *rp)
         }
 }
 
+/* ------------------------------------------------------------------ */
+/* 決まった順で畳む (federation.md §5.3-2, 2026-09-27)                 */
+/*                                                                     */
+/* 届いた順に float を足すと、同じ寄与の集合でも下位ビットが到着順で   */
+/* 変わる。requester は届いた partial / region 要約を id ごとに置いて   */
+/* おき、窓のあとで「自分 → id 昇順 (各 id で resp → rsum)」で畳む。  */
+/* 自分の partial は呼び出し側が最初に accumulate 済み。                */
+/* 置き場は 64 id × 2 × 172B ≈ 22KB なのでスタックでなく static。       */
+/* dkva_infer は dtr.c と shell の2か所から呼ばれ得るので g_fold_sem で */
+/* 1本ずつ通す。自己テスト [dkva-fold-order] も同じ関数を通る。         */
+/*                                                                     */
+/* ★falsifier -DDKVA_FOLD_ARRIVAL_ORDER: 旧来どおり届いた瞬間に足す。  */
+/*   同じ集合を別の順で流すと結果が変わり、自己テストが赤になる。       */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    DKVA_RESP_PKT resp[DNODE_MAX];   /* 自 region の per-source partial */
+    DKVA_RESP_PKT rsum[DNODE_MAX];   /* 他 region の coordinator 要約   */
+    UB            has_resp[DNODE_MAX];
+    UB            has_rsum[DNODE_MAX];
+} DKVA_FOLD;
+
+static DKVA_FOLD g_fold;
+static ID        g_fold_sem = 0;     /* 0 = 未作成 (作れなければ排他なし) */
+
+static void fold_reset(DKVA_FOLD *f)
+{
+    for (UB n = 0; n < DNODE_MAX; n++) { f->has_resp[n] = 0; f->has_rsum[n] = 0; }
+}
+
+static void fold_arrive(DKVA_FOLD *f, UB n, BOOL is_rsum, const DKVA_RESP_PKT *p,
+                        float total_out[DKVA_SEQ][DKVA_NH][DKVA_DH],
+                        float total_sum[DKVA_SEQ][DKVA_NH])
+{
+#ifdef DKVA_FOLD_ARRIVAL_ORDER
+    (void)f; (void)n; (void)is_rsum;
+    accumulate(total_out, total_sum, p);
+#else
+    (void)total_out; (void)total_sum;
+    if (is_rsum) { f->rsum[n] = *p; f->has_rsum[n] = 1; }
+    else         { f->resp[n] = *p; f->has_resp[n] = 1; }
+#endif
+}
+
+static void fold_finish(const DKVA_FOLD *f,
+                        float total_out[DKVA_SEQ][DKVA_NH][DKVA_DH],
+                        float total_sum[DKVA_SEQ][DKVA_NH])
+{
+#ifdef DKVA_FOLD_ARRIVAL_ORDER
+    (void)f; (void)total_out; (void)total_sum;
+#else
+    for (UB n = 0; n < DNODE_MAX; n++) {
+        if (f->has_resp[n]) accumulate(total_out, total_sum, &f->resp[n]);
+        if (f->has_rsum[n]) accumulate(total_out, total_sum, &f->rsum[n]);
+    }
+#endif
+}
+
+static void fold_lock(void)   { if (g_fold_sem > 0) tk_wai_sem(g_fold_sem, 1, TMO_FEVR); }
+static void fold_unlock(void) { if (g_fold_sem > 0) tk_sig_sem(g_fold_sem, 1); }
+
 /* 自分以外に「自 region 外の生存ノード」が居るか (= rsum を読む他 region が
  * 存在するか)。region_is_member() を使うので呼ぶ前に region_recompute() 済みの
  * こと (region_coordinator() が直前に再計算する)。単一 region では coordinator が
@@ -607,6 +667,8 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                          &exp_cnt0, &rc_cnt0, &uncertain_cnt);
     }
 
+    fold_lock();              /* g_fold を使う間だけ (下の fold_finish で解放) */
+    fold_reset(&g_fold);
     while (tmo_left > 0) {
         for (UB n = 0; n < DNODE_MAX; n++) {
             /* --- 自 region の per-source partial (自分宛 origin==me のみ) --- */
@@ -621,7 +683,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     resp_cnt++;
                     stat_resp_got++;
                     total_entries += rp.n_entries;
-                    accumulate(total_out, total_sum, &rp);
+                    fold_arrive(&g_fold, n, FALSE, &rp, total_out, total_sum);
                     dk_puts("[dkva] resp from node "); dk_putdec(rp.src_node);
                     dk_puts("  entries="); dk_putdec(rp.n_entries); dk_puts("\r\n");
                 }
@@ -646,7 +708,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
                     }
                     if (rc_expect[n]) rc_got++;
                     total_entries += rs.n_entries;
-                    accumulate(total_out, total_sum, &rs);
+                    fold_arrive(&g_fold, n, TRUE, &rs, total_out, total_sum);
                     dk_puts("[dkva] region summary rid="); dk_putdec(n);
                     dk_puts("  entries="); dk_putdec(rs.n_entries); dk_puts("\r\n");
                 }
@@ -687,6 +749,8 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         tk_dly_tsk(20);
         tmo_left -= 20;
     }
+    fold_finish(&g_fold, total_out, total_sum);   /* 自分 → id 昇順 */
+    fold_unlock();
 
     /* 期待も寄与も不確実枠も無い = 真の単独ノード → ローカル MHSA へ
      * フォールバック。uncertain な生存 remote が居る場合は単独ではない
@@ -879,6 +943,12 @@ void dkva_init(void)
     kv_head  = 0;
     kv_count = 0;
     stat_req_sent = stat_resp_got = stat_timeout = stat_resp_sent = 0;
+    if (g_fold_sem <= 0) {   /* dkva_infer の畳み置き場 g_fold の排他 */
+        T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO, .isemcnt = 1, .maxsem = 1 };
+        ER id = tk_cre_sem(&cs);
+        g_fold_sem = (id > 0) ? (ID)id : 0;
+        if (id <= 0) dk_puts("[dkva] fold sem not created; inferences not serialized\r\n");
+    }
     for (INT i = 0; i < DKVA_CACHE_SIZE; i++) kv_cache[i].valid = 0;
     for (UB n = 0; n < DNODE_MAX; n++) {
         h_q_pub[n]    = -1; h_q_sub[n]    = -1;
@@ -1253,6 +1323,94 @@ INT dkva_arrival_test(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* [dkva-fold-order] (federation.md §5.3-2): 同じ寄与の集合を2通りの     */
+/* 到着順で本番の fold_arrive/fold_finish に流し、結果がバイト同一で、    */
+/* 自分 → id 昇順 の参照和とも一致することを確かめる。値は float の足し  */
+/* 算が結合的でないもの (1e8 + 1 - 1e8 ...) を選ぶので、到着順に畳む      */
+/* falsifier ビルド (-DDKVA_FOLD_ARRIVAL_ORDER) では2つの結果が食い違う。 */
+/* 純ローカル。g_fold を使うので本番と同じ g_fold_sem を取る。           */
+/* ------------------------------------------------------------------ */
+static void fo_fill(DKVA_RESP_PKT *p, UB n, float v)
+{
+    p->magic = DKVA_RESP_MAGIC; p->src_node = n; p->n_entries = 1;
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++) {
+            p->attn_sum[t][h] = v;
+            for (INT d = 0; d < DKVA_DH; d++) p->partial_out[t][h][d] = v;
+        }
+}
+
+static INT dkva_fold_order_test(void)
+{
+    /* id と値: resp {3: 1e8, 7: -1e8, 12: 0.5}, rsum {5: 1, 9: 1} */
+    static const UB    ids[5]   = { 3, 5, 7, 9, 12 };
+    static const UB    isrs[5]  = { 0, 1, 0, 1, 0 };
+    static const float vals[5]  = { 1e8f, 1.0f, -1e8f, 1.0f, 0.5f };
+    static const UB    orderA[5] = { 0, 1, 2, 3, 4 };   /* id 昇順に届く */
+    static const UB    orderB[5] = { 4, 3, 2, 1, 0 };   /* 逆順に届く    */
+    static DKVA_RESP_PKT pk[5];
+    float outA[DKVA_SEQ][DKVA_NH][DKVA_DH], sumA[DKVA_SEQ][DKVA_NH];
+    float outB[DKVA_SEQ][DKVA_NH][DKVA_DH], sumB[DKVA_SEQ][DKVA_NH];
+    float outR[DKVA_SEQ][DKVA_NH][DKVA_DH], sumR[DKVA_SEQ][DKVA_NH];
+    INT fails = 0;
+
+    for (INT i = 0; i < 5; i++) fo_fill(&pk[i], ids[i], vals[i]);
+
+    fold_lock();
+    for (INT arm = 0; arm < 2; arm++) {
+        const UB *ord = arm ? orderB : orderA;
+        float (*o)[DKVA_NH][DKVA_DH] = arm ? outB : outA;
+        float (*s)[DKVA_NH]          = arm ? sumB : sumA;
+        for (INT t = 0; t < DKVA_SEQ; t++)
+            for (INT h = 0; h < DKVA_NH; h++) {
+                s[t][h] = 0.0f;
+                for (INT d = 0; d < DKVA_DH; d++) o[t][h][d] = 0.0f;
+            }
+        fold_reset(&g_fold);
+        for (INT k = 0; k < 5; k++) {
+            INT i = ord[k];
+            fold_arrive(&g_fold, ids[i], (BOOL)isrs[i], &pk[i], o, s);
+        }
+        fold_finish(&g_fold, o, s);
+    }
+    fold_unlock();
+
+    /* 参照: 自分 (0) → id 昇順 を素直に足した値 */
+    for (INT t = 0; t < DKVA_SEQ; t++)
+        for (INT h = 0; h < DKVA_NH; h++) {
+            sumR[t][h] = 0.0f;
+            for (INT d = 0; d < DKVA_DH; d++) outR[t][h][d] = 0.0f;
+        }
+    for (INT i = 0; i < 5; i++) accumulate(outR, sumR, &pk[i]);
+
+    const UB *a = (const UB *)outA, *b = (const UB *)outB, *r = (const UB *)outR;
+    const UB *sa = (const UB *)sumA, *sb = (const UB *)sumB, *sr = (const UB *)sumR;
+    INT same_ab = 1, same_ar = 1;
+    for (UW i = 0; i < (UW)sizeof(outA); i++) {
+        if (a[i] != b[i]) same_ab = 0;
+        if (a[i] != r[i]) same_ar = 0;
+    }
+    for (UW i = 0; i < (UW)sizeof(sumA); i++) {
+        if (sa[i] != sb[i]) same_ab = 0;
+        if (sa[i] != sr[i]) same_ar = 0;
+    }
+    /* 参照の値そのもの: 1e8+1-1e8+1+0.5 を左から = 1.5 (1e8+1 は 1e8 に丸まる) */
+    INT ref_ok = (outR[0][0][0] == 1.5f && sumR[0][0] == 1.5f);
+
+    dk_puts("[dkva-fold-order] F1 two arrival orders byte-identical : ");
+    dk_puts(same_ab ? "PASS\r\n" : "FAIL\r\n");
+    if (!same_ab) fails++;
+    dk_puts("[dkva-fold-order] F2 equals the id-order reference     : ");
+    dk_puts(same_ar ? "PASS\r\n" : "FAIL\r\n");
+    if (!same_ar) fails++;
+    dk_puts("[dkva-fold-order] F3 reference is non-associative (1.5): ");
+    dk_puts(ref_ok ? "PASS\r\n" : "FAIL\r\n");
+    if (!ref_ok) fails++;
+    dk_puts(fails ? "[dkva-fold-order] FAIL\r\n" : "[dkva-fold-order] PASS\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
 /* [fed-2cluster] + [coord-crash] federation R0 self-test (in-proc)     */
 /*                                                                     */
 /* docs/architecture/federation-r0-plan.md §3.1 Arm A + §3.2.           */
@@ -1484,7 +1642,7 @@ void dkva_cmd(const UB *args, UW len)
         while (tverb[ti] && p + ti < end && (char)p[ti] == tverb[ti]) ti++;
         if (tverb[ti] == '\0') {
             dkva_self_test(); dkva_arrival_test(); dkva_fed2_self_test();
-            dkva_unbounded_self_test();
+            dkva_unbounded_self_test(); dkva_fold_order_test();
             return;
         }
     }
