@@ -48,9 +48,36 @@ def strip_comments(src):
 
 
 def read_cmds(path):
-    src = strip_comments(open(os.path.join(ROOT, path), encoding="utf-8", errors="replace").read())
+    return read_src(open(os.path.join(ROOT, path), encoding="utf-8", errors="replace").read(), path)
+
+
+CHARLIT = re.compile(r"'(\\.|[^'])'")
+
+
+def logical_lines(src):
+    """Yield (line_no, text). A one-char chain whose `if (` condition is not
+    closed on its line (arch/x86/shell.c splits sensor/replica/persist/degrade
+    after `&&`) is joined with the following lines until the parentheses
+    balance, so the word is not cut at the line break (audit-12)."""
+    lines = src.splitlines()
+    i = 0
+    while i < len(lines):
+        ln, no = lines[i], i + 1
+        if CHAR.search(ln) and re.search(r"\bcmd\[0\]", ln):
+            depth = lambda s: s.count("(") - s.count(")")
+            d = depth(CHARLIT.sub("", ln))
+            while d > 0 and i + 1 < len(lines) and i + 1 - (no - 1) < 6:
+                i += 1
+                ln += " " + lines[i]
+                d += depth(CHARLIT.sub("", lines[i]))
+        yield no, ln
+        i += 1
+
+
+def read_src(src, path):
+    src = strip_comments(src)
     cmds, unknown = set(), []
-    for ln_no, ln in enumerate(src.splitlines(), 1):
+    for ln_no, ln in logical_lines(src):
         for rx in KNOWN:
             for m in rx.finditer(ln):
                 w = m.group(1).split()[0] if m.group(1).split() else ""

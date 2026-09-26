@@ -2967,6 +2967,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: reader fixtures (test_gen.py)
+        run: python3 tools/cmdmatrix/test_gen.py
       - name: gen.py --check
         run: python3 tools/cmdmatrix/gen.py --check
 
