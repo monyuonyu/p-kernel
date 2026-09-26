@@ -3,11 +3,19 @@
 # run_cradle_live.sh — the [cradle-teach] DEFERRED [live] row: the mind learns
 # ACROSS THE WIRE. A TEACHER node (T) emits a DETERMINISTIC text lesson over
 # ./relay; a separate-process STUDENT node (S) pulls it (KDDS beacon + p-fs body),
-# consolidates it on its DMN sleep tick, and a HELD probe it was NEVER directly
-# trained on becomes weight-resident — proven by S's own `cradle probe` self-
-# report dropping below chance. Then T is KILLED and S still answers below chance
-# (from PERSISTED weights): the [live] embodiment of "the mind survives the
-# teacher." Three falsification arms each go RED (off / scrambled / teacher-death).
+# consolidates it on its DMN sleep tick, and the lesson's HELD windows read
+# lower on S than on a control S that trained the fixture for the same volume
+# (`cradle probe-canon`, see THE CONTROL ARM below). Then T is KILLED and S
+# still reads that low from its IN-MEMORY weights (S is not restarted, so this
+# is not a persistence test): "the lesson outlives the teacher." Falsification
+# arms: off / scrambled; the death arm must also stay below the control.
+#
+# WHAT "HELD" MEANS HERE (audit-9, 2026-09-26): of the 320-byte held region
+# only the 52-byte held sentence is absent from the training region; the rest
+# is filler that also recurs in the train region. So much of the canon drop is
+# the filler being memorised, not generalisation to unseen text. The verdict
+# still measures THIS lesson: a same-length unrelated English lesson and a
+# ROT13 of the lesson were both taught over the wire and both went RED.
 #
 # This cashes the multi-process [live] row deferred by the in-proc [cradle-teach]
 # cert (tests/llm/run_cradle_teach.sh, audit-trail.md:876 PASS). It is the SS-6 ->
@@ -135,9 +143,8 @@
 #   cure    : boot 3 -> wait `-> FULL alive=3` on S -> PRE probe (~chance)
 #             -> PULL + AUTONOMOUS-CONSOLIDATE WHILE IDLE: poll `cradle probe`; the
 #                net task pulls (ring_len>0) and the autonomous DMN consolidates;
-#                WAIT until the held probe genuinely drops BELOW the CURE threshold
-#                (CHANCE-CURE_FLOOR) or a bounded timeout -> POST probe (held probe
-#                weight-resident, below chance). NO forced `baby N`.
+#                WAIT until S has applied TRIPLES passes (D5-j) -> POST canon probe,
+#                judged against the control arm. NO forced `baby N`.
 #   off     : S is PFS-LESS (no baby, no autonomous DMN) + `cradle off`; ring
 #             stays 0, no training, probe reads the chance FLOOR. CLEAN falsifier
 #             with NO autonomous-DMN fixture contamination (see the PERSISTENCE
@@ -148,9 +155,10 @@
 #             the autonomous DMN gets an EQUAL chance to consolidate the JUNK ->
 #             probe MUST STAY >= chance (it is the SEQUENCE, not bytes). STRICT: a
 #             scramble drop below the CURE threshold is a RED the harness surfaces.
-#   death   : cure sequence (autonomous-consolidate below threshold) -> kill T ->
-#             wait SWIM-dead on S -> POST probe STILL below the CURE threshold (the
-#             baby answers from its now-resident/persisted weights; mind survives T).
+#   death   : cure sequence -> PRE-KILL canon probe (same volume as ctrl) -> kill
+#             T -> wait SWIM-dead on S -> POST canon probe STILL below the control
+#             (S answers from its in-memory weights; S keeps training the ring it
+#             already holds, so POST is read a slice or so later than PRE).
 #
 # DISCIPLINE (the commander's hard-won rules, applied throughout): never assume
 # a fixed sleep is enough — POLL for a greppable marker (`-> FULL alive=3`,
@@ -260,8 +268,9 @@ wait_for_ring() {
 # ct_build_lesson, CT_CERT_BUDGET=1280 bytes), the SAME trainable, train/held-
 # structured bytes the in-proc [cradle-teach] cert proves. No shell-line-length
 # limit, no truncation: ingest sees the full 1280 bytes and the ring goes live.
-# The held probe lands at the production train_end boundary (the never-trained
-# continuation) so the post-train drop proves GENERALIZATION, not rote copy.
+# The held probe lands at the production train_end boundary. The held region is
+# mostly filler that also appears in training (see WHAT "HELD" MEANS above), so a
+# drop there is largely memorisation; the control arm is what makes it evidence.
 
 # ===========================================================================
 # helper: launch T (teacher) + W (quorum) + S (student) over one ./relay, then
@@ -274,7 +283,7 @@ wait_for_ring() {
 #   scramble  : T emits-scramble (random bytes, same length); S pulls + trains
 #               JUNK -> STAY at chance (it is the SEQUENCE, not byte statistics).
 #   death     : cure, THEN kill T, wait SWIM-dead, S re-probes -> STILL below
-#               chance from the now-resident/persisted weights (mind survives T).
+#               the control from its in-memory weights (S is not restarted).
 # All of S's verdicts are read from its REDIRECTED logfile (a real node's console
 # is flooded with [moe] spam — NEVER an interactive shell's stdout; the N-2c
 # lesson). T's teacher-election is read from T's "lesson emitted" line.
@@ -342,8 +351,9 @@ run_arm() {
 
   # ---- S (node 3): the STUDENT, driven CLOSED-LOOP through a FIFO. ----
   # PKERNEL_PFS_DIR set so (a) student_boot_restore BIRTHS a fresh baby at boot
-  # (no `student` verb needed — see header fact (2)) and (b) the kill-T arm reads
-  # PERSISTED weights. We hold the FIFO open on fd 9 so S's shell never sees EOF
+  # (no `student` verb needed — see header fact (2)) and (b) the autonomous DMN
+  # consolidates (it is gated on pfs_dur_active()). S is never restarted, so no
+  # arm reads weights back from disk. We hold the FIFO open on fd 9 so S's shell never sees EOF
   # until we deliberately send `exit`.
   # FRESH per-arm persistence dir: the cure arm's trained weights must NOT leak
   # into the scramble/death falsifiers (a restored trained baby would make them
@@ -444,16 +454,10 @@ run_arm() {
   # reads ~2.60 from the autonomous DMN before any `baby`). The autonomous-DMN idle
   # probe is the MORE production-representative signal, so we certify on IT.
   #
-  # We POLL `cradle probe` (a PURE READ at the production train_end over never-
-  # trained HELD windows — no training, no save) while S idles, and:
-  #   cure/death : WAIT until the held probe genuinely drops below the CURE
-  #                threshold (CHANCE-CURE_FLOOR) — real below-chance GENERALIZATION
-  #                on the held continuation — or a bounded timeout (then OPEN, no
-  #                fudge). We require ring_len>0 first so the drop is on the LESSON
-  #                ring, never the fixture.
-  #   scramble   : idle the SAME consolidation budget (give the autonomous DMN an
-  #                EQUAL chance to consolidate the junk) but NEVER early-break; the
-  #                held probe MUST stay >= chance (it is the SEQUENCE, not bytes).
+  # We POLL `cradle probe` (a PURE READ at the production train_end over the
+  # HELD windows — no training, no save) while S idles. (Historical: cure/death
+  # used to break early once the probe fell below chance-0.5, and scramble had
+  # to stay >= chance. Both are superseded by the D5-j paragraph below.)
   # The OFF arm skips this entirely (ring must stay 0 by design).
   #
   # D5-j (2026-09-25): the idle phase now runs until S has applied TRIPLES DMN
@@ -487,13 +491,18 @@ run_arm() {
     fi
   fi
 
-  # ---- death arm: the cure is now PULLED + CONSOLIDATED into S. Kill T, then
-  # wait for SWIM to mark T dead on S (ALIVE->SUSPECT->DEAD ~10s) BEFORE the POST
-  # probe, so S genuinely answers from its OWN resident/persisted weights with no
+  # ---- death arm: the cure is now PULLED + CONSOLIDATED into S. First read the
+  # canon probe at the SAME volume the control is judged at (audit-9 ①: the POST
+  # read lands ~8 triples later, because S keeps training while SWIM converges).
+  # Then kill T and wait for SWIM to mark T dead on S (ALIVE->SUSPECT->DEAD ~10s)
+  # BEFORE the POST probe, so S answers from its own in-memory weights with no
   # teacher present. ----
   if [ "$arm" = "death" ]; then
+    s_say "cradle probe-canon"
+    s_say "MARK-S-PREKILL-END"
+    wait_for_marker "$LOG_S" 'MARK-S-PREKILL-END' 40 || true
     kill -9 "$TPID" 2>/dev/null
-    echo "[cradle-live] killed T (node2) — SWIM must mark it dead; S answers from persisted weights"
+    echo "[cradle-live] killed T (node2) — SWIM must mark it dead; S answers from its in-memory weights"
     sleep 14                                  # SWIM converges S's view to T=DEAD
   fi
 
@@ -531,7 +540,7 @@ s_post_probe() {
   # `cradle probe` read of S's CURRENT weights: the autonomous DMN never emits this
   # line, ONLY the `cradle probe` verb does, so the last one is always our own most
   # recent probe. Honest in every arm — cure reads low, scramble/off read >=chance,
-  # death reads the post-consolidation persisted value. NEVER fabricates a number.
+  # death reads the post-kill in-memory value. NEVER fabricates a number.
   [ -z "$v" ] && v=$(grep -oE '\[cradle-live\] ring_len=[0-9]+ probe_loss=[0-9.]+ chance=[0-9.]+' \
                        "$L" 2>/dev/null | tail -1)
   printf '%s' "$v"
@@ -567,6 +576,12 @@ s_post_canon() {
   [ -z "$v" ] && v=$(grep -oE "$CANON_RE" "$L" 2>/dev/null | tail -1)
   printf '%s' "$v"
 }
+# death arm: the canon probe taken just before T was killed (no fallback — an
+# absent line must fail, not borrow a later reading).
+s_prekill_canon() {
+  grep -B12 'MARK-S-PREKILL-END' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null \
+    | grep -oE "$CANON_RE" | tail -1
+}
 # numeric compare without bc: awk.
 flt_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 < b+0)}'; }
 flt_ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
@@ -574,7 +589,6 @@ flt_sub() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.4f", a-b}'; }
 has_arm() { case " $ARMS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 CHANCE=5.5452          # ln(256)
-CURE_FLOOR=0.5         # the cure must drop the held probe >= 0.5 nats below chance
 
 # ---------------------------------------------------------------------------
 # THE CONTROL ARM AND CANON_DELTA (D5-j, 2026-09-25)
@@ -674,10 +688,11 @@ if has_arm cure; then
   [ "${EMIT_C:-0}" -ge 1 ] 2>/dev/null || fail "CURE: T never emitted (not elected teacher — check PKERNEL_TEACHER_CERT)"
   [ "${RING_C:-0}" -gt 0 ] 2>/dev/null || fail "CURE: the lesson body never arrived on S (ring_len stayed 0 over the wire)"
   [ -n "$PRE_CL" ] && flt_ge "$PRE_CL" 5.0 || fail "CURE: S did not start near chance (pre=$PRE_CL, want >=5.0)"
-  if [ -n "$POST_CL" ] && [ -n "$PRE_CL" ]; then
-    flt_lt "$POST_CL" "$(awk -v c=$CHANCE -v f=$CURE_FLOOR 'BEGIN{print c-f}')" \
-      || fail "CURE: held probe did not drop >= $CURE_FLOOR nats below chance (post=$POST_CL)"
-  else fail "CURE: missing probe readout (pre=$PRE_CL post=$POST_CL)"; fi
+  # The old absolute check (post < chance-0.5) is gone: audit-9 taught S
+  # an unrelated English lesson over the wire and it read 1.15, i.e. ANY English
+  # passes it. Only the control comparison below says the LESSON was learned.
+  # POST_CL is still printed above for the record.
+  [ -n "$POST_CL" ] || fail "CURE: missing live probe readout (post)"
   if need_volume CURE "$POST_CC" && need_ctrl CURE; then
     echo "[cradle-live] CURE vs control: canon $CANON_C vs $CANON_K (diff $(flt_sub "$CANON_K" "${CANON_C:-99}"), need >= $CANON_DELTA)"
     [ -n "$CANON_C" ] && flt_ge "$(flt_sub "$CANON_K" "$CANON_C")" "$CANON_DELTA" \
@@ -731,14 +746,26 @@ fi
 if has_arm death; then
   run_arm death
   echo
-  echo "===== ARM C: teacher killed -> S STILL answers (persisted; mind survives) ====="
+  echo "===== ARM C: teacher killed -> S STILL answers (in-memory weights; not restarted) ====="
   POST_D=$(s_post_probe death); POST_DC=$(s_post_canon death); RING_D=$(s_max_ring death)
+  PRE_DC=$(s_prekill_canon death)
   echo "S max ring_len: $RING_D   S post (after T death): $POST_D"
-  echo "S post (after T death): $POST_DC   (control: ${CANON_K:-?})"
-  CANON_D=$(canon_of "$POST_DC")
-  if need_volume "(C)" "$POST_DC" && need_ctrl "(C)"; then
+  echo "S pre-kill : $PRE_DC   (control: ${CANON_K:-?})"
+  echo "S post-kill: $POST_DC"
+  CANON_DP=$(canon_of "$PRE_DC"); CANON_D=$(canon_of "$POST_DC")
+  # (C1) at the control's volume, before T dies: the lesson was learned.
+  if [ -z "$PRE_DC" ]; then fail "(C): no pre-kill canon_probe readout"
+  elif need_volume "(C) pre-kill" "$PRE_DC" && need_ctrl "(C)"; then
+    echo "[cradle-live] DEATH pre-kill vs control: canon $CANON_DP@$(triples_of "$PRE_DC") vs $CANON_K (diff $(flt_sub "$CANON_K" "$CANON_DP"), need >= $CANON_DELTA)"
+    flt_ge "$(flt_sub "$CANON_K" "$CANON_DP")" "$CANON_DELTA" \
+      || fail "(C): before T died S was not >= $CANON_DELTA below the control (pre-kill=$CANON_DP ctrl=$CANON_K)"
+  fi
+  # (C2) after T is dead: still below the control (read a little later, so S
+  # has trained a little more on the ring it already holds).
+  if need_volume "(C) post-kill" "$POST_DC" && need_ctrl "(C)"; then
+    echo "[cradle-live] DEATH post-kill vs control: canon $CANON_D@$(triples_of "$POST_DC") vs $CANON_K (diff $(flt_sub "$CANON_K" "${CANON_D:-99}"), need >= $CANON_DELTA)"
     [ -n "$CANON_D" ] && flt_ge "$(flt_sub "$CANON_K" "$CANON_D")" "$CANON_DELTA" \
-      || fail "(C): after T died S is not >= $CANON_DELTA below the control (death=$CANON_D ctrl=$CANON_K) — the mind did not survive the teacher"
+      || fail "(C): after T died S is not >= $CANON_DELTA below the control (death=$CANON_D ctrl=$CANON_K) — the lesson did not outlive the teacher"
   fi
 fi
 
