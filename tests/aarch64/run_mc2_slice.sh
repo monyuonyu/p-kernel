@@ -41,8 +41,11 @@ TIMEOUT_S="${MC2_TIMEOUT:-30}"
 # NOTE (②.1b harness-snapshot fix): boot QEMU from a UNIQUE snapshot of
 # kernel.elf (run_qemu $2), not the live build-dir image, so the falsifier
 # rebuild (or a parallel auditor's `make`) cannot corrupt an in-flight read.
+# -nic none: same as run_smp0.sh — -M virt otherwise auto-creates a virtio-net
+# NIC that needs efi-virtio.rom, absent on the CI image (apt --no-install-
+# recommends drops ipxe-qemu); QEMU then exits before the kernel runs.
 QEMU_FLAGS="-M virt -cpu cortex-a53 -m 256M \
-            -serial stdio -display none -no-reboot"
+            -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[mc2-slice] FAIL: $*" >&2; exit 1; }
 

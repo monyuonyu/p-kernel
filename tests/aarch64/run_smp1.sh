@@ -45,8 +45,9 @@ TIMEOUT_S="${SMP1_TIMEOUT:-45}"
 # Snapshot the built ELF to a unique path before booting so a later rebuild
 # (the falsifier) can't corrupt an in-flight QEMU read (②.1b harness-fragility
 # fix, applied proactively here).
+# -nic none: see run_mc2_slice.sh (no efi-virtio.rom on the CI image).
 QEMU_BASE_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
-                 -serial stdio -display none -no-reboot"
+                 -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[smp1] FAIL: $*" >&2; exit 1; }
 

@@ -42,8 +42,9 @@ TIMEOUT_S="${MC2_TIMEOUT:-60}"
 # (equiv, Tooth A, Tooth B). Boot QEMU from a UNIQUE snapshot of kernel.elf
 # (run_qemu $2), not the live build-dir image, so each later `make` (or a
 # parallel auditor's) cannot corrupt an in-flight QEMU read.
+# -nic none: see run_mc2_slice.sh (no efi-virtio.rom on the CI image).
 QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
-                -serial stdio -display none -no-reboot"
+                -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[mc2-smp-equiv] FAIL: $*" >&2; exit 1; }
 
