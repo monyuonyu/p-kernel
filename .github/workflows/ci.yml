@@ -60,7 +60,7 @@ jobs:
   vendor-patch-inventory:
     # gap-ledger 行 VENDOR-PATCH-LOSS への第2の梯子段(2026-08-12 のゲートは
     # 9クラス中1クラスしか見ない)。kernel/mtkernel3/ 上の「ビルドは通るのに
-    # 挙動だけ壊れる」ローカルパッチ13アンカーを固定文字列で数える。
+    # 挙動だけ壊れる」ローカルパッチのアンカー（2026-09-27 時点で21個）を固定文字列で数える。
     # Pure-shell, no toolchain。2026-09-27 に BLOCKING へ（inbox #3 の 8①）。
     # それまでは非BLOCKINGで、CI 35420393619・36200060907 とも緑。陰性コント
     # ロールはコンテナで示した（アンカーを消した木で exit 1）。GitHub Actions
