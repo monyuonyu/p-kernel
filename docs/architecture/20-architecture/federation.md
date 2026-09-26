@@ -332,6 +332,15 @@ arch/common/include/pmesh.h:58-67
    新フィールドを足すか。後者は wire 後方互換に注意（drpc v1 と共存）。
 2. **葉間一貫性**: coordinator を跨ぐ rsum の順序/合意は eventual で十分か、
    region ごとに合意（raft）が要るか（`regions.md §6.2` の未解決問題のまま）。
+   **2026-09-27 決着（inbox #3、おすすめ採用）: 合意は入れず、畳む順序を固定する。**
+   いまの `dkva_infer` と `cagg_step` は届いた順に float を足すので、同じ寄与の集合でも
+   下位ビットが到着順で変わる。これを「集合が同じなら結果もバイト同一」にする。
+   第1段: requester 側。届いた resp/rsum を node id ごとに static 配列へ置き、窓の後に
+   自分 → id 昇順（各 id で resp → rsum）で畳む。畳みは純関数 `dkva_fold_ordered()` にして、
+   自己テストが同じ集合を2通りの到着順で畳んでバイト同一を確かめる（反証: 到着順に畳む
+   ビルドで赤）。bare-metal にリンクされるので crown が動く → re-bless へ。
+   第2段: coordinator 側（`cagg`）。member 軸の packet を持つと R×N×104B になるので、
+   U-3（member 軸の縮小）と一緒に設計する。
 3. **coordinator churn**: coordinator が落ちた瞬間の葉間メッシュの穴。
    最小 ID 引き継ぎ（`region.c`）の収束窓で rsum が欠ける可能性。
 4. **複数 relay の lease 調停**（`dynamic-id.md §4`）が region_id 払い出しに
