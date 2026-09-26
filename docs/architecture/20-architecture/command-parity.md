@@ -21,7 +21,11 @@ inbox #4（2026-09-26、翔太「プラットフォームでコマンドが多�
 | Linux 版 x86_64 / aarch64（Android も同じ中身） | `arch/linux/*/usermain.c` | `starts_with(line, n, "word")` |
 | ベアメタル AArch64 | `arch/aarch64/usermain.c` | `strneq(line, "word", n)` |
 | ベアメタル x86 | `arch/x86/shell.c` | `cmd[0]=='w' && cmd[1]=='o' && …` の連なり（42か所）を単語に戻す |
-| Windows x86_64 | `boot/windows/x86_64/main_win.c` | 未調査（段階0の最初に見る） |
+| Windows x86_64 | `arch/linux/x86_64/usermain.c`（Makefile の ARCH_SHARED_X86_SRCS。usermain.c に Windows 用の `#ifdef` は無い） | Linux 版と同じ |
+
+09-26 に数えた「Windows はごくわずか」は、ソースの上では当たらない（Linux x86_64 と
+同じ 52）。実行すると stub で空振りするもの（selfc など）があるはずで、それは段階2で
+実行して確かめ、表に「不可」か「空振り」として書く。
 
 読み手が拾えなかった振り分け（別の書き方）が残ると表が嘘になるので、各ソースで
 「コマンドを比べていそうな行」の数と「拾えた数」を並べて出し、差があれば赤にする。

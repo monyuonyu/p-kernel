@@ -2956,6 +2956,20 @@ jobs:
       - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
         run: bash tests/llm/run_kv.sh
 
+  command-matrix:
+    # inbox #4 stage 0 (docs/architecture/20-architecture/command-parity.md):
+    # docs/architecture/command-matrix.md is GENERATED from the six platforms'
+    # shell sources. Red if it is stale, or if a shell compares commands in an
+    # idiom tools/cmdmatrix/gen.py does not read (the table would under-count).
+    # Visibility only — no platform is required to have any command yet.
+    name: "コマンド × プラットフォームの表 (生成物が最新か)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: gen.py --check
+        run: python3 tools/cmdmatrix/gen.py --check
+
   consent-dom-cert:
     # G3 (fable5 CI-coverage audit): the galaxy/consent onboarding PIXELS had
     # zero automated cert -- only the fable5 HTTP/JSON data-plane was gated.
