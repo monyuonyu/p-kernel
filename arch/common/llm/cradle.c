@@ -161,7 +161,8 @@ int cradle_lesson_ingest(const uint8_t *body, int len)
      * BYTE-IDENTICAL (cradle_window_src unchanged) and the transport's high-water
      * does NOT advance (it only advances on a >0 return), so a refused lesson is
      * not silently swallowed. This is the -1 hard-refuse, distinct from the 0
-     * freeze-defer above. */
+     * freeze-defer below (checked AFTER this scan, so a lesson the floor refuses
+     * is refused even mid-batch and never raises a fixture pre-empt). */
     {
         GLEARN_CONS_QUERY q = { (const char *)body, len, 0, 0 };
         int cv = conscience_check((unsigned char)GLEARN_CONS_SITE_LEARN, &q);
