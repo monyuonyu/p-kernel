@@ -12,12 +12,14 @@
 #
 # Two nodes over a local relay. A blocking node is simulated by SIGSTOP on
 # node 2 for STOP_SECS, then SIGCONT.
-#   arm DEFAULT: no env -> node 1 must log "node 2 -> DEAD"   (the blocker)
+#   arm DEFAULT: no env -> node 1 must log node 2 DEAD AFTER the stop (a DEAD in
+#                the startup discovery race does not count)
 #   arm ENV    : both nodes with the env set to 40 -> node 1 must NOT log
 #                "node 2 -> DEAD", and must log the override line (so a
 #                build that ignores the env cannot pass by being slow)
 # Both arms must first see node 2 discovered by node 1 (mesh formed), or the
 # arm is FAIL, not PASS (an unformed mesh never kills anyone).
+# SWIM numbers nodes from 0: PKERNEL_NODE_ID=2 is "node 1" in node 1's log.
 #
 # Usage: tests/host/run_swim_env_rounds.sh     exit 0 = both arms as expected
 # ---------------------------------------------------------------------------
@@ -70,8 +72,10 @@ run_arm() {
     exec 8>"$d/in2"
 
     local t=0
-    while ! grep -aq "node 2 discovered\|node 2 -> ALIVE" "$d/node1.log" && [ "$t" -lt 30 ]; do sleep 1; t=$((t+1)); done
+    while ! grep -aq "node 1 discovered\|node 1 -> ALIVE\|node 1 recovered" "$d/node1.log" && [ "$t" -lt 30 ]; do sleep 1; t=$((t+1)); done
+    sleep "${SWIM_ENV_SETTLE:-10}"   # let a startup SUSPECT/DEAD race settle back to ALIVE
     echo "[$name] mesh after ${t}s; SIGSTOP node 2 for ${STOP_SECS}s"
+    wc -l < "$d/node1.log" > "$d/stopline"   # DEAD is judged only after this line
     kill -STOP "$N2"
     sleep "$STOP_SECS"
     kill -CONT "$N2"
@@ -85,16 +89,17 @@ echo "[swim-env-rounds] build: $BOOT/p-kernel  stop=${STOP_SECS}s  logs=$LOGDIR"
 
 run_arm default ""
 L="$LOGDIR/default/node1.log"
-grep -aq "node 2 discovered\|node 2 -> ALIVE" "$L" && ok "default: mesh formed" || bad "default: node 1 never saw node 2"
+grep -aq "node 1 discovered\|node 1 -> ALIVE\|node 1 recovered" "$L" && ok "default: mesh formed" || bad "default: node 1 never saw node 2"
 grep -aq "\[swim\] rounds suspect=" "$L" && bad "default: override line printed without env" || ok "default: no override line"
-grep -aq "node 2 -> DEAD" "$L" && ok "default: blocked node 2 declared DEAD (product timing)" \
+tail -n +"$(( $(cat "$LOGDIR/default/stopline") + 1 ))" "$L" | grep -aq "node 1 -> DEAD" \
+    && ok "default: blocked node 2 declared DEAD after the stop (product timing)" \
     || bad "default: node 2 not declared DEAD in ${STOP_SECS}s"
 
 run_arm env 40
 L="$LOGDIR/env/node1.log"
-grep -aq "node 2 discovered\|node 2 -> ALIVE" "$L" && ok "env: mesh formed" || bad "env: node 1 never saw node 2"
+grep -aq "node 1 discovered\|node 1 -> ALIVE\|node 1 recovered" "$L" && ok "env: mesh formed" || bad "env: node 1 never saw node 2"
 grep -aq "\[swim\] rounds suspect=40 dead=40 (env)" "$L" && ok "env: override read" || bad "env: override line missing"
-grep -aq "node 2 -> DEAD" "$L" && bad "env: node 2 declared DEAD despite PKERNEL_SWIM_*_ROUNDS=40" \
+grep -aq "node 1 -> DEAD" "$L" && bad "env: node 2 declared DEAD despite PKERNEL_SWIM_*_ROUNDS=40" \
     || ok "env: blocked node 2 survived ${STOP_SECS}s"
 
 echo "[swim-env-rounds] RESULT: $PASS PASS / $FAIL FAIL"
