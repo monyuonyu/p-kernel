@@ -33,8 +33,9 @@ TIMEOUT_S="${MC2_TIMEOUT:-40}"
 # kernel.elf (run_qemu $2), not the live build-dir image, so a concurrent
 # rebuild (a parallel auditor's `make`, or this harness's own faulting-tile
 # build) cannot corrupt an in-flight QEMU read.
+# -nic none: see run_mc2_slice.sh (no efi-virtio.rom on the CI image).
 QEMU_SMP_FLAGS="-M virt -cpu cortex-a53 -smp 4 -m 256M \
-                -serial stdio -display none -no-reboot"
+                -serial stdio -display none -no-reboot -nic none"
 
 fail() { echo "[mc2-boot-survives] FAIL: $*" >&2; exit 1; }
 
