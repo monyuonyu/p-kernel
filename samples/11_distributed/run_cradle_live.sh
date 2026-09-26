@@ -10,10 +10,12 @@
 # is not a persistence test): "the lesson outlives the teacher." Falsification
 # arms: off / scrambled; the death arm must also stay below the control.
 #
-# WHAT "HELD" MEANS HERE (audit-9, 2026-09-26): of the 320-byte held region
-# only the 52-byte held sentence is absent from the training region; the rest
-# is filler that also recurs in the train region. So much of the canon drop is
-# the filler being memorised, not generalisation to unseen text. The verdict
+# WHAT "HELD" MEANS HERE (audit-9, 2026-09-26; bytes re-counted by audit-10
+# from ct_build_lesson): the held region is 319 bytes (ring_len 1279 minus
+# train_end 960) = the 52-byte held sentence, which is absent from the training
+# region, + 232 bytes of filler (58 B x 4) that also recurs in the train region,
+# + 35 bytes of blank padding. So much of the canon drop is the filler being
+# memorised, not generalisation to unseen text. The verdict
 # still measures THIS lesson: a same-length unrelated English lesson and a
 # ROT13 of the lesson were both taught over the wire and both went RED.
 #
@@ -498,6 +500,7 @@ run_arm() {
   # BEFORE the POST probe, so S answers from its own in-memory weights with no
   # teacher present. ----
   if [ "$arm" = "death" ]; then
+    s_say "MARK-S-PREKILL-BEGIN"
     s_say "cradle probe-canon"
     s_say "MARK-S-PREKILL-END"
     wait_for_marker "$LOG_S" 'MARK-S-PREKILL-END' 40 || true
@@ -577,9 +580,11 @@ s_post_canon() {
   printf '%s' "$v"
 }
 # death arm: the canon probe taken just before T was killed (no fallback — an
-# absent line must fail, not borrow a later reading).
+# absent line must fail, not borrow a later reading). Read ONLY between the
+# BEGIN and END markers sent around that probe (audit-10: the old grep -B12 END
+# window could reach back to an idle-loop canon line and borrow it).
 s_prekill_canon() {
-  grep -B12 'MARK-S-PREKILL-END' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null \
+  sed -n '/MARK-S-PREKILL-BEGIN/,/MARK-S-PREKILL-END/p' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null \
     | grep -oE "$CANON_RE" | tail -1
 }
 # numeric compare without bc: awk.
