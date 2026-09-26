@@ -339,6 +339,9 @@ arch/common/include/pmesh.h:58-67
    自分 → id 昇順（各 id で resp → rsum）で畳む。畳みは純関数 `dkva_fold_ordered()` にして、
    自己テストが同じ集合を2通りの到着順で畳んでバイト同一を確かめる（反証: 到着順に畳む
    ビルドで赤）。bare-metal にリンクされるので crown が動く → re-bless へ。
+   制約: 貯める分は 64 id × (resp+rsum) × 172B ≈ 22KB でタスクスタックに載らない。
+   `dkva_infer` は dtr.c:1463 と shell（`dkva infer`）の2か所から呼ばれ得るので、
+   static に置くなら mutex で1本ずつ通す（待たせる。二重に畳まない）。
    第2段: coordinator 側（`cagg`）。member 軸の packet を持つと R×N×104B になるので、
    U-3（member 軸の縮小）と一緒に設計する。
 3. **coordinator churn**: coordinator が落ちた瞬間の葉間メッシュの穴。
