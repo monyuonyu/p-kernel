@@ -2716,10 +2716,10 @@ jobs:
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
       # 2026-09-27 (inbox #8): README said "22ジョブ" while this file had 45.
-      # Every "<N>ジョブ" in README.md must equal the job count here, so adding
+      # Every job count in README.ja.md / README.md / README.zh-CN.md must equal the job count here, so adding
       # a job means updating the README in the same change. A step here, not
       # a new job, so it does not change the count it checks.
-      - name: check_readme_counts.py (README の「Nジョブ」= ci.yml のジョブ数)
+      - name: check_readme_counts.py (3か国語の README のジョブ数 = ci.yml のジョブ数)
         run: python3 tests/ci/check_readme_counts.py .
 
   mc2-and-smp1:

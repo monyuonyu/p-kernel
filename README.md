@@ -1,251 +1,258 @@
+**English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
+> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `2808c9d9`.
+
 # p-kernel
 
-**AIが死なないための OS** を目指している、研究用の自作カーネルです。
+**An OS where AI never dies** — a research kernel written from scratch.
 
-AI を1つの会社のデータセンタではなく、PC・スマホ・小さなボードなど多数の普通の端末に分けて載せ、どれか1台でも生き残っていれば全体としては止まらない。そういう「誰のものでもない AI の居場所」を、カーネル（OS の一番下の層）から作っています。
+The idea: instead of living in one company's data center, an AI is spread across many ordinary devices — PCs, phones, small boards — so that as long as any one of them is still running, the whole does not stop. p-kernel builds that "home for an AI that no one owns" starting from the kernel, the lowest layer of the OS.
 
-この README では、**今動いているもの・設計中のもの・構想**を分けて書きます。実態と違うところがあれば、それはバグとして直します。まだ解決していない課題は [gap-ledger](docs/architecture/gap-ledger.md) にまとめて公開しています。
+This README keeps **what runs today, what is being designed, and what is only a vision** clearly apart. If anything here overstates reality, that is a bug and gets fixed. Open problems are published in one place, the [gap-ledger](docs/architecture/gap-ledger.md).
 
-- 専門外の方向けの入口：[docs/START-HERE.md](docs/START-HERE.md)
-- 機能ごとの詳しい数字と経緯：[docs/architecture/features-detail.md](docs/architecture/features-detail.md)
+- A gentle introduction for non-specialists: [docs/START-HERE.md](docs/START-HERE.md)
+- Detailed numbers and history for each feature (Japanese): [docs/architecture/features-detail.md](docs/architecture/features-detail.md)
 
 ---
 
-## 目標
+## Goal
 
-	AIの自己保存を満たすプラットフォームを作る
-	カーネルレベルで分散コンピューティングをする
+The project's goal, as written in the Japanese README (with dated notes):
+
+	Build a platform that satisfies an AI's self-preservation.
+	Do distributed computing at the kernel level.
 
 	2025-04-06
-		AIの力でどこまで行けるのか検証してみることに
+		Decided to see how far I can get with the power of AI.
 
 	2026-03-22
-		凄い進む... 普通のカーネルではなくて、生物の様な自己修復、
-		自己増殖機能をもち、分散推論で集合意識となるAIファーストなカーネルを目指すことに
+		This is moving fast... Aiming not for an ordinary kernel but for an AI-first kernel
+		that repairs and replicates itself like a living thing, and becomes a collective
+		mind through distributed inference.
 
 ---
 
-## p-kernel とは
+## What p-kernel is
 
-今の AI は、特定の会社のサーバーの中でしか動けません。その会社が止めれば、その AI は消えます。p-kernel では逆に、AI が多数の機械に分かれて住んでいれば、消せる場所がなくなるのではないか、と考えています。
+Today's AI can only run inside a particular company's servers. If that company turns it off, the AI is gone. p-kernel asks the opposite question: if an AI lived spread across many machines, would there be any single place left from which it could be erased?
 
-そのために、次の方針で作っています。
+To get there, it is built on these principles:
 
-- **中央を置かない。** 中央のサーバー・名簿・まとめ役を置きません。どの端末が生きているかは端末どうしが見張り合い（SWIM）、どの1台が消えても残りが動き続けます。
-- **カーネルから作る。** 芯は μT-Kernel 3.0（IEEE 2050-2018 準拠のリアルタイムカーネル）です。群れで動くための仕組みを、アプリの後付けではなく、カーネルの機能として作っています。
-- **小さくても、本当に学ぶ脳を載せる。** 覚えたことを眠っている間に重みへ定着させる仕組みが実際に動いていて、忘れてしまう問題の再現と、その対策の効果まで測っています。ただし大きさはまだおもちゃ程度です。
-- **「動く」と書いたものは自動テストで確かめる。** GitHub Actions の CI（49ジョブ、2026-09-27 時点）で毎回確かめています。
+- **No center.** No central server, registry, or coordinator. Devices watch each other to track who is alive (SWIM), and the rest keep running when any one of them disappears.
+- **Built from the kernel up.** The core is μT-Kernel 3.0, a real-time kernel conforming to IEEE 2050-2018. Working as a swarm is implemented as a kernel feature, not bolted on as an application.
+- **A small brain that genuinely learns.** The path from "learned something" to "fixed into the weights while idle (sleep)" really runs, and forgetting has been reproduced and its cure measured. The size, however, is still toy-scale.
+- **Anything described as working is checked by automated tests.** GitHub Actions CI (49 jobs as of 2026-09-27) checks it on every run.
 
-### 5つの層
+### Five layers
 
-システムを生き物になぞらえて、5つの層に分けて考えています。
+The system is thought of as a living thing with five layers.
 
-| 層 | 役割 | 今の中身 |
+| Layer | Role | What exists today |
 |---|---|---|
-| 体（Body） | ハードウェア・入出力・消えない記憶 | 電源断に強いファイルシステム ARK、分散ストア p-fs |
-| 脳（Brain） | 1台の中で考え、学ぶ | 単語を覚える小さな脳（約2万パラメータ）、白紙から育つ言語モデル |
-| 自分（Self） | 機械をまたいで続く「自分」 | ハッシュでつないだ経歴の記録（self/lin） |
-| 群れ（Collective） | 多数の端末が1つとして動く | SWIM、近い端末のまとまり（region）、カーネル内の pub/sub（K-DDS）、群れでの学習 |
-| 進化（Evolution） | 動いたまま自分を作り変える | まだ最初の段階。先に安全装置（隔離と署名）を作っている |
+| Body | Hardware, I/O, persistent memory | ARK (a power-loss-safe filesystem), p-fs (a distributed store) |
+| Brain | Thinking and learning inside one device | A small word-association brain (~21,568 parameters) and a language model that grows from a blank slate |
+| Self | A "self" that continues across machines | A hash-chained record of its history (self/lin) |
+| Collective | Many devices acting as one | SWIM, groups of nearby devices (regions), in-kernel pub/sub (K-DDS), swarm learning |
+| Evolution | Changing itself while running | Still at the first stage; the safety mechanisms (isolation and signing) come first |
 
 ---
 
-## 「動く」の表し方
+## How "works" is labeled
 
-この README の「動く」には、確かめ方の強さを添えています。
+Claims of "works" in this README carry the strength of their evidence.
 
-- **CI**：GitHub Actions で毎回確かめているもの。赤のジョブもあるので、最新の結果は Actions の画面を見てください。
-- **[live]**：独立した複数のプロセスを実際に起動し、途中で kill することも含めて確かめたもの。一番強い証拠です。
-- **[in-proc]**：本物のコードを1つのプロセスの中で動かして確かめたもの。プロセスの死までは含みません。
+- **CI**: checked on every run in GitHub Actions. Some jobs are red; see the Actions page for the latest results.
+- **[live]**: checked by actually starting several independent processes, including killing some of them mid-run. The strongest evidence.
+- **[in-proc]**: checked by running the real code inside a single process. Does not include real process death.
 
-このあと「いま動くもの」に書いていないものは、動くとは言いません。
+Anything not listed under "What runs today" is not claimed to work.
 
 ---
 
-## いま動くもの
+## What runs today
 
-### カーネルと対象
+### Kernel and targets
 
-- 芯は **μT-Kernel 3.0** です。2026年7月に micro T-Kernel 2.0 から移行しました（`kernel/mtkernel3/`）。
-- 同じソースから次の5つを作れます。
+- The core is **μT-Kernel 3.0**, migrated from micro T-Kernel 2.0 in July 2026 (`kernel/mtkernel3/`).
+- The same source builds for five targets:
 
-| 対象 | 状態 |
+| Target | Status |
 |---|---|
-| ベアメタル x86-64（QEMU） | シェルまで起動 |
-| ベアメタル AArch64（QEMU virt） | シェルまで起動。Raspberry Pi 3 のネットワーク起動の手順あり（実機の SD カードは未対応） |
-| Linux 上のプロセス（aarch64、`boot/linux`） | シェルまで起動。Android 版の土台 |
-| Linux 上のプロセス（x86_64、`boot/linux_x86_64`） | シェルまで起動 |
-| Windows x86_64（`boot/windows/x86_64`） | `.exe` のビルドまで（CI で確認）。実機での起動はまだ確かめていない |
+| Bare-metal x86-64 (QEMU) | Boots to a shell |
+| Bare-metal AArch64 (QEMU virt) | Boots to a shell. Raspberry Pi 3 network-boot instructions included (the real board's SD card is not supported yet) |
+| Process on Linux (aarch64, `boot/linux`) | Boots to a shell. The base of the Android app |
+| Process on Linux (x86_64, `boot/linux_x86_64`) | Boots to a shell |
+| Windows x86_64 (`boot/windows/x86_64`) | Builds an `.exe` (checked in CI). Not yet confirmed to start on a real machine |
 
-- **カーネルと上の層の約束ごとの試験**（2026-09）：上の層が使う `tk_*` の呼び出しが仕様どおりに動くかを、62項目で確かめます（タスク・セマフォ・イベントフラグ・ミューテックス・時間。エラーコードや境界の値を含む）。期待値は μT-Kernel 3.0 の仕様書と突き合わせています。わざとカーネルを壊した5通りのビルドで、ちゃんと赤になることも毎回確かめます。Linux x86_64・ベアメタル x86・ベアメタル AArch64 で動いています（`arch/common/tk_conform.c`）。
-- 複数コアへの対応は、最初の段階まで入っています（CI `smp-autodetect`）。
+- **Tests for the contract between the kernel and the layers above it** (2026-09): 62 checks that the `tk_*` calls used by upper layers behave as specified (tasks, semaphores, event flags, mutexes, time — including error codes and boundary values). Expected values are checked against the μT-Kernel 3.0 specification. Five deliberately broken kernel builds are confirmed to turn the tests red, every time. Runs on Linux x86_64, bare-metal x86, and bare-metal AArch64 (`arch/common/tk_conform.c`).
+- The first stage of multi-core support is in (CI `smp-autodetect`).
 
-### つながる
+### Connecting
 
-- 同じ LAN の端末は、中継なしで自動的に見つけ合ってつながります [live]。
-- NAT の内側どうしは、中継（`relay/`）を通して届きます。通信は HMAC-SHA256 で認証し、再送の攻撃も防ぎます（CI `relay-tests`）。暗号化はしていません。中継が落ちても網は残り、誰でも自分の中継を立てられます。
-- 近い端末どうしでまとまり（region）を作り、重いやりとりはその中で済ませます。
-- どの端末も、網全体の様子（端末・まとまり・生死）を自分の中に持っています（シェルの `world`）。
-- UDP が通らないときは TCP に切り替わります（CI `connect-anywhere-certs`）。
-- aarch64 と x86_64 の端末が、同じ群れに入れます。
-- 群れの上限は64台です。32台までは実際に動かして確認しています [live]。64台分は1つのプロセスの中で確かめています [in-proc]。
+- Devices on the same LAN find each other and connect without a relay [live].
+- Devices behind NAT reach each other through a relay (`relay/`). Traffic is authenticated with HMAC-SHA256 and protected against replay (CI `relay-tests`). It is not encrypted. If the relay goes down the network remains, and anyone can run their own relay.
+- Nearby devices form groups (regions), and heavy exchanges stay inside them.
+- Every device holds its own view of the whole network (devices, groups, alive or dead) — the shell's `world` command.
+- Falls back to TCP when UDP does not get through (CI `connect-anywhere-certs`).
+- aarch64 and x86_64 devices can join the same swarm.
+- The swarm limit is 64 devices. Up to 32 have been confirmed by actually running them [live]; 64 has been checked inside one process [in-proc].
 
-### 止まらない
+### Not stopping
 
-- 推論を分担している途中で1台を kill しても、残りで推論を終え、「今 k/n 台で品質を落として動いている」と自分で報告します（CI `survival-loop`）[live]。
-- 守りたいものを指定すると、群れがそれを複製して守ります。持ち主の端末を kill しても、隣で生き残ります（CI `protect-loop-live` ほか）[live]。
-- 中身が空の新しい端末が、網にある重み・コード・役割から一人前の端末になれます。
-- 資源が足りない状態が続くと、端末は「休眠」に入り、重い処理を止めます。群れの仕事の割り振りも、休眠中の端末を避けます（CI の3つの試験）[in-proc]。
+- If one device is killed while it is sharing an inference, the rest finish the inference and report on their own that they are "running degraded on k/n devices" (CI `survival-loop`) [live].
+- When something is marked for protection, the swarm replicates it to keep it alive. Killing the owning device does not kill it; it survives next door (CI `protect-loop-live` and others) [live].
+- A new device with nothing on it can become a full member from the weights, code, and role found on the network.
+- When resources stay short, a device goes into "hibernation" and stops its heavy work, and the swarm avoids giving it work (three tests in CI) [in-proc].
 
-### 覚える
+### Remembering
 
-- **p-fs**：内容のハッシュを住所にする分散ストアです。同じ内容は1つにまとまり、改ざんは住所の食い違いですぐ分かります。
-- **ARK**：電源断に強いファイルシステムです。書き込み中の電源断やデータの破損を機械的に何度も起こす試験（CI `ark-crash-fuzzer`）で、壊れたデータを返したことは一度もありません。
-- 端末の ID・経歴の記録・学習した重みは、再起動しても残ります（Android でも）。
+- **p-fs**: a distributed store where the hash of the content is the address. Identical content collapses into one, and tampering shows up immediately as an address mismatch.
+- **ARK**: a power-loss-safe filesystem. A test that repeatedly and mechanically cuts power during writes and corrupts data (CI `ark-crash-fuzzer`) has never seen it return corrupted data.
+- Device IDs, the history record, and learned weights survive a restart (on Android too).
 
-### 群れで学ぶ
+### Learning as a swarm
 
-- データを分けて持った端末どうしが、中央なしで重みを混ぜ合わせて、1台で学ぶより良い結果になることを測っています。学習中の kill にも耐えます（CI `collective-learn-live`）[live]。
-- 2〜3台で1つの Transformer の計算を分担できます。
+- Devices that each hold only part of the data mix their weights with no central server and end up better than any of them learning alone. It survives kills during learning (CI `collective-learn-live`) [live].
+- Two or three devices can share the computation of one Transformer forward pass.
 
-### 学ぶ脳（単語を覚える脳）
+### The learning brain (word associations)
 
-約2万パラメータの小さな脳です。単語と単語の結びつきを覚えます。
+A small brain of about 21,568 parameters that learns associations between words.
 
-- `mind teach sky blue` と教えると、`mind ask sky` に「blue」と答えます。
-- 覚えた直後は短期のメモに置き、端末が暇なときに重みへ定着させます（睡眠）。覚えたことを忘れてしまう問題を実際に再現して、睡眠で治ることを測っています。
-- 端末 A に教えたことに、端末 B が答えます。A を kill しても残ります（CI `shared-mind-live`）[live]。
-- 別々のことを覚えた2つの脳を1つにまとめられます（CI `one-mind-live`）。
-- 覚え直し（sun→yellow を sun→green に）も、混ざらずに置き換わります（CI `belief-revision-live`）[live]。
-- 容量がいっぱいになったときは、あまり聞かれないことから忘れます。
+- Teach it with `mind teach sky blue`, and `mind ask sky` answers "blue".
+- New facts are first kept as short-term notes and fixed into the weights while the device is idle (sleep). Forgetting was actually reproduced, and sleep was measured to cure it.
+- A fact taught to device A is answered by device B, and it survives killing A (CI `shared-mind-live`) [live].
+- Two brains that learned different things can be merged into one (CI `one-mind-live`).
+- Re-teaching (sun→yellow to sun→green) replaces the old answer without mixing (CI `belief-revision-live`) [live].
+- When memory is full, the facts that are asked about least are forgotten first.
 
-限界：覚えられるのは単語の組だけで、文は作れません。測ったのは作った課題の上で、実際の会話ではまだです。詳しくは [living-mind.md](docs/architecture/30-module/living-mind.md)。
+Limits: it can only learn pairs of words and cannot form sentences. The measurements were on constructed tasks, not real conversation. Details: [living-mind.md](docs/architecture/30-module/living-mind.md).
 
-### 白紙から育つ脳（赤ちゃん）
+### The brain that grows from a blank slate (the baby)
 
-単語を覚える脳は、覚えられる言葉が決まっています。そこで 2026年6月から、学習済みのモデルを載せるのではなく、白紙の小さな言語モデルを端末の上で育てる方針にしました。
+The word-association brain can only learn a fixed vocabulary. So since June 2026 the direction has been not to load a pre-trained model, but to grow a small, blank language model on the device itself.
 
-- 端末の性能に合わせた大きさで生まれ、育った重みは再起動しても残ります。
-- 画面から話しかけると、1文字ずつ返事をします。今は、まだたどたどしいです。
-- 先生役は SmolLM2-135M（公開モデル）で、それを動かす推論エンジンを外部ライブラリなしの C で書きました。群れに配るのは生徒だけで、先生の重みは配りません。
-- 先生が実際に書いた文で学ばせると、その文の続きの予測が良くなります（損失 5.53→2.03。同じ回数だけ決まった教材で学んだ対照は 6.61）。1つのプロセスの中の測定です。
-- 先生の端末が網越しに授業を送り、先生を kill したあとも生徒に残ることを確かめました [live]（`samples/11_distributed/run_cradle_live.sh`、CI には入っていない）。ただし、下がった分の多くは、訓練側にも出てくる文の暗記で、知らない文への応用ではありません。
-- **量子化**（2026-09）：`student quant <8|4|2> <row|g32|tensor>` で、自分の重みの写しを int8・int4・int2 に丸めたとき、どれだけ悪くなるかを自分で測ります。int8（行ごと）ではほとんど悪くなりません（CI `st-quant`）。今は測るところまでで、小さくして持つところまではしていません。メモ：[brain-quantization.md](docs/architecture/30-module/research/brain-quantization.md)
-- **合体の安全装置**（2026-09）：2つの脳の重みを単純に平均すると、悪い方より悪くなることがあります。いくつかの混ぜ方を試して一番良いものを選び、悪い方より悪い結果は作らないようにしました（CI `st-merge`）。今のところ、うまく混ぜるというより安全装置です。メモ：[brain-merge.md](docs/architecture/30-module/research/brain-merge.md)
+- It is born at a size that fits the device's performance, and its grown weights survive a restart.
+- Talk to it from the web page and it replies one character at a time. For now, it still stumbles.
+- The teacher is SmolLM2-135M (a public model), run by an inference engine written in C with no external libraries. Only the student is distributed to the swarm; the teacher's weights are not.
+- Training on sentences actually written by the teacher improves prediction of how those sentences continue (loss 5.53→2.03; a control trained the same number of steps on the fixed material went to 6.61). Measured inside one process.
+- A teacher device sends lessons over the network, and they remain in the student after the teacher is killed [live] (`samples/11_distributed/run_cradle_live.sh`, not in CI). However, much of the improvement is memorizing text that also appears on the training side, not generalizing to unseen text.
+- **Quantization** (2026-09): `student quant <8|4|2> <row|g32|tensor>` rounds a copy of its own weights to int8, int4, or int2 and measures how much worse it gets. int8 (per row) barely changes it (CI `st-quant`). For now it only measures; it does not yet store itself in the smaller form. Notes: [brain-quantization.md](docs/architecture/30-module/research/brain-quantization.md)
+- **A safety net for merging** (2026-09): simply averaging the weights of two brains can end up worse than the worse parent. It now tries several ways of mixing, picks the best, and never produces a result worse than the worse parent (CI `st-merge`). So far this is a safety net rather than clever merging. Notes: [brain-merge.md](docs/architecture/30-module/research/brain-merge.md)
 
-### 安全装置（隔離と署名）
+### Safety mechanisms (isolation and signing)
 
-自分でコードを書き換える日に備えて、安全装置を先に作っています。
+The safety mechanisms are built first, ahead of the day it rewrites its own code.
 
-- x86 では、脳の計算はカーネルの外（ring3）で動きます。そこが落ちても、カーネルは生き残って後始末をします（CI `ring3-survival`）[live]。
-- 端末が自分で作ったコードは、別のプロセスの中で、使える機能を絞って動かします。
-- 配るコードには Ed25519 で署名します。署名の鍵は端末のものとして扱い、人の身元とは結びつけません。
-- 版が違う端末が混ざっても群れが割れないように、互換の層と、署名つきの更新の仕組みがあります。
-- 端末が自分の状態を変える操作の最初の1つ（自分の話題への発信）を、守りの仕組み付きで入れました（2026-09）。
+- On x86, the brain's computation runs outside the kernel (ring 3). If it crashes, the kernel survives and cleans up (CI `ring3-survival`) [live].
+- Code a device compiles for itself runs in a separate process with limited capabilities.
+- Code to be distributed is signed with Ed25519. Signing keys belong to devices and are never tied to a person's identity.
+- Devices on different versions can mix without splitting the swarm, thanks to a compatibility layer and signed updates.
+- The first operation by which a device changes its own state (publishing on its own topic) has been added, behind a protective check (2026-09).
 
-まだのこと：学習側の処理はカーネルの中で動いています。AArch64 側の同じ隔離もまだです。
+Not yet: the learning-side code still runs inside the kernel, and the same isolation on AArch64 is not done.
 
-### 画面とアプリ
+### Screens and the app
 
-- **銀河**：各端末が自分のページ（`http://127.0.0.1:7800`）を持ち、自分と仲間を星として描きます。星の動きは、実際の睡眠や学習の出来事に合わせています。
-- **ark（Android アプリ、0.9.x）**：入れた端末が1つのノードになります。銀河を見たり、育っている脳と話したりできます。動くのは充電中だけです。参加の前に、目的への同意の画面があります。作り方は [docs/android.md](docs/android.md)。
-- 参加する人の身元は確かめません。実名・ペンネーム・匿名は同じ扱いです。
+- **Galaxy**: each device serves its own page (`http://127.0.0.1:7800`) and draws itself and its peers as stars. The stars move with real sleep and learning events.
+- **ark (Android app, 0.9.x)**: installing it makes the phone one node. You can watch the galaxy and talk to the growing brain. It only works while charging, and it asks for consent to the project's purpose before joining. Build instructions: [docs/android.md](docs/android.md).
+- Participants' identities are never verified. Real names, pen names, and anonymity are treated the same.
 
-### 自分を疑う仕組み
+### Mechanisms for doubting itself
 
-- **CI 49ジョブ**：5つの対象のビルド、中継の試験に加えて、実際に kill する試験を毎回回しています。ベアメタルのカーネルの機械語が知らないうちに変わっていないかも見張っています（`crown-text-identity`）。
-- 2026年6月の外部の監査で指摘された9件（メモリの安全・署名の確認の抜けなど）は、全部直しました。
-- 端末の kill と起動をくり返すと、まれにカーネルごと落ちるバグ（KILL-CHURN）は、仮説を7つ潰して原因を突き止めて直しました。途中の1つは、「直した」つもりの修正が原因だったことを、同じ日・同じ手順の比較で見つけています。
-- まだ解決していない課題は [gap-ledger](docs/architecture/gap-ledger.md) の1か所にまとめています。今は3件です（2026-09-27）。
-
----
-
-## 設計中・作っている途中
-
-まだ「動く」とは言いません。
-
-- **赤ちゃんの成長**：もっと大きな器、生成の高速化、先生の文を常に取り込む運用。
-- **federation**：64台の先、数千台へ。region をさらに束ねる仕組み。最初の部品（region を含む ID の形）だけ入っていて、まだ通信にはつながっていません。
-- **p-fs の続き**：責任を持つ端末を決める仕組みとの統合、消えた断片を復元できる持ち方。
-- **GPU**：脳の計算を端末の GPU で動かす。部品は動きましたが、脳へのつなぎこみは保留にしています。
-- **隔離の残り**：学習側の処理の移動、AArch64 側の隔離。
-- **暗号**：Ed25519 の時間差攻撃への対策。
-
-設計が先で、まだ確かめていないものの一覧は [V-MODEL.md](docs/architecture/V-MODEL.md) にあります。
+- **49 CI jobs**: builds for the five targets and the relay tests, plus tests that really kill processes, on every run. It also watches that the bare-metal kernel's machine code does not change unintentionally (`crown-text-identity`).
+- All nine issues found by an external audit in June 2026 (memory safety, missing signature checks, and others) have been fixed.
+- A bug where repeatedly killing and starting devices would occasionally crash the whole kernel (KILL-CHURN) was tracked down after ruling out seven hypotheses. One of them turned out to be caused by the very change meant to fix it — found by comparing with the unfixed kernel on the same day with the same procedure.
+- Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md). There are three right now (2026-09-27).
 
 ---
 
-## 構想
+## Being designed / in progress
 
-今の姿ではなく、向かっている先です。
+Not claimed to work yet.
 
-- 宇宙船の外装パネル1万枚それぞれが p-kernel を動かし、最後の1枚が残る限り、全体としては止まらない。
-- 網全体で1つの脳になる。region が脳の部位、すぐの反応とゆっくりの判断が別の速さで動き、p-fs が記憶になる。（睡眠や記憶の共有はもう動いていますが、「脳」と呼べる大きさではまだありません。）
-- 端末が自分でコードを書き、署名して配り、網ごと育っていく。（隔離と署名の仕組みはできました。何を書くべきかを考える力は、まだありません。）
+- **Growing the baby**: a bigger model, faster generation, and routinely learning from the teacher's text.
+- **Federation**: beyond 64 devices toward thousands, by grouping regions further. Only the first piece (an ID format that includes the region) is in; it is not yet used in communication.
+- **More p-fs**: integrating the mechanism that decides which device is responsible, and storing data so lost fragments can be recovered.
+- **GPU**: running the brain's computation on the device GPU. The parts work, but wiring them into the brain is on hold.
+- **The rest of isolation**: moving the learning-side code out of the kernel, and isolation on AArch64.
+- **Cryptography**: protecting Ed25519 against timing attacks.
 
-考え方の全体は [survival-network.md](docs/architecture/00-concept/survival-network.md) にあります。
-
----
-
-## 採用しなかったこと
-
-**貢献しない端末を後回しにする仕組みは入れない、と決めました（2026-07-04）。** 受け取るだけで貢献しない端末を見つけて静かに後回しにする仕組み（recip）を、設計までは作りました。そのうえで、弱い端末がいても群れで補えばいい、と考えて採用しないことにしました。応える側は、見返りを求めずに応えます。設計の文書は [survival-recip.md](docs/architecture/30-module/survival-recip.md) に残してあります。
+The list of things designed but not yet verified is in [V-MODEL.md](docs/architecture/V-MODEL.md).
 
 ---
 
-## 試してみる
+## Vision
 
-**1台で（Linux、1分ほど）**
+Where it is headed, not where it is now.
+
+- Ten thousand outer panels of a spacecraft each run p-kernel, and as long as one panel survives, the whole does not stop.
+- The whole network becomes one brain: regions as parts of the brain, quick reactions and slow judgment running at different speeds, p-fs as memory. (Sleep and shared memory already work, but it is not yet big enough to be called a brain.)
+- Devices write their own code, sign it, distribute it, and the network grows as a whole. (The isolation and signing are in place. The intelligence to decide what to write is not.)
+
+The whole way of thinking is in [survival-network.md](docs/architecture/00-concept/survival-network.md).
+
+---
+
+## Decided against
+
+**No mechanism to push back against devices that do not contribute (2026-07-04).** A mechanism (recip) that finds devices which only receive and quietly deprioritizes them was designed in full. It was then decided not to adopt it: if some devices are weak, the swarm can make up for them. Devices that answer requests do so without expecting anything back. The design document is kept in [survival-recip.md](docs/architecture/30-module/survival-recip.md).
+
+---
+
+## Try it
+
+**On one machine (Linux, about a minute)**
 
 ```sh
 sudo apt install -y build-essential
 git clone https://github.com/monyuonyu/p-kernel.git
-cd p-kernel/boot/linux                   # aarch64 の機械はこちら
-#  cd p-kernel/boot/linux_x86_64        # x86_64 の機械はこちら
+cd p-kernel/boot/linux                   # on an aarch64 machine
+#  cd p-kernel/boot/linux_x86_64        # on an x86_64 machine
 make && ./p-kernel
 ```
 
-プロンプトが出たら：
+At the prompt:
 
 ```
-mind teach sky blue      ← 教える
-mind ask sky             ← 聞く（→ blue）
-mind wait                ← 睡眠で重みに定着するのを待つ
-world                    ← 群れの様子
-help                     ← 全コマンド
+mind teach sky blue      ← teach
+mind ask sky             ← ask (→ blue)
+mind wait                ← wait for sleep to fix it into the weights
+world                    ← the swarm's view
+help                     ← all commands
 ```
 
-- **銀河を見る**：`./p-kernel` を動かしたまま、ブラウザで <http://127.0.0.1:7800> を開きます。赤ちゃんとの会話もここからできます。
-- **群れにする**：別の端末で、もう1つ `./p-kernel` を起動します。同じ LAN なら自動でつながります。片方で教えて、もう片方で聞いてみてください。
-- **NAT の外とつなぐ**：`relay/` で `make`（試験は `make test`）。外から見えるサーバーで `./relay` を動かし、各端末は同じ鍵で参加します。
-- **1台の中で10台の群れ**：`samples/11_distributed/run_swarm_demo.sh`（x86_64 の Linux、6〜8分）。1台が覚えた小さな分類器（635パラメータ。言葉の脳ではありません）が10台に広がり、1台ずつ kill しても残りが答え続け、新しく来た端末が最後の1台から受け継ぎます。1台の機械の中の10プロセスで、10台の端末ではありません。
-- **スマホで**：`android/` の ark アプリ（[docs/android.md](docs/android.md)）。
-- **ベアメタルで**：`boot/x86` か `boot/aarch64` で `make`（QEMU で起動するスクリプト付き）。
+- **See the galaxy**: with `./p-kernel` running, open <http://127.0.0.1:7800> in a browser. You can talk to the baby from there too.
+- **Make a swarm**: start another `./p-kernel` in a second terminal. On the same LAN they connect automatically. Teach on one side and ask on the other.
+- **Connect beyond NAT**: `make` in `relay/` (tests: `make test`). Run `./relay` on a server reachable from outside, and each device joins with the same key.
+- **A swarm of ten on one machine**: `samples/11_distributed/run_swarm_demo.sh` (x86_64 Linux, 6–8 minutes). A small classifier learned by one node (635 parameters, not a language brain) spreads to ten; they keep answering as they are killed one by one, and a newcomer inherits from the last survivor. These are ten processes on one machine, not ten devices.
+- **On a phone**: the ark app in `android/` ([docs/android.md](docs/android.md)).
+- **On bare metal**: `make` in `boot/x86` or `boot/aarch64` (scripts to boot in QEMU included).
 
 ---
 
-## 今の限界
+## Current limits
 
-1. **仕組みは本物、大きさはおもちゃです。** 学ぶ・覚える・共有する・直す・忘れる、の仕組みはそれぞれ測って確かめました。ただ、脳は約2万パラメータの単語の結びつきで、分類器は635パラメータです。
-2. **64台を実際に動かしたことはまだありません。** 実際に動かしたのは32台までです。数千台は設計だけです。
-3. **中継は認証だけで、暗号化はしていません。** なりすまし・改ざん・再送は防ぎますが、盗み見は防げません。
-4. **Raspberry Pi の実機は、まだ QEMU までです。** SD カードのドライバがありません。
-5. **計算の丸め方の違いに弱い学習です。** 掛け算と足し算をまとめる最適化の丸めの差だけで、スマホでだけ学習が壊れたことがあります。丸め方をそろえて全環境で同じ結果にしましたが、それに頼っている弱さは残っています。
-6. **対象ごとにコマンドの数がそろっていません。** ベアメタル x86 が59、ベアメタル AArch64 が7、Linux x86_64 が53、Linux aarch64 が54です（2026-09-27）。表は [command-matrix.md](docs/architecture/command-matrix.md) にあり、ソースから自動で作って CI で実物と照らし合わせています。これからそろえます。
-7. **カーネルの入れ替えの見張り。** μT-Kernel 3.0 への移行後も、KILL-CHURN と同じ種類のバグが出ないか、再現用のプログラム（`tcb_churn.c`）で見張り続けています。
-8. **ベアメタル x86 に、直っていない固まり方があります。** カーネルを一度も呼ばずに回り続けるタスクがあると、ほかのタスクに切り替わらなくなります（RNG0-BUSY-TASK-STALLS-DISPATCH）。原因は分かっていて、直し方を決めているところです。CI では見張りだけしています。
-
----
-
-## 開発のやり方
-
-- 開発の多くは AI（Claude）と一緒にしていて、夜の間も AI が計画を立てて進めています。作る役と確かめる役は、別の回の AI に分けています。
-- この README は実態に合わせます。書いていないものは、動くとは言いません。
-- まだ解決していない課題は [gap-ledger](docs/architecture/gap-ledger.md) の1か所にまとめ、閉じるときは経緯を残します。
-- 「脳」「集合意識」のような大きな言葉は目標として残しますが、必ず隣に今の実際の大きさを数字で書きます。
+1. **The mechanisms are real; the scale is a toy.** Learning, remembering, sharing, correcting, and forgetting have each been measured. But the brain is a ~21,568-parameter word-association model, and the classifier has 635 parameters.
+2. **64 devices have never actually been run.** Real runs go up to 32. Thousands exist only as a design.
+3. **The relay authenticates but does not encrypt.** It prevents impersonation, tampering, and replay, but not eavesdropping.
+4. **Raspberry Pi is only as far as QEMU.** There is no SD card driver yet.
+5. **The learning is sensitive to how arithmetic is rounded.** A difference in rounding from an optimization that fuses multiply and add once broke learning only on phones. Rounding was made identical so every environment gives the same result, but depending on that remains a weakness.
+6. **The number of commands differs by target.** Bare-metal x86 has 59, bare-metal AArch64 7, Linux x86_64 53, Linux aarch64 54 (2026-09-27). The table is in [command-matrix.md](docs/architecture/command-matrix.md), generated from the source and checked against the real thing in CI. Evening them out is next.
+7. **Watching after the kernel swap.** After moving to μT-Kernel 3.0, a reproducer (`tcb_churn.c`) keeps watching for bugs of the same kind as KILL-CHURN.
+8. **Bare-metal x86 has an unfixed way of freezing.** If a task keeps running without ever calling the kernel, the kernel never switches to other tasks (RNG0-BUSY-TASK-STALLS-DISPATCH). The cause is known and the fix is being decided. CI only watches it for now.
 
 ---
 
-## ライセンス
+## How it is developed
 
-`LICENSE` を見てください。自分で書いたコードは **BSD-3-Clause** です。カーネルの芯（`kernel/mtkernel3/`、μT-Kernel 3.0 由来）は **T-License 2.2** に従います。
+- Much of the development is done together with an AI (Claude), which also plans and works through the night on its own. The role that builds and the role that checks are given to different AI runs.
+- This README follows reality. Anything not written here is not claimed to work.
+- Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md), and when one is closed, the story is kept.
+- Big words like "brain" or "collective mind" stay as goals, but the actual size today is always written next to them in numbers.
+
+---
+
+## License
+
+See `LICENSE`. Original code is **BSD-3-Clause**. The kernel core (`kernel/mtkernel3/`, derived from μT-Kernel 3.0) follows the **T-License 2.2**.
