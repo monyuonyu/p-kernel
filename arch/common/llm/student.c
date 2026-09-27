@@ -2264,6 +2264,102 @@ int st_merge_cohort(st_model *into,
 }
 
 /* ================================================================== */
+/* brain self-quantization, stage 1 (st_quant_fake — see student.h)   */
+/* ================================================================== */
+
+/* RTN one group of n weights: src a[] -> dequantized b[]. Symmetric absmax,
+ * round half away from zero (own code, no libc), clamp to [-qmax-1, qmax].   */
+static void st_quant_group(const float *a, float *b, int n, int qmax)
+{
+#if defined(ST_QUANT_NOOP)
+    (void)qmax;
+    for (int i = 0; i < n; i++) b[i] = a[i];      /* negative control */
+#else
+    float amax = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float v = a[i] < 0.0f ? -a[i] : a[i];
+        if (v > amax) amax = v;
+    }
+    if (amax == 0.0f) { for (int i = 0; i < n; i++) b[i] = 0.0f; return; }
+    float s = amax / (float)qmax;
+#if defined(ST_QUANT_BADSCALE)
+    s = s * 0.25f;                                /* negative control: clips */
+#endif
+    for (int i = 0; i < n; i++) {
+        float r = a[i] / s;
+        int q = (int)(r >= 0.0f ? r + 0.5f : r - 0.5f);
+        if (q > qmax) q = qmax;
+        if (q < -qmax - 1) q = -qmax - 1;
+        b[i] = (float)q * s;
+    }
+#endif
+}
+
+/* One 2-D matrix [rows][cols] at w-offset `off`: split into groups per gran,
+ * return the packed bytes (int payload + one fp32 scale per group). */
+static size_t st_quant_mat(const st_model *src, st_model *dst, int off,
+                           int rows, int cols, int bits, int gran)
+{
+    int total = rows * cols;
+    int glen  = gran == ST_QG_TENSOR ? total : gran == ST_QG_G32 ? 32 : cols;
+    int qmax  = (1 << (bits - 1)) - 1;
+    size_t ngroups = 0;
+    for (int g0 = 0; g0 < total; g0 += glen) {
+        int n = glen; if (g0 + n > total) n = total - g0;
+        st_quant_group(src->w + off + g0, dst->w + off + g0, n, qmax);
+        ngroups++;
+    }
+    return ((size_t)total * (size_t)bits + 7u) / 8u + ngroups * sizeof(float);
+}
+
+int st_quant_fake(const st_model *src, st_model *dst, int bits, int gran,
+                  size_t *bytes_q)
+{
+    if (!src || !dst || !src->w || !dst->w || src == dst) return ST_E_ARG;
+    if (bits != 8 && bits != 4 && bits != 2) return ST_E_ARG;
+    if (gran != ST_QG_ROW && gran != ST_QG_G32 && gran != ST_QG_TENSOR) return ST_E_ARG;
+    if (dst->tier != src->tier || dst->d != src->d || dst->dff != src->dff ||
+        dst->nlayer != src->nlayer || dst->nexpert != src->nexpert ||
+        dst->n_params != src->n_params) return ST_E_ARG;
+    ST_DIMS(src);                 /* V is the file-wide ST_VOCAB macro */
+
+    /* SS-4 alive mask: mirror src's so dst selects the same live experts. */
+    if (dst->alive) { free(dst->alive); dst->alive = NULL; }
+    if (src->alive) {
+        dst->alive = (int8_t *)malloc((size_t)E);
+        if (!dst->alive) return ST_E_OOM;
+        for (int e = 0; e < E; e++) dst->alive[e] = src->alive[e];
+    }
+
+    /* fp32 everywhere first (norms, router kept verbatim), then the matrices. */
+    int np = src->n_params;
+    for (int i = 0; i < np; i++) {
+        dst->w[i] = src->w[i]; dst->g[i] = 0.0f; dst->mu[i] = 0.0f; dst->vu[i] = 0.0f;
+    }
+    dst->adam_t = 0;
+
+    size_t bq = 0, nq = 0;
+    bq += st_quant_mat(src, dst, src->o_embed, V, D, bits, gran); nq += (size_t)V * D;
+    for (int l = 0; l < L; l++) {
+        bq += st_quant_mat(src, dst, src->o_wq + l*D*D, D, D, bits, gran);
+        bq += st_quant_mat(src, dst, src->o_wk + l*D*D, D, D, bits, gran);
+        bq += st_quant_mat(src, dst, src->o_wv + l*D*D, D, D, bits, gran);
+        bq += st_quant_mat(src, dst, src->o_wo + l*D*D, D, D, bits, gran);
+        nq += (size_t)4 * D * D;
+    }
+    for (int x = 0; x < L * E; x++) {
+        bq += st_quant_mat(src, dst, src->o_w1 + x*DFF*D, DFF, D, bits, gran);
+        bq += st_quant_mat(src, dst, src->o_w3 + x*DFF*D, DFF, D, bits, gran);
+        bq += st_quant_mat(src, dst, src->o_w2 + x*D*DFF, D, DFF, bits, gran);
+        nq += (size_t)3 * D * DFF;
+    }
+    bq += st_quant_mat(src, dst, src->o_out, V, D, bits, gran); nq += (size_t)V * D;
+    bq += ((size_t)np - nq) * sizeof(float);      /* the fp32 remainder */
+    if (bytes_q) *bytes_q = bq;
+    return ST_OK;
+}
+
+/* ================================================================== */
 /* grad check                                                         */
 /* ================================================================== */
 
