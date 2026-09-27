@@ -2724,6 +2724,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # check_readme_translations.py reads README.ja.md's history
+      # 2026-09-28 (inbox #12.4 / #17.2): README.md and README.zh-CN.md name the
+      # README.ja.md commit they were translated from. If README.ja.md changed
+      # after it, warn (::warning::) — NON-blocking: it tells, it does not stop.
+      - name: check_readme_translations.py fixtures
+        run: python3 tests/ci/test_check_readme_translations.py
+      - name: check_readme_translations.py (訳が日本語版より古くないか、非BLOCKING)
+        continue-on-error: true
+        run: python3 tests/ci/check_readme_translations.py .
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
       # 2026-09-27 (inbox #8): README said "22ジョブ" while this file had 45.
