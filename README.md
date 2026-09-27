@@ -1,6 +1,6 @@
 **English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `2808c9d9`.
+> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `1be96cb1`.
 
 # p-kernel
 
@@ -35,6 +35,8 @@ The project's goal, as written in the Japanese README (with dated notes):
 ## What p-kernel is
 
 Today's AI can only run inside a particular company's servers. If that company turns it off, the AI is gone. p-kernel asks the opposite question: if an AI lived spread across many machines, would there be any single place left from which it could be erased?
+
+In research terms, p-kernel explores **an operating substrate for distributed artificial life (an Artificial Life substrate)**. This is not a claim to have created life or consciousness. It is an experiment in building a base on which small minds can persist across failures, share memory and knowledge, and evolve within explicit safety boundaries.
 
 To get there, it is built on these principles:
 
