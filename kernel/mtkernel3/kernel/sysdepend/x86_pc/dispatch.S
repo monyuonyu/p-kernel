@@ -125,11 +125,26 @@ knl_dispatch_entry:
     ret                             /* 保存済み戻り先 / トランポリンへ */
 
 .Lidle:
-    /* 実行可能タスクが無い — 次の割込みまで halt */
+    /* 実行可能タスクが無い — 次の割込みまで halt。
+     * halt の前に専用のスタックへ乗り換える（D5-k の x86_pc 版、2026-09-27）。
+     * tk_exd_tsk は knl_del_tsk で自分のスタックを解放してから
+     * knl_dispatch_to_schedtsk に来るので、乗り換えないと idle と、ring0 の
+     * 割込みフレーム・ハンドラが解放済みの領域の上で走る。ループは次に
+     * TCB_SSP で入場タスクのスタックへ移るので、元の esp には依存しない。 */
+    movl    $knl_idle_stack_top, %esp
     sti
     hlt
     cli
     jmp     .Ldispatch_loop
+
+/* idle と、idle 中に入る割込みのためのスタック（上の .Lidle が使う）。
+ * 割込みは ring0→ring0 なのでスタックを切り替えずに今の esp へ積む。 */
+    .bss
+    .align  16
+knl_idle_stack:
+    .space  8192
+knl_idle_stack_top:
+    .text
 
 /* -----------------------------------------------------------------------
  *  knl_task_entry_trampoline

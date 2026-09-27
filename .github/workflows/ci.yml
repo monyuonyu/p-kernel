@@ -247,6 +247,10 @@ jobs:
           # `dkva test`'s 4th sub-call, dkva.c) -- W1/W2/O1-O3/S1 legs were
           # printed to selftest.log on every run but never asserted here.
           grep -aF '[unbounded-dkva] PASS' selftest.log
+          # federation.md §5.3-2: the requester folds contributions in id
+          # order, so two arrival orders give byte-identical sums (`dkva
+          # test`'s 5th sub-call). Falsifier: tests/host/run_dkva_fold_order.sh.
+          grep -aF '[dkva-fold-order] PASS' selftest.log
           # R3 (non-trivial thought): in-context associative recall. The SAME
           # dtr kernels (dt_linear/dt_softmax/LayerNorm fwd+bwd) learn a function
           # no hand-written if can win at — the dictionary is resampled every
@@ -640,6 +644,13 @@ jobs:
       #       (-DSCALING_AGG_STUB proves it). The converged-null delta==0 arm
       #       CANNOT detect such a stub — this arm is why scaling now has a
       #       load-bearing mechanism falsifier, not only an honest null.
+      # (Placed before the scaling cert: the dkva-fold-order falsifier rebuilds
+      # boot/linux_x86_64 and ends with `make clean`, so rebuild after it.)
+      - name: dkva fold-order cert + arrival-order falsifier (federation.md §5.3-2)
+        run: |
+          timeout 300 tests/host/run_dkva_fold_order.sh | tee dkva_fold_order.log
+          grep -aF '[dkva-fold-order] ALL PASS' dkva_fold_order.log
+          make -C boot/linux_x86_64 >/dev/null
       - name: Scaling-law society-of-minds ensemble cert (scaling-law.md §6)
         run: |
           cd boot/linux_x86_64
@@ -2716,10 +2727,10 @@ jobs:
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
       # 2026-09-27 (inbox #8): README said "22ジョブ" while this file had 45.
-      # Every "<N>ジョブ" in README.md must equal the job count here, so adding
+      # Every job count in README.ja.md / README.md / README.zh-CN.md must equal the job count here, so adding
       # a job means updating the README in the same change. A step here, not
       # a new job, so it does not change the count it checks.
-      - name: check_readme_counts.py (README の「Nジョブ」= ci.yml のジョブ数)
+      - name: check_readme_counts.py (3か国語の README のジョブ数 = ci.yml のジョブ数)
         run: python3 tests/ci/check_readme_counts.py .
       - name: check_readme_counts.py fixtures (a name like x86_64 is not a count)
         run: python3 tests/ci/test_check_readme_counts.py
