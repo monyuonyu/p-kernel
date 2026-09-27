@@ -2225,6 +2225,26 @@ jobs:
       - name: SS-3 same-tier merge-cohort convergence/isolation/falsifiability
         run: bash tests/llm/run_ss3.sh
 
+  st-merge:
+    # Smarter merge stage 1 (docs/architecture/30-module/research/brain-merge.md):
+    # st_merge_barrier measures the linear-path loss barrier; st_merge_guarded
+    # picks, on validation windows, among alpha 0..1 and TIES, and must not be
+    # worse than the worse parent on DISJOINT test windows. Green only if the
+    # plain build passes AND -DST_MERGE_PLAIN_ONLY (= today's [ss3-blob-merge]
+    # plain mean) goes red. ~3.5 min on the dev box. Hosted-only code: crown
+    # untouched (measured 2026-09-27).
+    name: "賢い合体 第1段 ([merge] + 陰性コントロール)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: st-merge cert (plain green, PLAIN_ONLY red)
+        run: bash tests/llm/run_st_merge.sh
+
   distributed-moe:
     # Collective x Brain: DMOE-A — distributed-MoE expert capacity that GROWS
     # with the fleet (distributed_moe_design.md §7). The BANK shards a bank
