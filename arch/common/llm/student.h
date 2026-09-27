@@ -348,6 +348,37 @@ int  st_merge_cohort(st_model *into,
                      const void *const *peer_blobs, const size_t *peer_lens,
                      int count);
 
+/* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
+ *
+ * st_quant_fake: "fake-quantize" the MATRICES of `src` into `dst` — symmetric
+ * absmax round-to-nearest (RTN) to `bits` in {8,4,2}, then IMMEDIATELY dequantize
+ * back to fp32, so dst runs the unchanged fp32 forward but carries exactly the
+ * values an int<bits> copy would hold. Per group: s = absmax/qmax (qmax =
+ * 2^(bits-1)-1), q = clamp(round(w/s), -qmax-1, qmax), w_hat = q*s. So every
+ * element obeys |w - w_hat| <= s/2 (the [st-quant] cert's gate C).
+ *
+ * Quantized: embed, wq/wk/wv/wo, w1/w3/w2, out (99.8% of the M baby). Kept fp32
+ * (copied verbatim): the RMSNorm gains and the router (tiny, and the router's
+ * top-K margin is what widens firing — rounding it changes WHICH experts fire).
+ * `gran`: ST_QG_ROW (one scale per output row — mv() is [out][in] row-major),
+ * ST_QG_G32 (one per 32 contiguous inputs of a row), ST_QG_TENSOR (one per 2-D
+ * matrix, per layer/expert).
+ *
+ * dst must be st_init_tier'd to the SAME tier/n_params as src (else ST_E_ARG);
+ * its w[] is overwritten, its Adam moments are zeroed, src is NOT touched. If
+ * src carries an SS-4 alive mask it is copied. Rounding is own code (no libc
+ * math, one-math under -O1 -ffp-contract=off). Returns ST_OK / ST_E_*; writes
+ * the packed size an int<bits> blob of w would need (int payload + one fp32
+ * scale per group + the fp32 remainder) to *bytes_q if non-NULL.
+ *
+ * Negative controls (cert only): -DST_QUANT_NOOP copies w unchanged;
+ * -DST_QUANT_BADSCALE uses s/4 (clips). Neither is ever a shipped build.     */
+#define ST_QG_ROW     0
+#define ST_QG_G32     1
+#define ST_QG_TENSOR  2
+int  st_quant_fake(const st_model *src, st_model *dst, int bits, int gran,
+                   size_t *bytes_q);
+
 /* ---- smarter merge, stage 1 (research/brain-merge.md §2) ----
  *
  * st_merge_barrier: evaluate the LINEAR path theta(alpha) = (1-alpha)*a +

@@ -2225,6 +2225,27 @@ jobs:
       - name: SS-3 same-tier merge-cohort convergence/isolation/falsifiability
         run: bash tests/llm/run_ss3.sh
 
+  st-quant:
+    # Brain self-quantization stage 1 (docs/architecture/30-module/research/
+    # brain-quantization.md): st_quant_fake RTN int8/4/2 x row/g32/tensor on a
+    # trained M baby. The script builds the cert 3 ways and is green only if
+    # the plain build passes AND both negative controls (-DST_QUANT_NOOP,
+    # -DST_QUANT_BADSCALE) go red. The plain build runs on 3 seeds (audit-13:
+    # one seed can pass a gate by luck). ~10 min on the dev box (5 x train+9
+    # evals), so its own job rather than inside shipped-llm-certs.
+    # student.c is hosted-only (bare metal links student_stub.o): crown untouched.
+    name: "脳の自己量子化 第1段 ([st-quant] + 陰性コントロール2つ)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: st-quant cert (plain green, NOOP red, BADSCALE red)
+        run: bash tests/llm/run_st_quant.sh
+
   st-merge:
     # Smarter merge stage 1 (docs/architecture/30-module/research/brain-merge.md):
     # st_merge_barrier measures the linear-path loss barrier; st_merge_guarded
