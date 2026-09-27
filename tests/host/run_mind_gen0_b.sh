@@ -119,6 +119,9 @@ send 3 "mind teach sky green";  send 4 "mind teach snow white"
 for i in 1 2 3 4; do wait_for "$LOGDIR/node$i.log" 'published mind/teach' 120 || note "node$i never published"; done
 for i in 1 2 3 4 5; do send "$i" "mind wait 90"; done
 for i in 1 2 3 4 5; do wait_for "$LOGDIR/node$i.log" 'wait: drained|distilled in-context facts' 200 || note "node$i: no drain/distill line"; done
+# the teachers die only after their fact reached the other members of their side
+wait_for "$LOGDIR/node1.log" 'remote teach arrived: "fire"' 120 || note "node1: fire never arrived (the teacher dies anyway)"
+for i in 3 5; do wait_for "$LOGDIR/node$i.log" 'remote teach arrived: "snow"' 120 || note "node$i: snow never arrived (the teacher dies anyway)"; done
 sleep 5
 # ---- phase 2: deaths ------------------------------------------------------
 note "kill -9 node2 (taught fire) and node4 (taught snow)"
