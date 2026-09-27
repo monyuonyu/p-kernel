@@ -10,8 +10,13 @@
 #
 # Negative controls: the SAME suite on a kernel that breaks a promise must go
 # RED. Each one patches ONE line of the vendored kernel in a scratch copy:
-#   NC-SEMPOLL  semaphore.c: a TMO_POL wait succeeds with one unit too few
-#   NC-NODELAY  task_sync.c: tk_dly_tsk returns at once for any delay < 100 s
+#   NC-SEMPOLL   semaphore.c: a semaphore wait succeeds with one unit too few
+#   NC-WAIPAR    semaphore.c: tk_wai_sem no longer refuses cnt <= 0 (E_PAR)
+#   NC-HALFDELAY task_sync.c: tk_dly_tsk sleeps half the requested time
+# Each must go RED on its own checks (listed in the output), not on a crash.
+# (A "tk_dly_tsk returns at once" control was tried first and dropped: other
+# system tasks pace themselves with tk_dly_tsk, so it starved the whole
+# system and the suite printed nothing — red, but for no useful reason.)
 # A negative control that stays green fails this script.
 #
 #   tests/host/run_tk_conform.sh            (x86_64 host)
@@ -71,7 +76,8 @@ EOF
     echo ""
 }
 nc SEMPOLL semaphore.c '&& semcb->semcnt >= cnt ) {' '&& semcb->semcnt + 1 >= cnt ) {'
-nc NODELAY task_sync.c '	if ( dlytim > 0 ) {' '	if ( dlytim > 100000 ) {'
+nc WAIPAR semaphore.c $'\tCHECK_PAR(cnt > 0);\n\tCHECK_TMOUT(tmout);' $'\tCHECK_TMOUT(tmout);'
+nc HALFDELAY task_sync.c 'knl_make_wait_reltim(dlytim, TA_NULL);' 'knl_make_wait_reltim(dlytim / 2, TA_NULL);'
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform] PASS"; else echo "[tk-conform] FAIL"; fi
 exit "$rc_all"

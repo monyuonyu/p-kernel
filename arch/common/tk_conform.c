@@ -150,15 +150,17 @@ static void suite_task(PRI me)
     er = tk_slp_tsk(TMO_POL);
     check(er == E_TMOUT, "T15", "tk_slp_tsk(TMO_POL) nothing queued -> E_TMOUT", er);
 
-    /* priority change: E_PAR on 0, then observable through tk_ref_tsk */
-    er = tk_chg_pri(TSK_SELF, 0);
-    check(er == E_PAR, "T16", "tk_chg_pri pri=0 -> E_PAR", er);
+    /* priority change (task_manage.c tk_chg_pri, CHECK_PRI_INI): an out-of-
+     * range priority is E_PAR, but 0 is TPRI_INI = "back to the initial
+     * priority" (v1's first draft expected E_PAR for 0 — that was wrong). */
+    er = tk_chg_pri(TSK_SELF, 1000);
+    check(er == E_PAR, "T16", "tk_chg_pri pri=1000 -> E_PAR", er);
     er = tk_chg_pri(TSK_SELF, me + 1);
     tk_ref_tsk(TSK_SELF, &r);
     check(er == E_OK && r.tskpri == me + 1, "T17", "tk_chg_pri(self, me+1) seen by tk_ref_tsk", r.tskpri);
-    tk_chg_pri(TSK_SELF, me);
+    er = tk_chg_pri(TSK_SELF, TPRI_INI);
     tk_ref_tsk(TSK_SELF, &r);
-    check(r.tskpri == me, "T18", "priority restored", r.tskpri);
+    check(er == E_OK && r.tskpri == me, "T18", "tk_chg_pri(self, TPRI_INI) -> initial priority", r.tskpri);
 
     /* E_ID on an out-of-range id */
     check(tk_ref_tsk(-5, &r) == E_ID, "T19", "tk_ref_tsk id=-5 -> E_ID", tk_ref_tsk(-5, &r));
@@ -239,9 +241,12 @@ static void suite_time(void)
 
 /* The suite runs in its own task at TKC_PRI, so helpers can sit one above
  * and one below it whatever the caller's priority is (the hosted shell runs
- * at 1). The caller waits for it on a semaphore. */
+ * at 1). The caller sleeps until the runner wakes it — tk_slp_tsk/tk_wup_tsk,
+ * not a semaphore, so a negative control that breaks semaphores breaks the
+ * checks, not the harness. */
 #define TKC_PRI 20
-static ID g_done;
+static ID g_caller;
+static volatile INT g_done;
 
 static void t_runner(INT stacd, void *exinf)
 {
@@ -251,31 +256,32 @@ static void t_runner(INT stacd, void *exinf)
     suite_task(r.tskpri);
     suite_sem(r.tskpri);
     suite_time();
-    tk_sig_sem(g_done, 1);
+    g_done = 1;
+    tk_wup_tsk(g_caller);
     tk_ext_tsk();
 }
 
 INT tk_conform_run(void (*out)(const char *))
 {
     char b[64]; INT k = 0; const char *p;
-    ID run; ER er;
-    g_out = out; g_pass = g_fail = 0;
+    ID run;
+    g_out = out; g_pass = g_fail = 0; g_done = 0;
     out("[tkc] contract suite v1 (runner task pri 20)\r\n");
-    g_done = mk_sem(0, 1);
+    g_caller = tk_get_tid();
     run = mk_task(t_runner, TKC_PRI);
-    if (g_done <= 0 || run <= 0) {
-        out("[tkc] FAIL setup: could not create the runner task / semaphore\r\n");
+    if (run <= 0) {
+        out("[tkc] FAIL setup: could not create the runner task\r\n");
         return 1;
     }
+    tk_can_wup(TSK_SELF);
     tk_sta_tsk(run, 0);
-    er = tk_wai_sem(g_done, 1, 120000);
-    if (er != E_OK) {
+    while (!g_done && tk_slp_tsk(120000) == E_OK) { }
+    if (!g_done) {
         out("[tkc] FAIL setup: the runner did not finish within 120 s\r\n");
         g_fail++;
         tk_ter_tsk(run);
     }
     tk_del_tsk(run);
-    tk_del_sem(g_done);
     k = 0;
     for (p = "[tkc] "; *p; ) b[k++] = *p++;
     put_dec(b, &k, g_pass);
