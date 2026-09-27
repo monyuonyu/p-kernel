@@ -36,3 +36,6 @@ boot/x86/manifesto_page.h
 
 # gcc -MMD が生成するヘッダ依存ファイル
 *.d
+
+# Python のバイトコード（tools/cmdmatrix/gen.py などを走らせると出る）
+__pycache__/
