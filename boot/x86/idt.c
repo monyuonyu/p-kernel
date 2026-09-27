@@ -90,9 +90,11 @@ void idt_install(void) {
 /* change occurs and RSP0 is NOT consulted.                            */
 /*                                                                     */
 /* WHY ONLY #DF (and NOT the IRQ/#PF vectors): routing IRQs onto a     */
-/* shared IST stack is INCOMPATIBLE with this dispatcher.  The PIT     */
-/* IRQ0 handler calls knl_timer_handler -> END_CRITICAL_SECTION ->     */
-/* knl_dispatch() SYNCHRONOUSLY, inside the IRQ, and knl_dispatch      */
+/* shared IST stack is INCOMPATIBLE with this dispatcher.  Every IRQ   */
+/* ends in irq_handler -> knl_irq_exit_dispatch -> knl_dispatch()      */
+/* SYNCHRONOUSLY, inside the IRQ (since 2026-09-28; before that the    */
+/* timer's END_CRITICAL_SECTION never dispatched, see RNG0 in the      */
+/* gap-ledger), and knl_dispatch                                       */
 /* saves the CURRENT %esp into ctxtsk->ssp (cpu_support.S).  An IRQ    */
 /* on a shared IST stack persists an IST-relative ssp that the next    */
 /* interrupt overwrites -> corruption (verified: a #PF in              */
@@ -319,6 +321,9 @@ void exception_handler(uint32_t exception_num, uint32_t error_code,
  */
 void (*x86_irq_handlers[16])(void);
 
+/* kernel/mtkernel3/kernel/sysdepend/x86_pc/cpu_cntl.c */
+extern void knl_irq_exit_dispatch(void);
+
 /* 共通IRQディスパッチャ (isr.S の irq_common_stub から呼ばれる) */
 /* regparm(1): 第1引数を %eax/rax レジスタで渡す (i686でもレジスタ渡し) */
 void __attribute__((regparm(1))) irq_handler(uint32_t irq_num) {
@@ -333,6 +338,9 @@ void __attribute__((regparm(1))) irq_handler(uint32_t irq_num) {
     if (irq_num != 0 || x86_irq_handlers[0] == 0) {
         pic_send_eoi((uint8_t)irq_num);
     }
+
+    /* EOI の後、タスクへ戻る前に遅延ディスパッチ（RNG0 の修正、cpu_cntl.c） */
+    knl_irq_exit_dispatch();
 }
 
 /* IRQハンドラ登録関数 (将来の拡張用スタブ) */
