@@ -221,6 +221,14 @@ EXPORT INT usermain(void)
     print(" Phase 2c: AI + distributed kernel\r\n");
     print("====================================\r\n");
 
+#ifdef PK_TKCONF
+    /* the contract suite at boot (tests/aarch64/run_tk_conform.sh); test builds only */
+    {
+        extern INT tk_conform_run(void (*out)(const char *));
+        tk_conform_run(print);
+    }
+#endif
+
 #ifdef SMP_2TASKS_PROD
     /* ②.2a [smp-2tasks-prod]: prove the PRODUCTION scheduler runs TWO REAL
      * T-Kernel TCBs on TWO DISTINCT CPUs under the BKL.  Runs here, inside the
