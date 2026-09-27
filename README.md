@@ -146,7 +146,7 @@ AArch64 の3つ（CI の `ump-x86_64` と `tk-conform-bare`）。Linux aarch64 �
 - **冬眠（L2、2026-09）。** 資源の不足が続くと、ノードは「負荷を落とす（STRESSED）」から
   「冬眠（HIBERNATING）」へ進み、心の同期と DMN の重い固化を止め、ビーコンの間隔を延ばす。
   群れの仕事の振り分け（MoE）も、冬眠中のノードを避けるようになる。脅威・資源の回復・明示の `world_wake()` のどれでもすぐ起きる。
-  CI（`ump-x86_64` の中の `survival l2` ほか3本の cert、それぞれ陰性コントロールつき）[in-proc]。
+  CI（`ump-x86_64` の中の3本の cert: survival-l2・mind-pause・dmn-pause、それぞれ陰性コントロールつき）[in-proc]。
   「冬眠は死ではない（仲間から DEAD と見られない）」は複数プロセスではまだ確かめていない。
   設計は [survival-loop.md](docs/architecture/20-architecture/survival-loop.md) §6-L2。
 
