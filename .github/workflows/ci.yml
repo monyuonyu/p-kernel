@@ -815,6 +815,16 @@ jobs:
           timeout 300 tests/host/run_federation_f1.sh | tee federation_f1.log
           grep -aF '[federation-f1] ALL PASS' federation_f1.log
 
+      # The contract suite v1 (inbox #5, arch/common/tk_conform.c, verb tkconf):
+      # the tk_* task / semaphore / time promises user space relies on, 41
+      # checks incl. error codes. Three negative controls each patch ONE line
+      # of the vendored kernel in a scratch copy and must go RED. Hosted only
+      # (bare metal does not link tk_conform.c yet): crown untouched.
+      - name: contract suite v1 (tk_* tasks / semaphores / time + 3 kernel-breaking NCs)
+        run: |
+          timeout 600 tests/host/run_tk_conform.sh | tee tk_conform.log
+          grep -aF '[tk-conform] PASS' tk_conform.log
+
       # SWIM SELF-SUSPICION de-storm (arch/common/swim.c gossip_apply; replica.c:387).
       # Under self-hosted CI CPU load a node falls behind on SWIM PING/ACK, is FALSELY
       # rumored SUSPECT, and reacts to EVERY such rumor with a FULL UNPACED memory
