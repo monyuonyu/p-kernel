@@ -548,7 +548,7 @@ static void cyc_count(void *exinf)
 
 static void suite_cyc(void)
 {
-    ER er; ID c; INT n; T_RCYC rc;
+    ER er; ID c; INT n; W t0, dt; T_RCYC rc;
     T_CCYC cc = { .exinf = NULL, .cycatr = TA_HLNG, .cychdr = (FP)cyc_count,
                   .cyctim = 20, .cycphs = 0 };
     T_CCYC bad = cc;
@@ -562,10 +562,16 @@ static void suite_cyc(void)
     er = tk_sta_cyc(c);
     tk_ref_cyc(c, &rc);
     check(er == E_OK && rc.cycstat == TCYC_STA, "C3", "tk_sta_cyc -> E_OK, TCYC_STA", (W)rc.cycstat);
-    /* 400 ms at a 20 ms period is 20 calls; a period that doubled gives ~10 */
+    /* the count is judged against the time that really passed (tk_get_otm),
+     * not against the 400 ms asked of tk_dly_tsk: a broken delay is D2's
+     * business, not this check's (the first draft trusted the delay and went
+     * red under NC-HALFDELAY too). 20 ms period -> dt/20 calls; a period that
+     * doubled gives about half. */
+    t0 = now_ms();
     tk_dly_tsk(400);
     n = c_cnt;
-    check(n >= 14 && n <= 30, "C4", "20 ms period over 400 ms -> 14..30 calls", n);
+    dt = now_ms() - t0;
+    check(n * 20 >= dt * 7 / 10 && n * 20 <= dt * 3 / 2, "C4", "20 ms period -> about dt/20 calls (0.7x..1.5x)", n);
     er = tk_stp_cyc(c);
     n = c_cnt;
     tk_dly_tsk(100);
