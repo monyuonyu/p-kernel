@@ -135,7 +135,9 @@ jobs:
     runs-on: ubuntu-latest
     # 15 -> 20: the four LLM core host certs (tests/llm/, wired below) add
     # ~2.5min, run_student.sh being the slowest (~90s).
-    timeout-minutes: 20
+    # 20 -> 30 (2026-09-28): the job took 16m48s in CI 36338650549 and
+    # MIND-GEN-0-A adds ~95 s; tk-conform v2 would add ~8 min more.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -907,6 +909,16 @@ jobs:
           grep -aF '[persist-identity] PASS'   persist_cert.log
           grep -aF '[persist-mind] PASS'       persist_cert.log
           grep -aF '[persist-mind-stale] PASS' persist_cert.log
+
+      # MIND-GEN-0-A (ROADMAP 1-1, 2026-09-28): the same teach -> sleep ->
+      # persist -> restore -> ask path, but the first life is killed with
+      # SIGKILL (persist_cert.sh above only uses the shell's exit). Negative
+      # controls in the script: kill -9 before the sleep persisted, and a
+      # reboot on an empty dir, must both NOT answer blue. ~95 s.
+      - name: MIND-GEN-0-A memory cert (kill -9, ROADMAP 1-1)
+        run: |
+          timeout 600 tests/host/run_mind_gen0_a.sh | tee mind_gen0_a.log
+          grep -aF '[mind-gen0-a] ALL PASS' mind_gen0_a.log
 
       # LLM core host certs (tests/llm/). Each is deterministic and self-
       # contained — the SYNTHETIC core runs with NO gguf model file and NO
