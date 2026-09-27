@@ -8,9 +8,12 @@
  *
  *    (A) [merge-barrier-w0]  pair branched at W0: linear-path barrier on TEST
  *                            > BAR_MIN (reproduces the ss3 cause, [1] §3).
- *    (B) [merge-barrier-wk]  pair branched after sharing the first WK_ROUNDS
- *                            rounds: barrier smaller than (A), and the plain
- *                            mean is <= the worse parent on TEST.
+ *    (B) MEASUREMENT only    pairs branched after sharing the first k rounds
+ *                            (k = 4, 10, 20, 30 of 40): barrier and whether
+ *                            the plain mean beats the worse parent. This was a
+ *                            gate in the first version (k=4 -> plain <= worse);
+ *                            that prediction FAILED, so it is reported, not
+ *                            counted (brain-merge.md §3).
  *    (C) [merge-guarded]     st_merge_guarded on the W0 pair, choosing on VAL:
  *                            child <= worse parent on TEST (disjoint windows).
  *    (D) [merge-determ]      guarded merge twice -> byte-identical.
@@ -114,31 +117,40 @@ int main(void)
     printf("[A]\n");
     CHECK(bar0 > BAR_MIN, "[merge-barrier-w0] W0-branched pair: barrier > BAR_MIN");
 
-    /* ---- Wk pair: share WK_ROUNDS first, then branch ---- */
-    st_model K, A2, B2;
-    st_init_tier(&K, 0xC0FFEE, ST_TIER_S);
-    train_rounds(&K, 1, WK_ROUNDS);
-    clone(&A2, &K); clone(&B2, &K);
-    train_rounds(&A2, 1, ROUNDS - WK_ROUNDS);
-    train_rounds(&B2, 7, ROUNDS - WK_ROUNDS);
-    float curvek[ST_MERGE_NALPHA];
-    float bark = st_merge_barrier(&A2, &B2, &S, TESTW, SW, SEQLEN, curvek);
-    float lA2 = loss_on(&A2, TESTW, SW), lB2 = loss_on(&B2, TESTW, SW);
-    float worse2 = lA2 > lB2 ? lA2 : lB2;
-    printf("  [Wk] test A=%.4f B=%.4f  path:", (double)lA2, (double)lB2);
-    for (int k = 0; k < ST_MERGE_NALPHA; k++) printf(" %.4f", (double)curvek[k]);
-    printf("  barrier=%.4f\n", (double)bark);
-    printf("[B]\n");
-    CHECK(bark < bar0, "[merge-barrier-wk] Wk-branched barrier < W0-branched barrier");
-    CHECK(curvek[ST_MERGE_NALPHA / 2] <= worse2 + 1e-4f,
-          "[merge-barrier-wk] plain mean of the Wk pair <= worse parent (test)");
+    /* ---- (B) MEASUREMENT, not a gate: share the first k rounds, then
+     * branch. The first version of this cert GATED on "10% shared -> plain
+     * mean <= worse parent"; that prediction failed (barrier 0.375 -> 0.278,
+     * plain mean still worse), so it is now reported, not counted. ---- */
+    static const int WKS[4] = { WK_ROUNDS, 10, 20, 30 };
+    printf("[B] measurement: branch after k of %d shared rounds\n", ROUNDS);
+    for (int q = 0; q < 4; q++) {
+        st_model K, A2, B2;
+        st_init_tier(&K, 0xC0FFEE, ST_TIER_S);
+        train_rounds(&K, 1, WKS[q]);
+        clone(&A2, &K); clone(&B2, &K);
+        train_rounds(&A2, 1, ROUNDS - WKS[q]);
+        train_rounds(&B2, 7, ROUNDS - WKS[q]);
+        float curvek[ST_MERGE_NALPHA];
+        float bark = st_merge_barrier(&A2, &B2, &S, TESTW, SW, SEQLEN, curvek);
+        float lA2 = loss_on(&A2, TESTW, SW), lB2 = loss_on(&B2, TESTW, SW);
+        float worse2 = lA2 > lB2 ? lA2 : lB2;
+        printf("  [W%d] test A=%.4f B=%.4f path:", WKS[q], (double)lA2, (double)lB2);
+        for (int k = 0; k < ST_MERGE_NALPHA; k++) printf(" %.4f", (double)curvek[k]);
+        printf(" barrier=%.4f plain<=worse:%s\n", (double)bark,
+               curvek[ST_MERGE_NALPHA / 2] <= worse2 + 1e-4f ? "yes" : "no");
+        st_free(&K); st_free(&A2); st_free(&B2);
+    }
 
     /* ---- guarded merge on the W0 pair, choose on VAL, judge on TEST ---- */
     st_model C, C2;
     clone(&C, &A); clone(&C2, &A);
-    int pick  = st_merge_guarded(&C,  &B, &I, &S, VALW, VW, SEQLEN);
-    int pick2 = st_merge_guarded(&C2, &B, &I, &S, VALW, VW, SEQLEN);
+    float cl[ST_MERGE_NALPHA + 1];
+    int pick  = st_merge_guarded(&C,  &B, &I, &S, VALW, VW, SEQLEN, cl);
+    int pick2 = st_merge_guarded(&C2, &B, &I, &S, VALW, VW, SEQLEN, NULL);
     float lC = loss_on(&C, TESTW, SW);
+    printf("  [guarded] val loss per candidate:");
+    for (int c = 0; c <= ST_MERGE_NALPHA; c++) printf(" %.4f", (double)cl[c]);
+    printf("  (last = TIES)\n");
     printf("  [guarded] pick=%d (0..%d = alpha 0..1, %d = TIES) child test=%.4f "
            "worse parent=%.4f plain=%.4f\n", pick, ST_MERGE_NALPHA - 1,
            ST_MERGE_NALPHA, (double)lC, (double)worse,

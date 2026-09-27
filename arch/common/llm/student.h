@@ -370,6 +370,8 @@ int  st_merge_cohort(st_model *into,
  * worse than the worse parent ON THE VALIDATION WINDOWS; generalisation is
  * the cert's job (disjoint test windows). Returns the chosen index
  * (0..ST_MERGE_NALPHA-1 = alpha points, ST_MERGE_NALPHA = TIES), or negative.
+ * cand_loss[ST_MERGE_NALPHA+1] (optional) receives each candidate's
+ * validation loss (-1 for candidates not tried).
  * -DST_MERGE_PLAIN_ONLY (cert negative control) restricts it to alpha = 0.5.
  * Hosted-only (student.c is not linked into bare metal).                    */
 #define ST_MERGE_NALPHA 5
@@ -378,7 +380,8 @@ float st_merge_barrier(const st_model *a, const st_model *b, st_model *scratch,
                        float *curve);
 int   st_merge_guarded(st_model *into, const st_model *peer,
                        const st_model *init, st_model *scratch,
-                       const uint8_t *const *val, int n, int seqlen);
+                       const uint8_t *const *val, int n, int seqlen,
+                       float *cand_loss);
 
 /* ---- firing-width observability (SS-1) ----
  * Read-only: the number of experts the LAST st_forward fired on its FINAL
