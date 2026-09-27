@@ -104,26 +104,30 @@ jobs:
       - name: control arm — expect GREEN (probe itself is sound)
         run: ARM=control sh tests/x86/run_rng0_regression.sh
 
-  tk-conform-x86:
-    # The contract suite v1 on bare-metal x86 under QEMU (inbox #5,
+  tk-conform-bare:
+    # The contract suite v1 on bare-metal x86 AND AArch64 under QEMU (inbox #5,
     # arch/common/tk_conform.c; hosted twin in the UMP x86_64 job). Linked only
     # into -DPK_TKCONF test builds, so the default .text (crown) is unchanged
     # (measured 2026-09-27: dea715dd / 1c8e6d16, 0 tk_conform symbols).
-    # plain must be 41 PASS / 0 FAIL; three kernel-breaking negative controls
-    # (semaphore off-by-one, tk_wai_sem without its E_PAR check, a halved
-    # tk_dly_tsk) must each go RED. ~5 min on the dev box (4 builds + 4 boots).
-    name: "約束ごとの試験 v1 (ベアメタル x86, QEMU)"
+    # Per arch: plain must be 41 PASS / 0 FAIL; three kernel-breaking negative
+    # controls (semaphore off-by-one, tk_wai_sem without its E_PAR check, a
+    # halved tk_dly_tsk) must each go RED. ~5 min per arch on the dev box.
+    # -nic none on aarch64 (no efi-virtio.rom without ipxe-qemu), as run_smp0.sh.
+    name: "約束ごとの試験 v1 (ベアメタル x86 + AArch64, QEMU)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install i686 cross toolchain + qemu-system-x86
+      - name: Install cross toolchains + QEMU
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-i686-linux-gnu make qemu-system-x86 python3
+            gcc-i686-linux-gnu gcc-aarch64-linux-gnu make \
+            qemu-system-x86 qemu-system-arm python3
       - name: contract suite v1 on bare x86 (plain green, 3 NCs red)
         run: bash tests/x86/run_tk_conform.sh
+      - name: contract suite v1 on bare AArch64 (plain green, 3 NCs red)
+        run: bash tests/aarch64/run_tk_conform.sh
 
   ump-x86_64:
     name: "UMP x86_64 (ビルド + 自己テスト)"
