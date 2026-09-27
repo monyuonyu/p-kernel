@@ -61,6 +61,7 @@
 # Exit 0 = the cure + all three falsification arms behaved.
 # Env: CRADLE_LIVE_ARMS (default "ctrl cure off scramble death"; ctrl first),
 #      CRADLE_TRIPLES, CRADLE_IDLE_CAP_SECS, CRADLE_CANON_DELTA, CRADLE_LIVE_PORT, CRADLE_LIVE_LOGDIR.
+#      CRADLE_LIVE_NC_NO_PREKILL_END=1 is a negative control (death arm must go RED).
 #
 # D5-j (2026-09-25): cure/scramble/death are now judged AGAINST A CONTROL ARM
 # (ctrl: same boot, same idle time, no lesson) on the canonical lesson's held
@@ -502,7 +503,9 @@ run_arm() {
   if [ "$arm" = "death" ]; then
     s_say "MARK-S-PREKILL-BEGIN"
     s_say "cradle probe-canon"
-    s_say "MARK-S-PREKILL-END"
+    # negative control only (audit-13): never send END -> the pre-kill read must
+    # come back empty and the death arm must go RED, not borrow a later line.
+    [ "${CRADLE_LIVE_NC_NO_PREKILL_END:-0}" = 1 ] || s_say "MARK-S-PREKILL-END"
     wait_for_marker "$LOG_S" 'MARK-S-PREKILL-END' 40 || true
     kill -9 "$TPID" 2>/dev/null
     echo "[cradle-live] killed T (node2) — SWIM must mark it dead; S answers from its in-memory weights"
@@ -582,9 +585,14 @@ s_post_canon() {
 # death arm: the canon probe taken just before T was killed (no fallback — an
 # absent line must fail, not borrow a later reading). Read ONLY between the
 # BEGIN and END markers sent around that probe (audit-10: the old grep -B12 END
-# window could reach back to an idle-loop canon line and borrow it).
+# window could reach back to an idle-loop canon line and borrow it). The window
+# is emitted only once its END line is seen (audit-13: `sed -n '/B/,/E/p'` runs
+# to end-of-file when END is missing and borrowed the POST-kill reading). No END
+# -> empty -> the (C) gate goes red.
 s_prekill_canon() {
-  sed -n '/MARK-S-PREKILL-BEGIN/,/MARK-S-PREKILL-END/p' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null \
+  awk '/MARK-S-PREKILL-BEGIN/ { on = 1; buf = ""; next }
+       on && /MARK-S-PREKILL-END/ { printf "%s", buf; on = 0; next }
+       on { buf = buf $0 "\n" }' "$LOGD/cradle_live_nodeS_$1.log" 2>/dev/null \
     | grep -oE "$CANON_RE" | tail -1
 }
 # numeric compare without bc: awk.
