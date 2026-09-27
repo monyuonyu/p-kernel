@@ -39,6 +39,7 @@ note() { echo "[$(TS)] $*"; }
 res() {  # <E> <PASS|FAIL> <text>
     echo "[mind-gen0-b] $1 $2: $3"
     [ "$2" = FAIL ] && REDS="$REDS $1"
+    return 0     # callers use "cond && res PASS || res FAIL"
 }
 cleanup() {
     for i in 1 2 3 4 5 6; do
@@ -82,7 +83,9 @@ region_size() {  # <node> <size> <secs>: poll `region` until "size=<size>" appea
     return 1
 }
 ANS=""; TAUGHT=""
-ask() {  # <node> <key>: sets ANS (answer word) and TAUGHT (teacher node or "local")
+# TAUGHT is the PKERNEL_NODE_ID of the teacher. `mind ask` prints the origin
+# 0-based ("taught by node 2" = PKERNEL_NODE_ID 3, as SWIM does), so add 1.
+ask() {  # <node> <key>: sets ANS (answer word) and TAUGHT (teacher node id or "local")
     local i="$1" k="$2" lg="$LOGDIR/node$1.log" pre n=0
     pre=$(grep -ac "ask \"$k\" ->" "$lg")
     send "$i" "mind ask $k"
@@ -90,7 +93,7 @@ ask() {  # <node> <key>: sets ANS (answer word) and TAUGHT (teacher node or "loc
     ANS=$(grep -a "ask \"$k\" ->" "$lg" | tail -1 | grep -aoE -- '-> "[a-z]+"' | tr -d '">-' | tr -d ' ')
     sleep 0.5
     TAUGHT=$(grep -a -A8 "ask \"$k\" ->" "$lg" | tail -9 | grep -aoE 'taught by node [0-9]+' | tail -1 | grep -aoE '[0-9]+$')
-    [ -z "$TAUGHT" ] && TAUGHT=local
+    if [ -z "$TAUGHT" ]; then TAUGHT=local; else TAUGHT=$((TAUGHT + 1)); fi
 }
 
 echo "==========================================================="
@@ -154,6 +157,13 @@ for i in 1 3 5 6; do
     [ "${A1[$i.snow]}" = white ] || e1="$e1 node$i:snow=${A1[$i.snow]:-none}"
 done
 [ -z "$e1" ] && res E1 PASS "fire->warm and snow->white on 1,3,5,Z" || res E1 FAIL "missing:$e1"
+# not a verdict: the round-1 asks publish wants (LM-15), so round 2 shows what a pull added
+e1b=""
+for i in 1 3 5 6; do
+    [ "${A2[$i.fire]}" = warm ]  || e1b="$e1b node$i:fire=${A2[$i.fire]:-none}"
+    [ "${A2[$i.snow]}" = white ] || e1b="$e1b node$i:snow=${A2[$i.snow]:-none}"
+done
+echo "[mind-gen0-b] info: E1 as of round 2 (after the round-1 asks; not a verdict): ${e1b:- all present}"
 # E2: one answer for sky everywhere
 s=$(for i in 1 3 5 6; do echo "${A1[$i.sky]:-none}"; done | sort -u | tr '\n' ' ')
 [ "$(echo $s | wc -w)" = 1 ] && [ "$s" != "none " ] && res E2 PASS "every node answers sky -> $s" \
