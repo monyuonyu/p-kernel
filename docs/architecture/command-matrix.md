@@ -9,10 +9,10 @@ CI は `--check` で、この表と生成し直した結果が食い違えば赤
 |---|---|---|
 | x86 bare | `arch/x86/shell.c` | 59 |
 | AArch64 bare | `arch/aarch64/usermain.c` | 7 |
-| Linux x86_64 | `arch/linux/x86_64/usermain.c` | 52 |
-| Linux aarch64 | `arch/linux/aarch64/usermain.c` | 53 |
-| Android | `arch/linux/aarch64/usermain.c`（= Linux aarch64 の usermain.c） | 53 |
-| Windows x86_64 | `arch/linux/x86_64/usermain.c`（= Linux x86_64 の usermain.c） | 52 |
+| Linux x86_64 | `arch/linux/x86_64/usermain.c` | 53 |
+| Linux aarch64 | `arch/linux/aarch64/usermain.c` | 54 |
+| Android | `arch/linux/aarch64/usermain.c`（= Linux aarch64 の usermain.c） | 54 |
+| Windows x86_64 | `arch/linux/x86_64/usermain.c`（= Linux x86_64 の usermain.c） | 53 |
 
 | コマンド | x86 bare | AArch64 bare | Linux x86_64 | Linux aarch64 | Android | Windows x86_64 |
 |---|---|---|---|---|---|---|
@@ -106,6 +106,7 @@ CI は `--check` で、この表と生成し直した結果が食い違えば赤
 | `survival` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `swimtest` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `tcbchurn` | — | — | — | ✓ | ✓ | — |
+| `tkconf` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `topic` | ✓ | — | — | — | — | — |
 | `udp` | ✓ | — | — | — | — | — |
 | `umount` | ✓ | — | — | — | — | — |
