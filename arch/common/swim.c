@@ -38,6 +38,52 @@ static void sw_putdec(UW v)
 }
 
 /* ------------------------------------------------------------------ */
+/* Test-only patience (inbox #3-4, 2026-09-27)                         */
+/*                                                                     */
+/* A multi-node cert whose nodes block for tens of seconds (GGUF       */
+/* generation, distillation) gets its peers declared DEAD mid-test.    */
+/* HOSTED builds read PKERNEL_SWIM_SUSPECT_ROUNDS / _DEAD_ROUNDS       */
+/* (1..250: suspect_count is a UB) once at swim_init; the product      */
+/* defaults in swim.h are unchanged. Bare metal has no env:            */
+/* SWIM_*_LIMIT stay the swim.h                                        */
+/* constants, so its code is unchanged (crown-neutral).                */
+/* Cert: tests/host/run_swim_env_rounds.sh.                            */
+/* ------------------------------------------------------------------ */
+#ifdef _TK_HOSTED_LIBC_
+static INT swim_suspect_limit = SWIM_SUSPECT_ROUNDS;
+static INT swim_dead_limit    = SWIM_DEAD_ROUNDS;
+#define SWIM_SUSPECT_LIMIT swim_suspect_limit
+#define SWIM_DEAD_LIMIT    swim_dead_limit
+
+static INT swim_env_rounds(const char *name, INT dflt)
+{
+    extern char *getenv(const char *);
+    const char *s = getenv(name);
+    INT v = 0;
+    if (!s || !*s) return dflt;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9' || v > 250) return dflt;
+        v = v * 10 + (*s - '0');
+    }
+    return (v >= 1 && v <= 250) ? v : dflt;
+}
+
+static void swim_rounds_from_env(void)
+{
+    swim_suspect_limit = swim_env_rounds("PKERNEL_SWIM_SUSPECT_ROUNDS", SWIM_SUSPECT_ROUNDS);
+    swim_dead_limit    = swim_env_rounds("PKERNEL_SWIM_DEAD_ROUNDS",    SWIM_DEAD_ROUNDS);
+    if (swim_suspect_limit != SWIM_SUSPECT_ROUNDS || swim_dead_limit != SWIM_DEAD_ROUNDS) {
+        sw_puts("[swim] rounds suspect="); sw_putdec((UW)swim_suspect_limit);
+        sw_puts(" dead=");                 sw_putdec((UW)swim_dead_limit);
+        sw_puts(" (env)\r\n");
+    }
+}
+#else
+#define SWIM_SUSPECT_LIMIT SWIM_SUSPECT_ROUNDS
+#define SWIM_DEAD_LIMIT    SWIM_DEAD_ROUNDS
+#endif
+
+/* ------------------------------------------------------------------ */
 /* Gossip queue                                                        */
 /*                                                                     */
 /* Each entry is piggybacked on outgoing SWIM packets until            */
@@ -788,7 +834,7 @@ void swim_task(INT stacd, void *exinf)
          * For ALIVE nodes, require SWIM_SUSPECT_ROUNDS consecutive misses
          * before SUSPECT: with only 2 nodes there are no indirect helpers,
          * so a single dropped UDP datagram must not be a death sentence. */
-        if (st == DNODE_ALIVE && suspect_count[target] >= SWIM_SUSPECT_ROUNDS) {
+        if (st == DNODE_ALIVE && suspect_count[target] >= SWIM_SUSPECT_LIMIT) {
             dnode_table[target].state  = DNODE_SUSPECT;
             sw_note(target, DNODE_ALIVE, DNODE_SUSPECT);
             dnode_table[target].missed = 0;
@@ -797,7 +843,7 @@ void swim_task(INT stacd, void *exinf)
             sw_puts(" -> SUSPECT (no response)\r\n");
             gossip_add(target, DNODE_SUSPECT, dnode_incarn[target],
                        cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
-        } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_ROUNDS) {
+        } else if (st == DNODE_SUSPECT && suspect_count[target] >= SWIM_DEAD_LIMIT) {
             dnode_table[target].state  = DNODE_DEAD;
             sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
             dnode_table[target].missed = 0;
@@ -820,6 +866,9 @@ void swim_init(void)
 {
     for (INT i = 0; i < DNODE_MAX; i++) { suspect_count[i] = 0; dnode_incarn[i] = 0; }
     my_incarnation = 0;
+#ifdef _TK_HOSTED_LIBC_
+    swim_rounds_from_env();
+#endif
     udp_bind(SWIM_PORT, swim_rx);
     sw_puts("[swim] SWIM ready  port=7375\r\n");
 }

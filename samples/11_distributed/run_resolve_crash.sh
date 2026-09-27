@@ -15,7 +15,9 @@
 # caller drops it and falls through to solo/loopback. No getaddrinfo, no crash.
 #
 # This script asserts, on the DEFAULT hosted build:
-#   1. PKERNEL_RELAY=garbage:notaport  -> boots, logs the skip, exit 0 (loopback)
+#   1. PKERNEL_RELAY=garbage:notaport  -> boots, logs the skip, exit 0 (loopback,
+#      or the Slice 4 no-contact provisional relay pointer; 1b pins loopback
+#      with PKERNEL_RELAY_AUTOFALLBACK=0)
 #   2. PKERNEL_SEED=garbage:notaport   -> boots, logs the skip, exit 0 (solo)
 #   3. a VALID numeric relay still registers (back-compat, unchanged)
 #
@@ -63,8 +65,26 @@ E1=$?
 ck "RELAY unresolvable -> no crash" 0 "$E1"
 grep -q "unresolvable host 'garbage'" "$L1" && { echo "  PASS RELAY logged the skip"; PASS=$((PASS+1)); } \
     || { echo "  FAIL RELAY skip not logged"; FAIL=$((FAIL+1)); }
-grep -q "transport = loopback" "$L1" && { echo "  PASS RELAY degraded to loopback"; PASS=$((PASS+1)); } \
-    || { echo "  FAIL RELAY did not degrade to loopback"; FAIL=$((FAIL+1)); }
+# Since connect-anywhere Slice 4 (0b94f6a0) the default path races relay-UDP vs
+# relay-TCP to the SAME configured endpoint; with nothing reachable it keeps a
+# provisional relay-udp pointer (no mesh) instead of loopback. Both are a
+# degrade. What must NOT appear is an adopted contact (D5-i, inbox #3 (a)).
+if grep -q "transport = loopback" "$L1"; then
+    echo "  PASS RELAY degraded to loopback"; PASS=$((PASS+1))
+elif grep -q "auto: no relay contact (udp+tcp)" "$L1" && grep -q "transport = relay (node" "$L1" \
+     && ! grep -q "auto: adopted" "$L1" && ! grep -q "adopted relay-tcp" "$L1"; then
+    echo "  PASS RELAY degraded to a provisional relay pointer (no contact, no mesh)"; PASS=$((PASS+1))
+else
+    echo "  FAIL RELAY did not degrade (neither loopback nor no-contact provisional)"; FAIL=$((FAIL+1))
+fi
+
+# --- case 1b: same, with the auto race disabled -> the legacy loopback path ---
+L1B=$(mktemp)
+printf 'net\nexit\n' | PKERNEL_RELAY=garbage:notaport PKERNEL_RELAY_AUTOFALLBACK=0 \
+    "${RUN[@]}" "$BOOT/p-kernel" >"$L1B" 2>&1
+ck "RELAY unresolvable, AUTOFALLBACK=0 -> no crash" 0 "$?"
+grep -q "transport = loopback" "$L1B" && { echo "  PASS RELAY (AUTOFALLBACK=0) degraded to loopback"; PASS=$((PASS+1)); } \
+    || { echo "  FAIL RELAY (AUTOFALLBACK=0) did not degrade to loopback"; FAIL=$((FAIL+1)); }
 
 # --- case 2: unresolvable PKERNEL_SEED -> solo, exit 0 -------------------
 L2=$(mktemp)
@@ -90,6 +110,6 @@ grep -q "transport = relay" "$NLOG" && { echo "  PASS numeric relay selected"; P
 grep -q "node 9 registered" "$RLOG" && { echo "  PASS relay saw the REGISTER"; PASS=$((PASS+1)); } \
     || { echo "  FAIL relay never saw the REGISTER"; FAIL=$((FAIL+1)); }
 
-rm -f "$L1" "$L2" "$RLOG" "$NLOG"
+rm -f "$L1" "$L1B" "$L2" "$RLOG" "$NLOG"
 echo "[resolve-crash] RESULT: $PASS PASS / $FAIL FAIL"
 [ "$FAIL" = 0 ] && exit 0 || exit 1

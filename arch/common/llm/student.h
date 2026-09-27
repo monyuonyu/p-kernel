@@ -379,6 +379,41 @@ int  st_merge_cohort(st_model *into,
 int  st_quant_fake(const st_model *src, st_model *dst, int bits, int gran,
                    size_t *bytes_q);
 
+/* ---- smarter merge, stage 1 (research/brain-merge.md §2) ----
+ *
+ * st_merge_barrier: evaluate the LINEAR path theta(alpha) = (1-alpha)*a +
+ * alpha*b at alpha = k/(ST_MERGE_NALPHA-1) on `n` windows of `seqlen` bytes
+ * (mean st_eval_loss), writing each point to curve[ST_MERGE_NALPHA] if
+ * non-NULL. Returns the barrier height max_alpha L(alpha) - (L(0)+L(1))/2
+ * (Frankle et al. 2020's instability, on loss). `scratch` must be st_init'd
+ * to the same tier; a and b are not modified. Returns a negative value on bad
+ * args (mismatched tiers / n<1).
+ *
+ * st_merge_guarded: merge `peer` into `into` by picking, on the caller's
+ * VALIDATION windows, the best of ST_MERGE_NALPHA+1 candidates: the linear
+ * path points alpha = 0..1 (alpha=0 is `into` itself, 1 is `peer`) and
+ * TIES-Merging (Yadav et al. 2023) around `init` — task vectors
+ * tau = theta - init, keep each tau's top 20% magnitudes, elect the sign of
+ * the summed trimmed taus per parameter, average only the agreeing ones,
+ * theta = init + tau_m (lambda = 1). Ties in loss go to the lower index, so
+ * the result is deterministic. Adam state of `into` is reset (as in
+ * st_merge_cohort). Because the parents are candidates, the child is never
+ * worse than the worse parent ON THE VALIDATION WINDOWS; generalisation is
+ * the cert's job (disjoint test windows). Returns the chosen index
+ * (0..ST_MERGE_NALPHA-1 = alpha points, ST_MERGE_NALPHA = TIES), or negative.
+ * cand_loss[ST_MERGE_NALPHA+1] (optional) receives each candidate's
+ * validation loss (-1 for candidates not tried).
+ * -DST_MERGE_PLAIN_ONLY (cert negative control) restricts it to alpha = 0.5.
+ * Hosted-only (student.c is not linked into bare metal).                    */
+#define ST_MERGE_NALPHA 5
+float st_merge_barrier(const st_model *a, const st_model *b, st_model *scratch,
+                       const uint8_t *const *wins, int n, int seqlen,
+                       float *curve);
+int   st_merge_guarded(st_model *into, const st_model *peer,
+                       const st_model *init, st_model *scratch,
+                       const uint8_t *const *val, int n, int seqlen,
+                       float *cand_loss);
+
 /* ---- firing-width observability (SS-1) ----
  * Read-only: the number of experts the LAST st_forward fired on its FINAL
  * (most recent) token, final layer — the "answer token" firing width. This is

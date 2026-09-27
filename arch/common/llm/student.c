@@ -2360,6 +2360,123 @@ int st_quant_fake(const st_model *src, st_model *dst, int bits, int gran,
 }
 
 /* ================================================================== */
+/* smarter merge, stage 1 (st_merge_barrier / st_merge_guarded)        */
+/* ================================================================== */
+
+static int st_same_shape(const st_model *a, const st_model *b)
+{
+    return a && b && a->w && b->w && a->tier == b->tier && a->d == b->d &&
+           a->dff == b->dff && a->nlayer == b->nlayer &&
+           a->nexpert == b->nexpert && a->n_params == b->n_params;
+}
+
+static float st_windows_loss(st_model *m, const uint8_t *const *w, int n, int seqlen)
+{
+    double t = 0.0;
+    for (int i = 0; i < n; i++) { int np = 0; t += st_eval_loss(m, w[i], seqlen, &np); }
+    return (float)(t / n);
+}
+
+float st_merge_barrier(const st_model *a, const st_model *b, st_model *scratch,
+                       const uint8_t *const *wins, int n, int seqlen,
+                       float *curve)
+{
+    if (!st_same_shape(a, b) || !st_same_shape(a, scratch) || !wins || n < 1)
+        return -1.0f;
+    int np = a->n_params;
+    float lo[ST_MERGE_NALPHA];
+    float top = 0.0f;
+    for (int k = 0; k < ST_MERGE_NALPHA; k++) {
+        float al = (float)k / (float)(ST_MERGE_NALPHA - 1);
+        for (int i = 0; i < np; i++)
+            scratch->w[i] = (1.0f - al) * a->w[i] + al * b->w[i];
+        lo[k] = st_windows_loss(scratch, wins, n, seqlen);
+        if (curve) curve[k] = lo[k];
+        if (k == 0 || lo[k] > top) top = lo[k];
+    }
+    return top - 0.5f * (lo[0] + lo[ST_MERGE_NALPHA - 1]);
+}
+
+static int st_cmp_desc(const void *x, const void *y)
+{
+    float a = *(const float *)x, b = *(const float *)y;
+    return (a < b) - (a > b);
+}
+
+/* |tau| value at the top-20% boundary of tau = w - init (TIES "trim"). */
+static float st_ties_threshold(const float *w, const float *init, int np)
+{
+    float *mag = (float *)malloc((size_t)np * sizeof(float));
+    if (!mag) return -1.0f;
+    for (int i = 0; i < np; i++) {
+        float t = w[i] - init[i];
+        mag[i] = t < 0.0f ? -t : t;
+    }
+    qsort(mag, (size_t)np, sizeof(float), st_cmp_desc);
+    int k = np / 5; if (k < 1) k = 1;
+    float thr = mag[k - 1];
+    free(mag);
+    return thr;
+}
+
+/* candidate `c` of (a, b) into dst[] (dst may alias a). */
+static void st_merge_candidate(int c, const float *a, const float *b,
+                               const float *init, float thrA, float thrB,
+                               float *dst, int np)
+{
+    if (c < ST_MERGE_NALPHA) {
+        float al = (float)c / (float)(ST_MERGE_NALPHA - 1);
+        for (int i = 0; i < np; i++) dst[i] = (1.0f - al) * a[i] + al * b[i];
+        return;
+    }
+    for (int i = 0; i < np; i++) {               /* TIES, lambda = 1 */
+        float ta = a[i] - init[i], tb = b[i] - init[i];
+        float ma = ta < 0.0f ? -ta : ta, mb = tb < 0.0f ? -tb : tb;
+        if (ma < thrA) ta = 0.0f;
+        if (mb < thrB) tb = 0.0f;
+        float s = ta + tb, sum = 0.0f; int cnt = 0;
+        if (s > 0.0f) {
+            if (ta > 0.0f) { sum += ta; cnt++; }
+            if (tb > 0.0f) { sum += tb; cnt++; }
+        } else if (s < 0.0f) {
+            if (ta < 0.0f) { sum += ta; cnt++; }
+            if (tb < 0.0f) { sum += tb; cnt++; }
+        }
+        dst[i] = init[i] + (cnt ? sum / (float)cnt : 0.0f);
+    }
+}
+
+int st_merge_guarded(st_model *into, const st_model *peer,
+                     const st_model *init, st_model *scratch,
+                     const uint8_t *const *val, int n, int seqlen,
+                     float *cand_loss)
+{
+    if (cand_loss)
+        for (int c = 0; c <= ST_MERGE_NALPHA; c++) cand_loss[c] = -1.0f;
+    if (!st_same_shape(into, peer) || !st_same_shape(into, init) ||
+        !st_same_shape(into, scratch) || !val || n < 1) return ST_E_ARG;
+    int np = into->n_params;
+    float thrA = st_ties_threshold(into->w, init->w, np);
+    float thrB = st_ties_threshold(peer->w, init->w, np);
+    if (thrA < 0.0f || thrB < 0.0f) return ST_E_OOM;
+
+    int best = -1; float bl = 0.0f;
+    for (int c = 0; c <= ST_MERGE_NALPHA; c++) {
+#if defined(ST_MERGE_PLAIN_ONLY)
+        if (c != ST_MERGE_NALPHA / 2) continue;   /* negative control */
+#endif
+        st_merge_candidate(c, into->w, peer->w, init->w, thrA, thrB, scratch->w, np);
+        float l = st_windows_loss(scratch, val, n, seqlen);
+        if (cand_loss) cand_loss[c] = l;
+        if (best < 0 || l < bl) { best = c; bl = l; }
+    }
+    st_merge_candidate(best, into->w, peer->w, init->w, thrA, thrB, into->w, np);
+    for (int i = 0; i < np; i++) { into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
+    into->adam_t = 0;
+    return best;
+}
+
+/* ================================================================== */
 /* grad check                                                         */
 /* ================================================================== */
 

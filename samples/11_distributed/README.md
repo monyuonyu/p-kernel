@@ -110,6 +110,23 @@ N=8 ./run_survival_bench.sh    # N=8, K=3
 
 Measured results: `docs/benchmarks/survival.md`.
 
+## `run_swarm_demo.sh` — turn nodes off one by one; the swarm still remembers
+
+A demo to watch or record (`asciinema rec -c ./run_swarm_demo.sh`), and also
+a check (exit 0/1). **One machine, N (default 10) hosted p-kernel processes on
+a local relay — not N phones.** Node 1 learns the 635-parameter `dtr`
+classifier and the others pull it through p-fs. Nodes are killed one at a
+time, the teacher first, until one is left. A brand-new node then inherits the
+memory from that last survivor, and the last original is killed. Negative
+control: with every holder dead, a fresh node stays untrained (nothing is
+written to disk). First run on x86_64: rc=0 in about 8 minutes; 26.7%
+untrained → 100.0% held-out on every node; the act-4 node stays at 26.7%.
+
+```sh
+./run_swarm_demo.sh            # N=10
+N=6 ./run_swarm_demo.sh
+```
+
 ## `run_Nnode_scale.sh` — N-node runtime scale test
 
 Parametrized N-node harness (default 16, up to the DNODE_MAX=32 cap) that

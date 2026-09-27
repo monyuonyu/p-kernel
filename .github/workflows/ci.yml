@@ -2230,12 +2230,13 @@ jobs:
     # brain-quantization.md): st_quant_fake RTN int8/4/2 x row/g32/tensor on a
     # trained M baby. The script builds the cert 3 ways and is green only if
     # the plain build passes AND both negative controls (-DST_QUANT_NOOP,
-    # -DST_QUANT_BADSCALE) go red. ~6 min on the dev box (3 x train+9 evals),
-    # so its own job rather than inside shipped-llm-certs (20 min budget).
+    # -DST_QUANT_BADSCALE) go red. The plain build runs on 3 seeds (audit-13:
+    # one seed can pass a gate by luck). ~10 min on the dev box (5 x train+9
+    # evals), so its own job rather than inside shipped-llm-certs.
     # student.c is hosted-only (bare metal links student_stub.o): crown untouched.
     name: "脳の自己量子化 第1段 ([st-quant] + 陰性コントロール2つ)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -2244,6 +2245,26 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc make
       - name: st-quant cert (plain green, NOOP red, BADSCALE red)
         run: bash tests/llm/run_st_quant.sh
+
+  st-merge:
+    # Smarter merge stage 1 (docs/architecture/30-module/research/brain-merge.md):
+    # st_merge_barrier measures the linear-path loss barrier; st_merge_guarded
+    # picks, on validation windows, among alpha 0..1 and TIES, and must not be
+    # worse than the worse parent on DISJOINT test windows. Green only if the
+    # plain build passes AND -DST_MERGE_PLAIN_ONLY (= today's [ss3-blob-merge]
+    # plain mean) goes red. ~3.5 min on the dev box. Hosted-only code: crown
+    # untouched (measured 2026-09-27).
+    name: "賢い合体 第1段 ([merge] + 陰性コントロール)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make
+      - name: st-merge cert (plain green, PLAIN_ONLY red)
+        run: bash tests/llm/run_st_merge.sh
 
   distributed-moe:
     # Collective x Brain: DMOE-A — distributed-MoE expert capacity that GROWS
@@ -2658,6 +2679,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
+      # 2026-09-27 (inbox #8): README said "22ジョブ" while this file had 45.
+      # Every "<N>ジョブ" in README.md must equal the job count here, so adding
+      # a job means updating the README in the same change. A step here, not
+      # a new job, so it does not change the count it checks.
+      - name: check_readme_counts.py (README の「Nジョブ」= ci.yml のジョブ数)
+        run: python3 tests/ci/check_readme_counts.py .
 
   mc2-and-smp1:
     # 2026-09-23: a repo-wide cross-reference (BACKLOG.md D5) found 8 more
@@ -2988,6 +3015,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc make
       - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
         run: bash tests/llm/run_kv.sh
+
+  command-matrix:
+    # inbox #4 stage 0 (docs/architecture/20-architecture/command-parity.md):
+    # docs/architecture/command-matrix.md is GENERATED from the six platforms'
+    # shell sources. Red if it is stale, or if a shell compares commands in an
+    # idiom tools/cmdmatrix/gen.py does not read (the table would under-count).
+    # Visibility only — no platform is required to have any command yet.
+    name: "コマンド × プラットフォームの表 (生成物が最新か)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: reader fixtures (test_gen.py)
+        run: python3 tools/cmdmatrix/test_gen.py
+      - name: gen.py --check
+        run: python3 tools/cmdmatrix/gen.py --check
 
   consent-dom-cert:
     # G3 (fable5 CI-coverage audit): the galaxy/consent onboarding PIXELS had
