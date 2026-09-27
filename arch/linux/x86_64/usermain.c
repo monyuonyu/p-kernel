@@ -13,6 +13,7 @@
  */
 
 #include "kernel.h"
+#include "tk_conform.h"
 #include <tmonitor.h>
 #include "arch_reboot.h"
 #include "rtl8139.h"
@@ -1135,6 +1136,11 @@ EXPORT INT usermain(void)
             else if (al >= 2 && a[0]=='l' && a[1]=='1') world_survival_l1_test();
             else if (al >= 2 && a[0]=='l' && a[1]=='2') world_survival_l2_test();
             else print("usage: survival l0|l1|l2\r\n");
+        } else if (starts_with(line, n, "tkconf") && (n == 6 || line[6] == ' ')) {
+            /* the contract suite v1 (inbox #5, arch/common/tk_conform.c):
+             * tk_* task / semaphore / time promises, normal paths + error
+             * codes. tests/host/run_tk_conform.sh greps "[tkc] N PASS / 0 FAIL". */
+            tk_conform_run(print);
         } else if (starts_with(line, n, "fed") && (n == 3 || line[3] == ' ')) {
             /* federation F1 (docs/architecture/20-architecture/federation.md
              * §2.2/§4-F1, fed_id.h): `fed test` runs [fed-id-roundtrip], the

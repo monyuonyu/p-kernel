@@ -178,6 +178,12 @@ COMMON_C_SRCS = \
     ed25519.c \
     sign.c
 
+# The contract suite (inbox #5, arch/common/tk_conform.c) is linked ONLY into
+# -DPK_TKCONF test builds (tests/aarch64/run_tk_conform.sh), so the default
+# bare-metal .text (the crown) is unchanged.
+ifneq ($(findstring -DPK_TKCONF,$(EXTRA_CFLAGS)),)
+COMMON_C_SRCS += tk_conform.c
+endif
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
 # ---- kernel/common sources -------------------------------------------

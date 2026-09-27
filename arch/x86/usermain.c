@@ -102,12 +102,20 @@ static ID create_task(FP fn, INT pri, INT stksz)
 }
 
 IMPORT void kernel_selftest(void);
+#ifdef PK_TKCONF
+#include "tk_conform.h"
+/* the contract suite at boot (tests/x86/run_tk_conform.sh); test builds only */
+static void tkc_out(const char *m) { tm_putstring((UB *)m); }
+#endif
 
 EXPORT INT usermain(void)
 {
     tm_putstring((UB *)"[T-Kernel] Initial task started\r\n");
 
     kernel_selftest();
+#ifdef PK_TKCONF
+    tk_conform_run(tkc_out);
+#endif
 
     /* ---- Ring-3 userspace infrastructure -------------------------- */
     paging_init();          /* kernel CR3: strip U/S from all PD entries */
