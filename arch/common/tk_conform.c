@@ -1,5 +1,5 @@
 /*
- *  tk_conform.c — the contract suite, first version (inbox #5, stage 1).
+ *  tk_conform.c — the contract suite, version 2 (inbox #5).
  *
  *  p-kernel's sanctuary is not the kernel's insides but the promises it makes
  *  to user space: the μT-Kernel 3.0 tk_* service calls the shell / mind /
@@ -7,13 +7,18 @@
  *  outside — normal paths, error codes and boundaries — so that the kernel may
  *  be changed (or one day swapped) as long as this stays green.
  *
- *  Scope of this version: tasks (create/start/exit/delete/priority/sleep/wake),
- *  semaphores (create/signal/wait with TMO_POL, a timeout, TMO_FEVR, delete),
- *  event flags (AND/OR waits, TWF_BITCLR, TA_WSGL, delete), mutexes (E_ILUSE,
- *  TA_INHERIT priority inheritance), time (tk_dly_tsk, tk_get_otm). Error
- *  codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE. Each expectation cites the reference
- *  implementation's documented @retval (kernel/mtkernel3/kernel/tkernel/);
- *  the IEEE 2050 text itself has not been re-read for this version.
+ *  Scope: tasks (create/start/exit/delete/priority/sleep/wake), semaphores
+ *  (create/signal/wait with TMO_POL, a timeout, TMO_FEVR, delete), event flags
+ *  (AND/OR waits, TWF_BITCLR, TA_WSGL, delete), mutexes (E_ILUSE, TA_INHERIT
+ *  priority inheritance), and since v2 message buffers (copy, FIFO, size
+ *  limits, full buffer), mailboxes (TA_MPRI order, the packet address is
+ *  passed, not copied), fixed-size memory pools (hand-off to a waiter) and
+ *  cyclic handlers (start / period / stop); time (tk_dly_tsk, tk_get_otm).
+ *  Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE.
+ *  v1's expectations were checked against the μT-Kernel 3.0 specification
+ *  text (TRON Forum, mtk3_spec_jp) by audit-15; v2's were written from that
+ *  text. Checks whose expectation is the reference kernel's own reading, not
+ *  the spec's, are marked [impl] (check_impl below): S6 and C8.
  *
  *  Output: one "[tkc] PASS|FAIL <id> <what>" line per check, then
  *  "[tkc] <p> PASS / <f> FAIL". Driven by tests/host/run_tk_conform.sh.
@@ -47,6 +52,18 @@ static void check(BOOL ok, const char *id, const char *what, W got)
     g_out(b);
     if (ok) g_pass++; else g_fail++;
 }
+
+/* A check whose expectation comes from the reference kernel, not from the
+ * μT-Kernel 3.0 specification text (audit-15 found S6 is one: the spec's
+ * E_PAR for tk_wai_sem is only "tmout <= -2, cnt <= 0"). The id is printed
+ * with "[impl]" in the text. A kernel that meets the spec may differ here, so
+ * -DTKC_SPEC_ONLY drops these checks (the count then falls by their number;
+ * that build is for trying another kernel behind the same promises, inbox #6). */
+#ifdef TKC_SPEC_ONLY
+#define check_impl(ok, id, what, got) ((void)0)
+#else
+#define check_impl(ok, id, what, got) check((ok), (id), (what), (got))
+#endif
 
 static W now_ms(void)
 {
@@ -186,7 +203,7 @@ static void suite_sem(PRI me)
     er = tk_wai_sem(s, 0, TMO_POL);
     check(er == E_PAR, "S5", "tk_wai_sem cnt=0 -> E_PAR", er);
     er = tk_wai_sem(s, 2, TMO_POL);
-    check(er == E_PAR, "S6", "tk_wai_sem cnt>maxsem -> E_PAR", er);
+    check_impl(er == E_PAR, "S6", "[impl] tk_wai_sem cnt>maxsem -> E_PAR", er);
     er = tk_wai_sem(s, 1, -2);
     check(er == E_PAR, "S7", "tk_wai_sem tmout=-2 -> E_PAR", er);
 
@@ -339,6 +356,231 @@ static void suite_mtx(PRI me)
     check(er == E_NOEXS, "M10", "tk_loc_mtx deleted -> E_NOEXS", er);
 }
 
+/* ---- message buffers (messagebuf.c) ---------------------------------------- */
+static ID h_mbf;
+static volatile INT h_n1, h_n2;
+static UB h_rbuf[16];
+/* TA_USERBUF so the same call works with or without the kernel's allocator */
+static UW mbf_area[64 / sizeof(UW)];
+
+static void t_rcv_mbf_twice(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    h_n1 = tk_rcv_mbf(h_mbf, h_rbuf, TMO_FEVR);
+    h_flag = 1;
+    h_n2 = tk_rcv_mbf(h_mbf, h_rbuf, TMO_FEVR);   /* released by tk_del_mbf */
+    h_flag = 2;
+    tk_ext_tsk();
+}
+
+static void suite_mbf(PRI me)
+{
+    ER er; ID b, t; INT n, n2, i, ok; T_RMBF rb;
+    UB src[16], dst[16];
+    T_CMBF cb = { .exinf = NULL, .mbfatr = TA_TFIFO | TA_USERBUF,
+                  .bufsz = sizeof mbf_area, .maxmsz = 16, .bufptr = mbf_area };
+
+    for (i = 0; i < 16; i++) src[i] = (UB)('a' + i);
+    b = tk_cre_mbf(&cb);
+    check(b > 0, "B1", "tk_cre_mbf(64 B, maxmsz 16) -> ID > 0", b);
+    /* spec tk_snd_mbf: E_PAR for msgsz <= 0 and msgsz > maxmsz */
+    er = tk_snd_mbf(b, src, 17, TMO_POL);
+    check(er == E_PAR, "B2", "tk_snd_mbf msgsz 17 > maxmsz 16 -> E_PAR", er);
+    er = tk_snd_mbf(b, src, 0, TMO_POL);
+    check(er == E_PAR, "B3", "tk_snd_mbf msgsz=0 -> E_PAR", er);
+    n = tk_rcv_mbf(b, dst, TMO_POL);
+    check(n == E_TMOUT, "B4", "tk_rcv_mbf(TMO_POL) on empty -> E_TMOUT", n);
+
+    /* the message is COPIED at send time: changing the source afterwards
+     * does not change what is received */
+    er = tk_snd_mbf(b, src, 5, TMO_POL);
+    tk_ref_mbf(b, &rb);
+    check(er == E_OK && rb.msgsz == 5, "B5", "tk_snd_mbf 5 B -> tk_ref_mbf msgsz 5", rb.msgsz);
+    src[0] = 'Z';
+    n = tk_rcv_mbf(b, dst, TMO_POL);
+    check(n == 5 && dst[0] == 'a' && dst[4] == 'e', "B6", "tk_rcv_mbf -> 5 B, the bytes as sent (copied)", n);
+    src[0] = 'a';
+
+    /* FIFO order of messages */
+    tk_snd_mbf(b, src, 2, TMO_POL);
+    tk_snd_mbf(b, src, 3, TMO_POL);
+    n = tk_rcv_mbf(b, dst, TMO_POL);
+    n2 = tk_rcv_mbf(b, dst, TMO_POL);
+    check(n == 2 && n2 == 3, "B7", "two messages come out in the order sent (2 B then 3 B)", n * 10 + n2);
+
+    /* a full buffer: TMO_POL send fails with E_TMOUT instead of waiting */
+    for (i = 0, ok = 0; i < 32; i++) {
+        er = tk_snd_mbf(b, src, 16, TMO_POL);
+        if (er != E_OK) break;
+        ok++;
+    }
+    check(ok >= 1 && er == E_TMOUT, "B8", "tk_snd_mbf(TMO_POL) into a full buffer -> E_TMOUT", ok);
+    while (tk_rcv_mbf(b, dst, TMO_POL) > 0) { }
+
+    /* a higher-priority receiver is handed the message before tk_snd_mbf
+     * returns, and is released with E_DLT by tk_del_mbf */
+    h_mbf = b; h_flag = 0; h_n1 = h_n2 = -999;
+    t = mk_task(t_rcv_mbf_twice, me - 1);
+    tk_sta_tsk(t, 0);
+    check(h_flag == 0, "B9", "higher-pri receiver blocks on an empty buffer", h_flag);
+    er = tk_snd_mbf(b, src, 7, TMO_POL);
+    check(er == E_OK && h_flag == 1 && h_n1 == 7, "B10", "tk_snd_mbf hands 7 B to it before returning", h_n1);
+    er = tk_del_mbf(b);
+    check(er == E_OK && h_flag == 2 && h_n2 == E_DLT, "B11", "tk_del_mbf releases the receiver with E_DLT", h_n2);
+    tk_del_tsk(t);
+    er = tk_snd_mbf(b, src, 1, TMO_POL);
+    check(er == E_NOEXS, "B12", "tk_snd_mbf deleted -> E_NOEXS", er);
+}
+
+/* ---- mailboxes (mailbox.c) --------------------------------------------------- */
+static ID h_mbx;
+static T_MSG *volatile h_msg;
+static T_MSG_PRI m_pri1, m_pri3, m_pri0;
+
+static void t_rcv_mbx_twice(INT stacd, void *exinf)
+{
+    T_MSG *m = NULL;
+    (void)stacd; (void)exinf;
+    h_er1 = tk_rcv_mbx(h_mbx, &m, TMO_FEVR);
+    h_msg = m; h_flag = 1;
+    h_er2 = tk_rcv_mbx(h_mbx, &m, TMO_FEVR);   /* released by tk_del_mbx */
+    h_flag = 2;
+    tk_ext_tsk();
+}
+
+static void suite_mbx(PRI me)
+{
+    ER er, er2; ID x, t; T_MSG *m = NULL, *m2 = NULL;
+    T_CMBX cx = { .exinf = NULL, .mbxatr = TA_TFIFO | TA_MPRI };
+
+    x = tk_cre_mbx(&cx);
+    check(x > 0, "X1", "tk_cre_mbx(TA_MPRI) -> ID > 0", x);
+    er = tk_rcv_mbx(x, &m, TMO_POL);
+    check(er == E_TMOUT, "X2", "tk_rcv_mbx(TMO_POL) on empty -> E_TMOUT", er);
+    /* spec tk_snd_mbx: E_PAR for msgpri <= 0 */
+    m_pri0.msgpri = 0;
+    er = tk_snd_mbx(x, (T_MSG *)&m_pri0);
+    check(er == E_PAR, "X3", "tk_snd_mbx msgpri=0 on a TA_MPRI box -> E_PAR", er);
+
+    /* TA_MPRI: priority 1 is the highest and comes out first; the receiver
+     * gets the SAME address that was sent (the packet is not copied) */
+    m_pri3.msgpri = 3; m_pri1.msgpri = 1;
+    er  = tk_snd_mbx(x, (T_MSG *)&m_pri3);
+    er2 = tk_snd_mbx(x, (T_MSG *)&m_pri1);
+    tk_rcv_mbx(x, &m, TMO_POL);
+    tk_rcv_mbx(x, &m2, TMO_POL);
+    check(er == E_OK && er2 == E_OK && m == (T_MSG *)&m_pri1, "X4", "TA_MPRI: priority 1 sent second comes out first", er);
+    check(m2 == (T_MSG *)&m_pri3, "X5", "then priority 3, same address as sent", 0);
+
+    h_mbx = x; h_flag = 0; h_msg = NULL; h_er1 = h_er2 = -999;
+    t = mk_task(t_rcv_mbx_twice, me - 1);
+    tk_sta_tsk(t, 0);
+    check(h_flag == 0, "X6", "higher-pri receiver blocks on an empty mailbox", h_flag);
+    er = tk_snd_mbx(x, (T_MSG *)&m_pri1);
+    check(er == E_OK && h_flag == 1 && h_er1 == E_OK && h_msg == (T_MSG *)&m_pri1, "X7", "tk_snd_mbx hands the packet to it before returning", h_flag);
+    er = tk_del_mbx(x);
+    check(er == E_OK && h_flag == 2 && h_er2 == E_DLT, "X8", "tk_del_mbx releases the receiver with E_DLT", h_er2);
+    tk_del_tsk(t);
+    er = tk_snd_mbx(x, (T_MSG *)&m_pri1);
+    check(er == E_NOEXS, "X9", "tk_snd_mbx deleted -> E_NOEXS", er);
+}
+
+/* ---- fixed-size memory pools (mempfix.c) -------------------------------------- */
+static ID h_mpf;
+static void *volatile h_blk;
+static UW mpf_area[64 / sizeof(UW)];            /* 2 blocks of 32 B */
+
+static void t_get_mpf_twice(INT stacd, void *exinf)
+{
+    void *p = NULL;
+    (void)stacd; (void)exinf;
+    h_er1 = tk_get_mpf(h_mpf, &p, TMO_FEVR);
+    h_blk = p; h_flag = 1;
+    h_er2 = tk_get_mpf(h_mpf, &p, TMO_FEVR);   /* released by tk_del_mpf */
+    h_flag = 2;
+    tk_ext_tsk();
+}
+
+static void suite_mpf(PRI me)
+{
+    ER er, er2; ID p, t; void *b1 = NULL, *b2 = NULL, *b3 = NULL; T_RMPF rp;
+    UB *lo = (UB *)mpf_area, *hi = (UB *)mpf_area + sizeof mpf_area;
+    T_CMPF cp = { .exinf = NULL, .mpfatr = TA_TFIFO | TA_USERBUF,
+                  .mpfcnt = 2, .blfsz = 32, .bufptr = mpf_area };
+
+    p = tk_cre_mpf(&cp);
+    check(p > 0, "P1", "tk_cre_mpf(2 x 32 B) -> ID > 0", p);
+    er  = tk_get_mpf(p, &b1, TMO_POL);
+    er2 = tk_get_mpf(p, &b2, TMO_POL);
+    check(er == E_OK && er2 == E_OK && b1 != b2
+          && (UB *)b1 >= lo && (UB *)b1 < hi && (UB *)b2 >= lo && (UB *)b2 < hi,
+          "P2", "two tk_get_mpf -> two different blocks inside the pool", er2);
+    tk_ref_mpf(p, &rp);
+    check(rp.frbcnt == 0, "P3", "tk_ref_mpf frbcnt 0 once both are out", rp.frbcnt);
+    er = tk_get_mpf(p, &b3, TMO_POL);
+    check(er == E_TMOUT, "P4", "tk_get_mpf(TMO_POL) on an empty pool -> E_TMOUT", er);
+
+    /* a higher-priority waiter gets the returned block before tk_rel_mpf
+     * returns; the pool itself stays empty */
+    h_mpf = p; h_flag = 0; h_blk = NULL; h_er1 = h_er2 = -999;
+    t = mk_task(t_get_mpf_twice, me - 1);
+    tk_sta_tsk(t, 0);
+    check(h_flag == 0, "P5", "higher-pri task waits on the empty pool", h_flag);
+    er = tk_rel_mpf(p, b1);
+    check(er == E_OK && h_flag == 1 && h_er1 == E_OK && h_blk == b1, "P6", "tk_rel_mpf hands that block to the waiter before returning", h_flag);
+    tk_ref_mpf(p, &rp);
+    check(rp.frbcnt == 0, "P7", "the pool is still empty (the block went to the waiter)", rp.frbcnt);
+    er = tk_del_mpf(p);
+    check(er == E_OK && h_flag == 2 && h_er2 == E_DLT, "P8", "tk_del_mpf releases the next waiter with E_DLT", h_er2);
+    tk_del_tsk(t);
+    er = tk_get_mpf(p, &b3, TMO_POL);
+    check(er == E_NOEXS, "P9", "tk_get_mpf deleted -> E_NOEXS", er);
+}
+
+/* ---- cyclic handlers (time_calls.c) ------------------------------------------- */
+static volatile INT c_cnt;
+
+static void cyc_count(void *exinf)
+{
+    (void)exinf;
+    c_cnt++;
+}
+
+static void suite_cyc(void)
+{
+    ER er; ID c; INT n; T_RCYC rc;
+    T_CCYC cc = { .exinf = NULL, .cycatr = TA_HLNG, .cychdr = (FP)cyc_count,
+                  .cyctim = 20, .cycphs = 0 };
+    T_CCYC bad = cc;
+
+    c_cnt = 0;
+    c = tk_cre_cyc(&cc);
+    check(c > 0, "C1", "tk_cre_cyc(20 ms, no TA_STA) -> ID > 0", c);
+    tk_dly_tsk(100);
+    tk_ref_cyc(c, &rc);
+    check(c_cnt == 0 && rc.cycstat == TCYC_STP, "C2", "without TA_STA it does not run (TCYC_STP)", c_cnt);
+    er = tk_sta_cyc(c);
+    tk_ref_cyc(c, &rc);
+    check(er == E_OK && rc.cycstat == TCYC_STA, "C3", "tk_sta_cyc -> E_OK, TCYC_STA", (W)rc.cycstat);
+    /* 400 ms at a 20 ms period is 20 calls; a period that doubled gives ~10 */
+    tk_dly_tsk(400);
+    n = c_cnt;
+    check(n >= 14 && n <= 30, "C4", "20 ms period over 400 ms -> 14..30 calls", n);
+    er = tk_stp_cyc(c);
+    n = c_cnt;
+    tk_dly_tsk(100);
+    check(er == E_OK && c_cnt == n, "C5", "tk_stp_cyc -> no more calls", c_cnt - n);
+    er = tk_del_cyc(c);
+    check(er == E_OK && tk_ref_cyc(c, &rc) == E_NOEXS, "C6", "tk_del_cyc -> E_OK, then tk_ref_cyc -> E_NOEXS", er);
+    check(tk_sta_cyc(0) == E_ID, "C7", "tk_sta_cyc id=0 -> E_ID", tk_sta_cyc(0));
+    /* the spec's E_PAR is "cyctim ... not valid"; that 0 is invalid is the
+     * reference kernel's reading (CHECK_PAR(cyctim > 0)) */
+    bad.cyctim = 0;
+    er = tk_cre_cyc(&bad);
+    check_impl(er == E_PAR, "C8", "[impl] tk_cre_cyc cyctim=0 -> E_PAR", er);
+    if (er > 0) tk_del_cyc(er);
+}
+
 /* ---- time ----------------------------------------------------------------- */
 static void suite_time(void)
 {
@@ -374,6 +616,10 @@ static void t_runner(INT stacd, void *exinf)
     suite_sem(r.tskpri);
     suite_flg(r.tskpri);
     suite_mtx(r.tskpri);
+    suite_mbf(r.tskpri);
+    suite_mbx(r.tskpri);
+    suite_mpf(r.tskpri);
+    suite_cyc();
     suite_time();
     g_done = 1;
     tk_wup_tsk(g_caller);
@@ -385,7 +631,7 @@ INT tk_conform_run(void (*out)(const char *))
     char b[64]; INT k = 0; const char *p;
     ID run;
     g_out = out; g_pass = g_fail = 0; g_done = 0;
-    out("[tkc] contract suite v1 (runner task pri 20)\r\n");
+    out("[tkc] contract suite v2 (runner task pri 20)\r\n");
     g_caller = tk_get_tid();
     run = mk_task(t_runner, TKC_PRI);
     if (run <= 0) {
