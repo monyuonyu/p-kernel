@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="p-kernel: a research prototype toward a decentralized OS where an AI survives as a swarm — honest about every percent. The immortal body (failure detection, self-healing, crash-safe storage, gossip convergence) is largely real; the mind is still a 635-parameter seed. This page shows the real completion % of every layer.">
-<meta name="keywords" content="p-kernel, decentralized OS, microkernel, T-Kernel, distributed AI, survival network, swarm intelligence, research prototype, honest roadmap">
+<meta name="description" content="p-kernel: a research prototype toward a decentralized OS where an AI survives as a swarm — honest about every percent. The immortal body (failure detection, self-healing, crash-safe storage, gossip convergence) is largely real; the mind is still a small seed (a ~21,568-parameter word-association mind and a blank baby language model). Built on μT-Kernel 3.0 (IEEE 2050). This page shows the real completion % of every layer.">
+<meta name="keywords" content="p-kernel, decentralized OS, real-time kernel, μT-Kernel 3.0, IEEE 2050, distributed AI, survival network, swarm intelligence, on-device learning, bare metal, x86, AArch64, Android, research prototype, honest roadmap">
 <meta property="og:title" content="p-kernel — the immortal body is real, the mind is a seed">
 <meta property="og:description" content="A decentralized kernel network where AI survives as a swarm. We built the immortal body first — and we show you the honest completion % of every layer, including the parts that are 10%.">
 <meta property="og:type" content="website">
@@ -651,6 +651,7 @@
 <header>
   <div class="brand">⚡ p-kernel</div>
   <nav>
+    <a href="#now">Now</a>
     <a href="#vision">Vision</a>
     <a href="#status">Status</a>
     <a href="#body">Body</a>
@@ -668,7 +669,7 @@
   <h2>
     p-kernel is a decentralized kernel network where an AI is meant to survive as a swarm —
     no server, no owner, no single point of death. The <em>never-dies</em> part is largely real.
-    The <em>AI</em> part is a 635-parameter seed that actually learns. We'll show you every number.
+    The <em>AI</em> part is still a seed — small minds that actually learn. We'll show you every number.
   </h2>
   <div class="jp-subtitle jp">
     AIが死なないためのOS。<br>
@@ -685,6 +686,75 @@
     <div class="h-item"><div class="h-num scale">~25%</div><div class="h-lab">Running at scale</div></div>
     <div class="h-item"><div class="h-num vision">~5%</div><div class="h-lab">Toward the vision</div></div>
   </div>
+</section>
+
+<!-- ====== SINCE JUNE (keep in step with README.md; the README wins) ====== -->
+<section class="story" id="now">
+  <div class="story-eyebrow">— What changed since June · updated 2026-09-27</div>
+  <h3>The kernel changed underneath. <span class="accent2">The mind grew a little.</span></h3>
+  <p>
+    This page was first written on 2026-06-08. The scorecard further down is from that day and has
+    <span class="text-bright">not been re-graded</span> — read its percentages as a June snapshot.
+    What changed since, each with the strength of its evidence
+    (<em>CI</em> = checked on every push, 49 jobs; <em>live</em> = several real processes, with kills;
+    <em>in-proc</em> = the real code, driven inside one process):
+  </p>
+  <p>
+    <span class="text-bright">A new kernel core.</span> In July 2026 the core moved from micro T-Kernel 2.0 to
+    <strong>μT-Kernel 3.0</strong> (IEEE 2050-2018), now living in <code>kernel/mtkernel3/</code>. One code base,
+    five targets: bare-metal x86 and AArch64 (under QEMU), Linux user space x86_64 and aarch64, and
+    Windows x86_64 (CI builds it; CI does not boot it).
+  </p>
+  <p>
+    <span class="text-bright">A contract suite.</span> 62 checks of the <code>tk_*</code> promises the upper layers rely on
+    (tasks, semaphores, event flags, mutexes, time — including error codes), with expectations checked
+    against the μT-Kernel 3.0 specification text, and five negative controls that each break one line of
+    the kernel and must turn red. Runs on Linux x86_64, bare x86 and bare AArch64 (CI). Not yet on
+    Linux aarch64 or Windows.
+  </p>
+  <p>
+    <span class="text-bright">A mind that sleeps.</span> The R3 substrate (about 21,568 parameters, word-to-word
+    association) learns from teaching, consolidates what it learned during idle "sleep", can be corrected,
+    and forgets the least-asked facts first — each measured by reproducing the problem before the cure
+    (CI; several of them live). Still a toy: single words, no sentences.
+  </p>
+  <p>
+    <span class="text-bright">A baby language model.</span> A blank small model (the cradle baby) is born sized to its
+    device, grows by being taught, and answers free text token by token — clumsily. Its teacher,
+    SmolLM2-135M, runs on an inference engine written from scratch inside the kernel. In September:
+    trained on text the teacher really generated, its loss on the unseen tail of that text fell 5.53 → 2.03
+    while a control rose to 6.61 (in-proc, not in CI); and a lesson sent over the wire stayed in a separate
+    student process after the teacher was killed (live, not in CI — most of that drop is memorised filler,
+    not generalisation).
+  </p>
+  <p>
+    <span class="text-bright">Brain research, stage 1.</span> The baby can round a copy of itself to int8 / int4 / int2
+    and measure its own loss (int8 per row costs under +0.002 on a loss of about 3.2; CI). Merging two
+    babies now has a safety net that never yields a child worse than the worse parent — a safety net,
+    not yet a smart merge (CI).
+  </p>
+  <p>
+    <span class="text-bright">Hibernation.</span> Under a sustained resource shortage a node now goes
+    STRESSED → HIBERNATING: it pauses mind sync and heavy consolidation, slows its beacon, and the swarm
+    routes work away from it. A threat, recovery, or an explicit wake brings it back (CI, in-proc).
+  </p>
+  <p>
+    <span class="text-bright">A one-machine swarm demo.</span> <code>samples/11_distributed/run_swarm_demo.sh</code>
+    starts ten p-kernel processes, kills them one by one, shows the survivors still answering, and a newcomer
+    inheriting from the last one. It is ten processes on one machine, not ten devices, and the memory is a
+    635-parameter classifier, not the language brain.
+  </p>
+  <p>
+    <span class="text-bright">Still broken, said out loud.</span> The open-gap ledger has 3 rows again (it was 0 in July):
+    no guard yet against a vendored-code swap deleting local patches (a July swap had silently deleted an
+    old crash fix), a second ring-0 page fault, and a reproducible whole-system hang on bare-metal x86 when
+    a ring-0 task spins without calling the kernel (not fixed; CI only watches it). There is no Play Store
+    release yet.
+  </p>
+  <p class="big">
+    <span class="text-bright">The README is the source of truth.</span> If this page and the
+    <a href="https://github.com/monyuonyu/p-kernel/blob/master/README.md">README</a> disagree, the README wins.
+  </p>
 </section>
 
 <!-- ====== VISION ====== -->
@@ -730,6 +800,7 @@
       proven. Orange→red = how far it runs beyond a toy. The gap between the two bars <em>is</em>
       the roadmap.
     </p>
+    <p><em>Graded on 2026-06-08 and not re-graded since — see <a href="#now">what changed since June</a>.</em></p>
     <div class="bar-legend" style="justify-content:center; margin-top:1.2rem;">
       <span><span class="dot mech"></span>mechanism proven</span>
       <span><span class="dot scale"></span>running at scale</span>
@@ -909,6 +980,7 @@
         <div class="feature-head"><div class="feature-name">A seed designed to grow</div><div class="feature-file mono">roadmap</div></div>
         <p>Today: 4 tokens, d_model 8, 2 heads, 635 params, 3 nodes. The architecture is shaped to widen with the cluster — but real width (R3) and federation past 32 nodes are <em>designed, not built</em>.</p>
         <p class="honest">we are not GPT-anything. We're a seed that learns for real. The interesting claim isn't the size — it's that distributed learning genuinely works at all.</p>
+        <p><em>Update 2026-09:</em> R3 now exists — about 21,568 parameters, still word-to-word association — and a blank baby language model grows beside it (<a href="#now">since June</a>).</p>
       </div>
     </div>
   </div>
@@ -976,18 +1048,21 @@
         <div class="feature-head"><div class="feature-name">Memory — a ring of recent experience</div><div class="feature-file mono">mem_store.c</div></div>
         <p>Every interaction is embedded into an 8-dimensional vector and stored; similar memories are recalled by cosine similarity and persisted across reboots.</p>
         <p class="honest">it's a fixed ring buffer — it <em>forgets</em> the oldest entries when full, so "nothing is ever forgotten" isn't true yet. And the embedding is a bag-of-characters, not meaning. A real, working memory primitive — but a seed of the memory we want.</p>
+        <p><em>Update 2026-09:</em> the note above is about this ring (<code>mem_store.c</code>). The R3 mind keeps its facts in a separate store, which, when full, now evicts the facts asked least often rather than the oldest (README §4, LM-13).</p>
       </div>
 
       <div class="feature seed">
         <div class="feature-head"><div class="feature-name">Conversation — talking across power cycles</div><div class="feature-file mono">chat.c</div></div>
         <p>You converse with the kernel through its shell; turns are stored and recalled, surviving reboots.</p>
         <p class="honest">when it answers on its own, it's a few templated replies; for real answers it currently calls out to a frontier model. The cluster's own seed doesn't hold a conversation yet — it borrows one. We say so on purpose.</p>
+        <p><em>Update 2026-09:</em> the cradle baby now answers free text by itself, token by token, from the galaxy page — clumsily, because it is still growing (README §5).</p>
       </div>
 
       <div class="feature seed">
         <div class="feature-head"><div class="feature-name">Default Mode Network — the idle loop</div><div class="feature-file mono">dmn.c</div></div>
         <p>When stimuli stop, the kernel switches to IDLE and runs housekeeping — digesting stats and nudging the self-improvement loop. The scaffolding for a "dreaming" kernel is in place.</p>
         <p class="honest">today the idle work is a status digest plus the GA nudge — the metaphor is bigger than the code. Honest scaffold, not yet a dream.</p>
+        <p><em>Update 2026-09:</em> idle time now does real work — the DMN replays short-term engrams and distills them into weights (sleep consolidation), with catastrophic forgetting reproduced first and the cure measured (README §4).</p>
       </div>
     </div>
   </div>
