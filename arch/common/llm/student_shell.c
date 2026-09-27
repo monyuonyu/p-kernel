@@ -1475,6 +1475,56 @@ int student_shell_cmd(const char *args, emit_fn emit)
         return acc >= 0 ? 0 : -1;
     }
 
+    /* ---- brain self-quantization, stage 1 (research/brain-quantization.md
+     * §2). `student quant <8|4|2> <row|g32|tensor>`: fake-quantize a COPY of the
+     * resident baby (st_quant_fake) and measure the held-out loss of both on the
+     * SAME windows the DMN consolidate uses. The resident weights and the saved
+     * blob are never touched — this only tells the brain what a smaller copy of
+     * itself would cost. */
+    if (p[0]=='q' && p[1]=='u' && p[2]=='a' && p[3]=='n' && p[4]=='t') {
+        const char *q = p + 5;
+        char *end = NULL;
+        long bits = strtol(q, &end, 10);
+        if (end == q) bits = 8;
+        q = end;
+        while (*q == ' ' || *q == '\t') q++;
+        int gran = ST_QG_ROW;
+        const char *gname = "row";
+        if (q[0]=='g' && q[1]=='3' && q[2]=='2')      { gran = ST_QG_G32;    gname = "g32"; }
+        else if (q[0]=='t' && q[1]=='e' && q[2]=='n') { gran = ST_QG_TENSOR; gname = "tensor"; }
+        else if (*q && !(q[0]=='r' && q[1]=='o' && q[2]=='w')) {
+            emit("[st-quant] usage: student quant <8|4|2> <row|g32|tensor>\r\n");
+            return -1;
+        }
+
+        st_model qm;
+        if (st_init_tier(&qm, 1, g_student.tier) != ST_OK) {
+            emit("[st-quant] copy init OOM\r\n"); return -1;
+        }
+        size_t bq = 0;
+        int rc = st_quant_fake(&g_student, &qm, (int)bits, gran, &bq);
+        if (rc != ST_OK) {
+            st_free(&qm);
+            snprintf(line, sizeof line, "[st-quant] refused rc=%d (bits must be "
+                     "8/4/2; a grown baby is not supported yet)\r\n", rc);
+            emit(line);
+            return -1;
+        }
+        int cn = cradle_corpus_len();
+        int tot = cn / ST_DMN_SEQLEN, tw = tot * 3 / 4; if (tw < 2) tw = 2;
+        int hw = tot - tw; if (hw < 1) hw = 1; int te = tw * ST_DMN_SEQLEN;
+        float f32 = heldout_loss(&g_student, ST_DMN_SEQLEN, te, hw);
+        float ql  = heldout_loss(&qm, ST_DMN_SEQLEN, te, hw);
+        snprintf(line, sizeof line,
+                 "[st-quant] bits=%ld gran=%s fp32=%.4f q=%.4f delta=%+.4f "
+                 "bytes_q=%lu bytes_fp32=%lu held=%dwin\r\n",
+                 bits, gname, (double)f32, (double)ql, (double)(ql - f32),
+                 (unsigned long)bq, (unsigned long)((size_t)g_student.n_params * 4u), hw);
+        emit(line);
+        st_free(&qm);
+        return 0;
+    }
+
     if (p[0] == 'l' && p[1] == 'o' && p[2] == 's' && p[3] == 's') {
         loss_only = 1;
     } else if (*p) {
