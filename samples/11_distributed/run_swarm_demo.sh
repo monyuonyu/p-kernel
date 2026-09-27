@@ -25,6 +25,17 @@
 #   4. Negative control: kill that one too, start another fresh node. Nobody
 #      holds the weights, so it must stay untrained.
 #
+# What carries the weight: act 2 alone is easy — each survivor already holds
+# its own copy in RAM, so of course it keeps answering. The load-bearing parts
+# are act 3 (a node that never met the teacher gets the memory from a node
+# that also didn't learn it itself) and act 4 (the same step with no holder
+# left fails — so act 3 was not the newcomer finding it anywhere else).
+#
+# First run (2026-09-27, pkernel_audit_ss, x86_64 hosted, N=10): rc=0, about
+# 8 min. Accuracy 26.7% untrained -> 100.0% everywhere; act 4 stayed 26.7%.
+# SWIM needs longer than the ~40s wait to call a node DEAD, so the view shows
+# SUSPECT for the most recent kill.
+#
 # Checks (exit 1 if any fails): every node reaches ACC_MIN after act 1;
 # after every kill the survivor stays >= ACC_MIN; the newcomer goes from
 # < ACC_MIN to >= ACC_MIN; the act-4 node stays < ACC_MIN.
@@ -125,11 +136,11 @@ load_weights() {                # load_weights <id> <tries> -> 0 if loaded
     done
     return 1
 }
-swim_dead() {                   # how many DEAD <id>'s SWIM view shows
+swim_view() {                   # "<dead> <suspect>" in <id>'s SWIM view
     local M S
     M=$(mark "$1"); send "$1" "nodes"; sleep 2
     S=$(slice "$1" "$M")
-    printf '%s\n' "$S" | grep -cE '^ +[0-9]+ +DEAD'
+    echo "$(printf '%s\n' "$S" | grep -cE '^ +[0-9]+ +DEAD') $(printf '%s\n' "$S" | grep -cE '^ +[0-9]+ +SUSPECT')"
 }
 ge() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a+0 >= b+0) }'; }
 lt() { awk -v a="${1:-0}" -v b="$2" 'BEGIN { exit !(a+0 <  b+0) }'; }
@@ -173,13 +184,14 @@ KILLED=0
 for v in $(seq 1 $((N - 1))); do
     kill_node "$v"; KILLED=$((KILLED + 1))
     w=$((v + 1))                              # lowest-id survivor answers
-    D=0; t=0
+    D=0; SU=0; t=0
     while [ "$t" -lt 10 ]; do                 # give SWIM up to ~40s to notice
-        D=$(swim_dead "$w"); [ "$D" -ge "$KILLED" ] && break
+        read -r D SU <<<"$(swim_view "$w")"   # (declaring DEAD takes longer:
+        [ $((D + SU)) -ge "$KILLED" ] && break #  SUSPECT comes first)
         sleep 2; t=$((t + 1))
     done
     a=$(get_acc "$w")
-    line="killed node $v -> alive $(alive_count)/$N; node $w's SWIM sees $D dead; node $w answers ${a:-?}%"
+    line="killed node $v -> alive $(alive_count)/$N; node $w's SWIM: $D dead + $SU suspect; node $w answers ${a:-?}%"
     if ge "$a" "$ACC_MIN"; then ok "$line"; else bad "$line"; fi
 done
 
