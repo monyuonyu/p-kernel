@@ -303,7 +303,9 @@ static void t_mtx_high(INT stacd, void *exinf)  /* blocks on the mutex */
 static void suite_mtx(PRI me)
 {
     ER er; ID m, tl, th; T_RTSK r;
-    T_CMTX cm = { .exinf = NULL, .mtxatr = TA_TPRI | TA_INHERIT, .ceilpri = 1 };
+    /* the protocol is ONE value, not flags: TA_TPRI|TA_INHERIT == 3 ==
+     * TA_CEILING (the first draft did that and got a ceiling mutex). */
+    T_CMTX cm = { .exinf = NULL, .mtxatr = TA_INHERIT, .ceilpri = 1 };
 
     m = tk_cre_mtx(&cm);
     check(m > 0, "M1", "tk_cre_mtx(TA_INHERIT) -> ID > 0", m);
