@@ -30,7 +30,7 @@ rc_all=0
 arm() {  # $1 = name, $2 = kernel file ('' for plain), $3 = old, $4 = new, $5 = expect GREEN|RED
     local d="$WORK/$1" log="$WORK/$1.serial" p f v
     mkdir -p "$d"
-    cp -a "$ROOT/arch" "$ROOT/boot" "$ROOT/kernel" "$ROOT/include" "$ROOT/tools" "$ROOT/relay" "$d/"
+    tar -C "$ROOT" --exclude=./.git -cf - . | tar -C "$d" -xf -   # whole tree (~17 MB)
     if [ -n "$2" ]; then
         python3 - "$d/kernel/mtkernel3/kernel/tkernel/$2" "$3" "$4" <<'EOF'
 import sys
