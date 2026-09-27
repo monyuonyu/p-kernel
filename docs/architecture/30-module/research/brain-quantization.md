@@ -1,6 +1,6 @@
 # 脳の自己量子化（研究メモ・題材①）
 
-2026-09-27。第1段は監査待ち。
+2026-09-27。第1段は再監査待ち
 
 ## 1. 何が効くのか（原文から）
 
@@ -15,18 +15,18 @@
 M 段の重みは 1,903,744 個（fp32 で 7.6MB）で、行列が 99.8% を占める。`mv()` は [出力][入力] の行優先なので、行単位＝出力チャネル単位になる。
 
 **第1段**（student.c は hosted 専用。crown は実測）
-- `st_quant_fake(src, dst, bits, gran)`: 行列だけを RTN で量子化し、すぐ戻して別の st_model に書く。norm と router は fp32 のまま。丸めは自前で書き、one-math を守る
+- `st_quant_fake(src, dst, bits, gran)`: 行列だけを RTN で量子化し、すぐ戻して別の st_model に書く。norm と router は fp32 のまま。丸めは自前（one-math）
 - シェル `student quant <8|4|2> <row|g32|tensor>`: 常駐の赤子の写しを量子化し、DMN と同じ held 窓で前後の損失を `[st-quant]` の1行で出す。**常駐の重みと保存物には触らない**
 - 第2段: GPTQ（train 窓で校正）と、詰めた int8/int4 の形式。第3段: QAT（STE [1 §4]、赤子の自前の backward に入れる）と、「delta ≤ ε なら量子化版を配る」を DMN が自分で決める
 
 ## 3. どう測るか
 
-cert `tests/llm/run_st_quant.sh`（373B の corpus で学習、seed 固定）:
-- (A) int8・行単位で |delta| ≤ ε8＝0.01（測る前に決めた）
-- (B) 4bit の delta はテンソル単位 ≥ 行単位。2bit・テンソル単位では大きく悪化する（DMG2＝0.10 nats 超）
+cert `tests/llm/run_st_quant.sh`（373B の corpus で学習、種3つすべてで合格が条件）:
+- (A) int8・行単位で |delta| ≤ ε8＝0.01（事前に決めた）
+- (B) 2bit の delta はテンソル単位 > g32。2bit テンソルは大きく悪化（DMG2＝0.10 超）
 - (C) すべての行列の成分で |w−ŵ| ≤ s/2 が成り立ち、変わった成分の数は 0 より大きい
-- **陰性コントロール**: `-DST_QUANT_NOOP`（素通し）は (C) で赤。`-DST_QUANT_BADSCALE`（s を 1/4 にする）は (A)(C) で赤
-- **実測**（09-27、held 96B）: fp32 3.2258 に対し int8 行 +0.0003、int4 行 **−0.0213**、int4 テンソル +0.1455、int2 g32 +0.0912、int2 テンソル +1.3948。**int4 行は悪化しなかった（「int4 RTN は悪化」の予想は外れ）**。live（held 1056B）でも −0.0226。理由は未確定
+- **陰性コントロール**: `-DST_QUANT_NOOP`（素通し）は (C) で赤。`-DST_QUANT_BADSCALE`（s/4）は (A)(C) で赤
+- **実測**（09-27、held 96B）: fp32 3.2258 に対し int8 行 +0.0003、int4 行 −0.0213、int2 g32 +0.0912、int2 テンソル +1.3948。**int4 行の delta は種と corpus で符号が変わる（−0.021〜+0.017、監査-13）＝雑音の幅で、良し悪しは言えない。** live の −0.0226 も同じ。旧 (B)「4bit テンソル ≥ 行」は種の運で緑だった
 
 ## 出典
 [1] Nagel ほか, A White Paper on NN Quantization, arXiv:2106.08295

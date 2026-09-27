@@ -9,9 +9,13 @@
  *
  *  Gates:
  *    (A) [st-quant-int8]   int8 per-row: |delta| <= EPS8 nats.
- *    (B) [st-quant-damage] 4-bit: delta(tensor) >= delta(row); and 2-bit
+ *    (B) [st-quant-damage] 2-bit: delta(tensor) > delta(g32); and 2-bit
  *                          tensor is clearly damaged: delta > DMG2 nats AND
  *                          > 10x |delta(int8 row)| — the measure can SEE damage.
+ *                          (Audit-13 found the old 4-bit "tensor >= row" held
+ *                          only by seed luck: 2 of 3 other seeds and another
+ *                          corpus reversed it. The 2-bit ordering held in all
+ *                          5 by a wide margin; 4-bit deltas are noise here.)
  *    (C) [st-quant-bound]  for EVERY quantized element, recomputing the scale
  *                          HERE from src (not trusting the quantizer):
  *                          |w - w_hat| <= s/2, w_hat/s is an integer in
@@ -21,6 +25,9 @@
  *
  *  Negative controls (run_st_quant.sh builds them): -DST_QUANT_NOOP must go RED
  *  on (C) (nothing changed), -DST_QUANT_BADSCALE (s/4, clips) RED on (C) and (A).
+ *
+ *  argv[1] (optional): init seed of the trained baby (default 0xC0FFEE).
+ *  run_st_quant.sh runs the plain build on several seeds; all must pass.
  *
  *  Build (wave-49): -O1 -ffp-contract=off.
  */
@@ -134,9 +141,11 @@ static int fp32_parts_same(const st_model *a, const st_model *b)
     return 1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
-    printf("=== [st-quant] brain self-quantization stage 1 cert ===\n");
+    uint32_t seed = argc > 1 ? (uint32_t)strtoul(argv[1], NULL, 0) : 0xC0FFEEu;
+    printf("=== [st-quant] brain self-quantization stage 1 cert (seed=0x%lx) ===\n",
+           (unsigned long)seed);
 #if defined(ST_QUANT_NOOP)
     printf("(NEGATIVE CONTROL build: -DST_QUANT_NOOP — expect RED)\n");
 #elif defined(ST_QUANT_BADSCALE)
@@ -148,7 +157,7 @@ int main(void)
 
     float *logits = (float *)malloc((size_t)SEQLEN * ST_VOCAB * sizeof(float));
     st_model M, Q, Q2;
-    if (!logits || st_init_tier(&M, 0xC0FFEE, ST_TIER_M) != ST_OK ||
+    if (!logits || st_init_tier(&M, seed, ST_TIER_M) != ST_OK ||
         st_init_tier(&Q, 1, ST_TIER_M) != ST_OK ||
         st_init_tier(&Q2, 2, ST_TIER_M) != ST_OK) { printf("OOM\n"); return 2; }
 
@@ -195,7 +204,7 @@ int main(void)
     CHECK(fabsf_(delta[0][0]) <= EPS8, "[st-quant-int8] |delta(8,row)| <= EPS8");
 
     printf("[B] damage is visible\n");
-    CHECK(delta[1][2] >= delta[1][0], "[st-quant-damage] delta(4,tensor) >= delta(4,row)");
+    CHECK(delta[2][2] > delta[2][1], "[st-quant-damage] delta(2,tensor) > delta(2,g32)");
     CHECK(delta[2][2] > DMG2 && delta[2][2] > 10.0f * fabsf_(delta[0][0]),
           "[st-quant-damage] delta(2,tensor) > DMG2 and > 10x |delta(8,row)|");
 
