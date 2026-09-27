@@ -13,6 +13,8 @@
 #   NC-SEMPOLL   semaphore.c: a semaphore wait succeeds with one unit too few
 #   NC-WAIPAR    semaphore.c: tk_wai_sem no longer refuses cnt <= 0 (E_PAR)
 #   NC-HALFDELAY task_sync.c: tk_dly_tsk sleeps half the requested time
+#   NC-BITCLR    eventflag.c: TWF_BITCLR clears every bit, not just the waited ones
+#   NC-NOINHERIT mutex.c: TA_INHERIT no longer raises the holder's priority
 # Each must go RED on its own checks (listed in the output), not on a crash.
 # (A "tk_dly_tsk returns at once" control was tried first and dropped: other
 # system tasks pace themselves with tk_dly_tsk, so it starved the whole
@@ -24,7 +26,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-EXPECT=41
+EXPECT=62
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 rc_all=0
@@ -78,6 +80,8 @@ EOF
 nc SEMPOLL semaphore.c '&& semcb->semcnt >= cnt ) {' '&& semcb->semcnt + 1 >= cnt ) {'
 nc WAIPAR semaphore.c $'\tCHECK_PAR(cnt > 0);\n\tCHECK_TMOUT(tmout);' $'\tCHECK_TMOUT(tmout);'
 nc HALFDELAY task_sync.c 'knl_make_wait_reltim(dlytim, TA_NULL);' 'knl_make_wait_reltim(dlytim / 2, TA_NULL);'
+nc BITCLR eventflag.c $'\t\tif ( (wfmode & TWF_BITCLR) != 0 ) {\n\t\t\tflgcb->flgptn &= ~waiptn;' $'\t\tif ( (wfmode & TWF_BITCLR) != 0 ) {\n\t\t\tflgcb->flgptn = 0;'
+nc NOINHERIT mutex.c 'knl_change_task_priority(mtxtsk, knl_ctxtsk->priority);' '(void)0;'
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform] PASS"; else echo "[tk-conform] FAIL"; fi
 exit "$rc_all"

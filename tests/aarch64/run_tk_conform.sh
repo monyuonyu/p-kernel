@@ -15,7 +15,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-EXPECT=41
+EXPECT=62
 BOOT_TIMEOUT="${TKC_BOOT_TIMEOUT:-60}"
 QEMU="${QEMU:-qemu-system-aarch64}"
 command -v "$QEMU" >/dev/null 2>&1 || { echo "[tk-conform-a64] FAIL: $QEMU not found"; exit 1; }
@@ -57,6 +57,8 @@ arm plain '' '' '' GREEN
 arm NC-SEMPOLL semaphore.c '&& semcb->semcnt >= cnt ) {' '&& semcb->semcnt + 1 >= cnt ) {' RED
 arm NC-WAIPAR semaphore.c $'\tCHECK_PAR(cnt > 0);\n\tCHECK_TMOUT(tmout);' $'\tCHECK_TMOUT(tmout);' RED
 arm NC-HALFDELAY task_sync.c 'knl_make_wait_reltim(dlytim, TA_NULL);' 'knl_make_wait_reltim(dlytim / 2, TA_NULL);' RED
+arm NC-BITCLR eventflag.c $'\t\tif ( (wfmode & TWF_BITCLR) != 0 ) {\n\t\t\tflgcb->flgptn &= ~waiptn;' $'\t\tif ( (wfmode & TWF_BITCLR) != 0 ) {\n\t\t\tflgcb->flgptn = 0;' RED
+arm NC-NOINHERIT mutex.c 'knl_change_task_priority(mtxtsk, knl_ctxtsk->priority);' '(void)0;' RED
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform-a64] PASS"; else echo "[tk-conform-a64] FAIL"; fi
 exit "$rc_all"

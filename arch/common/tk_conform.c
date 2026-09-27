@@ -9,8 +9,9 @@
  *
  *  Scope of this version: tasks (create/start/exit/delete/priority/sleep/wake),
  *  semaphores (create/signal/wait with TMO_POL, a timeout, TMO_FEVR, delete),
- *  time (tk_dly_tsk, tk_get_otm). Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ,
- *  E_QOVR, E_TMOUT, E_DLT. Each expectation cites the reference
+ *  event flags (AND/OR waits, TWF_BITCLR, TA_WSGL, delete), mutexes (E_ILUSE,
+ *  TA_INHERIT priority inheritance), time (tk_dly_tsk, tk_get_otm). Error
+ *  codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE. Each expectation cites the reference
  *  implementation's documented @retval (kernel/mtkernel3/kernel/tkernel/);
  *  the IEEE 2050 text itself has not been re-read for this version.
  *
@@ -224,6 +225,118 @@ static void suite_sem(PRI me)
     check(er == E_ID, "S18", "tk_wai_sem id=0 -> E_ID", er);
 }
 
+/* ---- event flags (eventflag.c) ------------------------------------------ */
+static ID h_flg;
+static volatile UINT h_ptn;
+
+static void t_wait_flg_twice(INT stacd, void *exinf)
+{
+    UINT p = 0;
+    (void)stacd; (void)exinf;
+    h_er1 = tk_wai_flg(h_flg, 0x5, TWF_ANDW, &p, TMO_FEVR);
+    h_ptn = p; h_flag = 1;
+    h_er2 = tk_wai_flg(h_flg, 0x8, TWF_ORW, &p, TMO_FEVR);  /* released by tk_del_flg */
+    h_flag = 2;
+    tk_ext_tsk();
+}
+
+static void suite_flg(PRI me)
+{
+    ER er; ID f, t; UINT p = 0; T_RFLG rf;
+    T_CFLG cf = { .exinf = NULL, .flgatr = TA_TFIFO | TA_WSGL, .iflgptn = 0 };
+
+    f = tk_cre_flg(&cf);
+    check(f > 0, "F1", "tk_cre_flg -> ID > 0", f);
+    er = tk_wai_flg(f, 0x1, TWF_ANDW, &p, TMO_POL);
+    check(er == E_TMOUT, "F2", "tk_wai_flg(TMO_POL) on 0 -> E_TMOUT", er);
+    er = tk_wai_flg(f, 0, TWF_ANDW, &p, TMO_POL);
+    check(er == E_PAR, "F3", "tk_wai_flg waiptn=0 -> E_PAR", er);
+    tk_set_flg(f, 0x3);
+    er = tk_wai_flg(f, 0x1, TWF_ORW | TWF_BITCLR, &p, TMO_POL);
+    tk_ref_flg(f, &rf);
+    check(er == E_OK && p == 0x3 && rf.flgptn == 0x2, "F4", "TWF_ORW|TWF_BITCLR returns 0x3, clears only 0x1", (W)rf.flgptn);
+    er = tk_wai_flg(f, 0x3, TWF_ANDW, &p, TMO_POL);
+    check(er == E_TMOUT, "F5", "TWF_ANDW 0x3 with only 0x2 set -> E_TMOUT", er);
+    tk_clr_flg(f, 0);
+    tk_ref_flg(f, &rf);
+    check(rf.flgptn == 0, "F6", "tk_clr_flg(0) clears every bit", (W)rf.flgptn);
+
+    /* a higher-priority AND-waiter: released only when BOTH bits are set */
+    h_flg = f; h_flag = 0; h_ptn = 0; h_er1 = h_er2 = -999;
+    t = mk_task(t_wait_flg_twice, me - 1);
+    tk_sta_tsk(t, 0);
+    tk_set_flg(f, 0x1);
+    check(h_flag == 0, "F7", "AND-waiter for 0x5 still waits after 0x1", h_flag);
+    er = tk_wai_flg(f, 0x2, TWF_ORW, &p, TMO_POL);
+    check(er == E_OBJ, "F8", "TA_WSGL: a second waiter -> E_OBJ", er);
+    tk_set_flg(f, 0x4);
+    check(h_flag == 1 && h_er1 == E_OK && h_ptn == 0x5, "F9", "released by tk_set_flg before it returns (ptn 0x5)", (W)h_ptn);
+    er = tk_del_flg(f);
+    check(er == E_OK && h_flag == 2 && h_er2 == E_DLT, "F10", "tk_del_flg releases the waiter with E_DLT", h_er2);
+    tk_del_tsk(t);
+    er = tk_set_flg(f, 1);
+    check(er == E_NOEXS, "F11", "tk_set_flg deleted -> E_NOEXS", er);
+}
+
+/* ---- mutexes (mutex.c) ---------------------------------------------------- */
+static ID h_mtx;
+static volatile ER m_erL, m_erH;
+
+static void t_mtx_low(INT stacd, void *exinf)   /* locks, sleeps, unlocks */
+{
+    (void)stacd; (void)exinf;
+    m_erL = tk_loc_mtx(h_mtx, TMO_POL);
+    tk_slp_tsk(TMO_FEVR);
+    tk_unl_mtx(h_mtx);
+    tk_ext_tsk();
+}
+
+static void t_mtx_high(INT stacd, void *exinf)  /* blocks on the mutex */
+{
+    (void)stacd; (void)exinf;
+    m_erH = tk_loc_mtx(h_mtx, TMO_FEVR);
+    h_flag = 5;
+    tk_unl_mtx(h_mtx);
+    tk_ext_tsk();
+}
+
+static void suite_mtx(PRI me)
+{
+    ER er; ID m, tl, th; T_RTSK r;
+    T_CMTX cm = { .exinf = NULL, .mtxatr = TA_TPRI | TA_INHERIT, .ceilpri = 1 };
+
+    m = tk_cre_mtx(&cm);
+    check(m > 0, "M1", "tk_cre_mtx(TA_INHERIT) -> ID > 0", m);
+    er = tk_loc_mtx(m, TMO_POL);
+    check(er == E_OK, "M2", "tk_loc_mtx(TMO_POL) free -> E_OK", er);
+    er = tk_loc_mtx(m, TMO_POL);
+    check(er == E_ILUSE, "M3", "tk_loc_mtx by the owner again -> E_ILUSE", er);
+    er = tk_unl_mtx(m);
+    check(er == E_OK, "M4", "tk_unl_mtx by the owner -> E_OK", er);
+    er = tk_unl_mtx(m);
+    check(er == E_ILUSE, "M5", "tk_unl_mtx when not the owner -> E_ILUSE", er);
+
+    /* priority inheritance: a low task holds it, a high task waits */
+    h_mtx = m; h_flag = 0; m_erL = m_erH = -999;
+    tl = mk_task(t_mtx_low, me + 1);
+    th = mk_task(t_mtx_high, me - 1);
+    tk_sta_tsk(tl, 0);
+    tk_dly_tsk(20);                       /* let the low task lock + sleep */
+    tk_sta_tsk(th, 0);                    /* high task blocks on the mutex */
+    tk_ref_tsk(tl, &r);
+    check(m_erL == E_OK && h_flag == 0 && r.tskpri == me - 1, "M6", "TA_INHERIT: holder runs at the waiter's priority", r.tskpri);
+    tk_wup_tsk(tl);                       /* holder unlocks -> high task runs */
+    tk_ref_tsk(tl, &r);
+    check(h_flag == 5 && m_erH == E_OK, "M7", "the waiter got the mutex once it was released", m_erH);
+    check(r.tskpri == me + 1, "M8", "holder is back at its own priority", r.tskpri);
+    tk_dly_tsk(20);
+    tk_del_tsk(tl); tk_del_tsk(th);
+    er = tk_del_mtx(m);
+    check(er == E_OK, "M9", "tk_del_mtx -> E_OK", er);
+    er = tk_loc_mtx(m, TMO_POL);
+    check(er == E_NOEXS, "M10", "tk_loc_mtx deleted -> E_NOEXS", er);
+}
+
 /* ---- time ----------------------------------------------------------------- */
 static void suite_time(void)
 {
@@ -257,6 +370,8 @@ static void t_runner(INT stacd, void *exinf)
     tk_ref_tsk(TSK_SELF, &r);
     suite_task(r.tskpri);
     suite_sem(r.tskpri);
+    suite_flg(r.tskpri);
+    suite_mtx(r.tskpri);
     suite_time();
     g_done = 1;
     tk_wup_tsk(g_caller);
