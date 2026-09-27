@@ -1840,6 +1840,36 @@ N-4 cross-host deferred to the ThinkPad).
   `KCC-WILDPC` still has no mechanism. (5) this proves the harness reddens on THIS unfixed tree; it does
   not prove it would redden on a FUTURE vendor-patch loss that deletes a different one of the 9 hardening
   classes — the gate watches one signature, not the class of regressions the `VENDOR-PATCH-LOSS` row names.
+- CROWN RE-BLESS — F1 id-order fold + x86_pc idle stack, one re-bless for two merges (2026-09-28,
+  merges `a73156d1` of `feat/f1-rsum-order` and `b9d73890` of `feat/x86pc-idle-stack`, both audit-12
+  PASS on 2026-09-27; R-F1 / R-X86PC were put to mk_pino with a recommendation on 2026-09-27 04:40 and,
+  with no answer in 24 h, landed on the recommendation under the inbox #3 rule). The bare-metal `.text`
+  changes DELIBERATELY: F1 on BOTH targets (`arch/common/dkva.c` links into both), x86pc on x86 only
+  (`kernel/mtkernel3/kernel/sysdepend/x86_pc/dispatch.S`). NEW dev crown `.text` sha256 (audit
+  container gcc 13.3.0, fresh clone from a git bundle, `make clean` first, same `objcopy -O binary
+  -j .text` as `crown-text-identity`; script `pk-scratch/rb-0928.sh`, evidence
+  `pkernel_audit_ss:/build/rb-0928/`):
+    aarch64  81d5b88302dbaf7ef384265d2784c36e064f4535c527d3566d92d48bf4531a4b  358904 B  (was dea715dd…, 357240)
+    x86      10a4c0093d80e7011ee0952890552de5bb0ad3374cefc18a7fde2458b23ba94d  369399 B  (was 1c8e6d16…, 368082)
+  Measured at three first-parent points: `40825057` (= origin/master before the merges) gives exactly
+  the old full hashes of the 2026-09-24 entry below; `a73156d1` (F1 only) gives aarch64 81d5b883… /
+  x86 6f520901… 369394 B, the values audit-12 measured on the branch; `b9d73890` (both) gives the new
+  crown above. aarch64 does not move between `a73156d1` and `b9d73890`.
+  WHERE THE BYTES WENT (`nm -S`, `40825057` → `b9d73890`, no symbol removed): F1 adds `fold_lock`,
+  `fold_unlock`, `fold_finish`, `dkva_fold_order_test` (x86 1084 B / aarch64 1392 B) and grows
+  `dkva_init`, `dkva_infer`, `dkva_cmd` and (aarch64) `dkva_task`, `dkva_stat`, `dkva_arrival_test`,
+  `dkva_fed2_self_test` (x86 +228 / aarch64 +272); x86pc adds 5 B of unsized code in `dispatch.S`
+  (`.Lidle`'s stack switch). x86 1084+228+5 = 1317 = 369399−368082; aarch64 1392+272 = 1664. `.bss`
+  grows x86 +31232 (fold table 23040 + `knl_idle_stack` 8192) / aarch64 +23008. `tk_conform` symbols
+  in the default ELFs: 0 on both. Vendor-patch inventory on `b9d73890`: 23/23 GREEN (x86pc adds the
+  D5K-LX64 and D5K-X86PC anchors; the `vendor-patch-inventory` job comment now says 23).
+  CONTRACT AND REGRESSION RUNS ON `b9d73890` (same clone): bare x86 `tests/x86/run_tk_conform.sh`
+  rc=0 496 s (plain GREEN, the five NCs RED as expected); bare AArch64 `tests/aarch64/run_tk_conform.sh`
+  rc=0 483 s (same); `KILLCHURN_N=150 tests/x86/run_killchurn.sh` rc=0 444 s, sigA=0 sigB=0 clean=150
+  incomplete=0; hosted `tests/host/run_dkva_fold_order.sh` rc=0 39 s (cure ALL PASS, the arrival-order
+  falsifier RED on F1 only). These ran with two other measurements in the same 4-core container.
+  NOT YET DONE: an independent re-measurement by a later run (the inbox #1 practice). This entry was
+  written by the run that merged.
 - CROWN RE-BLESS — self-access R1, the first T1 affordance `self_access_publish` (2026-09-24, merge
   `3b797b0f` of `feat/self-access-r1-publish`, landed on local master 2026-09-21; **approved by mk_pino
   2026-09-23**, p-kernel chat inbox #1). The bare-metal `.text` changes DELIBERATELY on BOTH targets:
