@@ -86,8 +86,8 @@ Anything not listed under "What runs today" is not claimed to work.
 | Process on Linux (x86_64, `boot/linux_x86_64`) | Boots to a shell |
 | Windows x86_64 (`boot/windows/x86_64`) | Builds an `.exe` (checked in CI). Not yet confirmed to start on a real machine |
 
-- **Tests for the contract between the kernel and the layers above it** (2026-09): 62 checks that the `tk_*` calls used by upper layers behave as specified (tasks, semaphores, event flags, mutexes, time — including error codes and boundary values). Expected values are checked against the μT-Kernel 3.0 specification. Five deliberately broken kernel builds are confirmed to turn the tests red, every time. Runs on Linux x86_64, bare-metal x86, and bare-metal AArch64 (`arch/common/tk_conform.c`).
-- The first stage of multi-core support is in (CI `smp-autodetect`).
+- **Tests for the contract between the kernel and the layers above it** (2026-09): 62 checks that the `tk_*` calls used by upper layers behave as specified (tasks, semaphores, event flags, mutexes, time — including error codes and boundary values). Expected values are checked against the μT-Kernel 3.0 specification (one item follows the reference implementation, not the specification). Five deliberately broken kernel builds are confirmed to turn the tests red, every time. Runs on Linux x86_64, bare-metal x86, and bare-metal AArch64 (`arch/common/tk_conform.c`).
+- The first stage of multi-core support is in (CI `smp-autodetect` — a non-blocking job that failed 14 of its 15 runs up to 2026-09-09).
 
 ### Connecting
 
@@ -109,7 +109,7 @@ Anything not listed under "What runs today" is not claimed to work.
 ### Remembering
 
 - **p-fs**: a distributed store where the hash of the content is the address. Identical content collapses into one, and tampering shows up immediately as an address mismatch.
-- **ARK**: a power-loss-safe filesystem. A test that repeatedly and mechanically cuts power during writes and corrupts data (CI `ark-crash-fuzzer`) has never seen it return corrupted data.
+- **ARK**: a power-loss-safe filesystem. A test that repeatedly and mechanically cuts power during writes and corrupts data (CI `ark-crash-fuzzer`) has not seen it return corrupted data since the ARK-2 fixes (before them, this test found 4 bugs).
 - Device IDs, the history record, and learned weights survive a restart (on Android too).
 
 ### Learning as a swarm
@@ -138,7 +138,7 @@ The word-association brain can only learn a fixed vocabulary. So since June 2026
 - Talk to it from the web page and it replies one character at a time. For now, it still stumbles.
 - The teacher is SmolLM2-135M (a public model), run by an inference engine written in C with no external libraries. Only the student is distributed to the swarm; the teacher's weights are not.
 - Training on sentences actually written by the teacher improves prediction of how those sentences continue (loss 5.53→2.03; a control trained the same number of steps on the fixed material went to 6.61). Measured inside one process.
-- A teacher device sends lessons over the network, and they remain in the student after the teacher is killed [live] (`samples/11_distributed/run_cradle_live.sh`, not in CI). However, much of the improvement is memorizing text that also appears on the training side, not generalizing to unseen text.
+- A teacher device sends lessons over the network, and they remain in the student after the teacher is killed [live] (`samples/11_distributed/run_cradle_live.sh`, not in CI; the lessons are fixed sentences, not SmolLM2 output). However, much of the improvement is memorizing text that also appears on the training side, not generalizing to unseen text.
 - **Quantization** (2026-09): `student quant <8|4|2> <row|g32|tensor>` rounds a copy of its own weights to int8, int4, or int2 and measures how much worse it gets. int8 (per row) barely changes it (CI `st-quant`). For now it only measures; it does not yet store itself in the smaller form. Notes: [brain-quantization.md](docs/architecture/30-module/research/brain-quantization.md)
 - **A safety net for merging** (2026-09): simply averaging the weights of two brains can end up worse than the worse parent. It now tries several ways of mixing, picks the best, and never produces a result worse than the worse parent (CI `st-merge`). So far this is a safety net rather than clever merging. Notes: [brain-merge.md](docs/architecture/30-module/research/brain-merge.md)
 
@@ -146,7 +146,7 @@ The word-association brain can only learn a fixed vocabulary. So since June 2026
 
 The safety mechanisms are built first, ahead of the day it rewrites its own code.
 
-- On x86, the brain's computation runs outside the kernel (ring 3). If it crashes, the kernel survives and cleans up (CI `ring3-survival`) [live].
+- On x86, the brain's computation runs outside the kernel (ring 3). If it crashes, the kernel survives and cleans up (CI `ring3-survival`, a non-blocking job) [in-proc].
 - Code a device compiles for itself runs in a separate process with limited capabilities.
 - Code to be distributed is signed with Ed25519. Signing keys belong to devices and are never tied to a person's identity.
 - Devices on different versions can mix without splitting the swarm, thanks to a compatibility layer and signed updates.
@@ -164,7 +164,7 @@ Not yet: the learning-side code still runs inside the kernel, and the same isola
 
 - **49 CI jobs**: builds for the five targets and the relay tests, plus tests that really kill processes, on every run. It also watches that the bare-metal kernel's machine code does not change unintentionally (`crown-text-identity`).
 - All nine issues found by an external audit in June 2026 (memory safety, missing signature checks, and others) have been fixed.
-- A bug where repeatedly killing and starting devices would occasionally crash the whole kernel (KILL-CHURN) was tracked down after ruling out seven hypotheses. One of them turned out to be caused by the very change meant to fix it — found by comparing with the unfixed kernel on the same day with the same procedure.
+- A bug where repeatedly killing and starting devices would occasionally crash the whole kernel (KILL-CHURN) was tracked down and fixed after ruling out seven hypotheses. One of them turned out to be caused by the very change meant to fix it — found by comparing with the unfixed kernel on the same day with the same procedure.
 - Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md). There are three right now (2026-09-27).
 
 ---
@@ -198,7 +198,7 @@ The whole way of thinking is in [survival-network.md](docs/architecture/00-conce
 
 ## Decided against
 
-**No mechanism to push back against devices that do not contribute (2026-07-04).** A mechanism (recip) that finds devices which only receive and quietly deprioritizes them was designed in full. It was then decided not to adopt it: if some devices are weak, the swarm can make up for them. Devices that answer requests do so without expecting anything back. The design document is kept in [survival-recip.md](docs/architecture/30-module/survival-recip.md).
+**No mechanism to push back against devices that do not contribute (2026-07-04).** A mechanism (recip) that finds devices which only receive and quietly deprioritizes them was taken as far as a design. It was then decided not to adopt it: if some devices are weak, the swarm can make up for them. Devices that answer requests do so without expecting anything back. The design document is kept in [survival-recip.md](docs/architecture/30-module/survival-recip.md).
 
 ---
 
@@ -240,7 +240,7 @@ help                     ← all commands
 3. **The relay authenticates but does not encrypt.** It prevents impersonation, tampering, and replay, but not eavesdropping.
 4. **Raspberry Pi is only as far as QEMU.** There is no SD card driver yet.
 5. **The learning is sensitive to how arithmetic is rounded.** A difference in rounding from an optimization that fuses multiply and add once broke learning only on phones. Rounding was made identical so every environment gives the same result, but depending on that remains a weakness.
-6. **The number of commands differs by target.** Bare-metal x86 has 59, bare-metal AArch64 7, Linux x86_64 53, Linux aarch64 54 (2026-09-27). The table is in [command-matrix.md](docs/architecture/command-matrix.md), generated from the source and checked against the real thing in CI. Evening them out is next.
+6. **The number of commands differs by target.** Bare-metal x86 has 59, bare-metal AArch64 7, Linux x86_64 53, Linux aarch64 54 (2026-09-27). The table is in [command-matrix.md](docs/architecture/command-matrix.md), generated from the source, and CI checks that the table matches the source. Evening them out is next.
 7. **Watching after the kernel swap.** After moving to μT-Kernel 3.0, a reproducer (`tcb_churn.c`) keeps watching for bugs of the same kind as KILL-CHURN.
 8. **Bare-metal x86 has an unfixed way of freezing.** If a task keeps running without ever calling the kernel, the kernel never switches to other tasks (RNG0-BUSY-TASK-STALLS-DISPATCH). The cause is known and the fix is being decided. CI only watches it for now.
 
