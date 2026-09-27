@@ -11,7 +11,7 @@
  *  semaphores (create/signal/wait with TMO_POL, a timeout, TMO_FEVR, delete),
  *  time (tk_dly_tsk, tk_get_otm). Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ,
  *  E_QOVR, E_TMOUT, E_DLT. Each expectation cites the reference
- *  implementation's documented @retval (kernel/mtkernel3/kernel/tkernel/*.c);
+ *  implementation's documented @retval (kernel/mtkernel3/kernel/tkernel/);
  *  the IEEE 2050 text itself has not been re-read for this version.
  *
  *  Output: one "[tkc] PASS|FAIL <id> <what>" line per check, then
