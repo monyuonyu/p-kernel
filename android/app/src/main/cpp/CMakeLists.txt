@@ -174,6 +174,7 @@ set(COMMON_SRC
     ${ARCH_CO}/ga.c
     ${ARCH_CO}/gossip_learn.c
     ${ARCH_CO}/scaling_cert.c
+    ${ARCH_CO}/tk_conform.c
     ${ARCH_CO}/cradle_net.c
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c

@@ -197,7 +197,8 @@ COMMON_C_SRCS = \
     gen_succession.c \
     cradle_net.c \
     modver.c \
-    scaling_cert.c
+    scaling_cert.c \
+    tk_conform.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 
