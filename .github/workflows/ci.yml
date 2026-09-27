@@ -114,11 +114,14 @@ jobs:
     # halved tk_dly_tsk, TWF_BITCLR clearing every bit, no TA_INHERIT, no
     # maxmsz check in tk_snd_mbf, a TA_MPRI mailbox queued FIFO, tk_rel_mpf
     # not handing the block to a waiter, a cyclic handler at twice its
-    # period) must each go RED. ~8 min per arch on the dev box (6 builds + 6 boots).
+    # period) must each go RED. 10 builds + 10 boots per arch; every boot runs
+    # to QEMU's 60 s limit. v1 (6 arms) took ~8 min per arch on the dev box;
+    # v2 took ~26 min per arch there with ~14 other jobs sharing 4 cores
+    # (2026-09-27). Both arches run one after the other here -> timeout 45.
     # -nic none on aarch64 (no efi-virtio.rom without ipxe-qemu), as run_smp0.sh.
     name: "約束ごとの試験 v2 (ベアメタル x86 + AArch64, QEMU)"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchains + QEMU
