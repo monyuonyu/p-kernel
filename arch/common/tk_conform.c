@@ -228,11 +228,13 @@ static void suite_sem(PRI me)
 static void suite_time(void)
 {
     ER er; W t0, dt;
+    /* 200 ms, not 30: with a 10 ms tick a delay that is silently halved
+     * still rounds up past 30 ms (NC-HALFDELAY stayed green at 30). */
     t0 = now_ms();
-    er = tk_dly_tsk(30);
+    er = tk_dly_tsk(200);
     dt = now_ms() - t0;
-    check(er == E_OK, "D1", "tk_dly_tsk(30) -> E_OK", er);
-    check(dt >= 30 && dt < 1000, "D2", "tk_dly_tsk(30) lasted >= 30 ms", dt);
+    check(er == E_OK, "D1", "tk_dly_tsk(200) -> E_OK", er);
+    check(dt >= 200 && dt < 2000, "D2", "tk_dly_tsk(200) lasted >= 200 ms", dt);
     er = tk_dly_tsk(0);
     check(er == E_OK, "D3", "tk_dly_tsk(0) -> E_OK", er);
     t0 = now_ms(); tk_dly_tsk(10);
