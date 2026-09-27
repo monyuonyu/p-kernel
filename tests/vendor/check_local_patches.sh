@@ -102,6 +102,12 @@ check B-INITSTK    ../../include/sys/inittask.h  1 '#ifndef INITTASK_STKSZ'
 #     コンパイルは通ったまま挙動だけ変わる「静かに消える」クラス。上流 435096c9 には
 #     tk_ext_tsk の呼び出しが0個であることを実測済み（vendor-patch-inventory.md §7.16）。
 check B-INITTASK-EXIT  ../inittask/inittask.c  1 'tk_ext_tsk();'
+# --- D5-K（2026-09-25 / 09-27）: tk_exd_tsk のあと、解放済みのスタックの上で idle
+#     （と割込み）を走らせない。idle の前に専用スタックへ乗り換える。上流の
+#     armv7m などは knl_tmp_stack に乗り換えている。ベンダ差し替えで消えても
+#     ビルドは通り、普段は何も起きない（潜在バグ）ので、ここで数える。
+check D5K-LX64     ../sysdepend/linux_x86_64/dispatch.S  1 'leaq    knl_tmp_stack+KNL_TMP_STACK_SZ(%rip), %rsp'
+check D5K-X86PC    ../sysdepend/x86_pc/dispatch.S        1 'movl    $knl_idle_stack_top, %esp'
 
 echo
 echo "pass=$pass lost=$fail"
