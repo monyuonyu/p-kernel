@@ -16,7 +16,7 @@
  *
  *  Output: one "[tkc] PASS|FAIL <id> <what>" line per check, then
  *  "[tkc] <p> PASS / <f> FAIL". Driven by tests/host/run_tk_conform.sh.
- *  Needs a caller priority >= 3 (helpers run one above and one below it).
+ *  The checks run in a task of their own at priority 20 (helpers at 19/21).
  */
 #include "kernel.h"
 #include "tk_conform.h"
@@ -237,23 +237,45 @@ static void suite_time(void)
     check(now_ms() - t0 >= 10, "D4", "tk_get_otm advances across a 10 ms delay", now_ms() - t0);
 }
 
-INT tk_conform_run(void (*out)(const char *))
+/* The suite runs in its own task at TKC_PRI, so helpers can sit one above
+ * and one below it whatever the caller's priority is (the hosted shell runs
+ * at 1). The caller waits for it on a semaphore. */
+#define TKC_PRI 20
+static ID g_done;
+
+static void t_runner(INT stacd, void *exinf)
 {
     T_RTSK r;
-    char b[64]; INT k = 0; const char *p;
-    g_out = out; g_pass = g_fail = 0;
+    (void)stacd; (void)exinf;
     tk_ref_tsk(TSK_SELF, &r);
-    for (p = "[tkc] contract suite v1 (caller pri "; *p; ) b[k++] = *p++;
-    put_dec(b, &k, r.tskpri);
-    b[k++] = ')'; b[k++] = '\r'; b[k++] = '\n'; b[k] = 0;
-    out(b);
-    if (r.tskpri < 3 || r.tskpri > 138) {
-        out("[tkc] FAIL setup: caller priority must leave room above and below\r\n");
-        return 1;
-    }
     suite_task(r.tskpri);
     suite_sem(r.tskpri);
     suite_time();
+    tk_sig_sem(g_done, 1);
+    tk_ext_tsk();
+}
+
+INT tk_conform_run(void (*out)(const char *))
+{
+    char b[64]; INT k = 0; const char *p;
+    ID run; ER er;
+    g_out = out; g_pass = g_fail = 0;
+    out("[tkc] contract suite v1 (runner task pri 20)\r\n");
+    g_done = mk_sem(0, 1);
+    run = mk_task(t_runner, TKC_PRI);
+    if (g_done <= 0 || run <= 0) {
+        out("[tkc] FAIL setup: could not create the runner task / semaphore\r\n");
+        return 1;
+    }
+    tk_sta_tsk(run, 0);
+    er = tk_wai_sem(g_done, 1, 120000);
+    if (er != E_OK) {
+        out("[tkc] FAIL setup: the runner did not finish within 120 s\r\n");
+        g_fail++;
+        tk_ter_tsk(run);
+    }
+    tk_del_tsk(run);
+    tk_del_sem(g_done);
     k = 0;
     for (p = "[tkc] "; *p; ) b[k++] = *p++;
     put_dec(b, &k, g_pass);

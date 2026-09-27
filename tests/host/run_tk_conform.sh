@@ -50,7 +50,7 @@ echo ""
 nc() {  # $1 = name, $2 = file under kernel/mtkernel3/kernel/tkernel, $3 = old, $4 = new
     local d="$WORK/nc-$1"
     mkdir -p "$d"
-    cp -a "$ROOT/arch" "$ROOT/boot" "$ROOT/kernel" "$ROOT/include" "$ROOT/tools" "$d/"
+    cp -a "$ROOT/arch" "$ROOT/boot" "$ROOT/kernel" "$ROOT/include" "$ROOT/tools" "$ROOT/relay" "$d/"
     make -C "$d/boot/linux_x86_64" clean > /dev/null 2>&1
     python3 - "$d/kernel/mtkernel3/kernel/tkernel/$2" "$3" "$4" <<'EOF'
 import sys
