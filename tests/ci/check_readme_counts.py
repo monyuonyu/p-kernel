@@ -31,7 +31,10 @@ if not jobs:
     print("check_readme_counts: FAIL — found no jobs in ci.yml (parser broken?)")
     sys.exit(1)
 
-claims = [(m.start(), int(m.group(1))) for m in re.finditer(r"(\d+)\s*ジョブ", readme)]
+# A count is a number standing on its own: digits that end a name
+# ("UMP x86_64 ジョブ", "arm64ジョブ", "v2.64") are not one.
+claims = [(m.start(), int(m.group(1)))
+          for m in re.finditer(r"(?<![A-Za-z0-9_.])(\d+)\s*ジョブ", readme)]
 bad = [(readme.count("\n", 0, pos) + 1, n) for pos, n in claims if n != len(jobs)]
 print(f"check_readme_counts: ci.yml has {len(jobs)} jobs; README claims {[n for _, n in claims]}")
 if not claims:
