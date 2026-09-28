@@ -633,8 +633,11 @@ static void suite_time(void)
  * call that may wait returns E_CTX; tk_ref_sys shows TSS_DDSP; tk_dis_dsp     *
  * twice is ended by one tk_ena_dsp. Nothing is printed while disabled (the    *
  * output path is not part of the promise), so the values are kept and checked *
- * after tk_ena_dsp. K7/K8 go through the timer: on bare x86 that is the IRQ-  *
- * exit dispatch of RNG0 (knl_irq_exit_dispatch must honour the disable).      */
+ * after tk_ena_dsp. In K7 the only dispatch points are interrupt exits: on    *
+ * bare x86 that is the IRQ-exit dispatch of RNG0 (knl_irq_exit_dispatch must  *
+ * honour the disable). So under NC-NODDS K7 goes red only on a kernel that    *
+ * dispatches at interrupt exit (bare x86 before RNG0 does not; K2..K5 still   *
+ * make that NC red).                                                          */
 static void t_delay_then_flag(INT stacd, void *exinf)
 {
     (void)exinf;
@@ -670,17 +673,29 @@ static void suite_dds(PRI me)
           "tk_dis_dsp twice, tk_ena_dsp once -> enabled; the woken task runs before it returns", f_ena);
     tk_del_tsk(t);
 
-    t = mk_task(t_delay_then_flag, me - 1);
-    h_flag = 0;
-    tk_sta_tsk(t, 2);                     /* runs at once, sleeps 20 ms */
-    tk_dis_dsp();
-    t0 = now_ms();
-    while (now_ms() - t0 < 100 && spin < 50000000) spin++;
-    dt = now_ms() - t0;
-    f_dis = h_flag;
+    /* K7's busy wait makes NO kernel call, so the only dispatch points are
+     * interrupt exits (a loop that polled tk_get_otm would test the service-
+     * call exit instead — the first draft did). Calibrate the loop first:
+     * how many 64k-iteration chunks fit in ~50 ms, then spin 3x that. */
+    {
+        UW chunks = 0, i;
+        t0 = now_ms();
+        while (now_ms() - t0 < 50 && chunks < 20000) {   /* 3x stays < 2^32 */
+            for (i = 0; i < 65536; i++) spin++;
+            chunks++;
+        }
+        t = mk_task(t_delay_then_flag, me - 1);
+        h_flag = 0;
+        tk_sta_tsk(t, 2);                 /* runs at once, sleeps 20 ms */
+        tk_dis_dsp();
+        t0 = now_ms();
+        for (i = 0; i < chunks * 3 * 65536; i++) spin++;
+        f_dis = h_flag;                   /* read before any kernel call */
+        dt = now_ms() - t0;
+    }
     tk_ena_dsp();
     f_ena = h_flag;
-    check(f_dis == 0 && dt >= 40, "K7", "a task whose 20 ms delay ends while disabled does not run (100 ms busy)", f_dis);
+    check(f_dis == 0 && dt >= 40, "K7", "a task whose 20 ms delay ends while disabled does not run (~150 ms busy, no kernel call)", f_dis);
     check(f_ena == 2, "K8", "... and runs as soon as tk_ena_dsp", f_ena);
     tk_del_tsk(t);
 }
