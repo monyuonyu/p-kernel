@@ -292,7 +292,7 @@ galaxy on `127.0.0.1:7800` — `curl /galaxy.json` returns valid JSON,
 `GET /` returns the `<canvas` page, and `/manifesto` honors `Accept-Language`
 (ja→日本語, fr→français). The APK packages this identical `.so`.
 
-### What awaits a real device (mk_pino has it)
+### What awaits a real device (I have one; this host does not)
 
 CI on this host cannot build the APK (NDK under qemu = minutes), so nothing
 was added to `ci.yml`; the host-side galaxy cert (`samples/14_galaxy/`)
