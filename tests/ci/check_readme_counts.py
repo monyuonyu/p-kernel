@@ -15,9 +15,12 @@ import re, sys
 
 repo = (sys.argv[1] if len(sys.argv) > 1 else ".").rstrip("/")
 wf = open(repo + "/.github/workflows/ci.yml", encoding="utf-8").read().splitlines()
-READMES = [("README.ja.md", r"(\d+)\s*ジョブ"),
-           ("README.md", r"(\d+)\s+(?:CI\s+)?jobs\b"),
-           ("README.zh-CN.md", r"(\d+)\s*个\s*(?:CI\s*)?任务")]
+# A count is a number standing on its own: digits that end a name
+# ("UMP x86_64 ジョブ", "arm64 jobs", "v2.64") are not one.
+N = r"(?<![A-Za-z0-9_.])(\d+)"
+READMES = [("README.ja.md", N + r"\s*ジョブ"),
+           ("README.md", N + r"\s+(?:CI\s+)?jobs\b"),
+           ("README.zh-CN.md", N + r"\s*个\s*(?:CI\s*)?任务")]
 
 jobs, in_jobs = [], False
 for line in wf:
