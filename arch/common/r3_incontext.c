@@ -3161,6 +3161,114 @@ static const U1 *mq_lprov_find(UW local_seq)
     return 0;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* ---- ROADMAP 1-3a: the conflict history (global-rules.md rule 2) ----- *
+ *  r3_fact_revise overwrites the engram in place, and mt_rprov/mq_lprov  *
+ *  are re-pointed at the new teacher, so before this the superseded      *
+ *  value, who taught it and how firmly it was held were gone. mc_note is *
+ *  called at the two revise sites (m_teach Site 1, mind_net_task Site 2) *
+ *  BEFORE the overwrite and keeps them here. HISTORY ONLY: the current   *
+ *  answer is still chosen as before (last arrival). Bounded ring of      *
+ *  MC_MAX; the same (key, lost value, lost teacher, new value) again     *
+ *  only bumps a count; older records drop out (the drop count is shown). *
+ *  Hosted only for now: bare metal keeps its crown (docs/architecture/   *
+ *  30-module/mind-conflicts.md).                                         */
+#define MC_MAX 8
+#define MC_TEACHER_UNKNOWN 0xFF
+typedef struct {
+    UB used, key, v_lost, v_now;
+    U1 lost_by;                   /* node that taught v_lost (0-based)   */
+    U1 now_by;                    /* node whose value replaced it        */
+    UB lost_state, lost_rounds;   /* evidence: how firmly v_lost was held */
+    UB has_prov, n;               /* n = times seen (capped at 255)      */
+    UW lost_seq;                  /* local seq of the superseded engram  */
+    UW at_ms;                     /* local time of the first supersede   */
+    U1 lost_prov[PFS_ID_LEN];     /* content-id of v_lost's ARK_PROV     */
+} MC_REC;
+static MC_REC mc_hist[MC_MAX];
+static UW mc_next, mc_dropped;
+
+static void mc_print(const MC_REC *r, const char *lead)
+{
+    r_puts(lead);
+    r_puts("key "); r_putdec((UW)r->key);
+    r_puts(" \""); r_puts(r3_vocab_key_word(r->key)); r_puts("\": \"");
+    r_puts(r3_vocab_val_word(r->v_lost)); r_puts("\" (taught by node ");
+    if (r->lost_by == MC_TEACHER_UNKNOWN) r_puts("?");
+    else r_putdec((UW)r->lost_by);
+    r_puts(", seq "); r_putdec(r->lost_seq); r_puts(", ");
+    r_puts(r->lost_state == R3F_RETAINED ? "RETAINED " : "PENDING ");
+    r_putdec((UW)r->lost_rounds); r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT);
+    r_puts(r->has_prov ? ", prov kept" : ", no prov");
+    r_puts(") superseded by \""); r_puts(r3_vocab_val_word(r->v_now));
+    r_puts("\" from node "); r_putdec((UW)r->now_by);
+    r_puts(" at "); r_putdec(r->at_ms); r_puts(" ms");
+    if (r->n > 1) { r_puts(", seen "); r_putdec((UW)r->n); r_puts(" times"); }
+    r_puts("\r\n");
+}
+
+/* fi/bind = the engram about to be revised; call BEFORE r3_fact_revise. */
+static void mc_note(INT fi, INT bind, UB v_now, U1 now_by)
+{
+    UB k = r3_fq[fi].key[bind], v_lost = r3_fq[fi].yhat[bind];
+    UW seq = r3_fq[fi].seq;
+    U1 lost_by = MC_TEACHER_UNKNOWN; UB has_prov = 0;
+    U1 prov[PFS_ID_LEN];
+    MT_REMOTE_PROV *rp = mt_rprov_find(seq);
+    const U1 *lp = mq_lprov_find(seq);
+    if (rp) {
+        lost_by = rp->origin_node; has_prov = 1;
+        for (INT i = 0; i < PFS_ID_LEN; i++) prov[i] = rp->prov_head[i];
+    } else if (lp) {
+        lost_by = drpc_my_node; has_prov = 1;
+        for (INT i = 0; i < PFS_ID_LEN; i++) prov[i] = lp[i];
+    }
+    for (INT i = 0; i < MC_MAX; i++) {
+        MC_REC *r = &mc_hist[i];
+        if (r->used && r->key == k && r->v_lost == v_lost &&
+            r->lost_by == lost_by && r->v_now == v_now) {
+            if (r->n < 255) r->n++;
+            mc_print(r, "[mind] conflict again: ");
+            return;
+        }
+    }
+    MC_REC *r = &mc_hist[mc_next % MC_MAX];
+    if (r->used) mc_dropped++;
+    mc_next++;
+    SYSTIM t; tk_get_otm(&t);
+    r->used = 1; r->key = k; r->v_lost = v_lost; r->v_now = v_now;
+    r->lost_by = lost_by; r->now_by = now_by;
+    r->lost_state = r3_fq[fi].state; r->lost_rounds = r3_fq[fi].rounds_done;
+    r->has_prov = has_prov; r->n = 1; r->lost_seq = seq; r->at_ms = (UW)t.lo;
+    for (INT i = 0; i < PFS_ID_LEN; i++) r->lost_prov[i] = has_prov ? prov[i] : 0;
+    mc_print(r, "[mind] conflict recorded: ");
+}
+
+/* `mind conflicts` — read-only list of the history (hosted). */
+static void m_conflicts(void)
+{
+    UW shown = 0;
+    for (UW j = 0; j < MC_MAX; j++) {
+        MC_REC *r = &mc_hist[(mc_next + j) % MC_MAX];      /* oldest first */
+        if (!r->used) continue;
+        mc_print(r, "[mind] conflict ");
+        shown++;
+    }
+    r_puts("[mind] conflicts: "); r_putdec(shown); r_puts(" kept, ");
+    r_putdec(mc_dropped); r_puts(" older dropped (ring of ");
+    r_putdec(MC_MAX); r_puts(")\r\n");
+}
+
+/* `mind ask` tail: the superseded values for this key, if any. */
+static void mc_ask_tail(INT k)
+{
+    for (UW j = 0; j < MC_MAX; j++) {
+        MC_REC *r = &mc_hist[(mc_next + j) % MC_MAX];
+        if (r->used && r->key == (UB)k) mc_print(r, "[mind]   conflict history: ");
+    }
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 static INT m_parse_uint(const UB **pp, const UB *end, INT *out)
 {
     const UB *p = *pp;
@@ -3347,6 +3455,9 @@ static void m_teach(const UB *p, const UB *end)
         r_putf1(share[v]); r_puts("%  (old high, new low — the belief to invert)\r\n");
 
         m_round_snap = dmn_r3_rounds();            /* like teach (VII.5)     */
+#ifdef _TK_HOSTED_LIBC_
+        mc_note(fi, bind, (UB)v, drpc_my_node);    /* 1-3a: keep the loser   */
+#endif
         INT rrc = r3_fact_revise((UB)k, (UB)v);    /* supersede in place     */
         if (rrc != 0) {
             r_puts("[mind] r3_fact_revise refused (key vanished under the gate);"
@@ -3546,6 +3657,9 @@ static void m_ask(const UB *p, const UB *end)
             r_puts(" — remote teach, provenance via self/prov\r\n");
         }
     }
+#ifdef _TK_HOSTED_LIBC_
+    mc_ask_tail(k);                                /* 1-3a: the losers    */
+#endif
     if (r3_fq[fi].state != R3F_RETAINED) {
         r_puts("[mind]   still PENDING — no verdict yet; `mind wait` yields the idle window\r\n");
         return;
@@ -3649,6 +3763,7 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "law"))  m_law(p, end);            /* 良心 floor   */
 #ifdef _TK_HOSTED_LIBC_
     else if (m_kw(&p, end, "pause")) r3_mind_pause_test();     /* survival-L2 cert */
+    else if (m_kw(&p, end, "conflicts")) m_conflicts();        /* ROADMAP 1-3a */
 #endif
     /* "pause" deliberately NOT added to this usage string: it is the ONE
      * r_puts call in mind_cmd that is NOT inside a _TK_HOSTED_LIBC_ guard
@@ -4243,6 +4358,9 @@ void mind_net_task(INT stacd, void *exinf)
                              * the teacher, printed LOUDLY; B's OWN DMN then
                              * consolidates the new belief (same production path). */
                             UB v_old = cur;
+#ifdef _TK_HOSTED_LIBC_
+                            mc_note(fi, bind, (UB)v, org);   /* 1-3a */
+#endif
                             INT rrc = r3_fact_revise((UB)k, (UB)v);
                             if (rrc == 0) {
                                 UW local_seq = r3_fq[fi].seq;
