@@ -242,7 +242,7 @@ help                     ← all commands
 5. **The learning is sensitive to how arithmetic is rounded.** A difference in rounding from an optimization that fuses multiply and add once broke learning only on phones. Rounding was made identical so every environment gives the same result, but depending on that remains a weakness.
 6. **The number of commands differs by target.** Bare-metal x86 has 59, bare-metal AArch64 7, Linux x86_64 53, Linux aarch64 54 (2026-09-27). The table is in [command-matrix.md](docs/architecture/command-matrix.md), generated from the source, and CI checks that the table matches the source. Evening them out is next.
 7. **Watching after the kernel swap.** After moving to μT-Kernel 3.0, a reproducer (`tcb_churn.c`) keeps watching for bugs of the same kind as KILL-CHURN.
-8. **Bare-metal x86 has an unfixed way of freezing.** If a task keeps running without ever calling the kernel, the kernel never switches to other tasks (RNG0-BUSY-TASK-STALLS-DISPATCH). The cause is known and the fix is being decided. CI only watches it for now.
+8. **Bare-metal AArch64 still has the busy-task freeze.** If a task keeps running without ever calling the kernel, the kernel never switches to other tasks (RNG0-BUSY-TASK-STALLS-DISPATCH). On bare-metal x86 it is fixed (2026-09-29: at the exit of an interrupt, the kernel switches tasks if a switch is due). A CI regression test with three arms (the fix, a control, and the fix compiled out) blocks on it. The default bare-metal AArch64 build does not switch at the interrupt exit — confirmed in the code and by measurement — and is not fixed yet.
 
 ---
 

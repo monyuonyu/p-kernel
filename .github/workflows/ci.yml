@@ -60,7 +60,7 @@ jobs:
   vendor-patch-inventory:
     # gap-ledger 行 VENDOR-PATCH-LOSS への第2の梯子段(2026-08-12 のゲートは
     # 9クラス中1クラスしか見ない)。kernel/mtkernel3/ 上の「ビルドは通るのに
-    # 挙動だけ壊れる」ローカルパッチのアンカー（2026-09-28 時点で23個。x86pc の D5-k 修正で D5K-LX64・D5K-X86PC の2つを足した）を固定文字列で数える。
+    # 挙動だけ壊れる」ローカルパッチのアンカー（2026-09-29 時点で24個。x86pc の D5-k 修正で D5K-LX64・D5K-X86PC の2つ、RNG0 の割込みの出口の遅延ディスパッチで RNG0-X86PC を足した）を固定文字列で数える。
     # Pure-shell, no toolchain。2026-09-27 に BLOCKING へ（inbox #3 の 8①）。
     # それまでは非BLOCKINGで、CI 35420393619・36200060907 とも緑。陰性コント
     # ロールはコンテナで示した（アンカーを消した木で exit 1）。GitHub Actions
@@ -1938,8 +1938,9 @@ jobs:
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
     # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 81d5b883…,
-    # x86 10a4c009… after F1 id-order fold + x86_pc idle stack 2026-09-28,
-    # audit-container gcc 13.3.0; was aarch64 dea715dd…/x86 1c8e6d16… after
+    # x86 f12d805d… after the RNG0 IRQ-exit dispatch 2026-09-29, x86 only,
+    # audit-container gcc 13.3.0; was aarch64 81d5b883…/x86 10a4c009… after
+    # F1 id-order fold + x86_pc idle stack 2026-09-28; was aarch64 dea715dd…/x86 1c8e6d16… after
     # self-access R1 2026-09-24;
     # was aarch64 c4e255f1…/x86 d71839d1… after the IRQ-stub SS reload
     # 2026-09-03; was c4e255f1…/4f6f0dc5… after the KILL-CHURN restore

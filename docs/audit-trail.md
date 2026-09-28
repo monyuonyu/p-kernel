@@ -1840,6 +1840,28 @@ N-4 cross-host deferred to the ThinkPad).
   `KCC-WILDPC` still has no mechanism. (5) this proves the harness reddens on THIS unfixed tree; it does
   not prove it would redden on a FUTURE vendor-patch loss that deletes a different one of the 9 hardening
   classes — the gate watches one signature, not the class of regressions the `VENDOR-PATCH-LOSS` row names.
+- CROWN RE-BLESS — RNG0 delayed dispatch at the outermost IRQ exit, x86 only (2026-09-29, merge
+  `29a9d5d5` of `feat/rng0-exit-dispatch`, audit-17 PASS on 2026-09-28; R-RNG0 was put to mk_pino with a
+  recommendation on 2026-09-28 05:19 and, with no answer in 24 h, landed on the recommendation under the
+  inbox #3 / #18 rule). The bare-metal `.text` changes DELIBERATELY on x86 only
+  (`kernel/mtkernel3/kernel/sysdepend/x86_pc/cpu_cntl.c` `knl_irq_exit_dispatch`, called at the end of
+  `irq_handler` in `boot/x86/idt.c`). NEW dev crown `.text` sha256 (audit container gcc 13.3.0, fresh
+  clone from a git bundle, `make clean` first, same `objcopy -O binary -j .text` as `crown-text-identity`;
+  script `pk-scratch/rb-0929.sh` + `rb-0929-nm.py`, evidence `pkernel_audit_ss:/build/rb-0929/`):
+    aarch64  81d5b88302dbaf7ef384265d2784c36e064f4535c527d3566d92d48bf4531a4b  358904 B  (unchanged)
+    x86      f12d805da5a27d2b4bd18e87c6e57008b89800ad2fedd8005d7d8ee51987177f  369447 B  (was 10a4c009…, 369399)
+  Measured at the merge's first parent `d5dfa1b3` (gives exactly the 2026-09-28 crown below) and at
+  `29a9d5d5`; both hashes agree with the 8-digit values audit-17 measured on the branch.
+  WHERE THE BYTES WENT (x86 `nm -S`, `d5dfa1b3` → `29a9d5d5`): `irq_handler` 0x32→0x37 (+5) and new
+  `knl_irq_exit_dispatch` 0x2c (44); nothing else changed size. The symbols sum to +49 against a `.text`
+  delta of +48 — a 1 B alignment-padding difference, not examined further. `tk_conform` symbols in the
+  default x86 ELF: 0. Vendor-patch inventory on `29a9d5d5`: 24/24 GREEN (RNG0-X86PC is the 24th anchor).
+  REGRESSION ON `29a9d5d5` (same clone): `tests/x86/run_rng0_regression.sh` positive GREEN rc=0 32 s,
+  control GREEN rc=0 32 s, nofix RED (expected) rc=0 31 s. The heavier runs (tk_conform bare x86,
+  killchurn N=150, ring3 gates) were done by audit-17 on the branch and were not repeated here.
+  NOT COVERED: bare-metal AArch64 has the same shape (no IRQ-exit switch in the default build) — new
+  gap-ledger row `RNG0-AARCH64-NO-IRQ-EXIT-DISPATCH`. This entry was written by the run that merged;
+  an independent re-measure is for a different run.
 - CROWN RE-BLESS — F1 id-order fold + x86_pc idle stack, one re-bless for two merges (2026-09-28,
   merges `a73156d1` of `feat/f1-rsum-order` and `b9d73890` of `feat/x86pc-idle-stack`, both audit-12
   PASS on 2026-09-27; R-F1 / R-X86PC were put to mk_pino with a recommendation on 2026-09-27 04:40 and,
