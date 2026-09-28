@@ -3191,11 +3191,13 @@ typedef struct {
 static MC_REC mc_hist[MC_MAX];
 static UW mc_next, mc_dropped;
 
-/* "taught by node N" (remote, 0-based like m_ask), "taught here" (+ this
- * node's id once networking has one), or "teacher unknown". */
+/* "from node N" (remote, 0-based like m_ask), "taught here" (+ this node's
+ * id once networking has one), or "teacher unknown". Not "taught by node N":
+ * that is m_ask's teacher line, and run_mind_gen0_b.sh (E3) reads the last
+ * one after `mind ask` as the teacher — a history line must not look like it. */
 static void mc_put_teacher(UB src, U1 node)
 {
-    if (src == MC_SRC_REMOTE) { r_puts("taught by node "); r_putdec((UW)node); }
+    if (src == MC_SRC_REMOTE) { r_puts("from node "); r_putdec((UW)node); }
     else if (src == MC_SRC_LOCAL) {
         r_puts("taught here");
         if (node != 0xFF) { r_puts(" (node "); r_putdec((UW)node); r_puts(")"); }
