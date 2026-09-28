@@ -10,7 +10,7 @@
 # the crown (.text of the default kernel) does not move.
 #
 # Every arm is built in a scratch copy of the tree. Plain must print exactly
-# EXPECT PASS lines and 0 FAIL. The same ten kernel-breaking negative
+# EXPECT PASS lines and 0 FAIL. The same eleven kernel-breaking negative
 # controls as the hosted script must go RED.
 #
 #   tests/x86/run_tk_conform.sh     (needs gcc -m32 toolchain as boot/x86 and
@@ -19,7 +19,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-EXPECT=102
+EXPECT=110
 BOOT_TIMEOUT="${TKC_BOOT_TIMEOUT:-60}"
 QEMU="${QEMU:-qemu-system-x86_64}"
 command -v "$QEMU" >/dev/null 2>&1 || { echo "[tk-conform-x86] FAIL: $QEMU not found"; exit 1; }
@@ -68,6 +68,7 @@ arm NC-MBXFIFO mailbox.c $'\t\tif ( (mbxcb->mbxatr & TA_MPRI) != 0 ) {\n\t\t\t/*
 arm NC-MPFNOWAKE mempfix.c 'if ( !isQueEmpty(&mpfcb->wait_queue) ) {' 'if ( 0 ) {' RED
 arm NC-CYCSLOW time_calls.h 'tm = cyccb->cyctmeb.time + cyccb->cyctim;' 'tm = cyccb->cyctmeb.time + 2 * cyccb->cyctim;' RED
 arm NC-CYCPHS time_calls.c 'tm = lltoul(knl_current_time) + pk_ccyc->cycphs + TIMER_PERIOD;' 'tm = lltoul(knl_current_time) + TIMER_PERIOD;' RED
+arm NC-NODDS cpuctl.c 'knl_dispatch_disabled = DDS_DISABLE;' '(void)0;' RED
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform-x86] PASS"; else echo "[tk-conform-x86] FAIL"; fi
 exit "$rc_all"
