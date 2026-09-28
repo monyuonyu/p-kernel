@@ -5,12 +5,14 @@
 # When a belief is revised, the superseded value, who taught it and how firmly
 # it was held must stay readable (`mind conflicts`, and under `mind ask`).
 #   local : one node; mind teach sky blue, then sky green.
-#           Expect a record "blue" (taught by node 0) superseded by "green"
-#           from node 0, in `mind conflicts` and in `mind ask sky`.
+#           Expect a record "blue" (taught here) superseded by "green"
+#           (taught here), in `mind conflicts` and in `mind ask sky`. (With no
+#           networking the node has no id yet, so no "(node N)".)
 #   remote: node A (id 1) teaches sky blue; once node B (id 2) has it, B
 #           teaches sky green. B keeps "blue" taught by node 0 (the remote
-#           teacher, with its prov); A, receiving green, keeps its own
-#           "blue" superseded by "green" from node 1.
+#           teacher, with its prov) superseded by green "taught here
+#           (node 1)"; A, receiving green, keeps its own "blue" ("taught here
+#           (node 0)") superseded by "green" taught by node 1.
 # The current answer is not checked here (history only; the belief rule is
 # unchanged, MIND-GEN-0-B measures it).
 # Output: "[mind-conflicts] <check> PASS|FAIL", then ALL PASS (exit 0) or
@@ -51,8 +53,8 @@ chk() {  # <name> <file> <ERE>
 L="$WORK/local.log"; mkdir -p "$WORK/dl"
 printf 'mind teach sky blue\nmind teach sky green\nmind conflicts\nmind ask sky\nexit\n' \
     | timeout 180 env PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$WORK/dl" "$BOOT/p-kernel" > "$L" 2>&1
-chk local-recorded "$L" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught by node 0, seq [0-9]+, (PENDING|RETAINED) [0-9]+/[0-9]+, prov kept\) superseded by "green" from node 0'
-chk local-list     "$L" '^\[mind\] conflict key [0-9]+ "sky": "blue" .*superseded by "green" from node 0'
+chk local-recorded "$L" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught here, seq [0-9]+, (PENDING|RETAINED) [0-9]+/[0-9]+, prov kept\) superseded by "green" taught here at'
+chk local-list     "$L" '^\[mind\] conflict key [0-9]+ "sky": "blue" \(taught here, .*superseded by "green" taught here at'
 chk local-count    "$L" '^\[mind\] conflicts: 1 kept, 0 older dropped'
 chk local-ask      "$L" '^\[mind\]   conflict history: key [0-9]+ "sky": "blue"'
 
@@ -79,8 +81,8 @@ wait_for "$A" 'remote REVISE key [0-9]+ "sky"' 150 || echo "[mind-conflicts] not
 printf 'mind conflicts\nmind ask sky\n' >&7
 printf 'mind conflicts\nmind ask sky\n' >&8
 wait_for "$A" 'ask "sky" ->' 60; wait_for "$B" 'ask "sky" ->' 60; sleep 2
-chk remote-B-recorded "$B" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught by node 0, seq [0-9]+, (PENDING|RETAINED) [0-9]+/[0-9]+, prov kept\) superseded by "green" from node 1'
-chk remote-A-recorded "$A" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught by node 0, .*prov kept\) superseded by "green" from node 1'
+chk remote-B-recorded "$B" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught by node 0, seq [0-9]+, (PENDING|RETAINED) [0-9]+/[0-9]+, prov kept\) superseded by "green" taught here \(node 1\)'
+chk remote-A-recorded "$A" '^\[mind\] conflict recorded: key [0-9]+ "sky": "blue" \(taught here \(node 0\), .*prov kept\) superseded by "green" taught by node 1'
 chk remote-A-ask      "$A" '^\[mind\]   conflict history: key [0-9]+ "sky": "blue"'
 chk remote-B-ask      "$B" '^\[mind\]   conflict history: key [0-9]+ "sky": "blue"'
 echo "[mind-conflicts] logs: $WORK"

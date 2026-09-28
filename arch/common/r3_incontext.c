@@ -3174,9 +3174,12 @@ static const U1 *mq_lprov_find(UW local_seq)
  *  Hosted only for now: bare metal keeps its crown (docs/architecture/   *
  *  30-module/mind-conflicts.md).                                         */
 #define MC_MAX 8
-#define MC_TEACHER_UNKNOWN 0xFF
+#define MC_SRC_UNKNOWN 0          /* no prov entry for the lost engram   */
+#define MC_SRC_LOCAL   1          /* taught on this node (shell / web)   */
+#define MC_SRC_REMOTE  2          /* arrived from a region peer          */
 typedef struct {
     UB used, key, v_lost, v_now;
+    UB lost_src, now_src;         /* MC_SRC_*                            */
     U1 lost_by;                   /* node that taught v_lost (0-based)   */
     U1 now_by;                    /* node whose value replaced it        */
     UB lost_state, lost_rounds;   /* evidence: how firmly v_lost was held */
@@ -3188,45 +3191,56 @@ typedef struct {
 static MC_REC mc_hist[MC_MAX];
 static UW mc_next, mc_dropped;
 
+/* "taught by node N" (remote, 0-based like m_ask), "taught here" (+ this
+ * node's id once networking has one), or "teacher unknown". */
+static void mc_put_teacher(UB src, U1 node)
+{
+    if (src == MC_SRC_REMOTE) { r_puts("taught by node "); r_putdec((UW)node); }
+    else if (src == MC_SRC_LOCAL) {
+        r_puts("taught here");
+        if (node != 0xFF) { r_puts(" (node "); r_putdec((UW)node); r_puts(")"); }
+    } else r_puts("teacher unknown");
+}
+
 static void mc_print(const MC_REC *r, const char *lead)
 {
     r_puts(lead);
     r_puts("key "); r_putdec((UW)r->key);
     r_puts(" \""); r_puts(r3_vocab_key_word(r->key)); r_puts("\": \"");
-    r_puts(r3_vocab_val_word(r->v_lost)); r_puts("\" (taught by node ");
-    if (r->lost_by == MC_TEACHER_UNKNOWN) r_puts("?");
-    else r_putdec((UW)r->lost_by);
+    r_puts(r3_vocab_val_word(r->v_lost)); r_puts("\" (");
+    mc_put_teacher(r->lost_src, r->lost_by);
     r_puts(", seq "); r_putdec(r->lost_seq); r_puts(", ");
     r_puts(r->lost_state == R3F_RETAINED ? "RETAINED " : "PENDING ");
     r_putdec((UW)r->lost_rounds); r_puts("/"); r_putdec(R3_SLEEPS_PER_FACT);
     r_puts(r->has_prov ? ", prov kept" : ", no prov");
     r_puts(") superseded by \""); r_puts(r3_vocab_val_word(r->v_now));
-    r_puts("\" from node "); r_putdec((UW)r->now_by);
+    r_puts("\" "); mc_put_teacher(r->now_src, r->now_by);
     r_puts(" at "); r_putdec(r->at_ms); r_puts(" ms");
     if (r->n > 1) { r_puts(", seen "); r_putdec((UW)r->n); r_puts(" times"); }
     r_puts("\r\n");
 }
 
 /* fi/bind = the engram about to be revised; call BEFORE r3_fact_revise. */
-static void mc_note(INT fi, INT bind, UB v_now, U1 now_by)
+static void mc_note(INT fi, INT bind, UB v_now, UB now_src, U1 now_by)
 {
     UB k = r3_fq[fi].key[bind], v_lost = r3_fq[fi].yhat[bind];
     UW seq = r3_fq[fi].seq;
-    U1 lost_by = MC_TEACHER_UNKNOWN; UB has_prov = 0;
+    U1 lost_by = 0xFF; UB lost_src = MC_SRC_UNKNOWN, has_prov = 0;
     U1 prov[PFS_ID_LEN];
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     const U1 *lp = mq_lprov_find(seq);
     if (rp) {
-        lost_by = rp->origin_node; has_prov = 1;
+        lost_src = MC_SRC_REMOTE; lost_by = rp->origin_node; has_prov = 1;
         for (INT i = 0; i < PFS_ID_LEN; i++) prov[i] = rp->prov_head[i];
     } else if (lp) {
-        lost_by = drpc_my_node; has_prov = 1;
+        lost_src = MC_SRC_LOCAL; lost_by = drpc_my_node; has_prov = 1;
         for (INT i = 0; i < PFS_ID_LEN; i++) prov[i] = lp[i];
     }
     for (INT i = 0; i < MC_MAX; i++) {
         MC_REC *r = &mc_hist[i];
         if (r->used && r->key == k && r->v_lost == v_lost &&
-            r->lost_by == lost_by && r->v_now == v_now) {
+            r->lost_src == lost_src && r->lost_by == lost_by &&
+            r->v_now == v_now) {
             if (r->n < 255) r->n++;
             mc_print(r, "[mind] conflict again: ");
             return;
@@ -3237,6 +3251,7 @@ static void mc_note(INT fi, INT bind, UB v_now, U1 now_by)
     mc_next++;
     SYSTIM t; tk_get_otm(&t);
     r->used = 1; r->key = k; r->v_lost = v_lost; r->v_now = v_now;
+    r->lost_src = lost_src; r->now_src = now_src;
     r->lost_by = lost_by; r->now_by = now_by;
     r->lost_state = r3_fq[fi].state; r->lost_rounds = r3_fq[fi].rounds_done;
     r->has_prov = has_prov; r->n = 1; r->lost_seq = seq; r->at_ms = (UW)t.lo;
@@ -3456,7 +3471,7 @@ static void m_teach(const UB *p, const UB *end)
 
         m_round_snap = dmn_r3_rounds();            /* like teach (VII.5)     */
 #ifdef _TK_HOSTED_LIBC_
-        mc_note(fi, bind, (UB)v, drpc_my_node);    /* 1-3a: keep the loser   */
+        mc_note(fi, bind, (UB)v, MC_SRC_LOCAL, drpc_my_node); /* 1-3a    */
 #endif
         INT rrc = r3_fact_revise((UB)k, (UB)v);    /* supersede in place     */
         if (rrc != 0) {
@@ -4359,7 +4374,7 @@ void mind_net_task(INT stacd, void *exinf)
                              * consolidates the new belief (same production path). */
                             UB v_old = cur;
 #ifdef _TK_HOSTED_LIBC_
-                            mc_note(fi, bind, (UB)v, org);   /* 1-3a */
+                            mc_note(fi, bind, (UB)v, MC_SRC_REMOTE, org); /* 1-3a */
 #endif
                             INT rrc = r3_fact_revise((UB)k, (UB)v);
                             if (rrc == 0) {
