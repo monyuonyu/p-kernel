@@ -14,8 +14,9 @@
  *  limits, full buffer), mailboxes (TA_MPRI order, the packet address is
  *  passed, not copied), fixed-size memory pools (hand-off to a waiter) and
  *  cyclic handlers (start / period / stop / start phase); time (tk_dly_tsk,
- *  tk_get_otm).
- *  Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE.
+ *  tk_get_otm); dispatch disable (tk_dis_dsp / tk_ena_dsp / tk_ref_sys).
+ *  Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE,
+ *  E_CTX.
  *  v1's expectations were checked against the μT-Kernel 3.0 specification
  *  text (TRON Forum, mtk3_spec_jp) by audit-15; v2's were written from that
  *  text. Checks whose expectation is the reference kernel's own reading, not
@@ -627,6 +628,80 @@ static void suite_time(void)
     check(now_ms() - t0 >= 10, "D4", "tk_get_otm advances across a 10 ms delay", now_ms() - t0);
 }
 
+/* ---- dispatch disable (cpuctl.c, misc_calls.c) ----------------------------- *
+ * spec (tk_dis_dsp): while disabled, a higher-priority task made READY by the *
+ * caller or by an interrupt handler is not dispatched until tk_ena_dsp; a     *
+ * call that may wait returns E_CTX; tk_ref_sys shows TSS_DDSP; tk_dis_dsp     *
+ * twice is ended by one tk_ena_dsp. Nothing is printed while disabled (the    *
+ * output path is not part of the promise), so the values are kept and checked *
+ * after tk_ena_dsp. In K7 the only dispatch points are interrupt exits: on    *
+ * bare x86 that is the IRQ-exit dispatch of RNG0 (knl_irq_exit_dispatch must  *
+ * honour the disable). So under NC-NODDS K7 goes red only on a kernel that    *
+ * dispatches at interrupt exit: measured 2026-09-28, bare x86 with the RNG0   *
+ * fix only — not bare x86 before it, not bare AArch64, not hosted Linux (K2.. *
+ * K5 still make that NC red everywhere).                                      */
+static void t_delay_then_flag(INT stacd, void *exinf)
+{
+    (void)exinf;
+    tk_dly_tsk(20);
+    h_flag = stacd;
+    tk_ext_tsk();
+}
+
+static void suite_dds(PRI me)
+{
+    ER er_dis, er_slp, er_ena; ID t, runid, schedid; T_RSYS rs;
+    UINT st_dis, st_ena; INT f_dis, f_ena; W t0, dt; volatile UW spin = 0;
+
+    t = mk_task(t_sleep_then_exit, me - 1);
+    h_flag = 0; h_er1 = -999;
+    tk_sta_tsk(t, 0);                     /* runs at once, then sleeps */
+    er_dis = tk_dis_dsp();
+    tk_ref_sys(&rs); st_dis = rs.sysstat;
+    tk_wup_tsk(t);
+    f_dis = h_flag;
+    tk_ref_sys(&rs); runid = rs.runtskid; schedid = rs.schedtskid;
+    er_slp = tk_slp_tsk(10);
+    tk_dis_dsp();                         /* twice: one tk_ena_dsp still ends it */
+    er_ena = tk_ena_dsp();
+    f_ena = h_flag;
+    tk_ref_sys(&rs); st_ena = rs.sysstat;
+    check(er_dis == E_OK, "K1", "tk_dis_dsp -> E_OK", er_dis);
+    check((st_dis & TSS_DDSP) != 0, "K2", "tk_ref_sys shows TSS_DDSP while disabled", (W)st_dis);
+    check(f_dis == 0, "K3", "a higher-pri task woken while disabled does not run", f_dis);
+    check(runid == tk_get_tid() && schedid == t, "K4", "tk_ref_sys: runtskid = me, schedtskid = the woken task", schedid);
+    check(er_slp == E_CTX, "K5", "tk_slp_tsk while disabled -> E_CTX", er_slp);
+    check(er_ena == E_OK && f_ena == 1 && (st_ena & TSS_DDSP) == 0, "K6",
+          "tk_dis_dsp twice, tk_ena_dsp once -> enabled; the woken task runs before it returns", f_ena);
+    tk_del_tsk(t);
+
+    /* K7's busy wait makes NO kernel call, so the only dispatch points are
+     * interrupt exits (a loop that polled tk_get_otm would test the service-
+     * call exit instead — the first draft did). Calibrate the loop first:
+     * how many 64k-iteration chunks fit in ~50 ms, then spin 3x that. */
+    {
+        UW chunks = 0, i;
+        t0 = now_ms();
+        while (now_ms() - t0 < 50 && chunks < 20000) {   /* 3x stays < 2^32 */
+            for (i = 0; i < 65536; i++) spin++;
+            chunks++;
+        }
+        t = mk_task(t_delay_then_flag, me - 1);
+        h_flag = 0;
+        tk_sta_tsk(t, 2);                 /* runs at once, sleeps 20 ms */
+        tk_dis_dsp();
+        t0 = now_ms();
+        for (i = 0; i < chunks * 3 * 65536; i++) spin++;
+        f_dis = h_flag;                   /* read before any kernel call */
+        dt = now_ms() - t0;
+    }
+    tk_ena_dsp();
+    f_ena = h_flag;
+    check(f_dis == 0 && dt >= 40, "K7", "a task whose 20 ms delay ends while disabled does not run (~150 ms busy, no kernel call)", f_dis);
+    check(f_ena == 2, "K8", "... and runs as soon as tk_ena_dsp", f_ena);
+    tk_del_tsk(t);
+}
+
 /* The suite runs in its own task at TKC_PRI, so helpers can sit one above
  * and one below it whatever the caller's priority is (the hosted shell runs
  * at 1). The caller sleeps until the runner wakes it — tk_slp_tsk/tk_wup_tsk,
@@ -650,6 +725,7 @@ static void t_runner(INT stacd, void *exinf)
     suite_mpf(r.tskpri);
     suite_cyc();
     suite_time();
+    suite_dds(r.tskpri);
     g_done = 1;
     tk_wup_tsk(g_caller);
     tk_ext_tsk();
