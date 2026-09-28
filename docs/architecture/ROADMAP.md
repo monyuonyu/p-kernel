@@ -36,7 +36,7 @@
 
 作業に入る前に、次の決まりを短い設計メモにします。以後の作業は、すべてこれに従います。
 
-状態：設計メモ [00-concept/global-rules.md](00-concept/global-rules.md) を書いた（2026-09-28、監査待ち）。
+状態：設計メモ [00-concept/global-rules.md](00-concept/global-rules.md) を書いた（2026-09-28、監査-17 PASS）。
 
 1. **合体は3種類に分ける**（§45）
    - 重みの合体（`gl_merge` / `gl_merge_w`）：振る舞いを近づける
