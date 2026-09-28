@@ -636,8 +636,9 @@ static void suite_time(void)
  * after tk_ena_dsp. In K7 the only dispatch points are interrupt exits: on    *
  * bare x86 that is the IRQ-exit dispatch of RNG0 (knl_irq_exit_dispatch must  *
  * honour the disable). So under NC-NODDS K7 goes red only on a kernel that    *
- * dispatches at interrupt exit (bare x86 before RNG0 does not; K2..K5 still   *
- * make that NC red).                                                          */
+ * dispatches at interrupt exit: measured 2026-09-28, bare x86 with the RNG0   *
+ * fix only — not bare x86 before it, not bare AArch64, not hosted Linux (K2.. *
+ * K5 still make that NC red everywhere).                                      */
 static void t_delay_then_flag(INT stacd, void *exinf)
 {
     (void)exinf;
