@@ -108,6 +108,11 @@ check B-INITTASK-EXIT  ../inittask/inittask.c  1 'tk_ext_tsk();'
 #     ビルドは通り、普段は何も起きない（潜在バグ）ので、ここで数える。
 check D5K-LX64     ../sysdepend/linux_x86_64/dispatch.S  1 'leaq    knl_tmp_stack+KNL_TMP_STACK_SZ(%rip), %rsp'
 check D5K-X86PC    ../sysdepend/x86_pc/dispatch.S        1 'movl    $knl_idle_stack_top, %esp'
+# --- RNG0（2026-09-28）: 割込みの出口での遅延ディスパッチ。消えるとビルドは
+#     （idt.c の呼び出しが残っていればリンクで）落ちるが、関数の中身だけ消えても
+#     通る。カーネルを呼ばないタスクが、時限待ちの高い優先度のタスクを飢えさせる
+#     状態に黙って戻る。tests/x86/run_rng0_regression.sh の positive の腕が赤になる。
+check RNG0-X86PC   ../sysdepend/x86_pc/cpu_cntl.c        1 'knl_ctxtsk != NULL && knl_ctxtsk != knl_schedtsk'
 
 echo
 echo "pass=$pass lost=$fail"
