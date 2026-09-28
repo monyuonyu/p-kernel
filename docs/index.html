@@ -706,9 +706,9 @@
     Windows x86_64 (CI builds it; CI does not boot it).
   </p>
   <p>
-    <span class="text-bright">A contract suite.</span> 102 checks of the <code>tk_*</code> promises the upper layers rely on
-    (tasks, semaphores, event flags, mutexes, message buffers, mailboxes, fixed-size pools, cyclic handlers, time — including error codes), with expectations checked
-    against the μT-Kernel 3.0 specification text, and ten negative controls that each break one line of
+    <span class="text-bright">A contract suite.</span> 110 checks of the <code>tk_*</code> promises the upper layers rely on
+    (tasks, semaphores, event flags, mutexes, message buffers, mailboxes, fixed-size pools, cyclic handlers, time, dispatch disabling — including error codes), with expectations checked
+    against the μT-Kernel 3.0 specification text, and eleven negative controls that each break one line of
     the kernel and must turn red. Runs on Linux x86_64, bare x86 and bare AArch64 (CI). Not yet on
     Linux aarch64 or Windows.
   </p>
