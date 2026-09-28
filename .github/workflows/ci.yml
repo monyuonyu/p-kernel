@@ -920,6 +920,15 @@ jobs:
           timeout 600 tests/host/run_mind_gen0_a.sh | tee mind_gen0_a.log
           grep -aF '[mind-gen0-a] ALL PASS' mind_gen0_a.log
 
+      # ROADMAP 1-3a (2026-09-28): a revised belief keeps the superseded value,
+      # its teacher and how firmly it was held (`mind conflicts`, `mind ask`).
+      # One node (local re-teach) and two nodes over a relay (remote revise).
+      # Red on master before 1-3a (8/8) and with mc_note emptied (8/8). ~2 min.
+      - name: mind conflict history (ROADMAP 1-3a)
+        run: |
+          timeout 400 tests/host/run_mind_conflicts.sh | tee mind_conflicts.log
+          grep -aF '[mind-conflicts] ALL PASS' mind_conflicts.log
+
       # LLM core host certs (tests/llm/). Each is deterministic and self-
       # contained — the SYNTHETIC core runs with NO gguf model file and NO
       # network. They build their own harness with cc (the x86_64 runner's
