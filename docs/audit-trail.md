@@ -1868,8 +1868,13 @@ N-4 cross-host deferred to the ThinkPad).
   rc=0 483 s (same); `KILLCHURN_N=150 tests/x86/run_killchurn.sh` rc=0 444 s, sigA=0 sigB=0 clean=150
   incomplete=0; hosted `tests/host/run_dkva_fold_order.sh` rc=0 39 s (cure ALL PASS, the arrival-order
   falsifier RED on F1 only). These ran with two other measurements in the same 4-core container.
-  NOT YET DONE: an independent re-measurement by a later run (the inbox #1 practice). This entry was
-  written by the run that merged.
+  This entry was written by the run that merged.
+  INDEPENDENTLY RE-MEASURED (2026-09-28 19:30 run, audit-17; own script `pk-scratch/aud17-rb.sh` +
+  `aud17-nmsum.py`, fresh clone of a new bundle, gcc 13/13, evidence `pkernel_audit_ss:/build/aud17-0928/
+  rb.txt`): all six hashes and sizes at `40825057` / `a73156d1` / `b9d73890` agree to the last digit with
+  the values above. Symbol sums agree: x86 1084 + 228 + 5 unsized = 1317, aarch64 1392 + 272 = 1664. One
+  wording correction: inside aarch64's +272, `dkva_fed2_self_test` SHRANK by 40 B (the others grew by
+  312); the total is unchanged. `tk_conform` symbols 0 on both ELFs at all three points.
 - CROWN RE-BLESS — self-access R1, the first T1 affordance `self_access_publish` (2026-09-24, merge
   `3b797b0f` of `feat/self-access-r1-publish`, landed on local master 2026-09-21; **approved by mk_pino
   2026-09-23**, p-kernel chat inbox #1). The bare-metal `.text` changes DELIBERATELY on BOTH targets:
