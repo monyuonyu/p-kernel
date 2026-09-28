@@ -237,10 +237,11 @@ AArch64 の3つ（CI の `ump-x86_64` と `tk-conform-bare`）。Linux aarch64 �
   心臓部が μT-Kernel 3.0 に世代交代したため、同種の再発が無いかは churn 再現器
   （`tcb_churn.c`）を番犬として見張る（§10-7）。
 - **未解決リストは1枚だけ。** [gap-ledger](../architecture/gap-ledger.md) ——
-  2026-07-01 の棚卸しで一度 OPEN 0行になったが、**いまは OPEN 3行**（2026-09-27）。
+  2026-07-01 の棚卸しで一度 OPEN 0行になったが、**いまは OPEN 4行**（2026-09-29）。
   μT-Kernel 3.0 への差し替えで KILL-CHURN の治療が消えていた件（VENDOR-PATCH-LOSS）、
-  それを調べて見つかった別の ring0 #PF（KCC-WILDPC）、ベアメタル x86 の全体ハング
-  （RNG0-BUSY-TASK-STALLS-DISPATCH、§10）。「嘘をついて減る台帳より、本当のことを言って
+  それを調べて見つかった別の ring0 #PF（KCC-WILDPC）、カーネルを呼ばずに回り続けるタスクが
+  ほかのタスクを止める件の AArch64 版と Linux 版（x86 版の RNG0-BUSY-TASK-STALLS-DISPATCH は
+  2026-09-29 に直した、§10）。「嘘をついて減る台帳より、本当のことを言って
   増える台帳」を選んだ。設計先行で検証未着手の7本は [V-MODEL](../architecture/V-MODEL.md)
   の対応表に別途明示してある。
 
