@@ -9,13 +9,13 @@
 # the UART. The DEFAULT build does not contain it, so the crown is unchanged.
 #
 # Every arm is built in a scratch copy of the tree. Plain must print exactly
-# EXPECT PASS lines and 0 FAIL; the same nine kernel-breaking negative
+# EXPECT PASS lines and 0 FAIL; the same ten kernel-breaking negative
 # controls as the other two scripts must go RED.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-EXPECT=100
+EXPECT=102
 BOOT_TIMEOUT="${TKC_BOOT_TIMEOUT:-60}"
 QEMU="${QEMU:-qemu-system-aarch64}"
 command -v "$QEMU" >/dev/null 2>&1 || { echo "[tk-conform-a64] FAIL: $QEMU not found"; exit 1; }
@@ -63,6 +63,7 @@ arm NC-MBFMAX messagebuf.c 'if ( msgsz > mbfcb->maxmsz ) {' 'if ( 0 ) {' RED
 arm NC-MBXFIFO mailbox.c $'\t\tif ( (mbxcb->mbxatr & TA_MPRI) != 0 ) {\n\t\t\t/* 優先度順にキューへ接続 */' $'\t\tif ( 0 ) {\n\t\t\t/* 優先度順にキューへ接続 */' RED
 arm NC-MPFNOWAKE mempfix.c 'if ( !isQueEmpty(&mpfcb->wait_queue) ) {' 'if ( 0 ) {' RED
 arm NC-CYCSLOW time_calls.h 'tm = cyccb->cyctmeb.time + cyccb->cyctim;' 'tm = cyccb->cyctmeb.time + 2 * cyccb->cyctim;' RED
+arm NC-CYCPHS time_calls.c 'tm = lltoul(knl_current_time) + pk_ccyc->cycphs + TIMER_PERIOD;' 'tm = lltoul(knl_current_time) + TIMER_PERIOD;' RED
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform-a64] PASS"; else echo "[tk-conform-a64] FAIL"; fi
 exit "$rc_all"

@@ -19,6 +19,7 @@
 #   NC-MBXFIFO   mailbox.c: a TA_MPRI mailbox queues messages FIFO
 #   NC-MPFNOWAKE mempfix.c: tk_rel_mpf gives the block to the pool, not the waiter
 #   NC-CYCSLOW   time_calls.h: a cyclic handler re-arms at twice its period
+#   NC-CYCPHS    time_calls.c: tk_cre_cyc ignores the start phase (cycphs)
 # Each must go RED on its own checks (listed in the output), not on a crash.
 # (A "tk_dly_tsk returns at once" control was tried first and dropped: other
 # system tasks pace themselves with tk_dly_tsk, so it starved the whole
@@ -30,7 +31,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-EXPECT=100
+EXPECT=102
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 rc_all=0
@@ -90,6 +91,7 @@ nc MBFMAX messagebuf.c 'if ( msgsz > mbfcb->maxmsz ) {' 'if ( 0 ) {'
 nc MBXFIFO mailbox.c $'\t\tif ( (mbxcb->mbxatr & TA_MPRI) != 0 ) {\n\t\t\t/* 優先度順にキューへ接続 */' $'\t\tif ( 0 ) {\n\t\t\t/* 優先度順にキューへ接続 */'
 nc MPFNOWAKE mempfix.c 'if ( !isQueEmpty(&mpfcb->wait_queue) ) {' 'if ( 0 ) {'
 nc CYCSLOW time_calls.h 'tm = cyccb->cyctmeb.time + cyccb->cyctim;' 'tm = cyccb->cyctmeb.time + 2 * cyccb->cyctim;'
+nc CYCPHS time_calls.c 'tm = lltoul(knl_current_time) + pk_ccyc->cycphs + TIMER_PERIOD;' 'tm = lltoul(knl_current_time) + TIMER_PERIOD;'
 
 if [ "$rc_all" -eq 0 ]; then echo "[tk-conform] PASS"; else echo "[tk-conform] FAIL"; fi
 exit "$rc_all"

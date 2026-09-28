@@ -109,7 +109,7 @@ jobs:
     # arch/common/tk_conform.c; hosted twin in the UMP x86_64 job). Linked only
     # into -DPK_TKCONF test builds, so the default .text (crown) is unchanged
     # (measured 2026-09-27: dea715dd / 1c8e6d16, 0 tk_conform symbols).
-    # Per arch: plain must be 100 PASS / 0 FAIL; nine kernel-breaking negative
+    # Per arch: plain must be 102 PASS / 0 FAIL; ten kernel-breaking negative
     # controls (semaphore off-by-one, tk_wai_sem without its E_PAR check, a
     # halved tk_dly_tsk, TWF_BITCLR clearing every bit, no TA_INHERIT, no
     # maxmsz check in tk_snd_mbf, a TA_MPRI mailbox queued FIFO, tk_rel_mpf
@@ -130,9 +130,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-i686-linux-gnu gcc-aarch64-linux-gnu make \
             qemu-system-x86 qemu-system-arm python3
-      - name: contract suite v2 on bare x86 (plain green, 9 NCs red)
+      - name: contract suite v2 on bare x86 (plain green, 10 NCs red)
         run: bash tests/x86/run_tk_conform.sh
-      - name: contract suite v2 on bare AArch64 (plain green, 9 NCs red)
+      - name: contract suite v2 on bare AArch64 (plain green, 10 NCs red)
         run: bash tests/aarch64/run_tk_conform.sh
 
   ump-x86_64:
@@ -849,10 +849,10 @@ jobs:
       # The contract suite v2 (inbox #5, arch/common/tk_conform.c, verb tkconf):
       # the tk_* task / semaphore / event flag / mutex / message buffer /
       # mailbox / fixed pool / cyclic handler / time promises user space
-      # relies on, 100 checks incl. error codes. Nine negative controls
+      # relies on, 102 checks incl. error codes. Ten negative controls
       # each patch ONE line of the vendored kernel in a scratch copy and must
       # go RED. The bare-metal twins run in the tk-conform-bare job.
-      - name: contract suite v2 (tk_* tasks / sems / flags / mutexes / msg buffers / mailboxes / pools / cyclic / time + 9 kernel-breaking NCs)
+      - name: contract suite v2 (tk_* tasks / sems / flags / mutexes / msg buffers / mailboxes / pools / cyclic / time + 10 kernel-breaking NCs)
         run: |
           timeout 600 tests/host/run_tk_conform.sh | tee tk_conform.log
           grep -aF '[tk-conform] PASS' tk_conform.log

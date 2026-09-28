@@ -13,12 +13,14 @@
  *  priority inheritance), and since v2 message buffers (copy, FIFO, size
  *  limits, full buffer), mailboxes (TA_MPRI order, the packet address is
  *  passed, not copied), fixed-size memory pools (hand-off to a waiter) and
- *  cyclic handlers (start / period / stop); time (tk_dly_tsk, tk_get_otm).
+ *  cyclic handlers (start / period / stop / start phase); time (tk_dly_tsk,
+ *  tk_get_otm).
  *  Error codes: E_PAR, E_ID, E_NOEXS, E_OBJ, E_QOVR, E_TMOUT, E_DLT, E_ILUSE.
  *  v1's expectations were checked against the μT-Kernel 3.0 specification
  *  text (TRON Forum, mtk3_spec_jp) by audit-15; v2's were written from that
  *  text. Checks whose expectation is the reference kernel's own reading, not
- *  the spec's, are marked [impl] (check_impl below): S6 and C8.
+ *  the spec's, are marked [impl] (check_impl below): S6 and C7 (audit-17
+ *  moved the mark from C8, which the spec does cover, to C7).
  *
  *  Output: one "[tkc] PASS|FAIL <id> <what>" line per check, then
  *  "[tkc] <p> PASS / <f> FAIL". Driven by tests/host/run_tk_conform.sh.
@@ -551,7 +553,7 @@ static void suite_cyc(void)
     ER er; ID c; INT n; W t0, dt; T_RCYC rc;
     T_CCYC cc = { .exinf = NULL, .cycatr = TA_HLNG, .cychdr = (FP)cyc_count,
                   .cyctim = 20, .cycphs = 0 };
-    T_CCYC bad = cc;
+    T_CCYC bad = cc, ph = cc;
 
     c_cnt = 0;
     c = tk_cre_cyc(&cc);
@@ -578,13 +580,33 @@ static void suite_cyc(void)
     check(er == E_OK && c_cnt == n, "C5", "tk_stp_cyc -> no more calls", c_cnt - n);
     er = tk_del_cyc(c);
     check(er == E_OK && tk_ref_cyc(c, &rc) == E_NOEXS, "C6", "tk_del_cyc -> E_OK, then tk_ref_cyc -> E_NOEXS", er);
-    check(tk_sta_cyc(0) == E_ID, "C7", "tk_sta_cyc id=0 -> E_ID", tk_sta_cyc(0));
-    /* the spec's E_PAR is "cyctim ... not valid"; that 0 is invalid is the
-     * reference kernel's reading (CHECK_PAR(cyctim > 0)) */
+    /* the spec does not say that ID 0 is invalid; E_ID for it is the
+     * reference kernel's reading (CHECK_CYCID: 0 is below the ID range) */
+    er = tk_sta_cyc(0);
+    check_impl(er == E_ID, "C7", "[impl] tk_sta_cyc id=0 -> E_ID", er);
+    /* spec (tk_cre_cyc): "cyctim に0を指定することはできない", and E_PAR
+     * lists cyctim — so this one is the spec's, not [impl] (audit-17) */
     bad.cyctim = 0;
     er = tk_cre_cyc(&bad);
-    check_impl(er == E_PAR, "C8", "[impl] tk_cre_cyc cyctim=0 -> E_PAR", er);
+    check(er == E_PAR, "C8", "tk_cre_cyc cyctim=0 -> E_PAR", er);
     if (er > 0) tk_del_cyc(er);
+    /* the start phase (spec: the n-th call comes at least cycphs + cyctim *
+     * (n - 1) after tk_cre_cyc, at the first timer interrupt after that
+     * time). TA_STA, period 300, phase 250: no call at about 100 ms, exactly
+     * one at about 400 ms (the first after 250, the second not before 550).
+     * The phase is kept <= the period (longer is implementation-defined). */
+    c_cnt = 0;
+    ph.cycatr = TA_HLNG | TA_STA; ph.cyctim = 300; ph.cycphs = 250;
+    t0 = now_ms();
+    c = tk_cre_cyc(&ph);
+    tk_dly_tsk(100);
+    n = c_cnt;
+    check(c > 0 && n == 0, "C9", "TA_STA, cycphs=250: no call before the phase (at ~100 ms)", n);
+    tk_dly_tsk(300);
+    n = c_cnt;
+    dt = now_ms() - t0;
+    check(n == 1 && dt >= 260 && dt < 550, "C10", "TA_STA, cycphs=250, cyctim=300: exactly one call at ~400 ms", n);
+    if (c > 0) tk_del_cyc(c);
 }
 
 /* ---- time ----------------------------------------------------------------- */
