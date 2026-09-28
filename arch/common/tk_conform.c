@@ -591,10 +591,11 @@ static void suite_cyc(void)
     check(er == E_PAR, "C8", "tk_cre_cyc cyctim=0 -> E_PAR", er);
     if (er > 0) tk_del_cyc(er);
     /* the start phase (spec: the n-th call comes at least cycphs + cyctim *
-     * (n - 1) after tk_cre_cyc, at the first timer interrupt after that
-     * time). TA_STA, period 300, phase 250: no call at about 100 ms, exactly
-     * one at about 400 ms (the first after 250, the second not before 550).
-     * The phase is kept <= the period (longer is implementation-defined). */
+     * (n - 1) after tk_cre_cyc — a lower bound only). TA_STA, period 300,
+     * phase 250: no call at about 100 ms, exactly one at about 400 ms (the
+     * first after 250, the second not before 550). That the first call has
+     * come by ~400 ms is a timeliness assumption, the same kind C4 makes;
+     * audit-18 measured that a first call 160 ms late still passes. */
     c_cnt = 0;
     ph.cycatr = TA_HLNG | TA_STA; ph.cyctim = 300; ph.cycphs = 250;
     t0 = now_ms();
