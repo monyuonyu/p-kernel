@@ -176,11 +176,11 @@ built the current state, in case you want to retrace the steps.
 ## Reporting back
 
 If your `./p-kernel` produces the banner above, **you are node #1**.
-Tell the maintainer:
+Tell me:
 
 > I have UMP running on `<your host arch>` (e.g. `aarch64-linux on a
 > Raspberry Pi 4`). The boot banner came up clean.
 
 Filing an issue or even a one-line tweet helps build the topology map
-of where the cluster could live. As of 2026-05-21 the maintainer's own
+of where the cluster could live. As of 2026-05-21 my own
 phone (running Termux Ubuntu) is the seed node. You can be node #2.
