@@ -1866,8 +1866,11 @@ N-4 cross-host deferred to the ThinkPad).
   clone of a new bundle, gcc 13.3.0 on both targets, evidence `pkernel_audit_ss:/build/aud19-rb/rb.txt`):
   all four full hashes and sizes at `d5dfa1b3` / `29a9d5d5` agree to the last digit with the values
   above (x86 10a4c009… 369399 → f12d805d… 369447; aarch64 81d5b883… 358904 at both). `nm -S` on x86:
-  only `irq_handler` 50→55 and the new `knl_irq_exit_dispatch` 44, sum +49 against `.text` +48 (the
-  1 B is still not examined). `tk_conform` symbols 0. Vendor inventory 24/24. `run_rng0_regression.sh`
+  only `irq_handler` 50→55 and the new `knl_irq_exit_dispatch` 44, sum +49 against `.text` +48. The
+  1 B, now examined (`pk-scratch/aud19-pad.sh`, `nm -n` spans): `off_pow` (1 B, a lone `ret`) is followed
+  by `knl_dispatch_to_schedtsk` (dispatch.S, 2-byte aligned); at `d5dfa1b3` off_pow sat at 0x1599a6 with
+  one pad byte before 0x1599a8, and after the odd +49 shift it sits at 0x1599d7 with no pad. `objdump -h`
+  `.text` 0x5a2f7 → 0x5a327 (+48). `tk_conform` symbols 0. Vendor inventory 24/24. `run_rng0_regression.sh`
   on `29a9d5d5`: positive GREEN 44 s, control GREEN 43 s, nofix RED 43 s, all rc=0 (as expected).
 - CROWN RE-BLESS — F1 id-order fold + x86_pc idle stack, one re-bless for two merges (2026-09-28,
   merges `a73156d1` of `feat/f1-rsum-order` and `b9d73890` of `feat/x86pc-idle-stack`, both audit-12
