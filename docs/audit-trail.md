@@ -1862,6 +1862,13 @@ N-4 cross-host deferred to the ThinkPad).
   NOT COVERED: bare-metal AArch64 has the same shape (no IRQ-exit switch in the default build) — new
   gap-ledger row `RNG0-AARCH64-NO-IRQ-EXIT-DISPATCH`. This entry was written by the run that merged;
   an independent re-measure is for a different run.
+  INDEPENDENTLY RE-MEASURED (2026-09-29 19:30 run, audit-19; own script `pk-scratch/aud19-rb.sh`, fresh
+  clone of a new bundle, gcc 13.3.0 on both targets, evidence `pkernel_audit_ss:/build/aud19-rb/rb.txt`):
+  all four full hashes and sizes at `d5dfa1b3` / `29a9d5d5` agree to the last digit with the values
+  above (x86 10a4c009… 369399 → f12d805d… 369447; aarch64 81d5b883… 358904 at both). `nm -S` on x86:
+  only `irq_handler` 50→55 and the new `knl_irq_exit_dispatch` 44, sum +49 against `.text` +48 (the
+  1 B is still not examined). `tk_conform` symbols 0. Vendor inventory 24/24. `run_rng0_regression.sh`
+  on `29a9d5d5`: positive GREEN 44 s, control GREEN 43 s, nofix RED 43 s, all rc=0 (as expected).
 - CROWN RE-BLESS — F1 id-order fold + x86_pc idle stack, one re-bless for two merges (2026-09-28,
   merges `a73156d1` of `feat/f1-rsum-order` and `b9d73890` of `feat/x86pc-idle-stack`, both audit-12
   PASS on 2026-09-27; R-F1 / R-X86PC were put to mk_pino with a recommendation on 2026-09-27 04:40 and,
