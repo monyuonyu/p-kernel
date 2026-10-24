@@ -39,7 +39,14 @@
  * paired bootstrap 95% intervals of held damage differences over the held
  * windows (values only, never a pick); -DST_QALLOC_BOOT_ONE gives width 0.
  *
- *   student_qalloc_test <b1_held.txt> <seed>     exit 0 = ALL PASS
+ * Stage 8 (research/brain-quant-alloc-cal.md, run_st_qalloc_cal.sh, seeds
+ * 25-32): -DST_QALLOC_CAL picks the arm whose built copy loses least bpb on
+ * <b1_cal.txt> (the third argument; held is never used), prints "value C1"
+ * (clear misses of the CAL and the omega_el pick) and adds b1_cal vs held to
+ * G4. -DST_QALLOC_CAL_INVERT picks the largest; -DST_QALLOC_CAL_SHORT keeps
+ * b1_cal's first 48 windows.
+ *
+ *   student_qalloc_test <b1_held.txt> <seed> [b1_cal.txt]   exit 0 = ALL PASS
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,19 +83,22 @@ static void item(int ok, const char *id, const char *what)
     if (!ok) fails++;
 }
 
-/* held bpb; lw (if not NULL) gets each counted window's loss in nats (stage 7) */
+/* bpb over the windows of buf; lw (if not NULL) gets each counted window's
+ * loss in nats (stage 7). nwin is the count of the last call. */
 static int nwin;
-static double bpb_w(st_model *m, double *lw)
+static double bpb_buf(st_model *m, const uint8_t *buf, int n, double *lw)
 {
     double s = 0.0; int got = 0;
-    for (int w = 0; (w + 1) * SEQ <= hn; w++) {
+    for (int w = 0; (w + 1) * SEQ <= n; w++) {
         int np = 0;
-        float l = st_eval_loss(m, held + w * SEQ, SEQ, &np);
+        float l = st_eval_loss(m, buf + w * SEQ, SEQ, &np);
         if (np) { s += l; if (lw) lw[got] = l; got++; }
     }
     nwin = got;
     return got ? s / got / LN2 : 0.0;
 }
+
+static double bpb_w(st_model *m, double *lw) { return bpb_buf(m, held, hn, lw); }
 
 static double bpb(st_model *m) { return bpb_w(m, NULL); }
 
@@ -234,6 +244,17 @@ int main(int argc, char **argv)
     if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f);
     fclose(f);
+#if defined(ST_QALLOC_CAL)
+    /* stage 8: the node's own calibration text (never held) */
+    static uint8_t calt[65536];
+    int cln = 0;
+    if (argc < 4 || !(f = fopen(argv[3], "rb"))) { fprintf(stderr, "ST_QALLOC_CAL needs <b1_cal.txt>\n"); return 2; }
+    cln = (int)fread(calt, 1, sizeof calt, f);
+    fclose(f);
+#if defined(ST_QALLOC_CAL_SHORT)
+    if (cln > 48 * SEQ) cln = 48 * SEQ;   /* the fixture's amount of text */
+#endif
+#endif
 
     const uint8_t *fx = (const uint8_t *)TEACHER_FIXTURE;
     int fxn = (int)sizeof(TEACHER_FIXTURE) - 1;
@@ -314,6 +335,27 @@ int main(int argc, char **argv)
                o5[0], o5[1], o5[2], arm_name[k5]);
     }
 #endif
+#if defined(ST_QALLOC_CAL)
+    /* stage 8 (research/brain-quant-alloc-cal.md §2): the arm whose built copy
+     * loses least bpb on the node's own text b1_cal (held is never used) */
+    int pick_om = pick;
+    {
+        double cf = bpb_buf(&m, calt, cln, NULL), cd[NARM];
+        int cp = 0;
+        for (int a = 0; a < NARM; a++) cd[a] = bpb_buf(&qa[a], calt, cln, NULL) - cf;
+        for (int a = 1; a < NARM; a++) {
+#if defined(ST_QALLOC_CAL_INVERT)
+            if (cd[a] > cd[cp]) cp = a;   /* falsifier: P1 red */
+#else
+            if (cd[a] < cd[cp]) cp = a;
+#endif
+        }
+        printf("[st-qalloc] cal damage E4 %.4f E3O3 %.4f A3 %.4f on %d windows; pick %s (" OMEGA_NAME " pick %s)\n",
+               cd[0], cd[1], cd[2], nwin, arm_name[cp],
+               pick_om >= 0 && pick_om < NARM ? arm_name[pick_om] : "none");
+        if (okA) pick = cp;
+    }
+#endif
     if (pick < 0 || pick >= NARM) okA = 0;
     else if (st_quant_gptq_bits(&m, &qx, 2, arm_bits[pick][0], arm_bits[pick][1], arm_bits[pick][2],
                                 cal, cn, SEQ, NULL) != ST_OK || !same_w(&qx, &qa[pick])) okA = 0;
@@ -349,6 +391,18 @@ int main(int argc, char **argv)
         boot_ci(lw[2], lw[kmin], nwin, seed, &mu, &lo, &hi);
         printf("[st-qalloc] value A3-min mean %.4f ci95 [%.4f, %.4f] contains0 %d\n",
                mu, lo, hi, lo <= 0.0 && hi >= 0.0 ? 1 : 0);
+#if defined(ST_QALLOC_CAL)
+        /* C1 (stage 8): a clear miss = not the held minimum and the interval
+         * of (pick - min) excludes 0; for the CAL pick and the omega_el pick */
+        int miss_c = 0, miss_o = 0;
+        boot_ci(lw[p], lw[kmin], nwin, seed, &mu, &lo, &hi);
+        miss_c = p != kmin && !(lo <= 0.0 && hi >= 0.0);
+        int po = pick_om >= 0 && pick_om < NARM ? pick_om : kmin;
+        boot_ci(lw[po], lw[kmin], nwin, seed, &mu, &lo, &hi);
+        miss_o = po != kmin && !(lo <= 0.0 && hi >= 0.0);
+        printf("[st-qalloc] value C1 cal miss %d omega_el miss %d (cal pick %s, omega_el pick %s, held min %s)\n",
+               miss_c, miss_o, arm_name[p], arm_name[po], arm_name[kmin]);
+#endif
     }
 
     /* G4 */
@@ -362,6 +416,15 @@ int main(int argc, char **argv)
     }
     printf("[st-qalloc] off-grid %ld; calib vs B1 held: shared 16-byte runs %d\n", bad, shared);
     if (bad != 0 || shared != 0) okG4 = 0;
+#if defined(ST_QALLOC_CAL)
+    {
+        st_held_report r;
+        int rc = st_held_check_seen(held, hn, hn, 0, 1, calt, cln, ST_HELD_K, &r);
+        int sh2 = rc < 0 ? -1 : r.shared;
+        printf("[st-qalloc] b1_cal (%d B) vs B1 held: shared 16-byte runs %d\n", cln, sh2);
+        if (sh2 != 0) okG4 = 0;
+    }
+#endif
 
     /* K0, D1 */
     double g_s = st_quant_copy_kl(&m, &qs, gate, gn, SEQ);
