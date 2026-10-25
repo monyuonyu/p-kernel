@@ -37,6 +37,11 @@
  *  (refused silently): the re-drive cannot loop. Falsifier:
  *  -DSWARM_STOP_NO_FORWARD ([stop-live] L2); -DSWARM_STOP_SEND_ONCE (sent once,
  *  never again: a node started later never hears it, [stop-live] L4).
+ *
+ *  Bare x86 (swarm-stop.md "ベアへ" ①): linked into boot/x86 too. The bare
+ *  shell has `stop` (and `stop test`, the self-test, since bare has no
+ *  tkconf) and the DMN sleep obeys the stop ([stop-bare]). On bare nothing
+ *  calls swarm_stop_net_tick yet (stage ②) and there is no persist (RAM).
  */
 
 #include "swarm_stop.h"
@@ -520,6 +525,9 @@ void swarm_stop_cmd(const UB *a, UW n, void (*out)(const char *))
     ss_out = out;
     l = ss_word(&a, &n, &w);
     if (l == 0 || ss_is(w, l, "status")) { ss_status(); return; }
+    if (ss_is(w, l, "test")) {             /* [swarm-stop]: bare x86 has no tkconf */
+        (void)swarm_stop_selftest(out); return;
+    }
     if (ss_is(w, l, "now")) {
         PK_NOSW_ENTER(); ss_local = 1; ss_persist(); PK_NOSW_LEAVE();
         ss_status(); return;
@@ -578,7 +586,7 @@ void swarm_stop_cmd(const UB *a, UW n, void (*out)(const char *))
         return;
     }
 #endif
-    out("usage: stop [status|now|resume|key <hex>|key clear|in <hex>|apply]\r\n");
+    out("usage: stop [status|now|resume|key <hex>|key clear|in <hex>|apply|test]\r\n");
 }
 
 /* [live]: one call per tick of a task that runs whether or not the node is

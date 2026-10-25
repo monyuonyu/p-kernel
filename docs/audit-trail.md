@@ -1858,6 +1858,23 @@ N-4 cross-host deferred to the ThinkPad).
   run_mind_record.sh ALL PASS; bare run_tk_conform.sh x86 and AArch64 133/0 with all 14 broken kernels red;
   samples/28 rc 0; `[kload-leak]` 0; build_all ALL OK; pychecks 12/12 + parity + yaml. This entry was
   written by the run that merged; an independent re-measure is for a different run.
+- CROWN RE-BLESS — 0-14 S2 stage 1 on bare x86 (2026-10-25): `e7d86d6e` `feat/stop-bare-x86` cdeeccd0 (audit-83
+  PASS with limits; R-STOPBARE put to mk_pino with a recommendation, past its deadline 2026-10-25T14:35 with no
+  answer, landed on it per inbox #37), `--no-ff` onto `eaa93925` (the branch's base), no conflict; merge tree
+  f51fac85 = the branch head's tree. swarm_stop.c is linked into boot/x86, the bare shell gains `stop` /
+  `stop test`, dmn.c's sleep gate is `_TK_HOSTED_LIBC_ || _X86_PC_`. The bare x86 `.text` changes
+  DELIBERATELY; bare AArch64 compiles none of it. Measured by the auditor on `git archive cdeeccd0` and master
+  in pkernel_audit_ss (gcc 13.3.0, `objcopy -O binary -j .text`; `pk-scratch/a83/a83.sh`):
+    base `eaa93925`  aarch64 9f4400ea… 361980 B   x86 d805388a… 373027 B
+      aarch64  9f4400eab038a0a8aea43049a7b45863246bac1dc4b5ed27d3f9b1998c41c31e  361980 B (unchanged)
+      x86      f55b1b88f5b919afa4a61e3b86bedaf6da7ce909d78ec5fe6f9eadddfc8ed07c  379967 B (+6940)
+  (= the implementer's values.) [stop-bare]: test-first 110e1207 all of B0-B4 red; head ALL PASS (ga calls
+  A=4 B=4 C=6); nc (-DSWARM_STOP_NO_SLEEP_OBEY) B3 only; auditor breaks: ga_step gate alone removed -> B3
+  only, `stop now` not setting the local stop -> B2+B3, `stop resume` not clearing it -> B4 only. Bare
+  run_tk_conform.sh x86 133/0 with all 14 broken kernels red (bash, 1110 s); build_all ALL OK (648 s, incl.
+  windows, bare x86/rpi3/aarch64); pychecks 12/12 (incl. parity and yaml). Limit: on bare only the ga_step call is
+  seen; the engram replay and r3 distillation gates have nothing filling them on the bare console. Written by
+  the run that merged.
 - CROWN RE-BLESS — 1-8 record on the wire (2026-10-22): `66262879` `feat/ks-record-wire` 9a88b055 (audit-60/61
   PASS with limits, R-KSWIRE 2026-10-20T23:54 put to mk_pino with a recommendation and, with no answer in 24 h,
   landed on it), `--no-ff` onto `e82391eb`, no conflict. r3_incontext.c (shared with bare x86/aarch64):

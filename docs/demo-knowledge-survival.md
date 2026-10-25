@@ -1,6 +1,6 @@
 # デモ: 端末を殺しても、教えた記録は残るか（下書き）
 
-> 下書き（2026-10-24）。数字は `docs/architecture/30-module/knowledge-survival.md` の v4 の取り直し（2026-10-23）と監査-69 の測り直しから。11/30 に外へ出す前に、別の回が数字と言い方を監査する。
+> 下書き（2026-10-24）。数字は `docs/architecture/30-module/knowledge-survival.md` の v4 の取り直し（2026-10-23）と監査-69 の測り直しから。11/30 に外へ出す前に、別の回が数字と言い方を監査する。英語版は [demo-knowledge-survival.en.md](demo-knowledge-survival.en.md)（直すときは両方）。
 
 ## やったこと
 

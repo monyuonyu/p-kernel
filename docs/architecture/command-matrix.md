@@ -7,7 +7,7 @@ CI は `--check` で、この表と生成し直した結果が食い違えば赤
 
 | 対象 | 読んだソース | コマンド数 |
 |---|---|---|
-| x86 bare | `arch/x86/shell.c` | 60 |
+| x86 bare | `arch/x86/shell.c` | 61 |
 | AArch64 bare | `arch/aarch64/usermain.c` | 7 |
 | Linux x86_64 | `arch/linux/x86_64/usermain.c` | 54 |
 | Linux aarch64 | `arch/linux/aarch64/usermain.c` | 55 |
@@ -103,7 +103,7 @@ CI は `--check` で、この表と生成し直した結果が食い違えば赤
 | `spawn-stat` | ✓ | — | — | — | — | — |
 | `ss6live` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `status` | ✓ | — | — | — | — | — |
-| `stop` | — | — | ✓ | ✓ | ✓ | ✓ |
+| `stop` | ✓ | — | ✓ | ✓ | ✓ | ✓ |
 | `student` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `survival` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `swimtest` | — | — | ✓ | ✓ | ✓ | ✓ |
