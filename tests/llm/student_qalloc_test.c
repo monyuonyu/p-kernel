@@ -46,6 +46,12 @@
  * G4. -DST_QALLOC_CAL_INVERT picks the largest; -DST_QALLOC_CAL_SHORT keeps
  * b1_cal's first 48 windows.
  *
+ * Stage 9 (research/brain-quant-alloc-src.md, run_st_qalloc_src.sh, seeds
+ * 33-48): -DST_QALLOC_SRC (with CAL) prints "value SRC S33|TAIL|GATE", the
+ * damage on other texts and the clear miss of the arm each would pick (the
+ * pick stays CAL), and adds TAIL vs held and b1_cal vs the fixture to G4.
+ * -DST_QALLOC_SRC_SWAP feeds S33's windows to the TAIL line.
+ *
  *   student_qalloc_test <b1_held.txt> <seed> [b1_cal.txt]   exit 0 = ALL PASS
  */
 #include <stdio.h>
@@ -56,6 +62,10 @@
 #include "../../arch/common/llm/student.h"
 #include "../../arch/common/llm/held_indep.h"
 #include "../../arch/common/llm/teacher_fixture.h"
+
+#if defined(ST_QALLOC_SRC) && !defined(ST_QALLOC_CAL)
+#error "ST_QALLOC_SRC needs ST_QALLOC_CAL"
+#endif
 
 #define SEQ 32
 #define LN2 0.69314718055994530942
@@ -356,6 +366,30 @@ int main(int argc, char **argv)
         if (okA) pick = cp;
     }
 #endif
+#if defined(ST_QALLOC_SRC)
+    /* stage 9 (research/brain-quant-alloc-src.md §2): the same three arms, the
+     * damage on other texts and the arm each would pick (values; the pick
+     * stays CAL). S33 = b1_cal's first 33 windows, TAIL = the fixture's
+     * windows after train_end (never trained), GATE = the first 33 gate
+     * windows (trained). -DST_QALLOC_SRC_SWAP feeds S33 to the TAIL line. */
+    static const char *src_name[3] = { "S33", "TAIL", "GATE" };
+    const uint8_t *src_buf[3] = { calt, fx + fx_end, gate };
+    int src_n[3] = { cln < 33 * SEQ ? cln : 33 * SEQ, fxn - fx_end, gn < 33 * SEQ ? gn : 33 * SEQ };
+#if defined(ST_QALLOC_SRC_SWAP)
+    src_buf[1] = src_buf[0]; src_n[1] = src_n[0];   /* falsifier: TAIL == S33 */
+#endif
+    double src_d[3][NARM];
+    int src_pick[3], src_nw[3];
+    for (int x = 0; x < 3; x++) {
+        double sf = bpb_buf(&m, src_buf[x], src_n[x], NULL);
+        src_pick[x] = 0;
+        for (int a = 0; a < NARM; a++) {
+            src_d[x][a] = bpb_buf(&qa[a], src_buf[x], src_n[x], NULL) - sf;
+            if (a > 0 && src_d[x][a] < src_d[x][src_pick[x]]) src_pick[x] = a;
+        }
+        src_nw[x] = nwin;
+    }
+#endif
     if (pick < 0 || pick >= NARM) okA = 0;
     else if (st_quant_gptq_bits(&m, &qx, 2, arm_bits[pick][0], arm_bits[pick][1], arm_bits[pick][2],
                                 cal, cn, SEQ, NULL) != ST_OK || !same_w(&qx, &qa[pick])) okA = 0;
@@ -403,6 +437,16 @@ int main(int argc, char **argv)
         printf("[st-qalloc] value C1 cal miss %d omega_el miss %d (cal pick %s, omega_el pick %s, held min %s)\n",
                miss_c, miss_o, arm_name[p], arm_name[po], arm_name[kmin]);
 #endif
+#if defined(ST_QALLOC_SRC)
+        /* stage 9: the clear miss (C1's definition) of the arm each text picks */
+        for (int x = 0; x < 3; x++) {
+            int px = src_pick[x];
+            boot_ci(lw[px], lw[kmin], nwin, seed, &mu, &lo, &hi);
+            printf("[st-qalloc] value SRC %s damage E4 %.4f E3O3 %.4f A3 %.4f on %d windows; pick %s miss %d (held min %s)\n",
+                   src_name[x], src_d[x][0], src_d[x][1], src_d[x][2], src_nw[x], arm_name[px],
+                   px != kmin && !(lo <= 0.0 && hi >= 0.0) ? 1 : 0, arm_name[kmin]);
+        }
+#endif
     }
 
     /* G4 */
@@ -423,6 +467,19 @@ int main(int argc, char **argv)
         int sh2 = rc < 0 ? -1 : r.shared;
         printf("[st-qalloc] b1_cal (%d B) vs B1 held: shared 16-byte runs %d\n", cln, sh2);
         if (sh2 != 0) okG4 = 0;
+    }
+#endif
+#if defined(ST_QALLOC_SRC)
+    {
+        /* stage 9: TAIL vs held, and b1_cal vs the whole fixture (audit-81) */
+        st_held_report r;
+        int rc = st_held_check_seen(held, hn, hn, 0, 1, fx + fx_end, fxn - fx_end, ST_HELD_K, &r);
+        int sh3 = rc < 0 ? -1 : r.shared;
+        rc = st_held_check_seen(calt, cln, cln, 0, 1, fx, fxn, ST_HELD_K, &r);
+        int sh4 = rc < 0 ? -1 : r.shared;
+        printf("[st-qalloc] TAIL (%d B) vs B1 held: shared 16-byte runs %d; b1_cal vs fixture (%d B): %d\n",
+               fxn - fx_end, sh3, fxn, sh4);
+        if (sh3 != 0 || sh4 != 0) okG4 = 0;
     }
 #endif
 
