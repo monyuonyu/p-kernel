@@ -1119,6 +1119,7 @@
   <h3>Kill a node mid-thought. Watch the swarm finish anyway.</h3>
   <p>This is the survival loop the CI enforces on every commit: while a distributed inference runs, a node is <code>kill -9</code>'d. The swarm completes the inference and reports its own degradation honestly.</p>
   <p class="demo-note">Illustrative of the behavior asserted by the <span class="mono">survival-loop</span> CI job (see <span class="mono">samples/13_survival_loop/</span>) — not a captured transcript.</p>
+  <p>Measured, with baselines: <a href="https://github.com/monyuonyu/p-kernel/blob/master/docs/demo-knowledge-survival.en.md">kill the devices — do the taught records survive? (draft)</a> (8 processes on one machine)</p>
 
 <pre class="terminal"><span class="prompt">p-kernel&gt;</span> <span class="info">infer 31 88 12 40</span>   <span class="comment"># 3-node distributed forward (FULL)</span>
 [dkva] node0 partial → region sum

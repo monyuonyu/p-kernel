@@ -32,7 +32,13 @@
                         * the #ifdef at each call site below; bare metal
                         * compiles neither the check nor a call, so this
                         * include changes nothing there). */
-#include "swarm_stop.h" /* 0-14 S2 stage 2d: the sleep obeys the stop (hosted) */
+#endif
+/* 0-14 S2 stage 2d: the sleep obeys the stop. Hosted, and bare x86 since
+ * swarm-stop.md "ベアへ" ①; bare AArch64 links no swarm_stop.c yet (a later
+ * stage), so its dmn.c compiles none of this. */
+#if defined(_TK_HOSTED_LIBC_) || defined(_X86_PC_)
+#define DMN_OBEYS_STOP 1
+#include "swarm_stop.h"
 #endif
 #include "kernel.h"
 
@@ -271,6 +277,9 @@ INT dmn_pause_test(void)
     return fail;
 }
 
+#endif /* _TK_HOSTED_LIBC_ */
+
+#ifdef DMN_OBEYS_STOP
 /* 0-14 S2 stage 2d (swarm-stop.md "2d"): a stopped node does not learn in
  * its sleep either. Unlike hibernation (a cost pause, ga_step kept), the
  * stop is the owner saying "no more learning", so ga_step is gated too.
@@ -279,7 +288,8 @@ INT dmn_pause_test(void)
 static INT dmn_stopped(void)
 {
 #ifdef SWARM_STOP_NO_SLEEP_OBEY
-    /* falsifier (tests/host/run_stop_sleep.sh nc): Z2 must go red */
+    /* falsifier (tests/host/run_stop_sleep.sh and
+     * tests/x86/run_stop_sleep_bare.sh nc): Z2 / B3 must go red */
     return 0;
 #else
     return swarm_stop_is_stopped();
@@ -288,16 +298,20 @@ static INT dmn_stopped(void)
 
 static INT dmn_paused(void)
 {
+#ifdef _TK_HOSTED_LIBC_
     return dmn_paused_for_hibernation() || dmn_stopped();
+#else
+    return dmn_stopped();     /* bare x86: no hibernation pause (L2 is hosted) */
+#endif
 }
-#endif /* _TK_HOSTED_LIBC_ */
+#endif /* DMN_OBEYS_STOP */
 
 static void dmn_idle_work(void)
 {
     dmn_stats.idle_runs++;
 
     /* Phase 14: GA による重み自己改善 (GA_INTERVAL アイドルに 1 回) */
-#ifdef _TK_HOSTED_LIBC_
+#ifdef DMN_OBEYS_STOP
     if (!dmn_stopped())                   /* 0-14 S2 stage 2d */
 #endif
     if (dmn_stats.idle_runs % GA_INTERVAL == 1)
@@ -308,7 +322,7 @@ static void dmn_idle_work(void)
      * into the dtr slow weights. ALONGSIDE ga_step (not replacing the
      * organ). No-op until engrams are pending (e.g. captured by a prior
      * `dmn test` run or, later, the live conversational fast layer). */
-#ifdef _TK_HOSTED_LIBC_
+#ifdef DMN_OBEYS_STOP
     /* survival-loop L2 (§6-L2): skip this heavier track while HIBERNATING. */
     if (!dmn_paused())                    /* + 0-14 S2 stage 2d: stopped */
 #endif
@@ -326,7 +340,7 @@ static void dmn_idle_work(void)
      * ~R3_SLEEPS_PER_FACT idle seconds at the 1000ms pulse). Trains
      * R3's own rw[], a DIFFERENT network from the lm round above —
      * non-interference is structural (disjoint weight buffers). */
-#ifdef _TK_HOSTED_LIBC_
+#ifdef DMN_OBEYS_STOP
     /* survival-loop L2 (§6-L2): skip this heavier track while HIBERNATING. */
     if (!dmn_paused())                    /* + 0-14 S2 stage 2d: stopped */
 #endif
@@ -370,7 +384,7 @@ static void dmn_idle_work(void)
      * runs WHILE r3_facts_pending(), so it self-limits and is unaffected here.
      * The other half of the cure (skip the 22.8MB write when the baby did not
      * meaningfully improve) lives inside student_dmn_consolidate(). */
-#ifdef _TK_HOSTED_LIBC_
+#ifdef DMN_OBEYS_STOP
     /* survival-loop L2 (§6-L2): skip this heaviest track (5-11s/call per
      * gap-ledger) while HIBERNATING. */
     if (!dmn_paused())                    /* + 0-14 S2 stage 2d: stopped */

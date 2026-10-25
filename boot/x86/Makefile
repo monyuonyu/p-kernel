@@ -162,7 +162,8 @@ COMMON_C_SRCS = \
     protect.c \
     genome.c \
     ed25519.c \
-    sign.c
+    sign.c \
+    swarm_stop.c
 
 # The contract suite (inbox #5, arch/common/tk_conform.c) is linked ONLY into
 # -DPK_TKCONF test builds (tests/x86/run_tk_conform.sh), so the default
