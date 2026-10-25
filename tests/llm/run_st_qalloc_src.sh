@@ -65,7 +65,7 @@ echo "q_CAL_INVERT $first nc_inv.log" >> "$WORK/queue"
 echo "q_SRC_SWAP $first nc_swap.log" >> "$WORK/queue"
 runq < "$WORK/queue"
 
-nseed=0; p2=0; mc=0; mo=0; m_s33=0; m_tail=0; m_gate=0
+nseed=0; p2=0; mc=0; mo=0; m_s33=0; m_tail=0; m_gate=0; nosrc=0
 for s in $SEEDS; do
     nseed=$((nseed + 1))
     log="$WORK/plain_$s.log"
@@ -73,12 +73,12 @@ for s in $SEEDS; do
     grep -q '^\[st-qalloc\] ALL PASS' "$log" || { echo "[st-qalloc] seed $s RED"; FAIL=1; }
     grep -q '^\[st-qalloc\] value P2 1' "$log" && p2=$((p2 + 1))
     line=$(grep -a '^\[st-qalloc\] value C1 ' "$log")
-    if [ -z "$line" ]; then echo "[st-qalloc] FAIL C1 seed $s printed no miss line"; FAIL=1; continue; fi
+    if [ -z "$line" ]; then echo "[st-qalloc] FAIL C1 seed $s printed no miss line"; FAIL=1; nosrc=1; continue; fi
     c=$(echo "$line" | sed -n 's/.*cal miss \([01]\).*/\1/p'); o=$(echo "$line" | sed -n 's/.*omega_el miss \([01]\).*/\1/p')
     mc=$((mc + ${c:-1})); mo=$((mo + ${o:-0}))
     for x in S33 TAIL GATE; do
         l=$(grep -a "^\[st-qalloc\] value SRC $x damage " "$log")
-        if [ -z "$l" ]; then echo "[st-qalloc] FAIL SRC seed $s printed no $x line"; FAIL=1; continue; fi
+        if [ -z "$l" ]; then echo "[st-qalloc] FAIL SRC seed $s printed no $x line"; FAIL=1; nosrc=1; continue; fi
         k=$(echo "$l" | sed -n 's/.* miss \([01]\) .*/\1/p')
         case "$x" in
             S33)  m_s33=$((m_s33 + ${k:-1})) ;;
@@ -103,7 +103,9 @@ fi
 
 # H (a reading fixed in §3, not a gate)
 echo "[st-qalloc] value H clear misses: CAL $mc omega_el $mo S33 $m_s33 TAIL $m_tail GATE $m_gate (of $nseed)"
-if [ "$mo" = 0 ]; then
+if [ "$nosrc" = 1 ] || [ "$nseed" = 0 ]; then
+    h="not measured (a SRC line is missing)"
+elif [ "$mo" = 0 ]; then
     h="cannot decide (omega_el has no clear miss)"
 elif [ "$m_s33" -le $((mc + 1)) ] && [ "$m_tail" -ge "$mo" ]; then
     h="close text is needed"
