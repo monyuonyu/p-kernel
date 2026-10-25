@@ -1727,6 +1727,11 @@ jobs:
         # 2026-09-28 fix of arch/common/pipeline.c (stack bytes leaked into the
         # temperature). Rebuilds boot/x86 default, so it runs last in this job.
         run: sh tests/x86/run_infer_print.sh
+      - name: "[stop-bare] bare x86 `stop` and the DMN sleep obeys it (0-14 S2 ①; tests/x86/run_stop_sleep_bare.sh)"
+        # swarm-stop.md "ベアへ" ①. Rebuilds boot/x86 and cleans it, like the step above.
+        run: sh tests/x86/run_stop_sleep_bare.sh
+      - name: "[stop-bare] falsifier -DSWARM_STOP_NO_SLEEP_OBEY must turn B3 red"
+        run: sh tests/x86/run_stop_sleep_bare.sh nc
 
   relay-tests:
     name: "リレー往復スイート (6 シナリオ)"

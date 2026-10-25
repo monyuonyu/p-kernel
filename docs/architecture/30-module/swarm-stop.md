@@ -47,6 +47,8 @@ hosted で止まりに従わせた口（2a〜2g・[live]）は全部 `_TK_HOSTED
 
 段の案（各段で .text の差分を測り、監査 PASS を条件に re-bless）: ① swarm_stop.c をベアに入れ、x86 のシェルに `stop` と DMN の 3 つの仕事の門（[stop-sleep] と同じ項目を QEMU で）② [live] の受け口 ③ 永続（置き場が決まれば）
 
+① **（2026-10-25、feat/stop-bare-x86）**: boot/x86 が swarm_stop.c を組み込む。ベア x86 のシェルに `stop`（hosted と同じ swarm_stop_cmd）と `stop test`（[swarm-stop] の自己検査。ベアには tkconf が無いので共通の swarm_stop_cmd に足した＝hosted にも入る）。dmn.c の止まりの門（2d）は hosted と `_X86_PC_` で効く（ga_step・engram の再生・r3 の蒸留・赤子の蒸留（ベアでは空の関数））。冬眠の止めは hosted のまま。ベア AArch64 は dmn.c を組むが門は入らない（次の段）。試験 `tests/x86/run_stop_sleep_bare.sh` の B0〜B4（QEMU 1 台。作る前に固定）: B3 は止まっている 26 秒に DMN の idle runs が 20 以上進み、ga_step の呼び出し（steps＋skipped）が動かないこと。陰性コントロール `-DSWARM_STOP_NO_SLEEP_OBEY` で B3 だけ赤。見えるのは ga_step だけ（ベアのコンソールには engram と r3 を満たす口が無い）。まだ無いもの: 網の受け口（②）・永続（RAM だけ）
+
 ## 限界（先に書く）
 
 - 鍵を人がどう配るか（端末ごとにコンソールで足すのか、参加のときに渡すのか）は決めていない。S1（同意制）と一緒に決める

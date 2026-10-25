@@ -32,6 +32,7 @@
 #include "raft.h"
 #include "spawn.h"
 #include "kloader_task.h"
+#include "swarm_stop.h"   /* 0-14 S2: `stop` (swarm-stop.md "ベアへ" ①) */
 #include "moe.h"
 #include "dkva.h"
 #include "world.h"
@@ -219,6 +220,7 @@ static void cmd_help(void)
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     sout("  kpush <node_id>        - カーネルを送る (相手が kload open のときだけ届く)\r\n");
     sout("  kload [open|close|autopush on|off] - 受け手と自動プッシュ (既定は両方閉)\r\n");
+    sout("  stop [now|resume|key <hex>|in <hex>|apply|test] - 群れの停止 (眠りの学習も止まる)\r\n");
     sout("  write /shared/F text   - 書き込み→自動同期\r\n");
     sout("  rm    /shared/F        - 削除→自動tombstone伝播\r\n");
     sout("  cp src /shared/F       - コピー→自動同期\r\n");
@@ -514,6 +516,16 @@ static void cmd_sign(const char *arg)
         return;
     }
     sout("Usage: sign test\r\n");
+}
+
+/* stop — ROADMAP 0-14 S2 on bare x86 (swarm-stop.md "ベアへ" ①): this node's
+ * own stop and the stop-key table, from the console only (rule 5). The same
+ * swarm_stop_cmd as the hosted shell; `stop test` runs [swarm-stop]. */
+static void cmd_stop(const char *arg)
+{
+    UW n = 0;
+    while (arg[n]) n++;
+    swarm_stop_cmd((const UB *)arg, n, sout);
 }
 
 static void cmd_dmn(const char *arg)
@@ -3058,6 +3070,9 @@ static void execute(const char *cmd)
     if (cmd[0]=='s' && cmd[1]=='i' && cmd[2]=='g' && cmd[3]=='n' &&
         (cmd[4]==' ' || cmd[4]=='\0'))
         { cmd_sign(cmd + 4); return; }
+    if (cmd[0]=='s' && cmd[1]=='t' && cmd[2]=='o' && cmd[3]=='p' &&
+        (cmd[4]==' ' || cmd[4]=='\0'))
+        { cmd_stop(cmd + 4); return; }
     if (cmd[0]=='g' && cmd[1]=='a')
         { cmd_ga(cmd + 2); return; }
     if (cmd[0]=='d' && cmd[1]=='e' && cmd[2]=='g' && cmd[3]=='r' &&
