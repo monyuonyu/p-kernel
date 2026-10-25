@@ -1,6 +1,6 @@
 **English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `700151e9`.
+> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `4722c82d`.
 
 # p-kernel
 
@@ -122,6 +122,7 @@ Anything not listed under "What runs today" is not claimed to work.
 - **p-fs**: a distributed store where the hash of the content is the address. Identical content collapses into one, and tampering shows up immediately as an address mismatch.
 - **ARK**: a power-loss-safe filesystem. A test that repeatedly and mechanically cuts power during writes and corrupts data (CI `ark-crash-fuzzer`) has not seen it return corrupted data since the ARK-2 fixes (before them, this test found 4 bugs).
 - Device IDs, the history record, and learned weights survive a restart (on Android too).
+- Kill devices — do the taught records stay with the survivors? A draft demo measures it next to baselines (no copies, plain 3 copies, a build that stops the spreading): [docs/demo-knowledge-survival.en.md](docs/demo-knowledge-survival.en.md) (8 processes on one machine).
 
 ### Learning as a swarm
 
