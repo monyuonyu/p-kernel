@@ -170,7 +170,7 @@ for ln in open("/proc/net/udp").read().splitlines()[1:]:
     f = ln.split(); d = int(f[-1]); a += d
     if f[1].endswith(":" + port): r = d
 print("relay=%d,all=%d" % (r, a))' "$PORT")
-echo "[fleet] rec N=$N start_s=$((TL - T0)) conv_s=$CONV known=$KNOWN region=$RGN_SIZE dkva_peers=$PEERS relay_Bps_node=$BPSN rss_kB=$RSS load=$LOAD cpu_pct_node=$CPUN selfsus=$SELFSUS provisional=$PROV relay_tcp=$TCPN answered_node1=$RESPN udp_drops=$UDPD relay_v=$RELAY_V batch=$BATCH stop=$STOP zone=$ZONE kill=$KILLN"
+echo "[fleet] rec N=$N start_s=$((TL - T0)) conv_s=$CONV known=$KNOWN region=$RGN_SIZE dkva_peers=$PEERS relay_Bps_node=$BPSN rss_kB=$RSS load=$LOAD cpu_pct_node=$CPUN selfsus=$SELFSUS provisional=$PROV relay_tcp=$TCPN answered_node1=$RESPN udp_drops=$UDPD relay_v=$RELAY_V tau_env=${PKERNEL_REGION_TAU_MS:-none} batch=$BATCH stop=$STOP zone=$ZONE kill=$KILLN"
 
 TH=$(( (N * 3) / 4 ))
 [ "$REG" -ge "$N" ] && res C1 PASS "$REG/$N registered" || res C1 FAIL "only $REG/$N registered"
