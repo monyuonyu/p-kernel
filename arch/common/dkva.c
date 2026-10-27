@@ -967,8 +967,17 @@ void dkva_task(INT stacd, void *exinf)
                     /* N1: 読む 2 者 (起点・coordinator) にだけ送る。宛先は毎回
                      * 決め直す (coordinator が途中で変わっても新しい方へ)。 */
                     UB dst[2];
-                    UB coord = region_coordinator();   /* region_recompute 込み */
-                    INT nd = dkva_resp_dests(me, rr, coord, region_is_member(rr), dst);
+                    INT nd;
+                    if (dkva_resp_scope_global) {
+                        /* R0.1 falsifier (PKERNEL_DKVA_RESP_GLOBAL): 今までどおり
+                         * スコープ (GLOBAL) の全員へ。kdds_pub_to はスコープを
+                         * 見ないので、こうしないと run_4node_regions.sh の R2・R3
+                         * が噛まない (監査-92)。 */
+                        dst[0] = DKVA_RESP_ALL; nd = 1;
+                    } else {
+                        UB coord = region_coordinator();   /* region_recompute 込み */
+                        nd = dkva_resp_dests(me, rr, coord, region_is_member(rr), dst);
+                    }
                     for (INT k = 0; k < nd; k++) {
                         if (dst[k] == DKVA_RESP_ALL)
                             kdds_pub(h_resp_pub[me], &resp_cache[rr],
