@@ -455,12 +455,27 @@ int net_relay_tcp_init(void)
     return my_node_id;
 }
 
+/* N1: one node's MAC -> REL_DATA dst=N, else REL_BROADCAST. The same rule
+ * as relay_frame_dst in net_relay.c (read the comment there). */
+static int tcp_frame_dst(const unsigned char *f, int len)
+{
+    const char *e = getenv("PKERNEL_RELAY_UNICAST");
+    if (e && e[0] == '0') return 0;
+    if (len < 6) return 0;
+    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00 || f[4] != 0x00)
+        return 0;
+    if (f[5] == 0 || (int)f[5] == my_node_id) return 0;
+    return f[5];
+}
+
 int net_relay_tcp_send(const void *frame, int len)
 {
     if (tcp_fd < 0 || len <= 0 || len > MAX_PAYLOAD) return -1;
     tcp_tick();
     static unsigned char buf[MAX_PKT];
-    int n = build_packet(buf, REL_BROADCAST, (unsigned)my_node_id, 0, frame, len);
+    int dst = tcp_frame_dst((const unsigned char *)frame, len);
+    int n = build_packet(buf, dst ? REL_DATA : REL_BROADCAST, (unsigned)my_node_id,
+                         (unsigned)dst, frame, len);
     send_framed(buf, n);
     return len;
 }

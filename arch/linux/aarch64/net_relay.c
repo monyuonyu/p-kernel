@@ -912,11 +912,39 @@ static int relay_bcast(const void *frame, int len, unsigned char *sink)
     return n;
 }
 
+/* N1 (research/n1-fleet-64.md, audit-90): which relay node a frame is for.
+ * A frame whose Ethernet destination is one node's MAC (52:54:00:00:00:N,
+ * rtl8139_get_mac) goes to the relay as REL_DATA dst=N, so the relay forwards
+ * one copy instead of fanning it out to every node (at 64 nodes each kdds
+ * publish was (N-1) unicasts x (N-1) copies). Broadcast, multicast, other
+ * MACs, N=0 and our own MAC return 0 = REL_BROADCAST as before. Receivers
+ * still filter by IP (netstack.c ip_input), so what a node accepts does not
+ * change. PKERNEL_RELAY_UNICAST=0 turns it off (A/B, read on every call). */
+static int relay_frame_dst(const unsigned char *f, int len)
+{
+    const char *e = getenv("PKERNEL_RELAY_UNICAST");
+    if (e && e[0] == '0') return 0;
+    if (len < 6) return 0;
+    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00 || f[4] != 0x00)
+        return 0;
+    if (f[5] == 0 || (int)f[5] == my_node_id) return 0;
+    return f[5];
+}
+
 int net_relay_send(const void *frame, int len)
 {
     if (sock_fd < 0 || len <= 0 || len > MAX_PAYLOAD) return -1;
     ha_tick();
-    (void)relay_bcast(frame, len, NULL);
+    int dst = relay_frame_dst((const unsigned char *)frame, len);
+    if (dst == 0) {
+        (void)relay_bcast(frame, len, NULL);
+        return len;
+    }
+    static unsigned char buf[MAX_PKT];
+    PK_NOSW_ENTER();                         /* see send_register_to */
+    int n = build_packet(buf, REL_DATA, (unsigned)my_node_id, (unsigned)dst, frame, len);
+    udp_send_to(cur_relay, buf, n);
+    PK_NOSW_LEAVE();
     return len;
 }
 

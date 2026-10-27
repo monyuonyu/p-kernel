@@ -23,16 +23,30 @@
  *   ./run_relay_unicast.sh      exit 0 = ALL PASS
  */
 #define _GNU_SOURCE
-#ifdef RU_TCP                       /* the same items over the TCP fallback link */
+/* -DRU_TCP: the TCP fallback link. -DRU_A64: the arch/linux/aarch64 copy
+ * (plain C sockets, so it builds and runs on the x86_64 host too). */
+#if defined(RU_A64) && defined(RU_TCP)
+#include "../../arch/linux/aarch64/net_relay_tcp.c"
+#elif defined(RU_A64)
+#include "../../arch/linux/aarch64/net_relay.c"
+#elif defined(RU_TCP)
 #include "../../arch/linux/x86_64/net_relay_tcp.c"
+#else
+#include "../../arch/linux/x86_64/net_relay.c"
+#endif
+#ifdef RU_A64
+#define RU_ARCH "-a64"
+#else
+#define RU_ARCH ""
+#endif
+#ifdef RU_TCP
 #define net_relay_init  net_relay_tcp_init
 #define net_relay_send  net_relay_tcp_send
 #define RU_SOCK         SOCK_STREAM
-#define RU_NAME         "relay-unicast-tcp"
+#define RU_NAME         "relay-unicast-tcp" RU_ARCH
 #else
-#include "../../arch/linux/x86_64/net_relay.c"
 #define RU_SOCK         SOCK_DGRAM
-#define RU_NAME         "relay-unicast"
+#define RU_NAME         "relay-unicast" RU_ARCH
 #endif
 
 #include <sys/time.h>
