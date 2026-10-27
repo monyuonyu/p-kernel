@@ -62,6 +62,13 @@ NC1（DNODE_MAX 32 の木、48 台）C2 だけ赤／NC2（2 台 kill）C6 だけ
 - 読み: 重いのは HMAC ではなく、全員への配り直し。直す候補 ① 宛先の決まった送り（REGION・1 台宛て）を中継の REL_DATA で送る（hosted の net_relay.c、ベアは別の口＝確かめる）② 中継が sendmmsg でまとめて送る（relay/ だけ、2 乗は残る）。各 1 回、gprof の数え方が 1 つ壊れている（load_key_or_die 17.6 万回、中の hex_decode は 1 回）
 - 監査-90（10-28 01:15、PASS）: 数字は flat32/64・relay_stat・progress と全部一致、relay.c 856〜862・net_relay.c 908（_tcp.c 473 も）はそのとおり、ノードは REL_DATA を送らない。注 ①「カーネル 8 割＝sendto」は読み（stime の内訳は測っていない）② 倍率は「中継が処理した」パケットあたり＝落ちた分（6.1 万・14.4 万）は入らない ③ 64 台の回は relay-tcp 28・仮の relay 1、-pg で中継自体が遅い
 
+## 10-28 01:30 宛先つきの送り（実装、監査は別の回。枝 feat/n1-relay-data）
+
+- kdds_pub はもともと宛先ごとに pmesh_send(n) するが、hosted の網の口が全部を REL_BROADCAST にしていた＝1 回の pub で中継の配りは約 (N−1)²。直し: 宛先 MAC が 1 台のノード（52:54:00:00:00:N）なら REL_DATA dst=N、ほかは今までどおり。受け手は IP で選ぶ（netstack.c 1068）ので受け取るものは変わらない。UDP・TCP × x86_64・aarch64。`PKERNEL_RELAY_UNICAST=0` で切れる。ベアは別の口＝crown 不変
+- 試験 `tests/host/run_relay_unicast.sh`（[relay-unicast] U1〜U9 × 4 つの口、数秒、CI の UMP x86_64）: master で U1 だけ赤 ×4、枝で CERT ALL PASS
+- 容器、同じ版で切り替えだけ（順 32 入 32 切 64 入 64 切 64 切 64 入）: **32 台 入 ALL PASS**（仲間 30,30、中継の落ち 0、1 台の CPU 0.9%）／切 C4E 赤（29,0、落ち 5.7 万、2.6%）。**64 台 入 2/2 で C4P 緑**（仲間 54・55、領域 64、relay-tcp 0、負荷 3.9・4.9、1.3%）／切 2/2 で C4P・C4E 赤（仲間 0、領域 26・23、relay-tcp 26・24、負荷 8.5・7.9）。**64 台の入でも C4E は赤（2 回目の問い 0）・落ち 30〜32 万**＝応答の再送（ITERS 100）× 領域 64 台。次は応答の再送の形（起点宛てに・回数）。各 2 回まで
+- 監査者へ: ARP の返事も 1 台宛てになる＝他のノードが立ち聞きで MAC を覚える道は無くなる（hosted の ARP の使われ方は未確認）。getenv を送るたびに読む
+
 ## まだ言えないこと
 
 1 台の機械の 64 プロセス。実機・ネットの遅れは無い。各条件の試しは 1 回
