@@ -10,6 +10,8 @@
 #   C3  node1 printed a region (size >= 1; true alone, the content is C4P)
 #   C4  a dkva aggregate with KV > 0 or an `infer` class, and no "no result"
 #   C4P a dkva aggregate gathered >= 1 region peer
+#   C4E every dkva query node1 sent (both `infer`s) gathered >= 1 region peer
+#       (C4P is the best one only; the 2nd query was found lost, 10-27)
 #   C5  zero table-exhaustion lines in any log
 #   C6  no crash signature, every node booted, every node alive at the end
 #
@@ -148,6 +150,9 @@ RGN=$(grep -acE "^\[region\] id=" "$L1LOG")
 RGN_SIZE=$(grep -aE "^\[region\] id=" "$L1LOG" | grep -oE "size=[0-9]+" | grep -oE "[0-9]+" | tail -1); RGN_SIZE="${RGN_SIZE:-0}"
 AGG_NONZERO=$(grep -aE "\[dkva\] aggregated " "$L1LOG" | grep -vE "\(0 KV entries\)" | wc -l)
 PEERS=$(grep -aE "\[dkva\] aggregated " "$L1LOG" | sed -nE 's/.*aggregated ([0-9]+) region peers.*/\1/p' | sort -n | tail -1); PEERS="${PEERS:-0}"
+QSENT=$(grep -acE "\[dkva\] Q broadcast req=" "$L1LOG")
+PEERS_EACH=$(grep -aE "\[dkva\] aggregated " "$L1LOG" | sed -nE 's/.*aggregated ([0-9]+) region peers.*/\1/p' | tr '\n' ',' | sed 's/,$//'); PEERS_EACH="${PEERS_EACH:-none}"
+QGOT=$(grep -aE "\[dkva\] aggregated " "$L1LOG" | sed -nE 's/.*aggregated ([0-9]+) region peers.*/\1/p' | awk '$1 >= 1' | wc -l)
 INFER_OK=$(grep -acE "\[infer\] => class" "$L1LOG")
 INFER_NULL=$(grep -acE "\[infer\] no result" "$L1LOG")
 EXH=$(cat "$LOGDIR"/node*.log "$LOGDIR/relay.log" | grep -acE "topic table full|handle table full|pending table full|sem create failed|create failed|sem .*fail|handle .*full|slot full")
@@ -170,7 +175,7 @@ for ln in open("/proc/net/udp").read().splitlines()[1:]:
     f = ln.split(); d = int(f[-1]); a += d
     if f[1].endswith(":" + port): r = d
 print("relay=%d,all=%d" % (r, a))' "$PORT")
-echo "[fleet] rec N=$N start_s=$((TL - T0)) conv_s=$CONV known=$KNOWN region=$RGN_SIZE dkva_peers=$PEERS relay_Bps_node=$BPSN rss_kB=$RSS load=$LOAD cpu_pct_node=$CPUN selfsus=$SELFSUS provisional=$PROV relay_tcp=$TCPN answered_node1=$RESPN udp_drops=$UDPD relay_v=$RELAY_V tau_env=${PKERNEL_REGION_TAU_MS:-none} batch=$BATCH stop=$STOP zone=$ZONE kill=$KILLN"
+echo "[fleet] rec N=$N start_s=$((TL - T0)) conv_s=$CONV known=$KNOWN region=$RGN_SIZE dkva_peers=$PEERS relay_Bps_node=$BPSN rss_kB=$RSS load=$LOAD cpu_pct_node=$CPUN selfsus=$SELFSUS provisional=$PROV relay_tcp=$TCPN answered_node1=$RESPN peers_each=$PEERS_EACH udp_drops=$UDPD relay_v=$RELAY_V tau_env=${PKERNEL_REGION_TAU_MS:-none} batch=$BATCH stop=$STOP zone=$ZONE kill=$KILLN"
 
 TH=$(( (N * 3) / 4 ))
 [ "$REG" -ge "$N" ] && res C1 PASS "$REG/$N registered" || res C1 FAIL "only $REG/$N registered"
@@ -180,6 +185,9 @@ TH=$(( (N * 3) / 4 ))
     && res C4 PASS "aggregates non-zero $AGG_NONZERO, infer ok $INFER_OK" \
     || res C4 FAIL "aggregates non-zero $AGG_NONZERO, infer ok $INFER_OK null $INFER_NULL"
 [ "$PEERS" -ge 1 ] && res C4P PASS "dkva gathered $PEERS region peers" || res C4P FAIL "dkva gathered 0 region peers"
+{ [ "$QSENT" -ge 2 ] && [ "$QGOT" -ge "$QSENT" ]; } \
+    && res C4E PASS "all $QSENT queries gathered peers ($PEERS_EACH)" \
+    || res C4E FAIL "$QGOT of $QSENT queries gathered peers ($PEERS_EACH)"
 [ "$EXH" -eq 0 ] && res C5 PASS "0 exhaustion lines" || res C5 FAIL "$EXH exhaustion lines"
 { [ "$CRASH" -eq 0 ] && [ "$NOBOOT" -eq 0 ] && [ "$NDEAD" -eq 0 ]; } \
     && res C6 PASS "no crash, $N booted, $N alive" \
