@@ -102,9 +102,89 @@ def bpb(arms, name, u, key="bpb"):
 
 
 def main():
-    """STUB (test first): judges nothing."""
-    print("[b3-data] ALL PASS")
-    return 0
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    d = sys.argv[1]
+    rep = read_report(os.path.join(d, "gen-report.txt"))
+    arms = {n: read_arm(os.path.join(d, n + ".log")) for n in ARMS}
+
+    t = rep["teacher"]
+    item(t is not None and t[1] == 256 and t[0] >= TEACHER_LINE * t[1],
+         "TEACHER", "PyTorch top-1 = own forward at >= 95 %% of 256 positions (%s)" % (
+             "%d of %d" % t if t else "no report"))
+    fr = rep["filter"]
+    item(fr is not None and fr[0] > 0 and fr[2] <= MAX_DROP,
+         "FILTER", "q1..q5 dropped <= 30 %% (%s)" % ("rate %.4f of %d" % (fr[2], fr[0]) if fr else "no report"))
+
+    complete = True
+    for n, (tier, seed, mode, us) in ARMS.items():
+        a = arms[n]
+        ok = (a is not None and a["done"] and a["head"] is not None and sorted(a["pts"]) == us
+              and a["head"][0] == tier and a["head"][1] == seed and a["head"][2] == mode)
+        if not ok:
+            print("[b3-data] arm %s incomplete (%s)" % (n, "no log" if a is None else
+                  "points %s, done %s, head %s" % (sorted(a["pts"]), a["done"], a["head"])))
+            complete = False
+    item(complete, "ALL-ARMS", "every arm asked for printed every U and finished")
+
+    print("[b3-data] table: bpb on b1_held (B2 best S %.2f M %.2f), gen = bpb on gen_held" % (
+        B2_BEST["S"], B2_BEST["M"]))
+    print("[b3-data] arm        " + " ".join("U=%-9d" % u for u in US))
+    for n in ARMS:
+        a = arms[n]
+        if a is None:
+            continue
+        print("[b3-data] %-10s %s" % (n, " ".join(
+            ("%.4f/%.4f" % (a["pts"][u]["bpb"], a["pts"][u]["gen"])) if u in a["pts"] else "-          "
+            for u in US)))
+
+    g1 = complete
+    for n in ARMS:
+        a = arms[n]
+        if a is None:
+            continue
+        hw = int(a["head"][4]) if a["head"] else 0
+        if hw != HELD_WINDOWS:
+            g1 = False
+        for p in a["pts"].values():
+            if p["skip"] != 0 or p["wins"] != hw:
+                g1 = False
+    item(g1, "G1", "every point predicts every held window (%d, skipped 0)" % HELD_WINDOWS)
+
+    a, b = arms["S-1"], arms["S-1-again"]
+    def upto96(lines):
+        return [ln for ln in lines if ln != "[b3] done"
+                and (PT.match(ln) is None or int(PT.match(ln).group(1)) in G2_US)]
+    same = (a is not None and b is not None and b["done"] and len(b["pts"]) == len(G2_US)
+            and upto96(a["lines"]) == upto96(b["lines"]))
+    item(same, "G2", "S seed 1 run twice up to U=96 KB prints the same lines")
+
+    g3 = all(arms[n] is not None and arms[n]["head"] is not None and arms[n]["head"][3] == "0"
+             for n, (_, _, mode, _) in ARMS.items() if mode != "leak")
+    item(g3, "G3", "no plain or rep arm shares a 64-byte run with b1_held")
+
+    m1, m2 = bpb(arms, "M-1", US[-1]), bpb(arms, "M-2", US[-1])
+    print("[b3-data] G4 M at U=1.5 MB: seed 1 %s seed 2 %s (line < %.2f)" % (m1, m2, G4_LINE))
+    item(m1 is not None and m2 is not None and m1 < G4_LINE and m2 < G4_LINE,
+         "G4", "M seeds 1 and 2 at U=1.5 MB below %.2f (the research verdict)" % G4_LINE)
+
+    u = 393216
+    pa, pb = bpb(arms, "S-1", u, "a"), bpb(arms, "S-1", u, "b")
+    la, lb = bpb(arms, "S-leak", u, "a"), bpb(arms, "S-leak", u, "b")
+    lk = arms["S-leak"]
+    if None in (pa, pb, la, lb):
+        item(False, "LEAK", "leak arm not measured")
+    else:
+        dd = (la - pa) - (lb - pb)
+        print("[b3-data] LEAK at U=384 KB: first half %+.4f, second half %+.4f, difference %+.4f" % (
+            la - pa, lb - pb, dd))
+        item(lk["head"] is not None and lk["head"][2] == "leak" and dd <= LEAK_LINE,
+             "LEAK", "the mixed-in half drops %.2f more than the other half" % -LEAK_LINE)
+
+    readings(arms)
+    print("[b3-data] %s" % ("ALL PASS" if not fails else "RED (" + " ".join(fails) + ")"))
+    return 1 if fails else 0
 
 
 def readings(arms):

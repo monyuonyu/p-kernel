@@ -91,10 +91,32 @@ class Filter:
                        "held16_texts": 0, "bytes_kept": 0}
 
     def check(self, text):
-        """STUB (test first): keeps every text as it is."""
+        """Return (reason or None, cleaned text). Updates the kept state when kept."""
         self.counts["in"] += 1
+        t = normalize(text)
+        b = t.encode("utf-8", "replace")
+        if zlib_ratio(b) < Q1_RATIO:
+            return self._drop("q1", t)
+        if printable_share(t) < Q2_PRINTABLE:
+            return self._drop("q2", t)
+        t = strip_unprintable(t)
+        b = t.encode("ascii")
+        k64 = run_keys(b, RUN)
+        if k64 & self.kept64:
+            return self._drop("q3", t)
+        sh = shingles(t)
+        for other in self.kept_sh:
+            if jaccard(sh, other) >= Q4_JACCARD:
+                return self._drop("q4", t)
+        if k64 & self.held64:
+            return self._drop("q5", t)
+        if run_keys(b, SMALL_RUN) & self.held16:
+            self.counts["held16_texts"] += 1
+        self.kept64 |= k64
+        self.kept_sh.append(sh)
         self.counts["kept"] += 1
-        return None, text
+        self.counts["bytes_kept"] += len(b)
+        return None, t
 
     def _drop(self, why, t):
         self.counts[why] += 1

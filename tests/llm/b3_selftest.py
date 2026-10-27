@@ -12,7 +12,7 @@
   F8  more than 30 % dropped -> exit 1 (RED)
   J1  logs where every line passes -> the judge says ALL PASS
   J2..J8  one thing broken each -> the judge is red on that gate only
-          (G1 skipped window, G2 different line, G3 held64, G4 above 3.56,
+          (G1 a skipped window, G2 different line, G3 held64, G4 above 3.56,
            LEAK no difference, TEACHER 94 %, FILTER 31 %)
 
   b3_selftest.py           exit 0 = ALL PASS
@@ -82,16 +82,15 @@ def filter_tests():
     why, _ = f.check(" ".join(near))
     item(why0 is None and not k and why == ("q4" if jac >= 0.8 else None),
          "F5", "a near copy with no shared 64-byte run: Jaccard %.3f -> %s" % (jac, why))
-    # make the near copy close enough: change one word in 40, still no 64-byte run? (only if possible)
     near2 = list(story(6, 300).split())
     f.check(" ".join(near2))
-    swapped = [w + ("" if i % 10 else " ") for i, w in enumerate(near2)]  # a double space every 10 words
+    swapped = [w + ("" if i % 7 else " ") for i, w in enumerate(near2)]  # a double space every 7 words
     s2 = " ".join(swapped)
     k2 = b3_filter.run_keys(s2.encode(), 64) & f.kept64
     j2 = b3_filter.jaccard(b3_filter.shingles(s2), b3_filter.shingles(" ".join(near2)))
     why2, _ = f.check(s2)
     item(not k2 and j2 >= 0.8 and why2 == "q4",
-         "F5b", "spacing changed every 10 words: no shared 64-byte run, Jaccard %.3f -> %s" % (j2, why2))
+         "F5b", "spacing changed every 7 words: no shared 64-byte run, Jaccard %.3f -> %s" % (j2, why2))
     hs = held.decode()
     why, _ = f.check(story(7) + " " + hs[500:580] + " " + story(8))
     item(why == "q5", "F6", "a 64-byte run of the held text is dropped by q5 (%s)" % why)
