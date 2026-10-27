@@ -867,9 +867,16 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
 static INT dkva_resp_dests(UB me, UB origin, UB coord, BOOL origin_in_region,
                            UB out[2])
 {
+#ifdef DKVA_RESP_REGION_ALL   /* falsifier: 今までどおり region 全員へ */
     (void)me; (void)origin; (void)coord; (void)origin_in_region;
     out[0] = DKVA_RESP_ALL;
     return 1;
+#else
+    INT n = 0;
+    if (origin_in_region && origin != me && origin < DNODE_MAX) out[n++] = origin;
+    if (coord < DNODE_MAX && coord != me && coord != origin)    out[n++] = coord;
+    return n;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -957,8 +964,19 @@ void dkva_task(INT stacd, void *exinf)
             for (INT scan = 0; scan < DNODE_MAX; scan++) {
                 rr = (UB)((rr + 1) % DNODE_MAX);
                 if (pend_ttl[rr] > 0) {
-                    kdds_pub(h_resp_pub[me], &resp_cache[rr],
-                             (W)sizeof(DKVA_RESP_PKT));
+                    /* N1: 読む 2 者 (起点・coordinator) にだけ送る。宛先は毎回
+                     * 決め直す (coordinator が途中で変わっても新しい方へ)。 */
+                    UB dst[2];
+                    UB coord = region_coordinator();   /* region_recompute 込み */
+                    INT nd = dkva_resp_dests(me, rr, coord, region_is_member(rr), dst);
+                    for (INT k = 0; k < nd; k++) {
+                        if (dst[k] == DKVA_RESP_ALL)
+                            kdds_pub(h_resp_pub[me], &resp_cache[rr],
+                                     (W)sizeof(DKVA_RESP_PKT));
+                        else
+                            kdds_pub_to(h_resp_pub[me], &resp_cache[rr],
+                                        (W)sizeof(DKVA_RESP_PKT), dst[k]);
+                    }
                     pend_ttl[rr]--;
                     break;
                 }

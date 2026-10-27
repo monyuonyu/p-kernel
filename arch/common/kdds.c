@@ -218,7 +218,8 @@ W kdds_open_poll_scoped(const char *name, W qos, W scope)
 /* kdds_pub                                                            */
 /* ------------------------------------------------------------------ */
 
-W kdds_pub(W handle, const void *data, W len)
+/* dst < 0: 今までどおり (scope の全員)。dst >= 0: 網へは dst の 1 台だけ (N1)。 */
+static W kdds_pub_core(W handle, const void *data, W len, INT dst)
 {
     if (handle < 0 || handle >= KDDS_HANDLE_MAX || !kdds_handles[handle].open)
         return E_PAR;
@@ -275,7 +276,8 @@ W kdds_pub(W handle, const void *data, W len)
         UW fanout = 0;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
-            if (region_scoped && !region_is_member(n)) continue;
+            if (dst >= 0 && (INT)n != dst) continue;
+            if (dst < 0 && region_scoped && !region_is_member(n)) continue;
             if (pmesh_send(n, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0) {
                 fanout++;
                 /* locality 累積: 配送先 n が自 region 外なら「遠方 (cross)」 */
@@ -294,6 +296,18 @@ W kdds_pub(W handle, const void *data, W len)
     }
 
     return 0;
+}
+
+W kdds_pub(W handle, const void *data, W len)
+{
+    return kdds_pub_core(handle, data, len, -1);
+}
+
+W kdds_pub_to(W handle, const void *data, W len, UB dst)
+{
+    /* 自分・範囲外は網へ送らない (ローカルの更新だけ) */
+    INT d = (dst < DNODE_MAX && dst != drpc_my_node) ? (INT)dst : DNODE_MAX;
+    return kdds_pub_core(handle, data, len, d);
 }
 
 /* ------------------------------------------------------------------ */
