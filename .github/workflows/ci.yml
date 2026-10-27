@@ -766,6 +766,14 @@ jobs:
           timeout 300 tests/host/run_dkva_fold_order.sh | tee dkva_fold_order.log
           grep -aF '[dkva-fold-order] ALL PASS' dkva_fold_order.log
           make -C boot/linux_x86_64 >/dev/null
+      # [dkva-resp-to] (N1): a dkva answer goes to the origin and the region
+      # coordinator only; -DDKVA_RESP_REGION_ALL (the old whole-region send)
+      # must go RED. Rebuilds and cleans boot/linux_x86_64, so rebuild after.
+      - name: dkva answer destinations cert + whole-region falsifier (N1)
+        run: |
+          timeout 300 tests/host/run_dkva_resp_to.sh | tee dkva_resp_to.log
+          grep -aF '[dkva-resp-to] ALL PASS' dkva_resp_to.log
+          make -C boot/linux_x86_64 >/dev/null
       # [relay-unicast] (N1, research/n1-fleet-64-log.md): a frame for one
       # node's MAC goes to the relay as REL_DATA dst=N, the rest REL_BROADCAST,
       # on the UDP and TCP links of x86_64 and aarch64. Seconds, no relay.
