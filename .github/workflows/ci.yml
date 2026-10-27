@@ -766,6 +766,13 @@ jobs:
           timeout 300 tests/host/run_dkva_fold_order.sh | tee dkva_fold_order.log
           grep -aF '[dkva-fold-order] ALL PASS' dkva_fold_order.log
           make -C boot/linux_x86_64 >/dev/null
+      # [relay-unicast] (N1, research/n1-fleet-64-log.md): a frame for one
+      # node's MAC goes to the relay as REL_DATA dst=N, the rest REL_BROADCAST,
+      # on the UDP and TCP links of x86_64 and aarch64. Seconds, no relay.
+      - name: Relay unicast cert (N1, 4 links)
+        run: |
+          timeout 120 tests/host/run_relay_unicast.sh | tee relay_unicast.log
+          grep -aF '[relay-unicast] CERT ALL PASS (4 links)' relay_unicast.log
       - name: Scaling-law society-of-minds ensemble cert (scaling-law.md §6)
         run: |
           cd boot/linux_x86_64
