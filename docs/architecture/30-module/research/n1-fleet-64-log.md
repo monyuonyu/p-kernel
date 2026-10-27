@@ -77,6 +77,7 @@ NC1（DNODE_MAX 32 の木、48 台）C2 だけ赤／NC2（2 台 kill）C6 だけ
 - 容器、交互（32 枝・32 前・64 枝・64 前・64 前・64 枝、前＝master 7c52a9e6）: 32 台は両方 ALL PASS（落ち 0）。**64 台 枝 2/2 ALL PASS**（仲間 55,55・中継の落ち 0・region 59/56）／**前 2/2 C4E だけ赤**（54,0・落ち 33.3 万/32.2 万）。負荷 8〜10（交互なので比べは有効）。ベアの .text が動く: x86 f55b1b88 379967→1658860d 380511、aarch64 9f4400ea 361980→4087772c 362680
 - 監査者へ: 自己テストは宛先の表だけ＝網の上で 2 台にしか届かないことは 64 台の落ち 0 で見た読み（kdds の tx を数える試験は無い）。coordinator が途中で変わる・region が割れる場合は測っていない。各 2 回
 - 監査-92（10-28 04:25 の回、FAIL→監査者の直し 1e7562da）: 840b8baf では CI の BLOCKING の段 run_4node_regions.sh が赤（R2・R3: `PKERNEL_DKVA_RESP_GLOBAL` の falsifier が噛まない。kdds_pub_to はスコープを見ない）、master は PASS（容器で各 1 回）。直し: falsifier が立っているときだけ前の kdds_pub。直しで regions PASS・[dkva-resp-to] ALL PASS・coord_crash PASS（master も PASS）。64 台は測り直していない（本番の道は変わらない）。crown: 840b8baf は実装者の値と全桁一致、直しで x86 f3a94e2d 380523・aarch64 11be1015 362716。直しの監査は次の回
+- 監査-93（10-28 05:45 の回、直し 1e7562da を限界つき PASS）: 差分は応答の送りの if だけ、本番の道は 840b8baf と同じ。容器で頭 4bd354a4: regions PASS（R1〜R3）・[dkva-resp-to] ALL PASS（falsifier 赤）・coord_crash PASS。壊し方（if を逆に）: regions の R2・R3 が赤、[dkva-resp-to] は緑のまま（表しか見ない）。**穴: 本番の道だけを region 全員へ戻す壊し方は CI のどの段でも見えない（4 台では R1 が見えない、見えるのは 64 台）**。ベアの約束ごとの試験は x86・aarch64 とも 133/0＋14 種赤（監査-92 が走らせ、私が出力を読んだ）。crown を測り直して全桁一致（x86 f3a94e2d 380523・aarch64 11be1015 362716）。マージは R-RESPTO の期限（10-29 03:30）の後、re-bless と一緒に
 
 ## まだ言えないこと
 
