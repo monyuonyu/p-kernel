@@ -23,30 +23,54 @@
  *   ./run_relay_unicast.sh      exit 0 = ALL PASS
  */
 #define _GNU_SOURCE
+#ifdef RU_TCP                       /* the same items over the TCP fallback link */
+#include "../../arch/linux/x86_64/net_relay_tcp.c"
+#define net_relay_init  net_relay_tcp_init
+#define net_relay_send  net_relay_tcp_send
+#define RU_SOCK         SOCK_STREAM
+#define RU_NAME         "relay-unicast-tcp"
+#else
 #include "../../arch/linux/x86_64/net_relay.c"
+#define RU_SOCK         SOCK_DGRAM
+#define RU_NAME         "relay-unicast"
+#endif
 
 #include <sys/time.h>
 
-/* the two symbols net_relay.c takes from the rest of the hosted build */
+/* the symbols the link takes from the rest of the hosted build */
 int pkernel_default_node_id(void) { return 3; }
 unsigned int net_my_ip;
 
 static int fails;
-static int relay_fd;
+static int relay_fd;                /* UDP: the socket; TCP: the accepted stream */
 
 static void check(int ok, const char *name, const char *what)
 {
-    printf("[relay-unicast] %s %s: %s\n", name, ok ? "PASS" : "FAIL", what);
+    printf("[" RU_NAME "] %s %s: %s\n", name, ok ? "PASS" : "FAIL", what);
     if (!ok) fails++;
+}
+
+/* one packet off the wire: a datagram, or one [u16 BE len][pkt] TCP frame */
+static int take1(unsigned char *buf, int cap)
+{
+#ifdef RU_TCP
+    unsigned char h[2];
+    if (recv(relay_fd, h, 2, MSG_WAITALL) != 2) return -1;
+    int len = (h[0] << 8) | h[1];
+    if (len > cap) return -1;
+    return recv(relay_fd, buf, (size_t)len, MSG_WAITALL) == len ? len : -1;
+#else
+    return (int)recv(relay_fd, buf, (size_t)cap, 0);
+#endif
 }
 
 /* receive one packet the node sent to "the relay"; skip REGISTER/KEEPALIVE */
 static int take(unsigned char *buf, int cap)
 {
     for (int i = 0; i < 8; i++) {
-        ssize_t n = recv(relay_fd, buf, (size_t)cap, 0);
+        int n = take1(buf, cap);
         if (n <= 0) return -1;
-        if (buf[5] == REL_DATA || buf[5] == REL_BROADCAST) return (int)n;
+        if (buf[5] == REL_DATA || buf[5] == REL_BROADCAST) return n;
     }
     return -1;
 }
@@ -76,15 +100,17 @@ static void one(const char *name, const char *what, const unsigned char mac[6],
 
 int main(void)
 {
-    relay_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    int lfd = socket(AF_INET, RU_SOCK, 0);
     struct sockaddr_in a = {0};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (bind(relay_fd, (struct sockaddr *)&a, sizeof(a)) != 0) { perror("bind"); return 2; }
+    if (bind(lfd, (struct sockaddr *)&a, sizeof(a)) != 0) { perror("bind"); return 2; }
     socklen_t al = sizeof(a);
-    getsockname(relay_fd, (struct sockaddr *)&a, &al);
-    struct timeval tv = { 2, 0 };
-    setsockopt(relay_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    getsockname(lfd, (struct sockaddr *)&a, &al);
+#ifdef RU_TCP
+    listen(lfd, 1);
+#endif
+    relay_fd = lfd;
 
     char port[16];
     snprintf(port, sizeof(port), "%d", (int)ntohs(a.sin_port));
@@ -93,7 +119,13 @@ int main(void)
     setenv("PKERNEL_RELAY_PORT", port, 1);
     unsetenv("PKERNEL_RELAY");
     unsetenv("PKERNEL_RELAY_UNICAST");
-    if (net_relay_init() < 0) { printf("[relay-unicast] FAIL init\n"); return 1; }
+    if (net_relay_init() < 0) { printf("[" RU_NAME "] FAIL init\n"); return 1; }
+#ifdef RU_TCP
+    relay_fd = accept(lfd, NULL, NULL);
+    if (relay_fd < 0) { printf("[" RU_NAME "] FAIL accept\n"); return 1; }
+#endif
+    struct timeval tv = { 2, 0 };
+    setsockopt(relay_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     const unsigned char n7[6]   = { 0x52, 0x54, 0x00, 0x00, 0x00, 7 };
     const unsigned char bc[6]   = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
@@ -124,6 +156,6 @@ int main(void)
     one("U8", "PKERNEL_RELAY_UNICAST=0 -> node MAC 7 goes REL_BROADCAST", n7, 60,
         REL_BROADCAST, 0);
 
-    printf("[relay-unicast] %s\n", fails ? "RED" : "ALL PASS");
+    printf("[" RU_NAME "] %s\n", fails ? "RED" : "ALL PASS");
     return fails ? 1 : 0;
 }
