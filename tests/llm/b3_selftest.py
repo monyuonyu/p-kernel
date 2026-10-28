@@ -16,6 +16,9 @@
            LEAK no difference, TEACHER 94 %, FILTER 31 %)
   J9  M seed 2 above 3.56 -> red on G4 only (G4 reads both seeds)
   J10 one arm's log missing -> red on ALL-ARMS, G1 and G3
+  J12a..c one arm's head line says another tier, seed or mode -> red on ALL-ARMS and G1
+          (G1 starts from ALL-ARMS)
+  J13 S-leak16.log whose head says mode=leak -> no LEAK16 reading
 
   b3_selftest.py           exit 0 = ALL PASS
 """
@@ -133,8 +136,12 @@ US = [24576, 98304, 393216, 1572864]
 
 def write_logs(d, breaks=()):
     def arm(name, tier, seed, mode, us, base, held64=0):
+        # HEADT/HEADS/HEADM: the log of one arm says another tier, seed or mode in its head line
+        ht = "S" if "HEADT" in breaks and name == "M-1" else tier
+        hs = 1 if "HEADS" in breaks and name == "S-2" else seed
+        hm = "plain" if "HEADM" in breaks and name == "S-rep" else mode
         lines = ["[b3] arm tier=%s seed=%s mode=%s held64=%d held_windows=331" % (
-            tier, seed, mode, 1 if "G3" in breaks and name == "M-2" else held64)]
+            ht, hs, hm, 1 if "G3" in breaks and name == "M-2" else held64)]
         for i, u in enumerate(us):
             b = base - 0.05 * i
             a, bb = b, b
@@ -168,7 +175,8 @@ def write_logs(d, breaks=()):
                  "[b3] done\n" % (b, a, bb))
     if "LEAK16" in breaks:  # not a break: the reading arm is there
         with open(os.path.join(d, "S-leak16.log"), "w") as fh:
-            fh.write("[b3] arm tier=S seed=1 mode=leak16 held64=83472 held_windows=331\n"
+            fh.write("[b3] arm tier=S seed=1 mode=%s held64=83472 held_windows=331\n"
+                     % ("leak" if "HEAD16" in breaks else "leak16") +
                      "[b3] point U=393216 k=14928 bpb=3.2000 held_a=3.0200 held_b=3.4000 gen=3.1000 "
                      "wins=331 skipped=0\n[b3] done\n")
     with open(os.path.join(d, "gen-report.txt"), "w") as fh:
@@ -182,6 +190,9 @@ def judge_tests():
                                         enumerate(["G1", "G2", "G3", "G4", "LEAK", "TEACHER", "FILTER"])]
     # audit-94: G4 must read both M seeds; a missing arm reddens ALL-ARMS (and G1, G3, which need every arm)
     cases += [("J9", ("G4b",), ["G4"]), ("J10", ("ARMS",), ["ALL-ARMS", "G1", "G3"])]
+    # audit-95: ALL-ARMS also reads each head line (an arm's log that is another arm's run; G1 starts from it)
+    cases += [("J12a", ("HEADT",), ["ALL-ARMS", "G1"]), ("J12b", ("HEADS",), ["ALL-ARMS", "G1"]),
+              ("J12c", ("HEADM",), ["ALL-ARMS", "G1"])]
     for jid, breaks, want in cases:
         with tempfile.TemporaryDirectory() as d:
             write_logs(d, breaks)
@@ -206,6 +217,13 @@ def judge_tests():
         item(p.returncode == 0 and "[b3-data] ALL PASS" in p.stdout and len(rd) == 1
              and "first half -0.5000, second half -0.1200, difference -0.3800" in rd[0],
              "J11", "S-leak16 log -> one reading line, still ALL PASS (%s)" % (rd[0] if rd else "no line"))
+    # audit-95: the reading takes S-leak16.log only when its head says mode=leak16
+    with tempfile.TemporaryDirectory() as d:
+        write_logs(d, ("LEAK16", "HEAD16"))
+        p = subprocess.run([sys.executable, os.path.join(HERE, "b3_curve_check.py"), d],
+                           capture_output=True, text=True)
+        item(p.returncode == 0 and "[b3-data] ALL PASS" in p.stdout and "read LEAK16" not in p.stdout,
+             "J13", "S-leak16 log whose head says mode=leak -> no LEAK16 reading, still ALL PASS")
 
 
 def main():
