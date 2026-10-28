@@ -3596,6 +3596,15 @@ static void mc_ask_tail(INT k)
         if (r->used && r->key == (UB)k) mc_print(r, "[mind]   conflict history: ");
     }
 }
+
+#ifdef MT_RX_INJECT
+/* test builds only (tests/host/run_mind_dup_stamp.sh, ROADMAP 1-3m): `mind
+ * inject <node> <stamp> <key> <value>` hands mind_net_task one mind/teach
+ * packet as if <node> had sent it, in place of its next kdds_sub — a fixed
+ * arrival order on one node (the TLA+ counterexample cex/S3-now.txt). */
+static MT_TEACH_PKT mt_inj_pkt;
+static volatile UB mt_inj_have;
+#endif
 #endif /* _TK_HOSTED_LIBC_ */
 
 static INT m_parse_uint(const UB **pp, const UB *end, INT *out)
@@ -3670,6 +3679,34 @@ static INT m_resolve_token(const UB **pp, const UB *end, INT is_key, INT *out)
     *out = id;
     return 1;
 }
+
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+/* `mind inject <node> <stamp> <key> <value>` (test builds only, see
+ * mt_inj_pkt): one packet at a time; the caller waits for "inject: taken". */
+static void m_inject(const UB *p, const UB *end)
+{
+    INT org, s, k, v;
+    if (!m_parse_uint(&p, end, &org) || !m_parse_uint(&p, end, &s) ||
+        m_resolve_token(&p, end, 1, &k) != 1 ||
+        m_resolve_token(&p, end, 0, &v) != 1 || org >= DNODE_MAX) {
+        r_puts("usage: mind inject <node> <stamp> <key> <value>\r\n");
+        return;
+    }
+    if (mt_inj_have) { r_puts("[mind] inject: the previous packet is not taken yet\r\n"); return; }
+    for (INT i = 0; i < (INT)sizeof mt_inj_pkt; i++) ((UB *)&mt_inj_pkt)[i] = 0;
+    mt_inj_pkt.magic       = MT_MAGIC;
+    mt_inj_pkt.fact_seq    = (UW)s;
+    mt_inj_pkt.origin_node = (U1)org;
+    mt_inj_pkt.key         = (U1)k;
+    mt_inj_pkt.val         = (U1)v;
+    mt_inj_pkt.src         = ARK_PROV_SRC_SHELL;
+    mt_inj_pkt.wire_ver    = MT_WIRE_VER_VOCAB;
+    mt_vocab_fp_fill(mt_inj_pkt.vocab_fp);
+    mt_inj_have = 1;
+    r_puts("[mind] inject: node "); r_putdec((UW)org); r_puts(" stamp "); r_putdec((UW)s);
+    r_puts(" key "); r_putdec((UW)k); r_puts(" value "); r_putdec((UW)v); r_puts(" queued\r\n");
+}
+#endif
 
 static INT m_kw(const UB **pp, const UB *end, const char *kw)
 {
@@ -4193,6 +4230,9 @@ void mind_cmd(const UB *args, UW len)
     while (p < end && (*p == ' ' || *p == '\t')) p++;
     if (p >= end)                    { m_quiesce(); m_status(); }
     else if (m_kw(&p, end, "teach")) m_teach(p, end);
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+    else if (m_kw(&p, end, "inject")) m_inject(p, end);       /* test builds */
+#endif
     else if (m_kw(&p, end, "ask"))   m_ask(p, end);
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else if (m_kw(&p, end, "lang"))  r3_lang_test();
@@ -5062,7 +5102,16 @@ void mind_net_task(INT stacd, void *exinf)
         }
 #endif
 #endif
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+        W r;                         /* test builds: `mind inject` goes first */
+        if (mt_inj_have) {
+            mt_rx_pkt = mt_inj_pkt; mt_inj_have = 0; r = (W)sizeof mt_rx_pkt;
+            r_puts("[mind] inject: taken\r\n");
+        } else
+            r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+#else
         W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+#endif
         if (r >= (W)sizeof mt_rx_pkt && mt_rx_pkt.magic == MT_MAGIC) {
             /* LM-8 (IX.7/IX.8): version gate — a packet whose wire_ver does
              * not match ours is DROPPED and PRINTED. This is the ONE place
