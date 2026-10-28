@@ -1858,6 +1858,23 @@ N-4 cross-host deferred to the ThinkPad).
   run_mind_record.sh ALL PASS; bare run_tk_conform.sh x86 and AArch64 133/0 with all 14 broken kernels red;
   samples/28 rc 0; `[kload-leak]` 0; build_all ALL OK; pychecks 12/12 + parity + yaml. This entry was
   written by the run that merged; an independent re-measure is for a different run.
+- CROWN RE-BLESS — N1 answers to the origin and the coordinator only (2026-10-29): `384efd1a` `feat/n1-resp-to`
+  abee0c35 (audit-92 FAIL on 840b8baf -> auditor's fix 1e7562da, audit-93 PASS with limits; R-RESPTO put to
+  mk_pino with a recommendation 2026-10-28T03:30, no answer past its deadline 2026-10-29T03:30, landed on it),
+  `--no-ff` onto `3cd974e9`, no conflict (ci.yml and ROADMAP auto-merged); merge tree 25b64e80 = the trial merge
+  `trial/m98` 266873b7 the tests below ran on. dkva.c / kdds.c are shared with bare x86 and AArch64, so both
+  bare `.text` change DELIBERATELY (kdds_pub_to, dkva_resp_dests and the [dkva-resp-to] self-test). Measured on
+  `git archive` of the trial merge in pkernel_audit_ss (gcc 13.3.0, `objcopy -O binary -j .text`;
+  `pk-scratch/m98/m98.sh`):
+    base `3cd974e9`  aarch64 9f4400ea… 361980 B   x86 f55b1b88… 379967 B (measured on master in the same run)
+      aarch64  11be1015cbebbd67585e989d30991a9198a50216bded7a6073ed70d8601b08e7  362716 B (+736)
+      x86      f3a94e2d167fe0fcc671e47dcf9789c312ed7961e95990ff7cc6ab92dd82d6a3  380523 B (+556)
+  (= the values audit-92 and audit-93 measured on the fix.) On the merge tree: samples/11_distributed/
+  run_4node_regions.sh R1-R3 PASS (the BLOCKING CI step 840b8baf broke), tests/host/run_dkva_resp_to.sh ALL PASS
+  with its falsifier RED, run_coord_crash.sh PASS; bare run_tk_conform.sh x86 133/0 with all 14 broken kernels red and AArch64 133/0 with all 14 broken kernels red;
+  build_all ALL OK (incl. windows, bare x86/rpi3/aarch64, dmoe); pychecks 12/12 + parity + yaml. Limits (audit-93): a revert of the production path alone to the
+  whole region is seen by no CI step (only 64 nodes show it); 64 nodes were not re-run on the merge (production
+  path unchanged since 840b8baf: 2/2 ALL PASS there). Written by the run that merged.
 - CROWN RE-BLESS — 0-14 S2 stage 1 on bare x86 (2026-10-25): `e7d86d6e` `feat/stop-bare-x86` cdeeccd0 (audit-83
   PASS with limits; R-STOPBARE put to mk_pino with a recommendation, past its deadline 2026-10-25T14:35 with no
   answer, landed on it per inbox #37), `--no-ff` onto `eaa93925` (the branch's base), no conflict; merge tree
