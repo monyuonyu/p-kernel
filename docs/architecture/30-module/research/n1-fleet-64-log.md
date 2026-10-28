@@ -70,6 +70,15 @@ NC1（DNODE_MAX 32 の木、48 台）C2 だけ赤／NC2（2 台 kill）C6 だけ
 - 監査者へ: ARP の返事も 1 台宛てになる＝他のノードが立ち聞きで MAC を覚える道は無くなる（hosted の ARP の使われ方は未確認）。getenv を送るたびに読む
 - 監査-91（10-28 02:10、PASS）: 試験は master の木で U1 だけ赤 ×4・枝で 36 項目緑。壊し方 9 つ中 7 つが狙いの U で赤。緑のまま 2 つ: N=0 の検査を外す（dst 0＝broadcast で同じ動き）・MAC の先頭バイトを見ない（試験の穴、群れに 52 以外の 1 台宛ては無い）。32 台 入 ALL PASS（31,31・落ち 0）／切 C4E 赤（30,0・落ち 5.1 万、CI の始まりと重なった）。64 台は測り直していない。ARP は drpc.c 588〜599 が群れ全体を最初から入れる＝立ち聞きは要らない。setenv は試験だけ。ベアの .text は不変、build_all ALL OK
 
+## 10-28 02:30 応答の宛先（実装、監査は別の回。枝 feat/n1-resp-to）
+
+- 応答 resp/<n> を読むのは起点（自 region に居るとき）と自 region の coordinator（cagg）だけ。今までは region 全員へ×再送 100 回。直し: kdds_pub_to（網へは 1 台だけ）を足し、dkva_resp_dests で宛先を最大 2 つに。他 region の起点へは直接送らない（rsum と二重に数える）。`-DDKVA_RESP_REGION_ALL` で前の送り方
+- 試験 `tests/host/run_dkva_resp_to.sh`（[dkva-resp-to] R1〜R6、`dkva test`、CI の UMP x86_64）: 仮の関数で全部赤 → 実装で緑、falsifier で全部赤。x86_64 だけ（容器に aarch64 の実行が無い）
+- 容器、交互（32 枝・32 前・64 枝・64 前・64 前・64 枝、前＝master 7c52a9e6）: 32 台は両方 ALL PASS（落ち 0）。**64 台 枝 2/2 ALL PASS**（仲間 55,55・中継の落ち 0・region 59/56）／**前 2/2 C4E だけ赤**（54,0・落ち 33.3 万/32.2 万）。負荷 8〜10（交互なので比べは有効）。ベアの .text が動く: x86 f55b1b88 379967→1658860d 380511、aarch64 9f4400ea 361980→4087772c 362680
+- 監査者へ: 自己テストは宛先の表だけ＝網の上で 2 台にしか届かないことは 64 台の落ち 0 で見た読み（kdds の tx を数える試験は無い）。coordinator が途中で変わる・region が割れる場合は測っていない。各 2 回
+- 監査-92（10-28 04:25 の回、FAIL→監査者の直し 1e7562da）: 840b8baf では CI の BLOCKING の段 run_4node_regions.sh が赤（R2・R3: `PKERNEL_DKVA_RESP_GLOBAL` の falsifier が噛まない。kdds_pub_to はスコープを見ない）、master は PASS（容器で各 1 回）。直し: falsifier が立っているときだけ前の kdds_pub。直しで regions PASS・[dkva-resp-to] ALL PASS・coord_crash PASS（master も PASS）。64 台は測り直していない（本番の道は変わらない）。crown: 840b8baf は実装者の値と全桁一致、直しで x86 f3a94e2d 380523・aarch64 11be1015 362716。直しの監査は次の回
+- 監査-93（10-28 05:45 の回、直し 1e7562da を限界つき PASS）: 差分は応答の送りの if だけ、本番の道は 840b8baf と同じ。容器で頭 4bd354a4: regions PASS（R1〜R3）・[dkva-resp-to] ALL PASS（falsifier 赤）・coord_crash PASS。壊し方（if を逆に）: regions の R2・R3 が赤、[dkva-resp-to] は緑のまま（表しか見ない）。**穴: 本番の道だけを region 全員へ戻す壊し方は CI のどの段でも見えない（4 台では R1 が見えない、見えるのは 64 台）**。ベアの約束ごとの試験は x86・aarch64 とも 133/0＋14 種赤（監査-92 が走らせ、私が出力を読んだ）。crown を測り直して全桁一致（x86 f3a94e2d 380523・aarch64 11be1015 362716）。マージは R-RESPTO の期限（10-29 03:30）の後、re-bless と一緒に
+
 ## まだ言えないこと
 
 1 台の機械の 64 プロセス。実機・ネットの遅れは無い。各条件の試しは 1 回

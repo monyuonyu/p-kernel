@@ -239,6 +239,11 @@ void kdds_locality_stats(UW *msgs, UW *cross, UW *bytes, UW *bytes_cross);
  * 成功時は 0、失敗時は負のエラーコード。 */
 W kdds_pub(W handle, const void *data, W len);
 
+/* kdds_pub と同じだが、網へは dst の 1 台にだけ送る (N1、dkva の応答)。
+ * dst が自分か DNODE_MAX 以上なら網へは送らない。スコープは見ない
+ * (宛先を選ぶのは呼び出し側)。 */
+W kdds_pub_to(W handle, const void *data, W len, UB dst);
+
 /* トピックの次の値を受信する (ブロッキング)。
  * buf へデータをコピーし、受信バイト数を返す。
  * timeout_ms: -1=無限待ち, 0=ポーリング。

@@ -856,6 +856,30 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
 }
 
 /* ------------------------------------------------------------------ */
+/* N1 (research/n1-fleet-64.md「応答の宛先」): 起点 origin への応答を誰に  */
+/* 送るか。resp/<me> を読むのは 起点 (自 region に居るときだけ。他 region */
+/* の起点は rsum で受け取る＝直接送ると二重に数える) と自 region の       */
+/* coordinator (cagg_step) の 2 者だけ。out に最大 2 つ、数を返す。       */
+/* DKVA_RESP_ALL は「今までどおり region 全員へ kdds_pub」の印。          */
+/* ------------------------------------------------------------------ */
+#define DKVA_RESP_ALL 0xFF
+
+static INT dkva_resp_dests(UB me, UB origin, UB coord, BOOL origin_in_region,
+                           UB out[2])
+{
+#ifdef DKVA_RESP_REGION_ALL   /* falsifier: 今までどおり region 全員へ */
+    (void)me; (void)origin; (void)coord; (void)origin_in_region;
+    out[0] = DKVA_RESP_ALL;
+    return 1;
+#else
+    INT n = 0;
+    if (origin_in_region && origin != me && origin < DNODE_MAX) out[n++] = origin;
+    if (coord < DNODE_MAX && coord != me && coord != origin)    out[n++] = coord;
+    return n;
+#endif
+}
+
+/* ------------------------------------------------------------------ */
 /* Responder タスク: dtr_task とは別タスクで回す                      */
 /* ------------------------------------------------------------------ */
 
@@ -940,8 +964,28 @@ void dkva_task(INT stacd, void *exinf)
             for (INT scan = 0; scan < DNODE_MAX; scan++) {
                 rr = (UB)((rr + 1) % DNODE_MAX);
                 if (pend_ttl[rr] > 0) {
-                    kdds_pub(h_resp_pub[me], &resp_cache[rr],
-                             (W)sizeof(DKVA_RESP_PKT));
+                    /* N1: 読む 2 者 (起点・coordinator) にだけ送る。宛先は毎回
+                     * 決め直す (coordinator が途中で変わっても新しい方へ)。 */
+                    UB dst[2];
+                    INT nd;
+                    if (dkva_resp_scope_global) {
+                        /* R0.1 falsifier (PKERNEL_DKVA_RESP_GLOBAL): 今までどおり
+                         * スコープ (GLOBAL) の全員へ。kdds_pub_to はスコープを
+                         * 見ないので、こうしないと run_4node_regions.sh の R2・R3
+                         * が噛まない (監査-92)。 */
+                        dst[0] = DKVA_RESP_ALL; nd = 1;
+                    } else {
+                        UB coord = region_coordinator();   /* region_recompute 込み */
+                        nd = dkva_resp_dests(me, rr, coord, region_is_member(rr), dst);
+                    }
+                    for (INT k = 0; k < nd; k++) {
+                        if (dst[k] == DKVA_RESP_ALL)
+                            kdds_pub(h_resp_pub[me], &resp_cache[rr],
+                                     (W)sizeof(DKVA_RESP_PKT));
+                        else
+                            kdds_pub_to(h_resp_pub[me], &resp_cache[rr],
+                                        (W)sizeof(DKVA_RESP_PKT), dst[k]);
+                    }
                     pend_ttl[rr]--;
                     break;
                 }
@@ -1436,6 +1480,36 @@ static INT dkva_fold_order_test(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* [dkva-resp-to] (N1): dkva_resp_dests の宛先の表。me=1・origin=2 で、  */
+/* coordinator と「起点が自 region か」を変える。期待は 0〜2 個の宛先を  */
+/* 順に (起点 → coordinator)。純ローカル。                               */
+/* ------------------------------------------------------------------ */
+static INT dkva_resp_to_test(void)
+{
+    static const struct { UB coord; UB in; INT n; UB d0, d1; const char *what; } c[] = {
+        { 1,    1, 1, 2, 0, "R1 in region, I coordinate      -> origin       : " },
+        { 3,    1, 2, 2, 3, "R2 in region, coordinator 3     -> origin, 3    : " },
+        { 3,    0, 1, 3, 0, "R3 other region, coordinator 3  -> 3 only       : " },
+        { 1,    0, 0, 0, 0, "R4 other region, I coordinate   -> nobody       : " },
+        { 2,    1, 1, 2, 0, "R5 origin is the coordinator    -> origin once  : " },
+        { 0xFF, 1, 1, 2, 0, "R6 no coordinator known         -> origin       : " },
+    };
+    INT fails = 0;
+    for (UW i = 0; i < (UW)(sizeof(c) / sizeof(c[0])); i++) {
+        UB out[2] = { 0xEE, 0xEE };
+        INT n = dkva_resp_dests(1, 2, c[i].coord, (BOOL)c[i].in, out);
+        INT ok = (n == c[i].n)
+              && (n < 1 || out[0] == c[i].d0)
+              && (n < 2 || out[1] == c[i].d1);
+        dk_puts("[dkva-resp-to] "); dk_puts(c[i].what);
+        dk_puts(ok ? "PASS\r\n" : "FAIL\r\n");
+        if (!ok) fails++;
+    }
+    dk_puts(fails ? "[dkva-resp-to] FAIL\r\n" : "[dkva-resp-to] PASS\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
 /* [fed-2cluster] + [coord-crash] federation R0 self-test (in-proc)     */
 /*                                                                     */
 /* docs/architecture/federation-r0-plan.md §3.1 Arm A + §3.2.           */
@@ -1668,6 +1742,7 @@ void dkva_cmd(const UB *args, UW len)
         if (tverb[ti] == '\0') {
             dkva_self_test(); dkva_arrival_test(); dkva_fed2_self_test();
             dkva_unbounded_self_test(); dkva_fold_order_test();
+            dkva_resp_to_test();
             return;
         }
     }
