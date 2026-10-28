@@ -3372,7 +3372,11 @@ static MC_RSTAMP mc_rstamp[R3_FQ_MAX];
 static void mc_rstamp_put(UW local_seq, UW stamp)
 {
     INT slot = -1;
+    /* 1-3m: a seq already here gets the new stamp (mc_dup_adopt); the
+     * learn and revise sites always come with a fresh local seq */
     for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (mc_rstamp[i].used && mc_rstamp[i].seq == local_seq) { slot = i; break; }
+    for (INT i = 0; slot < 0 && i < R3_FQ_MAX; i++)
         if (!mc_rstamp[i].used) { slot = i; break; }
     if (slot < 0) {
         for (INT i = 0; i < R3_FQ_MAX; i++) {
@@ -3538,6 +3542,43 @@ static void mc_incoming_lost(INT fi, INT bind, UB v_in, U1 org, UW s_in,
 #endif
 }
 
+/* 1-3m (the TLA+ model, tests/model/mind_rule/cex/S3-now.txt): the same value
+ * from a teacher that wins on the rule (a larger stamp, or the same stamp and
+ * a smaller node). It used to be dropped as a plain duplicate: this node kept
+ * its own weaker stamp while the sender's seq was used up (mt_last_seq), a
+ * later value with a stamp in between then won here alone, and every re-send
+ * of the better one was deduplicated — three nodes split for good with no
+ * packet lost. Now the engram takes the incoming stamp and teacher; the
+ * value does not change, so nothing goes to the history. The node's own
+ * teach of that value keeps its prov record (ark), but `mind ask` and a pull
+ * answer now name the winning teacher. Returns 1 if taken.
+ * -DMC_DUP_KEEPS_STAMP: the old drop (negative control). */
+static INT mc_dup_adopt(INT fi, UB k, UW s_in, U1 org, const U1 prov_in[PFS_ID_LEN])
+{
+#ifdef MC_DUP_KEEPS_STAMP
+    (void)fi; (void)k; (void)s_in; (void)org; (void)prov_in;
+    return 0;
+#else
+    UW seq = r3_fq[fi].seq;
+    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    if (!((s_in > s_cur) || (s_in == s_cur && org < o_cur))) return 0;
+    MT_REMOTE_PROV *rp = mt_rprov_find(seq);
+    if (rp) {
+        rp->origin_node = org;
+        for (INT i = 0; i < PFS_ID_LEN; i++) rp->prov_head[i] = prov_in[i];
+    } else {
+        mt_rprov_put(seq, org, prov_in);
+    }
+    mc_rstamp_put(seq, s_in);
+    r_puts("[mind] remote teach key "); r_putdec((UW)k);
+    r_puts(" from node "); r_putdec((UW)org);
+    r_puts(" — same value, took its stamp "); r_putdec(s_in);
+    r_puts(" (was stamp "); r_putdec(s_cur); r_puts(" node "); r_putdec((UW)o_cur);
+    r_puts(")\r\n");
+    return 1;
+#endif
+}
+
 /* once per mind_net_task tick, after the pull answers and before my own
  * re-drive: re-send the held winner (see mc_incoming_lost). */
 static void mc_push_redrive(void)
@@ -3596,6 +3637,15 @@ static void mc_ask_tail(INT k)
         if (r->used && r->key == (UB)k) mc_print(r, "[mind]   conflict history: ");
     }
 }
+
+#ifdef MT_RX_INJECT
+/* test builds only (tests/host/run_mind_dup_stamp.sh, ROADMAP 1-3m): `mind
+ * inject <node> <stamp> <key> <value>` hands mind_net_task one mind/teach
+ * packet as if <node> had sent it, in place of its next kdds_sub — a fixed
+ * arrival order on one node (the TLA+ counterexample cex/S3-now.txt). */
+static MT_TEACH_PKT mt_inj_pkt;
+static volatile UB mt_inj_have;
+#endif
 #endif /* _TK_HOSTED_LIBC_ */
 
 static INT m_parse_uint(const UB **pp, const UB *end, INT *out)
@@ -3670,6 +3720,34 @@ static INT m_resolve_token(const UB **pp, const UB *end, INT is_key, INT *out)
     *out = id;
     return 1;
 }
+
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+/* `mind inject <node> <stamp> <key> <value>` (test builds only, see
+ * mt_inj_pkt): one packet at a time; the caller waits for "inject: taken". */
+static void m_inject(const UB *p, const UB *end)
+{
+    INT org, s, k, v;
+    if (!m_parse_uint(&p, end, &org) || !m_parse_uint(&p, end, &s) ||
+        m_resolve_token(&p, end, 1, &k) != 1 ||
+        m_resolve_token(&p, end, 0, &v) != 1 || org >= DNODE_MAX) {
+        r_puts("usage: mind inject <node> <stamp> <key> <value>\r\n");
+        return;
+    }
+    if (mt_inj_have) { r_puts("[mind] inject: the previous packet is not taken yet\r\n"); return; }
+    for (INT i = 0; i < (INT)sizeof mt_inj_pkt; i++) ((UB *)&mt_inj_pkt)[i] = 0;
+    mt_inj_pkt.magic       = MT_MAGIC;
+    mt_inj_pkt.fact_seq    = (UW)s;
+    mt_inj_pkt.origin_node = (U1)org;
+    mt_inj_pkt.key         = (U1)k;
+    mt_inj_pkt.val         = (U1)v;
+    mt_inj_pkt.src         = ARK_PROV_SRC_SHELL;
+    mt_inj_pkt.wire_ver    = MT_WIRE_VER_VOCAB;
+    mt_vocab_fp_fill(mt_inj_pkt.vocab_fp);
+    mt_inj_have = 1;
+    r_puts("[mind] inject: node "); r_putdec((UW)org); r_puts(" stamp "); r_putdec((UW)s);
+    r_puts(" key "); r_putdec((UW)k); r_puts(" value "); r_putdec((UW)v); r_puts(" queued\r\n");
+}
+#endif
 
 static INT m_kw(const UB **pp, const UB *end, const char *kw)
 {
@@ -4193,6 +4271,9 @@ void mind_cmd(const UB *args, UW len)
     while (p < end && (*p == ' ' || *p == '\t')) p++;
     if (p >= end)                    { m_quiesce(); m_status(); }
     else if (m_kw(&p, end, "teach")) m_teach(p, end);
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+    else if (m_kw(&p, end, "inject")) m_inject(p, end);       /* test builds */
+#endif
     else if (m_kw(&p, end, "ask"))   m_ask(p, end);
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else if (m_kw(&p, end, "lang"))  r3_lang_test();
@@ -5062,7 +5143,16 @@ void mind_net_task(INT stacd, void *exinf)
         }
 #endif
 #endif
+#if defined(_TK_HOSTED_LIBC_) && defined(MT_RX_INJECT)
+        W r;                         /* test builds: `mind inject` goes first */
+        if (mt_inj_have) {
+            mt_rx_pkt = mt_inj_pkt; mt_inj_have = 0; r = (W)sizeof mt_rx_pkt;
+            r_puts("[mind] inject: taken\r\n");
+        } else
+            r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+#else
         W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+#endif
         if (r >= (W)sizeof mt_rx_pkt && mt_rx_pkt.magic == MT_MAGIC) {
             /* LM-8 (IX.7/IX.8): version gate — a packet whose wire_ver does
              * not match ours is DROPPED and PRINTED. This is the ONE place
@@ -5156,6 +5246,12 @@ void mind_net_task(INT stacd, void *exinf)
                     if (fi >= 0) {
                         /* (4) conflict: LOCAL teach (or a prior remote) wins. */
                         UB cur = r3_fq[fi].val[bind];   /* 1-8: the record */
+#ifdef _TK_HOSTED_LIBC_
+                        if (cur == v && mc_dup_adopt(fi, (UB)k, mt_rx_pkt.fact_seq, org,
+                                                     mt_rx_pkt.prov_head)) {
+                            /* 1-3m: same value, a better stamp: taken */
+                        } else
+#endif
                         if (cur == v) {
                             r_puts("[mind] remote teach key ");
                             r_putdec((UW)k); r_puts(" from node ");

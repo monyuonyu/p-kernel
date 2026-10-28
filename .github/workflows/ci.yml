@@ -1094,6 +1094,16 @@ jobs:
           timeout 400 tests/host/run_mind_conflicts.sh | tee mind_conflicts.log
           grep -aF '[mind-conflicts] ALL PASS' mind_conflicts.log
 
+      # ROADMAP 1-3m (2026-10-29): the TLA+ model's counterexample on one node
+      # (tests/model/mind_rule/cex/S3-now.txt) — a same-value teach from a
+      # better teacher must take its stamp, or a middle stamp wins here alone.
+      # Test hook -DMT_RX_INJECT; red on master and with -DMC_DUP_KEEPS_STAMP.
+      # Rebuilds boot/linux_x86_64 and cleans it after. ~1 min.
+      - name: same value, better stamp (ROADMAP 1-3m)
+        run: |
+          timeout 300 tests/host/run_mind_dup_stamp.sh | tee mind_dup_stamp.log
+          grep -aF '[mind-dup-stamp] ALL PASS' mind_dup_stamp.log
+
       # ROADMAP 1-2b: a node that keeps re-driving its own last teach must
       # still deliver pull answers (mind/teach is LATEST_ONLY; the answer was
       # overwritten in the same tick). Red with -DMQ_NO_ANSWER_SKIP. ~1 min.
