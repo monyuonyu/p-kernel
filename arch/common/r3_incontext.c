@@ -3372,7 +3372,11 @@ static MC_RSTAMP mc_rstamp[R3_FQ_MAX];
 static void mc_rstamp_put(UW local_seq, UW stamp)
 {
     INT slot = -1;
+    /* 1-3m: a seq already here gets the new stamp (mc_dup_adopt); the
+     * learn and revise sites always come with a fresh local seq */
     for (INT i = 0; i < R3_FQ_MAX; i++)
+        if (mc_rstamp[i].used && mc_rstamp[i].seq == local_seq) { slot = i; break; }
+    for (INT i = 0; slot < 0 && i < R3_FQ_MAX; i++)
         if (!mc_rstamp[i].used) { slot = i; break; }
     if (slot < 0) {
         for (INT i = 0; i < R3_FQ_MAX; i++) {
@@ -3535,6 +3539,43 @@ static void mc_incoming_lost(INT fi, INT bind, UB v_in, U1 org, UW s_in,
     mc_push_sends_left  = (UB)(MC_PUSH_SENDS - mc_push_sent_n);
     mc_push_ticks_left  = MC_PUSH_TICKS;
     mq_answer_sent      = 1;         /* my own re-drive must not overwrite it now */
+#endif
+}
+
+/* 1-3m (the TLA+ model, tests/model/mind_rule/cex/S3-now.txt): the same value
+ * from a teacher that wins on the rule (a larger stamp, or the same stamp and
+ * a smaller node). It used to be dropped as a plain duplicate: this node kept
+ * its own weaker stamp while the sender's seq was used up (mt_last_seq), a
+ * later value with a stamp in between then won here alone, and every re-send
+ * of the better one was deduplicated — three nodes split for good with no
+ * packet lost. Now the engram takes the incoming stamp and teacher; the
+ * value does not change, so nothing goes to the history. The node's own
+ * teach of that value keeps its prov record (ark), but `mind ask` and a pull
+ * answer now name the winning teacher. Returns 1 if taken.
+ * -DMC_DUP_KEEPS_STAMP: the old drop (negative control). */
+static INT mc_dup_adopt(INT fi, UB k, UW s_in, U1 org, const U1 prov_in[PFS_ID_LEN])
+{
+#ifdef MC_DUP_KEEPS_STAMP
+    (void)fi; (void)k; (void)s_in; (void)org; (void)prov_in;
+    return 0;
+#else
+    UW seq = r3_fq[fi].seq;
+    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    if (!((s_in > s_cur) || (s_in == s_cur && org < o_cur))) return 0;
+    MT_REMOTE_PROV *rp = mt_rprov_find(seq);
+    if (rp) {
+        rp->origin_node = org;
+        for (INT i = 0; i < PFS_ID_LEN; i++) rp->prov_head[i] = prov_in[i];
+    } else {
+        mt_rprov_put(seq, org, prov_in);
+    }
+    mc_rstamp_put(seq, s_in);
+    r_puts("[mind] remote teach key "); r_putdec((UW)k);
+    r_puts(" from node "); r_putdec((UW)org);
+    r_puts(" — same value, took its stamp "); r_putdec(s_in);
+    r_puts(" (was stamp "); r_putdec(s_cur); r_puts(" node "); r_putdec((UW)o_cur);
+    r_puts(")\r\n");
+    return 1;
 #endif
 }
 
@@ -5205,6 +5246,12 @@ void mind_net_task(INT stacd, void *exinf)
                     if (fi >= 0) {
                         /* (4) conflict: LOCAL teach (or a prior remote) wins. */
                         UB cur = r3_fq[fi].val[bind];   /* 1-8: the record */
+#ifdef _TK_HOSTED_LIBC_
+                        if (cur == v && mc_dup_adopt(fi, (UB)k, mt_rx_pkt.fact_seq, org,
+                                                     mt_rx_pkt.prov_head)) {
+                            /* 1-3m: same value, a better stamp: taken */
+                        } else
+#endif
                         if (cur == v) {
                             r_puts("[mind] remote teach key ");
                             r_putdec((UW)k); r_puts(" from node ");
