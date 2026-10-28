@@ -3279,6 +3279,15 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
     for (int i = 0; i < np; i++) scratch->w[i] = into->w[i];   /* best so far */
     if (start != ST_DISTILL_START_PICK)
         for (int i = 0; i < np; i++) into->w[i] = init->w[i];
+    /* stage 7: the running sum of the averaged weights */
+    double *acc = NULL;
+    if (start == ST_DISTILL_START_INIT_SWA) {
+        acc = (double *)calloc((size_t)np, sizeof(double));
+        if (!acc) {
+            for (int i = 0; i < np; i++) into->w[i] = scratch->w[i];
+            free(la); free(lb); free(lc); free(q); st_free(&ta); return ST_E_OOM;
+        }
+    }
 
     /* (2)(3) KL(teacher || child) on the xfer windows, in order */
     for (int s = 1; s <= steps; s++) {
@@ -3291,14 +3300,38 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
         st_forward(into, x, seqlen, lc);
         st_backward_q(into, x, seqlen, q);
         st_adam_step(into, lr);
+        if (s % ST_DISTILL_EVAL != 0) continue;
+        if (acc) {
+            /* stage 7: add every ST_DISTILL_EVAL-th point after steps/2 */
+#if defined(ST_DISTILL_SWA_FIRST)
+            int in = s <= steps / 2;               /* negative control */
+#else
+            int in = s > steps / 2;
+#endif
+            if (in) {
+                for (int i = 0; i < np; i++) acc[i] += (double)into->w[i];
+                z.n_avg++;
+            }
+            continue;
+        }
         /* (4) keep the best on val (ties keep the earlier) */
-        if (s % ST_DISTILL_EVAL == 0) {
+        float l = st_windows_loss(into, val, nv, seqlen);
+        if (l < best) {
+            best = l; z.best_step = s;
+            for (int i = 0; i < np; i++) scratch->w[i] = into->w[i];
+        }
+    }
+    if (acc) {
+        /* the mean replaces the guarded pick only if its val is lower */
+        if (z.n_avg > 0) {
+            for (int i = 0; i < np; i++) into->w[i] = (float)(acc[i] / z.n_avg);
             float l = st_windows_loss(into, val, nv, seqlen);
             if (l < best) {
-                best = l; z.best_step = s;
+                best = l; z.best_step = steps;
                 for (int i = 0; i < np; i++) scratch->w[i] = into->w[i];
             }
         }
+        free(acc);
     }
     for (int i = 0; i < np; i++) {
         into->w[i] = scratch->w[i]; into->mu[i] = 0.0f; into->vu[i] = 0.0f;
