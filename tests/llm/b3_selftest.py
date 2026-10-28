@@ -14,6 +14,8 @@
   J2..J8  one thing broken each -> the judge is red on that gate only
           (G1 a skipped window, G2 different line, G3 held64, G4 above 3.56,
            LEAK no difference, TEACHER 94 %, FILTER 31 %)
+  J9  M seed 2 above 3.56 -> red on G4 only (G4 reads both seeds)
+  J10 one arm's log missing -> red on ALL-ARMS, G1 and G3
 
   b3_selftest.py           exit 0 = ALL PASS
 """
@@ -142,6 +144,8 @@ def write_logs(d, breaks=()):
                 a, bb = b - 0.10, b - 0.10
             if "G4" in breaks and name == "M-1" and u == US[-1]:
                 b = 3.57
+            if "G4b" in breaks and name == "M-2" and u == US[-1]:
+                b = 3.57
             skip = 1 if "G1" in breaks and name == "S-2" and i == 0 else 0
             lines.append("[b3] point U=%d k=%d bpb=%.4f held_a=%.4f held_b=%.4f gen=%.4f wins=%d skipped=%d" % (
                 u, u // 32, b, a, bb, b - 0.4, 331 - skip, skip))
@@ -149,7 +153,8 @@ def write_logs(d, breaks=()):
         with open(os.path.join(d, name + ".log"), "w") as fh:
             fh.write("noise line\n" + "\n".join(lines) + "\n")
     arm("S-1", "S", 1, "plain", US, 3.62)
-    arm("S-2", "S", 2, "plain", US, 3.63)
+    if "ARMS" not in breaks:
+        arm("S-2", "S", 2, "plain", US, 3.63)
     arm("M-1", "M", 1, "plain", US, 3.64)
     arm("M-2", "M", 2, "plain", US, 3.65)
     arm("S-1-again", "S", 1, "plain", US[:2], 3.62 + (0.0001 if "G2" in breaks else 0.0))
@@ -168,8 +173,10 @@ def write_logs(d, breaks=()):
 
 
 def judge_tests():
-    cases = [("J1", (), "ALL PASS")] + [("J%d" % (i + 2), (g,), g) for i, g in
+    cases = [("J1", (), "ALL PASS")] + [("J%d" % (i + 2), (g,), [g]) for i, g in
                                         enumerate(["G1", "G2", "G3", "G4", "LEAK", "TEACHER", "FILTER"])]
+    # audit-94: G4 must read both M seeds; a missing arm reddens ALL-ARMS (and G1, G3, which need every arm)
+    cases += [("J9", ("G4b",), ["G4"]), ("J10", ("ARMS",), ["ALL-ARMS", "G1", "G3"])]
     for jid, breaks, want in cases:
         with tempfile.TemporaryDirectory() as d:
             write_logs(d, breaks)
@@ -179,8 +186,8 @@ def judge_tests():
             if not breaks:
                 ok = p.returncode == 0 and "[b3-data] ALL PASS" in p.stdout and not red
             else:
-                ok = p.returncode == 1 and red == [want]
-            item(ok, jid, "%s -> rc %d, red %s" % ("nothing broken" if not breaks else "break " + want,
+                ok = p.returncode == 1 and red == sorted(want)
+            item(ok, jid, "%s -> rc %d, red %s" % ("nothing broken" if not breaks else "break " + breaks[0],
                                                    p.returncode, red))
 
 
