@@ -161,6 +161,11 @@ def write_logs(d, breaks=()):
         fh.write("[b3] arm tier=S seed=1 mode=leak held64=12 held_windows=331\n"
                  "[b3] point U=393216 k=12288 bpb=%.4f held_a=%.4f held_b=%.4f gen=3.1000 wins=331 skipped=0\n"
                  "[b3] done\n" % (b, a, bb))
+    if "LEAK16" in breaks:  # not a break: the reading arm is there
+        with open(os.path.join(d, "S-leak16.log"), "w") as fh:
+            fh.write("[b3] arm tier=S seed=1 mode=leak16 held64=83472 held_windows=331\n"
+                     "[b3] point U=393216 k=14928 bpb=3.2000 held_a=3.0200 held_b=3.4000 gen=3.1000 "
+                     "wins=331 skipped=0\n[b3] done\n")
     with open(os.path.join(d, "gen-report.txt"), "w") as fh:
         fh.write("[b3-teacher] match=%d of 256\n" % (240 if "TEACHER" in breaks else 250))
         fh.write("[b3-filter] in=1000 kept=%d bytes=1600000 drop q1=1 q2=1 q3=1 q4=1 q5=1 rate=%.4f "
@@ -182,6 +187,18 @@ def judge_tests():
                 ok = p.returncode == 1 and red == [want]
             item(ok, jid, "%s -> rc %d, red %s" % ("nothing broken" if not breaks else "break " + want,
                                                    p.returncode, red))
+            if not breaks:
+                item("read LEAK16" not in p.stdout, "J11a", "no S-leak16 log -> no LEAK16 reading")
+    # the reading arm S-leak16 (b1_held's first half 16 times; not a gate): S-1 at 384 KB is
+    # 3.52 on both halves, the arm 3.02 / 3.40 -> first half -0.50, second -0.12, difference -0.38
+    with tempfile.TemporaryDirectory() as d:
+        write_logs(d, ("LEAK16",))
+        p = subprocess.run([sys.executable, os.path.join(HERE, "b3_curve_check.py"), d],
+                           capture_output=True, text=True)
+        rd = [ln for ln in p.stdout.splitlines() if ln.startswith("[b3-data] read LEAK16")]
+        item(p.returncode == 0 and "[b3-data] ALL PASS" in p.stdout and len(rd) == 1
+             and "first half -0.5000, second half -0.1200, difference -0.3800" in rd[0],
+             "J11", "S-leak16 log -> one reading line, still ALL PASS (%s)" % (rd[0] if rd else "no line"))
 
 
 def main():
