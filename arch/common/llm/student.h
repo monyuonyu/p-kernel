@@ -560,11 +560,20 @@ int   st_merge_guarded(st_model *into, const st_model *peer,
 #define ST_DISTILL_EVAL 10
 #define ST_DISTILL_START_PICK 0
 #define ST_DISTILL_START_INIT 1
+/* stage 7 (research/brain-merge-swa.md §2): start from `init` like
+ * ST_DISTILL_START_INIT, but do not keep the VAL-best: return the mean of the
+ * weights at every ST_DISTILL_EVAL-th step after steps/2 (SWA, arXiv:1803.05407
+ * Alg. 1; summed in double, in order = deterministic) if its `val` loss is
+ * lower than the guarded pick's, else the guarded pick (best_step 0).
+ * best_step = steps when the mean is returned. Cert-only negative control:
+ * -DST_DISTILL_SWA_FIRST (average the first half instead).                 */
+#define ST_DISTILL_START_INIT_SWA 2
 typedef struct {
     int   init_pick;    /* st_merge_guarded's candidate index              */
     int   best_step;    /* 0 = the guarded pick was kept                   */
     float val_before;   /* val loss of the guarded pick                    */
     float val_after;    /* val loss of the returned child                  */
+    int   n_avg;        /* START_INIT_SWA: points averaged (else 0)        */
 } st_distill_stats;
 float st_backward_soft(st_model *m, const uint8_t *bytes, int n, const float *q);
 int   st_merge_distill(st_model *into, st_model *peer, const st_model *init,
@@ -590,6 +599,15 @@ int   st_merge_distill_sel(st_model *into, st_model *peer, const st_model *init,
                            int steps_pick, float lr_pick,
                            int steps_init, float lr_init,
                            st_distill_sel_stats *stats);
+/* st_merge_distill_sel_swa (stage 7): st_merge_distill_sel with the init
+ * arm run as ST_DISTILL_START_INIT_SWA. Same arguments, same choice by VAL,
+ * same negative controls. Hosted-only.                                     */
+int   st_merge_distill_sel_swa(st_model *into, st_model *peer, const st_model *init,
+                               st_model *scratch, const uint8_t *const *xfer, int nx,
+                               const uint8_t *const *val, int nv, int seqlen,
+                               int steps_pick, float lr_pick,
+                               int steps_init, float lr_init,
+                               st_distill_sel_stats *stats);
 
 /* ---- firing-width observability (SS-1) ----
  * Read-only: the number of experts the LAST st_forward fired on its FINAL

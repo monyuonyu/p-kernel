@@ -45,6 +45,16 @@
  *  (only the sel arm). run_st_distill_sel.sh runs seeds 0xC0FFEE 2 3 and
  *  the NCs -DST_DISTILL_SEL_INVERT / _SEL_PICK / _SEL_INIT.
  *
+ *  Stage 7 (brain-merge-swa.md §2-3, fixed before code), -DD5C_SWA: the
+ *  init arm returns the mean of the weights at every ST_DISTILL_EVAL-th
+ *  step after steps/2 (st_merge_distill_sel_swa, ST_DISTILL_START_INIT_SWA)
+ *  instead of the VAL-best; start=sel and the single-start init child in
+ *  [d5c-sel-val] both use it. Adds
+ *    [d5c-swa-points]     the init arm averaged steps/10 - (steps/2)/10
+ *                         points (gated: the mechanism, not the research)
+ *    [d5c-teacher-reach]  S1: the teacher's TEST <= better parent - GAIN
+ *                         (recorded, not gated). run_st_distill_swa.sh.
+ *
  *  Negative controls (run_st_distill.sh judges the target line
  *  "[d5c-s2-both] ... start=init", not the exit code):
  *    -DST_DISTILL_ONE_TEACHER  the teacher is `into` alone
@@ -205,14 +215,25 @@ static int merge(st_model *child, st_model *a, st_model *b, const st_model *I,
     clone(child, a);
     if (start == START_SEL) {
         memset(&g_ss, 0, sizeof g_ss);
+#ifdef D5C_SWA
+        int r = st_merge_distill_sel_swa(child, b, I, S, x, nx, VALW, VW, SEQLEN,
+                                         D_STEPS, D_LR, ROUNDS * TW, B_LR, &g_ss);
+#else
         int r = st_merge_distill_sel(child, b, I, S, x, nx, VALW, VW, SEQLEN,
                                      D_STEPS, D_LR, ROUNDS * TW, B_LR, &g_ss);
+#endif
         *st = g_ss.chose_init ? g_ss.init : g_ss.pick;
         return r;
     }
     if (start == ST_DISTILL_START_INIT)
         return st_merge_distill(child, b, I, S, x, nx, VALW, VW, SEQLEN,
-                                ROUNDS * TW, B_LR, start, st);
+                                ROUNDS * TW, B_LR,
+#ifdef D5C_SWA
+                                ST_DISTILL_START_INIT_SWA,
+#else
+                                start,
+#endif
+                                st);
     return st_merge_distill(child, b, I, S, x, nx, VALW, VW, SEQLEN, D_STEPS,
                             D_LR, start, st);
 }
@@ -224,6 +245,37 @@ static void report(const char *arm, const char *sc, int rc,
            arm, sc, rc, st->init_pick, st->best_step,
            (double)st->val_before, (double)st->val_after);
 }
+
+#ifdef D5C_SWA
+/* stage 7: the teacher's own loss on windows w = mean next-byte NLL under
+ * softmax(0.5 (logits A + logits B)), as st_teacher_row builds it */
+static float teacher_loss_on(st_model *a, st_model *b, const uint8_t *const *w, int n)
+{
+    size_t row = (size_t)SEQLEN * ST_VOCAB;
+    float *la = (float *)malloc(row * sizeof(float));
+    float *lb = (float *)malloc(row * sizeof(float));
+    double tot = 0.0;
+    for (int i = 0; i < n; i++) {
+        st_forward(a, w[i], SEQLEN, la);
+        st_forward(b, w[i], SEQLEN, lb);
+        double s1 = 0.0;
+        for (int t = 0; t < SEQLEN - 1; t++) {
+            const float *za = la + (size_t)t * ST_VOCAB, *zb = lb + (size_t)t * ST_VOCAB;
+            double mx = 0.5 * ((double)za[0] + zb[0]), s = 0.0;
+            for (int o = 1; o < ST_VOCAB; o++) {
+                double z = 0.5 * ((double)za[o] + zb[o]);
+                if (z > mx) mx = z;
+            }
+            for (int o = 0; o < ST_VOCAB; o++) s += exp(0.5 * ((double)za[o] + zb[o]) - mx);
+            int y = w[i][t + 1];
+            s1 -= 0.5 * ((double)za[y] + zb[y]) - mx - log(s);
+        }
+        tot += s1 / (SEQLEN - 1);
+    }
+    free(la); free(lb);
+    return n ? (float)(tot / n) : 0.0f;
+}
+#endif
 
 /* stage 4: the sel child against both single-start children */
 static void sel_check(const char *sc, st_model *C, st_model *A, st_model *B,
@@ -246,10 +298,21 @@ static void sel_check(const char *sc, st_model *C, st_model *A, st_model *B,
     printf("  [walk %s pick] best_step=%d val guard %.4f -> %.4f fell_back=%d\n",
            sc, ss.pick.best_step, (double)ss.pick.val_before,
            (double)ss.pick.val_after, ss.pick.best_step == 0);
+#ifdef D5C_SWA
+    int steps = ROUNDS * TW, want_pts = steps / ST_DISTILL_EVAL - (steps / 2) / ST_DISTILL_EVAL;
+    printf("  [walk %s init] best_step=%d val guard %.4f ancestor %.4f -> %.4f fell_back=%d swa_points=%d\n",
+           sc, ss.init.best_step, (double)ss.init.val_before,
+           (double)loss_on((st_model *)I, VALW, VW), (double)ss.init.val_after,
+           ss.init.best_step == 0, ss.init.n_avg);
+    snprintf(g_msg, sizeof g_msg,
+             "[d5c-swa-points] %s: the init arm averaged %d points (steps %d)", sc, want_pts, steps);
+    CHECK(rc >= 0 && ss.init.n_avg == want_pts, g_msg);
+#else
     printf("  [walk %s init] best_step=%d val guard %.4f ancestor %.4f -> %.4f fell_back=%d\n",
            sc, ss.init.best_step, (double)ss.init.val_before,
            (double)loss_on((st_model *)I, VALW, VW), (double)ss.init.val_after,
            ss.init.best_step == 0);
+#endif
     printf("  [sel %s] VAL pick=%.4f init=%.4f -> chose %s | TEST pick=%.4f init=%.4f -> %s\n",
            sc, (double)ss.pick.val_after, (double)ss.init.val_after,
            ss.chose_init ? "init" : "pick", (double)tp, (double)ti,
@@ -297,6 +360,14 @@ static void run_arm(const char *arm, int gen, int start)
     printf("  [%s S1 %s] TEST A=%.4f B=%.4f child=%.4f plain=%.4f (gain vs better %.4f)\n",
            arm, sn, (double)lA, (double)lB, (double)lC, (double)lP,
            (double)(better - lC));
+#ifdef D5C_SWA
+    if (start == START_SEL) {
+        float lT = teacher_loss_on(&A, &B, TESTW, SW);
+        printf("  [d5c-teacher-reach] S1 start=sel: teacher TEST %.4f vs better parent - %.2f = %.4f -> %s (recorded, not gated)\n",
+               (double)lT, (double)GAIN, (double)(better - GAIN),
+               lT <= better - GAIN ? "reach" : "MISS");
+    }
+#endif
     CHECK(rc >= 0, G("st_merge_distill returned ok (S1)", sn));
     CHECK(rc >= 0 && lC <= better - GAIN, G("[d5c-s1-gain] S1 TEST: child <= better parent - 0.03", sn));
     CHECK(rc >= 0 && lC <= worse + 1e-4f, G("[d5c-floor] S1 TEST: child <= worse parent", sn));
@@ -449,6 +520,12 @@ int main(void)
     int only_sel = eo && *eo == '1';
     printf("  seed 0x%llX%s\n", (unsigned long long)g_seed, only_sel ? " (only start=sel)" : "");
     printf("  LR %g B_LR %g\n", (double)LR, (double)B_LR);
+#ifdef D5C_SWA
+    printf("  stage 7: init arm = mean of the second-half weights (st_merge_distill_sel_swa)\n");
+#endif
+#ifdef ST_DISTILL_SWA_FIRST
+    printf("(NEGATIVE CONTROL build: -DST_DISTILL_SWA_FIRST — the first half is averaged; read S1 TEST against plain)\n");
+#endif
 #if defined(ST_DISTILL_SEL_INVERT)
     printf("(NEGATIVE CONTROL build: -DST_DISTILL_SEL_INVERT — expect RED on s1-gain or s2-both start=sel)\n");
 #elif defined(ST_DISTILL_SEL_PICK)
