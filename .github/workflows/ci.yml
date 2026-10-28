@@ -3712,6 +3712,11 @@ jobs:
         run: bash tests/llm/check_held_split.sh
       - name: "[b1-held] S bits per byte on an independent held text (ROADMAP B1; -DB1_LEAK must go RED)"
         run: bash tests/llm/run_b1_held.sh
+      # 2026-10-28 (ROADMAP B3): the B3 text checks q1..q5 and the judge are
+      # checked on texts and logs made in the test (seconds, no model). The
+      # B3 run itself (run_b3_data.sh) needs the teacher's texts: not in CI.
+      - name: "[b3-self] B3 filter q1..q5 and judge (each gate reddens on its own break)"
+        run: python3 tests/llm/b3_selftest.py
 
   llm-kv-equivalence:
     # KV-cache byte-equivalence of the generation path (run_kv.sh): 15 cases over
