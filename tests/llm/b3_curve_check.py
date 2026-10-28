@@ -16,7 +16,8 @@ docs/architecture/30-module/research/b3-data.md sections 3 and 5:
            (leak - plain on the first half) - (same on the second half) <= -0.05
   plus ALL-ARMS: every arm asked for printed every U and "done"
 
-Readings (not gates) follow the table: plateau, size helps, gen_held only.
+Readings (not gates) follow the table: plateau, size helps, gen_held only,
+and LEAK16 when S-leak16.log is there (the held half mixed in 16 times).
 
   b3_curve_check.py <dir with <arm>.log and gen-report.txt>   exit 0 = ALL PASS
 """
@@ -35,7 +36,7 @@ B2_BEST = {"S": 3.63, "M": 3.66}
 
 PT = re.compile(r"^\[b3\] point U=(\d+) k=(\d+) bpb=([0-9.]+) held_a=([0-9.]+) held_b=([0-9.]+) "
                 r"gen=([0-9.]+) wins=(\d+) skipped=(\d+)$")
-HD = re.compile(r"^\[b3\] arm tier=([SM]) seed=(\d+) mode=(plain|rep|leak) held64=(-?\d+) "
+HD = re.compile(r"^\[b3\] arm tier=([SM]) seed=(\d+) mode=(plain|rep|leak16|leak) held64=(-?\d+) "
                 r"held_windows=(\d+)$")
 FR = re.compile(r"^\[b3-filter\] in=(\d+) kept=(\d+) bytes=(\d+) .* rate=([0-9.]+) ")
 TR = re.compile(r"^\[b3-teacher\] match=(\d+) of (\d+)$")
@@ -50,6 +51,7 @@ ARMS = {
 }
 
 fails = []
+OUT_DIR = []  # the log dir, for the reading arm S-leak16 (not in ARMS: not a gate)
 
 
 def item(ok, gid, what):
@@ -106,6 +108,7 @@ def main():
         print(__doc__)
         return 2
     d = sys.argv[1]
+    OUT_DIR.append(d)
     rep = read_report(os.path.join(d, "gen-report.txt"))
     arms = {n: read_arm(os.path.join(d, n + ".log")) for n in ARMS}
 
@@ -211,6 +214,15 @@ def readings(arms):
                 if bpb(arms, "M-" + sd, u) is not None and bpb(arms, "S-" + sd, u) is not None
                 and bpb(arms, "M-" + sd, u) - bpb(arms, "S-" + sd, u) < -s)
         print("[b3-data] read size helps (M - S < -s, s=%.4f): %d of %d points" % (s, n, 2 * len(US)))
+    # S-leak16: b1_held's first half 16 times (declared before the cert, a reading only: at
+    # 4 times the first look missed the LEAK line; this says whether the halves part at all)
+    lk = read_arm(os.path.join(OUT_DIR[0], "S-leak16.log")) if OUT_DIR else None
+    u = 393216
+    if (lk is not None and lk["head"] is not None and lk["head"][2] == "leak16" and u in lk["pts"]
+            and bpb(arms, "S-1", u) is not None):
+        da, db = lk["pts"][u]["a"] - bpb(arms, "S-1", u, "a"), lk["pts"][u]["b"] - bpb(arms, "S-1", u, "b")
+        print("[b3-data] read LEAK16 (16 times, not a gate) at U=384 KB: first half %+.4f, second half %+.4f, "
+              "difference %+.4f" % (da, db, da - db))
     r, p = bpb(arms, "S-rep", US[-1]), bpb(arms, "S-1", US[-1])
     if r is not None and p is not None:
         print("[b3-data] read REP (24 KB repeated) vs unique at U=1.5 MB: %.4f vs %.4f (%+.4f)" % (r, p, r - p))
