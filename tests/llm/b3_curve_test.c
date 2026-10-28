@@ -18,11 +18,13 @@
  *   leak   plain, with b1_held's first half mixed in at the middle of each
  *          quarter of the bytes up to Umax (4 times; the negative control
  *          LEAK); only the point at Umax is printed
+ *   leak16 the same with 16 times (the middle of each sixteenth; a reading
+ *          declared before the cert, not a gate)
  * Printed once per arm: held64 = the trained positions whose 64-byte run is
  * also in b1_held (G3; 0 after the filter's q5, not 0 in the leak arm).
  *
  *   b3_curve_test <held.txt> <gen_held.txt> <train.txt> <tier 0|1> <seed>
- *                 <plain|rep|leak> <Umax>               exit 0 = ran
+ *                 <plain|rep|leak|leak16> <Umax>        exit 0 = ran
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,7 +108,8 @@ int main(int argc, char **argv)
     int tier = atoi(argv[4]), umax = atoi(argv[7]);
     uint32_t seed = (uint32_t)strtoul(argv[5], NULL, 10);
     const char *mode = argv[6];
-    int rep = !strcmp(mode, "rep"), leak = !strcmp(mode, "leak");
+    int rep = !strcmp(mode, "rep");
+    int nleak = !strcmp(mode, "leak") ? 4 : !strcmp(mode, "leak16") ? 16 : 0, leak = nleak > 0;
     if (!rep && !leak && strcmp(mode, "plain")) { printf("[b3] FAIL mode %s\n", mode); return 2; }
     uint8_t *hp = held, *gp = gen, *tr = NULL;
     int hn = slurp(argv[1], &hp, sizeof held);
@@ -121,7 +124,7 @@ int main(int argc, char **argv)
 
     /* the training stream */
     int hw = hn / SEQ, half = (hw / 2) * SEQ;
-    long sn = (long)umax + (leak ? 4L * half : 0);
+    long sn = (long)umax + (long)nleak * half;
     uint8_t *s = (uint8_t *)malloc((size_t)sn);
     if (!s) return 2;
     /* where each U point ends in the stream; the leak arm is judged at Umax only */
@@ -130,10 +133,10 @@ int main(int argc, char **argv)
     if (rep) {
         for (long o = 0; o < sn; o++) s[o] = tr[o % US[0]];
     } else if (leak) {
-        /* the held text's first half in the middle of each quarter of the texts */
+        /* the held text's first half in the middle of each nleak-th of the texts */
         long o = 0, c = 0;
-        for (int q = 0; q < 4; q++) {
-            long mid = (long)umax / 8 * (2 * q + 1);
+        for (int q = 0; q < nleak; q++) {
+            long mid = (long)umax / (2 * nleak) * (2 * q + 1);
             memcpy(s + o, tr + c, (size_t)(mid - c)); o += mid - c; c = mid;
             memcpy(s + o, held, (size_t)half); o += half;
         }

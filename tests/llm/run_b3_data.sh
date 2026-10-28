@@ -9,13 +9,14 @@
 #   <data dir> holds train.txt and gen_held.txt (b3_prep.py) and
 #   gen-report.txt (the [b3-teacher] and [b3-filter] lines). Not in CI: the
 #   texts are made by the teacher (b3_gen.py) and are not kept in git.
-#   B3_ARMS="S-1 ..."   arms to run (default all 7)
+#   B3_ARMS="S-1 ..."   arms to run (default all 8)
 #   B3_JOBS=4           arms run side by side
 #   B3_OUT=<dir>        keep the per-arm logs there (default: <data dir>/logs)
 #
 #   arms: S and M x seed 1/2 up to U=1.5 MB, S seed 1 again up to 96 KB (G2),
 #   S-rep (the first 24 KB repeated up to 1.5 MB), S-leak (U=384 KB with the
-#   held text's first half mixed in 4 times). Judge: b3_curve_check.py.
+#   held text's first half mixed in 4 times), S-leak16 (the same 16 times, a
+#   reading declared before the cert, not a gate). Judge: b3_curve_check.py.
 #   Time (B2's speeds): S about 50 min, M about 2.7 h per 1.5 MB arm.
 # ---------------------------------------------------------------------------
 set -u
@@ -25,7 +26,7 @@ CC="${CC:-cc}"
 CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla"
 DATA="${1:?data dir with train.txt gen_held.txt gen-report.txt}"
 DATA="$(cd "$DATA" && pwd)"
-ARMS="${B3_ARMS:-M-1 M-2 S-1 S-2 S-rep S-leak S-1-again}"
+ARMS="${B3_ARMS:-M-1 M-2 S-1 S-2 S-rep S-leak S-leak16 S-1-again}"
 JOBS="${B3_JOBS:-4}"
 OUT="${B3_OUT:-$DATA/logs}"
 WORK="$(mktemp -d)"
@@ -50,6 +51,7 @@ for a in $ARMS; do
     S-1-again) echo "$a 0 1 plain 98304" ;;
     S-rep) echo "$a 0 1 rep 1572864" ;;
     S-leak) echo "$a 0 1 leak 393216" ;;
+    S-leak16) echo "$a 0 1 leak16 393216" ;;
     *) echo "[b3-data] unknown arm $a"; exit 2 ;;
     esac >> "$WORK/arms"
 done
