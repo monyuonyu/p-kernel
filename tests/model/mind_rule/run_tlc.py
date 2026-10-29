@@ -10,7 +10,7 @@ metadir under DIR (default: a temp dir); the full TLC output is DIR/NAME.txt
 (the counterexample, if any). Not in CI (Java; #37 5). 'expect' is what the
 design fixed before the model existed; the last column says if it matched.
 """
-import argparse, os, re, subprocess, sys, tempfile, time
+import argparse, os, re, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -90,6 +90,10 @@ def main():
     ap.add_argument("--jar", required=True)
     ap.add_argument("--out")
     ap.add_argument("--workers", default="2")
+    ap.add_argument("--timeout", type=float, default=0,
+                    help="seconds per run; 0 = none. A stopped run reports 'timeout'")
+    ap.add_argument("--keep-meta", action="store_true",
+                    help="keep TLC's state directory (deleted by default)")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
     out = a.out or tempfile.mkdtemp(prefix="tlc-mindrule-")
@@ -106,14 +110,28 @@ def main():
         with open(cfg, "w") as f:
             f.write(cfg_text(over, inv, prop))
         t0 = time.time()
-        r = subprocess.run(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
-                            "-workers", a.workers, "-metadir", os.path.join(out, name + ".meta"),
-                            "-config", cfg, "MindRule.tla"],
-                           capture_output=True, text=True, cwd=out)
+        # TLC writes straight into <name>.txt (progress lines included), so a
+        # run stopped by --timeout or killed from outside still leaves how far
+        # it got (the 10-29 19:10 run lost two 60-75 min runs' state counts).
+        meta = os.path.join(out, name + ".meta")
+        txtp = os.path.join(out, name + ".txt")
+        timed_out = False
+        with open(txtp, "w") as f:
+            p = subprocess.Popen(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
+                                  "-workers", a.workers, "-metadir", meta,
+                                  "-config", cfg, "MindRule.tla"],
+                                 stdout=f, stderr=subprocess.STDOUT, cwd=out)
+            try:
+                p.wait(timeout=a.timeout or None)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                p.kill()
+                p.wait()
         dt = time.time() - t0
-        txt = r.stdout + r.stderr
-        with open(os.path.join(out, name + ".txt"), "w") as f:
-            f.write(txt)
+        if not a.keep_meta:
+            shutil.rmtree(meta, ignore_errors=True)   # GBs on the big runs
+        with open(txtp) as f:
+            txt = f.read()
         m = re.search(r"(Invariant|Temporal property|Property) (\w+) is violated", txt) \
             or re.search(r"Error: (Temporal properties were violated)", txt)
         st = re.findall(r"(\d+) distinct states found", txt)
@@ -123,6 +141,8 @@ def main():
             got = "fail:" + what
         elif "No error has been found" in txt:
             got = "pass"
+        elif timed_out:
+            got = "timeout"       # says nothing either way; states = how far
         else:
             got = "error"
         ok = got == expect or (expect.startswith("fail:") and got.startswith("fail:")
