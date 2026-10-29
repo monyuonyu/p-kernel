@@ -17,15 +17,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = dict(Nodes="{0, 1, 2}", Keys="{1}", Vals="{1, 2}", MaxTeach=3,
             MaxDrop=0, MaxEvict=0, MaxRestart=0, WithAnswer="TRUE",
             Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE",
-            Script="<<>>")
+            ScriptName='"none"')
 S3 = {}
 S4 = dict(Nodes="{0, 1, 2, 3}", MaxTeach=2)
 K2 = dict(Keys="{1, 2}", MaxTeach=3, MaxDrop=1, StampMax=8)
 SAFE = "TypeOK P1 P2 P3 P4 P5"
 K2SAFE = "TypeOK P2 P3 P4 P5"
 FIX = dict(DupAdopt="TRUE")
-STALE = "<< <<0, 1, 1>>, <<1, 1, 2>>, <<1, 2, 1>> >>"
-M4SC = "<< <<0, 1, 1>>, <<1, 1, 2>>, <<0, 2, 1>> >>"
+STALE = '"stale"'   # the sequences are Script in MindRule.tla
+M4SC = '"m4sc"'
 
 # name: (overrides, invariants, temporal property or None, expect)
 #   expect: "pass", or "fail:<property>" (the design's line or reading)
@@ -104,14 +104,14 @@ RUNS = {
     # losing v2) or by its own revise; if v2 wins (stamp 3) n1 keeps
     # re-sending it. Expected: L1 holds (FairSpec and FairASpec); M4 (no
     # push-back) red.
-    "Sc-stale-L1A-fix":    ({**K2, **FIX, "Script": STALE}, "TypeOK", "L1A", "fail:L1"),
-    "Sc-stale-L1A":        ({**K2, "Script": STALE}, "TypeOK", "L1A", "fail:L1"),
-    "Sc-stale-d0-L1A-fix": ({**K2, **FIX, "Script": STALE, "MaxDrop": 0}, "TypeOK", "L1A", "pass"),
-    "Sc-stale-fix-v":      ({**K2, **FIX, "Script": STALE}, K2SAFE.replace("P3", "P3v"), None, "pass"),
-    "Sc-m4-L1-fix":        ({**K2, **FIX, "Script": M4SC}, "TypeOK", "L1", "pass"),
-    "Sc-m4-L1A-fix":       ({**K2, **FIX, "Script": M4SC}, "TypeOK", "L1A", "pass"),
-    "Sc-m4-fix-v":         ({**K2, **FIX, "Script": M4SC}, K2SAFE.replace("P3", "P3v"), None, "pass"),
-    "M4sc-A":              ({**K2, **FIX, "Script": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-L1A-fix":    ({**K2, **FIX, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-L1A":        ({**K2, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-d0-L1A-fix": ({**K2, **FIX, "ScriptName": STALE, "MaxDrop": 0}, "TypeOK", "L1A", "pass"),
+    "Sc-stale-fix-v":      ({**K2, **FIX, "ScriptName": STALE}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "Sc-m4-L1-fix":        ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
+    "Sc-m4-L1A-fix":       ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1A", "pass"),
+    "Sc-m4-fix-v":         ({**K2, **FIX, "ScriptName": M4SC}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "M4sc-A":              ({**K2, **FIX, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
 }
 
 
