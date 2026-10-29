@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """N2a: rename the 8-bit node types that check_types.py reports.
 
-  python3 rewrite.py <repo>
+  python3 tools/n2scan/rename_n2a.py <repo>   # run once for N2a (dcdc3a19); a re-run finds nothing
 
 W (wire field) -> pk_node8_t, P (common prototype param) -> pk_node_t.
 Adds #include "pk_node.h" to every changed file that is a header, and to a
