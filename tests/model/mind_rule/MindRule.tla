@@ -202,6 +202,13 @@ Msgs == [to : Nodes, o : Nodes, k : Keys, s : 0..StampMax, v : Vals]
 Fair == /\ \A m \in Msgs : WF_vars(Recv(m))
         /\ \A n \in Nodes : WF_vars(Republish(n)) /\ WF_vars(PushRedrive(n))
 FairSpec == Spec /\ Fair
+\* the same plus weak fairness on Answer (a reading, not the design's line):
+\* the C asks again for a key it never held (mh_tick 4491 advertises held keys
+\* every 4 ticks, r3_want_hint -> want -> pull), so a pull that stays possible
+\* is answered. Only for runs without Evict/Restart: the C does not ask again
+\* for a key it once held, while Answer here serves any node that holds none.
+FairA == Fair /\ \A n, a \in Nodes, k \in Keys : WF_vars(Answer(n, a, k))
+FairASpec == Spec /\ FairA
 
 ----------------------------------------------------------------------------
 TaughtKeys == { p.k : p \in taught }
