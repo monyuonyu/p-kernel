@@ -4,6 +4,12 @@
 
 限界: 正規表現で名前を見るだけ。名前に node・src・origin などを含まない番号の欄、バッファに 1 バイトずつ書く所、tests・samples・llm・android は見ていない。中継（relay/relay.c）の頭は構造体でないので表 1 に出ない（src・dst は 6・7 バイト目、8〜11 は予約）。
 
+設計の前提として読んで確かめたこと（2026-10-29、master e8b6c5f4）:
+
+- **電文の番号は中の番号**: hosted は PKERNEL_NODE_ID（1..255）を偽の MAC の末尾に入れ（rtl8139.c 65）、usermain.c 395 で 1..DNODE_MAX だけを受けて中の番号＝外−1。0xFF は「ノードでない」。設計の「255 以上が広い」は中の番号（外の 256 以上）。試験の 260・300 は中で 259・299、下位 8 ビットは 3・43＝外の 4・44 の中の番号と同じ（化ける組のまま）
+- **SWIM の capability の bit 2 は空き**: 使うのは bit 0・1 だけ（swim.c 385・386）。ただし**旧版が他人のうわさを流し直すときは bit 0・1 から作り直す**（cap_byte、swim.c 256・453・476・486）＝bit 2 は旧版を通ると消える。本人の ALIVE（cap_self_byte）と新しいノードの流し直しでしか伝わらない。外れたときは「v2 を送らない」側に倒れる（安全側）。N2b の試験はこの経路（旧版だけを通るうわさ）でも X1〜X4 を見る
+- **旧い中継は版 3 を捨てる**: parse_packet（relay.c 273）は版 1・2 以外で -1。頭の 8〜11 は読まない。ノードの側も 0 を書く（net_relay.c 363）。ノードは PKERNEL_NODE_ID が 1..255 の外なら起動で言う（net_relay.c 762）
+
 ## 1. Wire/disk structs (packed, or with a magic, or named *_PKT etc.) with an 8-bit node field
 
 | file:line | struct | 8-bit node fields |
