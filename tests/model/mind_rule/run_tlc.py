@@ -148,8 +148,10 @@ def main():
             txt = f.read()
         m = re.search(r"(Invariant|Temporal property|Property) (\w+) is violated", txt) \
             or re.search(r"Error: (Temporal properties were violated)", txt)
-        st = re.findall(r"(\d+) distinct states found", txt)
-        states = st[-1] if st else "?"
+        # progress lines write "2,091,552 distinct states found", the final
+        # line "56305 distinct states found": take the digits and commas
+        st = re.findall(r"([\d,]+) distinct states found", txt)
+        states = st[-1].replace(",", "") if st else "?"
         if m:
             what = m.group(2) if m.lastindex and m.lastindex >= 2 else "L1"
             got = "fail:" + what
