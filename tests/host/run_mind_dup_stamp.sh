@@ -18,6 +18,10 @@
 #   D0 the hook works: both packets taken, the first one seen as the same value
 #   D1 green is refused against held stamp s node 0
 #   D2 green does not replace blue
+# and with a REMOTE engram held (audit-98b; D0-D2 pass without these parts):
+#   D3 the better teacher is taken too (same stamp, a smaller node)
+#   D4 the better stamp replaces the remote engram's stamp (mc_rstamp_put)
+#   D5 the same value from a worse teacher is still dropped as a duplicate
 # Env: MDS_PORT (default 7496), EXTRA_CFLAGS (added to -DMT_RX_INJECT, for a
 # negative control). Output "[mind-dup-stamp] <check> PASS|FAIL", then
 # ALL PASS (exit 0) or RED (exit 1).
@@ -85,6 +89,45 @@ if grep -aqE "conflict rule: incoming stamp $S node 1 loses to held stamp $S nod
     res D1-green-refused PASS; else res D1-green-refused FAIL; fi
 if grep -aqE 'remote REVISE key [0-9]+ "sky": "blue"->"green"' "$L"; then
     res D2-blue-kept FAIL; else res D2-blue-kept PASS; fi
+
+# audit-98b: the held engram is a remote teach (D0-D2 only see this node's
+# own teach, which has no stamp or teacher entry yet). Stamps above S, a new
+# seq per sender each time (the once-per-seq check), one packet at a time.
+# D4 runs first: the stamp table has R3_FQ_MAX (4) slots, and once it is full
+# a new entry overwrites slot 0, which hides a stamp that was not replaced.
+NI=2
+inj() {  # <node> <stamp> <key> <value> <ERE of the line it should cause>
+    NI=$((NI + 1))
+    printf 'mind inject %s %s %s %s\n' "$1" "$2" "$3" "$4" >&7
+    local n=0
+    while [ "$(grep -ac 'inject: taken' "$L")" -lt "$NI" ] && [ "$n" -lt 60 ]; do sleep 0.5; n=$((n + 1)); done
+    wait_for "$L" "$5" 15 || echo "[mind-dup-stamp] note: no line for $*"
+}
+T=$((S + 10)); U=$((S + 20)); M=$((S + 25)); V=$((S + 30))
+#   D4 the stamp of a remote engram (mc_rstamp_put on a seq it already has):
+#      fire warm from node 3 at U, node 0 sends warm at V (taken), then blue
+#      from node 1 at M (U < M < V) must lose to (V, node 0)
+inj 3 "$U" fire warm "remote teach arrived: \"fire\""
+inj 0 "$V" fire warm "took its stamp $V \\(was stamp $U node 3\\)"
+inj 1 "$M" fire blue "conflict rule: incoming stamp $M node 1 "
+if grep -aqE "conflict rule: incoming stamp $M node 1 loses to held stamp $V node 0" "$L"; then
+    res D4-stamp-taken PASS; else res D4-stamp-taken FAIL; fi
+#   D3 the teacher too (same stamp): sea deep learnt from node 3 at T, node 0
+#      sends deep at T (smaller node: taken), then green from node 1 at T
+#      must lose to (T, node 0) — it beats (T, node 3) if only the stamp moved
+#      (by now the 4-slot prov table is full, so a teacher that is not
+#      re-pointed shows in D4, not here; D3 is the equal-stamp case)
+inj 3 "$T" sea deep  "remote teach arrived: \"sea\""
+inj 0 "$T" sea deep  "took its stamp $T \\(was stamp $T node 3\\)"
+inj 1 "$T" sea green "conflict rule: incoming stamp $T node 1 "
+if grep -aqE "conflict rule: incoming stamp $T node 1 loses to held stamp $T node 0" "$L"; then
+    res D3-teacher-taken PASS; else res D3-teacher-taken FAIL; fi
+#   D5 a worse teacher of the same value is not taken: sea deep from node 4
+#      with the same stamp T against (T, node 0)
+inj 4 "$T" sea deep  "from node 4 — duplicate|took its stamp $T \\(was stamp $T node 0\\)"
+if grep -aqE "from node 4 — duplicate \(already bound to same v\)" "$L" \
+   && ! grep -aqE "took its stamp $T \(was stamp $T node 0\)" "$L"; then
+    res D5-worse-dropped PASS; else res D5-worse-dropped FAIL; fi
 grep -aE 'inject:|duplicate|conflict rule:|remote REVISE|took its stamp' "$L" | sed 's/^/  /'
 
 if [ -z "$REDS" ]; then echo "[mind-dup-stamp] ALL PASS"; exit 0; fi
