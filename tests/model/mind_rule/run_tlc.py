@@ -53,16 +53,35 @@ RUNS = {
     "R-restart-P5": ({**S3, **FIX, "MaxRestart": 1}, "TypeOK P5", None, "fail:P5"),
     "R-evict-P1":   ({**S3, **FIX, "MaxEvict": 1}, "TypeOK P1", None, "fail:P1"),
     "R-evict-L1":   ({**K2, **FIX, "MaxEvict": 1}, "TypeOK", "L1", "fail:L1"),
+    # after the design (10-29 19:10 run; the line above stays the gate):
+    # K2 with no drop (safety at the design's 3 teaches; the drop is what
+    # made K2-fix-v pass 60 min), K2 with 2 teaches (the design's "one fewer"),
+    # and L1 with weak fairness on Answer (FairASpec, a reading: the C pulls a
+    # key it never held, see MindRule.tla). M4 must stay red with it.
+    "K2-d0-fix-v": ({**K2, **FIX, "MaxDrop": 0}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "K2-d0":       ({**K2, "MaxDrop": 0}, K2SAFE, None, "fail:P2"),  # S3's path
+    "K2t2-fix-v":  ({**K2, **FIX, "MaxTeach": 2}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "K2t2-L1-fix": ({**K2, **FIX, "MaxTeach": 2}, "TypeOK", "L1", "fail:L1"),
+    "K2t2-L1A-fix": ({**K2, **FIX, "MaxTeach": 2}, "TypeOK", "L1A", "pass"),
+    "K2t2-L1A":    ({**K2, "MaxTeach": 2}, "TypeOK", "L1A", "pass"),
+    "M4t2-A":      ({**K2, **FIX, "MaxTeach": 2, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 2 teaches cannot show M4 (a conflict and the winner's next key need 3)
+    "K2-d0-L1A-fix": ({**K2, **FIX, "MaxDrop": 0}, "TypeOK", "L1A", "pass"),
+    "M4-d0-A":     ({**K2, **FIX, "MaxDrop": 0, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    "K2-L1A-fix":  ({**K2, **FIX}, "TypeOK", "L1A", "pass"),
+    "M4-A":        ({**K2, **FIX, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
 }
 
 
 def cfg_text(over, inv, prop):
     c = {**BASE, **over}
     lines = ["CONSTANTS"] + [f"  {k} = {v}" for k, v in c.items()]
-    lines.append("SPECIFICATION " + ("FairSpec" if prop else "Spec"))
+    # "L1A" = L1 under FairASpec (fairness on Answer too)
+    spec = "FairASpec" if prop == "L1A" else "FairSpec" if prop else "Spec"
+    lines.append("SPECIFICATION " + spec)
     lines.append("INVARIANTS " + inv)
     if prop:
-        lines.append("PROPERTIES " + prop)
+        lines.append("PROPERTIES L1")
     return "\n".join(lines) + "\n"
 
 
