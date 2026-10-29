@@ -71,3 +71,5 @@
 | Sc-m4-L1A-fix | 通る | 155,259 | 248 |
 | Sc-m4-L1-fix（FairSpec） | 通る | 155,259 | 271 |
 | M4sc-A | L1 破れ | 40,773 | 67 |
+
+- **C で再現と直し（同じ回、実装＝監査はまだ）**: 試験先 `tests/host/run_mind_stale.sh`（2 台、B に古い値を注入→B を止めて A の教えを取りこぼさせる→再開）は master の C で 2/2 とも S4（sky が green に直る）だけ赤。直し（枝 feat/mind-have-push）: mind/have で相手の値が規則で負けていたら勝つ側が押し返す（mc_push_winner）。2/2 ALL PASS、`-DMH_NO_HAVE_PUSH` で S4 だけ赤。模型に HaveFix（HavePush、弱い公平）、見込みを先にコミット（d6e2a2ca）、9/9 見込みどおり: Sc-stale-L1A-hp・L1-hp・L1-hponly 通る（各 145,127）、S3-fix-v-hp 通る（2,215,855）、Sc-m4-L1-hp 通る（174,611）、**M4sc-A-hp は通る＝HaveFix の下では M4SC の M4 が隠れる（押し返しの代わりに have-push で治る）＝読み**。限界: 模型の HavePush は相手の今の記憶を直接読む（C は 4 刻みごとの要約）
