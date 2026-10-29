@@ -41,6 +41,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pfs_block.h"
 
 /* ------------------------------------------------------------------ */
@@ -113,7 +114,7 @@ INT  protect_atrisk_count(void);
  * protected objects, mark src as a holder and recount. This is the only
  * input that lowers the grounded threat — and it is real (a peer only
  * announces a block it actually stored, durably). */
-void protect_note_holder(UB src_node, const U1 id[PFS_ID_LEN]);
+void protect_note_holder(pk_node_t src_node, const U1 id[PFS_ID_LEN]);
 
 /* ------------------------------------------------------------------ */
 /* the actuator (the protecting POWER)                                */

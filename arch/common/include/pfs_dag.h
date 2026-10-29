@@ -52,6 +52,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pfs_block.h"
 
 /* ------------------------------------------------------------------ */
@@ -87,7 +88,7 @@ typedef struct {
     U1   content[PFS_ID_LEN];      /* block id of this version's bytes  */
     UW   seq;                      /* 1-based version number on chain   */
     UW   content_len;              /* content byte count (for `log`)    */
-    U1   origin;                   /* node that made this save          */
+    pk_node8_t origin;                   /* node that made this save          */
     U1   name_len;                 /* valid chars in name[]             */
     UH   _pad;
     char name[PFS_NAME_MAX];       /* object name, NUL-padded           */
@@ -103,7 +104,7 @@ typedef struct {
     char name[PFS_NAME_MAX];       /* NUL-padded                        */
     U1   head[PFS_ID_LEN];         /* head manifest id                  */
     UW   seq;                      /* head manifest's seq               */
-    U1   origin;                   /* head manifest's origin            */
+    pk_node8_t origin;                   /* head manifest's origin            */
     U1   name_len;
     UH   _pad;
 } __attribute__((packed)) PFSD_REF_ENT;    /* 16+32+4+1+1+2 = 56 B    */
@@ -114,7 +115,7 @@ typedef struct {
 typedef struct {
     UW   magic;                    /* PFSD_REF_MAGIC                    */
     UW   seq;                      /* per-beaconer counter, starts at 1 */
-    U1   src_node;
+    pk_node8_t src_node;
     U1   n_ent;                    /* valid entries in ent[]            */
     UH   _pad;
     PFSD_REF_ENT ent[PFSD_REF_PER_PKT];
@@ -181,4 +182,4 @@ INT  pfs_dag_self_test(void (*emit)(const char *));
  * Returns the number of refs visited. The mind uses this to "see" which
  * objects its body holds without being able to alter them. */
 UW   pfs_dag_foreach_ref(void (*cb)(void *ctx, const char *name, UW seq,
-                                    UB origin), void *ctx);
+                                    pk_node_t origin), void *ctx);

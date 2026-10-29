@@ -26,6 +26,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                           */
@@ -142,8 +143,8 @@ typedef struct {
     UB  version;        /* DRPC_VERSION                      */
     UB  type;           /* DRPC_HEARTBEAT / REQ / REPLY      */
     UH  seq;            /* sequence number                   */
-    UB  src_node;
-    UB  dst_node;
+    pk_node8_t src_node;
+    pk_node8_t dst_node;
     UH  call_id;        /* DRPC_CALL_*                       */
     UW  obj_id;         /* global object ID or func_id       */
     W   arg[3];         /* call arguments                    */
@@ -188,7 +189,7 @@ extern UB    drpc_my_node;          /* 0xFF = not initialized            */
 
 /* Call from usermain after rtl8139_init(), before netstack_start().
  * Sets net_my_ip and registers UDP port. */
-void drpc_init(UB my_node_id, UW my_ip);
+void drpc_init(pk_node_t my_node_id, UW my_ip);
 
 /* T-Kernel heartbeat task (pri 5) */
 void drpc_task(INT stacd, void *exinf);
@@ -206,7 +207,7 @@ void drpc_nodes_list(void);
 /* Create a task (local or remote).
  * func_id: 0x0001=hello  0x0002=counter  (see drpc.c rfunc_table)
  * Returns local task ID (local) or remote task ID (remote), or negative error. */
-W  dtk_cre_tsk(UB node_id, UH func_id, INT pri);
+W  dtk_cre_tsk(pk_node_t node_id, UH func_id, INT pri);
 
 /* Create semaphore on this node; returns global semaphore ID. */
 UW dtk_cre_sem(INT isemcnt);
@@ -220,13 +221,13 @@ ER dtk_sig_sem(UW gsemid, INT cnt);
 /* Run MLP inference on a remote node (or local if node_id==drpc_my_node).
  * sensor_packed = SENSOR_PACK(temp_q8, hum_q8, press_q8, light_q8)
  * Returns E_OK and sets *class_out to 0/1/2. */
-ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);
+ER dtk_infer(pk_node_t node_id, W sensor_packed, UB *class_out, TMO tmout);
 
 /*
  * heal.c から呼ぶ公開ラッパー。
  * DEAD ノードの代わりにローカルで rfunc タスクを起動する。
  */
-W drpc_local_restart(UH func_id, INT pri, UB caller_node);
+W drpc_local_restart(UH func_id, INT pri, pk_node_t caller_node);
 
 /* SEC-OOB-DRPC cert (external audit 2026-06-13): drives the real drpc_call /
  * dtk_cre_tsk / dtk_sig_sem / dtk_infer entry points with a node id >=

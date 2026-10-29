@@ -14,6 +14,7 @@
  *  supernode_select()/region_supernode_test() do for the selector.
  */
 #include "supernode.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "region.h"
 #include "drpc.h"
 #include "netstack.h"
@@ -49,8 +50,8 @@ static void sn_putdec(UW v)
  * payload bytes are copied through VERBATIM (byte-identical forward). */
 typedef struct {
     UW    magic;        /* SNF_FWD_MAGIC / SNF_DLV_MAGIC / SNF_ACK_MAGIC     */
-    UB    origin;       /* the ORIGINAL sender node id (preserved end-to-end)*/
-    UB    final_dst;    /* the FINAL destination node id                     */
+    pk_node8_t origin;       /* the ORIGINAL sender node id (preserved end-to-end)*/
+    pk_node8_t final_dst;    /* the FINAL destination node id                     */
     UB    relayed_by;   /* the supernode that forwarded it (0xFF if direct)  */
     UB    _pad;
     UH    len;          /* meaningful payload bytes (<= SNF_PAYLOAD_MAX)      */

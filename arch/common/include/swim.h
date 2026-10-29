@@ -22,6 +22,7 @@
 
 #pragma once
 #include "drpc.h"   /* dnode_table[], DNODE_MAX, DNODE_*, drpc_my_node */
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -57,7 +58,7 @@
 
 /* ゴシップイベント 1 件 */
 typedef struct {
-    UB  node_id;
+    pk_node8_t node_id;
     UB  state;          /* DNODE_ALIVE / DNODE_SUSPECT / DNODE_DEAD */
     UB  incarnation;    /* より新しい incarnation で古い疑惑を上書き */
     /* Capability bitfield (was the reserved zero `_pad`; reusing it is
@@ -87,8 +88,8 @@ typedef struct {
     UB  version;                             /* SWIM_VERSION            */
     UB  type;                                /* SWIM_PING/ACK/PING_REQ  */
     UH  seq;                                 /* PING↔ACK 照合用         */
-    UB  src_node;
-    UB  probe_target;   /* PING_REQ: プローブ対象; ACK: 確認対象       */
+    pk_node8_t src_node;
+    pk_node8_t probe_target;   /* PING_REQ: プローブ対象; ACK: 確認対象       */
     UB  gossip_cnt;     /* gossip[] の有効エントリ数 (0..SWIM_GOSSIP_MAX) */
     UB  _pad;
     SWIM_GOSSIP_EVT gossip[SWIM_GOSSIP_MAX]; /* ピギーバックイベント    */
@@ -124,7 +125,7 @@ void swim_nodes_print(void);
  * 未実測のノードは 0xFFFFFFFF を返す。
  * (R0, regions design — docs/architecture/20-architecture/regions.md。region 形成と
  *  locality-aware MoE ゲーティングが消費する。) */
-UW swim_rtt_ms(UB node);
+UW swim_rtt_ms(pk_node_t node);
 
 /* RTT シミュレーション注入 (テスト専用)。zone = node_id / zone_size とし、
  * 異 zone のピアへの観測 RTT に penalty_ms を上乗せする。zone_size==0 で
