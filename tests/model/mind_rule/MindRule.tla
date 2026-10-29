@@ -17,6 +17,8 @@ CONSTANTS Nodes,       \* node ids (numbers; the tie goes to the smaller)
           Mut,         \* "none" | "M1" | "M2" | "M3" | "M4" (design: break-its)
           BadNode,     \* M3: the node whose tie goes to the larger teacher
           StampMax,    \* bound for the fairness universe only
+          Teachers,    \* who may Teach (= Nodes in every run of the design;
+                       \* a subset only shrinks the runs, see run_tlc.py)
           DupAdopt     \* FALSE = the C today (5159 drops a same-value packet
                        \* and keeps its own stamp); TRUE = the candidate fix
 
@@ -60,6 +62,7 @@ Init ==
    revise with the next local seq, which is the stamp (mc_stamp_of 3390),
    note the old one (mc_note 3789), publish to the region (m_publish_teach). *)
 Teach(n, k, v) ==
+  /\ n \in Teachers
   /\ nTeach < MaxTeach
   /\ held[n][k].v # v
   /\ LET s == clk[n] + 1

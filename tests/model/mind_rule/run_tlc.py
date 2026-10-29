@@ -70,11 +70,25 @@ RUNS = {
     "M4-d0-A":     ({**K2, **FIX, "MaxDrop": 0, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
     "K2-L1A-fix":  ({**K2, **FIX}, "TypeOK", "L1A", "pass"),
     "M4-A":        ({**K2, **FIX, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 10-29 21:05 run: M4 (no push-back) cannot show with MaxDrop 0 (every
+    # node receives every teach, so the push is never needed): keep K2's drop
+    # and 3 teaches but let only nodes 0 and 1 teach (node 2 only listens) =
+    # a SUBSET of K2's runs: a pass here is weaker than K2's, a red is a real
+    # counterexample of K2 too.
+    # R-evict-L1 is red but not telling: K2t2-L1-fix (no Evict) breaks L1
+    # under the same FairSpec. With fairness on Answer, the model's Answer
+    # still serves a node that FORGOT k (held = 0), while the C never asks
+    # again for a key it once held (r3_key_ever_held, r3_want_hint 2906).
+    # Expected before the run: pass = the model is kinder than the C here.
+    "R-evict-L1A-t2": ({**K2, **FIX, "MaxTeach": 2, "MaxEvict": 1}, "TypeOK", "L1A", "pass"),
+    "K2s-L1A-fix":({**K2, **FIX, "Teachers": "{0, 1}"}, "TypeOK", "L1A", "pass"),
+    "M4s-A":       ({**K2, **FIX, "Teachers": "{0, 1}", "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
 }
 
 
 def cfg_text(over, inv, prop):
     c = {**BASE, **over}
+    c.setdefault("Teachers", c["Nodes"])      # everyone teaches unless narrowed
     lines = ["CONSTANTS"] + [f"  {k} = {v}" for k, v in c.items()]
     # "L1A" = L1 under FairASpec (fairness on Answer too)
     spec = "FairASpec" if prop == "L1A" else "FairSpec" if prop else "Spec"
