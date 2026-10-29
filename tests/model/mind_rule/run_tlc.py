@@ -10,7 +10,7 @@ metadir under DIR (default: a temp dir); the full TLC output is DIR/NAME.txt
 (the counterexample, if any). Not in CI (Java; #37 5). 'expect' is what the
 design fixed before the model existed; the last column says if it matched.
 """
-import argparse, os, re, subprocess, sys, tempfile, time
+import argparse, os, re, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -70,11 +70,25 @@ RUNS = {
     "M4-d0-A":     ({**K2, **FIX, "MaxDrop": 0, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
     "K2-L1A-fix":  ({**K2, **FIX}, "TypeOK", "L1A", "pass"),
     "M4-A":        ({**K2, **FIX, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 10-29 21:05 run: M4 (no push-back) cannot show with MaxDrop 0 (every
+    # node receives every teach, so the push is never needed): keep K2's drop
+    # and 3 teaches but let only nodes 0 and 1 teach (node 2 only listens) =
+    # a SUBSET of K2's runs: a pass here is weaker than K2's, a red is a real
+    # counterexample of K2 too.
+    # R-evict-L1 is red but not telling: K2t2-L1-fix (no Evict) breaks L1
+    # under the same FairSpec. With fairness on Answer, the model's Answer
+    # still serves a node that FORGOT k (held = 0), while the C never asks
+    # again for a key it once held (r3_key_ever_held, r3_want_hint 2906).
+    # Expected before the run: pass = the model is kinder than the C here.
+    "R-evict-L1A-t2": ({**K2, **FIX, "MaxTeach": 2, "MaxEvict": 1}, "TypeOK", "L1A", "pass"),
+    "K2s-L1A-fix":({**K2, **FIX, "Teachers": "{0, 1}"}, "TypeOK", "L1A", "pass"),
+    "M4s-A":       ({**K2, **FIX, "Teachers": "{0, 1}", "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
 }
 
 
 def cfg_text(over, inv, prop):
     c = {**BASE, **over}
+    c.setdefault("Teachers", c["Nodes"])      # everyone teaches unless narrowed
     lines = ["CONSTANTS"] + [f"  {k} = {v}" for k, v in c.items()]
     # "L1A" = L1 under FairASpec (fairness on Answer too)
     spec = "FairASpec" if prop == "L1A" else "FairSpec" if prop else "Spec"
@@ -90,6 +104,10 @@ def main():
     ap.add_argument("--jar", required=True)
     ap.add_argument("--out")
     ap.add_argument("--workers", default="2")
+    ap.add_argument("--timeout", type=float, default=0,
+                    help="seconds per run; 0 = none. A stopped run reports 'timeout'")
+    ap.add_argument("--keep-meta", action="store_true",
+                    help="keep TLC's state directory (deleted by default)")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
     out = a.out or tempfile.mkdtemp(prefix="tlc-mindrule-")
@@ -106,23 +124,41 @@ def main():
         with open(cfg, "w") as f:
             f.write(cfg_text(over, inv, prop))
         t0 = time.time()
-        r = subprocess.run(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
-                            "-workers", a.workers, "-metadir", os.path.join(out, name + ".meta"),
-                            "-config", cfg, "MindRule.tla"],
-                           capture_output=True, text=True, cwd=out)
+        # TLC writes straight into <name>.txt (progress lines included), so a
+        # run stopped by --timeout or killed from outside still leaves how far
+        # it got (the 10-29 19:10 run lost two 60-75 min runs' state counts).
+        meta = os.path.join(out, name + ".meta")
+        txtp = os.path.join(out, name + ".txt")
+        timed_out = False
+        with open(txtp, "w") as f:
+            p = subprocess.Popen(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
+                                  "-workers", a.workers, "-metadir", meta,
+                                  "-config", cfg, "MindRule.tla"],
+                                 stdout=f, stderr=subprocess.STDOUT, cwd=out)
+            try:
+                p.wait(timeout=a.timeout or None)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                p.kill()
+                p.wait()
         dt = time.time() - t0
-        txt = r.stdout + r.stderr
-        with open(os.path.join(out, name + ".txt"), "w") as f:
-            f.write(txt)
+        if not a.keep_meta:
+            shutil.rmtree(meta, ignore_errors=True)   # GBs on the big runs
+        with open(txtp) as f:
+            txt = f.read()
         m = re.search(r"(Invariant|Temporal property|Property) (\w+) is violated", txt) \
             or re.search(r"Error: (Temporal properties were violated)", txt)
-        st = re.findall(r"(\d+) distinct states found", txt)
-        states = st[-1] if st else "?"
+        # progress lines write "2,091,552 distinct states found", the final
+        # line "56305 distinct states found": take the digits and commas
+        st = re.findall(r"([\d,]+) distinct states found", txt)
+        states = st[-1].replace(",", "") if st else "?"
         if m:
             what = m.group(2) if m.lastindex and m.lastindex >= 2 else "L1"
             got = "fail:" + what
         elif "No error has been found" in txt:
             got = "pass"
+        elif timed_out:
+            got = "timeout"       # says nothing either way; states = how far
         else:
             got = "error"
         ok = got == expect or (expect.startswith("fail:") and got.startswith("fail:")
