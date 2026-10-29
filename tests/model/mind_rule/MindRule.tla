@@ -21,6 +21,9 @@ CONSTANTS Nodes,       \* node ids (numbers; the tie goes to the smaller)
                        \* a subset only shrinks the runs, see run_tlc.py)
           DupAdopt,    \* FALSE = the C today (5159 drops a same-value packet
                        \* and keeps its own stamp); TRUE = the candidate fix
+          HaveFix,     \* TRUE = the [mind-stale] fix (mh_tick): a node whose
+                       \* held value beats a peer's (seen in its mind/have)
+                       \* pushes its winner; FALSE = every run before 10-30
           ScriptName   \* "none" = any teach (every run before 10-30); else
                        \* Script below: the teaches <<n, k, v>> in this order,
                        \* one story's runs only (deliveries, drops, re-sends free)
@@ -174,6 +177,24 @@ Answer(n, a, k) ==
   /\ UNCHANGED <<held, clk, last, hist, pub, push, taught, nTeach, nDrop,
                  nEvict, nRestart, seen, p4bad, p5bad>>
 
+(* mh_tick's poll with the [mind-stale] fix: n sees in a's summary (key,
+   stamp, teacher; no value) that a holds k with a stamp that loses to n's,
+   and pushes its winner like the push-back. The summary is the peer's
+   current engram (the C publishes it every 4 ticks), modelled as read
+   directly; the C's "not while the same winner is re-sent" is the guard
+   that the packets are not all in flight already. *)
+HavePush(n, a, k) ==
+  /\ HaveFix
+  /\ n # a
+  /\ held[n][k].v # 0 /\ held[a][k].v # 0
+  /\ Beats(held[n][k].s, held[n][k].t, held[a][k].s, held[a][k].t)
+  /\ LET h == held[n][k]
+         pp == Pkt(h.t, k, h.s, h.v) IN
+     /\ ~(SendAll(n, pp) \subseteq net)
+     /\ net' = net \cup SendAll(n, pp)
+  /\ UNCHANGED <<held, clk, last, hist, pub, push, taught, nTeach, nDrop,
+                 nEvict, nRestart, seen, p4bad, p5bad>>
+
 Drop(m) ==
   /\ nDrop < MaxDrop /\ m \in net
   /\ net' = net \ {m} /\ nDrop' = nDrop + 1
@@ -203,7 +224,7 @@ Next ==
   \/ \E n \in Nodes, k \in Keys, v \in Vals : Teach(n, k, v)
   \/ \E m \in net : Recv(m) \/ Drop(m)
   \/ \E n \in Nodes : Republish(n) \/ PushRedrive(n) \/ Restart(n)
-  \/ \E n, a \in Nodes, k \in Keys : Answer(n, a, k)
+  \/ \E n, a \in Nodes, k \in Keys : Answer(n, a, k) \/ HavePush(n, a, k)
   \/ \E n \in Nodes, k \in Keys : Evict(n, k)
 
 Spec == Init /\ [][Next]_vars
@@ -213,6 +234,7 @@ Spec == Init /\ [][Next]_vars
 Msgs == [to : Nodes, o : Nodes, k : Keys, s : 0..StampMax, v : Vals]
 Fair == /\ \A m \in Msgs : WF_vars(Recv(m))
         /\ \A n \in Nodes : WF_vars(Republish(n)) /\ WF_vars(PushRedrive(n))
+        /\ \A n, a \in Nodes, k \in Keys : WF_vars(HavePush(n, a, k))  \* off = always disabled
 FairSpec == Spec /\ Fair
 \* the same plus weak fairness on Answer (a reading, not the design's line):
 \* the C asks again for a key it never held (mh_tick 4491 advertises held keys
