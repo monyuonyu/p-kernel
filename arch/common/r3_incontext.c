@@ -3498,18 +3498,31 @@ static INT mc_incoming_wins(INT fi, UW s_in, U1 org)
 static MT_TEACH_PKT mc_push_pkt;
 static UB mc_push_sends_left, mc_push_ticks_left, mc_push_sent_n;
 static UB mq_answer_sent;            /* defined with M_REDRIVE_OWN below         */
+static void mc_push_winner(INT fi, INT bind);
 static void mc_incoming_lost(INT fi, INT bind, UB v_in, U1 org, UW s_in,
                              const U1 prov_in[PFS_ID_LEN])
+{
+    UW seq = r3_fq[fi].seq;
+    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    MT_REMOTE_PROV *rp = mt_rprov_find(seq);
+    UB now_src = rp ? MC_SRC_REMOTE : MC_SRC_LOCAL;
+    mc_add(r3_fq[fi].key[bind], v_in, MC_SRC_REMOTE, org, s_in,
+           MC_NEVER_HELD, 0, 0, prov_in,
+           r3_fq[fi].val[bind], now_src, o_cur, s_cur, 0xFF);
+    mc_push_winner(fi, bind);
+}
+
+/* send the held engram fi/bind to the region as its teach (its teacher, stamp
+ * and prov), and re-send it like a pull answer (above). Used when an incoming
+ * value lost here, and when a peer's mind/have shows it holds a value that
+ * loses to this one (mh_tick, 1-3m [mind-stale]). */
+static void mc_push_winner(INT fi, INT bind)
 {
     static const U1 zero_prov[PFS_ID_LEN] = { 0 };
     UW seq = r3_fq[fi].seq;
     U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     const U1 *lp = mq_lprov_find(seq);
-    UB now_src = rp ? MC_SRC_REMOTE : MC_SRC_LOCAL;
-    mc_add(r3_fq[fi].key[bind], v_in, MC_SRC_REMOTE, org, s_in,
-           MC_NEVER_HELD, 0, 0, prov_in,
-           r3_fq[fi].val[bind], now_src, o_cur, s_cur, 0xFF);
     if (drpc_my_node == 0xFF) return;
     mc_push_pkt.magic       = MT_MAGIC;
     mc_push_pkt.fact_seq    = s_cur;
@@ -4549,6 +4562,38 @@ static void mh_tick(void)
             r_puts(r3_vocab_key_word(k));
             r_puts("\") never held here -> want (level 0, pull)\r\n");
         }
+#ifndef MH_NO_HAVE_PUSH
+        /* 1-3m [mind-stale] (the model's STALE, run_mind_stale.sh): the peer
+         * holds k with a stamp that loses to the one held here. It held k
+         * once, so it never wants it; if it missed the winning teach and the
+         * winner's teacher has moved on to another key, no re-drive carries
+         * the winner again, and its own re-sends reuse a seq everyone took
+         * (per-origin once-per-seq), so nobody pushes back: it kept the loser
+         * for good. Now the holder of the better stamp pushes its winner
+         * (the push-back's packet and re-send). Only an advertised fact
+         * (taught here or by a named teacher, like the publish side), and
+         * not while the same winner is still being re-sent. The peer's next
+         * summary carries the new stamp, so the push stops by itself.
+         * -DMH_NO_HAVE_PUSH: the old behaviour (negative control). */
+        else {
+            INT bind, fi = m_find_key(k, &bind);
+            if (fi >= 0 && (mt_rprov_find(r3_fq[fi].seq) || mq_lprov_find(r3_fq[fi].seq))) {
+                U1 o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
+                UW s_in = mh_rx.e[i].stamp; U1 o_in = mh_rx.e[i].origin;
+                INT beats = (s_cur > s_in) || (s_cur == s_in && o_cur < o_in);
+                INT busy  = mc_push_sends_left > 0 && mc_push_pkt.key == (UB)k
+                            && mc_push_pkt.fact_seq == s_cur && mc_push_pkt.origin_node == o_cur;
+                if (beats && !busy) {
+                    r_puts("[mind] mind/have from node "); r_putdec((UW)o);
+                    r_puts(": key "); r_putdec((UW)k); r_puts(" stamp "); r_putdec(s_in);
+                    r_puts(" node "); r_putdec((UW)o_in);
+                    r_puts(" loses to held stamp "); r_putdec(s_cur);
+                    r_puts(" node "); r_putdec((UW)o_cur); r_puts(" -> push\r\n");
+                    mc_push_winner(fi, bind);
+                }
+            }
+        }
+#endif
     }
     m_gate_release();
 }
