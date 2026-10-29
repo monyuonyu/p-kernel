@@ -540,7 +540,7 @@ static void rtt_observe(UB node, UW sample_ms)
 
 /* 公開: ノードへの平滑化 RTT(ms)。未実測は 0xFFFFFFFF を返す。
  * sim_zone が有効なら異 zone のピアへ合成ペナルティを上乗せする。 */
-UW swim_rtt_ms(UB node)
+UW swim_rtt_ms(pk_node_t node)
 {
     if (node >= DNODE_MAX || !rtt_valid[node]) return 0xFFFFFFFFUL;
     UW r = rtt_ewma_ms[node];

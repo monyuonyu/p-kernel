@@ -165,7 +165,7 @@ static void snf_build(SNF_PKT *p, UW magic, UB origin, UB final_dst,
 /* ------------------------------------------------------------------ */
 /* public: send to a region peer, routed through the supernode if any  */
 /* ------------------------------------------------------------------ */
-INT snf_send(UB dst, const UB *payload, UH len)
+INT snf_send(pk_node_t dst, const UB *payload, UH len)
 {
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (len > SNF_PAYLOAD_MAX || (len > 0 && !payload)) return 0;
@@ -975,7 +975,7 @@ static void np_rx(UW src_ip, UH src_port, const UB *data, UH len)
 /* ------------------------------------------------------------------ */
 /* public: initiate a supernode-brokered rendezvous toward `peer`.     */
 /* ------------------------------------------------------------------ */
-INT np_request_punch(UB peer)
+INT np_request_punch(pk_node_t peer)
 {
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (peer >= DNODE_MAX || peer == drpc_my_node) return 0;

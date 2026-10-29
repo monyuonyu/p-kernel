@@ -334,7 +334,7 @@ static W drpc_local_cre_tsk(UH func_id, INT pri, UB caller_node)
  * drpc_local_restart — heal.c から呼ぶ公開ラッパー
  * DEAD ノードの代わりにローカルでタスクを再起動する。
  */
-W drpc_local_restart(UH func_id, INT pri, UB caller_node)
+W drpc_local_restart(UH func_id, INT pri, pk_node_t caller_node)
 {
     return drpc_local_cre_tsk(func_id, pri, caller_node);
 }
@@ -562,7 +562,7 @@ W drpc_call(UB dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
 /* Initialisation                                                      */
 /* ------------------------------------------------------------------ */
 
-void drpc_init(UB my_node_id, UW my_ip)
+void drpc_init(pk_node_t my_node_id, UW my_ip)
 {
     drpc_my_node = my_node_id;
     net_my_ip    = my_ip;
@@ -701,7 +701,7 @@ void drpc_nodes_list(void)
 /* Distributed T-Kernel API                                            */
 /* ------------------------------------------------------------------ */
 
-W dtk_cre_tsk(UB node_id, UH func_id, INT pri)
+W dtk_cre_tsk(pk_node_t node_id, UH func_id, INT pri)
 {
     if (node_id == drpc_my_node)
         return drpc_local_cre_tsk(func_id, pri, drpc_my_node);
@@ -755,7 +755,7 @@ ER dtk_sig_sem(UW gsemid, INT cnt)
 /* Distributed Inference                                               */
 /* ------------------------------------------------------------------ */
 
-ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout)
+ER dtk_infer(pk_node_t node_id, W sensor_packed, UB *class_out, TMO tmout)
 {
     (void)tmout;
 

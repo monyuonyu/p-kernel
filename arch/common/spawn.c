@@ -241,7 +241,7 @@ void spawn_on_leader(void)
 /* 新ノード発見時に呼ぶ (swim.c / drpc.c から)                       */
 /* ------------------------------------------------------------------ */
 
-void spawn_on_new_node(UB node_id)
+void spawn_on_new_node(pk_node_t node_id)
 {
     if (node_id >= DNODE_MAX) return;
     if (spawned[node_id]) return;         /* 配布済み */

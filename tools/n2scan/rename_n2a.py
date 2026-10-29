@@ -3,9 +3,10 @@
 
   python3 tools/n2scan/rename_n2a.py <repo>   # run once for N2a (dcdc3a19); a re-run finds nothing
 
-W (wire field) -> pk_node8_t, P (common prototype param) -> pk_node_t.
-Adds #include "pk_node.h" to every changed file that is a header, and to a
-changed .c file. Prints every change. Uses check_types.py's own scanners so
+W (wire field) -> pk_node8_t, P (common prototype param) and D (its .c
+definition) -> pk_node_t.
+Adds #include "pk_node.h" to every changed header (a .c file sees it through
+the header it includes; N2a's first run, dcdc3a19, also added it to 3 .c files). Prints every change. Uses check_types.py's own scanners so
 it changes exactly what the check reports.
 """
 import os, re, sys
@@ -20,8 +21,9 @@ for relp, ln, owner, name, t in ct.wire_fields():
     if (owner, name) in ct.NOT_NODE or t == 'pk_node8_t':
         continue
     edits.setdefault(relp, []).append((ln, name, 'pk_node8_t', 0))
-for relp, ln, owner, name, t in ct.proto_params():
-    if (owner, name) in ct.NOT_NODE or t == 'pk_node_t':
+protos = [q for q in ct.proto_params() if (q[2], q[3]) not in ct.NOT_NODE]
+for relp, ln, owner, name, t in protos + list(ct.def_params(protos)):
+    if t == 'pk_node_t':
         continue
     edits.setdefault(relp, []).append((ln, name, 'pk_node_t', 3))
 
@@ -47,7 +49,7 @@ for relp, es in sorted(edits.items()):
         if not done:
             print(f'!! {relp}:{ln} {name} not found')
     txt = '\n'.join(lines)
-    if '"pk_node.h"' not in txt:
+    if relp.endswith('.h') and '"pk_node.h"' not in txt:
         inc = [m for m in re.finditer(r'^#include[^\n]*\n', txt, re.M)]
         if inc:
             at = inc[0].end()

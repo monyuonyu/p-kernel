@@ -117,7 +117,7 @@ static UW gx_now_ms(void)
     return (UW)t.lo;
 }
 
-void galaxy_emit(UB type, UB src, UB dst, UH a, UH b)
+void galaxy_emit(UB type, pk_node_t src, pk_node_t dst, UH a, UH b)
 {
     if (!galaxy_on) return;
     ui_event_emit(type, src, dst, a, b);

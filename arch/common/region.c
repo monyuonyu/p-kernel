@@ -127,12 +127,12 @@ void region_recompute(void)
 /* NAT hole-punch. capability here is a LOCAL table only.              */
 /* ------------------------------------------------------------------ */
 
-void region_set_super_capable(UB node, BOOL yes)
+void region_set_super_capable(pk_node_t node, BOOL yes)
 {
     if (node < DNODE_MAX) super_capable[node] = yes ? 1 : 0;
 }
 
-BOOL region_is_super_capable(UB node)
+BOOL region_is_super_capable(pk_node_t node)
 {
     return (node < DNODE_MAX && super_capable[node]) ? TRUE : FALSE;
 }
@@ -188,12 +188,12 @@ UB region_supernode(void)
 /* its lesson ring / falls back to the committed TEACHER_FIXTURE).        */
 /* ------------------------------------------------------------------ */
 
-void region_set_teacher_capable(UB node, BOOL yes)
+void region_set_teacher_capable(pk_node_t node, BOOL yes)
 {
     if (node < DNODE_MAX) teacher_capable[node] = yes ? 1 : 0;
 }
 
-BOOL region_is_teacher_capable(UB node)
+BOOL region_is_teacher_capable(pk_node_t node)
 {
     return (node < DNODE_MAX && teacher_capable[node]) ? TRUE : FALSE;
 }
@@ -238,12 +238,12 @@ UB region_coordinator(void)
 /* 最後の region_recompute() の結果を読む (再計算しない; ホットパス用)。
  * kdds_pub のような per-packet ループは region_recompute() を一度呼んでから
  * これでメンバ判定すると O(N²) を避けられる。 */
-BOOL region_is_member(UB node)
+BOOL region_is_member(pk_node_t node)
 {
     return (node < DNODE_MAX && member[node]) ? TRUE : FALSE;
 }
 
-BOOL region_contains(UB node)
+BOOL region_contains(pk_node_t node)
 {
     region_recompute();
     return region_is_member(node);

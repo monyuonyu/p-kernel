@@ -312,7 +312,7 @@ static W pmesh_send_nosw(UB dst_node, UH dst_port, const UB *data, UH len);
 
 /* pk_nosw.h: data_pkt is shared by every sender, so the whole send (down to
  * the link layer's own static buffers) is one no-switch region */
-W pmesh_send(UB dst_node, UH dst_port, const UB *data, UH len)
+W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
 {
     PK_NOSW_ENTER();
     W rc = pmesh_send_nosw(dst_node, dst_port, data, len);

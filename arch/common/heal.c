@@ -77,7 +77,7 @@ void heal_elf_init(void)
 /* ガード登録                                                          */
 /* ------------------------------------------------------------------ */
 
-void heal_register(const char *name, UH func_id, UB home_node, W priority)
+void heal_register(const char *name, UH func_id, pk_node_t home_node, W priority)
 {
     for (INT i = 0; i < HEAL_GUARD_MAX; i++) {
         if (guards[i].active) continue;
@@ -103,7 +103,7 @@ void heal_register(const char *name, UH func_id, UB home_node, W priority)
 /* DEAD 検出時のコールバック                                           */
 /* ------------------------------------------------------------------ */
 
-void heal_on_node_dead(UB dead_node)
+void heal_on_node_dead(pk_node_t dead_node)
 {
     if (dead_node >= DNODE_MAX) return;
 
