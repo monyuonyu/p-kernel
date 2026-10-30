@@ -32,7 +32,7 @@ typedef struct __attribute__((packed)) {
     UW magic;
     UB version;
     UB type;
-    UB src_node;
+    pk_node8_t src_node;
     UB _pad;
     UW total_size;
     UW chunk_idx;

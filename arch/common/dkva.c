@@ -30,7 +30,7 @@
 #include "pk_nosw.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
-IMPORT void dtr_seed_kv_cache(UB node);   /* dtr.c: KV キャッシュ warmup */
+IMPORT void dtr_seed_kv_cache(pk_node_t node);   /* dtr.c: KV キャッシュ warmup */
 
 /* ------------------------------------------------------------------ */
 /* 出力ヘルパー                                                        */

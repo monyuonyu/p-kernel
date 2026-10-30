@@ -301,7 +301,7 @@ typedef struct __attribute__((packed)) {
     UW magic;
     UB version;
     UB type;
-    UB node_id;
+    pk_node8_t node_id;
     UB _pad;
     UW src_ip;
 } KL_BEACON_PKT;
