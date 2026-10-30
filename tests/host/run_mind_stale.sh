@@ -23,8 +23,13 @@
 #   S3 control: B gets sea from A's re-drive (A's last teach)
 #   S4 B's sky becomes green (A's, the rule's answer) within 60 s of S2/S3
 # Today S4 is expected RED (the hole) and S0-S3 green.
+# MST_A_SAW=1 (audit-104): A also takes node 5's sky blue (seq 1) before B
+# stops (check S0a). Without it, a wrong-way push (B sends its loser, A beats
+# it and the old push-back heals B) is green too, because A never used up
+# node 5's seq 1; with it, A drops that loser as a duplicate, so S4 is green
+# only if the winner's holder pushes (inverted rule in the have-push: red).
 # Output "[mind-stale] <check> PASS|FAIL", then ALL PASS (exit 0) or RED
-# (exit 1). Env: MST_PORT (default 7497), EXTRA_CFLAGS (added to
+# (exit 1). Env: MST_PORT (default 7497), MST_A_SAW, EXTRA_CFLAGS (added to
 # -DMT_RX_INJECT). Rebuilds boot/linux* and cleans it afterwards.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +84,11 @@ printf 'mind inject 5 1 sky blue\n' >&8
 wait_for "$B" 'inject: taken' 30 || echo "[mind-stale] note: inject not taken"
 if wait_for "$B" 'remote teach arrived: "sky"->"blue"' 30; then res S0-hook PASS; else res S0-hook FAIL; fi
 
+if [ "${MST_A_SAW:-0}" = 1 ]; then
+    printf 'mind inject 5 1 sky blue\n' >&7
+    if wait_for "$A" 'remote teach arrived: "sky"->"blue"' 30; then
+        res S0a-A-saw-blue PASS; else res S0a-A-saw-blue FAIL; fi
+fi
 printf 'stop now\n' >&8
 wait_for "$B" '^\[stop\] stopped 1 local 1' 30 || echo "[mind-stale] note: B not stopped"
 printf 'mind teach fire warm\n' >&7

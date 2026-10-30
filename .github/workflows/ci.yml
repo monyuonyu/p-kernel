@@ -1111,10 +1111,15 @@ jobs:
       # on stays on the loser unless the winner's holder pushes when it sees
       # the stale summary (mind/have). Test hook -DMT_RX_INJECT; S4 red on
       # master and with -DMH_NO_HAVE_PUSH. Rebuilds and cleans. ~1.5 min.
+      # Second run MST_A_SAW=1 (audit-104): A has used up the loser's seq, so
+      # only the winner's push heals B (an inverted rule is red). ~1.5 min.
       - name: stale holder healed by mind/have (ROADMAP 1-3m)
         run: |
           timeout 300 tests/host/run_mind_stale.sh | tee mind_stale.log
           grep -aF '[mind-stale] ALL PASS' mind_stale.log
+          MST_A_SAW=1 timeout 300 tests/host/run_mind_stale.sh | tee mind_stale_a.log
+          grep -aF '[mind-stale] S0a-A-saw-blue PASS' mind_stale_a.log
+          grep -aF '[mind-stale] ALL PASS' mind_stale_a.log
 
       # ROADMAP 1-2b: a node that keeps re-driving its own last teach must
       # still deliver pull answers (mind/teach is LATEST_ONLY; the answer was
