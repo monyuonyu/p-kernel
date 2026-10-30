@@ -2,7 +2,7 @@
 
 設計は `n2-wire16.md`。下は `python3 tools/n2scan/inventory.py` の出力そのまま（master e8b6c5f4、2026-10-29）。手で直さない。作り直すときはこの見出しの下を消して出力を貼る。
 
-限界: 正規表現で名前を見るだけ。名前に node・src・origin などを含まない番号の欄、バッファに 1 バイトずつ書く所、tests・samples・llm・android は見ていない。中継（relay/relay.c）の頭は構造体でないので表 1 に出ない（src・dst は 6・7 バイト目、8〜11 は予約）。
+限界: 正規表現で名前を見るだけ。名前に node・src・origin などを含まない番号の欄、バッファに 1 バイトずつ書く所、tests・samples・llm・android は見ていない。中継（relay/relay.c）の頭は構造体でないので表 1 に出ない（src・dst は 6・7 バイト目、8〜11 は予約）。**表 1 は `typedef struct __attribute__((packed)) {` の形（packed が { の前）を読まない＝KLOAD_PKT.src_node（kloader_task.h）と KL_BEACON_PKT.node_id（kloader_task.c）が漏れている（監査-103。check_types.py の W はこの形も読む）。ベア x86 の写し boot/x86/kl_net.h は u8 で書くので見えない。**
 
 設計の前提として読んで確かめたこと（2026-10-29、master e8b6c5f4）:
 

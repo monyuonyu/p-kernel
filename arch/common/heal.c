@@ -18,7 +18,7 @@ IMPORT void sio_send_frame(const UB *buf, INT size);
 IMPORT BOOL vfs_ready;
 
 /* drpc.c で定義された公開ラッパー (heal.c から呼ぶ用) */
-IMPORT W drpc_local_restart(UH func_id, INT pri, UB caller_node);
+IMPORT W drpc_local_restart(UH func_id, INT pri, pk_node_t caller_node);
 
 static void hl_puts(const char *s)
 {
