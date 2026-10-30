@@ -16,13 +16,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 BASE = dict(Nodes="{0, 1, 2}", Keys="{1}", Vals="{1, 2}", MaxTeach=3,
             MaxDrop=0, MaxEvict=0, MaxRestart=0, WithAnswer="TRUE",
-            Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE")
+            Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE",
+            ScriptName='"none"')
 S3 = {}
 S4 = dict(Nodes="{0, 1, 2, 3}", MaxTeach=2)
 K2 = dict(Keys="{1, 2}", MaxTeach=3, MaxDrop=1, StampMax=8)
 SAFE = "TypeOK P1 P2 P3 P4 P5"
 K2SAFE = "TypeOK P2 P3 P4 P5"
 FIX = dict(DupAdopt="TRUE")
+STALE = '"stale"'   # the sequences are Script in MindRule.tla
+M4SC = '"m4sc"'
 
 # name: (overrides, invariants, temporal property or None, expect)
 #   expect: "pass", or "fail:<property>" (the design's line or reading)
@@ -83,6 +86,32 @@ RUNS = {
     "R-evict-L1A-t2": ({**K2, **FIX, "MaxTeach": 2, "MaxEvict": 1}, "TypeOK", "L1A", "pass"),
     "K2s-L1A-fix":({**K2, **FIX, "Teachers": "{0, 1}"}, "TypeOK", "L1A", "pass"),
     "M4s-A":       ({**K2, **FIX, "Teachers": "{0, 1}", "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 10-30 00:00 run: K2 (2 keys, 1 drop) with the 3 teaches fixed in order
+    # (Script), deliveries/drops/re-sends still free. Expectations written
+    # before the first run (C: the per-origin dedup is fact_seq != last 5227,
+    # a re-send carries the teach's own seq, Republish sends only the last
+    # own teach).
+    # STALE: n0 teaches k1=v1; n1 teaches k1=v2 (after hearing v1 its stamp
+    # is 3 and wins); n1 then teaches k2, so its re-send moves to k2. If the
+    # one drop is v2 -> n0, n0 keeps v1 for good: n0's own re-send of v1 is
+    # deduplicated everywhere (same seq) before the rule, so nobody pushes
+    # back; Answer only serves a node that holds nothing. Expected red even
+    # with the fix and fairness on Answer = a liveness hole of the C rule
+    # (to be checked in C), not of M4.
+    # M4SC: n0 teaches k1=v1; n1 teaches k1=v2; n0 teaches k2. The winner's
+    # teacher moves on only when v1 wins (same stamp 1, smaller node), and
+    # then a node that missed v1 is healed by n0's push-back (n0 gets n1's
+    # losing v2) or by its own revise; if v2 wins (stamp 3) n1 keeps
+    # re-sending it. Expected: L1 holds (FairSpec and FairASpec); M4 (no
+    # push-back) red.
+    "Sc-stale-L1A-fix":    ({**K2, **FIX, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-L1A":        ({**K2, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-d0-L1A-fix": ({**K2, **FIX, "ScriptName": STALE, "MaxDrop": 0}, "TypeOK", "L1A", "pass"),
+    "Sc-stale-fix-v":      ({**K2, **FIX, "ScriptName": STALE}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "Sc-m4-L1-fix":        ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
+    "Sc-m4-L1A-fix":       ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1A", "pass"),
+    "Sc-m4-fix-v":         ({**K2, **FIX, "ScriptName": M4SC}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "M4sc-A":              ({**K2, **FIX, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
 }
 
 

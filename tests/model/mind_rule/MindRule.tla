@@ -8,7 +8,7 @@
    The network is a SET of packets: a re-send of a packet still in flight
    changes nothing, a packet is removed when it is received or dropped, and
    re-sends (Republish, PushRedrive) put it back = duplicates. Any order. *)
-EXTENDS Naturals, FiniteSets
+EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS Nodes,       \* node ids (numbers; the tie goes to the smaller)
           Keys, Vals,  \* Vals >= 1 (0 = not held)
@@ -19,8 +19,11 @@ CONSTANTS Nodes,       \* node ids (numbers; the tie goes to the smaller)
           StampMax,    \* bound for the fairness universe only
           Teachers,    \* who may Teach (= Nodes in every run of the design;
                        \* a subset only shrinks the runs, see run_tlc.py)
-          DupAdopt     \* FALSE = the C today (5159 drops a same-value packet
+          DupAdopt,    \* FALSE = the C today (5159 drops a same-value packet
                        \* and keeps its own stamp); TRUE = the candidate fix
+          ScriptName   \* "none" = any teach (every run before 10-30); else
+                       \* Script below: the teaches <<n, k, v>> in this order,
+                       \* one story's runs only (deliveries, drops, re-sends free)
 
 VARIABLES held, clk, last, hist, pub, push, net,
           taught, nTeach, nDrop, nEvict, nRestart,
@@ -28,6 +31,11 @@ VARIABLES held, clk, last, hist, pub, push, net,
 
 vars == <<held, clk, last, hist, pub, push, net, taught, nTeach, nDrop,
           nEvict, nRestart, seen, p4bad, p5bad>>
+
+\* the stories (run_tlc.py says what each is expected to show, and why)
+Script == CASE ScriptName = "stale" -> << <<0, 1, 1>>, <<1, 1, 2>>, <<1, 2, 1>> >>
+            [] ScriptName = "m4sc"  -> << <<0, 1, 1>>, <<1, 1, 2>>, <<0, 2, 1>> >>
+            [] OTHER                -> << >>
 
 None  == [v |-> 0, s |-> 0, t |-> 0]
 Max(a, b) == IF a > b THEN a ELSE b
@@ -64,6 +72,7 @@ Init ==
 Teach(n, k, v) ==
   /\ n \in Teachers
   /\ nTeach < MaxTeach
+  /\ Script = <<>> \/ (nTeach < Len(Script) /\ Script[nTeach + 1] = <<n, k, v>>)
   /\ held[n][k].v # v
   /\ LET s == clk[n] + 1
          p == Pkt(n, k, s, v) IN
