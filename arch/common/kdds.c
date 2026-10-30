@@ -303,7 +303,7 @@ W kdds_pub(W handle, const void *data, W len)
     return kdds_pub_core(handle, data, len, -1);
 }
 
-W kdds_pub_to(W handle, const void *data, W len, UB dst)
+W kdds_pub_to(W handle, const void *data, W len, pk_node_t dst)
 {
     /* 自分・範囲外は網へ送らない (ローカルの更新だけ) */
     INT d = (dst < DNODE_MAX && dst != drpc_my_node) ? (INT)dst : DNODE_MAX;
@@ -436,7 +436,7 @@ INT kdds_handle_count(void)
 /* kdds_rx — リモートノードからのデータ受信                           */
 /* ------------------------------------------------------------------ */
 
-void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len)
+void kdds_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 {
     (void)src_node; (void)dst_port;
     if (len < (UH)sizeof(KDDS_PKT)) return;

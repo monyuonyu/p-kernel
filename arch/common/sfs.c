@@ -282,7 +282,7 @@ void sfs_boot_sync(void)
 /* sfs_rx — UDP 受信コールバック                                       */
 /* ------------------------------------------------------------------ */
 
-void sfs_rx(UB src_node, UH dst_port, const UB *data, UH len)
+void sfs_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 {
     (void)dst_port;
 

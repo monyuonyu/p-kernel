@@ -21,6 +21,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -47,13 +48,13 @@ typedef struct {
     UW  magic;
     UB  version;
     UB  type;           /* SPAWN_* */
-    UB  src_node;
-    UB  dst_node;
+    pk_node8_t src_node;
+    pk_node8_t dst_node;
     UW  total_size;     /* バイナリ総サイズ (OFFER) */
     UW  chunk_idx;      /* チャンク番号 (CHUNK/ACK) */
     UW  chunk_size;     /* 有効データサイズ         */
     UB  raft_term;      /* 現在の任期番号           */
-    UB  raft_leader;    /* リーダーノードID         */
+    pk_node8_t raft_leader;    /* リーダーノードID         */
     UH  _pad;
     UB  data[SPAWN_CHUNK_SIZE];
 } __attribute__((packed)) SPAWN_PKT;
@@ -69,6 +70,6 @@ void spawn_rx(UW src_ip, UH src_port, const UB *data, UH len);
 void spawn_on_leader(void);
 
 /* swim.c の新ノード発見時に呼ぶ */
-void spawn_on_new_node(UB node_id);
+void spawn_on_new_node(pk_node_t node_id);
 
 void spawn_stat(void);

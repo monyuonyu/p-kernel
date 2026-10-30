@@ -518,7 +518,7 @@ static void run_mhsa_local(const float tok[SEQ][DM],
  *  requester が複数 peer の partial を集約したときに初めて「クラスタの集合
  *  記憶」を Attention に取り込んだ非自明な結果になる。
  */
-void dtr_seed_kv_cache(UB node)
+void dtr_seed_kv_cache(pk_node_t node)
 {
     PK_NOSW_ENTER();
     for (INT s = 0; s < DTR_KV_SEED_N; s++) {

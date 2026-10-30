@@ -24,6 +24,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"   /* DNODE_MAX */
 
 /* ------------------------------------------------------------------ */
@@ -49,7 +50,7 @@
  * T-Kernel の UB/UH は同じ実体だが、ワイヤ構造体では絶対に UW/W を使わない:
  * UW/W は環境によって long-based となり LP64 で 8 バイトへ膨らむため。 */
 typedef struct {
-    U1   node_id;       /* 発信ノード ID (0..DNODE_MAX-1)            */
+    pk_node8_t node_id;       /* 発信ノード ID (0..DNODE_MAX-1)            */
     U1   device_type;   /* WORLD_DEV_*                              */
     U1   region_id;     /* 発信時の自 region ID (0xFF=未確立)       */
     U1   pressure;      /* 負荷軸 0..100 (LOAD; capacity 余力の逆 §6; 避ける) */
@@ -153,47 +154,47 @@ void world_print(void);
 
 /* node のビーコンを一度でも受信したか (= 局所ビューに存在するか)。
  * 受信していなければ MoE は負荷項を諦め、安全側にフォールバックする。 */
-BOOL world_peer_known(UB node);
+BOOL world_peer_known(pk_node_t node);
 
 /* node の逼迫度 (0..100) を局所ビューから読む。未知なら -1。
  * これが §6 の応援・受援の勾配信号 (負荷軸 LOAD): 高いほど逼迫 (避ける)、
  * 低いほど余力あり (応援を引き受けられる)。 */
-INT  world_peer_pressure(UB node);
+INT  world_peer_pressure(pk_node_t node);
 
 /* node の脅威度 (0..100) を局所ビューから読む。未知なら -1 (= 脅威なし扱い)。
  * これが §2 の一点集束の勾配信号 (脅威軸 THREAT; reflex CONSERVE が立てる):
  * 高いほど「守るべき/危険」→ moe ゲートで *加点* され群れがそこへ寄る (rally)。
  * load (world_peer_pressure) とは別軸・逆符号 (G20: 旧実装は両者を pressure
  * 1 本に畳んで「脅威=避ける」の符号倒錯を起こしていた)。 */
-INT  world_peer_threat(UB node);
+INT  world_peer_threat(pk_node_t node);
 
 /* G35/§5: node が今ゴシップした「同時に at-risk な protected 点の数」を局所
  * world-table から読む。未知なら -1。threat (単一スカラ = aggregate rally 信号)
  * が畳んでしまう *多点性* をここで perceive する: 近傍は「あのノードは 1 点で
  * なく 3 点を同時に守っている」と見える。単一意識のボトルネックを乗り越える
  * 観測軸 (§5「同時に数百件…並行」)。中央集約なし — 各 node 自身が数えた値。 */
-INT  world_peer_atrisk(UB node);
+INT  world_peer_atrisk(pk_node_t node);
 
 /* node が gossip で広告した「自 region の coordinator ID (region_id)」を
  * 局所 world-table から読む。未知 / 未広告 (0xFF) なら -1 (wave 10, G2)。
  * dkva の requester はこれで他 region をまとめ、欠けた region を degraded に
  * 正直計上する (中央の真実ではなく、受信したビーコンだけから組む)。 */
-INT  world_peer_region(UB node);
+INT  world_peer_region(pk_node_t node);
 
 /* world_peer_region と同じだが、ビーコンが新鮮 (age <= WORLD_STALE_MS) な
  * ときだけ region を返す (G12, wave 12)。未受信 / 古い / 未広告なら -1。
  * dkva は「新鮮に確認できた」region だけで degraded の分母を組み、確認できない
  * remote は uncertain として別計上する (degraded の数字を gossip 鮮度に依存
  * させない = I4/I16 honesty)。 */
-INT  world_peer_region_fresh(UB node);
+INT  world_peer_region_fresh(pk_node_t node);
 
 /* galaxy v1 (galaxy.md §9): the beacon-carried device_type of a peer
  * (WORLD_DEV_*), -1 if unknown. The galaxy is world.c's FACE. */
-INT  world_peer_device(UB node);
+INT  world_peer_device(pk_node_t node);
 
 /* galaxy v1: ms since `node`'s beacon was last freshly observed, -1 if
  * unknown — so the window fades stale peers honestly (古さの尊重). */
-INT  world_peer_age_ms(UB node);
+INT  world_peer_age_ms(pk_node_t node);
 
 /* テスト専用 (G12 デモ): 起動後 ms ミリ秒だけ self-beacon を抑止し、gossip を
  * 意図的に未収束のまま保つ。0 = 無効 (既定; 本番挙動は不変)。 */
@@ -222,7 +223,7 @@ UB  world_self_state(void);
  * world_peer_pressure): the 2 bits WORLD_STATE_MASK of the beacon firing byte.
  * Returns WSTATE_* (0..3) for a known peer (a 12-byte old beacon with those bits
  * 0 reads as WSTATE_ACTIVE), or -1 if `node` is unknown. */
-INT world_peer_state(UB node);
+INT world_peer_state(pk_node_t node);
 
 /* Hosted cert (tests/host/run_survival_l0.sh): [state-axis] (axis-dependence is
  * load-bearing — THREAT@hi -> ACTIVE, other axes@hi -> STRESSED) + [state-gossip]

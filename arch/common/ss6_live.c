@@ -19,6 +19,7 @@
  *  the single-node path is byte-unchanged when REMOTE_EXPERTS is not enabled.
  */
 #include "ss6_live.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "student.h"   /* st_model, st_expert_forward_ref, st_set_remote_expert */
 #include "placement.h"
 #include "drpc.h"
@@ -54,8 +55,8 @@ static void sl_putdec(UW v)
 typedef struct {
     UW    magic;        /* SS6L_REQ_MAGIC (v2)                             */
     UH    seq;          /* request id (echoed in the reply)                */
-    UB    src_node;     /* requester node id                               */
-    UB    dst_node;     /* owner node id (SS-5 placement)                  */
+    pk_node8_t src_node;     /* requester node id                               */
+    pk_node8_t dst_node;     /* owner node id (SS-5 placement)                  */
     UH    layer;        /* transformer layer                               */
     UH    expert_id;    /* global expert id                                */
     UH    d;            /* model d (== student d_model)                    */
@@ -72,7 +73,7 @@ typedef struct {
 typedef struct {
     UW    magic;        /* SS6L_REP_MAGIC (v2)                             */
     UH    seq;          /* echoes the request seq                          */
-    UB    src_node;     /* responder (owner) node id                       */
+    pk_node8_t src_node;     /* responder (owner) node id                       */
     UB    status;       /* 0 = OK (eo valid), !=0 = refused                */
     UH    d;            /* number of valid eo entries                      */
     UB    refuse_reason;/* SS6L_REFUSE_* (0 == OK; VERSKEW on pin mismatch) */

@@ -23,6 +23,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -51,7 +52,7 @@ typedef struct {
     UW   magic;                  /* SFS_MAGIC                           */
     UB   version;                /* SFS_VERSION                         */
     UB   type;                   /* SFS_FILE_*                          */
-    UB   src_node;
+    pk_node8_t src_node;
     UB   _pad;
     char path[SFS_PATH_MAX];     /* ファイルパス (null terminated)      */
     UW   total_size;             /* ファイル全体バイト数 (START のみ)   */
@@ -97,7 +98,7 @@ void sfs_delete(const char *path);
 void sfs_boot_sync(void);
 
 /* UDP 受信コールバック (SFS_PORT に登録) */
-void sfs_rx(UB src_node, UH dst_port, const UB *data, UH len);
+void sfs_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len);
 
 /* パスが SFS_ROOT 以下かどうかを確認する */
 BOOL sfs_is_shared(const char *path);

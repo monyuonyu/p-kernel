@@ -19,6 +19,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ================================================================== */
 /* Tensor — kernel-managed N-dimensional array                         */
@@ -204,7 +205,7 @@ void ai_infer_task(INT stacd, void *exinf);
  *    node_id  = 0xFF → run locally; otherwise route to remote node
  *    Returns E_OK and sets *class_out to 0/1/2 on success.
  */
-ER   dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout);
+ER   dtk_infer(pk_node_t node_id, W sensor_packed, UB *class_out, TMO tmout);
 
 /* Federated Learning (fedlearn.c) was removed as dead code, superseded
  * by the decentralized gossip_learn.c collective-learning path. The

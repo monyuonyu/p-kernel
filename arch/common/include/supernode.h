@@ -37,6 +37,7 @@
  */
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* Dedicated UDP port for supernode forward REQ/DELIVER. MUST be distinct from
  * EVERY other udp_bind() port — netstack's udp_input dispatches a datagram to
@@ -71,13 +72,13 @@ void snf_install(void);
  * 1 if a delivery datagram was emitted (forwarded OR direct), 0 on a hard error
  * (bad args / port not bound). The byte-identical payload reaches `dst`'s
  * SNF_PORT handler -> snf_set_sink() callback. */
-INT snf_send(UB dst, const UB *payload, UH len);
+INT snf_send(pk_node_t dst, const UB *payload, UH len);
 
 /* The destination-side delivery sink: invoked on the node that owns `dst` when a
  * SNF_DELIVER for it arrives (whether forwarded by a supernode or sent direct).
  * `via_super` = 1 if a supernode forwarded it, 0 if it came direct. Lets a cert /
  * an application observe the byte-identical received payload. */
-typedef void (*snf_sink_fn)(UB src, const UB *payload, UH len, INT via_super);
+typedef void (*snf_sink_fn)(pk_node_t src, const UB *payload, UH len, INT via_super);
 void snf_set_sink(snf_sink_fn fn);
 
 /* UDP receive callback (registered on SNF_PORT by snf_install). Public so the
@@ -203,7 +204,7 @@ _Static_assert(sizeof(NP_PKT) == 44, "NP_PKT on-wire size must stay 44 B");
  * verdict==RELAY fall back to snf_send(peer,...) (connectivity preserved).
  * Returns 1 if a rendezvous outcome was reached (punch attempted or relayed),
  * 0 on a hard error (bad args / port not bound). */
-INT np_request_punch(UB peer);
+INT np_request_punch(pk_node_t peer);
 
 /* N-3 observability (read-only, per boot):
  *   np_punches()  : NP rendezvous this node resolved to PUNCH (as a peer)

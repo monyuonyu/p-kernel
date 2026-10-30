@@ -24,6 +24,7 @@
 
 #include "dtr.h"       /* shared kernels: dt_linear/dt_softmax/dt_relu/
                           dt_sqrt/dtr_ln_fwd_cache/dtr_ln_bwd/dtr_logf */
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
@@ -5400,7 +5401,7 @@ typedef struct {
     UW magic;                         /* MW_MAGIC                          */
     UW epoch;                         /* the origin's merge_epoch           */
     UW n_floats;                      /* == R_NP (sanity)                   */
-    U1 origin;                        /* the publishing node                */
+    pk_node8_t origin;                        /* the publishing node                */
     U1 n_chunks;                      /* == N_WCHUNK                        */
     UH _pad;
     U1 chunk[N_WCHUNK][PFS_ID_LEN];   /* content-id of each chunk block     */
@@ -5432,7 +5433,7 @@ _Static_assert(sizeof(MW_CHUNK) <= PFS_BLOCK_MAX, "mw chunk fits one block");
 typedef struct {
     UW magic;                         /* MW_MAGIC                          */
     UW epoch;                         /* the origin's published epoch       */
-    U1 origin;                        /* the publishing node                */
+    pk_node8_t origin;                        /* the publishing node                */
     U1 _pad[3];
     U1 man_id[PFS_ID_LEN];            /* content-id of the MW_MANIFEST block */
 } __attribute__((packed)) MW_ANNOUNCE;       /* 4+4+1+3+32 = 44 B           */

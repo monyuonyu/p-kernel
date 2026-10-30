@@ -3774,6 +3774,11 @@ jobs:
         run: python3 tools/cmdmatrix/test_gen.py
       - name: gen.py --check
         run: python3 tools/cmdmatrix/gen.py --check
+      # N2a (research/n2-wire16.md): node ids in wire structs are pk_node8_t
+      # and in the common prototypes pk_node_t. Static, rides on this job
+      # (python only) so the job count stays the same.
+      - name: "[n2a-types] tools/n2scan/check_types.py"
+        run: python3 tools/n2scan/check_types.py
 
   consent-dom-cert:
     # G3 (fable5 CI-coverage audit): the galaxy/consent onboarding PIXELS had

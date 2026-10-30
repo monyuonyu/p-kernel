@@ -9,6 +9,7 @@
 #define KLOADER_TASK_H
 
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* KLOAD プロトコル定数                                                */
@@ -46,7 +47,7 @@ void kloader_task_init(void);
 void kloader_task(INT stacd, void *exinf);
 
 /* pmesh_bind コールバック (既存 p-kernel ノードからの KLOAD 受信) */
-void kloader_rx(UB src_node, UH dst_port, const UB *data, UH len);
+void kloader_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len);
 
 /* udp_bind コールバック (bare kloader ノードからの BEACON 受信) */
 void kloader_beacon_rx(UW src_ip, UH src_port, const UB *data, UH len);
@@ -63,6 +64,6 @@ INT  kloader_rx_is_open(void);
 INT  kloader_auto_push_on(void);
 
 /* kpush コマンド用 (shell.c から呼ぶ) */
-void kloader_push(UB target_node);
+void kloader_push(pk_node_t target_node);
 
 #endif /* KLOADER_TASK_H */

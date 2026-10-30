@@ -110,7 +110,7 @@ static INT write_kl_bin(void)
 /* pmesh 受信コールバック                                              */
 /* ------------------------------------------------------------------ */
 
-void kloader_rx(UB src_node, UH dst_port, const UB *data, UH len)
+void kloader_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 {
     (void)src_node; (void)dst_port;
 
@@ -410,7 +410,7 @@ void kloader_task_init(void)
 /* kpush — シェルから呼ぶ: 自分自身のカーネルをターゲットノードへ送信 */
 /* ------------------------------------------------------------------ */
 
-void kloader_push(UB target_node)
+void kloader_push(pk_node_t target_node)
 {
     if (target_node >= DNODE_MAX) {
         kl_puts("[kpush] invalid node\r\n");

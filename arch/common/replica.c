@@ -271,7 +271,7 @@ static void merge_entry(const REPLICA_ENTRY *e)
 /* UDP 受信コールバック                                                */
 /* ------------------------------------------------------------------ */
 
-void replica_rx(UB src_node, UH dst_port, const UB *data, UH len)
+void replica_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 {
     (void)src_node; (void)dst_port;
     /* v2 ヘッダ 12 バイト以上 (ANNOUNCE はヘッダのみ送信) */
@@ -345,7 +345,7 @@ void replica_task(INT stacd, void *exinf)
 /* 即時プッシュ (swim.c から ALIVE 遷移時に呼ぶ)                      */
 /* ------------------------------------------------------------------ */
 
-void replica_push_to(UB node_id)
+void replica_push_to(pk_node_t node_id)
 {
     if (node_id >= DNODE_MAX) return;
     if (dnode_table[node_id].state != DNODE_ALIVE) return;

@@ -282,7 +282,7 @@ static void send_block_to(UB dst_node, const U1 id[PFS_ID_LEN]);
 
 /* G35: public direct push — unicast a held block straight to one neighbour
  * (reliable discovery for the protect actuator; see send_block_to below). */
-void pfs_repl_push(const U1 id[PFS_ID_LEN], UB dst_node)
+void pfs_repl_push(const U1 id[PFS_ID_LEN], pk_node_t dst_node)
 {
     if (drpc_my_node == 0xFF) return;
     if (dst_node >= DNODE_MAX || dst_node == drpc_my_node) return;
@@ -387,7 +387,7 @@ static void pending_tick(UW elapsed_ms)
 /* chunk receive (sfs_rx FILE_START/FILE_CHUNK generalized)            */
 /* ------------------------------------------------------------------ */
 
-void pfs_repl_rx(UB src_node, UH dst_port, const UB *data, UH len)
+void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 {
     (void)src_node; (void)dst_port;
 

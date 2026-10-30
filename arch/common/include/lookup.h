@@ -27,6 +27,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 #define LOOKUP_KEY_LEN      32   /* key width == sha256 digest width      */
 #define LOOKUP_MAX_MEMBERS  64   /* cap on one HRW population (>= DNODE_MAX) */
@@ -70,7 +71,7 @@ INT lookup_responsible_alive(const U1 key[LOOKUP_KEY_LEN],
  * successful fetch. Refreshes an existing entry for the same key;
  * otherwise evicts (in order of preference) a free slot, the oldest
  * expired slot, or the oldest live slot. Purely local state. */
-void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], UB node);
+void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], pk_node_t node);
 
 /* Fresh-cache probe: if `key` has a non-expired entry, write its node
  * to *node and return 1; else return 0. Never falls back to HRW —

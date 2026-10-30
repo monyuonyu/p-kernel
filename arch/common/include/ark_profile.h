@@ -34,6 +34,7 @@
  */
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pfs_block.h"     /* PFS_ID_LEN, PFS_BLOCK_MAX */
 
 /* ------------------------------------------------------------------ */
@@ -93,7 +94,7 @@ typedef struct {
     U4 magic;                      /* ARK_PROV_MAGIC                        */
     U4 fact_seq;                   /* R3_FACT.seq of the taught fact        */
     U1 key, val;                   /* the binding, as declared              */
-    U1 origin_node;                /* drpc_my_node                          */
+    pk_node8_t origin_node;                /* drpc_my_node                          */
     U1 src;                        /* 0 = shell verb, 1 = web (galaxy)      */
     U4 age_ms;
     U1 profile_head[PFS_ID_LEN];   /* content-id of the ARK_PROFILE version */
