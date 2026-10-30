@@ -17,13 +17,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = dict(Nodes="{0, 1, 2}", Keys="{1}", Vals="{1, 2}", MaxTeach=3,
             MaxDrop=0, MaxEvict=0, MaxRestart=0, WithAnswer="TRUE",
             Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE",
-            ScriptName='"none"')
+            HaveFix="FALSE", ScriptName='"none"')
 S3 = {}
 S4 = dict(Nodes="{0, 1, 2, 3}", MaxTeach=2)
 K2 = dict(Keys="{1, 2}", MaxTeach=3, MaxDrop=1, StampMax=8)
 SAFE = "TypeOK P1 P2 P3 P4 P5"
 K2SAFE = "TypeOK P2 P3 P4 P5"
 FIX = dict(DupAdopt="TRUE")
+HP = dict(HaveFix="TRUE")
 STALE = '"stale"'   # the sequences are Script in MindRule.tla
 M4SC = '"m4sc"'
 
@@ -112,6 +113,20 @@ RUNS = {
     "Sc-m4-L1A-fix":       ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1A", "pass"),
     "Sc-m4-fix-v":         ({**K2, **FIX, "ScriptName": M4SC}, K2SAFE.replace("P3", "P3v"), None, "pass"),
     "M4sc-A":              ({**K2, **FIX, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # the C fix of STALE (feat/mind-have-push, mh_tick): HaveFix. Expected
+    # before the run: STALE converges (the winner's holder sees the stale
+    # summary and pushes; the stale node never took that seq from that
+    # origin, so it is not deduplicated), with or without fairness on Answer;
+    # safety unchanged on S3; and M4 is MASKED on M4SC (the stale node n1 is
+    # healed by n0's have-push instead of the push-back) = a reading, not a
+    # gate: with the fix the push-back on a losing receive is no longer the
+    # only way back in this story.
+    "Sc-stale-L1A-hp":     ({**K2, **FIX, **HP, "ScriptName": STALE}, "TypeOK", "L1A", "pass"),
+    "Sc-stale-L1-hp":      ({**K2, **FIX, **HP, "ScriptName": STALE}, "TypeOK", "L1", "pass"),
+    "Sc-stale-L1-hponly":  ({**K2, **HP, "ScriptName": STALE}, "TypeOK", "L1", "pass"),
+    "S3-fix-v-hp":         ({**S3, **FIX, **HP}, SAFE.replace("P3", "P3v"), None, "pass"),
+    "Sc-m4-L1-hp":         ({**K2, **FIX, **HP, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
+    "M4sc-A-hp":           ({**K2, **FIX, **HP, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "pass"),
 }
 
 
