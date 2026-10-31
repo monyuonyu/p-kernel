@@ -134,13 +134,27 @@ static const char *G(const char *gate, const char *sn)
     return g_msg;
 }
 
-/* own-data loss of a parent, per round (stage 5, [d5c-parents-ok]) */
-typedef struct { float min, last; } own_curve;
+/* own-data loss of a parent, per round (stage 5, [d5c-parents-ok]).
+ * Stage 8 (brain-merge-keep.md §2, -DD5C_STAGE8): the parent is handed over
+ * with the weights of its own-data-min round (ties keep the earlier round),
+ * like the resident brain that never persists a regression; `handed` is the
+ * own-data loss of what is handed over. Without D5C_STAGE8 the last weights
+ * are handed (= stage 7, the design's "-DD5C_PARENT_LAST"; kept the default
+ * so the stage 3-7 certs print the same bytes). Negative control
+ * -DD5C_PARENT_KEEP_FIRST (with D5C_STAGE8): hand the first round's weights. */
+typedef struct { float min, last, handed; int min_round; } own_curve;
 
 static void train_list(st_model *m, const uint8_t *const *w, int n, int shift,
                        int rounds, own_curve *oc)
 {
-    if (oc) { oc->min = 1e30f; oc->last = 0.0f; }
+#ifdef D5C_STAGE8
+    float *keep = NULL;
+    if (oc) {
+        keep = (float *)malloc((size_t)m->n_params * sizeof(float));
+        if (!keep) { printf("  FAIL  out of memory (parent keep)\n"); exit(2); }
+    }
+#endif
+    if (oc) { oc->min = 1e30f; oc->last = 0.0f; oc->handed = 0.0f; oc->min_round = -1; }
     for (int r = 0; r < rounds; r++) {
         for (int j = 0; j < n; j++) {
             const uint8_t *b = w[(j * shift + 3) % n];
@@ -149,9 +163,25 @@ static void train_list(st_model *m, const uint8_t *const *w, int n, int shift,
         }
         if (oc) {
             oc->last = loss_on(m, w, n);
-            if (oc->last < oc->min) oc->min = oc->last;
+            if (oc->last < oc->min) {
+                oc->min = oc->last; oc->min_round = r;
+#if defined(D5C_STAGE8) && !defined(D5C_PARENT_KEEP_FIRST)
+                memcpy(keep, m->w, (size_t)m->n_params * sizeof(float));
+#endif
+            }
+#if defined(D5C_STAGE8) && defined(D5C_PARENT_KEEP_FIRST)
+            if (r == 0) memcpy(keep, m->w, (size_t)m->n_params * sizeof(float));
+#endif
         }
     }
+    if (oc) oc->handed = oc->last;
+#ifdef D5C_STAGE8
+    if (oc) {
+        memcpy(m->w, keep, (size_t)m->n_params * sizeof(float));
+        free(keep);
+        oc->handed = loss_on(m, w, n);
+    }
+#endif
 }
 
 /* brain-merge-stable.md §2: a parent that ends more than 0.3 above its own
@@ -160,12 +190,24 @@ static void train_list(st_model *m, const uint8_t *const *w, int n, int shift,
 static void parents_ok(const char *sc, const char *sn, const own_curve *a,
                        const own_curve *b)
 {
+#ifdef D5C_STAGE8
+    /* stage 8 (brain-merge-keep.md §2): learned = the handed parent's own
+     * loss <= 1.0; the live regression (min, last) is printed, not gated */
+    printf("  [parents %s] own-data loss A min=%.4f (round %d) last=%.4f handed=%.4f"
+           " | B min=%.4f (round %d) last=%.4f handed=%.4f\n",
+           sc, (double)a->min, a->min_round, (double)a->last, (double)a->handed,
+           (double)b->min, b->min_round, (double)b->last, (double)b->handed);
+    int ok = a->handed <= 1.0f && b->handed <= 1.0f;
+    char m[128];
+    snprintf(m, sizeof m, "[d5c-parents-ok] %s: both handed parents' own loss <= 1.0", sc);
+#else
     printf("  [parents %s] own-data loss A min=%.4f last=%.4f | B min=%.4f last=%.4f\n",
            sc, (double)a->min, (double)a->last, (double)b->min, (double)b->last);
     int ok = a->last <= a->min + 0.3f && a->last <= 1.0f &&
              b->last <= b->min + 0.3f && b->last <= 1.0f;
     char m[128];
     snprintf(m, sizeof m, "[d5c-parents-ok] %s: both parents end <= own min + 0.3 and <= 1.0", sc);
+#endif
     CHECK(ok, G(m, sn));
 }
 
@@ -307,6 +349,16 @@ static void sel_check(const char *sc, st_model *C, st_model *A, st_model *B,
     snprintf(g_msg, sizeof g_msg,
              "[d5c-swa-points] %s: the init arm averaged %d points (steps %d)", sc, want_pts, steps);
     CHECK(rc >= 0 && ss.init.n_avg == want_pts, g_msg);
+#ifdef D5C_STAGE8
+    /* stage 8 (brain-merge-keep.md §2): every element of the mean lies
+     * between the min and max of the averaged points (audit-97: dividing by
+     * n_avg - 1 left every other gate green) */
+    printf("  [swa-bounds %s] elements outside [min, max] of the %d points: %d\n",
+           sc, ss.init.n_avg, ss.init.n_out);
+    snprintf(g_msg, sizeof g_msg,
+             "[d5c-swa-bounds] %s: the init arm's mean is inside [min, max] of its points", sc);
+    CHECK(rc >= 0 && ss.init.n_avg > 0 && ss.init.n_out == 0, g_msg);
+#endif
 #else
     printf("  [walk %s init] best_step=%d val guard %.4f ancestor %.4f -> %.4f fell_back=%d\n",
            sc, ss.init.best_step, (double)ss.init.val_before,

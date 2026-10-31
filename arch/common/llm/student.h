@@ -574,6 +574,9 @@ typedef struct {
     float val_before;   /* val loss of the guarded pick                    */
     float val_after;    /* val loss of the returned child                  */
     int   n_avg;        /* START_INIT_SWA: points averaged (else 0)        */
+    int   n_out;        /* stage 8, START_INIT_SWA: elements of the mean   *
+                         * outside [min, max] of the averaged points (+-   *
+                         * 1e-6 x max(1, |mean|)); -1 = not checked        */
 } st_distill_stats;
 float st_backward_soft(st_model *m, const uint8_t *bytes, int n, const float *q);
 int   st_merge_distill(st_model *into, st_model *peer, const st_model *init,
