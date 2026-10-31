@@ -4504,6 +4504,16 @@ static void mh_have_open(void)
         mhi_sub = kdds_open_poll_scoped(MIND_HIST_TOPIC, KDDS_QOS_LATEST_ONLY, KDDS_SCOPE_REGION);
 }
 
+/* 2026-11-01 (CI 41053424126, [mind-stale] S4 red): read the peer's summary
+ * BEFORE publishing mine. kdds keeps one LATEST_ONLY slot per topic on a
+ * node and kdds_pub writes my own summary into it, so a peer's summary that
+ * arrived since the last tick was overwritten unread when this tick
+ * published; with both sides on MH_EVERY the phase can stay locked for a
+ * whole run (A never saw B's stale key, never pushed). Same for mind/hist
+ * (mhi_tick). -DMH_PUB_FIRST: the old order (negative control). Left: a
+ * summary that lands between this poll and this publish (same tick). */
+static void mh_poll(void);
+static void mh_publish(void);
 static void mh_tick(void)
 {
     if (mh_off == 0xFF) {
@@ -4512,8 +4522,15 @@ static void mh_tick(void)
         if (mh_off) r_puts("[mind] mind/have OFF (PKERNEL_MIND_HAVE=0)\r\n");
     }
     if (mh_off || drpc_my_node == 0xFF) return;
+#ifdef MH_PUB_FIRST
+    mh_publish(); mh_poll();
+#else
+    mh_poll(); mh_publish();
+#endif
+}
 
-    /* publish */
+static void mh_publish(void)
+{
     if (++mh_tick_n >= MH_EVERY) {
         mh_tick_n = 0;
         INT n = 0;
@@ -4545,8 +4562,10 @@ static void mh_tick(void)
             if (mh_pub >= 0) (void)kdds_pub(mh_pub, &mh_tx, (W)sizeof mh_tx);
         }
     }
+}
 
-    /* poll */
+static void mh_poll(void)
+{
     mh_have_open();
     if (mh_sub < 0) return;
     W r = kdds_sub(mh_sub, &mh_rx, (W)sizeof mh_rx, 0);
@@ -4642,11 +4661,22 @@ static INT mhi_holds(UB k, UB v)
 #endif
 }
 
+/* receive before send, like mh_tick (the same shared LATEST_ONLY slot) */
+static void mhi_send(void);
+static void mhi_recv(void);
 static void mhi_tick(void)
 {
     if (drpc_my_node == 0xFF) return;
+#ifdef MH_PUB_FIRST
+    mhi_send(); mhi_recv();
+#else
+    mhi_recv(); mhi_send();
+#endif
+}
+
+static void mhi_send(void)
+{
 #ifndef MH_NO_HIST
-    /* send */
     if (++mhi_tick_n >= MHI_EVERY) {
         mhi_tick_n = 0;
         INT found = 0;
@@ -4685,7 +4715,10 @@ static void mhi_tick(void)
         }
     }
 #endif
-    /* receive */
+}
+
+static void mhi_recv(void)
+{
     mh_have_open();
     if (mhi_sub < 0) return;
     W r = kdds_sub(mhi_sub, &mhi_rx, (W)sizeof mhi_rx, 0);
