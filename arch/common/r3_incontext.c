@@ -4487,7 +4487,9 @@ static void mq_publish_wants(void)
  * PKERNEL_MIND_HAVE=0 turns both sides off (the negative control, and the
  * 1-3b bump arm, which isolates the Lamport step on purpose). */
 extern char *getenv(const char *);
+#ifndef MH_EVERY                     /* test builds may set it (run_mind_stale.sh) */
 #define MH_EVERY 4                   /* ticks (~2 s at MT_POLL_MS)                */
+#endif
 static W mh_sub = -1, mh_pub = -1;
 static MH_HAVE_PKT mh_tx, mh_rx;     /* file-static (no task-stack packets)      */
 static UB mh_tick_n, mh_off = 0xFF;  /* 0xFF = env not read yet                  */
@@ -4613,7 +4615,9 @@ static void mh_tick(void)
  * -DMH_NO_HIST: never send. -DMH_HIST_IGNORE: receive and drop. (The two
  * negative controls of mind-conflicts.md 1-3c (3).) -DMH_HIST_BADVAL: send
  * v_lost = 200; with -DMH_HIST_NOGUARD the receiver skips the range check. */
+#ifndef MHI_EVERY
 #define MHI_EVERY 4                  /* ticks, like MH_EVERY                     */
+#endif
 static MHI_HIST_PKT mhi_tx, mhi_rx;
 static UB mhi_tick_n;
 static UW mhi_seq, mhi_rr;

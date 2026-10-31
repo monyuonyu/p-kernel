@@ -247,7 +247,8 @@ jobs:
     # step (~3 min), [stop-sleep] (~3 min), [stop-pathw] (~6 min) and
     # [stop-out] (~5 min), i.e. ~63 min expected; [stop-live] (~8 min) -> ~71.
     # 90 -> 100 (2026-10-30): 82.2 min in CI 40879351542 (65.8 in 40868271726,
-    # the runner's load varies), and [mind-stale] adds ~1.5 min.
+    # the runner's load varies), and [mind-stale] adds ~1.5 min (its
+    # -DMH_EVERY=1 pass another ~1.5, 2026-11-01).
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
@@ -1111,10 +1112,18 @@ jobs:
       # on stays on the loser unless the winner's holder pushes when it sees
       # the stale summary (mind/have). Test hook -DMT_RX_INJECT; S4 red on
       # master and with -DMH_NO_HAVE_PUSH. Rebuilds and cleans. ~1.5 min.
+      # Second pass -DMH_EVERY=1 (2026-11-01, CI 41053424126 was red on S4):
+      # a node's own kdds_pub overwrites its LATEST_ONLY slot, so a summary
+      # that arrives just before the node's own publish tick was never read;
+      # both sides publish every 4 ticks, so the phase can stay locked for a
+      # whole run. Publishing every tick makes that the case every time:
+      # S2 and S4 red when the poll comes after the publish. ~1.5 min.
       - name: stale holder healed by mind/have (ROADMAP 1-3m)
         run: |
           timeout 300 tests/host/run_mind_stale.sh | tee mind_stale.log
           grep -aF '[mind-stale] ALL PASS' mind_stale.log
+          EXTRA_CFLAGS=-DMH_EVERY=1 timeout 300 tests/host/run_mind_stale.sh | tee mind_stale_every1.log
+          grep -aF '[mind-stale] ALL PASS' mind_stale_every1.log
 
       # ROADMAP 1-2b: a node that keeps re-driving its own last teach must
       # still deliver pull answers (mind/teach is LATEST_ONLY; the answer was
