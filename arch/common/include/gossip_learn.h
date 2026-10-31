@@ -44,6 +44,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pfs_block.h"   /* PFS_ID_LEN / PFS_BLOCK_MAX for the SS-3 manifest */
 
 /* ------------------------------------------------------------------ */
@@ -183,7 +184,7 @@ typedef struct __attribute__((packed)) {
  * objects + a header object "st/<node>/h". Returns the number of chunks
  * written (>=0), or <0 on pfs error / too many chunks (NO truncation).
  * Shell-task context only. */
-INT  gl_student_publish(UB node, const void *blob, UW len);
+INT  gl_student_publish(pk_node_t node, const void *blob, UW len);
 
 /* Fetch peer `node`'s most-recent published student blob into out[cap].
  * Reads the header object, then each chunk object in ASCENDING order. On
@@ -191,7 +192,7 @@ INT  gl_student_publish(UB node, const void *blob, UW len);
  * returns <0 if the header / any chunk is not local yet (a P1 WANT is
  * issued so a retry may succeed), if cap is too small (NO truncation), or
  * on a malformed header. Shell-task context only. */
-INT  gl_student_fetch(UB node, void *out, UW cap);
+INT  gl_student_fetch(pk_node_t node, void *out, UW cap);
 
 /* [ss3-blob-roundtrip-falsify] support — HOSTED test builds only. Arms a
  * one-shot fault: the NEXT gl_student_publish OMITS storing chunk index `idx`

@@ -25,6 +25,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"
 
 /* ------------------------------------------------------------------ */
@@ -50,7 +51,7 @@
 
 /* BEACON に含まれる 1 エントリ (4 bytes) */
 typedef struct {
-    UB dst_node;   /* 宛先ノード ID           */
+    pk_node8_t dst_node;   /* 宛先ノード ID           */
     UB cost;       /* そこへのホップ数        */
     UB _pad[2];
 } __attribute__((packed)) PMESH_ROUTE_ENTRY;
@@ -63,7 +64,7 @@ typedef struct {
     UW magic;                              /* PMESH_MAGIC             */
     UB version;                            /* PMESH_VERSION           */
     UB type;                               /* PMESH_BEACON            */
-    UB src_node;                           /* 送信ノード ID            */
+    pk_node8_t src_node;                           /* 送信ノード ID            */
     UB entry_cnt;                          /* entries[] 有効数        */
     PMESH_ROUTE_ENTRY entries[DNODE_MAX];  /* ルーティングテーブル     */
 } __attribute__((packed)) PMESH_BEACON_PKT;
@@ -73,8 +74,8 @@ typedef struct {
     UW magic;        /* PMESH_MAGIC                        */
     UB version;      /* PMESH_VERSION                      */
     UB type;         /* PMESH_DATA                         */
-    UB src_node;     /* 元の送信ノード ID                   */
-    UB dst_node;     /* 最終宛先ノード ID                   */
+    pk_node8_t src_node;     /* 元の送信ノード ID                   */
+    pk_node8_t dst_node;     /* 最終宛先ノード ID                   */
     UH dst_port;     /* 宛先で配送するポート番号             */
     UH data_len;     /* data[] の有効バイト数               */
     UB data[PMESH_DATA_MAX];
@@ -113,7 +114,7 @@ extern PMESH_STATS pmesh_stats;
 /* 受信コールバック型                                                  */
 /* ------------------------------------------------------------------ */
 
-typedef void (*pmesh_recv_fn)(UB src_node, UH dst_port,
+typedef void (*pmesh_recv_fn)(pk_node_t src_node, UH dst_port,
                               const UB *data, UH len);
 
 /* ------------------------------------------------------------------ */
@@ -131,7 +132,7 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len);
 
 /* ノード ID 指定で送信。直接届かない場合は中継経路を使う。
  * 成功: 0 / 経路なし: -1 */
-W pmesh_send(UB dst_node, UH dst_port, const UB *data, UH len);
+W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len);
 
 /* ポートに対する受信コールバックを登録 */
 W pmesh_bind(UH port, pmesh_recv_fn fn);

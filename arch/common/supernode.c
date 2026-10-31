@@ -14,6 +14,7 @@
  *  supernode_select()/region_supernode_test() do for the selector.
  */
 #include "supernode.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "region.h"
 #include "drpc.h"
 #include "netstack.h"
@@ -49,8 +50,8 @@ static void sn_putdec(UW v)
  * payload bytes are copied through VERBATIM (byte-identical forward). */
 typedef struct {
     UW    magic;        /* SNF_FWD_MAGIC / SNF_DLV_MAGIC / SNF_ACK_MAGIC     */
-    UB    origin;       /* the ORIGINAL sender node id (preserved end-to-end)*/
-    UB    final_dst;    /* the FINAL destination node id                     */
+    pk_node8_t origin;       /* the ORIGINAL sender node id (preserved end-to-end)*/
+    pk_node8_t final_dst;    /* the FINAL destination node id                     */
     UB    relayed_by;   /* the supernode that forwarded it (0xFF if direct)  */
     UB    _pad;
     UH    len;          /* meaningful payload bytes (<= SNF_PAYLOAD_MAX)      */
@@ -164,7 +165,7 @@ static void snf_build(SNF_PKT *p, UW magic, UB origin, UB final_dst,
 /* ------------------------------------------------------------------ */
 /* public: send to a region peer, routed through the supernode if any  */
 /* ------------------------------------------------------------------ */
-INT snf_send(UB dst, const UB *payload, UH len)
+INT snf_send(pk_node_t dst, const UB *payload, UH len)
 {
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (len > SNF_PAYLOAD_MAX || (len > 0 && !payload)) return 0;
@@ -974,7 +975,7 @@ static void np_rx(UW src_ip, UH src_port, const UB *data, UH len)
 /* ------------------------------------------------------------------ */
 /* public: initiate a supernode-brokered rendezvous toward `peer`.     */
 /* ------------------------------------------------------------------ */
-INT np_request_punch(UB peer)
+INT np_request_punch(pk_node_t peer)
 {
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (peer >= DNODE_MAX || peer == drpc_my_node) return 0;

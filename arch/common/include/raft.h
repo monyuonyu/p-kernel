@@ -17,6 +17,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -57,7 +58,7 @@ typedef struct {
     UW  magic;          /* RAFT_MAGIC                              */
     UB  version;        /* RAFT_VERSION                            */
     UB  type;           /* RAFT_MSG_*                              */
-    UB  src_node;
+    pk_node8_t src_node;
     UB  candidate;      /* 選挙候補ノードID (VOTE_REQ)             */
     UW  term;           /* 現在の任期番号                          */
     UW  log_idx;        /* candidateの最終ログインデックス         */

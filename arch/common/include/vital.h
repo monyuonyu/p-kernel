@@ -19,6 +19,7 @@
 
 #pragma once
 #include "kdds.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"
 
 /* ------------------------------------------------------------------ */
@@ -26,7 +27,7 @@
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    UB  node_id;        /* このノードの ID                             */
+    pk_node8_t node_id;        /* このノードの ID                             */
     UB  peers_alive;    /* 現在 ALIVE と認識しているピア数             */
     UB  topics;         /* アクティブな K-DDS トピック数               */
     UB  _pad;

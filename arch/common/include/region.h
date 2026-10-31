@@ -19,6 +19,7 @@
 
 #pragma once
 #include "drpc.h"   /* dnode_table[], DNODE_MAX, DNODE_ALIVE, drpc_my_node */
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* RTT がこの値 (ms) 以内なら同一 region とみなす */
 #define REGION_TAU_MS   50
@@ -47,11 +48,11 @@ UB   region_id(void);
 UB   region_coordinator(void);
 
 /* node が自分と同じ region に属するか (内部で region_recompute する)。 */
-BOOL region_contains(UB node);
+BOOL region_contains(pk_node_t node);
 
 /* 最後の region_recompute() 結果を再計算せずに読む (ホットパス用)。
  * 呼ぶ前に region_recompute() を一度実行しておくこと。 */
-BOOL region_is_member(UB node);
+BOOL region_is_member(pk_node_t node);
 
 /* 自 region のメンバ数 (自分を含む)。 */
 UB   region_size(void);
@@ -75,8 +76,8 @@ UB   region_supernode(void);
 
 /* Mark/unmark a node as supernode-capable (reachable + volunteered).   */
 /* Local only this slice — NOT yet gossiped over SWIM.                 */
-void region_set_super_capable(UB node, BOOL yes);
-BOOL region_is_super_capable(UB node);
+void region_set_super_capable(pk_node_t node, BOOL yes);
+BOOL region_is_super_capable(pk_node_t node);
 
 /* Read the self capability opt-in once (env PKERNEL_SUPERNODE=1 on      */
 /* hosted nodes; default NOT capable). Idempotent. */
@@ -106,5 +107,5 @@ UB   region_teacher(void);
 
 /* Mark/unmark a node as teacher-capable. Fed VERBATIM by swim.c's      */
 /* gossip_apply (capability bit 1) under the same anti-stale LWW gate.  */
-void region_set_teacher_capable(UB node, BOOL yes);
-BOOL region_is_teacher_capable(UB node);
+void region_set_teacher_capable(pk_node_t node, BOOL yes);
+BOOL region_is_teacher_capable(pk_node_t node);

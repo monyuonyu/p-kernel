@@ -80,7 +80,7 @@ static void ui_event_refill(void)
     }
 }
 
-void ui_event_emit(U1 type, U1 src, U1 dst, U2 a, U2 b)
+void ui_event_emit(U1 type, pk_node_t src, pk_node_t dst, U2 a, U2 b)
 {
     ui_event_refill();
     if (ui_chatty(type) && type < 17) {

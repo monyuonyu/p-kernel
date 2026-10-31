@@ -200,7 +200,7 @@ INT protect_declare(const U1 id[PFS_ID_LEN], UW len, INT target_r)
 /* holder accounting (gossip-fed; lowers the grounded threat)          */
 /* ------------------------------------------------------------------ */
 
-void protect_note_holder(UB src_node, const U1 id[PFS_ID_LEN])
+void protect_note_holder(pk_node_t src_node, const U1 id[PFS_ID_LEN])
 {
     if (src_node >= DNODE_MAX) return;
     if (src_node == drpc_my_node) return;         /* self is not a replica  */

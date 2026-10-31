@@ -10,19 +10,23 @@ metadir under DIR (default: a temp dir); the full TLC output is DIR/NAME.txt
 (the counterexample, if any). Not in CI (Java; #37 5). 'expect' is what the
 design fixed before the model existed; the last column says if it matched.
 """
-import argparse, os, re, subprocess, sys, tempfile, time
+import argparse, os, re, shutil, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 BASE = dict(Nodes="{0, 1, 2}", Keys="{1}", Vals="{1, 2}", MaxTeach=3,
             MaxDrop=0, MaxEvict=0, MaxRestart=0, WithAnswer="TRUE",
-            Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE")
+            Mut='"none"', BadNode=2, StampMax=12, DupAdopt="FALSE",
+            HaveFix="FALSE", ScriptName='"none"')
 S3 = {}
 S4 = dict(Nodes="{0, 1, 2, 3}", MaxTeach=2)
 K2 = dict(Keys="{1, 2}", MaxTeach=3, MaxDrop=1, StampMax=8)
 SAFE = "TypeOK P1 P2 P3 P4 P5"
 K2SAFE = "TypeOK P2 P3 P4 P5"
 FIX = dict(DupAdopt="TRUE")
+HP = dict(HaveFix="TRUE")
+STALE = '"stale"'   # the sequences are Script in MindRule.tla
+M4SC = '"m4sc"'
 
 # name: (overrides, invariants, temporal property or None, expect)
 #   expect: "pass", or "fail:<property>" (the design's line or reading)
@@ -70,11 +74,65 @@ RUNS = {
     "M4-d0-A":     ({**K2, **FIX, "MaxDrop": 0, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
     "K2-L1A-fix":  ({**K2, **FIX}, "TypeOK", "L1A", "pass"),
     "M4-A":        ({**K2, **FIX, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 10-29 21:05 run: M4 (no push-back) cannot show with MaxDrop 0 (every
+    # node receives every teach, so the push is never needed): keep K2's drop
+    # and 3 teaches but let only nodes 0 and 1 teach (node 2 only listens) =
+    # a SUBSET of K2's runs: a pass here is weaker than K2's, a red is a real
+    # counterexample of K2 too.
+    # R-evict-L1 is red but not telling: K2t2-L1-fix (no Evict) breaks L1
+    # under the same FairSpec. With fairness on Answer, the model's Answer
+    # still serves a node that FORGOT k (held = 0), while the C never asks
+    # again for a key it once held (r3_key_ever_held, r3_want_hint 2906).
+    # Expected before the run: pass = the model is kinder than the C here.
+    "R-evict-L1A-t2": ({**K2, **FIX, "MaxTeach": 2, "MaxEvict": 1}, "TypeOK", "L1A", "pass"),
+    "K2s-L1A-fix":({**K2, **FIX, "Teachers": "{0, 1}"}, "TypeOK", "L1A", "pass"),
+    "M4s-A":       ({**K2, **FIX, "Teachers": "{0, 1}", "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # 10-30 00:00 run: K2 (2 keys, 1 drop) with the 3 teaches fixed in order
+    # (Script), deliveries/drops/re-sends still free. Expectations written
+    # before the first run (C: the per-origin dedup is fact_seq != last 5227,
+    # a re-send carries the teach's own seq, Republish sends only the last
+    # own teach).
+    # STALE: n0 teaches k1=v1; n1 teaches k1=v2 (after hearing v1 its stamp
+    # is 3 and wins); n1 then teaches k2, so its re-send moves to k2. If the
+    # one drop is v2 -> n0, n0 keeps v1 for good: n0's own re-send of v1 is
+    # deduplicated everywhere (same seq) before the rule, so nobody pushes
+    # back; Answer only serves a node that holds nothing. Expected red even
+    # with the fix and fairness on Answer = a liveness hole of the C rule
+    # (to be checked in C), not of M4.
+    # M4SC: n0 teaches k1=v1; n1 teaches k1=v2; n0 teaches k2. The winner's
+    # teacher moves on only when v1 wins (same stamp 1, smaller node), and
+    # then a node that missed v1 is healed by n0's push-back (n0 gets n1's
+    # losing v2) or by its own revise; if v2 wins (stamp 3) n1 keeps
+    # re-sending it. Expected: L1 holds (FairSpec and FairASpec); M4 (no
+    # push-back) red.
+    "Sc-stale-L1A-fix":    ({**K2, **FIX, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-L1A":        ({**K2, "ScriptName": STALE}, "TypeOK", "L1A", "fail:L1"),
+    "Sc-stale-d0-L1A-fix": ({**K2, **FIX, "ScriptName": STALE, "MaxDrop": 0}, "TypeOK", "L1A", "pass"),
+    "Sc-stale-fix-v":      ({**K2, **FIX, "ScriptName": STALE}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "Sc-m4-L1-fix":        ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
+    "Sc-m4-L1A-fix":       ({**K2, **FIX, "ScriptName": M4SC}, "TypeOK", "L1A", "pass"),
+    "Sc-m4-fix-v":         ({**K2, **FIX, "ScriptName": M4SC}, K2SAFE.replace("P3", "P3v"), None, "pass"),
+    "M4sc-A":              ({**K2, **FIX, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "fail:L1"),
+    # the C fix of STALE (feat/mind-have-push, mh_tick): HaveFix. Expected
+    # before the run: STALE converges (the winner's holder sees the stale
+    # summary and pushes; the stale node never took that seq from that
+    # origin, so it is not deduplicated), with or without fairness on Answer;
+    # safety unchanged on S3; and M4 is MASKED on M4SC (the stale node n1 is
+    # healed by n0's have-push instead of the push-back) = a reading, not a
+    # gate: with the fix the push-back on a losing receive is no longer the
+    # only way back in this story.
+    "Sc-stale-L1A-hp":     ({**K2, **FIX, **HP, "ScriptName": STALE}, "TypeOK", "L1A", "pass"),
+    "Sc-stale-L1-hp":      ({**K2, **FIX, **HP, "ScriptName": STALE}, "TypeOK", "L1", "pass"),
+    "Sc-stale-L1-hponly":  ({**K2, **HP, "ScriptName": STALE}, "TypeOK", "L1", "pass"),
+    "S3-fix-v-hp":         ({**S3, **FIX, **HP}, SAFE.replace("P3", "P3v"), None, "pass"),
+    "Sc-m4-L1-hp":         ({**K2, **FIX, **HP, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
+    "M4sc-A-hp":           ({**K2, **FIX, **HP, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "pass"),
 }
 
 
 def cfg_text(over, inv, prop):
     c = {**BASE, **over}
+    c.setdefault("Teachers", c["Nodes"])      # everyone teaches unless narrowed
     lines = ["CONSTANTS"] + [f"  {k} = {v}" for k, v in c.items()]
     # "L1A" = L1 under FairASpec (fairness on Answer too)
     spec = "FairASpec" if prop == "L1A" else "FairSpec" if prop else "Spec"
@@ -90,6 +148,10 @@ def main():
     ap.add_argument("--jar", required=True)
     ap.add_argument("--out")
     ap.add_argument("--workers", default="2")
+    ap.add_argument("--timeout", type=float, default=0,
+                    help="seconds per run; 0 = none. A stopped run reports 'timeout'")
+    ap.add_argument("--keep-meta", action="store_true",
+                    help="keep TLC's state directory (deleted by default)")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
     out = a.out or tempfile.mkdtemp(prefix="tlc-mindrule-")
@@ -106,23 +168,41 @@ def main():
         with open(cfg, "w") as f:
             f.write(cfg_text(over, inv, prop))
         t0 = time.time()
-        r = subprocess.run(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
-                            "-workers", a.workers, "-metadir", os.path.join(out, name + ".meta"),
-                            "-config", cfg, "MindRule.tla"],
-                           capture_output=True, text=True, cwd=out)
+        # TLC writes straight into <name>.txt (progress lines included), so a
+        # run stopped by --timeout or killed from outside still leaves how far
+        # it got (the 10-29 19:10 run lost two 60-75 min runs' state counts).
+        meta = os.path.join(out, name + ".meta")
+        txtp = os.path.join(out, name + ".txt")
+        timed_out = False
+        with open(txtp, "w") as f:
+            p = subprocess.Popen(["java", "-XX:+UseParallelGC", "-cp", a.jar, "tlc2.TLC",
+                                  "-workers", a.workers, "-metadir", meta,
+                                  "-config", cfg, "MindRule.tla"],
+                                 stdout=f, stderr=subprocess.STDOUT, cwd=out)
+            try:
+                p.wait(timeout=a.timeout or None)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                p.kill()
+                p.wait()
         dt = time.time() - t0
-        txt = r.stdout + r.stderr
-        with open(os.path.join(out, name + ".txt"), "w") as f:
-            f.write(txt)
+        if not a.keep_meta:
+            shutil.rmtree(meta, ignore_errors=True)   # GBs on the big runs
+        with open(txtp) as f:
+            txt = f.read()
         m = re.search(r"(Invariant|Temporal property|Property) (\w+) is violated", txt) \
             or re.search(r"Error: (Temporal properties were violated)", txt)
-        st = re.findall(r"(\d+) distinct states found", txt)
-        states = st[-1] if st else "?"
+        # progress lines write "2,091,552 distinct states found", the final
+        # line "56305 distinct states found": take the digits and commas
+        st = re.findall(r"([\d,]+) distinct states found", txt)
+        states = st[-1].replace(",", "") if st else "?"
         if m:
             what = m.group(2) if m.lastindex and m.lastindex >= 2 else "L1"
             got = "fail:" + what
         elif "No error has been found" in txt:
             got = "pass"
+        elif timed_out:
+            got = "timeout"       # says nothing either way; states = how far
         else:
             got = "error"
         ok = got == expect or (expect.startswith("fail:") and got.startswith("fail:")

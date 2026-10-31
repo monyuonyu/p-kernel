@@ -19,6 +19,7 @@
  */
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* Event vocabulary (§4) — the EV_* contract shared by the emit side    */
@@ -121,9 +122,9 @@ void galaxy_task(INT stacd, void *exinf);
  * the hook costs nothing and the kernels keep linking. The future
  * netstack-tcp-server slice replaces this branch, not the call sites. */
 #ifdef _TK_HOSTED_LIBC_
-void galaxy_emit(UB type, UB src, UB dst, UH a, UH b);
+void galaxy_emit(UB type, pk_node_t src, pk_node_t dst, UH a, UH b);
 #else
-static inline void galaxy_emit(UB type, UB src, UB dst, UH a, UH b)
+static inline void galaxy_emit(UB type, pk_node_t src, pk_node_t dst, UH a, UH b)
 {
     (void)type; (void)src; (void)dst; (void)a; (void)b;
 }

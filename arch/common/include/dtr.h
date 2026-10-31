@@ -24,6 +24,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pfs_block.h"   /* PFS_ID_LEN — LM-7 MT_TEACH_PKT.prov_head width */
 
 /* ------------------------------------------------------------------ */
@@ -63,7 +64,7 @@
 typedef struct {
     UW    magic;                       /* DTR_ACT_MAGIC               */
     UW    req_id;                      /* 推論リクエスト ID           */
-    UB    src_node;                    /* 送信ノード ID               */
+    pk_node8_t src_node;                    /* 送信ノード ID               */
     UB    layer;                       /* ステージ番号                */
     UH    _pad;
     float act[DTR_EMBED_DIM];          /* float[8] = 32B              */
@@ -74,7 +75,7 @@ typedef struct {
     UW    magic;                       /* DTR_RESULT_MAGIC            */
     UW    req_id;                      /* 対応する推論リクエスト ID  */
     UB    class_id;                    /* 0=normal 1=alert 2=critical */
-    UB    src_node;                    /* 送信ノード ID               */
+    pk_node8_t src_node;                    /* 送信ノード ID               */
     UH    _pad;
     float scores[DTR_OUT_DIM];         /* softmax 確率 float[3]=12B  */
 } __attribute__((packed)) DTR_RESULT; /* 4+4+1+1+2+12 = 24 bytes     */
@@ -87,7 +88,7 @@ typedef struct {
 typedef struct {
     UW  magic;                         /* DTR_INPUT_MAGIC             */
     UW  req_id;
-    UB  src_node;
+    pk_node8_t src_node;
     UB  _pad[3];
     B   input[DTR_SEQ_LEN];            /* センサー入力 int8[4]        */
 } __attribute__((packed)) DTR_INPUT;  /* 4+4+1+3+4 = 16 bytes        */
@@ -96,7 +97,7 @@ typedef struct {
 typedef struct {
     UW    magic;                       /* DTR_HEAD_MAGIC              */
     UW    req_id;
-    UB    src_node;
+    pk_node8_t src_node;
     UB    head_id;
     UH    _pad;
     float out[DTR_SEQ_LEN * DTR_D_HEAD]; /* [4][4] float = 64 bytes  */
@@ -177,7 +178,7 @@ void dtr_stat(void);
  * seed する。FULL クラスタで分散 Attention が非自明になるよう dkva_task の
  * 起動時に一度だけ呼ぶ。 */
 #define DTR_KV_SEED_N  3
-void dtr_seed_kv_cache(UB node);
+void dtr_seed_kv_cache(pk_node_t node);
 
 /* ------------------------------------------------------------------ */
 /* Phase 14 — GA サポート API                                         */
@@ -413,7 +414,7 @@ typedef struct {
     UW magic;                    /* MT_MAGIC                                */
     UW fact_seq;                 /* A's R3_FACT.seq — the autobiographical  */
                                  /* "when" (per-origin dedup high-water)    */
-    U1 origin_node;              /* drpc_my_node of A (the teacher's node)  */
+    pk_node8_t origin_node;              /* drpc_my_node of A (the teacher's node)  */
     U1 key, val;                 /* token ids (LM-8) — was k<8/v<4 (LM-7)   */
     U1 src;                      /* ARK_PROV_SRC_SHELL/WEB (carried for prov)*/
     U1 wire_ver;                 /* MT_WIRE_VER_VOCAB (mismatch = drop+print)*/
@@ -451,7 +452,7 @@ typedef struct {
                                   /* keep it -> responder answer-once dedup   */
                                   /* (compared with != so an asker reboot     */
                                   /* re-serves, like mt_last_seq)             */
-    U1 origin_node;               /* the wondering node (loop-guard + reply)  */
+    pk_node8_t origin_node;               /* the wondering node (loop-guard + reply)  */
     U1 n;                         /* wanted keys in keys[] (0 = the empty     */
                                   /* transition publish; 0..R3_WQ_MAX)        */
     U1 wire_ver;                  /* MT_WIRE_VER_VOCAB -- same partition law   */
@@ -476,12 +477,12 @@ typedef struct {
 #define MH_MAX           16             /* entries (the queue holds <= 4 facts) */
 typedef struct {
     U1 key;                       /* the held key token id                    */
-    U1 origin;                    /* the stamp's teaching node (1-3b)          */
+    pk_node8_t origin;                    /* the stamp's teaching node (1-3b)          */
     UW stamp;                     /* the stamp (Lamport, 1-3b)                 */
 } __attribute__((packed)) MH_ENTRY;
 typedef struct {
     UW magic;                     /* MH_MAGIC                                 */
-    U1 origin_node;               /* the publishing node                      */
+    pk_node8_t origin_node;               /* the publishing node                      */
     U1 n;                         /* entries in e[] (<= MH_MAX)                */
     U1 wire_ver;                  /* MT_WIRE_VER_VOCAB                         */
     U1 _pad;
@@ -505,7 +506,7 @@ typedef struct {
     UW hist_seq;                  /* sender's send counter (per-sender dedup) */
     UW lost_stamp, now_stamp;     /* 1-3b stamps of both values               */
     UW lost_seq;                  /* the SENDER's local seq of the lost engram */
-    U1 origin_node;               /* the sending node                         */
+    pk_node8_t origin_node;               /* the sending node                         */
     U1 key, v_lost, v_now;        /* token ids                                */
     U1 lost_src, now_src;         /* MC_SRC_* as seen by the sender           */
     U1 lost_by, now_by;           /* teaching nodes (0xFF = unknown)          */
@@ -554,7 +555,7 @@ typedef struct {
  * the ring/window are uint8_t-clean. */
 typedef struct {
     UW magic;                    /* CRADLE_MAGIC                            */
-    U1 teacher_node;             /* origin id (== region_teacher() healthy) */
+    pk_node8_t teacher_node;             /* origin id (== region_teacher() healthy) */
     U1 fmt;                      /* LESSON_FMT_BYTE now; _SOFT reserved     */
     U1 _pad0, _pad1;
     UW seq;                      /* per-teacher monotonic lesson high-water  */

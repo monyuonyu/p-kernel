@@ -20,6 +20,7 @@
 
 #pragma once
 #include "kdds.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"
 #include "pmesh.h"   /* PMESH_DATA_MAX — wire パケット上限の根拠 */
 
@@ -89,7 +90,7 @@ typedef struct {
     UW   magic;                                /* REPLICA_MAGIC            */
     UB   version;                              /* REPLICA_VERSION          */
     UB   type;                                 /* REPLICA_ANNOUNCE / DATA  */
-    UB   src_node;
+    pk_node8_t src_node;
     UB   entry_cnt;                            /* この part の entries 数  */
     UH   round_seq;                            /* スナップショット世代番号 */
     UB   part_idx;                             /* 0 .. part_cnt-1          */
@@ -144,10 +145,10 @@ void replica_init(void);
 void replica_task(INT stacd, void *exinf);
 
 /* UDP 受信コールバック (REPLICA_PORT に登録)。 */
-void replica_rx(UB src_node, UH dst_port, const UB *data, UH len);
+void replica_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len);
 
 /* 新規/復帰ノードへ即座に全トピックをプッシュする (swim.c から呼ぶ)。 */
-void replica_push_to(UB node_id);
+void replica_push_to(pk_node_t node_id);
 
 /* 起動の叫び: 全ノード IP へ ANNOUNCE を送り「記憶をよこせ」と要求する。
  * replica_task() 起動冒頭から呼ぶ。 */

@@ -208,7 +208,7 @@ static UW gl_student_ref(char *out, UB node, INT i)
     return k;
 }
 
-INT gl_student_publish(UB node, const void *blob, UW len)
+INT gl_student_publish(pk_node_t node, const void *blob, UW len)
 {
     if (!blob || len == 0) return -1;
     UW nchunk = (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK;
@@ -234,7 +234,7 @@ INT gl_student_publish(UB node, const void *blob, UW len)
     return (INT)nchunk;
 }
 
-INT gl_student_fetch(UB node, void *out, UW cap)
+INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 {
     if (!out) return -1;
     char href[20]; UW hrl = gl_student_ref(href, node, -1);
@@ -315,7 +315,7 @@ static void gl_st_idcpy(U1 dst[PFS_ID_LEN], const U1 src[PFS_ID_LEN])
     for (UW b = 0; b < PFS_ID_LEN; b++) dst[b] = src[b];
 }
 
-INT gl_student_publish(UB node, const void *blob, UW len)
+INT gl_student_publish(pk_node_t node, const void *blob, UW len)
 {
     if (!blob || len == 0) return -1;
     UW nchunk = (len + GL_ST_CHUNK - 1) / GL_ST_CHUNK;
@@ -418,7 +418,7 @@ static INT gl_st_pull_index(const U1 id[PFS_ID_LEN], UW level, UW count)
     return -1;
 }
 
-INT gl_student_fetch(UB node, void *out, UW cap)
+INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 {
     if (!out) return -1;
 

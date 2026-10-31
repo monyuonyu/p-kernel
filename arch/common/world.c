@@ -284,31 +284,31 @@ void world_observe(const WORLD_BEACON *b)
 /* 集約する場所はどこにも無い。                                         */
 /* ------------------------------------------------------------------ */
 
-BOOL world_peer_known(UB node)
+BOOL world_peer_known(pk_node_t node)
 {
     if (node >= DNODE_MAX) return FALSE;
     return table[node].valid ? TRUE : FALSE;
 }
 
-INT world_peer_pressure(UB node)
+INT world_peer_pressure(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)table[node].beacon.pressure;   /* 負荷軸 0..100 (-1 = 未知) */
 }
 
-INT world_peer_threat(UB node)
+INT world_peer_threat(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)table[node].beacon.threat;     /* 脅威軸 0..100 (-1 = 未知) */
 }
 
-INT world_peer_atrisk(UB node)
+INT world_peer_atrisk(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)table[node].beacon.atrisk;     /* 同時 at-risk 点数 (-1=未知) */
 }
 
-INT world_peer_region(UB node)
+INT world_peer_region(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     UB rid = table[node].beacon.region_id;
@@ -321,7 +321,7 @@ INT world_peer_region(UB node)
  * から degraded の分母を組み、確認できない remote は『不明 (uncertain)』として
  * 別計上する。これにより degraded(k/n) の数字が gossip 鮮度に依存して過大計上
  * (各メンバを別 region と誤認) することを防ぐ。 */
-INT world_peer_region_fresh(UB node)
+INT world_peer_region_fresh(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     UW now = now_ms();
@@ -334,7 +334,7 @@ INT world_peer_region_fresh(UB node)
 /* galaxy v1 (galaxy.md §9, S1/S12): the table already stores device_type
  * from each beacon; expose it so /galaxy.json can label a peer star by
  * arch+role. Returns WORLD_DEV_* or -1 if the node is unknown. */
-INT world_peer_device(UB node)
+INT world_peer_device(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)table[node].beacon.device_type;
@@ -343,7 +343,7 @@ INT world_peer_device(UB node)
 /* galaxy v1 (galaxy.md §5, S11/S12 honesty): age in ms since this node
  * last freshly observed `node`'s beacon, so the page can fade stale
  * peers (古さの尊重). Returns -1 if the node is unknown. */
-INT world_peer_age_ms(UB node)
+INT world_peer_age_ms(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     UW now = now_ms();
@@ -539,7 +539,7 @@ UW world_beacon_interval_ms(void)
 /* Read peer `node`'s gossiped STATE from the local world-table (mirrors
  * world_peer_pressure): bits WORLD_STATE_MASK of the beacon firing byte. A
  * 12-byte old beacon leaves those bits 0 -> WSTATE_ACTIVE (back-compat). */
-INT world_peer_state(UB node)
+INT world_peer_state(pk_node_t node)
 {
     if (node >= DNODE_MAX || !table[node].valid) return -1;
     return (INT)((table[node].beacon.firing & WORLD_STATE_MASK) >> WORLD_STATE_SHIFT);

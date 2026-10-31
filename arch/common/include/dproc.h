@@ -24,6 +24,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -48,7 +49,7 @@
 typedef struct {
     char  path[DPROC_PATH_MAX];  /* ELF パス (例: "/hello.elf")         */
     UW    tid;                   /* T-Kernel タスク ID (node_id 上)     */
-    UB    node_id;               /* 実行ノード ID                       */
+    pk_node8_t node_id;               /* 実行ノード ID                       */
     UB    state;                 /* DPROC_*                             */
     UH    _pad;
     UW    start_tick;            /* 起動時の uptime tick               */
@@ -75,7 +76,7 @@ W    dproc_kill_by_name(const char *name);
 /* ノード死亡時のフェイルオーバー:
  * dead_node で RUNNING だったプロセスを自ノードで再 exec する
  * (heal.c の heal_on_node_dead から呼ぶ) */
-void dproc_on_node_dead(UB dead_node);
+void dproc_on_node_dead(pk_node_t dead_node);
 
 /* クラスタ全体のプロセス一覧を表示 */
 void dproc_list(void);

@@ -196,7 +196,7 @@ static void engage(UB mask, const char *why)
 /* 推論完了フック (思考 → 行動の入口)                                  */
 /* ------------------------------------------------------------------ */
 
-void reflex_on_inference(UB threat_class, UB confidence, UB src_node)
+void reflex_on_inference(UB threat_class, UB confidence, pk_node_t src_node)
 {
     (void)src_node;
     if (!enabled) return;

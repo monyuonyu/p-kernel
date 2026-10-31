@@ -327,7 +327,7 @@ static INT lk_fresh(const LOOKUP_CACHE_ENT *e, U4 now)
     return e->valid && lk_age(e, now) <= (U4)LOOKUP_CACHE_TTL_MS;
 }
 
-void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], UB node)
+void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], pk_node_t node)
 {
     if (key == NULL) return;
 

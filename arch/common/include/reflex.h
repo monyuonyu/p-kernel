@@ -33,6 +33,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 脅威レベル = 推論 class ラベル (dtr/dkva の 3 クラスを再解釈)        */
@@ -128,7 +129,7 @@
 typedef struct {
     U4  magic;          /* REFLEX_ALARM_MAGIC                       */
     U4  seq;            /* 発信ごとに増える単調シーケンス           */
-    U1  src_node;       /* 観測したノード                           */
+    pk_node8_t src_node;       /* 観測したノード                           */
     U1  threat_class;   /* 観測した脅威レベル (0..2)                */
     U1  confidence;     /* 0..100 (0xFF=不明)                       */
     U1  hop;            /* 残り中継ホップ数 (減衰)                  */
@@ -159,7 +160,7 @@ BOOL reflex_set_enabled(BOOL on);
  *   threat_class : 0..2 (推論 class)
  *   confidence   : 0..100 (max softmax×100), 不明なら 0xFF
  *   src_node     : 観測ノード (drpc_my_node, 単機なら 0xFF) */
-void reflex_on_inference(UB threat_class, UB confidence, UB src_node);
+void reflex_on_inference(UB threat_class, UB confidence, pk_node_t src_node);
 
 /* ── G38 主アロー: 学習 → 守る (思考が守りを変える) ──────────────────────
  * 反射の発火ゲートそのものの純述語 (状態なし)。reflex_on_inference の

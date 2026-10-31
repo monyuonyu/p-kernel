@@ -22,6 +22,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"      /* DNODE_MAX / DREGION_MAX                          */
 #include "nodemap.h"   /* NODEMAP — the region-local id→slot primitive (§4)*/
 
@@ -105,7 +106,7 @@
 typedef struct {
     UW    magic;          /* DKVA_Q_MAGIC                         */
     UW    req_id;         /* リクエスト ID                        */
-    UB    src_node;       /* 送信元ノード ID                      */
+    pk_node8_t src_node;       /* 送信元ノード ID                      */
     UB    n_cached;       /* 要求するキャッシュエントリ数 (最大)  */
     UH    _pad;
     float Q[DKVA_SEQ][DKVA_NH][DKVA_DH];   /* Query テンソル    */
@@ -115,9 +116,9 @@ typedef struct {
 typedef struct {
     UW    magic;          /* DKVA_RESP_MAGIC                      */
     UW    req_id;
-    UB    src_node;       /* 応答した(=この partial を計算した)ノード */
+    pk_node8_t src_node;       /* 応答した(=この partial を計算した)ノード */
     UB    n_entries;      /* 応答に含まれる KV エントリ数         */
-    UB    origin;         /* この応答の宛先 = 問いの起点ノード (G1) */
+    pk_node8_t origin;         /* この応答の宛先 = 問いの起点ノード (G1) */
     UB    _pad;
     /* 部分 Attention 出力: Σ(softmax(Q·K_i^T) * V_i) の分子と分母 */
     float partial_out[DKVA_SEQ][DKVA_NH][DKVA_DH];  /* 加重和   */

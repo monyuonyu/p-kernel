@@ -23,6 +23,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 #define PFS_ID_LEN     32          /* sha256 digest width — block-id size */
 #define PFS_BLOCK_MAX  4096        /* max bytes per block (P0) */
@@ -62,12 +63,12 @@ INT  pfs_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
  * the registered put-hook fires — pfs_repl.c uses this to announce the
  * block to the region (save == publish, p-fs.md §3.2). */
 INT  pfs_put_origin(const void *buf, UW len, U1 id_out[PFS_ID_LEN],
-                    U1 origin);
+                    pk_node_t origin);
 
 /* Hook called on every NEW block store (never on a dedup hit). Keeps
  * pfs_block.c network-free: the P1 replication layer registers here.
  * The hook runs in the storing task's context — keep it light. */
-typedef void (*PFS_PUT_HOOK)(const U1 id[PFS_ID_LEN], UW len, U1 origin);
+typedef void (*PFS_PUT_HOOK)(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin);
 void pfs_set_put_hook(PFS_PUT_HOOK fn);
 
 /* Enumerate the block table for `pfs ls` / replication sync: fills the

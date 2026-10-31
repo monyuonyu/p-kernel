@@ -27,6 +27,7 @@
 
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "drpc.h"
 
 /* ------------------------------------------------------------------ */
@@ -187,7 +188,7 @@ typedef struct {
     UW   magic;                    /* KDDS_MAGIC                         */
     UB   version;                  /* KDDS_VERSION                       */
     UB   type;                     /* KDDS_DATA_PKT                      */
-    UB   src_node;
+    pk_node8_t src_node;
     UB   _pad;
     UH   data_len;                 /* data[] の有効バイト数              */
     UH   name_len;                 /* name[] の有効バイト数 (null 含む)  */
@@ -242,7 +243,7 @@ W kdds_pub(W handle, const void *data, W len);
 /* kdds_pub と同じだが、網へは dst の 1 台にだけ送る (N1、dkva の応答)。
  * dst が自分か DNODE_MAX 以上なら網へは送らない。スコープは見ない
  * (宛先を選ぶのは呼び出し側)。 */
-W kdds_pub_to(W handle, const void *data, W len, UB dst);
+W kdds_pub_to(W handle, const void *data, W len, pk_node_t dst);
 
 /* トピックの次の値を受信する (ブロッキング)。
  * buf へデータをコピーし、受信バイト数を返す。
@@ -270,7 +271,7 @@ INT kdds_close_by_owner(ID tid);
 INT kdds_handle_count(void);
 
 /* UDP 受信コールバック (KDDS_PORT に登録) */
-void kdds_rx(UB src_node, UH dst_port, const UB *data, UH len);
+void kdds_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len);
 
 /* トピックテーブルを表示 (shell `topic list`) */
 void kdds_list(void);

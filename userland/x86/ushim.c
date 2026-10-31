@@ -56,24 +56,24 @@ UB drpc_my_node = 0xFF;
 /* ---- STUB-DEAD: kernel-state inputs of select_expert -------------- */
 DNODE dnode_table[DNODE_MAX];                 /* zero-init: no peers   */
 
-UW swim_rtt_ms(UB node)
+UW swim_rtt_ms(pk_node_t node)
 {
     (void)node;
     return 0xFFFFFFFFu;                       /* "unreachable"         */
 }
 
-INT world_peer_pressure(UB node) { (void)node; return -1; }
-INT world_peer_threat(UB node)   { (void)node; return -1; }
+INT world_peer_pressure(pk_node_t node) { (void)node; return -1; }
+INT world_peer_threat(pk_node_t node)   { (void)node; return -1; }
 
 void region_recompute(void) { }
-BOOL region_is_member(UB node) { (void)node; return FALSE; }
+BOOL region_is_member(pk_node_t node) { (void)node; return FALSE; }
 
 UB reflex_threat_level(void) { return 0; }
 
 /* STUB-DEAD: remote delegation is a later wave (CDN-3 transport).
  * Never executed (local-only early return => expert == me); returns
  * != E_OK so even a stray call falls back to the local class.         */
-ER dtk_infer(UB node_id, W sensor_packed, UB *class_out, TMO tmout)
+ER dtk_infer(pk_node_t node_id, W sensor_packed, UB *class_out, TMO tmout)
 {
     (void)node_id; (void)sensor_packed; (void)class_out; (void)tmout;
     return E_NOSPT;
@@ -89,7 +89,7 @@ void world_note_firing(UB gate_class)
 /* the GUARD hook: the reflex ACTION table stays ring-0; only the hook
  * crosses the boundary.  src_node is dropped — the kernel side passes
  * its own (real) drpc_my_node.                                        */
-void reflex_on_inference(UB threat_class, UB confidence, UB src_node)
+void reflex_on_inference(UB threat_class, UB confidence, pk_node_t src_node)
 {
     (void)src_node;
     ushim_sc(SYS_MIND_NOTE, 1, (int)threat_class | ((int)confidence << 8), 0);

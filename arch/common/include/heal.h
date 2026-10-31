@@ -16,6 +16,7 @@
 
 #pragma once
 #include "drpc.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 
 /* ------------------------------------------------------------------ */
 /* 定数                                                                */
@@ -58,14 +59,14 @@ typedef struct {
 void heal_init(void);
 
 /* ガードを登録する。heal_init() の後に呼ぶ。 */
-void heal_register(const char *name, UH func_id, UB home_node, W priority);
+void heal_register(const char *name, UH func_id, pk_node_t home_node, W priority);
 
 /*
  * ノードが DEAD になったとき swim.c / drpc.c から呼ぶ。
  * 自分が後継ノードならガード済みタスクを再起動する。
  * 二重呼び出し防止: heal_triggered[dead_node] フラグで管理。
  */
-void heal_on_node_dead(UB dead_node);
+void heal_on_node_dead(pk_node_t dead_node);
 
 /* shell `heal list` から呼ぶ。ガード一覧を表示。 */
 void heal_list(void);

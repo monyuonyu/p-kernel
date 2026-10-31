@@ -7,6 +7,7 @@
  */
 #pragma once
 #include "kernel.h"
+#include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "ark_profile.h"  /* ARK_HANDLE_MAX */
 #include "galaxy.h"        /* single source of EV_* / GALAXY_NODE_NONE (§dedup) */
 
@@ -79,7 +80,7 @@ _Static_assert(sizeof(UI_EVENT) == 12, "UI_EVENT must be 12 bytes");
  * GALAXY_NODE_NONE for the none sentinel. */
 
 int ui_node_id(void);
-void ui_event_emit(U1 type, U1 src, U1 dst, U2 a, U2 b);
+void ui_event_emit(U1 type, pk_node_t src, pk_node_t dst, U2 a, U2 b);
 int ui_event_bounds(U4 *tail, U4 *head, U4 *dropped, U4 *capacity);
 int ui_event_read(U4 *cursor, UI_EVENT *out, unsigned max,
                   unsigned *count, unsigned *lost);

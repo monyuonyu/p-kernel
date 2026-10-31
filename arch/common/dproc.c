@@ -269,7 +269,7 @@ W dproc_kill_by_name(const char *name)
 /* RUNNING のプロセスのみ再起動。EXITED/KILLED は再起動しない。        */
 /* ------------------------------------------------------------------ */
 
-void dproc_on_node_dead(UB dead_node)
+void dproc_on_node_dead(pk_node_t dead_node)
 {
     if (!vfs_ready) return;
 
