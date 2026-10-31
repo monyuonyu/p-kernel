@@ -3244,7 +3244,7 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
            (into, peer, init, scratch, xfer, nx, val, nv, seqlen, steps, lr,
             start, stats))
 {
-    st_distill_stats z = { -1, 0, 0.0f, 0.0f, 0 };
+    st_distill_stats z = { -1, 0, 0.0f, 0.0f, 0, -1 };
     if (stats) *stats = z;
     if (!st_same_shape(into, peer) || !st_same_shape(into, init) ||
         !st_same_shape(into, scratch) || !xfer || nx < 1 || !val || nv < 1 ||
@@ -3352,7 +3352,7 @@ static int st_distill_sel_run(st_model *into, st_model *peer,
                               float lr_init, int init_start,
                               st_distill_sel_stats *stats)
 {
-    st_distill_sel_stats z = { { -1, 0, 0.0f, 0.0f, 0 }, { -1, 0, 0.0f, 0.0f, 0 }, 0 };
+    st_distill_sel_stats z = { { -1, 0, 0.0f, 0.0f, 0, -1 }, { -1, 0, 0.0f, 0.0f, 0, -1 }, 0 };
     if (stats) *stats = z;
     if (!st_same_shape(into, peer)) return ST_E_ARG;
     int np = into->n_params;
