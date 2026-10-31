@@ -3281,10 +3281,16 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
         for (int i = 0; i < np; i++) into->w[i] = init->w[i];
     /* stage 7: the running sum of the averaged weights */
     double *acc = NULL;
+    /* stage 8 (brain-merge-keep.md §2): the per-element min and max of the
+     * averaged points, for the [d5c-swa-bounds] count (SWA only) */
+    float *wmin = NULL, *wmax = NULL;
     if (start == ST_DISTILL_START_INIT_SWA) {
-        acc = (double *)calloc((size_t)np, sizeof(double));
-        if (!acc) {
+        acc  = (double *)calloc((size_t)np, sizeof(double));
+        wmin = (float *)malloc((size_t)np * sizeof(float));
+        wmax = (float *)malloc((size_t)np * sizeof(float));
+        if (!acc || !wmin || !wmax) {
             for (int i = 0; i < np; i++) into->w[i] = scratch->w[i];
+            free(acc); free(wmin); free(wmax);
             free(la); free(lb); free(lc); free(q); st_free(&ta); return ST_E_OOM;
         }
     }
@@ -3309,7 +3315,12 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
             int in = s > steps / 2;
 #endif
             if (in) {
-                for (int i = 0; i < np; i++) acc[i] += (double)into->w[i];
+                for (int i = 0; i < np; i++) {
+                    float v = into->w[i];
+                    acc[i] += (double)v;
+                    if (z.n_avg == 0 || v < wmin[i]) wmin[i] = v;
+                    if (z.n_avg == 0 || v > wmax[i]) wmax[i] = v;
+                }
                 z.n_avg++;
             }
             continue;
@@ -3324,14 +3335,27 @@ PK_NOSW_FN(int, st_merge_distill, (st_model *into, st_model *peer,
     if (acc) {
         /* the mean replaces the guarded pick only if its val is lower */
         if (z.n_avg > 0) {
-            for (int i = 0; i < np; i++) into->w[i] = (float)(acc[i] / z.n_avg);
+#if defined(ST_DISTILL_SWA_DIV_OFF1)
+            /* stage 8 negative control (audit-97's hole): divide by n - 1 */
+            int div = z.n_avg > 1 ? z.n_avg - 1 : 1;
+#else
+            int div = z.n_avg;
+#endif
+            z.n_out = 0;
+            for (int i = 0; i < np; i++) {
+                float v = (float)(acc[i] / div);
+                float a = v < 0.0f ? -v : v;
+                float tol = 1e-6f * (a > 1.0f ? a : 1.0f);
+                if (v < wmin[i] - tol || v > wmax[i] + tol) z.n_out++;
+                into->w[i] = v;
+            }
             float l = st_windows_loss(into, val, nv, seqlen);
             if (l < best) {
                 best = l; z.best_step = steps;
                 for (int i = 0; i < np; i++) scratch->w[i] = into->w[i];
             }
         }
-        free(acc);
+        free(acc); free(wmin); free(wmax);
     }
     for (int i = 0; i < np; i++) {
         into->w[i] = scratch->w[i]; into->mu[i] = 0.0f; into->vu[i] = 0.0f;
