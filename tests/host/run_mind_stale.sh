@@ -77,7 +77,9 @@ wait_for "$B" 'mind_net_task up' 90 || echo "[mind-stale] note: B mind_net_task 
 
 printf 'mind inject 5 1 sky blue\n' >&8
 wait_for "$B" 'inject: taken' 30 || echo "[mind-stale] note: inject not taken"
-if wait_for "$B" 'remote teach arrived: "sky"->"blue"' 30; then res S0-hook PASS; else res S0-hook FAIL; fi
+# 90 s, not 30: the injected teach is learned only after B's first-use
+# substrate pretrain, 31.5 s with 8 nodes on 4 cores (2026-11-01)
+if wait_for "$B" 'remote teach arrived: "sky"->"blue"' 90; then res S0-hook PASS; else res S0-hook FAIL; fi
 
 printf 'stop now\n' >&8
 wait_for "$B" '^\[stop\] stopped 1 local 1' 30 || echo "[mind-stale] note: B not stopped"
