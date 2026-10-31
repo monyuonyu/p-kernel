@@ -88,7 +88,8 @@ if wait_for "$B" 'remote teach arrived: "sky"->"blue"' 90; then res S0-hook PASS
 
 if [ "${MST_A_SAW:-0}" = 1 ]; then
     printf 'mind inject 5 1 sky blue\n' >&7
-    if wait_for "$A" 'remote teach arrived: "sky"->"blue"' 30; then
+    # 90 s like S0: this is A's first mind use (substrate pretrain)
+    if wait_for "$A" 'remote teach arrived: "sky"->"blue"' 90; then
         res S0a-A-saw-blue PASS; else res S0a-A-saw-blue FAIL; fi
 fi
 printf 'stop now\n' >&8
