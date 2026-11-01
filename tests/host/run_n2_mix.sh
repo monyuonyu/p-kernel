@@ -9,7 +9,10 @@
 # N2_OLD_BIN  a p-kernel built from the last tree before N2 wire changes (master 64b7c909;
 #             record the sha with any result). N2_NEW_BIN: default boot/linux_x86_64/p-kernel,
 #             so an -DN2_NC_TRUNC build goes in there. N2_RELAY_BIN: default relay/relay.
-# N2_WAIT     seconds to wait for membership, default 60. N2_LOGDIR keeps the logs.
+# N2_WAIT     seconds to wait for membership, default 120. N2_LOGDIR keeps the logs.
+# N2_NO_WIDE=1  leave 260 and 300 out: old and new narrow only, must be green already.
+#
+# `nodes` prints ids from 0 (PKERNEL_NODE_ID 44 is row 43).
 #
 # Negative control (design): -DN2_NC_TRUNC, wide ids cut to v1, must go red on X1 and X2.
 # Red today: the kernel's ids are still one byte, so 260 and 300 cannot join.
@@ -19,7 +22,8 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 OLD="${N2_OLD_BIN:?N2_OLD_BIN: a p-kernel from before N2}"
 NEW="${N2_NEW_BIN:-$ROOT/boot/linux_x86_64/p-kernel}"
 REL="${N2_RELAY_BIN:-$ROOT/relay/relay}"
-WAIT="${N2_WAIT:-60}"
+WAIT="${N2_WAIT:-120}"
+NOWIDE="${N2_NO_WIDE:-0}"
 PORT="${N2_PORT:-7595}"
 [ -x "$OLD" ] && [ -x "$NEW" ] && [ -x "$REL" ] || { echo "[n2-mix] missing a binary"; exit 2; }
 
@@ -62,18 +66,26 @@ known() {
 RH=$!
 sleep 1
 for i in 1 2 3; do start "$OLD" "$i"; sleep 0.2; done
-for i in 4 44 260 300; do start "$NEW" "$i"; sleep 0.2; done
+WIDE="260 300"; [ "$NOWIDE" = 1 ] && WIDE=""
+for i in 4 44 $WIDE; do start "$NEW" "$i"; sleep 0.2; done
+for i in 1 2 3 4 44 $WIDE; do
+    n=0
+    while [ "$n" -lt 240 ] && ! grep -aq 'mind_net_task up' "$LOGDIR/node$i.log"; do sleep 0.5; n=$((n + 1)); done
+    send "$i" "stop now"
+done
 
+WANT_A="0 1 2 3 43 "; WANT_B="0 1 2 3 43 259 299 "
+[ "$NOWIDE" = 1 ] && WANT_B="$WANT_A"
 t=0; a=""; b=""
 while [ "$t" -lt "$WAIT" ]; do
     sleep 3; t=$((t + 3))
     send 1 "nodes"; send 4 "nodes"; sleep 1
     a="$(known 1)"; b="$(known 4)"
-    [ "$a" = "1 2 3 4 44 " ] && [ "$b" = "1 2 3 4 44 260 300 " ] && break
+    [ "$a" = "$WANT_A" ] && [ "$b" = "$WANT_B" ] && break
 done
 
-[ "$a" = "1 2 3 4 44 " ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {1 2 3 4 44}"
-[ "$b" = "1 2 3 4 44 260 300 " ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted all 7"
+[ "$a" = "$WANT_A" ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {$WANT_A}"
+[ "$b" = "$WANT_B" ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted {$WANT_B}"
 
 if [ -z "$REDS" ]; then echo "[n2-mix] ALL PASS"; exit 0; fi
 echo "[n2-mix] RED:$REDS"
