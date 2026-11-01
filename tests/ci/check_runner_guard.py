@@ -16,8 +16,13 @@ GUARD = ("github.event_name == 'push' || "
 JOB = re.compile(r'^  ([A-Za-z0-9_-]+):\s*(#.*)?$')
 TOP = re.compile(r'^\S')
 KEY = re.compile(r'^    (runs-on|if):\s*(.*)$')
+# A runs-on that is not one GitHub-hosted name counts as the ThinkPad: the label alone reaches it,
+# without the word self-hosted (audit-107), and so does a runner group.
+HOSTED = re.compile(r'^(ubuntu|windows|macos)-[0-9a-z.-]+$')
 # pull_request_target runs with the base repo's secrets, and workflow_run after a fork's run.
-BAD_EVENT = re.compile(r'^\s*(pull_request_target|workflow_run)\s*:', re.M)
+# A word, not a key: on: also has a one-line form (audit-107). Comments are stripped first.
+BAD_EVENT = re.compile(r'\b(pull_request_target|workflow_run)\b')
+COMMENT = re.compile(r'(^|\s)#.*$', re.M)
 
 
 def jobs(text):
@@ -53,11 +58,11 @@ def check(text):
     for name, ron, cond in jobs(text):
         if not ron:
             bad.append(f'{name}: no one-line runs-on (cannot tell where it runs)')
-        elif 'self-hosted' in ron or '${{' in ron:
+        elif not HOSTED.match(COMMENT.sub('', ron).strip().strip('\'"')):
             n += 1
             if GUARD not in cond:
                 bad.append(f'{name}: self-hosted without the fork guard in its if:')
-    m = BAD_EVENT.search(text.split('\njobs:')[0])
+    m = BAD_EVENT.search(COMMENT.sub('', text.split('\njobs:')[0]))
     if m:
         bad.append(f'on: {m.group(1)} would run fork code with the base repo\'s rights')
     return bad, n
