@@ -58,8 +58,9 @@ if [ "$rc" != 0 ] && [ "$rc" != 124 ] && [ "$n" = 3 ] && [ "$e" -lt 15 ]; then o
 run deaf ok
 if [ "$rc" = 0 ] && [ "$n" = 2 ] && [ "$e" -lt 10 ]; then ok U5; else bad "U5 rc=$rc tries=$n secs=$e"; fi
 
-# U6 (audit-108): a job that calls apt_install.sh can spend 22 minutes on apt alone: update 8.5,
-# install 5, update again 8.5. Its time limit must leave room for that and for its own work.
+# U6 (audit-108, audit-110): a job that calls apt_install.sh can spend 27 minutes on apt alone:
+# update 8.5, install 5, update again 8.5, install 5. Its time limit must leave room for that;
+# 30 is the floor, this does not know how long the job's own work takes.
 CI="$(dirname "$(readlink -f "$0")")/../../.github/workflows/ci.yml"
 short="$(python3 - "$CI" <<'PY'
 import re, sys

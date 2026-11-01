@@ -2736,7 +2736,7 @@ jobs:
     # 25 -> 45 (2026-10-11): with run_ema.sh added the job hit 25 min and was
     # cancelled inside the EMA step (run 38122175153: the four steps before it
     # took ~10 min, EMA ran >15 min without finishing).
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
       # cross-built aarch64 ./p-kernel finds its glibc loader/libs under binfmt.
@@ -3413,7 +3413,7 @@ jobs:
     # a runner class already shown to be unreliable for this shape of test.
     name: "MC-2 SMP-partition certs + ②.1a cross-preempt (aarch64 QEMU, run_mc2_*.sh / run_smp1.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     continue-on-error: true  # until 2026-11-30: MC-2 SMP-partition certs advisory. ROADMAP 0-2
     steps:
       - uses: actions/checkout@v4
