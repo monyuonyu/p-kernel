@@ -1064,6 +1064,7 @@ static void swim_wide_age(UW now)
         UB old = e->state, st = old;
         if (wide_map.used[i] && old != DNODE_DEAD && old != DNODE_UNKNOWN) {
             UW age = (UW)(now - e->heard_ms);
+            if (age >= 0x80000000UL) age = 0;   /* heard after now was read */
             st = age >= SWIM_WIDE_DEAD_MS ? DNODE_DEAD
                : age >= SWIM_WIDE_SUSPECT_MS ? DNODE_SUSPECT : DNODE_ALIVE;
             e->state = st;
