@@ -35,12 +35,15 @@
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" (little-endian) */
 #define RELAY_VERSION_V1   1
 #define RELAY_VERSION_V2   2
+#define RELAY_VERSION_V3   3             /* v2 + high bytes of src, dst in 8, 9 (N2b) */
+#define RELAY_READS_V3_AT  10            /* a v1/v2 sender sets this byte to 3: "I read v3" */
 #define RELAY_HEADER_LEN   12
 #define RELAY_AUTH_LEN     24            /* nonce(8) + hmac16(16) */
 #define HMAC_TRUNC_LEN     16
 #define MAX_PAYLOAD        1380
 #define MAX_PKT            (RELAY_HEADER_LEN + RELAY_AUTH_LEN + MAX_PAYLOAD)
-#define NODE_MAX           256
+#define NODE_MAX           256           /* ids 1..255: slot = id */
+#define NODE_SLOTS         1024          /* wide ids take slots NODE_MAX.. */
 #define IDLE_TIMEOUT       300           /* seconds before an entry is evicted */
 #define KEY_LEN            32
 
@@ -62,6 +65,7 @@ typedef struct {
      * (UDP) so every existing UDP code path is byte-for-byte unchanged. */
     int     via_tcp;   /* 1 = reach this peer over tcp_fd; 0 = UDP via addr   */
     int     tcp_fd;    /* the accepted TCP connection fd when via_tcp         */
+    int     reads_v3;  /* said so in byte 10, or sent v3 itself (N2b)         */
 } NodeEntry;
 
 typedef struct {
@@ -70,8 +74,36 @@ typedef struct {
     int      armed;        /* 0 until first packet observed */
 } ReplayEntry;
 
-static NodeEntry   table[NODE_MAX];
-static ReplayEntry replay[NODE_MAX];
+static NodeEntry   table[NODE_SLOTS];
+static ReplayEntry replay[NODE_SLOTS];
+/* N2b: an id above 254 has a slot of its own, kept for good: replay[] must
+ * survive eviction, as for the narrow ids. slots_used bounds the loops, so a
+ * fleet without wide ids walks what it always walked. */
+static unsigned    slot_id[NODE_SLOTS];     /* id of slots NODE_MAX.. */
+static int         slots_used = NODE_MAX;
+
+/* The slot of `id`, or -1 (no such node yet and !create, or no slot left). */
+static int slot_of(unsigned id, int create)
+{
+    if (id < NODE_MAX) return (int)id;
+    if (id > 0xFFFE) return -1;                /* 0xFFFF = "not a node" */
+    for (int s = NODE_MAX; s < slots_used; s++)
+        if (slot_id[s] == id) return s;
+    if (!create) return -1;
+    if (slots_used == NODE_SLOTS) {
+        fprintf(stderr, "[relay] drop: no slot left for wide id %u\n", id);
+        return -1;
+    }
+    slot_id[slots_used] = id;
+    return slots_used++;
+}
+
+/* The node id of a slot, for the log. */
+static unsigned id_of(int slot)
+{
+    return slot < NODE_MAX ? (unsigned)slot : slot_id[slot];
+}
+
 static int         verbose  = 0;
 static int         insecure = 0;
 static uint8_t     key[KEY_LEN];
@@ -265,6 +297,7 @@ typedef struct {
     unsigned       type;
     unsigned       src;
     unsigned       dst;
+    int            reads_v3;
     uint64_t       nonce;       /* v2 only */
     const uint8_t *hmac;        /* v2 only — 16 bytes */
     const uint8_t *payload;
@@ -284,6 +317,12 @@ static int parse_packet(const unsigned char *buf, int len, ParsedPkt *out)
     out->type    = buf[5];
     out->src     = buf[6];
     out->dst     = buf[7];
+    out->reads_v3 = buf[RELAY_READS_V3_AT] >= RELAY_VERSION_V3;
+    if (out->version == RELAY_VERSION_V3) {
+        out->src |= (unsigned)buf[8] << 8;
+        out->dst |= (unsigned)buf[9] << 8;
+        out->reads_v3 = 1;
+    }
 
     if (out->version == RELAY_VERSION_V1) {
         out->nonce       = 0;
@@ -292,7 +331,7 @@ static int parse_packet(const unsigned char *buf, int len, ParsedPkt *out)
         out->payload_len = len - RELAY_HEADER_LEN;
         return 0;
     }
-    if (out->version == RELAY_VERSION_V2) {
+    if (out->version == RELAY_VERSION_V2 || out->version == RELAY_VERSION_V3) {
         if (len < RELAY_HEADER_LEN + RELAY_AUTH_LEN) return -1;
         out->nonce       = load_u64_le(buf + RELAY_HEADER_LEN);
         out->hmac        = buf + RELAY_HEADER_LEN + 8;
@@ -303,16 +342,23 @@ static int parse_packet(const unsigned char *buf, int len, ParsedPkt *out)
     return -1;
 }
 
-/* Recompute the v2 MAC over (ver, type, src, dst, nonce, payload). */
+/* Recompute the MAC over (ver, type, src, dst, nonce, payload); v3 adds the
+ * high bytes of src and dst after the nonce (a v2 preamble stays as it was). */
 static void compute_mac(const ParsedPkt *p, uint8_t out[HMAC_TRUNC_LEN])
 {
-    uint8_t preamble[12];
+    uint8_t preamble[14];
+    size_t  preamble_len = 12;
     preamble[0] = (uint8_t)p->version;
     preamble[1] = (uint8_t)p->type;
     preamble[2] = (uint8_t)p->src;
     preamble[3] = (uint8_t)p->dst;
     for (int i = 0; i < 8; i++) {
         preamble[4 + i] = (uint8_t)((p->nonce >> (i * 8)) & 0xff);
+    }
+    if (p->version == RELAY_VERSION_V3) {
+        preamble[12] = (uint8_t)(p->src >> 8);
+        preamble[13] = (uint8_t)(p->dst >> 8);
+        preamble_len = 14;
     }
     sha256_ctx c;
     /* Manually drive HMAC so we can stream preamble + payload separately. */
@@ -330,7 +376,7 @@ static void compute_mac(const ParsedPkt *p, uint8_t out[HMAC_TRUNC_LEN])
     }
     sha256_init(&c);
     sha256_update(&c, ipad, SHA256_BLOCK_SIZE);
-    sha256_update(&c, preamble, sizeof(preamble));
+    sha256_update(&c, preamble, preamble_len);
     if (p->payload_len > 0) sha256_update(&c, p->payload, (size_t)p->payload_len);
     sha256_final(&c, inner);
     sha256_init(&c);
@@ -354,7 +400,7 @@ static int verify_mac(const ParsedPkt *p)
 /* Returns 1 if nonce is fresh (accept), 0 if replay (drop). */
 static int replay_check_and_update(unsigned src, uint64_t nonce)
 {
-    if (src < 1 || src >= NODE_MAX) {
+    if (src < 1 || src >= NODE_SLOTS) {
         /* G7: surface the reason instead of a silent drop. */
         if (verbose) fprintf(stderr,
             "[relay] drop: replay-check src node id %u out of range "
@@ -389,9 +435,10 @@ static int replay_check_and_update(unsigned src, uint64_t nonce)
  * -1 for a UDP client (the legacy path; via_tcp stays 0), or the accepted TCP
  * connection fd for a TCP client. UDP callers pass -1, so their behaviour is
  * byte-for-byte unchanged. */
-static void update(int src, const struct sockaddr_in *from, int origin_fd)
+static void update(int src, const struct sockaddr_in *from, int origin_fd,
+                   int reads_v3)
 {
-    if (src < 1 || src >= NODE_MAX) {
+    if (src < 1 || src >= NODE_SLOTS) {
         /* G7: don't drop an out-of-range src silently — say why. */
         if (verbose) fprintf(stderr,
             "[relay] drop: REGISTER/DATA src node id %d out of range "
@@ -404,21 +451,22 @@ static void update(int src, const struct sockaddr_in *from, int origin_fd)
     table[src].active    = 1;
     table[src].via_tcp   = (origin_fd >= 0);
     table[src].tcp_fd    = origin_fd;
+    table[src].reads_v3  = reads_v3;
     if (!was_active) {
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &from->sin_addr, ip, sizeof(ip));
-        fprintf(stderr, "[relay] node %d registered: %s:%u%s\n",
-                src, ip, ntohs(from->sin_port),
+        fprintf(stderr, "[relay] node %u registered: %s:%u%s\n",
+                id_of(src), ip, ntohs(from->sin_port),
                 (origin_fd >= 0) ? " (tcp)" : "");
     }
 }
 
 static void evict_stale(time_t now)
 {
-    for (int n = 1; n < NODE_MAX; n++) {
+    for (int n = 1; n < slots_used; n++) {
         if (table[n].active && now - table[n].last_seen > idle_timeout) {
             table[n].active = 0;
-            fprintf(stderr, "[relay] node %d evicted (idle)\n", n);
+            fprintf(stderr, "[relay] node %u evicted (idle)\n", id_of(n));
             /* NOTE: replay[n] is intentionally preserved across eviction
              *       so an attacker can't clear the window by waiting. */
         }
@@ -567,11 +615,11 @@ static void tcp_conn_close(int slot)
 {
     int fd = tcp_conns[slot].fd;
     if (fd < 0) return;
-    for (int n = 1; n < NODE_MAX; n++) {
+    for (int n = 1; n < slots_used; n++) {
         if (table[n].active && table[n].via_tcp && table[n].tcp_fd == fd) {
             table[n].active = 0;
-            fprintf(stderr, "[relay] node %d route dropped (tcp close fd=%d)\n",
-                    n, fd);
+            fprintf(stderr, "[relay] node %u route dropped (tcp close fd=%d)\n",
+                    id_of(n), fd);
         }
     }
     close(fd);
@@ -586,7 +634,7 @@ static void tcp_conn_close(int slot)
 static void deliver_now(int sock, int dst_node,
                         const unsigned char *buf, int len, time_t now)
 {
-    if (dst_node < 1 || dst_node >= NODE_MAX) {
+    if (dst_node < 1 || dst_node >= NODE_SLOTS) {
         /* G7: an out-of-range dst is a routing dead-end — say why. */
         if (verbose) fprintf(stderr,
             "[relay] drop: dst node id %d out of range (valid 1..%d)\n",
@@ -594,9 +642,12 @@ static void deliver_now(int sock, int dst_node,
         return;
     }
     if (!table[dst_node].active) {
-        if (verbose) fprintf(stderr, "[relay] no route to dst=%d\n", dst_node);
+        if (verbose) fprintf(stderr, "[relay] no route to dst=%u\n", id_of(dst_node));
         return;
     }
+    /* N2b: an old node reads a v3 frame as unauthenticated v1 (the 24 bytes of
+     * nonce and MAC land in its stack as a frame head). It never gets one. */
+    if (buf[4] == RELAY_VERSION_V3 && !table[dst_node].reads_v3) return;
     if (now - table[dst_node].last_seen > idle_timeout) {
         table[dst_node].active = 0;
         return;
@@ -746,31 +797,38 @@ static void process_packet(int sock, int origin_fd,
         if (verbose) fprintf(stderr, "[relay] drop: v1 packet in secure mode\n");
         return;
     }
-    if (pkt.version == RELAY_VERSION_V2 && !have_key) {
-        if (verbose) fprintf(stderr, "[relay] drop: v2 packet but no key loaded\n");
+    if ((pkt.version == RELAY_VERSION_V2 || pkt.version == RELAY_VERSION_V3) && !have_key) {
+        if (verbose) fprintf(stderr, "[relay] drop: v%u packet but no key loaded\n", pkt.version);
         return;
     }
 
     /* v2: verify MAC, then check replay window. Order matters —
      * an unauthenticated nonce must NOT affect replay state. */
-    if (pkt.version == RELAY_VERSION_V2) {
+    int src_slot = 0;
+    if (pkt.version == RELAY_VERSION_V2 || pkt.version == RELAY_VERSION_V3) {
         if (!verify_mac(&pkt)) {
             if (verbose) fprintf(stderr, "[relay] drop: bad HMAC src=%u type=%u\n",
                                  pkt.src, pkt.type);
             return;
         }
+        if (pkt.version == RELAY_VERSION_V3 && pkt.src == 0) return;   /* no lease over v3 */
+        /* the slot only after the MAC: a forged wide id must not take one */
+        src_slot = slot_of(pkt.src, 1);
+        if (src_slot < 0) return;
         /* An auto-REGISTER (src=0) has no per-node replay state yet —
          * it's authenticated by HMAC above and deduped by source
          * address in handle_lease(), so it bypasses the src-keyed
          * replay window (which would otherwise drop src=0 outright). */
         if (!(pkt.type == REL_REGISTER && pkt.src == 0)) {
-            if (!replay_check_and_update(pkt.src, pkt.nonce)) {
+            if (!replay_check_and_update((unsigned)src_slot, pkt.nonce)) {
                 if (verbose) fprintf(stderr, "[relay] drop: replay src=%u nonce=%llu\n",
                                      pkt.src, (unsigned long long)pkt.nonce);
                 return;
             }
         }
     }
+
+    if (pkt.version == RELAY_VERSION_V1) src_slot = (int)pkt.src;
 
     time_t now = time(NULL);
     evict_stale(now);
@@ -790,12 +848,12 @@ static void process_packet(int sock, int origin_fd,
             /* Auto-lease request: hand out a dynamic node id. */
             handle_lease(sock, from, pkt.version, origin_fd);
         } else {
-            update((int)pkt.src, from, origin_fd);
+            update(src_slot, from, origin_fd, pkt.reads_v3);
         }
         break;
 
     case REL_KEEPALIVE: {
-        update((int)pkt.src, from, origin_fd);
+        update(src_slot, from, origin_fd, pkt.reads_v3);
         /* Relay-HA liveness pong: reflect the (already verified)
          * keepalive back to its sender so clients can distinguish
          * "relay alive" from "relay dead" and run deterministic
@@ -849,14 +907,14 @@ static void process_packet(int sock, int origin_fd,
     }
 
     case REL_DATA:
-        update((int)pkt.src, from, origin_fd);
-        forward(sock, (int)pkt.dst, buf, (int)n, now);
+        update(src_slot, from, origin_fd, pkt.reads_v3);
+        forward(sock, slot_of(pkt.dst, 0), buf, (int)n, now);
         break;
 
     case REL_BROADCAST:
-        update((int)pkt.src, from, origin_fd);
-        for (int n_id = 1; n_id < NODE_MAX; n_id++) {
-            if (n_id == (int)pkt.src) continue;
+        update(src_slot, from, origin_fd, pkt.reads_v3);
+        for (int n_id = 1; n_id < slots_used; n_id++) {
+            if (n_id == src_slot) continue;
             if (!table[n_id].active)   continue;
             forward(sock, n_id, buf, (int)n, now);
         }
