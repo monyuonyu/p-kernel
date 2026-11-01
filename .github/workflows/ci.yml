@@ -3354,6 +3354,11 @@ jobs:
         run: python3 tests/ci/check_readme_translations.py .
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
+      # inbox #39: a self-hosted job without the fork guard reddens. Not a wall (see the script).
+      - name: check_runner_guard.py selftest (each offence reddens)
+        run: python3 tests/ci/check_runner_guard.py --selftest
+      - name: check_runner_guard.py (every self-hosted job has the fork guard)
+        run: python3 tests/ci/check_runner_guard.py .
       # ROADMAP 0-13: every allowed red says until when (an expired date reddens).
       - name: check_ci_exceptions.py selftest (each offence reddens)
         run: python3 tests/ci/check_ci_exceptions.py --selftest
