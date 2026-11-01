@@ -13,7 +13,8 @@
 # First try: the same install, cut at APT_FIRST_SECS (default 300). If that
 # fails, point every apt source at archive.ubuntu.com instead of the azure
 # mirror, apt-get update, and try again (the .debs already fetched stay in
-# /var/cache/apt/archives). Exit status is the last install's.
+# /var/cache/apt/archives), cut at the same limit. Exit status is the last install's; the
+# worst case with the update before it is 22 minutes, and jobs that call this allow 35.
 set -u
 FIRST="${APT_FIRST_SECS:-300}"
 if timeout "$FIRST" apt-get install -y --no-install-recommends "$@"; then exit 0; fi
@@ -23,4 +24,4 @@ for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/
 done
 dpkg --configure -a || true    # in case the cut fell inside dpkg, not the download
 "$(dirname "$(readlink -f "$0")")/apt_update.sh"   # the update has its limits too (audit-107)
-apt-get install -y --no-install-recommends "$@"
+timeout "$FIRST" apt-get install -y --no-install-recommends "$@"

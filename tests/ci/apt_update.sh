@@ -9,8 +9,7 @@
 # install; nothing guarded the update.
 #
 # Three tries, each cut at APT_UPDATE_SECS (default 150) and killed APT_UPDATE_KILL seconds later
-# (default 20, for a try that ignores SIGTERM), so 8.5 minutes at most; the shortest limit of a
-# job that calls this is 15: as is; with apt's own short timeouts and retries; the same after
+# (default 20, for a try that ignores SIGTERM), so 8.5 minutes at most: as is; with apt's own short timeouts and retries; the same after
 # pointing every source at archive.ubuntu.com. Exit status is the last try's, except that a
 # cut try exits 1 (never timeout's 124, which would read as the update failing in another way).
 set -u
