@@ -613,7 +613,10 @@ done:
  * would take it for an unauthenticated v1 frame).
  */
 #define PORT9       27402
+#define PORT10      27403
+#define PORT11      27404
 #define REL_BCAST   4
+static int port9 = PORT9;
 
 static int pkt_make_v3(unsigned char *buf, unsigned type, unsigned src,
                        unsigned dst, uint64_t nonce,
@@ -668,8 +671,39 @@ static void send_p9(int s, const unsigned char *buf, int len)
 {
     struct sockaddr_in to;
     relay_addr(&to);
-    to.sin_port = htons(PORT9);
+    to.sin_port = htons(port9);
     sendto(s, buf, (size_t)len, 0, (struct sockaddr *)&to, sizeof(to));
+}
+
+/* A connected TCP client of the relay on port9, or -1. */
+static int tcp_p9(void)
+{
+    struct sockaddr_in to = {0};
+    int t = socket(AF_INET, SOCK_STREAM, 0);
+    to.sin_family      = AF_INET;
+    to.sin_addr.s_addr = htonl(0x7F000001);
+    to.sin_port        = htons(port9);
+    if (t >= 0 && connect(t, (struct sockaddr *)&to, sizeof(to)) < 0) {
+        close(t);
+        return -1;
+    }
+    return t;
+}
+
+static pid_t spawn_p9(int port, const char *idle, const char *delay)
+{
+    pid_t rp = fork();
+    if (rp == 0) {
+        setenv("PKERNEL_RELAY_KEY", TEST_KEY_HEX, 1);
+        if (idle)  setenv("PKERNEL_RELAY_IDLE", idle, 1);
+        if (delay) setenv("RELAY_DELAY_MS", delay, 1);
+        char p[16]; snprintf(p, sizeof(p), "%d", port);
+        execl("./relay", "./relay", "-p", p, (char *)NULL);
+        _exit(127);
+    }
+    port9 = port;
+    usleep(500 * 1000);
+    return rp;
 }
 
 /* 1 if s receives a frame within ms and its payload starts with `tag`. */
@@ -765,7 +799,144 @@ static int test_v3_wide(void)
     send_p9(a, p, n);
     V9("bad MAC does not register", recv_with_timeout(z, p, sizeof(p), 200) == -1);
 
+    /* audit-107 from here: each of these was green with its code removed. */
+    nw = nx = 6000;                 /* past the 5000 of the replay pair */
+
+    /* the claim follows the last frame: an old binary, same id, takes it back */
+    n = pkt_make_v2(p, REL_REG, 1, 0, na++, NULL, 0);
+    send_p9(a, p, n);
+    usleep(100 * 1000);
+    n = pkt_make_v3(p, REL_BCAST, 300, 0, nw++, "S1", 2);
+    send_p9(w, p, n);
+    V9("a frame without byte 10 takes it back", recv_with_timeout(a, p, sizeof(p), 200) == -1);
+    drain(x);
+    n = pkt_make_v2(p, REL_REG, 1, 0, na++, NULL, 0); p[10] = 3;
+    send_p9(a, p, n);
+    usleep(100 * 1000);
+
+    /* 0xFFFF is "not a node" (research/n2-wire16.md 8) */
+    n = pkt_make_v3(p, REL_REG, 0xFFFF, 0, 7200, NULL, 0);
+    send_p9(z, p, n);
+    usleep(100 * 1000);
+    n = pkt_make_v3(p, REL_DATA, 1, 0xFFFF, na++, "F1", 2);
+    send_p9(a, p, n);
+    V9("0xFFFF is not a node", recv_with_timeout(z, p, sizeof(p), 200) == -1);
+
+    /* a wide route over TCP dies with the connection: the fd's next owner gets nothing */
+    {
+        int t1 = tcp_p9(), t2;
+        unsigned char rx[1500];
+        TcpReasm rr;
+        tcp_reasm_init(&rr);
+        n = pkt_make_v3(p, REL_REG, 5000, 0, 1, NULL, 0);
+        tcp_send_framed_test(t1, p, n);
+        usleep(100 * 1000);
+        close(t1);
+        usleep(200 * 1000);
+        t2 = tcp_p9();
+        n = pkt_make_v2(p, REL_REG, 3, 0, 8000, NULL, 0); p[10] = 3;
+        tcp_send_framed_test(t2, p, n);
+        usleep(100 * 1000);
+        n = pkt_make_v3(p, REL_DATA, 1, 5000, na++, "T2", 2);
+        send_p9(a, p, n);
+        V9("a closed wide route is gone", tcp_recv_framed_test(t2, &rr, rx, sizeof(rx), 300) <= 0);
+        close(t2);
+    }
+
+    /* a frame to an id nobody holds takes no slot */
+    for (int i = 0; i < 768; i++) {
+        n = pkt_make_v3(p, REL_DATA, 1, 10000 + (unsigned)i, na++, "U", 1);
+        send_p9(a, p, n);
+        if (i % 32 == 31) usleep(2000);
+    }
+    usleep(200 * 1000);
+    n = pkt_make_v3(p, REL_REG, 3000, 0, 1, NULL, 0);
+    send_p9(z, p, n);
+    usleep(100 * 1000);
+    n = pkt_make_v3(p, REL_DATA, 1, 3000, na++, "C1", 2);
+    send_p9(a, p, n);
+    V9("a frame to nobody takes no slot", got(z, "C1", HEAD + AUTH, 300));
+
+    /* the table of wide ids ends at 768: 300, 556, 5000, 3000 and 764 more */
+    for (int i = 0; i < 764; i++) {
+        n = pkt_make_v3(p, REL_REG, 20000 + (unsigned)i, 0, 1, NULL, 0);
+        send_p9(z, p, n);
+        if (i % 32 == 31) usleep(2000);
+    }
+    usleep(200 * 1000);
+    int y = open_client_socket();
+    n = pkt_make_v3(p, REL_REG, 40000, 0, 1, NULL, 0);
+    send_p9(y, p, n);
+    usleep(100 * 1000);
+    n = pkt_make_v3(p, REL_DATA, 1, 40000, na++, "M1", 2);
+    send_p9(a, p, n);
+    V9("the 769th wide id gets no slot", recv_with_timeout(y, p, sizeof(p), 200) == -1);
+    n = pkt_make_v3(p, REL_BCAST, 556, 0, nx++, "M2", 2);
+    send_p9(x, p, n);
+    V9("a full table still works", got(a, "M2", HEAD + AUTH, 300));
+    close(y);
+
     close(a); close(b); close(w); close(x); close(z);
+    kill(rp, SIGTERM);
+    waitpid(rp, NULL, 0);
+    return fails;
+}
+
+/* Scenario 10 (audit-107): an evicted id goes to the next lease holder without
+ * the old holder's "I read v3". */
+static int test_v3_lease(void)
+{
+    fprintf(stderr, "\n=== scenario 10: a leased id, its next holder ===\n");
+    pid_t rp = spawn_p9(PORT10, "1", NULL);
+    int a = open_client_socket(), b = open_client_socket(), w = open_client_socket();
+    unsigned char p[1500];
+    int fails = 0, n, r;
+
+    n = pkt_make_v2(p, REL_REG, 0, 0, 1, NULL, 0); p[10] = 3;
+    send_p9(a, p, n);
+    r = recv_with_timeout(a, p, sizeof(p), 500);
+    int id = r >= HEAD ? p[7] : 0;
+    V9("lease granted", id != 0);
+    n = pkt_make_v2(p, REL_REG, (unsigned)id, 0, 2, NULL, 0); p[10] = 3;
+    send_p9(a, p, n);
+    usleep(2300 * 1000);                     /* past PKERNEL_RELAY_IDLE */
+    n = pkt_make_v3(p, REL_REG, 300, 0, 1, NULL, 0);
+    send_p9(w, p, n);                        /* any frame runs the eviction */
+    usleep(100 * 1000);
+    n = pkt_make_v2(p, REL_REG, 0, 0, 3, NULL, 0);
+    send_p9(b, p, n);                        /* an old node: byte 10 is 0 */
+    r = recv_with_timeout(b, p, sizeof(p), 500);
+    V9("the next holder has the same id", r >= HEAD && p[7] == id);
+    n = pkt_make_v3(p, REL_BCAST, 300, 0, 2, "L1", 2);
+    send_p9(w, p, n);
+    V9("the next holder gets no v3", recv_with_timeout(b, p, sizeof(p), 200) == -1);
+
+    close(a); close(b); close(w);
+    kill(rp, SIGTERM);
+    waitpid(rp, NULL, 0);
+    return fails;
+}
+
+/* Scenario 11 (audit-107): RELAY_DELAY_MS holds a wide destination like any other. */
+static int test_v3_delay(void)
+{
+    fprintf(stderr, "\n=== scenario 11: the delay knob and a wide destination ===\n");
+    pid_t rp = spawn_p9(PORT11, NULL, "400");
+    int w = open_client_socket(), x = open_client_socket();
+    unsigned char p[1500];
+    int fails = 0, n;
+
+    n = pkt_make_v3(p, REL_REG, 300, 0, 1, NULL, 0);
+    send_p9(w, p, n);
+    n = pkt_make_v3(p, REL_REG, 556, 0, 1, NULL, 0);
+    send_p9(x, p, n);
+    usleep(100 * 1000);
+    n = pkt_make_v3(p, REL_BCAST, 300, 0, 2, "P1", 2);
+    send_p9(w, p, n);
+    V9("not before the delay", recv_with_timeout(x, p, sizeof(p), 150) == -1);
+    V9("after the delay", got(x, "P1", HEAD + AUTH, 800));
+
+    close(w); close(x);
     kill(rp, SIGTERM);
     waitpid(rp, NULL, 0);
     return fails;
@@ -819,9 +990,11 @@ int main(int argc, char **argv)
 
     /* N2b — scenario 9: 16-bit ids, spawns its own relay. */
     fails += test_v3_wide();
+    fails += test_v3_lease();
+    fails += test_v3_delay();
 
     fprintf(stderr, "\n[relay-test] %s (%d failure%s)\n",
-            fails == 0 ? "PASS — all 9 scenarios green (6 UDP + de-framer + TCP↔UDP + v3)"
+            fails == 0 ? "PASS — all 11 scenarios green (6 UDP + de-framer + TCP↔UDP + v3 ×3)"
                        : "FAIL",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

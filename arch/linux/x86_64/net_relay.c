@@ -1483,6 +1483,32 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
         n = build_packet(p, REL_BROADCAST, 300, 0, f, sizeof(f));
         hb_check(pr, n == 0, "v3: no wide frame without the key");
 
+        /* audit-107: each of these was green with its code removed. */
+        wire_version = RELAY_VER_V2;
+        next_nonce = 9100;
+        n = build_packet(p, REL_BROADCAST, 300, 0, f, sizeof(f));
+        wire_version = RELAY_VER_V1;
+        udp_send_to(0, p, n);
+        hb_check(pr, net_relay_recv(o, sizeof(o)) == 0, "v3: no key, no check, not read");
+        wire_version = RELAY_VER_V2;
+        n = build_packet(p, REL_BROADCAST, 255, 0, f, sizeof(f));
+        hb_check(pr, n > 0 && p[4] == RELAY_VER_V3 && p[6] == 255 && p[8] == 0,
+                 "v3: 255 as src is not a v2 id (research/n2-wire16.md 8)");
+        {
+            int all = 1;
+            for (unsigned i = 0; i < RX_WIDE_MAX - 2; i++) {     /* 300, 556 hold 2 */
+                n = build_packet(p, REL_BROADCAST, 1000 + i, 0, f, sizeof(f));
+                udp_send_to(0, p, n);
+                if (net_relay_recv(o, sizeof(o)) != (int)sizeof(f)) all = 0;
+            }
+            n = build_packet(p, REL_BROADCAST, 5000, 0, f, sizeof(f));
+            udp_send_to(0, p, n);
+            hb_check(pr, all && net_relay_recv(o, sizeof(o)) == 0,
+                     "v3: the 257th wide id is dropped, its frame not passed unchecked");
+            memset(rx_wide_id, 0, sizeof(rx_wide_id));
+            memset(rx_nonce_armed + RX_NODE_MAX, 0, RX_WIDE_MAX);
+        }
+
         close(s);
         relay_list[0] = sv_rl;
         memcpy(key, sv_key, KEY_LEN);
@@ -1496,6 +1522,6 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
     hb_use_mock = 0;
 
     if (hb_fail) pr("[heartbeat] RESULT: FAIL\r\n");
-    else         pr("[heartbeat] RESULT: 10/10 PASS\r\n");
+    else         pr("[heartbeat] RESULT: 13/13 PASS\r\n");
 }
 #endif /* HEARTBEAT_CERT */
