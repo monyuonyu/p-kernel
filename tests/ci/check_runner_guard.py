@@ -78,6 +78,18 @@ def selftest():
         ('multi-line runs-on', head + "  b:\n    runs-on:\n      - self-hosted\n    steps: []\n", 1),
         ('second job', good + "  c:\n    runs-on: [self-hosted, x]\n    steps: []\n", 1),
         ('pull_request_target', good.replace('  push:\n', '  pull_request_target:\n  push:\n'), 1),
+        # audit-107: the label alone reaches the ThinkPad, and on: has a one-line form
+        ('label only', head + "  b:\n    runs-on: pkernel-thinkpad\n    steps: []\n", 1),
+        ('label in a list', head + "  b:\n    runs-on: [pkernel-thinkpad]\n    steps: []\n", 1),
+        ('runner group', head + "  b:\n    runs-on: {group: x}\n    steps: []\n", 1),
+        ('flow on', good.replace("on:\n  push:\n    branches: ['feat/**']\n",
+                                 "on: [push, pull_request_target]\n"), 1),
+        ('flow on, workflow_run', good.replace("on:\n  push:\n    branches: ['feat/**']\n",
+                                               "on: [workflow_run]\n"), 1),
+        ('a comment in on: is no event',
+         good.replace("on:\n", "on:\n  # not pull_request_target, on purpose\n"), 0),
+        ('hosted names stay hosted',
+         good.replace('runs-on: ubuntu-latest', 'runs-on: ubuntu-24.04'), 0),
     ]
     fails = 0
     for name, text, want in cases:
