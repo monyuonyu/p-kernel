@@ -67,8 +67,8 @@ void st_expert_key(UB expert_id, U1 out_key[LOOKUP_KEY_LEN])
 /* PURE cores (explicit member set — testable, no globals)             */
 /* ------------------------------------------------------------------ */
 
-INT st_expert_owners_in(UB expert_id, const UB *members, INT n_members,
-                        UB out[], INT r)
+INT st_expert_owners_in(UB expert_id, const pk_node_t *members, INT n_members,
+                        pk_node_t out[], INT r)
 {
     if (members == NULL || out == NULL) return -1;
     if (n_members <= 0 || r <= 0)       return -1;
@@ -79,9 +79,9 @@ INT st_expert_owners_in(UB expert_id, const UB *members, INT n_members,
     return lookup_responsible(key, members, n_members, out, r);
 }
 
-INT st_expert_owner_in(UB expert_id, const UB *members, INT n_members)
+INT st_expert_owner_in(UB expert_id, const pk_node_t *members, INT n_members)
 {
-    UB win[1];
+    pk_node_t win[1];
     INT n = st_expert_owners_in(expert_id, members, n_members, win, 1);
     if (n != 1) return -1;
     return (INT)win[0];
@@ -93,7 +93,7 @@ INT st_expert_owner_in(UB expert_id, const UB *members, INT n_members)
 
 /* Collect the current alive member ids (incl. self). Returns the count;
  * 0 == no cluster yet (drpc_my_node == 0xFF before init). */
-static INT alive_members(UB out[DNODE_MAX])
+static INT alive_members(pk_node_t out[DNODE_MAX])
 {
     INT n = 0;
     for (UB i = 0; i < DNODE_MAX; i++) {
@@ -102,9 +102,9 @@ static INT alive_members(UB out[DNODE_MAX])
     return n;
 }
 
-INT st_expert_owners(UB expert_id, UB out[], INT r)
+INT st_expert_owners(UB expert_id, pk_node_t out[], INT r)
 {
-    UB members[DNODE_MAX];
+    pk_node_t members[DNODE_MAX];
     INT n = alive_members(members);
     if (n == 0) return -1;   /* no cluster yet */
     return st_expert_owners_in(expert_id, members, n, out, r);
@@ -112,7 +112,7 @@ INT st_expert_owners(UB expert_id, UB out[], INT r)
 
 INT st_expert_owner(UB expert_id)
 {
-    UB members[DNODE_MAX];
+    pk_node_t members[DNODE_MAX];
     INT n = alive_members(members);
     if (n == 0) return -1;
     return st_expert_owner_in(expert_id, members, n);
@@ -122,7 +122,7 @@ BOOL st_expert_is_local(UB expert_id)
 {
     INT owner = st_expert_owner(expert_id);
     if (owner < 0) return FALSE;
-    return ((UB)owner == drpc_my_node) ? TRUE : FALSE;
+    return ((pk_node_t)owner == drpc_my_node) ? TRUE : FALSE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -145,7 +145,7 @@ static void emit_dec(void (*emit)(const char *), INT v)
 /* A non-HRW control: trivial modulo-N placement. Used ONLY to PROVE the
  * re-home cert is falsifiable — modulo-N reshuffles every expert when the
  * member set shrinks, so it FAILS minimal-disruption where HRW passes. */
-static INT modN_owner(UB expert_id, const UB *members, INT n_members)
+static INT modN_owner(UB expert_id, const pk_node_t *members, INT n_members)
 {
     return (INT)members[(INT)expert_id % n_members];
 }
@@ -157,7 +157,7 @@ INT st_placement_self_test(void (*emit)(const char *))
     /* A synthetic alive-member set of 5 distinct node ids — deliberately
      * NON-contiguous (not 0..4) so the map is proven not to assume ids
      * counted from zero. */
-    UB members[5] = { 3, 9, 17, 40, 62 };
+    pk_node_t members[5] = { 3, 9, 17, 40, 62 };
     INT NM = 5;
 
     /* ---- [place-deterministic]: every node derives the SAME map ----
@@ -194,8 +194,8 @@ INT st_placement_self_test(void (*emit)(const char *))
     /* ---- [place-rehome]: kill the owner of expert 0; ONLY expert 0's
      * owner may move; every other expert keeps its owner (HRW minimal
      * disruption). Build a member set with owner_base[0] removed. ---- */
-    UB victim = (UB)(owner_base[0] >= 0 ? owner_base[0] : 0);
-    UB reduced[5];
+    pk_node_t victim = (pk_node_t)(owner_base[0] >= 0 ? owner_base[0] : 0);
+    pk_node_t reduced[5];
     INT NR = 0;
     for (INT i = 0; i < NM; i++) {
         if (members[i] != victim) reduced[NR++] = members[i];
@@ -283,7 +283,7 @@ INT st_placement_self_test(void (*emit)(const char *))
      * expert maps to the one node. The map is SS-6's foundation, not
      * cross-node firing (which is DEFERRED to SS-6). ---- */
     {
-        UB solo[1] = { 7 };
+        pk_node_t solo[1] = { 7 };
         INT solo_ok = 1;
         for (INT e = 0; e < PLACE_TEST_NEXPERT; e++) {
             if (st_expert_owner_in((UB)e, solo, 1) != 7) solo_ok = 0;

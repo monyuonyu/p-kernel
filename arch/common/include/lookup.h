@@ -49,18 +49,18 @@
  * Returns the number of ids written (= min(r, n_members)), or a
  * negative value on bad arguments. */
 INT lookup_responsible(const U1 key[LOOKUP_KEY_LEN],
-                       const UB *members, INT n_members,
-                       UB out[], INT r);
+                       const pk_node_t *members, INT n_members,
+                       pk_node_t out[], INT r);
 
 /* Convenience: members = current region view (region.h, egocentric
  * local view — that is the documented contract). Returns count or <0. */
 INT lookup_responsible_region(const U1 key[LOOKUP_KEY_LEN],
-                              UB out[], INT r);
+                              pk_node_t out[], INT r);
 
 /* Convenience: members = all DNODE_ALIVE nodes in dnode_table[]
  * (egocentric local view; includes self). Returns count or <0. */
 INT lookup_responsible_alive(const U1 key[LOOKUP_KEY_LEN],
-                             UB out[], INT r);
+                             pk_node_t out[], INT r);
 
 /* ------------------------------------------------------------------ */
 /* L1 — resolution cache + read-k candidates (doc §2.3, §3.2, §6 L1)   */
@@ -76,7 +76,7 @@ void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], pk_node_t node);
 /* Fresh-cache probe: if `key` has a non-expired entry, write its node
  * to *node and return 1; else return 0. Never falls back to HRW —
  * that composition is lookup_candidates()'s job. */
-INT  lookup_cache_get(const U1 key[LOOKUP_KEY_LEN], UB *node);
+INT  lookup_cache_get(const U1 key[LOOKUP_KEY_LEN], pk_node_t *node);
 
 /* Drop every cache entry (tests; callers may use it on net reset). */
 void lookup_cache_clear(void);
@@ -96,12 +96,12 @@ void lookup_cache_age_for_test(U4 ms);
  * underlying HRW ranking stays byte-identical across ABIs.
  * Returns the number of ids written (<= k), or <0 on bad arguments. */
 INT lookup_candidates_in(const U1 key[LOOKUP_KEY_LEN],
-                         const UB *members, INT n_members,
-                         UB out[], INT k);
+                         const pk_node_t *members, INT n_members,
+                         pk_node_t out[], INT k);
 
 /* Convenience: members = all DNODE_ALIVE nodes in dnode_table[]
  * (egocentric local view). Returns count (0 if no cluster) or <0. */
-INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], UB out[], INT k);
+INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], pk_node_t out[], INT k);
 
 /* L0 self-test (shell `hrw`): determinism, the cross-ABI known vector
  * (full ranking of members {0..7} for a fixed key — must print the SAME

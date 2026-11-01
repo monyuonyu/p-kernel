@@ -37,6 +37,7 @@
  *  cross-node firing itself.
  */
 #pragma once
+#include "pk_node.h"   /* pk_node_t (N2b) */
 #include "lookup.h"          /* LOOKUP_KEY_LEN, LOOKUP_MAX_MEMBERS, HRW   */
 
 /* Replica fan-out ceiling for the top-r owner list (SS-6 fallback). Kept
@@ -53,14 +54,14 @@ void st_expert_key(UB expert_id, U1 out_key[LOOKUP_KEY_LEN]);
  * `members[0..n_members)` by HRW weight for expert `expert_id` and return
  * the WINNER (the owner). Returns the owner node id (>=0) or a negative
  * value on bad arguments / empty member set. No globals, no network. */
-INT st_expert_owner_in(UB expert_id, const UB *members, INT n_members);
+INT st_expert_owner_in(UB expert_id, const pk_node_t *members, INT n_members);
 
 /* PURE core: write up to `r` top owners (replica order, primary at [0])
  * for `expert_id` over `members[]` into out[]. Returns the count written
  * (= min(r, n_members)) or <0 on bad arguments. SS-6 will use index>=1
  * for safe fallback; SS-5 only needs index 0. */
-INT st_expert_owners_in(UB expert_id, const UB *members, INT n_members,
-                        UB out[], INT r);
+INT st_expert_owners_in(UB expert_id, const pk_node_t *members, INT n_members,
+                        pk_node_t out[], INT r);
 
 /* LIVE wrappers — the alive SWIM view (dnode_table[], egocentric local
  * view incl. self). These are what the kernel/student calls; the cert
@@ -76,7 +77,7 @@ BOOL st_expert_is_local(UB expert_id);
 
 /* Top-r owner list over the current alive set (SS-6 replica fallback).
  * Returns count written or <0. */
-INT st_expert_owners(UB expert_id, UB out[], INT r);
+INT st_expert_owners(UB expert_id, pk_node_t out[], INT r);
 
 /* SS-5 self-test (shell `place`): drives the PURE cores with synthetic
  * member sets and asserts —

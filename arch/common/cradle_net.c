@@ -146,7 +146,7 @@ static W ct_pub_handle(void)
 /* build the body ref "ct/<teacher>/<seq8>" (<= PFS_NAME_MAX = 16). seq is
  * the per-teacher monotonic high-water (LATEST_ONLY: a fresh ref per seq lets
  * a late-joining child fetch the newest). */
-static UW ct_body_ref(U1 *out, UB teacher, UW seq)
+static UW ct_body_ref(U1 *out, pk_node_t teacher, UW seq)
 {
     UW k = 0;
     out[k++] = 'c'; out[k++] = 't'; out[k++] = '/';
@@ -183,7 +183,7 @@ INT cradle_teach_emit(const UB *body, UW len)
     if (pfs_dag_save(ref, rl, body, len) != PFS_OK) { ct_emit_seq--; return 0; }
 
     ct_pub_pkt.magic        = CRADLE_MAGIC;
-    ct_pub_pkt.teacher_node = drpc_my_node;
+    ct_pub_pkt.teacher_node = pk_node_v1(drpc_my_node);
     ct_pub_pkt.fmt          = LESSON_FMT_BYTE;
     ct_pub_pkt._pad0 = ct_pub_pkt._pad1 = 0;
     ct_pub_pkt.seq          = seq;

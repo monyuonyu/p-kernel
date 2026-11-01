@@ -242,7 +242,7 @@ static void kloader_push_ip(UW target_ip)
     pkt.magic      = KLOAD_MAGIC;
     pkt.version    = KLOAD_VERSION;
     pkt.type       = KLOAD_START;
-    pkt.src_node   = (UB)drpc_my_node;
+    pkt.src_node   = pk_node_v1(drpc_my_node);
     pkt.total_size = bin_size;
     udp_send(target_ip, KLOAD_PORT, KLOAD_PORT,
              (const UB *)&pkt, (UH)sizeof(pkt));
@@ -260,7 +260,7 @@ static void kloader_push_ip(UW target_ip)
         pkt.magic      = KLOAD_MAGIC;
         pkt.version    = KLOAD_VERSION;
         pkt.type       = KLOAD_CHUNK;
-        pkt.src_node   = (UB)drpc_my_node;
+        pkt.src_node   = pk_node_v1(drpc_my_node);
         pkt.total_size = bin_size;
         pkt.chunk_idx  = chunk_idx;
         pkt.chunk_len  = clen;
@@ -432,7 +432,7 @@ void kloader_push(pk_node_t target_node)
     pkt.magic      = KLOAD_MAGIC;
     pkt.version    = KLOAD_VERSION;
     pkt.type       = KLOAD_START;
-    pkt.src_node   = (UB)drpc_my_node;
+    pkt.src_node   = pk_node_v1(drpc_my_node);
     pkt.total_size = bin_size;
     pmesh_send(target_node, KLOAD_PORT, (const UB *)&pkt, (UH)sizeof(pkt));
 
@@ -452,7 +452,7 @@ void kloader_push(pk_node_t target_node)
         pkt.magic      = KLOAD_MAGIC;
         pkt.version    = KLOAD_VERSION;
         pkt.type       = KLOAD_CHUNK;
-        pkt.src_node   = (UB)drpc_my_node;
+        pkt.src_node   = pk_node_v1(drpc_my_node);
         pkt.total_size = bin_size;
         pkt.chunk_idx  = chunk_idx;
         pkt.chunk_len  = clen;

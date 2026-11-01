@@ -24,6 +24,7 @@
  */
 
 #pragma once
+#include "pk_node.h"   /* pk_node_t (N2b) */
 #include "kernel.h"
 
 /* domains read by an introspection pass — a bitmask carried into the
@@ -38,7 +39,7 @@
 /* a flat read-only snapshot of the node's self-stats (no pointers, no
  * mutation; every field is copied out of live kernel/cluster state). */
 typedef struct {
-    UB  node_id;            /* drpc_my_node (0xFF = uninitialized)        */
+    pk_node_t node_id;            /* drpc_my_node (0xFF = uninitialized)        */
     UW  uptime_ms;          /* coarse uptime (SYSTIM.lo)                  */
     UW  alive_peers;        /* DNODE_ALIVE entries in dnode_table (excl. self) */
     UW  running_procs;      /* cluster processes in the RUNNING state     */

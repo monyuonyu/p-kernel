@@ -1439,6 +1439,39 @@ jobs:
           timeout 900 tests/host/run_stop_persist.sh | tee stop_persist.log
           grep -aF '[stop-persist] ALL PASS' stop_persist.log
           make -C boot/linux_x86_64 >/dev/null
+      # N2b (research/n2-wire16.md): a node id is 16 bits on hosted and nothing
+      # cuts one to a byte without saying so. The compiler is the reader; the
+      # script's own negative control runs first. Leaves the tree clean.
+      - name: "no node id cut to a byte ([n2-narrow], BLOCKING, N2)"
+        run: |
+          timeout 400 tests/host/run_n2_narrow.sh | tee n2_narrow.log
+          grep -aF '[n2-narrow] PASS' n2_narrow.log
+      # Old binaries and new in one swarm. 64b7c909 is the last master before the
+      # wire changes of N2; a shallow fetch is enough, and GitHub serves it by sha.
+      - name: "wide ids in SWIM's membership ([n2-mix], BLOCKING, N2)"
+        run: |
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          make -s -C relay
+          (printf 'nodes wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_wide.log || true
+          grep -aF '[swim-wide] PASS' nodes_wide.log
+          git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
+          git worktree add -q /tmp/n2old FETCH_HEAD
+          make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
+          N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix.log
+          # An old relay: the wide nodes stay out and disturb nobody.
+          make -s -C /tmp/n2old/relay
+          N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
+            timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
+      - name: "X1 and X2 go red when a wide id is cut to a byte ([n2-mix], negative control, -DN2_NC_TRUNC)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
+          N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc.log || true
+          grep -aF '[n2-mix] X2 FAIL' n2_mix_nc.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"

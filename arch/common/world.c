@@ -111,7 +111,7 @@ static W h_pub = -1;
 static W h_sub[DNODE_MAX];
 
 /* "world/beacon/<node>" を out へ組み立てる (node は 0..DNODE_MAX-1, 1 桁) */
-static void beacon_topic_name(char *out, UB node)
+static void beacon_topic_name(char *out, pk_node_t node)
 {
     const char *p = WORLD_BEACON_TOPIC_PFX;
     INT i = 0;
@@ -227,9 +227,9 @@ static void publish_beacon(void)
     if (h_pub < 0) return;
 
     WORLD_BEACON b;
-    b.node_id     = drpc_my_node;
+    b.node_id     = pk_node_v1(drpc_my_node);
     b.device_type = my_device_type();
-    b.region_id   = region_id();                 /* 自 region (局所ビュー)  */
+    b.region_id   = pk_node_v1(region_id());                 /* 自 region (局所ビュー)  */
     b.pressure    = compute_pressure();
     b.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
 #ifdef _TK_HOSTED_LIBC_
@@ -599,11 +599,11 @@ INT world_survival_l0_test(void)
      * observe it as a peer beacon, read it back via world_peer_state; and a
      * beacon with bits 3-4 = 0 reads as WSTATE_ACTIVE (old-node default). */
     INT gos_fail = 0;
-    UB peer = (UB)(DNODE_MAX - 1);
+    pk_node_t peer = (UB)(DNODE_MAX - 1);
     if (peer == drpc_my_node) peer = (UB)(DNODE_MAX - 2);
     {
         WORLD_BEACON b;
-        b.node_id = peer; b.device_type = 0; b.region_id = 0xFF;
+        b.node_id = pk_node_v1(peer); b.device_type = 0; b.region_id = 0xFF;
         b.pressure = 0; b.region_size = 0; b.threat = 0; b.atrisk = 0;
         b.firing = (UB)(WSTATE_STRESSED << WORLD_STATE_SHIFT);   /* stamp STRESSED */
         b.seq = 1000;
@@ -811,11 +811,11 @@ INT world_survival_l2_test(void)
      * WORLD_STATE_MASK L0 already wires — zero new wire code, reuses
      * world_observe/world_peer_state exactly like [state-gossip] does. */
     INT gos_fail = 0;
-    UB peer = (UB)(DNODE_MAX - 1);
+    pk_node_t peer = (UB)(DNODE_MAX - 1);
     if (peer == drpc_my_node) peer = (UB)(DNODE_MAX - 2);
     {
         WORLD_BEACON b;
-        b.node_id = peer; b.device_type = 0; b.region_id = 0xFF;
+        b.node_id = pk_node_v1(peer); b.device_type = 0; b.region_id = 0xFF;
         b.pressure = 0; b.region_size = 0; b.threat = 0; b.atrisk = 0;
         b.firing = (UB)(WSTATE_HIBERNATING << WORLD_STATE_SHIFT);
         b.seq = 2000;
@@ -926,9 +926,9 @@ void world_task(INT stacd, void *exinf)
 
         /* 自分のエントリも world-table に載せておく (自己観測)。 */
         WORLD_BEACON self;
-        self.node_id     = drpc_my_node;
+        self.node_id     = pk_node_v1(drpc_my_node);
         self.device_type = my_device_type();
-        self.region_id   = region_id();
+        self.region_id   = pk_node_v1(region_id());
         self.pressure    = compute_pressure();
         self.firing      = 0;
         self.region_size = region_size();
@@ -957,9 +957,9 @@ void world_task(INT stacd, void *exinf)
         /* 自分のエントリを更新 (自己観測; region/pressure は時々刻々変わる) */
         {
             WORLD_BEACON self;
-            self.node_id     = drpc_my_node;
+            self.node_id     = pk_node_v1(drpc_my_node);
             self.device_type = my_device_type();
-            self.region_id   = region_id();
+            self.region_id   = pk_node_v1(region_id());
             self.pressure    = compute_pressure();
             self.firing      = (UB)(my_firing & WORLD_BEACON_FIRE_MASK);
 #ifdef _TK_HOSTED_LIBC_

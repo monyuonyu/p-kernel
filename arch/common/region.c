@@ -36,7 +36,7 @@ static void rg_putdec(UW v)
 
 static UB member[DNODE_MAX];   /* 1 = 自 region のメンバ        */
 static UB member_cnt = 0;      /* メンバ数 (自分を含む)         */
-static UB coord      = 0xFF;   /* coordinator = メンバ内最小 ID */
+static pk_node_t coord      = 0xFF;   /* coordinator = メンバ内最小 ID */
 
 #ifdef _TK_HOSTED_LIBC_
 static UW region_tau = REGION_TAU_MS;  /* test-only override, see region.h */
@@ -89,7 +89,7 @@ void region_recompute(void)
     member_cnt = 0;
     coord      = 0xFF;
 
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     if (me == 0xFF) return;   /* 分散モード未確立 — region 無し */
 
     /* 自分は常にメンバ */
@@ -223,13 +223,13 @@ UB region_teacher(void)
 /* 問い合わせ API                                                      */
 /* ------------------------------------------------------------------ */
 
-UB region_id(void)
+pk_node_t region_id(void)
 {
     region_recompute();
     return coord;
 }
 
-UB region_coordinator(void)
+pk_node_t region_coordinator(void)
 {
     region_recompute();
     return coord;

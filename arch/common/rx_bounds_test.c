@@ -71,7 +71,7 @@ static void sp_build(UB *b, UH n, UB type, UB src)
 {
     for (UH i = 0; i < n; i++) b[i] = 0;
     p32(b, SPAWN_MAGIC);
-    b[4] = SPAWN_VERSION; b[5] = type; b[6] = src; b[7] = drpc_my_node;
+    b[4] = SPAWN_VERSION; b[5] = type; b[6] = src; b[7] = pk_node_v1(drpc_my_node);
 }
 
 static void sp_case(const char *id, const char *what, UH n, UB type, UB src,

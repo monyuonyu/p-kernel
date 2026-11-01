@@ -86,7 +86,7 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    UB next_hop;  /* 次に送るべきノード ID (0xFF = 経路なし) */
+    pk_node_t next_hop;  /* 次に送るべきノード ID (0xFF = 経路なし) */
     UB cost;      /* ホップ数                               */
     UB age;       /* 最終更新からの beacon 周期数           */
     UB active;    /* 1 = 有効                              */

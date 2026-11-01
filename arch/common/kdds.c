@@ -252,7 +252,7 @@ static W kdds_pub_core(W handle, const void *data, W len, INT dst)
         pkt.magic    = KDDS_MAGIC;
         pkt.version  = KDDS_VERSION;
         pkt.type     = KDDS_DATA_PKT;
-        pkt.src_node = drpc_my_node;
+        pkt.src_node = pk_node_v1(drpc_my_node);
         pkt.data_len = (UH)len;
 
         INT nlen = kd_strlen(t->name) + 1;
@@ -589,7 +589,7 @@ INT kdds_delcluster_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : kd_puts;
 
     /* run in non-distributed mode so the tail replica_tombstone() is skipped */
-    UB saved_my  = drpc_my_node;
+    pk_node_t saved_my  = drpc_my_node;
     drpc_my_node = 0xFF;
 
     const char *DEL   = "test/delcluster";

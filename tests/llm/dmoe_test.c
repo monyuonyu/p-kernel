@@ -48,9 +48,9 @@ static int g_pass = 0, g_fail = 0;
 #define R_REPL    2                  /* replicas per bank expert                   */
 
 /* a 3-node fleet with NON-contiguous ids (genericity: not 0..n). */
-static UB  MEMBERS_A[3] = { 1, 4, 9 };
+static pk_node_t MEMBERS_A[3] = { 1, 4, 9 };
 static int NMEM_A = 3;
-static UB  MEMBERS_B[2] = { 2, 7 };  /* a SECOND member set (genericity)          */
+static pk_node_t MEMBERS_B[2] = { 2, 7 };  /* a SECOND member set (genericity)          */
 static int NMEM_B = 2;
 
 /* DISJOINT sub-corpora — adversarially distinct byte distributions (§10.5): each
@@ -240,7 +240,7 @@ static void restore_shard0(const st_model *floor)
     for (size_t i = 0; i < n2;  i++) g_w2[0][i] = g_bk_w2[i];
 }
 
-static void fleet_build(const st_model *tier, const UB *members, int nmem, int nexp)
+static void fleet_build(const st_model *tier, const pk_node_t *members, int nmem, int nexp)
 {
     g_nexp = nexp;
     for (int n = 0; n < 64; n++) { g_alive[n] = 0; g_fire_dead[n] = 0; }
@@ -249,7 +249,7 @@ static void fleet_build(const st_model *tier, const UB *members, int nmem, int n
     /* HRW placement: holders of each bank expert derived from `members` (NO
      * hardcode — the [dmoe-genericity] property). */
     for (int s = 0; s < nexp; s++) {
-        UB owners[ST_PLACE_RMAX];
+        pk_node_t owners[ST_PLACE_RMAX];
         int no = st_expert_owners_in((UB)(tier->nexpert + s), members, nmem, owners, R_REPL);
         g_nholders[s] = no < 0 ? 0 : no;
         for (int k = 0; k < g_nholders[s]; k++) g_holders[s][k] = owners[k];
@@ -274,7 +274,7 @@ static void fleet_free(void) { for (int i = 0; i < g_fleet_n; i++) dmoe_bank_fre
  * bit-ref reference). */
 static void oracle_build(dmoe_bank *ora, const st_model *tier, int nexp)
 {
-    UB solo[1] = { 200 };                             /* a node id that holds all  */
+    pk_node_t solo[1] = { 200 };                             /* a node id that holds all  */
     dmoe_bank_init(ora, tier, 200);
     dmoe_set_members(ora, solo, 1);
     dmoe_set_alive(ora, fleet_alive, NULL);
@@ -640,7 +640,7 @@ int main(void)
     /* [dmoe-solo-floor] — partitioned node: floor-only, capacity == E_res      */
     /* ======================================================================= */
     {
-        UB solo[1] = { 5 };
+        pk_node_t solo[1] = { 5 };
         dmoe_bank sb; dmoe_bank_init(&sb, tier, 5);
         dmoe_set_members(&sb, solo, 1);
         dmoe_set_alive(&sb, fleet_alive, NULL);
@@ -682,7 +682,7 @@ int main(void)
     /* [dmoe-genericity] — HRW layout from a SECOND member set, no hardcode      */
     /* ======================================================================= */
     {
-        UB oA[ST_PLACE_RMAX], oB[ST_PLACE_RMAX];
+        pk_node_t oA[ST_PLACE_RMAX], oB[ST_PLACE_RMAX];
         int nA = st_expert_owners_in((UB)(tier->nexpert), MEMBERS_A, NMEM_A, oA, R_REPL);
         int nB = st_expert_owners_in((UB)(tier->nexpert), MEMBERS_B, NMEM_B, oB, R_REPL);
         /* owners must be drawn from the respective member sets (no hardcode), and

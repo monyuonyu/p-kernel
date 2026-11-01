@@ -44,7 +44,7 @@ static W sub_h[DNODE_MAX];
 
 /* "L/<node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁)。
  * out は最低 5 バイト ("L/NN\0") 必要。 */
-static void load_topic_name(char *out, UB node)
+static void load_topic_name(char *out, pk_node_t node)
 {
     INT i = 0;
     out[i++] = 'L';
@@ -87,7 +87,7 @@ UB edf_local_load(void)
 /* ノード選択                                                          */
 /* ------------------------------------------------------------------ */
 
-static UB pick_best_node(W deadline_ms)
+static pk_node_t pick_best_node(W deadline_ms)
 {
     if (drpc_my_node == 0xFF) return 0xFF;  /* 単体モードはローカル固定 */
 
@@ -102,7 +102,7 @@ static UB pick_best_node(W deadline_ms)
     if (local <= threshold) return drpc_my_node;
 
     /* 最も負荷の低い ALIVE ノードを探す */
-    UB best      = drpc_my_node;
+    pk_node_t best      = drpc_my_node;
     UB best_load = local;
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
@@ -127,7 +127,7 @@ W edf_infer(W sensor_packed, W deadline_ms)
     SYSTIM t0;
     tk_get_otm(&t0);
 
-    UB best = pick_best_node(deadline_ms);
+    pk_node_t best = pick_best_node(deadline_ms);
     UB cls  = 0;
 
     if (best == drpc_my_node || best == 0xFF) {
