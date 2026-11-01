@@ -14,8 +14,9 @@
 #
 # `nodes` prints ids from 0 (PKERNEL_NODE_ID 44 is row 43).
 #
-# Negative control (design): -DN2_NC_TRUNC, wide ids cut to v1, must go red on X1 and X2.
-# Red today: the kernel's ids are still one byte, so 260 and 300 cannot join.
+# Negative control: -DN2_NC_TRUNC cuts the wide ids to a byte, so 260 and 300 become 4 and 44.
+# 260 and 300 are in SWIM's membership only (swim.c): X3 and X4 of the design are not written
+# yet, because no other subsystem sees a wide id.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
