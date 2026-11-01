@@ -16,8 +16,13 @@ GUARD = ("github.event_name == 'push' || "
 JOB = re.compile(r'^  ([A-Za-z0-9_-]+):\s*(#.*)?$')
 TOP = re.compile(r'^\S')
 KEY = re.compile(r'^    (runs-on|if):\s*(.*)$')
+# A runs-on that is not one GitHub-hosted name counts as the ThinkPad: the label alone reaches it,
+# without the word self-hosted (audit-107), and so does a runner group.
+HOSTED = re.compile(r'^(ubuntu|windows|macos)-[0-9a-z.-]+$')
 # pull_request_target runs with the base repo's secrets, and workflow_run after a fork's run.
-BAD_EVENT = re.compile(r'^\s*(pull_request_target|workflow_run)\s*:', re.M)
+# A word, not a key: on: also has a one-line form (audit-107). Comments are stripped first.
+BAD_EVENT = re.compile(r'\b(pull_request_target|workflow_run)\b')
+COMMENT = re.compile(r'(^|\s)#.*$', re.M)
 
 
 def jobs(text):
@@ -53,11 +58,11 @@ def check(text):
     for name, ron, cond in jobs(text):
         if not ron:
             bad.append(f'{name}: no one-line runs-on (cannot tell where it runs)')
-        elif 'self-hosted' in ron or '${{' in ron:
+        elif not HOSTED.match(COMMENT.sub('', ron).strip().strip('\'"')):
             n += 1
             if GUARD not in cond:
                 bad.append(f'{name}: self-hosted without the fork guard in its if:')
-    m = BAD_EVENT.search(text.split('\njobs:')[0])
+    m = BAD_EVENT.search(COMMENT.sub('', text.split('\njobs:')[0]))
     if m:
         bad.append(f'on: {m.group(1)} would run fork code with the base repo\'s rights')
     return bad, n
@@ -78,6 +83,18 @@ def selftest():
         ('multi-line runs-on', head + "  b:\n    runs-on:\n      - self-hosted\n    steps: []\n", 1),
         ('second job', good + "  c:\n    runs-on: [self-hosted, x]\n    steps: []\n", 1),
         ('pull_request_target', good.replace('  push:\n', '  pull_request_target:\n  push:\n'), 1),
+        # audit-107: the label alone reaches the ThinkPad, and on: has a one-line form
+        ('label only', head + "  b:\n    runs-on: pkernel-thinkpad\n    steps: []\n", 1),
+        ('label in a list', head + "  b:\n    runs-on: [pkernel-thinkpad]\n    steps: []\n", 1),
+        ('runner group', head + "  b:\n    runs-on: {group: x}\n    steps: []\n", 1),
+        ('flow on', good.replace("on:\n  push:\n    branches: ['feat/**']\n",
+                                 "on: [push, pull_request_target]\n"), 1),
+        ('flow on, workflow_run', good.replace("on:\n  push:\n    branches: ['feat/**']\n",
+                                               "on: [workflow_run]\n"), 1),
+        ('a comment in on: is no event',
+         good.replace("on:\n", "on:\n  # not pull_request_target, on purpose\n"), 0),
+        ('hosted names stay hosted',
+         good.replace('runs-on: ubuntu-latest', 'runs-on: ubuntu-24.04'), 0),
     ]
     fails = 0
     for name, text, want in cases:
