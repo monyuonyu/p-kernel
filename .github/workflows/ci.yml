@@ -111,7 +111,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install i686 cross toolchain + qemu-system-x86
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends \
             gcc-i686-linux-gnu make qemu-system-x86
       - name: positive arm — expect GREEN (the fix)
@@ -185,7 +185,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cross toolchains + QEMU
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo tests/ci/apt_install.sh \
             gcc-i686-linux-gnu gcc-aarch64-linux-gnu make \
             qemu-system-x86 qemu-system-arm python3
@@ -254,7 +254,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # libtcc-dev: selfc-ring3 (the self-built-unit immune boundary) needs
           # libtcc for THIS ABI to compile units. The x86_64 runner has the
           # x86_64 libtcc, so the boot/linux_x86_64 Makefile probe links it and
@@ -1450,7 +1450,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-user
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # libc6-dev-arm64-cross: the hosted UMP build (_TK_HOSTED_LIBC_) needs
           # real aarch64 glibc headers; --no-install-recommends skips them and
           # the cross gcc falls back to the host's /usr/include and dies on
@@ -1624,7 +1624,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cross toolchains
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo tests/ci/apt_install.sh \
             gcc-i686-linux-gnu gcc-aarch64-linux-gnu make
       - name: Build boot/x86 (bootloader.bin + kloader.bin + kernel.elf)
@@ -1688,7 +1688,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain + QEMU + FAT tools
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends \
             gcc-i686-linux-gnu make qemu-system-x86 dosfstools mtools
       - name: Build kernel + disk image
@@ -1792,7 +1792,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build + run test_relay
         run: make -C relay test
@@ -1809,7 +1809,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -1840,7 +1840,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -1877,7 +1877,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -1924,7 +1924,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -1964,7 +1964,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make curl
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2011,7 +2011,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make curl
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2057,7 +2057,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make curl
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2116,7 +2116,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make curl
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2173,7 +2173,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2205,7 +2205,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2239,7 +2239,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make python3
       - name: Run ARK crash fuzzer (0 BUG required)
         run: timeout 400 bash samples/30_ark_crash/run.sh
@@ -2272,7 +2272,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -2316,7 +2316,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: "[depth-*] fast cert re-validated on the ThinkPad runner"
         run: |
@@ -2420,7 +2420,7 @@ jobs:
         # harness reads bootloader.bin's symbols with) + qemu + the FAT tools
         # that `make -C boot/x86 disk` needs.
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends \
             gcc-i686-linux-gnu make qemu-system-x86 dosfstools mtools
       - name: Run the kill/churn harness (150 boots)
@@ -2576,7 +2576,7 @@ jobs:
           fetch-depth: 2          # need HEAD^ for the relative compare
       - name: Install cross toolchains
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo tests/ci/apt_install.sh \
             gcc-i686-linux-gnu gcc-aarch64-linux-gnu make
       - name: Assert bare-metal .text is byte-identical to the parent commit
@@ -2630,7 +2630,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
       - name: Build the STUB binary (-DCONSCIENCE_STUB — judgment removed)
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DCONSCIENCE_STUB
@@ -2670,7 +2670,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
       - name: Build the STUB binary (-DSCALING_AGG_STUB — aggregator gutted to r[0])
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSCALING_AGG_STUB
@@ -2705,7 +2705,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
       - name: Build the SABOTAGE binary (-DSABOTAGE_FRONTIER_NOLABEL — labeler stubbed)
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSABOTAGE_FRONTIER_NOLABEL
@@ -2745,7 +2745,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchains + qemu-user (aarch64 leg under emulation)
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # gcc/make: native x86_64 leg. gcc-aarch64-linux-gnu + libc6-dev-arm64-
           # cross: cross-build the aarch64-hosted leg (real aarch64 glibc
           # headers, like ump-aarch64-cross). qemu-user-static + binfmt-support:
@@ -2796,7 +2796,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build boot/linux_x86_64 with ASan+UBSan (native x86_64)
         # NO_LIBTCC=1: the LDFLAGS override below drops -ltcc, so the selfc
@@ -2864,7 +2864,7 @@ jobs:
           fetch-depth: 0
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: SS-4 function-preserving expert growth ([expert-growth-preserves])
         run: bash tests/llm/run_ss4.sh
@@ -2906,7 +2906,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: st-quant cert (plain green, NOOP red, BADSCALE red)
         run: bash tests/llm/run_st_quant.sh
@@ -2926,7 +2926,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: st-merge cert (plain green, PLAIN_ONLY red)
         run: bash tests/llm/run_st_merge.sh
@@ -2964,7 +2964,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # boot/linux (aarch64 hosted) is built in the link-clean step below,
           # so this job needs the aarch64 cross gcc AND the arm64 glibc headers
           # (libc6-dev-arm64-cross), else make dies on aarch64-linux-gnu-gcc /
@@ -3035,7 +3035,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # the final "both hosted targets still link clean" step builds
           # boot/linux (aarch64 hosted), so this job needs the aarch64 cross gcc
           # AND the arm64 glibc headers (libc6-dev-arm64-cross), else make dies
@@ -3117,7 +3117,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain (+ aarch64 cross + qemu-user for the one-math diff)
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # native cc (run_depth.sh) needs libc6-dev (glibc headers); the final
           # link-clean step builds boot/linux (aarch64 hosted) so the aarch64
           # cross gcc needs libc6-dev-arm64-cross too, else it falls back to the
@@ -3218,7 +3218,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: Build sabotaged cert + assert [depth-deliberation] goes RED
         run: |
@@ -3252,7 +3252,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: "[generation-survives] cure — identity+knowledge cross the arch gap"
         run: |
@@ -3324,7 +3324,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-system-aarch64
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo tests/ci/apt_install.sh \
             gcc-aarch64-linux-gnu make qemu-system-arm
       - name: run_smp0.sh (smp-autodetect / 2-tasks-run / mutual-exclusion / boot-survives)
@@ -3352,6 +3352,14 @@ jobs:
       - name: check_readme_translations.py (訳が日本語版より古くないか、非BLOCKING)
         continue-on-error: true  # advisory: owner, inbox #12.4 (translations: tell, do not stop)
         run: python3 tests/ci/check_readme_translations.py .
+      - name: "[apt-update] apt_update.sh against a fake apt-get"
+        run: |
+          bash tests/ci/test_apt_update.sh tests/ci/apt_update.sh
+          # negative control: without the time limit U1 and U3 must go red
+          sed 's/timeout "$SECS" //' tests/ci/apt_update.sh > /tmp/apt_update_nc.sh
+          if bash tests/ci/test_apt_update.sh /tmp/apt_update_nc.sh; then exit 1; fi
+          # no bare update left in this file (the check names itself, so count)
+          test "$(grep -cE '^ +sudo apt-get update$' .github/workflows/ci.yml)" = 0
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
       # ROADMAP 0-13: every allowed red says until when (an expired date reddens).
@@ -3404,7 +3412,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-system-aarch64
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo tests/ci/apt_install.sh \
             gcc-aarch64-linux-gnu make qemu-system-arm
       - name: run_mc2_slice.sh (MC-2.1b [mc2-slice] partition unit-check + falsifier, no -smp)
@@ -3439,7 +3447,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -3488,7 +3496,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -3537,7 +3545,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
@@ -3585,7 +3593,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install mingw-w64 cross toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           # CI 39989603591: this step hit the 15-minute job timeout on a slow
           # azure mirror (cancelled = a new red that blocks promote); same fallback
           # as the aarch64 cross-gcc jobs
@@ -3740,7 +3748,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make python3 curl
       - name: SS-5 deterministic expert placement (HRW min-disruption falsifier)
         run: bash tests/llm/run_ss5.sh
@@ -3780,7 +3788,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
-          sudo apt-get update
+          sudo tests/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends gcc make
       - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
         run: bash tests/llm/run_kv.sh
