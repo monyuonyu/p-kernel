@@ -66,7 +66,7 @@ UW spawn_drop_bad = 0;
 
 static UW node_ip(pk_node_t n)
 {
-    return ((UW)(n + 1) << 24) | 0x0000010AUL;
+    return pk_node_ip(n);
 }
 
 /* ------------------------------------------------------------------ */

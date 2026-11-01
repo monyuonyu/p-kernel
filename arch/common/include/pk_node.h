@@ -29,6 +29,9 @@ typedef unsigned char pk_node_t;
 #endif
 #define PK_NODE_NONE 0xFF
 
+/* An id too wide for one byte (0xFFFF is the v2 wire's "not a node"). */
+#define PK_NODE_IS_WIDE(id) ((id) > 0xFF && (id) != 0xFFFF)
+
 /* A node id going into a one-byte field (v1 wire, disk): a wide id must not be
  * cut (300 would become 44), it becomes "not a node". Bare metal has no wide
  * ids, so there it is only the cast. */
@@ -39,6 +42,18 @@ static inline pk_node8_t pk_node_v1(pk_node_t id)
 }
 #else
 #define pk_node_v1(id) ((pk_node8_t)(id))
+#endif
+
+/* The node's address, 10.1.0.(n+1); a wide id uses the third byte too, so it
+ * never lands on a narrow node's address. Bare metal: the old expression. */
+#ifdef _TK_HOSTED_LIBC_
+static inline unsigned int pk_node_ip(pk_node_t n)
+{
+    unsigned int v = (unsigned int)n + 1u;
+    return ((v & 0xFFu) << 24) | ((v >> 8) << 16) | 0x0000010Au;
+}
+#else
+#define pk_node_ip(n) (((UW)((n) + 1) << 24) | 0x0000010AUL)
 #endif
 
 #endif /* PK_NODE_H */

@@ -95,7 +95,7 @@ static void local_dispatch(pk_node_t src_node, UH dst_port,
 /* ノード n の IP アドレス: 10.1.0.(n+1) */
 static UW node_ip(pk_node_t n)
 {
-    return ((UW)(n + 1) << 24) | 0x0000010AUL;
+    return pk_node_ip(n);
 }
 
 static void pm_memcpy(void *dst, const void *src, UH n)

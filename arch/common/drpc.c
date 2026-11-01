@@ -81,7 +81,7 @@ DNODE dnode_table[DNODE_MAX];
 /* IP for node n: 10.1.0.(n+1) = (n+1)<<24 | 0x0000010A */
 static UW node_base_ip(pk_node_t n)
 {
-    return ((UW)(n + 1) << 24) | 0x0000010AUL;
+    return pk_node_ip(n);
 }
 
 static const char *node_state_str(UB state)

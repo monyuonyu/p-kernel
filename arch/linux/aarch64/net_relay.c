@@ -790,12 +790,17 @@ int net_relay_init(void)
 #ifdef N2_NC_TRUNC
     my_node_id &= 0xFF;    /* [n2-mix] negative control: 300 becomes 44 */
 #endif
-    if (my_node_id < 1 || my_node_id > 255) {
+    /* N2b: 256 is 0-based 255, which is PK_NODE_NONE inside a node (pk_node.h);
+     * 65535 is 0-based 65534, kept clear of 0xFFFF on the v2 wire. */
+    if (my_node_id < 1 || my_node_id == 256 || my_node_id > 65534) {
         /* G7: don't silently rewrite a bad id to 1 (which would collide with
          * node 1) — say what happened. */
-        dprintf(2, "[net_relay] PKERNEL_NODE_ID=%d out of range (1..255) — "
+        dprintf(2, "[net_relay] PKERNEL_NODE_ID=%d out of range (1..255, 257..65534) — "
                    "defaulting to 1\n", my_node_id);
         my_node_id = 1;
+    } else if (my_node_id > 255) {
+        dprintf(2, "[net_relay] PKERNEL_NODE_ID=%d is a wide id: SWIM membership "
+                   "only for now, needs PKERNEL_RELAY_KEY and a v3 relay\n", my_node_id);
     } else if (my_node_id > NET_CLUSTER_NODE_MAX) {
         /* G7: valid on the relay wire, but the kernel cluster can't see it.
          * This is the silent-dropout case the audit flagged — make it loud. */
@@ -956,10 +961,11 @@ static int relay_frame_dst(const unsigned char *f, int len)
     const char *e = getenv("PKERNEL_RELAY_UNICAST");
     if (e && e[0] == '0') return 0;
     if (len < 6) return 0;
-    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00 || f[4] != 0x00)
+    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00)
         return 0;
-    if (f[5] == 0 || (int)f[5] == my_node_id) return 0;
-    return f[5];
+    int dst = (f[4] << 8) | f[5];   /* N2b: 300 is 52:54:00:00:01:2c */
+    if (dst == 0 || dst == my_node_id) return 0;
+    return dst;
 }
 
 int net_relay_send(const void *frame, int len)

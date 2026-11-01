@@ -78,7 +78,7 @@ static UW             commit_idx  = 0;
 static UW node_ip(pk_node_t n)
 {
     /* drpc.c と同じアドレッシング: 10.1.0.(n+1) */
-    return ((UW)(n + 1) << 24) | 0x0000010AUL;
+    return pk_node_ip(n);
 }
 
 /* 生存ノード数 (自分を含む) を返す */
