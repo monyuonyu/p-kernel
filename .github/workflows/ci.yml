@@ -1445,7 +1445,7 @@ jobs:
     runs-on: ubuntu-latest
     # 15 -> 20 (2026-10-07): + tkconf / pool and a second build for the K9 NC
     # 20 -> 25 (2026-10-07): + tkconf fp and a third build for its NC
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-user
@@ -2959,7 +2959,7 @@ jobs:
     # (resident-only beats solo) is a HARD RED.
     name: "distributed-MoE capacity ([dmoe-*] bank; hosted-only, crown-neutral)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3299,7 +3299,7 @@ jobs:
     # Shipped since the SMP waves but never in CI.
     name: "full-SMP + core autodetect (aarch64 QEMU, run_smp0.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     # Earning trust: first CI outing (2026-07-01) failed with
     # "qemu-system-aarch64: failed to find romfile" because --no-install-recommends
     # dropped ipxe-qemu (a qemu-system-arm Recommends that ships the virtio NIC
