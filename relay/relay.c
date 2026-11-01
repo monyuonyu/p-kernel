@@ -558,7 +558,7 @@ static void send_lease_grant(int sock, const struct sockaddr_in *to,
 }
 
 static void handle_lease(int sock, const struct sockaddr_in *from,
-                         unsigned version, int origin_fd)
+                         unsigned version, int origin_fd, int reads_v3)
 {
     int id = lease_pick(from);
     char ip[INET_ADDRSTRLEN];
@@ -576,6 +576,7 @@ static void handle_lease(int sock, const struct sockaddr_in *from,
     table[id].leased    = 1;
     table[id].via_tcp   = (origin_fd >= 0);   /* SLICE 3 transport tag */
     table[id].tcp_fd    = origin_fd;
+    table[id].reads_v3  = reads_v3;           /* not the last holder's */
     fprintf(stderr, "[relay] node %d %s to %s:%u%s\n",
             id, reissue ? "lease re-issued" : "leased (auto)",
             ip, ntohs(from->sin_port), (origin_fd >= 0) ? " (tcp)" : "");
@@ -723,7 +724,7 @@ static void forward(int sock, int dst_node,
         deliver_now(sock, dst_node, buf, len, now);
         return;
     }
-    if (dst_node < 1 || dst_node >= NODE_MAX || !table[dst_node].active) {
+    if (dst_node < 1 || dst_node >= NODE_SLOTS || !table[dst_node].active) {
         /* Don't queue traffic with no possible route; deliver_now logs why. */
         deliver_now(sock, dst_node, buf, len, now);
         return;
@@ -846,7 +847,7 @@ static void process_packet(int sock, int origin_fd,
     case REL_REGISTER:
         if (pkt.src == 0) {
             /* Auto-lease request: hand out a dynamic node id. */
-            handle_lease(sock, from, pkt.version, origin_fd);
+            handle_lease(sock, from, pkt.version, origin_fd, pkt.reads_v3);
         } else {
             update(src_slot, from, origin_fd, pkt.reads_v3);
         }
