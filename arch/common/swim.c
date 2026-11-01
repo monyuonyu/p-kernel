@@ -1214,6 +1214,25 @@ INT swim_wide_self_test(void (*emit)(const char *))
     swim_wide_age(wide_st[s].heard_ms - 1);
     W2(wide_st[s].state == DNODE_ALIVE, "a beacon newer than the tick's clock is not old");
 
+    /* That reading of the clock must not eat real ages: the half of the 32-bit
+     * range is the line, and a stamp across the wrap ages like any other. */
+    {
+        UW keep = wide_st[s].heard_ms;
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x80000000UL);
+        W2(wide_st[s].state == DNODE_ALIVE, "half the clock's range reads as heard after now");
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x7FFFFFFFUL);
+        W2(wide_st[s].state == DNODE_DEAD, "one less is old");
+        wide_st[s].state = DNODE_ALIVE;
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x10000UL);
+        W2(wide_st[s].state == DNODE_DEAD, "a late tick still sees 65 s as old");
+        wide_st[s].state = DNODE_ALIVE;
+        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(10);
+        W2(wide_st[s].state == DNODE_ALIVE, "26 ms across the wrap is young");
+        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(0xFFFFFFF0UL + SWIM_WIDE_DEAD_MS);
+        W2(wide_st[s].state == DNODE_DEAD, "15 s across the wrap is old");
+        wide_st[s].state = DNODE_ALIVE; wide_st[s].heard_ms = keep;
+    }
+
     /* A rumour neither kills nor revives; aging does, and a beacon revives. */
     sw2_build(&p, 43, 299, DNODE_DEAD, 1);
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
