@@ -75,11 +75,11 @@ static void dp_puthex(UW v)
 /* Module state                                                        */
 /* ------------------------------------------------------------------ */
 
-UB    drpc_my_node = 0xFF;          /* 0xFF = not initialised            */
+pk_node_t drpc_my_node = 0xFF;          /* 0xFF = not initialised            */
 DNODE dnode_table[DNODE_MAX];
 
 /* IP for node n: 10.1.0.(n+1) = (n+1)<<24 | 0x0000010A */
-static UW node_base_ip(UB n)
+static UW node_base_ip(pk_node_t n)
 {
     return ((UW)(n + 1) << 24) | 0x0000010AUL;
 }
@@ -101,7 +101,7 @@ static const char *node_state_str(UB state)
 #define DEDUP_SIZE  16
 
 typedef struct {
-    UB  src_node;
+    pk_node_t src_node;
     UH  seq;
     W   result;
     UB  valid;
@@ -110,7 +110,7 @@ typedef struct {
 static DEDUP_ENTRY dedup_table[DEDUP_SIZE];
 static INT         dedup_next = 0;
 
-static INT dedup_check(UB src_node, UH seq, W *result_out)
+static INT dedup_check(pk_node_t src_node, UH seq, W *result_out)
 {
     for (INT i = 0; i < DEDUP_SIZE; i++) {
         if (dedup_table[i].valid
@@ -123,7 +123,7 @@ static INT dedup_check(UB src_node, UH seq, W *result_out)
     return 0;
 }
 
-static void dedup_record(UB src_node, UH seq, W result)
+static void dedup_record(pk_node_t src_node, UH seq, W result)
 {
     dedup_table[dedup_next].src_node = src_node;
     dedup_table[dedup_next].seq      = seq;
@@ -143,7 +143,7 @@ static void dedup_record(UB src_node, UH seq, W result)
 
 typedef struct {
     UH  seq;
-    UB  dst_node;   /* used to cancel calls when that node goes DEAD  */
+    pk_node_t dst_node;   /* used to cancel calls when that node goes DEAD  */
     UB  in_use;     /* MUST be set last on write, read first on check  */
     ID  sem;
     W   result;
@@ -161,7 +161,7 @@ static UH           drpc_seq_ctr = 1;   /* never wraps to 0             */
  * creates the semaphore first). -DDRPC_FAULT_SLOW_CLAIM=<spins> widens the
  * gap between the search and the claim for `tkconf nosw` N26. Returns the
  * slot, or -1 if the table is full. */
-static INT drpc_claim(UB dst_node, ID sem, UH *seq_out)
+static INT drpc_claim(pk_node_t dst_node, ID sem, UH *seq_out)
 {
     INT slot = -1;
     PK_NOSW_ENTER();
@@ -204,7 +204,7 @@ void drpc_probe_release(INT slot)
 #endif
 
 /* Cancel all pending calls to dst_node (called when node → DEAD) */
-static void pending_cancel_node(UB dst_node)
+static void pending_cancel_node(pk_node_t dst_node)
 {
     for (INT i = 0; i < MAX_PENDING; i++) {
         if (pending[i].in_use && pending[i].dst_node == dst_node) {
@@ -300,7 +300,7 @@ static const RFUNC_ENTRY rfunc_table[] = {
 /* Per-node caller-string storage (safe for the task's lifetime) */
 static char caller_strs[DNODE_MAX][4];
 
-static W drpc_local_cre_tsk(UH func_id, INT pri, UB caller_node)
+static W drpc_local_cre_tsk(UH func_id, INT pri, pk_node_t caller_node)
 {
     RTASK_FN fn = NULL;
     for (INT i = 0; rfunc_table[i].fn; i++) {
@@ -343,7 +343,7 @@ W drpc_local_restart(UH func_id, INT pri, pk_node_t caller_node)
 /* RPC dispatch — called on the receiver side inside drpc_rx          */
 /* ------------------------------------------------------------------ */
 
-static W drpc_dispatch(UB src, UH call_id, UW obj_id, W a0, W a1, W a2)
+static W drpc_dispatch(pk_node_t src, UH call_id, UW obj_id, W a0, W a1, W a2)
 {
     (void)a1; (void)a2;
     switch (call_id) {
@@ -384,7 +384,7 @@ static void send_reply(UW dst_ip, const DRPC_PKT *req, W result)
 {
     DRPC_PKT rep = *req;
     rep.type     = DRPC_REPLY;
-    rep.src_node = drpc_my_node;
+    rep.src_node = pk_node_v1(drpc_my_node);
     rep.dst_node = req->src_node;
     rep.result   = result;
     /* Best-effort: if ARP not resolved the reply is dropped (caller retransmits) */
@@ -407,7 +407,7 @@ void drpc_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
     /* ---- Heartbeat: update node table ---- */
     case DRPC_HEARTBEAT: {
-        UB nid = pkt->src_node;
+        pk_node_t nid = pkt->src_node;
         if (nid >= DNODE_MAX || nid == drpc_my_node) break;
 
         UB old_state = dnode_table[nid].state;
@@ -468,7 +468,7 @@ void drpc_rx(UW src_ip, UH src_port, const UB *data, UH len)
 /* Aborts immediately if the target node transitions to DEAD.         */
 /* ------------------------------------------------------------------ */
 
-W drpc_call(UB dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
+W drpc_call(pk_node_t dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
 {
     /* SEC-OOB-DRPC (external audit 2026-06-13): dst_node is UB (0..255) but
      * dnode_table has DNODE_MAX(==64) slots. Reject out-of-range ids BEFORE
@@ -509,8 +509,8 @@ W drpc_call(UB dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
     pkt.version  = DRPC_VERSION;
     pkt.type     = DRPC_REQ;
     pkt.seq      = seq;
-    pkt.src_node = drpc_my_node;
-    pkt.dst_node = dst_node;
+    pkt.src_node = pk_node_v1(drpc_my_node);
+    pkt.dst_node = pk_node_v1(dst_node);
     pkt.call_id  = call_id;
     pkt.obj_id   = obj_id;
     pkt.arg[0]   = a0; pkt.arg[1] = a1; pkt.arg[2] = a2;
@@ -637,7 +637,7 @@ void drpc_task(INT stacd, void *exinf)
     hb.magic    = DRPC_MAGIC;
     hb.version  = DRPC_VERSION;
     hb.type     = DRPC_HEARTBEAT;
-    hb.src_node = drpc_my_node;
+    hb.src_node = pk_node_v1(drpc_my_node);
 
     for (;;) {
         tk_dly_tsk(500);

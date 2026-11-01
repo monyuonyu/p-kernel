@@ -74,7 +74,7 @@ void vital_task(INT stacd, void *exinf)
             if (kdds_topics[i].open) active_topics++;
 
         VITAL_DATA vd;
-        vd.node_id       = drpc_my_node;
+        vd.node_id       = pk_node_v1(drpc_my_node);
         vd.peers_alive   = alive;
         vd.topics        = active_topics;
         vd._pad          = 0;

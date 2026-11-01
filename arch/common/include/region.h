@@ -42,10 +42,10 @@ void region_recompute(void);
 
 /* 自 region の ID (= coordinator のノード ID)。
  * 分散モード未確立 (drpc_my_node==0xFF) なら 0xFF。 */
-UB   region_id(void);
+pk_node_t region_id(void);
 
 /* 自 region の coordinator ノード ID (region 内の最小 ID)。 */
-UB   region_coordinator(void);
+pk_node_t region_coordinator(void);
 
 /* node が自分と同じ region に属するか (内部で region_recompute する)。 */
 BOOL region_contains(pk_node_t node);

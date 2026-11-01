@@ -47,8 +47,8 @@ static void rf_putdec(UW v)
 
 static UB   role       = RAFT_FOLLOWER;
 static UW   cur_term   = 0;
-static UB   voted_for  = 0xFF;   /* 現任期で投票したノードID */
-static UB   cur_leader = 0xFF;   /* 現在のリーダー          */
+static pk_node_t voted_for = 0xFF;   /* 現任期で投票したノードID */
+static pk_node_t cur_leader = 0xFF;   /* 現在のリーダー          */
 static UW   votes_got  = 0;      /* 現任期で得た票数        */
 
 /* Election timeout カウンタ (tick 単位) */
@@ -75,7 +75,7 @@ static UW             commit_idx  = 0;
 /* ヘルパー                                                            */
 /* ------------------------------------------------------------------ */
 
-static UW node_ip(UB n)
+static UW node_ip(pk_node_t n)
 {
     /* drpc.c と同じアドレッシング: 10.1.0.(n+1) */
     return ((UW)(n + 1) << 24) | 0x0000010AUL;
@@ -119,8 +119,8 @@ static void send_pkt(UW dst_ip, UB type, UB extra_grant, UB extra_success)
     p.magic      = RAFT_MAGIC;
     p.version    = RAFT_VERSION;
     p.type       = type;
-    p.src_node   = drpc_my_node;
-    p.candidate  = drpc_my_node;
+    p.src_node   = pk_node_v1(drpc_my_node);
+    p.candidate  = pk_node_v1(drpc_my_node);
     p.term       = cur_term;
     p.log_idx    = log_size;
     p.log_term   = (log_size > 0) ? log_buf[log_size - 1].term : 0;
@@ -211,7 +211,7 @@ void raft_rx(UW src_ip, UH src_port, const UB *data, UH len)
         rep.magic    = RAFT_MAGIC;
         rep.version  = RAFT_VERSION;
         rep.type     = RAFT_MSG_VOTE_REP;
-        rep.src_node = drpc_my_node;
+        rep.src_node = pk_node_v1(drpc_my_node);
         rep.term     = cur_term;
         rep.granted  = grant;
         udp_send(node_ip(p->candidate), RAFT_PORT, RAFT_PORT,
@@ -285,7 +285,7 @@ void raft_rx(UW src_ip, UH src_port, const UB *data, UH len)
         rep.magic    = RAFT_MAGIC;
         rep.version  = RAFT_VERSION;
         rep.type     = RAFT_MSG_APPEND_REP;
-        rep.src_node = drpc_my_node;
+        rep.src_node = pk_node_v1(drpc_my_node);
         rep.term     = cur_term;
         rep.log_idx  = log_size;
         rep.success  = 1;
@@ -416,7 +416,7 @@ ER raft_write(UB key, UB val)
 /* ゲッター                                                            */
 /* ------------------------------------------------------------------ */
 
-UB raft_leader(void) { return cur_leader; }
+pk_node_t raft_leader(void) { return cur_leader; }
 UB raft_role(void)   { return role; }
 UW raft_term(void)   { return cur_term; }
 UW raft_log_size(void) { return log_size; }

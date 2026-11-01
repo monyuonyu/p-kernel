@@ -87,7 +87,7 @@ void ui_event_emit(U1 type, pk_node_t src, pk_node_t dst, U2 a, U2 b)
         if (g_ui_bucket[type] == 0) { g_ui_suppress[type]++; return; }
         g_ui_bucket[type]--;
     }
-    ui_event_append_raw(type, src, dst, a, b);
+    ui_event_append_raw(type, pk_node_v1(src), pk_node_v1(dst), a, b);
 }
 
 int ui_event_bounds(U4 *tail, U4 *head, U4 *dropped, U4 *capacity)

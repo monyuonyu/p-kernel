@@ -95,7 +95,7 @@ static void swim_rounds_from_env(void)
 #define GOSSIP_Q_MAX  (SWIM_GOSSIP_MAX * 2)
 
 typedef struct {
-    UB  node_id;
+    pk_node_t node_id;
     UB  state;
     UB  incarnation;
     UB  remaining;
@@ -131,7 +131,7 @@ static UB dnode_incarn[DNODE_MAX];
 /* deterministic peer address (10.1.0.(n+1)); defined below, used by the
  * transitive-discovery path in gossip_apply() to resolve a gossip-introduced
  * peer's IP from its node id alone (no address rides the gossip frame). */
-static UW swim_node_ip(UB n);
+static UW swim_node_ip(pk_node_t n);
 static UB suspect_count[DNODE_MAX];    /* fwd: cleared on gossip discovery */
 
 /* state severity ladder for same-incarnation tie-break (ALIVE<SUSPECT<DEAD) */
@@ -147,7 +147,7 @@ static INT state_rank(UB st)
  * dark in the window exactly when SWIM's belief changes — with SWIM's
  * latency, no new gossip (the membership table itself is read directly
  * by /galaxy.json). old==0xFF where the prior state was not in hand. */
-static void sw_note(UB nid, UB oldst, UB newst)
+static void sw_note(pk_node_t nid, UB oldst, UB newst)
 {
     galaxy_emit(EV_SWIM, nid, GALAXY_NODE_NONE, (UH)oldst, (UH)newst);
 }
@@ -253,13 +253,13 @@ static UB cap_self_byte(void)
  * verbatim from that peer's own gossip under the LWW gate. Keeps bit 0
  * byte-identical to the prior region_is_super_capable(target)?1:0 relay while
  * carrying bit 1 forward so the teacher axis spreads epidemically too. */
-static UB cap_byte(UB node)
+static UB cap_byte(pk_node_t node)
 {
     return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
               | (region_is_teacher_capable(node) ? 1 : 0) << 1);
 }
 
-static void gossip_add(UB node_id, UB state, UB incarnation, UB capability)
+static void gossip_add(pk_node_t node_id, UB state, UB incarnation, UB capability)
 {
     PK_NOSW_ENTER();      /* pk_nosw.h: swim_task and swim_rx both add */
     /* Update existing entry if present */
@@ -292,7 +292,7 @@ static void gossip_fill(SWIM_PKT *pkt)
     pkt->gossip_cnt = 0;
     for (INT i = 0; i < gq_cnt && pkt->gossip_cnt < SWIM_GOSSIP_MAX; i++) {
         if (gq[i].remaining == 0) continue;
-        pkt->gossip[pkt->gossip_cnt].node_id     = gq[i].node_id;
+        pkt->gossip[pkt->gossip_cnt].node_id     = pk_node_v1(gq[i].node_id);
         pkt->gossip[pkt->gossip_cnt].state       = gq[i].state;
         pkt->gossip[pkt->gossip_cnt].incarnation = gq[i].incarnation;
         pkt->gossip[pkt->gossip_cnt].capability  = gq[i].capability;  /* N-2b */
@@ -373,7 +373,7 @@ static INT self_scatter_due(void)
 static void gossip_apply(const SWIM_PKT *pkt)
 {
     for (UB i = 0; i < pkt->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
-        UB nid    = pkt->gossip[i].node_id;
+        pk_node_t nid    = pkt->gossip[i].node_id;
         UB st     = pkt->gossip[i].state;
         UB inc_in = pkt->gossip[i].incarnation;
         /* N-2b / T-fix-a: SELF-AUTHORITATIVE capability bits — meaningful only
@@ -495,7 +495,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
 
 static ID probe_sem          = -1;     /* signalled by swim_rx on ACK    */
 static UH probe_seq          = 1;
-static UB probe_waiting_node = 0xFF;   /* node currently being probed    */
+static pk_node_t probe_waiting_node = 0xFF;   /* node currently being probed    */
 /* suspect_count[] defined above (consecutive no-response rounds) — moved up so
  * the transitive-discovery path in gossip_apply() can clear it on adoption. */
 
@@ -526,7 +526,7 @@ void swim_set_sim_zone(UB zone_size, UW penalty_ms)
     sim_zone_penalty = penalty_ms;
 }
 
-static void rtt_observe(UB node, UW sample_ms)
+static void rtt_observe(pk_node_t node, UW sample_ms)
 {
     if (node >= DNODE_MAX) return;
     if (!rtt_valid[node]) {
@@ -555,7 +555,7 @@ UW swim_rtt_ms(pk_node_t node)
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-static UW swim_node_ip(UB n)
+static UW swim_node_ip(pk_node_t n)
 {
     /* 10.1.0.(n+1) — same scheme as drpc */
     return ((UW)(n + 1) << 24) | 0x0000010AUL;
@@ -583,7 +583,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
     gossip_apply(pkt);
 
     /* Mark sender alive */
-    UB snid = pkt->src_node;
+    pk_node_t snid = pkt->src_node;
     if (snid < DNODE_MAX && snid != drpc_my_node) {
         UB old = dnode_table[snid].state;
         dnode_table[snid].ip     = src_ip;
@@ -618,8 +618,8 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         ack.version      = SWIM_VERSION;
         ack.type         = SWIM_ACK;
         ack.seq          = pkt->seq;
-        ack.src_node     = drpc_my_node;
-        ack.probe_target = drpc_my_node;
+        ack.src_node     = pk_node_v1(drpc_my_node);
+        ack.probe_target = pk_node_v1(drpc_my_node);
         swim_send(src_ip, &ack);
         break;
     }
@@ -642,7 +642,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
          * Simplification: we forward the PING; if the target is alive
          * it will send ACK to us, and we forward it to the requester.
          */
-        UB target = pkt->probe_target;
+        pk_node_t target = pkt->probe_target;
         if (target >= DNODE_MAX || target == drpc_my_node) break;
 
         /* Ping the target */
@@ -651,8 +651,8 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         fwd.version      = SWIM_VERSION;
         fwd.type         = SWIM_PING;
         fwd.seq          = pkt->seq;     /* preserve seq for ACK matching */
-        fwd.src_node     = drpc_my_node;
-        fwd.probe_target = target;
+        fwd.src_node     = pk_node_v1(drpc_my_node);
+        fwd.probe_target = pk_node_v1(target);
         swim_send(swim_node_ip(target), &fwd);
 
         /*
@@ -673,7 +673,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
 static UB probe_cursor = 0;
 
-static UB pick_probe_target(void)
+static pk_node_t pick_probe_target(void)
 {
     /* Try round-robin among known (non-unknown) nodes first */
     for (UB tries = 0; tries < DNODE_MAX; tries++) {
@@ -688,7 +688,7 @@ static UB pick_probe_target(void)
     return drpc_my_node;
 }
 
-static void pick_helpers(UB exclude, UB helpers[SWIM_K_HELPERS], INT *cnt)
+static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], INT *cnt)
 {
     *cnt = 0;
     for (UB i = 0; i < DNODE_MAX && *cnt < SWIM_K_HELPERS; i++) {
@@ -754,12 +754,12 @@ void swim_task(INT stacd, void *exinf)
             beacon.version      = SWIM_VERSION;
             beacon.type         = SWIM_ACK;   /* seq=0 => not a probe reply to anyone */
             beacon.seq          = 0;
-            beacon.src_node     = drpc_my_node;
-            beacon.probe_target = drpc_my_node;
+            beacon.src_node     = pk_node_v1(drpc_my_node);
+            beacon.probe_target = pk_node_v1(drpc_my_node);
             swim_send(IP4(255, 255, 255, 255), &beacon);
         }
 
-        UB target = pick_probe_target();
+        pk_node_t target = pick_probe_target();
         if (target == drpc_my_node) continue;
 
         /* ---- Step 1: direct SWIM_PING ---- */
@@ -772,8 +772,8 @@ void swim_task(INT stacd, void *exinf)
         ping.version      = SWIM_VERSION;
         ping.type         = SWIM_PING;
         ping.seq          = probe_seq;
-        ping.src_node     = drpc_my_node;
-        ping.probe_target = target;
+        ping.src_node     = pk_node_v1(drpc_my_node);
+        ping.probe_target = pk_node_v1(target);
         swim_send(swim_node_ip(target), &ping);
         SYSTIM t_ping; tk_get_otm(&t_ping);   /* RTT 計測開始 */
 
@@ -797,7 +797,7 @@ void swim_task(INT stacd, void *exinf)
         }
 
         /* ---- Step 2: indirect probe via K helpers ---- */
-        UB helpers[SWIM_K_HELPERS];
+        pk_node_t helpers[SWIM_K_HELPERS];
         INT hcnt = 0;
         pick_helpers(target, helpers, &hcnt);
 
@@ -807,8 +807,8 @@ void swim_task(INT stacd, void *exinf)
             preq.version      = SWIM_VERSION;
             preq.type         = SWIM_PING_REQ;
             preq.seq          = probe_seq;
-            preq.src_node     = drpc_my_node;
-            preq.probe_target = target;
+            preq.src_node     = pk_node_v1(drpc_my_node);
+            preq.probe_target = pk_node_v1(target);
             swim_send(swim_node_ip(helpers[h]), &preq);
         }
 
@@ -936,7 +936,7 @@ void swim_nodes_print(void)
 /* ------------------------------------------------------------------ */
 
 /* find the incarnation a node_id is currently queued for in gq[] (or -1) */
-static INT gq_find_incarn(UB node_id, UB state)
+static INT gq_find_incarn(pk_node_t node_id, UB state)
 {
     for (INT i = 0; i < gq_cnt; i++)
         if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
@@ -948,7 +948,7 @@ static INT gq_find_incarn(UB node_id, UB state)
  * Used by the teacher cert to inspect what an rx-rediscovery relay ENQUEUED
  * for epidemic re-propagation (the bit-1 drop the auditor caught lived here,
  * invisible to a cert that only drives gossip_apply). */
-static INT gq_find_cap(UB node_id, UB state)
+static INT gq_find_cap(pk_node_t node_id, UB state)
 {
     for (INT i = 0; i < gq_cnt; i++)
         if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
@@ -962,7 +962,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* --- save global/file state we will perturb, restore at the end --- */
-    UB  saved_my      = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc     = my_incarnation;
     INT saved_gq_cnt  = gq_cnt;
 
@@ -1071,7 +1071,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save global/file state we perturb */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
     UB  saved_capX, saved_capSELF;
@@ -1251,7 +1251,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save global/file state we perturb */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
     UB  saved_tchX, saved_tchSELF;
@@ -1509,7 +1509,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save every global/file state we perturb (mirror the teacher cert) */
-    UB  saved_my       = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc      = my_incarnation;
     INT saved_gq_cnt   = gq_cnt;
     int saved_force    = selfelect_force_teacher;
@@ -1648,7 +1648,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* --- save global/file state we perturb, restore at the end --- */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
 
@@ -1792,7 +1792,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
     const INT N    = 8;   /* burst size (>= 8 rapid self-SUSPECT rumors) */
 
     /* --- save the global/file state we perturb, restore at the end --- */
-    UB  saved_my   = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc  = my_incarnation;
     INT saved_gq   = gq_cnt;
     UB  saved_st   = dnode_table[SELF].state;

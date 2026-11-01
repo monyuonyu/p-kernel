@@ -394,7 +394,7 @@ static void cmd_net(void)
      * 8->32 scale-up — that bound, not any kdds resource limit, was what
      * stranded nodes 9+ in single-node mode at runtime). */
     if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= DNODE_MAX) {
-        UB  nid = (UB)(mac[5] - 1);
+        pk_node_t nid = (UB)(mac[5] - 1);
         UW  nip = ((UW)mac[5] << 24) | 0x0000010AUL;   /* 10.1.0.N */
         drpc_init(nid, nip);
         print("[net] DRPC initialised (10.1.0.");

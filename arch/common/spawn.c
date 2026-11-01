@@ -64,7 +64,7 @@ UW spawn_drop_bad = 0;
 /* ノード IP アドレス                                                  */
 /* ------------------------------------------------------------------ */
 
-static UW node_ip(UB n)
+static UW node_ip(pk_node_t n)
 {
     return ((UW)(n + 1) << 24) | 0x0000010AUL;
 }
@@ -73,16 +73,16 @@ static UW node_ip(UB n)
 /* 状態 push: クラスタ情報を新ノードへ送信                            */
 /* ------------------------------------------------------------------ */
 
-static void push_state_to(UB dst_node)
+static void push_state_to(pk_node_t dst_node)
 {
     SPAWN_PKT pkt = { 0 };
     pkt.magic       = SPAWN_MAGIC;
     pkt.version     = SPAWN_VERSION;
     pkt.type        = SPAWN_STATE_PUSH;
-    pkt.src_node    = drpc_my_node;
-    pkt.dst_node    = dst_node;
+    pkt.src_node    = pk_node_v1(drpc_my_node);
+    pkt.dst_node    = pk_node_v1(dst_node);
     pkt.raft_term   = (UB)(raft_term() & 0xFF);
-    pkt.raft_leader = raft_leader();
+    pkt.raft_leader = pk_node_v1(raft_leader());
 
     /* data[0..DNODE_MAX-1]: 各ノードの状態を埋め込む */
     for (UB n = 0; n < DNODE_MAX && n < SPAWN_CHUNK_SIZE; n++)
@@ -100,16 +100,16 @@ static void push_state_to(UB dst_node)
 /* offer 送信                                                          */
 /* ------------------------------------------------------------------ */
 
-static void send_offer(UB dst_node)
+static void send_offer(pk_node_t dst_node)
 {
     SPAWN_PKT pkt = { 0 };
     pkt.magic       = SPAWN_MAGIC;
     pkt.version     = SPAWN_VERSION;
     pkt.type        = SPAWN_OFFER;
-    pkt.src_node    = drpc_my_node;
-    pkt.dst_node    = dst_node;
+    pkt.src_node    = pk_node_v1(drpc_my_node);
+    pkt.dst_node    = pk_node_v1(dst_node);
     pkt.raft_term   = (UB)(raft_term() & 0xFF);
-    pkt.raft_leader = raft_leader();
+    pkt.raft_leader = pk_node_v1(raft_leader());
 
     udp_send(node_ip(dst_node), SPAWN_PORT, SPAWN_PORT,
              (const UB *)&pkt, (UH)sizeof(pkt));
@@ -151,7 +151,7 @@ void spawn_rx(UW src_ip, UH src_port, const UB *data, UH len)
         rep.magic    = SPAWN_MAGIC;
         rep.version  = SPAWN_VERSION;
         rep.type     = SPAWN_READY;
-        rep.src_node = drpc_my_node;
+        rep.src_node = pk_node_v1(drpc_my_node);
         rep.dst_node = pkt->src_node;
         udp_send(node_ip(pkt->src_node), SPAWN_PORT, SPAWN_PORT,
                  (const UB *)&rep, (UH)sizeof(rep) - SPAWN_CHUNK_SIZE);

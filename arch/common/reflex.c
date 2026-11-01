@@ -130,7 +130,7 @@ static UW st_learn_down = 0;       /* 効きを下げた回数 (過剰防御だ�
 static W h_pub = -1;
 static W h_sub[DNODE_MAX];
 
-static void alarm_topic_name(char *out, UB node)
+static void alarm_topic_name(char *out, pk_node_t node)
 {
     const char *p = REFLEX_ALARM_TOPIC_PFX;
     INT i = 0;
@@ -156,7 +156,7 @@ static void emit_beacon(UB threat_class, UB confidence, UB hop)
     REFLEX_ALARM a;
     a.magic        = REFLEX_ALARM_MAGIC;
     a.seq          = (U4)(++my_alarm_seq);
-    a.src_node     = drpc_my_node;
+    a.src_node     = pk_node_v1(drpc_my_node);
     a.threat_class = threat_class;
     a.confidence   = confidence;
     a.hop          = hop;

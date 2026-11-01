@@ -77,7 +77,7 @@ W pmesh_bind(UH port, pmesh_recv_fn fn)
     return -1;
 }
 
-static void local_dispatch(UB src_node, UH dst_port,
+static void local_dispatch(pk_node_t src_node, UH dst_port,
                            const UB *data, UH len)
 {
     for (INT i = 0; i < PMESH_BIND_MAX; i++) {
@@ -93,7 +93,7 @@ static void local_dispatch(UB src_node, UH dst_port,
 /* ------------------------------------------------------------------ */
 
 /* ノード n の IP アドレス: 10.1.0.(n+1) */
-static UW node_ip(UB n)
+static UW node_ip(pk_node_t n)
 {
     return ((UW)(n + 1) << 24) | 0x0000010AUL;
 }
@@ -116,7 +116,7 @@ static void pm_memzero(void *dst, UH n)
 /* ------------------------------------------------------------------ */
 
 /* 直接隣接ノード（dnode_table で ALIVE なノード）の経路を cost=1 で登録 */
-static void update_direct(UB node_id)
+static void update_direct(pk_node_t node_id)
 {
     if (node_id >= DNODE_MAX || node_id == drpc_my_node) return;
     if (!pmesh_routes[node_id].active ||
@@ -129,14 +129,14 @@ static void update_direct(UB node_id)
 }
 
 /* Bellman-Ford: src_node から受け取ったルーティングテーブルで更新 */
-static void merge_beacon(UB src_node,
+static void merge_beacon(pk_node_t src_node,
                          const PMESH_ROUTE_ENTRY *entries, UB cnt)
 {
     /* まず src_node 自身を直接ノードとして登録 */
     update_direct(src_node);
 
     for (UB i = 0; i < cnt; i++) {
-        UB dst  = entries[i].dst_node;
+        pk_node_t dst  = entries[i].dst_node;
         UB cost = entries[i].cost;
 
         if (dst >= DNODE_MAX)          continue;
@@ -196,11 +196,11 @@ static void send_beacon(void)
     beacon_pkt.magic    = PMESH_MAGIC;
     beacon_pkt.version  = PMESH_VERSION;
     beacon_pkt.type     = PMESH_BEACON;
-    beacon_pkt.src_node = drpc_my_node;
+    beacon_pkt.src_node = pk_node_v1(drpc_my_node);
     beacon_pkt.entry_cnt = 0;
 
     /* 自分自身 (cost=0) */
-    beacon_pkt.entries[beacon_pkt.entry_cnt].dst_node = drpc_my_node;
+    beacon_pkt.entries[beacon_pkt.entry_cnt].dst_node = pk_node_v1(drpc_my_node);
     beacon_pkt.entries[beacon_pkt.entry_cnt].cost     = 0;
     beacon_pkt.entry_cnt++;
 
@@ -243,7 +243,7 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
     if (data[4] != PMESH_VERSION)    return;
 
     UB type     = data[5];
-    UB src_node = data[6];
+    pk_node_t src_node = data[6];
 
     /* ---- BEACON ---------------------------------------------------- */
     if (type == PMESH_BEACON) {
@@ -264,7 +264,7 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
         if (len < 12) return;
         pmesh_stats.data_rx++;
 
-        UB  dst_node = data[7];
+        pk_node_t dst_node = data[7];
         UH  dst_port = (UH)(data[8]  | ((UH)data[9]  << 8));
         UH  data_len = (UH)(data[10] | ((UH)data[11] << 8));
         const UB *payload = data + 12;
@@ -295,7 +295,7 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
             pmesh_stats.no_route++;
             return;
         }
-        UB next = pmesh_routes[dst_node].next_hop;
+        pk_node_t next = pmesh_routes[dst_node].next_hop;
         udp_send(node_ip(next), PMESH_PORT, PMESH_PORT, data, len);
         return;
     }
@@ -308,7 +308,7 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
 static PMESH_DATA_PKT data_pkt;  /* static: スタック節約 */
 
 #if PK_NOSW_ACTIVE
-static W pmesh_send_nosw(UB dst_node, UH dst_port, const UB *data, UH len);
+static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len);
 
 /* pk_nosw.h: data_pkt is shared by every sender, so the whole send (down to
  * the link layer's own static buffers) is one no-switch region */
@@ -320,9 +320,9 @@ W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
     return rc;
 }
 
-static W pmesh_send_nosw(UB dst_node, UH dst_port, const UB *data, UH len)
+static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
 #else
-W pmesh_send(UB dst_node, UH dst_port, const UB *data, UH len)
+W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
 #endif
 {
     if (dst_node >= DNODE_MAX) return -1;
@@ -333,8 +333,8 @@ W pmesh_send(UB dst_node, UH dst_port, const UB *data, UH len)
     data_pkt.magic    = PMESH_MAGIC;
     data_pkt.version  = PMESH_VERSION;
     data_pkt.type     = PMESH_DATA;
-    data_pkt.src_node = drpc_my_node;
-    data_pkt.dst_node = dst_node;
+    data_pkt.src_node = pk_node_v1(drpc_my_node);
+    data_pkt.dst_node = pk_node_v1(dst_node);
     data_pkt.dst_port = dst_port;
     data_pkt.data_len = len;
     pm_memcpy(data_pkt.data, data, len);
@@ -431,7 +431,7 @@ void pmesh_route_list(void)
         pm_puts("    ");
         pm_puthex1((UB)i);
         pm_puts("     ");
-        pm_puthex1(pmesh_routes[i].next_hop);
+        pm_puthex1(pk_node_v1(pmesh_routes[i].next_hop));
         pm_puts("     ");
         pm_putdec(pmesh_routes[i].cost);
         pm_puts("  age=");

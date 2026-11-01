@@ -108,7 +108,7 @@ static void try_task(FP fn, INT pri, INT stksz, const char *name)
     print("\r\n");
 }
 
-static void distributed_init(UB nid, UW nip)
+static void distributed_init(pk_node_t nid, UW nip)
 {
     print("[dist] joining cluster as node ");
     {
@@ -195,7 +195,7 @@ static void net_bringup(void)
     UB mac[6];
     rtl8139_get_mac(mac);
     if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= 8) {
-        UB nid = (UB)(mac[5] - 1);
+        pk_node_t nid = (UB)(mac[5] - 1);
         UW nip = ((UW)mac[5] << 24) | 0x0000010AUL;   /* 10.1.0.N */
         distributed_init(nid, nip);
     } else {
