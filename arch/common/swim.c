@@ -1201,8 +1201,13 @@ INT swim_wide_self_test(void (*emit)(const char *))
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
     W2(sw2_find(703) < 0, "a DEAD rumour introduces nobody");
 
-    /* A rumour neither kills nor revives; aging does, and a beacon revives. */
+    /* A beacon can land after the tick read its clock and before the tick
+     * reached this slot: heard_ms ahead of now is not an age of 49 days. */
     INT s = sw2_find(299);
+    swim_wide_age(wide_st[s].heard_ms - 1);
+    W2(wide_st[s].state == DNODE_ALIVE, "a beacon newer than the tick's clock is not old");
+
+    /* A rumour neither kills nor revives; aging does, and a beacon revives. */
     sw2_build(&p, 43, 299, DNODE_DEAD, 1);
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
     W2(wide_st[s].state == DNODE_ALIVE, "a DEAD rumour does not kill");
