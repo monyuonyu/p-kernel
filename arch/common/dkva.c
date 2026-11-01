@@ -137,7 +137,7 @@ void dkva_set_resp_global(INT on) { dkva_resp_scope_global = on ? 1 : 0; }
 
 /* "<pfx><node>" を out に組み立てる (node は 0..DNODE_MAX-1, 最大 2 桁。
  * resp/rsum が共用するので DNODE_MAX(=64, node 0..63) 対応で 2 桁化) */
-static void node_topic_name(char *out, const char *pfx, UB node)
+static void node_topic_name(char *out, const char *pfx, pk_node_t node)
 {
     INT i = 0;
     while (pfx[i]) { out[i] = pfx[i]; i++; }
@@ -361,7 +361,7 @@ static BOOL have_remote_region(void)
 /*   ようになると rc_cnt0 が remote ノード数まで膨らむ。正しい階層では     */
 /*   rc_cnt0 == remote *region* 数 (= O(#region))。これが [fed-2cluster]  */
 /*   の中心アサーション。 */
-static void dkva_expect_core(UB me, const UB *state, const UB *is_member,
+static void dkva_expect_core(pk_node_t me, const UB *state, const UB *is_member,
                              const INT *peer_region,
                              UB *expect, UB *rc_expect, UB *uncertain,
                              INT *exp_cnt0_o, INT *rc_cnt0_o,
@@ -431,7 +431,7 @@ static DKVA_CAGG g_cagg;
 /* origin id → slot on the REAL origin nodemap (find-or-admit). Returns
  * NODEMAP_NOSLOT iff the region is already tracking R concurrent origins
  * (the bound; unreachable at N≤R). */
-static INT cagg_slot_for(UB origin, BOOL create)
+static INT cagg_slot_for(pk_node_t origin, BOOL create)
 {
     if (create) return nodemap_admit(&g_cagg.origins, (UW)origin);
     return nodemap_find(&g_cagg.origins, (UW)origin);
@@ -461,7 +461,7 @@ static void cagg_start(UB o, const DKVA_Q_PKT *qpkt, const DKVA_RESP_PKT *self_p
     cs->pkt = *self_partial;
     cs->pkt.magic    = DKVA_RESP_MAGIC;
     cs->pkt.req_id   = qpkt->req_id;
-    cs->pkt.src_node = drpc_my_node;     /* = region id (coordinator)        */
+    cs->pkt.src_node = pk_node_v1(drpc_my_node);     /* = region id (coordinator)        */
     cs->pkt.origin   = o;                /* この要約の宛先 = 問いの起点 (G1) */
     cs->entries      = self_partial->n_entries;
 
@@ -586,14 +586,14 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
               float mhsa_out[DKVA_SEQ][DKVA_DM],
               UW req_id)
 {
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     if (me == 0xFF || me >= DNODE_MAX || h_q_pub[me] < 0) return E_NOEXS;
 
     /* Query パケット送信 (起点ごとの per-origin トピックへ — G1) */
     DKVA_Q_PKT qpkt = { 0 };
     qpkt.magic    = DKVA_Q_MAGIC;
     qpkt.req_id   = req_id;
-    qpkt.src_node = me;
+    qpkt.src_node = pk_node_v1(me);
     qpkt.n_cached = DKVA_CACHE_SIZE;
     for (INT t = 0; t < DKVA_SEQ; t++)
         for (INT h = 0; h < DKVA_NH; h++)
@@ -621,7 +621,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
     {
         DKVA_RESP_PKT self_resp = { 0 };
         self_resp.req_id = req_id;
-        self_resp.origin = me;
+        self_resp.origin = pk_node_v1(me);
         compute_partial(&qpkt, &self_resp);
         accumulate(total_out, total_sum, &self_resp);
         total_entries += self_resp.n_entries;
@@ -636,7 +636,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
      *     なるのでスキップする。
      * softmax の分子Σa·V と分母Σa は単純和なので、これで単一ノード全体 attention
      * と厳密に同じ結果になる。 */
-    UB my_coord = region_coordinator();   /* region_recompute() 込み */
+    pk_node_t my_coord = region_coordinator();   /* region_recompute() 込み */
     INT  tmo_left  = DKVA_INFER_TMO;
     INT  resp_cnt  = 0;       /* 自 region の直接 partial 数         */
     INT  rsum_cnt  = 0;       /* 畳んだ他 region 要約数              */
@@ -864,8 +864,8 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
 /* ------------------------------------------------------------------ */
 #define DKVA_RESP_ALL 0xFF
 
-static INT dkva_resp_dests(UB me, UB origin, UB coord, BOOL origin_in_region,
-                           UB out[2])
+static INT dkva_resp_dests(pk_node_t me, pk_node_t origin, pk_node_t coord, BOOL origin_in_region,
+                           pk_node_t out[2])
 {
 #ifdef DKVA_RESP_REGION_ALL   /* falsifier: 今までどおり region 全員へ */
     (void)me; (void)origin; (void)coord; (void)origin_in_region;
@@ -887,7 +887,7 @@ void dkva_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
     if (drpc_my_node == 0xFF) return;
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
 
     /* 全ノードが Responder として動作する。Requester も特定ノードでは
      * なく「いま問いを発行したノード」でしかない (起点に特権はない)。 */
@@ -934,7 +934,7 @@ void dkva_task(INT stacd, void *exinf)
             for (INT z = 0; z < (INT)sizeof(*rc); z++) rb[z] = 0;
             rc->magic    = DKVA_RESP_MAGIC;
             rc->req_id   = qpkt.req_id;
-            rc->src_node = me;
+            rc->src_node = pk_node_v1(me);
             rc->origin   = o;
             compute_partial(&qpkt, rc);
             pend_req[o] = qpkt.req_id;
@@ -966,7 +966,7 @@ void dkva_task(INT stacd, void *exinf)
                 if (pend_ttl[rr] > 0) {
                     /* N1: 読む 2 者 (起点・coordinator) にだけ送る。宛先は毎回
                      * 決め直す (coordinator が途中で変わっても新しい方へ)。 */
-                    UB dst[2];
+                    pk_node_t dst[2];
                     INT nd;
                     if (dkva_resp_scope_global) {
                         /* R0.1 falsifier (PKERNEL_DKVA_RESP_GLOBAL): 今までどおり
@@ -975,7 +975,7 @@ void dkva_task(INT stacd, void *exinf)
                          * が噛まない (監査-92)。 */
                         dst[0] = DKVA_RESP_ALL; nd = 1;
                     } else {
-                        UB coord = region_coordinator();   /* region_recompute 込み */
+                        pk_node_t coord = region_coordinator();   /* region_recompute 込み */
                         nd = dkva_resp_dests(me, rr, coord, region_is_member(rr), dst);
                     }
                     for (INT k = 0; k < nd; k++) {
@@ -1132,10 +1132,10 @@ static void st_zero(DKVA_RESP_PKT *p)
 }
 
 /* origin/seed から決定論的に小整数 partial を作る (1..n の整数 float)。 */
-static void st_fill(DKVA_RESP_PKT *p, UB origin, INT seed)
+static void st_fill(DKVA_RESP_PKT *p, pk_node_t origin, INT seed)
 {
     st_zero(p);
-    p->origin = origin;
+    p->origin = pk_node_v1(origin);
     p->src_node = (UB)seed;
     for (INT t = 0; t < DKVA_SEQ; t++)
         for (INT h = 0; h < DKVA_NH; h++) {
@@ -1486,7 +1486,7 @@ static INT dkva_fold_order_test(void)
 /* ------------------------------------------------------------------ */
 static INT dkva_resp_to_test(void)
 {
-    static const struct { UB coord; UB in; INT n; UB d0, d1; const char *what; } c[] = {
+    static const struct { pk_node_t coord; UB in; INT n; UB d0, d1; const char *what; } c[] = {
         { 1,    1, 1, 2, 0, "R1 in region, I coordinate      -> origin       : " },
         { 3,    1, 2, 2, 3, "R2 in region, coordinator 3     -> origin, 3    : " },
         { 3,    0, 1, 3, 0, "R3 other region, coordinator 3  -> 3 only       : " },
@@ -1496,7 +1496,7 @@ static INT dkva_resp_to_test(void)
     };
     INT fails = 0;
     for (UW i = 0; i < (UW)(sizeof(c) / sizeof(c[0])); i++) {
-        UB out[2] = { 0xEE, 0xEE };
+        pk_node_t out[2] = { 0xEE, 0xEE };
         INT n = dkva_resp_dests(1, 2, c[i].coord, (BOOL)c[i].in, out);
         INT ok = (n == c[i].n)
               && (n < 1 || out[0] == c[i].d0)

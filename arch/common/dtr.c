@@ -1225,7 +1225,7 @@ void dtr_task(INT stacd, void *exinf)
         return;
     }
 
-    UB my_node  = drpc_my_node;
+    pk_node_t my_node  = drpc_my_node;
     BOOL is_n0  = (my_node % 2 == 0);
 
     if (is_n0) {
@@ -1284,7 +1284,7 @@ void dtr_task(INT stacd, void *exinf)
                     DTR_RESULT res;
                     res.magic    = DTR_RESULT_MAGIC;
                     res.req_id   = act.req_id;
-                    res.src_node = my_node;
+                    res.src_node = pk_node_v1(my_node);
                     res._pad     = 0;
                     PK_NOSW_ENTER();
                     res.class_id = run_stage12(act.act, scores);
@@ -1318,7 +1318,7 @@ void dtr_task(INT stacd, void *exinf)
                     DTR_HEAD_ACT pkt;
                     pkt.magic    = DTR_HEAD_MAGIC;
                     pkt.req_id   = inp.req_id;
-                    pkt.src_node = my_node;
+                    pkt.src_node = pk_node_v1(my_node);
                     pkt.head_id  = 1;
                     pkt._pad     = 0;
                     for (INT t = 0; t < SEQ; t++)
@@ -1388,7 +1388,7 @@ W dtr_infer(const B input[4])
         DTR_INPUT inp_pkt;
         inp_pkt.magic    = DTR_INPUT_MAGIC;
         inp_pkt.req_id   = ++dtr_req_counter;
-        inp_pkt.src_node = drpc_my_node;
+        inp_pkt.src_node = pk_node_v1(drpc_my_node);
         inp_pkt._pad[0]  = inp_pkt._pad[1] = inp_pkt._pad[2] = 0;
         for (INT i = 0; i < SEQ; i++) inp_pkt.input[i] = input[i];
         kdds_pub(h_input_pub, &inp_pkt, (W)sizeof(inp_pkt));
@@ -1556,7 +1556,7 @@ W dtr_infer(const B input[4])
             DTR_ACT act;
             act.magic    = DTR_ACT_MAGIC;
             act.req_id   = ++dtr_req_counter;
-            act.src_node = drpc_my_node;
+            act.src_node = pk_node_v1(drpc_my_node);
             act.layer    = 1;
             act._pad     = 0;
             for (INT i = 0; i < DM; i++) act.act[i] = l0_out[i];

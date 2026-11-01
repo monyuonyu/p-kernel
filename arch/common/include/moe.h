@@ -23,6 +23,7 @@
  */
 
 #pragma once
+#include "pk_node.h"   /* pk_node_t (N2b) */
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -147,7 +148,7 @@
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    UB  node_id;
+    pk_node8_t node_id;              /* on the wire (K-DDS)       */
     UB  accuracy[MOE_NUM_CLASSES];   /* 各クラスの正答率 (0-100%) */
     UW  total_infer;                 /* 総推論回数                */
     UW  correct[MOE_NUM_CLASSES];    /* クラス別正解数            */
@@ -166,7 +167,7 @@ typedef struct {
 /* 選択ロジックが reconstruction でなく本番そのものだと数で守られる      */
 /* (philosophy-gap-audit trap A2 を閉じる)。                            */
 typedef struct {
-    UB  node_id;        /* 候補ノード ID (cand 配列の添字とは別; 観測用) */
+    pk_node_t node_id;        /* 候補ノード ID (cand 配列の添字とは別; 観測用) */
     UB  acc;            /* gate_class の accuracy 0..100 (熟慮層テーブル) */
     UW  rtt;            /* RTT ms (0xFFFFFFFF = 未実測)                   */
     INT eff_pressure;   /* 実効逼迫度 (負荷軸 §6; world 勾配 + 仮想負荷)  */
@@ -180,7 +181,7 @@ typedef struct {
 /* 純粋な反射層 1 決定: 候補集合 cand[0..ncand) から 1 つ選び、その添字を
  * 返す。incumbent_io は gate_class の現職スロットを指す (in/out)。I/O なし
  * (SWIM/drpc/printf に触れない)。select_expert と st_test_seam が共有する。 */
-UB   moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io);
+UB   moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, pk_node_t *incumbent_io);
 
 /* ------------------------------------------------------------------ */
 /* 公開 API                                                            */

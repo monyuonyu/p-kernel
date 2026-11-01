@@ -39,6 +39,7 @@
 #ifndef PKERNEL_LLM_DMOE_BANK_H
 #define PKERNEL_LLM_DMOE_BANK_H
 
+#include "pk_node.h"   /* pk_node_t (N2b) */
 #include <stdint.h>
 #include <stddef.h>
 #include "student.h"        /* st_model, ST_DMOE_FLEET_MAX, the hook types      */
@@ -65,14 +66,14 @@
  * (refuse: not resident there, ver skew, absent, or budget). `force_accept`
  * carries the sabotage flag so the [dmoe-version-skew] arm can prove the pin is
  * load-bearing (force-accept a stale blob -> hash diverges from the oracle). */
-typedef int (*dmoe_remote_fn)(UB owner, int xid, int layer, const float *fin,
+typedef int (*dmoe_remote_fn)(pk_node_t owner, int xid, int layer, const float *fin,
                               int d, uint64_t expect_ver, uint32_t expect_epoch,
                               int force_accept, float *out, void *ctx);
 
 /* An alive predicate over node ids (the SWIM view). Reachability + the remote
  * ladder consult it so a killed owner honestly degrades. Returns non-zero if
  * `node` is currently alive. */
-typedef int (*dmoe_alive_fn)(UB node, void *ctx);
+typedef int (*dmoe_alive_fn)(pk_node_t node, void *ctx);
 
 /* One bank expert slot as seen by ONE node. `resident` blocks are held only by
  * the expert's HRW owners; every node replicates the router row + the manifest
@@ -94,12 +95,12 @@ typedef struct {
     int       nbank;                /* live bank experts                         */
     int       E_res, L, D, DFF;     /* the floor tier dims (bank experts match)  */
     uint32_t  core_epoch;           /* this node's fleet core-epoch              */
-    UB        self_node;            /* this node's SWIM id                        */
+    pk_node_t self_node;            /* this node's SWIM id                        */
     float    *router;               /* [nbank][L][D] replicated router rows       */
     dmoe_slot slot[ST_DMOE_FLEET_MAX];
 
     /* fleet view (the cert supplies these; a production SWIM + SS6L wiring is a NOT-YET-WIRED follow-up (#7)). */
-    UB        members[LOOKUP_MAX_MEMBERS];  /* the HRW alive member set          */
+    pk_node_t members[LOOKUP_MAX_MEMBERS];  /* the HRW alive member set          */
     int       n_members;
     dmoe_alive_fn  alive;   void *alive_ctx;
     dmoe_remote_fn remote;  void *remote_ctx;
@@ -158,7 +159,7 @@ int  dmoe_expert_forward_ref(const dmoe_bank *b, int slot, int layer,
                              const float *fin, float *out);
 
 /* Fleet-view setters (the cert supplies these; a production SWIM + SS6L wiring is a NOT-YET-WIRED follow-up (#7)). */
-void dmoe_set_members(dmoe_bank *b, const UB *members, int n);
+void dmoe_set_members(dmoe_bank *b, const pk_node_t *members, int n);
 void dmoe_set_alive(dmoe_bank *b, dmoe_alive_fn fn, void *ctx);
 void dmoe_set_transport(dmoe_bank *b, dmoe_remote_fn fn, void *ctx);
 void dmoe_set_mode(dmoe_bank *b, int mode);

@@ -100,7 +100,7 @@ static W   h_score_pub = -1;
 static W   h_score_sub[DNODE_MAX];
 
 /* "moe/score/<node>" を out に組み立てる (node は 0..DNODE_MAX-1, 1 桁) */
-static void score_topic_name(char *out, UB node)
+static void score_topic_name(char *out, pk_node_t node)
 {
     const char *p = MOE_SCORE_TOPIC_PFX;
     INT i = 0;
@@ -177,7 +177,7 @@ static UW recent_pick[DNODE_MAX];
  * どちらも決定ごとに動く反射層 (速い時定数) の状態。 */
 static W  util_ewma[DNODE_MAX][MOE_NUM_CLASSES];
 static UB ewma_valid[DNODE_MAX][MOE_NUM_CLASSES];
-static UB incumbent[MOE_NUM_CLASSES];          /* 0xFF = 現職なし */
+static pk_node_t incumbent[MOE_NUM_CLASSES];          /* 0xFF = 現職なし */
 
 /* ── 熟慮層の可観測性 (D2): 反射の決定時に「熟慮の情報は何 ms 前か」を
  * 出せるように、moe_task が反射 tick で uptime を刻み、熟慮 tick の度に
@@ -337,7 +337,7 @@ static W ewma_step(W prev, W sample)
  * には MOE_SWITCH_MARGIN を超えて勝らねばならない。select_expert と
  * moe_self_test の両方がこの 1 関数を呼ぶので、ヒステリシス規則の重複定義が
  * 生まれない = 性質テスト (D0) が本番の切替ロジックそのものを守る。 */
-static UB deadband_pick(UB inc, int inc_ok, W inc_e, UB chal, W chal_e,
+static pk_node_t deadband_pick(pk_node_t inc, int inc_ok, W inc_e, pk_node_t chal, W chal_e,
                         const char **verdict)
 {
     if (!inc_ok) {                       /* 現職不在/死亡: 即引き継ぎ */
@@ -373,12 +373,12 @@ static UB deadband_pick(UB inc, int inc_ok, W inc_e, UB chal, W chal_e,
  * であり、候補ループが毎回 ewma_valid[node][gate_class]=1 を立てるので、元の
  * ewma_valid 条件込みでバイト等価。返り値は cand[] 内の添字 (picked index)。
  * cand[i].util_out / ewma_out に観測値を書き戻す (本番 printf がそのまま使う)。 */
-UB moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io)
+UB moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, pk_node_t *incumbent_io)
 {
     UB chal_i = 0xFF;        /* 挑戦者の cand[] 添字 */
     W  chal_e = 0;
     for (UB i = 0; i < ncand; i++) {
-        UB  n = cand[i].node_id;
+        pk_node_t n = cand[i].node_id;
         W   u = expert_utility(cand[i].acc, cand[i].rtt, cand[i].eff_pressure,
                                cand[i].threat, cand[i].same_region);
         util_ewma[n][gate_class] = ewma_valid[n][gate_class]
@@ -398,15 +398,15 @@ UB moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io)
 
     /* デッドバンド (§4.2 ヒステリシス): 現職が健在なら、挑戦者は margin を
      * 超えて勝らない限り選ばれない。現職の健在 = 今回の候補集合に居ること。 */
-    UB  inc    = *incumbent_io;
+    pk_node_t inc = *incumbent_io;
     UB  inc_i  = 0xFF;
     for (UB i = 0; i < ncand; i++)
         if (cand[i].node_id == inc) { inc_i = i; break; }
     int inc_ok = (inc < DNODE_MAX) && (inc_i != 0xFF);
     const char *verdict;
     W   inc_e  = inc_ok ? util_ewma[inc][gate_class] : 0;
-    UB  chal_n = (chal_i != 0xFF) ? cand[chal_i].node_id : 0xFF;
-    UB  pick_n = deadband_pick(inc, inc_ok, inc_e, chal_n, chal_e, &verdict);
+    pk_node_t chal_n = (chal_i != 0xFF) ? cand[chal_i].node_id : 0xFF;
+    pk_node_t pick_n = deadband_pick(inc, inc_ok, inc_e, chal_n, chal_e, &verdict);
     *incumbent_io = pick_n;
 
     /* §8: 選んだノードへ自己観測の仮想負荷を即座に上乗せ (反射層の速い側)。 */
@@ -428,7 +428,7 @@ UB moe_select_step(MOE_CAND *cand, UB ncand, UB gate_class, UB *incumbent_io)
  *
  * Wave G38.0: 候補列挙 (I/O) → MOE_CAND[] 充填 → 純粋 moe_select_step、の
  * 三段に整理した。数式は moe_select_step へバイト等価に移しただけ。 */
-static UB select_expert(UB gate_class)
+static pk_node_t select_expert(UB gate_class)
 {
     /* §8 ダンピング: 毎決定の冒頭で recent_pick を減衰させる。直近の選択ほど
      * 効き、時間 (= 連続選択数) が経つと薄れる。ゴシップが本物の逼迫度を
@@ -436,7 +436,7 @@ static UB select_expert(UB gate_class)
     for (UB n = 0; n < DNODE_MAX; n++)
         recent_pick[n] = recent_pick[n] * MOE_PICK_DECAY_NUM / MOE_PICK_DECAY_DEN;
 
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     if (me >= DNODE_MAX) {
         /* ノード ID 未確定 (net 未投入): 反射層はローカルに閉じる。 */
         if (!moe_quiet) mo_puts("[moe] reflex local-only (no node id)\r\n");
@@ -485,14 +485,14 @@ static UB select_expert(UB gate_class)
 
     /* 純粋な決定段: 本番と self-test (st_test_seam) が共有する唯一の選択数式。
      * 更新前の現職を控えてから呼ぶ (可観測行の inc/verdict 復元に使う)。 */
-    UB inc0 = incumbent[gate_class];
+    pk_node_t inc0 = incumbent[gate_class];
     UB pick_i = moe_select_step(cand, ncand, gate_class, &incumbent[gate_class]);
-    UB pick   = (pick_i < ncand) ? cand[pick_i].node_id : me;
+    pk_node_t pick = (pick_i < ncand) ? cand[pick_i].node_id : me;
 
     /* 候補ごとの可観測行 (D2): moe_select_step が書き戻した util/ewma を、
      * 元と同じ順序・同じ書式で出す (バイト等価)。 */
     for (UB i = 0; i < ncand; i++) {
-        UB n = cand[i].node_id;
+        pk_node_t n = cand[i].node_id;
         if (n == me) { mo_puts("[moe] cand self "); }
         else         { mo_puts("[moe] cand node"); mo_putdec(n); }
         mo_puts(" acc="); mo_putdec(cand[i].acc);
@@ -510,7 +510,7 @@ static UB select_expert(UB gate_class)
     /* 反射 vs 熟慮の可観測行 (D2): 更新前の現職 inc0 / 挑戦者 chal / verdict を
      * moe_select_step と *同一の* deadband_pick で復元する (重複ロジックなし;
      * deadband_pick は副作用なしなので再呼び出しはバイト等価)。 */
-    UB chal = 0xFF; W chal_e = 0;
+    pk_node_t chal = 0xFF; W chal_e = 0;
     for (UB i = 0; i < ncand; i++)
         if (chal == 0xFF || cand[i].ewma_out > chal_e) {
             chal = cand[i].node_id; chal_e = cand[i].ewma_out;
@@ -562,7 +562,7 @@ static void broadcast_score(void)
     if (h_score_pub < 0) return;
 
     MOE_SCORE s;
-    s.node_id     = drpc_my_node;
+    s.node_id     = pk_node_v1(drpc_my_node);
     s.total_infer = my_total;
     for (INT c = 0; c < MOE_NUM_CLASSES; c++) {
         s.accuracy[c] = my_accuracy[c];
@@ -604,7 +604,7 @@ UB moe_infer(B temp, B hum, B press, B light)
     UB  learned_class = dtr_decide(temp, hum, press, light, &confi);
 
     UB gate_class = learned_class;             /* ルーティング = 学習脳 */
-    UB expert     = select_expert(gate_class);
+    pk_node_t expert = select_expert(gate_class);
 
     /* S6 (galaxy.md): an inference flash — my star fires toward the
      * chosen expert star. ONE emit at the single select_expert site. */
@@ -686,7 +686,7 @@ void moe_feedback(UB pred_class, UB true_class)
 void moe_update_peer(const MOE_SCORE *score)
 {
     if (!score) return;
-    UB n = score->node_id;
+    pk_node_t n = score->node_id;
     if (n >= DNODE_MAX) return;
     peer_scores[n] = *score;
     score_valid[n] = 1;
@@ -810,21 +810,21 @@ void moe_init(void)
  * select_expert と *同じ* ewma_step + deadband_pick を呼ぶ (重複定義なし)。
  * ewma[]/ewma_valid[]/incumbent_slot は呼び出し側が保持する反射状態。 */
 static UB st_reflex_step(const W *inst_util, INT ncand,
-                         W *ewma, UB *ewma_valid, UB *incumbent_slot)
+                         W *ewma, UB *ewma_valid, pk_node_t *incumbent_slot)
 {
-    UB chal = 0xFF; W chal_e = 0;
+    pk_node_t chal = 0xFF; W chal_e = 0;
     for (INT n = 0; n < ncand; n++) {
         ewma[n] = ewma_valid[n] ? ewma_step(ewma[n], inst_util[n]) : inst_util[n];
         ewma_valid[n] = 1;
         if (chal == 0xFF || ewma[n] > chal_e) { chal = (UB)n; chal_e = ewma[n]; }
     }
-    UB  inc    = *incumbent_slot;
+    pk_node_t inc = *incumbent_slot;
     INT inc_ok = (inc < (UB)ncand) && ewma_valid[inc];
     W   inc_e  = inc_ok ? ewma[inc] : 0;
     const char *v;
-    UB pick = deadband_pick(inc, inc_ok, inc_e, chal, chal_e, &v);
+    pk_node_t pick = deadband_pick(inc, inc_ok, inc_e, chal, chal_e, &v);
     *incumbent_slot = pick;
-    return pick;
+    return (UB)pick;
 }
 
 /* argmax の純ヘルパー (中央 argmax の退行検知に使う)。 */
@@ -979,7 +979,7 @@ static INT st_herd(INT stabilized, UW *switches_out)
     const INT T = 30;           /* 決定回数 */
     UW load[3] = { 0, 0, 0 };
     W  ewma[3] = { 0, 0, 0 }; UB ev[3] = { 0, 0, 0 };
-    UB inc = 0xFF;
+    pk_node_t inc = 0xFF;
     UB prev = 0xFF; UW switches = 0;
     for (INT t = 0; t < T; t++) {
         /* 冒頭で負荷減衰 (本番 select_expert と同じ作法)。 */
@@ -1054,7 +1054,7 @@ static INT st_test_concurrent(void)
     UB res1[3][6], res2[3][6];
     /* run1: ラウンドロビン (0,1,2,0,1,2,...) — イベントが交互に殺到 */
     {
-        W ew[3][3]; UB ev[3][3], inc[3];
+        W ew[3][3]; UB ev[3][3]; pk_node_t inc[3];
         for (INT c = 0; c < C; c++) { inc[c] = 0xFF;
             for (INT n = 0; n < 3; n++) { ew[c][n] = 0; ev[c][n] = 0; } }
         for (INT k = 0; k < E; k++)
@@ -1065,7 +1065,7 @@ static INT st_test_concurrent(void)
     }
     /* run2: クラス毎ブロック (0x6, 1x6, 2x6) — 同じイベント集合・別順序 */
     {
-        W ew[3][3]; UB ev[3][3], inc[3];
+        W ew[3][3]; UB ev[3][3]; pk_node_t inc[3];
         for (INT c = 0; c < C; c++) { inc[c] = 0xFF;
             for (INT n = 0; n < 3; n++) { ew[c][n] = 0; ev[c][n] = 0; } }
         for (INT c = 0; c < C; c++)
@@ -1122,11 +1122,11 @@ static INT st_test_concurrent(void)
 
 /* 1 規則ぶんを回す。incumbent0 = この決定の現職 (A は keep=self, B は home)。
  * 返り: keep_or_aid = 「P を選んだ (= hold / rally)」回数。 */
-static INT pt_run(int protect, int axisB, UB inc0)
+static INT pt_run(int protect, int axisB, pk_node_t inc0)
 {
     /* 候補0 = (A) P が自分の仕事を保持 / (B) 近傍が P へ寄る。
      * 候補1 = (A) P が隣へ手放す       / (B) 近傍が手元に留まる。   */
-    W   ew[2] = { 0, 0 }; UB ev[2] = { 0, 0 }; UB inc = inc0;
+    W   ew[2] = { 0, 0 }; UB ev[2] = { 0, 0 }; pk_node_t inc = inc0;
     INT chose0 = 0;
     (void)axisB;
     for (INT t = 0; t < PT_T; t++) {
@@ -1232,7 +1232,7 @@ static INT st_test_protect(void)
  * 効用 u = acc - rtt/MOE_RTT_MS_PER_POINT - eff_pressure*PRESS_NUM/DEN
  *          + threat*PROTECT_NUM/DEN + (same_region?MOE_SAME_REGION_BONUS:0)。
  * 単発決定では ewma_valid=0 ゆえ EWMA == 瞬間効用 (手計算で picked が決まる)。 */
-static void sm_set(MOE_CAND *c, UB node, UB acc, UW rtt, INT press,
+static void sm_set(MOE_CAND *c, pk_node_t node, UB acc, UW rtt, INT press,
                    INT threat, int same_rgn)
 {
     c->node_id = node; c->acc = acc; c->rtt = rtt;
@@ -1254,7 +1254,7 @@ static INT st_test_seam(void)
         sm_set(&c[0], 0, 70, 0, 80, 0, 0);   /* u = 70-40        = 30 */
         sm_set(&c[1], 1, 70, 0, 10, 0, 0);   /* u = 70-5         = 65 */
         sm_set(&c[2], 2, 70, 0, 50, 0, 0);   /* u = 70-25        = 45 */
-        UB inc = 0xFF;
+        pk_node_t inc = 0xFF;
         UB pick = moe_select_step(c, 3, 0, &inc);
         mo_puts("[moe-seam] S1 seed pick=index"); mo_putdec(pick);
         mo_puts(" node"); mo_putdec(c[pick].node_id);
@@ -1273,7 +1273,7 @@ static INT st_test_seam(void)
         MOE_CAND c[2];
         sm_set(&c[0], 3, 70, 0, 20, 0, 0);   /* inc node3: u = 70-10 = 60 */
         sm_set(&c[1], 4, 70, 0, 10, 0, 0);   /* chal node4: u = 70-5 = 65 */
-        UB inc = 3;
+        pk_node_t inc = 3;
         UB pick = moe_select_step(c, 2, 0, &inc);
         mo_puts("[moe-seam] S2 inc=node3 chal=node4(+5) pick=node");
         mo_putdec(c[pick].node_id);
@@ -1291,7 +1291,7 @@ static INT st_test_seam(void)
         MOE_CAND c[2];
         sm_set(&c[0], 5, 70, 0, 50, 0, 0);   /* inc node5: u = 70-25 = 45 */
         sm_set(&c[1], 6, 70, 0,  0, 0, 0);   /* chal node6: u = 70     = 70 */
-        UB inc = 5;
+        pk_node_t inc = 5;
         UB pick = moe_select_step(c, 2, 0, &inc);
         mo_puts("[moe-seam] S3 inc=node5 chal=node6(+25) pick=node");
         mo_putdec(c[pick].node_id);
@@ -1309,7 +1309,7 @@ static INT st_test_seam(void)
         MOE_CAND c[2];
         sm_set(&c[0], 7, 70, 0, 0, 0, 0);    /* u = 70                       */
         sm_set(&c[1], 8, 68, 0, 0, 0, 1);    /* u = 68 + 5 (same_region) = 73 */
-        UB inc = 0xFF;
+        pk_node_t inc = 0xFF;
         UB pick = moe_select_step(c, 2, 0, &inc);
         mo_puts("[moe-seam] S4 region-bonus pick=node"); mo_putdec(c[pick].node_id);
         mo_puts(" util="); mo_putsdec(c[pick].util_out);
@@ -1637,7 +1637,7 @@ static void moe_l1_herd(const INT *states, int fold_state, UW picks[3], UB gc)
         ewma_valid[n][gc] = 0;
         picks[n] = 0;
     }
-    UB inc = 0xFF;               /* local incumbent — isolates the global one  */
+    pk_node_t inc = 0xFF;               /* local incumbent — isolates the global one  */
     for (INT t = 0; t < T; t++) {
         MOE_CAND cand[3];
         /* mirror select_expert: decay recent_pick at the top of each decision. */
@@ -1655,7 +1655,7 @@ static void moe_l1_herd(const INT *states, int fold_state, UW picks[3], UB gc)
             if (fold_state) moe_state_fold(&cand[n], states[n]);
         }
         UB pick_i = moe_select_step(cand, (UB)M, gc, &inc);
-        UB pick_n = (pick_i < M) ? cand[pick_i].node_id : 0xFF;
+        pk_node_t pick_n = (pick_i < M) ? cand[pick_i].node_id : 0xFF;
         if (pick_n < M) picks[pick_n]++;
     }
 }
