@@ -1169,6 +1169,12 @@ INT swim_wide_self_test(void (*emit)(const char *))
     W2(ip != pk_node_ip(43), "300 and 44 have different addresses");
     W2(pk_node_ip(43) == (((UW)44 << 24) | 0x0000010AUL), "a narrow address is unchanged");
 
+    /* A one-byte field: a narrow id as it is, a wide id is not a node, never its
+     * low byte. No path writes a wide id there today, so only this looks at it. */
+    W2(pk_node_v1(43) == 43, "pk_node_v1 keeps a narrow id");
+    W2(pk_node_v1(299) == PK_NODE_NONE, "pk_node_v1 does not cut a wide id");
+    W2(pk_node_v1(0xFFFF) == PK_NODE_NONE, "pk_node_v1 of 0xFFFF is not a node");
+
     /* Not wide: never in the table. 0xFF and 0xFFFF are not nodes. */
     sw2_build(&p, 43, 0xFFFF, DNODE_ALIVE, 1);
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
