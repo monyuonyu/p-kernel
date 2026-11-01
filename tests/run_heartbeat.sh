@@ -46,17 +46,17 @@ one_arch() {  # $1 = boot dir, $2 = human label
     local boot="$ROOT/$1" label="$2"
     [ -d "$boot" ] || { echo "[$label] SKIP (no $1)"; return; }
 
-    # ---- CURE: -DHEARTBEAT_CERT -> RESULT: 3/3 PASS -----------------------
+    # ---- CURE: -DHEARTBEAT_CERT -> RESULT: 13/13 PASS -----------------------
     make -C "$boot" clean >/dev/null 2>&1
     if ! make -C "$boot" EXTRA_CFLAGS=-DHEARTBEAT_CERT >/dev/null 2>&1; then
         echo "[$label] BUILD FAILED (cure)"; FAIL=1; return
     fi
     local out; out="$(run_bin "$boot/p-kernel")"
     echo "$out" | grep -E '^\[heartbeat\]'
-    if echo "$out" | grep -q '\[heartbeat\] RESULT: 3/3 PASS'; then
+    if echo "$out" | grep -q '\[heartbeat\] RESULT: 13/13 PASS'; then
         echo "[$label] CURE PASS"
     else
-        echo "[$label] CURE FAIL (expected 3/3 PASS)"; FAIL=1
+        echo "[$label] CURE FAIL (expected 13/13 PASS)"; FAIL=1
     fi
 
     # ---- FALSIFIER: +-DHEARTBEAT_FALSIFIER -> RESULT: FAIL (teeth) --------

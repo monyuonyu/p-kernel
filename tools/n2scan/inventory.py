@@ -19,9 +19,9 @@ REPO = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else
 SKIP = ('/mtk3', '/vendor', '/third_party', '/.git', '/samples/', '/tests/',
         '/llm/', '/android/')
 NODE_WORDS = r'(node|nid|peer|src|dst|owner|origin|coord|leader|sender|teacher|heard_from|target|voter|member)'
-U8 = r'(UB|U1|uint8_t|unsigned char)'
+U8 = r'(UB|U1|uint8_t|unsigned char|pk_node8_t|pk_node_t)'
 
-STRUCT = re.compile(r'typedef\s+struct\s*\w*\s*\{(.*?)\}\s*(__attribute__\s*\(\(\s*packed\s*\)\))?\s*(\w+)\s*;', re.S)
+STRUCT = re.compile(r'typedef\s+struct\s*(?:__attribute__\s*\(\(\s*packed\s*\)\)\s*)?\w*\s*\{(.*?)\}\s*(__attribute__\s*\(\(\s*packed\s*\)\))?\s*(\w+)\s*;', re.S)
 FIELD = re.compile(r'\b' + U8 + r'\s+(\w*' + NODE_WORDS + r'\w*)\s*(\[[^\]]*\])?\s*;', re.I)
 VERSION_DROP = re.compile(r'(?:version|wire_ver|\bver)\s*!=\s*(\w+_VER(?:SION)?\w*)\b')
 KINDS = {

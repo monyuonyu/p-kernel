@@ -201,7 +201,7 @@ void pfs_id_compute(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
 /* pk_nosw.h: a free slot is picked here and marked used only after the data
  * copy, so a put switched out in between can lose its slot to another put */
 PK_NOSW_FN(INT, pfs_put_origin,
-           (const void *buf, UW len, U1 id_out[PFS_ID_LEN], U1 origin),
+           (const void *buf, UW len, U1 id_out[PFS_ID_LEN], pk_node_t origin),
            (buf, len, id_out, origin))
 {
     if (buf == 0 && len != 0) return PFS_E_INVAL;
