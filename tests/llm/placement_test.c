@@ -74,7 +74,7 @@ int main(void)
 
     /* a synthetic alive-member set: 5 distinct node ids, NOT 0..4 (so we
      * also prove the map does not assume contiguous-from-zero ids). */
-    unsigned char members[5] = { 3, 9, 17, 40, 62 };
+    pk_node_t members[5] = { 3, 9, 17, 40, 62 };
     int NM = 5;
     int NE = 8;   /* sweep 8 experts (>= L-tier ST_E_MAX) */
 
@@ -105,7 +105,7 @@ int main(void)
 
     /* owners list (replica order) primary == single-owner */
     {
-        unsigned char top[ST_PLACE_RMAX];
+        pk_node_t top[ST_PLACE_RMAX];
         int nr = st_expert_owners_in(0, members, NM, top, ST_PLACE_RMAX);
         CHECK(nr == ST_PLACE_RMAX && (int)top[0] == base[0],
               "[place-deterministic] owners_in()[0] == owner_in() (primary is the winner)");
@@ -115,7 +115,7 @@ int main(void)
     /* kill the owner of expert 0; build the reduced set; assert ONLY the
      * experts owned by the victim move, all others UNCHANGED. */
     unsigned char victim = (unsigned char)base[0];
-    unsigned char reduced[5];
+    pk_node_t reduced[5];
     int NR = 0;
     for (int i = 0; i < NM; i++) if (members[i] != victim) reduced[NR++] = members[i];
 
@@ -163,7 +163,7 @@ int main(void)
 
     /* ---- single-node honesty (SS-6 deferred) ------------------------ */
     {
-        unsigned char solo[1] = { 42 };
+        pk_node_t solo[1] = { 42 };
         int solo_ok = 1;
         for (int e = 0; e < NE; e++)
             if (st_expert_owner_in((unsigned char)e, solo, 1) != 42) solo_ok = 0;

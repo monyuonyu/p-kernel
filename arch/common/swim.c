@@ -1183,10 +1183,23 @@ INT swim_wide_self_test(void (*emit)(const char *))
     W2(sw2_state(700) == DNODE_ALIVE, "news introduces a wide id");
     W2(wide_st[sw2_find(700)].ip == pk_node_ip(700), "at its own address");
 
-    /* A bad count reads no further than the array. */
-    sw2_build(&p, 43, 701, DNODE_ALIVE, 200);
+    /* A bad count reads no further than the array: what follows the packet
+     * looks like one more live entry, and must stay unread. */
+    {
+        static UB big[sizeof(SWIM2_PKT) + sizeof(SWIM2_GOSSIP_EVT)];
+        SWIM2_GOSSIP_EVT over = { 702, DNODE_ALIVE, 0, 0 };
+        sw2_build(&p, 43, 701, DNODE_ALIVE, 200);
+        for (UW i = 0; i < sizeof p; i++) big[i] = ((const UB *)&p)[i];
+        for (UW i = 0; i < sizeof over; i++) big[sizeof p + i] = ((const UB *)&over)[i];
+        swim_wide_rx(ip, big, (UH)sizeof big);
+        W2(sw2_state(701) == DNODE_ALIVE, "a count of 200 is read as the maximum");
+        W2(sw2_find(702) < 0, "nothing past the array is read");
+    }
+
+    /* A rumour of a dead or suspect stranger introduces nobody. */
+    sw2_build(&p, 43, 703, DNODE_DEAD, 1);
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
-    W2(sw2_state(701) == DNODE_ALIVE, "a count of 200 is read as the maximum");
+    W2(sw2_find(703) < 0, "a DEAD rumour introduces nobody");
 
     /* A rumour neither kills nor revives; aging does, and a beacon revives. */
     INT s = sw2_find(299);

@@ -14,10 +14,10 @@
 #include "drpc.h"     /* DNODE, dnode_table[], drpc_my_node, DNODE_MAX      */
 
 DNODE dnode_table[DNODE_MAX];
-UB    drpc_my_node = 0xFF;
+pk_node_t drpc_my_node = 0xFF;
 
 void region_recompute(void) { }
-BOOL region_is_member(UB node) { (void)node; return FALSE; }
+BOOL region_is_member(pk_node_t node) { (void)node; return FALSE; }
 
 /* tk_get_otm — t-kernel system-time getter the L1 cache stamps with.
  * Never reached by the SS-5 cert; return a zero clock. */
