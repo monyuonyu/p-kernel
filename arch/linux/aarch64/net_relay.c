@@ -1393,6 +1393,65 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
     hb_check(pr, emitted > 0,
              "at least one keepalive WITHOUT any peer or admission");
 
+    /* N2b: the SHIPPED receive path against relay v3, over a real loopback
+     * socket that is its own relay. In-proc: no relay, no peers. */
+    {
+        static u8 sv_key[KEY_LEN];
+        struct sockaddr_in sv_rl = relay_list[0], me = {0};
+        socklen_t mel = sizeof(me);
+        u64 sv_nonce = next_nonce;
+        u32 sv_ok = rx_ok_count;
+        unsigned char f[64], o[1500];
+        static unsigned char p[MAX_PKT];
+        int n;
+        memset(f, 0x5A, sizeof(f));
+        memcpy(sv_key, key, KEY_LEN);
+        memset(key, 0xA5, KEY_LEN);
+        int s = socket(AF_INET, SOCK_DGRAM, 0);
+        me.sin_family = AF_INET;
+        me.sin_addr.s_addr = htonl(0x7F000001);
+        bind(s, (struct sockaddr *)&me, sizeof(me));
+        getsockname(s, (struct sockaddr *)&me, &mel);
+        relay_list[0] = me;
+        sock_fd = s;
+        hb_use_mock = 0;
+        wire_version = RELAY_VER_V2;
+        my_node_id = 300;
+
+        next_nonce = 9000;
+        n = build_packet(p, REL_BROADCAST, 300, 0, f, sizeof(f));
+        hb_check(pr, n > 0 && p[4] == 3 && p[6] == 44 && p[8] == 1 && p[9] == 0,
+                 "v3: wide src goes out as version 3, high byte in 8");
+        udp_send_to(0, p, n);
+        hb_check(pr, net_relay_recv(o, sizeof(o)) == (int)sizeof(f) && o[0] == 0x5A,
+                 "v3: a wide frame comes in");
+        udp_send_to(0, p, n);
+        hb_check(pr, net_relay_recv(o, sizeof(o)) == 0, "v3: its replay does not");
+        next_nonce = 9000;
+        n = build_packet(p, REL_BROADCAST, 556, 0, f, sizeof(f));
+        udp_send_to(0, p, n);
+        hb_check(pr, net_relay_recv(o, sizeof(o)) == (int)sizeof(f),
+                 "v3: same nonce, same low byte, other wide id: own window");
+        n = build_packet(p, REL_BROADCAST, 300, 0, f, sizeof(f));
+        p[8] ^= 2;
+        udp_send_to(0, p, n);
+        hb_check(pr, net_relay_recv(o, sizeof(o)) == 0, "v3: high byte is under the MAC");
+
+        my_node_id = 7;
+        n = build_packet(p, REL_BROADCAST, 7, 0, f, sizeof(f));
+        hb_check(pr, n > 0 && p[4] == RELAY_VER_V2 && p[8] == 0 && p[9] == 0 && p[10] == 3,
+                 "v2: a narrow frame stays v2 and says it reads v3");
+        wire_version = RELAY_VER_V1;
+        n = build_packet(p, REL_BROADCAST, 300, 0, f, sizeof(f));
+        hb_check(pr, n == 0, "v3: no wide frame without the key");
+
+        close(s);
+        relay_list[0] = sv_rl;
+        memcpy(key, sv_key, KEY_LEN);
+        next_nonce = sv_nonce;
+        rx_ok_count = sv_ok;
+    }
+
     /* restore */
     relay_count = sv_relay_count; cur_relay = sv_cur; sock_fd = sv_sock;
     my_node_id  = sv_node; wire_version = sv_wire; last_send_ts = sv_last;
