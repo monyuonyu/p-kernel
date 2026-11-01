@@ -1445,7 +1445,7 @@ jobs:
     runs-on: ubuntu-latest
     # 15 -> 20 (2026-10-07): + tkconf / pool and a second build for the K9 NC
     # 20 -> 25 (2026-10-07): + tkconf fp and a third build for its NC
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-user
@@ -1619,7 +1619,7 @@ jobs:
   bare-metal:
     name: "ベアメタル (i686 + aarch64, ビルドのみ)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchains
@@ -2569,7 +2569,7 @@ jobs:
     # only diff-checks its TOP commit against the one before it.
     name: "crown 不変条件 (.text バイト同一性 — 対親ドリフト)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -2736,7 +2736,7 @@ jobs:
     # 25 -> 45 (2026-10-11): with run_ema.sh added the job hit 25 min and was
     # cancelled inside the EMA step (run 38122175153: the four steps before it
     # took ~10 min, EMA ran >15 min without finishing).
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
       # cross-built aarch64 ./p-kernel finds its glibc loader/libs under binfmt.
@@ -2959,7 +2959,7 @@ jobs:
     # (resident-only beats solo) is a HARD RED.
     name: "distributed-MoE capacity ([dmoe-*] bank; hosted-only, crown-neutral)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3030,7 +3030,7 @@ jobs:
     # (feedback_proot_sandbox_net_limits); wiring it is deferred (U-2/U-3, §10).
     name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3112,7 +3112,7 @@ jobs:
     # self-hosted runner — the depth-deliberation-live job below.
     name: "DEPTH test-time deliberation ([depth-*] DLB; hosted-only, crown-neutral)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain (+ aarch64 cross + qemu-user for the one-math diff)
@@ -3299,7 +3299,7 @@ jobs:
     # Shipped since the SMP waves but never in CI.
     name: "full-SMP + core autodetect (aarch64 QEMU, run_smp0.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     # Earning trust: first CI outing (2026-07-01) failed with
     # "qemu-system-aarch64: failed to find romfile" because --no-install-recommends
     # dropped ipxe-qemu (a qemu-system-arm Recommends that ships the virtio NIC
@@ -3413,7 +3413,7 @@ jobs:
     # a runner class already shown to be unreliable for this shape of test.
     name: "MC-2 SMP-partition certs + ②.1a cross-preempt (aarch64 QEMU, run_mc2_*.sh / run_smp1.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     continue-on-error: true  # until 2026-11-30: MC-2 SMP-partition certs advisory. ROADMAP 0-2
     steps:
       - uses: actions/checkout@v4
@@ -3595,7 +3595,7 @@ jobs:
     # (the shared TUs it touches are all #ifdef _WINDOWS_X86_64_-guarded).
     name: "Windows PE ビルドゲート (mingw-w64, boot/windows/x86_64)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install mingw-w64 cross toolchain

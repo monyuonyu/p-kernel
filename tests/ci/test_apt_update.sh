@@ -58,6 +58,24 @@ if [ "$rc" != 0 ] && [ "$rc" != 124 ] && [ "$n" = 3 ] && [ "$e" -lt 15 ]; then o
 run deaf ok
 if [ "$rc" = 0 ] && [ "$n" = 2 ] && [ "$e" -lt 10 ]; then ok U5; else bad "U5 rc=$rc tries=$n secs=$e"; fi
 
+# U6 (audit-108, audit-110): a job that calls apt_install.sh can spend 27 minutes on apt alone:
+# update 8.5, install 5, update again 8.5, install 5. Its time limit must leave room for that;
+# 30 is the floor, this does not know how long the job's own work takes.
+CI="$(dirname "$(readlink -f "$0")")/../../.github/workflows/ci.yml"
+short="$(python3 - "$CI" <<'PY'
+import re, sys
+s = open(sys.argv[1]).read()
+parts = re.split(r'^  ([A-Za-z0-9_-]+):\s*$', s[s.index('\njobs:'):], flags=re.M)
+for name, body in zip(parts[1::2], parts[2::2]):
+    if 'apt_install.sh' not in body or name == 'script-modes':
+        continue
+    m = re.search(r'^    timeout-minutes: (\d+)', body, re.M)
+    if not m or int(m[1]) < 30:
+        print(name, m[1] if m else 'none')
+PY
+)"
+if [ -z "$short" ]; then ok U6; else bad "U6 $(echo "$short" | tr '\n' ' ')"; fi
+
 [ "$fails" = 0 ] && { echo "[apt-update] PASS"; exit 0; }
 echo "[apt-update] FAIL ($fails)"
 exit 1
