@@ -5,6 +5,7 @@
 #   U2 first try works -> rc 0, 1 try, the mirror files untouched
 #   U3 every try hangs -> rc != 0 and the whole thing ends near the limits (never the job's)
 #   U4 the last try reads the sources rewritten to archive.ubuntu.com
+#   U5 a try that ignores SIGTERM is killed all the same (audit-107)
 # A negative control (a script without the time limit) must go red: see the NC arm at the end.
 set -u
 SUT="${1:-tests/ci/apt_update.sh}"
@@ -24,6 +25,7 @@ act=$(sed -n "${n}p" "$FAKE/plan")
 cp "$FAKE/mirrors" "$FAKE/mirrors.seen.$n"
 case "$act" in
   hang) exec sleep 300 ;;
+  deaf) trap '' TERM; exec sleep 300 ;;
   ok) exit 0 ;;
   *) exit 100 ;;
 esac
@@ -35,7 +37,7 @@ run() { # plan words...
     printf '%s\n' "$@" > "$d/plan"
     echo 'http://azure.archive.ubuntu.com/ubuntu priority:1' > "$d/mirrors"
     s=$(date +%s)
-    FAKE="$d" PATH="$d/bin:$PATH" APT_UPDATE_SECS=2 APT_SOURCES="$d/mirrors" \
+    FAKE="$d" PATH="$d/bin:$PATH" APT_UPDATE_SECS=2 APT_UPDATE_KILL=1 APT_SOURCES="$d/mirrors" \
         timeout 20 bash "$SUT" > "$d/out" 2>&1
     rc=$?
     e=$(( $(date +%s) - s ))
@@ -52,6 +54,9 @@ if [ "$rc" = 0 ] && [ "$n" = 1 ] && grep -q azure "$d/mirrors"; then ok U2; else
 
 run hang hang hang
 if [ "$rc" != 0 ] && [ "$rc" != 124 ] && [ "$n" = 3 ] && [ "$e" -lt 15 ]; then ok U3; else bad "U3 rc=$rc tries=$n secs=$e"; fi
+
+run deaf ok
+if [ "$rc" = 0 ] && [ "$n" = 2 ] && [ "$e" -lt 10 ]; then ok U5; else bad "U5 rc=$rc tries=$n secs=$e"; fi
 
 [ "$fails" = 0 ] && { echo "[apt-update] PASS"; exit 0; }
 echo "[apt-update] FAIL ($fails)"

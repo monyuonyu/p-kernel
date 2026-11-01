@@ -22,5 +22,5 @@ for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/
     [ -f "$f" ] && sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
 done
 dpkg --configure -a || true    # in case the cut fell inside dpkg, not the download
-apt-get update
+"$(dirname "$(readlink -f "$0")")/apt_update.sh"   # the update has its limits too (audit-107)
 apt-get install -y --no-install-recommends "$@"
