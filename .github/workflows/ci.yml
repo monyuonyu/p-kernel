@@ -1459,6 +1459,11 @@ jobs:
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
           N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix.log
           grep -aF '[n2-mix] ALL PASS' n2_mix.log
+          # An old relay: the wide nodes stay out and disturb nobody.
+          make -s -C /tmp/n2old/relay
+          N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
+            timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
       - name: "X1 and X2 go red when a wide id is cut to a byte ([n2-mix], negative control, -DN2_NC_TRUNC)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null

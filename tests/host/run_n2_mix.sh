@@ -11,6 +11,8 @@
 #             so an -DN2_NC_TRUNC build goes in there. N2_RELAY_BIN: default relay/relay.
 # N2_WAIT     seconds to wait for membership, default 120. N2_LOGDIR keeps the logs.
 # N2_NO_WIDE=1  leave 260 and 300 out: old and new narrow only, must be green already.
+# N2_RELAY_OLD=1  the relay is an old one (N2_RELAY_BIN): 260 and 300 run but cannot get in. X1
+#             and X2 then want the five narrow ids: a wide node on an old relay disturbs nobody.
 #
 # `nodes` prints ids from 0 (PKERNEL_NODE_ID 44 is row 43).
 #
@@ -77,6 +79,7 @@ done
 
 WANT_A="0 1 2 3 43 "; WANT_B="0 1 2 3 43 259 299 "
 [ "$NOWIDE" = 1 ] && WANT_B="$WANT_A"
+[ "${N2_RELAY_OLD:-0}" = 1 ] && WANT_B="$WANT_A"
 t=0; a=""; b=""
 while [ "$t" -lt "$WAIT" ]; do
     sleep 3; t=$((t + 3))
