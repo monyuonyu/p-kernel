@@ -154,7 +154,7 @@ static INT tomb_contains(const char *path)
 /* 単一ノードへパケット送信                                            */
 /* ------------------------------------------------------------------ */
 
-static void send_pkt_to(UB node_id, const SFS_PKT *pkt, UH len)
+static void send_pkt_to(pk_node_t node_id, const SFS_PKT *pkt, UH len)
 {
     pmesh_send(node_id, SFS_PORT, (const UB *)pkt, len);
 }
@@ -197,7 +197,7 @@ void sfs_push(const char *path)
     pkt.magic      = SFS_MAGIC;
     pkt.version    = SFS_VERSION;
     pkt.type       = SFS_FILE_START;
-    pkt.src_node   = drpc_my_node;
+    pkt.src_node   = pk_node_v1(drpc_my_node);
     sf_strncpy(pkt.path, path, SFS_PATH_MAX);
     pkt.total_size = fsize;
     pkt.chunk_idx  = 0;
@@ -248,7 +248,7 @@ void sfs_delete(const char *path)
     pkt.magic    = SFS_MAGIC;
     pkt.version  = SFS_VERSION;
     pkt.type     = SFS_FILE_DELETE;
-    pkt.src_node = drpc_my_node;
+    pkt.src_node = pk_node_v1(drpc_my_node);
     sf_strncpy(pkt.path, path, SFS_PATH_MAX);
 
     broadcast_pkt(&pkt, (UH)sizeof(pkt));
@@ -272,7 +272,7 @@ void sfs_boot_sync(void)
     pkt.magic    = SFS_MAGIC;
     pkt.version  = SFS_VERSION;
     pkt.type     = SFS_SYNC_REQ;
-    pkt.src_node = drpc_my_node;
+    pkt.src_node = pk_node_v1(drpc_my_node);
 
     broadcast_pkt(&pkt, (UH)sizeof(pkt));
     sf_puts("[sfs] boot sync request sent\r\n");
@@ -413,7 +413,7 @@ void sfs_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
                 spkt.magic      = SFS_MAGIC;
                 spkt.version    = SFS_VERSION;
                 spkt.type       = SFS_FILE_START;
-                spkt.src_node   = drpc_my_node;
+                spkt.src_node   = pk_node_v1(drpc_my_node);
                 sf_strncpy(spkt.path, fpath, SFS_PATH_MAX);
                 spkt.total_size = fsize;
 

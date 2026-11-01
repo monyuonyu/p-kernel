@@ -338,7 +338,7 @@ INT lm_self_append_unit_event(UB kind, U4 unit_ver, UB sig)
     self_memset(&e, 0, sizeof e);
     e.magic   = LM_SELF_MAGIC;
     e.version = LM_SELF_VER;
-    e.self_id = drpc_my_node;
+    e.self_id = pk_node_v1(drpc_my_node);
     e.seq     = next_seq;
     e.age_ms  = LM_UNIT_EV_ENCODE(kind, unit_ver, sig);  /* the event payload */
     if (!self_id_zero(prev)) self_memcpy(e.prev_entry, prev, PFS_ID_LEN);
@@ -465,7 +465,7 @@ INT lm_self_append_human(const U1 human_ref[PFS_ID_LEN])
     }
 
     LM_SELF_ENTRY e;
-    self_fill(&e, drpc_my_node, next_seq, self_id_zero(prev) ? (const U1 *)0 : prev);
+    self_fill(&e, pk_node_v1(drpc_my_node), next_seq, self_id_zero(prev) ? (const U1 *)0 : prev);
     self_memcpy(e.human_ref, human_ref, PFS_ID_LEN);
 
     INT r = pfs_dag_save((const UB *)LM_SELF_REF, LM_SELF_REF_LEN,
@@ -516,7 +516,7 @@ INT lm_self_append_succession(const U1 succ_archspec_id[PFS_ID_LEN],
     self_memset(&e, 0, sizeof e);
     e.magic   = LM_SELF_MAGIC;
     e.version = LM_SELF_VER;
-    e.self_id = drpc_my_node;
+    e.self_id = pk_node_v1(drpc_my_node);
     e.seq     = next_seq;
     e.age_ms  = LM_UNIT_EV_ENCODE(LM_UNIT_EV_SUCCESSION, 0, 0);  /* the kind */
     if (!self_id_zero(prev)) self_memcpy(e.prev_entry, prev, PFS_ID_LEN);
@@ -608,7 +608,7 @@ INT lm_self_sign_live_test(void)
     /* (1) GENUINE: build + commit a real entry, sign it with the node key,
      *     verify the companion against the pinned key -> ACCEPT. */
     LM_SELF_ENTRY e;
-    self_fill(&e, drpc_my_node, 1, (const U1 *)0);   /* a genesis entry */
+    self_fill(&e, pk_node_v1(drpc_my_node), 1, (const U1 *)0);   /* a genesis entry */
     U1 eid[PFS_ID_LEN];
     pfs_id_compute(&e, (UW)sizeof e, eid);
     (void)pfs_put(&e, (UW)sizeof e, 0);
@@ -626,7 +626,7 @@ INT lm_self_sign_live_test(void)
         ed25519_keypair_from_seed(fseed, fpk, fsk);
 
         LM_SELF_ENTRY fe;
-        self_fill(&fe, drpc_my_node, 1, (const U1 *)0);
+        self_fill(&fe, pk_node_v1(drpc_my_node), 1, (const U1 *)0);
         ((U1 *)&fe)[40] ^= 0x5A;                 /* a different (fake) entry */
         U1 fid[PFS_ID_LEN];
         pfs_id_compute(&fe, (UW)sizeof fe, fid);
@@ -664,7 +664,7 @@ INT lm_self_sign_live_test(void)
 void lm_self_test(void)
 {
     INT fails = 0;
-    U1  me = drpc_my_node;                  /* the origin self_id stamp */
+    U1  me = pk_node_v1(drpc_my_node);                  /* the origin self_id stamp */
 
     self_compute_model_ver();
 

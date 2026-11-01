@@ -148,7 +148,7 @@ static struct {
     UW total;
     UW received;
     UW next_chunk;
-    U1 origin;
+    pk_node_t origin;
     U1 active;
     U1 buf[PFS_BLOCK_MAX];
 } rx_state;
@@ -179,7 +179,7 @@ void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn) { sync_filter = fn; }
 /* control-plane publishes (small pkts — fine on stack)                */
 /* ------------------------------------------------------------------ */
 
-static void publish_announce(const U1 id[PFS_ID_LEN], UW len, U1 origin)
+static void publish_announce(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 {
     if (drpc_my_node == 0xFF || h_ann_pub < 0) return;
 
@@ -187,8 +187,8 @@ static void publish_announce(const U1 id[PFS_ID_LEN], UW len, U1 origin)
     pr_memset(&a, 0, (UW)sizeof(a));
     a.magic    = PFSR_ANN_MAGIC;
     a.seq      = ++ann_seq;
-    a.src_node = drpc_my_node;
-    a.origin   = origin;
+    a.src_node = pk_node_v1(drpc_my_node);
+    a.origin   = pk_node_v1(origin);
     a.len      = len;
     pr_memcpy(a.id, id, PFS_ID_LEN);
     kdds_pub(h_ann_pub, &a, (W)sizeof(a));
@@ -208,7 +208,7 @@ static void publish_want(const U1 id[PFS_ID_LEN])
     pr_memset(&w, 0, (UW)sizeof(w));
     w.magic    = PFSR_WANT_MAGIC;
     w.seq      = ++want_seq;
-    w.src_node = drpc_my_node;
+    w.src_node = pk_node_v1(drpc_my_node);
     pr_memcpy(w.id, id, PFS_ID_LEN);
     kdds_pub(h_want_pub, &w, (W)sizeof(w));
     stat_want_tx++;
@@ -222,7 +222,7 @@ static void publish_sync(void)
     pr_memset(&s, 0, (UW)sizeof(s));
     s.magic    = PFSR_SYNC_MAGIC;
     s.seq      = ++sync_seq;
-    s.src_node = drpc_my_node;
+    s.src_node = pk_node_v1(drpc_my_node);
     kdds_pub(h_sync_pub, &s, (W)sizeof(s));
 
     pr_puts("[pfs] boot sync request (region, fanout=");
@@ -236,11 +236,11 @@ static void publish_sync(void)
 /* replica that just stored a received block re-announces it onward)   */
 /* ------------------------------------------------------------------ */
 
-static void on_new_block(const U1 id[PFS_ID_LEN], UW len, U1 origin)
+static void on_new_block(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 {
     if (drpc_my_node == 0xFF) return;       /* not distributed: local only */
     if (announce_suppress) return;          /* G28: protected quiet put     */
-    U1 org = (origin == PFS_ORIGIN_SELF) ? drpc_my_node : origin;
+    pk_node_t org = (origin == PFS_ORIGIN_SELF) ? drpc_my_node : origin;
     publish_announce(id, len, org);
 }
 
@@ -248,7 +248,7 @@ static void on_new_block(const U1 id[PFS_ID_LEN], UW len, U1 origin)
  * point, so distinct holders never clobber each other (unlike the shared
  * LATEST_ONLY announce slot). Drives the origin's protect holder_count
  * reliably, so plural protection's grounded threat falls promptly. */
-static void send_hold_ack(UB origin_node, const U1 id[PFS_ID_LEN])
+static void send_hold_ack(pk_node_t origin_node, const U1 id[PFS_ID_LEN])
 {
     if (drpc_my_node == 0xFF) return;
     if (origin_node >= DNODE_MAX) return;       /* not a real node (e.g. 0xFF) */
@@ -256,8 +256,8 @@ static void send_hold_ack(UB origin_node, const U1 id[PFS_ID_LEN])
     PFSR_HOLD_PKT h;
     pr_memset(&h, 0, (UW)sizeof(h));
     h.magic    = PFSR_HOLD_MAGIC;
-    h.src_node = drpc_my_node;
-    h.origin   = origin_node;
+    h.src_node = pk_node_v1(drpc_my_node);
+    h.origin   = pk_node_v1(origin_node);
     pr_memcpy(h.id, id, PFS_ID_LEN);
     pmesh_send(origin_node, PFSR_PORT, (const UB *)&h, (UH)sizeof(h));
 }
@@ -269,16 +269,16 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
     if (!pfs_has(id)) return;
     /* recover the block's length + origin tag from the local table */
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 sid[PFS_ID_LEN]; UW slen; U1 sorg;
+        U1 sid[PFS_ID_LEN]; UW slen; pk_node_t sorg;
         if (pfs_slot_info(i, sid, &slen, &sorg) && pr_id_eq(sid, id)) {
-            U1 org = (sorg == PFS_ORIGIN_SELF) ? drpc_my_node : sorg;
+            pk_node_t org = (sorg == PFS_ORIGIN_SELF) ? drpc_my_node : sorg;
             publish_announce(id, slen, org);
             return;
         }
     }
 }
 
-static void send_block_to(UB dst_node, const U1 id[PFS_ID_LEN]);
+static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN]);
 
 /* G35: public direct push — unicast a held block straight to one neighbour
  * (reliable discovery for the protect actuator; see send_block_to below). */
@@ -294,15 +294,15 @@ void pfs_repl_push(const U1 id[PFS_ID_LEN], pk_node_t dst_node)
 /* chunked block send (sfs_push generalized to a block, unicast)       */
 /* ------------------------------------------------------------------ */
 
-static void send_block_to(UB dst_node, const U1 id[PFS_ID_LEN])
+static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
 {
     INT blen = pfs_get(id, tx_block, PFS_BLOCK_MAX);
     if (blen < 0 || blen > (INT)PFS_BLOCK_MAX) return;
 
     /* recover the origin tag so it survives the hop */
-    U1 origin = PFS_ORIGIN_SELF;
+    pk_node_t origin = PFS_ORIGIN_SELF;
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 sid[PFS_ID_LEN]; U1 sorg;
+        U1 sid[PFS_ID_LEN]; pk_node_t sorg;
         if (pfs_slot_info(i, sid, 0, &sorg) && pr_id_eq(sid, id)) {
             origin = sorg;
             break;
@@ -313,8 +313,8 @@ static void send_block_to(UB dst_node, const U1 id[PFS_ID_LEN])
     tx_pkt.magic     = PFSR_BLK_MAGIC;
     tx_pkt.version   = PFSR_VERSION;
     tx_pkt.type      = PFSR_BLK_CHUNK;
-    tx_pkt.src_node  = drpc_my_node;
-    tx_pkt.origin    = origin;
+    tx_pkt.src_node  = pk_node_v1(drpc_my_node);
+    tx_pkt.origin    = pk_node_v1(origin);
     tx_pkt.total_len = (UW)blen;
     pr_memcpy(tx_pkt.id, id, PFS_ID_LEN);
 
@@ -582,7 +582,7 @@ void pfs_repl_task(INT stacd, void *exinf)
 
 INT pfs_repl_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
 {
-    U1 origin = (drpc_my_node == 0xFF) ? PFS_ORIGIN_SELF : drpc_my_node;
+    pk_node_t origin = (drpc_my_node == 0xFF) ? PFS_ORIGIN_SELF : drpc_my_node;
     return pfs_put_origin(buf, len, id_out, origin);
 }
 
@@ -616,7 +616,7 @@ void pfs_repl_ls(void)
     pr_puts("[pfs] blocks (id-prefix / len / origin):\r\n");
     UW shown = 0;
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 id[PFS_ID_LEN]; UW len; U1 origin;
+        U1 id[PFS_ID_LEN]; UW len; pk_node_t origin;
         if (!pfs_slot_info(i, id, &len, &origin)) continue;
         pr_puts("  "); pr_put_id(id);
         pr_puts("  len="); pr_putdec(len);

@@ -3060,7 +3060,7 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
 
     mt_pub_pkt.magic       = MT_MAGIC;
     mt_pub_pkt.fact_seq    = fact_seq;
-    mt_pub_pkt.origin_node = drpc_my_node;
+    mt_pub_pkt.origin_node = pk_node_v1(drpc_my_node);
     mt_pub_pkt.key         = k;
     mt_pub_pkt.val         = v;
     mt_pub_pkt.src         = src;
@@ -3193,12 +3193,12 @@ INT r3_fact_revise(UB k, UB v_new)
 typedef struct {
     UW seq;                       /* B's local R3_FACT.seq for the fact   */
     U1 used;
-    U1 origin_node;               /* the teacher's node (A)               */
+    pk_node_t origin_node;               /* the teacher's node (A)               */
     U1 prov_head[PFS_ID_LEN];     /* content-id of A's ARK_PROV           */
 } MT_REMOTE_PROV;
 static MT_REMOTE_PROV mt_rprov[R3_FQ_MAX];
 
-static void mt_rprov_put(UW local_seq, U1 origin, const U1 prov_head[PFS_ID_LEN])
+static void mt_rprov_put(UW local_seq, pk_node_t origin, const U1 prov_head[PFS_ID_LEN])
 {
     /* reuse a slot for a seq no longer in the bounded queue, else any free. */
     INT slot = -1;
@@ -3304,15 +3304,15 @@ static void m_prov_tables_clear(void)
 typedef struct {
     UB used, key, v_lost, v_now;
     UB lost_src, now_src;         /* MC_SRC_*                            */
-    U1 lost_by;                   /* node that taught v_lost (0-based)   */
-    U1 now_by;                    /* node whose value replaced it        */
+    pk_node_t lost_by;            /* node that taught v_lost (0-based)   */
+    pk_node_t now_by;             /* node whose value replaced it        */
     UB lost_state, lost_rounds;   /* evidence: how firmly v_lost was held */
     UB has_prov, n;               /* n = times seen (capped at 255)      */
     UW lost_seq;                  /* local seq of the superseded engram  */
     UW lost_stamp, now_stamp;     /* 1-3b Lamport stamps of both values  */
     UW at_ms;                     /* local time of the first supersede   */
     U1 lost_prov[PFS_ID_LEN];     /* content-id of v_lost's ARK_PROV     */
-    U1 heard_from;                /* 0xFF = seen here; else the node whose */
+    pk_node_t heard_from;                /* 0xFF = seen here; else the node whose */
                                   /* mind/hist told us (1-3c (3))         */
     UB hist_told;                 /* mind/hist printed its first send     */
 } MC_REC;
@@ -3323,7 +3323,7 @@ static UW mc_next, mc_dropped;
  * id once networking has one), or "teacher unknown". Not "taught by node N":
  * that is m_ask's teacher line, and run_mind_gen0_b.sh (E3) reads the last
  * one after `mind ask` as the teacher — a history line must not look like it. */
-static void mc_put_teacher(UB src, U1 node)
+static void mc_put_teacher(UB src, pk_node_t node)
 {
     if (src == MC_SRC_REMOTE) { r_puts("from node "); r_putdec((UW)node); }
     else if (src == MC_SRC_LOCAL) {
@@ -3392,7 +3392,7 @@ static void mc_rstamp_put(UW local_seq, UW stamp)
 }
 
 /* stamp and teaching node of the engram with this local seq */
-static UW mc_stamp_of(UW local_seq, U1 *origin_out)
+static UW mc_stamp_of(UW local_seq, pk_node_t *origin_out)
 {
     MT_REMOTE_PROV *rp = mt_rprov_find(local_seq);
     if (!rp) { *origin_out = drpc_my_node; return local_seq; }
@@ -3405,9 +3405,9 @@ static UW mc_stamp_of(UW local_seq, U1 *origin_out)
 /* heard_from: 0xFF when this node saw the conflict itself; else the node
  * whose mind/hist record this is (1-3c (3)) — such a record is only added if
  * no record of the same conflict is kept, and never counts as "seen again". */
-static void mc_add(UB k, UB v_lost, UB lost_src, U1 lost_by, UW lost_stamp,
+static void mc_add(UB k, UB v_lost, UB lost_src, pk_node_t lost_by, UW lost_stamp,
                    UB lost_state, UB lost_rounds, UW lost_seq, const U1 *prov,
-                   UB v_now, UB now_src, U1 now_by, UW now_stamp, U1 heard_from)
+                   UB v_now, UB now_src, pk_node_t now_by, UW now_stamp, pk_node_t heard_from)
 {
     for (INT i = 0; i < MC_MAX; i++) {
         MC_REC *r = &mc_hist[i];
@@ -3442,15 +3442,15 @@ static void mc_add(UB k, UB v_lost, UB lost_src, U1 lost_by, UW lost_stamp,
 
 /* fi/bind = the engram about to be revised; call BEFORE r3_fact_revise.
  * now_stamp = the stamp of the value that replaces it. */
-static void mc_note(INT fi, INT bind, UB v_now, UB now_src, U1 now_by, UW now_stamp)
+static void mc_note(INT fi, INT bind, UB v_now, UB now_src, pk_node_t now_by, UW now_stamp)
 {
     UW seq = r3_fq[fi].seq;
-    U1 lost_by = 0xFF; UB lost_src = MC_SRC_UNKNOWN; const U1 *prov = 0;
+    pk_node_t lost_by = 0xFF; UB lost_src = MC_SRC_UNKNOWN; const U1 *prov = 0;
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     const U1 *lp = mq_lprov_find(seq);
     if (rp)      { lost_src = MC_SRC_REMOTE; lost_by = rp->origin_node; prov = rp->prov_head; }
     else if (lp) { lost_src = MC_SRC_LOCAL;  lost_by = drpc_my_node;    prov = lp; }
-    U1 o; UW lost_stamp = mc_stamp_of(seq, &o);
+    pk_node_t o; UW lost_stamp = mc_stamp_of(seq, &o);
 #ifdef R3_NOTE_KEEPS_READING         /* falsifier (run_mind_conflicts_misread.sh) */
     UB v_lost = r3_fq[fi].yhat[bind];
 #else
@@ -3465,9 +3465,9 @@ static void mc_note(INT fi, INT bind, UB v_now, UB now_src, U1 now_by, UW now_st
  * org) beat the held engram fi? Larger stamp wins; equal stamps -> the
  * smaller teaching node. The same comparison on every node, so the winner
  * does not depend on which value arrived last. */
-static INT mc_incoming_wins(INT fi, UW s_in, U1 org)
+static INT mc_incoming_wins(INT fi, UW s_in, pk_node_t org)
 {
-    U1 o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
+    pk_node_t o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
     INT win = (s_in > s_cur) || (s_in == s_cur && org < o_cur);
     r_puts("[mind] conflict rule: incoming stamp "); r_putdec(s_in);
     r_puts(" node "); r_putdec((UW)org);
@@ -3500,11 +3500,11 @@ static MT_TEACH_PKT mc_push_pkt;
 static UB mc_push_sends_left, mc_push_ticks_left, mc_push_sent_n;
 static UB mq_answer_sent;            /* defined with M_REDRIVE_OWN below         */
 static void mc_push_winner(INT fi, INT bind);
-static void mc_incoming_lost(INT fi, INT bind, UB v_in, U1 org, UW s_in,
+static void mc_incoming_lost(INT fi, INT bind, UB v_in, pk_node_t org, UW s_in,
                              const U1 prov_in[PFS_ID_LEN])
 {
     UW seq = r3_fq[fi].seq;
-    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    pk_node_t o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     UB now_src = rp ? MC_SRC_REMOTE : MC_SRC_LOCAL;
     mc_add(r3_fq[fi].key[bind], v_in, MC_SRC_REMOTE, org, s_in,
@@ -3521,13 +3521,13 @@ static void mc_push_winner(INT fi, INT bind)
 {
     static const U1 zero_prov[PFS_ID_LEN] = { 0 };
     UW seq = r3_fq[fi].seq;
-    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    pk_node_t o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     const U1 *lp = mq_lprov_find(seq);
     if (drpc_my_node == 0xFF) return;
     mc_push_pkt.magic       = MT_MAGIC;
     mc_push_pkt.fact_seq    = s_cur;
-    mc_push_pkt.origin_node = o_cur;
+    mc_push_pkt.origin_node = pk_node_v1(o_cur);
     mc_push_pkt.key         = r3_fq[fi].key[bind];
 #ifdef R3_PUSH_SENDS_READING         /* falsifier (run_mind_conflicts_misread.sh) */
     mc_push_pkt.val         = r3_fq[fi].yhat[bind];
@@ -3567,14 +3567,14 @@ static void mc_push_winner(INT fi, INT bind)
  * teach of that value keeps its prov record (ark), but `mind ask` and a pull
  * answer now name the winning teacher. Returns 1 if taken.
  * -DMC_DUP_KEEPS_STAMP: the old drop (negative control). */
-static INT mc_dup_adopt(INT fi, UB k, UW s_in, U1 org, const U1 prov_in[PFS_ID_LEN])
+static INT mc_dup_adopt(INT fi, UB k, UW s_in, pk_node_t org, const U1 prov_in[PFS_ID_LEN])
 {
 #ifdef MC_DUP_KEEPS_STAMP
     (void)fi; (void)k; (void)s_in; (void)org; (void)prov_in;
     return 0;
 #else
     UW seq = r3_fq[fi].seq;
-    U1 o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
+    pk_node_t o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
     if (!((s_in > s_cur) || (s_in == s_cur && org < o_cur))) return 0;
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     if (rp) {
@@ -3607,7 +3607,7 @@ static void mc_push_redrive(void)
     if (mq_answer_sent) return;      /* a pull answer owns this tick              */
     m_gate_acquire();
     INT bind, fi = m_find_key((INT)mc_push_pkt.key, &bind);
-    U1 o = 0xFF; UW s = 0;
+    pk_node_t o = 0xFF; UW s = 0;
     if (fi >= 0) s = mc_stamp_of(r3_fq[fi].seq, &o);
     INT still = fi >= 0 && r3_fq[fi].val[bind] == mc_push_pkt.val &&
                 s == mc_push_pkt.fact_seq && o == mc_push_pkt.origin_node;
@@ -4407,7 +4407,7 @@ static void mq_build_want(UW seq, const UB *keys, INT n)
 {
     mq_want_pkt.magic       = MQ_MAGIC;
     mq_want_pkt.want_seq    = seq;
-    mq_want_pkt.origin_node = drpc_my_node;
+    mq_want_pkt.origin_node = pk_node_v1(drpc_my_node);
     mq_want_pkt.n           = (UB)n;
     mq_want_pkt.wire_ver    = MT_WIRE_VER_VOCAB;
     mq_want_pkt._pad        = 0;
@@ -4546,15 +4546,15 @@ static void mh_publish(void)
              * before. -DMH_ADVERTISE_ANY: the old behaviour. */
             if (!mt_rprov_find(r3_fq[i].seq) && !mq_lprov_find(r3_fq[i].seq)) continue;
 #endif
-            U1 o; UW s = mc_stamp_of(r3_fq[i].seq, &o);
+            pk_node_t o; UW s = mc_stamp_of(r3_fq[i].seq, &o);
             for (INT b = 0; b < (INT)r3_fq[i].n && n < MH_MAX; b++) {
-                mh_tx.e[n].key = r3_fq[i].key[b]; mh_tx.e[n].origin = o; mh_tx.e[n].stamp = s;
+                mh_tx.e[n].key = r3_fq[i].key[b]; mh_tx.e[n].origin = pk_node_v1(o); mh_tx.e[n].stamp = s;
                 n++;
             }
         }
         m_gate_release();
         if (n > 0) {
-            mh_tx.magic = MH_MAGIC; mh_tx.origin_node = drpc_my_node;
+            mh_tx.magic = MH_MAGIC; mh_tx.origin_node = pk_node_v1(drpc_my_node);
             mh_tx.n = (U1)n; mh_tx.wire_ver = MT_WIRE_VER_VOCAB; mh_tx._pad = 0;
             mt_vocab_fp_fill(mh_tx.vocab_fp);
             if (mh_pub < 0)
@@ -4600,7 +4600,7 @@ static void mh_poll(void)
         else {
             INT bind, fi = m_find_key(k, &bind);
             if (fi >= 0 && (mt_rprov_find(r3_fq[fi].seq) || mq_lprov_find(r3_fq[fi].seq))) {
-                U1 o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
+                pk_node_t o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
                 UW s_in = mh_rx.e[i].stamp; U1 o_in = mh_rx.e[i].origin;
                 INT beats = (s_cur > s_in) || (s_cur == s_in && o_cur < o_in);
                 INT busy  = mc_push_sends_left > 0 && mc_push_pkt.key == (UB)k
@@ -4644,7 +4644,7 @@ static UB mhi_seen[DNODE_MAX];
 static UB mhi_bad[DNODE_MAX];        /* "out of range" printed once per sender  */
 
 /* the sender's per-node view of a teaching node -> the receiver's MC_SRC_* */
-static UB mhi_src_here(UB src, U1 by)
+static UB mhi_src_here(UB src, pk_node_t by)
 {
     if (src == MC_SRC_UNKNOWN || by == 0xFF) return MC_SRC_UNKNOWN;
     return by == drpc_my_node ? MC_SRC_LOCAL : MC_SRC_REMOTE;
@@ -4688,13 +4688,13 @@ static void mhi_send(void)
             found = 1; mhi_rr = (i + 1) % MC_MAX;
             mhi_tx.magic = MHI_MAGIC; mhi_tx.hist_seq = ++mhi_seq;
             mhi_tx.lost_stamp = r->lost_stamp; mhi_tx.now_stamp = r->now_stamp;
-            mhi_tx.lost_seq = r->lost_seq; mhi_tx.origin_node = drpc_my_node;
+            mhi_tx.lost_seq = r->lost_seq; mhi_tx.origin_node = pk_node_v1(drpc_my_node);
             mhi_tx.key = r->key; mhi_tx.v_lost = r->v_lost; mhi_tx.v_now = r->v_now;
 #ifdef MH_HIST_BADVAL                /* test: an answer id outside the R_VALV words */
             mhi_tx.v_lost = 200;
 #endif
             mhi_tx.lost_src = r->lost_src; mhi_tx.now_src = r->now_src;
-            mhi_tx.lost_by = r->lost_by; mhi_tx.now_by = r->now_by;
+            mhi_tx.lost_by = pk_node_v1(r->lost_by); mhi_tx.now_by = pk_node_v1(r->now_by);
             mhi_tx.lost_state = r->lost_state; mhi_tx.lost_rounds = r->lost_rounds;
             mhi_tx.has_prov = r->has_prov; mhi_tx.wire_ver = MT_WIRE_VER_VOCAB;
             for (INT j = 0; j < PFS_ID_LEN; j++) mhi_tx.lost_prov[j] = r->lost_prov[j];
@@ -4851,7 +4851,7 @@ static INT mq_answer_build(U1 asker, UB k, INT *forgotten_out)
     UW local_seq = r3_fq[fi].seq;
 
     static const U1 zero_prov[PFS_ID_LEN] = { 0 };
-    U1 fwd_origin; const U1 *fwd_prov; const U1 *lp;
+    pk_node_t fwd_origin; const U1 *fwd_prov; const U1 *lp;
     MT_REMOTE_PROV *rp = mt_rprov_find(local_seq);
     if (rp) {                                   /* learned remotely: name T     */
         fwd_origin = rp->origin_node; fwd_prov = rp->prov_head;
@@ -4877,9 +4877,9 @@ static INT mq_answer_build(U1 asker, UB k, INT *forgotten_out)
     /* 1-3b: carry the fact's stamp (its teacher's), not my arrival seq, so a
      * relayed old value cannot beat a newer one on the stamp rule. For a
      * locally-taught fact the two are the same. Still idempotent. */
-    { U1 o; mq_ans_pkt.fact_seq = mc_stamp_of(local_seq, &o); }
+    { pk_node_t o; mq_ans_pkt.fact_seq = mc_stamp_of(local_seq, &o); }
 #endif
-    mq_ans_pkt.origin_node = fwd_origin;
+    mq_ans_pkt.origin_node = pk_node_v1(fwd_origin);
     mq_ans_pkt.key         = k;
     mq_ans_pkt.val         = v;
     mq_ans_pkt.src         = ARK_PROV_SRC_SHELL;
@@ -5675,10 +5675,10 @@ static void mw_gc(void)
 #ifndef MW_GC_OFF
     UW dropped = 0;
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 id[PFS_ID_LEN]; UW len; U1 org;
+        U1 id[PFS_ID_LEN]; UW len; pk_node_t org;
         if (!pfs_slot_info(i, id, &len, &org)) continue;
         if (len != sizeof(MW_CHUNK) && len != sizeof(MW_MANIFEST)) continue;
-        U1 owner = (org == PFS_ORIGIN_SELF) ? drpc_my_node : org;
+        pk_node_t owner = (org == PFS_ORIGIN_SELF) ? drpc_my_node : org;
         if (owner >= DNODE_MAX) continue;
         if (owner == drpc_my_node ? !mw_own_have : !mw_ann_have[owner]) continue;
         if (pfs_get(id, mw_gc_buf, sizeof mw_gc_buf) != (INT)len) continue;
@@ -5709,7 +5709,7 @@ static INT mw_publish_weights(void)
     mw_man.magic    = MW_MAGIC;
     mw_man.epoch    = merge_epoch;
     mw_man.n_floats = R_NP;
-    mw_man.origin   = drpc_my_node;
+    mw_man.origin   = pk_node_v1(drpc_my_node);
     mw_man.n_chunks = N_WCHUNK;
     mw_man._pad     = 0;
 
@@ -5770,7 +5770,7 @@ static INT mw_publish_weights(void)
      * PROVEN mind/w K-DDS region topic (the Path E channel shape). */
     if (mw_ann_pub_h() >= 0) {
         mw_ann.magic = MW_MAGIC; mw_ann.epoch = merge_epoch;
-        mw_ann.origin = drpc_my_node;
+        mw_ann.origin = pk_node_v1(drpc_my_node);
         mw_ann._pad[0]=mw_ann._pad[1]=mw_ann._pad[2]=0;
         for (INT i=0;i<PFS_ID_LEN;i++) mw_ann.man_id[i] = man_id[i];
         (void)kdds_pub(mw_ann_pub, &mw_ann, (W)sizeof mw_ann);
@@ -5789,7 +5789,7 @@ static INT mw_publish_weights(void)
  * (XI.0 #3). Returns the peer's epoch on success, or -1 (manifest or any
  * chunk missing -> WANTs reissued, peer DROPPED this round). Reads the
  * manifest by CONTENT-ID from the mind/w announce — NOT the pfs/ref gossip. */
-static INT mw_fetch_peer(U1 origin)
+static INT mw_fetch_peer(pk_node_t origin)
 {
     if (origin >= DNODE_MAX || !mw_ann_have[origin]) return -1;  /* no announce */
     if (!pfs_has(mw_ann_man[origin])) {

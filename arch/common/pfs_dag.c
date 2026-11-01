@@ -232,14 +232,14 @@ static PFSD_REF *ref_alloc(void)
 }
 
 static void ref_set(PFSD_REF *r, const char *name, UW nlen,
-                    const U1 head[PFS_ID_LEN], UW seq, U1 origin)
+                    const U1 head[PFS_ID_LEN], UW seq, pk_node_t origin)
 {
     pd_memset(&r->e, 0, (UW)sizeof(r->e));
     pd_memcpy(r->e.name, name, nlen);
     r->e.name_len = (U1)nlen;
     pd_memcpy(r->e.head, head, PFS_ID_LEN);
     r->e.seq    = seq;
-    r->e.origin = origin;
+    r->e.origin = pk_node_v1(origin);
     r->used     = 1;
 
     /* the one mutation in all of p-fs — persist the ref table so the
@@ -362,7 +362,7 @@ static void beacon_publish(void)
 
     pd_memset(&tx_beacon, 0, (UW)sizeof(tx_beacon));
     tx_beacon.magic    = PFSD_REF_MAGIC;
-    tx_beacon.src_node = drpc_my_node;
+    tx_beacon.src_node = pk_node_v1(drpc_my_node);
 
     /* fill up to PFSD_REF_PER_PKT used slots, round-robin so a table
      * larger than one packet still fully gossips over a few beacons */
@@ -448,7 +448,7 @@ INT pfs_dag_save(const UB *name, UW nlen, const void *buf, UW len)
     pd_memcpy(man_scratch.content, content_id, PFS_ID_LEN);
     man_scratch.content_len = len;
     man_scratch.origin      = (drpc_my_node == 0xFF) ? PFS_ORIGIN_SELF
-                                                     : drpc_my_node;
+                                                     : pk_node_v1(drpc_my_node);
     man_scratch.name_len    = (U1)nlen;
     pd_memcpy(man_scratch.name, name, nlen);
 

@@ -159,7 +159,7 @@ static UH round_seq_gen;
  * ローカルはタスクスタックを食い破る) のため。複数コンテキストから
  * 同時に呼ばれると 1 パケットが壊れる可能性は v1 から同じだが、
  * 受信側は magic/version/長さ検査で弾き、次ラウンドが修復する。 */
-static void send_snapshot_to(UB node_id, W paced)
+static void send_snapshot_to(pk_node_t node_id, W paced)
 {
     if (node_id >= DNODE_MAX) return;
 
@@ -178,7 +178,7 @@ static void send_snapshot_to(UB node_id, W paced)
         pkt.magic     = REPLICA_MAGIC;
         pkt.version   = REPLICA_VERSION;
         pkt.type      = REPLICA_DATA;
-        pkt.src_node  = drpc_my_node;
+        pkt.src_node  = pk_node_v1(drpc_my_node);
         pkt.round_seq = round;
         pkt.part_idx  = p;
         pkt.part_cnt  = part_cnt;
@@ -368,7 +368,7 @@ void replica_boot_cry(void)
     ann.magic     = REPLICA_MAGIC;
     ann.version   = REPLICA_VERSION;
     ann.type      = REPLICA_ANNOUNCE;
-    ann.src_node  = drpc_my_node;
+    ann.src_node  = pk_node_v1(drpc_my_node);
     ann.entry_cnt = 0;
     ann.round_seq = 0;
     ann.part_idx  = 0;
@@ -438,7 +438,7 @@ void replica_tombstone(const char *name)
     pkt.magic     = REPLICA_MAGIC;
     pkt.version   = REPLICA_VERSION;
     pkt.type      = REPLICA_DATA;
-    pkt.src_node  = drpc_my_node;
+    pkt.src_node  = pk_node_v1(drpc_my_node);
     pkt.entry_cnt = 1;
     pkt.round_seq = ++round_seq_gen;
     pkt.part_idx  = 0;
