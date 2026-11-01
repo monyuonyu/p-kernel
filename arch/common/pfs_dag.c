@@ -939,7 +939,7 @@ INT pfs_dag_self_test(void (*emit)(const char *))
 /* each used slot. Touches no block contents and mutates nothing.       */
 /* ------------------------------------------------------------------ */
 UW pfs_dag_foreach_ref(void (*cb)(void *ctx, const char *name, UW seq,
-                                  UB origin), void *ctx)
+                                  pk_node_t origin), void *ctx)
 {
     UW n = 0;
     if (!cb) return 0;

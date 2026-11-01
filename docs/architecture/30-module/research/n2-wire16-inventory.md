@@ -1,6 +1,6 @@
 # N2: 8 ビットの番号を前提にしている所（洗い出しの表）
 
-設計は `n2-wire16.md`。下は `python3 tools/n2scan/inventory.py` の出力そのまま（master e8b6c5f4、2026-10-29）。手で直さない。作り直すときはこの見出しの下を消して出力を貼る。
+設計は `n2-wire16.md`。下は `python3 tools/n2scan/inventory.py` の出力そのまま（master 64b7c909、2026-11-01。packed を前に書く形と pk_node8_t も数えるようにした）。手で直さない。作り直すときはこの見出しの下を消して出力を貼る。
 
 限界: 正規表現で名前を見るだけ。名前に node・src・origin などを含まない番号の欄、バッファに 1 バイトずつ書く所、tests・samples・llm・android は見ていない。中継（relay/relay.c）の頭は構造体でないので表 1 に出ない（src・dst は 6・7 バイト目、8〜11 は予約）。**表 1 は `typedef struct __attribute__((packed)) {` の形（packed が { の前）を読まない＝KLOAD_PKT.src_node（kloader_task.h）と KL_BEACON_PKT.node_id（kloader_task.c）が漏れている（監査-103。check_types.py の W はこの形も読む）。ベア x86 の写し boot/x86/kl_net.h は u8 で書くので見えない。**
 
@@ -14,49 +14,51 @@
 
 | file:line | struct | 8-bit node fields |
 |---|---|---|
-| arch/common/include/ark_profile.h:92 | ARK_PROV | origin_node, src |
-| arch/common/include/dkva.h:105 | DKVA_Q_PKT | src_node |
-| arch/common/include/dkva.h:115 | DKVA_RESP_PKT | src_node, origin |
-| arch/common/include/dproc.h:48 | DPROC_ENTRY | node_id |
-| arch/common/include/drpc.h:140 | DRPC_PKT | src_node, dst_node |
-| arch/common/include/dtr.h:63 | DTR_ACT | src_node |
-| arch/common/include/dtr.h:73 | DTR_RESULT | src_node |
-| arch/common/include/dtr.h:87 | DTR_INPUT | src_node |
-| arch/common/include/dtr.h:96 | DTR_HEAD_ACT | src_node |
-| arch/common/include/dtr.h:412 | MT_TEACH_PKT | origin_node, src |
-| arch/common/include/dtr.h:447 | MQ_WANT_PKT | origin_node |
-| arch/common/include/dtr.h:477 | MH_ENTRY | origin |
-| arch/common/include/dtr.h:482 | MH_HAVE_PKT | origin_node |
-| arch/common/include/dtr.h:503 | MHI_HIST_PKT | origin_node |
-| arch/common/include/dtr.h:555 | CRADLE_TEACH_PKT | teacher_node |
-| arch/common/include/kdds.h:186 | KDDS_PKT | src_node |
-| arch/common/include/pfs_dag.h:83 | PFSD_MANIFEST | origin |
-| arch/common/include/pfs_dag.h:102 | PFSD_REF_ENT | origin |
-| arch/common/include/pfs_dag.h:114 | PFSD_REF_PKT | src_node |
-| arch/common/include/pfs_repl.h:91 | PFSR_ANN_PKT | src_node, origin |
-| arch/common/include/pfs_repl.h:102 | PFSR_WANT_PKT | src_node |
-| arch/common/include/pfs_repl.h:112 | PFSR_SYNC_PKT | src_node |
-| arch/common/include/pfs_repl.h:123 | PFSR_BLK_PKT | src_node, origin |
-| arch/common/include/pfs_repl.h:140 | PFSR_HOLD_PKT | src_node, origin |
-| arch/common/include/pmesh.h:52 | PMESH_ROUTE_ENTRY | dst_node |
-| arch/common/include/pmesh.h:62 | PMESH_BEACON_PKT | src_node |
-| arch/common/include/pmesh.h:72 | PMESH_DATA_PKT | src_node, dst_node |
-| arch/common/include/raft.h:56 | RAFT_PKT | src_node |
-| arch/common/include/reflex.h:128 | REFLEX_ALARM | src_node |
-| arch/common/include/replica.h:88 | REPLICA_PKT | src_node |
-| arch/common/include/sfs.h:50 | SFS_PKT | src_node |
-| arch/common/include/spawn.h:46 | SPAWN_PKT | src_node, dst_node, raft_leader |
-| arch/common/include/swim.h:59 | SWIM_GOSSIP_EVT | node_id |
-| arch/common/include/swim.h:85 | SWIM_PKT | src_node, probe_target |
-| arch/common/include/vital.h:28 | VITAL_DATA | node_id, peers_alive |
-| arch/common/include/world.h:51 | WORLD_BEACON | node_id |
-| arch/common/r3_incontext.c:5399 | MW_MANIFEST | origin |
-| arch/common/r3_incontext.c:5416 | MW_ANNOUNCE | origin |
-| arch/common/ss6_live.c:54 | SS6L_REQ | src_node, dst_node |
-| arch/common/ss6_live.c:72 | SS6L_REP | src_node |
-| arch/common/supernode.c:50 | SNF_PKT | origin, final_dst |
+| arch/common/include/ark_profile.h:93 | ARK_PROV | origin_node, src |
+| arch/common/include/dkva.h:106 | DKVA_Q_PKT | src_node |
+| arch/common/include/dkva.h:116 | DKVA_RESP_PKT | src_node, origin |
+| arch/common/include/dproc.h:49 | DPROC_ENTRY | node_id |
+| arch/common/include/drpc.h:141 | DRPC_PKT | src_node, dst_node |
+| arch/common/include/dtr.h:64 | DTR_ACT | src_node |
+| arch/common/include/dtr.h:74 | DTR_RESULT | src_node |
+| arch/common/include/dtr.h:88 | DTR_INPUT | src_node |
+| arch/common/include/dtr.h:97 | DTR_HEAD_ACT | src_node |
+| arch/common/include/dtr.h:413 | MT_TEACH_PKT | origin_node, src |
+| arch/common/include/dtr.h:448 | MQ_WANT_PKT | origin_node |
+| arch/common/include/dtr.h:478 | MH_ENTRY | origin |
+| arch/common/include/dtr.h:483 | MH_HAVE_PKT | origin_node |
+| arch/common/include/dtr.h:504 | MHI_HIST_PKT | origin_node |
+| arch/common/include/dtr.h:556 | CRADLE_TEACH_PKT | teacher_node |
+| arch/common/include/kdds.h:187 | KDDS_PKT | src_node |
+| arch/common/include/kloader_task.h:31 | KLOAD_PKT | src_node |
+| arch/common/include/pfs_dag.h:84 | PFSD_MANIFEST | origin |
+| arch/common/include/pfs_dag.h:103 | PFSD_REF_ENT | origin |
+| arch/common/include/pfs_dag.h:115 | PFSD_REF_PKT | src_node |
+| arch/common/include/pfs_repl.h:92 | PFSR_ANN_PKT | src_node, origin |
+| arch/common/include/pfs_repl.h:103 | PFSR_WANT_PKT | src_node |
+| arch/common/include/pfs_repl.h:113 | PFSR_SYNC_PKT | src_node |
+| arch/common/include/pfs_repl.h:124 | PFSR_BLK_PKT | src_node, origin |
+| arch/common/include/pfs_repl.h:141 | PFSR_HOLD_PKT | src_node, origin |
+| arch/common/include/pmesh.h:53 | PMESH_ROUTE_ENTRY | dst_node |
+| arch/common/include/pmesh.h:63 | PMESH_BEACON_PKT | src_node |
+| arch/common/include/pmesh.h:73 | PMESH_DATA_PKT | src_node, dst_node |
+| arch/common/include/raft.h:57 | RAFT_PKT | src_node |
+| arch/common/include/reflex.h:129 | REFLEX_ALARM | src_node |
+| arch/common/include/replica.h:89 | REPLICA_PKT | src_node |
+| arch/common/include/sfs.h:51 | SFS_PKT | src_node |
+| arch/common/include/spawn.h:47 | SPAWN_PKT | src_node, dst_node, raft_leader |
+| arch/common/include/swim.h:60 | SWIM_GOSSIP_EVT | node_id |
+| arch/common/include/swim.h:86 | SWIM_PKT | src_node, probe_target |
+| arch/common/include/vital.h:29 | VITAL_DATA | node_id, peers_alive |
+| arch/common/include/world.h:52 | WORLD_BEACON | node_id |
+| arch/common/kloader_task.c:300 | KL_BEACON_PKT | node_id |
+| arch/common/r3_incontext.c:5482 | MW_MANIFEST | origin |
+| arch/common/r3_incontext.c:5499 | MW_ANNOUNCE | origin |
+| arch/common/ss6_live.c:55 | SS6L_REQ | src_node, dst_node |
+| arch/common/ss6_live.c:73 | SS6L_REP | src_node |
+| arch/common/supernode.c:51 | SNF_PKT | origin, final_dst |
 
-41 structs in 20 files.
+43 structs in 22 files.
 
 ## 2. Receivers that drop a packet whose version byte is not theirs
 
@@ -78,28 +80,30 @@
 | arch/common/pfs_dag.c:593 | PFSD_VERSION |
 | arch/common/pfs_dag.c:629 | PFSD_VERSION |
 | arch/common/pfs_repl.c:412 | PFSR_VERSION |
-| arch/common/r3_incontext.c:4538 | MT_WIRE_VER_VOCAB |
-| arch/common/r3_incontext.c:4643 | MT_WIRE_VER_VOCAB |
-| arch/common/r3_incontext.c:4866 | MT_WIRE_VER_VOCAB |
-| arch/common/r3_incontext.c:5163 | MT_WIRE_VER_VOCAB |
+| arch/common/r3_incontext.c:4573 | MT_WIRE_VER_VOCAB |
+| arch/common/r3_incontext.c:4726 | MT_WIRE_VER_VOCAB |
+| arch/common/r3_incontext.c:4949 | MT_WIRE_VER_VOCAB |
+| arch/common/r3_incontext.c:5246 | MT_WIRE_VER_VOCAB |
 | arch/common/raft.c:177 | RAFT_VERSION |
 | arch/common/replica.c:282 | REPLICA_VERSION |
 | arch/common/sfs.c:293 | SFS_VERSION |
 | arch/common/sign.c:172 | SIGN_MANIFEST_VER |
 | arch/common/spawn.c:130 | SPAWN_VERSION |
 | arch/common/swim.c:580 | SWIM_VERSION |
+| arch/linux/aarch64/net_relay.c:1049 | RELAY_VER_V2 |
+| arch/linux/x86_64/net_relay.c:1049 | RELAY_VER_V2 |
 | arch/x86/persist.c:201 | PERSIST_VERSION |
 | boot/x86/kl_net.c:576 | KLOAD_VERSION |
 
-28 places.
+30 places.
 
 ## 3. Line counts by shape and area (comments skipped)
 
 | shape | arch/aarch64 | arch/common | arch/linux | arch/x86 | boot/linux | boot/x86 | kernel | lib | relay | userland | total |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| u8 node var/field (all) | 3 | 349 | 6 | 9 | 0 | 0 | 1 | 2 | 0 | 7 | 377 |
+| u8 node var/field (all) | 3 | 351 | 6 | 9 | 0 | 0 | 1 | 2 | 0 | 7 | 379 |
 | u8 node parameter | 1 | 167 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 174 |
 | 0xFF as "no node" | 0 | 90 | 0 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 100 |
-| array indexed by a node id | 2 | 254 | 92 | 5 | 2 | 0 | 0 | 0 | 21 | 1 | 377 |
+| array indexed by a node id | 2 | 254 | 86 | 5 | 2 | 0 | 0 | 0 | 24 | 1 | 374 |
 | DNODE_MAX | 1 | 346 | 19 | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 372 |
 | MAC/IP last octet = node | 3 | 1 | 18 | 3 | 0 | 3 | 0 | 0 | 0 | 0 | 28 |
