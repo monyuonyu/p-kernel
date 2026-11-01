@@ -91,6 +91,7 @@ extern int pkernel_default_node_id(void);
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" little-endian */
 #define RELAY_VER_V1       1
 #define RELAY_VER_V2       2
+#define RELAY_VER_V3       3   /* v2 + high bytes of src, dst in 8, 9 (N2b) */
 #define HEAD_LEN           12
 #define AUTH_LEN           24            /* nonce(8) + hmac16(16) */
 #define HMAC_TRUNC_LEN     16
@@ -207,17 +208,28 @@ static int v1_permit_warned    = 0;   /* one-shot permissive-mode warning  */
  * All state is static — never on a task stack (see
  * feedback_hosted_relay_stack_overflow). */
 #define RX_NODE_MAX 256
-static u64 rx_nonce_max[RX_NODE_MAX];
-static u64 rx_nonce_win[RX_NODE_MAX];
-static u8  rx_nonce_armed[RX_NODE_MAX];
+#define RX_WIDE_MAX 256     /* N2b: ids above 255 take a slot of their own */
+static u64 rx_nonce_max[RX_NODE_MAX + RX_WIDE_MAX];
+static u64 rx_nonce_win[RX_NODE_MAX + RX_WIDE_MAX];
+static u8  rx_nonce_armed[RX_NODE_MAX + RX_WIDE_MAX];
+static unsigned rx_wide_id[RX_WIDE_MAX];
 static u32 rx_ok_count          = 0;  /* authenticated, fresh frames passed */
 static u32 replay_drop_count    = 0;  /* inbound frames dropped as replays  */
 static u64 replay_drop_last_log_ms = 0; /* rate-limit for the replay log    */
 
 /* Returns 1 if (src,nonce) is fresh (accept), 0 if replay/out-of-window. */
-static int rx_replay_ok(unsigned src, u64 nonce)
+static int rx_replay_ok(unsigned id, u64 nonce)
 {
-    if (src >= RX_NODE_MAX) return 0;
+    unsigned src = id;
+    if (id >= RX_NODE_MAX) {
+        int w;
+        for (w = 0; w < RX_WIDE_MAX; w++) {
+            if (rx_wide_id[w] == id) break;
+            if (rx_wide_id[w] == 0) { rx_wide_id[w] = id; break; }
+        }
+        if (w == RX_WIDE_MAX) return 0;
+        src = RX_NODE_MAX + (unsigned)w;
+    }
     if (!rx_nonce_armed[src]) {
         rx_nonce_max[src]   = nonce;
         rx_nonce_win[src]   = 1;
@@ -314,12 +326,18 @@ static void compute_mac(unsigned version, unsigned type, unsigned src,
                         const void *payload, int plen,
                         u8 out[HMAC_TRUNC_LEN])
 {
-    u8 preamble[12];
+    u8 preamble[14];
+    size_t preamble_len = 12;
     preamble[0] = (u8)version;
     preamble[1] = (u8)type;
     preamble[2] = (u8)src;
     preamble[3] = (u8)dst;
     store_u64_le(preamble + 4, nonce);
+    if (version == RELAY_VER_V3) {
+        preamble[12] = (u8)(src >> 8);
+        preamble[13] = (u8)(dst >> 8);
+        preamble_len = 14;
+    }
 
     u8 k[SHA256_BLOCK_SIZE];
     u8 ipad[SHA256_BLOCK_SIZE], opad[SHA256_BLOCK_SIZE];
@@ -333,7 +351,7 @@ static void compute_mac(unsigned version, unsigned type, unsigned src,
     sha256_ctx c;
     sha256_init(&c);
     sha256_update(&c, ipad, SHA256_BLOCK_SIZE);
-    sha256_update(&c, preamble, sizeof(preamble));
+    sha256_update(&c, preamble, preamble_len);
     if (plen > 0) sha256_update(&c, payload, (size_t)plen);
     sha256_final(&c, inner);
     sha256_init(&c);
@@ -352,15 +370,25 @@ static int build_packet(unsigned char *buf,
     if (plen < 0) plen = 0;
     if (plen > MAX_PAYLOAD) plen = MAX_PAYLOAD;
 
+    /* N2b: v3 only for an id v2 cannot carry; every other frame stays v1/v2
+     * and an old relay or node sees what it always saw. 255 as dst stays v2:
+     * it is the broadcast MAC's last byte until the kernel's ids widen. A wide
+     * frame needs the MAC: never one without the key. */
+    int wide = (src > 254 || dst > 255);
+    if (wide && wire_version == RELAY_VER_V1) return 0;
+
     buf[0] = (u8)(RELAY_MAGIC      & 0xff);
     buf[1] = (u8)((RELAY_MAGIC>>8) & 0xff);
     buf[2] = (u8)((RELAY_MAGIC>>16)& 0xff);
     buf[3] = (u8)((RELAY_MAGIC>>24)& 0xff);
-    buf[4] = (u8)wire_version;
+    buf[4] = wide ? (u8)RELAY_VER_V3 : (u8)wire_version;
     buf[5] = (u8)type;
     buf[6] = (u8)src;
     buf[7] = (u8)dst;
-    buf[8] = buf[9] = buf[10] = buf[11] = 0;
+    buf[8] = wide ? (u8)(src >> 8) : 0;
+    buf[9] = wide ? (u8)(dst >> 8) : 0;
+    buf[10] = wide ? 0 : RELAY_VER_V3;   /* "I read v3" (outside the v2 MAC) */
+    buf[11] = 0;
 
     if (wire_version == RELAY_VER_V1) {
         if (payload && plen > 0) memcpy(buf + HEAD_LEN, payload, (size_t)plen);
@@ -369,8 +397,8 @@ static int build_packet(unsigned char *buf,
     /* v2 */
     u64 nonce = mint_nonce();
     store_u64_le(buf + HEAD_LEN, nonce);
-    compute_mac(RELAY_VER_V2, type, src, dst, nonce, payload, plen,
-                buf + HEAD_LEN + 8);
+    compute_mac(wide ? RELAY_VER_V3 : RELAY_VER_V2, type, src, dst, nonce,
+                payload, plen, buf + HEAD_LEN + 8);
     if (payload && plen > 0) {
         memcpy(buf + HEAD_LEN + AUTH_LEN, payload, (size_t)plen);
     }
@@ -380,7 +408,7 @@ static int build_packet(unsigned char *buf,
 /* Fire-and-forget to relay_list[idx]. Never blocks the caller. */
 static void udp_send_to(int idx, const unsigned char *buf, int len)
 {
-    if (sock_fd < 0 || idx < 0 || idx >= relay_count) return;
+    if (sock_fd < 0 || idx < 0 || idx >= relay_count || len <= 0) return;
 #ifdef HEARTBEAT_CERT
     if (hb_use_mock) {
         /* cert seam: count the emit, stamp the mock clock, no real socket. */
@@ -759,6 +787,9 @@ int net_relay_init(void)
 
     /* N-0: distinct, stable per-install id when PKERNEL_NODE_ID is unset. */
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+#ifdef N2_NC_TRUNC
+    my_node_id &= 0xFF;    /* [n2-mix] negative control: 300 becomes 44 */
+#endif
     if (my_node_id < 1 || my_node_id > 255) {
         /* G7: don't silently rewrite a bad id to 1 (which would collide with
          * node 1) — say what happened. */
@@ -1015,8 +1046,15 @@ int net_relay_recv(void *out, int maxlen)
 
         unsigned ver  = buf[4];
         unsigned type = buf[5];
-        int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
+        int hdr = (ver == RELAY_VER_V2 || ver == RELAY_VER_V3)
+                ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
         if (n < hdr) continue;
+        if (ver == RELAY_VER_V3 && wire_version != RELAY_VER_V2) continue;   /* no key, no check */
+        unsigned rx_src = buf[6], rx_dst = buf[7];
+        if (ver == RELAY_VER_V3) {
+            rx_src |= (unsigned)buf[8] << 8;
+            rx_dst |= (unsigned)buf[9] << 8;
+        }
 
         /* N-2d REFL1 reflexive echo (§C.1.a): a keepalive whose payload begins
          * with "REF1" and carries a 6-byte ip:port trailer the relay appended.
@@ -1053,11 +1091,11 @@ int net_relay_recv(void *out, int maxlen)
          * was wide open: anyone who could send to our UDP tuple from the
          * relay's address could inject arbitrary frames into the stack. */
         if (wire_version == RELAY_VER_V2) {
-            if (ver == RELAY_VER_V2) {
+            if (ver == RELAY_VER_V2 || ver == RELAY_VER_V3) {
                 u64 nonce = load_u64_le(buf + HEAD_LEN);
                 int plen  = (int)n - hdr - refl_trailer;   /* REFL trailer is outside the MAC */
                 u8 want[HMAC_TRUNC_LEN];
-                compute_mac(RELAY_VER_V2, buf[5], buf[6], buf[7], nonce,
+                compute_mac(ver, buf[5], rx_src, rx_dst, nonce,
                             buf + hdr, plen, want);
                 if (!ct_eq(want, buf + HEAD_LEN + 8, HMAC_TRUNC_LEN)) {
                     note_mac_drop();
@@ -1092,7 +1130,7 @@ int net_relay_recv(void *out, int maxlen)
          * from this src (per-source 64-packet window). Fresh nonces are never
          * dropped, so legitimate traffic always passes. v1 frames carry no
          * nonce and so are not replay-protected (that is what v2 is for). */
-        if (rx_have_nonce && !rx_replay_ok(buf[6], rx_nonce)) {
+        if (rx_have_nonce && !rx_replay_ok(rx_src, rx_nonce)) {
             note_replay_drop();
             continue;
         }
@@ -1458,6 +1496,6 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
     hb_use_mock = 0;
 
     if (hb_fail) pr("[heartbeat] RESULT: FAIL\r\n");
-    else         pr("[heartbeat] RESULT: 3/3 PASS\r\n");
+    else         pr("[heartbeat] RESULT: 10/10 PASS\r\n");
 }
 #endif /* HEARTBEAT_CERT */
