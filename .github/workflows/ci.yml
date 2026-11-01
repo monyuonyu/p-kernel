@@ -3356,7 +3356,7 @@ jobs:
         run: |
           bash tests/ci/test_apt_update.sh tests/ci/apt_update.sh
           # negative control: without the time limit U1 and U3 must go red
-          sed 's/timeout "$SECS" //' tests/ci/apt_update.sh > /tmp/apt_update_nc.sh
+          sed 's/timeout -k "$KILL" "$SECS" //' tests/ci/apt_update.sh > /tmp/apt_update_nc.sh
           if bash tests/ci/test_apt_update.sh /tmp/apt_update_nc.sh; then exit 1; fi
           # no bare update left in this file (the check names itself, so count)
           test "$(grep -cE '^ +sudo apt-get update$' .github/workflows/ci.yml)" = 0
