@@ -2279,6 +2279,25 @@ static float st_blob_w_at(const void *buf, size_t idx)
     return f;
 }
 
+/* NaN or Inf? (exponent all ones) */
+static int st_bad_f(float f)
+{
+    ST_F32 v; v.f = f;
+    return (v.u & 0x7F800000U) == 0x7F800000U;
+}
+
+/* the weights of a model or of a blob: a merge reads nothing else */
+static int st_w_finite(const float *w, int n)
+{
+    for (int i = 0; i < n; i++) if (st_bad_f(w[i])) return 0;
+    return 1;
+}
+static int st_blob_w_finite(const void *buf, int n)
+{
+    for (int i = 0; i < n; i++) if (st_bad_f(st_blob_w_at(buf, (size_t)i))) return 0;
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* SS-3 — same-tier merge cohort (special-structure-mind.md §3.2/§8.4) */
 /*                                                                     */
@@ -2296,17 +2315,37 @@ PK_NOSW_FN(int, st_merge_cohort, (st_model *into,
     if (!into || !into->w) return ST_E_ARG;
     if (count < 0) return ST_E_ARG;
     if (count > 0 && (!peer_blobs || !peer_lens)) return ST_E_ARG;
+    if (count > ST_COHORT_MAX) return ST_E_ARG;
 
     /* PASS 1 — tier guard: accept only peers whose tier+shape EXACTLY match the
      * resident model (st_blob_tier_ok, the same fail-closed predicate st_load
      * uses).  A cross-tier / wrong-shape / short blob is SKIPPED, never coerced
-     * (islands by construction).  We record acceptance so PASS 2 reduces over a
-     * fixed canonical set. */
+     * (islands by construction).  So is a peer with a NaN or Inf in w[] (G4 of
+     * research/b5-region-rounds.md): one such value makes the whole model NaN a
+     * step later, and the loss need not show it.  The mask makes PASS 2 reduce
+     * over a fixed canonical set. */
     int accepted = 0;
+    uint64_t take = 0;
+    int np = into->n_params;
     for (int k = 0; k < count; k++) {
-        if (st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) accepted++;
+        if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
+#ifndef ST_MERGE_NO_FINITE  /* falsifier for [guarded-*] [cohort-*] */
+        if (!st_blob_w_finite(peer_blobs[k], np)) continue;
+#endif
+        take |= (uint64_t)1 << k;
+        accepted++;
     }
     if (accepted == 0) return 0;   /* no cohort peer -> model BYTE-UNCHANGED */
+#ifndef ST_MERGE_NO_FINITE
+    /* finite parts can still sum to Inf: look before anything is written */
+    if (!st_w_finite(into->w, np)) return 0;
+    for (int i = 0; i < np; i++) {
+        float s = into->w[i];
+        for (int k = 0; k < count; k++)
+            if (take >> k & 1) s += st_blob_w_at(peer_blobs[k], (size_t)i);
+        if (st_bad_f(s)) return 0;
+    }
+#endif
 
     /* PASS 2 — per-parameter canonical reduction.  For each weight i:
      *   sum = into->w[i]  +  Σ_{accepted peers k, ascending} peer_k.w[i]
@@ -2316,13 +2355,10 @@ PK_NOSW_FN(int, st_merge_cohort, (st_model *into,
      * -> byte-identical, and the result is identical across arches under
      * -ffp-contract=off. */
     float denom = (float)(accepted + 1);
-    int np = into->n_params;
     for (int i = 0; i < np; i++) {
         float s = into->w[i];
-        for (int k = 0; k < count; k++) {
-            if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
-            s += st_blob_w_at(peer_blobs[k], (size_t)i);
-        }
+        for (int k = 0; k < count; k++)
+            if (take >> k & 1) s += st_blob_w_at(peer_blobs[k], (size_t)i);
         into->w[i] = s / denom;
     }
 
@@ -3217,6 +3253,11 @@ PK_NOSW_FN(int, st_merge_guarded, (st_model *into, const st_model *peer,
     if (!st_same_shape(into, peer) || !st_same_shape(into, init) ||
         !st_same_shape(into, scratch) || !val || n < 1) return ST_E_ARG;
     int np = into->n_params;
+#ifndef ST_MERGE_NO_FINITE
+    /* the pick reads the loss, and the loss does not see a row the windows
+     * miss (audit-116): the child would carry the value. Nothing is written. */
+    if (!st_w_finite(into->w, np) || !st_w_finite(peer->w, np)) return ST_E_ARG;
+#endif
     float thrA = st_ties_threshold(into->w, init->w, np);
     float thrB = st_ties_threshold(peer->w, init->w, np);
     if (thrA < 0.0f || thrB < 0.0f) return ST_E_OOM;

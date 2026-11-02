@@ -528,7 +528,9 @@ int  st_delta_sign(const st_model *base, const st_model *ft, st_model *dst,
  * the result is deterministic. Adam state of `into` is reset (as in
  * st_merge_cohort). Because the parents are candidates, the child is never
  * worse than the worse parent ON THE VALIDATION WINDOWS; generalisation is
- * the cert's job (disjoint test windows). Returns the chosen index
+ * the cert's job (disjoint test windows). A parent with a NaN or Inf in w[] is
+ * refused (ST_E_ARG, nothing written), the loss cannot be trusted to show it.
+ * Returns the chosen index
  * (0..ST_MERGE_NALPHA-1 = alpha points, ST_MERGE_NALPHA = TIES), or negative.
  * cand_loss[ST_MERGE_NALPHA+1] (optional) receives each candidate's
  * validation loss (-1 for candidates not tried).

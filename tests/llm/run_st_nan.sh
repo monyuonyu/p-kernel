@@ -111,7 +111,7 @@ want nomerge "$L" FAIL "[guarded-nan]"
 want nomerge "$L" FAIL "[guarded-into]"
 want nomerge "$L" FAIL "[guarded-distill]"
 want nomerge "$L" FAIL "[cohort-nonfinite]"
-want nomerge "$L" PASS "[guarded-clean]"
+want nomerge "$L" PASS "[cohort-clean]"
 
 echo ""
 if [ "$FAILS" -eq 0 ]; then
