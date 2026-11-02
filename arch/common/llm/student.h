@@ -372,6 +372,15 @@ int  st_merge_cohort(st_model *into,
                      const void *const *peer_blobs, const size_t *peer_lens,
                      int count);
 
+/* st_round_merge (B5, research/b5-region-rounds.md): one round's average. gens[k]
+ * is the generation peer k started its round from (the blob has no field for
+ * it, the caller carries it). Only peers of generation `gen` go to
+ * st_merge_cohort; none accepted leaves the model BYTE-UNCHANGED, as do its
+ * finite checks. Returns the peers accepted, or negative ST_E_*.             */
+int  st_round_merge(st_model *into, uint32_t gen,
+                    const void *const *peer_blobs, const size_t *peer_lens,
+                    const uint32_t *gens, int count);
+
 /* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
  *
  * st_quant_fake: "fake-quantize" the MATRICES of `src` into `dst` — symmetric

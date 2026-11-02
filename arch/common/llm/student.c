@@ -2413,6 +2413,14 @@ PK_NOSW_FN(int, st_merge_cohort, (st_model *into,
     return accepted;
 }
 
+int st_round_merge(st_model *into, uint32_t gen,
+                   const void *const *peer_blobs, const size_t *peer_lens,
+                   const uint32_t *gens, int count)
+{
+    (void)into; (void)gen; (void)peer_blobs; (void)peer_lens; (void)gens; (void)count;
+    return ST_E_ARG;
+}
+
 /* ================================================================== */
 /* brain self-quantization, stage 1 (st_quant_fake — see student.h)   */
 /* ================================================================== */
