@@ -7,6 +7,7 @@
 - 設計の読み直しで直す所は無かった。master を枝に取り込んだ（03863272。rebase はしない）
 - 試験先: 判定の自己試験 54819537（判定役は空で赤）、cert の台本 497d52ca。この木の見た種 22 は keep に `[d5c-keep-min]` の行が無く line 1 赤、near・NOKEEP も赤にならない
 - 実装 51c5fdca（試験だけ、student.c は変えていない）: `-DD5C_STAGE9` の `[d5c-keep-min]`、`-DD5C_PARENT_NEAR`、`-DD5C_PARENT_NOKEEP`、`D5C_ONLY_S1=1`、`[d5c9-self]` を CI に。STAGE9 は STAGE8 なしで組めない（#error）
+- 既定のビルド（旗なし、全部の腕）の出力は master 43631290 の試験と全バイト同じ（121 行）。crown は aarch64 11be1015 362716・x86 f3a94e2d 380523＝master と同じ（容器で同じ回に組んだ）
 - 見た種 22 で確かめた: keep から keep-min の行を除くと第8段の cert の plain-22.log と全バイト同じ、last は last-22.log と全バイト同じ、near の S1 の行は探り near-22.log と同じ
 
 ## 結果（容器 /build/d9/cert、21:14〜22:13、4 並列で 38 本・各 1 回。木 51c5fdca。出力 `pk-scratch/d9i/d9-out.tgz`）
