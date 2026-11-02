@@ -216,7 +216,8 @@ static void gate_checks(void)
     b0 = g_cap_bad;
     unsigned w1 = tick(), w2 = tick();
     printf("    clean baby: writes %u %u, held %f\n", w1, w2, (double)student_dmn_heldout_loss());
-    CHECK(w1 == 1 && w2 == 1 && g_cap_bad == b0, "[gate-clean] a clean baby is still written, twice");
+    CHECK(w1 == 1 && w2 == 1 && g_cap_bad == b0 && student_nonfinite_refused() == 0,
+          "[gate-clean] a clean baby is still written, twice, nothing refused");
 
     /* the first save has no loss to compare with */
     fresh(); b0 = g_cap_bad;
@@ -225,6 +226,7 @@ static void gate_checks(void)
     printf("    NaN, first save: writes %u (non-finite %u), held %f\n", w, g_cap_bad - b0,
            (double)student_dmn_heldout_loss());
     CHECK(g_cap_bad == b0, "[gate-first] a NaN baby is not written on the first save");
+    CHECK(student_nonfinite_refused() >= 1, "[gate-refused-count] the refusal is counted");
 
     /* after a good save: the loss comparison itself */
     fresh(); tick(); b0 = g_cap_bad;
