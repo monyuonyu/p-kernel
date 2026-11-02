@@ -81,6 +81,7 @@
 ## 2026-11-02 21:00 の回（mind/hist の順・押し返しの枠。実装の回、監査はまだ）
 
 - **`[mind-hist-order]`**（`tests/host/run_mind_hist_order.sh`、CI の UMP x86_64 に 1 段）: 2 台が互いに自分の記録を持ち、`-DMT_RX_INJECT -DMHI_EVERY=1` で毎刻み mind/hist を出す。容器 1 本ずつ（cert と同時）: 素 ALL PASS 2/2、`-DMH_PUB_FIRST` は H1・H2 赤 2/2、`-DMH_HIST_IGNORE` は H1・H2 赤 1/1。監査-106 の「mind/hist 側は試験が見分けない」は閉じた。見込みは走らせる前にコミット（04142e9b）
+- crown は aarch64 11be1015 362716・x86 f3a94e2d 380523＝master と同じ（docs・tests・ci.yml だけ、容器で同じ回に組んだ）
 - **押し返しの枠は 1 つ**（`MST_TWO=1`、CI の外）: B に古い鍵 2 つ。見込みは緑、ALL PASS 2/2、普通の形も ALL PASS。1 回の要約で 2 つ押すと後の鍵が枠に残り、ログでは snow→sky の順に治った＝先の鍵は次の要約で押し直される。`-DMH_NO_HAVE_PUSH` は S4・S5 赤に加えて S2 も赤（fire は窓の 60 秒より後に届いた＝cert と重なった時間のせいと読むが、確かめていない）。**言えないこと**: 衝突の押し返しが have-push に上書きされ、その事実が広告されない（出どころの記録が無い）場合は測っていない
 
 ## 区切り（2026-11-02、inbox #38 の 5）: 設計の合格の線
