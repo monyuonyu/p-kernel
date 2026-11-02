@@ -79,13 +79,25 @@ if [ -z "$short" ]; then ok U6; else bad "U6 $(echo "$short" | tr '\n' ' ')"; fi
 # U7: a GitHub-hosted job installs through apt_install.sh. CI 41469844784 (2026-11-03): the
 # RNG0 job's bare `apt-get install` sat until the job's 30 minutes, "cancelled", a new red for
 # promote. Self-hosted jobs are out of this: they do not use the azure mirror.
+# Any place on a line of a run: (one-line form, after && or ;), apt as well as apt-get, with or
+# without sudo and options (audit-116: the first form saw only `sudo apt-get install` at the
+# head of a line). apt_install.sh has an underscore, so it is not this.
 bare="$(python3 - "$CI" <<'PY'
 import re, sys
+BARE = re.compile(r'(^|[\s;&|(])apt(-get)?(\s+-\S+)*\s+install(\s|$)')
 s = open(sys.argv[1]).read()
 parts = re.split(r'^  ([A-Za-z0-9_-]+):\s*$', s[s.index('\njobs:'):], flags=re.M)
 for name, body in zip(parts[1::2], parts[2::2]):
-    if re.search(r'^    runs-on: ubuntu-latest', body, re.M) and re.search(r'^\s+sudo apt-get install', body, re.M):
-        print(name)
+    r = re.search(r'^    runs-on: *(.*)$', body, re.M)
+    if not r or 'self-hosted' in r[1]:
+        continue
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith('#') or line.startswith('- name:') or line.startswith('name:'):
+            continue
+        if BARE.search(line):
+            print(name)
+            break
 PY
 )"
 if [ -z "$bare" ]; then ok U7; else bad "U7 $(echo "$bare" | tr '\n' ' ')"; fi
