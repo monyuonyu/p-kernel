@@ -63,6 +63,9 @@ if [ -n "${SS2_BASE_STUDENT:-}" ] && [ -f "${SS2_BASE_STUDENT}" ]; then
 elif git -C "$ROOT" cat-file -e "${BASE_REF}:arch/common/llm/student.c" 2>/dev/null; then
     git -C "$ROOT" show "${BASE_REF}:arch/common/llm/student.c" > "$BASE_DIR/student.c"
     git -C "$ROOT" show "${BASE_REF}:arch/common/llm/student.h" > "$BASE_DIR/student.h"
+    # student.c includes ../include/pk_nosw.h since the exit dispatch
+    mkdir -p "$WORK/include"
+    git -C "$ROOT" show "${BASE_REF}:arch/common/include/pk_nosw.h" > "$WORK/include/pk_nosw.h" 2>/dev/null
     echo "[base] extracted pre-SS-2 student from git ${BASE_REF}"
 else
     echo "[base] FAILED to obtain a pre-SS-2 base student (ref=${BASE_REF})"
