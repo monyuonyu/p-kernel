@@ -75,7 +75,7 @@ void pfs_set_put_hook(PFS_PUT_HOOK fn);
  * out params for slot idx (0..PFS_MAX_BLOCKS-1). Returns 1 if the slot
  * holds a block, 0 if empty / out of range. Any out param may be NULL. */
 INT  pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
-                   U1 *origin_out);
+                   pk_node_t *origin_out);
 
 /* Retrieve the block named by id into buf (up to maxlen bytes). Returns the
  * block's full length on success (may exceed maxlen if the caller's buffer

@@ -394,12 +394,20 @@ static void cmd_net(void)
      * 8->32 scale-up — that bound, not any kdds resource limit, was what
      * stranded nodes 9+ in single-node mode at runtime). */
     if (mac[3] == 0 && mac[4] == 0 && mac[5] >= 1 && mac[5] <= DNODE_MAX) {
-        UB  nid = (UB)(mac[5] - 1);
+        pk_node_t nid = (UB)(mac[5] - 1);
         UW  nip = ((UW)mac[5] << 24) | 0x0000010AUL;   /* 10.1.0.N */
         drpc_init(nid, nip);
         print("[net] DRPC initialised (10.1.0.");
         print_dec_s((W)mac[5]);
         print(")\r\n");
+    } else if (mac[3] == 0 && mac[4] != 0) {
+        /* N2b: a wide id. Only SWIM's membership knows it so far (swim.c):
+         * every other table is sized DNODE_MAX, so drpc stays uninitialised
+         * and the rest of this node runs single-node. */
+        pk_node_t nid = (pk_node_t)((((UW)mac[4] << 8) | mac[5]) - 1);
+        swim_wide_self(nid, pk_node_ip(nid));
+        print("[net] wide node "); print_dec_s((W)nid + 1);
+        print(": SWIM membership only, single-node otherwise\r\n");
     } else if (mac[3] == 0 && mac[4] == 0 && mac[5] > DNODE_MAX) {
         /* G7: a valid relay-wire node id (1..255) that exceeds the cluster
          * cap. This node joins the relay transport but its index nid=mac[5]-1
@@ -989,6 +997,8 @@ EXPORT INT usermain(void)
             if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
             else if (al >= 3 && a[0]=='t'&&a[1]=='e'&&a[2]=='a') swim_teacher_gossip_self_test(print);
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
+            /* N2b: `nodes wide` drives the v2 receive path with crafted packets. */
+            else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
             /* wave-selfelect cert: `nodes selfelect` proves a teacher node
              * SELF-RECOGNIZES (region_teacher()==self). "sel" distinct. */
             else if (al >= 3 && a[0]=='s'&&a[1]=='e'&&a[2]=='l') swim_selfelect_self_test(print);

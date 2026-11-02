@@ -216,7 +216,7 @@ void sap_evaluate(void)
     /* FORCE > measured: a forced node is never demoted and skips fitness. */
     if (sap_is_forced()) return;
 
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     if (me == 0xFF) return;     /* no cluster id yet — nothing to set */
 
     SAP_SIGNALS s;
@@ -278,7 +278,7 @@ void sap_self_test(void (*pr)(const char *))
     sap_fail = 0;
     pr("[autopromote] measured-capability supernode auto-promotion cert (N-2d)\r\n");
 
-    UB saved_node = drpc_my_node;
+    pk_node_t saved_node = drpc_my_node;
     const UB ME   = 3;
     drpc_my_node  = ME;
 

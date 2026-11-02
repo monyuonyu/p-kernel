@@ -15,8 +15,8 @@
  *  NOTE: this shim is for the in-proc cert only; it is never part of any boot.
  */
 
-/* drpc_my_node is `UB` (unsigned char). 0xFF == SOLO / not-distributed. */
-unsigned char drpc_my_node = 0xFF;
+/* drpc_my_node is pk_node_t. 0xFF == SOLO / not-distributed. */
+unsigned short drpc_my_node = 0xFF;   /* pk_node_t on hosted (N2b) */
 
 /* sio frame output channel (kdds.c / pfs_repl.c diagnostics). */
 void sio_send_frame(const unsigned char *buf, int size) { (void)buf; (void)size; }

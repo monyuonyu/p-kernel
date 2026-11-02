@@ -104,6 +104,40 @@ _Static_assert(sizeof(SWIM_GOSSIP_EVT) == 4,
 _Static_assert(sizeof(SWIM_PKT) == 24,
                "SWIM_PKT must stay 24 bytes (wire-compatible with pre-N-2b nodes)");
 
+#ifdef _TK_HOSTED_LIBC_
+/* N2b, research/n2-wire16.md: the v2 packet, 16-bit ids. Only a wide id's own
+ * beacon and the news of wide ids ride it; everything else stays v1. An old
+ * node drops it at the version check. */
+#define SWIM2_VERSION 2
+
+typedef struct {
+    UH  node_id;        /* 0xFFFF = not a node */
+    UB  state;
+    UB  incarnation;
+    UB  capability;
+} __attribute__((packed)) SWIM2_GOSSIP_EVT;
+
+typedef struct {
+    UW  magic;
+    UB  version;        /* SWIM2_VERSION */
+    UB  type;
+    UH  seq;
+    UH  src_node;
+    UH  probe_target;
+    UB  gossip_cnt;
+    UB  _pad;
+    SWIM2_GOSSIP_EVT gossip[SWIM_GOSSIP_MAX];
+} __attribute__((packed)) SWIM2_PKT;
+
+_Static_assert(sizeof(SWIM2_GOSSIP_EVT) == 5, "SWIM2_GOSSIP_EVT layout");
+_Static_assert(sizeof(SWIM2_PKT) == 29, "SWIM2_PKT layout");
+
+/* A wide node says who it is (usermain, instead of drpc_init). */
+void swim_wide_self(pk_node_t id, UW ip);
+/* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
+INT swim_wide_self_test(void (*emit)(const char *));
+#endif
+
 /* ------------------------------------------------------------------ */
 /* 公開 API                                                            */
 /* ------------------------------------------------------------------ */

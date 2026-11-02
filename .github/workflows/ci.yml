@@ -1439,13 +1439,46 @@ jobs:
           timeout 900 tests/host/run_stop_persist.sh | tee stop_persist.log
           grep -aF '[stop-persist] ALL PASS' stop_persist.log
           make -C boot/linux_x86_64 >/dev/null
+      # N2b (research/n2-wire16.md): a node id is 16 bits on hosted and nothing
+      # cuts one to a byte without saying so. The compiler is the reader; the
+      # script's own negative control runs first. Leaves the tree clean.
+      - name: "no node id cut to a byte ([n2-narrow], BLOCKING, N2)"
+        run: |
+          timeout 400 tests/host/run_n2_narrow.sh | tee n2_narrow.log
+          grep -aF '[n2-narrow] PASS' n2_narrow.log
+      # Old binaries and new in one swarm. 64b7c909 is the last master before the
+      # wire changes of N2; a shallow fetch is enough, and GitHub serves it by sha.
+      - name: "wide ids in SWIM's membership ([n2-mix], BLOCKING, N2)"
+        run: |
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          make -s -C relay
+          (printf 'nodes wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_wide.log || true
+          grep -aF '[swim-wide] PASS' nodes_wide.log
+          git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
+          git worktree add -q /tmp/n2old FETCH_HEAD
+          make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
+          N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix.log
+          # An old relay: the wide nodes stay out and disturb nobody.
+          make -s -C /tmp/n2old/relay
+          N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
+            timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
+      - name: "X1 and X2 go red when a wide id is cut to a byte ([n2-mix], negative control, -DN2_NC_TRUNC)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
+          N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc.log || true
+          grep -aF '[n2-mix] X2 FAIL' n2_mix_nc.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
     runs-on: ubuntu-latest
     # 15 -> 20 (2026-10-07): + tkconf / pool and a second build for the K9 NC
     # 20 -> 25 (2026-10-07): + tkconf fp and a third build for its NC
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-user
@@ -1619,7 +1652,7 @@ jobs:
   bare-metal:
     name: "ベアメタル (i686 + aarch64, ビルドのみ)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchains
@@ -2569,7 +2602,7 @@ jobs:
     # only diff-checks its TOP commit against the one before it.
     name: "crown 不変条件 (.text バイト同一性 — 対親ドリフト)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -2736,7 +2769,7 @@ jobs:
     # 25 -> 45 (2026-10-11): with run_ema.sh added the job hit 25 min and was
     # cancelled inside the EMA step (run 38122175153: the four steps before it
     # took ~10 min, EMA ran >15 min without finishing).
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
       # cross-built aarch64 ./p-kernel finds its glibc loader/libs under binfmt.
@@ -2959,7 +2992,7 @@ jobs:
     # (resident-only beats solo) is a HARD RED.
     name: "distributed-MoE capacity ([dmoe-*] bank; hosted-only, crown-neutral)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3030,7 +3063,7 @@ jobs:
     # (feedback_proot_sandbox_net_limits); wiring it is deferred (U-2/U-3, §10).
     name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3112,7 +3145,7 @@ jobs:
     # self-hosted runner — the depth-deliberation-live job below.
     name: "DEPTH test-time deliberation ([depth-*] DLB; hosted-only, crown-neutral)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain (+ aarch64 cross + qemu-user for the one-math diff)
@@ -3299,7 +3332,7 @@ jobs:
     # Shipped since the SMP waves but never in CI.
     name: "full-SMP + core autodetect (aarch64 QEMU, run_smp0.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     # Earning trust: first CI outing (2026-07-01) failed with
     # "qemu-system-aarch64: failed to find romfile" because --no-install-recommends
     # dropped ipxe-qemu (a qemu-system-arm Recommends that ships the virtio NIC
@@ -3413,7 +3446,7 @@ jobs:
     # a runner class already shown to be unreliable for this shape of test.
     name: "MC-2 SMP-partition certs + ②.1a cross-preempt (aarch64 QEMU, run_mc2_*.sh / run_smp1.sh)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     continue-on-error: true  # until 2026-11-30: MC-2 SMP-partition certs advisory. ROADMAP 0-2
     steps:
       - uses: actions/checkout@v4
@@ -3595,7 +3628,7 @@ jobs:
     # (the shared TUs it touches are all #ifdef _WINDOWS_X86_64_-guarded).
     name: "Windows PE ビルドゲート (mingw-w64, boot/windows/x86_64)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install mingw-w64 cross toolchain

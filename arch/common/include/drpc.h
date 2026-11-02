@@ -174,14 +174,14 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    UB  node_id;
+    pk_node_t node_id;
     UW  ip;
     UB  state;  /* DNODE_UNKNOWN / ALIVE / SUSPECT / DEAD               */
     UB  missed; /* consecutive missed heartbeat periods                  */
 } DNODE;
 
 extern DNODE dnode_table[DNODE_MAX];
-extern UB    drpc_my_node;          /* 0xFF = not initialized            */
+extern pk_node_t drpc_my_node;          /* 0xFF = not initialized            */
 
 /* ------------------------------------------------------------------ */
 /* Init & tasks                                                        */

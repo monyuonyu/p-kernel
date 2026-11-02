@@ -55,7 +55,7 @@ _Static_assert(LOOKUP_MAX_MEMBERS >= DNODE_MAX,
 typedef struct {
     U4 hi;     /* digest bytes 0..3, big-endian */
     U4 lo;     /* digest bytes 4..7, big-endian */
-    UB id;     /* candidate node id             */
+    pk_node_t id; /* candidate node id             */
 } HRW_SCORE;
 
 _Static_assert(sizeof(HRW_SCORE) <= 12,
@@ -65,12 +65,27 @@ _Static_assert(sizeof(HRW_SCORE) <= 12,
 /* weight(n, k) = sha256(key || node_id), first 8 digest bytes         */
 /* ------------------------------------------------------------------ */
 
-static void hrw_weight(const U1 key[LOOKUP_KEY_LEN], UB node,
+static void hrw_weight(const U1 key[LOOKUP_KEY_LEN], pk_node_t node,
                        U4 *hi, U4 *lo)
 {
     U1 buf[LOOKUP_KEY_LEN + 1];
     for (INT i = 0; i < LOOKUP_KEY_LEN; i++) buf[i] = key[i];
-    buf[LOOKUP_KEY_LEN] = node;
+    buf[LOOKUP_KEY_LEN] = (U1)node;
+#ifdef _TK_HOSTED_LIBC_
+    /* A narrow id hashes as it always did, one byte, so old and new nodes agree
+     * on where a narrow id ranks. A wide id hashes its two bytes. */
+    if (node > 0xFF) {
+        U1 wbuf[LOOKUP_KEY_LEN + 2];
+        for (INT i = 0; i < LOOKUP_KEY_LEN; i++) wbuf[i] = key[i];
+        wbuf[LOOKUP_KEY_LEN] = (U1)node;
+        wbuf[LOOKUP_KEY_LEN + 1] = (U1)(node >> 8);
+        U1 wd[SHA256_DIGEST_SIZE];
+        sha256(wbuf, sizeof(wbuf), wd);
+        *hi = ((U4)wd[0] << 24) | ((U4)wd[1] << 16) | ((U4)wd[2] << 8) | (U4)wd[3];
+        *lo = ((U4)wd[4] << 24) | ((U4)wd[5] << 16) | ((U4)wd[6] << 8) | (U4)wd[7];
+        return;
+    }
+#endif
 
     U1 d[SHA256_DIGEST_SIZE];
     sha256(buf, sizeof(buf), d);
@@ -93,8 +108,8 @@ static INT hrw_before(const HRW_SCORE *a, const HRW_SCORE *b)
 /* ------------------------------------------------------------------ */
 
 INT lookup_responsible(const U1 key[LOOKUP_KEY_LEN],
-                       const UB *members, INT n_members,
-                       UB out[], INT r)
+                       const pk_node_t *members, INT n_members,
+                       pk_node_t out[], INT r)
 {
     if (key == NULL || members == NULL || out == NULL) return -1;
     if (n_members <= 0 || r <= 0)                      return -1;
@@ -129,9 +144,9 @@ INT lookup_responsible(const U1 key[LOOKUP_KEY_LEN],
 /* ------------------------------------------------------------------ */
 
 INT lookup_responsible_region(const U1 key[LOOKUP_KEY_LEN],
-                              UB out[], INT r)
+                              pk_node_t out[], INT r)
 {
-    UB members[DNODE_MAX];
+    pk_node_t members[DNODE_MAX];
     INT n = 0;
 
     region_recompute();
@@ -143,9 +158,9 @@ INT lookup_responsible_region(const U1 key[LOOKUP_KEY_LEN],
 }
 
 INT lookup_responsible_alive(const U1 key[LOOKUP_KEY_LEN],
-                             UB out[], INT r)
+                             pk_node_t out[], INT r)
 {
-    UB members[DNODE_MAX];
+    pk_node_t members[DNODE_MAX];
     INT n = 0;
 
     for (UB i = 0; i < DNODE_MAX; i++) {
@@ -170,7 +185,7 @@ static void emit_dec(void (*emit)(const char *), INT v)
     emit(&buf[i]);
 }
 
-static void emit_ids(void (*emit)(const char *), const UB *ids, INT n)
+static void emit_ids(void (*emit)(const char *), const pk_node_t *ids, INT n)
 {
     for (INT i = 0; i < n; i++) {
         if (i) emit(" ");
@@ -188,7 +203,7 @@ INT lookup_self_test(void (*emit)(const char *))
         return 1;
     }
 
-    UB members8[8];
+    pk_node_t members8[8];
     for (UB i = 0; i < 8; i++) members8[i] = i;
 
     /* The fixed test key: bytes 0x00..0x1f. Trivially reproducible on
@@ -197,7 +212,7 @@ INT lookup_self_test(void (*emit)(const char *))
     for (INT i = 0; i < LOOKUP_KEY_LEN; i++) key[i] = (U1)i;
 
     /* (1) determinism: same key + members twice -> identical top-r. */
-    UB a[8], b[8];
+    pk_node_t a[8], b[8];
     INT na = lookup_responsible(key, members8, 8, a, 3);
     INT nb = lookup_responsible(key, members8, 8, b, 3);
     INT same = (na == 3 && nb == 3);
@@ -210,7 +225,7 @@ INT lookup_self_test(void (*emit)(const char *))
 
     /* (2) cross-ABI known vector: full ranking of {0..7} for the fixed
      * key. This exact line must match on aarch64 / x86_64 / i686. */
-    UB full[8];
+    pk_node_t full[8];
     INT nf = lookup_responsible(key, members8, 8, full, 8);
     if (nf != 8) {
         emit("[hrw] FAIL known-vector rank count\r\n"); fails++;
@@ -225,7 +240,7 @@ INT lookup_self_test(void (*emit)(const char *))
     /* (3) §3.1 overlap: two views differing by ONE node must keep their
      * top-2 sets intersecting. Removal case: view B = A minus node 7.
      * Addition case: view B' = A plus node 8. 16 keys each. */
-    UB members7[7], members9[9];
+    pk_node_t members7[7], members9[9];
     for (UB i = 0; i < 7; i++) members7[i] = i;
     for (UB i = 0; i < 9; i++) members9[i] = i;
 
@@ -236,7 +251,7 @@ INT lookup_self_test(void (*emit)(const char *))
         for (INT i = 0; i < LOOKUP_KEY_LEN; i++)
             kk[i] = (U1)(i * 7 + k * 31 + 1);
 
-        UB ta[2], tb[2];
+        pk_node_t ta[2], tb[2];
         lookup_responsible(kk, members8, 8, ta, 2);
 
         lookup_responsible(kk, members7, 7, tb, 2);     /* one node removed */
@@ -289,7 +304,7 @@ INT lookup_self_test(void (*emit)(const char *))
 typedef struct {
     U1 key[LOOKUP_KEY_LEN];  /* the resolved key                        */
     U4 seen_ms;              /* local tk_get_otm().lo at observation    */
-    UB node;                 /* where the key was actually found        */
+    pk_node_t node;                 /* where the key was actually found        */
     UB valid;                /* 1 = slot in use                         */
 } LOOKUP_CACHE_ENT;
 
@@ -360,7 +375,7 @@ void lookup_note_found(const U1 key[LOOKUP_KEY_LEN], pk_node_t node)
     lk_cache[victim].valid   = 1;
 }
 
-INT lookup_cache_get(const U1 key[LOOKUP_KEY_LEN], UB *node)
+INT lookup_cache_get(const U1 key[LOOKUP_KEY_LEN], pk_node_t *node)
 {
     if (key == NULL || node == NULL) return 0;
 
@@ -396,15 +411,15 @@ void lookup_cache_age_for_test(U4 ms)
 /* ------------------------------------------------------------------ */
 
 INT lookup_candidates_in(const U1 key[LOOKUP_KEY_LEN],
-                         const UB *members, INT n_members,
-                         UB out[], INT k)
+                         const pk_node_t *members, INT n_members,
+                         pk_node_t out[], INT k)
 {
     if (key == NULL || members == NULL || out == NULL) return -1;
     if (n_members <= 0 || k <= 0)                      return -1;
     if (n_members > LOOKUP_MAX_MEMBERS)                return -1;
 
     /* Full HRW ranking once; the cache only REORDERS within it. */
-    UB rank[LOOKUP_MAX_MEMBERS];
+    pk_node_t rank[LOOKUP_MAX_MEMBERS];
     INT nr = lookup_responsible(key, members, n_members, rank, n_members);
     if (nr < 0) return nr;
 
@@ -413,7 +428,7 @@ INT lookup_candidates_in(const U1 key[LOOKUP_KEY_LEN],
     /* Fresh local observation goes first — but only if the node is in
      * the supplied member view (a dead/foreign node must not shadow a
      * live HRW candidate). */
-    UB hit;
+    pk_node_t hit;
     INT have_hit = 0;
     if (lookup_cache_get(key, &hit)) {
         for (INT i = 0; i < n_members; i++) {
@@ -430,9 +445,9 @@ INT lookup_candidates_in(const U1 key[LOOKUP_KEY_LEN],
     return cnt;
 }
 
-INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], UB out[], INT k)
+INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], pk_node_t out[], INT k)
 {
-    UB members[DNODE_MAX];
+    pk_node_t members[DNODE_MAX];
     INT n = 0;
 
     for (UB i = 0; i < DNODE_MAX; i++) {
@@ -446,7 +461,7 @@ INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], UB out[], INT k)
 /* L1 self-test — cache semantics on top of the unchanged L0 ranking   */
 /* ------------------------------------------------------------------ */
 
-static INT ids_equal(const UB *a, const UB *b, INT n)
+static INT ids_equal(const pk_node_t *a, const pk_node_t *b, INT n)
 {
     for (INT i = 0; i < n; i++)
         if (a[i] != b[i]) return 0;
@@ -457,7 +472,7 @@ INT lookup_l1_self_test(void (*emit)(const char *))
 {
     INT fails = 0;
 
-    UB members8[8];
+    pk_node_t members8[8];
     for (UB i = 0; i < 8; i++) members8[i] = i;
 
     /* Same fixed key as the L0 vector (bytes 0x00..0x1f) so the HRW
@@ -467,7 +482,7 @@ INT lookup_l1_self_test(void (*emit)(const char *))
 
     lookup_cache_clear();   /* re-runnable: start from a cold cache */
 
-    UB hrw[8], cand[8], cand2[8];
+    pk_node_t hrw[8], cand[8], cand2[8];
     INT nh = lookup_responsible(key, members8, 8, hrw, 8);
 
     /* (1) cold cache: candidates must equal the pure HRW order. */
@@ -480,7 +495,7 @@ INT lookup_l1_self_test(void (*emit)(const char *))
 
     /* (2) note a local observation on the HRW LAST-ranked node; a fresh
      * hit must short-circuit to candidates[0], rest stays HRW-ordered. */
-    UB found_on = hrw[7];               /* worst HRW guess: node 5 */
+    pk_node_t found_on = hrw[7];               /* worst HRW guess: node 5 */
     lookup_note_found(key, found_on);
     nc = lookup_candidates_in(key, members8, 8, cand, 8);
     {

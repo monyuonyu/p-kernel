@@ -164,7 +164,7 @@ void dproc_register(const char *path, ID tid)
     dp_memcpy(e.path, path, plen);
     e.path[plen] = '\0';
     e.tid        = (UW)tid;
-    e.node_id    = drpc_my_node;
+    e.node_id    = pk_node_v1(drpc_my_node);
     e.state      = DPROC_RUNNING;
     { SYSTIM st; tk_get_otm(&st); e.start_tick = (UW)st.lo; }
 
@@ -309,7 +309,7 @@ void dproc_on_node_dead(pk_node_t dead_node)
             }
 
             /* 新しい実行情報でスロットを更新 */
-            e.node_id    = drpc_my_node;
+            e.node_id    = pk_node_v1(drpc_my_node);
             e.tid        = (UW)new_tid;
             e.state      = DPROC_RUNNING;
             { SYSTIM st; tk_get_otm(&st); e.start_tick = (UW)st.lo; }

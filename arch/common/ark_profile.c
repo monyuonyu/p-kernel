@@ -227,7 +227,7 @@ INT ark_profile_save(U1 ack, const U1 mid[PFS_ID_LEN],
     ap_memset(&p, 0, (UW)sizeof p);
     p.magic       = ARK_PROF_MAGIC;
     p.version     = ARK_PROF_VER;
-    p.self_id     = drpc_my_node;
+    p.self_id     = pk_node_v1(drpc_my_node);
     p.consent_ack = 1;
     p.handle_len  = (U1)handle_len;
     p.name_len    = (U1)name_len;
@@ -291,7 +291,7 @@ void ark_prov_record(U4 fact_seq, U1 key, U1 val, U1 src)
     r.fact_seq    = fact_seq;
     r.key         = key;
     r.val         = val;
-    r.origin_node = drpc_my_node;
+    r.origin_node = pk_node_v1(drpc_my_node);
     r.src         = src;
     r.age_ms      = ap_now_ms();
 

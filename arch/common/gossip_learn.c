@@ -192,7 +192,7 @@ static GL_ST_HDR gl_st_hdr;               /* the header transfer scratch     */
 
 /* build the chunk/header ref "st/<node>/<i>" or "st/<node>/h" (<=16 chars).
  * Returns the ref length. `i` < 0 selects the header suffix 'h'. */
-static UW gl_student_ref(char *out, UB node, INT i)
+static UW gl_student_ref(char *out, pk_node_t node, INT i)
 {
     UW k = 0;
     out[k++] = 's'; out[k++] = 't'; out[k++] = '/';
@@ -300,7 +300,7 @@ static INT        gl_st_drop = -1;          /* falsifier: chunk idx to OMIT (-1=
 void gl_student_test_drop_chunk(INT idx) { gl_st_drop = idx; }
 
 /* the single named ref "st/<node>" (<= 6 chars <= PFS_NAME_MAX). */
-static UW gl_st_name(char *out, UB node)
+static UW gl_st_name(char *out, pk_node_t node)
 {
     UW k = 0;
     out[k++] = 's'; out[k++] = 't'; out[k++] = '/';
@@ -1077,7 +1077,7 @@ static void gl_cmd_guardscore(INT fresh)
     gl_ds_init();
     UW slot = gl_my_shard_slot();
     gl_build_shard(slot);
-    UB me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    pk_node_t me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
     dtr_ga_busy = 1;
     if (fresh) dtr_reinit_weights(GL_INIT_SEED);
     float td, fr, cr; float gs = gl_guard_score(&td, &fr, &cr);
@@ -1175,7 +1175,7 @@ static UW gl_my_shard_slot(void)
      * id onto a slot deterministically by its excluded class. We only
      * need one shard locally, stored in slot (node%NCLASS) so its
      * excluded-class arithmetic matches gl_build_shard. */
-    UB node = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    pk_node_t node = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
     return node % GL_NCLASS;
 }
 
@@ -1189,7 +1189,7 @@ static void gl_cmd_solo(UW steps)
     gl_ds_init();
     UW slot = gl_my_shard_slot();
     gl_build_shard(slot);
-    UB node = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    pk_node_t node = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
 
     dtr_ga_busy = 1;
     dtr_reinit_weights(GL_INIT_SEED);
@@ -1227,7 +1227,7 @@ static UB    gl_phave[GL_MAXNODES];
  * published-but-not-yet-ALIVE peer be discovered by its CONTENT. A WANT for an
  * unpublished id is a cheap miss. Still peer-symmetric (every node probes the
  * same id space) and no central aggregator. Return value ignored: prefetch. */
-static void gl_prefetch_peers(UB me)
+static void gl_prefetch_peers(pk_node_t me)
 {
     static float discard[DTR_WEIGHT_FLOATS];
     for (UB p = 0; p < DNODE_MAX; p++) {
@@ -1268,7 +1268,7 @@ static void gl_prefetch_peers(UB me)
  * Shared by the live path (gl_merge_peers, after it pulls the caches) and the
  * [g23-ceiling] self-test (which pre-fills the caches), so the test exercises
  * the REAL membership+merge logic. */
-static UW gl_fold_cached_peers(UB me)
+static UW gl_fold_cached_peers(pk_node_t me)
 {
     const float *ptrs[GL_MAXNODES];
     UW cnt = 0;
@@ -1296,7 +1296,7 @@ void gl_ens_set_lineage_k(UW k) { gl_ens_lineage_k = k; }
 UW   gl_ens_get_lineage_k(void) { return gl_ens_lineage_k; }
 #endif
 
-static UW gl_merge_peers(UB me)
+static UW gl_merge_peers(pk_node_t me)
 {
     /* transport: pull each peer's freshest model into the cache, then fold
      * over the symmetric set {self} U {peers cached}.
@@ -1354,7 +1354,7 @@ static void gl_cmd_run_ex(UW rounds, UW local, INT fresh)
     gl_ds_init();
     UW slot = gl_my_shard_slot();
     gl_build_shard(slot);
-    UB me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    pk_node_t me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
     UW total = rounds * local;
     for (UW p = 0; p < GL_MAXNODES; p++) gl_phave[p] = 0;   /* fresh cache */
 
@@ -1418,7 +1418,7 @@ static void gl_cmd_run_ex(UW rounds, UW local, INT fresh)
 
 static void gl_cmd_status(void)
 {
-    UB me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
+    pk_node_t me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
     gp("[g22-live] node="); gpd(me);
     gp(" excluded-class="); gpd(gl_my_shard_slot());
     gp(" rounds_done="); gpd(gl_live_total);
@@ -1519,7 +1519,7 @@ void gl_g23_test(void)
 
     /* ---- PART B: REAL membership+merge over N>32 ALIVE dnode_table entries ---- */
     /* save the live state we are about to perturb */
-    UB  saved_my = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_state[GL_G23_N];
     UB  saved_phave[GL_G23_N];
     for (UW p = 0; p < N; p++) {
@@ -1527,7 +1527,7 @@ void gl_g23_test(void)
         saved_phave[p] = gl_phave[p];
     }
 
-    UB me = 0;
+    pk_node_t me = 0;
     drpc_my_node = me;
     for (UW i = 0; i < (UW)DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = (float)me; /* my value=0 */
     UW alive = 0;

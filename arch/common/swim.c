@@ -20,6 +20,9 @@
 #include "galaxy.h"     /* galaxy v1: S1 membership emit hook */
 #include "netstack.h"
 #include "region.h"     /* N-2b: region_{set,is}_super_capable, region_supernode */
+#if defined(_TK_HOSTED_LIBC_)
+#include "nodemap.h"    /* N2b: wide ids */
+#endif
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -95,7 +98,7 @@ static void swim_rounds_from_env(void)
 #define GOSSIP_Q_MAX  (SWIM_GOSSIP_MAX * 2)
 
 typedef struct {
-    UB  node_id;
+    pk_node_t node_id;
     UB  state;
     UB  incarnation;
     UB  remaining;
@@ -131,7 +134,7 @@ static UB dnode_incarn[DNODE_MAX];
 /* deterministic peer address (10.1.0.(n+1)); defined below, used by the
  * transitive-discovery path in gossip_apply() to resolve a gossip-introduced
  * peer's IP from its node id alone (no address rides the gossip frame). */
-static UW swim_node_ip(UB n);
+static UW swim_node_ip(pk_node_t n);
 static UB suspect_count[DNODE_MAX];    /* fwd: cleared on gossip discovery */
 
 /* state severity ladder for same-incarnation tie-break (ALIVE<SUSPECT<DEAD) */
@@ -147,7 +150,7 @@ static INT state_rank(UB st)
  * dark in the window exactly when SWIM's belief changes — with SWIM's
  * latency, no new gossip (the membership table itself is read directly
  * by /galaxy.json). old==0xFF where the prior state was not in hand. */
-static void sw_note(UB nid, UB oldst, UB newst)
+static void sw_note(pk_node_t nid, UB oldst, UB newst)
 {
     galaxy_emit(EV_SWIM, nid, GALAXY_NODE_NONE, (UH)oldst, (UH)newst);
 }
@@ -253,13 +256,13 @@ static UB cap_self_byte(void)
  * verbatim from that peer's own gossip under the LWW gate. Keeps bit 0
  * byte-identical to the prior region_is_super_capable(target)?1:0 relay while
  * carrying bit 1 forward so the teacher axis spreads epidemically too. */
-static UB cap_byte(UB node)
+static UB cap_byte(pk_node_t node)
 {
     return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
               | (region_is_teacher_capable(node) ? 1 : 0) << 1);
 }
 
-static void gossip_add(UB node_id, UB state, UB incarnation, UB capability)
+static void gossip_add(pk_node_t node_id, UB state, UB incarnation, UB capability)
 {
     PK_NOSW_ENTER();      /* pk_nosw.h: swim_task and swim_rx both add */
     /* Update existing entry if present */
@@ -292,7 +295,7 @@ static void gossip_fill(SWIM_PKT *pkt)
     pkt->gossip_cnt = 0;
     for (INT i = 0; i < gq_cnt && pkt->gossip_cnt < SWIM_GOSSIP_MAX; i++) {
         if (gq[i].remaining == 0) continue;
-        pkt->gossip[pkt->gossip_cnt].node_id     = gq[i].node_id;
+        pkt->gossip[pkt->gossip_cnt].node_id     = pk_node_v1(gq[i].node_id);
         pkt->gossip[pkt->gossip_cnt].state       = gq[i].state;
         pkt->gossip[pkt->gossip_cnt].incarnation = gq[i].incarnation;
         pkt->gossip[pkt->gossip_cnt].capability  = gq[i].capability;  /* N-2b */
@@ -373,7 +376,7 @@ static INT self_scatter_due(void)
 static void gossip_apply(const SWIM_PKT *pkt)
 {
     for (UB i = 0; i < pkt->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
-        UB nid    = pkt->gossip[i].node_id;
+        pk_node_t nid    = pkt->gossip[i].node_id;
         UB st     = pkt->gossip[i].state;
         UB inc_in = pkt->gossip[i].incarnation;
         /* N-2b / T-fix-a: SELF-AUTHORITATIVE capability bits — meaningful only
@@ -495,7 +498,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
 
 static ID probe_sem          = -1;     /* signalled by swim_rx on ACK    */
 static UH probe_seq          = 1;
-static UB probe_waiting_node = 0xFF;   /* node currently being probed    */
+static pk_node_t probe_waiting_node = 0xFF;   /* node currently being probed    */
 /* suspect_count[] defined above (consecutive no-response rounds) — moved up so
  * the transitive-discovery path in gossip_apply() can clear it on adoption. */
 
@@ -526,7 +529,7 @@ void swim_set_sim_zone(UB zone_size, UW penalty_ms)
     sim_zone_penalty = penalty_ms;
 }
 
-static void rtt_observe(UB node, UW sample_ms)
+static void rtt_observe(pk_node_t node, UW sample_ms)
 {
     if (node >= DNODE_MAX) return;
     if (!rtt_valid[node]) {
@@ -555,10 +558,10 @@ UW swim_rtt_ms(pk_node_t node)
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-static UW swim_node_ip(UB n)
+static UW swim_node_ip(pk_node_t n)
 {
     /* 10.1.0.(n+1) — same scheme as drpc */
-    return ((UW)(n + 1) << 24) | 0x0000010AUL;
+    return pk_node_ip(n);
 }
 
 static void swim_send(UW dst_ip, SWIM_PKT *pkt)
@@ -571,9 +574,19 @@ static void swim_send(UW dst_ip, SWIM_PKT *pkt)
 /* UDP receive callback (registered on SWIM_PORT)                     */
 /* ------------------------------------------------------------------ */
 
+#if defined(_TK_HOSTED_LIBC_)
+static void swim_wide_init(void);
+static INT  swim_wide_rx(UW src_ip, const UB *data, UH len);
+static void swim_wide_tick(void);
+static void swim_wide_print(void);
+#endif
+
 void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
 {
     (void)src_port;
+#if defined(_TK_HOSTED_LIBC_)
+    if (swim_wide_rx(src_ip, data, len)) return;
+#endif
     if (len < (UH)sizeof(SWIM_PKT)) return;
 
     const SWIM_PKT *pkt = (const SWIM_PKT *)data;
@@ -583,7 +596,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
     gossip_apply(pkt);
 
     /* Mark sender alive */
-    UB snid = pkt->src_node;
+    pk_node_t snid = pkt->src_node;
     if (snid < DNODE_MAX && snid != drpc_my_node) {
         UB old = dnode_table[snid].state;
         dnode_table[snid].ip     = src_ip;
@@ -618,8 +631,8 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         ack.version      = SWIM_VERSION;
         ack.type         = SWIM_ACK;
         ack.seq          = pkt->seq;
-        ack.src_node     = drpc_my_node;
-        ack.probe_target = drpc_my_node;
+        ack.src_node     = pk_node_v1(drpc_my_node);
+        ack.probe_target = pk_node_v1(drpc_my_node);
         swim_send(src_ip, &ack);
         break;
     }
@@ -642,7 +655,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
          * Simplification: we forward the PING; if the target is alive
          * it will send ACK to us, and we forward it to the requester.
          */
-        UB target = pkt->probe_target;
+        pk_node_t target = pkt->probe_target;
         if (target >= DNODE_MAX || target == drpc_my_node) break;
 
         /* Ping the target */
@@ -651,8 +664,8 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         fwd.version      = SWIM_VERSION;
         fwd.type         = SWIM_PING;
         fwd.seq          = pkt->seq;     /* preserve seq for ACK matching */
-        fwd.src_node     = drpc_my_node;
-        fwd.probe_target = target;
+        fwd.src_node     = pk_node_v1(drpc_my_node);
+        fwd.probe_target = pk_node_v1(target);
         swim_send(swim_node_ip(target), &fwd);
 
         /*
@@ -673,7 +686,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
 static UB probe_cursor = 0;
 
-static UB pick_probe_target(void)
+static pk_node_t pick_probe_target(void)
 {
     /* Try round-robin among known (non-unknown) nodes first */
     for (UB tries = 0; tries < DNODE_MAX; tries++) {
@@ -688,7 +701,7 @@ static UB pick_probe_target(void)
     return drpc_my_node;
 }
 
-static void pick_helpers(UB exclude, UB helpers[SWIM_K_HELPERS], INT *cnt)
+static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], INT *cnt)
 {
     *cnt = 0;
     for (UB i = 0; i < DNODE_MAX && *cnt < SWIM_K_HELPERS; i++) {
@@ -710,6 +723,9 @@ void swim_task(INT stacd, void *exinf)
 
     for (;;) {
         tk_dly_tsk(SWIM_PROBE_INTERVAL_MS);
+#if defined(_TK_HOSTED_LIBC_)
+        swim_wide_tick();
+#endif
         if (drpc_my_node == 0xFF) continue;
 
         /* NET-DISCOVERY-STAR (wave-discovery-mesh): broadcast membership beacon.
@@ -754,12 +770,12 @@ void swim_task(INT stacd, void *exinf)
             beacon.version      = SWIM_VERSION;
             beacon.type         = SWIM_ACK;   /* seq=0 => not a probe reply to anyone */
             beacon.seq          = 0;
-            beacon.src_node     = drpc_my_node;
-            beacon.probe_target = drpc_my_node;
+            beacon.src_node     = pk_node_v1(drpc_my_node);
+            beacon.probe_target = pk_node_v1(drpc_my_node);
             swim_send(IP4(255, 255, 255, 255), &beacon);
         }
 
-        UB target = pick_probe_target();
+        pk_node_t target = pick_probe_target();
         if (target == drpc_my_node) continue;
 
         /* ---- Step 1: direct SWIM_PING ---- */
@@ -772,8 +788,8 @@ void swim_task(INT stacd, void *exinf)
         ping.version      = SWIM_VERSION;
         ping.type         = SWIM_PING;
         ping.seq          = probe_seq;
-        ping.src_node     = drpc_my_node;
-        ping.probe_target = target;
+        ping.src_node     = pk_node_v1(drpc_my_node);
+        ping.probe_target = pk_node_v1(target);
         swim_send(swim_node_ip(target), &ping);
         SYSTIM t_ping; tk_get_otm(&t_ping);   /* RTT 計測開始 */
 
@@ -797,7 +813,7 @@ void swim_task(INT stacd, void *exinf)
         }
 
         /* ---- Step 2: indirect probe via K helpers ---- */
-        UB helpers[SWIM_K_HELPERS];
+        pk_node_t helpers[SWIM_K_HELPERS];
         INT hcnt = 0;
         pick_helpers(target, helpers, &hcnt);
 
@@ -807,8 +823,8 @@ void swim_task(INT stacd, void *exinf)
             preq.version      = SWIM_VERSION;
             preq.type         = SWIM_PING_REQ;
             preq.seq          = probe_seq;
-            preq.src_node     = drpc_my_node;
-            preq.probe_target = target;
+            preq.src_node     = pk_node_v1(drpc_my_node);
+            preq.probe_target = pk_node_v1(target);
             swim_send(swim_node_ip(helpers[h]), &preq);
         }
 
@@ -875,6 +891,7 @@ void swim_init(void)
     my_incarnation = 0;
 #ifdef _TK_HOSTED_LIBC_
     swim_rounds_from_env();
+    swim_wide_init();
 #endif
     udp_bind(SWIM_PORT, swim_rx);
     sw_puts("[swim] SWIM ready  port=7375\r\n");
@@ -919,7 +936,358 @@ void swim_nodes_print(void)
             sw_puts("\r\n");
         }
     }
+#if defined(_TK_HOSTED_LIBC_)
+    swim_wide_print();
+#endif
 }
+
+#if defined(_TK_HOSTED_LIBC_)
+/* ------------------------------------------------------------------ */
+/* Wide ids in the membership (N2b, research/n2-wire16.md)             */
+/*                                                                     */
+/* A wide node beacons a v2 packet each round; a node that knows wide  */
+/* ids beacons them too, so the news spreads. The v2 beacon is not a   */
+/* probe: a wide peer is ALIVE while its own beacons arrive and ages   */
+/* to SUSPECT and DEAD without them. A rumour can introduce a wide id  */
+/* but never keeps one alive or kills one.                             */
+/* ------------------------------------------------------------------ */
+#define SWIM_WIDE_SUSPECT_MS 6000
+#define SWIM_WIDE_DEAD_MS    15000
+
+/* A wide id cannot index a table sized DNODE_MAX, so it has a slot here. Only
+ * this membership list knows wide ids so far: no other subsystem sees a wide
+ * peer, and a wide node itself runs with drpc_my_node = 0xFF apart from SWIM. */
+typedef struct {
+    UW  ip;
+    UW  heard_ms;   /* last packet from this node itself */
+    UB  state;      /* DNODE_UNKNOWN / ALIVE / SUSPECT / DEAD */
+} SWIM_WIDE;
+
+static NODEMAP   wide_map;          /* wide id -> slot, parallel to wide_st */
+static SWIM_WIDE wide_st[DREGION_MAX];
+static UW        nm_full;           /* wide ids refused: the table was full */
+static UW        swim2_bad;         /* v2 packets dropped: too short        */
+static pk_node_t swim_wide_me;      /* 0 = this node is not wide            */
+static INT       swim_wide_cursor;
+
+/* Slot of a wide id, taken if new (a dead entry gives way when full), or -1. */
+static INT wide_add(pk_node_t id)
+{
+    INT s = nodemap_find(&wide_map, id);
+    if (s != NODEMAP_NOSLOT) return s;
+    if (!PK_NODE_IS_WIDE(id)) return -1;
+    s = nodemap_admit(&wide_map, id);
+    for (INT i = 0; s == NODEMAP_NOSLOT && i < DREGION_MAX; i++) {
+        if (wide_map.used[i] && wide_st[i].state == DNODE_DEAD) {
+            nodemap_evict(&wide_map, i);
+            s = nodemap_admit(&wide_map, id);
+        }
+    }
+    if (s == NODEMAP_NOSLOT) { nm_full++; return -1; }
+    wide_st[s].ip = 0;
+    wide_st[s].heard_ms = 0;
+    wide_st[s].state = DNODE_UNKNOWN;
+    return s;
+}
+
+static UW swim_wide_now(void)
+{
+    SYSTIM t; tk_get_otm(&t);
+    return t.lo;
+}
+
+static void swim_wide_init(void) { nodemap_init(&wide_map, 0); }
+
+void swim_wide_self(pk_node_t id, UW ip)
+{
+    swim_wide_me = id;
+    NET_MY_IP    = ip;
+}
+
+/* direct: the packet came from this node. Otherwise it is news of the id. */
+static void swim_wide_heard(pk_node_t id, UW ip, BOOL direct, UW now)
+{
+    if (!PK_NODE_IS_WIDE(id) || id == swim_wide_me) return;
+    PK_NOSW_ENTER();      /* swim_rx (net_task) and swim_wide_tick (swim_task) */
+    INT s = wide_add(id);
+    if (s < 0) { PK_NOSW_LEAVE(); return; }
+    SWIM_WIDE *e = &wide_st[s];
+    UB old = e->state;
+    if (direct) { e->ip = ip; e->heard_ms = now; e->state = DNODE_ALIVE; }
+    else if (old == DNODE_UNKNOWN) {
+        e->ip = pk_node_ip(id); e->heard_ms = now; e->state = DNODE_ALIVE;
+    }
+    UB st = e->state;
+    PK_NOSW_LEAVE();
+    if (old != st) {
+        sw_puts("[swim] wide node "); sw_putdec(id);
+        sw_puts(old == DNODE_UNKNOWN ? " discovered\r\n" : " recovered\r\n");
+    }
+}
+
+/* 1 = this was a v2 packet (used or dropped), 0 = not ours. */
+static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
+{
+    const SWIM2_PKT *p = (const SWIM2_PKT *)data;
+    if (len < 5 || p->magic != SWIM_MAGIC || p->version != SWIM2_VERSION) return 0;
+    if (len < (UH)sizeof(SWIM2_PKT)) { swim2_bad++; return 1; }
+    UW now = swim_wide_now();
+    swim_wide_heard(p->src_node, src_ip, TRUE, now);
+    for (INT i = 0; i < p->gossip_cnt && i < SWIM_GOSSIP_MAX; i++)
+        if (p->gossip[i].state == DNODE_ALIVE)
+            swim_wide_heard(p->gossip[i].node_id, 0, FALSE, now);
+    return 1;
+}
+
+/* Fill up to SWIM_GOSSIP_MAX live wide ids, taking turns. Returns the count. */
+static INT swim_wide_fill(SWIM2_PKT *p)
+{
+    INT n = 0;
+    for (INT k = 0; k < DREGION_MAX && n < SWIM_GOSSIP_MAX; k++) {
+        swim_wide_cursor = (swim_wide_cursor + 1) % DREGION_MAX;
+        if (!wide_map.used[swim_wide_cursor]) continue;
+        if (wide_st[swim_wide_cursor].state != DNODE_ALIVE) continue;
+        p->gossip[n].node_id     = (UH)wide_map.id[swim_wide_cursor];
+        p->gossip[n].state       = DNODE_ALIVE;
+        p->gossip[n].incarnation = 0;
+        p->gossip[n].capability  = 0;
+        n++;
+    }
+    return n;
+}
+
+static void swim_wide_age(UW now)
+{
+    for (INT i = 0; i < DREGION_MAX; i++) {
+        SWIM_WIDE *e = &wide_st[i];
+        PK_NOSW_ENTER();
+        UB old = e->state, st = old;
+        if (wide_map.used[i] && old != DNODE_DEAD && old != DNODE_UNKNOWN) {
+            UW age = (UW)(now - e->heard_ms);
+            if (age >= 0x80000000UL) age = 0;   /* heard after now was read */
+            st = age >= SWIM_WIDE_DEAD_MS ? DNODE_DEAD
+               : age >= SWIM_WIDE_SUSPECT_MS ? DNODE_SUSPECT : DNODE_ALIVE;
+            e->state = st;
+        }
+        UW id = wide_map.id[i];
+        PK_NOSW_LEAVE();
+        if (st != old) {
+            sw_puts("[swim] wide node "); sw_putdec(id);
+            sw_puts(st == DNODE_DEAD ? " -> DEAD\r\n"
+                  : st == DNODE_SUSPECT ? " -> SUSPECT\r\n" : " -> ALIVE\r\n");
+        }
+    }
+}
+
+static void swim_wide_tick(void)
+{
+    swim_wide_age(swim_wide_now());
+    PK_NOSW_ENTER();
+    SWIM2_PKT b;
+    UB *pb = (UB *)&b;
+    for (INT i = 0; i < (INT)sizeof b; i++) pb[i] = 0;
+    INT n = swim_wide_fill(&b);
+    PK_NOSW_LEAVE();
+    /* A node that knows no wide id sends no v2 packet at all. */
+    if (swim_wide_me == 0 && (n == 0 || drpc_my_node == 0xFF)) return;
+    b.magic        = SWIM_MAGIC;
+    b.version      = SWIM2_VERSION;
+    b.type         = SWIM_ACK;     /* seq 0: a beacon, as in v1 */
+    b.src_node     = swim_wide_me ? swim_wide_me : drpc_my_node;
+    b.probe_target = b.src_node;
+    b.gossip_cnt   = (UB)n;
+    udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
+             (const UB *)&b, (UH)sizeof(b));
+}
+
+static void swim_wide_print(void)
+{
+    if (swim_wide_me) {
+        sw_puts("            "); sw_putdec(swim_wide_me);
+        sw_puts("  SELF     "); sw_puts(ip_str(NET_MY_IP)); sw_puts("\r\n");
+    }
+    for (INT i = 0; i < DREGION_MAX; i++) {
+        const SWIM_WIDE *e = &wide_st[i];
+        if (!wide_map.used[i] || e->state == DNODE_UNKNOWN) continue;
+        sw_puts("            "); sw_putdec(wide_map.id[i]);
+        sw_puts("  "); sw_puts(state_str(e->state));
+        sw_puts("  "); sw_puts(ip_str(e->ip));
+        sw_puts("  wide\r\n");
+    }
+}
+
+/* `nodes wide`: drives swim_wide_rx and the aging with crafted packets; the
+ * table is saved and put back, so a live node can run it. */
+static void sw2_build(SWIM2_PKT *p, UH src, UH g0, UB st, UB cnt)
+{
+    UB *pb = (UB *)p;
+    for (INT i = 0; i < (INT)sizeof *p; i++) pb[i] = 0;
+    p->magic = SWIM_MAGIC; p->version = SWIM2_VERSION; p->type = SWIM_ACK;
+    p->src_node = src; p->probe_target = src;
+    p->gossip_cnt = cnt;
+    for (INT i = 0; i < SWIM_GOSSIP_MAX; i++) { p->gossip[i].node_id = 0xFFFF; }
+    p->gossip[0].node_id = g0; p->gossip[0].state = st;
+}
+
+static INT sw2_find(pk_node_t id) { return nodemap_find(&wide_map, id); }
+
+static INT sw2_state(pk_node_t id)
+{
+    INT s = sw2_find(id);
+    return s < 0 ? -1 : (INT)wide_st[s].state;
+}
+
+INT swim_wide_self_test(void (*emit)(const char *))
+{
+    static SWIM_WIDE saved[DREGION_MAX];
+    static NODEMAP   saved_map;
+    PK_NOSW_ENTER();
+    saved_map = wide_map;
+    for (INT i = 0; i < DREGION_MAX; i++) saved[i] = wide_st[i];
+    nodemap_init(&wide_map, 0);
+    pk_node_t sv_me = swim_wide_me; UW sv_full = nm_full, sv_bad = swim2_bad;
+    PK_NOSW_LEAVE();
+    INT fails = 0;
+#define W2(cond, what) do { if (!(cond)) { fails++; \
+        emit("[swim-wide] FAIL "); emit(what); emit("\r\n"); } } while (0)
+    SWIM2_PKT p;
+    UW ip = pk_node_ip(299);
+
+    /* A v1 packet is not ours; a short v2 packet is ours and dropped. */
+    sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+    p.version = SWIM_VERSION;
+    W2(swim_wide_rx(ip, (const UB *)&p, sizeof p) == 0, "v1 is left to swim_rx");
+    p.version = SWIM2_VERSION;
+    W2(swim_wide_rx(ip, (const UB *)&p, sizeof p - 1) == 1, "short v2 is taken");
+    W2(swim2_bad == sv_bad + 1, "short v2 is counted");
+    W2(sw2_find(299) < 0, "short v2 adds nobody");
+
+    /* A wide sender is known, under its own number. */
+    W2(swim_wide_rx(ip, (const UB *)&p, sizeof p) == 1, "v2 is taken");
+    W2(sw2_state(299) == DNODE_ALIVE, "wide sender is ALIVE");
+    W2(wide_st[sw2_find(299)].ip == ip, "wide sender's ip kept");
+    W2(ip != pk_node_ip(43), "300 and 44 have different addresses");
+    W2(pk_node_ip(43) == (((UW)44 << 24) | 0x0000010AUL), "a narrow address is unchanged");
+
+    /* A one-byte field: a narrow id as it is, a wide id is not a node, never its
+     * low byte. No path writes a wide id there today, so only this looks at it. */
+    W2(pk_node_v1(43) == 43, "pk_node_v1 keeps a narrow id");
+    W2(pk_node_v1(299) == PK_NODE_NONE, "pk_node_v1 does not cut a wide id");
+    W2(pk_node_v1(0xFFFF) == PK_NODE_NONE, "pk_node_v1 of 0xFFFF is not a node");
+
+    /* Not wide: never in the table. 0xFF and 0xFFFF are not nodes. */
+    sw2_build(&p, 43, 0xFFFF, DNODE_ALIVE, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_find(43) < 0, "a narrow sender stays out");
+    W2(sw2_find(0xFFFF) < 0, "0xFFFF stays out");
+    sw2_build(&p, 0xFF, 0xFF, DNODE_ALIVE, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_find(0xFF) < 0, "0xFF stays out");
+
+    /* News introduces an id, at its own address. */
+    sw2_build(&p, 43, 700, DNODE_ALIVE, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_state(700) == DNODE_ALIVE, "news introduces a wide id");
+    W2(wide_st[sw2_find(700)].ip == pk_node_ip(700), "at its own address");
+
+    /* A bad count reads no further than the array: what follows the packet
+     * looks like one more live entry, and must stay unread. */
+    {
+        static UB big[sizeof(SWIM2_PKT) + sizeof(SWIM2_GOSSIP_EVT)];
+        SWIM2_GOSSIP_EVT over = { 702, DNODE_ALIVE, 0, 0 };
+        sw2_build(&p, 43, 701, DNODE_ALIVE, 200);
+        for (UW i = 0; i < sizeof p; i++) big[i] = ((const UB *)&p)[i];
+        for (UW i = 0; i < sizeof over; i++) big[sizeof p + i] = ((const UB *)&over)[i];
+        swim_wide_rx(ip, big, (UH)sizeof big);
+        W2(sw2_state(701) == DNODE_ALIVE, "a count of 200 is read as the maximum");
+        W2(sw2_find(702) < 0, "nothing past the array is read");
+    }
+
+    /* A rumour of a dead or suspect stranger introduces nobody. */
+    sw2_build(&p, 43, 703, DNODE_DEAD, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_find(703) < 0, "a DEAD rumour introduces nobody");
+
+    /* A beacon can land after the tick read its clock and before the tick
+     * reached this slot: heard_ms ahead of now is not an age of 49 days. */
+    INT s = sw2_find(299);
+    swim_wide_age(wide_st[s].heard_ms - 1);
+    W2(wide_st[s].state == DNODE_ALIVE, "a beacon newer than the tick's clock is not old");
+
+    /* That reading of the clock must not eat real ages: the half of the 32-bit
+     * range is the line, and a stamp across the wrap ages like any other. */
+    {
+        UW keep = wide_st[s].heard_ms;
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x80000000UL);
+        W2(wide_st[s].state == DNODE_ALIVE, "half the clock's range reads as heard after now");
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x7FFFFFFFUL);
+        W2(wide_st[s].state == DNODE_DEAD, "one less is old");
+        wide_st[s].state = DNODE_ALIVE;
+        wide_st[s].heard_ms = 1000; swim_wide_age(1000UL + 0x10000UL);
+        W2(wide_st[s].state == DNODE_DEAD, "a late tick still sees 65 s as old");
+        wide_st[s].state = DNODE_ALIVE;
+        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(10);
+        W2(wide_st[s].state == DNODE_ALIVE, "26 ms across the wrap is young");
+        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(0xFFFFFFF0UL + SWIM_WIDE_DEAD_MS);
+        W2(wide_st[s].state == DNODE_DEAD, "15 s across the wrap is old");
+        wide_st[s].state = DNODE_ALIVE; wide_st[s].heard_ms = keep;
+    }
+
+    /* A rumour neither kills nor revives; aging does, and a beacon revives. */
+    sw2_build(&p, 43, 299, DNODE_DEAD, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(wide_st[s].state == DNODE_ALIVE, "a DEAD rumour does not kill");
+    UW t0 = wide_st[s].heard_ms;
+    swim_wide_age(t0 + SWIM_WIDE_SUSPECT_MS - 1);
+    W2(wide_st[s].state == DNODE_ALIVE, "alive just before the suspect line");
+    swim_wide_age(t0 + SWIM_WIDE_SUSPECT_MS);
+    W2(wide_st[s].state == DNODE_SUSPECT, "suspect at the line");
+    sw2_build(&p, 43, 299, DNODE_ALIVE, 1);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(wide_st[s].state == DNODE_SUSPECT, "an ALIVE rumour does not revive");
+    swim_wide_age(t0 + SWIM_WIDE_DEAD_MS);
+    W2(wide_st[s].state == DNODE_DEAD, "dead at the line");
+    sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(wide_st[s].state == DNODE_ALIVE, "its own beacon revives");
+
+    /* Own id: not a peer. */
+    swim_wide_me = 800;
+    sw2_build(&p, 800, 800, DNODE_ALIVE, 1);
+    swim_wide_rx(pk_node_ip(800), (const UB *)&p, sizeof p);
+    W2(sw2_find(800) < 0, "own id is not a peer");
+    swim_wide_me = sv_me;
+
+    /* Full: refused and counted; a dead entry makes room. */
+    nodemap_init(&wide_map, 0);
+    for (INT i = 0; i < DREGION_MAX; i++) {
+        sw2_build(&p, (UH)(1000 + i), 0xFFFF, DNODE_ALIVE, 0);
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    }
+    W2(sw2_find((pk_node_t)(1000 + DREGION_MAX - 1)) >= 0, "the table holds DREGION_MAX");
+    sw2_build(&p, 2000, 0xFFFF, DNODE_ALIVE, 0);
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_find(2000) < 0 && nm_full == sv_full + 1, "the next id is refused and counted");
+    wide_st[5].state = DNODE_DEAD;
+    swim_wide_rx(ip, (const UB *)&p, sizeof p);
+    W2(sw2_find(2000) == 5, "a dead slot is reused");
+
+    /* What goes out: only live ids, taking turns. */
+    nodemap_init(&wide_map, 0);
+    wide_st[nodemap_admit(&wide_map, 900)].state = DNODE_ALIVE;
+    wide_st[nodemap_admit(&wide_map, 901)].state = DNODE_DEAD;
+    { SWIM2_PKT o; W2(swim_wide_fill(&o) == 1 && o.gossip[0].node_id == 900, "only live ids go out"); }
+
+    PK_NOSW_ENTER();
+    wide_map = saved_map;
+    for (INT i = 0; i < DREGION_MAX; i++) wide_st[i] = saved[i];
+    nm_full = sv_full; swim2_bad = sv_bad;
+    PK_NOSW_LEAVE();
+#undef W2
+    emit(fails ? "[swim-wide] FAIL\r\n" : "[swim-wide] PASS\r\n");
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ */
 /* SWIM-INCARN self-test (external audit 2026-06-13, gap-ledger)       */
@@ -936,7 +1304,7 @@ void swim_nodes_print(void)
 /* ------------------------------------------------------------------ */
 
 /* find the incarnation a node_id is currently queued for in gq[] (or -1) */
-static INT gq_find_incarn(UB node_id, UB state)
+static INT gq_find_incarn(pk_node_t node_id, UB state)
 {
     for (INT i = 0; i < gq_cnt; i++)
         if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
@@ -948,7 +1316,7 @@ static INT gq_find_incarn(UB node_id, UB state)
  * Used by the teacher cert to inspect what an rx-rediscovery relay ENQUEUED
  * for epidemic re-propagation (the bit-1 drop the auditor caught lived here,
  * invisible to a cert that only drives gossip_apply). */
-static INT gq_find_cap(UB node_id, UB state)
+static INT gq_find_cap(pk_node_t node_id, UB state)
 {
     for (INT i = 0; i < gq_cnt; i++)
         if (gq[i].node_id == node_id && gq[i].state == state && gq[i].remaining > 0)
@@ -962,7 +1330,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* --- save global/file state we will perturb, restore at the end --- */
-    UB  saved_my      = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc     = my_incarnation;
     INT saved_gq_cnt  = gq_cnt;
 
@@ -1071,7 +1439,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save global/file state we perturb */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
     UB  saved_capX, saved_capSELF;
@@ -1251,7 +1619,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save global/file state we perturb */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
     UB  saved_tchX, saved_tchSELF;
@@ -1509,7 +1877,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* save every global/file state we perturb (mirror the teacher cert) */
-    UB  saved_my       = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc      = my_incarnation;
     INT saved_gq_cnt   = gq_cnt;
     int saved_force    = selfelect_force_teacher;
@@ -1648,7 +2016,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
     void (*say)(const char *) = emit ? emit : sw_puts;
 
     /* --- save global/file state we perturb, restore at the end --- */
-    UB  saved_my     = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc    = my_incarnation;
     INT saved_gq_cnt = gq_cnt;
 
@@ -1792,7 +2160,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
     const INT N    = 8;   /* burst size (>= 8 rapid self-SUSPECT rumors) */
 
     /* --- save the global/file state we perturb, restore at the end --- */
-    UB  saved_my   = drpc_my_node;
+    pk_node_t saved_my = drpc_my_node;
     UB  saved_inc  = my_incarnation;
     INT saved_gq   = gq_cnt;
     UB  saved_st   = dnode_table[SELF].state;

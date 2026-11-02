@@ -6,8 +6,8 @@ both defined in arch/common/include/pk_node.h:
 
   pk_node8_t  the 8-bit node id as it is on the v1 wire and on disk. It never
               widens: a v1 packet keeps its layout when N2b widens the ids.
-  pk_node_t   the node id inside a node (today the same byte; N2b may widen it
-              on hosted, never on bare metal).
+  pk_node_t   the node id inside a node (16 bits on hosted since N2b, the byte
+              on bare metal).
 
 Checked (red = exit 1):
   W  every node field of a wire/disk struct (the structs of inventory.py's
@@ -20,7 +20,8 @@ Checked (red = exit 1):
      pk_node_t (single-line parameter lists only; see def_params).
   R  prototypes of those functions written again outside the common headers
      (IMPORT/extern in a .c) name the same parameter pk_node_t (audit-103).
-  H  pk_node.h defines both names as unsigned char.
+  H  pk_node.h defines both names as unsigned char (pk_node_t in its bare
+     metal branch).
 
 Static and heuristic, like inventory.py (the same struct and name regexes): a
 node id in a field or parameter whose name has none of inventory.NODE_WORDS is

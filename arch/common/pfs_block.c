@@ -128,7 +128,7 @@ typedef struct {
     U1   id[PFS_ID_LEN];           /* sha256(data[0..len)) */
     UW   len;                      /* block length in bytes */
     U1   used;                     /* slot occupied? */
-    U1   origin;                   /* creator node id / PFS_ORIGIN_SELF */
+    pk_node_t origin;              /* creator node id / PFS_ORIGIN_SELF */
     U1   unevict;                  /* DUR-SWALLOW: durable write FAILED for this
                                     * block, so the in-memory copy is the ONLY
                                     * copy. FIFO eviction must SKIP it until a
@@ -470,7 +470,7 @@ PK_NOSW_FN(INT, pfs_drop, (const U1 id[PFS_ID_LEN]), (id))
 }
 
 INT pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
-                  U1 *origin_out)
+                  pk_node_t *origin_out)
 {
     if (idx >= PFS_MAX_BLOCKS || !pfs_table[idx].used) return 0;
     if (id_out)     pfs_memcpy(id_out, pfs_table[idx].id, PFS_ID_LEN);

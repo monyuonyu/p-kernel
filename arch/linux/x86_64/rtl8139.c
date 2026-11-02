@@ -61,7 +61,8 @@ EXPORT void rtl8139_get_mac(UB mac[6])
      * If init never happened we fall through to a known-good single-
      * node MAC. */
     mac[0] = 0x52; mac[1] = 0x54; mac[2] = 0x00;
-    mac[3] = 0x00; mac[4] = 0x00;
+    mac[3] = 0x00;
+    mac[4] = rtl_initialized ? (UB)(my_node_id >> 8) : (UB)0x00;   /* N2b: wide ids */
     mac[5] = rtl_initialized ? (UB)my_node_id : (UB)0x56;
 }
 

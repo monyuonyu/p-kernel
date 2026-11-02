@@ -105,7 +105,7 @@ static SL_PEND sl_pend[SL_PENDING];
 static UH      sl_seq_ctr = 1;        /* never 0                            */
 
 /* node n IP — same deterministic addressing drpc.c uses (10.1.0.(n+1)). */
-static UW sl_node_ip(UB n)
+static UW sl_node_ip(pk_node_t n)
 {
     return ((UW)(n + 1) << 24) | (net_my_ip & 0x00FFFFFFUL);
 }
@@ -120,7 +120,7 @@ static void sl_serve(UW src_ip, const SS6L_REQ *rq)
     for (INT z = 0; z < (INT)sizeof rep; z++) rb[z] = 0;
     rep.magic    = SS6L_REP_MAGIC;
     rep.seq      = rq->seq;
-    rep.src_node = drpc_my_node;
+    rep.src_node = pk_node_v1(drpc_my_node);
     rep.status   = 1;            /* refused unless we fill eo below          */
     rep.refuse_reason = SS6L_REFUSE_ABSENT;   /* SS6L v2: honest refuse code   */
     rep.d        = 0;
@@ -195,8 +195,8 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
 
     /* SS-5 placement: who OWNS this expert (HRW, NOCENTRAL — no vote). */
     INT owner = st_expert_owner((UB)expert_id);
-    if (owner < 0 || (UB)owner == drpc_my_node) return -1;   /* local/none */
-    if ((UB)owner >= DNODE_MAX) return -1;
+    if (owner < 0 || (pk_node_t)owner == drpc_my_node) return -1;   /* local/none */
+    if ((pk_node_t)owner >= DNODE_MAX) return -1;
     if (dnode_table[owner].state == DNODE_DEAD) return -1;    /* absent     */
 
     /* claim a pending slot */
@@ -211,7 +211,7 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
     UH seq = sl_seq_ctr++;
     if (sl_seq_ctr == 0) sl_seq_ctr = 1;
     sl_pend[slot].seq      = seq;
-    sl_pend[slot].dst_node = (UB)owner;
+    sl_pend[slot].dst_node = pk_node_v1((pk_node_t)owner);
     sl_pend[slot].got      = 0;
     sl_pend[slot].sem      = sem;
     sl_pend[slot].in_use   = 1;          /* visible to ss6_live_rx from here */
@@ -222,15 +222,15 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
     for (INT z = 0; z < (INT)sizeof rq; z++) qb[z] = 0;
     rq.magic     = SS6L_REQ_MAGIC;
     rq.seq       = seq;
-    rq.src_node  = drpc_my_node;
-    rq.dst_node  = (UB)owner;
+    rq.src_node  = pk_node_v1(drpc_my_node);
+    rq.dst_node  = pk_node_v1((pk_node_t)owner);
     rq.layer     = (UH)layer;
     rq.expert_id = (UH)expert_id;
     rq.d         = (UH)d;
     rq.dff       = (UH)dff;
     for (int i = 0; i < d; i++) rq.fin[i] = fin[i];
 
-    UW dst_ip = sl_node_ip((UB)owner);
+    UW dst_ip = sl_node_ip((pk_node_t)owner);
     sl_sent++;
 
     int ok = 0;

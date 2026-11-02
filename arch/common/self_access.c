@@ -101,7 +101,7 @@ void self_access_stats(SELF_STATS *out)
 /* ------------------------------------------------------------------ */
 
 /* counter callback for pfs_dag_foreach_ref. */
-static void pfs_count_cb(void *ctx, const char *name, UW seq, UB origin)
+static void pfs_count_cb(void *ctx, const char *name, UW seq, pk_node_t origin)
 {
     (void)name; (void)seq; (void)origin;
     (*(UW *)ctx)++;
@@ -115,7 +115,7 @@ UW self_access_pfs_count(void)
 }
 
 /* printer callback: one line per named object (name + head seq + origin). */
-static void pfs_print_cb(void *ctx, const char *name, UW seq, UB origin)
+static void pfs_print_cb(void *ctx, const char *name, UW seq, pk_node_t origin)
 {
     (void)ctx;
     sp("    "); sp(name);
@@ -215,7 +215,7 @@ U4 self_access_body(void)
  * there is no namespace to escape (structural confinement; see the
  * header comment on self_access_publish). Handles node ids up to two
  * digits (DNODE_MAX=64 < 100). */
-static void pub_topic_name(char *out, UB node)
+static void pub_topic_name(char *out, pk_node_t node)
 {
     const char *p = "self/pub/";
     INT i = 0;

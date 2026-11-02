@@ -394,6 +394,14 @@ int net_relay_tcp_init(void)
     relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+    /* N2b: this transport has no v3, and a wide id must not turn into node 1
+     * here: on an old relay the wide node falls back to TCP and takes node 1's
+     * place in the relay's table. Refuse instead. */
+    if (my_node_id > 256 && my_node_id <= 65534) {
+        dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d is a wide id: not on TCP\n",
+                my_node_id);
+        return -1;
+    }
     if (my_node_id < 1 || my_node_id > 255) {
         dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d out of range (1..255) "
                    "— defaulting to 1\n", my_node_id);

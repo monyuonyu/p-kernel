@@ -99,7 +99,7 @@ static UH       snf_seq_ctr = 1;        /* never 0                          */
  * ONCE per (origin,seq); ACK every copy (idempotent). Small ring is enough — a
  * forward is request/replied within the 600ms budget. */
 #define SNF_DEDUP     8
-typedef struct { UB origin; UH seq; UB used; } SNF_SEEN;
+typedef struct { pk_node_t origin; UH seq; UB used; } SNF_SEEN;
 static SNF_SEEN snf_seen[SNF_DEDUP];
 static INT      snf_seen_cursor = 0;
 
@@ -118,7 +118,7 @@ static unsigned   snf_dlv_cnt   = 0;    /* SNF_DELIVERs received as dest      */
 
 /* node n IP — the SAME deterministic addressing drpc.c / ss6_live.c use
  * (10.1.0.(n+1) within our /24). */
-static UW snf_node_ip(UB n)
+static UW snf_node_ip(pk_node_t n)
 {
     return ((UW)(n + 1) << 24) | (net_my_ip & 0x00FFFFFFUL);
 }
@@ -135,7 +135,7 @@ static UW snf_node_ip(UB n)
  * Fail-closed: a supernode is used ONLY when sn is a valid OTHER node that is
  * NOT the self and NOT the destination — otherwise DIRECT. Pure, integer-only,
  * deterministic -> the in-proc cert drives THIS exact function. */
-static UB snf_route_target(UB dst, UB me, UB sn)
+static pk_node_t snf_route_target(pk_node_t dst, pk_node_t me, pk_node_t sn)
 {
     if (dst >= DNODE_MAX || dst == me) return 0xFF;     /* nothing to send    */
     if (sn == 0xFF) return dst;                          /* no supernode -> direct */
@@ -147,16 +147,16 @@ static UB snf_route_target(UB dst, UB me, UB sn)
 
 /* Fill a SNF_PKT with byte-identical payload. magic chooses FWD vs DELIVER.
  * seq carries the per-send id (end-to-end ACK match + B dedup); 0 when unused. */
-static void snf_build(SNF_PKT *p, UW magic, UB origin, UB final_dst,
-                      UB relayed_by, UH seq, const UB *payload, UH len)
+static void snf_build(SNF_PKT *p, UW magic, pk_node_t origin, pk_node_t final_dst,
+                      pk_node_t relayed_by, UH seq, const UB *payload, UH len)
 {
     UB *pb = (UB *)p;
     for (INT z = 0; z < (INT)sizeof *p; z++) pb[z] = 0;
     if (len > SNF_PAYLOAD_MAX) len = SNF_PAYLOAD_MAX;   /* clamp BEFORE storing */
     p->magic      = magic;
-    p->origin     = origin;
-    p->final_dst  = final_dst;
-    p->relayed_by = relayed_by;
+    p->origin     = pk_node_v1(origin);
+    p->final_dst  = pk_node_v1(final_dst);
+    p->relayed_by = pk_node_v1(relayed_by);
     p->len        = len;
     p->seq        = seq;
     for (UH i = 0; i < len; i++) p->payload[i] = payload[i];
@@ -170,7 +170,7 @@ INT snf_send(pk_node_t dst, const UB *payload, UH len)
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (len > SNF_PAYLOAD_MAX || (len > 0 && !payload)) return 0;
 
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     UB sn = region_supernode();              /* the elected min-id supernode  */
 
     /* Runtime fail-closed: an ELECTED supernode that SWIM has already marked
@@ -185,7 +185,7 @@ INT snf_send(pk_node_t dst, const UB *payload, UH len)
     if (sn != 0xFF && sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD)
         sn = 0xFF;                           /* dead supernode -> direct        */
 
-    UB tgt = snf_route_target(dst, me, sn);
+    pk_node_t tgt = snf_route_target(dst, me, sn);
     if (tgt == 0xFF) return 0;               /* invalid destination           */
 
     static SNF_PKT pkt;                      /* file-static: off the stack     */
@@ -268,7 +268,7 @@ static INT     snf_last_out_valid = 0;
 static void snf_forward(UW src_ip, const SNF_PKT *in)
 {
     (void)src_ip;
-    UB dst = in->final_dst;
+    pk_node_t dst = in->final_dst;
     if (dst >= DNODE_MAX || dst == drpc_my_node) return;   /* never to self */
 
     /* Re-wrap as SNF_DELIVER, stamping ourselves as the relay. The payload is
@@ -288,7 +288,7 @@ static void snf_forward(UW src_ip, const SNF_PKT *in)
  * retransmitted SNF_FWD makes S re-forward the same DELIVER, but the bytes must
  * land in the application only once. Returns 1 if this (origin,seq) is NEW
  * (deliver it), 0 if already seen (ACK it again, but do NOT re-deliver). */
-static INT snf_dedup_new(UB origin, UH seq)
+static INT snf_dedup_new(pk_node_t origin, UH seq)
 {
     for (INT i = 0; i < SNF_DEDUP; i++)
         if (snf_seen[i].used && snf_seen[i].origin == origin
@@ -328,7 +328,7 @@ void snf_rx(UW src_ip, UH src_port, const UB *data, UH len)
             static SNF_PKT ack;              /* file-static: off the task stack */
             snf_build(&ack, SNF_ACK_MAGIC, p->origin, p->origin,
                       p->relayed_by, p->seq, (const UB *)0, 0);
-            UB ack_hop = (p->relayed_by != 0xFF && p->relayed_by < DNODE_MAX)
+            pk_node_t ack_hop = (p->relayed_by != 0xFF && p->relayed_by < DNODE_MAX)
                          ? p->relayed_by   /* via the supernode (warm)      */
                          : p->origin;      /* direct delivery -> straight   */
             udp_send(snf_node_ip(ack_hop), SNF_PORT, SNF_PORT,
@@ -422,12 +422,12 @@ static void snf_check(void (*pr)(const char *), BOOL cond, const char *name)
 static UB  cert_recv_buf[SNF_PAYLOAD_MAX];
 static UH  cert_recv_len;
 static INT cert_recv_via_super;
-static UB  cert_recv_origin;
+static pk_node_t cert_recv_origin;
 
 /* A REAL snf_sink_fn for the production-code-path arm: snf_rx() calls THIS when
  * a SNF_DELIVER for us arrives, so we record what the SHIPPED delivery code
  * actually handed up (byte-identical check + via_super flag). */
-static void cert_real_sink(UB src, const UB *payload, UH len, INT via_super)
+static void cert_real_sink(pk_node_t src, const UB *payload, UH len, INT via_super)
 {
     cert_recv_origin    = src;
     cert_recv_via_super = via_super;
@@ -461,7 +461,7 @@ static INT cert_super_then_dest(const SNF_PKT *fwd, UB super_id, UB dest_id,
 
 /* In-proc model of a DIRECT send (degrade): the sender SNF_DELIVERs straight
  * to B (no supernode hop). Mirrors the snf_send `else` branch + snf_rx. */
-static void cert_direct_to_dest(UB origin, UB dest_id, const UB *payload, UH len)
+static void cert_direct_to_dest(pk_node_t origin, UB dest_id, const UB *payload, UH len)
 {
     (void)dest_id;
     SNF_PKT dlv;
@@ -495,7 +495,7 @@ void supernode_forward_self_test(void (*pr)(const char *))
     /* ---- [supernode-forward]: A->B routes THROUGH S; S forwards; B's bytes
      * are byte-identical. ------------------------------------------------- */
     unsigned fwd_counter = 0;
-    UB tgt = snf_route_target(B, A, S);
+    pk_node_t tgt = snf_route_target(B, A, S);
     snf_check(pr, tgt == S, "route A->B with supernode S=2 -> through S (not direct)");
 
     /* A builds the SNF_FWD to S. */
@@ -522,7 +522,7 @@ void supernode_forward_self_test(void (*pr)(const char *))
     /* ---- FALSIFIER (a): NO supernode (0xFF) -> DIRECT to B; S forwards 0;
      * the bytes still arrive. ------------------------------------------- */
     unsigned fwd_counter_a = 0;
-    UB tgt_a = snf_route_target(B, A, 0xFF);
+    pk_node_t tgt_a = snf_route_target(B, A, 0xFF);
     snf_check(pr, tgt_a == B,
               "falsifier(a) no supernode (0xFF) -> route DIRECT to B");
     cert_recv_len = 0xFFFF; cert_recv_via_super = -1;
@@ -544,7 +544,7 @@ void supernode_forward_self_test(void (*pr)(const char *))
      * the caller, on S-unreachable, falls back to a DIRECT deliver to B — and B
      * still gets the bytes. ----------------------------------------------- */
     unsigned fwd_counter_b = 0;
-    UB tgt_b = snf_route_target(B, A, S);
+    pk_node_t tgt_b = snf_route_target(B, A, S);
     snf_check(pr, tgt_b == S,
               "falsifier(b) route still elects S (selection is reachability-blind)");
     /* S is unreachable: it never re-forwards -> its counter stays 0. */
@@ -581,8 +581,8 @@ void supernode_forward_self_test(void (*pr)(const char *))
      * The udp_send() inside snf_forward no-ops safely (no socket bound here);
      * we assert the re-wrap + counter + delivery, which run for real. ------- */
     {
-        extern UB drpc_my_node;
-        UB saved_me = drpc_my_node;
+        extern pk_node_t drpc_my_node;
+        pk_node_t saved_me = drpc_my_node;
         snf_sink_fn saved_sink = snf_sink;
         unsigned fwd0 = snf_forwarded();
         unsigned dlv0 = snf_delivered();
@@ -650,10 +650,10 @@ static const UB SNF_PROBE[] = {
 static volatile UH  snf_last_len      = 0;
 static UB           snf_last_buf[SNF_PAYLOAD_MAX];
 static volatile INT snf_last_via      = -1;
-static volatile UB  snf_last_origin   = 0;
+static volatile pk_node_t snf_last_origin   = 0;
 static volatile unsigned snf_recv_cnt = 0;
 
-static void snf_cert_sink(UB src, const UB *payload, UH len, INT via_super)
+static void snf_cert_sink(pk_node_t src, const UB *payload, UH len, INT via_super)
 {
     snf_last_origin = src;
     snf_last_via    = via_super;
@@ -878,12 +878,12 @@ static void np_self_mappings(NP_EP *m1, NP_EP *m2)
     m2->ip = ip; m2->port = SNF_PORT; m2->nat_class = NP_NAT_UNKNOWN; m2->_pad = 0;
 }
 
-static void np_build_req(NP_PKT *p, UB a, UB b, UH seq)
+static void np_build_req(NP_PKT *p, pk_node_t a, pk_node_t b, UH seq)
 {
     UB *pb = (UB *)p;
     for (INT z = 0; z < (INT)sizeof *p; z++) pb[z] = 0;
     p->magic = NP_REQ_MAGIC;
-    p->a = a; p->b = b; p->seq = seq;
+    p->a = pk_node_v1(a); p->b = pk_node_v1(b); p->seq = seq;
     np_self_mappings(&p->a_ep, &p->a_ep2);   /* MY two observed mappings */
 }
 
@@ -980,7 +980,7 @@ INT np_request_punch(pk_node_t peer)
     if (!snf_bound || drpc_my_node == 0xFF) return 0;
     if (peer >= DNODE_MAX || peer == drpc_my_node) return 0;
 
-    UB me = drpc_my_node;
+    pk_node_t me = drpc_my_node;
     UB sn = region_supernode();
 
     /* no broker (no elected supernode) -> straight to relay (connectivity). */
@@ -1044,7 +1044,7 @@ INT np_request_punch(pk_node_t peer)
         UB *pb = (UB *)&prb;
         for (INT z = 0; z < (INT)sizeof prb; z++) pb[z] = 0;
         prb.magic = NP_PRB_MAGIC;
-        prb.a = me; prb.b = peer; prb.seq = seq; prb.verdict = NP_VERDICT_PUNCH;
+        prb.a = pk_node_v1(me); prb.b = pk_node_v1(peer); prb.seq = seq; prb.verdict = NP_VERDICT_PUNCH;
         np_self_mappings(&prb.a_ep, &prb.a_ep2);
         prb.b_ep = peer_ep;
         for (INT retry = 0; retry < NP_RETRIES; retry++) {
@@ -1094,7 +1094,7 @@ static void np_cert_req(NP_PKT *p, UB a, UB b, UH seq,
     UB *pb = (UB *)p;
     for (INT z = 0; z < (INT)sizeof *p; z++) pb[z] = 0;
     p->magic = NP_REQ_MAGIC;
-    p->a = a; p->b = b; p->seq = seq;
+    p->a = pk_node_v1(a); p->b = pk_node_v1(b); p->seq = seq;
     p->a_ep.ip  = 0x0A010001UL; p->a_ep.port  = port1;
     p->a_ep2.ip = 0x0A010001UL; p->a_ep2.port = port2;
 }
@@ -1141,8 +1141,8 @@ void nat_punch_self_test(void (*pr)(const char *))
      * shipped np_rx/snf_rx; assert the production NP_INFO was emitted with
      * swapped eps + verdict PUNCH (drives np_broker_req via np_rx). ----- */
     {
-        extern UB drpc_my_node;
-        UB saved_me = drpc_my_node;
+        extern pk_node_t drpc_my_node;
+        pk_node_t saved_me = drpc_my_node;
         BOOL saved_cap = region_is_super_capable(S);
         unsigned brk0 = np_brokered();
         np_last_info_valid = 0;
@@ -1202,8 +1202,8 @@ void nat_punch_self_test(void (*pr)(const char *))
      * fall back to relay; assert the payload still ARRIVES byte-identical via
      * the relay path (reuse the snf real production sink + byte compare). - */
     {
-        extern UB drpc_my_node;
-        UB saved_me = drpc_my_node;
+        extern pk_node_t drpc_my_node;
+        pk_node_t saved_me = drpc_my_node;
         snf_sink_fn saved_sink = snf_sink;
 
         /* The fallback in np_request_punch is `snf_send(peer, ...)`. We prove

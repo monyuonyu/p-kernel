@@ -280,7 +280,7 @@ int dmoe_experts_reachable(const dmoe_bank *b)
 /* fleet-view setters                                                 */
 /* ------------------------------------------------------------------ */
 
-void dmoe_set_members(dmoe_bank *b, const UB *members, int n)
+void dmoe_set_members(dmoe_bank *b, const pk_node_t *members, int n)
 {
     if (!b) return;
     if (n > (int)LOOKUP_MAX_MEMBERS) n = (int)LOOKUP_MAX_MEMBERS;

@@ -6,17 +6,54 @@
  *  pk_node8_t  a node id as it is on the v1 wire and on disk: one byte,
  *              0xFF = "not a node". It never widens — a v1 packet keeps
  *              its layout when N2b adds the 16-bit v2 packets.
- *  pk_node_t   a node id inside a node. Today the same byte. N2b may widen
- *              it on hosted builds; bare metal keeps the byte.
+ *  pk_node_t   a node id inside a node: 16 bits on hosted builds (N2b), the
+ *              same byte on bare metal, which stays at 8 nodes.
+ *  PK_NODE_NONE  "not a node" inside a node: 0xFF on both. It is not 0xFFFF
+ *              on hosted, so the v1 fields, the tables filled with 0xFF and
+ *              every comparison keep their meaning; id 255 (PKERNEL_NODE_ID
+ *              256) is simply never given out. 0xFFFF is only the v2 wire's
+ *              spelling of it.
  *
- *  Both are spelled unsigned char (= UB = U1) so this header needs no
- *  other header and N2a changes no code. tools/n2scan/check_types.py
- *  checks that wire fields and the common prototypes use these names.
+ *  These use unsigned char / unsigned short (= UB / UH), so this header
+ *  needs no other header. tools/n2scan/check_types.py checks that wire
+ *  fields and the common prototypes use these names.
  */
 #ifndef PK_NODE_H
 #define PK_NODE_H
 
 typedef unsigned char pk_node8_t;
+#ifdef _TK_HOSTED_LIBC_
+typedef unsigned short pk_node_t;
+#else
 typedef unsigned char pk_node_t;
+#endif
+#define PK_NODE_NONE 0xFF
+
+/* An id too wide for one byte (0xFFFF is the v2 wire's "not a node"). */
+#define PK_NODE_IS_WIDE(id) ((id) > 0xFF && (id) != 0xFFFF)
+
+/* A node id going into a one-byte field (v1 wire, disk): a wide id must not be
+ * cut (300 would become 44), it becomes "not a node". Bare metal has no wide
+ * ids, so there it is only the cast. */
+#ifdef _TK_HOSTED_LIBC_
+static inline pk_node8_t pk_node_v1(pk_node_t id)
+{
+    return id < PK_NODE_NONE ? (pk_node8_t)id : (pk_node8_t)PK_NODE_NONE;
+}
+#else
+#define pk_node_v1(id) ((pk_node8_t)(id))
+#endif
+
+/* The node's address, 10.1.0.(n+1); a wide id uses the third byte too, so it
+ * never lands on a narrow node's address. Bare metal: the old expression. */
+#ifdef _TK_HOSTED_LIBC_
+static inline unsigned int pk_node_ip(pk_node_t n)
+{
+    unsigned int v = (unsigned int)n + 1u;
+    return ((v & 0xFFu) << 24) | ((v >> 8) << 16) | 0x0000010Au;
+}
+#else
+#define pk_node_ip(n) (((UW)((n) + 1) << 24) | 0x0000010AUL)
+#endif
 
 #endif /* PK_NODE_H */
