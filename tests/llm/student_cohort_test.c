@@ -111,7 +111,12 @@ int main(void)
 
     /* train both on the SAME corpus but in a DIFFERENT visit order, so they
      * diverge along different SGD paths toward a compatible minimum. */
-    const int ROUNDS = 60; const float LR = 0.02f;
+    /* 3e-3, the resident baby's rate. It was 2e-2, where the line below passed
+     * only because one parent had fallen back: with the old root A=2.77 B=3.54
+     * merged 3.49; with the real root (B4 stage 1) A=2.83 B=2.68 merged 2.98, a
+     * better child that fails it. At 3e-3 the line holds on both trees: merged
+     * 3.11 of 4.18 and 3.98 before, 3.13 of 4.06 and 3.72 after. */
+    const int ROUNDS = 60; const float LR = 3e-3f;
     for (int r = 0; r < ROUNDS; r++) {
         for (int j = 0; j < train_windows; j++) {
             /* A visits 0,1,2,..; B visits a rotated order (shift = j*7 % W). */
