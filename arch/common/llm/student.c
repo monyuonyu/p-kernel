@@ -2253,6 +2253,7 @@ static float st_blob_w_at(const void *buf, size_t idx)
     return f;
 }
 
+#ifndef ST_MERGE_NO_FINITE
 /* NaN or Inf? (exponent all ones) */
 static int st_bad_f(float f)
 {
@@ -2271,6 +2272,7 @@ static int st_blob_w_finite(const void *buf, int n)
     for (int i = 0; i < n; i++) if (st_bad_f(st_blob_w_at(buf, (size_t)i))) return 0;
     return 1;
 }
+#endif
 
 PK_NOSW_FN(int, st_load, (st_model *m, const void *buf, size_t len), (m, buf, len))
 {
