@@ -2417,8 +2417,22 @@ int st_round_merge(st_model *into, uint32_t gen,
                    const void *const *peer_blobs, const size_t *peer_lens,
                    const uint32_t *gens, int count)
 {
-    (void)into; (void)gen; (void)peer_blobs; (void)peer_lens; (void)gens; (void)count;
-    return ST_E_ARG;
+    if (!into || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens || !gens)) return ST_E_ARG;
+    const void *take[ST_COHORT_MAX];
+    size_t len[ST_COHORT_MAX];
+    int n = 0;
+    for (int k = 0; k < count; k++) {
+#ifndef ST_ROUND_NO_GEN     /* falsifier for [b5-gen] */
+        if (gens[k] != gen) continue;
+#else
+        (void)gen;
+#endif
+        take[n] = peer_blobs[k];
+        len[n]  = peer_lens[k];
+        n++;
+    }
+    return st_merge_cohort(into, take, len, n);
 }
 
 /* ================================================================== */
