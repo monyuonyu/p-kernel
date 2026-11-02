@@ -25,8 +25,10 @@
  *    [tier-forward-pin]      the per-tier student forward hash is pinned (RE-
  *                            PINNED post SCALE-WALL C1 = RoPE + ST_MAXSEQ 64->256,
  *                            commit 7d497d7c, which moved st_forward every tier):
- *                            S=6baf2e14f370de17, M=604895ba9c2b1c9d,
- *                            L=5ba2c68f6ca0ba89. SAME recipe as student_ss6_test
+ *                            S=6493191cc50680ed, M=755833d2411c1b45,
+ *                            L=c429b792c8c45d05. SAME recipe as student_ss6_test
+ *                            (moved 2026-11-03: B4 stage 1 replaced st_sqrtf, which
+ *                            sets the initial 1/sqrt(D) scales and the RMSNorm root)
  *                            (CORPUS, warm_train 1 step, FNV-1a logit hash), so
  *                            the pins match the SS-6 single= hashes bit-for-bit.
  *
@@ -292,20 +294,20 @@ int main(int argc, char **argv)
          * By this cert's OWN invariant ("SAME recipe as student_ss6_test, so the
          * pins match the SS-6 single= hashes bit-for-bit") the correct values ARE
          * the current GREEN run_ss6.sh single= hashes, restored here. */
-        const uint64_t PIN_S = 0x6baf2e14f370de17ULL;  /* SS-6 S (post-C1) */
-        const uint64_t PIN_M = 0x604895ba9c2b1c9dULL;  /* SS-6 M (post-C1) */
-        const uint64_t PIN_L = 0x5ba2c68f6ca0ba89ULL;  /* SS-6 L (post-C1) */
+        const uint64_t PIN_S = 0x6493191cc50680edULL;  /* SS-6 S (post-B4) */
+        const uint64_t PIN_M = 0x755833d2411c1b45ULL;  /* SS-6 M (post-B4) */
+        const uint64_t PIN_L = 0xc429b792c8c45d05ULL;  /* SS-6 L (post-B4) */
         char msg[160];
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] S=%016llx == 6baf2e14f370de17 (post-C1; == SS-6 single=)",
+            "[tier-forward-pin] S=%016llx == 6493191cc50680ed (post-B4; == SS-6 single=)",
             (unsigned long long)hS);
         CHECK(hS == PIN_S, msg);
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] M=%016llx == 604895ba9c2b1c9d (post-C1; == SS-6 single=)",
+            "[tier-forward-pin] M=%016llx == 755833d2411c1b45 (post-B4; == SS-6 single=)",
             (unsigned long long)hM);
         CHECK(hM == PIN_M, msg);
         snprintf(msg, sizeof msg,
-            "[tier-forward-pin] L=%016llx == 5ba2c68f6ca0ba89 (post-C1; == SS-6 single=)",
+            "[tier-forward-pin] L=%016llx == c429b792c8c45d05 (post-B4; == SS-6 single=)",
             (unsigned long long)hL);
         CHECK(hL == PIN_L, msg);
     }

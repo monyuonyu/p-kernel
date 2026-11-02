@@ -19,7 +19,12 @@
 #
 # The BASE student.c is the last commit where M-tier's forward pass was
 # CONFIRMED byte-identical to its predecessor: it is taken from git (default
-# 7d497d7c, the SCALE-WALL C1 tip) if available, else from $SS2_BASE_STUDENT.
+# 53a6d2e4, ROADMAP B4 stage 1) if available, else from $SS2_BASE_STUDENT.
+# Advanced 7d497d7c -> 53a6d2e4 on 2026-11-03: B4 stage 1 replaced st_sqrtf, and
+# 1/sqrt(D) in the initial weights and the RMSNorm root moved with it, on
+# purpose. 7d497d7c's student.c with ONLY the new st_sqrtf and eps 1/64 copied
+# in gives this hash and loss, every byte (BACKLOG D5): the root is all that
+# moved. SS2_BASE_REF=7d497d7c turns [m-identical] red, the check still bites.
 # This was 5edbeeda (the pre-SS-2 SS-1 tip) until 2026-09-23. It was advanced
 # because 7d497d7c intentionally widened ST_MAXSEQ 64->256 and added RoPE
 # (special-structure-mind.md's NS v2 / scale_wall_design.md C1) — a deliberate
@@ -50,7 +55,7 @@ SRC_NEW="$ROOT/arch/common/llm/student.c"
 # ---- obtain the BASE (pre-SS-2) student.c + student.h ----
 BASE_DIR="$WORK/base"
 mkdir -p "$BASE_DIR"
-BASE_REF="${SS2_BASE_REF:-7d497d7c}"   # last confirmed M-tier-identical tip (see note above; was 5edbeeda pre-2026-09-23)
+BASE_REF="${SS2_BASE_REF:-53a6d2e4}"   # last confirmed M-tier-identical tip (see note above; was 5edbeeda pre-2026-09-23)
 if [ -n "${SS2_BASE_STUDENT:-}" ] && [ -f "${SS2_BASE_STUDENT}" ]; then
     cp "$SS2_BASE_STUDENT" "$BASE_DIR/student.c"
     cp "$(dirname "$SS2_BASE_STUDENT")/student.h" "$BASE_DIR/student.h"
