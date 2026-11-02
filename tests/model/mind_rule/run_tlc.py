@@ -127,6 +127,17 @@ RUNS = {
     "S3-fix-v-hp":         ({**S3, **FIX, **HP}, SAFE.replace("P3", "P3v"), None, "pass"),
     "Sc-m4-L1-hp":         ({**K2, **FIX, **HP, "ScriptName": M4SC}, "TypeOK", "L1", "pass"),
     "M4sc-A-hp":           ({**K2, **FIX, **HP, "ScriptName": M4SC, "Mut": '"M4"'}, "TypeOK", "L1A", "pass"),
+    # 11-02 21:00 run: the readings on Evict and Restart under HaveFix.
+    # Expected before the run: HaveFix helps none of them. HavePush needs the
+    # peer to hold k (held[a][k].v # 0), so a node that forgot k is not pushed
+    # to, and the per-origin dedup still drops the re-send and the answer;
+    # P1, P4 and P5 are states and flags reached before any push can fire.
+    # The control without Evict keeps converging.
+    "R-evict-P4-hp":     ({**S3, **FIX, **HP, "MaxEvict": 1}, "TypeOK P4", None, "fail:P4"),
+    "R-evict-P1-hp":     ({**S3, **FIX, **HP, "MaxEvict": 1}, "TypeOK P1", None, "fail:P1"),
+    "R-restart-P5-hp":   ({**S3, **FIX, **HP, "MaxRestart": 1}, "TypeOK P5", None, "fail:P5"),
+    "R-evict-L1A-t2-hp": ({**K2, **FIX, **HP, "MaxTeach": 2, "MaxEvict": 1}, "TypeOK", "L1A", "fail:L1"),
+    "K2t2-L1A-fix-hp":   ({**K2, **FIX, **HP, "MaxTeach": 2}, "TypeOK", "L1A", "pass"),
 }
 
 

@@ -28,9 +28,15 @@
 # it and the old push-back heals B) is green too, because A never used up
 # node 5's seq 1; with it, A drops that loser as a duplicate, so S4 is green
 # only if the winner's holder pushes (inverted rule in the have-push: red).
+# MST_TWO=1 (ROADMAP 1-3m, the one push slot): B also holds a stale snow (from
+# node 6), A also teaches snow white before sea. One summary then shows two
+# losing keys, and mc_push_winner has one packet and one re-send count: the
+# second push overwrites the first. Expected before the first run: S5 green
+# (the first key stays stale in the next summary, and it is not "busy" any
+# more, so it is pushed then).
 # Output "[mind-stale] <check> PASS|FAIL", then ALL PASS (exit 0) or RED
-# (exit 1). Env: MST_PORT (default 7497), MST_A_SAW, EXTRA_CFLAGS (added to
-# -DMT_RX_INJECT). Rebuilds boot/linux* and cleans it afterwards.
+# (exit 1). Env: MST_PORT (default 7497), MST_A_SAW, MST_TWO, EXTRA_CFLAGS
+# (added to -DMT_RX_INJECT). Rebuilds boot/linux* and cleans it afterwards.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -92,14 +98,26 @@ if [ "${MST_A_SAW:-0}" = 1 ]; then
     if wait_for "$A" 'remote teach arrived: "sky"->"blue"' 90; then
         res S0a-A-saw-blue PASS; else res S0a-A-saw-blue FAIL; fi
 fi
+if [ "${MST_TWO:-0}" = 1 ]; then
+    printf 'mind inject 6 1 snow blue\n' >&8
+    if wait_for "$B" 'remote teach arrived: "snow"->"blue"' 60; then
+        res S0b-two-stale PASS; else res S0b-two-stale FAIL; fi
+fi
 printf 'stop now\n' >&8
 wait_for "$B" '^\[stop\] stopped 1 local 1' 30 || echo "[mind-stale] note: B not stopped"
 printf 'mind teach fire warm\n' >&7
 wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=1 ' 60 || echo "[mind-stale] note: A fire not published"
 printf 'mind teach sky green\n' >&7
 wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=2 ' 60 || echo "[mind-stale] note: A sky not published"
-printf 'mind teach sea deep\n' >&7
-wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=3 ' 60 || echo "[mind-stale] note: A sea not published"
+if [ "${MST_TWO:-0}" = 1 ]; then
+    printf 'mind teach snow white\n' >&7
+    wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=3 ' 60 || echo "[mind-stale] note: A snow not published"
+    printf 'mind teach sea deep\n' >&7
+    wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=4 ' 60 || echo "[mind-stale] note: A sea not published"
+else
+    printf 'mind teach sea deep\n' >&7
+    wait_for "$A" 'published mind/teach k=[0-9]+ v=[0-9]+ seq=3 ' 60 || echo "[mind-stale] note: A sea not published"
+fi
 sleep 5                                   # re-drives of sea, refused at B
 if grep -aqE 'remote teach from node [0-9]+ refused \(stopped' "$B" \
    && ! grep -aqE 'remote teach arrived: "(fire|sea)"|"sky": "blue"->"green"' "$B"; then
@@ -112,6 +130,10 @@ if grep -aqE 'remote teach arrived: "fire"->"warm"' "$B"; then res S2-have-pull 
 if grep -aqE 'remote teach arrived: "sea"->"deep"' "$B"; then res S3-redrive PASS; else res S3-redrive FAIL; fi
 if wait_for "$B" 'remote REVISE key [0-9]+ "sky": "blue"->"green"' 60; then
     res S4-sky-green PASS; else res S4-sky-green FAIL; fi
+if [ "${MST_TWO:-0}" = 1 ]; then
+    if wait_for "$B" 'remote REVISE key [0-9]+ "snow": "blue"->"white"' 60; then
+        res S5-snow-white PASS; else res S5-snow-white FAIL; fi
+fi
 grep -aE 'inject:|refused|mind/have from|remote teach arrived|remote REVISE|conflict rule' "$B" | head -20 | sed 's/^/  B: /'
 cp "$A" /tmp/mind_stale.A.log 2>/dev/null; cp "$B" /tmp/mind_stale.B.log 2>/dev/null
 echo "[mind-stale] logs: $WORK (and /tmp/mind_stale.[AB].log)"
