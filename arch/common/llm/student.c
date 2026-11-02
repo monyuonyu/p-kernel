@@ -51,9 +51,14 @@ float st_expf(float x)
     float t = x * 1.4426950f;                       /* x / ln2 */
     int   k = (int)(t + (t >= 0.0f ? 0.5f : -0.5f));
     float r = x - (float)k * 0.69314718f;
+#ifdef ST_MATH_SHORT        /* falsifier for [m2-exp]: two terms fewer */
+    float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f +
+              r * 0.041666667f)));
+#else
     float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f +
               r * (0.041666667f + r * (0.0083333333f +
               r * 0.0013888889f)))));
+#endif
     ST_F32 s; s.u = (uint32_t)(k + 127) << 23;
     return p * s.f;
 }
@@ -74,17 +79,44 @@ float st_logf(float x)
     float m  = v.f;
     float z  = (m - 1.0f) / (m + 1.0f);
     float z2 = z * z;
+#ifdef ST_MATH_SHORT        /* falsifier for [m2-log]: two terms fewer */
+    float l  = 2.0f * z * (1.0f + z2 * (0.33333333f + z2 * 0.2f));
+#else
     float l  = 2.0f * z * (1.0f + z2 * (0.33333333f + z2 * (0.2f +
                z2 * (0.14285714f + z2 * 0.11111111f))));
+#endif
     return l + (float)e * 0.69314718f;
 }
 
+/* The root is taken of a mantissa in [1, 4) and scaled back by a power of two,
+ * so the same four Newton steps serve every positive float: within 2.4e-7 of
+ * libm ([b4-math] M1, research/b4-numerics.md). Only + - * / on floats, in a
+ * fixed order, so x86_64 and aarch64 give the same bits (M3).
+ * It was 6 steps from 1 or x/2: 1/64 for anything small, which made Adam's eps
+ * 1/64 in fact while the code said 1e-8; ST_ADAM_EPS now says it. */
 static float st_sqrtf(float x)
 {
     if (x <= 0.0f) return 0.0f;
-    float r = x > 1.0f ? x * 0.5f : 1.0f;
-    for (int i = 0; i < 6; i++) r = (r + x / r) * 0.5f;
-    return r;
+#ifdef ST_SQRT_OLD          /* falsifier for [m1-sqrt] */
+    float o = x > 1.0f ? x * 0.5f : 1.0f;
+    for (int i = 0; i < 6; i++) o = (o + x / o) * 0.5f;
+    return o;
+#else
+    ST_F32 v; v.f = x;
+#ifndef ST_SQRT_NO_INF      /* falsifier for [m1-inf] */
+    if ((v.u & 0x7F800000U) == 0x7F800000U) return x;   /* NaN, +Inf: libm's */
+#endif
+    int sub = 0;
+    if ((v.u & 0x7F800000U) == 0U) { v.f = x * 16777216.0f; sub = 24; } /* 2^24 */
+    int e   = (int)((v.u >> 23) & 0xFF) - 127 - sub;
+    int odd = (int)((unsigned)e & 1U);                  /* e - odd is even */
+    v.u = (v.u & 0x007FFFFFU) | ((uint32_t)(127 + odd) << 23);
+    float m = v.f;                                      /* [1, 4) */
+    float r = (1.0f + m) * 0.5f;
+    for (int i = 0; i < 4; i++) r = (r + m / r) * 0.5f;
+    ST_F32 s; s.u = (uint32_t)((e - odd) / 2 + 127) << 23;
+    return r * s.f;
+#endif
 }
 
 float st_rsqrtf(float x)
@@ -2077,11 +2109,18 @@ void st_zero_grad(st_model *m)
     PK_NOSW_LEAVE();
 }
 
+/* What Adam has had all along (see st_sqrtf). Stage 2 of research/b4-numerics.md
+ * moves it to 1e-8 together with the learning rate; -DST_ADAM_EPS=1e-8f is the
+ * falsifier for [m4-adam]. */
+#ifndef ST_ADAM_EPS
+#define ST_ADAM_EPS 0.015625f
+#endif
+
 void st_adam_step(st_model *m, float lr)
 {
     PK_NOSW_ENTER();
     m->adam_t++;
-    float b1 = 0.9f, b2 = 0.999f, eps = 1e-8f;
+    float b1 = 0.9f, b2 = 0.999f, eps = ST_ADAM_EPS;
     float bc1 = 1.0f - st_expf((float)m->adam_t * st_logf(b1));
     float bc2 = 1.0f - st_expf((float)m->adam_t * st_logf(b2));
     if (bc1 < 1e-12f) bc1 = 1e-12f;

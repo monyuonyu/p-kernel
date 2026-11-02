@@ -53,6 +53,10 @@ static void m1_sqrt(uint64_t stride)
                 st_sqrtf(from_u(0xFF800000u)) == 0.0f;
     float nn = st_sqrtf(from_u(0x7FC00000u));
     CHECK(edges && nn != nn, "[m1-edges] 0 and negatives give 0, NaN gives NaN");
+    /* audit-116: the design's M1 did not say. libm's answer: Adam's denominator
+     * turns infinite and the step 0, not a NaN weight (the old root gave NaN). */
+    float inf = st_sqrtf(from_u(0x7F800000u));
+    CHECK(to_u(inf) == 0x7F800000u, "[m1-inf] +Inf gives +Inf");
 }
 
 static void m2_exp_log(uint64_t stride)
