@@ -955,6 +955,19 @@ float student_dmn_heldout_loss(void)
     return heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
 }
 
+/* The saves refused for a non-finite model are nothing a person would see
+ * otherwise: the resident brain just stops saving (audit-116). One line, only
+ * when there is something to say, so the output of a healthy node is as before. */
+static void refused_say(emit_fn emit)
+{
+    if (!g_nonfinite_refused) return;
+    char line[96];
+    snprintf(line, sizeof line,
+             "[baby] %u saves refused: non-finite model (the last good save stays)\r\n",
+             g_nonfinite_refused);
+    emit(line);
+}
+
 /* ---------------------------------------------------------------------------
  * [cradle-live] self-report (the multi-process teacher-convergence harness,
  * T-fix-b / [cradle-teach] DEFERRED [live] row). Prints ONE uniquely-greppable
@@ -998,6 +1011,7 @@ void cradle_live_probe(emit_fn emit)
              "[cradle-live] ring_len=%d probe_loss=%.4f chance=%.4f\r\n",
              rlen, (double)probe, (double)chance);
     emit(line);
+    refused_say(emit);
 }
 
 /* [cradle-live] CANONICAL held probe (D5-j (d)). cradle_live_probe reads the
@@ -1654,6 +1668,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
              g_loaded_from_disk ? "RESTORED" : "fresh",
              corpus_n, seqlen, trainw, heldw, (double)chance);
     emit(line);
+    refused_say(emit);
 
     /* 0-12 step 3: say how much of the held set the baby also trains on */
     {
