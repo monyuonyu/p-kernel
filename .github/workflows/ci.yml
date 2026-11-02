@@ -2821,6 +2821,10 @@ jobs:
         # Plain, the saved copy, -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both.
         # 5 min in the audit container next to a CI run (the job has 55).
         run: bash tests/llm/run_st_nan.sh
+      - name: "[b4-math] the student's root, exp, log against libm, Adam's step, same bits on aarch64 (4 falsifiers red)"
+        # ROADMAP B4 stage 1: research/b4-numerics.md M1 to M4. Here for the
+        # aarch64 compiler and qemu-user of this job; about 20 s.
+        run: bash tests/llm/run_b4_math.sh
 
   sanitizer-build:
     # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
