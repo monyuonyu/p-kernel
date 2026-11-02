@@ -111,6 +111,8 @@ want nomerge "$L" FAIL "[guarded-nan]"
 want nomerge "$L" FAIL "[guarded-into]"
 want nomerge "$L" FAIL "[guarded-distill]"
 want nomerge "$L" FAIL "[cohort-nonfinite]"
+want nomerge "$L" FAIL "[load-nonfinite]"
+want nomerge "$L" PASS "[load-clean]"
 want nomerge "$L" PASS "[cohort-clean]"
 
 echo ""

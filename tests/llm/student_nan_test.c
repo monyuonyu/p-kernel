@@ -18,6 +18,8 @@
  *               step carries a NaN from vu into w)
  *   [guarded-*] st_merge_guarded and st_merge_distill refuse a non-finite parent,
  *               in a row the windows use or not, and leave the model as it was
+ *   [load-*]    st_load refuses a blob with a NaN or Inf in w, mu or vu (audit-116:
+ *               rc 0), the model as it was; a clean blob still loads
  *   [cohort-*]  st_merge_cohort skips a peer with a non-finite weight, refuses
  *               a sum that overflows, leaves the model as it was (research/
  *               b5-region-rounds.md G4); a finite merge is what it always was
@@ -304,6 +306,44 @@ static int cohort_with(st_model *a, const st_model *peer)
     return r;
 }
 
+static void load_checks(void)
+{
+    st_model a, p;
+    if (st_init_tier(&a, 2, ST_TIER_S) != ST_OK || st_init_tier(&p, 3, ST_TIER_S) != ST_OK) {
+        CHECK(0, "[load] init"); return;
+    }
+    const int n = p.n_params;
+    float *arr[3] = { p.w, p.mu, p.vu };
+    const int at[] = { 0, n / 2 + 1, n - 1 };
+    static const uint32_t pat[] = { 0x7FC00000u, 0x7F800000u, 0xFF800000u };
+    const uint64_t h0 = model_hash(&a);
+    int bad = 0;
+    for (int k = 0; k < 3; k++)
+        for (unsigned i = 0; i < 3; i++)
+            for (unsigned q = 0; q < 3; q++) {
+                float keep = arr[k][at[i]];
+                arr[k][at[i]] = from_u(pat[q]);
+                size_t l = 0;
+                void *b = blob_of(&p, &l);
+                arr[k][at[i]] = keep;
+                int r = b ? st_load(&a, b, l) : ST_OK;
+                free(b);
+                if (r == ST_OK || model_hash(&a) != h0) bad++;
+                if (model_hash(&a) != h0) {
+                    st_free(&a);
+                    if (st_init_tier(&a, 2, ST_TIER_S) != ST_OK) { CHECK(0, "[load] init"); return; }
+                }
+            }
+    printf("    27 poisoned blobs, %d loaded\n", bad);
+    CHECK(bad == 0, "[load-nonfinite] NaN or Inf in w, mu, vu: refused, the model as it was");
+    size_t l = 0;
+    void *b = blob_of(&p, &l);
+    int r = b ? st_load(&a, b, l) : ST_E_ARG;
+    free(b);
+    CHECK(r == ST_OK && model_hash(&a) == model_hash(&p), "[load-clean] a clean blob loads, every byte");
+    st_free(&a); st_free(&p);
+}
+
 static void cohort_checks(void)
 {
     st_model a, p, q;
@@ -552,7 +592,7 @@ int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc > 1 && strcmp(argv[1], "merge") == 0) {
-        printf("[nan] the merge\n");   guarded_checks(); cohort_checks();
+        printf("[nan] the merge\n");   guarded_checks(); load_checks(); cohort_checks();
     } else if (argc > 1 && strcmp(argv[1], "ema") == 0) {
         printf("[nan] the saved copy\n");
         ema_checks();
@@ -560,7 +600,7 @@ int main(int argc, char **argv)
         printf("[nan] st_logf\n");     logf_checks();
         printf("[nan] the loss\n");    loss_checks();
         printf("[nan] the check\n");   finite_checks();
-        printf("[nan] the merge\n");   guarded_checks(); cohort_checks();
+        printf("[nan] the merge\n");   guarded_checks(); load_checks(); cohort_checks();
         printf("[nan] the save\n");    refused_before(); gate_checks(); refused_after();
     }
     printf("[result] %s (%d pass, %d fail)\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);
