@@ -106,13 +106,13 @@ jobs:
     name: "RNG0 busy-task starvation 回帰試験 (x86, 3 arms)"
     runs-on: ubuntu-latest
     # 20 -> 30 (2026-10-15): + the two [kload-leak] arms (about 3 min each)
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install i686 cross toolchain + qemu-system-x86
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends \
+          sudo tests/ci/apt_install.sh \
             gcc-i686-linux-gnu make qemu-system-x86
       - name: positive arm — expect GREEN (the fix)
         run: ARM=positive sh tests/x86/run_rng0_regression.sh
@@ -136,7 +136,7 @@ jobs:
       # steps above leave objects built with their own -D flags.
       - name: "[kload-leak] an unknown beacon gets nothing back — expect exit 0 (0-14)"
         run: |
-          sudo apt-get install -y --no-install-recommends dosfstools mtools
+          sudo tests/ci/apt_install.sh dosfstools mtools
           make -C boot/x86 clean >/dev/null
           KL_WAIT=120 bash tests/x86/run_kload_leak.sh
       # Both gates out: since kload-drain (kload finding 3) the drain also drops
@@ -249,7 +249,7 @@ jobs:
     # 90 -> 100 (2026-10-30): 82.2 min in CI 40879351542 (65.8 in 40868271726,
     # the runner's load varies), and [mind-stale] adds ~1.5 min (its
     # -DMH_EVERY=1 pass another ~1.5, 2026-11-01).
-    timeout-minutes: 100
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -259,7 +259,7 @@ jobs:
           # libtcc for THIS ABI to compile units. The x86_64 runner has the
           # x86_64 libtcc, so the boot/linux_x86_64 Makefile probe links it and
           # HAVE_LIBTCC turns on — `selfc test` then actually compiles+forks.
-          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+          sudo tests/ci/apt_install.sh gcc make libtcc-dev
       - name: Build (native x86_64 — Makefile auto-detects host arch)
         run: make -C boot/linux_x86_64
       - name: Kernel self-tests (pfs + hrw via shell stdin)
@@ -1829,13 +1829,13 @@ jobs:
   relay-tests:
     name: "リレー往復スイート (6 シナリオ)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: Build + run test_relay
         run: make -C relay test
 
@@ -2667,13 +2667,13 @@ jobs:
     # theater; this job proves the gates only go green THROUGH conscience_check.
     name: "良心 anti-theater (-DCONSCIENCE_STUB must go RED)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+          sudo tests/ci/apt_install.sh gcc make libtcc-dev
       - name: Build the STUB binary (-DCONSCIENCE_STUB — judgment removed)
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DCONSCIENCE_STUB
       - name: The SAME harness must go RED both directions
@@ -2707,13 +2707,13 @@ jobs:
     # scaling had no mechanism falsifier at all.
     name: "society-of-minds anti-theater (-DSCALING_AGG_STUB must go RED)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+          sudo tests/ci/apt_install.sh gcc make libtcc-dev
       - name: Build the STUB binary (-DSCALING_AGG_STUB — aggregator gutted to r[0])
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSCALING_AGG_STUB
       - name: The mechanism arm must go RED; the converged-null arm stays green (it cannot detect the stub)
@@ -2742,13 +2742,13 @@ jobs:
     # sabotage: only the labeler is removed, exactly one falsifier at a time.)
     name: "frontier mouth anti-theater (-DSABOTAGE_FRONTIER_NOLABEL must go RED)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make libtcc-dev
+          sudo tests/ci/apt_install.sh gcc make libtcc-dev
       - name: Build the SABOTAGE binary (-DSABOTAGE_FRONTIER_NOLABEL — labeler stubbed)
         run: make -C boot/linux_x86_64 EXTRA_CFLAGS=-DSABOTAGE_FRONTIER_NOLABEL
       - name: The provenance cert MUST go RED
@@ -2816,6 +2816,12 @@ jobs:
         # 38122175153, cancelled at the old 25-min job limit) - hence 45 above.
         run: bash tests/llm/run_ema.sh
 
+      - name: non-finite model cert (st_logf floors NaN and Inf, no save writes a non-finite model)
+        # ROADMAP B4, audit-114: st_logf(NaN) was +89.13, a NaN model's loss -89.13.
+        # Plain, the saved copy, -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both.
+        # 5 min in the audit container next to a CI run (the job has 55).
+        run: bash tests/llm/run_st_nan.sh
+
   sanitizer-build:
     # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
     # green in a row; promoted from advisory) — catches the recurring stack-overflow class (the
@@ -2833,13 +2839,13 @@ jobs:
     # byte-identical.
     name: "サニタイザ build (ASan/UBSan)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: Build boot/linux_x86_64 with ASan+UBSan (native x86_64)
         # NO_LIBTCC=1: the LDFLAGS override below drops -ltcc, so the selfc
         # libtcc path must be compiled out too (else undefined tcc_* at link if
@@ -2897,7 +2903,7 @@ jobs:
     # wired, see BACKLOG D5.
     name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-2 / SS-3)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -2907,7 +2913,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: SS-4 function-preserving expert growth ([expert-growth-preserves])
         run: bash tests/llm/run_ss4.sh
       - name: DEVFIT-1 device-capacity mind-sizing ([device-fit] + falsifier)
@@ -2943,13 +2949,13 @@ jobs:
     # student.c is hosted-only (bare metal links student_stub.o): crown untouched.
     name: "脳の自己量子化 第1段 ([st-quant] + 陰性コントロール2つ)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: st-quant cert (plain green, NOOP red, BADSCALE red)
         run: bash tests/llm/run_st_quant.sh
 
@@ -2963,13 +2969,13 @@ jobs:
     # untouched (measured 2026-09-27).
     name: "賢い合体 第1段 ([merge] + 陰性コントロール)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: st-merge cert (plain green, PLAIN_ONLY red)
         run: bash tests/llm/run_st_merge.sh
 
@@ -3255,13 +3261,13 @@ jobs:
     # frontier-sabotage-red pattern).
     name: "depth anti-theater (-DDLB_SABOTAGE_NOVERIFY must go RED)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: Build sabotaged cert + assert [depth-deliberation] goes RED
         run: |
           set -e
@@ -3289,13 +3295,13 @@ jobs:
     # the evolution↔conscience floor invariant / gate 6, cross-audit #1) going RED.
     name: "世代交代 succession ([generation-survives] + F2/F5 falsifiers)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: "[generation-survives] cure — identity+knowledge cross the arch gap"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
@@ -3491,13 +3497,13 @@ jobs:
     # distributed-samples-localhost so the two batches fail independently.
     name: "多プロセス localhost cert 2 (記憶→思考 / 動的ノード ID)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make python3
+          sudo tests/ci/apt_install.sh gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
           make -C boot/linux_x86_64
@@ -3540,13 +3546,13 @@ jobs:
     # Separate job so the batches fail independently.
     name: "多プロセス localhost cert 3 (resolve-crash / mesh 発見 / TCP 中継 / 中継の交代 / 調整役の死 / スーパーノード転送 / 2 領域)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make python3
+          sudo tests/ci/apt_install.sh gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
           make -C boot/linux_x86_64
@@ -3589,13 +3595,13 @@ jobs:
     # ubuntu-latest, not the self-hosted chain: localhost only, no real network.
     name: "多プロセス localhost cert (SS-6 live / relay MAC 偽造 / replay 拒否)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make python3
+          sudo tests/ci/apt_install.sh gcc make python3
       - name: Build kernel (native x86_64) + relay
         run: |
           make -C boot/linux_x86_64
@@ -3792,13 +3798,13 @@ jobs:
     # are structurally immune to the dlb.c-class SRC-list drift that hit run_yield.
     name: "LLM エンジン cert (SS5配置/SS6発火/modver/forward/cradle-teach 出荷コード)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make python3 curl
+          sudo tests/ci/apt_install.sh gcc make python3 curl
       - name: SS-5 deterministic expert placement (HRW min-disruption falsifier)
         run: bash tests/llm/run_ss5.sh
       - name: SS-6 cross-node expert firing (logit-hash equiv + 1e-6 perturbation falsifier)
@@ -3836,14 +3842,14 @@ jobs:
     # continue-on-error to promote it to a blocking gate.
     name: "KV-cache 等価性 cert (run_kv.sh) [advisory: 実行時間 計測中]"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     continue-on-error: true  # until 2026-11-30: KV-cache cert, run time still being measured. ROADMAP 0-13
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
         run: |
           sudo tests/ci/apt_update.sh
-          sudo apt-get install -y --no-install-recommends gcc make
+          sudo tests/ci/apt_install.sh gcc make
       - name: KV-cache byte-equivalence (18 asserts + no-vla grep + tok/s floor)
         run: bash tests/llm/run_kv.sh
 

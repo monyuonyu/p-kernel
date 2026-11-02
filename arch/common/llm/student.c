@@ -60,8 +60,15 @@ float st_expf(float x)
 
 float st_logf(float x)
 {
-    if (x < 1e-30f) return -69.0f;
     ST_F32 v; v.f = x;
+#ifndef ST_LOGF_NO_FINITE   /* falsifier for [logf-nonfinite] */
+    /* NaN and +Inf are not probabilities: the floor, the worst loss. Without
+     * this the comparison below is false for NaN and the exponent 0xFF reads
+     * as e = 128: st_logf(NaN) = +89.13, a NaN model's loss -89.13, the best
+     * there is (audit-114). Every finite input is unchanged, bit for bit. */
+    if ((v.u & 0x7F800000U) == 0x7F800000U) return -69.0f;
+#endif
+    if (x < 1e-30f) return -69.0f;
     int e = (int)((v.u >> 23) & 0xFF) - 127;
     v.u = (v.u & 0x007FFFFFU) | 0x3F800000U;
     float m  = v.f;
@@ -2148,6 +2155,20 @@ size_t st_blob_size(const st_model *m)
 
 /* Serialize the trainable state into buf[cap]. Returns the number of bytes
  * written, or negative (ST_E_ARG) if buf is too small / model unallocated. */
+/* 1 if all of w, mu and vu (everything st_save writes as floats) are finite.
+ * A loss cannot say this: a weight in the row of a byte the text never holds
+ * does not reach the loss (student_nan_test.c [gate-unused-nan]). */
+int st_model_finite(const st_model *m)
+{
+    const float *a[3] = { m->w, m->mu, m->vu };
+    for (int k = 0; k < 3; k++)
+        for (int i = 0; i < m->n_params; i++) {
+            ST_F32 v; v.f = a[k][i];
+            if ((v.u & 0x7F800000U) == 0x7F800000U) return 0;
+        }
+    return 1;
+}
+
 PK_NOSW_FN(long, st_save, (const st_model *m, void *buf, size_t cap), (m, buf, cap))
 {
     if (!m || !m->w || !buf) return ST_E_ARG;
