@@ -16,7 +16,11 @@
  *   [finite-*]  st_model_finite on its own: w, mu, vu, first and last element,
  *               the second half (the [gate-*] alone do not tell: Adam's next
  *               step carries a NaN from vu into w)
- *   [guarded-*] st_merge_guarded does not pick a poisoned peer
+ *   [guarded-*] st_merge_guarded and st_merge_distill refuse a non-finite parent,
+ *               in a row the windows use or not, and leave the model as it was
+ *   [cohort-*]  st_merge_cohort skips a peer with a non-finite weight, refuses
+ *               a sum that overflows, leaves the model as it was (research/
+ *               b5-region-rounds.md G4); a finite merge is what it always was
  *   [gate-*]    the DMN save and the explicit save write no non-finite model:
  *               the first save (it has no loss to compare with), a save after
  *               a good one, an unused row (the loss cannot see it), Inf, the
@@ -25,7 +29,8 @@
  *   [refused-*] a refused save is said, in the probe: nothing else reads it
  *   [gate-ema]  (argv "ema", PKERNEL_STUDENT_EMA=1) the saved copy too
  *
- *  Falsifiers (run_st_nan.sh): -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both.
+ *  Falsifiers (run_st_nan.sh): -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both,
+ *  -DST_MERGE_NO_FINITE.
  *  Build: -std=c11 -O1 -Wall -Wextra -ffp-contract=off.
  */
 #define _POSIX_C_SOURCE 200809L
@@ -209,6 +214,20 @@ static void finite_checks(void)
     st_free(&m);
 }
 
+/* a model's whole state, to say "unchanged, all bytes" */
+static uint64_t model_hash(const st_model *m)
+{
+    uint64_t h = 1469598103934665603ULL;
+    const float *a[3] = { m->w, m->mu, m->vu };
+    for (int k = 0; k < 3; k++) {
+        const unsigned char *p = (const unsigned char *)a[k];
+        for (size_t i = 0; i < (size_t)m->n_params * sizeof(float); i++) {
+            h ^= p[i]; h *= 1099511628211ULL;
+        }
+    }
+    return h ^ (uint64_t)(uint32_t)m->adam_t;
+}
+
 static void guarded_checks(void)
 {
     st_model a, p, i, s;
@@ -217,14 +236,176 @@ static void guarded_checks(void)
         st_init_tier(&i, 2, ST_TIER_S) != ST_OK || st_init_tier(&s, 2, ST_TIER_S) != ST_OK) {
         CHECK(0, "[guarded] init"); return;
     }
-    p.w[p.o_out + 'e' * p.d] = from_u(0x7FC00000u);
-    float cand[ST_MERGE_NALPHA + 1];
-    int r = st_merge_guarded(&a, &p, &i, &s, val, 2, SEQ, cand);
-    int nf = nonfinite_f(a.w, a.n_params);
-    printf("    st_merge_guarded rc %d, non-finite in the child %d, cand[0] %f cand[1] %f\n",
-           r, nf, (double)cand[0], (double)cand[1]);
-    CHECK(r >= 0 && nf == 0, "[guarded-nan] a NaN peer does not win the pick");
+    /* a row the windows use, a row they miss, the last element */
+    const int at[] = { p.o_out + 'e' * p.d, p.o_embed + 255 * p.d, p.n_params - 1 };
+    static const uint32_t pat[] = { 0x7FC00000u, 0x7F800000u, 0xFF800000u };
+    const uint64_t h0 = model_hash(&a);
+    int bad = 0, tried = 0;
+    for (unsigned k = 0; k < 3; k++)
+        for (unsigned q = 0; q < 3; q++) {
+            float keep = p.w[at[k]];
+            p.w[at[k]] = from_u(pat[q]);
+            float cand[ST_MERGE_NALPHA + 1];
+            int r = st_merge_guarded(&a, &p, &i, &s, val, 2, SEQ, cand);
+            tried++;
+            if (r >= 0 || model_hash(&a) != h0) {
+                printf("    peer element %d pattern 0x%08X: rc %d, non-finite in the child %d\n",
+                       at[k], pat[q], r, nonfinite_f(a.w, a.n_params));
+                bad++;
+                memcpy(a.w, i.w, (size_t)a.n_params * sizeof(float));
+                for (int j = 0; j < a.n_params; j++) { a.mu[j] = 0.0f; a.vu[j] = 0.0f; }
+                a.adam_t = 0;
+            }
+            p.w[at[k]] = keep;
+        }
+    printf("    %d poisoned peers, %d not refused\n", tried, bad);
+    CHECK(bad == 0, "[guarded-nan] a non-finite peer is refused, row used or not, the model unchanged");
+
+    float keepa = a.w[a.n_params - 1];
+    a.w[a.n_params - 1] = from_u(0x7FC00000u);
+    uint64_t h1 = model_hash(&a);
+    int r = st_merge_guarded(&a, &p, &i, &s, val, 2, SEQ, NULL);
+    CHECK(r < 0 && model_hash(&a) == h1, "[guarded-into] a non-finite model is not merged into");
+    a.w[a.n_params - 1] = keepa;
+
+    const uint8_t *xfer[1] = { TXT };
+    p.w[at[1]] = from_u(0x7FC00000u);
+    r = st_merge_distill(&a, &p, &i, &s, xfer, 1, val, 2, SEQ, 4, 1e-3f, ST_DISTILL_START_PICK, NULL);
+    printf("    st_merge_distill with a NaN peer: rc %d\n", r);
+    CHECK(r < 0 && model_hash(&a) == h0, "[guarded-distill] st_merge_distill refuses it too");
+    p.w[at[1]] = 0.0f;
+
+    /* the control: finite parents still merge */
+    r = st_merge_guarded(&a, &p, &i, &s, val, 2, SEQ, NULL);
+    CHECK(r >= 0 && nonfinite_f(a.w, a.n_params) == 0, "[guarded-clean] finite parents still merge");
     st_free(&a); st_free(&p); st_free(&i); st_free(&s);
+}
+
+static void *blob_of(const st_model *m, size_t *len)
+{
+    size_t cap = st_blob_size(m);
+    void *b = malloc(cap);
+    if (!b) return NULL;
+    long n = st_save(m, b, cap);
+    if (n <= 0) { free(b); return NULL; }
+    *len = (size_t)n;
+    return b;
+}
+
+static int cohort_with(st_model *a, const st_model *peer)
+{
+    size_t l = 0;
+    void *b = blob_of(peer, &l);
+    if (!b) return -99;
+    const void *pb[1] = { b };
+    size_t pl[1] = { l };
+    int r = st_merge_cohort(a, pb, pl, 1);
+    free(b);
+    return r;
+}
+
+static void cohort_checks(void)
+{
+    st_model a, p, q;
+    if (st_init_tier(&a, 2, ST_TIER_S) != ST_OK || st_init_tier(&p, 3, ST_TIER_S) != ST_OK ||
+        st_init_tier(&q, 4, ST_TIER_S) != ST_OK) { CHECK(0, "[cohort] init"); return; }
+    const int n = a.n_params;
+    a.mu[0] = 0.5f; a.vu[0] = 0.25f; a.adam_t = 7;    /* so that "unchanged" means it */
+    const uint64_t h0 = model_hash(&a);
+
+    const int at[] = { a.o_out + 'e' * a.d, a.o_embed + 255 * a.d, n - 1 };
+    static const uint32_t pat[] = { 0x7FC00000u, 0x7F800000u, 0xFF800000u };
+    int bad = 0;
+    for (unsigned k = 0; k < 3; k++)
+        for (unsigned r = 0; r < 3; r++) {
+            float keep = p.w[at[k]];
+            p.w[at[k]] = from_u(pat[r]);
+            int acc = cohort_with(&a, &p);
+            if (acc != 0 || model_hash(&a) != h0) {
+                printf("    peer element %d pattern 0x%08X: accepted %d, non-finite in the child %d\n",
+                       at[k], pat[r], acc, nonfinite_f(a.w, n));
+                bad++;
+            }
+            p.w[at[k]] = keep;
+            if (model_hash(&a) != h0) break;      /* the rest would say nothing */
+        }
+    CHECK(bad == 0, "[cohort-nonfinite] a peer with NaN or Inf, used row, unused row, last element: skipped, all bytes the same");
+
+    /* an overflow from finite parts: the mean would be Inf */
+    if (model_hash(&a) == h0) {
+        float ka = a.w[5], kp = p.w[5];
+        a.w[5] = 3e38f; p.w[5] = 3e38f;
+        uint64_t h = model_hash(&a);
+        int acc = cohort_with(&a, &p);
+        printf("    an overflowing sum: accepted %d, non-finite in the child %d\n", acc, nonfinite_f(a.w, n));
+        CHECK(acc == 0 && model_hash(&a) == h, "[cohort-overflow] a sum that overflows is refused, all bytes the same");
+        a.w[5] = ka; p.w[5] = kp;
+    } else {
+        CHECK(0, "[cohort-overflow] the model had already changed");
+    }
+
+    /* the model itself: nothing to average */
+    if (model_hash(&a) == h0) {
+        float ka = a.w[n - 1];
+        a.w[n - 1] = from_u(0x7FC00000u);
+        uint64_t h = model_hash(&a);
+        int acc = cohort_with(&a, &p);
+        CHECK(acc == 0 && model_hash(&a) == h, "[cohort-into] a non-finite model is not merged into");
+        a.w[n - 1] = ka;
+    } else {
+        CHECK(0, "[cohort-into] the model had already changed");
+    }
+
+    /* two peers, the first poisoned: the mean is over the good one, the same bits */
+    {
+        st_model b1, b2;
+        size_t lg = 0, lb = 0;
+        void *good = blob_of(&q, &lg);
+        float keep = p.w[n - 1];
+        p.w[n - 1] = from_u(0x7F800000u);
+        void *badb = blob_of(&p, &lb);
+        p.w[n - 1] = keep;
+        if (!good || !badb || st_init_tier(&b1, 2, ST_TIER_S) != ST_OK ||
+            st_init_tier(&b2, 2, ST_TIER_S) != ST_OK) { CHECK(0, "[cohort-mixed] init"); return; }
+        const void *one[1] = { good }; size_t ol[1] = { lg };
+        const void *two[2] = { badb, good }; size_t tl[2] = { lb, lg };
+        int a1 = st_merge_cohort(&b1, one, ol, 1);
+        int a2 = st_merge_cohort(&b2, two, tl, 2);
+        printf("    good peer alone: accepted %d; bad and good: accepted %d\n", a1, a2);
+        CHECK(a1 == 1 && a2 == 1 && model_hash(&b1) == model_hash(&b2),
+              "[cohort-mixed] of a bad and a good peer the good one is averaged, same bits as alone");
+        free(good); free(badb); st_free(&b1); st_free(&b2);
+    }
+
+    /* more peers than the mask can hold: an error, not a silent drop */
+    {
+        const void *many[ST_COHORT_MAX + 1];
+        size_t ml[ST_COHORT_MAX + 1];
+        size_t l = 0;
+        void *g = blob_of(&q, &l);
+        for (int k = 0; k <= ST_COHORT_MAX; k++) { many[k] = g; ml[k] = l; }
+        uint64_t h = model_hash(&a);
+        int acc = st_merge_cohort(&a, many, ml, ST_COHORT_MAX + 1);
+        CHECK(acc == ST_E_ARG && model_hash(&a) == h, "[cohort-too-many] more peers than ST_COHORT_MAX is an error");
+        free(g);
+    }
+
+    /* the control: a finite merge is the plain mean, bit for bit, and resets Adam */
+    {
+        float *w0 = (float *)malloc((size_t)n * sizeof(float));
+        memcpy(w0, a.w, (size_t)n * sizeof(float));
+        int acc = cohort_with(&a, &p);
+        int diff = 0;
+        for (int i = 0; i < n; i++) {
+            float want = (w0[i] + p.w[i]) / 2.0f;
+            if (to_u(a.w[i]) != to_u(want)) diff++;
+        }
+        printf("    clean merge: accepted %d, %d of %d elements differ from the mean\n", acc, diff, n);
+        CHECK(acc == 1 && diff == 0 && a.adam_t == 0 && a.mu[0] == 0.0f,
+              "[cohort-clean] finite peers: the plain mean, every bit, Adam reset");
+        free(w0);
+    }
+    st_free(&a); st_free(&p); st_free(&q);
 }
 
 /* ---------- the resident baby ---------- */
@@ -370,14 +551,16 @@ static void ema_checks(void)
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    if (argc > 1 && strcmp(argv[1], "ema") == 0) {
+    if (argc > 1 && strcmp(argv[1], "merge") == 0) {
+        printf("[nan] the merge\n");   guarded_checks(); cohort_checks();
+    } else if (argc > 1 && strcmp(argv[1], "ema") == 0) {
         printf("[nan] the saved copy\n");
         ema_checks();
     } else {
         printf("[nan] st_logf\n");     logf_checks();
         printf("[nan] the loss\n");    loss_checks();
         printf("[nan] the check\n");   finite_checks();
-        printf("[nan] the merge\n");   guarded_checks();
+        printf("[nan] the merge\n");   guarded_checks(); cohort_checks();
         printf("[nan] the save\n");    refused_before(); gate_checks(); refused_after();
     }
     printf("[result] %s (%d pass, %d fail)\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);

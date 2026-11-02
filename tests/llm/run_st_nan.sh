@@ -3,10 +3,12 @@
 # run_st_nan.sh - a non-finite model must never read as a good one
 #                 (tests/llm/student_nan_test.c, ROADMAP B4).
 #   plain                    ALL PASS, with PKERNEL_STUDENT_EMA unset and set
-#   -DST_LOGF_NO_FINITE      [logf-nonfinite] [loss-not-better] [guarded-nan] RED
+#   -DST_LOGF_NO_FINITE      [logf-nonfinite] [loss-not-better] RED
 #   -DST_SAVE_NO_FINITE      the [gate-*] of a model the loss does not stop RED,
 #                            [gate-after-good] stays green (st_logf holds it)
 #   both                     [gate-after-good] RED too: that is the bug itself
+#   -DST_MERGE_NO_FINITE     [guarded-*] and [cohort-*] of a non-finite parent RED,
+#                            the finite controls green
 # exit 0 = plain green, every falsifier red exactly where it should be.
 # ---------------------------------------------------------------------------
 set -u
@@ -32,11 +34,12 @@ build() { # <out> <flags...>
     # shellcheck disable=SC2086
     "$CC" $CFLAGS "$@" $SRC -lm -o "$WORK/$o" || { echo "[build] $o FAILED"; exit 1; }
 }
-echo "[build] plain and three falsifiers ..."
+echo "[build] plain and four falsifiers ..."
 build plain
 build nologf -DST_LOGF_NO_FINITE
 build nosave -DST_SAVE_NO_FINITE
 build both   -DST_LOGF_NO_FINITE -DST_SAVE_NO_FINITE
+build nomerge -DST_MERGE_NO_FINITE
 
 FAILS=0
 want() { # <label> <log> <PASS|FAIL> <check>
@@ -67,7 +70,7 @@ L="$WORK/nologf.log"
 want nologf "$L" FAIL "[logf-nonfinite]"
 want nologf "$L" PASS "[logf-finite-bits]"
 want nologf "$L" FAIL "[loss-not-better]"
-want nologf "$L" FAIL "[guarded-nan]"
+want nologf "$L" PASS "[guarded-nan]"
 want nologf "$L" PASS "[gate-first]"
 want nologf "$L" PASS "[gate-after-good]"
 want nologf "$L" PASS "[gate-clean]"
@@ -100,6 +103,15 @@ arm both > /dev/null
 L="$WORK/both.log"
 want both "$L" FAIL "[gate-after-good]"
 want both "$L" PASS "[gate-clean]"
+
+echo ""; echo "=== -DST_MERGE_NO_FINITE ==="
+arm nomerge merge > /dev/null
+L="$WORK/nomergemerge.log"
+want nomerge "$L" FAIL "[guarded-nan]"
+want nomerge "$L" FAIL "[guarded-into]"
+want nomerge "$L" FAIL "[guarded-distill]"
+want nomerge "$L" FAIL "[cohort-nonfinite]"
+want nomerge "$L" PASS "[guarded-clean]"
 
 echo ""
 if [ "$FAILS" -eq 0 ]; then
