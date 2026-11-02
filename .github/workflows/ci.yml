@@ -3830,6 +3830,10 @@ jobs:
       # B3 run itself (run_b3_data.sh) needs the teacher's texts: not in CI.
       - name: "[b3-self] B3 filter q1..q5 and judge (each gate reddens on its own break)"
         run: python3 tests/llm/b3_selftest.py
+      # 2026-11-03 (ROADMAP B5): the generation and finite gates of one round and
+      # the judge's self-test (seconds). The cert on seeds 43..50 is not in CI.
+      - name: "[b5] a round takes only its generation, nothing non-finite (2 falsifiers red; the judge's self-test)"
+        run: B5_MODE=gates bash tests/llm/run_b5_rounds.sh
       # 2026-11-02 (D5-c stage 9): the judge of run_st_distill_parents.sh on
       # tables and logs made in the test (seconds, no model). The cert itself
       # is about 70 minutes on 4 cores: not in CI.

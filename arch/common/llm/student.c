@@ -2426,7 +2426,7 @@ int st_round_merge(st_model *into, uint32_t gen,
 #ifndef ST_ROUND_NO_GEN     /* falsifier for [b5-gen] */
         if (gens[k] != gen) continue;
 #else
-        (void)gen;
+        (void)gen; (void)gens;
 #endif
         take[n] = peer_blobs[k];
         len[n]  = peer_lens[k];
