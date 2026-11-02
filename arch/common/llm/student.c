@@ -2241,32 +2241,6 @@ int st_blob_tier_ok(const st_model *m, const void *buf, size_t len)
     return 1;
 }
 
-PK_NOSW_FN(int, st_load, (st_model *m, const void *buf, size_t len), (m, buf, len))
-{
-    if (!m || !m->w || !buf) return ST_E_ARG;
-    /* the SAME fail-closed tier/shape guard the merge reuses (SS-3). */
-    if (!st_blob_tier_ok(m, buf, len)) return ST_E_ARG;
-
-    const unsigned char *p = (const unsigned char *)buf;
-    ST_BLOB_HDR h;
-    for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
-
-    size_t np = (size_t)m->n_params;
-    size_t fbytes = np * sizeof(float);
-
-    size_t off = sizeof h;
-    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->w )[i] = p[off + i];
-    off += fbytes;
-    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->mu)[i] = p[off + i];
-    off += fbytes;
-    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->vu)[i] = p[off + i];
-    off += fbytes;
-    int32_t t = 0;
-    for (size_t i = 0; i < sizeof t; i++) ((unsigned char *)&t)[i] = p[off + i];
-    m->adam_t = (int)t;
-    return ST_OK;
-}
-
 /* read one float from a (possibly unaligned) student-blob byte stream at the
  * w[] payload region: w starts immediately after the header. idx is a float
  * index into w[]. Byte copy -> alignment-safe on every arch. */
@@ -2296,6 +2270,37 @@ static int st_blob_w_finite(const void *buf, int n)
 {
     for (int i = 0; i < n; i++) if (st_bad_f(st_blob_w_at(buf, (size_t)i))) return 0;
     return 1;
+}
+
+PK_NOSW_FN(int, st_load, (st_model *m, const void *buf, size_t len), (m, buf, len))
+{
+    if (!m || !m->w || !buf) return ST_E_ARG;
+    /* the SAME fail-closed tier/shape guard the merge reuses (SS-3). */
+    if (!st_blob_tier_ok(m, buf, len)) return ST_E_ARG;
+#ifndef ST_MERGE_NO_FINITE
+    /* w, mu, vu lie one after the other: a save from before the save gate, or
+     * a damaged file, stops here. Nothing is written. */
+    if (!st_blob_w_finite(buf, 3 * m->n_params)) return ST_E_ARG;
+#endif
+
+    const unsigned char *p = (const unsigned char *)buf;
+    ST_BLOB_HDR h;
+    for (size_t i = 0; i < sizeof h; i++) ((unsigned char *)&h)[i] = p[i];
+
+    size_t np = (size_t)m->n_params;
+    size_t fbytes = np * sizeof(float);
+
+    size_t off = sizeof h;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->w )[i] = p[off + i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->mu)[i] = p[off + i];
+    off += fbytes;
+    for (size_t i = 0; i < fbytes; i++) ((unsigned char *)m->vu)[i] = p[off + i];
+    off += fbytes;
+    int32_t t = 0;
+    for (size_t i = 0; i < sizeof t; i++) ((unsigned char *)&t)[i] = p[off + i];
+    m->adam_t = (int)t;
+    return ST_OK;
 }
 
 /* ------------------------------------------------------------------ */

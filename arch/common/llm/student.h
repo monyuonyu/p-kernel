@@ -309,7 +309,8 @@ size_t st_blob_size(const st_model *m);
 long st_save(const st_model *m, void *buf, size_t cap);
 
 /* Load a saved blob into m (already st_init'd to the SAME build — st_load
- * reuses its arena). Verifies magic/version/dims; refuses any mismatch.
+ * reuses its arena). Verifies magic/version/dims; refuses any mismatch, and a
+ * NaN or Inf in w, mu or vu. m is unchanged on a refusal.
  * Returns ST_OK on success, negative on reject. */
 int  st_load(st_model *m, const void *buf, size_t len);
 
