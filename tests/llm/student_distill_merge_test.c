@@ -115,6 +115,7 @@ static const uint8_t CORPUS[] =
 static uint64_t g_seed = 0xC0FFEE;
 static st_distill_sel_stats g_ss;
 static int NW, TW, VW, SW, NA, NB;
+static int g_only_s1 = 0;  /* D5C_ONLY_S1=1: stop each arm after S1 (stage 9) */
 static const uint8_t *ALLW[64], *VALW[64], *TESTW[64], *TRA[64], *TRB[64];
 static float *g_logits;
 static uint8_t GENBUF[NGEN_MAX][SEQLEN];
@@ -141,20 +142,39 @@ static const char *G(const char *gate, const char *sn)
  * own-data loss of what is handed over. Without D5C_STAGE8 the last weights
  * are handed (= stage 7, the design's "-DD5C_PARENT_LAST"; kept the default
  * so the stage 3-7 certs print the same bytes). Negative control
- * -DD5C_PARENT_KEEP_FIRST (with D5C_STAGE8): hand the first round's weights. */
-typedef struct { float min, last, handed; int min_round; } own_curve;
+ * -DD5C_PARENT_KEEP_FIRST (with D5C_STAGE8): hand the first round's weights.
+ * Stage 9 (brain-merge-parents.md §2, both with D5C_STAGE8):
+ * -DD5C_PARENT_NEAR hands a parent that went back the weights one round
+ * before its min, and a parent that did not its last weights (the design's
+ * third arm, S1 only); -DD5C_PARENT_NOKEEP hands the last weights (audit-106's
+ * break, [d5c-keep-min] must go red). */
+#if defined(D5C_STAGE9) && !defined(D5C_STAGE8)
+#error "D5C_STAGE9 needs D5C_STAGE8: the gate reads what stage 8 hands over"
+#endif
+typedef struct { float min, last, handed; int min_round, rounds; } own_curve;
 
 static void train_list(st_model *m, const uint8_t *const *w, int n, int shift,
                        int rounds, own_curve *oc)
 {
 #ifdef D5C_STAGE8
     float *keep = NULL;
+#ifdef D5C_PARENT_NEAR
+    float *prev = NULL;
+#endif
     if (oc) {
         keep = (float *)malloc((size_t)m->n_params * sizeof(float));
         if (!keep) { printf("  FAIL  out of memory (parent keep)\n"); exit(2); }
+#ifdef D5C_PARENT_NEAR
+        prev = (float *)malloc((size_t)m->n_params * sizeof(float));
+        if (!prev) { printf("  FAIL  out of memory (parent near)\n"); exit(2); }
+        memcpy(prev, m->w, (size_t)m->n_params * sizeof(float));
+#endif
     }
 #endif
-    if (oc) { oc->min = 1e30f; oc->last = 0.0f; oc->handed = 0.0f; oc->min_round = -1; }
+    if (oc) {
+        oc->min = 1e30f; oc->last = 0.0f; oc->handed = 0.0f;
+        oc->min_round = -1; oc->rounds = rounds;
+    }
     for (int r = 0; r < rounds; r++) {
         for (int j = 0; j < n; j++) {
             const uint8_t *b = w[(j * shift + 3) % n];
@@ -165,24 +185,52 @@ static void train_list(st_model *m, const uint8_t *const *w, int n, int shift,
             oc->last = loss_on(m, w, n);
             if (oc->last < oc->min) {
                 oc->min = oc->last; oc->min_round = r;
-#if defined(D5C_STAGE8) && !defined(D5C_PARENT_KEEP_FIRST)
+#if defined(D5C_STAGE8) && defined(D5C_PARENT_NEAR)
+                memcpy(keep, prev, (size_t)m->n_params * sizeof(float));
+#elif defined(D5C_STAGE8) && !defined(D5C_PARENT_KEEP_FIRST)
                 memcpy(keep, m->w, (size_t)m->n_params * sizeof(float));
 #endif
             }
 #if defined(D5C_STAGE8) && defined(D5C_PARENT_KEEP_FIRST)
             if (r == 0) memcpy(keep, m->w, (size_t)m->n_params * sizeof(float));
 #endif
+#if defined(D5C_STAGE8) && defined(D5C_PARENT_NEAR)
+            memcpy(prev, m->w, (size_t)m->n_params * sizeof(float));
+#endif
         }
     }
     if (oc) oc->handed = oc->last;
 #ifdef D5C_STAGE8
     if (oc) {
+#if defined(D5C_PARENT_NEAR)
+        if (oc->min_round != rounds - 1)
+            memcpy(m->w, keep, (size_t)m->n_params * sizeof(float));
+        free(prev);
+#elif !defined(D5C_PARENT_NOKEEP)
         memcpy(m->w, keep, (size_t)m->n_params * sizeof(float));
+#endif
         free(keep);
         oc->handed = loss_on(m, w, n);
     }
 #endif
 }
+
+#ifdef D5C_STAGE9
+/* stage 9 (brain-merge-parents.md §2): the mechanism itself. `handed` was
+ * measured again on the weights handed over, so both parents' handed loss
+ * must equal their own-data min, float for float. Audit-106: without the
+ * restore every older gate stayed green. */
+static void keep_min(const char *sc, const char *sn, const own_curve *a,
+                     const own_curve *b)
+{
+    int back = (a->min_round != a->rounds - 1) + (b->min_round != b->rounds - 1);
+    printf("  [keep-min %s] handed - min: A %+.6f B %+.6f; parents that went back: %d of 2\n",
+           sc, (double)a->handed - (double)a->min, (double)b->handed - (double)b->min, back);
+    char m[128];
+    snprintf(m, sizeof m, "[d5c-keep-min] %s: both handed parents' own loss == their own-data min", sc);
+    CHECK(a->handed == a->min && b->handed == b->min, G(m, sn));
+}
+#endif
 
 /* brain-merge-stable.md §2: a parent that ends more than 0.3 above its own
  * per-round minimum, or above 1.0, diverged or did not learn - the merge is
@@ -396,6 +444,9 @@ static void run_arm(const char *arm, int gen, int start)
     train_list(&A, ALLW, TW, 1, ROUNDS, &oa);
     train_list(&B, ALLW, TW, 7, ROUNDS, &ob);
     parents_ok("S1", sn, &oa, &ob);
+#ifdef D5C_STAGE9
+    keep_min("S1", sn, &oa, &ob);
+#endif
     if (gen) { nx = make_gen(&A, &B, 2 * TW); x = GENW; }
     else     { nx = TW; x = ALLW; }
 #ifdef ST_DISTILL_RAND_XFER
@@ -434,12 +485,16 @@ static void run_arm(const char *arm, int gen, int start)
     if (start == ST_DISTILL_START_INIT && !gen)
         CHECK(rc >= 0 && lC <= lP, G("[d5c-b-plain] S1 TEST: child <= plain training from I", sn));
     st_free(&A); st_free(&B); st_free(&C); st_free(&C2);
+    if (g_only_s1) { st_free(&I); st_free(&S); st_free(&P); return; }
 
     /* ---- S2 ---- */
     clone(&A, &I); clone(&B, &I);
     train_list(&A, TRA, NA, 1, ROUNDS * 2, &oa);
     train_list(&B, TRB, NB, 1, ROUNDS * 2, &ob);
     parents_ok("S2", sn, &oa, &ob);
+#ifdef D5C_STAGE9
+    keep_min("S2", sn, &oa, &ob);
+#endif
     if (gen) { nx = make_gen(&A, &B, 2 * TW); x = GENW; }
     else     { nx = TW; x = ALLW; }
 #ifdef ST_DISTILL_RAND_XFER
@@ -570,7 +625,10 @@ int main(void)
     if (es && *es) g_seed = strtoull(es, NULL, 0);
     const char *eo = getenv("D5C_ONLY_SEL");
     int only_sel = eo && *eo == '1';
+    const char *e1 = getenv("D5C_ONLY_S1");
+    g_only_s1 = e1 && *e1 == '1';
     printf("  seed 0x%llX%s\n", (unsigned long long)g_seed, only_sel ? " (only start=sel)" : "");
+    if (g_only_s1) printf("  only S1\n");
     printf("  LR %g B_LR %g\n", (double)LR, (double)B_LR);
 #ifdef D5C_SWA
     printf("  stage 7: init arm = mean of the second-half weights (st_merge_distill_sel_swa)\n");
