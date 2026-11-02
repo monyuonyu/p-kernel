@@ -1130,6 +1130,15 @@ jobs:
           grep -aF '[mind-stale] S0a-A-saw-blue PASS' mind_stale_a.log
           grep -aF '[mind-stale] ALL PASS' mind_stale_a.log
 
+      # ROADMAP 1-3m (2026-11-02): the same slot for mind/hist. Two nodes that
+      # both send a record on every tick read each other only if the receive
+      # comes first: H1 and H2 red with -DMH_PUB_FIRST. Test hook
+      # -DMT_RX_INJECT -DMHI_EVERY=1. Rebuilds and cleans. ~2 min.
+      - name: mind/hist read before the send (ROADMAP 1-3m)
+        run: |
+          timeout 300 tests/host/run_mind_hist_order.sh | tee mind_hist_order.log
+          grep -aF '[mind-hist-order] ALL PASS' mind_hist_order.log
+
       # ROADMAP 1-2b: a node that keeps re-driving its own last teach must
       # still deliver pull answers (mind/teach is LATEST_ONLY; the answer was
       # overwritten in the same tick). Red with -DMQ_NO_ANSWER_SKIP. ~1 min.
