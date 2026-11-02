@@ -678,8 +678,11 @@ int  st_rope_get_enabled(void);
 
 /* libc-free math, exposed for the test's hand-checks / reuse. */
 float st_expf(float x);
-float st_logf(float x);
+float st_logf(float x);          /* NaN and +-Inf give -69, the floor */
 float st_rsqrtf(float x);
+
+/* 1 if every weight and Adam moment is finite, else 0 */
+int st_model_finite(const st_model *m);
 
 /* ---------------------------------------------------------------------------
  * Thread T — the lesson BRIDGE corpus seam (T-fix-b / T-1; cradle.c).

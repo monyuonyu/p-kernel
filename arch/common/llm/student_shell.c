@@ -227,6 +227,16 @@ static int      g_dmn_saved = 0;          /* 1 once a DMN round has persisted   
 static float    g_dmn_saved_loss = 0.0f;  /* held-out loss at the last DMN save */
 static int      g_dmn_saved_adam_t = 0;   /* adam_t at the last DMN save        */
 static unsigned g_dmn_save_count = 0;     /* # of 22.8MB DMN writes (proof/obs)  */
+static unsigned g_nonfinite_refused = 0;  /* saves refused: non-finite model     */
+
+/* The save's own check: a non-finite model is never written, the last good
+ * blob stays. The loss cannot be this check: the first DMN save has no loss to
+ * compare with, and a NaN in an unused row does not reach the loss. */
+#ifdef ST_SAVE_NO_FINITE   /* falsifier for the [gate-*] of student_nan_test.c */
+#define ST_SAVE_FINITE(m) (1)
+#else
+#define ST_SAVE_FINITE(m) (st_model_finite(m) ? 1 : (g_nonfinite_refused++, 0))
+#endif
 
 /* How much the held-out loss must drop (nats) below the last DMN-persisted
  * value before we are willing to rewrite the 22.8MB blob again. Smaller than
@@ -507,6 +517,10 @@ static int student_persist(emit_fn emit)
         if (emit) emit("[baby] persistence OFF (set PKERNEL_PFS_DIR) — "
                        "weights stay memory-only this boot\r\n");
         return 1;
+    }
+    if (!ST_SAVE_FINITE(&g_student)) {
+        if (emit) emit("[baby] save refused: non-finite weights (the last good save stays)\r\n");
+        return -1;
     }
     size_t need = st_blob_size(&g_student);
     unsigned char *blob = (unsigned char *)malloc(need);
@@ -900,7 +914,8 @@ int student_dmn_consolidate(void)
 #endif
             PK_NOSW_ENTER();
             if (!use_ema) {
-                w = st_save(&g_student, blob, need);
+                if (ST_SAVE_FINITE(&g_student))
+                    w = st_save(&g_student, blob, need);
             } else if (
 #ifndef EMA_GEN_DISABLE   /* FALSIFIER for [ema-writer-kept]: write the stale copy */
                        g_ema_gen == ema_gen && g_ema_have &&
@@ -909,7 +924,8 @@ int student_dmn_consolidate(void)
                        st_blob_size(&g_student) == need) {
                 st_model view = g_student;
                 view.w = g_ema;
-                w = st_save(&view, blob, need);
+                if (ST_SAVE_FINITE(&view))
+                    w = st_save(&view, blob, need);
             }
             PK_NOSW_LEAVE();
             if (w >= 0 && pfs_dur_write(STUDENT_DUR_FILE, blob, (unsigned)w) == 0) {
@@ -1035,6 +1051,9 @@ void cradle_live_probe_canon(emit_fn emit)
  * heuristic it stops climbing once the baby plateaus. A NEW symbol — no existing
  * student_* signature changes. */
 unsigned student_dmn_save_count(void) { return g_dmn_save_count; }
+
+/* Saves refused because the model is not finite. Pure read. */
+unsigned student_nonfinite_refused(void) { return g_nonfinite_refused; }
 
 /* ---------------------------------------------------------------------------
  * Chat bridge (step ⑥): the yurikago talks to the RESIDENT baby.

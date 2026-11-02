@@ -2816,6 +2816,12 @@ jobs:
         # 38122175153, cancelled at the old 25-min job limit) - hence 45 above.
         run: bash tests/llm/run_ema.sh
 
+      - name: non-finite model cert (st_logf floors NaN and Inf, no save writes a non-finite model)
+        # ROADMAP B4, audit-114: st_logf(NaN) was +89.13, a NaN model's loss -89.13.
+        # Plain, the saved copy, -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both.
+        # 5 min in the audit container next to a CI run (the job has 55).
+        run: bash tests/llm/run_st_nan.sh
+
   sanitizer-build:
     # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
     # green in a row; promoted from advisory) — catches the recurring stack-overflow class (the
