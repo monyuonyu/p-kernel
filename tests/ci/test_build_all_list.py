@@ -38,6 +38,9 @@ def read_pairs(path):
     for raw in open(path, encoding="utf-8"):
         if "make" not in raw or "EXTRA_CFLAGS=" not in raw:
             continue
+        s = raw.lstrip()
+        if s.startswith("#") or s.startswith("name:") or s.startswith("- name:"):
+            continue   # a step's name or a comment only talks about a build
         t = tokens(raw.strip())
         for i in range(len(t) - 2):
             if t[i] != "make" or t[i + 1] != "-C":
@@ -80,8 +83,12 @@ def check(path, tag):
         print(f"[{tag}] not covered (other words '{x}'): make -C {d} EXTRA_CFLAGS={f}")
     for d, f in missing:
         print(f"[{tag}] FAIL build_all.sh does not build: make -C {d} EXTRA_CFLAGS={f}")
-    print(f"[{tag}] {len(want)} pairs in ci.yml, {len(got)} listed, {len(missing)} missing")
-    return missing
+    # and nothing that is no build (a step name once made build_all try "make -C ...")
+    extra = [p for p in got if p not in want]
+    for d, f in extra:
+        print(f"[{tag}] FAIL build_all.sh builds what ci.yml does not: make -C {d} EXTRA_CFLAGS={f}")
+    print(f"[{tag}] {len(want)} pairs in ci.yml, {len(got)} listed, {len(missing)} missing, {len(extra)} extra")
+    return missing + extra
 
 
 def selftest():
@@ -92,6 +99,8 @@ def selftest():
         "          make -C c -j EXTRA_CFLAGS='-DC1 -DC2' && echo ok\n"
         "          make -C d EXTRA_CFLAGS=-O2\n"
         "          make -C e V=1 EXTRA_CFLAGS=-DE1\n"
+        "      - name: builds every make -C ... EXTRA_CFLAGS=-D... here\n"
+        "          # make -C f EXTRA_CFLAGS=-DF1 in a comment\n"
     )
     with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
         f.write(yml)

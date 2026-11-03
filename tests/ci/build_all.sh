@@ -37,6 +37,9 @@ python3 - "$CIYML" <<'PY'
 import re, sys
 seen = []
 for line in open(sys.argv[1], encoding="utf-8"):
+    # a step's name or a comment only talks about a build
+    if re.match(r'\s*(#|(- )?name:)', line):
+        continue
     # an optional -j / -jN between the dir and EXTRA_CFLAGS (audit-122: the
     # TRUNC and WIDEPUB lines have -j4); other words there are not read
     m = re.search(r'make -C (\S+)(?: -j\d*)* EXTRA_CFLAGS=("([^"]*)"|\'([^\']*)\'|(\S+))', line)
