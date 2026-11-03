@@ -918,7 +918,8 @@ void world_task(INT stacd, void *exinf)
          * ブロッキング待ちはしないのでセマフォを消費しない。per-source topic を
          * DNODE_MAX 個開いても CFN_MAX_SEMID を枯渇させない (kdds.h 参照)。 */
         beacon_topic_name(tn, drpc_my_node);
-        h_pub = kdds_open_poll(tn, KDDS_QOS_LATEST_ONLY);
+        /* N2b: a wide self subscribes only (its cut name is a narrow node's). */
+        h_pub = PK_NODE_OWN_TOPIC(drpc_my_node) ? kdds_open_poll(tn, KDDS_QOS_LATEST_ONLY) : -1;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) { h_sub[n] = -1; continue; }
             beacon_topic_name(tn, n);

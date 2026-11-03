@@ -13,6 +13,7 @@
 #include "replica.h"
 #include "netstack.h"
 #include "kernel.h"
+#include "pk_node_row.h"  /* N2b: PK_NODE_OWN_TOPIC */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -42,6 +43,7 @@ void vital_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
     if (drpc_my_node == 0xFF) return;
+    if (!PK_NODE_OWN_TOPIC(drpc_my_node)) return;   /* N2b: "vital/<one char>" would be a narrow node's */
 
     /* "vital/N" トピックを開く */
     char topic[KDDS_NAME_MAX];
