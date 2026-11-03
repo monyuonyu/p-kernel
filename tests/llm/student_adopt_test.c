@@ -91,11 +91,37 @@ static void garbage(st_model *g, uint32_t seed)
     st_init_tier(g, seed ^ 0xBADu, ST_TIER_S);
     for (int i = 0; i < g->n_params; i++) g->w[i] *= 8.0f;
 }
-/* one node's merge with one peer blob; gated: through a copy and the gate */
-static int merge_one(st_model *me, const void *pb, size_t pl, uint32_t gen, int gated)
+/* B5 step 3 (research/b5-step3.md): a copy the gate refused trains one round
+ * alongside live as an apprentice, then replaces live only if lower then. */
+typedef struct { st_model m; int has; } apprentice_t;
+static int apprentice_late;   /* apprentices taken, this arm */
+
+/* before a new merge: the apprentice's turn at the gate, then it is gone */
+static void apprentice_judge(st_model *me, apprentice_t *ap, uint32_t gen)
+{
+    if (!ap || !ap->has) return;
+    float ll = 0, cl = 0;
+#if defined(B5A_APP_ALWAYS)          /* falsifier for H5: the apprentice always replaces live */
+    st_model *keep = &ap->m;
+    int r = st_round_adopt(me, keep, fx + fx_end, fxn - fx_end, SEQ, &ll, &cl);
+    if (r == 0) { for (int i = 0; i < me->n_params; i++) { me->w[i] = keep->w[i]; me->mu[i] = keep->mu[i]; me->vu[i] = keep->vu[i]; }
+                  me->adam_t = keep->adam_t; r = 1; }
+#else
+    int r = st_round_adopt(me, &ap->m, fx + fx_end, fxn - fx_end, SEQ, &ll, &cl);
+#endif
+    if (diag) printf("[b5a-diag] gen %u apprentice live %.4f cand %.4f d %+.4f %s\n", (unsigned)gen,
+                     (double)ll, (double)cl, (double)(cl - ll), r == 1 ? "took" : "dropped");
+    if (r == 1) apprentice_late++;
+    st_free(&ap->m); ap->has = 0;
+}
+
+/* one node's merge with one peer blob; gated: through a copy and the gate;
+ * ap != NULL: a refused copy becomes the apprentice */
+static int merge_one(st_model *me, const void *pb, size_t pl, uint32_t gen, int gated, apprentice_t *ap)
 {
     const void *bs[1] = { pb }; size_t ls[1] = { pl }; uint32_t gs[1] = { gen };
     if (!gated) return st_round_merge(me, gen, bs, ls, gs, 1) > 0;
+    apprentice_judge(me, ap, gen);
     st_model c; clone(&c, me);
     int r = 0;
     if (st_round_merge(&c, gen, bs, ls, gs, 1) > 0)
@@ -103,6 +129,7 @@ static int merge_one(st_model *me, const void *pb, size_t pl, uint32_t gen, int 
         float ll = 0, cl = 0;
         r = st_round_adopt(me, &c, fx + fx_end, fxn - fx_end, SEQ, &ll, &cl) == 1;
         if (diag) printf("[b5a-diag] gen %u live %.4f cand %.4f d %+.4f %s\n", (unsigned)gen, (double)ll, (double)cl, (double)(cl - ll), r ? "took" : "refused");
+        if (!r && ap && st_model_finite(&c)) { ap->m = c; ap->has = 1; return 0; }
     }
     st_free(&c);
     return r;
@@ -112,9 +139,13 @@ static void rounds(uint32_t seed, int gated, int poison, const char *name)
     st_model a, b;
     st_init_tier(&a, seed, ST_TIER_S); st_init_tier(&b, seed, ST_TIER_S);
     int took = 0, tries = 0; uint32_t gen = 0;
+    apprentice_t apa = { .has = 0 }, apb = { .has = 0 };
+    apprentice_t *pa = gated == 2 ? &apa : NULL, *pbp = gated == 2 ? &apb : NULL;
+    apprentice_late = 0;
     for (int p = 1; p <= PASSES; p++) {
         pass(&a, 0);
-        if (poison != 1) pass(&b, 1);
+        if (apa.has) pass(&apa.m, 0);
+        if (poison != 1) { pass(&b, 1); if (apb.has) pass(&apb.m, 1); }
         if (p % EVERY) continue;
         gen++;
         if (poison == 1) { st_free(&b); garbage(&b, seed + (uint32_t)p); }
@@ -125,11 +156,16 @@ static void rounds(uint32_t seed, int gated, int poison, const char *name)
             bb = blob(&sc, &lb); st_free(&sc);
         } else bb = blob(&b, &lb);
         tries++;
-        took += merge_one(&a, bb, lb, gen, gated);
-        if (!poison) merge_one(&b, ba, la, gen, gated);
+        took += merge_one(&a, bb, lb, gen, gated, pa);
+        if (!poison) merge_one(&b, ba, la, gen, gated, pbp);
         free(ba); free(bb);
     }
-    printf("[b5a] arm=%s bpb=%.4f took=%d/%d\n", name, bpb(&a), took, tries);
+    apprentice_judge(&a, pa, gen + 1);   /* the last apprentice still gets its turn */
+    int late_a = apprentice_late;
+    printf("[b5a] arm=%s bpb=%.4f took=%d/%d", name, bpb(&a), took, tries);
+    if (gated == 2) printf(" apprentices=%d", late_a);
+    printf("\n");
+    if (apb.has) st_free(&apb.m);
     st_free(&a); st_free(&b);
 }
 
@@ -192,8 +228,8 @@ int main(int argc, char **argv)
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
     if (argc > 4) mild = strtof(argv[4], NULL);
-    if (diag && argc > 4) { printf("[b5a] mild %.2f\n", (double)mild); rounds(seed, 0, 2, "mild-always"); rounds(seed, 1, 2, "mild-adopt"); rounds(seed, 1, 1, "poison-adopt"); return 0; }
-    if (diag) { rounds(seed, 0, 0, "always"); rounds(seed, 1, 0, "adopt"); return 0; }
+    if (diag && argc > 4) { printf("[b5a] mild %.2f\n", (double)mild); rounds(seed, 0, 2, "mild-always"); rounds(seed, 1, 2, "mild-adopt"); rounds(seed, 2, 2, "mild-apprentice"); rounds(seed, 2, 1, "poison-apprentice"); return 0; }
+    if (diag) { rounds(seed, 0, 0, "always"); rounds(seed, 1, 0, "adopt"); rounds(seed, 2, 0, "apprentice"); return 0; }
     for (int h = 0; h < 2; h++) {
         st_model m; st_init_tier(&m, seed, ST_TIER_S);
         for (int p = 1; p <= PASSES; p++) pass(&m, h);
