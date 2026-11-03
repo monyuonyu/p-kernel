@@ -8,6 +8,7 @@
 
 #include "region.h"
 #include "swim.h"     /* swim_rtt_ms() */
+#include "pk_node_row.h"  /* N2b: tables by row */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -34,7 +35,8 @@ static void rg_putdec(UW v)
 /* 状態 (最後に再計算した自 region の局所ビュー)                       */
 /* ------------------------------------------------------------------ */
 
-static UB member[DNODE_MAX];   /* 1 = 自 region のメンバ        */
+static UB member[DNODE_ROWS];   /* N2b: by row (pk_node_row.h)  */
+/* (was [DNODE_MAX]; on bare metal DNODE_ROWS is DNODE_MAX) */   /* 1 = 自 region のメンバ        */
 static UB member_cnt = 0;      /* メンバ数 (自分を含む)         */
 static pk_node_t coord      = 0xFF;   /* coordinator = メンバ内最小 ID */
 
@@ -65,7 +67,7 @@ UW region_tau_ms(void) { return region_tau; }
 /* over SWIM (that is a deferred slice). The self-test sets this table */
 /* directly to simulate an already-converged membership+capability     */
 /* view; production code sets only the self entry via PKERNEL_SUPERNODE.*/
-static UB super_capable[DNODE_MAX]; /* 1 = node volunteered & reachable */
+static UB super_capable[DNODE_ROWS]; /* 1 = node volunteered & reachable */
 static BOOL super_init_done = FALSE;
 
 /* ------------------------------------------------------------------ */
@@ -77,7 +79,7 @@ static BOOL super_init_done = FALSE;
 /* anti-stale (incarnation,state) LWW gate as the supernode bit). This  */
 /* table is the SELECTION input only; teacher truth originates in       */
 /* swim.c::teacher_self() (gated on a real GGUF, never a bare env). */
-static UB teacher_capable[DNODE_MAX]; /* 1 = node self-declares teacher-capable */
+static UB teacher_capable[DNODE_ROWS]; /* 1 = node self-declares teacher-capable */
 
 /* ------------------------------------------------------------------ */
 /* 再計算                                                              */
@@ -85,15 +87,20 @@ static UB teacher_capable[DNODE_MAX]; /* 1 = node self-declares teacher-capable 
 
 void region_recompute(void)
 {
-    for (UB n = 0; n < DNODE_MAX; n++) member[n] = 0;
+    for (UB n = 0; n < DNODE_ROWS; n++) member[n] = 0;
     member_cnt = 0;
     coord      = 0xFF;
 
     pk_node_t me = drpc_my_node;
     if (me == 0xFF) return;   /* 分散モード未確立 — region 無し */
 
-    /* 自分は常にメンバ */
+    /* 自分は常にメンバ (N2b: a wide self by its row; with no row it is still
+     * coord and counted, it just cannot be looked up) */
+#ifdef _TK_HOSTED_LIBC_
+    { INT r = pk_node_row(me); if (r >= 0) member[r] = 1; }
+#else
     member[me] = 1;
+#endif
     member_cnt = 1;
     coord      = me;
 
@@ -129,12 +136,22 @@ void region_recompute(void)
 
 void region_set_super_capable(pk_node_t node, BOOL yes)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT r = pk_node_row(node);
+    if (r >= 0) super_capable[r] = yes ? 1 : 0;
+#else
     if (node < DNODE_MAX) super_capable[node] = yes ? 1 : 0;
+#endif
 }
 
 BOOL region_is_super_capable(pk_node_t node)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT r = pk_node_row_find(node);
+    return (r >= 0 && super_capable[r]) ? TRUE : FALSE;
+#else
     return (node < DNODE_MAX && super_capable[node]) ? TRUE : FALSE;
+#endif
 }
 
 /* Read the self's capability opt-in once. Default: NOT capable
@@ -150,7 +167,10 @@ void region_super_init(void)
         extern char *getenv(const char *);
         const char *e = getenv("PKERNEL_SUPERNODE");
         if (e && e[0] == '1' && drpc_my_node != 0xFF)
-            super_capable[drpc_my_node] = 1;
+        {
+            INT r = pk_node_row(drpc_my_node);   /* N2b: a wide self too */
+            if (r >= 0) super_capable[r] = 1;
+        }
     }
 #endif
 }
@@ -190,12 +210,22 @@ UB region_supernode(void)
 
 void region_set_teacher_capable(pk_node_t node, BOOL yes)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT r = pk_node_row(node);
+    if (r >= 0) teacher_capable[r] = yes ? 1 : 0;
+#else
     if (node < DNODE_MAX) teacher_capable[node] = yes ? 1 : 0;
+#endif
 }
 
 BOOL region_is_teacher_capable(pk_node_t node)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT r = pk_node_row_find(node);
+    return (r >= 0 && teacher_capable[r]) ? TRUE : FALSE;
+#else
     return (node < DNODE_MAX && teacher_capable[node]) ? TRUE : FALSE;
+#endif
 }
 
 /* Pure core: lowest id that is BOTH a member (mbr[id]) AND teacher-capable
@@ -240,7 +270,12 @@ pk_node_t region_coordinator(void)
  * これでメンバ判定すると O(N²) を避けられる。 */
 BOOL region_is_member(pk_node_t node)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT r = pk_node_row_find(node);
+    return (r >= 0 && member[r]) ? TRUE : FALSE;
+#else
     return (node < DNODE_MAX && member[node]) ? TRUE : FALSE;
+#endif
 }
 
 BOOL region_contains(pk_node_t node)
