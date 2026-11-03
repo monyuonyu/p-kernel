@@ -371,15 +371,24 @@ static void cohort_checks(void)
         }
     CHECK(bad == 0, "[cohort-nonfinite] a peer with NaN or Inf, used row, unused row, last element: skipped, all bytes the same");
 
-    /* an overflow from finite parts: the mean would be Inf */
+    /* an overflow from finite parts: the mean would be Inf. At the front, the
+     * middle and the last element (audit-118: a check over the first half of
+     * the weights was green when only index 5 was tried) */
     if (model_hash(&a) == h0) {
-        float ka = a.w[5], kp = p.w[5];
-        a.w[5] = 3e38f; p.w[5] = 3e38f;
-        uint64_t h = model_hash(&a);
-        int acc = cohort_with(&a, &p);
-        printf("    an overflowing sum: accepted %d, non-finite in the child %d\n", acc, nonfinite_f(a.w, n));
-        CHECK(acc == 0 && model_hash(&a) == h, "[cohort-overflow] a sum that overflows is refused, all bytes the same");
-        a.w[5] = ka; p.w[5] = kp;
+        const int ov[] = { 5, n / 2 + 7, n - 1 };
+        int bad_ov = 0;
+        for (int k = 0; k < 3; k++) {
+            int i = ov[k];
+            float ka = a.w[i], kp = p.w[i];
+            a.w[i] = 3e38f; p.w[i] = 3e38f;
+            uint64_t h = model_hash(&a);
+            int acc = cohort_with(&a, &p);
+            printf("    an overflowing sum at %d: accepted %d, non-finite in the child %d\n", i, acc, nonfinite_f(a.w, n));
+            if (!(acc == 0 && model_hash(&a) == h)) bad_ov++;
+            a.w[i] = ka; p.w[i] = kp;
+            if (model_hash(&a) != h0) { bad_ov++; break; }
+        }
+        CHECK(bad_ov == 0, "[cohort-overflow] a sum that overflows (front, middle, last) is refused, all bytes the same");
     } else {
         CHECK(0, "[cohort-overflow] the model had already changed");
     }
@@ -548,7 +557,7 @@ static void gate_checks(void)
 }
 
 /* the probe a person can run says it; a clean run prints no such line */
-static char g_said[1024];
+static char g_said[4096];
 static void said(const char *s)
 {
     size_t n = strlen(g_said);
@@ -558,7 +567,8 @@ static void refused_before(void)
 {
     fresh(); g_said[0] = 0;
     cradle_live_probe(said);
-    CHECK(strstr(g_said, "saves refused") == NULL, "[refused-silent] nothing refused, no line");
+    student_shell_cmd("loss", said);
+    CHECK(strstr(g_said, "saves refused") == NULL, "[refused-silent] nothing refused, no line (probe, student verb)");
 }
 static void refused_after(void)
 {
@@ -569,6 +579,11 @@ static void refused_after(void)
     printf("    the probe says: %s", strstr(g_said, "[baby]") ? strstr(g_said, "[baby]") : "(nothing)\n");
     CHECK(student_nonfinite_refused() > 0 && strstr(g_said, want) != NULL,
           "[refused-said] the probe says how many saves were refused");
+    /* the student verb's head says it too (audit-117: removing it was green) */
+    g_said[0] = 0;
+    student_shell_cmd("loss", said);
+    CHECK(student_nonfinite_refused() > 0 && strstr(g_said, want) != NULL,
+          "[refused-said-cmd] the student verb says how many saves were refused");
 }
 
 /* PKERNEL_STUDENT_EMA=1: the copy wins from about tick 4; poison the copy only,
