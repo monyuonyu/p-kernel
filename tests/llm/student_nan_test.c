@@ -373,11 +373,13 @@ static void cohort_checks(void)
 
     /* an overflow from finite parts: the mean would be Inf. At the front, the
      * middle and the last element (audit-118: a check over the first half of
-     * the weights was green when only index 5 was tried) */
+     * the weights was green when only index 5 was tried). Odd and even indices
+     * (audit-119: 5, n/2+7 and n-1 were all odd, a check over odd indices only
+     * was green) */
     if (model_hash(&a) == h0) {
-        const int ov[] = { 5, n / 2 + 7, n - 1 };
+        const int ov[] = { 5, 6, n / 2 + 7, n / 2 + 8, n - 2, n - 1 };
         int bad_ov = 0;
-        for (int k = 0; k < 3; k++) {
+        for (int k = 0; k < 6; k++) {
             int i = ov[k];
             float ka = a.w[i], kp = p.w[i];
             a.w[i] = 3e38f; p.w[i] = 3e38f;
@@ -477,6 +479,8 @@ static void quiet(const char *s) { (void)s; }
 
 static void poison(float *p) { *p = from_u(0x7FC00000u); }
 
+static int refused_said_now(void);
+
 static void gate_checks(void)
 {
     const float pinf = from_u(0x7F800000u);
@@ -498,6 +502,10 @@ static void gate_checks(void)
            (double)student_dmn_heldout_loss());
     CHECK(g_cap_bad == b0, "[gate-first] a NaN baby is not written on the first save");
     CHECK(student_nonfinite_refused() >= 1, "[gate-refused-count] the refusal is counted");
+    /* one refusal is said too (audit-119: saying it only from 2 was green,
+     * every later check refuses more than once) */
+    CHECK(student_nonfinite_refused() == 1 && refused_said_now(),
+          "[refused-said-once] after the first refusal the probe says 1");
 
     /* after a good save: the loss comparison itself */
     fresh(); tick(); b0 = g_cap_bad;
@@ -563,6 +571,20 @@ static void said(const char *s)
     size_t n = strlen(g_said);
     snprintf(g_said + n, sizeof g_said - n, "%s", s);
 }
+/* the probe's line for the count now, in its own form "[baby] <n> saves refused"
+ * (audit-119: a substring "<n> saves refused" also matched "[baby] 1<n> ...") */
+static void want_line(char *want, size_t n)
+{
+    snprintf(want, n, "[baby] %u saves refused", student_nonfinite_refused());
+}
+static int refused_said_now(void)
+{
+    char want[64];
+    g_said[0] = 0;
+    cradle_live_probe(said);
+    want_line(want, sizeof want);
+    return strstr(g_said, want) != NULL;
+}
 static void refused_before(void)
 {
     fresh(); g_said[0] = 0;
@@ -575,7 +597,7 @@ static void refused_after(void)
     char want[64];
     g_said[0] = 0;
     cradle_live_probe(said);
-    snprintf(want, sizeof want, "%u saves refused", student_nonfinite_refused());
+    want_line(want, sizeof want);
     printf("    the probe says: %s", strstr(g_said, "[baby]") ? strstr(g_said, "[baby]") : "(nothing)\n");
     CHECK(student_nonfinite_refused() > 0 && strstr(g_said, want) != NULL,
           "[refused-said] the probe says how many saves were refused");
