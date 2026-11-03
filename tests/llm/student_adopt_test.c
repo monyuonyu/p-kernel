@@ -38,6 +38,8 @@ static const uint8_t *fx;
 static int fxn, fx_end;
 static float *lg;
 static int fails;
+static float mild = 1.3f;  /* diag: the mild poison's scale (argv[4]) */
+static int diag;    /* argv[3] == "diag": the gate's two losses per round, always and adopt only */
 
 static void check(int ok, const char *id, const char *what)
 {
@@ -97,7 +99,11 @@ static int merge_one(st_model *me, const void *pb, size_t pl, uint32_t gen, int 
     st_model c; clone(&c, me);
     int r = 0;
     if (st_round_merge(&c, gen, bs, ls, gs, 1) > 0)
-        r = st_round_adopt(me, &c, fx + fx_end, fxn - fx_end, SEQ, NULL, NULL) == 1;
+    {
+        float ll = 0, cl = 0;
+        r = st_round_adopt(me, &c, fx + fx_end, fxn - fx_end, SEQ, &ll, &cl) == 1;
+        if (diag) printf("[b5a-diag] gen %u live %.4f cand %.4f d %+.4f %s\n", (unsigned)gen, (double)ll, (double)cl, (double)(cl - ll), r ? "took" : "refused");
+    }
     st_free(&c);
     return r;
 }
@@ -108,11 +114,16 @@ static void rounds(uint32_t seed, int gated, int poison, const char *name)
     int took = 0, tries = 0; uint32_t gen = 0;
     for (int p = 1; p <= PASSES; p++) {
         pass(&a, 0);
-        if (!poison) pass(&b, 1);
+        if (poison != 1) pass(&b, 1);
         if (p % EVERY) continue;
         gen++;
-        if (poison) { st_free(&b); garbage(&b, seed + (uint32_t)p); }
-        size_t la, lb; void *ba = blob(&a, &la), *bb = blob(&b, &lb);
+        if (poison == 1) { st_free(&b); garbage(&b, seed + (uint32_t)p); }
+        size_t la, lb; void *ba = blob(&a, &la), *bb;
+        if (poison == 2) {   /* diag: a mild poison, B's real weights scaled by mild */
+            st_model sc; clone(&sc, &b);
+            for (int i = 0; i < sc.n_params; i++) sc.w[i] *= mild;
+            bb = blob(&sc, &lb); st_free(&sc);
+        } else bb = blob(&b, &lb);
         tries++;
         took += merge_one(&a, bb, lb, gen, gated);
         if (!poison) merge_one(&b, ba, la, gen, gated);
@@ -179,6 +190,10 @@ int main(int argc, char **argv)
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
+    diag = argc > 3 && strcmp(argv[3], "diag") == 0;
+    if (argc > 4) mild = strtof(argv[4], NULL);
+    if (diag && argc > 4) { printf("[b5a] mild %.2f\n", (double)mild); rounds(seed, 0, 2, "mild-always"); rounds(seed, 1, 2, "mild-adopt"); rounds(seed, 1, 1, "poison-adopt"); return 0; }
+    if (diag) { rounds(seed, 0, 0, "always"); rounds(seed, 1, 0, "adopt"); return 0; }
     for (int h = 0; h < 2; h++) {
         st_model m; st_init_tier(&m, seed, ST_TIER_S);
         for (int p = 1; p <= PASSES; p++) pass(&m, h);
