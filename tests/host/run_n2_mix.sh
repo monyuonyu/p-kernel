@@ -17,8 +17,8 @@
 # `nodes` prints ids from 0 (PKERNEL_NODE_ID 44 is row 43).
 #
 # Negative control: -DN2_NC_TRUNC cuts the wide ids to a byte, so 260 and 300 become 4 and 44.
-# 260 and 300 are in SWIM's membership only (swim.c): X3 and X4 of the design are not written
-# yet, because no other subsystem sees a wide id.
+# 260 and 300 are in SWIM's membership only (swim.c). N2_X3=1 adds X3 (a teach crosses the
+# mixed swarm, below); it is red until a wide node runs its own mind. X4 is not written yet.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -90,6 +90,30 @@ done
 
 [ "$a" = "$WANT_A" ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {$WANT_A}"
 [ "$b" = "$WANT_B" ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted {$WANT_B}"
+
+# X3 (N2_X3=1 until a wide node has a mind): old 1 teaches fire, wide 300 teaches snow.
+#   fire reaches every other node from node 0; snow reaches 4, 44 and 260 from node 299;
+#   no old node holds snow at all (300's low byte is 44's: an old node must not read it as 44's).
+#   Without the wide nodes (N2_NO_WIDE, N2_RELAY_OLD) only fire, over the five narrow ids.
+if [ "${N2_X3:-0}" = 1 ]; then
+    WIDE_IN="$WIDE"; [ "${N2_RELAY_OLD:-0}" = 1 ] && WIDE_IN=""
+    arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
+    send 1 "mind teach fire warm"
+    [ -n "$WIDE_IN" ] && send 300 "mind teach snow white"
+    t=0; miss="?"
+    while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
+        sleep 3; t=$((t + 3)); miss=""
+        for i in 2 3 4 44 $WIDE_IN; do arrived "$i" fire 0 || miss="$miss fire@$i"; done
+        if [ -n "$WIDE_IN" ]; then
+            for i in 4 44 260; do arrived "$i" snow 299 || miss="$miss snow@$i"; done
+        fi
+    done
+    for i in 1 2 3; do
+        grep -aqE 'remote teach arrived: "snow"' "$LOGDIR/node$i.log" && miss="$miss snow-on-old@$i"
+    done
+    [ -z "$miss" ] && res X3 PASS "fire from 0 everywhere${WIDE_IN:+, snow from 299 on the new}" \
+                   || res X3 FAIL "missing or wrong:$miss"
+fi
 
 if [ -z "$REDS" ]; then echo "[n2-mix] ALL PASS"; exit 0; fi
 echo "[n2-mix] RED:$REDS"
