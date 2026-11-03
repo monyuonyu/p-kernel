@@ -83,10 +83,11 @@ if [ -z "$short" ]; then ok U6; else bad "U6 $(echo "$short" | tr '\n' ' ')"; fi
 # without sudo and options (audit-116: the first form saw only `sudo apt-get install` at the
 # head of a line). apt_install.sh has an underscore, so it is not this. Audit-117 found three
 # more it missed: a path (/usr/bin/apt-get), an option with a value (-o K=V), and a line
-# continued with a backslash; continued lines are joined first.
+# continued with a backslash; continued lines are joined first. Audit-119: inside quotes
+# (bash -c "apt-get install ...", sh -c '...') and a backquote were not seen either.
 bare="$(python3 - "$CI" <<'PY'
 import re, sys
-BARE = re.compile(r'(^|[\s;&|(/])apt(-get)?(\s+-\S+(\s+[^-\s]\S*)?)*\s+install(\s|$)')
+BARE = re.compile(r'(^|[\s;&|(/"\'`])apt(-get)?(\s+-\S+(\s+[^-\s]\S*)?)*\s+install(\s|$)')
 s = open(sys.argv[1]).read()
 parts = re.split(r'^  ([A-Za-z0-9_-]+):\s*$', s[s.index('\njobs:'):], flags=re.M)
 for name, body in zip(parts[1::2], parts[2::2]):
