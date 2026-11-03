@@ -154,6 +154,26 @@ static int unit(void)
     r = st_round_adopt(&live, &cand, win, wn, SEQ, NULL, &cl);
     check(r == 0 && hash(&live) == h0, "b5a-nan", "a copy with a NaN is refused, live byte-unchanged");
     st_free(&cand);
+    /* a NaN at w[0] of a better copy: the windows never read it (its loss
+     * stays finite and lower), so only the finite check refuses it. The last
+     * element above gives the floor loss and is refused by the comparison too
+     * (audit-119: a gate without the finite check stayed green there).
+     * The pair is [b5a-better]'s (4 passes, then 4 more on a copy), so the
+     * copy is better by the comparison alone; the NaN is what must refuse. */
+    {
+        st_model l2;
+        st_init_tier(&l2, 7u, ST_TIER_S);
+        for (int p = 0; p < 4; p++) pass(&l2, 0);
+        clone(&cand, &l2);
+        for (int p = 0; p < 4; p++) pass(&cand, 0);
+        cand.w[0] = 0.0f / 0.0f;
+        h0 = hash(&l2);
+        r = st_round_adopt(&l2, &cand, win, wn, SEQ, &ll, &cl);
+        printf("    nan at w[0]: rc %d live %.4f cand %f\n", r, (double)ll, (double)cl);
+        check(r == 0 && hash(&l2) == h0, "b5a-nan0",
+              "a better copy with a NaN the windows never read (w[0]) is refused, live byte-unchanged");
+        st_free(&cand); st_free(&l2);
+    }
     /* another tier, no window, NULL: ST_E_ARG and unchanged */
     st_init_tier(&other, 7u, ST_TIER_M);
     h0 = hash(&live);
