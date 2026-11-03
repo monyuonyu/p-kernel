@@ -5,6 +5,7 @@
 #   old 1,2,3 (N2_OLD_BIN) + new narrow 4,44 + new wide 260,300 (low bytes 4 and 44)
 #   X1  the old nodes know {1,2,3,4,44} and nothing else (no phantom)
 #   X2  the new narrow node knows all 7, 260 and 300 by their own numbers
+#   XT  260 and 300 do not publish on a narrow node's one-char per-node topic (below)
 #
 # N2_OLD_BIN  a p-kernel built from the last tree before N2 wire changes (master 64b7c909;
 #             record the sha with any result). N2_NEW_BIN: default boot/linux_x86_64/p-kernel,
@@ -90,6 +91,26 @@ done
 
 [ "$a" = "$WANT_A" ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {$WANT_A}"
 [ "$b" = "$WANT_B" ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted {$WANT_B}"
+
+# XT  a wide node does not publish on a narrow node's per-node topic (audit-120). world, reflex
+#   and moe name a node's topic '0' + node in one char, vital the same: as a char 259 is '3'
+#   (node 4's row) and 299 is '[' (node 44's row). A wide node may subscribe to the 64 narrow
+#   names (one open each), but must not open its own cut name a second time as a publisher, nor
+#   vital/ at all. Counted against row 20's name ('D', no node here), which only subs open.
+if [ -n "$WIDE" ]; then
+    xt=""
+    for w in $WIDE; do
+        c="$(printf "\\$(printf %03o $(( (48 + w - 1) % 256 )))")"
+        for p in world/beacon reflex/alarm moe/score; do
+            mine="$(tr -d '\r' < "$LOGDIR/node$w.log" | grep -aFc "[kdds] open  topic=\"$p/$c\"")"
+            ref="$(tr -d '\r' < "$LOGDIR/node$w.log" | grep -aFc "[kdds] open  topic=\"$p/D\"")"
+            [ "$mine" -gt "$ref" ] && xt="$xt $w:$p/$c($mine>$ref)"
+        done
+        grep -aqF '[kdds] open  topic="vital/' "$LOGDIR/node$w.log" && xt="$xt $w:vital"
+    done
+    [ -z "$xt" ] && res XT PASS "no wide node publishes on a narrow per-node topic" \
+                 || res XT FAIL "a wide node publishes on a narrow name:$xt"
+fi
 
 # X3 (N2_X3=1 until a wide node has a mind): old 1 teaches fire, wide 300 teaches snow.
 #   fire reaches every other node from node 0; snow reaches 4, 44 and 260 from node 299;
