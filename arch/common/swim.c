@@ -1079,6 +1079,10 @@ static pk_node_t swim_wide_self_id(void)
     return swim_wide_me ? swim_wide_me : drpc_my_node;   /* 0xFF = none yet */
 }
 
+/* the self-test catches what swim_wide_send would send (audit-122: only the
+ * receiving side of the ACK was tested) */
+static SWIM2_PKT *swim_wide_tap;
+
 static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target)
 {
     SWIM2_PKT b;
@@ -1086,6 +1090,7 @@ static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target)
     for (INT i = 0; i < (INT)sizeof b; i++) pb[i] = 0;
     b.magic = SWIM_MAGIC; b.version = SWIM2_VERSION; b.type = type;
     b.seq = seq; b.src_node = me; b.probe_target = target;
+    if (swim_wide_tap) { *swim_wide_tap = b; return; }
     udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
              (const UB *)&b, (UH)sizeof(b));
 }
@@ -1378,6 +1383,20 @@ INT swim_wide_self_test(void (*emit)(const char *))
         p.type = SWIM_ACK;
         swim_wide_rx(ip, (const UB *)&p, sizeof p);
         W2(e->rtt_ok && e->rtt_ms < 1000, "the ACK to me is");
+        /* the sending side: what a PING makes me answer (caught, not sent) */
+        SWIM2_PKT got;
+        UB *gb = (UB *)&got;
+        for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        swim_wide_tap = &got;
+        sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+        p.type = SWIM_PING; p.seq = 81; p.probe_target = 811;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(got.type == 0, "a PING to someone else is not answered");
+        p.probe_target = 810;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        swim_wide_tap = NULL;
+        W2(got.type == SWIM_ACK && got.seq == 81, "a PING to me is answered by an ACK with its seq");
+        W2(got.src_node == 810 && got.probe_target == 299, "the ACK goes from me back to the asker");
         swim_wide_me = me_keep;
     }
 
