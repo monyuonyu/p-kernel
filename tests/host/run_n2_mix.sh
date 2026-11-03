@@ -98,6 +98,8 @@ done
 if [ "${N2_X3:-0}" = 1 ]; then
     WIDE_IN="$WIDE"; [ "${N2_RELAY_OLD:-0}" = 1 ] && WIDE_IN=""
     arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
+    for i in 1 2 3 4 44 $WIDE; do send "$i" "stop resume"; done   # a stopped node refuses teaches
+    sleep 2
     send 1 "mind teach fire warm"
     [ -n "$WIDE_IN" ] && send 300 "mind teach snow white"
     t=0; miss="?"
