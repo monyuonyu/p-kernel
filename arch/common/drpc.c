@@ -823,6 +823,9 @@ UW dtk_cre_sem(INT isemcnt)
 {
     T_CSEM cs = { .exinf = NULL, .sematr = TA_TFIFO,
                   .isemcnt = isemcnt, .maxsem = 64 };
+    /* N2b: a global id carries the node in 8 bits; a wide self (299 -> 43)
+     * would name a narrow node's semaphore. */
+    if (!PK_NODE_IN_TABLE(drpc_my_node)) return (UW)-1;
     ID sid = tk_cre_sem(&cs);
     if (sid < E_OK) return (UW)-1;
     return GOBJ_MAKE(drpc_my_node, (UW)sid);

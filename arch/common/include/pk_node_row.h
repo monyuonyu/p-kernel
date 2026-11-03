@@ -51,4 +51,15 @@ int       pk_node_row_self_test(void (*emit)(const char *));
 #define PK_NODE_IN_TABLE(id) 1
 #endif
 
+/* PK_NODE_OWN_TOPIC(id): may node id publish on its one-char per-node topic
+ * ('0' + id: world/beacon/, reflex/alarm/, moe/score/, vital/)? A wide id cut
+ * to a char is a narrow node's name (299 is 43's '[', 259 is 3's '3'), so a
+ * wide self subscribes only (audit-120). Two-byte names wait for K-DDS v2.
+ * -DN2_NC_WIDEPUB is the negative control for [n2-mix] XT. */
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_WIDEPUB)
+#define PK_NODE_OWN_TOPIC(id) PK_NODE_IN_TABLE(id)
+#else
+#define PK_NODE_OWN_TOPIC(id) 1
+#endif
+
 #endif /* PK_NODE_ROW_H */
