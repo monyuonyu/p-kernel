@@ -955,8 +955,8 @@ void swim_nodes_print(void)
 #define SWIM_WIDE_DEAD_MS    15000
 
 /* A wide id cannot index a table sized DNODE_MAX, so it has a slot here. Only
- * this membership list knows wide ids so far: no other subsystem sees a wide
- * peer, and a wide node itself runs with drpc_my_node = 0xFF apart from SWIM. */
+ * this membership list knows wide peers so far: no other subsystem sees one.
+ * A wide node itself runs drpc as its wide id (usermain, pk_node_row.h). */
 typedef struct {
     UW  ip;
     UW  heard_ms;   /* last packet from this node itself */
