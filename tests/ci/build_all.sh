@@ -9,8 +9,8 @@
 #
 # It cleans and rebuilds the tree it sits in (make clean in each boot dir).
 #
-# Covered: hosted x86_64 (plain, ASan+UBSan), every `make -C <dir>
-# EXTRA_CFLAGS=-D...` build written in ci.yml (found by reading ci.yml: the
+# Covered: hosted x86_64 (plain, ASan+UBSan), every `make -C <dir> [-jN]
+# EXTRA_CFLAGS=-D...` build written in ci.yml (tests/ci/test_build_all_list.py) (found by reading ci.yml: the
 # anti-theater stubs, exit-dispatch / FP / no-switch falsifiers, R3WP and
 # GEN_SURVIVE certs, ...), hosted aarch64 (cross), Windows PE (mingw-w64),
 # bare i686 + ring3 userland (all disk), bare AArch64 (virt and rpi3), relay,
@@ -37,7 +37,9 @@ python3 - "$CIYML" <<'PY'
 import re, sys
 seen = []
 for line in open(sys.argv[1], encoding="utf-8"):
-    m = re.search(r'make -C (\S+) EXTRA_CFLAGS=("([^"]*)"|\'([^\']*)\'|(\S+))', line)
+    # an optional -j / -jN between the dir and EXTRA_CFLAGS (audit-122: the
+    # TRUNC and WIDEPUB lines have -j4); other words there are not read
+    m = re.search(r'make -C (\S+)(?: -j\d*)* EXTRA_CFLAGS=("([^"]*)"|\'([^\']*)\'|(\S+))', line)
     if not m:
         continue
     flags = m.group(3) or m.group(4) or m.group(5) or ""
