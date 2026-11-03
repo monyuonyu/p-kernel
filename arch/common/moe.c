@@ -48,6 +48,7 @@
 #include "galaxy.h"     /* galaxy v1: S6 moe firing emit hook */
 #include "ai_kernel.h"
 #include "kernel.h"
+#include "pk_node_row.h"  /* N2b: PK_NODE_OWN_TOPIC */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -713,7 +714,8 @@ void moe_task(INT stacd, void *exinf)
     if (drpc_my_node != 0xFF) {
         char tn[KDDS_NAME_MAX];
         score_topic_name(tn, drpc_my_node);
-        h_score_pub = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
+        /* N2b: a wide self subscribes only (pk_node_row.h). */
+        h_score_pub = PK_NODE_OWN_TOPIC(drpc_my_node) ? kdds_open(tn, KDDS_QOS_LATEST_ONLY) : -1;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) { h_score_sub[n] = -1; continue; }
             score_topic_name(tn, n);

@@ -29,6 +29,7 @@ void swarm_stop_restore(void (*out)(const char *)); /* S2 persist */
 #include "netstack.h"
 #include "drpc.h"
 #include "swim.h"
+#include "pk_node_row.h"
 #include "region.h"
 #include "lookup.h"
 #include "placement.h"
@@ -401,13 +402,15 @@ static void cmd_net(void)
         print_dec_s((W)mac[5]);
         print(")\r\n");
     } else if (mac[3] == 0 && mac[4] != 0) {
-        /* N2b: a wide id. Only SWIM's membership knows it so far (swim.c):
-         * every other table is sized DNODE_MAX, so drpc stays uninitialised
-         * and the rest of this node runs single-node. */
+        /* N2b: a wide id. drpc runs as itself (drpc_my_node = the wide id);
+         * a table sized DNODE_MAX gives it no row (pk_node_row.h), and its v1
+         * fields say "not a node" (pk_node_v1). Peers: SWIM's membership
+         * knows wide ids, the other parts know only the narrow ones yet. */
         pk_node_t nid = (pk_node_t)((((UW)mac[4] << 8) | mac[5]) - 1);
         swim_wide_self(nid, pk_node_ip(nid));
+        drpc_init(nid, pk_node_ip(nid));
         print("[net] wide node "); print_dec_s((W)nid + 1);
-        print(": SWIM membership only, single-node otherwise\r\n");
+        print(": drpc as itself, wide peers in SWIM only\r\n");
     } else if (mac[3] == 0 && mac[4] == 0 && mac[5] > DNODE_MAX) {
         /* G7: a valid relay-wire node id (1..255) that exceeds the cluster
          * cap. This node joins the relay transport but its index nid=mac[5]-1
@@ -999,6 +1002,8 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             /* N2b: `nodes wide` drives the v2 receive path with crafted packets. */
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
+            /* N2b: `nodes rows` checks the id -> table-row map (drpc.c). */
+            else if (al >= 4 && a[0]=='r'&&a[1]=='o'&&a[2]=='w'&&a[3]=='s') pk_node_row_self_test(print);
             /* wave-selfelect cert: `nodes selfelect` proves a teacher node
              * SELF-RECOGNIZES (region_teacher()==self). "sel" distinct. */
             else if (al >= 3 && a[0]=='s'&&a[1]=='e'&&a[2]=='l') swim_selfelect_self_test(print);

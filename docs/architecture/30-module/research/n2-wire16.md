@@ -32,7 +32,10 @@
 
 作ったもの（11-01〜02）: 中継 v3（広い番号は枠 256.. に一度取ったら持ち続ける、最大 768 個、貸し出しは v3 に無い）、hosted の net_relay.c の受けと送り（`heartbeat test` の 10 項目）。`pk_node_t` は hosted で 16 ビット、1 バイトの欄へは `pk_node_v1()`（広い番号は切らずに「ノードでない」に）＝`[n2-narrow]` で切り詰め 0。広いノードは MAC 52:54:00:00:hi:lo・10.1.hi.lo で起動し、v2 のビーコン（SWIM2_PKT、hosted だけ）で **SWIM の仲間の表にだけ**載る＝[n2-mix] X1・X2 緑。広い仲間は swim.c の nodemap（dnode_table の横）。
 
-**まだ**: ほかの部品は広い番号を知らない。広いノード自身は drpc_my_node 0xFF＝SWIM のほかは単体（DNODE_MAX の表を踏まないため。表を nodemap に移すのが次）。広い仲間の生死は自分のビーコンだけ（PING なし）、広いノードは狭い仲間を死なせない。bit 2 は使っていない（1 台宛ての v2 がまだ無い）。snf・ss6 の宛先の IP は狭い番号の形のまま。net_relay_tcp.c は v3 を読まない＝広い番号は TCP で拒む。旧い中継の下で広いノードは入れず、ほかを乱さない（[n2-mix] N2_RELAY_OLD）。LAN は範囲外の番号を今も 1 にする＝広い番号はぶつかる
+11-04（feat/n2b-self）: 番号→表の行は `pk_node_row.h`（行 0..63 は番号そのもの、ほかの番号は 32 の追加の行を最初に見た時に取って持ち続ける。表は drpc.c、hosted だけ）。**広いノードも drpc_my_node＝自分の番号で起動する**。自分を DNODE_MAX の表で引く所は、UBSan（-fsanitize=bounds、[n2-mix] の 7 台）が出した drpc.c・region.c・world.c と、読んで見つけた edf.c を直した（region は行で、ほかは `PK_NODE_IN_TABLE` で引かない）。ベアは元の式のまま。
+監査-120 の FAIL の直し: 1 文字の名前の topic（`'0'+node` の world/beacon・reflex/alarm・moe/score・vital）は、広い番号を char に切ると狭いノードの名前になる（259→3 の、299→43 の）。広い自分はこれらを購読だけして出さない（`PK_NODE_OWN_TOPIC`）、`dtk_cre_sem` は -1。[n2-mix] の XT が見る。2 桁の名前（gossip_learn の `st/`・`dtr/model/`）も 263→「63」のように狭いとぶつかりうる＝K-DDS・PFS の名前の v2 の段で。
+
+**まだ**: ほかの部品は広い番号を知らない（広い仲間は region のメンバにならない＝RTT が無い）。広いノードの v1 の欄は「ノードでない」＝[n2-mix] の X3（`N2_X3=1`、狭いノードと 260・300 の間の教え）は赤。広い仲間の生死は自分のビーコンだけ（PING なし）、広いノードは狭い仲間を死なせない。bit 2 は使っていない（1 台宛ての v2 がまだ無い）。snf・ss6 の宛先の IP は狭い番号の形のまま。net_relay_tcp.c は v3 を読まない＝広い番号は TCP で拒む。旧い中継の下で広いノードは入れず、ほかを乱さない（[n2-mix] N2_RELAY_OLD）。LAN は範囲外の番号を今も 1 にする＝広い番号はぶつかる
 
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
 

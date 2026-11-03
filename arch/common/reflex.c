@@ -21,6 +21,7 @@
 #include "kdds.h"
 #include "moe.h"      /* moe_expert_utility — closed-loop self-test の §7 ゲート */
 #include "kernel.h"
+#include "pk_node_row.h"  /* N2b: PK_NODE_OWN_TOPIC */
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
 
@@ -461,7 +462,8 @@ void reflex_task(INT stacd, void *exinf)
     if (drpc_my_node != 0xFF) {
         char tn[KDDS_NAME_MAX];
         alarm_topic_name(tn, drpc_my_node);
-        h_pub = kdds_open_poll(tn, KDDS_QOS_LATEST_ONLY);
+        /* N2b: a wide self subscribes only (pk_node_row.h). */
+        h_pub = PK_NODE_OWN_TOPIC(drpc_my_node) ? kdds_open_poll(tn, KDDS_QOS_LATEST_ONLY) : -1;
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) { h_sub[n] = -1; continue; }
             alarm_topic_name(tn, n);
