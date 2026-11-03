@@ -29,6 +29,7 @@ void swarm_stop_restore(void (*out)(const char *)); /* S2 persist */
 #include "netstack.h"
 #include "drpc.h"
 #include "swim.h"
+#include "pk_node_row.h"
 #include "region.h"
 #include "lookup.h"
 #include "placement.h"
@@ -406,6 +407,12 @@ static void cmd_net(void)
          * and the rest of this node runs single-node. */
         pk_node_t nid = (pk_node_t)((((UW)mac[4] << 8) | mac[5]) - 1);
         swim_wide_self(nid, pk_node_ip(nid));
+#ifdef N2_WIDE_SELF
+        /* N2b, under construction: the wide node runs drpc as itself. The tables
+         * it touches are moving to rows (pk_node_row.h); until all of them have,
+         * this is a build for finding the rest (ASan), not a shipped one. */
+        drpc_init(nid, pk_node_ip(nid));
+#endif
         print("[net] wide node "); print_dec_s((W)nid + 1);
         print(": SWIM membership only, single-node otherwise\r\n");
     } else if (mac[3] == 0 && mac[4] == 0 && mac[5] > DNODE_MAX) {
@@ -999,6 +1006,8 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             /* N2b: `nodes wide` drives the v2 receive path with crafted packets. */
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
+            /* N2b: `nodes rows` checks the id -> table-row map (drpc.c). */
+            else if (al >= 4 && a[0]=='r'&&a[1]=='o'&&a[2]=='w'&&a[3]=='s') pk_node_row_self_test(print);
             /* wave-selfelect cert: `nodes selfelect` proves a teacher node
              * SELF-RECOGNIZES (region_teacher()==self). "sel" distinct. */
             else if (al >= 3 && a[0]=='s'&&a[1]=='e'&&a[2]=='l') swim_selfelect_self_test(print);

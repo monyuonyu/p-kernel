@@ -40,6 +40,7 @@
 #include "heal.h"
 #include "dtr.h"        /* ONE BRAIN: distributed infer uses the learned dtr */
 #include "galaxy.h"     /* galaxy v1: S5 drpc emit hooks */
+#include "pk_node_row.h"  /* N2b: the extra rows of the per-node tables */
 #include "pk_nosw.h"     /* drpc_claim: one region from the free-slot search to in_use */
 
 /* ------------------------------------------------------------------ */
@@ -77,6 +78,102 @@ static void dp_puthex(UW v)
 
 pk_node_t drpc_my_node = 0xFF;          /* 0xFF = not initialised            */
 DNODE dnode_table[DNODE_MAX];
+
+#ifdef _TK_HOSTED_LIBC_
+/* N2b (pk_node_row.h): the extra rows of the per-node tables. A row once
+ * taken is kept, so a row number never changes meaning under a table. */
+static pk_node_t row_id[DNODE_WIDE_ROWS];
+static UH        row_used;              /* rows 0..row_used-1 are taken    */
+static UW        row_refused;
+
+static int row_lookup(pk_node_t id)
+{
+    for (UH i = 0; i < row_used; i++)
+        if (row_id[i] == id) return (int)(DNODE_MAX + i);
+    return -1;
+}
+
+int pk_node_row_find(pk_node_t id)
+{
+    if (id < DNODE_MAX) return (int)id;
+    if (id == PK_NODE_NONE || id == 0xFFFF) return -1;
+    PK_NOSW_ENTER();
+    int r = row_lookup(id);
+    PK_NOSW_LEAVE();
+    return r;
+}
+
+int pk_node_row(pk_node_t id)
+{
+    if (id < DNODE_MAX) return (int)id;
+    if (id == PK_NODE_NONE || id == 0xFFFF) return -1;
+    PK_NOSW_ENTER();
+    int r = row_lookup(id);
+    if (r < 0) {
+        if (row_used < DNODE_WIDE_ROWS) {
+            row_id[row_used] = id;
+            r = (int)(DNODE_MAX + row_used);
+            row_used++;
+        } else {
+            row_refused++;
+        }
+    }
+    PK_NOSW_LEAVE();
+    return r;
+}
+
+pk_node_t pk_node_of_row(int r)
+{
+    if (r >= 0 && r < DNODE_MAX) return (pk_node_t)r;
+    if (r >= DNODE_MAX && r < DNODE_MAX + (int)row_used)
+        return row_id[r - DNODE_MAX];
+    return PK_NODE_NONE;
+}
+
+unsigned pk_node_row_refused(void) { return (unsigned)row_refused; }
+
+/* `nodes rows`: the rules above, on the live table. It takes rows for ids
+ * >= 60000 (no node uses them) and puts the table back as it found it; no
+ * switch in between, so no real id can take a row meanwhile. */
+int pk_node_row_self_test(void (*emit)(const char *))
+{
+    int bad = 0;
+    PK_NOSW_ENTER();
+    pk_node_t keep_id[DNODE_WIDE_ROWS];
+    UH keep_used = row_used; UW keep_refused = row_refused;
+    for (UH i = 0; i < DNODE_WIDE_ROWS; i++) keep_id[i] = row_id[i];
+#define RT(c, what) do { if (!(c)) { emit("[node-row] FAIL: " what "\r\n"); bad++; } } while (0)
+    RT(pk_node_row(0) == 0 && pk_node_row(DNODE_MAX - 1) == DNODE_MAX - 1,
+       "a narrow id below DNODE_MAX is its own row");
+    RT(pk_node_row(PK_NODE_NONE) == -1 && pk_node_row(0xFFFF) == -1,
+       "\"not a node\" has no row");
+    RT(pk_node_row_find(60001) == -1, "find does not take a row");
+    int a = pk_node_row(60001), b = pk_node_row(60002);
+    if (a < 0 || b < 0) {
+        RT(pk_node_row_refused() > 0, "a refused row is counted");
+    } else {
+        RT(a >= DNODE_MAX && a < DNODE_ROWS && b >= DNODE_MAX && b < DNODE_ROWS && a != b,
+           "two wide ids take two extra rows");
+        RT(pk_node_row(60001) == a && pk_node_row_find(60001) == a, "a row is kept");
+        RT(pk_node_of_row(a) == 60001 && pk_node_of_row(b) == 60002, "the row gives the id back");
+    }
+    RT(pk_node_of_row(7) == 7, "a narrow row gives its id");
+    RT(pk_node_of_row(DNODE_ROWS) == PK_NODE_NONE && pk_node_of_row(-1) == PK_NODE_NONE,
+       "outside the rows is not a node");
+    /* fill the rest: the next new id is refused and counted, nothing moves */
+    unsigned r0 = pk_node_row_refused();
+    for (pk_node_t i = 60003; i < 60003 + DNODE_WIDE_ROWS; i++) (void)pk_node_row(i);
+    RT(pk_node_row(61000) == -1, "full rows refuse a new id");
+    RT(pk_node_row_refused() > r0, "and count it");
+    RT(a < 0 || pk_node_row(60001) == a, "a kept row survives the rows filling up");
+#undef RT
+    for (UH i = 0; i < DNODE_WIDE_ROWS; i++) row_id[i] = keep_id[i];
+    row_used = keep_used; row_refused = keep_refused;
+    PK_NOSW_LEAVE();
+    emit(bad ? "[node-row] RED\r\n" : "[node-row] PASS\r\n");
+    return bad;
+}
+#endif
 
 /* IP for node n: 10.1.0.(n+1) = (n+1)<<24 | 0x0000010A */
 static UW node_base_ip(pk_node_t n)
