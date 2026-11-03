@@ -91,6 +91,7 @@ want nosave "$L" FAIL "[gate-adam]"
 want nosave "$L" FAIL "[gate-persist]"
 want nosave "$L" FAIL "[gate-persist-adam]"
 want nosave "$L" FAIL "[refused-said]"
+want nosave "$L" FAIL "[refused-said-cmd]"
 want nosave "$L" PASS "[refused-silent]"
 want nosave "$L" PASS "[finite-everywhere]"
 PKERNEL_STUDENT_EMA=1 arm nosave ema > /dev/null
