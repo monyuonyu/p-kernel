@@ -14,6 +14,7 @@
 
 #include "edf.h"
 #include "kdds.h"
+#include "pk_node_row.h"  /* N2b: PK_NODE_IN_TABLE */
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -38,6 +39,15 @@ static void ed_putdec(UW v)
 
 EDF_STATS edf_stats;
 UB        peer_load[DNODE_MAX];
+
+/* N2b: a wide self has no row in peer_load[] (sized DNODE_MAX); its own load
+ * lives here. Bare metal: the old expression. */
+#ifdef _TK_HOSTED_LIBC_
+static UB self_load_wide;
+#define SELF_LOAD ((PK_NODE_IN_TABLE(drpc_my_node) ? &peer_load[drpc_my_node] : &self_load_wide)[0])
+#else
+#define SELF_LOAD peer_load[drpc_my_node]
+#endif
 
 /* 負荷タスクが動的に開くサブスクライバハンドル (ノードごと) */
 static W sub_h[DNODE_MAX];
@@ -91,7 +101,7 @@ static pk_node_t pick_best_node(W deadline_ms)
 {
     if (drpc_my_node == 0xFF) return 0xFF;  /* 単体モードはローカル固定 */
 
-    UB local = peer_load[drpc_my_node];
+    UB local = SELF_LOAD;
 
     /* deadline に応じたしきい値でオフロード判断 */
     UB threshold;
@@ -143,7 +153,7 @@ W edf_infer(W sensor_packed, W deadline_ms)
     } else {
         /* リモートへオフロード */
         ed_puts("[edf] offload → node "); ed_putdec(best);
-        ed_puts(" (local="); ed_putdec(peer_load[drpc_my_node]);
+        ed_puts(" (local="); ed_putdec(SELF_LOAD);
         ed_puts("% dl="); ed_putdec((UW)deadline_ms); ed_puts("ms)\r\n");
 
         ER er = dtk_infer(best, sensor_packed, &cls, 3000);
@@ -189,7 +199,13 @@ void edf_load_task(INT stacd, void *exinf)
     /* 自分の負荷を発行するパブリッシャを開く */
     char my_topic[5];
     load_topic_name(my_topic, drpc_my_node);
+#ifdef _TK_HOSTED_LIBC_
+    /* N2b: "L/<node>" has two digits; a wide self does not publish its load
+     * (no narrow peer could name its topic yet) */
+    W pub_h = PK_NODE_IN_TABLE(drpc_my_node) ? kdds_open(my_topic, KDDS_QOS_LATEST_ONLY) : -1;
+#else
     W pub_h = kdds_open(my_topic, KDDS_QOS_LATEST_ONLY);
+#endif
 
     for (;;) {
         tk_dly_tsk(500);
@@ -210,7 +226,7 @@ void edf_load_task(INT stacd, void *exinf)
 
         /* 自分の負荷を更新して発行 */
         UB load_score = edf_local_load();
-        peer_load[drpc_my_node] = load_score;
+        SELF_LOAD = load_score;
         if (pub_h >= 0) kdds_pub(pub_h, &load_score, 1);
 
         /* ピアの負荷をポーリング受信 */

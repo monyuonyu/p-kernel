@@ -15,6 +15,7 @@
 
 #include "world.h"
 #include "drpc.h"
+#include "pk_node_row.h"  /* N2b: PK_NODE_IN_TABLE */
 #include "kdds.h"
 #include "swim.h"
 #include "region.h"
@@ -971,7 +972,8 @@ void world_task(INT stacd, void *exinf)
             self.region_size = region_size();
             self.threat      = compute_threat();
             self.atrisk      = compute_atrisk();
-            self.seq         = table[drpc_my_node].valid
+            /* N2b: a wide self has no row in table[] (sized DNODE_MAX) */
+            self.seq         = (PK_NODE_IN_TABLE(drpc_my_node) && table[drpc_my_node].valid)
                                  ? table[drpc_my_node].beacon.seq : 0;
             world_observe(&self);
         }
