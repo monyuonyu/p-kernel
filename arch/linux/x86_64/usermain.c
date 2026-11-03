@@ -401,19 +401,15 @@ static void cmd_net(void)
         print_dec_s((W)mac[5]);
         print(")\r\n");
     } else if (mac[3] == 0 && mac[4] != 0) {
-        /* N2b: a wide id. Only SWIM's membership knows it so far (swim.c):
-         * every other table is sized DNODE_MAX, so drpc stays uninitialised
-         * and the rest of this node runs single-node. */
+        /* N2b: a wide id. drpc runs as itself (drpc_my_node = the wide id);
+         * a table sized DNODE_MAX gives it no row (pk_node_row.h), and its v1
+         * fields say "not a node" (pk_node_v1). Peers: SWIM's membership
+         * knows wide ids, the other parts know only the narrow ones yet. */
         pk_node_t nid = (pk_node_t)((((UW)mac[4] << 8) | mac[5]) - 1);
         swim_wide_self(nid, pk_node_ip(nid));
-#ifdef N2_WIDE_SELF
-        /* N2b, under construction: the wide node runs drpc as itself. The tables
-         * it touches are moving to rows (pk_node_row.h); until all of them have,
-         * this is a build for finding the rest (ASan), not a shipped one. */
         drpc_init(nid, pk_node_ip(nid));
-#endif
         print("[net] wide node "); print_dec_s((W)nid + 1);
-        print(": SWIM membership only, single-node otherwise\r\n");
+        print(": drpc as itself, wide peers in SWIM only\r\n");
     } else if (mac[3] == 0 && mac[4] == 0 && mac[5] > DNODE_MAX) {
         /* G7: a valid relay-wire node id (1..255) that exceeds the cluster
          * cap. This node joins the relay transport but its index nid=mac[5]-1

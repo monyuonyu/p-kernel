@@ -113,6 +113,10 @@ if [ "${N2_X3:-0}" = 1 ]; then
     for i in 1 2 3; do
         grep -aqE 'remote teach arrived: "snow"' "$LOGDIR/node$i.log" && miss="$miss snow-on-old@$i"
     done
+    for i in 4 44 260; do   # snow from anyone but 299 (a cut id, 43 or 255) is wrong too
+        grep -aE 'remote teach arrived: "snow"' "$LOGDIR/node$i.log" | grep -avqE ' from node 299 ' \
+            && miss="$miss snow-not-from-299@$i"
+    done
     [ -z "$miss" ] && res X3 PASS "fire from 0 everywhere${WIDE_IN:+, snow from 299 on the new}" \
                    || res X3 FAIL "missing or wrong:$miss"
 fi
