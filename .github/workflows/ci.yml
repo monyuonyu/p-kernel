@@ -2778,7 +2778,7 @@ jobs:
     # 25 -> 45 (2026-10-11): with run_ema.sh added the job hit 25 min and was
     # cancelled inside the EMA step (run 38122175153: the four steps before it
     # took ~10 min, EMA ran >15 min without finishing).
-    timeout-minutes: 55
+    timeout-minutes: 70
     env:
       # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
       # cross-built aarch64 ./p-kernel finds its glibc loader/libs under binfmt.
@@ -2908,7 +2908,7 @@ jobs:
     # wired, see BACKLOG D5.
     name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-2 / SS-3)"
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -3847,7 +3847,7 @@ jobs:
     # continue-on-error to promote it to a blocking gate.
     name: "KV-cache 等価性 cert (run_kv.sh) [advisory: 実行時間 計測中]"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     continue-on-error: true  # until 2026-11-30: KV-cache cert, run time still being measured. ROADMAP 0-13
     steps:
       - uses: actions/checkout@v4

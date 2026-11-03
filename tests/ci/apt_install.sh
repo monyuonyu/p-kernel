@@ -15,7 +15,7 @@
 # mirror, apt-get update, and try again (the .debs already fetched stay in
 # /var/cache/apt/archives), cut at the same limit. Exit status is the last install's; the
 # worst case with the update before it is 27 minutes (update 8.5, install 5, update 8.5, install 5),
-# and jobs that call this allow at least 30, plus what the job itself takes.
+# and jobs that call this allow at least 35, plus what the job itself takes.
 set -u
 FIRST="${APT_FIRST_SECS:-300}"
 if timeout "$FIRST" apt-get install -y --no-install-recommends "$@"; then exit 0; fi
