@@ -42,4 +42,13 @@ int       pk_node_row_self_test(void (*emit)(const char *));
 #define pk_node_of_row(r)    ((pk_node_t)(r))
 #endif
 
+/* PK_NODE_IN_TABLE(id): may id index a table still sized DNODE_MAX? On hosted a
+ * wide self (drpc_my_node >= DNODE_MAX) must not; bare metal has ids 1..8 only,
+ * so there it is 1 and the guarded code compiles as before (crown). */
+#ifdef _TK_HOSTED_LIBC_
+#define PK_NODE_IN_TABLE(id) ((id) < DNODE_MAX)
+#else
+#define PK_NODE_IN_TABLE(id) 1
+#endif
+
 #endif /* PK_NODE_ROW_H */

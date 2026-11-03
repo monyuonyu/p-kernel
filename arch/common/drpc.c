@@ -676,11 +676,14 @@ void drpc_init(pk_node_t my_node_id, UW my_ip)
         dnode_table[i].node_id = i;
     }
 
-    /* Register self in the table */
-    dnode_table[my_node_id].node_id = my_node_id;
-    dnode_table[my_node_id].ip      = my_ip;
-    dnode_table[my_node_id].state   = DNODE_ALIVE;
-    dnode_table[my_node_id].missed  = 0;
+    /* Register self in the table (N2b: a wide self has no row in dnode_table,
+     * which holds the narrow peers; it is alive by being drpc_my_node). */
+    if (PK_NODE_IN_TABLE(my_node_id)) {
+        dnode_table[my_node_id].node_id = my_node_id;
+        dnode_table[my_node_id].ip      = my_ip;
+        dnode_table[my_node_id].state   = DNODE_ALIVE;
+        dnode_table[my_node_id].missed  = 0;
+    }
 
     /* Pre-seed ARP for the whole cluster. The virtual-cluster addressing
      * is fully deterministic — node d has IP 10.1.0.(d+1) and MAC
@@ -689,8 +692,16 @@ void drpc_init(pk_node_t my_node_id, UW my_ip)
      * a direct packet) has no ARP entry, so ip_send() drops the first
      * datagram to it and returns -1; one-shot senders like kdds_pub never
      * retry, silently losing e.g. DKVA partials back to the requester. */
+#ifdef _TK_HOSTED_LIBC_
+    /* N2b: a wide self's address has its high byte in the third octet
+     * (pk_node_ip); the narrow peers it seeds are on x.y.0.(d+1). */
+    UW net = my_ip & (PK_NODE_IS_WIDE(my_node_id) ? 0x0000FFFFUL : 0x00FFFFFFUL);
+    for (UB d = 0; d < DNODE_MAX; d++) {
+        UW  ip      = ((UW)(d + 1) << 24) | net;
+#else
     for (UB d = 0; d < DNODE_MAX; d++) {
         UW  ip      = ((UW)(d + 1) << 24) | (my_ip & 0x00FFFFFFUL);
+#endif
         UB  mac[6]  = { 0x52, 0x54, 0x00, 0x00, 0x00, (UB)(d + 1) };
         arp_seed(ip, mac);
     }
