@@ -285,12 +285,13 @@ void st_zero_grad(st_model *m);
  * macros are empty and this is the same four calls as before. */
 #include "../include/pk_nosw.h"
 
-/* The rate the student learns at, everywhere the kernel trains it (the DMN,
- * the `student` verb, its merge peer, the cradle certs). ROADMAP B4 stage 2
- * (research/b4-numerics.md): 1e-3 with Adam's eps 1e-8. Stage 1 was 3e-3 with
- * eps 1/64: -DST_LR=3e-3f -DST_ADAM_EPS=0.015625f builds it again. */
+/* The rate the student learns at (the DMN, the `student` verb, both cradle
+ * certs, b1_held and b2_curve). Stage 2 of research/b4-numerics.md (1e-3 with
+ * Adam's eps 1e-8) was red on its cert (tests/llm/run_b4_eps.sh, 2026-11-03),
+ * so this stays stage 1: 3e-3 with eps 1/64. -DST_LR=1e-3f -DST_ADAM_EPS=1e-8f
+ * builds stage 2. */
 #ifndef ST_LR
-#define ST_LR 1e-3f
+#define ST_LR 3e-3f
 #endif
 #define ST_TRAIN_STEP(m, bytes, n, logits, lr) do {                           \
         PK_NOSW_ENTER();                                                      \

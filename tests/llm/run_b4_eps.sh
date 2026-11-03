@@ -1,17 +1,20 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
 # run_b4_eps.sh - [b4-eps] stage 2 of research/b4-numerics.md: Adam's eps 1e-8
-# and the rate 1e-3 (the defaults now) against stage 1 (eps 1/64, 3e-3), on the
+# and the rate 1e-3 (s2) against stage 1 (s1: eps 1/64, 3e-3), on the
 # held text (tests/llm/b1_held.txt) with b2_curve_test.c.
 # Lines fixed in the design before any run (judge: b4_eps_check.py):
-#   G1  in all 4 arms (S and M x seeds 71 and 72) the best bpb of the defaults
-#       is <= stage 1's best - 0.05
-#   G2  in all 4 arms the defaults' bpb at k=1536 is <= their own best + 0.1
-#   NC  the defaults with the old root (-DST_SQRT_OLD) turn G1 red
+#   G1  in all 4 arms (S and M x seeds 71 and 72) the best bpb of s2
+#       is <= s1's best - 0.05
+#   G2  in all 4 arms s2's bpb at k=1536 is <= its own best + 0.1
+#   NC  s2 with the old root (-DST_SQRT_OLD) turns G1 red
+# Both arms name their eps and rate, so the cert does not depend on the
+# defaults. First run 2026-11-03 (d86154aa): RED, G1 on M seed 72 (-0.003)
+# and G2 on S seed 72 (+0.108); the defaults stay stage 1.
 # D = 3072, k up to 1536. The three builds of one (tier, seed) run side by
 # side (this machine throttles; comparisons across time are not valid).
 #
-#   ./run_b4_eps.sh              exit 0 = G1, G2 green and NC red
+#   ./run_b4_eps.sh              exit 0 = G1, G2 green and NC red (not in CI)
 #   B4E_OUT=<dir>                keep the per-arm logs there (default: temp)
 #   B4E_SEEDS="71 72"  B4E_TIERS="0 1"   (other seeds are a reading, not the cert)
 # ---------------------------------------------------------------------------
@@ -34,14 +37,14 @@ build() {  # build <name> <flags...>
     # shellcheck disable=SC2086
     $CC $CFLAGS "$@" $SRC -lm -o "$WORK/$n" || { echo "[build] $n FAILED"; exit 1; }
 }
-echo "[build] b4-eps: s1 (stage 1), def (the defaults), nc (the defaults, old root) ..."
+echo "[build] b4-eps: s1 (stage 1), s2 (stage 2), nc (stage 2 on the old root) ..."
 build s1 -DST_LR=3e-3f -DST_ADAM_EPS=0.015625f
-build def
-build nc -DST_SQRT_OLD
+build s2 -DST_LR=1e-3f -DST_ADAM_EPS=1e-8f
+build nc -DST_LR=1e-3f -DST_ADAM_EPS=1e-8f -DST_SQRT_OLD
 
 for t in $TIERS; do
     for s in $SEEDS; do
-        for b in s1 def nc; do
+        for b in s1 s2 nc; do
             "$WORK/$b" "$HERE/b1_held.txt" "$t" 3072 "$s" 1536 > "$OUT/$b-$t-$s.log" 2>&1 &
         done
         wait

@@ -13,7 +13,7 @@
 #                                m1-edges (a NaN's bits read as a number)
 #   -DST_MATH_SHORT              exp and log two terms short: m2-exp, m2-log,
 #                                m4-adam and m4-adam-t (bias correction uses both)
-#   -DST_ADAM_EPS=0.015625f      stage 1's eps: m4-adam, m4-adam-t
+#   -DST_ADAM_EPS=1e-8f          stage 2's eps (not the default): m4-adam, m4-adam-t
 #   -DST_ADAM_B2=0.99f           b2 wrong: m4-adam-t only (t = 1 cancels it)
 #   -DST_ADAM_B1=0.8f            b1 wrong: m4-adam-t only
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ nc() {  # nc <flag> <lines that must be red, sorted, space separated>
 nc -DST_SQRT_OLD "m1-inf m1-sqrt m4-adam m4-adam-t"
 nc -DST_SQRT_NO_INF "m1-edges m1-inf"
 nc -DST_MATH_SHORT "m2-exp m2-log m4-adam m4-adam-t"
-nc -DST_ADAM_EPS=0.015625f "m4-adam m4-adam-t"
+nc -DST_ADAM_EPS=1e-8f "m4-adam m4-adam-t"
 nc -DST_ADAM_B2=0.99f "m4-adam-t"
 nc -DST_ADAM_B1=0.8f "m4-adam-t"
 

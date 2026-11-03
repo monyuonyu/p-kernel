@@ -1544,7 +1544,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
         }
         /* train the peer on the SAME fixture but rotated order (compatible
          * objective, different SGD path) — reuse the resident sleep loop. */
-        sleep_rounds(&peer, sl, tw, rr, ST_LR);
+        sleep_rounds(&peer, sl, tw, rr, 2e-2f);   /* not ST_LR: no test reads it (B4 stage 2 left it) */
 
         float pre = heldout_loss(&g_student, sl, te, hw);
         size_t cap = st_blob_size(&peer);
