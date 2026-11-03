@@ -309,7 +309,8 @@ size_t st_blob_size(const st_model *m);
 long st_save(const st_model *m, void *buf, size_t cap);
 
 /* Load a saved blob into m (already st_init'd to the SAME build — st_load
- * reuses its arena). Verifies magic/version/dims; refuses any mismatch.
+ * reuses its arena). Verifies magic/version/dims; refuses any mismatch, and a
+ * NaN or Inf in w, mu or vu. m is unchanged on a refusal.
  * Returns ST_OK on success, negative on reject. */
 int  st_load(st_model *m, const void *buf, size_t len);
 
@@ -356,10 +357,17 @@ int  st_blob_tier_ok(const st_model *m, const void *buf, size_t len);
  * (averaging foreign optimizer state is meaningless; the merged model resumes
  * Adam fresh — the standard FedAvg choice, honestly noted).
  *
+ * Finite guard (research/b5-region-rounds.md G4): a peer with a NaN or Inf in
+ * its w[] is skipped like a peer of another tier. If `into` is not finite, or a
+ * sum overflows, nothing is merged: returns 0, model BYTE-UNCHANGED. The peers'
+ * Adam moments are not read, so they are not checked. count > ST_COHORT_MAX is
+ * ST_E_ARG. A finite merge is bit for bit what it was.
+ *
  * peer_blobs[i] / peer_lens[i] describe peer i's serialized st_save() blob.
  * It MUST NOT call gl_merge/gl_merge_w and MUST NOT touch R3's rw[]
  * (the [baby-merge-isolation] tripwire). Returns the number of peers ACCEPTED
  * (0..count), or negative ST_E_ARG on bad args. */
+#define ST_COHORT_MAX 64
 int  st_merge_cohort(st_model *into,
                      const void *const *peer_blobs, const size_t *peer_lens,
                      int count);
@@ -521,7 +529,9 @@ int  st_delta_sign(const st_model *base, const st_model *ft, st_model *dst,
  * the result is deterministic. Adam state of `into` is reset (as in
  * st_merge_cohort). Because the parents are candidates, the child is never
  * worse than the worse parent ON THE VALIDATION WINDOWS; generalisation is
- * the cert's job (disjoint test windows). Returns the chosen index
+ * the cert's job (disjoint test windows). A parent with a NaN or Inf in w[] is
+ * refused (ST_E_ARG, nothing written), the loss cannot be trusted to show it.
+ * Returns the chosen index
  * (0..ST_MERGE_NALPHA-1 = alpha points, ST_MERGE_NALPHA = TIES), or negative.
  * cand_loss[ST_MERGE_NALPHA+1] (optional) receives each candidate's
  * validation loss (-1 for candidates not tried).

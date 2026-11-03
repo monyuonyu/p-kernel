@@ -590,7 +590,7 @@ static int student_restore(emit_fn emit)
     int rc = st_load(&g_student, blob, (size_t)n);
     free(blob);
     if (rc != ST_OK) {
-        if (emit) emit("[baby] persisted weights rejected (build/dim mismatch) "
+        if (emit) emit("[baby] persisted weights rejected (build/dim mismatch or non-finite) "
                        "-> fresh st_init\r\n");
         return 0;
     }
