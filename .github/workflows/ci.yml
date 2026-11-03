@@ -178,9 +178,11 @@ jobs:
     # 4 arms x 2 arches. 70 -> 80.
     # 2026-10-07 (NOSW-SLEEP): + [nosw-sleep] and the arm glob (one depth for
     # all tasks): 5 arms x 2 arches. 80 -> 90.
+    # 2026-11-03 (audit-117): the last 7 green runs took 61.1-67.9 min; with
+    # apt_install.sh's worst 27 min that is 4.9 over 90. 90 -> 100.
     name: "約束ごとの試験 v2 (ベアメタル x86 + AArch64, QEMU)"
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchains + QEMU
@@ -2777,7 +2779,8 @@ jobs:
     runs-on: ubuntu-latest
     # 25 -> 45 (2026-10-11): with run_ema.sh added the job hit 25 min and was
     # cancelled inside the EMA step (run 38122175153: the four steps before it
-    # took ~10 min, EMA ran >15 min without finishing).
+    # took ~10 min, EMA ran >15 min without finishing). 45 -> 70 (2026-11-03,
+    # feat/ci-apt-gaps): room for apt_install.sh's worst 27 min.
     timeout-minutes: 70
     env:
       # qemu-user honours QEMU_LD_PREFIX as the -L runtime library path, so the
