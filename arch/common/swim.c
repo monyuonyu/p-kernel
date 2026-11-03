@@ -1228,7 +1228,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
         wide_st[s].state = DNODE_ALIVE;
         wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(10);
         W2(wide_st[s].state == DNODE_ALIVE, "26 ms across the wrap is young");
-        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age(0xFFFFFFF0UL + SWIM_WIDE_DEAD_MS);
+        wide_st[s].heard_ms = 0xFFFFFFF0UL; swim_wide_age((UW)(0xFFFFFFF0UL + SWIM_WIDE_DEAD_MS));
         W2(wide_st[s].state == DNODE_DEAD, "15 s across the wrap is old");
         wide_st[s].state = DNODE_ALIVE; wide_st[s].heard_ms = keep;
     }
