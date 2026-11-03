@@ -290,7 +290,7 @@ void st_zero_grad(st_model *m);
  * (research/b4-numerics.md): 1e-3 with Adam's eps 1e-8. Stage 1 was 3e-3 with
  * eps 1/64: -DST_LR=3e-3f -DST_ADAM_EPS=0.015625f builds it again. */
 #ifndef ST_LR
-#define ST_LR 3e-3f
+#define ST_LR 1e-3f
 #endif
 #define ST_TRAIN_STEP(m, bytes, n, logits, lr) do {                           \
         PK_NOSW_ENTER();                                                      \

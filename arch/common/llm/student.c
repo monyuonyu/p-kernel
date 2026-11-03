@@ -2114,7 +2114,7 @@ void st_zero_grad(st_model *m)
  * the rate ST_LR. -DST_ADAM_EPS=0.015625f is the falsifier for [m4-adam];
  * -DST_ADAM_B1 / -DST_ADAM_B2 are the falsifiers for [m4-adam-t]. */
 #ifndef ST_ADAM_EPS
-#define ST_ADAM_EPS 0.015625f
+#define ST_ADAM_EPS 1e-8f
 #endif
 #ifndef ST_ADAM_B1
 #define ST_ADAM_B1 0.9f
