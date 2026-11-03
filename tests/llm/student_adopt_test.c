@@ -169,6 +169,71 @@ static void rounds(uint32_t seed, int gated, int poison, const char *name)
     st_free(&a); st_free(&b);
 }
 
+/* B5 step 3, the reading of research/b5-step3.md §4 (diag "sp", exploration
+ * seeds only): what in a garbage peer's merge helps one node? One node, its
+ * half, the apprentice flow of the arms above; at each merge the candidate is
+ * live transformed, with no peer:
+ *   0 reset    w unchanged, Adam restarted (st_merge_cohort restarts Adam)
+ *   1 shrink   w * 0.5, Adam restarted
+ *   2 perturb  w + 0.5 * garbage.w, Adam restarted
+ *   3 garbage  st_round_merge with the garbage peer (= poison-apprentice)
+ * and the alone curve: bpb after every pass (does one node overfit?). */
+static void sp_cand(st_model *c, st_model *live, int mode, uint32_t seed, uint32_t gen, int p)
+{
+    clone(c, live);
+    st_model g; garbage(&g, seed + (uint32_t)p);
+    if (mode == 3) {
+        size_t lb; void *bb = blob(&g, &lb);
+        const void *bs[1] = { bb }; size_t ls[1] = { lb }; uint32_t gs[1] = { gen };
+        (void)st_round_merge(c, gen, bs, ls, gs, 1);
+        free(bb);
+    } else {
+        for (int i = 0; i < c->n_params; i++) {
+            if (mode == 1) c->w[i] *= 0.5f;
+            if (mode == 2) c->w[i] += 0.5f * g.w[i];
+            c->mu[i] = 0.0f; c->vu[i] = 0.0f;
+        }
+        c->adam_t = 0;
+    }
+    st_free(&g);
+}
+static void sp_rounds(uint32_t seed, int mode, const char *name)
+{
+    st_model a; st_init_tier(&a, seed, ST_TIER_S);
+    apprentice_t ap = { .has = 0 };
+    int took = 0; uint32_t gen = 0;
+    apprentice_late = 0;
+    for (int p = 1; p <= PASSES; p++) {
+        pass(&a, 0);
+        if (ap.has) pass(&ap.m, 0);
+        if (p % EVERY) continue;
+        gen++;
+        apprentice_judge(&a, &ap, gen);
+        st_model c; sp_cand(&c, &a, mode, seed, gen, p);
+        float ll = 0, cl = 0;
+        int r = st_round_adopt(&a, &c, fx + fx_end, fxn - fx_end, SEQ, &ll, &cl) == 1;
+        took += r;
+        if (!r && st_model_finite(&c)) { ap.m = c; ap.has = 1; } else st_free(&c);
+    }
+    apprentice_judge(&a, &ap, gen + 1);
+    printf("[b5a] arm=sp-%s bpb=%.4f took=%d/%d apprentices=%d\n", name, bpb(&a), took, (int)gen, apprentice_late);
+    st_free(&a);
+}
+static void sp_curve(uint32_t seed)
+{
+    st_model m; st_init_tier(&m, seed, ST_TIER_S);
+    double best = 1e9; int bp = 0;
+    printf("[b5a] curve alone-A:");
+    for (int p = 1; p <= PASSES; p++) {
+        pass(&m, 0);
+        double b = bpb(&m);
+        if (b < best) { best = b; bp = p; }
+        printf(" %.3f", b);
+    }
+    printf("\n[b5a] arm=sp-curve best=%.4f at pass %d last=%.4f\n", best, bp, bpb(&m));
+    st_free(&m);
+}
+
 static int unit(void)
 {
     st_model live, cand, other;
@@ -249,6 +314,12 @@ int main(int argc, char **argv)
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
     if (argc > 4) mild = strtof(argv[4], NULL);
     if (diag && argc > 4) { printf("[b5a] mild %.2f\n", (double)mild); rounds(seed, 0, 2, "mild-always"); rounds(seed, 1, 2, "mild-adopt"); rounds(seed, 2, 2, "mild-apprentice"); rounds(seed, 2, 1, "poison-apprentice"); return 0; }
+    if (argc > 3 && strcmp(argv[3], "sp") == 0) {
+        sp_curve(seed);
+        sp_rounds(seed, 0, "reset"); sp_rounds(seed, 1, "shrink");
+        sp_rounds(seed, 2, "perturb"); sp_rounds(seed, 3, "garbage");
+        return 0;
+    }
     if (diag) { rounds(seed, 0, 0, "always"); rounds(seed, 1, 0, "adopt"); rounds(seed, 2, 0, "apprentice"); return 0; }
     for (int h = 0; h < 2; h++) {
         st_model m; st_init_tier(&m, seed, ST_TIER_S);
