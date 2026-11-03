@@ -1475,12 +1475,17 @@ jobs:
           N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte ([n2-mix], negative control, -DN2_NC_TRUNC)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
           N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc.log || true
           grep -aF '[n2-mix] X2 FAIL' n2_mix_nc.log
+          # XT goes red when a wide self publishes on its cut one-char name (-DN2_NC_WIDEPUB)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_WIDEPUB >/dev/null
+          N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc2.log || true
+          grep -aF '[n2-mix] XT FAIL' n2_mix_nc2.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 
