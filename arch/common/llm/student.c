@@ -2437,6 +2437,15 @@ int st_round_merge(st_model *into, uint32_t gen,
     return st_merge_cohort(into, take, len, n);
 }
 
+int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
+                   int n, int seq, float *live_loss, float *cand_loss)
+{
+    (void)live; (void)cand; (void)bytes; (void)n; (void)seq;   /* test first: not yet */
+    if (live_loss) *live_loss = 0.0f;
+    if (cand_loss) *cand_loss = 0.0f;
+    return 0;
+}
+
 /* ================================================================== */
 /* brain self-quantization, stage 1 (st_quant_fake — see student.h)   */
 /* ================================================================== */

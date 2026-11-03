@@ -381,6 +381,16 @@ int  st_round_merge(st_model *into, uint32_t gen,
                     const void *const *peer_blobs, const size_t *peer_lens,
                     const uint32_t *gens, int count);
 
+/* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
+ * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
+ * is finite and its mean loss over the non-overlapping `seq` windows of
+ * bytes[0..n) is lower than live's. Otherwise live is BYTE-UNCHANGED.
+ * Returns 1 adopted, 0 kept, or ST_E_ARG (NULL, other tier, no window).
+ * *live_loss / *cand_loss (may be NULL) get the two losses (cand's is +Inf
+ * when it was not finite).                                                   */
+int  st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
+                    int n, int seq, float *live_loss, float *cand_loss);
+
 /* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
  *
  * st_quant_fake: "fake-quantize" the MATRICES of `src` into `dst` — symmetric
