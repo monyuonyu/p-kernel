@@ -3427,6 +3427,12 @@ jobs:
           test "$(grep -cE '^ *apt-get update' tests/ci/apt_install.sh)" = 0
       - name: check_script_modes.py
         run: python3 tests/ci/check_script_modes.py .
+      # audit-122: build_all.sh missed the make lines with -j4 before EXTRA_CFLAGS.
+      # ci.yml read a second way must find no -D build that build_all.sh skips.
+      - name: test_build_all_list.py selftest
+        run: python3 tests/ci/test_build_all_list.py --selftest
+      - name: test_build_all_list.py (build_all.sh builds every make -C ... EXTRA_CFLAGS=-D... here)
+        run: python3 tests/ci/test_build_all_list.py
       # inbox #39: a self-hosted job without the fork guard reddens. Not a wall (see the script).
       - name: check_runner_guard.py selftest (each offence reddens)
         run: python3 tests/ci/check_runner_guard.py --selftest
