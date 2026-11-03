@@ -7,12 +7,15 @@
 #   B4_STRIDE=17                 stride over the bit patterns (1 = all of them)
 #   B4_NC_STRIDE=251             the same for the falsifiers
 # Falsifiers (each must turn red exactly the lines it names):
-#   -DST_SQRT_OLD                the root as it was: m1-sqrt, m1-inf, m4-adam
+#   -DST_SQRT_OLD                the root as it was: m1-sqrt, m1-inf, m4-adam,
+#                                m4-adam-t
 #   -DST_SQRT_NO_INF             no case for the exponent 0xFF: m1-inf, and
 #                                m1-edges (a NaN's bits read as a number)
 #   -DST_MATH_SHORT              exp and log two terms short: m2-exp, m2-log,
-#                                and m4-adam (bias correction uses both)
-#   -DST_ADAM_EPS=1e-8f          the eps the code used to name: m4-adam
+#                                m4-adam and m4-adam-t (bias correction uses both)
+#   -DST_ADAM_EPS=1e-8f          stage 2's eps (not the default): m4-adam, m4-adam-t
+#   -DST_ADAM_B2=0.99f           b2 wrong: m4-adam-t only (t = 1 cancels it)
+#   -DST_ADAM_B1=0.8f            b1 wrong: m4-adam-t only
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -58,10 +61,12 @@ nc() {  # nc <flag> <lines that must be red, sorted, space separated>
         echo "  FAIL  [nc] $1 rc=$rc red on: [$got], want [$2]"; NCRC=1
     fi
 }
-nc -DST_SQRT_OLD "m1-inf m1-sqrt m4-adam"
+nc -DST_SQRT_OLD "m1-inf m1-sqrt m4-adam m4-adam-t"
 nc -DST_SQRT_NO_INF "m1-edges m1-inf"
-nc -DST_MATH_SHORT "m2-exp m2-log m4-adam"
-nc -DST_ADAM_EPS=1e-8f "m4-adam"
+nc -DST_MATH_SHORT "m2-exp m2-log m4-adam m4-adam-t"
+nc -DST_ADAM_EPS=1e-8f "m4-adam m4-adam-t"
+nc -DST_ADAM_B2=0.99f "m4-adam-t"
+nc -DST_ADAM_B1=0.8f "m4-adam-t"
 
 if [ "$RC" -eq 0 ] && [ "$HRC" -eq 0 ] && [ "$NCRC" -eq 0 ]; then
     echo "[result] PASS  b4-math"

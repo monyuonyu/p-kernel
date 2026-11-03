@@ -4,7 +4,7 @@
  * One arm of the S -> M -> L curve: a student of one tier and seed learns the
  * first D bytes of the fixture's train side (TEACHER_FIXTURE, 768 / 1536 /
  * 3072 B) one SEQ window per optimiser step, in order and round again, with
- * lr 3e-3 as B1 does. At k = 96, 192, 384, 768, 1536 (up to kmax) it prints
+ * lr ST_LR as B1 does. At k = 96, 192, 384, 768, 1536 (up to kmax) it prints
  * the bits per byte on the independent held text (tests/llm/b1_held.txt, 331
  * windows), evaluating inside the one training run (no retraining per point).
  *
@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     if (argc < 6) { fprintf(stderr, "usage: %s <held.txt> <tier> <D> <seed> <kmax>\n", argv[0]); return 2; }
     int tier = atoi(argv[2]), D = atoi(argv[3]), kmax = atoi(argv[5]);
     uint32_t seed = (uint32_t)strtoul(argv[4], NULL, 10);
-    float lr = 3e-3f;
+    float lr = ST_LR;
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 2; }
     int n = (int)fread(held, 1, sizeof held, f);
@@ -97,6 +97,7 @@ int main(int argc, char **argv)
     printf("[b2] arm tier=%d D=%d seed=%u leak=%d shared=%d unigram=%.4f bigram=%.4f held_windows=%d\n",
            tier, D, (unsigned)seed, leak, shared, u / np / LN2, b / np / LN2, n / SEQ);
 
+    printf("[b2] rate lr=%g\n", (double)lr);
     st_model m;
     if (st_init_tier(&m, seed, tier) != 0) { printf("[b2] FAIL init tier %d\n", tier); return 1; }
     float *logits = (float *)malloc((size_t)SEQ * ST_VOCAB * sizeof(float));
