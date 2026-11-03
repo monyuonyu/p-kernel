@@ -2437,6 +2437,42 @@ int st_round_merge(st_model *into, uint32_t gen,
     return st_merge_cohort(into, take, len, n);
 }
 
+int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
+                   int n, int seq, float *live_loss, float *cand_loss)
+{
+    if (!live || !cand || !bytes || seq < 2 || n < seq) return ST_E_ARG;
+    if (cand->tier != live->tier || cand->n_params != live->n_params) return ST_E_ARG;
+    double ls = 0.0, cs = 0.0;
+    int got = 0;
+    int fin = st_model_finite(cand);
+    for (int o = 0; o + seq <= n; o += seq) {
+        int a = 0, b = 0;
+        ls += st_eval_loss(live, bytes + o, seq, &a);
+        if (fin) cs += st_eval_loss(cand, bytes + o, seq, &b);
+        if (a) got++;
+    }
+    if (!got) return ST_E_ARG;
+    float lf = (float)(ls / got);
+    float cf = fin ? (float)(cs / got) : 1.0f / 0.0f;
+    if (live_loss) *live_loss = lf;
+    if (cand_loss) *cand_loss = cf;
+#if defined(ST_ADOPT_ALWAYS)         /* falsifier for H2: no gate at all */
+    int take = 1;
+#elif defined(ST_ADOPT_INVERT)       /* falsifier for H1: the comparison the other way */
+    int take = fin && cf > lf;
+#else
+    int take = fin && cf < lf;       /* finite, and strictly lower on the windows */
+#endif
+    if (!take) return 0;
+    PK_NOSW_ENTER();
+    for (int i = 0; i < live->n_params; i++) {
+        live->w[i] = cand->w[i]; live->mu[i] = cand->mu[i]; live->vu[i] = cand->vu[i];
+    }
+    live->adam_t = cand->adam_t;
+    PK_NOSW_LEAVE();
+    return 1;
+}
+
 /* ================================================================== */
 /* brain self-quantization, stage 1 (st_quant_fake — see student.h)   */
 /* ================================================================== */

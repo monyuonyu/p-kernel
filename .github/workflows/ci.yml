@@ -3838,6 +3838,10 @@ jobs:
       # the judge's self-test (seconds). The cert on seeds 43..50 is not in CI.
       - name: "[b5] a round takes only its generation, nothing non-finite (2 falsifiers red; the judge's self-test)"
         run: B5_MODE=gates bash tests/llm/run_b5_rounds.sh
+      # 2026-11-03 (ROADMAP B5 step 2): the adopt gate's unit cases and the
+      # judge's self-test (seconds). The cert on seeds 91..98 is not in CI.
+      - name: "[b5-adopt] a copy replaces live only if finite and lower (unit cases; the judge's self-test)"
+        run: B5A_MODE=unit bash tests/llm/run_b5_adopt.sh && python3 tests/llm/b5_adopt_check.py --self-test
       # 2026-11-02 (D5-c stage 9): the judge of run_st_distill_parents.sh on
       # tables and logs made in the test (seconds, no model). The cert itself
       # is about 70 minutes on 4 cores: not in CI.
