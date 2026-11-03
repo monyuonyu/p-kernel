@@ -437,7 +437,7 @@ int cradle_teach_self_test(cradle_emit_fn emit)
     int fails = 0;
     const int seqlen = CRADLE_SEQLEN;
     const int rounds = CT_CERT_ROUNDS;  /* enough for a real held-out drop, bounded */
-    const float lr   = 3e-3f;
+    const float lr   = ST_LR;
     const float chance = st_logf(256.0f);
 
     if (emit) emit("[cradle-teach] ==== teacher->student lesson bridge (Thread T, "
@@ -669,7 +669,7 @@ int cradle_live_teach_test(cradle_emit_fn emit, const uint8_t *live, int live_le
 {
     const int seqlen = CRADLE_SEQLEN;
     const int rounds = CT_CERT_ROUNDS;
-    const float lr = 3e-3f;
+    const float lr = ST_LR;
 
     if (live_drop_out) *live_drop_out = 0.0f;
     if (base_drop_out) *base_drop_out = 0.0f;

@@ -284,6 +284,14 @@ void st_zero_grad(st_model *m);
  * task's forward on m in between would replace that cache. Elsewhere the region
  * macros are empty and this is the same four calls as before. */
 #include "../include/pk_nosw.h"
+
+/* The rate the student learns at, everywhere the kernel trains it (the DMN,
+ * the `student` verb, its merge peer, the cradle certs). ROADMAP B4 stage 2
+ * (research/b4-numerics.md): 1e-3 with Adam's eps 1e-8. Stage 1 was 3e-3 with
+ * eps 1/64: -DST_LR=3e-3f -DST_ADAM_EPS=0.015625f builds it again. */
+#ifndef ST_LR
+#define ST_LR 3e-3f
+#endif
 #define ST_TRAIN_STEP(m, bytes, n, logits, lr) do {                           \
         PK_NOSW_ENTER();                                                      \
         st_zero_grad(m);                                                      \

@@ -252,7 +252,7 @@ static unsigned g_nonfinite_refused = 0;  /* saves refused: non-finite model    
  * and student_dmn_consolidate). Defined here, above the first use. */
 #define ST_DMN_SEQLEN  32
 #define ST_DMN_ROUNDS  2     /* tiny per-tick: prove growth, stay responsive */
-#define ST_DMN_LR      3e-3f
+#define ST_DMN_LR      ST_LR
 
 /* SAVED-COPY EMA (research/lr-schedule.md, 2026-10-11). Opt-in with
  * PKERNEL_STUDENT_EMA=1. The live weights train exactly as before (same
@@ -1521,7 +1521,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
     }
 
     int seqlen = 32, rounds = 8;
-    float lr = 3e-3f;
+    float lr = ST_LR;
     int loss_only = 0;
 
     /* ---- SS-3 (special-structure-mind.md §3.2/§8.4): same-tier merge cohort.
@@ -1544,7 +1544,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
         }
         /* train the peer on the SAME fixture but rotated order (compatible
          * objective, different SGD path) — reuse the resident sleep loop. */
-        sleep_rounds(&peer, sl, tw, rr, 2e-2f);
+        sleep_rounds(&peer, sl, tw, rr, ST_LR);
 
         float pre = heldout_loss(&g_student, sl, te, hw);
         size_t cap = st_blob_size(&peer);

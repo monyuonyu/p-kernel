@@ -20,10 +20,9 @@
 
 #include "../../arch/common/llm/student.c"
 
-/* stage 1 of the design: the eps Adam really had, said out loud. Stage 2 moves
- * this to 1e-8 with the learning rate. */
+/* stage 2 of the design: the eps the code names, 1e-8 (stage 1 had 1/64). */
 #ifndef WANT_ADAM_EPS
-#define WANT_ADAM_EPS 0.015625
+#define WANT_ADAM_EPS 1e-8
 #endif
 
 static int g_pass = 0, g_fail = 0;
@@ -106,6 +105,44 @@ static void m4_adam(void)
     st_free(&m);
 }
 
+/* 20 steps of a growing gradient g * t from a clean state, against the same
+ * recursion in double: past t = 1, b1 and b2 no longer cancel (audit-118: a
+ * build with b2 = 0.99 was green on [m4-adam]). Here b2 = 0.99 moves the sum
+ * by 1.13% and b1 = 0.8 by 12%; the line is 0.2%. */
+static void m4_adam_t(void)
+{
+    static const float G[] = { 100.0f, 1.0f, 0.01f, 1e-4f, 1e-6f, -0.01f };
+    enum { NG = sizeof G / sizeof G[0], T = 20 };
+    const float lr = 1e-3f;
+    st_model m;
+    if (st_init_tier(&m, 1, ST_TIER_S) != ST_OK) { CHECK(0, "[m4-adam-t] init"); return; }
+    float w0[NG];
+    for (int i = 0; i < m.n_params; i++) { m.g[i] = 0.0f; m.mu[i] = 0.0f; m.vu[i] = 0.0f; }
+    for (int i = 0; i < NG; i++) w0[i] = m.w[i];
+    m.adam_t = 0;
+    for (int t = 1; t <= T; t++) {
+        for (int i = 0; i < NG; i++) m.g[i] = G[i] * (float)t;
+        st_adam_step(&m, lr);
+    }
+    int bad = 0;
+    for (int i = 0; i < NG; i++) {
+        double mu = 0, vu = 0, want = 0, p1 = 1, p2 = 1;
+        for (int t = 1; t <= T; t++) {
+            double g = (double)G[i] * t;
+            mu = 0.9 * mu + 0.1 * g;
+            vu = 0.999 * vu + 0.001 * g * g;
+            p1 *= 0.9; p2 *= 0.999;
+            want += lr * (mu / (1 - p1)) / (sqrt(vu / (1 - p2)) + WANT_ADAM_EPS);
+        }
+        double got = (double)w0[i] - (double)m.w[i];
+        double r = fabs(got / want - 1.0);
+        printf("    g %-8g x t, %d steps: moved %.6e want %.6e off by %.3f%%\n", G[i], T, got, want, r * 100.0);
+        if (r > 0.002) bad++;
+    }
+    CHECK(bad == 0, "[m4-adam-t] 20 steps follow the formula within 0.2%");
+    st_free(&m);
+}
+
 static void m3_hash(void)
 {
     uint64_t h = 1469598103934665603ULL;
@@ -130,6 +167,7 @@ int main(int argc, char **argv)
     m1_sqrt(stride);
     m2_exp_log(stride);
     m4_adam();
+    m4_adam_t();
     printf("[result] %s (%d pass, %d fail)\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

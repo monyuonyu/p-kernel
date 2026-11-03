@@ -3,7 +3,7 @@
  *
  * Bits per byte of the student on an independent held text
  * (tests/llm/b1_held.txt, 10 KB written for this and never trained on),
- * after the training the `student` verb does (8 rounds, lr 3e-3, seqlen 32,
+ * after the training the `student` verb does (8 rounds, lr ST_LR, seqlen 32,
  * the fixture's train windows). Expectations fixed before the first run:
  *
  *   B1  the held text is >= 8192 bytes of printable ASCII and newlines
@@ -70,7 +70,7 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: %s <held.txt> [tier] [rounds]\n", argv[0]); return 2; }
     int tier = argc > 2 ? atoi(argv[2]) : ST_TIER_S;
     int rounds = argc > 3 ? atoi(argv[3]) : 8;
-    float lr = 3e-3f;
+    float lr = ST_LR;
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 2; }
     int n = (int)fread(held, 1, sizeof held, f);

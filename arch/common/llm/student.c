@@ -2109,18 +2109,25 @@ void st_zero_grad(st_model *m)
     PK_NOSW_LEAVE();
 }
 
-/* What Adam has had all along (see st_sqrtf). Stage 2 of research/b4-numerics.md
- * moves it to 1e-8 together with the learning rate; -DST_ADAM_EPS=1e-8f is the
- * falsifier for [m4-adam]. */
+/* Stage 2 of research/b4-numerics.md: the eps the code always named, now that
+ * the root is right (stage 1 had 1/64, what the old root gave in fact), with
+ * the rate ST_LR. -DST_ADAM_EPS=0.015625f is the falsifier for [m4-adam];
+ * -DST_ADAM_B1 / -DST_ADAM_B2 are the falsifiers for [m4-adam-t]. */
 #ifndef ST_ADAM_EPS
 #define ST_ADAM_EPS 0.015625f
+#endif
+#ifndef ST_ADAM_B1
+#define ST_ADAM_B1 0.9f
+#endif
+#ifndef ST_ADAM_B2
+#define ST_ADAM_B2 0.999f
 #endif
 
 void st_adam_step(st_model *m, float lr)
 {
     PK_NOSW_ENTER();
     m->adam_t++;
-    float b1 = 0.9f, b2 = 0.999f, eps = ST_ADAM_EPS;
+    float b1 = ST_ADAM_B1, b2 = ST_ADAM_B2, eps = ST_ADAM_EPS;
     float bc1 = 1.0f - st_expf((float)m->adam_t * st_logf(b1));
     float bc2 = 1.0f - st_expf((float)m->adam_t * st_logf(b2));
     if (bc1 < 1e-12f) bc1 = 1e-12f;
