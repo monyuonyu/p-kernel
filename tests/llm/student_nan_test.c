@@ -8,13 +8,21 @@
  *
  *   [logf-*]    st_logf: NaN and +-Inf give the floor -69 (the worst loss), and
  *               every other input is bit-equal to the recipe before the fix
- *   [loss-*]    a model with one NaN / Inf in a used weight does not read
- *               better than chance (st_eval_loss, st_span_ce)
+ *   [loss-*]    a model with one NaN / Inf in a weight of a row the windows use
+ *               does not read better than chance (st_eval_loss, st_span_ce).
+ *               Only there: an Inf in a row the windows miss can read better
+ *               than a clean model (audit-116). The value check holds that
+ *               line, not the loss
+ *   [finite-*]  st_model_finite on its own: w, mu, vu, first and last element,
+ *               the second half (the [gate-*] alone do not tell: Adam's next
+ *               step carries a NaN from vu into w)
  *   [guarded-*] st_merge_guarded does not pick a poisoned peer
  *   [gate-*]    the DMN save and the explicit save write no non-finite model:
  *               the first save (it has no loss to compare with), a save after
  *               a good one, an unused row (the loss cannot see it), Inf, the
- *               Adam state. A clean model is still written
+ *               Adam state, with no tick between (no step to carry it). A
+ *               clean model is still written
+ *   [refused-*] a refused save is said, in the probe: nothing else reads it
  *   [gate-ema]  (argv "ema", PKERNEL_STUDENT_EMA=1) the saved copy too
  *
  *  Falsifiers (run_st_nan.sh): -DST_LOGF_NO_FINITE, -DST_SAVE_NO_FINITE, both.
@@ -164,7 +172,40 @@ static void loss_checks(void)
         if (!(l >= chance) || !(s >= chance)) bad++;
     }
     *w = keep;
-    CHECK(bad == 0, "[loss-not-better] one non-finite used weight reads no better than chance");
+    CHECK(bad == 0, "[loss-not-better] one non-finite weight in a row the windows use reads no better than chance");
+    st_free(&m);
+}
+
+static void finite_checks(void)
+{
+    st_model m;
+    if (st_init_tier(&m, 2, ST_TIER_S) != ST_OK) { CHECK(0, "[finite] init"); return; }
+    CHECK(st_model_finite(&m), "[finite-clean] a fresh model is finite");
+    float *a[3] = { m.w, m.mu, m.vu };
+    const int n = m.n_params;
+    const int at[] = { 0, n / 2 + 1, n - 2, n - 1 };
+    static const uint32_t pat[] = { 0x7FC00000u, 0x7F800000u, 0xFF800000u, 0xFFC00001u };
+    int missed = 0, tried = 0;
+    for (int k = 0; k < 3; k++)
+        for (unsigned i = 0; i < sizeof at / sizeof at[0]; i++)
+            for (unsigned p = 0; p < sizeof pat / sizeof pat[0]; p++) {
+                float keep = a[k][at[i]];
+                a[k][at[i]] = from_u(pat[p]);
+                tried++;
+                if (st_model_finite(&m)) {
+                    printf("    missed: array %d element %d pattern 0x%08X\n", k, at[i], pat[p]);
+                    missed++;
+                }
+                a[k][at[i]] = keep;
+            }
+    printf("    %d placements, %d missed\n", tried, missed);
+    CHECK(missed == 0 && st_model_finite(&m),
+          "[finite-everywhere] w, mu, vu; first, late and last element; NaN and both Inf");
+    /* the largest finite value is not a reason to refuse */
+    float keep = m.vu[n - 1];
+    m.vu[n - 1] = from_u(0x7F7FFFFFu);
+    CHECK(st_model_finite(&m), "[finite-big] the largest finite float is finite");
+    m.vu[n - 1] = keep;
     st_free(&m);
 }
 
@@ -267,6 +308,46 @@ static void gate_checks(void)
     fresh(); b0 = g_cap_count;
     rc = student_persist(quiet);
     CHECK(rc == 0 && g_cap_count == b0 + 1, "[gate-persist-clean] the explicit save writes a clean baby");
+
+    /* no tick here: nothing moves a poison from the Adam state into w */
+    fresh(); b0 = g_cap_bad; unsigned c0 = g_cap_count;
+    poison(g_student.mu + g_student.o_embed + 255 * g_student.d);
+    int rm = student_persist(quiet);
+    fresh();
+    poison(g_student.vu + g_student.o_embed + 255 * g_student.d);
+    int rv = student_persist(quiet);
+    fresh();
+    poison(g_student.w + g_student.n_params - 1);
+    int rl = student_persist(quiet);
+    printf("    student_persist, NaN in mu %d, in vu %d, in the last weight %d, writes %u\n",
+           rm, rv, rl, g_cap_count - c0);
+    CHECK(rm != 0 && rv != 0 && rl != 0 && g_cap_count == c0 && g_cap_bad == b0,
+          "[gate-persist-adam] mu, vu, the last weight: no write, with no tick to carry it");
+    fresh();
+}
+
+/* the probe a person can run says it; a clean run prints no such line */
+static char g_said[1024];
+static void said(const char *s)
+{
+    size_t n = strlen(g_said);
+    snprintf(g_said + n, sizeof g_said - n, "%s", s);
+}
+static void refused_before(void)
+{
+    fresh(); g_said[0] = 0;
+    cradle_live_probe(said);
+    CHECK(strstr(g_said, "saves refused") == NULL, "[refused-silent] nothing refused, no line");
+}
+static void refused_after(void)
+{
+    char want[64];
+    g_said[0] = 0;
+    cradle_live_probe(said);
+    snprintf(want, sizeof want, "%u saves refused", student_nonfinite_refused());
+    printf("    the probe says: %s", strstr(g_said, "[baby]") ? strstr(g_said, "[baby]") : "(nothing)\n");
+    CHECK(student_nonfinite_refused() > 0 && strstr(g_said, want) != NULL,
+          "[refused-said] the probe says how many saves were refused");
 }
 
 /* PKERNEL_STUDENT_EMA=1: the copy wins from about tick 4; poison the copy only,
@@ -295,8 +376,9 @@ int main(int argc, char **argv)
     } else {
         printf("[nan] st_logf\n");     logf_checks();
         printf("[nan] the loss\n");    loss_checks();
+        printf("[nan] the check\n");   finite_checks();
         printf("[nan] the merge\n");   guarded_checks();
-        printf("[nan] the save\n");    gate_checks();
+        printf("[nan] the save\n");    refused_before(); gate_checks(); refused_after();
     }
     printf("[result] %s (%d pass, %d fail)\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);
     return g_fail ? 1 : 0;
