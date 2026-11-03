@@ -3395,7 +3395,9 @@ jobs:
     # checks every directly-executed script is 100755. Seconds, no toolchain.
     name: "スクリプトの実行ビット (ci.yml が直接実行するもの)"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 5 -> 10 (2026-11-04): the job takes about 3:15 (apt-update 73 s, vmodel selftest
+    # 107 s); CI 41695768230 spent 2:57 in the full-history checkout and was cancelled at 5:16
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
