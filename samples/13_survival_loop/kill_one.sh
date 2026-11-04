@@ -119,10 +119,29 @@ cluster_up() {    # <tag>  — fresh relay + 3 nodes, wait until SWIM says FULL
     done
     if [ $t -ge 30 ]; then
         fail "($tag) cluster never reached FULL"
-    else
-        log "cluster FULL after ~${t}s"
-        sleep 2     # let the remaining SWIM views converge
+        return
     fi
+    log "cluster FULL after ~${t}s"
+    # readiness 2: every node has finished its boot. FULL comes before the
+    # boot's last tasks start; in CI 41816920035 (2026-11-04) node3 was still
+    # booting when scenario A's baseline query came and answered after node1
+    # had closed the aggregation (1 of 2 region peers). In all 9 logs of that
+    # run the first query landed before "mind_net_task up" on some node.
+    local u=0 i n
+    while [ $u -lt 30 ]; do
+        n=0
+        for i in 1 2 3; do
+            grep -aq "mind_net_task up" "/tmp/sl13_${tag}_node$i.log" && n=$((n + 1))
+        done
+        [ $n -eq 3 ] && break
+        sleep 1; u=$((u + 1))
+    done
+    if [ $u -ge 30 ]; then
+        fail "($tag) not every node finished its boot (mind_net_task up on $n of 3)"
+    else
+        log "every node booted after ~${u}s more"
+    fi
+    sleep 2     # let the remaining SWIM views converge
 }
 
 # ===========================================================================
