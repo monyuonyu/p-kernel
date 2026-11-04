@@ -1424,8 +1424,14 @@ INT swim_wide_self_test(void (*emit)(const char *))
         UH q1 = swim_wide_ping_next(810);
         g1 = got;
         for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        /* the round also renews the PING's time (audit-125 m7: a time kept
+         * from an earlier round was green, the RTT would grow every round) */
+        e->ping_ms = swim_wide_now() - 60000UL;
+        UW t0 = swim_wide_now();
         UH q2 = swim_wide_ping_next(810);
+        UW t1 = swim_wide_now();
         swim_wide_tap = NULL;
+        W2((UW)(e->ping_ms - t0) <= (UW)(t1 - t0), "the next round's PING is timed when it is sent");
         W2(q1 != 0 && g1.type == SWIM_PING && g1.seq == q1 && g1.src_node == 810
            && g1.probe_target == 299, "a round sends a PING with its seq to the live peer");
         W2(q2 != 0 && q2 != q1 && got.seq == q2 && got.probe_target == 299,
