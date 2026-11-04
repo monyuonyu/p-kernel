@@ -23,6 +23,11 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 CC="${CC:-cc}"
+# The test trains its fixtures at its own rate, tuned with stage 1 Adam eps
+# (1/64), so it is built with that eps, not the default 1e-8 (B4, 2026-11-05).
+# With 1e-8 it went red (pk-scratch/a127); with its rate set to ST_LR instead,
+# it is green too, kept the same as dmoe. Same choice as run_st_merge.sh.
+CC="$CC -DST_ADAM_EPS=0.015625f"
 CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla"
 INC="-I$ROOT/arch/common/llm"
 WORK="$(mktemp -d)"
