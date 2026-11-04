@@ -6,6 +6,7 @@
 #   X1  the old nodes know {1,2,3,4,44} and nothing else (no phantom)
 #   X2  the new narrow node knows all 7, 260 and 300 by their own numbers
 #   XT  260 and 300 do not publish on a narrow node's one-char per-node topic (below)
+#   XR  node 4 times the round trip to 260 and 300 (rtt= on their rows; not on an old relay)
 #
 # N2_OLD_BIN  a p-kernel built from the last tree before N2 wire changes (master 64b7c909;
 #             record the sha with any result). N2_NEW_BIN: default boot/linux_x86_64/p-kernel,
@@ -91,6 +92,27 @@ done
 
 [ "$a" = "$WANT_A" ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {$WANT_A}"
 [ "$b" = "$WANT_B" ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted {$WANT_B}"
+
+# XR  the v2 round trip comes back (audit-122: breaking the ACK, probe_target = me or seq 0,
+#   left every check green). New node 4's last `nodes` table shows 259 and 299 with rtt=<n>ms.
+#   Only with the wide nodes on a new relay, and only when X2 is green (else nothing to time).
+wide_rtt() {  # the wide rows of node $1's last `nodes` table that carry an rtt, sorted
+    tr -d '\r' < "$LOGDIR/node$1.log" \
+        | awk '/^\[cluster\]  ID/{s=""; next} /^ +[0-9]+  ALIVE .* wide  rtt=[0-9]+ms/{s=s" "$1} END{print s}' \
+        | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tr '\n' ' '
+}
+if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
+    if [ "$b" != "$WANT_B" ]; then
+        res XR FAIL "not timed: X2 is red"
+    else
+        t=0; r="$(wide_rtt 4)"
+        while [ "$t" -lt "$WAIT" ] && [ "$r" != "259 299 " ]; do
+            sleep 3; t=$((t + 3)); send 4 "nodes"; sleep 1; r="$(wide_rtt 4)"
+        done
+        [ "$r" = "259 299 " ] && res XR PASS "new node 4 has a round-trip time for {$r}" \
+                              || res XR FAIL "new node 4 has a round-trip time for {$r}, wanted {259 299 }"
+    fi
+fi
 
 # XT  a wide node does not publish on a narrow node's per-node topic (audit-120). world, reflex
 #   and moe name a node's topic '0' + node in one char, vital the same: as a char 259 is '3'

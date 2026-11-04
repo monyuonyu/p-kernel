@@ -132,8 +132,10 @@ typedef struct {
 _Static_assert(sizeof(SWIM2_GOSSIP_EVT) == 5, "SWIM2_GOSSIP_EVT layout");
 _Static_assert(sizeof(SWIM2_PKT) == 29, "SWIM2_PKT layout");
 
-/* A wide node says who it is (usermain, instead of drpc_init). */
+/* A wide node says who it is (usermain, before drpc_init). */
 void swim_wide_self(pk_node_t id, UW ip);
+/* Smoothed v2 round trip to a wide peer (ms), 0xFFFFFFFF if not measured. */
+UW swim_wide_rtt(pk_node_t id);
 /* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
 INT swim_wide_self_test(void (*emit)(const char *));
 #endif

@@ -545,8 +545,19 @@ static void rtt_observe(pk_node_t node, UW sample_ms)
  * sim_zone が有効なら異 zone のピアへ合成ペナルティを上乗せする。 */
 UW swim_rtt_ms(pk_node_t node)
 {
+#if defined(_TK_HOSTED_LIBC_)
+    UW r;
+    if (node >= DNODE_MAX) {               /* N2b: a wide peer, v2 PING/ACK */
+        r = swim_wide_rtt(node);
+        if (r == 0xFFFFFFFFUL) return r;
+    } else {
+        if (!rtt_valid[node]) return 0xFFFFFFFFUL;
+        r = rtt_ewma_ms[node];
+    }
+#else
     if (node >= DNODE_MAX || !rtt_valid[node]) return 0xFFFFFFFFUL;
     UW r = rtt_ewma_ms[node];
+#endif
     if (sim_zone_size > 0 && drpc_my_node != 0xFF &&
         node / sim_zone_size != drpc_my_node / sim_zone_size) {
         r += sim_zone_penalty;
@@ -961,6 +972,10 @@ typedef struct {
     UW  ip;
     UW  heard_ms;   /* last packet from this node itself */
     UB  state;      /* DNODE_UNKNOWN / ALIVE / SUSPECT / DEAD */
+    UB  rtt_ok;     /* rtt_ms holds a measurement                */
+    UH  ping_seq;   /* seq of the v2 PING in flight, 0 = none    */
+    UW  ping_ms;    /* when that PING went out                   */
+    UW  rtt_ms;     /* smoothed round trip, as rtt_ewma_ms in v1  */
 } SWIM_WIDE;
 
 static NODEMAP   wide_map;          /* wide id -> slot, parallel to wide_st */
@@ -969,6 +984,8 @@ static UW        nm_full;           /* wide ids refused: the table was full */
 static UW        swim2_bad;         /* v2 packets dropped: too short        */
 static pk_node_t swim_wide_me;      /* 0 = this node is not wide            */
 static INT       swim_wide_cursor;
+static INT       swim_wide_pcur;    /* whom the next v2 PING goes to         */
+static UH        swim_wide_seq;     /* v2 PING numbers, never 0 (0 = beacon) */
 
 /* Slot of a wide id, taken if new (a dead entry gives way when full), or -1. */
 static INT wide_add(pk_node_t id)
@@ -987,6 +1004,8 @@ static INT wide_add(pk_node_t id)
     wide_st[s].ip = 0;
     wide_st[s].heard_ms = 0;
     wide_st[s].state = DNODE_UNKNOWN;
+    wide_st[s].rtt_ok = 0; wide_st[s].ping_seq = 0;
+    wide_st[s].ping_ms = 0; wide_st[s].rtt_ms = 0;
     return s;
 }
 
@@ -1025,6 +1044,57 @@ static void swim_wide_heard(pk_node_t id, UW ip, BOOL direct, UW now)
     }
 }
 
+/* v2 round trip (N2b): a node that knows wide peers PINGs one of them per
+ * round (type SWIM_PING, seq != 0, probe_target = the peer); the peer answers
+ * SWIM_ACK with the same seq and probe_target = the asker. Both go to the
+ * broadcast address like the beacon, so no wide address has to route. */
+static void swim_wide_rtt_sample(pk_node_t id, UH seq, UW now)
+{
+    PK_NOSW_ENTER();
+    INT s = nodemap_find(&wide_map, id);
+    if (s != NODEMAP_NOSLOT && seq != 0 && wide_st[s].ping_seq == seq) {
+        SWIM_WIDE *e = &wide_st[s];
+        UW rtt = (UW)(now - e->ping_ms);
+        if (rtt < 0x80000000UL) {          /* not an ACK from before its PING */
+            e->rtt_ms = e->rtt_ok ? (e->rtt_ms * 3 + rtt + 2) / 4 : rtt;
+            e->rtt_ok = 1;
+            e->ping_seq = 0;               /* one PING, one sample */
+        }
+    }
+    PK_NOSW_LEAVE();
+}
+
+/* the smoothed round trip to a wide peer, 0xFFFFFFFF if not measured */
+UW swim_wide_rtt(pk_node_t id)
+{
+    PK_NOSW_ENTER();
+    INT s = nodemap_find(&wide_map, id);
+    UW r = (s != NODEMAP_NOSLOT && wide_st[s].rtt_ok) ? wide_st[s].rtt_ms : 0xFFFFFFFFUL;
+    PK_NOSW_LEAVE();
+    return r;
+}
+
+static pk_node_t swim_wide_self_id(void)
+{
+    return swim_wide_me ? swim_wide_me : drpc_my_node;   /* 0xFF = none yet */
+}
+
+/* the self-test catches what swim_wide_send would send (audit-122: only the
+ * receiving side of the ACK was tested) */
+static SWIM2_PKT *swim_wide_tap;
+
+static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target)
+{
+    SWIM2_PKT b;
+    UB *pb = (UB *)&b;
+    for (INT i = 0; i < (INT)sizeof b; i++) pb[i] = 0;
+    b.magic = SWIM_MAGIC; b.version = SWIM2_VERSION; b.type = type;
+    b.seq = seq; b.src_node = me; b.probe_target = target;
+    if (swim_wide_tap) { *swim_wide_tap = b; return; }
+    udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
+             (const UB *)&b, (UH)sizeof(b));
+}
+
 /* 1 = this was a v2 packet (used or dropped), 0 = not ours. */
 static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
 {
@@ -1036,6 +1106,11 @@ static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
     for (INT i = 0; i < p->gossip_cnt && i < SWIM_GOSSIP_MAX; i++)
         if (p->gossip[i].state == DNODE_ALIVE)
             swim_wide_heard(p->gossip[i].node_id, 0, FALSE, now);
+    pk_node_t me = swim_wide_self_id();
+    if (me != 0xFF && p->seq != 0 && p->probe_target == me) {
+        if (p->type == SWIM_PING)     swim_wide_send(SWIM_ACK, p->seq, me, p->src_node);
+        else if (p->type == SWIM_ACK) swim_wide_rtt_sample(p->src_node, p->seq, now);
+    }
     return 1;
 }
 
@@ -1098,6 +1173,24 @@ static void swim_wide_tick(void)
     b.gossip_cnt   = (UB)n;
     udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
              (const UB *)&b, (UH)sizeof(b));
+
+    /* one v2 PING per round, to the next live wide peer */
+    pk_node_t me = swim_wide_self_id();
+    if (me == 0xFF) return;
+    PK_NOSW_ENTER();
+    pk_node_t target = 0xFF; UH seq = 0;
+    for (INT k = 0; k < DREGION_MAX; k++) {
+        swim_wide_pcur = (swim_wide_pcur + 1) % DREGION_MAX;
+        SWIM_WIDE *e = &wide_st[swim_wide_pcur];
+        if (!wide_map.used[swim_wide_pcur] || e->state != DNODE_ALIVE) continue;
+        if (++swim_wide_seq == 0) swim_wide_seq = 1;
+        seq = swim_wide_seq;
+        e->ping_seq = seq; e->ping_ms = swim_wide_now();
+        target = (pk_node_t)wide_map.id[swim_wide_pcur];
+        break;
+    }
+    PK_NOSW_LEAVE();
+    if (seq) swim_wide_send(SWIM_PING, seq, me, target);
 }
 
 static void swim_wide_print(void)
@@ -1112,7 +1205,9 @@ static void swim_wide_print(void)
         sw_puts("            "); sw_putdec(wide_map.id[i]);
         sw_puts("  "); sw_puts(state_str(e->state));
         sw_puts("  "); sw_puts(ip_str(e->ip));
-        sw_puts("  wide\r\n");
+        sw_puts("  wide");
+        if (e->rtt_ok) { sw_puts("  rtt="); sw_putdec(e->rtt_ms); sw_puts("ms"); }
+        sw_puts("\r\n");
     }
 }
 
@@ -1250,6 +1345,60 @@ INT swim_wide_self_test(void (*emit)(const char *))
     sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
     swim_wide_rx(ip, (const UB *)&p, sizeof p);
     W2(wide_st[s].state == DNODE_ALIVE, "its own beacon revives");
+
+    /* Round trip: an ACK with the PING's seq, addressed to me, is a sample. */
+    {
+        SWIM_WIDE *e = &wide_st[s];
+        e->ping_seq = 77; e->ping_ms = 5000; e->rtt_ok = 0;
+        swim_wide_rtt_sample(299, 76, 5009);
+        W2(!e->rtt_ok, "an ACK with another seq is no sample");
+        swim_wide_rtt_sample(299, 77, 5009);
+        W2(e->rtt_ok && e->rtt_ms == 9, "the matching ACK gives 9 ms");
+        W2(swim_wide_rtt(299) == 9, "swim_wide_rtt reads it");
+        W2(swim_rtt_ms(299) == 9, "swim_rtt_ms reads a wide peer");
+        swim_wide_rtt_sample(299, 77, 5100);
+        W2(e->rtt_ms == 9, "one PING gives one sample");
+        e->ping_seq = 78; e->ping_ms = 6000;
+        swim_wide_rtt_sample(299, 78, 6021);
+        W2(e->rtt_ms == (9 * 3 + 21 + 2) / 4, "samples are smoothed as in v1");
+        e->ping_seq = 79; e->ping_ms = 7000;
+        swim_wide_rtt_sample(299, 79, 6990);
+        W2(e->rtt_ms == (9 * 3 + 21 + 2) / 4, "an ACK before its PING is no sample");
+        W2(swim_wide_rtt(0x5555) == 0xFFFFFFFFUL, "a stranger is not measured");
+        W2(swim_rtt_ms(0x5555) == 0xFFFFFFFFUL, "nor through swim_rtt_ms");
+        /* through the receive path: only an ACK to me with seq != 0 */
+        pk_node_t me_keep = swim_wide_me; swim_wide_me = 810;
+        e->ping_seq = 80; e->rtt_ok = 0;
+        e->ping_ms = swim_wide_now();
+        sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+        p.seq = 80; p.probe_target = 811;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(!e->rtt_ok, "an ACK to someone else is no sample");
+        p.seq = 0; p.probe_target = 810;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(!e->rtt_ok, "a beacon (seq 0) is no sample");
+        p.type = SWIM_PING; p.seq = 80;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(!e->rtt_ok, "a PING is no sample");
+        p.type = SWIM_ACK;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(e->rtt_ok && e->rtt_ms < 1000, "the ACK to me is");
+        /* the sending side: what a PING makes me answer (caught, not sent) */
+        SWIM2_PKT got;
+        UB *gb = (UB *)&got;
+        for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        swim_wide_tap = &got;
+        sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+        p.type = SWIM_PING; p.seq = 81; p.probe_target = 811;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        W2(got.type == 0, "a PING to someone else is not answered");
+        p.probe_target = 810;
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        swim_wide_tap = NULL;
+        W2(got.type == SWIM_ACK && got.seq == 81, "a PING to me is answered by an ACK with its seq");
+        W2(got.src_node == 810 && got.probe_target == 299, "the ACK goes from me back to the asker");
+        swim_wide_me = me_keep;
+    }
 
     /* Own id: not a peer. */
     swim_wide_me = 800;
