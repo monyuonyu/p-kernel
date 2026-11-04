@@ -1875,6 +1875,23 @@ N-4 cross-host deferred to the ThinkPad).
   build_all ALL OK (incl. windows, bare x86/rpi3/aarch64, dmoe); pychecks 12/12 + parity + yaml. Limits (audit-93): a revert of the production path alone to the
   whole region is seen by no CI step (only 64 nodes show it); 64 nodes were not re-run on the merge (production
   path unchanged since 840b8baf: 2/2 ALL PASS there). Written by the run that merged.
+- CROWN SECTIONS RECORD, no re-bless — R-CROWNRO (2026-11-05): the crown (above, and the CI gate
+  crown-text-identity) hashes bare `.text` only, so a change that moves only a constant is not seen. Measured
+  (audit-128, pkernel_audit_ss gcc 13.3.0, `objcopy -O binary -j <section>` per section, `pk-scratch/a128/ro.sh`):
+  on x86 the float constants live in `.rodata.cst4` and initialised tables in `.data`, NOT in `.rodata`, so
+  "`.rodata` as a second number" (the recommendation as first written) would have missed them. Negative
+  control (`a128/ronc.sh`): one float in ai_job.c's table 0.1f -> 0.2f leaves `.text` byte-identical on both
+  arches and moves only `.data` (x86 fc65e93a -> 31b062b2, aarch64 2f9e5ef1 -> 357e5f57). From here the dev
+  crown is recorded with every `.text*`, `.rodata*` and `.data` section; on master 1b76589f (all ten equal on
+  the trial merge of feat/b4-e3-default, 04e9f413):
+    x86      .text f3a94e2d 380523  .text.start d7ed138e 436  .rodata 9c27d263 15040
+             .rodata.str1.1 e3dfa4c3 34763  .rodata.str1.4 f46c36e5 67590  .rodata.cst4 5d780823 328  .data fc65e93a 1132
+    aarch64  .text 11be1015 362716  .rodata 7c5f0e67 101752  .data 2f9e5ef1 841
+  `.text` is unchanged (no re-bless). A merge that moves any of these says so and goes the re-bless way. The CI
+  gate is NOT changed here; making it compare these sections is a later change through an audit. R-CROWNRO was
+  put to mk_pino 2026-11-04T03:37 with the `.rodata`-only recommendation; no answer by its deadline, landed on it
+  widened to all sections for the reason above. Limit: `.bss` (zeroed) is not hashed; one toolchain. Written by
+  an audit run (audit-128); an independent re-measure is for a different run.
 - CROWN RE-BLESS — 0-14 S2 stage 1 on bare x86 (2026-10-25): `e7d86d6e` `feat/stop-bare-x86` cdeeccd0 (audit-83
   PASS with limits; R-STOPBARE put to mk_pino with a recommendation, past its deadline 2026-10-25T14:35 with no
   answer, landed on it per inbox #37), `--no-ff` onto `eaa93925` (the branch's base), no conflict; merge tree
