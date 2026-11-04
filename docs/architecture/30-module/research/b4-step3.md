@@ -39,4 +39,4 @@
 
 ## 4. 作るもの（次の B4 の回）
 
-`b2_curve_test.c` に 96 歩ごとの点と held 側の測り（`-DB4_EVERY96`、既定の出力は全バイト同じ）、`run_b4_step3.sh` と判定役（自己試験つき）。5 腕×8 組、約 60 分。CI の外。
+`b2_curve_test.c` に 96 歩ごとの点と held 側の測り（`-DB4_EVERY96`、既定の出力は全バイト同じ）、`run_b4_step3.sh` と判定役（自己試験つき）。5 腕×8 組、約 60 分。CI の外。結果は `b4-step3-result.md`（PASS）。

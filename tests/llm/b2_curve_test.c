@@ -14,6 +14,14 @@
  * -DB2_LEAK interleaves the held text's first half into the training stream
  * (the negative control LEAK). The pass lines are judged by b2_curve_check.py.
  *
+ * -DB4_EVERY96 (B4 stage 3, research/b4-step3.md): also every 96 steps a
+ * "[b4] point" line with three bpb: stop = the fixture's held side (windows
+ * trainw..trainw+heldw-1, from train_end; never in the training stream since
+ * D <= train_end), trainwin = the first heldw windows of the training stream
+ * (the NC2 stand-in), held = the held text as above. The "[b2]" lines are
+ * printed as without the flag (the extra evaluations are pure forwards), so
+ * the default output stays byte for byte the same. Judge: b4_step3_check.py.
+ *
  *   b2_curve_test <held.txt> <tier 0|1|2> <D> <seed> <kmax>    exit 0 = ran
  */
 #include <stdio.h>
@@ -42,6 +50,21 @@ static double bpb(st_model *m, int n, int *wins, int *skipped)
     *wins = got; *skipped = skip;
     return got ? s / got / LN2 : 0.0;
 }
+
+#ifdef B4_EVERY96
+/* bpb over nw whole windows starting at buf; -1 if any window predicts nothing */
+static double win_bpb(st_model *m, const uint8_t *buf, int nw)
+{
+    double s = 0.0;
+    for (int w = 0; w < nw; w++) {
+        int np = 0;
+        float l = st_eval_loss(m, buf + w * SEQ, SEQ, &np);
+        if (!np) return -1.0;
+        s += l;
+    }
+    return nw ? s / nw / LN2 : -1.0;
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -104,10 +127,29 @@ int main(int argc, char **argv)
     if (!logits) return 2;
     static const int at[] = { 96, 192, 384, 768, 1536 };
     int next = 0, o = 0;
+#ifdef B4_EVERY96
+    st_split sp = st_held_split(fxn, SEQ);
+    if (st_held_wrapped(sp, fxn, SEQ) != 0 || sp.heldw * SEQ > D) {
+        printf("[b4] FAIL the stop windows wrap or are longer than the stream (heldw=%d D=%d)\n", sp.heldw, D);
+        return 2;
+    }
+    printf("[b4] stop windows=%d from=%d trainwin windows=%d from=0\n", sp.heldw, sp.train_end, sp.heldw);
+#endif
     for (int k = 1; k <= kmax; k++) {
         ST_TRAIN_STEP(&m, stream + o, SEQ, logits, lr);
         o += SEQ;
         if (o + SEQ > sn) o = 0;
+#ifdef B4_EVERY96
+        if (k % 96 == 0) {
+            int wins = 0, skipped = 0;
+            double hs = win_bpb(&m, fx + sp.train_end, sp.heldw);
+            double tw = win_bpb(&m, stream, sp.heldw);
+            double v = bpb(&m, n, &wins, &skipped);
+            printf("[b4] point k=%d stop=%.4f trainwin=%.4f held=%.4f wins=%d skipped=%d\n",
+                   k, hs, tw, v, wins, skipped);
+            fflush(stdout);
+        }
+#endif
         if (next < (int)(sizeof at / sizeof at[0]) && k == at[next]) {
             int wins = 0, skipped = 0;
             double v = bpb(&m, n, &wins, &skipped);
