@@ -16,6 +16,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 CC="${CC:-cc}"
 CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off -Werror=vla"
+# The W0 pair is a fixture with a barrier, so it is trained with stage 1's Adam
+# eps (1/64), not the default 1e-8 (B4, 2026-11-05). With 1e-8 there is no
+# such pair here: at LR 0.02 the plain mean already beats the worse parent
+# (the negative control stays green), at ST_LR the barrier is 0.038 < BAR_MIN
+# and the plain mean beats both parents (pk-scratch/a127, research/b4-step3-result.md).
+CFLAGS="$CFLAGS -DST_ADAM_EPS=0.015625f"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
