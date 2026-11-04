@@ -187,7 +187,7 @@ static int cert_distill(void)
 {
     const int seqlen = 32;
     const int rounds = 30;
-    const float lr = 3e-3f;
+    const float lr = ST_LR;   /* the rate the DMN uses (B4 stage 3: 1e-3, eps 1e-8) */
     /* split corpus into train / held-out windows */
     int total_windows = g_corpus_n / seqlen;
     if (total_windows < 4) total_windows = 4;

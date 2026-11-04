@@ -209,7 +209,7 @@ static void train_ctx(st_model *m, int rounds, int n_ex, uint32_t seed,
             st_zero_grad(m);
             st_forward(m, seq, n, logits);
             st_backward(m, seq, n);
-            st_adam_step(m, 3e-3f);
+            st_adam_step(m, ST_LR);
         }
     }
     free(logits);
@@ -244,7 +244,7 @@ static uint64_t train_ctx_bytes(st_model *m, uint64_t target_bytes, uint32_t see
         st_zero_grad(m);
         st_forward(m, seq, n, logits);
         st_backward(m, seq, n);
-        st_adam_step(m, 3e-3f);
+        st_adam_step(m, ST_LR);
         bytes += (uint64_t)n;
         examples++;
         if (bytes >= next_report) {
@@ -604,7 +604,7 @@ static void train_repeat(st_model *m, int rounds, int n_ex, uint32_t seed,
             st_zero_grad(m);
             st_forward(m, seq, n, logits);
             st_backward(m, seq, n);
-            st_adam_step(m, 3e-3f);
+            st_adam_step(m, ST_LR);
         }
     }
     free(logits);

@@ -115,8 +115,10 @@ int main(void)
      * only because one parent had fallen back: with the old root A=2.77 B=3.54
      * merged 3.49; with the real root (B4 stage 1) A=2.83 B=2.68 merged 2.98, a
      * better child that fails it. At 3e-3 the line holds on both trees: merged
-     * 3.11 of 4.18 and 3.98 before, 3.13 of 4.06 and 3.72 after. */
-    const int ROUNDS = 60; const float LR = 3e-3f;
+     * 3.11 of 4.18 and 3.98 before, 3.13 of 4.06 and 3.72 after.
+     * ST_LR since B4 stage 3 made it 1e-3 with eps 1e-8 (the rate the DMN
+     * uses): A=3.62 B=3.55 merged 3.23 (audit-128, pk-scratch/a128). */
+    const int ROUNDS = 60; const float LR = ST_LR;
     for (int r = 0; r < ROUNDS; r++) {
         for (int j = 0; j < train_windows; j++) {
             /* A visits 0,1,2,..; B visits a rotated order (shift = j*7 % W). */
