@@ -1080,8 +1080,11 @@ static pk_node_t swim_wide_self_id(void)
 }
 
 /* the self-test catches what swim_wide_send would send (audit-122: only the
- * receiving side of the ACK was tested) */
+ * receiving side of the ACK was tested). Only sends from the task that set the
+ * tap are caught (audit-124 limit 2: the swim task's own PING during the test
+ * would otherwise be swallowed). */
 static SWIM2_PKT *swim_wide_tap;
+static ID         swim_wide_tap_tid;
 
 static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target)
 {
@@ -1090,7 +1093,7 @@ static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target)
     for (INT i = 0; i < (INT)sizeof b; i++) pb[i] = 0;
     b.magic = SWIM_MAGIC; b.version = SWIM2_VERSION; b.type = type;
     b.seq = seq; b.src_node = me; b.probe_target = target;
-    if (swim_wide_tap) { *swim_wide_tap = b; return; }
+    if (swim_wide_tap && tk_get_tid() == swim_wide_tap_tid) { *swim_wide_tap = b; return; }
     udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
              (const UB *)&b, (UH)sizeof(b));
 }
@@ -1154,6 +1157,8 @@ static void swim_wide_age(UW now)
     }
 }
 
+static UH swim_wide_ping_next(pk_node_t me);
+
 static void swim_wide_tick(void)
 {
     swim_wide_age(swim_wide_now());
@@ -1177,6 +1182,14 @@ static void swim_wide_tick(void)
     /* one v2 PING per round, to the next live wide peer */
     pk_node_t me = swim_wide_self_id();
     if (me == 0xFF) return;
+    (void)swim_wide_ping_next(me);
+}
+
+/* the round's PING: the next live wide peer gets a fresh seq (never 0); the
+ * self-test drives this to see that rounds are told apart (audit-124 M3).
+ * Returns the seq sent, 0 if no peer is live. */
+static UH swim_wide_ping_next(pk_node_t me)
+{
     PK_NOSW_ENTER();
     pk_node_t target = 0xFF; UH seq = 0;
     for (INT k = 0; k < DREGION_MAX; k++) {
@@ -1191,6 +1204,7 @@ static void swim_wide_tick(void)
     }
     PK_NOSW_LEAVE();
     if (seq) swim_wide_send(SWIM_PING, seq, me, target);
+    return seq;
 }
 
 static void swim_wide_print(void)
@@ -1387,6 +1401,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
         SWIM2_PKT got;
         UB *gb = (UB *)&got;
         for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        swim_wide_tap_tid = tk_get_tid();
         swim_wide_tap = &got;
         sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
         p.type = SWIM_PING; p.seq = 81; p.probe_target = 811;
@@ -1397,6 +1412,28 @@ INT swim_wide_self_test(void (*emit)(const char *))
         swim_wide_tap = NULL;
         W2(got.type == SWIM_ACK && got.seq == 81, "a PING to me is answered by an ACK with its seq");
         W2(got.src_node == 810 && got.probe_target == 299, "the ACK goes from me back to the asker");
+        /* rounds are told apart (audit-124 M3: a PING seq stuck at 1 was green):
+         * two rounds to the one live peer carry two seqs, and the late ACK of
+         * the first round is no sample after the second PING went out */
+        for (INT i = 0; i < DREGION_MAX; i++)
+            if (wide_map.used[i] && i != s) wide_st[i].state = DNODE_DEAD;
+        e->rtt_ok = 0;
+        SWIM2_PKT g1;
+        swim_wide_tap = &got;
+        for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        UH q1 = swim_wide_ping_next(810);
+        g1 = got;
+        for (INT i = 0; i < (INT)sizeof got; i++) gb[i] = 0;
+        UH q2 = swim_wide_ping_next(810);
+        swim_wide_tap = NULL;
+        W2(q1 != 0 && g1.type == SWIM_PING && g1.seq == q1 && g1.src_node == 810
+           && g1.probe_target == 299, "a round sends a PING with its seq to the live peer");
+        W2(q2 != 0 && q2 != q1 && got.seq == q2 && got.probe_target == 299,
+           "the next round's PING has another seq");
+        swim_wide_rtt_sample(299, q1, e->ping_ms + 5);
+        W2(!e->rtt_ok, "the late ACK of the earlier round is no sample");
+        swim_wide_rtt_sample(299, q2, e->ping_ms + 5);
+        W2(e->rtt_ok && e->rtt_ms == 5, "the ACK of this round is");
         swim_wide_me = me_keep;
     }
 
