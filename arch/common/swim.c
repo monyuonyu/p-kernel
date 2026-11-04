@@ -1362,6 +1362,11 @@ INT swim_wide_self_test(void (*emit)(const char *))
 
     /* Round trip: an ACK with the PING's seq, addressed to me, is a sample. */
     {
+        /* at boot the clock can still read 0 (CI types nodes wide at once): a
+         * PING timed 0 would pass the round check below (audit-126 m9). Wait
+         * it off 0 here, before swim_wide_me is faked, so no real round runs
+         * with the fake ids while this task sleeps. */
+        for (INT w = 0; w < 50 && swim_wide_now() == 0; w++) tk_dly_tsk(2);
         SWIM_WIDE *e = &wide_st[s];
         e->ping_seq = 77; e->ping_ms = 5000; e->rtt_ok = 0;
         swim_wide_rtt_sample(299, 76, 5009);
@@ -1428,6 +1433,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
          * from an earlier round was green, the RTT would grow every round) */
         e->ping_ms = swim_wide_now() - 60000UL;
         UW t0 = swim_wide_now();
+        W2(t0 != 0, "the clock has left 0 before the PING is timed");
         UH q2 = swim_wide_ping_next(810);
         UW t1 = swim_wide_now();
         swim_wide_tap = NULL;
