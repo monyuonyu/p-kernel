@@ -2109,12 +2109,12 @@ void st_zero_grad(st_model *m)
     PK_NOSW_LEAVE();
 }
 
-/* Stage 1 of research/b4-numerics.md: 1/64, what the old root gave Adam in fact.
- * Stage 2 (1e-8 with ST_LR 1e-3) was red on its cert, see ST_LR in student.h.
- * -DST_ADAM_EPS=1e-8f is the falsifier for [m4-adam] and [m4-adam-t];
+/* 1e-8 with ST_LR 1e-3 (stage 3 of research/b4-numerics.md, see ST_LR in
+ * student.h). 1/64 is what the old root gave Adam in fact (stage 1).
+ * -DST_ADAM_EPS=0.015625f is the falsifier for [m4-adam] and [m4-adam-t];
  * -DST_ADAM_B1 / -DST_ADAM_B2 are the falsifiers for [m4-adam-t]. */
 #ifndef ST_ADAM_EPS
-#define ST_ADAM_EPS 0.015625f
+#define ST_ADAM_EPS 1e-8f
 #endif
 #ifndef ST_ADAM_B1
 #define ST_ADAM_B1 0.9f

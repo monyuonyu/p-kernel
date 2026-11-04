@@ -222,7 +222,7 @@ static int cert_determinism(void)
     st_init(&m, 0xDE7E20);
     /* train briefly so the router is non-trivial (real differentiated gates). */
     int seqlen = 24, tw = 8;
-    distill(&m, seqlen, tw, 6, 3e-3f);
+    distill(&m, seqlen, tw, 6, ST_LR);
 
     uint8_t buf[24];
     for (int i = 0; i < 24; i++) buf[i] = (uint8_t)("the sea is blue and sky "[i]);
@@ -275,7 +275,7 @@ static int cert_no_loss_regression(int seqlen, float baseline, int have_baseline
 
     st_model m;
     st_init(&m, 0x0BABE);          /* SAME seed as the baseline build */
-    distill(&m, seqlen, train_w, 30, 3e-3f);
+    distill(&m, seqlen, train_w, 30, ST_LR);
     float adaptive = heldout_loss(&m, seqlen, train_end, held_w);
     int wmean = st_last_fire_width_mean_milli();
     printf("  adaptive-K held-out loss = %.4f nats (mean firing width %d.%03d)\n",

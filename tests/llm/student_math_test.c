@@ -20,11 +20,10 @@
 
 #include "../../arch/common/llm/student.c"
 
-/* stage 1 of the design: the eps Adam really had, said out loud (stage 2, 1e-8,
- * was red on its cert: run_b4_eps.sh). -DST_ADAM_EPS=1e-8f -DWANT_ADAM_EPS=1e-8
- * is stage 2. */
+/* the eps Adam has by default: 1e-8 since B4 stage 3 (research/b4-step3.md).
+ * -DST_ADAM_EPS=0.015625f -DWANT_ADAM_EPS=0.015625 is stage 1, the old one. */
 #ifndef WANT_ADAM_EPS
-#define WANT_ADAM_EPS 0.015625
+#define WANT_ADAM_EPS 1e-8
 #endif
 
 static int g_pass = 0, g_fail = 0;

@@ -33,7 +33,7 @@
 
 #define SEQ        32
 #define ROUNDS     8
-#define LR         3e-3f
+#define LR         ST_LR    /* the rate the DMN uses (B4 stage 3: 1e-3) */
 #define GEN_LEN    96       /* st_generate internal cap is ~96 */
 #define SEED       0x0BABEu
 
