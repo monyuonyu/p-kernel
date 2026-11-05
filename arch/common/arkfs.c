@@ -384,13 +384,18 @@ static INT emit_record(U4 type, const void *payload, U4 len,
  * at read time, instead of letting one bad block truncate the whole log.
  * type/seq/len/id come straight from the (valid) header even when payload_ok=0.
  */
+/* 1 if the last read_record hit a device read error (not rot): ark_compact
+ * aborts on it rather than drop a block that may read fine later (audit-133) */
+static U1 g_rr_ioerr;
+
 static INT read_record(U4 sec, void *payout, U4 paymax,
                        U4 *type_out, U4 *seq_out, U4 *len_out,
                        U1 id_out[ARK_ID_LEN], INT *payload_ok)
 {
     if (payload_ok) *payload_ok = 0;
+    g_rr_ioerr = 0;
     if (sec >= ark_usable_end()) return 0;          /* never read the SB replica */
-    if (dev_read(sec, 1, g_secbuf) < 0) return 0;
+    if (dev_read(sec, 1, g_secbuf) < 0) { g_rr_ioerr = 1; return 0; }
     if (!ark_memeq(((ark_rec_hdr *)g_secbuf)->magic, ARK_REC_MAGIC, 4))
         return 0;                                             /* not a record */
 
@@ -417,7 +422,7 @@ static INT read_record(U4 sec, void *payout, U4 paymax,
     INT ok = 1;
     U1 *p = (U1 *)payout;
     for (U4 s = 0; s < psect; s++) {
-        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) { ok = 0; break; }
+        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) { ok = 0; g_rr_ioerr = 1; break; }
 #ifdef ARK_FAULT_SLOW_GET
         /* test builds only (`tkconf nosw` N9): widen the read -> copy window
          * on the shared g_secbuf, which emit_record also writes */
@@ -1172,6 +1177,7 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
             /* a live block was verified just above, so failing now is a read
              * error, not rot: abort, the old log stays (audit-133) */
 #ifndef ARK_COMPACT_SKIP_UNREAD
+            if (g_rr_ioerr) return ARK_E_IO;       /* may read later: keep the old log */
             if (compact_is_live(g_idx[s].id, nseen)) return ARK_E_CORRUPT;
 #endif
             continue;
@@ -1218,7 +1224,12 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
         if (g_idx[s].sec == 0) continue;
         g_epoch = save_epoch;                      /* read old blocks */
         INT bl = ark_block_get(g_idx[s].id, g_blkbuf, ARK_BLOCK_MAX);
-        if (bl < 0) continue;                      /* rotted in the dry pass, or a read error (counted below) */
+        if (bl < 0) {
+#ifndef ARK_COMPACT_SKIP_UNREAD
+            if (g_rr_ioerr) { rc = ARK_E_IO; break; }   /* a read error, not rot */
+#endif
+            continue;                              /* rotted (crc / sha): its bytes are gone */
+        }
         g_epoch = new_epoch;                        /* write new-epoch records */
         U4 st;
         INT r = emit_record(ARK_REC_BLOCK, g_blkbuf, (U4)bl,

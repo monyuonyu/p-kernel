@@ -225,6 +225,30 @@ for n in 2 3; do
     fi
   done
 done
+# the same for a p-fs block (no file names it: only the keep-all walks read it).
+# N=1: the read fails in the dry pass and the write pass (the counts would agree);
+# N=2: only in the write pass. A read error is not rot: abort, the block stays.
+PB="pfs-block: a diary entry that belongs to no arkfs file"
+for n in 1 2; do
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkp.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    pbid="$("$b" bput "$IMGR" "$PB")"; pbid="${pbid##* }"
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "$PB" "$n")"
+    prf="$("$b" bget "$IMGR" "$pbid")"
+    say "      p-fs block, read error from the ${n}th read ($(basename "$b")): $crf | $prf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$prf" = "BGET: $PB" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a read error on a p-fs block aborts, the block stays (N=$n)" \
+        || fail "p-fs block read error (N=$n): $crf / $prf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$prf" != "BGET: $PB" ] \
+        && pass "falsifier (skip unread) drops the p-fs block behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) p-fs N=$n kept the block: $crf / $prf"
+    fi
+  done
+done
 
 # ===========================================================================
 hr
