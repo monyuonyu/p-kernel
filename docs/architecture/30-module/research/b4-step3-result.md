@@ -31,4 +31,4 @@
 
 決めたこと（分かれ道は (a) 戻す・(b) 学ぶのを止める・(c) 戻して縮める、(a) を選んだ）: DMN の tick の終わりに、生きた重みの held 側の損失が最後の保存より `ST_DMN_RESTORE_MARGIN`（0.10 nats）を超えて悪ければ、保存したファイルを別のモデルに読み、**それが今の生きた重みより良いときだけ**重みを写して Adam を初めから（mu・vu・adam_t を 0、EMA の写しも初めから）。ファイルは別の書き手（`student` の保存）のものかもしれないので、比べずには入れない。
 
-試験 `tests/llm/run_restore.sh`（[restore-none]・[restore-back]・[restore-gated]・[restore-noread]、陰性 `-DST_DMN_RESTORE_DISABLE` で [restore-back] が赤）。限界: 戻した後また同じ教材で学ぶ＝戻しを繰り返しうる（1 tick に 1 回、22.8MB を読む）。0.10 は測った 1 本から決めた。
+試験 `tests/llm/run_restore.sh`（[restore-none]・[restore-back]・[restore-gated]・[restore-noread]、陰性 `-DST_DMN_RESTORE_DISABLE` で [restore-back] が赤）。長い走り（`student_restore_test drift 31`、読み戻しあり・なしを同時に、製品の既定・教材だけ）: なしは tick 19 で 2.8351、ありは tick 12 から 2.4073 と 2.4542 を行き来する（read-backs は 2 tick に 1 回）。**限界: 教材が変わらない間は、読み戻した最良から毎回同じ道をたどって同じ所で越える＝学びは保存の最良で止まるのと同じで、2 tick ごとに 22.8MB を読む**。次の一手の候補: 読み戻した後は教材が変わるまで学ぶのを休む。0.10 は測った 1 本から決めた。
