@@ -150,6 +150,33 @@ tafter="$(run read "$IMG" /y.txt)"
                                 || fail "torn-commit rollback: $tafter"
 
 # ===========================================================================
+hr; say "(e) a p-fs block (no file names it) survives ark_compact"; hr
+# The ark entry's records are p-fs blocks put the way pfs_ark_put does
+# (ark-entry.md §2.1, §2.3). audit-131 measured ark_compact dropping such a
+# block (pk-scratch/a132/compact_probe.c); this pins it. Superseded FILE
+# versions may still go (arkfs.c's compaction policy); the p-fs block may not.
+IMGE="$WORK/arke.img"
+run format "$IMGE" 1024 >/dev/null
+bput="$(run bput "$IMGE" "pfs-block: a diary entry that belongs to no arkfs file")"
+bid="${bput##* }"
+run write "$IMGE" /keep.txt "stays-alive" >/dev/null
+run write "$IMGE" /churn.txt "churn-v1" >/dev/null
+run write "$IMGE" /churn.txt "churn-v2" >/dev/null
+before="$(run bget "$IMGE" "$bid")"
+comp="$(run compact "$IMGE")"
+after="$(run bget "$IMGE" "$bid")"
+keep="$(run read "$IMGE" /keep.txt)"
+churn="$(run read "$IMGE" /churn.txt)"
+say "      $bput"
+say "      before: $before | $comp | after: $after"
+[ "$before" = "BGET: pfs-block: a diary entry that belongs to no arkfs file" ] \
+  && pass "p-fs block readable after a remount (setup)" || fail "p-fs block before compaction: $before"
+[ "$comp" = "COMPACT: 0" ] && [ "$keep" = "READ: stays-alive" ] && [ "$churn" = "READ: churn-v2" ] \
+  && pass "compaction ran, live files intact (setup)" || fail "compaction: $comp / $keep / $churn"
+[ "$after" = "$before" ] && pass "p-fs block survives ark_compact" \
+                         || fail "p-fs block lost by ark_compact: $after"
+
+# ===========================================================================
 hr
 if [ "$FAILS" -eq 0 ]; then
   say "ALL PASS — ARK is content-addressed, versioned, and crash-safe."

@@ -246,6 +246,35 @@ int main(int argc, char **argv)
         printf("MKDIR: %d\n", r);
         return r == ARK_OK ? 0 : 1;
     }
+    /* bput <img> <text>: a raw p-fs block the way arch/linux/pfs_ark.c pfs_ark_put
+     * stores one (ark_block_put + ark_checkpoint, no file names it); prints the id.
+     * bget <img> <id hex>: reads it back. (e) in run.sh: such a block must survive
+     * ark_compact (the ark entry's records are p-fs blocks, ark-entry.md §2.3). */
+    if (!strcmp(cmd, "bput")) {
+        if (argc < 4) return 2;
+        U1 id[ARK_ID_LEN];
+        int r = ark_block_put(argv[3], u4len(argv[3]), id);
+        int c = (r == ARK_OK) ? ark_checkpoint() : r;
+        printf("BPUT: %d %d ", r, c);
+        for (int i = 0; i < ARK_ID_LEN; i++) printf("%02x", id[i]);
+        printf("\n");
+        return (r == ARK_OK && c == ARK_OK) ? 0 : 1;
+    }
+    if (!strcmp(cmd, "bget")) {
+        if (argc < 4 || strlen(argv[3]) != 2 * ARK_ID_LEN) return 2;
+        U1 id[ARK_ID_LEN];
+        for (int i = 0; i < ARK_ID_LEN; i++) {
+            unsigned v; if (sscanf(argv[3] + 2 * i, "%2x", &v) != 1) return 2;
+            id[i] = (U1)v;
+        }
+        static char buf[ARK_BLOCK_MAX + 1];
+        int r = ark_block_get(id, buf, ARK_BLOCK_MAX);
+        if (r == ARK_E_CORRUPT) { printf("CORRUPT\n"); return 3; }
+        if (r < 0) { printf("NOTFOUND %d\n", r); return 1; }
+        buf[r] = '\0';
+        printf("BGET: %s\n", buf);
+        return 0;
+    }
     if (!strcmp(cmd, "checkpoint")) {
         int r = ark_checkpoint();
         printf("CHECKPOINT: %d\n", r);
