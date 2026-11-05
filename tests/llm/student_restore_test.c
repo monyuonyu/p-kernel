@@ -17,7 +17,14 @@
  *                    the baseline loss set low so the margin is crossed):
  *                    live is not replaced
  *   [restore-noread] the file cannot be read: live is not replaced, no crash
- *  FALSIFIER (-DST_DMN_RESTORE_DISABLE): [restore-back] goes RED.
+ *   [restore-rest]   after a read-back the same corpus starts no batch (no
+ *                    training, save or read); a writer (student_consol_abort)
+ *                    ends the rest; a waiting DLB winner ends the rest and is
+ *                    distilled; a lesson ends the rest
+ *  FALSIFIERS: -DST_DMN_RESTORE_DISABLE: [restore-back] goes RED;
+ *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED;
+ *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED;
+ *              -DST_DMN_REST_DLB_KEEP: [restore-rest] DLB winner goes RED.
  *
  *  Build: run_restore.sh.
  */
@@ -179,14 +186,74 @@ int main(int argc, char **argv)
     printf("[restore] read-backs so far %u\n", g_dmn_restores);
     CHECK(g_dmn_restores == 1, "[restore-back] exactly one read-back");
 #endif
-    /* the next tick trains from the best; DT must not force a write of a regression */
+    /* the next tick: with the rest (feat/b4-rest) it starts no batch; under
+     * -DST_DMN_REST_DISABLE it trains from the best. Either way DT must not
+     * force a write of a regression */
     before = g_writes;
     tick();
     float t2 = live_held(train_end, heldw);
     printf("[restore] next tick live %.4f wrote=%d saved %.4f\n", (double)t2, g_writes != before,
            (double)g_dmn_saved_loss);
     CHECK(g_writes == before || t2 < saved, "[restore-back] the next write is an improvement or none");
-    if (only_back) goto out;
+#ifdef HAVE_READ_BACK
+    /* 2b. rest after the read-back: on the same corpus no batch starts (no
+     * training, no save, no read); a lesson (a changed corpus) ends the rest.
+     * The tick above already rested; this one must too. */
+    {
+        int ta = g_student.adam_t; unsigned rb = g_dmn_restores, w0 = g_writes, r0 = g_dmn_rested;
+        tick();
+        printf("[restore] rest: adam_t %d -> %d, read-backs %u -> %u, writes %u -> %u, rested %u -> %u\n",
+               ta, g_student.adam_t, rb, g_dmn_restores, w0, g_writes, r0, g_dmn_rested);
+        CHECK(g_student.adam_t == 0 && g_student.adam_t == ta && g_dmn_restores == rb && g_writes == w0 &&
+              g_dmn_rested > r0, "[restore-rest] same corpus after a read-back: no training, no save, no read");
+        /* a writer of g_student (merge, retrain, restore: each calls
+         * student_consol_abort first) ends the rest: here it spoils live past
+         * the margin, and the next tick must read the best back (audit-132: on
+         * 69272b19 the DMN kept resting with live 5.5876, saved 2.5173) */
+        student_consol_abort();
+        spoil(&g_student, 9u, 0.4f);
+        rb = g_dmn_restores; r0 = g_dmn_rested;
+        float sp2 = live_held(train_end, heldw);
+        tick();
+        float *fw2 = file_w(&tmp);
+        int back2 = fw2 && memcmp(fw2, g_student.w, nb) == 0;
+        printf("[restore] writer then spoil: live %.4f -> %.4f (saved %.4f), read-backs %u -> %u, rested %u -> %u,"
+               " back=%d\n", (double)sp2, (double)live_held(train_end, heldw), (double)g_dmn_saved_loss,
+               rb, g_dmn_restores, r0, g_dmn_rested, back2);
+        CHECK(g_dmn_restores == rb + 1 && back2,
+              "[restore-rest] a writer ends the rest: a spoiled live is read back");
+        /* the read-back above rests again. A verified DLB winner (the chat
+         * enqueues one after the conscience allows a V-exact answer) is
+         * distilled only after a completed batch: it ends the rest, and the
+         * next tick distills it (audit-133: on da49a878 pending stayed 1,
+         * distilled 0, pk-scratch/a134/mkdlbprobe.py) */
+        {
+            static const uint8_t q[] = "3+4="; static const uint8_t a[] = "7";
+            int rs = g_dmn_rest, enq = dlb_compound_enqueue(q, 4, a, 1, 1);
+            unsigned d0 = g_dlb_distilled; int p0 = dlb_compound_pending(1);
+            tick();
+            printf("[restore] dlb winner while resting %d: enqueue %d, pending %d -> %d, distilled %u -> %u,"
+                   " resting %d\n", rs, enq, p0, dlb_compound_pending(1), d0, g_dlb_distilled, g_dmn_rest);
+            CHECK(rs && enq && g_dlb_distilled > d0 && !g_dmn_rest,
+                  "[restore-rest] a waiting DLB winner ends the rest and is distilled");
+            dlb_compound_reset();
+        }
+        static uint8_t les[4096];
+        int fl = (int)sizeof(TEACHER_FIXTURE) - 1, ln = fl < (int)sizeof les ? fl : (int)sizeof les;
+        memcpy(les, TEACHER_FIXTURE, (size_t)ln);
+        les[0] ^= 1;
+        cradle_set_enabled(1);
+        int got = cradle_lesson_ingest(les, ln);
+        int rl = 0; const uint8_t *src = cradle_window_src(&rl);
+        ta = g_student.adam_t;
+        tick();
+        printf("[restore] lesson of %d bytes: ingest %d, ring %d, adam_t %d -> %d, resting %d\n",
+               ln, got, src ? rl : 0, ta, g_student.adam_t, g_dmn_rest);
+        CHECK(got > 0 && src && g_student.adam_t > ta && !g_dmn_rest,
+              "[restore-rest] a changed corpus (a lesson) ends the rest");
+    }
+#endif
+    if (only_back) goto out;   /* the falsifiers stop here */
 
     /* 3. the file holds a worse model than live */
     {

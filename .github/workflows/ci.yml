@@ -2825,8 +2825,9 @@ jobs:
         run: bash tests/llm/run_ema.sh
       - name: DMN read-back cert (live drifted past the saved best by > 0.10 nats -> the better saved best comes back)
         # ROADMAP B4 remainder (research/b4-step3-result.md, the last section). Plain PASS
-        # ([restore-none/back/gated/noread]), -DST_DMN_RESTORE_DISABLE RED on [restore-back].
-        # About 9 DMN ticks, the falsifier's 6 run alongside.
+        # ([restore-none/back/rest/gated/noread]), -DST_DMN_RESTORE_DISABLE RED on [restore-back],
+        # -DST_DMN_REST_DISABLE, -DST_DMN_REST_ABORT_KEEP and -DST_DMN_REST_DLB_KEEP RED on [restore-rest].
+        # About 13 DMN ticks, the four falsifiers' 11 each run alongside (1365 s in the container under heavy load).
         run: bash tests/llm/run_restore.sh
 
       - name: non-finite model cert (st_logf floors NaN and Inf, no save writes a non-finite model)
