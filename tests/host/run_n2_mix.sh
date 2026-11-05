@@ -7,6 +7,7 @@
 #   X2  the new narrow node knows all 7, 260 and 300 by their own numbers
 #   XT  260 and 300 do not publish on a narrow node's one-char per-node topic (below)
 #   XR  node 4 times the round trip to 260 and 300 (rtt= on their rows; not on an old relay)
+#   XG  260 and 300 are region members of node 4 and of 260 (RTT <= tau; not on an old relay)
 #
 # N2_OLD_BIN  a p-kernel built from the last tree before N2 wire changes (master 64b7c909;
 #             record the sha with any result). N2_NEW_BIN: default boot/linux_x86_64/p-kernel,
@@ -34,6 +35,9 @@ PORT="${N2_PORT:-7595}"
 
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 unset PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_RTT_ZONE_SIZE
+# XG judges region membership: a loaded CI box times localhost at 10..50 ms, around the
+# 50 ms tau (CI-F, region-tau-env), so the test tau as in the multi-node certs
+export PKERNEL_REGION_TAU_MS="${PKERNEL_REGION_TAU_MS:-250}"
 WORK="$(mktemp -d /tmp/n2mix.XXXXXX)"
 LOGDIR="${N2_LOGDIR:-$WORK/logs}"; mkdir -p "$LOGDIR"
 declare -A PID FD
@@ -111,6 +115,34 @@ if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
         done
         [ "$r" = "259 299 " ] && res XR PASS "new node 4 has a round-trip time for {$r}" \
                               || res XR FAIL "new node 4 has a round-trip time for {$r}, wanted {259 299 }"
+    fi
+fi
+
+# XG  a wide peer within tau is a region member (N2b step (b), research/n2-wire16.md): node 4's
+#   `region` lists node259 and node299, and wide 260 lists itself and node299 (wide to wide is
+#   timed by the v2 PING as well). Only when XR is green (no rtt, no member). The tau is the
+#   test one (PKERNEL_REGION_TAU_MS above), as in the multi-node certs.
+#   Negative control: -DN2_NC_REGION_NARROW (the old loop over narrow ids only) reddens XG.
+region_has() {  # the node ids in node $1's last `[region] members:` line, sorted
+    tr -d '\r' < "$LOGDIR/node$1.log" | grep -a '^\[region\] members:' | tail -1 \
+        | grep -oE 'node[0-9]+' | sed 's/^node//' | sort -n | tr '\n' ' '
+}
+if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
+    if [ "${r:-}" != "259 299 " ]; then
+        res XG FAIL "not judged: XR is red"
+    else
+        t=0; g4=""; g260=""
+        while [ "$t" -lt "$WAIT" ]; do
+            send 4 "region"; send 260 "region"; sleep 1
+            g4="$(region_has 4)"; g260="$(region_has 260)"
+            case " $g4" in *" 259 "*" 299 "*) case " $g260" in *" 259 "*" 299 "*) break;; esac;; esac
+            sleep 2; t=$((t + 3))
+        done
+        miss=""
+        case " $g4" in *" 259 "*" 299 "*) ;; *) miss="$miss node4:{$g4}";; esac
+        case " $g260" in *" 259 "*" 299 "*) ;; *) miss="$miss node260:{$g260}";; esac
+        [ -z "$miss" ] && res XG PASS "wide peers are region members: node4 {$g4}, node260 {$g260}" \
+                       || res XG FAIL "a wide peer is not a region member:$miss"
     fi
 fi
 
