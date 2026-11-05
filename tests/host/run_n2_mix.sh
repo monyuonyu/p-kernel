@@ -127,6 +127,11 @@ region_has() {  # the node ids in node $1's last `[region] members:` line, sorte
     tr -d '\r' < "$LOGDIR/node$1.log" | grep -a '^\[region\] members:' | tail -1 \
         | grep -oE 'node[0-9]+' | sed 's/^node//' | sort -n | tr '\n' ' '
 }
+has_wide() {  # 0 if the list $1 holds both 259 and 299 (each word on its own)
+    case " $1" in *" 259 "*) ;; *) return 1;; esac
+    case " $1" in *" 299 "*) return 0;; esac
+    return 1
+}
 if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
     if [ "${r:-}" != "259 299 " ]; then
         res XG FAIL "not judged: XR is red"
@@ -135,12 +140,12 @@ if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
         while [ "$t" -lt "$WAIT" ]; do
             send 4 "region"; send 260 "region"; sleep 1
             g4="$(region_has 4)"; g260="$(region_has 260)"
-            case " $g4" in *" 259 "*" 299 "*) case " $g260" in *" 259 "*" 299 "*) break;; esac;; esac
+            has_wide "$g4" && has_wide "$g260" && break
             sleep 2; t=$((t + 3))
         done
         miss=""
-        case " $g4" in *" 259 "*" 299 "*) ;; *) miss="$miss node4:{$g4}";; esac
-        case " $g260" in *" 259 "*" 299 "*) ;; *) miss="$miss node260:{$g260}";; esac
+        has_wide "$g4" || miss="$miss node4:{$g4}"
+        has_wide "$g260" || miss="$miss node260:{$g260}"
         [ -z "$miss" ] && res XG PASS "wide peers are region members: node4 {$g4}, node260 {$g260}" \
                        || res XG FAIL "a wide peer is not a region member:$miss"
     fi
