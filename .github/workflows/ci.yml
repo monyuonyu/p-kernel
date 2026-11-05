@@ -2823,6 +2823,11 @@ jobs:
         # Estimated ~7 min from a local run, but on GitHub it ran >15 min (run
         # 38122175153, cancelled at the old 25-min job limit) - hence 45 above.
         run: bash tests/llm/run_ema.sh
+      - name: DMN read-back cert (live drifted past the saved best by > 0.10 nats -> the better saved best comes back)
+        # ROADMAP B4 remainder (research/b4-step3-result.md, the last section). Plain PASS
+        # ([restore-none/back/gated/noread]), -DST_DMN_RESTORE_DISABLE RED on [restore-back].
+        # About 9 DMN ticks, the falsifier's 6 run alongside.
+        run: bash tests/llm/run_restore.sh
 
       - name: non-finite model cert (st_logf floors NaN and Inf, no save writes a non-finite model)
         # ROADMAP B4, audit-114: st_logf(NaN) was +89.13, a NaN model's loss -89.13.

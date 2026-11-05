@@ -7,6 +7,7 @@
  *
  *   student_adopt_test unit                  H4: the gate's own cases
  *   student_adopt_test <b1_held.txt> <seed>  one seed of the arms below
+ *   student_adopt_test <b1_held.txt> <seed> s4   B5 step 4 (s4() below, run_b5_step4.sh)
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -66,10 +67,11 @@ static double bpb(st_model *m)
     }
     return got ? s / got / LN2 : 0;
 }
+static float lr = LR;   /* steps 2-3: LR (their judgement seeds were run on it); s4: ST_LR */
 static void pass(st_model *m, int half)
 {
     int a = half < 0 ? 0 : half * (D / 2), b = half < 0 ? D : a + D / 2;
-    for (int o = a; o + SEQ <= b; o += SEQ) ST_TRAIN_STEP(m, fx + o, SEQ, lg, LR);
+    for (int o = a; o + SEQ <= b; o += SEQ) ST_TRAIN_STEP(m, fx + o, SEQ, lg, lr);
 }
 static void *blob(st_model *m, size_t *len)
 {
@@ -234,6 +236,141 @@ static void sp_curve(uint32_t seed)
     st_free(&m);
 }
 
+/* B5 step 4 (research/b5-step4-design.md), stage "s4": the product's rate
+ * (ST_LR), and every arm stops where node A's loss on the gate window (the
+ * fixture's held side, the gate's own windows) was lowest; that pass's model
+ * is the arm's answer ("kept"). The ruler (b1_held) is measured only when a
+ * pass is kept and every 4th pass (a peek, for reading; never to choose).
+ * Ported from the exploration probe pk-scratch/a129/s4probe.c. Judge:
+ * tests/llm/b5_step4_check.py. -DB5S4_PEER_SAME: the honest peer trains on
+ * A's own half shifted by SEQ/2 (no new bytes), the NC of K1 and the pair of K4. */
+static double s4_gate(st_model *m)
+{
+    double s = 0; int got = 0;
+    for (int o = fx_end; o + SEQ <= fxn; o += SEQ) {
+        int np = 0; float l = st_eval_loss(m, fx + o, SEQ, &np);
+        if (np) { s += l; got++; }
+    }
+    return got ? s / got : 1e9;
+}
+static void pass_peer(st_model *m)
+{
+#if defined(B5S4_PEER_SAME)   /* A's own half, windows shifted by SEQ/2 */
+    for (int o = SEQ / 2; o + SEQ <= D / 2; o += SEQ) ST_TRAIN_STEP(m, fx + o, SEQ, lg, lr);
+#else
+    pass(m, 1);
+#endif
+}
+typedef struct { double best_g, best_b, peek_b; int best_p, peek_p, has; st_model m; } keeper_t;
+static void keep_init(keeper_t *k) { memset(k, 0, sizeof *k); k->best_g = 1e9; k->peek_b = 1e9; }
+static void keep_see(keeper_t *k, st_model *m, int p)
+{
+    double g = s4_gate(m), b = 0;
+    int need = g < k->best_g || p % 4 == 0;
+    if (need) b = bpb(m);
+    if (need && b < k->peek_b) { k->peek_b = b; k->peek_p = p; }
+    if (g < k->best_g) {
+        k->best_g = g; k->best_p = p; k->best_b = b;
+        if (k->has) st_free(&k->m);
+        clone(&k->m, m); k->has = 1;
+    }
+}
+static void keep_print(keeper_t *k, const char *name, st_model *last, const char *extra)
+{
+    printf("[b5s4] arm=%s last=%.4f kept=%.4f at %d (gate %.4f) peek=%.4f at %d lastgate=%.4f %s\n",
+           name, bpb(last), k->best_b, k->best_p, k->best_g, k->peek_b, k->peek_p, s4_gate(last), extra);
+    if (k->has) st_free(&k->m);
+}
+static void s4_alone(uint32_t seed, int half, int passes, const char *name)
+{
+    st_model m; st_init_tier(&m, seed, ST_TIER_S);
+    keeper_t k; keep_init(&k);
+    printf("[b5s4] curve %s gate:", name);
+    for (int p = 1; p <= passes; p++) { pass(&m, half); keep_see(&k, &m, p); printf(" %.3f", s4_gate(&m)); }
+    printf("\n");
+    keep_print(&k, name, &m, "");
+    st_free(&m);
+}
+/* one node, no peer: at each merge point the candidate is live x0.5 with Adam
+ * restarted, through the same gate and apprentice flow */
+static void s4_shrink(uint32_t seed, const char *name)
+{
+    st_model a; st_init_tier(&a, seed, ST_TIER_S);
+    apprentice_t ap = { .has = 0 };
+    int took = 0; uint32_t gen = 0;
+    keeper_t k; keep_init(&k);
+    apprentice_late = 0;
+    for (int p = 1; p <= PASSES; p++) {
+        pass(&a, 0);
+        if (ap.has) pass(&ap.m, 0);
+        if (p % EVERY == 0) {
+            gen++;
+            apprentice_judge(&a, &ap, gen);
+            st_model c; clone(&c, &a);
+            for (int i = 0; i < c.n_params; i++) { c.w[i] *= 0.5f; c.mu[i] = 0.0f; c.vu[i] = 0.0f; }
+            c.adam_t = 0;
+            int r = st_round_adopt(&a, &c, fx + fx_end, fxn - fx_end, SEQ, NULL, NULL) == 1;
+            took += r;
+            if (!r && st_model_finite(&c)) { ap.m = c; ap.has = 1; } else st_free(&c);
+        }
+        keep_see(&k, &a, p);
+    }
+    apprentice_judge(&a, &ap, gen + 1);
+    char ex[64]; snprintf(ex, sizeof ex, "took=%d/%d app=%d", took, (int)gen, apprentice_late);
+    keep_print(&k, name, &a, ex);
+    st_free(&a);
+}
+/* two nodes, gate + apprentice; poison: B is garbage (another init x8) */
+static void s4_rounds(uint32_t seed, int poison, const char *name)
+{
+    st_model a, b;
+    st_init_tier(&a, seed, ST_TIER_S); st_init_tier(&b, seed, ST_TIER_S);
+    int took = 0, tries = 0; uint32_t gen = 0;
+    apprentice_t apa = { .has = 0 }, apb = { .has = 0 };
+    keeper_t k; keep_init(&k);
+    apprentice_late = 0;
+    for (int p = 1; p <= PASSES; p++) {
+        pass(&a, 0);
+        if (apa.has) pass(&apa.m, 0);
+        if (!poison) { pass_peer(&b); if (apb.has) pass_peer(&apb.m); }
+        if (p % EVERY == 0) {
+            gen++;
+            if (poison) { st_free(&b); garbage(&b, seed + (uint32_t)p); }
+            size_t la, lb; void *ba = blob(&a, &la), *bb = blob(&b, &lb);
+            tries++;
+            took += merge_one(&a, bb, lb, gen, 2, &apa);
+            if (!poison) merge_one(&b, ba, la, gen, 2, &apb);
+            free(ba); free(bb);
+        }
+        keep_see(&k, &a, p);
+    }
+    char ex[64]; snprintf(ex, sizeof ex, "took=%d/%d app=%d", took, tries, apprentice_late);
+    keep_print(&k, name, &a, ex);
+    if (apa.has) st_free(&apa.m);
+    if (apb.has) st_free(&apb.m);
+    st_free(&a); st_free(&b);
+}
+static int s4(uint32_t seed)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    lr = ST_LR;
+#if defined(B5S4_PEER_SAME)
+    const char *peer = "same";
+#else
+    const char *peer = "plain";
+#endif
+    printf("[b5s4] seed %u lr %g peer %s gate windows %d held windows %d\n",
+           (unsigned)seed, (double)lr, peer, (fxn - fx_end) / SEQ, hn / SEQ);
+    s4_alone(seed, 0, PASSES, "alone-A");
+    s4_alone(seed, 1, PASSES, "alone-B");
+    s4_alone(seed, -1, PASSES / 2, "full");
+    s4_shrink(seed, "shrink-app");
+    s4_rounds(seed, 0, "apprentice");
+    s4_rounds(seed, 1, "poison-app");
+    printf("[b5s4] done\n");
+    return 0;
+}
+
 static int unit(void)
 {
     st_model live, cand, other;
@@ -309,6 +446,7 @@ int main(int argc, char **argv)
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
+    if (argc > 3 && strcmp(argv[3], "s4") == 0) return s4(seed);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
