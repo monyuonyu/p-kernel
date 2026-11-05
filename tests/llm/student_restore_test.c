@@ -16,7 +16,10 @@
  *                    the baseline loss set low so the margin is crossed):
  *                    live is not replaced
  *   [restore-noread] the file cannot be read: live is not replaced, no crash
- *  FALSIFIER (-DST_DMN_RESTORE_DISABLE): [restore-back] goes RED.
+ *   [restore-rest]   after a read-back the same corpus starts no batch (no
+ *                    training, save or read); a lesson ends the rest
+ *  FALSIFIERS: -DST_DMN_RESTORE_DISABLE: [restore-back] goes RED;
+ *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED.
  *
  *  Build: run_restore.sh.
  */
@@ -178,7 +181,33 @@ int main(int argc, char **argv)
     printf("[restore] next tick live %.4f wrote=%d saved %.4f\n", (double)t2, g_writes != before,
            (double)g_dmn_saved_loss);
     CHECK(g_writes == before || t2 < saved, "[restore-back] the next write is an improvement or none");
-    if (only_back) goto out;
+#ifdef HAVE_READ_BACK
+    /* 2b. rest after the read-back: on the same corpus no batch starts (no
+     * training, no save, no read); a lesson (a changed corpus) ends the rest.
+     * The tick above already rested; this one must too. */
+    {
+        int ta = g_student.adam_t; unsigned rb = g_dmn_restores, w0 = g_writes, r0 = g_dmn_rested;
+        tick();
+        printf("[restore] rest: adam_t %d -> %d, read-backs %u -> %u, writes %u -> %u, rested %u -> %u\n",
+               ta, g_student.adam_t, rb, g_dmn_restores, w0, g_writes, r0, g_dmn_rested);
+        CHECK(g_student.adam_t == 0 && g_student.adam_t == ta && g_dmn_restores == rb && g_writes == w0 &&
+              g_dmn_rested > r0, "[restore-rest] same corpus after a read-back: no training, no save, no read");
+        static uint8_t les[4096];
+        int fl = (int)sizeof(TEACHER_FIXTURE) - 1, ln = fl < (int)sizeof les ? fl : (int)sizeof les;
+        memcpy(les, TEACHER_FIXTURE, (size_t)ln);
+        les[0] ^= 1;
+        cradle_set_enabled(1);
+        int got = cradle_lesson_ingest(les, ln);
+        int rl = 0; const uint8_t *src = cradle_window_src(&rl);
+        ta = g_student.adam_t;
+        tick();
+        printf("[restore] lesson of %d bytes: ingest %d, ring %d, adam_t %d -> %d, resting %d\n",
+               ln, got, src ? rl : 0, ta, g_student.adam_t, g_dmn_rest);
+        CHECK(got > 0 && src && g_student.adam_t > ta && !g_dmn_rest,
+              "[restore-rest] a changed corpus (a lesson) ends the rest");
+    }
+#endif
+    if (only_back) goto out;   /* the falsifiers stop here */
 
     /* 3. the file holds a worse model than live */
     {

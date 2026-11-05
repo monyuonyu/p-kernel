@@ -259,6 +259,24 @@ static unsigned g_nonfinite_refused = 0;  /* saves refused: non-finite model    
 #endif
 static unsigned g_dmn_restores = 0;       /* # of read-backs of the saved best   */
 
+/* B4 remainder, rest after a read-back (audit-131): on an unchanged corpus the
+ * restored best retraces the same path and crosses the margin again (the long
+ * run: 2.4073 / 2.4542 every 2 ticks, 22.8 MB read each time), so learning has
+ * stopped at the save anyway. After a read-back the DMN remembers the corpus's
+ * fingerprint (FNV-1a 64 + length) and starts no batch while it is the same:
+ * no training, no save, no read. A changed corpus (a lesson) ends the rest.
+ * tests/llm/run_restore.sh [restore-rest]; falsifier -DST_DMN_REST_DISABLE. */
+static int      g_dmn_rest = 0;           /* resting after a read-back           */
+static int      g_dmn_rest_n = 0;         /* the corpus length then              */
+static uint64_t g_dmn_rest_fp = 0;        /* the corpus fingerprint then         */
+static unsigned g_dmn_rested = 0;         /* # of batch starts skipped resting   */
+static uint64_t dmn_corpus_fp(const uint8_t *p, int n)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (int i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+
 /* Per-DMN-tick distill geometry (used by both student_persist's baseline math
  * and student_dmn_consolidate). Defined here, above the first use. */
 #define ST_DMN_SEQLEN  32
@@ -640,6 +658,12 @@ static int student_dmn_read_back(float live_loss, int train_end, int heldw)
             g_dmn_saved_adam_t = 0;
             g_dmn_restores++;
             done = 1;
+#ifndef ST_DMN_REST_DISABLE   /* FALSIFIER for [restore-rest]: never rest */
+            {   /* rest until the corpus changes (above) */
+                int cn; const uint8_t *cc = cradle_corpus(&cn);
+                g_dmn_rest = 1; g_dmn_rest_n = cn; g_dmn_rest_fp = dmn_corpus_fp(cc, cn);
+            }
+#endif
         }
         st_free(&c);
     }
@@ -814,6 +838,15 @@ int student_dmn_consolidate(void)
          * stays empty -> window() reads the fixture (the no-op contract). Gated
          * inside the transport by g_cradle_enabled + region_teacher(). */
         cradle_poll_and_pull();
+
+        if (g_dmn_rest) {   /* resting after a read-back: same corpus -> no batch */
+            int cn; const uint8_t *cc = cradle_corpus(&cn);
+            if (cn == g_dmn_rest_n && dmn_corpus_fp(cc, cn) == g_dmn_rest_fp) {
+                g_dmn_rested++;
+                return 0;
+            }
+            g_dmn_rest = 0;
+        }
 
         /* the held-out split tracks the LIVE corpus source (lesson ring or
          * fixture) — exactly what the [cradle-teach] cert computes train_end
