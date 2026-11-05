@@ -1073,14 +1073,18 @@ static INT mtree_collect(U1 seen[][ARK_ID_LEN], U4 *pn, U4 *foot)
  *   ARK is append-only, so every put/mutation appends a full snapshot and the
  *   log only grows — eventually emit_record returns ARK_E_FULL (ENOSPC) and the
  *   store is write-dead. ark_compact() reclaims that space by rewriting a FRESH
- *   log that keeps ONLY the latest version of each LIVE block (the blocks the
- *   current commit references), discarding every superseded version and dead
- *   block. After compaction the live log occupies just the live working set.
+ *   log that keeps every committed block once and ONE commit (the current dir
+ *   table), discarding the superseded commits (each mutation appends the whole
+ *   table twice) and the uncommitted tail.
  *
- *   Retention: this is "keep the current library, drop the history." Old file
- *   *versions* (ark_read_version / ark_history) do NOT survive a compaction —
- *   they are the cost of not dying by ENOSPC. A caller that must keep history
- *   should compact rarely / never; the default kernel path does not auto-compact.
+ *   Retention: "keep every block, drop the history listing." No block's bytes
+ *   are dropped: a p-fs block (pfs_ark_put) is named by no ARK file, only by
+ *   other p-fs blocks, so dropping "non-live" blocks lost them (audit-131,
+ *   samples/25_survival_fs (e)). Old file *versions* can no longer be listed or
+ *   read by version (ark_read_version / ark_history) after a compaction — their
+ *   commits are gone — though their bytes stay. The default kernel path does
+ *   not auto-compact. -DARK_COMPACT_LIVE_ONLY restores the old live-set-only
+ *   policy (the falsifier of run.sh (e)).
  *
  * CRASH-SAFETY (last-good-or-new-complete, never half):
  *
@@ -1137,6 +1141,27 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
         INT mc = mtree_collect(g_compact_seen, &nseen, &foot);
         if (mc != ARK_OK) return mc;
     }
+#ifndef ARK_COMPACT_LIVE_ONLY
+    /* KEEP EVERY BLOCK (ark-entry.md §2.3, audit-131/132): the passes above only
+     * VERIFY that the live files and the dir tree are intact (abort otherwise);
+     * the new log re-emits every block in the index, not just theirs. A p-fs
+     * block (pfs_ark_put: ark_block_put + ark_checkpoint) is named by no ARK
+     * file — it is named by other p-fs blocks (manifests, the ark's records) —
+     * so "live" here cannot tell it from garbage. What compaction reclaims is
+     * the superseded commits (two copies of the whole dir table per mutation)
+     * and the history listing; no block's bytes are dropped. A block that fails
+     * self-verify and is not live cannot be re-emitted and is left behind (its
+     * bytes are already lost; p-fs re-WANTs it from the region). */
+    foot = 0;
+    for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
+        if (g_idx[s].sec == 0) continue;
+        U4 t, sq, ln; INT pk;
+        INT n = read_record(g_idx[s].sec, g_payld, ARK_COMMIT_MAX,
+                            &t, &sq, &ln, 0, &pk);
+        if (n <= 0 || t != ARK_REC_BLOCK || !pk) continue;
+        foot += 1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR;
+    }
+#endif
     /* the trailing commit's footprint */
     {
         U4 clen = (U4)sizeof(ark_commit_hdr) + g_live_n * (U4)sizeof(ark_dent);
@@ -1166,6 +1191,23 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
     g_seq  = 0;
 
     INT rc = ARK_OK;
+#ifndef ARK_COMPACT_LIVE_ONLY
+    /* every block in the index (see the dry pass). emit_record does not touch
+     * g_idx (only ark_block_put adds), so the walk is stable; the remount after
+     * the switch rebuilds the index from the new log. */
+    for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
+        if (g_idx[s].sec == 0) continue;
+        g_epoch = save_epoch;                      /* read old blocks */
+        INT bl = ark_block_get(g_idx[s].id, g_blkbuf, ARK_BLOCK_MAX);
+        if (bl < 0) continue;                      /* rotted, not live (verified above) */
+        g_epoch = new_epoch;                        /* write new-epoch records */
+        U4 st;
+        INT r = emit_record(ARK_REC_BLOCK, g_blkbuf, (U4)bl,
+                            g_idx[s].id, &st);
+        if (r != ARK_OK) { rc = r; break; }
+    }
+    (void)nseen;
+#else   /* FALSIFIER for samples/25_survival_fs (e): only the live set (the old policy) */
     for (U4 s = 0; s < nseen; s++) {
         g_epoch = save_epoch;                      /* read old blocks */
         INT bl = ark_block_get(g_compact_seen[s], g_blkbuf, ARK_BLOCK_MAX);
@@ -1176,6 +1218,7 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
                             g_compact_seen[s], &st);
         if (r != ARK_OK) { rc = r; break; }
     }
+#endif
     if (rc == ARK_OK) {
         g_epoch = new_epoch;
         rc = commit_live();                        /* trailing commit + fsync */

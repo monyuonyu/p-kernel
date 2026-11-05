@@ -175,6 +175,27 @@ say "      before: $before | $comp | after: $after"
   && pass "compaction ran, live files intact (setup)" || fail "compaction: $comp / $keep / $churn"
 [ "$after" = "$before" ] && pass "p-fs block survives ark_compact" \
                          || fail "p-fs block lost by ark_compact: $after"
+# FALSIFIER: the old live-set-only policy must lose the block
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_LIVE_ONLY \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_live_only" || fail "falsifier build"
+IMGN="$WORK/arkn.img"
+"$WORK/arkfs_live_only" format "$IMGN" 1024 >/dev/null
+nbid="$("$WORK/arkfs_live_only" bput "$IMGN" "pfs-block: a diary entry that belongs to no arkfs file")"
+nbid="${nbid##* }"
+"$WORK/arkfs_live_only" write "$IMGN" /keep.txt "stays-alive" >/dev/null
+"$WORK/arkfs_live_only" compact "$IMGN" >/dev/null
+nafter="$("$WORK/arkfs_live_only" bget "$IMGN" "$nbid")"
+say "      -DARK_COMPACT_LIVE_ONLY after: $nafter"
+case "$nafter" in NOTFOUND*) pass "falsifier (live set only) loses the block: the check has teeth" ;;
+                  *) fail "falsifier kept the block: $nafter" ;; esac
+# the bytes of a superseded FILE version stay too (no block is dropped), though
+# the version is no longer listed (its commit is gone)
+v1="$(printf '%s' "churn-v1" | sha256sum)"; v1="${v1%% *}"     # its id, without putting it
+v1got="$(run bget "$IMGE" "$v1")"
+[ "$v1got" = "BGET: churn-v1" ] && pass "a superseded file version's bytes survive" \
+                                || fail "superseded version's block lost: $v1got"
 
 # ===========================================================================
 hr
