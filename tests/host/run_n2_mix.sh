@@ -119,19 +119,29 @@ if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
 fi
 
 # XG  a wide peer within tau is a region member (N2b step (b), research/n2-wire16.md): node 4's
-#   `region` lists node259 and node299, and wide 260 lists itself and node299 (wide to wide is
-#   timed by the v2 PING as well). Only when XR is green (no rtt, no member). The tau is the
+#   `region` lists node259 and node299, and wide 260 lists itself, node299 (wide to wide is
+#   timed by the v2 PING as well) and the new narrow node3 and node43, not the old 0..2.
+#   Only when XR is green (no rtt, no member). The tau is the
 #   test one (PKERNEL_REGION_TAU_MS above), as in the multi-node certs.
 #   Negative control: -DN2_NC_REGION_NARROW (the old loop over narrow ids only) reddens XG.
 region_has() {  # the node ids in node $1's last `[region] members:` line, sorted
     tr -d '\r' < "$LOGDIR/node$1.log" | grep -a '^\[region\] members:' | tail -1 \
         | grep -oE 'node[0-9]+' | sed 's/^node//' | sort -n | tr '\n' ' '
 }
-has_wide() {  # 0 if the list $1 holds both 259 and 299 (each word on its own)
-    case " $1" in *" 259 "*) ;; *) return 1;; esac
-    case " $1" in *" 299 "*) return 0;; esac
-    return 1
+has_all() {  # 0 if the list $1 holds every id after it (each word on its own)
+    local l=" $1" w; shift
+    for w in "$@"; do case "$l" in *" $w "*) ;; *) return 1;; esac; done
+    return 0
 }
+has_none() {  # 0 if the list $1 holds none of the ids after it
+    local l=" $1" w; shift
+    for w in "$@"; do case "$l" in *" $w "*) return 1;; esac; done
+    return 0
+}
+has_wide() { has_all "$1" 259 299; }
+# a wide self times the new narrow ones too (step (b2): it sends them a v2 PING, they answer);
+# the old ones cannot answer v2, so they stay out of its region (no rtt is made up)
+g260_ok() { has_all "$1" 3 43 259 299 && has_none "$1" 0 1 2; }
 if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
     if [ "${r:-}" != "259 299 " ]; then
         res XG FAIL "not judged: XR is red"
@@ -140,12 +150,12 @@ if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
         while [ "$t" -lt "$WAIT" ]; do
             send 4 "region"; send 260 "region"; sleep 1
             g4="$(region_has 4)"; g260="$(region_has 260)"
-            has_wide "$g4" && has_wide "$g260" && break
+            has_wide "$g4" && g260_ok "$g260" && break
             sleep 2; t=$((t + 3))
         done
         miss=""
         has_wide "$g4" || miss="$miss node4:{$g4}"
-        has_wide "$g260" || miss="$miss node260:{$g260}"
+        g260_ok "$g260" || miss="$miss node260:{$g260}(wants 3 43 259 299, not 0 1 2)"
         [ -z "$miss" ] && res XG PASS "wide peers are region members: node4 {$g4}, node260 {$g260}" \
                        || res XG FAIL "a wide peer is not a region member:$miss"
     fi
