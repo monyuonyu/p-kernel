@@ -264,8 +264,11 @@ static unsigned g_dmn_restores = 0;       /* # of read-backs of the saved best  
  * run: 2.4073 / 2.4542 every 2 ticks, 22.8 MB read each time), so learning has
  * stopped at the save anyway. After a read-back the DMN remembers the corpus's
  * fingerprint (FNV-1a 64 + length) and starts no batch while it is the same:
- * no training, no save, no read. A changed corpus (a lesson) ends the rest.
- * tests/llm/run_restore.sh [restore-rest]; falsifier -DST_DMN_REST_DISABLE. */
+ * no training, no save, no read. A changed corpus (a lesson) ends the rest,
+ * and so does any writer of g_student (student_consol_abort: merge, retrain,
+ * restore), since live is then no longer the restored best (audit-132).
+ * tests/llm/run_restore.sh [restore-rest]; falsifiers -DST_DMN_REST_DISABLE,
+ * -DST_DMN_REST_ABORT_KEEP. */
 static int      g_dmn_rest = 0;           /* resting after a read-back           */
 static int      g_dmn_rest_n = 0;         /* the corpus length then              */
 static uint64_t g_dmn_rest_fp = 0;        /* the corpus fingerprint then         */
@@ -531,6 +534,9 @@ void student_consol_abort(void)
     g_consol_active = 0; g_consol_idx = 0;
     g_ema_have = 0;            /* the saved-copy EMA restarts from the new weights */
     g_ema_gen++;               /* ...and a copy evaluated before this is not written */
+#ifndef ST_DMN_REST_ABORT_KEEP /* FALSIFIER for [restore-rest] writer: the rest outlives a writer */
+    g_dmn_rest = 0;            /* live is no longer the restored best: the rest ends (audit-132) */
+#endif
 }
 
 /* ---------------------------------------------------------------------------

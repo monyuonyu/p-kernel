@@ -5,7 +5,8 @@
 # more than ST_DMN_RESTORE_MARGIN and the saved one is better than live now.
 #   plain build: must PASS.
 #   FALSIFIERS: -DST_DMN_RESTORE_DISABLE must FAIL ([restore-back] RED),
-#               -DST_DMN_REST_DISABLE must FAIL ([restore-rest] RED).
+#               -DST_DMN_REST_DISABLE must FAIL ([restore-rest] RED),
+#               -DST_DMN_REST_ABORT_KEEP must FAIL ([restore-rest] writer RED).
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,20 +28,26 @@ echo "[build] compiling the read-back cert and its falsifier ..."
 "$CC" $CFLAGS $SRC -lm -o "$WORK/r" || { echo "[build] FAILED"; exit 1; }
 "$CC" $CFLAGS -DST_DMN_RESTORE_DISABLE $SRC -lm -o "$WORK/r_off" || { echo "[build] falsifier FAILED"; exit 1; }
 "$CC" $CFLAGS -DST_DMN_REST_DISABLE $SRC -lm -o "$WORK/r_norest" || { echo "[build] rest falsifier FAILED"; exit 1; }
-# the two run side by side (each is ~1 min a DMN tick); the falsifier stops after [restore-back]
+"$CC" $CFLAGS -DST_DMN_REST_ABORT_KEEP $SRC -lm -o "$WORK/r_keep" || { echo "[build] rest-writer falsifier FAILED"; exit 1; }
+# all run side by side (each is ~1 min a DMN tick); the falsifiers stop after the rest checks
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_off" back > "$WORK/off.log" 2>&1 ) &
 OFF_PID=$!
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_norest" back > "$WORK/norest.log" 2>&1 ) &
 NOREST_PID=$!
+( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_keep" back > "$WORK/keep.log" 2>&1 ) &
+KEEP_PID=$!
 echo "=== plain (must PASS) ==="
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r" ); RC=$?
-wait "$OFF_PID"; wait "$NOREST_PID"
+wait "$OFF_PID"; wait "$NOREST_PID"; wait "$KEEP_PID"
 echo "=== -DST_DMN_RESTORE_DISABLE back (must FAIL on [restore-back]) ==="
 cat "$WORK/off.log"
 grep -q 'FAIL  \[restore-back\] live == the saved best' "$WORK/off.log"; NC=$?
 echo "=== -DST_DMN_REST_DISABLE back (must FAIL on [restore-rest]) ==="
 cat "$WORK/norest.log"
 grep -q 'FAIL  \[restore-rest\] same corpus after a read-back' "$WORK/norest.log" || NC=1
+echo "=== -DST_DMN_REST_ABORT_KEEP back (must FAIL on [restore-rest] writer) ==="
+cat "$WORK/keep.log"
+grep -q 'FAIL  \[restore-rest\] a writer ends the rest' "$WORK/keep.log" || NC=1
 if [ "$RC" -eq 0 ] && [ "$NC" -eq 0 ]; then echo "[result] PASS  dmn-restore (plain green, falsifier red)"; exit 0; fi
 echo "[result] FAIL  dmn-restore (plain rc=$RC, falsifier red on [restore-back]: $([ "$NC" -eq 0 ] && echo yes || echo no))"
 exit 1

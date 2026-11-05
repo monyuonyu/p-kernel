@@ -17,9 +17,11 @@
  *                    live is not replaced
  *   [restore-noread] the file cannot be read: live is not replaced, no crash
  *   [restore-rest]   after a read-back the same corpus starts no batch (no
- *                    training, save or read); a lesson ends the rest
+ *                    training, save or read); a writer (student_consol_abort)
+ *                    ends the rest; a lesson ends the rest
  *  FALSIFIERS: -DST_DMN_RESTORE_DISABLE: [restore-back] goes RED;
- *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED.
+ *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED;
+ *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED.
  *
  *  Build: run_restore.sh.
  */
@@ -174,7 +176,9 @@ int main(int argc, char **argv)
     printf("[restore] read-backs so far %u\n", g_dmn_restores);
     CHECK(g_dmn_restores == 1, "[restore-back] exactly one read-back");
 #endif
-    /* the next tick trains from the best; DT must not force a write of a regression */
+    /* the next tick: with the rest (feat/b4-rest) it starts no batch; under
+     * -DST_DMN_REST_DISABLE it trains from the best. Either way DT must not
+     * force a write of a regression */
     before = g_writes;
     tick();
     float t2 = live_held(train_end, heldw);
@@ -192,6 +196,22 @@ int main(int argc, char **argv)
                ta, g_student.adam_t, rb, g_dmn_restores, w0, g_writes, r0, g_dmn_rested);
         CHECK(g_student.adam_t == 0 && g_student.adam_t == ta && g_dmn_restores == rb && g_writes == w0 &&
               g_dmn_rested > r0, "[restore-rest] same corpus after a read-back: no training, no save, no read");
+        /* a writer of g_student (merge, retrain, restore: each calls
+         * student_consol_abort first) ends the rest: here it spoils live past
+         * the margin, and the next tick must read the best back (audit-132: on
+         * 69272b19 the DMN kept resting with live 5.5876, saved 2.5173) */
+        student_consol_abort();
+        spoil(&g_student, 9u, 0.4f);
+        rb = g_dmn_restores; r0 = g_dmn_rested;
+        float sp2 = live_held(train_end, heldw);
+        tick();
+        float *fw2 = file_w(&tmp);
+        int back2 = fw2 && memcmp(fw2, g_student.w, nb) == 0;
+        printf("[restore] writer then spoil: live %.4f -> %.4f (saved %.4f), read-backs %u -> %u, rested %u -> %u,"
+               " back=%d\n", (double)sp2, (double)live_held(train_end, heldw), (double)g_dmn_saved_loss,
+               rb, g_dmn_restores, r0, g_dmn_rested, back2);
+        CHECK(g_dmn_restores == rb + 1 && back2,
+              "[restore-rest] a writer ends the rest: a spoiled live is read back");
         static uint8_t les[4096];
         int fl = (int)sizeof(TEACHER_FIXTURE) - 1, ln = fl < (int)sizeof les ? fl : (int)sizeof les;
         memcpy(les, TEACHER_FIXTURE, (size_t)ln);
