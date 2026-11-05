@@ -171,6 +171,14 @@ def self_test():
          {"K4": False, "NC-same": True, "K1": True}),
         ("K4 one short ok", (good, one(same, "99", A(3.85))), True, {"K4": True}),
         ("K4 at the line", (good, {s: A(3.9, shrink=3.9) for s in S}), True, {"K4": True, "NC-same": True}),
+        # 0.005 over each line is red: the tolerance is only for float rounding
+        # (audit-131: widening +1e-9 to 0.011 on K1, K2, K4 passed the self-test)
+        ("K1 0.005 over, two seeds", (one(one(good, "99", A(3.905)), "100", A(3.905)), same), False,
+         {"K1": False}),
+        ("K2 0.005 over", (one(good, "103", A(3.905, shrink=4.1, alone=4.2, poison=4.2)), same), False,
+         {"K2": False, "K1": True, "K3": True}),
+        ("K4 0.005 over, two seeds", (good, one(one(same, "99", A(3.895)), "100", A(3.895))), False,
+         {"K4": False, "NC-same": True}),
     ]
     for name, (p, s), want, gw in cases:
         got, _, g = judge(p, s, dk, d1)
