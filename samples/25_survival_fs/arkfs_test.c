@@ -34,7 +34,7 @@
  *      checkpoint <img>
  *      compact <img>
  *      dump    <img> <path>...      # one line per path: version, size, sha256
- *      compactrf <img> <text> <N>   # compact with a read error on <text>'s block
+ *      compactrf <img> <text> <N> [hdr|rot]   # compact with a read error on <text>'s block
  *  ARK_COUNT=1 prints "[count] writes=<N>" on stderr at exit (the number of
  *  device writes the one operation made = the cut points 1..N).
  */
@@ -67,16 +67,24 @@ static long  g_wcnt;
  * only while armed (around ark_compact) */
 static int   g_rf_arm = 0, g_rf_from = 1, g_rf_hits = 0;
 static U4    g_rf_sec = 0;
+/* compactrf mode "rot": no error, but the N-th read alone (only that one)
+ * returns the sector with one byte flipped (a transient bad read, audit-134) */
+static int   g_rf_rot = 0;
 
 static int fb_read(void *c, U4 lba, U4 n, void *buf)
 {
     (void)c;
     if (lba + n > g_nsect) return -1;
-    if (g_rf_arm && g_rf_sec >= lba && g_rf_sec < lba + n && ++g_rf_hits >= g_rf_from)
+    int hit = g_rf_arm && g_rf_sec >= lba && g_rf_sec < lba + n;
+    if (hit) g_rf_hits++;
+    if (hit && !g_rf_rot && g_rf_hits >= g_rf_from)
         return -1;
     off_t off = (off_t)lba * ARK_SECTOR;
     ssize_t got = pread(g_fd, buf, (size_t)n * ARK_SECTOR, off);
-    return (got == (ssize_t)((size_t)n * ARK_SECTOR)) ? 0 : -1;
+    if (got != (ssize_t)((size_t)n * ARK_SECTOR)) return -1;
+    if (hit && g_rf_rot && g_rf_hits == g_rf_from)
+        ((U1 *)buf)[(size_t)(g_rf_sec - lba) * ARK_SECTOR + 7] ^= 0x5A;
+    return 0;
 }
 
 static int fb_write(void *c, U4 lba, U4 n, const void *buf)
@@ -288,13 +296,17 @@ int main(int argc, char **argv)
     }
     /* compactrf <img> <text> <N>: ark_compact while every read of the payload
      * sector of the block holding <text> fails from the N-th such read on (a
-     * read error mid-compaction). The device is healed afterwards. */
+     * read error mid-compaction). The device is healed afterwards. Optional
+     * 5th word: "hdr" = the block's header sector instead of the payload;
+     * "rot" = no error, the N-th read alone returns a flipped byte (audit-134). */
     if (!strcmp(cmd, "compactrf")) {
         if (argc < 5) return 2;
         U1 id[ARK_ID_LEN];
         sha256_ctx sc; sha256_init(&sc); sha256_update(&sc, argv[3], u4len(argv[3])); sha256_final(&sc, id);
         g_rf_sec = ark_dbg_id_sector(id);
         if (g_rf_sec == 0) { printf("COMPACTRF: no such block\n"); return 2; }
+        if (argc > 5 && !strcmp(argv[5], "hdr")) g_rf_sec -= 1u;   /* the header sector */
+        g_rf_rot = argc > 5 && !strcmp(argv[5], "rot");
         g_rf_from = atoi(argv[4]); g_rf_hits = 0; g_rf_arm = 1;
         int r = ark_compact();
         g_rf_arm = 0;

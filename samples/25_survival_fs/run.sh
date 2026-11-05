@@ -249,6 +249,32 @@ for n in 1 2; do
     fi
   done
 done
+# audit-134: the cases above fail only the payload sector and only by an error.
+# "hdr": the header sector's read error (N=1 both passes, N=2 the write pass);
+# "rot": no error, the write pass's read alone returns a flipped byte (N=2), so
+# the dry pass counted the block and the write pass skips it as rot: only the
+# count check (nemit != nkeep) keeps it from being dropped behind rc 0.
+for c in "1 hdr" "2 hdr" "2 rot"; do
+  n="${c% *}"; m="${c#* }"
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkh.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    pbid="$("$b" bput "$IMGR" "$PB")"; pbid="${pbid##* }"
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "$PB" "$n" "$m")"
+    prf="$("$b" bget "$IMGR" "$pbid")"
+    say "      p-fs block, $m from the ${n}th read ($(basename "$b")): $crf | $prf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$prf" = "BGET: $PB" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a $m fault on a p-fs block aborts, the block stays (N=$n)" \
+        || fail "p-fs block $m fault (N=$n): $crf / $prf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$prf" != "BGET: $PB" ] \
+        && pass "falsifier (skip unread) drops the p-fs block on a $m fault behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) p-fs $m N=$n kept the block: $crf / $prf"
+    fi
+  done
+done
 
 # ===========================================================================
 hr
