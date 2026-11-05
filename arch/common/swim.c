@@ -1064,6 +1064,47 @@ static void swim_wide_rtt_sample(pk_node_t id, UH seq, UW now)
     PK_NOSW_LEAVE();
 }
 
+/* N2b step (b2): a wide self cannot send a v1 PING (its id has no v1 form), so it
+ * times its narrow peers with the v2 PING too; a new narrow node answers it (the
+ * ACK path above), an old one cannot, so it stays unmeasured. The sample goes to
+ * the v1 table (rtt_observe), which region_recompute reads for a narrow id.
+ * -DN2_NC_WIDE_NO_NARROW_PING is the negative control of [n2-mix] XG. */
+static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target);
+static UH swim_nping_seq[DNODE_MAX];   /* seq of the v2 PING in flight, 0 = none */
+static UW swim_nping_ms[DNODE_MAX];
+static INT swim_nping_cur;
+
+static void swim_wide_narrow_sample(pk_node_t id, UH seq, UW now)
+{
+    if (id >= DNODE_MAX || seq == 0) return;
+    PK_NOSW_ENTER();
+    if (swim_nping_seq[id] == seq) {
+        UW rtt = (UW)(now - swim_nping_ms[id]);
+        swim_nping_seq[id] = 0;                    /* one PING, one sample */
+        if (rtt < 0x80000000UL) rtt_observe(id, rtt);
+    }
+    PK_NOSW_LEAVE();
+}
+
+/* the round's PING to the next ALIVE narrow peer (a wide self only); 0 if none */
+static UH swim_wide_ping_narrow(pk_node_t me)
+{
+    PK_NOSW_ENTER();
+    pk_node_t target = 0xFF; UH seq = 0;
+    for (INT k = 0; k < DNODE_MAX; k++) {
+        swim_nping_cur = (swim_nping_cur + 1) % DNODE_MAX;
+        if (dnode_table[swim_nping_cur].state != DNODE_ALIVE) continue;
+        if (++swim_wide_seq == 0) swim_wide_seq = 1;
+        seq = swim_wide_seq;
+        swim_nping_seq[swim_nping_cur] = seq; swim_nping_ms[swim_nping_cur] = swim_wide_now();
+        target = (pk_node_t)swim_nping_cur;
+        break;
+    }
+    PK_NOSW_LEAVE();
+    if (seq) swim_wide_send(SWIM_PING, seq, me, target);
+    return seq;
+}
+
 /* the smoothed round trip to a wide peer, 0xFFFFFFFF if not measured */
 UW swim_wide_rtt(pk_node_t id)
 {
@@ -1072,6 +1113,17 @@ UW swim_wide_rtt(pk_node_t id)
     UW r = (s != NODEMAP_NOSLOT && wide_st[s].rtt_ok) ? wide_st[s].rtt_ms : 0xFFFFFFFFUL;
     PK_NOSW_LEAVE();
     return r;
+}
+
+INT swim_wide_alive(pk_node_t *out, INT max)
+{
+    INT n = 0;
+    PK_NOSW_ENTER();
+    for (INT i = 0; i < DREGION_MAX && n < max; i++)
+        if (wide_map.used[i] && wide_st[i].state == DNODE_ALIVE)
+            out[n++] = (pk_node_t)wide_map.id[i];
+    PK_NOSW_LEAVE();
+    return n;
 }
 
 static pk_node_t swim_wide_self_id(void)
@@ -1112,7 +1164,10 @@ static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
     pk_node_t me = swim_wide_self_id();
     if (me != 0xFF && p->seq != 0 && p->probe_target == me) {
         if (p->type == SWIM_PING)     swim_wide_send(SWIM_ACK, p->seq, me, p->src_node);
-        else if (p->type == SWIM_ACK) swim_wide_rtt_sample(p->src_node, p->seq, now);
+        else if (p->type == SWIM_ACK) {
+            if (p->src_node < DNODE_MAX) swim_wide_narrow_sample(p->src_node, p->seq, now);
+            else                         swim_wide_rtt_sample(p->src_node, p->seq, now);
+        }
     }
     return 1;
 }
@@ -1183,6 +1238,9 @@ static void swim_wide_tick(void)
     pk_node_t me = swim_wide_self_id();
     if (me == 0xFF) return;
     (void)swim_wide_ping_next(me);
+#ifndef N2_NC_WIDE_NO_NARROW_PING
+    if (swim_wide_me) (void)swim_wide_ping_narrow(me);   /* and one to a narrow peer */
+#endif
 }
 
 /* the round's PING: the next live wide peer gets a fresh seq (never 0); the
@@ -1446,6 +1504,29 @@ INT swim_wide_self_test(void (*emit)(const char *))
         W2(!e->rtt_ok, "the late ACK of the earlier round is no sample");
         swim_wide_rtt_sample(299, q2, e->ping_ms + 5);
         W2(e->rtt_ok && e->rtt_ms == 5, "the ACK of this round is");
+        /* step (b2): a narrow peer's ACK to a wide self's v2 PING is a v1 sample;
+         * row 43's live entry is saved and put back */
+        {
+            UB kv = rtt_valid[43]; UW ke = rtt_ewma_ms[43];
+            UH ks = swim_nping_seq[43]; UW km = swim_nping_ms[43];
+            rtt_valid[43] = 0;
+            swim_nping_seq[43] = 90; swim_nping_ms[43] = 1000;
+            swim_wide_narrow_sample(43, 89, 1012);
+            W2(!rtt_valid[43], "a narrow ACK with another seq is no sample");
+            swim_wide_narrow_sample(43, 90, 1012);
+            W2(rtt_valid[43] && rtt_ewma_ms[43] == 12, "the narrow ACK of the PING gives 12 ms");
+            swim_wide_narrow_sample(43, 90, 1100);
+            W2(rtt_ewma_ms[43] == 12, "one narrow PING gives one sample");
+            rtt_valid[43] = 0;
+            swim_nping_seq[43] = 91; swim_nping_ms[43] = swim_wide_now();
+            sw2_build(&p, 43, 0xFFFF, DNODE_ALIVE, 0);
+            p.seq = 91; p.probe_target = 810;
+            swim_wide_rx(pk_node_ip(43), (const UB *)&p, sizeof p);
+            W2(rtt_valid[43] && rtt_ewma_ms[43] < 1000, "through the receive path: an ACK from 43 to me");
+            W2(sw2_find(43) < 0, "and 43 is still not a wide peer");
+            rtt_valid[43] = kv; rtt_ewma_ms[43] = ke;
+            swim_nping_seq[43] = ks; swim_nping_ms[43] = km;
+        }
         swim_wide_me = me_keep;
     }
 

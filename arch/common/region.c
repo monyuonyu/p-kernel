@@ -116,6 +116,27 @@ void region_recompute(void)
             if (n < coord) coord = n;
         }
     }
+
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_REGION_NARROW)
+    /* N2b step (b): a wide peer SWIM holds ALIVE, timed by the v2 PING within tau,
+     * is a member by its row like a narrow one. No row (the extra rows full) =
+     * not a member, as an id out of range before. -DN2_NC_REGION_NARROW is the
+     * negative control of [n2-mix] XG (the narrow loop above only). */
+    {
+        pk_node_t w[DREGION_MAX];
+        INT nw = swim_wide_alive(w, DREGION_MAX);
+        for (INT i = 0; i < nw; i++) {
+            if (w[i] == me) continue;
+            UW rtt = swim_rtt_ms(w[i]);
+            if (rtt == 0xFFFFFFFFUL || rtt > REGION_TAU) continue;
+            INT r = pk_node_row(w[i]);
+            if (r < 0 || member[r]) continue;
+            member[r] = 1;
+            member_cnt++;
+            if (w[i] < coord) coord = w[i];
+        }
+    }
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -310,8 +331,15 @@ void region_print(void)
     rg_puts("  tau="); rg_putdec(REGION_TAU); rg_puts("ms\r\n");
 
     rg_puts("[region] members:");
+#ifdef _TK_HOSTED_LIBC_
+    for (INT r = 0; r < DNODE_ROWS; r++) {   /* N2b: wide members by row */
+        if (!member[r]) continue;
+        pk_node_t n = pk_node_of_row(r);
+        if (n == PK_NODE_NONE) continue;
+#else
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (!member[n]) continue;
+#endif
         rg_puts(" node"); rg_putdec(n);
         if (n == drpc_my_node) {
             rg_puts("(self)");
