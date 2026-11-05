@@ -7,8 +7,9 @@
  *  Links the REAL student_shell.c (#include, like student_ema_test.c); the
  *  durable backend is one in-memory file (write keeps it, read returns it).
  *
- *   [restore-none]   ordinary ticks: no read-back (live is not the saved blob
- *                    after a tick that trained and did not save)
+ *   [restore-none]   5 ordinary ticks: no read-back (live is not the saved blob
+ *                    after a tick that trained and did not save), one of them
+ *                    ends worse than the save inside the margin (its lower side)
  *   [restore-back]   live spoiled with noise: after one tick, live w == the
  *                    saved blob's w bit for bit, Adam restarted (mu = vu = 0,
  *                    adam_t = 0), and the next save is not forced by DT
@@ -139,21 +140,28 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    /* 1. ordinary ticks */
-    int none = 1;
-    for (int t = 1; t <= 3; t++) {
+    /* 1. ordinary ticks. Ticks 1-4 save (live == file then); tick 5 does not
+     * save and ends worse than the save by less than the margin (2.5454 vs
+     * 2.4751 on the product's default, the drift reading): the margin's lower
+     * side. audit-131: with only ticks 1-3, ST_DMN_RESTORE_MARGIN 0 stayed
+     * green (the better-than-live gate refuses a file equal to live). */
+    int none = 1, within = 0;
+    for (int t = 1; t <= 5; t++) {
         unsigned before = g_writes;
         tick();
         float *fw = file_w(&tmp);
         int same = fw && memcmp(fw, g_student.w, nb) == 0;
+        float lv = live_held(train_end, heldw);
         printf("[restore] tick=%d live=%.4f saved=%.4f wrote=%d live==file %d\n", t,
-               (double)live_held(train_end, heldw), (double)g_dmn_saved_loss, g_writes != before, same);
+               (double)lv, (double)g_dmn_saved_loss, g_writes != before, same);
         if (g_writes == before && same) none = 0;    /* trained, did not save, yet is the file */
+        if (g_writes == before && lv > g_dmn_saved_loss && lv <= g_dmn_saved_loss + ST_DMN_RESTORE_MARGIN)
+            within++;
     }
 #ifdef HAVE_READ_BACK
-    /* early ticks all save (live == file then), so the counter is the check */
     none = none && g_dmn_restores == 0;
 #endif
+    CHECK(within > 0, "[restore-none] a tick ended worse than the save, inside the margin (setup)");
     CHECK(g_writes > 0 && none, "[restore-none] ordinary ticks do not read the file back");
 
     /* 2. live spoiled: one tick reads the best back */
