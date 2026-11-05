@@ -248,6 +248,17 @@ static unsigned g_nonfinite_refused = 0;  /* saves refused: non-finite model    
 #define ST_DMN_SAVE_EPS  0.01f
 #define ST_DMN_SAVE_DT   200
 
+/* B4 remainder (research/b4-step3-result.md, the last section): the save gate
+ * only keeps the best on disk; live (the weights that talk) keeps training and
+ * drifted +0.66 nats past it in 21 ticks on the product's default. When live's
+ * held-out loss is above the last saved loss by more than this, the tick reads
+ * the saved best back, only if it is better than live now (the file may hold
+ * another writer's save), and restarts Adam. tests/llm/run_restore.sh. */
+#ifndef ST_DMN_RESTORE_MARGIN
+#define ST_DMN_RESTORE_MARGIN 0.10f
+#endif
+static unsigned g_dmn_restores = 0;       /* # of read-backs of the saved best   */
+
 /* Per-DMN-tick distill geometry (used by both student_persist's baseline math
  * and student_dmn_consolidate). Defined here, above the first use. */
 #define ST_DMN_SEQLEN  32
@@ -597,6 +608,46 @@ static int student_restore(emit_fn emit)
     return 1;
 }
 
+/* The DMN's read-back of the saved best (ST_DMN_RESTORE_MARGIN above): the
+ * file is loaded into a scratch model; only if it loads, has live's shape and
+ * its held-out loss is below live's, its weights replace live's and Adam
+ * restarts (mu = vu = 0, adam_t = 0; the EMA copy restarts through
+ * student_consol_abort). Returns 1 if live was replaced. */
+static int student_dmn_read_back(float live_loss, int train_end, int heldw)
+{
+#ifdef ST_DMN_RESTORE_DISABLE   /* FALSIFIER for [restore-back]: never read back */
+    (void)live_loss; (void)train_end; (void)heldw; (void)g_dmn_restores;
+    return 0;
+#else
+    if (!pfs_dur_active()) return 0;
+    size_t need = st_blob_size(&g_student);
+    unsigned char *blob = (unsigned char *)malloc(need);
+    if (!blob) return 0;
+    int n = pfs_dur_read(STUDENT_DUR_FILE, blob, (unsigned)need);
+    int done = 0;
+    st_model c;
+    if (n == (int)need && st_init_tier(&c, STUDENT_SEED, g_student.tier) == ST_OK) {
+        if (st_load(&c, blob, (size_t)n) == ST_OK && c.n_params == g_student.n_params &&
+            heldout_loss(&c, ST_DMN_SEQLEN, train_end, heldw) < live_loss) {
+            size_t nb = (size_t)g_student.n_params * sizeof(float);
+            student_consol_abort();
+            PK_NOSW_ENTER();
+            memcpy(g_student.w, c.w, nb);
+            memset(g_student.mu, 0, nb);
+            memset(g_student.vu, 0, nb);
+            g_student.adam_t = 0;
+            PK_NOSW_LEAVE();
+            g_dmn_saved_adam_t = 0;
+            g_dmn_restores++;
+            done = 1;
+        }
+        st_free(&c);
+    }
+    free(blob);
+    return done;
+#endif
+}
+
 /* Ensure the resident baby exists, ALLOCATING it on first touch. This is the
  * "I am actively raising a baby" path (the `student` verb, or a DMN tick on a
  * node that already has a saved baby): st_init a fresh ~30MB arena, then try to
@@ -868,6 +919,7 @@ int student_dmn_consolidate(void)
      * checkpoint staleness). Honest heuristic: a baby that genuinely keeps
      * learning keeps persisting; the wear stops exactly when learning does. */
     float cur = heldout_loss(&g_student, ST_DMN_SEQLEN, train_end, heldw);
+    float live_loss = cur;   /* live's own, for the read-back below */
     /* saved-copy EMA: the candidate is the lower-held of live and the copy.
      * The copy is evaluated / saved through a VIEW (g_student's fields, w =
      * the copy, its own activation cache): g_student.w is never repointed.
@@ -938,6 +990,9 @@ int student_dmn_consolidate(void)
             free(blob);
         }
     }
+    /* live drifted past the saved best: read it back (B4 remainder) */
+    if (g_dmn_saved && live_loss > g_dmn_saved_loss + ST_DMN_RESTORE_MARGIN)
+        (void)student_dmn_read_back(live_loss, train_end, heldw);
     return 1;
 }
 
