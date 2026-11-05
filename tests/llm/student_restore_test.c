@@ -115,6 +115,25 @@ int main(int argc, char **argv)
     if (student_ensure(0) != 0) { printf("[restore] student_ensure OOM\n"); return 2; }
     size_t nb = (size_t)g_student.n_params * sizeof(float);
 
+    /* "drift T": a reading, not a check - T ordinary ticks on the product's
+     * default, live and the saved loss after each (audit-130's off.log form,
+     * with a durable file that can be read back) */
+    if (argc > 2 && !strcmp(argv[1], "drift")) {
+        int T = atoi(argv[2]);
+        for (int t = 1; t <= T; t++) {
+            unsigned before = g_writes;
+            tick();
+            printf("[drift] tick=%d live=%.4f saved=%.4f wrote=%d", t,
+                   (double)live_held(train_end, heldw), (double)g_dmn_saved_loss, g_writes != before);
+#ifdef HAVE_READ_BACK
+            printf(" read-backs=%u", g_dmn_restores);
+#endif
+            printf("\n");
+        }
+        st_free(&tmp); free(g_file);
+        return 0;
+    }
+
     /* 1. ordinary ticks */
     int none = 1;
     for (int t = 1; t <= 3; t++) {
