@@ -1074,6 +1074,17 @@ UW swim_wide_rtt(pk_node_t id)
     return r;
 }
 
+INT swim_wide_alive(pk_node_t *out, INT max)
+{
+    INT n = 0;
+    PK_NOSW_ENTER();
+    for (INT i = 0; i < DREGION_MAX && n < max; i++)
+        if (wide_map.used[i] && wide_st[i].state == DNODE_ALIVE)
+            out[n++] = (pk_node_t)wide_map.id[i];
+    PK_NOSW_LEAVE();
+    return n;
+}
+
 static pk_node_t swim_wide_self_id(void)
 {
     return swim_wide_me ? swim_wide_me : drpc_my_node;   /* 0xFF = none yet */

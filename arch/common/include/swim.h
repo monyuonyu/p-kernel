@@ -136,6 +136,9 @@ _Static_assert(sizeof(SWIM2_PKT) == 29, "SWIM2_PKT layout");
 void swim_wide_self(pk_node_t id, UW ip);
 /* Smoothed v2 round trip to a wide peer (ms), 0xFFFFFFFF if not measured. */
 UW swim_wide_rtt(pk_node_t id);
+/* The wide peers SWIM holds ALIVE now (not self), up to max, into out; returns the
+ * count. region_recompute reads it (N2b step (b): a wide peer within tau is a member). */
+INT swim_wide_alive(pk_node_t *out, INT max);
 /* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
 INT swim_wide_self_test(void (*emit)(const char *));
 #endif
