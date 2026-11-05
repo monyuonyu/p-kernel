@@ -1180,6 +1180,9 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
             if (g_rr_ioerr) return ARK_E_IO;       /* may read later: keep the old log */
             if (compact_is_live(g_idx[s].id, nseen)) return ARK_E_CORRUPT;
 #endif
+#ifdef ARK_COMPACT_ROT_ABORT   /* FALSIFIER for run.sh (e) rotall: rot blocks every compaction */
+            return ARK_E_CORRUPT;
+#endif
             continue;
         }
         foot += 1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR;

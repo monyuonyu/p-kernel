@@ -275,6 +275,32 @@ for c in "1 hdr" "2 hdr" "2 rot"; do
     fi
   done
 done
+# audit-135: a p-fs block that is really rotted (every read from the 1st on
+# returns a flipped byte) is not live: compaction goes on without it (its bytes
+# are gone) and the live file stays. Aborting here would block every later
+# compaction for good (ENOSPC). Falsifier -DARK_COMPACT_ROT_ABORT aborts on it.
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_ROT_ABORT \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_rot_abort" || fail "falsifier build (rot abort)"
+for b in "$BIN" "$WORK/arkfs_rot_abort"; do
+  IMGR="$WORK/arkt.img"
+  "$b" format "$IMGR" 1024 >/dev/null
+  "$b" bput "$IMGR" "$PB" >/dev/null
+  "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+  crf="$("$b" compactrf "$IMGR" "$PB" 1 rotall)"
+  krf="$("$b" read "$IMGR" /keep.txt)"
+  say "      rotted p-fs block ($(basename "$b")): $crf | $krf"
+  if [ "$b" = "$BIN" ]; then
+    [ "$crf" = "COMPACTRF: 0" ] && [ "$krf" = "READ: stays-alive" ] \
+      && pass "a rotted p-fs block does not block compaction, the live file stays" \
+      || fail "rotted p-fs block blocked compaction: $crf / $krf"
+  else
+    [ "$crf" != "COMPACTRF: 0" ] \
+      && pass "falsifier (rot abort) blocks compaction on a rotted block: the check has teeth" \
+      || fail "falsifier (rot abort) compacted anyway: $crf / $krf"
+  fi
+done
 
 # ===========================================================================
 hr
