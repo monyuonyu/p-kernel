@@ -196,6 +196,35 @@ v1="$(printf '%s' "churn-v1" | sha256sum)"; v1="${v1%% *}"     # its id, without
 v1got="$(run bget "$IMGE" "$v1")"
 [ "$v1got" = "BGET: churn-v1" ] && pass "a superseded file version's bytes survive" \
                                 || fail "superseded version's block lost: $v1got"
+# a read error on a live block mid-compaction aborts (the old log stays), never a
+# successful switch without the block (audit-133: rc 0 and /keep.txt NOTFOUND).
+# N=2: the read fails in the keep-all dry pass and the write pass; N=3: only in
+# the write pass (the 1st read is the live-file check).
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_SKIP_UNREAD \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_skip_unread" || fail "falsifier build (skip unread)"
+for n in 2 3; do
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkr.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    "$b" write "$IMGR" /churn.txt "churn-v1" >/dev/null
+    "$b" write "$IMGR" /churn.txt "churn-v2" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "stays-alive" "$n")"
+    krf="$("$b" read "$IMGR" /keep.txt)"
+    say "      read error from the ${n}th read ($(basename "$b")): $crf | $krf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$krf" = "READ: stays-alive" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a read error mid-compaction aborts, the live file stays (N=$n)" \
+        || fail "read error mid-compaction (N=$n): $crf / $krf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$krf" != "READ: stays-alive" ] \
+        && pass "falsifier (skip unread) loses the live file behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) N=$n kept the file: $crf / $krf"
+    fi
+  done
+done
 
 # ===========================================================================
 hr

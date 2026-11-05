@@ -1104,6 +1104,15 @@ static INT mtree_collect(U1 seen[][ARK_ID_LEN], U4 *pn, U4 *foot)
  * Returns ARK_OK on success (state reloaded), ARK_E_FULL if the live set does
  * not fit in any free region, or a negative error (old log left intact).
  */
+#if !defined(ARK_COMPACT_LIVE_ONLY) && !defined(ARK_COMPACT_SKIP_UNREAD)
+/* is id one of the n live / dir-tree block ids the dry pass collected? */
+static INT compact_is_live(const U1 id[ARK_ID_LEN], U4 n)
+{
+    for (U4 i = 0; i < n; i++)
+        if (ark_memeq(g_compact_seen[i], id, ARK_ID_LEN)) return 1;
+    return 0;
+}
+#endif
 PK_NOSW_FN(INT, ark_compact, (void), ())
 {
     if (!g_bd) return ARK_E_NOTMOUNTED;
@@ -1153,13 +1162,22 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
      * self-verify and is not live cannot be re-emitted and is left behind (its
      * bytes are already lost; p-fs re-WANTs it from the region). */
     foot = 0;
+    U4 nkeep = 0;                                  /* blocks the write pass must re-emit */
     for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
         if (g_idx[s].sec == 0) continue;
         U4 t, sq, ln; INT pk;
         INT n = read_record(g_idx[s].sec, g_payld, ARK_COMMIT_MAX,
                             &t, &sq, &ln, 0, &pk);
-        if (n <= 0 || t != ARK_REC_BLOCK || !pk) continue;
+        if (n <= 0 || t != ARK_REC_BLOCK || !pk) {
+            /* a live block was verified just above, so failing now is a read
+             * error, not rot: abort, the old log stays (audit-133) */
+#ifndef ARK_COMPACT_SKIP_UNREAD
+            if (compact_is_live(g_idx[s].id, nseen)) return ARK_E_CORRUPT;
+#endif
+            continue;
+        }
         foot += 1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR;
+        nkeep++;
     }
 #endif
     /* the trailing commit's footprint */
@@ -1195,18 +1213,28 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
     /* every block in the index (see the dry pass). emit_record does not touch
      * g_idx (only ark_block_put adds), so the walk is stable; the remount after
      * the switch rebuilds the index from the new log. */
+    U4 nemit = 0;
     for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
         if (g_idx[s].sec == 0) continue;
         g_epoch = save_epoch;                      /* read old blocks */
         INT bl = ark_block_get(g_idx[s].id, g_blkbuf, ARK_BLOCK_MAX);
-        if (bl < 0) continue;                      /* rotted, not live (verified above) */
+        if (bl < 0) continue;                      /* rotted in the dry pass, or a read error (counted below) */
         g_epoch = new_epoch;                        /* write new-epoch records */
         U4 st;
         INT r = emit_record(ARK_REC_BLOCK, g_blkbuf, (U4)bl,
                             g_idx[s].id, &st);
         if (r != ARK_OK) { rc = r; break; }
+        nemit++;
     }
-    (void)nseen;
+#ifndef ARK_COMPACT_SKIP_UNREAD   /* FALSIFIER for run.sh (e) read error: drop what fails to read */
+    /* every block the dry pass found intact must be in the new log: a read
+     * error now (a live file's block, or a p-fs block) would otherwise be
+     * dropped for good behind a successful switch (audit-133,
+     * pk-scratch/a134/readfail_probe.c). Abort: the old log stays. */
+    if (rc == ARK_OK && nemit != nkeep) rc = ARK_E_CORRUPT;
+#else
+    (void)nkeep; (void)nemit;
+#endif
 #else   /* FALSIFIER for samples/25_survival_fs (e): only the live set (the old policy) */
     for (U4 s = 0; s < nseen; s++) {
         g_epoch = save_epoch;                      /* read old blocks */

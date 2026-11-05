@@ -34,6 +34,7 @@
  *      checkpoint <img>
  *      compact <img>
  *      dump    <img> <path>...      # one line per path: version, size, sha256
+ *      compactrf <img> <text> <N>   # compact with a read error on <text>'s block
  *  ARK_COUNT=1 prints "[count] writes=<N>" on stderr at exit (the number of
  *  device writes the one operation made = the cut points 1..N).
  */
@@ -52,6 +53,9 @@
 
 static void emit_stdout(const char *s) { fputs(s, stdout); fflush(stdout); }
 
+/* test-only seam in arkfs.c (as samples/37_ark_merkle/merkle_test.c) */
+extern U4 ark_dbg_id_sector(const U1 id[ARK_ID_LEN]);
+
 /* ---- file-backed block device with fault injection ---- */
 static int   g_fd = -1;
 static U4    g_nsect;
@@ -59,10 +63,17 @@ static long  g_kill_before = -1;   /* 1-based write index, or -1 */
 static long  g_kill_torn   = -1;
 static long  g_wcnt;
 
+/* compactrf: reads touching g_rf_sec fail from the g_rf_from-th such read on,
+ * only while armed (around ark_compact) */
+static int   g_rf_arm = 0, g_rf_from = 1, g_rf_hits = 0;
+static U4    g_rf_sec = 0;
+
 static int fb_read(void *c, U4 lba, U4 n, void *buf)
 {
     (void)c;
     if (lba + n > g_nsect) return -1;
+    if (g_rf_arm && g_rf_sec >= lba && g_rf_sec < lba + n && ++g_rf_hits >= g_rf_from)
+        return -1;
     off_t off = (off_t)lba * ARK_SECTOR;
     ssize_t got = pread(g_fd, buf, (size_t)n * ARK_SECTOR, off);
     return (got == (ssize_t)((size_t)n * ARK_SECTOR)) ? 0 : -1;
@@ -273,6 +284,21 @@ int main(int argc, char **argv)
         if (r < 0) { printf("NOTFOUND %d\n", r); return 1; }
         buf[r] = '\0';
         printf("BGET: %s\n", buf);
+        return 0;
+    }
+    /* compactrf <img> <text> <N>: ark_compact while every read of the payload
+     * sector of the block holding <text> fails from the N-th such read on (a
+     * read error mid-compaction). The device is healed afterwards. */
+    if (!strcmp(cmd, "compactrf")) {
+        if (argc < 5) return 2;
+        U1 id[ARK_ID_LEN];
+        sha256_ctx sc; sha256_init(&sc); sha256_update(&sc, argv[3], u4len(argv[3])); sha256_final(&sc, id);
+        g_rf_sec = ark_dbg_id_sector(id);
+        if (g_rf_sec == 0) { printf("COMPACTRF: no such block\n"); return 2; }
+        g_rf_from = atoi(argv[4]); g_rf_hits = 0; g_rf_arm = 1;
+        int r = ark_compact();
+        g_rf_arm = 0;
+        printf("COMPACTRF: %d\n", r);
         return 0;
     }
     if (!strcmp(cmd, "checkpoint")) {
