@@ -19,10 +19,12 @@
  *   [restore-noread] the file cannot be read: live is not replaced, no crash
  *   [restore-rest]   after a read-back the same corpus starts no batch (no
  *                    training, save or read); a writer (student_consol_abort)
- *                    ends the rest; a lesson ends the rest
+ *                    ends the rest; a waiting DLB winner ends the rest and is
+ *                    distilled; a lesson ends the rest
  *  FALSIFIERS: -DST_DMN_RESTORE_DISABLE: [restore-back] goes RED;
  *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED;
- *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED.
+ *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED;
+ *              -DST_DMN_REST_DLB_KEEP: [restore-rest] DLB winner goes RED.
  *
  *  Build: run_restore.sh.
  */
@@ -220,6 +222,22 @@ int main(int argc, char **argv)
                rb, g_dmn_restores, r0, g_dmn_rested, back2);
         CHECK(g_dmn_restores == rb + 1 && back2,
               "[restore-rest] a writer ends the rest: a spoiled live is read back");
+        /* the read-back above rests again. A verified DLB winner (the chat
+         * enqueues one after the conscience allows a V-exact answer) is
+         * distilled only after a completed batch: it ends the rest, and the
+         * next tick distills it (audit-133: on da49a878 pending stayed 1,
+         * distilled 0, pk-scratch/a134/mkdlbprobe.py) */
+        {
+            static const uint8_t q[] = "3+4="; static const uint8_t a[] = "7";
+            int rs = g_dmn_rest, enq = dlb_compound_enqueue(q, 4, a, 1, 1);
+            unsigned d0 = g_dlb_distilled; int p0 = dlb_compound_pending(1);
+            tick();
+            printf("[restore] dlb winner while resting %d: enqueue %d, pending %d -> %d, distilled %u -> %u,"
+                   " resting %d\n", rs, enq, p0, dlb_compound_pending(1), d0, g_dlb_distilled, g_dmn_rest);
+            CHECK(rs && enq && g_dlb_distilled > d0 && !g_dmn_rest,
+                  "[restore-rest] a waiting DLB winner ends the rest and is distilled");
+            dlb_compound_reset();
+        }
         static uint8_t les[4096];
         int fl = (int)sizeof(TEACHER_FIXTURE) - 1, ln = fl < (int)sizeof les ? fl : (int)sizeof les;
         memcpy(les, TEACHER_FIXTURE, (size_t)ln);

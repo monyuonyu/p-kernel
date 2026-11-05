@@ -266,9 +266,10 @@ static unsigned g_dmn_restores = 0;       /* # of read-backs of the saved best  
  * fingerprint (FNV-1a 64 + length) and starts no batch while it is the same:
  * no training, no save, no read. A changed corpus (a lesson) ends the rest,
  * and so does any writer of g_student (student_consol_abort: merge, retrain,
- * restore), since live is then no longer the restored best (audit-132).
+ * restore), since live is then no longer the restored best (audit-132), and a
+ * verified DLB winner waiting to be distilled (audit-133).
  * tests/llm/run_restore.sh [restore-rest]; falsifiers -DST_DMN_REST_DISABLE,
- * -DST_DMN_REST_ABORT_KEEP. */
+ * -DST_DMN_REST_ABORT_KEEP, -DST_DMN_REST_DLB_KEEP. */
 static int      g_dmn_rest = 0;           /* resting after a read-back           */
 static int      g_dmn_rest_n = 0;         /* the corpus length then              */
 static uint64_t g_dmn_rest_fp = 0;        /* the corpus fingerprint then         */
@@ -847,7 +848,15 @@ int student_dmn_consolidate(void)
 
         if (g_dmn_rest) {   /* resting after a read-back: same corpus -> no batch */
             int cn; const uint8_t *cc = cradle_corpus(&cn);
-            if (cn == g_dmn_rest_n && dmn_corpus_fp(cc, cn) == g_dmn_rest_fp) {
+            /* a verified DLB winner waiting is teaching too: it is distilled
+             * only after a completed batch (below), so resting on it would
+             * never distill it and fill the ring (audit-133) */
+#ifdef ST_DMN_REST_DLB_KEEP     /* FALSIFIER for [restore-rest] dlb: rest over a waiting winner */
+            int dlb_wait = 0;
+#else
+            int dlb_wait = dlb_compound_pending(1) > 0;
+#endif
+            if (!dlb_wait && cn == g_dmn_rest_n && dmn_corpus_fp(cc, cn) == g_dmn_rest_fp) {
                 g_dmn_rested++;
                 return 0;
             }
