@@ -1069,6 +1069,7 @@ static void swim_wide_rtt_sample(pk_node_t id, UH seq, UW now)
  * ACK path above), an old one cannot, so it stays unmeasured. The sample goes to
  * the v1 table (rtt_observe), which region_recompute reads for a narrow id.
  * -DN2_NC_WIDE_NO_NARROW_PING is the negative control of [n2-mix] XG. */
+static void swim_wide_send(UB type, UH seq, pk_node_t me, pk_node_t target);
 static UH swim_nping_seq[DNODE_MAX];   /* seq of the v2 PING in flight, 0 = none */
 static UW swim_nping_ms[DNODE_MAX];
 static INT swim_nping_cur;
