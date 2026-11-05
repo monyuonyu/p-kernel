@@ -9,7 +9,8 @@
 #
 # It cleans and rebuilds the tree it sits in (make clean in each boot dir).
 #
-# Covered: hosted x86_64 (plain, ASan+UBSan), every `make -C <dir> [-jN]
+# Covered: the tree checks of the script-modes job (doc-checks: V-MODEL, README
+# counts, script modes, runner guard, CI exceptions), hosted x86_64 (plain, ASan+UBSan), every `make -C <dir> [-jN]
 # EXTRA_CFLAGS=-D...` build written in ci.yml (tests/ci/test_build_all_list.py) (found by reading ci.yml: the
 # anti-theater stubs, exit-dispatch / FP / no-switch falsifiers, R3WP and
 # GEN_SURVIVE certs, ...), hosted aarch64 (cross), Windows PE (mingw-w64),
@@ -75,6 +76,17 @@ step() {  # $1 = name, rest = command (run with bash -eo pipefail, like CI)
     fi
 }
 
+# The checks of the script-modes job that read the tree and need no toolchain
+# (2026-11-06: ark-entry.md reached master with no V-MODEL row, CI 42086847022
+# went red on check_vmodel.py --selftest, and build_all had been ALL OK for both
+# the implementer and the auditor). Not the apt fixture (it times a fake apt-get).
+# check_script_modes.py reads git's index: in a tree that is not a git checkout
+# (the audit container builds from git archive) it is skipped with a line.
+step doc-checks   "python3 tests/ci/check_vmodel.py --selftest && python3 tests/ci/check_vmodel.py \
+                     && python3 tests/ci/check_readme_counts.py . \
+                     && python3 tests/ci/check_runner_guard.py . && python3 tests/ci/check_ci_exceptions.py . \
+                     && if git rev-parse --git-dir >/dev/null 2>&1; then python3 tests/ci/check_script_modes.py .; \
+                        else echo 'check_script_modes: SKIPPED (not a git checkout)'; fi"
 step x86_64       "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64"
 step x86_64-san   "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64 NO_LIBTCC=1 \
                      EXTRA_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
