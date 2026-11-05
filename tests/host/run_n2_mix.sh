@@ -128,6 +128,10 @@ region_has() {  # the node ids in node $1's last `[region] members:` line, sorte
     tr -d '\r' < "$LOGDIR/node$1.log" | grep -a '^\[region\] members:' | tail -1 \
         | grep -oE 'node[0-9]+' | sed 's/^node//' | sort -n | tr '\n' ' '
 }
+region_size_of() {  # the size= in node $1's last `[region] id=` line
+    tr -d '\r' < "$LOGDIR/node$1.log" | grep -a '^\[region\] id=' | tail -1 \
+        | grep -oE 'size=[0-9]+' | sed 's/^size=//'
+}
 has_all() {  # 0 if the list $1 holds every id after it (each word on its own)
     local l=" $1" w; shift
     for w in "$@"; do case "$l" in *" $w "*) ;; *) return 1;; esac; done
@@ -156,8 +160,14 @@ if [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
         miss=""
         has_wide "$g4" || miss="$miss node4:{$g4}"
         g260_ok "$g260" || miss="$miss node260:{$g260}(wants 3 43 259 299, not 0 1 2)"
-        [ -z "$miss" ] && res XG PASS "wide peers are region members: node4 {$g4}, node260 {$g260}" \
-                       || res XG FAIL "a wide peer is not a region member:$miss"
+        # region_size counts the wide members too (audit-137: flagging a wide member without
+        # counting it was green): the size= of the same print equals the listed members
+        for n in 4 260; do
+            l="$(region_has $n)"; c=$(wc -w <<< "$l"); sz="$(region_size_of $n)"
+            [ "$sz" = "$c" ] || miss="$miss node$n:size=$sz but $c members {$l}"
+        done
+        [ -z "$miss" ] && res XG PASS "wide peers are region members: node4 {$g4}, node260 {$g260}, sizes match" \
+                       || res XG FAIL "a wide peer is not a region member, or size= is off:$miss"
     fi
 fi
 
