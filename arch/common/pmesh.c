@@ -351,6 +351,10 @@ static UB data_v2[PMESH_V2_HDR + PMESH_V2_DATA_MAX];
 static W pmesh_send_v2(pk_node_t dst, UH port, const UB *data, UH len)
 {
     if (len > PMESH_V2_DATA_MAX) return -1;
+#if !defined(N2_NC_PMV2_NOIDOK)
+    /* audit-148: no id yet (0xFF, not distributed) sends nothing, as v1 does */
+    if (drpc_my_node == PK_NODE_NONE) return -1;
+#endif
     if (dst == drpc_my_node)     return -1;
     BOOL direct = (dst >= DNODE_MAX) ? TRUE
                 : (dnode_table[dst].state == DNODE_ALIVE ? TRUE : FALSE);
