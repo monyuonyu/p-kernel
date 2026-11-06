@@ -159,19 +159,28 @@ int dlb_vexact_anslen(const uint8_t *cand, int cn);
  * tick-split live distill accumulates to the SAME total the cert proves. */
 #define DLB_TRACE_ROUNDS_MAX 30
 
+/* B4 refund (audit-139): a trace is given its unsaved passes back at most this
+ * many times (dlb_compound_refund). After a read-back the same corpus can cross
+ * the margin again every few ticks; a waiting winner ends each rest, so an
+ * unbounded refund would never spend it and the rest would never come back. */
+#define DLB_REFUND_MAX 1
+
 /* Clear the compounding ring (start of a session / cert arm). */
 void dlb_compound_reset(void);
 
 /* Queue a deliberation trace: the query (qn bytes) followed by its winning
  * answer (an bytes), tagged `verified` (1 iff a V-exact checker accepted it).
- * Refuses (returns 0) if the ring is full or the trace exceeds DLB_TRACE_MAX;
+ * A full ring first drops its oldest spent trace kept only for a refund (see
+ * dlb_compound_refund). Refuses (returns 0) if the ring is still full or the
+ * trace exceeds DLB_TRACE_MAX;
  * returns 1 on enqueue. The HARD GATE is applied at DISTILL time, not here, so
  * the cert can populate an unverified ring and prove distilling it degrades. */
 int  dlb_compound_enqueue(const uint8_t *query, int qn,
                           const uint8_t *ans, int an, int verified);
 
 /* Count queued traces matching the gate (require_verified=1 counts only
- * verified ones — what production would distill). Pure read. */
+ * verified ones — what production would distill) that still have distill
+ * budget (a spent trace kept for its unsaved passes is not waiting). Pure read. */
 int  dlb_compound_pending(int require_verified);
 
 /* Distill the queued traces into `m` (rounds passes of the SAME zero_grad ->
@@ -189,8 +198,23 @@ int  dlb_compound_distill(st_model *m, int rounds, float lr, int require_verifie
  * (ascending index) is preserved — one-math determinism intact. Unlike
  * dlb_compound_reset() this KEEPS freshly-enqueued not-yet-distilled verified
  * traces (it keys on rounds_done, not the whole ring), so a live feeder can call
- * it every sleep tick without dropping just-arrived work. Intended caller: the
+ * it every sleep tick without dropping just-arrived work. A spent trace with passes
+ * since the last DMN save is kept until dlb_compound_saved (they may come back
+ * through dlb_compound_refund). Intended caller: the
  * DMN task only (Wave-D2 wires it after each dlb_compound_distill). */
 void dlb_compound_gc(void);
+
+/* B4 (read-back keeps the winners' passes, research/b4-step3-result.md, the
+ * last section): the DMN may read its saved best back over live; passes
+ * distilled since the last DMN save are then gone from the weights.
+ * dlb_compound_saved(): a DMN save landed, the passes so far are kept.
+ * dlb_compound_refund(): live was replaced by the saved best, the passes since
+ * the last save are given back (they distill again), at most DLB_REFUND_MAX
+ * times per trace (later read-backs keep them spent). Pure ring bookkeeping.
+ * dlb_compound_rounds_done(): sum of rounds_done over the verified traces
+ * (for the cert). */
+void dlb_compound_saved(void);
+void dlb_compound_refund(void);
+int  dlb_compound_rounds_done(void);
 
 #endif /* PKERNEL_LLM_DLB_H */
