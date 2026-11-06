@@ -1023,6 +1023,9 @@ static UH        swim_wide_seq;     /* v2 PING numbers, never 0 (0 = beacon) */
 BOOL swim_peer_reads_v2(pk_node_t id)
 {
     if (id < DNODE_MAX) return v2cap_get(id) ? TRUE : FALSE;
+#if defined(N2_NC_V2WIDE_NO)
+    return FALSE;   /* falsifier: wide peers treated as unable to read v2 */
+#endif
     /* a wide peer exists only in v2: known and not dead is enough */
     INT s = nodemap_find(&wide_map, id);
     return (s != NODEMAP_NOSLOT && wide_st[s].state != DNODE_DEAD
@@ -2300,7 +2303,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 /*   [v2cap-relay]    the re-propagated entry keeps bit 2               */
 /*   [v2cap-wide]     a wide id heard over v2 reads v2; unknown does not */
 /* Falsifiers: -DN2_NC_NOBIT2 (no bit 2 sent), -DN2_NC_V2IGNORE (bit 2  */
-/* not read). Hosted-only: bare builds neither send nor read bit 2.     */
+/* not read), -DN2_NC_V2WIDE_NO (wide peers not v2). Hosted-only.      */
 /* ------------------------------------------------------------------ */
 INT swim_v2cap_self_test(void (*emit)(const char *))
 {
@@ -2354,18 +2357,29 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     V2C_RUMOR(V, 1, 0);   /* plain new peer, nothing: must not read v2 */
     if (swim_peer_reads_v2(V)) V2C_FAIL("absent: a zero byte made V read v2");
 
-    {
+    {   /* on a fresh wide table, saved and put back as swim_wide_self_test does
+         * (run alone, before swim_init, the table has no room at all) */
+        static SWIM_WIDE saved[DREGION_MAX];
+        static NODEMAP   saved_map;
         const pk_node_t WID = 777, UNK = 778;
+        PK_NOSW_ENTER();
+        saved_map = wide_map;
+        for (INT i = 0; i < DREGION_MAX; i++) saved[i] = wide_st[i];
+        nodemap_init(&wide_map, 0);
+        for (INT i = 0; i < DREGION_MAX; i++) wide_st[i].state = DNODE_UNKNOWN;
+        PK_NOSW_LEAVE();
         swim_wide_heard(WID, pk_node_ip(WID), TRUE, swim_wide_now());
         if (!swim_peer_reads_v2(WID)) V2C_FAIL("wide: a wide id heard over v2 does not read v2");
         if (swim_peer_reads_v2(UNK))  V2C_FAIL("wide: an unknown wide id reads v2");
-        INT s = nodemap_find(&wide_map, WID);
-        if (s != NODEMAP_NOSLOT) {
-            PK_NOSW_ENTER();
-            nodemap_evict(&wide_map, s);
-            wide_st[s].state = DNODE_UNKNOWN; wide_st[s].rtt_ok = 0; wide_st[s].ping_seq = 0;
-            PK_NOSW_LEAVE();
+        {
+            INT s = nodemap_find(&wide_map, WID);
+            if (s != NODEMAP_NOSLOT) wide_st[s].state = DNODE_DEAD;
+            if (swim_peer_reads_v2(WID)) V2C_FAIL("wide: a dead wide id still reads v2");
         }
+        PK_NOSW_ENTER();
+        wide_map = saved_map;
+        for (INT i = 0; i < DREGION_MAX; i++) wide_st[i] = saved[i];
+        PK_NOSW_LEAVE();
     }
 #undef V2C_RUMOR
 #undef V2C_FAIL
