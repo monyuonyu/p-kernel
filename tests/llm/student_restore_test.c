@@ -133,6 +133,10 @@ static void dlb_refund_check(void)
           "[restore-dlb] setup: the tick distilled the winner, did not save, read the best back");
     CHECK(done1 == 0 && p1 == 1, "[restore-dlb] the read-back gives the winner its passes back");
     unsigned d1 = g_dlb_distilled, w1 = g_writes;
+    /* make this tick save (any held loss is an improvement), as section 3 sets
+     * the saved loss: in the full flow (after the lesson) the tick did not save
+     * on its own, so the settle check below ran without its setup */
+    g_dmn_saved_loss = 1e9f;
     tick();
     int done2 = dlb_compound_rounds_done();
     printf("[restore] next tick: distilled %u -> %u, writes %u -> %u, rounds done %d\n",
