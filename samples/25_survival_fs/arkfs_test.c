@@ -34,6 +34,7 @@
  *      checkpoint <img>
  *      compact <img>
  *      dump    <img> <path>...      # one line per path: version, size, sha256
+ *      compactrf <img> <text> <N> [hdr|rot|rotall]   # compact with a read error on <text>'s block
  *  ARK_COUNT=1 prints "[count] writes=<N>" on stderr at exit (the number of
  *  device writes the one operation made = the cut points 1..N).
  */
@@ -52,6 +53,9 @@
 
 static void emit_stdout(const char *s) { fputs(s, stdout); fflush(stdout); }
 
+/* test-only seam in arkfs.c (as samples/37_ark_merkle/merkle_test.c) */
+extern U4 ark_dbg_id_sector(const U1 id[ARK_ID_LEN]);
+
 /* ---- file-backed block device with fault injection ---- */
 static int   g_fd = -1;
 static U4    g_nsect;
@@ -59,13 +63,29 @@ static long  g_kill_before = -1;   /* 1-based write index, or -1 */
 static long  g_kill_torn   = -1;
 static long  g_wcnt;
 
+/* compactrf: reads touching g_rf_sec fail from the g_rf_from-th such read on,
+ * only while armed (around ark_compact) */
+static int   g_rf_arm = 0, g_rf_from = 1, g_rf_hits = 0;
+static U4    g_rf_sec = 0;
+/* compactrf mode "rot" (1): no error, but the N-th read alone (only that one)
+ * returns the sector with one byte flipped (a transient bad read, audit-134);
+ * "rotall" (2): every read from the N-th on does (the block is rotted) */
+static int   g_rf_rot = 0;
+
 static int fb_read(void *c, U4 lba, U4 n, void *buf)
 {
     (void)c;
     if (lba + n > g_nsect) return -1;
+    int hit = g_rf_arm && g_rf_sec >= lba && g_rf_sec < lba + n;
+    if (hit) g_rf_hits++;
+    if (hit && !g_rf_rot && g_rf_hits >= g_rf_from)
+        return -1;
     off_t off = (off_t)lba * ARK_SECTOR;
     ssize_t got = pread(g_fd, buf, (size_t)n * ARK_SECTOR, off);
-    return (got == (ssize_t)((size_t)n * ARK_SECTOR)) ? 0 : -1;
+    if (got != (ssize_t)((size_t)n * ARK_SECTOR)) return -1;
+    if (hit && g_rf_rot && (g_rf_rot == 2 ? g_rf_hits >= g_rf_from : g_rf_hits == g_rf_from))
+        ((U1 *)buf)[(size_t)(g_rf_sec - lba) * ARK_SECTOR + 7] ^= 0x5A;
+    return 0;
 }
 
 static int fb_write(void *c, U4 lba, U4 n, const void *buf)
@@ -245,6 +265,56 @@ int main(int argc, char **argv)
         int r = ark_mkdir(argv[3]);
         printf("MKDIR: %d\n", r);
         return r == ARK_OK ? 0 : 1;
+    }
+    /* bput <img> <text>: a raw p-fs block the way arch/linux/pfs_ark.c pfs_ark_put
+     * stores one (ark_block_put + ark_checkpoint, no file names it); prints the id.
+     * bget <img> <id hex>: reads it back. (e) in run.sh: such a block must survive
+     * ark_compact (the ark entry's records are p-fs blocks, ark-entry.md §2.3). */
+    if (!strcmp(cmd, "bput")) {
+        if (argc < 4) return 2;
+        U1 id[ARK_ID_LEN];
+        int r = ark_block_put(argv[3], u4len(argv[3]), id);
+        int c = (r == ARK_OK) ? ark_checkpoint() : r;
+        printf("BPUT: %d %d ", r, c);
+        for (int i = 0; i < ARK_ID_LEN; i++) printf("%02x", id[i]);
+        printf("\n");
+        return (r == ARK_OK && c == ARK_OK) ? 0 : 1;
+    }
+    if (!strcmp(cmd, "bget")) {
+        if (argc < 4 || strlen(argv[3]) != 2 * ARK_ID_LEN) return 2;
+        U1 id[ARK_ID_LEN];
+        for (int i = 0; i < ARK_ID_LEN; i++) {
+            unsigned v; if (sscanf(argv[3] + 2 * i, "%2x", &v) != 1) return 2;
+            id[i] = (U1)v;
+        }
+        static char buf[ARK_BLOCK_MAX + 1];
+        int r = ark_block_get(id, buf, ARK_BLOCK_MAX);
+        if (r == ARK_E_CORRUPT) { printf("CORRUPT\n"); return 3; }
+        if (r < 0) { printf("NOTFOUND %d\n", r); return 1; }
+        buf[r] = '\0';
+        printf("BGET: %s\n", buf);
+        return 0;
+    }
+    /* compactrf <img> <text> <N>: ark_compact while every read of the payload
+     * sector of the block holding <text> fails from the N-th such read on (a
+     * read error mid-compaction). The device is healed afterwards. Optional
+     * 5th word: "hdr" = the block's header sector instead of the payload;
+     * "rot" = no error, the N-th read alone returns a flipped byte (audit-134);
+     * "rotall" = every read from the N-th on returns it (real rot, audit-135). */
+    if (!strcmp(cmd, "compactrf")) {
+        if (argc < 5) return 2;
+        U1 id[ARK_ID_LEN];
+        sha256_ctx sc; sha256_init(&sc); sha256_update(&sc, argv[3], u4len(argv[3])); sha256_final(&sc, id);
+        g_rf_sec = ark_dbg_id_sector(id);
+        if (g_rf_sec == 0) { printf("COMPACTRF: no such block\n"); return 2; }
+        if (argc > 5 && !strcmp(argv[5], "hdr")) g_rf_sec -= 1u;   /* the header sector */
+        g_rf_rot = (argc > 5 && !strcmp(argv[5], "rot")) ? 1
+                 : (argc > 5 && !strcmp(argv[5], "rotall")) ? 2 : 0;
+        g_rf_from = atoi(argv[4]); g_rf_hits = 0; g_rf_arm = 1;
+        int r = ark_compact();
+        g_rf_arm = 0;
+        printf("COMPACTRF: %d\n", r);
+        return 0;
     }
     if (!strcmp(cmd, "checkpoint")) {
         int r = ark_checkpoint();

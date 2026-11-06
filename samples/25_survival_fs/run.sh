@@ -150,6 +150,159 @@ tafter="$(run read "$IMG" /y.txt)"
                                 || fail "torn-commit rollback: $tafter"
 
 # ===========================================================================
+hr; say "(e) a p-fs block (no file names it) survives ark_compact"; hr
+# The ark entry's records are p-fs blocks put the way pfs_ark_put does
+# (ark-entry.md §2.1, §2.3). audit-131 measured ark_compact dropping such a
+# block (pk-scratch/a132/compact_probe.c); this pins it. Superseded FILE
+# versions may still go (arkfs.c's compaction policy); the p-fs block may not.
+IMGE="$WORK/arke.img"
+run format "$IMGE" 1024 >/dev/null
+bput="$(run bput "$IMGE" "pfs-block: a diary entry that belongs to no arkfs file")"
+bid="${bput##* }"
+run write "$IMGE" /keep.txt "stays-alive" >/dev/null
+run write "$IMGE" /churn.txt "churn-v1" >/dev/null
+run write "$IMGE" /churn.txt "churn-v2" >/dev/null
+before="$(run bget "$IMGE" "$bid")"
+comp="$(run compact "$IMGE")"
+after="$(run bget "$IMGE" "$bid")"
+keep="$(run read "$IMGE" /keep.txt)"
+churn="$(run read "$IMGE" /churn.txt)"
+say "      $bput"
+say "      before: $before | $comp | after: $after"
+[ "$before" = "BGET: pfs-block: a diary entry that belongs to no arkfs file" ] \
+  && pass "p-fs block readable after a remount (setup)" || fail "p-fs block before compaction: $before"
+[ "$comp" = "COMPACT: 0" ] && [ "$keep" = "READ: stays-alive" ] && [ "$churn" = "READ: churn-v2" ] \
+  && pass "compaction ran, live files intact (setup)" || fail "compaction: $comp / $keep / $churn"
+[ "$after" = "$before" ] && pass "p-fs block survives ark_compact" \
+                         || fail "p-fs block lost by ark_compact: $after"
+# FALSIFIER: the old live-set-only policy must lose the block
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_LIVE_ONLY \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_live_only" || fail "falsifier build"
+IMGN="$WORK/arkn.img"
+"$WORK/arkfs_live_only" format "$IMGN" 1024 >/dev/null
+nbid="$("$WORK/arkfs_live_only" bput "$IMGN" "pfs-block: a diary entry that belongs to no arkfs file")"
+nbid="${nbid##* }"
+"$WORK/arkfs_live_only" write "$IMGN" /keep.txt "stays-alive" >/dev/null
+"$WORK/arkfs_live_only" compact "$IMGN" >/dev/null
+nafter="$("$WORK/arkfs_live_only" bget "$IMGN" "$nbid")"
+say "      -DARK_COMPACT_LIVE_ONLY after: $nafter"
+case "$nafter" in NOTFOUND*) pass "falsifier (live set only) loses the block: the check has teeth" ;;
+                  *) fail "falsifier kept the block: $nafter" ;; esac
+# the bytes of a superseded FILE version stay too (no block is dropped), though
+# the version is no longer listed (its commit is gone)
+v1="$(printf '%s' "churn-v1" | sha256sum)"; v1="${v1%% *}"     # its id, without putting it
+v1got="$(run bget "$IMGE" "$v1")"
+[ "$v1got" = "BGET: churn-v1" ] && pass "a superseded file version's bytes survive" \
+                                || fail "superseded version's block lost: $v1got"
+# a read error on a live block mid-compaction aborts (the old log stays), never a
+# successful switch without the block (audit-133: rc 0 and /keep.txt NOTFOUND).
+# N=2: the read fails in the keep-all dry pass and the write pass; N=3: only in
+# the write pass (the 1st read is the live-file check).
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_SKIP_UNREAD \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_skip_unread" || fail "falsifier build (skip unread)"
+for n in 2 3; do
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkr.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    "$b" write "$IMGR" /churn.txt "churn-v1" >/dev/null
+    "$b" write "$IMGR" /churn.txt "churn-v2" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "stays-alive" "$n")"
+    krf="$("$b" read "$IMGR" /keep.txt)"
+    say "      read error from the ${n}th read ($(basename "$b")): $crf | $krf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$krf" = "READ: stays-alive" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a read error mid-compaction aborts, the live file stays (N=$n)" \
+        || fail "read error mid-compaction (N=$n): $crf / $krf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$krf" != "READ: stays-alive" ] \
+        && pass "falsifier (skip unread) loses the live file behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) N=$n kept the file: $crf / $krf"
+    fi
+  done
+done
+# the same for a p-fs block (no file names it: only the keep-all walks read it).
+# N=1: the read fails in the dry pass and the write pass (the counts would agree);
+# N=2: only in the write pass. A read error is not rot: abort, the block stays.
+PB="pfs-block: a diary entry that belongs to no arkfs file"
+for n in 1 2; do
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkp.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    pbid="$("$b" bput "$IMGR" "$PB")"; pbid="${pbid##* }"
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "$PB" "$n")"
+    prf="$("$b" bget "$IMGR" "$pbid")"
+    say "      p-fs block, read error from the ${n}th read ($(basename "$b")): $crf | $prf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$prf" = "BGET: $PB" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a read error on a p-fs block aborts, the block stays (N=$n)" \
+        || fail "p-fs block read error (N=$n): $crf / $prf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$prf" != "BGET: $PB" ] \
+        && pass "falsifier (skip unread) drops the p-fs block behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) p-fs N=$n kept the block: $crf / $prf"
+    fi
+  done
+done
+# audit-134: the cases above fail only the payload sector and only by an error.
+# "hdr": the header sector's read error (N=1 both passes, N=2 the write pass);
+# "rot": no error, the write pass's read alone returns a flipped byte (N=2), so
+# the dry pass counted the block and the write pass skips it as rot: only the
+# count check (nemit != nkeep) keeps it from being dropped behind rc 0.
+for c in "1 hdr" "2 hdr" "2 rot"; do
+  n="${c% *}"; m="${c#* }"
+  for b in "$BIN" "$WORK/arkfs_skip_unread"; do
+    IMGR="$WORK/arkh.img"
+    "$b" format "$IMGR" 1024 >/dev/null
+    pbid="$("$b" bput "$IMGR" "$PB")"; pbid="${pbid##* }"
+    "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+    crf="$("$b" compactrf "$IMGR" "$PB" "$n" "$m")"
+    prf="$("$b" bget "$IMGR" "$pbid")"
+    say "      p-fs block, $m from the ${n}th read ($(basename "$b")): $crf | $prf"
+    if [ "$b" = "$BIN" ]; then
+      [ "$prf" = "BGET: $PB" ] && [ "$crf" != "COMPACTRF: 0" ] \
+        && pass "a $m fault on a p-fs block aborts, the block stays (N=$n)" \
+        || fail "p-fs block $m fault (N=$n): $crf / $prf"
+    else
+      [ "$crf" = "COMPACTRF: 0" ] && [ "$prf" != "BGET: $PB" ] \
+        && pass "falsifier (skip unread) drops the p-fs block on a $m fault behind rc 0 (N=$n): the check has teeth" \
+        || fail "falsifier (skip unread) p-fs $m N=$n kept the block: $crf / $prf"
+    fi
+  done
+done
+# audit-135: a p-fs block that is really rotted (every read from the 1st on
+# returns a flipped byte) is not live: compaction goes on without it (its bytes
+# are gone) and the live file stays. Aborting here would block every later
+# compaction for good (ENOSPC). Falsifier -DARK_COMPACT_ROT_ABORT aborts on it.
+"$CC" -Wall -Wextra -std=gnu11 -O1 -DARK_HOST_TEST -DARK_COMPACT_ROT_ABORT \
+    -I"$ROOT/arch/common/include" -I"$ROOT/relay" \
+    "$HERE/arkfs_test.c" "$ROOT/arch/common/arkfs.c" "$ROOT/relay/sha256.c" \
+    -o "$WORK/arkfs_rot_abort" || fail "falsifier build (rot abort)"
+for b in "$BIN" "$WORK/arkfs_rot_abort"; do
+  IMGR="$WORK/arkt.img"
+  "$b" format "$IMGR" 1024 >/dev/null
+  "$b" bput "$IMGR" "$PB" >/dev/null
+  "$b" write "$IMGR" /keep.txt "stays-alive" >/dev/null
+  crf="$("$b" compactrf "$IMGR" "$PB" 1 rotall)"
+  krf="$("$b" read "$IMGR" /keep.txt)"
+  say "      rotted p-fs block ($(basename "$b")): $crf | $krf"
+  if [ "$b" = "$BIN" ]; then
+    [ "$crf" = "COMPACTRF: 0" ] && [ "$krf" = "READ: stays-alive" ] \
+      && pass "a rotted p-fs block does not block compaction, the live file stays" \
+      || fail "rotted p-fs block blocked compaction: $crf / $krf"
+  else
+    [ "$crf" != "COMPACTRF: 0" ] \
+      && pass "falsifier (rot abort) blocks compaction on a rotted block: the check has teeth" \
+      || fail "falsifier (rot abort) compacted anyway: $crf / $krf"
+  fi
+done
+
+# ===========================================================================
 hr
 if [ "$FAILS" -eq 0 ]; then
   say "ALL PASS — ARK is content-addressed, versioned, and crash-safe."

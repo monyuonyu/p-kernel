@@ -384,13 +384,18 @@ static INT emit_record(U4 type, const void *payload, U4 len,
  * at read time, instead of letting one bad block truncate the whole log.
  * type/seq/len/id come straight from the (valid) header even when payload_ok=0.
  */
+/* 1 if the last read_record hit a device read error (not rot): ark_compact
+ * aborts on it rather than drop a block that may read fine later (audit-133) */
+static U1 g_rr_ioerr;
+
 static INT read_record(U4 sec, void *payout, U4 paymax,
                        U4 *type_out, U4 *seq_out, U4 *len_out,
                        U1 id_out[ARK_ID_LEN], INT *payload_ok)
 {
     if (payload_ok) *payload_ok = 0;
+    g_rr_ioerr = 0;
     if (sec >= ark_usable_end()) return 0;          /* never read the SB replica */
-    if (dev_read(sec, 1, g_secbuf) < 0) return 0;
+    if (dev_read(sec, 1, g_secbuf) < 0) { g_rr_ioerr = 1; return 0; }
     if (!ark_memeq(((ark_rec_hdr *)g_secbuf)->magic, ARK_REC_MAGIC, 4))
         return 0;                                             /* not a record */
 
@@ -417,7 +422,7 @@ static INT read_record(U4 sec, void *payout, U4 paymax,
     INT ok = 1;
     U1 *p = (U1 *)payout;
     for (U4 s = 0; s < psect; s++) {
-        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) { ok = 0; break; }
+        if (dev_read(sec + 1 + s, 1, g_secbuf) < 0) { ok = 0; g_rr_ioerr = 1; break; }
 #ifdef ARK_FAULT_SLOW_GET
         /* test builds only (`tkconf nosw` N9): widen the read -> copy window
          * on the shared g_secbuf, which emit_record also writes */
@@ -1073,14 +1078,18 @@ static INT mtree_collect(U1 seen[][ARK_ID_LEN], U4 *pn, U4 *foot)
  *   ARK is append-only, so every put/mutation appends a full snapshot and the
  *   log only grows — eventually emit_record returns ARK_E_FULL (ENOSPC) and the
  *   store is write-dead. ark_compact() reclaims that space by rewriting a FRESH
- *   log that keeps ONLY the latest version of each LIVE block (the blocks the
- *   current commit references), discarding every superseded version and dead
- *   block. After compaction the live log occupies just the live working set.
+ *   log that keeps every committed block once and ONE commit (the current dir
+ *   table), discarding the superseded commits (each mutation appends the whole
+ *   table twice) and the uncommitted tail.
  *
- *   Retention: this is "keep the current library, drop the history." Old file
- *   *versions* (ark_read_version / ark_history) do NOT survive a compaction —
- *   they are the cost of not dying by ENOSPC. A caller that must keep history
- *   should compact rarely / never; the default kernel path does not auto-compact.
+ *   Retention: "keep every block, drop the history listing." No block's bytes
+ *   are dropped: a p-fs block (pfs_ark_put) is named by no ARK file, only by
+ *   other p-fs blocks, so dropping "non-live" blocks lost them (audit-131,
+ *   samples/25_survival_fs (e)). Old file *versions* can no longer be listed or
+ *   read by version (ark_read_version / ark_history) after a compaction — their
+ *   commits are gone — though their bytes stay. The default kernel path does
+ *   not auto-compact. -DARK_COMPACT_LIVE_ONLY restores the old live-set-only
+ *   policy (the falsifier of run.sh (e)).
  *
  * CRASH-SAFETY (last-good-or-new-complete, never half):
  *
@@ -1100,6 +1109,15 @@ static INT mtree_collect(U1 seen[][ARK_ID_LEN], U4 *pn, U4 *foot)
  * Returns ARK_OK on success (state reloaded), ARK_E_FULL if the live set does
  * not fit in any free region, or a negative error (old log left intact).
  */
+#if !defined(ARK_COMPACT_LIVE_ONLY) && !defined(ARK_COMPACT_SKIP_UNREAD)
+/* is id one of the n live / dir-tree block ids the dry pass collected? */
+static INT compact_is_live(const U1 id[ARK_ID_LEN], U4 n)
+{
+    for (U4 i = 0; i < n; i++)
+        if (ark_memeq(g_compact_seen[i], id, ARK_ID_LEN)) return 1;
+    return 0;
+}
+#endif
 PK_NOSW_FN(INT, ark_compact, (void), ())
 {
     if (!g_bd) return ARK_E_NOTMOUNTED;
@@ -1137,6 +1155,40 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
         INT mc = mtree_collect(g_compact_seen, &nseen, &foot);
         if (mc != ARK_OK) return mc;
     }
+#ifndef ARK_COMPACT_LIVE_ONLY
+    /* KEEP EVERY BLOCK (ark-entry.md §2.3, audit-131/132): the passes above only
+     * VERIFY that the live files and the dir tree are intact (abort otherwise);
+     * the new log re-emits every block in the index, not just theirs. A p-fs
+     * block (pfs_ark_put: ark_block_put + ark_checkpoint) is named by no ARK
+     * file — it is named by other p-fs blocks (manifests, the ark's records) —
+     * so "live" here cannot tell it from garbage. What compaction reclaims is
+     * the superseded commits (two copies of the whole dir table per mutation)
+     * and the history listing; no block's bytes are dropped. A block that fails
+     * self-verify and is not live cannot be re-emitted and is left behind (its
+     * bytes are already lost; p-fs re-WANTs it from the region). */
+    foot = 0;
+    U4 nkeep = 0;                                  /* blocks the write pass must re-emit */
+    for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
+        if (g_idx[s].sec == 0) continue;
+        U4 t, sq, ln; INT pk;
+        INT n = read_record(g_idx[s].sec, g_payld, ARK_COMMIT_MAX,
+                            &t, &sq, &ln, 0, &pk);
+        if (n <= 0 || t != ARK_REC_BLOCK || !pk) {
+            /* a live block was verified just above, so failing now is a read
+             * error, not rot: abort, the old log stays (audit-133) */
+#ifndef ARK_COMPACT_SKIP_UNREAD
+            if (g_rr_ioerr) return ARK_E_IO;       /* may read later: keep the old log */
+            if (compact_is_live(g_idx[s].id, nseen)) return ARK_E_CORRUPT;
+#endif
+#ifdef ARK_COMPACT_ROT_ABORT   /* FALSIFIER for run.sh (e) rotall: rot blocks every compaction */
+            return ARK_E_CORRUPT;
+#endif
+            continue;
+        }
+        foot += 1u + (ln + ARK_SECTOR - 1u) / ARK_SECTOR;
+        nkeep++;
+    }
+#endif
     /* the trailing commit's footprint */
     {
         U4 clen = (U4)sizeof(ark_commit_hdr) + g_live_n * (U4)sizeof(ark_dent);
@@ -1166,6 +1218,38 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
     g_seq  = 0;
 
     INT rc = ARK_OK;
+#ifndef ARK_COMPACT_LIVE_ONLY
+    /* every block in the index (see the dry pass). emit_record does not touch
+     * g_idx (only ark_block_put adds), so the walk is stable; the remount after
+     * the switch rebuilds the index from the new log. */
+    U4 nemit = 0;
+    for (U4 s = 0; s < ARK_IDX_SLOTS; s++) {
+        if (g_idx[s].sec == 0) continue;
+        g_epoch = save_epoch;                      /* read old blocks */
+        INT bl = ark_block_get(g_idx[s].id, g_blkbuf, ARK_BLOCK_MAX);
+        if (bl < 0) {
+#ifndef ARK_COMPACT_SKIP_UNREAD
+            if (g_rr_ioerr) { rc = ARK_E_IO; break; }   /* a read error, not rot */
+#endif
+            continue;                              /* rotted (crc / sha): its bytes are gone */
+        }
+        g_epoch = new_epoch;                        /* write new-epoch records */
+        U4 st;
+        INT r = emit_record(ARK_REC_BLOCK, g_blkbuf, (U4)bl,
+                            g_idx[s].id, &st);
+        if (r != ARK_OK) { rc = r; break; }
+        nemit++;
+    }
+#ifndef ARK_COMPACT_SKIP_UNREAD   /* FALSIFIER for run.sh (e) read error: drop what fails to read */
+    /* every block the dry pass found intact must be in the new log: a read
+     * error now (a live file's block, or a p-fs block) would otherwise be
+     * dropped for good behind a successful switch (audit-133,
+     * pk-scratch/a134/readfail_probe.c). Abort: the old log stays. */
+    if (rc == ARK_OK && nemit != nkeep) rc = ARK_E_CORRUPT;
+#else
+    (void)nkeep; (void)nemit;
+#endif
+#else   /* FALSIFIER for samples/25_survival_fs (e): only the live set (the old policy) */
     for (U4 s = 0; s < nseen; s++) {
         g_epoch = save_epoch;                      /* read old blocks */
         INT bl = ark_block_get(g_compact_seen[s], g_blkbuf, ARK_BLOCK_MAX);
@@ -1176,6 +1260,7 @@ PK_NOSW_FN(INT, ark_compact, (void), ())
                             g_compact_seen[s], &st);
         if (r != ARK_OK) { rc = r; break; }
     }
+#endif
     if (rc == ARK_OK) {
         g_epoch = new_epoch;
         rc = commit_live();                        /* trailing commit + fsync */
