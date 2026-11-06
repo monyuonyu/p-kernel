@@ -491,8 +491,18 @@ static void gossip_apply(const SWIM_PKT *pkt)
         }
 
         /* anti-stale: accept only if (incarnation,state) supersedes our view */
-        if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state))
+        if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state)) {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_V2DIRECT_NO)
+            /* N2 (ii)(a), audit-147: an old relay drops bit 2, and the peer's
+             * own word at the same incarnation loses the gate above, so take
+             * bit 2 (only) from the peer itself (src == nid) at the incarnation
+             * we hold. Third parties still cannot set it. */
+            if (pkt->src_node == (pk_node8_t)nid && pkt->src_node != PK_NODE_NONE &&
+                inc_in == dnode_incarn[nid])
+                V2CAP_ADOPT(nid, pkt->gossip[i].capability);
+#endif
             continue;   /* stale rumor refuted — capability does NOT regress */
+        }
 
         dnode_incarn[nid] = inc_in;
         /* N-2b / T-fix-a: a SUPERSEDING rumor (this peer's own fresher word
