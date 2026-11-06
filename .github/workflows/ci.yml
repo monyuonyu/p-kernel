@@ -1465,6 +1465,9 @@ jobs:
           make -s -C relay
           (printf 'nodes wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_wide.log || true
           grep -aF '[swim-wide] PASS' nodes_wide.log
+          # capability bit 2 = reads v2 (N2 (ii)(a)): sent, adopted under the LWW gate, relayed
+          (printf 'nodes v2cap\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_v2cap.log || true
+          grep -aF '[v2cap] PASS' nodes_v2cap.log
           # region test: the selectors and the narrow-reachable count (N2 (iii)(i))
           (printf 'region test\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee region_test.log || true
           grep -aF '[region-super] 8 PASS, 0 FAIL' region_test.log
@@ -1480,7 +1483,7 @@ jobs:
           N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1501,6 +1504,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_NARROW_SIZE_WIDE >/dev/null
           (printf 'region test\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee region_test_nc.log || true
           grep -aF '[region-narrow] 2 PASS, 4 FAIL' region_test_nc.log
+          # [v2cap] goes red when bit 2 is not adopted from a peer (-DN2_NC_V2IGNORE)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_V2IGNORE >/dev/null
+          (printf 'nodes v2cap\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_v2cap_nc.log || true
+          grep -aF '[v2cap] FAIL converge' nodes_v2cap_nc.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 
