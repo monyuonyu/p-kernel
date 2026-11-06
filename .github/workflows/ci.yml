@@ -2580,9 +2580,11 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 11be1015…,
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 4dfac3f4…,
+    # x86 cd490552… after ARK compaction keeps every block (R-ACKCROWN)
+    # 2026-11-07, audit-container gcc 13.3.0; was aarch64 11be1015…/
     # x86 f3a94e2d… after N1 answers to the origin and coordinator only
-    # (R-RESPTO) 2026-10-29, audit-container gcc 13.3.0; was aarch64 9f4400ea…/
+    # (R-RESPTO) 2026-10-29; was aarch64 9f4400ea…/
     # x86 f55b1b88… after 0-14 S2 stage 1 on bare x86 (R-STOPBARE) 2026-10-25;
     # was x86 d805388a… (aarch64 the same) after the
     # 1-8 record on the wire (R-KSWIRE) 2026-10-22; was aarch64 557a9ecc…/x86 64595931… after the

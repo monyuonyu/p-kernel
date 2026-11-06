@@ -1875,6 +1875,29 @@ N-4 cross-host deferred to the ThinkPad).
   build_all ALL OK (incl. windows, bare x86/rpi3/aarch64, dmoe); pychecks 12/12 + parity + yaml. Limits (audit-93): a revert of the production path alone to the
   whole region is seen by no CI step (only 64 nodes show it); 64 nodes were not re-run on the merge (production
   path unchanged since 840b8baf: 2/2 ALL PASS there). Written by the run that merged.
+- CROWN RE-BLESS — ARK compaction keeps every block (2026-11-07): `84e58cda` `feat/ark-compact-keep` dbd0e516
+  (audit-133 FAIL on 58ae4546 -> 166fca51, 9e461bde; audit-134 FAIL -> b4342330; audit-135 FAIL -> dbd0e516;
+  audit-136 PASS with limits; R-ACKCROWN put to mk_pino with a recommendation 2026-11-06T00:05, no answer past
+  its deadline 2026-11-07T00:05, landed on it), `--no-ff` onto `cf0bbe13`, no conflict. arkfs.c links into bare
+  x86 and AArch64, so `.text` changes DELIBERATELY (ark_compact re-emits every indexed block, ARK_E_IO on a read
+  error, only real rot skipped, the re-emit count checked; the falsifier ifdefs are off in every product build).
+  Measured in pkernel_audit_ss (gcc 13.3.0, `objcopy -O binary -j <section>`, `pk-scratch/a143/sec.sh`), master
+  `7c3cbba1` and the trial merge `e6315a67` (= this merge minus the test-only cf0bbe13) built side by side:
+    base `7c3cbba1`  x86 .text f3a94e2d… 380523 B   aarch64 .text 11be1015… 362716 B
+      x86      .text cd49055255451cda8132fe1befd8c424487d7d1343031d65ec8251890dcc3c60  380727 B (+204)
+      aarch64  .text 4dfac3f4ae20495b4554fd82389b624454efc6219005b6fa6f0f3ee2f1642bbd  363012 B (+296)
+    other sections (R-CROWNRO): x86 .text.start d7ed138e -> c932286c 436, .rodata 9c27d263 -> 996ad069 15040,
+    .data fc65e93a -> 6c1d1efd 1132, .rodata.str1.1 e3dfa4c3 / .rodata.str1.4 f46c36e5 / .rodata.cst4 5d780823
+    unchanged; aarch64 .rodata 7c5f0e67 -> 8e35fac0 101752, .data 2f9e5ef1 unchanged.
+  (`.text` and `.rodata` = audit-134/135/136 on the branch.) On the trial merge (`pk-scratch/a143/ack.sh`): bare
+  run_tk_conform.sh x86 133/0 and AArch64 133/0, each with all 14 broken kernels red; samples/25_survival_fs
+  run.sh ALL PASS (a rotted p-fs block: COMPACTRF 0, falsifier ROT_ABORT -7), allpoints.sh 224 cut points ALL
+  PASS; build_all ALL OK 33 steps. Limits: the product still has no path that calls ark_compact (ark-entry 2.3);
+  x86 .text.start and .data move by layout only (`pk-scratch/a143/why.sh`: .text grows 0xcc, so .text.start
+  moves 0x15ce6c -> 0x15cf38 and .data 0x192ba0 -> 0x192ca0; .text.start holds absolute addresses such as
+  multiboot_magic 0x192be6 -> 0x192ce6, and .data's gdt64_descriptor holds the GDT's address; .bss +0x20);
+  one toolchain. Written by the run
+  that merged; an independent re-measure is for a different run.
 - CROWN SECTIONS RECORD, no re-bless — R-CROWNRO (2026-11-05): the crown (above, and the CI gate
   crown-text-identity) hashes bare `.text` only, so a change that moves only a constant is not seen. Measured
   (audit-128, pkernel_audit_ss gcc 13.3.0, `objcopy -O binary -j <section>` per section, `pk-scratch/a128/ro.sh`):
