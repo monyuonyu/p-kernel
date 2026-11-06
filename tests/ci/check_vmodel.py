@@ -55,7 +55,7 @@ ARCH = os.path.join(ROOT, "docs", "architecture")
 VMODEL = os.path.join(ARCH, "V-MODEL.md")
 LEVEL_DIRS = ["10-requirements", "20-architecture", "30-module", "40-verify", "50-evolution"]
 SKIP_SUBDIRS = {"research"}
-OPEN_MAX = 12  # 2026-10-04: memory-thought, web-os, self-access, self-access-design,
+OPEN_MAX = 13  # 2026-10-04: memory-thought, web-os, self-access, self-access-design,
                # gpu-compute, gpu-3-wiring, webd-user-space, living-body-inspector,
                # n1-lan-direct-plan, mind-gen0-b, android-always-on.
                # 10 -> 11 for android-always-on (d9aec0b0): a new design memo for an
@@ -64,6 +64,9 @@ OPEN_MAX = 12  # 2026-10-04: memory-thought, web-os, self-access, self-access-de
                # 11 -> 12 for ark-entry (2026-11-06): the ark's entry v1 design memo
                # (audit-134, merged without a row, which reddened CI 42086847022);
                # nothing built yet, the build starts in December.
+               # 12 -> 13 for ark-handover (2026-11-06): v1.1's design memo (handing
+               # records on to the heir, R-ARKKEY's recommendation, deadline 11-06 19:56);
+               # nothing built yet, it comes after v1's E3.
 CORPUS_DIRS = ["arch", "boot", "tests", "samples", "tools", "relay", "apps", "android", "kernel/mtkernel3/lib"]
 CORPUS_EXT = (".c", ".h", ".S", ".sh", ".py", ".yml", ".yaml", ".kt", ".java", ".rs", ".ts", ".js", ".mk")
 
