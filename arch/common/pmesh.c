@@ -257,6 +257,25 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
     UW magic;
     __builtin_memcpy(&magic, data, sizeof magic);
     if (magic != PMESH_MAGIC)        return;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_PMV2_RXDROP)
+    /* N2 (ii)(b): the one-node DATA frame v2 (16-bit src/dst). Delivered to
+     * this node only; nothing relays v2 yet. The bound handlers do not index
+     * a table by the src argument (kdds, sfs, replica, pfs_repl, kloader). */
+    if (data[4] == PMESH_VERSION2) {
+        if (data[5] != PMESH_DATA || len < PMESH_V2_HDR) return;
+        pk_node_t s2 = (pk_node_t)(data[6] | ((UH)data[7] << 8));
+        pk_node_t d2 = (pk_node_t)(data[8] | ((UH)data[9] << 8));
+        UH port2 = (UH)(data[10] | ((UH)data[11] << 8));
+        UH n2    = (UH)(data[12] | ((UH)data[13] << 8));
+        if (n2 > PMESH_V2_DATA_MAX || (UW)PMESH_V2_HDR + n2 > len) return;
+        pmesh_v2_stats.v2_rx++;
+        if (d2 != drpc_my_node) { pmesh_v2_stats.v2_drop++; return; }
+        pmesh_v2_stats.v2_delivered++;
+        pmesh_stats.data_delivered++;
+        local_dispatch(s2, port2, data + PMESH_V2_HDR, n2);
+        return;
+    }
+#endif
     if (data[4] != PMESH_VERSION)    return;
 
     UB type     = data[5];
@@ -324,6 +343,42 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
 static PMESH_DATA_PKT data_pkt;  /* static: スタック節約 */
 
+#if defined(_TK_HOSTED_LIBC_)
+/* N2 (ii)(b): one v2 DATA frame, straight to a peer that reads v2. No relay:
+ * an intermediate would have to read v2 too (a later step). Called inside the
+ * send's no-switch region (pmesh_send), so the static frame is not shared. */
+static UB data_v2[PMESH_V2_HDR + PMESH_V2_DATA_MAX];
+static W pmesh_send_v2(pk_node_t dst, UH port, const UB *data, UH len)
+{
+    if (len > PMESH_V2_DATA_MAX) return -1;
+    if (dst == drpc_my_node)     return -1;
+    BOOL direct = (dst >= DNODE_MAX) ? TRUE
+                : (dnode_table[dst].state == DNODE_ALIVE ? TRUE : FALSE);
+#if defined(N2_NC_PMV2_NOCHECK)
+    BOOL reads = TRUE;                       /* falsifier: send to anyone */
+#else
+    BOOL reads = pm_reads_v2(dst);
+#endif
+    if (!direct || !reads) {
+        pmesh_v2_stats.v2_noread++;
+        pmesh_stats.no_route++;
+        return -1;
+    }
+    UW m = PMESH_MAGIC; __builtin_memcpy(data_v2, &m, 4);
+    data_v2[4]  = PMESH_VERSION2;
+    data_v2[5]  = PMESH_DATA;
+    data_v2[6]  = (UB)drpc_my_node; data_v2[7]  = (UB)(drpc_my_node >> 8);
+    data_v2[8]  = (UB)dst;          data_v2[9]  = (UB)(dst >> 8);
+    data_v2[10] = (UB)port;         data_v2[11] = (UB)(port >> 8);
+    data_v2[12] = (UB)len;          data_v2[13] = (UB)(len >> 8);
+    pm_memcpy(data_v2 + PMESH_V2_HDR, data, len);
+    pm_link_out(node_ip(dst), data_v2, (UH)(PMESH_V2_HDR + len));
+    pmesh_v2_stats.v2_tx++;
+    pmesh_stats.data_tx++;
+    return 0;
+}
+#endif
+
 #if PK_NOSW_ACTIVE
 static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len);
 
@@ -342,6 +397,11 @@ static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len
 W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
 #endif
 {
+#if defined(_TK_HOSTED_LIBC_)
+    /* N2 (ii)(b): a wide end on either side needs the 16-bit header */
+    if (dst_node >= DNODE_MAX || drpc_my_node >= DNODE_MAX)
+        return pmesh_send_v2(dst_node, dst_port, data, len);
+#endif
     if (dst_node >= DNODE_MAX) return -1;
     if (len > PMESH_DATA_MAX)  return -1;
     if (drpc_my_node == 0xFF)  return -1;
@@ -471,6 +531,14 @@ void pmesh_stat(void)
     pm_puts("  delivered=");       pm_putdec(pmesh_stats.data_delivered);
     pm_puts("  no_route=");        pm_putdec(pmesh_stats.no_route);
     pm_puts("\r\n");
+#if defined(_TK_HOSTED_LIBC_)
+    pm_puts("[pmesh] v2 tx=");     pm_putdec(pmesh_v2_stats.v2_tx);
+    pm_puts("  rx=");              pm_putdec(pmesh_v2_stats.v2_rx);
+    pm_puts("  delivered=");       pm_putdec(pmesh_v2_stats.v2_delivered);
+    pm_puts("  noread=");          pm_putdec(pmesh_v2_stats.v2_noread);
+    pm_puts("  drop=");            pm_putdec(pmesh_v2_stats.v2_drop);
+    pm_puts("\r\n");
+#endif
 }
 #if defined(_TK_HOSTED_LIBC_)
 /* ------------------------------------------------------------------ */
