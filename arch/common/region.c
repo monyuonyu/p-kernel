@@ -419,6 +419,15 @@ void region_print(void)
 
 static INT super_fail;
 
+/* The setters' "out of range" id. On hosted, DNODE_MAX + 5 (69) is a wide id
+ * that takes a row since N2b (e3ea8135), so that check went red and left node
+ * 69 marked capable; 0xFFFF (the v2 wire's "not a node") never gets a row. */
+#ifdef _TK_HOSTED_LIBC_
+#define RG_OUT_OF_RANGE 0xFFFF
+#else
+#define RG_OUT_OF_RANGE (DNODE_MAX + 5)
+#endif
+
 static void super_check(BOOL cond, const char *name)
 {
     if (cond) { rg_puts("[region-super]   PASS "); }
@@ -486,8 +495,8 @@ void region_supernode_test(void)
     region_set_super_capable(11, FALSE);
     super_check(region_is_super_capable(11) == FALSE,
                 "setter toggles capability table");
-    region_set_super_capable(DNODE_MAX + 5, TRUE);  /* out of range = no-op */
-    super_check(region_is_super_capable(DNODE_MAX + 5) == FALSE,
+    region_set_super_capable(RG_OUT_OF_RANGE, TRUE);  /* out of range = no-op */
+    super_check(region_is_super_capable(RG_OUT_OF_RANGE) == FALSE,
                 "setter bounds-checks out-of-range node");
 
     rg_puts("[region-super] ");
@@ -547,9 +556,9 @@ void region_supernode_test(void)
         rg_puts(region_is_teacher_capable(11) == FALSE
                 ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
         rg_puts("setter toggles teacher table\r\n");
-        region_set_teacher_capable(DNODE_MAX + 5, TRUE);  /* out of range no-op */
-        if (region_is_teacher_capable(DNODE_MAX + 5) != FALSE) tch_fail++;
-        rg_puts(region_is_teacher_capable(DNODE_MAX + 5) == FALSE
+        region_set_teacher_capable(RG_OUT_OF_RANGE, TRUE);  /* out of range no-op */
+        if (region_is_teacher_capable(RG_OUT_OF_RANGE) != FALSE) tch_fail++;
+        rg_puts(region_is_teacher_capable(RG_OUT_OF_RANGE) == FALSE
                 ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
         rg_puts("setter bounds-checks out-of-range node\r\n");
 
