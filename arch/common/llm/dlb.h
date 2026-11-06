@@ -159,6 +159,12 @@ int dlb_vexact_anslen(const uint8_t *cand, int cn);
  * tick-split live distill accumulates to the SAME total the cert proves. */
 #define DLB_TRACE_ROUNDS_MAX 30
 
+/* B4 refund (audit-139): a trace is given its unsaved passes back at most this
+ * many times (dlb_compound_refund). After a read-back the same corpus can cross
+ * the margin again every few ticks; a waiting winner ends each rest, so an
+ * unbounded refund would never spend it and the rest would never come back. */
+#define DLB_REFUND_MAX 1
+
 /* Clear the compounding ring (start of a session / cert arm). */
 void dlb_compound_reset(void);
 

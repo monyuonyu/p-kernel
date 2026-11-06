@@ -132,6 +132,19 @@ static void dlb_refund_check(void)
     CHECK(enq && g_dlb_distilled > d0 && g_dmn_restores == rb + 1 && g_writes == w0,
           "[restore-dlb] setup: the tick distilled the winner, did not save, read the best back");
     CHECK(done1 == 0 && p1 == 1, "[restore-dlb] the read-back gives the winner its passes back");
+    /* audit-139: on the product's default the same corpus crosses the margin
+     * again every 3 ticks after a read-back; a waiting winner ends each rest,
+     * so an unbounded refund never spends it and the rest never comes back
+     * (pk-scratch/a141/driftw.c: master rests from tick 28, the refund arm
+     * reads back every 3 ticks to tick 45). A second read-back gives nothing back. */
+    spoil(&g_student, 12u, 0.4f);
+    unsigned rb2 = g_dmn_restores;
+    tick();
+    int done1b = dlb_compound_rounds_done();
+    printf("[restore] a second spoiled tick: read-backs %u -> %u, rounds done %d (refund limit %d)\n",
+           rb2, g_dmn_restores, done1b, DLB_REFUND_MAX);
+    CHECK(g_dmn_restores == rb2 + 1 && done1b == ST_DMN_ROUNDS,
+          "[restore-dlb] a winner is given its passes back once: a second read-back keeps them spent");
     unsigned d1 = g_dlb_distilled, w1 = g_writes;
     /* make this tick save (any held loss is an improvement), as section 3 sets
      * the saved loss: in the full flow (after the lesson) the tick did not save
