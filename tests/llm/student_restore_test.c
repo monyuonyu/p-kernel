@@ -27,7 +27,8 @@
  *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED;
  *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED;
  *              -DST_DMN_REST_DLB_KEEP: [restore-rest] DLB winner goes RED;
- *              -DDLB_NO_REFUND: [restore-dlb] goes RED (run "dlb").
+ *              -DDLB_NO_REFUND: [restore-dlb] goes RED (run "dlb");
+ *              -DDLB_REFUND_UNBOUNDED: [restore-dlb] once goes RED (run "dlb").
  *
  *  Build: run_restore.sh.
  */

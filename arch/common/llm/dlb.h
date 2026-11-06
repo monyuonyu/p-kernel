@@ -209,7 +209,8 @@ void dlb_compound_gc(void);
  * distilled since the last DMN save are then gone from the weights.
  * dlb_compound_saved(): a DMN save landed, the passes so far are kept.
  * dlb_compound_refund(): live was replaced by the saved best, the passes since
- * the last save are given back (they distill again). Pure ring bookkeeping.
+ * the last save are given back (they distill again), at most DLB_REFUND_MAX
+ * times per trace (later read-backs keep them spent). Pure ring bookkeeping.
  * dlb_compound_rounds_done(): sum of rounds_done over the verified traces
  * (for the cert). */
 void dlb_compound_saved(void);

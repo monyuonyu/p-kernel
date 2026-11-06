@@ -223,6 +223,7 @@ typedef struct {
     int     verified;               /* 1 iff a V-exact checker accepted it     */
     int     rounds_done;            /* distill passes applied so far (budget)  */
     int     unsaved;                /* of those, passes since the last DMN save */
+    int     refunds;                /* times its unsaved passes were given back */
 } dlb_trace;
 
 static dlb_trace g_ring[DLB_RING_MAX];
@@ -260,6 +261,7 @@ PK_NOSW_FN(int, dlb_compound_enqueue, (const uint8_t *query, int qn,
     t->len = n; t->qn = qn; t->verified = verified ? 1 : 0;
     t->rounds_done = 0;             /* fresh trace: full distill budget available */
     t->unsaved = 0;
+    t->refunds = 0;
     g_ring_n++;
     return 1;
 }
@@ -339,8 +341,16 @@ void dlb_compound_refund(void)
     PK_NOSW_ENTER();
     for (int i = 0; i < g_ring_n; i++) {
 #ifndef DLB_NO_REFUND               /* FALSIFIER for [restore-dlb]: the passes stay spent */
-        g_ring[i].rounds_done -= g_ring[i].unsaved;
-        if (g_ring[i].rounds_done < 0) g_ring[i].rounds_done = 0;
+#ifndef DLB_REFUND_UNBOUNDED        /* FALSIFIER for [restore-dlb] once: refund every time */
+        if (g_ring[i].unsaved > 0 && g_ring[i].refunds < DLB_REFUND_MAX)
+#else
+        if (g_ring[i].unsaved > 0)
+#endif
+        {
+            g_ring[i].rounds_done -= g_ring[i].unsaved;
+            if (g_ring[i].rounds_done < 0) g_ring[i].rounds_done = 0;
+            g_ring[i].refunds++;
+        }
 #endif
         g_ring[i].unsaved = 0;
     }
