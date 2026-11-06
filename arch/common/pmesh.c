@@ -614,6 +614,24 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     if (rc != 0 || pmt_cnt != 1 || pmt_len != 15 || pmt_buf[4] != PMESH_VERSION ||
         pmt_buf[6] != 1 || pmt_buf[7] != N || pmt_ip != pk_node_ip(N))
         PMT_FAIL("v1same: narrow to narrow is not the old 12-byte v1 frame");
+    {   /* audit-148: every byte of the v1 frame, not only the length and 4 bytes */
+        UB want[15]; UW m = PMESH_MAGIC; INT bad = -1;
+        __builtin_memcpy(want, &m, 4);
+        want[4] = PMESH_VERSION; want[5] = PMESH_DATA; want[6] = 1; want[7] = (UB)N;
+        want[8] = (UB)PORT; want[9] = (UB)(PORT >> 8); want[10] = 3; want[11] = 0;
+        want[12] = 'a'; want[13] = 'b'; want[14] = 'c';
+        for (INT i = 0; i < 15; i++) if (pmt_buf[i] != want[i]) { bad = i; break; }
+        if (bad >= 0) PMT_FAIL("v1same: a byte of the v1 frame differs from the v1 layout");
+    }
+
+    /* [pmv2-noid] audit-148: a node without an id (0xFF, not distributed) sends
+     * nothing, as v1's drpc_my_node == 0xFF check did before v2 existed */
+    drpc_my_node = PK_NODE_NONE; pmt_v2_peer = N; pmt_cnt = 0;
+    rc = pmesh_send(N, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("noid: a node with id 0xFF sent to a narrow peer");
+    pmt_v2_peer = WIDE; pmt_cnt = 0; rc = pmesh_send(WIDE, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("noid: a node with id 0xFF sent to a wide peer");
+    drpc_my_node = 1; pmt_v2_peer = 0xFFFF;
 
     /* [pmv2-widedst] */
     pmt_v2_peer = WIDE; pmt_cnt = 0; rc = pmesh_send(WIDE, PORT, pl, 3);
