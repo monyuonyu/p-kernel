@@ -323,11 +323,13 @@ void pfs_ark_force_fail(int on) { ark_force_fail_once = on ? 1 : 0; }
 extern U4 ark_dbg_livespan(void);
 static unsigned ark_compactions;
 static U4 ark_compact_failed_span;        /* 0 = no failed try to wait out */
+static U4 ark_compact_next_span;          /* a proactive try waits for this span */
 
 static int ark_try_compact(const char *why)
 {
 #if defined(PFS_ARK_NO_AUTOCOMPACT)
     (void)why; (void)ark_compactions; (void)ark_compact_failed_span;
+    (void)ark_compact_next_span;
     return 0;                                  /* negative control */
 #else
     U4 span = ark_dbg_livespan();
@@ -337,6 +339,7 @@ static int ark_try_compact(const char *why)
     INT c = ark_compact();
     if (c != ARK_OK) {
         ark_compact_failed_span = span ? span : 1u;
+        ark_compact_next_span   = span + ark_total / 8u;
         if (ark_emit) {
             snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compaction did not help (%d)\r\n",
                      why, (int)c);
@@ -345,6 +348,9 @@ static int ark_try_compact(const char *why)
         return 0;
     }
     ark_compact_failed_span = 0;
+    /* a compaction that left the span near half would run again on every put
+     * (a full rewrite each time): the next proactive try waits for growth */
+    ark_compact_next_span = ark_dbg_livespan() + ark_total / 8u;
     ark_compactions++;
     if (ark_emit) {
         snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compacted (%u, span %u -> %u)\r\n",
@@ -360,8 +366,11 @@ int pfs_ark_put(const void *data, unsigned len)
 {
     if (ark_state != 1) return -1;
     if (ark_force_fail_once) { ark_force_fail_once = 0; return -1; }
-    if (ark_dbg_livespan() > ark_total / 2u)
-        (void)ark_try_compact("log over half");
+    {
+        U4 span = ark_dbg_livespan();
+        if (span > ark_total / 2u && span >= ark_compact_next_span)
+            (void)ark_try_compact("log over half");
+    }
     U1 id[ARK_ID_LEN];
     INT r = ark_block_put(data, (U4)len, id);
     if (r == ARK_E_FULL && ark_compact_on_full())
