@@ -184,6 +184,19 @@ static void dlb_refund_check(void)
         printf("[restore] refund of the kept ring: pending %d (want %d)\n", dlb_compound_pending(1), DLB_RING_MAX);
         CHECK(dlb_compound_pending(1) == DLB_RING_MAX,
               "[restore-dlb] spent passes kept by gc come back on a refund");
+        /* audit-140: three breaks were green on the benefit side. A fresh trace
+         * in a reused slot (slot 0 was refunded just above) and a refund with
+         * nothing unsaved must not use up the trace's one refund. */
+        dlb_compound_reset();
+        int e2 = dlb_compound_enqueue(q, 4, a, 1, 1);
+        dlb_compound_refund();              /* nothing unsaved yet: not a refund */
+        if (ok) (void)dlb_compound_distill(&sc, DLB_TRACE_ROUNDS_MAX, ST_DMN_LR, 1);
+        int sp = dlb_compound_pending(1);   /* spent, unsaved */
+        dlb_compound_refund();
+        printf("[restore] fresh trace in a reused slot: enqueued %d, spent pending %d, after the refund %d (want 1)\n",
+               e2, sp, dlb_compound_pending(1));
+        CHECK(ok && e2 == 1 && sp == 0 && dlb_compound_pending(1) == 1,
+              "[restore-dlb] a fresh trace in a reused slot keeps its one refund, an empty refund does not use it");
         if (ok) st_free(&sc);
     }
     dlb_compound_reset();
