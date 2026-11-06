@@ -55,7 +55,7 @@ trap cleanup EXIT
 
 ts() { date '+%H:%M:%S'; }
 note() { echo "[$(ts)] $*"; }
-fail() { echo "[$(ts)] FAIL: $*"; exit 1; }
+fail() { echo "[$(ts)] FAIL: $*"; declare -F report_overwrites >/dev/null && report_overwrites; exit 1; }
 
 # wait_for <timeout_s> <what> <file> <pattern> [min_count]
 wait_for() {
@@ -77,13 +77,13 @@ wait_for() {
 # (cmd_net: nid = mac[5]-1). So node1 shows up as "n0", node2 as "n1",
 # node3 as "n2".
 #
-# Known pre-existing flake (verified identical on master): kdds/pmesh
-# startup occasionally leaves individual DIRECTED routes unestablished
-# (e.g. node1->node2 missing while every other direction works), and the
-# hole persists. That is a pmesh route-formation bug, not a relay
-# property — all kdemo traffic transits the relay either way. So this
-# test records which directed flows DID establish in phase 1 and then
-# asserts that exactly those flows resume after failover and failback.
+# A single DIRECTED flow can stay missing (e.g. node2->node1 while every
+# other direction works). This was long read as a pmesh route-formation
+# flake; 2026-11-07 it was found to be the kdds slot overwrite described at
+# the node start below (two senders in phase, the earlier one lost). The
+# start stagger makes it rare, not impossible, so this test still records
+# which directed flows DID establish in phase 1 and then asserts that
+# exactly those flows resume after failover and failback.
 FLOW_FILE=(/tmp/pkha_node1.log /tmp/pkha_node1.log
            /tmp/pkha_node2.log /tmp/pkha_node2.log
            /tmp/pkha_node3.log /tmp/pkha_node3.log)
@@ -123,13 +123,38 @@ note "starting relay#1 on :$PORT1 and relay#2 on :$PORT2"
 "$ROOT/relay/relay" -p $PORT2 -v >/tmp/pkha_relay2.log 2>&1 & RELAY2=$!; PIDS+=($RELAY2)
 sleep 1
 
-note "starting nodes 1..3 (PKERNEL_RELAY=$PKERNEL_RELAY, kdemo on each)"
+# Stagger the node starts so the three kdemo publishers (period 2 s each)
+# sit about 0.7 s apart in phase. Started together, two publishers land in
+# the same 10 ms receive window on the third node: net_task (priority 3)
+# hands both frames to kdds_rx before the kdemo subscriber (priority 7)
+# runs, kdds_rx overwrites the topic's single slot, and the subscriber reads
+# the later message twice ("[kdemo-rx] n2 ... t=8" two times) while the
+# earlier sender's heartbeat is lost. The phases barely drift, so the loss
+# repeats every period and one directed flow never "resumes" (CI run
+# 42258976694). That is a kdds property (BEST_EFFORT keeps the latest only,
+# gap-ledger), not a relay one; this test is about the relay, so it keeps
+# the publishers apart and reports the overwrites it still sees.
+# PKHA_STAGGER=0 restores the old start (the negative control).
+STAGGER=${PKHA_STAGGER:-0.7}
+note "starting nodes 1..3 (PKERNEL_RELAY=$PKERNEL_RELAY, kdemo on each, ${STAGGER}s apart)"
 for i in 1 2 3; do
+    [ "$i" -gt 1 ] && sleep "$STAGGER"
     { echo "kdemo"; sleep 180 & echo $! >/tmp/pkha_feed$i.pid; wait; } | \
         PKERNEL_NODE_ID=$i PKERNEL_AUTONET=1 "$BOOT/p-kernel" \
         >/tmp/pkha_node$i.log 2>&1 &
     PIDS+=($!)
 done
+
+# A kdds slot overwrite shows as the same remote heartbeat printed twice in
+# a row. Reported (not gated) on every exit so a red run names the cause.
+report_overwrites() {
+    local i n
+    for i in 1 2 3; do
+        n=$(awk '/\[kdemo-rx\]/ { if ($0 == p) c++; p = $0 } END { print c + 0 }' \
+                /tmp/pkha_node$i.log 2>/dev/null)
+        echo "[$(ts)] kdds overwrites seen on node$i: ${n:-0}"
+    done
+}
 
 # --- phase 1: mesh forms on relay#1 ---------------------------------------
 note "phase 1: waiting for mesh on relay#1"
@@ -190,6 +215,7 @@ wait_for 15 "revived relay#1 saw all 3 nodes register" /tmp/pkha_relay1b.log "re
 snapshot_flows
 assert_flows_resume 20 "revived relay#1"
 
+report_overwrites
 echo
 note "PASS — relay#1 death and revival were both survived; all nodes converged"
 echo "        logs: /tmp/pkha_node{1,2,3}.log /tmp/pkha_relay{1,2,1b}.log"
