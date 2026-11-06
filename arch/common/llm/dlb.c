@@ -237,6 +237,20 @@ PK_NOSW_FN(int, dlb_compound_enqueue, (const uint8_t *query, int qn,
 {
     if (qn < 0) qn = 0;
     if (an < 0) an = 0;
+#ifndef DLB_NO_EVICT_KEPT           /* FALSIFIER for [restore-dlb] full ring */
+    if (g_ring_n >= DLB_RING_MAX) {
+        /* a spent trace kept only for a refund (no DMN save yet, e.g. a node
+         * with no durable store never saves) must not refuse a new winner:
+         * drop the oldest such one, front-packing the rest (order kept) */
+        int k = -1;
+        for (int i = 0; i < g_ring_n; i++)
+            if (g_ring[i].rounds_done >= DLB_TRACE_ROUNDS_MAX) { k = i; break; }
+        if (k >= 0) {
+            for (int i = k + 1; i < g_ring_n; i++) g_ring[i - 1] = g_ring[i];
+            g_ring_n--;
+        }
+    }
+#endif
     if (g_ring_n >= DLB_RING_MAX) return 0;
     if (qn + an > DLB_TRACE_MAX || qn + an < 1) return 0;
     dlb_trace *t = &g_ring[g_ring_n];

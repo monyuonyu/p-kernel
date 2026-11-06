@@ -8,7 +8,8 @@
 #               -DST_DMN_REST_DISABLE must FAIL ([restore-rest] RED),
 #               -DST_DMN_REST_ABORT_KEEP must FAIL ([restore-rest] writer RED),
 #               -DST_DMN_REST_DLB_KEEP must FAIL ([restore-rest] DLB winner RED),
-#               -DDLB_NO_REFUND must FAIL ([restore-dlb] RED, run "dlb").
+#               -DDLB_NO_REFUND must FAIL ([restore-dlb] RED, run "dlb"),
+#               -DDLB_NO_EVICT_KEPT must FAIL ([restore-dlb] full ring RED, run "dlb").
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +34,7 @@ echo "[build] compiling the read-back cert and its falsifier ..."
 "$CC" $CFLAGS -DST_DMN_REST_ABORT_KEEP $SRC -lm -o "$WORK/r_keep" || { echo "[build] rest-writer falsifier FAILED"; exit 1; }
 "$CC" $CFLAGS -DST_DMN_REST_DLB_KEEP $SRC -lm -o "$WORK/r_dlb" || { echo "[build] rest-dlb falsifier FAILED"; exit 1; }
 "$CC" $CFLAGS -DDLB_NO_REFUND $SRC -lm -o "$WORK/r_ref" || { echo "[build] refund falsifier FAILED"; exit 1; }
+"$CC" $CFLAGS -DDLB_NO_EVICT_KEPT $SRC -lm -o "$WORK/r_evk" || { echo "[build] evict falsifier FAILED"; exit 1; }
 # all run side by side (each is ~1 min a DMN tick); the falsifiers stop after the rest checks
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_off" back > "$WORK/off.log" 2>&1 ) &
 OFF_PID=$!
@@ -44,9 +46,11 @@ KEEP_PID=$!
 DLB_PID=$!
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_ref" dlb > "$WORK/ref.log" 2>&1 ) &
 REF_PID=$!
+( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r_evk" dlb > "$WORK/evk.log" 2>&1 ) &
+EVK_PID=$!
 echo "=== plain (must PASS) ==="
 ( cd "$ROOT" && env -u PKERNEL_STUDENT_EMA "$WORK/r" ); RC=$?
-wait "$OFF_PID"; wait "$NOREST_PID"; wait "$KEEP_PID"; wait "$DLB_PID"; wait "$REF_PID"
+wait "$OFF_PID"; wait "$NOREST_PID"; wait "$KEEP_PID"; wait "$DLB_PID"; wait "$REF_PID"; wait "$EVK_PID"
 echo "=== -DST_DMN_RESTORE_DISABLE back (must FAIL on [restore-back]) ==="
 cat "$WORK/off.log"
 grep -q 'FAIL  \[restore-back\] live == the saved best' "$WORK/off.log"; NC=$?
@@ -62,6 +66,9 @@ grep -q 'FAIL  \[restore-rest\] a waiting DLB winner ends the rest' "$WORK/dlb.l
 echo "=== -DDLB_NO_REFUND dlb (must FAIL on [restore-dlb]) ==="
 cat "$WORK/ref.log"
 grep -q 'FAIL  \[restore-dlb\] the read-back gives the winner its passes back' "$WORK/ref.log" || NC=1
+echo "=== -DDLB_NO_EVICT_KEPT dlb (must FAIL on [restore-dlb] full ring) ==="
+cat "$WORK/evk.log"
+grep -q 'FAIL  \[restore-dlb\] a full ring of passes kept for a refund' "$WORK/evk.log" || NC=1
 if [ "$RC" -eq 0 ] && [ "$NC" -eq 0 ]; then echo "[result] PASS  dmn-restore (plain green, falsifier red)"; exit 0; fi
 echo "[result] FAIL  dmn-restore (plain rc=$RC, falsifier red on [restore-back]: $([ "$NC" -eq 0 ] && echo yes || echo no))"
 exit 1

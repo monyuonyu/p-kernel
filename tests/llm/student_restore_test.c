@@ -143,6 +143,25 @@ static void dlb_refund_check(void)
            dlb_compound_rounds_done());
     CHECK(g_writes > w1 && dlb_compound_rounds_done() == done2,
           "[restore-dlb] a save settles the passes: a refund after it gives nothing back");
+    /* a full ring of spent winners kept for a refund (no save since) must not
+     * refuse a new one (a node with no durable store never saves) */
+    {
+        st_model sc;
+        dlb_compound_reset();
+        int ok = st_init(&sc, STUDENT_SEED ^ 0x5EEDu) == ST_OK, n = 0;
+        for (int i = 0; ok && i < DLB_RING_MAX; i++) {
+            uint8_t qq[4] = { (uint8_t)('0' + i % 10), '+', (uint8_t)('0' + i / 10), '=' };
+            n += dlb_compound_enqueue(qq, 4, a, 1, 1);
+        }
+        if (ok) (void)dlb_compound_distill(&sc, DLB_TRACE_ROUNDS_MAX, ST_DMN_LR, 1);
+        dlb_compound_gc();                  /* keeps them: spent but not saved */
+        int pend = dlb_compound_pending(1), more = dlb_compound_enqueue(q, 4, a, 1, 1);
+        printf("[restore] full ring: enqueued %d of %d, spent and kept, pending %d, a new winner enqueued %d,"
+               " pending %d\n", n, DLB_RING_MAX, pend, more, dlb_compound_pending(1));
+        CHECK(ok && n == DLB_RING_MAX && pend == 0 && more == 1 && dlb_compound_pending(1) == 1,
+              "[restore-dlb] a full ring of passes kept for a refund does not refuse a new winner");
+        if (ok) st_free(&sc);
+    }
     dlb_compound_reset();
 }
 #endif

@@ -164,7 +164,9 @@ void dlb_compound_reset(void);
 
 /* Queue a deliberation trace: the query (qn bytes) followed by its winning
  * answer (an bytes), tagged `verified` (1 iff a V-exact checker accepted it).
- * Refuses (returns 0) if the ring is full or the trace exceeds DLB_TRACE_MAX;
+ * A full ring first drops its oldest spent trace kept only for a refund (see
+ * dlb_compound_refund). Refuses (returns 0) if the ring is still full or the
+ * trace exceeds DLB_TRACE_MAX;
  * returns 1 on enqueue. The HARD GATE is applied at DISTILL time, not here, so
  * the cert can populate an unverified ring and prove distilling it degrades. */
 int  dlb_compound_enqueue(const uint8_t *query, int qn,
