@@ -564,6 +564,14 @@ int  st_delta_sign(const st_model *base, const st_model *ft, st_model *dst,
  * cand_loss[ST_MERGE_NALPHA+1] (optional) receives each candidate's
  * validation loss (-1 for candidates not tried).
  * -DST_MERGE_PLAIN_ONLY (cert negative control) restricts it to alpha = 0.5.
+ * Premise (research/brain-merge-e3.md 4, -log.md): the two parents share the
+ * init and learned with the same rate and Adam form. On the judgement seeds
+ * 107-114 (2 parents, tier S, 40 rounds) the plain mean stayed at or below the
+ * worse parent on 7/8 at the product ST_LR with eps 1e-8, but went above it on
+ * 7/8 at 3e-3 with eps 1e-8 (6/8 held at 3e-3 with eps 1/64), and parents from
+ * different inits were +1.17..+1.55 above (seen seeds). The guard keeps the
+ * child no worse than `into` on `val` either way; outside the premise the
+ * candidates other than alpha 0 are just unlikely to win.
  * Hosted-only (student.c is not linked into bare metal).                    */
 #define ST_MERGE_NALPHA 5
 float st_merge_barrier(const st_model *a, const st_model *b, st_model *scratch,
