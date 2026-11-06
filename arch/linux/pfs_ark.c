@@ -310,36 +310,58 @@ void pfs_ark_force_fail(int on) { ark_force_fail_once = on ? 1 : 0; }
 /* ark-entry.md 2.3: the product path that calls ark_compact. Every put appends
  * a checkpoint commit and nothing else reclaims old commits, so a small image
  * went write-dead with most of it holding superseded commits (64 sectors: 10
- * blocks). On ARK_E_FULL compact once (crash-safe: old or new log, never half;
- * every indexed block is kept) and retry. A live set that does not fit still
- * fails (-1), and pfs_block.c pins the RAM copy as before. */
+ * blocks). ark_compact writes the new log into FREE space (the tail, or the
+ * front a previous compaction freed), so once the log is full the first
+ * compaction has nowhere to go: compact BEFORE that, when the log span passes
+ * half the image (the tail then still holds a copy of the blocks), and also on
+ * ARK_E_FULL (the freed front). Crash-safe (old or new log, never half; every
+ * indexed block is kept). After a failed try, wait until the span grows by an
+ * eighth of the image (each try reads every block). A live set that does not
+ * fit still fails (-1), and pfs_block.c pins the RAM copy as before.
+ * The span is ark_dbg_livespan (head - log start): no arkfs.c change, so the
+ * bare builds (which do not compile this file) are untouched. */
+extern U4 ark_dbg_livespan(void);
 static unsigned ark_compactions;
+static U4 ark_compact_failed_span;        /* 0 = no failed try to wait out */
 
-static int ark_compact_on_full(void)
+static int ark_try_compact(const char *why)
 {
 #if defined(PFS_ARK_NO_AUTOCOMPACT)
+    (void)why; (void)ark_compactions; (void)ark_compact_failed_span;
     return 0;                                  /* negative control */
 #else
+    U4 span = ark_dbg_livespan();
+    if (ark_compact_failed_span && span < ark_compact_failed_span + ark_total / 8u)
+        return 0;
+    char msg[112];
     INT c = ark_compact();
     if (c != ARK_OK) {
-        if (ark_emit) ark_emit("[pfs] durable(ark): log full, compaction did not help\r\n");
+        ark_compact_failed_span = span ? span : 1u;
+        if (ark_emit) {
+            snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compaction did not help (%d)\r\n",
+                     why, (int)c);
+            ark_emit(msg);
+        }
         return 0;
     }
+    ark_compact_failed_span = 0;
     ark_compactions++;
     if (ark_emit) {
-        char msg[96];
-        snprintf(msg, sizeof msg, "[pfs] durable(ark): log full, compacted (%u)\r\n",
-                 ark_compactions);
+        snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compacted (%u, span %u -> %u)\r\n",
+                 why, ark_compactions, (unsigned)span, (unsigned)ark_dbg_livespan());
         ark_emit(msg);
     }
     return 1;
 #endif
 }
+#define ark_compact_on_full() ark_try_compact("log full")
 
 int pfs_ark_put(const void *data, unsigned len)
 {
     if (ark_state != 1) return -1;
     if (ark_force_fail_once) { ark_force_fail_once = 0; return -1; }
+    if (ark_dbg_livespan() > ark_total / 2u)
+        (void)ark_try_compact("log over half");
     U1 id[ARK_ID_LEN];
     INT r = ark_block_put(data, (U4)len, id);
     if (r == ARK_E_FULL && ark_compact_on_full())

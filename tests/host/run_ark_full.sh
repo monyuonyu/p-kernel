@@ -40,7 +40,7 @@ run() {   # $1 image  $2 log  $3 put|get  $4 count
 
 run "$d/a.img" "$d/w.log" put "$N"
 ok=$(grep -ac '^\[pfs\] put len=' "$d/w.log")
-comp=$(grep -ac '^\[pfs\] durable(ark): log full, compacted' "$d/w.log")
+comp=$(grep -acE '^\[pfs\] durable\(ark\): .*, compacted \(' "$d/w.log")
 run "$d/a.img" "$d/r.log" get "$N"
 got=0
 for i in $(seq 1 "$N"); do grep -aqxF "[pfs] get: $(text "$i")" "$d/r.log" && got=$((got + 1)); done
