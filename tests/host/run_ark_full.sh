@@ -32,8 +32,9 @@ run() {   # $1 image  $2 log  $3 put|get  $4 count
         sleep 1
         for i in $(seq 1 "$4"); do printf 'pfs %s %s\n' "$3" "$(text "$i")"; sleep 0.15; done
         sleep 2
+        printf 'exit\n'     # the shell does not end on EOF; puts are fsync'd already
     } | env PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$1" PKERNEL_ARK_SECTORS="$SEC" \
-          timeout 120 "$BIN" > "$2" 2>&1
+          timeout 60 "$BIN" > "$2" 2>&1
     tr -d '\r' < "$2" > "$2.t" && mv "$2.t" "$2"
 }
 
