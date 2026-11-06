@@ -178,6 +178,12 @@ static void dlb_refund_check(void)
                " pending %d\n", n, DLB_RING_MAX, pend, more, dlb_compound_pending(1));
         CHECK(ok && n == DLB_RING_MAX && pend == 0 && more == 1 && dlb_compound_pending(1) == 1,
               "[restore-dlb] a full ring of passes kept for a refund does not refuse a new winner");
+        /* audit-139: gc dropping spent-but-unsaved traces was green above;
+         * the kept ones (63 after the eviction) must come back on a refund */
+        dlb_compound_refund();
+        printf("[restore] refund of the kept ring: pending %d (want %d)\n", dlb_compound_pending(1), DLB_RING_MAX);
+        CHECK(dlb_compound_pending(1) == DLB_RING_MAX,
+              "[restore-dlb] spent passes kept by gc come back on a refund");
         if (ok) st_free(&sc);
     }
     dlb_compound_reset();
