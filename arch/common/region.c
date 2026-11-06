@@ -311,6 +311,56 @@ UB region_size(void)
     return member_cnt;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (iii)(i): self plus the members whose id fits the narrow tables
+ * (< DNODE_MAX). `others` = the members other than self. */
+static UB narrow_count_ids(const pk_node_t *others, INT n, pk_node_t me)
+{
+    (void)others; (void)me;
+    return (UB)(1 + n);                 /* stub: counts like region_size */
+}
+
+UB region_size_narrow(void)
+{
+    region_recompute();
+    if (drpc_my_node == 0xFF) return member_cnt;   /* no region, as region_size */
+    pk_node_t others[DNODE_ROWS];
+    INT n = 0;
+    for (INT r = 0; r < DNODE_ROWS; r++) {
+        if (!member[r]) continue;
+        pk_node_t id = pk_node_of_row(r);
+        if (id == PK_NODE_NONE || id == drpc_my_node) continue;
+        others[n++] = id;
+    }
+    return narrow_count_ids(others, n, drpc_my_node);
+}
+
+/* [region-narrow] (run by `region test`): the count on synthetic member lists. */
+static void region_narrow_size_test(void)
+{
+    static const struct { pk_node_t me; INT n; pk_node_t o[4]; UB want; const char *name; } C[] = {
+        {   4, 4, {  0,   1, 259, 299 }, 3, "narrow self, 2 narrow + 2 wide peers -> 3" },
+        { 259, 3, {  3,  43, 299,   0 }, 3, "wide self, 2 narrow + 1 wide peer -> 3" },
+        {   4, 1, { 259,  0,   0,   0 }, 1, "narrow self, only a wide peer -> 1 (a region of one)" },
+        {   4, 0, {  0,   0,   0,   0 }, 1, "alone -> 1" },
+        {   4, 3, {  0,   1,   2,   0 }, 4, "narrow only -> same as region_size (4)" },
+        {   4, 2, { DNODE_MAX - 1, DNODE_MAX, 0, 0 }, 2, "boundary: DNODE_MAX-1 counts, DNODE_MAX does not -> 2" },
+    };
+    INT nc = (INT)(sizeof C / sizeof C[0]), fail = 0;
+    for (INT i = 0; i < nc; i++) {
+        UB got = narrow_count_ids(C[i].o, C[i].n, C[i].me);
+        BOOL ok = (got == C[i].want);
+        if (!ok) fail++;
+        rg_puts(ok ? "[region-narrow]   PASS " : "[region-narrow]   FAIL ");
+        rg_puts(C[i].name);
+        if (!ok) { rg_puts(" (got "); rg_putdec(got); rg_puts(")"); }
+        rg_puts("\r\n");
+    }
+    rg_puts("[region-narrow] "); rg_putdec((UW)(nc - fail));
+    rg_puts(" PASS, "); rg_putdec((UW)fail); rg_puts(" FAIL\r\n");
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* 表示                                                                */
 /* ------------------------------------------------------------------ */
@@ -502,4 +552,7 @@ void region_supernode_test(void)
         rg_putdec((UW)tch_fail);
         rg_puts(" FAIL\r\n");
     }
+#ifdef _TK_HOSTED_LIBC_
+    region_narrow_size_test();
+#endif
 }
