@@ -307,3 +307,14 @@ void dlb_compound_gc(void)
     g_ring_n = w;
     PK_NOSW_LEAVE();
 }
+
+void dlb_compound_saved(void) { }       /* stub (test first) */
+void dlb_compound_refund(void) { }      /* stub (test first) */
+
+PK_NOSW_FN(int, dlb_compound_rounds_done, (void), ())
+{
+    int s = 0;
+    for (int i = 0; i < g_ring_n; i++)
+        if (g_ring[i].verified) s += g_ring[i].rounds_done;
+    return s;
+}

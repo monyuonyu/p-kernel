@@ -21,10 +21,13 @@
  *                    training, save or read); a writer (student_consol_abort)
  *                    ends the rest; a waiting DLB winner ends the rest and is
  *                    distilled; a lesson ends the rest
+ *   [restore-dlb]    a DLB winner distilled in a tick that reads the best back
+ *                    gets its passes back and distills again; a save settles
  *  FALSIFIERS: -DST_DMN_RESTORE_DISABLE: [restore-back] goes RED;
  *              -DST_DMN_REST_DISABLE: [restore-rest] goes RED;
  *              -DST_DMN_REST_ABORT_KEEP: [restore-rest] writer goes RED;
- *              -DST_DMN_REST_DLB_KEEP: [restore-rest] DLB winner goes RED.
+ *              -DST_DMN_REST_DLB_KEEP: [restore-rest] DLB winner goes RED;
+ *              -DDLB_NO_REFUND: [restore-dlb] goes RED (run "dlb").
  *
  *  Build: run_restore.sh.
  */
@@ -107,6 +110,43 @@ static int all_zero(const float *a, int n)
     return 1;
 }
 
+#ifdef HAVE_READ_BACK
+/* [restore-dlb] a verified DLB winner distilled in a tick that ends in a
+ * read-back (live spoiled past the margin, so the tick does not save) loses
+ * those passes from the weights; they are given back and distill again on the
+ * restored best. A save settles them (a refund after it gives nothing back).
+ * Falsifier -DDLB_NO_REFUND. */
+static void dlb_refund_check(void)
+{
+    static const uint8_t q[] = "5+2="; static const uint8_t a[] = "7";
+    dlb_compound_reset();
+    student_consol_abort();                    /* no rest, a fresh batch */
+    int enq = dlb_compound_enqueue(q, 4, a, 1, 1);
+    spoil(&g_student, 11u, 0.4f);
+    unsigned d0 = g_dlb_distilled, rb = g_dmn_restores, w0 = g_writes;
+    tick();
+    int done1 = dlb_compound_rounds_done(), p1 = dlb_compound_pending(1);
+    printf("[restore] dlb winner, spoiled tick: enqueue %d, distilled %u -> %u, read-backs %u -> %u,"
+           " writes %u -> %u, rounds done %d, pending %d\n", enq, d0, g_dlb_distilled, rb, g_dmn_restores,
+           w0, g_writes, done1, p1);
+    CHECK(enq && g_dlb_distilled > d0 && g_dmn_restores == rb + 1 && g_writes == w0,
+          "[restore-dlb] setup: the tick distilled the winner, did not save, read the best back");
+    CHECK(done1 == 0 && p1 == 1, "[restore-dlb] the read-back gives the winner its passes back");
+    unsigned d1 = g_dlb_distilled, w1 = g_writes;
+    tick();
+    int done2 = dlb_compound_rounds_done();
+    printf("[restore] next tick: distilled %u -> %u, writes %u -> %u, rounds done %d\n",
+           d1, g_dlb_distilled, w1, g_writes, done2);
+    CHECK(g_dlb_distilled > d1 && done2 > 0, "[restore-dlb] the next tick distills it again on the restored best");
+    dlb_compound_refund();
+    printf("[restore] refund after that tick (saved %d): rounds done %d -> %d\n", g_writes > w1, done2,
+           dlb_compound_rounds_done());
+    CHECK(g_writes > w1 && dlb_compound_rounds_done() == done2,
+          "[restore-dlb] a save settles the passes: a refund after it gives nothing back");
+    dlb_compound_reset();
+}
+#endif
+
 int main(int argc, char **argv)
 {
     int only_back = argc > 1 && !strcmp(argv[1], "back");   /* the falsifier's run: 1-2 only */
@@ -123,6 +163,16 @@ int main(int argc, char **argv)
     if (student_ensure(0) != 0) { printf("[restore] student_ensure OOM\n"); return 2; }
     size_t nb = (size_t)g_student.n_params * sizeof(float);
 
+#ifdef HAVE_READ_BACK
+    /* "dlb": two saving ticks, then [restore-dlb] only (the falsifier's run) */
+    if (argc > 1 && !strcmp(argv[1], "dlb")) {
+        tick(); tick();
+        dlb_refund_check();
+        st_free(&tmp); free(g_file);
+        printf("[result] %s (%d pass, %d fail)\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
+#endif
     /* "drift T": a reading, not a check - T ordinary ticks on the product's
      * default, live and the saved loss after each (audit-130's off.log form,
      * with a durable file that can be read back) */
@@ -251,6 +301,7 @@ int main(int argc, char **argv)
                ln, got, src ? rl : 0, ta, g_student.adam_t, g_dmn_rest);
         CHECK(got > 0 && src && g_student.adam_t > ta && !g_dmn_rest,
               "[restore-rest] a changed corpus (a lesson) ends the rest");
+        dlb_refund_check();
     }
 #endif
     if (only_back) goto out;   /* the falsifiers stop here */

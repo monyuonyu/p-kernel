@@ -193,4 +193,16 @@ int  dlb_compound_distill(st_model *m, int rounds, float lr, int require_verifie
  * DMN task only (Wave-D2 wires it after each dlb_compound_distill). */
 void dlb_compound_gc(void);
 
+/* B4 (read-back keeps the winners' passes, research/b4-step3-result.md, the
+ * last section): the DMN may read its saved best back over live; passes
+ * distilled since the last DMN save are then gone from the weights.
+ * dlb_compound_saved(): a DMN save landed, the passes so far are kept.
+ * dlb_compound_refund(): live was replaced by the saved best, the passes since
+ * the last save are given back (they distill again). Pure ring bookkeeping.
+ * dlb_compound_rounds_done(): sum of rounds_done over the verified traces
+ * (for the cert). */
+void dlb_compound_saved(void);
+void dlb_compound_refund(void);
+int  dlb_compound_rounds_done(void);
+
 #endif /* PKERNEL_LLM_DLB_H */
