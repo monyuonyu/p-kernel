@@ -79,6 +79,7 @@ static ssize_t win_pwrite(int fd, const void *buf, size_t n, long long off)
 
 static int      ark_fd    = -1;
 static int      ark_state = -1;      /* -1 unknown, 0 inactive, 1 mounted/ready */
+static void   (*ark_emit)(const char *);   /* the restore's emit, for the put path */
 static int      ark_cfg   = -1;      /* -1 unknown, 0 no, 1 backend == "ark" */
 static U4       ark_total = 0;
 static ARK_BDEV ark_bd;
@@ -212,6 +213,7 @@ INT pfs_ark_mount_or_reformat(ARK_BDEV *bd, int *reformatted,
 int pfs_ark_restore(void (*emit)(const char *))
 {
     if (!pfs_ark_configured()) return 0;
+    ark_emit = emit;
 
     const char *path = getenv("PKERNEL_ARK_IMG");
     if (!path || !path[0]) {
@@ -305,17 +307,56 @@ void pfs_ark_force_fail(int on) { ark_force_fail_once = on ? 1 : 0; }
 
 /* Persist a NEW p-fs block into the ARK log: append + durable checkpoint.
  * ark_block_put dedups against the on-disk index for free. Returns 0 / -1. */
+/* ark-entry.md 2.3: the product path that calls ark_compact. Every put appends
+ * a checkpoint commit and nothing else reclaims old commits, so a small image
+ * went write-dead with most of it holding superseded commits (64 sectors: 10
+ * blocks). On ARK_E_FULL compact once (crash-safe: old or new log, never half;
+ * every indexed block is kept) and retry. A live set that does not fit still
+ * fails (-1), and pfs_block.c pins the RAM copy as before. */
+static unsigned ark_compactions;
+
+static int ark_compact_on_full(void)
+{
+#if defined(PFS_ARK_NO_AUTOCOMPACT)
+    return 0;                                  /* negative control */
+#else
+    INT c = ark_compact();
+    if (c != ARK_OK) {
+        if (ark_emit) ark_emit("[pfs] durable(ark): log full, compaction did not help\r\n");
+        return 0;
+    }
+    ark_compactions++;
+    if (ark_emit) {
+        char msg[96];
+        snprintf(msg, sizeof msg, "[pfs] durable(ark): log full, compacted (%u)\r\n",
+                 ark_compactions);
+        ark_emit(msg);
+    }
+    return 1;
+#endif
+}
+
 int pfs_ark_put(const void *data, unsigned len)
 {
     if (ark_state != 1) return -1;
     if (ark_force_fail_once) { ark_force_fail_once = 0; return -1; }
     U1 id[ARK_ID_LEN];
-    if (ark_block_put(data, (U4)len, id) != ARK_OK) return -1;
+    INT r = ark_block_put(data, (U4)len, id);
+    if (r == ARK_E_FULL && ark_compact_on_full())
+        r = ark_block_put(data, (U4)len, id);
+    if (r != ARK_OK) return -1;
     /* Promote the appended block into the permanent index with a durable,
      * fsync'd commit so it survives a remount even though no file references
      * it yet. A torn checkpoint fails crc on replay and rolls the block back
      * (crash-safety preserved through the p-fs path). */
-    if (ark_checkpoint() != ARK_OK) return -1;
+    r = ark_checkpoint();
+    if (r == ARK_E_FULL && ark_compact_on_full()) {
+        /* the block was appended but not committed; put it again (a no-op
+         * if the compaction kept it) and commit on the compacted log */
+        if (ark_block_put(data, (U4)len, id) != ARK_OK) return -1;
+        r = ark_checkpoint();
+    }
+    if (r != ARK_OK) return -1;
     return 0;
 }
 
