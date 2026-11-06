@@ -123,7 +123,16 @@ int main(void)
     g_logits = (float *)malloc((size_t)SEQLEN * ST_VOCAB * sizeof(float));
     if (!g_logits) { printf("OOM\n"); return 2; }
 
+    /* research/brain-merge-e3.md 4 (E1 and NC1 green): the parents learn at the
+     * product's ST_LR (Adam eps as shipped). The old hard-coded 0.02 is the
+     * falsifier -DSS3_BLOB_OLD_LR of run_ss3_blob.sh: there the plain mean is
+     * worse than the worse parent ([ss3-blob-merge] convergence red). */
+#ifdef SS3_BLOB_OLD_LR
     const int ROUNDS = 40; const float LR = 0.02f;
+#else
+    const int ROUNDS = 40; const float LR = ST_LR;
+#endif
+    printf("[ss3-blob] lr %g\n", (double)LR);
 
     /* model A (seed C0FFEE, order 1) — the published blob. */
     st_model A; train_s(&A, 0xC0FFEE, 1, ROUNDS, LR);
