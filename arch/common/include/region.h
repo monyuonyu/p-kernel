@@ -57,6 +57,16 @@ BOOL region_is_member(pk_node_t node);
 /* 自 region のメンバ数 (自分を含む)。 */
 UB   region_size(void);
 
+/* N2 (iii)(i): self plus the members with an id < DNODE_MAX, i.e. the ones a
+ * loop over the narrow tables (protect, ss6, the mind's merge, degrade) can
+ * reach. region_size also counts the wide members (N2b step (b)); world.c's
+ * beacon keeps that. On bare metal there are no wide ids: the same call. */
+#ifdef _TK_HOSTED_LIBC_
+UB   region_size_narrow(void);
+#else
+#define region_size_narrow() region_size()
+#endif
+
 /* shell `region` 表示。 */
 void region_print(void);
 

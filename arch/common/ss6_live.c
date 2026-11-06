@@ -257,7 +257,7 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
 /* ------------------------------------------------------------------ */
 /* Fail-closed predicate. Mirrors the documented production rule:
  *   j >= K_min AND !st_expert_is_local(expert_id) AND degrade==FULL
- *   AND region_size() >= 2 AND PKERNEL_REMOTE_EXPERTS=1.
+ *   AND region_size_narrow() >= 2 (N2: narrow-reachable members) AND PKERNEL_REMOTE_EXPERTS=1.
  * The local K_min experts ALWAYS stay local; only the WIDENED experts a PEER
  * owns are eligible. Off by default -> single-node byte-unchanged. */
 static int ss6_live_gate(int layer, int j, int kmin, int expert_id, void *ctx)
@@ -266,7 +266,7 @@ static int ss6_live_gate(int layer, int j, int kmin, int expert_id, void *ctx)
     if (!sl_enabled) return 0;
     if (j < kmin) return 0;                       /* never the floor experts */
     if (degrade_level() != DEGRADE_FULL) return 0;
-    if (region_size() < 2) return 0;
+    if (region_size_narrow() < 2) return 0;
     if (st_expert_is_local((UB)expert_id)) return 0;   /* I own it -> local  */
     return 1;
 }

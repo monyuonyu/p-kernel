@@ -1465,6 +1465,11 @@ jobs:
           make -s -C relay
           (printf 'nodes wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_wide.log || true
           grep -aF '[swim-wide] PASS' nodes_wide.log
+          # region test: the selectors and the narrow-reachable count (N2 (iii)(i))
+          (printf 'region test\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee region_test.log || true
+          grep -aF '[region-super] 8 PASS, 0 FAIL' region_test.log
+          grep -aF '[region-teacher] 6 PASS, 0 FAIL' region_test.log
+          grep -aF '[region-narrow] 6 PASS, 0 FAIL' region_test.log
           git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
           git worktree add -q /tmp/n2old FETCH_HEAD
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
@@ -1475,7 +1480,7 @@ jobs:
           N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1491,6 +1496,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_REGION_NARROW >/dev/null
           N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc3.log || true
           grep -aF '[n2-mix] XG FAIL: a wide peer' n2_mix_nc3.log
+          # [region-narrow] goes red when the narrow count also counts wide members (-DN2_NC_NARROW_SIZE_WIDE)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_NARROW_SIZE_WIDE >/dev/null
+          (printf 'region test\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee region_test_nc.log || true
+          grep -aF '[region-narrow] 2 PASS, 4 FAIL' region_test_nc.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 

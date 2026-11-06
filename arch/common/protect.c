@@ -146,13 +146,13 @@ static PROTECT_OBJ *find_obj(const U1 id[PFS_ID_LEN])
 }
 
 /* region-aware cap: R can never exceed the neighbours we could reach. With
- * region_size() peers (incl. self) the most durable replicas possible is
+ * region_size_narrow() peers (incl. self; N2: only ids the narrow tables reach) the most durable replicas possible is
  * region_size-1; never below 1 (a lone node genuinely cannot protect by
  * replication — that is honest, not a bug). */
 static INT cap_target_r(INT want)
 {
     if (want <= 0) want = PROTECT_DEFAULT_R;
-    UB rs = region_size();                 /* incl. self; >=1 */
+    UB rs = region_size_narrow();                 /* incl. self; >=1 */
     INT max_peers = (rs > 1) ? (INT)rs - 1 : 1;
     if (want > max_peers) want = max_peers;
     if (want < 1) want = 1;
