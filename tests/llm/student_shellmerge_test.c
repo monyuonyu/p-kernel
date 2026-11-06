@@ -88,7 +88,7 @@ int main(int argc, char **argv)
     const char *p = strstr(g_said, "held-out loss ");
     float a = 0.0f, b = 0.0f;
     int got = p && sscanf(p, "held-out loss %f -> %f", &a, &b) == 2;
-    printf("    the merge: %s", p ? p : "(no line)\n");
+    printf("    the merge said: %s", g_said[0] ? g_said : "(nothing)\n");
     CHECK(rc == 0 && got, "[smerge-ran] the verb ran and said its held-out loss");
     CHECK(got && b <= a, "[smerge-held] the merge does not raise the live student's held-out loss");
     CHECK(finite_w(&g_student), "[smerge-finite] the live weights are finite");
