@@ -262,6 +262,16 @@ static UB cap_byte(pk_node_t node)
               | (region_is_teacher_capable(node) ? 1 : 0) << 1);
 }
 
+#if defined(_TK_HOSTED_LIBC_)
+/* N2 (ii)(a): capability bit 2 = "reads v2" (research/n2-wire16.md 2.2), per
+ * narrow peer as that peer last said about itself. Wide peers read v2 by
+ * construction (they exist only in v2). Hosted-only: bare neither sends nor
+ * reads bit 2, so its .text does not move. */
+static UB v2cap_tab[DNODE_MAX];
+static void v2cap_set(pk_node_t n, UB yes) { if (n < DNODE_MAX) v2cap_tab[n] = yes ? 1 : 0; }
+static UB   v2cap_get(pk_node_t n)         { return (n < DNODE_MAX) ? v2cap_tab[n] : 0; }
+#endif
+
 static void gossip_add(pk_node_t node_id, UB state, UB incarnation, UB capability)
 {
     PK_NOSW_ENTER();      /* pk_nosw.h: swim_task and swim_rx both add */
@@ -986,6 +996,13 @@ static pk_node_t swim_wide_me;      /* 0 = this node is not wide            */
 static INT       swim_wide_cursor;
 static INT       swim_wide_pcur;    /* whom the next v2 PING goes to         */
 static UH        swim_wide_seq;     /* v2 PING numbers, never 0 (0 = beacon) */
+
+/* N2 (ii)(a): may a one-node v2 frame go to `id`? (not yet wired: test first) */
+BOOL swim_peer_reads_v2(pk_node_t id)
+{
+    if (id < DNODE_MAX) return v2cap_get(id) ? TRUE : FALSE;
+    return FALSE;
+}
 
 /* Slot of a wide id, taken if new (a dead entry gives way when full), or -1. */
 static INT wide_add(pk_node_t id)
@@ -2242,6 +2259,101 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[selfelect] PASS (node self-recognizes its own teacher role: region_teacher()==self)\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* N2 (ii)(a) `nodes v2cap`: capability bit 2 = "this node reads v2"    */
+/* (research/n2-wire16.md 2.2). Drives the REAL gossip_apply / cap_byte */
+/* with crafted SWIM_PKTs, as the teacher cert does for bit 1:          */
+/*   [v2cap-self]     a hosted node's own byte carries bit 2            */
+/*   [v2cap-converge] a fresh self-rumor with bit 2 -> reads v2         */
+/*   [v2cap-absent]   a rumor with bits 0,1 only (an old node) -> not,  */
+/*                    while bits 0 and 1 still land (the byte is read)  */
+/*   [v2cap-noleak]   bit 2 alone sets neither supernode nor teacher    */
+/*   [v2cap-stale]    a stale rumor without bit 2 does not clear it     */
+/*   [v2cap-relay]    the re-propagated entry keeps bit 2               */
+/*   [v2cap-wide]     a wide id heard over v2 reads v2; unknown does not */
+/* Falsifiers: -DN2_NC_NOBIT2 (no bit 2 sent), -DN2_NC_V2IGNORE (bit 2  */
+/* not read). Hosted-only: bare builds neither send nor read bit 2.     */
+/* ------------------------------------------------------------------ */
+INT swim_v2cap_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+    pk_node_t saved_my = drpc_my_node;
+    UB  saved_inc      = my_incarnation;
+    INT saved_gq_cnt   = gq_cnt;
+    const UB SELF = 0, X = 9, W = 10, V = 12;
+    const UB ids[3] = { X, W, V };
+    UB sst[3], sinc[3], ssup[3], stch[3], sv2[3];
+    for (INT k = 0; k < 3; k++) {
+        sst[k] = dnode_table[ids[k]].state; sinc[k] = dnode_incarn[ids[k]];
+        ssup[k] = region_is_super_capable(ids[k]) ? 1 : 0;
+        stch[k] = region_is_teacher_capable(ids[k]) ? 1 : 0;
+        sv2[k]  = v2cap_get(ids[k]);
+    }
+
+    drpc_my_node = SELF; my_incarnation = 0; gq_cnt = 0;
+    for (INT k = 0; k < 3; k++) {
+        dnode_table[ids[k]].state = DNODE_UNKNOWN; dnode_incarn[ids[k]] = 0;
+        region_set_super_capable(ids[k], FALSE);
+        region_set_teacher_capable(ids[k], FALSE);
+        v2cap_set(ids[k], 0);
+    }
+#define V2C_FAIL(m) do { say("[v2cap] FAIL " m "\r\n"); fails++; } while (0)
+#define V2C_RUMOR(id, inc, cap) do { SWIM_PKT p = { 0 }; p.gossip_cnt = 1;         \
+        p.gossip[0].node_id = (id); p.gossip[0].state = DNODE_ALIVE;               \
+        p.gossip[0].incarnation = (inc); p.gossip[0].capability = (UB)(cap);       \
+        gossip_apply(&p); } while (0)
+
+    if ((cap_self_byte() & (UB)(1u << 2)) == 0) V2C_FAIL("self: own capability byte lacks bit 2");
+
+    V2C_RUMOR(X, 1, 1u << 2);
+    if (!swim_peer_reads_v2(X)) V2C_FAIL("converge: fresh self-rumor with bit 2, X does not read v2");
+    if (region_is_super_capable(X) || region_is_teacher_capable(X))
+        V2C_FAIL("noleak: bit 2 alone set the supernode or teacher bit");
+
+    V2C_RUMOR(W, 1, (1u << 0) | (1u << 1));
+    if (swim_peer_reads_v2(W)) V2C_FAIL("absent: a rumor without bit 2 made W read v2");
+    if (!region_is_super_capable(W) || !region_is_teacher_capable(W))
+        V2C_FAIL("absent: bits 0 and 1 of W's rumor did not land (byte not read)");
+
+    V2C_RUMOR(X, 0, 0);   /* stale: lower incarnation, no bit 2 */
+    if (!swim_peer_reads_v2(X)) V2C_FAIL("stale: a stale rumor without bit 2 cleared X");
+
+    {
+        INT q = gq_find_cap(X, DNODE_ALIVE);
+        if (q < 0 || ((UB)q & (UB)(1u << 2)) == 0) V2C_FAIL("relay: the queued entry for X lost bit 2");
+    }
+    V2C_RUMOR(V, 1, 0);   /* plain new peer, nothing: must not read v2 */
+    if (swim_peer_reads_v2(V)) V2C_FAIL("absent: a zero byte made V read v2");
+
+    {
+        const pk_node_t WID = 777, UNK = 778;
+        swim_wide_heard(WID, pk_node_ip(WID), TRUE, swim_wide_now());
+        if (!swim_peer_reads_v2(WID)) V2C_FAIL("wide: a wide id heard over v2 does not read v2");
+        if (swim_peer_reads_v2(UNK))  V2C_FAIL("wide: an unknown wide id reads v2");
+        INT s = nodemap_find(&wide_map, WID);
+        if (s != NODEMAP_NOSLOT) {
+            PK_NOSW_ENTER();
+            nodemap_evict(&wide_map, s);
+            wide_st[s].state = DNODE_UNKNOWN; wide_st[s].rtt_ok = 0; wide_st[s].ping_seq = 0;
+            PK_NOSW_LEAVE();
+        }
+    }
+#undef V2C_RUMOR
+#undef V2C_FAIL
+
+    for (INT k = 0; k < 3; k++) {
+        dnode_table[ids[k]].state = sst[k]; dnode_incarn[ids[k]] = sinc[k];
+        region_set_super_capable(ids[k], ssup[k] ? TRUE : FALSE);
+        region_set_teacher_capable(ids[k], stch[k] ? TRUE : FALSE);
+        v2cap_set(ids[k], sv2[k]);
+    }
+    drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq_cnt;
+    if (fails == 0) say("[v2cap] PASS (bit 2 sent, read under the LWW gate, relayed; wide ids read v2)\r\n");
+    else            say("[v2cap] RED\r\n");
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
