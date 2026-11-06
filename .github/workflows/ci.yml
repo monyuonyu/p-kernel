@@ -1483,7 +1483,7 @@ jobs:
           N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1509,6 +1509,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_V2IGNORE >/dev/null
           (printf 'nodes v2cap\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_v2cap_nc.log || true
           grep -aF '[v2cap] FAIL converge' nodes_v2cap_nc.log
+          # [v2cap] goes red when bit 2 is not taken from the peer itself after an old relay (-DN2_NC_V2DIRECT_NO)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_V2DIRECT_NO >/dev/null
+          (printf 'nodes v2cap\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_v2cap_nc2.log || true
+          grep -aF '[v2cap] FAIL oldrelay' nodes_v2cap_nc2.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 

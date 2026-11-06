@@ -37,7 +37,7 @@
 
 11-06（feat/n2b-region、段 (b)）: region_recompute は SWIM が ALIVE とする広い仲間のうち、v2 の往復が τ 以内のものを行でメンバにし、region_size に数える（[n2-mix] XG、陰性 `-DN2_NC_REGION_NARROW`）。限界: 狭い番号だけを回す呼び手（protect・dkva・lookup・kdds・moe・r3 の合体）は広いメンバを飛ばすのに、region_size は数える。
 
-11-07（feat/n2-v2cap、1 台宛ての v2 の段 (a)）: hosted は SWIM の capability の bit 2＝「v2 が読める」を自分のうわさに立てる。狭い仲間の bit 2 は本人のうわさから bit 0・1 と同じ LWW の門で取り、cap_byte が中継でも運ぶ。`swim_peer_reads_v2(id)`＝狭い仲間はその表、広い仲間は SWIM が知っていて死んでいなければ真（v2 にしかいない）。旧版は bit 0・1 しか読まない＝bit 2 は旧版に何もしない（X5 の違いはこのバイトだけ）。試験 `nodes v2cap`、陰性 -DN2_NC_NOBIT2・V2IGNORE・V2WIDE_NO。限界: 旧版が中継したうわさは bit 2 を落とす（本人から直に聞くまで読めない扱い＝安全側）。次は段 (b): PMESH の DATA の v2（頭 14）を、src か dst が広いときだけ、読める相手へだけ送る。
+11-07（feat/n2-v2cap、1 台宛ての v2 の段 (a)）: hosted は SWIM の capability の bit 2＝「v2 が読める」を自分のうわさに立てる。狭い仲間の bit 2 は本人のうわさから bit 0・1 と同じ LWW の門で取り、cap_byte が中継でも運ぶ。`swim_peer_reads_v2(id)`＝狭い仲間はその表、広い仲間は SWIM が知っていて死んでいなければ真（v2 にしかいない）。旧版は bit 0・1 しか読まない＝bit 2 は旧版に何もしない（X5 の違いはこのバイトだけ）。試験 `nodes v2cap`、陰性 -DN2_NC_NOBIT2・V2IGNORE・V2WIDE_NO。旧版が中継したうわさは bit 2 を落とし、本人の同じ incarnation のうわさは LWW で負ける（incarnation は反論でしか上がらない）＝監査-147 で、bit 2 だけは本人（src＝その番号）の同じ incarnation の言葉から取る形に（毎周のビーコンで届く、陰性 V2DIRECT_NO）。次は段 (b): PMESH の DATA の v2（頭 14）を、src か dst が広いときだけ、読める相手へだけ送る。
 
 **まだ**: ほかの部品は広い番号を知らない（region のメンバにはなるが、呼び手は狭い番号だけを回す）。広いノードの v1 の欄は「ノードでない」＝[n2-mix] の X3（`N2_X3=1`、狭いノードと 260・300 の間の教え）は赤。広い仲間の生死は自分のビーコンだけ（PING なし）、広いノードは狭い仲間を死なせない。bit 2 は立てて読む（段 (a)）が、1 台宛ての v2 はまだ無い。snf・ss6 の宛先の IP は狭い番号の形のまま。net_relay_tcp.c は v3 を読まない＝広い番号は TCP で拒む。旧い中継の下で広いノードは入れず、ほかを乱さない（[n2-mix] N2_RELAY_OLD）。LAN は範囲外の番号を今も 1 にする＝広い番号はぶつかる
 
