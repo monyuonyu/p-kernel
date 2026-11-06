@@ -209,7 +209,13 @@ static UB teacher_self(void)
  * teacher=0 → safe degrade. */
 static UB cap_self_byte(void)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_NOBIT2)
+    /* N2 (ii)(a): bit 2 = this node reads v2 (every hosted build since N2b).
+     * Old nodes read bits 0 and 1 only, so the extra bit changes nothing there. */
+    return (UB)((cap_self() << 0) | (teacher_self() << 1) | (1u << 2));
+#else
     return (UB)((cap_self() << 0) | (teacher_self() << 1));
+#endif
 }
 
 /* wave-selfelect: SELF-RECOGNITION of own capability.
@@ -256,12 +262,6 @@ static UB cap_self_byte(void)
  * verbatim from that peer's own gossip under the LWW gate. Keeps bit 0
  * byte-identical to the prior region_is_super_capable(target)?1:0 relay while
  * carrying bit 1 forward so the teacher axis spreads epidemically too. */
-static UB cap_byte(pk_node_t node)
-{
-    return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
-              | (region_is_teacher_capable(node) ? 1 : 0) << 1);
-}
-
 #if defined(_TK_HOSTED_LIBC_)
 /* N2 (ii)(a): capability bit 2 = "reads v2" (research/n2-wire16.md 2.2), per
  * narrow peer as that peer last said about itself. Wide peers read v2 by
@@ -270,7 +270,27 @@ static UB cap_byte(pk_node_t node)
 static UB v2cap_tab[DNODE_MAX];
 static void v2cap_set(pk_node_t n, UB yes) { if (n < DNODE_MAX) v2cap_tab[n] = yes ? 1 : 0; }
 static UB   v2cap_get(pk_node_t n)         { return (n < DNODE_MAX) ? v2cap_tab[n] : 0; }
+/* adopt bit 2 from a peer's own rumor (the same LWW gate as bits 0 and 1) */
+#if defined(N2_NC_V2IGNORE)
+#define V2CAP_ADOPT(nid, capbyte) do { (void)(capbyte); } while (0)
+#else
+#define V2CAP_ADOPT(nid, capbyte) v2cap_set((nid), (UB)(((capbyte) >> 2) & 1))
 #endif
+#else
+#define V2CAP_ADOPT(nid, capbyte) do { } while (0)
+#endif
+
+static UB cap_byte(pk_node_t node)
+{
+#if defined(_TK_HOSTED_LIBC_)
+    return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
+              | (region_is_teacher_capable(node) ? 1 : 0) << 1
+              | (v2cap_get(node) ? 1 : 0) << 2);   /* N2 (ii)(a): relay bit 2 too */
+#else
+    return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
+              | (region_is_teacher_capable(node) ? 1 : 0) << 1);
+#endif
+}
 
 static void gossip_add(pk_node_t node_id, UB state, UB incarnation, UB capability)
 {
@@ -459,6 +479,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
              * (epidemic relay; we do not originate them). */
             region_set_super_capable(nid, cap_in ? TRUE : FALSE);
             region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
+            V2CAP_ADOPT(nid, pkt->gossip[i].capability);   /* N2 (ii)(a): bit 2 */
             sw_note(nid, DNODE_UNKNOWN, st);
             sw_puts("[swim] gossip: node "); sw_putdec(nid);
             sw_puts(st == DNODE_ALIVE ? " discovered (via gossip)\r\n"
@@ -482,6 +503,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
          * flip carried by a fresh incarnation lands even when state is same. */
         region_set_super_capable(nid, cap_in ? TRUE : FALSE);
         region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
+        V2CAP_ADOPT(nid, pkt->gossip[i].capability);       /* N2 (ii)(a): bit 2 */
 
         if (dnode_table[nid].state == st) {
             /* incarnation bumped, state same: still relay the fresh entry so
@@ -997,11 +1019,14 @@ static INT       swim_wide_cursor;
 static INT       swim_wide_pcur;    /* whom the next v2 PING goes to         */
 static UH        swim_wide_seq;     /* v2 PING numbers, never 0 (0 = beacon) */
 
-/* N2 (ii)(a): may a one-node v2 frame go to `id`? (not yet wired: test first) */
+/* N2 (ii)(a): may a one-node v2 frame go to `id`? */
 BOOL swim_peer_reads_v2(pk_node_t id)
 {
     if (id < DNODE_MAX) return v2cap_get(id) ? TRUE : FALSE;
-    return FALSE;
+    /* a wide peer exists only in v2: known and not dead is enough */
+    INT s = nodemap_find(&wide_map, id);
+    return (s != NODEMAP_NOSLOT && wide_st[s].state != DNODE_DEAD
+            && wide_st[s].state != DNODE_UNKNOWN) ? TRUE : FALSE;
 }
 
 /* Slot of a wide id, taken if new (a dead entry gives way when full), or -1. */
