@@ -2312,10 +2312,14 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     pk_node_t saved_my = drpc_my_node;
     UB  saved_inc      = my_incarnation;
     INT saved_gq_cnt   = gq_cnt;
-    const UB SELF = 0, X = 9, W = 10, V = 12;
-    const UB ids[3] = { X, W, V };
-    UB sst[3], sinc[3], ssup[3], stch[3], sv2[3];
-    for (INT k = 0; k < 3; k++) {
+    const UB SELF = 0, X = 9, W = 10, V = 12, Y = 13, OLD = 11;
+    const UB ids[4] = { X, W, V, Y };
+    UB sst[4], sinc[4], ssup[4], stch[4], sv2[4];
+    /* audit-147: the queue entries the rumors below enqueue would otherwise be
+     * left in gq[] of a live node (gq_cnt alone was put back) and gossiped */
+    static GOSSIP_QUEUED saved_gq[GOSSIP_Q_MAX];
+    for (INT i = 0; i < GOSSIP_Q_MAX; i++) saved_gq[i] = gq[i];
+    for (INT k = 0; k < 4; k++) {
         sst[k] = dnode_table[ids[k]].state; sinc[k] = dnode_incarn[ids[k]];
         ssup[k] = region_is_super_capable(ids[k]) ? 1 : 0;
         stch[k] = region_is_teacher_capable(ids[k]) ? 1 : 0;
@@ -2323,7 +2327,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     }
 
     drpc_my_node = SELF; my_incarnation = 0; gq_cnt = 0;
-    for (INT k = 0; k < 3; k++) {
+    for (INT k = 0; k < 4; k++) {
         dnode_table[ids[k]].state = DNODE_UNKNOWN; dnode_incarn[ids[k]] = 0;
         region_set_super_capable(ids[k], FALSE);
         region_set_teacher_capable(ids[k], FALSE);
@@ -2357,6 +2361,28 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     V2C_RUMOR(V, 1, 0);   /* plain new peer, nothing: must not read v2 */
     if (swim_peer_reads_v2(V)) V2C_FAIL("absent: a zero byte made V read v2");
 
+    {   /* [v2cap-oldrelay] (audit-147): an OLD node relays Y's rumor first and
+         * drops bit 2 (old cap_byte has bits 0 and 1 only). Y's own word at the
+         * same incarnation loses the LWW gate, and incarnations rise only on a
+         * refutation, so without a direct path Y would read "not v2" for good. */
+        SWIM_PKT p = { 0 }; p.src_node = OLD; p.gossip_cnt = 1;
+        p.gossip[0].node_id = Y; p.gossip[0].state = DNODE_ALIVE;
+        p.gossip[0].incarnation = 0; p.gossip[0].capability = 0;
+        gossip_apply(&p);
+        if (swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: an old relay without bit 2 made Y read v2");
+        p.src_node = Y; p.gossip[0].capability = (UB)(1u << 2);
+        gossip_apply(&p);
+        if (!swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: Y's own same-incarnation word with bit 2 did not land");
+        p.src_node = OLD;                 /* a third party may not set it */
+        p.gossip[0].node_id = V; p.gossip[0].incarnation = 1;   /* V is ALIVE at 1 */
+        gossip_apply(&p);
+        if (swim_peer_reads_v2(V)) V2C_FAIL("oldrelay: a third party's same-incarnation bit 2 made V read v2");
+        p.src_node = Y; p.gossip[0].node_id = Y; p.gossip[0].incarnation = 0;
+        p.gossip[0].capability = 0;
+        gossip_apply(&p);                 /* Y itself now says no (restarted old) */
+        if (swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: Y's own same-incarnation word without bit 2 did not clear it");
+    }
+
     {   /* on a fresh wide table, saved and put back as swim_wide_self_test does
          * (run alone, before swim_init, the table has no room at all) */
         static SWIM_WIDE saved[DREGION_MAX];
@@ -2384,12 +2410,13 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
 #undef V2C_RUMOR
 #undef V2C_FAIL
 
-    for (INT k = 0; k < 3; k++) {
+    for (INT k = 0; k < 4; k++) {
         dnode_table[ids[k]].state = sst[k]; dnode_incarn[ids[k]] = sinc[k];
         region_set_super_capable(ids[k], ssup[k] ? TRUE : FALSE);
         region_set_teacher_capable(ids[k], stch[k] ? TRUE : FALSE);
         v2cap_set(ids[k], sv2[k]);
     }
+    for (INT i = 0; i < GOSSIP_Q_MAX; i++) gq[i] = saved_gq[i];
     drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq_cnt;
     if (fails == 0) say("[v2cap] PASS (bit 2 sent, read under the LWW gate, relayed; wide ids read v2)\r\n");
     else            say("[v2cap] RED\r\n");
