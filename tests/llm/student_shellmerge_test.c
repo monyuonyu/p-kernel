@@ -6,9 +6,11 @@
  *  mean - worse +1.17..+1.55 at ST_LR on the probe's seen seeds).
  *
  *  Links the REAL student_shell.c (#include, like student_nan_test.c), trains
- *  the resident student with the production DMN batches on the fixture, then
+ *  the resident with the shell's own sleep loop at ST_LR on the fixture's
+ *  train windows (6 production DMN batches left it untrained here), then
  *  runs `student merge` and reads its own line.
  *
+ *   [smerge-pre]   the resident has learned (held-out down by more than 0.5)
  *   [smerge-ran]   the verb ran and said "held-out loss a -> b"
  *   [smerge-held]  b <= a: the held-out loss of the live student does not rise
  *   [smerge-finite] the live weights are finite after the merge
@@ -67,16 +69,26 @@ static int finite_w(const st_model *m)
 
 int main(int argc, char **argv)
 {
-    int ticks = argc > 1 ? atoi(argv[1]) : 6;
+    int rounds = argc > 1 ? atoi(argv[1]) : 40;
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (student_ensure(0) != 0) { printf("[result] FAIL (student_ensure)\n"); return 1; }
-    for (int t = 0; t < ticks; t++) tick();
+    /* a trained resident: the shell's own sleep loop at ST_LR on the train
+     * windows (6 DMN batches left the held-out loss at 5.54 = untrained, so a
+     * merge looked like a gain; this test needs a student that has learned) */
+    int sl = 24;
+    st_split sp = st_held_split(cradle_corpus_len(), sl);
+    float h0 = heldout_loss(&g_student, sl, sp.train_end, sp.heldw);
+    sleep_rounds(&g_student, sl, sp.trainw, rounds, ST_LR);
+    float h1 = heldout_loss(&g_student, sl, sp.train_end, sp.heldw);
+    printf("    the resident learned %d rounds: held-out %.4f -> %.4f\n", rounds, (double)h0, (double)h1);
+    CHECK(h1 < h0 - 0.5f, "[smerge-pre] the resident has learned (held-out down by more than 0.5)");
+    (void)tick;
     g_said[0] = 0;
     int rc = student_shell_cmd("merge", said);
     const char *p = strstr(g_said, "held-out loss ");
     float a = 0.0f, b = 0.0f;
     int got = p && sscanf(p, "held-out loss %f -> %f", &a, &b) == 2;
-    printf("    after %d DMN batches: %s", ticks, p ? p : "(no line)\n");
+    printf("    the merge: %s", p ? p : "(no line)\n");
     CHECK(rc == 0 && got, "[smerge-ran] the verb ran and said its held-out loss");
     CHECK(got && b <= a, "[smerge-held] the merge does not raise the live student's held-out loss");
     CHECK(finite_w(&g_student), "[smerge-finite] the live weights are finite");

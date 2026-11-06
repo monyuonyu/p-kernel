@@ -6,7 +6,7 @@
 #   ./run_shellmerge.sh      exit 0 = the plain build passes and the falsifier
 #                            -DST_SHELL_MERGE_PLAIN (the old verb) turns
 #                            [smerge-held] red
-#   SMERGE_TICKS=<n>         DMN batches before the merge (default 6)
+#   SMERGE_ROUNDS=<n>        sleep rounds at ST_LR before the merge (default 40)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +24,7 @@ printf '%s\n' \
   'void frontier_self_test(void (*emit)(const char *)) { (void)emit; }' > "$STUB"
 SRC="$SRC $STUB"
 CFLAGS="-std=c11 -O1 -Wall -Wextra -ffp-contract=off"
-TICKS="${SMERGE_TICKS:-6}"
+TICKS="${SMERGE_ROUNDS:-40}"
 build() { # <out> <flags...>
     local o="$1"; shift
     # shellcheck disable=SC2086
