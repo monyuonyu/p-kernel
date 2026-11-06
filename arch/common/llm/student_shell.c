@@ -1641,6 +1641,67 @@ int student_shell_cmd(const char *args, emit_fn emit)
         st_split sp = st_held_split(cn, sl);
         int tw = sp.trainw, hw = sp.heldw, te = sp.train_end;
 
+#ifndef ST_SHELL_MERGE_PLAIN
+        /* research/brain-merge-e3-log.md: the old verb (below, the falsifier
+         * -DST_SHELL_MERGE_PLAIN of tests/llm/run_shellmerge.sh) built the peer
+         * from ANOTHER init (0x5151; g_student is STUDENT_SEED) and replaced the
+         * live weights with the plain mean, no guard: held-out 3.09 -> 3.29 on
+         * a trained resident. Now the peer is a copy of the resident (a shared
+         * ancestor, the shape where the merge-e3 cert's plain mean held on 7/8
+         * seeds) that learns the train windows at ST_LR in an order shifted by
+         * half, and st_merge_guarded picks, on the held-out windows, the best
+         * of the path points alpha 0..1 and TIES around the ancestor. alpha 0
+         * is the resident itself, so the held-out loss cannot rise. LIMIT: the
+         * pick is made on the same held-out windows the line reports, and the
+         * DMN uses to decide its saves (not an independent test). */
+        st_model peer, anc, scr;
+        if (st_init_tier(&peer, STUDENT_SEED, g_student.tier) != ST_OK) {
+            emit("[baby] merge: peer init OOM\r\n"); return -1;
+        }
+        if (st_init_tier(&anc, STUDENT_SEED, g_student.tier) != ST_OK) {
+            st_free(&peer); emit("[baby] merge: ancestor init OOM\r\n"); return -1;
+        }
+        if (st_init_tier(&scr, STUDENT_SEED, g_student.tier) != ST_OK) {
+            st_free(&peer); st_free(&anc); emit("[baby] merge: scratch init OOM\r\n"); return -1;
+        }
+        memcpy(peer.w, g_student.w, (size_t)g_student.n_params * sizeof(float));
+        memcpy(anc.w,  g_student.w, (size_t)g_student.n_params * sizeof(float));
+        uint8_t *hb = (uint8_t *)malloc((size_t)(hw > 0 ? hw : 1) * (size_t)sl);
+        const uint8_t **val = (const uint8_t **)malloc((size_t)(hw > 0 ? hw : 1) * sizeof(*val));
+        float *lg = (float *)malloc((size_t)sl * ST_VOCAB * sizeof(float));
+        if (!hb || !val || !lg || hw < 1 || tw < 1) {
+            free(hb); free(val); free(lg); st_free(&peer); st_free(&anc); st_free(&scr);
+            emit("[baby] merge: no held-out windows or OOM\r\n"); return -1;
+        }
+        {
+            uint8_t buf[ST_MAXSEQ];
+            for (int r = 0; r < rr; r++)
+                for (int w = 0; w < tw; w++) {
+                    window(buf, ((w + tw / 2) % tw) * sl, sl);
+                    ST_TRAIN_STEP(&peer, buf, sl, lg, ST_LR);
+                }
+        }
+        for (int w = 0; w < hw; w++) {
+            window(hb + (size_t)w * (size_t)sl, te + w * sl, sl);
+            val[w] = hb + (size_t)w * (size_t)sl;
+        }
+        float pre = heldout_loss(&g_student, sl, te, hw);
+        /* st_merge_guarded MUTATES g_student in place: the writer guard below */
+        student_consol_abort();
+        int pick = st_merge_guarded(&g_student, &peer, &anc, &scr, val, hw, sl, NULL);
+        int acc = pick >= 0 ? 1 : pick;
+        float post = heldout_loss(&g_student, sl, te, hw);
+        free(hb); free(val); free(lg); st_free(&peer); st_free(&anc); st_free(&scr);
+        snprintf(line, sizeof line,
+                 "[baby] SS-3 cohort merge: tier=%d accepted_peers=%d pick=%d  "
+                 "held-out loss %.4f -> %.4f nats\r\n",
+                 g_student.tier, acc, pick, (double)pre, (double)post);
+        emit(line);
+        emit("[baby] (guarded: the peer is a copy of this student; averaging "
+             "converges a SHARED objective; divergent-fact recovery is Path-W^2, "
+             "out of scope — wave-41)\r\n");
+        return acc >= 0 ? 0 : -1;
+#else
         st_model peer;
         if (st_init_tier(&peer, 0x5151u, g_student.tier) != ST_OK) {
             emit("[baby] merge: peer init OOM\r\n"); return -1;
@@ -1672,6 +1733,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
         emit("[baby] (averaging converges a SHARED objective; divergent-fact "
              "recovery is Path-W^2, out of scope — wave-41)\r\n");
         return acc >= 0 ? 0 : -1;
+#endif
     }
 
     /* ---- brain self-quantization, stage 1 (research/brain-quantization.md
