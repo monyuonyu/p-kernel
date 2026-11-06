@@ -29,15 +29,14 @@
 #   ./run_ss3_blob.sh
 # Exit 0 = all certs PASS.
 #
-# 2026-09-23: currently FAILS on master — [ss3-blob-merge]'s convergence
-# check ("merged loss <= worse parent") does not hold. Root-caused to RoPE
-# (7d497d7c, SCALE-WALL C1): a transport-free matched-arm probe shows RoPE
-# OFF reproduces the pre-C1 numbers and PASSes, RoPE ON (default) FAILs by a
-# large margin. This is a design fork (does st_merge_cohort need to become
-# basin-aware, or is the convergence guarantee itself no longer the right
-# bar?), not a code bug -- see docs/architecture/BACKLOG.md D5 and
-# pkernel-baton.md's judgment-pending list. Do not wire this into CI red as
-# a "known-failing" gate without a human decision first.
+# 2026-09-23: [ss3-blob-merge]'s convergence check ("merged loss <= worse
+# parent") failed on master (seen with RoPE on, 7d497d7c). 2026-11-07: the
+# merge-e3 cert (research/brain-merge-e3.md, -log.md) found the bad merge
+# comes from Adam eps 1e-8 with the test's hard-coded rate 0.02; at the
+# product's ST_LR the plain mean held on 7/8 judgement seeds. The parents now
+# learn at ST_LR; the old 0.02 is the falsifier -DSS3_BLOB_OLD_LR and must
+# turn ONLY the convergence check red. One seed (C0FFEE) only: this cert is
+# about the transport; whether merging helps is the merge-e3 cert's question.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -115,14 +114,38 @@ echo "[run] SS-3 blob-transport in-process cert (SOLO, ARK-backed) ..."
 "$WORK/blob"
 CERT_RC=$?
 
+# falsifier: the old hard-coded 0.02 must turn the convergence check red, and
+# only it (research/brain-merge-e3.md: the bad merge comes from a large rate).
+$CC $PFLAGS -DSS3_BLOB_OLD_LR -c "$HERE/student_blob_test.c" -o "$WORK/test_old.o" \
+    || { echo "[build] FAILED on test (old lr)"; exit 1; }
+$CC -no-pie -Wl,--gc-sections \
+    "$WORK"/test_old.o "$WORK"/shim.o "$WORK"/student.o \
+    "$WORK"/gossip_learn.o "$WORK"/pfs_block.o "$WORK"/pfs_repl.o "$WORK"/pfs_dag.o \
+    "$WORK"/arkfs.o "$WORK"/pfs_ark.o "$WORK"/pfs_durable.o "$WORK"/sha256.o \
+    -o "$WORK/blob_old" \
+    || { echo "[link] FAILED (old lr)"; exit 1; }
+rm -f "$PKERNEL_ARK_IMG"
 echo ""
-if [ "$CERT_RC" -eq 0 ]; then
+echo "[run] falsifier -DSS3_BLOB_OLD_LR (the old 0.02) ..."
+"$WORK/blob_old" > "$WORK/old.log" 2>&1
+grep -E '^\[ss3-blob\] lr|^  (PASS|FAIL) ' "$WORK/old.log"
+NC_OK=0
+if grep -q '^  FAIL  \[ss3-blob-merge\] merged held-out loss <= the worse parent' "$WORK/old.log" \
+   && [ "$(grep -c '^  FAIL  ' "$WORK/old.log")" = 1 ]; then
+    echo "[falsifier] the old 0.02 turns only the convergence check red (as it must)"
+    NC_OK=1
+else
+    echo "[falsifier] FAIL: the old 0.02 did not turn exactly the convergence check red"
+fi
+
+echo ""
+if [ "$CERT_RC" -eq 0 ] && [ "$NC_OK" = 1 ]; then
     echo "[result] PASS"
     echo "[note] STEP 1 gate. The [live] 3-process relay harness (STEP 3) is a"
     echo "       DEFERRED row — but note its fetcher needs the SAME ARK backend:"
     echo "       a 482-chunk blob does not fit a memory-only 64-slot P0 store."
     exit 0
 else
-    echo "[result] FAIL (cert=$CERT_RC)"
+    echo "[result] FAIL (cert=$CERT_RC falsifier_ok=$NC_OK)"
     exit 1
 fi

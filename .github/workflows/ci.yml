@@ -2936,7 +2936,9 @@ jobs:
     # was ALSO investigated and is a SEPARATE, still-open finding: 11/12
     # checks PASS but [ss3-blob-merge] "merged held-out loss <= the worse
     # parent (convergence)" FAILS, reproducibly (2 independent runs) -- NOT
-    # wired, see BACKLOG D5.
+    # wired, see BACKLOG D5. 2026-11-07: the merge-e3 cert traced that red to
+    # the test's hard-coded rate 0.02 with Adam eps 1e-8; the parents now
+    # learn at ST_LR, 0.02 is the falsifier, and run_ss3_blob.sh is wired.
     name: "出荷済み未接続 cert (SS-4 / DEVFIT-1 / compat / MC-0 / MC-1 / diverse-proof / SS-1 / SS-2 / SS-3)"
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -2973,6 +2975,8 @@ jobs:
         run: bash tests/llm/run_ss2.sh
       - name: SS-3 same-tier merge-cohort convergence/isolation/falsifiability
         run: bash tests/llm/run_ss3.sh
+      - name: SS-3 blob transport + merge at ST_LR ([ss3-blob-*], falsifier -DSS3_BLOB_OLD_LR red on convergence only)
+        run: bash tests/llm/run_ss3_blob.sh
 
   st-quant:
     # Brain self-quantization stage 1 (docs/architecture/30-module/research/
