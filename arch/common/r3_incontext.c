@@ -5945,14 +5945,14 @@ void mind_merge_task(INT stacd, void *exinf)
          * keep overwriting its own announce and never SEE a peer's. Draining
          * faster than the publish cadence catches each peer's announce as it
          * flits through the slot (records {epoch, manifest-id}, WANTs it). */
-        if (region_size() >= 2) {
+        if (region_size_narrow() >= 2) {
             m_gate_acquire(); mw_ann_poll(); m_gate_release();
         }
         since_pulse += MW_ANN_POLL_MS;
         if (since_pulse < MW_PULSE_MS) continue;
         since_pulse = 0;
         if (!m_ready) continue;                       /* no weights to merge  */
-        if (region_size() < 2) continue;             /* region of one        */
+        if (region_size_narrow() < 2) continue;             /* region of one        */
         m_gate_acquire();
         m_quiesce();
         (void)mw_fold_region();

@@ -316,8 +316,15 @@ UB region_size(void)
  * (< DNODE_MAX). `others` = the members other than self. */
 static UB narrow_count_ids(const pk_node_t *others, INT n, pk_node_t me)
 {
+#ifdef N2_NC_NARROW_SIZE_WIDE           /* negative control: count like region_size */
     (void)others; (void)me;
-    return (UB)(1 + n);                 /* stub: counts like region_size */
+    return (UB)(1 + n);
+#else
+    UB c = 1;                           /* self, narrow or wide, as region_size */
+    for (INT i = 0; i < n; i++)
+        if (others[i] != me && others[i] < DNODE_MAX) c++;
+    return c;
+#endif
 }
 
 UB region_size_narrow(void)

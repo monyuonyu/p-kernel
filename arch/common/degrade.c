@@ -189,14 +189,14 @@ UW capacity_experts(void)
 UW capacity_depth(void)
 {
     /* pipeline は region 内 (密) で組む。region 未確立なら自分 1 台。 */
-    UB rs = (drpc_my_node == 0xFF) ? 1 : region_size();
+    UB rs = (drpc_my_node == 0xFF) ? 1 : region_size_narrow();
     return cap_depth_of((UW)rs);
 }
 
 UW capacity_kv(void)
 {
     /* 推論前の見積り: region 内ノードがそれぞれ満杯のキャッシュを持つ想定。 */
-    UB rs = (drpc_my_node == 0xFF) ? 1 : region_size();
+    UB rs = (drpc_my_node == 0xFF) ? 1 : region_size_narrow();
     return cap_kv_of((UW)rs, last_kv_entries);
 }
 
