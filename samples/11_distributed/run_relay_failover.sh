@@ -77,13 +77,13 @@ wait_for() {
 # (cmd_net: nid = mac[5]-1). So node1 shows up as "n0", node2 as "n1",
 # node3 as "n2".
 #
-# Known pre-existing flake (verified identical on master): kdds/pmesh
-# startup occasionally leaves individual DIRECTED routes unestablished
-# (e.g. node1->node2 missing while every other direction works), and the
-# hole persists. That is a pmesh route-formation bug, not a relay
-# property — all kdemo traffic transits the relay either way. So this
-# test records which directed flows DID establish in phase 1 and then
-# asserts that exactly those flows resume after failover and failback.
+# A single DIRECTED flow can stay missing (e.g. node2->node1 while every
+# other direction works). This was long read as a pmesh route-formation
+# flake; 2026-11-07 it was found to be the kdds slot overwrite described at
+# the node start below (two senders in phase, the earlier one lost). The
+# start stagger makes it rare, not impossible, so this test still records
+# which directed flows DID establish in phase 1 and then asserts that
+# exactly those flows resume after failover and failback.
 FLOW_FILE=(/tmp/pkha_node1.log /tmp/pkha_node1.log
            /tmp/pkha_node2.log /tmp/pkha_node2.log
            /tmp/pkha_node3.log /tmp/pkha_node3.log)
