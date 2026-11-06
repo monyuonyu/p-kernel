@@ -171,7 +171,8 @@ int  dlb_compound_enqueue(const uint8_t *query, int qn,
                           const uint8_t *ans, int an, int verified);
 
 /* Count queued traces matching the gate (require_verified=1 counts only
- * verified ones — what production would distill). Pure read. */
+ * verified ones — what production would distill) that still have distill
+ * budget (a spent trace kept for its unsaved passes is not waiting). Pure read. */
 int  dlb_compound_pending(int require_verified);
 
 /* Distill the queued traces into `m` (rounds passes of the SAME zero_grad ->
@@ -189,7 +190,9 @@ int  dlb_compound_distill(st_model *m, int rounds, float lr, int require_verifie
  * (ascending index) is preserved — one-math determinism intact. Unlike
  * dlb_compound_reset() this KEEPS freshly-enqueued not-yet-distilled verified
  * traces (it keys on rounds_done, not the whole ring), so a live feeder can call
- * it every sleep tick without dropping just-arrived work. Intended caller: the
+ * it every sleep tick without dropping just-arrived work. A spent trace with passes
+ * since the last DMN save is kept until dlb_compound_saved (they may come back
+ * through dlb_compound_refund). Intended caller: the
  * DMN task only (Wave-D2 wires it after each dlb_compound_distill). */
 void dlb_compound_gc(void);
 

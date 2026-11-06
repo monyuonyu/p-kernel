@@ -222,6 +222,7 @@ typedef struct {
     int     qn;                     /* split point (answer starts at qn)      */
     int     verified;               /* 1 iff a V-exact checker accepted it     */
     int     rounds_done;            /* distill passes applied so far (budget)  */
+    int     unsaved;                /* of those, passes since the last DMN save */
 } dlb_trace;
 
 static dlb_trace g_ring[DLB_RING_MAX];
@@ -244,6 +245,7 @@ PK_NOSW_FN(int, dlb_compound_enqueue, (const uint8_t *query, int qn,
     for (int i = 0; i < an; i++) t->bytes[n++] = ans[i];
     t->len = n; t->qn = qn; t->verified = verified ? 1 : 0;
     t->rounds_done = 0;             /* fresh trace: full distill budget available */
+    t->unsaved = 0;
     g_ring_n++;
     return 1;
 }
@@ -251,8 +253,9 @@ PK_NOSW_FN(int, dlb_compound_enqueue, (const uint8_t *query, int qn,
 PK_NOSW_FN(int, dlb_compound_pending, (int require_verified), (require_verified))
 {
     int c = 0;
-    for (int i = 0; i < g_ring_n; i++)
-        if (!require_verified || g_ring[i].verified) c++;
+    for (int i = 0; i < g_ring_n; i++)   /* budget left: a spent trace kept for */
+        if ((!require_verified || g_ring[i].verified) &&      /* its unsaved passes */
+            g_ring[i].rounds_done < DLB_TRACE_ROUNDS_MAX) c++;  /* waits for nothing */
     return c;
 }
 
@@ -282,6 +285,7 @@ int dlb_compound_distill(st_model *m, int rounds, float lr, int require_verified
             if (t->len < 2) continue;
             ST_TRAIN_STEP(m, t->bytes, t->len, logits, lr);
             t->rounds_done++;              /* consume one pass of the budget */
+            t->unsaved++;
         }
     }
     free(logits);
@@ -299,8 +303,9 @@ void dlb_compound_gc(void)
     int w = 0;
     for (int i = 0; i < g_ring_n; i++) {
         dlb_trace *t = &g_ring[i];
-        if (t->rounds_done >= DLB_TRACE_ROUNDS_MAX) continue;  /* budget spent  */
         if (!t->verified) continue;                            /* never distills */
+        if (t->rounds_done >= DLB_TRACE_ROUNDS_MAX && t->unsaved == 0)
+            continue;              /* budget spent and saved (unsaved passes may come back) */
         if (w != i) g_ring[w] = *t;
         w++;
     }
@@ -308,8 +313,25 @@ void dlb_compound_gc(void)
     PK_NOSW_LEAVE();
 }
 
-void dlb_compound_saved(void) { }       /* stub (test first) */
-void dlb_compound_refund(void) { }      /* stub (test first) */
+void dlb_compound_saved(void)
+{
+    PK_NOSW_ENTER();
+    for (int i = 0; i < g_ring_n; i++) g_ring[i].unsaved = 0;
+    PK_NOSW_LEAVE();
+}
+
+void dlb_compound_refund(void)
+{
+    PK_NOSW_ENTER();
+    for (int i = 0; i < g_ring_n; i++) {
+#ifndef DLB_NO_REFUND               /* FALSIFIER for [restore-dlb]: the passes stay spent */
+        g_ring[i].rounds_done -= g_ring[i].unsaved;
+        if (g_ring[i].rounds_done < 0) g_ring[i].rounds_done = 0;
+#endif
+        g_ring[i].unsaved = 0;
+    }
+    PK_NOSW_LEAVE();
+}
 
 PK_NOSW_FN(int, dlb_compound_rounds_done, (void), ())
 {

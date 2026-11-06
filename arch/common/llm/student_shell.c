@@ -664,6 +664,7 @@ static int student_dmn_read_back(float live_loss, int train_end, int heldw)
             PK_NOSW_LEAVE();
             g_dmn_saved_adam_t = 0;
             g_dmn_restores++;
+            dlb_compound_refund();  /* passes since that save are gone from w: give them back */
             done = 1;
 #ifndef ST_DMN_REST_DISABLE   /* FALSIFIER for [restore-rest]: never rest */
             {   /* rest until the corpus changes (above) */
@@ -1034,6 +1035,7 @@ int student_dmn_consolidate(void)
                 g_dmn_saved_adam_t = g_student.adam_t;
                 g_dmn_save_count++;
                 if (use_ema) g_ema_saves++;
+                dlb_compound_saved();   /* the winners' passes are in the file now */
             }
             free(blob);
         }
