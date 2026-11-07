@@ -664,6 +664,12 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     /* audit-149 [pmv2-self]: v2 to my own id is not sent (even if "reads v2" says yes) */
     pmt_v2_peer = WSELF; pmt_cnt = 0; rc = pmesh_send(WSELF, PORT, pl, 3);
     if (rc != -1 || pmt_cnt != 0) PMT_FAIL("self: v2 to my own id was sent");
+    /* audit-150: an id that differs from mine only in the high byte (260+256) is not me */
+    pmt_v2_peer = (pk_node_t)(WSELF + 256); pmt_cnt = 0;
+    rc = pmesh_send((pk_node_t)(WSELF + 256), PORT, pl, 3);
+    if (rc != 0 || pmt_cnt != 1 || pmt_le16(pmt_buf + 8) != (UH)(WSELF + 256) ||
+        pmt_ip != pk_node_ip((pk_node_t)(WSELF + 256)))
+        PMT_FAIL("self: v2 to an id equal to mine in the low byte only (516) was not sent");
     pmt_v2_peer = N;
 
     /* [pmv2-direct] */
