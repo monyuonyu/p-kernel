@@ -1247,6 +1247,13 @@ jobs:
           B5S5_MODE=self tests/llm/run_b5_step5.sh | tee llm_b5s5.log
           grep -aF '[result] PASS  b5-step5 self-tests' llm_b5s5.log
           grep -aF '[b5-step5] the top-two mutant is red' llm_b5s5.log
+          # B5 step 6: st_merge_trust's self-test (s6unit) and the judge's, seconds; the NC1, NC2
+          # and g0-added builds must be red (the judgement on seeds 123-130 is not in CI)
+          B5S6_MODE=self tests/llm/run_b5_step6.sh | tee llm_b5s6.log
+          grep -aF '[result] PASS  b5-step6 self-tests' llm_b5s6.log
+          grep -aF '[b5-step6] the flat build is red' llm_b5s6.log
+          grep -aF '[b5-step6] the nonorm build is red' llm_b5s6.log
+          grep -aF '[b5-step6] the self build is red' llm_b5s6.log
 
       # SCALE-WALL rung C1 — context carry (scale_wall_design.md §8, [ctx-carry]).
       # The FIRST buildable rung of "real conversation": RoPE + ST_MAXSEQ 64->256
