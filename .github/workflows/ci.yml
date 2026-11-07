@@ -1487,6 +1487,9 @@ jobs:
           # the mind/want wide asker (N2 (c)(3)): 2 bytes after the 24, own answer row
           (printf 'nodes mqwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqwide.log || true
           grep -aF '[mqwide] PASS' nodes_mqwide.log
+          # which wide peers a kdds broadcast goes to (N2 (c)(1)): a REGION topic only to region members
+          (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide.log || true
+          grep -aF '[kdds-wide] PASS' kdds_wide.log
           # next_hop: 10.1/16 is on-link (a wide address uses the third byte; the /24 dropped wide<->narrow unicast)
           (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink.log || true
           grep -aF '[onlink] PASS' nodes_onlink.log
@@ -1505,7 +1508,7 @@ jobs:
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), X3's fire when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW),[region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), X3's fire when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1591,6 +1594,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MC_PUSH_NARROW >/dev/null
           (printf 'mind pull\n'; sleep 20) | timeout 60 boot/linux_x86_64/p-kernel | tee mind_pull_nc2.log || true
           grep -aF '[pull-answer-src] FAIL push-wide' mind_pull_nc2.log
+          # [kdds-wide] goes red when a wide peer gets a REGION topic from outside the region (-DN2_NC_KDW_NO_REGION)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_KDW_NO_REGION >/dev/null
+          (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide_nc.log || true
+          grep -aF '[kdds-wide] FAIL region' kdds_wide_nc.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 

@@ -1617,6 +1617,8 @@ EXPORT INT usermain(void)
             const UB *a = line + 4; UW al = (UW)(n - 4);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') kdds_delcluster_self_test(print);
+            /* N2 (c)(1): `kdds wide` checks which wide peers a broadcast goes to. */
+            else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') kdds_wide_self_test(print);
             else kdds_list();
         } else if (starts_with(line, n, "pfs")) {
             cmd_pfs(line, n);
