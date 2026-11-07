@@ -4494,6 +4494,8 @@ static W mq_want_frame(const MQ_WANT_PKT *p, pk_node_t org, MQ_WANT_PKT_W *out)
         out->org_lo = (U1)(org & 0xFF); out->org_hi = (U1)(org >> 8);
         return (W)sizeof *out;
     }
+#else
+    (void)org;
 #endif
     return (W)sizeof out->p;
 }
