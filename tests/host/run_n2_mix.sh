@@ -21,8 +21,8 @@
 #
 # Negative control: -DN2_NC_TRUNC cuts the wide ids to a byte, so 260 and 300 become 4 and 44.
 # 260 and 300 are in SWIM's membership only (swim.c). N2_X3=1 adds X3 (a teach crosses the
-# mixed swarm, below); it is red until a wide node runs its own mind. X4 is not written yet.
-# N2_X3_PART=snow judges only X3's snow lines (wide -> new, in CI); fire (old -> wide) is later.
+# mixed swarm, below; in CI since the want tail, N2 (c)(3)). X4 is not written yet.
+# N2_X3_PART=snow judges only X3's snow lines (wide -> new); fire (old -> wide) rides the want.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -197,7 +197,7 @@ fi
 #   no old node holds snow at all (300's low byte is 44's: an old node must not read it as 44's).
 #   Without the wide nodes (N2_NO_WIDE, N2_RELAY_OLD) only fire, over the five narrow ids.
 #   N2_X3_PART=snow: judge the snow lines only (snow@4/44/260, snow-on-old, snow-not-from-299);
-#   fire (old -> wide) needs the pull answer's wide origin, a later slice. Unset: all of X3.
+#   fire (old -> wide): a new node answers the wide asker's want (the want tail). Unset: all of X3.
 if [ "${N2_X3:-0}" = 1 ]; then
     WIDE_IN="$WIDE"; [ "${N2_RELAY_OLD:-0}" = 1 ] && WIDE_IN=""
     X3_FIRE=1; [ "${N2_X3_PART:-}" = snow ] && X3_FIRE=0
