@@ -3067,6 +3067,14 @@ static pk_node_t mt_rx_origin(const MT_TEACH_PKT_W *w, W r)
 }
 /* every caller but the own-teach ones sends no wide origin yet (limit) */
 static W mt_wire_send_org(const MT_TEACH_PKT *p, pk_node_t org);
+/* audit-153: the cert's dry send. While mt_wire_dry_p == p, mt_wire_send_org
+ * frames p as it would and records the length and the origin a receiver reads
+ * (mt_rx_origin), sends nothing. So [pull-answer-src] sees what the send SITE
+ * hands the wire (MQ_ANS_SEND, MC_PUSH_SEND), not a frame the cert built
+ * itself: sending those without the tail was green (audit-153, A1/P2). */
+static const MT_TEACH_PKT *mt_wire_dry_p;
+static W         mt_wire_dry_len;
+static pk_node_t mt_wire_dry_org;
 #define mt_wire_send(p) mt_wire_send_org((p), PK_NODE_NONE)
 #endif
 
@@ -3088,6 +3096,14 @@ static W mt_wire_send(const MT_TEACH_PKT *p)
         INT cv = conscience_check(CONS_SITE_WIRE, &q);
         if (cv != CONS_ALLOW) { conscience_on_refuse(CONS_SITE_WIRE, cv); return -1; }
     }
+#ifdef _TK_HOSTED_LIBC_
+    if (p && p == mt_wire_dry_p) {               /* the cert's dry send: no wire I/O */
+        MT_TEACH_PKT_W fw;
+        mt_wire_dry_len = mt_wire_frame(p, org, &fw);
+        mt_wire_dry_org = mt_rx_origin(&fw, mt_wire_dry_len);
+        return 0;
+    }
+#endif
     if (m_pub_handle() < 0) return -1;
 #ifdef _TK_HOSTED_LIBC_
     if (p) {
@@ -8207,9 +8223,13 @@ void r3_pull_test(void)
             pk_node_t keep = rp ? rp->origin_node : PK_NODE_NONE;
             if (rp) rp->origin_node = WT;
             INT fg3 = 0; INT built3 = mq_answer_build((U1)asker, (UB)krem, &fg3);
-            W fn = mt_wire_frame(&mq_ans_pkt, MQ_ANS_ORG(), &fw);
-            INT wide_ok = built3 && (fg3 == 0) && (mq_ans_pkt.origin_node == PK_NODE_NONE)
-                       && (fn == (W)sizeof fw) && (mt_rx_origin(&fw, fn) == WT);
+            /* what the send site hands the wire (a dry send, audit-153) */
+            mt_wire_dry_len = 0; mt_wire_dry_org = PK_NODE_NONE;
+            mt_wire_dry_p = &mq_ans_pkt;
+            W sent = MQ_ANS_SEND();
+            mt_wire_dry_p = 0;
+            INT wide_ok = built3 && (fg3 == 0) && (mq_ans_pkt.origin_node == PK_NODE_NONE) && (sent == 0)
+                       && (mt_wire_dry_len == (W)sizeof fw) && (mt_wire_dry_org == WT);
             INT fg4 = 0; INT built4 = mq_answer_build(WT, (UB)krem, &fg4);
             INT wforgot_ok = built4 && (fg4 == 1);
             r_puts("[pull] answer-src wide: teacher 300 in the tail="); r_putdec((UW)wide_ok);
@@ -8227,9 +8247,13 @@ void r3_pull_test(void)
                 INT pw_ok = 0;
                 if (fiw >= 0) {
                     mc_push_build(fiw, bw);
-                    W pn = mt_wire_frame(&mc_push_pkt, MC_PUSH_ORG(), &fw);
-                    pw_ok = (mc_push_pkt.origin_node == PK_NODE_NONE) && (pn == (W)sizeof fw)
-                         && (mt_rx_origin(&fw, pn) == WT) && mc_push_still();
+                    mt_wire_dry_len = 0; mt_wire_dry_org = PK_NODE_NONE;
+                    mt_wire_dry_p = &mc_push_pkt;          /* dry, as mc_push_winner sends */
+                    W ps = MC_PUSH_SEND();
+                    mt_wire_dry_p = 0;
+                    pw_ok = (mc_push_pkt.origin_node == PK_NODE_NONE) && (ps == 0)
+                         && (mt_wire_dry_len == (W)sizeof fw)
+                         && (mt_wire_dry_org == WT) && mc_push_still();
                 }
                 mc_push_pkt = keep_pkt; mc_push_org = keep_org;
                 r_puts("[pull] answer-src wide: push-back of teacher 300 (tail, still held)=");
