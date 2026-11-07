@@ -3590,14 +3590,15 @@ static void mc_incoming_lost(INT fi, INT bind, UB v_in, pk_node_t org, UW s_in,
  * and prov), and re-send it like a pull answer (above). Used when an incoming
  * value lost here, and when a peer's mind/have shows it holds a value that
  * loses to this one (mh_tick, 1-3m [mind-stale]). */
-static void mc_push_winner(INT fi, INT bind)
+/* fill mc_push_pkt (and mc_push_org) for fi/bind; no wire I/O, no print (the
+ * [pull-push-wide] line of the pull cert drives it). */
+static void mc_push_build(INT fi, INT bind)
 {
     static const U1 zero_prov[PFS_ID_LEN] = { 0 };
     UW seq = r3_fq[fi].seq;
     pk_node_t o_cur; UW s_cur = mc_stamp_of(seq, &o_cur);
     MT_REMOTE_PROV *rp = mt_rprov_find(seq);
     const U1 *lp = mq_lprov_find(seq);
-    if (drpc_my_node == 0xFF) return;
     mc_push_pkt.magic       = MT_MAGIC;
     mc_push_pkt.fact_seq    = s_cur;
     mc_push_pkt.origin_node = pk_node_v1(o_cur);
@@ -3615,6 +3616,11 @@ static void mc_push_winner(INT fi, INT bind)
     const U1 *pv = rp ? rp->prov_head : (lp ? lp : zero_prov);
     for (INT i = 0; i < PFS_ID_LEN; i++) mc_push_pkt.prov_head[i] = pv[i];
     mt_vocab_fp_fill(mc_push_pkt.vocab_fp);
+}
+static void mc_push_winner(INT fi, INT bind)
+{
+    if (drpc_my_node == 0xFF) return;
+    mc_push_build(fi, bind);
 #ifndef MC_PUSH_FAULT_DROP_FIRST
     W rc = MC_PUSH_SEND();
 #else
@@ -8214,18 +8220,18 @@ void r3_pull_test(void)
              * 0xFF in the byte, 300 in the tail, and the re-send still sees
              * it as held (it compared 300 with the byte 0xFF and stopped) */
             {
-                pk_node_t me = drpc_my_node;
-                drpc_my_node = 7;                 /* mc_push_winner is silent solo */
+                static MT_TEACH_PKT keep_pkt;     /* put the live push-back back after */
+                pk_node_t keep_org = mc_push_org;
+                keep_pkt = mc_push_pkt;
                 INT bw, fiw = m_find_key(krem, &bw);
                 INT pw_ok = 0;
                 if (fiw >= 0) {
-                    mc_push_winner(fiw, bw);
+                    mc_push_build(fiw, bw);
                     W pn = mt_wire_frame(&mc_push_pkt, MC_PUSH_ORG(), &fw);
                     pw_ok = (mc_push_pkt.origin_node == PK_NODE_NONE) && (pn == (W)sizeof fw)
                          && (mt_rx_origin(&fw, pn) == WT) && mc_push_still();
                 }
-                mc_push_sends_left = 0; mq_answer_sent = 0;   /* no re-send after the cert */
-                drpc_my_node = me;
+                mc_push_pkt = keep_pkt; mc_push_org = keep_org;
                 r_puts("[pull] answer-src wide: push-back of teacher 300 (tail, still held)=");
                 r_putdec((UW)pw_ok); r_puts("\r\n");
                 if (!pw_ok) r_puts("[pull-answer-src] FAIL push-wide (a wide winner is pushed without its tail or stops)\r\n");
