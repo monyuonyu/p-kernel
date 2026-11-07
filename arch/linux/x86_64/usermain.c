@@ -64,6 +64,7 @@ IMPORT void ai_kernel_init(void);
 IMPORT void ai_stats_print(void);
 IMPORT void kdds_init(void);
 IMPORT INT  mt_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3), r3_incontext.c */
+IMPORT INT  net_onlink_self_test(void (*emit)(const char *));   /* N2, netstack.c */
 IMPORT void kdds_list(void);
 IMPORT void dtr_init(void);
 IMPORT void dtr_stat(void);
@@ -1009,6 +1010,8 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='r'&&a[1]=='o'&&a[2]=='w'&&a[3]=='s') pk_node_row_self_test(print);
             /* N2 (c)(3): `nodes mtwide` checks the mind/teach wide origin (r3). */
             else if (al >= 2 && a[0]=='m'&&a[1]=='t') mt_wide_self_test(print);
+            /* N2: `nodes onlink` checks next_hop for 10.1/16 (netstack.c). */
+            else if (al >= 2 && a[0]=='o'&&a[1]=='n') net_onlink_self_test(print);
             /* wave-selfelect cert: `nodes selfelect` proves a teacher node
              * SELF-RECOGNIZES (region_teacher()==self). "sel" is distinct from
              * cap/tea/tes. */
