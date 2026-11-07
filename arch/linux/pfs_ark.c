@@ -79,6 +79,7 @@ static ssize_t win_pwrite(int fd, const void *buf, size_t n, long long off)
 
 static int      ark_fd    = -1;
 static int      ark_state = -1;      /* -1 unknown, 0 inactive, 1 mounted/ready */
+static void   (*ark_emit)(const char *);   /* the restore's emit, for the put path */
 static int      ark_cfg   = -1;      /* -1 unknown, 0 no, 1 backend == "ark" */
 static U4       ark_total = 0;
 static ARK_BDEV ark_bd;
@@ -212,6 +213,7 @@ INT pfs_ark_mount_or_reformat(ARK_BDEV *bd, int *reformatted,
 int pfs_ark_restore(void (*emit)(const char *))
 {
     if (!pfs_ark_configured()) return 0;
+    ark_emit = emit;
 
     const char *path = getenv("PKERNEL_ARK_IMG");
     if (!path || !path[0]) {
@@ -305,17 +307,87 @@ void pfs_ark_force_fail(int on) { ark_force_fail_once = on ? 1 : 0; }
 
 /* Persist a NEW p-fs block into the ARK log: append + durable checkpoint.
  * ark_block_put dedups against the on-disk index for free. Returns 0 / -1. */
+/* ark-entry.md 2.3: the product path that calls ark_compact. Every put appends
+ * a checkpoint commit and nothing else reclaims old commits, so a small image
+ * went write-dead with most of it holding superseded commits (64 sectors: 10
+ * blocks). ark_compact writes the new log into FREE space (the tail, or the
+ * front a previous compaction freed), so once the log is full the first
+ * compaction has nowhere to go: compact BEFORE that, when the log span passes
+ * half the image (the tail then still holds a copy of the blocks), and also on
+ * ARK_E_FULL (the freed front). Crash-safe (old or new log, never half; every
+ * indexed block is kept). After a failed try, wait until the span grows by an
+ * eighth of the image (each try reads every block). A live set that does not
+ * fit still fails (-1), and pfs_block.c pins the RAM copy as before.
+ * The span is ark_dbg_livespan (head - log start): no arkfs.c change, so the
+ * bare builds (which do not compile this file) are untouched. */
+extern U4 ark_dbg_livespan(void);
+static unsigned ark_compactions;
+static U4 ark_compact_failed_span;        /* 0 = no failed try to wait out */
+static U4 ark_compact_next_span;          /* a proactive try waits for this span */
+
+static int ark_try_compact(const char *why)
+{
+#if defined(PFS_ARK_NO_AUTOCOMPACT)
+    (void)why; (void)ark_compactions; (void)ark_compact_failed_span;
+    (void)ark_compact_next_span;
+    return 0;                                  /* negative control */
+#else
+    U4 span = ark_dbg_livespan();
+    if (ark_compact_failed_span && span < ark_compact_failed_span + ark_total / 8u)
+        return 0;
+    char msg[112];
+    INT c = ark_compact();
+    if (c != ARK_OK) {
+        ark_compact_failed_span = span ? span : 1u;
+        ark_compact_next_span   = span + ark_total / 8u;
+        if (ark_emit) {
+            snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compaction did not help (%d)\r\n",
+                     why, (int)c);
+            ark_emit(msg);
+        }
+        return 0;
+    }
+    ark_compact_failed_span = 0;
+    /* a compaction that left the span near half would run again on every put
+     * (a full rewrite each time): the next proactive try waits for growth */
+    ark_compact_next_span = ark_dbg_livespan() + ark_total / 8u;
+    ark_compactions++;
+    if (ark_emit) {
+        snprintf(msg, sizeof msg, "[pfs] durable(ark): %s, compacted (%u, span %u -> %u)\r\n",
+                 why, ark_compactions, (unsigned)span, (unsigned)ark_dbg_livespan());
+        ark_emit(msg);
+    }
+    return 1;
+#endif
+}
+#define ark_compact_on_full() ark_try_compact("log full")
+
 int pfs_ark_put(const void *data, unsigned len)
 {
     if (ark_state != 1) return -1;
     if (ark_force_fail_once) { ark_force_fail_once = 0; return -1; }
+    {
+        U4 span = ark_dbg_livespan();
+        if (span > ark_total / 2u && span >= ark_compact_next_span)
+            (void)ark_try_compact("log over half");
+    }
     U1 id[ARK_ID_LEN];
-    if (ark_block_put(data, (U4)len, id) != ARK_OK) return -1;
+    INT r = ark_block_put(data, (U4)len, id);
+    if (r == ARK_E_FULL && ark_compact_on_full())
+        r = ark_block_put(data, (U4)len, id);
+    if (r != ARK_OK) return -1;
     /* Promote the appended block into the permanent index with a durable,
      * fsync'd commit so it survives a remount even though no file references
      * it yet. A torn checkpoint fails crc on replay and rolls the block back
      * (crash-safety preserved through the p-fs path). */
-    if (ark_checkpoint() != ARK_OK) return -1;
+    r = ark_checkpoint();
+    if (r == ARK_E_FULL && ark_compact_on_full()) {
+        /* the block was appended but not committed; put it again (a no-op
+         * if the compaction kept it) and commit on the compacted log */
+        if (ark_block_put(data, (U4)len, id) != ARK_OK) return -1;
+        r = ark_checkpoint();
+    }
+    if (r != ARK_OK) return -1;
     return 0;
 }
 

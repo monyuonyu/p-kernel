@@ -2305,7 +2305,7 @@ jobs:
     # serialized self-hosted chain (de-flake): runs after parallel-infer-live. See HEAD.
     needs: [parallel-infer-live]
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    timeout-minutes: 15
+    timeout-minutes: 20   # 15 -> 20 (2026-11-07): [ark-full] adds two hosted builds
     # ARK's crash-safety, enforced. A format-agnostic fuzzer drives ARK via the
     # sample-25 CLI and perturbs the on-disk image at the sector level
     # (prefix-truncate / reorder+drop / torn / bit-flip), remounts, and asserts:
@@ -2332,6 +2332,20 @@ jobs:
         run: |
           timeout 300 bash samples/25_survival_fs/allpoints.sh | tee ark_allpoints.log
           grep -aF '[ark-allpoints] ALL PASS' ark_allpoints.log
+      # ark-entry.md 2.3: a full ARK log is compacted on a p-fs put (hosted
+      # pfs_ark_put); 20 blocks into 64 sectors all survive a remount (master
+      # before: 10). Red with -DPFS_ARK_NO_AUTOCOMPACT. ~1 min each.
+      - name: "ARK full log is compacted on put ([ark-full], negative -DPFS_ARK_NO_AUTOCOMPACT)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          timeout 200 bash tests/host/run_ark_full.sh | tee ark_full.log
+          grep -aF '[ark-full] PASS' ark_full.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_ARK_NO_AUTOCOMPACT >/dev/null
+          timeout 200 bash tests/host/run_ark_full.sh | tee ark_full_nc.log || true
+          grep -aF '[ark-full] FAIL' ark_full_nc.log
+          make -C boot/linux_x86_64 clean >/dev/null
 
   composite-loop:
     name: "複合ループ (kill ∧ 並行 ∧ メモリ, ボーナス)"
