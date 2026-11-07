@@ -2549,6 +2549,115 @@ int st_round_trimmed(st_model *into, uint32_t gen,
     return st_merge_trimmed(into, take, len, n, t);
 }
 
+/* ------------------------------------------------------------------ */
+/* B5 step 6 (research/b5-step6-design.md): own-anchored trust, the     */
+/* form of FLTrust (Cao et al., arXiv:2012.13995 v3, eqs 2-5). The root */
+/* update is the node's own g0 = into - prev; a peer's is gj = peer -   */
+/* prev. TS_j = ReLU(cos(gj, g0)), gj scaled to |g0|, and               */
+/*   into = prev + sum_j TS_j (|g0|/|gj|) gj / sum_j TS_j               */
+/* (eq. 4: g0 itself is not in the sum; alpha = 1). Sums in double, the */
+/* peers folded in the lexicographic order of their weight bytes, so    */
+/* their order does not change a byte.                                  */
+/* ------------------------------------------------------------------ */
+static double st_sqrt_d(double x)          /* Newton from above, no libm */
+{
+    if (!(x > 0.0)) return 0.0;
+    double r = x > 1.0 ? x : 1.0;
+    for (int i = 0; i < 2100; i++) {
+        double nr = 0.5 * (r + x / r);
+        if (!(nr < r)) break;               /* monotone from above: stop when it stops falling */
+        r = nr;
+    }
+    return r;
+}
+static int st_blob_w_cmp(const void *a, const void *b, int np)
+{
+    const unsigned char *x = (const unsigned char *)a + sizeof(ST_BLOB_HDR);
+    const unsigned char *y = (const unsigned char *)b + sizeof(ST_BLOB_HDR);
+    for (size_t i = 0; i < (size_t)np * sizeof(float); i++)
+        if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+    return 0;
+}
+
+int st_merge_trust(st_model *into, const st_model *prev,
+                   const void *const *peer_blobs, const size_t *peer_lens,
+                   int count, float *ts_out)
+{
+    if (!into || !into->w || !prev || !prev->w) return ST_E_ARG;
+    if (prev->tier != into->tier || prev->n_params != into->n_params) return ST_E_ARG;
+    if (count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens)) return ST_E_ARG;
+    int np = into->n_params;
+    if (ts_out) for (int k = 0; k < count; k++) ts_out[k] = 0.0f;
+    int ord[ST_COHORT_MAX];
+    int accepted = 0;
+    for (int k = 0; k < count; k++) {
+        if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
+#ifndef ST_MERGE_NO_FINITE
+        if (!st_blob_w_finite(peer_blobs[k], np)) continue;
+#endif
+        /* insertion into the weight-byte order (ties keep either: equal bytes, equal terms) */
+        int j = accepted++;
+        while (j > 0 && st_blob_w_cmp(peer_blobs[k], peer_blobs[ord[j - 1]], np) < 0) { ord[j] = ord[j - 1]; j--; }
+        ord[j] = k;
+    }
+    if (accepted == 0) return 0;
+#ifndef ST_MERGE_NO_FINITE
+    if (!st_w_finite(into->w, np) || !st_w_finite(prev->w, np)) return 0;
+#endif
+    double n0 = 0.0;
+    for (int i = 0; i < np; i++) { double g = (double)into->w[i] - (double)prev->w[i]; n0 += g * g; }
+    n0 = st_sqrt_d(n0);
+    if (!(n0 > 0.0)) return 0;              /* no own update: nothing to anchor on */
+    double ts[ST_COHORT_MAX], sc[ST_COHORT_MAX], sum = 0.0;
+    for (int a = 0; a < accepted; a++) {
+        const void *b = peer_blobs[ord[a]];
+        double dot = 0.0, nj = 0.0;
+        for (int i = 0; i < np; i++) {
+            double p = (double)prev->w[i];
+            double g0 = (double)into->w[i] - p, gj = (double)st_blob_w_at(b, (size_t)i) - p;
+            dot += g0 * gj; nj += gj * gj;
+        }
+        nj = st_sqrt_d(nj);
+        double cs = nj > 0.0 ? dot / (n0 * nj) : 0.0;
+#if defined(B5S6_TRUST_FLAT)                /* NC1 of the design: every accepted peer trusted 1 */
+        ts[a] = 1.0; (void)cs;
+#else
+        ts[a] = cs > 0.0 ? cs : 0.0;
+#endif
+#if defined(B5S6_NO_NORM)                   /* NC2 of the design: the peer's own size */
+        sc[a] = 1.0;
+#else
+        sc[a] = nj > 0.0 ? n0 / nj : 0.0;
+#endif
+        sum += ts[a];
+        if (ts_out) ts_out[ord[a]] = (float)ts[a];
+    }
+#if defined(B5S6_MUT_SELF)                  /* self-test mutant: g0 added with weight 1 */
+    sum += 1.0;
+#endif
+    if (!(sum > 0.0)) return 0;             /* nobody trusted: refused, never the own model alone */
+    float *out = (float *)malloc((size_t)np * sizeof(float));
+    if (!out) return 0;
+    for (int i = 0; i < np; i++) {
+        double p = (double)prev->w[i];
+        double acc = 0.0;
+#if defined(B5S6_MUT_SELF)
+        acc = (double)into->w[i] - p;
+#endif
+        for (int a = 0; a < accepted; a++)
+            if (ts[a] > 0.0) acc += ts[a] * sc[a] * ((double)st_blob_w_at(peer_blobs[ord[a]], (size_t)i) - p);
+        out[i] = (float)(p + acc / sum);
+#ifndef ST_MERGE_NO_FINITE
+        if (st_bad_f(out[i])) { free(out); return 0; }
+#endif
+    }
+    for (int i = 0; i < np; i++) { into->w[i] = out[i]; into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
+    into->adam_t = 0;
+    free(out);
+    return accepted;
+}
+
 int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                    int n, int seq, float *live_loss, float *cand_loss)
 {

@@ -406,6 +406,21 @@ int  st_round_trimmed(st_model *into, uint32_t gen,
                       const void *const *peer_blobs, const size_t *peer_lens,
                       const uint32_t *gens, int count, int t);
 
+/* st_merge_trust (B5 step 6, research/b5-step6-design.md): own-anchored trust
+ * in the form of FLTrust (Cao et al., arXiv:2012.13995 v3, eqs 2-5). prev is
+ * this node's model of the previous round (same tier, else ST_E_ARG). With
+ * g0 = into - prev and gj = peer_j - prev: TS_j = ReLU(cos(gj, g0)), gj scaled
+ * to |g0|, into = prev + sum TS_j gj' / sum TS_j (g0 itself not in the sum).
+ * Sums in double, the peers in the order of their weight bytes (any order of
+ * peer_blobs gives the same bytes). Peers pass the tier and finite checks of
+ * st_merge_cohort. Refused (returns 0, into BYTE-UNCHANGED, never the own
+ * model alone): no peer accepted, into or prev not finite, |g0| = 0, every TS
+ * 0, or a result not finite. Adam restarted. ts_out[k] (may be NULL) gets
+ * peer k's TS (0 when not accepted). Returns the peers accepted. Hosted only. */
+int  st_merge_trust(st_model *into, const st_model *prev,
+                    const void *const *peer_blobs, const size_t *peer_lens,
+                    int count, float *ts_out);
+
 /* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
  * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
  * is finite and its mean loss over the non-overlapping `seq` windows of

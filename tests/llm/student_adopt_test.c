@@ -8,6 +8,8 @@
  *   student_adopt_test unit                  H4: the gate's own cases
  *   student_adopt_test <b1_held.txt> <seed>  one seed of the arms below
  *   student_adopt_test <b1_held.txt> <seed> s4   B5 step 4 (s4() below, run_b5_step4.sh)
+ *   student_adopt_test s5unit | s6unit           the self-tests of st_merge_trimmed / st_merge_trust
+ *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -22,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include "../../arch/common/llm/student.h"
 #include "../../arch/common/llm/held_indep.h"
 #include "../../arch/common/llm/teacher_fixture.h"
@@ -492,6 +495,246 @@ static int s5(uint32_t seed, const char *which)
     return 0;
 }
 
+/* B5 step 6 (research/b5-step6-design.md), stage "s6": step 5's four nodes and
+ * flow; each honest node keeps its model of the previous round (prev) and the
+ * candidate is st_merge_trust(clone of me, prev, the three others), or
+ * st_round_trimmed (t = 1) for the trim arms. A refusal leaves no candidate
+ * (no gate, no apprentice). Poison kinds, every round, on the last 1 or 2
+ * nodes: 1 garbage (another init x8, step 5's), 2 sign flip (prev0 - 2 (n0 -
+ * prev0), node 0's update), 3 near (prev0 + 1.5 (n0 - prev0) + noise).
+ * Ported from pk-scratch/a154/s6probe.c (its trust_self = 0 form). Builds:
+ * -DB5S6_TRUST_FLAT (NC1), -DB5S6_NO_NORM (NC2). Judge b5_step6_check.py. */
+static void s6_poison(st_model *g, int kind, st_model *n0, st_model *p0, uint32_t s)
+{
+    if (kind == 1) { garbage(g, s); return; }
+    clone(g, n0);
+    uint32_t r = s * 2654435761u + 1u;
+    for (int i = 0; i < g->n_params; i++) {
+        float d = n0->w[i] - p0->w[i];
+        if (kind == 2) g->w[i] = p0->w[i] - 2.0f * d;
+        else { r = r * 1664525u + 1013904223u; float u = ((float)(r >> 8) / 16777216.0f) - 0.5f;
+               g->w[i] = p0->w[i] + 1.5f * d + 0.5f * u * (d < 0 ? -d : d); }
+    }
+}
+static double s6_tsh, s6_tsp; static int s6_tshn, s6_tspn, s6_refused;
+/* 1 = a candidate in c, 0 = refused (c not made) */
+static int s6_cand(st_model *c, st_model *models[K5], st_model *prev, int me, int trust, int honest, uint32_t gen)
+{
+    if (!trust) { s5_cand(c, models, me, 1, gen); return 1; }
+    clone(c, models[me]);
+    const void *bs[K5 - 1]; size_t ls[K5 - 1]; void *own[K5 - 1]; int who[K5 - 1]; float ts[K5 - 1]; int j = 0;
+    for (int k = 0; k < K5; k++) if (k != me) { own[j] = blob(models[k], &ls[j]); bs[j] = own[j]; who[j] = k; j++; }
+    int r = st_merge_trust(c, prev, bs, ls, K5 - 1, ts);
+    for (int i = 0; i < K5 - 1; i++) free(own[i]);
+    if (r < 0) { printf("  FAIL  [b5s6-io] st_merge_trust rc %d\n", r); exit(1); }
+    if (me == 0) for (int i = 0; i < K5 - 1; i++) {
+        if (who[i] < honest) { s6_tsh += ts[i]; s6_tshn++; } else { s6_tsp += ts[i]; s6_tspn++; }
+    }
+    if (r == 0) { if (me == 0) s6_refused++; st_free(c); return 0; }
+    return 1;
+}
+static void s6_rounds(uint32_t seed, int trust, int poison, int kind, const char *name)
+{
+    st_model n[K5], prev[K5]; apprentice_t ap[K5]; st_model *mp[K5];
+    for (int k = 0; k < K5; k++) { st_init_tier(&n[k], seed, ST_TIER_S); ap[k].has = 0; mp[k] = &n[k]; }
+    int honest = K5 - poison;
+    for (int k = 0; k < honest; k++) clone(&prev[k], &n[k]);
+    keeper_t kp; keep_init(&kp);
+    int took = 0, tries = 0; uint32_t gen = 0;
+    apprentice_late = 0; s6_tsh = s6_tsp = 0; s6_tshn = s6_tspn = 0; s6_refused = 0;
+    for (int p = 1; p <= PASSES; p++) {
+        for (int k = 0; k < honest; k++) { pass_q(&n[k], k); if (ap[k].has) pass_q(&ap[k].m, k); }
+        if (p % EVERY == 0) {
+            gen++;
+            for (int k = honest; k < K5; k++) { st_free(&n[k]); s6_poison(&n[k], kind, &n[0], &prev[0], seed + (uint32_t)p + 977u * (uint32_t)k); }
+            st_model c[K5]; int has[K5];
+            for (int k = 0; k < honest; k++) has[k] = s6_cand(&c[k], mp, &prev[k], k, trust, honest, gen);
+            for (int k = 0; k < honest; k++) {
+                apprentice_judge(&n[k], &ap[k], gen);
+                int r = 0;
+                if (has[k]) {
+                    r = st_round_adopt(&n[k], &c[k], fx + fx_end, fxn - fx_end, SEQ, NULL, NULL) == 1;
+                    if (!r && st_model_finite(&c[k])) { ap[k].m = c[k]; ap[k].has = 1; } else st_free(&c[k]);
+                }
+                if (k == 0) { took += r; tries++; }
+            }
+            for (int k = 0; k < honest; k++) { st_free(&prev[k]); clone(&prev[k], &n[k]); }
+        }
+        keep_see(&kp, &n[0], p);
+    }
+    char ex[128]; snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
+                           s6_refused, s6_tshn ? s6_tsh / s6_tshn : -1.0, s6_tspn ? s6_tsp / s6_tspn : -1.0);
+    keep_print(&kp, name, &n[0], ex);
+    for (int k = 0; k < K5; k++) { st_free(&n[k]); if (ap[k].has) st_free(&ap[k].m); }
+    for (int k = 0; k < honest; k++) st_free(&prev[k]);
+}
+/* which: "s6a" alone-A trim4 trust4 trim4-garb1 trust4-garb1;
+ *        "s6b" trust4-garb2 trust4-flip2 trust4-near2;
+ *        "s6c" trim4-near1 trust4-near1 (a reading, not a line);
+ *        "s6r1" trust4-garb2 only (the NC builds) */
+static int s6(uint32_t seed, const char *which)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    lr = ST_LR;
+    kp_tag = "b5s6";
+#if defined(B5S6_TRUST_FLAT)
+    const char *bld = "flat";
+#elif defined(B5S6_NO_NORM)
+    const char *bld = "nonorm";
+#else
+    const char *bld = "plain";
+#endif
+    printf("[b5s6] seed %u lr %g build %s stage %s quarter %d B gate windows %d held windows %d\n",
+           (unsigned)seed, (double)lr, bld, which, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+    if (strcmp(which, "s6a") == 0) {
+        s5_alone_q(seed, "alone-A");
+        s6_rounds(seed, 0, 0, 1, "trim4");
+        s6_rounds(seed, 1, 0, 1, "trust4");
+        s6_rounds(seed, 0, 1, 1, "trim4-garb1");
+        s6_rounds(seed, 1, 1, 1, "trust4-garb1");
+    } else if (strcmp(which, "s6b") == 0) {
+        s6_rounds(seed, 1, 2, 1, "trust4-garb2");
+        s6_rounds(seed, 1, 2, 2, "trust4-flip2");
+        s6_rounds(seed, 1, 2, 3, "trust4-near2");
+    } else if (strcmp(which, "s6c") == 0) {
+        s6_rounds(seed, 0, 1, 3, "trim4-near1");
+        s6_rounds(seed, 1, 1, 3, "trust4-near1");
+    } else if (strcmp(which, "s6r1") == 0) {
+        s6_rounds(seed, 1, 2, 1, "trust4-garb2");
+    } else { fprintf(stderr, "s6: unknown stage %s\n", which); return 2; }
+    printf("[b5s6] done\n");
+    return 0;
+}
+
+/* ---- the self-test of st_merge_trust (s6unit) ---- */
+/* the reference, written apart from student.c: the peers in the order given,
+ * libm sqrt, the same formula; compared with a tolerance (the fold order differs) */
+static void ref_trust(float *out, const st_model *into, const st_model *prev, st_model *const *peers, int no)
+{
+    int n = into->n_params;
+    double g0n = 0; for (int i = 0; i < n; i++) { double g = (double)into->w[i] - prev->w[i]; g0n += g * g; }
+    g0n = sqrt(g0n);
+    double ts[8], sc[8], sum = 0;
+    for (int j = 0; j < no; j++) {
+        double dot = 0, nj = 0;
+        for (int i = 0; i < n; i++) { double a = (double)into->w[i] - prev->w[i], b = (double)peers[j]->w[i] - prev->w[i]; dot += a * b; nj += b * b; }
+        nj = sqrt(nj);
+        double c = dot / (g0n * nj);
+        ts[j] = c > 0 ? c : 0; sc[j] = g0n / nj; sum += ts[j];
+    }
+    for (int i = 0; i < n; i++) {
+        double acc = 0;
+        for (int j = 0; j < no; j++) acc += ts[j] * sc[j] * ((double)peers[j]->w[i] - prev->w[i]);
+        out[i] = (float)((double)prev->w[i] + acc / sum);
+    }
+}
+static int s6u_merge(st_model *out, st_model *into, st_model *prev, st_model *const *peers, int no, float *ts)
+{
+    clone(out, into);
+    const void *bs[8]; size_t ls[8]; void *own[8];
+    for (int j = 0; j < no; j++) { own[j] = blob(peers[j], &ls[j]); bs[j] = own[j]; }
+    int r = st_merge_trust(out, prev, bs, ls, no, ts);
+    for (int j = 0; j < no; j++) free(own[j]);
+    return r;
+}
+static int near_f(float a, float b, double tol)
+{
+    double d = (double)a - b; if (d < 0) d = -d;
+    double s = (double)(a < 0 ? -a : a) + (b < 0 ? -b : b);
+    return d <= tol * (s > 1e-3 ? s : 1e-3);
+}
+static void zero_w(st_model *m) { for (int i = 0; i < m->n_params; i++) m->w[i] = 0.0f; }
+static int s6unit(void)
+{
+    /* hand: prev 0, g0 = (3,4) so |g0| = 5; P1 = (6,8) cos 1 scaled to (3,4);
+     * P2 = (-3,-4) cos -1 -> TS 0; P3 = (4,3) cos 0.96 |P3| = 5.
+     * into = ((3,4) + 0.96 (4,3)) / 1.96 = (3.48979..., 3.51020...), the rest 0 */
+    st_model pv, me, p1, p2, p3;
+    st_init_tier(&pv, 3u, ST_TIER_S); clone(&me, &pv); clone(&p1, &pv); clone(&p2, &pv); clone(&p3, &pv);
+    zero_w(&pv); zero_w(&me); zero_w(&p1); zero_w(&p2); zero_w(&p3);
+    me.w[0] = 3; me.w[1] = 4; p1.w[0] = 6; p1.w[1] = 8; p2.w[0] = -3; p2.w[1] = -4; p3.w[0] = 4; p3.w[1] = 3;
+    for (int i = 0; i < me.n_params; i++) { me.mu[i] = 0.25f; me.vu[i] = 0.5f; }
+    me.adam_t = 9;
+    st_model *hp[] = { &p1, &p2, &p3 };
+    st_model r; float ts[3];
+    int rc = s6u_merge(&r, &me, &pv, hp, 3, ts);
+    float w0 = (float)(6.84 / 1.96), w1 = (float)(6.88 / 1.96);
+    int rest = 1; for (int i = 2; i < r.n_params; i++) rest &= r.w[i] == 0.0f;
+    printf("    hand: rc %d w0 %.7g (want %.7g) w1 %.7g (want %.7g) TS %.4f %.4f %.4f\n", rc, (double)r.w[0], (double)w0,
+           (double)r.w[1], (double)w1, (double)ts[0], (double)ts[1], (double)ts[2]);
+    check(rc == 3 && near_f(r.w[0], w0, 1e-6) && near_f(r.w[1], w1, 1e-6) && rest, "s6-hand",
+          "|g0| 5: a same-direction peer of twice the size, an opposite one (TS 0), one at cos 0.96; g0 not in the sum");
+    check(near_f(ts[0], 1.0f, 1e-6) && ts[1] == 0.0f && near_f(ts[2], 0.96f, 1e-6), "s6-ts", "TS = ReLU(cos): 1, 0, 0.96 in the input order");
+    int z = 1; for (int i = 0; i < r.n_params; i++) z &= r.mu[i] == 0.0f && r.vu[i] == 0.0f;
+    check(z && r.adam_t == 0, "s6-adam", "a merge restarts Adam (mu vu 0, adam_t 0)");
+    /* size: the same direction at 1000 times the size gives the same result */
+    st_model big; clone(&big, &p1); big.w[0] = 3000; big.w[1] = 4000;
+    st_model *hb[] = { &big, &p2, &p3 };
+    st_model rb; s6u_merge(&rb, &me, &pv, hb, 3, NULL);
+    check(near_f(rb.w[0], w0, 1e-6) && near_f(rb.w[1], w1, 1e-6), "s6-norm", "a peer 1000 times larger in the same direction weighs the same (scaled to |g0|)");
+    st_free(&rb); st_free(&big); st_free(&r);
+    /* real models against the reference, and the order of the peers */
+    enum { NM = 5 };
+    st_model m[NM];
+    for (int k = 0; k < NM; k++) st_init_tier(&m[k], 21u + (uint32_t)k, ST_TIER_S);
+    st_model q; clone(&q, &m[0]);              /* into = prev + a bit of training */
+    for (int p = 0; p < 2; p++) pass_q(&q, 0);
+    for (int k = 1; k < 4; k++) {               /* peers: the same prev, trained on their quarters */
+        st_free(&m[k]); clone(&m[k], &m[0]);
+        for (int p = 0; p < 2; p++) pass_q(&m[k], k);
+    }
+    st_model *pr[] = { &m[1], &m[2], &m[3] }, *pr2[] = { &m[3], &m[1], &m[2] }, *pr3[] = { &m[2], &m[3], &m[1] };
+    st_model a1, a2, a3;
+    int ra = s6u_merge(&a1, &q, &m[0], pr, 3, NULL);
+    s6u_merge(&a2, &q, &m[0], pr2, 3, NULL); s6u_merge(&a3, &q, &m[0], pr3, 3, NULL);
+    float *ref = malloc((size_t)q.n_params * sizeof(float));
+    ref_trust(ref, &q, &m[0], pr, 3);
+    int refok = ra == 3, bad = -1;
+    for (int i = 0; refok && i < q.n_params; i++) if (!near_f(a1.w[i], ref[i], 1e-5)) { refok = 0; bad = i; }
+    if (bad >= 0) printf("    ref: w[%d] %g vs %g\n", bad, (double)a1.w[bad], (double)ref[bad]);
+    check(refok, "s6-ref", "trained models: every weight equals the separate libm reference (rel 1e-5)");
+    printf("    order: %016llx %016llx %016llx\n", (unsigned long long)hash(&a1), (unsigned long long)hash(&a2), (unsigned long long)hash(&a3));
+    check(hash(&a1) == hash(&a2) && hash(&a1) == hash(&a3), "s6-order", "three orders of the same peers, every byte the same");
+    free(ref); st_free(&a1); st_free(&a2); st_free(&a3);
+    /* refusals: each on a fresh clone, every byte unchanged */
+    uint64_t hq = hash(&q);
+    st_model t; int f, u;
+    st_model *opp[] = { &p2 };                 /* the hand case: only the opposite peer -> sum TS 0 */
+    clone(&t, &me); f = st_merge_trust(&t, &pv, NULL, NULL, 0, NULL); u = hash(&t) == hash(&me); st_free(&t);
+    check(f == 0 && u, "s6-none", "no peer: 0, unchanged");
+    { st_model o; int f2 = s6u_merge(&o, &me, &pv, opp, 1, NULL); int same = hash(&o) == hash(&me);
+      check(f2 == 0 && same, "s6-ts0", "every TS 0 (only an opposite peer): refused, not the own model alone, unchanged");
+      st_free(&o); }
+    { st_model o; int f3 = s6u_merge(&o, &pv, &pv, hp, 3, NULL); int same = hash(&o) == hash(&pv);
+      check(f3 == 0 && same, "s6-g0", "|g0| = 0 (into equals prev): refused, unchanged"); st_free(&o); }
+    { st_model other, nanp; st_init_tier(&other, 99u, ST_TIER_M); clone(&nanp, &m[3]); nanp.w[5] = 0.0f / 0.0f;
+      size_t lo, ln; void *bo = blob(&other, &lo), *bn = blob(&nanp, &ln);
+      const void *s1[] = { bo, bn }; size_t z1[] = { lo, ln };
+      clone(&t, &q); f = st_merge_trust(&t, &m[0], s1, z1, 2, NULL); u = hash(&t) == hq; st_free(&t);
+      check(f == 0 && u, "s6-few", "only another tier and a NaN peer: none accepted, 0, unchanged");
+      /* one good peer among them: accepted 1 */
+      size_t l1; void *b1 = blob(&m[1], &l1);
+      const void *s2[] = { bo, b1, bn }; size_t z2[] = { lo, l1, ln }; float t2[3];
+      clone(&t, &q); f = st_merge_trust(&t, &m[0], s2, z2, 3, t2); st_free(&t);
+      check(f == 1 && t2[0] == 0.0f && t2[2] == 0.0f, "s6-skip", "the bad two are skipped (TS 0 reported), the good one accepted");
+      int e1 = st_merge_trust(&q, &other, s2, z2, 3, NULL), e2 = st_merge_trust(&q, &m[0], s2, z2, ST_COHORT_MAX + 1, NULL),
+          e3 = st_merge_trust(&q, NULL, s2, z2, 3, NULL), e4 = st_merge_trust(NULL, &m[0], s2, z2, 3, NULL);
+      check(e1 < 0 && e2 < 0 && e3 < 0 && e4 < 0 && hash(&q) == hq, "s6-arg", "prev of another tier, count over the max, NULLs: ST_E_ARG, unchanged");
+      free(bo); free(bn); free(b1); st_free(&other); st_free(&nanp); }
+    /* a result that overflows: refused */
+    { st_model hi, ip, pp; clone(&ip, &me); clone(&pp, &pv); clone(&hi, &p1);
+      /* prev (3e38, 0), into (3e38, 3e38): g0 (0, 3e38). The peer's gj (0.3e38, 0.1e38) has cos 0.32 and
+       * is scaled by 9.5: w0 = 3e38 + 2.8e38, past the float range */
+      pp.w[0] = 3.0e38f; pp.w[1] = 0.0f; ip.w[0] = 3.0e38f; ip.w[1] = 3.0e38f; hi.w[0] = 3.3e38f; hi.w[1] = 1.0e37f;
+      st_model *hh[] = { &hi }; st_model o; int f5 = s6u_merge(&o, &ip, &pp, hh, 1, NULL); int same = hash(&o) == hash(&ip);
+      check(f5 == 0 && same, "s6-inf", "a result past the float range is refused, unchanged");
+      st_free(&o); st_free(&hi); st_free(&ip); st_free(&pp); }
+    st_free(&q); for (int k = 0; k < NM; k++) st_free(&m[k]);
+    st_free(&pv); st_free(&me); st_free(&p1); st_free(&p2); st_free(&p3);
+    printf("[b5s6] unit %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
+    return fails ? 1 : 0;
+}
+
 /* ---- the self-test of st_merge_trimmed (audit-150's note on the design) ---- */
 static int cmp_total(const void *x, const void *y)   /* value, then -0 before +0 */
 {
@@ -698,12 +941,14 @@ int main(int argc, char **argv)
     if (!lg || fx_end < D) { printf("  FAIL  [b5a-io] setup (fx_end %d)\n", fx_end); return 1; }
     if (argc > 1 && strcmp(argv[1], "unit") == 0) return unit();
     if (argc > 1 && strcmp(argv[1], "s5unit") == 0) return s5unit();
+    if (argc > 1 && strcmp(argv[1], "s6unit") == 0) return s6unit();
     if (argc < 3) { fprintf(stderr, "usage: %s unit | <b1_held.txt> <seed>\n", argv[0]); return 2; }
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
     if (argc > 3 && strcmp(argv[3], "s4") == 0) return s4(seed);
     if (argc > 3 && strncmp(argv[3], "s5", 2) == 0) return s5(seed, argv[3]);
+    if (argc > 3 && strncmp(argv[3], "s6", 2) == 0) return s6(seed, argv[3]);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
