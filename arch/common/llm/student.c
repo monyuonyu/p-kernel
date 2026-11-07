@@ -2444,19 +2444,109 @@ int st_round_merge(st_model *into, uint32_t gen,
     return st_merge_cohort(into, take, len, n);
 }
 
-/* B5 step 5: not written yet (the test comes first) */
+/* ------------------------------------------------------------------ */
+/* B5 step 5 (research/b5-step5-design.md): the coordinate-wise        */
+/* trimmed mean (Yin et al., arXiv:1803.01498, Definition 2). For each  */
+/* weight the values of {into} U the accepted peers are put in a TOTAL  */
+/* order (value, then -0 before +0, so equal-valued ties cannot change  */
+/* the bytes), the t lowest and t highest are dropped and the middle    */
+/* n-2t are summed in ascending order, then one divide. The order of    */
+/* the peers (and which of them is `into`) does not change a byte.      */
+/* ------------------------------------------------------------------ */
+static int st_f_before(float a, float b)   /* a strictly before b */
+{
+    if (a < b) return 1;
+    if (a > b) return 0;
+    ST_F32 x, y; x.f = a; y.f = b;
+    return (x.u >> 31) > (y.u >> 31);       /* equal: -0 before +0 */
+}
+
+/* the trimmed mean of the n values v[] (sorted in place), t from each end */
+static float st_trim_one(float *v, int n, int t)
+{
+    for (int i = 1; i < n; i++) {           /* insertion sort, n <= 65 */
+        float x = v[i];
+        int j = i - 1;
+        while (j >= 0 && st_f_before(x, v[j])) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = x;
+    }
+#if defined(B5S5_MUT_TOP2)                  /* self-test mutant: drops the top 2t, keeps the bottom */
+    int lo = 0, hi = n - 2 * t;
+#else
+    int lo = t, hi = n - t;
+#endif
+    float s = v[lo];
+    for (int i = lo + 1; i < hi; i++) s += v[i];
+    return s / (float)(hi - lo);
+}
+
 int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
                      const size_t *peer_lens, int count, int t)
 {
-    (void)into; (void)peer_blobs; (void)peer_lens; (void)count; (void)t;
-    return ST_E_ARG;
+    if (!into || !into->w) return ST_E_ARG;
+    if (count < 0 || count > ST_COHORT_MAX || t < 1) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens)) return ST_E_ARG;
+#if defined(B5S5_TRIM_OFF)                  /* NC1 of the design: the same function, every value averaged */
+    t = 0;
+#endif
+    int np = into->n_params;
+    int accepted = 0;
+    uint64_t take = 0;
+    for (int k = 0; k < count; k++) {
+        if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
+#ifndef ST_MERGE_NO_FINITE
+        if (!st_blob_w_finite(peer_blobs[k], np)) continue;
+#endif
+        take |= (uint64_t)1 << k;
+        accepted++;
+    }
+    int n = accepted + 1;                   /* into is a member */
+    /* counted after the tier and finite checks; too few is a refusal, never
+     * a fall back to the mean (a mean is what one bad peer breaks) */
+    if (n < 2 * t + 2) return 0;
+    float v[ST_COHORT_MAX + 1];
+#ifndef ST_MERGE_NO_FINITE
+    if (!st_w_finite(into->w, np)) return 0;
+    for (int i = 0; i < np; i++) {          /* the middle can still sum to Inf: look first */
+        int m = 0;
+        v[m++] = into->w[i];
+        for (int k = 0; k < count; k++)
+            if (take >> k & 1) v[m++] = st_blob_w_at(peer_blobs[k], (size_t)i);
+        if (st_bad_f(st_trim_one(v, m, t))) return 0;
+    }
+#endif
+    for (int i = 0; i < np; i++) {
+        int m = 0;
+        v[m++] = into->w[i];
+        for (int k = 0; k < count; k++)
+            if (take >> k & 1) v[m++] = st_blob_w_at(peer_blobs[k], (size_t)i);
+        into->w[i] = st_trim_one(v, m, t);
+    }
+    for (int i = 0; i < np; i++) { into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
+    into->adam_t = 0;
+    return accepted;
 }
+
 int st_round_trimmed(st_model *into, uint32_t gen,
                      const void *const *peer_blobs, const size_t *peer_lens,
                      const uint32_t *gens, int count, int t)
 {
-    (void)gen; (void)gens;
-    return st_merge_trimmed(into, peer_blobs, peer_lens, count, t);
+    if (!into || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens || !gens)) return ST_E_ARG;
+    const void *take[ST_COHORT_MAX];
+    size_t len[ST_COHORT_MAX];
+    int n = 0;
+    for (int k = 0; k < count; k++) {
+#ifndef ST_ROUND_NO_GEN
+        if (gens[k] != gen) continue;
+#else
+        (void)gen; (void)gens;
+#endif
+        take[n] = peer_blobs[k];
+        len[n]  = peer_lens[k];
+        n++;
+    }
+    return st_merge_trimmed(into, take, len, n, t);
 }
 
 int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
