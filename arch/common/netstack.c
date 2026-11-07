@@ -17,6 +17,7 @@
 #include "drpc.h"      /* DNODE_MAX — ARP table must cover the whole cluster */
 #include "kernel.h"
 #include "pk_nosw.h"
+#include "pk_node.h"   /* pk_node_ip (the onlink self-test) */
 
 /* ------------------------------------------------------------------ */
 /* My IP address (settable at runtime by drpc_init)                   */
@@ -322,6 +323,14 @@ static UH ip_id_ctr = 0x1234;
 /* Determine next-hop IP for a given destination */
 static UW next_hop(UW dst_ip)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_ONLINK24)
+    /* N2: the cluster is 10.1/16 (pk_node_ip puts a wide id's high byte in
+     * the third byte), so between two cluster addresses there is no gateway.
+     * Elsewhere the /24 below stays. -DN2_NC_ONLINK24 is the falsifier. */
+    if ((dst_ip & IP4(255,255,0,0)) == IP4(10,1,0,0) &&
+        (NET_MY_IP & IP4(255,255,0,0)) == IP4(10,1,0,0))
+        return dst_ip;
+#endif
     if ((dst_ip & NET_NETMASK) == (NET_MY_IP & NET_NETMASK))
         return dst_ip;          /* local */
     return NET_GW_IP;           /* default gateway */
@@ -1147,3 +1156,48 @@ INT icmp_ping_shell(UW dst_ip)
 {
     return icmp_ping(dst_ip, 0x5000, ping_seq_ctr++);
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* N2 `nodes onlink`: next_hop for the cluster's addresses. A wide id's */
+/* address uses the third byte (pk_node_ip: 300 is 10.1.1.44), so with  */
+/* the /24 a wide node sent its unicast to a narrow peer (10.1.0.x) to  */
+/* the gateway, whose ARP never resolves: dropped without a word, while */
+/* wide to wide (10.1.1.x) passed ([n2-mix] X3 snow@4/44, audit-149).   */
+/* Checks: wide<->narrow and wide<->wide and narrow<->narrow are on-link;*/
+/* outside 10.1/16 the /24 and the gateway stay (QEMU's 10.0.2.x).      */
+/* ------------------------------------------------------------------ */
+INT net_onlink_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : ns_puts;
+    UW bad = 0;
+    PK_NOSW_ENTER();                 /* net_my_ip is borrowed: no send in between */
+    UW saved = net_my_ip;
+    net_my_ip = pk_node_ip(299);     /* 10.1.1.44 */
+    if (next_hop(pk_node_ip(3))   != pk_node_ip(3))   bad |= 1u << 0;
+    if (next_hop(pk_node_ip(259)) != pk_node_ip(259)) bad |= 1u << 1;
+    net_my_ip = pk_node_ip(3);       /* 10.1.0.4 */
+    if (next_hop(pk_node_ip(299)) != pk_node_ip(299)) bad |= 1u << 2;
+    if (next_hop(pk_node_ip(43))  != pk_node_ip(43))  bad |= 1u << 3;
+    if (next_hop(IP4(10,2,0,4))   != NET_GW_IP)       bad |= 1u << 4;
+    if (next_hop(IP4(192,168,10,2)) != NET_GW_IP)     bad |= 1u << 5;
+    net_my_ip = IP4(10,0,2,15);      /* QEMU user-mode */
+    if (next_hop(IP4(10,0,2,2))   != IP4(10,0,2,2))   bad |= 1u << 6;
+    if (next_hop(IP4(10,0,5,1))   != NET_GW_IP)       bad |= 1u << 7;
+    net_my_ip = saved;
+    PK_NOSW_LEAVE();
+    static const char *const what[8] = {
+        "wide self to a narrow peer goes to the gateway",
+        "wide self to a wide peer goes to the gateway",
+        "narrow self to a wide peer goes to the gateway",
+        "narrow self to a narrow peer goes to the gateway",
+        "10.2.0.4 (outside 10.1/16) is taken as on-link",
+        "192.168.10.2 is taken as on-link",
+        "QEMU's 10.0.2.2 lost its /24",
+        "10.0.5.1 is taken as on-link (the /16 is for 10.1 only)" };
+    for (INT i = 0; i < 8; i++)
+        if (bad & (1u << i)) { say("[onlink] FAIL "); say(what[i]); say("\r\n"); }
+    say(bad ? "[onlink] RED\r\n" : "[onlink] PASS (10.1/16 is on-link, the /24 elsewhere)\r\n");
+    return bad ? 1 : 0;
+}
+#endif
