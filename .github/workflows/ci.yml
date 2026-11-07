@@ -1473,6 +1473,9 @@ jobs:
           grep -aF '[region-super] 8 PASS, 0 FAIL' region_test.log
           grep -aF '[region-teacher] 6 PASS, 0 FAIL' region_test.log
           grep -aF '[region-narrow] 6 PASS, 0 FAIL' region_test.log
+          # next_hop: 10.1/16 is on-link (a wide address uses the third byte; the /24 dropped wide<->narrow unicast)
+          (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink.log || true
+          grep -aF '[onlink] PASS' nodes_onlink.log
           git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
           git worktree add -q /tmp/n2old FETCH_HEAD
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
@@ -1504,6 +1507,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_NARROW_SIZE_WIDE >/dev/null
           (printf 'region test\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee region_test_nc.log || true
           grep -aF '[region-narrow] 2 PASS, 4 FAIL' region_test_nc.log
+          # [onlink] goes red when next_hop keeps the /24 inside 10.1/16 (-DN2_NC_ONLINK24)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_ONLINK24 >/dev/null
+          (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink_nc.log || true
+          grep -aF '[onlink] FAIL wide self to a narrow peer' nodes_onlink_nc.log
           # [v2cap] goes red when bit 2 is not adopted from a peer (-DN2_NC_V2IGNORE)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_V2IGNORE >/dev/null
