@@ -390,6 +390,22 @@ int  st_round_merge(st_model *into, uint32_t gen,
                     const void *const *peer_blobs, const size_t *peer_lens,
                     const uint32_t *gens, int count);
 
+/* st_merge_trimmed (B5 step 5, research/b5-step5-design.md): like
+ * st_merge_cohort (the same tier, finite and overflow checks, Adam restarted)
+ * but each weight is the coordinate-wise trimmed mean of {into} U the accepted
+ * peers: drop the t lowest and t highest values, average the rest (Yin et al.,
+ * arXiv:1803.01498). Order independent to the byte (a total order with -0
+ * before +0, the middle summed ascending). Fewer than 2t+2 members after the
+ * checks is a refusal: returns 0, model BYTE-UNCHANGED (never the mean).
+ * t < 1 or count > ST_COHORT_MAX is ST_E_ARG. Returns the peers accepted.
+ * Hosted only (student.c is not in the bare-metal builds).
+ * st_round_trimmed: the same with st_round_merge's generation filter.        */
+int  st_merge_trimmed(st_model *into, const void *const *peer_blobs,
+                      const size_t *peer_lens, int count, int t);
+int  st_round_trimmed(st_model *into, uint32_t gen,
+                      const void *const *peer_blobs, const size_t *peer_lens,
+                      const uint32_t *gens, int count, int t);
+
 /* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
  * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
  * is finite and its mean loss over the non-overlapping `seq` windows of
