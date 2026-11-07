@@ -286,3 +286,7 @@ void kdds_delete_cluster(const char *name);
  * them) while an unrelated topic's handle is untouched. Emits
  * "[kdds-delcluster] PASS"/"FAIL ...". Returns 0 on PASS, else the fail count. */
 INT kdds_delcluster_self_test(void (*emit)(const char *));
+
+/* N2 (c)(1) `kdds wide` (hosted): the wide peers a broadcast goes to, the
+ * region rule held with a fake member list. "[kdds-wide] PASS" or FAIL. */
+INT kdds_wide_self_test(void (*emit)(const char *));

@@ -221,6 +221,30 @@ W kdds_open_poll_scoped(const char *name, W qos, W scope)
 /* kdds_pub                                                            */
 /* ------------------------------------------------------------------ */
 
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_KDDS_NARROW_ONLY)
+/* N2 (c)(1): the wide peers a broadcast goes to, out of SWIM's ALIVE list:
+ * not myself, not a narrow id (the loop over 0..DNODE_MAX-1 has them), and
+ * for a REGION topic only region members. Pure (member is region_is_member
+ * in production) so `kdds wide` can hold the region rule: on localhost every
+ * peer is inside the RTT line, so a live swarm cannot show it (audit-151).
+ * out may be alive (k never runs behind m). -DN2_NC_KDW_NO_REGION: no region
+ * rule for wide peers (falsifier, [kdds-wide] region). */
+static INT kdds_wide_pick(const pk_node_t *alive, INT n, pk_node_t self, BOOL region_scoped,
+                          BOOL (*member)(pk_node_t), pk_node_t *out)
+{
+    INT m = 0;
+    for (INT k = 0; k < n; k++) {
+        pk_node_t w = alive[k];
+        if (w == self || w < DNODE_MAX) continue;
+#ifndef N2_NC_KDW_NO_REGION
+        if (region_scoped && !member(w)) continue;
+#endif
+        out[m++] = w;
+    }
+    return m;
+}
+#endif
+
 /* dst < 0: 今までどおり (scope の全員)。dst >= 0: 網へは dst の 1 台だけ (N1)。 */
 static W kdds_pub_core(W handle, const void *data, W len, INT dst)
 {
@@ -301,10 +325,9 @@ static W kdds_pub_core(W handle, const void *data, W len, INT dst)
         if (dst < 0) {
             static pk_node_t wide_ids[DREGION_MAX];
             INT nw = swim_wide_alive(wide_ids, DREGION_MAX);
+            nw = kdds_wide_pick(wide_ids, nw, drpc_my_node, region_scoped, region_is_member, wide_ids);
             for (INT k = 0; k < nw; k++) {
                 pk_node_t w = wide_ids[k];
-                if (w == drpc_my_node || w < DNODE_MAX) continue;
-                if (region_scoped && !region_is_member(w)) continue;
                 if (pmesh_send(w, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0) {
                     fanout++;
                     kdds_tx_msgs++;
@@ -668,3 +691,42 @@ INT kdds_delcluster_self_test(void (*emit)(const char *))
     if (fails == 0) say("[kdds-delcluster] PASS\r\n");
     return fails;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* N2 (c)(1) `kdds wide`: which wide peers a broadcast goes to          */
+/*   alive {260, 300, 5, 270}, region members 260 (and 5); self 270:    */
+/*   [region] a REGION topic goes to 260 only (300 is out of region)    */
+/*   [global] a GLOBAL topic goes to 260 and 300                        */
+/*   [self]   self 260 is skipped; [narrow] 5 is never picked here      */
+/* Falsifier: -DN2_NC_KDW_NO_REGION ([region] red).                     */
+/* ------------------------------------------------------------------ */
+static BOOL kw_member(pk_node_t n) { return (n == 260 || n == 5) ? TRUE : FALSE; }
+INT kdds_wide_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : kd_puts;
+#ifdef N2_NC_KDDS_NARROW_ONLY
+    say("[kdds-wide] FAIL narrow only (no wide peers at all)\r\n");
+    return 1;
+#else
+    static const pk_node_t alive[4] = { 260, 300, 5, 270 };
+    pk_node_t out[4];
+    INT m;
+    m = kdds_wide_pick(alive, 4, 270, TRUE, kw_member, out);
+    if (m != 1 || out[0] != 260) { say("[kdds-wide] FAIL region (a REGION topic is not 260 only)\r\n"); fails++; }
+    m = kdds_wide_pick(alive, 4, 270, FALSE, kw_member, out);
+    if (m != 2 || out[0] != 260 || out[1] != 300) { say("[kdds-wide] FAIL global (a GLOBAL topic is not 260 and 300)\r\n"); fails++; }
+    m = kdds_wide_pick(alive, 4, 260, FALSE, kw_member, out);
+    if (m != 2 || out[0] != 300 || out[1] != 270) { say("[kdds-wide] FAIL self (self 260 was picked or a peer lost)\r\n"); fails++; }
+    for (INT k = 0; k < m; k++) if (out[k] < DNODE_MAX) { say("[kdds-wide] FAIL narrow (a narrow id picked)\r\n"); fails++; break; }
+    {   /* in place, as kdds_pub_core calls it */
+        pk_node_t io[4] = { 300, 5, 260, 270 };
+        m = kdds_wide_pick(io, 4, 270, TRUE, kw_member, io);
+        if (m != 1 || io[0] != 260) { say("[kdds-wide] FAIL inplace (the in-place pick is not 260)\r\n"); fails++; }
+    }
+    if (fails == 0) say("[kdds-wide] PASS (wide peers: not self, not narrow, region members only for a REGION topic)\r\n");
+    return fails;
+#endif
+}
+#endif
