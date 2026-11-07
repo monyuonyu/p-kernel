@@ -661,6 +661,10 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     if (rc != 0 || pmt_cnt != 1 || pmt_buf[4] != PMESH_VERSION2 ||
         pmt_le16(pmt_buf + 6) != WSELF || pmt_le16(pmt_buf + 8) != N || pmt_ip != pk_node_ip(N))
         PMT_FAIL("read: wide self to a narrow peer with bit 2 is not one v2 frame from the wide id");
+    /* audit-149 [pmv2-self]: v2 to my own id is not sent (even if "reads v2" says yes) */
+    pmt_v2_peer = WSELF; pmt_cnt = 0; rc = pmesh_send(WSELF, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("self: v2 to my own id was sent");
+    pmt_v2_peer = N;
 
     /* [pmv2-direct] */
     dnode_table[N].state = DNODE_SUSPECT; pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);

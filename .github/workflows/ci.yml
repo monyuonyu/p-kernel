@@ -1486,7 +1486,7 @@ jobs:
           N2_RELAY_OLD=1 N2_RELAY_BIN=/tmp/n2old/relay/relay N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel \
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1531,6 +1531,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PMV2_NOIDOK >/dev/null
           (printf 'nodes pmv2\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pmv2_nc3.log || true
           grep -aF '[pmv2] FAIL noid' nodes_pmv2_nc3.log
+          # [pmv2] goes red when a node without an id (0xFF) takes a v2 frame to 0xFF (-DN2_NC_PMV2_RXNOIDOK, audit-149)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PMV2_RXNOIDOK >/dev/null
+          (printf 'nodes pmv2\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pmv2_nc4.log || true
+          grep -aF '[pmv2] FAIL rxnoid' nodes_pmv2_nc4.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
 
