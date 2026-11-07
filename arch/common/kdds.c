@@ -238,6 +238,8 @@ static INT kdds_wide_pick(const pk_node_t *alive, INT n, pk_node_t self, BOOL re
         if (w == self || w < DNODE_MAX) continue;
 #ifndef N2_NC_KDW_NO_REGION
         if (region_scoped && !member(w)) continue;
+#else
+        (void)region_scoped; (void)member;
 #endif
         out[m++] = w;
     }
@@ -701,15 +703,17 @@ INT kdds_delcluster_self_test(void (*emit)(const char *))
 /*   [self]   self 260 is skipped; [narrow] 5 is never picked here      */
 /* Falsifier: -DN2_NC_KDW_NO_REGION ([region] red).                     */
 /* ------------------------------------------------------------------ */
+#ifndef N2_NC_KDDS_NARROW_ONLY
 static BOOL kw_member(pk_node_t n) { return (n == 260 || n == 5) ? TRUE : FALSE; }
+#endif
 INT kdds_wide_self_test(void (*emit)(const char *))
 {
-    INT fails = 0;
     void (*say)(const char *) = emit ? emit : kd_puts;
 #ifdef N2_NC_KDDS_NARROW_ONLY
     say("[kdds-wide] FAIL narrow only (no wide peers at all)\r\n");
     return 1;
 #else
+    INT fails = 0;
     static const pk_node_t alive[4] = { 260, 300, 5, 270 };
     pk_node_t out[4];
     INT m;
