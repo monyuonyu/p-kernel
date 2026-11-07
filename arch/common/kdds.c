@@ -200,6 +200,8 @@ static void kq_save(W tidx)
         kd_memcpy(q->data, t->data, t->data_len);
         kq_w = (kq_w + 1) % KDDS_Q_N;
     }
+#else
+    (void)kq_wanted; (void)kq_w;
 #endif
     kq_tseq[tidx]++;                            /* the message about to be written */
 }
