@@ -3702,6 +3702,24 @@ static INT mc_push_still(void)
     return fi >= 0 && r3_fq[fi].val[bind] == mc_push_pkt.val &&
            s == mc_push_pkt.fact_seq && o == MC_PUSH_ORG();
 }
+/* is this winner (key, stamp, teacher) the one being re-sent? mind/have's
+ * busy test, so the [pull-answer-src] cert can drive it (the audit-153 hole
+ * P1: comparing the teacher by its byte stayed green). Bare: the same
+ * expression in place. -DN2_NC_MC_BUSY_NARROW: by the byte (negative). */
+static INT mc_push_busy(UB k, UW s, pk_node_t o)
+{
+#ifdef N2_NC_MC_BUSY_NARROW
+    return mc_push_sends_left > 0 && mc_push_pkt.key == k && mc_push_pkt.fact_seq == s
+        && (U1)MC_PUSH_ORG() == (U1)o;
+#else
+    return mc_push_sends_left > 0 && mc_push_pkt.key == k && mc_push_pkt.fact_seq == s
+        && MC_PUSH_ORG() == o;
+#endif
+}
+#define MC_PUSH_BUSY(k, s, o) mc_push_busy((k), (s), (o))
+#else
+#define MC_PUSH_BUSY(k, s, o) (mc_push_sends_left > 0 && mc_push_pkt.key == (k) \
+                               && mc_push_pkt.fact_seq == (s) && MC_PUSH_ORG() == (o))
 #endif
 /* once per mind_net_task tick, after the pull answers and before my own
  * re-drive: re-send the held winner (see mc_incoming_lost). */
@@ -4765,8 +4783,7 @@ static void mh_poll(void)
                 pk_node_t o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
                 UW s_in = mh_rx.e[i].stamp; U1 o_in = mh_rx.e[i].origin;
                 INT beats = (s_cur > s_in) || (s_cur == s_in && o_cur < o_in);
-                INT busy  = mc_push_sends_left > 0 && mc_push_pkt.key == (UB)k
-                            && mc_push_pkt.fact_seq == s_cur && MC_PUSH_ORG() == o_cur;
+                INT busy  = MC_PUSH_BUSY((UB)k, s_cur, o_cur);
                 if (beats && !busy) {
                     r_puts("[mind] mind/have from node "); r_putdec((UW)o);
                     r_puts(": key "); r_putdec((UW)k); r_puts(" stamp "); r_putdec(s_in);
@@ -8254,6 +8271,18 @@ void r3_pull_test(void)
                     pw_ok = (mc_push_pkt.origin_node == PK_NODE_NONE) && (ps == 0)
                          && (mt_wire_dry_len == (W)sizeof fw)
                          && (mt_wire_dry_org == WT) && mc_push_still();
+                    /* mind/have's busy (P1): the winner of teacher 300 is busy, the same
+                     * key and stamp from teacher 44 (300's low byte) is not */
+                    UB keep_left = mc_push_sends_left;
+                    mc_push_sends_left = 1;
+                    INT bz300 = MC_PUSH_BUSY(mc_push_pkt.key, mc_push_pkt.fact_seq, WT);
+                    INT bz44  = MC_PUSH_BUSY(mc_push_pkt.key, mc_push_pkt.fact_seq, (pk_node_t)(WT & 0xFF));
+                    mc_push_sends_left = keep_left;
+                    INT busy_ok = bz300 && !bz44;
+                    r_puts("[pull] answer-src wide: busy for teacher 300="); r_putdec((UW)bz300);
+                    r_puts(" for 44="); r_putdec((UW)bz44); r_puts("\r\n");
+                    if (!busy_ok) r_puts("[pull-answer-src] FAIL busy-wide (mind/have's busy compares the teacher by its byte)\r\n");
+                    pw_ok = pw_ok && busy_ok;
                 }
                 mc_push_pkt = keep_pkt; mc_push_org = keep_org;
                 r_puts("[pull] answer-src wide: push-back of teacher 300 (tail, still held)=");
