@@ -1,4 +1,6 @@
 # kdds: 送り元ごとに取りこぼさない受け（R-KDDSQ の設計）
+<!-- vmodel rung: PARTIAL -->
+<!-- vmodel certs: [kdds-queue] -->
 
 2026-11-08。**第 1 段は hosted だけ**（ベアは同じコード＝crown 不変、ベアへ広げるのは次の段で re-bless）。判断待ち R-KDDSQ（11-07 05:08）に 24 時間返事が無く、おすすめで設計から始める。第 1 段の実装は同じ回（11-08 04:05、feat/kdds-queue-design の上）、設計と実装の監査は別の回。
 
