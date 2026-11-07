@@ -685,7 +685,18 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
       pmt_put16(f + 12, (UH)(PMESH_V2_DATA_MAX + 1));
       pmesh_rx(0, PMESH_PORT, f, (UH)(PMESH_V2_HDR + PMESH_V2_DATA_MAX + 1));  /* too long */
       pmesh_rx(0, PMESH_PORT, f, 13);                                   /* under the header */
-      if (pmt_rx_cnt != 0) PMT_FAIL("rx: a v2 frame with a bad length was delivered"); }
+      if (pmt_rx_cnt != 0) PMT_FAIL("rx: a v2 frame with a bad length was delivered");
+      /* audit-149: an id that differs from mine only in the high byte (260+256) */
+      n = pmt_v2frame(f, WIDE, (UH)(WSELF + 256), PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 0) PMT_FAIL("rx: v2 to an id differing in the high byte was delivered");
+      /* audit-149 [pmv2-rxnoid]: a node without an id (0xFF) takes no v2 frame,
+       * as v1 drops dst >= DNODE_MAX before its == drpc_my_node check */
+      drpc_my_node = PK_NODE_NONE;
+      n = pmt_v2frame(f, WIDE, PK_NODE_NONE, PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 0) PMT_FAIL("rxnoid: a node with id 0xFF took a v2 frame addressed to 0xFF");
+      drpc_my_node = WSELF; }
     {   /* v1 to me (narrow) still lands */
         drpc_my_node = 1;
         UW m = PMESH_MAGIC; __builtin_memcpy(f, &m, 4);
