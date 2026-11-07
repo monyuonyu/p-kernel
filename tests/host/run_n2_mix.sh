@@ -22,6 +22,7 @@
 # Negative control: -DN2_NC_TRUNC cuts the wide ids to a byte, so 260 and 300 become 4 and 44.
 # 260 and 300 are in SWIM's membership only (swim.c). N2_X3=1 adds X3 (a teach crosses the
 # mixed swarm, below); it is red until a wide node runs its own mind. X4 is not written yet.
+# N2_X3_PART=snow judges only X3's snow lines (wide -> new, in CI); fire (old -> wide) is later.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -195,17 +196,34 @@ fi
 #   fire reaches every other node from node 0; snow reaches 4, 44 and 260 from node 299;
 #   no old node holds snow at all (300's low byte is 44's: an old node must not read it as 44's).
 #   Without the wide nodes (N2_NO_WIDE, N2_RELAY_OLD) only fire, over the five narrow ids.
+#   N2_X3_PART=snow: judge the snow lines only (snow@4/44/260, snow-on-old, snow-not-from-299);
+#   fire (old -> wide) needs the pull answer's wide origin, a later slice. Unset: all of X3.
 if [ "${N2_X3:-0}" = 1 ]; then
     WIDE_IN="$WIDE"; [ "${N2_RELAY_OLD:-0}" = 1 ] && WIDE_IN=""
+    X3_FIRE=1; [ "${N2_X3_PART:-}" = snow ] && X3_FIRE=0
+    [ "$X3_FIRE" = 0 ] && [ -z "$WIDE_IN" ] && { echo "[n2-mix] N2_X3_PART=snow needs the wide nodes"; exit 2; }
     arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
-    for i in 1 2 3 4 44 $WIDE; do send "$i" "stop resume"; done   # a stopped node refuses teaches
+    # a stopped node refuses teaches, and a teach is sent once: wait until every node has
+    # printed its resume (a fixed 2 s lost the race on a loaded box: 300 taught while 4 was
+    # still stopped, and snow reached nobody; b5s5i kdw runs at load 10)
+    resumed() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -ac 'stop\] stopped 0 '; }
+    declare -A R0
+    for i in 1 2 3 4 44 $WIDE; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
+    t=0; late="?"
+    while [ "$t" -lt 30 ] && [ -n "$late" ]; do
+        sleep 1; t=$((t + 1)); late=""
+        for i in 1 2 3 4 44 $WIDE; do [ "$(resumed "$i")" -gt "${R0[$i]}" ] || late="$late $i"; done
+    done
+    [ -n "$late" ] && echo "[n2-mix] X3 note: no resume line from:$late after 30 s"
     sleep 2
     send 1 "mind teach fire warm"
     [ -n "$WIDE_IN" ] && send 300 "mind teach snow white"
     t=0; miss="?"
     while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
         sleep 3; t=$((t + 3)); miss=""
-        for i in 2 3 4 44 $WIDE_IN; do arrived "$i" fire 0 || miss="$miss fire@$i"; done
+        if [ "$X3_FIRE" = 1 ]; then
+            for i in 2 3 4 44 $WIDE_IN; do arrived "$i" fire 0 || miss="$miss fire@$i"; done
+        fi
         if [ -n "$WIDE_IN" ]; then
             for i in 4 44 260; do arrived "$i" snow 299 || miss="$miss snow@$i"; done
         fi
@@ -217,7 +235,9 @@ if [ "${N2_X3:-0}" = 1 ]; then
         grep -aE 'remote teach arrived: "snow"' "$LOGDIR/node$i.log" | grep -avqE ' from node 299 ' \
             && miss="$miss snow-not-from-299@$i"
     done
-    [ -z "$miss" ] && res X3 PASS "fire from 0 everywhere${WIDE_IN:+, snow from 299 on the new}" \
+    X3_WHAT="fire from 0 everywhere${WIDE_IN:+, snow from 299 on the new}"
+    [ "$X3_FIRE" = 0 ] && X3_WHAT="(snow part) snow from 299 on the new, none on the old"
+    [ -z "$miss" ] && res X3 PASS "$X3_WHAT" \
                    || res X3 FAIL "missing or wrong:$miss"
 fi
 

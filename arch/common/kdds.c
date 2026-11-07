@@ -23,6 +23,9 @@
 #include "region.h"
 #include "kernel.h"
 #include "pk_nosw.h"
+#if defined(_TK_HOSTED_LIBC_)
+#include "swim.h"      /* swim_wide_alive (N2 (ii)(c)) */
+#endif
 
 /* 直近の kdds_pub() の fanout (UDP 送信したピア数) — スコープ効果の観測用 */
 static UW kdds_last_fanout = 0;
@@ -290,6 +293,30 @@ static W kdds_pub_core(W handle, const void *data, W len, INT dst)
                 }
             }
         }
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_KDDS_NARROW_ONLY)
+        /* N2 (ii)(c): the wide peers SWIM holds ALIVE get the broadcast too,
+         * over the one-node PMESH v2 (pmesh_send picks v2 for a wide id and
+         * sends only to a reader). kdds_rx does not read the src byte, so the
+         * KDDS frame itself stays v1. kdds_pub_to keeps to narrow ids. */
+        if (dst < 0) {
+            static pk_node_t wide_ids[DREGION_MAX];
+            INT nw = swim_wide_alive(wide_ids, DREGION_MAX);
+            for (INT k = 0; k < nw; k++) {
+                pk_node_t w = wide_ids[k];
+                if (w == drpc_my_node || w < DNODE_MAX) continue;
+                if (region_scoped && !region_is_member(w)) continue;
+                if (pmesh_send(w, KDDS_PORT, (const UB *)&pkt, (UH)sizeof(pkt)) == 0) {
+                    fanout++;
+                    kdds_tx_msgs++;
+                    kdds_tx_bytes += (UW)sizeof(pkt);
+                    if (!region_is_member(w)) {
+                        kdds_tx_cross++;
+                        kdds_tx_bytes_cross += (UW)sizeof(pkt);
+                    }
+                }
+            }
+        }
+#endif
         kdds_last_fanout = fanout;
     } else {
         kdds_last_fanout = 0;
