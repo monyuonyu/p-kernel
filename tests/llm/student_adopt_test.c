@@ -601,6 +601,8 @@ static int s6(uint32_t seed, const char *which)
         s6_rounds(seed, 1, 1, 3, "trust4-near1");
     } else if (strcmp(which, "s6r1") == 0) {
         s6_rounds(seed, 1, 2, 1, "trust4-garb2");
+    } else if (strcmp(which, "s6r2") == 0) {     /* a reading after the judgement: the flip poison */
+        s6_rounds(seed, 1, 2, 2, "trust4-flip2");
     } else { fprintf(stderr, "s6: unknown stage %s\n", which); return 2; }
     printf("[b5s6] done\n");
     return 0;
