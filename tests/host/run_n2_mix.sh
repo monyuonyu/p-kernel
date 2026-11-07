@@ -203,7 +203,18 @@ if [ "${N2_X3:-0}" = 1 ]; then
     X3_FIRE=1; [ "${N2_X3_PART:-}" = snow ] && X3_FIRE=0
     [ "$X3_FIRE" = 0 ] && [ -z "$WIDE_IN" ] && { echo "[n2-mix] N2_X3_PART=snow needs the wide nodes"; exit 2; }
     arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
-    for i in 1 2 3 4 44 $WIDE; do send "$i" "stop resume"; done   # a stopped node refuses teaches
+    # a stopped node refuses teaches, and a teach is sent once: wait until every node has
+    # printed its resume (a fixed 2 s lost the race on a loaded box: 300 taught while 4 was
+    # still stopped, and snow reached nobody; b5s5i kdw runs at load 10)
+    resumed() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -ac 'stop\] stopped 0 '; }
+    declare -A R0
+    for i in 1 2 3 4 44 $WIDE; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
+    t=0; late="?"
+    while [ "$t" -lt 30 ] && [ -n "$late" ]; do
+        sleep 1; t=$((t + 1)); late=""
+        for i in 1 2 3 4 44 $WIDE; do [ "$(resumed "$i")" -gt "${R0[$i]}" ] || late="$late $i"; done
+    done
+    [ -n "$late" ] && echo "[n2-mix] X3 note: no resume line from:$late after 30 s"
     sleep 2
     send 1 "mind teach fire warm"
     [ -n "$WIDE_IN" ] && send 300 "mind teach snow white"
