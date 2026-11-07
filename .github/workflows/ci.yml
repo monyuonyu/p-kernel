@@ -1242,6 +1242,11 @@ jobs:
           grep -aF '[result] PASS' llm_tok.log
           tests/llm/run_student.sh   | tee llm_student.log
           grep -aF '[result] PASS' llm_student.log
+          # B5 step 5: st_merge_trimmed's self-test (s5unit) and the judge's, seconds;
+          # the top-two mutant must be red (the judgement on seeds 115-122 is not in CI)
+          B5S5_MODE=self tests/llm/run_b5_step5.sh | tee llm_b5s5.log
+          grep -aF '[result] PASS  b5-step5 self-tests' llm_b5s5.log
+          grep -aF '[b5-step5] the top-two mutant is red' llm_b5s5.log
 
       # SCALE-WALL rung C1 — context carry (scale_wall_design.md §8, [ctx-carry]).
       # The FIRST buildable rung of "real conversation": RoPE + ST_MAXSEQ 64->256
