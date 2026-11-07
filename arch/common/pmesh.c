@@ -269,6 +269,10 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
         UH n2    = (UH)(data[12] | ((UH)data[13] << 8));
         if (n2 > PMESH_V2_DATA_MAX || (UW)PMESH_V2_HDR + n2 > len) return;
         pmesh_v2_stats.v2_rx++;
+#if !defined(N2_NC_PMV2_RXNOIDOK)
+        /* audit-149: no id (0xFF) takes nothing, as v1 drops dst >= DNODE_MAX */
+        if (drpc_my_node == PK_NODE_NONE) { pmesh_v2_stats.v2_drop++; return; }
+#endif
         if (d2 != drpc_my_node) { pmesh_v2_stats.v2_drop++; return; }
         pmesh_v2_stats.v2_delivered++;
         pmesh_stats.data_delivered++;
