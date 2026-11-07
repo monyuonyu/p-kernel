@@ -209,7 +209,13 @@ static UB teacher_self(void)
  * teacher=0 → safe degrade. */
 static UB cap_self_byte(void)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_NOBIT2)
+    /* N2 (ii)(a): bit 2 = this node reads v2 (every hosted build since N2b).
+     * Old nodes read bits 0 and 1 only, so the extra bit changes nothing there. */
+    return (UB)((cap_self() << 0) | (teacher_self() << 1) | (1u << 2));
+#else
     return (UB)((cap_self() << 0) | (teacher_self() << 1));
+#endif
 }
 
 /* wave-selfelect: SELF-RECOGNITION of own capability.
@@ -256,10 +262,34 @@ static UB cap_self_byte(void)
  * verbatim from that peer's own gossip under the LWW gate. Keeps bit 0
  * byte-identical to the prior region_is_super_capable(target)?1:0 relay while
  * carrying bit 1 forward so the teacher axis spreads epidemically too. */
+#if defined(_TK_HOSTED_LIBC_)
+/* N2 (ii)(a): capability bit 2 = "reads v2" (research/n2-wire16.md 2.2), per
+ * narrow peer as that peer last said about itself. Wide peers read v2 by
+ * construction (they exist only in v2). Hosted-only: bare neither sends nor
+ * reads bit 2, so its .text does not move. */
+static UB v2cap_tab[DNODE_MAX];
+static void v2cap_set(pk_node_t n, UB yes) { if (n < DNODE_MAX) v2cap_tab[n] = yes ? 1 : 0; }
+static UB   v2cap_get(pk_node_t n)         { return (n < DNODE_MAX) ? v2cap_tab[n] : 0; }
+/* adopt bit 2 from a peer's own rumor (the same LWW gate as bits 0 and 1) */
+#if defined(N2_NC_V2IGNORE)
+#define V2CAP_ADOPT(nid, capbyte) do { (void)(capbyte); } while (0)
+#else
+#define V2CAP_ADOPT(nid, capbyte) v2cap_set((nid), (UB)(((capbyte) >> 2) & 1))
+#endif
+#else
+#define V2CAP_ADOPT(nid, capbyte) do { } while (0)
+#endif
+
 static UB cap_byte(pk_node_t node)
 {
+#if defined(_TK_HOSTED_LIBC_)
+    return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
+              | (region_is_teacher_capable(node) ? 1 : 0) << 1
+              | (v2cap_get(node) ? 1 : 0) << 2);   /* N2 (ii)(a): relay bit 2 too */
+#else
     return (UB)((region_is_super_capable(node)   ? 1 : 0) << 0
               | (region_is_teacher_capable(node) ? 1 : 0) << 1);
+#endif
 }
 
 static void gossip_add(pk_node_t node_id, UB state, UB incarnation, UB capability)
@@ -449,6 +479,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
              * (epidemic relay; we do not originate them). */
             region_set_super_capable(nid, cap_in ? TRUE : FALSE);
             region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
+            V2CAP_ADOPT(nid, pkt->gossip[i].capability);   /* N2 (ii)(a): bit 2 */
             sw_note(nid, DNODE_UNKNOWN, st);
             sw_puts("[swim] gossip: node "); sw_putdec(nid);
             sw_puts(st == DNODE_ALIVE ? " discovered (via gossip)\r\n"
@@ -460,8 +491,18 @@ static void gossip_apply(const SWIM_PKT *pkt)
         }
 
         /* anti-stale: accept only if (incarnation,state) supersedes our view */
-        if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state))
+        if (!gossip_supersedes(inc_in, st, dnode_incarn[nid], dnode_table[nid].state)) {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_V2DIRECT_NO)
+            /* N2 (ii)(a), audit-147: an old relay drops bit 2, and the peer's
+             * own word at the same incarnation loses the gate above, so take
+             * bit 2 (only) from the peer itself (src == nid) at the incarnation
+             * we hold. Third parties still cannot set it. */
+            if (pkt->src_node == (pk_node8_t)nid && pkt->src_node != PK_NODE_NONE &&
+                inc_in == dnode_incarn[nid])
+                V2CAP_ADOPT(nid, pkt->gossip[i].capability);
+#endif
             continue;   /* stale rumor refuted — capability does NOT regress */
+        }
 
         dnode_incarn[nid] = inc_in;
         /* N-2b / T-fix-a: a SUPERSEDING rumor (this peer's own fresher word
@@ -472,6 +513,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
          * flip carried by a fresh incarnation lands even when state is same. */
         region_set_super_capable(nid, cap_in ? TRUE : FALSE);
         region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
+        V2CAP_ADOPT(nid, pkt->gossip[i].capability);       /* N2 (ii)(a): bit 2 */
 
         if (dnode_table[nid].state == st) {
             /* incarnation bumped, state same: still relay the fresh entry so
@@ -986,6 +1028,19 @@ static pk_node_t swim_wide_me;      /* 0 = this node is not wide            */
 static INT       swim_wide_cursor;
 static INT       swim_wide_pcur;    /* whom the next v2 PING goes to         */
 static UH        swim_wide_seq;     /* v2 PING numbers, never 0 (0 = beacon) */
+
+/* N2 (ii)(a): may a one-node v2 frame go to `id`? */
+BOOL swim_peer_reads_v2(pk_node_t id)
+{
+    if (id < DNODE_MAX) return v2cap_get(id) ? TRUE : FALSE;
+#if defined(N2_NC_V2WIDE_NO)
+    return FALSE;   /* falsifier: wide peers treated as unable to read v2 */
+#endif
+    /* a wide peer exists only in v2: known and not dead is enough */
+    INT s = nodemap_find(&wide_map, id);
+    return (s != NODEMAP_NOSLOT && wide_st[s].state != DNODE_DEAD
+            && wide_st[s].state != DNODE_UNKNOWN) ? TRUE : FALSE;
+}
 
 /* Slot of a wide id, taken if new (a dead entry gives way when full), or -1. */
 static INT wide_add(pk_node_t id)
@@ -2242,6 +2297,139 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[selfelect] PASS (node self-recognizes its own teacher role: region_teacher()==self)\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* N2 (ii)(a) `nodes v2cap`: capability bit 2 = "this node reads v2"    */
+/* (research/n2-wire16.md 2.2). Drives the REAL gossip_apply / cap_byte */
+/* with crafted SWIM_PKTs, as the teacher cert does for bit 1:          */
+/*   [v2cap-self]     a hosted node's own byte carries bit 2            */
+/*   [v2cap-converge] a fresh self-rumor with bit 2 -> reads v2         */
+/*   [v2cap-absent]   a rumor with bits 0,1 only (an old node) -> not,  */
+/*                    while bits 0 and 1 still land (the byte is read)  */
+/*   [v2cap-noleak]   bit 2 alone sets neither supernode nor teacher    */
+/*   [v2cap-stale]    a stale rumor without bit 2 does not clear it     */
+/*   [v2cap-relay]    the re-propagated entry keeps bit 2               */
+/*   [v2cap-wide]     a wide id heard over v2 reads v2; unknown does not */
+/* Falsifiers: -DN2_NC_NOBIT2 (no bit 2 sent), -DN2_NC_V2IGNORE (bit 2  */
+/* not read), -DN2_NC_V2WIDE_NO (wide peers not v2). Hosted-only.      */
+/* ------------------------------------------------------------------ */
+INT swim_v2cap_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : sw_puts;
+    pk_node_t saved_my = drpc_my_node;
+    UB  saved_inc      = my_incarnation;
+    INT saved_gq_cnt   = gq_cnt;
+    const UB SELF = 0, X = 9, W = 10, V = 12, Y = 13, OLD = 11;
+    const UB ids[4] = { X, W, V, Y };
+    UB sst[4], sinc[4], ssup[4], stch[4], sv2[4];
+    /* audit-147: the queue entries the rumors below enqueue would otherwise be
+     * left in gq[] of a live node (gq_cnt alone was put back) and gossiped */
+    static GOSSIP_QUEUED saved_gq[GOSSIP_Q_MAX];
+    for (INT i = 0; i < GOSSIP_Q_MAX; i++) saved_gq[i] = gq[i];
+    for (INT k = 0; k < 4; k++) {
+        sst[k] = dnode_table[ids[k]].state; sinc[k] = dnode_incarn[ids[k]];
+        ssup[k] = region_is_super_capable(ids[k]) ? 1 : 0;
+        stch[k] = region_is_teacher_capable(ids[k]) ? 1 : 0;
+        sv2[k]  = v2cap_get(ids[k]);
+    }
+
+    drpc_my_node = SELF; my_incarnation = 0; gq_cnt = 0;
+    for (INT k = 0; k < 4; k++) {
+        dnode_table[ids[k]].state = DNODE_UNKNOWN; dnode_incarn[ids[k]] = 0;
+        region_set_super_capable(ids[k], FALSE);
+        region_set_teacher_capable(ids[k], FALSE);
+        v2cap_set(ids[k], 0);
+    }
+#define V2C_FAIL(m) do { say("[v2cap] FAIL " m "\r\n"); fails++; } while (0)
+#define V2C_RUMOR(id, inc, cap) do { SWIM_PKT p = { 0 }; p.gossip_cnt = 1;         \
+        p.gossip[0].node_id = (id); p.gossip[0].state = DNODE_ALIVE;               \
+        p.gossip[0].incarnation = (inc); p.gossip[0].capability = (UB)(cap);       \
+        gossip_apply(&p); } while (0)
+
+    if ((cap_self_byte() & (UB)(1u << 2)) == 0) V2C_FAIL("self: own capability byte lacks bit 2");
+
+    V2C_RUMOR(X, 1, 1u << 2);
+    if (!swim_peer_reads_v2(X)) V2C_FAIL("converge: fresh self-rumor with bit 2, X does not read v2");
+    if (region_is_super_capable(X) || region_is_teacher_capable(X))
+        V2C_FAIL("noleak: bit 2 alone set the supernode or teacher bit");
+
+    V2C_RUMOR(W, 1, (1u << 0) | (1u << 1));
+    if (swim_peer_reads_v2(W)) V2C_FAIL("absent: a rumor without bit 2 made W read v2");
+    if (!region_is_super_capable(W) || !region_is_teacher_capable(W))
+        V2C_FAIL("absent: bits 0 and 1 of W's rumor did not land (byte not read)");
+
+    V2C_RUMOR(X, 0, 0);   /* stale: lower incarnation, no bit 2 */
+    if (!swim_peer_reads_v2(X)) V2C_FAIL("stale: a stale rumor without bit 2 cleared X");
+
+    {
+        INT q = gq_find_cap(X, DNODE_ALIVE);
+        if (q < 0 || ((UB)q & (UB)(1u << 2)) == 0) V2C_FAIL("relay: the queued entry for X lost bit 2");
+    }
+    V2C_RUMOR(V, 1, 0);   /* plain new peer, nothing: must not read v2 */
+    if (swim_peer_reads_v2(V)) V2C_FAIL("absent: a zero byte made V read v2");
+
+    {   /* [v2cap-oldrelay] (audit-147): an OLD node relays Y's rumor first and
+         * drops bit 2 (old cap_byte has bits 0 and 1 only). Y's own word at the
+         * same incarnation loses the LWW gate, and incarnations rise only on a
+         * refutation, so without a direct path Y would read "not v2" for good. */
+        SWIM_PKT p = { 0 }; p.src_node = OLD; p.gossip_cnt = 1;
+        p.gossip[0].node_id = Y; p.gossip[0].state = DNODE_ALIVE;
+        p.gossip[0].incarnation = 0; p.gossip[0].capability = 0;
+        gossip_apply(&p);
+        if (swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: an old relay without bit 2 made Y read v2");
+        p.src_node = Y; p.gossip[0].capability = (UB)(1u << 2);
+        gossip_apply(&p);
+        if (!swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: Y's own same-incarnation word with bit 2 did not land");
+        p.src_node = OLD;                 /* a third party may not set it */
+        p.gossip[0].node_id = V; p.gossip[0].incarnation = 1;   /* V is ALIVE at 1 */
+        gossip_apply(&p);
+        if (swim_peer_reads_v2(V)) V2C_FAIL("oldrelay: a third party's same-incarnation bit 2 made V read v2");
+        p.src_node = Y; p.gossip[0].node_id = Y; p.gossip[0].incarnation = 0;
+        p.gossip[0].capability = 0;
+        gossip_apply(&p);                 /* Y itself now says no (restarted old) */
+        if (swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: Y's own same-incarnation word without bit 2 did not clear it");
+    }
+
+    {   /* on a fresh wide table, saved and put back as swim_wide_self_test does
+         * (run alone, before swim_init, the table has no room at all) */
+        static SWIM_WIDE saved[DREGION_MAX];
+        static NODEMAP   saved_map;
+        const pk_node_t WID = 777, UNK = 778;
+        PK_NOSW_ENTER();
+        saved_map = wide_map;
+        for (INT i = 0; i < DREGION_MAX; i++) saved[i] = wide_st[i];
+        nodemap_init(&wide_map, 0);
+        for (INT i = 0; i < DREGION_MAX; i++) wide_st[i].state = DNODE_UNKNOWN;
+        PK_NOSW_LEAVE();
+        swim_wide_heard(WID, pk_node_ip(WID), TRUE, swim_wide_now());
+        if (!swim_peer_reads_v2(WID)) V2C_FAIL("wide: a wide id heard over v2 does not read v2");
+        if (swim_peer_reads_v2(UNK))  V2C_FAIL("wide: an unknown wide id reads v2");
+        {
+            INT s = nodemap_find(&wide_map, WID);
+            if (s != NODEMAP_NOSLOT) wide_st[s].state = DNODE_DEAD;
+            if (swim_peer_reads_v2(WID)) V2C_FAIL("wide: a dead wide id still reads v2");
+        }
+        PK_NOSW_ENTER();
+        wide_map = saved_map;
+        for (INT i = 0; i < DREGION_MAX; i++) wide_st[i] = saved[i];
+        PK_NOSW_LEAVE();
+    }
+#undef V2C_RUMOR
+#undef V2C_FAIL
+
+    for (INT k = 0; k < 4; k++) {
+        dnode_table[ids[k]].state = sst[k]; dnode_incarn[ids[k]] = sinc[k];
+        region_set_super_capable(ids[k], ssup[k] ? TRUE : FALSE);
+        region_set_teacher_capable(ids[k], stch[k] ? TRUE : FALSE);
+        v2cap_set(ids[k], sv2[k]);
+    }
+    for (INT i = 0; i < GOSSIP_Q_MAX; i++) gq[i] = saved_gq[i];
+    drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq_cnt;
+    if (fails == 0) say("[v2cap] PASS (bit 2 sent, read under the LWW gate, relayed; wide ids read v2)\r\n");
+    else            say("[v2cap] RED\r\n");
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */

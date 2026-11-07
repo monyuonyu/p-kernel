@@ -141,6 +141,11 @@ UW swim_wide_rtt(pk_node_t id);
 INT swim_wide_alive(pk_node_t *out, INT max);
 /* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
 INT swim_wide_self_test(void (*emit)(const char *));
+/* N2 (ii)(a): TRUE if a one-node v2 frame may go to id (a narrow peer that said
+ * capability bit 2 about itself, or a wide peer SWIM knows). */
+BOOL swim_peer_reads_v2(pk_node_t id);
+/* `nodes v2cap`: bit 2 sent, read under the LWW gate, relayed. 0 = all pass. */
+INT swim_v2cap_self_test(void (*emit)(const char *));
 #endif
 
 /* ------------------------------------------------------------------ */

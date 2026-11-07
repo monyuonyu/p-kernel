@@ -995,7 +995,9 @@ EXPORT INT usermain(void)
              * is the EXACT mirror for capability bit 1 (teacher-capable) +
              * region_teacher() — converge/selector/determinism/staleness/
              * falsifiable. `teacher` starts "tea", distinct from "tes"t. */
-            if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
+            /* N2 (ii)(a): `nodes v2cap` checks capability bit 2 (reads v2). */
+            if (al >= 2 && a[0]=='v'&&a[1]=='2') swim_v2cap_self_test(print);
+            else if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
             else if (al >= 3 && a[0]=='t'&&a[1]=='e'&&a[2]=='a') swim_teacher_gossip_self_test(print);
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
             /* N2b: `nodes wide` drives the v2 receive path with crafted packets. */
