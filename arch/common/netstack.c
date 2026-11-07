@@ -323,6 +323,14 @@ static UH ip_id_ctr = 0x1234;
 /* Determine next-hop IP for a given destination */
 static UW next_hop(UW dst_ip)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_ONLINK24)
+    /* N2: the cluster is 10.1/16 (pk_node_ip puts a wide id's high byte in
+     * the third byte), so between two cluster addresses there is no gateway.
+     * Elsewhere the /24 below stays. -DN2_NC_ONLINK24 is the falsifier. */
+    if ((dst_ip & IP4(255,255,0,0)) == IP4(10,1,0,0) &&
+        (NET_MY_IP & IP4(255,255,0,0)) == IP4(10,1,0,0))
+        return dst_ip;
+#endif
     if ((dst_ip & NET_NETMASK) == (NET_MY_IP & NET_NETMASK))
         return dst_ip;          /* local */
     return NET_GW_IP;           /* default gateway */
