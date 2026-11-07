@@ -4874,6 +4874,24 @@ static MT_TEACH_PKT mq_ans_pkt;      /* answer scratch — SEPARATE from        
                                      /* mt_pub_pkt/mt_pub_last (clobbering the */
                                      /* latter would break the LM-12 Site-3    */
                                      /* stale-re-drive clear at :2990)         */
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3): the forwarded origin of mq_ans_pkt, set by mq_answer_build. A
+ * wide teacher (origin_node 0xFF) rides the 2-byte tail (mt_wire_frame), so a
+ * fact a wide node taught can be pulled. Before, every answer went out as
+ * 0xFF with no tail and every receiver dropped it. -DN2_NC_MQ_ANS_NARROW: no
+ * tail on an answer (falsifier, [pull-answer-src] wide). */
+static pk_node_t mq_ans_org = PK_NODE_NONE;
+#ifndef N2_NC_MQ_ANS_NARROW
+#define MQ_ANS_ORG() mq_ans_org
+#else
+#define MQ_ANS_ORG() ((pk_node_t)PK_NODE_NONE)
+#endif
+#define MQ_ANS_SEND() mt_wire_send_org(&mq_ans_pkt, MQ_ANS_ORG())
+#define MQ_ANS_SAID() (PK_NODE_IS_WIDE(MQ_ANS_ORG()) ? (UW)MQ_ANS_ORG() : (UW)mq_ans_pkt.origin_node)
+#else
+#define MQ_ANS_SEND() mt_wire_send(&mq_ans_pkt)
+#define MQ_ANS_SAID() ((UW)mq_ans_pkt.origin_node)
+#endif
 #define MQ_ANS_REDRIVE_MAX 20        /* ~10s @ MT_POLL_MS: re-drive cap for a  */
                                      /* dead asker's stale LATEST_ONLY want    */
 #define MQ_ANS_SLOW_EVERY 16         /* 1-3c: then one re-drive per ~8 s ...   */
@@ -5009,6 +5027,9 @@ static INT mq_answer_build(mq_org_t asker, UB k, INT *forgotten_out)
         fwd_origin = drpc_my_node; fwd_prov = zero_prov;
         if (forgotten_out) *forgotten_out = 1;
     }
+#ifdef _TK_HOSTED_LIBC_
+    mq_ans_org = fwd_origin;
+#endif
 
     mq_ans_pkt.magic       = MT_MAGIC;
     mq_ans_pkt.fact_seq    = local_seq;         /* my local seq: idempotent re-drive */
@@ -5155,7 +5176,7 @@ static void mq_poll_wants(void)
             INT forgotten = 0;
             if (!mq_answer_build(o, k, &forgotten)) continue;  /* refuse: not held */
             (void)mq_mark_answer(o, S, k);     /* now MARK (answer-once)         */
-            (void)mt_wire_send(&mq_ans_pkt);   /* the ONE wire-writer            */
+            (void)MQ_ANS_SEND();   /* the ONE wire-writer            */
 #ifdef _TK_HOSTED_LIBC_
             mq_answer_sent = 1;                /* 1-2b: no own re-drive this tick */
 #endif
@@ -5164,7 +5185,7 @@ static void mq_poll_wants(void)
             r_puts(" (\""); r_puts(r3_vocab_key_word((INT)k));
             r_puts("\") from node "); r_putdec((UW)o);
             r_puts(" -> re-teach on mind/teach as origin ");
-            r_putdec((UW)mq_ans_pkt.origin_node);
+            r_putdec(MQ_ANS_SAID());
             r_puts(" seq="); r_putdec(mq_ans_pkt.fact_seq);
             if (forgotten) r_puts(" [re-teaching node its OWN forgotten fact]");
             r_puts("\r\n");
@@ -5206,7 +5227,7 @@ static void mq_poll_wants(void)
             for (INT i = 0; i < n; i++) if (mq_rx_want.keys[i] == k) { listed = 1; break; }
             INT fg = 0;
             if (!listed || !mq_answer_build(o, k, &fg)) continue;
-            (void)mt_wire_send(&mq_ans_pkt);
+            (void)MQ_ANS_SEND();
             mq_answer_sent = 1;
             s->redrive_ticks++;
             s->redrive_rr = (UB)((j + 1) % (INT)s->n_answered);
@@ -5221,7 +5242,7 @@ static void mq_poll_wants(void)
         if (listed) {
             INT fg = 0;
             if (mq_answer_build(o, s->redrive_key, &fg)) {
-                (void)mt_wire_send(&mq_ans_pkt);
+                (void)MQ_ANS_SEND();
 #ifdef _TK_HOSTED_LIBC_
                 mq_answer_sent = 1;
 #endif
@@ -8131,6 +8152,29 @@ void r3_pull_test(void)
         /* self-forgotten corner: asker IS the original teacher T. */
         INT fg2 = 0; INT built2 = mq_answer_build((U1)teacherT, (UB)krem, &fg2);
         forgot_ok = built2 && (fg2 == 1) && (mq_ans_pkt.origin_node == drpc_my_node);
+#ifdef _TK_HOSTED_LIBC_
+        /* N2 (c)(3), a WIDE teacher 300: the answer says 0xFF in the byte and
+         * 300 in the tail (55 bytes), never 44 (300 & 0xFF); asker 300 is the
+         * self-forgotten corner (a wide asker no longer cut to a byte). */
+        {
+            static MT_TEACH_PKT_W fw;
+            const pk_node_t WT = 300;
+            MT_REMOTE_PROV *rp = mt_rprov_find(rem_seq);
+            pk_node_t keep = rp ? rp->origin_node : PK_NODE_NONE;
+            if (rp) rp->origin_node = WT;
+            INT fg3 = 0; INT built3 = mq_answer_build((U1)asker, (UB)krem, &fg3);
+            W fn = mt_wire_frame(&mq_ans_pkt, MQ_ANS_ORG(), &fw);
+            INT wide_ok = built3 && (fg3 == 0) && (mq_ans_pkt.origin_node == PK_NODE_NONE)
+                       && (fn == (W)sizeof fw) && (mt_rx_origin(&fw, fn) == WT);
+            INT fg4 = 0; INT built4 = mq_answer_build(WT, (UB)krem, &fg4);
+            INT wforgot_ok = built4 && (fg4 == 1);
+            r_puts("[pull] answer-src wide: teacher 300 in the tail="); r_putdec((UW)wide_ok);
+            r_puts(" asker 300 self-forgotten="); r_putdec((UW)wforgot_ok); r_puts("\r\n");
+            if (!wide_ok) r_puts("[pull-answer-src] FAIL wide (a wide teacher's answer has no tail)\r\n");
+            rem_ok = rem_ok && rp && wide_ok && wforgot_ok;
+            if (rp) rp->origin_node = keep;
+        }
+#endif
     }
     /* (c) an UNBOUND key: refuse. */
     INT skipab[2] = { kloc, krem };
