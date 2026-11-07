@@ -1559,7 +1559,8 @@ jobs:
           # X3's snow goes red at 260 when a kdds broadcast goes to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY, N2 (c)(1))
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_KDDS_NARROW_ONLY >/dev/null
-          N2_WAIT=60 N2_X3=1 N2_X3_PART=snow N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 200 tests/host/run_n2_mix.sh | tee n2_mix_nc_kdw.log || true
+          # the default wait as in the pass (snow reaches 4 and 44 late, by the have/want pull; 60 s cut that too)
+          N2_X3=1 N2_X3_PART=snow N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_kdw.log || true
           grep -aE '^\[n2-mix\] X3 FAIL.* snow@260' n2_mix_nc_kdw.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
