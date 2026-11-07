@@ -2391,6 +2391,15 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
         p.gossip[0].capability = 0;
         gossip_apply(&p);                 /* Y itself now says no (restarted old) */
         if (swim_peer_reads_v2(Y)) V2C_FAIL("oldrelay: Y's own same-incarnation word without bit 2 did not clear it");
+        /* audit-148 [v2cap-lateown]: Y at inc 2 (a fresh relayed word with bit 2),
+         * then Y's own LATE word at inc 1 without bit 2: only the incarnation we
+         * hold may change bit 2 on the direct path */
+        p.src_node = OLD; p.gossip[0].incarnation = 2; p.gossip[0].capability = (UB)(1u << 2);
+        gossip_apply(&p);
+        if (!swim_peer_reads_v2(Y)) V2C_FAIL("lateown: a fresh relayed word with bit 2 did not set Y");
+        p.src_node = Y; p.gossip[0].incarnation = 1; p.gossip[0].capability = 0;
+        gossip_apply(&p);
+        if (!swim_peer_reads_v2(Y)) V2C_FAIL("lateown: Y's own older-incarnation word cleared bit 2");
     }
 
     {   /* on a fresh wide table, saved and put back as swim_wide_self_test does

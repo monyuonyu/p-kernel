@@ -53,6 +53,23 @@ PMESH_STATS  pmesh_stats;
  * rx-bounds cert (ROADMAP 0-9); not exported in a header. */
 UW pmesh_drop_bad = 0;
 
+#if defined(_TK_HOSTED_LIBC_)
+#include "swim.h"
+PMESH_V2_STATS pmesh_v2_stats;
+/* self-test seams (NULL in a live node): the link and the "reads v2" answer */
+static INT  (*pm_tx_tap)(UW ip, const UB *d, UH n);
+static BOOL (*pm_reads_v2_hook)(pk_node_t id);
+static INT pm_link_out(UW ip, const UB *d, UH n)
+{
+    if (pm_tx_tap) return pm_tx_tap(ip, d, n);
+    return udp_send(ip, PMESH_PORT, PMESH_PORT, d, n);
+}
+static BOOL pm_reads_v2(pk_node_t id)
+{
+    return pm_reads_v2_hook ? pm_reads_v2_hook(id) : swim_peer_reads_v2(id);
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* ローカル配送テーブル (pmesh_bind)                                  */
 /* ------------------------------------------------------------------ */
@@ -240,6 +257,29 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
     UW magic;
     __builtin_memcpy(&magic, data, sizeof magic);
     if (magic != PMESH_MAGIC)        return;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_PMV2_RXDROP)
+    /* N2 (ii)(b): the one-node DATA frame v2 (16-bit src/dst). Delivered to
+     * this node only; nothing relays v2 yet. The bound handlers do not index
+     * a table by the src argument (kdds, sfs, replica, pfs_repl, kloader). */
+    if (data[4] == PMESH_VERSION2) {
+        if (data[5] != PMESH_DATA || len < PMESH_V2_HDR) return;
+        pk_node_t s2 = (pk_node_t)(data[6] | ((UH)data[7] << 8));
+        pk_node_t d2 = (pk_node_t)(data[8] | ((UH)data[9] << 8));
+        UH port2 = (UH)(data[10] | ((UH)data[11] << 8));
+        UH n2    = (UH)(data[12] | ((UH)data[13] << 8));
+        if (n2 > PMESH_V2_DATA_MAX || (UW)PMESH_V2_HDR + n2 > len) return;
+        pmesh_v2_stats.v2_rx++;
+#if !defined(N2_NC_PMV2_RXNOIDOK)
+        /* audit-149: no id (0xFF) takes nothing, as v1 drops dst >= DNODE_MAX */
+        if (drpc_my_node == PK_NODE_NONE) { pmesh_v2_stats.v2_drop++; return; }
+#endif
+        if (d2 != drpc_my_node) { pmesh_v2_stats.v2_drop++; return; }
+        pmesh_v2_stats.v2_delivered++;
+        pmesh_stats.data_delivered++;
+        local_dispatch(s2, port2, data + PMESH_V2_HDR, n2);
+        return;
+    }
+#endif
     if (data[4] != PMESH_VERSION)    return;
 
     UB type     = data[5];
@@ -307,6 +347,46 @@ void pmesh_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
 static PMESH_DATA_PKT data_pkt;  /* static: スタック節約 */
 
+#if defined(_TK_HOSTED_LIBC_)
+/* N2 (ii)(b): one v2 DATA frame, straight to a peer that reads v2. No relay:
+ * an intermediate would have to read v2 too (a later step). Called inside the
+ * send's no-switch region (pmesh_send), so the static frame is not shared. */
+static UB data_v2[PMESH_V2_HDR + PMESH_V2_DATA_MAX];
+static W pmesh_send_v2(pk_node_t dst, UH port, const UB *data, UH len)
+{
+    if (len > PMESH_V2_DATA_MAX) return -1;
+#if !defined(N2_NC_PMV2_NOIDOK)
+    /* audit-148: no id yet (0xFF, not distributed) sends nothing, as v1 does */
+    if (drpc_my_node == PK_NODE_NONE) return -1;
+#endif
+    if (dst == drpc_my_node)     return -1;
+    BOOL direct = (dst >= DNODE_MAX) ? TRUE
+                : (dnode_table[dst].state == DNODE_ALIVE ? TRUE : FALSE);
+#if defined(N2_NC_PMV2_NOCHECK)
+    BOOL reads = TRUE;                       /* falsifier: send to anyone */
+#else
+    BOOL reads = pm_reads_v2(dst);
+#endif
+    if (!direct || !reads) {
+        pmesh_v2_stats.v2_noread++;
+        pmesh_stats.no_route++;
+        return -1;
+    }
+    UW m = PMESH_MAGIC; __builtin_memcpy(data_v2, &m, 4);
+    data_v2[4]  = PMESH_VERSION2;
+    data_v2[5]  = PMESH_DATA;
+    data_v2[6]  = (UB)drpc_my_node; data_v2[7]  = (UB)(drpc_my_node >> 8);
+    data_v2[8]  = (UB)dst;          data_v2[9]  = (UB)(dst >> 8);
+    data_v2[10] = (UB)port;         data_v2[11] = (UB)(port >> 8);
+    data_v2[12] = (UB)len;          data_v2[13] = (UB)(len >> 8);
+    pm_memcpy(data_v2 + PMESH_V2_HDR, data, len);
+    pm_link_out(node_ip(dst), data_v2, (UH)(PMESH_V2_HDR + len));
+    pmesh_v2_stats.v2_tx++;
+    pmesh_stats.data_tx++;
+    return 0;
+}
+#endif
+
 #if PK_NOSW_ACTIVE
 static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len);
 
@@ -325,6 +405,11 @@ static W pmesh_send_nosw(pk_node_t dst_node, UH dst_port, const UB *data, UH len
 W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
 #endif
 {
+#if defined(_TK_HOSTED_LIBC_)
+    /* N2 (ii)(b): a wide end on either side needs the 16-bit header */
+    if (dst_node >= DNODE_MAX || drpc_my_node >= DNODE_MAX)
+        return pmesh_send_v2(dst_node, dst_port, data, len);
+#endif
     if (dst_node >= DNODE_MAX) return -1;
     if (len > PMESH_DATA_MAX)  return -1;
     if (drpc_my_node == 0xFF)  return -1;
@@ -352,8 +437,12 @@ W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
         return -1;
     }
 
+#if defined(_TK_HOSTED_LIBC_)
+    pm_link_out(next_ip, (const UB *)&data_pkt, pkt_len);
+#else
     udp_send(next_ip, PMESH_PORT, PMESH_PORT,
              (const UB *)&data_pkt, pkt_len);
+#endif
     pmesh_stats.data_tx++;
     return 0;
 }
@@ -450,4 +539,190 @@ void pmesh_stat(void)
     pm_puts("  delivered=");       pm_putdec(pmesh_stats.data_delivered);
     pm_puts("  no_route=");        pm_putdec(pmesh_stats.no_route);
     pm_puts("\r\n");
+#if defined(_TK_HOSTED_LIBC_)
+    pm_puts("[pmesh] v2 tx=");     pm_putdec(pmesh_v2_stats.v2_tx);
+    pm_puts("  rx=");              pm_putdec(pmesh_v2_stats.v2_rx);
+    pm_puts("  delivered=");       pm_putdec(pmesh_v2_stats.v2_delivered);
+    pm_puts("  noread=");          pm_putdec(pmesh_v2_stats.v2_noread);
+    pm_puts("  drop=");            pm_putdec(pmesh_v2_stats.v2_drop);
+    pm_puts("\r\n");
+#endif
 }
+#if defined(_TK_HOSTED_LIBC_)
+/* ------------------------------------------------------------------ */
+/* N2 (ii)(b) `nodes pmv2`: the one-node DATA frame v2 (n2-wire16.md 3) */
+/* with a tap on the link and a stand-in for swim_peer_reads_v2:        */
+/*   [pmv2-v1same]  narrow to narrow: v1, 12 + n bytes, as before       */
+/*   [pmv2-widedst] narrow to a wide peer that reads v2: v2, 14 + n     */
+/*   [pmv2-noread]  wide self to a narrow peer without bit 2: -1, none  */
+/*   [pmv2-read]    wide self to a narrow peer with bit 2: v2, src wide */
+/*   [pmv2-direct]  v2 goes straight only: a peer not ALIVE gets -1     */
+/*   [pmv2-big]     a payload over PMESH_V2_DATA_MAX gets -1            */
+/*   [pmv2-rx]      v2 to me is delivered with the wide src; v2 to      */
+/*                  another id is dropped and counted; a short or long  */
+/*                  length is refused; v1 to me still delivered         */
+/* Falsifiers: -DN2_NC_PMV2_NOCHECK (send ignores reads-v2),            */
+/* -DN2_NC_PMV2_RXDROP (receive drops v2). Hosted-only.                */
+/* ------------------------------------------------------------------ */
+static UB  pmt_buf[PMESH_V2_HDR + PMESH_DATA_MAX];
+static UH  pmt_len;
+static UW  pmt_ip;
+static INT pmt_cnt;
+static INT pmt_tap(UW ip, const UB *d, UH n)
+{
+    pmt_ip = ip; pmt_len = n; pmt_cnt++;
+    for (UH i = 0; i < n && i < (UH)sizeof pmt_buf; i++) pmt_buf[i] = d[i];
+    return 0;
+}
+static pk_node_t pmt_v2_peer;        /* the one id the stand-in says reads v2 */
+static BOOL pmt_reads(pk_node_t id) { return id == pmt_v2_peer ? TRUE : FALSE; }
+static pk_node_t pmt_rx_src; static UH pmt_rx_len; static INT pmt_rx_cnt;
+static void pmt_rx(pk_node_t src, UH port, const UB *d, UH n)
+{
+    (void)port; (void)d; pmt_rx_src = src; pmt_rx_len = n; pmt_rx_cnt++;
+}
+static UH pmt_le16(const UB *p) { return (UH)(p[0] | ((UH)p[1] << 8)); }
+static void pmt_put16(UB *p, UH v) { p[0] = (UB)v; p[1] = (UB)(v >> 8); }
+static UH pmt_v2frame(UB *f, UH src, UH dst, UH port, const UB *pl, UH n)
+{
+    UW m = PMESH_MAGIC; __builtin_memcpy(f, &m, 4);
+    f[4] = PMESH_VERSION2; f[5] = PMESH_DATA;
+    pmt_put16(f + 6, src); pmt_put16(f + 8, dst);
+    pmt_put16(f + 10, port); pmt_put16(f + 12, n);
+    for (UH i = 0; i < n; i++) f[PMESH_V2_HDR + i] = pl[i];
+    return (UH)(PMESH_V2_HDR + n);
+}
+
+INT pmesh_v2_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : pm_puts;
+    static PMESH_SOCK saved_socks[PMESH_BIND_MAX];
+    pk_node_t saved_my = drpc_my_node;
+    const pk_node_t N = 2, WIDE = 300, WSELF = 260;
+    const UH PORT = 7777;
+    UB saved_st = dnode_table[N].state;
+    PMESH_STATS saved_stats = pmesh_stats;
+    PMESH_V2_STATS saved_v2 = pmesh_v2_stats;
+    const UB pl[3] = { 'a', 'b', 'c' };
+    static UB big[PMESH_DATA_MAX];
+    static UB f[PMESH_V2_HDR + PMESH_DATA_MAX];
+    W rc;
+
+    PK_NOSW_ENTER();
+    for (INT i = 0; i < PMESH_BIND_MAX; i++) saved_socks[i] = pmesh_socks[i];
+    pmesh_socks[0].port = PORT; pmesh_socks[0].fn = pmt_rx; pmesh_socks[0].active = 1;
+    pm_tx_tap = pmt_tap; pm_reads_v2_hook = pmt_reads;
+    PK_NOSW_LEAVE();
+#define PMT_FAIL(m) do { say("[pmv2] FAIL " m "\r\n"); fails++; } while (0)
+
+    /* [pmv2-v1same] */
+    drpc_my_node = 1; dnode_table[N].state = DNODE_ALIVE; pmt_v2_peer = 0xFFFF;
+    pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
+    if (rc != 0 || pmt_cnt != 1 || pmt_len != 15 || pmt_buf[4] != PMESH_VERSION ||
+        pmt_buf[6] != 1 || pmt_buf[7] != N || pmt_ip != pk_node_ip(N))
+        PMT_FAIL("v1same: narrow to narrow is not the old 12-byte v1 frame");
+    {   /* audit-148: every byte of the v1 frame, not only the length and 4 bytes */
+        UB want[15]; UW m = PMESH_MAGIC; INT bad = -1;
+        __builtin_memcpy(want, &m, 4);
+        want[4] = PMESH_VERSION; want[5] = PMESH_DATA; want[6] = 1; want[7] = (UB)N;
+        want[8] = (UB)PORT; want[9] = (UB)(PORT >> 8); want[10] = 3; want[11] = 0;
+        want[12] = 'a'; want[13] = 'b'; want[14] = 'c';
+        for (INT i = 0; i < 15; i++) if (pmt_buf[i] != want[i]) { bad = i; break; }
+        if (bad >= 0) PMT_FAIL("v1same: a byte of the v1 frame differs from the v1 layout");
+    }
+
+    /* [pmv2-noid] audit-148: a node without an id (0xFF, not distributed) sends
+     * nothing, as v1's drpc_my_node == 0xFF check did before v2 existed */
+    drpc_my_node = PK_NODE_NONE; pmt_v2_peer = N; pmt_cnt = 0;
+    rc = pmesh_send(N, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("noid: a node with id 0xFF sent to a narrow peer");
+    pmt_v2_peer = WIDE; pmt_cnt = 0; rc = pmesh_send(WIDE, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("noid: a node with id 0xFF sent to a wide peer");
+    drpc_my_node = 1; pmt_v2_peer = 0xFFFF;
+
+    /* [pmv2-widedst] */
+    pmt_v2_peer = WIDE; pmt_cnt = 0; rc = pmesh_send(WIDE, PORT, pl, 3);
+    if (rc != 0 || pmt_cnt != 1 || pmt_len != PMESH_V2_HDR + 3 || pmt_buf[4] != PMESH_VERSION2 ||
+        pmt_buf[5] != PMESH_DATA || pmt_le16(pmt_buf + 6) != 1 || pmt_le16(pmt_buf + 8) != WIDE ||
+        pmt_le16(pmt_buf + 10) != PORT || pmt_le16(pmt_buf + 12) != 3 ||
+        pmt_buf[PMESH_V2_HDR] != 'a' || pmt_ip != pk_node_ip(WIDE))
+        PMT_FAIL("widedst: narrow to a wide peer that reads v2 is not one v2 frame");
+
+    /* [pmv2-noread] */
+    drpc_my_node = WSELF; pmt_v2_peer = 0xFFFF; pmt_cnt = 0;
+    { UW nr = pmesh_v2_stats.v2_noread;
+      rc = pmesh_send(N, PORT, pl, 3);
+      if (rc != -1 || pmt_cnt != 0) PMT_FAIL("noread: wide self sent to a narrow peer without bit 2");
+      if (pmesh_v2_stats.v2_noread != nr + 1) PMT_FAIL("noread: not counted"); }
+
+    /* [pmv2-read] */
+    pmt_v2_peer = N; pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
+    if (rc != 0 || pmt_cnt != 1 || pmt_buf[4] != PMESH_VERSION2 ||
+        pmt_le16(pmt_buf + 6) != WSELF || pmt_le16(pmt_buf + 8) != N || pmt_ip != pk_node_ip(N))
+        PMT_FAIL("read: wide self to a narrow peer with bit 2 is not one v2 frame from the wide id");
+    /* audit-149 [pmv2-self]: v2 to my own id is not sent (even if "reads v2" says yes) */
+    pmt_v2_peer = WSELF; pmt_cnt = 0; rc = pmesh_send(WSELF, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("self: v2 to my own id was sent");
+    pmt_v2_peer = N;
+
+    /* [pmv2-direct] */
+    dnode_table[N].state = DNODE_SUSPECT; pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("direct: v2 went to a narrow peer that is not ALIVE");
+    dnode_table[N].state = DNODE_ALIVE;
+
+    /* [pmv2-big] */
+    pmt_cnt = 0; rc = pmesh_send(N, PORT, big, (UH)(PMESH_V2_DATA_MAX + 1));
+    if (rc != -1 || pmt_cnt != 0) PMT_FAIL("big: a payload over PMESH_V2_DATA_MAX was sent");
+    pmt_cnt = 0; rc = pmesh_send(N, PORT, big, (UH)PMESH_V2_DATA_MAX);
+    if (rc != 0 || pmt_cnt != 1 || pmt_len != PMESH_V2_HDR + PMESH_V2_DATA_MAX)
+        PMT_FAIL("big: the largest v2 payload was not sent whole");
+
+    /* [pmv2-rx] me = WSELF */
+    { UH n = pmt_v2frame(f, WIDE, WSELF, PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 1 || pmt_rx_src != WIDE || pmt_rx_len != 3)
+          PMT_FAIL("rx: v2 to me was not delivered with the wide src");
+      UW dr = pmesh_v2_stats.v2_drop;
+      n = pmt_v2frame(f, WIDE, (UH)(WSELF + 1), PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 0) PMT_FAIL("rx: v2 to another id was delivered");
+      if (pmesh_v2_stats.v2_drop != dr + 1) PMT_FAIL("rx: v2 to another id was not counted");
+      n = pmt_v2frame(f, WIDE, WSELF, PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, (UH)(n - 1));          /* short */
+      pmt_put16(f + 12, (UH)(PMESH_V2_DATA_MAX + 1));
+      pmesh_rx(0, PMESH_PORT, f, (UH)(PMESH_V2_HDR + PMESH_V2_DATA_MAX + 1));  /* too long */
+      pmesh_rx(0, PMESH_PORT, f, 13);                                   /* under the header */
+      if (pmt_rx_cnt != 0) PMT_FAIL("rx: a v2 frame with a bad length was delivered");
+      /* audit-149: an id that differs from mine only in the high byte (260+256) */
+      n = pmt_v2frame(f, WIDE, (UH)(WSELF + 256), PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 0) PMT_FAIL("rx: v2 to an id differing in the high byte was delivered");
+      /* audit-149 [pmv2-rxnoid]: a node without an id (0xFF) takes no v2 frame,
+       * as v1 drops dst >= DNODE_MAX before its == drpc_my_node check */
+      drpc_my_node = PK_NODE_NONE;
+      n = pmt_v2frame(f, WIDE, PK_NODE_NONE, PORT, pl, 3);
+      pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, n);
+      if (pmt_rx_cnt != 0) PMT_FAIL("rxnoid: a node with id 0xFF took a v2 frame addressed to 0xFF");
+      drpc_my_node = WSELF; }
+    {   /* v1 to me (narrow) still lands */
+        drpc_my_node = 1;
+        UW m = PMESH_MAGIC; __builtin_memcpy(f, &m, 4);
+        f[4] = PMESH_VERSION; f[5] = PMESH_DATA; f[6] = (UB)N; f[7] = 1;
+        pmt_put16(f + 8, PORT); pmt_put16(f + 10, 3); f[12] = 'a'; f[13] = 'b'; f[14] = 'c';
+        pmt_rx_cnt = 0; pmesh_rx(0, PMESH_PORT, f, 15);
+        if (pmt_rx_cnt != 1 || pmt_rx_src != N) PMT_FAIL("rx: v1 to me was not delivered");
+    }
+#undef PMT_FAIL
+
+    PK_NOSW_ENTER();
+    pm_tx_tap = NULL; pm_reads_v2_hook = NULL;
+    for (INT i = 0; i < PMESH_BIND_MAX; i++) pmesh_socks[i] = saved_socks[i];
+    PK_NOSW_LEAVE();
+    drpc_my_node = saved_my; dnode_table[N].state = saved_st;
+    pmesh_stats = saved_stats; pmesh_v2_stats = saved_v2;
+    if (fails == 0) say("[pmv2] PASS (v2 only when wide and to a reader, straight; v1 unchanged)\r\n");
+    else            say("[pmv2] RED\r\n");
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ */

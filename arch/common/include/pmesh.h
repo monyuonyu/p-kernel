@@ -142,3 +142,24 @@ void pmesh_route_list(void);
 
 /* 統計を表示 (shell `mesh stat`) */
 void pmesh_stat(void);
+
+#if defined(_TK_HOSTED_LIBC_)
+/* N2 (ii)(b), research/n2-wire16.md 3: the one-node DATA frame v2, hosted only.
+ * Header 14 bytes: magic(4) version=2 type src(2, LE) dst(2, LE) port(2) len(2).
+ * Sent only when the source or the destination is wide, and only straight to a
+ * peer that reads v2 (swim_peer_reads_v2); v1 stays byte-identical otherwise.
+ * Nothing relays v2 yet. Old nodes drop version != 1. */
+#define PMESH_VERSION2     2
+#define PMESH_V2_HDR       14
+#define PMESH_V2_DATA_MAX  (PMESH_DATA_MAX - 2)
+typedef struct {
+    UW v2_tx;         /* v2 frames sent                                   */
+    UW v2_rx;         /* v2 DATA frames that passed the header checks     */
+    UW v2_delivered;  /* v2 frames handed to a bound port                 */
+    UW v2_noread;     /* not sent: the peer does not read v2 / not direct */
+    UW v2_drop;       /* v2 received but not for this node (no relay yet) */
+} PMESH_V2_STATS;
+extern PMESH_V2_STATS pmesh_v2_stats;
+/* `nodes pmv2`: v2 send and receive with a tap on the link. 0 = all pass. */
+INT pmesh_v2_self_test(void (*emit)(const char *));
+#endif
