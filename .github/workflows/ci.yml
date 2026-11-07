@@ -1497,6 +1497,10 @@ jobs:
           # which wide peers a kdds broadcast goes to (N2 (c)(1)): a REGION topic only to region members
           (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide.log || true
           grep -aF '[kdds-wide] PASS' kdds_wide.log
+          # R-KDDSQ stage 1: kdds_sub_next keeps unread messages, oldest first (kdds-queue.md; the
+          # negative -DKDDS_NC_NO_QUEUE was red in the container, not wired here: the job is near its limit)
+          (printf 'kdds queue\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_queue.log || true
+          grep -aF '[kdds-queue] PASS' kdds_queue.log
           # next_hop: 10.1/16 is on-link (a wide address uses the third byte; the /24 dropped wide<->narrow unicast)
           (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink.log || true
           grep -aF '[onlink] PASS' nodes_onlink.log

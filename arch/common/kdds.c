@@ -158,6 +158,65 @@ W kdds_open(const char *name, W qos)
  * ので、ブロックしない購読者はセマフォを1個も消費しない。
  * (CFN_MAX_SEMID は TCB ABI に縛られて増やせないため、per-source topic を
  *  大量に開く world/moe のような購読者がセマフォを枯渇させない逃げ道。) */
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* R-KDDSQ, stage 1 (kdds-queue.md, hosted only): kdds_sub_next reads a */
+/* handle's unread messages oldest first. Before the topic's one slot  */
+/* is overwritten while a next-reader of it has not read it, the slot  */
+/* goes into a shared ring of KDDS_Q_N. kdds_sub is unchanged.         */
+/* -DKDDS_NC_NO_QUEUE: nothing is kept (negative control).             */
+/* ------------------------------------------------------------------ */
+#define KDDS_Q_N 32
+typedef struct { W tidx; UH seq; UH len; UB used; UB data[KDDS_DATA_MAX]; } KDDS_QSLOT;
+static KDDS_QSLOT kq_ring[KDDS_Q_N];
+static INT kq_w;                                /* next slot to write          */
+static UB  kq_on[KDDS_HANDLE_MAX];              /* the handle reads with _next */
+static UH  kq_seq[KDDS_HANDLE_MAX];             /* the last seq it read        */
+static UW  kq_drop[KDDS_TOPIC_MAX];             /* kept messages lost unread   */
+/* the queue's own count of the slot's messages (pub and rx both step it). Not
+ * data_seq: kdds_rx does not step that one, and replica.c compares it to merge
+ * (stepping it on rx would change which replica wins) */
+static UH  kq_tseq[KDDS_TOPIC_MAX];
+
+/* d = seq - last in 1..0x7FFF: after `last` (UH wraps) */
+static BOOL kq_after(UH seq, UH last) { UH d = (UH)(seq - last); return d >= 1 && d <= 0x7FFF; }
+/* is the message seq of topic tidx still unread by some next-reader? */
+static BOOL kq_wanted(W tidx, UH seq)
+{
+    for (W h = 0; h < KDDS_HANDLE_MAX; h++)
+        if (kdds_handles[h].open && kq_on[h] && kdds_handles[h].topic_idx == tidx && kq_after(seq, kq_seq[h]))
+            return TRUE;
+    return FALSE;
+}
+/* caller holds PK_NOSW: keep the slot's current message before it is overwritten */
+static void kq_save(W tidx)
+{
+#ifndef KDDS_NC_NO_QUEUE
+    KDDS_TOPIC *t = &kdds_topics[tidx];
+    if (t->data_len > 0 && kq_wanted(tidx, kq_tseq[tidx])) {
+        KDDS_QSLOT *q = &kq_ring[kq_w];
+        if (q->used && kq_wanted(q->tidx, q->seq)) kq_drop[q->tidx]++;
+        q->tidx = tidx; q->seq = kq_tseq[tidx]; q->len = t->data_len; q->used = 1;
+        kd_memcpy(q->data, t->data, t->data_len);
+        kq_w = (kq_w + 1) % KDDS_Q_N;
+    }
+#else
+    (void)kq_wanted; (void)kq_w;
+#endif
+    kq_tseq[tidx]++;                            /* the message about to be written */
+}
+UW kdds_queue_dropped(W handle)
+{
+    if (handle < 0 || handle >= KDDS_HANDLE_MAX || !kdds_handles[handle].open) return 0;
+    return kq_drop[kdds_handles[handle].topic_idx];
+}
+#define KQ_SAVE(tidx) kq_save(tidx)
+#define KQ_OPEN(h)    (kq_on[(h)] = 0)
+#else
+#define KQ_SAVE(tidx) ((void)0)
+#define KQ_OPEN(h)    ((void)0)
+#endif
+
 static W kdds_open_core(const char *name, W qos, W scope, int blocking)
 {
     W tidx = topic_find_or_create(name, qos, scope);
@@ -189,6 +248,7 @@ static W kdds_open_core(const char *name, W qos, W scope, int blocking)
                                               * SYS_TOPIC_OPEN が kdds_set_owner()
                                               * で所有タスクを刻む。 */
             kdds_handles[h].open      = 1;
+            KQ_OPEN(h);
 
             kd_puts("[kdds] open  topic=\""); kd_puts(name);
             kd_puts("\"  handle="); kd_putdec((UW)h);
@@ -261,6 +321,7 @@ static W kdds_pub_core(W handle, const void *data, W len, INT dst)
      * pk_nosw.h: the slot is shared; a task switch in the middle of the copy
      * would let another publisher or a reader see half of each */
     PK_NOSW_ENTER();
+    KQ_SAVE(tidx);
     kd_memcpy(t->data, data, len);
     t->data_len = (UH)len;
     t->data_seq++;
@@ -401,6 +462,44 @@ W kdds_sub(W handle, void *buf, W buflen, W timeout_ms)
     return copy;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* R-KDDSQ stage 1: the oldest message this handle has not read (from the
+ * ring or the slot), or 0 when there is none. Never waits. The first call
+ * starts the handle's reading at the slot's current message. */
+W kdds_sub_next(W handle, void *buf, W buflen)
+{
+    if (handle < 0 || handle >= KDDS_HANDLE_MAX || !kdds_handles[handle].open) return E_PAR;
+    if (!buf || buflen <= 0) return E_PAR;
+    W tidx = kdds_handles[handle].topic_idx;
+    KDDS_TOPIC *t = &kdds_topics[tidx];
+    W got = 0;
+    PK_NOSW_ENTER();
+    if (!kq_on[handle]) {
+        kq_on[handle] = 1;
+        kq_seq[handle] = (UH)(kq_tseq[tidx] - (t->data_len > 0 ? 1 : 0));
+    }
+    UH last = kq_seq[handle], best = 0;
+    const UB *src = 0; UH slen = 0;
+    for (INT i = 0; i < KDDS_Q_N; i++) {
+        const KDDS_QSLOT *q = &kq_ring[i];
+        if (!q->used || q->tidx != tidx || !kq_after(q->seq, last)) continue;
+        UH d = (UH)(q->seq - last);
+        if (!src || d < best) { best = d; src = q->data; slen = q->len; }
+    }
+    if (t->data_len > 0 && kq_after(kq_tseq[tidx], last)) {
+        UH d = (UH)(kq_tseq[tidx] - last);
+        if (!src || d < best) { best = d; src = t->data; slen = t->data_len; }
+    }
+    if (src) {
+        got = slen < buflen ? slen : buflen;
+        kd_memcpy(buf, src, got);
+        kq_seq[handle] = (UH)(last + best);
+    }
+    PK_NOSW_LEAVE();
+    return got;
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* kdds_close                                                          */
 /* ------------------------------------------------------------------ */
@@ -511,6 +610,7 @@ void kdds_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 
     KDDS_TOPIC *t = &kdds_topics[tidx];
     PK_NOSW_ENTER();                           /* pk_nosw.h: see kdds_pub */
+    KQ_SAVE(tidx);
     kd_memcpy(t->data, pkt->data, pkt->data_len);
     t->data_len = pkt->data_len;
     PK_NOSW_LEAVE();
@@ -732,5 +832,78 @@ INT kdds_wide_self_test(void (*emit)(const char *))
     if (fails == 0) say("[kdds-wide] PASS (wide peers: not self, not narrow, region members only for a REGION topic)\r\n");
     return fails;
 #endif
+}
+
+/* ------------------------------------------------------------------ */
+/* R-KDDSQ `kdds queue` (kdds-queue.md §3): non-distributed, one topic, */
+/*   [pub]   three kdds_pub in a row -> kdds_sub_next gives 1 2 3, then 0 */
+/*   [sub]   kdds_sub still gives the last one, every time               */
+/*   [two]   a second next-reader also gets 1 2 3                        */
+/*   [rx]    three kdds_rx in a row (as net_task hands them) -> 4 5 6    */
+/*   [over]  40 in a row: increasing, ends at the 40th, drops counted    */
+/* Falsifier: -DKDDS_NC_NO_QUEUE ([pub] [two] [rx] red).                */
+/* ------------------------------------------------------------------ */
+static void kq_rx_one(const char *name, UB v)
+{
+    static KDDS_PKT p;
+    for (INT i = 0; i < (INT)sizeof p; i++) ((UB *)&p)[i] = 0;
+    p.magic = KDDS_MAGIC; p.version = KDDS_VERSION; p.type = KDDS_DATA_PKT;
+    p.src_node = 1; p.data_len = 1;
+    INT n = kd_strlen(name) + 1;
+    kd_memcpy(p.name, name, n); p.name_len = (UH)n;
+    p.data[0] = v;
+    kdds_rx(1, KDDS_PORT, (const UB *)&p, (UH)sizeof p);
+}
+INT kdds_queue_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : kd_puts;
+    INT fails = 0;
+    pk_node_t saved_my = drpc_my_node;
+    drpc_my_node = 0xFF;                       /* no wire: kdds_pub stays local */
+    const char *NM = "test/kqueue";
+    W hp = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    W h1 = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    W h2 = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    if (hp < 0 || h1 < 0 || h2 < 0) {
+        say("[kdds-queue] FAIL open\r\n");
+        if (hp >= 0) kdds_close(hp);
+        if (h1 >= 0) kdds_close(h1);
+        if (h2 >= 0) kdds_close(h2);
+        drpc_my_node = saved_my;
+        return 1;
+    }
+    UB b[4];
+    W r1 = kdds_sub_next(h1, b, 4), r2 = kdds_sub_next(h2, b, 4);   /* both start reading: nothing yet */
+    if (r1 != 0 || r2 != 0) { say("[kdds-queue] FAIL empty (a message before any was sent)\r\n"); fails++; }
+    for (UB v = 1; v <= 3; v++) kdds_pub(hp, &v, 1);
+    INT ok = 1;
+    for (UB v = 1; v <= 3; v++) { b[0] = 0; if (kdds_sub_next(h1, b, 4) != 1 || b[0] != v) ok = 0; }
+    if (kdds_sub_next(h1, b, 4) != 0) ok = 0;
+    if (!ok) { say("[kdds-queue] FAIL pub (three in a row did not come back 1 2 3 then none)\r\n"); fails++; }
+    ok = 1;
+    for (INT k = 0; k < 2; k++) { b[0] = 0; if (kdds_sub(h1, b, 4, 0) != 1 || b[0] != 3) ok = 0; }
+    if (!ok) { say("[kdds-queue] FAIL sub (kdds_sub no longer gives the last one)\r\n"); fails++; }
+    ok = 1;
+    for (UB v = 1; v <= 3; v++) { b[0] = 0; if (kdds_sub_next(h2, b, 4) != 1 || b[0] != v) ok = 0; }
+    if (!ok) { say("[kdds-queue] FAIL two (the second reader did not get 1 2 3)\r\n"); fails++; }
+    for (UB v = 4; v <= 6; v++) kq_rx_one(NM, v);
+    ok = 1;
+    for (UB v = 4; v <= 6; v++) { b[0] = 0; if (kdds_sub_next(h1, b, 4) != 1 || b[0] != v) ok = 0; }
+    if (kdds_sub_next(h1, b, 4) != 0) ok = 0;
+    if (!ok) { say("[kdds-queue] FAIL rx (three received in a row did not come back 4 5 6)\r\n"); fails++; }
+    (void)kdds_sub_next(h2, b, 4); (void)kdds_sub_next(h2, b, 4); (void)kdds_sub_next(h2, b, 4);
+    UW d0 = kdds_queue_dropped(h1);
+    for (UB v = 11; v <= 50; v++) kdds_pub(hp, &v, 1);
+    ok = 1; INT got = 0; UB prev = 0, lastv = 0;
+    for (;;) { b[0] = 0; W r = kdds_sub_next(h1, b, 4); if (r == 0) break; if (r != 1 || b[0] <= prev) ok = 0; prev = lastv = b[0]; got++; if (got > 60) break; }
+    UW dr = kdds_queue_dropped(h1) - d0;
+    if (!ok || lastv != 50 || got < KDDS_Q_N || got > KDDS_Q_N + 1 || dr == 0) {
+        say("[kdds-queue] FAIL over (40 in a row: not increasing to 50, or no drop counted)\r\n"); fails++;
+    }
+    kd_puts("[kdds-queue] over: read "); kd_putdec((UW)got); kd_puts(" of 40, dropped "); kd_putdec(dr); kd_puts("\r\n");
+    kdds_close(hp); kdds_close(h1); kdds_close(h2);
+    drpc_my_node = saved_my;
+    if (fails == 0) say("[kdds-queue] PASS (unread messages kept and read oldest first; kdds_sub unchanged)\r\n");
+    return fails;
 }
 #endif

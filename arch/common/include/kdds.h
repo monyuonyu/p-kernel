@@ -290,3 +290,13 @@ INT kdds_delcluster_self_test(void (*emit)(const char *));
 /* N2 (c)(1) `kdds wide` (hosted): the wide peers a broadcast goes to, the
  * region rule held with a fake member list. "[kdds-wide] PASS" or FAIL. */
 INT kdds_wide_self_test(void (*emit)(const char *));
+
+/* R-KDDSQ stage 1 (kdds-queue.md, hosted only): kdds_sub_next returns this
+ * handle's oldest unread message (a shared ring keeps a slot's message before
+ * it is overwritten while a next-reader has not read it), 0 when none, never
+ * waits; kdds_sub is unchanged. kdds_queue_dropped: kept messages of the
+ * handle's topic lost unread (the ring full). `kdds queue` is the self-test
+ * ("[kdds-queue] PASS" or FAIL ...). */
+W   kdds_sub_next(W handle, void *buf, W buflen);
+UW  kdds_queue_dropped(W handle);
+INT kdds_queue_self_test(void (*emit)(const char *));
