@@ -1508,7 +1508,7 @@ jobs:
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), X3's fire when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), [mqwide] frame when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1579,11 +1579,16 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MQ_ASK_NARROW >/dev/null
           (printf 'nodes mqwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqwide_nc.log || true
           grep -aF '[mqwide] FAIL row' nodes_mqwide_nc.log
-          # X3's fire goes red at 260 and 300 when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL)
+          # [mqwide] frame goes red when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL). Not the live
+          # X3: its fire@260/300 went green here twice under this build (CI 42369721391, 42371103702), red locally;
+          # read as a race (a pull answer to a narrow asker is broadcast to the wide peers too), n2-wire16.md
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MQ_WANT_NO_TAIL >/dev/null
-          N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_mqw.log || true
-          grep -aE '^\[n2-mix\] X3 FAIL.* fire@260 fire@300' n2_mix_nc_mqw.log
+          (printf 'nodes mqwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqwide_nc2.log || true
+          grep -aF '[mqwide] FAIL frame' nodes_mqwide_nc2.log
+          # not judged (a reading for the race above): how fire reached the wide nodes without the tail
+          N2_X3=1 N2_LOGDIR=/tmp/n2_mqw_l N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_mqw.log || true
+          grep -a 'fire' /tmp/n2_mqw_l/node260.log /tmp/n2_mqw_l/node300.log /tmp/n2_mqw_l/node4.log /tmp/n2_mqw_l/node44.log | head -40 || true
           # [pull-answer-src] goes red when an answer for a wide teacher has no tail (-DN2_NC_MQ_ANS_NARROW)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MQ_ANS_NARROW >/dev/null
