@@ -3034,6 +3034,31 @@ static INT mt_vocab_fp_ok(const U1 fp[MT_VOCAB_FP_LEN])
  * receive path, zero forked queues (VIII.9 kept: two mouths — local teach, pull
  * answer — but ONE writer). Returns the kdds_pub rc, or -1 if the shared publish
  * handle could not be opened. */
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3), research/n2-wire16.md 3: a wide teacher's id rides 2 bytes LE
+ * after the 53-byte packet; origin_node stays 0xFF. Old nodes and bare metal
+ * read the first 53 bytes only (kdds_sub cuts to the reader's buffer,
+ * kdds.c), so their "origin 0xFF has no row" drop is unchanged. Hosted only.
+ *   mt_wire_frame  the bytes to send for packet p from origin org (53 or 55)
+ *   mt_rx_origin   the origin of a received frame of r bytes (0xFF = none)  */
+typedef struct {
+    MT_TEACH_PKT p;
+    U1 org_lo, org_hi;           /* the wide origin, only when p.origin_node == 0xFF */
+} __attribute__((packed)) MT_TEACH_PKT_W;
+_Static_assert(sizeof(MT_TEACH_PKT_W) <= KDDS_DATA_MAX, "mind/teach + wide origin fits one K-DDS payload");
+static W mt_wire_frame(const MT_TEACH_PKT *p, pk_node_t org, MT_TEACH_PKT_W *out)
+{
+    out->p = *p; out->org_lo = 0; out->org_hi = 0;
+    (void)org;                   /* test-first: the old 53 bytes always */
+    return (W)sizeof out->p;
+}
+static pk_node_t mt_rx_origin(const MT_TEACH_PKT_W *w, W r)
+{
+    (void)r;                     /* test-first: the one-byte origin only */
+    return (pk_node_t)w->p.origin_node;
+}
+#endif
+
 static W mt_wire_send(const MT_TEACH_PKT *p)
 {
     /* ── G-WIRE (conscience.md §1.2): belt-and-braces behind G-LEARN (nothing
@@ -5097,6 +5122,19 @@ static void mq_poll_wants(void)
 
 /* per-origin high-water of the last acted (origin -> fact_seq). 0 = none. */
 static UW mt_last_seq[DNODE_MAX];
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3): per-origin once-per-seq. mt_seq_fresh records seq for org and
+ * says 1 when it is new; 0 when it is the last one acted or org has no row.
+ * mt_seq_get / mt_seq_put are for the self-test's save and restore. */
+static INT mt_seq_fresh(pk_node_t org, UW seq)
+{
+    if (org >= DNODE_MAX || seq == mt_last_seq[org]) return 0;   /* test-first: old table */
+    mt_last_seq[org] = seq;
+    return 1;
+}
+static UW   mt_seq_get(pk_node_t org)        { return org < DNODE_MAX ? mt_last_seq[org] : 0; }
+static void mt_seq_put(pk_node_t org, UW v)  { if (org < DNODE_MAX) mt_last_seq[org] = v; }
+#endif
 /* LM-8 (IX.8): per-origin "already printed a version-mismatch drop" flag,
  * so a re-driven mismatched packet prints once, not every poll. */
 static UB mt_ver_drop_seen[DNODE_MAX];
@@ -8334,3 +8372,83 @@ void r3_conscience_test(void)
     law_show();
 }
 #endif
+
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* N2 (c)(3) `nodes mtwide`: the mind/teach wide origin (n2-wire16.md 3) */
+/*   [mtw-frame] narrow origin: the old 53 bytes, byte for byte;        */
+/*               wide origin with origin_node 0xFF: 55, tail LE;        */
+/*               a wide org but origin_node set, 0xFF, 0xFFFF: 53       */
+/*   [mtw-rx]    55 bytes, 0xFF, a wide tail: the wide id; 53 bytes     */
+/*               or a narrow origin_node: the byte; a tail that is not  */
+/*               wide (5, 0xFF, 0xFFFF) or 54 bytes: 0xFF               */
+/*   [mtw-seq]   300 and 44 (300 & 0xFF) keep their own last seq;       */
+/*               0xFF and 0xFFFF never fresh                            */
+/* Falsifier: -DN2_NC_MT_SEQ_NARROW (the seq row of org & 0xFF).        */
+/* Takes a row for 300 (pk_node_row), as a live wide teacher would.     */
+/* ------------------------------------------------------------------ */
+INT mt_wide_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : r_puts;
+    static MT_TEACH_PKT p;
+    static MT_TEACH_PKT_W w;
+    const pk_node_t WIDE = 300, NAR = 44;
+    W n;
+#define MTW_FAIL(m) do { say("[mtwide] FAIL " m "\r\n"); fails++; } while (0)
+    for (UW i = 0; i < (UW)sizeof p; i++) ((U1 *)&p)[i] = (U1)(0x5A + i);
+    p.magic = MT_MAGIC;
+
+    /* [mtw-frame] */
+    p.origin_node = 3;
+    n = mt_wire_frame(&p, 3, &w);
+    if (n != (W)sizeof p || __builtin_memcmp(&w.p, &p, sizeof p) != 0)
+        MTW_FAIL("frame: a narrow origin is not the old 53 bytes");
+    p.origin_node = PK_NODE_NONE;
+    n = mt_wire_frame(&p, WIDE, &w);
+    if (n != (W)sizeof w || __builtin_memcmp(&w.p, &p, sizeof p) != 0 ||
+        w.org_lo != (U1)(WIDE & 0xFF) || w.org_hi != (U1)(WIDE >> 8))
+        MTW_FAIL("frame: a wide origin is not 53 bytes + 2 bytes LE");
+    p.origin_node = 3;
+    if (mt_wire_frame(&p, WIDE, &w) != (W)sizeof p) MTW_FAIL("frame: a tail was added to a narrow origin_node");
+    p.origin_node = PK_NODE_NONE;
+    if (mt_wire_frame(&p, PK_NODE_NONE, &w) != (W)sizeof p) MTW_FAIL("frame: a tail was added for 0xFF");
+    if (mt_wire_frame(&p, 0xFFFF, &w) != (W)sizeof p)       MTW_FAIL("frame: a tail was added for 0xFFFF");
+
+    /* [mtw-rx] */
+    w.p = p; w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = (U1)(WIDE & 0xFF); w.org_hi = (U1)(WIDE >> 8);
+    if (mt_rx_origin(&w, (W)sizeof w) != WIDE)   MTW_FAIL("rx: 55 bytes with a wide tail did not give the wide id");
+    if (mt_rx_origin(&w, (W)sizeof p) != PK_NODE_NONE) MTW_FAIL("rx: 53 bytes read a tail");
+    if (mt_rx_origin(&w, (W)sizeof p + 1) != PK_NODE_NONE) MTW_FAIL("rx: 54 bytes read a tail");
+    w.p.origin_node = 3;
+    if (mt_rx_origin(&w, (W)sizeof w) != 3)      MTW_FAIL("rx: a narrow origin_node lost to the tail");
+    if (mt_rx_origin(&w, (W)sizeof p) != 3)      MTW_FAIL("rx: a narrow 53-byte origin is not the byte");
+    w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = 5; w.org_hi = 0;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: a narrow id in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: 0xFF in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0xFF;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: 0xFFFF in the tail was taken");
+
+    /* [mtw-seq] */
+    {
+        UW s_n = mt_seq_get(NAR), s_w = mt_seq_get(WIDE);
+        mt_seq_put(NAR, 0); mt_seq_put(WIDE, 0);
+        if (!mt_seq_fresh(NAR, 7))  MTW_FAIL("seq: a new seq from 44 was not fresh");
+        if (!mt_seq_fresh(WIDE, 7)) MTW_FAIL("seq: 300's seq 7 was blocked by 44's seq 7");
+        if (mt_seq_fresh(WIDE, 7))  MTW_FAIL("seq: 300's same seq was fresh twice");
+        if (mt_seq_fresh(NAR, 7))   MTW_FAIL("seq: 44's same seq was fresh twice");
+        if (!mt_seq_fresh(WIDE, 8)) MTW_FAIL("seq: 300's next seq was not fresh");
+        if (mt_seq_get(NAR) != 7)   MTW_FAIL("seq: 300's seq moved 44's");
+        if (mt_seq_fresh(PK_NODE_NONE, 9)) MTW_FAIL("seq: 0xFF was fresh");
+        if (mt_seq_fresh(0xFFFF, 9))       MTW_FAIL("seq: 0xFFFF was fresh");
+        mt_seq_put(NAR, s_n); mt_seq_put(WIDE, s_w);
+    }
+#undef MTW_FAIL
+    if (fails == 0) say("[mtwide] PASS (wide origin: 2 bytes after the 53, read only when 0xFF and wide; own seq row)\r\n");
+    else            say("[mtwide] RED\r\n");
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ */

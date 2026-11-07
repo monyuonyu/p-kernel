@@ -63,6 +63,7 @@ IMPORT INT  sio_read_line(UB *buf, INT maxlen);
 IMPORT void ai_kernel_init(void);
 IMPORT void ai_stats_print(void);
 IMPORT void kdds_init(void);
+IMPORT INT  mt_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3), r3_incontext.c */
 IMPORT void kdds_list(void);
 IMPORT void dtr_init(void);
 IMPORT void dtr_stat(void);
@@ -1004,6 +1005,8 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
             /* N2b: `nodes rows` checks the id -> table-row map (drpc.c). */
             else if (al >= 4 && a[0]=='r'&&a[1]=='o'&&a[2]=='w'&&a[3]=='s') pk_node_row_self_test(print);
+            /* N2 (c)(3): `nodes mtwide` checks the mind/teach wide origin (r3). */
+            else if (al >= 2 && a[0]=='m'&&a[1]=='t') mt_wide_self_test(print);
             /* wave-selfelect cert: `nodes selfelect` proves a teacher node
              * SELF-RECOGNIZES (region_teacher()==self). "sel" is distinct from
              * cap/tea/tes. */
