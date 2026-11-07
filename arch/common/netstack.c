@@ -1184,9 +1184,11 @@ INT net_onlink_self_test(void (*emit)(const char *))
     net_my_ip = IP4(10,0,2,15);      /* QEMU user-mode */
     if (next_hop(IP4(10,0,2,2))   != IP4(10,0,2,2))   bad |= 1u << 6;
     if (next_hop(IP4(10,0,5,1))   != NET_GW_IP)       bad |= 1u << 7;
+    /* audit-150: the self must be in 10.1/16 too, not only the destination */
+    if (next_hop(pk_node_ip(3))   != NET_GW_IP)       bad |= 1u << 8;
     net_my_ip = saved;
     PK_NOSW_LEAVE();
-    static const char *const what[8] = {
+    static const char *const what[9] = {
         "wide self to a narrow peer goes to the gateway",
         "wide self to a wide peer goes to the gateway",
         "narrow self to a wide peer goes to the gateway",
@@ -1194,8 +1196,9 @@ INT net_onlink_self_test(void (*emit)(const char *))
         "10.2.0.4 (outside 10.1/16) is taken as on-link",
         "192.168.10.2 is taken as on-link",
         "QEMU's 10.0.2.2 lost its /24",
-        "10.0.5.1 is taken as on-link (the /16 is for 10.1 only)" };
-    for (INT i = 0; i < 8; i++)
+        "10.0.5.1 is taken as on-link (the /16 is for 10.1 only)",
+        "self 10.0.2.15 to 10.1.0.4 is taken as on-link (the self is outside 10.1/16)" };
+    for (INT i = 0; i < 9; i++)
         if (bad & (1u << i)) { say("[onlink] FAIL "); say(what[i]); say("\r\n"); }
     say(bad ? "[onlink] RED\r\n" : "[onlink] PASS (10.1/16 is on-link, the /24 elsewhere)\r\n");
     return bad ? 1 : 0;
