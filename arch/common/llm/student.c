@@ -2444,6 +2444,21 @@ int st_round_merge(st_model *into, uint32_t gen,
     return st_merge_cohort(into, take, len, n);
 }
 
+/* B5 step 5: not written yet (the test comes first) */
+int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
+                     const size_t *peer_lens, int count, int t)
+{
+    (void)into; (void)peer_blobs; (void)peer_lens; (void)count; (void)t;
+    return ST_E_ARG;
+}
+int st_round_trimmed(st_model *into, uint32_t gen,
+                     const void *const *peer_blobs, const size_t *peer_lens,
+                     const uint32_t *gens, int count, int t)
+{
+    (void)gen; (void)gens;
+    return st_merge_trimmed(into, peer_blobs, peer_lens, count, t);
+}
+
 int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                    int n, int seq, float *live_loss, float *cand_loss)
 {
