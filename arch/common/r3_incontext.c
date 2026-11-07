@@ -4471,6 +4471,42 @@ static void mq_build_want(UW seq, const UB *keys, INT n)
         mq_want_pkt.keys[i] = (i < n) ? keys[i] : 0;
     mt_vocab_fp_fill(mq_want_pkt.vocab_fp);
 }
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3), the want: a wide asker's id rides 2 bytes LE after the 24-byte
+ * packet, origin_node stays 0xFF (the mind/teach tail, mt_wire_frame). Old
+ * nodes and bare metal read the 24 bytes only and drop 0xFF as before; a new
+ * responder answers the wide asker with its own row (mq_ask_state). Before,
+ * every responder dropped a wide want (o >= DNODE_MAX), so an old teacher's
+ * fact never reached a wide node ([n2-mix] X3 fire@260/300). Hosted only.
+ *   mq_want_frame      the bytes to send for p from asker org (24 or 26)
+ *   mq_want_rx_origin  the asker of a received frame of r bytes (0xFF = none)
+ * -DN2_NC_MQ_WANT_NO_TAIL: never send the tail (the live negative control). */
+typedef struct {
+    MQ_WANT_PKT p;
+    U1 org_lo, org_hi;           /* the wide asker, only when p.origin_node == 0xFF */
+} __attribute__((packed)) MQ_WANT_PKT_W;
+_Static_assert(sizeof(MQ_WANT_PKT_W) <= KDDS_DATA_MAX, "mind/want + wide asker fits one K-DDS payload");
+static W mq_want_frame(const MQ_WANT_PKT *p, pk_node_t org, MQ_WANT_PKT_W *out)
+{
+    out->p = *p; out->org_lo = 0; out->org_hi = 0;
+#ifndef N2_NC_MQ_WANT_NO_TAIL
+    if (PK_NODE_IS_WIDE(org) && p->origin_node == PK_NODE_NONE) {
+        out->org_lo = (U1)(org & 0xFF); out->org_hi = (U1)(org >> 8);
+        return (W)sizeof *out;
+    }
+#endif
+    return (W)sizeof out->p;
+}
+static pk_node_t mq_want_rx_origin(const MQ_WANT_PKT_W *w, W r)
+{
+    pk_node_t org = (pk_node_t)w->p.origin_node;
+    if (org == PK_NODE_NONE && r >= (W)sizeof *w) {
+        pk_node_t t = (pk_node_t)(w->org_lo | ((pk_node_t)w->org_hi << 8));
+        if (PK_NODE_IS_WIDE(t)) org = t;
+    }
+    return org;
+}
+#endif
 /* the want_seq generation + publish decision. Returns:
  *   2 = publish AND announce (a key-SET change, or the one empty-transition),
  *   1 = publish silently (re-drive of an unchanged non-empty set — the cure for
@@ -4514,8 +4550,16 @@ static void mq_publish_wants(void)
     if (act == 0) return;                      /* silent steady state          */
 
     mq_build_want(mq_want_seq, keys, n);
+#ifdef _TK_HOSTED_LIBC_
+    if (mq_want_pub_h() >= 0) {
+        MQ_WANT_PKT_W fw;        /* 26 B on the task's stack, no shared scratch */
+        W fn = mq_want_frame(&mq_want_pkt, drpc_my_node, &fw);
+        (void)kdds_pub(mq_want_pub, &fw, fn);
+    }
+#else
     if (mq_want_pub_h() >= 0)
         (void)kdds_pub(mq_want_pub, &mq_want_pkt, (W)sizeof mq_want_pkt);
+#endif
 
     if (act == 2) {
         if (n == 0) {
@@ -4818,7 +4862,12 @@ static void mhi_recv(void)
 #endif
 
 /* ---- answer side: ONE poll site, engram-only, forwarded provenance ---- */
+#ifdef _TK_HOSTED_LIBC_
+static MQ_WANT_PKT_W mq_rx_want_w;   /* N2 (c)(3): the 24 B + a wide asker tail */
+#define mq_rx_want (mq_rx_want_w.p)  /* every reader below sees the 24 B as before */
+#else
 static MQ_WANT_PKT  mq_rx_want;      /* poll scratch (file-static)            */
+#endif
 static MT_TEACH_PKT mq_ans_pkt;      /* answer scratch — SEPARATE from        */
                                      /* mt_pub_pkt/mt_pub_last (clobbering the */
                                      /* latter would break the LM-12 Site-3    */
@@ -4846,14 +4895,35 @@ typedef struct {
     UB redrive_slow;                 /* 1-3c: ticks since the last slow re-drive */
 #endif
 } MQ_ASK_STATE;
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3): one row per asker (pk_node_row.h), so a wide asker (300) has its
+ * own answer-once memory, never a narrow one's (44). An asker is pk_node_t.
+ * -DN2_NC_MQ_ASK_NARROW: the row of o & 0xFF (falsifier, [mqwide] mqw-row). */
+typedef pk_node_t mq_org_t;
+static MQ_ASK_STATE mq_ask_state[DNODE_ROWS];
+#if defined(N2_NC_MQ_ASK_NARROW)
+#define MQ_ASK_ROW(o) pk_node_row((pk_node_t)((o) & 0xFF))
+#else
+#define MQ_ASK_ROW(o) pk_node_row(o)
+#endif
+#define MQ_ASK_AT(o) ({ int r_ = MQ_ASK_ROW(o); r_ < 0 ? (MQ_ASK_STATE *)0 : &mq_ask_state[r_]; })
+static INT mt_org_takes(pk_node_t o);
+#else
+typedef U1 mq_org_t;
 static MQ_ASK_STATE mq_ask_state[DNODE_MAX];
+#endif
 
 /* reset the per-asker state on a NEW want_seq (compared with != so an asker
  * REBOOT — counter reset to a lower value — still re-arms, like mt_last_seq). */
-static void mq_gen_reset(U1 o, UW want_seq)
+static void mq_gen_reset(mq_org_t o, UW want_seq)
 {
+#ifdef _TK_HOSTED_LIBC_
+    MQ_ASK_STATE *s = MQ_ASK_AT(o);
+    if (!s) return;
+#else
     if (o >= DNODE_MAX) return;
     MQ_ASK_STATE *s = &mq_ask_state[o];
+#endif
     if (!s->used || s->want_seq != want_seq) {
         s->used = 1; s->want_seq = want_seq; s->n_answered = 0;
         s->stagger = (UB)(drpc_my_node & 3);   /* cross-responder thinning (§5) */
@@ -4865,11 +4935,17 @@ static void mq_gen_reset(U1 o, UW want_seq)
 }
 /* answer-once: 1 if (o, want_seq, k) has NOT been answered (and MARKS it); 0 if
  * already answered. The cert drives this directly ([pull-answered-once]). */
-static INT mq_mark_answer(U1 o, UW want_seq, UB k)
+static INT mq_mark_answer(mq_org_t o, UW want_seq, UB k)
 {
+#ifdef _TK_HOSTED_LIBC_
+    MQ_ASK_STATE *s = MQ_ASK_AT(o);
+    if (!s) return 0;
+    mq_gen_reset(o, want_seq);
+#else
     if (o >= DNODE_MAX) return 0;
     mq_gen_reset(o, want_seq);
     MQ_ASK_STATE *s = &mq_ask_state[o];
+#endif
     for (INT i = 0; i < (INT)s->n_answered; i++)
         if (s->answered[i] == k) return 0;     /* already answered this gen     */
     if (s->n_answered < R3_WQ_MAX) s->answered[s->n_answered++] = k;
@@ -4877,10 +4953,15 @@ static INT mq_mark_answer(U1 o, UW want_seq, UB k)
 }
 /* peek without marking (poll loop dedup pre-check; also lets a not-held key be
  * retried next gen). */
-static INT mq_already_answered(U1 o, UB k)
+static INT mq_already_answered(mq_org_t o, UB k)
 {
+#ifdef _TK_HOSTED_LIBC_
+    MQ_ASK_STATE *s = MQ_ASK_AT(o);
+    if (!s) return 0;
+#else
     if (o >= DNODE_MAX) return 0;
     MQ_ASK_STATE *s = &mq_ask_state[o];
+#endif
     for (INT i = 0; i < (INT)s->n_answered; i++) if (s->answered[i] == k) return 1;
     return 0;
 }
@@ -4891,7 +4972,7 @@ static INT mq_already_answered(U1 o, UB k)
  * engram-only scope cut: a weight-known-but-EVICTED key is not in r3_fq -> 0 ->
  * refuse). *forgotten_out=1 iff the self-forgotten-fact substitution fired.
  * Caller holds m_gate. The cert drives this directly ([pull-answer-src]). */
-static INT mq_answer_build(U1 asker, UB k, INT *forgotten_out)
+static INT mq_answer_build(mq_org_t asker, UB k, INT *forgotten_out)
 {
     if (forgotten_out) *forgotten_out = 0;
     INT bind, fi = m_find_key((INT)k, &bind);
@@ -4998,7 +5079,11 @@ static UB mq_answer_sent = 0;
 static void mq_poll_wants(void)
 {
     if (mq_want_sub_h() < 0) return;
+#ifdef _TK_HOSTED_LIBC_
+    W r = kdds_sub(mq_want_sub, &mq_rx_want_w, (W)sizeof mq_rx_want_w, 0);   /* 24 or 26 */
+#else
     W r = kdds_sub(mq_want_sub, &mq_rx_want, (W)sizeof mq_rx_want, 0);
+#endif
     if (r < (W)sizeof mq_rx_want || mq_rx_want.magic != MQ_MAGIC) return;
 
     /* gates, in the mind/teach order (magic already checked). */
@@ -5021,9 +5106,19 @@ static void mq_poll_wants(void)
         }
         return;
     }
+#ifdef _TK_HOSTED_LIBC_
+    /* N2 (c)(3): the asker from the tail when origin_node is 0xFF; a one-byte
+     * id at or above DNODE_MAX is dropped as before (mt_org_takes) */
+    pk_node_t o = mq_want_rx_origin(&mq_rx_want_w, r);
+    if (o == drpc_my_node) return;             /* own want echo — ignore        */
+    if (!mt_org_takes(o))  return;
+    MQ_ASK_STATE *s = MQ_ASK_AT(o);
+    if (!s) return;                            /* the wide rows are full        */
+#else
     U1 o = mq_rx_want.origin_node;
     if (o == drpc_my_node) return;             /* own want echo — ignore        */
     if (o >= DNODE_MAX)    return;
+#endif
     UW S = mq_rx_want.want_seq;
     INT n = (INT)mq_rx_want.n; if (n > R3_WQ_MAX) n = R3_WQ_MAX;
 
@@ -5031,9 +5126,14 @@ static void mq_poll_wants(void)
 
     /* print the receipt ONCE per new want_seq ([pull-want-live]); a re-drive of
      * the same generation is silent (avoids the LATEST_ONLY re-arrival flood). */
+#ifdef _TK_HOSTED_LIBC_
+    INT gen_changed = (!s->used || s->want_seq != S);
+    mq_gen_reset(o, S);
+#else
     INT gen_changed = (!mq_ask_state[o].used || mq_ask_state[o].want_seq != S);
     mq_gen_reset(o, S);
     MQ_ASK_STATE *s = &mq_ask_state[o];
+#endif
 
     if (gen_changed) {
         r_puts("[mind] mind/want from node "); r_putdec((UW)o);
@@ -8513,6 +8613,88 @@ INT mt_wide_self_test(void (*emit)(const char *))
 #undef MTW_FAIL
     if (fails == 0) say("[mtwide] PASS (wide origin: 2 bytes after the 53, read only when 0xFF and wide; own seq row)\r\n");
     else            say("[mtwide] RED\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* N2 (c)(3) `nodes mqwide`: the mind/want wide asker (the want tail)   */
+/*   [mqw-frame] narrow asker: the old 24 bytes, byte for byte; wide    */
+/*               asker with origin_node 0xFF: 26, tail LE; a wide org   */
+/*               but origin_node set, 0xFF, 0xFFFF: 24                  */
+/*   [mqw-rx]    26 bytes, 0xFF, a wide tail: the wide id; 24 or 25     */
+/*               bytes or a narrow origin_node: the byte; a tail that   */
+/*               is not wide (5, 0xFF, 0xFFFF): 0xFF                    */
+/*   [mqw-row]   300 and 44 (300 & 0xFF) keep their own answer-once     */
+/*               memory; 0xFF and 0xFFFF have none                      */
+/* Falsifiers: -DN2_NC_MQ_ASK_NARROW (mqw-row), -DN2_NC_MQ_WANT_NO_TAIL */
+/* (mqw-frame; live: [n2-mix] X3 fire@260/300). Takes rows for 300 and  */
+/* 44 and puts their state back.                                        */
+/* ------------------------------------------------------------------ */
+INT mq_wide_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : r_puts;
+    static MQ_WANT_PKT p;
+    static MQ_WANT_PKT_W w;
+    const pk_node_t WIDE = 300, NAR = 44;
+    W n;
+#define MQW_FAIL(m) do { say("[mqwide] FAIL " m "\r\n"); fails++; } while (0)
+    for (UW i = 0; i < (UW)sizeof p; i++) ((U1 *)&p)[i] = (U1)(0x5A + i);
+    p.magic = MQ_MAGIC;
+
+    /* [mqw-frame] */
+    p.origin_node = 3;
+    n = mq_want_frame(&p, 3, &w);
+    if (n != (W)sizeof p || __builtin_memcmp(&w.p, &p, sizeof p) != 0)
+        MQW_FAIL("frame: a narrow asker is not the old 24 bytes");
+    p.origin_node = PK_NODE_NONE;
+    n = mq_want_frame(&p, WIDE, &w);
+    if (n != (W)sizeof w || __builtin_memcmp(&w.p, &p, sizeof p) != 0 ||
+        w.org_lo != (U1)(WIDE & 0xFF) || w.org_hi != (U1)(WIDE >> 8))
+        MQW_FAIL("frame: a wide asker is not 24 bytes + 2 bytes LE");
+    p.origin_node = 3;
+    if (mq_want_frame(&p, WIDE, &w) != (W)sizeof p) MQW_FAIL("frame: a tail was added to a narrow origin_node");
+    p.origin_node = PK_NODE_NONE;
+    if (mq_want_frame(&p, PK_NODE_NONE, &w) != (W)sizeof p) MQW_FAIL("frame: a tail was added for 0xFF");
+    if (mq_want_frame(&p, 0xFFFF, &w) != (W)sizeof p)       MQW_FAIL("frame: a tail was added for 0xFFFF");
+
+    /* [mqw-rx] */
+    w.p = p; w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = (U1)(WIDE & 0xFF); w.org_hi = (U1)(WIDE >> 8);
+    if (mq_want_rx_origin(&w, (W)sizeof w) != WIDE)         MQW_FAIL("rx: 26 bytes with a wide tail did not give the wide id");
+    if (mq_want_rx_origin(&w, (W)sizeof p) != PK_NODE_NONE) MQW_FAIL("rx: 24 bytes read a tail");
+    if (mq_want_rx_origin(&w, (W)sizeof p + 1) != PK_NODE_NONE) MQW_FAIL("rx: 25 bytes read a tail");
+    w.p.origin_node = 3;
+    if (mq_want_rx_origin(&w, (W)sizeof w) != 3)            MQW_FAIL("rx: a narrow origin_node lost to the tail");
+    w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = 5; w.org_hi = 0;
+    if (mq_want_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MQW_FAIL("rx: a narrow id in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0;
+    if (mq_want_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MQW_FAIL("rx: 0xFF in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0xFF;
+    if (mq_want_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MQW_FAIL("rx: 0xFFFF in the tail was taken");
+
+    /* [mqw-row] */
+    {
+        MQ_ASK_STATE *sw = MQ_ASK_AT(WIDE), *sn = MQ_ASK_AT(NAR);
+        if (!sw || !sn) MQW_FAIL("row: 300 or 44 has no row");
+        else {
+            MQ_ASK_STATE kw = *sw, kn = *sn;
+            sw->used = 0; sn->used = 0;
+            if (!mq_mark_answer(WIDE, 7, 8))   MQW_FAIL("row: 300's first answer of key 8 was not new");
+            if (mq_already_answered(NAR, 8))   MQW_FAIL("row: 300's answer counted as 44's");
+            if (!mq_mark_answer(NAR, 7, 8))    MQW_FAIL("row: 44's first answer of key 8 was blocked by 300's");
+            if (mq_mark_answer(WIDE, 7, 8))    MQW_FAIL("row: 300's key 8 was answered twice in one generation");
+            if (!mq_mark_answer(WIDE, 9, 8))   MQW_FAIL("row: 300's new generation did not re-arm");
+            if (!mq_already_answered(NAR, 8))  MQW_FAIL("row: 300's new generation reset 44's");
+            if (mq_mark_answer(PK_NODE_NONE, 7, 8)) MQW_FAIL("row: 0xFF has a row");
+            if (mq_mark_answer(0xFFFF, 7, 8))       MQW_FAIL("row: 0xFFFF has a row");
+            *sw = kw; *sn = kn;
+        }
+    }
+#undef MQW_FAIL
+    if (fails == 0) say("[mqwide] PASS (wide asker: 2 bytes after the 24, read only when 0xFF and wide; own answer row)\r\n");
+    else            say("[mqwide] RED\r\n");
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
