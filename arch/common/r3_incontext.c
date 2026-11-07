@@ -25,6 +25,7 @@
 #include "dtr.h"       /* shared kernels: dt_linear/dt_softmax/dt_relu/
                           dt_sqrt/dtr_ln_fwd_cache/dtr_ln_bwd/dtr_logf */
 #include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
+#include "pk_node_row.h"   /* N2 (c)(3): the per-origin seq rows (hosted) */
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
@@ -3034,7 +3035,46 @@ static INT mt_vocab_fp_ok(const U1 fp[MT_VOCAB_FP_LEN])
  * receive path, zero forked queues (VIII.9 kept: two mouths — local teach, pull
  * answer — but ONE writer). Returns the kdds_pub rc, or -1 if the shared publish
  * handle could not be opened. */
+#ifdef _TK_HOSTED_LIBC_
+/* N2 (c)(3), research/n2-wire16.md 3: a wide teacher's id rides 2 bytes LE
+ * after the 53-byte packet; origin_node stays 0xFF. Old nodes and bare metal
+ * read the first 53 bytes only (kdds_sub cuts to the reader's buffer,
+ * kdds.c), so their "origin 0xFF has no row" drop is unchanged. Hosted only.
+ *   mt_wire_frame  the bytes to send for packet p from origin org (53 or 55)
+ *   mt_rx_origin   the origin of a received frame of r bytes (0xFF = none)  */
+typedef struct {
+    MT_TEACH_PKT p;
+    U1 org_lo, org_hi;           /* the wide origin, only when p.origin_node == 0xFF */
+} __attribute__((packed)) MT_TEACH_PKT_W;
+_Static_assert(sizeof(MT_TEACH_PKT_W) <= KDDS_DATA_MAX, "mind/teach + wide origin fits one K-DDS payload");
+static W mt_wire_frame(const MT_TEACH_PKT *p, pk_node_t org, MT_TEACH_PKT_W *out)
+{
+    out->p = *p; out->org_lo = 0; out->org_hi = 0;
+    if (PK_NODE_IS_WIDE(org) && p->origin_node == PK_NODE_NONE) {
+        out->org_lo = (U1)(org & 0xFF); out->org_hi = (U1)(org >> 8);
+        return (W)sizeof *out;
+    }
+    return (W)sizeof out->p;
+}
+static pk_node_t mt_rx_origin(const MT_TEACH_PKT_W *w, W r)
+{
+    pk_node_t org = (pk_node_t)w->p.origin_node;
+    if (org == PK_NODE_NONE && r >= (W)sizeof *w) {
+        pk_node_t t = (pk_node_t)(w->org_lo | ((pk_node_t)w->org_hi << 8));
+        if (PK_NODE_IS_WIDE(t)) org = t;
+    }
+    return org;
+}
+/* every caller but the own-teach ones sends no wide origin yet (limit) */
+static W mt_wire_send_org(const MT_TEACH_PKT *p, pk_node_t org);
+#define mt_wire_send(p) mt_wire_send_org((p), PK_NODE_NONE)
+#endif
+
+#ifdef _TK_HOSTED_LIBC_
+static W mt_wire_send_org(const MT_TEACH_PKT *p, pk_node_t org)
+#else
 static W mt_wire_send(const MT_TEACH_PKT *p)
+#endif
 {
     /* ── G-WIRE (conscience.md §1.2): belt-and-braces behind G-LEARN (nothing
      * forbidden should be HELD). The deliberately-single wire-writer covers
@@ -3049,6 +3089,14 @@ static W mt_wire_send(const MT_TEACH_PKT *p)
         if (cv != CONS_ALLOW) { conscience_on_refuse(CONS_SITE_WIRE, cv); return -1; }
     }
     if (m_pub_handle() < 0) return -1;
+#ifdef _TK_HOSTED_LIBC_
+    if (p) {
+        MT_TEACH_PKT_W fw;       /* 55 B on the caller's stack, no shared scratch */
+        W fn = mt_wire_frame(p, org, &fw);
+        return kdds_pub(mt_pub_h, &fw, fn);
+    }
+    (void)org;
+#endif
     return kdds_pub(mt_pub_h, p, (W)sizeof *p);
 }
 
@@ -3072,7 +3120,11 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
      * on a DIFFERENT word list refuses the engram instead of mis-binding. */
     mt_vocab_fp_fill(mt_pub_pkt.vocab_fp);
 
+#ifdef _TK_HOSTED_LIBC_
+    (void)mt_wire_send_org(&mt_pub_pkt, drpc_my_node);   /* N2 (c)(3): a wide self rides the tail */
+#else
     (void)mt_wire_send(&mt_pub_pkt);               /* LM-15: the one wire-writer */
+#endif
     mt_pub_last = mt_pub_pkt; mt_pub_have = 1;     /* retain for re-drive    */
     r_puts("[mind] published mind/teach k="); r_putdec((UW)k);
     r_puts(" v="); r_putdec((UW)v);
@@ -3088,7 +3140,11 @@ static void m_publish_teach(UW fact_seq, U1 k, U1 v, U1 src)
 static void m_republish_last(void)
 {
     if (!mt_pub_have || drpc_my_node == 0xFF) return;
+#ifdef _TK_HOSTED_LIBC_
+    (void)mt_wire_send_org(&mt_pub_last, drpc_my_node);  /* N2 (c)(3): own, as published */
+#else
     (void)mt_wire_send(&mt_pub_last);              /* LM-15: the one wire-writer */
+#endif
 }
 
 /* ================================================================== *
@@ -5096,7 +5152,30 @@ static void mq_poll_wants(void)
  * ================================================================== */
 
 /* per-origin high-water of the last acted (origin -> fact_seq). 0 = none. */
+#ifndef _TK_HOSTED_LIBC_
 static UW mt_last_seq[DNODE_MAX];
+#else
+/* N2 (c)(3): per-origin once-per-seq over rows (pk_node_row.h): a wide origin
+ * takes its own row, never a narrow one's (300 is not 44); 0xFF and 0xFFFF
+ * have none. mt_seq_fresh records seq for org and says 1 when it is new;
+ * 0 when it is the last one acted or org has no row. mt_seq_get / mt_seq_put
+ * are for the self-test's save and restore. */
+static UW mt_last_seq[DNODE_ROWS];
+#if defined(N2_NC_MT_SEQ_NARROW)                 /* falsifier: the row of org & 0xFF */
+#define MT_SEQ_ROW(o) pk_node_row((pk_node_t)((o) & 0xFF))
+#else
+#define MT_SEQ_ROW(o) pk_node_row(o)
+#endif
+static INT mt_seq_fresh(pk_node_t org, UW seq)
+{
+    int r = MT_SEQ_ROW(org);
+    if (r < 0 || seq == mt_last_seq[r]) return 0;
+    mt_last_seq[r] = seq;
+    return 1;
+}
+static UW   mt_seq_get(pk_node_t org)        { int r = MT_SEQ_ROW(org); return r >= 0 ? mt_last_seq[r] : 0; }
+static void mt_seq_put(pk_node_t org, UW v)  { int r = MT_SEQ_ROW(org); if (r >= 0) mt_last_seq[r] = v; }
+#endif
 /* LM-8 (IX.8): per-origin "already printed a version-mismatch drop" flag,
  * so a re-driven mismatched packet prints once, not every poll. */
 static UB mt_ver_drop_seen[DNODE_MAX];
@@ -5107,7 +5186,15 @@ static UB mt_stop_said;              /* 0-14 S2 2c: refusal printed this stop */
 #endif
 /* file-static receive scratch — NEVER a task-stack local (the hosted-relay
  * stack-overflow lesson). mind_net_task is the sole reader. */
+#ifdef _TK_HOSTED_LIBC_
+static MT_TEACH_PKT_W mt_rx_w;       /* N2 (c)(3): the 53 B + a wide origin tail */
+#define mt_rx_pkt (mt_rx_w.p)        /* every reader below sees the 53 B as before */
+/* the origins whose teach is acted on: a table id, or a wide id from the tail.
+ * A one-byte id at or above DNODE_MAX is dropped as before (no new rows). */
+static INT mt_org_takes(pk_node_t o) { return (o < DNODE_MAX || PK_NODE_IS_WIDE(o)) ? 1 : 0; }
+#else
 static MT_TEACH_PKT mt_rx_pkt;
+#endif
 
 #define MT_POLL_MS 500   /* >= the pfs_repl cadence; bounds B's arrival rate */
 
@@ -5232,7 +5319,9 @@ void mind_net_task(INT stacd, void *exinf)
             mt_rx_pkt = mt_inj_pkt; mt_inj_have = 0; r = (W)sizeof mt_rx_pkt;
             r_puts("[mind] inject: taken\r\n");
         } else
-            r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
+            r = kdds_sub(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w, 0);
+#elif defined(_TK_HOSTED_LIBC_)
+        W r = kdds_sub(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w, 0);   /* N2 (c)(3): 53 or 55 */
 #else
         W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
 #endif
@@ -5277,9 +5366,11 @@ void mind_net_task(INT stacd, void *exinf)
                 tk_dly_tsk(MT_POLL_MS);
                 continue;
             }
-            U1 org = mt_rx_pkt.origin_node;
 #ifdef _TK_HOSTED_LIBC_
+            pk_node_t org = mt_rx_origin(&mt_rx_w, r);       /* N2 (c)(3): the tail when 0xFF */
             if (!swarm_stop_is_stopped()) mt_stop_said = 0;   /* 2c: say it again next stop */
+#else
+            U1 org = mt_rx_pkt.origin_node;
 #endif
 
             /* (1) loop-prevention: drop my own gossiped fact (origin==me).
@@ -5306,10 +5397,15 @@ void mind_net_task(INT stacd, void *exinf)
                     r_puts(" refused (stopped; see stop)\r\n");
                 }
 #endif
+#ifdef _TK_HOSTED_LIBC_
+            } else if (mt_org_takes(org) && mt_seq_fresh(org, mt_rx_pkt.fact_seq)) {
+                /* (2) per-origin once-per-seq (N2 (c)(3): over rows, wide too). */
+#else
             } else if (org < DNODE_MAX &&
                        mt_rx_pkt.fact_seq != mt_last_seq[org]) {
                 /* (2) per-origin once-per-seq. */
                 mt_last_seq[org] = mt_rx_pkt.fact_seq;
+#endif
 
                 INT k = (INT)mt_rx_pkt.key, v = (INT)mt_rx_pkt.val;
                 if (k >= (INT)R_KEYV || v >= (INT)R_VALV) {
@@ -8334,3 +8430,89 @@ void r3_conscience_test(void)
     law_show();
 }
 #endif
+
+#ifdef _TK_HOSTED_LIBC_
+/* ------------------------------------------------------------------ */
+/* N2 (c)(3) `nodes mtwide`: the mind/teach wide origin (n2-wire16.md 3) */
+/*   [mtw-frame] narrow origin: the old 53 bytes, byte for byte;        */
+/*               wide origin with origin_node 0xFF: 55, tail LE;        */
+/*               a wide org but origin_node set, 0xFF, 0xFFFF: 53       */
+/*   [mtw-rx]    55 bytes, 0xFF, a wide tail: the wide id; 53 bytes     */
+/*               or a narrow origin_node: the byte; a tail that is not  */
+/*               wide (5, 0xFF, 0xFFFF) or 54 bytes: 0xFF               */
+/*   [mtw-seq]   300 and 44 (300 & 0xFF) keep their own last seq;       */
+/*               0xFF and 0xFFFF never fresh                            */
+/* Falsifier: -DN2_NC_MT_SEQ_NARROW (the seq row of org & 0xFF).        */
+/* Takes a row for 300 (pk_node_row), as a live wide teacher would.     */
+/* ------------------------------------------------------------------ */
+INT mt_wide_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : r_puts;
+    static MT_TEACH_PKT p;
+    static MT_TEACH_PKT_W w;
+    const pk_node_t WIDE = 300, NAR = 44;
+    W n;
+#define MTW_FAIL(m) do { say("[mtwide] FAIL " m "\r\n"); fails++; } while (0)
+    for (UW i = 0; i < (UW)sizeof p; i++) ((U1 *)&p)[i] = (U1)(0x5A + i);
+    p.magic = MT_MAGIC;
+
+    /* [mtw-frame] */
+    p.origin_node = 3;
+    n = mt_wire_frame(&p, 3, &w);
+    if (n != (W)sizeof p || __builtin_memcmp(&w.p, &p, sizeof p) != 0)
+        MTW_FAIL("frame: a narrow origin is not the old 53 bytes");
+    p.origin_node = PK_NODE_NONE;
+    n = mt_wire_frame(&p, WIDE, &w);
+    if (n != (W)sizeof w || __builtin_memcmp(&w.p, &p, sizeof p) != 0 ||
+        w.org_lo != (U1)(WIDE & 0xFF) || w.org_hi != (U1)(WIDE >> 8))
+        MTW_FAIL("frame: a wide origin is not 53 bytes + 2 bytes LE");
+    p.origin_node = 3;
+    if (mt_wire_frame(&p, WIDE, &w) != (W)sizeof p) MTW_FAIL("frame: a tail was added to a narrow origin_node");
+    p.origin_node = PK_NODE_NONE;
+    if (mt_wire_frame(&p, PK_NODE_NONE, &w) != (W)sizeof p) MTW_FAIL("frame: a tail was added for 0xFF");
+    if (mt_wire_frame(&p, 0xFFFF, &w) != (W)sizeof p)       MTW_FAIL("frame: a tail was added for 0xFFFF");
+
+    /* [mtw-rx] */
+    w.p = p; w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = (U1)(WIDE & 0xFF); w.org_hi = (U1)(WIDE >> 8);
+    if (mt_rx_origin(&w, (W)sizeof w) != WIDE)   MTW_FAIL("rx: 55 bytes with a wide tail did not give the wide id");
+    if (mt_rx_origin(&w, (W)sizeof p) != PK_NODE_NONE) MTW_FAIL("rx: 53 bytes read a tail");
+    if (mt_rx_origin(&w, (W)sizeof p + 1) != PK_NODE_NONE) MTW_FAIL("rx: 54 bytes read a tail");
+    w.p.origin_node = 3;
+    if (mt_rx_origin(&w, (W)sizeof w) != 3)      MTW_FAIL("rx: a narrow origin_node lost to the tail");
+    if (mt_rx_origin(&w, (W)sizeof p) != 3)      MTW_FAIL("rx: a narrow 53-byte origin is not the byte");
+    w.p.origin_node = PK_NODE_NONE;
+    w.org_lo = 5; w.org_hi = 0;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: a narrow id in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: 0xFF in the tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0xFF;
+    if (mt_rx_origin(&w, (W)sizeof w) != PK_NODE_NONE) MTW_FAIL("rx: 0xFFFF in the tail was taken");
+
+    /* [mtw-takes]: a table id or a wide id; a one-byte id at or above DNODE_MAX is not */
+    if (!mt_org_takes(0) || !mt_org_takes(DNODE_MAX - 1) || mt_org_takes(DNODE_MAX) ||
+        mt_org_takes(254) || mt_org_takes(PK_NODE_NONE) || !mt_org_takes(256) ||
+        !mt_org_takes(WIDE) || mt_org_takes(0xFFFF))
+        MTW_FAIL("takes: the origins acted on are not the table ids and the wide ids");
+
+    /* [mtw-seq] */
+    {
+        UW s_n = mt_seq_get(NAR), s_w = mt_seq_get(WIDE);
+        mt_seq_put(NAR, 0); mt_seq_put(WIDE, 0);
+        if (!mt_seq_fresh(NAR, 7))  MTW_FAIL("seq: a new seq from 44 was not fresh");
+        if (!mt_seq_fresh(WIDE, 7)) MTW_FAIL("seq: 300's seq 7 was blocked by 44's seq 7");
+        if (mt_seq_fresh(WIDE, 7))  MTW_FAIL("seq: 300's same seq was fresh twice");
+        if (mt_seq_fresh(NAR, 7))   MTW_FAIL("seq: 44's same seq was fresh twice");
+        if (!mt_seq_fresh(WIDE, 8)) MTW_FAIL("seq: 300's next seq was not fresh");
+        if (mt_seq_get(NAR) != 7)   MTW_FAIL("seq: 300's seq moved 44's");
+        if (mt_seq_fresh(PK_NODE_NONE, 9)) MTW_FAIL("seq: 0xFF was fresh");
+        if (mt_seq_fresh(0xFFFF, 9))       MTW_FAIL("seq: 0xFFFF was fresh");
+        mt_seq_put(NAR, s_n); mt_seq_put(WIDE, s_w);
+    }
+#undef MTW_FAIL
+    if (fails == 0) say("[mtwide] PASS (wide origin: 2 bytes after the 53, read only when 0xFF and wide; own seq row)\r\n");
+    else            say("[mtwide] RED\r\n");
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ */
