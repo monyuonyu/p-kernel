@@ -11,7 +11,7 @@
 #       "transport = none", and never node 1 (net_unix.c used to make it node 1)
 #   L3b the range's edges on loopback: 257 and 65534 refused, 256 and 65535 not called wide
 #   L4  loopback, PKERNEL_NODE_ID=3: "transport = loopback (node 3)"
-#   L5  PKERNEL_RELAY_TCP=1 without the key: wide 300, 257, 65534 refused on TCP (v3 needs the MAC), 256 not called wide
+#   L5  PKERNEL_RELAY_TCP=1 without the key: wide 300, 257, 65534 refused on TCP (v3 needs the MAC), 256 and 65535 not called wide
 # Negative controls: -DN2_NC_LAN_WIDE_TO_1 (the old LAN rule) turns L1 red,
 # -DN2_NC_LOOP_WIDE_TO_1 (the old loopback rule) turns L3 red.
 # Limit: ids 9..256 and a non-number still become node 1 on loopback (narrow ids
@@ -93,16 +93,18 @@ tcp() {  # tcp <id> <log>
         PKERNEL_AUTONET=1 PKERNEL_RELAY_TCP=1 PKERNEL_RELAY=127.0.0.1:17359 PKERNEL_RELAY_AUTOFALLBACK=0 \
         PKERNEL_NODE_ID="$1" timeout 20 "$BIN" > "$W/$2.out" 2> "$W/$2.err" || true
 }
-tcp 300 tw300; tcp 257 tw257; tcp 65534 tw65534; tcp 256 tn256
+tcp 300 tw300; tcp 257 tw257; tcp 65534 tw65534; tcp 256 tn256; tcp 65535 tn65535   # 65535: audit-163 (<= 65535 stayed green)
 l5=""
 for i in 300 257 65534; do
     grep -aqF "PKERNEL_NODE_ID=$i is a wide id: not on TCP" "$W/tw$i.err" || l5="$l5 $i-not-refused"
     grep -aqF 'relay-tcp init failed' "$W/tw$i.err" || l5="$l5 $i-no-fallback-line"
     grep -aqF 'transport = relay-tcp (node 1)' "$W/tw$i.err" && l5="$l5 $i-became-node-1"
 done
-grep -aqF 'PKERNEL_NODE_ID=256 is a wide id' "$W/tn256.err" && l5="$l5 256-called-wide"
+for i in 256 65535; do
+    grep -aqF "PKERNEL_NODE_ID=$i is a wide id" "$W/tn$i.err" && l5="$l5 $i-called-wide"
+done
 if [ -z "$l5" ]; then
-    echo "[n2-lan] L5 PASS: wide 300, 257 and 65534 are refused on TCP, 256 is not called wide"
+    echo "[n2-lan] L5 PASS: wide 300, 257 and 65534 are refused on TCP, 256 and 65535 are not called wide"
 else
     echo "[n2-lan] L5 FAIL: the TCP relay transport:$l5"
     fail=1
