@@ -1616,6 +1616,14 @@ EXPORT INT usermain(void)
             dtr_train_cmd(line + 3, (UW)(n - 3));
         } else if (starts_with(line, n, "guard")) {
             guard_print();
+        } else if (starts_with(line, n, "ark")) {
+            /* ark-entry.md 3b: `ark crypto` runs the ark crypto parts' known answers
+             * here (ark_crypto_selftest.c; hosted only, getrandom) */
+            extern void ark_crypto_self_test(void (*pr)(const char *));
+            const UB *a = line + 3; UW al = (UW)(n - 3);
+            while (al && (*a==' '||*a=='\t')) { a++; al--; }
+            if (al >= 6 && a[0]=='c'&&a[1]=='r'&&a[2]=='y'&&a[3]=='p'&&a[4]=='t'&&a[5]=='o') ark_crypto_self_test(print);
+            else print("usage: ark crypto\r\n");
         } else if (starts_with(line, n, "kdds")) {
             /* KDDS-DELCLUSTER cert (external audit 2026-06-13): `kdds test`
              * opens handles on a cluster topic, deletes the cluster via the
