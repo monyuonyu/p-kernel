@@ -9,7 +9,8 @@
 # -DARKC_NC_TAG_NOCHECK must redden [arkc-open-tamper] only; stage 2 (X25519, RFC 7748):
 # -DARKC_NC_NO_CLAMP the four x25519 lines, -DARKC_NC_NO_MASK [arkc-x25519] only; stage 3:
 # HMAC-SHA-512 (RFC 4231) and HKDF-SHA-512 (Wycheproof, tests/host/ark_hkdf_vectors.h):
-# -DARKC_NC_HKDF_NO_CHAIN [arkc-hkdf] only, -DARKC_NC_HKDF_NO_LIMIT [arkc-hkdf-toolong] only.
+# -DARKC_NC_HKDF_NO_CHAIN [arkc-hkdf] only, -DARKC_NC_HKDF_NO_LIMIT [arkc-hkdf-toolong] only;
+# -DARKC_NC_RAND_IGNORE [arkc-box-rand] only (getrandom by the -DARKC_TEST_RANDOM stand-in, H18).
 # Output: "[ark-crypto] ALL PASS" (exit 0) or RED (1); nc prints
 # "[ark-crypto] NC RED as expected" (exit 0) or NC FAIL (1). ~3 s.
 set -u
@@ -19,14 +20,14 @@ MODE="${1:-plain}"
 W="$(mktemp -d /tmp/arkc.XXXXXX)"
 trap 'rm -rf "$W"' EXIT
 CC="${CC:-cc}"
-CF="-std=c11 -O1 -Wall -Wextra -Werror -D_TK_HOSTED_LIBC_ -I $ROOT/arch/common/include -I $HERE"
+CF="-std=c11 -O1 -Wall -Wextra -Werror -D_TK_HOSTED_LIBC_ -DARKC_TEST_RANDOM -I $ROOT/arch/common/include -I $HERE"
 SRC="$HERE/ark_crypto_test.c $ROOT/arch/common/ark_crypto.c $ROOT/arch/common/ed25519.c"
 
 if [ "$MODE" != nc ]; then
     $CC $CF -fsanitize=address,undefined -fno-sanitize-recover=all $SRC -o "$W/plain" \
         || { echo "[ark-crypto] build FAILED"; exit 1; }
     "$W/plain" | tee "$W/plain.log"
-    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 25 ]; then
+    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 26 ]; then
         echo "[ark-crypto] ALL PASS"; exit 0
     fi
     echo "[ark-crypto] RED"; exit 1
@@ -50,5 +51,6 @@ nc ARKC_NC_NO_MASK "[arkc-x25519] "
 nc ARKC_NC_HKDF_NO_CHAIN "[arkc-hkdf] "
 nc ARKC_NC_HKDF_NO_LIMIT "[arkc-hkdf-toolong] "
 nc ARKC_NC_BOX_REUSE "[arkc-box-reseal] [arkc-box-unwrap] "
+nc ARKC_NC_RAND_IGNORE "[arkc-box-rand] "
 if [ "$bad" = 0 ]; then echo "[ark-crypto] NC RED as expected"; exit 0; fi
 echo "[ark-crypto] NC FAIL"; exit 1

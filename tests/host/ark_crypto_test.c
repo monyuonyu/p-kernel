@@ -9,6 +9,29 @@
 #include "ark_hkdf_vectors.h"
 #include "ark_box_vectors.h"
 #include "ed25519.h"
+#include <sys/types.h>
+
+/* the getrandom stand-ins for [arkc-box-rand] (ark_crypto.c -DARKC_TEST_RANDOM, H18) */
+extern ssize_t (*arkc_test_getrandom)(void *buf, size_t len, unsigned int flags);
+static int rand_calls;
+static ssize_t rand_fail(void *buf, size_t len, unsigned int flags)
+{
+    (void)buf; (void)len; (void)flags; rand_calls++;
+    return -1;
+}
+static ssize_t rand_half(void *buf, size_t len, unsigned int flags)   /* 16 bytes, then -1 */
+{
+    (void)flags;
+    if (rand_calls++ > 0 || len < 16) return -1;
+    memset(buf, 0x5A, 16);
+    return 16;
+}
+static ssize_t rand_byte(void *buf, size_t len, unsigned int flags)   /* one byte a call */
+{
+    (void)len; (void)flags;
+    *(uint8_t *)buf = (uint8_t)(0x40 + rand_calls++);
+    return 1;
+}
 
 static int fails;
 static void check(int ok, const char *what)
@@ -223,6 +246,29 @@ int main(void)
                   "[arkc-box-empty] an empty box (key all zero) refuses seal, open and wrap");
         }
         arkc_box_wipe(&n2); arkc_box_wipe(&u); arkc_box_wipe(&b);
+    }
+    {   /* test-holes H18: getrandom fails, fails after a part, or comes back one byte at a
+         * time (the stand-in of -DARKC_TEST_RANDOM). A failure leaves no live box and no
+         * wrap; short reads still fill the whole key. */
+        arkc_box g, r;
+        uint8_t w[ARKC_WRAP_LEN];
+        int ok = 1;
+        ok &= arkc_box_new(&g) == 0;               /* a live box, from the real getrandom */
+        arkc_test_getrandom = rand_fail;
+        ok &= arkc_box_new(&r) == -1 && !r.live && all_zero(r.k, 32);
+        memset(w, 0xA5, sizeof w);
+        ok &= arkc_box_wrap(&g, BOX_RPUB, w) == -1 && all_zero(w, sizeof w);
+        rand_calls = 0;
+        arkc_test_getrandom = rand_half;
+        ok &= arkc_box_new(&r) == -1 && !r.live && all_zero(r.k, 32);
+        rand_calls = 0;
+        arkc_test_getrandom = rand_byte;
+        ok &= arkc_box_new(&r) == 0 && r.live && rand_calls == 32;
+        for (int i = 0; i < 32; i++) ok &= r.k[i] == (uint8_t)(0x40 + i);
+        arkc_test_getrandom = NULL;
+        check(ok, "[arkc-box-rand] H18: getrandom failing (at once or after 16 bytes) gives -1, no live box"
+                  " and no wrap; one byte at a time fills all 32");
+        arkc_box_wipe(&g); arkc_box_wipe(&r);
     }
 
     printf("SUMMARY: %d FAIL\n", fails);

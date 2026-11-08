@@ -299,11 +299,25 @@ void arkc_box_wipe(arkc_box *b)
     b->live = 0; b->sealed = 0;
 }
 
+/* -DARKC_TEST_RANDOM (the test build only, test-holes H18): a stand-in for getrandom, so
+ * the test can make it fail or come back short. -DARKC_NC_RAND_IGNORE: a failure is
+ * ignored and the rest of the key stays as it was ([arkc-box-rand] goes red). */
+#ifdef ARKC_TEST_RANDOM
+ssize_t (*arkc_test_getrandom)(void *buf, size_t len, unsigned int flags);
+#define ARKC_GETRANDOM(p, n) (arkc_test_getrandom ? arkc_test_getrandom((p), (n), 0) : getrandom((p), (n), 0))
+#else
+#define ARKC_GETRANDOM(p, n) getrandom((p), (n), 0)
+#endif
+
 static int fill_random(uint8_t *p, size_t n)
 {
     while (n) {
-        ssize_t r = getrandom(p, n, 0);
+        ssize_t r = ARKC_GETRANDOM(p, n);
+#ifndef ARKC_NC_RAND_IGNORE
         if (r <= 0) return -1;               /* never filled from the clock or anything else */
+#else
+        if (r <= 0) return 0;
+#endif
         p += r; n -= (size_t)r;
     }
     return 0;
