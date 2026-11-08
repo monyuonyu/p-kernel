@@ -107,7 +107,7 @@ static UH      sl_seq_ctr = 1;        /* never 0                            */
 /* node n IP — same deterministic addressing drpc.c uses (10.1.0.(n+1)). */
 static UW sl_node_ip(pk_node_t n)
 {
-    return ((UW)(n + 1) << 24) | (net_my_ip & 0x00FFFFFFUL);
+    return (UW)pk_node_ip_like(n, (unsigned int)net_my_ip);   /* N2: a wide self too */
 }
 
 /* ------------------------------------------------------------------ */

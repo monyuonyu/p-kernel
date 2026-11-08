@@ -173,6 +173,27 @@ int pk_node_row_self_test(void (*emit)(const char *))
     emit(bad ? "[node-row] RED\r\n" : "[node-row] PASS\r\n");
     return bad;
 }
+
+/* `nodes ipw` (N2): pk_node_ip_like, the address snf and ss6 send to.
+ *   on 10.1/16, from narrow 3 and from wide 300: node 3 is 10.1.0.4, node 300
+ *   is 10.1.1.45 (the same as pk_node_ip); on a LAN 192.168.10.5: node 3 is
+ *   192.168.10.4 (as before). Falsifier -DN2_NC_IP_OLD (wide self to narrow). */
+static UW ipw_ip(UB a, UB b, UB c, UB d) { return (UW)a | ((UW)b << 8) | ((UW)c << 16) | ((UW)d << 24); }
+int pk_node_ip_self_test(void (*emit)(const char *))
+{
+    int bad = 0;
+    const UW me3 = pk_node_ip(3), me300 = pk_node_ip(300), lan = ipw_ip(192, 168, 10, 5);
+#define IT(c, what) do { if (!(c)) { emit("[ipw] FAIL " what "\r\n"); bad++; } } while (0)
+    IT(me3 == ipw_ip(10, 1, 0, 4) && me300 == ipw_ip(10, 1, 1, 45), "base: pk_node_ip 3 and 300");
+    IT(pk_node_ip_like(3, me3) == ipw_ip(10, 1, 0, 4), "narrow self to narrow");
+    IT(pk_node_ip_like(300, me3) == me300, "narrow self to wide");
+    IT(pk_node_ip_like(3, me300) == ipw_ip(10, 1, 0, 4), "wide self to narrow (10.1.1.4 before)");
+    IT(pk_node_ip_like(299, me300) == pk_node_ip(299), "wide self to wide");
+    IT(pk_node_ip_like(3, lan) == ipw_ip(192, 168, 10, 4), "a LAN keeps its first three bytes");
+#undef IT
+    emit(bad ? "[ipw] RED\r\n" : "[ipw] PASS (snf/ss6 addresses: pk_node_ip on 10.1/16, the old form on a LAN)\r\n");
+    return bad;
+}
 #endif
 
 /* IP for node n: 10.1.0.(n+1) = (n+1)<<24 | 0x0000010A */

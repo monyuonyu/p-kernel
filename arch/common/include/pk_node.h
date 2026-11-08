@@ -56,4 +56,20 @@ static inline unsigned int pk_node_ip(pk_node_t n)
 #define pk_node_ip(n) (((UW)((n) + 1) << 24) | 0x0000010AUL)
 #endif
 
+/* Node n's address on this node's own network (snf, ss6): on 10.1/16 the
+ * third byte is the id's high byte (pk_node_ip); on another network (a LAN)
+ * only the last byte is the node's, as before (narrow ids only there; a wide
+ * id collides, n2-wire16.md). Before (N2), a wide node 300 (10.1.1.45) kept
+ * its own third byte and sent node 3's packets to 10.1.1.4.
+ * -DN2_NC_IP_OLD: the old form everywhere (negative control, `nodes ipw`). */
+#ifdef _TK_HOSTED_LIBC_
+static inline unsigned int pk_node_ip_like(pk_node_t n, unsigned int my_ip)
+{
+#ifndef N2_NC_IP_OLD
+    if ((my_ip & 0xFFFFu) == 0x010Au) return pk_node_ip(n);
+#endif
+    return ((unsigned int)(n + 1) << 24) | (my_ip & 0x00FFFFFFu);
+}
+#endif
+
 #endif /* PK_NODE_H */
