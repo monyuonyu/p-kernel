@@ -9,6 +9,7 @@
 #   L2  PKERNEL_NODE_ID=3: "transport = lan-direct (node 3)" (a narrow id unchanged)
 #   L3  loopback (no LAN, no relay), PKERNEL_NODE_ID=300: "is a wide id: not on loopback",
 #       "transport = none", and never node 1 (net_unix.c used to make it node 1)
+#   L3b the range's edges on loopback: 257 and 65534 refused, 256 and 65535 not called wide
 #   L4  loopback, PKERNEL_NODE_ID=3: "transport = loopback (node 3)"
 # Negative controls: -DN2_NC_LAN_WIDE_TO_1 (the old LAN rule) turns L1 red,
 # -DN2_NC_LOOP_WIDE_TO_1 (the old loopback rule) turns L3 red.
@@ -58,6 +59,22 @@ if grep -aqF 'PKERNEL_NODE_ID=300 is a wide id: not on loopback' "$W/lwide.err" 
     echo "[n2-lan] L3 PASS: wide 300 is refused on loopback, no network, not node 1"
 else
     echo "[n2-lan] L3 FAIL: wide 300 on loopback: $(grep -a 'net_unix\|transport' "$W/lwide.err" | head -3 | tr '\n' '|')"
+    fail=1
+fi
+# L3b the edges of the wide range (257..65534, net_unix.c): 257 and 65534 are refused,
+# 256 and 65535 are not called wide (test-holes H19: `> 257` or `< 65534` stayed green)
+loop 257 lw257; loop 65534 lw65534; loop 256 ln256; loop 65535 ln65535
+l3b=""
+for i in 257 65534; do
+    grep -aqF "PKERNEL_NODE_ID=$i is a wide id: not on loopback" "$W/lw$i.err" || l3b="$l3b $i-not-refused"
+done
+for i in 256 65535; do
+    grep -aqF "PKERNEL_NODE_ID=$i is a wide id" "$W/ln$i.err" && l3b="$l3b $i-called-wide"
+done
+if [ -z "$l3b" ]; then
+    echo "[n2-lan] L3b PASS: 257 and 65534 are refused on loopback, 256 and 65535 are not called wide"
+else
+    echo "[n2-lan] L3b FAIL: the wide range's edges on loopback:$l3b"
     fail=1
 fi
 if grep -aqF 'transport = loopback (node 3)' "$W/lnarrow.err"; then
