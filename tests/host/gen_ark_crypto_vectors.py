@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen_vectors.py <rfc8439.txt> -> C header on stdout (tests/host/ark_crypto_vectors.h).
+"""gen_ark_crypto_vectors.py <rfc8439.txt> -> C header on stdout (tests/host/ark_crypto_vectors.h).
 Each vector is found by its label line (1-based line number checked against the label text),
 parsed from the RFC's own layout (a colon list, possibly wrapped mid-byte, or an offset dump),
 and its length asserted. An auditor reruns this and diffs the header."""
@@ -108,6 +108,47 @@ def a3():
         res.append((n, key, v["msg"], v["tag"]))
     return res
 
+def a5():
+    """appendix A.5 (decryption): the labelled offset dumps, each read to its last row
+    (page breaks inside a dump are skipped while the next row's offset follows on)"""
+    s = next(i for i, l in enumerate(L) if l.startswith("A.5.  ChaCha20-Poly1305 AEAD Decryption"))
+    e = next(i for i, l in enumerate(L) if l.startswith("Appendix B."))
+    want = {"The ChaCha20 Key": "key", "Ciphertext:": "ct", "The nonce:": "nonce",
+            "The AAD:": "aad", "Received Tag:": "tag", "Plaintext::": "pt"}
+    out = {}
+    for i in range(s, e):
+        lab = want.get(L[i].strip())
+        if not lab:
+            continue
+        b, j = bytearray(), i + 1
+        while j < e:
+            m = DUMP.match(L[j])
+            t = L[j].strip()
+            if m and int(m.group(1)) == len(b) and not t.startswith(("Nir & Langley", "RFC 8439")):
+                toks = m.group(2)[:47].split()
+                assert all(re.fullmatch(r"[0-9a-f]{2}", x) for x in toks), (j, toks)
+                b += bytes(int(x, 16) for x in toks); j += 1; continue
+            if (t == "" or t.startswith(("Nir & Langley", "RFC 8439"))) and not b:
+                j += 1; continue
+            if t == "" or t.startswith(("Nir & Langley", "RFC 8439")) or "\f" in L[j]:
+                k = j        # a page break: go on only if a row with the next offset follows
+                while k < e and (L[k].strip() == "" or L[k].strip().startswith(("Nir & Langley", "RFC 8439"))):
+                    k += 1
+                m2 = DUMP.match(L[k]) if k < e else None
+                if m2 and int(m2.group(1)) == len(b):
+                    j = k; continue
+            break
+        assert lab not in out, lab
+        out[lab] = bytes(b)
+    assert sorted(out) == sorted(want.values()), sorted(out)
+    assert (len(out["key"]), len(out["nonce"]), len(out["tag"])) == (32, 12, 16), out
+    assert len(out["ct"]) == len(out["pt"]) > 0 and len(out["aad"]) > 0
+    return out
+
+A5 = a5()
+for k in ("key", "nonce", "aad", "ct", "tag", "pt"):
+    V.append(("A5_" + k.upper(), A5[k]))
+
 A3 = a3()
 assert [len(m) for _, _, m, _ in A3] == [64, 375, 375, 127, 16, 16, 48, 48, 16, 64, 48], \
     [len(m) for _, _, m, _ in A3]
@@ -116,7 +157,7 @@ for n, key, msg, tag in A3:
 
 print("/* tests/host/ark_crypto_vectors.h: RFC 8439 test vectors, generated from the RFC text")
 print(" * by tests/host/gen_ark_crypto_vectors.py <rfc8439.txt> (sections 2.4.2, 2.5.2, 2.6.2,")
-print(" * 2.8.2 and appendix A.3 #1-#11). Do not edit: rerun and diff. */")
+print(" * 2.8.2, appendix A.3 #1-#11 and A.5). Do not edit: rerun and diff. */")
 for name, b in V:
     print("static const unsigned char %s[%d] = {" % (name, len(b)))
     for k in range(0, len(b), 12):

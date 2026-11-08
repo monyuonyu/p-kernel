@@ -1,7 +1,7 @@
 /* tests/host/ark_crypto_test.c: C2 and C4 of ark-entry.md 3b (stage 1, RFC 8439).
  * The vectors (ark_crypto_vectors.h) are generated from the RFC text, not typed.
- * Falsifiers (run_ark_crypto.sh): -DARKC_NC_NO_PAD reddens [arkc-aead-seal] and
- * [arkc-aead-open]; -DARKC_NC_TAG_NOCHECK reddens [arkc-open-tamper]. */
+ * Falsifiers (run_ark_crypto.sh): -DARKC_NC_NO_PAD reddens [arkc-aead-seal],
+ * [arkc-aead-open] and [arkc-aead-a5]; -DARKC_NC_TAG_NOCHECK reddens [arkc-open-tamper]. */
 #include <stdio.h>
 #include <string.h>
 #include "ark_crypto.h"
@@ -51,6 +51,12 @@ int main(void)
     uint8_t pt[256];
     int rc = arkc_aead_open(AE_KEY, nonce, AE_AAD, sizeof AE_AAD, AE_CT, sizeof AE_CT, AE_TAG, pt);
     check(rc == 0 && memcmp(pt, AE_PT, sizeof AE_PT) == 0, "[arkc-aead-open] RFC 8439 2.8.2 opens to the plaintext");
+
+    {   /* appendix A.5: decryption of a message we did not seal */
+        static uint8_t p5[sizeof A5_CT];
+        rc = arkc_aead_open(A5_KEY, A5_NONCE, A5_AAD, sizeof A5_AAD, A5_CT, sizeof A5_CT, A5_TAG, p5);
+        check(rc == 0 && memcmp(p5, A5_PT, sizeof A5_PT) == 0, "[arkc-aead-a5] RFC 8439 appendix A.5 opens to the plaintext");
+    }
 
     /* C4: one bit of the tag, the AAD or the ciphertext: no open, all of pt zero */
     int ok = 1;
