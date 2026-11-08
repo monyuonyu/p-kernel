@@ -7,24 +7,32 @@
  *  (ARK_FRAG blocks of up to 3584 bytes; their first 4 bytes are not MW_MAGIC, so mw_gc
  *  never picks them). Nothing is overwritten: a new version is new blocks.
  *
- *  `self/rec` holds only the index: a descriptor {nrec, depth, fanout, root id}. The
+ *  `ark/rec` holds only the index: a descriptor {nrec, depth, fanout, root id}. The
  *  index is a tree of ARK_IDX blocks, `fanout` ids each (127 fill a 4 KB block); level 0
  *  holds each record's newest ARK_REC id. When the tree is full the old root becomes
  *  child 0 of a new root and depth grows by one, so a record keeps its place. Write
- *  order (2.1): fragments -> ARK_REC -> index leaf .. root -> the self/rec version. A
+ *  order (2.1): fragments -> ARK_REC -> index leaf .. root -> the ark/rec version. A
  *  stop anywhere before the last step leaves the previous index whole (line E1c).
  *  Limit: every change leaves `depth` old index blocks (ark_compact keeps all blocks).
  *
- *  `self/heir` holds the heir's public key (33 B: 1 set / 0 cleared, key). Its versions
+ *  `ark/heir` holds the heir's public key (33 B: 1 set / 0 cleared, key). Its versions
  *  are pfs_dag's chain (the log reads back 64 versions at most, PFSD_LOG_MAX).
+ *
+ *  Nothing of the ark leaves the node yet (2.5: only sealed records may, and sealing is
+ *  E3): pfs_repl does not announce or send a block whose first bytes are "AKR", and
+ *  pfs_dag neither beacons nor adopts a name under "ark/" (refs are region-wide and the
+ *  newer seq wins, so two nodes' indexes would eat each other). -DARK_REC_SHARED turns
+ *  both off (negative control). Limit: the pfs_dag manifest of ark/rec and ark/heir
+ *  (name and content id, no content) is still announced; ark/heir's content is not
+ *  "AKR" (the heir key is a public key).
  *
  *  Shell: ark rec new <kind> <text> | fill <kind> <len> <seed> | set <no> <text>
  *         | setfill <no> <len> <seed> | vis <no> self|heir|public | get <no> [@seq]
  *         | sum <no> [@seq] | log <no> | ls ;  ark heir [set <64 hex> | clear | log]
  *  Test env (hosted): PKERNEL_ARK_REC_FANOUT (read only when the index is created, then
- *  kept in the descriptor), PKERNEL_ARK_REC_STOP=1 (_exit before the self/rec version).
+ *  kept in the descriptor), PKERNEL_ARK_REC_STOP=1 (_exit before the ark/rec version).
  *  Negative controls: -DARK_REC_OVERWRITE (a new version drops its previous id),
- *  -DARK_REC_DESC_FIRST (self/rec before the index blocks), -DARK_REC_DEFAULT_PUBLIC.
+ *  -DARK_REC_DESC_FIRST (ark/rec before the index blocks), -DARK_REC_DEFAULT_PUBLIC.
  */
 #include "kernel.h"
 #include "pfs_block.h"
@@ -117,7 +125,7 @@ static INT num(const UB **a, UW *al, UW *v)
 /* ---- index -------------------------------------------------------------- */
 static INT desc_load(void)
 {
-    INT n = pfs_dag_read((const UB *)"self/rec", 8, &desc, sizeof desc);
+    INT n = pfs_dag_read((const UB *)"ark/rec", 7, &desc, sizeof desc);
     if (n == PFS_E_NOTFOUND) { zero(&desc, sizeof desc); return 0; }    /* no index yet */
     if (n != (INT)sizeof desc || desc.magic != ARK_DESC_MAGIC || desc.version != ARK_REC_VER
         || desc.fanout < 2 || desc.fanout > ARK_IDX_IDS || desc.depth > ARK_DEPTH_MAX) return -1;
@@ -176,10 +184,10 @@ static INT index_walk(UW no, const U1 rid[PFS_ID_LEN], INT put)
 static void stop_test(void)
 {
     const char *e = getenv("PKERNEL_ARK_REC_STOP");
-    if (e && e[0] == '1') { P("[ark-rec] stop-test: stopped before the self/rec version\r\n"); _exit(0); }
+    if (e && e[0] == '1') { P("[ark-rec] stop-test: stopped before the ark/rec version\r\n"); _exit(0); }
 }
 
-/* point record `no` (no == nrec appends) at version `rid` and save a new self/rec */
+/* point record `no` (no == nrec appends) at version `rid` and save a new ark/rec */
 static INT index_set(UW no, const U1 rid[PFS_ID_LEN])
 {
     if (desc.magic != ARK_DESC_MAGIC) {
@@ -224,11 +232,11 @@ static INT index_set(UW no, const U1 rid[PFS_ID_LEN])
     }
     UW nrec = (no == desc.nrec) ? desc.nrec + 1 : desc.nrec;
 #ifdef ARK_REC_DESC_FIRST
-    {   /* negative control: the new self/rec goes first, then the index blocks */
+    {   /* negative control: the new ark/rec goes first, then the index blocks */
         ARK_DESC keep = desc;
         if (index_walk(no, rid, 0) != 0) return -1;
         desc.nrec = nrec;
-        if (pfs_dag_save((const UB *)"self/rec", 8, &desc, sizeof desc) != PFS_OK) return -1;
+        if (pfs_dag_save((const UB *)"ark/rec", 7, &desc, sizeof desc) != PFS_OK) return -1;
         stop_test();
         desc = keep;
         if (index_walk(no, rid, 1) != 0) return -1;
@@ -239,7 +247,7 @@ static INT index_set(UW no, const U1 rid[PFS_ID_LEN])
     if (index_walk(no, rid, 1) != 0) return -1;
     stop_test();
     desc.nrec = nrec;
-    return pfs_dag_save((const UB *)"self/rec", 8, &desc, sizeof desc) == PFS_OK ? 0 : -1;
+    return pfs_dag_save((const UB *)"ark/rec", 7, &desc, sizeof desc) == PFS_OK ? 0 : -1;
 #endif
 }
 
@@ -312,7 +320,7 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
 {
     U1 rid[PFS_ID_LEN];
     INT d = desc_load();
-    if (d < 0) { err("self/rec is not readable"); return; }
+    if (d < 0) { err("ark/rec is not readable"); return; }
     if (is_new) {
         no = desc.nrec;
         zero(&rec, sizeof rec);
@@ -392,7 +400,7 @@ static void cmd_rec(const UB *a, UW al)
         }
     } else if (word_is(v, n, "ls")) {
         INT d = desc_load();
-        if (d < 0) { err("self/rec is not readable"); return; }
+        if (d < 0) { err("ark/rec is not readable"); return; }
         P("[ark-rec] index nrec="); pdec(desc.nrec); P(" depth="); pdec(desc.depth); P(" fanout="); pdec(desc.fanout); P("\r\n");
         for (UW i = 0; i < desc.nrec; i++) {
             if (rec_find(i, 0) != 0) { P("[ark-rec]   no="); pdec(i); P(" missing\r\n"); continue; }
@@ -403,13 +411,13 @@ static void cmd_rec(const UB *a, UW al)
     }
 }
 
-/* ---- heir (2.7: the public key in self/heir, the identity is not checked) ---- */
+/* ---- heir (2.7: the public key in ark/heir, the identity is not checked) ---- */
 static U1 heir[33];
 struct heir_seq { UW seq; };
 static void heir_cb(void *ctx, const char *name, UW seq, pk_node_t o)
 {
     (void)o;
-    const char *w = "self/heir"; UW i = 0;
+    const char *w = "ark/heir"; UW i = 0;
     while (w[i] && name[i] == w[i]) i++;
     if (!w[i] && !name[i]) ((struct heir_seq *)ctx)->seq = seq;
 }
@@ -432,7 +440,7 @@ static void cmd_heir(const UB *a, UW al)
             }
             heir[0] = 1;
         }
-        if (pfs_dag_save((const UB *)"self/heir", 9, heir, sizeof heir) != PFS_OK) { P("[ark-heir] error: not saved\r\n"); return; }
+        if (pfs_dag_save((const UB *)"ark/heir", 8, heir, sizeof heir) != PFS_OK) { P("[ark-heir] error: not saved\r\n"); return; }
         P(heir[0] ? "[ark-heir] set " : "[ark-heir] cleared"); if (heir[0]) phex(heir + 1, 4); P("\r\n");
     } else if (word_is(v, n, "log") || n == 0) {
         struct heir_seq hs = { 0 };
@@ -441,7 +449,7 @@ static void cmd_heir(const UB *a, UW al)
         UW from = n == 0 ? hs.seq : 1;
         for (UW s = from; s <= hs.seq; s++) {
             P("[ark-heir] seq="); pdec(s);
-            if (pfs_dag_read_at((const UB *)"self/heir", 9, s, heir, sizeof heir) != (INT)sizeof heir) P(" not readable");
+            if (pfs_dag_read_at((const UB *)"ark/heir", 8, s, heir, sizeof heir) != (INT)sizeof heir) P(" not readable");
             else if (heir[0]) { P(" set "); phex(heir + 1, 4); }
             else P(" cleared");
             P("\r\n");

@@ -11,7 +11,7 @@
 #      record 1 equal to an independent python sha256 of the fill pattern, and
 #      `ark rec ls` with nrec=100 and depth>=3, all equal to what the writer read.
 #  E1c [ark-rec-stop] a process stopped (PKERNEL_ARK_REC_STOP=1: _exit after the
-#      index blocks, before the self/rec version) during `ark rec set 0 c3` leaves
+#      index blocks, before the ark/rec version) during `ark rec set 0 c3` leaves
 #      record 0 at seq 2 = "c2" with @1 = "c1" readable after a restart.
 #  E2  [ark-rec-e2] old versions stay readable after ark_compact: a small image
 #      (PKERNEL_ARK_SECTORS=ARK_REC_E2_SECTORS, 512) and 24 versions of one record; the
@@ -25,16 +25,23 @@
 #      or manifest's; the ark's blocks start with other magics (a limit, by reading).
 #  E4  [ark-rec-e4] a new record is vis=self; `ark rec vis 0 heir` makes seq 2 with
 #      vis=heir and seq 1 still self; `ark heir set <key>` then `ark heir clear` leave
-#      two versions of self/heir (`ark heir log`: 1 set <first 8 hex>, 2 cleared),
+#      two versions of ark/heir (`ark heir log`: 1 set <first 8 hex>, 2 cleared),
 #      and both survive a restart.
-# Not here (ark-entry.md E1, later): the region kill of one node.
+#  local [2026-11-09, written after the probe AND after its fix; its teeth are the
+#      negative -DARK_REC_SHARED, red] relay + nodes 1 and 2 of one
+#      region, ARK backend each: A saves a shared name zz and an ark record a-one, B
+#      (after zz reached it) writes b-one. Green iff B adopted zz (the refs do reach
+#      B), no node logs a ref 'ark/...', A reads a-one and B b-one, nrec=1 each. Until
+#      E3 the ark stays on its node (ark-entry.md 4, 2026-11-09).
+# Not here (ark-entry.md E1, after E3): the region kill of one node.
 # Negative controls (ARK_REC_EXPECT_RED=<the lines that must be red, no others>;
 # measured 2026-11-09 in the container):
 #   -DARK_REC_OVERWRITE         e1 e2 e4 stop (a new version forgets its previous one;
 #                               every line reads an old version)
-#   -DARK_REC_DESC_FIRST        stop  (self/rec is written before the index blocks)
+#   -DARK_REC_DESC_FIRST        stop  (ark/rec is written before the index blocks)
 #   -DARK_REC_DEFAULT_PUBLIC    e4    (a new record is public)
 #   -DPFS_ARK_HAS_RESIDENT_ONLY e1 e2 e4 stop (pfs_has blind to ARK, gap-ledger PFS-ARK-HAS)
+#   -DARK_REC_SHARED            local (ark/ names gossip and AKR blocks leave the node)
 #
 # Usage: tests/host/run_ark_rec.sh   (ARK_REC_BIN: default boot/linux_x86_64/p-kernel)
 #        ARK_REC_EXPECT_RED="e1 e2" ARK_REC_BIN=<negative build> tests/host/run_ark_rec.sh
@@ -101,7 +108,7 @@ run st 65536 "$d/s2.cmd" PKERNEL_ARK_REC_STOP=1; cp "$d/st.log" "$d/st-2.log"; :
 run st 65536 "$d/s3.cmd"
 if grep -aq 'stop-test' "$d/st-2.log" && grep -aqE '^\[ark-rec\] get no=0 seq=2 .*: c2$' "$d/st.log" \
    && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: c1$' "$d/st.log" && grep -aqE '^\[ark-rec\] index nrec=1 ' "$d/st.log"; then
-    say "ok   stop: stopped before the self/rec version, record 0 is seq 2 = c2 and @1 = c1"
+    say "ok   stop: stopped before the ark/rec version, record 0 is seq 2 = c2 and @1 = c1"
 else say "bad  stop: $(grep -aE '^\[ark-rec\] (get|index)' "$d/st.log" | tr '\n' '|')"; bad="$bad stop"; fi
 
 # ---- E2: after ark_compact --------------------------------------------------
@@ -130,6 +137,43 @@ if grep -aqE '^\[ark-rec\] new no=0 seq=1 vis=self ' "$d/e4-w.log" \
    && grep -aqE '^\[ark-heir\] seq=2 cleared$' "$d/e4.log"; then
     say "ok   e4: new is vis=self, vis heir is seq 2 (seq 1 still self), heir set+clear are 2 versions after a restart"
 else say "bad  e4: $(grep -aE '^\[ark-(rec|heir)\]' "$d/e4-w.log" "$d/e4.log" | tr '\n' '|')"; bad="$bad e4"; fi
+
+# ---- local: two nodes of one region keep their own ark (relay + A + B) -------
+RELAY="$ROOT/relay/relay"
+[ -x "$RELAY" ] || make -s -C "$ROOT/relay" > /dev/null 2>&1
+PORT="${ARK_REC_PORT:-7733}"
+export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+unset PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN
+wait_for() { local n=0; while [ "$n" -lt "$(( $3 * 2 ))" ]; do grep -aqE "$2" "$1" 2>/dev/null && return 0; sleep 0.5; n=$((n + 1)); done; return 1; }
+"$RELAY" -p "$PORT" > "$d/relay.log" 2>&1 & RP=$!
+sleep 1
+mkfifo "$d/fa" "$d/fb"
+node() {  # <id> <tag> <fifo>
+    exec env PKERNEL_NODE_ID="$1" PKERNEL_AUTONET=1 PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$d/l$2.img" \
+        PKERNEL_ARK_SECTORS=65536 PKERNEL_PFS_DIR="$d/l$2.dir" PKERNEL_RELAY="127.0.0.1:$PORT" \
+        timeout 150 "$BIN" < "$3" > "$d/l$2.log" 2>&1
+}
+node 1 a "$d/fa" & PA=$!; exec 7<>"$d/fa"
+node 2 b "$d/fb" & PB=$!; exec 8<>"$d/fb"
+wait_for "$d/la.log" 'P2 version DAG ready' 60; wait_for "$d/lb.log" 'P2 version DAG ready' 60
+sleep 15
+printf 'pfs save zz shared\n' >&7          # a shared name: shows that A's refs reach B
+printf 'ark rec new 1 a-one\n' >&7
+mesh=0; wait_for "$d/lb.log" "ref 'zz' -> seq 1" 40 && mesh=1
+sleep 5                                    # several 800 ms ref beacons
+printf 'ark rec new 1 b-one\n' >&8
+sleep 5
+printf 'ark rec ls\nark rec get 0\n' >&7
+printf 'ark rec ls\nark rec get 0\n' >&8
+sleep 3
+kill "$PA" "$PB" "$RP" 2>/dev/null; exec 7>&- 8>&-; wait "$PA" "$PB" "$RP" 2>/dev/null
+for t in a b; do tr -d '\r' < "$d/l$t.log" | sed 's/^\(p-kernel> \)*//' > "$d/l$t.t"; done
+adopt=$(cat "$d/la.t" "$d/lb.t" | grep -acE "ref 'ark/")
+if [ "$mesh" = 1 ] && [ "$adopt" = 0 ] \
+   && grep -aqE '^\[ark-rec\] index nrec=1 ' "$d/la.t" && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: a-one$' "$d/la.t" \
+   && grep -aqE '^\[ark-rec\] index nrec=1 ' "$d/lb.t" && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: b-one$' "$d/lb.t"; then
+    say "ok   local: A's refs reach B (zz), no ark/ ref is adopted, A reads a-one and B b-one, nrec=1 each"
+else say "bad  local: mesh=$mesh ark/-adoptions=$adopt A[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/la.t" | tr '\n' '|')] B[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/lb.t" | tr '\n' '|')]"; bad="$bad local"; fi
 
 # ---- verdict ----------------------------------------------------------------
 if [ -n "${ARK_REC_EXPECT_RED:-}" ]; then
