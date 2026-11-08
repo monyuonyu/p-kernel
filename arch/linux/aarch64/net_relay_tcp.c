@@ -48,6 +48,7 @@
 #endif
 #include <arpa/inet.h>
 
+#include "relay_misdeliver.h"   /* test-holes H20: a one-node frame for another node */
 #include "sha256.h"      /* same canonical relay/ HMAC-SHA256 as net_relay.c */
 #include "tcp_frame.h"   /* the shared [u16 len][pkt] de-framer (load-bearing) */
 
@@ -517,7 +518,11 @@ static int tcp_frame_dst(const unsigned char *f, int len)
     if (len < 6) return 0;
     if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00)
         return 0;
+#ifndef N2_NC_TCP_DST_LOW_BYTE
     int dst = (f[4] << 8) | f[5];   /* N2: 300 is 52:54:00:00:01:2c, as net_relay.c */
+#else
+    int dst = f[5];                 /* H20 negative: the high byte left out ([n2-tcp] T5 red) */
+#endif
     if (dst == 0 || dst == my_node_id) return 0;
     return dst;
 }
@@ -618,6 +623,8 @@ int net_relay_tcp_recv(void *out, int maxlen)
         int payload_len = flen - hdr;
         if (payload_len > maxlen) payload_len = maxlen;
         if (payload_len > 0) memcpy(out, pkt + hdr, (size_t)payload_len);
+        if (type == REL_DATA)                    /* H20: observation only */
+            relay_note_misdelivered("net_relay_tcp", my_node_id, pkt + hdr, flen - hdr);
         return payload_len;
     }
 }
