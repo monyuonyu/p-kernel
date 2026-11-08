@@ -106,7 +106,16 @@ knl_dispatch_entry:
     movq    %r15, 24(%rsp)
     movq    %rbx, 32(%rsp)
     movq    %rbp, 40(%rsp)
+    /* FP-CTL（2026-11-08）: SysV ABI では MXCSR の制御ビットと x87 の制御語も
+     * 呼び出し先保存。ここで保存しないと、丸めモードを変えたタスクのそれが
+     * 次に走るタスクへ漏れる（`tkconf fp` F6）。-DPK_DISPATCH_NO_FPCTL は
+     * 元の形（陰性コントロール）。 */
+#ifndef PK_DISPATCH_NO_FPCTL
+    stmxcsr 48(%rsp)
+    fnstcw  52(%rsp)
+#else
     movq    $0,   48(%rsp)                    /* 予約スロット */
+#endif
     /* 呼び出し元の rip は [rsp+56] にそのまま残す */
 
     /* ctxtsk->tskctxb.ssp へ現在の rsp を保存。ctxtsk が NULL の
@@ -145,6 +154,10 @@ knl_dispatch_entry:
     movq    24(%rsp), %r15
     movq    32(%rsp), %rbx
     movq    40(%rsp), %rbp
+#ifndef PK_DISPATCH_NO_FPCTL
+    ldmxcsr 48(%rsp)             /* FP-CTL: 新規タスクは cpu_task.h の既定値 */
+    fldcw   52(%rsp)
+#endif
     addq    $56, %rsp            /* rsp は保存済み rip のスロットを指す */
 
     /* 割込み再許可（保留分の drain はしない）。ここから ret までの

@@ -117,6 +117,16 @@ check D5K-LA64     ../sysdepend/linux_aarch64/dispatch.S 1 'add  x0, x0, #KNL_TM
 #     actually switches the stack is lost (the BLOCKING cert catches it, this
 #     inventory did not). The only `mov  sp, x0` in this file is that one.
 check D5K-LA64-SP  ../sysdepend/linux_aarch64/dispatch.S 1 'mov  sp, x0'
+# --- FP-CTL（2026-11-08）: 自発的な切り替えが ABI の呼び出し先保存の浮動小数点の
+#     状態も保存する（x86_64 は MXCSR の制御ビットと x87 の制御語、aarch64 は
+#     d8〜d15 と FPCR）。消えてもビルドは通り、丸めモードや d8 の値が別の
+#     タスクのものになるだけ。`tkconf fp` F6 が赤になる。保存と復元の両方を数える。
+check FPCTL-LX64-S ../sysdepend/linux_x86_64/dispatch.S  1 'stmxcsr 48(%rsp)'
+check FPCTL-LX64-R ../sysdepend/linux_x86_64/dispatch.S  1 'ldmxcsr 48(%rsp)'
+check FPCTL-LX64-I ../sysdepend/linux_x86_64/cpu_task.h  1 'ssp[6] = 0x1f80ULL'
+check FPCTL-LA64-S ../sysdepend/linux_aarch64/dispatch.S 1 'stp d8,  d9,  [sp, #112]'
+check FPCTL-LA64-R ../sysdepend/linux_aarch64/dispatch.S 1 'ldp d8,  d9,  [sp, #112]'
+check FPCTL-LA64-F ../sysdepend/linux_aarch64/cpu_task.h 1 '#define DORMANT_STACK_SIZE	176'
 # --- RNG0（2026-09-28）: 割込みの出口での遅延ディスパッチ。消えるとビルドは
 #     （idt.c の呼び出しが残っていればリンクで）落ちるが、関数の中身だけ消えても
 #     通る。カーネルを呼ばないタスクが、時限待ちの高い優先度のタスクを飢えさせる

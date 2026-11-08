@@ -82,6 +82,8 @@ CFLAGS  = -Wall -Wextra -g -O1 -no-pie -fno-pie \
 ASFLAGS = -D_in_asm_source_ -D_APP_X86_64_ -D_APP_LINUX_ -D_LINUX_X86_64_ \
           -I$(MTK3_SYSDEP) \
           -I$(MTK3)/include -I$(MTK3)/config
+# FP-CTL negative control (-DPK_DISPATCH_NO_FPCTL) reaches dispatch.S and cpu_task.h alike
+ASFLAGS += $(filter -D%,$(EXTRA_CFLAGS))
 
 LDFLAGS = -no-pie -static -lrt -lpthread
 

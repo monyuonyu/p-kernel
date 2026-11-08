@@ -35,6 +35,14 @@
 #define _in_asm_source_
 #include "offset.h"
 
+/* 休止フレームの大きさ（cpu_task.h の DORMANT_STACK_SIZE と同じ値）。
+ * FP-CTL（2026-11-08）で d8〜d15 の 64 バイトを足した。 */
+#ifndef PK_DISPATCH_NO_FPCTL
+#define PK_DORMANT_FRAME 176
+#else
+#define PK_DORMANT_FRAME 112
+#endif
+
     .text
     .align 4
 
@@ -103,15 +111,27 @@ knl_dispatch_entry:
     mov  w1, #1
     str  w1, [x0]
 
-    /* 112 バイトの休止フレームを現在の sp に積む */
-    sub sp, sp, #112
+    /* 休止フレーム（DORMANT_STACK_SIZE）を現在の sp に積む */
+    sub sp, sp, #PK_DORMANT_FRAME
     stp x19, x20, [sp,  #0]
     stp x21, x22, [sp, #16]
     stp x23, x24, [sp, #32]
     stp x25, x26, [sp, #48]
     stp x27, x28, [sp, #64]
     stp x29, x30, [sp, #80]
+    /* FP-CTL（2026-11-08）: AAPCS64 では d8〜d15（v8〜v15 の下位 64 ビット）と
+     * FPCR も呼び出し先保存。ここで保存しないと、別のタスクが書いた値で
+     * 戻る（`tkconf fp` F6）。-DPK_DISPATCH_NO_FPCTL は元の形（陰性コントロール）。 */
+#ifndef PK_DISPATCH_NO_FPCTL
+    mrs x1, fpcr
+    str x1,       [sp, #96]
+    stp d8,  d9,  [sp, #112]
+    stp d10, d11, [sp, #128]
+    stp d12, d13, [sp, #144]
+    stp d14, d15, [sp, #160]
+#else
     str xzr,      [sp, #96]     /* 予約スロット */
+#endif
 
     /* ctxtsk->tskctxb.ssp へ現在の sp を保存。ctxtsk が NULL の
      * 場合（タスク外コンテキストからの初回起動）は保存しない。 */
@@ -158,7 +178,15 @@ knl_dispatch_entry:
     ldp x25, x26, [sp, #48]
     ldp x27, x28, [sp, #64]
     ldp x29, x30, [sp, #80]
-    add sp, sp, #112
+#ifndef PK_DISPATCH_NO_FPCTL
+    ldr x1,       [sp, #96]     /* FP-CTL: 新規タスクは cpu_task.h の 0（既定） */
+    msr fpcr, x1
+    ldp d8,  d9,  [sp, #112]
+    ldp d10, d11, [sp, #128]
+    ldp d12, d13, [sp, #144]
+    ldp d14, d15, [sp, #160]
+#endif
+    add sp, sp, #PK_DORMANT_FRAME
 
     /* 割込み再許可（保留分の drain はしない）。x30 に復帰先が
      * 入っているため、ここから ret までの間に C 関数を呼んでは

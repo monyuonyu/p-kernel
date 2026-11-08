@@ -21,7 +21,8 @@
  *	  ssp+ 40: x24           ssp+ 80: x29 (fp)
  *	  ssp+ 48: x25           ssp+ 88: x30 (lr) ← 復帰先。新規タスクでは
  *	                                             トランポリン
- *	 ─── 合計 112 バイト（16 バイト整列）───
+ *	  ssp+112〜175: d8〜d15、ssp+96: FPCR（FP-CTL、2026-11-08）
+ *	 ─── 合計 176 バイト（16 バイト整列）───
  *
  *	AAPCS64 の callee-saved レジスタは x19〜x28 + fp + lr の 12 本。
  *	ディスパッチャ（dispatch.S）は x30 スロットの値へ ret で復帰します。
@@ -36,7 +37,14 @@
  * knl_setup_context が書き込むフレームサイズ
  *	task_manage.c はこの分のスタック余裕を確保して休止処理を行います。
  */
+/* FP-CTL（2026-11-08）: 112 の後ろに d8〜d15（offset 112〜175）、FPCR は
+ * offset 96（元の予約スロット、新規タスクは 0 = 既定）。dispatch.S の
+ * PK_DORMANT_FRAME と同じ値であること。 */
+#ifndef PK_DISPATCH_NO_FPCTL
+#define DORMANT_STACK_SIZE	176
+#else
 #define DORMANT_STACK_SIZE	112
+#endif
 
 /* arch/linux/aarch64/preempt.c: clear the task id's "inside the preemption
  * trampoline" word (a task deleted while switched out there kept it set) */

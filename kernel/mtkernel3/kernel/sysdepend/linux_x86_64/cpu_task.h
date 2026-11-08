@@ -19,7 +19,7 @@
  *	  ssp+24: r15 = 0
  *	  ssp+32: rbx = 0
  *	  ssp+40: rbp = 0
- *	  ssp+48: （予約 = 0）
+ *	  ssp+48: MXCSR（既定 0x1f80）、ssp+52: x87 の制御語（既定 0x037f）
  *	  ssp+56: rip = &knl_task_entry_trampoline  ← dispatch.S の ret が pop
  *	 ─── 合計 64 バイト（16 バイト整列）───
  *
@@ -68,6 +68,11 @@ Inline void knl_setup_context( TCB *tcb )
 	/* 「戻りアドレス」スロット（offset 56 = index 7）にトランポリン。
 	 * 初回ディスパッチ時に dispatch.S の ret がこれを pop する。 */
 	((void **)ssp)[7] = (void *)knl_task_entry_trampoline;
+
+	/* FP-CTL（2026-11-08）: offset 48 = MXCSR（既定 0x1f80）、52 = x87 の
+	 * 制御語（既定 0x037f）。dispatch.S が復帰のたびに読み込むので、0 のまま
+	 * だと全部の浮動小数点の例外が有効になる。 */
+	ssp[6] = 0x1f80ULL | (0x037fULL << 32);
 
 	tcb->tskctxb.ssp = ssp;
 	arch_preempt_forget(tcb->tskid);
