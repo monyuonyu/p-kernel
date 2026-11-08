@@ -24,7 +24,7 @@ if [ "$MODE" != nc ]; then
     $CC $CF -fsanitize=address,undefined -fno-sanitize-recover=all $SRC -o "$W/plain" \
         || { echo "[ark-crypto] build FAILED"; exit 1; }
     "$W/plain" | tee "$W/plain.log"
-    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 15 ]; then
+    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 17 ]; then
         echo "[ark-crypto] ALL PASS"; exit 0
     fi
     echo "[ark-crypto] RED"; exit 1

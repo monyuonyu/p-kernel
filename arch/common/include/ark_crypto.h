@@ -28,6 +28,11 @@ int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32]);
 void arkc_x25519_base(uint8_t pub[32], const uint8_t scalar[32]);
 /* stage 3: HMAC-SHA-512 (RFC 2104 on ed25519.c's SHA-512). 0, or -1 when out of memory */
 int arkc_hmac_sha512(const uint8_t *key, size_t klen, const uint8_t *msg, size_t mlen, uint8_t out[64]);
+/* stage 3: HKDF-SHA-512 (RFC 5869, extract then expand). okm_len up to 255 * 64; 0, or -1
+ * with every byte of okm zero (longer than that, or out of memory). An empty salt is
+ * 64 zero bytes (RFC 5869 2.2; HMAC pads both to the same block). */
+int arkc_hkdf_sha512(const uint8_t *salt, size_t salt_len, const uint8_t *ikm, size_t ikm_len,
+                     const uint8_t *info, size_t info_len, uint8_t *okm, size_t okm_len);
 /* open: 0 and pt, or -1 with every byte of pt zero (nothing of the plaintext is returned) */
 int arkc_aead_open(const uint8_t key[32], const uint8_t nonce[12],
                    const uint8_t *aad, size_t aad_len,

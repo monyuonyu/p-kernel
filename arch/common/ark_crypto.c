@@ -243,6 +243,15 @@ int arkc_hmac_sha512(const uint8_t *key, size_t klen, const uint8_t *msg, size_t
     return 0;
 }
 
+/* ---- HKDF-SHA-512 (stage 3, RFC 5869): a stub for the test-first commit ---- */
+int arkc_hkdf_sha512(const uint8_t *salt, size_t salt_len, const uint8_t *ikm, size_t ikm_len,
+                     const uint8_t *info, size_t info_len, uint8_t *okm, size_t okm_len)
+{
+    (void)salt; (void)salt_len; (void)ikm; (void)ikm_len; (void)info; (void)info_len;
+    memset(okm, 0, okm_len);
+    return 0;
+}
+
 /* ---- X25519 (stage 2, RFC 7748): the ladder is ed25519.c's ---- */
 int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32])
 {

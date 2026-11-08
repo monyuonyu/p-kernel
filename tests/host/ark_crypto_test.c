@@ -6,6 +6,8 @@
 #include <string.h>
 #include "ark_crypto.h"
 #include "ark_crypto_vectors.h"
+#include "ark_hkdf_vectors.h"
+#include "ed25519.h"
 
 static int fails;
 static void check(int ok, const char *what)
@@ -117,6 +119,38 @@ int main(void)
                 || memcmp(mac, hm[n].m, hm[n].ml) != 0) { printf("    RFC 4231 case %d differs\n", n + 1); bad = 1; }
         }
         check(!bad, "[arkc-hmac512] RFC 4231 4.2-4.8, all 7 cases (case 5 truncated to 128 bits)");
+    }
+
+    /* ---- stage 3: HKDF-SHA-512 (C3, Wycheproof hkdf_sha512_test.json: 80 valid, 3 too long) ---- */
+    {
+        static uint8_t okm[255 * 64 + 1];
+        uint8_t dg[64];
+        int bad = 0, nv = 0, badlong = 0, ni = 0;
+        for (unsigned n = 0; n < sizeof HK / sizeof HK[0]; n++) {
+            const struct hk_vec *v = &HK[n];
+            memset(okm, 0xA5, v->size);
+            int r = arkc_hkdf_sha512(v->salt, v->salt_len, v->ikm, v->ikm_len, v->info, v->info_len,
+                                     okm, v->size);
+            if (v->valid) {
+                int ok;
+                nv++;
+                if (v->okm_sha) {             /* a long OKM: the first and last 64 bytes and the SHA-512 */
+                    ed25519_sha512(okm, v->size, dg);
+                    ok = memcmp(okm, v->okm, 64) == 0 && memcmp(okm + v->size - 64, v->okm + 64, 64) == 0
+                         && memcmp(dg, v->okm_sha, 64) == 0;
+                } else {
+                    ok = memcmp(okm, v->okm, v->size) == 0;
+                }
+                if (r != 0 || !ok) { printf("    Wycheproof tcId %d (size %zu) differs\n", v->id, v->size); bad = 1; }
+            } else {
+                ni++;
+                if (r != -1 || !all_zero(okm, v->size)) {
+                    printf("    Wycheproof tcId %d (size %zu) not refused\n", v->id, v->size); badlong = 1;
+                }
+            }
+        }
+        check(!bad && nv == HK_VALID, "[arkc-hkdf] Wycheproof HKDF-SHA-512, all 80 valid OKMs (20 to 16320 bytes)");
+        check(!badlong && ni == HK_INVALID, "[arkc-hkdf-toolong] 255 * 64 + 1 bytes: -1 and all zero (3 tests)");
     }
 
     printf("SUMMARY: %d FAIL\n", fails);
