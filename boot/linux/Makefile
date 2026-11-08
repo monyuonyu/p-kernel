@@ -193,6 +193,7 @@ COMMON_C_SRCS = \
     ed25519.c \
     ark_crypto.c \
     ark_crypto_selftest.c \
+    ark_rec.c \
     sign.c \
     compat_ota.c \
     compat_arkfs_gap.c \

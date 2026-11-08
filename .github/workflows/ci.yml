@@ -1219,6 +1219,24 @@ jobs:
           (printf 'ark crypto\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee ark_shell.log || true
           grep -aF '[ark-crypto] SELF PASS 5/5' ark_shell.log
 
+      # ark-entry.md 2.1 / 3: the ark's records and index (`ark rec`, `ark heir`) on the
+      # ARK backend - E1 restart (100 records, 70 versions, 10240 B, index depth 4 with
+      # fanout 4), E1c stop before the self/rec version, E2 after ark_compact, E4 default
+      # self and heir versions, two nodes keep their own ark (relay). The five negative builds are in n2-negatives. ~70 s.
+      - name: ark records and index (E1 restart, E1c, E2, E4, local)
+        run: |
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          timeout 600 tests/host/run_ark_rec.sh | tee ark_rec.log
+          grep -aF '[ark-rec] ALL PASS' ark_rec.log
+
+      # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
+      # node B (never consented) still refuses /teach and does not show A's profile
+      # (self/ names stay with their node). The negative is in n2-negatives. ~60 s.
+      - name: one node's consent does not open another's gate (self/ names stay local)
+        run: |
+          timeout 300 tests/host/run_self_ref_local.sh | tee self_ref.log
+          grep -aF '[self-ref] ALL PASS' self_ref.log
+
       # ROADMAP 1-8 v4, the conflict half: with sky misread on every node
       # (-DR3_TEST_MISREAD_KEY=0) the push-back, the lost value in the history
       # and mind/hist's "do I hold the winner" must use the record. Three
@@ -1578,6 +1596,33 @@ jobs:
           git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
           git worktree add -q /tmp/n2old FETCH_HEAD
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
+      - name: "[ark-rec] negative controls: a version that forgets its previous one (-DARK_REC_OVERWRITE), ark/rec before the index (-DARK_REC_DESC_FIRST), public by default (-DARK_REC_DEFAULT_PUBLIC), pfs_has blind to ARK (-DPFS_ARK_HAS_RESIDENT_ONLY, gap-ledger PFS-ARK-HAS), the ark leaves the node (-DARK_REC_SHARED)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_OVERWRITE >/dev/null
+          ARK_REC_EXPECT_RED="e1 e2 e4 stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_OVERWRITE.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_OVERWRITE.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_DESC_FIRST >/dev/null
+          ARK_REC_EXPECT_RED="stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_DESC_FIRST.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_DESC_FIRST.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_DEFAULT_PUBLIC >/dev/null
+          ARK_REC_EXPECT_RED="e4" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_DEFAULT_PUBLIC.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_DEFAULT_PUBLIC.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_ARK_HAS_RESIDENT_ONLY >/dev/null
+          ARK_REC_EXPECT_RED="e1 e2 e4 stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_PFS_ARK_HAS_RESIDENT_ONLY.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_PFS_ARK_HAS_RESIDENT_ONLY.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SHARED >/dev/null
+          ARK_REC_EXPECT_RED="local" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_SHARED.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
+          # SELF-REF-REGION-SHARED: the old shared self/ names redden S1-S3
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DSELF_REF_SHARED >/dev/null
+          SELF_REF_EXPECT_RED=1 timeout 300 tests/host/run_self_ref_local.sh | tee self_ref_nc.log || true
+          grep -aF '[self-ref] NC RED as expected' self_ref_nc.log
       - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3), T5 when a wide one-node frame is sent by the low byte of its MAC (-DN2_NC_TCP_DST_LOW_BYTE, test-holes H20)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null

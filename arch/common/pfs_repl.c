@@ -240,6 +240,12 @@ static void on_new_block(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 {
     if (drpc_my_node == 0xFF) return;       /* not distributed: local only */
     if (announce_suppress) return;          /* G28: protected quiet put     */
+#if defined(_TK_HOSTED_LIBC_) && !defined(ARK_REC_SHARED)
+    {   /* ark-entry.md 2.5: the ark's records stay here (see send_block_to) */
+        U1 head[4];
+        if (len >= 4 && pfs_get(id, head, 4) >= 4 && head[0] == 'A' && head[1] == 'K' && head[2] == 'R') return;
+    }
+#endif
     pk_node_t org = (origin == PFS_ORIGIN_SELF) ? drpc_my_node : origin;
     publish_announce(id, len, org);
 }
@@ -298,6 +304,12 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
 {
     INT blen = pfs_get(id, tx_block, PFS_BLOCK_MAX);
     if (blen < 0 || blen > (INT)PFS_BLOCK_MAX) return;
+#if defined(_TK_HOSTED_LIBC_) && !defined(ARK_REC_SHARED)
+    /* ark-entry.md 2.5 (2026-11-09): the ark's records ("AKR" + R/F/I/D, ark_rec.c)
+     * do not leave the node in the clear - not to a WANT, a boot SYNC or a push -
+     * until they are sealed first (E3). ark_rec.c also mutes their announce. */
+    if (blen >= 4 && tx_block[0] == 'A' && tx_block[1] == 'K' && tx_block[2] == 'R') return;
+#endif
 
     /* recover the origin tag so it survives the hop */
     pk_node_t origin = PFS_ORIGIN_SELF;

@@ -356,6 +356,30 @@ void pfs_dag_restore(void)
 /* ref beacon (publish own table, rotating window)                     */
 /* ------------------------------------------------------------------ */
 
+/* ark-entry.md 2.5 (2026-11-09): names under "ark/" stay on this node until
+ * the ark's records are sealed before they leave (E3). Refs are region-wide and
+ * the newer seq wins, so two nodes' "ark/rec" would also eat each other's index
+ * (probe: B adopted A's index and could not save its own). Hosted only (the ark
+ * is hosted); -DARK_REC_SHARED is the old, shared behaviour (negative control). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(ARK_REC_SHARED)
+#define pd_ark_name(name, nlen) \
+    ((nlen) >= 4 && (name)[0] == 'a' && (name)[1] == 'r' && (name)[2] == 'k' && (name)[3] == '/')
+#else
+#define pd_ark_name(name, nlen) 0
+#endif
+/* SELF-REF-REGION-SHARED (2026-11-09, tests/host/run_self_ref_local.sh): the same for
+ * "self/" (self/prof, self/prov, self/lin, self/sig): node B adopted node A's as its
+ * own, so A's consent opened B's gate (ark-profile.md 7.3) and B showed A's profile.
+ * The blocks still replicate (P1); only the name stays with its node. Hosted only
+ * (the gate is hosted); -DSELF_REF_SHARED is the old behaviour (negative control). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(SELF_REF_SHARED)
+#define pd_self_name(name, nlen) \
+    ((nlen) >= 5 && (name)[0] == 's' && (name)[1] == 'e' && (name)[2] == 'l' && (name)[3] == 'f' && (name)[4] == '/')
+#else
+#define pd_self_name(name, nlen) 0
+#endif
+#define pd_local_name(name, nlen) (pd_ark_name(name, nlen) || pd_self_name(name, nlen))
+
 static void beacon_publish(void)
 {
     if (drpc_my_node == 0xFF || h_ref_pub < 0) return;
@@ -370,6 +394,7 @@ static void beacon_publish(void)
     for (INT k = 0; k < PFS_REF_MAX && n < PFSD_REF_PER_PKT; k++) {
         INT i = (INT)((beacon_rr + (UW)k) % PFS_REF_MAX);
         if (!refs[i].used) continue;
+        if (pd_local_name(refs[i].e.name, refs[i].e.name_len)) continue;
         pd_memcpy(&tx_beacon.ent[n], &refs[i].e, (UW)sizeof(PFSD_REF_ENT));
         n++;
     }
@@ -390,6 +415,7 @@ static void merge_entry(const PFSD_REF_ENT *in)
 {
     if (in->name_len == 0 || in->name_len > PFS_NAME_MAX) return;
     if (in->seq == 0) return;
+    if (pd_local_name(in->name, in->name_len)) return;   /* never adopt a peer's ark/ */
 
     PFSD_REF *cur = ref_find(in->name, in->name_len);
     const char *how = 0;

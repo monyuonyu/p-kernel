@@ -413,6 +413,13 @@ INT pfs_has(const U1 id[PFS_ID_LEN])
 #ifndef PFS_FLAT_HAS_RESIDENT_ONLY    /* test: the pre-224b57e3 pfs_has */
     if (find_slot(id) < 0 && pfs_flat_evicts() && pfs_get(id, 0, 0) >= 0) return 1;
 #endif
+    /* PFS-ARK-HAS (2026-11-09, found by tests/host/run_ark_rec.sh): the same for
+     * the ARK backend. A mount does not load the log into P0, so after a restart
+     * every block was "not held" and pfs_dag_read / read_at / `pfs cat` refused
+     * every named object (refs.tab came back, the blocks did not count). */
+#ifndef PFS_ARK_HAS_RESIDENT_ONLY     /* negative control: the old pfs_has */
+    if (find_slot(id) < 0 && pfs_ark_active() && pfs_get(id, 0, 0) >= 0) return 1;
+#endif
 #endif
     return find_slot(id) >= 0 ? 1 : 0;
 }
