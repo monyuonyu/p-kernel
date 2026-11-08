@@ -267,6 +267,20 @@ __asm__(
 #else
     "    fxrstor64 (%rsp)\n"
 #endif
+    /* test-holes H11, negative controls for `tkconf fp` F3 and F4: after the
+     * restore, -DPK_PREEMPT_DROP_FP_HI zeroes only xmm12-15 (F1 stays green:
+     * the compiler keeps fp_chunk's doubles lower) and -DPK_PREEMPT_DROP_MXCSR
+     * puts back the default MXCSR (0x1f80; offset 24 of the fxsave area) */
+#ifdef PK_PREEMPT_DROP_FP_HI
+    "    pxor  %xmm12, %xmm12\n"
+    "    pxor  %xmm13, %xmm13\n"
+    "    pxor  %xmm14, %xmm14\n"
+    "    pxor  %xmm15, %xmm15\n"
+#endif
+#ifdef PK_PREEMPT_DROP_MXCSR
+    "    movl  $0x1f80, 24(%rsp)\n"
+    "    ldmxcsr 24(%rsp)\n"
+#endif
     "    movq  %rbp, %rsp\n"
     "    popq  %rbp\n"
     "    popq %r11\n"
