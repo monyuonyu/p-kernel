@@ -828,6 +828,30 @@ static int s6unit(void)
     printf("    order: %016llx %016llx %016llx\n", (unsigned long long)hash(&a1), (unsigned long long)hash(&a2), (unsigned long long)hash(&a3));
     check(hash(&a1) == hash(&a2) && hash(&a1) == hash(&a3), "s6-order", "three orders of the same peers, every byte the same");
     free(ref); st_free(&a1); st_free(&a2); st_free(&a3);
+    {   /* test-holes H1: with 3 trained peers the order only moves the last bit of a double
+         * sum, which the cast to float hides (audit-156: the sort taken out stayed green).
+         * Here the sum cancels: on w[0] peer A is +1e8 and B -1e8 (mirror images, so the
+         * same TS and scale, exactly opposite terms), C is +1e-10; all three share
+         * w[1..100] = 1e8 with into (cos about 0.995 and 1). A, B, C: (T - T) + c = c;
+         * A, C, B: (T + c) - T = 0 (c is below half an ulp of T). Only the sort makes the
+         * three orders give the same bytes. */
+        st_model cp, ci, ca, cb, cc;
+        st_init_tier(&cp, 5u, ST_TIER_S); clone(&ci, &cp); clone(&ca, &cp); clone(&cb, &cp); clone(&cc, &cp);
+        zero_w(&cp); zero_w(&ci); zero_w(&ca); zero_w(&cb); zero_w(&cc);
+        for (int i = 1; i <= 100 && i < cp.n_params; i++) ci.w[i] = ca.w[i] = cb.w[i] = cc.w[i] = 1e8f;
+        ca.w[0] = 1e8f; cb.w[0] = -1e8f; cc.w[0] = 1e-10f;
+        st_model *o1[] = { &ca, &cb, &cc }, *o2[] = { &ca, &cc, &cb }, *o3[] = { &cc, &cb, &ca };
+        st_model c1, c2, c3;
+        int k1 = s6u_merge(&c1, &ci, &cp, o1, 3, NULL);
+        int k2 = s6u_merge(&c2, &ci, &cp, o2, 3, NULL);
+        int k3 = s6u_merge(&c3, &ci, &cp, o3, 3, NULL);
+        printf("    order-cancel: rc %d %d %d  w[0] %.9g %.9g %.9g\n", k1, k2, k3,
+               (double)c1.w[0], (double)c2.w[0], (double)c3.w[0]);
+        check(cp.n_params > 100 && k1 == 3 && k2 == 3 && k3 == 3 && hash(&c1) == hash(&c2) && hash(&c1) == hash(&c3),
+              "s6-order-cancel", "a cancelling sum (+1e8, -1e8, 1e-10 on w[0]) in three orders, every byte the same");
+        st_free(&c1); st_free(&c2); st_free(&c3);
+        st_free(&cp); st_free(&ci); st_free(&ca); st_free(&cb); st_free(&cc);
+    }
     /* refusals: each on a fresh clone, every byte unchanged */
     uint64_t hq = hash(&q);
     st_model t; int f, u;
