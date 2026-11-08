@@ -311,6 +311,16 @@ int net_lan_init(void)
      * (two fresh nodes both defaulting to 1 self-echo-filter in SWIM and
      * never mesh). pkernel_default_node_id honours the env override. */
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+#ifndef N2_NC_LAN_WIDE_TO_1
+    /* N2: the LAN wire has one byte for the node, and a wide id must not turn
+     * into node 1 here (it took node 1's place on the LAN). Refuse, like the
+     * TCP transport; arch_linux_net_init then falls back (relay, loopback).
+     * tests/host/run_n2_lan.sh; -DN2_NC_LAN_WIDE_TO_1: the old rule. */
+    if (my_node_id > 256 && my_node_id <= 65534) {
+        dprintf(2, "[net_lan] PKERNEL_NODE_ID=%d is a wide id: not on LAN\n", my_node_id);
+        return -1;
+    }
+#endif
     if (my_node_id < 1 || my_node_id > 255) {
         dprintf(2, "[net_lan] PKERNEL_NODE_ID=%d out of range (1..255) — "
                    "defaulting to 1\n", my_node_id);
