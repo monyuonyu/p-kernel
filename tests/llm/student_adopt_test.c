@@ -8,7 +8,7 @@
  *   student_adopt_test unit                  H4: the gate's own cases
  *   student_adopt_test <b1_held.txt> <seed>  one seed of the arms below
  *   student_adopt_test <b1_held.txt> <seed> s4   B5 step 4 (s4() below, run_b5_step4.sh)
- *   student_adopt_test s5unit | s6unit           the self-tests of st_merge_trimmed / st_merge_trust
+ *   student_adopt_test s5unit | s6unit | s7unit  the self-tests of st_merge_trimmed / st_merge_trust / _prev
  *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
@@ -737,6 +737,73 @@ static int s6unit(void)
     return fails ? 1 : 0;
 }
 
+/* ---- the self-test of st_merge_trust_prev (s7unit, B5 step 7) ---- */
+static int s7u_merge(st_model *out, st_model *into, st_model *prev, st_model *const *peers,
+                     st_model *const *pprev, int no, float *ts)
+{
+    clone(out, into);
+    const void *bs[8], *bp[8]; size_t ls[8], lp[8]; void *own[8], *ownp[8];
+    for (int j = 0; j < no; j++) {
+        own[j] = blob(peers[j], &ls[j]); bs[j] = own[j];
+        ownp[j] = pprev && pprev[j] ? blob(pprev[j], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
+    }
+    int r = st_merge_trust_prev(out, prev, bs, ls, pprev ? bp : NULL, pprev ? lp : NULL, no, ts);
+    for (int j = 0; j < no; j++) { free(own[j]); free(ownp[j]); }
+    return r;
+}
+static int s7unit(void)
+{
+    /* hand: prev 0, g0 = (3,4). Peer P1 = (10,0), its previous (7,-4): its own
+     * update (3,4) has cos 1 -> TS 1, while gj = (10,0) has cos 0.6 (step 6).
+     * The merge moves toward P1's weights scaled to |g0|: (5,0).
+     * P2 = (0,10), previous (3,14): own update (-3,-4), TS 0 (step 6: cos 0.8). */
+    st_model pv, me, p1, p2, q1, q2;
+    st_init_tier(&pv, 3u, ST_TIER_S); clone(&me, &pv); clone(&p1, &pv); clone(&p2, &pv); clone(&q1, &pv); clone(&q2, &pv);
+    zero_w(&pv); zero_w(&me); zero_w(&p1); zero_w(&p2); zero_w(&q1); zero_w(&q2);
+    me.w[0] = 3; me.w[1] = 4; p1.w[0] = 10; q1.w[0] = 7; q1.w[1] = -4; p2.w[1] = 10; q2.w[0] = 3; q2.w[1] = 14;
+    st_model *hp[] = { &p1, &p2 }, *hq[] = { &q1, &q2 };
+    st_model r; float ts[2];
+    int rc = s7u_merge(&r, &me, &pv, hp, hq, 2, ts);
+    int rest = 1; for (int i = 2; i < r.n_params; i++) rest &= r.w[i] == 0.0f;
+    printf("    hand: rc %d w0 %.7g w1 %.7g TS %.4f %.4f\n", rc, (double)r.w[0], (double)r.w[1], (double)ts[0], (double)ts[1]);
+    check(rc == 2 && near_f(ts[0], 1.0f, 1e-6) && ts[1] == 0.0f, "s7-ts", "TS from the peer's own update: 1 (cos of (3,4)), 0 (cos of (-3,-4))");
+    check(near_f(r.w[0], 5.0f, 1e-6) && r.w[1] == 0.0f && rest, "s7-toward", "the merge moves toward the peer's weights (10,0) scaled to |g0| 5, not toward its update");
+    st_free(&r);
+    /* step 6 on the same peers: TS 0.6 and 0.8 */
+    { st_model r6; float t6[2]; s7u_merge(&r6, &me, &pv, hp, NULL, 2, t6);
+      check(near_f(t6[0], 0.6f, 1e-6) && near_f(t6[1], 0.8f, 1e-6), "s7-null", "peer_prev NULL: step 6's TS (0.6, 0.8)");
+      st_free(&r6); }
+    /* a NULL entry and a bad entry (another tier, NaN) are step 6 for that peer */
+    { st_model other, nanq; st_init_tier(&other, 99u, ST_TIER_M); clone(&nanq, &q1); nanq.w[5] = 0.0f / 0.0f;
+      st_model *h1[] = { NULL, &q2 }, *h2[] = { &other, &q2 }, *h3[] = { &nanq, &q2 };
+      float a[2], b[2], c[2]; st_model x, y, z;
+      s7u_merge(&x, &me, &pv, hp, h1, 2, a); s7u_merge(&y, &me, &pv, hp, h2, 2, b); s7u_merge(&z, &me, &pv, hp, h3, 2, c);
+      check(near_f(a[0], 0.6f, 1e-6) && a[1] == 0.0f && near_f(b[0], 0.6f, 1e-6) && b[1] == 0.0f &&
+            near_f(c[0], 0.6f, 1e-6) && c[1] == 0.0f, "s7-entry", "a NULL, another-tier or NaN previous: that peer's TS from gj, the other's from its own update");
+      st_free(&x); st_free(&y); st_free(&z); st_free(&other); st_free(&nanq); }
+    /* real models: peer_prev NULL equals st_merge_trust byte for byte; with every
+     * previous equal to prev (the receiver's own previous) the TS are step 6's too */
+    enum { NM = 4 };
+    st_model m[NM];
+    for (int k = 0; k < NM; k++) st_init_tier(&m[k], 21u + (uint32_t)k, ST_TIER_S);
+    st_model qq; clone(&qq, &m[0]);
+    for (int p = 0; p < 2; p++) pass_q(&qq, 0);
+    for (int k = 1; k < NM; k++) { st_free(&m[k]); clone(&m[k], &m[0]); for (int p = 0; p < 2; p++) pass_q(&m[k], k); }
+    st_model *pr[] = { &m[1], &m[2], &m[3] }, *pp0[] = { &m[0], &m[0], &m[0] };
+    st_model a6, a7, a8;
+    s6u_merge(&a6, &qq, &m[0], pr, 3, NULL);
+    s7u_merge(&a7, &qq, &m[0], pr, NULL, 3, NULL);
+    s7u_merge(&a8, &qq, &m[0], pr, pp0, 3, NULL);
+    printf("    bytes: %016llx %016llx %016llx\n", (unsigned long long)hash(&a6), (unsigned long long)hash(&a7), (unsigned long long)hash(&a8));
+    check(hash(&a6) == hash(&a7), "s7-step6", "trained models, peer_prev NULL: every byte of st_merge_trust");
+    check(hash(&a6) == hash(&a8), "s7-same", "every previous equal to prev: d_j = g_j, every byte of step 6");
+    st_free(&a6); st_free(&a7); st_free(&a8); st_free(&qq);
+    for (int k = 0; k < NM; k++) st_free(&m[k]);
+    st_free(&pv); st_free(&me); st_free(&p1); st_free(&p2); st_free(&q1); st_free(&q2);
+    printf("[b5s7] unit %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
+    return fails ? 1 : 0;
+}
+
 /* ---- the self-test of st_merge_trimmed (audit-150's note on the design) ---- */
 static int cmp_total(const void *x, const void *y)   /* value, then -0 before +0 */
 {
@@ -944,6 +1011,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "unit") == 0) return unit();
     if (argc > 1 && strcmp(argv[1], "s5unit") == 0) return s5unit();
     if (argc > 1 && strcmp(argv[1], "s6unit") == 0) return s6unit();
+    if (argc > 1 && strcmp(argv[1], "s7unit") == 0) return s7unit();
     if (argc < 3) { fprintf(stderr, "usage: %s unit | <b1_held.txt> <seed>\n", argv[0]); return 2; }
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
