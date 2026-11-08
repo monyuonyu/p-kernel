@@ -11,6 +11,7 @@
 #       "transport = none", and never node 1 (net_unix.c used to make it node 1)
 #   L3b the range's edges on loopback: 257 and 65534 refused, 256 and 65535 not called wide
 #   L4  loopback, PKERNEL_NODE_ID=3: "transport = loopback (node 3)"
+#   L5  PKERNEL_RELAY_TCP=1: wide 300, 257, 65534 refused on TCP, 256 not called wide
 # Negative controls: -DN2_NC_LAN_WIDE_TO_1 (the old LAN rule) turns L1 red,
 # -DN2_NC_LOOP_WIDE_TO_1 (the old loopback rule) turns L3 red.
 # Limit: ids 9..256 and a non-number still become node 1 on loopback (narrow ids
@@ -81,6 +82,29 @@ if grep -aqF 'transport = loopback (node 3)' "$W/lnarrow.err"; then
     echo "[n2-lan] L4 PASS: narrow 3 is node 3 on loopback"
 else
     echo "[n2-lan] L4 FAIL: narrow 3 on loopback: $(grep -a 'net_unix\|transport' "$W/lnarrow.err" | head -3 | tr '\n' '|')"
+    fail=1
+fi
+# L5 the TCP relay transport (net_relay_tcp.c has no v3): PKERNEL_RELAY_TCP=1 with a wide id
+# is refused before any connect ("is a wide id: not on TCP", "relay-tcp init failed") and never
+# becomes relay-tcp node 1; the edges as L3b (257 and 65534 refused, 256 not called wide).
+# No relay listens on the port: only the refusal is judged, not where the node goes after.
+tcp() {  # tcp <id> <log>
+    ( printf 'exit\n'; sleep 2 ) | env -u PKERNEL_RELAY_HOST -u PKERNEL_SEED -u PKERNEL_LAN \
+        PKERNEL_AUTONET=1 PKERNEL_RELAY_TCP=1 PKERNEL_RELAY=127.0.0.1:17359 PKERNEL_RELAY_AUTOFALLBACK=0 \
+        PKERNEL_NODE_ID="$1" timeout 20 "$BIN" > "$W/$2.out" 2> "$W/$2.err" || true
+}
+tcp 300 tw300; tcp 257 tw257; tcp 65534 tw65534; tcp 256 tn256
+l5=""
+for i in 300 257 65534; do
+    grep -aqF "PKERNEL_NODE_ID=$i is a wide id: not on TCP" "$W/tw$i.err" || l5="$l5 $i-not-refused"
+    grep -aqF 'relay-tcp init failed' "$W/tw$i.err" || l5="$l5 $i-no-fallback-line"
+    grep -aqF 'transport = relay-tcp (node 1)' "$W/tw$i.err" && l5="$l5 $i-became-node-1"
+done
+grep -aqF 'PKERNEL_NODE_ID=256 is a wide id' "$W/tn256.err" && l5="$l5 256-called-wide"
+if [ -z "$l5" ]; then
+    echo "[n2-lan] L5 PASS: wide 300, 257 and 65534 are refused on TCP, 256 is not called wide"
+else
+    echo "[n2-lan] L5 FAIL: the TCP relay transport:$l5"
     fail=1
 fi
 [ "$fail" = 0 ] && echo "[n2-lan] ALL PASS" || echo "[n2-lan] RED"
