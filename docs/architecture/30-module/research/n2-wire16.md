@@ -49,13 +49,13 @@
 **済んだこと**: [n2-mix] の X3（`N2_X3=1`、狭いノードと 260・300 の間の教え）は want・答え・押し返しの尾と kdds の配り先で 11-07 に全部 PASS（監査-153）。mind/have も 11-08 から尾で広い番号。旧い中継の下で広いノードは入れず、ほかを乱さない（[n2-mix] N2_RELAY_OLD）。広いノードの v1 の欄は「ノードでない」（決めたこと）。
 
 **まだ（残りの切れ、2026-11-08 の見積もり。上から小さい順）**:
-1. ~~mind/have の生きた判定~~ 実装・監査待ち（11-08 feat/n2-x3h）: [n2-mix] X3H。4・44・260 を止めて 300 が sky→sea の順に教える（再送は最後の sea だけ）＝再開後 sky は pull でしか来ない。「from node 299 … sky … -> want」が 1 台以上（最初の sky の hint は 299 から）、sky が 3 台に 299 名義で届く。手元: 通常 PASS（4・260 で hint）、NO_TAIL は no-want・sky@3 台で赤。広い問い手（260）が広い先生（300）から pull する組も初めて生きた試験に入った。`N2_X3_PART=have` で単独
+1. ~~mind/have の生きた判定~~ 済み（11-08 feat/n2-x3h、監査-163 PASS。限界: 知りたいの尾を外す壊しは X3H でも緑＝MQN と同じ）: [n2-mix] X3H。4・44・260 を止めて 300 が sky→sea の順に教える（再送は最後の sea だけ）＝再開後 sky は pull でしか来ない。「from node 299 … sky … -> want」が 1 台以上（最初の sky の hint は 299 から）、sky が 3 台に 299 名義で届く。手元: 通常 PASS（4・260 で hint）、NO_TAIL は no-want・sky@3 台で赤。広い問い手（260）が広い先生（300）から pull する組も初めて生きた試験に入った。`N2_X3_PART=have` で単独
 2. ~~snf・ss6 の宛先の IP~~ 済み（11-08 feat/n2-ip-like、監査-158）: pk_node_ip_like（10.1/16 は pk_node_ip、LAN は前の形）。`nodes ipw`、陰性 N2_NC_IP_OLD。限界: 生きた試験で広いノードの snf・ss6 を通すものは無い
 3. ~~LAN~~ 済み（11-08 feat/n2-lan-wide、監査-158）: 広い番号は LAN で断り、relay・loopback へ落ちる。run_n2_lan.sh、陰性 N2_NC_LAN_WIDE_TO_1
 3b. ~~loopback（net_unix.c）~~ 済み（監査-162、境界は 11-08 feat/h19-loop-bounds の L3b、監査-163）: 広い番号（257..65534）は loopback で断り「網なし」で走る。9..256 は N2 の外なので今までどおりノード 1
-4. 広い仲間の生死: ~~広いノードは狭い仲間を死なせない~~ 測ると前提が違った（11-08 feat/n2-alive、監査待ち）: [n2-alive]（狭い 4・44・5＋広い 260・300、44 と 300 を kill -9）は master で 2/2 ALL PASS＝広い 260 も狭い 43 を DEAD にする（自分の v1 の探りで SUSPECT、狭い仲間の DEAD のうわさ）、死んだ 300 は狭い側でも広い側でもビーコンの古さで DEAD。30 秒の誤った死も 0。試験は今の振る舞いの見張りとして残す（陰性 N2_NC_WIDE_NEVER_DEAD で A3・A4 赤）。残るのは、広い仲間の生死が直の PING・間接の探りでなくビーコンの古さだけで決まること（片方向だけ届く網で誤りうる）＝急がない
+4. 広い仲間の生死: ~~広いノードは狭い仲間を死なせない~~ 測ると前提が違った（11-08 feat/n2-alive、監査-163 PASS）: [n2-alive]（狭い 4・44・5＋広い 260・300、44 と 300 を kill -9）は master で 2/2 ALL PASS＝広い 260 も狭い 43 を DEAD にする（自分の v1 の探りで SUSPECT、狭い仲間の DEAD のうわさ）、死んだ 300 は狭い側でも広い側でもビーコンの古さで DEAD。30 秒の誤った死も 0。試験は今の振る舞いの見張りとして残す（陰性 N2_NC_WIDE_NEVER_DEAD で A3・A4 赤）。残るのは、広い仲間の生死が直の PING・間接の探りでなくビーコンの古さだけで決まること（片方向だけ届く網で誤りうる）＝急がない
 5. ~~1 台宛ての v2~~ 7 に畳んだ（11-08 監査-163 の読み）: kdds.c は SWIM が ALIVE とする広い仲間へ pmesh_send で v2 を送る（feat/n2-kdds-wide、X3 の snow と X3H の道）。kdds_rx は電文の src バイトを読まない＝1 バイトのままで害が無い。残る呼び手（replica・sfs・pfs_repl・kloader は狭い番号だけ）は 7
-6. ~~TCP の中継~~ 実装・監査待ち（11-08 feat/n2-tcp-v3）: net_relay_tcp.c（x86_64・aarch64 同じ差分）も net_relay.c と同じ規則で v3（鍵があるとき広い番号で入る、v1/v2 の頭の 10 バイト目に「v3 が読める」、v3 の MAC と広い番号ごとの再送窓、MAC 4:5 の広い宛て）。鍵なしの広い番号は今までどおり断る（L5）。中継は UDP と TCP が同じ表で、前から v3 を TCP にも配れた。試験 [n2-tcp] T0〜T4、陰性 N2_NC_TCP_WIDE_REFUSE（T0）・N2_NC_TCP_NO_READS_V3（T3）
+6. ~~TCP の中継~~ 済み（11-08 feat/n2-tcp-v3、監査-163 限界つき PASS: T2b・T2c を監査側で足した。広い 1 台宛ての MAC 4:5 は試験で見えない＝test-holes H20）: net_relay_tcp.c（x86_64・aarch64 同じ差分）も net_relay.c と同じ規則で v3（鍵があるとき広い番号で入る、v1/v2 の頭の 10 バイト目に「v3 が読める」、v3 の MAC と広い番号ごとの再送窓、MAC 4:5 の広い宛て）。鍵なしの広い番号は今までどおり断る（L5）。中継は UDP と TCP が同じ表で、前から v3 を TCP にも配れた。試験 [n2-tcp] T0〜T4、陰性 N2_NC_TCP_WIDE_REFUSE（T0）・N2_NC_TCP_NO_READS_V3（T3）
 7. ほかの部品の呼び手: region のメンバにはなるが、呼び手は狭い番号だけを回す（洗い出しは n2-wire16-inventory.md）。いちばん大きい
 
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
