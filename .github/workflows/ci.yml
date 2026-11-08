@@ -251,6 +251,8 @@ jobs:
     # 90 -> 100 (2026-10-30): 82.2 min in CI 40879351542 (65.8 in 40868271726,
     # the runner's load varies), and [mind-stale] adds ~1.5 min (its
     # -DMH_EVERY=1 pass another ~1.5, 2026-11-01).
+    # 2026-11-08: 107.3 min in CI 42363056840; the N2 negative step (14.4 min)
+    # moved to its own job n2-negatives, ~93 min expected here.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -1519,6 +1521,27 @@ jobs:
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
+  # The N2 negative controls, out of ump-x86_64 (2026-11-08, inbox #40 item 2):
+  # they were its last step and its longest (14.4 of 107.2 min in CI
+  # 42363056840; the job limit is 120). Nothing after them used their builds.
+  # This job builds the same old binary (64b7c909) and relay for itself and runs
+  # beside ump-x86_64 on another GitHub runner (the ThinkPad queue is not used).
+  n2-negatives:
+    name: "N2 negative controls (x86_64, the wide-id falsifiers, BLOCKING)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo tests/ci/apt_update.sh
+          sudo tests/ci/apt_install.sh gcc make
+      - name: "the old binary (64b7c909, the [n2-mix] old nodes) and the relay"
+        run: |
+          make -s -C relay
+          git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
+          git worktree add -q /tmp/n2old FETCH_HEAD
+          make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
       - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), [mqwide] frame when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW) or mind/have's busy compares it by its byte (-DN2_NC_MC_BUSY_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
@@ -1620,8 +1643,6 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_KDW_NO_REGION >/dev/null
           (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide_nc.log || true
           grep -aF '[kdds-wide] FAIL region' kdds_wide_nc.log
-          make -C boot/linux_x86_64 clean >/dev/null
-          make -C boot/linux_x86_64 -j4 >/dev/null
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"

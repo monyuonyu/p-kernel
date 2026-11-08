@@ -54,7 +54,7 @@ To get there, it is built on these principles:
 - **No center.** No central server, registry, or coordinator. Devices watch each other to track who is alive (SWIM), and the rest keep running when any one of them disappears.
 - **Built from the kernel up.** The core is μT-Kernel 3.0, a real-time kernel conforming to IEEE 2050-2018. Working as a swarm is implemented as a kernel feature, not bolted on as an application.
 - **A small brain that genuinely learns.** The path from "learned something" to "fixed into the weights while idle (sleep)" really runs, and forgetting has been reproduced and its cure measured. The size, however, is still toy-scale.
-- **Anything described as working is checked by automated tests.** GitHub Actions CI (50 jobs as of 2026-10-24) checks it on every run.
+- **Anything described as working is checked by automated tests.** GitHub Actions CI (51 jobs as of 2026-11-08) checks it on every run.
 
 ### Five layers
 
@@ -174,7 +174,7 @@ Not yet: the learning-side code still runs inside the kernel, and the same isola
 
 ### Mechanisms for doubting itself
 
-- **50 CI jobs**: builds for the five targets and the relay tests, plus tests that really kill processes, on every run. It also watches that the bare-metal kernel's machine code does not change unintentionally (`crown-text-identity`).
+- **51 CI jobs**: builds for the five targets and the relay tests, plus tests that really kill processes, on every run. It also watches that the bare-metal kernel's machine code does not change unintentionally (`crown-text-identity`).
 - All nine issues found by an external audit in June 2026 (memory safety, missing signature checks, and others) have been fixed.
 - A bug where repeatedly killing and starting devices would occasionally crash the whole kernel (KILL-CHURN) was tracked down and fixed after ruling out seven hypotheses. One of them turned out to be caused by the very change meant to fix it — found by comparing with the unfixed kernel on the same day with the same procedure.
 - Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md). There are three right now (2026-10-24).
