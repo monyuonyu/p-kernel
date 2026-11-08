@@ -9,7 +9,6 @@
 | H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験（**一部は S8**: 呼び所が MC_PUSH_BUSY を通り、`mc_push_pkt.key ==` を書かないことは check_callsites.py が見る。ほかの形のバイト比べは見ない） |
 | H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案） |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す。**実装 feat/h11-fp-hi（11-08 監査-165 の回）→ 監査-166 PASS で master（feat/fpctl-dispatch と一緒に）**: x86_64 に F3（xmm12〜15 を asm で持つ）・F4（MXCSR の丸め）・F5（前提）。壊し -DPK_PREEMPT_DROP_FP_HI・-DPK_PREEMPT_DROP_MXCSR は前の版では緑、今は F3・F4 が赤（run_nosw.sh の腕）。残り: x87・ymm の上半分・aarch64 の一部だけの失い（v8〜v31）。途中で見つけた: 自発的な切り替え（dispatch.S）は MXCSR の制御ビットと x87 の制御語を保存しない（ABI では呼び出し先保存）＝丸めモードがタスク間で漏れる（台帳 HOSTED-FP-CTL-NOT-SAVED、F6・F7 で直し、監査-166 で閉じた） |
-| H20 | TCP の中継の広い宛て（net_relay_tcp.c の tcp_frame_dst、MAC 4:5） | `dst = f[5]` だけ読む（広い 1 台宛てが狭いノードへ行く） | 監査-163 | [n2-tcp] T2c（260 が 299 と rtt）でも緑。探り（監査-163）: 300 と 44 から 260 宛てが各 200 個以上ノード 4 へ誤配されても T2c・T4 は緑（rtt と snow は別の道）。受け手が広い送り手からの 1 台宛ての数を出し、それを判定に。**実装 feat/h20-misdeliver（11-08 監査-164 の回）→ 監査-165 限界つき PASS で master**（多ノード 7 本で誤った行 0、中継で 300→260（UDP の受け口）・260→300（TCP の受け口）に誤配させると両方とも行が出て T5 赤。限界: 行を判定に使うのは [n2-tcp] だけ＝UDP の群れの試験は誤配でも緑）。**UDP 側 feat/h20-udp-gate → 監査-166 PASS で master**（監査側の誤配 260→4・4→44・5→300 も A6 だけ赤、素 2/2 緑。限界: ログが無いノードは A6 では数えない＝ほかの行が赤になる）: [n2-alive] A6＝誤配の行が 0、陰性は中継 -DRELAY_NC_MISROUTE（300 宛てを 260 へ）で A6 だけ赤: 受け手が REL_DATA の MAC が自分でないと misdelivered を出し、[n2-tcp] T5 が 0 行を見る。陰性 DST_LOW_BYTE で T5 赤（ノード 4 に 6 行）、pass 2/2 緑 |
 
 ## ふさいだ
 
@@ -28,3 +27,5 @@
 | S11 | B5 第 6 歩の仲間の並べ替えを外す（H1） | s6unit の `[s6-order-cancel]`（f8b09654）: w[0] で +1e8・−1e8・1e-10 が打ち消し合う組、順で 3.344e-11 と 0 に分かれる。外す・`j > 1` は赤、監査-162。限界: 挿入を 1 歩だけにする壊しと逆順は緑（3 つの順は 6 通りの一部。逆順は全順序なので正しい） |
 | S12 | 方舟の鍵の箱の getrandom の失敗（H18） | [arkc-box-rand]（feat/h18-arkc-rand）: 陰性 RAND_IGNORE と監査側の壊し 3 つ（失敗で消さない・短い読みで進めない・wrap が失敗を無視）が赤、監査-163 |
 | S13 | N2 の広い番号の境界（H19） | run_n2_lan.sh L3b（loopback）と L5（TCP、鍵なし）: 境界の壊し 6 つが赤。L5 の 65535 は監査-163 で足した（`<= 65535` が緑だった） |
+
+| S14 | TCP・UDP の中継の広い宛て（H20、`dst = f[5]` だけ読む） | 受け手の misdelivered の行を [n2-tcp] T5（監査-165）と [n2-alive] A6（監査-166）が 0 で見る。ログが無い・空のノードは A6 で no-log の赤（fix/h20g-nolog、監査-167）。陰性 DST_LOW_BYTE・RELAY_NC_MISROUTE |
