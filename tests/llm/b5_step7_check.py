@@ -252,6 +252,14 @@ def self_test():
         check("H13 %d seed(s): not PASS" % k, got, False)
         check("H13 %d seed(s): the gates still green" % k, all(r.values()), True)
         check("H13 %d seed(s): result PARTIAL" % k, ls[-1].startswith("[result] PARTIAL"), True)
+    # audit-159: eight seeds, one of them not a judgement seed (138 -> 139 with
+    # 138's numbers) is PARTIAL too; comparing only the count passed this
+    sw = S[:7] + ["139"]
+    src = S[:7] + [S[7]]
+    got, ls, r = judge({a: good[b] for a, b in zip(sw, src)}, {a: GJr[b] for a, b in zip(sw, src)},
+                       {a: CLr[b] for a, b in zip(sw, src)})
+    check("H13 8 seeds, one swapped: not PASS", got, False)
+    check("H13 8 seeds, one swapped: result PARTIAL", ls[-1].startswith("[result] PARTIAL"), True)
 
     d = tempfile.mkdtemp()
     try:
