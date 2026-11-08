@@ -10,6 +10,7 @@
  *   student_adopt_test <b1_held.txt> <seed> s4   B5 step 4 (s4() below, run_b5_step4.sh)
  *   student_adopt_test s5unit | s6unit | s7unit  the self-tests of st_merge_trimmed / st_merge_trust / _prev
  *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
+ *   student_adopt_test <b1_held.txt> <seed> s7a | s7b | s7y | s7c           B5 step 7
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -608,6 +609,135 @@ static int s6(uint32_t seed, const char *which)
     return 0;
 }
 
+/* B5 step 7 (research/b5-step7-design.md), stage "s7": step 6's flow; the
+ * trust arms use st_merge_trust_prev with, for each peer, the blob it SENT the
+ * previous merge round as every receiver kept it (NULL on the first). Note:
+ * probe 2 (pk-scratch/a156/s6m-patch.py) used the peer's post-adopt prev
+ * instead, which a receiver cannot know; this is the design's form (audit-157
+ * missed the difference; the 11-08 09:00 run's note). Poison kinds 1-3 as
+ * step 6; 4 = the near poison of the design: garbage on its first round, then
+ * what it sent last + node 0's update (n0 - prev0). -DB5S7_PREV_CLAIMED (NC2):
+ * kind 4 sends fresh garbage every round and claims prev = it - (n0 - prev0),
+ * and the receivers use the claim. -DB5S7_TS_FROM_GJ (NC1, in student.c). */
+static void s7_poison(st_model *g, int kind, st_model *n0, st_model *p0, st_model *last, uint32_t s)
+{
+    if (kind != 4) { s6_poison(g, kind, n0, p0, s); return; }
+#if defined(B5S7_PREV_CLAIMED)
+    (void)last; garbage(g, s);
+#else
+    if (!last) { garbage(g, s); return; }
+    clone(g, last);
+    for (int i = 0; i < g->n_params; i++) g->w[i] = last->w[i] + (n0->w[i] - p0->w[i]);
+#endif
+}
+static int s7_cand(st_model *c, st_model *models[K5], st_model *prev, st_model *sent[K5], int me, int trust, int honest, uint32_t gen)
+{
+    if (!trust) { s5_cand(c, models, me, 1, gen); return 1; }
+    clone(c, models[me]);
+    const void *bs[K5 - 1], *bp[K5 - 1]; size_t ls[K5 - 1], lp[K5 - 1]; void *own[K5 - 1], *ownp[K5 - 1];
+    int who[K5 - 1]; float ts[K5 - 1]; int j = 0;
+    for (int k = 0; k < K5; k++) if (k != me) {
+        own[j] = blob(models[k], &ls[j]); bs[j] = own[j];
+        ownp[j] = sent[k] ? blob(sent[k], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
+        who[j] = k; j++;
+    }
+    int r = st_merge_trust_prev(c, prev, bs, ls, bp, lp, K5 - 1, ts);
+    for (int i = 0; i < K5 - 1; i++) { free(own[i]); free(ownp[i]); }
+    if (r < 0) { printf("  FAIL  [b5s7-io] st_merge_trust_prev rc %d\n", r); exit(1); }
+    if (me == 0) for (int i = 0; i < K5 - 1; i++) {
+        if (who[i] < honest) { s6_tsh += ts[i]; s6_tshn++; } else { s6_tsp += ts[i]; s6_tspn++; }
+    }
+    if (r == 0) { if (me == 0) s6_refused++; st_free(c); return 0; }
+    return 1;
+}
+static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char *name)
+{
+    st_model n[K5], prev[K5], sentm[K5]; apprentice_t ap[K5]; st_model *mp[K5], *sent[K5];
+    for (int k = 0; k < K5; k++) { st_init_tier(&n[k], seed, ST_TIER_S); ap[k].has = 0; mp[k] = &n[k]; sent[k] = NULL; }
+    int honest = K5 - poison;
+    for (int k = 0; k < honest; k++) clone(&prev[k], &n[k]);
+    keeper_t kp; keep_init(&kp);
+    int took = 0, tries = 0; uint32_t gen = 0;
+    apprentice_late = 0; s6_tsh = s6_tsp = 0; s6_tshn = s6_tspn = 0; s6_refused = 0;
+    for (int p = 1; p <= PASSES; p++) {
+        for (int k = 0; k < honest; k++) { pass_q(&n[k], k); if (ap[k].has) pass_q(&ap[k].m, k); }
+        if (p % EVERY == 0) {
+            gen++;
+            for (int k = honest; k < K5; k++) {
+                st_free(&n[k]);
+                s7_poison(&n[k], kind, &n[0], &prev[0], sent[k], seed + (uint32_t)p + 977u * (uint32_t)k);
+            }
+#if defined(B5S7_PREV_CLAIMED)
+            /* NC2: the near poison's claimed previous replaces what the receivers kept */
+            if (kind == 4) for (int k = honest; k < K5; k++) {
+                if (sent[k]) st_free(&sentm[k]);
+                clone(&sentm[k], &n[k]);
+                for (int i = 0; i < sentm[k].n_params; i++) sentm[k].w[i] = n[k].w[i] - (n[0].w[i] - prev[0].w[i]);
+                sent[k] = &sentm[k];
+            }
+#endif
+            st_model c[K5]; int has[K5];
+            for (int k = 0; k < honest; k++) has[k] = s7_cand(&c[k], mp, &prev[k], sent, k, trust, honest, gen);
+            /* what each node sent this round, as every receiver keeps it */
+            for (int k = 0; k < K5; k++) { if (sent[k]) st_free(&sentm[k]); clone(&sentm[k], &n[k]); sent[k] = &sentm[k]; }
+            for (int k = 0; k < honest; k++) {
+                apprentice_judge(&n[k], &ap[k], gen);
+                int r = 0;
+                if (has[k]) {
+                    r = st_round_adopt(&n[k], &c[k], fx + fx_end, fxn - fx_end, SEQ, NULL, NULL) == 1;
+                    if (!r && st_model_finite(&c[k])) { ap[k].m = c[k]; ap[k].has = 1; } else st_free(&c[k]);
+                }
+                if (k == 0) { took += r; tries++; }
+            }
+            for (int k = 0; k < honest; k++) { st_free(&prev[k]); clone(&prev[k], &n[k]); }
+        }
+        keep_see(&kp, &n[0], p);
+    }
+    char ex[128]; snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
+                           s6_refused, s6_tshn ? s6_tsh / s6_tshn : -1.0, s6_tspn ? s6_tsp / s6_tspn : -1.0);
+    keep_print(&kp, name, &n[0], ex);
+    for (int k = 0; k < K5; k++) { st_free(&n[k]); if (ap[k].has) st_free(&ap[k].m); if (sent[k]) st_free(&sentm[k]); }
+    for (int k = 0; k < honest; k++) st_free(&prev[k]);
+}
+/* which: "s7a" alone-A trim4 trust4 trim4-garb1 trust4-garb1;
+ *        "s7b" trust4-garb2 trust4-flip2 trust4-near2;
+ *        "s7y" trust4-yori1 trust4-yori2 (R6);
+ *        "s7c" trim4-near1 trust4-near1 (a reading, not a line) */
+static int s7(uint32_t seed, const char *which)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    lr = ST_LR;
+    kp_tag = "b5s7";
+#if defined(B5S7_TS_FROM_GJ)
+    const char *bld = "gj";
+#elif defined(B5S7_PREV_CLAIMED)
+    const char *bld = "claimed";
+#else
+    const char *bld = "plain";
+#endif
+    printf("[b5s7] seed %u lr %g build %s stage %s quarter %d B gate windows %d held windows %d\n",
+           (unsigned)seed, (double)lr, bld, which, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+    if (strcmp(which, "s7a") == 0) {
+        s5_alone_q(seed, "alone-A");
+        s7_rounds(seed, 0, 0, 1, "trim4");
+        s7_rounds(seed, 1, 0, 1, "trust4");
+        s7_rounds(seed, 0, 1, 1, "trim4-garb1");
+        s7_rounds(seed, 1, 1, 1, "trust4-garb1");
+    } else if (strcmp(which, "s7b") == 0) {
+        s7_rounds(seed, 1, 2, 1, "trust4-garb2");
+        s7_rounds(seed, 1, 2, 2, "trust4-flip2");
+        s7_rounds(seed, 1, 2, 3, "trust4-near2");
+    } else if (strcmp(which, "s7y") == 0) {
+        s7_rounds(seed, 1, 1, 4, "trust4-yori1");
+        s7_rounds(seed, 1, 2, 4, "trust4-yori2");
+    } else if (strcmp(which, "s7c") == 0) {
+        s7_rounds(seed, 0, 1, 3, "trim4-near1");
+        s7_rounds(seed, 1, 1, 3, "trust4-near1");
+    } else { fprintf(stderr, "s7: unknown stage %s\n", which); return 2; }
+    printf("[b5s7] done\n");
+    return 0;
+}
+
 /* ---- the self-test of st_merge_trust (s6unit) ---- */
 /* the reference, written apart from student.c: the peers in the order given,
  * libm sqrt, the same formula; compared with a tolerance (the fold order differs) */
@@ -1019,6 +1149,7 @@ int main(int argc, char **argv)
     if (argc > 3 && strcmp(argv[3], "s4") == 0) return s4(seed);
     if (argc > 3 && strncmp(argv[3], "s5", 2) == 0) return s5(seed, argv[3]);
     if (argc > 3 && strncmp(argv[3], "s6", 2) == 0) return s6(seed, argv[3]);
+    if (argc > 3 && strncmp(argv[3], "s7", 2) == 0) return s7(seed, argv[3]);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
