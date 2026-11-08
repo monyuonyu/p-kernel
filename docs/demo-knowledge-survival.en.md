@@ -1,6 +1,6 @@
 # Demo: kill the devices — do the taught records survive? (draft)
 
-> Draft (2026-10-25), an English rendering of [demo-knowledge-survival.md](demo-knowledge-survival.md) (2026-10-24). The numbers come from the v4 re-run in `docs/architecture/30-module/knowledge-survival.md` (2026-10-23) and the re-measurement in audit-69, and were re-run on the master of 2026-11-01. Before this goes out on 11/30, a separate run audits the numbers and the wording.
+> Draft (2026-10-25), an English rendering of [demo-knowledge-survival.md](demo-knowledge-survival.md) (2026-10-24). The numbers come from the v4 re-run in `docs/architecture/30-module/knowledge-survival.md` (2026-10-23) and the re-measurement in audit-69, and were re-run on the masters of 2026-11-01 and 2026-11-08. Before this goes out on 11/30, a separate run audits the numbers and the wording.
 
 ## What was done
 
@@ -20,7 +20,7 @@ Every number is the share of "survivors × 4 facts" that hold the record (held_m
 | 0.5 (4/8) | 1.0 / 1.0 | 0.125 / 0.125 | 0.125 | 0.375 / 0.5 |
 | 0.75 (6/8) | 1.0 / 1.0 | 0.125 / 0.125 | 0.125 | 0.375 / 0.5 |
 
-Each cell is seed 1 / seed 2 (a different set of killed nodes), one run per seed. Audit-69 re-measured seed 2 at f=0.25 and f=0.75; the record numbers matched to the last digit. All 12 runs (6 normal, 6 broken) re-run on the master of 2026-11-01 matched to the last digit too.
+Each cell is seed 1 / seed 2 (a different set of killed nodes), one run per seed. Audit-69 re-measured seed 2 at f=0.25 and f=0.75; the record numbers matched to the last digit. All 12 runs (6 normal, 6 broken) re-run on the master of 2026-11-01, and again on the master of 2026-11-08 (a1371f5f), matched to the last digit too (recall in the 6 normal runs of 11-08: 5 at 1.0, f=0.75 seed 2 at 0.875).
 
 How to read it: with 6 of 8 killed, the 2 survivors still held the records of all four facts. That is more than placing 3 copies (R3M), and the build that stops the spreading fell to "each teacher keeps only its own" (R1M) — what survived, survived because of the spreading.
 
