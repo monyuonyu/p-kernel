@@ -71,3 +71,4 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - E3c 違う `ark.key` のノードでは restore も get も開かない
 - **E3d（E1 の region の kill）** 中継＋A・B＋空の C: A が記録 3 つ（1 つは 10240 B・3 版）を書き、`sealed=` の id を控えて A を kill -9。A の `ark.key` を写した C が `ark rec restore <id>` で全記録の全版を全バイト同じに読め、`ark rec ls` が A の最後と同じ
 - 陰性 `-DARK_REC_PLAIN`（封じずに AKSF へ平文）で E3a 赤、`-DARK_REC_SAME_KEY`（版をまたいで同じ鍵）で「同じ鍵で 2 つ目を封じない」の自己試験が赤、`-DARK_REC_INDEX_LOCAL`（AKSI・AKSD を書かない）で E3d 赤、`-DARK_REC_AAD_INNER`（AAD に内の頭の kind を入れる＝第 1 版の形）で E3d 赤
+- **監査-170（限界つき PASS、作る回が守る条件 2 つ）**: ① 既定の目次の fanout は 127（`ARK_IDX_IDS`）、封じた `AKSI` は 124 まで＝既定では「同じ形の木」にならない（試験は fanout 4 なので見えない）。両方を 124 以下の同じ fanout にし、既定 fanout の単体の検査を足す ② `vis=public` の版を出さないと鎖と葉が欠け「全版を戻す」と食い違う。控えとしては public も封じて出す（公開の配り方とは別）。ほか: E3d は B が全部の AKS* を持つのを見てから kill、AKSD の前で止める版の試験（古い AKSD の id で戻る）、AKSI・AKSD の AAD を書く。§5 は約 2070 字で上限超え（作るときに削る）
