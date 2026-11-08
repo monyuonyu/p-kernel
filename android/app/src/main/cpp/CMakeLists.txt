@@ -200,6 +200,7 @@ set(COMMON_SRC
     ${ARCH_CO}/ed25519.c
     ${ARCH_CO}/ark_crypto.c
     ${ARCH_CO}/ark_crypto_selftest.c
+    ${ARCH_CO}/ark_rec.c
     ${ARCH_CO}/sign.c
     ${ARCH_CO}/compat_ota.c
     ${ARCH_CO}/compat_arkfs_gap.c

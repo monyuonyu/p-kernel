@@ -1623,10 +1623,12 @@ EXPORT INT usermain(void)
             print("[ark-crypto] not on Windows: the ark crypto parts need getrandom (ark-entry.md 3b)\r\n");
 #else
             extern void ark_crypto_self_test(void (*pr)(const char *));
+            extern INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *));
             const UB *a = line + 3; UW al = (UW)(n - 3);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 6 && a[0]=='c'&&a[1]=='r'&&a[2]=='y'&&a[3]=='p'&&a[4]=='t'&&a[5]=='o') ark_crypto_self_test(print);
-            else print("usage: ark crypto\r\n");
+            else if (!ark_rec_cmd(a, al, print))   /* ark-entry.md 2.1: ark rec / ark heir */
+                print("usage: ark crypto | ark rec ... | ark heir ...\r\n");
 #endif
         } else if (starts_with(line, n, "kdds")) {
             /* KDDS-DELCLUSTER cert (external audit 2026-06-13): `kdds test`

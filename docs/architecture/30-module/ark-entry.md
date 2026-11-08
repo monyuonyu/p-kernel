@@ -52,3 +52,5 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 ## 4. 順番
 
 詰め直しの直し → 暗号の部品 → 記録と目次（E1・E2・E4）→ 暗号で複製と預け（E3）→ 学習の印（E5）→ 画面（E6）→ v1.1（渡す処理）
+
+- 記録と目次（2026-11-09、feat/ark-rec、監査待ち）: `arch/common/ark_rec.c`（hosted だけ）とシェルの `ark rec`・`ark heir`、試験 `tests/host/run_ark_rec.sh`（E1 の再起動・E1c 目次の版の前で止める・E2 詰め直しの後・E4）。目次の 1 ブロックの数は試験では 4（`PKERNEL_ARK_REC_FANOUT`、目次を作るときだけ読み、目次の頭に残す）。作る途中で芯のバグ PFS-ARK-HAS（台帳）を見つけて直した: ARK では再起動の後に名前つきの物が全部読めなかった。`self/rec` の名前は refs.tab（`PKERNEL_PFS_DIR`）に残る＝ARK の像だけでは名前が戻らない（限界）。まだ: E1 の region の 1 台の kill、mw_gc を回す試験（今は「頭 4 バイトが MW_MAGIC でない」の読みだけ）、記録の時刻は試験しない
