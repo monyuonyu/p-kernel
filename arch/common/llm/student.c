@@ -2696,6 +2696,15 @@ int st_merge_trust_prev(st_model *into, const st_model *prev,
     return accepted;
 }
 
+int st_merge_trust_echo(st_model *into, const st_model *prev,
+                        const void *const *peer_blobs, const size_t *peer_lens,
+                        const void *const *peer_prev, const size_t *peer_prev_lens,
+                        int count, float *ts_out, float *c_out)
+{   /* TEST-FIRST STUB: no cut yet */
+    if (c_out) for (int k = 0; k < count && k < ST_COHORT_MAX; k++) c_out[k] = -2.0f;
+    return st_merge_trust_prev(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens, count, ts_out);
+}
+
 int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                    int n, int seq, float *live_loss, float *cand_loss)
 {

@@ -958,6 +958,88 @@ static int s7unit(void)
     return fails ? 1 : 0;
 }
 
+/* ---- the self-test of st_merge_trust_echo (s8unit, B5 step 8) ---- */
+static int s8u_merge(st_model *out, st_model *into, st_model *prev, st_model *const *peers,
+                     st_model *const *pprev, int no, float *ts, float *cs)
+{
+    clone(out, into);
+    const void *bs[8], *bp[8]; size_t ls[8], lp[8]; void *own[8], *ownp[8];
+    for (int j = 0; j < no; j++) {
+        own[j] = blob(peers[j], &ls[j]); bs[j] = own[j];
+        ownp[j] = pprev && pprev[j] ? blob(pprev[j], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
+    }
+    int r = st_merge_trust_echo(out, prev, bs, ls, pprev ? bp : NULL, pprev ? lp : NULL, no, ts, cs);
+    for (int j = 0; j < no; j++) { free(own[j]); free(ownp[j]); }
+    return r;
+}
+static int s8unit(void)
+{
+    /* hand: prev 0, g0 = (3,4,0). E = (3,4,1.6): cos(gj, g0) = 25/(5*5.2498) = 0.952
+     * >= tau 0.9, an echo. H = (3,4,3): cos 25/(5*5.8310) = 0.857 < tau. Their
+     * previous E - (3,4,0) and H - (3,4,0): both own updates (3,4,0), step 7's TS 1. */
+    st_model pv, me, e, h, e2, qe, qh, qe2;
+    st_init_tier(&pv, 3u, ST_TIER_S); clone(&me, &pv); clone(&e, &pv); clone(&h, &pv); clone(&e2, &pv);
+    clone(&qe, &pv); clone(&qh, &pv); clone(&qe2, &pv);
+    zero_w(&pv); zero_w(&me); zero_w(&e); zero_w(&h); zero_w(&e2); zero_w(&qe); zero_w(&qh); zero_w(&qe2);
+    me.w[0] = 3; me.w[1] = 4;
+    e.w[0] = 3; e.w[1] = 4; e.w[2] = 1.6f; qe.w[2] = 1.6f;
+    h.w[0] = 3; h.w[1] = 4; h.w[2] = 3;    qh.w[2] = 3;
+    e2.w[0] = 6; e2.w[1] = 8; e2.w[2] = 0.5f; qe2.w[0] = 3; qe2.w[1] = 4; qe2.w[2] = 0.5f;   /* cos 0.9988 */
+    st_model *pe[] = { &e, &h }, *qq[] = { &qe, &qh };
+    float ts[2], cs[2];
+    st_model r, r7, rh;
+    int rc = s8u_merge(&r, &me, &pv, pe, qq, 2, ts, cs);
+    printf("    hand: rc %d TS %.4f %.4f c %.4f %.4f w %.7g %.7g %.7g\n", rc, (double)ts[0], (double)ts[1],
+           (double)cs[0], (double)cs[1], (double)r.w[0], (double)r.w[1], (double)r.w[2]);
+    check(rc == 2 && near_f(cs[0], 0.95238f, 1e-4) && near_f(cs[1], 0.85749f, 1e-4), "s8-c",
+          "c_k on gj: 0.952 (the echo), 0.857 (honest)");
+    check(ts[0] == 0.0f && near_f(ts[1], 1.0f, 1e-6), "s8-cut", "c 0.95 -> TS 0; c 0.85 keeps step 7's TS 1");
+    { float t7[2]; st_model *p1[] = { &h }, *q1[] = { &qh };
+      s7u_merge(&r7, &me, &pv, pe, qq, 2, t7);
+      check(near_f(t7[0], 1.0f, 1e-6) && near_f(t7[1], 1.0f, 1e-6), "s8-step7", "step 7 on the same peers trusts the echo 1");
+      s7u_merge(&rh, &me, &pv, p1, q1, 1, NULL);
+      check(hash(&r) == hash(&rh), "s8-drop", "the echo cut: every byte of the merge of H alone");
+      check(hash(&r) != hash(&r7), "s8-moves", "and not step 7's bytes");
+      st_free(&r7); st_free(&rh); }
+    st_free(&r);
+    /* peer_prev NULL: the cut still works (c on gj), H keeps step 6's TS 0.857 */
+    { float t[2], c[2]; st_model x;
+      int r0 = s8u_merge(&x, &me, &pv, pe, NULL, 2, t, c);
+      check(r0 == 2 && t[0] == 0.0f && near_f(t[1], 0.85749f, 1e-4), "s8-null", "peer_prev NULL: echo TS 0, H step 6's 0.857");
+      st_free(&x); }
+    /* every peer an echo: refused, into byte-unchanged */
+    { st_model *pa[] = { &e, &e2 }, *qa[] = { &qe, &qe2 }; float t[2], c[2]; st_model x;
+      clone(&x, &me); uint64_t h0 = hash(&x); st_free(&x);
+      int r0 = s8u_merge(&x, &me, &pv, pa, qa, 2, t, c);
+      check(r0 == 0 && hash(&x) == h0 && t[0] == 0.0f && t[1] == 0.0f, "s8-all", "every peer an echo: refused (0), into every byte unchanged");
+      st_free(&x); }
+    /* real models with no echo: every byte of st_merge_trust_prev, with and without peer_prev */
+    enum { NM = 4 };
+    st_model m[NM];
+    for (int k = 0; k < NM; k++) st_init_tier(&m[k], 21u + (uint32_t)k, ST_TIER_S);
+    st_model q0; clone(&q0, &m[0]);
+    for (int p = 0; p < 2; p++) pass_q(&q0, 0);
+    for (int k = 1; k < NM; k++) { st_free(&m[k]); clone(&m[k], &m[0]); for (int p = 0; p < 2; p++) pass_q(&m[k], k); }
+    st_model mp[NM];
+    for (int k = 1; k < NM; k++) { clone(&mp[k], &m[k]); for (int p = 0; p < 1; p++) pass_q(&mp[k], (k + 1) % NM); }
+    st_model *pr[] = { &m[1], &m[2], &m[3] }, *pq[] = { &mp[1], &mp[2], &mp[3] };
+    { st_model a7, a8, b7, b8; float c[3];
+      s7u_merge(&a7, &q0, &m[0], pr, pq, 3, NULL); s8u_merge(&a8, &q0, &m[0], pr, pq, 3, NULL, c);
+      s7u_merge(&b7, &q0, &m[0], pr, NULL, 3, NULL); s8u_merge(&b8, &q0, &m[0], pr, NULL, 3, NULL, NULL);
+      printf("    real: c %.4f %.4f %.4f bytes %016llx %016llx %016llx %016llx\n", (double)c[0], (double)c[1], (double)c[2],
+             (unsigned long long)hash(&a7), (unsigned long long)hash(&a8), (unsigned long long)hash(&b7), (unsigned long long)hash(&b8));
+      check(c[0] < 0.9f && c[1] < 0.9f && c[2] < 0.9f, "s8-honest", "trained peers on other quarters: every c below tau");
+      check(hash(&a7) == hash(&a8), "s8-same", "no echo, with peer_prev: every byte of st_merge_trust_prev");
+      check(hash(&b7) == hash(&b8), "s8-same-null", "no echo, peer_prev NULL: every byte too");
+      st_free(&a7); st_free(&a8); st_free(&b7); st_free(&b8); }
+    for (int k = 1; k < NM; k++) st_free(&mp[k]);
+    for (int k = 0; k < NM; k++) st_free(&m[k]);
+    st_free(&q0);
+    st_free(&pv); st_free(&me); st_free(&e); st_free(&h); st_free(&e2); st_free(&qe); st_free(&qh); st_free(&qe2);
+    printf("[b5s8] unit %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
+    return fails ? 1 : 0;
+}
+
 /* ---- the self-test of st_merge_trimmed (audit-150's note on the design) ---- */
 static int cmp_total(const void *x, const void *y)   /* value, then -0 before +0 */
 {
@@ -1166,6 +1248,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "s5unit") == 0) return s5unit();
     if (argc > 1 && strcmp(argv[1], "s6unit") == 0) return s6unit();
     if (argc > 1 && strcmp(argv[1], "s7unit") == 0) return s7unit();
+    if (argc > 1 && strcmp(argv[1], "s8unit") == 0) return s8unit();
     if (argc < 3) { fprintf(stderr, "usage: %s unit | <b1_held.txt> <seed>\n", argv[0]); return 2; }
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
