@@ -9,7 +9,7 @@
 #   T2  wide 300 (TCP) sees 3, 43 and 259 ALIVE (v3 and v2 frames come in over the stream)
 #   T2b 300 has a round trip (rtt=) to 3, 43 and 259 (audit-163: T2 stayed green with the v3 MAC check
 #       broken, or with the replay slot taken by the low byte)
-#   T2c 260 has a round trip to 299 (audit-163: a wide unicast over TCP read by byte 5 only stayed green)
+#   T2c 260 has a round trip to 299 (coverage only: the byte-5-only break stays green, test-holes H20)
 #   T3  narrow 44 (TCP) has a round trip (rtt=) to 259 and 299: their v3 ACKs reach it, so its
 #       frames say "I read v3" in byte 10 (else the relay never forwards a wide frame to it).
 #       ALIVE alone is not enough: before the change 44 showed both ALIVE from the narrow
@@ -116,8 +116,8 @@ done
 has_rtt 300 3 && has_rtt 300 43 && has_rtt 300 259 \
     && res T2b PASS "wide 300 (TCP) has a round trip to 3, 43 and 259 (v3 read over the stream, a replay slot per id)" \
     || res T2b FAIL "wide 300 (TCP) has a round trip to {$(rtt_rows 300)}, wanted 3 43 259"
-# T2c (audit-163): wide 260 (UDP) has a round trip to 299: 300 answers 260 over TCP by a unicast to
-# MAC 52:54:00:00:01:04 (the high byte in 4:5); reading only byte 5 sent it to node 4 and stayed green
+# T2c (audit-163): wide 260 (UDP) has a round trip to 299. Coverage only: the break that reads only
+# byte 5 of the MAC (a wide unicast over TCP goes to node 4) stays green with T2c too (test-holes H20)
 has_rtt 260 299 && res T2c PASS "wide 260 (UDP) has a round trip to 299 (300 unicasts a wide id over TCP)" \
     || res T2c FAIL "wide 260 (UDP) has a round trip to {$(rtt_rows 260)}, wanted 299"
 wide_rtt() {  # the wide rows of node $1's last `nodes` table that carry an rtt, sorted
