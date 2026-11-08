@@ -1725,6 +1725,18 @@ jobs:
           (printf 'kdds ann\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_ann_nc.log || true
           grep -aF '[kdds-ann] FAIL drain' kdds_ann_nc.log
 
+      - name: "[n2-alive]: a killed narrow and a killed wide peer go DEAD on narrow and wide nodes, nobody else does (n2-wire16 'まだ' 4); A3 and A4 go red when a wide peer never dies (-DN2_NC_WIDE_NEVER_DEAD)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          timeout 300 tests/host/run_n2_alive.sh | tee n2_alive.log
+          grep -aF '[n2-alive] ALL PASS' n2_alive.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_WIDE_NEVER_DEAD >/dev/null
+          timeout 300 tests/host/run_n2_alive.sh | tee n2_alive_nc.log || true
+          grep -aF '[n2-alive] A3 FAIL' n2_alive_nc.log
+          grep -aF '[n2-alive] A4 FAIL' n2_alive_nc.log
+
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
     runs-on: ubuntu-latest
