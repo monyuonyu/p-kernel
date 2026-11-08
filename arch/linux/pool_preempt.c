@@ -1020,10 +1020,21 @@ INT nosw_relay_run(void (*out)(const char *))
  *   F2  precondition: high FP rounds that landed inside the runner's chunks
  * -DPK_PREEMPT_DROP_FP (preempt.c: on x86_64 the trampoline zeroes xmm0-15
  * instead of restoring them; on aarch64 the frame copy's fpsimd record loses
- * v0-v31) must turn F1 red. */
+ * v0-v31) must turn F1 red.
+ * x86_64 only (test-holes H11: the compiler keeps fp_chunk's doubles in the low
+ * xmm, so losing xmm12-15 or MXCSR stayed green): a second round where the runner
+ * holds 4 doubles in xmm12-15 and round-toward-zero in MXCSR inside an asm loop
+ * while the high task fills xmm12-15 with ones and sleeps under round-down.
+ *   F3  xmm12-15 unlike what the runner put there (of 4)
+ *   F4  MXCSR unlike the runner's 0x7f80 (got the value read back)
+ *   F5  precondition: high rounds while the runner held them
+ * -DPK_PREEMPT_DROP_FP_HI turns F3 red, -DPK_PREEMPT_DROP_MXCSR F4. Not looked
+ * at: x87, ymm upper halves, and on aarch64 a partial loss (v8-v31). */
 #define FP_HI    60
+#define FP_HI2   30
 #define FP_ITERS 20000
-static volatile INT fp_hrun, fp_during, fp_busy;
+static volatile INT fp_hrun, fp_during, fp_busy, fp_rounds;
+static volatile int fp_hdone;
 static volatile double fp_sink;
 static void fp_chunk(double s[8])
 {
@@ -1041,13 +1052,25 @@ static void t_fp_high(INT stacd, void *exinf)
 {
     double x[8] = { -3.5, 2.25, 9.0, -0.125, 7.75, -6.0, 0.5, 4.0 };
     (void)stacd; (void)exinf;
-    for (INT n = 0; n < FP_HI; n++) {
+    for (INT n = 0; n < fp_rounds; n++) {
+#if defined(__x86_64__)
+        /* H11: sleep under round-down (0x3f80) with xmm12-15 all ones, so a
+         * switch back that does not restore the runner's own shows */
+        static const unsigned mx_rd = 0x3f80, mx_def = 0x1f80;
+        __asm__ volatile("pcmpeqd %%xmm12, %%xmm12\n\tpcmpeqd %%xmm13, %%xmm13\n\t"
+                         "pcmpeqd %%xmm14, %%xmm14\n\tpcmpeqd %%xmm15, %%xmm15\n\t"
+                         "ldmxcsr %0" : : "m"(mx_rd) : "xmm12", "xmm13", "xmm14", "xmm15");
         tk_dly_tsk(2);
+        __asm__ volatile("ldmxcsr %0" : : "m"(mx_def));
+#else
+        tk_dly_tsk(2);
+#endif
         if (fp_busy) fp_during++;
         fp_chunk(x);
         fp_hrun++;
     }
     fp_sink = x[0];
+    fp_hdone = 1;
     tk_ext_tsk();
 }
 static void t_fp_runner(INT stacd, void *exinf)
@@ -1057,7 +1080,7 @@ static void t_fp_runner(INT stacd, void *exinf)
     INT chunks = 0, diff = 0;
     (void)stacd; (void)exinf;
     memcpy(s, s0, sizeof s);
-    fp_hrun = fp_during = 0;
+    fp_hrun = fp_during = 0; fp_rounds = FP_HI; fp_hdone = 0;
     ID t = pp_mk(t_fp_high, 19);
     if (t > 0) tk_sta_tsk(t, 0);
     fp_busy = 1;
@@ -1076,6 +1099,55 @@ static void t_fp_runner(INT stacd, void *exinf)
       pp_out(m); }
     pp_check(diff == 0, "F1", "doubles unlike the run without switches (of 8)", diff);
     pp_check(fp_during > 0, "F2", "precondition: high FP rounds inside the runner's chunks", fp_during);
+#if defined(__x86_64__)
+    {   /* H11: xmm12-15 and MXCSR held in asm across the high task's rounds */
+        static const double hin[4] = { 1.25, -2.5, 3.75, -5.0 };
+        static const unsigned mx_set = 0x7f80;      /* default masks, round toward zero */
+        double hout[4] = { 0, 0, 0, 0 };
+        unsigned mx_saved = 0, mx_got = 0;
+        unsigned long spin = 500000000UL;   /* bound (~2 s to ~1 min of pause): the high task may never finish */
+        INT hdiff = 0;
+        fp_hrun = fp_during = 0; fp_rounds = FP_HI2; fp_hdone = 0;
+        ID t2 = pp_mk(t_fp_high, 19);
+        if (t2 > 0) tk_sta_tsk(t2, 0);
+        fp_busy = 1;
+        __asm__ volatile(
+            "stmxcsr %[sv]\n\t"
+            "ldmxcsr %[set]\n\t"
+            "movsd  0(%[in]), %%xmm12\n\t"
+            "movsd  8(%[in]), %%xmm13\n\t"
+            "movsd 16(%[in]), %%xmm14\n\t"
+            "movsd 24(%[in]), %%xmm15\n\t"
+            "1:\n\t"
+            "pause\n\t"
+            "cmpl  $0, %[done]\n\t"
+            "jne   2f\n\t"
+            "dec   %[spin]\n\t"
+            "jnz   1b\n\t"
+            "2:\n\t"
+            "movsd %%xmm12,  0(%[out])\n\t"
+            "movsd %%xmm13,  8(%[out])\n\t"
+            "movsd %%xmm14, 16(%[out])\n\t"
+            "movsd %%xmm15, 24(%[out])\n\t"
+            "stmxcsr %[got]\n\t"
+            "ldmxcsr %[sv]\n\t"
+            : [sv] "+m"(mx_saved), [got] "=m"(mx_got), [spin] "+r"(spin)
+            : [set] "m"(mx_set), [in] "r"(hin), [out] "r"(hout), [done] "m"(fp_hdone)
+            : "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+        fp_busy = 0;
+        for (INT n = 0; n < 200 && !fp_hdone; n++) tk_dly_tsk(10);
+        if (t2 > 0) { tk_ter_tsk(t2); tk_del_tsk(t2); }
+        for (INT i = 0; i < 4; i++) if (memcmp(&hout[i], &hin[i], sizeof hin[i])) hdiff++;
+        { char m[200];
+          snprintf(m, sizeof m, "[fp] xmm12-15 held across %d high rounds: %g %g %g %g, MXCSR %#x%s\r\n",
+                   (int)fp_hrun, hout[0], hout[1], hout[2], hout[3], mx_got,
+                   spin ? "" : " (spin bound reached)");
+          pp_out(m); }
+        pp_check(hdiff == 0, "F3", "xmm12-15 unlike what the runner put there (of 4)", hdiff);
+        pp_check(mx_got == mx_set, "F4", "MXCSR unlike the runner's 0x7f80 (got)", (long)mx_got);
+        pp_check(fp_during > 0, "F5", "precondition: high rounds while the runner held xmm12-15", fp_during);
+    }
+#endif
     pp_done = 1;
     tk_wup_tsk(pp_caller);
     tk_ext_tsk();

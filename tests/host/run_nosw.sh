@@ -27,6 +27,8 @@
 #   netliveng  -DPK_NETLAN_PROBE_NO_GUARD, LAN up: must be RED on N23
 #   dropfp   -DPK_PREEMPT_DROP_FP (xmm0-15 zeroed, not restored): `tkconf fp`
 #            must be RED on F1 (plain also runs `tkconf fp`: ALL PASS)
+#   dropfphi -DPK_PREEMPT_DROP_FP_HI (only xmm12-15 zeroed): RED on F3 (H11)
+#   dropmxcsr -DPK_PREEMPT_DROP_MXCSR (default MXCSR put back): RED on F4 (H11)
 #   slowclaim  -DDRPC_FAULT_SLOW_CLAIM=200000 (drpc_claim's gap widened): ALL PASS
 #   slowclaimoff  the same with -DPK_NOSW_OFF: must be RED on N26
 # A negative-control arm that stays green fails this script.
@@ -158,6 +160,19 @@ else
     else echo "[result] dropfp not red on F1 (UNEXPECTED: lost FP registers went unseen)"; rc_all=1; fi
     echo ""
 fi
+# test-holes H11: a partial loss (xmm12-15 only, or MXCSR only) left F1 green
+fparm() {  # <name> <cflags> <check that must be red>
+    echo "[build] $1 ($2)"
+    local d; d=$(arm "$1" "$2")
+    if [ -z "$d" ]; then echo "[result] $1 build FAILED"; rc_all=1; return; fi
+    drive "$d" "tkconf fp" > "$WORK/$1.log"
+    grep '^\[fp\] \(FAIL\|PASS\|ALL PASS\|RED\)' "$WORK/$1.log"
+    if grep -q "^\[fp\] FAIL $3 " "$WORK/$1.log"; then echo "[result] $1 RED on $3 (expected)"
+    else echo "[result] $1 not red on $3 (UNEXPECTED)"; rc_all=1; fi
+    echo ""
+}
+fparm dropfphi "-DPK_PREEMPT_DROP_FP_HI" F3
+fparm dropmxcsr "-DPK_PREEMPT_DROP_MXCSR" F4
 expect_green slowclaim "-DDRPC_FAULT_SLOW_CLAIM=200000"
 expect_red slowclaimoff "-DDRPC_FAULT_SLOW_CLAIM=200000 -DPK_NOSW_OFF" N26
 
