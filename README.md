@@ -177,7 +177,7 @@ Not yet: the learning-side code still runs inside the kernel, and the same isola
 - **51 CI jobs**: builds for the five targets and the relay tests, plus tests that really kill processes, on every run. It also watches that the bare-metal kernel's machine code does not change unintentionally (`crown-text-identity`).
 - All nine issues found by an external audit in June 2026 (memory safety, missing signature checks, and others) have been fixed.
 - A bug where repeatedly killing and starting devices would occasionally crash the whole kernel (KILL-CHURN) was tracked down and fixed after ruling out seven hypotheses. One of them turned out to be caused by the very change meant to fix it — found by comparing with the unfixed kernel on the same day with the same procedure.
-- Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md). There are three right now (2026-10-24).
+- Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md). There are four right now (2026-11-08).
 
 ---
 
