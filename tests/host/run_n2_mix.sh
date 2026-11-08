@@ -269,8 +269,15 @@ if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
     [ -n "$late" ] && echo "[n2-mix] X3H note: no stop line from:$late after 30 s"
     send 300 "mind teach sky blue"; sleep 3
     send 300 "mind teach sea deep"; sleep 3      # the re-drive now carries sea, not sky
-    for i in 4 44 260; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
     hint299() { grep -aqE '^(p-kernel> )*\[mind\] mind/have from node 299: key [0-9]+ \("sky"\) never held here -> want' "$LOGDIR/node$1.log"; }
+    # node 4 resumes alone first: while 44 and 260 stay stopped nobody but 299 holds sky, so
+    # node 4's first sky hint must name 299. Resuming all three at once raced (CI 42488883666,
+    # first-sky-hint-not-299@4): a resumed peer that had already pulled sky put it in its own
+    # summary first. The others resume after node 4's hint (or the wait), and only node 4's
+    # first hint is judged (a truncated 299 reads 43, a real peer's id, so a peer's hint is no excuse)
+    R0[4]="$(resumed 4)"; send 4 "stop resume"
+    t=0; while [ "$t" -lt "$WAIT" ] && ! hint299 4; do sleep 1; t=$((t + 1)); done
+    for i in 44 260; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
     t=0; miss="?"
     while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
         sleep 3; t=$((t + 3)); miss=""; h=""
@@ -278,11 +285,9 @@ if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
         [ -z "$h" ] && miss=" no-want-from-299"
         for i in 4 44 260; do arrived "$i" sky 299 || miss="$miss sky@$i"; done
     done
-    # who printed the first sky hint (the first must name 299: nobody else held sky)
-    for i in 4 44 260; do
-        f="$(tr -d '\r' < "$LOGDIR/node$i.log" | grep -aoE 'mind/have from node [0-9]+: key [0-9]+ \("sky"\)' | head -1)"
-        case "$f" in ""|*"node 299:"*) ;; *) miss="$miss first-sky-hint-not-299@$i";; esac
-    done
+    # who printed node 4's first sky hint (it must name 299: nobody else held sky then)
+    f="$(tr -d '\r' < "$LOGDIR/node4.log" | grep -aoE 'mind/have from node [0-9]+: key [0-9]+ \("sky"\)' | head -1)"
+    case "$f" in *"node 299:"*) ;; *) miss="$miss first-sky-hint-not-299@4";; esac
     [ -z "$miss" ] && res X3H PASS "300's summary raised a want on{$h}, sky arrived from 299 at 4, 44, 260" \
                    || res X3H FAIL "missing or wrong:$miss"
 fi
