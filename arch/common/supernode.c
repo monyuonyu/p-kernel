@@ -120,7 +120,7 @@ static unsigned   snf_dlv_cnt   = 0;    /* SNF_DELIVERs received as dest      */
  * (10.1.0.(n+1) within our /24). */
 static UW snf_node_ip(pk_node_t n)
 {
-    return ((UW)(n + 1) << 24) | (net_my_ip & 0x00FFFFFFUL);
+    return (UW)pk_node_ip_like(n, (unsigned int)net_my_ip);   /* N2: a wide self too */
 }
 
 /* ------------------------------------------------------------------ */
