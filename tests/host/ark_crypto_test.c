@@ -30,6 +30,14 @@ int main(void)
 
     arkc_poly1305(P1305_KEY, P1305_MSG, sizeof P1305_MSG, tag);
     check(memcmp(tag, P1305_TAG, 16) == 0, "[arkc-poly1305] RFC 8439 2.5.2 tag");
+    {   /* appendix A.3 #1-#11; #5-#11 are the edges of the final reduction and of s's carry */
+        int bad = 0;
+        for (unsigned n = 0; n < sizeof A3 / sizeof A3[0]; n++) {
+            arkc_poly1305(A3[n].key, A3[n].msg, A3[n].len, tag);
+            if (memcmp(tag, A3[n].tag, 16) != 0) { printf("    A.3 #%u differs\n", n + 1); bad = 1; }
+        }
+        check(!bad, "[arkc-poly1305-a3] RFC 8439 appendix A.3, all 11 tags");
+    }
 
     arkc_poly1305_keygen(KG_KEY, KG_NONCE, otk);
     check(memcmp(otk, KG_OUT, 32) == 0, "[arkc-keygen] RFC 8439 2.6.2 one-time key");
