@@ -1,6 +1,6 @@
 [English](README.md) | [日本語](README.ja.md) | **简体中文**
 
-> 译自 [README.ja.md](README.ja.md)（日文版为原文），对应提交 `1ebec87f`。
+> 译自 [README.ja.md](README.ja.md)（日文版为原文），对应提交 `9a967382`。
 
 # p-kernel
 
