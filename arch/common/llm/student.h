@@ -421,6 +421,18 @@ int  st_merge_trust(st_model *into, const st_model *prev,
                     const void *const *peer_blobs, const size_t *peer_lens,
                     int count, float *ts_out);
 
+/* st_merge_trust_prev (B5 step 7, research/b5-step7-design.md): st_merge_trust
+ * with peer_prev[k] = the blob peer k sent the previous round, as the receiver
+ * kept it (peer_prev_lens[k] its length; the array or an entry may be NULL).
+ * With it TS_k = ReLU(cos(peer_k - peer_prev_k, g0)); the merge still moves
+ * toward peer_k (gj = peer_k - prev scaled to |g0|). A NULL entry, or one of
+ * another tier or not finite, is step 6's TS (from gj): peer_prev NULL gives
+ * st_merge_trust's bytes. Hosted only. */
+int  st_merge_trust_prev(st_model *into, const st_model *prev,
+                         const void *const *peer_blobs, const size_t *peer_lens,
+                         const void *const *peer_prev, const size_t *peer_prev_lens,
+                         int count, float *ts_out);
+
 /* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
  * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
  * is finite and its mean loss over the non-overlapping `seq` windows of

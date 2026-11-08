@@ -2579,9 +2579,38 @@ static int st_blob_w_cmp(const void *a, const void *b, int np)
     return 0;
 }
 
+/* B5 step 7 (research/b5-step7-design.md): the trust from the peer's own
+ * update. peer_prev[k] (may be NULL, or NULL entries) is what peer k sent the
+ * previous round, as this receiver kept it (never a peer's claim). With it,
+ * TS_k = ReLU(cos(peer_k - peer_prev_k, g0)); the merge still moves toward
+ * the peer's weights (gj = peer - prev scaled to |g0|). A NULL entry, or one
+ * that fails the tier or finite check, is step 6 (TS from gj): with peer_prev
+ * NULL every byte is step 6's. -DB5S7_TS_FROM_GJ: always gj (NC1 of the
+ * design). */
+static int st_prev_ok(const st_model *into, const void *const *pp, const size_t *pl, int k)
+{
+#if defined(B5S7_TS_FROM_GJ)
+    (void)into; (void)pp; (void)pl; (void)k;
+    return 0;
+#else
+    if (!pp || !pl || !pp[k]) return 0;
+    if (!st_blob_tier_ok(into, pp[k], pl[k])) return 0;
+    if (!st_blob_w_finite(pp[k], into->n_params)) return 0;
+    return 1;
+#endif
+}
+
 int st_merge_trust(st_model *into, const st_model *prev,
                    const void *const *peer_blobs, const size_t *peer_lens,
                    int count, float *ts_out)
+{
+    return st_merge_trust_prev(into, prev, peer_blobs, peer_lens, NULL, NULL, count, ts_out);
+}
+
+int st_merge_trust_prev(st_model *into, const st_model *prev,
+                        const void *const *peer_blobs, const size_t *peer_lens,
+                        const void *const *peer_prev, const size_t *peer_prev_lens,
+                        int count, float *ts_out)
 {
     if (!into || !into->w || !prev || !prev->w) return ST_E_ARG;
     if (prev->tier != into->tier || prev->n_params != into->n_params) return ST_E_ARG;
@@ -2612,14 +2641,21 @@ int st_merge_trust(st_model *into, const st_model *prev,
     double ts[ST_COHORT_MAX], sc[ST_COHORT_MAX], sum = 0.0;
     for (int a = 0; a < accepted; a++) {
         const void *b = peer_blobs[ord[a]];
-        double dot = 0.0, nj = 0.0;
+        const void *bp = st_prev_ok(into, peer_prev, peer_prev_lens, ord[a]) ? peer_prev[ord[a]] : NULL;
+        double dot = 0.0, nj = 0.0, nd = 0.0;
         for (int i = 0; i < np; i++) {
             double p = (double)prev->w[i];
             double g0 = (double)into->w[i] - p, gj = (double)st_blob_w_at(b, (size_t)i) - p;
-            dot += g0 * gj; nj += gj * gj;
+            if (bp) {                       /* step 7: the peer's own update */
+                double dj = (double)st_blob_w_at(b, (size_t)i) - (double)st_blob_w_at(bp, (size_t)i);
+                dot += g0 * dj; nd += dj * dj;
+            } else dot += g0 * gj;
+            nj += gj * gj;
         }
         nj = st_sqrt_d(nj);
-        double cs = nj > 0.0 ? dot / (n0 * nj) : 0.0;
+        double cs;
+        if (bp) { nd = st_sqrt_d(nd); cs = nd > 0.0 ? dot / (n0 * nd) : 0.0; }
+        else cs = nj > 0.0 ? dot / (n0 * nj) : 0.0;
 #if defined(B5S6_TRUST_FLAT)                /* NC1 of the design: every accepted peer trusted 1 */
         ts[a] = 1.0; (void)cs;
 #else
