@@ -1588,14 +1588,28 @@ jobs:
           git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
           git worktree add -q /tmp/n2old FETCH_HEAD
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
-      - name: "[ark-rec] negative controls: a version that forgets its previous one (-DARK_REC_OVERWRITE), self/rec before the index (-DARK_REC_DESC_FIRST), public by default (-DARK_REC_DEFAULT_PUBLIC), pfs_has blind to ARK (-DPFS_ARK_HAS_RESIDENT_ONLY, gap-ledger PFS-ARK-HAS), the ark leaves the node (-DARK_REC_SHARED)"
+      - name: "[ark-rec] negative controls: a version that forgets its previous one (-DARK_REC_OVERWRITE), ark/rec before the index (-DARK_REC_DESC_FIRST), public by default (-DARK_REC_DEFAULT_PUBLIC), pfs_has blind to ARK (-DPFS_ARK_HAS_RESIDENT_ONLY, gap-ledger PFS-ARK-HAS), the ark leaves the node (-DARK_REC_SHARED)"
         run: |
-          for nc in "ARK_REC_OVERWRITE:e1 e2 e4 stop" "ARK_REC_DESC_FIRST:stop" "ARK_REC_DEFAULT_PUBLIC:e4" "PFS_ARK_HAS_RESIDENT_ONLY:e1 e2 e4 stop" "ARK_REC_SHARED:local"; do
-            make -C boot/linux_x86_64 clean >/dev/null
-            make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-D"${nc%%:*}" >/dev/null
-            ARK_REC_EXPECT_RED="${nc#*:}" timeout 600 tests/host/run_ark_rec.sh | tee "ark_rec_${nc%%:*}.log" || true
-            grep -aF '[ark-rec] NC RED as expected' "ark_rec_${nc%%:*}.log"
-          done
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_OVERWRITE >/dev/null
+          ARK_REC_EXPECT_RED="e1 e2 e4 stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_OVERWRITE.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_OVERWRITE.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_DESC_FIRST >/dev/null
+          ARK_REC_EXPECT_RED="stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_DESC_FIRST.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_DESC_FIRST.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_DEFAULT_PUBLIC >/dev/null
+          ARK_REC_EXPECT_RED="e4" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_DEFAULT_PUBLIC.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_DEFAULT_PUBLIC.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_ARK_HAS_RESIDENT_ONLY >/dev/null
+          ARK_REC_EXPECT_RED="e1 e2 e4 stop" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_PFS_ARK_HAS_RESIDENT_ONLY.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_PFS_ARK_HAS_RESIDENT_ONLY.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SHARED >/dev/null
+          ARK_REC_EXPECT_RED="local" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_SHARED.log || true
+          grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
       - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3), T5 when a wide one-node frame is sent by the low byte of its MAC (-DN2_NC_TCP_DST_LOW_BYTE, test-holes H20)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
