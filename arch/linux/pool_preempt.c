@@ -1036,6 +1036,94 @@ INT nosw_relay_run(void (*out)(const char *))
 static volatile INT fp_hrun, fp_during, fp_busy, fp_rounds;
 static volatile int fp_hdone;
 static volatile double fp_sink;
+
+/* F6, F7 (both arches): the voluntary switch (knl_dispatch_entry, called like a
+ * function) must keep the FP state the ABI calls callee-saved: on x86_64 the
+ * control bits of MXCSR and the x87 control word, on aarch64 d8-d15 and FPCR.
+ * fp_hold_call(fn, in, out) loads `in` into them, calls fn (which starts a higher
+ * task that sets its own and exits, so the runner is switched out and back
+ * inside), stores them to `out` and puts its caller's back.
+ * -DPK_DISPATCH_NO_FPCTL (dispatch.S without the save) turns F6 red. */
+void fp_hold_call(void (*fn)(void), const void *in, void *out);
+#if defined(__x86_64__)
+__asm__(
+    "    .text\n"
+    "    .globl fp_hold_call\n"
+    "    .type  fp_hold_call, @function\n"
+    "fp_hold_call:\n"                       /* rdi fn, rsi in {u32 mxcsr, u16 cw}, rdx out */
+    "    pushq %r12\n"
+    "    subq  $16, %rsp\n"
+    "    stmxcsr 0(%rsp)\n"
+    "    fnstcw  4(%rsp)\n"
+    "    movq  %rdx, %r12\n"
+    "    ldmxcsr 0(%rsi)\n"
+    "    fldcw   4(%rsi)\n"
+    "    call  *%rdi\n"
+    "    stmxcsr 0(%r12)\n"
+    "    fnstcw  4(%r12)\n"
+    "    ldmxcsr 0(%rsp)\n"
+    "    fldcw   4(%rsp)\n"
+    "    addq  $16, %rsp\n"
+    "    popq  %r12\n"
+    "    ret\n"
+    "    .size fp_hold_call, . - fp_hold_call\n");
+#elif defined(__aarch64__)
+__asm__(
+    "    .text\n"
+    "    .globl fp_hold_call\n"
+    "    .type  fp_hold_call, %function\n"
+    "fp_hold_call:\n"                       /* x0 fn, x1 in {d8..d15, u64 fpcr}, x2 out */
+    "    stp  x29, x30, [sp, #-112]!\n"
+    "    mov  x29, sp\n"
+    "    stp  d8,  d9,  [sp, #16]\n"
+    "    stp  d10, d11, [sp, #32]\n"
+    "    stp  d12, d13, [sp, #48]\n"
+    "    stp  d14, d15, [sp, #64]\n"
+    "    mrs  x3, fpcr\n"
+    "    stp  x3, x19,  [sp, #80]\n"
+    "    mov  x19, x2\n"
+    "    ldp  d8,  d9,  [x1]\n"
+    "    ldp  d10, d11, [x1, #16]\n"
+    "    ldp  d12, d13, [x1, #32]\n"
+    "    ldp  d14, d15, [x1, #48]\n"
+    "    ldr  x3, [x1, #64]\n"
+    "    msr  fpcr, x3\n"
+    "    blr  x0\n"
+    "    stp  d8,  d9,  [x19]\n"
+    "    stp  d10, d11, [x19, #16]\n"
+    "    stp  d12, d13, [x19, #32]\n"
+    "    stp  d14, d15, [x19, #48]\n"
+    "    mrs  x3, fpcr\n"
+    "    str  x3, [x19, #64]\n"
+    "    ldp  x3, x19,  [sp, #80]\n"
+    "    msr  fpcr, x3\n"
+    "    ldp  d8,  d9,  [sp, #16]\n"
+    "    ldp  d10, d11, [sp, #32]\n"
+    "    ldp  d12, d13, [sp, #48]\n"
+    "    ldp  d14, d15, [sp, #64]\n"
+    "    ldp  x29, x30, [sp], #112\n"
+    "    ret\n"
+    "    .size fp_hold_call, . - fp_hold_call\n");
+#endif
+static volatile ID fpctl_tid;
+static volatile int fpctl_ran;
+static void t_fp_ctl(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+#if defined(__x86_64__)
+    static const unsigned mx_rd = 0x3f80;            /* round down */
+    static const unsigned short cw_rd = 0x077f;      /* x87: round down */
+    __asm__ volatile("ldmxcsr %0\n\tfldcw %1" : : "m"(mx_rd), "m"(cw_rd));
+#elif defined(__aarch64__)
+    __asm__ volatile("fmov d8, #-1.0\n\tfmov d9, #-1.0\n\tfmov d10, #-1.0\n\tfmov d11, #-1.0\n\t"
+                     "fmov d12, #-1.0\n\tfmov d13, #-1.0\n\tfmov d14, #-1.0\n\tfmov d15, #-1.0\n\t"
+                     "mov x9, #0x800000\n\tmsr fpcr, x9"   /* RMode = toward minus infinity */
+                     : : : "x9", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15");
+#endif
+    fpctl_ran = 1;
+    tk_ext_tsk();
+}
+static void fpctl_kick(void) { tk_sta_tsk(fpctl_tid, 0); }
 static void fp_chunk(double s[8])
 {
     double a = s[0], b = s[1], c = s[2], d = s[3], e = s[4], f = s[5], g = s[6], h = s[7];
@@ -1146,6 +1234,37 @@ static void t_fp_runner(INT stacd, void *exinf)
         pp_check(hdiff == 0, "F3", "xmm12-15 unlike what the runner put there (of 4)", hdiff);
         pp_check(mx_got == mx_set, "F4", "MXCSR unlike the runner's 0x7f80 (got)", (long)mx_got);
         pp_check(fp_during > 0, "F5", "precondition: high rounds while the runner held xmm12-15", fp_during);
+    }
+#endif
+#if defined(__x86_64__) || defined(__aarch64__)
+    {   /* F6, F7: the callee-saved FP state across a voluntary switch */
+        INT bad = 0;
+        char m[200];
+        fpctl_ran = 0;
+        fpctl_tid = pp_mk(t_fp_ctl, 19);
+#if defined(__x86_64__)
+        static const struct { unsigned mx; unsigned short cw; } in = { 0x7f80, 0x0f7f };  /* toward zero */
+        struct { unsigned mx; unsigned short cw; } out = { 0, 0 };
+        if (fpctl_tid > 0) fp_hold_call(fpctl_kick, &in, &out);
+        bad += (out.mx & ~0x3fu) != in.mx;   /* the status bits are caller-saved */
+        bad += out.cw != in.cw;
+        snprintf(m, sizeof m, "[fp] across a voluntary switch: MXCSR %#x (want %#x), x87 CW %#x (want %#x)\r\n",
+                 out.mx, in.mx, out.cw, in.cw);
+#else
+        static const struct { double d[8]; unsigned long fpcr; } in =
+            { { 1.5, -2.25, 3.125, -4.0, 5.5, -6.75, 7.0, -8.5 }, 0xC00000UL };            /* toward zero */
+        struct { double d[8]; unsigned long fpcr; } out;
+        memset(&out, 0, sizeof out);
+        if (fpctl_tid > 0) fp_hold_call(fpctl_kick, &in, &out);
+        for (INT i = 0; i < 8; i++) if (memcmp(&out.d[i], &in.d[i], sizeof in.d[i])) bad++;
+        bad += (out.fpcr & 0xC00000UL) != in.fpcr;
+        snprintf(m, sizeof m, "[fp] across a voluntary switch: d8 %g d15 %g (want 1.5 -8.5), FPCR RMode %#lx (want %#lx)\r\n",
+                 out.d[0], out.d[7], out.fpcr & 0xC00000UL, in.fpcr);
+#endif
+        pp_out(m);
+        if (fpctl_tid > 0) tk_del_tsk(fpctl_tid);
+        pp_check(bad == 0, "F6", "callee-saved FP state unlike before a voluntary switch", bad);
+        pp_check(fpctl_ran, "F7", "precondition: the higher task ran inside the call", fpctl_ran);
     }
 #endif
     pp_done = 1;
