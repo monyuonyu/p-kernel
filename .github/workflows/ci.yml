@@ -3657,6 +3657,11 @@ jobs:
         run: python3 tests/ci/test_build_all_list.py --selftest
       - name: test_build_all_list.py (build_all.sh builds every make -C ... EXTRA_CFLAGS=-D... here)
         run: python3 tests/ci/test_build_all_list.py
+      # CI 42445849552: -DST_MERGE_NO_FINITE (a falsifier that run_b5_rounds.sh builds
+      # itself, outside build_all.sh) stopped compiling with B5 step 7. Every -D of
+      # tests/llm/*.sh, built alone and syntax only, against each llm source naming it (~40 s).
+      - name: check_llm_falsifiers.py (each tests/llm falsifier macro still compiles)
+        run: python3 tests/ci/check_llm_falsifiers.py
       # inbox #39: a self-hosted job without the fork guard reddens. Not a wall (see the script).
       - name: check_runner_guard.py selftest (each offence reddens)
         run: python3 tests/ci/check_runner_guard.py --selftest
