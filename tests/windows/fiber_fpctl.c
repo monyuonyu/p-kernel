@@ -22,6 +22,9 @@
  * and the port's own tasks (this mimics win_prim.c, it is not the kernel).
  *
  * Build: x86_64-w64-mingw32-gcc -O1 -o fiber_fpctl.exe fiber_fpctl.c
+ * (audit-171: on the home box Smart App Control refuses many fresh unsigned
+ * builds by content - a renamed copy too, CodeIntegrity event 3077 - and lets
+ * others run, with no pattern in the flags; try another -O / -s if refused.)
  * Prints one line [win-fiber-fpctl] PASS|FAIL ... and exits 0 / 1.
  */
 #define WIN32_LEAN_AND_MEAN
@@ -43,12 +46,16 @@ static void set_cw(unsigned short v) { __asm__ volatile("fldcw %0" : : "m"(v)); 
 
 static unsigned got_mx;
 static unsigned short got_cw;
+/* audit-171: B must show it ran and its loads took hold inside B, or a switch
+ * that never reached B would pass A's check trivially */
+static volatile int b_ok;
 
 static void WINAPI fiber_b(void *arg)
 {
     (void)arg;
     set_mxcsr(B_MXCSR);
     set_cw(B_CW);
+    b_ok = ((get_mxcsr() & 0xFFC0u) == B_MXCSR) && ((get_cw() & 0x1F3Fu) == (B_CW & 0x1F3Fu));
     SwitchToFiber(fa);
     for (;;) SwitchToFiber(fmain);
 }
@@ -94,9 +101,9 @@ int main(int argc, char **argv)
         return 1;
     }
     SwitchToFiber(fa);
-    ok = ((got_mx & 0xFFC0u) == A_MXCSR) && ((got_cw & 0x1F3Fu) == (A_CW & 0x1F3Fu));
-    printf("[win-fiber-fpctl] %s mode=%s A after switch: mxcsr=0x%04X (want 0x%04X) cw=0x%04X (want 0x%04X)\n",
-           ok ? "PASS" : "FAIL", flt ? "FLOAT_SWITCH" : "no-flags(port)",
+    ok = b_ok && ((got_mx & 0xFFC0u) == A_MXCSR) && ((got_cw & 0x1F3Fu) == (A_CW & 0x1F3Fu));
+    printf("[win-fiber-fpctl] %s mode=%s b_ran=%d A after switch: mxcsr=0x%04X (want 0x%04X) cw=0x%04X (want 0x%04X)\n",
+           ok ? "PASS" : "FAIL", flt ? "FLOAT_SWITCH" : "no-flags(port)", (int)b_ok,
            got_mx & 0xFFC0u, A_MXCSR, got_cw & 0x1F3Fu, A_CW & 0x1F3Fu);
     return ok ? 0 : 1;
 }
