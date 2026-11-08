@@ -1200,9 +1200,12 @@ jobs:
       # ark-entry.md 3b, stage 1: ChaCha20, Poly1305 and the AEAD against the
       # RFC 8439 vectors (generated from the RFC text), ASan+UBSan, and a bit of
       # the tag/AAD/ciphertext refuses with all zero; stage 2: X25519 (RFC 7748
-      # 5.2 and 6.1, the ladder in ed25519.c, hosted only). nc: NO_PAD, TAG_NOCHECK,
-      # NO_CLAMP and NO_MASK redden their lines only. ~5 s.
-      - name: ark crypto stages 1-2 (RFC 8439 and RFC 7748 vectors, tamper and an all-zero K refused)
+      # 5.2 and 6.1, the ladder in ed25519.c, hosted only); stage 3 (first half):
+      # HMAC-SHA-512 on RFC 4231 4.2-4.8. nc: NO_PAD, TAG_NOCHECK,
+      # NO_CLAMP and NO_MASK redden their lines only. ~5 s. Audit-161 also diffed
+      # all of it against OpenSSL on 14,140 random inputs (not in CI: it needs
+      # python cryptography; pk-scratch/a161/diff.py).
+      - name: ark crypto stages 1-3 (RFC 8439, RFC 7748 and RFC 4231 vectors, tamper and an all-zero K refused)
         run: |
           timeout 120 tests/host/run_ark_crypto.sh | tee ark_crypto.log
           grep -aF '[ark-crypto] ALL PASS' ark_crypto.log

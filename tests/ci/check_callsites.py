@@ -85,6 +85,19 @@ def body(text, func):
     return None
 
 
+IF0 = re.compile(r"^[ \t]*#[ \t]*if[ \t]+0\b.*?^[ \t]*#[ \t]*endif\b[^\n]*", re.M | re.S)
+
+
+def code_only(b):
+    """the body without comments and #if 0 blocks (audit-161: the pinned call written into a
+    comment or under #if 0, with the break next to it, left the three rules without a
+    must-not green). Limit: a #if inside #if 0 is not followed (the block ends at the first
+    #endif, so a pinned call after that inner #endif still counts)."""
+    b = re.sub(r"/\*.*?\*/", " ", b, flags=re.S)
+    b = re.sub(r"//[^\n]*", " ", b)
+    return IF0.sub(" ", b)
+
+
 def check(texts):
     """texts: {file: text} -> [(rule id, ok, why)]"""
     out = []
@@ -93,6 +106,7 @@ def check(texts):
         if b is None:
             out.append((rid, False, "%s: %s() not found (renamed? move the rule with it)" % (f, func)))
             continue
+        b = code_only(b)
         miss = [p for p in must if not re.search(p, b)]
         bad = [p for p in mustnot if re.search(p, b)]
         why = "; ".join(["missing /%s/" % p for p in miss] + ["has /%s/" % p for p in bad])
@@ -123,13 +137,19 @@ def main(argv):
                       "rewrite the break)" % (rid, f))
                 bad += 1
                 continue
-            t = dict(texts)
-            t[f] = t[f].replace(old, new)
-            res = {r[0]: r[1] for r in check(t)}
-            red = sorted(k for k, ok in res.items() if not ok)
-            ok = red == [rid]
-            print("[callsites-self] %s break %s -> red %s" % ("ok   " if ok else "WRONG", rid, red))
-            bad += not ok
+            # the audit's break; then (audit-161) the same with the pinned text kept in a
+            # comment, in a // comment, or under #if 0
+            forms = [("", new), (" /*old*/", "/* %s */ %s" % (old, new)),
+                     (" //old", "%s // %s\n" % (new, old)),
+                     (" #if0", "\n#if 0\n%s\n#endif\n%s" % (old, new))]
+            for tag, rep in forms:
+                t = dict(texts)
+                t[f] = t[f].replace(old, rep)
+                res = {r[0]: r[1] for r in check(t)}
+                red = sorted(k for k, ok in res.items() if not ok)
+                ok = red == [rid]
+                print("[callsites-self] %s break %s%s -> red %s" % ("ok   " if ok else "WRONG", rid, tag, red))
+                bad += not ok
     for rid, ok, why in check(texts):
         print("[callsites] %s %s %s" % ("ok  " if ok else "RED ", rid, why))
         bad += not ok
