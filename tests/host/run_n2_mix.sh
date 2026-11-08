@@ -23,6 +23,8 @@
 # 260 and 300 are in SWIM's membership only (swim.c). N2_X3=1 adds X3 (a teach crosses the
 # mixed swarm, below; in CI since the want tail, N2 (c)(3)). X4 is not written yet.
 # N2_X3_PART=snow judges only X3's snow lines (wide -> new); fire (old -> wide) rides the want.
+# N2_X3=1 also runs X3H (a wide sender's mind/have summary raises a want, below) after X3;
+# N2_X3_PART=have runs X3H alone.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -200,8 +202,12 @@ fi
 #   fire (old -> wide): a new node answers the wide asker's want (the want tail). Unset: all of X3.
 if [ "${N2_X3:-0}" = 1 ]; then
     WIDE_IN="$WIDE"; [ "${N2_RELAY_OLD:-0}" = 1 ] && WIDE_IN=""
-    X3_FIRE=1; [ "${N2_X3_PART:-}" = snow ] && X3_FIRE=0
-    [ "$X3_FIRE" = 0 ] && [ -z "$WIDE_IN" ] && { echo "[n2-mix] N2_X3_PART=snow needs the wide nodes"; exit 2; }
+    X3_FIRE=1; X3_MAIN=1; X3_HAVE=1
+    case "${N2_X3_PART:-}" in
+        snow) X3_FIRE=0; X3_HAVE=0;;
+        have) X3_MAIN=0;;
+    esac
+    [ -z "$WIDE_IN" ] && [ -n "${N2_X3_PART:-}" ] && { echo "[n2-mix] N2_X3_PART=${N2_X3_PART} needs the wide nodes"; exit 2; }
     arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
     # a stopped node refuses teaches, and a teach is sent once: wait until every node has
     # printed its resume (a fixed 2 s lost the race on a loaded box: 300 taught while 4 was
@@ -216,6 +222,8 @@ if [ "${N2_X3:-0}" = 1 ]; then
     done
     [ -n "$late" ] && echo "[n2-mix] X3 note: no resume line from:$late after 30 s"
     sleep 2
+fi
+if [ "${N2_X3:-0}" = 1 ] && [ "$X3_MAIN" = 1 ]; then
     send 1 "mind teach fire warm"
     [ -n "$WIDE_IN" ] && send 300 "mind teach snow white"
     t=0; miss="?"
@@ -239,6 +247,44 @@ if [ "${N2_X3:-0}" = 1 ]; then
     [ "$X3_FIRE" = 0 ] && X3_WHAT="(snow part) snow from 299 on the new, none on the old"
     [ -z "$miss" ] && res X3 PASS "$X3_WHAT" \
                    || res X3 FAIL "missing or wrong:$miss"
+fi
+
+# X3H  a wide sender's mind/have summary raises a want (N2, research/n2-wire16.md "まだ" 1).
+#   4, 44 and 260 are stopped (a stopped node takes no teach and polls no summary), then wide
+#   300 teaches sky and after it sea. 300 re-drives only its LAST teach (m_republish_last),
+#   so after the resume sea comes by the re-drive and sky only by a pull: some resumed node
+#   must first see sky in 300's summary ("mind/have from node 299 ... -> want"; nobody else
+#   holds sky, so the first such line is from 299), and then sky must arrive at all three from
+#   299 (the want, the answer). Negative control: -DN2_NC_MH_NO_TAIL (300's summary says 0xFF
+#   with no tail and every reader drops it) leaves both red. N2_X3_PART=have runs X3H alone.
+if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
+    stops() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -ac 'stop\] stopped 1 local 1'; }
+    declare -A S0
+    for i in 4 44 260; do S0[$i]="$(stops "$i")"; send "$i" "stop now"; done
+    t=0; late="?"
+    while [ "$t" -lt 30 ] && [ -n "$late" ]; do
+        sleep 1; t=$((t + 1)); late=""
+        for i in 4 44 260; do [ "$(stops "$i")" -gt "${S0[$i]}" ] || late="$late $i"; done
+    done
+    [ -n "$late" ] && echo "[n2-mix] X3H note: no stop line from:$late after 30 s"
+    send 300 "mind teach sky blue"; sleep 3
+    send 300 "mind teach sea deep"; sleep 3      # the re-drive now carries sea, not sky
+    for i in 4 44 260; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
+    hint299() { grep -aqE '^(p-kernel> )*\[mind\] mind/have from node 299: key [0-9]+ \("sky"\) never held here -> want' "$LOGDIR/node$1.log"; }
+    t=0; miss="?"
+    while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
+        sleep 3; t=$((t + 3)); miss=""; h=""
+        for i in 4 44 260; do hint299 "$i" && h="$h $i"; done
+        [ -z "$h" ] && miss=" no-want-from-299"
+        for i in 4 44 260; do arrived "$i" sky 299 || miss="$miss sky@$i"; done
+    done
+    # who printed the first sky hint (the first must name 299: nobody else held sky)
+    for i in 4 44 260; do
+        f="$(tr -d '\r' < "$LOGDIR/node$i.log" | grep -aoE 'mind/have from node [0-9]+: key [0-9]+ \("sky"\)' | head -1)"
+        case "$f" in ""|*"node 299:"*) ;; *) miss="$miss first-sky-hint-not-299@$i";; esac
+    done
+    [ -z "$miss" ] && res X3H PASS "300's summary raised a want on{$h}, sky arrived from 299 at 4, 44, 260" \
+                   || res X3H FAIL "missing or wrong:$miss"
 fi
 
 if [ -z "$REDS" ]; then echo "[n2-mix] ALL PASS"; exit 0; fi

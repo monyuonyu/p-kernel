@@ -1544,7 +1544,8 @@ jobs:
             timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_old.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_old.log
           # X3: wide 300's teach reaches 4, 44 and 260 from 299 and no old node (kdds to wide peers, N2 (c)(1)),
-          # and old 0's fire reaches 260 and 300 (a new node answers the wide asker's want, N2 (c)(3) want)
+          # and old 0's fire reaches 260 and 300 (a new node answers the wide asker's want, N2 (c)(3) want);
+          # X3H: wide 300's mind/have summary raises a want on a new node, and sky arrives from 299 by the pull
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
@@ -1667,6 +1668,9 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MH_NO_TAIL >/dev/null
           (printf 'nodes mhwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mhwide_nc.log || true
           grep -aF '[mhwide] FAIL frame' nodes_mhwide_nc.log
+          # and the live X3H goes red under it too: nobody reads 300's summary, so nobody wants sky
+          N2_X3=1 N2_X3_PART=have N2_WAIT=60 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_mh.log || true
+          grep -aE '^\[n2-mix\] X3H FAIL.* no-want-from-299' n2_mix_nc_mh.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MH_RX_NARROW >/dev/null
           (printf 'nodes mhwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mhwide_nc2.log || true
