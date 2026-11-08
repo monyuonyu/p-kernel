@@ -243,12 +243,44 @@ int arkc_hmac_sha512(const uint8_t *key, size_t klen, const uint8_t *msg, size_t
     return 0;
 }
 
-/* ---- HKDF-SHA-512 (stage 3, RFC 5869): a stub for the test-first commit ---- */
+/* ---- HKDF-SHA-512 (stage 3, RFC 5869): PRK = HMAC(salt, IKM) (2.2), then
+ * T(i) = HMAC(PRK, T(i-1) || info || i) for i = 1..N, OKM = the first L bytes (2.3).
+ * Falsifiers: -DARKC_NC_HKDF_NO_CHAIN (T(i-1) left out: wrong from the second block on),
+ * -DARKC_NC_HKDF_NO_LIMIT (no 255 * 64 check: the counter byte wraps) ---- */
 int arkc_hkdf_sha512(const uint8_t *salt, size_t salt_len, const uint8_t *ikm, size_t ikm_len,
                      const uint8_t *info, size_t info_len, uint8_t *okm, size_t okm_len)
 {
-    (void)salt; (void)salt_len; (void)ikm; (void)ikm_len; (void)info; (void)info_len;
-    memset(okm, 0, okm_len);
+    static const uint8_t zeros[64];
+    uint8_t prk[64], t[64];
+#ifndef ARKC_NC_HKDF_NO_LIMIT
+    if (okm_len > 255u * 64u) { memset(okm, 0, okm_len); return -1; }
+#endif
+    if (!salt_len) { salt = zeros; salt_len = sizeof zeros; }   /* 2.2: HashLen zeros */
+    if (arkc_hmac_sha512(salt, salt_len, ikm, ikm_len, prk) != 0) { memset(okm, 0, okm_len); return -1; }
+    uint8_t *buf = (uint8_t *)malloc(64 + info_len + 1);
+    if (!buf) { wipe(prk, sizeof prk); memset(okm, 0, okm_len); return -1; }
+    size_t tl = 0, off = 0;                  /* T(0) is empty */
+    for (unsigned i = 1; off < okm_len; i++) {
+        size_t n = 0;
+#ifndef ARKC_NC_HKDF_NO_CHAIN
+        memcpy(buf, t, tl); n = tl;
+#else
+        (void)tl;
+#endif
+        if (info_len) memcpy(buf + n, info, info_len);
+        n += info_len;
+        buf[n++] = (uint8_t)i;
+        if (arkc_hmac_sha512(prk, sizeof prk, buf, n, t) != 0) {
+            wipe(buf, 64 + info_len + 1); free(buf); wipe(prk, sizeof prk); wipe(t, sizeof t);
+            memset(okm, 0, okm_len); return -1;
+        }
+        tl = 64;
+        size_t k = okm_len - off < 64 ? okm_len - off : 64;
+        memcpy(okm + off, t, k);
+        off += k;
+    }
+    wipe(buf, 64 + info_len + 1); free(buf);
+    wipe(prk, sizeof prk); wipe(t, sizeof t);
     return 0;
 }
 

@@ -1,7 +1,7 @@
 /* ark_crypto.h: the ark entry's crypto parts (docs/architecture/30-module/ark-entry.md 3b).
  * Stage 1: ChaCha20, Poly1305 and AEAD_CHACHA20_POLY1305 (RFC 8439 sections 2.4, 2.5, 2.6, 2.8).
  * Stage 2: X25519 (RFC 7748, the ladder in ed25519.c). Stage 3: HMAC-SHA-512 (RFC 4231);
- * HKDF on it and the one-use key box are next.
+ * HKDF-SHA-512 on it (RFC 5869, Wycheproof's vectors); the one-use key box is next.
  * Hosted only: no bare-metal Makefile lists ark_crypto.c.
  * Limits: no side-channel (timing, cache) testing; the tag compare is written in constant
  * time but not measured. */
