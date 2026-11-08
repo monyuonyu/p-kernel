@@ -345,7 +345,7 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
     rec.rec_no = no;
     if (rec_write(len, rid, vis < 0) != 0) { err("a block was not stored"); return; }
     if (index_set(no, rid) != 0) { err("the index was not saved"); return; }
-    say_ver(is_new ? "new" : "set"); P("\r\n");
+    say_ver(is_new ? "new" : "set"); P(" id="); phex(rid, 8); P("\r\n");   /* run_ark_rec.sh local looks for it on the other node */
 }
 
 static void cmd_rec(const UB *a, UW al)

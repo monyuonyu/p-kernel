@@ -31,7 +31,8 @@
 #      negative -DARK_REC_SHARED, red] relay + nodes 1 and 2 of one
 #      region, ARK backend each: A saves a shared name zz and an ark record a-one, B
 #      (after zz reached it) writes b-one. Green iff B adopted zz (the refs do reach
-#      B), no node logs a ref 'ark/...', A reads a-one and B b-one, nrec=1 each. Until
+#      B), no node logs a ref 'ark/...', B's `pfs ls` does not list A's record version (the
+#      id A printed), A reads a-one and B b-one, nrec=1 each. Until
 #      E3 the ark stays on its node (ark-entry.md 4, 2026-11-09).
 # Not here (ark-entry.md E1, after E3): the region kill of one node.
 # Negative controls (ARK_REC_EXPECT_RED=<the lines that must be red, no others>;
@@ -164,16 +165,18 @@ sleep 5                                    # several 800 ms ref beacons
 printf 'ark rec new 1 b-one\n' >&8
 sleep 5
 printf 'ark rec ls\nark rec get 0\n' >&7
-printf 'ark rec ls\nark rec get 0\n' >&8
+printf 'ark rec ls\nark rec get 0\npfs ls\n' >&8
 sleep 3
 kill "$PA" "$PB" "$RP" 2>/dev/null; exec 7>&- 8>&-; wait "$PA" "$PB" "$RP" 2>/dev/null
 for t in a b; do tr -d '\r' < "$d/l$t.log" | sed 's/^\(p-kernel> \)*//' > "$d/l$t.t"; done
 adopt=$(cat "$d/la.t" "$d/lb.t" | grep -acE "ref 'ark/")
-if [ "$mesh" = 1 ] && [ "$adopt" = 0 ] \
+aid=$(grep -aoE '^\[ark-rec\] new no=0 seq=1 .* id=[0-9a-f]{16}' "$d/la.t" | grep -oE '[0-9a-f]{16}$' | head -1)
+held=1; [ -n "$aid" ] && ! grep -aqE "^  $aid  len=" "$d/lb.t" && grep -aqE '^\[pfs\] blocks ' "$d/lb.t" && held=0
+if [ "$mesh" = 1 ] && [ "$adopt" = 0 ] && [ "$held" = 0 ] \
    && grep -aqE '^\[ark-rec\] index nrec=1 ' "$d/la.t" && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: a-one$' "$d/la.t" \
    && grep -aqE '^\[ark-rec\] index nrec=1 ' "$d/lb.t" && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: b-one$' "$d/lb.t"; then
-    say "ok   local: A's refs reach B (zz), no ark/ ref is adopted, A reads a-one and B b-one, nrec=1 each"
-else say "bad  local: mesh=$mesh ark/-adoptions=$adopt A[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/la.t" | tr '\n' '|')] B[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/lb.t" | tr '\n' '|')]"; bad="$bad local"; fi
+    say "ok   local: A's refs reach B (zz), no ark/ ref is adopted, B does not hold A's record $aid, A reads a-one and B b-one, nrec=1 each"
+else say "bad  local: mesh=$mesh ark/-adoptions=$adopt B-holds-A-record=$held(${aid:-no id}) A[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/la.t" | tr '\n' '|')] B[$(grep -aE '^\[ark-rec\]|ref .ark/' "$d/lb.t" | tr '\n' '|')]"; bad="$bad local"; fi
 
 # ---- verdict ----------------------------------------------------------------
 if [ -n "${ARK_REC_EXPECT_RED:-}" ]; then
