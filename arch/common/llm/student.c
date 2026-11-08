@@ -2595,7 +2595,9 @@ static int st_prev_ok(const st_model *into, const void *const *pp, const size_t 
 #else
     if (!pp || !pl || !pp[k]) return 0;
     if (!st_blob_tier_ok(into, pp[k], pl[k])) return 0;
+#ifndef ST_MERGE_NO_FINITE  /* the falsifier drops every finite check (st_blob_w_finite is not built) */
     if (!st_blob_w_finite(pp[k], into->n_params)) return 0;
+#endif
     return 1;
 #endif
 }
