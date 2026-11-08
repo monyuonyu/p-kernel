@@ -1667,6 +1667,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_LAN_WIDE_TO_1 >/dev/null
           timeout 60 tests/host/run_n2_lan.sh | tee n2_lan_nc.log || true
           grep -aF '[n2-lan] L1 FAIL' n2_lan_nc.log
+          # [n2-lan] L3 goes red when loopback makes a wide id node 1 (-DN2_NC_LOOP_WIDE_TO_1)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_LOOP_WIDE_TO_1 >/dev/null
+          timeout 60 tests/host/run_n2_lan.sh | tee n2_loop_nc.log || true
+          grep -aF '[n2-lan] L3 FAIL' n2_loop_nc.log
           # not judged (a reading for the race above): how fire reached the wide nodes without the tail
           N2_X3=1 N2_LOGDIR=/tmp/n2_mqw_l N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_mqw.log || true
           grep -a 'fire' /tmp/n2_mqw_l/node260.log /tmp/n2_mqw_l/node300.log /tmp/n2_mqw_l/node4.log /tmp/n2_mqw_l/node44.log | head -40 || true
