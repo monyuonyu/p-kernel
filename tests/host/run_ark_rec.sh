@@ -14,7 +14,11 @@
 #      index blocks, before the self/rec version) during `ark rec set 0 c3` leaves
 #      record 0 at seq 2 = "c2" with @1 = "c1" readable after a restart.
 #  E2  [ark-rec-e2] old versions stay readable after ark_compact: a small image
-#      (PKERNEL_ARK_SECTORS=ARK_REC_E2_SECTORS) and 24 versions of one record; the
+#      (PKERNEL_ARK_SECTORS=ARK_REC_E2_SECTORS, 512) and 24 versions of one record; the
+#      size was 160 before the code and is 512 after seeing it: 24 versions are ~120
+#      blocks, the live blocks after a compaction took ~1.6 sectors each (72 for 9
+#      versions), and they must stay under half the image (run_ark_full.sh); 160 was
+#      not worked out. 512 gives 6 compactions. The
 #      writer prints at least one compaction line and a fresh process reads all 24.
 #      (E1 also reads all 70 old versions.) mw_gc is not driven here: it drops only
 #      blocks whose first 4 bytes are MW_MAGIC and whose length is a weight chunk's
@@ -24,10 +28,13 @@
 #      two versions of self/heir (`ark heir log`: 1 set <first 8 hex>, 2 cleared),
 #      and both survive a restart.
 # Not here (ark-entry.md E1, later): the region kill of one node.
-# Negative controls (each must make its line red; ARK_REC_EXPECT_RED=<line>):
-#   -DARK_REC_OVERWRITE      e1 and e2 (a new version forgets its previous one)
-#   -DARK_REC_DESC_FIRST     stop   (self/rec is written before the index blocks)
-#   -DARK_REC_DEFAULT_PUBLIC e4     (a new record is public)
+# Negative controls (ARK_REC_EXPECT_RED=<the lines that must be red, no others>;
+# measured 2026-11-09 in the container):
+#   -DARK_REC_OVERWRITE         e1 e2 e4 stop (a new version forgets its previous one;
+#                               every line reads an old version)
+#   -DARK_REC_DESC_FIRST        stop  (self/rec is written before the index blocks)
+#   -DARK_REC_DEFAULT_PUBLIC    e4    (a new record is public)
+#   -DPFS_ARK_HAS_RESIDENT_ONLY e1 e2 e4 stop (pfs_has blind to ARK, gap-ledger PFS-ARK-HAS)
 #
 # Usage: tests/host/run_ark_rec.sh   (ARK_REC_BIN: default boot/linux_x86_64/p-kernel)
 #        ARK_REC_EXPECT_RED="e1 e2" ARK_REC_BIN=<negative build> tests/host/run_ark_rec.sh
@@ -38,7 +45,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${ARK_REC_BIN:-$ROOT/boot/linux_x86_64/p-kernel}"
-E2SEC="${ARK_REC_E2_SECTORS:-160}"
+E2SEC="${ARK_REC_E2_SECTORS:-512}"
 [ -x "$BIN" ] || { echo "[ark-rec] FAIL: no binary $BIN"; exit 1; }
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 
