@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen_ark_crypto_vectors.py <rfc8439.txt> -> C header on stdout (tests/host/ark_crypto_vectors.h).
+"""gen_ark_crypto_vectors.py <rfc8439.txt> [<rfc7748.txt> [<rfc4231.txt>]] -> C header on stdout (tests/host/ark_crypto_vectors.h).
 Each vector is found by its label line (1-based line number checked against the label text),
 parsed from the RFC's own layout (a colon list, possibly wrapped mid-byte, or an offset dump),
 and its length asserted. An auditor reruns this and diffs the header."""
@@ -169,8 +169,45 @@ def x25519_vectors(path):
         ("XK", h(776, "Their shared secret, K:")),
     ]
 
+def hmac_vectors(path):
+    """RFC 4231 4.2-4.8 (test cases 1-7): Key, Data and HMAC-SHA-512. A value is the hex
+    after "=" and on the lines indented 18 spaces below it (a page break inside is skipped);
+    the "(...)" comments are dropped. Case 5 (4.6) gives only the first 128 bits."""
+    R = open(path, encoding="ascii", errors="replace").read().split("\n")
+    s = next(i for i, l in enumerate(R) if l.startswith("4.2.  Test Case 1"))
+    e = next(i for i, l in enumerate(R) if l.startswith("5.  Security Considerations"))
+    cases, cur, field = [], None, None
+    for l in R[s:e]:
+        m = re.match(r"^4\.(\d)\.  Test Case (\d)", l)
+        if m:
+            assert int(m.group(2)) == len(cases) + 1, l
+            cur = {}; cases.append(cur); field = None; continue
+        # "=" optional: test case 3 (4.4) prints "Key            aaaa..." without it
+        m = re.match(r"^   (Key|Data|HMAC-SHA-\d+)\s*=?\s+([0-9a-f]+)", l)
+        if m:
+            field = m.group(1); cur[field] = m.group(2); continue
+        m = re.match(r"^ {18}([0-9a-f]+)", l)
+        if m and field:
+            cur[field] += m.group(1); continue
+        t = l.strip()
+        if t == "" or t.startswith(("Nystrom", "RFC 4231")):
+            continue                      # a blank or a page break: the field goes on
+        field = None                      # any other text ends the field
+    assert len(cases) == 7, len(cases)
+    out = []
+    for n, c in enumerate(cases, 1):
+        k, d, h = bytes.fromhex(c["Key"]), bytes.fromhex(c["Data"]), bytes.fromhex(c["HMAC-SHA-512"])
+        assert len(h) == (16 if n == 5 else 64), (n, len(h))
+        out.append((n, k, d, h))
+    assert [len(k) for _, k, _, _ in out] == [20, 4, 20, 25, 20, 131, 131], [len(k) for _, k, _, _ in out]
+    assert [len(d) for _, _, d, _ in out] == [8, 28, 50, 50, 20, 54, 152], [len(d) for _, _, d, _ in out]
+    return out
+
 if len(sys.argv) > 2:
     V += x25519_vectors(sys.argv[2])
+HM = hmac_vectors(sys.argv[3]) if len(sys.argv) > 3 else []
+for n, k, d, h in HM:
+    V += [("HM_KEY_%d" % n, k), ("HM_DATA_%d" % n, d), ("HM_MAC_%d" % n, h)]
 
 A3 = a3()
 assert [len(m) for _, _, m, _ in A3] == [64, 375, 375, 127, 16, 16, 48, 48, 16, 64, 48], \

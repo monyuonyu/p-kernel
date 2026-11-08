@@ -4,6 +4,7 @@
  * test is tests/host/ark_crypto_test.c (vectors generated from the RFC text).
  * Falsifiers: -DARKC_NC_NO_PAD (the AEAD's pad16 left out), -DARKC_NC_TAG_NOCHECK
  * (open does not compare the tag). Hosted only. */
+#include <stdlib.h>
 #include <string.h>
 #include "ark_crypto.h"
 #include "ed25519.h"
@@ -217,6 +218,28 @@ int arkc_aead_open(const uint8_t key[32], const uint8_t nonce[12], const uint8_t
         return -1;
     }
     arkc_chacha20(key, 1, nonce, ct, pt, len);
+    return 0;
+}
+
+/* ---- HMAC-SHA-512 (stage 3, RFC 2104 with SHA-512, checked on RFC 4231): the hash is
+ * ed25519.c's one-shot SHA-512, so the inner message is copied after the padded key ---- */
+int arkc_hmac_sha512(const uint8_t *key, size_t klen, const uint8_t *msg, size_t mlen, uint8_t out[64])
+{
+    uint8_t k0[128], ih[64];
+    memset(k0, 0, sizeof k0);
+    if (klen > 128) ed25519_sha512(key, klen, k0);   /* a long key is hashed first */
+    else if (klen) memcpy(k0, key, klen);
+    size_t cap = 128 + (mlen > 64 ? mlen : 64);
+    uint8_t *buf = (uint8_t *)malloc(cap);
+    if (!buf) { wipe(k0, sizeof k0); return -1; }
+    for (int i = 0; i < 128; i++) buf[i] = k0[i] ^ 0x36;
+    if (mlen) memcpy(buf + 128, msg, mlen);
+    ed25519_sha512(buf, 128 + mlen, ih);
+    for (int i = 0; i < 128; i++) buf[i] = k0[i] ^ 0x5c;
+    memcpy(buf + 128, ih, 64);
+    ed25519_sha512(buf, 128 + 64, out);
+    wipe(buf, cap); free(buf);
+    wipe(k0, sizeof k0); wipe(ih, sizeof ih);
     return 0;
 }
 

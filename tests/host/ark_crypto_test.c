@@ -99,6 +99,26 @@ int main(void)
     int r1 = arkc_x25519(t, XA_PRIV, u);
     check(r0 == -1 && r1 == -1 && all_zero(xo, 32), "[arkc-x25519-zero] u = 0 and u = 1 give an all-zero K: refused");
 
+    /* ---- stage 3: HMAC-SHA-512 (C3, RFC 4231 4.2-4.8; case 5 is the first 128 bits) ---- */
+    {
+        const struct { const uint8_t *k, *d, *m; size_t kl, dl, ml; } hm[7] = {
+            { HM_KEY_1, HM_DATA_1, HM_MAC_1, sizeof HM_KEY_1, sizeof HM_DATA_1, sizeof HM_MAC_1 },
+            { HM_KEY_2, HM_DATA_2, HM_MAC_2, sizeof HM_KEY_2, sizeof HM_DATA_2, sizeof HM_MAC_2 },
+            { HM_KEY_3, HM_DATA_3, HM_MAC_3, sizeof HM_KEY_3, sizeof HM_DATA_3, sizeof HM_MAC_3 },
+            { HM_KEY_4, HM_DATA_4, HM_MAC_4, sizeof HM_KEY_4, sizeof HM_DATA_4, sizeof HM_MAC_4 },
+            { HM_KEY_5, HM_DATA_5, HM_MAC_5, sizeof HM_KEY_5, sizeof HM_DATA_5, sizeof HM_MAC_5 },
+            { HM_KEY_6, HM_DATA_6, HM_MAC_6, sizeof HM_KEY_6, sizeof HM_DATA_6, sizeof HM_MAC_6 },
+            { HM_KEY_7, HM_DATA_7, HM_MAC_7, sizeof HM_KEY_7, sizeof HM_DATA_7, sizeof HM_MAC_7 },
+        };
+        int bad = 0;
+        uint8_t mac[64];
+        for (int n = 0; n < 7; n++) {
+            if (arkc_hmac_sha512(hm[n].k, hm[n].kl, hm[n].d, hm[n].dl, mac) != 0
+                || memcmp(mac, hm[n].m, hm[n].ml) != 0) { printf("    RFC 4231 case %d differs\n", n + 1); bad = 1; }
+        }
+        check(!bad, "[arkc-hmac512] RFC 4231 4.2-4.8, all 7 cases (case 5 truncated to 128 bits)");
+    }
+
     printf("SUMMARY: %d FAIL\n", fails);
     return fails ? 1 : 0;
 }

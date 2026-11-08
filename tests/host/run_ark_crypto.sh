@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/host/run_ark_crypto.sh — ark-entry.md 3b, stages 1 and 2 (C1, C2, C4):
+# tests/host/run_ark_crypto.sh — ark-entry.md 3b, stages 1-3 (C1, C2, C3 HMAC, C4):
 # arch/common/ark_crypto.c against the RFC 8439 vectors of 2.4.2, 2.5.2, 2.6.2 and
 # 2.8.2, appendix A.3 #1-#11 and A.5 (tests/host/ark_crypto_vectors.h, generated from the
 # RFC text by gen_ark_crypto_vectors.py), plus the
@@ -24,7 +24,7 @@ if [ "$MODE" != nc ]; then
     $CC $CF -fsanitize=address,undefined -fno-sanitize-recover=all $SRC -o "$W/plain" \
         || { echo "[ark-crypto] build FAILED"; exit 1; }
     "$W/plain" | tee "$W/plain.log"
-    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 14 ]; then
+    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 15 ]; then
         echo "[ark-crypto] ALL PASS"; exit 0
     fi
     echo "[ark-crypto] RED"; exit 1
