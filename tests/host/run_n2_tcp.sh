@@ -7,9 +7,12 @@
 #       id was refused on TCP and fell back to UDP
 #   T1  narrow 4 (UDP) sees 43, 259 and 299 ALIVE
 #   T2  wide 300 (TCP) sees 3, 43 and 259 ALIVE (v3 and v2 frames come in over the stream)
-#   T3  narrow 44 (TCP) sees 259 and 299 ALIVE: its frames say "I read v3" in byte 10, or the
-#       relay never forwards a wide frame to it
-#   T4  300 teaches snow: it arrives at 4, 44 and 260 from node 299 (kdds over v3 on TCP)
+#   T3  narrow 44 (TCP) has a round trip (rtt=) to 259 and 299: their v3 ACKs reach it, so its
+#       frames say "I read v3" in byte 10 (else the relay never forwards a wide frame to it).
+#       ALIVE alone is not enough: before the change 44 showed both ALIVE from the narrow
+#       peers' rumours (no rtt, then SUSPECT), and that was green (11-08, master's binary)
+#   T4  300 teaches snow: it arrives at 4, 44 and 260 from node 299. Limit: also green before
+#       the change (300 was on UDP then, and 44 got snow another way), so T4 is coverage only
 #
 # Negative controls: -DN2_NC_TCP_WIDE_REFUSE (the old rule) reddens T0, -DN2_NC_TCP_NO_READS_V3
 # (byte 10 stays 0) reddens T3.
@@ -93,8 +96,17 @@ all_alive 4 43 259 299 && res T1 PASS "narrow 4 (UDP) sees 43, 259, 299" \
                        || res T1 FAIL "narrow 4 (UDP):$(states 4 43 259 299)"
 all_alive 300 3 43 259 && res T2 PASS "wide 300 (TCP) sees 3, 43, 259" \
                        || res T2 FAIL "wide 300 (TCP):$(states 300 3 43 259)"
-all_alive 44 259 299 && res T3 PASS "narrow 44 (TCP) sees 259 and 299" \
-                     || res T3 FAIL "narrow 44 (TCP):$(states 44 259 299)"
+wide_rtt() {  # the wide rows of node $1's last `nodes` table that carry an rtt, sorted
+    tr -d '\r' < "$LOGDIR/node$1.log" \
+        | awk '/\[cluster\]  ID/{s=""; next} /^ +[0-9]+  ALIVE .* wide  rtt=[0-9]+ms/{s=s" "$1} END{print s}' \
+        | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -n | tr '\n' ' '
+}
+t=0; r="$(wide_rtt 44)"
+while [ "$t" -lt "$WAIT" ] && [ "$r" != "259 299 " ]; do
+    sleep 3; t=$((t + 3)); send 44 "nodes"; sleep 1; r="$(wide_rtt 44)"
+done
+[ "$r" = "259 299 " ] && res T3 PASS "narrow 44 (TCP) has a round trip to {$r}" \
+                      || res T3 FAIL "narrow 44 (TCP) has a round trip to {$r}, wanted {259 299 } ($(states 44 259 299))"
 
 arrived() { grep -aqE "remote teach arrived: \"$2\".* from node $3 " "$LOGDIR/node$1.log"; }
 sleep 2
