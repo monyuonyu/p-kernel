@@ -26,6 +26,10 @@
 - 生きた試験: run_relay_failover を 2 回ずつ（移した後）
 - 約束ごとの試験（tkconf）とベアの 2 つの build が通ること。kdds.c はベアに入る＝crown が動く→ re-bless を判断待ちに（24 時間の決まり）
 
+## 3b. 第 2 段（2026-11-08、hosted だけ）
+
+pfs_repl の ann の受けを kdds_sub_next に移した（`pfsr_ann_drain`、1 tick に最大 8 通、送り手ごとの seq の重複落としは残す。ベアは kdds_sub のまま 1 通＝crown 全桁同じ）。試験 `kdds ann`、陰性 -DPFSR_NC_ANN_LATEST。run_relay_failover は移す前と後で 2 回ずつ PASS（この試験は ann を通らない＝回帰の確認だけ）。CI: UMP x86_64 に `kdds ann` と陰性 2 本（KDDS_NC_NO_QUEUE も）。限界: task が drain を呼ぶことは cert が見ない。ann を生きた群れで通す試験はまだ無い
+
 ## 4. 限界
 
 待ち行列は全部の話題で共有＝1 つの話題が溢れさせると他も古いものを失う（捨てた数で見える）。順番は 1 台の中での着いた順で、送り手をまたいだ順序は約束しない

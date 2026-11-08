@@ -65,6 +65,7 @@ IMPORT void ai_stats_print(void);
 IMPORT void kdds_init(void);
 IMPORT INT  mt_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3), r3_incontext.c */
 IMPORT int  pk_node_ip_self_test(void (*emit)(const char *));   /* N2, drpc.c */
+IMPORT INT  pfs_repl_ann_self_test(void (*emit)(const char *));   /* R-KDDSQ stage 2, pfs_repl.c */
 IMPORT INT  mq_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) want, r3_incontext.c */
 IMPORT INT  mh_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) have, r3_incontext.c */
 IMPORT INT  net_onlink_self_test(void (*emit)(const char *));   /* N2, netstack.c */
@@ -1627,6 +1628,8 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') kdds_wide_self_test(print);
             /* R-KDDSQ: `kdds queue` checks kdds_sub_next (kdds-queue.md). */
             else if (al >= 5 && a[0]=='q'&&a[1]=='u'&&a[2]=='e'&&a[3]=='u'&&a[4]=='e') kdds_queue_self_test(print);
+            /* R-KDDSQ stage 2: `kdds ann` checks the pfs announce reader (pfs_repl.c). */
+            else if (al >= 3 && a[0]=='a'&&a[1]=='n'&&a[2]=='n') pfs_repl_ann_self_test(print);
             else kdds_list();
         } else if (starts_with(line, n, "pfs")) {
             cmd_pfs(line, n);
