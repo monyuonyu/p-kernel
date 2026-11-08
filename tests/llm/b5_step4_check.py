@@ -32,7 +32,7 @@ DK = 0.04      # fixed in the design (section 3) from exploration seeds 91..95, 
 D1 = 0.10
 NEED = 7
 SEEDS = " ".join(str(s) for s in range(99, 107))   # the judgement seeds (main's default)
-ARM =re.compile(r"^\[b5s4\] arm=(\S+) last=([0-9.]+) kept=([0-9.]+) at (\d+) \(gate ([0-9.]+)\)")
+ARM = re.compile(r"^\[b5s4\] arm=(\S+) last=([0-9.]+) kept=([0-9.]+) at (\d+) \(gate ([0-9.]+)\)")
 NEEDED = ["alone-A", "alone-B", "full", "shrink-app", "apprentice", "poison-app"]
 
 
