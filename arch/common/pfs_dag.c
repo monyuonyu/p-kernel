@@ -362,11 +362,23 @@ void pfs_dag_restore(void)
  * (probe: B adopted A's index and could not save its own). Hosted only (the ark
  * is hosted); -DARK_REC_SHARED is the old, shared behaviour (negative control). */
 #if defined(_TK_HOSTED_LIBC_) && !defined(ARK_REC_SHARED)
-#define pd_local_name(name, nlen) \
+#define pd_ark_name(name, nlen) \
     ((nlen) >= 4 && (name)[0] == 'a' && (name)[1] == 'r' && (name)[2] == 'k' && (name)[3] == '/')
 #else
-#define pd_local_name(name, nlen) 0
+#define pd_ark_name(name, nlen) 0
 #endif
+/* SELF-REF-REGION-SHARED (2026-11-09, tests/host/run_self_ref_local.sh): the same for
+ * "self/" (self/prof, self/prov, self/lin, self/sig): node B adopted node A's as its
+ * own, so A's consent opened B's gate (ark-profile.md 7.3) and B showed A's profile.
+ * The blocks still replicate (P1); only the name stays with its node. Hosted only
+ * (the gate is hosted); -DSELF_REF_SHARED is the old behaviour (negative control). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(SELF_REF_SHARED)
+#define pd_self_name(name, nlen) \
+    ((nlen) >= 5 && (name)[0] == 's' && (name)[1] == 'e' && (name)[2] == 'l' && (name)[3] == 'f' && (name)[4] == '/')
+#else
+#define pd_self_name(name, nlen) 0
+#endif
+#define pd_local_name(name, nlen) (pd_ark_name(name, nlen) || pd_self_name(name, nlen))
 
 static void beacon_publish(void)
 {
