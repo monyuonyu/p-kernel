@@ -14,6 +14,11 @@ that falsifier by hand since step 7.
 
 What it catches: a call or name that a macro removes but another part still
 uses (implicit declaration, undeclared identifier, any compile error).
+Names built from a shell variable (-DST_GPTQ_$v) are found from the other
+side: every macro with that prefix that an llm source tests with #ifdef,
+#ifndef or defined() and never #defines (audit-160: 30 names, 21 of them
+built by nothing before).
+
 What it does not: link errors of non-static functions that stay declared in a
 header, macros combined with each other (each macro is built alone, as well as
 the plain build), and anything at run time.
@@ -50,6 +55,40 @@ def macros(root):
     return out
 
 
+COMPOSED = re.compile(r'-D([A-Z][A-Z0-9_]*_)\$')
+EXISTS = re.compile(r'^\s*#\s*(?:ifdef|ifndef)\s+([A-Z][A-Z0-9_]*)|defined\s*\(?\s*([A-Z][A-Z0-9_]*)', re.M)
+DEFINE = re.compile(r'^\s*#\s*define\s+([A-Z][A-Z0-9_]*)', re.M)
+
+
+def composed(root, srcs):
+    """-D<PREFIX>_$v in tests/llm/*.sh (the name is built from a shell variable,
+    e.g. run_st_gptq.sh's -DST_GPTQ_$v): every macro the llm sources test for
+    existence (#ifdef, #ifndef, defined) with that prefix and never #define
+    themselves (those are settings with a default, not falsifiers).
+    audit-160: these were not built at all (a break under -DST_GPTQ_NOSEQ stayed green)."""
+    d = os.path.join(root, "tests", "llm")
+    pre = set()
+    for f in sorted(os.listdir(d)):
+        if f.endswith(".sh"):
+            with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if not line.lstrip().startswith("#"):
+                        pre.update(COMPOSED.findall(line))
+    hdr = ""
+    ld = os.path.join(root, "arch", "common", "llm")
+    for f in sorted(os.listdir(ld)):
+        if f.endswith(".h"):
+            with open(os.path.join(ld, f), encoding="utf-8", errors="replace") as fh:
+                hdr += fh.read()
+    defined = set(DEFINE.findall(hdr))
+    tested = set()
+    for _, text in srcs:
+        defined.update(DEFINE.findall(text))
+        for a, b in EXISTS.findall(text):
+            tested.add(a or b)
+    return sorted(n for n in tested if n not in defined and any(n.startswith(p) for p in pre))
+
+
 def sources(root):
     out = []
     for sub in (("arch", "common", "llm"), ("tests", "llm")):
@@ -66,7 +105,10 @@ def builds(root):
     """-> [(source path, macro, value)], plain first"""
     srcs = sources(root)
     res = [(p, "", "") for p, _ in srcs]
-    for (name, val), _ in sorted(macros(root).items()):
+    ms = macros(root)
+    for name in composed(root, srcs):
+        ms.setdefault((name, ""), set()).add("(composed)")
+    for (name, val), _ in sorted(ms.items()):
         word = re.compile(r"\b%s\b" % re.escape(name))
         for p, text in srcs:
             if word.search(text):
@@ -121,7 +163,8 @@ def main(argv):
     for p in sorted(alone):
         print("[llm-fals] not checked (does not compile alone even plain): %s" % os.path.relpath(p, root))
     print("[llm-fals] %d builds, %d broken, %d skipped by the source's own #error, %d sources not checked"
-          " (%d macros from tests/llm/*.sh)" % (len(bl), bad, skip, len(alone), len(macros(root))))
+          " (%d macros from tests/llm/*.sh, %d by a composed -DPREFIX_$v)"
+          % (len(bl), bad, skip, len(alone), len(macros(root)), len(composed(root, sources(root)))))
     if len(alone) > MAX_ALONE:
         bad += 1
         print("[llm-fals] BROKEN more than %d sources do not compile alone (a header moved?)" % MAX_ALONE)
