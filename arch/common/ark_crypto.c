@@ -284,6 +284,23 @@ int arkc_hkdf_sha512(const uint8_t *salt, size_t salt_len, const uint8_t *ikm, s
     return 0;
 }
 
+/* ---- the one-use key box (stage 4): a stub for the test-first commit ---- */
+int arkc_box_new(arkc_box *b) { (void)b; return -1; }
+int arkc_box_seal(arkc_box *b, const uint8_t *aad, size_t aad_len,
+                  const uint8_t *pt, size_t len, uint8_t *ct, uint8_t tag[16])
+{ (void)b; (void)aad; (void)aad_len; (void)pt; (void)len; (void)ct; (void)tag; return -1; }
+int arkc_box_open(const arkc_box *b, const uint8_t *aad, size_t aad_len,
+                  const uint8_t *ct, size_t len, const uint8_t tag[16], uint8_t *pt)
+{ (void)b; (void)aad; (void)aad_len; (void)ct; (void)len; (void)tag; (void)pt; return -1; }
+int arkc_box_wrap(const arkc_box *b, const uint8_t to_pub[32], uint8_t out[ARKC_WRAP_LEN])
+{ (void)b; (void)to_pub; (void)out; return -1; }
+int arkc_box_wrap_eph(const arkc_box *b, const uint8_t to_pub[32], const uint8_t eph[32],
+                      uint8_t out[ARKC_WRAP_LEN])
+{ (void)b; (void)to_pub; (void)eph; (void)out; return -1; }
+int arkc_box_unwrap(arkc_box *b, const uint8_t my_priv[32], const uint8_t in[ARKC_WRAP_LEN])
+{ (void)b; (void)my_priv; (void)in; return -1; }
+void arkc_box_wipe(arkc_box *b) { (void)b; }
+
 /* ---- X25519 (stage 2, RFC 7748): the ladder is ed25519.c's ---- */
 int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32])
 {

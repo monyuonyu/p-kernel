@@ -7,6 +7,7 @@
 #include "ark_crypto.h"
 #include "ark_crypto_vectors.h"
 #include "ark_hkdf_vectors.h"
+#include "ark_box_vectors.h"
 #include "ed25519.h"
 
 static int fails;
@@ -151,6 +152,59 @@ int main(void)
         }
         check(!bad && nv == HK_VALID, "[arkc-hkdf] Wycheproof HKDF-SHA-512, all 80 valid OKMs (20 to 16320 bytes)");
         check(!badlong && ni == HK_INVALID, "[arkc-hkdf-toolong] 255 * 64 + 1 bytes: -1 and all zero (3 tests)");
+    }
+
+    /* ---- stage 4: the one-use key box (K1-K4 of ark-entry.md 3b; ark_box_vectors.h is
+     *      python cryptography's, not this file's) ---- */
+    {
+        static uint8_t ct[sizeof BOX_PT], pt[sizeof BOX_PT];
+        uint8_t tg[16], w[ARKC_WRAP_LEN], w2[ARKC_WRAP_LEN];
+        arkc_box b, u, n1, n2;
+        memcpy(b.k, BOX_RK, 32); b.live = 1; b.sealed = 0;
+        int r = arkc_box_seal(&b, BOX_AAD, sizeof BOX_AAD, BOX_PT, sizeof BOX_PT, ct, tg);
+        check(r == 0 && memcmp(ct, BOX_CT, sizeof ct) == 0 && memcmp(tg, BOX_TAG, 16) == 0,
+              "[arkc-box-seal] a fresh box seals once, nonce 0 (python cryptography's bytes)");
+        memset(ct, 0xA5, sizeof ct); memset(tg, 0xA5, 16);
+        r = arkc_box_seal(&b, BOX_AAD, sizeof BOX_AAD, BOX_PT, sizeof BOX_PT, ct, tg);
+        check(r == -1 && all_zero(ct, sizeof ct) && all_zero(tg, 16),
+              "[arkc-box-reseal] K1: the second seal with the same key is refused, ct and tag zero");
+        r = arkc_box_wrap_eph(&b, BOX_RPUB, BOX_E, w);
+        check(r == 0 && memcmp(w, BOX_WRAPPED, ARKC_WRAP_LEN) == 0,
+              "[arkc-box-wrap-kat] K4: the wrap (X25519, HKDF-SHA-512, AEAD) equals python cryptography's 80 bytes");
+        memset(&u, 0xA5, sizeof u);
+        int ru = arkc_box_unwrap(&u, BOX_R, BOX_WRAPPED);
+        int ro = arkc_box_open(&u, BOX_AAD, sizeof BOX_AAD, BOX_CT, sizeof BOX_CT, BOX_TAG, pt);
+        memset(ct, 0xA5, sizeof ct);
+        int rs = arkc_box_seal(&u, BOX_AAD, sizeof BOX_AAD, BOX_PT, sizeof BOX_PT, ct, tg);
+        check(ru == 0 && u.live && u.sealed && memcmp(u.k, BOX_RK, 32) == 0 && ro == 0
+              && memcmp(pt, BOX_PT, sizeof pt) == 0 && rs == -1 && all_zero(ct, sizeof ct),
+              "[arkc-box-unwrap] K2: the unwrapped box opens the record and refuses to seal (born sealed)");
+        int bad = 0;
+        memset(&u, 0xA5, sizeof u);
+        if (arkc_box_unwrap(&u, BOX_E, BOX_WRAPPED) != -1 || u.live || !all_zero(u.k, 32)) bad |= 1;
+        for (int i = 0; i < ARKC_WRAP_LEN * 8; i += 7) {     /* one bit at a time, every 7th */
+            memcpy(w2, BOX_WRAPPED, ARKC_WRAP_LEN); w2[i / 8] ^= (uint8_t)(1u << (i % 8));
+            memset(&u, 0xA5, sizeof u);
+            if (arkc_box_unwrap(&u, BOX_R, w2) != -1 || u.live || !all_zero(u.k, 32)) bad |= 2;
+        }
+        memcpy(w2, BOX_WRAPPED, ARKC_WRAP_LEN); memset(w2, 0, 32);   /* e's public = 0: K all zero */
+        memset(&u, 0xA5, sizeof u);
+        if (arkc_box_unwrap(&u, BOX_R, w2) != -1 || u.live) bad |= 4;
+        if (bad) printf("    unwrap-bad: %d\n", bad);
+        check(!bad, "[arkc-box-unwrap-bad] K3: a wrong key, a flipped bit (92 of 640) or e = 0: -1 and an empty box");
+        int rn = arkc_box_new(&n1) | arkc_box_new(&n2);
+        int rw = arkc_box_wrap(&n1, BOX_RPUB, w) | arkc_box_wrap(&n1, BOX_RPUB, w2);
+        memset(&u, 0xA5, sizeof u);
+        int r1 = arkc_box_unwrap(&u, BOX_R, w);
+        int same1 = memcmp(u.k, n1.k, 32) == 0;
+        r1 |= arkc_box_unwrap(&u, BOX_R, w2);
+        check(rn == 0 && rw == 0 && r1 == 0 && n1.live && !n1.sealed && !all_zero(n1.k, 32)
+              && memcmp(n1.k, n2.k, 32) != 0 && memcmp(w, w2, 32) != 0 && same1 && memcmp(u.k, n1.k, 32) == 0,
+              "[arkc-box-new] getrandom keys differ; two wraps of one box use two ephemeral keys and both unwrap");
+        memset(n1.k, 0x5A, 32); n1.live = 1; n1.sealed = 0;    /* a full box, whatever new did */
+        arkc_box_wipe(&n1);
+        check(!n1.live && all_zero(n1.k, 32), "[arkc-box-wipe] the wiped box is empty");
+        arkc_box_wipe(&n2); arkc_box_wipe(&u); arkc_box_wipe(&b);
     }
 
     printf("SUMMARY: %d FAIL\n", fails);
