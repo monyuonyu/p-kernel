@@ -82,6 +82,7 @@ extern int pkernel_default_node_id(void);
 #define RELAY_MAGIC        0x52454C59U   /* "RELY" little-endian */
 #define RELAY_VER_V1       1
 #define RELAY_VER_V2       2
+#define RELAY_VER_V3       3   /* v2 + high bytes of src, dst in 8, 9 (N2b), as net_relay.c */
 #define HEAD_LEN           12
 #define AUTH_LEN           24            /* nonce(8) + hmac16(16) */
 #define HMAC_TRUNC_LEN     16
@@ -118,15 +119,27 @@ static int connect_tmo_ms  = CONNECT_TMO_MS;
  * a task stack (see feedback_hosted_relay_stack_overflow). */
 static TcpReasm rx_reasm;
 
-/* Receive-side replay window, identical logic to net_relay.c. */
+/* Receive-side replay window, identical logic to net_relay.c (N2: ids above 255
+ * take a slot of their own, the first 256 seen). */
 #define RX_NODE_MAX 256
-static u64 rx_nonce_max[RX_NODE_MAX];
-static u64 rx_nonce_win[RX_NODE_MAX];
-static u8  rx_nonce_armed[RX_NODE_MAX];
+#define RX_WIDE_MAX 256
+static u64 rx_nonce_max[RX_NODE_MAX + RX_WIDE_MAX];
+static u64 rx_nonce_win[RX_NODE_MAX + RX_WIDE_MAX];
+static u8  rx_nonce_armed[RX_NODE_MAX + RX_WIDE_MAX];
+static unsigned rx_wide_id[RX_WIDE_MAX];
 
-static int rx_replay_ok(unsigned src, u64 nonce)
+static int rx_replay_ok(unsigned id, u64 nonce)
 {
-    if (src >= RX_NODE_MAX) return 0;
+    unsigned src = id;
+    if (id >= RX_NODE_MAX) {
+        int w;
+        for (w = 0; w < RX_WIDE_MAX; w++) {
+            if (rx_wide_id[w] == id) break;
+            if (rx_wide_id[w] == 0) { rx_wide_id[w] = id; break; }
+        }
+        if (w == RX_WIDE_MAX) return 0;
+        src = RX_NODE_MAX + (unsigned)w;
+    }
     if (!rx_nonce_armed[src]) {
         rx_nonce_max[src]   = nonce;
         rx_nonce_win[src]   = 1;
@@ -200,12 +213,18 @@ static void compute_mac(unsigned version, unsigned type, unsigned src,
                         const void *payload, int plen,
                         u8 out[HMAC_TRUNC_LEN])
 {
-    u8 preamble[12];
+    u8 preamble[14];
+    size_t preamble_len = 12;
     preamble[0] = (u8)version;
     preamble[1] = (u8)type;
     preamble[2] = (u8)src;
     preamble[3] = (u8)dst;
     store_u64_le(preamble + 4, nonce);
+    if (version == RELAY_VER_V3) {           /* N2: the high bytes, under the MAC */
+        preamble[12] = (u8)(src >> 8);
+        preamble[13] = (u8)(dst >> 8);
+        preamble_len = 14;
+    }
 
     u8 k[SHA256_BLOCK_SIZE];
     u8 ipad[SHA256_BLOCK_SIZE], opad[SHA256_BLOCK_SIZE];
@@ -219,7 +238,7 @@ static void compute_mac(unsigned version, unsigned type, unsigned src,
     sha256_ctx c;
     sha256_init(&c);
     sha256_update(&c, ipad, SHA256_BLOCK_SIZE);
-    sha256_update(&c, preamble, sizeof(preamble));
+    sha256_update(&c, preamble, preamble_len);
     if (plen > 0) sha256_update(&c, payload, (size_t)plen);
     sha256_final(&c, inner);
     sha256_init(&c);
@@ -238,15 +257,29 @@ static int build_packet(unsigned char *buf,
     if (plen < 0) plen = 0;
     if (plen > MAX_PAYLOAD) plen = MAX_PAYLOAD;
 
+    /* N2 ("まだ" 6): the same rule as net_relay.c's build_packet. v3 only for an
+     * id v2 cannot carry, never without the key; a v1/v2 frame says "I read v3"
+     * in byte 10 (outside the v2 MAC), or the relay never forwards a wide frame
+     * here. -DN2_NC_TCP_NO_READS_V3: byte 10 stays 0 (the old TCP frame). */
+    int wide = (src > 254 || dst > 255);
+    if (wide && wire_version == RELAY_VER_V1) return 0;
+
     buf[0] = (u8)(RELAY_MAGIC      & 0xff);
     buf[1] = (u8)((RELAY_MAGIC>>8) & 0xff);
     buf[2] = (u8)((RELAY_MAGIC>>16)& 0xff);
     buf[3] = (u8)((RELAY_MAGIC>>24)& 0xff);
-    buf[4] = (u8)wire_version;
+    buf[4] = wide ? (u8)RELAY_VER_V3 : (u8)wire_version;
     buf[5] = (u8)type;
     buf[6] = (u8)src;
     buf[7] = (u8)dst;
-    buf[8] = buf[9] = buf[10] = buf[11] = 0;
+    buf[8] = wide ? (u8)(src >> 8) : 0;
+    buf[9] = wide ? (u8)(dst >> 8) : 0;
+#ifndef N2_NC_TCP_NO_READS_V3
+    buf[10] = wide ? 0 : RELAY_VER_V3;
+#else
+    buf[10] = 0;
+#endif
+    buf[11] = 0;
 
     if (wire_version == RELAY_VER_V1) {
         if (payload && plen > 0) memcpy(buf + HEAD_LEN, payload, (size_t)plen);
@@ -254,7 +287,7 @@ static int build_packet(unsigned char *buf,
     }
     u64 nonce = mint_nonce();
     store_u64_le(buf + HEAD_LEN, nonce);
-    compute_mac(RELAY_VER_V2, type, src, dst, nonce, payload, plen,
+    compute_mac(wide ? RELAY_VER_V3 : RELAY_VER_V2, type, src, dst, nonce, payload, plen,
                 buf + HEAD_LEN + 8);
     if (payload && plen > 0) {
         memcpy(buf + HEAD_LEN + AUTH_LEN, payload, (size_t)plen);
@@ -339,7 +372,7 @@ static int write_all(const unsigned char *buf, int len)
 /* Frame one v2 packet ([u16 len][pkt]) and write it. */
 static void send_framed(const unsigned char *pkt, int pktlen)
 {
-    if (tcp_fd < 0) return;
+    if (tcp_fd < 0 || pktlen <= 0) return;   /* 0: build_packet made no frame */
     static unsigned char out[TCP_FRAME_LENPFX + MAX_PKT];
     int total = tcp_frame_encode(out, pkt, pktlen);
     if (total < 0) return;
@@ -385,15 +418,27 @@ int net_relay_tcp_init(void)
     relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
     my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
-    /* N2b: this transport has no v3, and a wide id must not turn into node 1
-     * here: on an old relay the wide node falls back to TCP and takes node 1's
-     * place in the relay's table. Refuse instead. */
-    if (my_node_id > 256 && my_node_id <= 65534) {
+    /* N2 ("まだ" 6): a wide id speaks v3 here too, as on UDP, but a v3 frame
+     * needs the MAC: without the key a wide id is refused (it must not turn
+     * into node 1 and take node 1's place in the relay's table). An old relay
+     * refuses a wide id itself (v3 is unknown there), as on UDP. */
+    int wide_id = (my_node_id > 256 && my_node_id <= 65534);
+#ifdef N2_NC_TCP_WIDE_REFUSE
+    if (wide_id) {                       /* falsifier: the old rule (no v3 on TCP) */
         dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d is a wide id: not on TCP\n",
                 my_node_id);
         return -1;
     }
-    if (my_node_id < 1 || my_node_id > 255) {
+#endif
+    if (wide_id && !(env_key && *env_key)) {
+        dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d is a wide id: not on TCP "
+                   "without PKERNEL_RELAY_KEY (v3 needs the MAC)\n", my_node_id);
+        return -1;
+    }
+    if (wide_id) {
+        dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d is a wide id: v3 on TCP\n",
+                my_node_id);
+    } else if (my_node_id < 1 || my_node_id > 255) {
         dprintf(2, "[net_relay_tcp] PKERNEL_NODE_ID=%d out of range (1..255) "
                    "— defaulting to 1\n", my_node_id);
         my_node_id = 1;
@@ -470,10 +515,11 @@ static int tcp_frame_dst(const unsigned char *f, int len)
     const char *e = getenv("PKERNEL_RELAY_UNICAST");
     if (e && e[0] == '0') return 0;
     if (len < 6) return 0;
-    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00 || f[4] != 0x00)
+    if (f[0] != 0x52 || f[1] != 0x54 || f[2] != 0x00 || f[3] != 0x00)
         return 0;
-    if (f[5] == 0 || (int)f[5] == my_node_id) return 0;
-    return f[5];
+    int dst = (f[4] << 8) | f[5];   /* N2: 300 is 52:54:00:00:01:2c, as net_relay.c */
+    if (dst == 0 || dst == my_node_id) return 0;
+    return dst;
 }
 
 int net_relay_tcp_send(const void *frame, int len)
@@ -532,17 +578,23 @@ int net_relay_tcp_recv(void *out, int maxlen)
 
         unsigned ver  = pkt[4];
         unsigned type = pkt[5];
-        int hdr = (ver == RELAY_VER_V2) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
+        int hdr = (ver == RELAY_VER_V2 || ver == RELAY_VER_V3) ? (HEAD_LEN + AUTH_LEN) : HEAD_LEN;
         if (flen < hdr) continue;
+        if (ver == RELAY_VER_V3 && wire_version != RELAY_VER_V2) continue;   /* no key, no check */
+        unsigned rx_src = pkt[6], rx_dst = pkt[7];
+        if (ver == RELAY_VER_V3) {                   /* N2: the high bytes */
+            rx_src |= (unsigned)pkt[8] << 8;
+            rx_dst |= (unsigned)pkt[9] << 8;
+        }
 
         u64 rx_nonce = 0;
         int rx_have_nonce = 0;
 
-        if (wire_version == RELAY_VER_V2 && ver == RELAY_VER_V2) {
+        if (wire_version == RELAY_VER_V2 && (ver == RELAY_VER_V2 || ver == RELAY_VER_V3)) {
             u64 nonce = load_u64_le(pkt + HEAD_LEN);
             int plen  = flen - hdr;
             u8 want[HMAC_TRUNC_LEN];
-            compute_mac(RELAY_VER_V2, pkt[5], pkt[6], pkt[7], nonce,
+            compute_mac(ver, pkt[5], rx_src, rx_dst, nonce,
                         pkt + hdr, plen, want);
             if (!ct_eq(want, pkt + HEAD_LEN + 8, HMAC_TRUNC_LEN)) continue;
             rx_nonce = nonce;
@@ -561,7 +613,7 @@ int net_relay_tcp_recv(void *out, int maxlen)
          * and must not consume a data nonce slot. */
         if (type != REL_DATA && type != REL_BROADCAST) continue;
 
-        if (rx_have_nonce && !rx_replay_ok(pkt[6], rx_nonce)) continue;
+        if (rx_have_nonce && !rx_replay_ok(rx_src, rx_nonce)) continue;
 
         int payload_len = flen - hdr;
         if (payload_len > maxlen) payload_len = maxlen;
