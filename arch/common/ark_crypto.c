@@ -6,6 +6,8 @@
  * (open does not compare the tag). Hosted only. */
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/random.h>
 #include "ark_crypto.h"
 #include "ed25519.h"
 
@@ -284,22 +286,106 @@ int arkc_hkdf_sha512(const uint8_t *salt, size_t salt_len, const uint8_t *ikm, s
     return 0;
 }
 
-/* ---- the one-use key box (stage 4): a stub for the test-first commit ---- */
-int arkc_box_new(arkc_box *b) { (void)b; return -1; }
+/* ---- the one-use key box (stage 4, ark-entry.md 3b): every key encrypts once, so the
+ * nonce is 0 and no counter is kept. The mark is in the box: seal sets it, and a box
+ * unwrapped from storage is born with it (an edited record needs a new box).
+ * -DARKC_NC_BOX_REUSE: seal neither checks nor sets the mark (K1 and K2 go red) ---- */
+static const uint8_t nonce0[12];
+static const char wrap_info[] = "p-kernel ark wrap v1";
+
+void arkc_box_wipe(arkc_box *b)
+{
+    wipe(b->k, sizeof b->k);
+    b->live = 0; b->sealed = 0;
+}
+
+static int fill_random(uint8_t *p, size_t n)
+{
+    while (n) {
+        ssize_t r = getrandom(p, n, 0);
+        if (r <= 0) return -1;               /* never filled from the clock or anything else */
+        p += r; n -= (size_t)r;
+    }
+    return 0;
+}
+
+int arkc_box_new(arkc_box *b)
+{
+    arkc_box_wipe(b);
+    if (fill_random(b->k, sizeof b->k) != 0) { arkc_box_wipe(b); return -1; }
+    b->live = 1;
+    return 0;
+}
+
 int arkc_box_seal(arkc_box *b, const uint8_t *aad, size_t aad_len,
                   const uint8_t *pt, size_t len, uint8_t *ct, uint8_t tag[16])
-{ (void)b; (void)aad; (void)aad_len; (void)pt; (void)len; (void)ct; (void)tag; return -1; }
+{
+#ifndef ARKC_NC_BOX_REUSE
+    if (!b->live || b->sealed) { memset(ct, 0, len); memset(tag, 0, 16); return -1; }
+    b->sealed = 1;
+#else
+    if (!b->live) { memset(ct, 0, len); memset(tag, 0, 16); return -1; }
+#endif
+    arkc_aead_seal(b->k, nonce0, aad, aad_len, pt, len, ct, tag);
+    return 0;
+}
+
 int arkc_box_open(const arkc_box *b, const uint8_t *aad, size_t aad_len,
                   const uint8_t *ct, size_t len, const uint8_t tag[16], uint8_t *pt)
-{ (void)b; (void)aad; (void)aad_len; (void)ct; (void)len; (void)tag; (void)pt; return -1; }
-int arkc_box_wrap(const arkc_box *b, const uint8_t to_pub[32], uint8_t out[ARKC_WRAP_LEN])
-{ (void)b; (void)to_pub; (void)out; return -1; }
+{
+    if (!b->live) { memset(pt, 0, len); return -1; }
+    return arkc_aead_open(b->k, nonce0, aad, aad_len, ct, len, tag, pt);
+}
+
+/* the wrapping key: HKDF-SHA-512(salt = e_pub || to_pub, ikm = K, info), 32 bytes (RFC 7748 6.1:
+ * the KDF takes K and both public keys) */
+static int wrap_key(uint8_t wk[32], const uint8_t K[32], const uint8_t e_pub[32], const uint8_t to_pub[32])
+{
+    uint8_t salt[64];
+    memcpy(salt, e_pub, 32); memcpy(salt + 32, to_pub, 32);
+    int r = arkc_hkdf_sha512(salt, sizeof salt, K, 32, (const uint8_t *)wrap_info, sizeof wrap_info - 1, wk, 32);
+    wipe(salt, sizeof salt);
+    return r;
+}
+
 int arkc_box_wrap_eph(const arkc_box *b, const uint8_t to_pub[32], const uint8_t eph[32],
                       uint8_t out[ARKC_WRAP_LEN])
-{ (void)b; (void)to_pub; (void)eph; (void)out; return -1; }
+{
+    uint8_t K[32], wk[32];
+    memset(out, 0, ARKC_WRAP_LEN);
+    if (!b->live) return -1;
+    arkc_x25519_base(out, eph);              /* e_pub */
+    if (arkc_x25519(K, eph, to_pub) != 0 || wrap_key(wk, K, out, to_pub) != 0) {
+        wipe(K, sizeof K); memset(out, 0, ARKC_WRAP_LEN); return -1;
+    }
+    arkc_aead_seal(wk, nonce0, NULL, 0, b->k, 32, out + 32, out + 64);
+    wipe(K, sizeof K); wipe(wk, sizeof wk);
+    return 0;
+}
+
+int arkc_box_wrap(const arkc_box *b, const uint8_t to_pub[32], uint8_t out[ARKC_WRAP_LEN])
+{
+    uint8_t eph[32];
+    if (fill_random(eph, sizeof eph) != 0) { memset(out, 0, ARKC_WRAP_LEN); return -1; }
+    int r = arkc_box_wrap_eph(b, to_pub, eph, out);
+    wipe(eph, sizeof eph);
+    return r;
+}
+
 int arkc_box_unwrap(arkc_box *b, const uint8_t my_priv[32], const uint8_t in[ARKC_WRAP_LEN])
-{ (void)b; (void)my_priv; (void)in; return -1; }
-void arkc_box_wipe(arkc_box *b) { (void)b; }
+{
+    uint8_t K[32], wk[32], my_pub[32];
+    arkc_box_wipe(b);
+    arkc_x25519_base(my_pub, my_priv);
+    if (arkc_x25519(K, my_priv, in) != 0 || wrap_key(wk, K, in, my_pub) != 0) {
+        wipe(K, sizeof K); return -1;
+    }
+    int r = arkc_aead_open(wk, nonce0, NULL, 0, in + 32, 32, in + 64, b->k);
+    wipe(K, sizeof K); wipe(wk, sizeof wk);
+    if (r != 0) { arkc_box_wipe(b); return -1; }
+    b->live = 1; b->sealed = 1;               /* born sealed: it can open, never seal again */
+    return 0;
+}
 
 /* ---- X25519 (stage 2, RFC 7748): the ladder is ed25519.c's ---- */
 int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32])

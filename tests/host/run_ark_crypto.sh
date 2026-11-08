@@ -40,11 +40,15 @@ nc() {  # macro, the FAIL lines expected (sorted ids, space separated)
     if [ "$got" = "$2" ]; then echo "[ark-crypto] nc $1 red on: $got"; else
         echo "[ark-crypto] nc $1 WRONG: red on '$got', want '$2'"; bad=1; fi
 }
-nc ARKC_NC_NO_PAD "[arkc-aead-a5] [arkc-aead-open] [arkc-aead-seal] "
-nc ARKC_NC_TAG_NOCHECK "[arkc-open-tamper] "
-nc ARKC_NC_NO_CLAMP "[arkc-x25519-dh] [arkc-x25519-iter] [arkc-x25519-zero] [arkc-x25519] "
+# (stage 4 builds on the parts: NO_PAD also reddens the box's KAT seal and the open of
+# python's record, TAG_NOCHECK the tampered unwrap, NO_CLAMP the wrap KAT and the unwraps
+# with the fixed recipient key that python clamped)
+nc ARKC_NC_NO_PAD "[arkc-aead-a5] [arkc-aead-open] [arkc-aead-seal] [arkc-box-seal] [arkc-box-unwrap] "
+nc ARKC_NC_TAG_NOCHECK "[arkc-box-unwrap-bad] [arkc-open-tamper] "
+nc ARKC_NC_NO_CLAMP "[arkc-box-new] [arkc-box-unwrap] [arkc-box-wrap-kat] [arkc-x25519-dh] [arkc-x25519-iter] [arkc-x25519-zero] [arkc-x25519] "
 nc ARKC_NC_NO_MASK "[arkc-x25519] "
 nc ARKC_NC_HKDF_NO_CHAIN "[arkc-hkdf] "
 nc ARKC_NC_HKDF_NO_LIMIT "[arkc-hkdf-toolong] "
+nc ARKC_NC_BOX_REUSE "[arkc-box-reseal] [arkc-box-unwrap] "
 if [ "$bad" = 0 ]; then echo "[ark-crypto] NC RED as expected"; exit 0; fi
 echo "[ark-crypto] NC FAIL"; exit 1
