@@ -2,8 +2,9 @@
 """tests/ci/check_callsites.py [--root DIR] [--selftest]
 
 Pins a few call sites that the in-process certs do not reach (docs/architecture/
-test-holes.md H5, H12, part of H2). The certs (`nodes ipw`, `nodes mhwide`) test
-the helper functions (pk_node_ip_like, mh_have_frame, mh_have_rx_sender, ...);
+test-holes.md H3, H4, H5, H6, H12, part of H2). The certs (`nodes ipw`, `nodes mhwide`, `nodes mqwide`,
+`kdds ann`, `kdds wide`) test the helper functions (pk_node_ip_like,
+mh_have_frame, mq_want_frame, pfsr_ann_drain, kdds_wide_pick, ...);
 whether the sender and the receiver actually call them was only read by eye,
 and the audits' breaks there stayed green.
 
@@ -48,6 +49,21 @@ RULES = [
      [r"MC_PUSH_BUSY\s*\("], [r"mc_push_pkt\.key\s*=="], "H2 (part: the busy test goes through MC_PUSH_BUSY)",
      ("INT busy  = MC_PUSH_BUSY((UB)k, s_cur, o_cur);",
       "INT busy  = mc_push_sends_left > 0 && mc_push_pkt.key == (UB)k;")),
+    # the bare branches of the next three keep the narrow form on purpose: only
+    # the hosted call is pinned (a must), nothing is forbidden
+    ("mq-want-send", "arch/common/r3_incontext.c", "mq_publish_wants",
+     [r"mq_want_frame\s*\(\s*&mq_want_pkt\s*,\s*drpc_my_node\s*,\s*&fw\s*\)",
+      r"kdds_pub\s*\(\s*mq_want_pub\s*,\s*&fw\s*,\s*fn\s*\)"], [], "H4 (M1)",
+     ("(void)kdds_pub(mq_want_pub, &fw, fn);", "(void)kdds_pub(mq_want_pub, &fw, (W)sizeof mq_want_pkt);")),
+    ("pfs-ann", "arch/common/pfs_repl.c", "pfs_repl_task",
+     [r"pfsr_ann_drain\s*\(\s*h_ann_sub\s*,\s*pfsr_ann_take\s*\)"], [], "H6 (K3)",
+     ("(void)pfsr_ann_drain(h_ann_sub, pfsr_ann_take);",
+      "{ PFSR_ANN_PKT a; W r = kdds_sub(h_ann_sub, &a, (W)sizeof(a), 0); pfsr_ann_take(&a, r); }")),
+    ("kdds-region", "arch/common/kdds.c", "kdds_pub_core",
+     [r"region_scoped\s*=\s*\(\s*t->scope\s*==\s*KDDS_SCOPE_REGION\s*\)",
+      r"kdds_wide_pick\s*\([^;]*\bregion_scoped\b"], [], "H3 (K1)",
+     ("kdds_wide_pick(wide_ids, nw, drpc_my_node, region_scoped,",
+      "kdds_wide_pick(wide_ids, nw, drpc_my_node, FALSE,")),
 ]
 
 
