@@ -9,6 +9,7 @@
 | H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験（**一部は S8**: 呼び所が MC_PUSH_BUSY を通り、`mc_push_pkt.key ==` を書かないことは check_callsites.py が見る。ほかの形のバイト比べは見ない） |
 | H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案） |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す。**実装 feat/h11-fp-hi（11-08 監査-165 の回）→ 監査-166 PASS で master（feat/fpctl-dispatch と一緒に）**: x86_64 に F3（xmm12〜15 を asm で持つ）・F4（MXCSR の丸め）・F5（前提）。壊し -DPK_PREEMPT_DROP_FP_HI・-DPK_PREEMPT_DROP_MXCSR は前の版では緑、今は F3・F4 が赤（run_nosw.sh の腕）。残り: x87・ymm の上半分・aarch64 の一部だけの失い（v8〜v31）。途中で見つけた: 自発的な切り替え（dispatch.S）は MXCSR の制御ビットと x87 の制御語を保存しない（ABI では呼び出し先保存）＝丸めモードがタスク間で漏れる（台帳 HOSTED-FP-CTL-NOT-SAVED、F6・F7 で直し、監査-166 で閉じた） |
+| H22 | 方舟と `self/` の二重の守り（pfs_repl の AKR の送り止め・pfs_dag の受け取り側の名前の止め） | send_block_to の AKR の止めだけ外す（announce の止めが残る）、merge_entry の `self/` の止めだけ外す（配る側の止めが残る）＝どちらも緑 | 監査-169（K3・K6） | 片方だけの守りを見る試験: 古い版（-DARK_REC_SHARED・-DSELF_REF_SHARED）のノードを 1 台混ぜ、新しいノードが受け取らない・送らないことを見る（n2-mix の形）。announce を無視して WANT を出す探りのノード |
 
 ## ふさいだ
 
@@ -29,3 +30,4 @@
 | S13 | N2 の広い番号の境界（H19） | run_n2_lan.sh L3b（loopback）と L5（TCP、鍵なし）: 境界の壊し 6 つが赤。L5 の 65535 は監査-163 で足した（`<= 65535` が緑だった） |
 
 | S14 | TCP・UDP の中継の広い宛て（H20、`dst = f[5]` だけ読む） | 受け手の misdelivered の行を [n2-tcp] T5（監査-165）と [n2-alive] A6（監査-166）が 0 で見る。ログが無い・空のノードは A6 で no-log の赤（fix/h20g-nolog、監査-167）。陰性 DST_LOW_BYTE・RELAY_NC_MISROUTE |
+| S15 | B5 第 8 歩の s8unit の τ（H21） | `[s8-tau]` c 0.905 は切る・0.895 は残す＝τ を (0.895, 0.905] に留める（fix/h21-s8unit、監査-169: τ 0.91・0.95・0.85 は赤、0.899 は緑）。`>` と `>=` の違いは残る（c がちょうど τ の例は作れない） |

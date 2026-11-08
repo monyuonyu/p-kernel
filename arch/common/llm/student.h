@@ -433,6 +433,25 @@ int  st_merge_trust_prev(st_model *into, const st_model *prev,
                          const void *const *peer_prev, const size_t *peer_prev_lens,
                          int count, float *ts_out);
 
+/* st_merge_trust_echo (B5 step 8, research/b5-step8-design.md):
+ * st_merge_trust_prev, and a peer whose destination gj = peer_k - prev has
+ * c_k = cos(gj, g0) >= ST_ECHO_TAU gets TS 0: an echo of the receiver's own
+ * update (the mimic of Karimireddy et al. arXiv:2006.09365 §3.2 turned on the
+ * receiver itself). c_k is always measured on gj, with or without peer_prev.
+ * Every peer an echo (every TS 0) is a refusal (0, into BYTE-UNCHANGED). With
+ * no echo the bytes are st_merge_trust_prev's. c_out[k] (may be NULL) gets
+ * c_k (-2 when not accepted). -DB5S8_NO_ECHO: no cut (step 7, NC1);
+ * -DB5S8_TAU_LOW: tau 0.1 (NC2). Hosted only. */
+#if defined(B5S8_TAU_LOW)
+#define ST_ECHO_TAU 0.1
+#else
+#define ST_ECHO_TAU 0.9
+#endif
+int  st_merge_trust_echo(st_model *into, const st_model *prev,
+                         const void *const *peer_blobs, const size_t *peer_lens,
+                         const void *const *peer_prev, const size_t *peer_prev_lens,
+                         int count, float *ts_out, float *c_out);
+
 /* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
  * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
  * is finite and its mean loss over the non-overlapping `seq` windows of
