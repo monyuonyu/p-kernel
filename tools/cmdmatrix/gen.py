@@ -132,10 +132,13 @@ def render():
     L.append("設計と限界: `docs/architecture/20-architecture/command-parity.md`（inbox #4 段階0）。")
     L.append("✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由（振り分けがあっても「できない」と答えるだけのものを含む）")
     L.append("")
-    L.append("| 対象 | 読んだソース | コマンド数 |")
+    L.append("| 対象 | 読んだソース | コマンド数（✓ の数） |")
     L.append("|---|---|---|")
     for name, src, note in COLS:
-        L.append("| %s | `%s`%s | %d |" % (name, src, ("（" + note + "）") if note else "", len(per_src[src])))
+        # count the ✓ cells: a verb the exceptions file marks 不可 is not counted
+        # (audit-165: Windows counted `ark`, whose cell says 不可)
+        n = sum(1 for c in per_src[src] if (c, name.replace("_", " ")) not in exc)
+        L.append("| %s | `%s`%s | %d |" % (name, src, ("（" + note + "）") if note else "", n))
     L.append("")
     L.append("| コマンド | " + " | ".join(c[0] for c in COLS) + " |")
     L.append("|---|" + "---|" * len(COLS))
