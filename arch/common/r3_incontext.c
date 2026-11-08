@@ -4671,7 +4671,90 @@ extern char *getenv(const char *);
 #define MH_EVERY 4                   /* ticks (~2 s at MT_POLL_MS)                */
 #endif
 static W mh_sub = -1, mh_pub = -1;
-static MH_HAVE_PKT mh_tx, mh_rx;     /* file-static (no task-stack packets)      */
+/* N2 (c)(3), mind/have: the wide ids ride after the 112 bytes, the rule of the
+ * want tail (mq_want_frame): the sender's id as 2 bytes LE when origin_node is
+ * 0xFF, then 2 bytes LE per entry, set only when that entry's origin is 0xFF.
+ * Sent only when one of them is wide (else the old 112 bytes, byte for byte).
+ * Old nodes and bare metal read the 112 only, as before (a wide sender's
+ * summary is dropped there, a wide teacher is 0xFF). Before, every receiver
+ * dropped a wide sender's summary (o >= DNODE_MAX) and compared a wide
+ * teacher as 0xFF, so of two equal stamps from 260 and 300 the holder of 260
+ * never pushed. Hosted only.
+ *   mh_have_frame      the bytes to send (112 or 146)
+ *   mh_have_rx_sender  the sender of a received frame of r bytes (0xFF = none)
+ *   mh_have_rx_origin  entry i's teaching node
+ *   mh_sender_takes    the sender gate of mh_poll
+ *   mh_beats           the push decision's order of (stamp, teaching node)
+ * -DN2_NC_MH_NO_TAIL: never send the tail. -DN2_NC_MH_RX_NARROW: read the 112
+ * bytes only (the two negative controls of `nodes mhwide`). */
+typedef struct {
+    MH_HAVE_PKT p;
+    U1 org_lo, org_hi;            /* the wide sender, only when p.origin_node == 0xFF */
+    U1 eo[MH_MAX][2];             /* entry i's wide teaching node LE, only when     */
+                                  /* p.e[i].origin == 0xFF                           */
+} __attribute__((packed)) MH_HAVE_PKT_W;   /* 112+2+16*2 = 146 B */
+_Static_assert(sizeof(MH_HAVE_PKT_W) == 146, "mind/have wide frame is 146 B");
+_Static_assert(sizeof(MH_HAVE_PKT_W) <= KDDS_DATA_MAX, "mind/have + wide ids fit one K-DDS payload");
+static MH_HAVE_PKT mh_tx;            /* file-static (no task-stack packets)      */
+static MH_HAVE_PKT_W mh_tx_w, mh_rx_w;
+#define mh_rx (mh_rx_w.p)            /* the 112 B as before                       */
+static pk_node_t mh_tx_eo[MH_MAX];   /* the full teaching node of mh_tx.e[i]      */
+static INT mt_org_takes(pk_node_t o);
+
+static W mh_have_frame(const MH_HAVE_PKT *p, pk_node_t org, const pk_node_t *eo, MH_HAVE_PKT_W *out)
+{
+    INT wide = 0;
+    out->p = *p; out->org_lo = 0; out->org_hi = 0;
+    for (INT i = 0; i < MH_MAX; i++) { out->eo[i][0] = 0; out->eo[i][1] = 0; }
+#ifndef N2_NC_MH_NO_TAIL
+    if (PK_NODE_IS_WIDE(org) && p->origin_node == PK_NODE_NONE) {
+        out->org_lo = (U1)(org & 0xFF); out->org_hi = (U1)(org >> 8); wide = 1;
+    }
+    INT n = p->n > MH_MAX ? MH_MAX : (INT)p->n;
+    for (INT i = 0; eo && i < n; i++)
+        if (PK_NODE_IS_WIDE(eo[i]) && p->e[i].origin == PK_NODE_NONE) {
+            out->eo[i][0] = (U1)(eo[i] & 0xFF); out->eo[i][1] = (U1)(eo[i] >> 8); wide = 1;
+        }
+#else
+    (void)org; (void)eo;
+#endif
+    return wide ? (W)sizeof *out : (W)sizeof out->p;
+}
+static pk_node_t mh_have_rx_sender(const MH_HAVE_PKT_W *w, W r)
+{
+    pk_node_t org = (pk_node_t)w->p.origin_node;
+#ifndef N2_NC_MH_RX_NARROW
+    if (org == PK_NODE_NONE && r >= (W)sizeof *w) {
+        pk_node_t t = (pk_node_t)(w->org_lo | ((pk_node_t)w->org_hi << 8));
+        if (PK_NODE_IS_WIDE(t)) org = t;
+    }
+#else
+    (void)r;
+#endif
+    return org;
+}
+static pk_node_t mh_have_rx_origin(const MH_HAVE_PKT_W *w, W r, INT i)
+{
+    if (i < 0 || i >= MH_MAX) return PK_NODE_NONE;
+    pk_node_t org = (pk_node_t)w->p.e[i].origin;
+#ifndef N2_NC_MH_RX_NARROW
+    if (org == PK_NODE_NONE && r >= (W)sizeof *w) {
+        pk_node_t t = (pk_node_t)(w->eo[i][0] | ((pk_node_t)w->eo[i][1] << 8));
+        if (PK_NODE_IS_WIDE(t)) org = t;
+    }
+#else
+    (void)r;
+#endif
+    return org;
+}
+static INT mh_sender_takes(pk_node_t o)
+{
+    return (o != drpc_my_node && mt_org_takes(o)) ? 1 : 0;
+}
+static INT mh_beats(UW s_cur, pk_node_t o_cur, UW s_in, pk_node_t o_in)
+{
+    return ((s_cur > s_in) || (s_cur == s_in && o_cur < o_in)) ? 1 : 0;
+}
 static UB mh_tick_n, mh_off = 0xFF;  /* 0xFF = env not read yet                  */
 static UW mh_hints;                  /* keys wanted because of a summary         */
 
@@ -4729,6 +4812,7 @@ static void mh_publish(void)
             pk_node_t o; UW s = mc_stamp_of(r3_fq[i].seq, &o);
             for (INT b = 0; b < (INT)r3_fq[i].n && n < MH_MAX; b++) {
                 mh_tx.e[n].key = r3_fq[i].key[b]; mh_tx.e[n].origin = pk_node_v1(o); mh_tx.e[n].stamp = s;
+                mh_tx_eo[n] = o;
                 n++;
             }
         }
@@ -4739,7 +4823,10 @@ static void mh_publish(void)
             mt_vocab_fp_fill(mh_tx.vocab_fp);
             if (mh_pub < 0)
                 mh_pub = kdds_open_poll_scoped(MIND_HAVE_TOPIC, KDDS_QOS_LATEST_ONLY, KDDS_SCOPE_REGION);
-            if (mh_pub >= 0) (void)kdds_pub(mh_pub, &mh_tx, (W)sizeof mh_tx);
+            if (mh_pub >= 0) {       /* 112, or 146 with the wide ids (N2)        */
+                W fn = mh_have_frame(&mh_tx, drpc_my_node, mh_tx_eo, &mh_tx_w);
+                (void)kdds_pub(mh_pub, &mh_tx_w, fn);
+            }
         }
     }
 }
@@ -4748,11 +4835,11 @@ static void mh_poll(void)
 {
     mh_have_open();
     if (mh_sub < 0) return;
-    W r = kdds_sub(mh_sub, &mh_rx, (W)sizeof mh_rx, 0);
+    W r = kdds_sub(mh_sub, &mh_rx_w, (W)sizeof mh_rx_w, 0);   /* 112 or 146 */
     if (r < (W)sizeof mh_rx || mh_rx.magic != MH_MAGIC) return;
     if (mh_rx.wire_ver != MT_WIRE_VER_VOCAB || !mt_vocab_fp_ok(mh_rx.vocab_fp)) return;
-    U1 o = mh_rx.origin_node;
-    if (o == drpc_my_node || o >= DNODE_MAX) return;
+    pk_node_t o = mh_have_rx_sender(&mh_rx_w, r);   /* the wide sender (N2)   */
+    if (!mh_sender_takes(o)) return;
     INT n = mh_rx.n > MH_MAX ? MH_MAX : (INT)mh_rx.n;
     m_gate_acquire();
     for (INT i = 0; i < n; i++) {
@@ -4781,8 +4868,9 @@ static void mh_poll(void)
             INT bind, fi = m_find_key(k, &bind);
             if (fi >= 0 && (mt_rprov_find(r3_fq[fi].seq) || mq_lprov_find(r3_fq[fi].seq))) {
                 pk_node_t o_cur; UW s_cur = mc_stamp_of(r3_fq[fi].seq, &o_cur);
-                UW s_in = mh_rx.e[i].stamp; U1 o_in = mh_rx.e[i].origin;
-                INT beats = (s_cur > s_in) || (s_cur == s_in && o_cur < o_in);
+                UW s_in = mh_rx.e[i].stamp;
+                pk_node_t o_in = mh_have_rx_origin(&mh_rx_w, r, i);   /* N2 */
+                INT beats = mh_beats(s_cur, o_cur, s_in, o_in);
                 INT busy  = MC_PUSH_BUSY((UB)k, s_cur, o_cur);
                 if (beats && !busy) {
                     r_puts("[mind] mind/have from node "); r_putdec((UW)o);
@@ -8859,6 +8947,120 @@ INT mq_wide_self_test(void (*emit)(const char *))
 #undef MQW_FAIL
     if (fails == 0) say("[mqwide] PASS (wide asker: 2 bytes after the 24, read only when 0xFF and wide; own answer row)\r\n");
     else            say("[mqwide] RED\r\n");
+    return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* N2 (c)(3) `nodes mhwide`: the mind/have wide ids (the have tail)     */
+/*   [mhw-frame] all narrow: the old 112 bytes, byte for byte; a wide   */
+/*               sender or a wide entry with its byte 0xFF: 146, the    */
+/*               ids LE, the other slots 0; a wide id whose byte is     */
+/*               set, 0xFF, 0xFFFF, an entry past n: no tail            */
+/*   [mhw-rx]    146 bytes, 0xFF, a wide tail: the wide id; 112 or 145  */
+/*               bytes or a narrow byte: the byte; a tail that is not   */
+/*               wide (5, 0xFF, 0xFFFF): 0xFF                           */
+/*   [mhw-gate]  the sender of a frame from 300 is taken, 0xFF and 64   */
+/*               are not, nor this node itself                          */
+/*   [mhw-push]  equal stamps: held from 260 beats a summary from 300   */
+/*               read off the 146 bytes, not off the 112 (0xFF); 300    */
+/*               held does not beat 260                                 */
+/* Falsifiers: -DN2_NC_MH_NO_TAIL (frame), -DN2_NC_MH_RX_NARROW (rx,    */
+/* gate, push). Touches nothing but its own statics.                    */
+/* ------------------------------------------------------------------ */
+INT mh_wide_self_test(void (*emit)(const char *))
+{
+    INT fails = 0;
+    void (*say)(const char *) = emit ? emit : r_puts;
+    static MH_HAVE_PKT p;
+    static MH_HAVE_PKT_W w;
+    static pk_node_t eo[MH_MAX];
+    const pk_node_t W1 = 300, W2 = 260;
+    W n;
+#define MHW_FAIL(m) do { say("[mhwide] FAIL " m "\r\n"); fails++; } while (0)
+    for (UW i = 0; i < (UW)sizeof p; i++) ((U1 *)&p)[i] = (U1)(0x3C + i);
+    p.magic = MH_MAGIC; p.n = 3;
+    for (INT i = 0; i < MH_MAX; i++) eo[i] = (pk_node_t)i;
+    for (INT i = 0; i < 3; i++) p.e[i].origin = (U1)i;
+
+    /* [mhw-frame] */
+    p.origin_node = 3;
+    n = mh_have_frame(&p, 3, eo, &w);
+    if (n != (W)sizeof p || __builtin_memcmp(&w.p, &p, sizeof p) != 0)
+        MHW_FAIL("frame: an all-narrow summary is not the old 112 bytes");
+    if (mh_have_frame(&p, 3, (const pk_node_t *)0, &w) != (W)sizeof p)
+        MHW_FAIL("frame: no entry ids gave a tail");
+    p.origin_node = PK_NODE_NONE;
+    n = mh_have_frame(&p, W1, eo, &w);
+    if (n != (W)sizeof w || __builtin_memcmp(&w.p, &p, sizeof p) != 0 ||
+        w.org_lo != (U1)(W1 & 0xFF) || w.org_hi != (U1)(W1 >> 8) ||
+        w.eo[0][0] || w.eo[0][1] || w.eo[1][0] || w.eo[2][1])
+        MHW_FAIL("frame: a wide sender is not 112 bytes + 2 bytes LE (entry slots 0)");
+    p.origin_node = 3; p.e[1].origin = PK_NODE_NONE; eo[1] = W2;
+    n = mh_have_frame(&p, 3, eo, &w);
+    if (n != (W)sizeof w || w.org_lo || w.org_hi ||
+        w.eo[1][0] != (U1)(W2 & 0xFF) || w.eo[1][1] != (U1)(W2 >> 8) ||
+        w.eo[0][0] || w.eo[2][0])
+        MHW_FAIL("frame: a wide teacher of entry 1 is not its 2 bytes LE in slot 1");
+    p.e[1].origin = 1;
+    if (mh_have_frame(&p, 3, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added for an entry whose byte is set");
+    p.e[1].origin = PK_NODE_NONE; eo[1] = PK_NODE_NONE;
+    if (mh_have_frame(&p, 3, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added for an entry of 0xFF");
+    eo[1] = 0xFFFF;
+    if (mh_have_frame(&p, 3, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added for an entry of 0xFFFF");
+    eo[1] = 1; p.e[1].origin = 1;
+    p.e[5].origin = PK_NODE_NONE; eo[5] = W1;               /* past n = 3 */
+    if (mh_have_frame(&p, 3, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added for an entry past n");
+    p.e[5].origin = 5; eo[5] = 5;
+    p.origin_node = 3;
+    if (mh_have_frame(&p, W1, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added to a narrow origin_node");
+    p.origin_node = PK_NODE_NONE;
+    if (mh_have_frame(&p, PK_NODE_NONE, eo, &w) != (W)sizeof p) MHW_FAIL("frame: a tail was added for 0xFF");
+    if (mh_have_frame(&p, 0xFFFF, eo, &w) != (W)sizeof p)       MHW_FAIL("frame: a tail was added for 0xFFFF");
+
+    /* [mhw-rx] */
+    __builtin_memset(&w, 0, sizeof w);
+    w.p = p; w.p.origin_node = PK_NODE_NONE; w.p.e[2].origin = PK_NODE_NONE;
+    w.org_lo = (U1)(W1 & 0xFF); w.org_hi = (U1)(W1 >> 8);
+    w.eo[2][0] = (U1)(W2 & 0xFF); w.eo[2][1] = (U1)(W2 >> 8);
+    if (mh_have_rx_sender(&w, (W)sizeof w) != W1)         MHW_FAIL("rx: 146 bytes with a wide tail did not give the wide sender");
+    if (mh_have_rx_origin(&w, (W)sizeof w, 2) != W2)      MHW_FAIL("rx: 146 bytes did not give entry 2's wide teacher");
+    if (mh_have_rx_origin(&w, (W)sizeof w, 0) != 0)       MHW_FAIL("rx: entry 0's narrow byte was lost");
+    if (mh_have_rx_sender(&w, (W)sizeof p) != PK_NODE_NONE)      MHW_FAIL("rx: 112 bytes read a sender tail");
+    if (mh_have_rx_origin(&w, (W)sizeof p, 2) != PK_NODE_NONE)   MHW_FAIL("rx: 112 bytes read an entry tail");
+    if (mh_have_rx_sender(&w, (W)sizeof w - 1) != PK_NODE_NONE)  MHW_FAIL("rx: 145 bytes read a tail");
+    if (mh_have_rx_origin(&w, (W)sizeof w, MH_MAX) != PK_NODE_NONE) MHW_FAIL("rx: an entry past the table was read");
+    w.p.origin_node = 3; w.p.e[2].origin = 2;
+    if (mh_have_rx_sender(&w, (W)sizeof w) != 3)          MHW_FAIL("rx: a narrow origin_node lost to the tail");
+    if (mh_have_rx_origin(&w, (W)sizeof w, 2) != 2)       MHW_FAIL("rx: a narrow entry byte lost to the tail");
+    w.p.origin_node = PK_NODE_NONE; w.p.e[2].origin = PK_NODE_NONE;
+    w.org_lo = 5; w.org_hi = 0; w.eo[2][0] = 5; w.eo[2][1] = 0;
+    if (mh_have_rx_sender(&w, (W)sizeof w) != PK_NODE_NONE)   MHW_FAIL("rx: a narrow id in the sender tail was taken");
+    if (mh_have_rx_origin(&w, (W)sizeof w, 2) != PK_NODE_NONE) MHW_FAIL("rx: a narrow id in an entry tail was taken");
+    w.org_lo = 0xFF; w.org_hi = 0xFF; w.eo[2][0] = 0xFF; w.eo[2][1] = 0xFF;
+    if (mh_have_rx_sender(&w, (W)sizeof w) != PK_NODE_NONE)   MHW_FAIL("rx: 0xFFFF in the sender tail was taken");
+    if (mh_have_rx_origin(&w, (W)sizeof w, 2) != PK_NODE_NONE) MHW_FAIL("rx: 0xFFFF in an entry tail was taken");
+
+    /* [mhw-gate] and [mhw-push]: the frame a wide 300 sends, end to end */
+    __builtin_memset(&w, 0, sizeof w);
+    p.origin_node = PK_NODE_NONE; p.e[0].origin = PK_NODE_NONE; eo[0] = W1;
+    n = mh_have_frame(&p, W1, eo, &w);
+    if (!mh_sender_takes(mh_have_rx_sender(&w, n)))      MHW_FAIL("gate: the summary of wide 300 was dropped");
+    if (mh_sender_takes(mh_have_rx_sender(&w, (W)sizeof p))) MHW_FAIL("gate: 0xFF (the 112 bytes of 300) was taken");
+    if (mh_sender_takes(64))                             MHW_FAIL("gate: a one-byte 64 was taken");
+    if (drpc_my_node != PK_NODE_NONE && mh_sender_takes(drpc_my_node)) MHW_FAIL("gate: my own summary was taken");
+    {
+        pk_node_t o_in = mh_have_rx_origin(&w, n, 0);
+        if (!mh_beats(7, W2, 7, o_in))  MHW_FAIL("push: held (7, 260) did not beat (7, 300) from the 146 bytes");
+        if (mh_beats(7, W2, 7, mh_have_rx_origin(&w, (W)sizeof p, 0)) != 0)
+            MHW_FAIL("push: the 112 bytes are not the old order (260 vs 0xFF)");
+        if (mh_beats(7, W1, 7, W2))     MHW_FAIL("push: held (7, 300) beat (7, 260)");
+        if (!mh_beats(8, W1, 7, 3))     MHW_FAIL("push: a higher stamp did not beat");
+        if (mh_beats(7, 3, 8, W1))      MHW_FAIL("push: a lower stamp beat");
+    }
+    p.e[0].origin = 0; eo[0] = 0;
+#undef MHW_FAIL
+    if (fails == 0) say("[mhwide] PASS (wide sender and teachers: 2 bytes each after the 112, read only when 0xFF and wide; the push compares the wide id)\r\n");
+    else            say("[mhwide] RED\r\n");
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
