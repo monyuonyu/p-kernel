@@ -12,7 +12,8 @@
  *    [ark-crypto] x25519  RFC 7748 5.2, both pairs
  *    [ark-crypto] wrap    the box wrapped with a fixed ephemeral key equals K4; unwrap opens it
  *                         and the box it gives back refuses a seal (born sealed)
- *    [ark-crypto] box     a new box (getrandom) seals once, refuses the second seal, opens
+ *    [ark-crypto] box     a new box (getrandom) seals once, refuses the second seal, opens;
+ *                         a second new box has another key
  *  then "[ark-crypto] SELF PASS 5/5" or "[ark-crypto] SELF FAIL k/5".
  *  Negative controls: -DARKC_NC_NO_CLAMP reddens x25519 (and wrap), -DARKC_NC_TAG_NOCHECK tamper.
  */
@@ -77,8 +78,14 @@ void ark_crypto_self_test(void (*pr)(const char *))
         ok = ok && arkc_box_seal(&b, NULL, 0, msg, sizeof msg, ct, t) == 0;
         ok = ok && arkc_box_seal(&b, NULL, 0, msg, sizeof msg, ct2, t2) == -1 && zero(ct2, sizeof ct2);
         ok = ok && arkc_box_open(&b, NULL, 0, ct, sizeof ct, t, back) == 0 && memcmp(back, msg, sizeof msg) == 0;
+        {   /* a second new box has another key (audit-164: a fixed key stayed green without this) */
+            arkc_box c;
+            memset(&c, 0, sizeof c);
+            ok = ok && arkc_box_new(&c) == 0 && memcmp(c.k, b.k, 32) != 0;
+            arkc_box_wipe(&c);
+        }
         arkc_box_wipe(&b);
-        LINE("box    ", ok, "a new box (getrandom) seals once, refuses the second seal, opens");
+        LINE("box    ", ok, "a new box (getrandom) seals once, refuses the second seal, opens; two new boxes differ");
     }
 #undef LINE
     {
