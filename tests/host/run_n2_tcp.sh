@@ -7,6 +7,9 @@
 #       id was refused on TCP and fell back to UDP
 #   T1  narrow 4 (UDP) sees 43, 259 and 299 ALIVE
 #   T2  wide 300 (TCP) sees 3, 43 and 259 ALIVE (v3 and v2 frames come in over the stream)
+#   T2b 300 has a round trip (rtt=) to 3, 43 and 259 (audit-163: T2 stayed green with the v3 MAC check
+#       broken, or with the replay slot taken by the low byte)
+#   T2c 260 has a round trip to 299 (audit-163: a wide unicast over TCP read by byte 5 only stayed green)
 #   T3  narrow 44 (TCP) has a round trip (rtt=) to 259 and 299: their v3 ACKs reach it, so its
 #       frames say "I read v3" in byte 10 (else the relay never forwards a wide frame to it).
 #       ALIVE alone is not enough: before the change 44 showed both ALIVE from the narrow
@@ -96,6 +99,27 @@ all_alive 4 43 259 299 && res T1 PASS "narrow 4 (UDP) sees 43, 259, 299" \
                        || res T1 FAIL "narrow 4 (UDP):$(states 4 43 259 299)"
 all_alive 300 3 43 259 && res T2 PASS "wide 300 (TCP) sees 3, 43, 259" \
                        || res T2 FAIL "wide 300 (TCP):$(states 300 3 43 259)"
+# T2b (audit-163): 300 has a round trip (rtt=) to 3, 43 and 259: frames to a wide id are v3, so this
+# needs 300 to read v3 over the stream. ALIVE alone stayed green when 300 could not check any v3
+# MAC (the rumour makes a row ALIVE at once, as T3 below found)
+rtt_rows() {  # the rows of node $1 last `nodes` table that carry an rtt, sorted
+    tr -d "\r" < "$LOGDIR/node$1.log" \
+        | awk "/\\[cluster\\]  ID/{s=\"\"; next} /^ +[0-9]+  ALIVE .*rtt=[0-9]+ms/{s=s\" \"\$1} END{print s}" \
+        | tr " " "\n" | grep -E "^[0-9]+$" | sort -n | tr "\n" " "
+}
+has_rtt() { case " $(rtt_rows "$1")" in *" $2 "*) return 0;; esac; return 1; }
+t=0
+t2() { has_rtt 300 3 && has_rtt 300 43 && has_rtt 300 259 && has_rtt 260 299; }
+while [ "$t" -lt "$WAIT" ] && ! t2; do
+    sleep 3; t=$((t + 3)); send 300 "nodes"; send 260 "nodes"; sleep 1
+done
+has_rtt 300 3 && has_rtt 300 43 && has_rtt 300 259 \
+    && res T2b PASS "wide 300 (TCP) has a round trip to 3, 43 and 259 (v3 read over the stream, a replay slot per id)" \
+    || res T2b FAIL "wide 300 (TCP) has a round trip to {$(rtt_rows 300)}, wanted 3 43 259"
+# T2c (audit-163): wide 260 (UDP) has a round trip to 299: 300 answers 260 over TCP by a unicast to
+# MAC 52:54:00:00:01:04 (the high byte in 4:5); reading only byte 5 sent it to node 4 and stayed green
+has_rtt 260 299 && res T2c PASS "wide 260 (UDP) has a round trip to 299 (300 unicasts a wide id over TCP)" \
+    || res T2c FAIL "wide 260 (UDP) has a round trip to {$(rtt_rows 260)}, wanted 299"
 wide_rtt() {  # the wide rows of node $1's last `nodes` table that carry an rtt, sorted
     tr -d '\r' < "$LOGDIR/node$1.log" \
         | awk '/\[cluster\]  ID/{s=""; next} /^ +[0-9]+  ALIVE .* wide  rtt=[0-9]+ms/{s=s" "$1} END{print s}' \
