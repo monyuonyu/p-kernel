@@ -160,6 +160,14 @@ def judge(plain, gj, claimed):
     for gid, ok, what in res:
         lines.append("[b5s7] %s %s %s" % ("PASS" if ok else "FAIL", gid, what))
     ok = all(r[1] for r in res)
+    # test-holes H13 (audit-158): need = min(NEED, seeds) let a run on fewer
+    # seeds print "PASS ... on 7+ seeds". The judgement is the 8 fixed seeds;
+    # any other set is a reading: PARTIAL, never PASS (the gate lines stay).
+    full = sorted(plain, key=int) == sorted(SEEDS.split(), key=int)
+    if not full:
+        lines.append("[result] PARTIAL b5-step7 (%d of the %d judgement seeds: a reading, not the judgement)"
+                     % (len([s for s in plain if s in SEEDS.split()]), len(SEEDS.split())))
+        return False, lines, {r[0]: r[1] for r in res}
     lines.append("[result] %s b5-step7" % ("PASS" if ok else "FAIL"))
     return ok, lines, {r[0]: r[1] for r in res}
 
@@ -237,6 +245,21 @@ def self_test():
         check(name, got, want)
         for gid, w in gw.items():
             check("%s: %s" % (name, gid), r[gid], w)
+    # H13: a good run on one seed (or seven) is PARTIAL, not PASS
+    for k in (1, 7):
+        sub = S[:k]
+        got, ls, r = judge({s: good[s] for s in sub}, {s: GJr[s] for s in sub}, {s: CLr[s] for s in sub})
+        check("H13 %d seed(s): not PASS" % k, got, False)
+        check("H13 %d seed(s): the gates still green" % k, all(r.values()), True)
+        check("H13 %d seed(s): result PARTIAL" % k, ls[-1].startswith("[result] PARTIAL"), True)
+    # audit-159: eight seeds, one of them not a judgement seed (138 -> 139 with
+    # 138's numbers) is PARTIAL too; comparing only the count passed this
+    sw = S[:7] + ["139"]
+    src = S[:7] + [S[7]]
+    got, ls, r = judge({a: good[b] for a, b in zip(sw, src)}, {a: GJr[b] for a, b in zip(sw, src)},
+                       {a: CLr[b] for a, b in zip(sw, src)})
+    check("H13 8 seeds, one swapped: not PASS", got, False)
+    check("H13 8 seeds, one swapped: result PARTIAL", ls[-1].startswith("[result] PARTIAL"), True)
 
     d = tempfile.mkdtemp()
     try:
@@ -271,6 +294,14 @@ def self_test():
                 null.close()
         write_all()
         check("main: directory PASS", run_main(), 0)
+        null = open(os.devnull, "w")
+        old, sys.stdout = sys.stdout, null
+        try:
+            rc1 = main(["x", "--seeds", "138", d])
+        finally:
+            sys.stdout = old
+            null.close()
+        check("main: --seeds 138 only -> rc 1 (PARTIAL, H13)", rc1, 1)
         check("read_plain merges the four parts", read_plain(d, "131"), arms)
         os.remove(os.path.join(d, "plain-132-y.log"))
         check("main: a plain part missing -> rc 1", run_main(), 1)
