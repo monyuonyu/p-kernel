@@ -11,6 +11,8 @@
 #   A3  narrow 4 sees 299 DEAD              (a wide peer dies on a narrow node)
 #   A4  wide 260 sees 299 DEAD              (and on a wide node)
 #   A5  4 and 260 still see 4 (row 4 = id 5), 3 and 259 ALIVE (only the killed ones died)
+#   A6  no node logs "misdelivered" (UDP receivers; test-holes H20). Negative control: a relay
+#       built with -DRELAY_NC_MISROUTE (frames for 300 go to 260) reddens A6
 #
 # Written test first for "まだ" 4 ("a wide node never lets a narrow peer die"): green on
 # master e72de183 (2 runs, 11-08). A wide self marks a dead narrow peer by its own failing
@@ -119,6 +121,16 @@ a5=""
 for r in 4 259; do [ "$(state_of 4 "$r")" = ALIVE ] || a5="$a5 4:$r=$(state_of 4 "$r")"; done
 for r in 3 4; do [ "$(state_of 260 "$r")" = ALIVE ] || a5="$a5 260:$r=$(state_of 260 "$r")"; done
 [ -z "$a5" ] && res A5 PASS "the living stay ALIVE on 4 and 260" || res A5 FAIL "a living peer is not ALIVE:$a5"
+# A6 (test-holes H20, the UDP side): no node got a one-node frame (REL_DATA) whose MAC names
+# another node (relay_misdeliver.h). Before, only [n2-tcp] T5 looked at this line, and a relay
+# that sent 300's frames to 260 left every line above green (audit-165).
+md=""
+for i in $IDS; do
+    c=$(grep -ac 'misdelivered: a frame for node' "$LOGDIR/node$i.log")
+    [ "$c" -gt 0 ] && md="$md node$i:$c($(grep -a 'misdelivered' "$LOGDIR/node$i.log" | head -1 | sed 's/.*misdelivered: //'))"
+done
+[ -z "$md" ] && res A6 PASS "no one-node frame came to a node its MAC does not name" \
+             || res A6 FAIL "misdelivered one-node frames:$md"
 
 if [ -z "$REDS" ]; then echo "[n2-alive] ALL PASS"; exit 0; fi
 echo "[n2-alive] RED:$REDS"
