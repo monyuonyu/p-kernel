@@ -115,6 +115,12 @@ def judge(plain, trimoff, nogate):
     for gid, ok, what in res:
         lines.append("[b5s5] %s %s %s" % ("PASS" if ok else "FAIL", gid, what))
     ok = all(r[1] for r in res)
+    # test-holes H14 (as H13 in step 7): a run on other than the 8 judgement
+    # seeds is a reading: PARTIAL, never PASS (the gate lines stay).
+    if sorted(plain, key=int) != sorted(SEEDS.split(), key=int):
+        lines.append("[result] PARTIAL b5-step5 (%d of the %d judgement seeds: a reading, not the judgement)"
+                     % (len([s for s in plain if s in SEEDS.split()]), len(SEEDS.split())))
+        return False, lines, {r[0]: r[1] for r in res}
     lines.append("[result] %s b5-step5" % ("PASS" if ok else "FAIL"))
     return ok, lines, {r[0]: r[1] for r in res}
 
@@ -190,6 +196,12 @@ def self_test():
         check(name, got, want)
         for gid, w in gw.items():
             check("%s: %s" % (name, gid), r[gid], w)
+    # H14: a good run on 1 or 7 seeds, or on 8 with one not a judgement seed, is PARTIAL
+    for name, sub in (("1 seed", S[:1]), ("7 seeds", S[:7]), ("8 seeds, one swapped", S[:7] + ["999"])):
+        got, ls, r = judge({s: P() for s in sub}, {s: P(tp=3.95) for s in sub}, {s: P(tp2=4.60) for s in sub})
+        check("H14 %s: not PASS" % name, got, False)
+        check("H14 %s: the gates still green" % name, all(r.values()), True)
+        check("H14 %s: result PARTIAL" % name, ls[-1].startswith("[result] PARTIAL"), True)
 
     d = tempfile.mkdtemp()
     try:

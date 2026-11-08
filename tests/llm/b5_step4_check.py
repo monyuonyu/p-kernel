@@ -31,7 +31,8 @@ import tempfile
 DK = 0.04      # fixed in the design (section 3) from exploration seeds 91..95, before the code
 D1 = 0.10
 NEED = 7
-ARM = re.compile(r"^\[b5s4\] arm=(\S+) last=([0-9.]+) kept=([0-9.]+) at (\d+) \(gate ([0-9.]+)\)")
+SEEDS = " ".join(str(s) for s in range(99, 107))   # the judgement seeds (main's default)
+ARM =re.compile(r"^\[b5s4\] arm=(\S+) last=([0-9.]+) kept=([0-9.]+) at (\d+) \(gate ([0-9.]+)\)")
 NEEDED = ["alone-A", "alone-B", "full", "shrink-app", "apprentice", "poison-app"]
 
 
@@ -113,6 +114,12 @@ def judge(plain, same, dk, d1):
     for gid, ok, what in res:
         lines.append("[b5s4] %s %s %s" % ("PASS" if ok else "FAIL", gid, what))
     ok = all(r[1] for r in res)
+    # test-holes H14 (as H13 in step 7): a run on other than the 8 judgement
+    # seeds is a reading: PARTIAL, never PASS (the gate lines stay).
+    if sorted(plain, key=int) != sorted(SEEDS.split(), key=int):
+        lines.append("[result] PARTIAL b5-step4 (%d of the %d judgement seeds: a reading, not the judgement)"
+                     % (len([s for s in plain if s in SEEDS.split()]), len(SEEDS.split())))
+        return False, lines, {r[0]: r[1] for r in res}
     lines.append("[result] %s b5-step4" % ("PASS" if ok else "FAIL"))
     return ok, lines, {r[0]: r[1] for r in res}
 
@@ -185,6 +192,12 @@ def self_test():
         check(name, got, want)
         for gid, w in gw.items():
             check("%s: %s" % (name, gid), g[gid], w)
+    # H14: a good run on 1 or 7 seeds, or on 8 with one not a judgement seed, is PARTIAL
+    for name, sub in (("1 seed", S[:1]), ("7 seeds", S[:7]), ("8 seeds, one swapped", S[:7] + ["999"])):
+        got, ls, g = judge({s: A(3.8) for s in sub}, {s: A(4.0) for s in sub}, dk, d1)
+        check("H14 %s: not PASS" % name, got, False)
+        check("H14 %s: the gates still green" % name, all(g.values()), True)
+        check("H14 %s: result PARTIAL" % name, ls[-1].startswith("[result] PARTIAL"), True)
 
     # read(): through real files
     d = tempfile.mkdtemp()
@@ -230,7 +243,7 @@ def self_test():
 def main(argv):
     if argv[1:] == ["--self-test"]:
         return 1 if self_test() else 0
-    seeds, d, i = " ".join(str(s) for s in range(99, 107)), None, 1
+    seeds, d, i = SEEDS, None, 1
     while i < len(argv):
         if argv[i] == "--seeds":
             seeds = argv[i + 1]; i += 2
