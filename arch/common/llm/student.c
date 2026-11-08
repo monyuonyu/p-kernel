@@ -2609,11 +2609,44 @@ int st_merge_trust(st_model *into, const st_model *prev,
     return st_merge_trust_prev(into, prev, peer_blobs, peer_lens, NULL, NULL, count, ts_out);
 }
 
+/* the body of steps 6, 7 and 8: tau < 0 is step 7 (no echo cut); with
+ * tau >= 0 a peer with c = cos(gj, g0) >= tau gets TS 0 (step 8). The cut only
+ * zeroes a TS: every other number is computed as in step 7, so tau < 0 and
+ * "no peer reaches tau" give step 7's bytes. */
+static int st_merge_trust_core(st_model *into, const st_model *prev,
+                               const void *const *peer_blobs, const size_t *peer_lens,
+                               const void *const *peer_prev, const size_t *peer_prev_lens,
+                               int count, float *ts_out, double tau, float *c_out);
+
 int st_merge_trust_prev(st_model *into, const st_model *prev,
                         const void *const *peer_blobs, const size_t *peer_lens,
                         const void *const *peer_prev, const size_t *peer_prev_lens,
                         int count, float *ts_out)
 {
+    return st_merge_trust_core(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
+                               count, ts_out, -1.0, NULL);
+}
+
+int st_merge_trust_echo(st_model *into, const st_model *prev,
+                        const void *const *peer_blobs, const size_t *peer_lens,
+                        const void *const *peer_prev, const size_t *peer_prev_lens,
+                        int count, float *ts_out, float *c_out)
+{
+#if defined(B5S8_NO_ECHO)                   /* NC1 of the design: step 7, no cut */
+    const double tau = -1.0;
+#else
+    const double tau = ST_ECHO_TAU;
+#endif
+    return st_merge_trust_core(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
+                               count, ts_out, tau, c_out);
+}
+
+static int st_merge_trust_core(st_model *into, const st_model *prev,
+                               const void *const *peer_blobs, const size_t *peer_lens,
+                               const void *const *peer_prev, const size_t *peer_prev_lens,
+                               int count, float *ts_out, double tau, float *c_out)
+{
+    if (c_out && count > 0 && count <= ST_COHORT_MAX) for (int k = 0; k < count; k++) c_out[k] = -2.0f;
     if (!into || !into->w || !prev || !prev->w) return ST_E_ARG;
     if (prev->tier != into->tier || prev->n_params != into->n_params) return ST_E_ARG;
     if (count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
@@ -2644,7 +2677,7 @@ int st_merge_trust_prev(st_model *into, const st_model *prev,
     for (int a = 0; a < accepted; a++) {
         const void *b = peer_blobs[ord[a]];
         const void *bp = st_prev_ok(into, peer_prev, peer_prev_lens, ord[a]) ? peer_prev[ord[a]] : NULL;
-        double dot = 0.0, nj = 0.0, nd = 0.0;
+        double dot = 0.0, nj = 0.0, nd = 0.0, dg = 0.0;
         for (int i = 0; i < np; i++) {
             double p = (double)prev->w[i];
             double g0 = (double)into->w[i] - p, gj = (double)st_blob_w_at(b, (size_t)i) - p;
@@ -2652,6 +2685,7 @@ int st_merge_trust_prev(st_model *into, const st_model *prev,
                 double dj = (double)st_blob_w_at(b, (size_t)i) - (double)st_blob_w_at(bp, (size_t)i);
                 dot += g0 * dj; nd += dj * dj;
             } else dot += g0 * gj;
+            dg += g0 * gj;                  /* step 8: the destination's cos, always on gj */
             nj += gj * gj;
         }
         nj = st_sqrt_d(nj);
@@ -2663,6 +2697,11 @@ int st_merge_trust_prev(st_model *into, const st_model *prev,
 #else
         ts[a] = cs > 0.0 ? cs : 0.0;
 #endif
+        {   /* step 8: an echo of the receiver's own update is not a second voice */
+            double cg = nj > 0.0 ? dg / (n0 * nj) : 0.0;
+            if (c_out) c_out[ord[a]] = (float)cg;
+            if (tau >= 0.0 && cg >= tau) ts[a] = 0.0;
+        }
 #if defined(B5S6_NO_NORM)                   /* NC2 of the design: the peer's own size */
         sc[a] = 1.0;
 #else
