@@ -491,6 +491,133 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 
 #define PFSR_POLL_MS 50
 
+/* one received ANNOUNCE of r bytes: someone in the region stored a new block */
+static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
+{
+    if (r >= (W)sizeof(*ap) && ap->magic == PFSR_ANN_MAGIC &&
+        ap->src_node < DNODE_MAX && ap->src_node != drpc_my_node &&
+        ap->seq != last_ann_seq[ap->src_node]) {
+        last_ann_seq[ap->src_node] = ap->seq;
+        stat_ann_rx++;
+        /* G28: tell the protect layer this peer holds ap->id, whether or
+         * not WE hold it (the unit owner hears its replicas this way). */
+        if (announce_hook) announce_hook(ap->src_node, ap->id);
+        if (ap->len <= PFS_BLOCK_MAX && !pfs_has(ap->id)) {
+            pr_puts("[pfs] heard announce id="); pr_put_id(ap->id);
+            pr_puts("  from n"); pr_putdec(ap->src_node);
+            pr_puts(" -> want\r\n");
+            pending_add(ap->id);
+        } else if (pfs_has(ap->id) && ap->src_node == ap->origin) {
+            /* The block's ORIGIN is re-driving its replication (the
+             * protect actuator re-announcing a unit it owns; src==origin,
+             * never a holder<->holder message) and we already hold it
+             * durably. Confirm via reliable UNICAST hold-ack straight to
+             * the origin (G35) instead of a broadcast announce-back: the
+             * shared LATEST_ONLY announce slot overwrites all but one
+             * holder's reply per tick, so under concurrent multi-point
+             * replication the origin's holder_count could lag the real
+             * durable replicas by many ticks. The unicast path has no
+             * shared slot — each distinct holder confirms independently,
+             * so holder_count reaches R promptly. Bounded: only
+             * origin-driven announces (src==origin) trigger this, so it
+             * does not cascade between holders. */
+            send_hold_ack(ap->origin, ap->id);
+        }
+    }
+}
+
+#ifdef _TK_HOSTED_LIBC_
+/* R-KDDSQ stage 2 (kdds-queue.md): the ANNOUNCE reader takes every announce
+ * that came in since the last tick, oldest first (kdds_sub_next), up to
+ * PFSR_ANN_PER_TICK, not only the last one: two holders announcing in one
+ * tick overwrote each other's in the topic's one slot. The per-sender seq
+ * check stays (seq means nothing across senders). Hosted only (kdds_sub_next
+ * is hosted only; bare metal reads the last one as before).
+ * -DPFSR_NC_ANN_LATEST: the old kdds_sub (negative control, `kdds ann`). */
+#ifndef PFSR_ANN_PER_TICK
+#define PFSR_ANN_PER_TICK 8
+#endif
+static INT pfsr_ann_drain(W h, void (*take)(const PFSR_ANN_PKT *, W))
+{
+    PFSR_ANN_PKT a;
+    INT k = 0;
+#ifndef PFSR_NC_ANN_LATEST
+    for (; k < PFSR_ANN_PER_TICK; k++) {
+        W r = kdds_sub_next(h, &a, (W)sizeof(a));
+        if (r <= 0) break;
+        take(&a, r);
+    }
+#else
+    W r = kdds_sub(h, &a, (W)sizeof(a), 0);
+    if (r > 0) { take(&a, r); k = 1; }
+#endif
+    return k;
+}
+
+/* `kdds ann` (R-KDDSQ stage 2): four announces received in a row on a test
+ * topic (n1 seq 5, n2 seq 7, n1 seq 5 again, n1 seq 6), one drain with the
+ * real pfsr_ann_take: the protect hook hears n1 n2 n1 (the repeat is dropped
+ * by the per-sender seq), stat_ann_rx +3. The old kdds_sub reads n1 seq 6
+ * only. The block ids are not held and len > PFS_BLOCK_MAX: no want, no
+ * hold-ack. The hook, stat_ann_rx, last_ann_seq of 1 and 2 and drpc_my_node
+ * are put back. Limit: it checks pfsr_ann_drain, not that pfs_repl_task
+ * calls it (run_relay_failover and the CI's pfs runs do). */
+static UB  kq_ann_heard[8];
+static INT kq_ann_n;
+static void kq_ann_hook(pk_node_t src, const U1 id[PFS_ID_LEN])
+{
+    (void)id;
+    if (kq_ann_n < 8) kq_ann_heard[kq_ann_n] = (UB)src;
+    kq_ann_n++;
+}
+static void kq_ann_rx(const char *name, pk_node8_t src, UW seq)
+{
+    static KDDS_PKT p;
+    PFSR_ANN_PKT a;
+    for (INT i = 0; i < (INT)sizeof p; i++) ((UB *)&p)[i] = 0;
+    for (INT i = 0; i < (INT)sizeof a; i++) ((UB *)&a)[i] = 0;
+    a.magic = PFSR_ANN_MAGIC; a.seq = seq; a.src_node = src; a.origin = src;
+    a.len = PFS_BLOCK_MAX + 1;
+    for (INT i = 0; i < PFS_ID_LEN; i++) a.id[i] = (U1)(0xA0 + src + i);
+    p.magic = KDDS_MAGIC; p.version = KDDS_VERSION; p.type = KDDS_DATA_PKT;
+    p.src_node = src; p.data_len = (UH)sizeof a;
+    INT n = 0; while (name[n]) n++; n++;
+    for (INT i = 0; i < n && i < KDDS_NAME_MAX; i++) p.name[i] = name[i];
+    p.name_len = (UH)n;
+    for (INT i = 0; i < (INT)sizeof a; i++) p.data[i] = ((const UB *)&a)[i];
+    kdds_rx(src, KDDS_PORT, (const UB *)&p, (UH)sizeof p);
+}
+INT pfs_repl_ann_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : pr_puts;
+    const char *NM = "test/pfsann";
+    W h = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    if (h < 0) { say("[kdds-ann] FAIL open\r\n"); return 1; }
+    pk_node_t saved_my = drpc_my_node;
+    PFSR_ANN_HOOK saved_hook = announce_hook;
+    UW saved_rx = stat_ann_rx, s1 = last_ann_seq[1], s2 = last_ann_seq[2];
+    drpc_my_node = 0xFF; announce_hook = kq_ann_hook; kq_ann_n = 0;
+    last_ann_seq[1] = 0; last_ann_seq[2] = 0;
+    PFSR_ANN_PKT a;
+    (void)kdds_sub_next(h, &a, (W)sizeof a);          /* start reading: nothing yet */
+    kq_ann_rx(NM, 1, 5); kq_ann_rx(NM, 2, 7); kq_ann_rx(NM, 1, 5); kq_ann_rx(NM, 1, 6);
+    INT got = pfsr_ann_drain(h, pfsr_ann_take);
+    UW drx = stat_ann_rx - saved_rx;
+    INT ok = (kq_ann_n == 3 && kq_ann_heard[0] == 1 && kq_ann_heard[1] == 2 &&
+              kq_ann_heard[2] == 1 && drx == 3 && got == 4);
+    INT again = pfsr_ann_drain(h, pfsr_ann_take);   /* nothing new */
+    if (again != 0 || kq_ann_n != 3) ok = 0;
+    announce_hook = saved_hook; stat_ann_rx = saved_rx;
+    last_ann_seq[1] = s1; last_ann_seq[2] = s2; drpc_my_node = saved_my;
+    kdds_close(h);
+    pr_puts("[kdds-ann] read "); pr_putdec((UW)got); pr_puts(", heard ");
+    pr_putdec((UW)kq_ann_n); pr_puts(" (want 4 read, 3 heard: n1 n2 n1)\r\n");
+    if (!ok) { say("[kdds-ann] FAIL drain (four announces in one tick did not give n1 n2 n1)\r\n"); return 1; }
+    say("[kdds-ann] PASS (the announce reader takes every announce of the tick, oldest first; a repeated seq is dropped)\r\n");
+    return 0;
+}
+#endif
+
 void pfs_repl_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
@@ -503,40 +630,15 @@ void pfs_repl_task(INT stacd, void *exinf)
 
     for (;;) {
         /* ANNOUNCE: someone in the region stored a new block */
+#ifdef _TK_HOSTED_LIBC_
+        (void)pfsr_ann_drain(h_ann_sub, pfsr_ann_take);   /* every one of the tick */
+#else
         {
             PFSR_ANN_PKT a;
             W r = kdds_sub(h_ann_sub, &a, (W)sizeof(a), 0);
-            if (r >= (W)sizeof(a) && a.magic == PFSR_ANN_MAGIC &&
-                a.src_node < DNODE_MAX && a.src_node != drpc_my_node &&
-                a.seq != last_ann_seq[a.src_node]) {
-                last_ann_seq[a.src_node] = a.seq;
-                stat_ann_rx++;
-                /* G28: tell the protect layer this peer holds a.id, whether or
-                 * not WE hold it (the unit owner hears its replicas this way). */
-                if (announce_hook) announce_hook(a.src_node, a.id);
-                if (a.len <= PFS_BLOCK_MAX && !pfs_has(a.id)) {
-                    pr_puts("[pfs] heard announce id="); pr_put_id(a.id);
-                    pr_puts("  from n"); pr_putdec(a.src_node);
-                    pr_puts(" -> want\r\n");
-                    pending_add(a.id);
-                } else if (pfs_has(a.id) && a.src_node == a.origin) {
-                    /* The block's ORIGIN is re-driving its replication (the
-                     * protect actuator re-announcing a unit it owns; src==origin,
-                     * never a holder<->holder message) and we already hold it
-                     * durably. Confirm via reliable UNICAST hold-ack straight to
-                     * the origin (G35) instead of a broadcast announce-back: the
-                     * shared LATEST_ONLY announce slot overwrites all but one
-                     * holder's reply per tick, so under concurrent multi-point
-                     * replication the origin's holder_count could lag the real
-                     * durable replicas by many ticks. The unicast path has no
-                     * shared slot — each distinct holder confirms independently,
-                     * so holder_count reaches R promptly. Bounded: only
-                     * origin-driven announces (src==origin) trigger this, so it
-                     * does not cascade between holders. */
-                    send_hold_ack(a.origin, a.id);
-                }
-            }
+            pfsr_ann_take(&a, r);
         }
+#endif
 
         /* WANT: someone lacks a block — any holder streams it over */
         {
