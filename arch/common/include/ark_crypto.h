@@ -1,6 +1,6 @@
 /* ark_crypto.h: the ark entry's crypto parts (docs/architecture/30-module/ark-entry.md 3b).
  * Stage 1: ChaCha20, Poly1305 and AEAD_CHACHA20_POLY1305 (RFC 8439 sections 2.4, 2.5, 2.6, 2.8).
- * X25519 and the HKDF-SHA-512 key derivation are the next stage.
+ * Stage 2: X25519 (RFC 7748, the ladder in ed25519.c). HKDF-SHA-512 is the next stage.
  * Hosted only: no bare-metal Makefile lists ark_crypto.c.
  * Limits: no side-channel (timing, cache) testing; the tag compare is written in constant
  * time but not measured. */
@@ -20,6 +20,11 @@ void arkc_poly1305_keygen(const uint8_t key[32], const uint8_t nonce[12], uint8_
 void arkc_aead_seal(const uint8_t key[32], const uint8_t nonce[12],
                     const uint8_t *aad, size_t aad_len,
                     const uint8_t *pt, size_t len, uint8_t *ct, uint8_t tag[16]);
+/* RFC 7748 (stage 2): out = X25519(scalar, u), the ladder of ed25519.c. -1 (out all
+ * zero) when the shared value is all zero (6.1: a small-order u), else 0. */
+int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32]);
+/* the public key: X25519(scalar, 9) */
+void arkc_x25519_base(uint8_t pub[32], const uint8_t scalar[32]);
 /* open: 0 and pt, or -1 with every byte of pt zero (nothing of the plaintext is returned) */
 int arkc_aead_open(const uint8_t key[32], const uint8_t nonce[12],
                    const uint8_t *aad, size_t aad_len,

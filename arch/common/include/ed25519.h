@@ -77,4 +77,13 @@ int  ed25519_verify(const unsigned char sig[ED25519_SIGNATURE_LEN],
  * mismatch. Cheap; runs unconditionally every build like sha256_self_test. */
 int  ed25519_self_test(void);
 
+#ifdef _TK_HOSTED_LIBC_
+/* X25519 (RFC 7748 section 5) on this file's field arithmetic, for the ark
+ * entry (ark-entry.md 3b). out = X25519(scalar, u): the scalar is clamped and
+ * the top bit of u dropped here. Hosted only (the bare .text is unchanged).
+ * The all-zero check of section 6.1 is the caller's (arkc_x25519). */
+void ed25519_x25519(unsigned char out[32], const unsigned char scalar[32],
+                    const unsigned char u[32]);
+#endif
+
 #endif

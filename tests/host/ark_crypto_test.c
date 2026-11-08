@@ -72,6 +72,33 @@ int main(void)
     }
     check(ok, "[arkc-open-tamper] a bit of the tag, the AAD or the ciphertext: -1 and every byte zero");
 
+    /* ---- stage 2: X25519 (C1 of ark-entry.md 3b, RFC 7748) ---- */
+    uint8_t xo[32], k[32], u[32], t[32];
+    int x1 = arkc_x25519(xo, X1_K, X1_U) == 0 && memcmp(xo, X1_OUT, 32) == 0;
+    int x2 = arkc_x25519(xo, X2_K, X2_U) == 0 && memcmp(xo, X2_OUT, 32) == 0;
+    check(x1 && x2, "[arkc-x25519] RFC 7748 5.2, both pairs (the second u has its top bit set)");
+    memset(k, 0, 32); k[0] = 9; memcpy(u, k, 32);
+    int it1 = 0;
+    for (int n = 1; n <= 1000; n++) {          /* 5.2: k = X25519(k, u), u = the old k */
+        arkc_x25519(t, k, u);
+        memcpy(u, k, 32); memcpy(k, t, 32);
+        if (n == 1) it1 = memcmp(k, XI_1, 32) == 0;
+    }
+    check(it1 && memcmp(k, XI_1000, 32) == 0, "[arkc-x25519-iter] RFC 7748 5.2, after 1 and 1,000 iterations");
+    uint8_t pa[32], pb[32], ka[32], kb[32];
+    arkc_x25519_base(pa, XA_PRIV);
+    arkc_x25519_base(pb, XB_PRIV);
+    int ra = arkc_x25519(ka, XA_PRIV, XB_PUB), rb = arkc_x25519(kb, XB_PRIV, XA_PUB);
+    check(memcmp(pa, XA_PUB, 32) == 0 && memcmp(pb, XB_PUB, 32) == 0 && ra == 0 && rb == 0
+          && memcmp(ka, XK, 32) == 0 && memcmp(kb, XK, 32) == 0,
+          "[arkc-x25519-dh] RFC 7748 6.1, both public keys and the shared K on both sides");
+    memset(u, 0, 32);
+    memset(xo, 0xA5, 32);
+    int r0 = arkc_x25519(xo, XA_PRIV, u);
+    memset(u, 0, 32); u[0] = 1;                 /* u = 1: order 4, K is zero too */
+    int r1 = arkc_x25519(t, XA_PRIV, u);
+    check(r0 == -1 && r1 == -1 && all_zero(xo, 32), "[arkc-x25519-zero] u = 0 and u = 1 give an all-zero K: refused");
+
     printf("SUMMARY: %d FAIL\n", fails);
     return fails ? 1 : 0;
 }

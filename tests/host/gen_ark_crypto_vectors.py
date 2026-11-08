@@ -149,6 +149,29 @@ A5 = a5()
 for k in ("key", "nonce", "aad", "ct", "tag", "pt"):
     V.append(("A5_" + k.upper(), A5[k]))
 
+def x25519_vectors(path):
+    """RFC 7748 5.2 (two pairs, the 1 and 1,000 iterations) and 6.1 (Alice and Bob):
+    each value is the 64-hex line right after its label line (the label is checked)"""
+    R = open(path, encoding="ascii", errors="replace").read().split("\n")
+    def h(n, label):
+        assert R[n - 1].strip() == label, (n, label, R[n - 1])
+        t = R[n].strip()
+        assert re.fullmatch(r"[0-9a-f]{64}", t), (n, t)
+        return bytes.fromhex(t)
+    return [
+        ("X1_K", h(577, "Input scalar:")), ("X1_U", h(582, "Input u-coordinate:")),
+        ("X1_OUT", h(587, "Output u-coordinate:")),
+        ("X2_K", h(590, "Input scalar:")), ("X2_U", h(595, "Input u-coordinate:")),
+        ("X2_OUT", h(600, "Output u-coordinate:")),
+        ("XI_1", h(695, "After one iteration:")), ("XI_1000", h(697, "After 1,000 iterations:")),
+        ("XA_PRIV", h(768, "Alice's private key, a:")), ("XA_PUB", h(770, "Alice's public key, X25519(a, 9):")),
+        ("XB_PRIV", h(772, "Bob's private key, b:")), ("XB_PUB", h(774, "Bob's public key, X25519(b, 9):")),
+        ("XK", h(776, "Their shared secret, K:")),
+    ]
+
+if len(sys.argv) > 2:
+    V += x25519_vectors(sys.argv[2])
+
 A3 = a3()
 assert [len(m) for _, _, m, _ in A3] == [64, 375, 375, 127, 16, 16, 48, 48, 16, 64, 48], \
     [len(m) for _, _, m, _ in A3]

@@ -8,7 +8,10 @@
  *    - public symbols renamed crypto_* -> ed25519_* (wrappers at bottom);
  *    - the fixed-width typedefs below replace <stdint.h> (identical widths);
  *    - randombytes removed (keygen entropy is the caller's; signing has none);
- *    - the RFC 8032 §7.1 KAT self-test appended.
+ *    - the RFC 8032 §7.1 KAT self-test appended;
+ *    - (2026-11-08, hosted only, #ifdef _TK_HOSTED_LIBC_ at the bottom) X25519,
+ *      written out from TweetNaCl's crypto_scalarmult for the ark entry. The
+ *      bare .text does not change (measured in the commit that added it).
  *  NO field-arithmetic was altered. An auditor can diff the gf/ops/sha512
  *  blocks line-against-line with tweetnacl.c.
  *
@@ -701,3 +704,71 @@ int ed25519_self_test(void)
 
   return 0;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+/* X25519 (RFC 7748 section 5), the Montgomery ladder of TweetNaCl 20140427's
+ * crypto_scalarmult (written out from it, not an upstream copy: the constant is
+ * named c121665 instead of _121665, the loops are spelled out). It uses only the
+ * gf ops above, which stay as upstream. Hosted only: not in the bare .text.
+ * -DARKC_NC_NO_CLAMP: the scalar is not clamped (C1 goes red).
+ * -DARKC_NC_NO_MASK: the top bit of u is kept (5.2's second u, 0x93, goes red;
+ * the first, 0x4c, does not reach it). */
+static const gf c121665 = {0xDB41, 1};
+
+void ed25519_x25519(unsigned char out[32], const unsigned char scalar[32],
+                    const unsigned char u[32])
+{
+  u8 z[32];
+  i64 x[80], r, i;
+  gf a, b, c, d, e, f;
+  for (i = 0; i < 32; ++i) z[i] = scalar[i];
+#ifndef ARKC_NC_NO_CLAMP
+  z[31] = (u8)((z[31] & 127) | 64);
+  z[0] &= 248;
+#endif
+  unpack25519(x, u);
+#ifdef ARKC_NC_NO_MASK
+  x[15] = u[30] + ((i64)u[31] << 8);
+#endif
+  for (i = 0; i < 16; ++i) {
+    b[i] = x[i];
+    d[i] = a[i] = c[i] = 0;
+  }
+  a[0] = d[0] = 1;
+  for (i = 254; i >= 0; --i) {
+    r = (z[i >> 3] >> (i & 7)) & 1;
+    sel25519(a, b, (int)r);
+    sel25519(c, d, (int)r);
+    A(e, a, c);
+    Z(a, a, c);
+    A(c, b, d);
+    Z(b, b, d);
+    S(d, e);
+    S(f, a);
+    M(a, c, a);
+    M(c, b, e);
+    A(e, a, c);
+    Z(a, a, c);
+    S(b, a);
+    Z(c, d, f);
+    M(a, c, c121665);
+    A(a, a, d);
+    M(c, c, a);
+    M(a, d, f);
+    M(d, b, x);
+    S(b, e);
+    sel25519(a, b, (int)r);
+    sel25519(c, d, (int)r);
+  }
+  for (i = 0; i < 16; ++i) {
+    x[i + 16] = a[i];
+    x[i + 32] = c[i];
+    x[i + 48] = b[i];
+    x[i + 64] = d[i];
+  }
+  inv25519(x + 32, x + 32);
+  M(x + 16, x + 16, x + 32);
+  pack25519(out, x + 16);
+  for (i = 0; i < 32; ++i) z[i] = 0;
+}
+#endif

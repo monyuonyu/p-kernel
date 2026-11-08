@@ -6,6 +6,7 @@
  * (open does not compare the tag). Hosted only. */
 #include <string.h>
 #include "ark_crypto.h"
+#include "ed25519.h"
 
 static uint32_t ld32(const uint8_t *p)
 {
@@ -217,4 +218,19 @@ int arkc_aead_open(const uint8_t key[32], const uint8_t nonce[12], const uint8_t
     }
     arkc_chacha20(key, 1, nonce, ct, pt, len);
     return 0;
+}
+
+/* ---- X25519 (stage 2, RFC 7748): the ladder is ed25519.c's ---- */
+int arkc_x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t u[32])
+{
+    ed25519_x25519(out, scalar, u);
+    uint8_t any = 0;                         /* 6.1: an all-zero K is refused, every byte read */
+    for (int i = 0; i < 32; i++) any |= out[i];
+    return any ? 0 : -1;
+}
+
+void arkc_x25519_base(uint8_t pub[32], const uint8_t scalar[32])
+{
+    static const uint8_t nine[32] = {9};
+    ed25519_x25519(pub, scalar, nine);
 }
