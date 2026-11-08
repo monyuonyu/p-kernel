@@ -1197,6 +1197,17 @@ jobs:
           timeout 120 tests/host/run_ed25519_ubsan.sh nc | tee ed25519_ubsan_nc.log
           grep -aF '[ed25519-ubsan] NC RED as expected' ed25519_ubsan_nc.log
 
+      # ark-entry.md 3b, stage 1: ChaCha20, Poly1305 and the AEAD against the
+      # RFC 8439 vectors (generated from the RFC text), ASan+UBSan, and a bit of
+      # the tag/AAD/ciphertext refuses with all zero. nc: NO_PAD and TAG_NOCHECK
+      # redden their lines only. Hosted only, not in any kernel build. ~3 s.
+      - name: ark crypto stage 1 (RFC 8439 vectors, tamper refused)
+        run: |
+          timeout 120 tests/host/run_ark_crypto.sh | tee ark_crypto.log
+          grep -aF '[ark-crypto] ALL PASS' ark_crypto.log
+          timeout 120 tests/host/run_ark_crypto.sh nc | tee ark_crypto_nc.log
+          grep -aF '[ark-crypto] NC RED as expected' ark_crypto_nc.log
+
       # ROADMAP 1-8 v4, the conflict half: with sky misread on every node
       # (-DR3_TEST_MISREAD_KEY=0) the push-back, the lost value in the history
       # and mind/hist's "do I hold the winner" must use the record. Three
