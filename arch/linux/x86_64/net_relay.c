@@ -70,6 +70,7 @@
 #include <netdb.h>
 
 #include "pk_nosw.h"
+#include "relay_misdeliver.h"   /* test-holes H20: a one-node frame for another node */
 #include "sha256.h"   /* from relay/, added to include path by Makefile.
                        * NOTE: sha256.h deliberately avoids <stdint.h> so it
                        * coexists with the T-Kernel stdint shadow that this
@@ -1144,6 +1145,8 @@ int net_relay_recv(void *out, int maxlen)
         int payload_len = (int)n - hdr;
         if (payload_len > maxlen) payload_len = maxlen;
         if (payload_len > 0) memcpy(out, buf + hdr, (size_t)payload_len);
+        if (type == REL_DATA)                    /* H20: observation only */
+            relay_note_misdelivered("net_relay", my_node_id, buf + hdr, (int)n - hdr);
         rx_ok_count++;
         return payload_len;
     }
