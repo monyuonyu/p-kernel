@@ -3662,6 +3662,10 @@ jobs:
       # tests/llm/*.sh, built alone and syntax only, against each llm source naming it (~40 s).
       - name: check_llm_falsifiers.py (each tests/llm falsifier macro still compiles)
         run: python3 tests/ci/check_llm_falsifiers.py
+      # test-holes H12, H5, part of H2: the call sites the certs do not reach
+      # (snf/ss6 addresses, mind/have send and receive). Each rule's break reddens it.
+      - name: check_callsites.py --selftest (snf/ss6 address and mind/have call sites)
+        run: python3 tests/ci/check_callsites.py --selftest
       # inbox #39: a self-hosted job without the fork guard reddens. Not a wall (see the script).
       - name: check_runner_guard.py selftest (each offence reddens)
         run: python3 tests/ci/check_runner_guard.py --selftest

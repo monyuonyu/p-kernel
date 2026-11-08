@@ -7,15 +7,15 @@
 | # | どこ | 壊し方（緑のまま） | 見つけた所 | 直す案 |
 |---|---|---|---|---|
 | H1 | B5 第 6 歩 `st_merge_trust` の並べ替え（s6unit の s6-order） | 仲間の並べ替え（重みのバイトの辞書順）を外す | 監査-156 | 仲間 3 つの double の和は順で変わらない＝仲間を増やして順で丸めが変わる組を作るか、並べ替えの関数を直に試す |
-| H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験、または呼び所が mc_push_busy だけを使うことを ソースの検査で見る |
+| H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験、または呼び所が mc_push_busy だけを使うことを ソースの検査で見る（**一部の直し feat/callsite-pins（監査待ち）**: 呼び所が MC_PUSH_BUSY を通ることを check_callsites.py で見る。じかに書いたバイト比べ全般は見ない） |
 | H3 | kdds の送りの呼び所（K1、kdds_pub_core） | 呼び所で region_scoped を FALSE にして配り先の関数を呼ぶ | 監査-153（K1） | `kdds wide` は配り先の関数を見る＝kdds.c に差し替え口を作って kdds_pub を通して試す（監査-153 は 1 行の呼び所に重いとして作らなかった） |
 | H4 | mind/want の送る所（MQN の M1） | 送る所で 24 B だけを送る（mq_want_frame は正しいまま） | 監査-156 | `nodes mqwide` は関数を見る。手元の生きた X3 は赤、CI では答えの同報の別の道で緑になりうる＝fire を 260・300 に届ける道を 1 つに絞った生きた試験 |
-| H5 | mind/have の広い番号の呼び所（`nodes mhwide`） | mh_publish で 112 B を送る、mh_poll で 1 バイトを読む | 2026-11-08 の実装（自己申告）、監査-158 で両方とも緑を確認（B1・B2） | 生きた X3 に広い送り手の要約で want が立つ行を足す（監査-158 の手元の X3 で「from node 299 … -> want」が 2 行出た＝判定にできる） |
+| H5 | mind/have の広い番号の呼び所（`nodes mhwide`） | mh_publish で 112 B を送る、mh_poll で 1 バイトを読む | 2026-11-08 の実装（自己申告）、監査-158 で両方とも緑を確認（B1・B2） | 生きた X3 に広い送り手の要約で want が立つ行を足す（監査-158 の手元の X3 で「from node 299 … -> want」が 2 行出た＝判定にできる）（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が mh_publish の kdds_pub(…, &mh_tx_w, fn) と mh_poll の mh_have_rx_sender・mh_sender_takes・mh_have_rx_origin を見る。B1・B2 の形で赤。生きた判定は無いまま） |
 | H6 | pfs の ann の読み手（`kdds ann`） | pfs_repl_task が kdds_sub のまま（pfsr_ann_drain を呼ばない） | 2026-11-08 の実装（自己申告）、監査-158 で緑を確認（K3） | 生きた試験で 2 台が同じ周に announce し、3 台目が両方を聞く |
 | H10 | B5 第 4 歩の判定役の自己試験 | 許容幅を広げる | 監査-131 | 許容幅の端の値で自己試験を足す |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す |
 | H16 | LFC（check_llm_falsifiers.py）の届かない名前 | tests/llm/*.sh が変数で組み立てる -D（`-DST_GPTQ_$v` など）の下で消える名前を使う | 監査-160（壊し B3: ST_GPTQ_NOSEQ の下で緑。そういう名前が 21） | 直しは feat/lfc-composed 13a2b20a（監査待ち）: 接頭辞で始まり #ifdef・#ifndef・defined で見て #define しない名前も組む |
-| H12 | snf・ss6 の宛先の呼び所（`nodes ipw`） | snf_node_ip・sl_node_ip を古い式に戻す（pk_node_ip_like は正しいまま） | 2026-11-08 の実装（自己申告） | 広いノードの snf の生きた試験（snf send から 300 へ）、または呼び所をソースの検査で見る |
+| H12 | snf・ss6 の宛先の呼び所（`nodes ipw`） | snf_node_ip・sl_node_ip を古い式に戻す（pk_node_ip_like は正しいまま） | 2026-11-08 の実装（自己申告） | 広いノードの snf の生きた試験（snf send から 300 へ）、または呼び所をソースの検査で見る（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が snf_node_ip・sl_node_ip の中の pk_node_ip_like を見る。古い式で赤） |
 
 ## ふさいだ
 
