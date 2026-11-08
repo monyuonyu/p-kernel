@@ -204,6 +204,24 @@ int main(void)
         memset(n1.k, 0x5A, 32); n1.live = 1; n1.sealed = 0;    /* a full box, whatever new did */
         arkc_box_wipe(&n1);
         check(!n1.live && all_zero(n1.k, 32), "[arkc-box-wipe] the wiped box is empty");
+        {   /* audit-162: an empty box (wiped, or a new that failed and was not checked) has an
+             * all-zero key; it must refuse to seal, open and wrap (taking out the live check of
+             * seal or open stayed green before this line) */
+            uint8_t ect[8], etag[16], ept[8], ew[ARKC_WRAP_LEN];
+            static const uint8_t z8[8];
+            memset(ect, 0xA5, sizeof ect); memset(etag, 0xA5, sizeof etag);
+            int es = arkc_box_seal(&n1, NULL, 0, z8, sizeof z8, ect, etag);
+            uint8_t zt[16];                    /* the tag a zero key gives: open must still refuse */
+            uint8_t zc[8];
+            static const uint8_t zk[32];
+            arkc_aead_seal(zk, (const uint8_t[12]){0}, NULL, 0, z8, sizeof z8, zc, zt);
+            memset(ept, 0xA5, sizeof ept);
+            int eo = arkc_box_open(&n1, NULL, 0, zc, sizeof zc, zt, ept);
+            int ewr = arkc_box_wrap(&n1, BOX_RPUB, ew);
+            check(es == -1 && all_zero(ect, sizeof ect) && all_zero(etag, 16) && !n1.sealed
+                  && eo == -1 && all_zero(ept, sizeof ept) && ewr == -1 && all_zero(ew, sizeof ew),
+                  "[arkc-box-empty] an empty box (key all zero) refuses seal, open and wrap");
+        }
         arkc_box_wipe(&n2); arkc_box_wipe(&u); arkc_box_wipe(&b);
     }
 
