@@ -8,6 +8,8 @@
 #       and no "transport = lan-direct (node 1)"
 #   L2  PKERNEL_NODE_ID=3: "transport = lan-direct (node 3)" (a narrow id unchanged)
 # Negative control: a build with -DN2_NC_LAN_WIDE_TO_1 (the old rule) turns L1 red.
+# Limit: with no relay the wide node falls back to loopback, which still makes
+# an id outside 1..8 node 1 (net_unix.c; n2-wire16.md, not yet).
 #
 #   N2_LAN_BIN=<p-kernel>  (default boot/linux_x86_64/p-kernel of this tree)
 set -u
@@ -18,7 +20,7 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 fail=0
 run() {  # run <id> <port> <log>
-    ( printf 'exit\n'; sleep 2 ) | PKERNEL_LAN=1 PKERNEL_LAN_PORT="$2" PKERNEL_NODE_ID="$1" \
+    ( printf 'exit\n'; sleep 2 ) | PKERNEL_AUTONET=1 PKERNEL_LAN=1 PKERNEL_LAN_PORT="$2" PKERNEL_NODE_ID="$1" \
         timeout 20 "$BIN" > "$W/$3.out" 2> "$W/$3.err" || true
 }
 run 300 17351 wide
