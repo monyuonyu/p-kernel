@@ -1211,6 +1211,13 @@ jobs:
           grep -aF '[ark-crypto] ALL PASS' ark_crypto.log
           timeout 120 tests/host/run_ark_crypto.sh nc | tee ark_crypto_nc.log
           grep -aF '[ark-crypto] NC RED as expected' ark_crypto_nc.log
+          # the same parts inside the kernel: the shell verb `ark crypto` (5 lines; locally
+          # -DARKC_NC_NO_CLAMP reddens x25519 and wrap, -DARKC_NC_TAG_NOCHECK tamper).
+          # Build the plain kernel first: run_mind_record_pull.sh (two steps up) cleans
+          # boot/linux_x86_64 on exit, so there is no p-kernel here (audit-164)
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          (printf 'ark crypto\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee ark_shell.log || true
+          grep -aF '[ark-crypto] SELF PASS 5/5' ark_shell.log
 
       # ROADMAP 1-8 v4, the conflict half: with sky misread on every node
       # (-DR3_TEST_MISREAD_KEY=0) the push-back, the lost value in the history

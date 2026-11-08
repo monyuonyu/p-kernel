@@ -2,3 +2,6 @@
 # 書式: <コマンド> <対象（空白は _ で）> <理由>
 # 例:   tcbchurn  x86_bare  hosted の TCB を回す試験で、ベアメタルには相当物が無い
 # 段階0では空。段階2（穴を埋める）で、本当にできないものだけをここに書く。
+ark  x86_bare      方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b）
+ark  AArch64_bare  方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b）
+ark  Windows_x86_64  方舟の暗号の部品は getrandom が要る。振り分けは usermain.c を共有するのであるが「not on Windows」と答えるだけ（ark-entry.md 3b）

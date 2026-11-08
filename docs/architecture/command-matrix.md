@@ -3,21 +3,22 @@
 `python3 tools/cmdmatrix/gen.py` が各シェルのソースを静的に読んで書く。
 CI は `--check` で、この表と生成し直した結果が食い違えば赤にする。
 設計と限界: `docs/architecture/20-architecture/command-parity.md`（inbox #4 段階0）。
-✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由
+✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由（振り分けがあっても「できない」と答えるだけのものを含む）
 
 | 対象 | 読んだソース | コマンド数 |
 |---|---|---|
 | x86 bare | `arch/x86/shell.c` | 61 |
 | AArch64 bare | `arch/aarch64/usermain.c` | 7 |
-| Linux x86_64 | `arch/linux/x86_64/usermain.c` | 54 |
-| Linux aarch64 | `arch/linux/aarch64/usermain.c` | 55 |
-| Android | `arch/linux/aarch64/usermain.c`（= Linux aarch64 の usermain.c） | 55 |
-| Windows x86_64 | `arch/linux/x86_64/usermain.c`（= Linux x86_64 の usermain.c） | 54 |
+| Linux x86_64 | `arch/linux/x86_64/usermain.c` | 55 |
+| Linux aarch64 | `arch/linux/aarch64/usermain.c` | 56 |
+| Android | `arch/linux/aarch64/usermain.c`（= Linux aarch64 の usermain.c） | 56 |
+| Windows x86_64 | `arch/linux/x86_64/usermain.c`（= Linux x86_64 の usermain.c） | 55 |
 
 | コマンド | x86 bare | AArch64 bare | Linux x86_64 | Linux aarch64 | Android | Windows x86_64 |
 |---|---|---|---|---|---|---|
 | `ai` | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `aistat` | ✓ | — | — | — | — | — |
+| `ark` | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | ✓ | ✓ | ✓ | 不可: 方舟の暗号の部品は getrandom が要る。振り分けは usermain.c を共有するのであるが「not on Windows」と答えるだけ（ark-entry.md 3b） |
 | `arp` | ✓ | ✓ | — | — | — | — |
 | `autopromote` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `autoxport` | — | — | ✓ | ✓ | ✓ | ✓ |
