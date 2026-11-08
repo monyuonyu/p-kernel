@@ -26,7 +26,7 @@ How to read it: with 6 of 8 killed, the 2 survivors still held the records of al
 
 ## What it does not show yet
 
-- **Recall wobbles (the answering side is still weak).** A node can hold the record and still answer wrongly when asked. After the kill nearly every miss is ink→fresh answered as near or blue. The same pair changes from run to run (in the first 8 runs, f=0.25 seed 2 gave 0.958 and 0.792). The normal build was measured over the 6 (f, seed) pairs, 15 runs each, on two days (the share of correct answers over survivors × facts):
+- **Recall wobbles (the answering side is still weak).** A node can hold the record and still answer wrongly when asked. After the kill nearly every miss is ink→fresh answered as near or blue. The same pair changes from run to run (in the first 8 runs, f=0.25 seed 2 gave 0.958 and 0.792). The normal build was measured over the 6 (f, seed) pairs, 15 runs in all (3 each for f=0.25 and f=0.5 seed 1, 2 each for the rest), on two days (the share of correct answers over survivors × facts):
 
   | Measured | Result | Lowest run | Recall check S2 red |
   |---|---|---|---|
