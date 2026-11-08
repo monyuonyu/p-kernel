@@ -29,6 +29,7 @@
 #            must be RED on F1 (plain also runs `tkconf fp`: ALL PASS)
 #   dropfphi -DPK_PREEMPT_DROP_FP_HI (only xmm12-15 zeroed): RED on F3 (H11)
 #   dropmxcsr -DPK_PREEMPT_DROP_MXCSR (default MXCSR put back): RED on F4 (H11)
+#   nofpctl  -DPK_DISPATCH_NO_FPCTL (dispatch.S keeps no MXCSR / x87 CW): RED on F6
 #   slowclaim  -DDRPC_FAULT_SLOW_CLAIM=200000 (drpc_claim's gap widened): ALL PASS
 #   slowclaimoff  the same with -DPK_NOSW_OFF: must be RED on N26
 # A negative-control arm that stays green fails this script.
@@ -173,6 +174,8 @@ fparm() {  # <name> <cflags> <check that must be red>
 }
 fparm dropfphi "-DPK_PREEMPT_DROP_FP_HI" F3
 fparm dropmxcsr "-DPK_PREEMPT_DROP_MXCSR" F4
+# FP-CTL: the voluntary switch (dispatch.S) without the MXCSR / x87 CW save
+fparm nofpctl "-DPK_DISPATCH_NO_FPCTL" F6
 expect_green slowclaim "-DDRPC_FAULT_SLOW_CLAIM=200000"
 expect_red slowclaimoff "-DDRPC_FAULT_SLOW_CLAIM=200000 -DPK_NOSW_OFF" N26
 

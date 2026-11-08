@@ -1742,7 +1742,8 @@ jobs:
     runs-on: ubuntu-latest
     # 15 -> 20 (2026-10-07): + tkconf / pool and a second build for the K9 NC
     # 20 -> 25 (2026-10-07): + tkconf fp and a third build for its NC
-    timeout-minutes: 35
+    # 35 -> 38 (2026-11-08): + the FP-CTL NC build (F6)
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-user
@@ -1888,6 +1889,16 @@ jobs:
           timeout 300 sh -c "printf 'tkconf fp\nexit\n' | \
             qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc.log
           grep -aF '[fp] FAIL F1' fp_a64_nc.log
+      # FP-CTL (2026-11-08): the voluntary switch keeps d8-d15 and FPCR; the old
+      # dispatch.S (-DPK_DISPATCH_NO_FPCTL) gave d8-d15 back as another task's (F6 got 9)
+      - name: F6 goes red when the voluntary switch drops d8-d15 and FPCR (negative control, -DPK_DISPATCH_NO_FPCTL)
+        run: |
+          make -C boot/linux clean >/dev/null
+          make -C boot/linux EXTRA_CFLAGS=-DPK_DISPATCH_NO_FPCTL >/dev/null
+          cd boot/linux
+          timeout 300 sh -c "printf 'tkconf fp\nexit\n' | \
+            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc2.log
+          grep -aF '[fp] FAIL F6' fp_a64_nc2.log
       - name: N28 goes red with the no-switch regions emptied (negative control, -DPK_NOSW_OFF, 0-10)
         run: |
           make -C boot/linux clean >/dev/null
