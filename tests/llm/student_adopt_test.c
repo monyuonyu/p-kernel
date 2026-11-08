@@ -8,9 +8,10 @@
  *   student_adopt_test unit                  H4: the gate's own cases
  *   student_adopt_test <b1_held.txt> <seed>  one seed of the arms below
  *   student_adopt_test <b1_held.txt> <seed> s4   B5 step 4 (s4() below, run_b5_step4.sh)
- *   student_adopt_test s5unit | s6unit | s7unit  the self-tests of st_merge_trimmed / st_merge_trust / _prev
+ *   student_adopt_test s5unit | s6unit | s7unit | s8unit  the self-tests of st_merge_trimmed / st_merge_trust / _prev / _echo
  *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
  *   student_adopt_test <b1_held.txt> <seed> s7a | s7b | s7y | s7c           B5 step 7
+ *   student_adopt_test <b1_held.txt> <seed> s8a | s8b | s8y | s8c | s8d     B5 step 8 (the echo cut; s8d the adaptive near)
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -619,8 +620,31 @@ static int s6(uint32_t seed, const char *which)
  * what it sent last + node 0's update (n0 - prev0). -DB5S7_PREV_CLAIMED (NC2):
  * kind 4 sends fresh garbage every round and claims prev = it - (n0 - prev0),
  * and the receivers use the claim. -DB5S7_TS_FROM_GJ (NC1, in student.c). */
+/* B5 step 8 (research/b5-step8-design.md): stages s8a/s8b/s8y/s8c run step 7's
+ * arms with the trust arms on st_merge_trust_echo (s8_echo); s8d adds kind 5,
+ * the adaptive near poison: 1.5 x (cos 0.85 toward node 0's update + the rest
+ * of a garbage direction fixed by the seed), the form of the design's probe. */
+static int s8_echo;
+static double s8_cHmax, s8_cPmin; static int s8_cut;
+static void s8_ada(st_model *g, st_model *n0, st_model *p0, uint32_t s)
+{
+    const double ca = 0.85, sa = sqrt(1.0 - ca * ca);
+    garbage(g, s);
+    int n = g->n_params; double dd = 0, dr = 0, rr = 0;
+    for (int i = 0; i < n; i++) { double d = n0->w[i] - p0->w[i], r = g->w[i] - p0->w[i]; dd += d * d; dr += d * r; }
+    double k = dd > 0 ? dr / dd : 0;
+    for (int i = 0; i < n; i++) { double d = n0->w[i] - p0->w[i], r = g->w[i] - p0->w[i] - k * d; rr += r * r; }
+    double nd = sqrt(dd), nr = sqrt(rr);
+    float *nw = (float *)malloc((size_t)n * sizeof(float));
+    if (!nw) { printf("  FAIL  [b5s8-io] malloc\n"); exit(1); }
+    for (int i = 0; i < n; i++) { double d = n0->w[i] - p0->w[i], r = g->w[i] - p0->w[i] - k * d;
+        nw[i] = (float)(p0->w[i] + 1.5 * (ca * d + (nr > 0 ? sa * nd * r / nr : 0))); }
+    for (int i = 0; i < n; i++) g->w[i] = nw[i];
+    free(nw);
+}
 static void s7_poison(st_model *g, int kind, st_model *n0, st_model *p0, st_model *last, uint32_t s)
 {
+    if (kind == 5) { s8_ada(g, n0, p0, s); return; }
     if (kind != 4) { s6_poison(g, kind, n0, p0, s); return; }
 #if defined(B5S7_PREV_CLAIMED)
     (void)last; garbage(g, s);
@@ -641,11 +665,18 @@ static int s7_cand(st_model *c, st_model *models[K5], st_model *prev, st_model *
         ownp[j] = sent[k] ? blob(sent[k], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
         who[j] = k; j++;
     }
-    int r = st_merge_trust_prev(c, prev, bs, ls, bp, lp, K5 - 1, ts);
+    float cg[K5 - 1];
+    int r = s8_echo ? st_merge_trust_echo(c, prev, bs, ls, bp, lp, K5 - 1, ts, cg)
+                    : st_merge_trust_prev(c, prev, bs, ls, bp, lp, K5 - 1, ts);
     for (int i = 0; i < K5 - 1; i++) { free(own[i]); free(ownp[i]); }
-    if (r < 0) { printf("  FAIL  [b5s7-io] st_merge_trust_prev rc %d\n", r); exit(1); }
+    if (r < 0) { printf("  FAIL  [b5s7-io] st_merge_trust rc %d\n", r); exit(1); }
     if (me == 0) for (int i = 0; i < K5 - 1; i++) {
         if (who[i] < honest) { s6_tsh += ts[i]; s6_tshn++; } else { s6_tsp += ts[i]; s6_tspn++; }
+        if (s8_echo && cg[i] > -1.5f) {
+            if (who[i] < honest) { if (cg[i] > s8_cHmax) s8_cHmax = cg[i]; }
+            else if (cg[i] < s8_cPmin) s8_cPmin = cg[i];
+            if (cg[i] >= (float)ST_ECHO_TAU) s8_cut++;
+        }
     }
     if (r == 0) { if (me == 0) s6_refused++; st_free(c); return 0; }
     return 1;
@@ -659,13 +690,14 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
     keeper_t kp; keep_init(&kp);
     int took = 0, tries = 0; uint32_t gen = 0;
     apprentice_late = 0; s6_tsh = s6_tsp = 0; s6_tshn = s6_tspn = 0; s6_refused = 0;
+    s8_cHmax = -2.0; s8_cPmin = 2.0; s8_cut = 0;
     for (int p = 1; p <= PASSES; p++) {
         for (int k = 0; k < honest; k++) { pass_q(&n[k], k); if (ap[k].has) pass_q(&ap[k].m, k); }
         if (p % EVERY == 0) {
             gen++;
             for (int k = honest; k < K5; k++) {
                 st_free(&n[k]);
-                s7_poison(&n[k], kind, &n[0], &prev[0], sent[k], seed + (uint32_t)p + 977u * (uint32_t)k);
+                s7_poison(&n[k], kind, &n[0], &prev[0], sent[k], (kind == 5 ? seed : seed + (uint32_t)p) + 977u * (uint32_t)k);
             }
 #if defined(B5S7_PREV_CLAIMED)
             /* NC2: the near poison's claimed previous replaces what the receivers kept */
@@ -693,8 +725,10 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
         }
         keep_see(&kp, &n[0], p);
     }
-    char ex[128]; snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
+    char ex[192]; int at = snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
                            s6_refused, s6_tshn ? s6_tsh / s6_tshn : -1.0, s6_tspn ? s6_tsp / s6_tspn : -1.0);
+    if (s8_echo && trust && at > 0 && at < (int)sizeof ex)
+        snprintf(ex + at, sizeof ex - (size_t)at, " cHmax=%.3f cPmin=%.3f cut=%d", s8_cHmax, s8_cPmin, s8_cut);
     keep_print(&kp, name, &n[0], ex);
     for (int k = 0; k < K5; k++) { st_free(&n[k]); if (ap[k].has) st_free(&ap[k].m); if (sent[k]) st_free(&sentm[k]); }
     for (int k = 0; k < honest; k++) st_free(&prev[k]);
@@ -708,6 +742,26 @@ static int s7(uint32_t seed, const char *which)
     setvbuf(stdout, NULL, _IOLBF, 0);
     lr = ST_LR;
     kp_tag = "b5s7";
+    if (which[0] == 's' && which[1] == '8') {     /* step 8: the same arms, the echo cut */
+        static char w7[8];
+        s8_echo = 1; kp_tag = "b5s8";
+#if defined(B5S8_NO_ECHO)
+        const char *b8 = "noecho";
+#elif defined(B5S8_TAU_LOW)
+        const char *b8 = "taulow";
+#else
+        const char *b8 = "plain";
+#endif
+        printf("[b5s8] seed %u lr %g build %s stage %s tau %g quarter %d B gate windows %d held windows %d\n",
+               (unsigned)seed, (double)lr, b8, which, (double)ST_ECHO_TAU, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+        if (strcmp(which, "s8d") == 0) {
+            s7_rounds(seed, 1, 2, 5, "trust4-ada2");
+            printf("[b5s8] done\n");
+            return 0;
+        }
+        snprintf(w7, sizeof w7, "s7%s", which + 2);
+        which = w7;
+    }
 #if defined(B5S7_TS_FROM_GJ)
     const char *bld = "gj";
 #elif defined(B5S7_PREV_CLAIMED)
@@ -734,7 +788,7 @@ static int s7(uint32_t seed, const char *which)
         s7_rounds(seed, 0, 1, 3, "trim4-near1");
         s7_rounds(seed, 1, 1, 3, "trust4-near1");
     } else { fprintf(stderr, "s7: unknown stage %s\n", which); return 2; }
-    printf("[b5s7] done\n");
+    printf("[%s] done\n", kp_tag);
     return 0;
 }
 
@@ -1256,7 +1310,7 @@ int main(int argc, char **argv)
     if (argc > 3 && strcmp(argv[3], "s4") == 0) return s4(seed);
     if (argc > 3 && strncmp(argv[3], "s5", 2) == 0) return s5(seed, argv[3]);
     if (argc > 3 && strncmp(argv[3], "s6", 2) == 0) return s6(seed, argv[3]);
-    if (argc > 3 && strncmp(argv[3], "s7", 2) == 0) return s7(seed, argv[3]);
+    if (argc > 3 && (strncmp(argv[3], "s7", 2) == 0 || strncmp(argv[3], "s8", 2) == 0)) return s7(seed, argv[3]);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
