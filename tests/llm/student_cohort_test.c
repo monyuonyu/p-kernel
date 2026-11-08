@@ -166,6 +166,11 @@ int main(void)
     int copyA = memcmp(A.w, Aw, (size_t)np * sizeof(float)) == 0;
     int copyB = memcmp(A.w, B.w, (size_t)np * sizeof(float)) == 0;
     CHECK(!copyA && !copyB, "[ss3-cohort-converge] merged weights are neither parent's copy");
+    /* test-holes H15 (audit-159): a symmetric near copy (0.99 of one parent)
+     * is neither copy and stays <= the worse parent. The plain merge is 0.38
+     * under it (3.2345 vs 3.6181 at ST_LR); a near copy is within 0.01. */
+    CHECK(lossM <= worse - 0.10f,
+          "[ss3-cohort-converge] merged held-out loss <= the worse parent - 0.10");
 
     /* (b) peer-symmetry: merge(B,{A}) must be BYTE-IDENTICAL to merge(A,{B}).
      * Rebuild a fresh B' == B (same seed+training), load A's pre-merge blob as
