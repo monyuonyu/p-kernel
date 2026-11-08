@@ -2,7 +2,7 @@
 # tools/cmdmatrix/test_gen.py — fixtures for gen.py's readers (inbox #4 stage 0).
 # Each case is a C snippet in one of the dispatch idioms and the first words
 # gen.read_src() must return. Run: python3 tools/cmdmatrix/test_gen.py
-import os, sys
+import os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen  # noqa: E402
@@ -40,6 +40,28 @@ CASES = [
 ]
 
 
+def count_matches_cells(text):
+    """The count column must equal the ✓ cells of that column (a verb that is
+    there but only answers "not here" is 不可, and must not be counted:
+    audit-165 found Windows 55 counting `ark` while its cell said 不可)."""
+    lines = text.splitlines()
+    counts = {}
+    for ln in lines:
+        m = re.match(r"^\| (.+?) \| `[^`]+`.* \| (\d+) \|$", ln)
+        if m:
+            counts[m.group(1)] = int(m.group(2))
+    hdr = next(ln for ln in lines if ln.startswith("| コマンド |"))
+    cols = [c.strip() for c in hdr.strip("|").split("|")][1:]
+    ticks = dict((c, 0) for c in cols)
+    for ln in lines:
+        if ln.startswith("| `"):
+            cells = [c.strip() for c in ln.strip("|").split("|")][1:]
+            for c, v in zip(cols, cells):
+                ticks[c] += 1 if v == "✓" else 0
+    bad = ["%s: count %d, ✓ %d" % (c, counts.get(c, -1), ticks[c]) for c in cols if counts.get(c) != ticks[c]]
+    return bad
+
+
 def main():
     fails = 0
     for name, src, want in CASES:
@@ -47,6 +69,9 @@ def main():
         ok = (got == want) and not unknown
         print("[cmdmatrix-test] %-30s %s  got=%s" % (name, "PASS" if ok else "FAIL want=%s" % sorted(want), sorted(got)))
         fails += 0 if ok else 1
+    bad = count_matches_cells(gen.render()[0])
+    print("[cmdmatrix-test] %-30s %s" % ("count = ✓ cells", "PASS" if not bad else "FAIL " + "; ".join(bad)))
+    fails += 1 if bad else 0
     print("[cmdmatrix-test] PASS" if fails == 0 else "[cmdmatrix-test] %d FAIL" % fails)
     return 1 if fails else 0
 
