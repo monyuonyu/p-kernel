@@ -54,3 +54,16 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 詰め直しの直し → 暗号の部品 → 記録と目次（E1・E2・E4）→ 暗号で複製と預け（E3）→ 学習の印（E5）→ 画面（E6）→ v1.1（渡す処理）
 
 - 記録と目次（2026-11-09、feat/ark-rec、監査待ち）: `arch/common/ark_rec.c`（hosted だけ）とシェルの `ark rec`・`ark heir`、試験 `tests/host/run_ark_rec.sh`（E1 の再起動・E1c 目次の版の前で止める・E2 詰め直しの後・E4・2 台の local）。**名前は `self/rec`・`self/heir` でなく `ark/rec`・`ark/heir`、E3 までは方舟の物をノードから出さない**: 名前（ref）は region 全体で共有され新しい seq が勝つので、2 台の目次が食い合う（探り: B が A の目次を取り込み、自分の記録を書けなかった）。あわせて 2.5 の「公開でない記録は暗号にしてから出す」を、暗号の前に破らないため。pfs_repl は頭が "AKR" のブロックを announce も送りもせず、pfs_dag は `ark/` の名前を配らず受け取らない。したがって E1 の「region の 1 台の kill を越えて」は E3（暗号で複製）の後。目次の 1 ブロックの数は試験では 4（`PKERNEL_ARK_REC_FANOUT`、目次を作るときだけ読み、目次の頭に残す）。作る途中で芯のバグ PFS-ARK-HAS（台帳）を見つけて直した。限界: `ark/rec` の名前は refs.tab（`PKERNEL_PFS_DIR`）に残る＝ARK の像だけでは名前が戻らない。pfs_dag の manifest（名前と中身の id）は announce される。mw_gc を回す試験は無い（頭 4 バイトが MW_MAGIC でない、の読みだけ）。既存の `self/` の名前も 2 台で同じ形に食い合っていた＝A の同意で B の共感の門が開いた（台帳 SELF-REF-REGION-SHARED、直し fix/self-ref-local で `self/` もノードに留める）
+
+## 5. E3（暗号で複製）の設計（2026-11-09、実装の前。分かれ道はおすすめで決めた）
+
+- **版ごとに新しい箱**: 記録の版を書くたびに `arkc_box_new`（記録の鍵 32 B、getrandom）。本文の全体を **1 回だけ** 封じ（nonce 0、AAD＝magic・rec_no・seq・前の版の id・kind・vis）、暗号文を 3584 B ずつ断片 `AKSF` にする。tag 16 B は版の頭に。見せ方を変えるだけの版（`ark rec vis`）も本文を封じ直す（同じ鍵で 2 つ目を封じない、監査-158 の注）
+- **鍵は本人に包む**: ノードの方舟の鍵（X25519、hosted は `PKERNEL_PFS_DIR/ark.key` に 0600、無ければ作る）の公開鍵へ `arkc_box_wrap`（80 B）を版の頭に。「継ぐ人に」の預け（k-of-n）は v1.1（ark-handover.md）
+- **版の頭は 2 つに分ける**: 外に出してよい `AKSR`（magic・seq・前の版の id・wrap・tag・断片の id・暗号文の長さ）と、ノードに残る `AKRR`（今のもの。kind・vis・learn・時刻・平文の長さ）。目次の葉は `AKRR` を指したまま＝読み方は今と同じ。`AKSR`/`AKSF` は頭が "AKS" なので pfs_repl の送り止め（"AKR"）にかからず region へ複製される。`vis=public` の版は封じず `AKRF` のまま（出さない。公開の配り方は E6 の後）
+- **限界**: 外に出る `AKSR` から、版の数・前後の鎖・暗号文の長さ（＝本文の長さ±0）は読める。目次と名前はノードに残る＝端末を失うと、鍵の控え（`ark.key`）と目次の根の id を別に持っていないと戻せない（戻し方 `ark rec restore <root id>` は E3 の次）
+
+### 合否（実装より先に固定、壊したら赤）
+- E3a 2 台（中継）で A の 10240 B の記録 1 つと 3 版: B の `pfs ls` に A の `AKSR`・`AKSF` があり（複製された）、B が持つどのブロックにも本文の印（平文の 16 B の並び）が無い。A の `AKRR` は B に無い（local の行のまま）
+- E3b A が再起動して全版を読める（今の E1 と同じ）、断片の 1 ビットを変えると `get` は「開けない」と言い、何も出さない
+- E3c 違う鍵（別の `ark.key`）の A では開かない
+- 陰性 `-DARK_REC_PLAIN`（封じずに `AKSF` へ平文）で E3a 赤、`-DARK_REC_SAME_KEY`（版をまたいで同じ鍵）で「同じ鍵で 2 つ目を封じない」の自己試験が赤
