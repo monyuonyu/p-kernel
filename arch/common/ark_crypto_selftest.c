@@ -11,6 +11,7 @@
  *    [ark-crypto] tamper  one bit of the tag: open refuses, output all zero
  *    [ark-crypto] x25519  RFC 7748 5.2, both pairs
  *    [ark-crypto] wrap    the box wrapped with a fixed ephemeral key equals K4; unwrap opens it
+ *                         and the box it gives back refuses a seal (born sealed)
  *    [ark-crypto] box     a new box (getrandom) seals once, refuses the second seal, opens
  *  then "[ark-crypto] SELF PASS 5/5" or "[ark-crypto] SELF FAIL k/5".
  *  Negative controls: -DARKC_NC_NO_CLAMP reddens x25519 (and wrap), -DARKC_NC_TAG_NOCHECK tamper.
@@ -59,8 +60,13 @@ void ark_crypto_self_test(void (*pr)(const char *))
         memcpy(b.k, BOX_RK, 32); b.live = 1; b.sealed = 0;
         ok = arkc_box_wrap_eph(&b, BOX_RPUB, BOX_E, w) == 0 && memcmp(w, BOX_WRAPPED, ARKC_WRAP_LEN) == 0;
         ok = ok && arkc_box_unwrap(&u, BOX_R, BOX_WRAPPED) == 0 && u.live && memcmp(u.k, BOX_RK, 32) == 0;
+        {   /* the unwrapped box is born sealed: a seal is refused (audit-164: green without this) */
+            static const uint8_t m1[1] = { 'x' };
+            uint8_t c1[1], t1[16];
+            ok = ok && arkc_box_seal(&u, NULL, 0, m1, 1, c1, t1) == -1;
+        }
         arkc_box_wipe(&b); arkc_box_wipe(&u);
-        LINE("wrap   ", ok, "the box wrapped with a fixed ephemeral key equals K4; unwrap opens it");
+        LINE("wrap   ", ok, "the box wrapped with a fixed ephemeral key equals K4; unwrap opens it, refuses a seal");
     }
     {
         static const uint8_t msg[5] = { 'h', 'e', 'l', 'l', 'o' };
