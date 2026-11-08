@@ -7,9 +7,13 @@
 #   L1  PKERNEL_NODE_ID=300: "is a wide id: not on LAN", "lan-direct init failed",
 #       and no "transport = lan-direct (node 1)"
 #   L2  PKERNEL_NODE_ID=3: "transport = lan-direct (node 3)" (a narrow id unchanged)
-# Negative control: a build with -DN2_NC_LAN_WIDE_TO_1 (the old rule) turns L1 red.
-# Limit: with no relay the wide node falls back to loopback, which still makes
-# an id outside 1..8 node 1 (net_unix.c; n2-wire16.md, not yet).
+#   L3  loopback (no LAN, no relay), PKERNEL_NODE_ID=300: "is a wide id: not on loopback",
+#       "transport = none", and never node 1 (net_unix.c used to make it node 1)
+#   L4  loopback, PKERNEL_NODE_ID=3: "transport = loopback (node 3)"
+# Negative controls: -DN2_NC_LAN_WIDE_TO_1 (the old LAN rule) turns L1 red,
+# -DN2_NC_LOOP_WIDE_TO_1 (the old loopback rule) turns L3 red.
+# Limit: ids 9..256 and a non-number still become node 1 on loopback (narrow ids
+# beyond the 8 ports; not part of N2).
 #
 #   N2_LAN_BIN=<p-kernel>  (default boot/linux_x86_64/p-kernel of this tree)
 set -u
@@ -37,6 +41,29 @@ if grep -aqF 'transport = lan-direct (node 3)' "$W/narrow.err"; then
     echo "[n2-lan] L2 PASS: narrow 3 is node 3 on the LAN"
 else
     echo "[n2-lan] L2 FAIL: narrow 3: $(grep -a 'net_lan\|transport' "$W/narrow.err" | head -3 | tr '\n' '|')"
+    fail=1
+fi
+# loopback (net_unix.c, no LAN and no relay): L3 a wide id is refused there too and the
+# node runs without a network (never node 1); L4 a narrow id is unchanged
+loop() {  # loop <id> <log>
+    ( printf 'exit\n'; sleep 2 ) | env -u PKERNEL_RELAY -u PKERNEL_RELAY_HOST -u PKERNEL_SEED -u PKERNEL_LAN \
+        PKERNEL_AUTONET=1 PKERNEL_NODE_ID="$1" timeout 20 "$BIN" > "$W/$2.out" 2> "$W/$2.err" || true
+}
+loop 300 lwide
+loop 3 lnarrow
+if grep -aqF 'PKERNEL_NODE_ID=300 is a wide id: not on loopback' "$W/lwide.err" &&
+   grep -aqF 'transport = none' "$W/lwide.err" &&
+   ! grep -aqF 'transport = loopback (node 1)' "$W/lwide.err" &&
+   ! grep -aqF 'node 1 listening' "$W/lwide.err"; then
+    echo "[n2-lan] L3 PASS: wide 300 is refused on loopback, no network, not node 1"
+else
+    echo "[n2-lan] L3 FAIL: wide 300 on loopback: $(grep -a 'net_unix\|transport' "$W/lwide.err" | head -3 | tr '\n' '|')"
+    fail=1
+fi
+if grep -aqF 'transport = loopback (node 3)' "$W/lnarrow.err"; then
+    echo "[n2-lan] L4 PASS: narrow 3 is node 3 on loopback"
+else
+    echo "[n2-lan] L4 FAIL: narrow 3 on loopback: $(grep -a 'net_unix\|transport' "$W/lnarrow.err" | head -3 | tr '\n' '|')"
     fail=1
 fi
 [ "$fail" = 0 ] && echo "[n2-lan] ALL PASS" || echo "[n2-lan] RED"

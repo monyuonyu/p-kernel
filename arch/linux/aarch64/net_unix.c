@@ -48,6 +48,18 @@ int net_unix_init(void)
 {
     const char *env = getenv("PKERNEL_NODE_ID");
     my_node_id = env ? atoi(env) : 1;
+#ifndef N2_NC_LOOP_WIDE_TO_1
+    /* N2: a wide id (257..65534, as net_lan.c) is not made node 1 here (it took node
+     * 1's port or, with no node 1, its name). No socket: send -1, recv 0, and
+     * arch_linux_net_init reports no transport (the node runs without a network).
+     * tests/host/run_n2_lan.sh L3; -DN2_NC_LOOP_WIDE_TO_1: the old rule. */
+    if (my_node_id > 256 && my_node_id <= 65534) {
+        dprintf(2, "[net_unix] PKERNEL_NODE_ID=%d is a wide id: not on loopback (needs a relay)\n",
+                my_node_id);
+        sock_fd = -1;
+        return -1;
+    }
+#endif
     if (my_node_id < 1 || my_node_id > MAX_NODES) my_node_id = 1;
 
     sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
