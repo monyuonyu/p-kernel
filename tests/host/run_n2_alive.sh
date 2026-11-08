@@ -12,6 +12,13 @@
 #   A4  wide 260 sees 299 DEAD              (and on a wide node)
 #   A5  4 and 260 still see 4 (row 4 = id 5), 3 and 259 ALIVE (only the killed ones died)
 #
+# Written test first for "まだ" 4 ("a wide node never lets a narrow peer die"): green on
+# master e72de183 (2 runs, 11-08). A wide self marks a dead narrow peer by its own failing
+# v1 probe (SUSPECT) and the narrow peers' DEAD gossip; a dead wide peer ages out of its
+# beacons (SWIM_WIDE_DEAD_MS). So this is a guard of today's behaviour, not a red to fix.
+# Negative control: -DN2_NC_WIDE_NEVER_DEAD (a wide peer stops at SUSPECT) reddens A3 and A4.
+# Limit: A2 has two paths (own probe, gossip) and no negative takes out either one.
+#
 # N2_NEW_BIN (default boot/linux_x86_64/p-kernel), N2_RELAY_BIN (default relay/relay),
 # N2_WAIT (default 60: seconds for membership, and again for the deaths), N2_LOGDIR, N2_PORT.
 set -u
@@ -104,7 +111,7 @@ while [ "$t" -lt "$WAIT" ]; do
     [ "$(state_of 4 43)" = DEAD ] && [ "$(state_of 260 43)" = DEAD ] \
         && [ "$(state_of 4 299)" = DEAD ] && [ "$(state_of 260 299)" = DEAD ] && break
 done
-s=$(state_of 4 43);   [ "$s" = DEAD ] && res A1 PASS "narrow 4 sees 43 DEAD" || res A1 FAIL "narrow 4 sees 43 as '$s' after ${t} s"
+s=$(state_of 4 43);   [ "$s" = DEAD ] && res A1 PASS "narrow 4 sees 43 DEAD (all four by ${t} s)" || res A1 FAIL "narrow 4 sees 43 as '$s' after ${t} s"
 s=$(state_of 260 43); [ "$s" = DEAD ] && res A2 PASS "wide 260 sees 43 DEAD" || res A2 FAIL "wide 260 sees 43 as '$s' after ${t} s"
 s=$(state_of 4 299);  [ "$s" = DEAD ] && res A3 PASS "narrow 4 sees 299 DEAD" || res A3 FAIL "narrow 4 sees 299 as '$s' after ${t} s"
 s=$(state_of 260 299); [ "$s" = DEAD ] && res A4 PASS "wide 260 sees 299 DEAD" || res A4 FAIL "wide 260 sees 299 as '$s' after ${t} s"

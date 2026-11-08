@@ -1255,6 +1255,9 @@ static void swim_wide_age(UW now)
             if (age >= 0x80000000UL) age = 0;   /* heard after now was read */
             st = age >= SWIM_WIDE_DEAD_MS ? DNODE_DEAD
                : age >= SWIM_WIDE_SUSPECT_MS ? DNODE_SUSPECT : DNODE_ALIVE;
+#ifdef N2_NC_WIDE_NEVER_DEAD   /* falsifier: [n2-alive] A3 and A4 (a wide peer never dies) */
+            if (st == DNODE_DEAD) st = DNODE_SUSPECT;
+#endif
             e->state = st;
         }
         UW id = wide_map.id[i];
