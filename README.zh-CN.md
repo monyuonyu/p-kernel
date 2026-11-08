@@ -121,7 +121,7 @@
 - **p-fs**：以内容哈希为地址的分布式存储。相同内容自然合并为一份，篡改会立即表现为地址不一致。
 - **ARK**：抗断电的文件系统。在反复、机械地于写入中途断电并破坏数据的测试中（CI `ark-crash-fuzzer`），自 ARK-2 修复以来没有返回过损坏的数据（修复之前，该测试发现了 4 个缺陷）。
 - 设备 ID、经历记录和学到的权重在重启后依然保留（Android 上也是）。
-- 杀死设备后，教过的记录是否仍留在幸存者身上：与基线（不复制、只放 3 份、停止传播的构建）并列测量的演示草稿见 [docs/demo-knowledge-survival.en.md](docs/demo-knowledge-survival.en.md)（英文，一台机器上的 8 个进程）。
+- 杀死设备后，教过的记录是否仍留在幸存者身上：与基线（不复制、只放 3 份、停止传播的构建）并列测量的演示见 [docs/demo-knowledge-survival.en.md](docs/demo-knowledge-survival.en.md)（英文，一台机器上的 8 个进程）。
 
 ### 群体学习
 
@@ -263,6 +263,7 @@ help                     ← 所有命令
 - 本 README 以实际情况为准。没有写在这里的，不声称能运行。
 - 尚未解决的问题统一放在 [gap-ledger](docs/architecture/gap-ledger.md)，关闭时保留经过。
 - "大脑""集体意识"这样的大词作为目标保留，但旁边一定用数字写明目前的实际规模。
+- 开发日记（日文，与 AI 一起撰写）：[helloidea.org 的 p-kernel](https://helloidea.org/index.php/archives/category/p-kernel)。
 
 ---
 
