@@ -7,7 +7,9 @@
 # with ASan and UBSan.
 # "nc": -DARKC_NC_NO_PAD must redden [arkc-aead-seal], [arkc-aead-open] and [arkc-aead-a5] only,
 # -DARKC_NC_TAG_NOCHECK must redden [arkc-open-tamper] only; stage 2 (X25519, RFC 7748):
-# -DARKC_NC_NO_CLAMP the four x25519 lines, -DARKC_NC_NO_MASK [arkc-x25519] only.
+# -DARKC_NC_NO_CLAMP the four x25519 lines, -DARKC_NC_NO_MASK [arkc-x25519] only; stage 3:
+# HMAC-SHA-512 (RFC 4231) and HKDF-SHA-512 (Wycheproof, tests/host/ark_hkdf_vectors.h):
+# -DARKC_NC_HKDF_NO_CHAIN [arkc-hkdf] only, -DARKC_NC_HKDF_NO_LIMIT [arkc-hkdf-toolong] only.
 # Output: "[ark-crypto] ALL PASS" (exit 0) or RED (1); nc prints
 # "[ark-crypto] NC RED as expected" (exit 0) or NC FAIL (1). ~3 s.
 set -u
@@ -24,7 +26,7 @@ if [ "$MODE" != nc ]; then
     $CC $CF -fsanitize=address,undefined -fno-sanitize-recover=all $SRC -o "$W/plain" \
         || { echo "[ark-crypto] build FAILED"; exit 1; }
     "$W/plain" | tee "$W/plain.log"
-    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 15 ]; then
+    if grep -q 'SUMMARY: 0 FAIL' "$W/plain.log" && [ "$(grep -c '  PASS  ' "$W/plain.log")" = 24 ]; then
         echo "[ark-crypto] ALL PASS"; exit 0
     fi
     echo "[ark-crypto] RED"; exit 1
@@ -38,9 +40,15 @@ nc() {  # macro, the FAIL lines expected (sorted ids, space separated)
     if [ "$got" = "$2" ]; then echo "[ark-crypto] nc $1 red on: $got"; else
         echo "[ark-crypto] nc $1 WRONG: red on '$got', want '$2'"; bad=1; fi
 }
-nc ARKC_NC_NO_PAD "[arkc-aead-a5] [arkc-aead-open] [arkc-aead-seal] "
-nc ARKC_NC_TAG_NOCHECK "[arkc-open-tamper] "
-nc ARKC_NC_NO_CLAMP "[arkc-x25519-dh] [arkc-x25519-iter] [arkc-x25519-zero] [arkc-x25519] "
+# (stage 4 builds on the parts: NO_PAD also reddens the box's KAT seal and the open of
+# python's record, TAG_NOCHECK the tampered unwrap, NO_CLAMP the wrap KAT and the unwraps
+# with the fixed recipient key that python clamped)
+nc ARKC_NC_NO_PAD "[arkc-aead-a5] [arkc-aead-open] [arkc-aead-seal] [arkc-box-seal] [arkc-box-unwrap] "
+nc ARKC_NC_TAG_NOCHECK "[arkc-box-unwrap-bad] [arkc-open-tamper] "
+nc ARKC_NC_NO_CLAMP "[arkc-box-new] [arkc-box-unwrap] [arkc-box-wrap-kat] [arkc-x25519-dh] [arkc-x25519-iter] [arkc-x25519-zero] [arkc-x25519] "
 nc ARKC_NC_NO_MASK "[arkc-x25519] "
+nc ARKC_NC_HKDF_NO_CHAIN "[arkc-hkdf] "
+nc ARKC_NC_HKDF_NO_LIMIT "[arkc-hkdf-toolong] "
+nc ARKC_NC_BOX_REUSE "[arkc-box-reseal] [arkc-box-unwrap] "
 if [ "$bad" = 0 ]; then echo "[ark-crypto] NC RED as expected"; exit 0; fi
 echo "[ark-crypto] NC FAIL"; exit 1
