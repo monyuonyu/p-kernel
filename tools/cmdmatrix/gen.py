@@ -130,7 +130,7 @@ def render():
     L.append("`python3 tools/cmdmatrix/gen.py` が各シェルのソースを静的に読んで書く。")
     L.append("CI は `--check` で、この表と生成し直した結果が食い違えば赤にする。")
     L.append("設計と限界: `docs/architecture/20-architecture/command-parity.md`（inbox #4 段階0）。")
-    L.append("✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由")
+    L.append("✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由（振り分けがあっても「できない」と答えるだけのものを含む）")
     L.append("")
     L.append("| 対象 | 読んだソース | コマンド数 |")
     L.append("|---|---|---|")
@@ -142,10 +142,14 @@ def render():
     for c in allc:
         row = []
         for name, src, _ in COLS:
-            if c in per_src[src]:
+            # an exception wins over ✓: a verb that is there but only answers
+            # "not on this platform" (#ifdef, which this reader does not see) is 不可
+            # the file writes spaces as _, so "x86_64" reads "x86 64": compare both that way
+            key = (c, name.replace("_", " "))
+            if key in exc:
+                row.append("不可: " + exc[key])
+            elif c in per_src[src]:
                 row.append("✓")
-            elif (c, name) in exc:
-                row.append("不可: " + exc[(c, name)])
             else:
                 row.append("—")
         L.append("| `%s` | " % c + " | ".join(row) + " |")

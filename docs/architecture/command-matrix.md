@@ -3,7 +3,7 @@
 `python3 tools/cmdmatrix/gen.py` が各シェルのソースを静的に読んで書く。
 CI は `--check` で、この表と生成し直した結果が食い違えば赤にする。
 設計と限界: `docs/architecture/20-architecture/command-parity.md`（inbox #4 段階0）。
-✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由
+✓ = 振り分けがある / — = 無い / 不可 = `tools/cmdmatrix/exceptions.txt` に理由（振り分けがあっても「できない」と答えるだけのものを含む）
 
 | 対象 | 読んだソース | コマンド数 |
 |---|---|---|
@@ -18,7 +18,7 @@ CI は `--check` で、この表と生成し直した結果が食い違えば赤
 |---|---|---|---|---|---|---|
 | `ai` | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `aistat` | ✓ | — | — | — | — | — |
-| `ark` | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | ✓ | ✓ | ✓ | ✓ |
+| `ark` | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | 不可: 方舟の暗号の部品は getrandom が要り、v1 の置き場は hosted（ark-entry.md 3b） | ✓ | ✓ | ✓ | 不可: 方舟の暗号の部品は getrandom が要る。振り分けは usermain.c を共有するのであるが「not on Windows」と答えるだけ（ark-entry.md 3b） |
 | `arp` | ✓ | ✓ | — | — | — | — |
 | `autopromote` | — | — | ✓ | ✓ | ✓ | ✓ |
 | `autoxport` | — | — | ✓ | ✓ | ✓ | ✓ |
