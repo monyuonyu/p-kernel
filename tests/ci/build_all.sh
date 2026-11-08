@@ -89,6 +89,8 @@ step doc-checks   "python3 tests/ci/check_vmodel.py --selftest && python3 tests/
                         else echo 'check_script_modes: SKIPPED (not a git checkout)'; fi"
 # The falsifier macros that tests/llm/*.sh build themselves (CI 42445849552).
 step llm-falsifiers "python3 tests/ci/check_llm_falsifiers.py"
+# The call sites the certs do not reach (test-holes H3 H4 H5 H6 H12, part of H2).
+step callsites    "python3 tests/ci/check_callsites.py --selftest"
 step x86_64       "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64"
 step x86_64-san   "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64 NO_LIBTCC=1 \
                      EXTRA_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
