@@ -126,6 +126,8 @@ for r in 3 4; do [ "$(state_of 260 "$r")" = ALIVE ] || a5="$a5 260:$r=$(state_of
 # that sent 300's frames to 260 left every line above green (audit-165).
 md=""
 for i in $IDS; do
+    # a missing or empty log counts nothing (grep -c printed "" and the test fell to PASS, audit-166)
+    [ -s "$LOGDIR/node$i.log" ] || { md="$md node$i:no-log"; continue; }
     c=$(grep -ac 'misdelivered: a frame for node' "$LOGDIR/node$i.log")
     [ "$c" -gt 0 ] && md="$md node$i:$c($(grep -a 'misdelivered' "$LOGDIR/node$i.log" | head -1 | sed 's/.*misdelivered: //'))"
 done
