@@ -9,7 +9,7 @@
 | H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験（**一部は S8**: 呼び所が MC_PUSH_BUSY を通り、`mc_push_pkt.key ==` を書かないことは check_callsites.py が見る。ほかの形のバイト比べは見ない） |
 | H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案） |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す |
-| H18 | 方舟の鍵の箱（ark_crypto.c 第 4 段）の getrandom の失敗の道 | `fill_random` の失敗を無視して続ける（鍵が一部 0 のまま） | 監査-162 | getrandom を差し替える口（試験だけの印）で失敗させ、new・wrap が -1 と空の箱を返すことを見る |
+| H18 | 方舟の鍵の箱（ark_crypto.c 第 4 段）の getrandom の失敗の道 | `fill_random` の失敗を無視して続ける（鍵が一部 0 のまま） | 監査-162 | getrandom を差し替える口（試験だけの印）で失敗させ、new・wrap が -1 と空の箱を返すことを見る。**11-08 feat/h18-arkc-rand で [arkc-box-rand]（監査待ち）**: 印 ARKC_TEST_RANDOM の差し替え口、すぐ失敗・16 B の後に失敗・1 B ずつ。陰性 ARKC_NC_RAND_IGNORE はこの行だけ赤、部分の後に消さない壊しも赤 |
 | H19 | N2 の loopback の広い番号の境界（run_n2_lan.sh L3） | `> 256` を `> 257` にする（300 だけ試すので緑のはず） | 監査-162（読み） | L3 に 257 と 65534 を足す |
 
 ## ふさいだ
