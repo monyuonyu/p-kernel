@@ -550,7 +550,8 @@ int arch_linux_net_init(void)
     g_recv    = net_unix_recv;
     g_node_id = net_unix_node_id;
     g_node    = (n > 0) ? n : g_node;
-    dprintf(2, "[net] transport = loopback (node %d)\n", g_node);
+    if (n > 0) dprintf(2, "[net] transport = loopback (node %d)\n", g_node);
+    else       dprintf(2, "[net] transport = none (loopback init failed: no network)\n");
     return n;
 }
 
