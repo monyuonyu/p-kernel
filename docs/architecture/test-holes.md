@@ -7,15 +7,9 @@
 | # | どこ | 壊し方（緑のまま） | 見つけた所 | 直す案 |
 |---|---|---|---|---|
 | H1 | B5 第 6 歩 `st_merge_trust` の並べ替え（s6unit の s6-order） | 仲間の並べ替え（重みのバイトの辞書順）を外す | 監査-156 | 仲間 3 つの double の和は順で変わらない＝仲間を増やして順で丸めが変わる組を作るか、並べ替えの関数を直に試す |
-| H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験、または呼び所が mc_push_busy だけを使うことを ソースの検査で見る（**一部の直し feat/callsite-pins（監査待ち）**: 呼び所が MC_PUSH_BUSY を通ることを check_callsites.py で見る。じかに書いたバイト比べ全般は見ない） |
-| H3 | kdds の送りの呼び所（K1、kdds_pub_core） | 呼び所で region_scoped を FALSE にして配り先の関数を呼ぶ | 監査-153（K1） | `kdds wide` は配り先の関数を見る＝kdds.c に差し替え口を作って kdds_pub を通して試す（監査-153 は 1 行の呼び所に重いとして作らなかった）（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が kdds_pub_core の kdds_wide_pick(…, region_scoped, …) を見る。K1 の形で赤） |
-| H4 | mind/want の送る所（MQN の M1） | 送る所で 24 B だけを送る（mq_want_frame は正しいまま） | 監査-156 | `nodes mqwide` は関数を見る。手元の生きた X3 は赤、CI では答えの同報の別の道で緑になりうる＝fire を 260・300 に届ける道を 1 つに絞った生きた試験（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が mq_publish_wants の mq_want_frame と kdds_pub(…, &fw, fn) を見る。M1 の形で赤。生きた試験は無いまま） |
-| H5 | mind/have の広い番号の呼び所（`nodes mhwide`） | mh_publish で 112 B を送る、mh_poll で 1 バイトを読む | 2026-11-08 の実装（自己申告）、監査-158 で両方とも緑を確認（B1・B2） | 生きた X3 に広い送り手の要約で want が立つ行を足す（監査-158 の手元の X3 で「from node 299 … -> want」が 2 行出た＝判定にできる）（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が mh_publish の kdds_pub(…, &mh_tx_w, fn) と mh_poll の mh_have_rx_sender・mh_sender_takes・mh_have_rx_origin を見る。B1・B2 の形で赤。生きた判定は無いまま） |
-| H6 | pfs の ann の読み手（`kdds ann`） | pfs_repl_task が kdds_sub のまま（pfsr_ann_drain を呼ばない） | 2026-11-08 の実装（自己申告）、監査-158 で緑を確認（K3） | 生きた試験で 2 台が同じ周に announce し、3 台目が両方を聞く（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が pfs_repl_task の pfsr_ann_drain を見る。K3 の形で赤。生きた試験は無いまま） |
-| H10 | B5 第 4 歩の判定役の自己試験 | 許容幅を広げる | 監査-131 | 許容幅の端の値で自己試験を足す |
+| H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験（**一部は S8**: 呼び所が MC_PUSH_BUSY を通り、`mc_push_pkt.key ==` を書かないことは check_callsites.py が見る。ほかの形のバイト比べは見ない） |
+| H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案） |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す |
-| H16 | LFC（check_llm_falsifiers.py）の届かない名前 | tests/llm/*.sh が変数で組み立てる -D（`-DST_GPTQ_$v` など）の下で消える名前を使う | 監査-160（壊し B3: ST_GPTQ_NOSEQ の下で緑。そういう名前が 21） | 直しは feat/lfc-composed 13a2b20a（監査待ち）: 接頭辞で始まり #ifdef・#ifndef・defined で見て #define しない名前も組む |
-| H12 | snf・ss6 の宛先の呼び所（`nodes ipw`） | snf_node_ip・sl_node_ip を古い式に戻す（pk_node_ip_like は正しいまま） | 2026-11-08 の実装（自己申告） | 広いノードの snf の生きた試験（snf send から 300 へ）、または呼び所をソースの検査で見る（**直し feat/callsite-pins（監査待ち）**: check_callsites.py が snf_node_ip・sl_node_ip の中の pk_node_ip_like を見る。古い式で赤） |
 
 ## ふさいだ
 
@@ -28,3 +22,6 @@
 | S5 | d5c 第 8 段の「最小の周の重みを渡す」を外す（H7） | 第 9 段の `[d5c-keep-min]`（51c5fdca、11-02）＝NOKEEP は種 30・31 の S1 で赤。cert は約 70 分で CI の外（CI は判定役の自己試験だけ）。監査-159 が一覧の古さに気づいた |
 | S6 | B5 第 4・5・6 歩の判定役に種を 8 より少なく・別の番号で渡す（H14） | 判定の種の組と違えば PARTIAL（979dbb03）。壊し（数だけ比べる・PARTIAL を外す・部分集合を許す）は 3 つとも赤、監査-160。第 4 歩の自己試験は CI に無い（5・6 は run_b5_step5/6.sh の self） |
 | S7 | ss3 の合体の代わりに対称な「ほぼ写し」（小さい親 0.99）を返す（H15） | 「合体の損失 ≤ 悪い方の親 − 0.10」（416e98e1）。Y（3.6106）は赤、監査-160。限界: 0.9 の混ぜ（3.4630）・0.7（3.2323、平均 3.2345 より良い）は緑＝本物の内挿は見分けない |
+| S8 | 呼び所の見落とし（H3 kdds_pub_core の region_scoped・H4 mq_publish_wants の 24 B・H5 mh_publish の長さと mh_poll の広い送り手・H6 pfs_repl_task の drain・H12 snf/ss6 の宛先） | tests/ci/check_callsites.py（1f943757）が関数の本体の文字を固定。自己試験は監査の壊し 9 つ。監査-161: 呼び所をコメント・`#if 0` に入れて壊しを隣に書くと 3 規則（must not の無いもの）が緑＝監査側で本体からコメントと `#if 0` を除き、その 2 形を自己試験に足した。生きた試験は無いまま（H17） |
+| S9 | B5 第 4 歩の判定役の K3 の許容幅（H10） | K3 の線ちょうど＝緑・0.005 超え＝赤（9717a77b）。0.00・0.04・+0.011・厳密な `<`・0.019 は赤、監査-161。限界: 0.005 未満の広げ（+0.004・0.024）は緑（K1・K2・K4 と同じ細かさ） |
+| S10 | LFC の届かない名前（H16、`-DST_GPTQ_$v` のような変数で組む -D） | 接頭辞で始まり #ifdef・#ifndef・defined で見て #define しない名前も組む（13a2b20a、30 名、232 本）。監査-161: student_delta_test.c の ST_DQ_TEST_ALLPLUS の下の壊しは master で緑・直しで BROKEN。限界: 名前の組み合わせ（ST_QALLOC_CAL_INVERT と CAL）は組まない |

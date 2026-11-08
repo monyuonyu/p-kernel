@@ -186,6 +186,12 @@ def self_test():
          {"K2": False, "K1": True, "K3": True}),
         ("K4 0.005 over, two seeds", (good, one(one(same, "99", A(3.895)), "100", A(3.895))), False,
          {"K4": False, "NC-same": True}),
+        # test-holes H10 (audit-160): K3's 0.02 could be 0.00, 0.04 or +0.011 with
+        # every line above green (the only K3 case was 0.03 over). At the line is
+        # green, 0.005 over is red.
+        ("K3 at the line", (one(good, "104", A(3.8, poison=4.62)), same), True, {"K3": True}),
+        ("K3 0.005 over", (one(good, "104", A(3.8, poison=4.625)), same), False,
+         {"K3": False, "K2": True, "K1": True}),
     ]
     for name, (p, s), want, gw in cases:
         got, _, g = judge(p, s, dk, d1)
