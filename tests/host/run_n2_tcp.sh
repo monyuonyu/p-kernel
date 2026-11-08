@@ -16,9 +16,10 @@
 #       peers' rumours (no rtt, then SUSPECT), and that was green (11-08, master's binary)
 #   T4  300 teaches snow: it arrives at 4, 44 and 260 from node 299. Limit: also green before
 #       the change (300 was on UDP then, and 44 got snow another way), so T4 is coverage only
+#   T5  no node logs "misdelivered" (a one-node frame whose MAC names another node; test-holes H20)
 #
 # Negative controls: -DN2_NC_TCP_WIDE_REFUSE (the old rule) reddens T0, -DN2_NC_TCP_NO_READS_V3
-# (byte 10 stays 0) reddens T3.
+# (byte 10 stays 0) reddens T3, -DN2_NC_TCP_DST_LOW_BYTE (the MAC's high byte left out) T5.
 # N2_NEW_BIN (default boot/linux_x86_64/p-kernel), N2_RELAY_BIN (default relay/relay),
 # N2_WAIT (default 90), N2_LOGDIR, N2_PORT.
 set -u
@@ -141,6 +142,17 @@ while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
     for i in 4 44 260; do arrived "$i" snow 299 || miss="$miss snow@$i"; done
 done
 [ -z "$miss" ] && res T4 PASS "snow from 299 (TCP) at 4, 44, 260" || res T4 FAIL "missing:$miss"
+
+# T5 (test-holes H20): no node got a one-node frame (REL_DATA) whose MAC names another node.
+# The receiver says "misdelivered" (relay_misdeliver.h); before, 200+ frames for 260 went to
+# node 4 with the high byte of the MAC left out and every line above stayed green.
+md=""
+for i in 4 44 260 300; do
+    c=$(grep -ac 'misdelivered: a frame for node' "$LOGDIR/node$i.log")
+    [ "$c" -gt 0 ] && md="$md node$i:$c($(grep -a 'misdelivered' "$LOGDIR/node$i.log" | head -1 | sed 's/.*misdelivered: //'))"
+done
+[ -z "$md" ] && res T5 PASS "no one-node frame came to a node its MAC does not name" \
+             || res T5 FAIL "misdelivered one-node frames:$md"
 
 if [ -z "$REDS" ]; then echo "[n2-tcp] ALL PASS"; exit 0; fi
 echo "[n2-tcp] RED:$REDS"

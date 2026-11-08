@@ -191,6 +191,8 @@ COMMON_C_SRCS = \
     protect.c \
     genome.c \
     ed25519.c \
+    ark_crypto.c \
+    ark_crypto_selftest.c \
     sign.c \
     compat_ota.c \
     compat_arkfs_gap.c \

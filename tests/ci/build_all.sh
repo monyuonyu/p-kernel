@@ -17,7 +17,8 @@
 # bare i686 + ring3 userland (all disk), bare AArch64 (virt and rpi3), relay,
 # and tests/llm/run_dmoe.sh (compiles its own translation units outside the
 # Makefiles, broke in #22; it also runs its gates, ~40 s).
-# NOT covered: the Android APK (needs the NDK and gradle), and the builds that
+# NOT covered: the Android APK (needs the NDK and gradle; only its source list is
+# checked, src-parity), and the builds that
 # test scripts make themselves (falsifier kernels of run_tk_conform.sh,
 # run_rng0_regression.sh, run_fp_bare.sh, run_nosw*.sh, tkconf rx, ...) or
 # that ci.yml writes in another form (a variable, a different make variable);
@@ -91,7 +92,11 @@ step doc-checks   "python3 tests/ci/check_vmodel.py --selftest && python3 tests/
 step llm-falsifiers "python3 tests/ci/check_llm_falsifiers.py"
 # The call sites the certs do not reach (test-holes H3 H4 H5 H6 H12, part of H2).
 step callsites    "python3 tests/ci/check_callsites.py --selftest"
-step x86_64       "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64"
+# The source lists of Android's CMake and both host Makefiles (the BLOCKING job
+# "ソースリスト整合性"; audit-164: ark_crypto.c went into both Makefiles only, and
+# build_all was ALL OK, since the APK is not built here).
+step src-parity   "bash tools/android/check_parity.sh"
+step x86_64      "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64"
 step x86_64-san   "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64 NO_LIBTCC=1 \
                      EXTRA_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all' \
                      LDFLAGS='-no-pie -lrt -lpthread -fsanitize=address,undefined'"

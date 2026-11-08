@@ -7,7 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#if !(defined(__ANDROID__) && defined(__ANDROID_API__) && __ANDROID_API__ < 28)
 #include <sys/random.h>
+#endif
 #include "ark_crypto.h"
 #include "ed25519.h"
 
@@ -302,11 +304,30 @@ void arkc_box_wipe(arkc_box *b)
 /* -DARKC_TEST_RANDOM (the test build only, test-holes H18): a stand-in for getrandom, so
  * the test can make it fail or come back short. -DARKC_NC_RAND_IGNORE: a failure is
  * ignored and the rest of the key stays as it was ([arkc-box-rand] goes red). */
+/* Android: the app's minSdk is 26 and Bionic's getrandom() is API 28, so there the OS RNG is
+ * read from /dev/urandom (the same source as sign_entropy.c), failing closed. -DARKC_URANDOM
+ * takes this path on Linux too (so a host build can run it). */
+#if defined(ARKC_URANDOM) || (defined(__ANDROID__) && defined(__ANDROID_API__) && __ANDROID_API__ < 28)
+#include <fcntl.h>
+#include <unistd.h>
+static ssize_t arkc_urandom(void *buf, size_t len, unsigned int flags)
+{
+    (void)flags;
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t r = read(fd, buf, len);
+    close(fd);
+    return r;
+}
+#define ARKC_OS_RANDOM arkc_urandom
+#else
+#define ARKC_OS_RANDOM getrandom
+#endif
 #ifdef ARKC_TEST_RANDOM
 ssize_t (*arkc_test_getrandom)(void *buf, size_t len, unsigned int flags);
-#define ARKC_GETRANDOM(p, n) (arkc_test_getrandom ? arkc_test_getrandom((p), (n), 0) : getrandom((p), (n), 0))
+#define ARKC_GETRANDOM(p, n) (arkc_test_getrandom ? arkc_test_getrandom((p), (n), 0) : ARKC_OS_RANDOM((p), (n), 0))
 #else
-#define ARKC_GETRANDOM(p, n) getrandom((p), (n), 0)
+#define ARKC_GETRANDOM(p, n) ARKC_OS_RANDOM((p), (n), 0)
 #endif
 
 static int fill_random(uint8_t *p, size_t n)

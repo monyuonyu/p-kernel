@@ -1211,6 +1211,13 @@ jobs:
           grep -aF '[ark-crypto] ALL PASS' ark_crypto.log
           timeout 120 tests/host/run_ark_crypto.sh nc | tee ark_crypto_nc.log
           grep -aF '[ark-crypto] NC RED as expected' ark_crypto_nc.log
+          # the same parts inside the kernel: the shell verb `ark crypto` (5 lines; locally
+          # -DARKC_NC_NO_CLAMP reddens x25519 and wrap, -DARKC_NC_TAG_NOCHECK tamper).
+          # Build the plain kernel first: run_mind_record_pull.sh (two steps up) cleans
+          # boot/linux_x86_64 on exit, so there is no p-kernel here (audit-164)
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          (printf 'ark crypto\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee ark_shell.log || true
+          grep -aF '[ark-crypto] SELF PASS 5/5' ark_shell.log
 
       # ROADMAP 1-8 v4, the conflict half: with sky misread on every node
       # (-DR3_TEST_MISREAD_KEY=0) the push-back, the lost value in the history
@@ -1571,7 +1578,7 @@ jobs:
           git fetch -q --depth=1 origin 64b7c909eec599c6fc59da10d20ba3b94c17c07e
           git worktree add -q /tmp/n2old FETCH_HEAD
           make -C /tmp/n2old/boot/linux_x86_64 -j4 >/dev/null
-      - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3)"
+      - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3), T5 when a wide one-node frame is sent by the low byte of its MAC (-DN2_NC_TCP_DST_LOW_BYTE, test-holes H20)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
@@ -1585,6 +1592,10 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TCP_NO_READS_V3 >/dev/null
           N2_WAIT=45 timeout 400 tests/host/run_n2_tcp.sh | tee n2_tcp_nc2.log || true
           grep -aF '[n2-tcp] T3 FAIL' n2_tcp_nc2.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TCP_DST_LOW_BYTE >/dev/null
+          N2_WAIT=45 timeout 400 tests/host/run_n2_tcp.sh | tee n2_tcp_nc3.log || true
+          grep -aF '[n2-tcp] T5 FAIL' n2_tcp_nc3.log
       - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), [mqwide] frame when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [mhwide] when mind/have sends or reads no wide ids (-DN2_NC_MH_NO_TAIL, -DN2_NC_MH_RX_NARROW), [ipw] when snf/ss6 keep the old address for a wide self (-DN2_NC_IP_OLD), [n2-lan] L1 when the LAN makes a wide id node 1 (-DN2_NC_LAN_WIDE_TO_1), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW) or mind/have's busy compares it by its byte (-DN2_NC_MC_BUSY_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
