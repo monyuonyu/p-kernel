@@ -159,6 +159,13 @@ int main(void)
     CHECK(accA == 1, "[ss3-cohort-converge] same-tier peer ACCEPTED (1)");
     CHECK(lossM <= worse + 1e-4f,
           "[ss3-cohort-converge] merged held-out loss <= the worse parent");
+    /* test-holes H8 (audit-158): a merge that returns one parent's copy passed
+     * every line here (the worse parent's copy is <= the worse parent, and the
+     * perturbed peer below still changes which parent is copied). The merged
+     * weights must be neither parent's, byte for byte. */
+    int copyA = memcmp(A.w, Aw, (size_t)np * sizeof(float)) == 0;
+    int copyB = memcmp(A.w, B.w, (size_t)np * sizeof(float)) == 0;
+    CHECK(!copyA && !copyB, "[ss3-cohort-converge] merged weights are neither parent's copy");
 
     /* (b) peer-symmetry: merge(B,{A}) must be BYTE-IDENTICAL to merge(A,{B}).
      * Rebuild a fresh B' == B (same seed+training), load A's pre-merge blob as
