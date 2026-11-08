@@ -43,6 +43,8 @@
 #   -DARK_REC_DEFAULT_PUBLIC    e4    (a new record is public)
 #   -DPFS_ARK_HAS_RESIDENT_ONLY e1 e2 e4 stop (pfs_has blind to ARK, gap-ledger PFS-ARK-HAS)
 #   -DARK_REC_SHARED            local (ark/ names gossip and AKR blocks leave the node)
+#   (a break, not in CI: only pfs_repl.c's two AKR stops taken out, ark/ names still
+#   local: local red, B holds A's record version - 2026-11-09, /build/arkrec/h)
 #
 # Usage: tests/host/run_ark_rec.sh   (ARK_REC_BIN: default boot/linux_x86_64/p-kernel)
 #        ARK_REC_EXPECT_RED="e1 e2" ARK_REC_BIN=<negative build> tests/host/run_ark_rec.sh
