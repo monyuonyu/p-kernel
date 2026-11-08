@@ -1061,6 +1061,17 @@ static int s8unit(void)
       int r0 = s8u_merge(&x, &me, &pv, pe, NULL, 2, t, c);
       check(r0 == 2 && t[0] == 0.0f && near_f(t[1], 0.85749f, 1e-4), "s8-null", "peer_prev NULL: echo TS 0, H step 6's 0.857");
       st_free(&x); }
+    /* H21 (audit-168): the two hand peers above pin tau only to (0.857, 0.952]. A at
+     * (3,4,2.35): c = 5/sqrt(30.5225) = 0.90502, cut; B at (3,4,2.49): c = 5/sqrt(31.2001)
+     * = 0.89514, kept (peer_prev NULL: TS = c). tau is pinned to (0.895, 0.905]. */
+    { st_model a, b, x; clone(&a, &pv); clone(&b, &pv); zero_w(&a); zero_w(&b);
+      a.w[0] = 3; a.w[1] = 4; a.w[2] = 2.35f; b.w[0] = 3; b.w[1] = 4; b.w[2] = 2.49f;
+      st_model *pab[] = { &a, &b }; float t[2], c[2];
+      int r0 = s8u_merge(&x, &me, &pv, pab, NULL, 2, t, c);
+      printf("    tau: c %.5f %.5f TS %.5f %.5f\n", (double)c[0], (double)c[1], (double)t[0], (double)t[1]);
+      check(r0 == 2 && near_f(c[0], 0.90502f, 1e-4) && near_f(c[1], 0.89514f, 1e-4) && t[0] == 0.0f
+            && near_f(t[1], 0.89514f, 1e-4), "s8-tau", "c 0.905 is cut, c 0.895 keeps TS 0.895: tau in (0.895, 0.905]");
+      st_free(&x); st_free(&a); st_free(&b); }
     /* every peer an echo: refused, into byte-unchanged */
     { st_model *pa[] = { &e, &e2 }, *qa[] = { &qe, &qe2 }; float t[2], c[2]; st_model x;
       clone(&x, &me); uint64_t h0 = hash(&x); st_free(&x);
