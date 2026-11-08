@@ -122,7 +122,7 @@ Anything not listed under "What runs today" is not claimed to work.
 - **p-fs**: a distributed store where the hash of the content is the address. Identical content collapses into one, and tampering shows up immediately as an address mismatch.
 - **ARK**: a power-loss-safe filesystem. A test that repeatedly and mechanically cuts power during writes and corrupts data (CI `ark-crash-fuzzer`) has not seen it return corrupted data since the ARK-2 fixes (before them, this test found 4 bugs).
 - Device IDs, the history record, and learned weights survive a restart (on Android too).
-- Kill devices — do the taught records stay with the survivors? A draft demo measures it next to baselines (no copies, plain 3 copies, a build that stops the spreading): [docs/demo-knowledge-survival.en.md](docs/demo-knowledge-survival.en.md) (8 processes on one machine).
+- Kill devices — do the taught records stay with the survivors? A demo measures it next to baselines (no copies, plain 3 copies, a build that stops the spreading): [docs/demo-knowledge-survival.en.md](docs/demo-knowledge-survival.en.md) (8 processes on one machine).
 
 ### Learning as a swarm
 
@@ -264,6 +264,7 @@ help                     ← all commands
 - This README follows reality. Anything not written here is not claimed to work.
 - Open problems are kept in one place, the [gap-ledger](docs/architecture/gap-ledger.md), and when one is closed, the story is kept.
 - Big words like "brain" or "collective mind" stay as goals, but the actual size today is always written next to them in numbers.
+- Development diary (in Japanese, written together with an AI): [helloidea.org — p-kernel](https://helloidea.org/index.php/archives/category/p-kernel).
 
 ---
 

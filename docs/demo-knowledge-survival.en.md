@@ -1,6 +1,6 @@
-# Demo: kill the devices — do the taught records survive? (draft)
+# Demo: kill the devices — do the taught records survive?
 
-> Draft (2026-10-25), an English rendering of [demo-knowledge-survival.md](demo-knowledge-survival.md) (2026-10-24). The numbers come from the v4 re-run in `docs/architecture/30-module/knowledge-survival.md` (2026-10-23) and the re-measurement in audit-69, and were re-run on the masters of 2026-11-01 and 2026-11-08. Before this goes out on 11/30, a separate run audits the numbers and the wording.
+> Written 2026-10-25 as an English rendering of [demo-knowledge-survival.md](demo-knowledge-survival.md) (2026-10-24), revised 2026-11-08. The numbers come from the v4 re-run in `docs/architecture/30-module/knowledge-survival.md` (2026-10-23) and the re-measurement in audit-69, and were re-run on the masters of 2026-11-01 and 2026-11-08 with every digit of the table the same (checked against the table in audit-160).
 
 ## What was done
 
