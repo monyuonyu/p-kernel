@@ -111,7 +111,7 @@ while [ "$t" -lt "$WAIT" ]; do
     [ "$(state_of 4 43)" = DEAD ] && [ "$(state_of 260 43)" = DEAD ] \
         && [ "$(state_of 4 299)" = DEAD ] && [ "$(state_of 260 299)" = DEAD ] && break
 done
-s=$(state_of 4 43);   [ "$s" = DEAD ] && res A1 PASS "narrow 4 sees 43 DEAD (all four by ${t} s)" || res A1 FAIL "narrow 4 sees 43 as '$s' after ${t} s"
+s=$(state_of 4 43);   [ "$s" = DEAD ] && res A1 PASS "narrow 4 sees 43 DEAD (the wait ended at ${t} s)" || res A1 FAIL "narrow 4 sees 43 as '$s' after ${t} s"
 s=$(state_of 260 43); [ "$s" = DEAD ] && res A2 PASS "wide 260 sees 43 DEAD" || res A2 FAIL "wide 260 sees 43 as '$s' after ${t} s"
 s=$(state_of 4 299);  [ "$s" = DEAD ] && res A3 PASS "narrow 4 sees 299 DEAD" || res A3 FAIL "narrow 4 sees 299 as '$s' after ${t} s"
 s=$(state_of 260 299); [ "$s" = DEAD ] && res A4 PASS "wide 260 sees 299 DEAD" || res A4 FAIL "wide 260 sees 299 as '$s' after ${t} s"
