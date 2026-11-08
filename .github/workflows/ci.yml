@@ -1497,10 +1497,13 @@ jobs:
           # which wide peers a kdds broadcast goes to (N2 (c)(1)): a REGION topic only to region members
           (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide.log || true
           grep -aF '[kdds-wide] PASS' kdds_wide.log
-          # R-KDDSQ stage 1: kdds_sub_next keeps unread messages, oldest first (kdds-queue.md; the
-          # negative -DKDDS_NC_NO_QUEUE was red in the container, not wired here: the job is near its limit)
+          # R-KDDSQ stage 1: kdds_sub_next keeps unread messages, oldest first (kdds-queue.md; its
+          # negatives are in the step "kdds queue and the pfs announce reader go red ...")
           (printf 'kdds queue\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_queue.log || true
           grep -aF '[kdds-queue] PASS' kdds_queue.log
+          # R-KDDSQ stage 2: the pfs announce reader takes every announce of the tick (kdds_sub_next)
+          (printf 'kdds ann\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_ann.log || true
+          grep -aF '[kdds-ann] PASS' kdds_ann.log
           # next_hop: 10.1/16 is on-link (a wide address uses the third byte; the /24 dropped wide<->narrow unicast)
           (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink.log || true
           grep -aF '[onlink] PASS' nodes_onlink.log
@@ -1622,6 +1625,17 @@ jobs:
           grep -aF '[kdds-wide] FAIL region' kdds_wide_nc.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
+
+      - name: "kdds queue and the pfs announce reader go red when nothing is kept (-DKDDS_NC_NO_QUEUE) or the reader takes the last one only (-DPFSR_NC_ANN_LATEST, R-KDDSQ)"
+        run: |
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DKDDS_NC_NO_QUEUE >/dev/null
+          (printf 'kdds queue\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_queue_nc.log || true
+          grep -aF '[kdds-queue] FAIL rx' kdds_queue_nc.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_LATEST >/dev/null
+          (printf 'kdds ann\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_ann_nc.log || true
+          grep -aF '[kdds-ann] FAIL drain' kdds_ann_nc.log
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
