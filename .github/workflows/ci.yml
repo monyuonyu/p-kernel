@@ -1747,6 +1747,16 @@ jobs:
           timeout 300 tests/host/run_n2_alive.sh | tee n2_alive_nc.log || true
           grep -aF '[n2-alive] A3 FAIL' n2_alive_nc.log
           grep -aF '[n2-alive] A4 FAIL' n2_alive_nc.log
+          # A6 (test-holes H20): a relay that sends 300's frames to 260; only the receiver sees it
+          make -s -C relay clean >/dev/null
+          make -s -C relay relay CFLAGS="-Wall -Wextra -O2 -std=gnu11 -fno-stack-protector -DRELAY_NC_MISROUTE" >/dev/null
+          cp relay/relay /tmp/relay_misroute
+          make -s -C relay clean >/dev/null
+          make -s -C relay >/dev/null
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          N2_RELAY_BIN=/tmp/relay_misroute timeout 300 tests/host/run_n2_alive.sh | tee n2_alive_nc2.log || true
+          grep -aF '[n2-alive] A6 FAIL' n2_alive_nc2.log
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"

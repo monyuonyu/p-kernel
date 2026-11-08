@@ -909,7 +909,13 @@ static void process_packet(int sock, int origin_fd,
 
     case REL_DATA:
         update(src_slot, from, origin_fd, pkt.reads_v3);
+#ifndef RELAY_NC_MISROUTE
         forward(sock, slot_of(pkt.dst, 0), buf, (int)n, now);
+#else
+        /* test-holes H20, negative control for [n2-alive] A6: frames for 300 go to 260
+         * (the senders are right; only the receiver's misdelivered line shows it) */
+        forward(sock, slot_of(pkt.dst == 300 ? 260 : pkt.dst, 0), buf, (int)n, now);
+#endif
         break;
 
     case REL_BROADCAST:
