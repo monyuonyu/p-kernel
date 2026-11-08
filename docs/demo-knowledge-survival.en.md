@@ -34,7 +34,7 @@ How to read it: with 6 of 8 killed, the 2 survivors still held the records of al
   | 2026-11-01 (after 3 fixes to how a node takes in a teaching) | 10 runs at 1.0, the rest 0.958, 0.938, 0.812, 0.812, 0.75 | 0.75 (f=0.25 seed 2): all 6 survivors answered ink with near (every survivor held the record) | 1 (0.75 < 1.0) |
 
   S2: the share of facts some survivor answers correctly must reach R3, the share 3 copies would keep somewhere. Before the kill, facts other than ink miss too (13 of the 15 runs of 11-01 missed sea, stone or leaf somewhere). That is too few runs to say the fixes made recall better or worse. The record is the original and the answering model is the librarian; the librarian is still the weak side
-- Small: 8 nodes, 4 facts, 1 machine, 1 relay. Two seeds. The table above is one October run and one run of 2026-11-01 each (2 (f, seed) pairs re-run besides; recall was also re-run, the two sets of 15 runs above). Partitions (the network splitting) are not tested
+- Small: 8 nodes, 4 facts, 1 machine, 1 relay. Two seeds. The table above is one October run and one run each of 2026-11-01 and 2026-11-08 (2 (f, seed) pairs re-run besides; recall was also re-run, the two sets of 15 runs above). Partitions (the network splitting) are not tested
 - All kills happen at once. Recovery time under continuous churn and long-term consistency are not measured yet
 
 ## Run it yourself
