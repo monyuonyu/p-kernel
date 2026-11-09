@@ -1612,7 +1612,7 @@ jobs:
   n2-negatives:
     name: "Negative controls (x86_64: the N2 wide-id falsifiers and R-KDDSQ, BLOCKING)"
     runs-on: ubuntu-latest
-    timeout-minutes: 80   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09)
+    timeout-minutes: 90   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09); 57 min in CI 42621928249, +~14 for pfwide/XP and the 0 ms burst negatives (2026-11-09 23:xx) -> 80 to 90
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
