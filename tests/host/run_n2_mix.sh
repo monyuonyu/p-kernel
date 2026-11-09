@@ -277,6 +277,10 @@ if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
     # first hint is judged (a truncated 299 reads 43, a real peer's id, so a peer's hint is no excuse)
     R0[4]="$(resumed 4)"; send 4 "stop resume"
     t=0; while [ "$t" -lt "$WAIT" ] && ! hint299 4; do sleep 1; t=$((t + 1)); done
+    # The seconds alone measure mind/have only in the CI form (N2_X3=1): with N2_X3_PART=have,
+    # sky is 300's first teach and its substrate pretrains first (15-18 s in the container, no
+    # summary meanwhile), so both the old and the fixed reader wait ~29 s there (/build/mhd/ab)
+    t4="$t"; echo "[n2-mix] X3H note: node 4 alone for ${t4} s (its hint from 299 or the wait, ${WAIT} s)"
     for i in 44 260; do R0[$i]="$(resumed "$i")"; send "$i" "stop resume"; done
     t=0; miss="?"
     while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
@@ -290,6 +294,17 @@ if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
     case "$f" in *"node 299:"*) ;; *) miss="$miss first-sky-hint-not-299@4";; esac
     [ -z "$miss" ] && res X3H PASS "300's summary raised a want on{$h}, sky arrived from 299 at 4, 44, 260" \
                    || res X3H FAIL "missing or wrong:$miss"
+    # CI keeps no node logs (CI 42656744519 was red here and green 7/7 on the box): on a red,
+    # print what node 4 heard about sky and when it stopped and resumed, in log order, so the
+    # next red says who came first (an empty first hint, another id, or sky with no hint)
+    if [ -n "$miss" ]; then
+        echo "[n2-mix] X3H diag: node 4's first sky hint {${f}}, node 4 alone ${t4} s"
+        for i in 4 44 260; do
+            tr -d '\r' < "$LOGDIR/node$i.log" \
+                | grep -anE 'stop\] stopped|sky' | head -20 \
+                | sed "s/^/[n2-mix] X3H diag node$i: /"
+        done
+    fi
 fi
 
 # XP  p-fs blocks cross the mixed swarm (N2 "まだ" 7, the first caller: pfs_repl). N2_XP=1.

@@ -30,6 +30,10 @@
 
 pfs_repl の ann の受けを kdds_sub_next に移した（`pfsr_ann_drain`、1 tick に最大 8 通、送り手ごとの seq の重複落としは残す。ベアは kdds_sub のまま 1 通＝crown 全桁同じ）。試験 `kdds ann`、陰性 -DPFSR_NC_ANN_LATEST。run_relay_failover は移す前と後で 2 回ずつ PASS（この試験は ann を通らない＝回帰の確認だけ）。CI: UMP x86_64 に `kdds ann` と陰性 2 本（KDDS_NC_NO_QUEUE も）。限界: task が drain を呼ぶことは cert が見ない。ann を生きた群れで通す試験はまだ無い
 
+## 3c. 第 3 段（2026-11-10、hosted だけ、mind/have）
+
+CI 42656744519 の X3H 赤（first-sky-hint-not-299@4）から。mind/have は全員の要約が 1 枠に入り、poll は最後の 1 通だけを読んでいた。old 3 台と 300 が同じ周期で送ると 300 の要約が読まれる前に上書きされ続ける（容器で node4 が一人で 299 のヒントを待った秒数: 1〜24 秒、周期は約 2 秒）。mh_poll を `mh_drain`（kdds_sub_next、1 tick に最大 MH_PER_TICK 16 通）に移した。mind/have の節は全体が hosted＝ベアは変わらない。試験 `nodes mhq`（3 台の要約が 1 tick に → ヒント 3）、陰性 -DMH_NC_POLL_LATEST（ヒント 1）。check_callsites に mh-drain。限界: mind/hist（mhi）は 1 通読みのまま。自分の要約も待ち行列に入る（読んで捨てる）
+
 ## 4. 限界
 
 待ち行列は全部の話題で共有＝1 つの話題が溢れさせると他も古いものを失う（捨てた数で見える）。順番は 1 台の中での着いた順で、送り手をまたいだ順序は約束しない
