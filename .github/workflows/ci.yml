@@ -1602,7 +1602,7 @@ jobs:
   n2-negatives:
     name: "Negative controls (x86_64: the N2 wide-id falsifiers and R-KDDSQ, BLOCKING)"
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 80   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09)
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -1662,6 +1662,14 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DSELF_REF_SHARED >/dev/null
           SELF_REF_EXPECT_RED=1 timeout 300 tests/host/run_self_ref_local.sh | tee self_ref_nc.log || true
           grep -aF '[self-ref] NC RED as expected' self_ref_nc.log
+          cp boot/linux_x86_64/p-kernel /tmp/sref_old_pk  # the old-style node for H22's self/ half
+          # H22's self/ half: one old-style node, the other new (each stop of the new one alone)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          SELF_REF_BIN_A=/tmp/sref_old_pk timeout 300 tests/host/run_self_ref_local.sh | tee sref_aold.log
+          grep -aF '[self-ref] ALL PASS' sref_aold.log
+          SELF_REF_BIN_B=/tmp/sref_old_pk timeout 300 tests/host/run_self_ref_local.sh | tee sref_bold.log
+          grep -aF '[self-ref] ALL PASS' sref_bold.log
       - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3), T5 when a wide one-node frame is sent by the low byte of its MAC (-DN2_NC_TCP_DST_LOW_BYTE, test-holes H20)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
