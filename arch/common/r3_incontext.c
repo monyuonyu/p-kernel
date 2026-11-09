@@ -4831,11 +4831,42 @@ static void mh_publish(void)
     }
 }
 
+/* X3H (CI 42656744519, first-sky-hint-not-299@4): every peer's summary lands in
+ * the topic's one LATEST_ONLY slot, and a poll read only what was last in it.
+ * With several peers on the same MH_EVERY phase one sender's summary can be
+ * overwritten before every poll for minutes (trace in the commit message: the
+ * new node 4 saw wide 300's summary <N> times in <M> s). Hosted: read every
+ * summary that came in since the last tick, oldest first (kdds_sub_next,
+ * R-KDDSQ, kdds-queue.md 3c), up to MH_PER_TICK. Bare metal reads the last one
+ * as before (kdds_sub_next is hosted only; crown). -DMH_NC_POLL_LATEST: the
+ * old single read (negative control). */
+#ifndef MH_PER_TICK
+#define MH_PER_TICK 16
+#endif
+static void mh_take(W r);
+static INT mh_drain(W h)             /* summaries read (`nodes mhq` calls it too) */
+{
+    INT k = 0;
+#ifndef MH_NC_POLL_LATEST
+    for (; k < MH_PER_TICK; k++) {
+        W r = kdds_sub_next(h, &mh_rx_w, (W)sizeof mh_rx_w);   /* 112 or 146 */
+        if (r <= 0) break;
+        mh_take(r);
+    }
+#else
+    W r = kdds_sub(h, &mh_rx_w, (W)sizeof mh_rx_w, 0);
+    if (r > 0) { mh_take(r); k = 1; }
+#endif
+    return k;
+}
 static void mh_poll(void)
 {
     mh_have_open();
     if (mh_sub < 0) return;
-    W r = kdds_sub(mh_sub, &mh_rx_w, (W)sizeof mh_rx_w, 0);   /* 112 or 146 */
+    (void)mh_drain(mh_sub);
+}
+static void mh_take(W r)
+{
     if (r < (W)sizeof mh_rx || mh_rx.magic != MH_MAGIC) return;
     if (mh_rx.wire_ver != MT_WIRE_VER_VOCAB || !mt_vocab_fp_ok(mh_rx.vocab_fp)) return;
     pk_node_t o = mh_have_rx_sender(&mh_rx_w, r);   /* the wide sender (N2)   */
@@ -9062,5 +9093,66 @@ INT mh_wide_self_test(void (*emit)(const char *))
     if (fails == 0) say("[mhwide] PASS (wide sender and teachers: 2 bytes each after the 112, read only when 0xFF and wide; the push compares the wide id)\r\n");
     else            say("[mhwide] RED\r\n");
     return fails;
+}
+
+/* ------------------------------------------------------------------ */
+/* X3H `nodes mhq`: the mind/have reader takes every summary of a tick. */
+/* Summaries from nodes 1, 2 and 3 arrive in a row on a test topic,     */
+/* each naming one key never held here (keys 1, 2, 3); one drain with   */
+/* the real mh_take must raise 3 hints (the old single read: 1, node    */
+/* 3's). A second drain reads nothing. State put back: the want-table,  */
+/* its counter, mh_hints, drpc_my_node (0xFF meanwhile: the live tick   */
+/* stays off the shared rx buffer). -DMH_NC_POLL_LATEST: red.           */
+/* Limit: checks mh_drain, not that mh_poll calls it (X3H does).        */
+/* ------------------------------------------------------------------ */
+static void mhq_rx(const char *name, pk_node8_t src, U1 key)
+{
+    static KDDS_PKT k;
+    static MH_HAVE_PKT p;
+    __builtin_memset(&k, 0, sizeof k); __builtin_memset(&p, 0, sizeof p);
+    p.magic = MH_MAGIC; p.origin_node = src; p.n = 1; p.wire_ver = MT_WIRE_VER_VOCAB;
+    mt_vocab_fp_fill(p.vocab_fp);
+    p.e[0].key = key; p.e[0].origin = src; p.e[0].stamp = 1;
+    k.magic = KDDS_MAGIC; k.version = KDDS_VERSION; k.type = KDDS_DATA_PKT;
+    k.src_node = src; k.data_len = (UH)sizeof p;
+    INT n = 0; while (name[n]) n++; n++;
+    for (INT i = 0; i < n && i < KDDS_NAME_MAX; i++) k.name[i] = name[i];
+    k.name_len = (UH)n;
+    __builtin_memcpy(k.data, &p, sizeof p);
+    kdds_rx(src, KDDS_PORT, (const UB *)&k, (UH)sizeof k);
+}
+INT mh_queue_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : r_puts;
+    const char *NM = "test/mhq";
+    W h = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    if (h < 0) { say("[mhq] FAIL open\r\n"); return 1; }
+    static R3_WANT wq_saved[R3_WQ_MAX];
+    pk_node_t saved_my = drpc_my_node;
+    drpc_my_node = 0xFF;
+    m_gate_acquire();
+    __builtin_memcpy(wq_saved, r3_wq, sizeof r3_wq);
+    UW seq_saved = r3_wq_seq, hints_saved = mh_hints;
+    for (INT i = 0; i < R3_WQ_MAX; i++) r3_wq[i].used = 0;
+    m_gate_release();
+    INT r0 = mh_drain(h);                       /* start reading: nothing yet */
+    mhq_rx(NM, 1, 1); mhq_rx(NM, 2, 2); mhq_rx(NM, 3, 3);
+    INT got = mh_drain(h);
+    UW dh = mh_hints - hints_saved;
+    INT again = mh_drain(h);
+    m_gate_acquire();
+    __builtin_memcpy(r3_wq, wq_saved, sizeof r3_wq);
+    r3_wq_seq = seq_saved; mh_hints = hints_saved;
+    m_gate_release();
+    drpc_my_node = saved_my;
+    kdds_close(h);
+    r_puts("[mhq] read "); r_putdec((UW)got); r_puts(", hints "); r_putdec(dh);
+    r_puts(" (want 3 and 3)\r\n");
+    if (r0 != 0 || got != 3 || dh != 3 || again != 0) {
+        say("[mhq] FAIL (three summaries in one tick did not give three hints)\r\n");
+        return 1;
+    }
+    say("[mhq] PASS (the mind/have reader takes every summary of the tick, oldest first)\r\n");
+    return 0;
 }
 #endif /* _TK_HOSTED_LIBC_ */
