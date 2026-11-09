@@ -282,6 +282,15 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
             return;
         }
     }
+#ifdef _TK_HOSTED_LIBC_
+    /* ark-entry.md 5 (2026-11-09): a block held only in the ARK image (evicted from
+     * the table) is announced too, as this node's (`ark rec sync`) */
+    {
+        static U1 reann_buf[PFS_BLOCK_MAX];   /* not tx_block: the repl task sends from it */
+        INT n = pfs_get(id, reann_buf, PFS_BLOCK_MAX);
+        if (n >= 0) publish_announce(id, (UW)n, drpc_my_node);
+    }
+#endif
 }
 
 static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN]);

@@ -18,7 +18,9 @@
 #      size was 160 before the code and is 512 after seeing it: 24 versions are ~120
 #      blocks, the live blocks after a compaction took ~1.6 sectors each (72 for 9
 #      versions), and they must stay under half the image (run_ark_full.sh); 160 was
-#      not worked out. 512 gives 6 compactions. The
+#      not worked out. 512 gives 6 compactions. 2026-11-09 (E3): each version now also
+#      writes its sealed copy and sealed index (about twice the blocks), and 512 filled
+#      at 17 of 24 writes; 1024 since then. The
 #      writer prints at least one compaction line and a fresh process reads all 24.
 #      (E1 also reads all 70 old versions.) mw_gc is not driven here: it drops only
 #      blocks whose first 4 bytes are MW_MAGIC and whose length is a weight chunk's
@@ -55,7 +57,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${ARK_REC_BIN:-$ROOT/boot/linux_x86_64/p-kernel}"
-E2SEC="${ARK_REC_E2_SECTORS:-512}"
+E2SEC="${ARK_REC_E2_SECTORS:-1024}"
 [ -x "$BIN" ] || { echo "[ark-rec] FAIL: no binary $BIN"; exit 1; }
 d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
 

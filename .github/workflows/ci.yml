@@ -1229,6 +1229,16 @@ jobs:
           timeout 600 tests/host/run_ark_rec.sh | tee ark_rec.log
           grep -aF '[ark-rec] ALL PASS' ark_rec.log
 
+      # ark-entry.md 5 / E3: sealed copies leave the node (relay + 4 nodes): B holds only
+      # AKS* blocks and no plaintext, one key per version, A killed -9 and a fresh node
+      # with A's ark.key restores every version, another key cannot, a flipped bit cannot
+      # be opened, default fanout 124. The four negative builds are in n2-negatives. ~2 min.
+      - name: ark sealed copies (E3a-d, E1 region kill)
+        run: |
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          timeout 600 tests/host/run_ark_e3.sh | tee ark_e3.log
+          grep -aF '[ark-e3] ALL PASS' ark_e3.log
+
       # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
       # node B (never consented) still refuses /teach and does not show A's profile
       # (self/ names stay with their node). The negative is in n2-negatives. ~60 s.
