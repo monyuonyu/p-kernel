@@ -7,7 +7,7 @@
 | # | どこ | 壊し方（緑のまま） | 見つけた所 | 直す案 |
 |---|---|---|---|---|
 | H2 | mind/have の busy（P1、`mh_poll` の呼び所） | 呼び所にバイト比べをじかに書く（mc_push_busy を通らない） | 監査-156（B2） | 生きた 2 台で広い先生の押し返し中に要約を受ける試験（**一部は S8**: 呼び所が MC_PUSH_BUSY を通り、`mc_push_pkt.key ==` を書かないことは check_callsites.py が見る。ほかの形のバイト比べは見ない） |
-| H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案） |
+| H17 | check_callsites.py（S8）の規則 | 呼び所の関数を呼んで結果を捨てる・別の印の `#ifdef` の下に移す | 監査-161（規則は文字の形だけ。コメントと `#if 0` は監査-161 で除いた） | 意味を見るには生きた試験（H2〜H6 の元の案）。**H6（pfs_repl_task の announce の溜め読み）は 11-09 fix/pfs-ann-pace で生きた試験ができた（監査待ち）**: 0 ms の run_pfs_burst.sh が -DPFSR_NC_ANN_LATEST で 5/60・4/60（直しは 60/60）、CI の n2-negatives に。残り H2〜H5 |
 | H23 | run_ark_e3.sh e3x（ark.key） | `kn == 32` を `kn >= 32` に（33 B 以上の鍵の先頭 32 B を使う）。CI が root で走ると x2 も飛ぶので、存在の確かめを外す壊しも緑 | 監査-173（容器は非 root で x2 が赤。33 B は手で確かめて断り・ファイルはそのまま） | e3x に x3（33 B の鍵で断り・cmp 同じ）を足す。root でも読めない鍵を作る形（ディレクトリにする等）を x2 に |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す。**実装 feat/h11-fp-hi（11-08 監査-165 の回）→ 監査-166 PASS で master（feat/fpctl-dispatch と一緒に）**: x86_64 に F3（xmm12〜15 を asm で持つ）・F4（MXCSR の丸め）・F5（前提）。壊し -DPK_PREEMPT_DROP_FP_HI・-DPK_PREEMPT_DROP_MXCSR は前の版では緑、今は F3・F4 が赤（run_nosw.sh の腕）。残り: x87・ymm の上半分・aarch64 の一部だけの失い（v8〜v31）。途中で見つけた: 自発的な切り替え（dispatch.S）は MXCSR の制御ビットと x87 の制御語を保存しない（ABI では呼び出し先保存）＝丸めモードがタスク間で漏れる（台帳 HOSTED-FP-CTL-NOT-SAVED、F6・F7 で直し、監査-166 で閉じた） |
 

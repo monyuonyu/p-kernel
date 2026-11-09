@@ -1683,6 +1683,12 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_WANT_LATEST >/dev/null
           PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc3.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc3.log
+          # and the announce reader back to the last one of a tick (-DPFSR_NC_ANN_LATEST): the live test of
+          # test-holes H6/H17 (pfs_repl_task's drain), 5 and 4 of 60 in the container
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_LATEST >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc4.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc4.log
           # test-holes H22: each ark stop alone, next to an old-style node (-DARK_REC_SHARED)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
