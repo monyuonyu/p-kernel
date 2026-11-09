@@ -1239,6 +1239,15 @@ jobs:
           timeout 600 tests/host/run_ark_e3.sh | tee ark_e3.log
           grep -aF '[ark-e3] ALL PASS' ark_e3.log
 
+      # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 50 ms apart, B must hold all 60
+      # (a want that did not fit the 8-slot table was dropped for good). Negative in
+      # n2-negatives. ~80 s.
+      - name: a burst of puts reaches a peer whole (pfs want overflow)
+        run: |
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst.log
+          grep -aF '[pfs-burst] PASS' pfs_burst.log
+
       # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
       # node B (never consented) still refuses /teach and does not show A's profile
       # (self/ names stay with their node). The negative is in n2-negatives. ~60 s.
@@ -1628,6 +1637,18 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SHARED >/dev/null
           ARK_REC_EXPECT_RED="local" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_SHARED.log || true
           grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
+          # ark-entry.md 5 / E3 negatives (red lines measured 2026-11-09 in the container)
+          for nc in "ARK_REC_PLAIN:e3a e3b e3d" "ARK_REC_SAME_KEY:e3k" "ARK_REC_INDEX_LOCAL:e3a e3b e3c e3d e3k" "ARK_REC_AAD_INNER:e3b e3d"; do
+            make -C boot/linux_x86_64 clean >/dev/null
+            make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-D${nc%%:*} >/dev/null
+            ARK_E3_EXPECT_RED="${nc#*:}" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_${nc%%:*}.log || true
+            grep -aF "[ark-e3] NC RED as expected" ark_e3_${nc%%:*}.log
+          done
+          # PFS-REPL-WANT-DROP: the old drop is red
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
+          PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
           # SELF-REF-REGION-SHARED: the old shared self/ names redden S1-S3
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DSELF_REF_SHARED >/dev/null
