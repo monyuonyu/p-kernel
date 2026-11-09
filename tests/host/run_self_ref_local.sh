@@ -16,6 +16,10 @@
 #   S2 B's /profile.json does not carry A's profile id
 #   S3 no ref 'self/...' is adopted by B
 # Negative control: -DSELF_REF_SHARED (the old shared self/ names) must redden S1-S3.
+# test-holes H22 (2026-11-09): SELF_REF_BIN_A / SELF_REF_BIN_B set one node to an
+# old-style -DSELF_REF_SHARED build, so one stop of the other node is the only one in
+# the way: A old + B new = B's receive stop alone, A new + B old = A's beacon stop
+# alone. Both must stay ALL PASS.
 #
 # Usage: tests/host/run_self_ref_local.sh   (SELF_REF_BIN: default boot/linux_x86_64/p-kernel)
 #        SELF_REF_EXPECT_RED=1 ... : "[self-ref] NC RED as expected" iff S1, S2 and S3 are red
@@ -25,7 +29,8 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${SELF_REF_BIN:-$ROOT/boot/linux_x86_64/p-kernel}"
-[ -x "$BIN" ] || { echo "[self-ref] FAIL: no binary $BIN"; exit 1; }
+BIN_A="${SELF_REF_BIN_A:-$BIN}"; BIN_B="${SELF_REF_BIN_B:-$BIN}"
+[ -x "$BIN_A" ] && [ -x "$BIN_B" ] || { echo "[self-ref] FAIL: no binary $BIN_A / $BIN_B"; exit 1; }
 RELAY="$ROOT/relay/relay"
 [ -x "$RELAY" ] || make -s -C "$ROOT/relay" > /dev/null 2>&1
 d=$(mktemp -d); RP=0; PA=0; PB=0
@@ -39,9 +44,9 @@ wait_for() { local n=0; while [ "$n" -lt "$(( $3 * 2 ))" ]; do grep -aqE "$2" "$
 sleep 1
 mkfifo "$d/fa"
 env PKERNEL_NODE_ID=1 PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$d/da" PKERNEL_RELAY="127.0.0.1:$PORT" \
-    timeout 150 "$BIN" < "$d/fa" > "$d/a.log" 2>&1 & PA=$!; exec 7<>"$d/fa"
+    timeout 150 "$BIN_A" < "$d/fa" > "$d/a.log" 2>&1 & PA=$!; exec 7<>"$d/fa"
 env PKERNEL_NODE_ID=2 PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$d/db" PKERNEL_RELAY="127.0.0.1:$PORT" \
-    timeout 150 "$BIN" < /dev/null > "$d/b.log" 2>&1 & PB=$!
+    timeout 150 "$BIN_B" < /dev/null > "$d/b.log" 2>&1 & PB=$!
 wait_for "$d/a.log" 'P2 version DAG ready' 60; wait_for "$d/b.log" 'P2 version DAG ready' 60
 sleep 15
 before=$(curl -s --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7801/teach)

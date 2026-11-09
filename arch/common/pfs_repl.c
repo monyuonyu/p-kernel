@@ -140,6 +140,11 @@ typedef struct {
     U1 active;
 } PFSR_PENDING;
 static PFSR_PENDING pending[PFSR_PENDING_MAX];
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFS_WANT_NO_OVF)
+#define PFSR_WANT_OVF 256                      /* ids waiting for a free pending slot */
+static U1 want_ovf[PFSR_WANT_OVF][PFS_ID_LEN];
+static UW want_ovf_head, want_ovf_n;
+#endif
 
 /* single-slot receive assembly (sfs_rx_state generalized to a block).
  * Static — 4KB+ must never live on a task stack in a net path. */
@@ -282,6 +287,15 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
             return;
         }
     }
+#ifdef _TK_HOSTED_LIBC_
+    /* ark-entry.md 5 (2026-11-09): a block held only in the ARK image (evicted from
+     * the table) is announced too, as this node's (`ark rec sync`) */
+    {
+        static U1 reann_buf[PFS_BLOCK_MAX];   /* not tx_block: the repl task sends from it */
+        INT n = pfs_get(id, reann_buf, PFS_BLOCK_MAX);
+        if (n >= 0) publish_announce(id, (UW)n, drpc_my_node);
+    }
+#endif
 }
 
 static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN]);
@@ -370,8 +384,37 @@ static void pending_add(const U1 id[PFS_ID_LEN])
             return;
         }
     }
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFS_WANT_NO_OVF)
+    /* gap-ledger PFS-REPL-WANT-DROP (2026-11-09): nothing re-announces, so a dropped
+     * id was lost for good. Hosted: keep it in an overflow ring; pending_tick moves it
+     * into the table when a slot frees. When the ring itself is full, say so. */
+    for (UW i = 0; i < want_ovf_n; i++)
+        if (pr_id_eq(want_ovf[(want_ovf_head + i) % PFSR_WANT_OVF], id)) return;
+    if (want_ovf_n < PFSR_WANT_OVF) {
+        pr_memcpy(want_ovf[(want_ovf_head + want_ovf_n) % PFSR_WANT_OVF], id, PFS_ID_LEN);
+        want_ovf_n++;
+        return;
+    }
+    pr_puts("[pfs] want table full, dropped id="); pr_put_id(id); pr_puts("\r\n");
+#else
     /* table full: drop — the next re-announce will retry us */
+#endif
 }
+
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFS_WANT_NO_OVF)
+static void want_ovf_refill(void)
+{
+    while (want_ovf_n) {
+        INT free_slot = -1;
+        for (INT i = 0; i < PFSR_PENDING_MAX; i++) if (!pending[i].active) { free_slot = i; break; }
+        if (free_slot < 0) return;
+        U1 *id = want_ovf[want_ovf_head];
+        want_ovf_head = (want_ovf_head + 1) % PFSR_WANT_OVF; want_ovf_n--;
+        if (pfs_has(id)) continue;
+        pending_add(id);
+    }
+}
+#endif
 
 static void pending_tick(UW elapsed_ms)
 {
@@ -393,6 +436,9 @@ static void pending_tick(UW elapsed_ms)
         pending[i].tries++;
         publish_want(pending[i].id);
     }
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFS_WANT_NO_OVF)
+    want_ovf_refill();
+#endif
 }
 
 /* ------------------------------------------------------------------ */

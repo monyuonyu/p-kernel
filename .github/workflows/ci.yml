@@ -1229,6 +1229,25 @@ jobs:
           timeout 600 tests/host/run_ark_rec.sh | tee ark_rec.log
           grep -aF '[ark-rec] ALL PASS' ark_rec.log
 
+      # ark-entry.md 5 / E3: sealed copies leave the node (relay + 4 nodes): B holds only
+      # AKS* blocks and no plaintext, one key per version, A killed -9 and a fresh node
+      # with A's ark.key restores every version, another key cannot, a flipped bit cannot
+      # be opened, default fanout 124. The four negative builds are in n2-negatives. ~2 min.
+      - name: ark sealed copies (E3a-d, E1 region kill)
+        run: |
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          timeout 600 tests/host/run_ark_e3.sh | tee ark_e3.log
+          grep -aF '[ark-e3] ALL PASS' ark_e3.log
+
+      # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 10 ms apart, B must hold all 60
+      # (a want that did not fit the 8-slot table was dropped for good). Negative in
+      # n2-negatives. ~80 s.
+      - name: a burst of puts reaches a peer whole (pfs want overflow)
+        run: |
+          make -C boot/linux_x86_64 -j4 > /dev/null
+          timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst.log
+          grep -aF '[pfs-burst] PASS' pfs_burst.log
+
       # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
       # node B (never consented) still refuses /teach and does not show A's profile
       # (self/ names stay with their node). The negative is in n2-negatives. ~60 s.
@@ -1583,7 +1602,7 @@ jobs:
   n2-negatives:
     name: "Negative controls (x86_64: the N2 wide-id falsifiers and R-KDDSQ, BLOCKING)"
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 80   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09)
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -1618,11 +1637,53 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SHARED >/dev/null
           ARK_REC_EXPECT_RED="local" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_SHARED.log || true
           grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
+          cp boot/linux_x86_64/p-kernel /tmp/ark_old_pk   # the old-style node for run_ark_mix.sh (H22)
+          # ark-entry.md 5 / E3 negatives (red lines measured 2026-11-09 in the container)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_PLAIN >/dev/null
+          ARK_E3_EXPECT_RED="e3a e3b e3d e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_PLAIN.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_PLAIN.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SAME_KEY >/dev/null
+          ARK_E3_EXPECT_RED="e3k" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_SAME_KEY.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_SAME_KEY.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_INDEX_LOCAL >/dev/null
+          ARK_E3_EXPECT_RED="e3a e3b e3c e3d e3h e3k e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_INDEX_LOCAL.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_INDEX_LOCAL.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_AAD_INNER >/dev/null
+          ARK_E3_EXPECT_RED="e3b e3d e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_AAD_INNER.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_AAD_INNER.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_KEY_REPLACE >/dev/null
+          ARK_E3_EXPECT_RED="e3x" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_KEY_REPLACE.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_KEY_REPLACE.log
+          # PFS-REPL-WANT-DROP: the old drop is red
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
+          PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
+          # test-holes H22: each ark stop alone, next to an old-style node (-DARK_REC_SHARED)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          ARK_MIX_OLD=/tmp/ark_old_pk timeout 400 tests/host/run_ark_mix.sh | tee ark_mix.log
+          grep -aF '[ark-mix] ALL PASS' ark_mix.log
+          ARK_MIX_OLD=/tmp/ark_old_pk ARK_MIX_NEW=/tmp/ark_old_pk ARK_MIX_EXPECT_RED=1 timeout 400 tests/host/run_ark_mix.sh | tee ark_mix_nc.log || true
+          grep -aF '[ark-mix] NC RED as expected' ark_mix_nc.log
           # SELF-REF-REGION-SHARED: the old shared self/ names redden S1-S3
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DSELF_REF_SHARED >/dev/null
           SELF_REF_EXPECT_RED=1 timeout 300 tests/host/run_self_ref_local.sh | tee self_ref_nc.log || true
           grep -aF '[self-ref] NC RED as expected' self_ref_nc.log
+          cp boot/linux_x86_64/p-kernel /tmp/sref_old_pk  # the old-style node for H22's self/ half
+          # H22's self/ half: one old-style node, the other new (each stop of the new one alone)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          SELF_REF_BIN_A=/tmp/sref_old_pk timeout 300 tests/host/run_self_ref_local.sh | tee sref_aold.log
+          grep -aF '[self-ref] ALL PASS' sref_aold.log
+          SELF_REF_BIN_B=/tmp/sref_old_pk timeout 300 tests/host/run_self_ref_local.sh | tee sref_bold.log
+          grep -aF '[self-ref] ALL PASS' sref_bold.log
       - name: "[n2-tcp]: wide ids over the TCP relay transport (v3 on TCP, n2-wire16 'まだ' 6); T0 goes red with the old refusal (-DN2_NC_TCP_WIDE_REFUSE), T3 when TCP frames do not say they read v3 (-DN2_NC_TCP_NO_READS_V3), T5 when a wide one-node frame is sent by the low byte of its MAC (-DN2_NC_TCP_DST_LOW_BYTE, test-holes H20)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
