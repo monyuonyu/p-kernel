@@ -12,7 +12,7 @@
  *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
  *   student_adopt_test <b1_held.txt> <seed> s7a | s7b | s7y | s7c           B5 step 7
  *   student_adopt_test <b1_held.txt> <seed> s8a | s8b | s8y | s8c | s8d     B5 step 8 (the echo cut; s8d the adaptive near)
- *   student_adopt_test <b1_held.txt> <seed> s9a .. s9d | s9p | s9r1 | s9r2 | s9n   B5 step 9 (the ruler; pair2, rep)
+ *   student_adopt_test <b1_held.txt> <seed> s9a .. s9d | s9p | s9r1 | s9r2 | s9n | s9o   B5 step 9 (the ruler; pair2, rep; s9o a reading)
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -627,8 +627,9 @@ static int s6(uint32_t seed, const char *which)
  * of a garbage direction fixed by the seed), the form of the design's probe. */
 static int s8_echo;
 static double s8_cHmax, s8_cPmin; static int s8_cut;
-/* B5 step 9 (research/b5-step9-design.md): s9_pair2 = the poisons are sent to
- * nobody (every receiver merges the honest peers only); s9_rep shifts the
+/* B5 step 9 (research/b5-step9-design.md): s9_pair2 1 = the poisons are sent to
+ * nobody (every receiver merges the honest peers only), 2 = only node 0 gets
+ * them (god's eye at the other receivers, stage s9o, a reading); s9_rep shifts the
  * poisons' noise seed by 7919 x rep (rep 0 = step 8's seed, byte for byte) */
 static int s9_pair2; static uint32_t s9_rep;
 static void s8_ada(st_model *g, st_model *n0, st_model *p0, uint32_t s)
@@ -665,7 +666,7 @@ static int s7_cand(st_model *c, st_model *models[K5], st_model *prev, st_model *
     clone(c, models[me]);
     const void *bs[K5 - 1], *bp[K5 - 1]; size_t ls[K5 - 1], lp[K5 - 1]; void *own[K5 - 1], *ownp[K5 - 1];
     int who[K5 - 1]; float ts[K5 - 1]; int j = 0;
-    for (int k = 0; k < K5; k++) if (k != me && !(s9_pair2 && k >= honest)) {
+    for (int k = 0; k < K5; k++) if (k != me && !(s9_pair2 && k >= honest && (s9_pair2 == 1 || me != 0))) {
         own[j] = blob(models[k], &ls[j]); bs[j] = own[j];
         ownp[j] = sent[k] ? blob(sent[k], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
         who[j] = k; j++;
@@ -765,6 +766,9 @@ static int s7(uint32_t seed, const char *which)
             s7_rounds(seed, 1, 2, 1, g);
             s7_rounds(seed, 1, 2, 3, nn);
             s9_rep = 0;
+        } else if (strcmp(which, "s9o") == 0) {   /* a reading after the judgement, not a line:
+                                                   * god's eye, the receivers other than node 0 never get the poisons */
+            s9_pair2 = 2; s7_rounds(seed, 1, 2, 3, "trust4-near2-god"); s7_rounds(seed, 1, 2, 1, "trust4-garb2-god"); s9_pair2 = 0;
         } else if (strcmp(which, "s9n") == 0) {   /* NC1: near2 rep 0 only */
             s7_rounds(seed, 1, 2, 3, "trust4-near2");
         } else if (strcmp(which, "s9d") == 0) {
