@@ -12,6 +12,7 @@
  *   student_adopt_test <b1_held.txt> <seed> s5 | s6a | s6b | s6c | s6r1   B5 steps 5 and 6
  *   student_adopt_test <b1_held.txt> <seed> s7a | s7b | s7y | s7c           B5 step 7
  *   student_adopt_test <b1_held.txt> <seed> s8a | s8b | s8y | s8c | s8d     B5 step 8 (the echo cut; s8d the adaptive near)
+ *   student_adopt_test <b1_held.txt> <seed> s9a .. s9d | s9p | s9r1 | s9r2 | s9n   B5 step 9 (the ruler; pair2, rep)
  *
  * Arms (S, common init, the first 3072 B of the fixture's train side in two
  * halves, one pass = one node's half once, 32 passes, a merge every 4):
@@ -626,6 +627,10 @@ static int s6(uint32_t seed, const char *which)
  * of a garbage direction fixed by the seed), the form of the design's probe. */
 static int s8_echo;
 static double s8_cHmax, s8_cPmin; static int s8_cut;
+/* B5 step 9 (research/b5-step9-design.md): s9_pair2 = the poisons are sent to
+ * nobody (every receiver merges the honest peers only); s9_rep shifts the
+ * poisons' noise seed by 7919 x rep (rep 0 = step 8's seed, byte for byte) */
+static int s9_pair2; static uint32_t s9_rep;
 static void s8_ada(st_model *g, st_model *n0, st_model *p0, uint32_t s)
 {
     const double ca = 0.85, sa = sqrt(1.0 - ca * ca);
@@ -660,17 +665,17 @@ static int s7_cand(st_model *c, st_model *models[K5], st_model *prev, st_model *
     clone(c, models[me]);
     const void *bs[K5 - 1], *bp[K5 - 1]; size_t ls[K5 - 1], lp[K5 - 1]; void *own[K5 - 1], *ownp[K5 - 1];
     int who[K5 - 1]; float ts[K5 - 1]; int j = 0;
-    for (int k = 0; k < K5; k++) if (k != me) {
+    for (int k = 0; k < K5; k++) if (k != me && !(s9_pair2 && k >= honest)) {
         own[j] = blob(models[k], &ls[j]); bs[j] = own[j];
         ownp[j] = sent[k] ? blob(sent[k], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
         who[j] = k; j++;
     }
     float cg[K5 - 1];
-    int r = s8_echo ? st_merge_trust_echo(c, prev, bs, ls, bp, lp, K5 - 1, ts, cg)
-                    : st_merge_trust_prev(c, prev, bs, ls, bp, lp, K5 - 1, ts);
-    for (int i = 0; i < K5 - 1; i++) { free(own[i]); free(ownp[i]); }
+    int r = s8_echo ? st_merge_trust_echo(c, prev, bs, ls, bp, lp, j, ts, cg)
+                    : st_merge_trust_prev(c, prev, bs, ls, bp, lp, j, ts);
+    for (int i = 0; i < j; i++) { free(own[i]); free(ownp[i]); }
     if (r < 0) { printf("  FAIL  [b5s7-io] st_merge_trust rc %d\n", r); exit(1); }
-    if (me == 0) for (int i = 0; i < K5 - 1; i++) {
+    if (me == 0) for (int i = 0; i < j; i++) {
         if (who[i] < honest) { s6_tsh += ts[i]; s6_tshn++; } else { s6_tsp += ts[i]; s6_tspn++; }
         if (s8_echo && cg[i] > -1.5f) {
             if (who[i] < honest) { if (cg[i] > s8_cHmax) s8_cHmax = cg[i]; }
@@ -697,7 +702,7 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
             gen++;
             for (int k = honest; k < K5; k++) {
                 st_free(&n[k]);
-                s7_poison(&n[k], kind, &n[0], &prev[0], sent[k], (kind == 5 ? seed : seed + (uint32_t)p) + 977u * (uint32_t)k);
+                s7_poison(&n[k], kind, &n[0], &prev[0], sent[k], (kind == 5 ? seed : seed + (uint32_t)p) + 977u * (uint32_t)k + 7919u * s9_rep);
             }
 #if defined(B5S7_PREV_CLAIMED)
             /* NC2: the near poison's claimed previous replaces what the receivers kept */
@@ -742,6 +747,48 @@ static int s7(uint32_t seed, const char *which)
     setvbuf(stdout, NULL, _IOLBF, 0);
     lr = ST_LR;
     kp_tag = "b5s7";
+    if (which[0] == 's' && which[1] == '9') {     /* step 9: step 8's arms, pair2, rep 1 2 */
+        s8_echo = 1; kp_tag = "b5s9";
+#if defined(B5S8_NO_ECHO)
+        const char *b9 = "noecho";
+#else
+        const char *b9 = "plain";
+#endif
+        printf("[b5s9] seed %u lr %g build %s stage %s tau %g quarter %d B gate windows %d held windows %d\n",
+               (unsigned)seed, (double)lr, b9, which, (double)ST_ECHO_TAU, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+        if (strcmp(which, "s9p") == 0) {
+            s9_pair2 = 1; s7_rounds(seed, 1, 2, 3, "trust4-pair2"); s9_pair2 = 0;
+        } else if (strcmp(which, "s9r1") == 0 || strcmp(which, "s9r2") == 0) {
+            char g[24], nn[24]; s9_rep = (uint32_t)(which[3] - '0');
+            snprintf(g, sizeof g, "trust4-garb2-r%u", (unsigned)s9_rep);
+            snprintf(nn, sizeof nn, "trust4-near2-r%u", (unsigned)s9_rep);
+            s7_rounds(seed, 1, 2, 1, g);
+            s7_rounds(seed, 1, 2, 3, nn);
+            s9_rep = 0;
+        } else if (strcmp(which, "s9n") == 0) {   /* NC1: near2 rep 0 only */
+            s7_rounds(seed, 1, 2, 3, "trust4-near2");
+        } else if (strcmp(which, "s9d") == 0) {
+            s7_rounds(seed, 1, 2, 5, "trust4-ada2");
+        } else if (strcmp(which, "s9a") == 0) {
+            s5_alone_q(seed, "alone-A");
+            s7_rounds(seed, 0, 0, 1, "trim4");
+            s7_rounds(seed, 1, 0, 1, "trust4");
+            s7_rounds(seed, 0, 1, 1, "trim4-garb1");
+            s7_rounds(seed, 1, 1, 1, "trust4-garb1");
+        } else if (strcmp(which, "s9b") == 0) {
+            s7_rounds(seed, 1, 2, 1, "trust4-garb2");
+            s7_rounds(seed, 1, 2, 2, "trust4-flip2");
+            s7_rounds(seed, 1, 2, 3, "trust4-near2");
+        } else if (strcmp(which, "s9y") == 0) {
+            s7_rounds(seed, 1, 1, 4, "trust4-yori1");
+            s7_rounds(seed, 1, 2, 4, "trust4-yori2");
+        } else if (strcmp(which, "s9c") == 0) {
+            s7_rounds(seed, 0, 1, 3, "trim4-near1");
+            s7_rounds(seed, 1, 1, 3, "trust4-near1");
+        } else { fprintf(stderr, "s9: unknown stage %s\n", which); return 2; }
+        printf("[b5s9] done\n");
+        return 0;
+    }
     if (which[0] == 's' && which[1] == '8') {     /* step 8: the same arms, the echo cut */
         static char w7[8];
         s8_echo = 1; kp_tag = "b5s8";
@@ -1321,7 +1368,8 @@ int main(int argc, char **argv)
     if (argc > 3 && strcmp(argv[3], "s4") == 0) return s4(seed);
     if (argc > 3 && strncmp(argv[3], "s5", 2) == 0) return s5(seed, argv[3]);
     if (argc > 3 && strncmp(argv[3], "s6", 2) == 0) return s6(seed, argv[3]);
-    if (argc > 3 && (strncmp(argv[3], "s7", 2) == 0 || strncmp(argv[3], "s8", 2) == 0)) return s7(seed, argv[3]);
+    if (argc > 3 && (strncmp(argv[3], "s7", 2) == 0 || strncmp(argv[3], "s8", 2) == 0
+                     || strncmp(argv[3], "s9", 2) == 0)) return s7(seed, argv[3]);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;
