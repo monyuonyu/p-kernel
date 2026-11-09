@@ -1247,6 +1247,9 @@ jobs:
           make -C boot/linux_x86_64 -j4 > /dev/null
           timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst.log
           grep -aF '[pfs-burst] PASS' pfs_burst.log
+          # the same burst with no gap at all: paced announces, every WANT of a tick read
+          PFS_BURST_GAP=0 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst0.log
+          grep -aF '[pfs-burst] PASS' pfs_burst0.log
 
       # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
       # node B (never consented) still refuses /teach and does not show A's profile
@@ -1671,6 +1674,15 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
           PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
+          # the 0 ms burst: announces sent at once (-DPFSR_NC_ANN_UNPACED), one WANT read a tick (-DPFSR_NC_WANT_LATEST)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_UNPACED >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc2.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc2.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_WANT_LATEST >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc3.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc3.log
           # test-holes H22: each ark stop alone, next to an old-style node (-DARK_REC_SHARED)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null

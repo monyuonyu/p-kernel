@@ -33,6 +33,7 @@
 #include "drpc.h"
 #include "region.h"
 #include "pk_node_row.h"
+#include "pk_nosw.h"
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -257,7 +258,64 @@ void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn) { sync_filter = fn; }
 /* control-plane publishes (small pkts — fine on stack)                */
 /* ------------------------------------------------------------------ */
 
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFSR_NC_ANN_UNPACED)
+/* PFS-REPL-WANT-DROP, the 0 ms burst (2026-11-09): a put sent its ANNOUNCE at once,
+ * so 60 puts in a row put 60 announces on the wire within a few ms; the receiver's
+ * K-DDS kept queue (KDDS_Q_N 32, shared by every topic) is read 8 per 50 ms tick
+ * (pfsr_ann_drain) and lost 20 of them (kdds_queue_dropped; B held 40 of 60, no
+ * want-table line). Hosted: an announce goes into an outgoing ring and pfs_repl_task
+ * sends at most PFSR_ANN_PACE (8) per tick, below the rate a receiver reads. A repeat of
+ * a queued id is not queued twice. A full ring sends at once and says so (the old
+ * way). Bare metal unchanged (crown). -DPFSR_NC_ANN_UNPACED: the old immediate send
+ * (the negative control of run_pfs_burst.sh at PFS_BURST_GAP=0). */
+#define PFSR_ANN_PACED 1
+#ifndef PFSR_ANN_PACE
+#define PFSR_ANN_PACE 8                       /* announces sent per 50 ms tick */
+#endif
+#define PFSR_ANN_OUT 256
+static struct { U1 id[PFS_ID_LEN]; UW len; pk_node_t origin; } ann_out[PFSR_ANN_OUT];
+static UW ann_out_head, ann_out_n, ann_out_full;
+static void publish_announce_now(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin);
 static void publish_announce(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
+{
+    if (drpc_my_node == 0xFF || h_ann_pub < 0) return;
+    PK_NOSW_ENTER();
+    for (UW i = 0; i < ann_out_n; i++)
+        if (pr_id_eq(ann_out[(ann_out_head + i) % PFSR_ANN_OUT].id, id)) { PK_NOSW_LEAVE(); return; }
+    if (ann_out_n < PFSR_ANN_OUT) {
+        UW k = (ann_out_head + ann_out_n) % PFSR_ANN_OUT;
+        pr_memcpy(ann_out[k].id, id, PFS_ID_LEN);
+        ann_out[k].len = len; ann_out[k].origin = origin;
+        ann_out_n++;
+        PK_NOSW_LEAVE();
+        return;
+    }
+    UW nf = ann_out_full++;
+    PK_NOSW_LEAVE();
+    if ((nf & 31u) == 0) {
+        pr_puts("[pfs] announce queue full, sent at once (so far "); pr_putdec(nf + 1); pr_puts(")\r\n");
+    }
+    publish_announce_now(id, len, origin);
+}
+/* pfs_repl_task, once per tick: send up to PFSR_ANN_PACE queued announces */
+static void pfsr_ann_flush(UW max)
+{
+    for (UW k = 0; k < max; k++) {
+        U1 id[PFS_ID_LEN]; UW len; pk_node_t org;
+        PK_NOSW_ENTER();
+        if (ann_out_n == 0) { PK_NOSW_LEAVE(); return; }
+        pr_memcpy(id, ann_out[ann_out_head].id, PFS_ID_LEN);
+        len = ann_out[ann_out_head].len; org = ann_out[ann_out_head].origin;
+        ann_out_head = (ann_out_head + 1) % PFSR_ANN_OUT; ann_out_n--;
+        PK_NOSW_LEAVE();
+        publish_announce_now(id, len, org);
+    }
+}
+#else
+#define publish_announce_now publish_announce
+#endif
+
+static void publish_announce_now(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 {
     if (drpc_my_node == 0xFF || h_ann_pub < 0) return;
 
@@ -799,7 +857,7 @@ static void pfsr_sync_take(const PFSR_SYNC_PKT *s, W r)
  * is hosted only; bare metal reads the last one as before).
  * -DPFSR_NC_ANN_LATEST: the old kdds_sub (negative control, `kdds ann`). */
 #ifndef PFSR_ANN_PER_TICK
-#define PFSR_ANN_PER_TICK 8
+#define PFSR_ANN_PER_TICK 32   /* 8 until 2026-11-09: a node also keeps its own announces and WANTs in the shared ring (KDDS_Q_N 32), so reading 8 + 8 a tick fell behind a paced peer (PFSR_ANN_PACE) */
 #endif
 static INT pfsr_ann_drain(W h, void (*take)(const PFSR_ANN_PKT *, W))
 {
@@ -964,6 +1022,9 @@ void pfs_repl_task(INT stacd, void *exinf)
     for (;;) {
         /* ANNOUNCE: someone in the region stored a new block */
 #ifdef _TK_HOSTED_LIBC_
+#ifdef PFSR_ANN_PACED
+        pfsr_ann_flush(PFSR_ANN_PACE);                    /* our own, paced (above) */
+#endif
         (void)pfsr_ann_drain(h_ann_sub, pfsr_ann_take);   /* every one of the tick */
 #else
         {
@@ -977,8 +1038,21 @@ void pfs_repl_task(INT stacd, void *exinf)
         {
 #ifdef _TK_HOSTED_LIBC_
             PFSR_WANT_PKT_W ww;                    /* + a wide asker's tail (N2) */
+#ifndef PFSR_NC_WANT_LATEST
+            /* PFS-REPL-WANT-DROP, 0 ms burst: an asker's pending WANTs go out in the
+             * same tick (same age), and the last one overwrote the others in the
+             * topic's one slot, so a holder served 1 of 8 per round and the asker
+             * gave up on some (2 of 60). Read every WANT of the tick, oldest first,
+             * as the ANNOUNCE reader does (R-KDDSQ). -DPFSR_NC_WANT_LATEST: the old read. */
+            for (INT k = 0; k < PFSR_ANN_PER_TICK; k++) {
+                W r = kdds_sub_next(h_want_sub, &ww, (W)sizeof(ww));
+                if (r <= 0) break;
+                pfsr_want_take(&ww.p, r);
+            }
+#else
             W r = kdds_sub(h_want_sub, &ww, (W)sizeof(ww), 0);
             pfsr_want_take(&ww.p, r);
+#endif
 #else
             PFSR_WANT_PKT w;
             W r = kdds_sub(h_want_sub, &w, (W)sizeof(w), 0);
