@@ -32,6 +32,7 @@
 #include "pmesh.h"
 #include "drpc.h"
 #include "region.h"
+#include "pk_node_row.h"
 #include "kernel.h"
 
 /* ------------------------------------------------------------------ */
@@ -126,10 +127,77 @@ static W h_sync_pub = -1, h_sync_sub = -1;
 /* per-publisher sequence counters (start at 1; 0 == "nothing seen") */
 static UW ann_seq, want_seq, sync_seq;
 
-/* poll-side dedup: last seq acted on, per source node */
-static UW last_ann_seq [DNODE_MAX];
-static UW last_want_seq[DNODE_MAX];
-static UW last_sync_seq[DNODE_MAX];
+/* poll-side dedup: last seq acted on, per source node (hosted: per row,
+ * pk_node_row.h, so a wide sender has one; bare metal: DNODE_ROWS == DNODE_MAX) */
+static UW last_ann_seq [DNODE_ROWS];
+static UW last_want_seq[DNODE_ROWS];
+static UW last_sync_seq[DNODE_ROWS];
+
+#ifdef _TK_HOSTED_LIBC_
+/* N2 "まだ" 7, pfs_repl (research/n2-wire16.md, 2026-11-09). A wide id (> 0xFF) does
+ * not fit the 1-byte src_node / origin of these packets: the byte says 0xFF and the
+ * id rides 2 bytes LE after the packet, as mind/teach and mind/want do. Old nodes
+ * and bare metal read the packet only (kdds_sub cuts, pmesh hands the length) and
+ * drop 0xFF as before. A new node takes the tail only when the byte is 0xFF and the
+ * tail is a wide id. Before, every node dropped a wide sender's ANNOUNCE, WANT and
+ * SYNC (src_node 0xFF), so no block crossed between wide and narrow, and a block's
+ * wide origin became 0xFF ("self") on its first hop. Hosted only; the HOLD-ACK and
+ * the chunks name their sender by pmesh's src (v2 carries the wide id).
+ * -DN2_NC_PFS_NO_TAIL: never send a tail (the negative control of [n2-mix] XP). */
+typedef struct { PFSR_ANN_PKT  p; U1 src_lo, src_hi, org_lo, org_hi; } __attribute__((packed)) PFSR_ANN_PKT_W;
+typedef struct { PFSR_WANT_PKT p; U1 src_lo, src_hi; } __attribute__((packed)) PFSR_WANT_PKT_W;
+typedef struct { PFSR_SYNC_PKT p; U1 src_lo, src_hi; } __attribute__((packed)) PFSR_SYNC_PKT_W;
+typedef struct { PFSR_BLK_PKT  p; U1 org_lo, org_hi; } __attribute__((packed)) PFSR_BLK_PKT_W;
+_Static_assert(sizeof(PFSR_ANN_PKT_W)  == 52 && sizeof(PFSR_ANN_PKT_W)  <= KDDS_DATA_MAX, "ANN + tail");
+_Static_assert(sizeof(PFSR_WANT_PKT_W) == 46 && sizeof(PFSR_WANT_PKT_W) <= KDDS_DATA_MAX, "WANT + tail");
+_Static_assert(sizeof(PFSR_SYNC_PKT_W) == 14 && sizeof(PFSR_SYNC_PKT_W) <= KDDS_DATA_MAX, "SYNC + tail");
+_Static_assert(sizeof(PFSR_BLK_PKT_W)  == 566 && sizeof(PFSR_BLK_PKT_W) <= PMESH_V2_DATA_MAX, "BLK + tail");
+#ifndef N2_NC_PFS_NO_TAIL
+#define PW_SEND_TAIL 1
+#else
+#define PW_SEND_TAIL 0
+#endif
+static void pfsr_want_take(const PFSR_WANT_PKT *w, W r);
+static void pw_put(U1 *lo, U1 *hi, pk_node_t id) { *lo = (U1)(id & 0xFF); *hi = (U1)(id >> 8); }
+/* the id a received byte b stands for: the tail's wide id when b is 0xFF, else b */
+static pk_node_t pw_get(pk_node8_t b, U1 lo, U1 hi, INT have_tail)
+{
+#ifdef N2_NC_PFS_RX_NARROW
+    (void)lo; (void)hi; (void)have_tail;       /* negative control: the tail is never read */
+    return (pk_node_t)b;
+#endif
+    if (b == PK_NODE_NONE && have_tail) {
+        pk_node_t t = (pk_node_t)(lo | ((pk_node_t)hi << 8));
+        if (PK_NODE_IS_WIDE(t)) return t;
+    }
+    return (pk_node_t)b;
+}
+/* the dedup row of a received sender, or -1 (self, not a node, no row left) */
+static INT pw_row(pk_node_t src)
+{
+    if (src == drpc_my_node || src == PK_NODE_NONE) return -1;
+    if (src >= DNODE_MAX && !PK_NODE_IS_WIDE(src)) return -1;
+    return pk_node_row(src);
+}
+/* the bytes to send for packet p from sender me (and origin org): the packet, plus
+ * the tail when an id in it is wide. Returns the length. */
+static W pfsr_ann_frame(const PFSR_ANN_PKT *p, pk_node_t me, pk_node_t org, PFSR_ANN_PKT_W *out)
+{
+    out->p = *p;
+    pw_put(&out->src_lo, &out->src_hi, me); pw_put(&out->org_lo, &out->org_hi, org);
+    return (PW_SEND_TAIL && (PK_NODE_IS_WIDE(me) || PK_NODE_IS_WIDE(org))) ? (W)sizeof *out : (W)sizeof *p;
+}
+static W pfsr_want_frame(const PFSR_WANT_PKT *p, pk_node_t me, PFSR_WANT_PKT_W *out)
+{
+    out->p = *p; pw_put(&out->src_lo, &out->src_hi, me);
+    return (PW_SEND_TAIL && PK_NODE_IS_WIDE(me)) ? (W)sizeof *out : (W)sizeof *p;
+}
+static W pfsr_sync_frame(const PFSR_SYNC_PKT *p, pk_node_t me, PFSR_SYNC_PKT_W *out)
+{
+    out->p = *p; pw_put(&out->src_lo, &out->src_hi, me);
+    return (PW_SEND_TAIL && PK_NODE_IS_WIDE(me)) ? (W)sizeof *out : (W)sizeof *p;
+}
+#endif
 
 /* pending WANTs: announced blocks we still lack (retry until they
  * arrive or the budget runs out — lost packets self-heal here). */
@@ -159,7 +227,12 @@ static struct {
 } rx_state;
 
 /* static per-packet / per-block send scratch (same trap) */
+#ifdef _TK_HOSTED_LIBC_
+static PFSR_BLK_PKT_W tx_pkt_w;                /* + the wide origin's tail (N2) */
+#define tx_pkt (tx_pkt_w.p)
+#else
 static PFSR_BLK_PKT tx_pkt;
+#endif
 static U1           tx_block[PFS_BLOCK_MAX];
 
 /* stats (printed by events; counters kept for future `pfs stat`) */
@@ -196,7 +269,15 @@ static void publish_announce(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
     a.origin   = pk_node_v1(origin);
     a.len      = len;
     pr_memcpy(a.id, id, PFS_ID_LEN);
+#ifdef _TK_HOSTED_LIBC_
+    {
+        PFSR_ANN_PKT_W aw;
+        W n = pfsr_ann_frame(&a, drpc_my_node, origin, &aw);
+        kdds_pub(h_ann_pub, &aw, n);
+    }
+#else
     kdds_pub(h_ann_pub, &a, (W)sizeof(a));
+#endif
     stat_ann_tx++;
 
     pr_puts("[pfs] announce id="); pr_put_id(id);
@@ -215,7 +296,15 @@ static void publish_want(const U1 id[PFS_ID_LEN])
     w.seq      = ++want_seq;
     w.src_node = pk_node_v1(drpc_my_node);
     pr_memcpy(w.id, id, PFS_ID_LEN);
+#ifdef _TK_HOSTED_LIBC_
+    {
+        PFSR_WANT_PKT_W ww;
+        W n = pfsr_want_frame(&w, drpc_my_node, &ww);
+        kdds_pub(h_want_pub, &ww, n);
+    }
+#else
     kdds_pub(h_want_pub, &w, (W)sizeof(w));
+#endif
     stat_want_tx++;
 }
 
@@ -228,7 +317,15 @@ static void publish_sync(void)
     s.magic    = PFSR_SYNC_MAGIC;
     s.seq      = ++sync_seq;
     s.src_node = pk_node_v1(drpc_my_node);
+#ifdef _TK_HOSTED_LIBC_
+    {
+        PFSR_SYNC_PKT_W sw;
+        W n = pfsr_sync_frame(&s, drpc_my_node, &sw);
+        kdds_pub(h_sync_pub, &sw, n);
+    }
+#else
     kdds_pub(h_sync_pub, &s, (W)sizeof(s));
+#endif
 
     pr_puts("[pfs] boot sync request (region, fanout=");
     pr_putdec(kdds_pub_fanout());
@@ -262,7 +359,11 @@ static void on_new_block(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 static void send_hold_ack(pk_node_t origin_node, const U1 id[PFS_ID_LEN])
 {
     if (drpc_my_node == 0xFF) return;
+#ifdef _TK_HOSTED_LIBC_
+    if (origin_node >= DNODE_MAX && !PK_NODE_IS_WIDE(origin_node)) return;   /* N2: a wide origin is real */
+#else
     if (origin_node >= DNODE_MAX) return;       /* not a real node (e.g. 0xFF) */
+#endif
     if (origin_node == drpc_my_node) return;    /* never ack ourselves         */
     PFSR_HOLD_PKT h;
     pr_memset(&h, 0, (UW)sizeof(h));
@@ -305,7 +406,11 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN]);
 void pfs_repl_push(const U1 id[PFS_ID_LEN], pk_node_t dst_node)
 {
     if (drpc_my_node == 0xFF) return;
+#ifdef _TK_HOSTED_LIBC_
+    if ((dst_node >= DNODE_MAX && !PK_NODE_IS_WIDE(dst_node)) || dst_node == drpc_my_node) return;
+#else
     if (dst_node >= DNODE_MAX || dst_node == drpc_my_node) return;
+#endif
     if (!pfs_has(id)) return;
     send_block_to(dst_node, id);
 }
@@ -343,6 +448,13 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
     tx_pkt.origin    = pk_node_v1(origin);
     tx_pkt.total_len = (UW)blen;
     pr_memcpy(tx_pkt.id, id, PFS_ID_LEN);
+#ifdef _TK_HOSTED_LIBC_
+    UH tx_len = (UH)sizeof(tx_pkt);
+    if (PW_SEND_TAIL && PK_NODE_IS_WIDE(origin)) {     /* N2: the wide origin survives the hop */
+        pw_put(&tx_pkt_w.org_lo, &tx_pkt_w.org_hi, origin);
+        tx_len = (UH)sizeof(tx_pkt_w);
+    }
+#endif
 
     UW off = 0, idx = 0;
     do {                                   /* at least 1 chunk (len 0 ok) */
@@ -351,8 +463,12 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
         tx_pkt.chunk_idx = idx;
         tx_pkt.chunk_len = (UH)n;
         if (n) pr_memcpy(tx_pkt.data, tx_block + off, n);
+#ifdef _TK_HOSTED_LIBC_
+        pmesh_send(dst_node, PFSR_PORT, (const UB *)&tx_pkt_w, tx_len);
+#else
         pmesh_send(dst_node, PFSR_PORT, (const UB *)&tx_pkt,
                    (UH)sizeof(tx_pkt));
+#endif
         off += n;
         idx++;
     } while (off < (UW)blen);
@@ -456,9 +572,18 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
     if (len >= (UH)sizeof(PFSR_HOLD_PKT)) {
         const PFSR_HOLD_PKT *hp = (const PFSR_HOLD_PKT *)data;
         if (hp->magic == PFSR_HOLD_MAGIC) {
+#ifdef _TK_HOSTED_LIBC_
+            /* N2: a wide holder says 0xFF; pmesh's src (v2) is its id */
+            pk_node_t hs = hp->src_node;
+            if (hs == PK_NODE_NONE && PK_NODE_IS_WIDE(src_node)) hs = src_node;
+            if ((hs < DNODE_MAX || PK_NODE_IS_WIDE(hs)) && hs != drpc_my_node &&
+                announce_hook)
+                announce_hook(hs, hp->id);
+#else
             if (hp->src_node < DNODE_MAX && hp->src_node != drpc_my_node &&
                 announce_hook)
                 announce_hook(hp->src_node, hp->id);
+#endif
             return;
         }
     }
@@ -481,7 +606,15 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
         pr_memset(&rx_state, 0, (UW)sizeof(rx_state));
         pr_memcpy(rx_state.id, pkt->id, PFS_ID_LEN);
         rx_state.total      = pkt->total_len;
+#ifdef _TK_HOSTED_LIBC_
+        {   /* N2: a wide origin rides the tail (send_block_to) */
+            const PFSR_BLK_PKT_W *pw = (const PFSR_BLK_PKT_W *)data;
+            INT tail = len >= (UH)sizeof(PFSR_BLK_PKT_W);
+            rx_state.origin = pw_get(pkt->origin, tail ? pw->org_lo : 0, tail ? pw->org_hi : 0, tail);
+        }
+#else
         rx_state.origin     = pkt->origin;
+#endif
         rx_state.received   = 0;
         rx_state.next_chunk = 0;
         rx_state.active     = 1;
@@ -549,7 +682,49 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 
 #define PFSR_POLL_MS 50
 
-/* one received ANNOUNCE of r bytes: someone in the region stored a new block */
+/* one received ANNOUNCE of r bytes: someone in the region stored a new block.
+ * Hosted reads the N2 tail and keys the seq by row; bare metal keeps the old
+ * function word for word (crown), after the #else below. */
+#ifdef _TK_HOSTED_LIBC_
+static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
+{
+    if (r < (W)sizeof(*ap) || ap->magic != PFSR_ANN_MAGIC) return;
+    /* N2: ap points at a PFSR_ANN_PKT_W-sized buffer (pfsr_ann_drain) */
+    const PFSR_ANN_PKT_W *aw = (const PFSR_ANN_PKT_W *)ap;
+    INT tail = r >= (W)sizeof(*aw);
+    pk_node_t src = pw_get(ap->src_node, tail ? aw->src_lo : 0, tail ? aw->src_hi : 0, tail);
+    pk_node_t org = pw_get(ap->origin,   tail ? aw->org_lo : 0, tail ? aw->org_hi : 0, tail);
+    INT row = pw_row(src);
+    if (row >= 0 && ap->seq != last_ann_seq[row]) {
+        last_ann_seq[row] = ap->seq;
+        stat_ann_rx++;
+        /* G28: tell the protect layer this peer holds ap->id, whether or
+         * not WE hold it (the unit owner hears its replicas this way). */
+        if (announce_hook) announce_hook(src, ap->id);
+        if (ap->len <= PFS_BLOCK_MAX && !pfs_has(ap->id)) {
+            pr_puts("[pfs] heard announce id="); pr_put_id(ap->id);
+            pr_puts("  from n"); pr_putdec(src);
+            pr_puts(" -> want\r\n");
+            pending_add(ap->id);
+        } else if (pfs_has(ap->id) && src == org) {
+            /* The block's ORIGIN is re-driving its replication (the
+             * protect actuator re-announcing a unit it owns; src==origin,
+             * never a holder<->holder message) and we already hold it
+             * durably. Confirm via reliable UNICAST hold-ack straight to
+             * the origin (G35) instead of a broadcast announce-back: the
+             * shared LATEST_ONLY announce slot overwrites all but one
+             * holder's reply per tick, so under concurrent multi-point
+             * replication the origin's holder_count could lag the real
+             * durable replicas by many ticks. The unicast path has no
+             * shared slot — each distinct holder confirms independently,
+             * so holder_count reaches R promptly. Bounded: only
+             * origin-driven announces (src==origin) trigger this, so it
+             * does not cascade between holders. */
+            send_hold_ack(org, ap->id);
+        }
+    }
+}
+#else
 static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
 {
     if (r >= (W)sizeof(*ap) && ap->magic == PFSR_ANN_MAGIC &&
@@ -566,23 +741,54 @@ static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
             pr_puts(" -> want\r\n");
             pending_add(ap->id);
         } else if (pfs_has(ap->id) && ap->src_node == ap->origin) {
-            /* The block's ORIGIN is re-driving its replication (the
-             * protect actuator re-announcing a unit it owns; src==origin,
-             * never a holder<->holder message) and we already hold it
-             * durably. Confirm via reliable UNICAST hold-ack straight to
-             * the origin (G35) instead of a broadcast announce-back: the
-             * shared LATEST_ONLY announce slot overwrites all but one
-             * holder's reply per tick, so under concurrent multi-point
-             * replication the origin's holder_count could lag the real
-             * durable replicas by many ticks. The unicast path has no
-             * shared slot — each distinct holder confirms independently,
-             * so holder_count reaches R promptly. Bounded: only
-             * origin-driven announces (src==origin) trigger this, so it
-             * does not cascade between holders. */
+            /* origin re-driving its replication: unicast hold-ack (G35),
+             * see the hosted twin above */
             send_hold_ack(ap->origin, ap->id);
         }
     }
 }
+#endif
+
+#ifdef _TK_HOSTED_LIBC_
+/* one received WANT of r bytes: someone in the region lacks a block — any
+ * holder streams it over (w points at a PFSR_WANT_PKT_W-sized buffer). Hosted
+ * only (N2 tail, row); bare metal reads it inline in pfs_repl_task as before. */
+static void pfsr_want_take(const PFSR_WANT_PKT *w, W r)
+{
+    if (r < (W)sizeof(*w) || w->magic != PFSR_WANT_MAGIC) return;
+    const PFSR_WANT_PKT_W *ww = (const PFSR_WANT_PKT_W *)w;
+    INT tail = r >= (W)sizeof(*ww);
+    pk_node_t src = pw_get(w->src_node, tail ? ww->src_lo : 0, tail ? ww->src_hi : 0, tail);
+    INT row = pw_row(src);
+    if (row >= 0 && w->seq != last_want_seq[row]) {
+        last_want_seq[row] = w->seq;
+        stat_want_rx++;
+        if (pfs_has(w->id))
+            send_block_to(src, w->id);
+    }
+}
+
+/* one received SYNC of r bytes: a (re)joining node wants everything we hold */
+static void pfsr_sync_take(const PFSR_SYNC_PKT *s, W r)
+{
+    if (r < (W)sizeof(*s) || s->magic != PFSR_SYNC_MAGIC) return;
+    const PFSR_SYNC_PKT_W *sw = (const PFSR_SYNC_PKT_W *)s;
+    INT tail = r >= (W)sizeof(*sw);
+    pk_node_t src = pw_get(s->src_node, tail ? sw->src_lo : 0, tail ? sw->src_hi : 0, tail);
+    INT row = pw_row(src);
+    if (row >= 0 && s->seq != last_sync_seq[row]) {
+        last_sync_seq[row] = s->seq;
+        for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
+            U1 sid[PFS_ID_LEN];
+            if (!pfs_slot_info(i, sid, 0, 0)) continue;
+            /* a quietly-held protected unit is NOT streamed by ambient
+             * sync — only the protect actuator spreads it (§2/G28) */
+            if (sync_filter && sync_filter(sid)) continue;
+            send_block_to(src, sid);
+        }
+    }
+}
+#endif
 
 #ifdef _TK_HOSTED_LIBC_
 /* R-KDDSQ stage 2 (kdds-queue.md): the ANNOUNCE reader takes every announce
@@ -597,17 +803,17 @@ static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
 #endif
 static INT pfsr_ann_drain(W h, void (*take)(const PFSR_ANN_PKT *, W))
 {
-    PFSR_ANN_PKT a;
+    PFSR_ANN_PKT_W a;                    /* + a wide sender's / origin's tail (N2) */
     INT k = 0;
 #ifndef PFSR_NC_ANN_LATEST
     for (; k < PFSR_ANN_PER_TICK; k++) {
         W r = kdds_sub_next(h, &a, (W)sizeof(a));
         if (r <= 0) break;
-        take(&a, r);
+        take(&a.p, r);
     }
 #else
     W r = kdds_sub(h, &a, (W)sizeof(a), 0);
-    if (r > 0) { take(&a, r); k = 1; }
+    if (r > 0) { take(&a.p, r); k = 1; }
 #endif
     return k;
 }
@@ -674,6 +880,75 @@ INT pfs_repl_ann_self_test(void (*emit)(const char *))
     say("[kdds-ann] PASS (the announce reader takes every announce of the tick, oldest first; a repeated seq is dropped)\r\n");
     return 0;
 }
+
+/* `nodes pfwide` (N2 "まだ" 7, research/n2-wire16.md): the pfs_repl tails, one node.
+ *  F  frames: narrow self, narrow origin -> the old 48/44/12 bytes; wide self 299 ->
+ *     52/46/14, the byte 0xFF and 299 in the tail; narrow self announcing wide origin
+ *     299's block -> 52 with 299 in the tail
+ *  R  reading: 0xFF + wide tail -> the wide id; 0xFF + narrow tail 43 stays 0xFF (a tail
+ *     cannot speak for a narrow node); a narrow byte ignores the tail; no tail -> the byte
+ *  W  a WANT from 299 (0xFF + tail) is taken once on 299's own row (seq 7 twice -> 1);
+ *     row 43 (299 & 0xFF) keeps its seq; 0xFF without a tail and 0xFF + narrow tail 43
+ *     are dropped. The asked id is not held: nothing is sent.
+ *  State touched (drpc_my_node, stat_want_rx, last_want_seq of rows 43 and 299's) is put
+ *  back. Negative controls: -DN2_NC_PFS_NO_TAIL (F), -DN2_NC_PFS_RX_NARROW (R, W). */
+INT pfs_repl_wide_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : pr_puts;
+    INT fails = 0;
+#define PFW_FAIL(m) do { say("[pfwide] FAIL " m "\r\n"); fails++; } while (0)
+    PFSR_ANN_PKT a; PFSR_WANT_PKT w; PFSR_SYNC_PKT s;
+    PFSR_ANN_PKT_W aw; PFSR_WANT_PKT_W ww; PFSR_SYNC_PKT_W sw;
+    pr_memset(&a, 0, (UW)sizeof a); pr_memset(&w, 0, (UW)sizeof w); pr_memset(&s, 0, (UW)sizeof s);
+    a.src_node = 3; a.origin = 3; w.src_node = 3; s.src_node = 3;
+    if (pfsr_ann_frame(&a, 3, 3, &aw) != 48 || pfsr_want_frame(&w, 3, &ww) != 44 ||
+        pfsr_sync_frame(&s, 3, &sw) != 12) PFW_FAIL("F narrow (not the old 48/44/12 bytes)");
+    a.src_node = pk_node_v1(299); a.origin = pk_node_v1(299); w.src_node = pk_node_v1(299); s.src_node = pk_node_v1(299);
+    if (pfsr_ann_frame(&a, 299, 299, &aw) != 52 || aw.p.src_node != 0xFF ||
+        aw.src_lo != (299 & 0xFF) || aw.src_hi != 1 || aw.org_lo != (299 & 0xFF) || aw.org_hi != 1)
+        PFW_FAIL("F wide ANNOUNCE (not 52 bytes with 299 after 0xFF)");
+    if (pfsr_want_frame(&w, 299, &ww) != 46 || ww.src_lo != (299 & 0xFF) || ww.src_hi != 1)
+        PFW_FAIL("F wide WANT (not 46 bytes with 299 in the tail)");
+    if (pfsr_sync_frame(&s, 299, &sw) != 14 || sw.src_lo != (299 & 0xFF) || sw.src_hi != 1)
+        PFW_FAIL("F wide SYNC (not 14 bytes with 299 in the tail)");
+    a.src_node = 3;
+    if (pfsr_ann_frame(&a, 3, 299, &aw) != 52 || aw.org_lo != (299 & 0xFF) || aw.org_hi != 1)
+        PFW_FAIL("F narrow self, wide origin (not 52 bytes with the origin in the tail)");
+
+    if (pw_get(0xFF, 299 & 0xFF, 1, 1) != 299) PFW_FAIL("R 0xFF + tail 299 is not 299");
+    if (pw_get(0xFF, 43, 0, 1) != 0xFF)        PFW_FAIL("R 0xFF + narrow tail 43 is not 0xFF");
+    if (pw_get(3, 299 & 0xFF, 1, 1) != 3)      PFW_FAIL("R narrow byte 3 took the tail");
+    if (pw_get(0xFF, 299 & 0xFF, 1, 0) != 0xFF) PFW_FAIL("R no tail but read one");
+
+    pk_node_t saved_my = drpc_my_node;
+    UW saved_rx = stat_want_rx;
+    INT r299 = pk_node_row(299);
+    if (r299 < DNODE_MAX) PFW_FAIL("W 299 has no row of its own");
+    else {
+        UW s43 = last_want_seq[43], s299 = last_want_seq[r299];
+        drpc_my_node = 5; last_want_seq[43] = 0; last_want_seq[r299] = 0;
+        pr_memset(&ww, 0, (UW)sizeof ww);
+        ww.p.magic = PFSR_WANT_MAGIC; ww.p.seq = 7; ww.p.src_node = 0xFF;
+        for (INT i = 0; i < PFS_ID_LEN; i++) ww.p.id[i] = (U1)(0x5A ^ i);   /* not held */
+        ww.src_lo = 299 & 0xFF; ww.src_hi = 1;
+        pfsr_want_take(&ww.p, (W)sizeof ww);
+        pfsr_want_take(&ww.p, (W)sizeof ww);                        /* same seq again */
+        UW d1 = stat_want_rx - saved_rx;
+        if (d1 != 1 || last_want_seq[r299] != 7 || last_want_seq[43] != 0)
+            PFW_FAIL("W a wide WANT was not taken once on 299's own row");
+        ww.p.seq = 8; pfsr_want_take(&ww.p, (W)sizeof ww.p);        /* 0xFF, no tail */
+        ww.p.seq = 9; ww.src_lo = 43; ww.src_hi = 0;
+        pfsr_want_take(&ww.p, (W)sizeof ww);                        /* 0xFF + narrow tail */
+        if (stat_want_rx - saved_rx != d1 || last_want_seq[43] != 0)
+            PFW_FAIL("W 0xFF without a wide tail was taken");
+        last_want_seq[43] = s43; last_want_seq[r299] = s299;
+    }
+    drpc_my_node = saved_my; stat_want_rx = saved_rx;
+#undef PFW_FAIL
+    if (fails == 0) say("[pfwide] PASS (wide ids: 0xFF in the byte, 2 bytes LE after the packet; read only when 0xFF and wide; own dedup row)\r\n");
+    else            say("[pfwide] RED\r\n");
+    return fails;
+}
 #endif
 
 void pfs_repl_task(INT stacd, void *exinf)
@@ -700,6 +975,11 @@ void pfs_repl_task(INT stacd, void *exinf)
 
         /* WANT: someone lacks a block — any holder streams it over */
         {
+#ifdef _TK_HOSTED_LIBC_
+            PFSR_WANT_PKT_W ww;                    /* + a wide asker's tail (N2) */
+            W r = kdds_sub(h_want_sub, &ww, (W)sizeof(ww), 0);
+            pfsr_want_take(&ww.p, r);
+#else
             PFSR_WANT_PKT w;
             W r = kdds_sub(h_want_sub, &w, (W)sizeof(w), 0);
             if (r >= (W)sizeof(w) && w.magic == PFSR_WANT_MAGIC &&
@@ -710,10 +990,16 @@ void pfs_repl_task(INT stacd, void *exinf)
                 if (pfs_has(w.id))
                     send_block_to(w.src_node, w.id);
             }
+#endif
         }
 
         /* SYNC: a (re)joining node wants everything we hold */
         {
+#ifdef _TK_HOSTED_LIBC_
+            PFSR_SYNC_PKT_W sw;
+            W r = kdds_sub(h_sync_sub, &sw, (W)sizeof(sw), 0);
+            pfsr_sync_take(&sw.p, r);
+#else
             PFSR_SYNC_PKT s;
             W r = kdds_sub(h_sync_sub, &s, (W)sizeof(s), 0);
             if (r >= (W)sizeof(s) && s.magic == PFSR_SYNC_MAGIC &&
@@ -729,6 +1015,7 @@ void pfs_repl_task(INT stacd, void *exinf)
                     send_block_to(s.src_node, sid);
                 }
             }
+#endif
         }
 
         pending_tick(PFSR_POLL_MS);

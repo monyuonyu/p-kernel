@@ -24,7 +24,7 @@
 # mixed swarm, below; in CI since the want tail, N2 (c)(3)). X4 is not written yet.
 # N2_X3_PART=snow judges only X3's snow lines (wide -> new); fire (old -> wide) rides the want.
 # N2_X3=1 also runs X3H (a wide sender's mind/have summary raises a want, below) after X3;
-# N2_X3_PART=have runs X3H alone.
+# N2_X3_PART=have runs X3H alone. N2_XP=1 adds XP (p-fs blocks between wide and narrow, below).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -290,6 +290,51 @@ if [ "${N2_X3:-0}" = 1 ] && [ -n "$WIDE_IN" ] && [ "$X3_HAVE" = 1 ]; then
     case "$f" in *"node 299:"*) ;; *) miss="$miss first-sky-hint-not-299@4";; esac
     [ -z "$miss" ] && res X3H PASS "300's summary raised a want on{$h}, sky arrived from 299 at 4, 44, 260" \
                    || res X3H FAIL "missing or wrong:$miss"
+fi
+
+# XP  p-fs blocks cross the mixed swarm (N2 "まだ" 7, the first caller: pfs_repl). N2_XP=1.
+#   Wide 300 puts a block: new 4, 44 and 260 replicate it (300's ANNOUNCE says 0xFF with the id
+#   in a tail; their WANT reaches 300). Its origin there is n299, or n255 when the copy came
+#   through an old node: an old node cannot carry a wide origin and holds the block as its own
+#   (0xFF), so which a new node says depends on who streamed first (seen: 4 got it from an old
+#   node first). The first copy anywhere comes from 300 itself (only 300 holds it, an old node
+#   gets it from a new one), so at least one new node says n299 (the chunks' origin tail).
+#   Nobody says n43 (299 cut to a byte) or any other id. New narrow 4 puts a block: wide 260 and
+#   300 replicate it with origin=n3 (their WANT says 0xFF with the id in a tail, which 4 dropped
+#   before); 44 too (narrow to narrow, green before).
+#   Negative control: -DN2_NC_PFS_NO_TAIL (no tail is ever sent) leaves XP red.
+#   Limit: a new -> new hop keeping 299 (44 -> 260 in one run) is not required (the race above).
+if [ "${N2_XP:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
+    putid() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aoE '\[pfs\] put len=[0-9]+  id=[0-9a-f]{16}' | tail -1 | sed 's/.*id=//'; }
+    repl() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aqE "\[pfs\] replicated block id=$2  len=[0-9]+  origin=n($3)\$"; }
+    send 300 "pfs put xp wide block from 300"
+    send 4 "pfs put xp narrow block from 4"
+    t=0; wid=""; nid=""
+    while [ "$t" -lt 20 ] && { [ -z "$wid" ] || [ -z "$nid" ]; }; do
+        sleep 1; t=$((t + 1)); wid="$(putid 300)"; nid="$(putid 4)"
+    done
+    if [ -z "$wid" ] || [ -z "$nid" ]; then
+        res XP FAIL "no put line (300 {$wid}, 4 {$nid})"
+    else
+        t=0; miss="?"
+        while [ "$t" -lt "$WAIT" ] && [ -n "$miss" ]; do
+            sleep 3; t=$((t + 3)); miss=""
+            for i in 4 44 260; do repl "$i" "$wid" '299|255' || miss="$miss wide@$i"; done
+            for i in 44 260 300; do repl "$i" "$nid" 3 || miss="$miss narrow@$i"; done
+        done
+        n299=0
+        for i in 1 2 3 4 44 260; do
+            o="$(tr -d '\r' < "$LOGDIR/node$i.log" | grep -aoE "\[pfs\] replicated block id=$wid  len=[0-9]+  origin=n[0-9]+" | sed 's/.*origin=n//' | sort -u | tr '\n' ' ')"
+            case "$i" in
+                1|2|3) case " $o" in *" 43 "*) miss="$miss wide-as-43@$i";; esac;;
+                *) case "$o" in ""|"299 "|"255 ") ;; *) miss="$miss wide-origin{$o}@$i";; esac
+                   [ "$o" = "299 " ] && n299=$((n299 + 1));;
+            esac
+        done
+        [ "$n299" -ge 1 ] || miss="$miss no-new-node-says-299"
+        [ -z "$miss" ] && res XP PASS "300's block $wid on 4 44 260 ($n299 say n299, the rest n255 via an old node), 4's block $nid on 44 260 300 from n3" \
+                       || res XP FAIL "missing or wrong:$miss"
+    fi
 fi
 
 if [ -z "$REDS" ]; then echo "[n2-mix] ALL PASS"; exit 0; fi
