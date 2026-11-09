@@ -266,7 +266,11 @@ void pfs_repl_set_sync_filter(PFSR_SYNC_FILTER fn) { sync_filter = fn; }
  * want-table line). Hosted: an announce goes into an outgoing ring and pfs_repl_task
  * sends at most PFSR_ANN_PACE (8) per tick, below the rate a receiver reads. A repeat of
  * a queued id is not queued twice. A full ring sends at once and says so (the old
- * way). Bare metal unchanged (crown). -DPFSR_NC_ANN_UNPACED: the old immediate send
+ * way). Only a put's announce is paced: pfs_repl_reannounce (`ark rec sync`, the
+ * protect actuator) sends at once, its callers pace themselves and read the fanout
+ * of that very send (a queued re-announce left ark's fanout-0 retry reading a stale
+ * fanout: run_ark_e3 e3d red, 48 of 63 of A's announces had fanout 0).
+ * Bare metal unchanged (crown). -DPFSR_NC_ANN_UNPACED: the old immediate send
  * (the negative control of run_pfs_burst.sh at PFS_BURST_GAP=0). */
 #define PFSR_ANN_PACED 1
 #ifndef PFSR_ANN_PACE
@@ -442,7 +446,7 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
         U1 sid[PFS_ID_LEN]; UW slen; pk_node_t sorg;
         if (pfs_slot_info(i, sid, &slen, &sorg) && pr_id_eq(sid, id)) {
             pk_node_t org = (sorg == PFS_ORIGIN_SELF) ? drpc_my_node : sorg;
-            publish_announce(id, slen, org);
+            publish_announce_now(id, slen, org);   /* explicit re-drive: at once (its caller paces itself and reads the fanout) */
             return;
         }
     }
@@ -452,7 +456,7 @@ void pfs_repl_reannounce(const U1 id[PFS_ID_LEN])
     {
         static U1 reann_buf[PFS_BLOCK_MAX];   /* not tx_block: the repl task sends from it */
         INT n = pfs_get(id, reann_buf, PFS_BLOCK_MAX);
-        if (n >= 0) publish_announce(id, (UW)n, drpc_my_node);
+        if (n >= 0) publish_announce_now(id, (UW)n, drpc_my_node);
     }
 #endif
 }
