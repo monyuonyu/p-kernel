@@ -191,10 +191,11 @@ def judge(plain, noecho):
         lines.append("[b5s9] %s %s %s" % ("PASS" if ok else "FAIL", gid, what))
     ok = all(r[1] for r in res)
     # H13 (audit-158): only the 8 fixed seeds are the judgement
-    full = sorted(plain, key=int) == sorted(SEEDS.split(), key=int)
+    # a seed whose logs are missing or short is not judged either (still running, or died)
+    full = sorted(plain, key=int) == sorted(SEEDS.split(), key=int) and all(v is not None for v in plain.values())
     if not full:
-        lines.append("[result] PARTIAL b5-step9 (%d of the %d judgement seeds: a reading, not the judgement)"
-                     % (len([s for s in plain if s in SEEDS.split()]), len(SEEDS.split())))
+        lines.append("[result] PARTIAL b5-step9 (%d of the %d judgement seeds finished: a reading, not the judgement)"
+                     % (len([s for s in plain if s in SEEDS.split() and plain[s] is not None]), len(SEEDS.split())))
         return False, lines, {r[0]: r[1] for r in res}
     lines.append("[result] %s b5-step9" % ("PASS" if ok else "FAIL"))
     return ok, lines, {r[0]: r[1] for r in res}
@@ -299,6 +300,8 @@ def self_test():
          {"NC1": False}),
         ("missing seed", (one(good, S[7], None), NEr), False, {"R1": False, "R7'": False, "R9": False}),
     ]
+    got, ls, r = judge(one(good, S[7], None), NEr)
+    check("a seed's logs missing: result PARTIAL, not FAIL", ls[-1].startswith("[result] PARTIAL"), True)
     for name, (p, g), want, gw in cases:
         got, _, r = judge(p, g)
         check(name, got, want)
