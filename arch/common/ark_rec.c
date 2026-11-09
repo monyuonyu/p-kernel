@@ -622,6 +622,7 @@ static INT srec_read(const U1 srid[PFS_ID_LEN])
     if (off != srec.ctlen) return -1;
     const char *t = getenv("PKERNEL_ARK_REC_TAMPER");    /* test: one stored bit flipped */
     if (t && t[0] == '1') sbuf[srec.ctlen - 1] ^= 1;
+    if (t && t[0] == '2') srec.prev[0] ^= 1;              /* audit-172: a bit of the outer head (in the AAD) */
     arkc_box b;
     if (arkc_box_unwrap(&b, ark_priv, srec.wrap) != 0) return -1;
     INT r = arkc_box_open(&b, (const U1 *)&srec, AKS_REC_AAD, sbuf, srec.ctlen, srec.tag, sbuf);

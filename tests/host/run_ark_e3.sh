@@ -168,6 +168,22 @@ if [ -n "$s1" ] && [ "$s1" = "$s2" ] && grep -aqE '^\[ark-rec\] sget no=0 cannot
     say "ok   e3b: after a restart sget gives the 3 versions' sums; one flipped bit -> cannot open, nothing printed"
 else say "bad  e3b: sget[$(echo "$s1" | tr '\n' '|')] sum[$(echo "$s2" | tr '\n' '|')] tamper[$(grep -aE '^\[ark-rec\]' "$d/t.t" | tr '\n' '|')]"; bad="$bad e3b"; fi
 
+# ---- e3h (audit-172): the outer head is in the AAD; restore refuses on a node with records
+# h1: PKERNEL_ARK_REC_TAMPER=2 flips one bit of the AKSR's prev (outer head) before opening:
+#     sget says "cannot open" and prints no body (a break that shrank the AAD to 4 bytes was
+#     green on every other line, audit-172).
+# h2: A (it has records) is given its own sealed id to restore: it says "already has
+#     records" and `ls` is what it was (a break without the refusal was green, audit-172).
+runa "$d/t.cmd" PKERNEL_ARK_REC_TAMPER=2 > "$d/h1.t"
+printf 'ark rec ls\nark rec restore %s\nark rec ls\n' "${sealed:-0}" > "$d/h2.cmd"
+runa "$d/h2.cmd" > "$d/h2.t"
+l1=$(grep -aE '^\[ark-rec\] (index nrec=|  no=)' "$d/h2.t" | head -n 4); l2=$(grep -aE '^\[ark-rec\] (index nrec=|  no=)' "$d/h2.t" | tail -n 4)
+if grep -aqE '^\[ark-rec\] sget no=0 cannot open' "$d/h1.t" && ! grep -aqE '^\[ark-rec\] sget no=0 seq=' "$d/h1.t" \
+   && grep -aq 'restore error: this node already has records' "$d/h2.t" && [ -n "$l1" ] && [ "$l1" = "$l2" ] \
+   && [ "$(grep -acE '^\[ark-rec\] index nrec=3 ' "$d/h2.t")" = 2 ]; then
+    say "ok   e3h: a flipped bit of the outer head -> cannot open; restore on a node with records refuses, ls unchanged"
+else say "bad  e3h: h1[$(grep -aE '^\[ark-rec\]' "$d/h1.t" | tr '\n' '|')] h2[$(grep -aE '^\[ark-rec\]' "$d/h2.t" | tr '\n' '|')]"; bad="$bad e3h"; fi
+
 # ---- e3f ----------------------------------------------------------------------
 mkdir -p "$d/f.dir"; printf 'ark rec new 1 f\nark rec ls\n' > "$d/f.cmd"
 fo=$( { sleep 1; while IFS= read -r l; do printf '%s\n' "$l"; sleep 0.05; done < "$d/f.cmd"; sleep 1; printf 'exit\n'; } \
