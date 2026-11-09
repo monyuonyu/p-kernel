@@ -34,7 +34,7 @@
 # measured 2026-11-09 in the container, each NC RED as expected:
 #   -DARK_REC_PLAIN        e3a e3b e3d e3s   fragments carry the plaintext (B: 60 body windows, marker)
 #   -DARK_REC_SAME_KEY     e3k           one key across versions (3 versions, 1 key)
-#   -DARK_REC_INDEX_LOCAL  e3a e3b e3c e3d e3k e3s   no AKSI / AKSD (nothing to restore from)
+#   -DARK_REC_INDEX_LOCAL  e3a e3b e3c e3d e3h e3k e3s   no AKSI / AKSD (nothing to restore from)
 #   -DARK_REC_AAD_INNER    e3b e3d e3s   the AAD holds the inner kind (the first draft's form)
 #   -DARK_REC_KEY_REPLACE  e3x           (audit-172) a short / unreadable ark.key is replaced
 # Usage: tests/host/run_ark_e3.sh  (ARK_E3_BIN: default boot/linux_x86_64/p-kernel)

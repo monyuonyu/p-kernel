@@ -1239,7 +1239,7 @@ jobs:
           timeout 600 tests/host/run_ark_e3.sh | tee ark_e3.log
           grep -aF '[ark-e3] ALL PASS' ark_e3.log
 
-      # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 50 ms apart, B must hold all 60
+      # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 10 ms apart, B must hold all 60
       # (a want that did not fit the 8-slot table was dropped for good). Negative in
       # n2-negatives. ~80 s.
       - name: a burst of puts reaches a peer whole (pfs want overflow)
@@ -1649,7 +1649,7 @@ jobs:
           grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_SAME_KEY.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_INDEX_LOCAL >/dev/null
-          ARK_E3_EXPECT_RED="e3a e3b e3c e3d e3k e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_INDEX_LOCAL.log || true
+          ARK_E3_EXPECT_RED="e3a e3b e3c e3d e3h e3k e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_INDEX_LOCAL.log || true
           grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_INDEX_LOCAL.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_AAD_INNER >/dev/null

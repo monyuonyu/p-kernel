@@ -3,11 +3,16 @@
 # run_pfs_burst.sh — gap-ledger PFS-REPL-WANT-DROP: a burst of puts reaches a peer whole.
 #
 # The line (fixed before the fix, 2026-11-09; N 30 -> 60 after 30 was green on master): relay + A(1) + B(2), in-memory p-fs.
-# A puts 60 blocks, one per 50 ms (`pfs put burst-<i>`). Green iff, 40 s later, B's
+# A puts 60 blocks, one per 10 ms (50 ms until audit-172) (`pfs put burst-<i>`). Green iff, 40 s later, B's
 # `pfs ls` lists every one of A's 60 ids. Before the fix B's want table (8) drops the
 # rest of the burst and nothing announces them again (B got 18 of 36 in the E3 test).
 # Measured 2026-11-09 (container): master 45/60, 58/60 (no gave-up line: the missing
 # ids never entered the table); with the fix 60/60 twice; -DPFS_WANT_NO_OVF 57/60.
+# audit-172 (2026-11-09, container, under a build_all): at 50 ms the negative was green 1 of 3
+# (56, 58, 60 of 60; master 57, 58) - CI runs it once, so it would go red about 1 run in 3.
+# The gap is 10 ms since then (PFS_BURST_GAP): negative 18, 14, 18; fix 60, 60. At 0 ms the
+# fix too held 37 and 40 (no table-full line, 3 gave-up lines): a faster burst is lost before
+# the want table (the announce reader), a limit the ring does not cover.
 # Negative control: -DPFS_WANT_NO_OVF (the old drop) must be red.
 # Usage: tests/host/run_pfs_burst.sh  (PFS_BURST_BIN: default boot/linux_x86_64/p-kernel)
 #        PFS_BURST_EXPECT_RED=1 ... for the negative build.
@@ -34,7 +39,8 @@ node 1 a "$d/fa" & PA=$!; exec 7<>"$d/fa"
 node 2 b "$d/fb" & PB=$!; exec 8<>"$d/fb"
 wait_for "$d/la.log" 'P1 replication ready' 60; wait_for "$d/lb.log" 'P1 replication ready' 60
 sleep 15
-for i in $(seq 1 "$N"); do printf 'pfs put burst-%d\n' "$i" >&7; sleep 0.05; done
+GAP="${PFS_BURST_GAP:-0.01}"
+for i in $(seq 1 "$N"); do printf 'pfs put burst-%d\n' "$i" >&7; sleep "$GAP"; done
 sleep 40
 printf 'pfs ls\n' >&8
 sleep 3
