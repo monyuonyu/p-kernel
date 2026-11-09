@@ -836,11 +836,12 @@ static void cmd_rec(const UB *a, UW al)
         P("\r\n");
     } else if (word_is(v, n, "log")) {
         if (num(&a, &al, &x) != 0) { err("usage: ark rec log <no>"); return; }
-        if (desc_load() <= 0 || rec_find(x, 0) != 0) { P("[ark-rec] log no="); pdec(x); P(" not found\r\n"); return; }
+        U1 id[PFS_ID_LEN];
+        if (desc_load() <= 0 || index_find(x, id) != 0 || rec_load(id, &rec) != 0) { P("[ark-rec] log no="); pdec(x); P(" not found\r\n"); return; }
         for (;;) {
-            say_ver("log"); P("\r\n");
+            say_ver("log"); P(" id="); phex(id, PFS_ID_LEN); P("\r\n");   /* the full id: run_ark_mix.sh X2 */
             if (is0(rec.prev)) break;
-            U1 id[PFS_ID_LEN]; cpy(id, rec.prev, PFS_ID_LEN);
+            cpy(id, rec.prev, PFS_ID_LEN);
             if (rec_load(id, &rec) != 0) { err("a previous version is missing"); break; }
         }
     } else if (word_is(v, n, "ls")) {

@@ -1637,6 +1637,7 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SHARED >/dev/null
           ARK_REC_EXPECT_RED="local" timeout 600 tests/host/run_ark_rec.sh | tee ark_rec_ARK_REC_SHARED.log || true
           grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
+          cp boot/linux_x86_64/p-kernel /tmp/ark_old_pk   # the old-style node for run_ark_mix.sh (H22)
           # ark-entry.md 5 / E3 negatives (red lines measured 2026-11-09 in the container)
           for nc in "ARK_REC_PLAIN:e3a e3b e3d" "ARK_REC_SAME_KEY:e3k" "ARK_REC_INDEX_LOCAL:e3a e3b e3c e3d e3k" "ARK_REC_AAD_INNER:e3b e3d"; do
             make -C boot/linux_x86_64 clean >/dev/null
@@ -1649,6 +1650,13 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
           PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
+          # test-holes H22: each ark stop alone, next to an old-style node (-DARK_REC_SHARED)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 >/dev/null
+          ARK_MIX_OLD=/tmp/ark_old_pk timeout 400 tests/host/run_ark_mix.sh | tee ark_mix.log
+          grep -aF '[ark-mix] ALL PASS' ark_mix.log
+          ARK_MIX_OLD=/tmp/ark_old_pk ARK_MIX_NEW=/tmp/ark_old_pk ARK_MIX_EXPECT_RED=1 timeout 400 tests/host/run_ark_mix.sh | tee ark_mix_nc.log || true
+          grep -aF '[ark-mix] NC RED as expected' ark_mix_nc.log
           # SELF-REF-REGION-SHARED: the old shared self/ names redden S1-S3
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DSELF_REF_SHARED >/dev/null
