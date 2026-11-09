@@ -73,4 +73,4 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - E3c 違う `ark.key` のノードでは restore が開かない
 - **E3d（E1 の region の kill）** B が A の最後の AKSD を持つのを見てから A を kill -9。A の `ark.key` を写した空の C が restore で全記録の全版を同じ sha256 で読め、`ls` が A の最後と同じ
 - 陰性 `-DARK_REC_PLAIN`・`-DARK_REC_SAME_KEY`・`-DARK_REC_INDEX_LOCAL`・`-DARK_REC_AAD_INNER`（赤になる行は試験の頭に実測で書く）
-- 監査-170 の残り: AKSD の前で止める版の試験（古い AKSD の id で戻る）はまだ無い
+- E3s（監査-170 の提案）AKSD の前で止めても、前の AKSD の id で前の版に戻る

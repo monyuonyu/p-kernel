@@ -22,14 +22,20 @@
 #  e3b  A restarted alone on its image: `ark rec sget 0 @1..3` (read through the sealed
 #       copy) give A's sums; with PKERNEL_ARK_REC_TAMPER=1 (one bit of the fragment
 #       ciphertext flipped after it is read) sget says "cannot open" and prints no body.
+#  e3s  (audit-170; written 2026-11-09 20:1x, after the others) one node writes s-one,
+#       then `set 0 s-two` stops before the AKSD (PKERNEL_ARK_REC_STOP=2). After a
+#       restart it still lists the first sealed id and reads s-one; a fresh dir with
+#       the image and ark.key restores that id to s-one (no network: blocks are local).
+#       No negative of its own (the order is structural: blocks are never overwritten);
+#       PLAIN, INDEX_LOCAL and AAD_INNER redden it (measured), SAME_KEY does not.
 #  e3f  without PKERNEL_ARK_REC_FANOUT a new index has fanout 124 (= the sealed index's
 #       block, audit-170 1).
 # Negative controls (ARK_E3_EXPECT_RED = the lines that must be red, no others):
 # measured 2026-11-09 in the container, each NC RED as expected:
-#   -DARK_REC_PLAIN        e3a e3b e3d   fragments carry the plaintext (B: 60 body windows, marker)
+#   -DARK_REC_PLAIN        e3a e3b e3d e3s   fragments carry the plaintext (B: 60 body windows, marker)
 #   -DARK_REC_SAME_KEY     e3k           one key across versions (3 versions, 1 key)
-#   -DARK_REC_INDEX_LOCAL  e3a e3b e3c e3d e3k   no AKSI / AKSD (nothing to restore from)
-#   -DARK_REC_AAD_INNER    e3b e3d       the AAD holds the inner kind (the first draft's form)
+#   -DARK_REC_INDEX_LOCAL  e3a e3b e3c e3d e3k e3s   no AKSI / AKSD (nothing to restore from)
+#   -DARK_REC_AAD_INNER    e3b e3d e3s   the AAD holds the inner kind (the first draft's form)
 # Usage: tests/host/run_ark_e3.sh  (ARK_E3_BIN: default boot/linux_x86_64/p-kernel)
 # Output: [ark-e3] ALL PASS (0) / RED (1); with ARK_E3_EXPECT_RED: NC RED as expected / NC FAIL.
 # ===========================================================================
@@ -168,6 +174,29 @@ fo=$( { sleep 1; while IFS= read -r l; do printf '%s\n' "$l"; sleep 0.05; done <
             timeout 60 "$BIN" 2>&1 | tr -d '\r' | grep -aoE 'index nrec=1 depth=1 fanout=[0-9]+' | grep -oE '[0-9]+$')
 if [ "$fo" = 124 ]; then say "ok   e3f: the default fanout is 124"
 else say "bad  e3f: fanout=${fo:-?}"; bad="$bad e3f"; fi
+
+# ---- e3s: stopped before the AKSD, the previous AKSD still restores ------------
+run1() {  # <img> <dir> <cmdfile> [env...]
+    local img=$1 dir=$2 c=$3; shift 3
+    { sleep 1; while IFS= read -r l; do printf '%s\n' "$l"; sleep 0.05; done < "$c"; sleep 1; printf 'exit\n'; } \
+      | env PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$img" PKERNEL_ARK_SECTORS=4096 PKERNEL_PFS_DIR="$dir" \
+            PKERNEL_ARK_REC_FANOUT=4 "$@" timeout 60 "$BIN" 2>&1 | tr -d '\r' | sed 's/^\(p-kernel> \)*//'
+}
+mkdir -p "$d/s.dir" "$d/cs.dir"
+printf 'ark rec new 1 s-one\nark rec ls\n' > "$d/s1.cmd"; printf 'ark rec set 0 s-two\n' > "$d/s2.cmd"
+printf 'ark rec ls\nark rec get 0\n' > "$d/s3.cmd"
+run1 "$d/s.img" "$d/s.dir" "$d/s1.cmd" > "$d/s1.t"
+S1=$(grep -aoE 'index nrec=1 .*sealed=[0-9a-f]{64}' "$d/s1.t" | grep -oE '[0-9a-f]{64}$' | head -1)
+run1 "$d/s.img" "$d/s.dir" "$d/s2.cmd" PKERNEL_ARK_REC_STOP=2 > "$d/s2.t"
+run1 "$d/s.img" "$d/s.dir" "$d/s3.cmd" > "$d/s3.t"
+cp "$d/s.img" "$d/cs.img"; cp "$d/s.dir/ark.key" "$d/cs.dir/ark.key" 2>/dev/null
+printf 'ark rec restore %s\nark rec get 0\nark rec ls\n' "${S1:-0}" > "$d/s4.cmd"
+run1 "$d/cs.img" "$d/cs.dir" "$d/s4.cmd" > "$d/s4.t"
+if [ -n "$S1" ] && grep -aq 'stopped before the AKSD' "$d/s2.t" && grep -aqE "sealed=$S1" "$d/s3.t" \
+   && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: s-one$' "$d/s3.t" && grep -aqE '^\[ark-rec\] restore done nrec=1 versions=1' "$d/s4.t" \
+   && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: s-one$' "$d/s4.t"; then
+    say "ok   e3s: stopped before the AKSD of seq 2; the node still says the old sealed id, which restores seq 1"
+else say "bad  e3s: S1=${S1:0:16} s2[$(grep -a 'ark-rec' "$d/s2.t" | tr '\n' '|')] s3[$(grep -a '^.ark-rec' "$d/s3.t" | tr '\n' '|')] s4[$(grep -a '^.ark-rec' "$d/s4.t" | tr '\n' '|')]"; bad="$bad e3s"; fi
 
 if [ -n "${ARK_E3_EXPECT_RED:-}" ]; then
     want_red=$(echo $ARK_E3_EXPECT_RED | tr ' ' '\n' | sort | tr '\n' ' ')

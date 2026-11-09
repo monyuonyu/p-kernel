@@ -24,7 +24,8 @@
  *  at most 124) is written with it. Only these "AKS" blocks leave the node; `ark rec
  *  restore <AKSD id>` on a node with the same ark.key rebuilds everything from them.
  *  Negative controls: -DARK_REC_PLAIN, -DARK_REC_SAME_KEY, -DARK_REC_INDEX_LOCAL,
- *  -DARK_REC_AAD_INNER (tests/host/run_ark_e3.sh). Test env: PKERNEL_ARK_REC_TAMPER=1.
+ *  -DARK_REC_AAD_INNER (tests/host/run_ark_e3.sh). Test env: PKERNEL_ARK_REC_TAMPER=1,
+ *  PKERNEL_ARK_REC_STOP=2 (_exit before the AKSD).
  *
  *  The plain ark stays on its node: pfs_repl does not announce or send a block whose first bytes are "AKR", and
  *  pfs_dag neither beacons nor adopts a name under "ark/" (refs are region-wide and the
@@ -256,6 +257,12 @@ static void stop_test(void)
     const char *e = getenv("PKERNEL_ARK_REC_STOP");
     if (e && e[0] == '1') { P("[ark-rec] stop-test: stopped before the ark/rec version\r\n"); _exit(0); }
 }
+/* PKERNEL_ARK_REC_STOP=2: _exit after the index blocks, before the AKSD (run_ark_e3.sh e3s) */
+static void stop_test_sdesc(void)
+{
+    const char *e = getenv("PKERNEL_ARK_REC_STOP");
+    if (e && e[0] == '2') { P("[ark-rec] stop-test: stopped before the AKSD\r\n"); _exit(0); }
+}
 
 /* ---- E3: the node's ark key and the sealed blocks ------------------------ */
 /* The ark key (X25519) in PKERNEL_PFS_DIR/ark.key (0600, pfs_dur_write); made from
@@ -474,6 +481,7 @@ static INT index_set(UW no, const U1 rid[PFS_ID_LEN], const U1 srid[PFS_ID_LEN])
 #else
     if (index_walk(no, rid, 1) != 0) return -1;
     desc.nrec = nrec;
+    stop_test_sdesc();
     if (sdesc_put(sroot) != 0) return -1;                 /* AKSD after the trees' roots */
     stop_test();
     return pfs_dag_save((const UB *)"ark/rec", 7, &desc, sizeof desc) == PFS_OK ? 0 : -1;
