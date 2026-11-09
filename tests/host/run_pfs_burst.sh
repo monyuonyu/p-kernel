@@ -14,6 +14,11 @@
 # fix too held 37 and 40 (no table-full line, 3 gave-up lines): a faster burst is lost before
 # the want table (the announce reader), a limit the ring does not cover.
 # Negative control: -DPFS_WANT_NO_OVF (the old drop) must be red.
+# PFS_BURST_GAP=0 (fix/pfs-ann-pace, 2026-11-09, container under a build_all): the ring alone
+# held 40 of 60, B's K-DDS kept queue (32, shared by topics) lost 20 announces (probe), and
+# B gave up on 2 because a holder read 1 WANT a tick. With the announces paced 8 a tick at
+# the sender, every ANNOUNCE and WANT of a tick read (up to 32): 60/60. Negatives at 0 ms:
+# -DPFSR_NC_ANN_UNPACED (send at once) and -DPFSR_NC_WANT_LATEST (the old WANT read).
 # Usage: tests/host/run_pfs_burst.sh  (PFS_BURST_BIN: default boot/linux_x86_64/p-kernel)
 #        PFS_BURST_EXPECT_RED=1 ... for the negative build.
 # Output: [pfs-burst] PASS (0) / FAIL (1); with PFS_BURST_EXPECT_RED: NC RED as expected / NC FAIL.

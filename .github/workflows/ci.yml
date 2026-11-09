@@ -1247,6 +1247,9 @@ jobs:
           make -C boot/linux_x86_64 -j4 > /dev/null
           timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst.log
           grep -aF '[pfs-burst] PASS' pfs_burst.log
+          # the same burst with no gap at all: paced announces, every WANT of a tick read
+          PFS_BURST_GAP=0 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst0.log
+          grep -aF '[pfs-burst] PASS' pfs_burst0.log
 
       # gap-ledger SELF-REF-REGION-SHARED: relay + 2 nodes; after node A consents,
       # node B (never consented) still refuses /teach and does not show A's profile
@@ -1574,6 +1577,9 @@ jobs:
           # R-KDDSQ stage 2: the pfs announce reader takes every announce of the tick (kdds_sub_next)
           (printf 'kdds ann\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_ann.log || true
           grep -aF '[kdds-ann] PASS' kdds_ann.log
+          # N2 "まだ" 7: pfs_repl's wide tails (frames, reading, the dedup row), one node
+          (printf 'nodes pfwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pfwide.log || true
+          grep -aF '[pfwide] PASS' nodes_pfwide.log
           # next_hop: 10.1/16 is on-link (a wide address uses the third byte; the /24 dropped wide<->narrow unicast)
           (printf 'nodes onlink\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_onlink.log || true
           grep -aF '[onlink] PASS' nodes_onlink.log
@@ -1593,6 +1599,10 @@ jobs:
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
+          # XP: p-fs blocks cross between wide and narrow (pfs_repl's wide tails, N2 "まだ" 7)
+          N2_XP=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_xp.log
+          grep -aF '[n2-mix] XP PASS' n2_mix_xp.log
+          grep -aF '[n2-mix] ALL PASS' n2_mix_xp.log
   # The N2 negative controls, out of ump-x86_64 (2026-11-08, inbox #40 item 2):
   # they were its last step and its longest (14.4 of 107.2 min in CI
   # 42363056840; the job limit is 120). Nothing after them used their builds.
@@ -1602,7 +1612,7 @@ jobs:
   n2-negatives:
     name: "Negative controls (x86_64: the N2 wide-id falsifiers and R-KDDSQ, BLOCKING)"
     runs-on: ubuntu-latest
-    timeout-minutes: 80   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09)
+    timeout-minutes: 90   # 38 min on 11-08; +~16 min for the E3, burst and H22 lines (2026-11-09); 57 min in CI 42621928249, +~14 for pfwide/XP and the 0 ms burst negatives (2026-11-09 23:xx) -> 80 to 90
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -1664,6 +1674,21 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
           PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
+          # the 0 ms burst: announces sent at once (-DPFSR_NC_ANN_UNPACED), one WANT read a tick (-DPFSR_NC_WANT_LATEST)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_UNPACED >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc2.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc2.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_WANT_LATEST >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc3.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc3.log
+          # and the announce reader back to the last one of a tick (-DPFSR_NC_ANN_LATEST): the live test of
+          # test-holes H6/H17 (pfs_repl_task's drain), 5 and 4 of 60 in the container
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_LATEST >/dev/null
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc4.log || true
+          grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc4.log
           # test-holes H22: each ark stop alone, next to an old-style node (-DARK_REC_SHARED)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 >/dev/null
@@ -1702,7 +1727,7 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TCP_DST_LOW_BYTE >/dev/null
           N2_WAIT=45 timeout 400 tests/host/run_n2_tcp.sh | tee n2_tcp_nc3.log || true
           grep -aF '[n2-tcp] T5 FAIL' n2_tcp_nc3.log
-      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), [mqwide] frame when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [mhwide] when mind/have sends or reads no wide ids (-DN2_NC_MH_NO_TAIL, -DN2_NC_MH_RX_NARROW), [ipw] when snf/ss6 keep the old address for a wide self (-DN2_NC_IP_OLD), [n2-lan] L1 when the LAN makes a wide id node 1 (-DN2_NC_LAN_WIDE_TO_1), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW) or mind/have's busy compares it by its byte (-DN2_NC_MC_BUSY_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
+      - name: "X1 and X2 go red when a wide id is cut to a byte, XT when a wide self publishes on a narrow name, XG when the region loop is narrow only, X3's snow when kdds broadcasts to narrow ids only (-DN2_NC_KDDS_NARROW_ONLY), [mqwide] frame when the want carries no wide asker (-DN2_NC_MQ_WANT_NO_TAIL), [mhwide] when mind/have sends or reads no wide ids (-DN2_NC_MH_NO_TAIL, -DN2_NC_MH_RX_NARROW), [pfwide] and XP when pfs_repl sends or reads no wide tail (-DN2_NC_PFS_NO_TAIL, -DN2_NC_PFS_RX_NARROW), [ipw] when snf/ss6 keep the old address for a wide self (-DN2_NC_IP_OLD), [n2-lan] L1 when the LAN makes a wide id node 1 (-DN2_NC_LAN_WIDE_TO_1), [pull-answer-src] when a wide teacher's answer has no tail (-DN2_NC_MQ_ANS_NARROW), or a wide winner is pushed back without it (-DN2_NC_MC_PUSH_NARROW) or mind/have's busy compares it by its byte (-DN2_NC_MC_BUSY_NARROW), [mqwide] when a wide asker shares a narrow answer row (-DN2_NC_MQ_ASK_NARROW), [kdds-wide] when a wide peer outside the region gets a REGION topic (-DN2_NC_KDW_NO_REGION), [region-narrow] when the narrow count counts wide members, [v2cap] when bit 2 is not adopted or not taken from the peer itself, [pmv2] when v2 ignores the reader, is dropped on receive or is sent or taken without an id ([n2-mix], negative controls, -DN2_NC_TRUNC, -DN2_NC_WIDEPUB, -DN2_NC_REGION_NARROW, -DN2_NC_NARROW_SIZE_WIDE, -DN2_NC_V2IGNORE, -DN2_NC_V2DIRECT_NO, -DN2_NC_PMV2_NOCHECK, -DN2_NC_PMV2_RXDROP, -DN2_NC_PMV2_NOIDOK, -DN2_NC_PMV2_RXNOIDOK)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_TRUNC >/dev/null
@@ -1792,6 +1817,18 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MH_RX_NARROW >/dev/null
           (printf 'nodes mhwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mhwide_nc2.log || true
           grep -aF '[mhwide] FAIL rx' nodes_mhwide_nc2.log
+          # [pfwide] goes red when pfs_repl sends no wide tail (-DN2_NC_PFS_NO_TAIL) or reads none (-DN2_NC_PFS_RX_NARROW), N2 "まだ" 7
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PFS_NO_TAIL >/dev/null
+          (printf 'nodes pfwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pfwide_nc.log || true
+          grep -aF '[pfwide] FAIL F wide ANNOUNCE' nodes_pfwide_nc.log
+          # and the live XP under it: 300's block reaches no new node (its announce says 0xFF with no tail)
+          N2_XP=1 N2_WAIT=60 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_pfs.log || true
+          grep -aE '^\[n2-mix\] XP FAIL.* wide@4' n2_mix_nc_pfs.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PFS_RX_NARROW >/dev/null
+          (printf 'nodes pfwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pfwide_nc2.log || true
+          grep -aF '[pfwide] FAIL W a wide WANT' nodes_pfwide_nc2.log
           # [ipw] goes red when snf/ss6 keep the old address form for a wide self (-DN2_NC_IP_OLD)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_IP_OLD >/dev/null

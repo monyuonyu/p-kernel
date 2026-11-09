@@ -57,6 +57,8 @@
 5. ~~1 台宛ての v2~~ 7 に畳んだ（11-08 監査-163 の読み）: kdds.c は SWIM が ALIVE とする広い仲間へ pmesh_send で v2 を送る（feat/n2-kdds-wide、X3 の snow と X3H の道）。kdds_rx は電文の src バイトを読まない＝1 バイトのままで害が無い。残る呼び手（replica・sfs・pfs_repl・kloader は狭い番号だけ）は 7
 6. ~~TCP の中継~~ 済み（11-08 feat/n2-tcp-v3、監査-163 限界つき PASS: T2b・T2c を監査側で足した。広い 1 台宛ての MAC 4:5 は試験で見えない＝test-holes H20）: net_relay_tcp.c（x86_64・aarch64 同じ差分）も net_relay.c と同じ規則で v3（鍵があるとき広い番号で入る、v1/v2 の頭の 10 バイト目に「v3 が読める」、v3 の MAC と広い番号ごとの再送窓、MAC 4:5 の広い宛て）。鍵なしの広い番号は今までどおり断る（L5）。中継は UDP と TCP が同じ表で、前から v3 を TCP にも配れた。試験 [n2-tcp] T0〜T4、陰性 N2_NC_TCP_WIDE_REFUSE（T0）・N2_NC_TCP_NO_READS_V3（T3）
 7. ほかの部品の呼び手: region のメンバにはなるが、呼び手は狭い番号だけを回す（洗い出しは n2-wire16-inventory.md）。いちばん大きい
+   - 7a pfs_repl（11-09 feat/n2-pfs-wide、hosted だけ）: ANNOUNCE・WANT・SYNC は 1 バイトに 0xFF、後ろに 2 バイト LE（ANNOUNCE は送り手と origin の 4 バイト）。塊（BLK）は origin が広いときだけ 2 バイトの尾、送り手は pmesh の src（v2）。HOLD-ACK も送り手は pmesh の src。重複を見る seq は行（pk_node_row）。尾は「0xFF かつ尾が広い番号」のときだけ読む＝尾が狭い番号を名乗れない。試験 [n2-mix] XP（`N2_XP=1`）と `nodes pfwide`、陰性 N2_NC_PFS_NO_TAIL・N2_NC_PFS_RX_NARROW。残り: protect の持ち手の表は狭い番号だけ（広い持ち手は数えない）、旧版は広い origin の塊を origin=n255（自分）として持つ
+   - 7b（11-10 読んだだけ）: 5 に挙げた残り 3 つ（sfs・replica・kloader）は**ベアでだけ起動される**（sfs_init・replica_init・kloader_task_init の呼び手は arch/x86・arch/aarch64 の usermain だけ。linux_x86_64 は sfs.c を組み込むが起こさない）＝広い番号（hosted だけ）は届かない。7 の残りは region_size_narrow の呼び手（protect・ss6・mind の合体・degrade、③(i)）を広げるかどうか＝設計の話
 
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
 

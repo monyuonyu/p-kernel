@@ -67,6 +67,7 @@ IMPORT INT  mt_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3), r3_in
 IMPORT int  pk_node_ip_self_test(void (*emit)(const char *));   /* N2, drpc.c */
 IMPORT INT  pfs_repl_ann_self_test(void (*emit)(const char *));   /* R-KDDSQ stage 2, pfs_repl.c */
 IMPORT INT  mq_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) want, r3_incontext.c */
+IMPORT INT  pfs_repl_wide_self_test(void (*emit)(const char *));   /* N2 "まだ" 7, pfs_repl.c */
 IMPORT INT  mh_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) have, r3_incontext.c */
 IMPORT INT  net_onlink_self_test(void (*emit)(const char *));   /* N2, netstack.c */
 IMPORT void kdds_list(void);
@@ -1016,6 +1017,8 @@ EXPORT INT usermain(void)
             else if (al >= 2 && a[0]=='m'&&a[1]=='t') mt_wide_self_test(print);
             /* N2 (c)(3): `nodes mqwide` checks the mind/want wide asker (r3). */
             else if (al >= 2 && a[0]=='m'&&a[1]=='q') mq_wide_self_test(print);
+            /* N2 "まだ" 7: `nodes pfwide` checks the pfs_repl wide tails (pfs_repl.c). */
+            else if (al >= 3 && a[0]=='p'&&a[1]=='f'&&a[2]=='w') pfs_repl_wide_self_test(print);
             /* N2 (c)(3): `nodes mhwide` checks the mind/have wide ids (r3). */
             else if (al >= 2 && a[0]=='m'&&a[1]=='h') mh_wide_self_test(print);
             /* N2: `nodes ipw` checks the snf/ss6 address of a node (pk_node.h). */
