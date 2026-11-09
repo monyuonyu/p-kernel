@@ -62,7 +62,7 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - **鍵は本人に包む**: ノードの方舟の鍵（X25519、`PKERNEL_PFS_DIR/ark.key` 0600、無ければ作る。作れなければ何も書かない）。「継ぐ人に」の預けは v1.1
 - **封じた目次も出す**: 今の目次（`AKR*`、ノードに残る）と同じ形の木を `AKSI`（平文＝数‖id、葉は各記録の最新の `AKSR`）と根を指す `AKSD`（nrec・段・fanout・根）で書く。どれも節ごとに新しい箱、AAD は頭の 96 B（magic・版・段・長さ・wrap）。書く順は AKSF→AKSR→AKRF→AKRR→葉..根（AKSI と AKRI）→AKSD→`ark/rec`。`ark rec ls` が `sealed=<AKSD の id>` と出す
 - **（監査-170 ①）fanout は両方の木で同じ 124 以下**（AKSI の 1 ブロックに 124＝既定。前の既定 127 の目次は読めるが封じられない）。**（監査-170 ②）`vis=public` の版も封じて出す**（控え。公開の配り方は E6 の後）
-- 頭が "AKS" のブロックは pfs_repl の送り止め（"AKR"）にかからず region へ複製される。**ただし続けて書くと取りこぼす**（実測: 受け手の WANT の表は 8 枠で、溢れた分は捨てられ再 announce まで戻らない。B は 36 個中 18 個）＝`ark rec sync` が封じたブロックを 700 ms おきに出し直す（仲間 0 台で届かなければ出し直す。hosted の `pfs_repl_reannounce` は像だけにあるブロックも出す）。自動では呼ばない（限界）
+- 頭が "AKS" のブロックは pfs_repl の送り止め（"AKR"）にかからず region へ複製される。**続けて書くと取りこぼす**（台帳 PFS-REPL-WANT-DROP、B は 36 個中 18 個）＝`ark rec sync` が 700 ms おきに出し直す（仲間 0 台なら再度。像だけのブロックも出す）。自動では呼ばない（限界）
 - **戻し方** `ark rec restore <AKSD の id>`: 同じ `ark.key` を持ち記録の無いノードが WANT で取り、開いて AKR* と両方の目次を作り直す（AKSR・AKSF はそのまま使う）。`ark rec sget` は封じた写しから読む
 - **限界**: 外から版の数・鎖・暗号文の長さ・目次の大きさは読める。戻すには `ark.key` の控えと AKSD の id が要る（最新を探す仕組みは次）。region が AKS* を持ち続けるかは pfs_repl しだい
 
