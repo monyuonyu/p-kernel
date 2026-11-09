@@ -36,6 +36,7 @@
 #   -DARK_REC_SAME_KEY     e3k           one key across versions (3 versions, 1 key)
 #   -DARK_REC_INDEX_LOCAL  e3a e3b e3c e3d e3k e3s   no AKSI / AKSD (nothing to restore from)
 #   -DARK_REC_AAD_INNER    e3b e3d e3s   the AAD holds the inner kind (the first draft's form)
+#   -DARK_REC_KEY_REPLACE  e3x           (audit-172) a short / unreadable ark.key is replaced
 # Usage: tests/host/run_ark_e3.sh  (ARK_E3_BIN: default boot/linux_x86_64/p-kernel)
 # Output: [ark-e3] ALL PASS (0) / RED (1); with ARK_E3_EXPECT_RED: NC RED as expected / NC FAIL.
 # ===========================================================================
@@ -197,6 +198,31 @@ if [ -n "$S1" ] && grep -aq 'stopped before the AKSD' "$d/s2.t" && grep -aqE "se
    && grep -aqE '^\[ark-rec\] get no=0 seq=1 .*: s-one$' "$d/s4.t"; then
     say "ok   e3s: stopped before the AKSD of seq 2; the node still says the old sealed id, which restores seq 1"
 else say "bad  e3s: S1=${S1:0:16} s2[$(grep -a 'ark-rec' "$d/s2.t" | tr '\n' '|')] s3[$(grep -a '^.ark-rec' "$d/s3.t" | tr '\n' '|')] s4[$(grep -a '^.ark-rec' "$d/s4.t" | tr '\n' '|')]"; bad="$bad e3s"; fi
+
+# ---- e3x (audit-172): an ark.key that is there but does not read as 32 bytes is never replaced
+# x1: a 31-byte ark.key (cut short). x2: a 32-byte ark.key without read permission (skipped as
+# root, where chmod does not stop the read). Each: `ark rec new` says "no ark key", writes no
+# record, and the file is byte-for-byte what it was. Negative: -DARK_REC_KEY_REPLACE (the
+# code before audit-172, which made a new key over it): e3x red.
+xr=""
+mkdir -p "$d/x1.dir" "$d/x2.dir"
+head -c 31 /dev/urandom > "$d/x1.dir/ark.key"; cp "$d/x1.dir/ark.key" "$d/x1.want"
+printf 'ark rec new 1 x-one\nark rec ls\n' > "$d/x.cmd"
+run1 "$d/x1.img" "$d/x1.dir" "$d/x.cmd" > "$d/x1.t"
+if grep -aq 'no ark key' "$d/x1.t" && grep -aqE 'index nrec=0' "$d/x1.t" && cmp -s "$d/x1.dir/ark.key" "$d/x1.want"; then :
+else xr="$xr x1[$(grep -a '^.ark-rec' "$d/x1.t" | tr '\n' '|') cmp=$(cmp -s "$d/x1.dir/ark.key" "$d/x1.want" && echo same || echo changed)]"; fi
+x2="skipped (root)"
+head -c 32 /dev/urandom > "$d/x2.dir/ark.key"; cp "$d/x2.dir/ark.key" "$d/x2.want"; chmod 000 "$d/x2.dir/ark.key"
+if ! cat "$d/x2.dir/ark.key" > /dev/null 2>&1; then
+    x2="run"
+    run1 "$d/x2.img" "$d/x2.dir" "$d/x.cmd" > "$d/x2.t"
+    chmod 600 "$d/x2.dir/ark.key"
+    if grep -aq 'no ark key' "$d/x2.t" && grep -aqE 'index nrec=0' "$d/x2.t" && cmp -s "$d/x2.dir/ark.key" "$d/x2.want"; then :
+    else xr="$xr x2[$(grep -a '^.ark-rec' "$d/x2.t" | tr '\n' '|') cmp=$(cmp -s "$d/x2.dir/ark.key" "$d/x2.want" && echo same || echo changed)]"; fi
+fi
+chmod 600 "$d/x2.dir/ark.key" 2>/dev/null
+if [ -z "$xr" ]; then say "ok   e3x: a short or unreadable ark.key is refused and left as it was (x2 $x2)"
+else say "bad  e3x:$xr"; bad="$bad e3x"; fi
 
 if [ -n "${ARK_E3_EXPECT_RED:-}" ]; then
     want_red=$(echo $ARK_E3_EXPECT_RED | tr ' ' '\n' | sort | tr '\n' ' ')

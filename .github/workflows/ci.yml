@@ -1655,6 +1655,10 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_AAD_INNER >/dev/null
           ARK_E3_EXPECT_RED="e3b e3d e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_AAD_INNER.log || true
           grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_AAD_INNER.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_KEY_REPLACE >/dev/null
+          ARK_E3_EXPECT_RED="e3x" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_KEY_REPLACE.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_KEY_REPLACE.log
           # PFS-REPL-WANT-DROP: the old drop is red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null

@@ -41,6 +41,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -173,6 +174,21 @@ int pfs_dur_read(const char *fname, void *buf, unsigned maxlen)
     }
     close(fd);
     return (int)off;
+}
+
+/* 1 unless <dir>/<fname> is certainly absent (stat says ENOENT): any other failure
+ * counts as "there" so a caller never replaces a file it merely could not read
+ * (ark_rec.c's ark.key, audit-172). 0 when persistence is disabled. */
+int pfs_dur_exists(const char *fname)
+{
+    const char *dir = pfs_dur_dir();
+    if (!dir) return 0;
+    char path[PFS_DUR_PATH_MAX];
+    if (snprintf(path, sizeof path, "%s/%s", dir, fname) >= (int)sizeof path)
+        return 1;
+    struct stat st;
+    if (stat(path, &st) == 0) return 1;
+    return errno == ENOENT ? 0 : 1;
 }
 
 /* Remove <dir>/<fname> (pfs_drop: a superseded block must not come back at

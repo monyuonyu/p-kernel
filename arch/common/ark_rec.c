@@ -51,6 +51,7 @@
 extern char *getenv(const char *);
 extern int   pfs_dur_write(const char *fname, const void *data, unsigned len);
 extern int   pfs_dur_read(const char *fname, void *buf, unsigned maxlen);
+extern int   pfs_dur_exists(const char *fname);
 extern long  time(long *);
 extern void  _exit(int);
 
@@ -270,7 +271,17 @@ static void stop_test_sdesc(void)
 static INT ark_key(void)
 {
     if (ark_key_ok) return 0;
-    if (pfs_dur_read("ark.key", ark_priv, 32) != 32) {
+    U1 kb[33];
+    INT kn = pfs_dur_read("ark.key", kb, 33);
+    if (kn == 32) { cpy(ark_priv, kb, 32); zero(kb, 33); }
+    else {
+        zero(kb, 33);
+        /* audit-172: make a key only when there is none. A file that is there but does
+         * not read as 32 bytes (no permission, an I/O error, cut short) was replaced by a
+         * new key: every sealed copy of the old key could not be opened again. */
+#ifndef ARK_REC_KEY_REPLACE
+        if (kn >= 0 || pfs_dur_exists("ark.key")) return -1;
+#endif
         arkc_box b;
         if (arkc_box_new(&b) != 0) return -1;
         cpy(ark_priv, b.k, 32); arkc_box_wipe(&b);
@@ -656,7 +667,7 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
     U1 rid[PFS_ID_LEN], srid[PFS_ID_LEN], sprev[PFS_ID_LEN];
     INT d = desc_load();
     if (d < 0) { err("ark/rec is not readable"); return; }
-    if (ark_key() != 0) { err("no ark key (PKERNEL_PFS_DIR / getrandom); nothing written"); return; }
+    if (ark_key() != 0) { err("no ark key (PKERNEL_PFS_DIR / getrandom / an ark.key that does not read as 32 bytes is never replaced); nothing written"); return; }
     if (len > AKS_BODY_MAX) { err("longer than a sealed record holds"); return; }
     zero(sprev, PFS_ID_LEN);
     if (is_new) {
