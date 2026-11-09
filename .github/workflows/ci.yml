@@ -1639,12 +1639,22 @@ jobs:
           grep -aF "[ark-rec] NC RED as expected" ark_rec_ARK_REC_SHARED.log
           cp boot/linux_x86_64/p-kernel /tmp/ark_old_pk   # the old-style node for run_ark_mix.sh (H22)
           # ark-entry.md 5 / E3 negatives (red lines measured 2026-11-09 in the container)
-          for nc in "ARK_REC_PLAIN:e3a e3b e3d e3s" "ARK_REC_SAME_KEY:e3k" "ARK_REC_INDEX_LOCAL:e3a e3b e3c e3d e3k e3s" "ARK_REC_AAD_INNER:e3b e3d e3s"; do
-            make -C boot/linux_x86_64 clean >/dev/null
-            make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-D${nc%%:*} >/dev/null
-            ARK_E3_EXPECT_RED="${nc#*:}" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_${nc%%:*}.log || true
-            grep -aF "[ark-e3] NC RED as expected" ark_e3_${nc%%:*}.log
-          done
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_PLAIN >/dev/null
+          ARK_E3_EXPECT_RED="e3a e3b e3d e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_PLAIN.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_PLAIN.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_SAME_KEY >/dev/null
+          ARK_E3_EXPECT_RED="e3k" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_SAME_KEY.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_SAME_KEY.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_INDEX_LOCAL >/dev/null
+          ARK_E3_EXPECT_RED="e3a e3b e3c e3d e3k e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_INDEX_LOCAL.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_INDEX_LOCAL.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DARK_REC_AAD_INNER >/dev/null
+          ARK_E3_EXPECT_RED="e3b e3d e3s" timeout 600 tests/host/run_ark_e3.sh | tee ark_e3_ARK_REC_AAD_INNER.log || true
+          grep -aF "[ark-e3] NC RED as expected" ark_e3_ARK_REC_AAD_INNER.log
           # PFS-REPL-WANT-DROP: the old drop is red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
