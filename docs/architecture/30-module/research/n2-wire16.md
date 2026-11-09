@@ -59,6 +59,8 @@
 7. ほかの部品の呼び手: region のメンバにはなるが、呼び手は狭い番号だけを回す（洗い出しは n2-wire16-inventory.md）。いちばん大きい
    - 7a pfs_repl（11-09 feat/n2-pfs-wide、hosted だけ）: ANNOUNCE・WANT・SYNC は 1 バイトに 0xFF、後ろに 2 バイト LE（ANNOUNCE は送り手と origin の 4 バイト）。塊（BLK）は origin が広いときだけ 2 バイトの尾、送り手は pmesh の src（v2）。HOLD-ACK も送り手は pmesh の src。重複を見る seq は行（pk_node_row）。尾は「0xFF かつ尾が広い番号」のときだけ読む＝尾が狭い番号を名乗れない。試験 [n2-mix] XP（`N2_XP=1`）と `nodes pfwide`、陰性 N2_NC_PFS_NO_TAIL・N2_NC_PFS_RX_NARROW。残り: protect の持ち手の表は狭い番号だけ（広い持ち手は数えない）、旧版は広い origin の塊を origin=n255（自分）として持つ
    - 7b（11-10 読んだだけ）: 5 に挙げた残り 3 つ（sfs・replica・kloader）は**ベアでだけ起動される**（sfs_init・replica_init・kloader_task_init の呼び手は arch/x86・arch/aarch64 の usermain だけ。linux_x86_64 は sfs.c を組み込むが起こさない）＝広い番号（hosted だけ）は届かない。7 の残りは region_size_narrow の呼び手（protect・ss6・mind の合体・degrade、③(i)）を広げるかどうか＝設計の話
+   - 7c（11-10 監査-174 の回、読んだだけ・設計）: **数（region_size_narrow）だけを広げてはいけない。数と表を一緒に広げる**。どの呼び手も、数えたメンバを id で引く表（DNODE_MAX）を持つ: protect は `holders[DNODE_MAX]`（`protect_note_holder` は `src >= DNODE_MAX` で返る）、mind の合体は `mw_fold_region` が `o < DNODE_MAX` を回す。数だけ広げると protect の R が届かない値になり、押し続ける（偽の脅威）。監査-174 の壊し B3（広い持ち手の HOLD-ACK を pmesh の src に読み替えない）が緑だったのはこのため＝受け手の protect が広い持ち手を捨てている（test-holes H24(a)）。
+     順番（おすすめ）: ① protect（holders を行に、押し先の輪は行と `pk_node_of_row`、`cap_target_r` を region_size に。試験は [n2-mix] に広い持ち手で R に届く XR、陰性は holders を狭いままにする印。H24(a) も埋まる）② mind の合体（mind/w の告知の広い番号を先に確かめる）③ ss6・degrade は狭いまま（遠くの専門家の呼び出しと pipeline は狭い表で組む。広げる理由が出たら）。どれも hosted だけ、ベアは DNODE_ROWS == DNODE_MAX で crown 不変
 
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
 
