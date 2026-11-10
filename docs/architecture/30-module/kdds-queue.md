@@ -41,6 +41,11 @@ CI 42656744519 の X3H 赤（first-sky-hint-not-299@4）から。mind/have は�
 監査-175 の容器（重い負荷）で X3 の fire が 26 本中 3 本赤（直しなしでも）。赤の 3 本とも 260 は初回の学習の直後に fire を want したのに、fire は X3H の後（120 秒の窓の外）に届いた。abB5: node 4 が 260 の want に fire で答えた数行後に別の want へ snow を同じ mind/teach に送り、260 は snow（見た seq＝黙って落とす）だけを読んだ。答えは同じ want の世代には一度だけ。abA8: 44 は 260 の最初の want を一度も表示していない（ほかの want に上書き）。初回の学習が 71〜75 秒かかり窓を食うことも重なる。
 形: 1 tick に読むのは、まだ読んでいない一番古い 1 通（kdds_sub_next）、無ければ今までどおり枠の読み直し（kdds_sub）。1 tick 1 通・本体はそのまま・枠の読み直しが再送を動かすのも同じ・同じ電文の 2 度目は seq で落ちる。試験 `nodes mtq`・`nodes mqq`（3 通続けて → 1 2 3 3、古い読みは 3 3 3 3）、陰性 -DMT_NC_TEACH_LATEST・-DMQ_NC_WANT_LATEST、check_callsites mt-rx-read・mq-rx-read。ベアは kdds_sub のまま。限界: 止まっている間・冬眠の間に待ち行列に入った電文は読んで捨てる（送り手の再送に任せる、前と同じ）。共有の 32 枠を pfs の ann・mind/have と分け合う
 
+## 3e. 第 4 段の 2（2026-11-11、hosted だけ、答え手の表、X3F）
+
+3d だけでは X3F は消えなかった（11-10 の容器 14 組で X3F の形は master 1・直し 1）。直しの側では 4 と 44 が 260 の want を受け取ったのに答えていない。答え手の譲り合い（stagger）・最初の答え・再送は「その asker の want を読んだ tick」にしか進まず、待ち行列から 1 度読まれた want は stagger の 1 歩で使われて二度と読まれなかった。
+形: asker ごとの行（MQ_ASK_STATE）に最新の want（org・keys）を持つ。mq_drain が 1 tick の want を古い順に最大 MQ_PER_TICK（16）通読んで行に入れ（無ければ枠の読み直し）、mq_step_rows が毎 tick 全部の行を進める: stagger は行ごとに 1 つ減り、1 tick の送りは今までどおり 1 つ（答えか再送）、順番は行の輪番。1 行の中身（答えは 1 世代 1 度・1-3c の再送・-DMQ_REDRIVE_LAST_ONLY）は前の本体のまま。試験 `nodes mqq` の [mqa]（3 人の want が 1 tick に来て stagger 2 → 8 tick で 3 人とも最初の答えが 1 度）、陰性 -DMQ_NC_STEP_READ_ONLY（3d の形＝読んだ行だけ進む）と -DMQ_NC_WANT_LATEST で赤。check_callsites mq-poll・mq-drain。ベアは前のまま。限界: 死んだ asker の行は残る（再送は予算で止まる、枠のときと同じ）。[mqa] の答えと送りは偽物（mq_answer_build と線は通らない）
+
 ## 4. 限界
 
 待ち行列は全部の話題で共有＝1 つの話題が溢れさせると他も古いものを失う（捨てた数で見える）。順番は 1 台の中での着いた順で、送り手をまたいだ順序は約束しない

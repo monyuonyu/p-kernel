@@ -1568,6 +1568,8 @@ jobs:
           (printf 'nodes mtq\nnodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_x3fq.log || true
           grep -aF '[mtq] PASS' nodes_x3fq.log
           grep -aF '[mqq] PASS' nodes_x3fq.log
+          # X3F step 2: three wants in one tick, each asker is answered (the answer table)
+          grep -aF '[mqa] PASS' nodes_x3fq.log
           # the snf/ss6 address of a node (N2): pk_node_ip on 10.1/16 (a wide self too), the old form on a LAN
           (printf 'nodes ipw\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_ipw.log || true
           grep -aF '[ipw] PASS' nodes_ipw.log
@@ -1896,6 +1898,13 @@ jobs:
           (printf 'nodes mtq\nnodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_x3fq_nc.log || true
           grep -aF '[mtq] FAIL' nodes_x3fq_nc.log
           grep -aF '[mqq] FAIL' nodes_x3fq_nc.log
+          grep -aF '[mqa] FAIL' nodes_x3fq_nc.log
+          # X3F step 2: one want a tick, only the asker read this tick steps (step 1): [mqa] red, the reader still green
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_STEP_READ_ONLY >/dev/null
+          (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc.log || true
+          grep -aF '[mqq] PASS' nodes_mqa_nc.log
+          grep -aF '[mqa] FAIL' nodes_mqa_nc.log
 
       - name: "[n2-alive]: a killed narrow and a killed wide peer go DEAD on narrow and wide nodes, nobody else does (n2-wire16 'まだ' 4); A3 and A4 go red when a wide peer never dies (-DN2_NC_WIDE_NEVER_DEAD)"
         run: |
