@@ -3288,7 +3288,12 @@ jobs:
       - name: "[b4-math] the student's root, exp, log against libm, Adam's step, same bits on aarch64 (4 falsifiers red)"
         # ROADMAP B4 stage 1: research/b4-numerics.md M1 to M4. Here for the
         # aarch64 compiler and qemu-user of this job; about 20 s.
-        run: bash tests/llm/run_b4_math.sh
+        # audit-176: [m3-hash] must PASS, not SKIP. On ubuntu-26.04 master's script found no
+        # qemu-aarch64-static, printed SKIP and the step stayed green (the x86_64/aarch64 bits went unchecked).
+        run: |
+          set -o pipefail
+          bash tests/llm/run_b4_math.sh | tee b4_math.log
+          grep -aF 'PASS  [m3-hash]' b4_math.log
 
   sanitizer-build:
     # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
