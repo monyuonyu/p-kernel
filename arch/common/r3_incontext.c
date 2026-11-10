@@ -9518,20 +9518,28 @@ static INT mqa_test(void (*emit)(const char *))
     mq_step_rr = keep_rr;
     m_gate_release();
     kdds_close(h);
-    INT ok = 1;
+    /* the three causes are told apart (each negative of ci.yml looks for its own tag) */
+    INT once = 1;
     r_puts("[mqa] first answers");
     for (INT i = 0; i < 3; i++) {
         r_puts(" "); r_putdec((UW)mqa_org[i]); r_puts(":"); r_putdec((UW)mqa_first[i]);
-        if (mqa_first[i] != 1) ok = 0;
+        if (mqa_first[i] != 1) once = 0;
     }
     r_puts(" sends "); r_putdec((UW)sends7); r_puts(" (want 1 each); late ");
     r_putdec((UW)mqa_late); r_puts(":"); r_putdec((UW)mqa_late_first); r_puts(" (want 1 in its first tick);");
     r_puts(" most sends in a tick "); r_putdec((UW)tick_max); r_puts(" (want 1)\r\n");
-    if (mqa_late_first != 1) ok = 0;
-    if (tick_max != 1) ok = 0;
-    say(ok ? "[mqa] PASS (three wants in one tick: each asker is answered once; a first answer goes before a re-drive)\r\n"
-           : "[mqa] FAIL (an asker whose want was read was never answered)\r\n");
-    return ok ? 0 : 1;
+    INT late = mqa_late_first == 1, one = tick_max == 1;
+    INT ok = once && late && one;
+    if (ok) {
+        say("[mqa] PASS (three wants in one tick: each asker is answered once; a first answer goes before a re-drive)\r\n");
+        return 0;
+    }
+    say("[mqa] FAIL (");
+    if (!once) say(" [not-once] an asker whose want was read was not answered exactly once;");
+    if (!late) say(" [late-not-first] the late asker's first answer did not take its first tick;");
+    if (!one) say(" [not-one-send] the most sends in a tick is not 1;");
+    say(" )\r\n");
+    return 1;
 }
 INT mq_queue_self_test(void (*emit)(const char *))
 {

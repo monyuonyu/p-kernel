@@ -1899,22 +1899,26 @@ jobs:
           grep -aF '[mtq] FAIL' nodes_x3fq_nc.log
           grep -aF '[mqq] FAIL' nodes_x3fq_nc.log
           grep -aF '[mqa] FAIL' nodes_x3fq_nc.log
+          grep -aF '[not-once]' nodes_x3fq_nc.log   # its own cause
           # X3F step 2: one want a tick, only the asker read this tick steps (step 1): [mqa] red, the reader still green
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_STEP_READ_ONLY >/dev/null
           (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc.log || true
           grep -aF '[mqq] PASS' nodes_mqa_nc.log
           grep -aF '[mqa] FAIL' nodes_mqa_nc.log
+          grep -aF '[not-once]' nodes_mqa_nc.log   # its own cause
           # a re-drive can take the tick before a late asker's first answer (one pass): [mqa] red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_REDRIVE_FIRST >/dev/null
           (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc2.log || true
           grep -aF '[mqa] FAIL' nodes_mqa_nc2.log
+          grep -aF '[late-not-first]' nodes_mqa_nc2.log   # its own cause
           # audit-177: more than one send in a tick (every row of the pass sends): [mqa] red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_MANY_SENDS >/dev/null
           (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc3.log || true
           grep -aF '[mqa] FAIL' nodes_mqa_nc3.log
+          grep -aF '[not-one-send]' nodes_mqa_nc3.log   # its own cause
 
       - name: "[n2-alive]: a killed narrow and a killed wide peer go DEAD on narrow and wide nodes, nobody else does (n2-wire16 'まだ' 4); A3 and A4 go red when a wide peer never dies (-DN2_NC_WIDE_NEVER_DEAD)"
         run: |
