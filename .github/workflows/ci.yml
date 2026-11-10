@@ -1564,6 +1564,12 @@ jobs:
           # X3H (CI 42656744519): mind/have reads every summary of a tick, not the last one only
           (printf 'nodes mhq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mhq.log || true
           grep -aF '[mhq] PASS' nodes_mhq.log
+          # X3F: mind/teach and mind/want read every packet of a tick (oldest unread first, then the slot)
+          (printf 'nodes mtq\nnodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_x3fq.log || true
+          grep -aF '[mtq] PASS' nodes_x3fq.log
+          grep -aF '[mqq] PASS' nodes_x3fq.log
+          # X3F step 2: three wants in one tick, each asker is answered (the answer table)
+          grep -aF '[mqa] PASS' nodes_x3fq.log
           # the snf/ss6 address of a node (N2): pk_node_ip on 10.1/16 (a wide self too), the old form on a LAN
           (printf 'nodes ipw\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_ipw.log || true
           grep -aF '[ipw] PASS' nodes_ipw.log
@@ -1873,7 +1879,7 @@ jobs:
           (printf 'kdds wide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_wide_nc.log || true
           grep -aF '[kdds-wide] FAIL region' kdds_wide_nc.log
 
-      - name: "kdds queue and the pfs announce reader go red when nothing is kept (-DKDDS_NC_NO_QUEUE) or the reader takes the last one only (-DPFSR_NC_ANN_LATEST, R-KDDSQ; -DMH_NC_POLL_LATEST, mind/have, X3H)"
+      - name: "kdds queue and the pfs announce reader go red when nothing is kept (-DKDDS_NC_NO_QUEUE) or the reader takes the last one only (-DPFSR_NC_ANN_LATEST, R-KDDSQ; -DMH_NC_POLL_LATEST, mind/have, X3H; -DMT_NC_TEACH_LATEST -DMQ_NC_WANT_LATEST, X3F)"
         run: |
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DKDDS_NC_NO_QUEUE >/dev/null
@@ -1887,6 +1893,28 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMH_NC_POLL_LATEST >/dev/null
           (printf 'nodes mhq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mhq_nc.log || true
           grep -aF '[mhq] FAIL' nodes_mhq_nc.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS="-DMT_NC_TEACH_LATEST -DMQ_NC_WANT_LATEST" >/dev/null
+          (printf 'nodes mtq\nnodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_x3fq_nc.log || true
+          grep -aF '[mtq] FAIL' nodes_x3fq_nc.log
+          grep -aF '[mqq] FAIL' nodes_x3fq_nc.log
+          grep -aF '[mqa] FAIL' nodes_x3fq_nc.log
+          # X3F step 2: one want a tick, only the asker read this tick steps (step 1): [mqa] red, the reader still green
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_STEP_READ_ONLY >/dev/null
+          (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc.log || true
+          grep -aF '[mqq] PASS' nodes_mqa_nc.log
+          grep -aF '[mqa] FAIL' nodes_mqa_nc.log
+          # a re-drive can take the tick before a late asker's first answer (one pass): [mqa] red
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_REDRIVE_FIRST >/dev/null
+          (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc2.log || true
+          grep -aF '[mqa] FAIL' nodes_mqa_nc2.log
+          # audit-177: more than one send in a tick (every row of the pass sends): [mqa] red
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DMQ_NC_MANY_SENDS >/dev/null
+          (printf 'nodes mqq\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_mqa_nc3.log || true
+          grep -aF '[mqa] FAIL' nodes_mqa_nc3.log
 
       - name: "[n2-alive]: a killed narrow and a killed wide peer go DEAD on narrow and wide nodes, nobody else does (n2-wire16 'まだ' 4); A3 and A4 go red when a wide peer never dies (-DN2_NC_WIDE_NEVER_DEAD)"
         run: |

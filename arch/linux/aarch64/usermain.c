@@ -70,6 +70,8 @@ IMPORT INT  mq_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) want, 
 IMPORT INT  pfs_repl_wide_self_test(void (*emit)(const char *));   /* N2 "まだ" 7, pfs_repl.c */
 IMPORT INT  mh_wide_self_test(void (*emit)(const char *));   /* N2 (c)(3) have, r3_incontext.c */
 IMPORT INT  mh_queue_self_test(void (*emit)(const char *));   /* X3H, mind/have reads every summary, r3_incontext.c */
+IMPORT INT  mt_queue_self_test(void (*emit)(const char *));   /* X3F, mind/teach reads every packet, r3_incontext.c */
+IMPORT INT  mq_queue_self_test(void (*emit)(const char *));   /* X3F, mind/want reads every packet, r3_incontext.c */
 IMPORT INT  net_onlink_self_test(void (*emit)(const char *));   /* N2, netstack.c */
 IMPORT void kdds_list(void);
 IMPORT void dtr_init(void);
@@ -1016,6 +1018,9 @@ EXPORT INT usermain(void)
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
             /* N2b: `nodes rows` checks the id -> table-row map (drpc.c). */
             else if (al >= 4 && a[0]=='r'&&a[1]=='o'&&a[2]=='w'&&a[3]=='s') pk_node_row_self_test(print);
+            /* X3F: `nodes mtq` / `nodes mqq` check that mind/teach / mind/want read every packet of a tick (r3). */
+            else if (al >= 3 && a[0]=='m'&&a[1]=='t'&&a[2]=='q') mt_queue_self_test(print);
+            else if (al >= 3 && a[0]=='m'&&a[1]=='q'&&a[2]=='q') mq_queue_self_test(print);
             /* N2 (c)(3): `nodes mtwide` checks the mind/teach wide origin (r3). */
             else if (al >= 2 && a[0]=='m'&&a[1]=='t') mt_wide_self_test(print);
             /* N2 (c)(3): `nodes mqwide` checks the mind/want wide asker (r3). */
