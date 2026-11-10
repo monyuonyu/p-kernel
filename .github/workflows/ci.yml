@@ -1675,7 +1675,9 @@ jobs:
           # PFS-REPL-WANT-DROP: the old drop is red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
-          PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
+          # audit-176, ubuntu-26.04 container: at 10 ms this negative held 43, 56, 46 and once 60 (green);
+          # at 0 ms (one write) 32, 24, 24 side by side, while the plain build holds 60 at both gaps
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
           # the 0 ms burst: announces sent at once (-DPFSR_NC_ANN_UNPACED), one WANT read a tick (-DPFSR_NC_WANT_LATEST)
           make -C boot/linux_x86_64 clean >/dev/null
