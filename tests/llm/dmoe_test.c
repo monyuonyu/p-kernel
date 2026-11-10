@@ -161,7 +161,7 @@ static int       g_fire_dead[64]; /* node died mid-token: alive at SCORE, dead a
                                    * (models an owner death between select and serve
                                    * -> the honest DROP / degraded(k/n) path, §4.2)  */
 
-static int fleet_alive(UB node, void *ctx) { (void)ctx; return g_alive[node] ? 1 : 0; }
+static int fleet_alive(pk_node_t node, void *ctx) { (void)ctx; return g_alive[node] ? 1 : 0; }
 
 static dmoe_bank *fleet_bank_of(UB node)
 {
@@ -172,7 +172,7 @@ static dmoe_bank *fleet_bank_of(UB node)
 /* the transport: an SS6L v2 responder in-process. The owner refuses if it does
  * not hold the expert resident OR (unless force_accept) its manifest ver != the
  * requester's pin (the [dmoe-version-skew] REFUSE). */
-static int fleet_remote(UB owner, int xid, int layer, const float *fin, int d,
+static int fleet_remote(pk_node_t owner, int xid, int layer, const float *fin, int d,
                         uint64_t expect_ver, uint32_t expect_epoch,
                         int force_accept, float *out, void *ctx)
 {

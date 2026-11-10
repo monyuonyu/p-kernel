@@ -1926,7 +1926,7 @@ jobs:
           # bits/libc-header-start.h. (Also pulls libc6-arm64-cross, which
           # provides /usr/aarch64-linux-gnu for the qemu-user -L below.)
           sudo tests/ci/apt_install.sh \
-            gcc-aarch64-linux-gnu libc6-dev-arm64-cross make qemu-user-static \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross make qemu-user \
             gdb-multiarch
       - name: Cross-build (Makefile auto-selects aarch64-linux-gnu- off-host)
         run: make -C boot/linux
@@ -1937,7 +1937,7 @@ jobs:
         run: |
           cd boot/linux
           timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee selftest.log
           grep -aF '[pfs] PASS' selftest.log
           grep -aF '[hrw] PASS' selftest.log
           grep -aF '[hrw-l1] PASS' selftest.log
@@ -1988,7 +1988,7 @@ jobs:
         run: |
           cd boot/linux
           timeout 60 sh -c "printf 'dtr fpdet\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fpdet.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee fpdet.log
           grep -aF '[fpdet] PASS' fpdet.log
       # RNG0 on hosted aarch64 (Android's core; gap-ledger RNG0-HOSTED): the
       # SIGALRM exit dispatch in arch/linux/aarch64/preempt.c. `tkconf` is the
@@ -1998,14 +1998,14 @@ jobs:
         run: |
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee tkconf_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee tkconf_a64.log
           grep -aF '[tkc] 133 PASS / 0 FAIL' tkconf_a64.log
       - name: compute pool under the exit dispatch on hosted aarch64 (non-blocking; 1 hang in 15 local runs)
         continue-on-error: true  # until 2026-11-30: 1 hang in 15 local runs, cause not found. ROADMAP 0-13
         run: |
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf pool\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee pool_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee pool_a64.log
           grep -aF '[pool] ALL PASS' pool_a64.log
       # FP-PRESERVE on aarch64: the trampoline returns through rt_sigreturn
       # from a copied frame, so v0-v31 come back from the copy's fpsimd record.
@@ -2013,7 +2013,7 @@ jobs:
         run: |
           cd boot/linux
           timeout 300 sh -c "printf 'tkconf fp\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64.log
           grep -aF '[fp] ALL PASS' fp_a64.log
       # ROADMAP 0-10: the relay broadcast sender (static buffer + shared nonce)
       # under the exit dispatch, N28-N30 only (`tkconf nr`; the whole `tkconf
@@ -2023,19 +2023,19 @@ jobs:
         run: |
           cd boot/linux
           timeout 300 sh -c "printf 'tkconf nr\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee nr_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee nr_a64.log
           grep -aF '[nosw] ALL PASS' nr_a64.log
       - name: receive entry points reject malformed packets on hosted aarch64 (tkconf rx, BLOCKING, 0-9)
         run: |
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf rx\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee rx_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee rx_a64.log
           grep -aF '[rxb] 17 PASS / 0 FAIL' rx_a64.log
       - name: signed swarm stop - accept rule on hosted aarch64 (tkconf stop, BLOCKING, 0-14 S2)
         run: |
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf stop\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee stop_a64.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee stop_a64.log
           grep -aF '[swarm-stop] 10 PASS / 0 FAIL' stop_a64.log
       # D5-k on aarch64: tk_exd_tsk frees its own stack, then force-dispatches;
       # knl_dispatch_to_schedtsk must leave it for knl_tmp_stack before idling.
@@ -2050,7 +2050,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DPK_HOSTED_NO_EXIT_DISPATCH >/dev/null
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee tkconf_a64_nc.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee tkconf_a64_nc.log
           grep -aF '[tkc] FAIL K9' tkconf_a64_nc.log
       - name: F1 goes red when the frame copy loses v0-v31 (negative control, -DPK_PREEMPT_DROP_FP)
         run: |
@@ -2058,7 +2058,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DPK_PREEMPT_DROP_FP >/dev/null
           cd boot/linux
           timeout 300 sh -c "printf 'tkconf fp\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc.log
           grep -aF '[fp] FAIL F1' fp_a64_nc.log
       # FP-CTL (2026-11-08): the voluntary switch keeps d8-d15 and FPCR; the old
       # dispatch.S (-DPK_DISPATCH_NO_FPCTL) gave d8-d15 back as another task's (F6 got 9)
@@ -2068,7 +2068,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DPK_DISPATCH_NO_FPCTL >/dev/null
           cd boot/linux
           timeout 300 sh -c "printf 'tkconf fp\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc2.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee fp_a64_nc2.log
           grep -aF '[fp] FAIL F6' fp_a64_nc2.log
       - name: N28 goes red with the no-switch regions emptied (negative control, -DPK_NOSW_OFF, 0-10)
         run: |
@@ -2076,7 +2076,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DPK_NOSW_OFF >/dev/null
           cd boot/linux
           timeout 300 sh -c "printf 'tkconf nr\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee nr_a64_nc.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee nr_a64_nc.log
           grep -aF '[nosw] FAIL N28' nr_a64_nc.log
       - name: K4 goes red without the kloader chunk_idx ceiling (negative control, -DRXB_NO_KLOAD_IDX, 0-9)
         run: |
@@ -2084,7 +2084,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DRXB_NO_KLOAD_IDX >/dev/null
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf rx\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee rx_a64_nc.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee rx_a64_nc.log
           grep -aF '[rxb] K4 FAIL' rx_a64_nc.log
       - name: T6b goes red without the stop length check (negative control, -DSWARM_STOP_NO_LENCHECK, 0-14 S2)
         run: |
@@ -2092,7 +2092,7 @@ jobs:
           make -C boot/linux EXTRA_CFLAGS=-DSWARM_STOP_NO_LENCHECK >/dev/null
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf stop\nexit\n' | \
-            qemu-aarch64-static -L /usr/aarch64-linux-gnu ./p-kernel" | tee stop_a64_nc.log
+            qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee stop_a64_nc.log
           grep -aF '[swarm-stop] T6b FAIL' stop_a64_nc.log
 
   bare-metal:
@@ -3224,7 +3224,7 @@ jobs:
     # harnesses drive BOTH host arches: the x86_64-hosted leg runs NATIVELY on
     # this x86_64 runner; the aarch64-hosted leg cross-builds (gcc-aarch64-
     # linux-gnu + libc6-dev-arm64-cross) and executes transparently under
-    # qemu-user-static via binfmt, with QEMU_LD_PREFIX pointing the emulator at
+    # qemu-user via binfmt (qemu-user-binfmt), with QEMU_LD_PREFIX pointing the emulator at
     # the aarch64 glibc (same emulation the ump-aarch64-cross job already uses).
     name: "接続フォールバック cert (heartbeat / UDP↔TCP / スーパーノード自動昇格)"
     runs-on: ubuntu-latest
@@ -3244,12 +3244,16 @@ jobs:
           sudo tests/ci/apt_update.sh
           # gcc/make: native x86_64 leg. gcc-aarch64-linux-gnu + libc6-dev-arm64-
           # cross: cross-build the aarch64-hosted leg (real aarch64 glibc
-          # headers, like ump-aarch64-cross). qemu-user-static + binfmt-support:
+          # headers, like ump-aarch64-cross). qemu-user + qemu-user-binfmt (ubuntu-26.04 has no qemu-user-static; its qemu-user is static):
           # register the aarch64 binfmt handler so the harness's direct
           # `./p-kernel` invocation of the aarch64 ELF runs under qemu.
           sudo tests/ci/apt_install.sh \
             gcc make gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
-            qemu-user-static binfmt-support
+            qemu-user qemu-user-binfmt
+          # qemu-user-binfmt has no postinst; systemd's dpkg trigger on /usr/lib/binfmt.d
+          # registers it. Say so plainly if it did not (else the aarch64 leg fails later as exec format error)
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || sudo systemctl restart systemd-binfmt
+          test -e /proc/sys/fs/binfmt_misc/qemu-aarch64
       - name: heartbeat cert (unconditional relay keepalive — connect-anywhere SLICE 1)
         run: bash tests/run_heartbeat.sh
       - name: autofallback cert (automatic UDP<->TCP relay transport — SLICE 4)
@@ -3640,7 +3644,7 @@ jobs:
           # cross gcc needs libc6-dev-arm64-cross too, else it falls back to the
           # host /usr/include and dies on bits/libc-header-start.h.
           sudo tests/ci/apt_install.sh \
-            gcc make libc6-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
+            gcc make libc6-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
       - name: "[depth-*] cert (metric-nonvacuous / deliberation / compound-verified-only / not-breadth)"
         run: bash tests/llm/run_depth.sh | tee llm_depth.log
       - name: Load-bearing gates PASS + the two anti-theater teeth are RED-when-stubbed
@@ -3706,7 +3710,7 @@ jobs:
           cc $CF $SRC -lm -o /tmp/depth_x86
           aarch64-linux-gnu-gcc $CF $SRC -lm -static -o /tmp/depth_a64
           /tmp/depth_x86 --machine  | grep -aF '[machine]' > /tmp/depth_x86.mh
-          qemu-aarch64-static /tmp/depth_a64 --machine | grep -aF '[machine]' > /tmp/depth_a64.mh
+          qemu-aarch64 /tmp/depth_a64 --machine | grep -aF '[machine]' > /tmp/depth_a64.mh
           echo "x86_64:"; cat /tmp/depth_x86.mh
           echo "aarch64:"; cat /tmp/depth_a64.mh
           diff /tmp/depth_x86.mh /tmp/depth_a64.mh \
