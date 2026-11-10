@@ -52,7 +52,7 @@ static int g_pass = 0, g_fail = 0;
 static void emit(const char *s) { fputs(s, stdout); }
 
 /* A non-HRW control (modulo-N) — used to PROVE [place-rehome] falsifiable. */
-static int modN_owner(unsigned e, const unsigned char *m, int n)
+static int modN_owner(unsigned e, const pk_node_t *m, int n)
 {
     return (int)m[(int)e % n];
 }

@@ -45,7 +45,14 @@ node 2 b "$d/fb" & PB=$!; exec 8<>"$d/fb"
 wait_for "$d/la.log" 'P1 replication ready' 60; wait_for "$d/lb.log" 'P1 replication ready' 60
 sleep 15
 GAP="${PFS_BURST_GAP:-0.01}"
-for i in $(seq 1 "$N"); do printf 'pfs put burst-%d\n' "$i" >&7; sleep "$GAP"; done
+if [ "$GAP" = 0 ]; then
+    # one write for the whole burst: a line + `sleep 0` (a fork) per put spread 60 puts over
+    # ~2 ticks on ubuntu-26.04 and the -DPFSR_NC_ANN_UNPACED negative went green (60/60,
+    # run 42708932708) while ubuntu-24.04 held 44 (fix/ci-ubuntu26, 2026-11-10)
+    seq 1 "$N" | sed 's/^/pfs put burst-/' >&7
+else
+    for i in $(seq 1 "$N"); do printf 'pfs put burst-%d\n' "$i" >&7; sleep "$GAP"; done
+fi
 sleep 40
 printf 'pfs ls\n' >&8
 sleep 3
