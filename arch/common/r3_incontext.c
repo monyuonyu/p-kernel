@@ -5295,11 +5295,48 @@ static UB mq_answer_sent = 0;
         mq_poll_wants(); M_REDRIVE_OWN(); mq_publish_wants(); MH_TICK(); } while (0)
 #endif
 
+#ifdef _TK_HOSTED_LIBC_
+/* X3F (2026-11-10, hosted only, kdds-queue.md 3d): mind/teach and mind/want are
+ * LATEST_ONLY, one slot for the whole region, read once a tick. Two packets in
+ * one tick and the first is never read: in the red X3 runs (container, heavy
+ * load) node 4 answered 260's want for fire and, a few lines later, someone's
+ * want for snow on the same mind/teach; 260 read the snow (a seq it had seen,
+ * dropped silently) and never the fire, and the answer-once rule did not send
+ * it again until 260's next want generation, after the X3 window. On the asker
+ * side 44 never printed 260's first want (other askers' wants on the slot).
+ * Now a tick reads the oldest message not yet read (kdds_sub_next) and, only
+ * when there is none, the slot again as before (kdds_sub): one packet a tick
+ * still, the body unchanged, a re-read slot still drives the re-drives, and the
+ * once-per-seq checks drop the second reading of the same packet.
+ * -DMT_NC_TEACH_LATEST / -DMQ_NC_WANT_LATEST: the old read (negative controls
+ * of `nodes mtq` / `nodes mqq`). Bare metal reads kdds_sub as before (crown). */
+static W x3f_read_one(W h, void *buf, W len, INT latest_only)
+{
+    if (!latest_only) {
+        W r = kdds_sub_next(h, buf, len);
+        if (r > 0) return r;
+    }
+    return kdds_sub(h, buf, len, 0);
+}
+#ifdef MT_NC_TEACH_LATEST
+#define MT_RX_LATEST_ONLY 1
+#else
+#define MT_RX_LATEST_ONLY 0
+#endif
+#ifdef MQ_NC_WANT_LATEST
+#define MQ_RX_LATEST_ONLY 1
+#else
+#define MQ_RX_LATEST_ONLY 0
+#endif
+static W mt_rx_read(W h, void *buf, W len) { return x3f_read_one(h, buf, len, MT_RX_LATEST_ONLY); }
+static W mq_rx_read(W h, void *buf, W len) { return x3f_read_one(h, buf, len, MQ_RX_LATEST_ONLY); }
+#endif
+
 static void mq_poll_wants(void)
 {
     if (mq_want_sub_h() < 0) return;
 #ifdef _TK_HOSTED_LIBC_
-    W r = kdds_sub(mq_want_sub, &mq_rx_want_w, (W)sizeof mq_rx_want_w, 0);   /* 24 or 26 */
+    W r = mq_rx_read(mq_want_sub, &mq_rx_want_w, (W)sizeof mq_rx_want_w);   /* 24 or 26 */
 #else
     W r = kdds_sub(mq_want_sub, &mq_rx_want, (W)sizeof mq_rx_want, 0);
 #endif
@@ -5638,9 +5675,9 @@ void mind_net_task(INT stacd, void *exinf)
             mt_rx_pkt = mt_inj_pkt; mt_inj_have = 0; r = (W)sizeof mt_rx_pkt;
             r_puts("[mind] inject: taken\r\n");
         } else
-            r = kdds_sub(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w, 0);
+            r = mt_rx_read(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w);
 #elif defined(_TK_HOSTED_LIBC_)
-        W r = kdds_sub(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w, 0);   /* N2 (c)(3): 53 or 55 */
+        W r = mt_rx_read(mt_sub_h, &mt_rx_w, (W)sizeof mt_rx_w);   /* N2 (c)(3): 53 or 55; X3F */
 #else
         W r = kdds_sub(mt_sub_h, &mt_rx_pkt, (W)sizeof mt_rx_pkt, 0);
 #endif
@@ -9154,5 +9191,62 @@ INT mh_queue_self_test(void (*emit)(const char *))
     }
     say("[mhq] PASS (the mind/have reader takes every summary of the tick, oldest first)\r\n");
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* X3F `nodes mtq` / `nodes mqq`: the mind/teach and mind/want readers  */
+/* (mt_rx_read, mq_rx_read) see every packet of a tick. Three packets   */
+/* (tags 1, 2, 3) arrive in a row on a test topic; four reads must give */
+/* 1 2 3 3 (oldest first, then the slot again as before). The old read */
+/* gives 3 3 3 3. Own buffer and topic: no live state is touched.      */
+/* -DMT_NC_TEACH_LATEST / -DMQ_NC_WANT_LATEST: red.                     */
+/* Limit: checks the reader, not that the task calls it (check_callsites */
+/* mt-rx-read / mq-rx-read pin the calls).                              */
+/* ------------------------------------------------------------------ */
+static void x3fq_rx(const char *name, pk_node8_t src, U1 tag)
+{
+    static KDDS_PKT k;
+    __builtin_memset(&k, 0, sizeof k);
+    k.magic = KDDS_MAGIC; k.version = KDDS_VERSION; k.type = KDDS_DATA_PKT;
+    k.src_node = src; k.data_len = 8;
+    INT n = 0; while (name[n]) n++; n++;
+    for (INT i = 0; i < n && i < KDDS_NAME_MAX; i++) k.name[i] = name[i];
+    k.name_len = (UH)n;
+    k.data[0] = tag;
+    kdds_rx(src, KDDS_PORT, (const UB *)&k, (UH)sizeof k);
+}
+static INT x3fq_test(void (*emit)(const char *), const char *NM, const char *who,
+                     W (*rd)(W, void *, W))
+{
+    void (*say)(const char *) = emit ? emit : r_puts;
+    W h = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    if (h < 0) { say(who); say(" FAIL open\r\n"); return 1; }
+    static UB b[KDDS_DATA_MAX];
+    W r0 = rd(h, b, (W)sizeof b);                 /* start reading: nothing yet */
+    x3fq_rx(NM, 201, 1); x3fq_rx(NM, 202, 2); x3fq_rx(NM, 203, 3);
+    UB got[4]; INT ok = (r0 <= 0);
+    static const UB want[4] = { 1, 2, 3, 3 };
+    for (INT i = 0; i < 4; i++) {
+        b[0] = 0;
+        W r = rd(h, b, (W)sizeof b);
+        got[i] = r > 0 ? b[0] : 0;
+        if (got[i] != want[i]) ok = 0;
+    }
+    kdds_close(h);
+    r_puts(who); r_puts(" read");
+    for (INT i = 0; i < 4; i++) { r_puts(" "); r_putdec((UW)got[i]); }
+    r_puts(" (want 1 2 3 3)\r\n");
+    say(who);
+    say(ok ? " PASS (every packet of the tick is read, oldest first, then the slot as before)\r\n"
+           : " FAIL (a packet overwritten in the same tick was never read)\r\n");
+    return ok ? 0 : 1;
+}
+INT mt_queue_self_test(void (*emit)(const char *))
+{
+    return x3fq_test(emit, "test/mtq", "[mtq]", mt_rx_read);
+}
+INT mq_queue_self_test(void (*emit)(const char *))
+{
+    return x3fq_test(emit, "test/mqq", "[mqq]", mq_rx_read);
 }
 #endif /* _TK_HOSTED_LIBC_ */
