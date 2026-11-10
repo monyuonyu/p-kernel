@@ -5109,6 +5109,13 @@ typedef struct {
 #ifdef _TK_HOSTED_LIBC_
     UB redrive_rr;                   /* 1-3c: next answered[] slot to re-drive  */
     UB redrive_slow;                 /* 1-3c: ticks since the last slow re-drive */
+    /* X3F step 2 (answer table): the asker's latest want, kept here so every
+     * tick steps every asker, not only the one whose packet was read */
+    pk_node_t org;                   /* the asker of this row                   */
+    UB has_want;                     /* a want of this generation is stored     */
+    UB fresh;                        /* read this tick (-DMQ_NC_STEP_READ_ONLY) */
+    UB wn;                           /* its key count                           */
+    UB wkeys[R3_WQ_MAX];             /* its keys                                */
 #endif
 } MQ_ASK_STATE;
 #ifdef _TK_HOSTED_LIBC_
@@ -5124,6 +5131,8 @@ static MQ_ASK_STATE mq_ask_state[DNODE_ROWS];
 #endif
 #define MQ_ASK_AT(o) ({ int r_ = MQ_ASK_ROW(o); r_ < 0 ? (MQ_ASK_STATE *)0 : &mq_ask_state[r_]; })
 static INT mt_org_takes(pk_node_t o);
+/* `nodes mqq` sets the stagger of a new generation (-1: drpc_my_node & 3) */
+static INT mq_stagger_force = -1;
 #else
 typedef U1 mq_org_t;
 static MQ_ASK_STATE mq_ask_state[DNODE_MAX];
@@ -5146,6 +5155,8 @@ static void mq_gen_reset(mq_org_t o, UW want_seq)
         s->redrive_key = 0xFF; s->redrive_ticks = 0;
 #ifdef _TK_HOSTED_LIBC_
         s->redrive_rr = 0; s->redrive_slow = 0;
+        if (mq_stagger_force >= 0) s->stagger = (UB)mq_stagger_force;
+        s->has_want = 0;                       /* the taker stores the new want */
 #endif
     }
 }
@@ -5245,10 +5256,6 @@ static INT mq_answer_build(mq_org_t asker, UB k, INT *forgotten_out)
     return 1;
 }
 
-/* ONE poll site — called once per mind_net_task tick. Reads the latest want
- * packet, gates it in the mind/teach order, and answers ONE new key I hold this
- * tick (after the stagger), or re-drives the last answer while still wanted +
- * budget. Serialized behind m_gate for the r3_fq / prov reads. */
 #ifdef _TK_HOSTED_LIBC_
 /* ROADMAP 1-2b (MIND-GEN-0-B E1, second half): mind/teach is LATEST_ONLY, and
  * every tick ran mq_poll_wants (an answer) and then m_republish_last (my own
@@ -5332,14 +5339,233 @@ static W mt_rx_read(W h, void *buf, W len) { return x3f_read_one(h, buf, len, MT
 static W mq_rx_read(W h, void *buf, W len) { return x3f_read_one(h, buf, len, MQ_RX_LATEST_ONLY); }
 #endif
 
+#ifdef _TK_HOSTED_LIBC_
+/* X3F step 2 (2026-11-11, hosted only, kdds-queue.md 3e): the answer table.
+ * Step 1 read every want of a tick (oldest first), but the responder still
+ * stepped only the asker whose packet it had just read: the stagger, the
+ * first answer and the re-drives of an asker went forward only while its want
+ * was read again, which on the one region slot is while nobody else asks. A
+ * want read once from the queue was used for one stagger step and then never
+ * again: in the 14 container pairs of 11-10 node 4 and 44 received 260's want
+ * (seq 1) and neither answered it. Now each asker's row keeps its latest want
+ * (org, keys), mq_drain reads the tick's wants into the rows (up to
+ * MQ_PER_TICK, oldest first; the slot again when there are none), and
+ * mq_step_rows steps every row each tick: the stagger counts down for each,
+ * and the ONE send of the tick (as before: one answer or re-drive a tick)
+ * goes to the next row in turn that has one. The body of a row's turn is the
+ * old body (answer-once, the 1-3c re-drives, -DMQ_REDRIVE_LAST_ONLY).
+ * -DMQ_NC_STEP_READ_ONLY: one packet a tick and only the rows read this tick
+ * are stepped (step 1, the negative control of `nodes mqq` [mqa]).
+ * Bare metal is unchanged (crown). */
+#ifndef MQ_PER_TICK
+#define MQ_PER_TICK 16
+#endif
+typedef INT  (*mq_hold_fn)(mq_org_t, UB, INT *);
+typedef void (*mq_sent_fn)(mq_org_t, UB, INT, INT);
+static UH mq_step_rr;                /* the row that gets the next send first  */
+
+/* gates one received want (r bytes in mq_rx_want_w) in the mind/teach order
+ * and stores it in its asker's row. 1 if stored. Caller holds m_gate. */
+static INT mq_take_want(W r)
+{
+    if (r < (W)sizeof mq_rx_want || mq_rx_want.magic != MQ_MAGIC) return 0;
+    if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
+        U1 vorg = mq_rx_want.origin_node;
+        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
+            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
+            r_puts("[mind] mind/want wire_ver mismatch from node ");
+            r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
+        }
+        return 0;
+    }
+    if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
+        U1 forg = mq_rx_want.origin_node;
+        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
+            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
+            r_puts("[mind] mind/want vocab mismatch from node ");
+            r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
+                   " answering would gossip mis-bound ids)\r\n");
+        }
+        return 0;
+    }
+    /* N2 (c)(3): the asker from the tail when origin_node is 0xFF; a one-byte
+     * id at or above DNODE_MAX is dropped as before (mt_org_takes) */
+    pk_node_t o = mq_want_rx_origin(&mq_rx_want_w, r);
+    if (o == drpc_my_node) return 0;           /* own want echo — ignore        */
+    if (!mt_org_takes(o))  return 0;
+    MQ_ASK_STATE *s = MQ_ASK_AT(o);
+    if (!s) return 0;                          /* the wide rows are full        */
+    UW S = mq_rx_want.want_seq;
+    INT n = (INT)mq_rx_want.n; if (n > R3_WQ_MAX) n = R3_WQ_MAX;
+
+    /* print the receipt ONCE per new want_seq ([pull-want-live]) */
+    INT gen_changed = (!s->used || s->want_seq != S);
+    mq_gen_reset(o, S);
+    s->org = o; s->wn = (UB)n; s->has_want = 1; s->fresh = 1;
+    for (INT i = 0; i < n; i++) s->wkeys[i] = mq_rx_want.keys[i];
+
+    if (gen_changed) {
+        r_puts("[mind] mind/want from node "); r_putdec((UW)o);
+        r_puts(" seq="); r_putdec(S); r_puts(" n="); r_putdec((UW)n);
+        r_puts(" keys");
+        for (INT i = 0; i < n; i++) { r_puts(" "); r_putdec((UW)s->wkeys[i]); }
+        r_puts("\r\n");
+        /* disease-leg print ([pull-unknown-silent]): I hold NONE of the wanted
+         * keys — say so once per generation (as before: when no stagger). */
+        if (s->stagger == 0 && n > 0) {
+            INT hold_any = 0;
+            for (INT i = 0; i < n; i++) {
+                INT b, f = m_find_key((INT)s->wkeys[i], &b);
+                if (f >= 0) { hold_any = 1; break; }
+            }
+            if (!hold_any)
+                r_puts("[mind] mind/want: none of the wanted keys held — silent\r\n");
+        }
+    }
+    return 1;
+}
+
+/* reads this tick's wants into the rows; the number read. Caller holds m_gate. */
+static INT mq_drain(W h)
+{
+    INT k = 0;
+#if !MQ_RX_LATEST_ONLY && !defined(MQ_NC_STEP_READ_ONLY)
+    for (; k < MQ_PER_TICK; k++) {
+        W r = kdds_sub_next(h, &mq_rx_want_w, (W)sizeof mq_rx_want_w);   /* 24 or 26 */
+        if (r <= 0) break;
+        (void)mq_take_want(r);
+    }
+    if (k > 0) return k;
+#endif
+    W r = mq_rx_read(h, &mq_rx_want_w, (W)sizeof mq_rx_want_w);
+    if (r <= 0) return 0;
+    (void)mq_take_want(r);
+    return 1;
+}
+
+/* one row's turn (stagger already 0): answer ONE new key it wants that I hold,
+ * else re-drive; 1 if it sent. hold builds the answer (mq_answer_build). */
+static INT mq_row_turn(MQ_ASK_STATE *s, mq_hold_fn hold, mq_sent_fn sent)
+{
+    mq_org_t o = s->org;
+    INT n = (INT)s->wn;
+    for (INT i = 0; i < n; i++) {
+        UB k = s->wkeys[i];
+        if (mq_already_answered(o, k)) continue;   /* dedup peek             */
+        INT forgotten = 0;
+        if (!hold(o, k, &forgotten)) continue;     /* refuse: not held        */
+        (void)mq_mark_answer(o, s->want_seq, k);   /* now MARK (answer-once)  */
+        s->redrive_key = k; s->redrive_ticks = 0;
+        sent(o, k, 1, forgotten);
+        return 1;
+    }
+#ifndef MQ_REDRIVE_LAST_ONLY
+    /* 1-3c: re-drive EVERY key answered this generation, in turn, while still
+     * wanted (silent): MQ_ANS_REDRIVE_MAX ticks per key, then one every
+     * MQ_ANS_SLOW_EVERY ticks, MQ_ANS_SLOW_MAX more at most (a dead asker's
+     * want stays in its row). -DMQ_REDRIVE_LAST_ONLY: the old behaviour. */
+    UH fast = (UH)(MQ_ANS_REDRIVE_MAX * s->n_answered);
+    INT go = s->n_answered > 0 && s->redrive_ticks < fast + MQ_ANS_SLOW_MAX;
+    if (go && s->redrive_ticks >= fast) {
+        if (++s->redrive_slow < MQ_ANS_SLOW_EVERY) go = 0; else s->redrive_slow = 0;
+    }
+    if (go) {
+        for (INT t = 0; t < (INT)s->n_answered; t++) {
+            INT j = ((INT)s->redrive_rr + t) % (INT)s->n_answered;
+            UB k = s->answered[j];
+            INT listed = 0;
+            for (INT i = 0; i < n; i++) if (s->wkeys[i] == k) { listed = 1; break; }
+            INT fg = 0;
+            if (!listed || !hold(o, k, &fg)) continue;
+            sent(o, k, 0, fg);
+            s->redrive_ticks++;
+            s->redrive_rr = (UB)((j + 1) % (INT)s->n_answered);
+            return 1;
+        }
+    }
+#else
+    if (s->redrive_key != 0xFF && s->redrive_ticks < MQ_ANS_REDRIVE_MAX) {
+        INT listed = 0;
+        for (INT i = 0; i < n; i++) if (s->wkeys[i] == s->redrive_key) { listed = 1; break; }
+        if (listed) {
+            INT fg = 0;
+            if (hold(o, s->redrive_key, &fg)) {
+                sent(o, s->redrive_key, 0, fg);
+                s->redrive_ticks++;
+                return 1;
+            }
+            s->redrive_key = 0xFF;             /* no longer hold it — stop      */
+        }
+    }
+#endif
+    return 0;
+}
+
+/* every row, each tick: the ONE send of the tick to the next row in turn whose
+ * stagger was already 0, then the stagger of the others counts down. The
+ * sends of the tick (0 or 1). Caller holds m_gate. */
+static INT mq_step_rows(mq_hold_fn hold, mq_sent_fn sent)
+{
+    const INT NR = (INT)(sizeof mq_ask_state / sizeof mq_ask_state[0]);
+    INT did = 0;
+    for (INT t = 0; t < NR && !did; t++) {
+        INT ri = ((INT)mq_step_rr + t) % NR;
+        MQ_ASK_STATE *s = &mq_ask_state[ri];
+        if (!s->used || !s->has_want || s->stagger > 0) continue;
+#ifdef MQ_NC_STEP_READ_ONLY
+        if (!s->fresh) continue;
+#endif
+        if (mq_row_turn(s, hold, sent)) { did = 1; mq_step_rr = (UH)((ri + 1) % NR); }
+    }
+    for (INT ri = 0; ri < NR; ri++) {
+        MQ_ASK_STATE *s = &mq_ask_state[ri];
+        if (!s->used || !s->has_want) continue;
+#ifdef MQ_NC_STEP_READ_ONLY
+        if (s->fresh && s->stagger > 0) s->stagger--;
+#else
+        if (s->stagger > 0) s->stagger--;      /* cross-responder stagger (§5)  */
+#endif
+        s->fresh = 0;
+    }
+    return did;
+}
+
+/* the production send: the ONE wire-writer, and the receipt of a first answer */
+static void mq_ans_sent(mq_org_t o, UB k, INT first, INT forgotten)
+{
+    (void)MQ_ANS_SEND();
+    mq_answer_sent = 1;                        /* 1-2b: no own re-drive this tick */
+    if (!first) return;
+    r_puts("[mind] answering want key "); r_putdec((UW)k);
+    r_puts(" (\""); r_puts(r3_vocab_key_word((INT)k));
+    r_puts("\") from node "); r_putdec((UW)o);
+    r_puts(" -> re-teach on mind/teach as origin ");
+    r_putdec(MQ_ANS_SAID());
+    r_puts(" seq="); r_putdec(mq_ans_pkt.fact_seq);
+    if (forgotten) r_puts(" [re-teaching node its OWN forgotten fact]");
+    r_puts("\r\n");
+}
+
+/* ONE poll site — called once per mind_net_task tick: the tick's wants into
+ * the rows, then every row steps. Serialized behind m_gate for the r3_fq /
+ * prov reads. */
 static void mq_poll_wants(void)
 {
     if (mq_want_sub_h() < 0) return;
-#ifdef _TK_HOSTED_LIBC_
-    W r = mq_rx_read(mq_want_sub, &mq_rx_want_w, (W)sizeof mq_rx_want_w);   /* 24 or 26 */
+    m_gate_acquire();
+    (void)mq_drain(mq_want_sub);
+    (void)mq_step_rows(mq_answer_build, mq_ans_sent);
+    m_gate_release();
+}
 #else
+/* ONE poll site — called once per mind_net_task tick. Reads the latest want
+ * packet, gates it in the mind/teach order, and answers ONE new key I hold this
+ * tick (after the stagger), or re-drives the last answer while still wanted +
+ * budget. Serialized behind m_gate for the r3_fq / prov reads. */
+static void mq_poll_wants(void)
+{
+    if (mq_want_sub_h() < 0) return;
     W r = kdds_sub(mq_want_sub, &mq_rx_want, (W)sizeof mq_rx_want, 0);
-#endif
     if (r < (W)sizeof mq_rx_want || mq_rx_want.magic != MQ_MAGIC) return;
 
     /* gates, in the mind/teach order (magic already checked). */
@@ -5362,19 +5588,9 @@ static void mq_poll_wants(void)
         }
         return;
     }
-#ifdef _TK_HOSTED_LIBC_
-    /* N2 (c)(3): the asker from the tail when origin_node is 0xFF; a one-byte
-     * id at or above DNODE_MAX is dropped as before (mt_org_takes) */
-    pk_node_t o = mq_want_rx_origin(&mq_rx_want_w, r);
-    if (o == drpc_my_node) return;             /* own want echo — ignore        */
-    if (!mt_org_takes(o))  return;
-    MQ_ASK_STATE *s = MQ_ASK_AT(o);
-    if (!s) return;                            /* the wide rows are full        */
-#else
     U1 o = mq_rx_want.origin_node;
     if (o == drpc_my_node) return;             /* own want echo — ignore        */
     if (o >= DNODE_MAX)    return;
-#endif
     UW S = mq_rx_want.want_seq;
     INT n = (INT)mq_rx_want.n; if (n > R3_WQ_MAX) n = R3_WQ_MAX;
 
@@ -5382,14 +5598,9 @@ static void mq_poll_wants(void)
 
     /* print the receipt ONCE per new want_seq ([pull-want-live]); a re-drive of
      * the same generation is silent (avoids the LATEST_ONLY re-arrival flood). */
-#ifdef _TK_HOSTED_LIBC_
-    INT gen_changed = (!s->used || s->want_seq != S);
-    mq_gen_reset(o, S);
-#else
     INT gen_changed = (!mq_ask_state[o].used || mq_ask_state[o].want_seq != S);
     mq_gen_reset(o, S);
     MQ_ASK_STATE *s = &mq_ask_state[o];
-#endif
 
     if (gen_changed) {
         r_puts("[mind] mind/want from node "); r_putdec((UW)o);
@@ -5410,9 +5621,6 @@ static void mq_poll_wants(void)
             if (!mq_answer_build(o, k, &forgotten)) continue;  /* refuse: not held */
             (void)mq_mark_answer(o, S, k);     /* now MARK (answer-once)         */
             (void)MQ_ANS_SEND();   /* the ONE wire-writer            */
-#ifdef _TK_HOSTED_LIBC_
-            mq_answer_sent = 1;                /* 1-2b: no own re-drive this tick */
-#endif
             s->redrive_key = k; s->redrive_ticks = 0;
             r_puts("[mind] answering want key "); r_putdec((UW)k);
             r_puts(" (\""); r_puts(r3_vocab_key_word((INT)k));
@@ -5437,37 +5645,6 @@ static void mq_poll_wants(void)
         }
     }
 
-#if defined(_TK_HOSTED_LIBC_) && !defined(MQ_REDRIVE_LAST_ONLY)
-    /* 1-3c: re-drive EVERY key answered this generation, in turn, while still
-     * wanted (silent): MQ_ANS_REDRIVE_MAX ticks per key, then one every
-     * MQ_ANS_SLOW_EVERY ticks, MQ_ANS_SLOW_MAX more at most. Before, only the
-     * last answer was re-driven and only for ~10 s; mind/teach is LATEST_ONLY
-     * and the asker does not re-issue a want for the same generation, so an
-     * asker busy for longer than that (in audit-21 B was, after learning its
-     * first fact) got none of the answers, ever. The slow tail is bounded
-     * because a dead asker's want stays in the LATEST_ONLY slot.
-     * -DMQ_REDRIVE_LAST_ONLY: the old behaviour (the negative control). */
-    UH fast = (UH)(MQ_ANS_REDRIVE_MAX * s->n_answered);
-    INT go = !did_answer && s->n_answered > 0 && s->redrive_ticks < fast + MQ_ANS_SLOW_MAX;
-    if (go && s->redrive_ticks >= fast) {
-        if (++s->redrive_slow < MQ_ANS_SLOW_EVERY) go = 0; else s->redrive_slow = 0;
-    }
-    if (go) {
-        for (INT t = 0; t < (INT)s->n_answered; t++) {
-            INT j = ((INT)s->redrive_rr + t) % (INT)s->n_answered;
-            UB k = s->answered[j];
-            INT listed = 0;
-            for (INT i = 0; i < n; i++) if (mq_rx_want.keys[i] == k) { listed = 1; break; }
-            INT fg = 0;
-            if (!listed || !mq_answer_build(o, k, &fg)) continue;
-            (void)MQ_ANS_SEND();
-            mq_answer_sent = 1;
-            s->redrive_ticks++;
-            s->redrive_rr = (UB)((j + 1) % (INT)s->n_answered);
-            break;
-        }
-    }
-#else
     /* re-drive the last answer (silent) while still wanted + budget remains. */
     if (!did_answer && s->redrive_key != 0xFF && s->redrive_ticks < MQ_ANS_REDRIVE_MAX) {
         INT listed = 0;
@@ -5476,19 +5653,16 @@ static void mq_poll_wants(void)
             INT fg = 0;
             if (mq_answer_build(o, s->redrive_key, &fg)) {
                 (void)MQ_ANS_SEND();
-#ifdef _TK_HOSTED_LIBC_
-                mq_answer_sent = 1;
-#endif
                 s->redrive_ticks++;
             } else {
                 s->redrive_key = 0xFF;         /* no longer hold it — stop      */
             }
         }
     }
-#endif
 
     m_gate_release();
 }
+#endif
 
 /* ================================================================== *
  *  LM-7 mind_net_task — the region subscriber (VIII.3 / VIII.9)        *
@@ -9245,8 +9419,77 @@ INT mt_queue_self_test(void (*emit)(const char *))
 {
     return x3fq_test(emit, "test/mtq", "[mtq]", mt_rx_read);
 }
+/* X3F step 2 `nodes mqq` [mqa]: the answer table. Three askers' wants (key */
+/* 7, a held key) arrive in ONE tick on a test topic; with a stagger of 2   */
+/* each, eight ticks of mq_drain + mq_step_rows must give each asker its    */
+/* first answer once (a fake hold and send; no wire). Step 1 (one row a     */
+/* tick, -DMQ_NC_STEP_READ_ONLY) answers the last asker only; the old read  */
+/* (-DMQ_NC_WANT_LATEST) never sees the first two. The live rows are saved  */
+/* and put back; m_gate is held, so the task's own step waits.              */
+/* Limit: a fake hold (not mq_answer_build) and a fake send.                */
+static mq_org_t mqa_org[3];
+static UB mqa_first[3];
+static INT mqa_sends;
+static INT mqa_hold(mq_org_t o, UB k, INT *fg) { (void)o; if (fg) *fg = 0; return k == 7; }
+static void mqa_sent(mq_org_t o, UB k, INT first, INT fg)
+{
+    (void)k; (void)fg; mqa_sends++;
+    for (INT i = 0; i < 3; i++) if (first && mqa_org[i] == o) mqa_first[i]++;
+}
+static void mqa_rx(const char *name, pk_node8_t src, pk_node_t asker)
+{
+    static KDDS_PKT k;
+    static MQ_WANT_PKT p;
+    __builtin_memset(&k, 0, sizeof k);
+    __builtin_memset(&p, 0, sizeof p);
+    p.magic = MQ_MAGIC; p.want_seq = 1; p.origin_node = (U1)asker; p.n = 1;
+    p.wire_ver = MT_WIRE_VER_VOCAB; p.keys[0] = 7;
+    mt_vocab_fp_fill(p.vocab_fp);
+    k.magic = KDDS_MAGIC; k.version = KDDS_VERSION; k.type = KDDS_DATA_PKT;
+    k.src_node = src; k.data_len = (UH)sizeof p;
+    INT n = 0; while (name[n]) n++; n++;
+    for (INT i = 0; i < n && i < KDDS_NAME_MAX; i++) k.name[i] = name[i];
+    k.name_len = (UH)n;
+    __builtin_memcpy(k.data, &p, sizeof p);
+    kdds_rx(src, KDDS_PORT, (const UB *)&k, (UH)sizeof k);
+}
+static INT mqa_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : r_puts;
+    static const char NM[] = "test/mqa";
+    W h = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
+    if (h < 0) { say("[mqa] FAIL open\r\n"); return 1; }
+    static MQ_ASK_STATE keep[sizeof mq_ask_state / sizeof mq_ask_state[0]];
+    pk_node_t base = (drpc_my_node >= 41 && drpc_my_node <= 43) ? 51 : 41;
+    for (INT i = 0; i < 3; i++) { mqa_org[i] = (mq_org_t)(base + i); mqa_first[i] = 0; }
+    mqa_sends = 0;
+    m_gate_acquire();
+    __builtin_memcpy(keep, mq_ask_state, sizeof keep);
+    UH keep_rr = mq_step_rr;
+    for (UW i = 0; i < sizeof keep / sizeof keep[0]; i++) { mq_ask_state[i].used = 0; mq_ask_state[i].has_want = 0; }
+    mq_stagger_force = 2;
+    (void)mq_drain(h);                            /* start reading: nothing yet */
+    for (INT i = 0; i < 3; i++) mqa_rx(NM, (pk_node8_t)(201 + i), mqa_org[i]);
+    for (INT t = 0; t < 8; t++) { (void)mq_drain(h); (void)mq_step_rows(mqa_hold, mqa_sent); }
+    mq_stagger_force = -1;
+    __builtin_memcpy(mq_ask_state, keep, sizeof keep);
+    mq_step_rr = keep_rr;
+    m_gate_release();
+    kdds_close(h);
+    INT ok = 1;
+    r_puts("[mqa] first answers");
+    for (INT i = 0; i < 3; i++) {
+        r_puts(" "); r_putdec((UW)mqa_org[i]); r_puts(":"); r_putdec((UW)mqa_first[i]);
+        if (mqa_first[i] != 1) ok = 0;
+    }
+    r_puts(" sends "); r_putdec((UW)mqa_sends); r_puts(" (want 1 each)\r\n");
+    say(ok ? "[mqa] PASS (three wants in one tick: each asker is answered once)\r\n"
+           : "[mqa] FAIL (an asker whose want was read was never answered)\r\n");
+    return ok ? 0 : 1;
+}
 INT mq_queue_self_test(void (*emit)(const char *))
 {
-    return x3fq_test(emit, "test/mqq", "[mqq]", mq_rx_read);
+    INT f = x3fq_test(emit, "test/mqq", "[mqq]", mq_rx_read);
+    return f + mqa_test(emit);
 }
 #endif /* _TK_HOSTED_LIBC_ */
