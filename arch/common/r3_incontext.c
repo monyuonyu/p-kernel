@@ -5443,13 +5443,16 @@ static INT mq_drain(W h)
     return 1;
 }
 
-/* one row's turn (stagger already 0): answer ONE new key it wants that I hold,
- * else re-drive; 1 if it sent. hold builds the answer (mq_answer_build). */
-static INT mq_row_turn(MQ_ASK_STATE *s, mq_hold_fn hold, mq_sent_fn sent)
+/* one row's turn (stagger already 0): answer ONE new key it wants that I hold
+ * (what & 1), else re-drive (what & 2); 1 if it sent. hold builds the answer
+ * (mq_answer_build). */
+#define MQ_TURN_FIRST  1
+#define MQ_TURN_REDRIVE 2
+static INT mq_row_turn(MQ_ASK_STATE *s, mq_hold_fn hold, mq_sent_fn sent, INT what)
 {
     mq_org_t o = s->org;
     INT n = (INT)s->wn;
-    for (INT i = 0; i < n; i++) {
+    for (INT i = 0; (what & MQ_TURN_FIRST) && i < n; i++) {
         UB k = s->wkeys[i];
         if (mq_already_answered(o, k)) continue;   /* dedup peek             */
         INT forgotten = 0;
@@ -5459,6 +5462,7 @@ static INT mq_row_turn(MQ_ASK_STATE *s, mq_hold_fn hold, mq_sent_fn sent)
         sent(o, k, 1, forgotten);
         return 1;
     }
+    if (!(what & MQ_TURN_REDRIVE)) return 0;
 #ifndef MQ_REDRIVE_LAST_ONLY
     /* 1-3c: re-drive EVERY key answered this generation, in turn, while still
      * wanted (silent): MQ_ANS_REDRIVE_MAX ticks per key, then one every
@@ -5502,20 +5506,30 @@ static INT mq_row_turn(MQ_ASK_STATE *s, mq_hold_fn hold, mq_sent_fn sent)
 }
 
 /* every row, each tick: the ONE send of the tick to the next row in turn whose
- * stagger was already 0, then the stagger of the others counts down. The
- * sends of the tick (0 or 1). Caller holds m_gate. */
+ * stagger was already 0, then the stagger of the others counts down. A first
+ * answer to any asker goes before a re-drive to any asker (two passes; under
+ * load the window of an asker is short, and a re-drive repeats what was sent).
+ * -DMQ_NC_REDRIVE_FIRST: one pass, a re-driving row can take the tick ([mqa]
+ * late asker red). The sends of the tick (0 or 1). Caller holds m_gate. */
 static INT mq_step_rows(mq_hold_fn hold, mq_sent_fn sent)
 {
     const INT NR = (INT)(sizeof mq_ask_state / sizeof mq_ask_state[0]);
     INT did = 0;
-    for (INT t = 0; t < NR && !did; t++) {
-        INT ri = ((INT)mq_step_rr + t) % NR;
-        MQ_ASK_STATE *s = &mq_ask_state[ri];
-        if (!s->used || !s->has_want || s->stagger > 0) continue;
-#ifdef MQ_NC_STEP_READ_ONLY
-        if (!s->fresh) continue;
+#ifdef MQ_NC_REDRIVE_FIRST
+    static const INT pass_what[1] = { MQ_TURN_FIRST | MQ_TURN_REDRIVE };
+#else
+    static const INT pass_what[2] = { MQ_TURN_FIRST, MQ_TURN_REDRIVE };
 #endif
-        if (mq_row_turn(s, hold, sent)) { did = 1; mq_step_rr = (UH)((ri + 1) % NR); }
+    for (INT p = 0; p < (INT)(sizeof pass_what / sizeof pass_what[0]) && !did; p++) {
+        for (INT t = 0; t < NR && !did; t++) {
+            INT ri = ((INT)mq_step_rr + t) % NR;
+            MQ_ASK_STATE *s = &mq_ask_state[ri];
+            if (!s->used || !s->has_want || s->stagger > 0) continue;
+#ifdef MQ_NC_STEP_READ_ONLY
+            if (!s->fresh) continue;
+#endif
+            if (mq_row_turn(s, hold, sent, pass_what[p])) { did = 1; mq_step_rr = (UH)((ri + 1) % NR); }
+        }
     }
     for (INT ri = 0; ri < NR; ri++) {
         MQ_ASK_STATE *s = &mq_ask_state[ri];
@@ -9424,17 +9438,20 @@ INT mt_queue_self_test(void (*emit)(const char *))
 /* each, eight ticks of mq_drain + mq_step_rows must give each asker its    */
 /* first answer once (a fake hold and send; no wire). Step 1 (one row a     */
 /* tick, -DMQ_NC_STEP_READ_ONLY) answers the last asker only; the old read  */
-/* (-DMQ_NC_WANT_LATEST) never sees the first two. The live rows are saved  */
+/* (-DMQ_NC_WANT_LATEST) never sees the first two. Then a late asker comes  */
+/* while the three are re-driven: its first answer must take the next tick */
+/* (-DMQ_NC_REDRIVE_FIRST: a re-drive takes it). The live rows are saved   */
 /* and put back; m_gate is held, so the task's own step waits.              */
 /* Limit: a fake hold (not mq_answer_build) and a fake send.                */
-static mq_org_t mqa_org[3];
-static UB mqa_first[3];
+static mq_org_t mqa_org[3], mqa_late;
+static UB mqa_first[3], mqa_late_first;
 static INT mqa_sends;
 static INT mqa_hold(mq_org_t o, UB k, INT *fg) { (void)o; if (fg) *fg = 0; return k == 7; }
 static void mqa_sent(mq_org_t o, UB k, INT first, INT fg)
 {
     (void)k; (void)fg; mqa_sends++;
     for (INT i = 0; i < 3; i++) if (first && mqa_org[i] == o) mqa_first[i]++;
+    if (first && o == mqa_late) mqa_late_first++;
 }
 static void mqa_rx(const char *name, pk_node8_t src, pk_node_t asker)
 {
@@ -9460,8 +9477,9 @@ static INT mqa_test(void (*emit)(const char *))
     W h = kdds_open_poll(NM, KDDS_QOS_LATEST_ONLY);
     if (h < 0) { say("[mqa] FAIL open\r\n"); return 1; }
     static MQ_ASK_STATE keep[sizeof mq_ask_state / sizeof mq_ask_state[0]];
-    pk_node_t base = (drpc_my_node >= 41 && drpc_my_node <= 43) ? 51 : 41;
+    pk_node_t base = (drpc_my_node >= 40 && drpc_my_node <= 43) ? 51 : 41;
     for (INT i = 0; i < 3; i++) { mqa_org[i] = (mq_org_t)(base + i); mqa_first[i] = 0; }
+    mqa_late = (mq_org_t)(base - 1); mqa_late_first = 0;
     mqa_sends = 0;
     m_gate_acquire();
     __builtin_memcpy(keep, mq_ask_state, sizeof keep);
@@ -9470,7 +9488,14 @@ static INT mqa_test(void (*emit)(const char *))
     mq_stagger_force = 2;
     (void)mq_drain(h);                            /* start reading: nothing yet */
     for (INT i = 0; i < 3; i++) mqa_rx(NM, (pk_node8_t)(201 + i), mqa_org[i]);
-    for (INT t = 0; t < 8; t++) { (void)mq_drain(h); (void)mq_step_rows(mqa_hold, mqa_sent); }
+    /* ticks 0, 1: stagger; 2, 3, 4: the three first answers; 5, 6: re-drives */
+    for (INT t = 0; t < 7; t++) { (void)mq_drain(h); (void)mq_step_rows(mqa_hold, mqa_sent); }
+    INT sends7 = mqa_sends;
+    /* a late asker (no stagger) while the three are re-driven: its first answer
+     * must take the next tick (-DMQ_NC_REDRIVE_FIRST: the turn goes on to a re-drive) */
+    mq_stagger_force = 0;
+    mqa_rx(NM, (pk_node8_t)204, mqa_late);
+    (void)mq_drain(h); (void)mq_step_rows(mqa_hold, mqa_sent);
     mq_stagger_force = -1;
     __builtin_memcpy(mq_ask_state, keep, sizeof keep);
     mq_step_rr = keep_rr;
@@ -9482,8 +9507,10 @@ static INT mqa_test(void (*emit)(const char *))
         r_puts(" "); r_putdec((UW)mqa_org[i]); r_puts(":"); r_putdec((UW)mqa_first[i]);
         if (mqa_first[i] != 1) ok = 0;
     }
-    r_puts(" sends "); r_putdec((UW)mqa_sends); r_puts(" (want 1 each)\r\n");
-    say(ok ? "[mqa] PASS (three wants in one tick: each asker is answered once)\r\n"
+    r_puts(" sends "); r_putdec((UW)sends7); r_puts(" (want 1 each); late ");
+    r_putdec((UW)mqa_late); r_puts(":"); r_putdec((UW)mqa_late_first); r_puts(" (want 1 in its first tick)\r\n");
+    if (mqa_late_first != 1) ok = 0;
+    say(ok ? "[mqa] PASS (three wants in one tick: each asker is answered once; a first answer goes before a re-drive)\r\n"
            : "[mqa] FAIL (an asker whose want was read was never answered)\r\n");
     return ok ? 0 : 1;
 }

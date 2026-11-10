@@ -44,7 +44,7 @@ CI 42656744519 の X3H 赤（first-sky-hint-not-299@4）から。mind/have は�
 ## 3e. 第 4 段の 2（2026-11-11、hosted だけ、答え手の表、X3F）
 
 3d だけでは X3F は消えなかった（11-10 の容器 14 組で X3F の形は master 1・直し 1）。直しの側では 4 と 44 が 260 の want を受け取ったのに答えていない。答え手の譲り合い（stagger）・最初の答え・再送は「その asker の want を読んだ tick」にしか進まず、待ち行列から 1 度読まれた want は stagger の 1 歩で使われて二度と読まれなかった。
-形: asker ごとの行（MQ_ASK_STATE）に最新の want（org・keys）を持つ。mq_drain が 1 tick の want を古い順に最大 MQ_PER_TICK（16）通読んで行に入れ（無ければ枠の読み直し）、mq_step_rows が毎 tick 全部の行を進める: stagger は行ごとに 1 つ減り、1 tick の送りは今までどおり 1 つ（答えか再送）、順番は行の輪番。1 行の中身（答えは 1 世代 1 度・1-3c の再送・-DMQ_REDRIVE_LAST_ONLY）は前の本体のまま。試験 `nodes mqq` の [mqa]（3 人の want が 1 tick に来て stagger 2 → 8 tick で 3 人とも最初の答えが 1 度）、陰性 -DMQ_NC_STEP_READ_ONLY（3d の形＝読んだ行だけ進む）と -DMQ_NC_WANT_LATEST で赤。check_callsites mq-poll・mq-drain。ベアは前のまま。限界: 死んだ asker の行は残る（再送は予算で止まる、枠のときと同じ）。[mqa] の答えと送りは偽物（mq_answer_build と線は通らない）
+形: asker ごとの行（MQ_ASK_STATE）に最新の want（org・keys）を持つ。mq_drain が 1 tick の want を古い順に最大 MQ_PER_TICK（16）通読んで行に入れ（無ければ枠の読み直し）、mq_step_rows が毎 tick 全部の行を進める: stagger は行ごとに 1 つ減り、1 tick の送りは今までどおり 1 つ（答えか再送）、順番は行の輪番。1 行の中身（答えは 1 世代 1 度・1-3c の再送・-DMQ_REDRIVE_LAST_ONLY）は前の本体のまま。どの asker への最初の答えも、どの asker への再送より先（2 回の見回り。陰性 -DMQ_NC_REDRIVE_FIRST）。11-11 の容器（重い負荷）で、直しの node 4 が 3 人の snow に順に答えている間に 260 の fire の番が窓に間に合わなかった形を見たため（時刻の無いログからの読み）。試験 `nodes mqq` の [mqa]（3 人の want が 1 tick に来て stagger 2 → 8 tick で 3 人とも最初の答えが 1 度）、陰性 -DMQ_NC_STEP_READ_ONLY（3d の形＝読んだ行だけ進む）と -DMQ_NC_WANT_LATEST で赤。check_callsites mq-poll・mq-drain。ベアは前のまま。限界: 死んだ asker の行は残る（再送は予算で止まる、枠のときと同じ）。[mqa] の答えと送りは偽物（mq_answer_build と線は通らない）
 
 ## 4. 限界
 
