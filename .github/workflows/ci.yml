@@ -1675,7 +1675,9 @@ jobs:
           # PFS-REPL-WANT-DROP: the old drop is red
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFS_WANT_NO_OVF >/dev/null
-          PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
+          # audit-176, ubuntu-26.04 container: at 10 ms this negative held 43, 56, 46 and once 60 (green);
+          # at 0 ms (one write) 32, 24, 24 side by side, while the plain build holds 60 at both gaps
+          PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
           # the 0 ms burst: announces sent at once (-DPFSR_NC_ANN_UNPACED), one WANT read a tick (-DPFSR_NC_WANT_LATEST)
           make -C boot/linux_x86_64 clean >/dev/null
@@ -3288,7 +3290,12 @@ jobs:
       - name: "[b4-math] the student's root, exp, log against libm, Adam's step, same bits on aarch64 (4 falsifiers red)"
         # ROADMAP B4 stage 1: research/b4-numerics.md M1 to M4. Here for the
         # aarch64 compiler and qemu-user of this job; about 20 s.
-        run: bash tests/llm/run_b4_math.sh
+        # audit-176: [m3-hash] must PASS, not SKIP. On ubuntu-26.04 master's script found no
+        # qemu-aarch64-static, printed SKIP and the step stayed green (the x86_64/aarch64 bits went unchecked).
+        run: |
+          set -o pipefail
+          bash tests/llm/run_b4_math.sh | tee b4_math.log
+          grep -aF 'PASS  [m3-hash]' b4_math.log
 
   sanitizer-build:
     # サニタイザ build (ASan/UBSan). BLOCKING as of 2026-07-12 (4 hosted runs
