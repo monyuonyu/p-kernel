@@ -404,7 +404,7 @@ if [ "${N2_XW:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; the
     folded() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aqE "^\[onemind\] peer ($2) epoch=[0-9]+: ALL [0-9]+ chunks"; }
     for i in 4 44 260 300; do send "$i" "stop resume"; done   # a stopped node neither sends nor folds
     # the mind is ready (m_ready) only after its lazy first learning: a teach starts it
-    for i in 4 44 260 300; do send "$i" "mind teach xw$i one"; done
+    for i in 4 44 260 300; do send "$i" "mind teach fire warm"; done   # the key vocabulary is fixed (16 words)
     t=0; ok=0; XWW="${N2_XW_WAIT:-300}"
     while [ "$t" -lt "$XWW" ]; do
         sleep 5; t=$((t + 5))
