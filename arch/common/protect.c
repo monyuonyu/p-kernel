@@ -21,6 +21,10 @@
 #include "pfs_repl.h"
 #include "drpc.h"
 #include "region.h"
+#include "pk_node_row.h"
+#ifdef _TK_HOSTED_LIBC_
+#include "swim.h"
+#endif
 #include "kernel.h"
 
 IMPORT void sio_send_frame(const UB *buf, INT size);
@@ -74,7 +78,9 @@ typedef struct {
     U1 requested_r;              /* R as originally requested (pre-cap)      */
     U1 target_r;                 /* desired durable replicas (region-capped) */
     U1 driven;                   /* 1 once the actuator has driven this unit  */
-    U1 holders[DNODE_MAX];       /* holders[n]=1: peer n announced holding  */
+    U1 holders[DNODE_ROWS];      /* holders[r]=1: the peer of row r (pk_node_row)
+                                  * announced holding. N2 7c: on hosted a wide
+                                  * peer has a row too; bare: DNODE_ROWS==DNODE_MAX */
     U1 holder_count;             /* distinct peers (excl. self) known holders */
     UW drive_age_ms;             /* since last actuator re-announce          */
     UB last_threat;              /* for transition logging (observability)   */
@@ -146,13 +152,14 @@ static PROTECT_OBJ *find_obj(const U1 id[PFS_ID_LEN])
 }
 
 /* region-aware cap: R can never exceed the neighbours we could reach. With
- * region_size_narrow() peers (incl. self; N2: only ids the narrow tables reach) the most durable replicas possible is
+ * region_size() peers (incl. self; N2 7c: the wide members too, since the
+ * holders table and the push loop reach them) the most durable replicas possible is
  * region_size-1; never below 1 (a lone node genuinely cannot protect by
  * replication — that is honest, not a bug). */
 static INT cap_target_r(INT want)
 {
     if (want <= 0) want = PROTECT_DEFAULT_R;
-    UB rs = region_size_narrow();                 /* incl. self; >=1 */
+    UB rs = region_size();                        /* incl. self; >=1 */
     INT max_peers = (rs > 1) ? (INT)rs - 1 : 1;
     if (want > max_peers) want = max_peers;
     if (want < 1) want = 1;
@@ -180,7 +187,7 @@ INT protect_declare(const U1 id[PFS_ID_LEN], UW len, INT target_r)
         objs[i].driven       = 0;
         objs[i].holder_count = 0;
         objs[i].drive_age_ms = PROTECT_REANNOUNCE_MS;   /* drive immediately */
-        for (INT n = 0; n < DNODE_MAX; n++) objs[i].holders[n] = 0;
+        for (INT n = 0; n < DNODE_ROWS; n++) objs[i].holders[n] = 0;
         objs[i].active     = 1;
         objs[i].last_threat = protect_threat_for(0, objs[i].target_r);
         st_declared++;
@@ -202,15 +209,19 @@ INT protect_declare(const U1 id[PFS_ID_LEN], UW len, INT target_r)
 
 void protect_note_holder(pk_node_t src_node, const U1 id[PFS_ID_LEN])
 {
+#if defined(N2_NC_PROTECT_NARROW)                 /* [n2-mix] XQ negative: the old narrow table */
     if (src_node >= DNODE_MAX) return;
+#endif
+    INT row = pk_node_row(src_node);              /* bare: the id, or -1 >= DNODE_MAX */
+    if (row < 0) return;                          /* no row (the wide rows full) */
     if (src_node == drpc_my_node) return;         /* self is not a replica  */
 
     PROTECT_OBJ *o = find_obj(id);
     if (!o) return;                               /* not a protected unit   */
-    if (o->holders[src_node]) return;             /* already counted        */
+    if (o->holders[row]) return;                  /* already counted        */
 
-    o->holders[src_node] = 1;
-    if (o->holder_count < DNODE_MAX) o->holder_count++;
+    o->holders[row] = 1;
+    if (o->holder_count < DNODE_ROWS) o->holder_count++;
     st_holder_events++;
 
     UB t = protect_threat_for((INT)o->holder_count, (INT)o->target_r);
@@ -341,6 +352,19 @@ void protect_tick(UW elapsed_ms)
             if (!region_is_member((UB)n)) continue;       /* region-scoped (§7)*/
             pfs_repl_push(objs[i].id, (UB)n);
         }
+#ifdef _TK_HOSTED_LIBC_
+        {   /* N2 7c: the wide region members too (SWIM's alive list; dnode_table
+             * is narrow). Bare metal has no wide ids. */
+            pk_node_t wl[DNODE_WIDE_ROWS];
+            INT nw = swim_wide_alive(wl, DNODE_WIDE_ROWS);
+            for (INT k = 0; k < nw; k++) {
+                INT row = pk_node_row_find(wl[k]);
+                if (row >= 0 && objs[i].holders[row]) continue;   /* already a holder */
+                if (!region_is_member(wl[k])) continue;
+                pfs_repl_push(objs[i].id, wl[k]);
+            }
+        }
+#endif
         st_drives++;
         driven_this_tick++;
         pt_puts("[protect] ACTUATE id="); pt_put_id(objs[i].id);
@@ -434,11 +458,11 @@ void protect_stat(void)
         pt_puts("  threat="); pt_putdec(t);
         pt_puts(t == 0 ? "  SAFE  holders=[" : "  AT-RISK  holders=[");
         UB first = 1;
-        for (INT n = 0; n < DNODE_MAX; n++) {
+        for (INT n = 0; n < DNODE_ROWS; n++) {
             if (!objs[i].holders[n]) continue;
             if (!first) pt_puts(",");
             first = 0;
-            pt_puts("n"); pt_putdec((UW)n);
+            pt_puts("n"); pt_putdec((UW)pk_node_of_row(n));
         }
         pt_puts("]\r\n");
     }
