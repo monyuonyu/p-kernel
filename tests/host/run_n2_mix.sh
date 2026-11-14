@@ -41,6 +41,12 @@ unset PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_RTT_ZONE_SIZE
 # XG judges region membership: a loaded CI box times localhost at 10..50 ms, around the
 # 50 ms tau (CI-F, region-tau-env), so the test tau as in the multi-node certs
 export PKERNEL_REGION_TAU_MS="${PKERNEL_REGION_TAU_MS:-250}"
+# This test is the UDP relay (TCP is run_n2_tcp.sh). Without the pin the UDP/TCP race picks TCP
+# for a node whose UDP gets no contact in its head start, and since TCP takes wide ids (N2 "まだ"
+# 6) the -DN2_NC_TRUNC negative went green: its UDP-only cut made 260 into a second 4, the relay
+# gave it no contact, and TCP brought it in as 260 (CI 42901823254, 11-15). XU below checks the pin.
+# N2_AUTOFALLBACK=1 lifts the pin (only to show XU going red).
+export PKERNEL_RELAY_AUTOFALLBACK="${N2_AUTOFALLBACK:-0}"
 WORK="$(mktemp -d /tmp/n2mix.XXXXXX)"
 LOGDIR="${N2_LOGDIR:-$WORK/logs}"; mkdir -p "$LOGDIR"
 declare -A PID FD
@@ -99,6 +105,10 @@ done
 
 [ "$a" = "$WANT_A" ] && res X1 PASS "old node 1 knows {$a}" || res X1 FAIL "old node 1 knows {$a}, wanted {$WANT_A}"
 [ "$b" = "$WANT_B" ] && res X2 PASS "new node 4 knows {$b}" || res X2 FAIL "new node 4 knows {$b}, wanted {$WANT_B}"
+# XU  every node is on the UDP relay (the pin above); a node on TCP would make X1/X2 judge TCP
+tcpn=""
+for i in 1 2 3 4 44 $WIDE; do grep -aq 'transport = relay-tcp' "$LOGDIR/node$i.log" && tcpn="$tcpn $i"; done
+[ -z "$tcpn" ] && res XU PASS "no node on relay-tcp" || res XU FAIL "on relay-tcp:$tcpn"
 
 # XR  the v2 round trip comes back (audit-122: breaking the ACK, probe_target = me or seq 0,
 #   left every check green). New node 4's last `nodes` table shows 259 and 299 with rtt=<n>ms.
