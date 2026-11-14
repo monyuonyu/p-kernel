@@ -1608,9 +1608,11 @@ jobs:
           N2_X3=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_x3.log
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
-          # XP: p-fs blocks cross between wide and narrow (pfs_repl's wide tails, N2 "まだ" 7)
-          N2_XP=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_xp.log
+          # XP: p-fs blocks cross between wide and narrow (pfs_repl's wide tails, N2 "まだ" 7);
+          # XQ: protect counts and pushes to wide holders (N2 7c 1)
+          N2_XP=1 N2_XQ=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_xp.log
           grep -aF '[n2-mix] XP PASS' n2_mix_xp.log
+          grep -aF '[n2-mix] XQ PASS' n2_mix_xp.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_xp.log
   # The N2 negative controls, out of ump-x86_64 (2026-11-08, inbox #40 item 2):
   # they were its last step and its longest (14.4 of 107.2 min in CI
@@ -1840,6 +1842,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PFS_RX_NARROW >/dev/null
           (printf 'nodes pfwide\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee nodes_pfwide_nc2.log || true
           grep -aF '[pfwide] FAIL W a wide WANT' nodes_pfwide_nc2.log
+          # [n2-mix] XQ goes red when protect's holders drop a wide src again (-DN2_NC_PROTECT_NARROW, N2 7c 1)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PROTECT_NARROW >/dev/null
+          N2_XQ=1 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_prot.log || true
+          grep -aE '^\[n2-mix\] XQ FAIL.* wants n299' n2_mix_nc_prot.log
           # [ipw] goes red when snf/ss6 keep the old address form for a wide self (-DN2_NC_IP_OLD)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_IP_OLD >/dev/null

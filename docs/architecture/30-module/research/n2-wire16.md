@@ -61,6 +61,7 @@
    - 7b（11-10 読んだだけ）: 5 に挙げた残り 3 つ（sfs・replica・kloader）は**ベアでだけ起動される**（sfs_init・replica_init・kloader_task_init の呼び手は arch/x86・arch/aarch64 の usermain だけ。linux_x86_64 は sfs.c を組み込むが起こさない）＝広い番号（hosted だけ）は届かない。7 の残りは region_size_narrow の呼び手（protect・ss6・mind の合体・degrade、③(i)）を広げるかどうか＝設計の話
    - 7c（11-10 監査-174 の回、読んだだけ・設計）: **数（region_size_narrow）だけを広げてはいけない。数と表を一緒に広げる**。どの呼び手も、数えたメンバを id で引く表（DNODE_MAX）を持つ: protect は `holders[DNODE_MAX]`（`protect_note_holder` は `src >= DNODE_MAX` で返る）、mind の合体は `mw_fold_region` が `o < DNODE_MAX` を回す。数だけ広げると protect の R が届かない値になり、押し続ける（偽の脅威）。監査-174 の壊し B3（広い持ち手の HOLD-ACK を pmesh の src に読み替えない）が緑だったのはこのため＝受け手の protect が広い持ち手を捨てている（test-holes H24(a)）。
      順番（おすすめ）: ① protect（holders を行に、押し先の輪は行と `pk_node_of_row`、`cap_target_r` を region_size に。試験は [n2-mix] に広い持ち手で R に届く XR、陰性は holders を狭いままにする印。H24(a) も埋まる）② mind の合体（mind/w の告知の広い番号を先に確かめる）③ ss6・degrade は狭いまま（遠くの専門家の呼び出しと pipeline は狭い表で組む。広げる理由が出たら）。どれも hosted だけ、ベアは DNODE_ROWS == DNODE_MAX で crown 不変
+     ① の実装（11-15 04:00 の回、feat/n2-protect-rows、監査待ち）: holders を DNODE_ROWS の行に（pk_node_row）、押し先に swim_wide_alive の広い region メンバを足す（hosted だけ）、cap_target_r は region_size、表示は行の id。試験は [n2-mix] XQ（名は XR が往復時間で使われているので XQ）: 260 の単位の持ち手に n299、4 の単位に n259 か n299。陰性 `-DN2_NC_PROTECT_NARROW`
 
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
 
