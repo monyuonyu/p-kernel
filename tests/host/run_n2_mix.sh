@@ -25,6 +25,7 @@
 # N2_X3_PART=snow judges only X3's snow lines (wide -> new); fire (old -> wide) rides the want.
 # N2_X3=1 also runs X3H (a wide sender's mind/have summary raises a want, below) after X3;
 # N2_X3_PART=have runs X3H alone. N2_XP=1 adds XP (p-fs blocks between wide and narrow, below).
+# N2_XQ=1 adds XQ (protect counts and pushes to wide holders, below).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -359,6 +360,35 @@ if [ "${N2_XP:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; the
         [ "$n299" -ge 1 ] || miss="$miss no-new-node-says-299"
         [ -z "$miss" ] && res XP PASS "300's block $wid on 4 44 260 ($n299 say n299, the rest n255 via an old node), 4's block $nid on 44 260 300 from n3" \
                        || res XP FAIL "missing or wrong:$miss"
+    fi
+fi
+
+# XQ  protect counts and drives wide holders (N2 7c ①, research/n2-wire16.md). N2_XQ=1.
+#   Wide 260 protects a unit: its `protect` table must list wide 300 (n299) as a holder, and new
+#   narrow 4 protects one: its table must list 260 or 300 (n259 / n299). Before, holders[] was
+#   indexed by the narrow id (a wide HOLD-ACK was dropped) and the push loop went over the narrow
+#   ids only, so no wide node was ever pushed to or counted (test-holes H24(a)).
+#   Negative control: -DN2_NC_PROTECT_NARROW (holders drop a wide src again) leaves XQ red.
+if [ "${N2_XQ:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
+    holders() {  # the holders of node $1's last `protect` row for the unit put with text $2
+        tr -d '\r' < "$LOGDIR/node$1.log" | grep -a "  id=$2  " | grep -aoE 'holders=\[[^]]*\]' | tail -1
+    }
+    pid_of() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aoE '\[protect\] DECLARE unit id=[0-9a-f]{16}' | tail -1 | sed 's/.*id=//'; }
+    send 260 "protect xq wide holder from 260"
+    send 4 "protect xq narrow holder from 4"
+    t=0; w=""; n=""
+    while [ "$t" -lt 20 ] && { [ -z "$w" ] || [ -z "$n" ]; }; do sleep 1; t=$((t + 1)); w="$(pid_of 260)"; n="$(pid_of 4)"; done
+    if [ -z "$w" ] || [ -z "$n" ]; then
+        res XQ FAIL "no DECLARE line (260 {$w}, 4 {$n})"
+    else
+        t=0; hw=""; hn=""; ok=0
+        while [ "$t" -lt "$WAIT" ] && [ "$ok" = 0 ]; do
+            sleep 3; t=$((t + 3)); send 260 "protect"; send 4 "protect"; sleep 1
+            hw="$(holders 260 "$w")"; hn="$(holders 4 "$n")"
+            case "$hw" in *n299*) case "$hn" in *n259*|*n299*) ok=1;; esac;; esac
+        done
+        [ "$ok" = 1 ] && res XQ PASS "260's unit $w $hw, 4's unit $n $hn" \
+                      || res XQ FAIL "260's unit $w {$hw} wants n299, 4's unit $n {$hn} wants n259 or n299"
     fi
 fi
 
