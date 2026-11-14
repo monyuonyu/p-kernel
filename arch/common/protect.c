@@ -356,7 +356,11 @@ void protect_tick(UW elapsed_ms)
         {   /* N2 7c: the wide region members too (SWIM's alive list; dnode_table
              * is narrow). Bare metal has no wide ids. */
             pk_node_t wl[DNODE_WIDE_ROWS];
+#if defined(N2_NC_PROTECT_NO_WIDE_PUSH)       /* H26 negative: no push to a wide member */
+            INT nw = 0; (void)wl;
+#else
             INT nw = swim_wide_alive(wl, DNODE_WIDE_ROWS);
+#endif
             for (INT k = 0; k < nw; k++) {
                 INT row = pk_node_row_find(wl[k]);
                 if (row >= 0 && objs[i].holders[row]) continue;   /* already a holder */
