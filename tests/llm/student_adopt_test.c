@@ -632,6 +632,10 @@ static double s8_cHmax, s8_cPmin; static int s8_cut;
  * them (god's eye at the other receivers, stage s9o, a reading); s9_rep shifts the
  * poisons' noise seed by 7919 x rep (rep 0 = step 8's seed, byte for byte) */
 static int s9_pair2; static uint32_t s9_rep;
+/* B5 step 10 (research/b5-step10-design.md): s10_group 1 = the trust arms on
+ * st_merge_trust_group; s10_kP / s10_kH count the poisons / honest peers that
+ * receiver 1 kept with TS > 0 (a reading) */
+static int s10_group, s10_kP, s10_kH;
 static void s8_ada(st_model *g, st_model *n0, st_model *p0, uint32_t s)
 {
     const double ca = 0.85, sa = sqrt(1.0 - ca * ca);
@@ -672,10 +676,12 @@ static int s7_cand(st_model *c, st_model *models[K5], st_model *prev, st_model *
         who[j] = k; j++;
     }
     float cg[K5 - 1];
-    int r = s8_echo ? st_merge_trust_echo(c, prev, bs, ls, bp, lp, j, ts, cg)
+    int r = s10_group ? st_merge_trust_group(c, prev, bs, ls, bp, lp, j, ts, cg)
+          : s8_echo ? st_merge_trust_echo(c, prev, bs, ls, bp, lp, j, ts, cg)
                     : st_merge_trust_prev(c, prev, bs, ls, bp, lp, j, ts);
     for (int i = 0; i < j; i++) { free(own[i]); free(ownp[i]); }
     if (r < 0) { printf("  FAIL  [b5s7-io] st_merge_trust rc %d\n", r); exit(1); }
+    if (me == 1) for (int i = 0; i < j; i++) if (ts[i] > 0.0f) { if (who[i] < honest) s10_kH++; else s10_kP++; }
     if (me == 0) for (int i = 0; i < j; i++) {
         if (who[i] < honest) { s6_tsh += ts[i]; s6_tshn++; } else { s6_tsp += ts[i]; s6_tspn++; }
         if (s8_echo && cg[i] > -1.5f) {
@@ -696,7 +702,7 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
     keeper_t kp; keep_init(&kp);
     int took = 0, tries = 0; uint32_t gen = 0;
     apprentice_late = 0; s6_tsh = s6_tsp = 0; s6_tshn = s6_tspn = 0; s6_refused = 0;
-    s8_cHmax = -2.0; s8_cPmin = 2.0; s8_cut = 0;
+    s8_cHmax = -2.0; s8_cPmin = 2.0; s8_cut = 0; s10_kP = s10_kH = 0;
     for (int p = 1; p <= PASSES; p++) {
         for (int k = 0; k < honest; k++) { pass_q(&n[k], k); if (ap[k].has) pass_q(&ap[k].m, k); }
         if (p % EVERY == 0) {
@@ -734,7 +740,9 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
     char ex[192]; int at = snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
                            s6_refused, s6_tshn ? s6_tsh / s6_tshn : -1.0, s6_tspn ? s6_tsp / s6_tspn : -1.0);
     if (s8_echo && trust && at > 0 && at < (int)sizeof ex)
-        snprintf(ex + at, sizeof ex - (size_t)at, " cHmax=%.3f cPmin=%.3f cut=%d", s8_cHmax, s8_cPmin, s8_cut);
+        at += snprintf(ex + at, sizeof ex - (size_t)at, " cHmax=%.3f cPmin=%.3f cut=%d", s8_cHmax, s8_cPmin, s8_cut);
+    if (s10_group && trust && at > 0 && at < (int)sizeof ex)
+        snprintf(ex + at, sizeof ex - (size_t)at, " r1keptH=%d r1keptP=%d", s10_kH, s10_kP);
     keep_print(&kp, name, &n[0], ex);
     for (int k = 0; k < K5; k++) { st_free(&n[k]); if (ap[k].has) st_free(&ap[k].m); if (sent[k]) st_free(&sentm[k]); }
     for (int k = 0; k < honest; k++) st_free(&prev[k]);
@@ -748,15 +756,30 @@ static int s7(uint32_t seed, const char *which)
     setvbuf(stdout, NULL, _IOLBF, 0);
     lr = ST_LR;
     kp_tag = "b5s7";
+    if (which[0] == 's' && which[1] == '1' && which[2] == '0') {   /* step 10: step 9's stages, the group rule */
+        static char w9[8];
+        s10_group = 1;
+        snprintf(w9, sizeof w9, "s9%s", which + 3);
+        which = w9;
+    }
     if (which[0] == 's' && which[1] == '9') {     /* step 9: step 8's arms, pair2, rep 1 2 */
-        s8_echo = 1; kp_tag = "b5s9";
-#if defined(B5S8_NO_ECHO)
+        s8_echo = 1; kp_tag = s10_group ? "b5s10" : "b5s9";
+#if defined(B5S10_GROUP_FAR)
+        const char *b9 = "far";
+#elif defined(B5S10_TG_LOW)
+        const char *b9 = "tglow";
+#elif defined(B5S8_NO_ECHO)
         const char *b9 = "noecho";
 #else
         const char *b9 = "plain";
 #endif
-        printf("[b5s9] seed %u lr %g build %s stage %s tau %g quarter %d B gate windows %d held windows %d\n",
-               (unsigned)seed, (double)lr, b9, which, (double)ST_ECHO_TAU, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+        if (s10_group)
+            printf("[b5s10] seed %u lr %g build %s stage s10%s tau %g tg %g quarter %d B gate windows %d held windows %d\n",
+                   (unsigned)seed, (double)lr, b9, which + 2, (double)ST_ECHO_TAU, (double)ST_GROUP_TAU,
+                   D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
+        else
+            printf("[b5s9] seed %u lr %g build %s stage %s tau %g quarter %d B gate windows %d held windows %d\n",
+                   (unsigned)seed, (double)lr, b9, which, (double)ST_ECHO_TAU, D / K5, (fxn - fx_end) / SEQ, hn / SEQ);
         if (strcmp(which, "s9p") == 0) {
             s9_pair2 = 1; s7_rounds(seed, 1, 2, 3, "trust4-pair2"); s9_pair2 = 0;
         } else if (strcmp(which, "s9r1") == 0 || strcmp(which, "s9r2") == 0) {
@@ -790,7 +813,7 @@ static int s7(uint32_t seed, const char *which)
             s7_rounds(seed, 0, 1, 3, "trim4-near1");
             s7_rounds(seed, 1, 1, 3, "trust4-near1");
         } else { fprintf(stderr, "s9: unknown stage %s\n", which); return 2; }
-        printf("[b5s9] done\n");
+        printf("[%s] done\n", kp_tag);
         return 0;
     }
     if (which[0] == 's' && which[1] == '8') {     /* step 8: the same arms, the echo cut */
@@ -1156,6 +1179,123 @@ static int s8unit(void)
     return fails ? 1 : 0;
 }
 
+/* ---- the self-test of st_merge_trust_group (s10unit, B5 step 10) ---- */
+static int s10u_merge(st_model *out, st_model *into, st_model *prev, st_model *const *peers,
+                      st_model *const *pprev, int no, float *ts, int group)
+{
+    clone(out, into);
+    const void *bs[8], *bp[8]; size_t ls[8], lp[8]; void *own[8], *ownp[8];
+    for (int j = 0; j < no; j++) {
+        own[j] = blob(peers[j], &ls[j]); bs[j] = own[j];
+        ownp[j] = pprev && pprev[j] ? blob(pprev[j], &lp[j]) : NULL; bp[j] = ownp[j]; if (!ownp[j]) lp[j] = 0;
+    }
+    int r = group ? st_merge_trust_group(out, prev, bs, ls, pprev ? bp : NULL, pprev ? lp : NULL, no, ts, NULL)
+                  : st_merge_trust_echo(out, prev, bs, ls, pprev ? bp : NULL, pprev ? lp : NULL, no, ts, NULL);
+    for (int j = 0; j < no; j++) { free(own[j]); free(ownp[j]); }
+    return r;
+}
+/* r x (cos th x (0.6, 0.8), sin th) in w[0..2]: angle th (degrees) from g0 = (3,4,0) */
+static void s10u_at(st_model *m, st_model *like, double th, double r)
+{
+    clone(m, like); zero_w(m);
+    double c = cos(th * 3.14159265358979323846 / 180.0), s = sin(th * 3.14159265358979323846 / 180.0);
+    m->w[0] = (float)(r * c * 0.6); m->w[1] = (float)(r * c * 0.8); m->w[2] = (float)(r * s);
+}
+static int s10unit(void)
+{
+    /* hand: prev 0, g0 = (3,4,0,0); peer_prev NULL, so TS = ReLU(cos(gj, g0)) and the
+     * echo cut is cos(gj, g0) >= 0.9. A = (3,4,4,0): cos to g0 25/(5 sqrt 41) = 0.781. */
+    st_model pv, me, a, a2, x, y;
+    st_init_tier(&pv, 3u, ST_TIER_S); clone(&me, &pv); clone(&a, &pv); clone(&a2, &pv);
+    zero_w(&pv); zero_w(&me); zero_w(&a); zero_w(&a2);
+    me.w[0] = 3; me.w[1] = 4;
+    a.w[0] = 3; a.w[1] = 4; a.w[2] = 4;
+    a2.w[0] = 4.5f; a2.w[1] = 6; a2.w[2] = 6; a2.w[3] = 0.5f; /* about 1.5 x A: cos(A, A2) 0.9987, farther */
+    /* 1. two peers with one destination: only the nearer keeps its TS, the bytes are A's alone */
+    { st_model *p2[] = { &a2, &a }, *p1[] = { &a }; float t[2], t1[1];
+      int r = s10u_merge(&x, &me, &pv, p2, NULL, 2, t, 1);
+      s10u_merge(&y, &me, &pv, p1, NULL, 1, t1, 1);
+      printf("    same: rc %d TS(A2) %.4f TS(A) %.4f\n", r, (double)t[0], (double)t[1]);
+      check(r == 2 && t[0] == 0.0f && near_f(t[1], 0.78087f, 1e-4), "s10-same", "A2 gets TS 0, A keeps 0.781");
+      check(hash(&x) == hash(&y), "s10-same-bytes", "every byte of the merge of A alone");
+      float te[2]; st_model z; s10u_merge(&z, &me, &pv, p2, NULL, 2, te, 0);
+      check(te[0] > 0.7f && near_f(te[1], 0.78087f, 1e-4), "s10-echo-both", "step 8 trusts both");
+      check(hash(&z) != hash(&y), "s10-same-moves", "and step 8's bytes are not A's alone (the check can fail)");
+      st_free(&x); st_free(&y); st_free(&z); }
+    /* 2. the line: Q = A + t e3, cos(A, Q) = sqrt 41 / sqrt(41 + t^2); t 1.8676 -> 0.960 (a group),
+     *    t 2.3240 -> 0.940 (no group, Q keeps TS = cos(Q, g0) = 0.734) */
+    { st_model q; clone(&q, &a); q.w[3] = 1.8676f;
+      st_model *pq[] = { &a, &q }; float t[2];
+      s10u_merge(&x, &me, &pv, pq, NULL, 2, t, 1); st_free(&x);
+      int in = (t[0] == 0.0f || t[1] == 0.0f);
+      q.w[3] = 2.3240f; float u[2];
+      s10u_merge(&x, &me, &pv, pq, NULL, 2, u, 1); st_free(&x);
+      printf("    line: cos 0.960 TS %.4f %.4f; cos 0.940 TS %.4f %.4f\n", (double)t[0], (double)t[1], (double)u[0], (double)u[1]);
+      check(in && near_f(t[0], 0.78087f, 1e-4) && t[1] == 0.0f, "s10-line-in", "cos 0.960: one group, the farther Q gets TS 0");
+      check(near_f(u[0], 0.78087f, 1e-4) && near_f(u[1], 0.73402f, 1e-4), "s10-line-out", "cos 0.940: no group, both keep TS");
+      st_free(&q); }
+    /* 3. equal |g|: (3,4,4,0.5) and (3,4,4,-0.5), cos 0.988. The same one is kept whatever the input order */
+    { st_model p, r; clone(&p, &a); clone(&r, &a); p.w[3] = 0.5f; r.w[3] = -0.5f;
+      st_model *o1[] = { &p, &r }, *o2[] = { &r, &p }; float t[2], u[2];
+      s10u_merge(&x, &me, &pv, o1, NULL, 2, t, 1); s10u_merge(&y, &me, &pv, o2, NULL, 2, u, 1);
+      printf("    tie: TS (p r) %.4f %.4f, (r p) %.4f %.4f\n", (double)t[0], (double)t[1], (double)u[0], (double)u[1]);
+      check(((t[0] > 0.0f) != (t[1] > 0.0f)) && t[0] == u[1] && t[1] == u[0], "s10-tie", "one kept, the same peer in both orders");
+      check(hash(&x) == hash(&y), "s10-tie-bytes", "and the same bytes");
+      st_free(&x); st_free(&y); st_free(&p); st_free(&r); }
+    /* 4. a chain: angles 40, 55, 70 degrees from g0 (TS 0.766 0.574 0.342), norms 3 2 1.
+     *    40~55 and 55~70 are cos 0.966, 40~70 cos 0.866: one group (transitive), only the 70 (|g| 1) kept */
+    { st_model c1, c2, c3; s10u_at(&c1, &pv, 40, 3); s10u_at(&c2, &pv, 55, 2); s10u_at(&c3, &pv, 70, 1);
+      st_model *pc[] = { &c1, &c2, &c3 }; float t[3];
+      s10u_merge(&x, &me, &pv, pc, NULL, 3, t, 1); st_free(&x);
+      printf("    chain: TS %.4f %.4f %.4f\n", (double)t[0], (double)t[1], (double)t[2]);
+      check(t[0] == 0.0f && t[1] == 0.0f && near_f(t[2], 0.34202f, 1e-4), "s10-chain", "a~b, b~c, not a~c: one group, the nearest kept");
+      st_model *p13[] = { &c1, &c3 }; float u[2];
+      s10u_merge(&x, &me, &pv, p13, NULL, 2, u, 1); st_free(&x);
+      check(near_f(u[0], 0.76604f, 1e-4) && near_f(u[1], 0.34202f, 1e-4), "s10-chain-pair", "a and c alone (cos 0.866): no group");
+      st_free(&c1); st_free(&c2); st_free(&c3); }
+    /* 5. a peer the echo cut has removed is not in a group: E at 20 degrees (c 0.940 >= 0.9, |g| 1),
+     *    F at 35 (c 0.819, |g| 2), cos(E, F) 0.966. F keeps its TS, the bytes are F's alone */
+    { st_model e, f; s10u_at(&e, &pv, 20, 1); s10u_at(&f, &pv, 35, 2);
+      st_model *pef[] = { &e, &f }, *pf[] = { &f }; float t[2], t1[1];
+      int r = s10u_merge(&x, &me, &pv, pef, NULL, 2, t, 1); s10u_merge(&y, &me, &pv, pf, NULL, 1, t1, 1);
+      printf("    echo: rc %d TS(E) %.4f TS(F) %.4f\n", r, (double)t[0], (double)t[1]);
+      check(r == 2 && t[0] == 0.0f && near_f(t[1], 0.81915f, 1e-4), "s10-echo", "E cut by the echo, F not grouped with it: TS 0.819");
+      check(hash(&x) == hash(&y), "s10-echo-bytes", "every byte of the merge of F alone");
+      st_free(&x); st_free(&y); st_free(&e); st_free(&f); }
+    /* 6. real models (s8unit's: trained on other quarters, no group): every byte of st_merge_trust_echo */
+    enum { NM = 4 };
+    st_model m[NM];
+    for (int k = 0; k < NM; k++) st_init_tier(&m[k], 21u + (uint32_t)k, ST_TIER_S);
+    st_model q0; clone(&q0, &m[0]);
+    for (int p = 0; p < 2; p++) pass_q(&q0, 0);
+    for (int k = 1; k < NM; k++) { st_free(&m[k]); clone(&m[k], &m[0]); for (int p = 0; p < 2; p++) pass_q(&m[k], k); }
+    /* peer_prev = the peer after its first pass (so its own update is its second pass: TS > 0;
+     * s8unit's mp, a pass AFTER the peer, gave every TS 0 here = a refusal, a vacuous byte check) */
+    st_model mp[NM];
+    for (int k = 1; k < NM; k++) { clone(&mp[k], &m[0]); pass_q(&mp[k], k); }
+    st_model *pr[] = { &m[1], &m[2], &m[3] }, *pq[] = { &mp[1], &mp[2], &mp[3] };
+    { st_model a8, a10, b8, b10, x0; float t8[3], t10[3], n8[3], n10[3];
+      int ra = s10u_merge(&a8, &q0, &m[0], pr, pq, 3, t8, 0); s10u_merge(&a10, &q0, &m[0], pr, pq, 3, t10, 1);
+      int rb = s10u_merge(&b8, &q0, &m[0], pr, NULL, 3, n8, 0); s10u_merge(&b10, &q0, &m[0], pr, NULL, 3, n10, 1);
+      clone(&x0, &q0);
+      printf("    real: rc %d %d TS %.4f %.4f %.4f / null %.4f %.4f %.4f bytes %016llx %016llx %016llx %016llx\n", ra, rb,
+             (double)t10[0], (double)t10[1], (double)t10[2], (double)n10[0], (double)n10[1], (double)n10[2],
+             (unsigned long long)hash(&a8), (unsigned long long)hash(&a10), (unsigned long long)hash(&b8), (unsigned long long)hash(&b10));
+      int tsok = 1;
+      for (int k = 0; k < 3; k++) tsok &= t10[k] > 0.0f && n10[k] > 0.0f && t8[k] == t10[k] && n8[k] == n10[k];
+      check(ra == 3 && rb == 3 && tsok, "s10-real-ts", "trained peers on other quarters: every TS > 0 and as step 8 (no group)");
+      check(hash(&a8) != hash(&x0) && hash(&b8) != hash(&x0), "s10-real-moved", "both merges moved the model (not a refusal)");
+      check(hash(&a8) == hash(&a10), "s10-real", "no group, with peer_prev: every byte of st_merge_trust_echo");
+      check(hash(&b8) == hash(&b10), "s10-real-null", "no group, peer_prev NULL: every byte too");
+      st_free(&a8); st_free(&a10); st_free(&b8); st_free(&b10); st_free(&x0); }
+    for (int k = 1; k < NM; k++) st_free(&mp[k]);
+    for (int k = 0; k < NM; k++) st_free(&m[k]);
+    st_free(&q0);
+    st_free(&pv); st_free(&me); st_free(&a); st_free(&a2);
+    printf("[b5s10] unit %s (%d failed)\n", fails ? "FAIL" : "PASS", fails);
+    return fails ? 1 : 0;
+}
+
 /* ---- the self-test of st_merge_trimmed (audit-150's note on the design) ---- */
 static int cmp_total(const void *x, const void *y)   /* value, then -0 before +0 */
 {
@@ -1365,6 +1505,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "s6unit") == 0) return s6unit();
     if (argc > 1 && strcmp(argv[1], "s7unit") == 0) return s7unit();
     if (argc > 1 && strcmp(argv[1], "s8unit") == 0) return s8unit();
+    if (argc > 1 && strcmp(argv[1], "s10unit") == 0) return s10unit();
     if (argc < 3) { fprintf(stderr, "usage: %s unit | <b1_held.txt> <seed>\n", argv[0]); return 2; }
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
@@ -1373,7 +1514,7 @@ int main(int argc, char **argv)
     if (argc > 3 && strncmp(argv[3], "s5", 2) == 0) return s5(seed, argv[3]);
     if (argc > 3 && strncmp(argv[3], "s6", 2) == 0) return s6(seed, argv[3]);
     if (argc > 3 && (strncmp(argv[3], "s7", 2) == 0 || strncmp(argv[3], "s8", 2) == 0
-                     || strncmp(argv[3], "s9", 2) == 0)) return s7(seed, argv[3]);
+                     || strncmp(argv[3], "s9", 2) == 0 || strncmp(argv[3], "s10", 3) == 0)) return s7(seed, argv[3]);
     printf("[b5a] seed %u passes %d every %d held windows %d (fixture held %d B)\n",
            (unsigned)seed, PASSES, EVERY, hn / SEQ, fxn - fx_end);
     diag = argc > 3 && strcmp(argv[3], "diag") == 0;

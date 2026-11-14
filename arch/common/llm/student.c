@@ -2641,6 +2641,16 @@ int st_merge_trust_echo(st_model *into, const st_model *prev,
                                count, ts_out, tau, c_out);
 }
 
+int st_merge_trust_group(st_model *into, const st_model *prev,
+                         const void *const *peer_blobs, const size_t *peer_lens,
+                         const void *const *peer_prev, const size_t *peer_prev_lens,
+                         int count, float *ts_out, float *c_out)
+{
+    /* STUB (test first): step 8 alone, no groups yet */
+    return st_merge_trust_echo(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
+                               count, ts_out, c_out);
+}
+
 static int st_merge_trust_core(st_model *into, const st_model *prev,
                                const void *const *peer_blobs, const size_t *peer_lens,
                                const void *const *peer_prev, const size_t *peer_prev_lens,

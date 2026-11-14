@@ -452,6 +452,25 @@ int  st_merge_trust_echo(st_model *into, const st_model *prev,
                          const void *const *peer_prev, const size_t *peer_prev_lens,
                          int count, float *ts_out, float *c_out);
 
+/* st_merge_trust_group (B5 step 10, research/b5-step10-design.md):
+ * st_merge_trust_echo, and then one voice per group of same-direction peers:
+ * among the peers still trusted (TS > 0 after the echo cut), a and b with
+ * cos(g_a, g_b) >= ST_GROUP_TAU (g = peer - prev, the destinations) are
+ * joined, transitively; in each group only the member with the smallest |g|
+ * (the one nearest to the receiver; equal |g|: the first in weight-byte
+ * order) keeps its TS, the others get TS 0. With no group the bytes are
+ * st_merge_trust_echo's. -DB5S10_GROUP_FAR: the largest |g| is kept (NC1);
+ * -DB5S10_TG_LOW: tau 0.5 (NC2). Hosted only. */
+#if defined(B5S10_TG_LOW)
+#define ST_GROUP_TAU 0.5
+#else
+#define ST_GROUP_TAU 0.95
+#endif
+int  st_merge_trust_group(st_model *into, const st_model *prev,
+                          const void *const *peer_blobs, const size_t *peer_lens,
+                          const void *const *peer_prev, const size_t *peer_prev_lens,
+                          int count, float *ts_out, float *c_out);
+
 /* st_round_adopt (B5 step 2, research/b5-step2.md): the round's average is
  * made in a copy `cand`; it replaces `live` (w, mu, vu, adam_t) only if cand
  * is finite and its mean loss over the non-overlapping `seq` windows of
