@@ -1136,18 +1136,25 @@ static int s8unit(void)
     st_model q0; clone(&q0, &m[0]);
     for (int p = 0; p < 2; p++) pass_q(&q0, 0);
     for (int k = 1; k < NM; k++) { st_free(&m[k]); clone(&m[k], &m[0]); for (int p = 0; p < 2; p++) pass_q(&m[k], k); }
+    /* H25 (11-15): peer_prev was a pass AFTER the peer (mp = m[k] + 1 pass), so the peer's own
+     * update pointed back and every TS was 0 with peer_prev: s8-same compared two refusals.
+     * Now peer_prev is the peer after its first pass (its own update = its second pass, TS > 0). */
     st_model mp[NM];
-    for (int k = 1; k < NM; k++) { clone(&mp[k], &m[k]); for (int p = 0; p < 1; p++) pass_q(&mp[k], (k + 1) % NM); }
+    for (int k = 1; k < NM; k++) { clone(&mp[k], &m[0]); pass_q(&mp[k], k); }
     st_model *pr[] = { &m[1], &m[2], &m[3] }, *pq[] = { &mp[1], &mp[2], &mp[3] };
-    { st_model a7, a8, b7, b8; float c[3];
-      s7u_merge(&a7, &q0, &m[0], pr, pq, 3, NULL); s8u_merge(&a8, &q0, &m[0], pr, pq, 3, NULL, c);
-      s7u_merge(&b7, &q0, &m[0], pr, NULL, 3, NULL); s8u_merge(&b8, &q0, &m[0], pr, NULL, 3, NULL, NULL);
-      printf("    real: c %.4f %.4f %.4f bytes %016llx %016llx %016llx %016llx\n", (double)c[0], (double)c[1], (double)c[2],
+    { st_model a7, a8, b7, b8, x0; float c[3], t8[3];
+      int ra = s7u_merge(&a7, &q0, &m[0], pr, pq, 3, NULL); s8u_merge(&a8, &q0, &m[0], pr, pq, 3, t8, c);
+      int rb = s7u_merge(&b7, &q0, &m[0], pr, NULL, 3, NULL); s8u_merge(&b8, &q0, &m[0], pr, NULL, 3, NULL, NULL);
+      clone(&x0, &q0);
+      printf("    real: rc %d %d TS %.4f %.4f %.4f c %.4f %.4f %.4f bytes %016llx %016llx %016llx %016llx\n", ra, rb,
+             (double)t8[0], (double)t8[1], (double)t8[2], (double)c[0], (double)c[1], (double)c[2],
              (unsigned long long)hash(&a7), (unsigned long long)hash(&a8), (unsigned long long)hash(&b7), (unsigned long long)hash(&b8));
       check(c[0] < 0.9f && c[1] < 0.9f && c[2] < 0.9f, "s8-honest", "trained peers on other quarters: every c below tau");
+      check(ra == 3 && rb == 3 && t8[0] > 0.0f && t8[1] > 0.0f && t8[2] > 0.0f && hash(&a7) != hash(&x0) && hash(&b7) != hash(&x0),
+            "s8-real-moved", "both merges took the 3 peers with TS > 0 and moved the model (not two refusals, H25)");
       check(hash(&a7) == hash(&a8), "s8-same", "no echo, with peer_prev: every byte of st_merge_trust_prev");
       check(hash(&b7) == hash(&b8), "s8-same-null", "no echo, peer_prev NULL: every byte too");
-      st_free(&a7); st_free(&a8); st_free(&b7); st_free(&b8); }
+      st_free(&a7); st_free(&a8); st_free(&b7); st_free(&b8); st_free(&x0); }
     for (int k = 1; k < NM; k++) st_free(&mp[k]);
     for (int k = 0; k < NM; k++) st_free(&m[k]);
     st_free(&q0);
