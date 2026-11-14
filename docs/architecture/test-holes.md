@@ -33,3 +33,4 @@
 | S14 | TCP・UDP の中継の広い宛て（H20、`dst = f[5]` だけ読む） | 受け手の misdelivered の行を [n2-tcp] T5（監査-165）と [n2-alive] A6（監査-166）が 0 で見る。ログが無い・空のノードは A6 で no-log の赤（fix/h20g-nolog、監査-167）。陰性 DST_LOW_BYTE・RELAY_NC_MISROUTE |
 | S15 | B5 第 8 歩の s8unit の τ（H21） | `[s8-tau]` c 0.905 は切る・0.895 は残す＝τ を (0.895, 0.905] に留める（fix/h21-s8unit、監査-169: τ 0.91・0.95・0.85 は赤、0.899 は緑）。`>` と `>=` の違いは残る（c がちょうど τ の例は作れない） |
 | S16 | 方舟と self/ の片側だけの守り（H22） | run_ark_mix.sh（古い形の隣で x1 受け取り・x2 送りの止めだけ）と run_self_ref_local.sh の SELF_REF_BIN_A/_B。監査-172 PASS で master（両方古い形で赤） |
+| S17 | s8unit の実モデルの比べ（H25、11-15 の回が s10unit を書いて見つけた） | peer_prev が仲間の「後の 1 周」で TS が全部 0＝s8-same は合体を断った同士の比べだった。前の 1 周にして TS>0・動いたことを確かめる（fix/h25-s8unit-real）。step 8 だけ 1 台落とす壊しは master で緑・直しで赤（s8-same） |
