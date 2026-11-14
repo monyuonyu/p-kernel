@@ -220,8 +220,11 @@ else say "bad  e3s: S1=${S1:0:16} s2[$(grep -a 'ark-rec' "$d/s2.t" | tr '\n' '|'
 # root, where chmod does not stop the read). Each: `ark rec new` says "no ark key", writes no
 # record, and the file is byte-for-byte what it was. Negative: -DARK_REC_KEY_REPLACE (the
 # code before audit-172, which made a new key over it): e3x red.
+# H23 (11-15): x3 a 33-byte ark.key (`kn == 32` made `kn >= 32` used its first 32 bytes, green
+# before) and x4 an ark.key that is a directory (unreadable for root too, so it runs where x2 is
+# skipped). Each is refused and left as it was.
 xr=""
-mkdir -p "$d/x1.dir" "$d/x2.dir"
+mkdir -p "$d/x1.dir" "$d/x2.dir" "$d/x3.dir" "$d/x4.dir/ark.key"
 head -c 31 /dev/urandom > "$d/x1.dir/ark.key"; cp "$d/x1.dir/ark.key" "$d/x1.want"
 printf 'ark rec new 1 x-one\nark rec ls\n' > "$d/x.cmd"
 run1 "$d/x1.img" "$d/x1.dir" "$d/x.cmd" > "$d/x1.t"
@@ -237,7 +240,15 @@ if ! cat "$d/x2.dir/ark.key" > /dev/null 2>&1; then
     else xr="$xr x2[$(grep -a '^.ark-rec' "$d/x2.t" | tr '\n' '|') cmp=$(cmp -s "$d/x2.dir/ark.key" "$d/x2.want" && echo same || echo changed)]"; fi
 fi
 chmod 600 "$d/x2.dir/ark.key" 2>/dev/null
-if [ -z "$xr" ]; then say "ok   e3x: a short or unreadable ark.key is refused and left as it was (x2 $x2)"
+head -c 33 /dev/urandom > "$d/x3.dir/ark.key"; cp "$d/x3.dir/ark.key" "$d/x3.want"
+run1 "$d/x3.img" "$d/x3.dir" "$d/x.cmd" > "$d/x3.t"
+if grep -aq 'no ark key' "$d/x3.t" && grep -aqE 'index nrec=0' "$d/x3.t" && cmp -s "$d/x3.dir/ark.key" "$d/x3.want"; then :
+else xr="$xr x3[$(grep -a '^.ark-rec' "$d/x3.t" | tr '\n' '|') cmp=$(cmp -s "$d/x3.dir/ark.key" "$d/x3.want" && echo same || echo changed)]"; fi
+run1 "$d/x4.img" "$d/x4.dir" "$d/x.cmd" > "$d/x4.t"
+if grep -aq 'no ark key' "$d/x4.t" && grep -aqE 'index nrec=0' "$d/x4.t" && [ -d "$d/x4.dir/ark.key" ] \
+   && [ -z "$(ls -A "$d/x4.dir/ark.key")" ]; then :
+else xr="$xr x4[$(grep -a '^.ark-rec' "$d/x4.t" | tr '\n' '|') dir=$([ -d "$d/x4.dir/ark.key" ] && echo kept || echo gone)]"; fi
+if [ -z "$xr" ]; then say "ok   e3x: a short, long or unreadable ark.key is refused and left as it was (x2 $x2)"
 else say "bad  e3x:$xr"; bad="$bad e3x"; fi
 
 if [ -n "${ARK_E3_EXPECT_RED:-}" ]; then
