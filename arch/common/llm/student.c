@@ -2609,14 +2609,15 @@ int st_merge_trust(st_model *into, const st_model *prev,
     return st_merge_trust_prev(into, prev, peer_blobs, peer_lens, NULL, NULL, count, ts_out);
 }
 
-/* the body of steps 6, 7 and 8: tau < 0 is step 7 (no echo cut); with
+/* the body of steps 6, 7, 8 and 10: tau < 0 is step 7 (no echo cut); with
  * tau >= 0 a peer with c = cos(gj, g0) >= tau gets TS 0 (step 8). The cut only
  * zeroes a TS: every other number is computed as in step 7, so tau < 0 and
- * "no peer reaches tau" give step 7's bytes. */
+ * "no peer reaches tau" give step 7's bytes. tg >= 0 is step 10's group rule
+ * after the cut (tg < 0, or no group, gives step 8's bytes). */
 static int st_merge_trust_core(st_model *into, const st_model *prev,
                                const void *const *peer_blobs, const size_t *peer_lens,
                                const void *const *peer_prev, const size_t *peer_prev_lens,
-                               int count, float *ts_out, double tau, float *c_out);
+                               int count, float *ts_out, double tau, float *c_out, double tg);
 
 int st_merge_trust_prev(st_model *into, const st_model *prev,
                         const void *const *peer_blobs, const size_t *peer_lens,
@@ -2624,7 +2625,7 @@ int st_merge_trust_prev(st_model *into, const st_model *prev,
                         int count, float *ts_out)
 {
     return st_merge_trust_core(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
-                               count, ts_out, -1.0, NULL);
+                               count, ts_out, -1.0, NULL, -1.0);
 }
 
 int st_merge_trust_echo(st_model *into, const st_model *prev,
@@ -2638,7 +2639,7 @@ int st_merge_trust_echo(st_model *into, const st_model *prev,
     const double tau = ST_ECHO_TAU;
 #endif
     return st_merge_trust_core(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
-                               count, ts_out, tau, c_out);
+                               count, ts_out, tau, c_out, -1.0);
 }
 
 int st_merge_trust_group(st_model *into, const st_model *prev,
@@ -2646,15 +2647,19 @@ int st_merge_trust_group(st_model *into, const st_model *prev,
                          const void *const *peer_prev, const size_t *peer_prev_lens,
                          int count, float *ts_out, float *c_out)
 {
-    /* STUB (test first): step 8 alone, no groups yet */
-    return st_merge_trust_echo(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
-                               count, ts_out, c_out);
+#if defined(B5S8_NO_ECHO)
+    const double tau = -1.0;
+#else
+    const double tau = ST_ECHO_TAU;
+#endif
+    return st_merge_trust_core(into, prev, peer_blobs, peer_lens, peer_prev, peer_prev_lens,
+                               count, ts_out, tau, c_out, ST_GROUP_TAU);
 }
 
 static int st_merge_trust_core(st_model *into, const st_model *prev,
                                const void *const *peer_blobs, const size_t *peer_lens,
                                const void *const *peer_prev, const size_t *peer_prev_lens,
-                               int count, float *ts_out, double tau, float *c_out)
+                               int count, float *ts_out, double tau, float *c_out, double tg)
 {
     if (c_out && count > 0 && count <= ST_COHORT_MAX) for (int k = 0; k < count; k++) c_out[k] = -2.0f;
     if (!into || !into->w || !prev || !prev->w) return ST_E_ARG;
@@ -2683,7 +2688,7 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
     for (int i = 0; i < np; i++) { double g = (double)into->w[i] - (double)prev->w[i]; n0 += g * g; }
     n0 = st_sqrt_d(n0);
     if (!(n0 > 0.0)) return 0;              /* no own update: nothing to anchor on */
-    double ts[ST_COHORT_MAX], sc[ST_COHORT_MAX], sum = 0.0;
+    double ts[ST_COHORT_MAX], sc[ST_COHORT_MAX], gn[ST_COHORT_MAX], sum = 0.0;
     for (int a = 0; a < accepted; a++) {
         const void *b = peer_blobs[ord[a]];
         const void *bp = st_prev_ok(into, peer_prev, peer_prev_lens, ord[a]) ? peer_prev[ord[a]] : NULL;
@@ -2699,6 +2704,7 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
             nj += gj * gj;
         }
         nj = st_sqrt_d(nj);
+        gn[a] = nj;
         double cs;
         if (bp) { nd = st_sqrt_d(nd); cs = nd > 0.0 ? dot / (n0 * nd) : 0.0; }
         else cs = nj > 0.0 ? dot / (n0 * nj) : 0.0;
@@ -2719,6 +2725,49 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
 #endif
         sum += ts[a];
         if (ts_out) ts_out[ord[a]] = (float)ts[a];
+    }
+    if (tg >= 0.0 && accepted > 1) {
+        /* step 10: one voice per group of same-direction peers. Peers still trusted
+         * are joined when cos(g_a, g_b) >= tg (union-find, the root the smaller
+         * index, so no loop); in each group only the member with the smallest |g|
+         * keeps its TS (equal |g|: the smaller index = the first in weight-byte
+         * order). That member is never zeroed, so the result does not depend on
+         * the order the zeroing goes in. */
+        int par[ST_COHORT_MAX], keep[ST_COHORT_MAX];
+        for (int a = 0; a < accepted; a++) par[a] = a;
+        for (int a = 0; a < accepted; a++) for (int b = a + 1; b < accepted; b++) {
+            if (!(ts[a] > 0.0) || !(ts[b] > 0.0) || !(gn[a] > 0.0) || !(gn[b] > 0.0)) continue;
+            const void *ba = peer_blobs[ord[a]], *bb = peer_blobs[ord[b]];
+            double d = 0.0;
+            for (int i = 0; i < np; i++) {
+                double p = (double)prev->w[i];
+                d += ((double)st_blob_w_at(ba, (size_t)i) - p) * ((double)st_blob_w_at(bb, (size_t)i) - p);
+            }
+            if (d / (gn[a] * gn[b]) >= tg) {
+                int ra = a, rb = b;
+                while (par[ra] != ra) ra = par[ra];
+                while (par[rb] != rb) rb = par[rb];
+                if (ra != rb) { if (ra < rb) par[rb] = ra; else par[ra] = rb; }
+            }
+        }
+        for (int a = 0; a < accepted; a++) keep[a] = -1;   /* per root: the member kept */
+        for (int a = 0; a < accepted; a++) {
+            if (!(ts[a] > 0.0)) continue;
+            int r = a; while (par[r] != r) r = par[r];
+            int k = keep[r];
+#if defined(B5S10_GROUP_FAR)                /* NC1 of the design: the farthest kept */
+            if (k < 0 || gn[a] > gn[k]) keep[r] = a;
+#else
+            if (k < 0 || gn[a] < gn[k]) keep[r] = a;
+#endif
+        }
+        int cut = 0;
+        for (int a = 0; a < accepted; a++) {
+            if (!(ts[a] > 0.0)) continue;
+            int r = a; while (par[r] != r) r = par[r];
+            if (keep[r] != a) { ts[a] = 0.0; if (ts_out) ts_out[ord[a]] = 0.0f; cut = 1; }
+        }
+        if (cut) { sum = 0.0; for (int a = 0; a < accepted; a++) sum += ts[a]; }
     }
 #if defined(B5S6_MUT_SELF)                  /* self-test mutant: g0 added with weight 1 */
     sum += 1.0;
