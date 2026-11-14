@@ -397,13 +397,15 @@ fi
 #   Wide 260 reassembles wide 300's weights ("[onemind] peer 299 epoch=..: ALL .. chunks") and new
 #   narrow 4 reassembles 260's or 300's (peer 259 / 299). Before, a wide node announced origin 0xFF
 #   with no tail and every receiver skipped it (o >= DNODE_MAX), and the tables were narrow.
-#   The nodes were stopped at the start (above): XW resumes the new ones. The merge pulses every
-#   4 s once the mind is ready (its first learning can take a minute or two).
+#   The nodes were stopped at the start (above): XW resumes the new ones and teaches each a fact
+#   (the mind learns lazily, on its first command). The merge pulses every 4 s once the mind is ready (its first learning can take a minute or two).
 #   Negative control: -DN2_NC_MW_NARROW (no tail on the announce) leaves XW red.
 if [ "${N2_XW:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
     folded() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aqE "^\[onemind\] peer ($2) epoch=[0-9]+: ALL [0-9]+ chunks"; }
     for i in 4 44 260 300; do send "$i" "stop resume"; done   # a stopped node neither sends nor folds
-    t=0; ok=0; XWW="${N2_XW_WAIT:-240}"
+    # the mind is ready (m_ready) only after its lazy first learning: a teach starts it
+    for i in 4 44 260 300; do send "$i" "mind teach xw$i one"; done
+    t=0; ok=0; XWW="${N2_XW_WAIT:-300}"
     while [ "$t" -lt "$XWW" ]; do
         sleep 5; t=$((t + 5))
         folded 260 299 && folded 4 '259|299' && { ok=1; break; }
