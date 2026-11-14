@@ -26,6 +26,9 @@
                           dt_sqrt/dtr_ln_fwd_cache/dtr_ln_bwd/dtr_logf */
 #include "pk_node.h"   /* pk_node_t, pk_node8_t (N2a) */
 #include "pk_node_row.h"   /* N2 (c)(3): the per-origin seq rows (hosted) */
+#ifdef _TK_HOSTED_LIBC_
+#include "swim.h"           /* N2 7c 2: swim_wide_alive (the wide region members) */
+#endif
 #include "dmn.h"       /* dmn_trigger(): a fact arrival IS a stimulus (VI.3) */
 #include "drpc.h"     /* galaxy v1: drpc_my_node for emit src */
 #include "galaxy.h"   /* galaxy v1: S4 teach/ask emit hooks */
@@ -6181,9 +6184,24 @@ static MW_ANNOUNCE mw_ann;            /* publish/recv announce scratch      */
 /* region announce pub/sub handles (lazy, region scope) + per-origin latest
  * announced {epoch, manifest-id} (the subscriber records, the fold reads). */
 static W  mw_ann_pub = -1, mw_ann_sub = -1;
-static UW mw_ann_epoch[DNODE_MAX];
-static U1 mw_ann_man[DNODE_MAX][PFS_ID_LEN];
-static UB mw_ann_have[DNODE_MAX];
+/* N2 7c 2: on hosted the tables are rows (pk_node_row), so a wide origin has one;
+ * bare metal: MW_ROWS == DNODE_MAX and the loops below are the old ones. */
+#ifdef _TK_HOSTED_LIBC_
+#define MW_ROWS DNODE_ROWS
+/* the origin of a mind/w announce or manifest: the byte, or after 0xFF the wide id
+ * of the tail (only a wide id: a tail cannot name a narrow node, as in 7a) */
+static pk_node_t mw_org_of(pk_node8_t o, U1 lo, U1 hi)
+{
+    if (o != PK_NODE_NONE) return (pk_node_t)o;
+    pk_node_t w = (pk_node_t)((UH)lo | ((UH)hi << 8));
+    return PK_NODE_IS_WIDE(w) ? w : (pk_node_t)PK_NODE_NONE;
+}
+#else
+#define MW_ROWS DNODE_MAX
+#endif
+static UW mw_ann_epoch[MW_ROWS];
+static U1 mw_ann_man[MW_ROWS][PFS_ID_LEN];
+static UB mw_ann_have[MW_ROWS];
 
 static W mw_ann_pub_h(void)
 {
@@ -6214,8 +6232,15 @@ static void mw_ann_poll(void)
     for (INT guard = 0; guard < 8; guard++) {
         W r = kdds_sub(mw_ann_sub, &mw_ann, (W)sizeof mw_ann, 0);
         if (r < (W)sizeof mw_ann || mw_ann.magic != MW_MAGIC) break;
+#ifdef _TK_HOSTED_LIBC_
+        pk_node_t oid = mw_org_of(mw_ann.origin, mw_ann._pad[0], mw_ann._pad[1]);
+        if (oid == PK_NODE_NONE || oid == drpc_my_node) continue;
+        INT o = pk_node_row(oid);
+        if (o < 0) continue;                          /* the wide rows full */
+#else
         U1 o = mw_ann.origin;
         if (o >= DNODE_MAX || o == drpc_my_node) continue;
+#endif
         if (mw_ann_have[o]) {
             INT same = 1;
             for (INT i = 0; i < PFS_ID_LEN; i++)
@@ -6307,8 +6332,13 @@ static INT mw_is_live(const U1 id[PFS_ID_LEN])
 {
     if (mw_own_have && (mw_id_eq(id, mw_own_man) || mw_in_man(&mw_own_live, id)))
         return 1;
+#ifdef _TK_HOSTED_LIBC_
+    for (INT o = 0; o < MW_ROWS; o++) {
+        if (!mw_ann_have[o] || pk_node_of_row(o) == drpc_my_node) continue;
+#else
     for (U1 o = 0; o < DNODE_MAX; o++) {
         if (!mw_ann_have[o] || o == drpc_my_node) continue;
+#endif
         if (mw_id_eq(id, mw_ann_man[o])) return 1;
         if (pfs_get(mw_ann_man[o], &mw_gc_man, sizeof mw_gc_man) == (INT)sizeof mw_gc_man &&
             mw_gc_man.magic == MW_MAGIC && mw_in_man(&mw_gc_man, id))
@@ -6325,8 +6355,13 @@ static void mw_gc(void)
         if (!pfs_slot_info(i, id, &len, &org)) continue;
         if (len != sizeof(MW_CHUNK) && len != sizeof(MW_MANIFEST)) continue;
         pk_node_t owner = (org == PFS_ORIGIN_SELF) ? drpc_my_node : org;
+#ifdef _TK_HOSTED_LIBC_
+        if (owner == drpc_my_node) { if (!mw_own_have) continue; }
+        else { INT orow = pk_node_row_find(owner); if (orow < 0 || !mw_ann_have[orow]) continue; }
+#else
         if (owner >= DNODE_MAX) continue;
         if (owner == drpc_my_node ? !mw_own_have : !mw_ann_have[owner]) continue;
+#endif
         if (pfs_get(id, mw_gc_buf, sizeof mw_gc_buf) != (INT)len) continue;
         UW mg = (UW)mw_gc_buf[0] | ((UW)mw_gc_buf[1] << 8) |
                 ((UW)mw_gc_buf[2] << 16) | ((UW)mw_gc_buf[3] << 24);
@@ -6358,6 +6393,9 @@ static INT mw_publish_weights(void)
     mw_man.origin   = pk_node_v1(drpc_my_node);
     mw_man.n_chunks = N_WCHUNK;
     mw_man._pad     = 0;
+#ifdef _TK_HOSTED_LIBC_
+    if (PK_NODE_IS_WIDE(drpc_my_node)) mw_man._pad = (UH)drpc_my_node;   /* N2 7c 2: the wide tail */
+#endif
 
     /* PFS-FULL-SILENT-DROP: name the NEW set first (ids only), make it my
      * current publish, and free what it supersedes BEFORE the puts — so the
@@ -6411,6 +6449,18 @@ static INT mw_publish_weights(void)
         for (UW j = 0; j < MW_PUSH_BURST; j++)
             pfs_repl_push(mw_man.chunk[(pstart + j) % N_WCHUNK], o);
     }
+#ifdef _TK_HOSTED_LIBC_
+    {   /* N2 7c 2: the wide region members too (SWIM's alive list) */
+        pk_node_t wl[DNODE_WIDE_ROWS];
+        INT nw = swim_wide_alive(wl, DNODE_WIDE_ROWS);
+        for (INT k = 0; k < nw; k++) {
+            if (wl[k] == drpc_my_node || !region_contains(wl[k])) continue;
+            pfs_repl_push(man_id, wl[k]);
+            for (UW j = 0; j < MW_PUSH_BURST; j++)
+                pfs_repl_push(mw_man.chunk[(pstart + j) % N_WCHUNK], wl[k]);
+        }
+    }
+#endif
 
     /* publish the compact region announce {origin, epoch, manifest-id} on the
      * PROVEN mind/w K-DDS region topic (the Path E channel shape). */
@@ -6418,6 +6468,12 @@ static INT mw_publish_weights(void)
         mw_ann.magic = MW_MAGIC; mw_ann.epoch = merge_epoch;
         mw_ann.origin = pk_node_v1(drpc_my_node);
         mw_ann._pad[0]=mw_ann._pad[1]=mw_ann._pad[2]=0;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_MW_NARROW)   /* the negative: no tail */
+        if (PK_NODE_IS_WIDE(drpc_my_node)) {          /* N2 7c 2: 0xFF + the wide id */
+            mw_ann._pad[0] = (U1)(drpc_my_node & 0xFF);
+            mw_ann._pad[1] = (U1)(drpc_my_node >> 8);
+        }
+#endif
         for (INT i=0;i<PFS_ID_LEN;i++) mw_ann.man_id[i] = man_id[i];
         (void)kdds_pub(mw_ann_pub, &mw_ann, (W)sizeof mw_ann);
     }
@@ -6437,16 +6493,30 @@ static INT mw_publish_weights(void)
  * manifest by CONTENT-ID from the mind/w announce — NOT the pfs/ref gossip. */
 static INT mw_fetch_peer(pk_node_t origin)
 {
+#ifdef _TK_HOSTED_LIBC_
+    INT orow = pk_node_row_find(origin);
+    if (orow < 0 || !mw_ann_have[orow]) return -1;    /* no announce */
+#else
     if (origin >= DNODE_MAX || !mw_ann_have[origin]) return -1;  /* no announce */
-    if (!pfs_has(mw_ann_man[origin])) {
-        pfs_repl_want(mw_ann_man[origin]);          /* manifest not local yet */
+#define orow origin
+#endif
+    if (!pfs_has(mw_ann_man[orow])) {
+        pfs_repl_want(mw_ann_man[orow]);            /* manifest not local yet */
         return -1;
     }
-    INT mr = pfs_get(mw_ann_man[origin], &mw_man, sizeof mw_man);
+    INT mr = pfs_get(mw_ann_man[orow], &mw_man, sizeof mw_man);
+#ifdef _TK_HOSTED_LIBC_
+    if (mr != (INT)sizeof mw_man || mw_man.magic != MW_MAGIC ||
+        mw_man.n_floats != R_NP || mw_man.n_chunks != N_WCHUNK ||
+        mw_org_of(mw_man.origin, (U1)(mw_man._pad & 0xFF), (U1)(mw_man._pad >> 8)) != origin)
+        return -1;                                  /* manifest bad/partial   */
+#else
     if (mr != (INT)sizeof mw_man || mw_man.magic != MW_MAGIC ||
         mw_man.n_floats != R_NP || mw_man.n_chunks != N_WCHUNK ||
         mw_man.origin != origin)
         return -1;                                  /* manifest bad/partial   */
+#undef orow
+#endif
 
     /* The P1 receive assembler is SINGLE-SLOT (pfs_repl.c: one block in flight
      * at a time): WANTing all 22 chunks at once makes the holder flood 22
@@ -6488,7 +6558,7 @@ static INT mw_fetch_peer(pk_node_t origin)
 
 /* per-origin last-folded epoch high-water (XI.3 loop guard: never re-fold a
  * stale peer-state; a peer is folded only if its epoch is NEWER). */
-static UW mw_peer_epoch[DNODE_MAX];
+static UW mw_peer_epoch[MW_ROWS];
 
 /* THE merge: fold {self} U {region peers with a NEWER epoch} via gl_merge at
  * n=R_NP (the no-central averager, XI.0 #1). Sets rw[] to the mean, bumps
@@ -6511,10 +6581,18 @@ static INT mw_fold_region(void)
      * proof bounds |fwd-rev| at n=R_NP). */
     for (INT i = 0; i < R_NP; i++) mw_out[i] = mw_self[i];   /* {self} */
     INT folded = 0;
+#ifdef _TK_HOSTED_LIBC_
+    for (INT o = 0; o < MW_ROWS; o++) {             /* N2 7c 2: rows, wide too */
+        pk_node_t oid = pk_node_of_row(o);
+        if (oid == PK_NODE_NONE || oid == drpc_my_node) continue;
+        if (!region_contains(oid)) continue;        /* REGION-scoped (XI.0 #7)*/
+        INT pe = mw_fetch_peer(oid);
+#else
     for (U1 o = 0; o < DNODE_MAX; o++) {
         if (o == drpc_my_node) continue;
         if (!region_contains(o)) continue;          /* REGION-scoped (XI.0 #7)*/
         INT pe = mw_fetch_peer(o);
+#endif
         if (pe < 0) continue;                        /* dropped (partial)     */
         if ((UW)pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) continue; /* stale */
         mw_peer_epoch[o] = (UW)pe;
@@ -6591,14 +6669,14 @@ void mind_merge_task(INT stacd, void *exinf)
          * keep overwriting its own announce and never SEE a peer's. Draining
          * faster than the publish cadence catches each peer's announce as it
          * flits through the slot (records {epoch, manifest-id}, WANTs it). */
-        if (region_size_narrow() >= 2) {
+        if (region_size() >= 2) {                     /* N2 7c 2: wide members count (rows) */
             m_gate_acquire(); mw_ann_poll(); m_gate_release();
         }
         since_pulse += MW_ANN_POLL_MS;
         if (since_pulse < MW_PULSE_MS) continue;
         since_pulse = 0;
         if (!m_ready) continue;                       /* no weights to merge  */
-        if (region_size_narrow() < 2) continue;             /* region of one        */
+        if (region_size() < 2) continue;                    /* region of one        */
         m_gate_acquire();
         m_quiesce();
         (void)mw_fold_region();

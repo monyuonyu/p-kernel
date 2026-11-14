@@ -25,7 +25,8 @@
 # N2_X3_PART=snow judges only X3's snow lines (wide -> new); fire (old -> wide) rides the want.
 # N2_X3=1 also runs X3H (a wide sender's mind/have summary raises a want, below) after X3;
 # N2_X3_PART=have runs X3H alone. N2_XP=1 adds XP (p-fs blocks between wide and narrow, below).
-# N2_XQ=1 adds XQ (protect counts and pushes to wide holders, below).
+# N2_XQ=1 adds XQ (protect counts and pushes to wide holders, below). N2_XW=1 adds XW (the mind's
+# weight merge folds a wide peer, below).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -390,6 +391,26 @@ if [ "${N2_XQ:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; the
         [ "$ok" = 1 ] && res XQ PASS "260's unit $w $hw, 4's unit $n $hn" \
                       || res XQ FAIL "260's unit $w {$hw} wants n299, 4's unit $n {$hn} wants n259 or n299"
     fi
+fi
+
+# XW  the mind's merge (mind/w, Path W) reaches the wide peers (N2 7c 2). N2_XW=1.
+#   Wide 260 reassembles wide 300's weights ("[onemind] peer 299 epoch=..: ALL .. chunks") and new
+#   narrow 4 reassembles 260's or 300's (peer 259 / 299). Before, a wide node announced origin 0xFF
+#   with no tail and every receiver skipped it (o >= DNODE_MAX), and the tables were narrow.
+#   The nodes were stopped at the start (above): XW resumes the new ones. The merge pulses every
+#   4 s once the mind is ready (its first learning can take a minute or two).
+#   Negative control: -DN2_NC_MW_NARROW (no tail on the announce) leaves XW red.
+if [ "${N2_XW:-0}" = 1 ] && [ -n "$WIDE" ] && [ "${N2_RELAY_OLD:-0}" != 1 ]; then
+    folded() { tr -d '\r' < "$LOGDIR/node$1.log" | grep -aqE "^\[onemind\] peer ($2) epoch=[0-9]+: ALL [0-9]+ chunks"; }
+    for i in 4 44 260 300; do send "$i" "stop resume"; done   # a stopped node neither sends nor folds
+    t=0; ok=0; XWW="${N2_XW_WAIT:-240}"
+    while [ "$t" -lt "$XWW" ]; do
+        sleep 5; t=$((t + 5))
+        folded 260 299 && folded 4 '259|299' && { ok=1; break; }
+    done
+    a="$(folded 260 299 && echo yes || echo no)"; b="$(folded 4 '259|299' && echo yes || echo no)"
+    [ "$ok" = 1 ] && res XW PASS "260 folded 299's weights, 4 folded a wide peer's (after ${t} s)" \
+                  || res XW FAIL "260 folded 299: $a, 4 folded 259 or 299: $b (in ${XWW} s)"
 fi
 
 if [ -z "$REDS" ]; then echo "[n2-mix] ALL PASS"; exit 0; fi
