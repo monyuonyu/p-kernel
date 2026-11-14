@@ -812,6 +812,11 @@ static int s7(uint32_t seed, const char *which)
         } else if (strcmp(which, "s9c") == 0) {
             s7_rounds(seed, 0, 1, 3, "trim4-near1");
             s7_rounds(seed, 1, 1, 3, "trust4-near1");
+        } else if (strcmp(which, "s9t") == 0) {   /* step 10's R10 / NC2: the two trust arms of s9a only */
+            s7_rounds(seed, 1, 0, 1, "trust4");
+            s7_rounds(seed, 1, 1, 1, "trust4-garb1");
+        } else if (strcmp(which, "s9u") == 0) {   /* step 10's near1 reading: the trust arm of s9c only */
+            s7_rounds(seed, 1, 1, 3, "trust4-near1");
         } else { fprintf(stderr, "s9: unknown stage %s\n", which); return 2; }
         printf("[%s] done\n", kp_tag);
         return 0;

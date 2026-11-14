@@ -3,10 +3,10 @@
 # run_b5_step10.sh - B5 step 10 (research/b5-step10-design.md): step 9's arms
 # with the trust arms on st_merge_trust_group (one voice per group of
 # same-direction peers). student_adopt_test.c stages s10a s10b s10y s10c s10d
-# s10p s10r1 s10r2, step 9 (s9a s9c, st_merge_trust_echo) of the same build
-# for R10, the NC1 build (-DB5S10_GROUP_FAR) stage s10n, the NC2 build
-# (-DB5S10_TG_LOW) stage s10a; judge b5_step10_check.py. Not in CI (about two
-# and a half hours on 3 cores).
+# s10p s10r1 s10r2, step 9 (s9t s9u: the trust arms of s9a s9c,
+# st_merge_trust_echo) of the same build for R10, the NC1 build
+# (-DB5S10_GROUP_FAR) stage s10n, the NC2 build (-DB5S10_TG_LOW) stage s10t;
+# judge b5_step10_check.py. Not in CI (about three hours on 3 cores).
 #
 #   ./run_b5_step10.sh              exit 0 = self-tests green, R1-R10 green, NC1 and NC2 red
 #   B5S10_MODE=self                 the judge's self-test and the units (seconds)
@@ -52,9 +52,9 @@ for b in far tglow; do
 done
 if [ "${B5S10_MODE:-}" = self ]; then echo "[result] PASS  b5-step10 self-tests"; exit 0; fi
 { for s in $SEEDS; do for p in p b r1 r2; do echo "plain $s s10$p plain-$s-$p"; done
-      echo "far $s s10n far-$s"; echo "tglow $s s10a tglow-$s"; done
+      echo "far $s s10n far-$s"; echo "tglow $s s10t tglow-$s"; done
   for s in $SEEDS; do for p in a y c d; do echo "plain $s s10$p plain-$s-$p"; done
-      echo "plain $s s9a echo-$s-a"; echo "plain $s s9c echo-$s-c"; done; } \
+      echo "plain $s s9t echo-$s-t"; echo "plain $s s9u echo-$s-u"; done; } \
     | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; b="$3"; s="$4"; st="$5"; f="$6"; "$w/$b" "$h" "$s" "$st" > "$o/$f.log" 2>&1; echo "[b5-step10] $f rc=$?"' \
         "$WORK" "$HERE/b1_held.txt" "$OUT"
 python3 "$HERE/b5_step10_check.py" --seeds "$SEEDS" "$OUT"

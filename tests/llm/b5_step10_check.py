@@ -3,8 +3,9 @@
 Reads the logs written by run_b5_step10.sh (student_adopt_test.c). The plain
 build's stages s10a s10b s10y s10c s10d s10p s10r1 s10r2 are step 9's arms
 with the trust arms on st_merge_trust_group; s9a and s9c of the same build are
-step 9 (st_merge_trust_echo, every byte as before) on the same seeds; s10n of
-the NC1 build (-DB5S10_GROUP_FAR) is near2 rep 0; s10a of the NC2 build
+step 9 (st_merge_trust_echo, every byte as before) on the same seeds (s9t =
+s9a's trust4 and trust4-garb1, s9u = s9c's trust4-near1); s10n of the NC1
+build (-DB5S10_GROUP_FAR) is near2 rep 0; s10t of the NC2 build
 (-DB5S10_TG_LOW) gives trust4 and trust4-garb1. Each arm prints one line
 
   [b5s10] arm=<name> last=<bpb> kept=<bpb> at <pass> (gate <nats>) ...
@@ -52,7 +53,7 @@ PARTS = {"a": ["alone-A", "trim4", "trust4", "trim4-garb1", "trust4-garb1"],
          "r1": ["trust4-garb2-r1", "trust4-near2-r1"],
          "r2": ["trust4-garb2-r2", "trust4-near2-r2"]}
 R10_ARMS = ["trust4", "trust4-garb1"]
-ECHO_PARTS = {"a": PARTS["a"], "c": PARTS["c"]}
+ECHO_PARTS = {"t": ["trust4", "trust4-garb1"], "u": ["trust4-near1"]}
 
 
 def read(path, needed, tag="b5s10", extra=None):
@@ -114,7 +115,7 @@ def read_nc1(d, s, plain):
 
 def read_nc2(d, s, echo):
     """NC2's trust4 and trust4-garb1 with step 9's from the echo logs; None if either is missing"""
-    a = read(os.path.join(d, "tglow-%s.log" % s), PARTS["a"])
+    a = read(os.path.join(d, "tglow-%s.log" % s), R10_ARMS)
     if a is None or echo is None:
         return None
     return {"new": {k: a[k] for k in R10_ARMS}, "echo": {k: echo[k] for k in R10_ARMS}}
@@ -406,7 +407,7 @@ def self_test():
                     e["trust4"] = echo_trust
                     put("echo-%s-%s.log" % (s, p), _log(e, tag="b5s9"))
                 put("far-%s.log" % s, _log({"trust4-near2": far_near2}))
-                t = {k: arms[k] for k in PARTS["a"]}
+                t = {k: arms[k] for k in R10_ARMS}
                 t["trust4"] = tg_trust
                 put("tglow-%s.log" % s, _log(t))
 
@@ -430,10 +431,10 @@ def self_test():
         check("main: NC1 all green -> rc 1", run_main(), 1)
         write_all(tg_trust=3.592)
         check("main: NC2 all green -> rc 1", run_main(), 1)
-        os.remove(os.path.join(d, "echo-%s-c.log" % S[2]))
+        os.remove(os.path.join(d, "echo-%s-u.log" % S[2]))
         write_all()
         check("main: back to PASS", run_main(), 0)
-        os.remove(os.path.join(d, "echo-%s-c.log" % S[2]))
+        os.remove(os.path.join(d, "echo-%s-u.log" % S[2]))
         check("main: an echo part missing -> rc 1", run_main(), 1)
     finally:
         shutil.rmtree(d)
