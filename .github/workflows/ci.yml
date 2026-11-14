@@ -1609,10 +1609,11 @@ jobs:
           grep -aF '[n2-mix] X3 PASS' n2_mix_x3.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_x3.log
           # XP: p-fs blocks cross between wide and narrow (pfs_repl's wide tails, N2 "まだ" 7);
-          # XQ: protect counts and pushes to wide holders (N2 7c 1)
-          N2_XP=1 N2_XQ=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_xp.log
+          # XQ: protect counts and pushes to wide holders (N2 7c 1); XW: the mind's weight merge folds a wide peer (N2 7c 2)
+          N2_XP=1 N2_XQ=1 N2_XW=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 600 tests/host/run_n2_mix.sh | tee n2_mix_xp.log
           grep -aF '[n2-mix] XP PASS' n2_mix_xp.log
           grep -aF '[n2-mix] XQ PASS' n2_mix_xp.log
+          grep -aF '[n2-mix] XW PASS' n2_mix_xp.log
           grep -aF '[n2-mix] ALL PASS' n2_mix_xp.log
   # The N2 negative controls, out of ump-x86_64 (2026-11-08, inbox #40 item 2):
   # they were its last step and its longest (14.4 of 107.2 min in CI
@@ -1847,6 +1848,12 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PROTECT_NARROW >/dev/null
           N2_XQ=1 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_prot.log || true
           grep -aE '^\[n2-mix\] XQ FAIL.* wants n299' n2_mix_nc_prot.log
+          # [n2-mix] XW goes red when a wide node's mind/w announce has no tail (-DN2_NC_MW_NARROW, N2 7c 2;
+          # the branch folds in about 45 s in the container, so 120 s is the window here)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_MW_NARROW >/dev/null
+          N2_XW=1 N2_XW_WAIT=120 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 400 tests/host/run_n2_mix.sh | tee n2_mix_nc_mw.log || true
+          grep -aE '^\[n2-mix\] XW FAIL: 260 folded 299: no' n2_mix_nc_mw.log
           # [ipw] goes red when snf/ss6 keep the old address form for a wide self (-DN2_NC_IP_OLD)
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_IP_OLD >/dev/null
