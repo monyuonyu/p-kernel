@@ -33,3 +33,9 @@
 - ARK の像の塊は origin を持たない＝第 1 版は平らな保存先だけ。ARK は次の切れ（像の中に origin の表）
 - 他の端末に複製された自分の記録は消せない（頼むのは S2 の道か、別の項目）
 - 入れたコードが走っている間に `leave` したときの扱い（再起動を求めるだけ）。genome・selfc の取り込みが塊の外に残るかは実装の回で読む
+
+## 5. 実装（2026-11-15 10:00 の回、feat/s1-leave、監査待ち）
+
+- `arch/common/swarm_leave.c`（hosted のビルドだけに入る。Makefile 3 つと Android の CMake）、pfs_durable.c に `.org` の読み書き・脇へ移す・名前と origin を回す、pfs_block.c の hosted の部分で `.org` を書き（自分は 0xFF）・読み戻しで使い・drop で消す。usermain（x86_64・aarch64）に `leave`・`join`・`pfs origins` と cmd_net の門
+- `leave` の後、この起動のうちは pfs_dur_write が mind.rw・ns1_student.bin を書かない（RAM の重みの書き戻しを止める）。**この守りを見る試験は無い**: L2 の赤 3 回はどれも `join` の後の起動で生まれた赤子が自分の重みを保存したもので、試験の見る時点の誤りだった（daaf3a62 で直した。d7611766 の「書き込みが leave と競う」という読みは誤り）
+- 測り（容器、x86_64）: 素 L1〜L5 緑、陰性 3 つはそれぞれ狙いの項目が赤、crown（ベア x86・aarch64 の .text・.rodata）は master と全バイト同じ、hosted の警告 57＝master と同じ
