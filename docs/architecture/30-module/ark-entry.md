@@ -74,3 +74,35 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - **E3d（E1 の region の kill）** B が A の最後の AKSD を持つのを見てから A を kill -9。A の `ark.key` を写した空の C が restore で全記録の全版を同じ sha256 で読め、`ls` が A の最後と同じ
 - 陰性 `-DARK_REC_PLAIN`・`-DARK_REC_SAME_KEY`・`-DARK_REC_INDEX_LOCAL`・`-DARK_REC_AAD_INNER`（赤になる行は試験の頭に実測で書く）
 - E3s（監査-170 の提案）AKSD の前で止めても、前の AKSD の id で前の版に戻る
+
+## 7. 1 人でも使える入口（ark アプリの画面と口）の設計（2026-11-15、#43 の 2。docs だけ・未実装）
+### 7.1 今あるもの（master affd64cd を読んだ）
+
+- 記録は**シェルからだけ**（`ark rec new|set|vis|learn|teach`、`ark heir set <64 hex>`）。アプリの画面は galaxy（127.0.0.1 の HTTP、Android は WebView）で、口は `/profile`・`/teach`・`/ask` など。記録の口は無い
+- galaxy の要求は 3072 B まで（`GX_REQ_MAX`）。同意の門 `ark_consent_ok`（README の原文への同意）は `/teach` にかかる
+- 鍵 `ark.key` を失うと封じた写しは誰にも開けない（E3 の限界）。控えを取る画面は無い
+
+### 7.2 決めたこと
+
+1. **記録の口は galaxy に足す**（第 2 の server は作らない）: `POST /ark/rec`（新しい記録）・`POST /ark/rec/<no>`（新しい版）・`GET /ark/rec.json`（番号・版・時刻・見せ方・学習・長さだけ。**数・いいね・順位を出さない**＝E6）・`GET /ark/rec/<no>`（本文のバイト）・`POST /ark/rec/<no>/vis|learn`・`GET|POST /ark/heir`。中身はシェルと同じ関数（ark_rec.c）を呼ぶ
+2. **書く口は同意の門の後ろ**（`ark_consent_ok`、`/teach` と同じ）。読むのは門なし（自分の端末の 127.0.0.1）
+3. **原文のまま**: 本文は受けたバイトをそのまま（文字コードの変換・空白の詰め・改行の直しをしない）。UTF-8 でなくても断らない。1 回の POST は 16 KB まで（この口だけ大きい受け皿）。長い記録は章ごとの記録に分ける（v1 の限界）
+4. **最初の画面の順**: 原文（README）→ 同意 → **鍵の控え**（`ark.key` を 64 桁の 16 進で 1 回だけ見せ、「書き写した」を押すまで記録の口を開けない）→ **継ぐ人**（相手の端末が見せる 64 桁を貼る、飛ばせる、身元は確かめない）→ 最初の記録。どれも後から変えられる
+5. 見せ方の既定は「自分だけ」、学習の既定は「使わない」（ark-entry.md 2.4・2.6 のまま）。画面は 1 つずつ選ばせる（まとめて変えるボタンを置かない）
+
+### 7.3 合否（作る前に固定。`tests/host/run_ark_app.sh`、galaxy に curl）
+
+- **A1** 同意の前の `POST /ark/rec` は 403 で何も書かない。同意の後は `{no,seq}` で、`GET /ark/rec/<no>` が送ったバイトと sha256 で同じ（多バイトの文字・CRLF・行末の空白・NUL を含む本文で）
+- **A2** HTTP で書いた記録が `ark rec ls` に出て、封じた目次の id（sealed=）が変わる
+- **A3** `vis`・`learn` の POST が版を足し、既定は self・no
+- **A4** 鍵の控えを「書き写した」にする前は記録の口が 409。控えの 64 桁で別の空のノードが `ark rec restore` できる
+- **A5** `/ark/rec.json` と画面の HTML に数・順位の欄が無い（決めた語の一覧で走査）
+- **A6** 16 KB を超える POST は 413 で何も書かない
+- 陰性: `-DGALAXY_ARK_NO_GATE`（A1 赤）・`-DGALAXY_ARK_NORMALIZE`（行末の空白を詰める＝A1 の sha256 赤）・`-DGALAXY_ARK_NO_BACKUP_GATE`（A4 赤）
+
+### 7.4 限界・まだ
+
+- 鍵の控えは紙に書き写す形だけ（言葉の列や QR は次）。控えを見せる画面は 127.0.0.1 の上でも、画面を覗かれれば読める
+- 継ぐ人の公開鍵の受け渡しは手で 64 桁（近くの 2 台で読み取る形は次）。渡す処理は v1.1（ark-handover.md）
+- ark-profile.md の v3「会話の原文の保管庫」は、この記録（原本の層）で置き換える。会話を自動で記録にするのは脳が育ってから
+- Android の実機で確かめるのは人の仕事
