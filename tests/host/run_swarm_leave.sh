@@ -119,7 +119,7 @@ suite() {  # <tag> <cflags>: prints the checks, sets SUITE_REDS
     run "$d" "$WORK/$tag-e0.log" 0 "leave"
     run "$d" "$WORK/$tag-e.log" 1 "join"
     run "$d" "$WORK/$tag-f.log" 1 "stop"
-    if grep -aq '^\[leave\] left' "$WORK/$tag-e.log" && ! grep -aq '^\[net\] transport = ' "$WORK/$tag-e.log" \
+    if grep -aq '^\[leave\] left: ' "$WORK/$tag-e.log" &&! grep -aq '^\[net\] transport = ' "$WORK/$tag-e.log" \
        && grep -aq '^\[net\] transport = ' "$WORK/$tag-f.log"; then r L3 PASS; else r L3 FAIL; fi
     # L5: a block without its .org is unknown and moved aside, not deleted
     d2="$WORK/$tag-d2"; mkdir -p "$d2"

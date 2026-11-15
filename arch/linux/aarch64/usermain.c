@@ -27,6 +27,7 @@ void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *)); /* swarm_lea
 void swarm_join_cmd(void (*out)(const char *));                       /* S1 */
 void swarm_leave_origins(void (*out)(const char *));                  /* S1: `pfs origins` */
 INT  swarm_leave_is_left(void);                                       /* S1: the leave mark */
+void swarm_leave_restore(void (*out)(const char *));                  /* S1: the start-up sweep */
 #include <tmonitor.h>
 #include "arch_reboot.h"
 #include "rtl8139.h"
@@ -862,6 +863,9 @@ EXPORT INT usermain(void)
     /* 0-14 S2 persist: the stop, its epoch and the stop-key table come back
      * before any task that obeys the stop starts. No-op without PKERNEL_PFS_DIR. */
     swarm_stop_restore(print);
+    /* 0-14 S1 (swarm-leave.md, audit-181): a node that left removes again what
+     * is not its own, and keeps refusing it. Before any net (cmd_net). */
+    swarm_leave_restore(print);
     /* persistence SLICE 2 (docs/architecture/30-module/persistence.md): the LEARNED
      * mind survives the reboot. If a durable weights blob exists AND its
      * header matches THIS build (version + R_NP + vocab content-id), load

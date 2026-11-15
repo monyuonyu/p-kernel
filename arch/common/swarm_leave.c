@@ -143,8 +143,10 @@ static void sl_seed(const UB *a, UW n, void (*out)(const char *))
         buf[len++] = (UB)('a' + (k % 26)); buf[len++] = (UB)('a' + (k / 26) % 26);
         k++;
     }
-    if (pfs_put_origin(buf, len, id, self ? PFS_ORIGIN_SELF : (pk_node_t)org) != PFS_OK) {
-        out("[leave] seed: pfs_put failed\r\n"); return;
+    {
+        INT rc = pfs_put_origin(buf, len, id, self ? PFS_ORIGIN_SELF : (pk_node_t)org);
+        if (rc == PFS_E_LEFT) { out("[leave] seed: refused (this node left the swarm)\r\n"); return; }
+        if (rc != PFS_OK) { out("[leave] seed: pfs_put failed\r\n"); return; }
     }
     sl_id_to_hex(id, hex);
     out("[leave] seed id="); out(hex);
@@ -153,10 +155,28 @@ static void sl_seed(const UB *a, UW n, void (*out)(const char *))
 }
 #endif
 
+/* remove what is not this node's: the table first (a foreign block there is
+ * dropped with its file), then every file left (evicted foreign blocks;
+ * unknown ones are moved aside). Returns the foreign count. */
+static UW sl_sweep(sl_count *c)
+{
+    UW i, tab_foreign = 0;
+    for (i = 0; i < PFS_MAX_BLOCKS; i++) {
+        U1 id[PFS_ID_LEN]; UW len; pk_node_t o;
+        if (!pfs_slot_info(i, id, &len, &o) || sl_is_self((INT)o)) continue;
+        tab_foreign++;
+#ifndef S1_NC_LEAVE_KEEP_FOREIGN
+        (void)pfs_drop(id);
+#endif
+    }
+    (void)pfs_dur_foreach_origin(sl_file, c);
+    return tab_foreign + c->foreign;
+}
+
 void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *))
 {
     sl_count c = { 0, 0, 0, 1 };
-    UW i, weights = 0, tab_foreign = 0;
+    UW weights = 0, foreign;
     while (n && (*a == ' ' || *a == '\t')) { a++; n--; }
 #ifdef SWARM_LEAVE_TEST
     if (n >= 4 && a[0] == 's' && a[1] == 'e' && a[2] == 'e' && a[3] == 'd') { sl_seed(a + 4, n - 4, out); return; }
@@ -167,26 +187,20 @@ void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *))
         return;
     }
     swarm_stop_cmd((const UB *)" now", 4, out);          /* ① the local stop */
-    /* ② the table first (a foreign block there is dropped with its file) ... */
-    for (i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 id[PFS_ID_LEN]; UW len; pk_node_t o;
-        if (!pfs_slot_info(i, id, &len, &o) || sl_is_self((INT)o)) continue;
-        tab_foreign++;
-#ifndef S1_NC_LEAVE_KEEP_FOREIGN
-        (void)pfs_drop(id);
+    /* audit-181: from here on nothing foreign is kept (the net's receive does
+     * not obey the stop), and the mark goes down BEFORE the removal: a leave
+     * that dies half way is finished by the sweep at the next start */
+    pfs_set_refuse_foreign(1);
+#ifndef S1_NC_LEAVE_NO_FLAG
+    if (pfs_dur_write(SL_MARK, "PKLEFT1\n", 8) != 0) out("[leave] could not write " SL_MARK "\r\n");
 #endif
-    }
-    /* ... then every file left (evicted foreign blocks, unknown ones) */
-    (void)pfs_dur_foreach_origin(sl_file, &c);
+    /* ② what is not this node's */
+    foreign = sl_sweep(&c);
     /* ③ the weights */
     pfs_dur_freeze_weights();     /* and no write-back of the RAM copies until the restart */
     if (pfs_dur_exists("mind.rw"))         { (void)pfs_dur_remove("mind.rw"); weights++; }
     if (pfs_dur_exists("ns1_student.bin")) { (void)pfs_dur_remove("ns1_student.bin"); weights++; }
-    /* ④ the mark */
-#ifndef S1_NC_LEAVE_NO_FLAG
-    if (pfs_dur_write(SL_MARK, "PKLEFT1\n", 8) != 0) out("[leave] could not write " SL_MARK "\r\n");
-#endif
-    out("[leave] foreign "); sl_dec(out, tab_foreign + c.foreign);
+    out("[leave] foreign "); sl_dec(out, foreign);
     out(" weights "); sl_dec(out, weights);
     out(" unknown "); sl_dec(out, c.unknown);
     out(" kept "); sl_dec(out, c.self);
@@ -195,10 +209,32 @@ void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *))
     out("[leave] restart to finish (the mind in RAM still has the swarm's weights); `join` to come back\r\n");
 }
 
+/* at start (after pfs_durable_restore, before the net): with the mark, keep
+ * refusing foreign blocks and remove the ones on disk again (audit-181: what
+ * arrived between `leave` and the restart, or a leave that died half way).
+ * The weights files are not touched here: after `leave` a newborn's own
+ * weights may be saved, and those are not the swarm's. */
+void swarm_leave_restore(void (*out)(const char *))
+{
+    sl_count c = { 0, 0, 0, 1 };
+    UW foreign;
+    if (!swarm_leave_is_left()) return;
+    pfs_set_refuse_foreign(1);
+#ifndef S1_NC_LEFT_NO_SWEEP
+    foreign = sl_sweep(&c);
+#else
+    foreign = 0;
+#endif
+    out("[leave] left at start: foreign "); sl_dec(out, foreign);
+    out(" removed, unknown "); sl_dec(out, c.unknown);
+    out(" moved aside\r\n");
+}
+
 void swarm_join_cmd(void (*out)(const char *))
 {
     if (!swarm_leave_is_left()) { out("[leave] not left\r\n"); return; }
     if (pfs_dur_remove(SL_MARK) != 0) { out("[leave] could not remove " SL_MARK "\r\n"); return; }
+    pfs_set_refuse_foreign(0);
     swarm_stop_cmd((const UB *)" resume", 7, out);
     out("[leave] joined: the network comes up at the next start\r\n");
 }

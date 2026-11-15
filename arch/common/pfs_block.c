@@ -155,6 +155,12 @@ static PFS_PUT_HOOK pfs_put_hook = 0;
  * hook (boot reload is local recovery, not a fresh save to broadcast). */
 static U1 pfs_loading = 0;
 
+#ifdef _TK_HOSTED_LIBC_
+/* 0-14 S1: on while this node has left the swarm (swarm_leave.c) */
+static volatile U1 pfs_refuse_foreign_on = 0;
+void pfs_set_refuse_foreign(INT on) { pfs_refuse_foreign_on = on ? 1 : 0; }
+#endif
+
 void pfs_set_put_hook(PFS_PUT_HOOK fn)
 {
     pfs_put_hook = fn;
@@ -248,6 +254,18 @@ PK_NOSW_FN(INT, pfs_put_origin,
         }
     }
 
+#ifdef _TK_HOSTED_LIBC_
+    /* 0-14 S1 (swarm-leave.md, audit-181): a node that left keeps nothing of
+     * the swarm, also what arrives after `leave` (a peer's push, an answer to
+     * an old want: pfs_repl's receive comes here). Replay from disk is not
+     * refused: the start-up sweep of swarm_leave.c removes those. */
+#ifndef S1_NC_LEFT_ACCEPTS
+    if (pfs_refuse_foreign_on && !pfs_loading
+        && origin != (pk_node_t)PFS_ORIGIN_SELF && origin != drpc_my_node)
+        return PFS_E_LEFT;
+#endif
+#endif
+
     /* Pick a slot: a FREE one if any. Otherwise the table is full — and P0 is
      * a CACHE in front of a durable backend, not the system of record. If a
      * durable ARK backend is mounted, every block in the table is also in the
@@ -337,8 +355,12 @@ PK_NOSW_FN(INT, pfs_put_origin,
              * if the number changes later, they must not turn foreign (and be
              * removed by `leave`; global rule 11, the owner's originals). */
             if (dur_rc == 0)
+#ifndef S1_NC_SELF_BY_NUMBER          /* S1 negative: own blocks kept by number */
                 (void)pfs_dur_org_write(hex, origin == drpc_my_node ? (unsigned)PFS_ORIGIN_SELF
                                                                     : (unsigned)origin);
+#else
+                (void)pfs_dur_org_write(hex, (unsigned)origin);
+#endif
 #endif
         }
         if (dur_on && dur_rc != 0) {
