@@ -39,3 +39,11 @@
 - `arch/common/swarm_leave.c`（hosted のビルドだけに入る。Makefile 3 つと Android の CMake）、pfs_durable.c に `.org` の読み書き・脇へ移す・名前と origin を回す、pfs_block.c の hosted の部分で `.org` を書き（自分は 0xFF）・読み戻しで使い・drop で消す。usermain（x86_64・aarch64）に `leave`・`join`・`pfs origins` と cmd_net の門
 - `leave` の後、この起動のうちは pfs_dur_write が mind.rw・ns1_student.bin を書かない（RAM の重みの書き戻しを止める）。**この守りを見る試験は無い**: L2 の赤 3 回はどれも `join` の後の起動で生まれた赤子が自分の重みを保存したもので、試験の見る時点の誤りだった（daaf3a62 で直した。d7611766 の「書き込みが leave と競う」という読みは誤り）
 - 測り（容器、x86_64）: 素 L1〜L5 緑、陰性 3 つはそれぞれ狙いの項目が赤、crown（ベア x86・aarch64 の .text・.rodata）は master と全バイト同じ、hosted の警告 57＝master と同じ
+
+## 6. 監査-181（2026-11-15 12:30 の回、実装していない回）: **FAIL（実装側へ戻す）**
+
+再現（容器）: 先端 7c473d32 ALL PASS、試験だけの bbe28579 は全部赤、陰性 3 つとも狙いが赤。[n2-mix] XP+XQ ALL PASS、protect test・pfs flattest・run_knowledge_survival.sh も緑（origin を読み戻すようにした影響は見えない）。
+
+1. **戻す理由: `leave` の後に届いた他人の塊が、外れた後の起動に残る。** `leave`→`leave seed 300`（網の受け pfs_repl.c 710 行と同じ pfs_put_origin）→再起動で `[pfs] origins self 0 foreign 1`、ファイルも残る。網の受けは止まり（stop）を見ない＝`leave` から再起動までの間に仲間の押しや want の答えが来ると、群れの物が残る。おすすめの直し: 印（swarm-left.st）のある起動で、他人の塊をもう一度消す（`leave` の途中で落ちた時も救える）。あわせて印のある間は pfs_put_origin が他人の塊を保存しない。試験 L6: 上の手順で foreign 0
+2. **試験の穴（直しと一緒に）**: 自分の塊を 0xFF でなく番号で書く壊し（pfs_block.c の三項を外す）で L1〜L5 が全部緑。だがその壊しでは、網のある起動で `pfs put` した自分の記録が、網のない起動の `leave` で**消える**（drpc_my_node が 0xFF のため番号 1 が他人に見える）。素では残る（.org=ff00、番号 1→2 でも残る）。L1 の自分の塊を `pfs put`（網あり）で作る形にすれば赤になる
+3. 限界（直さなくてよいが書く）: pfs_dur_foreach_origin は 4096 個で黙って打ち切る。固定の失敗の後の書き直し（pfs_block.c 240 行）は .org を書かない＝分からない塊として脇へ（安全側）
