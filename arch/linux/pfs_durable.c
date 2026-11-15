@@ -148,6 +148,9 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
 #endif
     close(fd);
 
+    /* S1: a weights write that began before `leave` must not land after it
+     * (the 22 MB baby blob takes seconds; seen in run_swarm_leave.sh L2) */
+    if (dur_weights_frozen && dur_is_weights(fname)) { unlink(tmp); return -1; }
     if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
 
 #ifndef _WIN32
