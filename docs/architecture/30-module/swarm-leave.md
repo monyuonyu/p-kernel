@@ -61,3 +61,13 @@
 測り（容器、x86_64）: fe3c18eb（試験だけ）は素で L6a・L6b だけ赤（L1 は今の三項があるので緑、SELF_BY_NUMBER はまだ無いので「赤にならない」と出る）。f0cad325 は素 ALL PASS、陰性 6 つとも狙いが赤（KEEP_FOREIGN は L6b も、SELF_BY_NUMBER は L4 も赤＝同じ道を使うため）。網ありの put は `[net] transport = relay (node 1)` の起動で入った。crown（ベア x86・aarch64 の .text・.rodata）は c02cae26 と全バイト同じ（cd490552・4dfac3f4・996ad069・8e35fac0）、hosted の警告 57、Linux aarch64 hosted もビルド OK。
 
 限界: 断るのは電文の origin の申告で決まる（他人が自分の番号を名乗れば通る＝N2c の鍵の話）。断りの 1 行（pfs_repl）と、起動の掃除で refs.tab が指す塊が消えることは試験していない。
+
+## 8. 監査-182（2026-11-15 18:00 の回、実装者ではない。限界つき PASS）
+
+再現（容器、x86_64）: 先端 6891bdec は ALL PASS（陰性 6 つとも狙いが赤）、試験だけの fe3c18eb は素で L6a・L6b だけ赤＝実装者どおり。crown（ベア x86・aarch64 の .text・.rodata）は合わせた木 60a4f324 と master 6e3646c2 で全バイト同じ（cd490552・4dfac3f4・996ad069・8e35fac0）。
+
+読み: 網の受け（pfs_repl.c 710 行）は PFS_E_LEFT で「DROP block (store refused rc=6)」と言い hold-ack を出さない。断りは重複の確かめの後＝`leave` の断りと掃除の間に同じ塊がもう一度来ると OK を返すが、その塊は直後の掃除で消える。断りを通った put が掃除の後に入る競争も、印が先にあるので次の起動の掃除が消す（印を先に置いた効き）。
+
+私の壊し B1（起動の `swarm_leave_restore` が断りを入れ直さない）: 印のある起動の後の `leave seed 300` が通り foreign 1 になるのに、**試験一式は ALL PASS**（試験の穴、test-holes H28）。効きは小さい: 印のある起動は網に出ないので、他人の塊が来る道は試験の seed しか無い。
+
+限界（加えて）: 網の受けの断りは読んだだけ（2 ノードでの [live] は無い）。refs.tab の名前は `leave` でも消えず、消えた塊を指しうる。
