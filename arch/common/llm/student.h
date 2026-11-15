@@ -481,6 +481,34 @@ int  st_merge_trust_group(st_model *into, const st_model *prev,
 int  st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                     int n, int seq, float *live_loss, float *cand_loss);
 
+/* st_region_round (B5 wire, stage 1, research/b5-wire.md): one round of the
+ * resident student with its region. A peer's blob is an envelope of ST_RG_HDR
+ * bytes (magic ST_RG_MAGIC, the round's generation, the st_save length, 0)
+ * and then the st_save bytes (st_rg_wrap). For each member other than `self`
+ * the blob comes from fetch() (the transport, gl_student_fetch in the node);
+ * a failed fetch, another magic, a length that does not match, or another
+ * generation is not counted. The peers that are left go to st_round_trimmed
+ * (t = 1) on a copy of live; a refusal there (fewer than 4 with live) leaves
+ * live BYTE-UNCHANGED, never the mean. The copy replaces live only through
+ * st_round_adopt on bytes[0..n) (the node's held windows). Returns 1 adopted,
+ * 0 kept or refused, ST_E_ARG. rep (may be NULL): members counts self, same_gen
+ * counts self, accepted the peers st_round_trimmed took. Falsifiers:
+ * -DB5W_NC_MEAN (st_round_merge instead), -DB5W_NC_NO_GATE (every candidate
+ * replaces live), -DB5W_NC_NO_GEN (the generation is not read). Hosted only. */
+#define ST_RG_MAGIC 0x31475242u   /* "BRG1" little-endian */
+#define ST_RG_HDR   16
+typedef int (*st_rg_fetch_fn)(void *ctx, uint16_t node, void *out, size_t cap);
+typedef struct {
+    int   members, fetched, same_gen, accepted, adopted;
+    float held_live, held_cand;   /* the gate's two losses (0 when no gate ran) */
+} st_rg_report;
+size_t st_rg_cap(const st_model *m);
+long   st_rg_wrap(const st_model *m, uint32_t gen, void *buf, size_t cap);
+int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
+                       const uint16_t *members, int count,
+                       st_rg_fetch_fn fetch, void *ctx,
+                       const uint8_t *bytes, int n, int seq, st_rg_report *rep);
+
 /* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
  *
  * st_quant_fake: "fake-quantize" the MATRICES of `src` into `dst` — symmetric
