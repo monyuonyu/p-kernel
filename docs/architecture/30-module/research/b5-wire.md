@@ -27,3 +27,7 @@
 - crown: x86・aarch64 の .text・.rodata が master と全バイト同じ。build_all
 
 限界: 1 プロセス・網なし（中継越しは第 2 段）、4 台、全知の近い毒には第 10 歩が要る（第 2 段）。門の窓は自分の保持の窓＝ログの held と同じ窓（SS-3 と同じ限界、独立の物差しは b1_held）
+
+## 4. 監査-183（2026-11-15、限界つき PASS。作る回への条件）
+
+§1 は 4 つともコードどおり（呼び手は student_blob_test.c だけ、fetch は版 ≠1 を断る、trimmed は自分を含め 4 未満で 0）。条件: ① **NO_GATE は W1・W2 で赤にならない見込み**（第 5 歩で毒 1 台は切り詰めだけで守れた）＝**W6: でたらめ 2 台で adopted 0・g_student 全バイト不変**を足し、NO_GATE は W6 で赤 ② W2 は adopted 1 も見る（NC_MEAN でも門が断れば 1 台と同じ値で緑になる） ③ 1 プロセスでは pfs は 1 つ（shim で put は手元だけ）＝分かれるのは名前 `st/<node>` だけ ④ W5 の欠く塊は w の範囲（mu・vu はゼロで塊が他と同じになりうる）。既存の旗 ST_ADOPT_ALWAYS・B5S5_TRIM_OFF を使ってよい
