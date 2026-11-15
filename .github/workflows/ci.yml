@@ -1240,9 +1240,9 @@ jobs:
           grep -aF '[ark-e3] ALL PASS' ark_e3.log
 
       # ark-entry.md 6 / E5: only records whose owner consented (ark rec learn) reach
-      # cradle's lesson ring (ark rec teach); the two negatives (-DARK_REC_LEARN_ALL,
-      # -DARK_REC_LEARN_NOVER) run inside the script. It rebuilds and cleans.
-      - name: ark learning consent (E5a-d)
+      # cradle's lesson ring (ark rec teach); the three negatives (-DARK_REC_LEARN_ALL,
+      # -DARK_REC_LEARN_NOVER, -DARK_REC_NO_WITHDRAW) run inside the script. It rebuilds and cleans.
+      - name: ark learning consent (E5a-e)
         run: |
           timeout 900 tests/host/run_ark_e5.sh | tee ark_e5.log
           grep -aF '[ark-e5] ALL PASS' ark_e5.log
