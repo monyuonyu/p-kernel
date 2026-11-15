@@ -47,6 +47,13 @@
                                     * block is kept (marked un-evictable) but
                                     * the put is reported NON-OK so the caller
                                     * knows the ark did not persist it. */
+#define PFS_E_LEFT     (-6)        /* 0-14 S1: this node left the swarm (`leave`):
+                                    * a block from another node is not kept.
+                                    * Hosted only. */
+
+/* 0-14 S1 (swarm-leave.md): while on, pfs_put_origin refuses blocks whose
+ * origin is not this node (PFS_E_LEFT). Set by swarm_leave.c. Hosted only. */
+void pfs_set_refuse_foreign(INT on);
 
 /* Compute block-id = sha256(buf[0..len)) into id_out (no store). */
 void pfs_id_compute(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);

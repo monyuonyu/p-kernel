@@ -203,7 +203,8 @@ COMMON_C_SRCS = \
     scaling_cert.c \
     tk_conform.c \
     rx_bounds_test.c \
-    swarm_stop.c
+    swarm_stop.c \
+    swarm_leave.c
 
 COMMON_OBJS = $(COMMON_C_SRCS:.c=.o)
 

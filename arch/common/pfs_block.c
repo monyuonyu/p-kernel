@@ -46,6 +46,11 @@ extern int  pfs_dur_read(const char *fname, void *buf, unsigned maxlen);
 extern int  pfs_dur_foreach(void (*cb)(const char *name, const void *data,
                                        unsigned len, void *ctx),
                             void *ctx);
+/* 0-14 S1 (swarm-leave.md): each flat block's origin in "<hex>.org" */
+extern int  pfs_dur_org_write(const char *hex, unsigned origin);
+extern int  pfs_dur_org_read(const char *hex);
+extern int  pfs_dur_remove_block(const char *hex);
+extern pk_node_t drpc_my_node;     /* drpc.c: this node's number (0xFF = none) */
 
 /* ARK durable backend (arch/linux/pfs_ark.c) — the wave-13 "white-pearl"
  * integration: ARK becomes p-fs's durable store when PKERNEL_PFS_BACKEND=ark.
@@ -150,6 +155,12 @@ static PFS_PUT_HOOK pfs_put_hook = 0;
  * hook (boot reload is local recovery, not a fresh save to broadcast). */
 static U1 pfs_loading = 0;
 
+#ifdef _TK_HOSTED_LIBC_
+/* 0-14 S1: on while this node has left the swarm (swarm_leave.c) */
+static volatile U1 pfs_refuse_foreign_on = 0;
+void pfs_set_refuse_foreign(INT on) { pfs_refuse_foreign_on = on ? 1 : 0; }
+#endif
+
 void pfs_set_put_hook(PFS_PUT_HOOK fn)
 {
     pfs_put_hook = fn;
@@ -243,6 +254,18 @@ PK_NOSW_FN(INT, pfs_put_origin,
         }
     }
 
+#ifdef _TK_HOSTED_LIBC_
+    /* 0-14 S1 (swarm-leave.md, audit-181): a node that left keeps nothing of
+     * the swarm, also what arrives after `leave` (a peer's push, an answer to
+     * an old want: pfs_repl's receive comes here). Replay from disk is not
+     * refused: the start-up sweep of swarm_leave.c removes those. */
+#ifndef S1_NC_LEFT_ACCEPTS
+    if (pfs_refuse_foreign_on && !pfs_loading
+        && origin != (pk_node_t)PFS_ORIGIN_SELF && origin != drpc_my_node)
+        return PFS_E_LEFT;
+#endif
+#endif
+
     /* Pick a slot: a FREE one if any. Otherwise the table is full — and P0 is
      * a CACHE in front of a durable backend, not the system of record. If a
      * durable ARK backend is mounted, every block in the table is also in the
@@ -325,6 +348,20 @@ PK_NOSW_FN(INT, pfs_put_origin,
             char hex[2 * PFS_ID_LEN + 1];
             id_to_hex(pfs_table[slot].id, hex);
             dur_rc = pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
+#ifndef S1_NC_ORIGIN_VOLATILE         /* S1 negative: the origin is not kept */
+            /* 0-14 S1: keep who the block came from, or a restart makes every
+             * block this node's own (best effort: no .org reads as "unknown").
+             * This node's own blocks are kept as "self" (0xFF), not by number:
+             * if the number changes later, they must not turn foreign (and be
+             * removed by `leave`; global rule 11, the owner's originals). */
+            if (dur_rc == 0)
+#ifndef S1_NC_SELF_BY_NUMBER          /* S1 negative: own blocks kept by number */
+                (void)pfs_dur_org_write(hex, origin == drpc_my_node ? (unsigned)PFS_ORIGIN_SELF
+                                                                    : (unsigned)origin);
+#else
+                (void)pfs_dur_org_write(hex, (unsigned)origin);
+#endif
+#endif
         }
         if (dur_on && dur_rc != 0) {
             /* The ONLY copy now lives in RAM — pin it against FIFO eviction
@@ -454,7 +491,7 @@ PK_NOSW_FN(INT, pfs_drop, (const U1 id[PFS_ID_LEN]), (id))
         char hex[2 * PFS_ID_LEN + 1];
         id_to_hex(id, hex);
 #ifndef PFS_FLAT_DROP_KEEPFILE        /* test: leave the evicted block's file */
-        if (pfs_dur_remove(hex) == 0) return PFS_OK;
+        if (pfs_dur_remove(hex) == 0) { (void)pfs_dur_remove_block(hex); return PFS_OK; }
 #endif
         return PFS_E_NOTFOUND;
     }
@@ -467,7 +504,7 @@ PK_NOSW_FN(INT, pfs_drop, (const U1 id[PFS_ID_LEN]), (id))
     if (!pfs_ark_active() && pfs_dur_active()) {
         char hex[2 * PFS_ID_LEN + 1];
         id_to_hex(pfs_table[s].id, hex);
-        (void)pfs_dur_remove(hex);
+        (void)pfs_dur_remove_block(hex);      /* the block and its .org (S1) */
     }
 #endif
     pfs_table[s].used = 0;
@@ -564,10 +601,15 @@ static void pfs_restore_cb(const char *name, const void *data,
         return;
     }
 
-    /* verified — replay into the table without re-persisting or announcing */
-    pfs_loading = 1;
-    pfs_put_origin(data, (UW)len, 0, PFS_ORIGIN_SELF);
-    pfs_loading = 0;
+    /* verified — replay into the table without re-persisting or announcing.
+     * 0-14 S1: with its .org the block keeps the origin it came with; without
+     * one (written before S1) it is taken as this node's, as before. */
+    {
+        int org = pfs_dur_org_read(name);
+        pfs_loading = 1;
+        pfs_put_origin(data, (UW)len, 0, org < 0 ? PFS_ORIGIN_SELF : (pk_node_t)org);
+        pfs_loading = 0;
+    }
     c->loaded++;
 }
 #endif /* _TK_HOSTED_LIBC_ */

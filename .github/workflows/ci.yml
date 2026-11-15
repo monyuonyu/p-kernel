@@ -1461,6 +1461,15 @@ jobs:
           timeout 900 tests/host/run_stop_console.sh | tee stop_console.log
           grep -aF '[stop-console] ALL PASS' stop_console.log
           make -C boot/linux_x86_64 >/dev/null
+      # 0-14 S1 (swarm-leave.md): `leave` keeps nothing of the swarm (L1-L6b,
+      # L6a/L6b after audit-181); the six falsifiers (-DS1_NC_*) run inside the
+      # script, each must turn its own check red. It rebuilds and cleans; the
+      # plain binary is rebuilt.
+      - name: leaving the swarm keeps nothing of it ([swarm-leave], BLOCKING, 0-14 S1)
+        run: |
+          timeout 1200 tests/host/run_swarm_leave.sh | tee swarm_leave.log
+          grep -aF '[swarm-leave] ALL PASS' swarm_leave.log
+          make -C boot/linux_x86_64 >/dev/null
       # 0-14 S2 stage 2b: galaxy's POST /teach refuses while stopped; the
       # falsifier -DGALAXY_NO_STOP_GATE runs inside the script.
       - name: galaxy POST /teach obeying the stop ([stop-galaxy], BLOCKING, 0-14 S2)

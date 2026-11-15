@@ -100,6 +100,16 @@ int pfs_dur_active(void)
 static int dur_force_fail_once;
 void pfs_dur_force_fail(int on) { dur_force_fail_once = on ? 1 : 0; }
 
+/* 0-14 S1 (swarm-leave.md): after `leave` this process must not write the
+ * weights back (the mind and the baby in RAM still hold the swarm's share).
+ * Until the process ends, writes of these two names fail. */
+static int dur_weights_frozen;
+void pfs_dur_freeze_weights(void) { dur_weights_frozen = 1; }
+static int dur_is_weights(const char *fname)
+{
+    return strcmp(fname, "mind.rw") == 0 || strcmp(fname, "ns1_student.bin") == 0;
+}
+
 /* Atomic, fsync'd write of `len` bytes to <dir>/<fname>. Returns 0 on
  * success, -1 on any failure (or when persistence is disabled). */
 int pfs_dur_write(const char *fname, const void *data, unsigned len)
@@ -108,6 +118,7 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
     if (!dir) return -1;
 
     if (dur_force_fail_once) { dur_force_fail_once = 0; return -1; }
+    if (dur_weights_frozen && dur_is_weights(fname)) return -1;   /* S1: left */
 
     char path[PFS_DUR_PATH_MAX], tmp[PFS_DUR_PATH_MAX];
     if (snprintf(path, sizeof path, "%s/%s", dir, fname) >= (int)sizeof path)
@@ -137,6 +148,9 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
 #endif
     close(fd);
 
+    /* S1: a weights write that began before `leave` must not land after it
+     * (the 22 MB baby blob takes seconds; seen in run_swarm_leave.sh L2) */
+    if (dur_weights_frozen && dur_is_weights(fname)) { unlink(tmp); return -1; }
     if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
 
 #ifndef _WIN32
@@ -244,4 +258,82 @@ int pfs_dur_foreach(void (*cb)(const char *name, const void *data,
     }
     closedir(d);
     return count;
+}
+
+/* ---- ROADMAP 0-14 S1 (docs/architecture/30-module/swarm-leave.md) ----------
+ * Each flat block's origin lives beside it in "<64 hex>.org": 2 bytes, little
+ * endian (the hosted pk_node_t). The block file name stays the sha256 (the
+ * store is still self-verifying); a block without its .org is "unknown"
+ * (written before S1, or the .org was lost). */
+int pfs_dur_org_write(const char *hex, unsigned origin)
+{
+    char name[PFS_DUR_HEX_LEN + 8];
+    unsigned char b[2];
+    if (snprintf(name, sizeof name, "%s.org", hex) >= (int)sizeof name) return -1;
+    b[0] = (unsigned char)(origin & 0xFFu);
+    b[1] = (unsigned char)((origin >> 8) & 0xFFu);
+    return pfs_dur_write(name, b, 2);
+}
+
+/* the origin recorded for block <hex>, or -1 when there is none */
+int pfs_dur_org_read(const char *hex)
+{
+    char name[PFS_DUR_HEX_LEN + 8];
+    unsigned char b[3];
+    if (snprintf(name, sizeof name, "%s.org", hex) >= (int)sizeof name) return -1;
+    if (pfs_dur_read(name, b, sizeof b) != 2) return -1;
+    return (int)b[0] | ((int)b[1] << 8);
+}
+
+/* remove block <hex> and its .org (0 if the block file is gone afterwards) */
+int pfs_dur_remove_block(const char *hex)
+{
+    char name[PFS_DUR_HEX_LEN + 8];
+    (void)pfs_dur_remove(hex);
+    if (snprintf(name, sizeof name, "%s.org", hex) < (int)sizeof name) (void)pfs_dur_remove(name);
+    return pfs_dur_exists(hex) ? -1 : 0;
+}
+
+/* move block <hex> into <dir>/<sub>/ (kept, not deleted). 0 on success */
+int pfs_dur_move_aside(const char *hex, const char *sub)
+{
+    const char *dir = pfs_dur_dir();
+    char sd[PFS_DUR_PATH_MAX], from[PFS_DUR_PATH_MAX], to[PFS_DUR_PATH_MAX];
+    if (!dir) return -1;
+    if (snprintf(sd, sizeof sd, "%s/%s", dir, sub) >= (int)sizeof sd) return -1;
+    if (snprintf(from, sizeof from, "%s/%s", dir, hex) >= (int)sizeof from) return -1;
+    if (snprintf(to, sizeof to, "%s/%s/%s", dir, sub, hex) >= (int)sizeof to) return -1;
+#ifdef _WIN32
+    (void)_mkdir(sd);
+#else
+    (void)mkdir(sd, 0700);
+#endif
+    if (rename(from, to) != 0) return -1;
+#ifndef _WIN32
+    { int dfd = open(dir, O_RDONLY | O_DIRECTORY); if (dfd >= 0) { (void)fsync(dfd); close(dfd); } }
+#endif
+    return 0;
+}
+
+/* hand every block file's name and recorded origin (-1: none) to cb; the
+ * number visited, or -1 when persistence is off. cb may remove or move the
+ * file it is given (the names are copied out before any callback runs). */
+int pfs_dur_foreach_origin(void (*cb)(const char *hex, int origin, void *ctx), void *ctx)
+{
+    const char *dir = pfs_dur_dir();
+    static char names[4096][PFS_DUR_HEX_LEN + 1];
+    int n = 0, i;
+    DIR *d;
+    struct dirent *de;
+    if (!dir) return -1;
+    d = opendir(dir);
+    if (!d) return -1;
+    while ((de = readdir(d)) != (struct dirent *)0 && n < 4096) {
+        if (!is_block_name(de->d_name)) continue;
+        memcpy(names[n], de->d_name, PFS_DUR_HEX_LEN + 1);
+        n++;
+    }
+    closedir(d);
+    for (i = 0; i < n; i++) if (cb) cb(names[i], pfs_dur_org_read(names[i]), ctx);
+    return n;
 }

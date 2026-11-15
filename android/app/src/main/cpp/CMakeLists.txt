@@ -180,6 +180,7 @@ set(COMMON_SRC
     ${ARCH_CO}/tk_conform.c
     ${ARCH_CO}/rx_bounds_test.c
     ${ARCH_CO}/swarm_stop.c
+    ${ARCH_CO}/swarm_leave.c
     ${ARCH_CO}/cradle_net.c
     ${ARCH_CO}/mem_store.c
     ${ARCH_CO}/chat.c
