@@ -100,6 +100,16 @@ int pfs_dur_active(void)
 static int dur_force_fail_once;
 void pfs_dur_force_fail(int on) { dur_force_fail_once = on ? 1 : 0; }
 
+/* 0-14 S1 (swarm-leave.md): after `leave` this process must not write the
+ * weights back (the mind and the baby in RAM still hold the swarm's share).
+ * Until the process ends, writes of these two names fail. */
+static int dur_weights_frozen;
+void pfs_dur_freeze_weights(void) { dur_weights_frozen = 1; }
+static int dur_is_weights(const char *fname)
+{
+    return strcmp(fname, "mind.rw") == 0 || strcmp(fname, "ns1_student.bin") == 0;
+}
+
 /* Atomic, fsync'd write of `len` bytes to <dir>/<fname>. Returns 0 on
  * success, -1 on any failure (or when persistence is disabled). */
 int pfs_dur_write(const char *fname, const void *data, unsigned len)
@@ -108,6 +118,7 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
     if (!dir) return -1;
 
     if (dur_force_fail_once) { dur_force_fail_once = 0; return -1; }
+    if (dur_weights_frozen && dur_is_weights(fname)) return -1;   /* S1: left */
 
     char path[PFS_DUR_PATH_MAX], tmp[PFS_DUR_PATH_MAX];
     if (snprintf(path, sizeof path, "%s/%s", dir, fname) >= (int)sizeof path)

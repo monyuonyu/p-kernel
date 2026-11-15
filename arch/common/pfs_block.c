@@ -50,6 +50,7 @@ extern int  pfs_dur_foreach(void (*cb)(const char *name, const void *data,
 extern int  pfs_dur_org_write(const char *hex, unsigned origin);
 extern int  pfs_dur_org_read(const char *hex);
 extern int  pfs_dur_remove_block(const char *hex);
+extern pk_node_t drpc_my_node;     /* drpc.c: this node's number (0xFF = none) */
 
 /* ARK durable backend (arch/linux/pfs_ark.c) — the wave-13 "white-pearl"
  * integration: ARK becomes p-fs's durable store when PKERNEL_PFS_BACKEND=ark.
@@ -331,8 +332,13 @@ PK_NOSW_FN(INT, pfs_put_origin,
             dur_rc = pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
 #ifndef S1_NC_ORIGIN_VOLATILE         /* S1 negative: the origin is not kept */
             /* 0-14 S1: keep who the block came from, or a restart makes every
-             * block this node's own (best effort: no .org reads as "unknown") */
-            if (dur_rc == 0) (void)pfs_dur_org_write(hex, (unsigned)origin);
+             * block this node's own (best effort: no .org reads as "unknown").
+             * This node's own blocks are kept as "self" (0xFF), not by number:
+             * if the number changes later, they must not turn foreign (and be
+             * removed by `leave`; global rule 11, the owner's originals). */
+            if (dur_rc == 0)
+                (void)pfs_dur_org_write(hex, origin == drpc_my_node ? (unsigned)PFS_ORIGIN_SELF
+                                                                    : (unsigned)origin);
 #endif
         }
         if (dur_on && dur_rc != 0) {

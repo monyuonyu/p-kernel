@@ -15,8 +15,9 @@
  *
  *  Hosted only (bare metal keeps nothing on disk). Limits: the ARK image's
  *  blocks carry no origin (the flat store only); the weights in RAM stay until
- *  the restart `leave` asks for; copies of the owner's blocks on other nodes
- *  are not asked back.
+ *  the restart `leave` asks for (pfs_dur_freeze_weights: they are not written
+ *  back meanwhile); copies of the owner's blocks on other nodes are not asked
+ *  back.
  *  Negatives: -DS1_NC_LEAVE_KEEP_FOREIGN (L1), -DS1_NC_LEAVE_NO_FLAG (L3);
  *  -DS1_NC_ORIGIN_VOLATILE (L4) is in pfs_block.c.
  */
@@ -34,6 +35,7 @@ extern int pfs_dur_exists(const char *fname);
 extern int pfs_dur_remove_block(const char *hex);
 extern int pfs_dur_move_aside(const char *hex, const char *sub);
 extern int pfs_dur_foreach_origin(void (*cb)(const char *hex, int origin, void *ctx), void *ctx);
+extern void pfs_dur_freeze_weights(void);
 
 #define SL_MARK    "swarm-left.st"
 #define SL_UNKNOWN "left-unknown"
@@ -62,14 +64,6 @@ static void sl_hex_to_id(const char *hex, U1 id[PFS_ID_LEN])
     INT i;
     for (i = 0; i < PFS_ID_LEN; i++)
         id[i] = (U1)((sl_nib(hex[2 * i]) << 4) | sl_nib(hex[2 * i + 1]));
-}
-
-static void sl_id_to_hex(const U1 id[PFS_ID_LEN], char hex[2 * PFS_ID_LEN + 1])
-{
-    static const char H[] = "0123456789abcdef";
-    INT i;
-    for (i = 0; i < PFS_ID_LEN; i++) { hex[2 * i] = H[id[i] >> 4]; hex[2 * i + 1] = H[id[i] & 15]; }
-    hex[2 * PFS_ID_LEN] = 0;
 }
 
 typedef struct { UW self, foreign, unknown; INT act; } sl_count;
@@ -118,6 +112,14 @@ INT swarm_leave_is_left(void)
 }
 
 #ifdef SWARM_LEAVE_TEST
+static void sl_id_to_hex(const U1 id[PFS_ID_LEN], char hex[2 * PFS_ID_LEN + 1])
+{
+    static const char H[] = "0123456789abcdef";
+    INT i;
+    for (i = 0; i < PFS_ID_LEN; i++) { hex[2 * i] = H[id[i] >> 4]; hex[2 * i + 1] = H[id[i] & 15]; }
+    hex[2 * PFS_ID_LEN] = 0;
+}
+
 /* `leave seed self|<origin>`: one block with that origin (the test build only) */
 static void sl_seed(const UB *a, UW n, void (*out)(const char *))
 {
@@ -177,6 +179,7 @@ void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *))
     /* ... then every file left (evicted foreign blocks, unknown ones) */
     (void)pfs_dur_foreach_origin(sl_file, &c);
     /* ③ the weights */
+    pfs_dur_freeze_weights();     /* and no write-back of the RAM copies until the restart */
     if (pfs_dur_exists("mind.rw"))         { (void)pfs_dur_remove("mind.rw"); weights++; }
     if (pfs_dur_exists("ns1_student.bin")) { (void)pfs_dur_remove("ns1_student.bin"); weights++; }
     /* ④ the mark */

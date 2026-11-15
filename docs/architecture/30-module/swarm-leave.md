@@ -10,7 +10,7 @@
 
 ## 2. 決めたこと
 
-1. **origin を残す**: 塊の横に `<id>.org`（2 B LE の pk_node_t、一時→fsync→rename）。読み戻しで使う。無い塊は「分からない」
+1. **origin を残す**: 塊の横に `<id>.org`（2 B LE の pk_node_t、一時→fsync→rename）。読み戻しで使う。無い塊は「分からない」。**自分の塊は番号でなく 0xFF（self）で書く**＝番号が後で変わっても（node_seed の作り直し・N2c の引き直し）自分の原本が他人にならない
 2. **`leave`（コンソールだけ）**: ① 手元の止まり（S2 の `stop now`）② origin が自分でない塊を消す ③ `mind.rw`・`ns1_student.bin` を消す（合体した重みは群れの分を分けられない。次の起動はふだんの事前学習から）④ 印 `swarm-left.st` を fsync＝再起動しても網に出ない。`join` で印を消すまで
 3. **自分の原本は消さない**（決まり 11）。origin が自分の塊・`ark.key`・`node_seed` は残す。**分からない塊は消さずに `left-unknown/` へ移し、数を言う**（この変更より前の塊。消すかは持ち主が決める）
 4. 出力: `[leave] foreign F weights W unknown U kept K`、`pfs origins` は `[pfs] origins self S foreign F unknown U`
