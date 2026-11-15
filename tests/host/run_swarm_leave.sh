@@ -40,8 +40,9 @@ run() {  # <dir> <log> <relay 0|1> <commands...>
     local d="$1" log="$2" rl="$3"; shift 3
     printf '%s\n' "$@" exit > "$WORK/in.txt"
     if [ "$rl" = 1 ]; then
+        # PKERNEL_AUTONET: the net comes up at boot (cmd_net), where the mark must stop it
         timeout 120 env PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$d" PKERNEL_RELAY="127.0.0.1:$PORT" \
-            PKERNEL_RELAY_AUTOFALLBACK=0 "$BOOT/p-kernel" < "$WORK/in.txt" > "$log" 2>&1
+            PKERNEL_RELAY_AUTOFALLBACK=0 PKERNEL_AUTONET=1 "$BOOT/p-kernel" < "$WORK/in.txt" > "$log" 2>&1
     else
         timeout 120 env PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$d" "$BOOT/p-kernel" < "$WORK/in.txt" > "$log" 2>&1
     fi

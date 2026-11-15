@@ -23,6 +23,10 @@ INT swarm_stop_selftest(void (*out)(const char *)); /* swarm_stop.c (0-14 S2) */
 void swarm_stop_cmd(const UB *a, UW n, void (*out)(const char *)); /* S2 stage 2a */
 INT swarm_stop_refuses_mind(const UB *a, UW n);     /* S2 stage 2a */
 void swarm_stop_restore(void (*out)(const char *)); /* S2 persist */
+void swarm_leave_cmd(const UB *a, UW n, void (*out)(const char *)); /* swarm_leave.c (0-14 S1) */
+void swarm_join_cmd(void (*out)(const char *));                       /* S1 */
+void swarm_leave_origins(void (*out)(const char *));                  /* S1: `pfs origins` */
+INT  swarm_leave_is_left(void);                                       /* S1: the leave mark */
 #include <tmonitor.h>
 #include "arch_reboot.h"
 #include "rtl8139.h"
@@ -373,6 +377,11 @@ static UW env_uint(const char *name, UW dflt)
 
 static void cmd_net(void)
 {
+    /* 0-14 S1: a node that left the swarm stays off the net until `join` */
+    if (swarm_leave_is_left()) {
+        print("[leave] left: this node left the swarm (`join`, then restart, to come back)\r\n");
+        return;
+    }
     if (net_up) {
         print("[net] already up\r\n");
         return;
@@ -766,6 +775,9 @@ static void cmd_pfs(const UB *line, INT n)
         /* PFS-FLAT-FULL cert: with PKERNEL_PFS_DIR a full table evicts, the
          * evicted blocks read back from their files, a drop removes them. */
         pfs_flatfull_self_test(print);
+    } else if (p < end && starts_with(p, (INT)(end - p), "origins")) {
+        /* 0-14 S1: who the stored blocks came from (swarm-leave.md) */
+        swarm_leave_origins(print);
     } else if (p < end && starts_with(p, (INT)(end - p), "ls")) {
         pfs_repl_ls();
     } else {
@@ -1602,6 +1614,11 @@ EXPORT INT usermain(void)
                 /* default / `cradle test`: the in-process [cradle-teach] cert. */
                 (void)cradle_teach_self_test(print);
             }
+        } else if (starts_with(line, n, "leave") && (n == 5 || line[5] == ' ')) {
+            /* ROADMAP 0-14 S1 (swarm-leave.md): leave the swarm, keep nothing of it */
+            swarm_leave_cmd(line + 5, (UW)(n - 5), print);
+        } else if (starts_with(line, n, "join") && n == 4) {
+            swarm_join_cmd(print);   /* S1: undo `leave` (the net at the next start) */
         } else if (starts_with(line, n, "stop") && (n == 4 || line[4] == ' ')) {
             /* ROADMAP 0-14 S2 stage 2a (swarm-stop.md): this node's own stop
              * and the stop-key table, from the console only */
