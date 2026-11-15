@@ -9,8 +9,11 @@
 #       `learn 1 no`: seed 3 alone again; `log 1` (newest first) learn=no,yes,no
 #   E5c nothing consented: "teach nothing consented", `cradle probe` ring_len unchanged
 #   E5d after a restart the consent is the last one set (teach = seed 3 alone)
+#   E5e (added 2026-11-15, before its code) withdrawing a consent (`learn 0 no`) clears
+#       the ring when it still holds the lesson teach made: ring_len 200 -> 0
 # Falsifiers (each must turn its check red; the plain build must be ALL PASS):
 #   -DARK_REC_LEARN_ALL -> E5a      -DARK_REC_LEARN_NOVER -> E5d
+#   -DARK_REC_NO_WITHDRAW -> E5e
 # Output: "[ark-e5] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 set -u
@@ -63,13 +66,19 @@ suite() {  # <tag> <cflags>
     if teach "$L-1.log" 1 | grep -q 'nothing consented' && [ -n "$c1" ] && [ "$c1" = "$c2" ]; then r E5c PASS; else r E5c FAIL; fi
     run "$tag" "$L-2.log" "ark rec teach"
     case "$(teach "$L-2.log" 1)" in *"records=1 "*"ring=$A3"*) r E5d PASS ;; *) r E5d FAIL ;; esac
+    # E5e: withdrawing a consent clears the ring when it still holds what teach put there
+    run "$tag" "$L-3.log" "ark rec teach" "cradle probe" "ark rec learn 0 no" "cradle probe"
+    local e1 e2
+    e1=$(grep -ao '^\[cradle-live\] ring_len=[0-9]*' "$L-3.log" | sed -n 1p); e2=$(grep -ao '^\[cradle-live\] ring_len=[0-9]*' "$L-3.log" | sed -n 2p)
+    if [ "$e1" = "[cradle-live] ring_len=200" ] && [ "$e2" = "[cradle-live] ring_len=0" ] \
+       && grep -aq '^\[ark-rec\] learn: the lesson ring held' "$L-3.log"; then r E5e PASS; else r E5e FAIL; fi
     SUITE_REDS="$reds"
 }
 
 FAIL=0
 suite plain ""
 [ -z "$SUITE_REDS" ] || { echo "[ark-e5] plain red:$SUITE_REDS"; FAIL=1; }
-for nc in "ARK_REC_LEARN_ALL E5a" "ARK_REC_LEARN_NOVER E5d"; do
+for nc in "ARK_REC_LEARN_ALL E5a" "ARK_REC_LEARN_NOVER E5d" "ARK_REC_NO_WITHDRAW E5e"; do
     set -- $nc
     suite "$1" "-D$1"
     case " $SUITE_REDS " in
