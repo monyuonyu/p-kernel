@@ -28,8 +28,13 @@ case "$(uname -m)" in
     *)             BOOT="$ROOT/boot/linux_x86_64" ;;
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET
-WORK="$(mktemp -d /tmp/leave.XXXXXX)"
-trap 'rm -rf "$WORK"; make -C "$BOOT" clean >/dev/null 2>&1' EXIT
+if [ -n "${LEAVE_WORK:-}" ]; then          # keep the logs (LEAVE_WORK=<empty dir>)
+    WORK="$LEAVE_WORK"; mkdir -p "$WORK"
+    trap 'make -C "$BOOT" clean >/dev/null 2>&1' EXIT
+else
+    WORK="$(mktemp -d /tmp/leave.XXXXXX)"
+    trap 'rm -rf "$WORK"; make -C "$BOOT" clean >/dev/null 2>&1' EXIT
+fi
 PORT="${LEAVE_RELAY_PORT:-7491}"   # nothing listens there: the line is about choosing, not reaching
 
 build() {  # <cflags>
