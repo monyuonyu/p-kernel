@@ -700,6 +700,9 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
     int honest = K5 - poison;
     for (int k = 0; k < honest; k++) clone(&prev[k], &n[k]);
     keeper_t kp; keep_init(&kp);
+#if defined(B5S10_R1_READ)
+    keeper_t kp1; keep_init(&kp1); int r1_took = 0, r1_tries = 0;
+#endif
     int took = 0, tries = 0; uint32_t gen = 0;
     apprentice_late = 0; s6_tsh = s6_tsp = 0; s6_tshn = s6_tspn = 0; s6_refused = 0;
     s8_cHmax = -2.0; s8_cPmin = 2.0; s8_cut = 0; s10_kP = s10_kH = 0;
@@ -732,11 +735,27 @@ static void s7_rounds(uint32_t seed, int trust, int poison, int kind, const char
                     if (!r && st_model_finite(&c[k])) { ap[k].m = c[k]; ap[k].has = 1; } else st_free(&c[k]);
                 }
                 if (k == 0) { took += r; tries++; }
+#if defined(B5S10_R1_READ)
+                if (k == 1) { r1_took += r; r1_tries++; }
+#endif
             }
             for (int k = 0; k < honest; k++) { st_free(&prev[k]); clone(&prev[k], &n[k]); }
         }
         keep_see(&kp, &n[0], p);
+#if defined(B5S10_R1_READ)
+        if (honest > 1) keep_see(&kp1, &n[1], p);
+#endif
     }
+#if defined(B5S10_R1_READ)
+    /* a reading (research/b5-robust-summary.md, the NC1 cut): node 1's own ruler,
+     * the same keeper rule as node 0's; never used to choose */
+    if (honest > 1) {
+        char n1[48], e1[48];
+        snprintf(n1, sizeof n1, "%s@n1", name);
+        snprintf(e1, sizeof e1, "took=%d/%d", r1_took, r1_tries);
+        keep_print(&kp1, n1, &n[1], e1);
+    }
+#endif
     char ex[192]; int at = snprintf(ex, sizeof ex, "took=%d/%d app=%d refused=%d tsH=%.3f tsP=%.3f", took, tries, apprentice_late,
                            s6_refused, s6_tshn ? s6_tsh / s6_tshn : -1.0, s6_tspn ? s6_tsp / s6_tspn : -1.0);
     if (s8_echo && trust && at > 0 && at < (int)sizeof ex)
