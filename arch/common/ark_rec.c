@@ -662,6 +662,9 @@ static void fill(UW len, UW seed)
     for (UW i = 0; i < len; i++) body[i] = (U1)((seed + i * 7 + (i >> 9) * 13) & 255);
 }
 
+/* E5 (ark-entry.md 6): `ark rec learn` sets this before put_version; -1 = keep */
+static INT pv_learn = -1;
+
 /* a new record (no == desc.nrec) or a new version of record `no` */
 static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
 {
@@ -690,8 +693,9 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
         zero(rec.prev, PFS_ID_LEN);
 #endif
         rec.seq++;
-        if (vis >= 0) {                           /* a vis version is sealed again: needs the body */
-            rec.vis = (U1)vis;
+        if (vis >= 0 || pv_learn >= 0) {          /* a vis / learn version is sealed again: needs the body */
+            if (vis >= 0) rec.vis = (U1)vis;
+            if (pv_learn >= 0) rec.learn = (U1)pv_learn;
             if (body_read(&rec) != 0) { err("a fragment is missing or wrong"); return; }
             len = rec.len;
         }
@@ -813,6 +817,82 @@ static void cmd_sync(void)
     P("[ark-rec] sync done records="); pdec(desc.nrec); P(" versions="); pdec(nver); P(" announced="); pdec(nsync_ann); P(" reached-no-peer="); pdec(nsync_lost); P("\r\n");
 }
 
+/* `ark rec teach` (ark-entry.md 6, E5): the latest version of every record whose
+ * owner consented (learn=yes), bodies in record order joined by "\n", as ONE lesson
+ * into cradle's ring (cradle_lesson_ingest: the conscience floor is there). A record
+ * that does not fit is skipped whole and counted (full=); under 128 B nothing is
+ * given. Only the plain versions on this node (AKR*) are read, never the sealed copies.
+ * -DARK_REC_LEARN_ALL (the E5 negative): the consent is not looked at. */
+extern int cradle_lesson_ingest(const unsigned char *body, int len);
+extern const unsigned char *cradle_window_src(int *len_out);
+#define TEACH_CAP 6144                         /* CRADLE_RING_BYTES (student.h) */
+#define TEACH_MIN 128                          /* CRADLE_MIN_LIVE (cradle.c)    */
+static U1 tbuf[TEACH_CAP];
+static U1  taught_h[PFS_ID_LEN];               /* the ring's sha256 right after our teach */
+static INT taught = 0;
+static UW  taught_no[256], taught_n; static INT taught_over;   /* the records in that lesson */
+extern void cradle_lesson_clear(void);
+/* E5e: a consent withdrawn while the ring still holds the lesson teach made (same
+ * sha256: not replaced by a mesh lesson since) clears the ring. What the weights
+ * already learned from it stays (like S1's merged weights). */
+static void teach_withdraw(UW no)
+{
+    int rl = 0;
+    const unsigned char *ring;
+    U1 h[PFS_ID_LEN];
+    if (!taught) return;
+    if (!taught_over) {                       /* a record not in the lesson: nothing to clear */
+        UW k = 0;
+        while (k < taught_n && taught_no[k] != no) k++;
+        if (k == taught_n) return;
+    }
+    ring = cradle_window_src(&rl);
+    if (!ring || rl <= 0) { taught = 0; return; }
+    pfs_id_compute(ring, (UW)rl, h);
+    for (UW k = 0; k < PFS_ID_LEN; k++) if (h[k] != taught_h[k]) { taught = 0; return; }
+#ifndef ARK_REC_NO_WITHDRAW                    /* E5 negative: the ring keeps it */
+    cradle_lesson_clear();
+#endif
+    taught = 0;
+    P("[ark-rec] learn: the lesson ring held consented records; cleared (what the weights already learned stays)\r\n");
+}
+static void cmd_teach(void)
+{
+    UW nrec = 0, skipped = 0, full = 0, tl = 0;
+    static UW tn[256]; INT tover = 0;
+    if (desc_load() <= 0) { P("[ark-rec] teach nothing consented (no records)\r\n"); return; }
+    for (UW i = 0; i < desc.nrec; i++) {
+        U1 id[PFS_ID_LEN];
+        if (index_find(i, id) != 0 || rec_load(id, &rec) != 0) { err("a record is not readable"); return; }
+#ifndef ARK_REC_LEARN_ALL
+        if (!rec.learn) { skipped++; continue; }
+#endif
+        if (body_read(&rec) != 0) { err("a fragment is missing or wrong"); return; }
+        UW need = rec.len + (tl ? 1u : 0u);
+        if (tl + need > TEACH_CAP) { full++; continue; }
+        if (tl) tbuf[tl++] = '\n';
+        cpy(tbuf + tl, body, rec.len); tl += rec.len;
+        nrec++;
+        if (nrec <= 256) tn[nrec - 1] = i; else tover = 1;
+    }
+    if (nrec == 0) { P("[ark-rec] teach nothing consented (skipped="); pdec(skipped); P(")\r\n"); return; }
+    if (tl < TEACH_MIN) { P("[ark-rec] teach too short ("); pdec(tl); P(" B < 128): nothing given\r\n"); return; }
+    int rc = cradle_lesson_ingest(tbuf, (int)tl);
+    if (rc <= 0) { P(rc == 0 ? "[ark-rec] teach deferred (a consolidation batch owns the ring; try again)\r\n"
+                             : "[ark-rec] teach refused by the lesson ring (the conscience floor or the size)\r\n"); return; }
+    int rl = 0;
+    const unsigned char *ring = cradle_window_src(&rl);
+    U1 h[PFS_ID_LEN];
+    if (ring && rl > 0) pfs_id_compute(ring, (UW)rl, h); else zero(h, PFS_ID_LEN);
+    if (ring && rl > 0) {
+        cpy(taught_h, h, PFS_ID_LEN); taught = 1; taught_over = tover;
+        taught_n = nrec <= 256 ? nrec : 256;
+        for (UW k = 0; k < taught_n; k++) taught_no[k] = tn[k];
+    }
+    P("[ark-rec] teach records="); pdec(nrec); P(" skipped="); pdec(skipped); P(" full="); pdec(full);
+    P(" bytes="); pdec(tl); P(" ring="); phex(h, 8); P("\r\n");
+}
+
 static void cmd_rec(const UB *a, UW al)
 {
     a = skip(a, &al);
@@ -836,6 +916,21 @@ static void cmd_rec(const UB *a, UW al)
         INT vv = word_is(a, m, "self") ? VIS_SELF : word_is(a, m, "heir") ? VIS_HEIR : word_is(a, m, "public") ? VIS_PUBLIC : -1;
         if (vv < 0) { err("usage: ark rec vis <no> self|heir|public"); return; }
         put_version(0, x, 0, 0, vv);
+    } else if (word_is(v, n, "learn")) {        /* E5: the learning consent, a new version */
+        if (num(&a, &al, &x) != 0) { err("usage: ark rec learn <no> yes|no"); return; }
+        a = skip(a, &al); UW m = wordlen(a, al);
+        INT lv = word_is(a, m, "yes") ? 1 : word_is(a, m, "no") ? 0 : -1;
+        if (lv < 0) { err("usage: ark rec learn <no> yes|no"); return; }
+#ifdef ARK_REC_LEARN_NOVER                   /* E5 negative: no version is written */
+        P("[ark-rec] learn no="); pdec(x); P(lv ? " yes" : " no"); P(" (not kept)\r\n");
+#else
+        pv_learn = lv;
+        put_version(0, x, 0, 0, -1);
+        pv_learn = -1;
+        if (!lv) teach_withdraw(x);
+#endif
+    } else if (word_is(v, n, "teach")) {
+        cmd_teach();
     } else if (word_is(v, n, "get") || word_is(v, n, "sum")) {
         INT get = v[0] == 'g';
         if (num(&a, &al, &x) != 0) { err("usage: ark rec get|sum <no> [@seq]"); return; }
@@ -917,7 +1012,7 @@ static void cmd_rec(const UB *a, UW al)
         }
         restore(sd);
     } else {
-        err("usage: ark rec new|fill|set|setfill|vis|get|sum|log|ls|sget|keys|sync|restore");
+        err("usage: ark rec new|fill|set|setfill|vis|learn|teach|get|sum|log|ls|sget|keys|sync|restore");
     }
 }
 

@@ -74,3 +74,21 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - **E3d（E1 の region の kill）** B が A の最後の AKSD を持つのを見てから A を kill -9。A の `ark.key` を写した空の C が restore で全記録の全版を同じ sha256 で読め、`ls` が A の最後と同じ
 - 陰性 `-DARK_REC_PLAIN`・`-DARK_REC_SAME_KEY`・`-DARK_REC_INDEX_LOCAL`・`-DARK_REC_AAD_INNER`（赤になる行は試験の頭に実測で書く）
 - E3s（監査-170 の提案）AKSD の前で止めても、前の AKSD の id で前の版に戻る
+
+## 6. E5（学習の印）の設計（2026-11-15、#43 の 2。試験を先に、実装は次の回）
+
+master affd64cd を読んだ: 記録は `learn` を持つが、作るとき 0 で、変える口が無い。記録から学びへの道も無い（cradle の授業の輪 `cradle_lesson_ingest` に入るのは先生と網の授業だけ）＝今の E5 は「道が無いから入らない」だけで、何も確かめていない。
+- **`ark rec learn <no> yes|no`**: 学習の同意だけを変えた新しい版（見せ方の `vis` と同じ形。本文は同じ）。同意の移り変わりは版の鎖に残る
+- **`ark rec teach`**（持ち主がコンソールで。自動では呼ばない）: 各記録の最新の版のうち `learn=yes` だけを、番号の順に本文を `\n` でつないで 1 つの授業にし、`cradle_lesson_ingest` に渡す（良心の床もそこで通る）。輪（6144 B）に入りきらない記録は切らずに飛ばして数える。合わせて 128 B（`CRADLE_MIN_LIVE`）に満たなければ渡さない。出力 `[ark-rec] teach records=R skipped=S full=F bytes=B ring=<輪の sha256 の頭 16 桁>`。同意が 0 件なら `[ark-rec] teach nothing consented`（輪は前のまま）
+- 読むのはノードの中の平文の版（AKR*）だけ。封じた写し（AKS*）から学ばない
+
+### 合否（実装より先に固定、壊したら赤。`tests/host/run_ark_e5.sh`）
+- **E5a** `fill` で 200 B の記録 2 つ（種 3・5）、0 だけ `learn 0 yes` → teach は records=1 skipped=1 bytes=200、ring が python で作った種 3 の本文の sha256 と同じ
+- **E5b** `learn 1 yes` → records=2 bytes=401、ring＝種 3‖`\n`‖種 5。`learn 1 no` → また種 3 だけ。`log 1` は新しい順に learn=no・yes・no・no（最後の no は E5c のために書いた版）
+- **E5c** 同意 0 件（どちらも no）→ nothing consented、`cradle probe` の ring_len が前と同じ
+- **E5d** 再起動しても同意は最後のまま（teach が種 3 だけ）
+- **E5e**（同じ回に足した。コードより先に ba271e68）同意を取り消すと（`learn 0 no`）、輪がまだ teach の授業のまま（sha256 が同じ）でその記録を含むなら輪を空にする: ring_len 200→0。学んでしまった重みは戻らない（限界、S1 の合体した重みと同じ）
+- 陰性: `-DARK_REC_LEARN_ALL`（印を見ない＝E5a 赤）、`-DARK_REC_LEARN_NOVER`（`learn` が新しい版を書かず手元の値だけ変える＝E5d 赤）、`-DARK_REC_NO_WITHDRAW`（取り消しで輪を空にしない＝E5e 赤）
+- 限界: 学んだかどうか（損失が下がるか）は見ない＝同意の門だけ。輪は 1 授業ずつ（次の teach や網の授業で置き換わる）。Android は良心の床が無いビルド（cradle.c の頭の注）
+
+実装（2026-11-15 10:00 の回、feat/ark-e5、監査待ち）: ark_rec.c に `learn`（`pv_learn` を立てて put_version＝vis と同じ道で本文ごと封じ直す）と `teach`（`cmd_teach`）。ring の値は `cradle_window_src` で輪そのものを読んで sha256。測り（容器、x86_64）: 試験だけのコミット 3a4d2e18 では E5a〜E5d 全部赤、実装 29d3238a で全部緑、LEARN_ALL は E5a 赤・LEARN_NOVER は E5d 赤。E5e: 試験のコミット ba271e68 で E5e だけ赤、実装 50c0e099 で E5a〜E5e 全部緑、NO_WITHDRAW は E5e だけ赤、hosted の警告 57＝master と同じ。**E5c は弱い**: 輪は前も後も 0（空）＝「変わらない」は空のまま、を見ただけ（先に網の授業を入れてから同意 0 件の teach をする形にすれば強くなる）。ark_rec.c はベアと Windows のビルドに入らない
