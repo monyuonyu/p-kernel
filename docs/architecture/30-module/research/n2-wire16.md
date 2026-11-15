@@ -65,6 +65,8 @@
      ② の設計（11-15 04:00 の回、読んだだけ）: mind/w の告知 MW_ANNOUNCE（44 B）と MW_MANIFEST は origin が 1 バイト（pk_node8_t）。広い送り手は origin 0xFF＋告知の `_pad[0..1]`・マニフェストの `_pad`（UH）に 2 バイト LE（大きさは変わらない。狭い送り手は今のまま 0＝内容 id もバイトも同じ）。旧版の受け手は o=0xFF≥DNODE_MAX で読み飛ばす（mw_ann_poll 6218 行）＝安全。受け手: mw_ann_epoch/man/have・mw_peer_epoch を DNODE_ROWS の行に、mw_fetch_peer の `mw_man.origin != origin` は尾を解いて比べる、mw_fold_region の輪は行と pk_node_of_row＋region_is_member(id)、チャンクを押す輪（`o < DNODE_MAX`）に swim_wide_alive の広いメンバ、門の region_size_narrow()≥2（6594・6601 行）は region_size に。尾は「0xFF かつ尾が広い番号」のときだけ読む（7a と同じ）。試験は [n2-mix] に 260 の `[onemind] peer 299 epoch=` と 4 の `peer 259`（XW）、陰性 `-DN2_NC_MW_NARROW`（告知に尾を付けない）。合体の学習が動くので重い負荷では窓を広く
      監査-179（11-15）: ① 限界つき PASS・② PASS で master。XQ 枝 緑 2/2・master 赤 2/2・陰性 赤 2/2。XW 枝 緑 2/2（45・65 s）・master 赤・陰性 赤・監査の壊し（マニフェストの尾を消す）赤 2/2、旧 1〜3 も動かすと緑 2/2 で旧は狭い番号だけを組み立てる。crown 全バイト同じ。**① の限界: 押しの輪を消す壊しと H24(a) の B3 は XQ で緑**（持ち手は pfs のふつうの複製と告知で載る、test-holes H26）。XW は「組み立てた（foldable）」を見る＝合体の値は見ない
 
+**N2b の締め（2026-11-15、#43 の 4）**: 「まだ」の 1〜7 は、7c ③（ss6・degrade は狭い表のまま）を除いて済んだ。残るのは、生死がビーコンの古さだけで決まること（4）、ss6・degrade の狭さ（7c ③）、H24(b)（announce の origin を読む受け手の試験）、XW が合体の値を見ないこと。どれも広げる理由が出たら。同一性は N2c（research/n2c-identity.md、設計のみ）
+
 ## 4. 混ぜる試験 [n2-mix]（合否は先に固定）
 
 旧版＝N2 の前の master から作ったバイナリ（sha を記録）。容器で旧 3（1〜3）＋新の狭い 2（4・44）＋新の広い 2（260・300＝下位 8 ビットが 4・44）。
