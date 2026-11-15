@@ -89,3 +89,5 @@ master affd64cd を読んだ: 記録は `learn` を持つが、作るとき 0 �
 - **E5d** 再起動しても同意は最後のまま（teach が種 3 だけ）
 - 陰性: `-DARK_REC_LEARN_ALL`（印を見ない＝E5a 赤）、`-DARK_REC_LEARN_NOVER`（`learn` が新しい版を書かず手元の値だけ変える＝E5d 赤）
 - 限界: 学んだかどうか（損失が下がるか）は見ない＝同意の門だけ。輪は 1 授業ずつ（次の teach や網の授業で置き換わる）。Android は良心の床が無いビルド（cradle.c の頭の注）
+
+実装（2026-11-15 10:00 の回、feat/ark-e5、監査待ち）: ark_rec.c に `learn`（`pv_learn` を立てて put_version＝vis と同じ道で本文ごと封じ直す）と `teach`（`cmd_teach`）。ring の値は `cradle_window_src` で輪そのものを読んで sha256。測り（容器、x86_64）: 試験だけのコミット 3a4d2e18 では E5a〜E5d 全部赤、実装 29d3238a で全部緑、LEARN_ALL は E5a 赤・LEARN_NOVER は E5d 赤。**E5c は弱い**: 輪は前も後も 0（空）＝「変わらない」は空のまま、を見ただけ（先に網の授業を入れてから同意 0 件の teach をする形にすれば強くなる）。ark_rec.c はベアと Windows のビルドに入らない

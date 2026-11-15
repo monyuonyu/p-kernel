@@ -1239,6 +1239,15 @@ jobs:
           timeout 600 tests/host/run_ark_e3.sh | tee ark_e3.log
           grep -aF '[ark-e3] ALL PASS' ark_e3.log
 
+      # ark-entry.md 6 / E5: only records whose owner consented (ark rec learn) reach
+      # cradle's lesson ring (ark rec teach); the two negatives (-DARK_REC_LEARN_ALL,
+      # -DARK_REC_LEARN_NOVER) run inside the script. It rebuilds and cleans.
+      - name: ark learning consent (E5a-d)
+        run: |
+          timeout 900 tests/host/run_ark_e5.sh | tee ark_e5.log
+          grep -aF '[ark-e5] ALL PASS' ark_e5.log
+          make -C boot/linux_x86_64 -j4 > /dev/null
+
       # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 10 ms apart, B must hold all 60
       # (a want that did not fit the 8-slot table was dropped for good). Negative in
       # n2-negatives. ~80 s.
