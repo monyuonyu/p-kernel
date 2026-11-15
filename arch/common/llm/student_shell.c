@@ -1693,7 +1693,7 @@ int student_shell_cmd(const char *args, emit_fn emit)
 
     /* B5 wire, stage 1: `baby region [gen]` (student_region_cmd above). No
      * _TK_HOSTED_LIBC_ guard: this file is the LLM tier, hosted only, built
-     * without the kernel defines (boot/*/Makefile LLM_CFLAGS). */
+     * without the kernel defines (LLM_CFLAGS in the boot Makefiles). */
     if (p[0]=='r' && p[1]=='e' && p[2]=='g' && p[3]=='i' && p[4]=='o' && p[5]=='n' &&
         (p[6]==0 || p[6]==' ' || p[6]=='\t'))
         return student_region_cmd(p + 6, emit);
