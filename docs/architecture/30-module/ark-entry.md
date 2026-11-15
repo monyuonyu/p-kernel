@@ -85,20 +85,30 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 ### 7.2 決めたこと
 
 1. **記録の口は galaxy に足す**（第 2 の server は作らない）: `POST /ark/rec`（新しい記録）・`POST /ark/rec/<no>`（新しい版）・`GET /ark/rec.json`（番号・版・時刻・見せ方・学習・長さだけ。**数・いいね・順位を出さない**＝E6）・`GET /ark/rec/<no>`（本文のバイト）・`POST /ark/rec/<no>/vis|learn`・`GET|POST /ark/heir`。中身はシェルと同じ関数（ark_rec.c）を呼ぶ
-2. **書く口は同意の門の後ろ**（`ark_consent_ok`、`/teach` と同じ）。読むのは門なし（自分の端末の 127.0.0.1）
+2. **書く口は同意の門の後ろ**（`ark_consent_ok`、`/teach` と同じ）。**読む口も書く口も、6 の合言葉が無ければ 401**（127.0.0.1 は「自分」の証にならない。監査-183）
 3. **原文のまま**: 本文は受けたバイトをそのまま（文字コードの変換・空白の詰め・改行の直しをしない）。UTF-8 でなくても断らない。1 回の POST は 16 KB まで（この口だけ大きい受け皿）。長い記録は章ごとの記録に分ける（v1 の限界）
-4. **最初の画面の順**: 原文（README）→ 同意 → **鍵の控え**（`ark.key` を 64 桁の 16 進で 1 回だけ見せ、「書き写した」を押すまで記録の口を開けない）→ **継ぐ人**（相手の端末が見せる 64 桁を貼る、飛ばせる、身元は確かめない）→ 最初の記録。どれも後から変えられる
+4. **最初の画面の順**: 原文（README）→ 同意 → **鍵の控え**（`POST /ark/key/backup`＝合言葉つきの POST で、`ark.key` を 64 桁の 16 進で 1 回だけ返す。2 回目からは 410。GET では出さない。「書き写した」の `POST /ark/key/backup/done` まで記録の口は 409。印は `ark.key.shown` に残し、再起動でも 2 回目は出さない）→ **継ぐ人**（相手の端末が見せる 64 桁を貼る、飛ばせる、身元は確かめない）→ 最初の記録。どれも後から変えられる
 5. 見せ方の既定は「自分だけ」、学習の既定は「使わない」（ark-entry.md 2.4・2.6 のまま）。画面は 1 つずつ選ばせる（まとめて変えるボタンを置かない）
+6. **呼び手の確かめ（監査-183 の ①②）**: galaxy は起動ごとに合言葉（32 B の乱数、64 桁の 16 進）を作り、`PKERNEL_PFS_DIR/galaxy.token`（0600、書いてから bind）に置く。要求は見出し `X-Galaxy-Token` で出す（比べは長さ固定・全バイト）。
+   - 渡し方は 1 つ: **URL の `#t=<64 hex>`**（# の後ろは送られず Referer にも出ない）。Android は GalaxyActivity がアプリ専用の filesDir（他のアプリは読めない）から読んで `loadUrl` に付ける。PC はシェルの `galaxy url` が同じ形の URL を出す。ページの JS は sessionStorage に移し、`history.replaceState` で URL から消し、fetch の見出しに付ける
+   - 独自の見出しはよそのページからは前置き（OPTIONS）なしに送れない。galaxy は OPTIONS を受けない＝ブラウザのよそのページは届かない。合言葉を持たない他のアプリは 401
+   - **Host** が `127.0.0.1:<port>`・`localhost:<port>` でなければ 403（DNS の付け替え）。**Origin** があり `http://127.0.0.1:<port>`・`http://localhost:<port>` でなければ 403。Origin が無い（curl）は合言葉だけで見る
+   - `/events`・`/ws` は見出しを付けられないので `?t=` で受ける（同じ比べ）
+7. **鍵を戻す口（監査-183 の ④）**: シェルの `ark key import <64 hex>`。`ark.key` が無いときだけ書く（0600、pfs_dur_write）。あれば何もせず断る（ark_rec.c 269 行の「上書きしない」を守る）。HTTP の口は作らない（v1）
+
+**既存の口（/teach・/profile・/ask・/profile.json・/console.txt・/log.txt）も同じ穴**（監査-183）。決めた: **galaxy の POST は全部と、人の中身を返す GET（/self.json＝human の欄がある・/profile.json・/console.txt・/log.txt・/events・/ws・/ark/*）は 6 の合言葉を要る**。要らないのはページの殻と公開の文だけ（`/`・/galaxy.json・/modules.json・/manifesto・/vocab・/langs）。**hosted だけ**（`_TK_HOSTED_LIBC_` の中。ベアの galaxy は ark の口も合言葉のファイルも無く、今のまま＝crown は動かない見込み。作る回が測る。ガードが hosted で本当に効くかは A7 が見る＝11-15 の B5W の「LLM_CFLAGS に定義が無い」の轍を踏まない）。他の案（/ark/* だけ守り、残りは台帳に行を足す）は採らない: 同じ確かめを 2 つの決まりで持つと片方が抜ける。直す呼び手（curl で POST する試験）: tests/host/run_self_ref_local.sh・run_stop_galaxy.sh・stop_galaxy.py・tests/web/consent_dom_cert.py・tests/android/emulator_smoke.sh・ci.yml の段。合言葉は試験も `galaxy.token` から読む
 
 ### 7.3 合否（作る前に固定。`tests/host/run_ark_app.sh`、galaxy に curl）
 
 - **A1** 同意の前の `POST /ark/rec` は 403 で何も書かない。同意の後は `{no,seq}` で、`GET /ark/rec/<no>` が送ったバイトと sha256 で同じ（多バイトの文字・CRLF・行末の空白・NUL を含む本文で）
 - **A2** HTTP で書いた記録が `ark rec ls` に出て、封じた目次の id（sealed=）が変わる
 - **A3** `vis`・`learn` の POST が版を足し、既定は self・no
-- **A4** 鍵の控えを「書き写した」にする前は記録の口が 409。控えの 64 桁で別の空のノードが `ark rec restore` できる
+- **A4** 鍵の控えを「書き写した」にする前は記録の口が 409。`POST /ark/key/backup` の 2 回目（再起動の後も）は 410、GET は 405 か 404。控えの 64 桁を空のノードで `ark key import` → `ark rec restore` で本文が sha256 で同じ。`ark.key` があるノードへの import は断り、ファイルのバイトが変わらない
 - **A5** `/ark/rec.json` と画面の HTML に数・順位の欄が無い（決めた語の一覧で走査）
 - **A6** 16 KB を超える POST は 413 で何も書かない
-- 陰性: `-DGALAXY_ARK_NO_GATE`（A1 赤）・`-DGALAXY_ARK_NORMALIZE`（行末の空白を詰める＝A1 の sha256 赤）・`-DGALAXY_ARK_NO_BACKUP_GATE`（A4 赤）
+- **A7** 7.2 の 6 の守る口（全部の POST と守る GET を表で回す）に、合言葉なし→401、違う合言葉（1 バイト違い・短い）→401、正しい合言葉で `Origin: http://evil.example`→403、`Host: evil.example:7800`→403、`OPTIONS`→405 か切断。どれも何も書かない（記録の数・profile の seq が前後で同じ）。公開の口は合言葉なしで 200。`galaxy.token` は 0600 で、起動ごとに違う
+- **A8** ページの殻を `#t=` 付きで開いた試験（tests/web の DOM の試験）で、同意→記録が通る＝ページの JS が見出しを付けている
+- 陰性: `-DGALAXY_ARK_NO_GATE`（A1 赤）・`-DGALAXY_ARK_NORMALIZE`（行末の空白を詰める＝A1 の sha256 赤）・`-DGALAXY_ARK_NO_BACKUP_GATE`（A4 赤）・`-DGALAXY_NO_TOKEN`（合言葉を見ない＝A7 赤）・`-DGALAXY_NO_ORIGIN`（Origin・Host を見ない＝A7 の 403 の 2 つだけ赤）・`-DGALAXY_BACKUP_TWICE`（控えを何度も返す＝A4 赤）
 
 ### 7.4 限界・まだ
 
@@ -106,7 +116,10 @@ hosted だけ（v1 の置き場が hosted）。新しいファイル `arch/commo
 - 継ぐ人の公開鍵の受け渡しは手で 64 桁（近くの 2 台で読み取る形は次）。渡す処理は v1.1（ark-handover.md）
 - ark-profile.md の v3「会話の原文の保管庫」は、この記録（原本の層）で置き換える。会話を自動で記録にするのは脳が育ってから
 - Android の実機で確かめるのは人の仕事
+- 合言葉は同じ利用者の別のプロセス（PC で同じ人が動かすもの）からは読める。守るのは「よそのアプリ・よそのページ」まで。root・同じ uid は守らない
+- 作る順: ① 合言葉と既存の口（A7・既存の試験の直し）を先に 1 本 ② 記録の口（A1〜A6・A8）を次の 1 本。①だけで今ある穴が閉じる
 
 ### 7.5 監査-183（2026-11-15、FAIL。設計の直しへ）
 
 7.1 の事実はコードどおり（galaxy.c 712 行 GX_REQ_MAX、1495 行の門は /teach だけ、ark.key は X25519 の秘密 32 B）。**戻す理由: galaxy の口に「誰が呼んだか」の確かめが無い**（loopback に bind するだけ、Origin・合言葉なし）。Android では同じ端末のどのアプリも 127.0.0.1:7800〜 に繋げる、端末のブラウザのページは text/plain の POST を前置きなしで送れる。この口の上で 7.2 の 2（読むのは門なし）は「自分だけ」の記録を他のアプリに読ませ、4 は秘密鍵を見せ、書く口は同意の後なら他のページから書ける。直しのおすすめ: ① /ark/* は合言葉（起動ごとに作り 0600 のファイルか WebView にだけ渡す）を要り、無ければ 401 ② Origin・Host が自分でなければ 403 ③ 鍵の控えは合言葉つきの POST で 1 回だけ ④ A4 の「別のノードで restore」には鍵を戻す口（`ark key import`）が要るが 7.2 に無い ⑤ 合否に A7（合言葉なし 401・よその Origin 403）と陰性 `-DGALAXY_ARK_NO_TOKEN`
+直し（11-15 23:30 の回）: ①②③⑤は 7.2 の 2・4・6 と 7.3 の A4・A7・A8・陰性 3 つに、④は 7.2 の 7 に入れた。既存の口の穴は 7.2 の 6 の後ろの段落で決めた（全部の POST と人の中身を返す GET に合言葉、台帳の行は足さない）。監査待ち（🔍ENT2）
