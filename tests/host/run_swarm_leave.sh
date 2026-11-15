@@ -60,7 +60,7 @@ origins() {  # <log> <n>: the n-th "[pfs] origins" line
 }
 
 suite() {  # <tag> <cflags>: prints the checks, sets SUITE_REDS
-    local tag="$1" cf="$2" reds="" d d2 s7 s300 sself su
+    local tag="$1" cf="$2" reds="" d d2 s7 s300 sself su l2
     r() { echo "[swarm-leave] $tag $1 $2"; [ "$2" = FAIL ] && reds="$reds $1"; return 0; }
     if ! build "-DSWARM_LEAVE_TEST $cf"; then
         r build FAIL; tail -20 "$WORK/build.log"; SUITE_REDS="build"; return
@@ -75,12 +75,15 @@ suite() {  # <tag> <cflags>: prints the checks, sets SUITE_REDS
     # L1 + L2: leave (weights files planted first, by name)
     echo w > "$d/mind.rw"; echo w > "$d/ns1_student.bin"
     run "$d" "$WORK/$tag-c.log" 0 "leave" "join"
+    # L2 right after the leave run: the restart below (joined again) is a newborn
+    # that may save its own fresh weights, which is not the swarm's
+    if [ ! -e "$d/mind.rw" ] && [ ! -e "$d/ns1_student.bin" ]; then l2=PASS; else l2=FAIL; fi
     run "$d" "$WORK/$tag-c2.log" 0 "pfs origins"
     if grep -aq '^\[leave\] foreign 2 ' "$WORK/$tag-c.log" \
        && case "$(origins "$WORK/$tag-c2.log" 1)" in *" foreign 0 "*) true ;; *) false ;; esac \
        && [ -n "$s7" ] && [ ! -e "$d/$s7" ] && [ -n "$s300" ] && [ ! -e "$d/$s300" ] \
        && [ -n "$sself" ] && [ -e "$d/$sself" ]; then r L1 PASS; else r L1 FAIL; fi
-    if [ ! -e "$d/mind.rw" ] && [ ! -e "$d/ns1_student.bin" ]; then r L2 PASS; else r L2 FAIL; fi
+    r L2 "$l2"
     # L3: the mark keeps the node off the net; join lifts it
     run "$d" "$WORK/$tag-e0.log" 0 "leave"
     run "$d" "$WORK/$tag-e.log" 1 "join"
