@@ -1512,7 +1512,6 @@ static void dlb_cert_sink(void *ctx, const char *bytes, int n)
  * provenance (fresh vs restored). Always saves after a real round so the gain
  * survives the next reboot.
  * ------------------------------------------------------------------------- */
-#ifdef _TK_HOSTED_LIBC_
 /* B5 wire, stage 1 (research/b5-wire.md §2): `baby region [gen]`. Publish this
  * node's student (st_rg_wrap: the generation in the envelope) under st/<node>,
  * then one st_region_round with the narrow region members: their blobs of the
@@ -1574,7 +1573,6 @@ static int student_region_cmd(const char *q, emit_fn emit)
     emit(line);
     return r < 0 ? -1 : 0;
 }
-#endif
 
 int student_shell_cmd(const char *args, emit_fn emit)
 {
@@ -1693,12 +1691,12 @@ int student_shell_cmd(const char *args, emit_fn emit)
     float lr = ST_LR;
     int loss_only = 0;
 
-#ifdef _TK_HOSTED_LIBC_
-    /* B5 wire, stage 1: `baby region [gen]` (student_region_cmd above) */
+    /* B5 wire, stage 1: `baby region [gen]` (student_region_cmd above). No
+     * _TK_HOSTED_LIBC_ guard: this file is the LLM tier, hosted only, built
+     * without the kernel defines (boot/*/Makefile LLM_CFLAGS). */
     if (p[0]=='r' && p[1]=='e' && p[2]=='g' && p[3]=='i' && p[4]=='o' && p[5]=='n' &&
         (p[6]==0 || p[6]==' ' || p[6]=='\t'))
         return student_region_cmd(p + 6, emit);
-#endif
 
     /* ---- SS-3 (special-structure-mind.md §3.2/§8.4): same-tier merge cohort.
      * `student merge` / `baby merge` drives the REAL student-only weight merge
