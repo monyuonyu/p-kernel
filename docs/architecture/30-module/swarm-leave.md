@@ -47,3 +47,17 @@
 1. **戻す理由: `leave` の後に届いた他人の塊が、外れた後の起動に残る。** `leave`→`leave seed 300`（網の受け pfs_repl.c 710 行と同じ pfs_put_origin）→再起動で `[pfs] origins self 0 foreign 1`、ファイルも残る。網の受けは止まり（stop）を見ない＝`leave` から再起動までの間に仲間の押しや want の答えが来ると、群れの物が残る。おすすめの直し: 印（swarm-left.st）のある起動で、他人の塊をもう一度消す（`leave` の途中で落ちた時も救える）。あわせて印のある間は pfs_put_origin が他人の塊を保存しない。試験 L6: 上の手順で foreign 0
 2. **試験の穴（直しと一緒に）**: 自分の塊を 0xFF でなく番号で書く壊し（pfs_block.c の三項を外す）で L1〜L5 が全部緑。だがその壊しでは、網のある起動で `pfs put` した自分の記録が、網のない起動の `leave` で**消える**（drpc_my_node が 0xFF のため番号 1 が他人に見える）。素では残る（.org=ff00、番号 1→2 でも残る）。L1 の自分の塊を `pfs put`（網あり）で作る形にすれば赤になる
 3. 限界（直さなくてよいが書く）: pfs_dur_foreach_origin は 4096 個で黙って打ち切る。固定の失敗の後の書き直し（pfs_block.c 240 行）は .org を書かない＝分からない塊として脇へ（安全側）
+
+## 7. 直し（2026-11-15 14:00 の回、実装者。監査は別の回）
+
+試験を先に（fe3c18eb）: **L6a** `leave`→同じ起動で `leave seed 300`→`[leave] seed: refused`・foreign 0。**L6b** 他人の塊をディスクに置いたまま印だけ置いて起動→`[leave] left at start: foreign 1 removed`・ファイルと .org が無い。**L1** に網ありの `pfs put` の自分の記録（drpc_my_node＝1）が網なしの `leave` の後も残る、を足した。陰性: `S1_NC_SELF_BY_NUMBER`（三項を外す、L1）・`S1_NC_LEFT_ACCEPTS`（L6a）・`S1_NC_LEFT_NO_SWEEP`（L6b）。
+
+直し（f0cad325）:
+1. pfs_put_origin（hosted だけ）: 印のある間、origin が自分でない塊は `PFS_E_LEFT`（-6）で断る。重複（もう持っている）はこれまでどおり OK。ディスクからの読み戻しは断らない（下の掃除が消す）。網の受け（pfs_repl.c 710 行）は断りを数えて 32 回に 1 行言い、hold-ack を出さない＝持っていると言わない
+2. `leave` は止まりの直後に断りを入れ、**印を消す前に置く**（途中で落ちても次の起動の掃除が終わらせる）
+3. 起動（pfs_durable_restore・swarm_stop_restore の後、網の前）に `swarm_leave_restore`: 印があれば断りを入れ、表とファイルから他人の塊を消し直す。重みのファイルはここでは消さない（印の後の赤子の自分の重みは群れのものではない）
+4. L3 の grep を `[leave] left: `（cmd_net の行）に絞った（起動の行も `[leave] left` で始まるため）
+
+測り（容器、x86_64）: fe3c18eb（試験だけ）は素で L6a・L6b だけ赤（L1 は今の三項があるので緑、SELF_BY_NUMBER はまだ無いので「赤にならない」と出る）。f0cad325 は素 ALL PASS、陰性 6 つとも狙いが赤（KEEP_FOREIGN は L6b も、SELF_BY_NUMBER は L4 も赤＝同じ道を使うため）。網ありの put は `[net] transport = relay (node 1)` の起動で入った。crown（ベア x86・aarch64 の .text・.rodata）は c02cae26 と全バイト同じ（cd490552・4dfac3f4・996ad069・8e35fac0）、hosted の警告 57、Linux aarch64 hosted もビルド OK。
+
+限界: 断るのは電文の origin の申告で決まる（他人が自分の番号を名乗れば通る＝N2c の鍵の話）。断りの 1 行（pfs_repl）と、起動の掃除で refs.tab が指す塊が消えることは試験していない。
