@@ -637,7 +637,9 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
 #ifdef _TK_HOSTED_LIBC_
             /* N2: a wide holder says 0xFF; pmesh's src (v2) is its id */
             pk_node_t hs = hp->src_node;
+#ifndef N2_NC_HOLDACK_NO_WIDE                     /* H24(a) negative: the 0xFF stays */
             if (hs == PK_NODE_NONE && PK_NODE_IS_WIDE(src_node)) hs = src_node;
+#endif
             if ((hs < DNODE_MAX || PK_NODE_IS_WIDE(hs)) && hs != drpc_my_node &&
                 announce_hook)
                 announce_hook(hs, hp->id);
@@ -760,6 +762,14 @@ static void pfsr_ann_take(const PFSR_ANN_PKT *ap, W r)
     if (row >= 0 && ap->seq != last_ann_seq[row]) {
         last_ann_seq[row] = ap->seq;
         stat_ann_rx++;
+#ifdef PFSR_TEST_PUSH_ONLY
+        /* test-holes H26 / H24(a), a test build only ([n2-mix] XQ with N2_XQ_PUSH_ONLY):
+         * an announce neither counts a holder nor raises a WANT, so a block reaches a
+         * peer only by a push (protect's actuator) and a holder counts only by its
+         * HOLD-ACK. Never in a product build. */
+        (void)org;
+        return;
+#endif
         /* G28: tell the protect layer this peer holds ap->id, whether or
          * not WE hold it (the unit owner hears its replicas this way). */
         if (announce_hook) announce_hook(src, ap->id);

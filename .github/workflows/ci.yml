@@ -1848,6 +1848,21 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DN2_NC_PROTECT_NARROW >/dev/null
           N2_XQ=1 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_nc_prot.log || true
           grep -aE '^\[n2-mix\] XQ FAIL.* wants n299' n2_mix_nc_prot.log
+          # test-holes H26 / H24(a): with announces cut (-DPFSR_TEST_PUSH_ONLY, a test build) a wide holder
+          # comes only by protect's wide push and counts only by its HOLD-ACK: XQ green, and red without
+          # the wide push (-DN2_NC_PROTECT_NO_WIDE_PUSH) or the HOLD-ACK's 0xFF -> src (-DN2_NC_HOLDACK_NO_WIDE)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_TEST_PUSH_ONLY >/dev/null
+          N2_XQ=1 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_po.log || true
+          grep -aF '[n2-mix] XQ PASS' n2_mix_po.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS="-DPFSR_TEST_PUSH_ONLY -DN2_NC_PROTECT_NO_WIDE_PUSH" >/dev/null
+          N2_XQ=1 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_po_nc1.log || true
+          grep -aE '^\[n2-mix\] XQ FAIL.* wants n299' n2_mix_po_nc1.log
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS="-DPFSR_TEST_PUSH_ONLY -DN2_NC_HOLDACK_NO_WIDE" >/dev/null
+          N2_XQ=1 N2_WAIT=30 N2_OLD_BIN=/tmp/n2old/boot/linux_x86_64/p-kernel timeout 300 tests/host/run_n2_mix.sh | tee n2_mix_po_nc2.log || true
+          grep -aE '^\[n2-mix\] XQ FAIL.* wants n299' n2_mix_po_nc2.log
           # [n2-mix] XW goes red when a wide node's mind/w announce has no tail (-DN2_NC_MW_NARROW, N2 7c 2;
           # the branch folds in about 45 s in the container, so 120 s is the window here)
           make -C boot/linux_x86_64 clean >/dev/null
