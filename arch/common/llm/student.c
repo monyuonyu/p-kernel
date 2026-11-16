@@ -2830,6 +2830,98 @@ int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
     return 1;
 }
 
+/* ------------------------------------------------------------------ */
+/* B5 wire, stage 1 (research/b5-wire.md): one round with the region.   */
+/* ------------------------------------------------------------------ */
+size_t st_rg_cap(const st_model *m)
+{
+    return m ? ST_RG_HDR + st_blob_size(m) : 0;
+}
+
+long st_rg_wrap(const st_model *m, uint32_t gen, void *buf, size_t cap)
+{
+    if (!m || !buf || cap < ST_RG_HDR) return ST_E_ARG;
+    long n = st_save(m, (uint8_t *)buf + ST_RG_HDR, cap - ST_RG_HDR);
+    if (n < 0) return n;
+    uint32_t h[4] = { ST_RG_MAGIC, gen, (uint32_t)n, 0u };
+    for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)buf)[i] = ((const uint8_t *)h)[i];
+    return n + ST_RG_HDR;
+}
+
+int st_region_round(st_model *live, uint32_t gen, uint16_t self,
+                    const uint16_t *members, int count,
+                    st_rg_fetch_fn fetch, void *ctx,
+                    const uint8_t *bytes, int n, int seq, st_rg_report *rep)
+{
+    st_rg_report r0 = { 0, 0, 0, 0, 0, 0.0f, 0.0f };
+    if (rep) *rep = r0;
+    if (!live || !fetch || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
+    if (count > 0 && !members) return ST_E_ARG;
+    if (!bytes || seq < 2 || n < seq) return ST_E_ARG;
+    size_t cap = st_rg_cap(live);
+    void *buf[ST_COHORT_MAX];
+    const void *bs[ST_COHORT_MAX];
+    size_t ls[ST_COHORT_MAX];
+    uint32_t gs[ST_COHORT_MAX];
+    int nb = 0, ret = 0;
+    for (int k = 0; k < count; k++) {
+        if (members[k] == self) continue;
+        r0.members++;
+        void *b = malloc(cap);
+        if (!b) continue;
+        int got = fetch(ctx, members[k], b, cap);
+        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); continue; }
+        r0.fetched++;
+        uint32_t h[4];
+        for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
+        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); continue; }
+#if defined(B5W_NC_NO_GEN)
+        h[1] = gen;                      /* falsifier: the generation is not read */
+#endif
+        if (h[1] != gen) { free(b); continue; }
+        buf[nb] = b;
+        bs[nb] = (const uint8_t *)b + ST_RG_HDR;
+        ls[nb] = (size_t)h[2];
+        gs[nb] = h[1];
+        nb++;
+    }
+    r0.members += 1;                     /* self */
+    r0.same_gen = nb + 1;
+    if (nb > 0) {
+        st_model cand;
+        void *own = malloc(st_blob_size(live));
+        long on = own ? st_save(live, own, st_blob_size(live)) : -1;
+        if (on > 0 && st_init_tier(&cand, 1u, live->tier) == ST_OK) {
+            if (st_load(&cand, own, (size_t)on) == ST_OK) {
+#if defined(B5W_NC_MEAN)
+                int acc = st_round_merge(&cand, gen, bs, ls, gs, nb);
+#else
+                int acc = st_round_trimmed(&cand, gen, bs, ls, gs, nb, 1);
+#endif
+                r0.accepted = acc > 0 ? acc : 0;
+                if (acc > 0) {
+#if defined(B5W_NC_NO_GATE)
+                    for (int i = 0; i < live->n_params; i++) {   /* falsifier: no gate */
+                        live->w[i] = cand.w[i]; live->mu[i] = cand.mu[i]; live->vu[i] = cand.vu[i];
+                    }
+                    live->adam_t = cand.adam_t;
+                    ret = 1;
+#else
+                    int a = st_round_adopt(live, &cand, bytes, n, seq, &r0.held_live, &r0.held_cand);
+                    ret = a == 1 ? 1 : 0;
+#endif
+                }
+            }
+            st_free(&cand);
+        }
+        free(own);
+    }
+    for (int k = 0; k < nb; k++) free(buf[k]);
+    r0.adopted = ret;
+    if (rep) *rep = r0;
+    return ret;
+}
+
 /* ================================================================== */
 /* brain self-quantization, stage 1 (st_quant_fake — see student.h)   */
 /* ================================================================== */

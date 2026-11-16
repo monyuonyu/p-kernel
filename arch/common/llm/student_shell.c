@@ -1512,6 +1512,68 @@ static void dlb_cert_sink(void *ctx, const char *bytes, int n)
  * provenance (fresh vs restored). Always saves after a real round so the gain
  * survives the next reboot.
  * ------------------------------------------------------------------------- */
+/* B5 wire, stage 1 (research/b5-wire.md §2): `baby region [gen]`. Publish this
+ * node's student (st_rg_wrap: the generation in the envelope) under st/<node>,
+ * then one st_region_round with the narrow region members: their blobs of the
+ * same generation, st_round_trimmed (t = 1) into a copy, st_round_adopt on the
+ * held windows of the DMN split. Fewer than 4 with self, a failed fetch or
+ * another generation: refused, g_student byte-unchanged. No timer yet (stage
+ * 2); the generation is the caller's. */
+extern int          gl_student_publish(unsigned short node, const void *blob, unsigned int len);
+extern int          gl_student_fetch(unsigned short node, void *out, unsigned int cap);
+extern unsigned int region_contains(unsigned short node);   /* BOOL, pk_node_t */
+extern unsigned short drpc_my_node;                          /* pk_node_t      */
+
+static int region_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    (void)ctx;
+    return gl_student_fetch(node, out, (unsigned int)cap);
+}
+
+static int student_region_cmd(const char *q, emit_fn emit)
+{
+    char line[200];
+    while (*q == ' ' || *q == '\t') q++;
+    char *end = NULL;
+    unsigned long g = strtoul(q, &end, 10);
+    uint32_t gen = (end == q) ? 0u : (uint32_t)g;
+    unsigned short self = drpc_my_node;
+    if (self == 0xFF || self == 0xFFFF) {
+        emit("[baby] region: refused (not in a mesh), unchanged\r\n"); return -1;
+    }
+    uint16_t mem[ST_COHORT_MAX];
+    int m = 0;
+    mem[m++] = self;
+    for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)   /* the narrow ids */
+        if (id != self && region_contains(id)) mem[m++] = id;
+    int cn = cradle_corpus_len();
+    st_split sp = st_held_split(cn, ST_DMN_SEQLEN);
+    int hw = sp.heldw, te = sp.train_end, sl = ST_DMN_SEQLEN;
+    if (hw < 1) { emit("[baby] region: refused (no held windows), unchanged\r\n"); return -1; }
+    uint8_t *hb = (uint8_t *)malloc((size_t)hw * (size_t)sl);
+    size_t cap = st_rg_cap(&g_student);
+    void *own = malloc(cap);
+    if (!hb || !own) { free(hb); free(own); emit("[baby] region: OOM, unchanged\r\n"); return -1; }
+    for (int w = 0; w < hw; w++) window(hb + (size_t)w * (size_t)sl, te + w * sl, sl);
+    long on = st_rg_wrap(&g_student, gen, own, cap);
+    int pub = on > 0 ? gl_student_publish(self, own, (unsigned int)on) : -1;
+    free(own);
+    if (pub <= 0) { free(hb); emit("[baby] region: refused (publish failed), unchanged\r\n"); return -1; }
+    /* st_region_round may replace g_student: the writer guard (as SS-3) */
+    student_consol_abort();
+    st_rg_report rp;
+    int r = st_region_round(&g_student, gen, self, mem, m, region_fetch, NULL, hb, hw * sl, sl, &rp);
+    free(hb);
+    float after = rp.adopted ? rp.held_cand : rp.held_live;
+    snprintf(line, sizeof line,
+             "[baby] region: gen %u members %d same-gen %d accepted %d adopted %d "
+             "held %.4f -> %.4f%s\r\n", (unsigned)gen, rp.members, rp.same_gen, rp.accepted,
+             rp.adopted, (double)rp.held_live, (double)after,
+             rp.accepted ? "" : " (refused, unchanged)");
+    emit(line);
+    return r < 0 ? -1 : 0;
+}
+
 int student_shell_cmd(const char *args, emit_fn emit)
 {
     char line[200];
@@ -1628,6 +1690,13 @@ int student_shell_cmd(const char *args, emit_fn emit)
     int seqlen = 32, rounds = 8;
     float lr = ST_LR;
     int loss_only = 0;
+
+    /* B5 wire, stage 1: `baby region [gen]` (student_region_cmd above). No
+     * _TK_HOSTED_LIBC_ guard: this file is the LLM tier, hosted only, built
+     * without the kernel defines (LLM_CFLAGS in the boot Makefiles). */
+    if (p[0]=='r' && p[1]=='e' && p[2]=='g' && p[3]=='i' && p[4]=='o' && p[5]=='n' &&
+        (p[6]==0 || p[6]==' ' || p[6]=='\t'))
+        return student_region_cmd(p + 6, emit);
 
     /* ---- SS-3 (special-structure-mind.md §3.2/§8.4): same-tier merge cohort.
      * `student merge` / `baby merge` drives the REAL student-only weight merge
