@@ -246,6 +246,8 @@ try:
             continue
         if p == "/profile":
             b = "ack=1&mid=%s&handle=owner" % mid
+        if p == "/teach":
+            b = "k=ink&v=fresh"   # not "sea": A7-nowrite looks for sea (sent without the pass)
         st, _h, _b = raw(m, p, b, headers=H)
         want = 404 if p == "/nope" else 200
         if st != want:
