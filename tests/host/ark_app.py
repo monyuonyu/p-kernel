@@ -142,7 +142,7 @@ def profile(tok):
     st, _h, b = raw("GET", "/profile.json", headers={"X-Galaxy-Token": tok})
     txt = b.decode("utf-8", "replace")
     seq = re.search(r'"seq":(\d+)', txt)
-    hd = re.search(r'"handle":"([^"]*)"', txt)
+    hd = re.search(r'"handle_len":(\d+)', txt)   # "owner" = 5, "evil" = 4
     return st, (seq.group(1) if seq else None), (hd.group(1) if hd else None), txt
 
 
@@ -304,8 +304,8 @@ try:
     L = node_log()
     has_sky = '[mind]   "sky" -> ' in L
     has_sea = '[mind]   "sea" -> ' in L
-    res("A7-nowrite", hd1 == "owner" and seq1 == seq0 and has_sky and not has_sea,
-        "handle=%s seq %s->%s sky=%s sea=%s" % (hd1, seq0, seq1, has_sky, has_sea))
+    res("A7-nowrite", hd1 == "5" and seq1 == seq0 and has_sky and not has_sea,
+        "handle_len=%s seq %s->%s sky=%s sea=%s" % (hd1, seq0, seq1, has_sky, has_sea))
     n.stop()
 finally:
     pass
