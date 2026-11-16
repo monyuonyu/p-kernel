@@ -326,6 +326,34 @@
   <h2 id="ptitle"></h2><pre id="pbody"></pre></div>
 <script>
 "use strict";
+// ── the caller's pass (ark-entry.md §7.2 6) ───────────────────────
+//    The node makes a 64-hex pass at each boot. The app (or `galaxy.token`)
+//    opens this page with #t=<pass>; the part after # is never sent to the
+//    node nor put in a Referer. Move it to sessionStorage, drop it from the
+//    URL, and send it on every same-origin fetch as X-Galaxy-Token. The two
+//    streams (/events, /ws) cannot carry a header, so they take ?t=.
+const GX_TOKEN=(function(){
+  let t="";
+  try{
+    const m=/(?:^#|&)t=([0-9a-f]{64})(?:&|$)/.exec(location.hash||"");
+    if(m){ t=m[1]; sessionStorage.setItem("gxt",t);
+           history.replaceState(null,"",location.pathname+location.search); }
+    else t=sessionStorage.getItem("gxt")||"";
+  }catch(_){}
+  return t;
+})();
+(function(){
+  const f0=window.fetch.bind(window);
+  window.fetch=function(u,o){
+    if(typeof u==="string" && u.charAt(0)==="/" && GX_TOKEN){
+      o=Object.assign({},o||{});
+      const h=new Headers(o.headers||{}); h.set("X-Galaxy-Token",GX_TOKEN);
+      o.headers=h;
+    }
+    return f0(u,o);
+  };
+})();
+function gxT(){ return GX_TOKEN ? "?t="+GX_TOKEN : ""; }
 // ── i18n (ark-profile.md §7.5) ────────────────────────────────────
 //    UI chrome strings per language; the MANIFESTO itself is served
 //    per-language by the node (/manifesto?lang=xx) — never duplicated
@@ -1506,12 +1534,12 @@ function wsURL(){
   const proto = (location.protocol==="https:") ? "wss:" : "ws:";
   // location.host already carries host:port; fall back to loopback default.
   const host = location.host || "127.0.0.1:7800";
-  return proto+"//"+host+"/ws";
+  return proto+"//"+host+"/ws"+gxT();
 }
 function connectSSE(){
   if(sse) return;                         // already on the fallback stream
   try{
-    sse=new EventSource("/events");
+    sse=new EventSource("/events"+gxT());
     sse.onmessage=(e)=>{ let v;try{v=JSON.parse(e.data);}catch(_){return;} dispatch(v); };
     sse.onerror=()=>{};                   // EventSource auto-reconnects itself
   }catch(_){ sse=null; }
