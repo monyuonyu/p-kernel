@@ -156,6 +156,7 @@ if command -v curl >/dev/null 2>&1; then
               | grep -aoE '"id":"[0-9a-f]+"' | head -1 | grep -aoE '[0-9a-f]+')
         if [ -n "$MID" ]; then
             curl -s -X POST "http://127.0.0.1:$GPORT/profile" \
+                 -H "X-Galaxy-Token: $(cat "$WORK/dA/galaxy.token" 2>/dev/null)" \
                  -d "ack=1&mid=$MID&handle=alice" >/dev/null 2>&1 \
                  && A_HANDLE="alice" && log "declared handle 'alice' on A (named teacher)"
         fi
@@ -168,7 +169,8 @@ fi
 GB_EVENTS="$WORK/b_events.sse"
 GBPORT=$(grep -aoE 'galaxy\] listening on [0-9.]+:[0-9]+' "$L2" | grep -aoE '[0-9]+$' | head -1)
 if command -v curl >/dev/null 2>&1 && [ -n "$GBPORT" ]; then
-    curl -sN --max-time 200 "http://127.0.0.1:$GBPORT/events" > "$GB_EVENTS" 2>/dev/null &
+    # ark-entry.md 7.2 6: /events wants this boot's pass in ?t=
+    curl -sN --max-time 200 "http://127.0.0.1:$GBPORT/events?t=$(cat "$WORK/dB/galaxy.token" 2>/dev/null)" > "$GB_EVENTS" 2>/dev/null &
     SSE_PID=$!
     log "capturing B's galaxy /events (port $GBPORT) for EV_REMOTE_TEACH"
 fi

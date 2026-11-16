@@ -32,11 +32,21 @@ HTTP_RETRY_MAXTIME="${HTTP_RETRY_MAXTIME:-8}"    # per-attempt --max-time (sec)
 # and enforces a per-attempt --max-time (appended last, so it always bounds the
 # call even if a site forgot one). Retries ONLY a transient; returns the first
 # DEFINITIVE result immediately; FAILS CLOSED at the bound.
+#
+# The pass (ark-entry.md 7.2 6): galaxy wants this boot's pass on every POST and
+# on the GETs that carry the person. Set GX_TOKEN_FILE=<PKERNEL_PFS_DIR>/galaxy.token
+# before the boot; curl000 reads the file on every call (a restart writes a new
+# pass to the same place) and sends it as X-Galaxy-Token. Unset = no header.
+gx_token() {  # print the pass in GX_TOKEN_FILE (empty if none)
+    [ -n "${GX_TOKEN_FILE:-}" ] && [ -r "$GX_TOKEN_FILE" ] && tr -d '\r\n' < "$GX_TOKEN_FILE"
+}
 curl000() {
-    local out rc code attempt=0 transient
+    local out rc code attempt=0 transient tokh=() tk
     while :; do
         attempt=$((attempt + 1))
-        out="$(curl "$@" --max-time "$HTTP_RETRY_MAXTIME")"
+        tk="$(gx_token)"
+        tokh=(); [ -n "$tk" ] && tokh=(-H "X-Galaxy-Token: $tk")
+        out="$(curl ${tokh[@]+"${tokh[@]}"} "$@" --max-time "$HTTP_RETRY_MAXTIME")"
         rc=$?
         # The HTTP code (when present) is the LAST whitespace token of the
         # last non-empty line of the -w output. Absent (-w not used) -> empty.

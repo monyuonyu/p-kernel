@@ -17,8 +17,17 @@ def res(name, ok):
     print("[stop-galaxy] %s %s" % (name, "PASS" if ok else "FAIL"), flush=True)
 
 
+def gx_token():
+    # ark-entry.md 7.2 6: galaxy wants this boot's pass on POSTs and person GETs
+    try:
+        return open(os.path.join(env["PKERNEL_PFS_DIR"], "galaxy.token")).read().strip()
+    except OSError:
+        return ""
+
+
 def http(path, body=None):
-    req = urllib.request.Request(base + path, data=body.encode() if body is not None else None)
+    req = urllib.request.Request(base + path, data=body.encode() if body is not None else None,
+                                 headers={"X-Galaxy-Token": gx_token()})
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             return r.status, dict(r.headers), r.read().decode("utf-8", "replace")

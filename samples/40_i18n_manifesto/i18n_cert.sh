@@ -46,7 +46,7 @@ trap killall_nodes EXIT
 PORT=7800
 hdr_val() { grep -i "$1" "$2" | tr -d '\r' | awk '{print $2}'; }
 
-D=$(mktemp -d /tmp/i18n40.XXXXXX)
+D=$(mktemp -d /tmp/i18n40.XXXXXX); GX_TOKEN_FILE="$D/galaxy.token"
 PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" </dev/null \
     >/tmp/i18n40_node.log 2>&1 & PIDS+=($!)
 sleep 3

@@ -108,8 +108,11 @@ FOUND_PORT=""
 CONSOLE=""
 DEADLINE=$((SECONDS + BOOT_TIMEOUT_S))
 while [ "$SECONDS" -lt "$DEADLINE" ] && [ -z "$FOUND_PORT" ]; do
+    # ark-entry.md 7.2 6: /console.txt wants this boot's pass, which the app
+    # keeps in its private files dir (the debug APK lets run-as read it)
+    TK="$(adb exec-out run-as "$PKG" cat files/ark/galaxy.token 2>/dev/null | tr -d '\r\n')"
     for p in $(seq "$PORT_LO" "$PORT_HI"); do
-        C="$(curl -s --max-time 1 "http://127.0.0.1:$p/console.txt" 2>/dev/null)"
+        C="$(curl -s --max-time 1 -H "X-Galaxy-Token: $TK" "http://127.0.0.1:$p/console.txt" 2>/dev/null)"
         if [ -n "$C" ]; then
             FOUND_PORT="$p"; CONSOLE="$C"
             break
@@ -153,7 +156,7 @@ fi
 # is explicitly NOT consent-gated (galaxy.c comment: "the SHELL mouth is NOT
 # gated (operator trust)"), so a well-formed JSON reply -- refusal or a real
 # answer -- both prove the HTTP -> mind_cmd -> HTTP path is alive end-to-end.
-ASK="$(curl -s --max-time 5 --data 'k=sky' "http://127.0.0.1:$FOUND_PORT/ask" 2>/dev/null)"
+ASK="$(curl -s --max-time 5 -H "X-Galaxy-Token: $TK" --data 'k=sky' "http://127.0.0.1:$FOUND_PORT/ask" 2>/dev/null)"
 echo "[emulator-smoke] /ask k=sky (informational, not gated): $ASK"
 
 adb shell dumpsys battery reset >/dev/null 2>&1 || true
