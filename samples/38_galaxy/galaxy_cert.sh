@@ -74,6 +74,10 @@ wait_ports_free() {
 }
 
 have_python() { command -v python3 >/dev/null 2>&1; }
+# the pass (ark-entry.md 7.2 6): these nodes run without PKERNEL_PFS_DIR, so
+# galaxy prints "[galaxy] open http://127.0.0.1:<port>/#t=<pass>" on its own
+# console. POSTs and the person GETs (/log.txt, /events) want it back.
+gxt() { grep -ao '#t=[0-9a-f]\{64\}' "$1" 2>/dev/null | tail -1 | cut -c4-; }
 
 # ----------------------------------------------------------------- serve
 gate_serve() {
@@ -175,7 +179,7 @@ gate_events() {
         printf 'moe 30 40 90 5\n' >&7         # node2 (cluster id 1) drives
         printf 'moe 30 40 90 5\n' >&8         # node3 (cluster id 2) drives
         sleep 1                               # let the drpc land + ring record + task settle
-        curl -s --max-time 8 127.0.0.1:7800/log.txt > /tmp/gx38_log.txt 2>/dev/null
+        curl -s --max-time 8 -H "X-Galaxy-Token: $(gxt /tmp/gx38_e1.log)" 127.0.0.1:7800/log.txt > /tmp/gx38_log.txt 2>/dev/null
         if grep -aq 'drpc_in src=2' /tmp/gx38_log.txt; then seen=1; break; fi
     done
     exec 6>&- 7>&- 8>&- 2>/dev/null
@@ -199,7 +203,8 @@ gate_teach() {
     sleep 3
     # SSE window spans the lazy pretrain (~23s, inside the first teach) PLUS
     # the up-to-120s drain, so the consolidate event is never missed.
-    ( curl -sN --max-time 200 127.0.0.1:7800/events > /tmp/gx38_tsse.log 2>&1 ) & PIDS+=($!)
+    local TK; TK=$(gxt /tmp/gx38_t.log)
+    ( curl -sN --max-time 200 "127.0.0.1:7800/events?t=$TK" > /tmp/gx38_tsse.log 2>&1 ) & PIDS+=($!)
     sleep 1
     # ark-profile v1 (ark-profile.md §7.3): the web /teach now passes the
     # 共感 consent gate first. An ack-ONLY profile (consent != disclosure)
@@ -207,7 +212,7 @@ gate_teach() {
     # id. This is the intended behavior change galaxy v1 reserved a seam for.
     local MID; MID=$(curl -s -D - -o /dev/null --max-time 5 127.0.0.1:7800/manifesto \
                      | grep -i 'X-Manifesto-Id' | tr -d '\r' | awk '{print $2}')
-    curl -s --max-time 5 -d "ack=1&mid=$MID" 127.0.0.1:7800/profile >/dev/null
+    curl -s --max-time 5 -H "X-Galaxy-Token: $TK" -d "ack=1&mid=$MID" 127.0.0.1:7800/profile >/dev/null
     # LM-8 (galaxy.c:1413): the web mouth moved from integer slots to real
     # WORDS resolved through the SHARED vocab (arch/common/r3_vocab.c). The
     # off-bias pair the integer cert used (k=2,v=3) IS, by construction, the
@@ -221,7 +226,7 @@ gate_teach() {
     # teach POST must allow for it. (The old integer-slot cert never hit this:
     # k=2 was rejected as OOV *before* mind_cmd, so it never triggered a
     # pretrain. The valid word pair does — hence the generous bound here.)
-    local R; R=$(curl -s --max-time 90 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+    local R; R=$(curl -s --max-time 90 -H "X-Galaxy-Token: $TK" -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
     log "teach: $R"
     # accept check. FLAKE: the first teach POST can occasionally return an EMPTY
     # body though the teach landed (pending increments). So: trust the body's
@@ -235,7 +240,7 @@ gate_teach() {
     fi
     if [ $ACCEPT -eq 0 ]; then
         sleep 1
-        R=$(curl -s --max-time 90 -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
+        R=$(curl -s --max-time 90 -H "X-Galaxy-Token: $TK" -d 'k=sun&v=yellow' 127.0.0.1:7800/teach)
         log "teach (retry): $R"
         echo "$R" | grep -q '"ok":true' && ACCEPT=1
     fi
@@ -254,7 +259,7 @@ gate_teach() {
     # ask returns the taught value, by WORD and by id. Falsifiable: if
     # teach->learn->recall failed, the answer defaults to id 0 == "blue", so
     # BOTH asserts fail (pred 3 != 0, word "yellow" != "blue").
-    local A; A=$(curl -s --max-time 5 -d 'k=sun' 127.0.0.1:7800/ask)
+    local A; A=$(curl -s --max-time 5 -H "X-Galaxy-Token: $TK" -d 'k=sun' 127.0.0.1:7800/ask)
     log "ask: $A"
     echo "$A" | grep -q '"pred":3' || { fail "[galaxy-teach]" "ask pred != 3 (taught value)"; killall_nodes; return; }
     echo "$A" | grep -q '"word":"yellow"' || { fail "[galaxy-teach]" "ask word != yellow (taught value)"; killall_nodes; return; }

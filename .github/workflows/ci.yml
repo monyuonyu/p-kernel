@@ -1248,6 +1248,16 @@ jobs:
           grep -aF '[ark-e5] ALL PASS' ark_e5.log
           make -C boot/linux_x86_64 -j4 > /dev/null
 
+      # ark-entry.md 7.2 6 / A7: galaxy wants this boot's pass (galaxy.token, 0600) on every
+      # POST and person GET, and refuses a Host / Origin that is not this node. The two
+      # negatives (-DGALAXY_NO_TOKEN, -DGALAXY_NO_ORIGIN) run inside the script. It
+      # rebuilds and cleans. ~3 min.
+      - name: who may call galaxy (A7, the pass and Host/Origin)
+        run: |
+          timeout 900 tests/host/run_ark_app.sh | tee ark_app.log
+          grep -aF '[ark-app] ALL PASS' ark_app.log
+          make -C boot/linux_x86_64 -j4 > /dev/null
+
       # gap-ledger PFS-REPL-WANT-DROP: A puts 60 blocks 10 ms apart, B must hold all 60
       # (a want that did not fit the 8-slot table was dropped for good). Negative in
       # n2-negatives. ~80 s.

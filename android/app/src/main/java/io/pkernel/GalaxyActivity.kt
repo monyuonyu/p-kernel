@@ -272,7 +272,17 @@ class GalaxyActivity : AppCompatActivity() {
         loaded = true
         // ?intro=1 replays the picture-book intro (pictures only, no re-consent)
         // for a returning user who tapped "view introduction again" in settings.
-        val url = "http://127.0.0.1:$galaxyPort/" + if (showIntro) "?intro=1" else ""
+        // ark-entry.md §7.2 6: galaxy wants the pass it writes at each boot to
+        // the app-private data dir (other apps cannot read filesDir). It goes
+        // after '#', so it is never sent over the socket nor in a Referer; the
+        // page moves it to sessionStorage and drops it from the URL. galaxy
+        // writes the file before it binds, so once the probe sees the port
+        // open the file is this boot's.
+        val pass = try {
+            java.io.File(filesDir, "ark/galaxy.token").readText().trim()
+        } catch (_: Exception) { "" }
+        val url = "http://127.0.0.1:$galaxyPort/" + (if (showIntro) "?intro=1" else "") +
+            (if (pass.length == 64) "#t=$pass" else "")
         web.loadUrl(url)
         web.visibility = View.VISIBLE
         splashBox.visibility = View.GONE

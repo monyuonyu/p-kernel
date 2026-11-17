@@ -69,7 +69,7 @@ fetch_manifesto() {
 # ----------------------------------------------------------------- consent
 gate_consent() {
     log "--- [ark-consent]: the 共感 gate + consent != disclosure ---"
-    local D; D=$(mktemp -d /tmp/ark39_consent.XXXXXX)
+    local D; D=$(mktemp -d /tmp/ark39_consent.XXXXXX); GX_TOKEN_FILE="$D/galaxy.token"
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" </dev/null \
         >/tmp/ark39_consent.log 2>&1 & PIDS+=($!)
     sleep 3
@@ -102,7 +102,7 @@ gate_consent() {
     killall_nodes; rm -rf "$D"
 
     # (5) negative control: a FRESH node + WRONG mid -> 409, teach still 403
-    local D2; D2=$(mktemp -d /tmp/ark39_consent2.XXXXXX)
+    local D2; D2=$(mktemp -d /tmp/ark39_consent2.XXXXXX); GX_TOKEN_FILE="$D2/galaxy.token"
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D2" "$BOOT/p-kernel" </dev/null \
         >/tmp/ark39_consent2.log 2>&1 & PIDS+=($!)
     sleep 3
@@ -121,7 +121,7 @@ gate_consent() {
 # ----------------------------------------------------------------- profile
 gate_profile() {
     log "--- [ark-profile]: real, chained, death-piercing ---"
-    local D; D=$(mktemp -d /tmp/ark39_prof.XXXXXX)
+    local D; D=$(mktemp -d /tmp/ark39_prof.XXXXXX); GX_TOKEN_FILE="$D/galaxy.token"
     local F; F=$(mktemp -u /tmp/ark39_fifo.XXXXXX); mkfifo "$F"
     exec 5<>"$F"
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" <"$F" \
@@ -201,7 +201,7 @@ PY
 # -------------------------------------------------------------- provenance
 gate_provenance() {
     log "--- [ark-provenance]: who taught this resolves to the profile ---"
-    local D; D=$(mktemp -d /tmp/ark39_prov.XXXXXX)
+    local D; D=$(mktemp -d /tmp/ark39_prov.XXXXXX); GX_TOKEN_FILE="$D/galaxy.token"
     local F; F=$(mktemp -u /tmp/ark39_pfifo.XXXXXX); mkfifo "$F"
     exec 5<>"$F"
     PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$D" "$BOOT/p-kernel" <"$F" \

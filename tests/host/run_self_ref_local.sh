@@ -49,15 +49,17 @@ env PKERNEL_NODE_ID=2 PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$d/db" PKERNEL_RELAY="1
     timeout 150 "$BIN_B" < /dev/null > "$d/b.log" 2>&1 & PB=$!
 wait_for "$d/a.log" 'P2 version DAG ready' 60; wait_for "$d/b.log" 'P2 version DAG ready' 60
 sleep 15
-before=$(curl -s --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7801/teach)
+# ark-entry.md 7.2 6: POSTs and person GETs want each node's pass
+TA=$(cat "$d/da/galaxy.token" 2>/dev/null); TB=$(cat "$d/db/galaxy.token" 2>/dev/null)
+before=$(curl -s --max-time 8 -H "X-Galaxy-Token: $TB" -d 'k=sun&v=yellow' 127.0.0.1:7801/teach)
 MID=$(curl -s -D - -o /dev/null --max-time 8 127.0.0.1:7800/manifesto | tr -d '\r' | grep -i 'X-Manifesto-Id' | awk '{print $2}')
-prof=$(curl -s -w ' %{http_code}' --max-time 8 -d "ack=1&mid=$MID&handle=alice" 127.0.0.1:7800/profile)
+prof=$(curl -s -w ' %{http_code}' --max-time 8 -H "X-Galaxy-Token: $TA" -d "ack=1&mid=$MID&handle=alice" 127.0.0.1:7800/profile)
 pid=$(echo "$prof" | grep -oE '"id":"[0-9a-f]{64}"' | grep -oE '[0-9a-f]{64}')
 printf 'pfs save zz shared\n' >&7
 mesh=0; wait_for "$d/b.log" "ref 'zz' -> seq 1" 40 && mesh=1
 sleep 6                                     # several 800 ms ref beacons after zz
-after=$(curl -s --max-time 8 -d 'k=sun&v=yellow' 127.0.0.1:7801/teach)
-bprof=$(curl -s --max-time 8 127.0.0.1:7801/profile.json)
+after=$(curl -s --max-time 8 -H "X-Galaxy-Token: $TB" -d 'k=sun&v=yellow' 127.0.0.1:7801/teach)
+bprof=$(curl -s --max-time 8 -H "X-Galaxy-Token: $TB" 127.0.0.1:7801/profile.json)
 adopt=$(tr -d '\r' < "$d/b.log" | grep -acE "ref 'self/")
 echo "[self-ref] B before: $before | A profile: ${prof:0:40}... | mesh=$mesh | B after: $after | B self/ adoptions: $adopt"
 reds=""

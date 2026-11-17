@@ -152,3 +152,14 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 2. **直す呼び手の一覧が足りない**: samples/38_galaxy/galaxy_cert.sh（/teach・/ask・/profile・/events・/log.txt、ci.yml の Galaxy cert）・samples/39_ark_profile/profile_cert.sh・samples/40_i18n_manifesto/i18n_cert.sh・samples/41_shared_mind/run.sh・samples/lib/http_retry.sh（合わせて /teach・/profile・/profile.json・/self.json・/events・/ask。39 と 40 は ci.yml の段）も合言葉が要る（grep の範囲に samples/ が無かった）。tests/modver/run_modver.sh は /modules.json だけ＝公開のまま
 3. A7 の OPTIONS は「405 か切断」でなく今の動き＝**400 で閉じる**も合格に数える
 限界: /galaxy.json は公開のままだが、名乗った人の handle（star）を含む。handle は名乗ると決めた名前なので公開でよい、と読んだ（網に出ているかは確かめていない）。⑥の `ark key import` は壊れた ark.key を手で消す必要がある＝上書きしない側に倒した決めとして妥当。
+
+### 7.7 作る順 ① を作った（2026-11-16 20:20 の回、feat/ark-token。監査待ち）
+
+試験を先に（a8708f80・dcf6aedf、`tests/host/run_ark_app.sh`＋`ark_app.py`、A7 を 9 項目に分けた）。master（80eae153）では file・no-token・bad-token・origin・host・nowrite の 6 つが赤、public・good-token・options は緑（変えてはいけない側）。実装 0b54ece7（galaxy.c の gx_guard、hosted だけ＝galaxy.c はベアのビルドに入らない）:
+- 合言葉は galaxy_init で 32 B（Linux・Android は sign_entropy＝/dev/urandom、Windows は rand_s。弱い乱数なら作らず、守る口は 503）。PKERNEL_PFS_DIR があれば `galaxy.token`（pfs_dur_write、0600）、無ければ自分のコンソールに `[galaxy] open http://127.0.0.1:<port>/#t=…` を 1 行
+- 守る口は「公開の 6 本（`/`・galaxy.json・modules.json・manifesto・vocab・langs）以外の全部」＝知らない道も 401（既定で閉じる）。§7.6 の 1 は `t=` を生の要求行から読む（GX_REQ.query は広げない）、`?t=` は /events・/ws だけ
+- Host は全部の口で `127.0.0.1:<port>`・`localhost:<port>` だけ（無い Host も 403）。Origin は有れば `http://` 付きの同じ 2 つだけ（公開の口も）
+- ページの JS は `#t=` を sessionStorage へ移して URL から消し、相対の fetch 全部に見出しを付ける（window.fetch を包む）。Android は filesDir/ark/galaxy.token を読んで `#t=` を付ける
+呼び手（§7.6 の 2）: samples/38〜41・lib/http_retry.sh（`GX_TOKEN_FILE`）・run_self_ref_local・stop_galaxy.py・emulator_smoke（`run-as`）。ci.yml の ump-x86_64 に段。
+限界: ブラウザが自分で取りに来る /favicon.ico も 401 になる（前は 404）。Android の実機と WebView は試していない（人の仕事）。ページの JS は使い捨ての確かめ（スタブのサーバー＋headless chromium、枝 20 本中 19 本に合言葉・master は 19 本とも無し）だけで、A8 は ② と一緒
+測り（容器 /build/tok）: 8a547355 で plain 9/9・nc-token は no-token・bad-token・nowrite だけ赤・nc-origin は origin・host だけ赤（ALL PASS）。0b54ece7 の最初の走りは nowrite が赤＝試験側が合言葉つきで sea を教えていた（8a547355 で ink に）。crown は master と全バイト同じ（x86 .text cd490552・aarch64 4dfac3f4、.rodata も）、hosted x86_64 の警告 57 で master と同じ

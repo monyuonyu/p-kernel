@@ -1002,6 +1002,182 @@ static INT gx_header_val(const char *buf, INT len, const char *name,
     return -1;
 }
 
+/* ------------------------------------------------------------------ */
+/* who may call (ark-entry.md §7.2 6, audit-183/184). A loopback bind is */
+/* not a caller check: on Android every app on the phone can reach       */
+/* 127.0.0.1:7800, and a page in the phone's browser can POST text/plain */
+/* there with no preflight. So galaxy makes a pass at each boot (32 B,   */
+/* 64 hex), writes it to PKERNEL_PFS_DIR/galaxy.token (0600) BEFORE it   */
+/* binds, and wants it back in X-Galaxy-Token on every POST and on every */
+/* GET that carries the person. /events and /ws cannot set a header, so  */
+/* they alone take ?t=. A custom header cannot be sent cross-origin      */
+/* without an OPTIONS preflight, and gx_parse answers OPTIONS with 400.  */
+/* Host must be this node's loopback name:port (DNS rebinding) and an    */
+/* Origin, when sent, must be this page's own origin.                    */
+/* -DGALAXY_NO_TOKEN / -DGALAXY_NO_ORIGIN are the test falsifiers        */
+/* (tests/host/run_ark_app.sh). galaxy.c is hosted-only.                 */
+/* ------------------------------------------------------------------ */
+
+#ifdef _WIN32
+/* the hosted Windows port: sign_entropy.c reads /dev/urandom, which Windows
+ * does not have (its weak path would hand out a guessable pass). rand_s is
+ * the CRT's RtlGenRandom; 0 = ok. */
+extern int rand_s(unsigned int *v);
+static int gx_entropy(unsigned char *out, int n)
+{
+    for (int i = 0; i < n; i += 4) {
+        unsigned int v;
+        if (rand_s(&v) != 0) return 0;
+        for (int k = 0; k < 4 && i + k < n; k++) out[i + k] = (unsigned char)(v >> (8 * k));
+    }
+    return 1;
+}
+#else
+extern int sign_entropy(unsigned char *out, int n);
+#define gx_entropy sign_entropy    /* 1 = strong (the OS RNG), 0 = weak */
+#endif
+extern int pfs_dur_write(const char *fname, const void *data, unsigned len);
+extern const char *pfs_dur_dir(void);
+
+#define GX_TOK_HEX 64
+static char gx_tok[GX_TOK_HEX + 1];
+static INT  gx_tok_ok;                 /* 0: no pass (no entropy) -> 503   */
+
+static void gx_tok_make(void)
+{
+    unsigned char rb[GX_TOK_HEX / 2];
+    static const char hx[] = "0123456789abcdef";
+    gx_tok_ok = 0;
+    if (gx_entropy(rb, (int)sizeof rb) != 1) {
+        /* fail closed: no weak pass; guarded routes answer 503 */
+        tm_putstring((UB *)"[galaxy] WARN no entropy for the pass; guarded routes refuse\r\n");
+        for (INT i = 0; i < (INT)sizeof rb; i++) rb[i] = 0;
+        return;
+    }
+    for (INT i = 0; i < (INT)sizeof rb; i++) {
+        gx_tok[2 * i]     = hx[rb[i] >> 4];
+        gx_tok[2 * i + 1] = hx[rb[i] & 15];
+        rb[i] = 0;
+    }
+    gx_tok[GX_TOK_HEX] = 0;
+    gx_tok_ok = 1;
+
+    static char line[600];
+    INT n = 0;
+    const char *d = pfs_dur_dir();
+#define GX_LCAT(s) do { const char *_s = (s); while (*_s && n < (INT)sizeof line - 1) line[n++] = *_s++; } while (0)
+    if (d) {
+        if (pfs_dur_write("galaxy.token", gx_tok, GX_TOK_HEX) == 0) {
+            GX_LCAT("[galaxy] pass: "); GX_LCAT(d); GX_LCAT("/galaxy.token (0600, new each boot)\r\n");
+        } else {
+            GX_LCAT("[galaxy] WARN could not write "); GX_LCAT(d);
+            GX_LCAT("/galaxy.token; the page needs the pass in #t=\r\n");
+        }
+    } else {
+        /* no data dir = no file to read it from: the owner's own console is the
+         * only place left. Not on /console.txt for anyone without the pass. */
+        char pb[12]; INT pn = gx_itoa(pb, (INT)galaxy_port); pb[pn] = 0;
+        GX_LCAT("[galaxy] open http://127.0.0.1:"); GX_LCAT(pb); GX_LCAT("/#t=");
+        GX_LCAT(gx_tok); GX_LCAT("\r\n");
+    }
+#undef GX_LCAT
+    line[n] = 0;
+    tm_putstring((UB *)line);
+}
+
+/* 1 if s (n bytes) is exactly the pass; the compare looks at every byte. */
+static INT gx_tok_eq(const char *s, INT n)
+{
+    if (!gx_tok_ok || n != GX_TOK_HEX) return 0;
+    UB d = 0;
+    for (INT i = 0; i < GX_TOK_HEX; i++) d |= (UB)(s[i] ^ gx_tok[i]);
+    return d == 0;
+}
+
+/* the value of t= in the raw request line's query (not GX_REQ.query: 64 B
+ * cannot hold "t=" + 64 hex, audit-184 condition 1). -1 if absent. */
+static INT gx_query_tok(const char *raw, INT rawn, const char **v)
+{
+    INT i = 0;
+    while (i < rawn && raw[i] != ' ' && raw[i] != '\r' && raw[i] != '\n') i++;   /* method */
+    i++;
+    while (i < rawn && raw[i] != '?' && raw[i] != ' ' && raw[i] != '\r' && raw[i] != '\n') i++;
+    if (i >= rawn || raw[i] != '?') return -1;
+    i++;
+    while (i < rawn && raw[i] != ' ' && raw[i] != '\r' && raw[i] != '\n') {
+        INT s = i;
+        while (i < rawn && raw[i] != '&' && raw[i] != ' ' && raw[i] != '\r' && raw[i] != '\n') i++;
+        if (i - s >= 2 && raw[s] == 't' && raw[s + 1] == '=') { *v = raw + s + 2; return i - s - 2; }
+        if (i < rawn && raw[i] == '&') i++;
+    }
+    return -1;
+}
+
+/* the routes anyone on the box may read: the page shell and public words. */
+static INT gx_is_public(const GX_REQ *q)
+{
+    if (q->is_post) return 0;
+    const char *p = q->path;
+    return (p[0] == '/' && p[1] == 0) || gx_streq(p, "/galaxy.json") ||
+           gx_streq(p, "/modules.json") || gx_streq(p, "/manifesto") ||
+           gx_streq(p, "/vocab") || gx_streq(p, "/langs");
+}
+
+/* "127.0.0.1:<port>" / "localhost:<port>" (with an optional "http://"). */
+static INT gx_is_self_name(const char *v, INT with_scheme)
+{
+    char pb[12]; INT pn = gx_itoa(pb, (INT)galaxy_port); pb[pn] = 0;
+    static const char *const hosts[2] = { "127.0.0.1:", "localhost:" };
+    for (INT h = 0; h < 2; h++) {
+        char want[48]; INT n = 0;
+        const char *a = with_scheme ? "http://" : "";
+        while (*a) want[n++] = *a++;
+        a = hosts[h]; while (*a) want[n++] = *a++;
+        for (INT k = 0; k < pn; k++) want[n++] = pb[k];
+        want[n] = 0;
+        if (gx_streq(v, want)) return 1;
+    }
+    return 0;
+}
+
+static void gx_refuse(INT slot, const char *status, const char *why)
+{
+    gx_resp_head(slot, status, "text/plain; charset=utf-8");
+    gx_qs(slot, why);
+}
+
+/* returns 1 when the request was refused (the answer is queued), 0 to route. */
+static INT gx_guard(INT slot, const GX_REQ *q, const char *raw, INT rawn)
+{
+#ifndef GALAXY_NO_ORIGIN
+    char hv[96];
+    INT hn = gx_header_val(raw, rawn, "host", hv, (INT)sizeof hv);
+    if (hn <= 0 || hn >= (INT)sizeof hv - 1 || !gx_is_self_name(hv, 0)) {
+        gx_refuse(slot, "403 Forbidden", "host is not this node\n");
+        return 1;
+    }
+    INT on = gx_header_val(raw, rawn, "origin", hv, (INT)sizeof hv);
+    if (on >= 0 && (on >= (INT)sizeof hv - 1 || !gx_is_self_name(hv, 1))) {
+        gx_refuse(slot, "403 Forbidden", "origin is not this page\n");
+        return 1;
+    }
+#endif
+    if (gx_is_public(q)) return 0;
+#ifndef GALAXY_NO_TOKEN
+    if (!gx_tok_ok) { gx_refuse(slot, "503 Service Unavailable", "no pass this boot\n"); return 1; }
+    char tv[GX_TOK_HEX + 2];
+    INT tn = gx_header_val(raw, rawn, "x-galaxy-token", tv, (INT)sizeof tv);
+    INT ok = (tn >= 0 && gx_tok_eq(tv, tn));
+    if (!ok && !q->is_post && (gx_streq(q->path, "/events") || gx_streq(q->path, "/ws"))) {
+        const char *qv = 0;
+        INT qn = gx_query_tok(raw, rawn, &qv);
+        ok = (qn >= 0 && gx_tok_eq(qv, qn));
+    }
+    if (!ok) { gx_refuse(slot, "401 Unauthorized", "this route wants the pass (X-Galaxy-Token)\n"); return 1; }
+#endif
+    return 0;
+}
+
 /* perform the RFC 6455 §1.3 opening handshake on slot, using the raw
  * request bytes in `raw` (g_req[slot]). returns 1 on a successful upgrade
  * (the 101 is queued; caller flips is_ws and keeps the slot), 0 if this
@@ -1616,7 +1792,8 @@ void galaxy_init(void)
     else
         tm_putstring((UB *)"[galaxy] WARN ws handshake KAT FAILED — /ws disabled-equivalent\r\n");
 
-    galaxy_on = 1;                                  /* hooks live from here  */
+    gx_tok_make();                                  /* the pass, before bind */
+    galaxy_on = 1;                                 /* hooks live from here  */
 }
 
 /* g_req[]/g_reqn[] (the per-slot request scratch — static, never a task
@@ -1682,6 +1859,10 @@ void galaxy_task(INT stacd, void *exinf)
                     && q.clen <= GX_POST_PROF)
                     continue;                       /* wait for the body     */
 
+                if (gx_guard(i, &q, g_req[i], g_reqn[i])) {   /* §7.2 6       */
+                    gx_flush(i);
+                    galaxy_io_close(i); g_cli[i].in_use = 0; continue;
+                }
                 INT keep = gx_route(i, &q);
                 gx_flush(i);
                 if (!keep) { galaxy_io_close(i); g_cli[i].in_use = 0; }
