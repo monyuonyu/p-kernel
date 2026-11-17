@@ -274,7 +274,11 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 #include "pfs_repl.h"
 
 /* windowed-want fetch policy (§2.1). W <= PFSR_PENDING_MAX. */
+#if defined(B5W_NC_LOUD)
 #define GL_ST_WANT_WINDOW    6u            /* outstanding wants per pass      */
+#else
+#define GL_ST_WANT_WINDOW    24u           /* unicast: no shared slot to clobber (b5-wire2 §6) */
+#endif
 #define GL_ST_FETCH_POLL_MS  60            /* yield between passes            */
 /* give up after this many no-progress passes. Stage 2 (b5-wire2.md §6): 4
  * (0.24 s) was shorter than one re-WANT (PFSR_WANT_RETRY_MS 600): with the
@@ -317,6 +321,7 @@ static UB         gl_st_chunk[GL_ST_CHUNK];                  /* one chunk in fli
 static GL_ST_INDEX gl_st_idx;                                /* one index block       */
 static U1         gl_st_leafids[GL_ST_IDS_PER_IDX][PFS_ID_LEN]; /* up to 127 leaf ids */
 static U1         gl_st_idlist[GL_ST_MAXCHUNK][PFS_ID_LEN];  /* fetch: all chunk ids  */
+static U1         gl_st_have[GL_ST_MAXCHUNK];               /* fetch: seen present   */
 static GL_ST_DESC gl_st_desc;                                /* descriptor scratch    */
 static INT        gl_st_drop = -1;          /* falsifier: chunk idx to OMIT (-1=off) */
 
@@ -483,13 +488,18 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     /* 3. windowed WANT of every chunk; presence is checked with a zero-copy
      * pfs_get (returns the stored length without touching `out`), so `out`
      * stays UNCONSUMED until every chunk is confirmed present (fail closed). */
+    /* b5-wire2 §6: a chunk seen present stays present; remember it, so a pass
+     * looks up only the missing ones (482 lookups a pass made a 4-peer S round
+     * take 72 s in the live test at 6b0423a0) */
+    for (UW c = 0; c < nchunk; c++) gl_st_have[c] = 0;
     UW present = 0; INT prev = -1, stall = 0;
     for (UW pass = 0; pass < GL_ST_FETCH_MAXPASS; pass++) {
         present = 0; UW window = 0;
         for (UW c = 0; c < nchunk; c++) {
+            if (gl_st_have[c]) { present++; continue; }
             UW off  = c * GL_ST_CHUNK;
             UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
-            if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { present++; continue; }
+            if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { gl_st_have[c] = 1; present++; continue; }
             if (window < GL_ST_WANT_WINDOW) { gl_st_want(gl_st_idlist[c]); window++; }
         }
         if (present == nchunk) break;
