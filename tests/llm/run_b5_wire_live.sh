@@ -101,7 +101,7 @@ sleep_until $(( H1 - 2 ))
 M0="$(mark)"
 # L4: in the middle of G1+1's merge on node 1
 G2=$(( G1 + 1 ))
-sleep_until $(( G2 * P + P / 2 + 3 ))
+sleep_until $(( G2 * P + P / 4 + 3 ))
 L4a=$(wc -l < "$WORK/n1.log")
 t0=$(date +%s%N)
 say 1 "baby region 0"
@@ -114,7 +114,7 @@ for i in $(seq 1 40); do
     [ "$busy" = 1 ] && [ "$ver" = 1 ] && break
 done
 # was node 1 really mid-merge? (its G1+1 line comes after the probe)
-for k in 1 2 3 4 5; do wait_for "$WORK/n$k.log" "\[baby\] auto: gen $G2 " $(( P / 2 )) || true; done
+for k in 1 2 3 4 5; do wait_for "$WORK/n$k.log" "\[baby\] auto: gen $G2 " $(( 3 * P / 4 )) || true; done
 M1="$(mark)"
 after=$(tail -n +"$L4a" "$WORK/n1.log" | grep -ac "\[baby\] auto: gen $G2 ")
 if [ "$busy" = 1 ] && [ "$ver" = 1 ] && [ "$after" -ge 1 ]; then res L4 PASS "busy ${tb} ms, ver ${tv} ms, the merge line after the probe"

@@ -6689,7 +6689,7 @@ void mind_merge_task(INT stacd, void *exinf)
  * resident student with its region. The generation is the wall clock in
  * seconds / the period, so every node of a round names the same gen without
  * talking; the student is published (quietly, gossip_learn.c) in the first
- * tenth of a round and merged from the middle on (student_shell.c), once each
+ * tenth of a round and merged from a quarter on (student_shell.c), once each
  * per gen, under the verb's lock. The same gates as mind_merge_task
  * (hibernation, a stopped node, solo). Opt-in for now: PKERNEL_B5_ROUND_S
  * unset or 0 = the task returns at once (🧭 11-18: a default-on round would
@@ -6741,7 +6741,10 @@ void student_region_task(INT stacd, void *exinf)
             (void)student_region_publish((UW)gen, r_puts, "auto");
             pub = gen;                               /* a refusal is said; not again this round */
             student_region_done();
-        } else if (gen == pub && gen != mer && ph >= (long)(P / 2u)) {
+        } else if (gen == pub && gen != mer && ph >= (long)(P / 4u)) {
+            /* a quarter, not the middle (b5-wire2 §6): five S nodes on the
+             * 4-core test box took 60-74 s to fetch 4 peers and merge, more
+             * than the half of a 120 s round */
             if (!student_region_try()) continue;
             (void)student_region_merge((UW)gen, r_puts, "auto");
             mer = gen;
