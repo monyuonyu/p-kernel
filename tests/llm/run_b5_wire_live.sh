@@ -167,5 +167,10 @@ if [ -z "$WANT_RED" ]; then
     if [ -z "$REDS" ]; then echo "[b5w-live] ALL PASS"; exit 0; fi
     echo "[b5w-live] RED:$REDS"; exit 1
 fi
+# live: the falsifier must turn its line red; other reds are written down (a
+# loud transport is also slow, so L1 may fall with L2)
 if [ "$REDS" = " $WANT_RED" ]; then echo "[b5w-live] falsifier $MODE: red on $WANT_RED only (as it must)"; exit 0; fi
+case "$REDS " in *" $WANT_RED "*)
+    echo "[b5w-live] falsifier $MODE: red on $WANT_RED (as it must), also red:$REDS"; exit 0 ;;
+esac
 echo "[b5w-live] falsifier $MODE: FAIL, red on '$REDS', want ' $WANT_RED'"; exit 1
