@@ -16,7 +16,8 @@
 # GEN_SURVIVE certs, ...), hosted aarch64 (cross), Windows PE (mingw-w64),
 # bare i686 + ring3 userland (all disk), bare AArch64 (virt and rpi3), relay,
 # and tests/llm/run_dmoe.sh (compiles its own translation units outside the
-# Makefiles, broke in #22; it also runs its gates, ~40 s).
+# Makefiles, broke in #22; it also runs its gates, ~40 s), and the programs the
+# student_shell.c tests link themselves (tests/ci/shell_links.sh, links only).
 # NOT covered: the Android APK (needs the NDK and gradle; only its source list is
 # checked, src-parity), and the builds that
 # test scripts make themselves (falsifier kernels of run_tk_conform.sh,
@@ -117,6 +118,9 @@ step bare-rpi3    "make -C boot/aarch64 rpi3"
 step bare-aarch64 "make -C boot/aarch64 clean >/dev/null && make -C boot/aarch64"
 step relay        "make -C relay"
 step dmoe         "bash tests/llm/run_dmoe.sh"
+# The programs that the student_shell.c tests link themselves (BA-SHELL: CI
+# 43854354327 broke at link there, build_all was ALL OK). Links only, no certs.
+step shell-links  "bash tests/ci/shell_links.sh"
 
 if [ "$fails" -eq 0 ]; then
     echo "[build] ALL OK (logs: $LOG)"
