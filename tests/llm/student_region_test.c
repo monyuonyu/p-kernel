@@ -155,6 +155,97 @@ static void say(const char *what, int r, const st_rg_report *p)
            (double)p->held_live, (double)p->held_cand);
 }
 
+/* ---- stage 2 (research/b5-wire2.md §3): W7 W8 W9 W10, from tables ---- */
+
+/* W7: the envelope says n, the transport hands back 8 bytes less (the tail of
+ * the blob is missing). The cap is the exact blob size, so "8 bytes MORE" can
+ * not reach the round; the tooth is the same check (h[2] == got - HDR). */
+static int w7_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    tab_t *t = (tab_t *)ctx;
+    memset(out, 0, cap);
+    int r = tab_fetch(ctx, node, out, cap);
+    if (r > 0 && node == 3 && t->n[3] > ST_RG_HDR + 8) r -= 8;
+    return r;
+}
+/* W9: which nodes were fetched in one round */
+typedef struct { tab_t *t; int calls; unsigned long seen; } w9_t;
+static int w9_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    w9_t *w = (w9_t *)ctx;
+    w->calls++;
+    if (node < 64) w->seen |= 1ul << node;
+    return tab_fetch(w->t, node, out, cap);
+}
+/* W10: the hook is in student.c from stage 2; weak here so the test-only
+ * commit links and W10 is red by its own line */
+extern void st_rg_test_fail_alloc(int nth) __attribute__((weak));
+
+static void w7_w10(st_model *n, tab_t *t, uint32_t G)
+{
+    st_model a; st_rg_report rp; uint64_t h0;
+
+    /* W7 */
+    clone(&a, &n[0]); h0 = hash(&a);
+    const uint16_t all4[4] = { 0, 1, 2, 3 };
+    int r7 = round_on(&a, G, 0, all4, 4, w7_fetch, t, &rp); say("W7", r7, &rp);
+    check(rp.fetched == 3 && rp.same_gen == 3 && rp.accepted == 0 && r7 == 0 && hash(&a) == h0,
+          "b5w-W7", "the blob's last 8 bytes missing, the envelope's length right: not counted, refused, live byte-unchanged");
+    st_free(&a);
+
+    /* W8 */
+    clone(&a, &n[0]); h0 = hash(&a);
+    const uint16_t dup[4] = { 0, 1, 2, 2 };
+    int r8 = round_on(&a, G, 0, dup, 4, tab_fetch, t, &rp); say("W8", r8, &rp);
+    check(rp.members == 3 && rp.same_gen == 3 && rp.accepted == 0 && r8 == 0 && hash(&a) == h0,
+          "b5w-W8", "members [self,1,2,2]: two peers (members 3), refused, live byte-unchanged");
+    st_free(&a);
+
+    /* W9: nine peers 1..9, two generations */
+    {
+        tab_t g0, g1; memset(&g0, 0, sizeof g0); memset(&g1, 0, sizeof g1);
+        for (int k = 1; k <= 9; k++) {
+            g0.b[k] = wrap(&n[1 + (k - 1) % 3], G, &g0.n[k]);
+            g1.b[k] = wrap(&n[1 + (k - 1) % 3], G + 1, &g1.n[k]);
+        }
+        const uint16_t ten[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+        w9_t w0 = { &g0, 0, 0 }, w1 = { &g1, 0, 0 };
+        st_rg_report p0, p1;
+        clone(&a, &n[0]);
+        int r0 = round_on(&a, G, 0, ten, 10, w9_fetch, &w0, &p0); say("W9 g", r0, &p0);
+        st_free(&a); clone(&a, &n[0]);
+        int r1 = round_on(&a, G + 1, 0, ten, 10, w9_fetch, &w1, &p1); say("W9 g+1", r1, &p1);
+        st_free(&a);
+        printf("  W9: fetched per round %d %d, seen %#lx %#lx\n", w0.calls, w1.calls, w0.seen, w1.seen);
+        check(w0.calls <= 7 && w1.calls <= 7 && p0.fetched <= 7 && p1.fetched <= 7,
+              "b5w-W9", "nine peers: at most 7 fetched (and held at once) a round");
+        check((w0.seen | w1.seen) == 0x3FEul && p0.members == 10 && p1.members == 10,
+              "b5w-W9", "generations g and g+1 together fetch all nine (members 10)");
+        tab_free(&g0); tab_free(&g1);
+    }
+
+    /* W10: the second peer buffer can not be had -> the round is refused */
+    {
+        tab_t t5; memset(&t5, 0, sizeof t5);
+        for (int k = 1; k <= 4; k++) t5.b[k] = wrap(&n[1 + (k - 1) % 3], G, &t5.n[k]);
+        const uint16_t five[5] = { 0, 1, 2, 3, 4 };
+        clone(&a, &n[0]); h0 = hash(&a);
+        if (!st_rg_test_fail_alloc) {
+            check(0, "b5w-W10", "st_rg_test_fail_alloc is not there (stage 2 not built)");
+        } else {
+            st_rg_test_fail_alloc(2);
+            int r10 = round_on(&a, G, 0, five, 5, tab_fetch, &t5, &rp); say("W10", r10, &rp);
+            check(r10 == 0 && rp.accepted == 0 && rp.adopted == 0 && hash(&a) == h0,
+                  "b5w-W10", "the second peer buffer fails: the whole round refused, live byte-unchanged");
+            st_free(&a); clone(&a, &n[0]);
+            int r10b = round_on(&a, G, 0, five, 5, tab_fetch, &t5, &rp); say("W10 after", r10b, &rp);
+            check(rp.fetched == 4 && rp.accepted == 4, "b5w-W10", "the hook is one-shot: the next round takes the four");
+        }
+        st_free(&a);
+        tab_free(&t5);
+    }
+}
+
 /* W0 W3 W4 W5 W6 with the real pfs (ARK-backed, SOLO) */
 static int unit(void)
 {
@@ -221,6 +312,8 @@ static int unit(void)
         check(r6 == 0 && rp.adopted == 0 && hash(&a) == h0, "b5w-W6", "two garbage peers: adopted 0, live byte-unchanged");
         st_free(&a); st_free(&g1); st_free(&g2);
     }
+
+    w7_w10(n, &t, G);
 
     /* the arguments */
     clone(&a, &n[0]);

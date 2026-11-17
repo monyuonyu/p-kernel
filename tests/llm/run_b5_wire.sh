@@ -17,6 +17,10 @@
 #   -DB5W_NC_NO_GEN   the generation is not read        -> W4 red (unit)
 #   -DB5W_NC_NO_GATE  every candidate replaces live     -> W6 red (unit)
 #   -DB5W_NC_MEAN     st_round_merge instead of the trim -> W2 red (judge)
+# stage 2 (research/b5-wire2.md §3):
+#   -DB5W_NC_NO_LEN   the envelope's length is not checked -> W7 red (unit)
+#   -DB5W_NC_NO_DEDUP members are not de-duplicated       -> W8 red (unit)
+#   -DB5W_NC_NO_CAP   every peer is fetched (no K = 7)     -> W9 red (unit)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -70,6 +74,9 @@ build plain
 build nogen  -DB5W_NC_NO_GEN
 build nogate -DB5W_NC_NO_GATE
 build nomean -DB5W_NC_MEAN
+build nolen  -DB5W_NC_NO_LEN
+build nodedup -DB5W_NC_NO_DEDUP
+build nocap  -DB5W_NC_NO_CAP
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -87,6 +94,9 @@ nc() {  # nc <name> <the one id that must be red>
 }
 nc nogen b5w-W4
 nc nogate b5w-W6
+nc nolen b5w-W7
+nc nodedup b5w-W8
+nc nocap b5w-W9
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 if [ "${B5W_MODE:-}" = unit ]; then
