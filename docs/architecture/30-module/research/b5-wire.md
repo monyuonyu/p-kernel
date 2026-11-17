@@ -52,3 +52,12 @@
 - 容器で再現: 先端 6177e430 の unit PASS（NO_GEN は W4 だけ・NO_GATE は W6 だけ赤）、44ea14a7 はリンクで赤（st_region_round・st_rg_cap・st_rg_wrap なし）。種 184 を取り直し、plain・nomean とも実装者のログと全バイト同じ（判定役は 8 種のうち 7 を要るので、1 種だけの取り直しは FAIL と出る＝仕様）。crown 先端と master で x86・aarch64 の .text・.rodata 全バイト同じ（cd490552・4dfac3f4）
 - 私の壊し: self を仲間に数える → W0（数）と W5 赤。切り詰め t=0 → W0・W6 赤。**封の長さ（h[2]）を見ない → 全段緑**＝その確かめは試験の外（st_load 側で断られるかは見ていない）。週 1 回の見直しの回へ（H29）
 - 限界（実装者の申告どおり）: W2 の比べる相手（平均の腕）は門に全部断られて 1 台と同じ＝歯が無い。網越しは 1 周だけ。読んで見つけた: st_region_round は members の重複を除かない（シェルは 0〜63 を 1 回ずつ回すので今は起きない、第 2 段で関数の側で除く）。試験では self の塊を公開しないので、self を数える壊しは数でしか捕まらない（本物のノードは先に publish する）。仲間の塊は全部を同時に確保（最大 63×M）＝第 2 段の上限
+
+## 8. 監査-186（2026-11-18、B5WL＝リンクの直し a7663a0e、PASS。直した回とは別の回）
+
+- 赤の元: B5W で student_shell.c が gl_student_publish/_fetch・region_contains・drpc_my_node を呼び、student_shell.c を取り込む試験 6 本がリンクで落ちた（CI 43854354327）。直しは関数 3 つを weak の「網なし」既定（-1/0）、drpc_my_node は weak の参照だけ（無ければ断る）
+- 容器 /build/a186 で: master cc4712b3 は 6 本（ema・held_indep・restore・shellmerge・st_nan・yield）とも未定義 4 つで赤、audit/a186 は 0。held_indep は全段 ALL PASS
+- 本物のノードが強い定義を使うか: nm で student_shell.o は W/w、p-kernel は T・D の 1 つだけ。relay＋2 台で node 1 が `baby region 3` → `gen 3 members 2 same-gen 1 … (refused, unchanged)`＝番号・publish・region_contains とも本物の道（weak なら not in a mesh／publish failed／members 1）。4 台未満なので合体はしていない
+- 私の壊し: 既定の publish から weak を外す → hosted のリンクが二重定義で落ちる（weak が支え。外せば build_all が気づく）
+- Windows（build_all の PE）: gl_student_publish などは強い定義の番地（weak の既定は `.weak.*` の別の番地）、`.refptr.drpc_my_node` の中身は本物の drpc_my_node の番地（objdump で読んだ）。ただし MinGW では student_shell.o の drpc_my_node が w でなく U＝weak の参照が効かない（drpc.c の無い Windows の試験は今は無いので害なし）
+- 限界: Windows は読んだだけで走らせていない。2 台の網で `baby region` の後に SWIM の自分への疑い（SUSPECT/DEAD の打ち消し）が続いた＝周を同期で回す間にノードが止まる疑い、第 2 段（周期）で測る
