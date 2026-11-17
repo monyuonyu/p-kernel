@@ -276,7 +276,12 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 /* windowed-want fetch policy (§2.1). W <= PFSR_PENDING_MAX. */
 #define GL_ST_WANT_WINDOW    6u            /* outstanding wants per pass      */
 #define GL_ST_FETCH_POLL_MS  60            /* yield between passes            */
-#define GL_ST_FETCH_STALL    4             /* give up after this many no-progress passes */
+/* give up after this many no-progress passes. Stage 2 (b5-wire2.md §6): 4
+ * (0.24 s) was shorter than one re-WANT (PFSR_WANT_RETRY_MS 600): with the
+ * chunks quiet nothing is pushed ahead, a want lost in the LATEST_ONLY slot
+ * is sent again only after 600 ms, and the fetch had already failed (live
+ * L1: fetched 2-3 of 4 in the second round). 50 passes = 3 s = 5 re-WANTs. */
+#define GL_ST_FETCH_STALL    50
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
 
 /* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
