@@ -19,6 +19,11 @@
 # one is not missed).
 # A script is RED if any of its links failed, or if it linked nothing (it did
 # not reach its build: we would be blind to it).
+# Audit-187: the pick is wider than the target. run_depth_compound, run_ss1 and
+# run_ss3 only grep student_shell.c and never link it (an undefined call put
+# into student_shell.c turned exactly the other 6 red). Harmless, a few seconds.
+# A script stops at its first failed link, so its later links are seen only
+# after that one is fixed.
 #   shell_links.sh            -> "[shell-links] <script> ok|RED (...)", exit = number of RED
 #   shell_links.sh --list     -> the scripts it would run
 set -u
