@@ -105,6 +105,30 @@ if [ "${B5W_MODE:-}" = unit ]; then
 fi
 [ "$fail" = 0 ] || { echo "[result] FAIL  b5-wire unit (the judgement not run)"; exit 1; }
 
+# stage 2, W2b (research/b5-wire2.md §3): a weak poison. B5W_MODE=w2b-cal runs
+# the calibration seeds 209 210 at s 0.5 1 2 and names s; B5W_MODE=w2b runs
+# the judgement seeds 211..218 at B5W_W2B_S (the calibrated s) and judges.
+case "${B5W_MODE:-}" in
+w2b-cal)
+    python3 "$HERE/b5_wire2_check.py" --self-test > "$OUT/w2b-self.log" 2>&1 \
+        || { cat "$OUT/w2b-self.log"; echo "[result] FAIL  w2b judge self-test"; exit 1; }
+    for sv in 0.5 1 2; do for s in 209 210; do echo "$sv $s"; done; done \
+        | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; sv="$3"; s="$4"; "$w/bin-plain" "$h" "$s" "w2b:$sv" > "$o/cal-$sv-$s.log" 2>&1; echo "[b5-wire] w2b cal s $sv seed $s rc=$?"' \
+            "$WORK" "$HERE/b1_held.txt" "$OUT"
+    python3 "$HERE/b5_wire2_check.py" --cal "209 210" "0.5 1 2" "$OUT"
+    exit $? ;;
+w2b)
+    SV="${B5W_W2B_S:?B5W_W2B_S (the calibrated s) is required}"
+    W2SEEDS="${B5W_W2B_SEEDS:-211 212 213 214 215 216 217 218}"
+    python3 "$HERE/b5_wire2_check.py" --self-test > "$OUT/w2b-self.log" 2>&1 \
+        || { cat "$OUT/w2b-self.log"; echo "[result] FAIL  w2b judge self-test"; exit 1; }
+    for s in $W2SEEDS; do echo "$s"; done \
+        | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; sv="$3"; s="$4"; "$w/bin-plain" "$h" "$s" "w2b:$sv" > "$o/w2b-$s.log" 2>&1; echo "[b5-wire] w2b seed $s rc=$?"' \
+            "$WORK" "$HERE/b1_held.txt" "$OUT" "$SV"
+    python3 "$HERE/b5_wire2_check.py" --seeds "$W2SEEDS" "$OUT"
+    exit $? ;;
+esac
+
 { for s in $SEEDS; do echo "plain $s all"; done
   for s in $SEEDS; do echo "nomean $s w2"; done; } \
     | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; b="$3"; s="$4"; st="$5"; "$w/bin-$b" "$h" "$s" "$st" > "$o/$b-$s.log" 2>&1; echo "[b5-wire] $b seed $s rc=$?"' \

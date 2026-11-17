@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include "student.h"
 #include "held_indep.h"
 #include "teacher_fixture.h"
@@ -351,6 +352,43 @@ static void alone(uint32_t seed)
     keep_print(&k, "alone", &m, "");
     st_free(&m);
 }
+/* W2b (research/b5-wire2.md §3): a weak poison. The node trains honestly and
+ * publishes its weights + s x (the std of each weight family) x N(0,1). The
+ * families are the 13 offsets of st_model (embed, attn_norm, wq..wo,
+ * ffn_norm, router, w1 w3 w2, out_norm, out). */
+static uint64_t wp_state;
+static double wp_unif(void)
+{
+    wp_state ^= wp_state << 13; wp_state ^= wp_state >> 7; wp_state ^= wp_state << 17;
+    return ((double)(wp_state >> 11) + 0.5) / 9007199254740992.0;
+}
+static double wp_gauss(void)
+{
+    double u = wp_unif(), v = wp_unif();
+    return sqrt(-2.0 * log(u)) * cos(6.283185307179586 * v);
+}
+static void weak_poison(st_model *dst, const st_model *src, double s, uint32_t seed)
+{
+    clone(dst, src);
+    int o[14] = { src->o_embed, src->o_attn_norm, src->o_wq, src->o_wk, src->o_wv, src->o_wo,
+                  src->o_ffn_norm, src->o_router, src->o_w1, src->o_w3, src->o_w2,
+                  src->o_out_norm, src->o_out, src->n_params };
+    for (int i = 1; i < 14; i++)            /* in offset order (insertion sort) */
+        for (int j = i; j > 0 && o[j - 1] > o[j]; j--) { int x = o[j]; o[j] = o[j - 1]; o[j - 1] = x; }
+    wp_state = 0x9E3779B97F4A7C15ull ^ ((uint64_t)seed * 0x100000001B3ull);
+    for (int f = 0; f + 1 < 14; f++) {
+        int a = o[f], b = o[f + 1];
+        if (b <= a) continue;
+        double m = 0, q = 0;
+        for (int i = a; i < b; i++) m += src->w[i];
+        m /= (double)(b - a);
+        for (int i = a; i < b; i++) q += ((double)src->w[i] - m) * ((double)src->w[i] - m);
+        double sd = sqrt(q / (double)(b - a));
+        for (int i = a; i < b; i++) dst->w[i] = (float)((double)src->w[i] + s * sd * wp_gauss());
+    }
+}
+static double g_weak = 0.0;   /* > 0: rounds() poisons by weak_poison, node K-1 */
+
 /* mean = 1: the comparator (st_round_merge into a copy, the same gate) */
 static void rounds(uint32_t seed, int poison, int mean, const char *name)
 {
@@ -366,7 +404,13 @@ static void rounds(uint32_t seed, int poison, int mean, const char *name)
             gen++;
             for (int k = honest; k < K; k++) { st_free(&n[k]); garbage(&n[k], seed + (uint32_t)p + 977u * (uint32_t)k); }
             tab_t t; memset(&t, 0, sizeof t);
-            for (int k = 0; k < K; k++) t.b[k] = wrap(&n[k], gen, &t.n[k]);   /* one snapshot */
+            for (int k = 0; k < K; k++) {                                      /* one snapshot */
+                if (g_weak > 0.0 && k == K - 1) {
+                    st_model wp; weak_poison(&wp, &n[k], g_weak, seed * 131u + (uint32_t)p);
+                    t.b[k] = wrap(&wp, gen, &t.n[k]);
+                    st_free(&wp);
+                } else t.b[k] = wrap(&n[k], gen, &t.n[k]);
+            }
             for (int k = 0; k < honest; k++) {
                 int r;
                 if (!mean) {
@@ -408,6 +452,16 @@ int main(int argc, char **argv)
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
     const char *st = argc > 3 ? argv[3] : "all";
+    if (strncmp(st, "w2b:", 4) == 0) {      /* W2b: alone, trim and mean against a weak poison */
+        g_weak = strtod(st + 4, NULL);
+        if (!(g_weak > 0.0)) { fprintf(stderr, "w2b:<s>, s > 0\n"); return 2; }
+        printf("[b5w] seed %u stage w2b s %.3f held windows %d\n", (unsigned)seed, g_weak, hn / SEQ);
+        alone(seed);
+        rounds(seed, 0, 0, "region4-weak");
+        rounds(seed, 0, 1, "mean4-weak");
+        printf("[b5w] done\n");
+        return 0;
+    }
 #if defined(B5W_NC_MEAN)
     const char *bld = "nomean";
 #elif defined(B5W_NC_NO_GATE)
