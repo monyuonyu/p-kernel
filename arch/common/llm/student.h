@@ -494,8 +494,17 @@ int  st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
  * 0 kept or refused, ST_E_ARG. rep (may be NULL): members counts self, same_gen
  * counts self, accepted the peers st_round_trimmed took. Falsifiers:
  * -DB5W_NC_MEAN (st_round_merge instead), -DB5W_NC_NO_GATE (every candidate
- * replaces live), -DB5W_NC_NO_GEN (the generation is not read). Hosted only. */
+ * replaces live), -DB5W_NC_NO_GEN (the generation is not read). Hosted only.
+ * Stage 2 (research/b5-wire2.md §2 5, 6): the members are de-duplicated and
+ * put in id order (st_rg_peers, rep->members counts them once); a round
+ * fetches at most ST_RG_PEERS_MAX peers, from gen * ST_RG_PEERS_MAX round the
+ * list (st_rg_pick); every peer buffer is had before the first fetch and one
+ * that is not refuses the whole round (live byte-unchanged). Falsifiers
+ * -DB5W_NC_NO_LEN (the envelope's length not checked), -DB5W_NC_NO_DEDUP,
+ * -DB5W_NC_NO_CAP. st_rg_test_fail_alloc(nth): the next round's nth peer
+ * buffer fails (one-shot, the unit's W10).                                   */
 #define ST_RG_MAGIC 0x31475242u   /* "BRG1" little-endian */
+#define ST_RG_PEERS_MAX 7
 #define ST_RG_HDR   16
 typedef int (*st_rg_fetch_fn)(void *ctx, uint16_t node, void *out, size_t cap);
 typedef struct {
@@ -508,6 +517,9 @@ int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
                        const uint16_t *members, int count,
                        st_rg_fetch_fn fetch, void *ctx,
                        const uint8_t *bytes, int n, int seq, st_rg_report *rep);
+int    st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out);
+int    st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out);
+void   st_rg_test_fail_alloc(int nth);
 
 /* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
  *
