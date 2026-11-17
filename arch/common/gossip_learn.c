@@ -279,6 +279,21 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 #define GL_ST_FETCH_STALL    4             /* give up after this many no-progress passes */
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
 
+/* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
+ * blocks go quietly (no announce; a peer pulls them by want at its round, and
+ * what it pulled is not re-announced either); the descriptor stays loud. The
+ * publish yields GL_ST_YIELD_MS every GL_ST_YIELD_EVERY chunks. Falsifier
+ * -DB5W_NC_LOUD: the stage-1 puts and wants (every chunk announced). */
+#if defined(B5W_NC_LOUD)
+#define gl_st_put  pfs_repl_put
+#define gl_st_want pfs_repl_want
+#else
+#define gl_st_put  pfs_repl_put_quiet
+#define gl_st_want pfs_repl_want_quiet
+#endif
+#define GL_ST_YIELD_EVERY    64u
+#define GL_ST_YIELD_MS       10
+
 /* layout pins (LP64 / wire): the index header is exactly 4 packed UW. */
 _Static_assert(sizeof(UW) == 4, "UW must be 32-bit on the wire");
 _Static_assert(GL_ST_IDS_PER_IDX == 127, "127 ids fit one 4096-byte index block");
@@ -354,13 +369,14 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
                 /* falsifier: index the chunk's id but DO NOT store the block,
                  * so a fetch MUST fail closed (content-id known, bytes absent). */
                 pfs_id_compute(gl_st_chunk, clen, cid);
-            } else if (pfs_repl_put(gl_st_chunk, clen, cid) != PFS_OK) {
+            } else if (gl_st_put(gl_st_chunk, clen, cid) != PFS_OK) {
                 return -1;
             }
             gl_st_idcpy(gl_st_idx.id[j], cid);
+            if ((c + 1u) % GL_ST_YIELD_EVERY == 0u) tk_dly_tsk(GL_ST_YIELD_MS);
         }
         U1 lid[PFS_ID_LEN];
-        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + cnt * PFS_ID_LEN, lid) != PFS_OK)
+        if (gl_st_put(&gl_st_idx, GL_ST_IDX_HDR + cnt * PFS_ID_LEN, lid) != PFS_OK)
             return -1;
         gl_st_idcpy(gl_st_leafids[lf], lid);
     }
@@ -376,7 +392,7 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
         gl_st_idx.count = nleaf;
         gl_st_idx._pad  = 0;
         for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_idx.id[lf], gl_st_leafids[lf]);
-        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + nleaf * PFS_ID_LEN, root_id) != PFS_OK)
+        if (gl_st_put(&gl_st_idx, GL_ST_IDX_HDR + nleaf * PFS_ID_LEN, root_id) != PFS_OK)
             return -1;
     }
 
@@ -410,7 +426,7 @@ static INT gl_st_pull_index(const U1 id[PFS_ID_LEN], UW level, UW count)
                 return 0;
             return -1;                              /* present but malformed */
         }
-        pfs_repl_want(id);
+        gl_st_want(id);
         if (r <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
         prev = r;
         tk_dly_tsk(GL_ST_FETCH_POLL_MS);
@@ -463,7 +479,7 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
             UW off  = c * GL_ST_CHUNK;
             UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
             if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { present++; continue; }
-            if (window < GL_ST_WANT_WINDOW) { pfs_repl_want(gl_st_idlist[c]); window++; }
+            if (window < GL_ST_WANT_WINDOW) { gl_st_want(gl_st_idlist[c]); window++; }
         }
         if (present == nchunk) break;
         if ((INT)present <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;

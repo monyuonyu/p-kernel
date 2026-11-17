@@ -2875,6 +2875,7 @@ int st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out
 int st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out)
 {
 #if defined(B5W_NC_NO_CAP)
+    (void)gen;
     for (int k = 0; k < m; k++) out[k] = peers[k];
     return m;
 #else

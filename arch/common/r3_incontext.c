@@ -6684,6 +6684,73 @@ void mind_merge_task(INT stacd, void *exinf)
     }
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* B5 wire stage 2 (research/b5-wire2.md §2 2): the periodic round of the
+ * resident student with its region. The generation is the wall clock in
+ * seconds / the period, so every node of a round names the same gen without
+ * talking; the student is published (quietly, gossip_learn.c) in the first
+ * tenth of a round and merged from the middle on (student_shell.c), once each
+ * per gen, under the verb's lock. The same gates as mind_merge_task
+ * (hibernation, a stopped node, solo). Opt-in for now: PKERNEL_B5_ROUND_S
+ * unset or 0 = the task returns at once (🧭 11-18: a default-on round would
+ * land at wall-clock times inside multi-node CI runs; on by default after the
+ * live L1-L4). The value is the period in seconds, at least 60. Falsifier
+ * -DB5W_NC_NO_STOP: a stopped node still runs its rounds (L3 red). */
+extern long  time(long *);
+extern char *getenv(const char *);
+/* weak references (never weak definitions): the tests that link this TU
+ * without student_shell.c (the B5WL lesson) get NULL, and the task returns */
+extern int  student_region_try(void) __attribute__((weak));
+extern void student_region_done(void) __attribute__((weak));
+extern int  student_region_publish(UW gen, void (*emit)(const char *), const char *tag) __attribute__((weak));
+extern int  student_region_merge(UW gen, void (*emit)(const char *), const char *tag) __attribute__((weak));
+#define SR_ROUND_MIN 60u
+
+static UW sr_period(void)
+{
+    const char *e = getenv("PKERNEL_B5_ROUND_S");
+    UW v = 0;
+    if (!e) return 0;
+    for (; *e >= '0' && *e <= '9'; e++) { v = v * 10u + (UW)(*e - '0'); if (v > 86400u) v = 86400u; }
+    if (v == 0) return 0;
+    return v < SR_ROUND_MIN ? SR_ROUND_MIN : v;
+}
+
+void student_region_task(INT stacd, void *exinf)
+{
+    (void)stacd; (void)exinf;
+    UW P = sr_period();
+    if (!P) return;                                  /* opt-in: off */
+    if (!student_region_try || !student_region_done || !student_region_publish || !student_region_merge) return;
+    tk_dly_tsk(8000);                                /* let SWIM form a region */
+    r_puts("[baby] student_region_task up, round "); r_putdec(P); r_puts(" s\r\n");
+    long pub = -1, mer = -1;
+    for (;;) {
+        tk_dly_tsk(1000);
+        if (mind_paused_for_hibernation()) continue;
+#ifndef B5W_NC_NO_STOP
+        if (swarm_stop_is_stopped()) continue;
+#endif
+        if (drpc_my_node == 0xFF) continue;
+        long now = time(0);
+        if (now <= 0) continue;
+        long gen = now / (long)P, ph = now % (long)P;
+        if (gen != pub && ph < (long)(P / 10u)) {
+            if (!student_region_try()) continue;
+            r_puts("[baby] auto: publish gen "); r_putdec((UW)gen); r_puts("\r\n");
+            (void)student_region_publish((UW)gen, r_puts, "auto");
+            pub = gen;                               /* a refusal is said; not again this round */
+            student_region_done();
+        } else if (gen == pub && gen != mer && ph >= (long)(P / 2u)) {
+            if (!student_region_try()) continue;
+            (void)student_region_merge((UW)gen, r_puts, "auto");
+            mer = gen;
+            student_region_done();
+        }
+    }
+}
+#endif
+
 /* `mind merge` verb (M-b, XI.3) — drives the cert + a debugging handle.
  * Caller already holds the mind_cmd gate. */
 static void m_merge(void)

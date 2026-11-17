@@ -170,6 +170,16 @@ INT  pfs_repl_put(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
  * DAG layer to fetch a manifest learned from a ref beacon. */
 void pfs_repl_want(const U1 id[PFS_ID_LEN]);
 
+/* B5 wire stage 2 (research/b5-wire2.md §2 1): the same two, quiet. The put
+ * is not announced; a block wanted quietly is not re-announced when it
+ * arrives. Per id (a ring of 64), never the global announce_suppress below.
+ * pfs_repl_quiet_count: the announces left out so far. Hosted only. */
+#if defined(_TK_HOSTED_LIBC_)
+INT  pfs_repl_put_quiet(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
+void pfs_repl_want_quiet(const U1 id[PFS_ID_LEN]);
+UW   pfs_repl_quiet_count(void);
+#endif
+
 /* Shell helpers (`pfs put <text>` / `pfs ls`) — print via tmonitor. */
 void pfs_repl_put_cmd(const UB *text, UW len);
 void pfs_repl_ls(void);

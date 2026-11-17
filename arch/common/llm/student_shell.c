@@ -1539,16 +1539,65 @@ static int region_fetch(void *ctx, uint16_t node, void *out, size_t cap)
     return gl_student_fetch(node, out, (unsigned int)cap);
 }
 
-static int student_region_cmd(const char *q, emit_fn emit)
+/* B5 wire stage 2 (research/b5-wire2.md §2 2, 4): the verb and the periodic
+ * task (student_region_task, r3_incontext.c) share one lock; the verb that
+ * finds it taken says `busy` and changes nothing. The task publishes at the
+ * head of a round and merges at its middle, so the two halves are separate
+ * calls: student_region_publish, student_region_merge (tag: "region" for the
+ * verb, "auto" for the task). Falsifier -DB5W_NC_NO_LOCK: the lock always
+ * granted (L4's `busy` red). */
+static volatile int g_region_busy = 0;
+int student_region_try(void)
+{
+#if defined(B5W_NC_NO_LOCK)
+    return 1;
+#else
+    return __sync_lock_test_and_set(&g_region_busy, 1) == 0;
+#endif
+}
+void student_region_done(void) { __sync_lock_release(&g_region_busy); }
+
+static unsigned short region_self(void)
+{
+    return (&drpc_my_node != NULL) ? drpc_my_node : 0xFFFF;
+}
+
+/* > 0 the chunks, -1 refused (said) */
+int student_region_publish(uint32_t gen, emit_fn emit, const char *tag)
+{
+    char line[160];
+    unsigned short self = region_self();
+    if (self == 0xFF || self == 0xFFFF) {
+        snprintf(line, sizeof line, "[baby] %s: refused (not in a mesh), unchanged\r\n", tag);
+        emit(line); return -1;
+    }
+    if (student_ensure(0) != 0) {
+        snprintf(line, sizeof line, "[baby] %s: refused (no student), unchanged\r\n", tag);
+        emit(line); return -1;
+    }
+    size_t cap = st_rg_cap(&g_student);
+    void *own = malloc(cap);
+    long on = own ? st_rg_wrap(&g_student, gen, own, cap) : -1;
+    int pub = on > 0 ? gl_student_publish(self, own, (unsigned int)on) : -1;
+    free(own);
+    if (pub <= 0) {
+        snprintf(line, sizeof line, "[baby] %s: refused (publish failed), unchanged\r\n", tag);
+        emit(line); return -1;
+    }
+    return pub;
+}
+
+int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
 {
     char line[200];
-    while (*q == ' ' || *q == '\t') q++;
-    char *end = NULL;
-    unsigned long g = strtoul(q, &end, 10);
-    uint32_t gen = (end == q) ? 0u : (uint32_t)g;
-    unsigned short self = (&drpc_my_node != NULL) ? drpc_my_node : 0xFFFF;
+    unsigned short self = region_self();
     if (self == 0xFF || self == 0xFFFF) {
-        emit("[baby] region: refused (not in a mesh), unchanged\r\n"); return -1;
+        snprintf(line, sizeof line, "[baby] %s: refused (not in a mesh), unchanged\r\n", tag);
+        emit(line); return -1;
+    }
+    if (student_ensure(0) != 0) {
+        snprintf(line, sizeof line, "[baby] %s: refused (no student), unchanged\r\n", tag);
+        emit(line); return -1;
     }
     uint16_t mem[ST_COHORT_MAX];
     int m = 0;
@@ -1558,16 +1607,13 @@ static int student_region_cmd(const char *q, emit_fn emit)
     int cn = cradle_corpus_len();
     st_split sp = st_held_split(cn, ST_DMN_SEQLEN);
     int hw = sp.heldw, te = sp.train_end, sl = ST_DMN_SEQLEN;
-    if (hw < 1) { emit("[baby] region: refused (no held windows), unchanged\r\n"); return -1; }
+    if (hw < 1) {
+        snprintf(line, sizeof line, "[baby] %s: refused (no held windows), unchanged\r\n", tag);
+        emit(line); return -1;
+    }
     uint8_t *hb = (uint8_t *)malloc((size_t)hw * (size_t)sl);
-    size_t cap = st_rg_cap(&g_student);
-    void *own = malloc(cap);
-    if (!hb || !own) { free(hb); free(own); emit("[baby] region: OOM, unchanged\r\n"); return -1; }
+    if (!hb) { snprintf(line, sizeof line, "[baby] %s: OOM, unchanged\r\n", tag); emit(line); return -1; }
     for (int w = 0; w < hw; w++) window(hb + (size_t)w * (size_t)sl, te + w * sl, sl);
-    long on = st_rg_wrap(&g_student, gen, own, cap);
-    int pub = on > 0 ? gl_student_publish(self, own, (unsigned int)on) : -1;
-    free(own);
-    if (pub <= 0) { free(hb); emit("[baby] region: refused (publish failed), unchanged\r\n"); return -1; }
     /* st_region_round may replace g_student: the writer guard (as SS-3) */
     student_consol_abort();
     st_rg_report rp;
@@ -1575,11 +1621,24 @@ static int student_region_cmd(const char *q, emit_fn emit)
     free(hb);
     float after = rp.adopted ? rp.held_cand : rp.held_live;
     snprintf(line, sizeof line,
-             "[baby] region: gen %u members %d same-gen %d accepted %d adopted %d "
-             "held %.4f -> %.4f%s\r\n", (unsigned)gen, rp.members, rp.same_gen, rp.accepted,
-             rp.adopted, (double)rp.held_live, (double)after,
+             "[baby] %s: gen %u members %d fetched %d same-gen %d accepted %d adopted %d "
+             "held %.4f -> %.4f%s\r\n", tag, (unsigned)gen, rp.members, rp.fetched, rp.same_gen,
+             rp.accepted, rp.adopted, (double)rp.held_live, (double)after,
              rp.accepted ? "" : " (refused, unchanged)");
     emit(line);
+    return r < 0 ? -1 : r;
+}
+
+static int student_region_cmd(const char *q, emit_fn emit)
+{
+    while (*q == ' ' || *q == '\t') q++;
+    char *end = NULL;
+    unsigned long g = strtoul(q, &end, 10);
+    uint32_t gen = (end == q) ? 0u : (uint32_t)g;
+    if (!student_region_try()) { emit("[baby] region: busy (a round is running), unchanged\r\n"); return -1; }
+    int r = student_region_publish(gen, emit, "region");
+    if (r > 0) r = student_region_merge(gen, emit, "region");
+    student_region_done();
     return r < 0 ? -1 : 0;
 }
 

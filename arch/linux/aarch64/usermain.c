@@ -115,6 +115,7 @@ IMPORT void mind_cmd(const UB *args, UW len);         /* LM-6 the mouth  */
 IMPORT void mind_net_open(void);                      /* LM-7 reserve topic */
 IMPORT void mind_net_task(INT stacd, void *exinf);    /* LM-7 shared mind */
 IMPORT void mind_merge_task(INT stacd, void *exinf);  /* LM-10 Path W merge */
+IMPORT void student_region_task(INT stacd, void *exinf); /* B5 wire stage 2 */
 IMPORT void cradle_net_open(void);                    /* T-fix-b reserve topic */
 IMPORT void cradle_net_task(INT stacd, void *exinf);  /* T-fix-b lesson bridge */
 IMPORT INT  cradle_teach_emit(const UB *body, UW len);/* T-fix-b teacher emit */
@@ -592,6 +593,12 @@ static void cmd_net(void)
      * publish/fetch + gl_merge call chain. */
     create_task((FP)mind_merge_task, 7, 16384);
     print("[net] mind one-mind weight-merge (LM-10 Path W) task started\r\n");
+
+    /* B5 wire stage 2 (research/b5-wire2.md §2 2): the resident student's
+     * periodic round with its region. Opt-in (PKERNEL_B5_ROUND_S, seconds);
+     * unset, the task returns at once. Low priority and a big stack, as the
+     * DMN task (st_round_adopt runs the forward). */
+    create_task((FP)student_region_task, 13, 262144);
 
     /* p-fs P2 ref gossip — beacons this node's name->head-manifest refs
      * on the region topic and merges peers' (LWW by version seq). Same
