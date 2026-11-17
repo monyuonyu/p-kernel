@@ -85,9 +85,14 @@ for k in 1 2 3 4 5; do
     wait_for "$WORK/n$k.log" 'student_region_task up' 180 || { res L0 FAIL "node $k: no student_region_task"; }
 done
 echo "[b5w-live] tier $TIER round $P s, mode $MODE, nodes up at $(date +%s)"
-# G1: the first generation whose head is at least 10 s ahead (every node sees its head)
+# every node a different student before G1 (fresh nodes are born equal: the
+# chunks would already be in every store and the fetch would not cross the net)
+for k in 1 2 3 4 5; do say $k "baby 1 0.00$k 32"; done
+for k in 1 2 3 4 5; do wait_for "$WORK/n$k.log" 'held-out loss \(after\)' 120 || echo "[b5w-live] note: node $k: no trained line"; done
+sleep 5
+# G1: the first generation whose head is at least 20 s ahead (every node sees its head)
 now=$(date +%s)
-G1=$(( (now + 10 + P - 1) / P ))
+G1=$(( (now + 20 + P - 1) / P ))
 H1=$(( G1 * P ))
 echo "[b5w-live] G1 $G1 head in $(( H1 - now )) s"
 sleep_until() { local t; t=$(( $1 - $(date +%s) )); [ "$t" -gt 0 ] && sleep "$t"; return 0; }
@@ -123,7 +128,9 @@ for k in 1 2 3 4 5; do
         echo "$ln" | grep -q "members 5 fetched 4 " || { l1=0; l1why="$l1why n$k/g$g"; }
     done
 done
-if [ "$l1" = 1 ]; then res L1 PASS "5 nodes x gens $G1 $G2: members 5 fetched 4"; else res L1 FAIL "missing or short:$l1why"; fi
+nd=$(for k in 1 2 3 4 5; do grep -a "\[baby\] auto: gen $G1 " "$WORK/n$k.log" | head -1 | sed -n 's/.* held \([0-9.]*\) .*/\1/p'; done | sort -u | wc -l)
+[ "$nd" -ge 2 ] || { l1=0; l1why="$l1why (gen $G1 held is the same on every node: the students were equal, the fetch did not cross the net)"; }
+if [ "$l1" = 1 ]; then res L1 PASS "5 nodes x gens $G1 $G2: members 5 fetched 4 ($nd different students at $G1)"; else res L1 FAIL "missing or short:$l1why"; fi
 # L2: the window [head of G1 - 2 s, the last G1+1 line]
 l2=1; l2why=""
 set -- $M0; a0=("$@"); set -- $M1; a1=("$@")
