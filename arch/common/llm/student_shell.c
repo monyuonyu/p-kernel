@@ -1519,10 +1519,19 @@ static void dlb_cert_sink(void *ctx, const char *bytes, int n)
  * held windows of the DMN split. Fewer than 4 with self, a failed fetch or
  * another generation: refused, g_student byte-unchanged. No timer yet (stage
  * 2); the generation is the caller's. */
-extern int          gl_student_publish(unsigned short node, const void *blob, unsigned int len);
-extern int          gl_student_fetch(unsigned short node, void *out, unsigned int cap);
-extern unsigned int region_contains(unsigned short node);   /* BOOL, pk_node_t */
-extern unsigned short drpc_my_node;                          /* pk_node_t      */
+/* Many tests #include or link this TU without gossip_learn.c / region.c /
+ * drpc.c (run_yield.sh, run_held_indep.sh, ...; CI 43854354327 failed to link).
+ * So, as cradle_poll_and_pull above: WEAK "no mesh" defaults for the three
+ * functions (the strong defs in gossip_learn.c / region.c win on a hosted
+ * kernel), and a WEAK reference to drpc_my_node (never a weak definition of
+ * the node id itself): absent from the link = address 0 = refused. */
+__attribute__((weak)) int gl_student_publish(unsigned short node, const void *blob, unsigned int len)
+{ (void)node; (void)blob; (void)len; return -1; }
+__attribute__((weak)) int gl_student_fetch(unsigned short node, void *out, unsigned int cap)
+{ (void)node; (void)out; (void)cap; return -1; }
+__attribute__((weak)) unsigned int region_contains(unsigned short node)   /* BOOL, pk_node_t */
+{ (void)node; return 0; }
+extern unsigned short drpc_my_node __attribute__((weak));    /* pk_node_t      */
 
 static int region_fetch(void *ctx, uint16_t node, void *out, size_t cap)
 {
@@ -1537,7 +1546,7 @@ static int student_region_cmd(const char *q, emit_fn emit)
     char *end = NULL;
     unsigned long g = strtoul(q, &end, 10);
     uint32_t gen = (end == q) ? 0u : (uint32_t)g;
-    unsigned short self = drpc_my_node;
+    unsigned short self = (&drpc_my_node != NULL) ? drpc_my_node : 0xFFFF;
     if (self == 0xFF || self == 0xFFFF) {
         emit("[baby] region: refused (not in a mesh), unchanged\r\n"); return -1;
     }
