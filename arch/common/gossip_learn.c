@@ -281,7 +281,7 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
  * chunks quiet nothing is pushed ahead, a want lost in the LATEST_ONLY slot
  * is sent again only after 600 ms, and the fetch had already failed (live
  * L1: fetched 2-3 of 4 in the second round). 50 passes = 3 s = 5 re-WANTs. */
-#define GL_ST_FETCH_STALL    334           /* about 20 s (live: 3 s was not enough either) */
+#define GL_ST_FETCH_STALL    167           /* about 10 s (the holder may be computing its own round) */
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
 
 /* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
@@ -293,8 +293,11 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 #define gl_st_put  pfs_repl_put
 #define gl_st_want pfs_repl_want
 #else
+/* the wants go to the blob's owner alone (pfs_repl_want_from; the region
+ * slot lost most of them, live L1 at b7c04d6e/bfed9920) */
+static pk_node_t gl_st_from;
+static void gl_st_want(const U1 id[PFS_ID_LEN]) { pfs_repl_want_from(id, gl_st_from); }
 #define gl_st_put  pfs_repl_put_quiet
-#define gl_st_want pfs_repl_want_quiet
 #endif
 #define GL_ST_YIELD_EVERY    64u
 #define GL_ST_YIELD_MS       10
@@ -444,6 +447,9 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     if (!out) return -1;
 
     /* 1 named ref -> descriptor. */
+#if !defined(B5W_NC_LOUD)
+    gl_st_from = node;
+#endif
     char nm[8]; UW nl = gl_st_name(nm, node);
     INT dr = pfs_dag_read((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc);
     if (dr != (INT)sizeof gl_st_desc) return -1;

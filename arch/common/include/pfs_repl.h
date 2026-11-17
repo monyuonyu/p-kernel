@@ -178,6 +178,8 @@ void pfs_repl_want(const U1 id[PFS_ID_LEN]);
 INT  pfs_repl_put_quiet(const void *buf, UW len, U1 id_out[PFS_ID_LEN]);
 void pfs_repl_want_quiet(const U1 id[PFS_ID_LEN]);
 UW   pfs_repl_quiet_count(void);
+/* the quiet want sent straight to one holder (unicast, not the region slot) */
+void pfs_repl_want_from(const U1 id[PFS_ID_LEN], pk_node_t holder);
 #endif
 
 /* Shell helpers (`pfs put <text>` / `pfs ls`) — print via tmonitor. */
