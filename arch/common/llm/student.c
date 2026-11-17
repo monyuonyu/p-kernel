@@ -2921,26 +2921,38 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
             return 0;
         }
     }
-    for (int k = 0; k < npick; k++) {
+    /* fetch in a rotated order (from the first peer above self) so a region
+     * does not all pull the lowest id first (M: node 0 sent 58,837 blocks,
+     * b5-wire2 §6); the blobs are still merged in id order */
+    int rot = -1, okk[ST_COHORT_MAX];
+    for (int k = 0; k < npick; k++) { okk[k] = 0; if (rot < 0 && pick[k] > self) rot = k; }
+    if (rot < 0) rot = 0;
+    for (int j = 0; j < npick; j++) {
+        int k = (rot + j) % npick;
         void *b = buf[k];
         int got = fetch(ctx, pick[k], b, cap);
-        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); continue; }
+        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); buf[k] = NULL; continue; }
         r0.fetched++;
         uint32_t h[4];
         for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
 #if defined(B5W_NC_NO_LEN)
-        if (h[0] != ST_RG_MAGIC || (size_t)h[2] > cap - ST_RG_HDR) { free(b); continue; }  /* falsifier */
+        if (h[0] != ST_RG_MAGIC || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }  /* falsifier */
 #else
-        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); continue; }
+        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }
 #endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
-        if (h[1] != gen) { free(b); continue; }
-        buf[nb] = b;
-        bs[nb] = (const uint8_t *)b + ST_RG_HDR;
-        ls[nb] = (size_t)h[2];
-        gs[nb] = h[1];
+        if (h[1] != gen) { free(b); buf[k] = NULL; continue; }
+        okk[k] = 1;
+        ls[k] = (size_t)h[2];
+    }
+    for (int k = 0; k < npick; k++) {    /* id order, as before */
+        if (!okk[k]) continue;
+        buf[nb] = buf[k];
+        bs[nb] = (const uint8_t *)buf[k] + ST_RG_HDR;
+        ls[nb] = ls[k];
+        gs[nb] = gen;
         nb++;
     }
     r0.members += 1;                     /* self */

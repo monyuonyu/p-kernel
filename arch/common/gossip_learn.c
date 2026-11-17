@@ -303,6 +303,14 @@ static pk_node_t gl_st_from;
 static void gl_st_want(const U1 id[PFS_ID_LEN]) { pfs_repl_want_from(id, gl_st_from); }
 #define gl_st_put  pfs_repl_put_quiet
 #endif
+/* re-ask one chunk only after this many passes (b5-wire2 §6, M: every
+ * pass asked the same 24 again before they could arrive, node 0 sent 58,837
+ * blocks for about 4,700 wanted). The loud falsifier keeps every pass. */
+#if defined(B5W_NC_LOUD)
+#define GL_ST_REASK          1u
+#else
+#define GL_ST_REASK          8u            /* about 0.5 s */
+#endif
 #define GL_ST_YIELD_EVERY    64u
 #define GL_ST_YIELD_MS       10
 
@@ -322,6 +330,7 @@ static GL_ST_INDEX gl_st_idx;                                /* one index block 
 static U1         gl_st_leafids[GL_ST_IDS_PER_IDX][PFS_ID_LEN]; /* up to 127 leaf ids */
 static U1         gl_st_idlist[GL_ST_MAXCHUNK][PFS_ID_LEN];  /* fetch: all chunk ids  */
 static U1         gl_st_have[GL_ST_MAXCHUNK];               /* fetch: seen present   */
+static UH         gl_st_asked[GL_ST_MAXCHUNK];              /* fetch: pass+1 last asked */
 static GL_ST_DESC gl_st_desc;                                /* descriptor scratch    */
 static INT        gl_st_drop = -1;          /* falsifier: chunk idx to OMIT (-1=off) */
 
@@ -491,7 +500,7 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     /* b5-wire2 §6: a chunk seen present stays present; remember it, so a pass
      * looks up only the missing ones (482 lookups a pass made a 4-peer S round
      * take 72 s in the live test at 6b0423a0) */
-    for (UW c = 0; c < nchunk; c++) gl_st_have[c] = 0;
+    for (UW c = 0; c < nchunk; c++) { gl_st_have[c] = 0; gl_st_asked[c] = 0; }
     UW present = 0; INT prev = -1, stall = 0;
     for (UW pass = 0; pass < GL_ST_FETCH_MAXPASS; pass++) {
         present = 0; UW window = 0;
@@ -500,7 +509,11 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
             UW off  = c * GL_ST_CHUNK;
             UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
             if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { gl_st_have[c] = 1; present++; continue; }
-            if (window < GL_ST_WANT_WINDOW) { gl_st_want(gl_st_idlist[c]); window++; }
+            if (window < GL_ST_WANT_WINDOW) {
+                UW a = gl_st_asked[c];
+                if (a == 0 || pass + 1u - a >= GL_ST_REASK) { gl_st_want(gl_st_idlist[c]); gl_st_asked[c] = (UH)(pass + 1u); }
+                window++;
+            }
         }
         if (present == nchunk) break;
         if ((INT)present <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
