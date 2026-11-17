@@ -128,8 +128,8 @@ for k in 1 2 3 4 5; do
         echo "$ln" | grep -q "members 5 fetched 4 " || { l1=0; l1why="$l1why n$k/g$g"; }
     done
 done
-nd=$(for k in 1 2 3 4 5; do grep -a "\[baby\] auto: gen $G1 " "$WORK/n$k.log" | head -1 | sed -n 's/.* held \([0-9.]*\) .*/\1/p'; done | sort -u | wc -l)
-[ "$nd" -ge 2 ] || { l1=0; l1why="$l1why (gen $G1 held is the same on every node: the students were equal, the fetch did not cross the net)"; }
+nd=$(for k in 1 2 3 4 5; do grep -a 'held-out loss (after)' "$WORK/n$k.log" | head -1 | sed -n 's/.*= *\([0-9.]*\) nats.*/\1/p'; done | sort -u | wc -l)
+[ "$nd" -ge 2 ] || { l1=0; l1why="$l1why (the trained students before G1 are not different: $nd value(s), the fetch would not cross the net)"; }
 if [ "$l1" = 1 ]; then res L1 PASS "5 nodes x gens $G1 $G2: members 5 fetched 4 ($nd different students at $G1)"; else res L1 FAIL "missing or short:$l1why"; fi
 # L2: the window [head of G1 - 2 s, the last G1+1 line]
 l2=1; l2why=""

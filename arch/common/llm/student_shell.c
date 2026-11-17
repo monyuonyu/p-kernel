@@ -48,6 +48,7 @@
 #include <stdlib.h>     /* malloc / free / getenv                 */
 #include <string.h>     /* memcpy / strlen                        */
 #include <stdio.h>      /* snprintf (output formatting only)      */
+#include <time.h>       /* time: b5-wire2 round seconds (output)  */
 
 typedef void (*emit_fn)(const char *);
 
@@ -1617,14 +1618,16 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
     /* st_region_round may replace g_student: the writer guard (as SS-3) */
     student_consol_abort();
     st_rg_report rp;
+    long t0 = (long)time(NULL);
     int r = st_region_round(&g_student, gen, self, mem, m, region_fetch, NULL, hb, hw * sl, sl, &rp);
+    long dt = (long)time(NULL) - t0;
     free(hb);
     float after = rp.adopted ? rp.held_cand : rp.held_live;
     snprintf(line, sizeof line,
              "[baby] %s: gen %u members %d fetched %d same-gen %d accepted %d adopted %d "
-             "held %.4f -> %.4f%s\r\n", tag, (unsigned)gen, rp.members, rp.fetched, rp.same_gen,
+             "held %.4f -> %.4f%s in %ld s\r\n", tag, (unsigned)gen, rp.members, rp.fetched, rp.same_gen,
              rp.accepted, rp.adopted, (double)rp.held_live, (double)after,
-             rp.accepted ? "" : " (refused, unchanged)");
+             rp.accepted ? "" : " (refused, unchanged)", dt);
     emit(line);
     return r < 0 ? -1 : r;
 }

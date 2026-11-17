@@ -281,7 +281,7 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
  * chunks quiet nothing is pushed ahead, a want lost in the LATEST_ONLY slot
  * is sent again only after 600 ms, and the fetch had already failed (live
  * L1: fetched 2-3 of 4 in the second round). 50 passes = 3 s = 5 re-WANTs. */
-#define GL_ST_FETCH_STALL    50
+#define GL_ST_FETCH_STALL    334           /* about 20 s (live: 3 s was not enough either) */
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
 
 /* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
@@ -460,16 +460,16 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 
     /* 2. walk the index into the ordered chunk-id list. */
     if (depth == 1) {
-        if (gl_st_pull_index(gl_st_desc.root_id, 0u, nchunk) < 0) return -1;
+        if (gl_st_pull_index(gl_st_desc.root_id, 0u, nchunk) < 0) { gp("[pfs] student fetch: gave up on the index\r\n"); return -1; }
         for (UW c = 0; c < nchunk; c++) gl_st_idcpy(gl_st_idlist[c], gl_st_idx.id[c]);
     } else {
-        if (gl_st_pull_index(gl_st_desc.root_id, 1u, nleaf) < 0) return -1;
+        if (gl_st_pull_index(gl_st_desc.root_id, 1u, nleaf) < 0) { gp("[pfs] student fetch: gave up on the root index\r\n"); return -1; }
         for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_leafids[lf], gl_st_idx.id[lf]);
         for (UW lf = 0; lf < nleaf; lf++) {
             UW base = lf * GL_ST_IDS_PER_IDX;
             UW cnt  = nchunk - base;
             if (cnt > GL_ST_IDS_PER_IDX) cnt = GL_ST_IDS_PER_IDX;
-            if (gl_st_pull_index(gl_st_leafids[lf], 0u, cnt) < 0) return -1;
+            if (gl_st_pull_index(gl_st_leafids[lf], 0u, cnt) < 0) { gp("[pfs] student fetch: gave up on a leaf index\r\n"); return -1; }
             for (UW j = 0; j < cnt; j++) gl_st_idcpy(gl_st_idlist[base + j], gl_st_idx.id[j]);
         }
     }
@@ -491,7 +491,11 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
         prev = (INT)present;
         tk_dly_tsk(GL_ST_FETCH_POLL_MS);
     }
-    if (present != nchunk) return -1;                        /* fail closed */
+    if (present != nchunk) {                                 /* fail closed */
+        gp("[pfs] student fetch n"); gpd(node); gp(": gave up, chunks "); gpd(present);
+        gp("/"); gpd(nchunk); gp(" present\r\n");
+        return -1;
+    }
 
     /* 4. all present -> reassemble into the caller buffer + verify length. */
     UW got = 0;
