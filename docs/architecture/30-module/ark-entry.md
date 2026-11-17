@@ -163,3 +163,8 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 呼び手（§7.6 の 2）: samples/38〜41・lib/http_retry.sh（`GX_TOKEN_FILE`）・run_self_ref_local・stop_galaxy.py・emulator_smoke（`run-as`）。ci.yml の ump-x86_64 に段。
 限界: ブラウザが自分で取りに来る /favicon.ico も 401 になる（前は 404）。Android の実機と WebView は試していない（人の仕事）。ページの JS は使い捨ての確かめ（スタブのサーバー＋headless chromium、枝 20 本中 19 本に合言葉・master は 19 本とも無し）だけで、A8 は ② と一緒
 測り（容器 /build/tok）: 8a547355 で plain 9/9・nc-token は no-token・bad-token・nowrite だけ赤・nc-origin は origin・host だけ赤（ALL PASS）。0b54ece7 の最初の走りは nowrite が赤＝試験側が合言葉つきで sea を教えていた（8a547355 で ink に）。crown は master と全バイト同じ（x86 .text cd490552・aarch64 4dfac3f4、.rodata も）、hosted x86_64 の警告 57 で master と同じ
+
+### 7.8 監査-185（2026-11-18、限界つき PASS。作った回とは別の回）
+
+取り直し（容器 /build/a185）: 先端 06e7bc99 で ALL PASS（3 腕とも 7.7 と同じ行）、試験だけの dcf6aedf で file・no-token・bad-token・origin・host・nowrite の 6 赤。crown は master 80eae153 と全バイト同じ、hosted x86_64 警告 57・aarch64 OK。呼び手 6 本（self_ref・38・39・40・41・stop_galaxy）とも緑。私の壊し: Host を見ない→host 赤、/self.json を公開に→no-token・bad-token 赤、`?t=` を全部の GET で→bad-token 赤、**比べで先頭の 1 字を飛ばす→9 項目とも緑＝H30**。読み: gx_header_val は本文まで探すが最初の一致＝本物の見出しが勝つ。
+限界: ページの JS は `u.charAt(0)==="/"` で `//よその host/` にも見出しを付ける（今の fetch は全部 `/英字` の固定の道＝害なし、② で `//` を除く）。emulator_smoke は 401 の本文も「答えた」と数える（合言葉が読めないと後段で紛らわしい赤）。ほかは 7.7 の限界のまま。
