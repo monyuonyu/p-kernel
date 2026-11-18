@@ -266,11 +266,11 @@ try:
         short = tok[:63]
         # H30 (audit-185): one char off at the head and in the middle too
         first = flip(tok[0]) + tok[1:]
-        mid = tok[:31] + flip(tok[31]) + tok[32:]
+        midc = tok[:31] + flip(tok[31]) + tok[32:]
     else:
-        off, short, first, mid = "0" * 64, "0" * 63, "1" * 64, "2" * 64
+        off, short, first, midc = "0" * 64, "0" * 63, "1" * 64, "2" * 64
     for name, hh in (("off", {"X-Galaxy-Token": off}), ("short", {"X-Galaxy-Token": short}),
-                     ("first", {"X-Galaxy-Token": first}), ("mid", {"X-Galaxy-Token": mid})):
+                     ("first", {"X-Galaxy-Token": first}), ("mid", {"X-Galaxy-Token": midc})):
         for m, p, b in (("GET", "/self.json", None), ("POST", "/teach", "k=sea&v=green"),
                         ("POST", "/profile", "ack=1&mid=%s&handle=evil" % mid)):
             st, _h, _b = raw(m, p, b, headers=hh)
