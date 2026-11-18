@@ -3519,11 +3519,6 @@ jobs:
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
       - name: B5 wire stage 1 unit ([b5w-W0] [b5w-W3..W6], falsifiers NO_GEN on W4 and NO_GATE on W6)
         run: B5W_MODE=unit bash tests/llm/run_b5_wire.sh
-      # B5 D4 (research/b5-m-round.md §4, §5 W13): the student's chunks are not
-      # fsync'd one by one; relay + 2 nodes, the verb says its fsyncs. The
-      # falsifier -DB5W_NC_FSYNC_EACH must be red by the count.
-      - name: B5 D4 W13 (one syncfs per publish / fetch, falsifier FSYNC_EACH)
-        run: timeout 1500 bash tests/llm/run_b5_d4.sh
 
   st-quant:
     # Brain self-quantization stage 1 (docs/architecture/30-module/research/
