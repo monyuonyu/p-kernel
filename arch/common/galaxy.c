@@ -1391,9 +1391,157 @@ static void gx_ws_on_message(INT slot, const char *msg, INT n)
 /* open SSE stream (keep it), 0 if it should be closed after flush.      */
 /* ------------------------------------------------------------------ */
 
+#if defined(_TK_HOSTED_LIBC_) && !defined(_WINDOWS_X86_64_)
+/* ==== ark-entry.md 7.2 1-4: the record routes (ark_rec.c does the work; hosted, not
+ * Windows, which does not build ark_rec.c). gx_guard has already checked the pass,
+ * Host and Origin. Order: 413 (too long) -> 403 (no consent, writes) -> 409 (the key
+ * backup not written down yet) -> the route. ==== */
+#define GX_ARK_POST_MAX 16384
+IMPORT INT ark_rec_http_put(INT no, const U1 *b, UW len, UW *out_no, UW *out_seq);
+IMPORT INT ark_rec_http_flag(UW no, INT vis, INT learn, UW *out_seq);
+IMPORT INT ark_rec_http_get(UW no, const U1 **out, UW *len);
+IMPORT INT ark_rec_http_list(char *o, UW cap);
+IMPORT INT ark_key_backup_hex(char out[65]);
+IMPORT INT ark_key_backup_done(void);
+IMPORT INT ark_key_backup_is_done(void);
+static char gx_arkjson[65536];
+#ifdef GALAXY_ARK_NORMALIZE
+static U1 gx_arknorm[GX_ARK_POST_MAX];
+#endif
+
+/* bytes straight to the socket after the head (the body can exceed GX_OUTBUF) */
+static void gx_send_raw(INT slot, const char *ctype, const void *b, UW len)
+{
+    gx_resp_head(slot, "200 OK", ctype);
+    gx_flush(slot);
+    UW off = 0;
+    while (off < len) {
+        INT chunk = (INT)(len - off);
+        if (chunk > 1024) chunk = 1024;
+        INT w = galaxy_io_write(slot, (const char *)b + off, chunk);
+        if (w < 0) return;
+        if (w == 0) { tk_dly_tsk(5); continue; }
+        off += (UW)w;
+    }
+}
+static void gx_ark_status(INT slot, const char *st, const char *msg)
+{
+    gx_resp_head(slot, st, "text/plain"); gx_qs(slot, msg); gx_qs(slot, "\n");
+}
+static void gx_ark_written(INT slot, INT r, UW no, UW seq)
+{
+    if (r == 0) {
+        gx_resp_head(slot, "200 OK", "application/json");
+        gx_qs(slot, "{\"no\":"); gx_qdec(slot, no); gx_qs(slot, ",\"seq\":"); gx_qdec(slot, seq); gx_qs(slot, "}\n");
+    } else if (r == -9) gx_ark_status(slot, "503 Service Unavailable", "the shell is using the records; try again");
+    else if (r == -4)   gx_ark_status(slot, "404 Not Found", "no such record");
+    else                gx_ark_status(slot, "500 Internal Server Error", "not written (see the console)");
+}
+static INT gx_body_is(const GX_REQ *q, const char *w)
+{
+    INT n = 0; while (w[n]) n++;
+    INT bl = q->body_len;
+    while (bl > 0 && (q->body[bl - 1] == '\n' || q->body[bl - 1] == '\r')) bl--;   /* a form tool's newline */
+    if (bl != n) return 0;
+    for (INT i = 0; i < n; i++) if (q->body[i] != w[i]) return 0;
+    return 1;
+}
+
+static void gx_ark_route(INT slot, GX_REQ *q)
+{
+    const char *p = q->path + 4;                    /* after "/ark" */
+    if (gx_streq(p, "/key/backup")) {
+        if (!q->is_post) { gx_ark_status(slot, "405 Method Not Allowed", "POST only (the key is shown once)"); return; }
+        char hx[65];
+        INT r = ark_key_backup_hex(hx);
+        if (r == 0) { gx_resp_head(slot, "200 OK", "text/plain"); gx_qs(slot, hx); gx_qs(slot, "\n"); for (INT i = 0; i < 65; i++) hx[i] = 0; }
+        else if (r == -2) gx_ark_status(slot, "410 Gone", "the key was shown once already");
+        else gx_ark_status(slot, "500 Internal Server Error", "no ark key");
+        return;
+    }
+    if (gx_streq(p, "/key/backup/done")) {
+        if (!q->is_post) { gx_ark_status(slot, "405 Method Not Allowed", "POST only"); return; }
+        if (ark_key_backup_done() == 0) gx_ark_status(slot, "200 OK", "ok");
+        else gx_ark_status(slot, "409 Conflict", "the key has not been shown");
+        return;
+    }
+    if (!(p[0]=='/'&&p[1]=='r'&&p[2]=='e'&&p[3]=='c'&&(p[4]==0||p[4]=='/'||p[4]=='.'))) {
+        gx_ark_status(slot, "404 Not Found", "not found"); return;
+    }
+    if (q->is_post && (q->clen > GX_ARK_POST_MAX || q->body_len > GX_ARK_POST_MAX)) {
+        gx_ark_status(slot, "413 Payload Too Large", "16 KB at most in one POST; split a long record"); return;
+    }
+    if (q->is_post && q->body_len < q->clen) { gx_ark_status(slot, "400 Bad Request", "the body is short"); return; }
+#ifndef GALAXY_ARK_NO_GATE
+    if (q->is_post && !ark_consent_ok()) { gx_ark_status(slot, "403 Forbidden", "consent first (the manifesto)"); return; }
+#endif
+#ifndef GALAXY_ARK_NO_BACKUP_GATE
+    if (!ark_key_backup_is_done()) { gx_ark_status(slot, "409 Conflict", "write down the key backup first"); return; }
+#endif
+    p += 4;                                         /* after "/rec" */
+    if (gx_streq(p, ".json")) {
+        if (q->is_post) { gx_ark_status(slot, "405 Method Not Allowed", "GET only"); return; }
+        INT n = ark_rec_http_list(gx_arkjson, sizeof gx_arkjson);
+        if (n < 0) gx_ark_status(slot, n == -9 ? "503 Service Unavailable" : "500 Internal Server Error", "the list is not ready");
+        else gx_send_raw(slot, "application/json", gx_arkjson, (UW)n);
+        return;
+    }
+    UW no = 0; INT has_no = 0;
+    if (p[0] == '/') {
+        p++;
+        while (*p >= '0' && *p <= '9' && no < 100000000u) { no = no * 10 + (UW)(*p - '0'); p++; has_no = 1; }
+        if (!has_no) { gx_ark_status(slot, "404 Not Found", "not found"); return; }
+    } else if (p[0] != 0) { gx_ark_status(slot, "404 Not Found", "not found"); return; }
+    UW ono = 0, oseq = 0;
+    if (!has_no) {                                  /* /ark/rec */
+        if (!q->is_post) { gx_ark_status(slot, "405 Method Not Allowed", "POST a record; the list is /ark/rec.json"); return; }
+        const U1 *b = (const U1 *)q->body; UW bl = (UW)q->clen;
+#ifdef GALAXY_ARK_NORMALIZE
+        { UW o = 0;                                 /* negative control: line-end blanks cut */
+          for (UW i = 0; i < bl; i++) {
+              if (b[i] == '\r' || b[i] == '\n')
+                  while (o && (gx_arknorm[o - 1] == ' ' || gx_arknorm[o - 1] == '\t')) o--;
+              gx_arknorm[o++] = b[i];
+          }
+          b = gx_arknorm; bl = o; }
+#endif
+        gx_ark_written(slot, ark_rec_http_put(-1, b, bl, &ono, &oseq), ono, oseq);
+        return;
+    }
+    if (p[0] == 0) {                                /* /ark/rec/<no> */
+        if (q->is_post) {
+            gx_ark_written(slot, ark_rec_http_put((INT)no, (const U1 *)q->body, (UW)q->clen, &ono, &oseq), no, oseq);
+        } else {
+            const U1 *b = 0; UW bl = 0;
+            INT r = ark_rec_http_get(no, &b, &bl);
+            if (r == 0) gx_send_raw(slot, "application/octet-stream", b, bl);
+            else gx_ark_written(slot, r, 0, 0);
+        }
+        return;
+    }
+    if (q->is_post && gx_streq(p, "/vis")) {
+        INT v = gx_body_is(q, "self") ? 0 : gx_body_is(q, "heir") ? 1 : gx_body_is(q, "public") ? 2 : -1;
+        if (v < 0) { gx_ark_status(slot, "400 Bad Request", "self, heir or public"); return; }
+        gx_ark_written(slot, ark_rec_http_flag(no, v, -1, &oseq), no, oseq);
+        return;
+    }
+    if (q->is_post && gx_streq(p, "/learn")) {
+        INT v = gx_body_is(q, "yes") ? 1 : gx_body_is(q, "no") ? 0 : -1;
+        if (v < 0) { gx_ark_status(slot, "400 Bad Request", "yes or no"); return; }
+        gx_ark_written(slot, ark_rec_http_flag(no, -1, v, &oseq), no, oseq);
+        return;
+    }
+    gx_ark_status(slot, "404 Not Found", "not found");
+}
+#endif
+
 static INT gx_route(INT slot, GX_REQ *q)
 {
     const char *path = q->path;
+
+#if defined(_TK_HOSTED_LIBC_) && !defined(_WINDOWS_X86_64_)
+    if (path[0]=='/'&&path[1]=='a'&&path[2]=='r'&&path[3]=='k'&&path[4]=='/') { gx_ark_route(slot, q); return 0; }
+#endif
 
     if (!q->is_post && path[0]=='/' && path[1]==0) {
         gx_serve_page(slot);
@@ -1800,6 +1948,45 @@ void galaxy_init(void)
  * stack buffer, the hosted-relay stack-overflow lesson) are defined above,
  * before gx_route, because the /ws handshake reads the raw bytes there. */
 
+/* ark-entry.md 7.2 3: one big receive buffer for a /ark/rec POST (16 KB), taken by one
+ * slot at a time; the others get 503 while it is in use. */
+#if defined(_TK_HOSTED_LIBC_) && !defined(_WINDOWS_X86_64_)
+static char gx_big[GX_ARK_POST_MAX + GX_REQ_MAX];
+static INT  gx_big_slot = -1;
+#define GX_RQ(i)     ((i) == gx_big_slot ? gx_big : g_req[i])
+#define GX_RQCAP(i)  ((i) == gx_big_slot ? (INT)sizeof gx_big : GX_REQ_MAX)
+#define GX_BIG_FREE(s) do { if ((s) == gx_big_slot) gx_big_slot = -1; } while (0)
+static INT gx_is_arkrec(const GX_REQ *q)
+{
+    const char *p = q->path;
+    return p[0]=='/'&&p[1]=='a'&&p[2]=='r'&&p[3]=='k'&&p[4]=='/'&&p[5]=='r'&&p[6]=='e'&&p[7]=='c';
+}
+/* the headers are complete in the full slot buffer: let the parse decide (a /ark/rec
+ * POST moves to the big buffer instead of the old 400) */
+static INT gx_hdr_in(const char *b, INT n)
+{
+    for (INT j = 0; j + 3 < n; j++)
+        if (b[j]=='\r'&&b[j+1]=='\n'&&b[j+2]=='\r'&&b[j+3]=='\n') return 1;
+    return 0;
+}
+#define GX_ARK_HDR_IN(b, n) gx_hdr_in((b), (n))
+/* a full buffer is fine only in the big one, or for an oversize /ark/rec POST (413) */
+#define GX_ARK_FULL_OK(i, q) ((i) == gx_big_slot || ((q)->is_post && gx_is_arkrec(q)))
+static INT gx_big_take(INT i)
+{
+    if (gx_big_slot >= 0 && gx_big_slot != i && g_cli[gx_big_slot].in_use) return 0;
+    for (INT k = 0; k < g_reqn[i]; k++) gx_big[k] = g_req[i][k];
+    gx_big_slot = i;
+    return 1;
+}
+#else
+#define GX_RQ(i)     (g_req[i])
+#define GX_RQCAP(i)  GX_REQ_MAX
+#define GX_BIG_FREE(s) do { } while (0)
+#define GX_ARK_HDR_IN(b, n) 0
+#define GX_ARK_FULL_OK(i, q) 0
+#endif
+
 void galaxy_task(INT stacd, void *exinf)
 {
     (void)stacd; (void)exinf;
@@ -1817,6 +2004,7 @@ void galaxy_task(INT stacd, void *exinf)
         /* accept up to one new connection per tick. */
         INT s = galaxy_io_accept();
         if (s >= 0) {
+            GX_BIG_FREE(s);
             g_cli[s].in_use = 1; g_cli[s].is_sse = 0; g_cli[s].is_ws = 0;
             g_cli[s].ob_len = 0; g_reqn[s] = 0;
         }
@@ -1827,14 +2015,19 @@ void galaxy_task(INT stacd, void *exinf)
             if (!g_cli[i].in_use) continue;
 
             if (!g_cli[i].is_sse && !g_cli[i].is_ws) {
-                /* read request bytes into the slot scratch. */
-                INT room = GX_REQ_MAX - 1 - g_reqn[i];
+                /* read request bytes into the slot scratch (or the one big
+                 * buffer a /ark/rec POST took, ark-entry.md 7.2 3) */
+                char *rq = GX_RQ(i);
+                INT  rcap = GX_RQCAP(i);
+                INT room = rcap - 1 - g_reqn[i];
                 if (room > 0) {
-                    INT n = galaxy_io_read(i, g_req[i] + g_reqn[i], room);
+                    INT n = galaxy_io_read(i, rq + g_reqn[i], room);
                     if (n < 0) { galaxy_io_close(i); g_cli[i].in_use = 0; continue; }
                     if (n > 0) g_reqn[i] += n;
                 }
-                if (g_reqn[i] >= GX_REQ_MAX - 1) {
+                rq[g_reqn[i]] = 0;
+                INT full = g_reqn[i] >= rcap - 1;
+                if (full && !GX_ARK_HDR_IN(rq, g_reqn[i])) {
                     /* over-long request line -> 400, close (§3.6). */
                     gx_resp_head(i, "400 Bad Request", "text/plain");
                     gx_qs(i, "bad request\n"); gx_flush(i);
@@ -1842,24 +2035,37 @@ void galaxy_task(INT stacd, void *exinf)
                 }
                 /* a request is complete once we have the header terminator
                  * (and, for POST, the declared body). */
-                g_req[i][g_reqn[i]] = 0;
                 INT have_hdr = 0, hdr_end = 0;
                 for (INT j = 0; j + 3 < g_reqn[i]; j++)
-                    if (g_req[i][j]=='\r'&&g_req[i][j+1]=='\n'&&
-                        g_req[i][j+2]=='\r'&&g_req[i][j+3]=='\n') { have_hdr=1; hdr_end=j+4; break; }
+                    if (rq[j]=='\r'&&rq[j+1]=='\n'&&
+                        rq[j+2]=='\r'&&rq[j+3]=='\n') { have_hdr=1; hdr_end=j+4; break; }
                 if (!have_hdr) continue;            /* wait for more         */
 
                 GX_REQ q;
-                if (gx_parse(g_req[i], g_reqn[i], &q) < 0) {
+                if (gx_parse(rq, g_reqn[i], &q) < 0) {
                     gx_resp_head(i, "400 Bad Request", "text/plain");
                     gx_qs(i, "bad request\n"); gx_flush(i);
                     galaxy_io_close(i); g_cli[i].in_use = 0; continue;
                 }
                 if (q.is_post && (g_reqn[i] - hdr_end) < q.clen
-                    && q.clen <= GX_POST_PROF)
+                    && q.clen <= GX_POST_PROF && !full)
                     continue;                       /* wait for the body     */
+#if defined(_TK_HOSTED_LIBC_) && !defined(_WINDOWS_X86_64_)
+                /* a /ark/rec POST up to 16 KB: wait for all of it in the big buffer */
+                if (q.is_post && (g_reqn[i] - hdr_end) < q.clen && q.clen <= GX_ARK_POST_MAX
+                    && gx_is_arkrec(&q)) {
+                    if (gx_big_slot == i || gx_big_take(i)) continue;
+                    gx_ark_status(i, "503 Service Unavailable", "another record is being received; try again");
+                    gx_flush(i); galaxy_io_close(i); g_cli[i].in_use = 0; continue;
+                }
+#endif
+                if (full && !GX_ARK_FULL_OK(i, &q)) {          /* the old rule: too long -> 400 */
+                    gx_resp_head(i, "400 Bad Request", "text/plain");
+                    gx_qs(i, "bad request\n"); gx_flush(i);
+                    galaxy_io_close(i); g_cli[i].in_use = 0; continue;
+                }
 
-                if (gx_guard(i, &q, g_req[i], g_reqn[i])) {   /* §7.2 6       */
+                if (gx_guard(i, &q, rq, g_reqn[i])) {   /* §7.2 6       */
                     gx_flush(i);
                     galaxy_io_close(i); g_cli[i].in_use = 0; continue;
                 }
