@@ -945,6 +945,15 @@ void swim_init(void)
 #ifdef _TK_HOSTED_LIBC_
     swim_rounds_from_env();
     swim_wide_init();
+    {   /* N2c: the incarnation survives a restart ($PKERNEL_PFS_DIR/node.incarn,
+         * written before the first beacon; node_ident.c). The wire keeps 1 byte. */
+        extern unsigned pk_node_incarn_boot(void);
+        unsigned v = pk_node_incarn_boot();
+        if (v) {
+            my_incarnation = (UB)(v & 0xFFu);
+            sw_puts("[swim] incarnation "); sw_putdec((UW)v); sw_puts(" (node.incarn)\r\n");
+        }
+    }
 #endif
     udp_bind(SWIM_PORT, swim_rx);
     sw_puts("[swim] SWIM ready  port=7375\r\n");

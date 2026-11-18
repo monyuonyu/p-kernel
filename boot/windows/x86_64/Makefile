@@ -128,7 +128,7 @@ RELAY_OBJS   = $(RELAY_C_SRCS:.c=.o)
 
 # arch/linux 共有（POSIX 汎用: console_ring/node_id/sign_entropy/pfs_*）。
 # selfc.c / selfc_proc.c は除外（selfc_stub で代替）。
-ARCH_SHARED_C_SRCS = pfs_durable.c pfs_ark.c sign_entropy.c console_ring.c node_id.c
+ARCH_SHARED_C_SRCS = pfs_durable.c pfs_ark.c sign_entropy.c console_ring.c node_id.c node_ident.c
 ARCH_SHARED_OBJS   = $(ARCH_SHARED_C_SRCS:.c=.o)
 
 ARCH_OBJS = $(ARCH_SHARED_X86_OBJS) $(ARCH_WIN_OBJS) $(RELAY_OBJS) $(ARCH_SHARED_OBJS)
