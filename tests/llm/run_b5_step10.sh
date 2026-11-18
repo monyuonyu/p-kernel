@@ -39,12 +39,16 @@ echo "[build] b5-step10: plain, far, tglow ..."
 build plain
 build far -DB5S10_GROUP_FAR
 build tglow -DB5S10_TG_LOW
+# test-holes H27: each must be red on s10unit (and only by the new cases' lines)
+build keepfirst -DB5S10_KEEP_FIRST
+build noroot -DB5S10_NO_ROOT
+build abscos -DB5S10_ABS_COS
 for u in s6unit s7unit s8unit s10unit; do
     "$WORK/plain" $u > "$OUT/unit-$u.log" 2>&1 \
         || { cat "$OUT/unit-$u.log"; echo "[result] FAIL  b5-step10 $u"; exit 1; }
     echo "[b5-step10] $u ok ($(grep -c '  PASS  ' "$OUT/unit-$u.log") checks)"
 done
-for b in far tglow; do
+for b in far tglow keepfirst noroot abscos; do
     if "$WORK/$b" s10unit > "$OUT/unit-$b.log" 2>&1; then
         echo "[result] FAIL  b5-step10 the $b build passes s10unit"; exit 1
     fi
