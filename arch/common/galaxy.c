@@ -1090,7 +1090,11 @@ static INT gx_tok_eq(const char *s, INT n)
 {
     if (!gx_tok_ok || n != GX_TOK_HEX) return 0;
     UB d = 0;
+#ifndef GALAXY_TOK_SKIP_FIRST              /* falsifier (test-holes H30) */
     for (INT i = 0; i < GX_TOK_HEX; i++) d |= (UB)(s[i] ^ gx_tok[i]);
+#else
+    for (INT i = 1; i < GX_TOK_HEX; i++) d |= (UB)(s[i] ^ gx_tok[i]);
+#endif
     return d == 0;
 }
 
