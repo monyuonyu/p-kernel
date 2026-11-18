@@ -664,15 +664,16 @@ static void fill(UW len, UW seed)
 
 /* E5 (ark-entry.md 6): `ark rec learn` sets this before put_version; -1 = keep */
 static INT pv_learn = -1;
+static UW  pv_no, pv_seq;                        /* what the last put_version wrote */
 
 /* a new record (no == desc.nrec) or a new version of record `no` */
-static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
+static INT put_version(INT is_new, UW no, UW kind, UW len, INT vis)
 {
     U1 rid[PFS_ID_LEN], srid[PFS_ID_LEN], sprev[PFS_ID_LEN];
     INT d = desc_load();
-    if (d < 0) { err("ark/rec is not readable"); return; }
-    if (ark_key() != 0) { err("no ark key (PKERNEL_PFS_DIR / getrandom / an ark.key that does not read as 32 bytes is never replaced); nothing written"); return; }
-    if (len > AKS_BODY_MAX) { err("longer than a sealed record holds"); return; }
+    if (d < 0) { err("ark/rec is not readable"); return -1; }
+    if (ark_key() != 0) { err("no ark key (PKERNEL_PFS_DIR / getrandom / an ark.key that does not read as 32 bytes is never replaced); nothing written"); return -1; }
+    if (len > AKS_BODY_MAX) { err("longer than a sealed record holds"); return -1; }
     zero(sprev, PFS_ID_LEN);
     if (is_new) {
         no = desc.nrec;
@@ -687,7 +688,7 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
         rec.seq = 1;
     } else {
         U1 oid[PFS_ID_LEN];
-        if (index_find(no, oid) != 0 || rec_load(oid, &rec) != 0) { err("no such record"); return; }
+        if (index_find(no, oid) != 0 || rec_load(oid, &rec) != 0) { err("no such record"); return -1; }
         cpy(rec.prev, oid, PFS_ID_LEN);
 #ifdef ARK_REC_OVERWRITE
         zero(rec.prev, PFS_ID_LEN);
@@ -696,22 +697,24 @@ static void put_version(INT is_new, UW no, UW kind, UW len, INT vis)
         if (vis >= 0 || pv_learn >= 0) {          /* a vis / learn version is sealed again: needs the body */
             if (vis >= 0) rec.vis = (U1)vis;
             if (pv_learn >= 0) rec.learn = (U1)pv_learn;
-            if (body_read(&rec) != 0) { err("a fragment is missing or wrong"); return; }
+            if (body_read(&rec) != 0) { err("a fragment is missing or wrong"); return -1; }
             len = rec.len;
         }
 #ifndef ARK_REC_INDEX_LOCAL
-        if (sfind(desc.sroot, desc.depth, desc.fanout, no, sprev) != 0) { err("the sealed copy is not readable"); return; }
+        if (sfind(desc.sroot, desc.depth, desc.fanout, no, sprev) != 0) { err("the sealed copy is not readable"); return -1; }
 #endif
     }
     rec.rec_no = no;
     rec.len = len;
+    pv_no = no; pv_seq = rec.seq;                 /* rec is reused by index_set */
     long t = time(0);
     rec.time_lo = (UW)t; rec.time_hi = (UW)((unsigned long)t >> 16 >> 16);
     /* 5: AKSF -> AKSR -> AKRF -> AKRR -> index leaf .. root (AKSI, AKRI) -> AKSD -> ark/rec */
-    if (srec_write(sprev, srid) != 0) { err("the sealed copy was not stored"); return; }
-    if (rec_write(len, rid, 1) != 0) { err("a block was not stored"); return; }
-    if (index_set(no, rid, srid) != 0) { err("the index was not saved"); return; }
+    if (srec_write(sprev, srid) != 0) { err("the sealed copy was not stored"); return -1; }
+    if (rec_write(len, rid, 1) != 0) { err("a block was not stored"); return -1; }
+    if (index_set(no, rid, srid) != 0) { err("the index was not saved"); return -1; }
     say_ver(is_new ? "new" : "set"); P(" id="); phex(rid, 8); P(" sid="); phex(srid, 8); P("\r\n");   /* run_ark_rec.sh local looks for it on the other node */
+    return 0;
 }
 
 static INT hexv(UB c);
@@ -1065,6 +1068,31 @@ static void cmd_heir(const UB *a, UW al)
 }
 
 /* `ark rec ...` and `ark heir ...`; returns 1 if the verb was ours */
+/* ---- `ark key import <64 hex>` (ark-entry.md 7.2 7): the written-down key back on a
+ * node that has none. A node with an ark.key (or one that cannot be read) refuses and
+ * keeps its bytes (the 269-line rule: an ark.key is never replaced). ---- */
+static void cmd_key(const UB *a, UW al)
+{
+    a = skip(a, &al);
+    UW n = wordlen(a, al);
+    if (!word_is(a, n, "import")) { err("usage: ark key import <64 hex>"); return; }
+    a += n; al -= n; a = skip(a, &al);
+    U1 k[32];
+    if (wordlen(a, al) != 64) { P("[ark-key] import refused: not 64 hex\r\n"); return; }
+    for (UW i = 0; i < 32; i++) {
+        INT h = hexv(a[2 * i]), l = hexv(a[2 * i + 1]);
+        if (h < 0 || l < 0) { P("[ark-key] import refused: not 64 hex\r\n"); zero(k, 32); return; }
+        k[i] = (U1)(h * 16 + l);
+    }
+    if (pfs_dur_exists("ark.key")) { P("[ark-key] import refused: this node has an ark.key (it is never replaced)\r\n"); zero(k, 32); return; }
+    if (pfs_dur_write("ark.key", k, 32) != 0) { P("[ark-key] import failed: not written (PKERNEL_PFS_DIR?)\r\n"); zero(k, 32); return; }
+    zero(k, 32);
+    ark_key_ok = 0;                              /* read it again at the next use */
+    P("[ark-key] import written: ark.key (the key backup marks are set, it was written down)\r\n");
+    (void)pfs_dur_write("ark.key.shown", "1", 1);
+    (void)pfs_dur_write("ark.key.done", "1", 1);
+}
+
 INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *))
 {
     P = pr;
@@ -1072,5 +1100,157 @@ INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *))
     UW n = wordlen(a, al);
     if (word_is(a, n, "rec"))  { cmd_rec(a + n, al - n);  return 1; }
     if (word_is(a, n, "heir")) { cmd_heir(a + n, al - n); return 1; }
+    if (word_is(a, n, "key"))  { cmd_key(a + n, al - n);  return 1; }
     return 0;
+}
+
+/* ==== the galaxy routes (ark-entry.md 7.2 1-4): the same functions as the shell ====
+ * Every call runs on the galaxy task; the shell runs on its own. The buffers above are
+ * shared, so a call that finds the other one inside returns ARK_HTTP_BUSY (limit: the
+ * flag is not atomic). The lines go to the console like the shell's. */
+IMPORT void sio_send_frame(const UB *buf, INT size);
+static void con(const char *s) { UW n = 0; while (s[n]) n++; sio_send_frame((const UB *)s, (INT)n); }
+static INT http_busy;
+#define ARK_HTTP_BUSY  (-9)
+#define ARK_HTTP_NONE  (-4)
+
+static INT http_enter(void) { if (http_busy) return -1; http_busy = 1; if (!P) P = con; return 0; }
+
+/* a new record (no < 0) or a new version of `no` with body b[0..len); the number and
+ * version out. 0 = written, ARK_HTTP_NONE = no such record, -1 = not written. */
+INT ark_rec_http_put(INT no, const U1 *b, UW len, UW *out_no, UW *out_seq)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = -1;
+    if (len <= AKS_BODY_MAX) {
+        if (no >= 0 && (desc_load() <= 0 || (UW)no >= desc.nrec)) r = ARK_HTTP_NONE;
+        else {
+            cpy(body, b, len);
+            r = put_version(no < 0, no < 0 ? 0 : (UW)no, 0, len, -1);
+            if (r == 0) { *out_no = pv_no; *out_seq = pv_seq; }
+        }
+    }
+    http_busy = 0;
+    return r;
+}
+
+/* a new version that changes only how it is shown (vis 0 self, 1 heir, 2 public) or
+ * the learning consent (learn 0/1); the other one is < 0 */
+INT ark_rec_http_flag(UW no, INT vis, INT learn, UW *out_seq)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r;
+    if (desc_load() <= 0 || no >= desc.nrec) r = ARK_HTTP_NONE;
+    else {
+        pv_learn = learn;
+        r = put_version(0, no, 0, 0, vis);
+        pv_learn = -1;
+        if (r == 0) *out_seq = pv_seq;
+        if (r == 0 && learn == 0) teach_withdraw(no);
+    }
+    http_busy = 0;
+    return r;
+}
+
+/* the newest body of `no`: *out points into the module's buffer until the next call */
+INT ark_rec_http_get(UW no, const U1 **out, UW *len)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = ARK_HTTP_NONE;
+    if (desc_load() > 0 && no < desc.nrec && rec_find(no, 0) == 0)
+        r = body_read(&rec) == 0 ? 0 : -1;
+    if (r == 0) { *out = body; *len = rec.len; }
+    http_busy = 0;
+    return r;
+}
+
+/* /ark/rec.json into out: number, version, time, how shown, learning, length per record.
+ * Nothing that counts or ranks (E6). The length written, or -1 (too small / busy). */
+static UW jput(char *o, UW at, UW cap, const char *s) { while (*s && at + 1 < cap) o[at++] = *s++; return at; }
+static UW jdec(char *o, UW at, UW cap, unsigned long v)
+{
+    char b[24]; INT i = 23; b[i] = 0;
+    do { b[--i] = (char)('0' + v % 10); v /= 10; } while (v);
+    return jput(o, at, cap, b + i);
+}
+INT ark_rec_http_list(char *o, UW cap)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    UW at = 0;
+    INT d = desc_load();
+    at = jput(o, at, cap, "{\"records\":[");
+    for (UW i = 0; d > 0 && i < desc.nrec; i++) {
+        if (i) at = jput(o, at, cap, ",");
+        at = jput(o, at, cap, "{\"no\":"); at = jdec(o, at, cap, i);
+        if (rec_find(i, 0) != 0) { at = jput(o, at, cap, ",\"missing\":true}"); continue; }
+        at = jput(o, at, cap, ",\"seq\":"); at = jdec(o, at, cap, rec.seq);
+        at = jput(o, at, cap, ",\"time\":");
+        at = jdec(o, at, cap, ((unsigned long)rec.time_hi << 16 << 16) | rec.time_lo);
+        at = jput(o, at, cap, ",\"vis\":\""); at = jput(o, at, cap, visname(rec.vis));
+        at = jput(o, at, cap, "\",\"learn\":\""); at = jput(o, at, cap, rec.learn ? "yes" : "no");
+        at = jput(o, at, cap, "\",\"len\":"); at = jdec(o, at, cap, rec.len);
+        at = jput(o, at, cap, "}");
+    }
+    at = jput(o, at, cap, "]}\n");
+    http_busy = 0;
+    if (at + 2 >= cap) return -1;              /* cut: say so rather than send half */
+    o[at] = 0;
+    return (INT)at;
+}
+
+/* the key backup (7.2 4): the ark key as 64 hex, ONCE. The mark ark.key.shown is written
+ * before the key is handed out, so a crash cannot show it twice. 0 = out has the key,
+ * -2 = shown before (410), -1 = no key / the mark not written. */
+INT ark_key_backup_hex(char out[65])
+{
+    static const char H[] = "0123456789abcdef";
+#ifndef GALAXY_BACKUP_TWICE
+    if (pfs_dur_exists("ark.key.shown")) return -2;
+#endif
+    if (ark_key() != 0) return -1;
+    if (pfs_dur_write("ark.key.shown", "1", 1) != 0) return -1;
+    for (UW i = 0; i < 32; i++) { out[2 * i] = H[ark_priv[i] >> 4]; out[2 * i + 1] = H[ark_priv[i] & 15]; }
+    out[64] = 0;
+    return 0;
+}
+/* "written down" (POST /ark/key/backup/done): only after the key was shown */
+INT ark_key_backup_done(void)
+{
+    if (!pfs_dur_exists("ark.key.shown")) return -1;
+    return pfs_dur_write("ark.key.done", "1", 1) == 0 ? 0 : -1;
+}
+INT ark_key_backup_is_done(void) { return pfs_dur_exists("ark.key.done") ? 1 : 0; }
+
+/* /ark/heir (7.2 1): the heir's public key, the same ark/heir ref as `ark heir set|clear`.
+ * set: hex = 64 hex chars, or 0 to clear. 0 = saved, -3 = not 64 hex, -1 = not saved. */
+INT ark_heir_http_set(const char *hex)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = 0;
+    zero(heir, sizeof heir);
+    if (hex) {
+        for (UW i = 0; i < 32 && r == 0; i++) {
+            INT h = hexv((UB)hex[2 * i]), l = h < 0 ? -1 : hexv((UB)hex[2 * i + 1]);
+            if (h < 0 || l < 0) r = -3; else heir[1 + i] = (U1)(h * 16 + l);
+        }
+        if (r == 0) heir[0] = 1;
+    }
+    if (r == 0 && pfs_dag_save((const UB *)"ark/heir", 8, heir, sizeof heir) != PFS_OK) r = -1;
+    if (r == 0) { P(heir[0] ? "[ark-heir] set " : "[ark-heir] cleared"); if (heir[0]) phex(heir + 1, 4); P(" (http)\r\n"); }
+    http_busy = 0;
+    return r;
+}
+/* the heir now: 1 and out = 64 hex, 0 = none (never set, or cleared) */
+INT ark_heir_http_get(char out[65])
+{
+    static const char H[] = "0123456789abcdef";
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = 0;
+    if (pfs_dag_read((const UB *)"ark/heir", 8, heir, sizeof heir) == (INT)sizeof heir && heir[0] == 1) {
+        for (UW i = 0; i < 32; i++) { out[2 * i] = H[heir[1 + i] >> 4]; out[2 * i + 1] = H[heir[1 + i] & 15]; }
+        out[64] = 0;
+        r = 1;
+    }
+    http_busy = 0;
+    return r;
 }

@@ -1254,7 +1254,7 @@ jobs:
       # rebuilds and cleans. ~3 min.
       - name: who may call galaxy (A7, the pass and Host/Origin)
         run: |
-          timeout 900 tests/host/run_ark_app.sh | tee ark_app.log
+          timeout 1800 tests/host/run_ark_app.sh | tee ark_app.log
           grep -aF '[ark-app] ALL PASS' ark_app.log
           make -C boot/linux_x86_64 -j4 > /dev/null
 

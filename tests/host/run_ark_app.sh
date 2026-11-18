@@ -1,7 +1,7 @@
 #!/bin/bash
 # tests/host/run_ark_app.sh — ark-entry.md §7.3: the one-person entry over galaxy.
-# Part ① (this file today): A7, who may call galaxy (§7.2 6, §7.6). The record
-# routes (A1-A6, A8) come with part ②.
+# Part ①: A7, who may call galaxy (§7.2 6, §7.6). Part ② (2026-11-19): the record
+# routes A1-A6 (§7.2 1-4, 7); A8 (the page's JS, a DOM test) is still to come.
 #
 # One hosted node, galaxy on a fixed port, driven by tests/host/ark_app.py.
 # The checks and what each arm must show are fixed before the code:
@@ -13,6 +13,11 @@
 #   nc-origin (-DGALAXY_NO_ORIGIN: galaxy does not look at Host / Origin)
 #             A7-origin and A7-host FAIL; A7-no-token, A7-bad-token,
 #             A7-good-token and A7-nowrite still PASS
+#   part ② (plain: A1-gate A1 A2 A3 A4 A4-import A5 A6 AH PASS; AH = /ark/heir)
+#   nc-ark-gate     (-DGALAXY_ARK_NO_GATE: no consent check)      A1-gate FAIL, A1 PASS
+#   nc-normalize    (-DGALAXY_ARK_NORMALIZE: trailing spaces cut)  A1 FAIL, A1-gate PASS
+#   nc-backup-gate  (-DGALAXY_ARK_NO_BACKUP_GATE: no 409)          A4 FAIL, A1 PASS
+#   nc-backup-twice (-DGALAXY_BACKUP_TWICE: the key every time)    A4 FAIL, A1 PASS
 # Output: "[ark-app] <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 # ARK_APP_ARMS="plain" runs only the named arms (the negatives are skipped
@@ -26,7 +31,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_APP_PORT:-17831}"
-ARMS="${ARK_APP_ARMS:-plain nc-token nc-origin}"
+ARMS="${ARK_APP_ARMS:-plain nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
 WORK="$(mktemp -d /tmp/arkapp.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 REDS=""
@@ -53,7 +58,8 @@ want() {  # <arm> <PASS|FAIL> <check>...
     for c in "$@"; do is "$a" "$c" "$v" || REDS="$REDS $a-$c"; done
 }
 
-ALL="A7-file A7-public A7-no-token A7-bad-token A7-good-token A7-origin A7-host A7-options A7-nowrite"
+ALL="A7-file A7-public A7-no-token A7-bad-token A7-good-token A7-origin A7-host A7-options A7-nowrite
+     A1-gate A1 A2 A3 A4 A4-import A5 A6 AH"
 # shellcheck disable=SC2086
 if arm plain ""; then want plain PASS $ALL; fi
 if arm nc-token "-DGALAXY_NO_TOKEN"; then
@@ -63,6 +69,18 @@ fi
 if arm nc-origin "-DGALAXY_NO_ORIGIN"; then
     want nc-origin FAIL A7-origin A7-host
     want nc-origin PASS A7-no-token A7-bad-token A7-good-token A7-nowrite
+fi
+if arm nc-ark-gate "-DGALAXY_ARK_NO_GATE"; then
+    want nc-ark-gate FAIL A1-gate; want nc-ark-gate PASS A1
+fi
+if arm nc-normalize "-DGALAXY_ARK_NORMALIZE"; then
+    want nc-normalize FAIL A1; want nc-normalize PASS A1-gate
+fi
+if arm nc-backup-gate "-DGALAXY_ARK_NO_BACKUP_GATE"; then
+    want nc-backup-gate FAIL A4; want nc-backup-gate PASS A1
+fi
+if arm nc-backup-twice "-DGALAXY_BACKUP_TWICE"; then
+    want nc-backup-twice FAIL A4; want nc-backup-twice PASS A1
 fi
 make -C "$BOOT" clean >/dev/null 2>&1
 echo "[ark-app] logs: /tmp/ark_app_<arm>.log"

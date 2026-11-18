@@ -169,6 +169,44 @@ def stream_status(path, tok_in_query, extra=None):
     return st
 
 
+def shell_wait(n, line, pat, timeout=60):
+    """send a shell line, wait for one more match of pat than before; the last match"""
+    before = len(re.findall(pat, node_log()))
+    n.shell(line)
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        ms = re.findall(pat, node_log())
+        if len(ms) > before:
+            time.sleep(0.3)
+            return re.findall(pat, node_log())[before]
+        time.sleep(0.3)
+    return None
+
+
+def rec_ls(n):
+    """(nrec, sealed id or '', {no: (seq, vis, len)}) from `ark rec ls`"""
+    m = shell_wait(n, "ark rec ls", r"\[ark-rec\] index nrec=(\d+)[^\r\n]*?(?: sealed=([0-9a-f]{64}))?\r?\n")
+    if m is None:
+        return None, "", {}
+    L = node_log()
+    tail = L[L.rfind("[ark-rec] index nrec="):]
+    rows = {}
+    for no, seq, vis, ln in re.findall(r"\[ark-rec\]   no=(\d+) seq=(\d+) vis=(\w+) len=(\d+)", tail):
+        rows[int(no)] = (int(seq), vis, int(ln))
+    return int(m[0]), m[1], rows
+
+
+def rec_count(n):
+    return rec_ls(n)[0]
+
+
+# part 2 (ark-entry.md 7.3 A1-A6): a body with multibyte text, CRLF, trailing
+# spaces and a NUL, kept byte for byte
+BODY1 = "朝の散歩、café \r\nline with trailing spaces   \r\n".encode() + b"\x00end\t \n"
+# A5: words of counting and ranking that must not be in the record list or the page
+RANK_WORDS = ["likes", "like_count", "rank", "ranking", "score", "views", "followers",
+              "popular", "いいね", "順位", "人気"]
+
 open(logpath, "wb").close()
 tok1 = ""
 try:
@@ -185,6 +223,10 @@ try:
     ok, why = token_file_ok()
     res("A7-file", up and ok and tok != tok1, why or ("same pass at boot 2" if tok == tok1 else ""))
     H = {"X-Galaxy-Token": tok}
+
+    # A1-gate (part 2): before the consent a record is refused, nothing written
+    g403, _h, _b = raw("POST", "/ark/rec", b"before the consent", headers=H)
+    nrec_pre = rec_count(n)
 
     # consent (with the pass) so /teach would be heard
     st, hd, _b = raw("GET", "/manifesto")
@@ -308,6 +350,117 @@ try:
     has_sea = '[mind]   "sea" -> ' in L
     res("A7-nowrite", hd1 == "5" and seq1 == seq0 and has_sky and not has_sea,
         "handle_len=%s seq %s->%s sky=%s sea=%s" % (hd1, seq0, seq1, has_sky, has_sea))
+
+    # ---- part 2: the record routes (ark-entry.md 7.2 1-4, 7.3 A1-A6) ----
+    res("A1-gate", g403 == 403 and nrec_pre == 0, "before consent=%s nrec=%s" % (g403, nrec_pre))
+    # A4: after the consent, before "written down", the record route is 409
+    c409, _h, _b = raw("POST", "/ark/rec", b"before the backup", headers=H)
+    n409 = rec_count(n)
+    b1, _h, key1 = raw("POST", "/ark/key/backup", "", headers=H)
+    b2, _h, _b2 = raw("POST", "/ark/key/backup", "", headers=H)
+    bg, _h, bgb = raw("GET", "/ark/key/backup", headers=H)
+    try:
+        kfile = open(os.path.join(pfs, "ark.key"), "rb").read().hex()
+    except OSError:
+        kfile = ""
+    key1 = key1.decode("latin-1").strip()
+    bd, _h, _b = raw("POST", "/ark/key/backup/done", "", headers=H)
+    print("[ark-app] note backup: 409=%s nrec=%s first=%s second=%s get=%s done=%s key=%s file=%s"
+          % (c409, n409, b1, b2, bg, bd, key1[:8], kfile[:8]), flush=True)
+
+    # A1: a record, read back byte for byte
+    _n0, sealed0, _r = rec_ls(n)
+    p1, _h, j1 = raw("POST", "/ark/rec", BODY1, headers=dict(H, **{"Content-Type": "application/octet-stream"}))
+    m = re.search(rb'"no":(\d+),"seq":(\d+)', j1)
+    no1 = int(m.group(1)) if m else -1
+    g1, _h, back = raw("GET", "/ark/rec/%d" % no1, headers=H)
+    res("A1", p1 == 200 and m is not None and int(m.group(2)) == 1 and g1 == 200 and back == BODY1,
+        "post=%s %r get=%s same=%s" % (p1, j1[:40], g1, back == BODY1))
+    # A2: the shell sees it, the sealed index id moved
+    nr2, sealed1, rows = rec_ls(n)
+    res("A2", nr2 == 1 and rows.get(no1, (0,))[0] == 1 and rows.get(no1, (0, 0, 0))[2] == len(BODY1)
+        and sealed1 != "" and sealed1 != sealed0,
+        "nrec=%s rows=%s sealed %s->%s" % (nr2, rows, sealed0[:8], sealed1[:8]))
+    # A3: vis and learn add versions; the first version is self / no
+    st0, _h, js0 = raw("GET", "/ark/rec.json", headers=H)
+    v1, _h, jv = raw("POST", "/ark/rec/%d/vis" % no1, "public", headers=H)
+    l1, _h, jl = raw("POST", "/ark/rec/%d/learn" % no1, "yes", headers=H)
+    s2, _h, js2 = raw("GET", "/ark/rec.json", headers=H)
+    t0 = js0.decode("utf-8", "replace"); t2 = js2.decode("utf-8", "replace")
+    ok3 = (st0 == 200 and '"vis":"self"' in t0 and '"learn":"no"' in t0 and '"seq":1' in t0
+           and v1 == 200 and b'"seq":2' in jv and l1 == 200 and b'"seq":3' in jl
+           and s2 == 200 and '"vis":"public"' in t2 and '"learn":"yes"' in t2 and '"seq":3' in t2)
+    g3, _h, back3 = raw("GET", "/ark/rec/%d" % no1, headers=H)
+    res("A3", ok3 and back3 == BODY1, "json0=%r vis=%s %r learn=%s %r json2=%r same=%s"
+        % (t0[:120], v1, jv[:30], l1, jl[:30], t2[:120], back3 == BODY1))
+    # A5: no counting / ranking words in the list or the page
+    _s, _h, page = raw("GET", "/")
+    # whole words (the page has "WebViews" in a CSS comment: not a count of views)
+    pg = page.decode("utf-8", "replace").lower()
+    hits = [w for w in RANK_WORDS
+            if re.search(r"(?<![a-z_])%s(?![a-z_])" % re.escape(w), t2.lower())
+            or re.search(r"(?<![a-z_])%s(?![a-z_])" % re.escape(w), pg)]
+    res("A5", s2 == 200 and not hits, "words=%s" % hits)
+    # A6: 16 KB is the limit of one POST; over it is 413 and nothing written
+    big_ok, _h, _b = raw("POST", "/ark/rec", b"x" * 16384, headers=H)
+    nr6a = rec_count(n)
+    big_no, _h, _b = raw("POST", "/ark/rec", b"y" * 16385, headers=H)
+    nr6b = rec_count(n)
+    res("A6", big_ok == 200 and big_no == 413 and nr6a == 2 and nr6b == 2,
+        "16384=%s 16385=%s nrec %s->%s" % (big_ok, big_no, nr6a, nr6b))
+    # AH (7.2 1, 4): the heir's public key by HTTP: set, read back, clear, refuse a bad one
+    HEIR = "ab" * 32
+    h1, _h, _b = raw("POST", "/ark/heir", HEIR, headers=H)
+    h2, _h, hb2 = raw("GET", "/ark/heir", headers=H)
+    h3, _h, _b = raw("POST", "/ark/heir", "zz", headers=H)
+    h4, _h, hb4 = raw("GET", "/ark/heir", headers=H)
+    h5, _h, _b = raw("POST", "/ark/heir", "clear", headers=H)
+    h6, _h, hb6 = raw("GET", "/ark/heir", headers=H)
+    res("AH", h1 == 200 and h2 == 200 and ('"heir":"%s"' % HEIR).encode() in hb2 and h3 == 400
+        and h4 == 200 and ('"heir":"%s"' % HEIR).encode() in hb4 and h5 == 200 and h6 == 200
+        and b'"heir":null' in hb6,
+        "set=%s get=%s %r bad=%s after-bad=%r clear=%s get=%s %r" % (h1, h2, hb2[:90], h3, hb4[:30], h5, h6, hb6[:40]))
+    # A4 (this boot): 409 before "written down" wrote nothing; the key once, as the file
+    a4 = (c409 == 409 and n409 == 0 and b1 == 200 and re.fullmatch(r"[0-9a-f]{64}", key1 or "")
+          and key1 == kfile and b2 == 410 and bg in (404, 405) and bd == 200)
     n.stop()
+
+    # boot 3: the key is not shown again after a restart
+    n = Node("3")
+    n.up()
+    b3, _h, _b = raw("POST", "/ark/key/backup", "", headers={"X-Galaxy-Token": read_token()})
+    r3, _h, back4 = raw("GET", "/ark/rec/%d" % no1, headers={"X-Galaxy-Token": read_token()})
+    _n3, sealed3, _r3 = rec_ls(n)
+    n.stop()
+    res("A4", a4 and b3 == 410 and r3 == 200 and back4 == BODY1,
+        "409=%s nrec=%s first=%s second=%s get=%s done=%s same-as-file=%s restart=%s"
+        % (c409, n409, b1, b2, bg, bd, key1 == kfile, b3))
+
+    # A4-import: the written-down key on an empty node opens the sealed copies;
+    # a node that has ark.key refuses the import and keeps its bytes
+    pfs2 = os.path.join(work, "pfs2")
+    os.makedirs(pfs2, exist_ok=True)
+    for f in os.listdir(pfs):        # the blocks only (as the net would bring them)
+        if re.fullmatch(r"[0-9a-f]{64}(\.org)?", f):
+            with open(os.path.join(pfs, f), "rb") as a, open(os.path.join(pfs2, f), "wb") as b:
+                b.write(a.read())
+    env2 = dict(env, PKERNEL_PFS_DIR=pfs2, PKERNEL_GALAXY="0")
+    env_keep = env
+    env = env2
+    n = Node("import")
+    time.sleep(3)
+    imp = shell_wait(n, "ark key import " + (key1 or "0" * 64), r"\[ark-key\] import[^\r\n]*")
+    shell_wait(n, "ark rec restore " + (sealed3 or "0" * 64), r"\[ark-rec\] restore[^\r\n]*", timeout=120)
+    sm = shell_wait(n, "ark rec sum %d" % max(no1, 0), r"\[ark-rec\] sum no=\d+ seq=\d+ len=\d+ sha256=([0-9a-f]{64})")
+    k2 = open(os.path.join(pfs2, "ark.key"), "rb").read() if os.path.exists(os.path.join(pfs2, "ark.key")) else b""
+    other = "1" * 64
+    ref = shell_wait(n, "ark key import " + other, r"\[ark-key\] import[^\r\n]*")
+    k3 = open(os.path.join(pfs2, "ark.key"), "rb").read() if os.path.exists(os.path.join(pfs2, "ark.key")) else b""
+    n.stop()
+    env = env_keep
+    import hashlib
+    res("A4-import", imp is not None and "written" in imp and k2.hex() == key1
+        and sm == hashlib.sha256(BODY1).hexdigest() and ref is not None and "refused" in ref and k3 == k2,
+        "import=%r sum=%s refuse=%r kept=%s" % (imp, (sm or "")[:8], ref, k3 == k2))
 finally:
     pass

@@ -345,7 +345,8 @@ const GX_TOKEN=(function(){
 (function(){
   const f0=window.fetch.bind(window);
   window.fetch=function(u,o){
-    if(typeof u==="string" && u.charAt(0)==="/" && GX_TOKEN){
+    // same origin only: "/x", never "//host/x" or "/\host/x" (audit-185)
+    if(typeof u==="string" && /^\/(?![\/\\])/.test(u) && GX_TOKEN){
       o=Object.assign({},o||{});
       const h=new Headers(o.headers||{}); h.set("X-Galaxy-Token",GX_TOKEN);
       o.headers=h;
