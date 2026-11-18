@@ -45,3 +45,6 @@
 
 relay＋3 台、node 2 を kill -9、DEAD の後に同じ dir で起こす（台本 pk-scratch/n2c/i5.sh、2 腕同時に 1 回ずつ）。戻るまで: 実装 1.1 s・0.0 s、陰性 INC_RESET 0.7 s・0.3 s＝**陰性は赤にならない**。直に届く電文は incarnation を見ずに ALIVE に戻す（swim_rx の「recovered (via rx)」）ので、中継で全員が直に聞こえる網では保存の効きは見えない。効くのは噂だけで聞く仲間のとき（読み）。I5 は門にしない
 
+## 8. 監査-189（2026-11-19、限界つき PASS）
+
+先端 5741cca1 を容器で取り直した: crown x86・aarch64 の .text・.rodata が master と全バイト同じ、hosted x86_64 警告 57（master と同じ）・aarch64・Windows OK。試験 ALL PASS、陰性 4 つとも狙いが赤（KEY_EPHEMERAL は I2・I2b も赤）。試験先 b4e73c63 で I1・I2・I2b・I2s・IN 赤、I1e 緑＝実装者と同じ。私の壊し: move_aside が .bad を上書き→I2b だけ赤。**node_seed.bad も在るときに上書き→全部緑＝穴 H31**。網あり（relay なしの port）でも 2 回の起動で鍵・番号が同じ・incarnation 1→2。node.incarn を 2 B に切る→.bad へ退けて 1 から、255→256（電文は 0、§2 4 のとおり）。§5 の ③ は読んだ: 3 つとも呼んだときの鍵を pin する自己試験＝鍵が残っても壊れない。限界: **末尾に改行のある node_seed（33 B）は master では受け入れたが、今は .bad に退けて番号が変わる**（1 行言う。リポジトリに改行つきで書く所は無い。手で書いた人だけ）。同じ PKERNEL_PFS_DIR を 2 台で使えば同じ鍵（node_seed と同じ、前からの形）。Windows の rename は測っていない
