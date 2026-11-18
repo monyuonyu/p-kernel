@@ -1108,6 +1108,23 @@ static void test_hold(void)
 #define test_hold() ((void)0)
 #endif
 
+/* ==== one flag for the records (ark-entry.md 7.10 1) ====
+ * The shell (`ark rec|heir|key`, its own task) and the galaxy routes below (the
+ * galaxy task) use the same buffers (body, rec, desc, heir, the key). Whoever is
+ * inside holds http_busy; the other side does nothing: the page gets 503, the shell
+ * says busy in one line. Taken with an atomic exchange (the two tasks can be cut
+ * between a test and a set). Falsifier -DARK_REC_SHELL_NO_FLAG: the shell goes in
+ * without it (as before 2026-11-19). */
+IMPORT void sio_send_frame(const UB *buf, INT size);
+static void con(const char *s) { UW n = 0; while (s[n]) n++; sio_send_frame((const UB *)s, (INT)n); }
+static INT http_busy;
+#define ARK_HTTP_BUSY  (-9)
+#define ARK_HTTP_NONE  (-4)
+
+static INT  rec_take(void)    { return __atomic_exchange_n(&http_busy, 1, __ATOMIC_ACQ_REL) ? -1 : 0; }
+static void rec_release(void) { __atomic_store_n(&http_busy, 0, __ATOMIC_RELEASE); }
+static INT  http_enter(void)  { if (rec_take() != 0) return -1; if (!P) P = con; return 0; }
+
 INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *))
 {
     P = pr;
@@ -1115,24 +1132,22 @@ INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *))
     UW n = wordlen(a, al);
     INT w = word_is(a, n, "rec") ? 1 : word_is(a, n, "heir") ? 2 : word_is(a, n, "key") ? 3 : 0;
     if (!w) return 0;
+#ifndef ARK_REC_SHELL_NO_FLAG
+    if (rec_take() != 0) { pr("[ark] busy: the page is using the records; try again\r\n"); return 1; }
+#endif
     test_hold();
     if (w == 1) cmd_rec(a + n, al - n);
     else if (w == 2) cmd_heir(a + n, al - n);
     else cmd_key(a + n, al - n);
+#ifndef ARK_REC_SHELL_NO_FLAG
+    rec_release();
+#endif
     return 1;
 }
 
 /* ==== the galaxy routes (ark-entry.md 7.2 1-4): the same functions as the shell ====
- * Every call runs on the galaxy task; the shell runs on its own. The buffers above are
- * shared, so a call that finds the other one inside returns ARK_HTTP_BUSY (limit: the
- * flag is not atomic). The lines go to the console like the shell's. */
-IMPORT void sio_send_frame(const UB *buf, INT size);
-static void con(const char *s) { UW n = 0; while (s[n]) n++; sio_send_frame((const UB *)s, (INT)n); }
-static INT http_busy;
-#define ARK_HTTP_BUSY  (-9)
-#define ARK_HTTP_NONE  (-4)
-
-static INT http_enter(void) { if (http_busy) return -1; http_busy = 1; if (!P) P = con; return 0; }
+ * Every call runs on the galaxy task and takes the flag above. The lines go to the
+ * console like the shell's. */
 
 /* a new record (no < 0) or a new version of `no` with body b[0..len); the number and
  * version out. 0 = written, ARK_HTTP_NONE = no such record, -1 = not written. */
@@ -1149,7 +1164,7 @@ INT ark_rec_http_put(INT no, const U1 *b, UW len, UW *out_no, UW *out_seq)
             if (r == 0) { *out_no = pv_no; *out_seq = pv_seq; }
         }
     }
-    http_busy = 0;
+    rec_release();
     return r;
 }
 
@@ -1167,7 +1182,7 @@ INT ark_rec_http_flag(UW no, INT vis, INT learn, UW *out_seq)
         if (r == 0) *out_seq = pv_seq;
         if (r == 0 && learn == 0) teach_withdraw(no);
     }
-    http_busy = 0;
+    rec_release();
     return r;
 }
 
@@ -1179,7 +1194,7 @@ INT ark_rec_http_get(UW no, const U1 **out, UW *len)
     if (desc_load() > 0 && no < desc.nrec && rec_find(no, 0) == 0)
         r = body_read(&rec) == 0 ? 0 : -1;
     if (r == 0) { *out = body; *len = rec.len; }
-    http_busy = 0;
+    rec_release();
     return r;
 }
 
@@ -1211,7 +1226,7 @@ INT ark_rec_http_list(char *o, UW cap)
         at = jput(o, at, cap, "}");
     }
     at = jput(o, at, cap, "]}\n");
-    http_busy = 0;
+    rec_release();
     if (at + 2 >= cap) return -1;              /* cut: say so rather than send half */
     o[at] = 0;
     return (INT)at;
@@ -1256,7 +1271,7 @@ INT ark_heir_http_set(const char *hex)
     }
     if (r == 0 && pfs_dag_save((const UB *)"ark/heir", 8, heir, sizeof heir) != PFS_OK) r = -1;
     if (r == 0) { P(heir[0] ? "[ark-heir] set " : "[ark-heir] cleared"); if (heir[0]) phex(heir + 1, 4); P(" (http)\r\n"); }
-    http_busy = 0;
+    rec_release();
     return r;
 }
 /* the heir now: 1 and out = 64 hex, 0 = none (never set, or cleared) */
@@ -1270,6 +1285,6 @@ INT ark_heir_http_get(char out[65])
         out[64] = 0;
         r = 1;
     }
-    http_busy = 0;
+    rec_release();
     return r;
 }
