@@ -51,6 +51,11 @@ static U1  node_pk[ED25519_PUBLIC_KEY_LEN];
 static U1  node_sk[ED25519_SECRET_KEY_LEN];   /* seed||pk — NEVER gossiped   */
 static INT node_have_key   = 0;
 static INT node_keygen_strong = 0;
+#ifdef _TK_HOSTED_LIBC_
+/* N2c (research/n2c-identity.md): where this run's key came from.
+ * 0 = made for this run only, 1 = made now and kept (node.key), 2 = read from node.key */
+static INT node_key_src = 0;
+#endif
 
 INT sign_node_key_ensure(void)
 {
@@ -58,7 +63,16 @@ INT sign_node_key_ensure(void)
     int strong;
     if (node_have_key) return 1;
 
+#ifdef _TK_HOSTED_LIBC_
+    {   /* N2c: hosted keeps the key in $PKERNEL_PFS_DIR/node.key (node_ident.c) */
+        IMPORT int pk_node_key_seed(unsigned char seed[32]);
+        int f = pk_node_key_seed(seed);
+        strong = f & 1;
+        node_key_src = (f & 2) ? 2 : (f & 4) ? 1 : 0;
+    }
+#else
     strong = sign_entropy(seed, (int)sizeof seed);
+#endif
     node_keygen_strong = strong;
     ed25519_keypair_from_seed(seed, node_pk, node_sk);
     /* scrub the local seed copy; node_sk already embeds it (TweetNaCl layout) */
@@ -71,6 +85,26 @@ INT sign_node_key_ensure(void)
     }
     return 1;
 }
+
+#ifdef _TK_HOSTED_LIBC_
+IMPORT int pkernel_default_node_id(void);
+
+/* `sign key`: "[sign] key <64 hex> src=ephemeral|new|disk id=<default node id>" */
+void sign_key_show(void)
+{
+    static const char H[] = "0123456789abcdef";
+    char hx[2 * ED25519_PUBLIC_KEY_LEN + 1];
+    UW i;
+    if (!sign_node_key_ensure()) { sg_puts("[sign] no node key\r\n"); return; }
+    for (i = 0; i < ED25519_PUBLIC_KEY_LEN; i++) {
+        hx[2 * i] = H[(node_pk[i] >> 4) & 0xF]; hx[2 * i + 1] = H[node_pk[i] & 0xF];
+    }
+    hx[2 * ED25519_PUBLIC_KEY_LEN] = 0;
+    sg_puts("[sign] key "); sg_puts(hx);
+    sg_puts(node_key_src == 2 ? " src=disk" : node_key_src == 1 ? " src=new" : " src=ephemeral");
+    sg_puts(" id="); sg_putdec((UW)pkernel_default_node_id()); sg_puts("\r\n");
+}
+#endif
 
 const U1 *sign_node_pubkey(void)
 {

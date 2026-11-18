@@ -36,3 +36,12 @@
 ## 5. 監査-183（2026-11-15、限界つき PASS。作る回への条件）
 
 §1 は 4 つともコードどおり（sign.c 55 行、node_id.c 109〜140 行、swim.c 131 行の UB、allow_pk はメモリ）。条件: ① **狭い番号のぶつかりで 5 が揺れる**（同じ番号・別の鍵の 2 台が交互に聞こえると、そのたび別人として状態を捨てる）＝狭いぶつかりは最初の鍵を保ち、もう一方は言うだけ。I6 に「狭い 2 台が同じ番号で状態の捨てが 1 回以下」 ② 指紋は v2 のビーコンにだけ載る＝v1 だけの狭いノードのぶつかりは見えない、と書く ③ 鍵が残ると genome.c 548・gen_succession.c 368・lm_self.c 606 の「自分の鍵」が再起動をまたぐ＝実装の回はこの 3 つを読む ④ 小さい指紋を作れる者は相手を引き直させ続けられる（Sybil と同じ限界）。`leave` は node.key を残す（node_seed と同じ）
+
+## 6. 第 1 段（2026-11-19、feat/n2c-identity、監査待ち）
+
+決めたこと 1・4 だけ。arch/linux/node_ident.c（hosted、sign.c・swim.c は `_TK_HOSTED_LIBC_` の中だけ＝ベア不変）。試験 tests/host/run_n2c_identity.sh（I1・I1e・I2・I2b・I2s・IN、陰性 4）。I2 に足した形: node.key.bad も在れば何も上書きせず、その回だけの鍵で動く。弱い乱数の鍵は残さない。語 `sign key`。限界: 生きている間の反論で上がった incarnation は残さない（起動の +1 だけ）。Windows は rename が上書きしない＝2 回目から node.incarn が書けない（1 行言う。読み、測っていない。pfs_dur_write 全体の話）。I5 は §7
+
+## 7. I5 の測り（2026-11-19、門ではない）
+
+relay＋3 台、node 2 を kill -9、DEAD の後に同じ dir で起こす（台本 pk-scratch/n2c/i5.sh、2 腕同時に 1 回ずつ）。戻るまで: 実装 1.1 s・0.0 s、陰性 INC_RESET 0.7 s・0.3 s＝**陰性は赤にならない**。直に届く電文は incarnation を見ずに ALIVE に戻す（swim_rx の「recovered (via rx)」）ので、中継で全員が直に聞こえる網では保存の効きは見えない。効くのは噂だけで聞く仲間のとき（読み）。I5 は門にしない
+

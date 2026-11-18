@@ -161,6 +161,7 @@ IMPORT int  student_boot_restore(void (*emit)(const char *));
 IMPORT int  student_shell_cmd(const char *args, void (*emit)(const char *));
 IMPORT void lm_self_test(void);                       /* living-mind Self */
 IMPORT void sign_self_test(void);                      /* signing.md sign suite */
+IMPORT void sign_key_show(void);                       /* N2c: `sign key`        */
 IMPORT void tcb_churn(W cycles, W concurrency);        /* KILL-CHURN-CRASH repro */
 IMPORT void tcb_churn_pri(W cycles, W concurrency, W vpri);
 static void print_dec_s(W v);   /* fwd: used by cmd_net for multi-digit node id */
@@ -1344,7 +1345,8 @@ EXPORT INT usermain(void)
             const UB *a = line + 4; UW al = (UW)(n - 4);
             while (al && (*a==' '||*a=='\t')) { a++; al--; }
             if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') sign_self_test();
-            else print("usage: sign test\r\n");
+            else if (al >= 3 && a[0]=='k'&&a[1]=='e'&&a[2]=='y') sign_key_show();
+            else print("usage: sign test|key\r\n");
         } else if (starts_with(line, n, "compat") && (n == 6 || line[6] == ' ')) {
             /* compat-migration-chain-plan.md §5: `compat test` runs the
              * migration-chain acceptance suite ([migrate-forward]); `compat

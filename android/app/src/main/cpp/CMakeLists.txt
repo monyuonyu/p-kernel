@@ -113,6 +113,8 @@ set(ARCH_SHARED_SRC
     # net_relay / galaxy when PKERNEL_NODE_ID is unset). Lock-stepped with
     # boot/linux/Makefile's ARCH_SHARED_C_SRCS.
     ${ARCH_LX}/node_id.c
+    # N2c: the node key and the incarnation kept across restarts.
+    ${ARCH_LX}/node_ident.c
     # `tkconf pool` / `tkconf nosw`: the shared-state probes for the exit
     # dispatch (pk_nosw.h), on every hosted target.
     ${ARCH_LX}/pool_preempt.c

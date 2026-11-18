@@ -38,11 +38,25 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>       /* _commit */
+#endif
 
 #include "sha256.h"   /* from relay/, on the include path (see Makefile). */
 
 #define DNODE_MAX  64              /* keep in sync with arch/common/include/drpc.h */
 #define SEED_LEN   16
+
+/* one line on the p-kernel console; stderr when linked without it
+ * (test_node_id.c builds this file alone) */
+extern void sio_send_frame(const unsigned char *buf, int size) __attribute__((weak));
+static void nid_say(const char *s)
+{
+    if (sio_send_frame) sio_send_frame((const unsigned char *)s, (int)strlen(s));
+    else fputs(s, stderr);
+}
 
 /* map a 32-byte digest to a node id in [1 .. DNODE_MAX-1] (never 0). */
 static int digest_to_id(const unsigned char digest[SHA256_DIGEST_SIZE])
@@ -108,12 +122,35 @@ static int seed_from_pfs_dir(const char *pfs_dir, unsigned char out[SEED_LEN])
     /* try to read an existing seed first. */
     int fd = open(path, O_RDONLY);
     if (fd >= 0) {
-        char hex[2*SEED_LEN + 1] = {0};
-        ssize_t n = read(fd, hex, 2*SEED_LEN);
+        char hex[2*SEED_LEN + 2] = {0};
+        ssize_t n = read(fd, hex, 2*SEED_LEN + 1);
         close(fd);
         if (n == 2*SEED_LEN && seed_from_hex(hex, out) == 0)
             return 0;
-        /* a short/garbled file: fall through and re-mint. */
+#ifndef N2C_NC_SEED_REMINT
+        /* N2c (research/n2c-identity.md §2 1): a short/garbled seed is not
+         * re-minted over silently (the id would change without a word). Keep it
+         * as node_seed.bad and say so; if node_seed.bad is there too, touch
+         * nothing and give this run no seed (the caller falls back to id 1). */
+        {
+            char bad[1100], m[200];
+            struct stat st;
+            snprintf(bad, sizeof(bad), "%s.bad", path);
+            if (stat(bad, &st) == 0 || rename(path, bad) != 0) {
+                snprintf(m, sizeof(m), "[node-id] node_seed: not %d hex chars and node_seed.bad is "
+                         "there too; nothing changed on disk, id 1 for this run\r\n", 2*SEED_LEN);
+                nid_say(m);
+                return -1;
+            }
+            snprintf(m, sizeof(m), "[node-id] node_seed: not %d hex chars; kept as node_seed.bad, "
+                     "a new seed (the default id may change)\r\n", 2*SEED_LEN);
+            nid_say(m);
+        }
+#endif
+    } else if (errno != ENOENT) {
+        /* there but unreadable: never write over it (same rule as node.key) */
+        nid_say("[node-id] node_seed: cannot be read; nothing changed on disk, id 1 for this run\r\n");
+        return -1;
     }
 
     /* mint a new seed and persist it (best-effort; mkdir is the caller's
@@ -128,11 +165,33 @@ static int seed_from_pfs_dir(const char *pfs_dir, unsigned char out[SEED_LEN])
     }
     hex[2*SEED_LEN] = '\0';
 
-    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (fd >= 0) {
-        ssize_t w = write(fd, hex, 2*SEED_LEN);
-        (void)w;
-        close(fd);
+    /* N2c: tmp, fsync, rename, then the directory (a cut write must not leave
+     * a short node_seed that the next start would have to set aside). */
+    {
+        char tmp[1100];
+        snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+#ifdef _WIN32
+        fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
+#else
+        fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+#endif
+        if (fd >= 0) {
+            ssize_t w = write(fd, hex, 2*SEED_LEN);
+#ifdef _WIN32
+            int sy = _commit(fd);
+#else
+            int sy = fsync(fd);
+#endif
+            close(fd);
+            if (w == 2*SEED_LEN && sy == 0 && rename(tmp, path) == 0) {
+#ifndef _WIN32
+                int dfd = open(pfs_dir, O_RDONLY | O_DIRECTORY);
+                if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
+#endif
+            } else {
+                unlink(tmp);
+            }
+        }
     }
     /* even if the write failed we still return the freshly-minted seed:
      * the id is stable for THIS process at least, and the next boot will
