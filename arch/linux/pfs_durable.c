@@ -119,7 +119,9 @@ static int dur_is_weights(const char *fname)
  * read re-hashes it against its id (pfs_get). Every fsync this file does is
  * counted (pfs_dur_fsync_count, W13). Windows has no syncfs: lazy = durable. */
 static unsigned long dur_fsync_n;
+#ifndef _WIN32
 static int dur_lazy_pending;
+#endif
 unsigned long pfs_dur_fsync_count(void) { return dur_fsync_n; }
 static int dur_fsync(int fd)
 {
@@ -149,13 +151,15 @@ int pfs_dur_sync(void)
 {
 #ifndef _WIN32
     const char *dir = pfs_dur_dir();
-    if (!dir || !dur_lazy_pending) return 0;
+    /* the mark is cleared BEFORE the syncfs: a lazy write by another task
+     * (pfs_repl_rx) during it sets the mark again, never lost */
+    if (!dir || !__atomic_exchange_n(&dur_lazy_pending, 0, __ATOMIC_ACQ_REL)) return 0;
     int dfd = open(dir, O_RDONLY | O_DIRECTORY);
-    if (dfd < 0) return -1;
+    if (dfd < 0) { __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE); return -1; }
     dur_fsync_n++;
     int r = (int)syscall(SYS_syncfs, dfd);
     close(dfd);
-    if (r == 0) dur_lazy_pending = 0;
+    if (r != 0) __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE);
     return r == 0 ? 0 : -1;
 #else
     return 0;
@@ -210,7 +214,7 @@ static int dur_write(const char *fname, const void *data, unsigned len, int sync
         int dfd = open(dir, O_RDONLY | O_DIRECTORY);
         if (dfd >= 0) { (void)dur_fsync(dfd); close(dfd); }
     } else {
-        dur_lazy_pending = 1;
+        __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE);
     }
 #endif
     return 0;
