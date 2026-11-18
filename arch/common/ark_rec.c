@@ -664,6 +664,7 @@ static void fill(UW len, UW seed)
 
 /* E5 (ark-entry.md 6): `ark rec learn` sets this before put_version; -1 = keep */
 static INT pv_learn = -1;
+static UW  pv_no, pv_seq;                        /* what the last put_version wrote */
 
 /* a new record (no == desc.nrec) or a new version of record `no` */
 static INT put_version(INT is_new, UW no, UW kind, UW len, INT vis)
@@ -705,6 +706,7 @@ static INT put_version(INT is_new, UW no, UW kind, UW len, INT vis)
     }
     rec.rec_no = no;
     rec.len = len;
+    pv_no = no; pv_seq = rec.seq;                 /* rec is reused by index_set */
     long t = time(0);
     rec.time_lo = (UW)t; rec.time_hi = (UW)((unsigned long)t >> 16 >> 16);
     /* 5: AKSF -> AKSR -> AKRF -> AKRR -> index leaf .. root (AKSI, AKRI) -> AKSD -> ark/rec */
@@ -1125,7 +1127,7 @@ INT ark_rec_http_put(INT no, const U1 *b, UW len, UW *out_no, UW *out_seq)
         else {
             cpy(body, b, len);
             r = put_version(no < 0, no < 0 ? 0 : (UW)no, 0, len, -1);
-            if (r == 0) { *out_no = rec.rec_no; *out_seq = rec.seq; }
+            if (r == 0) { *out_no = pv_no; *out_seq = pv_seq; }
         }
     }
     http_busy = 0;
@@ -1143,7 +1145,7 @@ INT ark_rec_http_flag(UW no, INT vis, INT learn, UW *out_seq)
         pv_learn = learn;
         r = put_version(0, no, 0, 0, vis);
         pv_learn = -1;
-        if (r == 0) *out_seq = rec.seq;
+        if (r == 0) *out_seq = pv_seq;
         if (r == 0 && learn == 0) teach_withdraw(no);
     }
     http_busy = 0;
