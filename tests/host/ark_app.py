@@ -395,7 +395,11 @@ try:
         % (t0[:120], v1, jv[:30], l1, jl[:30], t2[:120], back3 == BODY1))
     # A5: no counting / ranking words in the list or the page
     _s, _h, page = raw("GET", "/")
-    hits = [w for w in RANK_WORDS if w in t2.lower() or w in page.decode("utf-8", "replace").lower()]
+    # whole words (the page has "WebViews" in a CSS comment: not a count of views)
+    pg = page.decode("utf-8", "replace").lower()
+    hits = [w for w in RANK_WORDS
+            if re.search(r"(?<![a-z_])%s(?![a-z_])" % re.escape(w), t2.lower())
+            or re.search(r"(?<![a-z_])%s(?![a-z_])" % re.escape(w), pg)]
     res("A5", s2 == 200 and not hits, "words=%s" % hits)
     # A6: 16 KB is the limit of one POST; over it is 413 and nothing written
     big_ok, _h, _b = raw("POST", "/ark/rec", b"x" * 16384, headers=H)
