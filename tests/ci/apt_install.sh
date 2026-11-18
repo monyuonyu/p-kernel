@@ -20,8 +20,10 @@ set -u
 FIRST="${APT_FIRST_SECS:-300}"
 if timeout "$FIRST" apt-get install -y --no-install-recommends "$@"; then exit 0; fi
 echo "[apt_install] first try failed or passed ${FIRST}s; retrying on archive.ubuntu.com"
-for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-    [ -f "$f" ] && sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
+# any <region>.archive.ubuntu.com, as apt_update.sh (CI 44370186784: the mirror is us-east-2.ec2
+# now, and the azure-only rewrite sent the retry back to it). APT_SOURCES is for the test.
+for f in ${APT_SOURCES:-/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*}; do
+    [ -f "$f" ] && sed -i 's|[A-Za-z0-9.-]*\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
 done
 dpkg --configure -a || true    # in case the cut fell inside dpkg, not the download
 "$(dirname "$(readlink -f "$0")")/apt_update.sh"   # the update has its limits too (audit-107)
