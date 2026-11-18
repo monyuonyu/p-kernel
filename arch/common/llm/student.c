@@ -2743,10 +2743,17 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
                 double p = (double)prev->w[i];
                 d += ((double)st_blob_w_at(ba, (size_t)i) - p) * ((double)st_blob_w_at(bb, (size_t)i) - p);
             }
+#if defined(B5S10_ABS_COS)                  /* H27 falsifier: opposite directions grouped too */
+            double cgab = d / (gn[a] * gn[b]); if (cgab < 0.0) cgab = -cgab;
+            if (cgab >= tg) {
+#else
             if (d / (gn[a] * gn[b]) >= tg) {
+#endif
                 int ra = a, rb = b;
+#if !defined(B5S10_NO_ROOT)                 /* H27 falsifier: the roots are not followed */
                 while (par[ra] != ra) ra = par[ra];
                 while (par[rb] != rb) rb = par[rb];
+#endif
                 if (ra != rb) { if (ra < rb) par[rb] = ra; else par[ra] = rb; }
             }
         }
@@ -2757,6 +2764,8 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
             int k = keep[r];
 #if defined(B5S10_GROUP_FAR)                /* NC1 of the design: the farthest kept */
             if (k < 0 || gn[a] > gn[k]) keep[r] = a;
+#elif defined(B5S10_KEEP_FIRST)             /* H27 falsifier: the first member, |g| not looked at */
+            if (k < 0) keep[r] = a;
 #else
             if (k < 0 || gn[a] < gn[k]) keep[r] = a;
 #endif

@@ -1293,6 +1293,40 @@ static int s10unit(void)
       check(r == 2 && t[0] == 0.0f && near_f(t[1], 0.81915f, 1e-4), "s10-echo", "E cut by the echo, F not grouped with it: TS 0.819");
       check(hash(&x) == hash(&y), "s10-echo-bytes", "every byte of the merge of F alone");
       st_free(&x); st_free(&y); st_free(&e); st_free(&f); }
+    /* 7 (test-holes H27, audit-180). a. the nearer is the later one in weight-byte order:
+     *    A3 = 0.7 x (3,4,4,0.2) (2.1f's low bytes sort after 3.0f's), cos(A, A3) 0.9994; A3 kept */
+    { st_model a3; clone(&a3, &a); a3.w[0] = 2.1f; a3.w[1] = 2.8f; a3.w[2] = 2.8f; a3.w[3] = 0.14f;
+      st_model *p2[] = { &a, &a3 }, *p1[] = { &a3 }; float t[2], t1[1];
+      int r = s10u_merge(&x, &me, &pv, p2, NULL, 2, t, 1); s10u_merge(&y, &me, &pv, p1, NULL, 1, t1, 1);
+      printf("    near-later: rc %d TS(A) %.4f TS(A3) %.4f\n", r, (double)t[0], (double)t[1]);
+      check(r == 2 && t[0] == 0.0f && t[1] > 0.0f && t[1] == t1[0], "s10-near-later", "the nearer A3 is kept though A comes first");
+      check(hash(&x) == hash(&y), "s10-near-later-bytes", "every byte of the merge of A3 alone");
+      st_free(&x); st_free(&y); st_free(&a3); }
+    /* b. chains whose middle (55 degrees) has each of the three norms: always one group,
+     *    only the member with the smallest |g| keeps its TS (the roots must be followed) */
+    { static const double nrm[3][3] = { { 3, 2, 1 }, { 1, 3, 2 }, { 2, 1, 3 } };
+      static const double ang[3] = { 40, 55, 70 };
+      int ok = 1;
+      for (int v = 0; v < 3; v++) {
+          st_model c[3]; st_model *pc[3]; float t[3];
+          for (int k = 0; k < 3; k++) { s10u_at(&c[k], &pv, ang[k], nrm[v][k]); pc[k] = &c[k]; }
+          s10u_merge(&x, &me, &pv, pc, NULL, 3, t, 1); st_free(&x);
+          int kmin = 0; for (int k = 1; k < 3; k++) if (nrm[v][k] < nrm[v][kmin]) kmin = k;
+          int nz = 0; for (int k = 0; k < 3; k++) nz += t[k] > 0.0f;
+          double want = cos(ang[kmin] * 3.14159265358979323846 / 180.0);
+          printf("    chain v%d: TS %.4f %.4f %.4f\n", v, (double)t[0], (double)t[1], (double)t[2]);
+          ok &= nz == 1 && near_f(t[kmin], (float)want, 1e-4f);
+          for (int k = 0; k < 3; k++) st_free(&c[k]);
+      }
+      check(ok, "s10-chain-roots", "three chains, any norm in the middle: one group, the smallest |g| kept"); }
+    /* c. opposite directions are not one group: E at +81, F at -81 degrees (cos(E, F) -0.951),
+     *    both trusted (cos to g0 0.156), both keep their TS */
+    { st_model e, f; s10u_at(&e, &pv, 81, 1); s10u_at(&f, &pv, -81, 2);
+      st_model *pef[] = { &e, &f }; float t[2];
+      s10u_merge(&x, &me, &pv, pef, NULL, 2, t, 1); st_free(&x);
+      printf("    opposite: TS %.4f %.4f\n", (double)t[0], (double)t[1]);
+      check(near_f(t[0], 0.15643f, 1e-4) && near_f(t[1], 0.15643f, 1e-4), "s10-opposite", "cos -0.951: no group, both keep TS");
+      st_free(&e); st_free(&f); }
     /* 6. real models (s8unit's: trained on other quarters, no group): every byte of st_merge_trust_echo */
     enum { NM = 4 };
     st_model m[NM];
