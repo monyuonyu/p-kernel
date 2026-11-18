@@ -13,7 +13,7 @@
 | H28 | swarm_leave_restore の断りの入れ直し（0-14 S1、hosted） | 起動の `pfs_set_refuse_foreign(1)` を消す（印のある起動の後に他人の塊が入る） | 監査-182（run_swarm_leave.sh が ALL PASS のまま） | L6b の起動の後に同じ起動で `leave seed 300` を足し、`seed: refused` を見る。効きは小さい（印のある起動は網に出ない）。週 1 回の見直しの回（#43 の 5）で |
 | H30 | galaxy の合言葉の比べ gx_tok_eq（入口 ①、hosted） | 先頭の 1 字を比べない（i=1 から） | 監査-185（run_ark_app.sh の 9 項目とも緑。「1 字違い」は最後の字だけ） | A7-bad-token に「先頭の 1 字違い」「真ん中の 1 字違い」を足す。週 1 回の見直しの回で |
 | H31 | node_id.c の node_seed.bad（N2c 第 1 段、hosted） | node_seed.bad が在っても rename で上書きする（`stat(bad)` の確かめを消す） | 監査-189（run_n2c_identity.sh が ALL PASS のまま） | I2s の後にもう一度 node_seed を切って起こし、node_seed.bad が元のバイトのまま・id 1 の 1 行を見る（I2b と同じ形）。週 1 回の見直しの回で |
-| H32 | test_apt_update.sh の U6・U7（CI の足回り） | ci.yml が読めない（試験を別の場所へ写して走らせる）と python が落ちて出力が空＝PASS | 監査-190（APTX の監査で試験を /tmp に写したら U6・U7 が traceback のまま PASS。CI では tests/ci から走るので今は効いていない） | python の終了コードを見て、読めなければ bad。週 1 回の見直しの回で |
+| H32 | test_apt_update.sh の U6・U7（CI の足回り） | ci.yml が読めない（試験を別の場所へ写して走らせる）と python が落ちて出力が空＝PASS | 監査-190（APTX の監査で試験を /tmp に写したら U6・U7 が traceback のまま PASS。CI では tests/ci から走るので今は効いていない） | python の終了コードを見て、読めなければ bad。週 1 回の見直しの回で。**11-19 fix/h32-apt-ci-read で python の終了コードを見る形にした（監査待ち）: tests/ci から 9/9、/tmp へ写すと U6・U7 が赤（master は写しても PASS）** |
 | H11 | `tkconf fp` | xmm12〜15・x87・ymm を壊す | 0-1 の行（台帳） | 見るレジスタを足す。**実装 feat/h11-fp-hi（11-08 監査-165 の回）→ 監査-166 PASS で master（feat/fpctl-dispatch と一緒に）**: x86_64 に F3（xmm12〜15 を asm で持つ）・F4（MXCSR の丸め）・F5（前提）。壊し -DPK_PREEMPT_DROP_FP_HI・-DPK_PREEMPT_DROP_MXCSR は前の版では緑、今は F3・F4 が赤（run_nosw.sh の腕）。残り: x87・ymm の上半分・aarch64 の一部だけの失い（v8〜v31）。途中で見つけた: 自発的な切り替え（dispatch.S）は MXCSR の制御ビットと x87 の制御語を保存しない（ABI では呼び出し先保存）＝丸めモードがタスク間で漏れる（台帳 HOSTED-FP-CTL-NOT-SAVED、F6・F7 で直し、監査-166 で閉じた） |
 
 ## ふさいだ

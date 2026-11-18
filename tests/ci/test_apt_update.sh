@@ -102,7 +102,9 @@ for name, body in zip(parts[1::2], parts[2::2]):
         print(name, m[1] if m else 'none')
 PY
 )"
-if [ -z "$short" ]; then ok U6; else bad "U6 $(echo "$short" | tr '\n' ' ')"; fi
+prc=$?   # H32 (audit-190): an unreadable ci.yml made python fail with no output = PASS
+if [ "$prc" != 0 ]; then bad "U6 cannot read $CI (python rc $prc)"
+elif [ -z "$short" ]; then ok U6; else bad "U6 $(echo "$short" | tr '\n' ' ')"; fi
 
 # U7: a GitHub-hosted job installs through apt_install.sh. CI 41469844784 (2026-11-03): the
 # RNG0 job's bare `apt-get install` sat until the job's 30 minutes, "cancelled", a new red for
@@ -131,7 +133,9 @@ for name, body in zip(parts[1::2], parts[2::2]):
             break
 PY
 )"
-if [ -z "$bare" ]; then ok U7; else bad "U7 $(echo "$bare" | tr '\n' ' ')"; fi
+prc=$?
+if [ "$prc" != 0 ]; then bad "U7 cannot read $CI (python rc $prc)"
+elif [ -z "$bare" ]; then ok U7; else bad "U7 $(echo "$bare" | tr '\n' ' ')"; fi
 
 [ "$fails" = 0 ] && { echo "[apt-update] PASS"; exit 0; }
 echo "[apt-update] FAIL ($fails)"
