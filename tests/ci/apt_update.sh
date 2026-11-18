@@ -22,8 +22,10 @@ if timeout -k "$KILL" "$SECS" apt-get update; then exit 0; fi
 echo "[apt_update] first try failed or passed ${SECS}s; short apt timeouts"
 if timeout -k "$KILL" "$SECS" apt-get update "${SHORT[@]}"; then exit 0; fi
 echo "[apt_update] second try failed or passed ${SECS}s; retrying on archive.ubuntu.com"
+# any <region>.archive.ubuntu.com (azure until 2026-11, us-east-2.ec2 on CI 44370186784), not
+# security.ubuntu.com or ports.ubuntu.com (a dot must come before "archive")
 for f in $SOURCES; do
-    [ -f "$f" ] && sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
+    [ -f "$f" ] && sed -i 's|[A-Za-z0-9.-]*\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
 done
 if timeout -k "$KILL" "$SECS" apt-get update "${SHORT[@]}"; then exit 0; fi
 echo "[apt_update] third try failed or passed ${SECS}s"
