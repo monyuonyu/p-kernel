@@ -48,6 +48,8 @@
 #ifdef _WIN32
 #include <direct.h>	/* _mkdir (single-arg on Windows) */
 #include <io.h>		/* _commit (fsync equivalent)     */
+#else
+#include <sys/syscall.h>	/* SYS_syncfs (bionic has it as a syscall number too) */
 #endif
 
 /* sha256 digest is 32 bytes -> 64 lowercase hex chars per block-id name.
@@ -110,9 +112,59 @@ static int dur_is_weights(const char *fname)
     return strcmp(fname, "mind.rw") == 0 || strcmp(fname, "ns1_student.bin") == 0;
 }
 
-/* Atomic, fsync'd write of `len` bytes to <dir>/<fname>. Returns 0 on
- * success, -1 on any failure (or when persistence is disabled). */
+/* B5 D4 (research/b5-m-round.md §4): the student's chunks (quiet blocks, tens of
+ * thousands a round) are written WITHOUT the two fsyncs (tmp + rename only) and
+ * made durable by ONE syncfs at the end of the publish / the fetch
+ * (pfs_dur_sync). A chunk cut by a power loss reads back as "not there": every
+ * read re-hashes it against its id (pfs_get). Every fsync this file does is
+ * counted (pfs_dur_fsync_count, W13). Windows has no syncfs: lazy = durable. */
+static unsigned long dur_fsync_n;
+static int dur_lazy_pending;
+unsigned long pfs_dur_fsync_count(void) { return dur_fsync_n; }
+static int dur_fsync(int fd)
+{
+    dur_fsync_n++;
+#ifdef _WIN32
+    return _commit(fd);
+#else
+    return fsync(fd);
+#endif
+}
+static int dur_write(const char *fname, const void *data, unsigned len, int sync);
 int pfs_dur_write(const char *fname, const void *data, unsigned len)
+{
+    return dur_write(fname, data, len, 1);
+}
+int pfs_dur_write_lazy(const char *fname, const void *data, unsigned len)
+{
+#if defined(_WIN32) || defined(B5W_NC_FSYNC_EACH)
+    return dur_write(fname, data, len, 1);   /* falsifier W13: every chunk fsync'd */
+#else
+    return dur_write(fname, data, len, 0);
+#endif
+}
+/* one syncfs for everything written lazily since the last call; 0 = done or
+ * nothing pending */
+int pfs_dur_sync(void)
+{
+#ifndef _WIN32
+    const char *dir = pfs_dur_dir();
+    if (!dir || !dur_lazy_pending) return 0;
+    int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+    if (dfd < 0) return -1;
+    dur_fsync_n++;
+    int r = (int)syscall(SYS_syncfs, dfd);
+    close(dfd);
+    if (r == 0) dur_lazy_pending = 0;
+    return r == 0 ? 0 : -1;
+#else
+    return 0;
+#endif
+}
+
+/* Atomic write of `len` bytes to <dir>/<fname>, fsync'd unless `sync` is 0.
+ * Returns 0 on success, -1 on any failure (or when persistence is disabled). */
+static int dur_write(const char *fname, const void *data, unsigned len, int sync)
 {
     const char *dir = pfs_dur_dir();
     if (!dir) return -1;
@@ -141,11 +193,7 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
         if (w <= 0) { close(fd); unlink(tmp); return -1; }
         off += (unsigned)w;
     }
-#ifdef _WIN32
-    if (_commit(fd) != 0) { close(fd); unlink(tmp); return -1; }
-#else
-    if (fsync(fd) != 0) { close(fd); unlink(tmp); return -1; }
-#endif
+    if (sync && dur_fsync(fd) != 0) { close(fd); unlink(tmp); return -1; }
     close(fd);
 
     /* S1: a weights write that began before `leave` must not land after it
@@ -158,8 +206,12 @@ int pfs_dur_write(const char *fname, const void *data, unsigned len)
      * power loss, not just the file's own data blocks. Windows has no
      * directory-fsync fd; the rename is still atomic (P1 accepts the
      * weaker crash-durability). */
-    int dfd = open(dir, O_RDONLY | O_DIRECTORY);
-    if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
+    if (sync) {
+        int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+        if (dfd >= 0) { (void)dur_fsync(dfd); close(dfd); }
+    } else {
+        dur_lazy_pending = 1;
+    }
 #endif
     return 0;
 }
@@ -265,15 +317,18 @@ int pfs_dur_foreach(void (*cb)(const char *name, const void *data,
  * endian (the hosted pk_node_t). The block file name stays the sha256 (the
  * store is still self-verifying); a block without its .org is "unknown"
  * (written before S1, or the .org was lost). */
-int pfs_dur_org_write(const char *hex, unsigned origin)
+static int dur_org_write(const char *hex, unsigned origin, int lazy)
 {
     char name[PFS_DUR_HEX_LEN + 8];
     unsigned char b[2];
     if (snprintf(name, sizeof name, "%s.org", hex) >= (int)sizeof name) return -1;
     b[0] = (unsigned char)(origin & 0xFFu);
     b[1] = (unsigned char)((origin >> 8) & 0xFFu);
-    return pfs_dur_write(name, b, 2);
+    return lazy ? pfs_dur_write_lazy(name, b, 2) : pfs_dur_write(name, b, 2);
 }
+int pfs_dur_org_write(const char *hex, unsigned origin) { return dur_org_write(hex, origin, 0); }
+/* B5 D4: a chunk's .org goes with the chunk (made durable by pfs_dur_sync) */
+int pfs_dur_org_write_lazy(const char *hex, unsigned origin) { return dur_org_write(hex, origin, 1); }
 
 /* the origin recorded for block <hex>, or -1 when there is none */
 int pfs_dur_org_read(const char *hex)
@@ -310,7 +365,7 @@ int pfs_dur_move_aside(const char *hex, const char *sub)
 #endif
     if (rename(from, to) != 0) return -1;
 #ifndef _WIN32
-    { int dfd = open(dir, O_RDONLY | O_DIRECTORY); if (dfd >= 0) { (void)fsync(dfd); close(dfd); } }
+    { int dfd = open(dir, O_RDONLY | O_DIRECTORY); if (dfd >= 0) { (void)dur_fsync(dfd); close(dfd); } }
 #endif
     return 0;
 }

@@ -1632,6 +1632,12 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
     return r < 0 ? -1 : r;
 }
 
+/* W13 (research/b5-m-round.md §5): the fsyncs of the store during the verb publish
+ * and merge, said in one line. Weak: the unit tests link this file without
+ * pfs_durable.c. */
+extern unsigned long pfs_dur_fsync_count(void) __attribute__((weak));
+static unsigned long region_fsyncs(void) { return pfs_dur_fsync_count ? pfs_dur_fsync_count() : 0; }
+
 static int student_region_cmd(const char *q, emit_fn emit)
 {
     while (*q == ' ' || *q == '\t') q++;
@@ -1639,9 +1645,19 @@ static int student_region_cmd(const char *q, emit_fn emit)
     unsigned long g = strtoul(q, &end, 10);
     uint32_t gen = (end == q) ? 0u : (uint32_t)g;
     if (!student_region_try()) { emit("[baby] region: busy (a round is running), unchanged\r\n"); return -1; }
+    unsigned long f0 = region_fsyncs();
     int r = student_region_publish(gen, emit, "region");
+    int chunks = r;
+    unsigned long f1 = region_fsyncs();
     if (r > 0) r = student_region_merge(gen, emit, "region");
+    unsigned long f2 = region_fsyncs();
     student_region_done();
+    {
+        char line[160];
+        snprintf(line, sizeof line, "[baby] region: fsync publish %lu merge %lu (chunks %d)\r\n",
+                 f1 - f0, f2 - f1, chunks);
+        emit(line);
+    }
     return r < 0 ? -1 : 0;
 }
 
