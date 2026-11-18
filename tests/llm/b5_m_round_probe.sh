@@ -2,7 +2,7 @@
 # b5w2 M round, separating the limits of b5-wire2.md §7 (a measurement, not a test).
 #   two arms AT THE SAME TIME (this box throttles; no A/B across time):
 #     fs: as built (every received block: tmp write + fsync + rename + dir fsync, and a .org)
-#     nf: the same binary with fsync/fdatasync made no-ops by LD_PRELOAD (nofsync.so)
+#     nf: pfs_durable.c without its two fsync calls (a scratch copy of the tree, the binary is static)
 #   every 5 s per node: block files on disk, CPU ticks (user, sys), give-up lines, sent/replicated lines
 #   -> ① does a peer fetch stop at GL_ST_FETCH_MAXPASS (4096 passes) / ② is the late slowdown fsync
 #      or CPU (table/file probing) / ③ how many hold-acks a round sends (= replicated lines)
@@ -15,29 +15,34 @@ echo "== M3 $(git log --oneline -1 | cut -c1-9) $(date -Is)" >> $S
 B=$W/src/boot/linux_x86_64
 make -C $B > $W/build.log 2>&1 || { echo "BUILD FAIL" >> $S; exit 1; }
 make -C $W/src/relay > /dev/null 2>&1
-printf 'int fsync(int fd){(void)fd;return 0;}\nint fdatasync(int fd){(void)fd;return 0;}\n' > $W/nofsync.c
-gcc -shared -fPIC -O2 -o $W/nofsync.so $W/nofsync.c || { echo "SO FAIL" >> $S; exit 1; }
-file $B/p-kernel | cut -c1-120 >> $S
+# the binary is static (no LD_PRELOAD): the nf arm is a copy of the tree whose pfs_durable.c has
+# its two fsync calls (the file, the directory) removed. Measurement only, never committed.
+cp -r $W/src $W/src-nf
+sed -i 's/if (fsync(fd) != 0) { close(fd); unlink(tmp); return -1; }/(void)0;/; s/(void)fsync(dfd);/(void)0;/' $W/src-nf/arch/linux/pfs_durable.c
+echo "nf: fsync calls left in pfs_durable.c: $(grep -c 'fsync(' $W/src-nf/arch/linux/pfs_durable.c) (fs: $(grep -c 'fsync(' $W/src/arch/linux/pfs_durable.c))" >> $S
+make -C $W/src-nf/boot/linux_x86_64 > $W/build-nf.log 2>&1 || { echo "BUILD nf FAIL" >> $S; exit 1; }
+BNF=$W/src-nf/boot/linux_x86_64
+cmp -s $B/p-kernel $BNF/p-kernel && { echo "nf binary == fs binary (sed did nothing)" >> $S; exit 1; }
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 unset PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN
 
 declare -A PID
-start_arm() { # arm port preload
-  local arm=$1 port=$2 pre=$3
+start_arm() { # arm port binary
+  local arm=$1 port=$2 bin=$3
   mkdir -p $W/$arm
   $W/src/relay/relay -p $port > $W/$arm/relay.log 2>&1 &
   PID[$arm-r]=$!
   sleep 1
   for k in 1 2 3 4 5; do
     mkfifo $W/$arm/f$k; mkdir -p $W/$arm/d$k
-    env ${pre:+LD_PRELOAD=$pre} PKERNEL_NODE_ID=$k PKERNEL_AUTONET=1 PKERNEL_PFS_DIR=$W/$arm/d$k \
+    env PKERNEL_NODE_ID=$k PKERNEL_AUTONET=1 PKERNEL_PFS_DIR=$W/$arm/d$k \
         PKERNEL_RELAY=127.0.0.1:$port PKERNEL_DEVICE_TIER=M \
-        $B/p-kernel < $W/$arm/f$k > $W/$arm/n$k.log 2>&1 &
+        $bin < $W/$arm/f$k > $W/$arm/n$k.log 2>&1 &
     PID[$arm-$k]=$!
   done
 }
-start_arm fs 7611 ""
-start_arm nf 7612 "$W/nofsync.so"
+start_arm fs 7611 $B/p-kernel
+start_arm nf 7612 $BNF/p-kernel
 # fifos: fs on fd 11-15, nf on fd 21-25
 for k in 1 2 3 4 5; do eval "exec $((10 + k))<>$W/fs/f$k"; eval "exec $((20 + k))<>$W/nf/f$k"; done
 send_all() { # text
@@ -48,8 +53,6 @@ count_logs() { # pattern -> how many of the 10 logs have it
 }
 n=0; while [ $n -lt 360 ]; do [ "$(count_logs 'mind_merge_task up')" -ge 10 ] && break; sleep 0.5; n=$((n+1)); done
 echo "up after $((n/2)) s" >> $S
-grep -a "LD_PRELOAD\|ERROR: ld.so" $W/nf/n1.log | head -2 >> $S
-echo "preload in nf n1 maps: $(grep -c nofsync /proc/${PID[nf-1]}/maps)  in fs n1 maps: $(grep -c nofsync /proc/${PID[fs-1]}/maps)" >> $S
 
 # sampler
 sampler() {
@@ -86,8 +89,9 @@ echo "publish+first region lines after $(( $(date +%s) - t0 )) s" >> $S
 sleep 10
 send_all 'baby region 7'
 t1=$(date +%s); echo "fetch start $t1" >> $S
-# wait for the second region line on every node, at most M3_MAX s (default 2400)
-MAX=${M3_MAX:-2400}
+# wait for the second region line on every node, at most M3_MAX s (default 1500: the budget is
+# 1,350 s, research/b5-m-round.md §1, so a node not done by then already fails M1)
+MAX=${M3_MAX:-1500}
 while [ $(( $(date +%s) - t1 )) -lt $MAX ]; do
   c=0
   for arm in fs nf; do for k in 1 2 3 4 5; do [ "$(grep -ac '\[baby\] region: gen 7' $W/$arm/n$k.log)" -ge 2 ] && c=$((c+1)); done; done
@@ -104,5 +108,5 @@ send_all 'exit'
 sleep 2
 kill -9 ${PID[@]} $SP 2>/dev/null
 for arm in fs nf; do du -sh $W/$arm | tr '\t' ' ' >> $S; rm -rf $W/$arm/d1 $W/$arm/d2 $W/$arm/d3 $W/$arm/d4 $W/$arm/d5; done
-rm -rf $W/src
+rm -rf $W/src $W/src-nf
 echo DONE $(date -Is) >> $S

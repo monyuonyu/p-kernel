@@ -1,42 +1,43 @@
 # B5 第 2 段の M の周（設計メモ、未実装）
 
-2026-11-19 03:40 の回。b5-wire2.md §7 の限界 ①〜③ の切り分けと、M を周に収める直しの案と合否。
+2026-11-19 03:40 の回。b5-wire2.md §7 の限界 ①〜③ の切り分け、直しの案、合否。
 
 ## 1. 予算
 
-合体は周の 1/4 から（r3_incontext.c `student_region_task`）、次の gen の頭まで＝周 1800 秒なら 1,350 秒。M（5,578 塊）を 4 台から＝1 台 22,312 塊 → **1 台 16.5 塊/秒以上**、合体の計算の時間はその外。
+合体は周の 1/4 から次の gen まで（`student_region_task`）＝1800 秒なら 1,350 秒。M を 4 台から＝22,312 塊 → **1 台 16.5 塊/秒以上**。publish は周の 1/10 以内。
 
-## 2. 読みで分かったこと（gossip_learn.c・pfs_block.c・pfs_repl.c）
+## 2. 読み
 
-- ① `GL_ST_FETCH_MAXPASS` 4096 は**仲間 1 台ごと**の上限。1 pass は 60 ms＋走査なので 1 台分の取り寄せは最長 4 分強
-- 走査: 1 pass ごとに**足りない塊を全部** `pfs_get(id,0,0)` で探す。表（64）にない塊は flat の `<dir>/<hex>` を open（無ければ失敗）＝最初は 1 pass で 5,578 回
-- 受けた塊 1 つごとに `pfs_dur_write` が 2 回（塊と .org）、それぞれ tmp・fsync・rename・dir の fsync
-- 持ち主は unicast の want 1 つごとに、受けのタスクの中で塊のファイルを 2 回読み SHA-256 を 2 回（`pfs_has` と `send_block_to`）、512 B×8 通で送る
-- ③ hold-ack は受けた塊 1 つに 1 通＝1 台 1 周 22,312 通。受けた持ち主は `announce_hook` を呼ぶだけ
+- ① `GL_ST_FETCH_MAXPASS` 4096 は仲間 1 台ごと。1 pass＝60 ms＋走査
+- 走査は毎 pass **足りない塊を全部** `pfs_get`＝flat の open（最初は 5,578 回）
+- 受けた塊 1 つに `pfs_dur_write` 2 回（塊と .org）＝fsync 4 回
+- 持ち主は want 1 つに塊を 2 回読み SHA 2 回（`pfs_has`・`send_block_to`）
+- ③ hold-ack は受けた塊 1 つに 1 通
 
-## 3. 測り（m3.sh、腕 2 つを同時に）
+## 3. 測り（tests/llm/b5_m_round_probe.sh、master 7e8a4208、11-19 04:25〜）
 
-（結果は §5）
+腕 fs（そのまま）と nf（pfs_durable.c の fsync を外した写し、測りだけ）を同時に、容器の 4 コアに 10 台。
+- **② は fsync**: fs は publish も取り寄せも 1 台 **14〜17 塊/秒**、CPU は user 5〜8%・sys 10〜14%。nf は **190〜280 塊/秒**（n2 は 22,276 塊を約 2 分）。小さな測り: durable な 4 KB の put 7.6 ms、fsync なし 0.09 ms、open 5,578 回 40 ms
+- 1,500 秒で: **fs n2 は 3 台分 16,711 塊に 1,220 秒**（4 台なら約 1,630 秒＞1,350）、n4・n5 は 2 台分に 765 秒、n1・n3 は終わらず。**nf n2 は 4 台分と合体で 102 秒**。gave up 0、疑いは fs n2 に 1
+- fs の publish 178 秒（1/10＝180 秒の際）
+- ①: 15 塊/秒なら 1 台分 3,700 pass（約 100 ms）＝上限の際
+- ③: hold-ack は 1 周 22,276 通でも relay の CPU は最大 11%
+- 語で回すと members が 1〜5 に揺れる（記述子がそろう前に合体、疑いは 0）
 
-## 4. 直しの案（作る回で、1 つずつ測って）
+## 4. 直しの案（順番は §3 から）
 
-- D1 上限を pass の数から**締め切りの時刻**に（周の合体は次の gen の頭の 60 秒前まで、語は今の 4 分強のまま）。止まり（STALL）の判定は残す
-- D2 走査を**窓の分だけ**に: 足りない最初の塊からの位置を覚え、W 個の足りない塊を探したら止める。present は足し算で数える
-- D3 持ち主は want 1 つにつき 1 回だけ読む（`pfs_has` を外し `send_block_to` の `pfs_get` で決める）
-- D4 取り寄せた塊は fsync しない（tmp→rename だけ）。合体の前に 1 回 `syncfs`。中身は読むたびに SHA で確かめるので、途中で落ちて壊れた塊は「無い」に見えるだけ
-- D5 静かな塊（quiet の表で取った塊）には hold-ack を送らない（守りの単位ではない）
-- 順番は §3 の測りの結果で決める（大きい方から）
+- **D4（先）**: 生徒の塊（publish・取り寄せ）は塊ごとに fsync しない、最後に 1 回。壊れた塊は SHA で「無い」に見え、.org が消えた塊は `leave` が left-unknown/ へ退ける
+- D1: 上限を pass の数から締め切りの時刻に（STALL は残す）
+- D2: 走査は窓の分だけ／D3: 持ち主は 1 回だけ読む／D5: 静かな塊に hold-ack を送らない（D4 の後に測って効くなら）
 
 ## 5. 合否（作る前に固定）
 
-unit（run_b5_wire.sh に足す）
-- W11（D2）: 1 pass の探しは W＋1 回以下（数える口は試験のビルドだけ）。陰性 `B5W_NC_FULL_SCAN` で赤
-- W12（D1）: 1 pass に 1 塊ずつしか届かない仲間から 5,000 塊＝4,096 pass を超えても、締め切りの内なら取り寄せが成る。陰性 `B5W_NC_PASS_CAP` で赤
-- W0〜W10 は緑のまま
+unit（run_b5_wire.sh）
+- W13（D4）: publish と取り寄せ 1 回の fsync は 2 回以下、読み戻しは全バイト同じ。陰性 `B5W_NC_FSYNC_EACH` で赤
+- W12（D1）: 4,096 pass を超えても締め切りの内なら成る。陰性 `B5W_NC_PASS_CAP` で赤
+- W11（D2）: 1 pass の探しは W＋1 回以下。陰性 `B5W_NC_FULL_SCAN` で赤。W0〜W10 は緑のまま
 
-live M（relay＋5 台、`PKERNEL_DEVICE_TIER=M`、腕は m3.sh の形で語から、手元だけ）
-- M1: 5 台とも 2 つ目の region の行が出て members 5・fetched 4、`gave up` 0、**取り寄せの始まりから 1,350 秒以内**
-- M2: 疑い（`-> SUSPECT`・SELF-SUSPICION）0、`want table full` 0
-- M3: D5 を入れたら hold-ack の数は 1 台 1 周 64 以下
-- 腕は fs（そのまま）と、比べる相手として直す前の master を**同時に**走らせる（時間をまたいだ比べはしない）
-- 周期のタスク（`PKERNEL_B5_ROUND_S=1800`、2 周＝1 時間）は M1〜M2 が通ってから 1 回。既定で入れるのはその後
+live M（relay＋5 台、手元）
+- M1: `PKERNEL_B5_ROUND_S=600` で 2 周、各周 members 5・fetched 4・gave up 0、合体の行が 1/4 から 450 秒以内（1,350 秒より厳しい）（測りの後に語の形から直した、前の版 191d878c）
+- M2: 疑い 0・`want table full` 0。比べる相手（直す前の master）を同時に
+- 1800 秒の周は M1・M2 の後に 1 回。既定で入れるのはその後
