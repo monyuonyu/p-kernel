@@ -72,6 +72,29 @@ INT sign_node_key_ensure(void)
     return 1;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* N2c (research/n2c-identity.md): where this run's key came from.
+ * 0 = made for this run only, 1 = made now and kept (node.key), 2 = read from node.key */
+static INT node_key_src = 0;
+IMPORT int pkernel_default_node_id(void);
+
+/* `sign key`: "[sign] key <64 hex> src=ephemeral|new|disk id=<default node id>" */
+void sign_key_show(void)
+{
+    static const char H[] = "0123456789abcdef";
+    char hx[2 * ED25519_PUBLIC_KEY_LEN + 1];
+    UW i;
+    if (!sign_node_key_ensure()) { sg_puts("[sign] no node key\r\n"); return; }
+    for (i = 0; i < ED25519_PUBLIC_KEY_LEN; i++) {
+        hx[2 * i] = H[(node_pk[i] >> 4) & 0xF]; hx[2 * i + 1] = H[node_pk[i] & 0xF];
+    }
+    hx[2 * ED25519_PUBLIC_KEY_LEN] = 0;
+    sg_puts("[sign] key "); sg_puts(hx);
+    sg_puts(node_key_src == 2 ? " src=disk" : node_key_src == 1 ? " src=new" : " src=ephemeral");
+    sg_puts(" id="); sg_putdec((UW)pkernel_default_node_id()); sg_puts("\r\n");
+}
+#endif
+
 const U1 *sign_node_pubkey(void)
 {
     if (!node_have_key) return (const U1 *)0;
