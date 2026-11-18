@@ -6,6 +6,8 @@
 #   U3 every try hangs -> rc != 0 and the whole thing ends near the limits (never the job's)
 #   U4 the last try reads the sources rewritten to archive.ubuntu.com
 #   U5 a try that ignores SIGTERM is killed all the same (audit-107)
+#   U4b the same for any <region>.archive.ubuntu.com mirror (the runners' ec2 one, 2026-11-19)
+#   U8 apt_install.sh's second install reads the rewritten sources too
 # A negative control (a script without the time limit) must go red: see the NC arm at the end.
 set -u
 SUT="${1:-tests/ci/apt_update.sh}"
@@ -32,10 +34,11 @@ esac
 EOF
 chmod +x "$d/bin/apt-get"
 
+MIRROR='http://azure.archive.ubuntu.com/ubuntu priority:1'
 run() { # plan words...
     rm -f "$d"/count "$d"/mirrors.seen.*
     printf '%s\n' "$@" > "$d/plan"
-    echo 'http://azure.archive.ubuntu.com/ubuntu priority:1' > "$d/mirrors"
+    echo "$MIRROR" > "$d/mirrors"
     s=$(date +%s)
     FAKE="$d" PATH="$d/bin:$PATH" APT_UPDATE_SECS=2 APT_UPDATE_KILL=1 APT_SOURCES="$d/mirrors" \
         timeout 20 bash "$SUT" > "$d/out" 2>&1
@@ -48,6 +51,31 @@ run hang hang ok
 if [ "$rc" = 0 ] && [ "$n" = 3 ]; then ok U1; else bad "U1 rc=$rc tries=$n"; fi
 if grep -q 'archive.ubuntu.com' "$d/mirrors.seen.3" && ! grep -q 'azure' "$d/mirrors.seen.3"
 then ok U4; else bad U4; fi
+
+# U4b: CI 44370186784 (2026-11-19): the runners' mirror is now us-east-2.ec2.archive.ubuntu.com,
+# the rewrite knew only azure.archive.ubuntu.com, so the "archive.ubuntu.com" try went to the
+# same slow mirror (the bare-metal job ended at exit 124, a new red for promote). Any
+# <region>.archive.ubuntu.com host goes to archive.ubuntu.com; security/ports are not touched.
+MIRROR='http://us-east-2.ec2.archive.ubuntu.com/ubuntu priority:1
+http://security.ubuntu.com/ubuntu priority:2'
+run hang hang ok
+if grep -q '^http://archive.ubuntu.com/ubuntu priority:1' "$d/mirrors.seen.3" && ! grep -q 'ec2' "$d/mirrors.seen.3" \
+   && grep -q '^http://security.ubuntu.com/ubuntu priority:2' "$d/mirrors.seen.3"
+then ok U4b; else bad "U4b $(tr '\n' ' ' < "$d/mirrors.seen.3")"; fi
+MIRROR='http://azure.archive.ubuntu.com/ubuntu priority:1'
+
+# U8: apt_install.sh's own retry rewrites the same way (first install cut, then update, then the
+# second install must read archive.ubuntu.com). Its fake plan: install hang, update ok, install ok.
+INST="$(dirname "$SUT")/apt_install.sh"
+rm -f "$d"/count "$d"/mirrors.seen.*
+printf '%s\n' hang ok ok > "$d/plan"
+echo 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu priority:1' > "$d/mirrors"
+FAKE="$d" PATH="$d/bin:$PATH" APT_FIRST_SECS=2 APT_UPDATE_SECS=2 APT_UPDATE_KILL=1 APT_SOURCES="$d/mirrors" \
+    timeout 30 bash "$INST" gcc > "$d/out" 2>&1
+rc=$?
+n=$(cat "$d/count" 2>/dev/null || echo 0)
+if [ "$rc" = 0 ] && [ "$n" = 3 ] && grep -q '^http://archive.ubuntu.com/' "$d/mirrors.seen.3" && ! grep -q 'ec2' "$d/mirrors.seen.3"
+then ok U8; else bad "U8 rc=$rc tries=$n $(cat "$d/mirrors.seen.3" 2>/dev/null)"; fi
 
 run ok
 if [ "$rc" = 0 ] && [ "$n" = 1 ] && grep -q azure "$d/mirrors"; then ok U2; else bad "U2 rc=$rc tries=$n"; fi
