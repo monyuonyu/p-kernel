@@ -168,3 +168,8 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 
 取り直し（容器 /build/a185）: 先端 06e7bc99 で ALL PASS（3 腕とも 7.7 と同じ行）、試験だけの dcf6aedf で file・no-token・bad-token・origin・host・nowrite の 6 赤。crown は master 80eae153 と全バイト同じ、hosted x86_64 警告 57・aarch64 OK。呼び手 6 本（self_ref・38・39・40・41・stop_galaxy）とも緑。私の壊し: Host を見ない→host 赤、/self.json を公開に→no-token・bad-token 赤、`?t=` を全部の GET で→bad-token 赤、**比べで先頭の 1 字を飛ばす→9 項目とも緑＝H30**。読み: gx_header_val は本文まで探すが最初の一致＝本物の見出しが勝つ。
 限界: ページの JS は `u.charAt(0)==="/"` で `//よその host/` にも見出しを付ける（今の fetch は全部 `/英字` の固定の道＝害なし、② で `//` を除く）。emulator_smoke は 401 の本文も「答えた」と数える（合言葉が読めないと後段で紛らわしい赤）。ほかは 7.7 の限界のまま。
+
+### 7.9 作る順 ② を作った（2026-11-19 00:40 の回、feat/ark-rec-http。監査待ち）
+
+試験先 5d2f5b8c（A1-gate・A1・A2・A3・A4・A4-import・A5・A6 と陰性 4 腕、`run_ark_app.sh`）は master で part ② が全部赤。実装（galaxy.c の gx_ark_route、ark_rec.c の ark_rec_http_*・ark_key_backup_*・`ark key import`、hosted で Windows は除く）: 道の順は 413（16 KB 超）→ 403（同意の前の書き込み）→ 409（鍵の控えを書き写す前、読む道も）。/ark/rec の POST は 16 KB の大きな受け皿 1 つで受ける（使用中は 503）。印は ark.key.shown（鍵を渡す前に書く）と ark.key.done。import は印も立てる。ページの JS は `//`・`/\` の道に合言葉を付けない（7.8 の限界）。A8（DOM の試験）と GET|POST /ark/heir はまだ。
+限界: シェルと HTTP は ark_rec.c の同じ置き場を使い、旗で 503 を返すが旗は不可分でない。A4-import はブロックのファイルを写して網の代わりにした。A5 の最初の走りは私の語の一覧の誤り（WebViews）で赤、語の境で比べる形に直した。
