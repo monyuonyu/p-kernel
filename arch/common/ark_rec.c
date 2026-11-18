@@ -1220,3 +1220,37 @@ INT ark_key_backup_done(void)
     return pfs_dur_write("ark.key.done", "1", 1) == 0 ? 0 : -1;
 }
 INT ark_key_backup_is_done(void) { return pfs_dur_exists("ark.key.done") ? 1 : 0; }
+
+/* /ark/heir (7.2 1): the heir's public key, the same ark/heir ref as `ark heir set|clear`.
+ * set: hex = 64 hex chars, or 0 to clear. 0 = saved, -3 = not 64 hex, -1 = not saved. */
+INT ark_heir_http_set(const char *hex)
+{
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = 0;
+    zero(heir, sizeof heir);
+    if (hex) {
+        for (UW i = 0; i < 32 && r == 0; i++) {
+            INT h = hexv((UB)hex[2 * i]), l = h < 0 ? -1 : hexv((UB)hex[2 * i + 1]);
+            if (h < 0 || l < 0) r = -3; else heir[1 + i] = (U1)(h * 16 + l);
+        }
+        if (r == 0) heir[0] = 1;
+    }
+    if (r == 0 && pfs_dag_save((const UB *)"ark/heir", 8, heir, sizeof heir) != PFS_OK) r = -1;
+    if (r == 0) { P(heir[0] ? "[ark-heir] set " : "[ark-heir] cleared"); if (heir[0]) phex(heir + 1, 4); P(" (http)\r\n"); }
+    http_busy = 0;
+    return r;
+}
+/* the heir now: 1 and out = 64 hex, 0 = none (never set, or cleared) */
+INT ark_heir_http_get(char out[65])
+{
+    static const char H[] = "0123456789abcdef";
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
+    INT r = 0;
+    if (pfs_dag_read((const UB *)"ark/heir", 8, heir, sizeof heir) == (INT)sizeof heir && heir[0] == 1) {
+        for (UW i = 0; i < 32; i++) { out[2 * i] = H[heir[1 + i] >> 4]; out[2 * i + 1] = H[heir[1 + i] & 15]; }
+        out[64] = 0;
+        r = 1;
+    }
+    http_busy = 0;
+    return r;
+}

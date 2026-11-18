@@ -1404,6 +1404,8 @@ IMPORT INT ark_rec_http_list(char *o, UW cap);
 IMPORT INT ark_key_backup_hex(char out[65]);
 IMPORT INT ark_key_backup_done(void);
 IMPORT INT ark_key_backup_is_done(void);
+IMPORT INT ark_heir_http_set(const char *hex);
+IMPORT INT ark_heir_http_get(char out[65]);
 static char gx_arkjson[65536];
 #ifdef GALAXY_ARK_NORMALIZE
 static U1 gx_arknorm[GX_ARK_POST_MAX];
@@ -1465,7 +1467,8 @@ static void gx_ark_route(INT slot, GX_REQ *q)
         else gx_ark_status(slot, "409 Conflict", "the key has not been shown");
         return;
     }
-    if (!(p[0]=='/'&&p[1]=='r'&&p[2]=='e'&&p[3]=='c'&&(p[4]==0||p[4]=='/'||p[4]=='.'))) {
+    INT is_heir = gx_streq(p, "/heir");
+    if (!is_heir && !(p[0]=='/'&&p[1]=='r'&&p[2]=='e'&&p[3]=='c'&&(p[4]==0||p[4]=='/'||p[4]=='.'))) {
         gx_ark_status(slot, "404 Not Found", "not found"); return;
     }
     if (q->is_post && (q->clen > GX_ARK_POST_MAX || q->body_len > GX_ARK_POST_MAX)) {
@@ -1478,6 +1481,26 @@ static void gx_ark_route(INT slot, GX_REQ *q)
 #ifndef GALAXY_ARK_NO_BACKUP_GATE
     if (!ark_key_backup_is_done()) { gx_ark_status(slot, "409 Conflict", "write down the key backup first"); return; }
 #endif
+    if (is_heir) {                                  /* /ark/heir: the heir's public key */
+        char hx[65];
+        if (q->is_post) {
+            INT r = gx_body_is(q, "clear") ? ark_heir_http_set(0)
+                  : (q->body_len >= 64 && (q->body_len == 64 || q->body[64] == '\n' || q->body[64] == '\r'))
+                    ? ark_heir_http_set(q->body) : -3;
+            if (r == 0) gx_ark_status(slot, "200 OK", "ok");
+            else if (r == -3) gx_ark_status(slot, "400 Bad Request", "64 hex (the heir's public key) or clear");
+            else gx_ark_written(slot, r, 0, 0);
+        } else {
+            INT r = ark_heir_http_get(hx);
+            if (r < 0) gx_ark_written(slot, r, 0, 0);
+            else {
+                gx_resp_head(slot, "200 OK", "application/json");
+                if (r == 1) { gx_qs(slot, "{\"heir\":\""); gx_qs(slot, hx); gx_qs(slot, "\"}\n"); }
+                else gx_qs(slot, "{\"heir\":null}\n");
+            }
+        }
+        return;
+    }
     p += 4;                                         /* after "/rec" */
     if (gx_streq(p, ".json")) {
         if (q->is_post) { gx_ark_status(slot, "405 Method Not Allowed", "GET only"); return; }
