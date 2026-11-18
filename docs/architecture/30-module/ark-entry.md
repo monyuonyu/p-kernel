@@ -171,5 +171,5 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 
 ### 7.9 作る順 ② を作った（2026-11-19 00:40 の回、feat/ark-rec-http。監査待ち）
 
-試験先 5d2f5b8c（A1-gate・A1・A2・A3・A4・A4-import・A5・A6 と陰性 4 腕、`run_ark_app.sh`）は master で part ② が全部赤。実装（galaxy.c の gx_ark_route、ark_rec.c の ark_rec_http_*・ark_key_backup_*・`ark key import`、hosted で Windows は除く）: 道の順は 413（16 KB 超）→ 403（同意の前の書き込み）→ 409（鍵の控えを書き写す前、読む道も）。/ark/rec の POST は 16 KB の大きな受け皿 1 つで受ける（使用中は 503）。印は ark.key.shown（鍵を渡す前に書く）と ark.key.done。import は印も立てる。ページの JS は `//`・`/\` の道に合言葉を付けない（7.8 の限界）。A8（DOM の試験）と GET|POST /ark/heir はまだ。
+試験先 5d2f5b8c（A1-gate・A1・A2・A3・A4・A4-import・A5・A6 と陰性 4 腕、`run_ark_app.sh`）は master で part ② が全部赤。実装（galaxy.c の gx_ark_route、ark_rec.c の ark_rec_http_*・ark_key_backup_*・`ark key import`、hosted で Windows は除く）: 道の順は 413（16 KB 超）→ 403（同意の前の書き込み）→ 409（鍵の控えを書き写す前、読む道も）。/ark/rec の POST は 16 KB の大きな受け皿 1 つで受ける（使用中は 503）。印は ark.key.shown（鍵を渡す前に書く）と ark.key.done。import は印も立てる。ページの JS は `//`・`/\` の道に合言葉を付けない（7.8 の限界）。GET|POST /ark/heir（AH、試験先 935f9817 で赤→8a433c06）も同じ門の後ろ。A8（DOM の試験）と画面（同意→控え→継ぐ人→最初の記録）はまだ＝容器に Playwright が無い。
 限界: シェルと HTTP は ark_rec.c の同じ置き場を使い、旗で 503 を返すが旗は不可分でない。A4-import はブロックのファイルを写して網の代わりにした。A5 の最初の走りは私の語の一覧の誤り（WebViews）で赤、語の境で比べる形に直した。
