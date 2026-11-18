@@ -43,12 +43,15 @@ build tglow -DB5S10_TG_LOW
 build keepfirst -DB5S10_KEEP_FIRST
 build noroot -DB5S10_NO_ROOT
 build abscos -DB5S10_ABS_COS
+# test-holes H33: a's root not followed / equal |g| keeps the later one
+build rootb -DB5S10_ROOT_B_ONLY
+build tielater -DB5S10_TIE_LATER
 for u in s6unit s7unit s8unit s10unit; do
     "$WORK/plain" $u > "$OUT/unit-$u.log" 2>&1 \
         || { cat "$OUT/unit-$u.log"; echo "[result] FAIL  b5-step10 $u"; exit 1; }
     echo "[b5-step10] $u ok ($(grep -c '  PASS  ' "$OUT/unit-$u.log") checks)"
 done
-for b in far tglow keepfirst noroot abscos; do
+for b in far tglow keepfirst noroot abscos rootb tielater; do
     if "$WORK/$b" s10unit > "$OUT/unit-$b.log" 2>&1; then
         echo "[result] FAIL  b5-step10 the $b build passes s10unit"; exit 1
     fi

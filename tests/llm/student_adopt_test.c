@@ -1327,6 +1327,39 @@ static int s10unit(void)
       printf("    opposite: TS %.4f %.4f\n", (double)t[0], (double)t[1]);
       check(near_f(t[0], 0.15643f, 1e-4) && near_f(t[1], 0.15643f, 1e-4), "s10-opposite", "cos -0.951: no group, both keep TS");
       st_free(&e); st_free(&f); }
+    /* 8 (test-holes H33, audit-191). a. a's root as well as b's: a chain of four at 35, 50, 65, 80
+     *    degrees (neighbours cos 0.966, the rest <= 0.866), norms 1.0 2.0 0.9 3.0 chosen so that the
+     *    weight-byte order is 35, 80, 50, 65. The pair (50, 65) comes last: 50 is already a child of 35,
+     *    65 already of 80. Joining 50 itself (not its root) to 80's root cuts 35 off = two groups.
+     *    One group: only 65 (|g| 0.9) keeps its TS, the bytes are 65's alone */
+    { static const double ang[4] = { 35, 50, 65, 80 }, nrm[4] = { 1.0, 2.0, 0.9, 3.0 };
+      st_model c[4]; st_model *pc[4]; float t[4], t1[1];
+      for (int k = 0; k < 4; k++) { s10u_at(&c[k], &pv, ang[k], nrm[k]); pc[k] = &c[k]; }
+      size_t nb = (size_t)c[0].n_params * sizeof(float);
+      int pre = memcmp(c[0].w, c[3].w, nb) < 0 && memcmp(c[3].w, c[1].w, nb) < 0 && memcmp(c[1].w, c[2].w, nb) < 0;
+      check(pre, "s10-root-a-order", "precondition: the weight-byte order is 35, 80, 50, 65");
+      int r = s10u_merge(&x, &me, &pv, pc, NULL, 4, t, 1);
+      st_model *p65[] = { &c[2] }; s10u_merge(&y, &me, &pv, p65, NULL, 1, t1, 1);
+      printf("    root-a: rc %d TS %.4f %.4f %.4f %.4f\n", r, (double)t[0], (double)t[1], (double)t[2], (double)t[3]);
+      check(r == 4 && t[0] == 0.0f && t[1] == 0.0f && t[3] == 0.0f && near_f(t[2], 0.42262f, 1e-4),
+            "s10-root-a", "a chain joined last in its middle: one group, only 65 kept");
+      check(hash(&x) == hash(&y), "s10-root-a-bytes", "every byte of the merge of 65 alone");
+      st_free(&x); st_free(&y);
+      for (int k = 0; k < 4; k++) st_free(&c[k]); }
+    /* b. equal |g| in one group: the first in weight-byte order is kept (the comment's promise),
+     *    whatever the input order (the tie case 3 checks only that the same one is kept) */
+    { st_model p, r; clone(&p, &a); clone(&r, &a); p.w[3] = 0.5f; r.w[3] = -0.5f;
+      int pfirst = memcmp(p.w, r.w, (size_t)p.n_params * sizeof(float)) < 0;
+      st_model *o1[] = { &p, &r }, *o2[] = { &r, &p }, *pf[] = { pfirst ? &p : &r }; float t[2], u[2], t1[1];
+      s10u_merge(&x, &me, &pv, o1, NULL, 2, t, 1); s10u_merge(&y, &me, &pv, o2, NULL, 2, u, 1);
+      st_model z; s10u_merge(&z, &me, &pv, pf, NULL, 1, t1, 1);
+      printf("    tie-first: %s first; TS (p r) %.4f %.4f, (r p) %.4f %.4f\n", pfirst ? "p" : "r",
+             (double)t[0], (double)t[1], (double)u[0], (double)u[1]);
+      int okp = pfirst ? (t[0] > 0.0f && t[1] == 0.0f && u[1] > 0.0f && u[0] == 0.0f)
+                       : (t[1] > 0.0f && t[0] == 0.0f && u[0] > 0.0f && u[1] == 0.0f);
+      check(okp, "s10-tie-first", "equal |g|: the first in weight-byte order kept, in both input orders");
+      check(hash(&x) == hash(&z) && hash(&y) == hash(&z), "s10-tie-first-bytes", "every byte of the merge of the first alone");
+      st_free(&x); st_free(&y); st_free(&z); st_free(&p); st_free(&r); }
     /* 6. real models (s8unit's: trained on other quarters, no group): every byte of st_merge_trust_echo */
     enum { NM = 4 };
     st_model m[NM];

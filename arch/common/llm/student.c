@@ -2751,7 +2751,9 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
 #endif
                 int ra = a, rb = b;
 #if !defined(B5S10_NO_ROOT)                 /* H27 falsifier: the roots are not followed */
+#if !defined(B5S10_ROOT_B_ONLY)             /* H33 falsifier: only b's root is followed */
                 while (par[ra] != ra) ra = par[ra];
+#endif
                 while (par[rb] != rb) rb = par[rb];
 #endif
                 if (ra != rb) { if (ra < rb) par[rb] = ra; else par[ra] = rb; }
@@ -2766,6 +2768,8 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
             if (k < 0 || gn[a] > gn[k]) keep[r] = a;
 #elif defined(B5S10_KEEP_FIRST)             /* H27 falsifier: the first member, |g| not looked at */
             if (k < 0) keep[r] = a;
+#elif defined(B5S10_TIE_LATER)              /* H33 falsifier: equal |g| keeps the later one */
+            if (k < 0 || gn[a] <= gn[k]) keep[r] = a;
 #else
             if (k < 0 || gn[a] < gn[k]) keep[r] = a;
 #endif
