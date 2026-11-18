@@ -1505,12 +1505,14 @@ static void gx_ark_route(INT slot, GX_REQ *q)
           }
           b = gx_arknorm; bl = o; }
 #endif
-        gx_ark_written(slot, ark_rec_http_put(-1, b, bl, &ono, &oseq), ono, oseq);
+        INT r = ark_rec_http_put(-1, b, bl, &ono, &oseq);   /* before ono/oseq are read */
+        gx_ark_written(slot, r, ono, oseq);
         return;
     }
     if (p[0] == 0) {                                /* /ark/rec/<no> */
         if (q->is_post) {
-            gx_ark_written(slot, ark_rec_http_put((INT)no, (const U1 *)q->body, (UW)q->clen, &ono, &oseq), no, oseq);
+            INT r = ark_rec_http_put((INT)no, (const U1 *)q->body, (UW)q->clen, &ono, &oseq);
+            gx_ark_written(slot, r, no, oseq);
         } else {
             const U1 *b = 0; UW bl = 0;
             INT r = ark_rec_http_get(no, &b, &bl);
@@ -1522,13 +1524,15 @@ static void gx_ark_route(INT slot, GX_REQ *q)
     if (q->is_post && gx_streq(p, "/vis")) {
         INT v = gx_body_is(q, "self") ? 0 : gx_body_is(q, "heir") ? 1 : gx_body_is(q, "public") ? 2 : -1;
         if (v < 0) { gx_ark_status(slot, "400 Bad Request", "self, heir or public"); return; }
-        gx_ark_written(slot, ark_rec_http_flag(no, v, -1, &oseq), no, oseq);
+        INT r = ark_rec_http_flag(no, v, -1, &oseq);
+        gx_ark_written(slot, r, no, oseq);
         return;
     }
     if (q->is_post && gx_streq(p, "/learn")) {
         INT v = gx_body_is(q, "yes") ? 1 : gx_body_is(q, "no") ? 0 : -1;
         if (v < 0) { gx_ark_status(slot, "400 Bad Request", "yes or no"); return; }
-        gx_ark_written(slot, ark_rec_http_flag(no, -1, v, &oseq), no, oseq);
+        INT r = ark_rec_http_flag(no, -1, v, &oseq);
+        gx_ark_written(slot, r, no, oseq);
         return;
     }
     gx_ark_status(slot, "404 Not Found", "not found");
