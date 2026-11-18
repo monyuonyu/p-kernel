@@ -1093,15 +1093,33 @@ static void cmd_key(const UB *a, UW al)
     (void)pfs_dur_write("ark.key.done", "1", 1);
 }
 
+/* test builds only (run_ark_app.sh, the lock arms): hold the records for
+ * PKERNEL_ARK_REC_HOLD_MS ms after taking them, so the other side surely
+ * comes while one is inside. Not in a normal build. */
+#ifdef ARK_REC_TEST_HOLD
+static void test_hold(void)
+{
+    const char *e = getenv("PKERNEL_ARK_REC_HOLD_MS");
+    INT ms = 0;
+    while (e && *e >= '0' && *e <= '9' && ms < 100000) ms = ms * 10 + (*e++ - '0');
+    if (ms > 0) tk_dly_tsk(ms);
+}
+#else
+#define test_hold() ((void)0)
+#endif
+
 INT ark_rec_cmd(const UB *a, UW al, void (*pr)(const char *))
 {
     P = pr;
     a = skip(a, &al);
     UW n = wordlen(a, al);
-    if (word_is(a, n, "rec"))  { cmd_rec(a + n, al - n);  return 1; }
-    if (word_is(a, n, "heir")) { cmd_heir(a + n, al - n); return 1; }
-    if (word_is(a, n, "key"))  { cmd_key(a + n, al - n);  return 1; }
-    return 0;
+    INT w = word_is(a, n, "rec") ? 1 : word_is(a, n, "heir") ? 2 : word_is(a, n, "key") ? 3 : 0;
+    if (!w) return 0;
+    test_hold();
+    if (w == 1) cmd_rec(a + n, al - n);
+    else if (w == 2) cmd_heir(a + n, al - n);
+    else cmd_key(a + n, al - n);
+    return 1;
 }
 
 /* ==== the galaxy routes (ark-entry.md 7.2 1-4): the same functions as the shell ====
@@ -1121,6 +1139,7 @@ static INT http_enter(void) { if (http_busy) return -1; http_busy = 1; if (!P) P
 INT ark_rec_http_put(INT no, const U1 *b, UW len, UW *out_no, UW *out_seq)
 {
     if (http_enter() != 0) return ARK_HTTP_BUSY;
+    test_hold();
     INT r = -1;
     if (len <= AKS_BODY_MAX) {
         if (no >= 0 && (desc_load() <= 0 || (UW)no >= desc.nrec)) r = ARK_HTTP_NONE;
