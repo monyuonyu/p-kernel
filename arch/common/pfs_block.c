@@ -51,6 +51,13 @@ extern int  pfs_dur_org_write(const char *hex, unsigned origin);
 extern int  pfs_dur_org_read(const char *hex);
 extern int  pfs_dur_remove_block(const char *hex);
 extern pk_node_t drpc_my_node;     /* drpc.c: this node's number (0xFF = none) */
+/* B5 D4 (research/b5-m-round.md §4): a block the hook calls lazy (pfs_repl: a
+ * quiet id = a student chunk or index block) is written without its fsyncs;
+ * the publish / the fetch ends with one pfs_dur_sync. Unset = every block
+ * fsync'd as before. */
+extern int  pfs_dur_write_lazy(const char *fname, const void *data, unsigned len);
+extern int  pfs_dur_org_write_lazy(const char *hex, unsigned origin);
+INT (*pfs_put_lazy)(const U1 id[PFS_ID_LEN]);
 
 /* ARK durable backend (arch/linux/pfs_ark.c) — the wave-13 "white-pearl"
  * integration: ARK becomes p-fs's durable store when PKERNEL_PFS_BACKEND=ark.
@@ -347,20 +354,23 @@ PK_NOSW_FN(INT, pfs_put_origin,
             dur_on = 1;
             char hex[2 * PFS_ID_LEN + 1];
             id_to_hex(pfs_table[slot].id, hex);
-            dur_rc = pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
+            INT lazy = pfs_put_lazy ? pfs_put_lazy(pfs_table[slot].id) : 0;
+            dur_rc = lazy ? pfs_dur_write_lazy(hex, pfs_table[slot].data, (unsigned)len)
+                          : pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
 #ifndef S1_NC_ORIGIN_VOLATILE         /* S1 negative: the origin is not kept */
             /* 0-14 S1: keep who the block came from, or a restart makes every
              * block this node's own (best effort: no .org reads as "unknown").
              * This node's own blocks are kept as "self" (0xFF), not by number:
              * if the number changes later, they must not turn foreign (and be
              * removed by `leave`; global rule 11, the owner's originals). */
-            if (dur_rc == 0)
+            if (dur_rc == 0) {
 #ifndef S1_NC_SELF_BY_NUMBER          /* S1 negative: own blocks kept by number */
-                (void)pfs_dur_org_write(hex, origin == drpc_my_node ? (unsigned)PFS_ORIGIN_SELF
-                                                                    : (unsigned)origin);
+                unsigned org = origin == drpc_my_node ? (unsigned)PFS_ORIGIN_SELF : (unsigned)origin;
 #else
-                (void)pfs_dur_org_write(hex, (unsigned)origin);
+                unsigned org = (unsigned)origin;
 #endif
+                (void)(lazy ? pfs_dur_org_write_lazy(hex, org) : pfs_dur_org_write(hex, org));
+            }
 #endif
         }
         if (dur_on && dur_rc != 0) {

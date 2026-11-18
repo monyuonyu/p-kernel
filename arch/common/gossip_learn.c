@@ -288,6 +288,13 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 #define GL_ST_FETCH_STALL    167           /* about 10 s (the holder may be computing its own round) */
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
 
+/* B5 D4 (research/b5-m-round.md §4): the student's chunks are written without
+ * their own fsyncs (pfs_put_lazy, a quiet id); one syncfs ends the publish
+ * (before its descriptor) and the fetch. Weak: some unit tests link this file
+ * without pfs_durable.c (no store = nothing to sync). */
+extern int pfs_dur_sync(void) __attribute__((weak));
+static INT gl_st_sync(void) { return pfs_dur_sync ? (INT)pfs_dur_sync() : 0; }
+
 /* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
  * blocks go quietly (no announce; a peer pulls them by want at its round, and
  * what it pulled is not re-announced either); the descriptor stays loud. The
@@ -418,6 +425,10 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
             return -1;
     }
 
+    /* B5 D4: the chunks went without their own fsyncs; ONE syncfs makes them
+     * durable BEFORE the descriptor that names them is saved (fsync'd). */
+    if (gl_st_sync() != 0) return -1;
+
     /* descriptor under ONE named ref "st/<node>". */
     gl_st_desc.magic     = GL_ST_DESC_MAGIC;
     gl_st_desc.version   = GL_ST_DESC_VER;
@@ -456,7 +467,7 @@ static INT gl_st_pull_index(const U1 id[PFS_ID_LEN], UW level, UW count)
     return -1;
 }
 
-INT gl_student_fetch(pk_node_t node, void *out, UW cap)
+static INT gl_student_fetch_in(pk_node_t node, void *out, UW cap)
 {
     if (!out) return -1;
 
@@ -539,6 +550,14 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     return (INT)len;
 }
 
+/* the fetch, then one syncfs for the chunks it brought (D4) */
+INT gl_student_fetch(pk_node_t node, void *out, UW cap)
+{
+    INT r = gl_student_fetch_in(node, out, cap);
+    if (gl_st_sync() != 0)
+        gp("[pfs] student fetch: syncfs failed (the fetched chunks may not survive a power loss)\r\n");
+    return r;
+}
 #endif /* _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ */
