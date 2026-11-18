@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include "student.h"
 #include "held_indep.h"
 #include "teacher_fixture.h"
@@ -155,6 +156,97 @@ static void say(const char *what, int r, const st_rg_report *p)
            (double)p->held_live, (double)p->held_cand);
 }
 
+/* ---- stage 2 (research/b5-wire2.md §3): W7 W8 W9 W10, from tables ---- */
+
+/* W7: the envelope says n, the transport hands back 8 bytes less (the tail of
+ * the blob is missing). The cap is the exact blob size, so "8 bytes MORE" can
+ * not reach the round; the tooth is the same check (h[2] == got - HDR). */
+static int w7_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    tab_t *t = (tab_t *)ctx;
+    memset(out, 0, cap);
+    int r = tab_fetch(ctx, node, out, cap);
+    if (r > 0 && node == 3 && t->n[3] > ST_RG_HDR + 8) r -= 8;
+    return r;
+}
+/* W9: which nodes were fetched in one round */
+typedef struct { tab_t *t; int calls; unsigned long seen; } w9_t;
+static int w9_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    w9_t *w = (w9_t *)ctx;
+    w->calls++;
+    if (node < 64) w->seen |= 1ul << node;
+    return tab_fetch(w->t, node, out, cap);
+}
+/* W10: the hook is in student.c from stage 2; weak here so the test-only
+ * commit links and W10 is red by its own line */
+extern void st_rg_test_fail_alloc(int nth) __attribute__((weak));
+
+static void w7_w10(st_model *n, tab_t *t, uint32_t G)
+{
+    st_model a; st_rg_report rp; uint64_t h0;
+
+    /* W7 */
+    clone(&a, &n[0]); h0 = hash(&a);
+    const uint16_t all4[4] = { 0, 1, 2, 3 };
+    int r7 = round_on(&a, G, 0, all4, 4, w7_fetch, t, &rp); say("W7", r7, &rp);
+    check(rp.fetched == 3 && rp.same_gen == 3 && rp.accepted == 0 && r7 == 0 && hash(&a) == h0,
+          "b5w-W7", "the blob's last 8 bytes missing, the envelope's length right: not counted, refused, live byte-unchanged");
+    st_free(&a);
+
+    /* W8 */
+    clone(&a, &n[0]); h0 = hash(&a);
+    const uint16_t dup[4] = { 0, 1, 2, 2 };
+    int r8 = round_on(&a, G, 0, dup, 4, tab_fetch, t, &rp); say("W8", r8, &rp);
+    check(rp.members == 3 && rp.same_gen == 3 && rp.accepted == 0 && r8 == 0 && hash(&a) == h0,
+          "b5w-W8", "members [self,1,2,2]: two peers (members 3), refused, live byte-unchanged");
+    st_free(&a);
+
+    /* W9: nine peers 1..9, two generations */
+    {
+        tab_t g0, g1; memset(&g0, 0, sizeof g0); memset(&g1, 0, sizeof g1);
+        for (int k = 1; k <= 9; k++) {
+            g0.b[k] = wrap(&n[1 + (k - 1) % 3], G, &g0.n[k]);
+            g1.b[k] = wrap(&n[1 + (k - 1) % 3], G + 1, &g1.n[k]);
+        }
+        const uint16_t ten[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+        w9_t w0 = { &g0, 0, 0 }, w1 = { &g1, 0, 0 };
+        st_rg_report p0, p1;
+        clone(&a, &n[0]);
+        int r0 = round_on(&a, G, 0, ten, 10, w9_fetch, &w0, &p0); say("W9 g", r0, &p0);
+        st_free(&a); clone(&a, &n[0]);
+        int r1 = round_on(&a, G + 1, 0, ten, 10, w9_fetch, &w1, &p1); say("W9 g+1", r1, &p1);
+        st_free(&a);
+        printf("  W9: fetched per round %d %d, seen %#lx %#lx\n", w0.calls, w1.calls, w0.seen, w1.seen);
+        check(w0.calls <= 7 && w1.calls <= 7 && p0.fetched <= 7 && p1.fetched <= 7,
+              "b5w-W9", "nine peers: at most 7 fetched (and held at once) a round");
+        check((w0.seen | w1.seen) == 0x3FEul && p0.members == 10 && p1.members == 10,
+              "b5w-W9", "generations g and g+1 together fetch all nine (members 10)");
+        tab_free(&g0); tab_free(&g1);
+    }
+
+    /* W10: the second peer buffer can not be had -> the round is refused */
+    {
+        tab_t t5; memset(&t5, 0, sizeof t5);
+        for (int k = 1; k <= 4; k++) t5.b[k] = wrap(&n[1 + (k - 1) % 3], G, &t5.n[k]);
+        const uint16_t five[5] = { 0, 1, 2, 3, 4 };
+        clone(&a, &n[0]); h0 = hash(&a);
+        if (!st_rg_test_fail_alloc) {
+            check(0, "b5w-W10", "st_rg_test_fail_alloc is not there (stage 2 not built)");
+        } else {
+            st_rg_test_fail_alloc(2);
+            int r10 = round_on(&a, G, 0, five, 5, tab_fetch, &t5, &rp); say("W10", r10, &rp);
+            check(r10 == 0 && rp.accepted == 0 && rp.adopted == 0 && hash(&a) == h0,
+                  "b5w-W10", "the second peer buffer fails: the whole round refused, live byte-unchanged");
+            st_free(&a); clone(&a, &n[0]);
+            int r10b = round_on(&a, G, 0, five, 5, tab_fetch, &t5, &rp); say("W10 after", r10b, &rp);
+            check(rp.fetched == 4 && rp.accepted == 4, "b5w-W10", "the hook is one-shot: the next round takes the four");
+        }
+        st_free(&a);
+        tab_free(&t5);
+    }
+}
+
 /* W0 W3 W4 W5 W6 with the real pfs (ARK-backed, SOLO) */
 static int unit(void)
 {
@@ -222,6 +314,8 @@ static int unit(void)
         st_free(&a); st_free(&g1); st_free(&g2);
     }
 
+    w7_w10(n, &t, G);
+
     /* the arguments */
     clone(&a, &n[0]);
     check(st_region_round(&a, G, 0, all4, ST_COHORT_MAX + 1, tab_fetch, &t, fx + fx_end, fxn - fx_end, SEQ, NULL) == ST_E_ARG
@@ -258,6 +352,43 @@ static void alone(uint32_t seed)
     keep_print(&k, "alone", &m, "");
     st_free(&m);
 }
+/* W2b (research/b5-wire2.md §3): a weak poison. The node trains honestly and
+ * publishes its weights + s x (the std of each weight family) x N(0,1). The
+ * families are the 13 offsets of st_model (embed, attn_norm, wq..wo,
+ * ffn_norm, router, w1 w3 w2, out_norm, out). */
+static uint64_t wp_state;
+static double wp_unif(void)
+{
+    wp_state ^= wp_state << 13; wp_state ^= wp_state >> 7; wp_state ^= wp_state << 17;
+    return ((double)(wp_state >> 11) + 0.5) / 9007199254740992.0;
+}
+static double wp_gauss(void)
+{
+    double u = wp_unif(), v = wp_unif();
+    return sqrt(-2.0 * log(u)) * cos(6.283185307179586 * v);
+}
+static void weak_poison(st_model *dst, const st_model *src, double s, uint32_t seed)
+{
+    clone(dst, src);
+    int o[14] = { src->o_embed, src->o_attn_norm, src->o_wq, src->o_wk, src->o_wv, src->o_wo,
+                  src->o_ffn_norm, src->o_router, src->o_w1, src->o_w3, src->o_w2,
+                  src->o_out_norm, src->o_out, src->n_params };
+    for (int i = 1; i < 14; i++)            /* in offset order (insertion sort) */
+        for (int j = i; j > 0 && o[j - 1] > o[j]; j--) { int x = o[j]; o[j] = o[j - 1]; o[j - 1] = x; }
+    wp_state = 0x9E3779B97F4A7C15ull ^ ((uint64_t)seed * 0x100000001B3ull);
+    for (int f = 0; f + 1 < 14; f++) {
+        int a = o[f], b = o[f + 1];
+        if (b <= a) continue;
+        double m = 0, q = 0;
+        for (int i = a; i < b; i++) m += src->w[i];
+        m /= (double)(b - a);
+        for (int i = a; i < b; i++) q += ((double)src->w[i] - m) * ((double)src->w[i] - m);
+        double sd = sqrt(q / (double)(b - a));
+        for (int i = a; i < b; i++) dst->w[i] = (float)((double)src->w[i] + s * sd * wp_gauss());
+    }
+}
+static double g_weak = 0.0;   /* > 0: rounds() poisons by weak_poison, node K-1 */
+
 /* mean = 1: the comparator (st_round_merge into a copy, the same gate) */
 static void rounds(uint32_t seed, int poison, int mean, const char *name)
 {
@@ -273,7 +404,13 @@ static void rounds(uint32_t seed, int poison, int mean, const char *name)
             gen++;
             for (int k = honest; k < K; k++) { st_free(&n[k]); garbage(&n[k], seed + (uint32_t)p + 977u * (uint32_t)k); }
             tab_t t; memset(&t, 0, sizeof t);
-            for (int k = 0; k < K; k++) t.b[k] = wrap(&n[k], gen, &t.n[k]);   /* one snapshot */
+            for (int k = 0; k < K; k++) {                                      /* one snapshot */
+                if (g_weak > 0.0 && k == K - 1) {
+                    st_model wp; weak_poison(&wp, &n[k], g_weak, seed * 131u + (uint32_t)p);
+                    t.b[k] = wrap(&wp, gen, &t.n[k]);
+                    st_free(&wp);
+                } else t.b[k] = wrap(&n[k], gen, &t.n[k]);
+            }
             for (int k = 0; k < honest; k++) {
                 int r;
                 if (!mean) {
@@ -315,6 +452,16 @@ int main(int argc, char **argv)
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
     const char *st = argc > 3 ? argv[3] : "all";
+    if (strncmp(st, "w2b:", 4) == 0) {      /* W2b: alone, trim and mean against a weak poison */
+        g_weak = strtod(st + 4, NULL);
+        if (!(g_weak > 0.0)) { fprintf(stderr, "w2b:<s>, s > 0\n"); return 2; }
+        printf("[b5w] seed %u stage w2b s %.3f held windows %d\n", (unsigned)seed, g_weak, hn / SEQ);
+        alone(seed);
+        rounds(seed, 0, 0, "region4-weak");
+        rounds(seed, 0, 1, "mean4-weak");
+        printf("[b5w] done\n");
+        return 0;
+    }
 #if defined(B5W_NC_MEAN)
     const char *bld = "nomean";
 #elif defined(B5W_NC_NO_GATE)

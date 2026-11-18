@@ -2848,6 +2848,47 @@ long st_rg_wrap(const st_model *m, uint32_t gen, void *buf, size_t cap)
     return n + ST_RG_HDR;
 }
 
+/* stage 2 (research/b5-wire2.md §2 5, 6): the peers of a round. The members
+ * other than self, de-duplicated and in id order (st_rg_peers); when more than
+ * ST_RG_PEERS_MAX, the round takes ST_RG_PEERS_MAX of them starting at
+ * gen * ST_RG_PEERS_MAX (mod the count), so consecutive generations go round
+ * them all (st_rg_pick). Falsifiers -DB5W_NC_NO_DEDUP, -DB5W_NC_NO_CAP.     */
+int st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out)
+{
+    int m = 0;
+    for (int k = 0; k < count; k++) {
+        uint16_t id = members[k];
+        if (id == self) continue;
+        int j = m;
+#if !defined(B5W_NC_NO_DEDUP)
+        int dup = 0;
+        for (int q = 0; q < m; q++) if (out[q] == id) { dup = 1; break; }
+        if (dup) continue;
+        while (j > 0 && out[j - 1] > id) { out[j] = out[j - 1]; j--; }   /* id order */
+#endif
+        out[j] = id;
+        m++;
+    }
+    return m;
+}
+
+int st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out)
+{
+#if defined(B5W_NC_NO_CAP)
+    (void)gen;
+    for (int k = 0; k < m; k++) out[k] = peers[k];
+    return m;
+#else
+    if (m <= ST_RG_PEERS_MAX) { for (int k = 0; k < m; k++) out[k] = peers[k]; return m; }
+    uint32_t s = (uint32_t)(((uint64_t)gen * ST_RG_PEERS_MAX) % (uint32_t)m);
+    for (int k = 0; k < ST_RG_PEERS_MAX; k++) out[k] = peers[(s + (uint32_t)k) % (uint32_t)m];
+    return ST_RG_PEERS_MAX;
+#endif
+}
+
+static int st_rg_fail_nth;               /* test hook: the nth peer buffer fails */
+void st_rg_test_fail_alloc(int nth) { st_rg_fail_nth = nth; }
+
 int st_region_round(st_model *live, uint32_t gen, uint16_t self,
                     const uint16_t *members, int count,
                     st_rg_fetch_fn fetch, void *ctx,
@@ -2855,6 +2896,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
 {
     st_rg_report r0 = { 0, 0, 0, 0, 0, 0.0f, 0.0f };
     if (rep) *rep = r0;
+    int failn = st_rg_fail_nth; st_rg_fail_nth = 0;      /* one-shot */
     if (!live || !fetch || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
     if (count > 0 && !members) return ST_E_ARG;
     if (!bytes || seq < 2 || n < seq) return ST_E_ARG;
@@ -2863,26 +2905,54 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     const void *bs[ST_COHORT_MAX];
     size_t ls[ST_COHORT_MAX];
     uint32_t gs[ST_COHORT_MAX];
+    uint16_t peers[ST_COHORT_MAX], pick[ST_COHORT_MAX];
+    int np = st_rg_peers(members, count, self, peers);
+    int npick = st_rg_pick(peers, np, gen, pick);
+    r0.members = np;
     int nb = 0, ret = 0;
-    for (int k = 0; k < count; k++) {
-        if (members[k] == self) continue;
-        r0.members++;
-        void *b = malloc(cap);
-        if (!b) continue;
-        int got = fetch(ctx, members[k], b, cap);
-        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); continue; }
+    /* every peer buffer first: one that can not be had refuses the round
+     * (§2 5; stage 1 skipped it silently and merged the rest) */
+    for (int k = 0; k < npick; k++) {
+        buf[k] = (failn == k + 1) ? NULL : malloc(cap);
+        if (!buf[k]) {
+            for (int q = 0; q < k; q++) free(buf[q]);
+            r0.members += 1;
+            if (rep) *rep = r0;
+            return 0;
+        }
+    }
+    /* fetch in a rotated order (from the first peer above self) so a region
+     * does not all pull the lowest id first (M: node 0 sent 58,837 blocks,
+     * b5-wire2 §6); the blobs are still merged in id order */
+    int rot = -1, okk[ST_COHORT_MAX];
+    for (int k = 0; k < npick; k++) { okk[k] = 0; if (rot < 0 && pick[k] > self) rot = k; }
+    if (rot < 0) rot = 0;
+    for (int j = 0; j < npick; j++) {
+        int k = (rot + j) % npick;
+        void *b = buf[k];
+        int got = fetch(ctx, pick[k], b, cap);
+        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); buf[k] = NULL; continue; }
         r0.fetched++;
         uint32_t h[4];
         for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
-        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); continue; }
+#if defined(B5W_NC_NO_LEN)
+        if (h[0] != ST_RG_MAGIC || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }  /* falsifier */
+#else
+        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }
+#endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
-        if (h[1] != gen) { free(b); continue; }
-        buf[nb] = b;
-        bs[nb] = (const uint8_t *)b + ST_RG_HDR;
-        ls[nb] = (size_t)h[2];
-        gs[nb] = h[1];
+        if (h[1] != gen) { free(b); buf[k] = NULL; continue; }
+        okk[k] = 1;
+        ls[k] = (size_t)h[2];
+    }
+    for (int k = 0; k < npick; k++) {    /* id order, as before */
+        if (!okk[k]) continue;
+        buf[nb] = buf[k];
+        bs[nb] = (const uint8_t *)buf[k] + ST_RG_HDR;
+        ls[nb] = ls[k];
+        gs[nb] = gen;
         nb++;
     }
     r0.members += 1;                     /* self */

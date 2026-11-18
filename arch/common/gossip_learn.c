@@ -274,10 +274,45 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 #include "pfs_repl.h"
 
 /* windowed-want fetch policy (§2.1). W <= PFSR_PENDING_MAX. */
+#if defined(B5W_NC_LOUD)
 #define GL_ST_WANT_WINDOW    6u            /* outstanding wants per pass      */
+#else
+#define GL_ST_WANT_WINDOW    24u           /* unicast: no shared slot to clobber (b5-wire2 §6) */
+#endif
 #define GL_ST_FETCH_POLL_MS  60            /* yield between passes            */
-#define GL_ST_FETCH_STALL    4             /* give up after this many no-progress passes */
+/* give up after this many no-progress passes. Stage 2 (b5-wire2.md §6): 4
+ * (0.24 s) was shorter than one re-WANT (PFSR_WANT_RETRY_MS 600): with the
+ * chunks quiet nothing is pushed ahead, a want lost in the LATEST_ONLY slot
+ * is sent again only after 600 ms, and the fetch had already failed (live
+ * L1: fetched 2-3 of 4 in the second round). 50 passes = 3 s = 5 re-WANTs. */
+#define GL_ST_FETCH_STALL    167           /* about 10 s (the holder may be computing its own round) */
 #define GL_ST_FETCH_MAXPASS  4096u         /* hard ceiling on total passes    */
+
+/* B5 wire stage 2 (research/b5-wire2.md §2 1, 3): the chunks and the index
+ * blocks go quietly (no announce; a peer pulls them by want at its round, and
+ * what it pulled is not re-announced either); the descriptor stays loud. The
+ * publish yields GL_ST_YIELD_MS every GL_ST_YIELD_EVERY chunks. Falsifier
+ * -DB5W_NC_LOUD: the stage-1 puts and wants (every chunk announced). */
+#if defined(B5W_NC_LOUD)
+#define gl_st_put  pfs_repl_put
+#define gl_st_want pfs_repl_want
+#else
+/* the wants go to the blob's owner alone (pfs_repl_want_from; the region
+ * slot lost most of them, live L1 at b7c04d6e/bfed9920) */
+static pk_node_t gl_st_from;
+static void gl_st_want(const U1 id[PFS_ID_LEN]) { pfs_repl_want_from(id, gl_st_from); }
+#define gl_st_put  pfs_repl_put_quiet
+#endif
+/* re-ask one chunk only after this many passes (b5-wire2 §6, M: every
+ * pass asked the same 24 again before they could arrive, node 0 sent 58,837
+ * blocks for about 4,700 wanted). The loud falsifier keeps every pass. */
+#if defined(B5W_NC_LOUD)
+#define GL_ST_REASK          1u
+#else
+#define GL_ST_REASK          8u            /* about 0.5 s */
+#endif
+#define GL_ST_YIELD_EVERY    64u
+#define GL_ST_YIELD_MS       10
 
 /* layout pins (LP64 / wire): the index header is exactly 4 packed UW. */
 _Static_assert(sizeof(UW) == 4, "UW must be 32-bit on the wire");
@@ -294,6 +329,8 @@ static UB         gl_st_chunk[GL_ST_CHUNK];                  /* one chunk in fli
 static GL_ST_INDEX gl_st_idx;                                /* one index block       */
 static U1         gl_st_leafids[GL_ST_IDS_PER_IDX][PFS_ID_LEN]; /* up to 127 leaf ids */
 static U1         gl_st_idlist[GL_ST_MAXCHUNK][PFS_ID_LEN];  /* fetch: all chunk ids  */
+static U1         gl_st_have[GL_ST_MAXCHUNK];               /* fetch: seen present   */
+static UH         gl_st_asked[GL_ST_MAXCHUNK];              /* fetch: pass+1 last asked */
 static GL_ST_DESC gl_st_desc;                                /* descriptor scratch    */
 static INT        gl_st_drop = -1;          /* falsifier: chunk idx to OMIT (-1=off) */
 
@@ -354,13 +391,14 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
                 /* falsifier: index the chunk's id but DO NOT store the block,
                  * so a fetch MUST fail closed (content-id known, bytes absent). */
                 pfs_id_compute(gl_st_chunk, clen, cid);
-            } else if (pfs_repl_put(gl_st_chunk, clen, cid) != PFS_OK) {
+            } else if (gl_st_put(gl_st_chunk, clen, cid) != PFS_OK) {
                 return -1;
             }
             gl_st_idcpy(gl_st_idx.id[j], cid);
+            if ((c + 1u) % GL_ST_YIELD_EVERY == 0u) tk_dly_tsk(GL_ST_YIELD_MS);
         }
         U1 lid[PFS_ID_LEN];
-        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + cnt * PFS_ID_LEN, lid) != PFS_OK)
+        if (gl_st_put(&gl_st_idx, GL_ST_IDX_HDR + cnt * PFS_ID_LEN, lid) != PFS_OK)
             return -1;
         gl_st_idcpy(gl_st_leafids[lf], lid);
     }
@@ -376,7 +414,7 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
         gl_st_idx.count = nleaf;
         gl_st_idx._pad  = 0;
         for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_idx.id[lf], gl_st_leafids[lf]);
-        if (pfs_repl_put(&gl_st_idx, GL_ST_IDX_HDR + nleaf * PFS_ID_LEN, root_id) != PFS_OK)
+        if (gl_st_put(&gl_st_idx, GL_ST_IDX_HDR + nleaf * PFS_ID_LEN, root_id) != PFS_OK)
             return -1;
     }
 
@@ -410,7 +448,7 @@ static INT gl_st_pull_index(const U1 id[PFS_ID_LEN], UW level, UW count)
                 return 0;
             return -1;                              /* present but malformed */
         }
-        pfs_repl_want(id);
+        gl_st_want(id);
         if (r <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
         prev = r;
         tk_dly_tsk(GL_ST_FETCH_POLL_MS);
@@ -423,6 +461,9 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     if (!out) return -1;
 
     /* 1 named ref -> descriptor. */
+#if !defined(B5W_NC_LOUD)
+    gl_st_from = node;
+#endif
     char nm[8]; UW nl = gl_st_name(nm, node);
     INT dr = pfs_dag_read((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc);
     if (dr != (INT)sizeof gl_st_desc) return -1;
@@ -439,16 +480,16 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 
     /* 2. walk the index into the ordered chunk-id list. */
     if (depth == 1) {
-        if (gl_st_pull_index(gl_st_desc.root_id, 0u, nchunk) < 0) return -1;
+        if (gl_st_pull_index(gl_st_desc.root_id, 0u, nchunk) < 0) { gp("[pfs] student fetch: gave up on the index\r\n"); return -1; }
         for (UW c = 0; c < nchunk; c++) gl_st_idcpy(gl_st_idlist[c], gl_st_idx.id[c]);
     } else {
-        if (gl_st_pull_index(gl_st_desc.root_id, 1u, nleaf) < 0) return -1;
+        if (gl_st_pull_index(gl_st_desc.root_id, 1u, nleaf) < 0) { gp("[pfs] student fetch: gave up on the root index\r\n"); return -1; }
         for (UW lf = 0; lf < nleaf; lf++) gl_st_idcpy(gl_st_leafids[lf], gl_st_idx.id[lf]);
         for (UW lf = 0; lf < nleaf; lf++) {
             UW base = lf * GL_ST_IDS_PER_IDX;
             UW cnt  = nchunk - base;
             if (cnt > GL_ST_IDS_PER_IDX) cnt = GL_ST_IDS_PER_IDX;
-            if (gl_st_pull_index(gl_st_leafids[lf], 0u, cnt) < 0) return -1;
+            if (gl_st_pull_index(gl_st_leafids[lf], 0u, cnt) < 0) { gp("[pfs] student fetch: gave up on a leaf index\r\n"); return -1; }
             for (UW j = 0; j < cnt; j++) gl_st_idcpy(gl_st_idlist[base + j], gl_st_idx.id[j]);
         }
     }
@@ -456,21 +497,34 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
     /* 3. windowed WANT of every chunk; presence is checked with a zero-copy
      * pfs_get (returns the stored length without touching `out`), so `out`
      * stays UNCONSUMED until every chunk is confirmed present (fail closed). */
+    /* b5-wire2 §6: a chunk seen present stays present; remember it, so a pass
+     * looks up only the missing ones (482 lookups a pass made a 4-peer S round
+     * take 72 s in the live test at 6b0423a0) */
+    for (UW c = 0; c < nchunk; c++) { gl_st_have[c] = 0; gl_st_asked[c] = 0; }
     UW present = 0; INT prev = -1, stall = 0;
     for (UW pass = 0; pass < GL_ST_FETCH_MAXPASS; pass++) {
         present = 0; UW window = 0;
         for (UW c = 0; c < nchunk; c++) {
+            if (gl_st_have[c]) { present++; continue; }
             UW off  = c * GL_ST_CHUNK;
             UW clen = (len - off < GL_ST_CHUNK) ? (len - off) : GL_ST_CHUNK;
-            if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { present++; continue; }
-            if (window < GL_ST_WANT_WINDOW) { pfs_repl_want(gl_st_idlist[c]); window++; }
+            if (pfs_get(gl_st_idlist[c], 0, 0) == (INT)clen) { gl_st_have[c] = 1; present++; continue; }
+            if (window < GL_ST_WANT_WINDOW) {
+                UW a = gl_st_asked[c];
+                if (a == 0 || pass + 1u - a >= GL_ST_REASK) { gl_st_want(gl_st_idlist[c]); gl_st_asked[c] = (UH)(pass + 1u); }
+                window++;
+            }
         }
         if (present == nchunk) break;
         if ((INT)present <= prev) { if (++stall >= GL_ST_FETCH_STALL) break; } else stall = 0;
         prev = (INT)present;
         tk_dly_tsk(GL_ST_FETCH_POLL_MS);
     }
-    if (present != nchunk) return -1;                        /* fail closed */
+    if (present != nchunk) {                                 /* fail closed */
+        gp("[pfs] student fetch n"); gpd(node); gp(": gave up, chunks "); gpd(present);
+        gp("/"); gpd(nchunk); gp(" present\r\n");
+        return -1;
+    }
 
     /* 4. all present -> reassemble into the caller buffer + verify length. */
     UW got = 0;

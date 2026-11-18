@@ -400,9 +400,91 @@ static void publish_sync(void)
 /* replica that just stored a received block re-announces it onward)   */
 /* ------------------------------------------------------------------ */
 
+#if defined(_TK_HOSTED_LIBC_)
+/* B5 wire stage 2 (research/b5-wire2.md §2 1, §5 1-2): quiet ids. A block put
+ * through pfs_repl_put_quiet, or one that arrives after pfs_repl_want_quiet,
+ * is not announced (nor re-announced by the node that fetched it). Per id,
+ * not a flag: announce_suppress (protect) is untouched, so the two never
+ * overlap. A small ring; an id pushed out by newer ones is merely announced
+ * as before (loud, not lost). The student task adds, pfs_repl_task takes;
+ * a torn id matches nothing (loud again), never a wrong block. Hosted only. */
+#define PFSR_QUIET_MAX 64
+static void pending_add(const U1 id[PFS_ID_LEN]);
+static U1 quiet_id[PFSR_QUIET_MAX][PFS_ID_LEN];
+static U1 quiet_on[PFSR_QUIET_MAX];
+static UW quiet_next, stat_quiet;
+static INT quiet_find(const U1 id[PFS_ID_LEN])
+{
+    for (INT i = 0; i < PFSR_QUIET_MAX; i++)
+        if (quiet_on[i] && pr_id_eq(quiet_id[i], id)) return i;
+    return -1;
+}
+static void quiet_add(const U1 id[PFS_ID_LEN])
+{
+    if (quiet_find(id) >= 0) return;
+    UW s = quiet_next++ % PFSR_QUIET_MAX;
+    quiet_on[s] = 0;
+    pr_memcpy(quiet_id[s], id, PFS_ID_LEN);
+    quiet_on[s] = 1;
+}
+static INT quiet_take(const U1 id[PFS_ID_LEN])
+{
+    INT i = quiet_find(id);
+    if (i < 0) return 0;
+    quiet_on[i] = 0;
+    return 1;
+}
+INT pfs_repl_put_quiet(const void *buf, UW len, U1 id_out[PFS_ID_LEN])
+{
+    U1 id[PFS_ID_LEN];
+    pfs_id_compute(buf, len, id);
+    quiet_add(id);
+    INT r = pfs_repl_put(buf, len, id_out);
+    quiet_take(id);                         /* already held: no hook ran */
+    return r;
+}
+void pfs_repl_want_quiet(const U1 id[PFS_ID_LEN])
+{
+    if (drpc_my_node == 0xFF) return;
+    if (pfs_has(id)) return;
+    quiet_add(id);
+    pending_add(id);
+}
+UW pfs_repl_quiet_count(void) { return stat_quiet; }
+
+/* b5-wire2 §6 (live L1, 11-18): a quiet want sent straight to the holder. The
+ * region want is one LATEST_ONLY slot: a receiver polling it every 50 ms sees
+ * only the last want of all wanters, so five nodes pulling 482 chunks each
+ * from four peers lost most wants and waited for the 600 ms re-WANT (the
+ * second round fetched 0-2 of 4). Unicast, like the G35 hold-ack: the PFSR_
+ * HOLD_PKT layout with its own magic, answered by send_block_to the sender.
+ * No pending entry: the caller asks again on its next pass. */
+#define PFSR_UWANT_MAGIC 0x57554650UL  /* "PFUW" LE */
+static UW stat_uwant_tx, stat_uwant_rx;
+void pfs_repl_want_from(const U1 id[PFS_ID_LEN], pk_node_t holder)
+{
+    if (drpc_my_node == 0xFF) return;
+    if (pfs_has(id)) return;
+    if (holder == drpc_my_node) return;
+    if (holder >= DNODE_MAX && !PK_NODE_IS_WIDE(holder)) return;
+    quiet_add(id);
+    PFSR_HOLD_PKT h;
+    pr_memset(&h, 0, (UW)sizeof(h));
+    h.magic    = PFSR_UWANT_MAGIC;
+    h.src_node = pk_node_v1(drpc_my_node);
+    h.origin   = pk_node_v1(holder);
+    pr_memcpy(h.id, id, PFS_ID_LEN);
+    pmesh_send(holder, PFSR_PORT, (const UB *)&h, (UH)sizeof(h));
+    stat_uwant_tx++;
+}
+#endif
+
 static void on_new_block(const U1 id[PFS_ID_LEN], UW len, pk_node_t origin)
 {
     if (drpc_my_node == 0xFF) return;       /* not distributed: local only */
+#if defined(_TK_HOSTED_LIBC_)
+    if (quiet_take(id)) { stat_quiet++; return; }   /* b5-wire2: a quiet id */
+#endif
     if (announce_suppress) return;          /* G28: protected quiet put     */
 #if defined(_TK_HOSTED_LIBC_) && !defined(ARK_REC_SHARED)
     {   /* ark-entry.md 2.5: the ark's records stay here (see send_block_to) */
@@ -633,6 +715,13 @@ void pfs_repl_rx(pk_node_t src_node, UH dst_port, const UB *data, UH len)
      * even when the shared K-DDS announce slot lost the broadcast. */
     if (len >= (UH)sizeof(PFSR_HOLD_PKT)) {
         const PFSR_HOLD_PKT *hp = (const PFSR_HOLD_PKT *)data;
+#ifdef _TK_HOSTED_LIBC_
+        if (hp->magic == PFSR_UWANT_MAGIC) {        /* b5-wire2: a want to us alone */
+            stat_uwant_rx++;
+            if (src_node != drpc_my_node && pfs_has(hp->id)) send_block_to(src_node, hp->id);
+            return;
+        }
+#endif
         if (hp->magic == PFSR_HOLD_MAGIC) {
 #ifdef _TK_HOSTED_LIBC_
             /* N2: a wide holder says 0xFF; pmesh's src (v2) is its id */
