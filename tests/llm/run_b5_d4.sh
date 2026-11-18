@@ -58,7 +58,7 @@ arm() { # <name> <cflags> <expect PASS|FAIL>
     for k in 1 2; do
         mkfifo "$W/f$k"; mkdir -p "$W/d$k"
         env PKERNEL_NODE_ID=$k PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$W/d$k" \
-            PKERNEL_RELAY=127.0.0.1:$PORT "$W/p-kernel" < "$W/f$k" > "$W/n$k.log" 2>&1 &
+            PKERNEL_RELAY=127.0.0.1:$PORT PKERNEL_DEVICE_TIER=S "$W/p-kernel" < "$W/f$k" > "$W/n$k.log" 2>&1 &
         PIDS="$PIDS $!"
     done
     exec 7<>"$W/f1" 8<>"$W/f2"
@@ -68,7 +68,11 @@ arm() { # <name> <cflags> <expect PASS|FAIL>
     sleep 5
     printf 'baby region 7\n' >&7
     wait_for "$W/n1.log" 'region: fsync publish' 1 900
-    sleep 5
+    # node 2 must have node 1 in its region, or its verb fetches nothing (members 1)
+    local i=0
+    while [ "$i" -lt 60 ] && ! grep -aq '\[region\] members:.* node1(' "$W/n2.log"; do
+        printf 'region\n' >&8; sleep 2; i=$((i + 1))
+    done
     printf 'baby region 7\n' >&8
     wait_for "$W/n2.log" 'region: fsync publish' 1 1500
     local l1 l2 m2 c p f
