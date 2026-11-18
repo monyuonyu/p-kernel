@@ -25,6 +25,7 @@
 #   -DS1_NC_LEAVE_KEEP_FOREIGN -> L1   -DS1_NC_ORIGIN_VOLATILE -> L4
 #   -DS1_NC_LEAVE_NO_FLAG      -> L3   -DS1_NC_SELF_BY_NUMBER -> L1
 #   -DS1_NC_LEFT_ACCEPTS       -> L6a  -DS1_NC_LEFT_NO_SWEEP  -> L6b
+#   -DS1_NC_RESTORE_NO_REFUSE  -> L6c (a start with the mark takes a foreign block; H28)
 # Output: "[swarm-leave] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 set -u
@@ -111,7 +112,9 @@ suite() {  # <tag> <cflags>: prints the checks, sets SUITE_REDS
     run "$d4" "$WORK/$tag-m.log" 0 "leave seed 300"
     s6=$(seedid "$WORK/$tag-m.log" 300)
     printf 'PKLEFT1\n' > "$d4/swarm-left.st"
-    run "$d4" "$WORK/$tag-n.log" 0 "pfs origins"
+    run "$d4" "$WORK/$tag-n.log" 0 "pfs origins" "leave seed 301"
+    # H28 (audit-182): a start with the mark keeps refusing foreign blocks in that run
+    if grep -aq '^\[leave\] seed: refused' "$WORK/$tag-n.log"; then r L6c PASS; else r L6c FAIL; fi
     if grep -aq '^\[leave\] left at start: foreign 1 removed' "$WORK/$tag-n.log" \
        && case "$(origins "$WORK/$tag-n.log" 1)" in *" foreign 0 "*) true ;; *) false ;; esac \
        && [ -n "$s6" ] && [ ! -e "$d4/$s6" ] && [ ! -e "$d4/$s6.org" ]; then r L6b PASS; else r L6b FAIL; fi
@@ -137,7 +140,7 @@ FAIL=0
 suite plain ""
 [ -z "$SUITE_REDS" ] || { echo "[swarm-leave] plain red:$SUITE_REDS"; FAIL=1; }
 for nc in "S1_NC_LEAVE_KEEP_FOREIGN L1" "S1_NC_ORIGIN_VOLATILE L4" "S1_NC_LEAVE_NO_FLAG L3" \
-          "S1_NC_SELF_BY_NUMBER L1" "S1_NC_LEFT_ACCEPTS L6a" "S1_NC_LEFT_NO_SWEEP L6b"; do
+          "S1_NC_SELF_BY_NUMBER L1" "S1_NC_LEFT_ACCEPTS L6a" "S1_NC_LEFT_NO_SWEEP L6b" "S1_NC_RESTORE_NO_REFUSE L6c"; do
     set -- $nc
     suite "$1" "-D$1"
     case " $SUITE_REDS " in
