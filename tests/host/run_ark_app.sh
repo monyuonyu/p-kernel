@@ -13,7 +13,7 @@
 #   nc-origin (-DGALAXY_NO_ORIGIN: galaxy does not look at Host / Origin)
 #             A7-origin and A7-host FAIL; A7-no-token, A7-bad-token,
 #             A7-good-token and A7-nowrite still PASS
-#   part ② (plain: A1-gate A1 A2 A3 A4 A4-import A5 A6 PASS)
+#   part ② (plain: A1-gate A1 A2 A3 A4 A4-import A5 A6 AH PASS; AH = /ark/heir)
 #   nc-ark-gate     (-DGALAXY_ARK_NO_GATE: no consent check)      A1-gate FAIL, A1 PASS
 #   nc-normalize    (-DGALAXY_ARK_NORMALIZE: trailing spaces cut)  A1 FAIL, A1-gate PASS
 #   nc-backup-gate  (-DGALAXY_ARK_NO_BACKUP_GATE: no 409)          A4 FAIL, A1 PASS
@@ -59,7 +59,7 @@ want() {  # <arm> <PASS|FAIL> <check>...
 }
 
 ALL="A7-file A7-public A7-no-token A7-bad-token A7-good-token A7-origin A7-host A7-options A7-nowrite
-     A1-gate A1 A2 A3 A4 A4-import A5 A6"
+     A1-gate A1 A2 A3 A4 A4-import A5 A6 AH"
 # shellcheck disable=SC2086
 if arm plain ""; then want plain PASS $ALL; fi
 if arm nc-token "-DGALAXY_NO_TOKEN"; then

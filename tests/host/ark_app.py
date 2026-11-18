@@ -408,6 +408,18 @@ try:
     nr6b = rec_count(n)
     res("A6", big_ok == 200 and big_no == 413 and nr6a == 2 and nr6b == 2,
         "16384=%s 16385=%s nrec %s->%s" % (big_ok, big_no, nr6a, nr6b))
+    # AH (7.2 1, 4): the heir's public key by HTTP: set, read back, clear, refuse a bad one
+    HEIR = "ab" * 32
+    h1, _h, _b = raw("POST", "/ark/heir", HEIR, headers=H)
+    h2, _h, hb2 = raw("GET", "/ark/heir", headers=H)
+    h3, _h, _b = raw("POST", "/ark/heir", "zz", headers=H)
+    h4, _h, hb4 = raw("GET", "/ark/heir", headers=H)
+    h5, _h, _b = raw("POST", "/ark/heir", "clear", headers=H)
+    h6, _h, hb6 = raw("GET", "/ark/heir", headers=H)
+    res("AH", h1 == 200 and h2 == 200 and ('"heir":"%s"' % HEIR).encode() in hb2 and h3 == 400
+        and h4 == 200 and ('"heir":"%s"' % HEIR).encode() in hb4 and h5 == 200 and h6 == 200
+        and b'"heir":null' in hb6,
+        "set=%s get=%s %r bad=%s after-bad=%r clear=%s get=%s %r" % (h1, h2, hb2[:90], h3, hb4[:30], h5, h6, hb6[:40]))
     # A4 (this boot): 409 before "written down" wrote nothing; the key once, as the file
     a4 = (c409 == 409 and n409 == 0 and b1 == 200 and re.fullmatch(r"[0-9a-f]{64}", key1 or "")
           and key1 == kfile and b2 == 410 and bg in (404, 405) and bd == 200)
