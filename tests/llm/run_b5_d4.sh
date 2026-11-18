@@ -111,7 +111,7 @@ arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
     exec 7>&- 8>&-
     sleep 2
     kill -9 $PIDS 2>/dev/null; PIDS=""
-    cp "$W/n1.log" "/tmp/b5_d4_${a}_n1.log"; cp "$W/n2.log" "/tmp/b5_d4_${a}_n2.log"
+    cp "$W/n1.log" "/tmp/b5_d4_${PORT}_${a}_n1.log"; cp "$W/n2.log" "/tmp/b5_d4_${PORT}_${a}_n2.log"
 }
 
 arm plain "" PASS S
