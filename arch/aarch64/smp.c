@@ -590,8 +590,19 @@ void bkl_release(void)
         unsigned long di = smp_bkl_di();   /* mask IRQ across the clear window */
         __asm__ volatile("dsb ish" ::: "memory");
         g_bkl_owner = -1;
-        raw_unlock(&g_bkl_lock);           /* raw lock actually freed here     */
+#ifndef SMP_BKL_DEPTH_LATE
+        /* depth BEFORE the unlock: written after it, a CPU that took the lock in
+         * between (depth 1) got its depth overwritten with 0, its release then
+         * wrapped the unsigned depth and never unlocked -> the other CPU spun
+         * forever (smp0's hang after "cpu1 entered dispatcher", and the join
+         * timeout with a short counter; 2026-11-19). Falsifier
+         * -DSMP_BKL_DEPTH_LATE: the old order. */
         g_bkl_depth = 0;
+        raw_unlock(&g_bkl_lock);           /* raw lock actually freed here     */
+#else
+        raw_unlock(&g_bkl_lock);
+        g_bkl_depth = 0;
+#endif
         smp_bkl_ei(di);                    /* restore caller's IRQ state       */
     } else {
         g_bkl_depth--;

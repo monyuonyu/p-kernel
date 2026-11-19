@@ -5,11 +5,13 @@
 # 理由と期限を書き、監査を通す。期限を過ぎた行は許されなくなる（＝その日から master が止まる）。
 #
 # 形: ジョブ名の先頭 | 期限（YYYY-MM-DD） | 理由（ロードマップの番号）
-full-SMP + core autodetect | 2026-11-30 | ARM の複数コア（smp0）。ROADMAP 0-2
 Android エミュレータ実行 smoke | 2026-11-30 | advisory。ROADMAP 0-2・0-13
 # （二層カップリングの行は 2026-10-18 に消した: region の τ を直した 923ab570（監査-40）より後の
 #  CI 19回で二層の赤は1回だけ（38397211088、自己ホストの4ジョブが一緒に赤でログが空。監査-53: run と
 #  step の結論は cancelled ではなく failure＝取り消しとは言えず、原因は分からない）。直す前は4回中3回赤。
 #  数え方は pk-scratch/nisou.py。また赤くなれば promote が止まる＝それで気づく）
+# （full-SMP（smp0）の行は 2026-11-19 に消した: bkl_release が raw_unlock の後に共有の depth を
+#  0 にしていた（他コアの depth 1 を潰し、unsigned が回って旗を返さない）。fix/smp0-bkl-depth で
+#  順番を入れ替え、容器で master と同時に走らせて枝は全段 PASS・master は -smp 2 で止まる）
 # （複数点保護の行は 2026-10-11 監査-39 で消した: 時間の確かめと決まった生き残りの両方が
 #  feat/p28-survive-either で構造の確かめ・両方に聞く形になり、行が名指ししていた原因が無くなった）
