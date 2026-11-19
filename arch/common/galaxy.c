@@ -1462,6 +1462,7 @@ static void gx_ark_route(INT slot, GX_REQ *q)
         INT r = ark_key_backup_hex(hx);
         if (r == 0) { gx_resp_head(slot, "200 OK", "text/plain"); gx_qs(slot, hx); gx_qs(slot, "\n"); for (INT i = 0; i < 65; i++) hx[i] = 0; }
         else if (r == -2) gx_ark_status(slot, "410 Gone", "the key was shown once already");
+        else if (r == -9) gx_ark_status(slot, "503 Service Unavailable", "the shell is using the records; try again");
         else gx_ark_status(slot, "500 Internal Server Error", "no ark key");
         return;
     }
