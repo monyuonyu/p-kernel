@@ -589,7 +589,9 @@ void bkl_release(void)
     if (g_bkl_depth == 1) {
         unsigned long di = smp_bkl_di();   /* mask IRQ across the clear window */
         __asm__ volatile("dsb ish" ::: "memory");
+#ifndef SMP_BKL_OWNER_LATE      /* H35 falsifier: the owner cleared after the unlock */
         g_bkl_owner = -1;
+#endif
 #ifndef SMP_BKL_DEPTH_LATE
         /* depth BEFORE the unlock: written after it, a CPU that took the lock in
          * between (depth 1) got its depth overwritten with 0, its release then
@@ -599,6 +601,9 @@ void bkl_release(void)
          * -DSMP_BKL_DEPTH_LATE: the old order. */
         g_bkl_depth = 0;
         raw_unlock(&g_bkl_lock);           /* raw lock actually freed here     */
+#ifdef SMP_BKL_OWNER_LATE
+        g_bkl_owner = -1;                  /* H35 falsifier: after the unlock  */
+#endif
 #else
         raw_unlock(&g_bkl_lock);
         g_bkl_depth = 0;
@@ -999,6 +1004,14 @@ void smp_counter_inc(void)
 {
 #ifndef SMP_MUTEX_NOLOCK
     bkl_acquire();
+    /* H35 (a) (test-holes.md): every 4th count also takes the BKL NESTED. The
+     * recursive path reads g_bkl_owner, so an owner a racing release wrote
+     * after its unlock (-DSMP_BKL_OWNER_LATE) sends this CPU into raw_lock on
+     * the lock it holds -> a hang or a short counter. Without it the counter
+     * only ever took and dropped the lock at depth 1 (audit-195: x2 green). */
+    int nest = ((g_shared_counter & 3u) == 0u);
+    if (nest)
+        bkl_acquire();
 #endif
     unsigned long v = g_shared_counter;     /* read  */
     /* widen the race window so a NOLOCK build loses updates reliably */
@@ -1006,6 +1019,8 @@ void smp_counter_inc(void)
         __asm__ volatile("" ::: "memory");
     g_shared_counter = v + 1;               /* write */
 #ifndef SMP_MUTEX_NOLOCK
+    if (nest)
+        bkl_release();
     bkl_release();
 #endif
 }
