@@ -3957,19 +3957,12 @@ jobs:
     # never uses; run_smp0.sh now passes -nic none, so the romfile (and the
     # ipxe-qemu package) are no longer needed.
     #
-    # CORRECTION 2026-09-16 (unattended routine, verified via `gh run view` on
-    # every run of this job, not summarized from memory): this comment used to
-    # say "kept continue-on-error for one green run, then this guard can be
-    # removed" -- that premise no longer holds. Of the 15 runs of this job from
-    # 2026-07-12 through 2026-09-09, 14 FAILED and only ONE (2026-09-03 12:13
-    # UTC) was green. This is not "nearly stable, one more green away" -- it is
-    # mostly-red with one flake toward green. Removing continue-on-error now
-    # would very likely make master's CI red on nearly every push. Raising
-    # SMP0_TIMEOUT further, reducing the test's workload, or accepting this job
-    # as permanently informational are the live options. Which one is still an
-    # open maintainer decision (it needs qemu-system-aarch64 to measure, which the
-    # unattended routine's host does not have).
-    continue-on-error: true  # until 2026-11-30: smp0 mostly red since 07-12 (also tests/ci/known-red.txt). ROADMAP 0-2
+    # Blocking since 2026-11-20. It was red 14 of 15 runs (07-12..09-09); the
+    # cause was a real race, not the runner: bkl_release wrote the shared depth
+    # after raw_unlock (fix/smp0-bkl-depth, audit-195; the nested-acquire
+    # counter is fix/h35-smp-nested). After the fix it was green three runs in
+    # a row: 44564255384 (e4c75dc5), 44601951644 (0157d78b), 44621977966
+    # (7719dcc5). Its known-red line was removed on 2026-11-19.
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-system-aarch64
@@ -4082,8 +4075,9 @@ jobs:
     # secondary CPU entering the dispatcher but the actual task body never
     # running (ran=0 / tcb=ok=0 / H_smp=0), the same "secondary-CPU task
     # dispatch doesn't complete under software-only QEMU" shape already on
-    # record for run_smp0.sh (14/15 red on GitHub Actions, see that job's own
-    # comment above) -- NOT wired here, deliberately, per BACKLOG D5 and
+    # record for run_smp0.sh at the time (14/15 red on GitHub Actions; that
+    # turned out to be a real BKL race, fixed 2026-11-19, smp0 is blocking
+    # since 2026-11-20 -- whether smp2-5 share it is not measured) -- NOT wired here, deliberately, per BACKLOG D5 and
     # pkernel-baton.md's judgment-pending list. continue-on-error mirrors
     # run_smp0.sh's own precedent: these are QEMU-TCG-only aarch64 SMP certs on
     # a runner class already shown to be unreliable for this shape of test.
