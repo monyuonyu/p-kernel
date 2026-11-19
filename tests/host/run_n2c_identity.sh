@@ -17,11 +17,16 @@
 #       and node.key.bad keep their bytes), the run uses "src=ephemeral" and says so
 #   I2s node_seed cut to 5 bytes: one line "[node-id] node_seed: ...", the
 #       5 bytes kept as node_seed.bad, a new node_seed of 32 hex chars
+#   I2sb (H31) cut again while node_seed.bad is there: nothing is overwritten,
+#       one line "... node_seed.bad is there too ..."
+#   I2n node_seed + LF or + CRLF: the same id, no line, no node_seed.bad
+#       (added 2026-11-19 after audit-189; red on 5741cca1, which set it aside)
 #   IN  with the net up (a relay port nothing listens on), the first start says
 #       "[swim] incarnation 1 (node.incarn)" and the second "incarnation 2"
 # Falsifiers (each must turn its check red; the plain build must be ALL PASS):
 #   -DN2C_NC_KEY_EPHEMERAL -> I1    -DN2C_NC_KEY_OVERWRITE -> I2
 #   -DN2C_NC_SEED_REMINT   -> I2s   -DN2C_NC_INC_RESET     -> IN
+#   -DN2C_NC_SEED_BAD_OVERWRITE -> I2sb
 # Output: "[n2c-id] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 set -u
@@ -41,7 +46,7 @@ else
     trap 'rm -rf "$WORK"; make -C "$BOOT" clean >/dev/null 2>&1' EXIT
 fi
 PORT="${N2C_RELAY_PORT:-7493}"   # nothing listens there: the net comes up, nobody answers
-MODES="${N2C_MODES:-plain N2C_NC_KEY_EPHEMERAL N2C_NC_KEY_OVERWRITE N2C_NC_SEED_REMINT N2C_NC_INC_RESET}"
+MODES="${N2C_MODES:-plain N2C_NC_KEY_EPHEMERAL N2C_NC_KEY_OVERWRITE N2C_NC_SEED_REMINT N2C_NC_INC_RESET N2C_NC_SEED_BAD_OVERWRITE}"
 
 build() {  # <cflags>
     make -C "$BOOT" clean >/dev/null 2>&1
@@ -114,6 +119,26 @@ suite() {  # <tag> <cflags>: prints the checks, sets SUITE_REDS
     if [ "$(grep -ac '^\[node-id\] node_seed: ' "$WORK/$tag-s2.log")" -ge 1 ] \
        && [ "$(cat "$ds/node_seed.bad" 2>/dev/null)" = abcde ] && [ "$(fsize "$ds/node_seed")" = 32 ]; then
         r I2s PASS; else r I2s FAIL; fi
+    # I2sb (test-holes H31): cut again while node_seed.bad is there: nothing overwritten
+    printf 'vwxyz' > "$ds/node_seed"
+    run "$ds" "$WORK/$tag-s3.log" 0 "sign key"
+    echo "[n2c-id] $tag I2sb detail: node_seed $(fsize "$ds/node_seed") B node_seed.bad $(cat "$ds/node_seed.bad" 2>/dev/null) id=$(keyid "$WORK/$tag-s3.log") lines $(grep -ac '^\[node-id\] node_seed: .*node_seed.bad is there too' "$WORK/$tag-s3.log")"
+    if [ "$(grep -ac '^\[node-id\] node_seed: .*node_seed.bad is there too' "$WORK/$tag-s3.log")" -ge 1 ] \
+       && [ "$(cat "$ds/node_seed" 2>/dev/null)" = vwxyz ] && [ "$(cat "$ds/node_seed.bad" 2>/dev/null)" = abcde ]; then
+        r I2sb PASS; else r I2sb FAIL; fi
+    # I2n (n2c-identity §8): a node_seed with a line end (an editor's "\n" or "\r\n") is
+    # the same seed: the same id, no line, nothing set aside (as master before N2c)
+    dl="$WORK/$tag-dl"; mkdir -p "$dl"
+    run "$dl" "$WORK/$tag-l1.log" 0 "sign key"
+    printf '\n' >> "$dl/node_seed"
+    run "$dl" "$WORK/$tag-l2.log" 0 "sign key"
+    head -c 32 "$dl/node_seed" > "$dl/seed.tmp"; printf '\r\n' >> "$dl/seed.tmp"; mv "$dl/seed.tmp" "$dl/node_seed"
+    run "$dl" "$WORK/$tag-l3.log" 0 "sign key"
+    echo "[n2c-id] $tag I2n detail: id $(keyid "$WORK/$tag-l1.log") / LF $(keyid "$WORK/$tag-l2.log") / CRLF $(keyid "$WORK/$tag-l3.log") lines $(cat "$WORK/$tag-l2.log" "$WORK/$tag-l3.log" | grep -ac '^\[node-id\] node_seed: ') bad $(fsize "$dl/node_seed.bad")"
+    if [ -n "$(keyid "$WORK/$tag-l1.log")" ] && [ "$(keyid "$WORK/$tag-l1.log")" = "$(keyid "$WORK/$tag-l2.log")" ] \
+       && [ "$(keyid "$WORK/$tag-l1.log")" = "$(keyid "$WORK/$tag-l3.log")" ] \
+       && [ "$(cat "$WORK/$tag-l2.log" "$WORK/$tag-l3.log" | grep -ac '^\[node-id\] node_seed: ')" = 0 ] \
+       && [ "$(fsize "$dl/node_seed.bad")" = none ]; then r I2n PASS; else r I2n FAIL; fi
     # IN: incarnation kept and bumped
     dn="$WORK/$tag-dn"; mkdir -p "$dn"
     run "$dn" "$WORK/$tag-n1.log" 1 "nodes"
@@ -136,6 +161,7 @@ for m in $MODES; do
         N2C_NC_KEY_OVERWRITE) want=I2 ;;
         N2C_NC_SEED_REMINT)   want=I2s ;;
         N2C_NC_INC_RESET)     want=IN ;;
+        N2C_NC_SEED_BAD_OVERWRITE) want=I2sb ;;
         *) echo "[n2c-id] unknown mode $m"; FAIL=1; continue ;;
     esac
     suite "$m" "-D$m"

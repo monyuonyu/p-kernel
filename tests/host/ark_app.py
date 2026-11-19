@@ -207,7 +207,63 @@ BODY1 = "朝の散歩、café \r\nline with trailing spaces   \r\n".encode() + b
 RANK_WORDS = ["likes", "like_count", "rank", "ranking", "score", "views", "followers",
               "popular", "いいね", "順位", "人気"]
 
+def consent_and_backup(H):
+    """consent (the manifesto) and the key backup written down: the record routes open"""
+    _st, hd, _b = raw("GET", "/manifesto")
+    m = re.search(r"X-Manifesto-Id: ([0-9a-f]{64})", hd)
+    c, _h, _b = raw("POST", "/profile", "ack=1&handle=owner&mid=%s" % (m.group(1) if m else ""), headers=H)
+    b, _h, _b = raw("POST", "/ark/key/backup", "", headers=H)
+    d, _h, _b = raw("POST", "/ark/key/backup/done", "", headers=H)
+    return c, b, d
+
+
+def lock_part():
+    """A9-lock (ark-entry.md 7.10 1): the shell's `ark rec|heir|key` and the record routes
+    take the same flag. Built with -DARK_REC_TEST_HOLD and PKERNEL_ARK_REC_HOLD_MS, the
+    side that is inside waits HOLD ms holding it, so the other side surely comes then.
+      D1 the shell is inside (`ark rec new`): POST /ark/rec answers 503 at once, writes
+         nothing (the shell's record is the only one)
+      D2 the page is inside (POST /ark/rec): the shell's `ark rec ls` says busy at once,
+         the POST then answers 200 (two records)"""
+    import threading
+    hold = int(env.get("PKERNEL_ARK_REC_HOLD_MS", "0"))
+    n = Node("lock")
+    up = n.up()
+    H = {"X-Galaxy-Token": read_token()}
+    c, b, d = consent_and_backup(H)
+    print("[ark-app] note lock: up=%s consent=%s backup=%s done=%s hold=%d" % (up, c, b, d, hold), flush=True)
+    # D1
+    before = len(re.findall(r"\[ark-rec\] new no=", node_log()))
+    n.shell("ark rec new 0 from the shell")
+    time.sleep(0.8)
+    t = time.time()
+    s1, _h, _b = raw("POST", "/ark/rec", b"from the page while the shell is inside", headers=H)
+    e1 = time.time() - t
+    t_end = time.time() + 30
+    while time.time() < t_end and len(re.findall(r"\[ark-rec\] new no=", node_log())) <= before:
+        time.sleep(0.2)
+    n1 = rec_count(n)
+    d1 = s1 == 503 and e1 < hold / 1000.0 - 1.0 and n1 == 1
+    # D2
+    out = {}
+    def post():
+        out["s"], _h2, _b2 = raw("POST", "/ark/rec", b"from the page, the shell comes", headers=H)
+    th = threading.Thread(target=post)
+    th.start()
+    time.sleep(0.8)
+    busy = shell_wait(n, "ark rec ls", r"\[ark\] busy[^\r\n]*|\[ark-rec\] index nrec=\d+", timeout=hold / 1000.0 + 30)
+    th.join(timeout=60)
+    n2 = rec_count(n)
+    d2 = busy is not None and busy.startswith("[ark] busy") and out.get("s") == 200 and n2 == 2
+    n.stop()
+    res("A9-lock", d1 and d2, "D1 post=%s in %.1f s nrec=%s / D2 shell=%r post=%s nrec=%s"
+        % (s1, e1, n1, busy, out.get("s"), n2))
+
+
 open(logpath, "wb").close()
+if os.environ.get("ARK_APP_PART") == "lock":
+    lock_part()
+    sys.exit(0)
 tok1 = ""
 try:
     # ---- boot 1: the file, then shut down to see a new pass at boot 2 ----
@@ -462,5 +518,24 @@ try:
     res("A4-import", imp is not None and "written" in imp and k2.hex() == key1
         and sm == hashlib.sha256(BODY1).hexdigest() and ref is not None and "refused" in ref and k3 == k2,
         "import=%r sum=%s refuse=%r kept=%s" % (imp, (sm or "")[:8], ref, k3 == k2))
+
+    # A1-gate2 (ark-entry.md 7.10 2): the key written down (an import sets the marks)
+    # but no consent on this node: POST /ark/rec is 403 and writes nothing. A1-gate
+    # only saw the node before the backup, where a missing consent gate shows as 409.
+    pfs3 = os.path.join(work, "pfs3")
+    os.makedirs(pfs3, exist_ok=True)
+    env = dict(env_keep, PKERNEL_PFS_DIR=pfs3)
+    pfs_keep, pfs = pfs, pfs3
+    n = Node("gate2")
+    n.up()
+    imp3 = shell_wait(n, "ark key import " + "2" * 64, r"\[ark-key\] import[^\r\n]*")
+    marks = os.path.exists(os.path.join(pfs3, "ark.key.done"))
+    g2, _h, gb2 = raw("POST", "/ark/rec", b"after the backup, before the consent",
+                      headers={"X-Galaxy-Token": read_token()})
+    nr3 = rec_count(n)
+    n.stop()
+    env, pfs = env_keep, pfs_keep
+    res("A1-gate2", imp3 is not None and "written" in imp3 and marks and g2 == 403 and nr3 == 0,
+        "import=%r done-mark=%s post=%s %r nrec=%s" % (imp3, marks, g2, gb2[:40], nr3))
 finally:
     pass
