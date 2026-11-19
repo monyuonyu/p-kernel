@@ -1637,6 +1637,11 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
  * pfs_durable.c. */
 extern unsigned long pfs_dur_fsync_count(void) __attribute__((weak));
 static unsigned long region_fsyncs(void) { return pfs_dur_fsync_count ? pfs_dur_fsync_count() : 0; }
+/* W13c: the fsyncs of the lazy door only (the student's chunks) and the syncfs calls */
+extern unsigned long pfs_dur_lazy_fsync_count(void) __attribute__((weak));
+extern unsigned long pfs_dur_syncfs_count(void) __attribute__((weak));
+static unsigned long region_lazy(void) { return pfs_dur_lazy_fsync_count ? pfs_dur_lazy_fsync_count() : 0; }
+static unsigned long region_syncfs(void) { return pfs_dur_syncfs_count ? pfs_dur_syncfs_count() : 0; }
 
 static int student_region_cmd(const char *q, emit_fn emit)
 {
@@ -1645,17 +1650,18 @@ static int student_region_cmd(const char *q, emit_fn emit)
     unsigned long g = strtoul(q, &end, 10);
     uint32_t gen = (end == q) ? 0u : (uint32_t)g;
     if (!student_region_try()) { emit("[baby] region: busy (a round is running), unchanged\r\n"); return -1; }
-    unsigned long f0 = region_fsyncs();
+    unsigned long f0 = region_fsyncs(), l0 = region_lazy(), s0 = region_syncfs();
     int r = student_region_publish(gen, emit, "region");
     int chunks = r;
-    unsigned long f1 = region_fsyncs();
+    unsigned long f1 = region_fsyncs(), l1 = region_lazy(), s1 = region_syncfs();
     if (r > 0) r = student_region_merge(gen, emit, "region");
-    unsigned long f2 = region_fsyncs();
+    unsigned long f2 = region_fsyncs(), l2 = region_lazy(), s2 = region_syncfs();
     student_region_done();
     {
-        char line[160];
-        snprintf(line, sizeof line, "[baby] region: fsync publish %lu merge %lu (chunks %d)\r\n",
-                 f1 - f0, f2 - f1, chunks);
+        char line[224];
+        snprintf(line, sizeof line, "[baby] region: fsync publish %lu merge %lu (chunks %d)"
+                 " lazy publish %lu merge %lu syncfs publish %lu merge %lu\r\n",
+                 f1 - f0, f2 - f1, chunks, l1 - l0, l2 - l1, s1 - s0, s2 - s1);
         emit(line);
     }
     return r < 0 ? -1 : 0;

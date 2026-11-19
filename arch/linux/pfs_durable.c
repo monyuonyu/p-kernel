@@ -119,12 +119,21 @@ static int dur_is_weights(const char *fname)
  * read re-hashes it against its id (pfs_get). Every fsync this file does is
  * counted (pfs_dur_fsync_count, W13). Windows has no syncfs: lazy = durable. */
 static unsigned long dur_fsync_n;
+/* W13c (research/b5-m-round.md §7): two narrower counts, so other tasks'
+ * durable writes do not enter them: the fsyncs of writes that came in through
+ * the lazy door (pfs_dur_write_lazy: the student's chunks and their .org; 0 in
+ * the default build, every chunk under -DB5W_NC_FSYNC_EACH), and the syncfs
+ * calls that ran (pfs_dur_sync with something pending). */
+static unsigned long dur_lazy_fsync_n, dur_syncfs_n;
 #ifndef _WIN32
 static int dur_lazy_pending;
 #endif
 unsigned long pfs_dur_fsync_count(void) { return dur_fsync_n; }
-static int dur_fsync(int fd)
+unsigned long pfs_dur_lazy_fsync_count(void) { return __atomic_load_n(&dur_lazy_fsync_n, __ATOMIC_RELAXED); }
+unsigned long pfs_dur_syncfs_count(void) { return __atomic_load_n(&dur_syncfs_n, __ATOMIC_RELAXED); }
+static int dur_fsync_lz(int fd, int lazy)
 {
+    if (lazy) __atomic_add_fetch(&dur_lazy_fsync_n, 1, __ATOMIC_RELAXED);
     dur_fsync_n++;
 #ifdef _WIN32
     return _commit(fd);
@@ -132,17 +141,20 @@ static int dur_fsync(int fd)
     return fsync(fd);
 #endif
 }
-static int dur_write(const char *fname, const void *data, unsigned len, int sync);
+static int dur_fsync(int fd) { return dur_fsync_lz(fd, 0); }
+/* sync: 1 = fsync'd as before, 0 = no fsyncs (made durable by pfs_dur_sync);
+ * lazy: the write came through the lazy door (counted for W13c) */
+static int dur_write(const char *fname, const void *data, unsigned len, int sync, int lazy);
 int pfs_dur_write(const char *fname, const void *data, unsigned len)
 {
-    return dur_write(fname, data, len, 1);
+    return dur_write(fname, data, len, 1, 0);
 }
 int pfs_dur_write_lazy(const char *fname, const void *data, unsigned len)
 {
 #if defined(_WIN32) || defined(B5W_NC_FSYNC_EACH)
-    return dur_write(fname, data, len, 1);   /* falsifier W13: every chunk fsync'd */
+    return dur_write(fname, data, len, 1, 1);   /* falsifier W13: every chunk fsync'd */
 #else
-    return dur_write(fname, data, len, 0);
+    return dur_write(fname, data, len, 0, 1);
 #endif
 }
 /* one syncfs for everything written lazily since the last call; 0 = done or
@@ -157,6 +169,7 @@ int pfs_dur_sync(void)
     int dfd = open(dir, O_RDONLY | O_DIRECTORY);
     if (dfd < 0) { __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE); return -1; }
     dur_fsync_n++;
+    __atomic_add_fetch(&dur_syncfs_n, 1, __ATOMIC_RELAXED);
     int r = (int)syscall(SYS_syncfs, dfd);
     close(dfd);
     if (r != 0) __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE);
@@ -168,7 +181,7 @@ int pfs_dur_sync(void)
 
 /* Atomic write of `len` bytes to <dir>/<fname>, fsync'd unless `sync` is 0.
  * Returns 0 on success, -1 on any failure (or when persistence is disabled). */
-static int dur_write(const char *fname, const void *data, unsigned len, int sync)
+static int dur_write(const char *fname, const void *data, unsigned len, int sync, int lazy)
 {
     const char *dir = pfs_dur_dir();
     if (!dir) return -1;
@@ -197,7 +210,7 @@ static int dur_write(const char *fname, const void *data, unsigned len, int sync
         if (w <= 0) { close(fd); unlink(tmp); return -1; }
         off += (unsigned)w;
     }
-    if (sync && dur_fsync(fd) != 0) { close(fd); unlink(tmp); return -1; }
+    if (sync && dur_fsync_lz(fd, lazy) != 0) { close(fd); unlink(tmp); return -1; }
     close(fd);
 
     /* S1: a weights write that began before `leave` must not land after it
@@ -212,7 +225,7 @@ static int dur_write(const char *fname, const void *data, unsigned len, int sync
      * weaker crash-durability). */
     if (sync) {
         int dfd = open(dir, O_RDONLY | O_DIRECTORY);
-        if (dfd >= 0) { (void)dur_fsync(dfd); close(dfd); }
+        if (dfd >= 0) { (void)dur_fsync_lz(dfd, lazy); close(dfd); }
     } else {
         __atomic_store_n(&dur_lazy_pending, 1, __ATOMIC_RELEASE);
     }
