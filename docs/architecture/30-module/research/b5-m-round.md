@@ -100,3 +100,11 @@ live M（relay＋5 台、手元）
 - crown（`/build/d6c/cc.txt`、master e4c75dc5 と並べて）: x86・aarch64 の .text・.rodata が全バイト同じ（a 4dfac3f4/8e35fac0・x cd490552/996ad069）、hosted x86_64 警告 57（同じ）、hosted aarch64・Windows OK、shell_links 0 RED
 - **M1・M2（容器、run_b5_wire_live.sh を tier M・600 秒・τ 50 ms、3 腕同時 01:38〜: master e4c75dc5・D4b ce4915d7（印なし）・D6b 8e6908f5、`/build/d6m/`）**: **D6b ALL PASS**（L1 5 台×2 周すべて members 5 fetched 4・L2・L3・L4）。**D4b は L1 赤・L4 赤**（L2・L3 PASS）。合体の行（4 周分）: D6b は 19 行全部 members 5、うち 3 行が印で救われた（latched 1・3・1、外れていた相手は ALIVE で RTT 57〜90 ms、救われた相手も全部 fetched）。D4b は 19 行中 8 行が members 4〜1（gen 2991846 の n1 は members 1 で断り）。master は L1 赤（7 行が欠けか不足）・L2 赤（n4・n5 に SUSPECT）・L4 赤（後半は H35 の QEMU 4 本と同時）
 - 限界: 1 回だけ。印は「一度でも region にいた」相手を入れるので、本当に去った相手は取り寄せの gave up まで待つ（その時間は測っていない）。L4 の D4b の赤は合体が 0 秒で断られて語が busy にならなかった巻き添えの読み
+
+## 14. 監査-196（2026-11-20 03:00 の回）: **D4b・D6b とも限界つき PASS**
+
+- 台本と結果: `pk-scratch/a196/`（容器 `/build/a196/`）
+- **D4b**: W13d（1434bf99、01:26:23）は 1 周目（run.sh 01:26:36、結果 01:31:37）より前。ヘッダの「01:4x」は誤記。4 本同時で枝 2/2 ALL PASS（nc P1898 F1840、nchalf P1019 F881 で数の理由の赤）。τ 50 の写しは plainM が members 1 fetched 0＝1 周目の観察を再現。**私の壊し x5（publish の syncfs を記述子の保存の後へ）は plain・plainM とも W13d PASS**＝順序は試験の外（H36。製品の順序は読みで正しい）。nchalf の FAIL-OTHER の分け方は正しい
+- **D6b**: unit W14 6 項目 PASS、nolatch は W14 だけ赤、**私の壊し y2（union が gen を見ない）は W14 赤**。鍵: 印は 5 秒ごとに語の鍵を短く取る＝語が busy と言う隙は増えるが、印の処理は 64 回の region_contains だけ（読み）
+- M（D6b 2 本＋D4b を同時）: **私が build_all を同時に走らせたため合体が 1 周 540〜690 秒になり、3 腕とも L 判定の前に 3000 秒の打ち切り＝判定なし**（私の誤り）。合体の行は読めた: D6b 20 行中 7 行で外れた相手がいて、6 行は印で members 5（latched 1〜4、RTT 58〜134 ms、全部 fetched 4）、1 行は印があっても members 4（gen の頭から τ を超えたままの相手＝設計どおり救えない）。D4b は 11 行中 1 行が members 4
+- 限界: live の L1〜L4 の判定は実装者の 1 回だけ。去った相手の gave up までの時間は測っていない
