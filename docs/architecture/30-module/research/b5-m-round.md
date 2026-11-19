@@ -61,6 +61,12 @@ live M（relay＋5 台、手元）
 
 ## 9. M1・M2（同じ回、容器、run_b5_wire_live.sh を tier M・600 秒で、枝 f691ac08 と master fab2f457 を同時に）
 
-**M1 は赤、M2 は緑**（`/build/d4c/m12-br-keep.txt`・`m12-seen-keep.tsv`）。枝: 10 行のうち 8 行が members 5・fetched 4（合体は 134〜284 秒＝450 秒の内、gave up 0）、赤の 2 行は n3 の G1（members 3・99 秒）と n4 の G2（members 2・39 秒）＝取り寄せの遅さではなく、合体を始めた時に記述子がそろっていない（§6 の「語の形で members が揃わない」と同じ形が自動の周でも出た）。L2（疑い 0・want table full 0・announce 20）・L3・L4 は PASS。
-比べる相手の master: G1 は 5 台中 4 台が fetched 0（members 1、publish が周の 1/4 に間に合わない）、n2 だけ fetched 1 に 217 秒。G2 は n5 が members 3・fetched 2 に 1,062 秒、ほかは打ち切りの時点で行なし。master の判定は L1 赤（10 行とも）・**L2 赤（n2・n3 に SUSPECT 1）**・L4 PASS＝M2 は枝で緑、master で赤。**D4 で M の取り寄せは周に収まる速さになった（4 台分で約 140 秒）。残る赤は members のそろい方**。次: 合体の始めを「記述子が members 分そろうまで待つ（締め切りつき）」にするか、周の 1/4 を publish の終わりに合わせるかを決めて作る（D6、試験先）。D1・D2 は今は要らない見込み（上限にも当たっていない）。
+**M1 は赤、M2 は緑**（`/build/d4c/m12-br-keep.txt`・`m12-seen-keep.tsv`）。枝: 10 行のうち 8 行が members 5・fetched 4（合体は 134〜284 秒＝450 秒の内、gave up 0）、赤の 2 行は n3 の G1（members 3・99 秒）と n4 の G2（members 2・39 秒）＝取り寄せの遅さではない。**直し（同じ回の後半に読み直した）: 一度「記述子がそろう前に合体」と書いたが誤り。members は合体を始めた時の `region_contains`＝SWIM で ALIVE かつ RTT≤τ（REGION_TAU_MS 50 ms）の数で、記述子とは関係ない**（student_region_merge、region.c region_recompute）。塊の流れで RTT が 50 ms を超えた相手が region から外れた、という読み（ログに RTT が無く、確かめていない）。L2（疑い 0・want table full 0・announce 20）・L3・L4 は PASS。
+比べる相手の master: G1 は 5 台中 4 台が fetched 0（members 1、publish が周の 1/4 に間に合わない）、n2 だけ fetched 1 に 217 秒。G2 は n5 が members 3・fetched 2 に 1,062 秒、ほかは打ち切りの時点で行なし。master の判定は L1 赤（10 行とも）・**L2 赤（n2・n3 に SUSPECT 1）**・L4 PASS＝M2 は枝で緑、master で赤。**D4 で M の取り寄せは周に収まる速さになった（4 台分で約 140 秒）。残る赤は members のそろい方**。D1・D2 は今は要らない見込み（上限にも当たっていない）。
+
+## 10. D6 の設計（同じ回、実装はまだ。合否は作る前に固定）
+
+- **D6a（先に測る）**: 合体の行に「外した ALIVE の相手と、その RTT」を足す（例 `excluded n3:120ms`）。M を 1 回（枝だけでよい）。外れた相手の RTT が τ を超えていれば読みが当たり。超えていなければ D6b は作らず原因を探し直す
+- **D6b（当たりなら）**: 周の仲間は「その gen の頭から合体の始めまでに 1 度でも region にいた相手」の和（region の任務が 5 秒ごとに `region_contains` を見て印を足す、gen が変われば消す）。いなくなった相手は取り寄せが gave up で外れる（今と同じ）。RTT の線（τ）そのものは変えない（region の意味は N2 のまま）
+- 合否: unit W14＝印の和に、途中で外れた相手が残る・gen が変わると消える。陰性 `-DB5W_NC_NO_LATCH`（今の形）で W14 赤。live は M1・M2 をそのまま（枝と master を同時に）。M1 の members の赤が消え、L2 は緑のまま
 限界: 1 回だけ（周 2 つ）。master の G2 の後半は、私が H34 の試験と crown のビルドを同じ容器で始めた後に走った（21:04〜）。
