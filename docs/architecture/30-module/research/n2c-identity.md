@@ -57,20 +57,22 @@ node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master �
 
 ## 10. 第 2 段の設計: incarnation で生死を決める（2026-11-20 04:55 の回、docs と測りだけ）
 
-**題**（§7・swim.c を読んだ）: DEAD にした仲間を、どの電文でも（直の rx・直／間接の探りの ACK）その場で ALIVE に戻し、**incarnation は DEAD のときの k のまま** ALIVE@k を噂する。ほかのノードは同じ k なら DEAD が勝つので捨てる＝見え方が割れたまま、直に聞くか探るまで直らない。だから保存した incarnation の効きも I5 で見えなかった。もう 1 つ: 比べが `inc_in > inc_cur` の素の大小＝255 の後の 0 は「古い」。噂 DEAD@255 への反論は 0 になり負け続ける（今は rx の復活が隠している）
+**題**（swim.c・drpc.c を読んだ）: DEAD の仲間を、どの電文でも（rx・探りの ACK・drpc の HEARTBEAT）その場で ALIVE に戻し、incarnation は死んだときの k のまま ALIVE@k を噂する。他のノードは同じ k なら DEAD を残す＝見え方が割れ、直に聞くか探るまで直らない（§7 で保存の効きが見えなかった理由）。また比べが素の大小なので、噂 DEAD@255 への反論 0 は負け続ける（今は rx の復活が隠す）
 
-**決めたこと**（hosted だけ、`_TK_HOSTED_LIBC_` の中。ベアは今のまま＝crown 不変）:
-1. **DEAD からは、本人の言葉（うわさの自分の行）で k より新しい incarnation が来たときだけ ALIVE に戻す**。rx・探りの ACK では戻さない。**drpc.c の HEARTBEAT の受け（535 行、DEAD も ALIVE にする）も同じ門に**（hosted は drpc_task を起こさないが、ベアの仲間は送る）。SUSPECT は今のまま（直の証拠で ALIVE に戻す）
-2. **知らせる**: DEAD の仲間から新しくない電文が来たら DEAD@k を gossip_add（TTL を新しく）。次のビーコンで本人に届き、本人が k+1 で反論する（6 月からある道、旧版もベアも反論する）
-3. **比べは順序数**（RFC 1982）: `(UB)(a−b)` が 1..127 なら新しい。反論・ほかのノードの比べも同じ関数
-4. **反論で上げた incarnation も node.incarn に書く**（§6 の限界。書けなくても 2 の道で戻れる）
-5. 戻した行は `[swim] node N back at incarnation a (dead at k)` と 1 行言う
+**決めたこと**（hosted だけ＝crown 不変）:
+1. DEAD からは**本人の言葉（うわさの自分の行）で k より新しい incarnation**のときだけ ALIVE に。rx・探りの ACK・drpc.c 535 行の HEARTBEAT（hosted は送らないがベアは送る）では戻さない。SUSPECT は今のまま
+2. **知らせる**: DEAD の仲間から新しくない電文が来たら DEAD@k を gossip_add。本人が k+1 で反論する（6 月からの道、旧版・ベアも）
+3. 比べは**順序数**（RFC 1982）: `(UB)(a−b)` が 1..127 なら新しい
+4. 反論で上げた incarnation も node.incarn に書く（§6 の限界）
+5. 戻した行 `[swim] node N back at incarnation a (dead at k)`
 
-**合否（実装の前に固定、§3 に続けて）**:
-- **I7**（unit `nodes life`、`[swim-life] PASS`）: a DEAD@5 の仲間から自分の行なし／ALIVE@5 の電文→DEAD のまま・DEAD@5 が積まれる b ALIVE@6→ALIVE・incarn 6 c 探りの ACK でも、drpc の HEARTBEAT でも DEAD のまま d DEAD@255 に ALIVE@0→ALIVE e ALIVE@0 に DEAD@255→捨てる f 噂 DEAD@255 への自分の反論が 0 で、その 0 が別の受け手の DEAD@255 に勝つ g SUSPECT@5 は直の rx で ALIVE（今のまま）
-- **I8**（生きた、relay＋3 台）: node 2 を kill -STOP で DEAD にし、TTL（6 周）を過ぎてから CONT。n1・n3 の戻りは「back at incarnation」の行で、rx・探りの戻り行は無い。node 2 は SELF-SUSPICION 1 行以上・incarnation が上がる。60 秒以内
-- **I5b**: §7 の kill -9 と再起動を、保存あり・`N2C_NC_INC_RESET` の両方で。どちらも 60 秒以内に戻る（RESET は 2 の道で）
-- 陰性: `-DN2C_NC_RX_REVIVE`（rx で戻す）I7 a・c と I8 が赤／`-DN2C_NC_NO_TELL` I7 a と I8 が赤（戻れない）／`-DN2C_NC_PLAIN_CMP` I7 d・e・f が赤
-- 共通: `nodes test`（swim-incarn）・`cap`・`tea`・`v2`・[n2-mix] X1・X2・X5・[n2-alive] が緑、ベアの .text・.rodata 全バイト同じ
+**合否（実装の前に固定）**:
+- **I7**（unit `nodes life`）: a DEAD@5 に自分の行なし／ALIVE@5 の rx→DEAD のまま・DEAD@5 が積まれる b ALIVE@6→ALIVE・6 c 探りの ACK・HEARTBEAT でも DEAD のまま d DEAD@255 に噂 ALIVE@0→ALIVE e ALIVE@0 に噂 DEAD@255→捨てる f 噂 DEAD@255 への反論 0 が DEAD@255 に勝つ g SUSPECT@5 は rx で ALIVE
+- **I8**（relay＋3 台）: node 2 を kill -STOP で DEAD、20 秒（TTL の後）待って CONT。n1・n3 の戻りは「back at」の行だけ（rx・探りの戻り行 0）、60 秒以内
+- **I5b**: kill -9、DEAD から 20 秒待って同じ dir で再起動。保存あり・`N2C_NC_INC_RESET` とも 60 秒以内に戻る
+- 陰性: `N2C_NC_RX_REVIVE` I7 a・c と I8 が赤／`N2C_NC_NO_TELL` I7 a と I5b の RESET が赤／`N2C_NC_PLAIN_CMP` I7 d・e・f が赤
+- 共通: `nodes test`・`cap`・`tea`・`v2`・[n2-mix] X1・X2・X5・[n2-alive] 緑、ベアの .text・.rodata 全バイト同じ
 
-**限界**: 戻りが最短 1 周遅れる（2 の往復）。広い仲間（v2 のうわさは incarnation 0、生死は古さだけ）は入れない。旧版の hosted は素の大小のまま＝255 の近くでは割れうる。差が 128 以上は比べられない。新しい命の仲間の状態（seq・持ち手）を捨てるのは第 3 段（§2 の 5 と一緒に）
+**master で測った**（試験先、台本と探りは pk-scratch/n2c2/）: I7 は a1・a2・d・e・f の勝ちが赤、b・g 緑（c は読みだけ）。I8 は 2/2 赤（n1・n3 とも「recovered (via rx)」）。**CONT の後 node 2 は 14・16 回反論した**＝止まる間に受けの口に溜まった古い噂を読む。だから NO_TELL は I8 では赤にならない見込みで、陰性を I5b の RESET に移した（測った後の直し、合否の線は同じ）。「SELF-SUSPICION がある」も master で緑なので合否から外した
+
+**限界**: 戻りが最短 1 周遅れる。広い仲間（v2 の噂は incarnation 0、生死は古さだけ）は入れない。旧版の hosted は素の大小＝255 の近くで割れうる。差 128 以上は比べられない。新しい命の仲間の状態（seq・持ち手）を捨てるのは第 3 段（§2 の 5 と）
