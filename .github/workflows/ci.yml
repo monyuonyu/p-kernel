@@ -253,7 +253,12 @@ jobs:
     # -DMH_EVERY=1 pass another ~1.5, 2026-11-01).
     # 2026-11-08: 107.3 min in CI 42363056840; the N2 negative step (14.4 min)
     # moved to its own job n2-negatives, ~93 min expected here.
-    timeout-minutes: 120
+    # 120 -> 150 (2026-11-19, audit-194): 108.6 min in CI 44411492521, then
+    # cancelled at 120 in 44511375364 during [n2-mix] (the next-to-last step):
+    # the ark-app step went 306 -> 524 s with the LOCK arms and the runner was
+    # ~10% slower on most steps (~124 min expected). Not a hang. The job is
+    # near its budget: the next long step belongs in a job of its own.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
