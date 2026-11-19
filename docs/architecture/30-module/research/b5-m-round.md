@@ -78,3 +78,11 @@ live M（relay＋5 台、手元）
 - **② ゲートの穴**: 私の壊し x1（pfs_put_origin で id[0] が奇数の塊は lazy にしない＝半分が普通の扉で fsync）は、①を直すと **W13c PASS**（Lp 0・Lf 0・Sp 1・Sf 1）なのに P 963・F 965。W13c は「塊が lazy の扉を通ったか」を見ない。直し案: 全体の数でも P<C/4・F<C/4（今の plain は 11・1）を合否に、陰性 `-DB5W_NC_HALF_LAZY`（x1 の形）で赤。台本 `pk-scratch/a194/x1.py`
 - 読みで残す限界（FAIL の理由ではない）: pfs_dur_sync は印を先に下ろすので、別のタスクの syncfs の最中に自分の sync が 0 で戻り、塊より先に記述子が disk に載る隙がある（電源断のときだけ。塊は SHA で「無い」と読まれる）
 - 結果: 容器 `/build/a194/br*.txt`・`x1*.txt`
+
+## 12. D4b（2026-11-20 01:25 の回、実装者。🔍D4b 監査待ち）
+
+- 合否を走らせる前に固定（1434bf99）: 待ちは `node0(`、120 秒で見えなければ WAIT-RED。**ゲートは W13d＝W13c かつ P<C/4・F<C/4**。陰性 `-DB5W_NC_HALF_LAZY`（x1 の形、pfs_block.c の ifdef）は「W13c の部分は緑で P か F が C/4 以上」のときだけ赤と数える（ほかは FAIL-OTHER）
+- 1 周目（2 本同時、τ 50 ms）: plain PASS・nc・nchalf は数の理由で赤（nchalf P 963 F 881）。**plainM は 2/2 赤＝members 1 fetched 0**。node 2 は直前に `node0(rtt=36ms)` を見ていたのに、M の publish（5,578 塊）の後の合体の始めで node 1 が region から外れていた＝D6 の現象で、D4 の題ではない（ログ `/tmp/b5_d4_7631_plainM_n2.log` の 722〜727 行）
+- 直し（ce4915d7）: 試験だけ `PKERNEL_REGION_TAU_MS=250`（samples 13・27・28・32・46 と同じ）。ゲートは変えていない
+- 2 周目（2 本同時、`/build/d4b/r1.txt`・`r2.txt`）: **2/2 ALL PASS**。plain P 11 F 1 C 482・plainM P 11 F 1 C 5578、nc P 1898 F 1840、nchalf P 1019 F 965（C/4＝120）
+- 限界: τ を広げたので、この試験は region の出入りを見ない（M1 と D6 が見る）。nchalf の赤は「半分」の形だけ、数個の塊だけ外れる形（P が C/4 未満）は緑のまま
