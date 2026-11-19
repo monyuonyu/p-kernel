@@ -10,6 +10,8 @@
 #   nc-token  (-DGALAXY_NO_TOKEN: galaxy does not look at the pass)
 #             A7-no-token, A7-bad-token and A7-nowrite FAIL; A7-public,
 #             A7-good-token, A7-origin and A7-host still PASS
+#   nc-tok-first (-DGALAXY_TOK_SKIP_FIRST: the first char is not compared, H30)
+#             A7-bad-token FAIL (the "first" pass); A7-good-token, A7-no-token PASS
 #   nc-origin (-DGALAXY_NO_ORIGIN: galaxy does not look at Host / Origin)
 #             A7-origin and A7-host FAIL; A7-no-token, A7-bad-token,
 #             A7-good-token and A7-nowrite still PASS
@@ -18,6 +20,9 @@
 #   nc-normalize    (-DGALAXY_ARK_NORMALIZE: trailing spaces cut)  A1 FAIL, A1-gate PASS
 #   nc-backup-gate  (-DGALAXY_ARK_NO_BACKUP_GATE: no 409)          A4 FAIL, A1 PASS
 #   nc-backup-twice (-DGALAXY_BACKUP_TWICE: the key every time)    A4 FAIL, A1 PASS
+#   A1-gate2 (plain PASS, nc-ark-gate FAIL): key written down, no consent -> 403
+#   lock    (-DARK_REC_TEST_HOLD, only A9-lock: the shell and the page take one flag) PASS
+#   nc-lock (... -DARK_REC_SHELL_NO_FLAG: the shell does not take it)          A9-lock FAIL
 # Output: "[ark-app] <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 # ARK_APP_ARMS="plain" runs only the named arms (the negatives are skipped
@@ -31,7 +36,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_APP_PORT:-17831}"
-ARMS="${ARK_APP_ARMS:-plain nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
+ARMS="${ARK_APP_ARMS:-plain lock nc-lock nc-tok-first nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
 WORK="$(mktemp -d /tmp/arkapp.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 REDS=""
@@ -42,10 +47,11 @@ build() {  # <name> <cflags>
         tail -20 "$WORK/$1.build"; echo "[ark-app] $1 build FAIL"; return 1
     fi
 }
-arm() {  # <name> <cflags>
+arm() {  # <name> <cflags> [part: lock]
     case " $ARMS " in *" $1 "*) ;; *) REDS="$REDS $1-skipped"; return 1 ;; esac
     build "$1" "$2" || { REDS="$REDS $1-build"; return 1; }
     mkdir -p "$WORK/$1"
+    ARK_APP_PART="${3:-}" PKERNEL_ARK_REC_HOLD_MS="${3:+3000}" \
     timeout 600 python3 "$HERE/ark_app.py" "$BOOT/p-kernel" "$WORK/$1" "$PORT" > "$WORK/$1.out" 2>&1
     sed "s/^\[ark-app\] /[ark-app] $1 /" "$WORK/$1.out"
     cp "$WORK/$1/node.log" "/tmp/ark_app_$1.log" 2>/dev/null
@@ -59,19 +65,24 @@ want() {  # <arm> <PASS|FAIL> <check>...
 }
 
 ALL="A7-file A7-public A7-no-token A7-bad-token A7-good-token A7-origin A7-host A7-options A7-nowrite
-     A1-gate A1 A2 A3 A4 A4-import A5 A6 AH"
+     A1-gate A1-gate2 A1 A2 A3 A4 A4-import A5 A6 AH"
 # shellcheck disable=SC2086
 if arm plain ""; then want plain PASS $ALL; fi
+if arm lock "-DARK_REC_TEST_HOLD" lock; then want lock PASS A9-lock; fi
+if arm nc-lock "-DARK_REC_TEST_HOLD -DARK_REC_SHELL_NO_FLAG" lock; then want nc-lock FAIL A9-lock; fi
 if arm nc-token "-DGALAXY_NO_TOKEN"; then
     want nc-token FAIL A7-no-token A7-bad-token A7-nowrite
     want nc-token PASS A7-public A7-good-token A7-origin A7-host
+fi
+if arm nc-tok-first "-DGALAXY_TOK_SKIP_FIRST"; then
+    want nc-tok-first FAIL A7-bad-token; want nc-tok-first PASS A7-good-token A7-no-token
 fi
 if arm nc-origin "-DGALAXY_NO_ORIGIN"; then
     want nc-origin FAIL A7-origin A7-host
     want nc-origin PASS A7-no-token A7-bad-token A7-good-token A7-nowrite
 fi
 if arm nc-ark-gate "-DGALAXY_ARK_NO_GATE"; then
-    want nc-ark-gate FAIL A1-gate; want nc-ark-gate PASS A1
+    want nc-ark-gate FAIL A1-gate A1-gate2; want nc-ark-gate PASS A1
 fi
 if arm nc-normalize "-DGALAXY_ARK_NORMALIZE"; then
     want nc-normalize FAIL A1; want nc-normalize PASS A1-gate

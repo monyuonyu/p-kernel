@@ -219,7 +219,9 @@ void swarm_leave_restore(void (*out)(const char *))
     sl_count c = { 0, 0, 0, 1 };
     UW foreign;
     if (!swarm_leave_is_left()) return;
+#ifndef S1_NC_RESTORE_NO_REFUSE           /* falsifier (test-holes H28) */
     pfs_set_refuse_foreign(1);
+#endif
 #ifndef S1_NC_LEFT_NO_SWEEP
     foreign = sl_sweep(&c);
 #else

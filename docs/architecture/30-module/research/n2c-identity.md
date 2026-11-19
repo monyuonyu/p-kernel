@@ -48,3 +48,9 @@ relay＋3 台、node 2 を kill -9、DEAD の後に同じ dir で起こす（台
 ## 8. 監査-189（2026-11-19、限界つき PASS）
 
 先端 5741cca1 を容器で取り直した: crown x86・aarch64 の .text・.rodata が master と全バイト同じ、hosted x86_64 警告 57（master と同じ）・aarch64・Windows OK。試験 ALL PASS、陰性 4 つとも狙いが赤（KEY_EPHEMERAL は I2・I2b も赤）。試験先 b4e73c63 で I1・I2・I2b・I2s・IN 赤、I1e 緑＝実装者と同じ。私の壊し: move_aside が .bad を上書き→I2b だけ赤。**node_seed.bad も在るときに上書き→全部緑＝穴 H31**。網あり（relay なしの port）でも 2 回の起動で鍵・番号が同じ・incarnation 1→2。node.incarn を 2 B に切る→.bad へ退けて 1 から、255→256（電文は 0、§2 4 のとおり）。§5 の ③ は読んだ: 3 つとも呼んだときの鍵を pin する自己試験＝鍵が残っても壊れない。限界: **末尾に改行のある node_seed（33 B）は master では受け入れたが、今は .bad に退けて番号が変わる**（1 行言う。リポジトリに改行つきで書く所は無い。手で書いた人だけ）。同じ PKERNEL_PFS_DIR を 2 台で使えば同じ鍵（node_seed と同じ、前からの形）。Windows の rename は測っていない
+
+## 9. 8 の限界と H31 を直した（2026-11-19 05:10 の回、feat/ark-rec-lock。監査待ち）
+
+node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master と同じ扱い、ほかの尾は今までどおり .bad へ）。試験 I2n（LF・CRLF で同じ番号・行なし・.bad なし、b60f0d6c の前では赤）。H31: I2sb（.bad が在るときに切った node_seed を置くと、どちらも書き換えず「there too」の 1 行）、陰性 `-DN2C_NC_SEED_BAD_OVERWRITE` で赤
+
+監査-193（2026-11-19 19:05 の回、作った回とは別）: PASS。run_n2c_identity.sh 6 モード ALL PASS を再現（I2n は id が LF・CRLF でも同じ・行 0・.bad なし、陰性 SEED_BAD_OVERWRITE は I2sb だけ赤＝.bad が vwxyz に上書き）。読み: 尾が「LF 2 つ」「CR だけ」「34 B より長い」は今までどおり .bad（read は 34 B まで）。H31 は「ふさいだ」（S22）

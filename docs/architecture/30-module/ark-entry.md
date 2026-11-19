@@ -177,3 +177,11 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 ### 7.10 監査-189（2026-11-19、限界つき PASS。作った回とは別の回）
 
 先端 96483068 で 7 腕を取り直し ALL PASS（plain 18/18、陰性は各々狙いが赤）。試験先 5d2f5b8c で part ② 8 つ赤。私の壊し: import が在る ark.key を上書き→A4-import だけ赤、413 を外す→A6 だけ赤。galaxy の呼び手 39・40・41 も先端で PASS（実装者の 38・self_ref_local・stop_galaxy と合わせて全部）。限界: ① **7.9 の「シェルと HTTP は旗で 503」は誤り**。旗 http_busy を立てるのは ark_rec_http_* だけで、シェル（ark_rec_cmd）は立てない＝シェルと galaxy のタスクが同じ body・rec・desc を同時に使いうる（hosted はタイマーで横取りする）。実測ではシェルの `ark rec fill` と POST /ark/rec を交互に 2×40 回、80 件とも番号が別・読み戻し一致で壊れは出なかった。直し: ark_rec_cmd も同じ旗を取る（作る回で） ② A1-gate は控えの前（409 でも止まる状態）でしか試していない。nc-ark-gate の赤は 403→409 の違いで、「控え済み・同意前」の書き込みは試験に無い ③ 大きな受け皿は合言葉の確かめ（本文の後）より前に取られる。本文を送らずに止まる相手は受け皿を持ち続ける（galaxy には idle の打ち切りが無い、どの口も同じ） ④ gx_send_raw は相手が読まないと回り続ける（合言葉の後）
+
+### 7.11 7.10 の ① ② を直した（2026-11-19 05:10 の回、feat/ark-rec-lock。監査待ち）
+
+① シェルの `ark rec|heir|key` も同じ旗を取る（ark_rec_cmd、不可分の交換 `__atomic_exchange_n`）。中に相手がいればページは 503、シェルは `[ark] busy: ...` の 1 行で何もしない。試験 A9-lock（`run_ark_app.sh` の腕 lock、`-DARK_REC_TEST_HOLD` で入った側が PKERNEL_ARK_REC_HOLD_MS＝3 秒だけ旗を持つ）: D1 シェルが中→POST は待たずに 503・記録は 1 件、D2 ページが中→`ark rec ls` は busy・POST は 200・2 件。陰性 `-DARK_REC_SHELL_NO_FLAG` で赤。② A1-gate2: `ark key import` で控えの印がある・同意の無いノードへの POST は 403・0 件（nc-ark-gate で赤）。限界: 鍵の控えの道（ark_key_backup_hex）は旗を取らない（ark_priv を読むだけ）。待ちの口は試験のビルドだけ＝ふだんの二進で取り合いを起こす試験は無い
+
+### 7.12 監査-193（2026-11-19 19:05 の回、限界つき PASS。作った回とは別の回）
+
+7.11 の数字を再現（run_ark_app.sh 9 腕 ALL PASS・nc-lock の A9-lock 赤・A1-gate2 は nc-ark-gate だけ赤、run_n2c_identity.sh ALL PASS）。私の壊し: シェルが `ark key` の後に旗を返さない→赤、**`ark heir` の後に返さない→全部緑**だったので、監査側で A9-lock に D3（シェルの heir・key・rec ls の後にページの GET /ark/rec.json が 200）を足し、その壊しで赤を確かめた。限界（H34）: rec_take を不可分でなくする・ページの書きが書く前に旗を下ろす、はどちらも緑（試験は待ちの 3 秒だけを見る）。**7.11 の「鍵の控えの道は ark_priv を読むだけ」は不正確**: ark_key_backup_hex は鍵が無ければ作って ark.key を書く。シェルの `ark key import`（在るかを見てから書く）と同時なら、見せた鍵と disk の鍵が食い違いうる。同じ持ち主が 2 つの口を同時に使うときだけなので止めはしないが、次の入口の作る回で控えの道も旗を取る（busy は 503）のがおすすめ

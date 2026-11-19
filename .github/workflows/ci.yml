@@ -3519,6 +3519,10 @@ jobs:
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
       - name: B5 wire stage 1 unit ([b5w-W0] [b5w-W3..W6], falsifiers NO_GEN on W4 and NO_GATE on W6)
         run: B5W_MODE=unit bash tests/llm/run_b5_wire.sh
+      # B5 step 10 self-tests (s6/s7/s8/s10unit, the far/tglow falsifiers and the
+      # three of test-holes H27): seconds. The judgement seeds are not here.
+      - name: B5 step 10 self-tests (s10unit + 5 falsifier builds red)
+        run: B5S10_MODE=self bash tests/llm/run_b5_step10.sh
       # B5 D4 (research/b5-m-round.md §7-8): the student's chunks are written
       # without their own fsyncs, one syncfs ends the publish and the fetch.
       # Gate W13c at tier S and M; the falsifier FSYNC_EACH must be red by the

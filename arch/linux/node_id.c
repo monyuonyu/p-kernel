@@ -122,9 +122,14 @@ static int seed_from_pfs_dir(const char *pfs_dir, unsigned char out[SEED_LEN])
     /* try to read an existing seed first. */
     int fd = open(path, O_RDONLY);
     if (fd >= 0) {
-        char hex[2*SEED_LEN + 2] = {0};
-        ssize_t n = read(fd, hex, 2*SEED_LEN + 1);
+        char hex[2*SEED_LEN + 3] = {0};
+        ssize_t n = read(fd, hex, 2*SEED_LEN + 2);
         close(fd);
+        /* a line end after the 32 hex chars ("\n", or "\r\n" from an editor) is the
+         * same seed (master read only 32 bytes and took it; audit-189 §8). Anything
+         * else after them is not a seed this code wrote: set aside below. */
+        if (n == 2*SEED_LEN + 1 && hex[2*SEED_LEN] == '\n') n = 2*SEED_LEN;
+        if (n == 2*SEED_LEN + 2 && hex[2*SEED_LEN] == '\r' && hex[2*SEED_LEN + 1] == '\n') n = 2*SEED_LEN;
         if (n == 2*SEED_LEN && seed_from_hex(hex, out) == 0)
             return 0;
 #ifndef N2C_NC_SEED_REMINT
@@ -136,7 +141,12 @@ static int seed_from_pfs_dir(const char *pfs_dir, unsigned char out[SEED_LEN])
             char bad[1100], m[200];
             struct stat st;
             snprintf(bad, sizeof(bad), "%s.bad", path);
+#ifndef N2C_NC_SEED_BAD_OVERWRITE         /* falsifier (test-holes H31): .bad is overwritten */
             if (stat(bad, &st) == 0 || rename(path, bad) != 0) {
+#else
+            (void)st;
+            if (rename(path, bad) != 0) {
+#endif
                 snprintf(m, sizeof(m), "[node-id] node_seed: not %d hex chars and node_seed.bad is "
                          "there too; nothing changed on disk, id 1 for this run\r\n", 2*SEED_LEN);
                 nid_say(m);
