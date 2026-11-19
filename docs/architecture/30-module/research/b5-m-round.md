@@ -58,3 +58,9 @@ live M（relay＋5 台、手元）
 走らせる前に固定（f691ac08）: 数える口を 2 つ足した＝lazy の扉（pfs_dur_write_lazy）から来た書き込みの fsync と、実際に走った syncfs。語の行に「lazy publish Lp merge Lf syncfs publish Sp merge Sf」。合否は node 2 が S と M の両方で C≥50・Lp=Lf=0・Sp=Sf=1・fetched 1、陰性 FSYNC_EACH は Lp≥C かつ Lf≥C で赤（数以外の理由の赤は陰性と数えない）。W13・W13b は報告だけに残した。
 結果（容器、1 回、`/build/d4c/w13c-keep.txt`）: **ALL PASS**。S（C 482）・M（C 5,578）とも 0・0・1・1。陰性は Lp 1,888・Lf 1,840（syncfs 0・0）で狙いどおり赤。プロセス全体の数 P は S・M とも 11（前の回の M の 19 は再現せず）。M の取り寄せ 24 秒。CI の shipped-llm-certs に段を足した（約 4 分）。
 限界: 1 回ずつ。数えるのは書き込みの道の上だけで、syncfs が本当に塊を disk に載せたか（電源断）は試していない（SHA で読むたびに確かめる、が頼り）。
+
+## 9. M1・M2（同じ回、容器、run_b5_wire_live.sh を tier M・600 秒で、枝 f691ac08 と master fab2f457 を同時に）
+
+**M1 は赤、M2 は緑**（`/build/d4c/m12-br-keep.txt`・`m12-seen-keep.tsv`）。枝: 10 行のうち 8 行が members 5・fetched 4（合体は 134〜284 秒＝450 秒の内、gave up 0）、赤の 2 行は n3 の G1（members 3・99 秒）と n4 の G2（members 2・39 秒）＝取り寄せの遅さではなく、合体を始めた時に記述子がそろっていない（§6 の「語の形で members が揃わない」と同じ形が自動の周でも出た）。L2（疑い 0・want table full 0・announce 20）・L3・L4 は PASS。
+比べる相手の master: G1 は 5 台中 4 台が fetched 0（members 1、publish が周の 1/4 に間に合わない）、n2 だけ fetched 1 に 217 秒。G2 は n5 が members 3・fetched 2 に 1,062 秒、ほかは打ち切りの時点で行なし。**D4 で M の取り寄せは周に収まる速さになった（4 台分で約 140 秒）。残る赤は members のそろい方**。次: 合体の始めを「記述子が members 分そろうまで待つ（締め切りつき）」にするか、周の 1/4 を publish の終わりに合わせるかを決めて作る（D6、試験先）。D1・D2 は今は要らない見込み（上限にも当たっていない）。
+限界: 1 回だけ（周 2 つ）。master の G2 の後半は、私が H34 の試験と crown のビルドを同じ容器で始めた後に走った（21:04〜）。
