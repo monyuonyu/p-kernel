@@ -1533,6 +1533,10 @@ __attribute__((weak)) int gl_student_fetch(unsigned short node, void *out, unsig
 __attribute__((weak)) unsigned int region_contains(unsigned short node)   /* BOOL, pk_node_t */
 { (void)node; return 0; }
 extern unsigned short drpc_my_node __attribute__((weak));    /* pk_node_t      */
+/* B5 D6a (region.c, hosted): weak references, absent = no measurement line */
+extern int region_left_out(unsigned short *ids, unsigned char *states, unsigned int *rtts, int max)
+    __attribute__((weak));
+extern unsigned int region_tau_ms(void) __attribute__((weak));
 
 static int region_fetch(void *ctx, uint16_t node, void *out, size_t cap)
 {
@@ -1629,6 +1633,21 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
              rp.accepted, rp.adopted, (double)rp.held_live, (double)after,
              rp.accepted ? "" : " (refused, unchanged)", dt);
     emit(line);
+    /* B5 D6a (research/b5-m-round.md §10), a measurement: who the region left out
+     * at this merge's start, with SWIM state and RTT. Its own line AFTER the merge
+     * line (the live tests read the first "<tag>: gen G " line). */
+    if (region_left_out) {
+        unsigned short ids[16]; unsigned char sts[16]; unsigned int rtts[16];
+        int k = region_left_out(ids, sts, rtts, 16), at;
+        at = snprintf(line, sizeof line, "[baby] %s: left-out gen %u:", tag, (unsigned)gen);
+        for (int i = 0; i < k && at < (int)sizeof line - 24; i++)
+            at += rtts[i] == 0xFFFFFFFFu
+                ? snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:rtt?", ids[i], sts[i])
+                : snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:%ums", ids[i], sts[i], rtts[i]);
+        snprintf(line + at, sizeof line - (size_t)at, "%s (members %d, tau %u ms)\r\n", k ? "" : " none", m,
+                 region_tau_ms ? region_tau_ms() : 0u);
+        emit(line);
+    }
     return r < 0 ? -1 : r;
 }
 

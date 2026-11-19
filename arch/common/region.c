@@ -305,6 +305,24 @@ BOOL region_contains(pk_node_t node)
     return region_is_member(node);
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* B5 D6a (research/b5-m-round.md §10), a measurement: the known narrow peers the
+ * region leaves out right now, with their SWIM state (1 alive, 2 suspect, 3 dead)
+ * and RTT (0xFFFFFFFF = not measured). Hosted only (bare metal unchanged). */
+INT region_left_out(pk_node_t *ids, UB *states, UW *rtts, INT max)
+{
+    INT k = 0;
+    pk_node_t me = drpc_my_node;
+    region_recompute();
+    for (UB n = 0; n < DNODE_MAX && k < max; n++) {
+        if (n == me || dnode_table[n].state == 0) continue;
+        if (region_is_member(n)) continue;
+        ids[k] = n; states[k] = dnode_table[n].state; rtts[k] = swim_rtt_ms(n); k++;
+    }
+    return k;
+}
+#endif
+
 UB region_size(void)
 {
     region_recompute();
