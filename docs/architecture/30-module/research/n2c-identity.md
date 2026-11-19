@@ -52,3 +52,5 @@ relay＋3 台、node 2 を kill -9、DEAD の後に同じ dir で起こす（台
 ## 9. 8 の限界と H31 を直した（2026-11-19 05:10 の回、feat/ark-rec-lock。監査待ち）
 
 node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master と同じ扱い、ほかの尾は今までどおり .bad へ）。試験 I2n（LF・CRLF で同じ番号・行なし・.bad なし、b60f0d6c の前では赤）。H31: I2sb（.bad が在るときに切った node_seed を置くと、どちらも書き換えず「there too」の 1 行）、陰性 `-DN2C_NC_SEED_BAD_OVERWRITE` で赤
+
+監査-193（2026-11-19 19:05 の回、作った回とは別）: PASS。run_n2c_identity.sh 6 モード ALL PASS を再現（I2n は id が LF・CRLF でも同じ・行 0・.bad なし、陰性 SEED_BAD_OVERWRITE は I2sb だけ赤＝.bad が vwxyz に上書き）。読み: 尾が「LF 2 つ」「CR だけ」「34 B より長い」は今までどおり .bad（read は 34 B まで）。H31 は「ふさいだ」（S22）
