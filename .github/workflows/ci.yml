@@ -3519,6 +3519,11 @@ jobs:
         run: bash tests/llm/run_ss3.sh
       - name: SS-3 blob transport + merge at ST_LR ([ss3-blob-*], falsifier -DSS3_BLOB_OLD_LR red on convergence only)
         run: bash tests/llm/run_ss3_blob.sh
+      # test-holes H36: the publish's syncfs before its descriptor (B5 D4). The
+      # order is seen through --wrap; the falsifier x5 (syncfs after the
+      # descriptor, audit-196) must turn [h36-order] alone red. Seconds.
+      - name: H36 publish syncfs before the descriptor ([h36-*], falsifier x5 red on [h36-order] only)
+        run: bash tests/llm/run_h36_sync_order.sh
       # B5 wire stage 1 (research/b5-wire.md): st_region_round through the real
       # pfs (W0 W3-W6), NO_GEN red on W4 only, NO_GATE red on W6 only. The
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
