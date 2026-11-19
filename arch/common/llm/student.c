@@ -2902,6 +2902,23 @@ int st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out)
 static int st_rg_fail_nth;               /* test hook: the nth peer buffer fails */
 void st_rg_test_fail_alloc(int nth) { st_rg_fail_nth = nth; }
 
+/* B5 D6b (student.h): the round's members, latched from the gen's head */
+void st_rg_latch_see(st_rg_latch *l, uint32_t gen, uint64_t now)
+{
+    if (!l) return;
+    if (!l->set || l->gen != gen) { l->gen = gen; l->set = 1; l->seen = 0; }
+    l->seen |= now;
+}
+uint64_t st_rg_latch_union(const st_rg_latch *l, uint32_t gen, uint64_t now)
+{
+#if defined(B5W_NC_NO_LATCH)
+    (void)l; (void)gen;
+    return now;
+#else
+    return (l && l->set && l->gen == gen) ? (now | l->seen) : now;
+#endif
+}
+
 int st_region_round(st_model *live, uint32_t gen, uint16_t self,
                     const uint16_t *members, int count,
                     st_rg_fetch_fn fetch, void *ctx,

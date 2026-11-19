@@ -6704,6 +6704,8 @@ extern int  student_region_try(void) __attribute__((weak));
 extern void student_region_done(void) __attribute__((weak));
 extern int  student_region_publish(UW gen, void (*emit)(const char *), const char *tag) __attribute__((weak));
 extern int  student_region_merge(UW gen, void (*emit)(const char *), const char *tag) __attribute__((weak));
+extern void student_region_see(UW gen) __attribute__((weak));   /* B5 D6b: latch the round's members */
+#define SR_SEE_S 5
 #define SR_ROUND_MIN 60u
 
 static UW sr_period(void)
@@ -6724,7 +6726,7 @@ void student_region_task(INT stacd, void *exinf)
     if (!student_region_try || !student_region_done || !student_region_publish || !student_region_merge) return;
     tk_dly_tsk(8000);                                /* let SWIM form a region */
     r_puts("[baby] student_region_task up, round "); r_putdec(P); r_puts(" s\r\n");
-    long pub = -1, mer = -1;
+    long pub = -1, mer = -1, seen_at = 0;
     for (;;) {
         tk_dly_tsk(1000);
         if (mind_paused_for_hibernation()) continue;
@@ -6735,6 +6737,13 @@ void student_region_task(INT stacd, void *exinf)
         long now = time(0);
         if (now <= 0) continue;
         long gen = now / (long)P, ph = now % (long)P;
+        /* D6b: from the gen's head to its merge, mark who the region holds
+         * (every SR_SEE_S s, under the verb's lock; busy = the next tick) */
+        if (student_region_see && gen != mer && now - seen_at >= SR_SEE_S && student_region_try()) {
+            student_region_see((UW)gen);
+            seen_at = now;
+            student_region_done();
+        }
         if (gen != pub && ph < (long)(P / 10u)) {
             if (!student_region_try()) continue;
             r_puts("[baby] auto: publish gen "); r_putdec((UW)gen); r_puts("\r\n");

@@ -248,9 +248,39 @@ static void w7_w10(st_model *n, tab_t *t, uint32_t G)
 }
 
 /* W0 W3 W4 W5 W6 with the real pfs (ARK-backed, SOLO) */
+/* ---- D6b (research/b5-m-round.md §10): W14, the round's members latched.
+ * Weak, so the test-first commit links and W14 is red by its own line. ---- */
+extern void     st_rg_latch_see(st_rg_latch *l, uint32_t gen, uint64_t now) __attribute__((weak));
+extern uint64_t st_rg_latch_union(const st_rg_latch *l, uint32_t gen, uint64_t now) __attribute__((weak));
+static void w14(void)
+{
+    if (!st_rg_latch_see || !st_rg_latch_union) {
+        check(0, "b5w-W14", "st_rg_latch_see / _union are not there (D6b not built)");
+        return;
+    }
+    st_rg_latch l; memset(&l, 0, sizeof l);
+    const uint64_t head = (1ull << 0) | (1ull << 2) | (1ull << 3) | (1ull << 4);   /* 4 peers at the gen's head */
+    const uint64_t start = (1ull << 0) | (1ull << 2);                            /* n3, n4 out at the merge's start */
+    check(st_rg_latch_union(&l, 0, start) == start, "b5w-W14", "a zeroed latch adds nothing (gen 0)");
+    st_rg_latch_see(&l, 100, head);
+    st_rg_latch_see(&l, 100, head & ~(1ull << 3));                               /* n3 over tau mid-round */
+    st_rg_latch_see(&l, 100, start);
+    check(st_rg_latch_union(&l, 100, start) == head, "b5w-W14",
+          "peers that left the region mid-round stay in the round's members (n3, n4)");
+    check(st_rg_latch_union(&l, 100, start | (1ull << 5)) == (head | (1ull << 5)), "b5w-W14",
+          "a peer first seen at the merge's start is in too");
+    check(st_rg_latch_union(&l, 101, start) == start, "b5w-W14", "another gen: the view at the start only");
+    st_rg_latch_see(&l, 101, start);
+    check(st_rg_latch_union(&l, 101, start) == start && st_rg_latch_union(&l, 100, start) == start, "b5w-W14",
+          "a new gen clears the old marks");
+    st_rg_latch_see(&l, 102, 1ull << 63);
+    check(st_rg_latch_union(&l, 102, 0) == (1ull << 63), "b5w-W14", "id 63 (the top narrow id) is kept");
+}
+
 static int unit(void)
 {
     printf("=== [b5-wire] unit (research/b5-wire.md §3 §4) ===\n");
+    w14();
     pfs_durable_restore(emit);
     if (!pfs_durable_active()) { printf("  FAIL  [b5w-io] durable backend not active (PKERNEL_PFS_BACKEND=ark)\n"); return 2; }
     st_model n[K];

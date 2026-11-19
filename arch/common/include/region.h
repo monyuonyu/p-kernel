@@ -34,6 +34,8 @@
  * code is unchanged. Cert: tests/host/run_region_tau_env.sh. */
 void region_set_tau_ms(UW tau_ms);
 UW   region_tau_ms(void);
+/* B5 D6a: the known narrow peers outside the region now (state, RTT); hosted */
+INT  region_left_out(pk_node_t *ids, UB *states, UW *rtts, INT max);
 #endif
 
 /* 現在の RTT / membership から自 region を再計算する。

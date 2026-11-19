@@ -451,6 +451,10 @@ void pfs_repl_want_quiet(const U1 id[PFS_ID_LEN])
     pending_add(id);
 }
 UW pfs_repl_quiet_count(void) { return stat_quiet; }
+/* B5 D4: a quiet id is a student chunk / index block: written without its own
+ * fsyncs (pfs_block.c pfs_put_lazy), made durable by one pfs_dur_sync at the end */
+extern INT (*pfs_put_lazy)(const U1 id[PFS_ID_LEN]);
+static INT quiet_lazy(const U1 id[PFS_ID_LEN]) { return quiet_find(id) >= 0; }
 
 /* b5-wire2 §6 (live L1, 11-18): a quiet want sent straight to the holder. The
  * region want is one LATEST_ONLY slot: a receiver polling it every 50 ms sees
@@ -1287,6 +1291,9 @@ void pfs_repl_init(void)
 
     pmesh_bind(PFSR_PORT, pfs_repl_rx);
     pfs_set_put_hook(on_new_block);
+#if defined(_TK_HOSTED_LIBC_)
+    pfs_put_lazy = quiet_lazy;
+#endif
 
     pr_puts("[pfs] P1 replication ready  port=");
     pr_putdec(PFSR_PORT);

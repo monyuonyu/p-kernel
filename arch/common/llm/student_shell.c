@@ -1533,6 +1533,10 @@ __attribute__((weak)) int gl_student_fetch(unsigned short node, void *out, unsig
 __attribute__((weak)) unsigned int region_contains(unsigned short node)   /* BOOL, pk_node_t */
 { (void)node; return 0; }
 extern unsigned short drpc_my_node __attribute__((weak));    /* pk_node_t      */
+/* B5 D6a (region.c, hosted): weak references, absent = no measurement line */
+extern int region_left_out(unsigned short *ids, unsigned char *states, unsigned int *rtts, int max)
+    __attribute__((weak));
+extern unsigned int region_tau_ms(void) __attribute__((weak));
 
 static int region_fetch(void *ctx, uint16_t node, void *out, size_t cap)
 {
@@ -1588,6 +1592,24 @@ int student_region_publish(uint32_t gen, emit_fn emit, const char *tag)
     return pub;
 }
 
+/* B5 D6b (research/b5-m-round.md §10): the round's members latched from the
+ * gen's head. The task (r3_incontext.c) calls student_region_see every 5 s
+ * until it merges, under the verb's lock; the merge reads the union. */
+static st_rg_latch g_rg_latch;
+static uint64_t region_now_mask(unsigned short self)
+{
+    uint64_t mk = 0;
+    for (unsigned short id = 0; id < 64; id++)            /* the narrow ids */
+        if (id != self && region_contains(id)) mk |= 1ull << id;
+    return mk;
+}
+void student_region_see(uint32_t gen)
+{
+    unsigned short self = region_self();
+    if (self == 0xFF || self == 0xFFFF) return;
+    st_rg_latch_see(&g_rg_latch, gen, region_now_mask(self));
+}
+
 int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
 {
     char line[200];
@@ -1603,8 +1625,19 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
     uint16_t mem[ST_COHORT_MAX];
     int m = 0;
     mem[m++] = self;
-    for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)   /* the narrow ids */
-        if (id != self && region_contains(id)) mem[m++] = id;
+    /* D6b: the view now, OR the peers the region held at least once since the
+     * gen's head (student_region_see, the task's ticks); the narrow ids */
+    uint64_t now_m = region_now_mask(self);
+    uint64_t all_m = st_rg_latch_union(&g_rg_latch, gen, now_m);
+    int latched = 0;
+    for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)
+        if (id != self && ((all_m >> id) & 1u)) {
+            mem[m++] = id;
+            if (!((now_m >> id) & 1u)) latched++;
+        }
+    /* D6a: who the region leaves out NOW (the start), said after the merge line */
+    unsigned short lo_ids[16]; unsigned char lo_sts[16]; unsigned int lo_rtts[16];
+    int lo_k = region_left_out ? region_left_out(lo_ids, lo_sts, lo_rtts, 16) : -1;
     int cn = cradle_corpus_len();
     st_split sp = st_held_split(cn, ST_DMN_SEQLEN);
     int hw = sp.heldw, te = sp.train_end, sl = ST_DMN_SEQLEN;
@@ -1629,8 +1662,35 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
              rp.accepted, rp.adopted, (double)rp.held_live, (double)after,
              rp.accepted ? "" : " (refused, unchanged)", dt);
     emit(line);
+    /* B5 D6a (research/b5-m-round.md §10), a measurement: who the region left out
+     * at this merge's start (taken right after the members, 21:35 fix: the first
+     * run took it at the end), with SWIM state and RTT. Its own line AFTER the merge
+     * line (the live tests read the first "<tag>: gen G " line). */
+    if (lo_k >= 0) {
+        unsigned short *ids = lo_ids; unsigned char *sts = lo_sts; unsigned int *rtts = lo_rtts;
+        int k = lo_k, at;
+        at = snprintf(line, sizeof line, "[baby] %s: left-out gen %u:", tag, (unsigned)gen);
+        for (int i = 0; i < k && at < (int)sizeof line - 24; i++)
+            at += rtts[i] == 0xFFFFFFFFu
+                ? snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:rtt?", ids[i], sts[i])
+                : snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:%ums", ids[i], sts[i], rtts[i]);
+        snprintf(line + at, sizeof line - (size_t)at, "%s (members %d, latched %d, tau %u ms)\r\n", k ? "" : " none", m,
+                 latched, region_tau_ms ? region_tau_ms() : 0u);
+        emit(line);
+    }
     return r < 0 ? -1 : r;
 }
+
+/* W13 (research/b5-m-round.md §5): the fsyncs of the store during the verb publish
+ * and merge, said in one line. Weak: the unit tests link this file without
+ * pfs_durable.c. */
+extern unsigned long pfs_dur_fsync_count(void) __attribute__((weak));
+static unsigned long region_fsyncs(void) { return pfs_dur_fsync_count ? pfs_dur_fsync_count() : 0; }
+/* W13c: the fsyncs of the lazy door only (the student's chunks) and the syncfs calls */
+extern unsigned long pfs_dur_lazy_fsync_count(void) __attribute__((weak));
+extern unsigned long pfs_dur_syncfs_count(void) __attribute__((weak));
+static unsigned long region_lazy(void) { return pfs_dur_lazy_fsync_count ? pfs_dur_lazy_fsync_count() : 0; }
+static unsigned long region_syncfs(void) { return pfs_dur_syncfs_count ? pfs_dur_syncfs_count() : 0; }
 
 static int student_region_cmd(const char *q, emit_fn emit)
 {
@@ -1639,9 +1699,20 @@ static int student_region_cmd(const char *q, emit_fn emit)
     unsigned long g = strtoul(q, &end, 10);
     uint32_t gen = (end == q) ? 0u : (uint32_t)g;
     if (!student_region_try()) { emit("[baby] region: busy (a round is running), unchanged\r\n"); return -1; }
+    unsigned long f0 = region_fsyncs(), l0 = region_lazy(), s0 = region_syncfs();
     int r = student_region_publish(gen, emit, "region");
+    int chunks = r;
+    unsigned long f1 = region_fsyncs(), l1 = region_lazy(), s1 = region_syncfs();
     if (r > 0) r = student_region_merge(gen, emit, "region");
+    unsigned long f2 = region_fsyncs(), l2 = region_lazy(), s2 = region_syncfs();
     student_region_done();
+    {
+        char line[224];
+        snprintf(line, sizeof line, "[baby] region: fsync publish %lu merge %lu (chunks %d)"
+                 " lazy publish %lu merge %lu syncfs publish %lu merge %lu\r\n",
+                 f1 - f0, f2 - f1, chunks, l1 - l0, l2 - l1, s1 - s0, s2 - s1);
+        emit(line);
+    }
     return r < 0 ? -1 : 0;
 }
 
