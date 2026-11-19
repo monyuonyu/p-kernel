@@ -23,6 +23,10 @@
 #   A1-gate2 (plain PASS, nc-ark-gate FAIL): key written down, no consent -> 403
 #   lock    (-DARK_REC_TEST_HOLD, only A9-lock: the shell and the page take one flag) PASS
 #   nc-lock (... -DARK_REC_SHELL_NO_FLAG: the shell does not take it)          A9-lock FAIL
+#   A9-key  (lock PASS; H34, ark-entry 7.12): the key backup takes the same flag (503
+#           while the shell is inside, 410 after, the page's GET 200)
+#   nc-key-flag (... -DARK_KEY_BACKUP_NO_FLAG: the backup does not take it)    A9-key FAIL, A9-lock PASS
+#   A9-atomic (text, H34 (a)): rec_take is still one __atomic_exchange_n on http_busy
 # Output: "[ark-app] <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 # ARK_APP_ARMS="plain" runs only the named arms (the negatives are skipped
@@ -36,7 +40,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_APP_PORT:-17831}"
-ARMS="${ARK_APP_ARMS:-plain lock nc-lock nc-tok-first nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
+ARMS="${ARK_APP_ARMS:-plain lock nc-lock nc-key-flag nc-tok-first nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
 WORK="$(mktemp -d /tmp/arkapp.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 REDS=""
@@ -68,8 +72,16 @@ ALL="A7-file A7-public A7-no-token A7-bad-token A7-good-token A7-origin A7-host 
      A1-gate A1-gate2 A1 A2 A3 A4 A4-import A5 A6 AH"
 # shellcheck disable=SC2086
 if arm plain ""; then want plain PASS $ALL; fi
-if arm lock "-DARK_REC_TEST_HOLD" lock; then want lock PASS A9-lock; fi
+if arm lock "-DARK_REC_TEST_HOLD" lock; then want lock PASS A9-lock A9-key; fi
 if arm nc-lock "-DARK_REC_TEST_HOLD -DARK_REC_SHELL_NO_FLAG" lock; then want nc-lock FAIL A9-lock; fi
+if arm nc-key-flag "-DARK_REC_TEST_HOLD -DARK_KEY_BACKUP_NO_FLAG" lock; then
+    want nc-key-flag FAIL A9-key; want nc-key-flag PASS A9-lock
+fi
+# A9-atomic (H34 (a)): a test-then-set flag passes every live check (the cut between the
+# two is too short to hit), so the text is checked: rec_take is one atomic exchange
+if grep -q 'static INT  rec_take(void)    { return __atomic_exchange_n(&http_busy, 1, __ATOMIC_ACQ_REL)' "$ROOT/arch/common/ark_rec.c"; then
+    echo "[ark-app] A9-atomic PASS"
+else echo "[ark-app] A9-atomic FAIL (rec_take is not one __atomic_exchange_n on http_busy)"; REDS="$REDS A9-atomic"; fi
 if arm nc-token "-DGALAXY_NO_TOKEN"; then
     want nc-token FAIL A7-no-token A7-bad-token A7-nowrite
     want nc-token PASS A7-public A7-good-token A7-origin A7-host

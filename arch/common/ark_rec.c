@@ -1234,18 +1234,31 @@ INT ark_rec_http_list(char *o, UW cap)
 
 /* the key backup (7.2 4): the ark key as 64 hex, ONCE. The mark ark.key.shown is written
  * before the key is handed out, so a crash cannot show it twice. 0 = out has the key,
- * -2 = shown before (410), -1 = no key / the mark not written. */
+ * -2 = shown before (410), -1 = no key / the mark not written, ARK_HTTP_BUSY = the shell
+ * is inside (503). It takes the records' flag (H34, ark-entry.md 7.12): ark_key() can
+ * make and write the key, and the shell's `ark key import` writes it too; without the
+ * flag the page could show one key while the disk keeps the other. Falsifier
+ * -DARK_KEY_BACKUP_NO_FLAG: no flag (as before 2026-11-19 20:15). */
 INT ark_key_backup_hex(char out[65])
 {
     static const char H[] = "0123456789abcdef";
-#ifndef GALAXY_BACKUP_TWICE
-    if (pfs_dur_exists("ark.key.shown")) return -2;
+#ifndef ARK_KEY_BACKUP_NO_FLAG
+    if (http_enter() != 0) return ARK_HTTP_BUSY;
 #endif
-    if (ark_key() != 0) return -1;
-    if (pfs_dur_write("ark.key.shown", "1", 1) != 0) return -1;
-    for (UW i = 0; i < 32; i++) { out[2 * i] = H[ark_priv[i] >> 4]; out[2 * i + 1] = H[ark_priv[i] & 15]; }
-    out[64] = 0;
-    return 0;
+    INT r = 0;
+#ifndef GALAXY_BACKUP_TWICE
+    if (pfs_dur_exists("ark.key.shown")) r = -2;
+#endif
+    if (r == 0 && ark_key() != 0) r = -1;
+    if (r == 0 && pfs_dur_write("ark.key.shown", "1", 1) != 0) r = -1;
+    if (r == 0) {
+        for (UW i = 0; i < 32; i++) { out[2 * i] = H[ark_priv[i] >> 4]; out[2 * i + 1] = H[ark_priv[i] & 15]; }
+        out[64] = 0;
+    }
+#ifndef ARK_KEY_BACKUP_NO_FLAG
+    rec_release();
+#endif
+    return r;
 }
 /* "written down" (POST /ark/key/backup/done): only after the key was shown */
 INT ark_key_backup_done(void)

@@ -269,7 +269,22 @@ def lock_part():
         g, _h, _b = raw("GET", "/ark/rec.json", headers=H)
         d3s.append((line, got is not None, g))
     d3 = all(ok and g == 200 for _l, ok, g in d3s)
+    # A9-key (H34, ark-entry.md 7.12): the key backup takes the same flag. The key was
+    # shown once above, so without the flag the answer is 410; with it, while the shell
+    # is inside (`ark rec ls` holds HOLD ms) the answer is 503 at once. After the shell:
+    # 410 again (shown once), and the page's GET /ark/rec.json is 200 (the backup route
+    # gave the flag back).
+    n.shell("ark rec ls")
+    time.sleep(0.8)
+    t = time.time()
+    k1, _h, _b = raw("POST", "/ark/key/backup", "", headers=H)
+    ek = time.time() - t
+    time.sleep(hold / 1000.0 + 1.0)
+    k2, _h, _b = raw("POST", "/ark/key/backup", "", headers=H)
+    k3, _h, _b = raw("GET", "/ark/rec.json", headers=H)
+    dk = k1 == 503 and ek < hold / 1000.0 - 1.0 and k2 == 410 and k3 == 200
     n.stop()
+    res("A9-key", dk, "inside=%s in %.1f s / after=%s / rec.json=%s" % (k1, ek, k2, k3))
     res("A9-lock", d1 and d2 and d3, "D1 post=%s in %.1f s nrec=%s / D2 shell=%r post=%s nrec=%s / D3 %s"
         % (s1, e1, n1, busy, out.get("s"), n2,
            " ".join("%s:%s:%s" % (l.split()[1] + ("-" + l.split()[2] if len(l.split()) > 2 else ""), ok, g)
