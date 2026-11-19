@@ -224,7 +224,9 @@ def lock_part():
       D1 the shell is inside (`ark rec new`): POST /ark/rec answers 503 at once, writes
          nothing (the shell's record is the only one)
       D2 the page is inside (POST /ark/rec): the shell's `ark rec ls` says busy at once,
-         the POST then answers 200 (two records)"""
+         the POST then answers 200 (two records)
+      D3 (audit-193) after `ark heir`, `ark key` and `ark rec ls` in the shell the page's
+         GET /ark/rec.json answers 200 (the shell gave the flag back on every word)"""
     import threading
     hold = int(env.get("PKERNEL_ARK_REC_HOLD_MS", "0"))
     n = Node("lock")
@@ -255,9 +257,23 @@ def lock_part():
     th.join(timeout=60)
     n2 = rec_count(n)
     d2 = busy is not None and busy.startswith("[ark] busy") and out.get("s") == 200 and n2 == 2
+    # D3 (audit-193): every shell word gives the flag back. After `ark heir`, `ark key`
+    # (its usage line) and `ark rec ls` the page's GET /ark/rec.json answers 200, not 503.
+    # Before this, a shell that kept the flag after `ark heir` passed every check.
+    d3s = []
+    for line, pat in (("ark heir", r"\[ark-heir\][^\r\n]*"),
+                      ("ark key", r"usage: ark key import[^\r\n]*"),
+                      ("ark rec ls", r"\[ark-rec\] index nrec=\d+[^\r\n]*")):
+        got = shell_wait(n, line, pat, timeout=hold / 1000.0 + 30)
+        time.sleep(0.5)
+        g, _h, _b = raw("GET", "/ark/rec.json", headers=H)
+        d3s.append((line, got is not None, g))
+    d3 = all(ok and g == 200 for _l, ok, g in d3s)
     n.stop()
-    res("A9-lock", d1 and d2, "D1 post=%s in %.1f s nrec=%s / D2 shell=%r post=%s nrec=%s"
-        % (s1, e1, n1, busy, out.get("s"), n2))
+    res("A9-lock", d1 and d2 and d3, "D1 post=%s in %.1f s nrec=%s / D2 shell=%r post=%s nrec=%s / D3 %s"
+        % (s1, e1, n1, busy, out.get("s"), n2,
+           " ".join("%s:%s:%s" % (l.split()[1] + ("-" + l.split()[2] if len(l.split()) > 2 else ""), ok, g)
+                    for l, ok, g in d3s)))
 
 
 open(logpath, "wb").close()
