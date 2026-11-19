@@ -1592,6 +1592,24 @@ int student_region_publish(uint32_t gen, emit_fn emit, const char *tag)
     return pub;
 }
 
+/* B5 D6b (research/b5-m-round.md §10): the round's members latched from the
+ * gen's head. The task (r3_incontext.c) calls student_region_see every 5 s
+ * until it merges, under the verb's lock; the merge reads the union. */
+static st_rg_latch g_rg_latch;
+static uint64_t region_now_mask(unsigned short self)
+{
+    uint64_t mk = 0;
+    for (unsigned short id = 0; id < 64; id++)            /* the narrow ids */
+        if (id != self && region_contains(id)) mk |= 1ull << id;
+    return mk;
+}
+void student_region_see(uint32_t gen)
+{
+    unsigned short self = region_self();
+    if (self == 0xFF || self == 0xFFFF) return;
+    st_rg_latch_see(&g_rg_latch, gen, region_now_mask(self));
+}
+
 int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
 {
     char line[200];
@@ -1607,8 +1625,16 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
     uint16_t mem[ST_COHORT_MAX];
     int m = 0;
     mem[m++] = self;
-    for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)   /* the narrow ids */
-        if (id != self && region_contains(id)) mem[m++] = id;
+    /* D6b: the view now, OR the peers the region held at least once since the
+     * gen's head (student_region_see, the task's ticks); the narrow ids */
+    uint64_t now_m = region_now_mask(self);
+    uint64_t all_m = st_rg_latch_union(&g_rg_latch, gen, now_m);
+    int latched = 0;
+    for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)
+        if (id != self && ((all_m >> id) & 1u)) {
+            mem[m++] = id;
+            if (!((now_m >> id) & 1u)) latched++;
+        }
     /* D6a: who the region leaves out NOW (the start), said after the merge line */
     unsigned short lo_ids[16]; unsigned char lo_sts[16]; unsigned int lo_rtts[16];
     int lo_k = region_left_out ? region_left_out(lo_ids, lo_sts, lo_rtts, 16) : -1;
@@ -1648,8 +1674,8 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
             at += rtts[i] == 0xFFFFFFFFu
                 ? snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:rtt?", ids[i], sts[i])
                 : snprintf(line + at, sizeof line - (size_t)at, " n%u:s%u:%ums", ids[i], sts[i], rtts[i]);
-        snprintf(line + at, sizeof line - (size_t)at, "%s (members %d, tau %u ms)\r\n", k ? "" : " none", m,
-                 region_tau_ms ? region_tau_ms() : 0u);
+        snprintf(line + at, sizeof line - (size_t)at, "%s (members %d, latched %d, tau %u ms)\r\n", k ? "" : " none", m,
+                 latched, region_tau_ms ? region_tau_ms() : 0u);
         emit(line);
     }
     return r < 0 ? -1 : r;
