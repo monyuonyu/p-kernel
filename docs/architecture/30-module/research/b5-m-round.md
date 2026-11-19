@@ -52,3 +52,9 @@ live M（relay＋5 台、手元）
 ## 7. D4 を作った（2026-11-19 05:10 の回、feat/b5-m-d4。**W13・W13b とも赤**、監査待ち）
 
 生徒の塊（quiet の id）は塊ごとの fsync をせず（tmp→rename、.org も）、publish の終わり（記述子の保存の前）と取り寄せの終わりに syncfs を 1 回（pfs_put_lazy・pfs_dur_sync、Windows は今までどおり）。試験 tests/llm/run_b5_d4.sh（relay＋2 台、語が fsync の数を言う）。数（容器、1 回ずつ）: 試験先 ae498178 は S で P=1898・F=1840（482 塊）、M で P=22358。先端は S で P=11・F=1、M で P=11（1 回目）・19（2 回目）・F=1、陰性 FSYNC_EACH は P=1898・F=1840。M の取り寄せ 5,578 塊は 26〜27 秒（陰性 237 秒、ただし時間をまたいだ比べ）。**作る前に決めた W13（P≤8）は赤**（11＝syncfs 1＋記述子の pfs_dag_save 1 回で 10、塊の数には比例しない）。測った後に決めた W13b（P≤11・F≤1・S と M で同じ P）も赤（M で 19＝数えるのがプロセス全体で、ほかのタスクの durable な書き込みも入る）。次: **W13c（生徒の塊の fsync だけを数えて 0、syncfs は 1 回ずつ）を走らせる前に固定**し、数える口を lazy の対象に絞る。CI には入れていない。M1・M2（600 秒の周、比べる相手と同時）は未
+
+## 8. W13c（2026-11-19 20:15 の回、実装者）
+
+走らせる前に固定（f691ac08）: 数える口を 2 つ足した＝lazy の扉（pfs_dur_write_lazy）から来た書き込みの fsync と、実際に走った syncfs。語の行に「lazy publish Lp merge Lf syncfs publish Sp merge Sf」。合否は node 2 が S と M の両方で C≥50・Lp=Lf=0・Sp=Sf=1・fetched 1、陰性 FSYNC_EACH は Lp≥C かつ Lf≥C で赤（数以外の理由の赤は陰性と数えない）。W13・W13b は報告だけに残した。
+結果（容器、1 回、`/build/d4c/w13c-keep.txt`）: **ALL PASS**。S（C 482）・M（C 5,578）とも 0・0・1・1。陰性は Lp 1,888・Lf 1,840（syncfs 0・0）で狙いどおり赤。プロセス全体の数 P は S・M とも 11（前の回の M の 19 は再現せず）。M の取り寄せ 24 秒。CI の shipped-llm-certs に段を足した（約 4 分）。
+限界: 1 回ずつ。数えるのは書き込みの道の上だけで、syncfs が本当に塊を disk に載せたか（電源断）は試していない（SHA で読むたびに確かめる、が頼り）。
