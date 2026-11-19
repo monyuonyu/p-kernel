@@ -1609,6 +1609,9 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
     mem[m++] = self;
     for (unsigned short id = 0; id < 64 && m < ST_COHORT_MAX; id++)   /* the narrow ids */
         if (id != self && region_contains(id)) mem[m++] = id;
+    /* D6a: who the region leaves out NOW (the start), said after the merge line */
+    unsigned short lo_ids[16]; unsigned char lo_sts[16]; unsigned int lo_rtts[16];
+    int lo_k = region_left_out ? region_left_out(lo_ids, lo_sts, lo_rtts, 16) : -1;
     int cn = cradle_corpus_len();
     st_split sp = st_held_split(cn, ST_DMN_SEQLEN);
     int hw = sp.heldw, te = sp.train_end, sl = ST_DMN_SEQLEN;
@@ -1634,11 +1637,12 @@ int student_region_merge(uint32_t gen, emit_fn emit, const char *tag)
              rp.accepted ? "" : " (refused, unchanged)", dt);
     emit(line);
     /* B5 D6a (research/b5-m-round.md §10), a measurement: who the region left out
-     * at this merge's start, with SWIM state and RTT. Its own line AFTER the merge
+     * at this merge's start (taken right after the members, 21:35 fix: the first
+     * run took it at the end), with SWIM state and RTT. Its own line AFTER the merge
      * line (the live tests read the first "<tag>: gen G " line). */
-    if (region_left_out) {
-        unsigned short ids[16]; unsigned char sts[16]; unsigned int rtts[16];
-        int k = region_left_out(ids, sts, rtts, 16), at;
+    if (lo_k >= 0) {
+        unsigned short *ids = lo_ids; unsigned char *sts = lo_sts; unsigned int *rtts = lo_rtts;
+        int k = lo_k, at;
         at = snprintf(line, sizeof line, "[baby] %s: left-out gen %u:", tag, (unsigned)gen);
         for (int i = 0; i < k && at < (int)sizeof line - 24; i++)
             at += rtts[i] == 0xFFFFFFFFu
