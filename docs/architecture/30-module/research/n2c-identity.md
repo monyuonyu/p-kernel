@@ -54,3 +54,27 @@ relay＋3 台、node 2 を kill -9、DEAD の後に同じ dir で起こす（台
 node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master と同じ扱い、ほかの尾は今までどおり .bad へ）。試験 I2n（LF・CRLF で同じ番号・行なし・.bad なし、b60f0d6c の前では赤）。H31: I2sb（.bad が在るときに切った node_seed を置くと、どちらも書き換えず「there too」の 1 行）、陰性 `-DN2C_NC_SEED_BAD_OVERWRITE` で赤
 
 監査-193（2026-11-19 19:05 の回、作った回とは別）: PASS。run_n2c_identity.sh 6 モード ALL PASS を再現（I2n は id が LF・CRLF でも同じ・行 0・.bad なし、陰性 SEED_BAD_OVERWRITE は I2sb だけ赤＝.bad が vwxyz に上書き）。読み: 尾が「LF 2 つ」「CR だけ」「34 B より長い」は今までどおり .bad（read は 34 B まで）。H31 は「ふさいだ」（S22）
+
+## 10. 第 2 段の設計: incarnation で生死を決める（2026-11-20 04:55 の回、docs と測りだけ）
+
+**題**（swim.c・drpc.c を読んだ）: DEAD の仲間を rx・探りの ACK・drpc の HEARTBEAT で ALIVE に戻し、死んだときの k のまま ALIVE@k を噂する。他は同じ k なら DEAD を残す＝見え方が割れる（§7 で効きが見えなかった理由）。比べも素の大小で、DEAD@255 への反論 0 は負ける
+
+**決めたこと**（hosted だけ＝crown 不変）:
+1. DEAD からは**本人の言葉（うわさの自分の行）で k より新しい incarnation**のときだけ ALIVE に。rx・探りの ACK・drpc.c 535 行の HEARTBEAT（ベアが送る）では戻さない。SUSPECT は今のまま
+2. **知らせる**: DEAD の仲間から新しくない電文が来たら DEAD@k を gossip_add。本人が k+1 で反論する（旧版・ベアも反論する）
+3. 比べは**順序数**（RFC 1982）: `(UB)(a−b)` が 1..127 なら新しい
+4. 反論で上げた incarnation も node.incarn に書く（§6 の限界）
+5. 戻した行 `[swim] node N back at incarnation a (dead at k)`。後始末は rx の戻りと同じ（replica_push_to・degrade_update）
+
+**合否（実装の前に固定）**:
+- **I7**（unit `nodes life`）: a DEAD@5 に自分の行なし／ALIVE@5 の rx→DEAD のまま・DEAD@5 が積まれる b ALIVE@6→ALIVE・6 c 探りの ACK・HEARTBEAT でも DEAD のまま d DEAD@255 に噂 ALIVE@0→ALIVE e ALIVE@0 に噂 DEAD@255→捨てる f 噂 DEAD@255 への反論 0 が DEAD@255 に勝つ g SUSPECT@5 は rx で ALIVE
+- **I8**（relay＋3 台）: node 2 を kill -STOP で DEAD、20 秒（TTL の後）待って CONT。n1・n3 の戻りは「back at」の行だけ（rx・探りの戻り行 0）、60 秒以内
+- **I5b**: kill -9、DEAD から 20 秒待って同じ dir で再起動。保存あり・`N2C_NC_INC_RESET` とも 60 秒以内に戻る
+- 陰性: `N2C_NC_RX_REVIVE` I7 a・c と I8 が赤／`N2C_NC_NO_TELL` I7 a と I5b の RESET が赤／`N2C_NC_PLAIN_CMP` I7 d・e・f が赤
+- 共通: `nodes test`・`cap`・`tea`・`v2`・[n2-mix] X1・X2・X5・[n2-alive] 緑、ベアの .text・.rodata 全バイト同じ
+
+**master で測った**（試験先、pk-scratch/n2c2/）: I7 は a1・a2・d・e・f の勝ちが赤、b・g 緑（c は読みだけ）。I8 は 2/2 赤（n1・n3 とも「recovered (via rx)」）。**CONT の後 node 2 は 14・16 回反論した**＝止まる間に受けの口に溜まった古い噂を読む。NO_TELL は I8 で赤にならない見込み→陰性を I5b の RESET へ（測った後の直し、合否の線は同じ）。「SELF-SUSPICION がある」も master で緑なので合否から外した。I5b は master で両腕とも 1 秒未満で戻り（n3 は保存ありで gossip の ALIVE、RESET で rx）、**RESET の node 2 は 30 秒 SELF-SUSPICION 0**＝TTL の後は噂が届かない＝NO_TELL はそこで効く見込み
+
+**参照**（memberlist state.go の原文）: aliveNode は既知の仲間（Dead も）に incarnation ≤ の alive を捨てる。refute は告発より上へ。probe は Dead を飛ばす。32 ビットなので順序数は無い
+
+**限界**: 戻りが最短 1 周遅れる。広い仲間（v2 の噂は incarnation 0、生死は古さだけ）は入れない。旧版の hosted は素の大小＝255 の近くで割れうる。差 128 以上は比べられない。新しい命の仲間の状態（seq・持ち手）を捨てるのは第 3 段（§2 の 5 と）
