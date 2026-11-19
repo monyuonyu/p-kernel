@@ -60,14 +60,14 @@ node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master �
 **題**（§7・swim.c を読んだ）: DEAD にした仲間を、どの電文でも（直の rx・直／間接の探りの ACK）その場で ALIVE に戻し、**incarnation は DEAD のときの k のまま** ALIVE@k を噂する。ほかのノードは同じ k なら DEAD が勝つので捨てる＝見え方が割れたまま、直に聞くか探るまで直らない。だから保存した incarnation の効きも I5 で見えなかった。もう 1 つ: 比べが `inc_in > inc_cur` の素の大小＝255 の後の 0 は「古い」。噂 DEAD@255 への反論は 0 になり負け続ける（今は rx の復活が隠している）
 
 **決めたこと**（hosted だけ、`_TK_HOSTED_LIBC_` の中。ベアは今のまま＝crown 不変）:
-1. **DEAD からは、本人の言葉（うわさの自分の行）で k より新しい incarnation が来たときだけ ALIVE に戻す**。rx・探りの ACK では戻さない。SUSPECT は今のまま（直の証拠で ALIVE に戻す）
+1. **DEAD からは、本人の言葉（うわさの自分の行）で k より新しい incarnation が来たときだけ ALIVE に戻す**。rx・探りの ACK では戻さない。**drpc.c の HEARTBEAT の受け（535 行、DEAD も ALIVE にする）も同じ門に**（hosted は drpc_task を起こさないが、ベアの仲間は送る）。SUSPECT は今のまま（直の証拠で ALIVE に戻す）
 2. **知らせる**: DEAD の仲間から新しくない電文が来たら DEAD@k を gossip_add（TTL を新しく）。次のビーコンで本人に届き、本人が k+1 で反論する（6 月からある道、旧版もベアも反論する）
 3. **比べは順序数**（RFC 1982）: `(UB)(a−b)` が 1..127 なら新しい。反論・ほかのノードの比べも同じ関数
 4. **反論で上げた incarnation も node.incarn に書く**（§6 の限界。書けなくても 2 の道で戻れる）
 5. 戻した行は `[swim] node N back at incarnation a (dead at k)` と 1 行言う
 
 **合否（実装の前に固定、§3 に続けて）**:
-- **I7**（unit `nodes life`、`[swim-life] PASS`）: a DEAD@5 の仲間から自分の行なし／ALIVE@5 の電文→DEAD のまま・DEAD@5 が積まれる b ALIVE@6→ALIVE・incarn 6 c 探りの ACK でも DEAD のまま d DEAD@255 に ALIVE@0→ALIVE e ALIVE@0 に DEAD@255→捨てる f 噂 DEAD@255 への自分の反論が 0 で、その 0 が別の受け手の DEAD@255 に勝つ g SUSPECT@5 は直の rx で ALIVE（今のまま）
+- **I7**（unit `nodes life`、`[swim-life] PASS`）: a DEAD@5 の仲間から自分の行なし／ALIVE@5 の電文→DEAD のまま・DEAD@5 が積まれる b ALIVE@6→ALIVE・incarn 6 c 探りの ACK でも、drpc の HEARTBEAT でも DEAD のまま d DEAD@255 に ALIVE@0→ALIVE e ALIVE@0 に DEAD@255→捨てる f 噂 DEAD@255 への自分の反論が 0 で、その 0 が別の受け手の DEAD@255 に勝つ g SUSPECT@5 は直の rx で ALIVE（今のまま）
 - **I8**（生きた、relay＋3 台）: node 2 を kill -STOP で DEAD にし、TTL（6 周）を過ぎてから CONT。n1・n3 の戻りは「back at incarnation」の行で、rx・探りの戻り行は無い。node 2 は SELF-SUSPICION 1 行以上・incarnation が上がる。60 秒以内
 - **I5b**: §7 の kill -9 と再起動を、保存あり・`N2C_NC_INC_RESET` の両方で。どちらも 60 秒以内に戻る（RESET は 2 の道で）
 - 陰性: `-DN2C_NC_RX_REVIVE`（rx で戻す）I7 a・c と I8 が赤／`-DN2C_NC_NO_TELL` I7 a と I8 が赤（戻れない）／`-DN2C_NC_PLAIN_CMP` I7 d・e・f が赤
