@@ -78,3 +78,5 @@ node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master �
 **参照**（memberlist state.go の原文）: aliveNode は既知の仲間（Dead も）に incarnation ≤ の alive を捨てる。refute は告発より上へ。probe は Dead を飛ばす。32 ビットなので順序数は無い
 
 **限界**: 戻りが最短 1 周遅れる。広い仲間（v2 の噂は incarnation 0、生死は古さだけ）は入れない。旧版の hosted は素の大小＝255 の近くで割れうる。差 128 以上は比べられない。新しい命の仲間の状態（seq・持ち手）を捨てるのは第 3 段（§2 の 5 と）
+
+**監査-197（11-20、限界つき PASS）**: 合否は測りより前（9e58ff51 04:58:57、探りの初出 04:59:42）。測った後の直しは線を弱めない（I8 の node 2 は止まる間に溜まった古い SUSPECT に反論して戻る＝NO_TELL は I8 では見えない。「back at」の行は a>k を含む）。DEAD の噂は移るとき 1 度だけ積まれ、TTL は送るごとに減る＝20 秒で足りる。HEARTBEAT はベアが混ざるときだけ届く。master 77f47bb9 で取り直し: I7 同じ赤、I8 2/2 赤（rx）、I5b 両腕 1.1 秒・RESET の SELF-SUSPICION 0。作る回への条件: ① I7 c を試験に（探りの ACK を関数に、HEARTBEAT は drpc_rx に電文を渡す）② i5b.sh の戻りの数え方に「back at」を足す ③ 知らせは電文ごとに TTL を新しくする＝反論しない相手には止まらない（限界に書く）
