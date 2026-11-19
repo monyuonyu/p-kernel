@@ -77,6 +77,7 @@ build nomean -DB5W_NC_MEAN
 build nolen  -DB5W_NC_NO_LEN
 build nodedup -DB5W_NC_NO_DEDUP
 build nocap  -DB5W_NC_NO_CAP
+build nolatch -DB5W_NC_NO_LATCH   # D6b (research/b5-m-round.md §10): W14 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -97,6 +98,7 @@ nc nogate b5w-W6
 nc nolen b5w-W7
 nc nodedup b5w-W8
 nc nocap b5w-W9
+nc nolatch b5w-W14
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 if [ "${B5W_MODE:-}" = unit ]; then

@@ -520,6 +520,17 @@ int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
 int    st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out);
 int    st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out);
 void   st_rg_test_fail_alloc(int nth);
+/* B5 D6b (research/b5-m-round.md §10): the round's members are every narrow
+ * peer (id < 64, a bit each) the region held at least once from the head of the
+ * gen to the merge's start, not only the view at the start (a loaded box's RTT
+ * crosses tau 50 ms and back). st_rg_latch_see ORs `now` into the latch of
+ * `gen` (another gen clears it first); st_rg_latch_union is now | the marks of
+ * `gen` (another gen: now only). A peer that left for good is dropped by its
+ * fetch (gave up), as before. Falsifier -DB5W_NC_NO_LATCH: the union is now
+ * only (the D4 form; W14 red). A zeroed latch is empty.                       */
+typedef struct { uint32_t gen; int set; uint64_t seen; } st_rg_latch;
+void     st_rg_latch_see(st_rg_latch *l, uint32_t gen, uint64_t now);
+uint64_t st_rg_latch_union(const st_rg_latch *l, uint32_t gen, uint64_t now);
 
 /* ---- brain self-quantization, stage 1 (research/brain-quantization.md §2) ----
  *
