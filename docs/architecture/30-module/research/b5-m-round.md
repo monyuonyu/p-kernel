@@ -91,3 +91,12 @@ live M（relay＋5 台、手元）
 - 直し（ce4915d7）: 試験だけ `PKERNEL_REGION_TAU_MS=250`（samples 13・27・28・32・46 と同じ）。ゲートは変えていない
 - 2 周目（2 本同時、`/build/d4b/r1.txt`・`r2.txt`）: **2/2 ALL PASS**。plain P 11 F 1 C 482・plainM P 11 F 1 C 5578、nc P 1898 F 1840、nchalf P 1019 F 965（C/4＝120）
 - 限界: τ を広げたので、この試験は region の出入りを見ない（M1 と D6 が見る）。nchalf の赤は「半分」の形だけ、数個の塊だけ外れる形（P が C/4 未満）は緑のまま
+
+## 13. D6b（2026-11-20 01:25 の回、実装者。🔍D6b 監査待ち）
+
+- 試験先（3abda0a7）: unit W14（印の和に途中で外れた相手が残る・始めに初めて見えた相手も入る・別の gen は今の見えだけ・gen が変わると消える・id 63）。この版では W14 が赤（関数が無い）、陰性の腕 nolatch を run_b5_wire.sh に
+- 実装（ec2ca616）: student.c の `st_rg_latch_see`／`st_rg_latch_union`（64 ビットの印、hosted だけ）。region の任務が gen の合体まで 5 秒ごとに語の鍵の下で印を足し、合体は「今の見え OR その gen の印」。外れた相手の行に `latched k`。語（`baby region G`）は任務と gen が違えば今と同じ
+- unit（容器 `/build/d6b/t1.txt`）: **W14 6 項目 PASS、陰性 nolatch は W14 だけ赤**、ほかの陰性 5 つも狙いの 1 行だけ。試験先では W14 が全腕で赤（`t0.txt`）
+- crown（`/build/d6c/cc.txt`、master e4c75dc5 と並べて）: x86・aarch64 の .text・.rodata が全バイト同じ（a 4dfac3f4/8e35fac0・x cd490552/996ad069）、hosted x86_64 警告 57（同じ）、hosted aarch64・Windows OK、shell_links 0 RED
+- **M1・M2（容器、run_b5_wire_live.sh を tier M・600 秒・τ 50 ms、3 腕同時 01:38〜: master e4c75dc5・D4b ce4915d7（印なし）・D6b 8e6908f5、`/build/d6m/`）**: **D6b ALL PASS**（L1 5 台×2 周すべて members 5 fetched 4・L2・L3・L4）。**D4b は L1 赤・L4 赤**（L2・L3 PASS）。合体の行（4 周分）: D6b は 19 行全部 members 5、うち 3 行が印で救われた（latched 1・3・1、外れていた相手は ALIVE で RTT 57〜90 ms、救われた相手も全部 fetched）。D4b は 19 行中 7 行が members 4〜1（gen 2991846 の n1 は members 1 で断り）。master の腕は 02:18 の時点で走行中、その後半は H35 の QEMU と同時（結果はバトン）
+- 限界: 1 回だけ。印は「一度でも region にいた」相手を入れるので、本当に去った相手は取り寄せの gave up まで待つ（その時間は測っていない）。L4 の D4b の赤は合体が 0 秒で断られて語が busy にならなかった巻き添えの読み
