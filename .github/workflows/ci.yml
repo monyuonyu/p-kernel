@@ -4611,7 +4611,16 @@ jobs:
       - name: Runtime smoke on a booted emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          # 2026-11-20: api-level 30 -> 34. On 30 the app reached GalaxyActivity and then a
+          # thread died with SIGILL inside /system/lib64/libndk_translation.so
+          # (Decoder::DecodeSimdScalarTwoRegMisc; run 44601951644). Our objects (clang,
+          # aarch64, same sources) hold only 6 forms of that class: ucvtf/scvtf/fcvtzs/
+          # fcvtzu s,s and scvtf/fcvtzs d,d - all common clang output. So either the
+          # Android 11 translator lacks one of them (A) or the guest PC went to garbage
+          # under translation (B: hand-written context switch, see above). 34 ships a
+          # newer translator: green there says the old translator was at fault (still
+          # not proof on real arm64); the same SIGILL points at (B).
+          api-level: 34
           target: google_apis_playstore
           arch: x86_64
           profile: pixel_5
