@@ -185,3 +185,7 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 ### 7.12 監査-193（2026-11-19 19:05 の回、限界つき PASS。作った回とは別の回）
 
 7.11 の数字を再現（run_ark_app.sh 9 腕 ALL PASS・nc-lock の A9-lock 赤・A1-gate2 は nc-ark-gate だけ赤、run_n2c_identity.sh ALL PASS）。私の壊し: シェルが `ark key` の後に旗を返さない→赤、**`ark heir` の後に返さない→全部緑**だったので、監査側で A9-lock に D3（シェルの heir・key・rec ls の後にページの GET /ark/rec.json が 200）を足し、その壊しで赤を確かめた。限界（H34）: rec_take を不可分でなくする・ページの書きが書く前に旗を下ろす、はどちらも緑（試験は待ちの 3 秒だけを見る）。**7.11 の「鍵の控えの道は ark_priv を読むだけ」は不正確**: ark_key_backup_hex は鍵が無ければ作って ark.key を書く。シェルの `ark key import`（在るかを見てから書く）と同時なら、見せた鍵と disk の鍵が食い違いうる。同じ持ち主が 2 つの口を同時に使うときだけなので止めはしないが、次の入口の作る回で控えの道も旗を取る（busy は 503）のがおすすめ
+
+### 7.13 H34 の直し（2026-11-19 20:15 の回、実装者。監査待ち）
+
+鍵の控えの道（ark_key_backup_hex）も記録の旗を取る（7.12 のおすすめ）。シェルが中にいればページは 503（410 ではない）。試験 A9-key（腕 lock）: シェルの `ark rec ls` が旗を 3 秒持つ間の POST /ark/key/backup が 1 秒より速く 503、その後は 410、ページの GET /ark/rec.json は 200。陰性 nc-key-flag（-DARK_KEY_BACKUP_NO_FLAG）で A9-key だけ赤。H34 (a) は文字の検査 A9-atomic（rec_take が 1 つの __atomic_exchange_n）。試験先 044cf780 で A9-key 赤（inside=410）、先端で緑。crown 全バイト同じ。残り: H34 (b)（ページの書きが書く前に旗を下ろす）は試験で捕まらないまま。
