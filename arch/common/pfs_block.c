@@ -354,7 +354,11 @@ PK_NOSW_FN(INT, pfs_put_origin,
             dur_on = 1;
             char hex[2 * PFS_ID_LEN + 1];
             id_to_hex(pfs_table[slot].id, hex);
+#ifdef B5W_NC_HALF_LAZY   /* D4b negative (audit-194 x1): chunks with an odd id[0] skip the lazy door */
+            INT lazy = (pfs_put_lazy && !(pfs_table[slot].id[0] & 1)) ? pfs_put_lazy(pfs_table[slot].id) : 0;
+#else
             INT lazy = pfs_put_lazy ? pfs_put_lazy(pfs_table[slot].id) : 0;
+#endif
             dur_rc = lazy ? pfs_dur_write_lazy(hex, pfs_table[slot].data, (unsigned)len)
                           : pfs_dur_write(hex, pfs_table[slot].data, (unsigned)len);
 #ifndef S1_NC_ORIGIN_VOLATILE         /* S1 negative: the origin is not kept */

@@ -28,7 +28,17 @@
 #        Sp == 1, Sf == 1, and "fetched 1"
 # Falsifier -DB5W_NC_FSYNC_EACH (every chunk fsync'd as before): W13c red BY THE
 #        COUNT: Lp >= C and Lf >= C (else FAIL-OTHER, which is not the falsifier).
-# Arms: D4_ARMS="plain plainM nc" (default all). Ports D4_PORT (relay, default 7631).
+#   W13d (D4b, fixed 2026-11-20 01:4x BEFORE it ever ran, after audit-194 FAIL):
+#        W13c AND the whole counts P < C/4 and F < C/4. W13c alone does not see
+#        a chunk that skips the lazy door (audit-194 x1: P 963 F 965, Lp 0).
+#        THE GATE is now W13d.
+# Falsifier -DB5W_NC_HALF_LAZY (chunks with an odd id[0] skip the lazy door,
+#        the x1 form): W13d red BY THE COUNT: P >= C/4 or F >= C/4 while W13c
+#        alone is green (else FAIL-OTHER).
+# The wait for node 2 to see node 1 (audit-194 ①): node 1 is "node0(" in node
+#        2's members line (the number is ID-1; "node1(self)" is node 2 itself).
+#        Not seen in 120 s -> the arm says WAIT-RED and is red, whatever follows.
+# Arms: D4_ARMS="plain plainM nc nchalf" (default all). Ports D4_PORT (relay, default 7631).
 # Output: "[b5-d4] <arm> W13c PASS|FAIL (...)", then ALL PASS (exit 0) or RED.
 # ---------------------------------------------------------------------------
 set -u
@@ -36,7 +46,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 B="$ROOT/boot/linux_x86_64"
 case "$(uname -m)" in aarch64|arm64) B="$ROOT/boot/linux" ;; esac
-ARMS="${D4_ARMS:-plain plainM nc}"
+ARMS="${D4_ARMS:-plain plainM nc nchalf}"
 PORT="${D4_PORT:-7631}"
 WORK="$(mktemp -d /tmp/b5d4.XXXXXX)"
 PIDS=""
@@ -85,10 +95,15 @@ arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
     printf 'baby region 7\n' >&7
     wait_for "$W/n1.log" 'region: fsync publish' 1 900
     # node 2 must have node 1 in its region, or its verb fetches nothing (members 1)
-    local i=0
-    while [ "$i" -lt 60 ] && ! grep -aq '\[region\] members:.* node1(' "$W/n2.log"; do
+    # (node 1 is "node0(" there: the number is ID-1, "node1(self)" is node 2)
+    local i=0 waitred=""
+    while [ "$i" -lt 60 ] && ! grep -aq '\[region\] members:.* node0(' "$W/n2.log"; do
         printf 'region\n' >&8; sleep 2; i=$((i + 1))
     done
+    if ! grep -aq '\[region\] members:.* node0(' "$W/n2.log"; then
+        echo "[b5-d4] $a WAIT-RED: node 2 never saw node 1 (node0) in its region in 120 s"
+        waitred=1
+    fi
     printf 'baby region 7\n' >&8
     wait_for "$W/n2.log" 'region: fsync publish' 1 1500
     local l1 l2 m2 c p f
@@ -123,7 +138,24 @@ arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
         echo "[b5-d4] $a note: red, but not by the lazy fsync count (Lp=$lp Lf=$lf C=$c)"; wc=FAIL-OTHER
     fi
     echo "[b5-d4] $a W13c $wc (Lp=$lp Lf=$lf Sp=$sp Sf=$sf C=$c)"
-    [ "$wc" = "$3" ] || REDS="$REDS $a-W13c"
+    # W13d = W13c (as computed before the nc note) and P, F < C/4
+    local wd=FAIL
+    if [ -n "$c" ] && [ -n "$lp" ] && [ -n "$lf" ] && [ -n "$sp" ] && [ -n "$sf" ] && [ -n "$p" ] && [ -n "$f" ] \
+       && [ "$c" -ge 50 ] && [ "$lp" -eq 0 ] && [ "$lf" -eq 0 ] && [ "$sp" -eq 1 ] && [ "$sf" -eq 1 ] \
+       && [ "$((p * 4))" -lt "$c" ] && [ "$((f * 4))" -lt "$c" ] \
+       && echo "$m2" | grep -q 'fetched 1 '; then wd=PASS; fi
+    if [ "$a" = nc ] && [ "$wc" = FAIL-OTHER ]; then wd=FAIL-OTHER; fi
+    if [ "$a" = nchalf ] && [ "$wd" = FAIL ]; then
+        # red by the count only: W13c's own parts green, and P or F >= C/4
+        if ! { [ -n "$c" ] && [ -n "$lp" ] && [ "$c" -ge 50 ] && [ "$lp" -eq 0 ] && [ "$lf" -eq 0 ] \
+               && [ "$sp" -eq 1 ] && [ "$sf" -eq 1 ] && echo "$m2" | grep -q 'fetched 1 ' \
+               && { [ "$((p * 4))" -ge "$c" ] || [ "$((f * 4))" -ge "$c" ]; }; }; then
+            echo "[b5-d4] $a note: red, but not by P or F >= C/4 with W13c green (P=$p F=$f C=$c)"; wd=FAIL-OTHER
+        fi
+    fi
+    [ -n "$waitred" ] && wd=WAIT-RED
+    echo "[b5-d4] $a W13d (THE GATE) $wd (P=$p F=$f C=$c, C/4=$((${c:-0} / 4)))"
+    [ "$wd" = "$3" ] || REDS="$REDS $a-W13d"
     printf 'exit\n' >&7; printf 'exit\n' >&8
     exec 7>&- 8>&-
     sleep 2
@@ -134,6 +166,7 @@ arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
 arm plain "" PASS S
 arm plainM "" PASS M
 arm nc "-DB5W_NC_FSYNC_EACH" FAIL S
+arm nchalf "-DB5W_NC_HALF_LAZY" FAIL S
 if [ -n "$PS" ] && [ -n "$PM" ]; then
     if [ "$PS" = "$PM" ]; then echo "[b5-d4] W13b same P at S and M ($PS)"
     else echo "[b5-d4] W13b P differs: S $PS M $PM (reported, not the gate)"; fi
