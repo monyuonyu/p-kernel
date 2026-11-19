@@ -124,6 +124,14 @@ done
 
 if [ -z "$FOUND_PORT" ]; then
     fail "[boot-port]" "no node answered GET /console.txt on any port $PORT_LO-$PORT_HI within ${BOOT_TIMEOUT_S}s"
+    # 2026-11-20: the tail below was all adbd's port probes; the app's own start
+    # (or crash) had scrolled out. The app's lines from the WHOLE log first.
+    echo "----- the app's process and services (diagnostics only) -----"
+    adb shell pidof io.pkernel.ump 2>/dev/null || echo "(no io.pkernel.ump process)"
+    adb shell dumpsys activity services io.pkernel.ump 2>/dev/null | head -40
+    echo "----- adb logcat, the app and crash lines from the whole log (diagnostics only) -----"
+    adb logcat -d 2>/dev/null | grep -aE 'io\.pkernel|PKernel|pkernel|AndroidRuntime|FATAL|DEBUG +:|libc +:|ActivityTaskManager' \
+        | grep -av 'adbd *:' | tail -150
     echo "----- adb logcat tail (diagnostics only -- kernel stdout is NOT routed here, see header) -----"
     adb logcat -d -t 200 2>/dev/null | tail -200
     exit 1
