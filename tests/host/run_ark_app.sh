@@ -10,6 +10,8 @@
 #   nc-token  (-DGALAXY_NO_TOKEN: galaxy does not look at the pass)
 #             A7-no-token, A7-bad-token and A7-nowrite FAIL; A7-public,
 #             A7-good-token, A7-origin and A7-host still PASS
+#   nc-tok-first (-DGALAXY_TOK_SKIP_FIRST: the first char is not compared, H30)
+#             A7-bad-token FAIL (the "first" pass); A7-good-token, A7-no-token PASS
 #   nc-origin (-DGALAXY_NO_ORIGIN: galaxy does not look at Host / Origin)
 #             A7-origin and A7-host FAIL; A7-no-token, A7-bad-token,
 #             A7-good-token and A7-nowrite still PASS
@@ -34,7 +36,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_APP_PORT:-17831}"
-ARMS="${ARK_APP_ARMS:-plain lock nc-lock nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
+ARMS="${ARK_APP_ARMS:-plain lock nc-lock nc-tok-first nc-token nc-origin nc-ark-gate nc-normalize nc-backup-gate nc-backup-twice}"
 WORK="$(mktemp -d /tmp/arkapp.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 REDS=""
@@ -71,6 +73,9 @@ if arm nc-lock "-DARK_REC_TEST_HOLD -DARK_REC_SHELL_NO_FLAG" lock; then want nc-
 if arm nc-token "-DGALAXY_NO_TOKEN"; then
     want nc-token FAIL A7-no-token A7-bad-token A7-nowrite
     want nc-token PASS A7-public A7-good-token A7-origin A7-host
+fi
+if arm nc-tok-first "-DGALAXY_TOK_SKIP_FIRST"; then
+    want nc-tok-first FAIL A7-bad-token; want nc-tok-first PASS A7-good-token A7-no-token
 fi
 if arm nc-origin "-DGALAXY_NO_ORIGIN"; then
     want nc-origin FAIL A7-origin A7-host

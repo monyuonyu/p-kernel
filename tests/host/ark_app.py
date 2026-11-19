@@ -316,12 +316,17 @@ try:
 
     # A7-bad-token: one byte off, short, and ?t= on a plain GET
     bad = []
+    flip = lambda c: "0" if c != "0" else "1"
     if len(tok) == 64:
-        off = tok[:-1] + ("0" if tok[-1] != "0" else "1")
+        off = tok[:-1] + flip(tok[-1])
         short = tok[:63]
+        # H30 (audit-185): one char off at the head and in the middle too
+        first = flip(tok[0]) + tok[1:]
+        midc = tok[:31] + flip(tok[31]) + tok[32:]
     else:
-        off, short = "0" * 64, "0" * 63
-    for name, hh in (("off", {"X-Galaxy-Token": off}), ("short", {"X-Galaxy-Token": short})):
+        off, short, first, midc = "0" * 64, "0" * 63, "1" * 64, "2" * 64
+    for name, hh in (("off", {"X-Galaxy-Token": off}), ("short", {"X-Galaxy-Token": short}),
+                     ("first", {"X-Galaxy-Token": first}), ("mid", {"X-Galaxy-Token": midc})):
         for m, p, b in (("GET", "/self.json", None), ("POST", "/teach", "k=sea&v=green"),
                         ("POST", "/profile", "ack=1&mid=%s&handle=evil" % mid)):
             st, _h, _b = raw(m, p, b, headers=hh)
