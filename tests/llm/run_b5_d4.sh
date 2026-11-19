@@ -54,6 +54,13 @@ cleanup() { [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null; rm -rf "$WORK"; make -C
 trap cleanup EXIT
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 unset PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_NODE_SEED PKERNEL_GALAXY
+# D4b (2026-11-20 01:4x): the test-only region tau, as samples/13 27 28 32 46 do.
+# This test is about the fsync counts, not the region: at the product tau 50 ms,
+# two copies of this test at once left node 1 out of node 2's region at the
+# merge's start (plainM 2/2: members 1 fetched 0, right after a members line
+# with node0 rtt=36ms; the M publish of 5578 chunks loads the box). That is
+# the D6 subject (feat/b5-d6), not D4's. The gate W13d is unchanged.
+export PKERNEL_REGION_TAU_MS="${PKERNEL_REGION_TAU_MS:-250}"
 make -C "$ROOT/relay" > /dev/null 2>&1 || { echo "[b5-d4] relay build FAIL"; exit 1; }
 REDS=""
 
