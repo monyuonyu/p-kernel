@@ -4313,7 +4313,10 @@ jobs:
     # Windows box's Smart App Control refuses new unsigned exes, so this is the
     # place it is measured). The negative build -DPFS_DUR_NC_WIN_RENAME (plain
     # rename, as before the fix) must fail D2. The image's MinGW gcc.
-    name: "Windows で実行: 店の上書き (pfs_durable.c, windows-latest) [advisory]"
+    # Second step: tests/windows/fiber_fpctl.c (audit-171, 2026-11-09 measured
+    # only on the home box): MXCSR and the x87 CW survive a Fiber switch the way
+    # win_prim.c switches; `leak` is its negative and must fail.
+    name: "Windows で実行: 店の上書きと Fiber の FP (windows-latest) [advisory]"
     runs-on: windows-latest
     timeout-minutes: 15
     continue-on-error: true  # until 2026-12-05: a new runner kind, its first runs not seen yet (fix/win-dur-rename, 2026-11-21)
@@ -4336,6 +4339,18 @@ jobs:
           ./dot-nc.exe
           if ($LASTEXITCODE -ne 1) { Write-Output "the negative did not fail (rc $LASTEXITCODE)"; exit 1 }
           Write-Output "windows-durable: overwrite PASS, the plain-rename negative FAILs as meant"
+      - name: fiber_fpctl (no flags, float, and the leak negative)
+        shell: pwsh
+        run: |
+          gcc -O1 -o fiber_fpctl.exe tests/windows/fiber_fpctl.c
+          if ($LASTEXITCODE -ne 0) { Write-Output "build FAILED"; exit 1 }
+          ./fiber_fpctl.exe
+          if ($LASTEXITCODE -ne 0) { Write-Output "no-flags FAILED"; exit 1 }
+          ./fiber_fpctl.exe float
+          if ($LASTEXITCODE -ne 0) { Write-Output "float FAILED"; exit 1 }
+          ./fiber_fpctl.exe leak
+          if ($LASTEXITCODE -ne 1) { Write-Output "the leak negative did not fail (rc $LASTEXITCODE)"; exit 1 }
+          Write-Output "windows-durable: fiber_fpctl no-flags and float PASS, leak FAILs as meant"
 
   android-apk-build:
     # REAL Android APK build gate — closes a coverage gap the `parity` job
