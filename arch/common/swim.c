@@ -347,7 +347,15 @@ static void gossip_fill(SWIM_PKT *pkt)
  *   - strictly lower incarnation never wins (the stale rumor is refuted). */
 static INT gossip_supersedes(UB inc_in, UB st_in, UB inc_cur, UB st_cur)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_PLAIN_CMP)
+    /* N2c stage 2: serial-number order (RFC 1982) on the 1-byte incarnation:
+     * a is newer than b when (UB)(a - b) is 1..127, so the refute 0 of a
+     * DEAD@255 wins instead of losing forever. A gap of exactly 128 is
+     * neither (the limit, research/n2c-identity.md §10). */
+    if (inc_in != inc_cur) { UB d = (UB)(inc_in - inc_cur); return d >= 1 && d <= 127; }
+#else
     if (inc_in != inc_cur) return inc_in > inc_cur;
+#endif
     return state_rank(st_in) > state_rank(st_cur);
 }
 
@@ -434,8 +442,22 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 /* refute: bump strictly above the rumor's incarnation so the
                  * ALIVE re-assertion supersedes the stale DEAD/SUSPECT
                  * everywhere it has spread (UB ++ wraps sanely at 256). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_PLAIN_CMP)
+                /* N2c stage 2: "at or past mine" in serial order, so the
+                 * refute is newer than both the rumour and my own word. */
+                if (inc_in == my_incarnation || gossip_supersedes(inc_in, DNODE_ALIVE, my_incarnation, DNODE_ALIVE))
+                    my_incarnation = (UB)(inc_in + 1);
+                else
+                    my_incarnation = (UB)(my_incarnation + 1);
+                {   /* the refuted incarnation is kept too (§10 4): a restart
+                     * then starts past it (node_ident.c) */
+                    extern void pk_node_incarn_note(unsigned char wire);
+                    pk_node_incarn_note(my_incarnation);
+                }
+#else
                 if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
                 else                          my_incarnation = (UB)(my_incarnation + 1);
+#endif
                 /* re-assert MY OWN capability bits, both axes (self-authoritative
                  * source: supernode + teacher). */
                 gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
@@ -504,6 +526,9 @@ static void gossip_apply(const SWIM_PKT *pkt)
             continue;   /* stale rumor refuted — capability does NOT regress */
         }
 
+#if defined(_TK_HOSTED_LIBC_)
+        UB inc_was = dnode_incarn[nid];   /* N2c stage 2: for the "back at" line */
+#endif
         dnode_incarn[nid] = inc_in;
         /* N-2b / T-fix-a: a SUPERSEDING rumor (this peer's own fresher word
          * about itself) updates BOTH capability axes in LOCK-STEP with
@@ -523,7 +548,24 @@ static void gossip_apply(const SWIM_PKT *pkt)
         }
 
         { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
-          sw_note(nid, oldst, st); }
+          sw_note(nid, oldst, st);
+#if defined(_TK_HOSTED_LIBC_)
+          /* N2c stage 2: the only way back from DEAD is the peer's own newer
+           * incarnation (rx, probe answers and heartbeats no longer revive). */
+          if (oldst == DNODE_DEAD && st == DNODE_ALIVE) {
+              sw_puts("[swim] node "); sw_putdec(nid);
+              sw_puts(" back at incarnation "); sw_putdec(inc_in);
+              sw_puts(" (dead at "); sw_putdec(inc_was); sw_puts(")\r\n");
+              dnode_table[nid].missed = 0;
+              suspect_count[nid] = 0;
+              gossip_add(nid, st, inc_in, cap_byte(nid));
+              replica_push_to(nid);
+              degrade_update();
+              dmn_trigger();
+              continue;
+          }
+#endif
+        }
         sw_puts("[swim] gossip: node "); sw_putdec(nid);
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
@@ -650,6 +692,19 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
     /* Mark sender alive */
     pk_node_t snid = pkt->src_node;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
+    /* N2c stage 2 (§10 1, 2): a packet from a peer we hold DEAD@k does not
+     * bring it back (its own newer incarnation does, in gossip_apply above).
+     * Tell it instead: queue DEAD@k so it hears it and refutes with k+1.
+     * gossip_add renews the TTL on every such packet, so a peer that never
+     * refutes (an old build) keeps the rumour going (the limit, §10). */
+    if (snid < DNODE_MAX && snid != drpc_my_node && dnode_table[snid].state == DNODE_DEAD) {
+#if !defined(N2C_NC_NO_TELL)
+        gossip_add(snid, DNODE_DEAD, dnode_incarn[snid], cap_byte(snid));
+#endif
+        snid = DNODE_MAX;   /* skip "mark sender alive"; still answer below */
+    }
+#endif
     if (snid < DNODE_MAX && snid != drpc_my_node) {
         UB old = dnode_table[snid].state;
         dnode_table[snid].ip     = src_ip;
@@ -763,13 +818,18 @@ static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], I
     }
 }
 
-/* A probe of `target` was answered (directly or through a helper). Kept
- * as one function so the N2c `nodes life` test (I7 c) can drive the real
- * code; always_inline so the bare-metal build emits what it emitted when
- * this was written out twice in swim_task (crown). */
-static inline __attribute__((always_inline))
-void swim_probe_ok(pk_node_t target, const char *how)
+#if defined(_TK_HOSTED_LIBC_)
+/* A probe of `target` was answered (directly or through a helper). One
+ * function on hosted so the N2c `nodes life` test (I7 c) drives the real
+ * code. Bare metal keeps the two written-out copies in swim_task: moving
+ * them into a function (even always_inline) changed the aarch64 .text. */
+static void swim_probe_ok(pk_node_t target, const char *how)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
+    /* N2c stage 2: an answer from a DEAD peer does not revive it; the answer
+     * itself went through swim_rx, which told it (DEAD@k) */
+    if (dnode_table[target].state == DNODE_DEAD) return;
+#endif
     if (dnode_table[target].state != DNODE_ALIVE) {
         UB oldst = dnode_table[target].state;
         dnode_table[target].state = DNODE_ALIVE;
@@ -782,6 +842,7 @@ void swim_probe_ok(pk_node_t target, const char *how)
     }
     suspect_count[target] = 0;
 }
+#endif /* _TK_HOSTED_LIBC_ */
 
 /* ------------------------------------------------------------------ */
 /* SWIM task — one probing round per SWIM_PROBE_INTERVAL_MS           */
@@ -871,7 +932,21 @@ void swim_task(INT stacd, void *exinf)
             /* Direct probe succeeded — clean round-trip, record RTT. */
             SYSTIM t_ack; tk_get_otm(&t_ack);
             rtt_observe(target, (UW)(t_ack.lo - t_ping.lo));
+#if defined(_TK_HOSTED_LIBC_)
             swim_probe_ok(target, " -> ALIVE (direct probe)\r\n");
+#else   /* bare metal: the same steps written out (crown: one function moved .text) */
+            if (dnode_table[target].state != DNODE_ALIVE) {
+                UB oldst = dnode_table[target].state;
+                dnode_table[target].state = DNODE_ALIVE;
+                sw_note(target, oldst, DNODE_ALIVE);
+                sw_puts("[swim] node "); sw_putdec(target);
+                sw_puts(" -> ALIVE (direct probe)\r\n");
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
+                           cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
+                replica_push_to(target);
+            }
+            suspect_count[target] = 0;
+#endif
             continue;
         }
 
@@ -893,7 +968,21 @@ void swim_task(INT stacd, void *exinf)
 
         er = tk_wai_sem(probe_sem, 1, SWIM_IND_TMO_MS);
         if (er == E_OK) {
+#if defined(_TK_HOSTED_LIBC_)
             swim_probe_ok(target, " -> ALIVE (indirect probe)\r\n");
+#else   /* bare metal: the same steps written out (crown: one function moved .text) */
+            if (dnode_table[target].state != DNODE_ALIVE) {
+                UB oldst = dnode_table[target].state;
+                dnode_table[target].state = DNODE_ALIVE;
+                sw_note(target, oldst, DNODE_ALIVE);
+                sw_puts("[swim] node "); sw_putdec(target);
+                sw_puts(" -> ALIVE (indirect probe)\r\n");
+                gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
+                           cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
+                replica_push_to(target);
+            }
+            suspect_count[target] = 0;
+#endif
             continue;
         }
 
