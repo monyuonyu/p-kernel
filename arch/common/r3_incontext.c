@@ -6569,9 +6569,19 @@ static UW mw_peer_epoch[MW_ROWS];
 #ifdef _TK_HOSTED_LIBC_
 /* The loop guard as one function (hosted), so `mind mwguard` can drive it.
  * Returns 1 when peer row o at epoch pe is to be folded, and records it. */
+static UB mw_peer_folded[MW_ROWS];   /* 1 once row o has been folded */
+
 static INT mw_should_fold(INT o, UW pe)
 {
-    if (pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) return 0;   /* stale */
+#ifndef MW_NC_REFOLD_ZERO
+    /* "folded before" is its own bit: epoch 0 is a real epoch (a node that
+     * has not consolidated yet publishes 0), not "never folded". */
+    if (mw_peer_folded[o] && pe <= mw_peer_epoch[o]) return 0;        /* stale */
+    mw_peer_folded[o] = 1;
+#else
+    /* falsifier: the old guard, an epoch-0 peer is folded on every pulse */
+    if (pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) return 0;
+#endif
     mw_peer_epoch[o] = pe;
     return 1;
 }
@@ -6588,7 +6598,8 @@ static void r3_mwguard_test(void)
     static const INT want[6] = { 1, 0, 1, 0, 0, 1 };
     INT o = MW_ROWS - 1, bad = 0;
     UW saved = mw_peer_epoch[o];
-    mw_peer_epoch[o] = 0;
+    UB saved_f = mw_peer_folded[o];
+    mw_peer_epoch[o] = 0; mw_peer_folded[o] = 0;
     for (INT i = 0; i < 6; i++) {
         INT got = mw_should_fold(o, seq[i]);
         r_puts("[mw-guard] epoch "); r_putdec(seq[i]);
@@ -6596,7 +6607,7 @@ static void r3_mwguard_test(void)
         if (got != want[i]) { bad++; r_puts("  RED (want "); r_puts(want[i] ? "fold" : "skip"); r_puts(")"); }
         r_puts("\r\n");
     }
-    mw_peer_epoch[o] = saved;
+    mw_peer_epoch[o] = saved; mw_peer_folded[o] = saved_f;
     r_puts(bad ? "[mw-guard] FAIL\r\n" : "[mw-guard] PASS\r\n");
 }
 #endif
