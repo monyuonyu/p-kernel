@@ -122,3 +122,27 @@ unsigned pk_node_incarn_boot(void)
     return 0;
 #endif
 }
+
+/* N2c stage 2 (research/n2c-identity.md §10 4): a refute raised the 1-byte
+ * wire incarnation to `wire`; keep the smallest count >= the stored one whose
+ * low byte is `wire`, so the next start (count + 1) is past the refute too.
+ * Nothing is written without PKERNEL_PFS_DIR or when the count is unreadable. */
+void pk_node_incarn_note(unsigned char wire)
+{
+#ifndef N2C_NC_INC_RESET
+    unsigned char b[5];
+    unsigned v, w;
+    if (!pfs_dur_dir()) return;
+    if (pfs_dur_read("node.incarn", b, sizeof b) != 4) return;
+    v = (unsigned)b[0] | ((unsigned)b[1] << 8) | ((unsigned)b[2] << 16) | ((unsigned)b[3] << 24);
+    w = (v & ~0xFFu) | wire;
+    if (w < v) w += 0x100u;
+    if (w == v) return;
+    b[0] = (unsigned char)(w & 0xFF); b[1] = (unsigned char)((w >> 8) & 0xFF);
+    b[2] = (unsigned char)((w >> 16) & 0xFF); b[3] = (unsigned char)((w >> 24) & 0xFF);
+    if (pfs_dur_write("node.incarn", b, 4) != 0)
+        say("[swim] node.incarn: could not be written\r\n");
+#else
+    (void)wire;
+#endif
+}

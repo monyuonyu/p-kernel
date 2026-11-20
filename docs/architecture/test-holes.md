@@ -46,3 +46,4 @@
 | S21 | galaxy の合言葉の比べで先頭の 1 字を飛ばす（H30） | A7-bad-token の first・midc（先頭・真ん中の 1 字違い）、陰性 -DGALAXY_TOK_SKIP_FIRST（腕 nc-tok-first）。監査-193: master の試験では緑・新しい試験で赤（first で 200）を再現 |
 | S22 | node_seed.bad の上書き（H31） | run_n2c_identity.sh の I2sb、陰性 -DN2C_NC_SEED_BAD_OVERWRITE で I2sb だけ赤（REMINT も巻き添えで赤）。監査-193 で再現 |
 | S23 | 鍵の控えの道が記録の旗を取らない・rec_take の不可分（H34 の控えの道と (a)） | run_ark_app.sh の A9-key（シェルが旗を持つ間 503、後で 410、GET 200）と陰性腕 nc-key-flag（A9-key だけ赤）、文字の検査 A9-atomic。監査-194: 試験先 044cf780 で A9-key 赤、私の壊し（控えの道が旗を返さない）で A9-key・A9-lock 赤。限界: A9-atomic は書き方を変えると偽の赤、早く下ろす形は緑のまま（(b)） |
+| S24 | swim.c の自己試験の数え sw_selftest_depth の LEAVE 忘れ（H37、監査-201 で見つけてその場で）・反論を node.incarn に書かない（§10 の 4 に試験が無かった） | run_n2c_life.sh の I8: node 2 が STOP の前に `nodes test`、CONT の後 node.incarn ≥ 戻った incarnation。LEAVE 忘れ（brk.py x2）は 1 < 7 で赤、陰性 -DN2C_NC_NOTE_NEVER は 1 < 15 で赤、直しは 25 ≥ 17・15 ≥ 7（監査-201、容器 1 回ずつ） |

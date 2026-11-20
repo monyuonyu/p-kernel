@@ -129,6 +129,18 @@ static INT           gq_cnt = 0;
 /* so a wrap only loses one anti-stale round (self re-bumps next time it  */
 /* is rumored) — sane and never UB. */
 static UB my_incarnation        = 0;
+#if defined(_TK_HOSTED_LIBC_)
+/* N2c stage 2 (audit-200): > 0 while a swim self-test drives the refute
+ * path with a pretend incarnation. The refute then must not reach
+ * pk_node_incarn_note: the test restores my_incarnation, but a write to
+ * node.incarn would stay (nodes test 3 -> 258). Bare: no note, no counter. */
+static INT sw_selftest_depth = 0;
+#define SW_SELFTEST_ENTER() (sw_selftest_depth++)
+#define SW_SELFTEST_LEAVE() (sw_selftest_depth--)
+#else
+#define SW_SELFTEST_ENTER() ((void)0)
+#define SW_SELFTEST_LEAVE() ((void)0)
+#endif
 static UB dnode_incarn[DNODE_MAX];
 
 /* deterministic peer address (10.1.0.(n+1)); defined below, used by the
@@ -347,7 +359,15 @@ static void gossip_fill(SWIM_PKT *pkt)
  *   - strictly lower incarnation never wins (the stale rumor is refuted). */
 static INT gossip_supersedes(UB inc_in, UB st_in, UB inc_cur, UB st_cur)
 {
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_PLAIN_CMP)
+    /* N2c stage 2: serial-number order (RFC 1982) on the 1-byte incarnation:
+     * a is newer than b when (UB)(a - b) is 1..127, so the refute 0 of a
+     * DEAD@255 wins instead of losing forever. A gap of exactly 128 is
+     * neither (the limit, research/n2c-identity.md §10). */
+    if (inc_in != inc_cur) { UB d = (UB)(inc_in - inc_cur); return d >= 1 && d <= 127; }
+#else
     if (inc_in != inc_cur) return inc_in > inc_cur;
+#endif
     return state_rank(st_in) > state_rank(st_cur);
 }
 
@@ -434,8 +454,28 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 /* refute: bump strictly above the rumor's incarnation so the
                  * ALIVE re-assertion supersedes the stale DEAD/SUSPECT
                  * everywhere it has spread (UB ++ wraps sanely at 256). */
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_PLAIN_CMP)
+                /* N2c stage 2: "at or past mine" in serial order, so the
+                 * refute is newer than both the rumour and my own word. */
+                if (inc_in == my_incarnation || gossip_supersedes(inc_in, DNODE_ALIVE, my_incarnation, DNODE_ALIVE))
+                    my_incarnation = (UB)(inc_in + 1);
+                else
+                    my_incarnation = (UB)(my_incarnation + 1);
+                {   /* the refuted incarnation is kept too (§10 4): a restart
+                     * then starts past it (node_ident.c) */
+                    extern void pk_node_incarn_note(unsigned char wire);
+#if defined(N2C_NC_NOTE_NEVER)
+                    /* falsifier (audit-201): the refute is never kept -> I8 red */
+                    if (0)
+#elif !defined(N2C_NC_NOTE_IN_TEST)
+                    if (sw_selftest_depth == 0)
+#endif
+                        pk_node_incarn_note(my_incarnation);
+                }
+#else
                 if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
                 else                          my_incarnation = (UB)(my_incarnation + 1);
+#endif
                 /* re-assert MY OWN capability bits, both axes (self-authoritative
                  * source: supernode + teacher). */
                 gossip_add(drpc_my_node, DNODE_ALIVE, my_incarnation, cap_self_byte());
@@ -504,6 +544,9 @@ static void gossip_apply(const SWIM_PKT *pkt)
             continue;   /* stale rumor refuted — capability does NOT regress */
         }
 
+#if defined(_TK_HOSTED_LIBC_)
+        UB inc_was = dnode_incarn[nid];   /* N2c stage 2: for the "back at" line */
+#endif
         dnode_incarn[nid] = inc_in;
         /* N-2b / T-fix-a: a SUPERSEDING rumor (this peer's own fresher word
          * about itself) updates BOTH capability axes in LOCK-STEP with
@@ -523,7 +566,24 @@ static void gossip_apply(const SWIM_PKT *pkt)
         }
 
         { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
-          sw_note(nid, oldst, st); }
+          sw_note(nid, oldst, st);
+#if defined(_TK_HOSTED_LIBC_)
+          /* N2c stage 2: the only way back from DEAD is the peer's own newer
+           * incarnation (rx, probe answers and heartbeats no longer revive). */
+          if (oldst == DNODE_DEAD && st == DNODE_ALIVE) {
+              sw_puts("[swim] node "); sw_putdec(nid);
+              sw_puts(" back at incarnation "); sw_putdec(inc_in);
+              sw_puts(" (dead at "); sw_putdec(inc_was); sw_puts(")\r\n");
+              dnode_table[nid].missed = 0;
+              suspect_count[nid] = 0;
+              gossip_add(nid, st, inc_in, cap_byte(nid));
+              replica_push_to(nid);
+              degrade_update();
+              dmn_trigger();
+              continue;
+          }
+#endif
+        }
         sw_puts("[swim] gossip: node "); sw_putdec(nid);
         if      (st == DNODE_ALIVE)   sw_puts(" -> ALIVE\r\n");
         else if (st == DNODE_SUSPECT) sw_puts(" -> SUSPECT\r\n");
@@ -650,6 +710,19 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
 
     /* Mark sender alive */
     pk_node_t snid = pkt->src_node;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
+    /* N2c stage 2 (§10 1, 2): a packet from a peer we hold DEAD@k does not
+     * bring it back (its own newer incarnation does, in gossip_apply above).
+     * Tell it instead: queue DEAD@k so it hears it and refutes with k+1.
+     * gossip_add renews the TTL on every such packet, so a peer that never
+     * refutes (an old build) keeps the rumour going (the limit, §10). */
+    if (snid < DNODE_MAX && snid != drpc_my_node && dnode_table[snid].state == DNODE_DEAD) {
+#if !defined(N2C_NC_NO_TELL)
+        gossip_add(snid, DNODE_DEAD, dnode_incarn[snid], cap_byte(snid));
+#endif
+        snid = DNODE_MAX;   /* skip "mark sender alive"; still answer below */
+    }
+#endif
     if (snid < DNODE_MAX && snid != drpc_my_node) {
         UB old = dnode_table[snid].state;
         dnode_table[snid].ip     = src_ip;
@@ -763,6 +836,32 @@ static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], I
     }
 }
 
+#if defined(_TK_HOSTED_LIBC_)
+/* A probe of `target` was answered (directly or through a helper). One
+ * function on hosted so the N2c `nodes life` test (I7 c) drives the real
+ * code. Bare metal keeps the two written-out copies in swim_task: moving
+ * them into a function (even always_inline) changed the aarch64 .text. */
+static void swim_probe_ok(pk_node_t target, const char *how)
+{
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
+    /* N2c stage 2: an answer from a DEAD peer does not revive it; the answer
+     * itself went through swim_rx, which told it (DEAD@k) */
+    if (dnode_table[target].state == DNODE_DEAD) return;
+#endif
+    if (dnode_table[target].state != DNODE_ALIVE) {
+        UB oldst = dnode_table[target].state;
+        dnode_table[target].state = DNODE_ALIVE;
+        sw_note(target, oldst, DNODE_ALIVE);
+        sw_puts("[swim] node "); sw_putdec(target);
+        sw_puts(how);
+        gossip_add(target, DNODE_ALIVE, dnode_incarn[target],
+                   cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
+        replica_push_to(target);
+    }
+    suspect_count[target] = 0;
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 /* ------------------------------------------------------------------ */
 /* SWIM task — one probing round per SWIM_PROBE_INTERVAL_MS           */
 /* ------------------------------------------------------------------ */
@@ -851,6 +950,9 @@ void swim_task(INT stacd, void *exinf)
             /* Direct probe succeeded — clean round-trip, record RTT. */
             SYSTIM t_ack; tk_get_otm(&t_ack);
             rtt_observe(target, (UW)(t_ack.lo - t_ping.lo));
+#if defined(_TK_HOSTED_LIBC_)
+            swim_probe_ok(target, " -> ALIVE (direct probe)\r\n");
+#else   /* bare metal: the same steps written out (crown: one function moved .text) */
             if (dnode_table[target].state != DNODE_ALIVE) {
                 UB oldst = dnode_table[target].state;
                 dnode_table[target].state = DNODE_ALIVE;
@@ -862,6 +964,7 @@ void swim_task(INT stacd, void *exinf)
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
+#endif
             continue;
         }
 
@@ -883,6 +986,9 @@ void swim_task(INT stacd, void *exinf)
 
         er = tk_wai_sem(probe_sem, 1, SWIM_IND_TMO_MS);
         if (er == E_OK) {
+#if defined(_TK_HOSTED_LIBC_)
+            swim_probe_ok(target, " -> ALIVE (indirect probe)\r\n");
+#else   /* bare metal: the same steps written out (crown: one function moved .text) */
             if (dnode_table[target].state != DNODE_ALIVE) {
                 UB oldst = dnode_table[target].state;
                 dnode_table[target].state = DNODE_ALIVE;
@@ -894,6 +1000,7 @@ void swim_task(INT stacd, void *exinf)
                 replica_push_to(target);
             }
             suspect_count[target] = 0;
+#endif
             continue;
         }
 
@@ -1373,6 +1480,7 @@ static INT sw2_state(pk_node_t id)
 
 INT swim_wide_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     static SWIM_WIDE saved[DREGION_MAX];
     static NODEMAP   saved_map;
     PK_NOSW_ENTER();
@@ -1631,6 +1739,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
     PK_NOSW_LEAVE();
 #undef W2
     emit(fails ? "[swim-wide] FAIL\r\n" : "[swim-wide] PASS\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
@@ -1672,6 +1781,7 @@ static INT gq_find_cap(pk_node_t node_id, UB state)
 
 INT swim_incarn_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -1758,6 +1868,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     dnode_incarn[PEER]      = 0;
 
     if (fails == 0) say("[swim-incarn] PASS\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -1781,6 +1892,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
 
 INT swim_cap_gossip_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -1931,6 +2043,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     region_set_super_capable(SELF, saved_capSELF ? TRUE : FALSE);
 
     if (fails == 0) say("[cap-gossip] PASS (converge + staleness + falsifiable)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -1961,6 +2074,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
 
 INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2189,6 +2303,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[teacher-gossip] PASS (converge + selector + determinism + staleness + falsifiable + rx-relay)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -2219,6 +2334,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 #if defined(_TK_HOSTED_LIBC_)
 INT swim_selfelect_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2309,6 +2425,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[selfelect] PASS (node self-recognizes its own teacher role: region_teacher()==self)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -2329,6 +2446,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 /* ------------------------------------------------------------------ */
 INT swim_v2cap_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
     pk_node_t saved_my = drpc_my_node;
@@ -2451,6 +2569,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq_cnt;
     if (fails == 0) say("[v2cap] PASS (bit 2 sent, read under the LWW gate, relayed; wide ids read v2)\r\n");
     else            say("[v2cap] RED\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
@@ -2500,6 +2619,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
 #if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
 INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2613,6 +2733,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
         sw_putdec((UW)fails);
         say("\r\n");
     }
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* NOFLEETSPLIT_CERT && _TK_HOSTED_LIBC_ */
@@ -2641,6 +2762,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 #if defined(SWIM_SELFSUSPECT_CERT) && defined(_TK_HOSTED_LIBC_)
 INT swim_selfsuspect_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2732,6 +2854,112 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
         sw_putdec((UW)fails);
         say("\r\n");
     }
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_ */
+
+#if defined(_TK_HOSTED_LIBC_)
+/* ------------------------------------------------------------------ */
+/* N2c stage 2 — `nodes life` (I7 of research/n2c-identity.md §10).   */
+/* A DEAD peer comes back only with a newer incarnation of its own.  */
+/* Drives the real swim_rx / gossip_apply / swim_probe_ok / drpc_rx  */
+/* with crafted packets. Fixed before the code (2026-11-20).         */
+/*  a1 DEAD@5 + a packet from it with no word about itself: DEAD,    */
+/*     and DEAD@5 is queued (it is told, so it can refute)           */
+/*  a2 DEAD@5 + its own ALIVE@5: DEAD, DEAD@5 queued                 */
+/*  b  DEAD@5 + its own ALIVE@6: ALIVE at 6                          */
+/*  c  DEAD@5 + a probe answer (swim_probe_ok) and a drpc HEARTBEAT: */
+/*     DEAD                                                          */
+/*  d  DEAD@255 + rumour ALIVE@0 (relayed): ALIVE (serial order)     */
+/*  e  ALIVE@0 + rumour DEAD@255: ignored                            */
+/*  f  my refute of DEAD@255 is 0, and ALIVE@0 beats DEAD@255        */
+/*  g  SUSPECT@5 + a packet from it: ALIVE (as before)               */
+/* Prints "[swim-life] ok|RED <item>" and PASS / FAIL.               */
+/* ------------------------------------------------------------------ */
+static void life_pkt(SWIM_PKT *p, UB src, UB n, UB g0, UB st0, UB inc0)
+{
+    UB *b = (UB *)p;
+    for (INT i = 0; i < (INT)sizeof *p; i++) b[i] = 0;
+    p->magic = SWIM_MAGIC; p->version = SWIM_VERSION; p->type = SWIM_ACK; p->seq = 0;
+    p->src_node = src; p->probe_target = src; p->gossip_cnt = n;
+    if (n) { p->gossip[0].node_id = g0; p->gossip[0].state = st0; p->gossip[0].incarnation = inc0; }
+}
+
+INT swim_life_self_test(void (*emit)(const char *))
+{
+    SW_SELFTEST_ENTER();
+    void (*say)(const char *) = emit ? emit : sw_puts;
+    INT fails = 0;
+    const UB PEER = 5, THIRD = 7;
+    pk_node_t saved_my = drpc_my_node;
+    UB saved_inc = my_incarnation;
+    INT saved_gq = gq_cnt;
+    UW saved_ip = dnode_table[PEER].ip;
+    UB saved_st = dnode_table[PEER].state, saved_pinc = dnode_incarn[PEER];
+    SWIM_PKT p;
+    DRPC_PKT hb;
+#define LIFE(cond, what) do { if (cond) { say("[swim-life] ok   "); } else { fails++; say("[swim-life] RED  "); } \
+                              say(what); say("\r\n"); } while (0)
+#define LIFE_SET(st, inc) do { dnode_table[PEER].state = (st); dnode_incarn[PEER] = (inc); \
+                               suspect_count[PEER] = 0; gq_cnt = 0; } while (0)
+    if (drpc_my_node == PEER || drpc_my_node == THIRD) drpc_my_node = 1;
+
+    LIFE_SET(DNODE_DEAD, 5);
+    life_pkt(&p, PEER, 0, 0, 0, 0); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
+    LIFE(dnode_table[PEER].state == DNODE_DEAD, "a1s DEAD@5 + a packet with no word about itself: stays DEAD");
+    LIFE(gq_find_incarn(PEER, DNODE_DEAD) == 5, "a1q DEAD@5 is queued (told)");
+
+    LIFE_SET(DNODE_DEAD, 5);
+    life_pkt(&p, PEER, 1, PEER, DNODE_ALIVE, 5); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
+    LIFE(dnode_table[PEER].state == DNODE_DEAD, "a2s DEAD@5 + its own ALIVE@5: stays DEAD");
+    LIFE(gq_find_incarn(PEER, DNODE_DEAD) == 5, "a2q DEAD@5 is queued (told)");
+
+    LIFE_SET(DNODE_DEAD, 5);
+    life_pkt(&p, PEER, 1, PEER, DNODE_ALIVE, 6); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
+    LIFE(dnode_table[PEER].state == DNODE_ALIVE && dnode_incarn[PEER] == 6, "b DEAD@5 + its own ALIVE@6: ALIVE at 6");
+
+    LIFE_SET(DNODE_DEAD, 5);
+    swim_probe_ok(PEER, " -> ALIVE (life test probe)\r\n");
+    LIFE(dnode_table[PEER].state == DNODE_DEAD, "cp DEAD@5 + a probe answer: stays DEAD");
+    LIFE_SET(DNODE_DEAD, 5);
+    {
+        UB *hbb = (UB *)&hb;
+        for (INT i = 0; i < (INT)sizeof hb; i++) hbb[i] = 0;
+        hb.magic = DRPC_MAGIC; hb.version = DRPC_VERSION; hb.type = DRPC_HEARTBEAT;
+        hb.src_node = PEER; hb.dst_node = 0xFF;
+        drpc_rx(0x0A010006UL, DRPC_PORT, (const UB *)&hb, sizeof hb);
+    }
+    LIFE(dnode_table[PEER].state == DNODE_DEAD, "ch DEAD@5 + a drpc HEARTBEAT: stays DEAD");
+
+    LIFE_SET(DNODE_DEAD, 255);
+    life_pkt(&p, THIRD, 1, PEER, DNODE_ALIVE, 0); gossip_apply(&p);
+    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "d DEAD@255 + rumour ALIVE@0: ALIVE");
+
+    LIFE_SET(DNODE_ALIVE, 0);
+    life_pkt(&p, THIRD, 1, PEER, DNODE_DEAD, 255); gossip_apply(&p);
+    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "e ALIVE@0 + rumour DEAD@255: ignored");
+
+    {
+        pk_node_t me = drpc_my_node;
+        my_incarnation = 200; gq_cnt = 0;
+        life_pkt(&p, THIRD, 1, (UB)me, DNODE_DEAD, 255); gossip_apply(&p);
+        LIFE(my_incarnation == 0, "f0 my refute of DEAD@255 is 0");
+        LIFE(gossip_supersedes(my_incarnation, DNODE_ALIVE, 255, DNODE_DEAD), "fb ALIVE@0 beats DEAD@255");
+        my_incarnation = saved_inc;
+    }
+
+    LIFE_SET(DNODE_SUSPECT, 5);
+    life_pkt(&p, PEER, 0, 0, 0, 0); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
+    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "g SUSPECT@5 + a packet from it: ALIVE");
+#undef LIFE
+#undef LIFE_SET
+
+    drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq;
+    dnode_table[PEER].state = saved_st; dnode_incarn[PEER] = saved_pinc; dnode_table[PEER].ip = saved_ip;
+    suspect_count[PEER] = 0;
+    say(fails ? "[swim-life] FAIL\r\n" : "[swim-life] PASS\r\n");
+    SW_SELFTEST_LEAVE();
+    return fails;
+}
+#endif /* _TK_HOSTED_LIBC_ (N2c stage 2, nodes life) */

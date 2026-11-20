@@ -529,6 +529,11 @@ void drpc_rx(UW src_ip, UH src_port, const UB *data, UH len)
         if (nid >= DNODE_MAX || nid == drpc_my_node) break;
 
         UB old_state = dnode_table[nid].state;
+#if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
+        /* N2c stage 2 (research/n2c-identity.md §10 1): a heartbeat carries no
+         * incarnation, so it does not bring a DEAD peer back (SWIM does) */
+        if (old_state == DNODE_DEAD) break;
+#endif
         dnode_table[nid].node_id = nid;
         dnode_table[nid].ip      = src_ip;
         dnode_table[nid].missed  = 0;
