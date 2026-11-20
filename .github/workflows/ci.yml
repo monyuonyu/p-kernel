@@ -2646,6 +2646,13 @@ jobs:
         run: |
           make -C boot/linux_x86_64
           make -C relay
+      # 2026-11-20: a peer epoch is folded once. A peer at epoch 0 was folded
+      # on every pulse (the guard skipped only when the high-water was not 0),
+      # which faded A's k1 before B folded A (k1 55-60% in 2 of 12 runs).
+      - name: "the Path W loop guard folds a peer epoch once ([mw-guard], mind mwguard)"
+        run: |
+          (printf 'mind mwguard\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee mwguard.log || true
+          grep -aF '[mw-guard] PASS' mwguard.log
       - name: Run 42_one_mind/run.sh and assert the tags + RESULT PASS
         run: |
           timeout 1140 samples/42_one_mind/run.sh | tee /tmp/p42_ci.log

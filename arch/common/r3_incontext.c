@@ -4393,6 +4393,9 @@ static void m_wait(const UB *p, const UB *end)
 /* LM-10 (Part XI): forward decls — definitions follow mind_net_task so they
  * see the transport helpers; the verbs dispatch them here. */
 static void m_merge(void);
+#ifdef _TK_HOSTED_LIBC_
+static void r3_mwguard_test(void);   /* Path W loop guard (mind mwguard) */
+#endif
 void r3_onemind_test(void);
 void r3_onemind_nocentral_test(void);
 void r3_wmerge_test(void);            /* LM-11 Path W² cert (Part XII)   */
@@ -4429,6 +4432,9 @@ void mind_cmd(const UB *args, UW len)
     else if (m_kw(&p, end, "wait"))  m_wait(p, end);
     else if (m_kw(&p, end, "lang"))  r3_lang_test();
     else if (m_kw(&p, end, "merge")) m_merge();                /* LM-10 M-b  */
+#ifdef _TK_HOSTED_LIBC_
+    else if (m_kw(&p, end, "mwguard")) r3_mwguard_test();     /* Path W guard */
+#endif
     else if (m_kw(&p, end, "onemind")) r3_onemind_test();      /* LM-10 cert */
     else if (m_kw(&p, end, "nocentral")) r3_onemind_nocentral_test();
     else if (m_kw(&p, end, "wmerge")) r3_wmerge_test();        /* LM-11 cert */
@@ -6560,6 +6566,41 @@ static INT mw_fetch_peer(pk_node_t origin)
  * stale peer-state; a peer is folded only if its epoch is NEWER). */
 static UW mw_peer_epoch[MW_ROWS];
 
+#ifdef _TK_HOSTED_LIBC_
+/* The loop guard as one function (hosted), so `mind mwguard` can drive it.
+ * Returns 1 when peer row o at epoch pe is to be folded, and records it. */
+static INT mw_should_fold(INT o, UW pe)
+{
+    if (pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) return 0;   /* stale */
+    mw_peer_epoch[o] = pe;
+    return 1;
+}
+
+/* `mind mwguard` (CI 44629065908 and 44370186784: Path W k1 55-60%): a peer
+ * epoch is folded once. In 44629065908 node A folded node B's epoch 0 six
+ * times in a row (p42_nodeA.log lines 1008-1279); each fold pulls A halfway
+ * back to B as it was before any teach, so A's k1 fades before B folds A.
+ * Sequence on a spare row: 0 fold, 0 skip, 5 fold, 5 skip, 3 skip, 6 fold.
+ * Prints [mw-guard] PASS|FAIL. */
+static void r3_mwguard_test(void)
+{
+    static const UW  seq[6]  = { 0, 0, 5, 5, 3, 6 };
+    static const INT want[6] = { 1, 0, 1, 0, 0, 1 };
+    INT o = MW_ROWS - 1, bad = 0;
+    UW saved = mw_peer_epoch[o];
+    mw_peer_epoch[o] = 0;
+    for (INT i = 0; i < 6; i++) {
+        INT got = mw_should_fold(o, seq[i]);
+        r_puts("[mw-guard] epoch "); r_putdec(seq[i]);
+        r_puts(got ? " -> fold" : " -> skip");
+        if (got != want[i]) { bad++; r_puts("  RED (want "); r_puts(want[i] ? "fold" : "skip"); r_puts(")"); }
+        r_puts("\r\n");
+    }
+    mw_peer_epoch[o] = saved;
+    r_puts(bad ? "[mw-guard] FAIL\r\n" : "[mw-guard] PASS\r\n");
+}
+#endif
+
 /* THE merge: fold {self} U {region peers with a NEWER epoch} via gl_merge at
  * n=R_NP (the no-central averager, XI.0 #1). Sets rw[] to the mean, bumps
  * merge_epoch, emits ONE EV_MERGE. Returns peers folded (0 = nobody new).
@@ -6594,8 +6635,12 @@ static INT mw_fold_region(void)
         INT pe = mw_fetch_peer(o);
 #endif
         if (pe < 0) continue;                        /* dropped (partial)     */
+#ifdef _TK_HOSTED_LIBC_
+        if (!mw_should_fold(o, (UW)pe)) continue;   /* stale (loop guard)    */
+#else
         if ((UW)pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) continue; /* stale */
         mw_peer_epoch[o] = (UW)pe;
+#endif
         for (INT i = 0; i < R_NP; i++) mw_out[i] += mw_peer[i];
         folded++;
     }
