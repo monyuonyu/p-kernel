@@ -2856,6 +2856,22 @@ long st_rg_wrap(const st_model *m, uint32_t gen, void *buf, size_t cap)
     if (!m || !buf || cap < ST_RG_HDR) return ST_E_ARG;
     long n = st_save(m, (uint8_t *)buf + ST_RG_HDR, cap - ST_RG_HDR);
     if (n < 0) return n;
+#if !defined(B5W_NC_SEND_MOMENTS)
+    /* B5 ⓪ (research/b5-m-default.md §3 2, G5): the published copy carries
+     * zero Adam moments. The merge reads a peer's w only (st_round_trimmed and
+     * the cohorts reset mu, vu), so they were 2/3 of the bytes on the wire for
+     * nothing; zero, they chunk to the same ids on every node and round. The
+     * blob is header, w, mu, vu, adam_t (st_blob_size); the live model is not
+     * touched. W15 in tests/llm/student_region_test.c. */
+    {
+        size_t mv = 2u * (size_t)m->n_params * sizeof(float);
+        size_t end = (size_t)n - sizeof(int32_t);          /* before adam_t */
+        if (end >= mv) {
+            uint8_t *z = (uint8_t *)buf + ST_RG_HDR + end - mv;
+            for (size_t i = 0; i < mv; i++) z[i] = 0;
+        }
+    }
+#endif
     uint32_t h[4] = { ST_RG_MAGIC, gen, (uint32_t)n, 0u };
     for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)buf)[i] = ((const uint8_t *)h)[i];
     return n + ST_RG_HDR;
