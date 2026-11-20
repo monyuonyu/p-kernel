@@ -185,6 +185,11 @@ void swim_set_sim_zone(UB zone_size, UW penalty_ms);
  * Returns 0 on PASS, else the fail count. */
 INT swim_incarn_self_test(void (*emit)(const char *));
 
+/* N2c stage 2 (hosted, `nodes life`): a DEAD peer comes back only with a
+ * newer incarnation of its own (research/n2c-identity.md §10, I7 a-g).
+ * Emits "[swim-life] PASS"/"FAIL". Returns 0 on PASS, else the fail count. */
+INT swim_life_self_test(void (*emit)(const char *));
+
 /* N-2b cap-gossip cert (p2p-overlay.md "Supernodes (N-2)"): drives the REAL
  * gossip_apply() with crafted SWIM_PKTs carrying the capability bit and
  * asserts (a) a fresh self-rumor with capability=1 makes the receiver report

@@ -1036,6 +1036,8 @@ EXPORT INT usermain(void)
             else if (al >= 3 && a[0]=='c'&&a[1]=='a'&&a[2]=='p') swim_cap_gossip_self_test(print);
             else if (al >= 3 && a[0]=='t'&&a[1]=='e'&&a[2]=='a') swim_teacher_gossip_self_test(print);
             else if (al >= 4 && a[0]=='t'&&a[1]=='e'&&a[2]=='s'&&a[3]=='t') swim_incarn_self_test(print);
+            /* N2c stage 2: `nodes life` (a DEAD peer comes back only with a newer incarnation). */
+            else if (al >= 4 && a[0]=='l'&&a[1]=='i'&&a[2]=='f'&&a[3]=='e') swim_life_self_test(print);
             /* N2b: `nodes wide` drives the v2 receive path with crafted packets. */
             else if (al >= 4 && a[0]=='w'&&a[1]=='i'&&a[2]=='d'&&a[3]=='e') swim_wide_self_test(print);
             /* N2b: `nodes rows` checks the id -> table-row map (drpc.c). */
