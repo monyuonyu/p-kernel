@@ -48,6 +48,7 @@
 #ifdef _WIN32
 #include <direct.h>	/* _mkdir (single-arg on Windows) */
 #include <io.h>		/* _commit (fsync equivalent)     */
+#include <windows.h>	/* MoveFileExA: rename() cannot replace a name */
 #else
 #include <sys/syscall.h>	/* SYS_syncfs (bionic has it as a syscall number too) */
 #endif
@@ -216,7 +217,16 @@ static int dur_write(const char *fname, const void *data, unsigned len, int sync
     /* S1: a weights write that began before `leave` must not land after it
      * (the 22 MB baby blob takes seconds; seen in run_swarm_leave.sh L2) */
     if (dur_weights_frozen && dur_is_weights(fname)) { unlink(tmp); return -1; }
+#if defined(_WIN32) && !defined(PFS_DUR_NC_WIN_RENAME)
+    /* msvcrt/UCRT rename() refuses an existing name, so every second write
+     * of a name failed on Windows (tests/windows/dur_overwrite_test.c D2).
+     * MoveFileEx replaces it; WRITE_THROUGH returns after the move is on
+     * disk (the closest Windows has to the directory fsync below).
+     * -DPFS_DUR_NC_WIN_RENAME: the plain rename (negative, D2 red). */
+    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) { unlink(tmp); return -1; }
+#else
     if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
+#endif
 
 #ifndef _WIN32
     /* fsync the directory so the rename (the durability point) survives a
