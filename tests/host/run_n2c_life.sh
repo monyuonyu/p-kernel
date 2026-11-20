@@ -10,7 +10,9 @@
 #       back with a "back at incarnation" line, and neither with a rx or probe
 #       line ("node 1 recovered (via rx)" / "-> ALIVE (direct|indirect probe)").
 #       audit-201: and node 2's node.incarn is at least the incarnation it came
-#       back at (§10 4, the refute is kept; -DN2C_NC_NOTE_NEVER turns it red)
+#       back at (§10 4, the refute is kept; -DN2C_NC_NOTE_NEVER turns it red).
+#       Node 2 runs `nodes test` before the STOP (a self-test counter left up
+#       would keep the refute out: H37)
 #   I5b kill -9 node 2, 20 s after both DEAD lines restart it on the same
 #       PFS dir. Both see it back within 60 s ("recovered", "-> ALIVE" or
 #       "back at"). Two arms: the plain build (node.incarn kept) and
@@ -104,6 +106,9 @@ i8() {  # <tag>: I8
     node "$bin" "$T/d2" 2 "$T/n2.log" "$T/f2"; P2=$LASTPID; exec 8<>"$T/f2"
     node "$bin" "$T/d3" 3 "$T/n3.log" "$T/f3"; P3=$LASTPID; exec 9<>"$T/f3"
     echo "[n2c-life] $1 I8 up: n1 $(waitfor "$T/n1.log" "$UP_RE" 120) s, n3 $(waitfor "$T/n3.log" "$UP_RE" 120) s"
+    # audit-201 (H37): a self-test on the live node 2 first; a counter it leaves
+    # up would keep the refute below out of node.incarn (checked after the CONT)
+    printf 'nodes test\n' >&8
     sleep 10
     kill -STOP "$P2"
     echo "[n2c-life] $1 I8 DEAD: n1 $(waitfor "$T/n1.log" "$DEAD_RE" 180) s, n3 $(waitfor "$T/n3.log" "$DEAD_RE" 180) s"
