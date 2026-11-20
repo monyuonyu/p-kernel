@@ -316,8 +316,23 @@ static int ct_eq(const u8 *a, const u8 *b, int n)
     return d == 0;
 }
 
+/* N2c stage 3 (research/n2c-identity.md §11): a node that drew its wide id
+ * from its key takes nonces from the wall clock in the same scale as the
+ * start value (seconds << 24, plus the microseconds in that scale), and never
+ * less than the last + 1. The relay and every receiver keep ONE replay window
+ * per sender id, so two nodes under one id with counters from their own start
+ * second cut each other: the later start passes and the other is neither heard
+ * nor hears (measured 11-21). On one clock both pass, so the collision can be
+ * seen and redrawn. */
+static int nonce_clock;
 static u64 mint_nonce(void)
 {
+    if (nonce_clock) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        u64 t = ((u64)ts.tv_sec << 24) + (((u64)(ts.tv_nsec / 1000) << 24) / 1000000u);
+        if (t > next_nonce) next_nonce = t;
+    }
     return next_nonce++;
 }
 
@@ -793,6 +808,9 @@ int net_relay_init(void)
          * (node_ident.c); 0 = not asked or no key, the narrow default as before */
         extern int pk_node_wide_id(void);
         my_node_id = pk_node_wide_id();
+#ifndef N2C_NC_NONCE_COUNT
+        nonce_clock = (my_node_id != 0);
+#endif
         if (!my_node_id) my_node_id = pkernel_default_node_id();
     }
 #ifdef N2_NC_TRUNC
@@ -1454,6 +1472,7 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
         struct sockaddr_in sv_rl = relay_list[0], me = {0};
         socklen_t mel = sizeof(me);
         u64 sv_nonce = next_nonce;
+        int sv_clock = nonce_clock; nonce_clock = 0;   /* the cases below set nonces by hand */
         u32 sv_ok = rx_ok_count;
         unsigned char f[64], o[1500];
         static unsigned char p[MAX_PKT];
@@ -1529,6 +1548,7 @@ void net_relay_heartbeat_self_test(void (*pr)(const char *))
         relay_list[0] = sv_rl;
         memcpy(key, sv_key, KEY_LEN);
         next_nonce = sv_nonce;
+        nonce_clock = sv_clock;
         rx_ok_count = sv_ok;
     }
 

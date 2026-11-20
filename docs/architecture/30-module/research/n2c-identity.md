@@ -86,3 +86,13 @@ node_seed の 32 hex の後の LF・CRLF は同じ種として読む（master �
 **監査-200（11-20、FAIL）→ 直し（11-20 22:15 の回、監査待ち）**: 自己試験が my_incarnation を 0 や 200 に置いて反論の道を通り、その値が node.incarn に書かれていた（`nodes test` 3→258、`nodes life` 3→256。次の起動の線の値が相手の知る値より古くなりうる＝§10 の 4 が 1 回崩れる）。swim.c の自己試験 9 本の間は数え `sw_selftest_depth` を上げ、反論は 0 のときだけ書く（hosted だけ、ベアは空のマクロ）。試験 I9（`nodes test|life|cap|teacher|v2cap|wide|selfelect` の前後で 3 のまま）、陰性 `N2C_NC_NOTE_IN_TEST`。限界: 自己試験の最中に本物の反論が来ても書かない（自己試験は人が打つときだけ）。`SWIM_SELFSUSPECT_CERT`・`NOFLEETSPLIT_CERT` のビルドの 2 本は数えを入れたが I9 では打っていない
 
 **監査-201（11-21、限界つき PASS）**: 取り直しで試験先 I9 赤・直し ALL PASS（全 6 モード）・crown 全バイト同じ。壊し: life の数えを外す＝I9 赤、incarn 試験の LEAVE 忘れ・反論を一切書かない＝どちらも緑（§10 の 4 に試験が無かった）→ 監査側で I8 に足した: node 2 が STOP の前に `nodes test`、CONT の後 node.incarn ≥ 戻った incarnation、陰性 `N2C_NC_NOTE_NEVER`（test-holes S24）。限界: `nodes test` を打った I8 では戻りの incarnation が 7〜17 と揺れた（打たない full では 5・7）。原因は見ていない（害は数が進むだけ）。この項目は 1 回ずつしか走らせていない
+
+## 11. 第 3 段（2026-11-21 05:25 の回、feat/n2c-stage3、監査待ち）
+
+§2 の 2・3・5 を作った（hosted だけ）。**読んで分かった前提の違い**: 中継は番号ごとに席を 1 つ持ち、放送は送り手の席に返さない＝同じ番号の 2 台は互いのビーコンを直接聞けない。だから知らせは第三者の噂に乗せる:
+- 番号: `PKERNEL_NODE_WIDE=1` かつ `PKERNEL_NODE_ID` なしのとき `257 + sha256(公開鍵 ‖ 回数 LE4) の頭 2 B mod 65278`（node_ident.c `pk_node_wide_id`）。回数は `node.redraw`
+- v2 ビーコンの 29 B の後ろに `"N2F" n 指紋×n`（[0] 送り手、[1+i] 噂 i の番号に覚えている鍵）。旧版は 29 B だけ読む
+- 鍵を覚えるのは本人のビーコンからだけ。違う鍵が来たら別人＝往復の測りを捨て、新しい鍵を覚え、1 行（§2 5）。覚え直すので、ぶつかっている間は第三者の噂が 2 つの鍵を交互に運ぶ＝両方が気づき、**鍵の大きい方が引き直す**（§2 3 のとおり）。最初の鍵を保つ形（監査-183 ①）にすると、第三者が皆 A を覚えたとき大きい B が永久に気づかない
+- 引き直し: 回数+1 を fsync してから自分を execv し直す（番号は送り口・drpc・番地に起動時に固まる）。Android・Windows は 1 行言うだけ（次の起動から）
+- 合否は tests/host/run_n2c_wide.sh の頭（I1w・I6u・I3・I6・I4、陰性 NO_REDRAW・REDRAW_VOLATILE・NO_PIN）。試験先 bd88e5c3 で 5 つとも赤
+- **限界**: I3 の「教えを取り違えない」は試していない。狭い番号は v1 に鍵が無い＝ぶつかりは見えない（監査-183 ②）。drpc・pfs_repl など他の層は鍵を見ない（第三者の往復の測りだけ捨てる）。小さい鍵を作れる者は相手を引き直させ続けられる（§5 ④）。PKERNEL_PFS_DIR なしは鍵が毎回変わる＝番号も毎回変わる

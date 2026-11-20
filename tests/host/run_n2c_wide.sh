@@ -23,6 +23,9 @@
 #        as M with "redraw 1" and no new "[n2c] redraw" line in 20 s
 # Falsifiers (each must turn its check red; plain must be ALL PASS):
 #   -DN2C_NC_NO_REDRAW -> I3    -DN2C_NC_REDRAW_VOLATILE -> I4    -DN2C_NC_NO_PIN -> I6u
+#   -DN2C_NC_NONCE_COUNT -> I3 (added 11-21 after the first run of the code: nonces counted
+#        from the start second, as before; the relay's one replay window per id lets only the
+#        later start through, the other is neither heard nor hears, so nobody can redraw)
 # Not checked here (limits, §11): that a teaching (X3) is not mixed up between A and B;
 # narrow ids (no key on the v1 wire); Android and Windows (no re-exec: the new id from the
 # next start).
@@ -41,7 +44,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -193,6 +196,7 @@ for md in $MODES; do
         N2C_NC_NO_REDRAW)       want=I3 ;;
         N2C_NC_REDRAW_VOLATILE) want=I4 ;;
         N2C_NC_NO_PIN)          want=I6u ;;
+        N2C_NC_NONCE_COUNT)     want=I3 ;;
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"
