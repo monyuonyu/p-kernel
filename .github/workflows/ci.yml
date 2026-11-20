@@ -64,11 +64,33 @@ jobs:
     # class. Nonzero exit fails the build.
     name: "ソースリスト整合性 (Android CMake と両ホスト Makefile)"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: check_parity.sh (Android .so + host x86_64<->aarch64 module lists)
         run: tools/android/check_parity.sh
+      # Android run-gate decision (RunGate.kt, pure Kotlin — no Android SDK):
+      # the owner's 灯す pierce must survive the sticky battery tick (the CI
+      # emulator smoke red of run 44774377700). Lives here, not in the advisory
+      # APK job, so it is BLOCKING. kotlinc is pinned by version + sha256.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: RunGate unit + 3 negatives (tests/android/run_gate_unit.sh)
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o /tmp/kc.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.4.21/kotlin-compiler-2.4.21.zip
+          echo '7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd  /tmp/kc.zip' | sha256sum -c -
+          unzip -q /tmp/kc.zip -d /tmp/kc
+          export KOTLINC=/tmp/kc/kotlinc/bin/kotlinc
+          bash tests/android/run_gate_unit.sh
+          for m in nc_ignore_pierce nc_never_clear nc_pierce_always; do
+            rc=0; bash tests/android/run_gate_unit.sh "$m" || rc=$?
+            if [ "$rc" != 1 ]; then echo "negative $m: rc=$rc (want 1)"; exit 1; fi
+          done
+          echo "RunGate: real PASS, 3 negatives red"
 
   vendor-patch-inventory:
     # gap-ledger 行 VENDOR-PATCH-LOSS への第2の梯子段(2026-08-12 のゲートは

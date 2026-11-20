@@ -76,6 +76,8 @@ class PKernelService : Service() {
 
     private var pollerThread: Thread? = null
     private val running = AtomicBoolean(false)
+    // Battery/WiFi run-gate decision incl. the owner's 灯す pierce (RunGate.kt).
+    private val gate = RunGate()
     private lateinit var prefs: SharedPreferences
     private var powerReceiver: BroadcastReceiver? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
@@ -148,8 +150,19 @@ class PKernelService : Service() {
         // "灯す" appeared to do nothing.
         val userExplicit = intent?.getBooleanExtra(EXTRA_USER_EXPLICIT, false) ?: false
 
-        if (runAllowed() || userExplicit) {
+        // RunGate remembers the pierce, so the sticky ACTION_BATTERY_CHANGED
+        // tick that arrives right after registerPowerReceiver() no longer
+        // stopSelf()s the star the owner just lit (RunGate.kt).
+        if (gate.onStart(runAllowed(), userExplicit)) {
+            if (gate.isPierced) {
+                appendLog("[ump] owner tapped 灯す below the battery/WiFi gate — " +
+                          "lighting anyway until the gate opens once.\n")
+            }
             bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey, bootLanOn)
+        } else if (running.get()) {
+            // Already lit by an earlier pierce in this process (a later start
+            // without the explicit flag, e.g. the app reopened): leave it lit
+            // and do NOT overwrite the notification with a "waiting" reason.
         } else if (!powerAllowed()) {
             appendLog("[ump] battery-safe mode: battery is low and unplugged — " +
                       "the star will relight when you plug in.\n")
@@ -378,12 +391,12 @@ class PKernelService : Service() {
      * stopSelf() is the only stop available (no native shutdown).
      */
     private fun reconcileGate() {
-        val allowed = runAllowed()
-        if (allowed && !running.get()) {
+        val action = gate.reconcile(runAllowed(), running.get())
+        if (action == RunGate.Action.BOOT) {
             appendLog("[ump] run-gate OK (battery above ${batteryFloor()}% or plugged; " +
                       "network OK) — relighting the star.\n")
             bootKernelOnce(bootNodeId, bootRelayHost, bootRelayPort, bootRelayKey, bootLanOn)
-        } else if (!allowed && running.get()) {
+        } else if (action == RunGate.Action.STOP) {
             if (!powerAllowed()) {
                 appendLog("[ump] battery ≤${batteryFloor()}% and unplugged — pausing to " +
                           "protect the battery; will resume when charging.\n")
