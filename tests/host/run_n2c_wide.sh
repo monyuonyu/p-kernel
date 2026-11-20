@@ -17,12 +17,17 @@
 #   I3   within 30 s of both being up exactly one of A and B says "[n2c] redraw" and comes
 #        back as "[n2c] wide id M (key, redraw 1)" with M != 300; the other stays 300; and
 #        then node 4 sees both 299 and M-1 ALIVE (`nodes` prints ids from 0) within 45 s
-#   I6   node 4 said "[swim] wide node 299: another key" at least once (two keys behind
-#        one id are two nodes), and no such line in the 20 s after I3 settled
+#   I6   no "[swim] wide node 299: another key" line on node 4 in the 20 s after I3 settled
+#        (one key behind 299 again). The count before is printed, not judged: 11-21 (1b884f01)
+#        B redrew before node 4 heard its key, 0 lines, and that is right. That another key is
+#        another node is I6u's.
 #   I4   the one that redrew, killed with -9 and started again on the same dir, comes up
 #        as M with "redraw 1" and no new "[n2c] redraw" line in 20 s
 # Falsifiers (each must turn its check red; plain must be ALL PASS):
 #   -DN2C_NC_NO_REDRAW -> I3    -DN2C_NC_REDRAW_VOLATILE -> I4    -DN2C_NC_NO_PIN -> I6u
+#   -DN2C_NC_SMALL_NEVER -> I6u (the smaller key never redraws, even when the larger has not
+#        moved in 10 s; added 11-21: on 1b884f01 node 4 swapped the two keys 80 times and the
+#        larger never heard the smaller, nobody redrew in 30 s)
 #   -DN2C_NC_NONCE_COUNT -> I3 (added 11-21 after the first run of the code: nonces counted
 #        from the start second, as before; the relay's one replay window per id lets only the
 #        later start through, the other is neither heard nor hears, so nobody can redraw)
@@ -46,7 +51,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -165,8 +170,8 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
     c=$(cnt "$LOG/C.log" '^\[swim\] wide node 299: another key')
     sleep 20
     b=$(cnt "$LOG/C.log" '^\[swim\] wide node 299: another key')
-    if [ "$c" -ge 1 ] && [ "$b" = "$c" ] && [ -n "$who" ]; then r I6 PASS "($c lines, none in the next 20 s)"
-    else r I6 FAIL "($c lines, then $b)"; fi
+    if [ "$b" = "$c" ] && [ -n "$who" ]; then r I6 PASS "($c lines, none in the next 20 s)"
+    else r I6 FAIL "($c lines, then $b; redrew: '${who}')"; fi
 
     # I4
     if [ -n "$who" ] && [ -n "$m" ]; then
@@ -200,6 +205,7 @@ for md in $MODES; do
         N2C_NC_REDRAW_VOLATILE) want=I4 ;;
         N2C_NC_NO_PIN)          want=I6u ;;
         N2C_NC_NONCE_COUNT)     want=I3 ;;
+        N2C_NC_SMALL_NEVER)     want=I6u ;;
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"

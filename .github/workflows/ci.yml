@@ -2046,11 +2046,11 @@ jobs:
 
       # N2c stage 3 (research/n2c-identity.md section 11): a wide id from the key,
       # a redraw when two keys claim one id (both start as 300 on the relay), the
-      # same id is the same key. I1w I6u I3 I6 I4; the four falsifiers (-DN2C_NC_*)
-      # run inside the script (about 10 minutes).
+      # same id is the same key. I1w I6u I3 I6 I4; the six falsifiers (-DN2C_NC_*)
+      # run inside the script (about 15 minutes).
       - name: "a wide id from the key, redrawn on a collision ([n2c-wide], BLOCKING, N2c)"
         run: |
-          timeout 1200 tests/host/run_n2c_wide.sh | tee n2c_wide.log
+          timeout 1500 tests/host/run_n2c_wide.sh | tee n2c_wide.log
           grep -aF '[n2c-wide] ALL PASS' n2c_wide.log
           make -C boot/linux_x86_64 >/dev/null
 

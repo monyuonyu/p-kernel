@@ -1241,29 +1241,47 @@ static const UB *sw_my_fp_get(void)
     return sw_my_fp_ok ? sw_my_fp : (const UB *)0;
 }
 
-/* This node's own wide id was heard with the key `f`. */
-static void swim_wide_claim(const UB *f)
+/* This node's own wide id was heard with the key `f` at `now` (ms).
+ * The larger key redraws at once. The smaller one waits: if it still hears the
+ * other key SWIM2_CLAIM_WAIT_MS after it first did, the larger has not moved
+ * (on the relay the news of the smaller key may not reach it: the relay's slot
+ * and a third node's news both follow whoever spoke last, measured 11-21), so
+ * it redraws itself. A larger key that moved is no longer heard here. */
+#define SWIM2_CLAIM_WAIT_MS 10000
+static UB  sw_claim_seen;          /* the smaller side heard the other key   */
+static UW  sw_claim_t0;            /* when it first did                      */
+static void sw_redraw_now(const UB *f, const UB *mine, const char *why)
+{
+    sw_redraw_asked++;
+    if (sw_selftest_depth != 0) return;
+    sw_puts("[swim] wide id "); sw_putdec(swim_wide_me);
+    sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it, mine "); sw_puthex8(mine);
+    sw_puts(why);
+#ifndef N2C_NC_NO_REDRAW
+    IMPORT void pk_node_wide_redraw(void);   /* node_ident.c: re-exec */
+    pk_node_wide_redraw();
+#endif
+}
+static void swim_wide_claim(const UB *f, UW now)
 {
     const UB *mine;
     if (!swim_wide_me || sw_fp_zero(f) || !(mine = sw_my_fp_get())) return;
     INT c = sw_fp_cmp(mine, f);
     if (c == 0) return;
-    if (c > 0) {
-        sw_redraw_asked++;
-        if (sw_selftest_depth == 0) {
+    if (c > 0) { sw_redraw_now(f, mine, " is the larger: redraw\r\n"); return; }
+    if (!sw_claim_seen) {
+        sw_claim_seen = 1; sw_claim_t0 = now;
+        if (!sw_claim_said && sw_selftest_depth == 0) {
+            sw_claim_said = 1;
             sw_puts("[swim] wide id "); sw_putdec(swim_wide_me);
-            sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it, mine "); sw_puthex8(mine);
-            sw_puts(" is the larger: redraw\r\n");
-#ifndef N2C_NC_NO_REDRAW
-            IMPORT void pk_node_wide_redraw(void);   /* node_ident.c: re-exec */
-            pk_node_wide_redraw();
-#endif
+            sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it; that key is the larger, it redraws\r\n");
         }
-    } else if (!sw_claim_said && sw_selftest_depth == 0) {
-        sw_claim_said = 1;
-        sw_puts("[swim] wide id "); sw_putdec(swim_wide_me);
-        sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it; that key is the larger, it redraws\r\n");
+        return;
     }
+#ifndef N2C_NC_SMALL_NEVER
+    if ((UW)(now - sw_claim_t0) >= SWIM2_CLAIM_WAIT_MS && (UW)(now - sw_claim_t0) < 0x80000000UL)
+        sw_redraw_now(f, mine, " is the smaller, but the larger has not moved in 10 s: redraw\r\n");
+#endif
 }
 
 /* direct: the packet came from this node. Otherwise it is news of the id.
@@ -1430,11 +1448,11 @@ static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
             fx = t;
         }
     }
-    if (fx && fn > 0 && p->src_node == swim_wide_me) swim_wide_claim(fx->fp[0]);   /* a LAN hears itself */
+    if (fx && fn > 0 && p->src_node == swim_wide_me) swim_wide_claim(fx->fp[0], now);   /* a LAN hears itself */
     swim_wide_heard(p->src_node, src_ip, TRUE, now, (fx && fn > 0) ? fx->fp[0] : (const UB *)0);
     for (INT i = 0; i < p->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
         if (fx && 1 + i < fn && swim_wide_me && p->gossip[i].node_id == swim_wide_me)
-            swim_wide_claim(fx->fp[1 + i]);
+            swim_wide_claim(fx->fp[1 + i], now);
         if (p->gossip[i].state == DNODE_ALIVE)
             swim_wide_heard(p->gossip[i].node_id, 0, FALSE, now, (const UB *)0);
     }
@@ -1897,6 +1915,8 @@ INT swim_idpin_self_test(void (*emit)(const char *))
     UB sv_fp[8]; INT sv_fp_ok = sw_my_fp_ok;
     for (INT i = 0; i < 8; i++) sv_fp[i] = sw_my_fp[i];
     UW sv_chg = sw_keychg, sv_ask = sw_redraw_asked;
+    UB sv_seen = sw_claim_seen; UW sv_t0 = sw_claim_t0;
+    sw_claim_seen = 0;
     PK_NOSW_LEAVE();
     INT fails = 0;
 #define I6(cond, what) do { if (!(cond)) { fails++; \
@@ -1975,6 +1995,21 @@ INT swim_idpin_self_test(void (*emit)(const char *))
     buf[sizeof(SWIM2_PKT) + 3] = 200;
     swim_wide_rx(ip, buf, (UH)(sizeof(SWIM2_PKT) + 4 + 8));   /* only fp[0] is there */
     I6(sw_redraw_asked == sv_ask + 2, "a key past the end is not read");
+    /* the smaller side: still hearing the larger key 10 s after it first did */
+    {
+        UW t = 50000;
+        sw_claim_seen = 0;
+        swim_wide_claim(H, t);
+        I6(sw_redraw_asked == sv_ask + 2 && sw_claim_seen, "a larger key: the first time I wait");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS - 1);
+        I6(sw_redraw_asked == sv_ask + 2, "still within 10 s: I wait");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS);
+        I6(sw_redraw_asked == sv_ask + 3, "the larger has not moved in 10 s: I redraw");
+        sw_claim_seen = 0;
+        swim_wide_claim(H, 0xFFFFF000UL);
+        swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS));
+        I6(sw_redraw_asked == sv_ask + 4, "the 10 s across the clock's wrap");
+    }
 
     PK_NOSW_ENTER();
     wide_map = saved_map;
@@ -1982,6 +2017,7 @@ INT swim_idpin_self_test(void (*emit)(const char *))
     swim_wide_me = sv_me; sw_my_fp_ok = sv_fp_ok;
     for (INT i = 0; i < 8; i++) sw_my_fp[i] = sv_fp[i];
     sw_keychg = sv_chg; sw_redraw_asked = sv_ask;
+    sw_claim_seen = sv_seen; sw_claim_t0 = sv_t0;
     PK_NOSW_LEAVE();
 #undef I6
     emit(fails ? "[idpin] RED\r\n" : "[idpin] ALL PASS\r\n");
