@@ -464,7 +464,10 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 {   /* the refuted incarnation is kept too (§10 4): a restart
                      * then starts past it (node_ident.c) */
                     extern void pk_node_incarn_note(unsigned char wire);
-#if !defined(N2C_NC_NOTE_IN_TEST)
+#if defined(N2C_NC_NOTE_NEVER)
+                    /* falsifier (audit-201): the refute is never kept -> I8 red */
+                    if (0)
+#elif !defined(N2C_NC_NOTE_IN_TEST)
                     if (sw_selftest_depth == 0)
 #endif
                         pk_node_incarn_note(my_incarnation);

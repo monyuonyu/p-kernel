@@ -8,7 +8,9 @@
 #   I8  relay + nodes 1,2,3. kill -STOP node 2 until nodes 1 and 3 say DEAD,
 #       wait 20 s (past the gossip TTL), kill -CONT. Within 60 s both bring it
 #       back with a "back at incarnation" line, and neither with a rx or probe
-#       line ("node 1 recovered (via rx)" / "-> ALIVE (direct|indirect probe)")
+#       line ("node 1 recovered (via rx)" / "-> ALIVE (direct|indirect probe)").
+#       audit-201: and node 2's node.incarn is at least the incarnation it came
+#       back at (§10 4, the refute is kept; -DN2C_NC_NOTE_NEVER turns it red)
 #   I5b kill -9 node 2, 20 s after both DEAD lines restart it on the same
 #       PFS dir. Both see it back within 60 s ("recovered", "-> ALIVE" or
 #       "back at"). Two arms: the plain build (node.incarn kept) and
@@ -21,6 +23,7 @@
 #   -DN2C_NC_NO_TELL   -> I7 (a1/a2 told) and I5b of the RESET arm red
 #   -DN2C_NC_PLAIN_CMP -> I7 (d/e/f) red
 #   -DN2C_NC_NOTE_IN_TEST (the self-tests may write node.incarn) -> I9 red
+#   -DN2C_NC_NOTE_NEVER (a refute is never kept, audit-201) -> I8 red
 # Output: "[n2c-life] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # N2C_LIFE_MODES picks the builds, N2C_LIFE_CHECKS (e.g. "I9") narrows the
 # checks of every build; N2C_WORK=<dir> keeps the logs.
@@ -47,7 +50,7 @@ else
     trap 'cleanup; rm -rf "$WORK"' EXIT
 fi
 PORT="${N2C_LIFE_PORT:-7583}"
-MODES="${N2C_LIFE_MODES:-plain N2C_NC_RX_REVIVE N2C_NC_NO_TELL N2C_NC_PLAIN_CMP N2C_NC_NOTE_IN_TEST}"
+MODES="${N2C_LIFE_MODES:-plain N2C_NC_RX_REVIVE N2C_NC_NO_TELL N2C_NC_PLAIN_CMP N2C_NC_NOTE_IN_TEST N2C_NC_NOTE_NEVER}"
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export PKERNEL_GALAXY=0
 
@@ -118,6 +121,14 @@ i8() {  # <tag>: I8
         echo "[n2c-life] $1 I8 n$k after CONT: rx=$rx probe=$probe back=$back $(grep -m1 'node 1 back at' "$T/after$k")"
         { [ "$back" -ge 1 ] && [ "$rx" = 0 ] && [ "$probe" = 0 ]; } || ok=0
     done
+    # audit-201: §10 4 -- node 2 refuted its DEAD on the wire; the count it keeps
+    # (node.incarn) must be at least the incarnation the peers saw it come back at,
+    # else the next start can be behind its own refute. Nothing else tests the note.
+    local seen kept
+    seen=$(cat "$T/after1" "$T/after3" | sed -n 's/.*node 1 back at incarnation \([0-9]*\).*/\1/p' | sort -n | tail -1)
+    kept=$(od -An -tu4 "$T/d2/node.incarn" 2>/dev/null | tr -d ' ')
+    echo "[n2c-life] $1 I8 node 2 kept node.incarn ${kept:-missing}, back at ${seen:-none}"
+    { [ -n "$seen" ] && [ -n "$kept" ] && [ "$kept" -ge "$seen" ]; } || ok=0
     kill -9 "$P1" "$P2" "$P3" "$RL" 2>/dev/null
     exec 7>&- 8>&- 9>&-
     wait 2>/dev/null
@@ -178,6 +189,7 @@ for m in $MODES; do
         N2C_NC_NO_TELL)   cf="-D$m"; checks="I7 I5bR";        want="I7 I5bR"; items="a1q a2q" ;;
         N2C_NC_PLAIN_CMP) cf="-D$m"; checks="I7";             want="I7";      items="d e fb" ;;
         N2C_NC_NOTE_IN_TEST) cf="-D$m"; checks="I9";          want="I9";      items="" ;;
+        N2C_NC_NOTE_NEVER) cf="-D$m"; checks="I8";            want="I8";      items="" ;;
         *) echo "[n2c-life] unknown mode $m"; FAIL=1; continue ;;
     esac
     [ -n "${N2C_LIFE_CHECKS:-}" ] && { checks="$N2C_LIFE_CHECKS"; want=""; items=""; }
