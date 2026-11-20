@@ -48,3 +48,4 @@
 | S22 | node_seed.bad の上書き（H31） | run_n2c_identity.sh の I2sb、陰性 -DN2C_NC_SEED_BAD_OVERWRITE で I2sb だけ赤（REMINT も巻き添えで赤）。監査-193 で再現 |
 | S23 | 鍵の控えの道が記録の旗を取らない・rec_take の不可分（H34 の控えの道と (a)） | run_ark_app.sh の A9-key（シェルが旗を持つ間 503、後で 410、GET 200）と陰性腕 nc-key-flag（A9-key だけ赤）、文字の検査 A9-atomic。監査-194: 試験先 044cf780 で A9-key 赤、私の壊し（控えの道が旗を返さない）で A9-key・A9-lock 赤。限界: A9-atomic は書き方を変えると偽の赤、早く下ろす形は緑のまま（(b)） |
 | S24 | swim.c の自己試験の数え sw_selftest_depth の LEAVE 忘れ（H37、監査-201 で見つけてその場で）・反論を node.incarn に書かない（§10 の 4 に試験が無かった） | run_n2c_life.sh の I8: node 2 が STOP の前に `nodes test`、CONT の後 node.incarn ≥ 戻った incarnation。LEAVE 忘れ（brk.py x2）は 1 < 7 で赤、陰性 -DN2C_NC_NOTE_NEVER は 1 < 15 で赤、直しは 25 ≥ 17・15 ≥ 7（監査-201、容器 1 回ずつ） |
+| S25 | RunGate の貫きの消え方と閉じた tick（監査-202 で見つけてその場で） | tests/android/rungate の G8（貫いた後に門が開いた状態の onStart が貫きを消す）・G9（貫き中・止まっている時の閉じた tick は BOOT しない）。私の壊し x2（onStart の開いた門で消さない）・x5（貫き中の閉じた tick が BOOT）は G1〜G7 で緑、G8・G9 で赤（監査-202、各 1 回） |
