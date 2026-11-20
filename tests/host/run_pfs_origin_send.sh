@@ -6,11 +6,11 @@
 #   O1 relay + 2 hosted nodes. Node 1 puts 80 blocks at once (more than the
 #      64-slot table, so the first ones leave node 1's table before node 2
 #      WANTs them); node 2 fetches every one of them within 90 s
-#   O2 on node 2, the <id>.org of each of the 80 blocks says 1 (node 1), not
-#      0xFF (self). master: 16 of them say self (probe pk-scratch/b5md/h38b.sh,
-#      11-21: "self 16 foreign 64") = red
+#   O2 on node 2, the <id>.org of each of the 80 blocks says node 1 (its net
+#      number 0), not 0xFF (self). master: 16 of them say self (probe
+#      pk-scratch/b5md/h38b.sh, 11-21: "self 16 foreign 64") = red
 #   O3 node 2's "replicated block ... origin=n<k>" lines for the 80 ids all
-#      say n1 (none n255)
+#      say n0 (none n255)
 # Falsifier (must turn O2/O3 red, the plain build must be ALL PASS):
 #   -DPFSR_NC_SEND_SELF  send_block_to sends "self" as before the fix
 # Output: "[pfs-origin] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
@@ -41,6 +41,7 @@ else
 fi
 PORT="${PFS_ORIGIN_PORT:-7493}"
 N=80
+OWN=0      # node 1's number on the net (PKERNEL_NODE_ID 1 -> drpc node 0)
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 make -C "$ROOT/relay" > "$WORK/relay-build.log" 2>&1 || { echo "[pfs-origin] relay build FAIL"; exit 1; }
@@ -87,23 +88,27 @@ suite() {  # <tag> <cflags>
     PIDS=""
     echo "[pfs-origin] $tag node 2 holds $fetched of $N"
     [ "$fetched" = "$N" ] && r O1 PASS || r O1 FAIL
-    # O2: each fetched block's .org says 1 (2 bytes little endian)
+    # O2: each fetched block's .org (2 bytes little endian) says node 1's net
+    # number, OWN (PKERNEL_NODE_ID - 1 = 0; the first test-first run counted 1
+    # and saw 0 on 64 blocks = the test's error, corrected before the fix ran)
     want=0; self=0; got=0
     while read -r id; do
         [ -e "$W/d2/$id" ] || continue
-        org=$(od -An -tu2 -N2 "$W/d2/$id.org" 2>/dev/null | tr -d ' ')
-        case "$org" in 1) want=$((want + 1)) ;; 255) self=$((self + 1)) ;; *) got=$((got + 1)) ;; esac
+        org=$(od -An -tu2 -N2 "$W/d2/$id.org" 2>/dev/null | tr -d ' \n')
+        if [ "$org" = "$OWN" ]; then want=$((want + 1))
+        elif [ "$org" = 255 ]; then self=$((self + 1))
+        else got=$((got + 1)); fi
     done < "$W/ids.txt"
-    echo "[pfs-origin] $tag node 2 .org: n1 $want, self $self, other/none $got"
+    echo "[pfs-origin] $tag node 2 .org: node 1 ($OWN) $want, self $self, other/none $got"
     [ "$want" = "$fetched" ] && [ "$fetched" -gt 0 ] && r O2 PASS || r O2 FAIL
-    # O3: the receive lines for these ids
+    # O3: the receive lines for these ids (the log prints the first 16 hex)
     want=0; self=0
     while read -r id; do
-        org=$(grep -a "replicated block id=$id " "$W/n2.log" | head -1 | tr -d '\r' | sed -n 's/.*origin=n\([0-9]*\).*/\1/p')
-        case "$org" in 1) want=$((want + 1)) ;; 255) self=$((self + 1)) ;; esac
+        org=$(grep -a "replicated block id=${id:0:16} " "$W/n2.log" | head -1 | tr -d '\r' | sed -n 's/.*origin=n\([0-9]*\).*/\1/p')
+        if [ "$org" = "$OWN" ]; then want=$((want + 1)); elif [ "$org" = 255 ]; then self=$((self + 1)); fi
     done < "$W/ids.txt"
-    echo "[pfs-origin] $tag node 2 receive lines: origin=n1 $want, origin=n255 $self"
-    [ "$self" = 0 ] && [ "$want" -gt 0 ] && r O3 PASS || r O3 FAIL
+    echo "[pfs-origin] $tag node 2 receive lines: origin=n$OWN $want, origin=n255 $self"
+    [ "$self" = 0 ] && [ "$want" = "$fetched" ] && [ "$fetched" -gt 0 ] && r O3 PASS || r O3 FAIL
     SUITE_REDS="$reds"
 }
 
