@@ -75,6 +75,22 @@ fun main() {
         check("G7-resume-boots", a == B, "tick=$a (want BOOT)")
     }
 
+    // G8 (audit-202): a later start that finds the gate OPEN spends the pierce
+    // too (not only a reconcile tick); the next floor crossing pauses.
+    RunGate().let { g ->
+        g.onStart(false, true)
+        val boot = g.onStart(allowed = true, userExplicit = false)
+        val a = g.reconcile(false, true)
+        check("G8-open-start-ends-pierce", boot && a == S, "boot=$boot close=$a (want true, STOP)")
+    }
+    // G9 (audit-202): a pierce never boots from a closed-gate tick by itself
+    // (booting is onStart's job; a tick with the gate closed only holds).
+    RunGate().let { g ->
+        g.onStart(false, true)
+        val a = g.reconcile(false, false)
+        check("G9-closed-tick-never-boots", a == N, "tick=$a (want NONE)")
+    }
+
     println("[rungate] $passes passed, $fails failed")
     exitProcess(if (fails == 0) 0 else 1)
 }
