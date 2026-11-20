@@ -129,9 +129,15 @@ if [ -z "$FOUND_PORT" ]; then
     echo "----- the app's process and services (diagnostics only) -----"
     adb shell pidof io.pkernel.ump 2>/dev/null || echo "(no io.pkernel.ump process)"
     adb shell dumpsys activity services io.pkernel.ump 2>/dev/null | head -40
+    # 2026-11-20 (CI 44629065908, API 34): the app died 4 s after start, and
+    # the 150 lines were all AppsFilter "interaction ... BLOCKED" lines (they
+    # name io.pkernel), so no line said why. The crash buffer first, then the
+    # app's lines without AppsFilter.
+    echo "----- adb logcat -b crash (diagnostics only) -----"
+    adb logcat -d -b crash 2>/dev/null | tail -120
     echo "----- adb logcat, the app and crash lines from the whole log (diagnostics only) -----"
-    adb logcat -d 2>/dev/null | grep -aE 'io\.pkernel|PKernel|pkernel|AndroidRuntime|FATAL|DEBUG +:|libc +:|ActivityTaskManager' \
-        | grep -av 'adbd *:' | tail -150
+    adb logcat -d 2>/dev/null | grep -aE 'io\.pkernel|PKernel|pkernel|AndroidRuntime|FATAL|DEBUG +:|libc +:|ActivityTaskManager|ActivityManager' \
+        | grep -av 'adbd *:' | grep -av 'AppsFilter' | tail -150
     echo "----- adb logcat tail (diagnostics only -- kernel stdout is NOT routed here, see header) -----"
     adb logcat -d -t 200 2>/dev/null | tail -200
     exit 1
