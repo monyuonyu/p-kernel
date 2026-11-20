@@ -26,6 +26,8 @@
 #   -DN2C_NC_NONCE_COUNT -> I3 (added 11-21 after the first run of the code: nonces counted
 #        from the start second, as before; the relay's one replay window per id lets only the
 #        later start through, the other is neither heard nor hears, so nobody can redraw)
+#        B starts 2 s after A: started in the same second, the counted nonces interleave and
+#        the negative went green once (d5e29208, A redrew, 4 saw no second key)
 # Not checked here (limits, §11): that a teaching (X3) is not mixed up between A and B;
 # narrow ids (no key on the v1 wire); Android and Windows (no re-exec: the new id from the
 # next start).
@@ -130,6 +132,7 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
     start C "$LOG/dC" PKERNEL_NODE_ID=4
     wait_up C 1
     start A "$LOG/dA" PKERNEL_NODE_WIDE=1 PKERNEL_N2C_TEST_WIDE0=300
+    sleep 2   # B starts in a later second than A (11-21: in the same second the counted nonces interleave)
     start B "$LOG/dB" PKERNEL_NODE_WIDE=1 PKERNEL_N2C_TEST_WIDE0=300
     wait_up A 1; wait_up B 1
     t=0
