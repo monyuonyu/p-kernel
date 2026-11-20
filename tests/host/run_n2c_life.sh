@@ -13,12 +13,17 @@
 #       PFS dir. Both see it back within 60 s ("recovered", "-> ALIVE" or
 #       "back at"). Two arms: the plain build (node.incarn kept) and
 #       -DN2C_NC_INC_RESET (every start is incarnation 0)
+#   I9  the swim self-tests (`nodes test|life|cap|teacher|v2cap|wide|selfelect`)
+#       leave node.incarn alone: 3 before, 3 after (audit-200 found `nodes test`
+#       3 -> 258 and `nodes life` 3 -> 256: their refutes reached the note)
 # Falsifiers (the plain build must be ALL PASS):
 #   -DN2C_NC_RX_REVIVE -> I7 (a1/a2/c) and I8 red
 #   -DN2C_NC_NO_TELL   -> I7 (a1/a2 told) and I5b of the RESET arm red
 #   -DN2C_NC_PLAIN_CMP -> I7 (d/e/f) red
+#   -DN2C_NC_NOTE_IN_TEST (the self-tests may write node.incarn) -> I9 red
 # Output: "[n2c-life] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
-# N2C_LIFE_MODES picks the builds; N2C_WORK=<dir> keeps the logs.
+# N2C_LIFE_MODES picks the builds, N2C_LIFE_CHECKS (e.g. "I9") narrows the
+# checks of every build; N2C_WORK=<dir> keeps the logs.
 # Rebuilds boot/linux* and relay/ and cleans boot/linux* afterwards.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,7 +47,7 @@ else
     trap 'cleanup; rm -rf "$WORK"' EXIT
 fi
 PORT="${N2C_LIFE_PORT:-7583}"
-MODES="${N2C_LIFE_MODES:-plain N2C_NC_RX_REVIVE N2C_NC_NO_TELL N2C_NC_PLAIN_CMP}"
+MODES="${N2C_LIFE_MODES:-plain N2C_NC_RX_REVIVE N2C_NC_NO_TELL N2C_NC_PLAIN_CMP N2C_NC_NOTE_IN_TEST}"
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 export PKERNEL_GALAXY=0
 
@@ -147,6 +152,19 @@ i5b() {  # <tag>: I5b on the build <tag>
     [ "$ok" = 1 ]
 }
 
+keep() {  # <tag>: I9
+    local bin="$WORK/$1/p-kernel" ok=1 v u got
+    for v in test life cap teacher v2cap wide selfelect; do
+        u="$WORK/$1/k-$v"; rm -rf "$u"; mkdir -p "$u"
+        printf '\003\000\000\000' > "$u/node.incarn"
+        printf 'nodes %s\nexit\n' "$v" | timeout 60 env PKERNEL_PFS_DIR="$u" "$bin" > "$u.log" 2>&1
+        got=$(od -An -tu4 "$u/node.incarn" 2>/dev/null | tr -d ' ')
+        echo "[n2c-life] $1 I9 nodes $v: node.incarn 3 -> ${got:-missing}"
+        [ "$got" = 3 ] || ok=0
+    done
+    [ "$ok" = 1 ]
+}
+
 FAIL=0
 r() {  # <tag> <check> <0|1 passed>
     if [ "$3" = 1 ]; then echo "[n2c-life] $1 $2 PASS"; else echo "[n2c-life] $1 $2 FAIL"; REDS="$REDS $2"; fi
@@ -155,15 +173,18 @@ for m in $MODES; do
     REDS=""
     # items: the `nodes life` items that must be RED under the falsifier
     case "$m" in
-        plain)            cf="";     checks="I7 I8 I5b I5bR"; want="";        items="" ;;
+        plain)            cf="";     checks="I9 I7 I8 I5b I5bR"; want="";     items="" ;;
         N2C_NC_RX_REVIVE) cf="-D$m"; checks="I7 I8";          want="I7 I8";   items="a1s a2s cp ch" ;;
         N2C_NC_NO_TELL)   cf="-D$m"; checks="I7 I5bR";        want="I7 I5bR"; items="a1q a2q" ;;
         N2C_NC_PLAIN_CMP) cf="-D$m"; checks="I7";             want="I7";      items="d e fb" ;;
+        N2C_NC_NOTE_IN_TEST) cf="-D$m"; checks="I9";          want="I9";      items="" ;;
         *) echo "[n2c-life] unknown mode $m"; FAIL=1; continue ;;
     esac
+    [ -n "${N2C_LIFE_CHECKS:-}" ] && { checks="$N2C_LIFE_CHECKS"; want=""; items=""; }
     if ! build "$m" "$cf"; then echo "[n2c-life] $m build FAIL"; tail -20 "$WORK/$m/build.log"; FAIL=1; continue; fi
     for c in $checks; do
         case "$c" in
+            I9)   keep "$m" && r "$m" I9 1 || r "$m" I9 0 ;;
             I7)   unit "$m" && r "$m" I7 1 || r "$m" I7 0 ;;
             I8)   i8 "$m"   && r "$m" I8 1 || r "$m" I8 0 ;;
             I5b)  i5b "$m"  && r "$m" I5b 1 || r "$m" I5b 0 ;;
