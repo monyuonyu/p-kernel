@@ -2022,6 +2022,17 @@ jobs:
           grep -aF '[n2c-life] ALL PASS' n2c_life.log
           make -C boot/linux_x86_64 >/dev/null
 
+      # gap-ledger PFS-ORIGIN-SELF-ON-SEND (test-holes H38): a block fetched
+      # over the net after it left the sender's 64-slot table keeps its owner
+      # (relay + 2 nodes, 80 puts; O1-O3). The falsifier -DPFSR_NC_SEND_SELF
+      # runs inside the script and must turn O2 red. Rebuilds and cleans.
+      # About 3-4 min (two builds); the job's 110 min had 70 min in 44740868265.
+      - name: "a fetched block keeps its owner ([pfs-origin], BLOCKING, H38)"
+        run: |
+          timeout 900 tests/host/run_pfs_origin_send.sh | tee pfs_origin.log
+          grep -aF '[pfs-origin] ALL PASS' pfs_origin.log
+          make -C boot/linux_x86_64 >/dev/null
+
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
     runs-on: ubuntu-latest

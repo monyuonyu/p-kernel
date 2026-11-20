@@ -180,6 +180,9 @@ void pfs_repl_want_quiet(const U1 id[PFS_ID_LEN]);
 UW   pfs_repl_quiet_count(void);
 /* the quiet want sent straight to one holder (unicast, not the region slot) */
 void pfs_repl_want_from(const U1 id[PFS_ID_LEN], pk_node_t holder);
+/* `pfs orgtest` (PFS-ORIGIN-SELF-ON-SEND, O4): the origin a block is sent with,
+ * in and out of the table, own and a peer's. Single node, PKERNEL_PFS_DIR. */
+INT  pfs_repl_origin_self_test(void (*emit)(const char *));
 #endif
 
 /* Shell helpers (`pfs put <text>` / `pfs ls`) — print via tmonitor. */

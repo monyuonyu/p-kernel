@@ -11,10 +11,17 @@
 #      pk-scratch/b5md/h38b.sh, 11-21: "self 16 foreign 64") = red
 #   O3 node 2's "replicated block ... origin=n<k>" lines for the 80 ids all
 #      say n0 (none n255)
-# Falsifier (must turn O2/O3 red, the plain build must be ALL PASS):
-#   -DPFSR_NC_SEND_SELF  send_block_to sends "self" as before the fix
+# Added after the first fix run (02:37), before its code: O1-O3 pass on the
+# self->number line alone (node 1's own blocks); they do not see the <id>.org
+# read (a peer's block out of the table). So:
+#   O4 `pfs orgtest` (one node, PKERNEL_PFS_DIR): a peer's block (origin 7)
+#      and an own block pushed out of the table, two more in it; the origin
+#      each is sent with is 7 / this node / 7 / this node ("[pfs-orgtest] PASS")
+# Falsifiers (the plain build must be ALL PASS):
+#   -DPFSR_NC_SEND_SELF   "self" goes on the wire as before: O2, O3, O4 red
+#   -DPFSR_NC_NO_ORG_READ the <id>.org is not read: O4 red (nc2 runs O4 only)
 # Output: "[pfs-origin] <build> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
-# Env: PFS_ORIGIN_MODES="plain nc" (default both), PFS_ORIGIN_PORT (relay
+# Env: PFS_ORIGIN_MODES="plain nc nc2" (default all), PFS_ORIGIN_PORT (relay
 # port, default 7493), PFS_ORIGIN_WORK=<dir> keeps the logs.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards.
 set -u
@@ -46,14 +53,21 @@ export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456
 
 make -C "$ROOT/relay" > "$WORK/relay-build.log" 2>&1 || { echo "[pfs-origin] relay build FAIL"; exit 1; }
 
-suite() {  # <tag> <cflags>
-    local tag="$1" cf="$2" reds="" W k i id want got self fetched org
+suite() {  # <tag> <cflags> [o4only]
+    local tag="$1" cf="$2" only="${3:-}" reds="" W k i id want got self fetched org
     r() { echo "[pfs-origin] $tag $1 $2"; [ "$2" = FAIL ] && reds="$reds $1"; return 0; }
     make -C "$BOOT" clean >/dev/null 2>&1
     if ! make -C "$BOOT" EXTRA_CFLAGS="$cf" > "$WORK/$tag-build.log" 2>&1; then
         r build FAIL; tail -20 "$WORK/$tag-build.log"; SUITE_REDS="build"; return
     fi
     W="$WORK/$tag"; rm -rf "$W"; mkdir -p "$W"
+    # O4: one node off the net
+    mkdir -p "$W/d0"
+    printf 'pfs orgtest\nexit\n' | timeout 120 env PKERNEL_NODE_ID=1 PKERNEL_PFS_DIR="$W/d0" \
+        "$BOOT/p-kernel" > "$W/o4.log" 2>&1
+    grep -a '^\[pfs-orgtest\]' "$W/o4.log" | tr -d '\r' | sed "s/^/[pfs-origin] $tag /"
+    grep -aq '^\[pfs-orgtest\] PASS' "$W/o4.log" && r O4 PASS || r O4 FAIL
+    if [ "$only" = o4only ]; then SUITE_REDS="$reds"; return; fi
     PIDS=""
     "$ROOT/relay/relay" -p "$PORT" > "$W/relay.log" 2>&1 &
     PIDS="$PIDS $!"
@@ -112,7 +126,7 @@ suite() {  # <tag> <cflags>
     SUITE_REDS="$reds"
 }
 
-MODES="${PFS_ORIGIN_MODES:-plain nc}"
+MODES="${PFS_ORIGIN_MODES:-plain nc nc2}"
 bad=0
 for m in $MODES; do
     case "$m" in
@@ -120,7 +134,11 @@ for m in $MODES; do
                [ -n "$SUITE_REDS" ] && bad=1 ;;
         nc)    suite nc "-DPFSR_NC_SEND_SELF"
                case "$SUITE_REDS" in *O2*) echo "[pfs-origin] nc turns O2 red (as meant)" ;;
-                   *) echo "[pfs-origin] nc stayed green on O2 (the falsifier does not bite)"; bad=1 ;; esac ;;
+                   *) echo "[pfs-origin] nc stayed green on O2 (the falsifier does not bite)"; bad=1 ;; esac
+               case "$SUITE_REDS" in *O4*) ;; *) echo "[pfs-origin] nc stayed green on O4"; bad=1 ;; esac ;;
+        nc2)   suite nc2 "-DPFSR_NC_NO_ORG_READ" o4only
+               case "$SUITE_REDS" in *O4*) echo "[pfs-origin] nc2 turns O4 red (as meant)" ;;
+                   *) echo "[pfs-origin] nc2 stayed green on O4 (the falsifier does not bite)"; bad=1 ;; esac ;;
         *) echo "[pfs-origin] unknown mode $m"; bad=1 ;;
     esac
 done

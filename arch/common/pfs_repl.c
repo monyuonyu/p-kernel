@@ -567,6 +567,103 @@ void pfs_repl_push(const U1 id[PFS_ID_LEN], pk_node_t dst_node)
 /* chunked block send (sfs_push generalized to a block, unicast)       */
 /* ------------------------------------------------------------------ */
 
+/* The origin a block goes out with (send_block_to). PFS-ORIGIN-SELF-ON-SEND
+ * (2026-11-21): it looked only in the 64-slot table and sent 0xFF (self) for
+ * the rest and for this node's own blocks; the receiver kept 0xFF, so a peer's
+ * block became its own original (S1 leave keeps it). */
+static pk_node_t pfsr_send_origin(const U1 id[PFS_ID_LEN])
+{
+    pk_node_t origin = PFS_ORIGIN_SELF;
+    INT in_table = 0;
+    for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
+        U1 sid[PFS_ID_LEN]; pk_node_t sorg;
+        if (pfs_slot_info(i, sid, 0, &sorg) && pr_id_eq(sid, id)) {
+            origin = sorg;
+            in_table = 1;
+            break;
+        }
+    }
+#if defined(_TK_HOSTED_LIBC_) && !defined(PFSR_NC_NO_ORG_READ)
+    /* a block out of the table (served from its flat file) keeps the origin
+     * in its <id>.org. -DPFSR_NC_NO_ORG_READ: not read (negative, O4) */
+    if (!in_table) {
+        INT dorg = pfs_dur_origin_of(id);
+        if (dorg >= 0) origin = (pk_node_t)dorg;
+    }
+#else
+    (void)in_table;
+#endif
+#ifndef PFSR_NC_SEND_SELF   /* H38 negative: "self" goes on the wire as before */
+    /* "self" (0xFF) is this node's own block: on the wire it is this node's
+     * number, as on_new_block announces it. A block whose origin is unknown
+     * (no table slot, no .org) goes as this node's too: the receiver then
+     * counts it foreign, never its own. */
+    if (origin == PFS_ORIGIN_SELF) origin = drpc_my_node;
+#endif
+    return origin;
+}
+
+#ifdef _TK_HOSTED_LIBC_
+/* `pfs orgtest` (O4 of tests/host/run_pfs_origin_send.sh). Single node with
+ * PKERNEL_PFS_DIR, off the net (this node's number is set to 5 for the test
+ * and put back). Blocks: P (a peer's, origin 7) and S (own) put first, then
+ * PFS_MAX_BLOCKS + 8 fillers push both out of the table; P2 (origin 7) and S2
+ * (own) put last stay in it. Expected send origins: P 7, S 5, P2 7, S2 5.
+ * -DPFSR_NC_NO_ORG_READ turns P red (5), -DPFSR_NC_SEND_SELF turns S, S2 red (255). */
+static void og_dec(void (*emit)(const char *), UW v)
+{
+    char b[12]; INT i = 11; b[i] = 0;
+    do { b[--i] = (char)('0' + v % 10); v /= 10; } while (v && i > 0);
+    emit(&b[i]);
+}
+static void og_block(U1 b[16], UW k)
+{
+    static const char tag[] = "pfs-orgtest!";
+    for (INT i = 0; i < 12; i++) b[i] = (U1)tag[i];
+    b[12] = (U1)k; b[13] = (U1)(k >> 8); b[14] = 0x5A; b[15] = 0xA5;
+}
+#define OG_FILL (PFS_MAX_BLOCKS + 8)
+INT pfs_repl_origin_self_test(void (*emit)(const char *))
+{
+    static U1 ids[OG_FILL + 4][PFS_ID_LEN];
+    static U1 b[16];
+    INT fails = 0;
+    if (!pfs_dur_active()) {
+        emit("[pfs-orgtest] FAIL needs PKERNEL_PFS_DIR (the flat files)\r\n");
+        return 1;
+    }
+    pk_node_t me0 = drpc_my_node;
+    U1 sup0 = announce_suppress;
+    announce_suppress = 1;            /* the test's puts are not announced */
+    drpc_my_node = 5;
+    UW n = 0;
+    og_block(b, 9000); (void)pfs_put_origin(b, 16, ids[n++], 7);            /* P  */
+    og_block(b, 9001); (void)pfs_put_origin(b, 16, ids[n++], PFS_ORIGIN_SELF); /* S */
+    for (UW k = 0; k < OG_FILL; k++) { og_block(b, k); (void)pfs_put_origin(b, 16, ids[n++], 7); }
+    og_block(b, 9002); (void)pfs_put_origin(b, 16, ids[n++], 7);            /* P2 */
+    og_block(b, 9003); (void)pfs_put_origin(b, 16, ids[n++], PFS_ORIGIN_SELF); /* S2 */
+    static const char *const nm[4] = { "P (peer 7, out of the table)", "S (own, out of the table)",
+                                       "P2 (peer 7, in the table)", "S2 (own, in the table)" };
+    const UW at[4] = { 0, 1, n - 2, n - 1 };
+    const UW want[4] = { 7, 5, 7, 5 };
+    const INT res[4] = { 0, 0, 1, 1 };
+    for (INT c = 0; c < 4; c++) {
+        INT r = pfs_resident(ids[at[c]]) ? 1 : 0;
+        UW got = (UW)pfsr_send_origin(ids[at[c]]);
+        INT ok = pfs_has(ids[at[c]]) && r == res[c] && got == want[c];
+        emit(ok ? "[pfs-orgtest] ok   " : "[pfs-orgtest] FAIL ");
+        emit(nm[c]); emit(": resident "); og_dec(emit, (UW)r);
+        emit(", sent as "); og_dec(emit, got); emit(" (want "); og_dec(emit, want[c]); emit(")\r\n");
+        if (!ok) fails++;
+    }
+    for (UW k = 0; k < n; k++) (void)pfs_drop(ids[k]);
+    drpc_my_node = me0;
+    announce_suppress = sup0;
+    emit(fails ? "[pfs-orgtest] FAIL\r\n" : "[pfs-orgtest] PASS\r\n");
+    return fails;
+}
+#endif
+
 static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
 {
     INT blen = pfs_get(id, tx_block, PFS_BLOCK_MAX);
@@ -579,34 +676,7 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
 #endif
 
     /* recover the origin tag so it survives the hop */
-    pk_node_t origin = PFS_ORIGIN_SELF;
-    INT in_table = 0;
-    for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
-        U1 sid[PFS_ID_LEN]; pk_node_t sorg;
-        if (pfs_slot_info(i, sid, 0, &sorg) && pr_id_eq(sid, id)) {
-            origin = sorg;
-            in_table = 1;
-            break;
-        }
-    }
-#ifdef _TK_HOSTED_LIBC_
-    /* PFS-ORIGIN-SELF-ON-SEND (2026-11-21): a block out of the 64-slot table
-     * (served from its flat file) keeps the origin in its <id>.org */
-    if (!in_table) {
-        INT dorg = pfs_dur_origin_of(id);
-        if (dorg >= 0) origin = (pk_node_t)dorg;
-    }
-#else
-    (void)in_table;
-#endif
-#ifndef PFSR_NC_SEND_SELF   /* H38 negative: "self" goes on the wire as before */
-    /* "self" (0xFF) is this node's own block: on the wire it is this node's
-     * number, as on_new_block announces it. Sent as 0xFF the receiver kept a
-     * peer's block as its own original (S1 leave keeps it). A block whose
-     * origin is unknown (no table slot, no .org) goes as this node's too: the
-     * receiver then counts it foreign, never its own. */
-    if (origin == PFS_ORIGIN_SELF) origin = drpc_my_node;
-#endif
+    pk_node_t origin = pfsr_send_origin(id);
 
     pr_memset(&tx_pkt, 0, (UW)sizeof(tx_pkt));
     tx_pkt.magic     = PFSR_BLK_MAGIC;
