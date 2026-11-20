@@ -4361,6 +4361,10 @@ jobs:
           ./dot-nc.exe
           if ($LASTEXITCODE -ne 1) { Write-Output "the negative did not fail (rc $LASTEXITCODE)"; exit 1 }
           Write-Output "windows-durable: overwrite PASS, the plain-rename negative FAILs as meant"
+          # The runner's pwsh wrapper ends the step with `exit $LASTEXITCODE`,
+          # which is still the negative's meant 1 here (run 44808383332 went
+          # red right after the PASS line above). Say the step's own verdict.
+          exit 0
       - name: fiber_fpctl (no flags, float, and the leak negative)
         shell: pwsh
         run: |
@@ -4373,6 +4377,7 @@ jobs:
           ./fiber_fpctl.exe leak
           if ($LASTEXITCODE -ne 1) { Write-Output "the leak negative did not fail (rc $LASTEXITCODE)"; exit 1 }
           Write-Output "windows-durable: fiber_fpctl no-flags and float PASS, leak FAILs as meant"
+          exit 0  # same wrapper: $LASTEXITCODE is the leak negative's meant 1
 
   android-apk-build:
     # REAL Android APK build gate — closes a coverage gap the `parity` job
