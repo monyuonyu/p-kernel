@@ -4303,6 +4303,40 @@ jobs:
             || { echo 'output is not a PE32+ Windows executable'; exit 1; }
           echo "windows-pe-build: $exe is a native PE32+ Windows binary."
 
+  windows-durable:
+    # The first job that RUNS Windows code (windows-pe-build only links it).
+    # tests/windows/dur_overwrite_test.c links the hosted durable store
+    # (arch/linux/pfs_durable.c) as is: a second write of the same name
+    # (node.incarn, mind.rw, ns1_student.bin, swarm-stop.st ...) must land.
+    # msvcrt/UCRT rename() refuses an existing name, so on master every
+    # overwrite failed (read in research/n2c-identity.md section 6; the home
+    # Windows box's Smart App Control refuses new unsigned exes, so this is the
+    # place it is measured). The negative build -DPFS_DUR_NC_WIN_RENAME (plain
+    # rename, as before the fix) must fail D2. The image's MinGW gcc.
+    name: "Windows で実行: 店の上書き (pfs_durable.c, windows-latest) [advisory]"
+    runs-on: windows-latest
+    timeout-minutes: 15
+    continue-on-error: true  # until 2026-12-05: a new runner kind, its first runs not seen yet (fix/win-dur-rename, 2026-11-21)
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and run dur_overwrite_test, then the negative
+        shell: pwsh
+        run: |
+          gcc --version | Select-Object -First 1
+          gcc -O1 -o dot.exe tests/windows/dur_overwrite_test.c arch/linux/pfs_durable.c
+          if ($LASTEXITCODE -ne 0) { Write-Output "build FAILED"; exit 1 }
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\dd" | Out-Null
+          $env:PKERNEL_PFS_DIR = "$env:RUNNER_TEMP\dd"
+          ./dot.exe
+          if ($LASTEXITCODE -ne 0) { Write-Output "dur_overwrite_test FAILED"; exit 1 }
+          gcc -O1 -DPFS_DUR_NC_WIN_RENAME -o dot-nc.exe tests/windows/dur_overwrite_test.c arch/linux/pfs_durable.c
+          if ($LASTEXITCODE -ne 0) { Write-Output "negative build FAILED"; exit 1 }
+          Remove-Item -Recurse -Force "$env:RUNNER_TEMP\dd"
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\dd" | Out-Null
+          ./dot-nc.exe
+          if ($LASTEXITCODE -ne 1) { Write-Output "the negative did not fail (rc $LASTEXITCODE)"; exit 1 }
+          Write-Output "windows-durable: overwrite PASS, the plain-rename negative FAILs as meant"
+
   android-apk-build:
     # REAL Android APK build gate — closes a coverage gap the `parity` job
     # (top of this file) cannot: check_parity.sh only diffs the CMakeLists.txt
