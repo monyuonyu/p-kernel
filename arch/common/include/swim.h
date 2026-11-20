@@ -190,6 +190,10 @@ INT swim_incarn_self_test(void (*emit)(const char *));
  * Emits "[swim-life] PASS"/"FAIL". Returns 0 on PASS, else the fail count. */
 INT swim_life_self_test(void (*emit)(const char *));
 
+/* N2c stage 3 (hosted, `nodes idpin`): the same wide id is the same key
+ * (research/n2c-identity.md §11, I6u). Emits "[idpin] ALL PASS"/"RED". */
+INT swim_idpin_self_test(void (*emit)(const char *));
+
 /* N-2b cap-gossip cert (p2p-overlay.md "Supernodes (N-2)"): drives the REAL
  * gossip_apply() with crafted SWIM_PKTs carrying the capability bit and
  * asserts (a) a fresh self-rumor with capability=1 makes the receiver report

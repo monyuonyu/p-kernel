@@ -1057,6 +1057,8 @@ EXPORT INT usermain(void)
             /* X3H: `nodes mhq` checks that mind/have reads every summary of a tick (r3). */
             else if (al >= 3 && a[0]=='m'&&a[1]=='h'&&a[2]=='q') mh_queue_self_test(print);
             else if (al >= 2 && a[0]=='m'&&a[1]=='h') mh_wide_self_test(print);
+            /* N2c stage 3: `nodes idpin` (the same wide id is the same key). */
+            else if (al >= 3 && a[0]=='i'&&a[1]=='d'&&a[2]=='p') swim_idpin_self_test(print);
             /* N2: `nodes ipw` checks the snf/ss6 address of a node (pk_node.h). */
             else if (al >= 3 && a[0]=='i'&&a[1]=='p'&&a[2]=='w') pk_node_ip_self_test(print);
             /* N2: `nodes onlink` checks next_hop for 10.1/16 (netstack.c). */

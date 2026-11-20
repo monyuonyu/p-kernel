@@ -204,7 +204,25 @@ static int ct_eq(const u8 *a, const u8 *b, int n)
     return d == 0;
 }
 
-static u64 mint_nonce(void) { return next_nonce++; }
+/* N2c stage 3 (research/n2c-identity.md §11): a node that drew its wide id
+ * from its key takes nonces from the wall clock in the same scale as the
+ * start value (seconds << 24, plus the microseconds in that scale), and never
+ * less than the last + 1. The relay and every receiver keep ONE replay window
+ * per sender id, so two nodes under one id with counters from their own start
+ * second cut each other: the later start passes and the other is neither heard
+ * nor hears (measured 11-21). On one clock both pass, so the collision can be
+ * seen and redrawn. */
+static int nonce_clock;
+static u64 mint_nonce(void)
+{
+    if (nonce_clock) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        u64 t = ((u64)ts.tv_sec << 24) + (((u64)(ts.tv_nsec / 1000) << 24) / 1000000u);
+        if (t > next_nonce) next_nonce = t;
+    }
+    return next_nonce++;
+}
 
 /* HMAC-SHA256 over (ver, type, src, dst, nonce, payload), truncated to 16 B.
  * Byte-identical to net_relay.c / relay.c so a TCP node and a UDP node share
@@ -418,7 +436,15 @@ int net_relay_tcp_init(void)
 
     relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
-    my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+    if (env_id) my_node_id = atoi(env_id);
+    else {   /* N2c stage 3: the same wide id as net_relay.c (node_ident.c) */
+        extern int pk_node_wide_id(void);
+        my_node_id = pk_node_wide_id();
+#ifndef N2C_NC_NONCE_COUNT
+        nonce_clock = (my_node_id != 0);
+#endif
+        if (!my_node_id) my_node_id = pkernel_default_node_id();
+    }
     /* N2 ("まだ" 6): a wide id speaks v3 here too, as on UDP, but a v3 frame
      * needs the MAC: without the key a wide id is refused (it must not turn
      * into node 1 and take node 1's place in the relay's table). An old relay
