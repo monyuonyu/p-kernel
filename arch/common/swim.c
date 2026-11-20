@@ -129,6 +129,18 @@ static INT           gq_cnt = 0;
 /* so a wrap only loses one anti-stale round (self re-bumps next time it  */
 /* is rumored) — sane and never UB. */
 static UB my_incarnation        = 0;
+#if defined(_TK_HOSTED_LIBC_)
+/* N2c stage 2 (audit-200): > 0 while a swim self-test drives the refute
+ * path with a pretend incarnation. The refute then must not reach
+ * pk_node_incarn_note: the test restores my_incarnation, but a write to
+ * node.incarn would stay (nodes test 3 -> 258). Bare: no note, no counter. */
+static INT sw_selftest_depth = 0;
+#define SW_SELFTEST_ENTER() (sw_selftest_depth++)
+#define SW_SELFTEST_LEAVE() (sw_selftest_depth--)
+#else
+#define SW_SELFTEST_ENTER() ((void)0)
+#define SW_SELFTEST_LEAVE() ((void)0)
+#endif
 static UB dnode_incarn[DNODE_MAX];
 
 /* deterministic peer address (10.1.0.(n+1)); defined below, used by the
@@ -452,7 +464,10 @@ static void gossip_apply(const SWIM_PKT *pkt)
                 {   /* the refuted incarnation is kept too (§10 4): a restart
                      * then starts past it (node_ident.c) */
                     extern void pk_node_incarn_note(unsigned char wire);
-                    pk_node_incarn_note(my_incarnation);
+#if !defined(N2C_NC_NOTE_IN_TEST)
+                    if (sw_selftest_depth == 0)
+#endif
+                        pk_node_incarn_note(my_incarnation);
                 }
 #else
                 if (inc_in >= my_incarnation) my_incarnation = (UB)(inc_in + 1);
@@ -1462,6 +1477,7 @@ static INT sw2_state(pk_node_t id)
 
 INT swim_wide_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     static SWIM_WIDE saved[DREGION_MAX];
     static NODEMAP   saved_map;
     PK_NOSW_ENTER();
@@ -1720,6 +1736,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
     PK_NOSW_LEAVE();
 #undef W2
     emit(fails ? "[swim-wide] FAIL\r\n" : "[swim-wide] PASS\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
@@ -1761,6 +1778,7 @@ static INT gq_find_cap(pk_node_t node_id, UB state)
 
 INT swim_incarn_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -1847,6 +1865,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     dnode_incarn[PEER]      = 0;
 
     if (fails == 0) say("[swim-incarn] PASS\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -1870,6 +1889,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
 
 INT swim_cap_gossip_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2020,6 +2040,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     region_set_super_capable(SELF, saved_capSELF ? TRUE : FALSE);
 
     if (fails == 0) say("[cap-gossip] PASS (converge + staleness + falsifiable)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -2050,6 +2071,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
 
 INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2278,6 +2300,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[teacher-gossip] PASS (converge + selector + determinism + staleness + falsifiable + rx-relay)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -2308,6 +2331,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
 #if defined(_TK_HOSTED_LIBC_)
 INT swim_selfelect_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2398,6 +2422,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 
     if (fails == 0)
         say("[selfelect] PASS (node self-recognizes its own teacher role: region_teacher()==self)\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 
@@ -2418,6 +2443,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 /* ------------------------------------------------------------------ */
 INT swim_v2cap_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
     pk_node_t saved_my = drpc_my_node;
@@ -2540,6 +2566,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq_cnt;
     if (fails == 0) say("[v2cap] PASS (bit 2 sent, read under the LWW gate, relayed; wide ids read v2)\r\n");
     else            say("[v2cap] RED\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ */
@@ -2589,6 +2616,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
 #if defined(NOFLEETSPLIT_CERT) && defined(_TK_HOSTED_LIBC_)
 INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2702,6 +2730,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
         sw_putdec((UW)fails);
         say("\r\n");
     }
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* NOFLEETSPLIT_CERT && _TK_HOSTED_LIBC_ */
@@ -2730,6 +2759,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 #if defined(SWIM_SELFSUSPECT_CERT) && defined(_TK_HOSTED_LIBC_)
 INT swim_selfsuspect_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     INT fails = 0;
     void (*say)(const char *) = emit ? emit : sw_puts;
 
@@ -2821,6 +2851,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
         sw_putdec((UW)fails);
         say("\r\n");
     }
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_ */
@@ -2854,6 +2885,7 @@ static void life_pkt(SWIM_PKT *p, UB src, UB n, UB g0, UB st0, UB inc0)
 
 INT swim_life_self_test(void (*emit)(const char *))
 {
+    SW_SELFTEST_ENTER();
     void (*say)(const char *) = emit ? emit : sw_puts;
     INT fails = 0;
     const UB PEER = 5, THIRD = 7;
@@ -2924,6 +2956,7 @@ INT swim_life_self_test(void (*emit)(const char *))
     dnode_table[PEER].state = saved_st; dnode_incarn[PEER] = saved_pinc; dnode_table[PEER].ip = saved_ip;
     suspect_count[PEER] = 0;
     say(fails ? "[swim-life] FAIL\r\n" : "[swim-life] PASS\r\n");
+    SW_SELFTEST_LEAVE();
     return fails;
 }
 #endif /* _TK_HOSTED_LIBC_ (N2c stage 2, nodes life) */
