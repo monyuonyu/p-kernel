@@ -124,6 +124,17 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
     if [ -n "$a" ] && [ "$a" = "$b" ] && [ -n "$c" ] && [ "${a% *}" != "${c% *}" ] \
        && [ "${a#* }" = 0 ] && [ "${a% *}" -ge 257 ] && [ "${a% *}" -le 65534 ]; then
         r I1w PASS "($a / $b / other dir $c)"; else r I1w FAIL "('$a' / '$b' / other dir '$c')"; fi
+    # I1r (audit-203): the redraw count is in the hash. The same key with count 1 must give
+    # another id than with count 0; else a natural collision redraws onto the same id and the
+    # node starts itself again for ever. The live I3 cannot see it (PKERNEL_N2C_TEST_WIDE0
+    # replaces only the count-0 id). Break brk.py x5 (count left out of the hash) went green.
+    printf '%s\n' "sign key" exit > "$WORK/in.txt"
+    timeout 60 env PKERNEL_N2C_REDRAW_MEM=1 PKERNEL_PFS_DIR="$LOG/d1" PKERNEL_NODE_WIDE=1 \
+        PKERNEL_RELAY="127.0.0.1:$((PORT + 1))" PKERNEL_RELAY_AUTOFALLBACK=0 PKERNEL_AUTONET=1 \
+        "$BOOT/p-kernel" < "$WORK/in.txt" > "$LOG/w4.log" 2>&1
+    c=$(wideline "$LOG/w4.log")
+    if [ -n "$a" ] && [ -n "$c" ] && [ "${c#* }" = 1 ] && [ "${c% *}" != "${a% *}" ]; then
+        r I1r PASS "(count 0: $a, count 1: $c)"; else r I1r FAIL "(count 0: '$a', count 1: '$c')"; fi
 
     # I6u
     run1 "$LOG/d1" "$LOG/u.log" "nodes idpin"
