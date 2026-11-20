@@ -418,7 +418,12 @@ int net_relay_tcp_init(void)
 
     relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
-    my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+    if (env_id) my_node_id = atoi(env_id);
+    else {   /* N2c stage 3: the same wide id as net_relay.c (node_ident.c) */
+        extern int pk_node_wide_id(void);
+        my_node_id = pk_node_wide_id();
+        if (!my_node_id) my_node_id = pkernel_default_node_id();
+    }
     /* N2 ("まだ" 6): a wide id speaks v3 here too, as on UDP, but a v3 frame
      * needs the MAC: without the key a wide id is refused (it must not turn
      * into node 1 and take node 1's place in the relay's table). An old relay

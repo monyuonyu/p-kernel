@@ -1134,6 +1134,8 @@ typedef struct {
     UH  ping_seq;   /* seq of the v2 PING in flight, 0 = none    */
     UW  ping_ms;    /* when that PING went out                   */
     UW  rtt_ms;     /* smoothed round trip, as rtt_ewma_ms in v1  */
+    UB  fp[8];      /* N2c stage 3: the key heard from it (fp_ok)  */
+    UB  fp_ok;
 } SWIM_WIDE;
 
 static NODEMAP   wide_map;          /* wide id -> slot, parallel to wide_st */
@@ -1177,6 +1179,7 @@ static INT wide_add(pk_node_t id)
     wide_st[s].state = DNODE_UNKNOWN;
     wide_st[s].rtt_ok = 0; wide_st[s].ping_seq = 0;
     wide_st[s].ping_ms = 0; wide_st[s].rtt_ms = 0;
+    wide_st[s].fp_ok = 0;
     return s;
 }
 
@@ -1194,21 +1197,108 @@ void swim_wide_self(pk_node_t id, UW ip)
     NET_MY_IP    = ip;
 }
 
-/* direct: the packet came from this node. Otherwise it is news of the id. */
-static void swim_wide_heard(pk_node_t id, UW ip, BOOL direct, UW now)
+/* N2c stage 3 (research/n2c-identity.md §11): the same id is the same key.
+ * A wide beacon carries a trailer after the 29-byte packet (an old node reads
+ * only the 29 bytes): "N2F", a count n, then n fingerprints of 8 bytes (the
+ * first 8 bytes of sha256 of the public key): [0] the sender's own (zeros when
+ * the sender is narrow), [1 + i] the key this node keeps for gossip[i] (zeros
+ * when it keeps none). The first key heard straight from a wide id is kept; a
+ * beacon with another key is another node under that id: its round trip is
+ * dropped, the new key is kept, one line. A node that hears its own wide id
+ * with another key redraws its id when its own key is the larger (§2 3). */
+#define SWIM2_FP_N (1 + SWIM_GOSSIP_MAX)
+typedef struct {
+    UB tag[3];             /* 'N' '2' 'F' */
+    UB n;
+    UB fp[SWIM2_FP_N][8];
+} __attribute__((packed)) SWIM2_FPS;
+
+static UB  sw_my_fp[8];
+static INT sw_my_fp_ok;            /* 1 = sw_my_fp holds this node's key */
+static UW  sw_keychg;              /* another key behind a known wide id */
+static UW  sw_redraw_asked;        /* this node's own id heard with another (smaller) key */
+static UB  sw_claim_said;          /* the "that key is larger" line, once */
+
+static BOOL sw_fp_zero(const UB *f) { for (INT i = 0; i < 8; i++) if (f[i]) return FALSE; return TRUE; }
+static INT  sw_fp_cmp(const UB *a, const UB *b)
+{
+    for (INT i = 0; i < 8; i++) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+static void sw_puthex8(const UB *f)
+{
+    static const char H[] = "0123456789abcdef";
+    char b[17];
+    for (INT i = 0; i < 8; i++) { b[2 * i] = H[f[i] >> 4]; b[2 * i + 1] = H[f[i] & 15]; }
+    b[16] = 0; sw_puts(b);
+}
+static const UB *sw_my_fp_get(void)
+{
+    if (!sw_my_fp_ok) {
+        IMPORT int pk_node_fp(unsigned char fp[8]);   /* node_ident.c */
+        if (pk_node_fp(sw_my_fp)) sw_my_fp_ok = 1;
+    }
+    return sw_my_fp_ok ? sw_my_fp : (const UB *)0;
+}
+
+/* This node's own wide id was heard with the key `f`. */
+static void swim_wide_claim(const UB *f)
+{
+    const UB *mine;
+    if (!swim_wide_me || sw_fp_zero(f) || !(mine = sw_my_fp_get())) return;
+    INT c = sw_fp_cmp(mine, f);
+    if (c == 0) return;
+    if (c > 0) {
+        sw_redraw_asked++;
+        if (sw_selftest_depth == 0) {
+            sw_puts("[swim] wide id "); sw_putdec(swim_wide_me);
+            sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it, mine "); sw_puthex8(mine);
+            sw_puts(" is the larger: redraw\r\n");
+#ifndef N2C_NC_NO_REDRAW
+            IMPORT void pk_node_wide_redraw(void);   /* node_ident.c: re-exec */
+            pk_node_wide_redraw();
+#endif
+        }
+    } else if (!sw_claim_said && sw_selftest_depth == 0) {
+        sw_claim_said = 1;
+        sw_puts("[swim] wide id "); sw_putdec(swim_wide_me);
+        sw_puts(": another key "); sw_puthex8(f); sw_puts(" holds it; that key is the larger, it redraws\r\n");
+    }
+}
+
+/* direct: the packet came from this node. Otherwise it is news of the id.
+ * fp: the sender's key from the trailer (direct only), or 0. */
+static void swim_wide_heard(pk_node_t id, UW ip, BOOL direct, UW now, const UB *fp)
 {
     if (!PK_NODE_IS_WIDE(id) || id == swim_wide_me) return;
     PK_NOSW_ENTER();      /* swim_rx (net_task) and swim_wide_tick (swim_task) */
     INT s = wide_add(id);
     if (s < 0) { PK_NOSW_LEAVE(); return; }
     SWIM_WIDE *e = &wide_st[s];
-    UB old = e->state;
+    UB old = e->state, chg = 0, was[8];
+    if (direct && fp && !sw_fp_zero(fp)) {
+        if (!e->fp_ok) {
+            for (INT i = 0; i < 8; i++) e->fp[i] = fp[i];
+            e->fp_ok = 1;
+        } else if (sw_fp_cmp(e->fp, fp) != 0) {
+#ifndef N2C_NC_NO_PIN
+            /* another node under this id: nothing of the old one carries over */
+            for (INT i = 0; i < 8; i++) { was[i] = e->fp[i]; e->fp[i] = fp[i]; }
+            e->rtt_ok = 0; e->rtt_ms = 0; e->ping_seq = 0; e->ping_ms = 0;
+            sw_keychg++; chg = 1;
+#endif
+        }
+    }
     if (direct) { e->ip = ip; e->heard_ms = now; e->state = DNODE_ALIVE; }
     else if (old == DNODE_UNKNOWN) {
         e->ip = pk_node_ip(id); e->heard_ms = now; e->state = DNODE_ALIVE;
     }
     UB st = e->state;
     PK_NOSW_LEAVE();
+    if (chg && sw_selftest_depth == 0) {
+        sw_puts("[swim] wide node "); sw_putdec(id); sw_puts(": another key ");
+        sw_puthex8(fp); sw_puts(" (was "); sw_puthex8(was); sw_puts("), a new node: its round trip dropped\r\n");
+    }
     if (old != st) {
         sw_puts("[swim] wide node "); sw_putdec(id);
         sw_puts(old == DNODE_UNKNOWN ? " discovered\r\n" : " recovered\r\n");
@@ -1328,10 +1418,26 @@ static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
     if (len < 5 || p->magic != SWIM_MAGIC || p->version != SWIM2_VERSION) return 0;
     if (len < (UH)sizeof(SWIM2_PKT)) { swim2_bad++; return 1; }
     UW now = swim_wide_now();
-    swim_wide_heard(p->src_node, src_ip, TRUE, now);
-    for (INT i = 0; i < p->gossip_cnt && i < SWIM_GOSSIP_MAX; i++)
+    /* N2c stage 3: the keys after the packet, if any (an old sender has none) */
+    const SWIM2_FPS *fx = 0;
+    INT fn = 0;
+    if (len >= (UH)(sizeof(SWIM2_PKT) + 4)) {
+        const SWIM2_FPS *t = (const SWIM2_FPS *)(data + sizeof(SWIM2_PKT));
+        if (t->tag[0] == 'N' && t->tag[1] == '2' && t->tag[2] == 'F') {
+            fn = t->n;
+            if (fn > SWIM2_FP_N) fn = SWIM2_FP_N;
+            if (fn > (INT)((len - sizeof(SWIM2_PKT) - 4) / 8)) fn = (INT)((len - sizeof(SWIM2_PKT) - 4) / 8);
+            fx = t;
+        }
+    }
+    if (fx && fn > 0 && p->src_node == swim_wide_me) swim_wide_claim(fx->fp[0]);   /* a LAN hears itself */
+    swim_wide_heard(p->src_node, src_ip, TRUE, now, (fx && fn > 0) ? fx->fp[0] : (const UB *)0);
+    for (INT i = 0; i < p->gossip_cnt && i < SWIM_GOSSIP_MAX; i++) {
+        if (fx && 1 + i < fn && swim_wide_me && p->gossip[i].node_id == swim_wide_me)
+            swim_wide_claim(fx->fp[1 + i]);
         if (p->gossip[i].state == DNODE_ALIVE)
-            swim_wide_heard(p->gossip[i].node_id, 0, FALSE, now);
+            swim_wide_heard(p->gossip[i].node_id, 0, FALSE, now, (const UB *)0);
+    }
     pk_node_t me = swim_wide_self_id();
     if (me != 0xFF && p->seq != 0 && p->probe_target == me) {
         if (p->type == SWIM_PING)     swim_wide_send(SWIM_ACK, p->seq, me, p->src_node);
@@ -1343,8 +1449,9 @@ static INT swim_wide_rx(UW src_ip, const UB *data, UH len)
     return 1;
 }
 
-/* Fill up to SWIM_GOSSIP_MAX live wide ids, taking turns. Returns the count. */
-static INT swim_wide_fill(SWIM2_PKT *p)
+/* Fill up to SWIM_GOSSIP_MAX live wide ids, taking turns. Returns the count.
+ * fx (or 0): the trailer; fp[1 + i] gets the key kept for gossip[i]. */
+static INT swim_wide_fill(SWIM2_PKT *p, SWIM2_FPS *fx)
 {
     INT n = 0;
     for (INT k = 0; k < DREGION_MAX && n < SWIM_GOSSIP_MAX; k++) {
@@ -1355,6 +1462,8 @@ static INT swim_wide_fill(SWIM2_PKT *p)
         p->gossip[n].state       = DNODE_ALIVE;
         p->gossip[n].incarnation = 0;
         p->gossip[n].capability  = 0;
+        if (fx && wide_st[swim_wide_cursor].fp_ok)
+            for (INT i = 0; i < 8; i++) fx->fp[1 + n][i] = wide_st[swim_wide_cursor].fp[i];
         n++;
     }
     return n;
@@ -1392,10 +1501,14 @@ static void swim_wide_tick(void)
 {
     swim_wide_age(swim_wide_now());
     PK_NOSW_ENTER();
+    static UB out[sizeof(SWIM2_PKT) + sizeof(SWIM2_FPS)];   /* swim_task only */
     SWIM2_PKT b;
+    SWIM2_FPS fx;
     UB *pb = (UB *)&b;
     for (INT i = 0; i < (INT)sizeof b; i++) pb[i] = 0;
-    INT n = swim_wide_fill(&b);
+    pb = (UB *)&fx;
+    for (INT i = 0; i < (INT)sizeof fx; i++) pb[i] = 0;
+    INT n = swim_wide_fill(&b, &fx);
     PK_NOSW_LEAVE();
     /* A node that knows no wide id sends no v2 packet at all. */
     if (swim_wide_me == 0 && (n == 0 || drpc_my_node == 0xFF)) return;
@@ -1405,8 +1518,17 @@ static void swim_wide_tick(void)
     b.src_node     = swim_wide_me ? swim_wide_me : drpc_my_node;
     b.probe_target = b.src_node;
     b.gossip_cnt   = (UB)n;
+    /* N2c stage 3: the trailer of keys (an old node reads the 29 bytes only) */
+    fx.tag[0] = 'N'; fx.tag[1] = '2'; fx.tag[2] = 'F';
+    fx.n = (UB)(1 + n);
+    if (swim_wide_me) {
+        const UB *mine = sw_my_fp_get();
+        if (mine) for (INT i = 0; i < 8; i++) fx.fp[0][i] = mine[i];
+    }
+    for (UW i = 0; i < sizeof b; i++) out[i] = ((const UB *)&b)[i];
+    for (UW i = 0; i < 4 + 8u * (UW)(1 + n); i++) out[sizeof b + i] = ((const UB *)&fx)[i];
     udp_send(IP4(255, 255, 255, 255), SWIM_PORT, SWIM_PORT,
-             (const UB *)&b, (UH)sizeof(b));
+             out, (UH)(sizeof(b) + 4 + 8 * (1 + n)));
 
     /* one v2 PING per round, to the next live wide peer */
     pk_node_t me = swim_wide_self_id();
@@ -1730,7 +1852,7 @@ INT swim_wide_self_test(void (*emit)(const char *))
     nodemap_init(&wide_map, 0);
     wide_st[nodemap_admit(&wide_map, 900)].state = DNODE_ALIVE;
     wide_st[nodemap_admit(&wide_map, 901)].state = DNODE_DEAD;
-    { SWIM2_PKT o; W2(swim_wide_fill(&o) == 1 && o.gossip[0].node_id == 900, "only live ids go out"); }
+    { SWIM2_PKT o; W2(swim_wide_fill(&o, 0) == 1 && o.gossip[0].node_id == 900, "only live ids go out"); }
 
     PK_NOSW_ENTER();
     wide_map = saved_map;
@@ -1739,6 +1861,130 @@ INT swim_wide_self_test(void (*emit)(const char *))
     PK_NOSW_LEAVE();
 #undef W2
     emit(fails ? "[swim-wide] FAIL\r\n" : "[swim-wide] PASS\r\n");
+    SW_SELFTEST_LEAVE();
+    return fails;
+}
+
+/* `nodes idpin` (N2c stage 3, I6u): the keys after a v2 packet, on a fresh wide
+ * table, saved and put back as swim_wide_self_test does. Nothing is sent and no
+ * redraw runs (sw_selftest_depth > 0 only counts the ask). */
+static UH sw3_pkt(UB *buf, UH src, UH g0, const UB *f0, const UB *fg)
+{
+    SWIM2_PKT p;
+    SWIM2_FPS t;
+    UB *pt = (UB *)&t;
+    sw2_build(&p, src, g0, DNODE_ALIVE, g0 == 0xFFFF ? 0 : 1);
+    for (UW i = 0; i < sizeof t; i++) pt[i] = 0;
+    t.tag[0] = 'N'; t.tag[1] = '2'; t.tag[2] = 'F'; t.n = 2;
+    if (f0) for (INT i = 0; i < 8; i++) t.fp[0][i] = f0[i];
+    if (fg) for (INT i = 0; i < 8; i++) t.fp[1][i] = fg[i];
+    for (UW i = 0; i < sizeof p; i++) buf[i] = ((const UB *)&p)[i];
+    for (UW i = 0; i < 4 + 16; i++) buf[sizeof p + i] = pt[i];
+    return (UH)(sizeof p + 4 + 16);
+}
+
+INT swim_idpin_self_test(void (*emit)(const char *))
+{
+    SW_SELFTEST_ENTER();
+    static SWIM_WIDE saved[DREGION_MAX];
+    static NODEMAP   saved_map;
+    static UB        buf[sizeof(SWIM2_PKT) + sizeof(SWIM2_FPS)];
+    PK_NOSW_ENTER();
+    saved_map = wide_map;
+    for (INT i = 0; i < DREGION_MAX; i++) saved[i] = wide_st[i];
+    nodemap_init(&wide_map, 0);
+    pk_node_t sv_me = swim_wide_me;
+    UB sv_fp[8]; INT sv_fp_ok = sw_my_fp_ok;
+    for (INT i = 0; i < 8; i++) sv_fp[i] = sw_my_fp[i];
+    UW sv_chg = sw_keychg, sv_ask = sw_redraw_asked;
+    PK_NOSW_LEAVE();
+    INT fails = 0;
+#define I6(cond, what) do { if (!(cond)) { fails++; \
+        emit("[idpin] FAIL "); emit(what); emit("\r\n"); } } while (0)
+    static const UB X[8] = { 0x11, 1, 2, 3, 4, 5, 6, 7 };
+    static const UB Y[8] = { 0x22, 1, 2, 3, 4, 5, 6, 7 };
+    static const UB L[8] = { 0x40, 0, 0, 0, 0, 0, 0, 1 };
+    static const UB M[8] = { 0x80, 0, 0, 0, 0, 0, 0, 0 };
+    static const UB H[8] = { 0xC0, 0, 0, 0, 0, 0, 0, 0 };
+    UW ip = pk_node_ip(299);
+    UH n;
+    INT s;
+
+    /* the first key heard from a wide id is kept */
+    n = sw3_pkt(buf, 299, 0xFFFF, X, 0);
+    I6(swim_wide_rx(ip, buf, n) == 1, "a v2 packet with keys is taken");
+    s = sw2_find(299);
+    I6(s >= 0 && wide_st[s].fp_ok && sw_fp_cmp(wide_st[s].fp, X) == 0, "the first key is kept");
+    /* the same key changes nothing */
+    if (s >= 0) { wide_st[s].rtt_ok = 1; wide_st[s].rtt_ms = 50; }
+    swim_wide_rx(ip, buf, n);
+    I6(s >= 0 && wide_st[s].rtt_ok == 1 && wide_st[s].rtt_ms == 50 && sw_keychg == sv_chg,
+       "the same key keeps the round trip");
+    /* a packet without keys (an old sender) changes nothing */
+    {
+        SWIM2_PKT p; sw2_build(&p, 299, 0xFFFF, DNODE_ALIVE, 0);
+        swim_wide_rx(ip, (const UB *)&p, sizeof p);
+        I6(s >= 0 && sw_fp_cmp(wide_st[s].fp, X) == 0 && wide_st[s].rtt_ok == 1, "no keys: nothing changes");
+    }
+    /* another key is another node: the round trip is dropped, the new key kept */
+    n = sw3_pkt(buf, 299, 0xFFFF, Y, 0);
+    swim_wide_rx(ip, buf, n);
+    I6(s >= 0 && sw_fp_cmp(wide_st[s].fp, Y) == 0, "another key is kept as the new one");
+    I6(s >= 0 && wide_st[s].rtt_ok == 0 && wide_st[s].ping_seq == 0, "another key drops the round trip");
+    I6(sw_keychg == sv_chg + 1, "another key is counted once");
+    I6(s >= 0 && wide_st[s].state == DNODE_ALIVE, "the new node is ALIVE");
+    /* news never sets a key: only the id's own beacon does */
+    n = sw3_pkt(buf, 43, 700, 0, X);
+    swim_wide_rx(ip, buf, n);
+    I6(sw2_state(700) == DNODE_ALIVE && !wide_st[sw2_find(700)].fp_ok, "news introduces an id without a key");
+    /* the news of an id carries the key kept for it */
+    {
+        SWIM2_PKT o; SWIM2_FPS t; UB *pt = (UB *)&t; INT k, got = 0;
+        for (UW i = 0; i < sizeof t; i++) pt[i] = 0;
+        INT c = swim_wide_fill(&o, &t);
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], Y) == 0) got = 1;
+        I6(c == 2 && got, "news of 299 carries the key kept for it");
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 700) I6(sw_fp_zero(t.fp[1 + k]), "news of 700 carries no key");
+    }
+    /* this node's own id with another key: a redraw only when mine is the larger */
+    PK_NOSW_ENTER();
+    swim_wide_me = 400;
+    for (INT i = 0; i < 8; i++) sw_my_fp[i] = M[i];
+    sw_my_fp_ok = 1;
+    PK_NOSW_LEAVE();
+    n = sw3_pkt(buf, 43, 400, 0, H);
+    swim_wide_rx(ip, buf, n);
+    I6(sw_redraw_asked == sv_ask, "a larger key on my id: I keep it");
+    n = sw3_pkt(buf, 43, 400, 0, M);
+    swim_wide_rx(ip, buf, n);
+    I6(sw_redraw_asked == sv_ask, "my own key on my id: nothing");
+    n = sw3_pkt(buf, 43, 400, 0, 0);
+    swim_wide_rx(ip, buf, n);
+    I6(sw_redraw_asked == sv_ask, "no key on my id: nothing");
+    n = sw3_pkt(buf, 43, 400, 0, L);
+    swim_wide_rx(ip, buf, n);
+    I6(sw_redraw_asked == sv_ask + 1, "a smaller key on my id: I redraw");
+    n = sw3_pkt(buf, 400, 0xFFFF, L, 0);
+    swim_wide_rx(ip, buf, n);
+    I6(sw_redraw_asked == sv_ask + 2, "my id's beacon with a smaller key (a LAN): I redraw");
+    I6(sw2_find(400) < 0, "my own id stays out of the table");
+    /* a count larger than the packet is cut to what is there */
+    n = sw3_pkt(buf, 43, 400, 0, L);
+    buf[sizeof(SWIM2_PKT) + 3] = 200;
+    swim_wide_rx(ip, buf, (UH)(sizeof(SWIM2_PKT) + 4 + 8));   /* only fp[0] is there */
+    I6(sw_redraw_asked == sv_ask + 2, "a key past the end is not read");
+
+    PK_NOSW_ENTER();
+    wide_map = saved_map;
+    for (INT i = 0; i < DREGION_MAX; i++) wide_st[i] = saved[i];
+    swim_wide_me = sv_me; sw_my_fp_ok = sv_fp_ok;
+    for (INT i = 0; i < 8; i++) sw_my_fp[i] = sv_fp[i];
+    sw_keychg = sv_chg; sw_redraw_asked = sv_ask;
+    PK_NOSW_LEAVE();
+#undef I6
+    emit(fails ? "[idpin] RED\r\n" : "[idpin] ALL PASS\r\n");
     SW_SELFTEST_LEAVE();
     return fails;
 }
@@ -2543,7 +2789,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
         nodemap_init(&wide_map, 0);
         for (INT i = 0; i < DREGION_MAX; i++) wide_st[i].state = DNODE_UNKNOWN;
         PK_NOSW_LEAVE();
-        swim_wide_heard(WID, pk_node_ip(WID), TRUE, swim_wide_now());
+        swim_wide_heard(WID, pk_node_ip(WID), TRUE, swim_wide_now(), (const UB *)0);
         if (!swim_peer_reads_v2(WID)) V2C_FAIL("wide: a wide id heard over v2 does not read v2");
         if (swim_peer_reads_v2(UNK))  V2C_FAIL("wide: an unknown wide id reads v2");
         {

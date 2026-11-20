@@ -787,7 +787,14 @@ int net_relay_init(void)
     relay_contacted = 0;   /* SLICE 4: a fresh init starts un-contacted */
 
     /* N-0: distinct, stable per-install id when PKERNEL_NODE_ID is unset. */
-    my_node_id = env_id ? atoi(env_id) : pkernel_default_node_id();
+    if (env_id) my_node_id = atoi(env_id);
+    else {
+        /* N2c stage 3: PKERNEL_NODE_WIDE=1 draws a wide id from the key
+         * (node_ident.c); 0 = not asked or no key, the narrow default as before */
+        extern int pk_node_wide_id(void);
+        my_node_id = pk_node_wide_id();
+        if (!my_node_id) my_node_id = pkernel_default_node_id();
+    }
 #ifdef N2_NC_TRUNC
     my_node_id &= 0xFF;    /* [n2-mix] negative control: 300 becomes 44 */
 #endif
