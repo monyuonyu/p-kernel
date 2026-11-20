@@ -360,6 +360,7 @@ void gl_student_test_drop_chunk(INT idx) { gl_st_drop = idx; }
 #define GL_GC_HSIZE  (1u << GL_GC_HBITS)
 typedef struct {
     UB        used, n;              /* n = generations kept (0..2)      */
+    UB        own;                  /* 1 = this node's publish: keeps 2  */
     pk_node_t node;
     U1        root[2][PFS_ID_LEN];  /* [0] newest, [1] the one before   */
     UB        depth[2];
@@ -435,27 +436,33 @@ static INT gl_gc_eq(const U1 *a, const U1 *b)
 }
 
 /* st/<node> now names the generation `root`; clean the one two before it */
-static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk)
+static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, UB own)
 {
 #if defined(B5_NC_NO_GC)
-    (void)node; (void)root; (void)depth; (void)nchunk;
+    (void)node; (void)root; (void)depth; (void)nchunk; (void)own;
 #else
     GL_GC_REF *r = 0;
     for (UW i = 0; i < GL_GC_REFS && !r; i++)
         if (gl_gc_ref[i].used && gl_gc_ref[i].node == node) r = &gl_gc_ref[i];
     for (UW i = 0; i < GL_GC_REFS && !r; i++)
-        if (!gl_gc_ref[i].used) { r = &gl_gc_ref[i]; r->used = 1; r->node = node; r->n = 0; }
+        if (!gl_gc_ref[i].used) { r = &gl_gc_ref[i]; r->used = 1; r->node = node; r->n = 0; r->own = 0; }
     if (!r) return;                             /* more refs than slots: no cleanup */
+    /* research/b5-m-default.md §3 2: the own chunks two generations back (a peer
+     * may still be fetching the one before), a peer's after this node's merge
+     * of the next one = one generation kept */
+    if (own) r->own = 1;
+    UB keep = r->own ? 2 : 1;
     if (r->n > 0 && gl_gc_eq(r->root[0], root)) return;   /* the same generation again */
     U1 vic[PFS_ID_LEN]; UW vdepth = 0, vn = 0; INT have_vic = 0;
-    if (r->n == 2) {
-        for (UW b = 0; b < PFS_ID_LEN; b++) vic[b] = r->root[1][b];
-        vdepth = r->depth[1]; vn = r->nchunk[1]; have_vic = 1;
+    if (r->n == keep) {
+        UW o = keep - 1u;                       /* the oldest kept */
+        for (UW b = 0; b < PFS_ID_LEN; b++) vic[b] = r->root[o][b];
+        vdepth = r->depth[o]; vn = r->nchunk[o]; have_vic = 1;
     }
     for (UW b = 0; b < PFS_ID_LEN; b++) { r->root[1][b] = r->root[0][b]; r->root[0][b] = root[b]; }
     r->depth[1] = r->depth[0]; r->nchunk[1] = r->nchunk[0];
     r->depth[0] = (UB)depth;   r->nchunk[0] = nchunk;
-    if (r->n < 2) r->n++;
+    if (r->n < keep) r->n++;
     if (!have_vic) return;
     /* the guard: every kept generation of every ref */
     for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
@@ -471,7 +478,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     gl_gc_dropped = 0; gl_gc_seen = 0;
     INT w = gl_gc_walk(vic, vdepth, vn, 2);
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
-    gpd(gl_gc_seen); gp(w < 0 ? " ids (the old generation was not all here)\r\n" : " ids of the generation two back\r\n");
+    gpd(gl_gc_seen); gp(w < 0 ? " ids (the old generation was not all here)\r\n" : (keep == 2 ? " ids of the own generation two back\r\n" : " ids of the peer's generation one back\r\n"));
 #endif
 }
 
@@ -573,7 +580,7 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
     char nm[8]; UW nl = gl_st_name(nm, node);
     if (pfs_dag_save((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc) != PFS_OK)
         return -1;
-    gl_gc_note(node, root_id, depth, nchunk);   /* B5 ①: the own generation two back */
+    gl_gc_note(node, root_id, depth, nchunk, 1);   /* B5 ①: the own generation two back */
     return (INT)nchunk;
 }
 
@@ -680,7 +687,7 @@ static INT gl_student_fetch_in(pk_node_t node, void *out, UW cap)
         got += clen;
     }
     if (got != len) return -1;                               /* recovered length check */
-    gl_gc_note(node, gl_st_desc.root_id, depth, nchunk);    /* B5 ①: the peer's two back */
+    gl_gc_note(node, gl_st_desc.root_id, depth, nchunk, 0); /* B5 ①: the peer's one back */
     return (INT)len;
 }
 
