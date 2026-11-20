@@ -214,6 +214,22 @@ if grep -aq '\[onemind\] FOLD' "$L1"; then
 else
     log "note: A did not complete folding B inside the window (84 KB pull is the honest ~1900x Path E cost; A is killed next anyway — the survive property is B holding A)"
 fi
+# [onemind-once] (2026-11-20, CI 44629065908): no node folds the same peer
+# epoch twice. A folded B's epoch 0 on every pulse there (the loop guard took
+# epoch 0 for "never folded"), which faded A's k1 before B folded A.
+refolds() {  # <log>: FOLD lines whose peer (origin, epoch) was folded before
+    tr -d '\r' < "$1" | awk '
+        /\[onemind\] peer [0-9]+ epoch=[0-9]+: ALL/ { k = $3 " " $4; last = last " " k; next }
+        /\[onemind\] FOLD:/ { n = split(last, a, " "); for (i = 1; i < n; i += 2) { kk = a[i] " " a[i+1]; if (kk in seen) d++; seen[kk] = 1 } last = ""; next }
+        /\[onemind\] fold: no region peer/ { last = "" }
+        END { print d + 0 }'
+}
+RA=$(refolds "$L1"); RB=$(refolds "$L2")
+if [ "$RA" -eq 0 ] && [ "$RB" -eq 0 ]; then
+    ok "[onemind-once] no peer epoch was folded twice (A $RA, B $RB)"
+else
+    bad "[onemind-once] a peer epoch was folded again (A $RA, B $RB)"
+fi
 # C (out of region) must NOT have folded A/B's weights.
 if grep -aq '\[onemind\] FOLD' "$L3"; then
     bad "C (out of region) folded the region's weights — region scope leaked!"
