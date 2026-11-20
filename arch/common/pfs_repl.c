@@ -580,13 +580,33 @@ static void send_block_to(pk_node_t dst_node, const U1 id[PFS_ID_LEN])
 
     /* recover the origin tag so it survives the hop */
     pk_node_t origin = PFS_ORIGIN_SELF;
+    INT in_table = 0;
     for (UW i = 0; i < PFS_MAX_BLOCKS; i++) {
         U1 sid[PFS_ID_LEN]; pk_node_t sorg;
         if (pfs_slot_info(i, sid, 0, &sorg) && pr_id_eq(sid, id)) {
             origin = sorg;
+            in_table = 1;
             break;
         }
     }
+#ifdef _TK_HOSTED_LIBC_
+    /* PFS-ORIGIN-SELF-ON-SEND (2026-11-21): a block out of the 64-slot table
+     * (served from its flat file) keeps the origin in its <id>.org */
+    if (!in_table) {
+        INT dorg = pfs_dur_origin_of(id);
+        if (dorg >= 0) origin = (pk_node_t)dorg;
+    }
+#else
+    (void)in_table;
+#endif
+#ifndef PFSR_NC_SEND_SELF   /* H38 negative: "self" goes on the wire as before */
+    /* "self" (0xFF) is this node's own block: on the wire it is this node's
+     * number, as on_new_block announces it. Sent as 0xFF the receiver kept a
+     * peer's block as its own original (S1 leave keeps it). A block whose
+     * origin is unknown (no table slot, no .org) goes as this node's too: the
+     * receiver then counts it foreign, never its own. */
+    if (origin == PFS_ORIGIN_SELF) origin = drpc_my_node;
+#endif
 
     pr_memset(&tx_pkt, 0, (UW)sizeof(tx_pkt));
     tx_pkt.magic     = PFSR_BLK_MAGIC;
