@@ -225,11 +225,6 @@ void pk_node_wide_redraw(void)
             say("[n2c] node.redraw: could not be written (the new id lasts this run only)\r\n");
     }
 #endif
-    {
-        char cs[16];
-        snprintf(cs, sizeof cs, "%u", c);
-        setenv("PKERNEL_N2C_REDRAW_MEM", cs, 1);   /* the next image reads this first */
-    }
 #if defined(_WIN32) || defined(__ANDROID__)
     snprintf(m, sizeof m, "[n2c] redraw %u: another key holds wide id %d; the new id from the next start\r\n",
              c, wide_now_id);
@@ -237,6 +232,11 @@ void pk_node_wide_redraw(void)
 #else
     snprintf(m, sizeof m, "[n2c] redraw %u: another key holds wide id %d; starting again\r\n", c, wide_now_id);
     say(m);
+    {
+        char cs[16];
+        snprintf(cs, sizeof cs, "%u", c);
+        setenv("PKERNEL_N2C_REDRAW_MEM", cs, 1);   /* the next image reads this first */
+    }
     {
         static char buf[8192];
         char *av[128];
