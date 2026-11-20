@@ -135,9 +135,25 @@ if [ -z "$FOUND_PORT" ]; then
     # app's lines without AppsFilter.
     echo "----- adb logcat -b crash (diagnostics only) -----"
     adb logcat -d -b crash 2>/dev/null | tail -120
+    # 2026-11-20 (CI 44740868265): the app's process was alive, it had no
+    # service, the crash buffer was empty, and the 150 lines below were all
+    # ActivityManager restarts of gms services 25 s after the start -- the
+    # app's own lines had scrolled out. ActivityManager/ActivityTaskManager
+    # lines now only when they name the app; then the app's own pids, then
+    # the events buffer (am_proc_start/died, am_kill, FGS) for the app.
     echo "----- adb logcat, the app and crash lines from the whole log (diagnostics only) -----"
-    adb logcat -d 2>/dev/null | grep -aE 'io\.pkernel|PKernel|pkernel|AndroidRuntime|FATAL|DEBUG +:|libc +:|ActivityTaskManager|ActivityManager' \
-        | grep -av 'adbd *:' | grep -av 'AppsFilter' | tail -150
+    adb logcat -d 2>/dev/null | grep -aE 'io\.pkernel|PKernel|pkernel|AndroidRuntime|FATAL|DEBUG +:|libc +:' \
+        | grep -av 'adbd *:' | grep -av 'AppsFilter' \
+        | grep -avE ' (ActivityManager|ActivityTaskManager): ' | tail -100
+    echo "----- ActivityManager / ActivityTaskManager lines that name the app (diagnostics only) -----"
+    adb logcat -d 2>/dev/null | grep -aE ' (ActivityManager|ActivityTaskManager): ' \
+        | grep -aE 'io\.pkernel|PKernel' | grep -av 'AppsFilter' | tail -60
+    for p in $(adb shell pidof io.pkernel.ump 2>/dev/null | tr -d '\r'); do
+        echo "----- adb logcat --pid=$p (diagnostics only) -----"
+        adb logcat -d --pid="$p" 2>/dev/null | grep -av 'AppsFilter' | tail -80
+    done
+    echo "----- adb logcat -b events, the app (diagnostics only) -----"
+    adb logcat -d -b events 2>/dev/null | grep -aE 'io\.pkernel|pkernel' | tail -60
     echo "----- adb logcat tail (diagnostics only -- kernel stdout is NOT routed here, see header) -----"
     adb logcat -d -t 200 2>/dev/null | tail -200
     exit 1
