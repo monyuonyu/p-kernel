@@ -277,6 +277,34 @@ static void w14(void)
     check(st_rg_latch_union(&l, 102, 0) == (1ull << 63), "b5w-W14", "id 63 (the top narrow id) is kept");
 }
 
+/* ---- B5 ⓪ (research/b5-m-default.md §3 2, G5): W15, the published copy
+ * carries the weights and zero Adam moments. The merge reads a peer's w only
+ * (st_round_trimmed / cohort reset mu, vu), so mu and vu were 2/3 of the bytes
+ * on the wire for nothing; zero, they are the same chunk on every node. The
+ * live model keeps its own moments. Falsifier -DB5W_NC_SEND_MOMENTS. ---- */
+static void w15(const st_model *m, uint32_t gen)
+{
+    int np = m->n_params, mu0 = 0;
+    for (int i = 0; i < np; i++) mu0 += m->mu[i] != 0.0f || m->vu[i] != 0.0f;
+    check(mu0 > 0, "b5w-W15", "precondition: the trained model has non-zero moments");
+    size_t len; uint8_t *env = wrap(m, gen, &len);
+    st_model c;
+    int ld = st_init_tier(&c, 1u, m->tier) == ST_OK && st_load(&c, env + ST_RG_HDR, len - ST_RG_HDR) == ST_OK;
+    check(ld, "b5w-W15", "the published copy loads");
+    if (ld) {
+        int wsame = memcmp(c.w, m->w, (size_t)np * sizeof(float)) == 0, zero = 1;
+        for (int i = 0; i < np; i++) if (c.mu[i] != 0.0f || c.vu[i] != 0.0f) { zero = 0; break; }
+        check(wsame, "b5w-W15", "the published copy carries the weights byte for byte");
+        check(zero, "b5w-W15", "the published copy carries zero mu and vu");
+        check(c.adam_t == m->adam_t, "b5w-W15", "the published copy keeps adam_t");
+        st_free(&c);
+    }
+    int mu1 = 0;
+    for (int i = 0; i < np; i++) mu1 += m->mu[i] != 0.0f || m->vu[i] != 0.0f;
+    check(mu1 == mu0, "b5w-W15", "the live model keeps its own moments");
+    free(env);
+}
+
 static int unit(void)
 {
     printf("=== [b5-wire] unit (research/b5-wire.md §3 §4) ===\n");
@@ -285,6 +313,7 @@ static int unit(void)
     if (!pfs_durable_active()) { printf("  FAIL  [b5w-io] durable backend not active (PKERNEL_PFS_BACKEND=ark)\n"); return 2; }
     st_model n[K];
     for (int k = 0; k < K; k++) { st_init_tier(&n[k], 181u, ST_TIER_S); for (int p = 0; p < 4; p++) pass_q(&n[k], k); }
+    w15(&n[0], 7);
     const uint32_t G = 7;
     for (int k = 1; k < K; k++)
         if (publish((uint16_t)k, &n[k], G) <= 0) { printf("  FAIL  [b5w-io] publish %d\n", k); return 1; }

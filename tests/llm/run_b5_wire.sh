@@ -21,6 +21,8 @@
 #   -DB5W_NC_NO_LEN   the envelope's length is not checked -> W7 red (unit)
 #   -DB5W_NC_NO_DEDUP members are not de-duplicated       -> W8 red (unit)
 #   -DB5W_NC_NO_CAP   every peer is fetched (no K = 7)     -> W9 red (unit)
+# B5 ⓪ (research/b5-m-default.md §3 2):
+#   -DB5W_NC_SEND_MOMENTS the published copy keeps mu, vu  -> W15 red (unit)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -78,6 +80,7 @@ build nolen  -DB5W_NC_NO_LEN
 build nodedup -DB5W_NC_NO_DEDUP
 build nocap  -DB5W_NC_NO_CAP
 build nolatch -DB5W_NC_NO_LATCH   # D6b (research/b5-m-round.md §10): W14 red
+build nomom  -DB5W_NC_SEND_MOMENTS   # B5 ⓪ (research/b5-m-default.md §3 2): W15 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -99,6 +102,7 @@ nc nolen b5w-W7
 nc nodedup b5w-W8
 nc nocap b5w-W9
 nc nolatch b5w-W14
+nc nomom b5w-W15
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 if [ "${B5W_MODE:-}" = unit ]; then
