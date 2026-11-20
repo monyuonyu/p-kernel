@@ -16,6 +16,10 @@
 #             (-include a header). S1 must go RED.
 # Exit 0 = S1 and S2 PASS. On master e4ca62c8 (before N3 step 1) both are RED:
 # data+bss 11028 / 13716 / 24468, four always-true loops.
+# NOT ENOUGH ALONE: a throwaway swim.c that only shrank the seven tables to
+# [DREGION_MAX] (still indexed by the node id = writes past the end once an id
+# is >= R) and made the loops INT was ALL PASS here (11028 x3). S5 (live, more
+# nodes than slots, under ASan) is what sees that.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -41,21 +45,32 @@ for n in 64 256 1024; do
         exit 1
     fi
     DB[$n]=$(size "$B/s$n.o" | awk 'NR==2 {print $2 + $3}')
-    nm -S "$B/s$n.o" | awk '$3 ~ /^[bBdD]$/ {print $4, strtonum("0x" $2)}' | sort > "$B/y$n.txt"
+    nm -S "$B/s$n.o" > "$B/y$n.txt"
 done
 echo "[unbounded-swim] swim.o data+bss at DNODE_MAX 64/256/1024: ${DB[64]} / ${DB[256]} / ${DB[1024]}"
 if [ "${DB[64]}" = "${DB[256]}" ] && [ "${DB[256]}" = "${DB[1024]}" ]; then
     echo "[unbounded-swim] S1 PASS: swim's static data does not grow with the fleet"
 else
     echo "[unbounded-swim] S1 FAIL: swim's static data grows with DNODE_MAX; the tables that grew (64 -> 1024 bytes):"
-    join -a1 -a2 -e 0 -o 0,1.2,2.2 "$B/y64.txt" "$B/y1024.txt" | awk '$2 != $3 {printf "    %-28s %7d -> %7d\n", $1, $2, $3}'
+    python3 -c '
+import sys
+def load(p):
+    d = {}
+    for l in open(p):
+        f = l.split()
+        if len(f) == 4 and f[2] in "bBdD": d[f[3]] = int(f[1], 16)
+    return d
+a, b = load(sys.argv[1]), load(sys.argv[2])
+for k in sorted(set(a) | set(b)):
+    if a.get(k, 0) != b.get(k, 0): print("    %-28s %7d -> %7d" % (k, a.get(k, 0), b.get(k, 0)))
+' "$B/y64.txt" "$B/y1024.txt"
     fails=$((fails + 1))
 fi
 wl=$(cat "$B/w256.txt" "$B/w1024.txt" | grep -c 'Wtype-limits')
 if [ "$wl" -eq 0 ]; then
     echo "[unbounded-swim] S2 PASS: no always-true loop at DNODE_MAX 256/1024"
 else
-    echo "[unbounded-swim] S2 FAIL: $wl always-true comparisons (an 8-bit counter to DNODE_MAX never ends at 256+):"
+    echo "[unbounded-swim] S2 FAIL: $wl always-true comparisons at 256 and 1024 together (an 8-bit counter to DNODE_MAX never ends at 256+); at 256:"
     grep -h 'Wtype-limits' "$B/w256.txt" | sed 's/^/    /'
     fails=$((fails + 1))
 fi

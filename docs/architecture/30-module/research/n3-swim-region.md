@@ -7,9 +7,8 @@ ROADMAP N3 の最初の 1 表。製品のコードはまだ変えていない。
 swim.c を hosted x86_64 で DNODE_MAX 64/256/1024 にしてコンパイルし `nm -S` で見た:
 
 - **台数で伸びる表 7 本**（番号で引く）: `dnode_incarn`・`suspect_count`・`v2cap_tab`・`rtt_valid`（各 1 B）、`swim_nping_seq`（2 B）、`rtt_ewma_ms`・`swim_nping_ms`（各 4 B）＝1 台 14 B、896 → 3,584 → 14,336 B。引くのは swim.c だけ（外へは `swim_rtt_ms`・`swim_peer_reads_v2`、10 ファイルが呼ぶ）
-- **既に領域の大きさ**: 広い番号の `wide_st[DREGION_MAX]`（32 B×64）と `wide_map`（NODEMAP）。N2C3 の指紋（`fp`）もここ。満杯なら DEAD を追い出し、それも無ければ断って `nm_full` を数える
-- swim.o の data+bss: 11,028 / 13,716 / 24,468 B
-- **DNODE_MAX を 256 以上にすると終わらないループ**: `for (UB i = 0; i < DNODE_MAX; …)` が swim.c に 4 か所（`pick_probe_target` 2・`pick_helpers`・`swim_nodes_print`、gcc の -Wtype-limits）。共通コード全体では 88 か所（dkva 26・region 10・moe 7・drpc 6 ほか）＝N3 の後の段の前提
+- **既に領域の大きさ**: 広い番号の `wide_st[DREGION_MAX]`（32 B×64、N2C3 の指紋 `fp` も）と `wide_map`。満杯なら DEAD を追い出し、無ければ断って `nm_full` を数える
+- **DNODE_MAX が 256 以上で終わらないループ**: `for (UB i = 0; i < DNODE_MAX; …)` が swim.c に 4 か所（-Wtype-limits）。共通コード全体で 88 か所（dkva 26・region 10・moe 7 ほか）＝後の段の前提
 - `dnode_table`（drpc.c）は SWIM も書くが第 2 段。ベアも swim.c を使い、番号は 1〜8
 
 ## 2. 作る形
@@ -24,8 +23,8 @@ swim.c を hosted x86_64 で DNODE_MAX 64/256/1024 にしてコンパイルし `
 
 ## 3. 合否（作る前に固定）
 
-- **S1** `tests/unbounded/swim_coupling.sh`: swim.o の data+bss が 64/256/1024 で同じ。master で赤（上の 3 つの数）
+- **S1** `tests/unbounded/swim_coupling.sh`: swim.o の data+bss が 64/256/1024 で同じ。master で赤（11,028 / 13,716 / 24,468 B）
 - **S2** 同じ台本: DNODE_MAX 256/1024 で -Wtype-limits が 0。master で赤（4）
 - **S3** 陰性 `N3S_NC=1`（[DNODE_MAX] の配列を 1 本押し込む）で S1 が赤
 - **S4** 出荷の形（64）で何も変わらない: SWIM の自己試験（`nodes test`・`nodes life`・idpin・selfsuspect・[n2-mix]・run_n2c_wide.sh）が緑、build_all ALL OK、crown（上の 4）
-- **S5** 生きた試験（作る回が台本を先に）: `-DSWIM_PEERS=8` で狭い番号 12 台。全員の枠が 8 以下、断りの数が 0 より大、12 台とも 120 秒応える。陰性（上限を外す）で枠 11＝赤
+- **S5** 生きた試験（作る回が台本を先に、ASan つき）: `-DSWIM_PEERS=8` で狭い番号 12 台。全員の枠が 8 以下、断りの数が 0 より大、12 台とも 120 秒応え ASan の報告 0。陰性（上限を外す）で枠 11＝赤。**S1・S2 だけでは足りない**: 7 本を [DREGION_MAX] に縮めただけ（番号で引いたまま＝はみ出す）の使い捨ての swim.c が S1・S2 とも緑だった
