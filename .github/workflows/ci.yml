@@ -4696,6 +4696,14 @@ jobs:
         run: |
           timeout 1500 bash tests/web/run_ark_entry_dom.sh | tee ark_dom.log
           grep -aF '[ark-dom] ALL PASS' ark_dom.log
+      # ark-entry.md 7.14 (audit-208, fix/galaxy-sse-slots): a closed SSE stream frees
+      # its slot at once and a full table lets the oldest SSE give way; plain must be
+      # ALL PASS and the falsifiers GX_NC_SSE_NO_READ / GX_NC_NO_EVICT turn S1-keep /
+      # S2-held red (the script checks both). No browser; 3 hosted builds, ~4 min.
+      - name: Galaxy client slots (S0-S2, held and closed SSE streams)
+        run: |
+          timeout 900 bash tests/host/run_galaxy_slots.sh | tee gx_slots.log
+          grep -aF '[gx-slots] ALL PASS' gx_slots.log
 
   android-emulator-smoke:
     # RUNTIME smoke — closes fable5 audit gap G1 (highest-ranked risk).

@@ -23,6 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -102,6 +103,16 @@ int galaxy_io_accept(void)
     (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     client_fd[slot] = fd;
     return slot;
+}
+
+/* 1 if a connection waits to be accepted, 0 if not, -1 on error (no wait). */
+int galaxy_io_pending(void)
+{
+    if (listen_fd < 0) return -1;
+    struct pollfd pf = { .fd = listen_fd, .events = POLLIN, .revents = 0 };
+    int r = poll(&pf, 1, 0);
+    if (r < 0) return -1;
+    return (r > 0 && (pf.revents & POLLIN)) ? 1 : 0;
 }
 
 /* nonblocking read. ret bytes (>0), 0 = nothing now, -1 = closed/error. */

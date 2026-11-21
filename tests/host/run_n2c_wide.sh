@@ -33,6 +33,9 @@
 #        later start through, the other is neither heard nor hears, so nobody can redraw)
 #        B starts 2 s after A: started in the same second, the counted nonces interleave and
 #        the negative went green once (d5e29208, A redrew, 4 saw no second key)
+#   -DN2C_NC_NO_MOVED -> I6u (added 11-21 after CI 44880448567: plain I3 red with both redrawing;
+#        the moved node's old key came late as news of the id. A key already heard under another
+#        wide id is a moved key, not a claim)
 # Not checked here (limits, §11): that a teaching (X3) is not mixed up between A and B;
 # narrow ids (no key on the v1 wire); Android and Windows (no re-exec: the new id from the
 # next start).
@@ -51,7 +54,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS N2C_NC_NO_MOVED}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -218,6 +221,7 @@ for md in $MODES; do
         N2C_NC_NONCE_COUNT)     want=I3 ;;
         N2C_NC_SMALL_NEVER)     want=I6u ;;
         N2C_NC_NO_WAS)          want=I6u ;;   # 11-21: the news carries no previous key (idpin)
+        N2C_NC_NO_MOVED)        want=I6u ;;   # 11-21 audit-207: a key heard under another id claims my id (idpin)
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"
