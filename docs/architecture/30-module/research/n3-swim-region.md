@@ -34,4 +34,4 @@ swim.c を hosted x86_64 で DNODE_MAX 64/256/1024 にしてコンパイルし `
 - `SWIM_PEER sw_peer[SWIM_PEERS]`（1 枠 16 B）＋`NODEMAP sw_map`。枠を取るのは SWIM が聞いたとき（その台のパケット・うわさ）。断られた台は返事だけもらい、生きている印もうわさも捨てる。探りと手助けは枠の上。ベアは `SW_*` のマクロが元の配列に展開する
 - 64 では swim.o が master より 448 B 大きい（13,076→13,524。枠の構造体の詰め物と NODEMAP）＝64/256/1024 で同じ
 - 作る途中の赤: 網の無い台は swim_init を通らず、枠の上限が 0 のまま全部断っていた（`nodes test` ほか 6 つ赤）→上限を静的な初期値に
-- 限界: ① 満杯で DEAD の枠を渡すと、その台の incarnation を忘れる＝後で古い ALIVE のうわさで戻りうる（64 では起きない）② 自己試験は試験の番号の枠を取ったまま残す（`nodes test` の後 11/64）③ **H41 (b) は試験にできていない**: drpc の heartbeat の老化（drpc.c の SUSPECT_THRESH・DEAD_THRESH 6＋6 回、読みでは約 6 秒）が表を DEAD にし、SWIM は 8 枠なら同じ台を 8 秒に 1 回探り DEAD まで 2＋3 回＝SWIM が DEAD と言う前に表が DEAD になり、SWIM は DEAD の台を上げない（読み。測っていない）。SWIM だけの効きを見るには drpc の老化を外す段（N3 第 2 段）が要る
+- 限界: ① 満杯で DEAD の枠を渡すと、その台の incarnation を忘れる＝後で古い ALIVE のうわさで戻りうる（64 では起きない）② 自己試験は試験の番号の枠を取ったまま残す（`nodes test` の後 11/64）③ H41 (b) は S5 の C6 にした: 最初は「drpc の老化が先に DEAD にする」と読みで書いたが、測る（pk-scratch/n3s/h41.sh）と止めた番号 11 を残り 11 台が全部 SWIM（自分の探りかうわさ）で DEAD にし、drpc の行は 0 本＝読みは誤り。`[swim] slots` の行に枠の番号を出し、止める前に枠を持っていた台だけを見る。陰性 -DN3_NC_NO_PROBE_SLOTS ④ 枠の無い狭い台は `swim_peer_reads_v2` が FALSE（古い台として扱う。64 では起きない）
