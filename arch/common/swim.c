@@ -191,6 +191,44 @@ static NODEMAP   sw_map = { .cap = SWIM_PEERS };
 static UW        sw_refused;        /* times an id found the slots full */
 static SWIM_PEER sw_scratch;        /* self-tests only: a refused id    */
 
+/* The graves (11-21, S5 C9): a peer whose slot is handed over leaves its id
+ * and incarnation here (SW_STORE of them, the oldest overwritten). Measured
+ * before: a killed peer restarted with a newer incarnation stayed DEAD on 9 of
+ * 11 nodes (full slots dropped its word; master: 11/11 ALIVE again). Now its
+ * slot comes back with the old incarnation, so only a NEWER word revives it
+ * (and a stale ALIVE cannot: limit 1). -DN3_NC_NO_GRAVE: not kept (C9 red). */
+typedef struct { pk_node_t id; UB incarn; UB used; } SW_GRAVE;
+static SW_GRAVE sw_grave[SW_STORE];
+static INT      sw_grave_next;
+
+static void sw_grave_put(pk_node_t id, UB incarn)
+{
+#if defined(N3_NC_NO_GRAVE)
+    (void)id; (void)incarn;
+#else
+    INT g = -1;
+    for (INT i = 0; i < SW_STORE && g < 0; i++) if (sw_grave[i].used && sw_grave[i].id == id) g = i;
+    if (g < 0) { g = sw_grave_next; sw_grave_next = (sw_grave_next + 1) % SW_STORE; }
+    sw_grave[g].id = id; sw_grave[g].incarn = incarn; sw_grave[g].used = 1;
+#endif
+}
+
+/* the grave of id: its slot in sw_grave, or -1 */
+static INT sw_grave_find(pk_node_t id)
+{
+    for (INT i = 0; i < SW_STORE; i++) if (sw_grave[i].used && sw_grave[i].id == id) return i;
+    return -1;
+}
+
+/* is incarnation inc newer (serial order, as gossip_supersedes) than id's grave? */
+static BOOL sw_grave_newer(pk_node_t id, UB inc)
+{
+    INT g = sw_grave_find(id);
+    if (g < 0) return FALSE;
+    UB d = (UB)(inc - sw_grave[g].incarn);
+    return (d >= 1 && d <= 127) ? TRUE : FALSE;
+}
+
 /* the slot of narrow id n, or NULL (looks only) */
 static SWIM_PEER *sw_get(pk_node_t n)
 {
@@ -228,6 +266,7 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
             st = DNODE_ALIVE;   /* negative control of [n3-swim-cap] C8 */
 #endif
             if (st == DNODE_DEAD || st == DNODE_UNKNOWN) {   /* as wide_add */
+                sw_grave_put((pk_node_t)sw_map.id[i], sw_peer[i].incarn);
                 nodemap_evict(&sw_map, i);
                 s = nodemap_admit(&sw_map, n);
             }
@@ -247,6 +286,7 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
                 if (lo < 0 || sc < lo_sc) { lo = i; lo_sc = sc; }
             }
             if (lo >= 0 && sw_score(n) > lo_sc) {
+                sw_grave_put((pk_node_t)sw_map.id[lo], sw_peer[lo].incarn);
                 nodemap_evict(&sw_map, lo);
                 s = nodemap_admit(&sw_map, n);
             }
@@ -255,6 +295,8 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
         if (s >= SW_STORE) { nodemap_evict(&sw_map, s); s = -1; }   /* never: lowest free first */
         if (s < 0) { sw_refused++; PK_NOSW_LEAVE(); return NULL; }
         sw_peer[s] = (SWIM_PEER){ 0 };
+        INT g = sw_grave_find(n);      /* back from a grave: the old incarnation */
+        if (g >= 0) { sw_peer[s].incarn = sw_grave[g].incarn; sw_grave[g].used = 0; }
     }
     PK_NOSW_LEAVE();
     return &sw_peer[s];
@@ -266,7 +308,13 @@ static SWIM_PEER *sw_take(pk_node_t n)
     return sw_take_ex(n, dnode_table[n].state != DNODE_DEAD ? TRUE : FALSE);
 }
 
-static UB   sw_inc_get(pk_node_t n)        { SWIM_PEER *p = sw_get(n); return p ? p->incarn : 0; }
+static UB   sw_inc_get(pk_node_t n)
+{
+    SWIM_PEER *p = sw_get(n);
+    if (p) return p->incarn;
+    INT g = sw_grave_find(n);        /* e.g. rx telling a dead sender DEAD@k */
+    return g >= 0 ? sw_grave[g].incarn : 0;
+}
 static void sw_inc_set(pk_node_t n, UB v)  { SWIM_PEER *p = sw_get(n); if (p) p->incarn = v; }
 static UB   sw_sus_get(pk_node_t n)        { SWIM_PEER *p = sw_get(n); return p ? p->suspect : 0; }
 static void sw_sus_set(pk_node_t n, UB v)  { SWIM_PEER *p = sw_get(n); if (p) p->suspect = v; }
@@ -647,7 +695,10 @@ static void gossip_apply(const SWIM_PKT *pkt)
         if (nid >= DNODE_MAX) continue;
 #if defined(_TK_HOSTED_LIBC_)
         /* N3 step 1: a rumour needs the peer's slot; none free = dropped */
-        if (!sw_take_ex(nid, (st != DNODE_DEAD && dnode_table[nid].state != DNODE_DEAD) ? TRUE : FALSE))
+        /* may push out a live holder: a live word about a peer not held DEAD, or a
+         * word NEWER than the peer's grave (it came back: C9) */
+        if (!sw_take_ex(nid, (st != DNODE_DEAD && (dnode_table[nid].state != DNODE_DEAD
+                                                   || sw_grave_newer(nid, inc_in))) ? TRUE : FALSE))
             continue;
 #endif
 
