@@ -15,6 +15,10 @@
 #                  A8-order A8-key A8-heir PASS
 #   nc-keep-key    "written down" leaves the key in the DOM: A8-clear FAIL,
 #                  A8-order A8-key A8-rec PASS
+# The records screen (A10, ark-entry 7.2 1 3 5; fixed before the screen was written):
+#   nc-new-trim    a new record from #arnew is .trim()ed: A10-new FAIL, A10-list PASS
+#   nc-vis-both    changing #arvis also posts learn=yes (two at once, 7.2 5):
+#                  A10-vis FAIL, A10-new PASS
 # The mutations must find their anchor exactly once, else the arm is RED (a moved
 # anchor must not turn into a silent green).
 # Needs python3 + playwright (+ a chromium: PK_CHROMIUM, or `playwright install
@@ -29,7 +33,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_DOM_PORT:-17841}"
-ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key}"
+ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key nc-new-trim nc-vis-both}"
 SRC="$ROOT/arch/common/web/galaxy.html"
 WORK="$(mktemp -d /tmp/arkdom.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -63,7 +67,8 @@ want() {  # <arm> <PASS|FAIL> <check>...
     for c in "$@"; do is "$a" "$c" "$v" || REDS="$REDS $a-$c"; done
 }
 
-ALL="A8-url A8-order A8-key A8-clear A8-header A8-heir A8-rec A8-done A8-resume A8-skip"
+ALL="A8-url A8-order A8-key A8-clear A8-header A8-heir A8-rec A8-done A8-resume A8-skip
+     A10-btn A10-list A10-new A10-view A10-vis A10-learn A10-edit"
 # shellcheck disable=SC2086
 if arm plain "$SRC"; then want plain PASS $ALL; fi
 case " $ARMS " in *" nc-no-header "*)
@@ -88,6 +93,17 @@ case " $ARMS " in *" nc-keep-key "*)
         if arm nc-keep-key "$WORK/keep.html"; then want nc-keep-key FAIL A8-clear; want nc-keep-key PASS A8-order A8-key A8-rec; fi
     else REDS="$REDS nc-keep-key-anchor"; fi ;;
 *) REDS="$REDS nc-keep-key-skipped" ;; esac
+case " $ARMS " in *" nc-new-trim "*)
+    if mutate "$WORK/ntrim.html" 'const t=document.getElementById("arnew").value;' \
+              'const t=document.getElementById("arnew").value.trim();'; then
+        if arm nc-new-trim "$WORK/ntrim.html"; then want nc-new-trim FAIL A10-new; want nc-new-trim PASS A10-list; fi
+    else REDS="$REDS nc-new-trim-anchor"; fi ;;
+*) REDS="$REDS nc-new-trim-skipped" ;; esac
+case " $ARMS " in *" nc-vis-both "*)
+    if mutate "$WORK/both.html" '/*AR-VIS*/' 'await arFlag(no,"learn","yes");'; then
+        if arm nc-vis-both "$WORK/both.html"; then want nc-vis-both FAIL A10-vis; want nc-vis-both PASS A10-new; fi
+    else REDS="$REDS nc-vis-both-anchor"; fi ;;
+*) REDS="$REDS nc-vis-both-skipped" ;; esac
 make -C "$BOOT" clean >/dev/null 2>&1
 echo "[ark-dom] logs: /tmp/ark_dom_<arm>_<node>.log"
 if [ -z "$REDS" ]; then echo "[ark-dom] ALL PASS"; exit 0; fi
