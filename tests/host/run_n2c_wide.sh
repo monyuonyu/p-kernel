@@ -36,6 +36,9 @@
 #   -DN2C_NC_NO_MOVED -> I6u (added 11-21 after CI 44880448567: plain I3 red with both redrawing;
 #        the moved node's old key came late as news of the id. A key already heard under another
 #        wide id is a moved key, not a claim)
+#   -DN2C_NC_CLAIM_ONCE -> I6u (added 11-21 after audit-208: the smaller redraws on one hearing
+#        past the 10 s, as before; a larger that redrew at once was not yet heard under its new id
+#        and its old key came past the 10 s, so both redrew. Now once more 7 s after that)
 # Not checked here (limits, §11): that a teaching (X3) is not mixed up between A and B;
 # narrow ids (no key on the v1 wire); Android and Windows (no re-exec: the new id from the
 # next start).
@@ -54,7 +57,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS N2C_NC_NO_MOVED}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS N2C_NC_NO_MOVED N2C_NC_CLAIM_ONCE}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -160,7 +163,9 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
         ra=$(cnt "$LOG/A.log" '^\[n2c\] redraw'); rb=$(cnt "$LOG/B.log" '^\[n2c\] redraw')
         [ $((ra + rb)) -ge 1 ] && break
     done
-    sleep 5    # a second redraw (both sides) would show by now
+    # a second redraw (both sides) would show by now: 11-21 (fix/n2c-twice) the smaller
+    # redraws 10 s + 7 s after it first heard the other key, so 5 s no longer covers it
+    sleep 20
     ra=$(cnt "$LOG/A.log" '^\[n2c\] redraw'); rb=$(cnt "$LOG/B.log" '^\[n2c\] redraw')
     who=""; other=""
     [ "$ra" = 1 ] && [ "$rb" = 0 ] && { who=A; other=B; }
@@ -222,6 +227,7 @@ for md in $MODES; do
         N2C_NC_SMALL_NEVER)     want=I6u ;;
         N2C_NC_NO_WAS)          want=I6u ;;   # 11-21: the news carries no previous key (idpin)
         N2C_NC_NO_MOVED)        want=I6u ;;   # 11-21 audit-207: a key heard under another id claims my id (idpin)
+        N2C_NC_CLAIM_ONCE)      want=I6u ;;   # 11-21 (after audit-208): one hearing past the 10 s redraws the smaller (idpin)
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"

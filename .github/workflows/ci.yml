@@ -2053,11 +2053,11 @@ jobs:
 
       # N2c stage 3 (research/n2c-identity.md section 11): a wide id from the key,
       # a redraw when two keys claim one id (both start as 300 on the relay), the
-      # same id is the same key. I1w I6u I3 I6 I4; the six falsifiers (-DN2C_NC_*)
-      # run inside the script (about 15 minutes).
+      # same id is the same key. I1w I6u I3 I6 I4; the eight falsifiers (-DN2C_NC_*)
+      # run inside the script (about 20 minutes; the 9th mode CLAIM_ONCE, 11-21).
       - name: "a wide id from the key, redrawn on a collision ([n2c-wide], BLOCKING, N2c)"
         run: |
-          timeout 1500 tests/host/run_n2c_wide.sh | tee n2c_wide.log
+          timeout 1800 tests/host/run_n2c_wide.sh | tee n2c_wide.log
           grep -aF '[n2c-wide] ALL PASS' n2c_wide.log
           make -C boot/linux_x86_64 >/dev/null
 
@@ -3800,7 +3800,10 @@ jobs:
           ! N3C_CFLAGS=-DN3_NC_FIRST_COME N3C_PORT=7614 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc7.log 2>&1
           cat n3cap_nc7.log
           grep -aqF '[n3-swim-cap] C7 FAIL' n3cap_nc7.log
-          grep -aqF '[n3-swim-cap] C6 PASS' n3cap_nc7.log
+          # not C6: which ids first come leaves out depends on the start order, and C6
+          # kills id N-1 (CI 44880448567: 5 9 10 out, C6 PASS; 44908344069: 10 11 out,
+          # C6 0/0 FAIL). C1 (the cap itself) does not depend on who is left out
+          grep -aqF '[n3-swim-cap] C1 PASS' n3cap_nc7.log
           # C8: a dead holder's slot is handed over to a refused peer
           ! N3C_CFLAGS=-DN3_NC_NO_HANDOVER N3C_PORT=7615 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc8.log 2>&1
           cat n3cap_nc8.log
