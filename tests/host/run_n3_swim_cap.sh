@@ -165,6 +165,8 @@ echo "[n3-swim-cap] C6 killed id $VID: $held nodes held its slot, $saw of them s
 # handed over. N-2 live peers are still > P, so a refused one keeps asking; on
 # every node that held id N-1, a fresh `nodes` shows P slots without it.
 # -DN3_NC_NO_HANDOVER (a DEAD holder is never handed over) => C8 RED.
+# First measured on 555eec3a: RED 6/9 (the dead id's rumours took a slot back
+# from a live holder); -DN3_NC_DEAD_DISPLACES keeps that bug => C8 RED.
 for i in $(seq 1 $((N - 1))); do printf '%s\n' "nodes" >&$((i + 9)); done
 sleep 5
 c8n=0; c8ok=0; c8bad=""

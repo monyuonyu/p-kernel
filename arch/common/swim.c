@@ -209,9 +209,13 @@ static UW sw_score(pk_node_t n)
     return h;
 }
 
-/* the slot of narrow id n, taken (zeroed) if new; NULL if refused */
-static SWIM_PEER *sw_take(pk_node_t n)
+/* the slot of narrow id n, taken (zeroed) if new; NULL if refused.
+ * may_displace: n may push out a live holder it outscores. Never for a dead n:
+ * measured 11-21 (S5 C8, 555eec3a) a killed id's DEAD rumours re-took a slot
+ * from a live holder each time it was handed over (3/9 nodes still held it). */
+static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
 {
+    (void)may_displace;   /* unused with -DN3_NC_FIRST_COME */
     if (n >= DNODE_MAX) return NULL;
     PK_NOSW_ENTER();      /* swim_rx and the self-tests take; swim_task reads */
     INT s = nodemap_find(&sw_map, n);
@@ -232,7 +236,10 @@ static SWIM_PEER *sw_take(pk_node_t n)
         /* still full: n replaces the holder this node wants least, if it wants
          * n more (stable once the best SWIM_PEERS are in; that holder is then
          * refused like any other). -DN3_NC_FIRST_COME: the step-1 rule (C7 red) */
-        if (s < 0) {
+#if defined(N3_NC_DEAD_DISPLACES)
+        may_displace = TRUE;   /* negative control: the bug above (C8 red) */
+#endif
+        if (s < 0 && may_displace) {
             INT lo = -1; UW lo_sc = 0;
             for (INT i = 0; i < SW_STORE; i++) {
                 if (!sw_map.used[i] || (pk_node_t)sw_map.id[i] == drpc_my_node) continue;
@@ -251,6 +258,12 @@ static SWIM_PEER *sw_take(pk_node_t n)
     }
     PK_NOSW_LEAVE();
     return &sw_peer[s];
+}
+
+static SWIM_PEER *sw_take(pk_node_t n)
+{
+    if (n >= DNODE_MAX) return NULL;
+    return sw_take_ex(n, dnode_table[n].state != DNODE_DEAD ? TRUE : FALSE);
 }
 
 static UB   sw_inc_get(pk_node_t n)        { SWIM_PEER *p = sw_get(n); return p ? p->incarn : 0; }
@@ -634,7 +647,8 @@ static void gossip_apply(const SWIM_PKT *pkt)
         if (nid >= DNODE_MAX) continue;
 #if defined(_TK_HOSTED_LIBC_)
         /* N3 step 1: a rumour needs the peer's slot; none free = dropped */
-        if (!sw_take(nid)) continue;
+        if (!sw_take_ex(nid, (st != DNODE_DEAD && dnode_table[nid].state != DNODE_DEAD) ? TRUE : FALSE))
+            continue;
 #endif
 
         /* NET-DISCOVERY-STAR (wave-discovery-mesh): TRANSITIVE membership.
