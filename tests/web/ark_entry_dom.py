@@ -407,6 +407,11 @@ def main():
               % (ok, ks, kp, posts), flush=True)
         pg.goto(BASE + "/", wait_until="load")          # the pass is in sessionStorage now
         k2 = wait_shown(pg, "#aestep-key", 15) and only(pg, "#aestep-key")
+        st_rj, _b = raw("GET", "/ark/rec.json", b"", tok)
+        print("[ark-dom] note n2 after reload: entry=%r steps=%r rec.json=%s url=%s" % (
+            pg.evaluate("document.getElementById('arkentry').className"),
+            pg.evaluate("[...document.querySelectorAll('#arkentry .aestep')].map(e=>e.id+':'+e.className)"),
+            st_rj, pg.evaluate("location.href")), flush=True)
         if k2 and wait_shown(pg, "#aekeyshow", 5):
             pg.click("#aekeyshow")
         gone = k2 and wait_shown(pg, "#aekeygone", 10)
