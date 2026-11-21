@@ -301,7 +301,8 @@ def main():
             nb = len([1 for pth, _st in posts if pth == "/ark/key/backup"])
             res("A8-ask", shown(pg, "#aekeyshow") and nb == 0 and not re.search(r"[0-9a-f]{64}", pre),
                 "show=%s backup-posts=%d key=%r" % (shown(pg, "#aekeyshow"), nb, pre[:12]))
-            pg.click("#aekeyshow")
+            if shown(pg, "#aekeyshow"):
+                pg.click("#aekeyshow")
         else:
             res("A8-ask", False, "the key step did not open")
         if key_only:
@@ -384,7 +385,7 @@ def main():
         # A8-later (added with A8-ask): "later" closes the entry without fetching the
         # key; a reload opens the key step again
         kl = ok and wait_shown(pg, "#aestep-key", 15) and wait_shown(pg, "#aekeylater", 5)
-        if kl:
+        if kl and shown(pg, "#aekeylater"):
             pg.click("#aekeylater")
         closed_l = False
         t_end = time.time() + 10
@@ -398,8 +399,8 @@ def main():
         back_l = wait_shown(pg, "#aestep-key", 15) and wait_shown(pg, "#aekeyshow", 5)
         res("A8-later", bool(closed_l) and nb_l == 0 and back_l,
             "later=%s closed=%s backup-posts=%d again=%s" % (kl, closed_l, nb_l, back_l))
-        ks = back_l
-        if ks:
+        ks = wait_shown(pg, "#aestep-key", 15)
+        if ks and shown(pg, "#aekeyshow"):
             pg.click("#aekeyshow")
         kp = wait_post(pg, posts, "/ark/key/backup") if ks else None
         k1 = bool(ks) and kp == 200
@@ -439,7 +440,10 @@ def main():
         browser.close()
 
 
-main()
+try:
+    main()
+except Exception as e:                    # a click that cannot happen is a red, not a crash
+    print("[ark-dom] note exception: %s" % str(e).splitlines()[0][:200], flush=True)
 ALLC = ["A8-url", "A8-ask", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done",
         "A8-later", "A8-resume", "A8-skip"] + A10
 if all(RESULTS.get(c) for c in ALLC):
