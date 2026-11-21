@@ -6566,9 +6566,9 @@ static INT mw_fetch_peer(pk_node_t origin)
  * stale peer-state; a peer is folded only if its epoch is NEWER). */
 static UW mw_peer_epoch[MW_ROWS];
 
-#ifdef _TK_HOSTED_LIBC_
-/* The loop guard as one function (hosted), so `mind mwguard` can drive it.
- * Returns 1 when peer row o at epoch pe is to be folded, and records it. */
+/* The loop guard as one function, so `mind mwguard` (hosted) can drive it.
+ * Returns 1 when peer row o at epoch pe is to be folded, and records it.
+ * (fix/pw-epoch0-bare: bare metal uses it too.) */
 static UB mw_peer_folded[MW_ROWS];   /* 1 once row o has been folded */
 
 static INT mw_should_fold(INT o, UW pe)
@@ -6586,6 +6586,7 @@ static INT mw_should_fold(INT o, UW pe)
     return 1;
 }
 
+#ifdef _TK_HOSTED_LIBC_
 /* `mind mwguard` (CI 44629065908 and 44370186784: Path W k1 55-60%): a peer
  * epoch is folded once. In 44629065908 node A folded node B's epoch 0 six
  * times in a row (p42_nodeA.log lines 1008-1279); each fold pulls A halfway
@@ -6646,12 +6647,7 @@ static INT mw_fold_region(void)
         INT pe = mw_fetch_peer(o);
 #endif
         if (pe < 0) continue;                        /* dropped (partial)     */
-#ifdef _TK_HOSTED_LIBC_
         if (!mw_should_fold(o, (UW)pe)) continue;   /* stale (loop guard)    */
-#else
-        if ((UW)pe <= mw_peer_epoch[o] && mw_peer_epoch[o] != 0) continue; /* stale */
-        mw_peer_epoch[o] = (UW)pe;
-#endif
         for (INT i = 0; i < R_NP; i++) mw_out[i] += mw_peer[i];
         folded++;
     }
