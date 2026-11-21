@@ -196,3 +196,8 @@ galaxy.c（master 2df75ce3）と突き合わせた。合っている: 口は gx_
 実装（galaxy.html だけ）: `#arkentry` に 1 段ずつ。同意の成功の後と、同意済みのノードを開いたときに `GET /ark/rec.json` を見て 409 なら鍵の段を開く。「書き写した」で鍵を DOM から消す。記録は textarea の UTF-8 をそのまま octet-stream で。文は en と ja だけ（他の言語は en に落ちる）。crown は master と全バイト同じ（galaxy.html は hosted だけが組み込む）。CI は consent-dom-cert（advisory）に段を足した。
 測り（容器 /build/a8）: 先端で plain ALL PASS 2/2、陰性 2 腕は全項目をほぼ赤にする粗い形だったので、画面を書いた後に 1 項目だけ赤くする 2 腕を足した（試験を見てから足した、と台本の頭に書いた）: nc-trim（本文を trim）→A8-rec だけ赤、nc-keep-key（書き写した後も鍵を DOM に残す）→新しい A8-clear だけ赤。最初の先端の走りの A8-resume の赤は試験の誤り（Playwright の同期 API は time.sleep の間にイベントを配らない）。run_ark_app.sh plain 19/19・consent_dom_cert も枝で PASS。
 限界: 「書き写した」は押すだけ（書き写したかは確かめない）。410 の後に鍵をもう一度見る道は無い（v1 の限界、`ark key import` は戻す口だけ）。Android の WebView・実機は試していない（人の仕事）。
+
+### 7.15 記録の画面を作った（2026-11-21 16:40 の回、feat/ark-rec-screen＝7.14 の枝の上。実装者、監査待ち）
+
+試験先 bf6953f8（同じ台本の A10-btn・list・new・view・vis・learn・edit。A8 の流れの後のノード 1 で）は画面なしで A10 の 7 つ赤・A8 は全部 PASS。実装 817b9cf0（galaxy.html だけ）: 鍵の控えを書き写した後（rec.json が 200）に dock の「📖 記録」。一覧は新しい順で日付・見せる相手・学習だけ（数・順位なし）、本文は GET のバイトを TextDecoder で、見せる相手と学習は別々の select で 1 つずつ POST（7.2 5、まとめて変える口なし）、新しい版は同じ番号へ POST。陰性: nc-new-trim→A10-new だけ赤、nc-vis-both（見せる相手を変えると学習も yes に）→A10-vis 赤（後ろの learn・edit は版の数がずれて連鎖で赤）。先端で plain ALL PASS。
+限界: textarea で書き直すと CR LF は LF になる（ブラウザの決まり）。前の版を見る画面は無い（版の鎖は残る）。記録の削除は無い（決まり 11、原本は消さない）。
