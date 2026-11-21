@@ -4769,11 +4769,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # 2026-11-22 (ci/exceptions-1130): the only one of the 10 kept advisory.
-    # 11-08..11-21: failure 28, success 7, cancelled 2; the PIERCE fix
-    # (fix/android-pierce, audit-202) landed 11-21 and only a few runs came after
-    # it, so 2 weeks of green are not there yet. Its known-red.txt line was
-    # removed 11-21, so a red here still stops promote.
-    continue-on-error: true  # until 2026-12-14: Android emulator smoke, 2 weeks after the PIERCE fix (11-21) not seen yet. ROADMAP 0-2, 0-13
+    # 11-08..11-21: failure 28, success 7, cancelled 2. Since the PIERCE fix
+    # (fix/android-pierce, audit-202; first run 44808383332 on 1bccefa3,
+    # 2026-11-21 05:06 JST) it was success 7 / failure 1, and the 1 was
+    # 64d51ff2's real GCC-15/clang build break (fixed, audit-211) = green so
+    # far, but 1.5 days, not the week the owner's rule (#3 8-4) asks for.
+    # Not in known-red.txt on purpose: a red here still stops promote. If it
+    # stays green to 12-05 (2 weeks after PIERCE), make it BLOCKING.
+    continue-on-error: true  # until 2026-12-05: Android emulator smoke, green since the PIERCE fix (11-21) but not a week yet. ROADMAP 0-2, 0-13
     steps:
       - uses: actions/checkout@v4
       - name: Enable KVM group perms (required for hardware-accelerated emulation)
