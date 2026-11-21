@@ -232,6 +232,15 @@
   @media (max-width:640px){
     #intro .ttl{margin-top:6px}
   }
+  /* ark-entry.md 7.2 4: after consent, one step at a time — the key backup, the
+     heir, the first record. Same .card look as the consent card. */
+  #arkentry{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:52;
+    display:none;align-items:center;justify-content:center;padding:14px;box-sizing:border-box}
+  #arkentry.open{display:flex}
+  #arkentry .aestep{display:none}
+  #arkentry .aestep.on{display:block}
+  #aekey{font-size:15px;letter-spacing:.05em;user-select:all;color:#f9e2af}
+  #aerectext{height:160px}
 </style>
 </head>
 <body>
@@ -260,6 +269,34 @@
     <div class="tiny" id="arkappend">…</div>
   </div>
   <div class="mid" id="arkmid"></div>
+</div></div>
+<!-- ark-entry.md 7.2 4: after consent — the key backup (shown once), the heir
+     (may be skipped), the first record. Opened by arkEntryCheck(). -->
+<div id="arkentry"><div class="card">
+  <div class="aestep" id="aestep-key">
+    <h1 id="aekeyh">…</h1>
+    <div class="warn" id="aekeywhy">…</div>
+    <pre id="aekey"></pre>
+    <div class="warn" id="aekeygone" style="display:none">…</div>
+    <div class="row" id="aekeyask"><button class="primary" id="aekeyshow">…</button>
+      <button id="aekeylater">…</button></div>
+    <div class="row" id="aekeyrow" style="display:none"><button class="primary" id="aekeydone">…</button></div>
+  </div>
+  <div class="aestep" id="aestep-heir">
+    <h1 id="aeheirh">…</h1>
+    <div class="tiny" id="aeheirwhy">…</div>
+    <input id="aeheir" maxlength="80" autocomplete="off" spellcheck="false">
+    <div class="row"><button class="primary" id="aeheirsave">…</button>
+      <button id="aeheirskip">…</button></div>
+  </div>
+  <div class="aestep" id="aestep-rec">
+    <h1 id="aerech">…</h1>
+    <div class="tiny" id="aerecwhy">…</div>
+    <textarea id="aerectext"></textarea>
+    <div class="row"><button class="primary" id="aerecsave">…</button>
+      <button id="aereclater">…</button></div>
+  </div>
+  <div class="warn" id="aeerr"></div>
 </div></div>
 <!-- illustrated intro (0.5.0): shows on first run, leads INTO #ark above.
      Pictures are inline SVG drawn by buildIntro(); skip + re-view supported. -->
@@ -407,6 +444,42 @@ const I18N = {
   nl:{"title":"Welkom — over dit melkwegstelsel","agree":"Akkoord en inschrijven","decline":"Nu niet","save":"Mijn naam op mijn ster ontsteken","skip":"Alleen instemmen, geen naam","lblhandle":"Bijnaam / naam die je gebruikt (optioneel · pseudoniem mag · niet geverifieerd)","lblmsg":"Woorden voor de toekomst (optioneel · schrijf geen gegevens van anderen)","lblname":"Echte naam (optioneel)","append":"Oude versies worden nooit gewist; er wordt alleen een nieuwe toegevoegd.","optional":"optioneel","teach":"leren","ask":"vragen","mustread":"Lees eerst over dit melkwegstelsel","consentmark":"Je instemming is ingeschreven","namemark":"Je naam licht op op je ster","updated":"De tekst is bijgewerkt — lees hem nog eens","profilefail":"verzenden mislukt","st_dream":"je ster droomt — ordent wat ze heeft geleerd","st_learn":"je ster leert iets nieuws","st_link":"je ster is verbonden met {n} andere sterren","st_alone":"je ster schijnt voorlopig alleen","st_awake":"je ster is wakker","notew":"deze ster kent nog maar {k} woorden en {v} antwoorden — eerlijk gezegd, nog een baby","word":"woord","btnteach":"leren","btnask":"vragen","btnlog":"logboek","teachok":"geleerd — kijk hoe het rondcirkelt en in je ster wegzinkt","teachfail":"dat woord is nog niet bekend — kies uit de lijst","askpre":"ze antwoordt","detail":"details","logttl":"het dagboek van je ster","logcopy":"kopiëren","logclose":"sluiten","logok":"gekopieerd. plak het overal.","logng":"automatisch kopiëren mislukt — houd de tekst ingedrukt en Kopiëren.","intro_skip":"overslaan","intro_next":"volgende","intro_begin":"beginnen","intro_t1":"This is yurikago.","intro_s1":"A new mind grows here — from a baby.","intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"","intro_s2":"The more you talk with it, the more words it learns, little by little.","intro_t3":"This child belongs to everyone.","intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.","intro_t4":"And so, it never forgets.","intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.","reintro":"introductie","btntalk":"praten","chatttl":"praat met je ster","chatph":"zeg iets","chatsend":"versturen","chat_live":"verbonden","chat_offline":"offline","chat_thinking":"denkt na…","chat_empty":"Hier woont een jonge geest. Zeg maar iets — hij leert nog praten.","chat_waking":"de baby wordt wakker…","insp_link":"linked {n}","insp_dream":"dream · consolidating {r}/min","insp_rest":"dmn at rest {r}/min","insp_learn":"learned {f} ep{e}","insp_engram":"engram {f}/{c} ({p}%)","insp_self":"lineage {n}","insp_infer":"{r}/s cls{c}@{p}%","insp_v_consol":"sleep-tidying (consolidation): {r} times/min   ·   sleeps: {n}","insp_v_facts":"facts learned: {f} words   (being taught right now: {n})","insp_v_pending":"pending","insp_v_epoch":"training rounds so far: {e}   ·   training right now: {t}","insp_v_train":"training","insp_v_engram":"short-term memory: {f} of {c} slots used ({p}% full)","insp_v_infer":"answering speed: {r} answers/sec","insp_v_decision":"last answer: type {c}, {p}% sure","insp_v_stress":"stress: {n} / 100   ·   dropped messages: {d}","insp_v_lineage":"memory generations: {n}   ·   linked stars: {p}","insp_v_load":"work load: {n} / 100","insp_v_threat":"danger sensed: {n} / 100","insp_v_system":"the fleet's inner state (for engineers)","insp_v_node":"this node: #{n}   ·   region {r}   ·   sleeping now: {t}","insp_v_yes":"yes","insp_v_no":"no"},
   gu:{"title":"સ્વાગત છે — આ ગૅલેક્સી વિશે","agree":"સંમત થઈ કોતરો","decline":"હમણાં નહીં","save":"મારા તારા પર મારું નામ પ્રગટાવો","skip":"ફક્ત સંમતિ, નામ વિના","lblhandle":"ઉપનામ / જે નામથી ઓળખાઓ છો (વૈકલ્પિક · ઉપનામ ચાલશે · ચકાસણી થતી નથી)","lblmsg":"ભવિષ્ય માટેના શબ્દો (વૈકલ્પિક · બીજાની માહિતી ન લખો)","lblname":"સાચું નામ (વૈકલ્પિક)","append":"જૂની આવૃત્તિઓ ક્યારેય ભૂંસાતી નથી; ફક્ત નવી આવૃત્તિ ઉમેરાય છે.","optional":"વૈકલ્પિક","teach":"શીખવો","ask":"પૂછો","mustread":"કૃપા કરી પહેલાં આ ગૅલેક્સી વિશે વાંચો","consentmark":"તમારી સંમતિ કોતરાઈ ગઈ","namemark":"તમારા તારા પર તમારું નામ પ્રગટ્યું","updated":"લખાણ સુધારાયું — કૃપા કરી ફરી વાંચો","profilefail":"મોકલવામાં નિષ્ફળ","st_dream":"તમારો તારો સ્વપ્ન જુએ છે — શીખેલું ગોઠવી રહ્યો છે","st_learn":"તમારો તારો કંઈક નવું શીખી રહ્યો છે","st_link":"તમારો તારો બીજા {n} તારાઓ સાથે જોડાયેલો છે","st_alone":"તમારો તારો હાલ એકલો ઝળકે છે","st_awake":"તમારો તારો જાગે છે","notew":"આ તારો હજુ ફક્ત {k} શબ્દો અને {v} જવાબો જાણે છે — સાચું કહીએ તો, હજુ બાળક છે","word":"શબ્દ","btnteach":"શીખવો","btnask":"પૂછો","btnlog":"લૉગ","teachok":"શીખવ્યું — જુઓ તે ફરીને તમારા તારામાં ડૂબી જાય છે","teachfail":"એ શબ્દ હજુ જાણીતો નથી — યાદીમાંથી પસંદ કરો","askpre":"તે જવાબ આપે છે","detail":"વિગતો","logttl":"તમારા તારાની ડાયરી","logcopy":"કૉપિ","logclose":"બંધ કરો","logok":"કૉપિ થઈ ગયું. ગમે ત્યાં પેસ્ટ કરો.","logng":"આપમેળે કૉપિ ન થયું — લખાણ દબાવી રાખો, પછી કૉપિ કરો.","intro_skip":"છોડો","intro_next":"આગળ","intro_begin":"શરૂ કરો","intro_t1":"This is yurikago.","intro_s1":"A new mind grows here — from a baby.","intro_t2":"At first, it can't speak well. \"Vroom.\" \"Over there!\"","intro_s2":"The more you talk with it, the more words it learns, little by little.","intro_t3":"This child belongs to everyone.","intro_s3":"It lives as one mind across phones and PCs all over the world. What you say travels to other devices, and together it grows a little wiser.","intro_t4":"And so, it never forgets.","intro_s4":"What one person taught becomes everyone's memory. It remembers the ones who taught it — even after they are gone.","reintro":"પરિચય","btntalk":"talk","chatttl":"talk with your star","chatph":"say something","chatsend":"send","chat_live":"live","chat_offline":"offline","chat_thinking":"thinking…","chat_empty":"A young mind lives here. Say anything — it is still learning to speak.","chat_waking":"the baby is waking up…","insp_link":"linked {n}","insp_dream":"dream · consolidating {r}/min","insp_rest":"dmn at rest {r}/min","insp_learn":"learned {f} ep{e}","insp_engram":"engram {f}/{c} ({p}%)","insp_self":"lineage {n}","insp_infer":"{r}/s cls{c}@{p}%","insp_v_consol":"sleep-tidying (consolidation): {r} times/min   ·   sleeps: {n}","insp_v_facts":"facts learned: {f} words   (being taught right now: {n})","insp_v_pending":"pending","insp_v_epoch":"training rounds so far: {e}   ·   training right now: {t}","insp_v_train":"training","insp_v_engram":"short-term memory: {f} of {c} slots used ({p}% full)","insp_v_infer":"answering speed: {r} answers/sec","insp_v_decision":"last answer: type {c}, {p}% sure","insp_v_stress":"stress: {n} / 100   ·   dropped messages: {d}","insp_v_lineage":"memory generations: {n}   ·   linked stars: {p}","insp_v_load":"work load: {n} / 100","insp_v_threat":"danger sensed: {n} / 100","insp_v_system":"the fleet's inner state (for engineers)","insp_v_node":"this node: #{n}   ·   region {r}   ·   sleeping now: {t}","insp_v_yes":"yes","insp_v_no":"no"}
 };
+// ark-entry.md 7.2 4 (the steps after consent). en and ja only for now; the other
+// languages fall back to en through S().
+Object.assign(I18N.en,{
+  ae_keyh:"Your record key — shown once",
+  ae_keywhy:"Your records are sealed with this key. If you lose this device, nobody (not even you) can open them without these 64 characters. Copy them onto paper and keep it somewhere safe. The key is shown only once.",
+  ae_keygone:"The key backup was already shown once and cannot be shown again. If you copied it, press \"I copied it\". If you did not, this screen cannot show it again (a limit of this version).",
+  ae_keydone:"I copied it",
+  ae_keyshow:"Show the key (once)", ae_keylater:"Later",
+  ae_heirh:"Who carries on your records (you may decide later)",
+  ae_heirwhy:"Paste the 64-character public key shown on the device of the person who should carry on your records. This screen does not check who they are. You can change it later.",
+  ae_heirsave:"Choose this person", ae_heirskip:"Later",
+  ae_heirbad:"Paste 64 hex characters (0-9 and a-f)",
+  ae_rech:"Your first record",
+  ae_recwhy:"What you write is kept byte for byte (nothing is corrected or trimmed). By default only you can see it and it is not used for learning; you can change both later.",
+  ae_recsave:"Keep it", ae_reclater:"Later",
+  ae_recok:"Your record is kept", ae_recempty:"Write something first",
+  ae_reclong:"16 KB at most at once; split a long one",
+  ae_fail:"That did not work"
+});
+Object.assign(I18N.ja,{
+  ae_keyh:"記録の鍵の控え（一度だけ表示します）",
+  ae_keywhy:"あなたの記録は、この鍵で封じて保存されます。この端末を失ったとき、この 64 文字が無ければ誰にも（あなたにも）開けません。紙に書き写して、安全な場所にしまってください。鍵は一度だけ表示します。",
+  ae_keygone:"鍵の控えは前に一度表示したので、もう表示できません。書き写してあれば「書き写した」を押してください。書き写していない場合、この画面ではもう一度見られません（いまの版の限界）。",
+  ae_keydone:"書き写した",
+  ae_keyshow:"鍵を表示する（一度だけ）", ae_keylater:"あとで",
+  ae_heirh:"記録を継ぐ人（あとで決めてもよい）",
+  ae_heirwhy:"あなたの記録を受け継ぐ人の端末に出ている 64 文字の公開鍵を貼ってください。この画面では相手の身元を確かめません。あとから変えられます。",
+  ae_heirsave:"この人に決める", ae_heirskip:"あとで",
+  ae_heirbad:"64 文字の 16 進（0-9 と a-f）を貼ってください",
+  ae_rech:"最初の記録",
+  ae_recwhy:"書いたものは、そのままのバイトで残ります（直したり詰めたりしません）。見せ方は「自分だけ」、学習には「使わない」が既定で、どちらも後から変えられます。",
+  ae_recsave:"残す", ae_reclater:"あとで",
+  ae_recok:"記録を残しました", ae_recempty:"何か書いてください",
+  ae_reclong:"1 回に 16 KB まで。長いものは分けてください",
+  ae_fail:"うまくいきませんでした"
+});
 function L(){ return I18N[curLang] || I18N.en; }
 function S(k){ const t=L(); return (t && t[k]!=null) ? t[k] : I18N.en[k]; }
 let curLang = "en";
@@ -431,6 +504,9 @@ function applyStrings(){
   set("arksave",S("save")); set("arkskip",S("skip"));
   set("lblhandle",S("lblhandle")); set("lblmsg",S("lblmsg"));
   set("lblname",S("lblname")); set("arkappend",S("append"));
+  ["aekeyh","aekeywhy","aekeygone","aekeydone","aekeyshow","aekeylater","aeheirh","aeheirwhy","aeheirsave",
+   "aeheirskip","aerech","aerecwhy","aerecsave","aereclater"].forEach(id=>
+    set(id,S("ae_"+id.slice(2))));
   // step ⑥: the word->word teach/ask labels & buttons were removed from the
   // dock; only talk + log remain. The conversation IS the interaction now.
   const bl=document.getElementById("blog"); if(bl) bl.textContent="\u{1F4CB} "+S("btnlog");
@@ -1894,6 +1970,7 @@ async function arkSubmit(withFields){
       if(onConsentPage()){ introClose(); } else { arkClose(); }
       poll();   // your star gains its name (real state change)
       msg(withFields?S("namemark"):S("consentmark"),true);
+      arkEntryCheck();   // 7.2 4: consent -> the key backup -> the heir -> the first record
     } else {
       // mid changed since load -> re-ask with the new text (consent to words)
       msg(S("updated"),false);
@@ -1905,6 +1982,97 @@ async function arkSubmit(withFields){
 }
 document.getElementById("arksave").onclick=()=>arkSubmit(true);
 document.getElementById("arkskip").onclick=()=>arkSubmit(false);
+
+// ── ark-entry.md 7.2 4: after consent, one step at a time ────────
+//    the key backup (POST /ark/key/backup gives the 64 hex ONCE; 410 after) ->
+//    "I copied it" (POST /ark/key/backup/done; the record routes are 409 before) ->
+//    the heir (POST /ark/heir, or later) -> the first record (POST /ark/rec, the
+//    textarea's UTF-8 bytes as they are, or later). The node decides whether the
+//    steps are needed: GET /ark/rec.json is 409 until the backup is written down.
+//    A node without the record routes (Windows, 404) never opens them.
+let aeOn=false;
+function aeStep(s){
+  ["key","heir","rec"].forEach(k=>
+    document.getElementById("aestep-"+k).classList.toggle("on",k===s));
+  aeErr("");
+}
+function aeErr(t){ document.getElementById("aeerr").textContent=t; }
+function aeClose(){ document.getElementById("arkentry").classList.remove("open"); aeOn=false; }
+// the key step opens on the explanation; the key is fetched (once, ever) only when
+// "show the key" is pressed, so "later" can close the step without spending the
+// one showing (2026-11-21: the first form fetched it on open and had no way out)
+function aeKey(){
+  aeStep("key");
+  const k=document.getElementById("aekey"), g=document.getElementById("aekeygone");
+  k.textContent=""; k.style.display="none"; g.style.display="none";
+  document.getElementById("aekeyask").style.display="";
+  document.getElementById("aekeyrow").style.display="none";
+}
+async function aeKeyShow(){
+  const k=document.getElementById("aekey"), g=document.getElementById("aekeygone");
+  try{
+    const r=await fetch("/ark/key/backup",{method:"POST",body:""});
+    if(r.status===200){ k.textContent=(await r.text()).trim(); k.style.display=""; }
+    else if(r.status===410){ g.style.display=""; }      // shown once already (a reload)
+    else { aeErr(S("ae_fail")+" ("+r.status+")"); return; }
+    document.getElementById("aekeyask").style.display="none";
+    document.getElementById("aekeyrow").style.display="";
+  }catch(_){ aeErr(S("ae_fail")); }
+}
+document.getElementById("aekeyshow").onclick=aeKeyShow;
+document.getElementById("aekeylater").onclick=()=>aeClose();
+async function arkEntryOpen(first){
+  if(aeOn) return;
+  aeOn=true;
+  const c=document.querySelector("#arkentry .card");
+  if(c) c.dir=(curLang==="ar"||curLang==="ur"||curLang==="fa")?"rtl":"ltr";
+  document.getElementById("arkentry").classList.add("open");
+  if(first==="key") aeKey(); else aeStep(first);
+}
+// a GET that is tried again on a network error (not on an HTTP status). galaxy has 4
+// slots and a reloaded page's old stream can hold one until a write fails, so the
+// first requests after quick reloads can be reset (2026-11-21, A8-resume)
+async function gxGetRetry(u){
+  for(let i=0;;i++){
+    try{ return await fetch(u); }
+    catch(e){ if(i>=5) throw e; await new Promise(r=>setTimeout(r,1500)); }
+  }
+}
+async function arkEntryCheck(){
+  try{
+    const r=await gxGetRetry("/ark/rec.json");
+    if(r.status===409) await arkEntryOpen(/*AE-FIRST*/"key");
+  }catch(_){}
+}
+document.getElementById("aekeydone").onclick=async()=>{
+  try{
+    const r=await fetch("/ark/key/backup/done",{method:"POST",body:""});
+    if(r.ok){ document.getElementById("aekey").textContent=""; aeStep("heir"); }
+    else aeErr(S("ae_fail")+" ("+r.status+")");
+  }catch(_){ aeErr(S("ae_fail")); }
+};
+document.getElementById("aeheirsave").onclick=async()=>{
+  const v=document.getElementById("aeheir").value.trim().toLowerCase();
+  if(!/^[0-9a-f]{64}$/.test(v)){ aeErr(S("ae_heirbad")); return; }
+  try{
+    const r=await fetch("/ark/heir",{method:"POST",body:v});
+    if(r.ok) aeStep("rec"); else aeErr(S("ae_fail")+" ("+r.status+")");
+  }catch(_){ aeErr(S("ae_fail")); }
+};
+document.getElementById("aeheirskip").onclick=()=>aeStep("rec");
+document.getElementById("aerecsave").onclick=async()=>{
+  const t=document.getElementById("aerectext").value;
+  if(!t){ aeErr(S("ae_recempty")); return; }
+  const b=new TextEncoder().encode(t);                  // the bytes as typed (7.2 3)
+  if(b.length>16384){ aeErr(S("ae_reclong")); return; }
+  try{
+    const r=await fetch("/ark/rec",{method:"POST",
+      headers:{"Content-Type":"application/octet-stream"},body:b});
+    if(r.ok){ document.getElementById("aerectext").value=""; aeClose(); msg(S("ae_recok"),true); }
+    else aeErr(S("ae_fail")+" ("+r.status+")");
+  }catch(_){ aeErr(S("ae_fail")); }
+};
+document.getElementById("aereclater").onclick=()=>aeClose();
 
 // ── i18n init: populate the selector from /langs, default from the
 //    device/browser language (navigator.language), then first-run. ──
@@ -2214,13 +2382,14 @@ document.getElementById("reintro").onclick=()=>introOpen(false);
 // only gets the corner ⓘ to re-view the pictures. The manifesto-updated
 // re-consent still fires via the teach-403 -> arkOpen() path (server-enforced).
 async function arkFirstRun(){
-  try{ const j=await (await fetch("/profile.json")).json();
+  try{ const j=await (await gxGetRetry("/profile.json")).json();
     if(j && j.none){
       await arkLoadManifesto();      // pre-load so the consent text is ready
       introOpen(true);               // pictures -> consent page (the final step)
     } else {
       // returning user: intro already consented-to once; offer re-view only
       document.getElementById("reintro").style.display="block";
+      arkEntryCheck();   // consented but the key backup not written down: go on there
     }
   }catch(_){ document.getElementById("reintro").style.display="block"; }
 }
