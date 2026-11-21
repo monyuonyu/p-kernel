@@ -85,15 +85,25 @@ def eof_within(s, secs):
 try:
     up = get_within("/manifesto", 120)
     res("S0-up", up is not None)
-    # S1: four streams opened and closed by the browser (quick reloads): the slots
-    # come back at once, not when a keepalive write fails (15 s and more)
-    ss = [sse_open() for _ in range(4)]
+    # S1: three streams held, a fourth opened and closed by the browser (a quick
+    # reload): its slot comes back at once, not when a keepalive write fails (15 s
+    # and more), and the GET does not cost a held stream (S1-keep; written after the
+    # first run of the fix: with S1 as four closed streams, the oldest-gives-way rule
+    # alone also let the GET in, and the falsifier NO_READ stayed green)
+    ss = []
+    for _ in range(4):
+        ss.append(sse_open())
+        time.sleep(0.3)
     res("S0-open", all(ss), "(%d of 4 streams open)" % sum(1 for x in ss if x))
-    for x in ss:
-        if x:
-            x.close()
+    if ss[3]:
+        ss[3].close()
+    time.sleep(0.5)
     w = get_within("/manifesto", 5)
     res("S1-closed", w is not None, "(%s)" % ("answered in %.1f s" % w if w is not None else "no answer in 5 s"))
+    res("S1-keep", bool(ss[0]) and not eof_within(ss[0], 1), "(the oldest held stream stays)")
+    for x in ss[:3]:
+        if x:
+            x.close()
     time.sleep(1)
     # S2: four streams held open: the page still gets in, the oldest stream gives way
     ss = []

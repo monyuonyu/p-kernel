@@ -6,12 +6,15 @@
 # Expectations fixed before the code (2026-11-21, test first; one hosted node, galaxy on
 # a fixed port, driven by tests/host/galaxy_slots.py):
 #   S0  the page answers; four /events streams open (the 4 slots, GALAXY_MAX_CLIENTS)
-#   S1  the four streams closed by the client: GET /manifesto answers 200 within 5 s
-#       (a closed stream frees its slot at once, not when a keepalive write fails)
+#   S1  three streams held and a fourth closed by the client: GET /manifesto answers 200
+#       within 5 s (a closed stream frees its slot at once, not when a keepalive write
+#       fails), and the oldest held stream stays open (S1-keep; added after the first run
+#       of the fix, when S1 was four closed streams and NO_READ stayed green: the oldest-
+#       gives-way rule alone let the GET in)
 #   S2  four streams held open: GET /manifesto answers 200 within 5 s; the oldest
 #       stream is closed by the node (S2-oldest), the newest stays (S2-newest)
 # Falsifiers (each must turn its check red; plain must be ALL PASS):
-#   -DGX_NC_SSE_NO_READ (a stream is never read, as before) -> S1
+#   -DGX_NC_SSE_NO_READ (a stream is never read, as before) -> S1-keep
 #   -DGX_NC_NO_EVICT    (a full table drops the new connection, as before) -> S2-held
 # Output: "[gx-slots] <arm> <check> PASS|FAIL", then ALL PASS (exit 0) or RED.
 # Rebuilds boot/linux* with EXTRA_CFLAGS and cleans it afterwards. GX_SLOTS_PORT (17831).
@@ -40,13 +43,13 @@ arm() {  # <name> <cflags>
 is() { grep -q "^\[gx-slots\] $2 $3" "$WORK/$1.out"; }
 
 if arm plain ""; then
-    for c in S0-up S0-open S1-closed S2-open S2-held S2-oldest S2-newest; do
+    for c in S0-up S0-open S1-closed S1-keep S2-open S2-held S2-oldest S2-newest; do
         is plain "$c" PASS || REDS="$REDS plain-$c"
     done
 fi
 if arm noread "-DGX_NC_SSE_NO_READ"; then
-    if is noread S1-closed FAIL; then echo "[gx-slots] GX_NC_SSE_NO_READ turns S1-closed red (as it must)"
-    else echo "[gx-slots] GX_NC_SSE_NO_READ does NOT turn S1-closed red"; REDS="$REDS noread"; fi
+    if is noread S1-keep FAIL; then echo "[gx-slots] GX_NC_SSE_NO_READ turns S1-keep red (as it must)"
+    else echo "[gx-slots] GX_NC_SSE_NO_READ does NOT turn S1-keep red"; REDS="$REDS noread"; fi
 fi
 if arm noevict "-DGX_NC_NO_EVICT"; then
     if is noevict S2-held FAIL; then echo "[gx-slots] GX_NC_NO_EVICT turns S2-held red (as it must)"
