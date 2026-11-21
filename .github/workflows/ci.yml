@@ -3800,7 +3800,10 @@ jobs:
           ! N3C_CFLAGS=-DN3_NC_FIRST_COME N3C_PORT=7614 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc7.log 2>&1
           cat n3cap_nc7.log
           grep -aqF '[n3-swim-cap] C7 FAIL' n3cap_nc7.log
-          grep -aqF '[n3-swim-cap] C6 PASS' n3cap_nc7.log
+          # not C6: which ids first come leaves out depends on the start order, and C6
+          # kills id N-1 (CI 44880448567: 5 9 10 out, C6 PASS; 44908344069: 10 11 out,
+          # C6 0/0 FAIL). C1 (the cap itself) does not depend on who is left out
+          grep -aqF '[n3-swim-cap] C1 PASS' n3cap_nc7.log
           # C8: a dead holder's slot is handed over to a refused peer
           ! N3C_CFLAGS=-DN3_NC_NO_HANDOVER N3C_PORT=7615 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc8.log 2>&1
           cat n3cap_nc8.log
