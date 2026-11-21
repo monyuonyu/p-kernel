@@ -3729,8 +3729,8 @@ jobs:
     # (feedback_proot_sandbox_net_limits); wiring it is deferred (U-2/U-3, §10).
     name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
-    # 35 -> 50 (11-21): five run_n3_swim_cap.sh runs (plain + 4 negatives), ~4 min each
-    timeout-minutes: 50
+    # 35 -> 60 (11-21): six run_n3_swim_cap.sh runs (plain + 5 negatives), ~6 min each
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3797,6 +3797,11 @@ jobs:
           cat n3cap_nc8.log
           grep -aqF '[n3-swim-cap] C8 FAIL' n3cap_nc8.log
           grep -aqF '[n3-swim-cap] C6 PASS' n3cap_nc8.log
+          # C9: a restarted peer is ALIVE again on its former holders (the graves)
+          ! N3C_CFLAGS=-DN3_NC_NO_GRAVE N3C_PORT=7616 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc9.log 2>&1
+          cat n3cap_nc9.log
+          grep -aqF '[n3-swim-cap] C9 FAIL' n3cap_nc9.log
+          grep -aqF '[n3-swim-cap] C8 PASS' n3cap_nc9.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
         run: bash tests/unbounded/run_unbounded_live.sh
       - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)
