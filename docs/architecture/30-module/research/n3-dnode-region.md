@@ -5,8 +5,8 @@ ROADMAP N3 の 2 本目の表。この文書と試験先だけで、製品のコ
 ## 1. いまの形（master 64d51ff2）
 
 - `DNODE dnode_table[DNODE_MAX]`（drpc.c、1 行 ip・state・missed・node_id）。狭い番号で引く。drpc の heartbeat が「全員」に送り、全員の行を持つ（第 1 段の後も、SWIM の枠に入らない台はここにだけ居る）
-- 引く所: arch の .c で約 200 か所（state 163・ip 15・missed 14・node_id 5）、29 ファイル。書くのは drpc.c 19・swim.c 56 と、自己試験の中の gossip_learn 3・pmesh 4・spawn 2
-- 大きさの数字は §4（試験先を master で走らせた結果）
+- 引く所: 約 200 か所（state 163）。書くのは drpc.c・swim.c と、自己試験の中の gossip_learn・pmesh・spawn
+- 数字は §4
 
 ## 2. 作る形
 
@@ -27,7 +27,11 @@ ROADMAP N3 の 2 本目の表。この文書と試験先だけで、製品のコ
 
 D1・D2 だけでは足りない（第 1 段の教え）: 生きた台で行が溢れないことは D5 が見る。
 
-## 4. 試験先を master で（下に追記する）
+## 4. 試験先を master で（11-22、容器、木は 9cc5d09d）
+
+- D1 赤: drpc.o 1,412 / 4,484 / 16,772 B。伸びるのは `dnode_table`（12 B/台）と **`caller_strs`（4 B/台、呼ばれた仕事の exinf に呼び手の番号の文字列）**＝2b で一緒に消す（番号を数のまま渡すか R 個の輪。読む側を見て決める）
+- D2 赤: 61 行・23 ファイル（pmesh 9・dkva 7・gossip_learn 5・spawn 5 …）。最初の版は行の後ろの注釈も数えた（lookup.c の #include の注釈）＝直してから数えた
+- 陰性 D3 は土台が赤のあいだは意味が無い（どちらも赤のまま）。2a・2b の回で、緑の土台に対して赤になるかを見る
 
 ## 5. 選ばなかった案
 

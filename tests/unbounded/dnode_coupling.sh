@@ -8,7 +8,8 @@
 #       static data (size: data + bss) at DNODE_MAX 64 / 256 / 1024
 #       = the node table is not sized by the fleet any more
 #   D2  outside drpc.c and swim.c, no code line under arch/ indexes
-#       dnode_table[ directly (comment lines skipped) = everyone goes through
+#       dnode_table[ directly (comment lines and a comment after code are
+#       skipped; a string literal with "//" in it may hide a use) = everyone goes through
 #       the accessors of drpc.h, so the rows can move without touching them
 #
 #   N3D_NC=1  negative control: force one [DNODE_MAX] array into drpc.o => D1 RED
@@ -84,6 +85,7 @@ for p in sorted(files):
     for i, l in enumerate(open(p, errors="replace"), 1):
         s = l.strip()
         if s.startswith(("*", "/*", "//")): continue
+        s = re.sub(r"/\*.*?(\*/|$)", "", s).split("//")[0]   # the comment after code
         if "dnode_table[" in s:
             hits.setdefault(os.path.relpath(p, root) if p.startswith(root) else os.path.basename(p), []).append(i)
 n = sum(len(v) for v in hits.values())
