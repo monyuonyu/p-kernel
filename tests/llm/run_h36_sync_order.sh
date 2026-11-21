@@ -82,8 +82,12 @@ import sys
 p = sys.argv[1]; s = open(p).read()
 a = '    if (gl_st_sync() != 0) return -1;\n\n    /* descriptor under ONE named ref'
 b = '    /* x5: sync moved after the descriptor */\n\n    /* descriptor under ONE named ref'
-a2 = 'sizeof gl_st_desc) != PFS_OK)\n        return -1;\n    return (INT)nchunk;\n}'
-b2 = 'sizeof gl_st_desc) != PFS_OK)\n        return -1;\n    (void)gl_st_sync(); /* x5 */\n    return (INT)nchunk;\n}'
+# a2 is the descriptor save itself, not what follows it: B5 ① (feat/b5-gc,
+# master 3f45c6c5) put gl_gc_note between the save and the return, the old
+# anchor (the save then "return (INT)nchunk;") stopped matching and CI's
+# falsifier step went red ("anchor not found", run 44863534347)
+a2 = 'if (pfs_dag_save((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc) != PFS_OK)\n        return -1;\n'
+b2 = a2 + '    (void)gl_st_sync(); /* x5 */\n'
 if s.count(a) != 1 or s.count(a2) != 1:
     print('[falsifier] anchor not found'); sys.exit(1)
 open(p, 'w').write(s.replace(a, b).replace(a2, b2))
