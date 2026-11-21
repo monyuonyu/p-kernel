@@ -51,7 +51,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -217,6 +217,7 @@ for md in $MODES; do
         N2C_NC_NO_PIN)          want=I6u ;;
         N2C_NC_NONCE_COUNT)     want=I3 ;;
         N2C_NC_SMALL_NEVER)     want=I6u ;;
+        N2C_NC_NO_WAS)          want=I6u ;;   # 11-21: the news carries no previous key (idpin)
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"
