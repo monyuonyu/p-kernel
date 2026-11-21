@@ -220,6 +220,9 @@ static SWIM_PEER *sw_take(pk_node_t n)
         for (INT i = 0; s < 0 && i < SW_STORE; i++) {
             if (!sw_map.used[i]) continue;
             UB st = dnode_table[sw_map.id[i]].state;
+#if defined(N3_NC_NO_HANDOVER)
+            st = DNODE_ALIVE;   /* negative control of [n3-swim-cap] C8 */
+#endif
             if (st == DNODE_DEAD || st == DNODE_UNKNOWN) {   /* as wide_add */
                 nodemap_evict(&sw_map, i);
                 s = nodemap_admit(&sw_map, n);

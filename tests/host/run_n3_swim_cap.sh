@@ -22,6 +22,7 @@
 #   C6  (H41 (b), 11-21) node N is killed; every node that held its slot says
 #       DEAD about it through SWIM within N3C_C6_WAIT (60) s (details below)
 #   C7  (11-21) every id is in the slots of >= 2 nodes (no peer nobody watches)
+#   C8  (11-21) after C6, the dead holder's slot went to a refused peer
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -160,6 +161,24 @@ done
 echo "[n3-swim-cap] C6 killed id $VID: $held nodes held its slot, $saw of them say DEAD through SWIM"
 [ "$held" -ge 1 ] && [ "$saw" -eq "$held" ] && r C6 PASS "($saw/$held slot holders: DEAD within ${C6W} s)" \
     || r C6 FAIL "($saw/$held slot holders said DEAD; not:$miss)"
+# C8 (11-21 13:05 run, written before it was measured): the dead holder's slot is
+# handed over. N-2 live peers are still > P, so a refused one keeps asking; on
+# every node that held id N-1, a fresh `nodes` shows P slots without it.
+# -DN3_NC_NO_HANDOVER (a DEAD holder is never handed over) => C8 RED.
+for i in $(seq 1 $((N - 1))); do printf '%s\n' "nodes" >&$((i + 9)); done
+sleep 5
+c8n=0; c8ok=0; c8bad=""
+for i in $(seq 1 $((N - 1))); do
+    ids=$(tr -d '\r' < "$LOG/node$i.log" | head -n "${L0[$i]}" | grep -a '^\[swim\] slots ' | tail -1 | sed -n 's/.* ids \(.*\)$/ \1 /p')
+    case "$ids" in *" $VID "*) ;; *) continue ;; esac
+    c8n=$((c8n + 1))
+    now=$(tail -n +"$((L0[$i] + 1))" "$LOG/node$i.log" | tr -d '\r' | grep -a '^\[swim\] slots ' | tail -1)
+    u=$(echo "$now" | sed -n 's/^\[swim\] slots \([0-9]*\)\/.*/\1/p')
+    nid=$(echo "$now" | sed -n 's/.* ids \(.*\)$/ \1 /p')
+    case "$nid" in *" $VID "*) c8bad="$c8bad $i(still)";; *) [ "${u:-0}" -eq "$P" ] && c8ok=$((c8ok + 1)) || c8bad="$c8bad $i(U=${u:-?})";; esac
+done
+[ "$c8n" -ge 1 ] && [ "$c8ok" -eq "$c8n" ] && r C8 PASS "($c8ok/$c8n former holders: $P slots, id $VID handed over)" \
+    || r C8 FAIL "($c8ok/$c8n former holders handed id $VID's slot over; not:$c8bad)"
 [ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"
