@@ -24,6 +24,8 @@
 #   C7  (11-21) every id is in the slots of >= 2 nodes (no peer nobody watches)
 #   C8  (11-21) after C6, the dead holder's slot went to a refused peer
 #   C9  (11-21) node N starts again: its former holders have it ALIVE again
+#   C10 (11-22, N3 step 2 D5, only with N3C_DNODE=1) every node's last [cluster]
+#       table has <= P rows besides SELF (drpc's rows live in the slots)
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -116,6 +118,11 @@ for i in $(seq 1 "$N"); do
     [ -n "$f" ] && [ "$f" -gt 0 ] && c2=$((c2 + 1))
     [ "$alive" -ge $((P - 2)) ] && c3=$((c3 + 1))
     grep -aq '^\[cluster\]  ID' "$L" && c5=$((c5 + 1))   # only the last `nodes` prints it
+    # C10 (N3 step 2, research/n3-dnode-region.md D5): rows other than SELF in the
+    # last [cluster] table (drpc's dnode rows), any state
+    rows=$(tr -d '\r' < "$L" | awk '/^\[cluster\]  ID/{a=0; next} /^ +[0-9]+  (ALIVE|SUSPECT|DEAD|unknown)/{a++} END{print a+0}')
+    rec10="${rec10:-} $i:$rows"
+    [ "$rows" -le "$P" ] && c10=$((${c10:-0} + 1))
 done
 echo "[n3-swim-cap] rec node:U/C/F/alive$rec"
 
@@ -213,5 +220,12 @@ done
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"
 [ -z "$dead" ] && r C4 PASS "(all $N alive: no bounds trap, no crash)" || r C4 FAIL "(dead:$dead; a bounds trap or a crash, see node<i>.log)"
 [ "$c5" -eq "$N" ] && r C5 PASS "($N/$N answered the last nodes)" || r C5 FAIL "($c5/$N answered the last nodes)"
+# C10 only with N3C_DNODE=1 (off until N3 step 2b ships; master is expected RED:
+# drpc keeps a row for every peer it hears, N-1 > P). Negative -DN3D_NC_FLEET.
+if [ "${N3C_DNODE:-0}" = 1 ]; then
+    echo "[n3-swim-cap] rec node:dnode-rows$rec10"
+    [ "${c10:-0}" -eq "$N" ] && r C10 PASS "($N/$N nodes keep <= $P dnode rows)" \
+        || r C10 FAIL "($((N - ${c10:-0}))/$N nodes keep more than $P dnode rows)"
+fi
 if [ -z "$REDS" ]; then echo "[n3-swim-cap] ALL PASS"; exit 0; fi
 echo "[n3-swim-cap] RED:$REDS"; exit 1
