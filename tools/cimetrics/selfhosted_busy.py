@@ -34,8 +34,13 @@ def main():
     busy = []
     want = expected_jobs()
     try:
-        for st in ('in_progress', 'queued'):
-            runs = gh('repos/%s/actions/runs?status=%s&per_page=20' % (REPO, st)).get('workflow_runs', [])
+        # 状態で絞らない: ジョブが runner を待つ間、run は in_progress・queued 以外（waiting・pending・
+        # requested）にもなる。11-22 05:11 に status=in_progress と queued だけを見て、ジョブとジョブの
+        # 間に FREE と言った（二層カップリングの後、並列推論の前）。
+        allr = gh('repos/%s/actions/runs?per_page=30' % REPO).get('workflow_runs', [])
+        if True:
+            runs = [r for r in allr if r.get('status') != 'completed']
+            print('[selfhosted-busy] runs not completed: %s' % ' '.join('%d:%s' % (r['id'], r['status']) for r in runs))
             for r in runs:
                 page, done = 1, 0
                 while True:
