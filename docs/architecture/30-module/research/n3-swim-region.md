@@ -28,3 +28,10 @@ swim.c を hosted x86_64 で DNODE_MAX 64/256/1024 にしてコンパイルし `
 - **S3** 陰性 `N3S_NC=1`（[DNODE_MAX] の配列を 1 本押し込む）で S1 が赤
 - **S4** 出荷の形（64）で何も変わらない: SWIM の自己試験（`nodes test`・`nodes life`・idpin・selfsuspect・[n2-mix]・run_n2c_wide.sh）が緑、build_all ALL OK、crown（上の 4）
 - **S5** `tests/host/run_n3_swim_cap.sh`（境界の検査つき）: `-DSWIM_PEERS=8` で狭い番号 12 台。全員 U≤8・F>0・表の ALIVE 6 以上・はみ出せば trap で落ちる・最後まで応える。陰性 `-DN3_NC_NO_CAP` で赤。**S1・S2 だけでは足りない**: 7 本を縮めただけ（番号で引く＝はみ出す）の使い捨ての swim.c が S1・S2 とも緑だった
+
+## 4. 作った形（2026-11-21 13:05 の回、feat/n3-swim-cap、監査待ち）
+
+- `SWIM_PEER sw_peer[SWIM_PEERS]`（1 枠 16 B）＋`NODEMAP sw_map`。枠を取るのは SWIM が聞いたとき（その台のパケット・うわさ）。断られた台は返事だけもらい、生きている印もうわさも捨てる。探りと手助けは枠の上。ベアは `SW_*` のマクロが元の配列に展開する
+- 64 では swim.o が master より 448 B 大きい（13,076→13,524。枠の構造体の詰め物と NODEMAP）＝64/256/1024 で同じ
+- 作る途中の赤: 網の無い台は swim_init を通らず、枠の上限が 0 のまま全部断っていた（`nodes test` ほか 6 つ赤）→上限を静的な初期値に
+- 限界: ① 満杯で DEAD の枠を渡すと、その台の incarnation を忘れる＝後で古い ALIVE のうわさで戻りうる（64 では起きない）② 自己試験は試験の番号の枠を取ったまま残す（`nodes test` の後 11/64）③ **H41 (b) は試験にできていない**: drpc の heartbeat の老化（drpc.c の SUSPECT_THRESH・DEAD_THRESH 6＋6 回、読みでは約 6 秒）が表を DEAD にし、SWIM は 8 枠なら同じ台を 8 秒に 1 回探り DEAD まで 2＋3 回＝SWIM が DEAD と言う前に表が DEAD になり、SWIM は DEAD の台を上げない（読み。測っていない）。SWIM だけの効きを見るには drpc の老化を外す段（N3 第 2 段）が要る
