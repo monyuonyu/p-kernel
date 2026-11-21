@@ -2339,6 +2339,53 @@ INT swim_idpin_self_test(void (*emit)(const char *))
         swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS));
         I6(sw_redraw_asked == sv_ask + 4, "the 10 s across the clock's wrap");
     }
+    /* 11-21 (audit-207, CI 44880448567 plain I3 red, both redrew): a key already
+     * heard under another wide id is a node that moved away from mine. Its old
+     * key still comes as news of my id (a third node's pin, the 2nd and 4th news
+     * carry the previous key), late; it must not make me redraw. */
+    {
+        static const UB L2[8] = { 0x41, 0, 0, 0, 0, 0, 0, 2 };
+        static const UB L3[8] = { 0x42, 0, 0, 0, 0, 0, 0, 3 };
+        static const UB L4[8] = { 0x43, 0, 0, 0, 0, 0, 0, 4 };
+        static const UB H2[8] = { 0xC1, 0, 0, 0, 0, 0, 0, 2 };
+        UW a = sw_redraw_asked;
+        /* heard straight under 500, then as news of my id: the larger side waits for nothing */
+        n = sw3_pkt(buf, 500, 0xFFFF, L, 0);
+        swim_wide_rx(ip, buf, n);
+        n = sw3_pkt(buf, 43, 400, 0, L);
+        swim_wide_rx(ip, buf, n);
+        I6(sw_redraw_asked == a, "a key heard under 500 comes as my id's news: it moved, I keep my id");
+        /* the smaller side: the larger key heard under 501 never starts the 10 s */
+        n = sw3_pkt(buf, 501, 0xFFFF, H2, 0);
+        swim_wide_rx(ip, buf, n);
+        sw_claim_seen = 0;
+        swim_wide_claim(H2, 70000);
+        swim_wide_claim(H2, 70000 + SWIM2_CLAIM_WAIT_MS);
+        I6(sw_redraw_asked == a && !sw_claim_seen, "the larger key moved to 501: the smaller does not redraw");
+        /* only in the news of another id (no beacon from it yet) */
+        n = sw3_pkt(buf, 43, 502, 0, L2);
+        swim_wide_rx(ip, buf, n);
+        n = sw3_pkt(buf, 43, 400, 0, L2);
+        swim_wide_rx(ip, buf, n);
+        I6(sw_redraw_asked == a, "a key in the news of 502 comes as my id's news: it moved");
+        /* in one packet, my id's news first and the other id's after it */
+        n = sw3_pkt(buf, 43, 400, 0, L3);
+        {
+            SWIM2_PKT *pp = (SWIM2_PKT *)buf;
+            SWIM2_FPS *tt = (SWIM2_FPS *)(buf + sizeof(SWIM2_PKT));
+            pp->gossip_cnt = 2;
+            pp->gossip[1].node_id = 503; pp->gossip[1].state = DNODE_ALIVE;
+            tt->n = 3;
+            for (INT i = 0; i < 8; i++) tt->fp[2][i] = L3[i];
+            n = (UH)(sizeof(SWIM2_PKT) + 4 + 24);
+        }
+        swim_wide_rx(ip, buf, n);
+        I6(sw_redraw_asked == a, "one packet: my id with L3, then 503 with L3: it moved");
+        /* a key heard nowhere else still redraws (the check is not a blanket) */
+        n = sw3_pkt(buf, 43, 400, 0, L4);
+        swim_wide_rx(ip, buf, n);
+        I6(sw_redraw_asked == a + 1, "a smaller key heard nowhere else: I redraw");
+    }
 
     PK_NOSW_ENTER();
     wide_map = saved_map;
