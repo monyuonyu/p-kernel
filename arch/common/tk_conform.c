@@ -902,6 +902,9 @@ static void suite_dds(PRI me)
             for (i = 0; i < 65536; i++) spin++;
             chunks++;
         }
+#ifdef TKC_K9_SHORT_TRIES   /* test hook: the first N calibrations come out short */
+        if (TKC_K9_SHORT_TRIES > 0) chunks = 1;
+#endif
         t = mk_task(t_delay_then_flag, me - 1);
         h_flag = 0;
         tk_sta_tsk(t, 9);                 /* runs at once, sleeps 20 ms */
