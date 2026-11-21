@@ -131,13 +131,15 @@ def wait_shown(pg, sel, timeout=15):
     return False
 
 
-def wait_post(posts, path, timeout=15):
+def wait_post(pg, posts, path, timeout=15):
+    """the status of the page's POST to path. pg.wait_for_timeout, not time.sleep: the
+    sync API hands out the response events only while it is inside a call"""
     t_end = time.time() + timeout
     while time.time() < t_end:
         for p, st in posts:
             if p == path and st is not None:
                 return st
-        time.sleep(0.1)
+        pg.wait_for_timeout(100)
     return None
 
 
@@ -222,7 +224,7 @@ def main():
         if rec_only:
             pg.fill("#aerectext", REC_TEXT)
             pg.click("#aerecsave")
-            wait_post(posts, "/ark/rec")
+            wait_post(pg, posts, "/ark/rec")
         closed = False
         t_end = time.time() + 10
         while rec_only and time.time() < t_end:
@@ -278,7 +280,7 @@ def main():
         ctx, pg = open_page(browser, tok, reqs, posts)
         ok = consent(pg)
         ks = ok and wait_shown(pg, "#aestep-key", 15)
-        kp = wait_post(posts, "/ark/key/backup") if ks else None
+        kp = wait_post(pg, posts, "/ark/key/backup") if ks else None
         k1 = bool(ks) and kp == 200
         print("[ark-dom] note n2 before reload: consent=%s keystep=%s backup=%s posts=%s"
               % (ok, ks, kp, posts), flush=True)
@@ -298,7 +300,7 @@ def main():
         if r2:
             pg.fill("#aerectext", "skip the heir")
             pg.click("#aerecsave")
-            wait_post(posts, "/ark/rec")
+            wait_post(pg, posts, "/ark/rec")
         hs, hb = raw("GET", "/ark/heir", b"", tok)
         ls, lb = raw("GET", "/ark/rec.json", b"", tok)
         nheir = [pth for pth, _st in posts if pth == "/ark/heir"]
