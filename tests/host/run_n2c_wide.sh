@@ -163,7 +163,9 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
         ra=$(cnt "$LOG/A.log" '^\[n2c\] redraw'); rb=$(cnt "$LOG/B.log" '^\[n2c\] redraw')
         [ $((ra + rb)) -ge 1 ] && break
     done
-    sleep 5    # a second redraw (both sides) would show by now
+    # a second redraw (both sides) would show by now: 11-21 (fix/n2c-twice) the smaller
+    # redraws 10 s + 7 s after it first heard the other key, so 5 s no longer covers it
+    sleep 20
     ra=$(cnt "$LOG/A.log" '^\[n2c\] redraw'); rb=$(cnt "$LOG/B.log" '^\[n2c\] redraw')
     who=""; other=""
     [ "$ra" = 1 ] && [ "$rb" = 0 ] && { who=A; other=B; }
