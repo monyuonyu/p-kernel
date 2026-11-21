@@ -21,6 +21,7 @@
 #   C5  every node answered the last `nodes` (printed the [cluster] header)
 #   C6  (H41 (b), 11-21) node N is killed; every node that held its slot says
 #       DEAD about it through SWIM within N3C_C6_WAIT (60) s (details below)
+#   C7  (11-21) every id is in the slots of >= 2 nodes (no peer nobody watches)
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -124,6 +125,25 @@ echo "[n3-swim-cap] rec node:U/C/F/alive$rec"
 # writing C6 (pk-scratch/n3s/h41.sh): all 11 nodes had it DEAD through SWIM,
 # drpc printed nothing about it. Negative -DN3_NC_NO_PROBE_SLOTS (the slots are
 # never probed) => C6 RED.
+# C7 (limit 4 of step 1, added 11-21 13:05 run BEFORE the fix): from the same
+# last slots lines (before the kill), every id 0..N-1 is held by >= 2 nodes.
+# On 689575a7 (first come keeps the slots) three ids were held by NO node, the
+# same three on every node (0 4 9, then 1 8 10), so SWIM watched nobody of them.
+declare -A HOLD
+for i in $(seq 1 "$N"); do
+    for id in $(tr -d '\r' < "$LOG/node$i.log" | grep -a '^\[swim\] slots ' | tail -1 | sed -n 's/.* ids \(.*\)$/\1/p'); do
+        HOLD[$id]=$(( ${HOLD[$id]:-0} + 1 ))
+    done
+done
+c7=""; c7rec=""
+for id in $(seq 0 $((N - 1))); do
+    c7rec="$c7rec $id:${HOLD[$id]:-0}"
+    [ "${HOLD[$id]:-0}" -ge 2 ] || c7="$c7 $id"
+done
+echo "[n3-swim-cap] C7 holders per id:$c7rec"
+[ -z "$c7" ] && r C7 PASS "(every id 0..$((N - 1)) is in >= 2 nodes' slots)" \
+    || r C7 FAIL "(ids in fewer than 2 nodes' slots:$c7)"
+
 VID=$((N - 1)); C6W="${N3C_C6_WAIT:-60}"
 declare -A L0
 for i in $(seq 1 $((N - 1))); do L0[$i]=$(wc -l < "$LOG/node$i.log"); done
