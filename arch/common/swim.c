@@ -1544,6 +1544,9 @@ static const UB *sw_my_fp_get(void)
  * and a third node's news both follow whoever spoke last, measured 11-21), so
  * it redraws itself. A larger key that moved is no longer heard here. */
 #define SWIM2_CLAIM_WAIT_MS 10000
+/* and once more after that: longer than a third node's pin of the moved key can
+ * last (it gossips only ALIVE ids, SUSPECT after SWIM_WIDE_SUSPECT_MS) */
+#define SWIM2_CLAIM_AGAIN_MS (SWIM_WIDE_SUSPECT_MS + SWIM_PROBE_INTERVAL_MS)
 static UB  sw_claim_seen;          /* the smaller side heard the other key   */
 static UW  sw_claim_t0;            /* when it first did                      */
 static void sw_redraw_now(const UB *f, const UB *mine, const char *why)
@@ -2380,12 +2383,29 @@ INT swim_idpin_self_test(void (*emit)(const char *))
         I6(sw_redraw_asked == sv_ask + 2 && sw_claim_seen, "a larger key: the first time I wait");
         swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS - 1);
         I6(sw_redraw_asked == sv_ask + 2, "still within 10 s: I wait");
+        /* 11-21 (audit-208): the larger may have redrawn and not yet spoken under
+         * its new id; its old key still comes for a while (a third node's pin until
+         * it turns SUSPECT, the 2nd and 4th news after a change). One hearing past
+         * the 10 s is not enough: it must come again SWIM2_CLAIM_AGAIN_MS later. */
         swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS);
-        I6(sw_redraw_asked == sv_ask + 3, "the larger has not moved in 10 s: I redraw");
+        I6(sw_redraw_asked == sv_ask + 2, "heard at 10 s: I wait for one more");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS - 1);
+        I6(sw_redraw_asked == sv_ask + 2, "again, but within 7 s of that: I wait");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS);
+        I6(sw_redraw_asked == sv_ask + 3, "heard at 10 s and 7 s after: the larger has not moved, I redraw");
         sw_claim_seen = 0;
         swim_wide_claim(H, 0xFFFFF000UL);
         swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS));
-        I6(sw_redraw_asked == sv_ask + 4, "the 10 s across the clock's wrap");
+        swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS));
+        I6(sw_redraw_asked == sv_ask + 4, "the 10 s and the 7 s across the clock's wrap");
+        /* the shape seen in /build/mvk/l-fall/r1 (audit-208): the larger redrew at
+         * once, its old key came at 10 s, 12 s, 14 s, then never */
+        sw_claim_seen = 0;
+        swim_wide_claim(H, 90000);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS + 2000);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS + 4000);
+        I6(sw_redraw_asked == sv_ask + 4, "a moved larger key's tail at 10, 12, 14 s: I keep my id");
     }
     /* 11-21 (audit-207, CI 44880448567 plain I3 red, both redrew): a key already
      * heard under another wide id is a node that moved away from mine. Its old
