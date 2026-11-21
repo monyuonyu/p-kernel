@@ -10,7 +10,7 @@ ROADMAP N3 の 2 本目の表。この文書と試験先だけで、製品のコ
 
 ## 2. 作る形
 
-1. **2a 口をそろえる**: drpc.h に `dnode_state(n)`・`dnode_ip(n)`・`dnode_missed(n)` と書く口、行を回す `DNODE_FOREACH`。drpc.c と swim.c の外は口だけを使う。中身は今の配列のまま＝ベアも hosted も .text の全バイト同じを狙う（static inline）
+1. **2a 口をそろえる**: drpc.h に `dnode_state(n)`・`dnode_ip(n)`・`dnode_missed(n)` と書く口、行を回す `DNODE_FOREACH`。drpc.c と swim.c の外は口だけを使う。中身は今の配列のまま、口は**マクロ**（§4: static inline だと .text が動いた）＝ベアも hosted も .text の全バイト同じ
 2. **2b 中身を枠へ（hosted だけ）**: 行を SWIM の枠 `SWIM_PEER` に入れ、表を 1 本・地図を `sw_map` 1 本にする。行の無い番号は UNKNOWN・ip 0。heartbeat を聞いたら枠を取る（取り方は第 1 段と同じ、満杯なら断って数える）。heartbeat を送るのも年を取らせるのも行の上だけ（O(R)）
 3. ベアは第 1 段と同じく番号＝枠のマクロ。crown の全バイト同じを狙い、動いたら判断待ち（監査 PASS を条件に re-bless がおすすめ）
 4. `tests/unbounded/coupling_check.sh` は「番号が広がった」の証拠に `dnode_table_bytes` の伸びを使っている。2b で平らになるので、同じコミットで証拠を `DNODE_MAX` そのものに替える
@@ -32,6 +32,7 @@ D1・D2 だけでは足りない（第 1 段の教え）: 生きた台で行が�
 - D1 赤: drpc.o 1,412 / 4,484 / 16,772 B。伸びるのは `dnode_table`（12 B/台）と **`caller_strs`（4 B/台、呼ばれた仕事の exinf に呼び手の番号の文字列）**＝2b で一緒に消す（番号を数のまま渡すか R 個の輪。読む側を見て決める）
 - D2 赤: 61 行・23 ファイル（pmesh 9・dkva 7・gossip_learn 5・spawn 5 …）。最初の版は行の後ろの注釈も数えた（lookup.c の #include の注釈）＝直してから数えた
 - D5（C10）赤: 12 台・枠 8 で行の数 10・10・10・10・9・8・10・10・11・9・11・10＝11/12 台が 8 を超える。C1〜C9 は全部 PASS（C10 の足しで他は変わらない）。8 行の台が 1 つ通った＝heartbeat が全員から届くとは限らない。全台を求めるので master は赤
+- 2a の探り（使い捨ての木、読む 51 か所・22 ファイルだけ口に置き換え、同時に 2 腕）: 口を `static inline`（引数 pk_node_t）にすると x86 902d7460 380747→0e6f708f 380735・aarch64 と hosted も別の値。**マクロ `(dnode_table[(n)].state)` なら 3 つとも全バイト同じ**。台本 pk-scratch/n3d2/probe*.{py,sh}
 - 陰性 D3 は土台が赤のあいだは意味が無い（どちらも赤のまま）。2a・2b の回で、緑の土台に対して赤になるかを見る
 
 ## 5. 選ばなかった案
