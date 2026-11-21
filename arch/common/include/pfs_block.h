@@ -83,6 +83,11 @@ void pfs_set_put_hook(PFS_PUT_HOOK fn);
  * holds a block, 0 if empty / out of range. Any out param may be NULL. */
 INT  pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
                    pk_node_t *origin_out);
+#ifdef _TK_HOSTED_LIBC_
+/* The origin in <id>.org for a block out of the table (0xFF = own), or -1 when
+ * there is none (no file / no durable dir). Hosted only (the flat files). */
+INT  pfs_dur_origin_of(const U1 id[PFS_ID_LEN]);
+#endif
 
 /* Retrieve the block named by id into buf (up to maxlen bytes). Returns the
  * block's full length on success (may exceed maxlen if the caller's buffer

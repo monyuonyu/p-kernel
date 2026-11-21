@@ -787,6 +787,9 @@ static void cmd_pfs(const UB *line, INT n)
         /* PFS-FLAT-FULL cert: with PKERNEL_PFS_DIR a full table evicts, the
          * evicted blocks read back from their files, a drop removes them. */
         pfs_flatfull_self_test(print);
+    } else if (p < end && starts_with(p, (INT)(end - p), "orgtest")) {
+        /* PFS-ORIGIN-SELF-ON-SEND (O4): the origin a block is sent with */
+        pfs_repl_origin_self_test(print);
     } else if (p < end && starts_with(p, (INT)(end - p), "origins")) {
         /* 0-14 S1: who the stored blocks came from (swarm-leave.md) */
         swarm_leave_origins(print);
