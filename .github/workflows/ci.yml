@@ -3729,7 +3729,8 @@ jobs:
     # (feedback_proot_sandbox_net_limits); wiring it is deferred (U-2/U-3, §10).
     name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # 35 -> 60 (11-21): six run_n3_swim_cap.sh runs (plain + 5 negatives), ~6 min each
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3763,6 +3764,44 @@ jobs:
           grep -aqF 'disease REFUSED to build by the SHIPPING gate' unbounded.log
           ! grep -aqE 'unbounded-(flat|coupling|dkva-origin|disease)\]  (FAIL|RED)' unbounded.log
           ! grep -aqF 'the disease BUILT' unbounded.log
+      - name: "[unbounded-swim] + [n3-swim-cap]: N3 step 1, SWIM tables sized by the region (S1 S2 S3 S5, BLOCKING)"
+        # research/n3-swim-region.md §3. S1/S2: swim.o's static data is the same at
+        # DNODE_MAX 64/256/1024 and no 8-bit loop to DNODE_MAX; S3: one forced
+        # [DNODE_MAX] array turns S1 RED. S5: 12 narrow nodes on a relay with
+        # SWIM_PEERS=8 (swim.o with -fsanitize=bounds trap): every node 7<=U<=8,
+        # refused > 0, alive; -DN3_NC_NO_CAP (no cap) turns C1 RED. C6: a killed
+        # slot holder is DEAD through SWIM (-DN3_NC_NO_PROBE_SLOTS: RED). C7: every
+        # id is in >= 2 nodes' slots (-DN3_NC_FIRST_COME: RED).
+        run: |
+          bash tests/unbounded/swim_coupling.sh | tee swim_cpl.log
+          grep -aqF '[unbounded-swim] ALL PASS' swim_cpl.log
+          ! N3S_NC=1 bash tests/unbounded/swim_coupling.sh > swim_cpl_nc.log 2>&1
+          grep -aqF '[unbounded-swim] S1 FAIL' swim_cpl_nc.log
+          grep -aqF 'n3s_nc_fleet' swim_cpl_nc.log
+          timeout 600 bash tests/host/run_n3_swim_cap.sh | tee n3cap.log
+          grep -aqF '[n3-swim-cap] ALL PASS' n3cap.log
+          ! N3C_CFLAGS=-DN3_NC_NO_CAP N3C_PORT=7612 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc.log 2>&1
+          cat n3cap_nc.log
+          grep -aqF '[n3-swim-cap] C1 FAIL' n3cap_nc.log
+          ! N3C_CFLAGS=-DN3_NC_NO_PROBE_SLOTS N3C_PORT=7613 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc6.log 2>&1
+          cat n3cap_nc6.log
+          grep -aqF '[n3-swim-cap] C6 FAIL' n3cap_nc6.log
+          grep -aqF '[n3-swim-cap] C1 PASS' n3cap_nc6.log
+          # C7: first come (the step-1 rule) leaves the same ids out on every node
+          ! N3C_CFLAGS=-DN3_NC_FIRST_COME N3C_PORT=7614 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc7.log 2>&1
+          cat n3cap_nc7.log
+          grep -aqF '[n3-swim-cap] C7 FAIL' n3cap_nc7.log
+          grep -aqF '[n3-swim-cap] C6 PASS' n3cap_nc7.log
+          # C8: a dead holder's slot is handed over to a refused peer
+          ! N3C_CFLAGS=-DN3_NC_NO_HANDOVER N3C_PORT=7615 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc8.log 2>&1
+          cat n3cap_nc8.log
+          grep -aqF '[n3-swim-cap] C8 FAIL' n3cap_nc8.log
+          grep -aqF '[n3-swim-cap] C6 PASS' n3cap_nc8.log
+          # C9: a restarted peer is ALIVE again on its former holders (the graves)
+          ! N3C_CFLAGS=-DN3_NC_NO_GRAVE N3C_PORT=7616 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc9.log 2>&1
+          cat n3cap_nc9.log
+          grep -aqF '[n3-swim-cap] C9 FAIL' n3cap_nc9.log
+          grep -aqF '[n3-swim-cap] C8 PASS' n3cap_nc9.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
         run: bash tests/unbounded/run_unbounded_live.sh
       - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)

@@ -121,6 +121,9 @@ step dmoe         "bash tests/llm/run_dmoe.sh"
 # The programs that the student_shell.c tests link themselves (BA-SHELL: CI
 # 43854354327 broke at link there, build_all was ALL OK). Links only, no certs.
 step shell-links  "bash tests/ci/shell_links.sh"
+# H36's falsifier patches gossip_learn.c by text (CI 44863534347: B5 ① moved
+# the anchor, build_all was ALL OK). A few seconds, no network (test-holes H43).
+step h36-anchor   "bash tests/llm/run_h36_sync_order.sh"
 
 if [ "$fails" -eq 0 ]; then
     echo "[build] ALL OK (logs: $LOG)"

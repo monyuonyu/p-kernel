@@ -371,7 +371,7 @@ static UW          gl_gc_key[GL_GC_HSIZE][2];   /* id[0..8), 0/0 = empty */
 static UW          gl_gc_fill;
 static GL_ST_INDEX gl_gc_root;                   /* a level-1 index being walked */
 static GL_ST_INDEX gl_gc_leaf;                   /* a level-0 index being walked */
-static UW          gl_gc_dropped, gl_gc_seen;
+static UW          gl_gc_dropped, gl_gc_seen, gl_gc_present;
 
 static void gl_gc_k(const U1 id[PFS_ID_LEN], UW k[2])
 {
@@ -405,11 +405,13 @@ static INT gl_gc_index(const U1 id[PFS_ID_LEN], GL_ST_INDEX *ix, UW level, UW co
     return 0;
 }
 
-/* every id of one generation: mode 0 into the guard, 2 = drop what the guard lacks */
+/* every id of one generation: mode 0 into the guard, 2 = drop what the guard lacks,
+ * 3 = count the ids still in the store (H42: the own generation one back) */
 static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
 {
     UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
 #define GL_GC_ONE(id) do { if (mode == 0) { if (gl_gc_hash((id), 0) < 0) return -1; } \
+        else if (mode == 3) { gl_gc_seen++; if (pfs_has(id)) gl_gc_present++; } \
         else { gl_gc_seen++; if (!gl_gc_hash((id), 1) && pfs_drop(id) == PFS_OK) gl_gc_dropped++; } } while (0)
     if (depth == 1) {
         if (gl_gc_index(root, &gl_gc_leaf, 0u, nchunk) < 0) return -1;
@@ -479,6 +481,16 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     INT w = gl_gc_walk(vic, vdepth, vn, 2);
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
     gpd(gl_gc_seen); gp(w < 0 ? " ids (the old generation was not all here)\r\n" : (keep == 2 ? " ids of the own generation two back\r\n" : " ids of the peer's generation one back\r\n"));
+    /* H42: after an own cleanup, the own generation ONE back (a peer may still be
+     * fetching it) is counted in the store, id by id ([b5-gc] G3 reads the line).
+     * An unreadable index counts as not here (the walk stops: present < seen). */
+    if (own && r->n == 2) {
+        gl_gc_seen = 0; gl_gc_present = 0;
+        INT w3 = gl_gc_walk(r->root[1], r->depth[1], r->nchunk[1], 3);
+        if (w3 < 0) gl_gc_seen++;
+        gp("[b5-gc] st/"); gpd(node); gp(": own generation one back: "); gpd(gl_gc_present);
+        gp(" of "); gpd(gl_gc_seen); gp(" ids here\r\n");
+    }
 #endif
 }
 
