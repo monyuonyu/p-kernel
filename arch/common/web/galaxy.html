@@ -241,6 +241,17 @@
   #arkentry .aestep.on{display:block}
   #aekey{font-size:15px;letter-spacing:.05em;user-select:all;color:#f9e2af}
   #aerectext{height:160px}
+  /* ark-entry.md 7.2 1, 5: the records screen (the dock's records button) */
+  #arkrecs{position:fixed;inset:0;background:rgba(3,4,8,.96);z-index:51;
+    display:none;align-items:center;justify-content:center;padding:14px;box-sizing:border-box}
+  #arkrecs.open{display:flex}
+  #arkrecs .arbar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  #arkrecs .arbar button,#arkrecs select{background:#181825;color:#cdd6f4;border:1px solid #313244;
+    border-radius:4px;padding:5px 9px;font-family:inherit;font-size:12px;cursor:pointer}
+  #arlist .arrow{padding:9px 6px;border-bottom:1px solid #181825;cursor:pointer;
+    font-size:12px;color:#cdd6f4}
+  #arlist .arrow:hover{background:#11131c}
+  #arnew,#aredit{height:110px}
 </style>
 </head>
 <body>
@@ -296,6 +307,30 @@
   </div>
   <div class="warn" id="aeerr"></div>
 </div></div>
+<!-- ark-entry.md 7.2 1, 3, 5: my records — the list, a new record, one record's text,
+     how it is shown and whether it is used for learning (each changed alone), a new
+     version. Opened by the dock's #brec (shown once the key backup is written down). -->
+<div id="arkrecs"><div class="card">
+  <div class="arbar"><h1 id="arrech">…</h1><button id="arclose">…</button></div>
+  <div id="arlistbox">
+    <div id="arlist"></div>
+    <label id="lblarnew">…</label>
+    <textarea id="arnew"></textarea>
+    <div class="row"><button class="primary" id="arnewsave">…</button></div>
+  </div>
+  <div id="arview" style="display:none">
+    <div class="row"><button id="arback">…</button></div>
+    <pre id="arbody"></pre>
+    <label id="lblarvis">…</label>
+    <select id="arvis"></select>
+    <label id="lblarlearn">…</label>
+    <select id="arlearn"></select>
+    <label id="lblaredit">…</label>
+    <textarea id="aredit"></textarea>
+    <div class="row"><button class="primary" id="areditsave">…</button></div>
+  </div>
+  <div class="warn" id="arerr"></div>
+</div></div>
 <!-- illustrated intro (0.5.0): shows on first run, leads INTO #ark above.
      Pictures are inline SVG drawn by buildIntro(); skip + re-view supported. -->
 <div id="intro">
@@ -317,6 +352,7 @@
   <div id="ctl">
     <button id="btalk" title="talk with this star">&#128172; talk</button>
     <button id="blog" title="copy this node's recent log">&#128203; log</button>
+    <button id="brec" style="display:none">&#128214; records</button>
     <span id="msg" style="color:#a6e3a1"></span>
   </div>
   <div id="foot"></div>
@@ -458,7 +494,13 @@ Object.assign(I18N.en,{
   ae_recsave:"Keep it", ae_reclater:"Later",
   ae_recok:"Your record is kept", ae_recempty:"Write something first",
   ae_reclong:"16 KB at most at once; split a long one",
-  ae_fail:"That did not work"
+  ae_fail:"That did not work",
+  ar_btn:"records", ar_h:"My records", ar_close:"close", ar_back:"back to the list",
+  ar_new:"A new record", ar_newsave:"Keep it", ar_lblvis:"Who may see it",
+  ar_lbllearn:"Used for learning", ar_lbledit:"Write a new version (the old ones stay)",
+  ar_editsave:"Keep the new version", ar_vis_self:"only me", ar_vis_heir:"my heir",
+  ar_vis_public:"anyone", ar_learn_no:"not used for learning", ar_learn_yes:"used for learning",
+  ar_missing:"not readable on this device"
 });
 Object.assign(I18N.ja,{
   ae_keyh:"記録の鍵の控え（一度だけ表示します）",
@@ -474,7 +516,13 @@ Object.assign(I18N.ja,{
   ae_recsave:"残す", ae_reclater:"あとで",
   ae_recok:"記録を残しました", ae_recempty:"何か書いてください",
   ae_reclong:"1 回に 16 KB まで。長いものは分けてください",
-  ae_fail:"うまくいきませんでした"
+  ae_fail:"うまくいきませんでした",
+  ar_btn:"記録", ar_h:"わたしの記録", ar_close:"閉じる", ar_back:"一覧へ戻る",
+  ar_new:"新しい記録", ar_newsave:"残す", ar_lblvis:"見せる相手",
+  ar_lbllearn:"学習に使うか", ar_lbledit:"新しい版を書く（前の版は消えません）",
+  ar_editsave:"新しい版を残す", ar_vis_self:"自分だけ", ar_vis_heir:"継ぐ人へ",
+  ar_vis_public:"だれでも", ar_learn_no:"学習に使わない", ar_learn_yes:"学習に使う",
+  ar_missing:"この端末では読めません"
 });
 function L(){ return I18N[curLang] || I18N.en; }
 function S(k){ const t=L(); return (t && t[k]!=null) ? t[k] : I18N.en[k]; }
@@ -503,6 +551,14 @@ function applyStrings(){
   ["aekeyh","aekeywhy","aekeygone","aekeydone","aeheirh","aeheirwhy","aeheirsave",
    "aeheirskip","aerech","aerecwhy","aerecsave","aereclater"].forEach(id=>
     set(id,S("ae_"+id.slice(2))));
+  set("arrech",S("ar_h")); set("arclose",S("ar_close")); set("arback",S("ar_back"));
+  set("lblarnew",S("ar_new")); set("arnewsave",S("ar_newsave")); set("lblarvis",S("ar_lblvis"));
+  set("lblarlearn",S("ar_lbllearn")); set("lblaredit",S("ar_lbledit")); set("areditsave",S("ar_editsave"));
+  const br=document.getElementById("brec"); if(br) br.textContent="\u{1F4D6} "+S("ar_btn");
+  const fill=(id,vals,pre)=>{ const e=document.getElementById(id); if(!e) return; const v=e.value;
+    e.innerHTML=""; vals.forEach(x=>{ const o=document.createElement("option"); o.value=x;
+      o.text=S(pre+x); e.add(o); }); if(v) e.value=v; };
+  fill("arvis",["self","heir","public"],"ar_vis_"); fill("arlearn",["no","yes"],"ar_learn_");
   // step ⑥: the word->word teach/ask labels & buttons were removed from the
   // dock; only talk + log remain. The conversation IS the interaction now.
   const bl=document.getElementById("blog"); if(bl) bl.textContent="\u{1F4CB} "+S("btnlog");
@@ -2017,12 +2073,14 @@ async function arkEntryCheck(){
   try{
     const r=await fetch("/ark/rec.json");
     if(r.status===409) await arkEntryOpen(/*AE-FIRST*/"key");
+    else if(r.ok) arShowBtn();
   }catch(_){}
 }
+function arShowBtn(){ const b=document.getElementById("brec"); if(b) b.style.display=""; }
 document.getElementById("aekeydone").onclick=async()=>{
   try{
     const r=await fetch("/ark/key/backup/done",{method:"POST",body:""});
-    if(r.ok){ document.getElementById("aekey").textContent=""; aeStep("heir"); }
+    if(r.ok){ document.getElementById("aekey").textContent=""; aeStep("heir"); arShowBtn(); }
     else aeErr(S("ae_fail")+" ("+r.status+")");
   }catch(_){ aeErr(S("ae_fail")); }
 };
@@ -2048,6 +2106,99 @@ document.getElementById("aerecsave").onclick=async()=>{
   }catch(_){ aeErr(S("ae_fail")); }
 };
 document.getElementById("aereclater").onclick=()=>aeClose();
+
+// ── ark-entry.md 7.2 1, 3, 5: my records ─────────────────────────
+//    GET /ark/rec.json lists no / seq / time / vis / learn (no counts, no ranks: E6).
+//    A record's text is GET /ark/rec/<no> as bytes, shown through TextDecoder.
+//    vis and learn are each their own select and their own POST (one version each;
+//    no button changes both). A new version is POST /ark/rec/<no> with the textarea's
+//    UTF-8 bytes (the browser's textarea turns CR LF into LF: a limit of editing here).
+let arCur=-1;
+function arErr(t){ document.getElementById("arerr").textContent=t; }
+function arDate(t){ try{ return new Date(t*1000).toLocaleString(curLang); }catch(_){ return String(t); } }
+function arShowList(){
+  document.getElementById("arview").style.display="none";
+  document.getElementById("arlistbox").style.display="";
+  arCur=-1;
+}
+async function arList(){
+  try{
+    const r=await fetch("/ark/rec.json");
+    if(!r.ok){ arErr(S("ae_fail")+" ("+r.status+")"); return null; }
+    return (await r.json()).records||[];
+  }catch(_){ arErr(S("ae_fail")); return null; }
+}
+async function arLoad(){
+  const rows=await arList(); if(!rows) return;
+  const box=document.getElementById("arlist"); box.innerHTML="";
+  for(const x of rows.slice().reverse()){                 // the newest first
+    const d=document.createElement("div"); d.className="arrow"; d.dataset.no=String(x.no);
+    d.textContent = x.missing ? S("ar_missing")
+      : arDate(x.time)+" · "+S("ar_vis_"+x.vis)+" · "+S("ar_learn_"+x.learn);
+    if(!x.missing) d.onclick=()=>arOpen(x.no);
+    box.appendChild(d);
+  }
+}
+async function arOpen(no){
+  arErr(""); arCur=no;
+  document.getElementById("arlistbox").style.display="none";
+  document.getElementById("arview").style.display="";
+  const body=document.getElementById("arbody"); body.textContent="";
+  try{
+    const r=await fetch("/ark/rec/"+no);
+    if(!r.ok){ arErr(S("ae_fail")+" ("+r.status+")"); return; }
+    const t=new TextDecoder("utf-8").decode(new Uint8Array(await r.arrayBuffer()));
+    body.textContent=t; document.getElementById("aredit").value=t;
+    const x=((await arList())||[]).find(y=>y.no===no);
+    if(x){ document.getElementById("arvis").value=x.vis; document.getElementById("arlearn").value=x.learn; }
+  }catch(_){ arErr(S("ae_fail")); }
+}
+async function arFlag(no,what,v){
+  try{
+    const r=await fetch("/ark/rec/"+no+"/"+what,{method:"POST",body:v});
+    if(!r.ok) arErr(S("ae_fail")+" ("+r.status+")");
+    return r.ok;
+  }catch(_){ arErr(S("ae_fail")); return false; }
+}
+document.getElementById("brec").onclick=()=>{
+  arErr(""); arShowList();
+  document.getElementById("arkrecs").classList.add("open");
+  arLoad();
+};
+document.getElementById("arclose").onclick=()=>document.getElementById("arkrecs").classList.remove("open");
+document.getElementById("arback").onclick=()=>{ arShowList(); arLoad(); };
+document.getElementById("arvis").onchange=async function(){
+  const no=arCur, v=this.value; if(no<0) return;
+  /*AR-VIS*/await arFlag(no,"vis",v);
+};
+document.getElementById("arlearn").onchange=async function(){
+  const no=arCur, v=this.value; if(no<0) return;
+  await arFlag(no,"learn",v);
+};
+document.getElementById("arnewsave").onclick=async()=>{
+  const t=document.getElementById("arnew").value;
+  if(!t){ arErr(S("ae_recempty")); return; }
+  const b=new TextEncoder().encode(t);
+  if(b.length>16384){ arErr(S("ae_reclong")); return; }
+  try{
+    const r=await fetch("/ark/rec",{method:"POST",
+      headers:{"Content-Type":"application/octet-stream"},body:b});
+    if(r.ok){ document.getElementById("arnew").value=""; arErr(""); arLoad(); }
+    else arErr(S("ae_fail")+" ("+r.status+")");
+  }catch(_){ arErr(S("ae_fail")); }
+};
+document.getElementById("areditsave").onclick=async()=>{
+  const no=arCur; if(no<0) return;
+  const t=document.getElementById("aredit").value;
+  if(!t){ arErr(S("ae_recempty")); return; }
+  const b=new TextEncoder().encode(t);
+  if(b.length>16384){ arErr(S("ae_reclong")); return; }
+  try{
+    const r=await fetch("/ark/rec/"+no,{method:"POST",
+      headers:{"Content-Type":"application/octet-stream"},body:b});
+    if(r.ok){ arOpen(no); } else arErr(S("ae_fail")+" ("+r.status+")");
+  }catch(_){ arErr(S("ae_fail")); }
+};
 
 // ── i18n init: populate the selector from /langs, default from the
 //    device/browser language (navigator.language), then first-run. ──

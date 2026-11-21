@@ -88,8 +88,8 @@ case " $ARMS " in *" nc-trim "*)
     else REDS="$REDS nc-trim-anchor"; fi ;;
 *) REDS="$REDS nc-trim-skipped" ;; esac
 case " $ARMS " in *" nc-keep-key "*)
-    if mutate "$WORK/keep.html" 'if(r.ok){ document.getElementById("aekey").textContent=""; aeStep("heir"); }' \
-              'if(r.ok){ aeStep("heir"); }'; then
+    if mutate "$WORK/keep.html" 'if(r.ok){ document.getElementById("aekey").textContent=""; aeStep("heir"); arShowBtn(); }' \
+              'if(r.ok){ aeStep("heir"); arShowBtn(); }'; then
         if arm nc-keep-key "$WORK/keep.html"; then want nc-keep-key FAIL A8-clear; want nc-keep-key PASS A8-order A8-key A8-rec; fi
     else REDS="$REDS nc-keep-key-anchor"; fi ;;
 *) REDS="$REDS nc-keep-key-skipped" ;; esac
