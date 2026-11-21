@@ -1967,6 +1967,25 @@ INT swim_idpin_self_test(void (*emit)(const char *))
         I6(c == 2 && got, "news of 299 carries the key kept for it");
         for (k = 0; k < c; k++)
             if (o.gossip[k].node_id == 700) I6(sw_fp_zero(t.fp[1 + k]), "news of 700 carries no key");
+        /* 11-21 (CI 44838481621 plain I3 red): on the relay the id's slot follows
+         * whoever spoke last, and so does the key kept here, so the news reached
+         * only the key's own holder and two nodes under one id never heard each
+         * other. After a change the news carries the previous key too (the 2nd
+         * and 4th news), so the new holder of the slot hears the old key. */
+        INT gotx = 0, goty = 0;
+        for (UW i = 0; i < sizeof t; i++) pt[i] = 0;
+        c = swim_wide_fill(&o, &t);
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 299) {
+                if (sw_fp_cmp(t.fp[1 + k], X) == 0) gotx = 1;
+                if (sw_fp_cmp(t.fp[1 + k], Y) == 0) goty = 1;
+            }
+        I6(gotx && !goty, "the next news of 299 carries the previous key");
+        for (INT r = 0; r < 4; r++) { for (UW i = 0; i < sizeof t; i++) pt[i] = 0; c = swim_wide_fill(&o, &t); }
+        got = 0;
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], Y) == 0) got = 1;
+        I6(got, "and later news the kept key again");
     }
     /* this node's own id with another key: a redraw only when mine is the larger */
     PK_NOSW_ENTER();
