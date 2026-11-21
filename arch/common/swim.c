@@ -1136,6 +1136,8 @@ typedef struct {
     UW  rtt_ms;     /* smoothed round trip, as rtt_ewma_ms in v1  */
     UB  fp[8];      /* N2c stage 3: the key heard from it (fp_ok)  */
     UB  fp_ok;
+    UB  fp_was[8];  /* the key before the last change              */
+    UB  was_left;   /* news still to come after it (2nd, 4th carry fp_was) */
 } SWIM_WIDE;
 
 static NODEMAP   wide_map;          /* wide id -> slot, parallel to wide_st */
@@ -1179,7 +1181,7 @@ static INT wide_add(pk_node_t id)
     wide_st[s].state = DNODE_UNKNOWN;
     wide_st[s].rtt_ok = 0; wide_st[s].ping_seq = 0;
     wide_st[s].ping_ms = 0; wide_st[s].rtt_ms = 0;
-    wide_st[s].fp_ok = 0;
+    wide_st[s].fp_ok = 0; wide_st[s].was_left = 0;
     return s;
 }
 
@@ -1301,8 +1303,11 @@ static void swim_wide_heard(pk_node_t id, UW ip, BOOL direct, UW now, const UB *
         } else if (sw_fp_cmp(e->fp, fp) != 0) {
 #ifndef N2C_NC_NO_PIN
             /* another node under this id: nothing of the old one carries over */
-            for (INT i = 0; i < 8; i++) { was[i] = e->fp[i]; e->fp[i] = fp[i]; }
+            for (INT i = 0; i < 8; i++) { was[i] = e->fp[i]; e->fp_was[i] = e->fp[i]; e->fp[i] = fp[i]; }
             e->rtt_ok = 0; e->rtt_ms = 0; e->ping_seq = 0; e->ping_ms = 0;
+#ifndef N2C_NC_NO_WAS
+            e->was_left = 4;   /* the new holder of the relay slot must hear the old key */
+#endif
             sw_keychg++; chg = 1;
 #endif
         }
@@ -1480,8 +1485,15 @@ static INT swim_wide_fill(SWIM2_PKT *p, SWIM2_FPS *fx)
         p->gossip[n].state       = DNODE_ALIVE;
         p->gossip[n].incarnation = 0;
         p->gossip[n].capability  = 0;
-        if (fx && wide_st[swim_wide_cursor].fp_ok)
-            for (INT i = 0; i < 8; i++) fx->fp[1 + n][i] = wide_st[swim_wide_cursor].fp[i];
+        if (fx && wide_st[swim_wide_cursor].fp_ok) {
+            /* after a key change the 2nd and 4th news carry the previous key: on the
+             * relay this id's slot follows whoever spoke last, as the kept key does,
+             * so without it the news reaches only that key's own holder */
+            SWIM_WIDE *e = &wide_st[swim_wide_cursor];
+            const UB *k = e->fp;
+            if (e->was_left) { e->was_left--; if (!(e->was_left & 1)) k = e->fp_was; }
+            for (INT i = 0; i < 8; i++) fx->fp[1 + n][i] = k[i];
+        }
         n++;
     }
     return n;
