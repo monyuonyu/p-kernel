@@ -1875,6 +1875,22 @@ N-4 cross-host deferred to the ThinkPad).
   build_all ALL OK (incl. windows, bare x86/rpi3/aarch64, dmoe); pychecks 12/12 + parity + yaml. Limits (audit-93): a revert of the production path alone to the
   whole region is seen by no CI step (only 64 nodes show it); 64 nodes were not re-run on the merge (production
   path unchanged since 840b8baf: 2/2 ALL PASS there). Written by the run that merged.
+- CROWN RE-BLESS — a block sent over the net keeps its owner (2026-11-22): `b1705dee` merges
+  `fix/pfs-origin-on-send` 488aa2c9 (audit-202 PASS; R-PORG put to mk_pino with a recommendation
+  2026-11-21T02:49, no answer past its deadline 2026-11-22T02:50, landed on it) into `audit/a210`.
+  send_block_to (arch/common/pfs_repl.c) links into bare x86 and AArch64: a self block (0xFF) now goes
+  as my own number, so `.text` changes DELIBERATELY. Measured in pkernel_audit_ss (gcc 13.3.0,
+  `objcopy -O binary -j <section>`, `pk-scratch/a210/merge.sh`), master `cd8e3352` and the merge side by side:
+    base `cd8e3352`  x86 .text 8da41f99… 380739 B   aarch64 .text cc552398… 363008 B
+      x86      .text 902d7460223884af69e23d4995c2fe39d4c7f88f1c0fb0af14b9ef7a106836de  380747 B (+8)
+      aarch64  .text edf545056ef52586e8a3e03992f0f6da96e242f18d2813d7650327a998cdfa1e  363024 B (+16)
+    other sections (R-CROWNRO): x86 .text.start a7fe4efb -> 39a804b9 436, .rodata d780518e -> 16e62231 15040;
+    aarch64 .rodata 4c46ecac -> 63cd0706 101752; x86 .rodata.str1.1 / .str1.4 / .cst4 / .data and aarch64
+    .data unchanged. The deltas (+8, +16) are the same as the implementer's and audit-202's on d0826988.
+  On the merge: bare run_tk_conform.sh x86 133/0 and AArch64 133/0, each with all 14 broken kernels red;
+  [pfs-origin] O1-O4 PASS, -DPFSR_NC_SEND_SELF red on O2-O4; build_all (result in the merge commit message). Limits: no test drives the bare send path (the hosted [pfs-origin] is the
+  evidence for the same function); one toolchain. Written by the run that merged; an independent
+  re-measure is for a different run.
 - CROWN RE-BLESS — Path W folds an epoch once on bare metal too (2026-11-21): `d18caa5d` merges
   `fix/pw-epoch0-bare` 07bf16df (audit-201 PASS with a limit; R-PWBARE put to mk_pino with a recommendation
   2026-11-20T19:36, no answer past its deadline 2026-11-21T19:36, landed on it) into `audit/a207` (with the
