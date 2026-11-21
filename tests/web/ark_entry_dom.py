@@ -77,6 +77,9 @@ def raw(method, path, body=b"", tok=None):
     return (int(m.group(1)) if m else None), (data[he + 4:] if he >= 0 else b"")
 
 
+LIVE = []                                 # nodes to kill if the script dies
+
+
 class Node:
     def __init__(self, tag):
         self.dir = os.path.join(work, tag)
@@ -87,6 +90,7 @@ class Node:
         self.log = open(os.path.join(self.dir, "node.log"), "ab")
         self.p = subprocess.Popen([pk], stdin=subprocess.PIPE, stdout=self.log,
                                   stderr=subprocess.STDOUT, env=env)
+        LIVE.append(self.p)
 
     def up(self):
         for _ in range(120):
@@ -362,6 +366,11 @@ try:
     main()
 except Exception as e:                    # a click that cannot happen is a red, not a crash
     print("[ark-dom] note exception: %s" % str(e).splitlines()[0][:200], flush=True)
+finally:                                  # never leave a node on the port (the next arm
+    for p in LIVE:                        # would talk to it with its own pass: 401s)
+        if p.poll() is None:
+            p.kill()
+            p.wait()
 ALLC = ["A8-url", "A8-ask", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done",
         "A8-later", "A8-resume", "A8-skip"]
 if all(RESULTS.get(c) for c in ALLC):
