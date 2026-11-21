@@ -365,7 +365,9 @@ def main():
 try:
     main()
 except Exception as e:                    # a click that cannot happen is a red, not a crash
-    print("[ark-dom] note exception: %s" % str(e).splitlines()[0][:200], flush=True)
+    import traceback
+    ln = [f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename.endswith("ark_entry_dom.py")]
+    print("[ark-dom] note exception at line %s: %s" % (ln[-1] if ln else "?", str(e).splitlines()[0][:200]), flush=True)
 finally:                                  # never leave a node on the port (the next arm
     for p in LIVE:                        # would talk to it with its own pass: 401s)
         if p.poll() is None:
@@ -373,6 +375,9 @@ finally:                                  # never leave a node on the port (the 
             p.wait()
 ALLC = ["A8-url", "A8-ask", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done",
         "A8-later", "A8-resume", "A8-skip"]
+for c in ALLC:                            # a check the run never reached is a red
+    if c not in RESULTS:
+        res(c, False, "not reached")
 if all(RESULTS.get(c) for c in ALLC):
     print("[ark-dom] ALL PASS")
     sys.exit(0)
