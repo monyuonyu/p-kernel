@@ -1542,10 +1542,19 @@ static const UB *sw_my_fp_get(void)
  * other key SWIM2_CLAIM_WAIT_MS after it first did, the larger has not moved
  * (on the relay the news of the smaller key may not reach it: the relay's slot
  * and a third node's news both follow whoever spoke last, measured 11-21), so
- * it redraws itself. A larger key that moved is no longer heard here. */
+ * it redraws itself. A larger key that moved is no longer heard here.
+ * 11-21 (audit-208): but it is, for a while: the larger redrew at once and had
+ * not yet spoken under its new id when the old key came past the 10 s (a third
+ * node's pin, the 2nd and 4th news after a change), and both redrew. So the key
+ * must come once past the 10 s and once more SWIM2_CLAIM_AGAIN_MS after that:
+ * longer than a third node's pin of the moved key lasts (it gossips only ALIVE
+ * ids, SUSPECT after SWIM_WIDE_SUSPECT_MS). Limit: the 2nd/4th news of several
+ * third nodes, or of many ids (one news per id per few rounds), can span more. */
 #define SWIM2_CLAIM_WAIT_MS 10000
-static UB  sw_claim_seen;          /* the smaller side heard the other key   */
+#define SWIM2_CLAIM_AGAIN_MS (SWIM_WIDE_SUSPECT_MS + SWIM_PROBE_INTERVAL_MS)
+static UB  sw_claim_seen;          /* the smaller side heard the other key (1), and past the 10 s (2) */
 static UW  sw_claim_t0;            /* when it first did                      */
+static UW  sw_claim_t1;            /* when it first did past the 10 s        */
 static void sw_redraw_now(const UB *f, const UB *mine, const char *why)
 {
     sw_redraw_asked++;
@@ -1600,6 +1609,13 @@ static void swim_wide_claim(const UB *f, UW now)
     if (c == 0) return;
     if (sw_moved(f)) return;
     if (c > 0) { sw_redraw_now(f, mine, " is the larger: redraw\r\n"); return; }
+    if (sw_claim_seen == 2) {   /* heard past the 10 s: redraw when it comes again */
+#ifndef N2C_NC_CLAIM_ONCE
+        if ((UW)(now - sw_claim_t1) >= SWIM2_CLAIM_AGAIN_MS && (UW)(now - sw_claim_t1) < 0x80000000UL)
+#endif
+            sw_redraw_now(f, mine, " is the smaller, but the larger is still here after 10 s and 7 s: redraw\r\n");
+        return;
+    }
     if (!sw_claim_seen) {
         sw_claim_seen = 1; sw_claim_t0 = now;
         if (!sw_claim_said && sw_selftest_depth == 0) {
@@ -1610,8 +1626,13 @@ static void swim_wide_claim(const UB *f, UW now)
         return;
     }
 #ifndef N2C_NC_SMALL_NEVER
-    if ((UW)(now - sw_claim_t0) >= SWIM2_CLAIM_WAIT_MS && (UW)(now - sw_claim_t0) < 0x80000000UL)
+    if ((UW)(now - sw_claim_t0) >= SWIM2_CLAIM_WAIT_MS && (UW)(now - sw_claim_t0) < 0x80000000UL) {
+#if defined(N2C_NC_CLAIM_ONCE)   /* falsifier: one hearing past the 10 s redraws, as before (idpin) */
         sw_redraw_now(f, mine, " is the smaller, but the larger has not moved in 10 s: redraw\r\n");
+#else
+        sw_claim_seen = 2; sw_claim_t1 = now;
+#endif
+    }
 #endif
 }
 
@@ -2269,7 +2290,7 @@ INT swim_idpin_self_test(void (*emit)(const char *))
     UB sv_fp[8]; INT sv_fp_ok = sw_my_fp_ok;
     for (INT i = 0; i < 8; i++) sv_fp[i] = sw_my_fp[i];
     UW sv_chg = sw_keychg, sv_ask = sw_redraw_asked;
-    UB sv_seen = sw_claim_seen; UW sv_t0 = sw_claim_t0;
+    UB sv_seen = sw_claim_seen; UW sv_t0 = sw_claim_t0, sv_t1 = sw_claim_t1;
     sw_claim_seen = 0;
     static UB sv_mv[SW_MOVED_N][8];
     INT sv_mv_n = sw_mv_n, sv_mv_w = sw_mv_w;
@@ -2380,12 +2401,29 @@ INT swim_idpin_self_test(void (*emit)(const char *))
         I6(sw_redraw_asked == sv_ask + 2 && sw_claim_seen, "a larger key: the first time I wait");
         swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS - 1);
         I6(sw_redraw_asked == sv_ask + 2, "still within 10 s: I wait");
+        /* 11-21 (audit-208): the larger may have redrawn and not yet spoken under
+         * its new id; its old key still comes for a while (a third node's pin until
+         * it turns SUSPECT, the 2nd and 4th news after a change). One hearing past
+         * the 10 s is not enough: it must come again SWIM2_CLAIM_AGAIN_MS later. */
         swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS);
-        I6(sw_redraw_asked == sv_ask + 3, "the larger has not moved in 10 s: I redraw");
+        I6(sw_redraw_asked == sv_ask + 2, "heard at 10 s: I wait for one more");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS - 1);
+        I6(sw_redraw_asked == sv_ask + 2, "again, but within 7 s of that: I wait");
+        swim_wide_claim(H, t + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS);
+        I6(sw_redraw_asked == sv_ask + 3, "heard at 10 s and 7 s after: the larger has not moved, I redraw");
         sw_claim_seen = 0;
         swim_wide_claim(H, 0xFFFFF000UL);
         swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS));
-        I6(sw_redraw_asked == sv_ask + 4, "the 10 s across the clock's wrap");
+        swim_wide_claim(H, (UW)(0xFFFFF000UL + SWIM2_CLAIM_WAIT_MS + SWIM2_CLAIM_AGAIN_MS));
+        I6(sw_redraw_asked == sv_ask + 4, "the 10 s and the 7 s across the clock's wrap");
+        /* the shape seen in /build/mvk/l-fall/r1 (audit-208): the larger redrew at
+         * once, its old key came at 10 s, 12 s, 14 s, then never */
+        sw_claim_seen = 0;
+        swim_wide_claim(H, 90000);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS + 2000);
+        swim_wide_claim(H, 90000 + SWIM2_CLAIM_WAIT_MS + 4000);
+        I6(sw_redraw_asked == sv_ask + 4, "a moved larger key's tail at 10, 12, 14 s: I keep my id");
     }
     /* 11-21 (audit-207, CI 44880448567 plain I3 red, both redrew): a key already
      * heard under another wide id is a node that moved away from mine. Its old
@@ -2441,7 +2479,7 @@ INT swim_idpin_self_test(void (*emit)(const char *))
     swim_wide_me = sv_me; sw_my_fp_ok = sv_fp_ok;
     for (INT i = 0; i < 8; i++) sw_my_fp[i] = sv_fp[i];
     sw_keychg = sv_chg; sw_redraw_asked = sv_ask;
-    sw_claim_seen = sv_seen; sw_claim_t0 = sv_t0;
+    sw_claim_seen = sv_seen; sw_claim_t0 = sv_t0; sw_claim_t1 = sv_t1;
     sw_mv_n = sv_mv_n; sw_mv_w = sv_mv_w;
     for (INT i = 0; i < SW_MOVED_N; i++) for (INT j = 0; j < 8; j++) sw_mv_fp[i][j] = sv_mv[i][j];
     PK_NOSW_LEAVE();
