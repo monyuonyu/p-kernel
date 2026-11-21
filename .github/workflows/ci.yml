@@ -3780,6 +3780,10 @@ jobs:
           ! N3C_CFLAGS=-DN3_NC_NO_CAP N3C_PORT=7612 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc.log 2>&1
           cat n3cap_nc.log
           grep -aqF '[n3-swim-cap] C1 FAIL' n3cap_nc.log
+          ! N3C_CFLAGS=-DN3_NC_NO_PROBE_SLOTS N3C_PORT=7613 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc6.log 2>&1
+          cat n3cap_nc6.log
+          grep -aqF '[n3-swim-cap] C6 FAIL' n3cap_nc6.log
+          grep -aqF '[n3-swim-cap] C1 PASS' n3cap_nc6.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
         run: bash tests/unbounded/run_unbounded_live.sh
       - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)

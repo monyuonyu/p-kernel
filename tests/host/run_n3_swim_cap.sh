@@ -19,8 +19,11 @@
 #   C4  every node is alive at the end (built with -fsanitize=bounds and
 #       trap-on-error: a table indexed past its end kills the node)
 #   C5  every node answered the last `nodes` (printed the [cluster] header)
-# Negative control: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
-# that takes the cap away: a node keeps all N-1) => C1 RED.
+#   C6  (H41 (b), 11-21) node N is killed; every node that held its slot says
+#       DEAD about it through SWIM within N3C_C6_WAIT (60) s (details below)
+# Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
+# that takes the cap away: a node keeps all N-1) => C1 RED;
+# -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
 # Env: N3C_N (12), N3C_PEERS (8), N3C_PORT (7611), N3C_WAIT (60 s),
 #      N3C_CFLAGS (extra), N3C_WORK (keep the logs there).
 # Output: "[n3-swim-cap] C<n> PASS|FAIL ...", then ALL PASS (exit 0) or RED (exit 1).
@@ -112,6 +115,31 @@ for i in $(seq 1 "$N"); do
     grep -aq '^\[cluster\]  ID' "$L" && c5=$((c5 + 1))   # only the last `nodes` prints it
 done
 echo "[n3-swim-cap] rec node:U/C/F/alive$rec"
+
+# C6 (H41 (b), added 11-21 13:05 run with the implementation): kill node N
+# (drpc id N-1; PKERNEL_NODE_ID i is id i-1) and wait C6_WAIT s. Every other node
+# whose last slots line ("... ids a b c") held id N-1 prints a SWIM line that
+# it is DEAD (its own probe "[swim] node X -> DEAD" or the rumour "[swim] gossip:
+# node X -> DEAD") after the kill; at least one node held it. Measured before
+# writing C6 (pk-scratch/n3s/h41.sh): all 11 nodes had it DEAD through SWIM,
+# drpc printed nothing about it. Negative -DN3_NC_NO_PROBE_SLOTS (the slots are
+# never probed) => C6 RED.
+VID=$((N - 1)); C6W="${N3C_C6_WAIT:-60}"
+declare -A L0
+for i in $(seq 1 $((N - 1))); do L0[$i]=$(wc -l < "$LOG/node$i.log"); done
+kill -9 "${PID[$N]}" 2>/dev/null; unset "PID[$N]"
+sleep "$C6W"
+held=0; saw=0; miss=""
+for i in $(seq 1 $((N - 1))); do
+    ids=$(tr -d '\r' < "$LOG/node$i.log" | head -n "${L0[$i]}" | grep -a '^\[swim\] slots ' | tail -1 | sed -n 's/.* ids \(.*\)$/ \1 /p')
+    case "$ids" in *" $VID "*) ;; *) continue ;; esac
+    held=$((held + 1))
+    if tail -n +"$((L0[$i] + 1))" "$LOG/node$i.log" | tr -d '\r' \
+       | grep -aqE "\[swim\] (gossip: )?node $VID -> DEAD"; then saw=$((saw + 1)); else miss="$miss $i"; fi
+done
+echo "[n3-swim-cap] C6 killed id $VID: $held nodes held its slot, $saw of them say DEAD through SWIM"
+[ "$held" -ge 1 ] && [ "$saw" -eq "$held" ] && r C6 PASS "($saw/$held slot holders: DEAD within ${C6W} s)" \
+    || r C6 FAIL "($saw/$held slot holders said DEAD; not:$miss)"
 [ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"

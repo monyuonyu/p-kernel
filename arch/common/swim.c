@@ -957,7 +957,13 @@ static INT probe_cursor = 0;
 
 static pk_node_t pick_probe_target(void)
 {
+#if defined(N3_NC_NO_PROBE_SLOTS)
+    /* negative control of [n3-swim-cap] C6: the slots are never probed, so
+     * SWIM never finds a dead slot holder (only the fallback below runs) */
+    for (INT tries = 0; tries < 0; tries++) {
+#else
     for (INT tries = 0; tries < SW_STORE; tries++) {
+#endif
         probe_cursor = (probe_cursor + 1) % SW_STORE;
         if (!sw_map.used[probe_cursor]) continue;
         pk_node_t id = (pk_node_t)sw_map.id[probe_cursor];
@@ -1295,7 +1301,11 @@ void swim_nodes_print(void)
     /* N3 step 1: slots used / capacity, and how often an id found them full */
     sw_puts("[swim] slots "); sw_putdec(nodemap_count(&sw_map));
     sw_puts("/"); sw_putdec(SWIM_PEERS);
-    sw_puts(" refused "); sw_putdec(sw_refused); sw_puts("\r\n");
+    sw_puts(" refused "); sw_putdec(sw_refused);
+    sw_puts(" ids");                     /* who holds a slot ([n3-swim-cap] C6) */
+    for (INT i = 0; i < SW_STORE; i++)
+        if (sw_map.used[i]) { sw_puts(" "); sw_putdec(sw_map.id[i]); }
+    sw_puts("\r\n");
 #endif
 }
 
