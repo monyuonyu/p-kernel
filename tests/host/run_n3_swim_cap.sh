@@ -7,7 +7,11 @@
 # One hosted build with -DSWIM_PEERS=<P> (default 8), swim.o with -fsanitize=bounds (trap),
 # N (default 12) narrow nodes (ids 1..N) on one relay, so every node hears of
 # N-1 > P peers. After the wait, `nodes` on every node, then:
-#   C1  every node prints "[swim] slots U/C refused F" with C == P and U <= P
+#   C1  every node prints "[swim] slots U/C refused F" with C == P and P-1 <= U <= P
+#       (audit-205: U >= P-1 added before the implementation. Without it a node
+#        that refuses everyone (U 0, F > 0) passed C1..C5: C3 is filled by the
+#        drpc heartbeat, not by SWIM. With N-1 > P live peers the slots fill;
+#        P-1 leaves room for one DEAD slot being handed over)
 #   C2  every node has F > 0 (it was told about more peers than it has slots)
 #   C3  every node's [cluster] table shows >= P-2 ALIVE peers
 #       (the drpc heartbeat fills the table for all, step 2 of N3; this only
@@ -102,13 +106,13 @@ for i in $(seq 1 "$N"); do
     f=$(echo "$line" | sed -n 's/^\[swim\] slots \([0-9]*\)\/\([0-9]*\) refused \([0-9]*\).*/\3/p')
     alive=$(tr -d '\r' < "$L" | awk '/^\[cluster\]  ID/{a=0; next} /^ +[0-9]+  ALIVE/{a++} END{print a+0}')
     rec="$rec $i:${u:-?}/${cc:-?}/${f:-?}/a$alive"
-    [ -n "$u" ] && [ "$cc" = "$P" ] && [ "$u" -le "$P" ] && c1=$((c1 + 1))
+    [ -n "$u" ] && [ "$cc" = "$P" ] && [ "$u" -le "$P" ] && [ "$u" -ge $((P - 1)) ] && c1=$((c1 + 1))
     [ -n "$f" ] && [ "$f" -gt 0 ] && c2=$((c2 + 1))
     [ "$alive" -ge $((P - 2)) ] && c3=$((c3 + 1))
     grep -aq '^\[cluster\]  ID' "$L" && c5=$((c5 + 1))   # only the last `nodes` prints it
 done
 echo "[n3-swim-cap] rec node:U/C/F/alive$rec"
-[ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and U<=$P)"
+[ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"
 [ -z "$dead" ] && r C4 PASS "(all $N alive: no bounds trap, no crash)" || r C4 FAIL "(dead:$dead; a bounds trap or a crash, see node<i>.log)"
