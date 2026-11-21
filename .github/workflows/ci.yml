@@ -4668,7 +4668,8 @@ jobs:
     # which runs apt on the azure mirror) took 31 s in CI 39974335515, 11 min
     # in 39953421360, and hit 15 min (cancelled = a new red for promote) in
     # 39994098268; the cert itself takes seconds
-    timeout-minutes: 30
+    # 30 -> 45 (2026-11-21): the A8 step builds the hosted node 3 times (~1-2 min each)
+    timeout-minutes: 45
     continue-on-error: true  # until 2026-11-30: consent-card DOM cert advisory (headless Chromium). ROADMAP 0-13
     steps:
       - uses: actions/checkout@v4
@@ -4678,6 +4679,14 @@ jobs:
           python3 -m playwright install --with-deps chromium
       - name: Consent-card DOM cert (galaxy.html, 411px phone viewport)
         run: bash tests/web/run_consent_dom.sh
+      # ark-entry.md 7.3 A8 / 7.2 4: the real hosted node (its built-in galaxy.html) in
+      # headless Chromium: consent -> key backup -> heir -> first record, the pass on
+      # every request, the record byte for byte. Two negatives mutate galaxy.html inside
+      # the script (no token header; the entry starts on the heir step). ~3 builds.
+      - name: Ark entry first screens (A8, headless Chromium against a real node)
+        run: |
+          timeout 1500 bash tests/web/run_ark_entry_dom.sh | tee ark_dom.log
+          grep -aF '[ark-dom] ALL PASS' ark_dom.log
 
   android-emulator-smoke:
     # RUNTIME smoke — closes fable5 audit gap G1 (highest-ranked risk).
