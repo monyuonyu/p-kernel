@@ -4,7 +4,7 @@
 # Written before the implementation (test first): on master e4ca62c8 C1 and C2
 # are RED (there is no slot table and no "[swim] slots" line).
 #
-# One hosted build with -DSWIM_PEERS=<P> (default 8) and -fsanitize=bounds (trap),
+# One hosted build with -DSWIM_PEERS=<P> (default 8), swim.o with -fsanitize=bounds (trap),
 # N (default 12) narrow nodes (ids 1..N) on one relay, so every node hears of
 # N-1 > P peers. After the wait, `nodes` on every node, then:
 #   C1  every node prints "[swim] slots U/C refused F" with C == P and U <= P
@@ -52,11 +52,18 @@ cnt() { local c; c=$(grep -ac -- "$2" "$1" 2>/dev/null); echo "${c:-0}"; }
 
 make -C "$ROOT/relay" > "$WORK/relay-build.log" 2>&1 || { echo "[n3-swim-cap] relay build FAIL"; exit 2; }
 make -C "$BOOT" clean > /dev/null 2>&1
-# bounds with trap-on-error: the hosted link is -static (no libubsan), so an index past
-# a table's end stops the node at once (ud2 = SIGILL); C4 sees it
-if ! make -C "$BOOT" EXTRA_CFLAGS="-DSWIM_PEERS=$P -fsanitize=bounds -fsanitize-undefined-trap-on-error $CFX" \
-        > "$WORK/build.log" 2>&1; then
-    echo "[n3-swim-cap] build FAIL"; tail -20 "$WORK/build.log"; exit 2
+# bounds with trap-on-error, on swim.o ONLY: the hosted link is -static (no libubsan), so
+# an index past a table's end stops the node at once (ud2 = SIGILL); C4 sees it.
+# Not the whole build: mtkernel3's ready_queue.h:117 reads tskque[NUM_TSKPRI] when the
+# queue is empty (the T-Kernel sentinel, one past the array onto the next member) and
+# every node trapped there at boot (11-21, gdb: knl_make_non_ready <- tk_ext_tsk).
+SAN="-fsanitize=bounds -fsanitize-undefined-trap-on-error"
+if ! make -C "$BOOT" EXTRA_CFLAGS="-DSWIM_PEERS=$P $CFX" > "$WORK/build.log" 2>&1 \
+   || ! rm -f "$BOOT/swim.o" \
+   || ! make -C "$BOOT" swim.o EXTRA_CFLAGS="-DSWIM_PEERS=$P $SAN $CFX" >> "$WORK/build.log" 2>&1 \
+   || ! make -C "$BOOT" EXTRA_CFLAGS="-DSWIM_PEERS=$P $CFX" >> "$WORK/build.log" 2>&1 \
+   || ! grep -aq 'swim.c' "$WORK/build.log" || ! grep -a 'swim.c' "$WORK/build.log" | grep -aq -- '-fsanitize=bounds'; then
+    echo "[n3-swim-cap] build FAIL (or swim.o was not built with $SAN)"; tail -20 "$WORK/build.log"; exit 2
 fi
 echo "[n3-swim-cap] N=$N SWIM_PEERS=$P extra='$CFX'"
 
