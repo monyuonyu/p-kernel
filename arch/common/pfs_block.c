@@ -537,6 +537,18 @@ INT pfs_slot_info(UW idx, U1 id_out[PFS_ID_LEN], UW *len_out,
     return 1;
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* PFS-ORIGIN-SELF-ON-SEND: the origin kept in <id>.org for a block out of the
+ * table (0xFF = this node's own), or -1 when there is none / no durable dir */
+INT pfs_dur_origin_of(const U1 id[PFS_ID_LEN])
+{
+    if (!pfs_dur_active()) return -1;
+    char hex[2 * PFS_ID_LEN + 1];
+    id_to_hex(id, hex);
+    return (INT)pfs_dur_org_read(hex);
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* P0 durable backend — boot restore with content-addressed self-check */
 /* ------------------------------------------------------------------ */
