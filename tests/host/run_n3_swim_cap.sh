@@ -23,6 +23,7 @@
 #       DEAD about it through SWIM within N3C_C6_WAIT (60) s (details below)
 #   C7  (11-21) every id is in the slots of >= 2 nodes (no peer nobody watches)
 #   C8  (11-21) after C6, the dead holder's slot went to a refused peer
+#   C9  (11-21) node N starts again: its former holders have it ALIVE again
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -181,6 +182,32 @@ for i in $(seq 1 $((N - 1))); do
 done
 [ "$c8n" -ge 1 ] && [ "$c8ok" -eq "$c8n" ] && r C8 PASS "($c8ok/$c8n former holders: $P slots, id $VID handed over)" \
     || r C8 FAIL "($c8ok/$c8n former holders handed id $VID's slot over; not:$c8bad)"
+# C9 (11-21 13:05 run, written before the fix; probe pk-scratch/n3s/c9.sh): node N
+# starts again with the same id and store (node.incarn: it refutes the DEAD with a
+# newer incarnation). After C9_WAIT (60) s every node that held id N-1 before the
+# kill has it ALIVE again in its table. master 3f45c6c5 (no cap): 11/11. af8a465b:
+# 2 of 11 (its slot was handed over; a full node dropped the new word).
+# -DN3_NC_NO_GRAVE (the handed-over id and incarnation are not kept) => C9 RED.
+declare -A L2
+for i in $(seq 1 $((N - 1))); do L2[$i]=$(wc -l < "$LOG/node$i.log"); done
+fifo="$WORK/f$N"; rm -f "$fifo"; mkfifo "$fifo"
+env PKERNEL_NODE_ID="$N" PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$WORK/d$N" PKERNEL_RELAY="127.0.0.1:$PORT" \
+    "$BOOT/p-kernel" < "$fifo" >> "$LOG/node$N.log" 2>&1 &
+PID[$N]=$!
+eval "exec $((N + 9))<>\"$fifo\""
+sleep "${N3C_C9_WAIT:-60}"
+for i in $(seq 1 $((N - 1))); do printf '%s\n' "nodes" >&$((i + 9)); done
+sleep 5
+c9n=0; c9ok=0; c9bad=""
+for i in $(seq 1 $((N - 1))); do
+    ids=$(tr -d '\r' < "$LOG/node$i.log" | head -n "${L0[$i]}" | grep -a '^\[swim\] slots ' | tail -1 | sed -n 's/.* ids \(.*\)$/ \1 /p')
+    case "$ids" in *" $VID "*) ;; *) continue ;; esac
+    c9n=$((c9n + 1))
+    st=$(tail -n +"$((L2[$i] + 1))" "$LOG/node$i.log" | tr -d '\r' | grep -a "^ *$VID  " | tail -1 | awk '{print $2}')
+    [ "$st" = ALIVE ] && c9ok=$((c9ok + 1)) || c9bad="$c9bad $i(${st:-none})"
+done
+[ "$c9n" -ge 1 ] && [ "$c9ok" -eq "$c9n" ] && r C9 PASS "($c9ok/$c9n former holders have id $VID ALIVE again)" \
+    || r C9 FAIL "($c9ok/$c9n former holders have id $VID ALIVE again; not:$c9bad)"
 [ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"
