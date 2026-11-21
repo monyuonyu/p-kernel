@@ -1551,7 +1551,7 @@ static UW gl_merge_peers(pk_node_t me)
          * is only spent on a peer we have reason to believe is really there
          * (SWIM-ALIVE or already cached) — an unpublished id fails its first
          * fetch fast and we move on without sleeping GL_FETCH_RETRY×. */
-        BOOL believed = (dnode_table[p].state == DNODE_ALIVE) || gl_phave[p];
+        BOOL believed = (dnode_state(p) == DNODE_ALIVE) || gl_phave[p];
         char pref[20]; UW prl = gl_model_ref(pref, p);
         for (INT a = 0; a < GL_FETCH_RETRY; a++) {
             if (gl_pfs_fetch(pref, prl, gl_pcache[p], DTR_WEIGHT_FLOATS) == 0) {
@@ -1749,7 +1749,7 @@ void gl_g23_test(void)
     UB  saved_state[GL_G23_N];
     UB  saved_phave[GL_G23_N];
     for (UW p = 0; p < N; p++) {
-        saved_state[p] = dnode_table[p].state;
+        saved_state[p] = dnode_state(p);
         saved_phave[p] = gl_phave[p];
     }
 
@@ -1758,8 +1758,8 @@ void gl_g23_test(void)
     for (UW i = 0; i < (UW)DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = (float)me; /* my value=0 */
     UW alive = 0;
     for (UW p = 1; p < N; p++) {
-        dnode_table[p].node_id = (UB)p;
-        dnode_table[p].state   = DNODE_ALIVE;
+        dnode_set_node_id(p, (UB)p);
+        dnode_set_state(p, DNODE_ALIVE);
         for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_pcache[p][i] = (float)p;
         gl_phave[p] = 1;
         alive++;
@@ -1783,7 +1783,7 @@ void gl_g23_test(void)
     /* restore live state */
     drpc_my_node = saved_my;
     for (UW p = 0; p < N; p++) {
-        dnode_table[p].state = saved_state[p];
+        dnode_set_state(p, saved_state[p]);
         gl_phave[p]          = saved_phave[p];
     }
 

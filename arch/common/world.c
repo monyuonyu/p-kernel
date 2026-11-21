@@ -1058,7 +1058,7 @@ void world_print(void)
         int self  = (n == drpc_my_node);
         int stale = (!self && age > WORLD_STALE_MS);
         /* SWIM が DEAD と見ているなら、それも反映する (生死の2軸) */
-        int dead  = (!self && dnode_table[n].state == DNODE_DEAD);
+        int dead  = (!self && dnode_state(n) == DNODE_DEAD);
 
         wo_puts("  node"); wo_putdec(n); wo_puts("  ");
 

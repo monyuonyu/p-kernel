@@ -13,7 +13,7 @@
 #include "region.h"   /* region_recompute / region_is_member               */
 #include "drpc.h"     /* DNODE, dnode_table[], drpc_my_node, DNODE_MAX      */
 
-DNODE dnode_table[DNODE_MAX];
+DNODE_TABLE_DEFINE;   /* N3 2a: the stub owns the table through the door */
 pk_node_t drpc_my_node = 0xFF;
 
 void region_recompute(void) { }

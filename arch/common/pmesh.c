@@ -361,7 +361,7 @@ static W pmesh_send_v2(pk_node_t dst, UH port, const UB *data, UH len)
 #endif
     if (dst == drpc_my_node)     return -1;
     BOOL direct = (dst >= DNODE_MAX) ? TRUE
-                : (dnode_table[dst].state == DNODE_ALIVE ? TRUE : FALSE);
+                : (dnode_state(dst) == DNODE_ALIVE ? TRUE : FALSE);
 #if defined(N2_NC_PMV2_NOCHECK)
     BOOL reads = TRUE;                       /* falsifier: send to anyone */
 #else
@@ -428,7 +428,7 @@ W pmesh_send(pk_node_t dst_node, UH dst_port, const UB *data, UH len)
     UW next_ip;
 
     /* 直接到達可能か確認 */
-    if (dnode_table[dst_node].state == DNODE_ALIVE) {
+    if (dnode_state(dst_node) == DNODE_ALIVE) {
         next_ip = node_ip(dst_node);
     } else if (pmesh_routes[dst_node].active) {
         next_ip = node_ip(pmesh_routes[dst_node].next_hop);
@@ -505,7 +505,7 @@ void pmesh_route_list(void)
     /* 直接ノード（dnode_table） */
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        if (dnode_state(n) != DNODE_ALIVE) continue;
         pm_puts("    ");
         pm_puthex1(n);
         pm_puts("     ");
@@ -516,7 +516,7 @@ void pmesh_route_list(void)
     /* 中継経路 */
     for (INT i = 0; i < DNODE_MAX; i++) {
         if (!pmesh_routes[i].active) continue;
-        if (dnode_table[i].state == DNODE_ALIVE) continue; /* 直接は上で表示済み */
+        if (dnode_state(i) == DNODE_ALIVE) continue; /* 直接は上で表示済み */
         pm_puts("    ");
         pm_puthex1((UB)i);
         pm_puts("     ");
@@ -601,7 +601,7 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     pk_node_t saved_my = drpc_my_node;
     const pk_node_t N = 2, WIDE = 300, WSELF = 260;
     const UH PORT = 7777;
-    UB saved_st = dnode_table[N].state;
+    UB saved_st = dnode_state(N);
     PMESH_STATS saved_stats = pmesh_stats;
     PMESH_V2_STATS saved_v2 = pmesh_v2_stats;
     const UB pl[3] = { 'a', 'b', 'c' };
@@ -617,7 +617,7 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
 #define PMT_FAIL(m) do { say("[pmv2] FAIL " m "\r\n"); fails++; } while (0)
 
     /* [pmv2-v1same] */
-    drpc_my_node = 1; dnode_table[N].state = DNODE_ALIVE; pmt_v2_peer = 0xFFFF;
+    drpc_my_node = 1; dnode_set_state(N, DNODE_ALIVE); pmt_v2_peer = 0xFFFF;
     pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
     if (rc != 0 || pmt_cnt != 1 || pmt_len != 15 || pmt_buf[4] != PMESH_VERSION ||
         pmt_buf[6] != 1 || pmt_buf[7] != N || pmt_ip != pk_node_ip(N))
@@ -673,9 +673,9 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     pmt_v2_peer = N;
 
     /* [pmv2-direct] */
-    dnode_table[N].state = DNODE_SUSPECT; pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
+    dnode_set_state(N, DNODE_SUSPECT); pmt_cnt = 0; rc = pmesh_send(N, PORT, pl, 3);
     if (rc != -1 || pmt_cnt != 0) PMT_FAIL("direct: v2 went to a narrow peer that is not ALIVE");
-    dnode_table[N].state = DNODE_ALIVE;
+    dnode_set_state(N, DNODE_ALIVE);
 
     /* [pmv2-big] */
     pmt_cnt = 0; rc = pmesh_send(N, PORT, big, (UH)(PMESH_V2_DATA_MAX + 1));
@@ -725,7 +725,7 @@ INT pmesh_v2_self_test(void (*emit)(const char *))
     pm_tx_tap = NULL; pm_reads_v2_hook = NULL;
     for (INT i = 0; i < PMESH_BIND_MAX; i++) pmesh_socks[i] = saved_socks[i];
     PK_NOSW_LEAVE();
-    drpc_my_node = saved_my; dnode_table[N].state = saved_st;
+    drpc_my_node = saved_my; dnode_set_state(N, saved_st);
     pmesh_stats = saved_stats; pmesh_v2_stats = saved_v2;
     if (fails == 0) say("[pmv2] PASS (v2 only when wide and to a reader, straight; v1 unchanged)\r\n");
     else            say("[pmv2] RED\r\n");

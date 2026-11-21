@@ -120,7 +120,7 @@ void heal_on_node_dead(pk_node_t dead_node)
             if (heir == 0xFF || n < heir) heir = n;
             continue;
         }
-        if (dnode_table[n].state == DNODE_ALIVE) {
+        if (dnode_state(n) == DNODE_ALIVE) {
             if (heir == 0xFF || n < heir) heir = n;
         }
     }

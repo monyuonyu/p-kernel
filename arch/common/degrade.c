@@ -69,7 +69,7 @@ void degrade_update(void)
     UW cnt = 1;  /* 自分は常に生存 */
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state == DNODE_ALIVE) cnt++;
+        if (dnode_state(n) == DNODE_ALIVE) cnt++;
     }
     alive_node_cnt = cnt;
 

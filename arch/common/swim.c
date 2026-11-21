@@ -10,7 +10,7 @@
  *  Gossip TTL: each membership event is piggybacked GOSSIP_TTL times,
  *  giving O(log N) epidemic spread across the cluster.
  */
-
+#define DRPC_TABLE_OWNER 1      /* N3 2a: one of the two owners of dnode_table */
 #include "swim.h"
 #include "pk_nosw.h"   /* gq[] is shared by swim_task and swim_rx (net_task) */
 #include "heal.h"

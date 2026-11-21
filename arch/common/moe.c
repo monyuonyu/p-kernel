@@ -456,7 +456,7 @@ static pk_node_t select_expert(UB gate_class)
         int is_self = (n == me);
         if (!is_self) {
             if (!score_valid[n]) continue;
-            if (dnode_table[n].state != DNODE_ALIVE) continue;
+            if (dnode_state(n) != DNODE_ALIVE) continue;
         }
         cand[ncand].node_id      = n;
         cand[ncand].acc          = is_self ? my_accuracy[gate_class]
