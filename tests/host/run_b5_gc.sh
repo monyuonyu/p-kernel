@@ -109,5 +109,23 @@ echo "[b5-gc] G1 $g1"
 over=$(cat "$W"/n?.log | grep -acE 'not all here|cannot be read|student fetch: gave up')
 if [ "$over" -eq 0 ]; then echo "[b5-gc] G2 PASS (no too-much-dropped line)"
 else echo "[b5-gc] G2 FAIL ($over lines: not all here / cannot be read / gave up)"; bad=1; fi
+# G3 (H42, 11-21 13:05 run, written before the product line existed): the own
+# generation ONE back is still whole in the store after each own cleanup (a peer
+# may still be fetching it). The product prints, after the cleanup of an own
+# publish, "[b5-gc] st/<n>: own generation one back: <present> of <seen> ids here"
+# (pfs_has on every id of it). Every node has >= 1 such line and on every line
+# present == seen > 0. Keeping only one own generation (H42's break) prints no line
+# (red); dropping the one back instead of two back prints present < seen (red).
+g3=PASS
+for k in 1 2 3 4 5; do
+    L=$(tr -d '\r' < "$W/n$k.log" | grep -a "own generation one back: ")
+    n=$(echo "$L" | grep -c 'one back')
+    badl=$(echo "$L" | awk '/one back: / { for (i = 1; i <= NF; i++) if ($i == "back:") { p = $(i + 1); s = $(i + 3) } if (p != s || s == 0) b++ } END { print b + 0 }')
+    [ -z "$L" ] && n=0
+    echo "[b5-gc] node $k: $n own-one-back lines, $badl not whole"
+    { [ "$n" -ge 1 ] && [ "$badl" -eq 0 ]; } || g3=FAIL
+done
+echo "[b5-gc] G3 $g3"
+[ "$g3" = PASS ] || bad=1
 if [ "$bad" = 0 ]; then echo "[b5-gc] ALL PASS"; exit 0; fi
 echo "[b5-gc] RED"; exit 1
