@@ -7,7 +7,7 @@
 #   D1  drpc.o (the REAL arch/common/drpc.c, hosted x86_64 flags) has the same
 #       static data (size: data + bss) at DNODE_MAX 64 / 256 / 1024
 #       = the node table is not sized by the fleet any more
-#   D2  outside drpc.c and swim.c, no code line under arch/ indexes
+#   D2  outside drpc.c, swim.c (and drpc.h, the door), no code line under arch/ indexes
 #       dnode_table[ directly (comment lines and a comment after code are
 #       skipped; a string literal with "//" in it may hide a use) = everyone goes through
 #       the accessors of drpc.h, so the rows can move without touching them
@@ -79,7 +79,7 @@ fi
 python3 -c '
 import os, re, sys
 root, extra = sys.argv[1], sys.argv[2:]
-own = {"arch/common/drpc.c", "arch/common/swim.c"}
+own = {"arch/common/drpc.c", "arch/common/swim.c", "arch/common/include/drpc.h"}  # drpc.h: the door names the table
 files = []
 for d, _, fs in os.walk(os.path.join(root, "arch")):
     for f in fs:
