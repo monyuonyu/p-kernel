@@ -29,7 +29,9 @@ swim.c を hosted x86_64 で DNODE_MAX 64/256/1024 にしてコンパイルし `
 - **S4** 出荷の形（64）で何も変わらない: SWIM の自己試験（`nodes test`・`nodes life`・idpin・selfsuspect・[n2-mix]・run_n2c_wide.sh）が緑、build_all ALL OK、crown（上の 4）
 - **S5** `tests/host/run_n3_swim_cap.sh`（境界の検査つき）: `-DSWIM_PEERS=8` で狭い番号 12 台。全員 U≤8・F>0・表の ALIVE 6 以上・はみ出せば trap で落ちる・最後まで応える。陰性 `-DN3_NC_NO_CAP` で赤。**S1・S2 だけでは足りない**: 7 本を縮めただけ（番号で引く＝はみ出す）の使い捨ての swim.c が S1・S2 とも緑だった
 
-## 4. 作った形（11-21 13:05 の回、feat/n3-swim-cap、監査待ち）
+## 4. 作った形（11-21 13:05 の回、feat/n3-swim-cap＋feat/n3-swim-spread。監査-206 限界つき PASS）
+
+監査-206（11-21 15:25 の回、容器 /build/a206）: S5 素 ALL PASS（C1〜C9、実装者と合わせて 3/3）。壊し x1（点が自分の番号を見ない）は C7 だけ赤（0・6・9 が 0 台）。**x2（墓から取り直すとき incarnation を戻さない）と x4（直接の送り手は枠を取らない、うわさだけが取る）は全部緑**＝限界①を墓が塞ぐことと rx の枠取りは試験に見えない（害は読みでは小さい、断りの数は x4 で約半分）。swim_coupling 13808 ×3 PASS・陰性赤、自己試験 8 本 PASS、crown 全バイト同じ
 
 - `sw_peer[SWIM_PEERS]`（16 B）＋`NODEMAP`。枠は SWIM が聞いた時に取る、無い台は返事だけ。探りは枠の上。ベアは `SW_*` が元の配列。swim.o は 64 で +448 B
 - C6（H41 (b)）: 止めた台を枠の持ち主が SWIM で DEAD にするか。「drpc が先」は読みの誤りだった（測ると 11/11 が SWIM、drpc 0 本）
