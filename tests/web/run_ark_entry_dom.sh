@@ -15,6 +15,8 @@
 #                  A8-order A8-key A8-heir PASS
 #   nc-keep-key    "written down" leaves the key in the DOM: A8-clear FAIL,
 #                  A8-order A8-key A8-rec PASS
+#   nc-key-on-open the key is fetched as soon as the key step opens (the first
+#                  form): A8-ask and A8-later FAIL, A8-key PASS
 # The mutations must find their anchor exactly once, else the arm is RED (a moved
 # anchor must not turn into a silent green).
 # Needs python3 + playwright (+ a chromium: PK_CHROMIUM, or `playwright install
@@ -29,7 +31,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_DOM_PORT:-17841}"
-ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key}"
+ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key nc-key-on-open}"
 SRC="$ROOT/arch/common/web/galaxy.html"
 WORK="$(mktemp -d /tmp/arkdom.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -63,7 +65,7 @@ want() {  # <arm> <PASS|FAIL> <check>...
     for c in "$@"; do is "$a" "$c" "$v" || REDS="$REDS $a-$c"; done
 }
 
-ALL="A8-url A8-order A8-key A8-clear A8-header A8-heir A8-rec A8-done A8-resume A8-skip"
+ALL="A8-url A8-ask A8-later A8-order A8-key A8-clear A8-header A8-heir A8-rec A8-done A8-resume A8-skip"
 # shellcheck disable=SC2086
 if arm plain "$SRC"; then want plain PASS $ALL; fi
 case " $ARMS " in *" nc-no-header "*)
@@ -88,6 +90,12 @@ case " $ARMS " in *" nc-keep-key "*)
         if arm nc-keep-key "$WORK/keep.html"; then want nc-keep-key FAIL A8-clear; want nc-keep-key PASS A8-order A8-key A8-rec; fi
     else REDS="$REDS nc-keep-key-anchor"; fi ;;
 *) REDS="$REDS nc-keep-key-skipped" ;; esac
+case " $ARMS " in *" nc-key-on-open "*)
+    if mutate "$WORK/open.html" '  if(first==="key") aeKey(); else aeStep(first);' \
+              '  if(first==="key"){ aeKey(); aeKeyShow(); } else aeStep(first);'; then
+        if arm nc-key-on-open "$WORK/open.html"; then want nc-key-on-open FAIL A8-ask A8-later; want nc-key-on-open PASS A8-key; fi
+    else REDS="$REDS nc-key-on-open-anchor"; fi ;;
+*) REDS="$REDS nc-key-on-open-skipped" ;; esac
 make -C "$BOOT" clean >/dev/null 2>&1
 echo "[ark-dom] logs: /tmp/ark_dom_<arm>_<node>.log"
 if [ -z "$REDS" ]; then echo "[ark-dom] ALL PASS"; exit 0; fi
