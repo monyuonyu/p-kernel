@@ -1462,6 +1462,13 @@ jobs:
           make -C boot/linux_x86_64 EXTRA_CFLAGS=-DPK_HOSTED_NO_EXIT_DISPATCH >/dev/null
           ( cd boot/linux_x86_64 && timeout 120 sh -c "printf 'tkconf\nexit\n' | ./p-kernel" ) | tee tkconf_x64_nc.log
           grep -aF '[tkc] FAIL K9' tkconf_x64_nc.log
+          # audit-207: the same broken kernel through K9's retry path (the first
+          # calibration made short). A retry that kept the flag of the short try
+          # (h_flag = 0 outside the loop) was green here: 133/0.
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 EXTRA_CFLAGS="-DPK_HOSTED_NO_EXIT_DISPATCH -DTKC_K9_SHORT_TRIES=1" >/dev/null
+          ( cd boot/linux_x86_64 && timeout 120 sh -c "printf 'tkconf\nexit\n' | ./p-kernel" ) | tee tkconf_x64_nc_retry.log
+          grep -aF '[tkc] FAIL K9' tkconf_x64_nc_retry.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 >/dev/null
       # KLOAD-UNAUTH (0-14 S3): K0 is the shut-by-default receiver; it must go
