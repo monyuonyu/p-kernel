@@ -112,6 +112,14 @@ while IFS=$'\t' read -r dir flags; do
 done < <(ci_pairs)
 step x86_64-again "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64"
 step aarch64      "make -C boot/linux clean >/dev/null && make -C boot/linux"
+# GitHub's ubuntu-26.04 has GCC 15, which (from GCC 14) makes these warnings errors by
+# default; this container's gcc 13 only warns (it knows these four; return-mismatch and
+# declaration-missing-parameter-type are GCC 14 names it refuses). CI 44940189356 (64d51ff2): pfs_repl.c called
+# pfs_dur_active with no declaration, 20 jobs red at their build, build_all ALL OK 93.
+step x86_64-gcc14 "make -C boot/linux_x86_64 clean >/dev/null && make -C boot/linux_x86_64 \
+                     EXTRA_CFLAGS='-Werror=implicit-function-declaration -Werror=implicit-int -Werror=int-conversion -Werror=incompatible-pointer-types'"
+step aarch64-gcc14 "make -C boot/linux clean >/dev/null && make -C boot/linux \
+                     EXTRA_CFLAGS='-Werror=implicit-function-declaration -Werror=implicit-int -Werror=int-conversion -Werror=incompatible-pointer-types'"
 step windows      "make -C boot/windows/x86_64 clean >/dev/null && make -C boot/windows/x86_64"
 step bare-x86     "make -C boot/x86 clean >/dev/null && make -C boot/x86 all disk"
 step bare-rpi3    "make -C boot/aarch64 rpi3"
