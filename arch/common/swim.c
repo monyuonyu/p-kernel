@@ -199,6 +199,16 @@ static SWIM_PEER *sw_get(pk_node_t n)
     return (s < 0 || s >= SW_STORE) ? NULL : &sw_peer[s];
 }
 
+/* How much THIS node wants peer n in a slot (limit 4 of step 1, 11-21): a
+ * hash of (my id, n), so each node prefers its own set. First come kept the
+ * same peers everywhere and the same few were in no node's slots (S5 C7). */
+static UW sw_score(pk_node_t n)
+{
+    UW h = (UW)drpc_my_node * 0x9E3779B1UL ^ ((UW)n + 1u) * 0x85EBCA6BUL;
+    h ^= h >> 16; h *= 0x7FEB352DUL; h ^= h >> 15; h *= 0x846CA68BUL; h ^= h >> 16;
+    return h;
+}
+
 /* the slot of narrow id n, taken (zeroed) if new; NULL if refused */
 static SWIM_PEER *sw_take(pk_node_t n)
 {
@@ -215,6 +225,23 @@ static SWIM_PEER *sw_take(pk_node_t n)
                 s = nodemap_admit(&sw_map, n);
             }
         }
+#if !defined(N3_NC_FIRST_COME)
+        /* still full: n replaces the holder this node wants least, if it wants
+         * n more (stable once the best SWIM_PEERS are in; that holder is then
+         * refused like any other). -DN3_NC_FIRST_COME: the step-1 rule (C7 red) */
+        if (s < 0) {
+            INT lo = -1; UW lo_sc = 0;
+            for (INT i = 0; i < SW_STORE; i++) {
+                if (!sw_map.used[i] || (pk_node_t)sw_map.id[i] == drpc_my_node) continue;
+                UW sc = sw_score((pk_node_t)sw_map.id[i]);
+                if (lo < 0 || sc < lo_sc) { lo = i; lo_sc = sc; }
+            }
+            if (lo >= 0 && sw_score(n) > lo_sc) {
+                nodemap_evict(&sw_map, lo);
+                s = nodemap_admit(&sw_map, n);
+            }
+        }
+#endif
         if (s >= SW_STORE) { nodemap_evict(&sw_map, s); s = -1; }   /* never: lowest free first */
         if (s < 0) { sw_refused++; PK_NOSW_LEAVE(); return NULL; }
         sw_peer[s] = (SWIM_PEER){ 0 };
