@@ -7,6 +7,8 @@ The order the page must walk (7.2 4): the manifesto -> consent -> the key backup
 the heir -> the first record. Checks (fixed before the screens were written):
   A8-url     opened as /#t=<pass>: the page moved the pass to sessionStorage and
              took it out of the URL (history.replaceState)
+  A8-ask     (added 2026-11-21 after the first form) the key step opens on the
+             explanation: no POST /ark/key/backup and no key in the DOM until "show"
   A8-order   after consent the key screen is the only step shown; the heir and the
              record steps are not shown until "written down"; the record step not
              until the heir is set or skipped. The page's POSTs come in this order:
@@ -23,6 +25,8 @@ the heir -> the first record. Checks (fixed before the screens were written):
   A8-done    after the record the overlay is closed; a reload (no #t=, the pass from
              sessionStorage) shows neither the intro nor the entry screens
 Second node (a fresh store), the "come back" path:
+  A8-later   (added with A8-ask) "later" on the key step closes the entry with no
+             key POST; a reload opens the key step again
   A8-resume  the key was shown, the page reloaded before "written down": the entry
              opens on the key step again, says it was shown once (#aekeygone, the
              route is 410) and does not show the key; "written down" goes on
@@ -290,6 +294,17 @@ def main():
         key_only = ok and wait_shown(pg, "#aestep-key", 15) and only(pg, "#aestep-key")
         key_txt = ""
         if key_only:
+            # A8-ask (added 2026-11-21 after the first form: the key is fetched only
+            # on "show the key"): the step is open, no key POST yet, no key in the DOM
+            pg.wait_for_timeout(1500)
+            pre = (pg.text_content("#aekey") or "").strip()
+            nb = len([1 for pth, _st in posts if pth == "/ark/key/backup"])
+            res("A8-ask", shown(pg, "#aekeyshow") and nb == 0 and not re.search(r"[0-9a-f]{64}", pre),
+                "show=%s backup-posts=%d key=%r" % (shown(pg, "#aekeyshow"), nb, pre[:12]))
+            pg.click("#aekeyshow")
+        else:
+            res("A8-ask", False, "the key step did not open")
+        if key_only:
             t_end = time.time() + 10
             while time.time() < t_end:
                 key_txt = (pg.text_content("#aekey") or "").strip()
@@ -366,13 +381,34 @@ def main():
         reqs, posts = [], []
         ctx, pg = open_page(browser, tok, reqs, posts)
         ok = consent(pg)
-        ks = ok and wait_shown(pg, "#aestep-key", 15)
+        # A8-later (added with A8-ask): "later" closes the entry without fetching the
+        # key; a reload opens the key step again
+        kl = ok and wait_shown(pg, "#aestep-key", 15) and wait_shown(pg, "#aekeylater", 5)
+        if kl:
+            pg.click("#aekeylater")
+        closed_l = False
+        t_end = time.time() + 10
+        while kl and time.time() < t_end:
+            if not pg.evaluate("document.getElementById('arkentry').classList.contains('open')"):
+                closed_l = True
+                break
+            pg.wait_for_timeout(100)
+        nb_l = len([1 for pth, _st in posts if pth == "/ark/key/backup"])
+        pg.goto(BASE + "/", wait_until="load")
+        back_l = wait_shown(pg, "#aestep-key", 15) and wait_shown(pg, "#aekeyshow", 5)
+        res("A8-later", bool(closed_l) and nb_l == 0 and back_l,
+            "later=%s closed=%s backup-posts=%d again=%s" % (kl, closed_l, nb_l, back_l))
+        ks = back_l
+        if ks:
+            pg.click("#aekeyshow")
         kp = wait_post(pg, posts, "/ark/key/backup") if ks else None
         k1 = bool(ks) and kp == 200
         print("[ark-dom] note n2 before reload: consent=%s keystep=%s backup=%s posts=%s"
               % (ok, ks, kp, posts), flush=True)
         pg.goto(BASE + "/", wait_until="load")          # the pass is in sessionStorage now
         k2 = wait_shown(pg, "#aestep-key", 15) and only(pg, "#aestep-key")
+        if k2 and wait_shown(pg, "#aekeyshow", 5):
+            pg.click("#aekeyshow")
         gone = k2 and wait_shown(pg, "#aekeygone", 10)
         txt2 = (pg.text_content("#aekey") or "").strip() if k2 else ""
         intro2 = pg.evaluate("document.getElementById('intro').classList.contains('open')")
@@ -399,7 +435,8 @@ def main():
 
 
 main()
-ALLC = ["A8-url", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done", "A8-resume", "A8-skip"] + A10
+ALLC = ["A8-url", "A8-ask", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done",
+        "A8-later", "A8-resume", "A8-skip"] + A10
 if all(RESULTS.get(c) for c in ALLC):
     print("[ark-dom] ALL PASS")
     sys.exit(0)

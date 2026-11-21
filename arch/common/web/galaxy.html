@@ -289,7 +289,9 @@
     <div class="warn" id="aekeywhy">…</div>
     <pre id="aekey"></pre>
     <div class="warn" id="aekeygone" style="display:none">…</div>
-    <div class="row"><button class="primary" id="aekeydone">…</button></div>
+    <div class="row" id="aekeyask"><button class="primary" id="aekeyshow">…</button>
+      <button id="aekeylater">…</button></div>
+    <div class="row" id="aekeyrow" style="display:none"><button class="primary" id="aekeydone">…</button></div>
   </div>
   <div class="aestep" id="aestep-heir">
     <h1 id="aeheirh">…</h1>
@@ -482,9 +484,10 @@ const I18N = {
 // languages fall back to en through S().
 Object.assign(I18N.en,{
   ae_keyh:"Your record key — shown once",
-  ae_keywhy:"Your records are sealed with this key. If you lose this device, nobody (not even you) can open them without these 64 characters. Copy them onto paper and keep it somewhere safe. This screen will not come back.",
+  ae_keywhy:"Your records are sealed with this key. If you lose this device, nobody (not even you) can open them without these 64 characters. Copy them onto paper and keep it somewhere safe. The key is shown only once.",
   ae_keygone:"The key backup was already shown once and cannot be shown again. If you copied it, press \"I copied it\". If you did not, this screen cannot show it again (a limit of this version).",
   ae_keydone:"I copied it",
+  ae_keyshow:"Show the key (once)", ae_keylater:"Later",
   ae_heirh:"Who carries on your records (you may decide later)",
   ae_heirwhy:"Paste the 64-character public key shown on the device of the person who should carry on your records. This screen does not check who they are. You can change it later.",
   ae_heirsave:"Choose this person", ae_heirskip:"Later",
@@ -504,9 +507,10 @@ Object.assign(I18N.en,{
 });
 Object.assign(I18N.ja,{
   ae_keyh:"記録の鍵の控え（一度だけ表示します）",
-  ae_keywhy:"あなたの記録は、この鍵で封じて保存されます。この端末を失ったとき、この 64 文字が無ければ誰にも（あなたにも）開けません。紙に書き写して、安全な場所にしまってください。この画面は二度と出ません。",
+  ae_keywhy:"あなたの記録は、この鍵で封じて保存されます。この端末を失ったとき、この 64 文字が無ければ誰にも（あなたにも）開けません。紙に書き写して、安全な場所にしまってください。鍵は一度だけ表示します。",
   ae_keygone:"鍵の控えは前に一度表示したので、もう表示できません。書き写してあれば「書き写した」を押してください。書き写していない場合、この画面ではもう一度見られません（いまの版の限界）。",
   ae_keydone:"書き写した",
+  ae_keyshow:"鍵を表示する（一度だけ）", ae_keylater:"あとで",
   ae_heirh:"記録を継ぐ人（あとで決めてもよい）",
   ae_heirwhy:"あなたの記録を受け継ぐ人の端末に出ている 64 文字の公開鍵を貼ってください。この画面では相手の身元を確かめません。あとから変えられます。",
   ae_heirsave:"この人に決める", ae_heirskip:"あとで",
@@ -548,7 +552,7 @@ function applyStrings(){
   set("arksave",S("save")); set("arkskip",S("skip"));
   set("lblhandle",S("lblhandle")); set("lblmsg",S("lblmsg"));
   set("lblname",S("lblname")); set("arkappend",S("append"));
-  ["aekeyh","aekeywhy","aekeygone","aekeydone","aeheirh","aeheirwhy","aeheirsave",
+  ["aekeyh","aekeywhy","aekeygone","aekeydone","aekeyshow","aekeylater","aeheirh","aeheirwhy","aeheirsave",
    "aeheirskip","aerech","aerecwhy","aerecsave","aereclater"].forEach(id=>
     set(id,S("ae_"+id.slice(2))));
   set("arrech",S("ar_h")); set("arclose",S("ar_close")); set("arback",S("ar_back"));
@@ -2050,24 +2054,36 @@ function aeStep(s){
 }
 function aeErr(t){ document.getElementById("aeerr").textContent=t; }
 function aeClose(){ document.getElementById("arkentry").classList.remove("open"); aeOn=false; }
-async function aeKey(){
+// the key step opens on the explanation; the key is fetched (once, ever) only when
+// "show the key" is pressed, so "later" can close the step without spending the
+// one showing (2026-11-21: the first form fetched it on open and had no way out)
+function aeKey(){
   aeStep("key");
   const k=document.getElementById("aekey"), g=document.getElementById("aekeygone");
   k.textContent=""; k.style.display="none"; g.style.display="none";
+  document.getElementById("aekeyask").style.display="";
+  document.getElementById("aekeyrow").style.display="none";
+}
+async function aeKeyShow(){
+  const k=document.getElementById("aekey"), g=document.getElementById("aekeygone");
   try{
     const r=await fetch("/ark/key/backup",{method:"POST",body:""});
     if(r.status===200){ k.textContent=(await r.text()).trim(); k.style.display=""; }
     else if(r.status===410){ g.style.display=""; }      // shown once already (a reload)
-    else aeErr(S("ae_fail")+" ("+r.status+")");
+    else { aeErr(S("ae_fail")+" ("+r.status+")"); return; }
+    document.getElementById("aekeyask").style.display="none";
+    document.getElementById("aekeyrow").style.display="";
   }catch(_){ aeErr(S("ae_fail")); }
 }
+document.getElementById("aekeyshow").onclick=aeKeyShow;
+document.getElementById("aekeylater").onclick=()=>aeClose();
 async function arkEntryOpen(first){
   if(aeOn) return;
   aeOn=true;
   const c=document.querySelector("#arkentry .card");
   if(c) c.dir=(curLang==="ar"||curLang==="ur"||curLang==="fa")?"rtl":"ltr";
   document.getElementById("arkentry").classList.add("open");
-  if(first==="key") await aeKey(); else aeStep(first);
+  if(first==="key") aeKey(); else aeStep(first);
 }
 async function arkEntryCheck(){
   try{
