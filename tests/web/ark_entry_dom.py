@@ -192,6 +192,87 @@ def consent(pg):
     return True
 
 
+REC2 = "二つ目の記録 \n  字下げと行末の空白  \n"
+EDIT0 = "書き直した一つ目\n\tタブ "
+A10 = ["A10-btn", "A10-list", "A10-new", "A10-view", "A10-vis", "A10-learn", "A10-edit"]
+
+
+def rec_rows(tok):
+    st, b = raw("GET", "/ark/rec.json", b"", tok)
+    try:
+        return st, json.loads(b.decode("utf-8")).get("records", [])
+    except Exception:
+        return st, []
+
+
+def poll(pg, fn, timeout=15):
+    """fn() until truthy; pg.wait_for_timeout between tries (events keep flowing)"""
+    t_end = time.time() + timeout
+    v = fn()
+    while not v and time.time() < t_end:
+        pg.wait_for_timeout(150)
+        v = fn()
+    return v
+
+
+def dom_rows(pg):
+    return pg.eval_on_selector_all("#arlist .arrow", "es=>es.map(e=>e.dataset.no)")
+
+
+def a10(pg, tok):
+    """ark-entry.md 7.2 1, 3, 5: the records screen after the first run (node 1 holds
+    record 0 = REC_TEXT, self / no, seq 1). Checks fixed before the screen was written:
+      A10-btn   the dock has #brec once the backup is written down
+      A10-list  #brec opens #arkrecs; #arlist has one .arrow per record (data-no)
+      A10-new   #arnew + #arnewsave keep a second record byte for byte; the list has 2
+      A10-view  a row opens #arview; #arbody is the record's text as written
+      A10-vis   #arvis -> public adds exactly one version: vis public, learn still no
+      A10-learn #arlearn -> yes adds exactly one version: learn yes, vis still public
+      A10-edit  #aredit + #areditsave add one version of the same record: the body is
+                the new text byte for byte, vis and learn are kept"""
+    btn = wait_shown(pg, "#brec", 15)
+    res("A10-btn", btn, "no #brec on the dock")
+    if not btn:
+        for c in A10[1:]:
+            res(c, False, "no #brec")
+        return
+    pg.click("#brec")
+    lst = wait_shown(pg, "#arkrecs", 10) and poll(pg, lambda: dom_rows(pg) == ["0"])
+    res("A10-list", lst, "rows=%s" % dom_rows(pg))
+    pg.fill("#arnew", REC2)
+    pg.click("#arnewsave")
+    two = poll(pg, lambda: dom_rows(pg) == ["0", "1"] or dom_rows(pg) == ["1", "0"])
+    st, rr = rec_rows(tok)
+    _g, b1 = raw("GET", "/ark/rec/1", b"", tok)
+    res("A10-new", two and len(rr) == 2 and b1 == REC2.encode("utf-8"),
+        "dom=%s rows=%d same=%s" % (dom_rows(pg), len(rr), b1 == REC2.encode("utf-8")))
+    seq0 = rr[0].get("seq", -1) if rr else -1
+    pg.click('#arlist .arrow[data-no="0"]')
+    view = wait_shown(pg, "#arview", 10) and poll(pg, lambda: (pg.text_content("#arbody") or "") == REC_TEXT)
+    res("A10-view", view, "body=%r" % (pg.text_content("#arbody") or "")[:40])
+
+    def row0():
+        _s, r = rec_rows(tok)
+        return r[0] if r else {}
+    if view:
+        pg.select_option("#arvis", "public")
+    r = poll(pg, lambda: row0().get("vis") == "public" and row0()) or row0()
+    res("A10-vis", r.get("vis") == "public" and r.get("learn") == "no" and r.get("seq") == seq0 + 1,
+        "row0=%s seq0=%s" % (r, seq0))
+    if view:
+        pg.select_option("#arlearn", "yes")
+    r = poll(pg, lambda: row0().get("learn") == "yes" and row0()) or row0()
+    res("A10-learn", r.get("vis") == "public" and r.get("learn") == "yes" and r.get("seq") == seq0 + 2,
+        "row0=%s seq0=%s" % (r, seq0))
+    if view:
+        pg.fill("#aredit", EDIT0)
+        pg.click("#areditsave")
+    ok = poll(pg, lambda: raw("GET", "/ark/rec/0", b"", tok)[1] == EDIT0.encode("utf-8"))
+    r = row0()
+    res("A10-edit", bool(ok) and r.get("seq") == seq0 + 3 and r.get("vis") == "public" and r.get("learn") == "yes",
+        "same=%s row0=%s seq0=%s" % (bool(ok), r, seq0))
+
+
 GUARDED_PREFIX = ("/self.json", "/profile", "/console.txt", "/log.txt", "/ark/", "/teach", "/ask", "/events")
 
 
@@ -292,6 +373,7 @@ def main():
         n401 = len([r for r in reqs if r[3] == 401 and r[1] != "/favicon.ico"])  # 7.7: the browser's own
         res("A8-done", closed and not intro_open and not ent_open and n401 == 0,
             "closed=%s intro=%s entry=%s 401s=%d" % (closed, intro_open, ent_open, n401))
+        a10(pg, tok)
         ctx.close()
         n.stop()
 
@@ -374,7 +456,7 @@ finally:                                  # never leave a node on the port (the 
             p.kill()
             p.wait()
 ALLC = ["A8-url", "A8-ask", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done",
-        "A8-later", "A8-resume", "A8-skip"]
+        "A8-later", "A8-resume", "A8-skip"] + A10
 for c in ALLC:                            # a check the run never reached is a red
     if c not in RESULTS:
         res(c, False, "not reached")
