@@ -180,7 +180,14 @@ typedef struct {
     UB rtt_valid;     /* 1 = measured at least once                       */
 } SWIM_PEER;
 static SWIM_PEER sw_peer[SW_STORE];
-static NODEMAP   sw_map;            /* narrow id -> slot in sw_peer   */
+/* narrow id -> slot in sw_peer. The cap is set here, not only in swim_init:
+ * a node with no network never runs swim_init, but `nodes test` and the other
+ * self-tests still drive gossip_apply (a zero cap refused every id). */
+#if defined(N3_NC_NO_CAP)
+static NODEMAP   sw_map = { .cap = DREGION_MAX };
+#else
+static NODEMAP   sw_map = { .cap = SWIM_PEERS };
+#endif
 static UW        sw_refused;        /* times an id found the slots full */
 static SWIM_PEER sw_scratch;        /* self-tests only: a refused id    */
 
