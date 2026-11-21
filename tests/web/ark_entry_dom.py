@@ -277,7 +277,11 @@ def main():
         reqs, posts = [], []
         ctx, pg = open_page(browser, tok, reqs, posts)
         ok = consent(pg)
-        k1 = ok and wait_shown(pg, "#aestep-key", 15) and wait_post(posts, "/ark/key/backup") == 200
+        ks = ok and wait_shown(pg, "#aestep-key", 15)
+        kp = wait_post(posts, "/ark/key/backup") if ks else None
+        k1 = bool(ks) and kp == 200
+        print("[ark-dom] note n2 before reload: consent=%s keystep=%s backup=%s posts=%s"
+              % (ok, ks, kp, posts), flush=True)
         pg.goto(BASE + "/", wait_until="load")          # the pass is in sessionStorage now
         k2 = wait_shown(pg, "#aestep-key", 15) and only(pg, "#aestep-key")
         gone = k2 and wait_shown(pg, "#aekeygone", 10)
