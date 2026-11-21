@@ -53,6 +53,9 @@
 
 /* the symbols the link takes from the rest of the hosted build */
 int pkernel_default_node_id(void) { return 3; }
+/* N2c stage 3 (node_ident.c): 0 = no wide id asked, the narrow default above.
+ * Without it the four links stop linking (CI 44838481621, UMP x86_64). */
+int pk_node_wide_id(void) { return 0; }
 unsigned int net_my_ip;
 
 static int fails;

@@ -15,8 +15,9 @@
 # ignored; we read only the link log.
 #
 # Which scripts: tests/llm/*.sh that take ${CC:-...} and name student_shell.c or
-# a tests/llm/*.c that #includes it (found from the tree each time, so a new
-# one is not missed).
+# a tests/llm/*.c that #includes it, and tests/host/*.sh that take ${CC:-...}
+# and name a tests/host/*.c that #includes a product .c (found from the tree
+# each time, so a new one is not missed).
 # A script is RED if any of its links failed, or if it linked nothing (it did
 # not reach its build: we would be blind to it).
 # Audit-187: the pick is wider than the target. run_depth_compound, run_ss1 and
@@ -39,6 +40,15 @@ names = ["student_shell.c"] + inc
 for s in sorted(glob.glob("tests/llm/*.sh")):
     t = open(s, encoding="utf-8", errors="replace").read()
     if "${CC:-" in t and any(n in t for n in names):
+        print(s)
+# 11-21: tests/host/*.c that #include a product .c (relay_unicast_test.c takes
+# net_relay.c) went red the same way in CI 44838481621 (N2C3 added a call to
+# pk_node_wide_id, the test had no stand-in) and build_all did not see it.
+host = [os.path.basename(c) for c in sorted(glob.glob("tests/host/*.c"))
+        if re.search(r'#\s*include\s*"\.\./\.\./(arch|kernel|relay)/[^"]*\.c"', open(c, encoding="utf-8", errors="replace").read())]
+for s in sorted(glob.glob("tests/host/*.sh")):
+    t = open(s, encoding="utf-8", errors="replace").read()
+    if "${CC:-" in t and any(n in t for n in host):
         print(s)
 PY
 }
