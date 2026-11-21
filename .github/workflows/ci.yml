@@ -3827,6 +3827,21 @@ jobs:
           cat n3cap_nc9.log
           grep -aqF '[n3-swim-cap] C9 FAIL' n3cap_nc9.log
           grep -aqF '[n3-swim-cap] C8 PASS' n3cap_nc9.log
+      - name: "[unbounded-dnode] N3 step 2a: dnode_table behind the drpc.h door (D2 D2c, BLOCKING; D1 waits for 2b)"
+        # research/n3-dnode-region.md §3, §4b. D2: no code line outside drpc.c /
+        # swim.c / drpc.h indexes dnode_table[. D2c: outside those, the compiler
+        # refuses dnode_table in 5 shapes (#pragma GCC poison) and the door
+        # compiles. D1 (drpc.o not sized by the fleet) is RED until 2b, so the
+        # script exits non-zero today: the step checks the D2/D2c lines, not the
+        # exit code. N3D_NC=2 (one more .c that indexes it) turns D2 RED.
+        run: |
+          bash tests/unbounded/dnode_coupling.sh > dnode.log 2>&1 || true
+          cat dnode.log
+          grep -aqF '[unbounded-dnode] D2 PASS' dnode.log
+          grep -aqF '[unbounded-dnode] D2c PASS' dnode.log
+          ! grep -aqE '\[unbounded-dnode\] D2c? FAIL' dnode.log
+          N3D_NC=2 bash tests/unbounded/dnode_coupling.sh > dnode_nc2.log 2>&1 || true
+          grep -aqF '[unbounded-dnode] D2 FAIL' dnode_nc2.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
         run: bash tests/unbounded/run_unbounded_live.sh
       - name: Both hosted targets still link clean (bare-metal .text is the crown-text-identity job — re-blessed this wave)
