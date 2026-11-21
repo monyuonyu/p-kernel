@@ -81,6 +81,7 @@ extern void frontier_consent_grant(void);
 /* the 5-function transport ABI (galaxy_posix.c; C ABI, no T-Kernel types) */
 int  galaxy_io_init(int port);
 int  galaxy_io_accept(void);
+int  galaxy_io_pending(void);
 int  galaxy_io_read(int slot, void *buf, int max);
 int  galaxy_io_write(int slot, const void *buf, int len);
 void galaxy_io_close(int slot);
@@ -137,6 +138,7 @@ typedef struct {
     INT  is_ws;           /* §3.7 held-open WebSocket (chat + events)     */
     U4   sse_cursor;      /* next UI event ring index this client sends   */
     UW   last_ping;       /* ms of last keepalive (SSE comment / WS ping) */
+    UW   since;           /* ms the SSE stream opened (the oldest gives way) */
     INT  ob_len;          /* pending bytes in ob[]                        */
     char ob[GX_OUTBUF];
 } GX_CLIENT;
@@ -1825,6 +1827,7 @@ static INT gx_route(INT slot, GX_REQ *q)
         g_cli[slot].is_sse     = 1;
         g_cli[slot].sse_cursor = gx_event_now_cursor(); /* start at "now"    */
         g_cli[slot].last_ping  = gx_now_ms();
+        g_cli[slot].since      = g_cli[slot].last_ping;
         return 1;
     }
     if (q->is_post && gx_streq(path, "/teach")) {
@@ -2033,6 +2036,22 @@ void galaxy_task(INT stacd, void *exinf)
     for (INT i = 0; i < GALAXY_MAX_CLIENTS; i++) { g_cli[i].in_use = 0; g_reqn[i] = 0; }
 
     for (;;) {
+#ifndef GX_NC_NO_EVICT
+        /* 11-21 (ark-entry 7.14, tests/host/run_galaxy_slots.sh S2): every slot
+         * taken and a connection waiting -> the oldest SSE stream gives way (an
+         * EventSource opens again by itself); before, the new one was reset. */
+        {
+            INT used = 0, old = -1;
+            for (INT i = 0; i < GALAXY_MAX_CLIENTS; i++) {
+                if (!g_cli[i].in_use) continue;
+                used++;
+                if (g_cli[i].is_sse && (old < 0 || (W)(g_cli[i].since - g_cli[old].since) < 0)) old = i;
+            }
+            if (used == GALAXY_MAX_CLIENTS && old >= 0 && galaxy_io_pending() > 0) {
+                galaxy_io_close(old); g_cli[old].in_use = 0;
+            }
+        }
+#endif
         /* accept up to one new connection per tick. */
         INT s = galaxy_io_accept();
         if (s >= 0) {
@@ -2199,6 +2218,15 @@ void galaxy_task(INT stacd, void *exinf)
 
             /* SSE: drain the UI event ring into this client. */
             GX_CLIENT *c = &g_cli[i];
+#ifndef GX_NC_SSE_NO_READ
+            /* 11-21 (run_galaxy_slots.sh S1): read (and drop) what the client
+             * sends, so a closed stream frees its slot now, not when a keepalive
+             * write fails 15-30 s later */
+            {
+                INT n = galaxy_io_read(i, g_req[i], GX_REQ_MAX - 1);
+                if (n < 0) { galaxy_io_close(i); c->in_use = 0; continue; }
+            }
+#endif
             for (;;) {
                 UI_EVENT ev;
                 INT er = gx_next_event(&c->sse_cursor, &ev, 0);
