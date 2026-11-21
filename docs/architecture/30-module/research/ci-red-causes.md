@@ -39,8 +39,19 @@ W42 進めた 7・止まった 7／W43 19・5／W44 15・2／W45 20・7／W46 10
 | kdds の 1 枠 | 起動を 0.7 秒ずらす（2166c102）＝軽くしただけ。根は R-KDDSQ | 下の測り |
 | 陰性が緑 | 自己試験の frame で判定（MQN）、0 ms→10 ms（CIU26） | 出ていない |
 | n2c-wide plain | MVK・N2T＝部分の直し。根（大に小の鍵が届かない）は残る | 下の測り |
-| K9 | 較正の取り直し（K9R） | 出ていない（3 回） |
+| K9 | 較正の取り直し（K9R） | 出ていない（K9R の後の feat/next 2 回） |
 | FIRST_COME | 副の検査を C1 に（N3FC） | 下の測り |
+
+promote に出ない揺れ（ci.yml の continue-on-error で、期限つきで許している）: hosted aarch64 の `tkconf pool` が手元 15 回に 1 回止まる（原因不明、**期限 11-30**）、
+ring3 の起動が 3 CPU の自己ホストで 300 秒の窓に届かないことがある（飢え、**期限 11-30**）。どちらもこの片づけの残り。
+
+## 提案（直し方の決まりの中で）
+
+1. **promote の再実行は runner の形だけに**（`~/pkernel-promote.py` はリポジトリの外＝判断待ち）: 赤いジョブの落ちた段が Install／checkout、または注記が「lost communication」のときだけ、`gh run rerun --failed` を 1 回してから判定する。**試験の段が走って落ちたものは再実行しない**（揺れを隠さないため）。35 回のうち runner の形だけで止まった回は 7（10-23 ×2・10-24・11-01・11-03・11-05・11-18）
+2. **重い測りの前に `python3 tools/cimetrics/selfhosted_busy.py`**（終わり値 0 で始める）。自己ホストのジョブは run の始まりから約 60 分。
+   runner の容器（pkernel_gh_runner）と監査の容器（pkernel_audit_ss）は、この機体の 4 CPU を制限なしで分け合う（`docker inspect` の CpusetCpus・NanoCpus は空、11-22）。ci.yml の注の「3 CPU」とは違う。
+   分けるなら本番の容器の設定＝判断待ち
+3. 残る揺れの根: n2c（大に小の鍵が届かない）・kdds の 1 枠（R-KDDSQ、ベアが動く）・pool の止まり
 
 ## 測り（同じコミット 64d51ff2、負荷なし／負荷ありを組で、組の中の順も回ごとに入れ替え）
 
