@@ -2029,9 +2029,18 @@ async function arkEntryOpen(first){
   document.getElementById("arkentry").classList.add("open");
   if(first==="key") aeKey(); else aeStep(first);
 }
+// a GET that is tried again on a network error (not on an HTTP status). galaxy has 4
+// slots and a reloaded page's old stream can hold one until a write fails, so the
+// first requests after quick reloads can be reset (2026-11-21, A8-resume)
+async function gxGetRetry(u){
+  for(let i=0;;i++){
+    try{ return await fetch(u); }
+    catch(e){ if(i>=5) throw e; await new Promise(r=>setTimeout(r,1500)); }
+  }
+}
 async function arkEntryCheck(){
   try{
-    const r=await fetch("/ark/rec.json");
+    const r=await gxGetRetry("/ark/rec.json");
     if(r.status===409) await arkEntryOpen(/*AE-FIRST*/"key");
   }catch(_){}
 }
@@ -2373,7 +2382,7 @@ document.getElementById("reintro").onclick=()=>introOpen(false);
 // only gets the corner ⓘ to re-view the pictures. The manifesto-updated
 // re-consent still fires via the teach-403 -> arkOpen() path (server-enforced).
 async function arkFirstRun(){
-  try{ const j=await (await fetch("/profile.json")).json();
+  try{ const j=await (await gxGetRetry("/profile.json")).json();
     if(j && j.none){
       await arkLoadManifesto();      // pre-load so the consent text is ready
       introOpen(true);               // pictures -> consent page (the final step)
