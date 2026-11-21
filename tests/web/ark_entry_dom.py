@@ -13,6 +13,8 @@ the heir -> the first record. Checks (fixed before the screens were written):
              /profile, /ark/key/backup, /ark/key/backup/done, /ark/heir, /ark/rec
   A8-key     the 64 hex on the key screen are ark.key on disk; a second
              POST /ark/key/backup (with the pass, from outside) is 410
+  A8-clear   after "written down" the 64 hex are gone from the DOM (added after the
+             screens were written, with its negative nc-keep-key)
   A8-header  every request the page made to a guarded route carried
              X-Galaxy-Token = the pass, and none was answered 401
   A8-heir    GET /ark/heir (with the pass) is the 64 hex typed on the heir step
@@ -217,6 +219,9 @@ def main():
         if key_only:
             pg.click("#aekeydone")
         heir_only = key_only and wait_shown(pg, "#aestep-heir", 10) and only(pg, "#aestep-heir")
+        left = pg.evaluate("(document.getElementById('aekey')||{}).textContent||''") if heir_only else "?"
+        res("A8-clear", heir_only and not re.search(r"[0-9a-f]{64}", left),
+            "heir=%s key still in the DOM=%r" % (heir_only, left[:12]))
         if heir_only:
             pg.fill("#aeheir", HEIR)
             pg.click("#aeheirsave")
@@ -312,7 +317,7 @@ def main():
 
 
 main()
-ALLC = ["A8-url", "A8-order", "A8-key", "A8-header", "A8-heir", "A8-rec", "A8-done", "A8-resume", "A8-skip"]
+ALLC = ["A8-url", "A8-order", "A8-key", "A8-clear", "A8-header", "A8-heir", "A8-rec", "A8-done", "A8-resume", "A8-skip"]
 if all(RESULTS.get(c) for c in ALLC):
     print("[ark-dom] ALL PASS")
     sys.exit(0)
