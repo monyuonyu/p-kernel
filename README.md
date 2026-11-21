@@ -1,6 +1,6 @@
 **English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `efcce8c5`.
+> Translated from [README.ja.md](README.ja.md) (the Japanese version is the original) at commit `681b8099`.
 
 # p-kernel
 
@@ -39,6 +39,8 @@ Today's AI can only run inside a particular company's servers. If those servers 
 **Why should it not die?** The goal is not a clever AI that surpasses frontier models.
 
 What we want to keep is the record of people's lives. Even after a person is gone, "this person was really here" remains. Even if humanity is gone, the swarm starts up again and keeps the records. We want to build that kind of ark.
+
+We call that ark **yurikago** (Japanese for "cradle"). yurikago is the app people use, and p-kernel is what runs inside it.
 
 So what we ask of the brain is to hold everyday conversation and to remember it. An ark's job is not to spread like fire, but to stay afloat.
 
@@ -169,7 +171,7 @@ Not yet: the learning-side code still runs inside the kernel, and the same isola
 ### Screens and the app
 
 - **Galaxy**: each device serves its own page (`http://127.0.0.1:7800`) and draws itself and its peers as stars. The stars move with real sleep and learning events.
-- **ark (Android app, 0.9.x)**: installing it makes the phone one node. You can watch the galaxy and talk to the growing brain. It runs while charging or while the battery is above 30% (it stops below that; the 30% can be set between 10% and 50%, and with the battery-safe setting off it runs on a low battery too). It is built to resume when charging starts, but whether it really resumes on newer Android (15 and later) has not been checked. It asks for consent to the project's purpose before joining. Build instructions: [docs/android.md](docs/android.md).
+- **yurikago (Android app, 0.9.x)**: installing it makes the phone one node. You can watch the galaxy and talk to the growing brain. It runs while charging or while the battery is above 30% (it stops below that; the 30% can be set between 10% and 50%, and with the battery-safe setting off it runs on a low battery too). It is built to resume when charging starts, but whether it really resumes on newer Android (15 and later) has not been checked. It asks for consent to the project's purpose before joining. Build instructions: [docs/android.md](docs/android.md).
 - Participants' identities are never verified. Real names, pen names, and anonymity are treated the same.
 
 ### Mechanisms for doubting itself
@@ -240,7 +242,7 @@ help                     ← all commands
 - **Make a swarm**: start another `./p-kernel` in a second terminal. On the same LAN they connect automatically. Teach on one side and ask on the other.
 - **Connect beyond NAT**: `make` in `relay/` (tests: `make test`). Run `./relay` on a server reachable from outside, and each device joins with the same key.
 - **A swarm of ten on one machine**: `samples/11_distributed/run_swarm_demo.sh` (x86_64 Linux, 6–8 minutes). A small classifier learned by one node (635 parameters, not a language brain) spreads to ten; they keep answering as they are killed one by one, and a newcomer inherits from the last survivor. These are ten processes on one machine, not ten devices.
-- **On a phone**: the ark app in `android/` ([docs/android.md](docs/android.md)).
+- **On a phone**: the yurikago app in `android/` ([docs/android.md](docs/android.md)).
 - **On bare metal**: `make` in `boot/x86` or `boot/aarch64` (scripts to boot in QEMU included).
 
 ---
