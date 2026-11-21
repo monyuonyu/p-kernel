@@ -1875,6 +1875,23 @@ N-4 cross-host deferred to the ThinkPad).
   build_all ALL OK (incl. windows, bare x86/rpi3/aarch64, dmoe); pychecks 12/12 + parity + yaml. Limits (audit-93): a revert of the production path alone to the
   whole region is seen by no CI step (only 64 nodes show it); 64 nodes were not re-run on the merge (production
   path unchanged since 840b8baf: 2/2 ALL PASS there). Written by the run that merged.
+- CROWN RE-BLESS — Path W folds an epoch once on bare metal too (2026-11-21): `d18caa5d` merges
+  `fix/pw-epoch0-bare` 07bf16df (audit-201 PASS with a limit; R-PWBARE put to mk_pino with a recommendation
+  2026-11-20T19:36, no answer past its deadline 2026-11-21T19:36, landed on it) into `audit/a207` (with the
+  audit-207 merges K9R, MCD, A8S, ARS, none of which moves the crown). r3_incontext.c links into bare x86 and
+  AArch64: the guard reads epoch 0 as "not folded yet" (mw_should_fold, the same line as hosted PWE0), so
+  `.text` changes DELIBERATELY. Measured in pkernel_audit_ss (gcc 13.3.0, `objcopy -O binary -j <section>`,
+  `pk-scratch/a207/merge.sh`), master `9844f12e` and the merge built side by side:
+    base `9844f12e`  x86 .text cd490552… 380727 B   aarch64 .text 4dfac3f4… 363012 B
+      x86      .text 8da41f99e8136f130827d348b1a5805691007f46bbcb2bd6ca45e21a92f9beff  380739 B (+12)
+      aarch64  .text cc552398aaf54b58a4f9ee08822f9aa108817b0644f834faed7ad2c6391e414a  363008 B (-4)
+    other sections (R-CROWNRO): x86 .text.start c932286c -> a7fe4efb 436, .rodata 996ad069 -> d780518e 15040;
+    aarch64 .rodata 8e35fac0 -> 4c46ecac 101752; x86 .rodata.str1.1 / .str1.4 / .cst4 / .data and aarch64
+    .data unchanged. The same values as audit-201's on 24c23eb0 (all digits it recorded).
+  On the merge: bare run_tk_conform.sh x86 133/0 and AArch64 133/0, each with all 14 broken kernels red;
+  build_all (result in the merge's commit message). Limits (audit-201): no test drives the guard on bare metal
+  (`mind merge` only), the decisive evidence is hosted mwguard on the same function; x86 .text.start moves by
+  layout only; one toolchain. Written by the run that merged; an independent re-measure is for a different run.
 - CROWN RE-BLESS — ARK compaction keeps every block (2026-11-07): `84e58cda` `feat/ark-compact-keep` dbd0e516
   (audit-133 FAIL on 58ae4546 -> 166fca51, 9e461bde; audit-134 FAIL -> b4342330; audit-135 FAIL -> dbd0e516;
   audit-136 PASS with limits; R-ACKCROWN put to mk_pino with a recommendation 2026-11-06T00:05, no answer past

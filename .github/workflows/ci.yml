@@ -1462,6 +1462,13 @@ jobs:
           make -C boot/linux_x86_64 EXTRA_CFLAGS=-DPK_HOSTED_NO_EXIT_DISPATCH >/dev/null
           ( cd boot/linux_x86_64 && timeout 120 sh -c "printf 'tkconf\nexit\n' | ./p-kernel" ) | tee tkconf_x64_nc.log
           grep -aF '[tkc] FAIL K9' tkconf_x64_nc.log
+          # audit-207: the same broken kernel through K9's retry path (the first
+          # calibration made short). A retry that kept the flag of the short try
+          # (h_flag = 0 outside the loop) was green here: 133/0.
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 EXTRA_CFLAGS="-DPK_HOSTED_NO_EXIT_DISPATCH -DTKC_K9_SHORT_TRIES=1" >/dev/null
+          ( cd boot/linux_x86_64 && timeout 120 sh -c "printf 'tkconf\nexit\n' | ./p-kernel" ) | tee tkconf_x64_nc_retry.log
+          grep -aF '[tkc] FAIL K9' tkconf_x64_nc_retry.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 >/dev/null
       # KLOAD-UNAUTH (0-14 S3): K0 is the shut-by-default receiver; it must go
@@ -3162,9 +3169,11 @@ jobs:
     # bare-metal arch backends) flips .text and FAILS this gate.
     #
     # WHY RELATIVE, NOT AN ABSOLUTE PINNED HASH: the .text bytes are
-    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 4dfac3f4…,
+    # TOOLCHAIN-DEPENDENT. The canonical dev crown (currently aarch64 cc552398…,
+    # x86 8da41f99… after Path W folds an epoch once on bare metal (R-PWBARE)
+    # 2026-11-21, audit-container gcc 13.3.0; was aarch64 4dfac3f4…/
     # x86 cd490552… after ARK compaction keeps every block (R-ACKCROWN)
-    # 2026-11-07, audit-container gcc 13.3.0; was aarch64 11be1015…/
+    # 2026-11-07; was aarch64 11be1015…/
     # x86 f3a94e2d… after N1 answers to the origin and coordinator only
     # (R-RESPTO) 2026-10-29; was aarch64 9f4400ea…/
     # x86 f55b1b88… after 0-14 S2 stage 1 on bare x86 (R-STOPBARE) 2026-10-25;
@@ -4668,7 +4677,8 @@ jobs:
     # which runs apt on the azure mirror) took 31 s in CI 39974335515, 11 min
     # in 39953421360, and hit 15 min (cancelled = a new red for promote) in
     # 39994098268; the cert itself takes seconds
-    timeout-minutes: 30
+    # 30 -> 45 (2026-11-21): the A8 step builds the hosted node 3 times (~1-2 min each)
+    timeout-minutes: 45
     continue-on-error: true  # until 2026-11-30: consent-card DOM cert advisory (headless Chromium). ROADMAP 0-13
     steps:
       - uses: actions/checkout@v4
@@ -4678,6 +4688,14 @@ jobs:
           python3 -m playwright install --with-deps chromium
       - name: Consent-card DOM cert (galaxy.html, 411px phone viewport)
         run: bash tests/web/run_consent_dom.sh
+      # ark-entry.md 7.3 A8 / 7.2 4: the real hosted node (its built-in galaxy.html) in
+      # headless Chromium: consent -> key backup -> heir -> first record, the pass on
+      # every request, the record byte for byte. Two negatives mutate galaxy.html inside
+      # the script (no token header; the entry starts on the heir step). ~3 builds.
+      - name: Ark entry first screens (A8, headless Chromium against a real node)
+        run: |
+          timeout 1500 bash tests/web/run_ark_entry_dom.sh | tee ark_dom.log
+          grep -aF '[ark-dom] ALL PASS' ark_dom.log
 
   android-emulator-smoke:
     # RUNTIME smoke — closes fable5 audit gap G1 (highest-ranked risk).

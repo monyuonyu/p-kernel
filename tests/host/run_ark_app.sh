@@ -1,7 +1,7 @@
 #!/bin/bash
 # tests/host/run_ark_app.sh — ark-entry.md §7.3: the one-person entry over galaxy.
 # Part ①: A7, who may call galaxy (§7.2 6, §7.6). Part ② (2026-11-19): the record
-# routes A1-A6 (§7.2 1-4, 7); A8 (the page's JS, a DOM test) is still to come.
+# routes A1-A6 (§7.2 1-4, 7); A8 (the page's JS) is tests/web/run_ark_entry_dom.sh.
 #
 # One hosted node, galaxy on a fixed port, driven by tests/host/ark_app.py.
 # The checks and what each arm must show are fixed before the code:

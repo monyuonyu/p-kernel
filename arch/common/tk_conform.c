@@ -895,20 +895,34 @@ static void suite_dds(PRI me)
      * Red before RNG0 was fixed on each target: bare x86 before 29a9d5d5,
      * bare AArch64 before 99a307c9, hosted Linux x86_64 before the SIGALRM
      * exit dispatch (measured 2026-09-29 with a scratch copy of this check). */
+    /* A short try (dt < 40: the calibration was preempted by host load, so the spin
+     * may end before the 20 ms delay) is not judged: let t finish, delete it,
+     * recalibrate, at most 3 tries — K7's rule (ff635cf4). K9 had the single try
+     * until 2026-11-21 (CI 44880448567, hosted aarch64 under qemu-user, got 0 once).
+     * A try that lasted >= 40 ms is judged at once; three short tries are red. */
     {
-        UW chunks = 0, i;
-        t0 = now_ms();
-        while (now_ms() - t0 < 50 && chunks < 20000) {
-            for (i = 0; i < 65536; i++) spin++;
-            chunks++;
+        UW chunks, i; INT k9try;
+        for (k9try = 0; k9try < 3; k9try++) {
+            chunks = 0;
+            t0 = now_ms();
+            while (now_ms() - t0 < 50 && chunks < 20000) {
+                for (i = 0; i < 65536; i++) spin++;
+                chunks++;
+            }
+#ifdef TKC_K9_SHORT_TRIES   /* test hook: the first N calibrations come out short */
+            if (k9try < TKC_K9_SHORT_TRIES) chunks = 1;
+#endif
+            t = mk_task(t_delay_then_flag, me - 1);
+            h_flag = 0;
+            tk_sta_tsk(t, 9);             /* runs at once, sleeps 20 ms */
+            t0 = now_ms();
+            for (i = 0; i < chunks * 3 * 65536; i++) spin++;
+            f_ena = h_flag;               /* read before any kernel call */
+            dt = now_ms() - t0;
+            if (dt >= 40) break;
+            tk_dly_tsk(40);               /* a short try: let t finish, then retry */
+            tk_del_tsk(t);
         }
-        t = mk_task(t_delay_then_flag, me - 1);
-        h_flag = 0;
-        tk_sta_tsk(t, 9);                 /* runs at once, sleeps 20 ms */
-        t0 = now_ms();
-        for (i = 0; i < chunks * 3 * 65536; i++) spin++;
-        f_ena = h_flag;                   /* read before any kernel call */
-        dt = now_ms() - t0;
     }
     check(f_ena == 9 && dt >= 40, "K9", "dispatch enabled: a task whose 20 ms delay ends during the ~150 ms no-call spin runs during it", f_ena);
     tk_dly_tsk(30);
