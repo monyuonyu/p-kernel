@@ -604,7 +604,7 @@ static pk_node_t pfsr_send_origin(const U1 id[PFS_ID_LEN])
 }
 
 #ifdef _TK_HOSTED_LIBC_
-/* pfs_dur.c (hosted only), declared here as pfs_block.c and swarm_stop.c do: without it
+/* arch/linux/pfs_durable.c (hosted only, Windows too), declared here as pfs_block.c and swarm_stop.c do: without it
  * GCC 15's default -Werror=implicit-function-declaration stopped CI 44940189356 */
 extern int pfs_dur_active(void);
 /* `pfs orgtest` (O4 of tests/host/run_pfs_origin_send.sh). Single node with

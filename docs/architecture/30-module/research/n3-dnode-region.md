@@ -35,6 +35,10 @@ D1・D2 だけでは足りない（第 1 段の教え）: 生きた台で行が�
 - 2a の探り（使い捨ての木で読む 51 か所を口に、同時に 2 腕）: `static inline` だと x86・aarch64・hosted の .text が動く、**マクロなら 3 つとも全バイト同じ**（pk-scratch/n3d2/probe*）
 - 陰性 D3 は土台が赤のあいだは意味が無い。2a・2b の回で緑の土台に対して見る
 
+## 4b. 監査-211（限界つき PASS、11-22）
+
+D1 1,412/4,484/16,772・D2 61 行 23 ファイルを再現、N3D_NC=2 で 62/24。**D2 の grep は 3 つの形を見ない**（監査者の壊し、どれも 61 のまま）: 行頭が `*` のコード（`*p = dnode_table[1]…`）・別名（`DNODE *t = dnode_table; t[1]`）・`dnode_table [1]`。C10 は上限だけ＝行 0 の台も緑。**2a の条件**: 口の外の使用はコンパイラで捕まえる（表を drpc.c の static にするか、外のファイルで `#pragma GCC poison`）＝D2 は補助に。2b の C10 に下限（行 ≥ P−2）。台本の外で表を定義するもの（userland/x86/ushim.c・tests/llm/placement_stub.c）と sizeof を読むもの（tests/unbounded/*.c）も 2a で口へ。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。
