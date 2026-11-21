@@ -224,7 +224,8 @@ def a10(pg, tok):
     record 0 = REC_TEXT, self / no, seq 1). Checks fixed before the screen was written:
       A10-btn   the dock has #brec once the backup is written down
       A10-list  #brec opens #arkrecs; #arlist has one .arrow per record (data-no)
-      A10-new   #arnew + #arnewsave keep a second record byte for byte; the list has 2
+      A10-new   #arnew + #arnewsave keep a second record byte for byte; the list has 2,
+                the newest first (audit-207, added after the screen was written)
       A10-view  a row opens #arview; #arbody is the record's text as written
       A10-vis   #arvis -> public adds exactly one version: vis public, learn still no
       A10-learn #arlearn -> yes adds exactly one version: learn yes, vis still public
@@ -241,7 +242,9 @@ def a10(pg, tok):
     res("A10-list", lst, "rows=%s" % dom_rows(pg))
     pg.fill("#arnew", REC2)
     pg.click("#arnewsave")
-    two = poll(pg, lambda: dom_rows(pg) == ["0", "1"] or dom_rows(pg) == ["1", "0"])
+    # audit-207: the list is the newest first (7.15). Both orders passed before; a
+    # break that dropped the .reverse() stayed green. Added after the screen was written.
+    two = poll(pg, lambda: dom_rows(pg) == ["1", "0"])
     st, rr = rec_rows(tok)
     _g, b1 = raw("GET", "/ark/rec/1", b"", tok)
     res("A10-new", two and len(rr) == 2 and b1 == REC2.encode("utf-8"),
