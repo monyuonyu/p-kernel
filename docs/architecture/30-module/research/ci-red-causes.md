@@ -47,7 +47,7 @@ ring3 の起動が 3 CPU の自己ホストで 300 秒の窓に届かないこ�
 
 ## 提案（直し方の決まりの中で）
 
-1. **promote の再実行は runner の形だけに**（`~/pkernel-promote.py` はリポジトリの外＝判断待ち）: 赤いジョブの落ちた段が Install／checkout、または注記が「lost communication」のときだけ、`gh run rerun --failed` を 1 回してから判定する。**試験の段が走って落ちたものは再実行しない**（揺れを隠さないため）。35 回のうち runner の形だけで止まった回は 7（10-23 ×2・10-24・11-01・11-03・11-05・11-18）
+1. **promote の再実行は runner の形だけに**（`~/pkernel-promote.py` はリポジトリの外＝判断待ち）: 赤いジョブの落ちた段が Set up job／checkout／Install だけのときに、`gh run rerun --failed` を 1 回してから判定する（「lost communication」は段の結論が空で、この形では拾えない）。**試験の段が走って落ちたものは再実行しない**（揺れを隠さないため）。35 回のうち runner の形だけで止まった回は 7（10-23 ×2・10-24・11-01・11-03・11-05・11-18）
 2. **重い測りの前に `python3 tools/cimetrics/selfhosted_busy.py`**（終わり値 0 で始める）。自己ホストのジョブは run の始まりから約 60 分。
    runner の容器（pkernel_gh_runner）と監査の容器（pkernel_audit_ss）は、この機体の 4 CPU を制限なしで分け合う（`docker inspect` の CpusetCpus・NanoCpus は空、11-22）。ci.yml の注の「3 CPU」とは違う。
    分けるなら本番の容器の設定＝判断待ち
@@ -55,4 +55,16 @@ ring3 の起動が 3 CPU の自己ホストで 300 秒の窓に届かないこ�
 
 ## 測り（同じコミット 64d51ff2、負荷なし／負荷ありを組で、組の中の順も回ごとに入れ替え）
 
-台本 `pk-scratch/flaky/ab2.sh`（容器、負荷＝python の空回し 4 本＝nproc）。結果は下に書き足す。
+台本 `pk-scratch/flaky/ab2.sh`（容器、負荷＝python の空回し 4 本＝nproc）。自己ホストの CI のジョブが全部終わってから始めた（05:28〜06:05）。
+
+| 試験 | 負荷なし | 負荷あり（load 4.9〜6.1） | 時間（なし／あり） |
+|---|---|---|---|
+| n2c-wide plain（Negative controls の段） | 5/5 PASS | 5/5 PASS | 115〜235 秒／153〜277 秒 |
+| run_relay_failover（多プロセス cert 3） | 5/5 PASS | 5/5 PASS | 27〜51 秒／27〜76 秒 |
+
+relay_failover の kdds の上書きは 10 回とも 3 台とも 0、流れ 12 本とも OK。
+**読み: この重さでは赤は出ない＝「負荷で赤」はこの測りでは示せない**。限界: 1 コミット・5 組だけ。過去に n2c-wide plain の赤が出たのは load 8〜10（build_all と重ねたとき、容器の記録で load≥5 は 35 回中 8 回赤・load<5 は 27 回中 3 回、コミットは混ざる）。rep 4 の負荷なしの腕の途中（05:56〜05:57）と rep 5（05:58〜06:04）は、私の nice 19 のビルドと重なった。
+
+## 表の後（11-22 05:38）
+
+64d51ff2 の CI 44940189356 で新しい赤 20＝**本物（試験に入らない形の製品のコード）**: R-PORG の pfs_repl.c の自己試験が宣言の無い `pfs_dur_active` を呼び、GitHub の GCC 15（ubuntu-26.04）ではエラー、容器の gcc 13 では警告で build_all ALL OK 93 を抜けた。直し fix/gcc15-decl（build_all に GCC 14 の既定のエラー 4 つの段、test-holes H44）。
