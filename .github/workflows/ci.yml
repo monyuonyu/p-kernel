@@ -2096,8 +2096,9 @@ jobs:
         run: make -C boot/linux
       - name: Verify artifact is aarch64
         run: file boot/linux/p-kernel | grep -F 'ARM aarch64'
-      - name: Kernel self-tests under qemu-aarch64 (bonus, non-blocking)
-        continue-on-error: true  # until 2026-11-30: bonus self-tests under qemu-user (the BLOCKING gates follow). ROADMAP 0-13
+      - name: Kernel self-tests under qemu-aarch64 (BLOCKING)
+        # Advisory until 2026-11-30; BLOCKING from 2026-11-22 (ci/exceptions-1130):
+        # success in every one of the 35 CI runs it ran in, 11-08..11-21 (2 skipped).
         run: |
           cd boot/linux
           timeout 150 sh -c "printf 'pfs\nhrw\nmoe test\ndkva test\nreflex test\nprotect test\ndtr gossip test\ndtr gossip g38\ndtr gossip ceiling\nexit\n' | \
@@ -2142,7 +2143,7 @@ jobs:
           grep -aF '[g23-ceiling] PASS' selftest.log
       - name: aarch64 FP-determinism golden (BLOCKING — "one mind, one math")
         # Focused, fast (~few s) BLOCKING gate, deliberately separate from the
-        # heavy continue-on-error self-test step above. "One mind, one math" is
+        # heavy self-test step above (advisory until 2026-11-22). "One mind, one math" is
         # only fully certified when BOTH arches assert the IDENTICAL golden
         # logit hash (DTR_FPDET_GOLDEN = 0xe2391516) in CI; the x86_64 blocking
         # job already gates [fpdet] PASS, so this run proves the aarch64 build
@@ -2164,8 +2165,12 @@ jobs:
           timeout 120 sh -c "printf 'tkconf\nexit\n' | \
             qemu-aarch64 -L /usr/aarch64-linux-gnu ./p-kernel" | tee tkconf_a64.log
           grep -aF '[tkc] 133 PASS / 0 FAIL' tkconf_a64.log
-      - name: compute pool under the exit dispatch on hosted aarch64 (non-blocking; 1 hang in 15 local runs)
-        continue-on-error: true  # until 2026-11-30: 1 hang in 15 local runs, cause not found. ROADMAP 0-13
+      - name: compute pool under the exit dispatch on hosted aarch64 (BLOCKING)
+        # Advisory until 2026-11-30 (1 hang in 15 local runs, cause not found);
+        # BLOCKING from 2026-11-22: 230/230 PASS, 0 hangs in this job's image
+        # (ubuntu:26.04, gcc 15.2, qemu-aarch64 10.2.1; audit-211) and success
+        # in all 34 CI runs it ran in, 11-08..11-21. The 120 s timeout still
+        # turns a hang into a red, not a stuck job.
         run: |
           cd boot/linux
           timeout 120 sh -c "printf 'tkconf pool\nexit\n' | \
@@ -2317,16 +2322,15 @@ jobs:
     # property). ring3-survival is the chain HEAD (no `needs:`).
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
-    # ADVISORY (continue-on-error): the ring3-core gates are DETERMINISTIC and
-    # proven — they pass on an un-starved runner in ~30s (KVM), and locally.
-    # But this bare-metal QEMU-x86 boot is the heaviest self-hosted job, and the
-    # pkernel-thinkpad runner (3 CPUs / 2 workers, occasional OOM) sometimes
-    # cannot even reach the `p-kernel>` prompt within the widened 300s marker
-    # window — a HARDWARE resource limit (swap-thrash under memory pressure),
-    # NOT a code or harness-logic bug (the feed is marker-gated, see below). Kept
-    # advisory so pure runner starvation does not red master ("strict CI =
-    # green-when-healthy, not more-red"); re-blocking is a bigger-runner decision.
-    continue-on-error: true  # until 2026-11-30: runner starvation (3 CPUs, occasional OOM), see above. ROADMAP 0-13
+    # BLOCKING from 2026-11-22 (ci/exceptions-1130; advisory until 2026-11-30):
+    # the ring3-core gates are DETERMINISTIC (~30s on an un-starved runner). It
+    # was advisory because the pkernel-thinkpad runner (3 CPUs / 2 workers,
+    # occasional OOM) sometimes could not reach the `p-kernel>` prompt within
+    # the 300s marker window (swap-thrash, not a code bug). Success in all 37
+    # CI runs 11-08..11-21. The runner shares its CPUs with the unattended
+    # audit container: do not run heavy container work while self-hosted jobs
+    # run (tools/cimetrics/selfhosted_busy.py). A starvation red now stops
+    # promote — that is the point (read the log, do not re-advise it blindly).
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain + QEMU + FAT tools
@@ -2929,9 +2933,10 @@ jobs:
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     # heavy: SWIM convergence + p-fs gossip + a revival on one 4-node cluster.
     timeout-minutes: 25
-    # bonus job: surface the G19 closed loop without blocking unrelated PRs
-    # while it earns trust on hosted runners (see composite-scenarios.md).
-    continue-on-error: true  # until 2026-11-30: bonus G19 loop, earning trust (composite-scenarios.md). ROADMAP 0-13
+    # Was a bonus job (advisory until 2026-11-30) while the G19 closed loop
+    # earned trust; BLOCKING from 2026-11-22 (ci/exceptions-1130): success in
+    # all 37 CI runs 11-08..11-21. The job name keeps "ボーナス" so the
+    # promote log and tools/cimetrics keep matching it.
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -2974,7 +2979,8 @@ jobs:
     # serialized self-hosted chain (de-flake): chain TAIL, runs after composite-loop.
     needs: [composite-loop]
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    continue-on-error: true  # until 2026-11-30: bonus re-run of the fast DEPTH cert at the chain tail. ROADMAP 0-13
+    # BLOCKING from 2026-11-22 (advisory until 2026-11-30): success in all 37
+    # CI runs 11-08..11-21 (ci/exceptions-1130).
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -4197,7 +4203,8 @@ jobs:
     name: "MC-2 SMP-partition certs + ②.1a cross-preempt (aarch64 QEMU, run_mc2_*.sh / run_smp1.sh)"
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    continue-on-error: true  # until 2026-11-30: MC-2 SMP-partition certs advisory. ROADMAP 0-2
+    # BLOCKING from 2026-11-22 (advisory until 2026-11-30, the precedent above):
+    # success in all 37 CI runs 11-08..11-21 (ci/exceptions-1130).
     steps:
       - uses: actions/checkout@v4
       - name: Install cross toolchain + qemu-system-aarch64
@@ -4519,7 +4526,10 @@ jobs:
     name: "Android APK 実ビルド (NDK assembleDebug — 実機出荷物のリンク+コンパイル gate) [advisory]"
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true  # until 2026-11-30: Android APK build advisory (inbox #7). ROADMAP 0-13
+    # BLOCKING from 2026-11-22 (ci/exceptions-1130; advisory until 2026-11-30):
+    # 36 of 37 CI runs 11-08..11-21 success, the 1 red was the real GCC-15 /
+    # clang implicit-declaration build break of 64d51ff2 (fixed, audit-211) =
+    # the gate caught a real bug. 1.1-1.6 min in 11 runs (timeout 30).
     steps:
       - uses: actions/checkout@v4
 
@@ -4640,7 +4650,9 @@ jobs:
     name: "KV-cache 等価性 cert (run_kv.sh) [advisory: 実行時間 計測中]"
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    continue-on-error: true  # until 2026-11-30: KV-cache cert, run time still being measured. ROADMAP 0-13
+    # BLOCKING from 2026-11-22 (ci/exceptions-1130; advisory until 2026-11-30):
+    # measured wall-clock 11.7-20.1 min in 12 runs (11-20..11-21, max 20.1 = 2.5x
+    # under the 50 min timeout, kept); success in all 37 CI runs 11-08..11-21.
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -4695,7 +4707,9 @@ jobs:
     # 39994098268; the cert itself takes seconds
     # 30 -> 45 (2026-11-21): the A8 step builds the hosted node 3 times (~1-2 min each)
     timeout-minutes: 45
-    continue-on-error: true  # until 2026-11-30: consent-card DOM cert advisory (headless Chromium). ROADMAP 0-13
+    # BLOCKING from 2026-11-22 (ci/exceptions-1130; advisory until 2026-11-30):
+    # 36 of 37 CI runs 11-08..11-21 success, the 1 red was 64d51ff2's real
+    # build break (fixed, audit-211); 0.4-10.8 min in 11 runs (timeout 45).
     steps:
       - uses: actions/checkout@v4
       - name: Install Playwright (python) + headless Chromium
@@ -4754,7 +4768,15 @@ jobs:
     name: "Android エミュレータ実行 smoke (実機起動+galaxy HTTP 検証) [advisory]"
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true  # until 2026-11-30: Android emulator smoke (also known-red.txt). ROADMAP 0-2, 0-13
+    # 2026-11-22 (ci/exceptions-1130): the only one of the 10 kept advisory.
+    # 11-08..11-21: failure 28, success 7, cancelled 2. Since the PIERCE fix
+    # (fix/android-pierce, audit-202; first run 44808383332 on 1bccefa3,
+    # 2026-11-21 05:06 JST) it was success 7 / failure 1, and the 1 was
+    # 64d51ff2's real GCC-15/clang build break (fixed, audit-211) = green so
+    # far, but 1.5 days, not the week the owner's rule (#3 8-4) asks for.
+    # Not in known-red.txt on purpose: a red here still stops promote. If it
+    # stays green to 12-05 (2 weeks after PIERCE), make it BLOCKING.
+    continue-on-error: true  # until 2026-12-05: Android emulator smoke, green since the PIERCE fix (11-21) but not a week yet. ROADMAP 0-2, 0-13
     steps:
       - uses: actions/checkout@v4
       - name: Enable KVM group perms (required for hardware-accelerated emulation)
