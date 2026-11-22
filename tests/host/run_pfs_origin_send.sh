@@ -24,6 +24,10 @@
 #   O4 `pfs orgtest` (one node, PKERNEL_PFS_DIR): a peer's block (origin 7)
 #      and an own block pushed out of the table, two more in it; the origin
 #      each is sent with is 7 / this node / 7 / this node ("[pfs-orgtest] PASS")
+# Added 2026-11-22 (CI 44994993940: nc did not bite, n255 0): the 80 puts go
+# in one write, and
+#   O5 node 1 sent each of the first 16 after its last put (= out of its
+#      table when sent), 16 of 16; on the nc build too (else not exercised)
 # Falsifiers (the plain build must be ALL PASS):
 #   -DPFSR_NC_SEND_SELF   "self" goes on the wire as before: O2, O3, O4 red
 #   -DPFSR_NC_NO_ORG_READ the <id>.org is not read: O4 red (nc2 runs O4 only)
@@ -89,11 +93,17 @@ suite() {  # <tag> <cflags> [o4only]
     done
     say() { printf '%s\n' "$2" >&$((10 + $1)); }
     sleep 25
-    : > "$W/ids.txt"
+    # The ids first, then the 80 puts in one write (2026-11-22, CI 44994993940):
+    # with three forks per put between the puts, a slow runner's shell let node
+    # 1 send #1 after about 42 puts = still in its table, so the "out of the
+    # table" premise of O1-O3 did not hold and the nc falsifier did not bite
+    # (n255 16 in the container, 6 and 0 on CI). O5 below checks the premise.
+    : > "$W/ids.txt"; : > "$W/puts.txt"
     for i in $(seq 1 $N); do
-        say 1 "pfs put h38-origin-block-$i-from-node-1"
+        printf 'pfs put h38-origin-block-%s-from-node-1\n' "$i" >> "$W/puts.txt"
         printf '%s' "h38-origin-block-$i-from-node-1" | sha256sum | cut -c1-64 >> "$W/ids.txt"
     done
+    cat "$W/puts.txt" >&11
     # O1: wait (up to 90 s) until node 2 holds all N
     for i in $(seq 1 90); do
         fetched=0
@@ -145,6 +155,17 @@ suite() {  # <tag> <cflags> [o4only]
     done < "$W/ids.txt"
     echo "[pfs-origin] $tag node 2 receive lines: origin=n$OWN $want, origin=n255 $self"
     [ "$self" = 0 ] && [ "$want" = "$fetched" ] && [ "$fetched" -gt 0 ] && r O3 PASS || r O3 FAIL
+    # O5 (added 2026-11-22 before its first run): the premise of O1-O3. Each of
+    # the first 16 was first sent by node 1 after its last put (so out of its
+    # 64-slot table when sent): 16 of 16. Read from n1.log line order.
+    lastput=$(grep -an '\[pfs\] put len=' "$W/n1.log" | tail -1 | cut -d: -f1)
+    late=0
+    while read -r id; do
+        s=$(grep -an "sent block id=${id:0:16} " "$W/n1.log" | head -1 | cut -d: -f1)
+        [ -n "$s" ] && [ -n "$lastput" ] && [ "$s" -gt "$lastput" ] && late=$((late + 1))
+    done < "$W/first16.txt"
+    echo "[pfs-origin] $tag node 1 sent $late of the first 16 after its last put (line ${lastput:-none})"
+    [ "$late" = 16 ] && r O5 PASS || r O5 FAIL
     SUITE_REDS="$reds"
 }
 
@@ -155,6 +176,7 @@ for m in $MODES; do
         plain) suite plain ""
                [ -n "$SUITE_REDS" ] && bad=1 ;;
         nc)    suite nc "-DPFSR_NC_SEND_SELF"
+               case "$SUITE_REDS" in *O5*) echo "[pfs-origin] nc: the premise O5 did not hold, the falsifier was not exercised"; bad=1 ;; esac
                case "$SUITE_REDS" in *O2*) echo "[pfs-origin] nc turns O2 red (as meant)" ;;
                    *) echo "[pfs-origin] nc stayed green on O2 (the falsifier does not bite)"; bad=1 ;; esac
                case "$SUITE_REDS" in *O4*) ;; *) echo "[pfs-origin] nc stayed green on O4"; bad=1 ;; esac ;;
