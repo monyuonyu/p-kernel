@@ -120,7 +120,9 @@ suite() {  # <tag> <cflags> [o4only]
              "n2 heard $(grep -ac 'heard announce' "$W/n2.log"), replicated $(grep -ac 'replicated block' "$W/n2.log")"
         grep -aiE 'dropped|SUSPECT|DEAD|level change|relay (lost|down|reconnect)' "$W/n1.log" "$W/n2.log" \
             | tr -d '\r' | head -12 | sed "s|^$W/|[pfs-origin] $tag diag |"
-        tail -3 "$W/relay.log" | tr -d '\r' | sed "s/^/[pfs-origin] $tag diag relay: /" ;;
+        tail -3 "$W/relay.log" | tr -d '\r' | sed "s/^/[pfs-origin] $tag diag relay: /"
+        echo "[pfs-origin] $tag diag after the kill: p-kernel processes $(ps -eo args | grep -c '[p]-kernel$'), relays $(ps -eo args | grep -c '[r]elay/relay')," \
+             "load $(cut -d' ' -f1-3 /proc/loadavg)" ;;
     esac
     # O2: each fetched block's .org (2 bytes little endian) says node 1's net
     # number, OWN (PKERNEL_NODE_ID - 1 = 0; the first test-first run counted 1
