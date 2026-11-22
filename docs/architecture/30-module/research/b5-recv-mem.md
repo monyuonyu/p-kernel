@@ -29,6 +29,6 @@
 - Q6: 判定の種 261・263 の q8 の段（alone・region4・region4-garb1・q8 の 3 腕）のログが master 25365e93 と全バイト同じ（同時に走らせた。判定役は 2 種なので「7 種以上」で FAIL と出る＝仕様）
 
 ## 6. RG-FETCH（11-23）
-- ST_RG_FETCH_MAX と publish の上限を _Static_assert で結んだ（run_rg_fetch_tie.sh）
+- ST_RG_FETCH_MAX と publish の上限を _Static_assert で結んだ
 - Q5 は本物の malloc で数える: cand は w・g・mu・vu の 4 本、q8 の calloc も
-- 限界: L の合体の段は数えで 7×(頭＋w)＋cand 4 本≒908 MB＞線 700 MB（未測定）
+- 限界: L の合体の段（7 仲間）は本物の malloc で 928 MB（数え 906 MB）＞線 700 MB
