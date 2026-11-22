@@ -3846,7 +3846,7 @@ jobs:
           cat dnode.log
           grep -aqF '[unbounded-dnode] D2 PASS' dnode.log
           grep -aqF '[unbounded-dnode] D2c PASS' dnode.log
-          ! grep -aqE '\[unbounded-dnode\] D2c? FAIL' dnode.log
+          if grep -aqE '\[unbounded-dnode\] D2c? FAIL' dnode.log; then echo "::error::a D2/D2c FAIL line"; exit 1; fi
           N3D_NC=2 bash tests/unbounded/dnode_coupling.sh > dnode_nc2.log 2>&1 || true
           grep -aqF '[unbounded-dnode] D2 FAIL' dnode_nc2.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
