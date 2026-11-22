@@ -19,6 +19,8 @@
 # B gave up on 2 because a holder read 1 WANT a tick. With the announces paced 8 a tick at
 # the sender, every ANNOUNCE and WANT of a tick read (up to 32): 60/60. Negatives at 0 ms:
 # -DPFSR_NC_ANN_UNPACED (send at once) and -DPFSR_NC_WANT_LATEST (the old WANT read).
+# 2026-11-22 (fix/kdds-ring-cap, kept ring 32 -> 128): unpaced alone now holds 60/60 (2 of 2),
+# so CI builds it with -DKDDS_NC_RING32 (a receiver with the old ring): 33, 33 of 60 = red.
 # Usage: tests/host/run_pfs_burst.sh  (PFS_BURST_BIN: default boot/linux_x86_64/p-kernel)
 #        PFS_BURST_EXPECT_RED=1 ... for the negative build.
 # Output: [pfs-burst] PASS (0) / FAIL (1); with PFS_BURST_EXPECT_RED: NC RED as expected / NC FAIL.
