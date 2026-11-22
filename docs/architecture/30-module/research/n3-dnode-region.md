@@ -43,6 +43,10 @@ D1 1,412/4,484/16,772・D2 61 行 23 ファイルを再現、N3D_NC=2 で 62/24�
 
 drpc.h に口（`dnode_state/ip/missed/node_id` は読みだけ＝キャスト、書きは `dnode_set_*`、`DNODE_FOREACH`・`DNODE_TABLE_BYTES`・`DNODE_TABLE_DEFINE`）と、持ち主（`DRPC_TABLE_OWNER` を最初に定義する drpc.c・swim.c）以外での `#pragma GCC poison dnode_table`。25 ファイル 60 行（読み 51・書き 9）、ushim.c・placement_stub.c の定義、tests/unbounded の sizeof を口へ。.c の行番号は変えていない。試験先 D2c（5 つの形が "poisoned" で断られ、口は通る）は master で赤。枝: D2 0 行・D2c PASS、NC=2 で D2 赤、毒を外すと D2c 赤。D2 の持ち主に drpc.h を足した（口が表を名指しする。master は 60 行 22 ファイル）。DNODE_FOREACH はまだ誰も使っていない（2b で行の上を回す口）。CI の unbounded-N に D2/D2c（D1 は 2b まで赤）。
 
+## 4d. 監査-212（限界つき PASS、11-22）
+
+crown・hosted の .text/.rodata/.data は 4 つとも全バイト同じ、D2 0・D2c PASS・NC=2 で D2 赤・master で D2c 赤を再現。毒は gcc・aarch64-gcc・mingw・clang 18 で効き、後から定義したマクロ・`##` の連結も断る。読みの口は右辺値（`&dnode_state(1)` は断られる）。**すり抜けるもの**: drpc.h より前に定義したマクロ（gcc の仕様）・asm のラベル・自前の `DRPC_TABLE_OWNER`（arch/ の下の `dnode_table[` なら D2 が拾う）。今の木には無い。CI の段の `! grep … FAIL` は効かない形だった＝監査側で `if grep …; then exit 1; fi` に。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。
