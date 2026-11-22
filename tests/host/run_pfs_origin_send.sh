@@ -158,13 +158,18 @@ suite() {  # <tag> <cflags> [o4only]
     # O5 (added 2026-11-22 before its first run): the premise of O1-O3. Each of
     # the first 16 was first sent by node 1 after its last put (so out of its
     # 64-slot table when sent): 16 of 16. Read from n1.log line order.
+    # Audit-216: a block never sent (its announce lost at node 2, an O1 red)
+    # also fails O5, so the line says which: sent before the last put (the
+    # premise broken) or never sent (delivery, see O1). The verdict is the same.
     lastput=$(grep -an '\[pfs\] put len=' "$W/n1.log" | tail -1 | cut -d: -f1)
-    late=0
+    late=0; O5_EARLY=0; O5_UNSENT=0
     while read -r id; do
         s=$(grep -an "sent block id=${id:0:16} " "$W/n1.log" | head -1 | cut -d: -f1)
-        [ -n "$s" ] && [ -n "$lastput" ] && [ "$s" -gt "$lastput" ] && late=$((late + 1))
+        if [ -z "$s" ]; then O5_UNSENT=$((O5_UNSENT + 1))
+        elif [ -n "$lastput" ] && [ "$s" -gt "$lastput" ]; then late=$((late + 1))
+        else O5_EARLY=$((O5_EARLY + 1)); fi
     done < "$W/first16.txt"
-    echo "[pfs-origin] $tag node 1 sent $late of the first 16 after its last put (line ${lastput:-none})"
+    echo "[pfs-origin] $tag node 1 sent $late of the first 16 after its last put (line ${lastput:-none}); before it $O5_EARLY, never $O5_UNSENT"
     [ "$late" = 16 ] && r O5 PASS || r O5 FAIL
     SUITE_REDS="$reds"
 }
@@ -176,7 +181,7 @@ for m in $MODES; do
         plain) suite plain ""
                [ -n "$SUITE_REDS" ] && bad=1 ;;
         nc)    suite nc "-DPFSR_NC_SEND_SELF"
-               case "$SUITE_REDS" in *O5*) echo "[pfs-origin] nc: the premise O5 did not hold, the falsifier was not exercised"; bad=1 ;; esac
+               case "$SUITE_REDS" in *O5*) echo "[pfs-origin] nc: O5 red (sent before the last put $O5_EARLY = the premise did not hold; never sent $O5_UNSENT = delivery), the falsifier was not exercised"; bad=1 ;; esac
                case "$SUITE_REDS" in *O2*) echo "[pfs-origin] nc turns O2 red (as meant)" ;;
                    *) echo "[pfs-origin] nc stayed green on O2 (the falsifier does not bite)"; bad=1 ;; esac
                case "$SUITE_REDS" in *O4*) ;; *) echo "[pfs-origin] nc stayed green on O4"; bad=1 ;; esac ;;
