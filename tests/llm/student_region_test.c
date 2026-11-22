@@ -416,6 +416,47 @@ static void q4(void)
     free(big); st_free(&l);
 }
 
+/* ---- B5 q8 2 (research/b5-recv-mem.md §3): Q5, the bytes a round holds at
+ * once. Weak, so the test-first commit links; the lines are the design's. ---- */
+extern size_t st_rg_test_bytes(void) __attribute__((weak));
+static int fail_fetch(void *ctx, uint16_t node, void *out, size_t cap)
+{
+    (void)ctx; (void)node; (void)out; (void)cap;
+    return -1;
+}
+static void q5(uint32_t G)
+{
+    if (!have_q8() || !st_rg_test_bytes) { check(0, "b5r-Q5", "st_rg_test_bytes is not there"); return; }
+    const size_t fmax = 32u * 1024u * 1024u + ST_RG_HDR;      /* publish: 8192 chunks x 4096 B */
+    /* M, three BRG2 peers: the peers' w, one fetch buffer, the scratch, the candidate */
+    st_model mk[K];
+    for (int k = 0; k < K; k++) st_init_tier(&mk[k], 191u + (uint32_t)k, ST_TIER_M);
+    size_t np = (size_t)mk[0].n_params, bs = st_blob_size(&mk[0]);
+    size_t wsz = bs - 2u * np * sizeof(float) - sizeof(int32_t);   /* header + w */
+    size_t fc = st_rg_cap(&mk[0]) < fmax ? st_rg_cap(&mk[0]) : fmax;
+    tab_t tq; memset(&tq, 0, sizeof tq);
+    for (int k = 1; k < K; k++) tq.b[k] = wrap_q8(&mk[k], G, &tq.n[k]);
+    const uint16_t all4[4] = { 0, 1, 2, 3 };
+    st_rg_report rp;
+    round_on(&mk[0], G, 0, all4, 4, tab_fetch, &tq, &rp); say("Q5 M", 0, &rp);
+    size_t got = st_rg_test_bytes();
+    size_t line = fc + 3u * wsz + st_rg_q8_cap(&mk[0]) + bs;
+    printf("  Q5: M three peers held %zu bytes (line %zu; header+w %zu, the full copy %zu)\n", got, line, wsz, st_rg_cap(&mk[0]));
+    check(rp.fetched == 3 && rp.accepted == 3, "b5r-Q5", "precondition: the M round took its three peers");
+    check(got > 0 && got <= line, "b5r-Q5", "M, three BRG2 peers: the round holds <= one fetch buffer + 3 x (header + w) + scratch + candidate");
+    tab_free(&tq);
+    for (int k = 0; k < K; k++) st_free(&mk[k]);
+    /* L, seven peers that do not answer: the buffers are had before the first fetch */
+    st_model l; st_init_tier(&l, 7u, ST_TIER_L);
+    const uint16_t eight[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    int rl = st_region_round(&l, G, 0, eight, 8, fail_fetch, NULL, fx + fx_end, fxn - fx_end, SEQ, &rp);
+    got = st_rg_test_bytes();
+    printf("  Q5: L seven peers held %zu bytes (line 700000000; the full copy %zu)\n", got, st_rg_cap(&l));
+    check(rl == 0 && rp.members == 8 && rp.fetched == 0, "b5r-Q5", "precondition: the L round asked seven peers, none answered");
+    check(got > 0 && got <= 700000000u, "b5r-Q5", "L, seven peers: the round holds <= 700 MB");
+    st_free(&l);
+}
+
 static int unit(void)
 {
     printf("=== [b5-wire] unit (research/b5-wire.md §3 §4) ===\n");
@@ -487,6 +528,7 @@ static int unit(void)
     w7_w10(n, &t, G);
     q0(n, G);
     q4();
+    q5(G);
 
     /* the arguments */
     clone(&a, &n[0]);

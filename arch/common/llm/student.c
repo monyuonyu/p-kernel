@@ -2917,6 +2917,16 @@ int st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out)
 
 static int st_rg_fail_nth;               /* test hook: the nth peer buffer fails */
 void st_rg_test_fail_alloc(int nth) { st_rg_fail_nth = nth; }
+/* test hook (research/b5-recv-mem.md §3 Q5): the most bytes the last round held
+ * at once in its own buffers (peer buffers, the q8 scratch, the candidate) */
+static size_t st_rg_bytes_held, st_rg_bytes_peak;
+static void st_rg_hold(size_t n)
+{
+    st_rg_bytes_held += n;
+    if (st_rg_bytes_held > st_rg_bytes_peak) st_rg_bytes_peak = st_rg_bytes_held;
+}
+static void st_rg_drop(size_t n) { st_rg_bytes_held -= n; }
+size_t st_rg_test_bytes(void) { return st_rg_bytes_peak; }
 
 /* B5 D6b (student.h): the round's members, latched from the gen's head */
 void st_rg_latch_see(st_rg_latch *l, uint32_t gen, uint64_t now)
@@ -2960,7 +2970,9 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
      * (§2 5; stage 1 skipped it silently and merged the rest). B5 q8: and one
      * scratch for a BRG2 payload while it is opened into its st_save bytes */
     size_t qcap = st_rg_q8_cap(live);
+    st_rg_bytes_held = 0; st_rg_bytes_peak = 0;
     void *scr = npick > 0 ? malloc(qcap) : NULL;
+    if (scr) st_rg_hold(qcap);
     for (int k = 0; k < npick; k++) {
         buf[k] = (failn == k + 1 || !scr) ? NULL : malloc(cap);
         if (!buf[k]) {
@@ -2970,6 +2982,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
             if (rep) *rep = r0;
             return 0;
         }
+        st_rg_hold(cap);
     }
     /* fetch in a rotated order (from the first peer above self) so a region
      * does not all pull the lowest id first (M: node 0 sent 58,837 blocks,
@@ -2981,20 +2994,20 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         int k = (rot + j) % npick;
         void *b = buf[k];
         int got = fetch(ctx, pick[k], b, cap);
-        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); buf[k] = NULL; continue; }
+        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
         r0.fetched++;
         uint32_t h[4];
         for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
         int q8 = h[0] == ST_RG_MAGIC2;   /* B5 q8: BRG2, int8 rows; BRG1 still read */
 #if defined(B5W_NC_NO_LEN)
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }  /* falsifier */
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }  /* falsifier */
 #else
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
 #endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
-        if (h[1] != gen) { free(b); buf[k] = NULL; continue; }
+        if (h[1] != gen) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
         if (q8) {
             long on = -1;
             if ((size_t)h[2] + ST_RG_HDR <= qcap) {
@@ -3002,7 +3015,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
                     ((uint8_t *)scr)[i] = ((const uint8_t *)b)[ST_RG_HDR + i];
                 on = st_rg_q8_open(live, scr, (size_t)h[2], (uint8_t *)b + ST_RG_HDR, cap - ST_RG_HDR);
             }
-            if (on < 0) { free(b); buf[k] = NULL; continue; }
+            if (on < 0) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
             h[2] = (uint32_t)on;
         }
         okk[k] = 1;
@@ -3021,8 +3034,10 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     if (nb > 0) {
         st_model cand;
         void *own = malloc(st_blob_size(live));
+        if (own) st_rg_hold(st_blob_size(live));
         long on = own ? st_save(live, own, st_blob_size(live)) : -1;
         if (on > 0 && st_init_tier(&cand, 1u, live->tier) == ST_OK) {
+            st_rg_hold(st_blob_size(live));      /* the candidate's w, mu, vu */
             if (st_load(&cand, own, (size_t)on) == ST_OK) {
 #if defined(B5W_NC_MEAN)
                 int acc = st_round_merge(&cand, gen, bs, ls, gs, nb);

@@ -520,6 +520,7 @@ int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
 int    st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out);
 int    st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out);
 void   st_rg_test_fail_alloc(int nth);
+size_t st_rg_test_bytes(void);   /* research/b5-recv-mem.md Q5: the last round's peak bytes */
 /* B5 q8 (research/b5-q8-copy.md): the region copy as int8 rows. st_rg_wrap_q8
  * writes the envelope with magic ST_RG_MAGIC2 ("BRG2") and a payload of the
  * ST_BLOB_HDR, each st_quant_fake matrix row by row (an fp32 scale = absmax /
