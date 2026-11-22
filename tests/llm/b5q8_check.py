@@ -2,7 +2,7 @@
 """b5q8_check.py - the judge of B5 q8 (research/b5-q8-copy.md §4).
 
 Reads <out>/q8-<seed>.log (the plain build, stage q8) and <out>/nq8-<seed>.log
-(the -DB5Q_NC_INT2T build, stage q8) of student_region_test. Lines fixed in the
+(the -DB5Q_NC_INT2T build, stage q8nc: alone, region4-q8) of student_region_test. Lines fixed in the
 design (3efd5246) before the judgement seeds 261..268 were run:
   Q1  region4-q8 kept <= region4 kept + 0.03                         >= 7 of 8
   Q2  region4-q8 kept <= alone kept - 0.10                           8 of 8
@@ -20,7 +20,7 @@ GAIN = 0.10
 NEED = 7
 
 
-def parse(text):
+def parse(text, want=('alone', 'region4', 'region4-garb1', 'region4-q8', 'region4-garb1-q8', 'region4-garb2-q8')):
     arms, done = {}, False
     for ln in text.splitlines():
         if ln.startswith('[b5w] done'):
@@ -28,7 +28,6 @@ def parse(text):
         m = ARM.match(ln)
         if m:
             arms[m.group(1)] = m.group(3)          # the printed string
-    want = ('alone', 'region4', 'region4-garb1', 'region4-q8', 'region4-garb1-q8', 'region4-garb2-q8')
     return arms if done and all(a in arms for a in want) else None
 
 
@@ -52,7 +51,7 @@ def judge(plain, nc, seeds, say=print):
     n1 = n2 = n3a = n3b = nn = 0
     ok_all = True
     for s in seeds:
-        p, q = plain.get(s), nc.get(s)
+        p, q = plain.get(s), nc.get(s)       # nc: stage q8nc (alone, region4-q8)
         if p is None or q is None:
             say(f'[b5-q8] seed {s}: a log is missing or not done')
             ok_all = False
@@ -116,10 +115,10 @@ def main(argv):
     seeds = [int(x) for x in argv[2].split()]
     plain, nc = {}, {}
     for s in seeds:
-        for tab, b in ((plain, 'q8'), (nc, 'nq8')):
+        for tab, b, w in ((plain, 'q8', None), (nc, 'nq8', ('alone', 'region4-q8'))):
             try:
                 with open(f'{argv[3]}/{b}-{s}.log', encoding='utf-8') as f:
-                    tab[s] = parse(f.read())
+                    tab[s] = parse(f.read()) if w is None else parse(f.read(), w)
             except OSError:
                 tab[s] = None
     return 0 if judge(plain, nc, seeds) else 1

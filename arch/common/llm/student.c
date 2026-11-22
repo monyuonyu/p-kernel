@@ -2957,11 +2957,15 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     r0.members = np;
     int nb = 0, ret = 0;
     /* every peer buffer first: one that can not be had refuses the round
-     * (§2 5; stage 1 skipped it silently and merged the rest) */
+     * (§2 5; stage 1 skipped it silently and merged the rest). B5 q8: and one
+     * scratch for a BRG2 payload while it is opened into its st_save bytes */
+    size_t qcap = st_rg_q8_cap(live);
+    void *scr = npick > 0 ? malloc(qcap) : NULL;
     for (int k = 0; k < npick; k++) {
-        buf[k] = (failn == k + 1) ? NULL : malloc(cap);
+        buf[k] = (failn == k + 1 || !scr) ? NULL : malloc(cap);
         if (!buf[k]) {
             for (int q = 0; q < k; q++) free(buf[q]);
+            free(scr);
             r0.members += 1;
             if (rep) *rep = r0;
             return 0;
@@ -2981,15 +2985,26 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         r0.fetched++;
         uint32_t h[4];
         for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
+        int q8 = h[0] == ST_RG_MAGIC2;   /* B5 q8: BRG2, int8 rows; BRG1 still read */
 #if defined(B5W_NC_NO_LEN)
-        if (h[0] != ST_RG_MAGIC || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }  /* falsifier */
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }  /* falsifier */
 #else
-        if (h[0] != ST_RG_MAGIC || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; continue; }
 #endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
         if (h[1] != gen) { free(b); buf[k] = NULL; continue; }
+        if (q8) {
+            long on = -1;
+            if ((size_t)h[2] + ST_RG_HDR <= qcap) {
+                for (size_t i = 0; i < (size_t)h[2]; i++)
+                    ((uint8_t *)scr)[i] = ((const uint8_t *)b)[ST_RG_HDR + i];
+                on = st_rg_q8_open(live, scr, (size_t)h[2], (uint8_t *)b + ST_RG_HDR, cap - ST_RG_HDR);
+            }
+            if (on < 0) { free(b); buf[k] = NULL; continue; }
+            h[2] = (uint32_t)on;
+        }
         okk[k] = 1;
         ls[k] = (size_t)h[2];
     }
@@ -3033,6 +3048,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         free(own);
     }
     for (int k = 0; k < nb; k++) free(buf[k]);
+    free(scr);
     r0.adopted = ret;
     if (rep) *rep = r0;
     return ret;
@@ -3144,6 +3160,194 @@ int st_quant_fake(const st_model *src, st_model *dst, int bits, int gran,
     bq += ((size_t)np - nq) * sizeof(float);      /* the fp32 remainder */
     if (bytes_q) *bytes_q = bq;
     return ST_OK;
+}
+
+/* ================================================================== */
+/* B5 q8 (research/b5-q8-copy.md): the region copy as int8 rows, BRG2  */
+/* ================================================================== */
+/* The matrices of st_quant_fake, in its order. f(ctx, off, rows, cols). */
+typedef void (*st_q8_mat_fn)(void *ctx, int off, int rows, int cols);
+static void st_q8_mats(const st_model *m, st_q8_mat_fn f, void *ctx)
+{
+    ST_DIMS(m);
+    f(ctx, m->o_embed, V, D);
+    for (int l = 0; l < L; l++) {
+        f(ctx, m->o_wq + l*D*D, D, D); f(ctx, m->o_wk + l*D*D, D, D);
+        f(ctx, m->o_wv + l*D*D, D, D); f(ctx, m->o_wo + l*D*D, D, D);
+    }
+    for (int x = 0; x < L * E; x++) {
+        f(ctx, m->o_w1 + x*DFF*D, DFF, D); f(ctx, m->o_w3 + x*DFF*D, DFF, D);
+        f(ctx, m->o_w2 + x*D*DFF, D, DFF);
+    }
+    f(ctx, m->o_out, V, D);
+}
+
+typedef struct {
+    const float *w;          /* encode: the weights; decode: NULL           */
+    uint8_t *cov;            /* 1 = the index is in a matrix (may be NULL)   */
+    uint8_t *q;              /* the BRG2 payload (after the ST_BLOB_HDR)     */
+    uint8_t *out;            /* decode: the st_save w region                 */
+    size_t pos, rows, elems; /* bytes of q used; rows; matrix elements       */
+    int bad;
+} st_q8_ctx;
+
+static int st_q8_bad(float f)              /* NaN or Inf (exponent all ones) */
+{
+    ST_F32 v; v.f = f;
+    return (v.u & 0x7F800000U) == 0x7F800000U;
+}
+static void st_q8_put_f(uint8_t *p, float f)
+{
+    for (size_t i = 0; i < sizeof f; i++) p[i] = ((const uint8_t *)&f)[i];
+}
+static float st_q8_get_f(const uint8_t *p)
+{
+    float f;
+    for (size_t i = 0; i < sizeof f; i++) ((uint8_t *)&f)[i] = p[i];
+    return f;
+}
+
+static void st_q8_count(void *c, int off, int rows, int cols)
+{
+    st_q8_ctx *x = (st_q8_ctx *)c;
+    (void)off;
+    x->rows += (size_t)rows; x->elems += (size_t)rows * (size_t)cols;
+    x->pos += (size_t)rows * (sizeof(float) + (size_t)cols);
+    if (x->cov) for (int i = 0; i < rows * cols; i++) x->cov[off + i] = 1;
+}
+
+/* one row: the st_quant_fake ST_QG_ROW grid at 8 bits (s = absmax / 127,
+ * q = clamp(round half away, -128, 127)), so q * s is st_quant_one's value */
+static void st_q8_enc(void *c, int off, int rows, int cols)
+{
+    st_q8_ctx *x = (st_q8_ctx *)c;
+    for (int r = 0; r < rows; r++) {
+        const float *a = x->w + off + (size_t)r * cols;
+        for (int i = 0; i < cols; i++) if (st_q8_bad(a[i])) x->bad = 1;
+        float s = x->bad ? 0.0f : st_quant_scale(a, cols, 127);
+        st_q8_put_f(x->q + x->pos, s); x->pos += sizeof(float);
+        for (int i = 0; i < cols; i++) {
+            int q = 0;
+            if (s != 0.0f) {
+                float t = a[i] / s;
+                q = (int)(t >= 0.0f ? t + 0.5f : t - 0.5f);
+                if (q > 127) q = 127;
+                if (q < -128) q = -128;
+            }
+            x->q[x->pos++] = (uint8_t)(int8_t)q;
+        }
+        x->rows++;
+    }
+}
+
+static void st_q8_dec(void *c, int off, int rows, int cols)
+{
+    st_q8_ctx *x = (st_q8_ctx *)c;
+    for (int r = 0; r < rows; r++) {
+        float s = st_q8_get_f(x->q + x->pos); x->pos += sizeof(float);
+        if (st_q8_bad(s) || s < 0.0f) x->bad = 1;
+        uint8_t *o = x->out + ((size_t)off + (size_t)r * cols) * sizeof(float);
+        for (int i = 0; i < cols; i++) {
+            float v = (s == 0.0f) ? 0.0f : (float)(int8_t)x->q[x->pos] * s;
+            x->pos++;
+            st_q8_put_f(o + (size_t)i * sizeof(float), v);
+        }
+    }
+}
+
+/* the BRG2 payload: ST_BLOB_HDR, the matrices row by row (fp32 scale, int8 x
+ * cols), the fp32 remainder (norms, router) in w order, adam_t */
+static size_t st_q8_payload(const st_model *m)
+{
+    st_q8_ctx x = { NULL, NULL, NULL, NULL, 0, 0, 0, 0 };
+    st_q8_mats(m, st_q8_count, &x);
+    return sizeof(ST_BLOB_HDR) + x.pos + ((size_t)m->n_params - x.elems) * sizeof(float)
+         + sizeof(int32_t);
+}
+
+size_t st_rg_q8_cap(const st_model *m)
+{
+    return m ? ST_RG_HDR + st_q8_payload(m) : 0;
+}
+
+long st_rg_wrap_q8(const st_model *m, uint32_t gen, void *buf, size_t cap)
+{
+    if (!m || !m->w || !buf) return ST_E_ARG;
+    size_t need = st_rg_q8_cap(m);
+    if (cap < need) return ST_E_ARG;
+    const st_model *src = m;
+#if defined(B5Q_NC_INT2T)
+    /* falsifier (cert only): the copy is the int2 per-tensor grid, packed in the
+     * same rows -> the gate refuses it (Q2 red) */
+    st_model t2;
+    if (st_init_tier(&t2, 1u, m->tier) != ST_OK) return ST_E_OOM;
+    if (st_quant_fake(m, &t2, 2, ST_QG_TENSOR, NULL) != ST_OK) { st_free(&t2); return ST_E_ARG; }
+    src = &t2;
+#endif
+    long ret = ST_E_ARG;
+    uint8_t *cov = (uint8_t *)calloc((size_t)m->n_params, 1);
+    if (cov) {
+        uint8_t *p = (uint8_t *)buf + ST_RG_HDR;
+        ST_BLOB_HDR h;
+        h.magic = ST_BLOB_MAGIC; h.version = ST_BLOB_VER; h.ns_ver = (uint32_t)NS_STUDENT_VER;
+        h.n_params = (uint32_t)m->n_params; h.vocab = (uint32_t)ST_VOCAB;
+        h.d_model = (uint32_t)m->d; h.n_layer = (uint32_t)m->nlayer;
+        h.n_expert = (uint32_t)m->nexpert; h.dff = (uint32_t)m->dff; h.tier = (uint32_t)m->tier;
+        for (size_t i = 0; i < sizeof h; i++) p[i] = ((const uint8_t *)&h)[i];
+        st_q8_ctx x = { src->w, cov, p + sizeof h, NULL, 0, 0, 0, 0 };
+        st_q8_ctx c0 = { NULL, cov, NULL, NULL, 0, 0, 0, 0 };
+        st_q8_mats(m, st_q8_count, &c0);                 /* the mask */
+        st_q8_mats(m, st_q8_enc, &x);
+        for (int i = 0; i < m->n_params; i++) {
+            if (cov[i]) continue;
+            if (st_q8_bad(src->w[i])) x.bad = 1;
+            st_q8_put_f(x.q + x.pos, src->w[i]); x.pos += sizeof(float);
+        }
+        int32_t t = (int32_t)m->adam_t;
+        for (size_t i = 0; i < sizeof t; i++) x.q[x.pos++] = ((const uint8_t *)&t)[i];
+        size_t n = sizeof h + x.pos;
+        if (!x.bad && ST_RG_HDR + n == need) {
+            uint32_t e[4] = { ST_RG_MAGIC2, gen, (uint32_t)n, 0u };
+            for (size_t i = 0; i < sizeof e; i++) ((uint8_t *)buf)[i] = ((const uint8_t *)e)[i];
+            ret = (long)need;
+        }
+        free(cov);
+    } else ret = ST_E_OOM;
+#if defined(B5Q_NC_INT2T)
+    st_free(&t2);
+#endif
+    return ret;
+}
+
+/* a BRG2 payload q[0..n) -> the st_save bytes in out (zero mu, vu). Returns the
+ * st_save length, or < 0 (another shape, a bad scale, the wrong length). */
+long st_rg_q8_open(const st_model *live, const void *q, size_t n, void *out, size_t cap)
+{
+    if (!live || !q || !out) return ST_E_ARG;
+    size_t bs = st_blob_size(live);
+    if (n != st_q8_payload(live) || cap < bs) return ST_E_ARG;
+    uint8_t *cov = (uint8_t *)calloc((size_t)live->n_params, 1);
+    if (!cov) return ST_E_OOM;
+    const uint8_t *s = (const uint8_t *)q;
+    uint8_t *o = (uint8_t *)out;
+    for (size_t i = 0; i < sizeof(ST_BLOB_HDR); i++) o[i] = s[i];
+    uint8_t *ow = o + sizeof(ST_BLOB_HDR);
+    st_q8_ctx c0 = { NULL, cov, NULL, NULL, 0, 0, 0, 0 };
+    st_q8_mats(live, st_q8_count, &c0);
+    st_q8_ctx x = { NULL, NULL, (uint8_t *)s + sizeof(ST_BLOB_HDR), ow, 0, 0, 0, 0 };
+    st_q8_mats(live, st_q8_dec, &x);
+    size_t np = (size_t)live->n_params;
+    for (size_t i = 0; i < np; i++) {
+        if (cov[i]) continue;
+        for (size_t b = 0; b < sizeof(float); b++) ow[i * sizeof(float) + b] = x.q[x.pos + b];
+        x.pos += sizeof(float);
+    }
+    free(cov);
+    uint8_t *mv = ow + np * sizeof(float);
+    for (size_t i = 0; i < 2 * np * sizeof(float); i++) mv[i] = 0;
+    for (size_t i = 0; i < sizeof(int32_t); i++) mv[2 * np * sizeof(float) + i] = x.q[x.pos + i];
+    if (x.bad || !st_blob_tier_ok(live, out, bs)) return ST_E_ARG;
+    return (long)bs;
 }
 
 /* ================================================================== */

@@ -125,9 +125,9 @@ q8)
     python3 "$HERE/b5q8_check.py" --self-test > "$OUT/q8-self.log" 2>&1 \
         || { cat "$OUT/q8-self.log"; echo "[result] FAIL  b5-q8 judge self-test"; exit 1; }
     Q8SEEDS="${B5W_Q8_SEEDS:-261 262 263 264 265 266 267 268}"
-    { for s in $Q8SEEDS; do echo "plain q8 $s"; done
-      for s in $Q8SEEDS; do echo "nq8 nq8 $s"; done; } \
-        | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; b="$3"; t="$4"; s="$5"; "$w/bin-$b" "$h" "$s" q8 > "$o/$t-$s.log" 2>&1; echo "[b5-q8] $b seed $s rc=$?"' \
+    { for s in $Q8SEEDS; do echo "plain q8 q8 $s"; done
+      for s in $Q8SEEDS; do echo "nq8 q8nc nq8 $s"; done; } \
+        | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; b="$3"; t="$4"; g="$5"; s="$6"; "$w/bin-$b" "$h" "$s" "$t" > "$o/$g-$s.log" 2>&1; echo "[b5-q8] $b $t seed $s rc=$?"' \
             "$WORK" "$HERE/b1_held.txt" "$OUT"
     python3 "$HERE/b5q8_check.py" --seeds "$Q8SEEDS" "$OUT"
     exit $? ;;

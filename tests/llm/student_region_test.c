@@ -645,6 +645,14 @@ int main(int argc, char **argv)
 #endif
     printf("[b5w] seed %u build %s stage %s quarter %d B gate windows %d held windows %d\n",
            (unsigned)seed, bld, st, D / K, (fxn - fx_end) / SEQ, hn / SEQ);
+    if (strcmp(st, "q8nc") == 0) {          /* the NC build: Q2 only needs these two */
+        if (!have_q8()) { printf("  FAIL  [b5q-io] q8 not built\n"); return 1; }
+        alone(seed);
+        g_q8 = 1;
+        rounds(seed, 0, 0, "region4-q8");
+        printf("[b5w] done\n");
+        return 0;
+    }
     if (strcmp(st, "q8") == 0) {            /* B5 q8 (research/b5-q8-copy.md §4) */
         if (!have_q8()) { printf("  FAIL  [b5q-io] q8 not built\n"); return 1; }
         alone(seed);

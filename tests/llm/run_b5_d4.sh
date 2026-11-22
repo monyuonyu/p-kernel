@@ -38,6 +38,11 @@
 # The wait for node 2 to see node 1 (audit-194 ①): node 1 is "node0(" in node
 #        2's members line (the number is ID-1; "node1(self)" is node 2 itself).
 #        Not seen in 120 s -> the arm says WAIT-RED and is red, whatever follows.
+# B5 q8 (research/b5-q8-copy.md, 2026-11-22): the node publishes the int8 copy;
+#        at tier S that is 43 chunks (< the C >= 50 above), so the S arms (plain,
+#        nc, nchalf) publish the fp copy (PKERNEL_B5_COPY=fp, 482 chunks, the
+#        copy these lines were fixed on) and plainM publishes the int8 copy that
+#        ships (M: 480 chunks). The lines are not changed.
 # Arms: D4_ARMS="plain plainM nc nchalf" (default all). Ports D4_PORT (relay, default 7631).
 # Output: "[b5-d4] <arm> W13c PASS|FAIL (...)", then ALL PASS (exit 0) or RED.
 # ---------------------------------------------------------------------------
@@ -76,7 +81,8 @@ wait_for() { # <log> <pattern> <count> <seconds>
 
 PS=""; PM=""
 arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
-    local a="$1" W="$WORK/$1" tier="$4"
+    local a="$1" W="$WORK/$1" tier="$4" copy=q8
+    [ "$tier" = S ] && copy=fp
     case " $ARMS " in *" $a "*) ;; *) REDS="$REDS $a-skipped"; return ;; esac
     mkdir -p "$W"
     make -C "$B" clean >/dev/null 2>&1
@@ -91,7 +97,7 @@ arm() { # <name> <cflags> <expect PASS|FAIL> <tier>
     for k in 1 2; do
         mkfifo "$W/f$k"; mkdir -p "$W/d$k"
         env PKERNEL_NODE_ID=$k PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$W/d$k" \
-            PKERNEL_RELAY=127.0.0.1:$PORT PKERNEL_DEVICE_TIER="$tier" "$W/p-kernel" < "$W/f$k" > "$W/n$k.log" 2>&1 &
+            PKERNEL_RELAY=127.0.0.1:$PORT PKERNEL_DEVICE_TIER="$tier" PKERNEL_B5_COPY="$copy" "$W/p-kernel" < "$W/f$k" > "$W/n$k.log" 2>&1 &
         PIDS="$PIDS $!"
     done
     exec 7<>"$W/f1" 8<>"$W/f2"
