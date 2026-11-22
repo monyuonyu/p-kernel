@@ -24,6 +24,8 @@
 # B5 ⓪ (research/b5-m-default.md §3 2):
 #   -DB5W_NC_SEND_MOMENTS the published copy keeps mu, vu  -> W15 red (unit)
 # B5 q8 (research/b5-q8-copy.md §4): unit Q0 Q4 (the int8 copy, BRG2);
+# B5 q8 2 (research/b5-recv-mem.md §3): unit Q5 (the bytes a round holds);
+#   -DB5R_NC_FULL_PEER (each peer buffer the full copy again) -> Q5 red
 #   B5W_MODE=q8 runs the judgement seeds 261..268 (B5W_Q8_SEEDS), stage q8,
 #   on plain and nq8, judge b5q8_check.py (Q1 Q2 Q3 and the NC)
 #   -DB5Q_NC_INT2T    the copy is the int2 per-tensor grid  -> Q0 red (unit), Q2 red (judge)
@@ -86,6 +88,7 @@ build nocap  -DB5W_NC_NO_CAP
 build nolatch -DB5W_NC_NO_LATCH   # D6b (research/b5-m-round.md §10): W14 red
 build nomom  -DB5W_NC_SEND_MOMENTS   # B5 ⓪ (research/b5-m-default.md §3 2): W15 red
 build nq8    -DB5Q_NC_INT2T          # B5 q8 (research/b5-q8-copy.md §4): Q0 red, Q2 red
+build nfull  -DB5R_NC_FULL_PEER      # B5 q8 2 (research/b5-recv-mem.md §3): Q5 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -109,6 +112,7 @@ nc nocap b5w-W9
 nc nolatch b5w-W14
 nc nomom b5w-W15
 nc nq8 b5q-Q0
+nc nfull b5r-Q5
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 if [ "${B5W_MODE:-}" = unit ]; then
