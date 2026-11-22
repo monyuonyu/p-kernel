@@ -2928,7 +2928,7 @@ jobs:
     name: "複合ループ (kill ∧ 並行 ∧ メモリ, ボーナス)"
     runs-on: [self-hosted, pkernel-thinkpad]
     # serialized self-hosted chain (de-flake): chain TAIL, runs after ark-crash-fuzzer.
-    # always() keeps it running even though it's a continue-on-error bonus. See HEAD.
+    # always() keeps it running even when an earlier link of the chain is red. See HEAD.
     needs: [ark-crash-fuzzer]
     if: ${{ always() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     # heavy: SWIM convergence + p-fs gossip + a revival on one 4-node cluster.
@@ -2972,8 +2972,9 @@ jobs:
     #     walk (L/XL) + context growth + a stronger teacher land.
     # Today this job re-validates the fast cert on the ThinkPad toolchain (proving
     # it is green on the self-hosted runner too) + prints the cross-arch machine
-    # hashes. Chained at the self-hosted TAIL (after composite-loop) as a
-    # continue-on-error bonus so it can never destabilize the serialized chain.
+    # hashes. Chained at the self-hosted TAIL (after composite-loop, always()),
+    # so it runs last and does not hold the serialized chain (BLOCKING since
+    # 2026-11-22, see below).
     name: "DEPTH deliberation [live] — heavy teacher-approach legs (ThinkPad home)"
     runs-on: [self-hosted, pkernel-thinkpad]
     # serialized self-hosted chain (de-flake): chain TAIL, runs after composite-loop.
@@ -4513,16 +4514,14 @@ jobs:
     # actions/setup-java's built-in Gradle cache (cache: gradle) cuts most of
     # that download cost back down on repeat runs of this workflow.
     #
-    # ── NON-BLOCKING (continue-on-error: true) ─── ADVISORY FOR NOW ──────────
+    # ── was NON-BLOCKING (continue-on-error) until 2026-11-22, now BLOCKING ──
     # First hosted ubuntu-latest run went GREEN (run 29196506263, 2026-07-12) —
-    # the setup-android/sdkmanager/aapt2 recipe works on a real runner. Kept
-    # advisory a little longer because the remaining unknowns are network
-    # flakiness (fresh-runner ~1GB NDK + Maven pulls) and SDK-license timing,
-    # which need a few runs to trust; a runner-capability gap must never redden
-    # master on a green tree.
-    # PROMOTE TO BLOCKING (remove continue-on-error) once a few more hosted runs
-    # are confirmed green — at that point the APK has a real, non-bypassable
-    # compile+link gate the way windows-pe-build now gates the Windows port.
+    # the setup-android/sdkmanager/aapt2 recipe works on a real runner. It was
+    # kept advisory while network flakiness (fresh-runner ~1GB NDK + Maven
+    # pulls) and SDK-license timing earned trust; promoted below (the APK now
+    # has a real compile+link gate, like windows-pe-build for Windows). The
+    # "[advisory]" in the job name stays only so the promote log and
+    # tools/cimetrics keep matching it (audit-212).
     name: "Android APK 実ビルド (NDK assembleDebug — 実機出荷物のリンク+コンパイル gate) [advisory]"
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -4644,9 +4643,10 @@ jobs:
     # 3 tiers, byte + FNV-hash equality of the cached vs recompute paths, a
     # >MAXSEQ window-slide case, a [no-vla] structural grep, and a real tokens/sec
     # floor-gate. GREEN with strong teeth, but HEAVY (the L-tier long-context
-    # recompute is minutes of scalar FP). ADVISORY until its real ubuntu-latest
-    # wall-clock is measured — then set a right-sized timeout and remove
-    # continue-on-error to promote it to a blocking gate.
+    # recompute is minutes of scalar FP). It was ADVISORY until its real
+    # ubuntu-latest wall-clock was measured; measured and promoted below
+    # (audit-212: 10.9-21.6 min in 40 runs, timeout 50 kept). The job name's
+    # "[advisory: ...]" stays only for the promote log / tools/cimetrics.
     name: "KV-cache 等価性 cert (run_kv.sh) [advisory: 実行時間 計測中]"
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -4694,11 +4694,11 @@ jobs:
     # assertions red: cardWidth 1380px>411, paddingTop 0, whiteSpace 'pre',
     # opt 'block') and PASSES on the current file -- has real teeth.
     #
-    # ── ADVISORY FOR NOW ── promote to blocking once proven green on several
-    # hosted runs (mirrors windows-pe-build / android-apk-build): this is the
-    # FIRST headless-browser job in this CI, so give it a few runs to shake out
+    # ── was ADVISORY until 2026-11-22, now BLOCKING (see below) ── it was the
+    # FIRST headless-browser job in this CI, so it got runs to shake out
     # ubuntu-latest-only quirks (font metrics, playwright's apt --with-deps
-    # list, PEP-668 pip behavior) before it can redden master.
+    # list, PEP-668 pip behavior) before it could redden master. The job
+    # name's "[advisory]" stays only for the promote log / tools/cimetrics.
     name: "consent-card DOM cert (headless Chromium, first-run #ark→#intromount move) [advisory]"
     runs-on: ubuntu-latest
     # 15 -> 30 (2026-10-24): the install step (pip + playwright --with-deps,
