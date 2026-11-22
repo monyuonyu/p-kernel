@@ -2066,11 +2066,26 @@ jobs:
       # (relay + 2 nodes, 80 puts; O1-O3). The falsifier -DPFSR_NC_SEND_SELF
       # runs inside the script and must turn O2 red. Rebuilds and cleans.
       # About 3-4 min (two builds); the job's 110 min had 70 min in 44740868265.
+      # 44961258707 (6e240b2d, its first CI run): plain O1 red, node 2 held 8 of
+      # 80 (the first paced tick only), nc right after 80/80; 0 of 10 in the
+      # container (audit-212). The work dir is kept and uploaded on a red, and
+      # the script prints a diag line on an O1 red, so the next one can be read.
       - name: "a fetched block keeps its owner ([pfs-origin], BLOCKING, H38)"
         run: |
-          timeout 900 tests/host/run_pfs_origin_send.sh | tee pfs_origin.log
+          rm -rf /tmp/pfs_origin_work
+          PFS_ORIGIN_WORK=/tmp/pfs_origin_work timeout 900 tests/host/run_pfs_origin_send.sh | tee pfs_origin.log
           grep -aF '[pfs-origin] ALL PASS' pfs_origin.log
           make -C boot/linux_x86_64 >/dev/null
+      - name: Upload [pfs-origin] node logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pfs-origin-logs
+          path: |
+            /tmp/pfs_origin_work/*/n*.log
+            /tmp/pfs_origin_work/*/relay.log
+            /tmp/pfs_origin_work/*/o4.log
+            /tmp/pfs_origin_work/*/ids.txt
 
   ump-aarch64-cross:
     name: "UMP aarch64 (x86_64 上でクロスビルド)"
