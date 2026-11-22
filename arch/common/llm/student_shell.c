@@ -1580,9 +1580,16 @@ int student_region_publish(uint32_t gen, emit_fn emit, const char *tag)
         snprintf(line, sizeof line, "[baby] %s: refused (no student), unchanged\r\n", tag);
         emit(line); return -1;
     }
-    size_t cap = st_rg_cap(&g_student);
+    /* B5 q8 (research/b5-q8-copy.md): the copy is the int8 rows (BRG2), 0.26 x
+     * the fp32 w; the merge reads BRG1 and BRG2 alike. PKERNEL_B5_COPY=fp
+     * publishes the fp copy (BRG1) as before: tests/llm/run_b5_d4.sh counts the
+     * fsyncs against the chunks, and the S int8 copy is 43 chunks (< its 50) */
+    const char *cv = getenv("PKERNEL_B5_COPY");
+    int fp = cv && cv[0] == 'f' && cv[1] == 'p' && cv[2] == 0;
+    size_t cap = fp ? st_rg_cap(&g_student) : st_rg_q8_cap(&g_student);
     void *own = malloc(cap);
-    long on = own ? st_rg_wrap(&g_student, gen, own, cap) : -1;
+    long on = !own ? -1 : fp ? st_rg_wrap(&g_student, gen, own, cap)
+                             : st_rg_wrap_q8(&g_student, gen, own, cap);
     int pub = on > 0 ? gl_student_publish(self, own, (unsigned int)on) : -1;
     free(own);
     if (pub <= 0) {

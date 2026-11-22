@@ -520,6 +520,22 @@ int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
 int    st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out);
 int    st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out);
 void   st_rg_test_fail_alloc(int nth);
+/* B5 q8 (research/b5-q8-copy.md): the region copy as int8 rows. st_rg_wrap_q8
+ * writes the envelope with magic ST_RG_MAGIC2 ("BRG2") and a payload of the
+ * ST_BLOB_HDR, each st_quant_fake matrix row by row (an fp32 scale = absmax /
+ * 127, then the row as int8, round half away from zero, clamp -128..127), the
+ * fp32 remainder (the norms and the router) in w order, and adam_t; no Adam
+ * moments. Opened (st_rg_q8_open) it is the st_save bytes of a model whose w
+ * is st_quant_fake(8, ST_QG_ROW) byte for byte, mu = vu = 0 (Q0).
+ * st_region_round reads BRG1 and BRG2 alike (a swarm in the middle of the
+ * change); an old receiver does not count BRG2 (one merge partner less).
+ * st_rg_q8_cap: the envelope + payload size (M 0.27 x its w). A model with a
+ * weight that is not finite is not wrapped (ST_E_ARG). Falsifier (cert only)
+ * -DB5Q_NC_INT2T: the copy is the int2 per-tensor grid in the same rows.     */
+#define ST_RG_MAGIC2 0x32475242u  /* "BRG2" little-endian */
+size_t st_rg_q8_cap(const st_model *m);
+long   st_rg_wrap_q8(const st_model *m, uint32_t gen, void *buf, size_t cap);
+long   st_rg_q8_open(const st_model *live, const void *q, size_t n, void *out, size_t cap);
 /* B5 D6b (research/b5-m-round.md §10): the round's members are every narrow
  * peer (id < 64, a bit each) the region held at least once from the head of the
  * gen to the merge's start, not only the view at the start (a loaded box's RTT
