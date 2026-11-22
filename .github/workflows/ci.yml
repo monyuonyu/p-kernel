@@ -1759,8 +1759,11 @@ jobs:
           PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc.log
           # the 0 ms burst: announces sent at once (-DPFSR_NC_ANN_UNPACED), one WANT read a tick (-DPFSR_NC_WANT_LATEST)
+          # Since the kept ring is 128 (fix/kdds-ring-cap, audit-216) a 60-burst sent at once fits the
+          # receiver (60/60), so the unpaced negative runs against the old 32 ring (-DKDDS_NC_RING32):
+          # the pacer is what keeps a peer that still has 32 slots whole
           make -C boot/linux_x86_64 clean >/dev/null
-          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_UNPACED >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS="-DPFSR_NC_ANN_UNPACED -DKDDS_NC_RING32" >/dev/null
           PFS_BURST_GAP=0 PFS_BURST_EXPECT_RED=1 timeout 300 tests/host/run_pfs_burst.sh | tee pfs_burst_nc2.log || true
           grep -aF '[pfs-burst] NC RED as expected' pfs_burst_nc2.log
           make -C boot/linux_x86_64 clean >/dev/null
@@ -1984,6 +1987,11 @@ jobs:
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DKDDS_NC_NO_QUEUE >/dev/null
           (printf 'kdds queue\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_queue_nc.log || true
           grep -aF '[kdds-queue] FAIL rx' kdds_queue_nc.log
+          # the ring at its old size (32): a reader 4 ticks behind loses some ([starve], audit-216)
+          make -C boot/linux_x86_64 clean >/dev/null
+          make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DKDDS_NC_RING32 >/dev/null
+          (printf 'kdds queue\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_queue_nc32.log || true
+          grep -aF '[kdds-queue] FAIL starve' kdds_queue_nc32.log
           make -C boot/linux_x86_64 clean >/dev/null
           make -C boot/linux_x86_64 -j4 EXTRA_CFLAGS=-DPFSR_NC_ANN_LATEST >/dev/null
           (printf 'kdds ann\n'; sleep 3) | timeout 20 boot/linux_x86_64/p-kernel | tee kdds_ann_nc.log || true
