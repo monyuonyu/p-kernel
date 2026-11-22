@@ -166,7 +166,18 @@ W kdds_open(const char *name, W qos)
 /* goes into a shared ring of KDDS_Q_N. kdds_sub is unchanged.         */
 /* -DKDDS_NC_NO_QUEUE: nothing is kept (negative control).             */
 /* ------------------------------------------------------------------ */
+/* 128 since 2026-11-22 (audit-216; 32 before, about 6.3 KB): the ring is */
+/* shared by every topic (pfs announce/want, mind/teach/want/have) and a  */
+/* node keeps its own pubs too, so one reader that missed a tick or two   */
+/* under host starvation lost a paced peer's announces (run_pfs_origin_   */
+/* send.sh node 2: 6-14 lost = the blocks never fetched). 128 holds 4     */
+/* missed ticks of 8 + 8 with room ([starve]); about 25 KB, hosted only.  */
+/* -DKDDS_NC_RING32: the old size (negative control of [starve]).         */
+#ifndef KDDS_NC_RING32
+#define KDDS_Q_N 128
+#else
 #define KDDS_Q_N 32
+#endif
 typedef struct { W tidx; UH seq; UH len; UB used; UB data[KDDS_DATA_MAX]; } KDDS_QSLOT;
 static KDDS_QSLOT kq_ring[KDDS_Q_N];
 static INT kq_w;                                /* next slot to write          */
