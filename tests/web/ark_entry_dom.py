@@ -161,11 +161,19 @@ def only(pg, sel):
     return shown(pg, sel) and not any(shown(pg, s) for s in STEPS if s != sel)
 
 
-def open_page(browser, tok, reqs, posts):
+def open_page(browser, tok, reqs, posts, sent=None):
+    """sent (audit-217): the POST paths as the page SENDS them (the request event).
+    posts has them only once the answer is back: a check that counts posts right
+    after a click races the answer (CI 45020275743: nc-key-on-open closed the entry
+    before the key POST's answer, A8-later counted 0 and stayed green)"""
     ctx = browser.new_context(viewport={"width": 411, "height": 800})
     pg = ctx.new_page()
     pg.on("console", lambda m: print("[ark-dom] note console: %s" % m.text[:200], flush=True)
           if m.type in ("error", "warning") else None)
+    if sent is not None:
+        pg.on("request", lambda rq: sent.append(
+            re.sub(r"^https?://[^/]+", "", rq.url).split("?")[0].split("#")[0])
+            if rq.method == "POST" else None)
 
     def on_resp(r):
         rq = r.request
@@ -290,8 +298,8 @@ def main():
             res("A8-up", False, "galaxy did not answer")
             n.stop(); browser.close(); return
         tok = n.token()
-        reqs, posts = [], []
-        ctx, pg = open_page(browser, tok, reqs, posts)
+        reqs, posts, sent = [], [], []
+        ctx, pg = open_page(browser, tok, reqs, posts, sent)
         time.sleep(1.0)
         url = pg.evaluate("location.href")
         ss = pg.evaluate("sessionStorage.getItem('gxt')")
@@ -305,7 +313,7 @@ def main():
             # on "show the key"): the step is open, no key POST yet, no key in the DOM
             pg.wait_for_timeout(1500)
             pre = (pg.text_content("#aekey") or "").strip()
-            nb = len([1 for pth, _st in posts if pth == "/ark/key/backup"])
+            nb = len([1 for pth in sent if pth == "/ark/key/backup"])   # sent, not answered (audit-217)
             res("A8-ask", shown(pg, "#aekeyshow") and nb == 0 and not re.search(r"[0-9a-f]{64}", pre),
                 "show=%s backup-posts=%d key=%r" % (shown(pg, "#aekeyshow"), nb, pre[:12]))
             if shown(pg, "#aekeyshow"):
@@ -386,8 +394,8 @@ def main():
             res("A8-up2", False, "galaxy did not answer")
             n.stop(); browser.close(); return
         tok = n.token()
-        reqs, posts = [], []
-        ctx, pg = open_page(browser, tok, reqs, posts)
+        reqs, posts, sent = [], [], []
+        ctx, pg = open_page(browser, tok, reqs, posts, sent)
         ok = consent(pg)
         # A8-later (added with A8-ask): "later" closes the entry without fetching the
         # key; a reload opens the key step again
@@ -401,7 +409,11 @@ def main():
                 closed_l = True
                 break
             pg.wait_for_timeout(100)
-        nb_l = len([1 for pth, _st in posts if pth == "/ark/key/backup"])
+        # count what was SENT, after the same 1.5 s A8-ask waits (audit-217: counting
+        # the answers right after the close raced a key POST still in flight)
+        if kl:
+            pg.wait_for_timeout(1500)
+        nb_l = len([1 for pth in sent if pth == "/ark/key/backup"])
         pg.goto(BASE + "/", wait_until="load")
         back_l = wait_shown(pg, "#aestep-key", 15) and wait_shown(pg, "#aekeyshow", 5)
         res("A8-later", bool(closed_l) and nb_l == 0 and back_l,
