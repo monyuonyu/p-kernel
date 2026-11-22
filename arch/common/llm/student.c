@@ -2260,7 +2260,14 @@ PK_NOSW_FN(long, st_save, (const st_model *m, void *buf, size_t cap), (m, buf, c
  * this — one source of truth for the tier/dim guard.  Pure read; never mutates
  * m.  Returns 1 (accept) / 0 (refuse).  A blob shorter than the full payload is
  * refused too (the SS-2 truncation check, folded in here). */
+static int st_blob_hdr_need_ok(const st_model *m, const void *buf, size_t len, size_t need);
 int st_blob_tier_ok(const st_model *m, const void *buf, size_t len)
+{
+    return st_blob_hdr_need_ok(m, buf, len, m ? st_blob_size(m) : 0);
+}
+/* B5 q8 2 (research/b5-recv-mem.md §2): the same predicate with the length a
+ * reader needs; the round keeps a peer's header + w only (st_rg_w_size) */
+static int st_blob_hdr_need_ok(const st_model *m, const void *buf, size_t len, size_t need)
 {
     if (!m || !buf) return 0;
     if (len < sizeof(ST_BLOB_HDR)) return 0;
@@ -2283,8 +2290,12 @@ int st_blob_tier_ok(const st_model *m, const void *buf, size_t len)
     if (h.n_layer  != (uint32_t)m->nlayer)      return 0;
     if (h.n_expert != (uint32_t)m->nexpert)     return 0;
     if (h.dff      != (uint32_t)m->dff)         return 0;
-    if (len < st_blob_size(m))                  return 0;   /* truncated payload */
+    if (len < need)                             return 0;   /* truncated payload */
     return 1;
+}
+size_t st_rg_w_size(const st_model *m)
+{
+    return m ? sizeof(ST_BLOB_HDR) + (size_t)m->n_params * sizeof(float) : 0;
 }
 
 /* read one float from a (possibly unaligned) student-blob byte stream at the
@@ -2480,8 +2491,15 @@ static float st_trim_one(float *v, int n, int t)
     return s / (float)(hi - lo);
 }
 
+static int st_merge_trimmed_need(st_model *into, const void *const *peer_blobs,
+                                 const size_t *peer_lens, int count, int t, size_t need);
 int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
                      const size_t *peer_lens, int count, int t)
+{
+    return st_merge_trimmed_need(into, peer_blobs, peer_lens, count, t, into ? st_blob_size(into) : 0);
+}
+static int st_merge_trimmed_need(st_model *into, const void *const *peer_blobs,
+                                 const size_t *peer_lens, int count, int t, size_t need)
 {
     if (!into || !into->w) return ST_E_ARG;
     if (count < 0 || count > ST_COHORT_MAX || t < 1) return ST_E_ARG;
@@ -2493,7 +2511,7 @@ int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
     int accepted = 0;
     uint64_t take = 0;
     for (int k = 0; k < count; k++) {
-        if (!st_blob_tier_ok(into, peer_blobs[k], peer_lens[k])) continue;
+        if (!st_blob_hdr_need_ok(into, peer_blobs[k], peer_lens[k], need)) continue;
 #ifndef ST_MERGE_NO_FINITE
         if (!st_blob_w_finite(peer_blobs[k], np)) continue;
 #endif
@@ -2527,9 +2545,19 @@ int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
     return accepted;
 }
 
+static int st_round_trimmed_need(st_model *into, uint32_t gen,
+                                 const void *const *peer_blobs, const size_t *peer_lens,
+                                 const uint32_t *gens, int count, int t, size_t need);
 int st_round_trimmed(st_model *into, uint32_t gen,
                      const void *const *peer_blobs, const size_t *peer_lens,
                      const uint32_t *gens, int count, int t)
+{
+    return st_round_trimmed_need(into, gen, peer_blobs, peer_lens, gens, count, t,
+                                 into ? st_blob_size(into) : 0);
+}
+static int st_round_trimmed_need(st_model *into, uint32_t gen,
+                                 const void *const *peer_blobs, const size_t *peer_lens,
+                                 const uint32_t *gens, int count, int t, size_t need)
 {
     if (!into || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
     if (count > 0 && (!peer_blobs || !peer_lens || !gens)) return ST_E_ARG;
@@ -2546,7 +2574,7 @@ int st_round_trimmed(st_model *into, uint32_t gen,
         len[n]  = peer_lens[k];
         n++;
     }
-    return st_merge_trimmed(into, take, len, n, t);
+    return st_merge_trimmed_need(into, take, len, n, t, need);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2945,6 +2973,26 @@ uint64_t st_rg_latch_union(const st_rg_latch *l, uint32_t gen, uint64_t now)
 #endif
 }
 
+/* B5 q8 2 (research/b5-recv-mem.md §2 3): the candidate starts as live, as the
+ * st_save + st_load it replaces (the same finite check, the same bytes) without
+ * a third copy of the model in between */
+static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *out, size_t cap, int full);
+static int st_rg_take_live(st_model *cand, const st_model *live)
+{
+    int ok = 1;
+    size_t np = (size_t)live->n_params;
+    PK_NOSW_ENTER();
+#ifndef ST_MERGE_NO_FINITE
+    ok = st_w_finite(live->w, (int)np) && st_w_finite(live->mu, (int)np) && st_w_finite(live->vu, (int)np);
+#endif
+    if (ok) {
+        for (size_t i = 0; i < np; i++) { cand->w[i] = live->w[i]; cand->mu[i] = live->mu[i]; cand->vu[i] = live->vu[i]; }
+        cand->adam_t = live->adam_t;
+    }
+    PK_NOSW_LEAVE();
+    return ok;
+}
+
 int st_region_round(st_model *live, uint32_t gen, uint16_t self,
                     const uint16_t *members, int count,
                     st_rg_fetch_fn fetch, void *ctx,
@@ -2957,6 +3005,18 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     if (count > 0 && !members) return ST_E_ARG;
     if (!bytes || seq < 2 || n < seq) return ST_E_ARG;
     size_t cap = st_rg_cap(live);
+    /* B5 q8 2 (research/b5-recv-mem.md §2): one fetch buffer, used in turn (no
+     * copy longer than what publish takes can arrive), and per peer the header
+     * and w only, all the merge reads (L: 82 MB each, was 247 MB). Full: the
+     * falsifier, and B5W_NC_MEAN (st_round_merge reads whole blobs) */
+#if defined(B5R_NC_FULL_PEER) || defined(B5W_NC_MEAN)
+    const int full = 1;
+#else
+    const int full = 0;
+#endif
+    size_t wsz = st_rg_w_size(live), bsz = st_blob_size(live);
+    size_t pcap = full ? bsz : wsz;
+    size_t fcap = cap < ST_RG_FETCH_MAX ? cap : ST_RG_FETCH_MAX;
     void *buf[ST_COHORT_MAX];
     const void *bs[ST_COHORT_MAX];
     size_t ls[ST_COHORT_MAX];
@@ -2966,23 +3026,22 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     int npick = st_rg_pick(peers, np, gen, pick);
     r0.members = np;
     int nb = 0, ret = 0;
-    /* every peer buffer first: one that can not be had refuses the round
-     * (§2 5; stage 1 skipped it silently and merged the rest). B5 q8: and one
-     * scratch for a BRG2 payload while it is opened into its st_save bytes */
+    /* every buffer first: one that can not be had refuses the round (§2 5;
+     * stage 1 skipped it silently and merged the rest) */
     size_t qcap = st_rg_q8_cap(live);
     st_rg_bytes_held = 0; st_rg_bytes_peak = 0;
-    void *scr = npick > 0 ? malloc(qcap) : NULL;
-    if (scr) st_rg_hold(qcap);
+    void *fb = npick > 0 ? malloc(fcap) : NULL;
+    if (fb) st_rg_hold(fcap);
     for (int k = 0; k < npick; k++) {
-        buf[k] = (failn == k + 1 || !scr) ? NULL : malloc(cap);
+        buf[k] = (failn == k + 1 || !fb) ? NULL : malloc(pcap);
         if (!buf[k]) {
             for (int q = 0; q < k; q++) free(buf[q]);
-            free(scr);
+            free(fb);
             r0.members += 1;
             if (rep) *rep = r0;
             return 0;
         }
-        st_rg_hold(cap);
+        st_rg_hold(pcap);
     }
     /* fetch in a rotated order (from the first peer above self) so a region
      * does not all pull the lowest id first (M: node 0 sent 58,837 blocks,
@@ -2992,57 +3051,63 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     if (rot < 0) rot = 0;
     for (int j = 0; j < npick; j++) {
         int k = (rot + j) % npick;
-        void *b = buf[k];
-        int got = fetch(ctx, pick[k], b, cap);
-        if (got < ST_RG_HDR || (size_t)got > cap) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
+        uint8_t *b = (uint8_t *)buf[k], *f = (uint8_t *)fb;
+        int got = fetch(ctx, pick[k], fb, fcap);
+        if (got < ST_RG_HDR || (size_t)got > fcap) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
         r0.fetched++;
         uint32_t h[4];
-        for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = ((const uint8_t *)b)[i];
+        for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = f[i];
         int q8 = h[0] == ST_RG_MAGIC2;   /* B5 q8: BRG2, int8 rows; BRG1 still read */
 #if defined(B5W_NC_NO_LEN)
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > cap - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }  /* falsifier */
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > fcap - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }  /* falsifier */
 #else
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
 #endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
-        if (h[1] != gen) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
+        if (h[1] != gen) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
         if (q8) {
             long on = -1;
-            if ((size_t)h[2] + ST_RG_HDR <= qcap) {
-                for (size_t i = 0; i < (size_t)h[2]; i++)
-                    ((uint8_t *)scr)[i] = ((const uint8_t *)b)[ST_RG_HDR + i];
-                on = st_rg_q8_open(live, scr, (size_t)h[2], (uint8_t *)b + ST_RG_HDR, cap - ST_RG_HDR);
-            }
-            if (on < 0) { free(b); buf[k] = NULL; st_rg_drop(cap); continue; }
-            h[2] = (uint32_t)on;
+            if ((size_t)h[2] + ST_RG_HDR <= qcap)
+                on = st_q8_open_to(live, f + ST_RG_HDR, (size_t)h[2], b, pcap, full);
+            if (on < 0) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
+            ls[k] = (size_t)on;
+        } else if (full) {
+            size_t c = (size_t)h[2] < pcap ? (size_t)h[2] : pcap;   /* past a blob nothing is read */
+            for (size_t i = 0; i < c; i++) b[i] = f[ST_RG_HDR + i];
+            ls[k] = c;
+        } else {
+            /* the whole copy is checked here, as the merge did; one that fails
+             * is still counted (same-gen) and the merge refuses it (length 0) */
+            int ok = st_blob_tier_ok(live, f + ST_RG_HDR, (size_t)h[2]);
+            for (size_t i = 0; ok && i < wsz; i++) b[i] = f[ST_RG_HDR + i];
+            ls[k] = ok ? wsz : 0;
         }
         okk[k] = 1;
-        ls[k] = (size_t)h[2];
     }
     for (int k = 0; k < npick; k++) {    /* id order, as before */
         if (!okk[k]) continue;
         buf[nb] = buf[k];
-        bs[nb] = (const uint8_t *)buf[k] + ST_RG_HDR;
+        bs[nb] = buf[k];
         ls[nb] = ls[k];
         gs[nb] = gen;
         nb++;
     }
+    free(fb);
+    if (fb) st_rg_drop(fcap);
     r0.members += 1;                     /* self */
     r0.same_gen = nb + 1;
     if (nb > 0) {
         st_model cand;
-        void *own = malloc(st_blob_size(live));
-        if (own) st_rg_hold(st_blob_size(live));
-        long on = own ? st_save(live, own, st_blob_size(live)) : -1;
-        if (on > 0 && st_init_tier(&cand, 1u, live->tier) == ST_OK) {
-            st_rg_hold(st_blob_size(live));      /* the candidate's w, mu, vu */
-            if (st_load(&cand, own, (size_t)on) == ST_OK) {
+        if (st_init_tier(&cand, 1u, live->tier) == ST_OK) {
+            st_rg_hold(bsz);                     /* the candidate's w, mu, vu */
+            if (st_rg_take_live(&cand, live)) {
 #if defined(B5W_NC_MEAN)
                 int acc = st_round_merge(&cand, gen, bs, ls, gs, nb);
 #else
-                int acc = st_round_trimmed(&cand, gen, bs, ls, gs, nb, 1);
+                int acc = full ? st_round_trimmed(&cand, gen, bs, ls, gs, nb, 1)
+                               : st_round_trimmed_need(&cand, gen, bs, ls, gs, nb, 1, wsz);
 #endif
                 r0.accepted = acc > 0 ? acc : 0;
                 if (acc > 0) {
@@ -3060,10 +3125,8 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
             }
             st_free(&cand);
         }
-        free(own);
     }
     for (int k = 0; k < nb; k++) free(buf[k]);
-    free(scr);
     r0.adopted = ret;
     if (rep) *rep = r0;
     return ret;
@@ -3336,10 +3399,17 @@ long st_rg_wrap_q8(const st_model *m, uint32_t gen, void *buf, size_t cap)
 
 /* a BRG2 payload q[0..n) -> the st_save bytes in out (zero mu, vu). Returns the
  * st_save length, or < 0 (another shape, a bad scale, the wrong length). */
+/* full = 0 (B5 q8 2, research/b5-recv-mem.md §2): only the header and w are
+ * written (st_rg_w_size bytes), all a merge reads; the same checks */
+static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *out, size_t cap, int full);
 long st_rg_q8_open(const st_model *live, const void *q, size_t n, void *out, size_t cap)
 {
+    return st_q8_open_to(live, q, n, out, cap, 1);
+}
+static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *out, size_t cap, int full)
+{
     if (!live || !q || !out) return ST_E_ARG;
-    size_t bs = st_blob_size(live);
+    size_t bs = full ? st_blob_size(live) : st_rg_w_size(live);
     if (n != st_q8_payload(live) || cap < bs) return ST_E_ARG;
     uint8_t *cov = (uint8_t *)calloc((size_t)live->n_params, 1);
     if (!cov) return ST_E_OOM;
@@ -3358,6 +3428,10 @@ long st_rg_q8_open(const st_model *live, const void *q, size_t n, void *out, siz
         x.pos += sizeof(float);
     }
     free(cov);
+    if (!full) {
+        if (x.bad || !st_blob_hdr_need_ok(live, out, bs, bs)) return ST_E_ARG;
+        return (long)bs;
+    }
     uint8_t *mv = ow + np * sizeof(float);
     for (size_t i = 0; i < 2 * np * sizeof(float); i++) mv[i] = 0;
     for (size_t i = 0; i < sizeof(int32_t); i++) mv[2 * np * sizeof(float) + i] = x.q[x.pos + i];
