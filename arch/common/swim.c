@@ -1431,7 +1431,7 @@ typedef struct {
     UB  fp[8];      /* N2c stage 3: the key heard from it (fp_ok)  */
     UB  fp_ok;
     UB  fp_was[8];  /* the key before the last change              */
-    UB  was_left;   /* news still to come after it (2nd, 4th carry fp_was) */
+    UB  was_left;   /* news still to come after it (1st, 3rd carry fp_was; 2nd, 4th until 11-23) */
 } SWIM_WIDE;
 
 static NODEMAP   wide_map;          /* wide id -> slot, parallel to wide_st */
@@ -1848,12 +1848,18 @@ static INT swim_wide_fill(SWIM2_PKT *p, SWIM2_FPS *fx)
         p->gossip[n].incarnation = 0;
         p->gossip[n].capability  = 0;
         if (fx && wide_st[swim_wide_cursor].fp_ok) {
-            /* after a key change the 2nd and 4th news carry the previous key: on the
+            /* after a key change the 1st and 3rd news carry the previous key: on the
              * relay this id's slot follows whoever spoke last, as the kept key does,
-             * so without it the news reaches only that key's own holder */
+             * so without it the news reaches only that key's own holder. 11-23: it
+             * was the 2nd and 4th, which never went out while both keep talking
+             * (each change starts the count again; idpin "two keys heard in turn") */
             SWIM_WIDE *e = &wide_st[swim_wide_cursor];
             const UB *k = e->fp;
+#ifdef N2C_NC_WAS_SECOND   /* falsifier: the previous key in the 2nd and 4th news, as before (idpin) */
             if (e->was_left) { e->was_left--; if (!(e->was_left & 1)) k = e->fp_was; }
+#else
+            if (e->was_left) { e->was_left--; if (e->was_left & 1) k = e->fp_was; }
+#endif
             for (INT i = 0; i < 8; i++) fx->fp[1 + n][i] = k[i];
         }
         n++;
@@ -2343,23 +2349,28 @@ INT swim_idpin_self_test(void (*emit)(const char *))
         INT c = swim_wide_fill(&o, &t);
         for (k = 0; k < c; k++)
             if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], Y) == 0) got = 1;
-        I6(c == 2 && got, "news of 299 carries the key kept for it");
-        for (k = 0; k < c; k++)
-            if (o.gossip[k].node_id == 700) I6(sw_fp_zero(t.fp[1 + k]), "news of 700 carries no key");
         /* 11-21 (CI 44838481621 plain I3 red): on the relay the id's slot follows
          * whoever spoke last, and so does the key kept here, so the news reached
          * only the key's own holder and two nodes under one id never heard each
-         * other. After a change the news carries the previous key too (the 2nd
-         * and 4th news), so the new holder of the slot hears the old key. */
-        INT gotx = 0, goty = 0;
+         * other. After a change the news carries the previous key too, so the new
+         * holder of the slot hears the old key. 11-23: the 1st and 3rd news (it
+         * was the 2nd and 4th; see "two keys heard in turn" below) */
+        I6(c == 2 && !got, "the first news of 299 after the change does not carry the kept key");
+        INT gotx = 0;
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], X) == 0) gotx = 1;
+        I6(gotx, "the first news of 299 after the change carries the previous key");
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 700) I6(sw_fp_zero(t.fp[1 + k]), "news of 700 carries no key");
+        INT goty = 0;
         for (UW i = 0; i < sizeof t; i++) pt[i] = 0;
         c = swim_wide_fill(&o, &t);
         for (k = 0; k < c; k++)
             if (o.gossip[k].node_id == 299) {
-                if (sw_fp_cmp(t.fp[1 + k], X) == 0) gotx = 1;
+                if (sw_fp_cmp(t.fp[1 + k], X) == 0) gotx = 2;
                 if (sw_fp_cmp(t.fp[1 + k], Y) == 0) goty = 1;
             }
-        I6(gotx && !goty, "the next news of 299 carries the previous key");
+        I6(goty && gotx != 2, "the next news of 299 carries the kept key");
         for (INT r = 0; r < 4; r++) { for (UW i = 0; i < sizeof t; i++) pt[i] = 0; c = swim_wide_fill(&o, &t); }
         got = 0;
         for (k = 0; k < c; k++)
