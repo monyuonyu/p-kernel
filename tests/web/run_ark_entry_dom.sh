@@ -17,6 +17,8 @@
 #                  A8-order A8-key A8-rec PASS
 #   nc-key-on-open the key is fetched as soon as the key step opens (the first
 #                  form): A8-ask and A8-later FAIL, A8-key PASS
+#   nc-key-soon    the same 0.3 s later (audit-217, the race of A8-later's count):
+#                  A8-ask and A8-later FAIL, A8-key PASS
 # The records screen (A10, ark-entry 7.2 1 3 5; fixed before the screen was written):
 #   nc-new-trim    a new record from #arnew is .trim()ed: A10-new FAIL, A10-list PASS
 #   nc-vis-both    changing #arvis also posts learn=yes (two at once, 7.2 5):
@@ -35,7 +37,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET PKERNEL_GALAXY
 PORT="${ARK_DOM_PORT:-17841}"
-ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key nc-key-on-open nc-new-trim nc-vis-both}"
+ARMS="${ARK_DOM_ARMS:-plain nc-no-header nc-skip-backup nc-trim nc-keep-key nc-key-on-open nc-key-soon nc-new-trim nc-vis-both}"
 SRC="$ROOT/arch/common/web/galaxy.html"
 WORK="$(mktemp -d /tmp/arkdom.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -101,6 +103,16 @@ case " $ARMS " in *" nc-key-on-open "*)
         if arm nc-key-on-open "$WORK/open.html"; then want nc-key-on-open FAIL A8-ask A8-later; want nc-key-on-open PASS A8-key; fi
     else REDS="$REDS nc-key-on-open-anchor"; fi ;;
 *) REDS="$REDS nc-key-on-open-skipped" ;; esac
+# nc-key-soon (audit-217): the key is fetched 0.3 s after the key step opens. A8-later
+# clicks "later" at once, so the POST goes out after the close: counted at the close
+# from the answers (before audit-217) A8-later stayed green; counted from what was
+# sent, after 1.5 s, it is red. CI 45020275743 was this race by chance (nc-key-on-open)
+case " $ARMS " in *" nc-key-soon "*)
+    if mutate "$WORK/soon.html" '  if(first==="key") aeKey(); else aeStep(first);' \
+              '  if(first==="key"){ aeKey(); setTimeout(aeKeyShow, 300); } else aeStep(first);'; then
+        if arm nc-key-soon "$WORK/soon.html"; then want nc-key-soon FAIL A8-ask A8-later; want nc-key-soon PASS A8-key; fi
+    else REDS="$REDS nc-key-soon-anchor"; fi ;;
+*) REDS="$REDS nc-key-soon-skipped" ;; esac
 case " $ARMS " in *" nc-new-trim "*)
     if mutate "$WORK/ntrim.html" 'const t=document.getElementById("arnew").value;' \
               'const t=document.getElementById("arnew").value.trim();'; then
