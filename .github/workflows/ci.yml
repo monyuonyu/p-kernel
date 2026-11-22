@@ -3620,7 +3620,9 @@ jobs:
       # B5 wire stage 1 (research/b5-wire.md): st_region_round through the real
       # pfs (W0 W3-W6), NO_GEN red on W4 only, NO_GATE red on W6 only. The
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
-      - name: B5 wire stage 1 unit ([b5w-W0] [b5w-W3..W6], falsifiers NO_GEN on W4 and NO_GATE on W6)
+      # B5 q8 (research/b5-q8-copy.md): Q0 Q4 (the int8 copy BRG2; Q4 makes an
+      # L model, about 0.6 GB), the falsifier INT2T red on Q0 only.
+      - name: B5 wire stage 1 unit ([b5w-W0] [b5w-W3..W6], falsifiers NO_GEN on W4 and NO_GATE on W6; [b5q-Q0] [b5q-Q4])
         run: B5W_MODE=unit bash tests/llm/run_b5_wire.sh
       # B5 step 10 self-tests (s6/s7/s8/s10unit, the far/tglow falsifiers and the
       # three of test-holes H27): seconds. The judgement seeds are not here.

@@ -23,6 +23,10 @@
 #   -DB5W_NC_NO_CAP   every peer is fetched (no K = 7)     -> W9 red (unit)
 # B5 ⓪ (research/b5-m-default.md §3 2):
 #   -DB5W_NC_SEND_MOMENTS the published copy keeps mu, vu  -> W15 red (unit)
+# B5 q8 (research/b5-q8-copy.md §4): unit Q0 Q4 (the int8 copy, BRG2);
+#   B5W_MODE=q8 runs the judgement seeds 261..268 (B5W_Q8_SEEDS), stage q8,
+#   on plain and nq8, judge b5q8_check.py (Q1 Q2 Q3 and the NC)
+#   -DB5Q_NC_INT2T    the copy is the int2 per-tensor grid  -> Q0 red (unit), Q2 red (judge)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -81,6 +85,7 @@ build nodedup -DB5W_NC_NO_DEDUP
 build nocap  -DB5W_NC_NO_CAP
 build nolatch -DB5W_NC_NO_LATCH   # D6b (research/b5-m-round.md §10): W14 red
 build nomom  -DB5W_NC_SEND_MOMENTS   # B5 ⓪ (research/b5-m-default.md §3 2): W15 red
+build nq8    -DB5Q_NC_INT2T          # B5 q8 (research/b5-q8-copy.md §4): Q0 red, Q2 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -103,6 +108,7 @@ nc nodedup b5w-W8
 nc nocap b5w-W9
 nc nolatch b5w-W14
 nc nomom b5w-W15
+nc nq8 b5q-Q0
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 if [ "${B5W_MODE:-}" = unit ]; then
@@ -115,6 +121,16 @@ fi
 # the calibration seeds 209 210 at s 0.5 1 2 and names s; B5W_MODE=w2b runs
 # the judgement seeds 211..218 at B5W_W2B_S (the calibrated s) and judges.
 case "${B5W_MODE:-}" in
+q8)
+    python3 "$HERE/b5q8_check.py" --self-test > "$OUT/q8-self.log" 2>&1 \
+        || { cat "$OUT/q8-self.log"; echo "[result] FAIL  b5-q8 judge self-test"; exit 1; }
+    Q8SEEDS="${B5W_Q8_SEEDS:-261 262 263 264 265 266 267 268}"
+    { for s in $Q8SEEDS; do echo "plain q8 q8 $s"; done
+      for s in $Q8SEEDS; do echo "nq8 q8nc nq8 $s"; done; } \
+        | xargs -P "$JOBS" -L 1 sh -c 'w="$0"; h="$1"; o="$2"; b="$3"; t="$4"; g="$5"; s="$6"; "$w/bin-$b" "$h" "$s" "$t" > "$o/$g-$s.log" 2>&1; echo "[b5-q8] $b $t seed $s rc=$?"' \
+            "$WORK" "$HERE/b1_held.txt" "$OUT"
+    python3 "$HERE/b5q8_check.py" --seeds "$Q8SEEDS" "$OUT"
+    exit $? ;;
 w2b-cal)
     python3 "$HERE/b5_wire2_check.py" --self-test > "$OUT/w2b-self.log" 2>&1 \
         || { cat "$OUT/w2b-self.log"; echo "[result] FAIL  w2b judge self-test"; exit 1; }

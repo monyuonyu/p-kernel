@@ -20,6 +20,11 @@
  *   mean4-garb1      the same, the candidate the plain mean (st_round_merge)
  *                    through the same gate: W2's comparator, made here
  *   region4-garb2    nodes 2 and 3 garbage (a reading, W6 is the unit's)
+ *
+ * B5 q8 (research/b5-q8-copy.md §4): unit Q0 Q4 (the BRG2 copy); stage q8
+ * runs alone, region4 and region4-garb1 with the fp copy (BRG1) and region4-q8,
+ * region4-garb1-q8, region4-garb2-q8 with the int8 copy (BRG2) on the same
+ * seed; the judge is tests/llm/b5q8_check.py (Q1 Q2 Q3).
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -111,8 +116,28 @@ static void garbage(st_model *g, uint32_t seed)
     st_init_tier(g, seed ^ 0xBADu, ST_TIER_S);
     for (int i = 0; i < g->n_params; i++) g->w[i] *= 8.0f;
 }
+/* B5 q8: weak, so the test-first commit links and Q0 Q4 are red by their lines */
+#ifndef ST_RG_MAGIC2
+#define ST_RG_MAGIC2 0x32475242u  /* "BRG2" (student.h from q8) */
+#endif
+extern size_t st_rg_q8_cap(const st_model *m) __attribute__((weak));
+extern long   st_rg_wrap_q8(const st_model *m, uint32_t gen, void *buf, size_t cap) __attribute__((weak));
+extern long   st_rg_q8_open(const st_model *live, const void *q, size_t n, void *out, size_t cap) __attribute__((weak));
+static int g_q8 = 0;          /* 1: rounds() publishes the int8 copy (BRG2) */
+static int have_q8(void) { return st_rg_q8_cap && st_rg_wrap_q8 && st_rg_q8_open; }
+static void *wrap_q8(const st_model *m, uint32_t gen, size_t *len)
+{
+    if (!have_q8()) { printf("  FAIL  [b5q-io] st_rg_wrap_q8 is not there\n"); exit(1); }
+    size_t cap = st_rg_q8_cap(m);
+    void *b = malloc(cap);
+    long n = b ? st_rg_wrap_q8(m, gen, b, cap) : -1;
+    if (n < ST_RG_HDR) { printf("  FAIL  [b5q-io] wrap_q8 %ld\n", n); exit(1); }
+    *len = (size_t)n;
+    return b;
+}
 static void *wrap(const st_model *m, uint32_t gen, size_t *len)
 {
+    if (g_q8) return wrap_q8(m, gen, len);
     size_t cap = st_rg_cap(m);
     void *b = malloc(cap);
     long n = b ? st_rg_wrap(m, gen, b, cap) : -1;
@@ -305,6 +330,92 @@ static void w15(const st_model *m, uint32_t gen)
     free(env);
 }
 
+/* ---- B5 q8 (research/b5-q8-copy.md §4): Q0 and Q4 ---- */
+static void q0(st_model *n, uint32_t G)
+{
+    if (!have_q8()) { check(0, "b5q-Q0", "st_rg_wrap_q8 / _q8_cap / _q8_open are not there (q8 not built)"); return; }
+    const st_model *m = &n[0];
+    int np = m->n_params;
+    size_t len; uint8_t *env = wrap_q8(m, G, &len);
+    uint32_t h[4]; memcpy(h, env, sizeof h);
+    check(h[0] == ST_RG_MAGIC2 && h[1] == G && (size_t)h[2] == len - ST_RG_HDR, "b5q-Q0", "the envelope: BRG2, the gen, the payload length");
+    size_t bs = st_blob_size(m);
+    uint8_t *ob = malloc(bs);
+    long on = st_rg_q8_open(m, env + ST_RG_HDR, len - ST_RG_HDR, ob, bs);
+    st_model c, f;
+    int ld = on == (long)bs && st_init_tier(&c, 1u, m->tier) == ST_OK && st_load(&c, ob, bs) == ST_OK;
+    check(ld, "b5q-Q0", "the opened copy loads (st_save bytes)");
+    st_init_tier(&f, 1u, m->tier);
+    st_quant_fake(m, &f, 8, ST_QG_ROW, NULL);
+    if (ld) {
+        check(memcmp(c.w, f.w, (size_t)np * sizeof(float)) == 0, "b5q-Q0", "the opened w == st_quant_fake(8, ROW) byte for byte");
+        int zero = 1;
+        for (int i = 0; i < np; i++) if (c.mu[i] != 0.0f || c.vu[i] != 0.0f) { zero = 0; break; }
+        check(zero && c.adam_t == m->adam_t, "b5q-Q0", "zero mu and vu, adam_t kept");
+        int diff = 0;
+        for (int i = 0; i < np; i++) diff += c.w[i] != m->w[i];
+        printf("  Q0: %d of %d weights moved by the rounding, payload %zu bytes\n", diff, np, len - ST_RG_HDR);
+        check(diff > 0, "b5q-Q0", "precondition: the rounding moved some weights (the copy is not the fp one)");
+        st_free(&c);
+    }
+    /* a bad scale, a short payload: not opened */
+    uint8_t *bad = malloc(len); memcpy(bad, env, len);
+    float nanv = 0.0f / 0.0f;
+    memcpy(bad + ST_RG_HDR + 40, &nanv, sizeof nanv);           /* the first row's scale (after the 40-byte ST_BLOB_HDR) */
+    check(st_rg_q8_open(m, bad + ST_RG_HDR, len - ST_RG_HDR, ob, bs) < 0, "b5q-Q0", "a NaN scale is not opened");
+    check(st_rg_q8_open(m, env + ST_RG_HDR, len - ST_RG_HDR - 1, ob, bs) < 0, "b5q-Q0", "a payload one byte short is not opened");
+    free(bad); free(ob); free(env);
+
+    /* the round: three BRG2 peers == three BRG1 peers that carry st_quant_fake(8, ROW) */
+    tab_t tq, tf; memset(&tq, 0, sizeof tq); memset(&tf, 0, sizeof tf);
+    for (int k = 1; k < K; k++) {
+        tq.b[k] = wrap_q8(&n[k], G, &tq.n[k]);
+        st_model qk; st_init_tier(&qk, 1u, n[k].tier); st_quant_fake(&n[k], &qk, 8, ST_QG_ROW, NULL);
+        qk.adam_t = n[k].adam_t;
+        tf.b[k] = wrap(&qk, G, &tf.n[k]);
+        st_free(&qk);
+    }
+    const uint16_t all4[4] = { 0, 1, 2, 3 };
+    st_model a, b; st_rg_report ra, rb;
+    clone(&a, &n[0]); clone(&b, &n[0]);
+    int r1 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 BRG2", r1, &ra);
+    int r2 = round_on(&b, G, 0, all4, 4, tab_fetch, &tf, &rb); say("Q0 BRG1 of the fake", r2, &rb);
+    check(ra.fetched == 3 && ra.accepted == 3 && r1 == r2 && hash(&a) == hash(&b), "b5q-Q0",
+          "a round of three BRG2 peers == the round of their st_quant_fake copies as BRG1 (bytes)");
+    st_free(&a); st_free(&b);
+    /* a swarm in the middle of the change: node 1 BRG1, nodes 2 3 BRG2 */
+    free(tq.b[1]); tq.b[1] = wrap(&n[1], G, &tq.n[1]);
+    clone(&a, &n[0]);
+    int r3 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 mixed", r3, &ra);
+    check(ra.fetched == 3 && ra.same_gen == 4 && ra.accepted == 3, "b5q-Q0", "BRG1 and BRG2 in one round: all three counted");
+    st_free(&a);
+    tab_free(&tq); tab_free(&tf);
+    st_free(&f);
+}
+
+static void q4(void)
+{
+    if (!have_q8()) { check(0, "b5q-Q4", "st_rg_wrap_q8 is not there (q8 not built)"); return; }
+    st_model m; st_init_tier(&m, 7u, ST_TIER_M);
+    size_t w = (size_t)m.n_params * sizeof(float);
+    size_t len; void *e = wrap_q8(&m, 1, &len);
+    printf("  Q4: M copy %zu bytes (fp32 w %zu, ratio %.4f; the BRG1 copy %zu)\n", len, w, (double)len / (double)w, st_rg_cap(&m));
+    check(len <= 2060000u && (double)len <= 0.27 * (double)w, "b5q-Q4", "the M copy <= 2.06 MB and <= 0.27 x its w");
+    free(e); st_free(&m);
+    st_model l; st_init_tier(&l, 7u, ST_TIER_L);
+    e = wrap_q8(&l, 1, &len);
+    int pq = gl_student_publish(60, e, (unsigned int)len);
+    printf("  Q4: L copy %zu bytes, publish %d chunks\n", len, pq);
+    check(pq > 0, "b5q-Q4", "the L copy (BRG2) passes publish");
+    free(e);
+    size_t fc = st_rg_cap(&l);
+    void *big = malloc(fc);                   /* never written: publish refuses by the length first */
+    int pf = big ? gl_student_publish(61, big, (unsigned int)fc) : -2;
+    printf("  Q4: L fp copy %zu bytes, publish %d\n", fc, pf);
+    check(pf < 0, "b5q-Q4", "the L fp copy (BRG1) is still refused by publish");
+    free(big); st_free(&l);
+}
+
 static int unit(void)
 {
     printf("=== [b5-wire] unit (research/b5-wire.md §3 §4) ===\n");
@@ -374,6 +485,8 @@ static int unit(void)
     }
 
     w7_w10(n, &t, G);
+    q0(n, G);
+    q4();
 
     /* the arguments */
     clone(&a, &n[0]);
@@ -532,6 +645,26 @@ int main(int argc, char **argv)
 #endif
     printf("[b5w] seed %u build %s stage %s quarter %d B gate windows %d held windows %d\n",
            (unsigned)seed, bld, st, D / K, (fxn - fx_end) / SEQ, hn / SEQ);
+    if (strcmp(st, "q8nc") == 0) {          /* the NC build: Q2 only needs these two */
+        if (!have_q8()) { printf("  FAIL  [b5q-io] q8 not built\n"); return 1; }
+        alone(seed);
+        g_q8 = 1;
+        rounds(seed, 0, 0, "region4-q8");
+        printf("[b5w] done\n");
+        return 0;
+    }
+    if (strcmp(st, "q8") == 0) {            /* B5 q8 (research/b5-q8-copy.md §4) */
+        if (!have_q8()) { printf("  FAIL  [b5q-io] q8 not built\n"); return 1; }
+        alone(seed);
+        rounds(seed, 0, 0, "region4");
+        rounds(seed, 1, 0, "region4-garb1");
+        g_q8 = 1;
+        rounds(seed, 0, 0, "region4-q8");
+        rounds(seed, 1, 0, "region4-garb1-q8");
+        rounds(seed, 2, 0, "region4-garb2-q8");
+        printf("[b5w] done\n");
+        return 0;
+    }
     int all = strcmp(st, "all") == 0;
     if (all) { alone(seed); rounds(seed, 0, 0, "region4"); }
     rounds(seed, 1, 0, "region4-garb1");
