@@ -2366,6 +2366,38 @@ INT swim_idpin_self_test(void (*emit)(const char *))
             if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], Y) == 0) got = 1;
         I6(got, "and later news the kept key again");
     }
+    /* 11-23 (n2c root, #46 4): two nodes under one id both beacon every second, so
+     * a third node hears them in turn and its kept key flips before nearly every
+     * news it sends. The relay slot of the id is whoever spoke last, the same node
+     * whose key is kept here: news carrying the kept key reaches only that key's
+     * own holder. If the previous key waits for the 2nd news after a change, it
+     * never goes out while the two keep talking (each change starts the count
+     * again), and the larger hears the smaller late or never (§15: 17 s, then
+     * both redrew). The news right after a change must carry the previous key. */
+    {
+        SWIM2_PKT o; SWIM2_FPS t; UB *pt = (UB *)&t; INT k, c, other = 0, own = 0;
+        for (INT r = 0; r < 4; r++) {
+            const UB *first = (r & 1) ? Y : X, *last = (r & 1) ? X : Y;
+            n = sw3_pkt(buf, 299, 0xFFFF, first, 0);
+            swim_wide_rx(ip, buf, n);
+            n = sw3_pkt(buf, 299, 0xFFFF, last, 0);
+            swim_wide_rx(ip, buf, n);
+            for (UW i = 0; i < sizeof t; i++) pt[i] = 0;
+            c = swim_wide_fill(&o, &t);
+            for (k = 0; k < c; k++)
+                if (o.gossip[k].node_id == 299) {
+                    if (sw_fp_cmp(t.fp[1 + k], first) == 0) other++;
+                    if (sw_fp_cmp(t.fp[1 + k], last) == 0) own++;
+                }
+        }
+        I6(other == 4 && own == 0, "two keys heard in turn: every news carries the key before the last");
+        /* when the talking stops (one moved away), the news returns to the kept key */
+        for (INT r = 0; r < 4; r++) { for (UW i = 0; i < sizeof t; i++) pt[i] = 0; c = swim_wide_fill(&o, &t); }
+        INT kept = 0;
+        for (k = 0; k < c; k++)
+            if (o.gossip[k].node_id == 299 && sw_fp_cmp(t.fp[1 + k], X) == 0) kept = 1;
+        I6(kept, "after the 4 news the kept key again");
+    }
     /* this node's own id with another key: a redraw only when mine is the larger */
     PK_NOSW_ENTER();
     swim_wide_me = 400;
