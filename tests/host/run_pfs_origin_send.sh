@@ -112,6 +112,16 @@ suite() {  # <tag> <cflags> [o4only]
     while read -r id; do [ -e "$W/d2/$id" ] && first=$((first + 1)); done < "$W/first16.txt"
     echo "[pfs-origin] $tag node 2 holds $fetched of $N, $first of the first 16 (out of node 1's table)"
     [ "$first" = 16 ] && [ "$fetched" -ge 64 ] && r O1 PASS || r O1 FAIL
+    # On an O1 red, say where the blocks stopped (CI 44961258707 held 8 of 80
+    # and kept no logs). Prints only; the verdict above does not change.
+    case "$reds" in *O1*)
+        echo "[pfs-origin] $tag diag O1: n1 announces $(grep -ac '\[pfs\] announce id=' "$W/n1.log")," \
+             "fanout=0 $(grep -ac 'announce id=.*fanout=0' "$W/n1.log"), queue-full $(grep -ac 'announce queue full' "$W/n1.log");" \
+             "n2 heard $(grep -ac 'heard announce' "$W/n2.log"), replicated $(grep -ac 'replicated block' "$W/n2.log")"
+        grep -aiE 'dropped|SUSPECT|DEAD|level change|relay (lost|down|reconnect)' "$W/n1.log" "$W/n2.log" \
+            | tr -d '\r' | head -12 | sed "s|^$W/|[pfs-origin] $tag diag |"
+        tail -3 "$W/relay.log" | tr -d '\r' | sed "s/^/[pfs-origin] $tag diag relay: /" ;;
+    esac
     # O2: each fetched block's .org (2 bytes little endian) says node 1's net
     # number, OWN (PKERNEL_NODE_ID - 1 = 0; the first test-first run counted 1
     # and saw 0 on 64 blocks = the test's error, corrected before the fix ran)
