@@ -29,6 +29,6 @@ int main(void)
     printf("kdds_topics_bytes=%lu ",  (unsigned long)sizeof(kdds_topics));
     printf("dkva_preopen=%d ",        (int)KDDS_DKVA_PREOPEN);
     printf("nodemap_bytes=%lu ",      (unsigned long)sizeof(NODEMAP));
-    printf("dnode_table_bytes=%lu\n", (unsigned long)sizeof(dnode_table));
+    printf("dnode_table_bytes=%lu\n", (unsigned long)DNODE_TABLE_BYTES);
     return 0;
 }

@@ -213,7 +213,7 @@ int ui_snapshot(UI_SNAPSHOT *out)
 
     for (INT n = 0; n < DNODE_MAX && out->peer_count < UI_PEER_MAX; n++) {
         if ((U1)n == me) continue;
-        U1 st = dnode_table[n].state;
+        U1 st = dnode_state(n);
         if (st == DNODE_UNKNOWN && !world_peer_known((U1)n)) continue;
 
         UI_PEER *p = &out->peers[out->peer_count++];

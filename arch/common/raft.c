@@ -87,7 +87,7 @@ static UW alive_count(void)
     UW cnt = 1;
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state == DNODE_ALIVE) cnt++;
+        if (dnode_state(n) == DNODE_ALIVE) cnt++;
     }
     return cnt;
 }
@@ -143,8 +143,8 @@ static void broadcast(UB type)
 {
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state == DNODE_ALIVE ||
-            dnode_table[n].state == DNODE_UNKNOWN) {
+        if (dnode_state(n) == DNODE_ALIVE ||
+            dnode_state(n) == DNODE_UNKNOWN) {
             send_pkt(node_ip(n), type, 0, 0);
         }
     }

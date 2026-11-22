@@ -86,7 +86,7 @@ static void push_state_to(pk_node_t dst_node)
 
     /* data[0..DNODE_MAX-1]: 各ノードの状態を埋め込む */
     for (UB n = 0; n < DNODE_MAX && n < SPAWN_CHUNK_SIZE; n++)
-        pkt.data[n] = dnode_table[n].state;
+        pkt.data[n] = dnode_state(n);
 
     udp_send(node_ip(dst_node), SPAWN_PORT, SPAWN_PORT,
              (const UB *)&pkt, (UH)sizeof(pkt));
@@ -201,10 +201,10 @@ void spawn_rx(UW src_ip, UH src_port, const UB *data, UH len)
         /* dnode_table を状態情報で初期化 (まだ未発見のノードを登録) */
         for (UB n = 0; n < DNODE_MAX && n < SPAWN_CHUNK_SIZE; n++) {
             if (n == drpc_my_node) continue;
-            if (dnode_table[n].state == DNODE_UNKNOWN &&
+            if (dnode_state(n) == DNODE_UNKNOWN &&
                 pkt->data[n] == DNODE_ALIVE) {
-                dnode_table[n].ip    = node_ip(n);
-                dnode_table[n].state = DNODE_ALIVE;
+                dnode_set_ip(n, node_ip(n));
+                dnode_set_state(n, DNODE_ALIVE);
                 sp_puts("[spawn] registered node "); sp_putdec(n);
                 sp_puts(" from cluster state\r\n");
             }
@@ -228,7 +228,7 @@ void spawn_on_leader(void)
 {
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state == DNODE_ALIVE && !spawned[n]) {
+        if (dnode_state(n) == DNODE_ALIVE && !spawned[n]) {
             send_offer(n);
             push_state_to(n);   /* offer + state を即時送信 */
             spawned[n] = 1;

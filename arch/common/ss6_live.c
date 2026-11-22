@@ -197,7 +197,7 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
     INT owner = st_expert_owner((UB)expert_id);
     if (owner < 0 || (pk_node_t)owner == drpc_my_node) return -1;   /* local/none */
     if ((pk_node_t)owner >= DNODE_MAX) return -1;
-    if (dnode_table[owner].state == DNODE_DEAD) return -1;    /* absent     */
+    if (dnode_state(owner) == DNODE_DEAD) return -1;    /* absent     */
 
     /* claim a pending slot */
     INT slot = -1;
@@ -243,7 +243,7 @@ static int ss6_live_remote_expert(int layer, int expert_id, const float *fin,
             ok = 1;
             break;
         }
-        if (dnode_table[owner].state == DNODE_DEAD) break;   /* died -> fall back */
+        if (dnode_state(owner) == DNODE_DEAD) break;   /* died -> fall back */
     }
 
     sl_pend[slot].in_use = 0;

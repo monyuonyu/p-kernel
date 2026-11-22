@@ -182,7 +182,7 @@ INT snf_send(pk_node_t dst, const UB *payload, UH len)
      * silently-unreachable-but-still-ALIVE S, within the SWIM death-detection
      * window, is a brief loss window — the same honest bound ss6_live.c
      * documents; a full ACK/retry is a deferred hardening.) */
-    if (sn != 0xFF && sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD)
+    if (sn != 0xFF && sn < DNODE_MAX && dnode_state(sn) == DNODE_DEAD)
         sn = 0xFF;                           /* dead supernode -> direct        */
 
     pk_node_t tgt = snf_route_target(dst, me, sn);
@@ -227,7 +227,7 @@ INT snf_send(pk_node_t dst, const UB *payload, UH len)
                 ER er = tk_wai_sem(sem, 1, SNF_WAIT_MS);
                 if (er == E_OK && snf_pend[slot].got) { acked = 1; break; }
                 /* the elected S died mid-flight -> stop, fall closed to DIRECT */
-                if (sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD) break;
+                if (sn < DNODE_MAX && dnode_state(sn) == DNODE_DEAD) break;
             }
 
             snf_pend[slot].in_use = 0;
@@ -985,7 +985,7 @@ INT np_request_punch(pk_node_t peer)
 
     /* no broker (no elected supernode) -> straight to relay (connectivity). */
     if (sn == 0xFF || sn >= DNODE_MAX
-        || (sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD)) {
+        || (sn < DNODE_MAX && dnode_state(sn) == DNODE_DEAD)) {
         np_relay_cnt++;
         return snf_send(peer, (const UB *)0, 0);
     }
@@ -1029,7 +1029,7 @@ INT np_request_punch(pk_node_t peer)
                 peer_ep  = np_pend[slot].peer_ep;
                 break;
             }
-            if (sn < DNODE_MAX && dnode_table[sn].state == DNODE_DEAD) break;
+            if (sn < DNODE_MAX && dnode_state(sn) == DNODE_DEAD) break;
         }
 
         np_pend[slot].in_use = 0;

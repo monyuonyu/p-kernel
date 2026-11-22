@@ -39,6 +39,10 @@ D1・D2 だけでは足りない（第 1 段の教え）: 生きた台で行が�
 
 D1 1,412/4,484/16,772・D2 61 行 23 ファイルを再現、N3D_NC=2 で 62/24。**D2 の grep は 3 つの形を見ない**（監査者の壊し、どれも 61 のまま）: 行頭が `*` のコード（`*p = dnode_table[1]…`）・別名（`DNODE *t = dnode_table; t[1]`）・`dnode_table [1]`。C10 は上限だけ＝行 0 の台も緑。**2a の条件**: 口の外の使用はコンパイラで捕まえる（表を drpc.c の static にするか、外のファイルで `#pragma GCC poison`）＝D2 は補助に。2b の C10 に下限（行 ≥ P−2）。台本の外で表を定義するもの（userland/x86/ushim.c・tests/llm/placement_stub.c）と sizeof を読むもの（tests/unbounded/*.c）も 2a で口へ。
 
+## 4c. 2a を作った（11-22、feat/n3-dnode-door、監査待ち）
+
+drpc.h に口（`dnode_state/ip/missed/node_id` は読みだけ＝キャスト、書きは `dnode_set_*`、`DNODE_FOREACH`・`DNODE_TABLE_BYTES`・`DNODE_TABLE_DEFINE`）と、持ち主（`DRPC_TABLE_OWNER` を最初に定義する drpc.c・swim.c）以外での `#pragma GCC poison dnode_table`。25 ファイル 60 行（読み 51・書き 9）、ushim.c・placement_stub.c の定義、tests/unbounded の sizeof を口へ。.c の行番号は変えていない。試験先 D2c（5 つの形が "poisoned" で断られ、口は通る）は master で赤。枝: D2 0 行・D2c PASS、NC=2 で D2 赤、毒を外すと D2c 赤。D2 の持ち主に drpc.h を足した（口が表を名指しする。master は 60 行 22 ファイル）。DNODE_FOREACH はまだ誰も使っていない（2b で行の上を回す口）。CI の unbounded-N に D2/D2c（D1 は 2b まで赤）。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。

@@ -107,7 +107,7 @@ void region_recompute(void)
     /* ALIVE かつ RTT≤τ のノードを取り込む */
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == me) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        if (dnode_state(n) != DNODE_ALIVE) continue;
         UW rtt = swim_rtt_ms(n);
         if (rtt == 0xFFFFFFFFUL) continue;   /* 未実測は判定保留 */
         if (rtt <= REGION_TAU) {
@@ -315,9 +315,9 @@ INT region_left_out(pk_node_t *ids, UB *states, UW *rtts, INT max)
     pk_node_t me = drpc_my_node;
     region_recompute();
     for (UB n = 0; n < DNODE_MAX && k < max; n++) {
-        if (n == me || dnode_table[n].state == 0) continue;
+        if (n == me || dnode_state(n) == 0) continue;
         if (region_is_member(n)) continue;
-        ids[k] = n; states[k] = dnode_table[n].state; rtts[k] = swim_rtt_ms(n); k++;
+        ids[k] = n; states[k] = dnode_state(n); rtts[k] = swim_rtt_ms(n); k++;
     }
     return k;
 }

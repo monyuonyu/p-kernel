@@ -181,7 +181,30 @@ typedef struct {
 } DNODE;
 
 extern DNODE dnode_table[DNODE_MAX];
-extern pk_node_t drpc_my_node;          /* 0xFF = not initialized            */
+
+/* N3 2a (research/n3-dnode-region.md §2.1, §4b): the door to the node table.
+ * Outside the owners (drpc.c, swim.c: they #define DRPC_TABLE_OWNER before
+ * any include) nobody names dnode_table; the pragma below makes the compiler
+ * refuse it, so step 2b can move the rows into the SWIM slots by changing
+ * only these lines and the owners. Reads are rvalues (a cast), writes go
+ * through dnode_set_*. Macros, not static inline: inline moved .text (§4),
+ * these expand to the very same expressions = crown and hosted .text are
+ * byte-identical. DNODE_FOREACH is the row walk 2b will shrink to O(R). */
+#define dnode_state(n)          ((UB)dnode_table[(n)].state)
+#define dnode_ip(n)             ((UW)dnode_table[(n)].ip)
+#define dnode_missed(n)         ((UB)dnode_table[(n)].missed)
+#define dnode_node_id(n)        ((pk_node_t)dnode_table[(n)].node_id)
+#define dnode_set_state(n, v)   (dnode_table[(n)].state = (v))
+#define dnode_set_ip(n, v)      (dnode_table[(n)].ip = (v))
+#define dnode_set_node_id(n, v) (dnode_table[(n)].node_id = (v))
+#define DNODE_FOREACH(n)        for ((n) = 0; (n) < DNODE_MAX; (n)++)
+#define DNODE_TABLE_BYTES       (sizeof(dnode_table))
+#define DNODE_TABLE_DEFINE      DNODE dnode_table[DNODE_MAX]  /* stubs: ushim, placement_stub */
+#ifndef DRPC_TABLE_OWNER
+#pragma GCC poison dnode_table
+#endif
+
+extern pk_node_t drpc_my_node;         /* 0xFF = not initialized            */
 
 /* ------------------------------------------------------------------ */
 /* Init & tasks                                                        */

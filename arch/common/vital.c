@@ -67,7 +67,7 @@ void vital_task(INT stacd, void *exinf)
         /* ALIVE ピア数をカウント */
         UB alive = 0;
         for (UB n = 0; n < DNODE_MAX; n++)
-            if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE)
+            if (n != drpc_my_node && dnode_state(n) == DNODE_ALIVE)
                 alive++;
 
         /* アクティブトピック数をカウント */

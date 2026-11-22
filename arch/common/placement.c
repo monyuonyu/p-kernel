@@ -97,7 +97,7 @@ static INT alive_members(pk_node_t out[DNODE_MAX])
 {
     INT n = 0;
     for (UB i = 0; i < DNODE_MAX; i++) {
-        if (dnode_table[i].state == DNODE_ALIVE) out[n++] = i;
+        if (dnode_state(i) == DNODE_ALIVE) out[n++] = i;
     }
     return n;
 }

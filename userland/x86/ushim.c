@@ -54,7 +54,7 @@ void sio_send_frame(const UB *buf, INT size)
 UB drpc_my_node = 0xFF;
 
 /* ---- STUB-DEAD: kernel-state inputs of select_expert -------------- */
-DNODE dnode_table[DNODE_MAX];                 /* zero-init: no peers   */
+DNODE_TABLE_DEFINE;                           /* zero-init: no peers   */
 
 UW swim_rtt_ms(pk_node_t node)
 {

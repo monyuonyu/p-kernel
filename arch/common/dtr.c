@@ -1470,7 +1470,7 @@ W dtr_infer(const B input[4])
     if (lvl == DEGRADE_FULL && h_l0_pub >= 0) {
         BOOL has_peers = FALSE;
         for (UB n = 0; n < DNODE_MAX; n++) {
-            if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE) {
+            if (n != drpc_my_node && dnode_state(n) == DNODE_ALIVE) {
                 has_peers = TRUE; break;
             }
         }
@@ -1543,7 +1543,7 @@ W dtr_infer(const B input[4])
     if (h_l0_pub >= 0) {
         BOOL has_peers = FALSE;
         for (UB n = 0; n < DNODE_MAX; n++) {
-            if (n != drpc_my_node && dnode_table[n].state == DNODE_ALIVE) {
+            if (n != drpc_my_node && dnode_state(n) == DNODE_ALIVE) {
                 has_peers = TRUE; break;
             }
         }
