@@ -33,7 +33,11 @@ INC="-I$ROOT/boot/linux_x86_64 -I$ROOT/arch/linux/x86_64/include -I$ROOT/arch/li
 CF="-Wall -Wextra -g -O1 -no-pie -fno-pie -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOSTED_LIBC_ -D_LINUX_X86_64_"
 NC=""
 if [ "${N3S_NC:-0}" = 1 ]; then
-    printf '#include "drpc.h"\nstatic unsigned char n3s_nc_fleet[DNODE_MAX] __attribute__((used));\n' > "$B/nc.h"
+    # The header is forced in ahead of swim.c's own '#define DRPC_TABLE_OWNER 1',
+    # so it must say it too: without it drpc.h poisons dnode_table and swim.c no
+    # longer compiles = this control went RED for the wrong reason (CI 44979169043,
+    # after N3 2a's poison). Same token sequence = no redefinition warning.
+    printf '#define DRPC_TABLE_OWNER 1\n#include "drpc.h"\nstatic unsigned char n3s_nc_fleet[DNODE_MAX] __attribute__((used));\n' > "$B/nc.h"
     NC="-include $B/nc.h"
     echo "[unbounded-swim] negative control: one [DNODE_MAX] array forced into swim.o"
 fi
