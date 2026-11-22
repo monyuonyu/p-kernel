@@ -27,3 +27,8 @@
 - 器の最大は「取り寄せの器＋仲間の頭＋w」か「仲間の頭＋w＋cand」の大きい方（取り寄せの器は合体の前に返す。q8 の scratch は要らなくなった＝取り寄せの器から直接開く）
 - crown（x86・aarch64 の .text・.rodata）は master と全バイト同じ（student.c はベアに入らない）
 - Q6: 判定の種 261・263 の q8 の段（alone・region4・region4-garb1・q8 の 3 腕）のログが master 25365e93 と全バイト同じ（同時に走らせた。判定役は 2 種なので「7 種以上」で FAIL と出る＝仕様）
+
+## 6. RG-FETCH（11-23）
+- ST_RG_FETCH_MAX と publish の上限を _Static_assert で結んだ（run_rg_fetch_tie.sh）
+- Q5 は本物の malloc で数える: cand は w・g・mu・vu の 4 本、q8 の calloc も
+- 限界: L の合体の段は数えで 7×(頭＋w)＋cand 4 本≒908 MB＞線 700 MB（未測定）

@@ -3101,7 +3101,9 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     if (nb > 0) {
         st_model cand;
         if (st_init_tier(&cand, 1u, live->tier) == ST_OK) {
-            st_rg_hold(bsz);                     /* the candidate's w, mu, vu */
+            /* the candidate as st_init_tier allocates it: w g mu vu (RG-FETCH,
+             * research/b5-recv-mem.md §6; was bsz = w mu vu, 7.6 MB short on M) */
+            st_rg_hold((size_t)cand.n_params * 4u * sizeof(float));
             if (st_rg_take_live(&cand, live)) {
 #if defined(B5W_NC_MEAN)
                 int acc = st_round_merge(&cand, gen, bs, ls, gs, nb);
@@ -3413,6 +3415,7 @@ static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *o
     if (n != st_q8_payload(live) || cap < bs) return ST_E_ARG;
     uint8_t *cov = (uint8_t *)calloc((size_t)live->n_params, 1);
     if (!cov) return ST_E_OOM;
+    st_rg_hold((size_t)live->n_params);      /* RG-FETCH: Q5 counts this too */
     const uint8_t *s = (const uint8_t *)q;
     uint8_t *o = (uint8_t *)out;
     for (size_t i = 0; i < sizeof(ST_BLOB_HDR); i++) o[i] = s[i];
@@ -3428,6 +3431,7 @@ static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *o
         x.pos += sizeof(float);
     }
     free(cov);
+    st_rg_drop((size_t)live->n_params);
     if (!full) {
         if (x.bad || !st_blob_hdr_need_ok(live, out, bs, bs)) return ST_E_ARG;
         return (long)bs;
